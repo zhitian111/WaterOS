@@ -1,0 +1,132 @@
+# rustfmt.toml 完整配置解析
+
+# 基础格式设置 
+max_width = 100                     # 最大行宽（默认100，超过自动换行）
+hard_tabs = false                   # 使用空格代替制表符（false=用空格）
+tab_spaces = 4                      # 每个缩进级别4个空格
+newline_style = "Auto"              # 换行符风格（Auto/Unix/Native）
+indent_style = "Visual"             # 缩进风格（Block块缩进/Visual视觉缩进）
+# 启发式优化 
+use_small_heuristics = "Off"    # 紧凑格式启发式（Default/Off/Max）
+
+# 特定结构宽度限制 
+fn_call_width = 20                  # 函数调用参数换行阈值
+attr_fn_like_width = 70             # 属性宏参数换行宽度
+struct_lit_width = 18               # 结构体字面量单行最大宽度
+struct_variant_width = 35           # 结构体变体单行最大宽度
+array_width = 60                    # 数组/元组换行宽度阈值
+chain_width = 10                    # 方法链换行宽度
+single_line_if_else_max_width = 50  # if-else单行最大宽度
+single_line_let_else_max_width = 50 # let-else单行最大宽度
+# 注释处理 
+wrap_comments = false               # 自动换行注释（true/false）
+format_code_in_doc_comments = false # 格式化文档注释中的代码块
+doc_comment_code_block_width = 100  # 文档代码块最大宽度
+comment_width = 80                  # 注释行最大宽度
+normalize_comments = false          # 标准化注释格式（删除多余空格）
+normalize_doc_attributes = false    # 标准化文档属性格式
+
+# 字符串与字面量 
+format_strings = false              # 自动换行字符串字面量
+hex_literal_case = "Upper"       # 十六进制大小写（Preserve/Upper/Lower）
+
+# 宏处理 
+format_macro_matchers = false       # 格式化宏匹配器
+format_macro_bodies = true          # 格式化宏体
+skip_macro_invocations = []         # 跳过的宏列表（如["try!"]）
+
+# 代码块风格 
+empty_item_single_line = true       # 空结构体/枚举保持单行
+struct_lit_single_line = true       # 单字段结构体字面量保持单行
+fn_single_line = false              # 单行函数不强制压缩
+where_single_line = false           # where子句不强制单行
+
+# 导入管理 
+imports_indent = "Block"            # 导入缩进风格（Block/Visual）
+imports_layout = "Mixed"            # 导入布局（Mixed/Vertical/Horizontal）
+imports_granularity = "Preserve"    # 导入分组粒度（Preserve/Crate/Module等）
+group_imports = "Preserve"          # 导入分组方式（Preserve/StdExternalCrate等）
+reorder_imports = true              # 自动排序导入
+reorder_modules = true              # 自动排序模块声明
+reorder_impl_items = false          #  不重新排列impl项
+
+# 类型系统 
+type_punctuation_density = "Wide"   # 类型标点密度（Wide/Compact）
+space_before_colon = true           # 类型冒号前加空格
+space_after_colon = true            # 类型冒号后加空格
+spaces_around_ranges = false        # 范围运算符周围不加空格
+
+# 运算符格式 
+binop_separator = "Back"           # 二元运算符位置（Front换行后置/Back前置）
+
+# 括号处理 
+remove_nested_parens = true         # 移除多余嵌套括号
+combine_control_expr = true         # 合并控制表达式括号
+
+# 数组处理 
+short_array_element_width_threshold = 10 # 短数组元素宽度阈值
+
+# 表达式换行 
+overflow_delimited_expr = true     # 允许分割括号内的长表达式
+
+# 对齐设置 
+struct_field_align_threshold = 0    # 结构体字段对齐阈值（0=禁用）
+enum_discrim_align_threshold = 0    # 枚举判别值对齐阈值（0=禁用）
+
+# match表达式 
+match_arm_blocks = true             # match分支使用块时保持换行
+match_arm_leading_pipes = "Never"   # match分支前导管道符（Never/Always）
+
+# 代码块换行 
+force_multiline_blocks = false      # 不强制多行代码块
+
+# 函数参数布局 
+fn_params_layout = "Tall"            # 函数参数垂直布局（Tall/Wide）
+
+# 大括号风格 
+brace_style = "SameLineWhere"       # where子句与}同行（SameLineWhere/PreferSameLine）
+control_brace_style = "AlwaysSameLine" # 控制语句大括号不换行
+
+# 分号与逗号 
+trailing_semicolon = true           # 表达式语句保留分号
+trailing_comma = "Vertical"         # 多行结构保留逗号（Vertical/Never）
+match_block_trailing_comma = false  # match块不保留结尾逗号
+
+# 空行管理 
+blank_lines_upper_bound = 1         # 最大连续空行数
+blank_lines_lower_bound = 0         # 最小连续空行数
+
+# 版本设置 
+edition = "2015"                    # Rust版本（2015/2018/2021）
+style_edition = "2015"              # 格式化风格版本
+# version = "One"                     # 配置版本（One/Two）
+
+# 高级文件处理 
+inline_attribute_width = 0          # 内联属性最大宽度（0=不限制）
+format_generated_files = true       # 格式化生成的文件
+generated_marker_line_search_limit = 5 # 生成文件标记搜索行数
+
+# 语法糖 
+use_try_shorthand = false           # 不使用?运算符替换try!宏
+use_field_init_shorthand = false     # 不使用字段初始化简写
+
+# ABI 处理 
+force_explicit_abi = true           # 强制显式声明ABI
+
+# 通配符处理 
+condense_wildcard_suffixes = false  # 不压缩通配符后缀（如_0=>_）
+
+# 输出设置 
+color = "Auto"                      # 颜色输出（Auto/Always/Never）
+required_version = "1.8.0"          # 最低rustfmt版本
+unstable_features = true            # 启用实验性特性
+
+# 极端配置 
+disable_all_formatting = false      # 禁用所有格式化（紧急开关）
+skip_children = false               # 不跳过子目录
+show_parse_errors = true            # 显示解析错误
+error_on_line_overflow = false      # 行超宽不报错
+error_on_unformatted = false        # 未格式化代码不报错
+ignore = []                         # 忽略文件列表（正则表达式）
+emit_mode = "Files"                 # 输出模式（Files/Stdout）
+make_backup = false                 # 不生成备份文件
