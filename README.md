@@ -43,3 +43,5 @@ sudo apt install rustup
 
 # 更改信息历史记录
 此模块是方便查询项目规范和配置文件的更改信息，以免@lick长期摆烂落后进度。
+# 附加信息
+1. 如果你需要使用neovim在Ubuntu上进行Rust编程，可以参考[我的nvim配置文件](https://github.com/zhitian111/nvim-configs-of-zhitian111)--zhitian111
