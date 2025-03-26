@@ -1,14 +1,11 @@
 # 最新更改
-项目设置了.rustfmt.toml文件，用于rust代码格式化，请将toolchain改为nightly版本
-具体来说请执行：
-```bash
-rustup toolchain install nightly
-rustup default nightly
-```
-如果没有rustup，请安装rustup：
-```bash
-sudo apt install rustup
-```
+## 2025-3-26
+1. 项目新增了scripts目录，用于存放项目的脚本文件，目前添加了两个文件：
+- ./scripts/rustc_target_for_oscmp.sh
+    用于查看当前rust编译器支持的本次比赛需要的目标架构
+- ./scripts/rustc_target_tools_install.sh
+    用于安装构建对应平台的程序的rust工具链
+2. 项目新增了Makefile文件，在已经安装好rust工具链的情况下，可以直接使用make all命令进行编译。
 # 任务安排（来自老师）
 3Q1 文档写出来（xv6 starry 其它OS）md \
 3Q2 启动基本裸机程序 ，并学会使用git、rust，printf\
@@ -43,5 +40,16 @@ sudo apt install rustup
 
 # 更改信息历史记录
 此模块是方便查询项目规范和配置文件的更改信息，以免@lick长期摆烂落后进度。
+## 2025-3-24
+项目设置了.rustfmt.toml文件，用于rust代码格式化，请将toolchain改为nightly版本
+具体来说请执行：
+```bash
+rustup toolchain install nightly
+rustup default nightly
+```
+如果没有rustup，请安装rustup：
+```bash
+sudo apt install rustup
+```
 # 附加信息
 1. 如果你需要使用neovim在Ubuntu上进行Rust编程，可以参考[我的nvim配置文件](https://github.com/zhitian111/nvim-configs-of-zhitian111)--zhitian111
