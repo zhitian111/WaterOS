@@ -1,0 +1,8 @@
+[target.riscv64gc-unknown-none-elf]
+linker = "riscv64-unknown-elf-ld"
+rustflags = [
+    "-C", "link-arg=-Tsrc/script/riscv/riscv-link.ld",
+    "-C", "link-arg=-zmax-page-size=4096",
+    "-C", "link-arg=-nostdlib",
+]
+[target.loongarch64-unknown-none-elf]

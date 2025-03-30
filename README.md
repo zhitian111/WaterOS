@@ -1,11 +1,37 @@
 # 最新更改
-## 2025-3-26
-1. 项目新增了scripts目录，用于存放项目的脚本文件，目前添加了两个文件：
-- ./scripts/rustc_target_for_oscmp.sh
-    用于查看当前rust编译器支持的本次比赛需要的目标架构
-- ./scripts/rustc_target_tools_install.sh
-    用于安装构建对应平台的程序的rust工具链
-2. 项目新增了Makefile文件，在已经安装好rust工具链的情况下，可以直接使用make all命令进行编译。
+## 2025-3-30
+1. 添加了.cargo目录，用于配置cargo构建时的链接器脚本。
+2. 更改了项目src的目录结构，请参考以下目录结构：
+```bash
+src                             # 项目源码目录
+├── arch                        # 汇编相关代码目录
+│   ├── loongarch               # loongarch架构相关汇编代码目录
+│   └── riscv                   # riscv架构相关汇编代码目录
+│       └── entry.asm           # 入口点汇编代码
+├── rust                        # rust源码目录
+│   ├── loongarch               # loongarch架构相关rust代码目录
+│   │   └── loongarch-main.rs   # loongarch架构入口点rust代码
+│   ├── riscv                   # riscv架构相关rust代码目录
+│   │   └── riscv-main.rs       # riscv架构入口点rust代码
+│   └── share                   # 共享代码目录
+│       ├── io                  # 输入输出相关代码目录
+│       │   ├── mod.rs          # 输入输出模块声明
+│       │   └── stdout.rs       # 标准输出相关代码
+│       └── lib.rs              # 共享库代码，用于模块声明
+└── script                      # 脚本目录，存放链接器脚本或其他脚本文件
+    ├── loongarch               # loongarch架构链接器脚本
+    └── riscv                   # riscv架构链接器脚本
+        └── riscv-link.ld       # riscv架构链接器脚本文件
+```
+3. 调整了Cargo.toml文件，添加了目录内的库的crate，现在可以通过
+    ```rust
+    warter-os::模块名::子模块名::方法/类型名;
+    ```
+    这样的结构来调用库中的方法和类型。
+4. 添加了./scripts/linker_toolchain_install.sh脚本，用于安装链接器脚本。目前还不完善，仅包括riscv64架构的链接器脚本。
+5. 添加了./scripts/test_in_qemu_riscv.sh脚本，用于在qemu上运行riscv架构的测试程序。
+ps:关于qemu的安装，请参考[qemu的官网](https://www.qemu.org/)，另外也可以通过[赛题发布页](https://github.com/oscomp/testsuits-for-oskernel)提供的docker环境来运行该脚本。
+src
 # 任务安排（来自老师）
 3Q1 文档写出来（xv6 starry 其它OS）md \
 3Q2 启动基本裸机程序 ，并学会使用git、rust，printf\
@@ -47,6 +73,13 @@
 rustup toolchain install nightly
 rustup default nightly
 ```
+## 2025-3-26
+1. 项目新增了scripts目录，用于存放项目的脚本文件，目前添加了两个文件：
+- ./scripts/rustc_target_for_oscmp.sh
+    用于查看当前rust编译器支持的本次比赛需要的目标架构
+- ./scripts/rustc_target_tools_install.sh
+    用于安装构建对应平台的程序的rust工具链
+2. 项目新增了Makefile文件，在已经安装好rust工具链的情况下，可以直接使用make all命令进行编译。
 如果没有rustup，请安装rustup：
 ```bash
 sudo apt install rustup

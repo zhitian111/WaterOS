@@ -1,16 +1,19 @@
 [package]
-name = "WaterOS"
+name = "water-os"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
+[lib]
+path = "./src/rust/share/lib.rs"
 [dependencies]
 [profile.release]
 panic = "abort"
 [[bin]]
 name = "kernel-la"
-path = "src/main.rs"
+path = "./src/rust/loongarch/loongarch-main.rs"
 [[bin]]
 name = "kernel-rv"
-path = "src/main.rs"
+path = "./src/rust/riscv/riscv-main.rs"
+
+

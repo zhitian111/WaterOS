@@ -24,6 +24,7 @@ build-loongarch:
 # 清理生成的文件
 clean:
 	rm -f $(OUTPUT_RISCV) $(OUTPUT_LOONGARCH)
+	cargo clean
 	@echo "Clean complete."
 
 # 伪目标声明
