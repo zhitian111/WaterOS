@@ -21,14 +21,27 @@
 //     [VIRT_PCIE_MMIO] =    { 0x40000000,    0x40000000 },
 //     [VIRT_DRAM] =         { 0x80000000,           0x0 },
 // };
+
+// 当架构为 riscv64 时，串口的地址为 0x1000_0000：
+#[cfg(target_arch = "riscv64")]
 const UART_ADDR : *mut u8 = 0x1000_0000 as *mut u8; // QEMU的串口地址
+
+// 当架构为 loongarch64 时，串口的地址为 0x1000_0000：
+#[cfg(target_arch = "loongarch64")]
+const UART_ADDR : *mut u8 = 0x1000_0000 as *mut u8; // QEMU的串口地址
+
+// 当架构为其他架构时，串口的地址为 0x1000_0000：
+#[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
+const UART_ADDR : *mut u8 = 0x1000_0000 as *mut u8; // QEMU的串口地址
+
+// 初始化串口
 pub fn uart_init() {
     unsafe {
         // 配置线路控制寄存器 (LCR) 为 8 位数据模式
-        core::ptr::write_volatile(UART_ADDR.add(3),
-                                  0x03u8);
+        core::ptr::write_volatile(UART_ADDR.add(3), 0x03u8);
     }
 }
+// 向串口发送一个字符串
 pub fn prints(_s : &str) -> () {
     for &byte in _s.as_bytes() {
         unsafe {
@@ -36,4 +49,60 @@ pub fn prints(_s : &str) -> () {
             core::ptr::write_volatile(UART_ADDR, byte); // 发送一个字节
         }
     }
+}
+
+// 向串口发送一个字节
+pub fn putc(byte : u8) -> () {
+    unsafe {
+        while (core::ptr::read_volatile(UART_ADDR.add(5)) & 0x20) == 0 {} // 等待发送缓冲区空闲
+        core::ptr::write_volatile(UART_ADDR, byte); // 发送一个字节
+    }
+}
+
+// 输出缓冲区定义
+pub struct BufferWriter<'a> {
+    buffer : &'a mut [u8],
+    position : usize,
+}
+impl<'a> BufferWriter<'a> {
+    pub fn new(buffer : &'a mut [u8]) -> Self {
+        Self { buffer,
+               position : 0 }
+    }
+    pub fn as_slice(&self) -> &[u8] {
+        &self.buffer[..self.position]
+    }
+}
+impl<'a> core::fmt::Write for BufferWriter<'a> {
+    fn write_str(&mut self, s : &str) -> core::fmt::Result {
+        let len = s.len();
+        if len >
+           self.buffer
+               .len() -
+           self.position
+        {
+            return Err(core::fmt::Error);
+        }
+        self.buffer[self.position..self.position + len].copy_from_slice(s.as_bytes());
+        self.position += len;
+        Ok(())
+    }
+}
+// 输出宏定义，用于向串口输出格式化的字符串，最大长度为 1024 字节
+#[macro_export]
+macro_rules! print{
+    () => {
+       return;
+    };
+    ($($arg:tt)*) =>{
+        {
+            let mut buf = [0u8;1024];
+            let mut writer = BufferWriter::new(&mut buf);
+            let _ = write!(&mut writer,$($arg)*).unwrap();
+            // let mut _s = format!( $($arg)* );
+            for &byte in writer.as_slice() {
+                putc(byte);
+            }
+        }
+    };
 }

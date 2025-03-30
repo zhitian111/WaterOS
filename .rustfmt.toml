@@ -10,7 +10,7 @@ indent_style = "Visual"             # 缩进风格（Block块缩进/Visual视觉
 use_small_heuristics = "Off"    # 紧凑格式启发式（Default/Off/Max）
 
 # 特定结构宽度限制 
-fn_call_width = 20                  # 函数调用参数换行阈值
+fn_call_width = 40                  # 函数调用参数换行阈值
 attr_fn_like_width = 70             # 属性宏参数换行宽度
 struct_lit_width = 18               # 结构体字面量单行最大宽度
 struct_variant_width = 35           # 结构体变体单行最大宽度
