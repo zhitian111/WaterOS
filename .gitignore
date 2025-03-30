@@ -3,6 +3,9 @@
 
 # Added by cargo
 
+.DS_Store
+.vscode/
+
 /target
 ./kernel-rv
 ./kernel-la
