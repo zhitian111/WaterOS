@@ -7,12 +7,11 @@ global_asm!(include_str!("../../arch/riscv/entry.asm")); // 导入汇编代码
 use core::panic::PanicInfo; // 导入PanicInfo
 use water_os::print; // 导入输出宏
 pub const KERNEL_BASE : usize = 0xFFFF_FFC0_0000_0000; // 内核基址
+
 #[panic_handler] // 定义Panic处理函数
 fn panic(_info : &PanicInfo) -> ! {
     loop {}
 }
-use core::fmt::Write; // 导入Write
-use water_os::io::stdout::BufferWriter; // 导入BufferWriter
 #[unsafe(no_mangle)] // 不要对函数名称进行重命名
 pub extern "C" fn rust_main() -> ! {
     uart_init();

@@ -34,14 +34,30 @@ const UART_ADDR : *mut u8 = 0x1000_0000 as *mut u8; // QEMU的串口地址
 #[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
 const UART_ADDR : *mut u8 = 0x1000_0000 as *mut u8; // QEMU的串口地址
 
-// 初始化串口
+/*
+* 方法简介：该方法用于初始化串口。
+*           调用：core::ptr::write_volatile()
+* 输入参数：无。
+* 输出参数：无。
+* 异常情况：无。
+* 注意事项：在进行串口通信之前，必须先调用该方法进行初始化。
+*/
 pub fn uart_init() {
     unsafe {
         // 配置线路控制寄存器 (LCR) 为 8 位数据模式
         core::ptr::write_volatile(UART_ADDR.add(3), 0x03u8);
     }
 }
-// 向串口发送一个字符串
+/*
+* 方法简介：该方法用于向串口发送字符串。
+*           依赖：water_os::io::stdout::uart_init()
+*           调用：core::ptr::write_volatile()
+* 输入参数：
+*           _s：&str：需要发送的字符串。
+* 输出参数：无。
+* 异常情况：无。
+* 注意事项：在第一次使用该方法之前，必须先调用water_os::io::stdout::uart_init()进行初始化。
+*/
 pub fn prints(_s : &str) -> () {
     for &byte in _s.as_bytes() {
         unsafe {
@@ -51,7 +67,16 @@ pub fn prints(_s : &str) -> () {
     }
 }
 
-// 向串口发送一个字节
+/*
+* 方法简介：该方法用于向串口发送一个字节。
+*           依赖：water_os::io::stdout::uart_init()
+*           调用：core::ptr::write_volatile()
+* 输入参数：
+*           byte：u8：需要发送的字节。
+* 输出参数：无。
+* 异常情况：无。
+* 注意事项：在第一次使用该方法之前，必须先调用water_os::io::stdout::uart_init()进行初始化。
+*/
 pub fn putc(byte : u8) -> () {
     unsafe {
         while (core::ptr::read_volatile(UART_ADDR.add(5)) & 0x20) == 0 {} // 等待发送缓冲区空闲
@@ -89,15 +114,30 @@ impl<'a> core::fmt::Write for BufferWriter<'a> {
     }
 }
 // 输出宏定义，用于向串口输出格式化的字符串，最大长度为 1024 字节
-#[macro_export]
+/*
+* 方法简介：该方法用于向串口输出格式化的字符串。
+*           依赖：water_os::io::stdout::uart_init()
+*           调用：core::fmt::write!()
+*                 water_os::io::stdout::BufferWriter::new()
+*                 water_os::io::stdout::BufferWriter::as_slice()
+*                 water_os::io::stdout::putc()
+* 输入参数：
+*           fmt：格式化字符串，长度应在1024 字节以内。
+* 输出参数：无。
+* 异常情况：如果格式化字符串的长度超过 1024 字节，则会截取前 1024 字节。
+* 注意事项：在第一次使用该方法之前，必须先调用water_os::io::stdout::uart_init()进行初始化。
+*           格式化字符串的长度应在1024 字节以内。
+*/
+#[macro_export] // 用于宏导出
 macro_rules! print{
     () => {
        return;
     };
     ($($arg:tt)*) =>{
         {
+            use core::fmt::Write;
             let mut buf = [0u8;1024];
-            let mut writer = BufferWriter::new(&mut buf);
+            let mut writer = water_os::io::stdout::BufferWriter::new(&mut buf);
             let _ = write!(&mut writer,$($arg)*).unwrap();
             // let mut _s = format!( $($arg)* );
             for &byte in writer.as_slice() {

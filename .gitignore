@@ -4,5 +4,7 @@
 # Added by cargo
 
 /target
-./kernel-rv
+/kernel-rv
+/kernel-la
 ./kernel-la
+./kernel-rv
