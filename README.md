@@ -83,9 +83,9 @@ src                             # 项目源码目录
 │   │   └── riscv-main.rs       # riscv架构入口点rust代码
 │   └── share                   # 共享代码目录
 │       ├── io                  # 输入输出相关代码目录
-│       │   ├── mod.rs          # 输入输出模块声明
+│       │   ├── mod.rs          # 输入输出模块声明，也得声明pub mod
 │       │   └── stdout.rs       # 标准输出相关代码
-│       └── lib.rs              # 共享库代码，用于模块声明
+│       └── lib.rs              # 共享库代码，用于模块声明，加文件夹名字
 └── script                      # 脚本目录，存放链接器脚本或其他脚本文件
     ├── loongarch               # loongarch架构链接器脚本
     └── riscv                   # riscv架构链接器脚本
