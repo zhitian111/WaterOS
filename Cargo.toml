@@ -9,11 +9,11 @@ path = "./src/rust/share/lib.rs"
 [dependencies]
 [profile.release]
 panic = "abort"
+[profile.dev]
+panic = "unwind"
 [[bin]]
 name = "kernel-la"
 path = "./src/rust/loongarch/loongarch-main.rs"
 [[bin]]
 name = "kernel-rv"
 path = "./src/rust/riscv/riscv-main.rs"
-
-

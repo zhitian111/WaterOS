@@ -141,7 +141,7 @@ macro_rules! print{
             let _ = write!(&mut writer,$($arg)*).unwrap();
             // let mut _s = format!( $($arg)* );
             for &byte in writer.as_slice() {
-                putc(byte);
+                water_os::io::stdout::putc(byte);
             }
         }
     };
