@@ -1,5 +1,3 @@
-stty sane
-stty erase '^?' 2> /dev/null
 echo "\n\033[1;33m开始git仓库更新...\033[0m\n"
 echo "\n\033[1;36m当前分支：\033[0m\n"
 git -P branch
