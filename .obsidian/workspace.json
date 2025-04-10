@@ -47,12 +47,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "tasks/todo-list.md",
+                "file": "README.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "todo-list"
+              "title": "README"
             }
           }
         ]
@@ -201,6 +201,10 @@
   },
   "active": "e6166465a1db999a",
   "lastOpenFiles": [
+    "os-arch/arch.canvas",
+    "tasks/todo-list.md",
+    "tasks/tasks.md",
+    "os-arch/arch.md",
     "scripts/rust-install.sh",
     "target/debug/incremental/kernel_rv-3oa1r31cj3krx/s-h6amb9bcvc-0a39c1d-working/dep-graph.part.bin",
     "target/debug/incremental/kernel_rv-3oa1r31cj3krx/s-h6amb9bcvc-0a39c1d-working",
@@ -211,13 +215,8 @@
     "target/debug/incremental/kernel_la-35u7sjuvxpucd/s-h6amb9bcve-0j1kucz-working/dep-graph.part.bin",
     "target/debug/incremental/kernel_la-35u7sjuvxpucd/s-h6amb9bcve-0j1kucz-working",
     "target/debug/incremental/kernel_rv-13keopd8rgtjv/s-h6amb9bcvd-12zroc8.lock",
-    "target/debug/incremental/kernel_la-35u7sjuvxpucd/s-h6amb9bcve-0j1kucz.lock",
-    "tasks/tasks.md",
-    "tasks/todo-list.md",
     "os-arch/transportation.md",
     "os-arch/process.md",
-    "os-arch/arch.md",
-    "os-arch/arch.canvas",
     "os-arch/file-system.md",
     "README.md",
     "Welcome.md"
