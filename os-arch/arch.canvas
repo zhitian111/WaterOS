@@ -1,0 +1,11 @@
+{
+	"nodes":[
+		{"id":"2cd7bcbb1caf4873","type":"file","file":"os-arch/file-system.md","x":-320,"y":-420,"width":400,"height":400},
+		{"id":"ece6ec728d1ce234","type":"file","file":"os-arch/arch.md","x":-320,"y":-940,"width":400,"height":400},
+		{"id":"f8a39789d8dab2bf","x":200,"y":-420,"width":400,"height":400,"type":"file","file":"os-arch/process.md"}
+	],
+	"edges":[
+		{"id":"73efa9ab58384e2e","fromNode":"ece6ec728d1ce234","fromSide":"bottom","toNode":"2cd7bcbb1caf4873","toSide":"top"},
+		{"id":"20ab57d3a9194b4f","fromNode":"ece6ec728d1ce234","fromSide":"right","toNode":"f8a39789d8dab2bf","toSide":"top"}
+	]
+}
