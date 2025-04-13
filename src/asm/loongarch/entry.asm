@@ -25,7 +25,7 @@ skip_bss_clear:
 
     # 不应该返回到这里，但如果返回了，则进入无限循环
 halt_loop:
-    j halt_loop
+    b halt_loop
 
 # 用户上下文恢复函数
 .globl restore_user_context

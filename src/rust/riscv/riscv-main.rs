@@ -3,8 +3,8 @@
 use core::arch::asm;
 use core::arch::global_asm;
 use water_os::io::stdout::{prints, uart_init}; // 导入water_os的prints、uart_init、print!
-global_asm!(include_str!("../../arch/riscv/entry.asm")); // 导入汇编代码
-global_asm!(include_str!("../../arch/riscv/trap.asm"));
+global_asm!(include_str!("../../asm/riscv/entry.asm")); // 导入汇编代码
+global_asm!(include_str!("../../asm/riscv/trap.asm"));
 use core::panic::PanicInfo; // 导入PanicInfo
 use water_os::print; // 导入输出宏
 
