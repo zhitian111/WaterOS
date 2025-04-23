@@ -42,6 +42,7 @@ const UART_ADDR : *mut u8 = 0x1000_0000 as *mut u8; // QEMU的串口地址
 * 异常情况：无。
 * 注意事项：在进行串口通信之前，必须先调用该方法进行初始化。
 */
+#[unsafe(no_mangle)]
 pub fn uart_init() {
     unsafe {
         // 配置线路控制寄存器 (LCR) 为 8 位数据模式
@@ -58,6 +59,7 @@ pub fn uart_init() {
 * 异常情况：无。
 * 注意事项：在第一次使用该方法之前，必须先调用water_os::io::stdout::uart_init()进行初始化。
 */
+#[unsafe(no_mangle)]
 pub fn prints(_s : &str) -> () {
     for &byte in _s.as_bytes() {
         unsafe {
@@ -77,6 +79,7 @@ pub fn prints(_s : &str) -> () {
 * 异常情况：无。
 * 注意事项：在第一次使用该方法之前，必须先调用water_os::io::stdout::uart_init()进行初始化。
 */
+#[unsafe(no_mangle)]
 pub fn putc(byte : u8) -> () {
     unsafe {
         while (core::ptr::read_volatile(UART_ADDR.add(5)) & 0x20) == 0 {} // 等待发送缓冲区空闲

@@ -58,7 +58,7 @@ _start:
     sb t1, 0(t0)
     li t1, '\r'
     sb t1, 0(t0)
-
+  
     // 获取核心编号
     // csrr t0, mhartid
     mv t0, a0 // 保存核心编号到 t0 (opensbi启动时传入a0寄存器)
@@ -74,12 +74,8 @@ _start:
     la sp, boot_stack_top
     // 设置栈底地址
     sub sp, sp, t0  // sp = stack top - hart_id * stack_size
-
-    la a0, rust_main  // 保存 Rust 程序的入口地址到 a0
-
-    // call setup_vm  // 设置页表
-
-
+    j setup_vm
+entry_rust:
     // 跳转到 Rust 程序的入口函数
     // la ra, rust_main  /* 正确加载地址 */
     // 输出提示信息
@@ -103,8 +99,14 @@ _start:
     li t1, '\n'
     sb t1, 0(t0)
     li t1, '\r'
+
+    la a0, rust_main  // 保存 Rust 程序的入口地址到 a0
+    call print_register  // 打印寄存器内容
+    auipc a0,0x0
+    call print_register  // 打印寄存器内容
     // lui ra, %hi(rust_main)
     // jalr ra           /* 跳转 */
+
     call rust_main  // 调用 Rust 程序的入口函数
     li t1, 'E'
     sb t1, 0(t0)
@@ -152,9 +154,31 @@ setup_vm:
     sb t1, 0(ra)
     li t1, 't'
     sb t1, 0(ra)
+    li t1, ' '
+    sb t1, 0(ra)
+    li t1, 'P'
+    sb t1, 0(ra)
+    li t1, 'a'
+    sb t1, 0(ra)
+    li t1, 'g'
+    sb t1, 0(ra)
+    li t1, 'e'
+    sb t1, 0(ra)
+    li t1, 't'
+    sb t1, 0(ra)
+    li t1, 'a'
+    sb t1, 0(ra)
+    li t1, 'b'
+    sb t1, 0(ra)
+    li t1, 'l'
+    sb t1, 0(ra)
+    li t1, 'e'
+    sb t1, 0(ra)
     li t1, '!'
     sb t1, 0(ra)
     li t1, '\n'
+    sb t1, 0(ra)
+    li t1, '\r'
     sb t1, 0(ra)
     la t0, boot_pagetable // 内核启动时的页表物理地址
     li t1, 0x0000008FFFFFFFFF
@@ -164,12 +188,16 @@ setup_vm:
     li t1, 8            // 设置MODE段为8, 表示SV39页表格式
     slli t1, t1, 60     // 左移 60 位，得到页表项格式
     or t0, t0, t1       // 合并PNN和页表项格式
+    mv a0,t0
+    call print_register  // 打印页表项内容
     csrw satp, t0       // 写入页表寄存器
     // 刷新TLB
     sfence.vma
     sfence.vma
     sfence.vma
-    ret
+    call print_register  // 打印页表项内容
+    la ra, entry_rust
+    jr ra
 
 
 /* 
@@ -193,16 +221,15 @@ print_a_bit:
     li a2, '\n'
     sb a2, 0(a4)
     ret
+
 .section .bss.stack
+.align 12
+boot_stack_lower_bound:
+    .space 4096 * 16 * 8  // 8 CPUS at most
 /*
  * 位于.data 段的符号，表明系统栈区的栈顶地址
 */
 boot_stack_top:
-    .section .data
-    .align 12
-boot_stack_lower_bound:
-
-    .space 4096 * 16 * 8  // 8 CPUS at most
 
 
 
@@ -212,7 +239,7 @@ boot_stack_lower_bound:
  * 使用SV39页表格式
 */
 /* L2 根页表 */
-.section .data
+.section .text
 .align 12
 boot_pagetable:
     /*63      54 53        28 27        19 18        10 9   8 7 6 5 4 3 2 1 0
@@ -238,11 +265,11 @@ boot_pagetable:
     // L2[2]: 1GB 巨页 恒等映射
     .quad (0x80000000 >> 30 << 28) | 0xCF 
     // 填充L2[4]到L2[98] 
-    .zero 8 * 96
-    // L2[99]: 1GB 巨页 映射到内核空间
+    .zero 8 * 255
+    // L2[258]: 1GB 巨页 映射到内核空间
     .quad (0x80000000 >> 30 << 28) | 0xCF
     // 填充剩余表项
-    .zero 8 * 512 - 100 * 8
+    .zero 8
 
 .section .text.trampoline
 .align 12/*

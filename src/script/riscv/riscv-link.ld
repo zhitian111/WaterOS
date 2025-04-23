@@ -4,7 +4,7 @@ INPUT(wateros_platform_riscv64_gcc.o)
  
 LINK_ADDRESS = 0x0000000000200000;
 BASE_ADDRESS = 0xffffffc080200000;
-KERN_OFFSET  = 0xffffffc000000000;
+KERNAL_OFFSET  = 0xffffffc000000000;
 QEMU_ENTRY   = 0x0000000080200000;
 SECTIONS
 {
@@ -13,11 +13,11 @@ SECTIONS
     skernel = .;
 
     stext = .;
-    .text.entry : AT(QEMU_ENTRY){
+    /* .text.entry : AT(QEMU_ENTRY){ */
+    /* } */
+    .text : AT(QEMU_ENTRY){
         *(.text.entry)
-    }
-    
-    .text : {
+        . = ALIGN(4K);
         *(.text.rust_main)
         . = ALIGN(4K);
         *(.text.usercheck)
