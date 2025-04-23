@@ -4,6 +4,7 @@ use core::arch::asm;
 use core::panic::PanicInfo;
 use water_os::io::stdout::{prints, uart_init};
 use water_os::print;
+use water_os::println;
 
 pub const KERNEL_BASE : usize = 0xFFFF_FFC0_0000_0000;
 
@@ -51,6 +52,19 @@ pub extern "C" fn rust_main() -> ! {
     uart_init();
     prints("Hello, riscv!\n\r");
     print!("Kernel Base: {}\n\r", "riscv64");
+    println!("Regist S-Mode interrupt handler !");
+    println!("rust_main address: {:#x}",
+             rust_main as usize);
+    let s_mode_trap_handler_ptr : usize = ((S_mode_trap_handler as usize) & 0x2) as usize;
+    unsafe {
+        asm!("csrw stvec, {}", in(reg) s_mode_trap_handler_ptr);
+    }
+    println!("S-Mode interrupt handler set !");
+    println!("test s-mode interrupt !");
+    unsafe {
+        asm!("ecall");
+    }
+    println!("Entering user mode !");
     loop {}
 }
 
@@ -76,3 +90,23 @@ pub extern "C" fn rust_main() -> ! {
 //         }
 //     }
 // }
+//
+
+#[unsafe(no_mangle)]
+pub extern "C" fn S_mode_trap_handler() -> ! {
+    let mut mcause : usize;
+    unsafe {
+        asm!("csrr {}, scause", out(reg) mcause);
+    }
+    print!("Trap: {:#x}\n\r", mcause);
+    // 检查异常类型
+    // Environment call form U-mode
+    if mcause ^ 8 == 0 {
+        print!("Environment call from U-mode\n\r");
+    }
+    // Environment call from S-mode
+    if mcause ^ 9 == 0 {
+        print!("Environment call from S-mode\n\r");
+    }
+    loop {}
+}

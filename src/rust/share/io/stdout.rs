@@ -149,3 +149,25 @@ macro_rules! print{
         }
     };
 }
+
+#[macro_export] // 用于宏导出
+macro_rules!  println{
+    () => {
+       return;
+    };
+    ($($arg:tt)*) =>{
+        {
+            use core::fmt::Write;
+            let mut buf = [0u8;1024];
+            let mut writer = water_os::io::stdout::BufferWriter::new(&mut buf);
+            let _ = write!(&mut writer, $($arg)*).unwrap();
+            // let mut _s = format!( $($arg)* );
+            for &byte in writer.as_slice() {
+                water_os::io::stdout::putc(byte);
+            }
+            water_os::io::stdout::putc(b'\n');
+            water_os::io::stdout::putc(b'\r');
+        }
+    };
+
+}

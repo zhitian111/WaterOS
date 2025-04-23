@@ -100,16 +100,10 @@ entry_rust:
     sb t1, 0(t0)
     li t1, '\r'
 
-    la a0, rust_main  // 保存 Rust 程序的入口地址到 a0
-    call print_register  // 打印寄存器内容
-    auipc a0,0x0
-    call print_register  // 打印寄存器内容
     // lui ra, %hi(rust_main)
     // jalr ra           /* 跳转 */
 
     call rust_main  // 调用 Rust 程序的入口函数
-    li t1, 'E'
-    sb t1, 0(t0)
     // call rust_main
     // call rust_main
 
