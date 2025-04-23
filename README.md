@@ -96,7 +96,7 @@ sudo apt install rustup
 2. 更改了项目src的目录结构，请参考以下目录结构：
 ```bash
 src                             # 项目源码目录
-├── arch                        # 汇编相关代码目录
+├── asm                         # 汇编相关代码目录
 │   ├── loongarch               # loongarch架构相关汇编代码目录
 │   └── riscv                   # riscv架构相关汇编代码目录
 │       └── entry.asm           # 入口点汇编代码

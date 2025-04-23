@@ -1,15 +1,23 @@
 OUTPUT_ARCH(riscv)
 ENTRY(_start)
-/* BASE_ADDRESS = 0xffffffc000200000; */
-BASE_ADDRESS = 0x80200000;
+INPUT(wateros_platform_riscv64_gcc.o)
+ 
+LINK_ADDRESS = 0x0000000000200000;
+BASE_ADDRESS = 0xffffffc000200000;
+KERN_OFFSET  = 0xffffffc000000000;
+QEMU_ENTRY   = 0x0000000080200000;
 SECTIONS
 {
+    /* . = QUMU_ENTRY; */
     . = BASE_ADDRESS;
     skernel = .;
 
     stext = .;
-    .text : {
+    .text.entry : AT(QEMU_ENTRY){
         *(.text.entry)
+    }
+    .text : {
+        *(.text.rust_main)
         . = ALIGN(4K);
         *(.text.usercheck)
         . = ALIGN(4K);

@@ -1,6 +1,9 @@
 [target.riscv64gc-unknown-none-elf]
 linker = "riscv64-unknown-elf-ld"
 rustflags = [
+    "--emit=obj",
+    "-C", "code-model=large",
+    "-C", "link-arg=-Ltarget/objects/kernel-rv",
     "-C", "link-arg=-Tsrc/script/riscv/riscv-link.ld",
     "-C", "link-arg=-zmax-page-size=4096",
     "-C", "link-arg=-nostdlib",
