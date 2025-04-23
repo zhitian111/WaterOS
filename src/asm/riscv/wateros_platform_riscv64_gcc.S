@@ -1,4 +1,4 @@
-/* 该文件中存储而是 RISC-V 65 架构下的操作系统启动前的准备工作的代码，
+/* 该文件中存储而是 RISC-V 64 架构下的操作系统启动前的准备工作的代码，
   包括设置栈指针、设置页表、调用 Rust 程序的入口函数等。 */
 /* 段定义: .text.entry */
 
@@ -20,7 +20,7 @@
 #define STACK_SIZE_LOG2 16
 #define STACK_SIZE (1 << STACK_SIZE_LOG2)
 #define UART_BASE 0x10000000
-#define UART_VIRT_BASE 0x50000000
+#define UART_VIRT_BASE 0x10000000
   .equ KERNEL_OFFSET, 0xffffffc000000000 // 内核空间的起始地址
 
 /*
@@ -30,23 +30,60 @@
  * 3. 调用 Rust 程序的入口函数
 */
 _start:
+    // 输出提示信息
     li t0, UART_BASE
-    li t1, 'S'
+    li t1, 'B'
     sb t1, 0(t0)
-    li t1, 'T'
+    li t1, 'o'
     sb t1, 0(t0)
-    li t1, 'A'
+    li t1, 'o'
     sb t1, 0(t0)
-    li t1, 'R'
-    sb t1, 0(t0)
-    li t1, 'T'
-    sb t1, 0(t0)
-    li t1, 'O'
-    sb t1, 0(t0)
-    li t1, 'S'
+    li t1, 't'
     sb t1, 0(t0)
     li t1, ' '
     sb t1, 0(t0)
+    li t1, 'S'
+    sb t1, 0(t0)
+    li t1, 't'
+    sb t1, 0(t0)
+    li t1, 'a'
+    sb t1, 0(t0)
+    li t1, 'r'
+    sb t1, 0(t0)
+    li t1, 't'
+    sb t1, 0(t0)
+    li t1, '!'
+    sb t1, 0(t0)
+    li t1, '\n'
+    sb t1, 0(t0)
+    li t1, '\r'
+    sb t1, 0(t0)
+
+    // 获取核心编号
+    // csrr t0, mhartid
+    mv t0, a0 // 保存核心编号到 t0 (opensbi启动时传入a0寄存器)
+    bnez t0, park_core // 如果是核心 0，则进入休眠状态，等待其他核心启动
+    mv tp, t0
+
+    // 设置栈指针, 每个核心分配一个 kstack
+    // t0 = hart id
+    // pc = 0x00200000
+    slli a0, t0, STACK_SIZE_LOG2 // 左移 16 位，得到每个核心的栈大小 (2^16 = 64KB)
+
+    // 获取栈顶地址
+    la sp, boot_stack_top
+    // 设置栈底地址
+    sub sp, sp, t0  // sp = stack top - hart_id * stack_size
+
+    la a0, rust_main  // 保存 Rust 程序的入口地址到 a0
+
+    // call setup_vm  // 设置页表
+
+
+    // 跳转到 Rust 程序的入口函数
+    // la ra, rust_main  /* 正确加载地址 */
+    // 输出提示信息
+    li t0, UART_VIRT_BASE
     li t1, 'R'
     sb t1, 0(t0)
     li t1, 'u'
@@ -66,36 +103,9 @@ _start:
     li t1, '\n'
     sb t1, 0(t0)
     li t1, '\r'
-    sb t1, 0(t0)
-    // 获取核心编号
-    // csrr t0, mhartid
-    mv t0, a0 // 保存核心编号到 t0 (opensbi启动时传入a0寄存器)
-    bnez t0, park_core // 如果是核心 0，则进入休眠状态，等待其他核心启动
-    mv tp, t0
-
-    // 设置栈指针, 每个核心分配一个 kstack
-    // t0 = hart id
-    // pc = 0x00200000
-    slli a0, t0, STACK_SIZE_LOG2 // 左移 16 位，得到每个核心的栈大小 (2^16 = 64KB)
-
-    // 获取栈顶地址
-    la sp, boot_stack_top
-    // 设置栈底地址
-    sub sp, sp, t0  // sp = stack top - hart_id * stack_size
-
-    la a0, rust_main  // 保存 Rust 程序的入口地址到 a0
-    call print_register  // 打印 Rust 程序的入口地址
-
-    call setup_vm  // 设置页表
-
-
-    // 跳转到 Rust 程序的入口函数
-    la ra, rust_main  /* 正确加载地址 */
-    li t0, UART_VIRT_BASE
-    li t1, 'R'
-    sb t1, 0(t0)
     // lui ra, %hi(rust_main)
-    jalr ra           /* 跳转 */
+    // jalr ra           /* 跳转 */
+    call rust_main  // 调用 Rust 程序的入口函数
     li t1, 'E'
     sb t1, 0(t0)
     // call rust_main
@@ -148,15 +158,8 @@ setup_vm:
     sb t1, 0(ra)
     la t0, boot_pagetable // 内核启动时的页表物理地址
     li t1, 0x0000008FFFFFFFFF
+
     and t0, t0, t1 // 虚拟地址转物理地址
-    mv a0, t0 // 保存物理地址到 a0
-    call print_register
-    ld a0, 0(t0) // 读取页表项
-    call print_register
-    ld a0, 8(t0) // 读取页表项
-    call print_register
-    ld a0, 16(t0) // 读取页表项
-    call print_register
     srli t0, t0, 12     // 右移 12 位，得到PNN
     li t1, 8            // 设置MODE段为8, 表示SV39页表格式
     slli t1, t1, 60     // 左移 60 位，得到页表项格式
@@ -232,8 +235,10 @@ boot_pagetable:
     .quad (0x00000000 >> 30 << 28) | 0xCF
     // L2[1]: 1GB 巨页 恒等映射
     .quad (0x40000000 >> 30 << 28) | 0xCF 
-    // 填充L2[3]到L2[98] 
-    .zero 8 * 97
+    // L2[2]: 1GB 巨页 恒等映射
+    .quad (0x80000000 >> 30 << 28) | 0xCF 
+    // 填充L2[4]到L2[98] 
+    .zero 8 * 96
     // L2[99]: 1GB 巨页 映射到内核空间
     .quad (0x80000000 >> 30 << 28) | 0xCF
     // 填充剩余表项
