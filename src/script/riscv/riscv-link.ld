@@ -25,6 +25,8 @@ SECTIONS
         strampoline = .;
         *(.text.trampoline)
         . = ALIGN(4K);
+        *(.text.trap_handler)
+        . = ALIGN(4K);
         etrampoline = .;
         *(.text .text.*)
     }

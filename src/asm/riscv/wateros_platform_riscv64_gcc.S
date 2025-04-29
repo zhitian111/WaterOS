@@ -58,7 +58,7 @@ _start:
     sb t1, 0(t0)
     li t1, '\r'
     sb t1, 0(t0)
-  
+     
     // 获取核心编号
     // csrr t0, mhartid
     mv t0, a0 // 保存核心编号到 t0 (opensbi启动时传入a0寄存器)
@@ -69,11 +69,17 @@ _start:
     // t0 = hart id
     // pc = 0x00200000
     slli a0, t0, STACK_SIZE_LOG2 // 左移 16 位，得到每个核心的栈大小 (2^16 = 64KB)
-
+    
     // 获取栈顶地址
     la sp, boot_stack_top
     // 设置栈底地址
     sub sp, sp, t0  // sp = stack top - hart_id * stack_size
+    // 设置SUM (Supervisor User Memory)位，允许内核和用户模式访问相同的内存
+    csrr a0, sstatus // 读取sstatus寄存器
+    li a1, 1<<18 // 设置SUM位
+    or a0, a0, a1 // 使能SUM位
+    csrw sstatus, a0 // 写入sstatus寄存器
+
     j setup_vm
 entry_rust:
     // 跳转到 Rust 程序的入口函数
@@ -182,14 +188,11 @@ setup_vm:
     li t1, 8            // 设置MODE段为8, 表示SV39页表格式
     slli t1, t1, 60     // 左移 60 位，得到页表项格式
     or t0, t0, t1       // 合并PNN和页表项格式
-    mv a0,t0
-    call print_register  // 打印页表项内容
     csrw satp, t0       // 写入页表寄存器
     // 刷新TLB
     sfence.vma
     sfence.vma
     sfence.vma
-    call print_register  // 打印页表项内容
     la ra, entry_rust
     jr ra
 
@@ -258,15 +261,18 @@ boot_pagetable:
     .quad (0x40000000 >> 30 << 28) | 0xCF 
     // L2[2]: 1GB 巨页 恒等映射
     .quad (0x80000000 >> 30 << 28) | 0xCF 
+    // L2[3]: 1GB 巨页 0xC0000000->0x80000000
+    .quad (0x80000000 >> 30 << 28) | 0x1F
     // 填充L2[4]到L2[98] 
-    .zero 8 * 255
+    .zero 8 * 254
     // L2[258]: 1GB 巨页 映射到内核空间
     .quad (0x80000000 >> 30 << 28) | 0xCF
     // 填充剩余表项
     .zero 8
 
 .section .text.trampoline
-.align 12/*
+.align 12
+/*
  * 信号处理函数的中断陷阱
  * 这个函数的作用是将控制权转移到 Rust 程序的信号处理函数中
  * 也可以用来测试ecall指令的功能
