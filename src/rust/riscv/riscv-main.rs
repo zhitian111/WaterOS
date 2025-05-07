@@ -1,12 +1,14 @@
 #![no_std]
 #![no_main]
 use core::arch::asm;
-use core::option;
 use core::panic::PanicInfo;
-use water_os::io::stdout::{prints, uart_init};
+use water_os::fs::ext4::*;
+use water_os::io::common::*;
+use water_os::io::stdout::*;
+use water_os::io::virtio::*;
+use water_os::kernal_log;
 use water_os::print;
 use water_os::println;
-
 pub const KERNEL_BASE : usize = 0xFFFF_FFC0_8000_0000;
 pub const USER_BASE : usize = 0xC000_0000;
 
@@ -39,7 +41,7 @@ macro_rules! call_asm_func {
 
 #[panic_handler]
 fn panic(_info : &PanicInfo) -> ! {
-    print!("Kernel Panic: {}\n\r", _info);
+    kernal_log!("Kernel Panic: {}\n\r", _info);
     if let Some(location) = _info.location() {
         print!("Panic at {}:{} {}\n\r",
                location.file(),
@@ -50,56 +52,38 @@ fn panic(_info : &PanicInfo) -> ! {
     }
     loop {}
 }
-
 #[unsafe(no_mangle)]
 pub extern "C" fn rust_main() -> ! {
+    init_dtb_mmio();
     uart_init();
-    println!("Hello, riscv!");
-    println!("Kernel Base: riscv64");
-    println!("Regist S-Mode interrupt handler !");
-    println!("rust_main address: {:#x}",
-             rust_main as usize);
+    show_logo();
+    kernal_log!("Hello, riscv!");
+    kernal_log!("Kernel Base: riscv64");
+    kernal_log!("Regist S-Mode interrupt handler !");
+    kernal_log!("rust_main address: {:#x}",
+                rust_main as usize);
     let mut s_mode_trap_handler_ptr : usize = S_mode_trap_handler as usize;
     s_mode_trap_handler_ptr = s_mode_trap_handler_ptr & (!1);
-    println!("S-Mode trap handler address: {:#x}",
-             s_mode_trap_handler_ptr);
+    kernal_log!("S-Mode trap handler address: {:#x}",
+                s_mode_trap_handler_ptr);
     unsafe {
         asm!("csrw stvec, {}", in(reg) s_mode_trap_handler_ptr);
     }
-    println!("S-Mode interrupt handler set !");
-    println!("Entering user mode !");
-    println!("User stack top address: {:#x}",
-             get_user_stack_top_ptr() as usize);
-    println!("User entry point address: {:#x}",
-             show_logo as usize);
-    entry_user_mode(show_logo as usize);
-    println!("Failed to enter user mode !");
+    kernal_log!("S-Mode interrupt handler set !");
+    kernal_log!("Entering user mode !");
+    kernal_log!("User stack top address: {:#x}",
+                get_user_stack_top_ptr() as usize);
+    kernal_log!("User entry point address: {:#x}",
+                show_logo as usize);
+    kernal_log!("ext4_superblock size : {}",
+                core::mem::size_of::<Ext4SuperBlock>());
+    kernal_log!("ext4_group_block size : {}",
+                core::mem::size_of::<Ext4BlockGroupDescriptor>());
+    print_dtb_info();
+    // entry_user_mode(show_logo as usize);
+    // println!("Failed to enter user mode !");
     loop {}
 }
-
-// #[unsafe(no_mangle)]
-// pub extern "C" fn trap_handler() {
-//     let mut scause : usize;
-//     unsafe {
-//         asm!("csrr {}, scause", out(reg) mcause);
-//     }
-//     print!("Trap: {:#x}\n\r", scause);
-//     if scause & 0x8000000000000000 != 0 {
-//         print!("Machine mode exception\n\r");
-//     } else {
-//         print!("User mode exception\n\r");
-//         if scause & 0x7FFFFFFF == 9 {
-//             print!("ECALL from user mode\n\r");
-//             unsafe {
-//                 asm!("csrr sp, sscratch");
-//                 asm!("csrw sstatus, t0");
-//                 asm!("csrw sepc, t1");
-//                 asm!("sret");
-//             }
-//         }
-//     }
-// }
-//
 
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.trap_handler")]
@@ -188,17 +172,51 @@ pub extern "C" fn entry_user_mode(entry_point : usize) {
     }
 }
 
-pub fn show_logo() {
-    // println!(
-    //          r#"
-    // ██╗    ██╗ █████╗ ████████╗███████╗██████╗      ██████╗ ███████╗
-    // ██║    ██║██╔══██╗╚══██╔══╝██╔════╝██╔══██╗    ██╔═══██╗██╔════╝
-    // ██║ █╗ ██║███████║   ██║   █████╗  ██████╔╝    ██║   ██║███████╗
-    // ██║███╗██║██╔══██║   ██║   ██╔══╝  ██╔══██╗    ██║   ██║╚════██║
-    // ╚███╔███╔╝██║  ██║   ██║   ███████╗██║  ██║    ╚██████╔╝███████║
-    //  ╚══╝╚══╝ ╚═╝  ╚═╝   ╚═╝   ╚══════╝╚═╝  ╚═╝     ╚═════╝ ╚══════╝"#
-    // );
-    unsafe {
-        asm!("ecall");
+pub fn print_dtb_info() {
+    let dtb_header = get_dtb_header();
+    let dtb_base_addr = dtb_header.ptr;
+    use crate::kernal_log;
+    kernal_log!("DTB Base Address: {:#x}", dtb_base_addr);
+    // 魔数
+    let dtb_magic_number : u32 = dtb_header.magic;
+    kernal_log!("DTB magic number: {:#x}",
+                dtb_magic_number);
+    // DTB 总大小
+    let dtb_total_size : u32 = dtb_header.total_size;
+    kernal_log!("DTB total size: {:#x}", dtb_total_size);
+    // 结构块偏移
+    let dtb_struct_offset : u32 = dtb_header.off_dt_struct;
+    kernal_log!("DTB struct offset: {:#x}",
+                dtb_struct_offset);
+    // 字符串表偏移
+    let dtb_strings_offset : u32 = dtb_header.off_dt_strings;
+    kernal_log!("DTB strings offset: {:#x}",
+                dtb_strings_offset);
+    // 内存保留块偏移
+    let dtb_memory_reserve_offset : u32 = dtb_header.off_mem_rsvmap;
+    kernal_log!("DTB memory reserve offset: {:#x}",
+                dtb_memory_reserve_offset);
+    // DTB 版本
+    let dtb_version : u32 = dtb_header.version;
+    kernal_log!("DTB version: {}", dtb_version);
+    // 最低兼容版本
+    let dtb_lowest_version : u32 = dtb_header.last_comp_version;
+    kernal_log!("DTB lowest version: {}",
+                dtb_lowest_version);
+    // 启动CPU ID
+    let dtb_boot_cpu_id : u32 = dtb_header.boot_cpuid_phys;
+    kernal_log!("DTB boot cpu id: {}", dtb_boot_cpu_id);
+    // 字符串块大小
+    let dtb_strings_size : u32 = dtb_header.size_dt_strings;
+    kernal_log!("DTB strings size: {}", dtb_strings_size);
+    // 结构块大小
+    let dtb_struct_size : u32 = dtb_header.size_dt_struct;
+    kernal_log!("DTB struct size: {}", dtb_struct_size);
+    let mut dtb_str : [u8; 0x1000] = [0; 0x1000];
+    for i in 0..dtb_strings_size as usize {
+        dtb_str[i] = read_value_at_address::<u8>(dtb_base_addr as usize +
+                                                 dtb_strings_offset as usize,
+                                                 i);
     }
+    kernel_log_from_c_str(dtb_str.as_ptr() as *const u8);
 }

@@ -6,6 +6,9 @@ edition = "2024"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
 path = "./src/rust/share/lib.rs"
+# 全局依赖
+[dependencies]
+
 [profile.release]
 panic = "abort"
 [profile.dev]
@@ -16,6 +19,12 @@ path = "./src/rust/loongarch/loongarch-main.rs"
 [[bin]]
 name = "kernel-rv"
 path = "./src/rust/riscv/riscv-main.rs"
+
+
+# 特定平台依赖
+## loongarch64
 [target.'cfg(target_arch = "loongarch64")'.dependencies]
+
+## riscv64
 [target.'cfg(target_arch = "riscv64")'.dependencies]
 

@@ -32,6 +32,7 @@
 _start:
     // 输出提示信息
     li t0, UART_BASE
+    call boot_info_prefix
     li t1, 'B'
     sb t1, 0(t0)
     li t1, 'o'
@@ -58,7 +59,6 @@ _start:
     sb t1, 0(t0)
     li t1, '\r'
     sb t1, 0(t0)
-     
     // 获取核心编号
     // csrr t0, mhartid
     mv t0, a0 // 保存核心编号到 t0 (opensbi启动时传入a0寄存器)
@@ -76,8 +76,8 @@ _start:
     sub sp, sp, t0  // sp = stack top - hart_id * stack_size
     // 设置SUM (Supervisor User Memory)位，允许内核和用户模式访问相同的内存
     csrr a0, sstatus // 读取sstatus寄存器
-    li a1, 1<<18 // 设置SUM位
-    or a0, a0, a1 // 使能SUM位
+    li a2, 1<<18 // 设置SUM位
+    or a0, a0, a2 // 使能SUM位
     csrw sstatus, a0 // 写入sstatus寄存器
 
     j setup_vm
@@ -86,6 +86,7 @@ entry_rust:
     // la ra, rust_main  /* 正确加载地址 */
     // 输出提示信息
     li t0, UART_VIRT_BASE
+    call boot_info_prefix
     li t1, 'R'
     sb t1, 0(t0)
     li t1, 'u'
@@ -146,6 +147,24 @@ setup_vm:
 	 *    -----------------------------------------------------------
     */
     la ra, UART_BASE
+    li t1, '['
+    sb t1, 0(ra)
+    li t1, ' '
+    sb t1, 0(ra)
+    li t1, 'B'
+    sb t1, 0(ra)
+    li t1, 'o'
+    sb t1, 0(ra)
+    li t1, 'o'
+    sb t1, 0(ra)
+    li t1, 't'
+    sb t1, 0(ra)
+    li t1, ' '
+    sb t1, 0(ra)
+    li t1, ']'
+    sb t1, 0(ra)
+    li t1, '\t'
+    sb t1, 0(ra)
     li t1, 'B'
     sb t1, 0(ra)
     li t1, 'o'
@@ -219,6 +238,28 @@ print_a_bit:
     sb a2, 0(a4)
     ret
 
+boot_info_prefix:
+    li t0, UART_BASE
+    li t1, '['
+    sb t1, 0(t0)
+    li t1, ' '
+    sb t1, 0(t0)
+    li t1, 'B'
+    sb t1, 0(t0)
+    li t1, 'o'
+    sb t1, 0(t0)
+    li t1, 'o'
+    sb t1, 0(t0)
+    li t1, 't'
+    sb t1, 0(t0)
+    li t1, ' '
+    sb t1, 0(t0)
+    li t1, ']'
+    sb t1, 0(t0)
+    li t1, '\t'
+    sb t1, 0(t0)
+    ret
+
 .section .bss.stack
 .align 12
 boot_stack_lower_bound:
@@ -255,13 +296,13 @@ boot_pagetable:
     *                                                     `---------------------- Reserved for supervisor software
     */
     /* L2 根页表（单级，1GB 巨页） */
-    // L2[0]: 1GB 巨页 恒等映射
+    // L2[0]: 1GB 巨页 恒等映射, 内核空间
     .quad (0x00000000 >> 30 << 28) | 0xCF
-    // L2[1]: 1GB 巨页 恒等映射
+    // L2[1]: 1GB 巨页 恒等映射, 内核空间
     .quad (0x40000000 >> 30 << 28) | 0xCF 
-    // L2[2]: 1GB 巨页 恒等映射
+    // L2[2]: 1GB 巨页 恒等映射, 内核空间
     .quad (0x80000000 >> 30 << 28) | 0xCF 
-    // L2[3]: 1GB 巨页 0xC0000000->0x80000000
+    // L2[3]: 1GB 巨页 0xC0000000->0x80000000, 用户空间
     .quad (0x80000000 >> 30 << 28) | 0x1F
     // 填充L2[4]到L2[98] 
     .zero 8 * 254

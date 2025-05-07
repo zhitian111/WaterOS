@@ -151,7 +151,7 @@ macro_rules! print{
 }
 
 #[macro_export] // 用于宏导出
-macro_rules!  println{
+macro_rules! println{
     () => {
        return;
     };
@@ -170,4 +170,73 @@ macro_rules!  println{
         }
     };
 
+}
+
+#[macro_export] // 用于宏导出
+macro_rules! kernal_log{
+    () => {
+       return;
+    };
+    ($($arg:tt)*) =>{
+        {
+        water_os::io::stdout::putc(b'[');
+        water_os::io::stdout::putc(b' ');
+        water_os::io::stdout::prints("\x1B[33m");
+        water_os::io::stdout::putc(b'K');
+        water_os::io::stdout::putc(b'e');
+        water_os::io::stdout::putc(b'r');
+        water_os::io::stdout::putc(b'n');
+        water_os::io::stdout::putc(b'e');
+        water_os::io::stdout::putc(b'l');
+        water_os::io::stdout::prints("\x1B[0m");
+        water_os::io::stdout::putc(b' ');
+        water_os::io::stdout::putc(b']');
+        water_os::io::stdout::putc(b'\t');
+        use core::fmt::Write;
+        let mut buf = [0u8;1024];
+        let mut writer = water_os::io::stdout::BufferWriter::new(&mut buf);
+        let _ = write!(&mut writer, $($arg)*).unwrap();
+        // let mut _s = format!( $($arg)* );
+        for &byte in writer.as_slice() {
+            water_os::io::stdout::putc(byte);
+        }
+        water_os::io::stdout::putc(b'\n');
+        water_os::io::stdout::putc(b'\r');
+        }
+    };
+
+}
+
+pub fn kernel_log_from_c_str(s : *const u8) {
+    putc(b'[');
+    putc(b' ');
+    prints("\x1B[33m");
+    putc(b'K');
+    putc(b'e');
+    putc(b'r');
+    putc(b'n');
+    putc(b'e');
+    putc(b'l');
+    prints("\x1B[0m");
+    putc(b' ');
+    putc(b']');
+    putc(b'\t');
+    let mut i = 0;
+    while unsafe { *s.add(i) } != 0 {
+        putc(unsafe { *s.add(i) });
+        i += 1;
+    }
+    putc(b'\n');
+    putc(b'\r');
+}
+
+pub fn show_logo() {
+    prints("\x1B[36m");
+    prints("██╗    ██╗ █████╗ ████████╗███████╗██████╗      ██████╗ ███████╗\n\r");
+    prints("██║    ██║██╔══██╗╚══██╔══╝██╔════╝██╔══██╗    ██╔═══██╗██╔════╝\n\r");
+    prints("██║ █╗ ██║███████║   ██║   █████╗  ██████╔╝    ██║   ██║███████╗\n\r");
+    prints("██║███╗██║██╔══██║   ██║   ██╔══╝  ██╔══██╗    ██║   ██║╚════██║\n\r");
+    prints("╚███╔███╔╝██║  ██║   ██║   ███████╗██║  ██║    ╚██████╔╝███████║\n\r");
+    prints(" ╚══╝╚══╝ ╚═╝  ╚═╝   ╚═╝   ╚══════╝╚═╝  ╚═╝     ╚═════╝ ╚══════╝\n\r");
+    prints("\x1B[0m");
 }
