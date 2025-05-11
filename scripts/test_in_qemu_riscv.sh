@@ -1,4 +1,7 @@
-qemu-system-riscv64 -machine virt -nographic -kernel ./kernel-rv -serial mon:stdio
+qemu-system-riscv64 -machine virt -nographic -kernel ./kernel-rv -serial mon:stdio -bios default -no-reboot \
+                    -drive file=./scripts/sdcard-rv.img,if=none,format=raw,id=x0 \
+                    -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 \
+                    -rtc base=utc
 # qemu-system-riscv64 -machine virt -kernel {os_file} -m {mem} -nographic -smp {smp} -bios default -drive file={fs},if=none,format=raw,id=x0 \
 #                     -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 -no-reboot -device virtio-net-device,netdev=net -netdev user,id=net \
 #                     -rtc base=utc \
