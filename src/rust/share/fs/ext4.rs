@@ -1,7 +1,8 @@
 use crate::fs::common::*;
 
 // Ext4 super block
-// #[repr(packed)]
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
 pub struct Ext4SuperBlock {
     pub s_inodes_count : u32,         // Total inode count
     pub s_blocks_count_lo : u32,      // Total block count
@@ -214,6 +215,8 @@ pub struct Ext4SuperBlock {
 }
 
 // 块组描述符
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
 pub struct Ext4BlockGroupDescriptor {
     pub bg_block_bitmap_lo : u32, // Lower 32-bits of location of block bitmap.
     pub bg_inode_bitmap_lo : u32, // Lower 32-bits of location of inode bitmap.
@@ -250,6 +253,8 @@ pub struct Ext4BlockGroupDescriptor {
 }
 
 // Inode 表
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
 pub struct Ext4InodeTable {
     // File mode. Any of:
     // 0x1 	S_IXOTH (Others may execute)

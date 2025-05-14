@@ -8,7 +8,7 @@ edition = "2024"
 path = "./src/rust/share/lib.rs"
 # 全局依赖
 [dependencies]
-
+fdt = { version = "0.1.5" }
 [profile.release]
 panic = "abort"
 [profile.dev]

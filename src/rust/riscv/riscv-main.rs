@@ -1,14 +1,13 @@
 #![no_std]
 #![no_main]
 use core::arch::asm;
-use core::panic::PanicInfo;
 use water_os::fs::ext4::*;
-use water_os::io::common::*;
 use water_os::io::stdout::*;
-use water_os::io::virtio::*;
 use water_os::kernal_log;
-use water_os::print;
 use water_os::println;
+mod trap;
+mod virtual_devices;
+mod virtual_memory;
 pub const KERNEL_BASE : usize = 0xFFFF_FFC0_8000_0000;
 pub const USER_BASE : usize = 0xC000_0000;
 
@@ -23,46 +22,50 @@ pub fn get_user_stack_top_ptr() -> *mut u8 {
     return user_stack_ptr;
 }
 
-/*
-* 用于调用汇编函数，的宏
+/**
+# 方法简介
+## 方法名称
+rust_main
+## 功能描述
+rust_main方法是内核由rust代码接管后的入口，目前包含以下流程：
+- 初始化虚拟设备
+- 显示logo
+- 打印内核日志
+- 设置S模式中断处理函数
+- 测试用户态和内核态切换
+## 涉及数据
+如果展开调用来描述的话，它会涉及所有数据。
+## 链式调用
+如果展开调用来描述的话，它会涉及所有方法。
+## 前置依赖
+在项目下src/asm/riscv/wateros_platform_riscv64_gcc.S文件中，定义了一些汇编指令，其中的_start符号可被认为是rust_main函数的依赖。
+## 是否修改参数
+是
+# 输入参数
+| 参数名 | 类型 | 含义 | 约束条件 | 默认值 |
+| ------ | -------- | ------ | ------ | ------ |
+| 无 | 无 | 无 | 无 | 无 |
+# 输出参数
+| 参数名 | 类型 | 含义 | 约束条件 |
+| ------ | -------- | ------ | ------ |
+| 无 | 无 | 无 | 无 |
+# 异常情况
+| 异常类型 | 异常原因 | 异常处理方式 |
+| ------ | -------- | ------ |
+| Panic | 运行时错误 | 打印错误信息，退出程序 |
+# 注意事项
+- 无
 */
-macro_rules! call_asm_func {
-    // 无参数时报错
-    () => {
-        compile_error!("Expected a function name");
-    };
-    // 匹配函数名
-    ($func:ident) => {
-        unsafe {
-            asm!("call {}", sym $func);
-        }
-    };
-}
-
-#[panic_handler]
-fn panic(_info : &PanicInfo) -> ! {
-    kernal_log!("Kernel Panic: {}\n\r", _info);
-    if let Some(location) = _info.location() {
-        print!("Panic at {}:{} {}\n\r",
-               location.file(),
-               location.line(),
-               _info.message());
-    } else {
-        print!("Panic: {}\n\r", _info.message());
-    }
-    loop {}
-}
 #[unsafe(no_mangle)]
 pub extern "C" fn rust_main() -> ! {
-    init_dtb_mmio();
-    uart_init();
+    virtual_devices::init_virtual_devices();
     show_logo();
     kernal_log!("Hello, riscv!");
     kernal_log!("Kernel Base: riscv64");
     kernal_log!("Regist S-Mode interrupt handler !");
     kernal_log!("rust_main address: {:#x}",
                 rust_main as usize);
-    let mut s_mode_trap_handler_ptr : usize = S_mode_trap_handler as usize;
+    let mut s_mode_trap_handler_ptr : usize = trap::S_mode_trap_handler as usize;
     s_mode_trap_handler_ptr = s_mode_trap_handler_ptr & (!1);
     kernal_log!("S-Mode trap handler address: {:#x}",
                 s_mode_trap_handler_ptr);
@@ -79,47 +82,7 @@ pub extern "C" fn rust_main() -> ! {
                 core::mem::size_of::<Ext4SuperBlock>());
     kernal_log!("ext4_group_block size : {}",
                 core::mem::size_of::<Ext4BlockGroupDescriptor>());
-    print_dtb_info();
-    // entry_user_mode(show_logo as usize);
-    // println!("Failed to enter user mode !");
-    loop {}
-}
-
-#[unsafe(no_mangle)]
-#[unsafe(link_section = ".text.trap_handler")]
-pub extern "C" fn S_mode_trap_handler() -> ! {
-    unsafe {
-        asm!("csrrw sp, sscratch, sp");
-    }
-    let mut scause : usize;
-    let mut stval : usize;
-    let mut sepc : usize;
-    let mut sstatus : usize;
-    unsafe {
-        asm!("csrr {}, scause", out(reg) scause);
-        asm!("csrr {}, stval", out(reg) stval);
-        asm!("csrr {}, sepc", out(reg) sepc);
-        asm!("csrr {}, sstatus", out(reg) sstatus);
-    }
-    print!("Trap: scause={:#x}, stval={:#x}, sepc={:#x}, sstatus={:#x}\n\r",
-           scause, stval, sepc, sstatus);
-    // 检查异常类型
-    // Environment call form U-mode
-    if scause ^ 8 == 0 {
-        print!("Environment call from U-mode\n\r");
-        unsafe {
-            asm!("csrr t0, sepc",
-                 "addi t0, t0, 4",
-                 "csrw sepc, t0",
-                 "csrrw sp, sscratch, sp",
-                 "sret")
-        }
-    }
-    // Environment call from S-mode
-    if scause ^ 9 == 0 {
-        print!("Environment call from S-mode\n\r");
-    }
-
+    virtual_devices::print_dtb_info();
     loop {}
 }
 
@@ -159,7 +122,7 @@ pub extern "C" fn entry_user_mode(entry_point : usize) {
              user_sp=in(reg) user_sp,
              user_entry_point=in(reg) user_entry_point,
              clobber_abi("C"),
-             out("t0") _
+             // out("t0") _
         )
     }
     let mut sstatus : usize;
@@ -170,53 +133,4 @@ pub extern "C" fn entry_user_mode(entry_point : usize) {
     unsafe {
         asm!("sret");
     }
-}
-
-pub fn print_dtb_info() {
-    let dtb_header = get_dtb_header();
-    let dtb_base_addr = dtb_header.ptr;
-    use crate::kernal_log;
-    kernal_log!("DTB Base Address: {:#x}", dtb_base_addr);
-    // 魔数
-    let dtb_magic_number : u32 = dtb_header.magic;
-    kernal_log!("DTB magic number: {:#x}",
-                dtb_magic_number);
-    // DTB 总大小
-    let dtb_total_size : u32 = dtb_header.total_size;
-    kernal_log!("DTB total size: {:#x}", dtb_total_size);
-    // 结构块偏移
-    let dtb_struct_offset : u32 = dtb_header.off_dt_struct;
-    kernal_log!("DTB struct offset: {:#x}",
-                dtb_struct_offset);
-    // 字符串表偏移
-    let dtb_strings_offset : u32 = dtb_header.off_dt_strings;
-    kernal_log!("DTB strings offset: {:#x}",
-                dtb_strings_offset);
-    // 内存保留块偏移
-    let dtb_memory_reserve_offset : u32 = dtb_header.off_mem_rsvmap;
-    kernal_log!("DTB memory reserve offset: {:#x}",
-                dtb_memory_reserve_offset);
-    // DTB 版本
-    let dtb_version : u32 = dtb_header.version;
-    kernal_log!("DTB version: {}", dtb_version);
-    // 最低兼容版本
-    let dtb_lowest_version : u32 = dtb_header.last_comp_version;
-    kernal_log!("DTB lowest version: {}",
-                dtb_lowest_version);
-    // 启动CPU ID
-    let dtb_boot_cpu_id : u32 = dtb_header.boot_cpuid_phys;
-    kernal_log!("DTB boot cpu id: {}", dtb_boot_cpu_id);
-    // 字符串块大小
-    let dtb_strings_size : u32 = dtb_header.size_dt_strings;
-    kernal_log!("DTB strings size: {}", dtb_strings_size);
-    // 结构块大小
-    let dtb_struct_size : u32 = dtb_header.size_dt_struct;
-    kernal_log!("DTB struct size: {}", dtb_struct_size);
-    let mut dtb_str : [u8; 0x1000] = [0; 0x1000];
-    for i in 0..dtb_strings_size as usize {
-        dtb_str[i] = read_value_at_address::<u8>(dtb_base_addr as usize +
-                                                 dtb_strings_offset as usize,
-                                                 i);
-    }
-    kernel_log_from_c_str(dtb_str.as_ptr() as *const u8);
 }
