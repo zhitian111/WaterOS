@@ -1,4 +1,7 @@
-qemu-system-riscv64 -machine virt -nographic -kernel ./kernel-rv -serial mon:stdio -bios default -no-reboot \
+qemu-system-riscv64 -machine virt \
+                    -nographic \
+                    -kernel ./kernel-rv \
+                    -serial mon:stdio -bios default -no-reboot \
                     -drive file=./scripts/sdcard-rv.img,if=none,format=raw,id=x0 \
                     -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 \
                     -rtc base=utc

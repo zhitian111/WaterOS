@@ -1,3 +1,4 @@
+use fdt::node::FdtNode;
 use water_os::io::stdout::*;
 use water_os::io::virtio::*;
 use water_os::kernal_log;
@@ -131,6 +132,11 @@ pub fn print_dtb_info() {
         kernal_log!("Node Name: {:?}", node.name);
         kernal_log!("Node Address: {:#x}",
                     &node as *const _ as usize);
+        for child in node.children() {
+            kernal_log!("Child Name: {:?}", child.name);
+            kernal_log!("Child Address: {:#x}",
+                        &child as *const _ as usize);
+        }
         for prop in node.properties() {
             let name = prop.name;
             let value = prop.value;
@@ -170,11 +176,22 @@ pub fn print_dtb_info() {
                .unwrap() ==
            "virtio_mmio"
         {
-            kernal_log!("{:?}", VirtioMmioDevice::new(&node));
+            kernal_log!("{:?}",
+                        VirtioMmioDevice::from_fdt_node(&node));
         }
         kernal_log!("------------------Device Tree Node Split Line------------------");
     }
     if is_virtio_mmio_device_with_ptr(0x10008000 as usize) {
         kernal_log!("Virtio mmio device found! At 0x10008000");
+    }
+    let blkdevice = dt.find_node("/soc/virtio_mmio@10001000");
+    match blkdevice {
+        Some(blkdevice) => {
+            let device = VirtioMmioDevice::from_fdt_node(&blkdevice);
+            kernal_log!("{:?}", device);
+        }
+        None => {
+            kernal_log!("Virtio mmio device not found!");
+        }
     }
 }

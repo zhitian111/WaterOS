@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 use core::arch::asm;
+use water_os::def::*;
 use water_os::fs::ext4::*;
 use water_os::io::stdout::*;
 use water_os::kernal_log;
@@ -8,7 +9,6 @@ use water_os::println;
 mod trap;
 mod virtual_devices;
 mod virtual_memory;
-pub const KERNEL_BASE : usize = 0xFFFF_FFC0_8000_0000;
 pub const USER_BASE : usize = 0xC000_0000;
 
 pub const USER_STACK_SIZE : usize = 0x0000_1000;
