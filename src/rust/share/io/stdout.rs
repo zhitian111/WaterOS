@@ -1,3 +1,4 @@
+extern crate alloc;
 // static const MemMapEntry virt_memmap[] = {
 //     [VIRT_DEBUG] =        {        0x0,         0x100 },
 //     [VIRT_MROM] =         {     0x1000,        0xf000 },
@@ -184,6 +185,7 @@ impl<'a> core::fmt::Write for BufferWriter<'a> {
         Ok(())
     }
 }
+
 // 输出宏定义，用于向串口输出格式化的字符串，最大长度为 1024 字节
 /**
 # 方法简介
@@ -230,14 +232,9 @@ macro_rules! print{
     };
     ($($arg:tt)*) =>{
         {
-            use core::fmt::Write;
-            let mut buf = [0u8;1024];
-            let mut writer = water_os::io::stdout::BufferWriter::new(&mut buf);
-            let _ = write!(&mut writer,$($arg)*).unwrap();
-            // let mut _s = format!( $($arg)* );
-            for &byte in writer.as_slice() {
-                water_os::io::stdout::putc(byte);
-            }
+            extern crate alloc;
+            let mut buf = alloc::format!($($arg)*);
+            water_os::io::stdout::prints(&buf);
         }
     };
 }
@@ -289,14 +286,9 @@ macro_rules! println{
     };
     ($($arg:tt)*) =>{
         {
-            use core::fmt::Write;
-            let mut buf = [0u8;1024];
-            let mut writer = water_os::io::stdout::BufferWriter::new(&mut buf);
-            let _ = write!(&mut writer, $($arg)*).unwrap();
-            // let mut _s = format!( $($arg)* );
-            for &byte in writer.as_slice() {
-                water_os::io::stdout::putc(byte);
-            }
+            extern crate alloc;
+            let mut buf = alloc::format!($($arg)*);
+            water_os::io::stdout::prints(&buf);
             water_os::io::stdout::putc(b'\n');
             water_os::io::stdout::putc(b'\r');
         }
@@ -365,14 +357,9 @@ macro_rules! kernal_log{
         water_os::io::stdout::putc(b' ');
         water_os::io::stdout::putc(b']');
         water_os::io::stdout::putc(b'\t');
-        use core::fmt::Write;
-        let mut buf = [0u8;1024];
-        let mut writer = water_os::io::stdout::BufferWriter::new(&mut buf);
-        let _ = write!(&mut writer, $($arg)*).unwrap();
-        // let mut _s = format!( $($arg)* );
-        for &byte in writer.as_slice() {
-            water_os::io::stdout::putc(byte);
-        }
+        extern crate alloc;
+        let mut buf = alloc::format!($($arg)*);
+        water_os::io::stdout::prints(&buf);
         water_os::io::stdout::putc(b'\n');
         water_os::io::stdout::putc(b'\r');
         }
@@ -440,14 +427,9 @@ macro_rules! kernal_log_no_newline{
         water_os::io::stdout::putc(b' ');
         water_os::io::stdout::putc(b']');
         water_os::io::stdout::putc(b'\t');
-        use core::fmt::Write;
-        let mut buf = [0u8;1024];
-        let mut writer = water_os::io::stdout::BufferWriter::new(&mut buf);
-        let _ = write!(&mut writer, $($arg)*).unwrap();
-        // let mut _s = format!( $($arg)* );
-        for &byte in writer.as_slice() {
-            water_os::io::stdout::putc(byte);
-        }
+        extern crate alloc;
+        let mut buf = alloc::format!($($arg)*);
+        water_os::io::stdout::prints(&buf);
         }
     };
 

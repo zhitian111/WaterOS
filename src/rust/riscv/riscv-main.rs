@@ -9,6 +9,8 @@ use water_os::println;
 mod trap;
 mod virtual_devices;
 mod virtual_memory;
+
+extern crate alloc;
 pub const USER_BASE : usize = 0xC000_0000;
 
 pub const USER_STACK_SIZE : usize = 0x0000_1000;
@@ -60,6 +62,7 @@ rust_main方法是内核由rust代码接管后的入口，目前包含以下流�
 pub extern "C" fn rust_main() -> ! {
     virtual_devices::init_virtual_devices();
     show_logo();
+    virtual_memory::init_virtual_memory();
     kernal_log!("Hello, riscv!");
     kernal_log!("Kernel Base: riscv64");
     kernal_log!("Regist S-Mode interrupt handler !");
@@ -78,6 +81,7 @@ pub extern "C" fn rust_main() -> ! {
                 get_user_stack_top_ptr() as usize);
     kernal_log!("User entry point address: {:#x}",
                 show_logo as usize);
+    kernal_log!("Virtual memory initialized !");
     kernal_log!("ext4_superblock size : {}",
                 core::mem::size_of::<Ext4SuperBlock>());
     kernal_log!("ext4_group_block size : {}",

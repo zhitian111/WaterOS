@@ -24,165 +24,81 @@
 
 // 已知：挂载的virtio mmio设备的地址空间是0x10001000-0x10008fff
 // 已知：从启动脚本可知，0号总线对应0x10001000-0x10001fff，1号总线对应0x10002000-0x10002fff，以此类推
-
+extern crate alloc;
 use crate::io::common::*;
-use crate::io::virtqueue::*;
 use core::ptr::{read_volatile, write_volatile};
 use fdt::{node::FdtNode, Fdt};
-// 当架构为riscv64时，VIRT_VIRTIO_BASE为0x10001000，VIRT_VIRTIO_SIZE为0x1000，即virt_memmap[VIRT_VIRTIO]的地址为0x10001000，大小为0x1000。
-#[cfg(target_arch = "riscv64")]
-const VIRT_VIRTIO_BASE : usize = 0x10001000;
-#[cfg(target_arch = "riscv64")]
-const VIRT_VIRTIO_SIZE : usize = 0x1000;
-// 为了获取mmio设备的Magic Number，需要将VIRT_VIRTIO_BASE加上VIRT_VIRTIO_MAGIC_OFFSET
-#[cfg(target_arch = "riscv64")]
-const VIRT_VIRTIO_MAGIC_OFFSET : usize = 0x000;
-// 为了获取mmio设备的Device ID，需要将VIRT_VIRTIO_BASE加上VIRT_VIRTIO_DEVICE_OFFSET
-#[cfg(target_arch = "riscv64")]
-const VIRT_VIRTIO_DEVICE_OFFSET : usize = 0x008;
-// 为了获取mmio设备的Version Number，需要将VIRT_VIRTIO_BASE加上VIRT_VIRTIO_VERSION_OFFSET
-#[cfg(target_arch = "riscv64")]
-const VIRT_VIRTIO_VERSION_OFFSET : usize = 0x004;
-// 为了获取mmio的Vendoer ID，需要将VIRT_VIRTIO_BASE加上VIRT_VIRTIO_DEVICE_OFFSET
-#[cfg(target_arch = "riscv64")]
-const VIRT_VIRTIO_VENDOR_OFFSET : usize = 0x00C;
-// 为了获取mmio设备的Features，需要将VIRT_VIRTIO_BASE加上VIRT_FEATUES_OFFSET
-#[cfg(target_arch = "riscv64")]
-const VIRT_VIRTIO_FEATUES_OFFSET : usize = 0x010;
-// 为了设置mmio设备的Features，需要将VIRT_VIRTIO_BASE加上VIRT_VIRTIO_FEATUES_SEL_OFFSET
-#[cfg(target_arch = "riscv64")]
-const VIRT_VIRTIO_FEATUES_SEL_OFFSET : usize = 0x014;
-// 为了获取mmio设备的GuestFeatures，需要将VIRT_VIRTIO_BASE加上VIRT_VIRTIO_GUEST_FEATUES_OFFSET
-#[cfg(target_arch = "riscv64")]
-const VIRT_VIRTIO_GUEST_FEATUES_OFFSET : usize = 0x020;
-// 为了设置mmio设备的GuestFeatures，需要将VIRT_VIRTIO_BASE加上VIRT_VIRTIO_GUEST_FEATUES_SEL_OFFSET
-#[cfg(target_arch = "riscv64")]
-const VIRT_VIRTIO_GUEST_FEATUES_SEL_OFFSET : usize = 0x024;
-// 为了设置mmio设备的QueueSel，需要将VIRT_VIRTIO_BASE加上VIRT_VIRTIO_QUEUE_SEL_OFFSET
-#[cfg(target_arch = "riscv64")]
-const VIRT_VIRTIO_QUEUE_SEL_OFFSET : usize = 0x030;
-// 为了获取mmio设备的QueueNumMax，需要将VIRT_VIRTIO_BASE加上VIRT_VIRTIO_QUEUE_NUM_MAX_OFFSET
-#[cfg(target_arch = "riscv64")]
-const VIRT_VIRTIO_QUEUE_NUM_MAX_OFFSET : usize = 0x034;
-// 为了获取mmio设备的QueueNum，需要将VIRT_VIRTIO_BASE加上VIRT_VIRTIO_QUEUE_NUM_OFFSET
-#[cfg(target_arch = "riscv64")]
-const VIRT_VIRTIO_QUEUE_NUM_OFFSET : usize = 0x038;
-// 为了设置mmio设备的QueueAlign，需要将VIRT_VIRTIO_BASE加上VIRT_VIRTIO_QUEUE_ALIGN_OFFSET
-#[cfg(target_arch = "riscv64")]
-const VIRT_VIRTIO_QUEUE_ALIGN_OFFSET : usize = 0x03C;
-// 为了获取mmio设备的QueuePFN，需要将VIRT_VIRTIO_BASE加上VIRT_VIRTIO_QUEUE_PFN_OFFSET
-#[cfg(target_arch = "riscv64")]
-const VIRT_VIRTIO_QUEUE_PFN_OFFSET : usize = 0x040;
-// 为了设置mmio设备的QueueNotify，需要将VIRT_VIRTIO_BASE加上VIRT_VIRTIO_QUEUE_NOTIFY_OFFSET
-#[cfg(target_arch = "riscv64")]
-const VIRT_VIRTIO_QUEUE_NOTIFY_OFFSET : usize = 0x050;
-// 为了设置mmio设备的interrupt_status，需要将VIRT_VIRTIO_BASE加上VIRT_VIRTIO_INTERRUPT_STATUS_OFFSET
-#[cfg(target_arch = "riscv64")]
-const VIRT_VIRTIO_INTERRUPT_STATUS_OFFSET : usize = 0x060;
-// 为了设置mmio设备的interrupt_ack，需要将VIRT_VIRTIO_BASE加上VIRT_VIRTIO_INTERRUPT_ACK_OFFSET
-#[cfg(target_arch = "riscv64")]
-const VIRT_VIRTIO_INTERRUPT_ACK_OFFSET : usize = 0x064;
-// 为了设置mmio设备的status，需要将VIRT_VIRTIO_BASE加上VIRT_VIRTIO_STATUS_OFFSET
-#[cfg(target_arch = "riscv64")]
-const VIRT_VIRTIO_STATUS_OFFSET : usize = 0x070;
+use virtio_drivers;
 
-// TODO: 对于loongarch64架构，需要修改这些值
-// 当架构为loongarch64架构时,将这些值设置为与riscv64架构相同的值做占位符
-#[cfg(target_arch = "loongarch64")]
-const VIRT_VIRTIO_BASE : usize = 0x10001000;
-#[cfg(target_arch = "loongarch64")]
-const VIRT_VIRTIO_SIZE : usize = 0x1000;
-// 为了获取mmio设备的Magic Number，需要将VIRT_VIRTIO_BASE加上VIRT_VIRTIO_MAGIC_OFFSET
-#[cfg(target_arch = "loongarch64")]
-const VIRT_VIRTIO_MAGIC_OFFSET : usize = 0x000;
-// 为了获取mmio设备的Device ID，需要将VIRT_VIRTIO_BASE加上VIRT_VIRTIO_DEVICE_OFFSET
-#[cfg(target_arch = "loongarch64")]
-const VIRT_VIRTIO_DEVICE_OFFSET : usize = 0x008;
-// 为了获取mmio设备的Version Number，需要将VIRT_VIRTIO_BASE加上VIRT_VIRTIO_VERSION_OFFSET
-#[cfg(target_arch = "loongarch64")]
-const VIRT_VIRTIO_VERSION_OFFSET : usize = 0x004;
-// 为了获取mmio的Vendoer ID，需要将VIRT_VIRTIO_BASE加上VIRT_VIRTIO_DEVICE_OFFSET
-#[cfg(target_arch = "loongarch64")]
-const VIRT_VIRTIO_VENDOR_OFFSET : usize = 0x00C;
-// 为了获取mmio设备的Features，需要将VIRT_VIRTIO_BASE加上VIRT_FEATUES_OFFSET
-#[cfg(target_arch = "loongarch64")]
-const VIRT_VIRTIO_FEATUES_OFFSET : usize = 0x010;
-// 为了设置mmio设备的Features，需要将VIRT_VIRTIO_BASE加上VIRT_VIRTIO_FEATUES_SEL_OFFSET
-#[cfg(target_arch = "loongarch64")]
-const VIRT_VIRTIO_FEATUES_SEL_OFFSET : usize = 0x014;
-// 为了获取mmio设备的GuestFeatures，需要将VIRT_VIRTIO_BASE加上VIRT_VIRTIO_GUEST_FEATUES_OFFSET
-#[cfg(target_arch = "loongarch64")]
-const VIRT_VIRTIO_GUEST_FEATUES_OFFSET : usize = 0x020;
-// 为了设置mmio设备的GuestFeatures，需要将VIRT_VIRTIO_BASE加上VIRT_VIRTIO_GUEST_FEATUES_SEL_OFFSET
-#[cfg(target_arch = "loongarch64")]
-const VIRT_VIRTIO_GUEST_FEATUES_SEL_OFFSET : usize = 0x024;
-// 为了设置mmio设备的QueueSel，需要将VIRT_VIRTIO_BASE加上VIRT_VIRTIO_QUEUE_SEL_OFFSET
-#[cfg(target_arch = "loongarch64")]
-const VIRT_VIRTIO_QUEUE_SEL_OFFSET : usize = 0x030;
-// 为了获取mmio设备的QueueNumMax，需要将VIRT_VIRTIO_BASE加上VIRT_VIRTIO_QUEUE_NUM_MAX_OFFSET
-#[cfg(target_arch = "loongarch64")]
-const VIRT_VIRTIO_QUEUE_NUM_MAX_OFFSET : usize = 0x034;
-// 为了获取mmio设备的QueueNum，需要将VIRT_VIRTIO_BASE加上VIRT_VIRTIO_QUEUE_NUM_OFFSET
-#[cfg(target_arch = "loongarch64")]
-const VIRT_VIRTIO_QUEUE_NUM_OFFSET : usize = 0x038;
-// 为了设置mmio设备的QueueAlign，需要将VIRT_VIRTIO_BASE加上VIRT_VIRTIO_QUEUE_ALIGN_OFFSET
-#[cfg(target_arch = "loongarch64")]
-const VIRT_VIRTIO_QUEUE_ALIGN_OFFSET : usize = 0x03C;
-// 为了获取mmio设备的QueuePFN，需要将VIRT_VIRTIO_BASE加上VIRT_VIRTIO_QUEUE_PFN_OFFSET
-#[cfg(target_arch = "loongarch64")]
-const VIRT_VIRTIO_QUEUE_PFN_OFFSET : usize = 0x040;
-// 为了设置mmio设备的QueueNotify，需要将VIRT_VIRTIO_BASE加上VIRT_VIRTIO_QUEUE_NOTIFY_OFFSET
-#[cfg(target_arch = "loongarch64")]
-const VIRT_VIRTIO_QUEUE_NOTIFY_OFFSET : usize = 0x050;
-// 为了设置mmio设备的interrupt_status，需要将VIRT_VIRTIO_BASE加上VIRT_VIRTIO_INTERRUPT_STATUS_OFFSET
-#[cfg(target_arch = "loongarch64")]
-const VIRT_VIRTIO_INTERRUPT_STATUS_OFFSET : usize = 0x060;
-// 为了设置mmio设备的interrupt_ack，需要将VIRT_VIRTIO_BASE加上VIRT_VIRTIO_INTERRUPT_ACK_OFFSET
-#[cfg(target_arch = "loongarch64")]
-const VIRT_VIRTIO_INTERRUPT_ACK_OFFSET : usize = 0x064;
-// 为了设置mmio设备的status，需要将VIRT_VIRTIO_BASE加上VIRT_VIRTIO_STATUS_OFFSET
-#[cfg(target_arch = "loongarch64")]
-const VIRT_VIRTIO_STATUS_OFFSET : usize = 0x070;
+#[cfg(target_arch = "riscv64")]
+#[derive(Debug)]
+#[repr(usize)]
+pub enum VirtioMMIOBlockOffset {
+    MagicNumber = 0x000,
+    Version = 0x004,
+    DeviceID = 0x008,
+    VendorID = 0x00C,
+    DeviceFeatures = 0x010,
+    DeviceFeaturesSel = 0x014,
+    GuestFeatures = 0x020,
+    GuestFeaturesSel = 0x024,
+    QueueSel = 0x030,
+    QueueNumMax = 0x034,
+    QueueNum = 0x038,
+    QueueAlign = 0x03C,
+    QueuePFN = 0x040,
+    QueueNotify = 0x050,
+    InterruptStatus = 0x060,
+    InterruptAck = 0x064,
+    Status = 0x070,
+}
 
-// 当架构为其他架构时,将这些值设置为与riscv64架构相同的值做占位符
+#[cfg(target_arch = "loongarch64")]
+#[derive(Debug)]
+#[repr(usize)]
+pub enum VirtioMMIOBlockOffset {
+    MagicNumber = 0x000,
+    Version = 0x004,
+    DeviceID = 0x008,
+    VendorID = 0x00C,
+    DeviceFeatures = 0x010,
+    DeviceFeaturesSel = 0x014,
+    GuestFeatures = 0x020,
+    GuestFeaturesSel = 0x024,
+    QueueSel = 0x030,
+    QueueNumMax = 0x034,
+    QueueNum = 0x038,
+    QueueAlign = 0x03C,
+    QueuePFN = 0x040,
+    QueueNotify = 0x050,
+    InterruptStatus = 0x060,
+    InterruptAck = 0x064,
+    Status = 0x070,
+}
+
 #[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
-const VIRT_VIRTIO_BASE : usize = 0x10001000;
-#[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
-const VIRT_VIRTIO_SIZE : usize = 0x1000;
-#[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
-const VIRT_VIRTIO_MAGIC_OFFSET : usize = 0x1000;
-#[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
-const VIRT_VIRTIO_DEVICE_OFFSET : usize = 0x1004;
-#[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
-const VIRT_VIRTIO_VERSION_OFFSET : usize = 0x1004;
-#[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
-const VIRT_VIRTIO_VENDOR_OFFSET : usize = 0x00C;
-#[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
-const VIRT_VIRTIO_FEATUES_OFFSET : usize = 0x010;
-#[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
-const VIRT_VIRTIO_FEATUES_SEL_OFFSET : usize = 0x014;
-#[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
-const VIRT_VIRTIO_GUEST_FEATUES_OFFSET : usize = 0x020;
-#[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
-const VIRT_VIRTIO_GUEST_FEATUES_SEL_OFFSET : usize = 0x024;
-#[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
-const VIRT_VIRTIO_QUEUE_SEL_OFFSET : usize = 0x030;
-#[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
-const VIRT_VIRTIO_QUEUE_NUM_MAX_OFFSET : usize = 0x034;
-#[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
-const VIRT_VIRTIO_QUEUE_NUM_OFFSET : usize = 0x038;
-#[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
-const VIRT_VIRTIO_QUEUE_ALIGN_OFFSET : usize = 0x03C;
-#[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
-const VIRT_VIRTIO_QUEUE_PFN_OFFSET : usize = 0x040;
-#[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
-const VIRT_VIRTIO_QUEUE_NOTIFY_OFFSET : usize = 0x050;
-#[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
-const VIRT_VIRTIO_INTERRUPT_STATUS_OFFSET : usize = 0x060;
-#[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
-const VIRT_VIRTIO_INTERRUPT_ACK_OFFSET : usize = 0x064;
-#[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
-const VIRT_VIRTIO_STATUS_OFFSET : usize = 0x070;
+#[derive(Debug)]
+#[repr(usize)]
+pub enum VirtioMMIOBlockOffset {
+    MagicNumber = 0x000,
+    Version = 0x004,
+    DeviceID = 0x008,
+    VendorID = 0x00C,
+    DeviceFeatures = 0x010,
+    DeviceFeaturesSel = 0x014,
+    GuestFeatures = 0x020,
+    GuestFeaturesSel = 0x024,
+    QueueSel = 0x030,
+    QueueNumMax = 0x034,
+    QueueNum = 0x038,
+    QueueAlign = 0x03C,
+    QueuePFN = 0x040,
+    QueueNotify = 0x050,
+    InterruptStatus = 0x060,
+    InterruptAck = 0x064,
+    Status = 0x070,
+}
+
 // 魔术值的正确值
 const CORRECT_MAGIC_NUMBER : u32 = 0x74726976;
 
@@ -267,102 +183,122 @@ impl VirtMmioBlock {
         let mut virt_mmio_block = VirtMmioBlock::zeros();
         unsafe {
             virt_mmio_block.magic_number =
-                read_value_at_address::<u32>(base_addr, VIRT_VIRTIO_MAGIC_OFFSET);
-            virt_mmio_block.version =
-                read_value_at_address::<u32>(base_addr, VIRT_VIRTIO_VERSION_OFFSET);
-            virt_mmio_block.device_id =
-                read_value_at_address::<u32>(base_addr, VIRT_VIRTIO_DEVICE_OFFSET);
-            virt_mmio_block.vendor_id =
-                read_value_at_address::<u32>(base_addr, VIRT_VIRTIO_VENDOR_OFFSET);
+                read_value_at_address::<u32>(base_addr,
+                                             VirtioMMIOBlockOffset::MagicNumber as usize);
+            virt_mmio_block.version = read_value_at_address::<u32>(base_addr,
+                                                                   VirtioMMIOBlockOffset::Version
+                                                                   as usize);
+            virt_mmio_block.device_id = read_value_at_address::<u32>(base_addr,
+                                                                     VirtioMMIOBlockOffset::DeviceID
+                                                                     as usize);
+            virt_mmio_block.vendor_id = read_value_at_address::<u32>(base_addr,
+                                                                     VirtioMMIOBlockOffset::VendorID
+                                                                     as usize);
             virt_mmio_block.features =
-                read_volatile((base_addr + VIRT_VIRTIO_FEATUES_OFFSET) as *const u32);
+                read_volatile((base_addr + VirtioMMIOBlockOffset::DeviceFeatures as usize)
+                              as *const u32);
             virt_mmio_block.guest_features =
-                read_volatile((base_addr + VIRT_VIRTIO_STATUS_OFFSET) as *const u32);
+                read_volatile((base_addr + VirtioMMIOBlockOffset::GuestFeatures as usize)
+                              as *const u32);
             virt_mmio_block.queue_num_max =
-                read_volatile((base_addr + VIRT_VIRTIO_QUEUE_NUM_MAX_OFFSET) as *const u32);
+                read_volatile((base_addr + VirtioMMIOBlockOffset::QueueNumMax as usize)
+                              as *const u32);
             virt_mmio_block.queue_num =
-                read_volatile((base_addr + VIRT_VIRTIO_QUEUE_NUM_OFFSET) as *const u32);
+                read_volatile((base_addr + VirtioMMIOBlockOffset::QueueNum as usize) as *const u32);
             virt_mmio_block.queue_align =
-                read_volatile((base_addr + VIRT_VIRTIO_QUEUE_ALIGN_OFFSET) as *const u32);
+                read_volatile((base_addr + VirtioMMIOBlockOffset::QueueAlign as usize)
+                              as *const u32);
             virt_mmio_block.queue_pfn =
-                read_volatile((base_addr + VIRT_VIRTIO_QUEUE_PFN_OFFSET) as *const u64);
+                read_volatile((base_addr + VirtioMMIOBlockOffset::QueuePFN as usize) as *const u64);
             virt_mmio_block.queue_notify =
-                read_volatile((base_addr + VIRT_VIRTIO_QUEUE_NOTIFY_OFFSET) as *const u64);
+                read_volatile((base_addr + VirtioMMIOBlockOffset::QueueNotify as usize)
+                              as *const u64);
             virt_mmio_block.interrupt_status =
-                read_volatile((base_addr + VIRT_VIRTIO_INTERRUPT_STATUS_OFFSET) as *const u32);
+                read_volatile((base_addr + VirtioMMIOBlockOffset::InterruptStatus as usize)
+                              as *const u32);
             virt_mmio_block.interrupt_ack =
-                read_volatile((base_addr + VIRT_VIRTIO_INTERRUPT_ACK_OFFSET) as *const u32);
+                read_volatile((base_addr + VirtioMMIOBlockOffset::InterruptAck as usize)
+                              as *const u32);
             virt_mmio_block.status =
-                read_volatile((base_addr + VIRT_VIRTIO_STATUS_OFFSET) as *const u32);
+                read_volatile((base_addr + VirtioMMIOBlockOffset::Status as usize) as *const u32);
         }
         return virt_mmio_block;
     }
-    pub fn set_features(&mut self, features : u32) {
+    pub fn set_features_select(&mut self, features : u32) {
         unsafe {
-            write_volatile((self.p_base_addr + VIRT_VIRTIO_FEATUES_OFFSET) as *mut u32,
+            write_volatile((self.p_base_addr + VirtioMMIOBlockOffset::DeviceFeaturesSel as usize)
+                           as *mut u32,
                            features);
             self.features = features;
         }
     }
-    pub fn set_guest_features(&mut self, features : u32) {
+    pub fn set_guest_features_select(&mut self, features : u32) {
         unsafe {
-            write_volatile((self.p_base_addr + VIRT_VIRTIO_GUEST_FEATUES_OFFSET) as *mut u32,
+            write_volatile((self.p_base_addr + VirtioMMIOBlockOffset::GuestFeaturesSel as usize)
+                           as *mut u32,
                            features);
             self.guest_features = features;
         }
     }
     pub fn set_queue_select(&mut self, queue_index : u32) {
         unsafe {
-            write_volatile((self.p_base_addr + VIRT_VIRTIO_QUEUE_SEL_OFFSET) as *mut u32,
+            write_volatile((self.p_base_addr + VirtioMMIOBlockOffset::QueueSel as usize)
+                           as *mut u32,
                            queue_index);
             self.queue_select = queue_index;
         }
     }
     pub fn set_queue_notify(&mut self, queue_notify : u64) {
         unsafe {
-            write_volatile((self.p_base_addr + VIRT_VIRTIO_QUEUE_NOTIFY_OFFSET) as *mut u64,
+            write_volatile((self.p_base_addr + VirtioMMIOBlockOffset::QueueNotify as usize)
+                           as *mut u64,
                            queue_notify);
             self.queue_notify = queue_notify;
         }
     }
     pub fn set_status(&mut self, status : u32) {
         unsafe {
-            write_volatile((self.p_base_addr + VIRT_VIRTIO_STATUS_OFFSET) as *mut u32,
+            write_volatile((self.p_base_addr + VirtioMMIOBlockOffset::Status as usize) as *mut u32,
                            status);
             self.status = status;
         }
     }
     pub fn set_queue_pfn(&mut self, queue_pfn : u64) {
         unsafe {
-            write_volatile((self.p_base_addr + VIRT_VIRTIO_QUEUE_PFN_OFFSET) as *mut u64,
+            write_volatile((self.p_base_addr + VirtioMMIOBlockOffset::QueuePFN as usize)
+                           as *mut u64,
                            queue_pfn);
             self.queue_pfn = queue_pfn;
         }
     }
     pub fn set_queue_num(&mut self, queue_num : u32) {
         unsafe {
-            write_volatile((self.p_base_addr + VIRT_VIRTIO_QUEUE_NUM_OFFSET) as *mut u32,
+            write_volatile((self.p_base_addr + VirtioMMIOBlockOffset::QueueNum as usize)
+                           as *mut u32,
                            queue_num);
             self.queue_num = queue_num;
         }
     }
     pub fn set_queue_align(&mut self, queue_align : u32) {
         unsafe {
-            write_volatile((self.p_base_addr + VIRT_VIRTIO_QUEUE_ALIGN_OFFSET) as *mut u32,
+            write_volatile((self.p_base_addr + VirtioMMIOBlockOffset::QueueAlign as usize)
+                           as *mut u32,
                            queue_align);
             self.queue_align = queue_align;
         }
     }
     pub fn set_interrupt_status(&mut self, status : u32) {
         unsafe {
-            write_volatile((self.p_base_addr + VIRT_VIRTIO_INTERRUPT_STATUS_OFFSET) as *mut u32,
+            write_volatile((self.p_base_addr + VirtioMMIOBlockOffset::InterruptStatus as usize)
+                           as *mut u32,
                            status);
             self.interrupt_status = status;
         }
     }
     pub fn set_interrupt_ack(&mut self, status : u32) {
         unsafe {
-            write_volatile((self.p_base_addr + VIRT_VIRTIO_INTERRUPT_ACK_OFFSET) as *mut u32,
+            write_volatile((self.p_base_addr + VirtioMMIOBlockOffset::InterruptAck as usize)
+                           as *mut u32,
                            status);
             self.interrupt_ack = status;
         }
@@ -401,7 +337,6 @@ pub struct VirtioMmioDevice {
     pub reg_size : usize,
     pub interrupts : u32,
     pub interrupt_parent : u32,
-    pub virt_queue : Virtqueue,
     pub virt_mmio_block : VirtMmioBlock,
 }
 impl VirtioMmioDevice {
@@ -418,7 +353,6 @@ impl VirtioMmioDevice {
                                                         reg_size : 0,
                                                         interrupts : 0,
                                                         interrupt_parent : 0,
-                                                        virt_queue : Virtqueue::zeros(),
                                                         virt_mmio_block:
                                                             VirtMmioBlock::new(base_addr) };
         let properties = device_node.properties();
@@ -606,13 +540,18 @@ pub fn init_dtb_mmio() {
 
 pub fn is_virtio_mmio_device_with_ptr(base_addr : usize) -> bool {
     let mut mmio_device_block = VirtMmioBlock::zeros();
-    mmio_device_block.magic_number =
-        read_value_at_address::<u32>(base_addr, VIRT_VIRTIO_MAGIC_OFFSET);
-    mmio_device_block.version = read_value_at_address::<u32>(base_addr, VIRT_VIRTIO_VERSION_OFFSET);
-    mmio_device_block.device_id =
-        read_value_at_address::<u32>(base_addr, VIRT_VIRTIO_DEVICE_OFFSET);
-    mmio_device_block.vendor_id =
-        read_value_at_address::<u32>(base_addr, VIRT_VIRTIO_VENDOR_OFFSET);
+    mmio_device_block.magic_number = read_value_at_address::<u32>(base_addr,
+                                                                  VirtioMMIOBlockOffset::MagicNumber
+                                                                  as usize);
+    mmio_device_block.version = read_value_at_address::<u32>(base_addr,
+                                                             VirtioMMIOBlockOffset::Version
+                                                             as usize);
+    mmio_device_block.device_id = read_value_at_address::<u32>(base_addr,
+                                                               VirtioMMIOBlockOffset::DeviceID
+                                                               as usize);
+    mmio_device_block.vendor_id = read_value_at_address::<u32>(base_addr,
+                                                               VirtioMMIOBlockOffset::VendorID
+                                                               as usize);
     if mmio_device_block.magic_number == CORRECT_MAGIC_NUMBER {
         return true;
     }
@@ -624,122 +563,28 @@ pub fn scan_virtio_mmio() {}
 
 pub fn configure_virtio_mmio_device(device : &VirtioMmioDevice) {
     unsafe {
-        write_volatile((device.p_base_addr + VIRT_VIRTIO_STATUS_OFFSET) as *mut u32,
+        write_volatile((device.p_base_addr + VirtioMMIOBlockOffset::Status as usize) as *mut u32,
                        0); // 重置设备
-        write_volatile((device.p_base_addr + VIRT_VIRTIO_STATUS_OFFSET) as *mut u32,
+        write_volatile((device.p_base_addr + VirtioMMIOBlockOffset::Status as usize) as *mut u32,
                        1); // 启用设备
-        write_volatile((device.p_base_addr + VIRT_VIRTIO_STATUS_OFFSET) as *mut u32,
+        write_volatile((device.p_base_addr + VirtioMMIOBlockOffset::Status as usize) as *mut u32,
                        1 | 2); // 启用驱动程序
-        write_volatile((device.p_base_addr + VIRT_VIRTIO_STATUS_OFFSET) as *mut u32,
+        write_volatile((device.p_base_addr + VirtioMMIOBlockOffset::Status as usize) as *mut u32,
                        1 | 2 | 4); // 驱动程序完毕
-        let _features =
-            read_volatile((device.p_base_addr + VIRT_VIRTIO_FEATUES_OFFSET) as *const u32);
+        let _features = read_volatile((device.p_base_addr +
+                                       VirtioMMIOBlockOffset::DeviceFeatures as usize)
+                                      as *const u32);
         /* 设置设备的特性 */
-        write_volatile((device.p_base_addr + VIRT_VIRTIO_FEATUES_OFFSET) as *mut u32,
+        write_volatile((device.p_base_addr + VirtioMMIOBlockOffset::DeviceFeaturesSel as usize)
+                       as *mut u32,
                        _features);
-        write_volatile((device.p_base_addr + VIRT_VIRTIO_STATUS_OFFSET) as *mut u32,
+        write_volatile((device.p_base_addr + VirtioMMIOBlockOffset::Status as usize) as *mut u32,
                        1 | 2 | 4 | 8); // 启用特性
     }
 }
 
-// 简化的 virtqueue 结构
-pub struct VirtioReqBlockHeader {
-    type_ : u32,
-    reserved : u32,
-    sector : u64,
-}
-
-impl VirtioMmioDevice {
-    // 读取块设备的指定块数据
-    fn read_block(&mut self, block_num : u64, buffer : &mut [u8]) {
-        // 准备请求头（virtio_blk_outhdr）
-        let header = VirtioReqBlockHeader {
-            type_: 0,      // VIRTIO_BLK_T_IN，表示读取操作
-            reserved: 0,
-            sector: block_num, // 要读取的扇区号
-        };
-
-        // 设置描述符
-        let desc0 = Descriptor { addr : &header as *const _ as u64,
-                                 len : core::mem::size_of::<VirtioReqBlockHeader>() as u32,
-                                 flags : 1, // VIRTIO_DESC_F_NEXT，表示有下一个描述符
-                                 next : 1 };
-
-        let desc1 = Descriptor { addr : buffer.as_mut_ptr() as u64,
-                                 len : buffer.len() as u32,
-                                 flags : 2, // VIRTIO_DESC_F_WRITE，表示设备将写入此缓冲区
-                                 next : 0 };
-
-        // 3. 将描述符写入 virtqueue 的描述符表
-        unsafe {
-            *self.virt_queue
-                 .desc
-                 .add(0) = desc0; // 描述符 0：请求头
-            *self.virt_queue
-                 .desc
-                 .add(1) = desc1; // 描述符 1：数据缓冲区
-        }
-
-        // 4. 更新 avail 环，通知设备有新请求
-        unsafe {
-            (*self.virt_queue
-                  .avail)
-                         .ring[(*self.virt_queue
-                                                 .avail)
-                                                        .idx
-                                           as usize %
-                                           256] = 0; // 描述符链起始索引
-            (*self.virt_queue
-                  .avail)
-                         .idx += 1; // 更新索引
-        }
-
-        // 通知设备
-        self.virt_mmio_block
-            .set_queue_notify(0);
-
-        // 等待并处理响应（这里简化为轮询）
-        loop {
-            let used_idx = unsafe {
-                (*self.virt_queue
-                      .used)
-                            .idx
-            };
-            unsafe {
-                if used_idx !=
-                   (*self.virt_queue
-                         .avail)
-                                .idx
-                {
-                    let elem = {
-                        (*self.virt_queue
-                              .used)
-                                    .ring[used_idx as usize % 256]
-                    };
-                    if elem.id == 0 {
-                        // 检查状态（假设状态字节在缓冲区末尾）
-                        let status = buffer.last()
-                                           .unwrap();
-                        if *status == 0 {
-                            // 读取成功
-                            break;
-                        } else {
-                            panic!("读取失败");
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-pub const VIRTIO_REQ_BLOCK_TYPE_IN : u32 = 0;
-pub const VIRTIO_REQ_BLOCK_TYPE_OUT : u32 = 1;
-pub const VIRTIO_REQ_BLOCK_TYPE_FLUSH : u32 = 4;
-pub const VIRTIO_REQ_DESC_F_NEXT : u16 = 1;
-pub const VIRTIO_REQ_DESC_F_WRITE : u16 = 2;
 pub fn read_virt_block(device : &mut VirtioMmioDevice, block_index : u64) -> [u8; 1024] {
     let mut block_data : [u8; 1024] = [0; 1024];
     configure_virtio_mmio_device(device);
-    device.read_block(block_index, &mut block_data);
     return block_data;
 }

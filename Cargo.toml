@@ -9,6 +9,8 @@ path = "./src/rust/share/lib.rs"
 # 全局依赖
 [dependencies]
 fdt = { version = "0.1.5" }
+linked_list_allocator = "0.10.5"
+virtio-drivers = { version = "0.11.0" }
 [profile.release]
 panic = "abort"
 [profile.dev]
