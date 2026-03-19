@@ -1,0 +1,25 @@
+[package]
+    name = "wateros"
+    version = "0.1.0"
+    edition = "2024"
+
+[dependencies]
+    abi = { package = "wateros-abi", path = "./components/wateros-abi/", default-features = true }
+    base = { package = "wateros-base", path = "./components/wateros-base/", default-features = true }
+    fs = { package = "wateros-fs", path = "./components/wateros-fs/", default-features = true }
+    vfs = { package = "wateros-vfs", path = "./components/wateros-vfs/", default-features = true }
+    platform = { package = "wateros-platform", path = "./components/wateros-platform/", default-features = true }
+    utils = { package = "wateros-utils", path = "./components/wateros-utils/", default-features = true }
+    driver = { package = "wateros-driver", path = "./components/wateros-driver/", default-features = true }
+    ipc = { package = "wateros-ipc", path = "./components/wateros-ipc/", default-features = true }
+    runtime = { package = "wateros-runtime", path = "./components/wateros-runtime/", default-features = true }
+
+[profile.dev]
+    panic = "abort"
+
+[profile.release]
+    panic = "abort"
+
+[features]
+    default = [ "qemu-riscv64-opensbi" ]
+qemu-riscv64-opensbi = ["platform/impl-qemu-riscv64-opensbi"]

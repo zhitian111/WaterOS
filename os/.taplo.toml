@@ -1,0 +1,138 @@
+# Taplo 配置文件
+# 官方会自动查找 .taplo.toml 或 taplo.toml。:contentReference[oaicite:1]{index=1}
+
+[formatting]
+
+# align_comments
+# 作用：让“行尾注释”在连续多行里垂直对齐。
+# 可选值：
+#   true  = 自动对齐
+#   false = 不对齐
+# 官方默认值：true
+# 建议：
+#   - 想让 diff 更稳定、避免因为字段长度变化导致注释整体挪动：false
+#   - 想追求视觉整齐：true
+align_comments = false
+
+# reorder_keys
+# 作用：按字母序重排 key。
+# 注意：只会重排“没有被空行分隔”的那些 key。
+# 可选值：
+#   true  = 排序
+#   false = 不排序
+# 官方默认值：false
+# 建议：
+#   - 通用 TOML：true 比较整齐
+#   - Cargo.toml 的 [package] 常常不想排序，可在 rule 里覆盖
+reorder_keys = true
+
+# reorder_arrays
+# 作用：按字母序重排数组中的值。
+# 注意：只会重排“没有被空行分隔”的数组元素。
+# 可选值：
+#   true  = 排序
+#   false = 不排序
+# 官方默认值：false
+# 适用场景：
+#   - features、成员列表、字符串列表想保持稳定顺序：true
+#   - 数组顺序本身有语义：false
+reorder_arrays = true
+
+# compact_arrays
+# 作用：单行数组内部是否去掉额外空格。
+# 可选值：
+#   true  = 紧凑写法，如 [1, 2, 3]
+#   false = 宽松写法，如 [ 1, 2, 3 ]
+# 官方默认值：true
+compact_arrays = false
+
+# compact_inline_tables
+# 作用：单行内联表内部是否去掉额外空格。
+# 可选值：
+#   true  = 紧凑写法，如 {a = 1, b = 2}
+#   false = 宽松写法，如 { a = 1, b = 2 }
+# 官方默认值：false
+compact_inline_tables = false
+
+# indent_tables
+# 作用：如果子表“按顺序紧跟着出现”，是否把子表标题缩进。
+# 可选值：
+#   true  = 缩进子表
+#   false = 不缩进子表
+# 官方默认值：false
+# 说明：
+#   这个选项更偏“视觉风格”，Cargo.toml 里很多人会保持 false。
+indent_tables = true
+
+# indent_entries
+# 作用：是否把表中的各个 key/value 条目缩进。
+# 可选值：
+#   true  = 缩进
+#   false = 不缩进
+# 官方默认值：false
+# 你之前报错就是因为这里写成了 4；它是 bool，不是数字。:contentReference[oaicite:2]{index=2}
+indent_entries = true
+
+# indent_string
+# 作用：定义“缩进用什么字符”。
+# 可选值：
+#   "  "     = 2 个空格（官方默认）
+#   "    "   = 4 个空格
+#   "\t"     = Tab
+#   其他字符串理论上也能用，但一般只建议空格或 Tab
+# 官方默认值：2 个空格
+# 说明：
+#   真正控制“缩进宽度”的是它，而不是 indent_entries。:contentReference[oaicite:3]{index=3}
+indent_string = "    "
+
+
+# -----------------------------
+# 针对特定文件/键路径的覆盖规则
+# -----------------------------
+# 规则支持按 include/exclude 匹配文件，也支持按 keys 匹配文档内部的键路径。
+# 如果多个规则重叠，后写的规则优先。:contentReference[oaicite:4]{index=4}
+[[rule]]
+
+# include
+# 作用：这个规则要应用到哪些文件。
+# 类型：字符串数组，支持 glob，支持 **
+# 常见例子：
+#   ["**/Cargo.toml"]
+#   ["Cargo.toml"]
+#   ["crates/**/Cargo.toml"]
+# 这里表示：只对所有 Cargo.toml 生效。:contentReference[oaicite:5]{index=5}
+include = ["**/Cargo.toml"]
+
+# keys
+# 作用：把规则限制在文档中的某些键路径下。
+# 类型：字符串数组，使用 dotted keys 形式，也支持 glob。
+# 常见写法：
+#   ["package"]
+#   ["dependencies"]
+#   ["dev-dependencies"]
+#   ["build-dependencies"]
+#   ["target.*.dependencies"]
+# 这里表示：只在这些顶层 section 下应用 rule.formatting 里的配置。:contentReference[oaicite:6]{index=6}
+keys = [
+  "package",
+  "dependencies",
+  "dev-dependencies",
+  "build-dependencies",
+]
+
+[rule.formatting]
+
+# reorder_keys
+# 这里只覆盖上面列出的那些 keys 区域。
+# 可选值：
+#   true  = 这些 section 内排序
+#   false = 这些 section 内不排序
+#
+# 你当前写法的实际含义是：
+#   对所有文件默认 reorder_keys = true，
+#   但在 Cargo.toml 的 package / dependencies / dev-dependencies / build-dependencies
+#   这些 section 里，强制不要排序。
+#
+# 如果你的目标是“只保留 [package] 不排序，但 dependencies 排序”，
+# 那就不该把 dependencies 这些 section 也放进这个 rule 里。
+reorder_keys = false

@@ -1,0 +1,41 @@
+[workspace]
+    members = [
+        "./driver-api/api-v0/",
+        "./driver-block/",
+        "./driver-block/block-api/api-v0/",
+        "./driver-block/block-impl/impl-dummy/",
+        "./driver-character/",
+        "./driver-character/character-api/api-v0/",
+        "./driver-character/character-impl/impl-dummy/",
+        "./driver-impl/impl-dummy/",
+        "./driver-network/",
+        "./driver-network/network-api/api-v0/",
+        "./driver-network/network-impl/impl-dummy/",
+    ]
+[package]
+    name = "wateros-driver"
+    version = "0.1.0"
+    edition = "2024"
+
+[dependencies]
+    api-v0 = { path = "./driver-api/api-v0/", package = "wateros-driver-api-v0", default-features = true }
+    impl-dummy = { path = "./driver-impl/impl-dummy/", package = "wateros-driver-impl-dummy", default-features = true }
+    block = { path = "./driver-block/", package = "wateros-driver-block", default-features = true }
+    character = { path = "./driver-character/", package = "wateros-driver-character", default-features = true }
+    network = { path = "./driver-network/", package = "wateros-driver-network", default-features = true }
+
+[features]
+    api-v0 = [
+        "block/api-v0",
+        "character/api-v0",
+        "impl-dummy/api-v0",
+        "network/api-v0",
+    ]
+    default = [ "api-v0", "impl-dummy" ]
+    impl-dummy = [  ]
+
+[profile.dev]
+    panic = "abort"
+
+[profile.release]
+    panic = "abort"

@@ -1,0 +1,14 @@
+[workspace]
+members = [
+  "./runtime-panic/"
+, "runtime-console",
+"./runtime-logging/"]
+[package]
+    name = "wateros-runtime"
+    version = "0.1.0"
+    edition = "2024"
+
+[dependencies]
+panic = {path = "./runtime-panic/", package ="wateros-runtime-panic", default-features = true }
+console = { path = "./runtime-console/", package = "wateros-runtime-console", default-features = true}
+logging = {path = "./runtime-logging/", package = "wateros-runtime-logging", default-features= true}

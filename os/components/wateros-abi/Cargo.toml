@@ -1,0 +1,22 @@
+[workspace]
+    members = [ "./abi-api/api-v0/", "./abi-impl/impl-dummy/" ]
+[package]
+    name = "wateros-abi"
+    version = "0.1.0"
+    edition = "2024"
+
+[dependencies]
+    api-v0 = { path = "./abi-api/api-v0/", package = "wateros-abi-api-v0", default-features = true }
+    impl-dummy = { path = "./abi-impl/impl-dummy/", package = "wateros-abi-impl-dummy", default-features = true }
+
+
+[features]
+    api-v0 = [ "impl-dummy/api-v0" ]
+    default = [ "api-v0", "impl-dummy" ]
+    impl-dummy = [  ]
+
+[profile.dev]
+    panic = "abort"
+
+[profile.release]
+    panic = "abort"

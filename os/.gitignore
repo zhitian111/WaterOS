@@ -1,0 +1,16 @@
+/target
+/.git
+/.idea
+/kernel-rv
+/kernel-la
+/sdcard-rv.img
+/sdcard-la.img
+*.log
+*log.txt
+*cache*
+**/Cargo.lock
+./config.conf
+./feature-tree.txt
+**/target/
+*.wosbak
+*backup*

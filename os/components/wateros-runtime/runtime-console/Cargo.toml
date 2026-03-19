@@ -1,0 +1,7 @@
+[package]
+name = "wateros-runtime-console"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+firmware = {path  = "../../wateros-platform/platform-firmware/", package = "wateros-platform-firmware"}

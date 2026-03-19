@@ -1,0 +1,15 @@
+[package]
+    name = "wateros-platform-arch"
+    version = "0.1.0"
+    edition = "2024"
+
+[dependencies]
+    api-v0 = { path = "./arch-api/api-v0/", package = "wateros-platform-arch-api-v0", default-features = true }
+    impl-dummy = { path = "./arch-impl/impl-dummy/", package = "wateros-platform-arch-impl-dummy", default-features = true }
+    impl-riscv64 = { path = "./arch-impl/impl-riscv64/", package = "wateros-platform-arch-impl-riscv64", default-features = true }
+
+[features]
+    api-v0 = [ "impl-dummy/api-v0", "impl-riscv64/api-v0" ]
+    default = [ "api-v0", "impl-dummy" ]
+    impl-dummy = [  ]
+    impl-riscv64 = [  ]
