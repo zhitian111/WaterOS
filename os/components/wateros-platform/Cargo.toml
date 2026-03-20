@@ -25,16 +25,16 @@
     firmware = { path = "./platform-firmware/", package = "wateros-platform-firmware", default-features = true }
 
 [features]
-    default = [ "api-v0", "impl-qemu-riscv64-opensbi" ]
     api-v0 = [
         "arch/api-v0",
         "firmware/api-v0",
         "impl-dummy/api-v0",
         "impl-qemu-riscv64-opensbi/api-v0",
     ]
+    default = [ "api-v0", "impl-qemu-riscv64-opensbi" ]
     impl-dummy = [  ]
-    impl-qemu-riscv64-opensbi = ["opensbi" ]
-    opensbi = ["firmware/impl-opensbi"]
+    impl-qemu-riscv64-opensbi = [ "opensbi" ]
+    opensbi = [ "firmware/impl-opensbi" ]
 
 [profile.dev]
     panic = "abort"

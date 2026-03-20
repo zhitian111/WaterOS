@@ -5,7 +5,7 @@ STAGE := prototype
 BRANCH=$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
 BUILD_NUM = $(shell git rev-list --count HEAD 2>/dev/null || echo "0")
 
-.PHONY: clean check all all_start_info kernel configure
+.PHONY: clean check all all_start_info kernel configure fmt
 .PHONY: rv_check rv_elf_info rv_obj_dump rv_qemu_run rv_qemu_run_with_log rv_qemu_gdb rv_gdb
 .PHONY: rv_user_mode_bin
 COLOR_ANSI_RED := \033[31m
@@ -143,8 +143,23 @@ clean:
 	@cargo clean
 	@bash ./scripts/cargo_clean_all.sh ./components/
 	@rm -f ./kernel-rv >/dev/null 2>/dev/null
+	$(call INFO, "构建产物清理完成！")
+	$(call INFO, "开始清理备份文件...")
+	$(call INFO, "以下文件将被删除！")
+	$(call INFO, "$(shell find . -name "*.wosbak")")
+	@rm -f $(shell find . -name "*.wosbak")
+	$(call INFO, "备份文件清理完成！")
+	$(call INFO, "开始清理 feature 配置文件...")
+	@rm -f ./config.conf ./feature-tree.txt
+	$(call INFO, "feature 配置文件清理完成！")
 	$(call INFO, "清理完成！")
 
 all_start_info:
 	$(call INFO, "开始构建完整项目...")
 all: all_start_info kernel-rv kernel-rv-strip-image
+
+fmt:
+	$(call INFO, "开始格式化项目文件...")
+	@taplo fmt **/Cargo.toml
+	@rustfmt **/*.rs
+	$(call INFO, "项目文件格式化完成！")

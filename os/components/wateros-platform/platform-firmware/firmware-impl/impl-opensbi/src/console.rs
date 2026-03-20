@@ -4,7 +4,7 @@ use sbi::{console_write, console_write_byte};
 pub struct OpenSBIConsole;
 impl FirmwareConsole for OpenSBIConsole {
     #[inline]
-    fn firmware_console_write_a_byte(byte: u8) -> FirmwareConsoleResult<()> {
+    fn firmware_console_write_a_byte(byte : u8) -> FirmwareConsoleResult<()> {
         if console_write_byte(byte).is_ok() {
             Ok(())
         } else {

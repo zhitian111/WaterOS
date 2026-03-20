@@ -22,4 +22,4 @@
 
 [features]
     default = [ "qemu-riscv64-opensbi" ]
-qemu-riscv64-opensbi = ["platform/impl-qemu-riscv64-opensbi"]
+    qemu-riscv64-opensbi = [ "platform/impl-qemu-riscv64-opensbi" ]

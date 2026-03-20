@@ -7,23 +7,15 @@ pub mod boot {
     pub struct PlatformDummyBootContext;
     impl PlatformBootArgs for PlatformDummyBootArgs {
         #[allow(unused)]
-        fn arg0(&self) -> Option<usize> {
-            unimplemented!()
-        }
+        fn arg0(&self) -> Option<usize> { unimplemented!() }
         #[allow(unused)]
-        fn arg1(&self) -> Option<usize> {
-            unimplemented!()
-        }
+        fn arg1(&self) -> Option<usize> { unimplemented!() }
         #[allow(unused)]
-        fn arg2(&self) -> Option<usize> {
-            unimplemented!()
-        }
+        fn arg2(&self) -> Option<usize> { unimplemented!() }
     }
     impl From<PlatformDummyBootArgs> for PlatformDummyBootContext {
         #[allow(unused)]
-        fn from(value: PlatformDummyBootArgs) -> Self {
-            unimplemented!()
-        }
+        fn from(value : PlatformDummyBootArgs) -> Self { unimplemented!() }
     }
     impl PlatformBootContext<PlatformDummyBootArgs> for PlatformDummyBootContext {}
 }

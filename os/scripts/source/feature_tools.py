@@ -8,11 +8,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
-try:
-    import tomllib  # py>=3.11
-except Exception:  # pragma: no cover
-    tomllib = None  # type: ignore
-
 
 @dataclass(frozen=True)
 class Dep:
@@ -29,13 +24,101 @@ class Crate:
     features: Dict[str, List[str]]
 
 
-def _read_toml(path: Path) -> Dict[str, Any]:
-    if tomllib is None:
-        raise RuntimeError("Python 3.11+ is required (tomllib missing)")
-    data = tomllib.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        return {}
-    return data
+_STRING_RE = re.compile(r"""(["'])(.*?)\1""")
+_IDENT_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _strip_comment(line: str) -> str:
+    # Cargo.toml 的字符串基本不会包含 '#'(注释)；这里做简化处理
+    if "#" in line:
+        return line.split("#", 1)[0]
+    return line
+
+
+def _parse_array_of_strings(block: str) -> List[str]:
+    # 从形如 [ "a", 'b', c ] 的 block 提取字符串字面量
+    return [m.group(2).strip() for m in _STRING_RE.finditer(block)]
+
+
+def _parse_cargo_toml_simple(manifest_path: Path) -> Dict[str, Any]:
+    """
+    简易解析 Cargo.toml（仅覆盖本项目用到的部分）：
+    - [package].name
+    - [dependencies] 中 { package = "...", path = "..." } 字段
+    - [features] 中 key = [ ... ]（支持多行数组）
+    目标：兼容 Python 3.8+，不依赖 tomllib/toml 第三方包。
+    """
+    result: Dict[str, Any] = {"package": {}, "dependencies": {}, "features": {}}
+    text_lines = manifest_path.read_text(encoding="utf-8").splitlines()
+
+    section: Optional[str] = None
+    i = 0
+    while i < len(text_lines):
+        raw = text_lines[i]
+        line = _strip_comment(raw).strip()
+        i += 1
+
+        if not line:
+            continue
+        m = re.match(r"^\[(?P<section>[A-Za-z0-9_-]+)\]\s*$", line)
+        if m:
+            section = m.group("section").strip()
+            continue
+
+        if section == "package":
+            m = re.match(r"^name\s*=\s*(?P<q>['\"])(?P<name>.*?)\1\s*$", line)
+            if m:
+                result["package"]["name"] = m.group("name").strip()
+            continue
+
+        if section == "dependencies":
+            # 处理单行或多行的 { ... } dict
+            m = re.match(r"^(?P<key>[A-Za-z0-9_-]+)\s*=\s*\{(?P<rest>.*)$", line)
+            if not m:
+                continue
+            dep_name = m.group("key")
+            rest = m.group("rest").strip()
+            # 收集到匹配到 '}' 结束
+            while "}" not in rest and i < len(text_lines):
+                rest = rest + " " + _strip_comment(text_lines[i]).strip()
+                i += 1
+            # 截断到 '}'
+            if "}" in rest:
+                rest = rest.split("}", 1)[0]
+            # 解析 package/path
+            pkg = None
+            path = None
+            mpkg = re.search(r'package\s*=\s*(?P<q>["\'])(?P<v>.*?)(?P=q)', rest)
+            mpath = re.search(r'path\s*=\s*(?P<q>["\'])(?P<v>.*?)(?P=q)', rest)
+            if mpkg:
+                pkg = mpkg.group("v").strip()
+            if mpath:
+                path = mpath.group("v").strip()
+            if pkg:
+                result["dependencies"][dep_name] = {"package": pkg, "path": path}
+            else:
+                result["dependencies"][dep_name] = {"package": dep_name, "path": path}
+            continue
+
+        if section == "features":
+            # key = [ ... ]（支持多行数组）
+            m = re.match(r"^(?P<key>[A-Za-z0-9_-]+)\s*=\s*\[(?P<after>.*)$", line)
+            if not m:
+                # 支持 features value 用多行时的 key 行没写 '[' 的情况（当前仓库基本不需要）
+                continue
+            feat_key = m.group("key")
+            block = m.group("after")
+            while "]" not in block and i < len(text_lines):
+                block = block + "\n" + _strip_comment(text_lines[i])
+                i += 1
+            # block 现在包含直到 ']' 前的内容
+            if "]" in block:
+                block = block.split("]", 1)[0]
+            vals = _parse_array_of_strings(block)
+            result["features"][feat_key] = vals
+            continue
+
+    return result
 
 
 def _as_str_list(v: Any) -> List[str]:
@@ -87,7 +170,7 @@ def _parse_features(tbl: Dict[str, Any]) -> Dict[str, List[str]]:
 
 def load_crate(manifest_path: Path) -> Optional[Crate]:
     try:
-        tbl = _read_toml(manifest_path)
+        tbl = _parse_cargo_toml_simple(manifest_path)
     except Exception:
         return None
     pkg = tbl.get("package", {})

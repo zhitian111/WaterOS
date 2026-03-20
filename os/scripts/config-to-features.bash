@@ -46,11 +46,25 @@ conf_path = Path(sys.argv[2]).resolve()
 # root_pkg 默认为 root_dir/Cargo.toml 对应的 package name
 root_pkg = sys.argv[3].strip() if len(sys.argv) >= 4 else ""
 if not root_pkg:
-    # 直接读取 root_dir/Cargo.toml 的 [package].name
-    import tomllib
+    # 直接读取 root_dir/Cargo.toml 的 [package].name（不依赖 tomllib）
+    import re
     root_manifest = root_dir / "Cargo.toml"
-    data = tomllib.loads(root_manifest.read_text(encoding="utf-8"))
-    root_pkg = data.get("package", {}).get("name", "").strip() or "wateros"
+    lines = root_manifest.read_text(encoding="utf-8").splitlines()
+    in_package = False
+    root_pkg = ""
+    for line in lines:
+        s = line.strip()
+        if s == "[package]":
+            in_package = True
+            continue
+        if in_package and s.startswith("[") and s.endswith("]"):
+            break
+        if in_package:
+            m = re.match(r"^name\\s*=\\s*(['\\\"])(.*?)\\1\\s*$", s)
+            if m:
+                root_pkg = m.group(2).strip()
+                break
+    root_pkg = root_pkg or "wateros"
 
 manifests = discover_manifests(root_dir)
 crates, _ = build_index(manifests)

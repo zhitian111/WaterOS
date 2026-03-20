@@ -1,12 +1,12 @@
-#!/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 # shellcheck source=/dev/null
-source "${SCRIPT_DIR}/source/console.bash"
+. "${SCRIPT_DIR}/source/console.bash"
 
-ROOT_DIR_DEFAULT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
-ROOT_DIR="${1:-${ROOT_DIR_DEFAULT}}"
+ROOT_DIR_DEFAULT=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
+ROOT_DIR="${1:-$ROOT_DIR_DEFAULT}"
 
 info "开始生成 feature-tree.txt 与 config.conf"
 

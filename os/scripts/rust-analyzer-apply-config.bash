@@ -22,9 +22,28 @@ mkdir -p "${CURSOR_DIR}"
 
 ROOT_PKG="$(
   python3 - <<'PY' "${OS_DIR}/Cargo.toml"
-import sys, tomllib
-data = tomllib.loads(open(sys.argv[1], 'r', encoding='utf-8').read())
-print(data.get('package', {}).get('name', '').strip())
+import re, sys
+
+path = sys.argv[1]
+text = open(path, 'r', encoding='utf-8').read().splitlines()
+
+in_package = False
+root = ''
+for line in text:
+    s = line.strip()
+    if s == '[package]':
+        in_package = True
+        continue
+    if in_package and s.startswith('[') and s.endswith(']'):
+        # next section
+        break
+        if in_package:
+            m = re.match(r"^name\\s*=\\s*(['\\\"])(.*?)\\1\\s*$", s)
+        if m:
+            root = m.group(2).strip()
+            break
+
+print(root)
 PY
 )"
 if [[ -z "${ROOT_PKG}" ]]; then

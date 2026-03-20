@@ -1,9 +1,8 @@
 use api_v0::reset::{
     FirmwareReset, FirmwareResetError, FirmwareResetReason, FirmwareResetResult, FirmwareResetType,
 };
-use sbi::{ResetReason, ResetType, system_reset};
+use sbi::{system_reset, ResetReason, ResetType};
 pub struct OpenSBIReset;
-
 pub enum OpenSBIResetType {
     Shutdown,
     ColdReboot,
@@ -13,10 +12,9 @@ pub enum OpenSBIResetReason {
     NoReason,
     SystemFailure,
 }
-
 impl From<FirmwareResetReason> for OpenSBIResetReason {
     #[inline]
-    fn from(value: FirmwareResetReason) -> Self {
+    fn from(value : FirmwareResetReason) -> Self {
         match value {
             FirmwareResetReason::NoReason => Self::NoReason,
             FirmwareResetReason::SystemFailure => Self::SystemFailure,
@@ -25,7 +23,7 @@ impl From<FirmwareResetReason> for OpenSBIResetReason {
 }
 impl From<FirmwareResetType> for OpenSBIResetType {
     #[inline]
-    fn from(value: FirmwareResetType) -> Self {
+    fn from(value : FirmwareResetType) -> Self {
         match value {
             FirmwareResetType::ColdReboot => Self::ColdReboot,
             FirmwareResetType::Shutdown => Self::Shutdown,
@@ -33,7 +31,6 @@ impl From<FirmwareResetType> for OpenSBIResetType {
         }
     }
 }
-
 impl ResetReason for OpenSBIResetReason {
     #[inline]
     fn raw(&self) -> u32 {
@@ -53,17 +50,13 @@ impl ResetType for OpenSBIResetType {
         }
     }
 }
-
 impl FirmwareReset for OpenSBIReset {
     #[inline]
-    fn firmware_reset(
-        reset_type: FirmwareResetType,
-        reset_reason: FirmwareResetReason,
-    ) -> FirmwareResetResult<()> {
-        system_reset(
-            Into::<OpenSBIResetType>::into(reset_type),
-            Into::<OpenSBIResetReason>::into(reset_reason),
-        );
+    fn firmware_reset(reset_type : FirmwareResetType,
+                      reset_reason : FirmwareResetReason)
+                      -> FirmwareResetResult<()> {
+        system_reset(Into::<OpenSBIResetType>::into(reset_type),
+                     Into::<OpenSBIResetReason>::into(reset_reason));
         // unreachable!("System reset failure !");
         Err(FirmwareResetError::Failed)
     }

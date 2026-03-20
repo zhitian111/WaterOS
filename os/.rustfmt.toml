@@ -7,7 +7,7 @@ tab_spaces = 4                      # 每个缩进级别4个空格
 newline_style = "Auto"              # 换行符风格（Auto/Unix/Native）
 indent_style = "Visual"             # 缩进风格（Block块缩进/Visual视觉缩进）
 # 启发式优化 
-use_small_heuristics = "Off"    # 紧凑格式启发式（Default/Off/Max）
+use_small_heuristics = "Default"    # 紧凑格式启发式（Default/Off/Max）
 
 # 特定结构宽度限制 
 fn_call_width = 40                  # 函数调用参数换行阈值
@@ -15,31 +15,31 @@ attr_fn_like_width = 70             # 属性宏参数换行宽度
 struct_lit_width = 18               # 结构体字面量单行最大宽度
 struct_variant_width = 35           # 结构体变体单行最大宽度
 array_width = 60                    # 数组/元组换行宽度阈值
-chain_width = 10                    # 方法链换行宽度
+chain_width = 20                    # 方法链换行宽度
 single_line_if_else_max_width = 50  # if-else单行最大宽度
 single_line_let_else_max_width = 50 # let-else单行最大宽度
 # 注释处理 
-wrap_comments = false               # 自动换行注释（true/false）
-format_code_in_doc_comments = false # 格式化文档注释中的代码块
+wrap_comments = true                # 自动换行注释（true/false）
+format_code_in_doc_comments = true  # 格式化文档注释中的代码块
 doc_comment_code_block_width = 100  # 文档代码块最大宽度
 comment_width = 80                  # 注释行最大宽度
-normalize_comments = false          # 标准化注释格式（删除多余空格）
+normalize_comments = true           # 标准化注释格式（删除多余空格）
 normalize_doc_attributes = false    # 标准化文档属性格式
 
 # 字符串与字面量 
-format_strings = false              # 自动换行字符串字面量
+format_strings = true              # 自动换行字符串字面量
 hex_literal_case = "Upper"       # 十六进制大小写（Preserve/Upper/Lower）
 
 # 宏处理 
-format_macro_matchers = false       # 格式化宏匹配器
+format_macro_matchers = true       # 格式化宏匹配器
 format_macro_bodies = true          # 格式化宏体
 skip_macro_invocations = []         # 跳过的宏列表（如["try!"]）
 
 # 代码块风格 
 empty_item_single_line = true       # 空结构体/枚举保持单行
 struct_lit_single_line = true       # 单字段结构体字面量保持单行
-fn_single_line = false              # 单行函数不强制压缩
-where_single_line = false           # where子句不强制单行
+fn_single_line = true              # 单行函数不强制压缩
+where_single_line = true           # where子句不强制单行
 
 # 导入管理 
 imports_indent = "Block"            # 导入缩进风格（Block/Visual）
@@ -93,7 +93,7 @@ trailing_comma = "Vertical"         # 多行结构保留逗号（Vertical/Never�
 match_block_trailing_comma = false  # match块不保留结尾逗号
 
 # 空行管理 
-blank_lines_upper_bound = 1         # 最大连续空行数
+blank_lines_upper_bound = 2         # 最大连续空行数
 blank_lines_lower_bound = 0         # 最小连续空行数
 
 # 版本设置 

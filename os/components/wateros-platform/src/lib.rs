@@ -1,5 +1,4 @@
 #![no_std]
-
 #[cfg(feature = "api-v0")]
 pub mod boot {
     pub use api_v0::boot::{PlatformBootArgs, PlatformBootContext};

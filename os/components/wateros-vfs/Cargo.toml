@@ -11,7 +11,7 @@
 
 [features]
     api-v0 = [ "impl-dummy/api-v0" ]
-    default = []
+    default = [  ]
     impl-dummy = [  ]
 
 [profile.dev]
