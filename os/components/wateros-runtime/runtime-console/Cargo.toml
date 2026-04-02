@@ -4,4 +4,11 @@
     edition = "2024"
 
 [dependencies]
-    firmware = { path = "../../wateros-platform/platform-firmware/", package = "wateros-platform-firmware" }
+    api-v0 = { path = "./console-api/api-v0/", package = "wateros-runtime-console-api-v0" }
+    impl-dummy = { path = "./console-impl/impl-dummy/", package = "wateros-runtime-console-impl-dummy" }
+    impl-firmware-opensbi = { path = "./console-impl/impl-firmware-opensbi/", package = "wateros-runtime-console-impl-firmware-opensbi" }
+[features]
+    api-v0 = [ "impl-dummy/api-v0", "impl-firmware-opensbi/api-v0" ]
+    default = [ "api-v0", "impl-firmware-opensbi" ]
+    impl-dummy = [  ]
+    impl-firmware-opensbi = [  ]

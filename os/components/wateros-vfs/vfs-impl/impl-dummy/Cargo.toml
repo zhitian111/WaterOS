@@ -9,9 +9,3 @@
 [features]
     api-v0 = [  ]
     default = [  ]
-
-[profile.dev]
-    panic = "abort"
-
-[profile.release]
-    panic = "abort"

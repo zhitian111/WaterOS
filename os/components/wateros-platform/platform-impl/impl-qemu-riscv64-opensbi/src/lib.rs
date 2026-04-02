@@ -42,3 +42,23 @@ pub mod boot {
     }
     impl PlatformBootContext<QEMURiscv64OpenSBIBootArgs> for QEMURiscv64OpenSBIBootContext {}
 }
+
+pub mod time {
+    use api_v0::time::{PlatformTime, PlatformTimeError, PlatformTimeResult};
+
+    pub struct QEMURiscv64OpenSBITime;
+
+    impl PlatformTime for QEMURiscv64OpenSBITime {
+        #[inline]
+        fn time_frequency_hz() -> PlatformTimeResult<u64> {
+            // QEMU virt + OpenSBI 常见 timebase 频率（Hz）。
+            // 后续可替换为从 DTB 动态读取。
+            const QEMU_TIMEBASE_HZ : u64 = 1250_0000;
+            if QEMU_TIMEBASE_HZ == 0 {
+                Err(PlatformTimeError::InvalidFrequency)
+            } else {
+                Ok(QEMU_TIMEBASE_HZ)
+            }
+        }
+    }
+}

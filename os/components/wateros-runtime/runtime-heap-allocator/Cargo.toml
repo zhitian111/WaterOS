@@ -1,0 +1,11 @@
+[package]
+name = "wateros-runtime-heap-allocator"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+buddy_system_allocator = {version = "0.11.0"}
+config = {path = "../../wateros-base/base-config/", package = "wateros-base-config"}
+[features]
+    default = [ "impl-buddy-allocator" ]
+impl-buddy-allocator = []

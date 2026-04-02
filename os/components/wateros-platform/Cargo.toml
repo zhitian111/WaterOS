@@ -23,6 +23,7 @@
     impl-qemu-riscv64-opensbi = { path = "./platform-impl/impl-qemu-riscv64-opensbi/", package = "wateros-platform-impl-qemu-riscv64-opensbi", default-features = true }
     arch = { path = "./platform-arch/", package = "wateros-platform-arch", default-features = true }
     firmware = { path = "./platform-firmware/", package = "wateros-platform-firmware", default-features = true }
+    logging = {path = "../wateros-runtime/runtime-logging/", package = "wateros-runtime-logging", default-features = true}
 
 [features]
     api-v0 = [

@@ -1,26 +1,5 @@
 #![no_std]
-#[inline]
-#[allow(unused)]
-pub fn firmware_write_a_byte(byte : u8) { firmware::console::console_write_a_byte(byte).unwrap(); }
-#[inline]
-#[allow(unused)]
-pub fn firmware_write_a_buffer(bytes : &[u8]) {
-    firmware::console::console_write_a_buffer(&bytes).unwrap();
-}
-use core::fmt::{self, Write};
-// Console Trait 包括向控制台输出和从控制台读入的特性
-pub trait Console: fmt::Write + Default {}
-use firmware::console::FirmwareConsoleImpl;
-#[derive(Default)]
-pub struct FirmwareConsoleHandle;
-impl Write for FirmwareConsoleHandle {
-    #[inline]
-    fn write_str(&mut self, s : &str) -> fmt::Result {
-        firmware_write_a_buffer(s.as_bytes());
-        Ok(())
-    }
-}
-impl Console for FirmwareConsoleHandle {}
+use core::fmt;
 pub enum AnsiColor {
     Red,
     Green,
@@ -46,6 +25,8 @@ impl fmt::Display for AnsiColor {
         }
     }
 }
+
+use api_v0::Console;
 #[inline]
 pub fn print<C : Console>(args : fmt::Arguments) {
     let mut c = C::default();
@@ -58,16 +39,22 @@ pub fn prints<C : Console>(str : &str) {
     c.write_str(str)
      .unwrap();
 }
+
+#[cfg(feature = "impl-dummy")]
+pub use impl_dummy::DummyConsoleHandle as ConsoleHandle;
+#[cfg(feature = "impl-firmware-opensbi")]
+pub use impl_firmware_opensbi::FirmwareConsoleHandle as ConsoleHandle;
+
 #[macro_export]
 macro_rules! print {
     ($fmt: literal $(, $($arg: tt)+)?) => {
-        $crate::print::<$crate::FirmwareConsoleHandle>(format_args!($fmt $(,$($arg)+)?));
+        $crate::print::<$crate::ConsoleHandle>(format_args!($fmt $(,$($arg)+)?));
     }
 }
 #[macro_export]
 macro_rules! println {
     ($fmt: literal $(, $($arg: tt)+)?) => {
-        $crate::print::<$crate::FirmwareConsoleHandle>(format_args!(concat!($fmt, "\n") $(,$($arg)+)?));
+        $crate::print::<$crate::ConsoleHandle>(format_args!(concat!($fmt, "\n") $(,$($arg)+)?));
     }
 }
 pub fn show_logo() {

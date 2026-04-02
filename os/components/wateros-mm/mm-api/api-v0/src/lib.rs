@@ -1,11 +1,23 @@
 #![no_std]
-pub fn add(left : u64, right : u64) -> u64 { left + right }
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
+
+pub mod addr;
+pub mod error;
+pub mod perm;
+pub mod flags;
+
+pub mod frame_allocator;
+pub mod address_space;
+pub mod user_access;
+
+pub mod brk;
+pub mod mmap;
+
+pub use frame_allocator::PhysicalFrameAllocator;
+
+pub fn test() {
+    log::trace!("[mm-api] test begin");
+    addr::test();
+    perm::test();
+    flags::test();
+    log::trace!("[mm-api] test end");
 }

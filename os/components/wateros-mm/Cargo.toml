@@ -1,5 +1,5 @@
 [workspace]
-    members = [ "./mm-api/api-v0/", "./mm-impl/impl-dummy/" ]
+    members = [ "./mm-api/api-v0/", "./mm-impl/impl-dummy/" , "mm-frame-alloctor", "mm-impl/impl-sv39"]
 [package]
     name = "wateros-mm"
     version = "0.1.0"
@@ -8,8 +8,13 @@
 [dependencies]
     api-v0 = { path = "./mm-api/api-v0/", package = "wateros-mm-api-v0", default-features = true }
     impl-dummy = { path = "./mm-impl/impl-dummy/", package = "wateros-mm-impl-dummy", default-features = true }
+    impl-sv39 = { path = "./mm-impl/impl-sv39/", package = "wateros-mm-impl-sv39", default-features = true }
+    log = { version = "0.4.29" }
+    frame-alloctor = { path = "./mm-frame-alloctor", package = "wateros-mm-frame-alloctor", default-features = true }
+    wateros-base = { path = "../wateros-base", package = "wateros-base", default-features = true }
 
 [features]
-    api-v0 = [ "impl-dummy/api-v0" ]
-    default = [ "api-v0", "impl-dummy" ]
+    api-v0 = [ "impl-dummy/api-v0", "impl-sv39/api-v0" ]
+    default = [ "api-v0", "impl-sv39" ]
     impl-dummy = [  ]
+    impl-sv39 = [  ]

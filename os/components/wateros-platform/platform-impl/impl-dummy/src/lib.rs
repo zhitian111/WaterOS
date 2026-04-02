@@ -19,3 +19,16 @@ pub mod boot {
     }
     impl PlatformBootContext<PlatformDummyBootArgs> for PlatformDummyBootContext {}
 }
+
+pub mod time {
+    use api_v0::time::{PlatformTime, PlatformTimeError, PlatformTimeResult};
+
+    pub struct PlatformDummyTime;
+
+    impl PlatformTime for PlatformDummyTime {
+        #[inline]
+        fn time_frequency_hz() -> PlatformTimeResult<u64> {
+            Err(PlatformTimeError::Unsupported)
+        }
+    }
+}

@@ -1,3 +1,57 @@
 #![no_std]
 #[unsafe(no_mangle)]
-pub fn arch_boot() {}
+pub fn arch_boot() {
+    #[cfg(feature = "impl-riscv64")]
+    #[cfg(feature = "api-v0")]
+    impl_riscv64::init_trap();
+}
+
+#[cfg(feature = "api-v0")]
+pub mod time {
+    pub use api_v0::time::{
+        ArchTime, ArchTimeError, ArchTimeFrequency, ArchTimeResult, ArchTimeTick,
+    };
+
+    #[cfg(feature = "impl-riscv64")]
+    pub use impl_riscv64::time::Riscv64ArchTime as ArchTimeImpl;
+
+    #[inline]
+    pub fn read_time_tick() -> ArchTimeResult<ArchTimeTick> { ArchTimeImpl::read_time_tick() }
+
+    #[inline]
+    pub fn read_time_frequency() -> ArchTimeResult<ArchTimeFrequency> {
+        ArchTimeImpl::read_time_frequency()
+    }
+}
+
+#[cfg(feature = "api-v0")]
+pub mod interrupt {
+    pub use api_v0::interrupt::ArchTimerInterruptControl;
+    pub use api_v0::time::ArchTimeResult;
+
+    #[cfg(feature = "impl-riscv64")]
+    pub use impl_riscv64::interrupt::Riscv64ArchInterrupt as ArchInterruptImpl;
+
+    #[inline]
+    pub fn enable_timer_interrupt() -> ArchTimeResult<()> {
+        // 早期阶段为了尽快验证中断链路，开启 STIE 后同时开启全局 SIE。
+        // 后续如果你想严格区分职责，再把这里改回“只开 timer 源”。
+        ArchInterruptImpl::enable_timer_interrupt()
+            .and_then(|_| ArchInterruptImpl::enable_global_interrupt())
+    }
+
+    #[inline]
+    pub fn disable_timer_interrupt() -> ArchTimeResult<()> {
+        ArchInterruptImpl::disable_timer_interrupt()
+    }
+
+    #[inline]
+    pub fn enable_global_interrupt() -> ArchTimeResult<()> {
+        ArchInterruptImpl::enable_global_interrupt()
+    }
+
+    #[inline]
+    pub fn disable_global_interrupt() -> ArchTimeResult<()> {
+        ArchInterruptImpl::disable_global_interrupt()
+    }
+}

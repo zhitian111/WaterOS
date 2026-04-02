@@ -6,6 +6,7 @@
 [dependencies]
     api-v0 = { path = "./block-api/api-v0/", package = "wateros-driver-block-api-v0", default-features = true }
     impl-dummy = { path = "./block-impl/impl-dummy/", package = "wateros-driver-block-impl-dummy", default-features = true }
+    log = { version = "0.4.29" }
 
 
 [features]
@@ -13,8 +14,3 @@
     default = [ "api-v0", "impl-dummy" ]
     impl-dummy = [  ]
 
-[profile.dev]
-    panic = "abort"
-
-[profile.release]
-    panic = "abort"

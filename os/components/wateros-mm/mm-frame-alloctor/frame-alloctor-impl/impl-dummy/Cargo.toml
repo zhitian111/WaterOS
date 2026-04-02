@@ -1,0 +1,10 @@
+[package]
+name = "wateros-mm-frame-alloctor-impl-dummy"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+
+[features]
+default = ["api-v0"]
+api-v0 = []

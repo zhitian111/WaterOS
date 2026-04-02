@@ -4,3 +4,5 @@
     edition = "2024"
 
 [dependencies]
+driver-api = { path = "../../../driver-api/api-v0", package = "wateros-driver-api-v0", default-features = true }
+log = { version = "0.4.29" }

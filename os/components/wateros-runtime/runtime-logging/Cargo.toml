@@ -5,3 +5,11 @@
 
 [dependencies]
     log = { version = "0.4.29" }
+    console = { path = "../runtime-console/", package = "wateros-runtime-console"}
+[features]
+    default = [ "impl-debug", "impl-trace" ]
+    impl-trace = []
+    impl-debug = []
+    impl-info = []
+    impl-warn = []
+    impl-error = []

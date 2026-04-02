@@ -1,5 +1,12 @@
 [workspace]
-    members = [ "./runtime-logging/", "./runtime-panic/", "runtime-console" ]
+    members = [
+        "./runtime-console/console-api/api-v0/",
+        "./runtime-console/console-impl/impl-dummy/",
+        "./runtime-console/console-impl/impl-firmware-opensbi/",
+        "./runtime-logging/",
+        "./runtime-panic/",
+        "runtime-console", "runtime-heap-allocator",
+    ]
 [package]
     name = "wateros-runtime"
     version = "0.1.0"
@@ -9,3 +16,4 @@
     panic = { path = "./runtime-panic/", package = "wateros-runtime-panic", default-features = true }
     console = { path = "./runtime-console/", package = "wateros-runtime-console", default-features = true }
     logging = { path = "./runtime-logging/", package = "wateros-runtime-logging", default-features = true }
+    heap-allocator = {path= "./runtime-heap-allocator/",package = "wateros-runtime-heap-allocator", default-features = true}

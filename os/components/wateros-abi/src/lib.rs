@@ -1,11 +1,19 @@
 #![no_std]
-pub fn add(left : u64, right : u64) -> u64 { left + right }
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
+#[cfg(feature = "api-v0")]
+pub mod user_ret {
+    pub use api_v0::user_ret::*;
+}
+#[cfg(feature = "api-v0")]
+pub mod errno {
+    pub use api_v0::errno::*;
+}
+#[cfg(feature = "api-v0")]
+pub mod syscall_number {
+    pub use api_v0::syscall_number::SyscallNumber;
+    #[cfg(feature = "impl-linux-riscv64")]
+    pub use impl_linux_riscv64::LinuxRiscv64 as SyscallNumberTable;
+}
+#[cfg(feature = "api-v0")]
+pub mod syscall_args {
+    pub use api_v0::syscall_args::*;
 }

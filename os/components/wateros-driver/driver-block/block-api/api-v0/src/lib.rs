@@ -1,11 +1,16 @@
 #![no_std]
-pub fn add(left : u64, right : u64) -> u64 { left + right }
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
+
+pub use driver_api::{DriverError, DriverResult};
+
+pub const BLOCK_SIZE: usize = 512;
+
+pub trait BlockDevice {
+    fn read_blocks(&mut self, start_block: usize, buf: &mut [u8]) -> DriverResult<()>;
+    fn write_blocks(&mut self, start_block: usize, buf: &[u8]) -> DriverResult<()>;
+}
+
+pub fn test() {
+    log::trace!("[driver-block-api] test begin");
+    assert_eq!(BLOCK_SIZE, 512);
+    log::trace!("[driver-block-api] test end");
 }

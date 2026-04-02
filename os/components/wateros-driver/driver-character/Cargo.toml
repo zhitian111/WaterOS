@@ -11,9 +11,3 @@
     api-v0 = [ "impl-dummy/api-v0" ]
     default = [ "api-v0", "impl-dummy" ]
     impl-dummy = [  ]
-
-[profile.dev]
-    panic = "abort"
-
-[profile.release]
-    panic = "abort"

@@ -1,9 +1,11 @@
 #!/bin/bash
 
 # 引入控制台输出函数
-source script/source/console.bash
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/source/console.bash"
 
-if [ ! -d .git ]; then
+if [ git status > /dev/null 2> /dev/null ]; then
     error "当前目录不是 Git 仓库" 1
 fi
 

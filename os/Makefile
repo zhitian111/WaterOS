@@ -5,7 +5,7 @@ STAGE := prototype
 BRANCH=$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
 BUILD_NUM = $(shell git rev-list --count HEAD 2>/dev/null || echo "0")
 
-.PHONY: clean check all all_start_info kernel configure fmt
+.PHONY: clean check all all_start_info kernel configure fmt apply_features
 .PHONY: rv_check rv_elf_info rv_obj_dump rv_qemu_run rv_qemu_run_with_log rv_qemu_gdb rv_gdb
 .PHONY: rv_user_mode_bin
 COLOR_ANSI_RED := \033[31m
@@ -80,7 +80,7 @@ $(kernel_rv_build_artifact_path)/wateros: $(kernel_rv_dependencies) kernel
 	@cargo build $(kernel_rv_flag)
 	$(call INFO,"构建成功！");
 
-kernel-rv:	version $(kernel_rv_build_artifact_path)/wateros
+kernel-rv:	version apply_features $(kernel_rv_build_artifact_path)/wateros
 	@cp $(kernel_rv_build_artifact_path)/wateros ./kernel-rv
 
 kernel-rv-strip-image: $(kernel_rv_build_artifact_path)/wateros
@@ -163,3 +163,7 @@ fmt:
 	@taplo fmt **/Cargo.toml
 	@rustfmt **/*.rs
 	$(call INFO, "项目文件格式化完成！")
+apply_features: ./config.conf
+	$(call INFO, "开始写入 features...")
+	@bash ./scripts/apply-config-as-default-features.bash
+	$(call INFO, "features 写入完成！")

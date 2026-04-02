@@ -1,0 +1,271 @@
+#![no_std]
+
+use api_v0::addr::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum, PAGE_SIZE};
+use api_v0::address_space::AddressSpaceOps;
+use api_v0::error::{MmError, MmResult};
+use api_v0::perm::PagePerm;
+
+use frame_alloctor::{frame_alloc_result, frame_dealloc_result};
+use wateros_base::addr::BasePPN;
+
+/// Sv39 PTE flags（硬件编码语义）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Sv39PteFlags(u16);
+
+impl Sv39PteFlags {
+    const V: Self = Self(1 << 0);
+    const R: Self = Self(1 << 1);
+    const W: Self = Self(1 << 2);
+    const X: Self = Self(1 << 3);
+    const U: Self = Self(1 << 4);
+    // const G: Self = Self(1 << 5);
+    const A: Self = Self(1 << 6);
+    const D: Self = Self(1 << 7);
+
+    #[inline]
+    const fn empty() -> Self { Self(0) }
+
+    #[inline]
+    const fn bits(self) -> u16 { self.0 }
+
+    #[inline]
+    const fn is_valid(self) -> bool { (self.0 & Self::V.0) != 0 }
+
+    #[inline]
+    const fn is_leaf(self) -> bool { (self.0 & (Self::R.0 | Self::W.0 | Self::X.0)) != 0 }
+
+    #[inline]
+    fn from_perm(perm: PagePerm) -> Self {
+        let mut f = Self::empty();
+        f.0 |= Self::V.0;
+        if perm.readable() { f.0 |= Self::R.0; }
+        if perm.writable() { f.0 |= Self::W.0; }
+        if perm.executable() { f.0 |= Self::X.0; }
+        if perm.user() { f.0 |= Self::U.0; }
+        // early: 直接置 A/D，避免后续访问触发异常（更贴合“先跑通”）
+        f.0 |= Self::A.0 | Self::D.0;
+        f
+    }
+}
+
+/// Sv39 页表项（64-bit）
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+struct Sv39Pte(usize);
+
+impl Sv39Pte {
+    #[inline]
+    const fn zero() -> Self { Self(0) }
+
+    #[inline]
+    fn flags(self) -> Sv39PteFlags { Sv39PteFlags((self.0 & 0x3ff) as u16) }
+
+    #[inline]
+    fn ppn(self) -> PhysPageNum { PhysPageNum((self.0 >> 10) & ((1usize << 44) - 1)) }
+
+    #[inline]
+    fn set(&mut self, ppn: PhysPageNum, flags: Sv39PteFlags) {
+        self.0 = (ppn.0 << 10) | (flags.bits() as usize);
+    }
+
+    #[inline]
+    fn clear(&mut self) { self.0 = 0; }
+}
+
+const SV39_LEVELS: usize = 3;
+const SV39_ENTRIES: usize = 512;
+
+#[inline]
+fn vpn_indexes(vpn: VirtPageNum) -> [usize; 3] {
+    let v = vpn.0;
+    [
+        (v >> 0) & 0x1ff,
+        (v >> 9) & 0x1ff,
+        (v >> 18) & 0x1ff,
+    ]
+}
+
+#[inline]
+unsafe fn table_mut(ppn: PhysPageNum) -> &'static mut [Sv39Pte; SV39_ENTRIES] {
+    // early stage：假设物理内存可直接线性访问（裸机/恒等映射环境）。
+    let pa = ppn.0 * PAGE_SIZE;
+    unsafe { &mut *(pa as *mut [Sv39Pte; SV39_ENTRIES]) }
+}
+
+#[inline]
+fn alloc_table_frame_zeroed() -> MmResult<PhysPageNum> {
+    let ppn = frame_alloc_result().map_err(MmError::from)?;
+    unsafe {
+        let tbl = table_mut(ppn);
+        for e in tbl.iter_mut() {
+            *e = Sv39Pte::zero();
+        }
+    }
+    Ok(ppn)
+}
+
+/// Sv39 地址空间（仅页表骨架）。
+pub struct Sv39AddressSpace {
+    root: PhysPageNum,
+}
+
+impl Sv39AddressSpace {
+    pub fn new() -> MmResult<Self> {
+        let root = alloc_table_frame_zeroed()?;
+        Ok(Self { root })
+    }
+
+    #[inline]
+    fn walk_create(&mut self, vpn: VirtPageNum) -> MmResult<(&'static mut Sv39Pte, usize)> {
+        let idx = vpn_indexes(vpn);
+        let mut ppn = self.root;
+
+        for level in (0..SV39_LEVELS).rev() {
+            let table = unsafe { table_mut(ppn) };
+            let pte = &mut table[idx[level]];
+            let flags = pte.flags();
+
+            if level == 0 {
+                return Ok((pte, level));
+            }
+
+            if !flags.is_valid() {
+                let child = alloc_table_frame_zeroed()?;
+                pte.set(child, Sv39PteFlags::V);
+            } else if flags.is_leaf() {
+                // 遇到叶子就无法继续下钻
+                return Err(MmError::AlreadyMapped);
+            }
+
+            ppn = pte.ppn();
+        }
+
+        Err(MmError::InvalidAddress)
+    }
+
+    #[inline]
+    fn walk_find(&self, vpn: VirtPageNum) -> MmResult<Option<(&'static mut Sv39Pte, usize)>> {
+        let idx = vpn_indexes(vpn);
+        let mut ppn = self.root;
+
+        for level in (0..SV39_LEVELS).rev() {
+            let table = unsafe { table_mut(ppn) };
+            let pte = &mut table[idx[level]];
+            let flags = pte.flags();
+
+            if !flags.is_valid() {
+                return Ok(None);
+            }
+            if level == 0 || flags.is_leaf() {
+                return Ok(Some((pte, level)));
+            }
+            ppn = pte.ppn();
+        }
+        Ok(None)
+    }
+}
+
+impl AddressSpaceOps for Sv39AddressSpace {
+    fn satp_value(&self) -> usize {
+        // satp: MODE=8 (Sv39), ASID=0, PPN=root
+        (8usize << 60) | (self.root.0 & ((1usize << 44) - 1))
+    }
+
+    fn map_page_to_ppn(
+        &mut self,
+        vpn: VirtPageNum,
+        ppn: PhysPageNum,
+        perm: PagePerm,
+    ) -> MmResult<()> {
+        let (pte, _level) = self.walk_create(vpn)?;
+        if pte.flags().is_valid() {
+            return Err(MmError::AlreadyMapped);
+        }
+        pte.set(ppn, Sv39PteFlags::from_perm(perm));
+        Ok(())
+    }
+
+    fn unmap_page_to_ppn(&mut self, vpn: VirtPageNum) -> MmResult<Option<PhysPageNum>> {
+        let Some((pte, _level)) = self.walk_find(vpn)? else {
+            return Ok(None);
+        };
+        if !pte.flags().is_leaf() {
+            // 不是叶子则不认为是有效页映射
+            return Ok(None);
+        }
+        let old = pte.ppn();
+        pte.clear();
+        Ok(Some(old))
+    }
+
+    fn protect_page(&mut self, vpn: VirtPageNum, perm: PagePerm) -> MmResult<()> {
+        let Some((pte, _level)) = self.walk_find(vpn)? else {
+            return Err(MmError::NotMapped);
+        };
+        if !pte.flags().is_leaf() {
+            return Err(MmError::NotMapped);
+        }
+        let ppn = pte.ppn();
+        pte.set(ppn, Sv39PteFlags::from_perm(perm));
+        Ok(())
+    }
+
+    fn translate_addr(&self, va: VirtAddr) -> MmResult<Option<PhysAddr>> {
+        let vpn = va.floor_page();
+        let off = va.page_offset();
+        let Some((pte, level)) = self.walk_find(vpn)? else {
+            return Ok(None);
+        };
+        if !pte.flags().is_leaf() {
+            return Ok(None);
+        }
+
+        // 当前实现只做 4KiB 页（level==0 叶子）；大页可后续再加
+        if level != 0 {
+            return Err(MmError::Unsupported);
+        }
+        Ok(Some(PhysAddr(pte.ppn().0 * PAGE_SIZE + off)))
+    }
+}
+
+// 早期阶段：允许手动回收根表（不做递归回收中间表）
+impl Drop for Sv39AddressSpace {
+    fn drop(&mut self) {
+        let _ = frame_dealloc_result(self.root);
+    }
+}
+
+pub fn test_with_range(start_ppn: BasePPN, end_ppn: BasePPN) {
+    log::trace!("[mm-impl::sv39] test begin");
+    frame_alloctor::test_with_range(start_ppn, end_ppn);
+
+    let mut aspace = Sv39AddressSpace::new().expect("Sv39AddressSpace::new should succeed");
+
+    // 取一页测试映射
+    let ppn = frame_alloc_result().expect("alloc one frame for map test");
+    let vpn = VirtPageNum(0x200);
+    let perm = PagePerm::R | PagePerm::W | PagePerm::U;
+    aspace.map_page_to_ppn(vpn, ppn, perm).expect("map should succeed");
+
+    let va = VirtAddr(vpn.0 * PAGE_SIZE + 0x123);
+    let pa = aspace.translate_addr(va).expect("translate should not error").expect("should map");
+    assert_eq!(pa.0, ppn.0 * PAGE_SIZE + 0x123);
+
+    // 修改权限不应影响翻译结果
+    aspace
+        .protect_page(vpn, PagePerm::R | PagePerm::U)
+        .expect("protect should succeed");
+    let pa2 = aspace.translate_addr(va).unwrap().unwrap();
+    assert_eq!(pa2.0, pa.0);
+
+    // 解除映射应返回 ppn
+    let old = aspace.unmap_page_to_ppn(vpn).expect("unmap should succeed");
+    assert_eq!(old, Some(ppn));
+    let none = aspace.translate_addr(va).unwrap();
+    assert!(none.is_none());
+
+    // 回收测试页
+    frame_dealloc_result(ppn).expect("dealloc test frame");
+
+    log::trace!("[mm-impl::sv39] test end");
+}
