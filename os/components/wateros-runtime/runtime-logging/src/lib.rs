@@ -5,15 +5,15 @@ mod logger;
 pub fn init() {
     use log::LevelFilter;
     #[cfg(feature = "impl-trace")]
-    logger::init(LevelFilter::Trace);
+    let _ = logger::init(LevelFilter::Trace);
     #[cfg(feature = "impl-debug")]
-    logger::init(LevelFilter::Debug);
+    let _ = logger::init(LevelFilter::Debug);
     #[cfg(feature = "impl-info")]
-    logger::init(LevelFilter::Info);
+    let _ = logger::init(LevelFilter::Info);
     #[cfg(feature = "impl-warn")]
-    logger::init(LevelFilter::Warn);
+    let _ = logger::init(LevelFilter::Warn);
     #[cfg(feature = "impl-error")]
-    logger::init(LevelFilter::Error);
+    let _ = logger::init(LevelFilter::Error);
 }
 
 pub use log::debug;

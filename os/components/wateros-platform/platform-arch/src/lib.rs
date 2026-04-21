@@ -34,10 +34,7 @@ pub mod interrupt {
 
     #[inline]
     pub fn enable_timer_interrupt() -> ArchTimeResult<()> {
-        // 早期阶段为了尽快验证中断链路，开启 STIE 后同时开启全局 SIE。
-        // 后续如果你想严格区分职责，再把这里改回“只开 timer 源”。
         ArchInterruptImpl::enable_timer_interrupt()
-            .and_then(|_| ArchInterruptImpl::enable_global_interrupt())
     }
 
     #[inline]

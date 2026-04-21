@@ -21,6 +21,33 @@ mod qemu_riscv64_opensbi {
     use runtime::logging::*;
     global_asm!(include_str!("../components/wateros-platform/platform-impl/\
                               impl-qemu-riscv64-opensbi/src/asm/_start.S"));
+
+    fn busy_delay(rounds: usize) {
+        for _ in 0..rounds {
+            core::hint::spin_loop();
+        }
+    }
+
+    extern "C" fn demo_task_a(_arg: usize) -> ! {
+        let mut tick = 0usize;
+        loop {
+            tick = tick.wrapping_add(1);
+            info!("[task-demo] task A tick {}", tick);
+            busy_delay(400_000);
+            task::yield_now();
+        }
+    }
+
+    extern "C" fn demo_task_b(_arg: usize) -> ! {
+        let mut tick = 0usize;
+        loop {
+            tick = tick.wrapping_add(1);
+            info!("[task-demo] task B tick {}", tick);
+            busy_delay(700_000);
+            task::yield_now();
+        }
+    }
+
     #[unsafe(no_mangle)]
     pub fn kernel_main(boot_arg0 : usize, boot_arg1 : usize) -> ! {
         use platform::boot::{BootArgs, BootContext};
@@ -69,12 +96,19 @@ mod qemu_riscv64_opensbi {
             fs::test();
         }
 
-        platform::interrupt::enable_global_interrupt().unwrap();
+        task::init();
+        let task_a_id = task::spawn_kernel_task(demo_task_a, 0);
+        let task_b_id = task::spawn_kernel_task(demo_task_b, 0);
+        info!(
+            "[task-demo] spawned kernel tasks: A={}, B={}",
+            task_a_id,
+            task_b_id
+        );
+
         platform::interrupt::enable_timer_interrupt().unwrap();
         platform::timer::set_timer_after_ms(100).unwrap();
-        loop {}
-
-
-        unreachable!("unreachable code in platform_main")
+        platform::interrupt::enable_global_interrupt().unwrap();
+        info!("[task-demo] starting first task");
+        task::run_first_task()
     }
 }

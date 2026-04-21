@@ -1,10 +1,11 @@
-use abi::errno::ErrNo;
-use abi::syscall_args::{SyscallArgs, SyscallPacket};
+use abi::syscall_args::SyscallArgs;
 use abi::syscall_number::SyscallNumber;
 use abi::user_ret::UserRet;
-use api_v0::trap::{Exception, Interrupt, TrapCOntextWrite, TrapCause, TrapContextRead};
-
+use api_v0::time::ArchTime;
+use api_v0::trap::{Interrupt, TrapCOntextWrite, TrapCause, TrapContextRead};
 use core::arch::asm;
+use core::sync::atomic::{AtomicUsize, Ordering};
+use firmware::timer::FirmwareTimerDeadline;
 
 /// 该结构的字段顺序/大小必须与 `asm/trap.asm` 的偏移严格一致（方案A）。
 #[repr(C)]
@@ -31,14 +32,12 @@ impl TrapContext {
     }
 }
 
-/// 未来你会在这里接入 abi 内的 syscall 处理函数。
-/// 现在先返回 ENOSYS，确保接口链条能跑通（你接入后再删除这个 stub）。
-#[inline(never)]
-fn abi_syscall_entry(_packet : SyscallPacket) -> UserRet { UserRet::from_error(ErrNo::ENOSYS) }
-
 unsafe extern "C" {
     fn __alltraps();
 }
+
+const TIMER_SLICE_TICKS: u64 = 1_250_000;
+static TIMER_TICK_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 /// 初始化 trap 入口：把 `stvec` 指向 `__alltraps`。
 ///
@@ -52,44 +51,35 @@ pub fn init_trap() {
 }
 
 /// 方案A：入口汇编只保存上下文到栈上，然后跳转到该 Rust 入口。
-/// 当前阶段只用于可观测测试；处理完不期望返回。
+/// 第一阶段在内核态任务之间切换后，最终回到 trap 汇编完成恢复与 `sret`。
 #[unsafe(no_mangle)]
-pub extern "C" fn trap_entry_rust(cx_ptr : *mut TrapContext) -> ! {
+pub extern "C" fn trap_entry_rust(cx_ptr : *mut TrapContext) {
     let cx = unsafe { &mut *cx_ptr };
 
-    // 为了避免中断嵌套把栈/上下文覆盖，需要先关掉 timer 中断与全局中断。
-    unsafe {
-        use riscv::register::{sie, sstatus};
-        sie::clear_stimer();
-        sstatus::clear_sie();
-    }
-
     let trap_cause = TrapCause::from(cx.scause);
-    logging::debug!("[trap] trap_cause : {:?}", trap_cause);
     match trap_cause {
         TrapCause::Interrupt(Interrupt::SupervisiorTimer) => {
-            logging::debug!("[trap] timer interrupt: scause={:#x?} sepc={:#x?}",
-                            cx.scause,
-                            cx.sepc);
-        }
-        TrapCause::Exception(Exception::UserEnvCall) => {
-            // syscall 入口（目前仍用 stub，后续你会接入 abi 跳转）
-            let packet = cx.syscall_context();
-            let ret = abi_syscall_entry(packet);
-            cx.set_syscall_ret(ret);
-            cx.add_user_pc(4);
-            logging::debug!("[trap] ecall (stub): scause={:#x?}",
-                            cx.scause);
+            let now = super::time::Riscv64ArchTime::read_time_tick()
+                .expect("read time tick during trap")
+                .0;
+            let deadline = now.saturating_add(TIMER_SLICE_TICKS);
+            if let Err(err) = firmware::timer::set_timer(FirmwareTimerDeadline(deadline)) {
+                panic!("failed to re-arm timer in trap: {:?}", err);
+            }
+            let tick = TIMER_TICK_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+            if tick % 8 == 0 {
+                logging::trace!("[trap] timer tick {}", tick);
+            }
+            task::schedule_tick();
         }
         _ => {
-            logging::debug!("[trap] other: scause={:#x?} sepc={:#x?}",
-                            cx.scause,
-                            cx.sepc);
+            panic!(
+                "unexpected trap: cause={:?}, sepc={:#x}, stval={:#x}",
+                trap_cause,
+                cx.sepc,
+                cx.stval
+            );
         }
-    }
-
-    loop {
-        core::hint::spin_loop();
     }
 }
 

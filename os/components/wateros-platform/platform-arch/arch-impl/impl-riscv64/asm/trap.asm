@@ -68,6 +68,49 @@ __alltraps:
 
     # a0 = cx_ptr
     mv a0, sp
-    # 跳转到 Rust 入口（不期望返回）
-    j trap_entry_rust
+    # 调用 Rust 入口，返回后从当前 sp 上的 TrapContext 恢复现场
+    call trap_entry_rust
 
+    # 恢复控制寄存器
+    ld t0, 32*8(sp)
+    csrw sstatus, t0
+    ld t0, 33*8(sp)
+    csrw sepc, t0
+
+    # 先把原始 sp 暂存到 sscratch，再恢复通用寄存器
+    ld t0, 2*8(sp)
+    csrw sscratch, t0
+
+    ld x1,  1*8(sp)
+    ld x3,  3*8(sp)
+    ld x4,  4*8(sp)
+    ld x5,  5*8(sp)
+    ld x6,  6*8(sp)
+    ld x7,  7*8(sp)
+    ld x8,  8*8(sp)
+    ld x9,  9*8(sp)
+    ld x10, 10*8(sp)
+    ld x11, 11*8(sp)
+    ld x12, 12*8(sp)
+    ld x13, 13*8(sp)
+    ld x14, 14*8(sp)
+    ld x15, 15*8(sp)
+    ld x16, 16*8(sp)
+    ld x17, 17*8(sp)
+    ld x18, 18*8(sp)
+    ld x19, 19*8(sp)
+    ld x20, 20*8(sp)
+    ld x21, 21*8(sp)
+    ld x22, 22*8(sp)
+    ld x23, 23*8(sp)
+    ld x24, 24*8(sp)
+    ld x25, 25*8(sp)
+    ld x26, 26*8(sp)
+    ld x27, 27*8(sp)
+    ld x28, 28*8(sp)
+    ld x29, 29*8(sp)
+    ld x30, 30*8(sp)
+    ld x31, 31*8(sp)
+
+    csrr sp, sscratch
+    sret

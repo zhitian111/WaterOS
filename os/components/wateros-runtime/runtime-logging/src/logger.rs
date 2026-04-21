@@ -1,6 +1,5 @@
 use console::println;
 use core::result::Result;
-use log::Log;
 use log::{info, Level, Metadata, Record, SetLoggerError};
 struct WaterOSLogger;
 static LOGGER : WaterOSLogger = WaterOSLogger;

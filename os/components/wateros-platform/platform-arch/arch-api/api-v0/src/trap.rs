@@ -1,6 +1,6 @@
 use abi::syscall_args::{SyscallArgs, SyscallPacket};
 use abi::syscall_number::SyscallNumber;
-use abi::user_ret::{SyscallResult, UserRet};
+use abi::user_ret::UserRet;
 #[allow(unused)]
 #[derive(Clone, Copy, Debug)]
 pub enum Exception {
