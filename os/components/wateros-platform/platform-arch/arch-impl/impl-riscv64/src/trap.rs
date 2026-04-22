@@ -8,9 +8,9 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use firmware::timer::FirmwareTimerDeadline;
 
 unsafe extern "C" {
-    fn __wateros_record_current_trap_frame(trap_frame_ptr: *const u8);
-    fn __wateros_restore_current_trap_frame(trap_frame_ptr: *mut u8) -> bool;
-    fn __wateros_schedule_tick();
+    fn __wateros_task_runtime_record_current_trap_frame(trap_frame_ptr: *const u8);
+    fn __wateros_task_runtime_restore_current_trap_frame(trap_frame_ptr: *mut u8) -> bool;
+    fn __wateros_task_runtime_schedule_tick();
 }
 
 /// 该结构的字段顺序/大小必须与 `asm/trap.asm` 的偏移严格一致（方案A）。
@@ -63,7 +63,7 @@ pub extern "C" fn trap_entry_rust(cx_ptr : *mut TrapContext) {
     let cx = unsafe { &mut *cx_ptr };
 
     unsafe {
-        __wateros_record_current_trap_frame(cx_ptr.cast::<u8>());
+        __wateros_task_runtime_record_current_trap_frame(cx_ptr.cast::<u8>());
     }
 
     let trap_cause = TrapCause::from(cx.scause);
@@ -81,7 +81,7 @@ pub extern "C" fn trap_entry_rust(cx_ptr : *mut TrapContext) {
                 logging::trace!("[trap] timer tick {}", tick);
             }
             unsafe {
-                __wateros_schedule_tick();
+                __wateros_task_runtime_schedule_tick();
             }
         }
         _ => {
@@ -95,7 +95,7 @@ pub extern "C" fn trap_entry_rust(cx_ptr : *mut TrapContext) {
     }
 
     unsafe {
-        __wateros_restore_current_trap_frame(cx_ptr.cast::<u8>());
+        __wateros_task_runtime_restore_current_trap_frame(cx_ptr.cast::<u8>());
     }
 }
 

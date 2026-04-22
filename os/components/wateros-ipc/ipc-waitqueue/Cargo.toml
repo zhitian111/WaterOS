@@ -4,6 +4,7 @@
     edition = "2024"
 
 [dependencies]
+    wateros-task = { path = "../../wateros-task/", default-features = true }
 
 [profile.dev]
     panic = "abort"

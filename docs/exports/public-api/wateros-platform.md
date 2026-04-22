@@ -4,7 +4,7 @@
 
 聚合层当前导出 `boot`、`arch`、`time`、`timer`、`reset`、`console`、`interrupt` 等能力，并通过 feature 绑定 `impl-qemu-riscv64-opensbi`。这是最典型的 API/impl/聚合范式实现。
 
-其中 `platform-arch` 现在还承担了架构级任务切换上下文抽象 `ArchTaskContext` 及当前架构具体实现的组织工作，用于表达“当前 CPU 架构下任务切换最小需要保存的寄存器集合”。`TaskContext` 已不再属于 `wateros-task` 公共 API，而是作为机制层实现细节由 `task-impl` / `task-scheduler` 消费。
+其中 `platform-arch` 现在还承担了架构级任务切换上下文抽象 `ArchTaskContext` 及当前架构具体实现的组织工作，用于表达“当前 CPU 架构下任务切换最小需要保存的寄存器集合”。Stage3A 之后，arch 侧的 `goto_task_entry(...)` 语义已进一步收敛为“向任务 runtime 传递 opaque bootstrap 指针”，而不再把 task 启动协议对象暴露到公共 API。`TaskContext` 也继续只作为 `task-impl` / `task-scheduler` 的机制层细节被消费。
 
 ## 事实来源
 
