@@ -6,4 +6,12 @@ pub trait ArchTaskContext: Clone + Copy + core::fmt::Debug {
     fn zero_init() -> Self;
 
     fn goto_entry(entry_stub: usize, kstack_top: usize) -> Self;
+
+    /// Build the initial context for a task that will first enter an
+    /// arch-specific trampoline and then transfer control to a task entry.
+    ///
+    /// The concrete arch impl decides how a task-start descriptor pointer is
+    /// encoded into the saved context, so task code does not need to write
+    /// registers directly.
+    fn goto_task_entry(entry_stub: usize, kstack_top: usize, task_start_ptr: usize) -> Self;
 }

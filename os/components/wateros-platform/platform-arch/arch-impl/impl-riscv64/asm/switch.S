@@ -26,8 +26,11 @@ __switch:
     ld sp, 8(a1)
     ret
 
-    .globl __task_entry
-__task_entry:
+    .globl __arch_task_entry
+__arch_task_entry:
     mv a0, s0
-    mv a1, s1
-    tail __wateros_task_entry
+    tail __wateros_arch_task_entry_trampoline
+
+    .globl __arch_idle_task_entry
+__arch_idle_task_entry:
+    tail __wateros_arch_idle_task_entry_trampoline

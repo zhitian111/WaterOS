@@ -2,6 +2,3 @@
     name = "wateros-task-api-v0"
     version = "0.1.0"
     edition = "2024"
-
-[dependencies]
-    arch = { path = "../../../wateros-platform/platform-arch/", package = "wateros-platform-arch", default-features = true }

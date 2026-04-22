@@ -8,6 +8,8 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use firmware::timer::FirmwareTimerDeadline;
 
 unsafe extern "C" {
+    fn __wateros_record_current_trap_frame(trap_frame_ptr: *const u8);
+    fn __wateros_restore_current_trap_frame(trap_frame_ptr: *mut u8) -> bool;
     fn __wateros_schedule_tick();
 }
 
@@ -60,6 +62,10 @@ pub fn init_trap() {
 pub extern "C" fn trap_entry_rust(cx_ptr : *mut TrapContext) {
     let cx = unsafe { &mut *cx_ptr };
 
+    unsafe {
+        __wateros_record_current_trap_frame(cx_ptr.cast::<u8>());
+    }
+
     let trap_cause = TrapCause::from(cx.scause);
     match trap_cause {
         TrapCause::Interrupt(Interrupt::SupervisiorTimer) => {
@@ -86,6 +92,10 @@ pub extern "C" fn trap_entry_rust(cx_ptr : *mut TrapContext) {
                 cx.stval
             );
         }
+    }
+
+    unsafe {
+        __wateros_restore_current_trap_frame(cx_ptr.cast::<u8>());
     }
 }
 
