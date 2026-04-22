@@ -109,8 +109,13 @@ pub trait TrapContextRead {
     fn trap_cause(&self) -> TrapCause;
     fn fault_addr(&self) -> usize;
     fn user_pc(&self) -> usize;
+    fn user_sp(&self) -> usize;
+    fn returns_to_user(&self) -> bool;
     fn syscall_args(&self) -> SyscallArgs;
     fn syscall_nr(&self) -> SyscallNumber;
+    #[inline]
+    #[allow(unused)]
+    fn returns_to_kernel(&self) -> bool { !self.returns_to_user() }
     #[inline]
     #[allow(unused)]
     fn syscall_context(&self) -> SyscallPacket {
@@ -123,6 +128,16 @@ pub trait TrapCOntextWrite {
     fn set_syscall_ret(&mut self, ret : UserRet);
     fn set_user_pc(&mut self, pc : usize);
     fn add_user_pc(&mut self, bytes : usize);
+    fn set_user_sp(&mut self, sp : usize);
+    fn set_return_to_user(&mut self);
+    fn set_return_to_kernel(&mut self);
+    #[inline]
+    #[allow(unused)]
+    fn prepare_user_return(&mut self, entry_pc : usize, user_sp : usize) {
+        self.set_user_pc(entry_pc);
+        self.set_user_sp(user_sp);
+        self.set_return_to_user();
+    }
 }
 
 #[allow(unused)]

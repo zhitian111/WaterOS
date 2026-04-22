@@ -71,6 +71,8 @@ pub trait Scheduler {
     fn current_task_snapshot(&self) -> Option<TaskSnapshot>;
     /// 记录当前任务最近一次 trap 的保存现场。
     fn record_current_trap_frame(&mut self, trap_frame: TaskTrapFrame);
+    /// 将当前 trap 现场装载到当前任务对象，并返回权威 trap frame 指针。
+    fn begin_current_trap_frame_access(&mut self, trap_frame: TaskTrapFrame) -> Option<*mut TaskTrapFrame>;
     /// 将当前任务保存的 trap 现场恢复到给定缓冲区。
     fn restore_current_trap_frame(&self, trap_frame: &mut TaskTrapFrame) -> bool;
 }

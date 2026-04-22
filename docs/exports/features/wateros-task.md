@@ -17,6 +17,7 @@
 - 退出任务现在会保留为可回收 zombie，并在退出时自动唤醒等待其退出的 waiter
 - task 根 crate 已收紧为 facade，trap/tick/task-entry hook 已迁入内部 runtime
 - trap 路径已开始把完整 trap frame 快照复制进当前任务对象，并在返回前回写到 trap 栈帧
+- trap 读写路径已显式区分“是否返回用户态”的语义，`TaskTrapFrame` 可直接表达 `user_pc/user_sp/syscall_ret/user return`
 - `current_task_snapshot` 可提供不含任务切换上下文、但包含最近一次 trap frame 快照的轻量任务状态快照与统计信息
 
 ## 后续关注点
@@ -24,5 +25,5 @@
 - 继续把当前“复制 + 回写”模式推进为完整 trap frame 归属与恢复模型
 - 继续把当前 wait handle 模型推进为更完整的通用阻塞对象 / block object 层
 - 继续补更明确的 task handle / generation 语义，以及更贴近 `waitpid` 的上层回收关系
-- 为用户态任务、syscall 返回路径和更复杂的 waitqueue 使用场景预留更稳定的接入面
+- 继续把“可表达 user return”推进成真正的用户任务创建与首次进入路径
 - 持续补齐注释与公共 API 文档

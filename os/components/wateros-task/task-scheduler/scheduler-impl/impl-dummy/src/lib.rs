@@ -222,6 +222,18 @@ impl TaskRegistry {
         }
     }
 
+    fn begin_current_trap_frame_access(
+        &mut self,
+        trap_frame: TaskTrapFrame,
+    ) -> Option<*mut TaskTrapFrame> {
+        let current_task_id = self.current_task_id?;
+        Some(
+            self.task_table
+                .task_mut(current_task_id)
+                .begin_trap_frame_access(trap_frame),
+        )
+    }
+
     fn restore_current_trap_frame(&self, trap_frame: &mut TaskTrapFrame) -> bool {
         self.current_task_id
             .map(|current_task_id| {
@@ -616,6 +628,13 @@ impl RoundRobinScheduler {
         self.registry.record_current_trap_frame(trap_frame);
     }
 
+    fn begin_current_trap_frame_access(
+        &mut self,
+        trap_frame: TaskTrapFrame,
+    ) -> Option<*mut TaskTrapFrame> {
+        self.registry.begin_current_trap_frame_access(trap_frame)
+    }
+
     fn restore_current_trap_frame(&self, trap_frame: &mut TaskTrapFrame) -> bool {
         self.registry.restore_current_trap_frame(trap_frame)
     }
@@ -840,6 +859,11 @@ pub fn current_task_snapshot() -> Option<TaskSnapshot> {
 pub fn record_current_trap_frame(trap_frame: TaskTrapFrame) {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.record_current_trap_frame(trap_frame));
+}
+
+pub fn begin_current_trap_frame_access(trap_frame: TaskTrapFrame) -> Option<*mut TaskTrapFrame> {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.begin_current_trap_frame_access(trap_frame))
 }
 
 pub fn restore_current_trap_frame(trap_frame: &mut TaskTrapFrame) -> bool {

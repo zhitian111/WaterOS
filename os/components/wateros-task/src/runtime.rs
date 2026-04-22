@@ -8,9 +8,29 @@ pub extern "C" fn __wateros_task_runtime_schedule_tick() {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn __wateros_task_runtime_yield_current() {
+    crate::yield_now();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn __wateros_task_runtime_exit_current(exit_code: isize) -> ! {
+    crate::exit_current(exit_code)
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn __wateros_task_runtime_record_current_trap_frame(trap_frame_ptr: *const u8) {
     let trap_frame = unsafe { *(trap_frame_ptr as *const TaskTrapFrame) };
     scheduler::record_current_trap_frame(trap_frame);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn __wateros_task_runtime_begin_current_trap_frame_access(
+    trap_frame_ptr: *mut u8,
+) -> *mut u8 {
+    let trap_frame = unsafe { *(trap_frame_ptr as *const TaskTrapFrame) };
+    scheduler::begin_current_trap_frame_access(trap_frame)
+        .map(|trap_frame_ptr| trap_frame_ptr.cast::<u8>())
+        .unwrap_or(trap_frame_ptr)
 }
 
 #[unsafe(no_mangle)]

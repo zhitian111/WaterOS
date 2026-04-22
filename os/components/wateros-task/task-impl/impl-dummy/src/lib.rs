@@ -204,6 +204,16 @@ impl TaskControlBlock {
     pub fn record_trap_frame(&mut self, trap_frame: TaskTrapFrame) { self.trap_frame = Some(trap_frame); }
 
     #[inline]
+    /// 将给定 trap 现场装载为任务当前的权威 trap frame，并返回其可写指针。
+    pub fn begin_trap_frame_access(&mut self, trap_frame: TaskTrapFrame) -> *mut TaskTrapFrame {
+        self.trap_frame = Some(trap_frame);
+        self.trap_frame
+            .as_mut()
+            .map(|trap_frame| trap_frame as *mut TaskTrapFrame)
+            .expect("trap frame must exist after begin_trap_frame_access")
+    }
+
+    #[inline]
     /// 清除任务上次等待返回结果。
     pub fn clear_wait_result(&mut self) { self.wait_result = None; }
 

@@ -130,6 +130,12 @@ pub fn record_current_trap_frame(trap_frame: TaskTrapFrame) {
     active_impl::record_current_trap_frame(trap_frame);
 }
 
+/// 将当前 trap 现场装载到当前任务对象，并返回权威 trap frame 指针。
+#[inline]
+pub fn begin_current_trap_frame_access(trap_frame: TaskTrapFrame) -> Option<*mut TaskTrapFrame> {
+    active_impl::begin_current_trap_frame_access(trap_frame)
+}
+
 /// 将当前任务中保存的 trap 现场恢复到给定缓冲区。
 #[inline]
 pub fn restore_current_trap_frame(trap_frame: &mut TaskTrapFrame) -> bool {
