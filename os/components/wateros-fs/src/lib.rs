@@ -1,11 +1,33 @@
 #![no_std]
-pub fn add(left : u64, right : u64) -> u64 { left + right }
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
+
+pub mod api {
+    pub use ::api_v0::*;
+}
+
+#[cfg(feature = "impl-ext4-view")]
+pub use impl_ext4_view as active_impl;
+#[cfg(all(not(feature = "impl-ext4-view"), feature = "impl-dummy"))]
+pub use impl_dummy as active_impl;
+
+pub use api_v0::*;
+
+pub fn init() {
+    #[cfg(feature = "impl-ext4-view")]
+    {
+        if let Err(err) = impl_ext4_view::init() {
+            log::warn!("[fs] init failed: {:?}", err);
+        }
     }
+}
+
+pub fn test() {
+    log::trace!("[fs] test begin");
+    api_v0::test();
+    #[cfg(feature = "impl-ext4-view")]
+    {
+        if let Err(err) = impl_ext4_view::test() {
+            log::warn!("[fs] ext4-view test failed: {:?}", err);
+        }
+    }
+    log::trace!("[fs] test end");
 }

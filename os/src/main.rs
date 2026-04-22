@@ -60,9 +60,14 @@ mod qemu_riscv64_opensbi {
         );
         info!("[self-test] mm self-test done");
 
-        // 设备驱动扫描与最小 virtio-blk 探测自检
-        driver::init_after_boot();
-        driver::test();
+        // 设备驱动扫描与根文件系统挂载自检。
+        if let Err(err) = driver::active_impl::init_after_boot() {
+            warn!("[self-test] driver init failed: {:?}", err);
+        } else {
+            info!("[self-test] driver init done");
+            fs::init();
+            fs::test();
+        }
 
         platform::interrupt::enable_global_interrupt().unwrap();
         platform::interrupt::enable_timer_interrupt().unwrap();

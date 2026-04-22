@@ -1,13 +1,12 @@
 #![no_std]
 extern crate alloc;
 
-use alloc::string::String;
-use alloc::vec::Vec;
+use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use api_v0::{DeviceInfo, DeviceType, DriverError, DriverResult, IrqLine, MmioRegion};
-use block_api_v0::{BlockDevice, BLOCK_SIZE};
+use block_api_v0::{register_block_device, BlockDevice, Lba, BLOCK_SIZE};
 use fdt::Fdt;
 use spin::Mutex;
 use virtio_drivers::device::blk::VirtIOBlk;
@@ -172,15 +171,15 @@ impl VirtioBlkDevice {
 }
 
 impl BlockDevice for VirtioBlkDevice {
-    fn read_blocks(&mut self, start_block: usize, buf: &mut [u8]) -> DriverResult<()> {
+    fn read_blocks(&mut self, start_block: Lba, buf: &mut [u8]) -> DriverResult<()> {
         self.inner
-            .read_blocks(start_block, buf)
+            .read_blocks(start_block.0 as usize, buf)
             .map_err(|_| DriverError::IoError)
     }
 
-    fn write_blocks(&mut self, start_block: usize, buf: &[u8]) -> DriverResult<()> {
+    fn write_blocks(&mut self, start_block: Lba, buf: &[u8]) -> DriverResult<()> {
         self.inner
-            .write_blocks(start_block, buf)
+            .write_blocks(start_block.0 as usize, buf)
             .map_err(|_| DriverError::IoError)
     }
 }
@@ -193,6 +192,9 @@ fn probe_virtio_blk() {
         if info.device_type == DeviceType::Block && is_virtio_mmio(info) {
             if let Some(mmio) = info.mmio {
                 blk.push(mmio);
+                if let Ok(dev) = VirtioBlkDevice::from_mmio(mmio) {
+                    register_block_device(Arc::new(Mutex::new(Box::new(dev))));
+                }
                 log::info!(
                     "[driver] found virtio-blk: node={} base={:#x} size={:#x}",
                     info.node_name,
@@ -212,7 +214,7 @@ pub fn virtio_blk_probe_test() -> DriverResult<()> {
     drop(blk);
     let mut dev = VirtioBlkDevice::from_mmio(mmio)?;
     let mut buf = [0u8; BLOCK_SIZE];
-    dev.read_blocks(0, &mut buf)?;
+    dev.read_blocks(Lba(0), &mut buf)?;
     log::info!("[driver] virtio-blk read block0 ok, first16={:02x?}", &buf[..16]);
     Ok(())
 }

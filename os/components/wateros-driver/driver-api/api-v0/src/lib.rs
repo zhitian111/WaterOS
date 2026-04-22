@@ -35,6 +35,7 @@ pub struct DeviceInfo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DriverError {
     InvalidDtb,
+    InvalidParam,
     NotFound,
     Unsupported,
     IoError,
