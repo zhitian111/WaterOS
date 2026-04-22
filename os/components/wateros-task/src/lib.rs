@@ -56,6 +56,7 @@ pub use api_v0::{
     ExitedTask, KernelTaskEntry, ScheduleReason, TaskBlockReason, TaskExitCode, TaskId,
     TaskKind, TaskSnapshot, TaskState, TaskTick, TaskTrapFrame, TaskWaitHandle,
     TaskWaitResult, TaskWaitTarget, WaitQueueId, IDLE_TASK_ID,
+    UserTaskEntryPc,
 };
 
 /// 初始化任务系统和底层调度器状态。
@@ -66,6 +67,12 @@ pub fn init() { scheduler::init(); }
 #[inline]
 pub fn spawn_kernel_task(entry: KernelTaskEntry, arg: usize) -> TaskId {
     scheduler::spawn_kernel_task(entry, arg)
+}
+
+/// 创建一个新的用户任务骨架，并返回分配到的任务号。
+#[inline]
+pub fn spawn_user_task(entry_pc: UserTaskEntryPc) -> TaskId {
+    scheduler::spawn_user_task(entry_pc)
 }
 
 /// 启动调度器并切入第一批可运行任务。

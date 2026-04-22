@@ -11,7 +11,7 @@ pub use api_v0::Scheduler;
 pub use task_api::{
     ExitedTask, KernelTaskEntry, ScheduleReason, TaskBlockReason, TaskExitCode, TaskId,
     TaskKind, TaskSnapshot, TaskState, TaskTick, TaskTrapFrame, TaskWaitHandle,
-    TaskWaitResult, TaskWaitTarget, WaitQueueId, IDLE_TASK_ID,
+    TaskWaitResult, TaskWaitTarget, UserTaskEntryPc, WaitQueueId, IDLE_TASK_ID,
 };
 
 /// 初始化当前启用的调度器实现。
@@ -22,6 +22,12 @@ pub fn init() { active_impl::init_scheduler(); }
 #[inline]
 pub fn spawn_kernel_task(entry: KernelTaskEntry, arg: usize) -> TaskId {
     active_impl::spawn_kernel_task(entry, arg)
+}
+
+/// 创建一个新的用户任务骨架，并返回其任务号。
+#[inline]
+pub fn spawn_user_task(entry_pc: UserTaskEntryPc) -> TaskId {
+    active_impl::spawn_user_task(entry_pc)
 }
 
 /// 为上层同步对象分配一个等待队列编号。

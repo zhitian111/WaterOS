@@ -18,6 +18,7 @@
 - task 根 crate 已收紧为 facade，trap/tick/task-entry hook 已迁入内部 runtime
 - trap 路径已开始把完整 trap frame 快照复制进当前任务对象，并在返回前回写到 trap 栈帧
 - trap 读写路径已显式区分“是否返回用户态”的语义，`TaskTrapFrame` 可直接表达 `user_pc/user_sp/syscall_ret/user return`
+- 已具备最小 `spawn_user_task` 骨架：用户任务可预分配用户栈，并准备首次 `sret` 进入所需的 trap frame
 - `current_task_snapshot` 可提供不含任务切换上下文、但包含最近一次 trap frame 快照的轻量任务状态快照与统计信息
 
 ## 后续关注点
@@ -25,5 +26,5 @@
 - 继续把当前“复制 + 回写”模式推进为完整 trap frame 归属与恢复模型
 - 继续把当前 wait handle 模型推进为更完整的通用阻塞对象 / block object 层
 - 继续补更明确的 task handle / generation 语义，以及更贴近 `waitpid` 的上层回收关系
-- 继续把“可表达 user return”推进成真正的用户任务创建与首次进入路径
+- 继续把当前 user task 骨架推进成真正可运行的用户态主线，包括 trap 期间内核栈切换与用户态自检
 - 持续补齐注释与公共 API 文档

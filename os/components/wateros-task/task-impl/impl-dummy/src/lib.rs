@@ -6,6 +6,7 @@ use alloc::boxed::Box;
 use api_v0::{
     ExitedTask, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskId, TaskKind,
     TaskRuntimeStats, TaskSnapshot, TaskState, TaskTick, TaskTrapFrame, TaskWaitResult,
+    UserTaskEntryPc,
 };
 use arch::task::ActiveArchTaskContext as TaskContext;
 
@@ -14,9 +15,13 @@ mod runtime;
 pub use runtime::TaskBootstrap;
 
 const KERNEL_TASK_STACK_SIZE: usize = 32 * 1024;
+const USER_TASK_STACK_SIZE: usize = 16 * 1024;
 
 #[repr(align(16))]
 struct AlignedKernelStack([u8; KERNEL_TASK_STACK_SIZE]);
+
+#[repr(align(16))]
+struct AlignedUserStack([u8; USER_TASK_STACK_SIZE]);
 
 /// 内核任务独占的内核栈封装。
 pub struct KernelStack {
@@ -43,6 +48,31 @@ impl KernelStack {
     }
 }
 
+/// 用户任务独占的用户栈封装。
+pub struct UserStack {
+    storage: Box<AlignedUserStack>,
+    top: usize,
+}
+
+impl UserStack {
+    fn new() -> Self {
+        let storage = Box::new(AlignedUserStack([0; USER_TASK_STACK_SIZE]));
+        let stack_bottom = storage.0.as_ptr() as usize;
+        let top = align_down(stack_bottom + USER_TASK_STACK_SIZE, 16);
+        Self { storage, top }
+    }
+
+    #[inline]
+    /// 返回当前用户栈的栈顶地址。
+    pub fn top(&self) -> usize {
+        debug_assert_eq!(
+            align_down(self.storage.0.as_ptr() as usize + USER_TASK_STACK_SIZE, 16),
+            self.top
+        );
+        self.top
+    }
+}
+
 /// 调度器持有的任务控制块。
 pub struct TaskControlBlock {
     id: TaskId,
@@ -53,6 +83,7 @@ pub struct TaskControlBlock {
     wait_result: Option<TaskWaitResult>,
     task_cx: TaskContext,
     kernel_stack: KernelStack,
+    user_stack: Option<UserStack>,
     bootstrap: Option<Box<TaskBootstrap>>,
     is_idle: bool,
 }
@@ -82,8 +113,31 @@ impl TaskControlBlock {
             wait_result: None,
             task_cx,
             kernel_stack,
+            user_stack: None,
             bootstrap: None,
             is_idle: true,
+        }
+    }
+
+    /// 创建一个最小用户任务骨架。
+    pub fn new_user_task(id: TaskId, entry_stub: usize, entry_pc: UserTaskEntryPc) -> Self {
+        let kernel_stack = KernelStack::new();
+        let user_stack = UserStack::new();
+        let task_cx = TaskContext::goto_entry(entry_stub, kernel_stack.top());
+        let mut trap_frame = TaskTrapFrame::default();
+        trap_frame.prepare_user_return(entry_pc, user_stack.top());
+        Self {
+            id,
+            kind: TaskKind::User,
+            state: TaskState::Ready,
+            stats: TaskRuntimeStats::default(),
+            trap_frame: Some(trap_frame),
+            wait_result: None,
+            task_cx,
+            kernel_stack,
+            user_stack: Some(user_stack),
+            bootstrap: None,
+            is_idle: false,
         }
     }
 
@@ -108,6 +162,7 @@ impl TaskControlBlock {
             wait_result: None,
             task_cx,
             kernel_stack,
+            user_stack: None,
             bootstrap: Some(bootstrap),
             is_idle,
         }
@@ -148,6 +203,14 @@ impl TaskControlBlock {
     #[inline]
     /// 返回任务内核栈顶地址。
     pub fn kernel_stack_top(&self) -> usize { self.kernel_stack.top() }
+
+    #[inline]
+    /// 若该任务持有用户栈，则返回其栈顶地址。
+    pub fn user_stack_top(&self) -> Option<usize> {
+        self.user_stack
+            .as_ref()
+            .map(UserStack::top)
+    }
 
     #[inline]
     /// 返回 bootstrap 对象指针，供任务首次启动时传给入口桩。

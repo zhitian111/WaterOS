@@ -10,6 +10,8 @@ pub type TaskExitCode = isize;
 pub type WaitQueueId = usize;
 /// 内核任务入口函数签名。
 pub type KernelTaskEntry = extern "C" fn(usize) -> !;
+/// 用户任务首次进入时的目标 PC。
+pub type UserTaskEntryPc = usize;
 
 /// 预留给 idle 任务的固定任务号。
 pub const IDLE_TASK_ID: TaskId = 0;

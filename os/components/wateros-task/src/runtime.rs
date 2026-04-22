@@ -2,6 +2,10 @@ use crate::active_impl::TaskBootstrap;
 use crate::{schedule_tick, scheduler, TaskTrapFrame};
 use riscv::register::sstatus;
 
+unsafe extern "C" {
+    fn __wateros_arch_restore_user_task(trap_frame_ptr: *const u8) -> !;
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn __wateros_task_runtime_schedule_tick() {
     schedule_tick();
@@ -39,6 +43,17 @@ pub extern "C" fn __wateros_task_runtime_restore_current_trap_frame(
 ) -> bool {
     let trap_frame = unsafe { &mut *(trap_frame_ptr as *mut TaskTrapFrame) };
     scheduler::restore_current_trap_frame(trap_frame)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn __wateros_task_runtime_enter_current_user_task() -> ! {
+    let mut trap_frame = TaskTrapFrame::default();
+    let restored = scheduler::restore_current_trap_frame(&mut trap_frame);
+    assert!(
+        restored,
+        "user task entry requires a prepared trap frame in the current task"
+    );
+    unsafe { __wateros_arch_restore_user_task((&trap_frame as *const TaskTrapFrame).cast::<u8>()) }
 }
 
 #[unsafe(no_mangle)]

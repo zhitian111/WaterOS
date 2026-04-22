@@ -14,7 +14,7 @@ use riscv::register::sstatus;
 use task_api::{
     ExitedTask, KernelTaskEntry, ScheduleReason, TaskBlockReason, TaskExitCode, TaskId,
     TaskSnapshot, TaskState, TaskTick, TaskTrapFrame, TaskWaitHandle, TaskWaitResult,
-    TaskWaitTarget, WaitQueueId, IDLE_TASK_ID,
+    TaskWaitTarget, UserTaskEntryPc, WaitQueueId, IDLE_TASK_ID,
 };
 use task_impl::TaskControlBlock;
 
@@ -23,6 +23,7 @@ unsafe extern "C" {
     fn __switch(current_task_cx_ptr: *mut TaskContext, next_task_cx_ptr: *const TaskContext);
     fn __arch_idle_task_entry();
     fn __arch_task_entry();
+    fn __arch_user_task_entry();
 }
 
 type SwitchPair = (*mut TaskContext, *const TaskContext);
@@ -119,6 +120,17 @@ impl TaskRegistry {
             __arch_task_entry as usize,
             entry,
             arg,
+        )));
+        task_id
+    }
+
+    fn spawn_user_task(&mut self, entry_pc: UserTaskEntryPc) -> TaskId {
+        let task_id = self.next_task_id;
+        self.next_task_id += 1;
+        self.task_table.insert(Box::new(TaskControlBlock::new_user_task(
+            task_id,
+            __arch_user_task_entry as usize,
+            entry_pc,
         )));
         task_id
     }
@@ -503,6 +515,13 @@ impl RoundRobinScheduler {
         task_id
     }
 
+    fn spawn_user_task(&mut self, entry_pc: UserTaskEntryPc) -> TaskId {
+        let task_id = self.registry.spawn_user_task(entry_pc);
+        self.queues.push_spawned_task(task_id);
+        log::debug!("[task-scheduler] spawned user task {}", task_id);
+        task_id
+    }
+
     fn allocate_wait_queue(&mut self) -> WaitQueueId { self.queues.allocate_wait_queue() }
 
     fn prepare_first_switch(&mut self) -> SwitchPair {
@@ -712,6 +731,11 @@ pub fn init_scheduler() {
 pub fn spawn_kernel_task(entry: KernelTaskEntry, arg: usize) -> TaskId {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.spawn_kernel_task(entry, arg))
+}
+
+pub fn spawn_user_task(entry_pc: UserTaskEntryPc) -> TaskId {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.spawn_user_task(entry_pc))
 }
 
 pub fn allocate_wait_queue() -> WaitQueueId {
