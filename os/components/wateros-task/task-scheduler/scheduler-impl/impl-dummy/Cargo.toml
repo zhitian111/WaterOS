@@ -9,6 +9,7 @@
     log = "0.4"
     riscv = { version = "0.16.0" }
     task-api = { path = "../../../task-api/api-v0/", package = "wateros-task-api-v0", default-features = true }
+    task-impl = { path = "../../../task-impl/impl-dummy/", package = "wateros-task-impl-dummy", default-features = true }
 
 [features]
     api-v0 = [  ]

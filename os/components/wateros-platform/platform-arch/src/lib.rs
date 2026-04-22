@@ -25,6 +25,14 @@ pub mod time {
 }
 
 #[cfg(feature = "api-v0")]
+pub mod task {
+    pub use api_v0::task::ArchTaskContext;
+
+    #[cfg(feature = "impl-riscv64")]
+    pub use impl_riscv64::task::Riscv64ArchTaskContext as ActiveArchTaskContext;
+}
+
+#[cfg(feature = "api-v0")]
 pub mod interrupt {
     pub use api_v0::interrupt::ArchTimerInterruptControl;
     pub use api_v0::time::ArchTimeResult;

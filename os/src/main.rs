@@ -18,9 +18,12 @@ pub fn alloc_error_handler(layout : core::alloc::Layout) -> ! {
 mod qemu_riscv64_opensbi {
     use core::arch::global_asm;
     use core::include_str;
+    use core::sync::atomic::{AtomicBool, Ordering};
     use runtime::logging::*;
     global_asm!(include_str!("../components/wateros-platform/platform-impl/\
                               impl-qemu-riscv64-opensbi/src/asm/_start.S"));
+
+    static BLOCK_TASK_READY: AtomicBool = AtomicBool::new(false);
 
     fn busy_delay(rounds: usize) {
         for _ in 0..rounds {
@@ -28,24 +31,81 @@ mod qemu_riscv64_opensbi {
         }
     }
 
-    extern "C" fn demo_task_a(_arg: usize) -> ! {
-        let mut tick = 0usize;
-        loop {
-            tick = tick.wrapping_add(1);
-            info!("[task-demo] task A tick {}", tick);
-            busy_delay(400_000);
-            task::yield_now();
+    fn log_task_snapshot(label: &str) {
+        if let Some(snapshot) = task::current_task_snapshot() {
+            info!(
+                "[task-stage2] {} id={} state={:?} schedule_count={} tick_count={}",
+                label,
+                snapshot.id,
+                snapshot.state,
+                snapshot.stats.schedule_count,
+                snapshot.stats.tick_count
+            );
+        } else {
+            warn!("[task-stage2] {} no current task snapshot", label);
         }
     }
 
-    extern "C" fn demo_task_b(_arg: usize) -> ! {
-        let mut tick = 0usize;
-        loop {
-            tick = tick.wrapping_add(1);
-            info!("[task-demo] task B tick {}", tick);
-            busy_delay(700_000);
+    extern "C" fn stage2_sleep_task(_arg: usize) -> ! {
+        info!("[task-stage2] sleep task started");
+        for round in 1..=3usize {
+            log_task_snapshot("sleep-before");
+            info!("[task-stage2] sleep task round {} -> sleep_for_ticks(2)", round);
+            task::sleep_for_ticks(2);
+            log_task_snapshot("sleep-after");
+            busy_delay(250_000);
+        }
+        info!("[task-stage2] sleep task exiting with code 11");
+        task::exit_current(11);
+    }
+
+    extern "C" fn stage2_blocked_task(_arg: usize) -> ! {
+        info!("[task-stage2] blocked task started");
+        log_task_snapshot("block-before");
+        BLOCK_TASK_READY.store(true, Ordering::Release);
+        info!("[task-stage2] blocked task entering manual block");
+        task::block_current(task::TaskBlockReason::Manual);
+        info!("[task-stage2] blocked task resumed after wake");
+        log_task_snapshot("block-after");
+        busy_delay(250_000);
+        info!("[task-stage2] blocked task exiting with code 22");
+        task::exit_current(22);
+    }
+
+    extern "C" fn stage2_waker_task(blocked_task_id: usize) -> ! {
+        info!(
+            "[task-stage2] waker task started, target blocked_task_id={}",
+            blocked_task_id
+        );
+        let mut attempt = 0usize;
+        while !BLOCK_TASK_READY.load(Ordering::Acquire) {
+            attempt = attempt.wrapping_add(1);
+            if attempt % 2 == 0 {
+                info!(
+                    "[task-stage2] waker waiting for blocked task to reach block point, attempt={}",
+                    attempt
+                );
+            }
             task::yield_now();
         }
+
+        info!("[task-stage2] waker observed blocked task ready, delaying wake by 3 ticks");
+        task::sleep_for_ticks(3);
+        let woke = task::wake_task(blocked_task_id);
+        info!(
+            "[task-stage2] waker invoked wake_task({}) -> {}",
+            blocked_task_id,
+            woke
+        );
+        log_task_snapshot("waker-after-wake");
+
+        for round in 1..=3usize {
+            info!("[task-stage2] waker observation round {}", round);
+            task::yield_now();
+        }
+
+        info!("[task-stage2] waker task exiting with code 33");
+        task::exit_current(33);
     }
 
     #[unsafe(no_mangle)]
@@ -97,18 +157,20 @@ mod qemu_riscv64_opensbi {
         }
 
         task::init();
-        let task_a_id = task::spawn_kernel_task(demo_task_a, 0);
-        let task_b_id = task::spawn_kernel_task(demo_task_b, 0);
+        let blocked_task_id = task::spawn_kernel_task(stage2_blocked_task, 0);
+        let sleep_task_id = task::spawn_kernel_task(stage2_sleep_task, 0);
+        let waker_task_id = task::spawn_kernel_task(stage2_waker_task, blocked_task_id);
         info!(
-            "[task-demo] spawned kernel tasks: A={}, B={}",
-            task_a_id,
-            task_b_id
+            "[task-stage2] spawned kernel tasks: blocked={}, sleep={}, waker={}",
+            blocked_task_id,
+            sleep_task_id,
+            waker_task_id
         );
 
         platform::interrupt::enable_timer_interrupt().unwrap();
         platform::timer::set_timer_after_ms(100).unwrap();
         platform::interrupt::enable_global_interrupt().unwrap();
-        info!("[task-demo] starting first task");
+        info!("[task-stage2] starting first task");
         task::run_first_task()
     }
 }

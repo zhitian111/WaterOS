@@ -7,6 +7,10 @@ use core::arch::asm;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use firmware::timer::FirmwareTimerDeadline;
 
+unsafe extern "C" {
+    fn __wateros_schedule_tick();
+}
+
 /// 该结构的字段顺序/大小必须与 `asm/trap.asm` 的偏移严格一致（方案A）。
 #[repr(C)]
 pub struct TrapContext {
@@ -70,7 +74,9 @@ pub extern "C" fn trap_entry_rust(cx_ptr : *mut TrapContext) {
             if tick % 8 == 0 {
                 logging::trace!("[trap] timer tick {}", tick);
             }
-            task::schedule_tick();
+            unsafe {
+                __wateros_schedule_tick();
+            }
         }
         _ => {
             panic!(
