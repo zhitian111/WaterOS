@@ -1,5 +1,5 @@
 [workspace]
-    members = [ "./ipc-api/api-v0/", "./ipc-impl/impl-dummy/" ]
+    members = [ "./ipc-api/api-v0/", "./ipc-impl/impl-dummy/", "./ipc-waitqueue/" ]
 [package]
     name = "wateros-ipc"
     version = "0.1.0"
@@ -8,6 +8,7 @@
 [dependencies]
     api-v0 = { path = "./ipc-api/api-v0/", package = "wateros-ipc-api-v0", default-features = true }
     impl-dummy = { path = "./ipc-impl/impl-dummy/", package = "wateros-ipc-impl-dummy", default-features = true }
+    waitqueue = { path = "./ipc-waitqueue/", package = "ipc-waitqueue", default-features = true }
 
 [features]
     api-v0 = [ "impl-dummy/api-v0" ]

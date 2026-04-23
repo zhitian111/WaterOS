@@ -1,0 +1,19 @@
+[workspace]
+
+[package]
+    name = "wateros-syscall"
+    version = "0.1.0"
+    edition = "2024"
+
+[dependencies]
+    abi = { path = "../wateros-abi/", package = "wateros-abi", default-features = true }
+    task = { path = "../wateros-task/", package = "wateros-task", default-features = true }
+
+[features]
+    default = []
+
+[profile.dev]
+    panic = "abort"
+
+[profile.release]
+    panic = "abort"

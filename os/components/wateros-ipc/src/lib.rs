@@ -1,11 +1,12 @@
 #![no_std]
-pub fn add(left : u64, right : u64) -> u64 { left + right }
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
+
+pub mod api {
+    pub use ::api_v0::*;
+}
+
+#[cfg(feature = "impl-dummy")]
+pub use impl_dummy as active_impl;
+
+pub mod waitqueue {
+    pub use ::waitqueue::*;
 }

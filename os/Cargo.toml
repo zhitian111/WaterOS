@@ -14,6 +14,8 @@
     ipc = { package = "wateros-ipc", path = "./components/wateros-ipc/", default-features = true }
     runtime = { package = "wateros-runtime", path = "./components/wateros-runtime/", default-features = true }
     mm = { package = "wateros-mm", path = "./components/wateros-mm/", default-features = true }
+    syscall = { package = "wateros-syscall", path = "./components/wateros-syscall/", default-features = true }
+    task = { package = "wateros-task", path = "./components/wateros-task/", default-features = true }
 
 [profile.dev]
     panic = "abort"

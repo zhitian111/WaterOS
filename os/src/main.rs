@@ -3,6 +3,10 @@
 #![feature(alloc_error_handler)]
 
 extern crate alloc;
+use syscall as _;
+
+#[cfg(feature = "qemu-riscv64-opensbi")]
+mod self_tests;
 
 #[panic_handler]
 pub fn panic_handler(_panic_info : &core::panic::PanicInfo) -> ! {
@@ -24,6 +28,7 @@ mod qemu_riscv64_opensbi {
     use runtime::logging::*;
     global_asm!(include_str!("../components/wateros-platform/platform-impl/\
                               impl-qemu-riscv64-opensbi/src/asm/_start.S"));
+
     #[unsafe(no_mangle)]
     pub fn kernel_main(boot_arg0 : usize, boot_arg1 : usize) -> ! {
         use platform::boot::{BootArgs, BootContext};
@@ -44,12 +49,10 @@ mod qemu_riscv64_opensbi {
             fn kernel_end();
         }
         // QEMU virt 默认 RAM：0x8000_0000..0x8800_0000（与 old 代码一致）
-        const MEMORY_END: usize = 0x8800_0000;
-        const PAGE_SIZE: usize = 4096;
+        const MEMORY_END : usize = 0x8800_0000;
+        const PAGE_SIZE : usize = 4096;
         #[inline]
-        const fn align_up(v: usize, align: usize) -> usize {
-            (v + align - 1) & !(align - 1)
-        }
+        const fn align_up(v : usize, align : usize) -> usize { (v + align - 1) & !(align - 1) }
         let start_ppn = align_up(kernel_end as usize, PAGE_SIZE) / PAGE_SIZE;
         let end_ppn = MEMORY_END / PAGE_SIZE;
         info!(
@@ -66,20 +69,22 @@ mod qemu_riscv64_opensbi {
 
         // 设备驱动扫描与根文件系统挂载自检。
         if let Err(err) = driver::active_impl::init_after_boot() {
-            warn!("[self-test] driver init failed: {:?}", err);
+            warn!("[self-test] driver init failed: {:?}",
+                  err);
         } else {
             info!("[self-test] driver init done");
             fs::init();
             fs::test();
         }
 
-        platform::interrupt::enable_global_interrupt().unwrap();
+        task::init();
+        crate::self_tests::task::spawn_all();
+
         platform::interrupt::enable_timer_interrupt().unwrap();
         platform::timer::set_timer_after_ms(100).unwrap();
-        loop {}
-
-
-        unreachable!("unreachable code in platform_main")
+        platform::interrupt::enable_global_interrupt().unwrap();
+        info!("[task-selftest] starting first task");
+        task::run_first_task()
     }
 
     fn paging_effective_smoke_test(start_ppn: usize, end_ppn: usize) {

@@ -25,6 +25,14 @@ pub mod time {
 }
 
 #[cfg(feature = "api-v0")]
+pub mod task {
+    pub use api_v0::task::ArchTaskContext;
+
+    #[cfg(feature = "impl-riscv64")]
+    pub use impl_riscv64::task::Riscv64ArchTaskContext as ActiveArchTaskContext;
+}
+
+#[cfg(feature = "api-v0")]
 pub mod interrupt {
     pub use api_v0::interrupt::ArchTimerInterruptControl;
     pub use api_v0::time::ArchTimeResult;
@@ -34,10 +42,7 @@ pub mod interrupt {
 
     #[inline]
     pub fn enable_timer_interrupt() -> ArchTimeResult<()> {
-        // 早期阶段为了尽快验证中断链路，开启 STIE 后同时开启全局 SIE。
-        // 后续如果你想严格区分职责，再把这里改回“只开 timer 源”。
         ArchInterruptImpl::enable_timer_interrupt()
-            .and_then(|_| ArchInterruptImpl::enable_global_interrupt())
     }
 
     #[inline]

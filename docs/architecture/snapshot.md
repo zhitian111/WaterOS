@@ -22,9 +22,10 @@
 - `wateros-mm`
 - `wateros-platform`
 - `wateros-runtime`
+- `wateros-task`
 - `wateros-vfs`
 
-`wateros-task`、`wateros-utils` 等组件也已存在于组件树中，但当前根 crate 的直接依赖仍以实际 `os/Cargo.toml` 为准。
+`wateros-utils` 等组件也已存在于组件树中，但当前根 crate 的直接依赖仍以实际 `os/Cargo.toml` 为准。
 
 ## 架构总图
 
@@ -39,6 +40,7 @@ flowchart TD
     mm[wateros-mm]
     platform[wateros-platform]
     runtime[wateros-runtime]
+    task[wateros-task]
     vfs[wateros-vfs]
 
     wateros --> abi
@@ -49,6 +51,7 @@ flowchart TD
     wateros --> mm
     wateros --> platform
     wateros --> runtime
+    wateros --> task
     wateros --> vfs
 
     platform --> platformApi[api-v0]
@@ -57,6 +60,8 @@ flowchart TD
     driver --> driverImpl[impl-*]
     mm --> mmApi[api-v0]
     mm --> mmImpl[impl-*]
+    task --> taskApi[api-v0]
+    task --> taskImpl[impl-*]
 ```
 
 ## 当前主线启动路径
@@ -68,7 +73,8 @@ flowchart TD
 - 构造平台引导上下文。
 - 初始化驱动、控制台、日志和堆分配器。
 - 执行内核态 MM 自检。
-- 启用中断与定时器。
+- 初始化任务调度器并创建演示性 kernel task。
+- 启用中断与定时器，并进入首个任务。
 
 ## 对应导出结果
 
