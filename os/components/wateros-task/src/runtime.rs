@@ -1,9 +1,9 @@
 use crate::active_impl::TaskBootstrap;
-use crate::{schedule_tick, scheduler, TaskTrapFrame};
+use crate::{schedule_tick, scheduler, syscall, TaskTrapFrame};
 use riscv::register::sstatus;
 
 unsafe extern "C" {
-    fn __wateros_arch_restore_user_task(trap_frame_ptr: *const u8) -> !;
+    fn __wateros_arch_restore_user_task(trap_frame_ptr: *const u8, kernel_stack_top: usize) -> !;
 }
 
 #[unsafe(no_mangle)]
@@ -12,13 +12,17 @@ pub extern "C" fn __wateros_task_runtime_schedule_tick() {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn __wateros_task_runtime_yield_current() {
-    crate::yield_now();
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn __wateros_task_runtime_exit_current(exit_code: isize) -> ! {
-    crate::exit_current(exit_code)
+pub extern "C" fn __wateros_task_runtime_dispatch_current_syscall(
+    syscall_nr: usize,
+    arg0: usize,
+    arg1: usize,
+    arg2: usize,
+    arg3: usize,
+    arg4: usize,
+    arg5: usize,
+) -> isize {
+    let syscall_args = abi::syscall_args::SyscallArgs::from_regs([arg0, arg1, arg2, arg3, arg4, arg5]);
+    syscall::dispatch_current_syscall(syscall_nr, syscall_args)
 }
 
 #[unsafe(no_mangle)]
@@ -49,11 +53,18 @@ pub extern "C" fn __wateros_task_runtime_restore_current_trap_frame(
 pub extern "C" fn __wateros_task_runtime_enter_current_user_task() -> ! {
     let mut trap_frame = TaskTrapFrame::default();
     let restored = scheduler::restore_current_trap_frame(&mut trap_frame);
+    let kernel_stack_top = scheduler::current_task_kernel_stack_top()
+        .expect("user task entry requires a current task kernel stack");
     assert!(
         restored,
         "user task entry requires a prepared trap frame in the current task"
     );
-    unsafe { __wateros_arch_restore_user_task((&trap_frame as *const TaskTrapFrame).cast::<u8>()) }
+    unsafe {
+        __wateros_arch_restore_user_task(
+            (&trap_frame as *const TaskTrapFrame).cast::<u8>(),
+            kernel_stack_top,
+        )
+    }
 }
 
 #[unsafe(no_mangle)]

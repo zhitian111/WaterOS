@@ -46,6 +46,8 @@ __wateros_arch_restore_user_task:
     ld t0, 33*8(a0)
     csrw sepc, t0
 
+    # a1 holds the kernel stack top that user-mode traps should switch to.
+    mv sp, a1
     ld t0, 2*8(a0)
     csrw sscratch, t0
 
@@ -79,6 +81,6 @@ __wateros_arch_restore_user_task:
     ld x30, 30*8(a0)
     ld x31, 31*8(a0)
 
-    csrr sp, sscratch
     ld x10, 10*8(a0)
+    csrrw sp, sscratch, sp
     sret

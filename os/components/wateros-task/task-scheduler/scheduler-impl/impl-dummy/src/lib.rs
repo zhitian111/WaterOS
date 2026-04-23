@@ -206,6 +206,11 @@ impl TaskRegistry {
             .map(|task_id| self.task_table.task(task_id).snapshot())
     }
 
+    fn current_task_kernel_stack_top(&self) -> Option<usize> {
+        self.current_task_id
+            .map(|task_id| self.task_table.task(task_id).kernel_stack_top())
+    }
+
     fn clear_wait_result(&mut self, task_id: TaskId) {
         self.task_table.task_mut(task_id).clear_wait_result();
     }
@@ -643,6 +648,10 @@ impl RoundRobinScheduler {
         self.registry.current_task_snapshot()
     }
 
+    fn current_task_kernel_stack_top(&self) -> Option<usize> {
+        self.registry.current_task_kernel_stack_top()
+    }
+
     fn record_current_trap_frame(&mut self, trap_frame: TaskTrapFrame) {
         self.registry.record_current_trap_frame(trap_frame);
     }
@@ -878,6 +887,11 @@ pub fn current_task_id() -> Option<TaskId> {
 pub fn current_task_snapshot() -> Option<TaskSnapshot> {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.current_task_snapshot())
+}
+
+pub fn current_task_kernel_stack_top() -> Option<usize> {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.current_task_kernel_stack_top())
 }
 
 pub fn record_current_trap_frame(trap_frame: TaskTrapFrame) {

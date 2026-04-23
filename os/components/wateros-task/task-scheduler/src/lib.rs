@@ -130,6 +130,12 @@ pub fn current_task_id() -> Option<TaskId> { active_impl::current_task_id() }
 #[inline]
 pub fn current_task_snapshot() -> Option<TaskSnapshot> { active_impl::current_task_snapshot() }
 
+/// 返回当前任务用于处理 trap 的内核栈顶地址。
+#[inline]
+pub fn current_task_kernel_stack_top() -> Option<usize> {
+    active_impl::current_task_kernel_stack_top()
+}
+
 /// 将当前 trap 保存现场记录到当前任务对象中。
 #[inline]
 pub fn record_current_trap_frame(trap_frame: TaskTrapFrame) {

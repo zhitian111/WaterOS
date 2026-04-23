@@ -14,18 +14,33 @@
 # 总大小：36 * 8 = 288 字节
 #
 # a0 = TrapContext*  (交给 trap_entry_rust)
+#
+# 约定：
+# - 从用户态进入 trap 前，sscratch 保存“当前任务下次 trap 应切回的内核栈顶”
+# - 从用户态进入时，入口先用 csrrw 把 sp 切到内核栈，再在内核栈上分配 TrapContext
+# - 返回用户态时，用 csrrw 把 sp 切回用户栈，同时把新的内核栈顶重新留在 sscratch
 
 __alltraps:
-    # 备份当前 sp（用于写入 TrapContext.x[2]）
-    mv t0, sp
+    csrr t1, sstatus
+    andi t2, t1, 1 << 8
+    bnez t2, .Ltrap_from_kernel
 
-    # 在当前 sp 下方分配 TrapContext 空间
+    # User -> kernel: swap to the task's kernel stack first.
+    csrrw sp, sscratch, sp
     addi sp, sp, -288
+    csrr t0, sscratch
+    j .Lsave_context
+
+.Ltrap_from_kernel:
+    mv t0, sp
+    addi sp, sp, -288
+
+.Lsave_context:
 
     # 保存通用寄存器（x0..x31）
     sd x0,  0*8(sp)
     sd x1,  1*8(sp)
-    sd t0,  2*8(sp)   # x2 = 进入 trap 时的 sp
+    sd t0,  2*8(sp)   # x2 = 进入 trap 时的原始 sp（用户栈或内核栈）
     sd x3,  3*8(sp)
     sd x4,  4*8(sp)
     sd x5,  5*8(sp)
@@ -57,14 +72,13 @@ __alltraps:
     sd x31, 31*8(sp)
 
     # 保存控制寄存器
-    csrr t1, sstatus
     sd t1, 32*8(sp)
-    csrr t1, sepc
-    sd t1, 33*8(sp)
-    csrr t1, scause
-    sd t1, 34*8(sp)
-    csrr t1, stval
-    sd t1, 35*8(sp)
+    csrr t0, sepc
+    sd t0, 33*8(sp)
+    csrr t0, scause
+    sd t0, 34*8(sp)
+    csrr t0, stval
+    sd t0, 35*8(sp)
 
     # a0 = cx_ptr
     mv a0, sp
@@ -73,13 +87,10 @@ __alltraps:
 
     # 恢复控制寄存器
     ld t0, 32*8(sp)
+    andi t1, t0, 1 << 8
     csrw sstatus, t0
     ld t0, 33*8(sp)
     csrw sepc, t0
-
-    # 先把原始 sp 暂存到 sscratch，再恢复通用寄存器
-    ld t0, 2*8(sp)
-    csrw sscratch, t0
 
     ld x1,  1*8(sp)
     ld x3,  3*8(sp)
@@ -112,5 +123,13 @@ __alltraps:
     ld x30, 30*8(sp)
     ld x31, 31*8(sp)
 
-    csrr sp, sscratch
+    bnez t1, .Ltrap_return_kernel
+
+    addi sp, sp, 288
+    csrrw sp, sscratch, sp
+    sret
+
+.Ltrap_return_kernel:
+    ld t0, 2*8(sp)
+    mv sp, t0
     sret

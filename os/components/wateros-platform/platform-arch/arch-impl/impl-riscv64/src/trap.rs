@@ -1,4 +1,3 @@
-use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::syscall_number::SyscallNumber;
 use abi::user_ret::UserRet;
@@ -12,9 +11,16 @@ unsafe extern "C" {
     fn __wateros_task_runtime_record_current_trap_frame(trap_frame_ptr: *const u8);
     fn __wateros_task_runtime_begin_current_trap_frame_access(trap_frame_ptr: *mut u8) -> *mut u8;
     fn __wateros_task_runtime_restore_current_trap_frame(trap_frame_ptr: *mut u8) -> bool;
+    fn __wateros_task_runtime_dispatch_current_syscall(
+        syscall_nr: usize,
+        arg0: usize,
+        arg1: usize,
+        arg2: usize,
+        arg3: usize,
+        arg4: usize,
+        arg5: usize,
+    ) -> isize;
     fn __wateros_task_runtime_schedule_tick();
-    fn __wateros_task_runtime_yield_current();
-    fn __wateros_task_runtime_exit_current(exit_code: isize) -> !;
 }
 
 /// 该结构的字段顺序/大小必须与 `asm/trap.asm` 的偏移严格一致（方案A）。
@@ -72,9 +78,6 @@ unsafe extern "C" {
 const TIMER_SLICE_TICKS: u64 = 1_250_000;
 static TIMER_TICK_COUNT: AtomicUsize = AtomicUsize::new(0);
 const SYSCALL_INSN_BYTES: usize = 4;
-const SYSCALL_YIELD_NR: usize = 124;
-const SYSCALL_EXIT_NR: usize = 93;
-const SYSCALL_EXIT_GROUP_NR: usize = 94;
 
 /// 初始化 trap 入口：把 `stvec` 指向 `__alltraps`。
 ///
@@ -142,31 +145,20 @@ pub extern "C" fn trap_entry_rust(cx_ptr : *mut TrapContext) {
 
 fn handle_user_syscall(cx: &mut TrapContext) {
     let syscall_nr = cx.syscall_nr().raw();
-    match syscall_nr {
-        SYSCALL_YIELD_NR => {
-            cx.add_user_pc(SYSCALL_INSN_BYTES);
-            cx.set_syscall_ret(UserRet::from_success(0));
-            unsafe {
-                __wateros_task_runtime_yield_current();
-            }
-        }
-        SYSCALL_EXIT_NR | SYSCALL_EXIT_GROUP_NR => {
-            let exit_code = cx.syscall_args().arg(0) as isize;
-            cx.add_user_pc(SYSCALL_INSN_BYTES);
-            unsafe {
-                __wateros_task_runtime_exit_current(exit_code);
-            }
-        }
-        _ => {
-            logging::trace!(
-                "[trap] unsupported user syscall nr={} args={:?}",
-                syscall_nr,
-                cx.syscall_args().as_regs()
-            );
-            cx.add_user_pc(SYSCALL_INSN_BYTES);
-            cx.set_syscall_ret(UserRet::from_error(ErrNo::ENOSYS));
-        }
-    }
+    let syscall_args = cx.syscall_args();
+    let syscall_ret = unsafe {
+        __wateros_task_runtime_dispatch_current_syscall(
+            syscall_nr,
+            syscall_args.arg(0),
+            syscall_args.arg(1),
+            syscall_args.arg(2),
+            syscall_args.arg(3),
+            syscall_args.arg(4),
+            syscall_args.arg(5),
+        )
+    };
+    cx.add_user_pc(SYSCALL_INSN_BYTES);
+    cx.set_syscall_ret(UserRet(syscall_ret));
 }
 
 impl TrapContextRead for TrapContext {

@@ -1,7 +1,34 @@
+use core::arch::asm;
 use core::sync::atomic::{AtomicBool, Ordering};
 use runtime::logging::*;
 
 static BLOCK_TASK_READY : AtomicBool = AtomicBool::new(false);
+const STAGE4_USER_EXIT_OK : isize = 88;
+const STAGE4_USER_EXIT_BAD_RET : isize = 89;
+const STAGE4_USER_SYSCALL_YIELD_NR : usize = 124;
+const STAGE4_USER_SYSCALL_EXIT_GROUP_NR : usize = 94;
+
+#[inline]
+unsafe fn user_syscall0(nr : usize) -> isize {
+    let mut ret = 0usize;
+    unsafe {
+        asm!("ecall",
+             inlateout("a0") ret,
+             in("a7") nr,
+             clobber_abi("C"));
+    }
+    ret as isize
+}
+
+#[inline]
+unsafe fn user_exit_group(exit_code : isize) -> ! {
+    unsafe {
+        asm!("ecall",
+             in("a0") exit_code as usize,
+             in("a7") STAGE4_USER_SYSCALL_EXIT_GROUP_NR,
+             options(noreturn));
+    }
+}
 
 fn busy_delay(rounds : usize) {
     for _ in 0..rounds {
@@ -130,6 +157,36 @@ extern "C" fn stage3_exit_reaper_task(exit_target_task_id : usize) -> ! {
     task::exit_current(77);
 }
 
+extern "C" fn stage4_user_task_entry() -> ! {
+    let yield_ret = unsafe { user_syscall0(STAGE4_USER_SYSCALL_YIELD_NR) };
+    let exit_code = if yield_ret == 0 { STAGE4_USER_EXIT_OK } else { STAGE4_USER_EXIT_BAD_RET };
+    unsafe {
+        user_exit_group(exit_code);
+    }
+}
+
+extern "C" fn stage4_user_observer_task(user_task_id : usize) -> ! {
+    info!("[task-stage4] observer task started, user_task_id={}",
+          user_task_id);
+    let wait_result = task::wait_for_task_exit_for_ticks(user_task_id, 16);
+    assert_eq!(wait_result,
+               task::TaskWaitResult::Woken,
+               "stage4 observer must observe user task exit");
+    let exited_task = task::reap_exited_task(user_task_id).expect("stage4 observer must reap \
+                                                                   exited user task");
+    assert_eq!(exited_task.id, user_task_id,
+               "reaped user task id must match spawned user task");
+    assert_eq!(exited_task.kind, task::TaskKind::User,
+               "reaped task must be a user task");
+    assert_eq!(exited_task.exit_code, STAGE4_USER_EXIT_OK,
+               "user task must observe sched_yield return 0 before exit");
+    assert!(exited_task.trap_frame.is_some(),
+            "user task exit should leave an observable trap frame snapshot");
+    info!("[task-stage4] observer reaped user task {} with exit_code={}",
+          exited_task.id, exited_task.exit_code);
+    task::exit_current(99);
+}
+
 pub fn spawn_all() {
     let wait_timeout_queue = task::WaitQueue::new();
     let blocked_task_id = task::spawn_kernel_task(stage2_blocked_task, 0);
@@ -142,6 +199,9 @@ pub fn spawn_all() {
                                                       exit_target_task_id);
     let exit_reaper_task_id = task::spawn_kernel_task(stage3_exit_reaper_task,
                                                       exit_target_task_id);
+    let user_task_id = task::spawn_user_task(stage4_user_task_entry as usize);
+    let user_observer_task_id = task::spawn_kernel_task(stage4_user_observer_task,
+                                                        user_task_id);
     info!("[task-stage2] spawned kernel tasks: blocked={}, sleep={}, waker={}",
           blocked_task_id, sleep_task_id, waker_task_id);
     info!("[task-stage3b] spawned self-test tasks: timeout={}, exit_target={}, exit_waiter={}, \
@@ -151,4 +211,6 @@ pub fn spawn_all() {
           exit_waiter_task_id,
           exit_reaper_task_id,
           wait_timeout_queue.id());
+    info!("[task-stage4] spawned user self-test tasks: user={}, observer={}",
+          user_task_id, user_observer_task_id);
 }
