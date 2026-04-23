@@ -448,32 +448,32 @@ wateros-runtime-panic  (components/wateros-runtime/runtime-panic/Cargo.toml)
 wateros-task  (components/wateros-task/Cargo.toml)
   - default [default]
   - api-v0
-    - impl-dummy/api-v0
-      > wateros-task-impl-dummy
+    - impl-core/api-v0
+      > wateros-task-impl-core
         - default [default]
         - api-v0
-  - impl-dummy
+  - impl-core
 
 wateros-task-api-v0  (components/wateros-task/task-api/api-v0/Cargo.toml)
   (no [features])
 
-wateros-task-impl-dummy  (components/wateros-task/task-impl/impl-dummy/Cargo.toml)
+wateros-task-impl-core  (components/wateros-task/task-impl/impl-core/Cargo.toml)
   - default [default]
   - api-v0
 
 wateros-task-scheduler  (components/wateros-task/task-scheduler/Cargo.toml)
   - default [default]
   - api-v0
-    - impl-dummy/api-v0
-      > wateros-task-scheduler-impl-dummy
+    - impl-round-robin/api-v0
+      > wateros-task-scheduler-impl-round-robin
         - default [default]
         - api-v0
-  - impl-dummy
+  - impl-round-robin
 
 wateros-task-scheduler-api-v0  (components/wateros-task/task-scheduler/scheduler-api/api-v0/Cargo.toml)
   (no [features])
 
-wateros-task-scheduler-impl-dummy  (components/wateros-task/task-scheduler/scheduler-impl/impl-dummy/Cargo.toml)
+wateros-task-scheduler-impl-round-robin  (components/wateros-task/task-scheduler/scheduler-impl/impl-round-robin/Cargo.toml)
   - default [default]
   - api-v0
 

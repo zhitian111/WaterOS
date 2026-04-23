@@ -10,8 +10,8 @@ pub mod scheduler {
     pub use ::scheduler::*;
 }
 
-#[cfg(feature = "impl-dummy")]
-pub use impl_dummy as active_impl;
+#[cfg(feature = "impl-core")]
+pub use impl_core as active_impl;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WaitQueue {

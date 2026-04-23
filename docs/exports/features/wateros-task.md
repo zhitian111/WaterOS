@@ -6,7 +6,7 @@
 
 当前已落地的能力包括：
 
-- 任务对象由 `task-impl/impl-dummy` 统一承载
+- 任务对象由 `task-impl/impl-core` 统一承载
 - `TaskSnapshot` 已收敛为稳定公共快照，不再暴露栈顶地址和启动协议细节
 - 任务状态已从单纯 `Ready/Running` 扩展为 `Ready`、`Running`、`Blocking`、`Sleeping`、`Exited`
 - 调度器已可区分 `yield`、timer tick、阻塞、睡眠与退出等调度原因
