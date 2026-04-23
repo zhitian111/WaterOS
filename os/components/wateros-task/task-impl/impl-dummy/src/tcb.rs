@@ -2,7 +2,8 @@ use alloc::boxed::Box;
 use api_v0::{
     AddressSpaceHandle, ExitedTask, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskId,
     TaskKind, TaskRuntimeStats, TaskSnapshot, TaskState, TaskTick, TaskTrapFrame,
-    TaskWaitResult, UserTaskEntryPc, UserTaskResources as UserTaskResourcesSnapshot, UserTaskSpec,
+    TaskWaitResult, UserImageInfo, UserTaskEntryPc,
+    UserTaskResources as UserTaskResourcesSnapshot, UserTaskSpec,
 };
 use arch::task::ActiveArchTaskContext as TaskContext;
 
@@ -13,6 +14,7 @@ struct UserTaskResources {
     entry_pc: UserTaskEntryPc,
     user_stack: UserStack,
     address_space: Option<AddressSpaceHandle>,
+    image: Option<UserImageInfo>,
 }
 
 impl UserTaskResources {
@@ -21,6 +23,7 @@ impl UserTaskResources {
             entry_pc: spec.entry_pc(),
             user_stack: UserStack::new(),
             address_space: spec.address_space(),
+            image: spec.image(),
         }
     }
 
@@ -28,11 +31,18 @@ impl UserTaskResources {
 
     fn user_stack_top(&self) -> usize { self.user_stack.top() }
 
+    fn user_stack_bottom(&self) -> usize { self.user_stack.bottom() }
+
+    fn user_stack_size(&self) -> usize { self.user_stack.size() }
+
     fn snapshot(&self) -> UserTaskResourcesSnapshot {
         UserTaskResourcesSnapshot {
             entry_pc: self.entry_pc,
-            user_stack_top: self.user_stack.top(),
+            user_stack_bottom: self.user_stack_bottom(),
+            user_stack_top: self.user_stack_top(),
+            user_stack_size: self.user_stack_size(),
             address_space: self.address_space,
+            image: self.image,
         }
     }
 }

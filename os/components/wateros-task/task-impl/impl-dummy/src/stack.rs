@@ -37,6 +37,7 @@ impl KernelStack {
 /// 用户任务独占的用户栈封装。
 pub struct UserStack {
     storage: Box<AlignedUserStack>,
+    bottom: usize,
     top: usize,
 }
 
@@ -45,7 +46,18 @@ impl UserStack {
         let storage = Box::new(AlignedUserStack([0; USER_TASK_STACK_SIZE]));
         let stack_bottom = storage.0.as_ptr() as usize;
         let top = align_down(stack_bottom + USER_TASK_STACK_SIZE, 16);
-        Self { storage, top }
+        Self {
+            storage,
+            bottom: stack_bottom,
+            top,
+        }
+    }
+
+    #[inline]
+    /// 返回当前用户栈的栈底地址。
+    pub fn bottom(&self) -> usize {
+        debug_assert_eq!(self.storage.0.as_ptr() as usize, self.bottom);
+        self.bottom
     }
 
     #[inline]
@@ -57,6 +69,10 @@ impl UserStack {
         );
         self.top
     }
+
+    #[inline]
+    /// 返回当前用户栈大小。
+    pub const fn size(&self) -> usize { USER_TASK_STACK_SIZE }
 }
 
 #[inline]

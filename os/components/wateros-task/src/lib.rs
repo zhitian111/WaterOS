@@ -55,8 +55,8 @@ impl WaitQueue {
 pub use api_v0::{
     AddressSpaceHandle, ExitedTask, KernelTaskEntry, ScheduleReason, TaskBlockReason,
     TaskExitCode, TaskId, TaskKind, TaskSnapshot, TaskState, TaskTick, TaskTrapFrame,
-    TaskWaitHandle, TaskWaitResult, TaskWaitTarget, UserTaskEntryPc, UserTaskResources,
-    UserTaskSpec, WaitQueueId, IDLE_TASK_ID,
+    TaskWaitHandle, TaskWaitResult, TaskWaitTarget, UserImageInfo, UserTaskEntryPc,
+    UserTaskResources, UserTaskSpec, WaitQueueId, IDLE_TASK_ID,
 };
 
 /// 初始化任务系统和底层调度器状态。

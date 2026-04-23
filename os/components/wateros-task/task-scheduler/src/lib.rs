@@ -11,8 +11,8 @@ pub use api_v0::Scheduler;
 pub use task_api::{
     AddressSpaceHandle, ExitedTask, KernelTaskEntry, ScheduleReason, TaskBlockReason,
     TaskExitCode, TaskId, TaskKind, TaskSnapshot, TaskState, TaskTick, TaskTrapFrame,
-    TaskWaitHandle, TaskWaitResult, TaskWaitTarget, UserTaskEntryPc, UserTaskResources,
-    UserTaskSpec, WaitQueueId, IDLE_TASK_ID,
+    TaskWaitHandle, TaskWaitResult, TaskWaitTarget, UserImageInfo, UserTaskEntryPc,
+    UserTaskResources, UserTaskSpec, WaitQueueId, IDLE_TASK_ID,
 };
 
 /// 初始化当前启用的调度器实现。
