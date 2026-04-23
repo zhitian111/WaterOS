@@ -30,7 +30,7 @@
 
 [features]
     api-v0 = [ "impl-dummy/api-v0", "impl-ext4-view/api-v0", "devfs/api-v0", "rootfs/api-v0" ]
-    default = [ "api-v0", "impl-ext4-view" ]
+    default = [ "api-v0", "impl-dummy" ]
     impl-devfs = [  ]
     impl-dummy = [  ]
     impl-ext4-view = [  ]
