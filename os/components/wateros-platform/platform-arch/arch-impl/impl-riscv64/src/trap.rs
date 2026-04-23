@@ -72,6 +72,17 @@ pub extern "C" fn trap_entry_rust(cx_ptr : *mut TrapContext) -> ! {
                             cx.scause,
                             cx.sepc);
         }
+        TrapCause::Exception(Exception::InstructionPageFault)
+        | TrapCause::Exception(Exception::LoadPageFault)
+        | TrapCause::Exception(Exception::StorePageFault) => {
+            logging::debug!(
+                "[trap] page fault: cause={:?} scause={:#x?} sepc={:#x?} stval={:#x?}",
+                trap_cause,
+                cx.scause,
+                cx.sepc,
+                cx.stval
+            );
+        }
         TrapCause::Exception(Exception::UserEnvCall) => {
             // syscall 入口（目前仍用 stub，后续你会接入 abi 跳转）
             let packet = cx.syscall_context();

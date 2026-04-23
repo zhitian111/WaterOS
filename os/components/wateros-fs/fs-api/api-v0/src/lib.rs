@@ -78,24 +78,14 @@ unsafe impl Send for LocalFs {}
 
 pub type SharedFs = Arc<Mutex<LocalFs>>;
 
-static ROOT_FS: Mutex<Option<SharedFs>> = Mutex::new(None);
-
-pub fn install_root_fs(fs: SharedFs) {
-    *ROOT_FS.lock() = Some(fs);
-}
-
-pub fn root_fs() -> Option<SharedFs> {
-    ROOT_FS.lock().as_ref().cloned()
-}
-
 pub fn test() {
-    log::trace!("[fs-api] test begin");
+    logging::trace!("[fs-api] test begin");
     let fs = SampleFs;
     let text = fs.read_to_string("/hello.txt").expect("sample text");
     assert_eq!(text, "hello");
     let meta = fs.metadata("/hello.txt").expect("sample metadata");
     assert_eq!(meta.size, 5);
-    log::trace!("[fs-api] test end");
+    logging::trace!("[fs-api] test end");
 }
 
 struct SampleFs;

@@ -2,8 +2,8 @@
 extern crate alloc;
 
 use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
-use api_v0::{install_root_fs, root_fs, FsError, FsMetadata, FsNodeType, FsResult, LocalFs, ReadOnlyFs, SharedFs};
-use driver_block_api_v0::{block_device_count, first_block_device, SharedBlockDevice};
+use api_v0::{FsError, FsMetadata, FsNodeType, FsResult, LocalFs, ReadOnlyFs, SharedFs};
+use driver_block_api_v0::SharedBlockDevice;
 use ext4_view::{Ext4, Ext4Error, Ext4Read, Metadata};
 use spin::Mutex;
 
@@ -157,34 +157,26 @@ fn parse_elf_header(data: &[u8]) -> FsResult<ElfHeaderInfo> {
     })
 }
 
-pub fn init() -> FsResult<()> {
-    if root_fs().is_some() {
-        return Ok(());
-    }
-
-    let device = first_block_device().ok_or(FsError::NotMounted)?;
+pub fn mount_by_block_path(path: &str) -> FsResult<SharedFs> {
+    logging::info!("[fs::ext4-view] mount begin, device_path={}", path);
+    let device = devfs::active_impl::lookup_block_device(path)?;
     let mut fs = Ext4ViewFs::new();
     fs.mount(device)?;
     let shared: SharedFs = Arc::new(Mutex::new(LocalFs::new(Box::new(fs))));
-    install_root_fs(shared);
-    log::info!("[fs::ext4-view] mounted root fs from first block device");
-    Ok(())
+    Ok(shared)
 }
 
-pub fn test() -> FsResult<()> {
-    if block_device_count() == 0 {
-        return Err(FsError::NotMounted);
-    }
-
-    init()?;
-    let fs = root_fs().ok_or(FsError::NotMounted)?;
+pub fn test_with(fs: SharedFs) -> FsResult<()> {
     let fs = fs.lock();
 
-    for path in ["/src/bin/000_hello_world.rs", "/elf/000_hello_world"] {
+    const TEXT_PATH: &str = "/src/bin/000_hello_world.rs";
+    const ELF_PATH: &str = "/elf/000_hello_world";
+
+    for path in [TEXT_PATH, ELF_PATH] {
         match fs.metadata(path) {
             Ok(meta) => {
-                log::info!(
-                    "[fs::ext4-view] path={} type={:?} size={} mode={:#o}",
+                logging::info!(
+                    "[fs::ext4-view][test] metadata OK path={} type={:?} size={} mode={:#o}",
                     path,
                     meta.node_type,
                     meta.size,
@@ -192,27 +184,71 @@ pub fn test() -> FsResult<()> {
                 );
             }
             Err(err) => {
-                log::warn!("[fs::ext4-view] metadata failed for {}: {:?}", path, err);
+                logging::warn!(
+                    "[fs::ext4-view][test] metadata FAIL path={} err={:?}",
+                    path,
+                    err
+                );
             }
         }
     }
 
-    if let Ok(text) = fs.read_prefix("/src/bin/000_hello_world.rs", 96) {
-        let preview = String::from_utf8_lossy(&text);
-        log::info!("[fs::ext4-view] text prefix: {}", preview);
+    match fs.read_prefix(TEXT_PATH, 96) {
+        Ok(text) => {
+            let preview = String::from_utf8_lossy(&text);
+            let hex_preview_len = text.len().min(32);
+            logging::info!(
+                "[fs::ext4-view][test] read OK path={} bytes={} hex_prefix[0..{}]={:02x?} utf8_preview={:?}",
+                TEXT_PATH,
+                text.len(),
+                hex_preview_len,
+                &text[..hex_preview_len],
+                preview.as_ref()
+            );
+        }
+        Err(err) => {
+            logging::warn!(
+                "[fs::ext4-view][test] read FAIL path={} err={:?}",
+                TEXT_PATH,
+                err
+            );
+        }
     }
 
-    if let Ok(elf_head) = fs.read_prefix("/elf/000_hello_world", 64) {
-        log::info!("[fs::ext4-view] elf first16={:02x?}", &elf_head[..elf_head.len().min(16)]);
-        match parse_elf_header(&elf_head) {
-            Ok(info) => log::info!(
-                "[fs::ext4-view] elf header class={} data={} machine={:#x} entry={:#x}",
-                info.class,
-                info.data,
-                info.machine,
-                info.entry
-            ),
-            Err(err) => log::warn!("[fs::ext4-view] parse elf header failed: {:?}", err),
+    match fs.read_prefix(ELF_PATH, 64) {
+        Ok(elf_head) => {
+            let n = elf_head.len().min(16);
+            logging::info!(
+                "[fs::ext4-view][test] read OK path={} bytes={} first16={:02x?}",
+                ELF_PATH,
+                elf_head.len(),
+                &elf_head[..n]
+            );
+            match parse_elf_header(&elf_head) {
+                Ok(info) => {
+                    logging::info!(
+                        "[fs::ext4-view][test] elf header OK class={} data={} machine={:#x} entry={:#x}",
+                        info.class,
+                        info.data,
+                        info.machine,
+                        info.entry
+                    );
+                }
+                Err(err) => {
+                    logging::warn!(
+                        "[fs::ext4-view][test] elf header PARSE FAIL err={:?} raw64={:02x?}",
+                        err,
+                        elf_head.as_slice()
+                    );
+                }
+            }
+        }
+        Err(err) => {
+            logging::warn!(
+                "[fs::ext4-view][test] read FAIL path={} err={:?}",
+                ELF_PATH,
+                err
+            );
         }
     }
 

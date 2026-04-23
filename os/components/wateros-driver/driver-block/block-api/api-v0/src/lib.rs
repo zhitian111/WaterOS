@@ -87,13 +87,17 @@ pub fn first_block_device() -> Option<SharedBlockDevice> {
     BLOCK_DEVICES.lock().first().cloned()
 }
 
+pub fn block_device_at(index: usize) -> Option<SharedBlockDevice> {
+    BLOCK_DEVICES.lock().get(index).cloned()
+}
+
 pub fn test() {
-    log::trace!("[driver-block-api] test begin");
+    logging::trace!("[driver-block-api] test begin");
     assert_eq!(BLOCK_SIZE, 512);
     let mut sample = SampleBlockDevice::new();
     let prefix = sample.read_prefix(3, 5).expect("prefix read should work");
     assert_eq!(&prefix, &[3, 4, 5, 6, 7]);
-    log::trace!("[driver-block-api] test end");
+    logging::trace!("[driver-block-api] test end");
 }
 
 struct SampleBlockDevice {

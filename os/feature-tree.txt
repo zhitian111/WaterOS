@@ -181,17 +181,63 @@ wateros-driver-network-impl-dummy  (components/wateros-driver/driver-network/net
 wateros-fs  (components/wateros-fs/Cargo.toml)
   - default [default]
     - api-v0
-    - impl-dummy
+    - impl-ext4-view
   - api-v0 [default]
     - impl-dummy/api-v0
       > wateros-fs-impl-dummy
         - default [default]
         - api-v0 [default]
+    - impl-ext4-view/api-v0
+      > wateros-fs-impl-ext4-view
+        - default [default]
+        - api-v0 [default]
+    - devfs/api-v0
+      > wateros-fs-devfs
+        - default [default]
+        - api-v0 [default]
+        - impl-dummy
+        - impl-kernel [default]
+    - rootfs/api-v0
+      > wateros-fs-rootfs
+        - default [default]
+        - api-v0 [default]
+        - impl-dummy
+        - impl-kernel [default]
   - impl-devfs
-  - impl-dummy [default]
+  - impl-dummy
+  - impl-ext4-view [default]
 
 wateros-fs-api-v0  (components/wateros-fs/fs-api/api-v0/Cargo.toml)
   (no [features])
+
+wateros-fs-devfs  (components/wateros-fs/fs-devfs/Cargo.toml)
+  - default [default]
+    - api-v0
+    - impl-kernel
+  - api-v0 [default]
+    - impl-dummy/api-v0
+      > wateros-fs-devfs-impl-dummy
+        - default [default]
+        - api-v0 [default]
+    - impl-kernel/api-v0
+      > wateros-fs-devfs-impl-kernel
+        - default [default]
+        - api-v0 [default]
+  - impl-dummy
+  - impl-kernel [default]
+
+wateros-fs-devfs-api-v0  (components/wateros-fs/fs-devfs/devfs-api/api-v0/Cargo.toml)
+  (no [features])
+
+wateros-fs-devfs-impl-dummy  (components/wateros-fs/fs-devfs/devfs-impl/impl-dummy/Cargo.toml)
+  - default [default]
+    - api-v0
+  - api-v0 [default]
+
+wateros-fs-devfs-impl-kernel  (components/wateros-fs/fs-devfs/devfs-impl/impl-kernel/Cargo.toml)
+  - default [default]
+    - api-v0
+  - api-v0 [default]
 
 wateros-fs-impl-devfs  (components/wateros-fs/fs-impl/impl-devfs/Cargo.toml)
   - default [default]
@@ -199,6 +245,40 @@ wateros-fs-impl-devfs  (components/wateros-fs/fs-impl/impl-devfs/Cargo.toml)
   - api-v0 [default]
 
 wateros-fs-impl-dummy  (components/wateros-fs/fs-impl/impl-dummy/Cargo.toml)
+  - default [default]
+    - api-v0
+  - api-v0 [default]
+
+wateros-fs-impl-ext4-view  (components/wateros-fs/fs-impl/impl-ext4-view/Cargo.toml)
+  - default [default]
+    - api-v0
+  - api-v0 [default]
+
+wateros-fs-rootfs  (components/wateros-fs/fs-rootfs/Cargo.toml)
+  - default [default]
+    - api-v0
+    - impl-kernel
+  - api-v0 [default]
+    - impl-dummy/api-v0
+      > wateros-fs-rootfs-impl-dummy
+        - default [default]
+        - api-v0 [default]
+    - impl-kernel/api-v0
+      > wateros-fs-rootfs-impl-kernel
+        - default [default]
+        - api-v0 [default]
+  - impl-dummy
+  - impl-kernel [default]
+
+wateros-fs-rootfs-api-v0  (components/wateros-fs/fs-rootfs/rootfs-api/api-v0/Cargo.toml)
+  (no [features])
+
+wateros-fs-rootfs-impl-dummy  (components/wateros-fs/fs-rootfs/rootfs-impl/impl-dummy/Cargo.toml)
+  - default [default]
+    - api-v0
+  - api-v0 [default]
+
+wateros-fs-rootfs-impl-kernel  (components/wateros-fs/fs-rootfs/rootfs-impl/impl-kernel/Cargo.toml)
   - default [default]
     - api-v0
   - api-v0 [default]

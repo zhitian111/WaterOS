@@ -5,5 +5,5 @@
 
 [dependencies]
 driver-api = { path = "../../../driver-api/api-v0", package = "wateros-driver-api-v0", default-features = true }
-log = { version = "0.4.29" }
+logging = { path = "../../../../wateros-runtime/runtime-logging", package = "wateros-runtime-logging", default-features = true }
 spin = "0.10.0"

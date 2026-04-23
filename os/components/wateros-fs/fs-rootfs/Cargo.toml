@@ -1,0 +1,15 @@
+[package]
+    name = "wateros-fs-rootfs"
+    version = "0.1.0"
+    edition = "2024"
+
+[dependencies]
+    api-v0 = { path = "./rootfs-api/api-v0/", package = "wateros-fs-rootfs-api-v0", default-features = true }
+    impl-dummy = { path = "./rootfs-impl/impl-dummy/", package = "wateros-fs-rootfs-impl-dummy", default-features = true }
+    impl-kernel = { path = "./rootfs-impl/impl-kernel/", package = "wateros-fs-rootfs-impl-kernel", default-features = true }
+
+[features]
+    api-v0 = [ "impl-dummy/api-v0", "impl-kernel/api-v0" ]
+    default = [ "api-v0", "impl-kernel" ]
+    impl-dummy = [  ]
+    impl-kernel = [  ]

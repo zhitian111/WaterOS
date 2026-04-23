@@ -240,12 +240,16 @@ pub fn test_with_range(start_ppn: BasePPN, end_ppn: BasePPN) {
     frame_alloctor::test_with_range(start_ppn, end_ppn);
 
     let mut aspace = Sv39AddressSpace::new().expect("Sv39AddressSpace::new should succeed");
+    let satp = aspace.satp_value();
+    assert_eq!(satp >> 60, 8, "satp mode should be Sv39");
 
     // 取一页测试映射
     let ppn = frame_alloc_result().expect("alloc one frame for map test");
     let vpn = VirtPageNum(0x200);
     let perm = PagePerm::R | PagePerm::W | PagePerm::U;
     aspace.map_page_to_ppn(vpn, ppn, perm).expect("map should succeed");
+    let map_dup = aspace.map_page_to_ppn(vpn, ppn, perm);
+    assert!(matches!(map_dup, Err(MmError::AlreadyMapped)));
 
     let va = VirtAddr(vpn.0 * PAGE_SIZE + 0x123);
     let pa = aspace.translate_addr(va).expect("translate should not error").expect("should map");
@@ -263,6 +267,10 @@ pub fn test_with_range(start_ppn: BasePPN, end_ppn: BasePPN) {
     assert_eq!(old, Some(ppn));
     let none = aspace.translate_addr(va).unwrap();
     assert!(none.is_none());
+    let missing_protect = aspace.protect_page(vpn, PagePerm::R);
+    assert!(matches!(missing_protect, Err(MmError::NotMapped)));
+    let second_unmap = aspace.unmap_page_to_ppn(vpn).expect("second unmap should be ok");
+    assert!(second_unmap.is_none());
 
     // 回收测试页
     frame_dealloc_result(ppn).expect("dealloc test frame");

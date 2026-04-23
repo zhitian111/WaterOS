@@ -1,0 +1,7 @@
+[package]
+    name = "wateros-fs-rootfs-api-v0"
+    version = "0.1.0"
+    edition = "2024"
+
+[dependencies]
+    fs-api-v0 = { path = "../../../fs-api/api-v0/", package = "wateros-fs-api-v0", default-features = true }

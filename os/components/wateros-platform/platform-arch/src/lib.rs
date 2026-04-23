@@ -55,3 +55,14 @@ pub mod interrupt {
         ArchInterruptImpl::disable_global_interrupt()
     }
 }
+
+pub mod paging {
+    #[cfg(feature = "impl-riscv64")]
+    pub use impl_riscv64::paging::Riscv64Paging as ArchPagingImpl;
+
+    #[inline]
+    pub fn read_satp() -> usize { ArchPagingImpl::read_satp() }
+
+    #[inline]
+    pub fn write_satp_and_flush(satp: usize) { ArchPagingImpl::write_satp_and_flush(satp) }
+}

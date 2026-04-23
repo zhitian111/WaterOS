@@ -17,3 +17,4 @@
 2. 再看 `architecture/snapshot.md` 了解项目结构。
 3. 需要执行全项目任务时查看 `tasks/README.md`。
 4. 需要了解当前系统状态时查看 `exports/`。
+5. 需要做内存管理验证时查看 `guides/mm-validation.md`。
