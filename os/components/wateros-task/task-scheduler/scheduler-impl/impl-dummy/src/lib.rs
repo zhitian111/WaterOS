@@ -9,7 +9,7 @@ use riscv::register::sstatus;
 use task_api::{
     ExitedTask, KernelTaskEntry, ScheduleReason, TaskBlockReason, TaskExitCode, TaskId,
     TaskSnapshot, TaskTick, TaskTrapFrame, TaskWaitHandle, TaskWaitResult, UserTaskEntryPc,
-    WaitQueueId,
+    UserTaskSpec, WaitQueueId,
 };
 
 mod queues;
@@ -80,9 +80,13 @@ pub fn spawn_kernel_task(entry: KernelTaskEntry, arg: usize) -> TaskId {
     with_scheduler(|scheduler| scheduler.spawn_kernel_task(entry, arg))
 }
 
-pub fn spawn_user_task(entry_pc: UserTaskEntryPc) -> TaskId {
+pub fn spawn_user_task_spec(spec: UserTaskSpec) -> TaskId {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.spawn_user_task(entry_pc))
+    with_scheduler(|scheduler| scheduler.spawn_user_task_spec(spec))
+}
+
+pub fn spawn_user_task(entry_pc: UserTaskEntryPc) -> TaskId {
+    spawn_user_task_spec(UserTaskSpec::new(entry_pc))
 }
 
 pub fn allocate_wait_queue() -> WaitQueueId {

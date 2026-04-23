@@ -6,7 +6,7 @@ use arch::task::ActiveArchTaskContext as TaskContext;
 use task_api::{
     ExitedTask, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskId, TaskSnapshot,
     TaskState, TaskTick, TaskTrapFrame, TaskWaitHandle, TaskWaitResult, TaskWaitTarget,
-    UserTaskEntryPc, IDLE_TASK_ID,
+    UserTaskSpec, IDLE_TASK_ID,
 };
 use task_impl::TaskControlBlock;
 
@@ -101,13 +101,13 @@ impl TaskRegistry {
         task_id
     }
 
-    pub(super) fn spawn_user_task(&mut self, entry_pc: UserTaskEntryPc) -> TaskId {
+    pub(super) fn spawn_user_task_spec(&mut self, spec: UserTaskSpec) -> TaskId {
         let task_id = self.next_task_id;
         self.next_task_id += 1;
         self.task_table.insert(Box::new(TaskControlBlock::new_user_task(
             task_id,
             __arch_user_task_entry as usize,
-            entry_pc,
+            spec,
         )));
         task_id
     }

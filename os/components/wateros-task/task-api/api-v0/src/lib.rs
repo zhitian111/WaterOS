@@ -16,6 +16,68 @@ pub type UserTaskEntryPc = usize;
 /// 预留给 idle 任务的固定任务号。
 pub const IDLE_TASK_ID: TaskId = 0;
 
+/// 预留给后续地址空间实现使用的稳定句柄占位。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AddressSpaceHandle {
+    raw: usize,
+}
+
+impl AddressSpaceHandle {
+    /// 基于一个实现自定义的原始值构造地址空间句柄。
+    #[inline]
+    pub const fn from_raw(raw: usize) -> Self { Self { raw } }
+
+    /// 读取该句柄对应的原始值。
+    #[inline]
+    pub const fn raw(self) -> usize { self.raw }
+}
+
+/// 创建用户任务时需要提供的最小启动规格。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UserTaskSpec {
+    entry_pc: UserTaskEntryPc,
+    address_space: Option<AddressSpaceHandle>,
+}
+
+impl UserTaskSpec {
+    /// 基于用户入口地址构造一份最小任务规格。
+    #[inline]
+    pub const fn new(entry_pc: UserTaskEntryPc) -> Self {
+        Self {
+            entry_pc,
+            address_space: None,
+        }
+    }
+
+    /// 为该用户任务规格附上一份地址空间句柄占位。
+    #[inline]
+    pub const fn with_address_space(self, address_space: AddressSpaceHandle) -> Self {
+        Self {
+            entry_pc: self.entry_pc,
+            address_space: Some(address_space),
+        }
+    }
+
+    /// 返回用户态首次进入时的目标 PC。
+    #[inline]
+    pub const fn entry_pc(&self) -> UserTaskEntryPc { self.entry_pc }
+
+    /// 返回当前规格附带的地址空间句柄占位。
+    #[inline]
+    pub const fn address_space(&self) -> Option<AddressSpaceHandle> { self.address_space }
+}
+
+/// 对外暴露的用户任务资源快照。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UserTaskResources {
+    /// 用户任务首次返回用户态时的入口 PC。
+    pub entry_pc: UserTaskEntryPc,
+    /// 当前用户栈顶地址。
+    pub user_stack_top: usize,
+    /// 预留给后续地址空间/loader 使用的地址空间句柄占位。
+    pub address_space: Option<AddressSpaceHandle>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TaskKind {
     /// 只在内核态运行的任务。
@@ -220,6 +282,8 @@ pub struct TaskSnapshot {
     pub trap_frame: Option<TaskTrapFrame>,
     /// 调度器维护的运行统计。
     pub stats: TaskRuntimeStats,
+    /// 若为用户任务，则附带其资源快照。
+    pub user_resources: Option<UserTaskResources>,
 }
 
 /// 已退出任务的可回收信息。
@@ -235,4 +299,6 @@ pub struct ExitedTask {
     pub trap_frame: Option<TaskTrapFrame>,
     /// 退出时刻的运行统计。
     pub stats: TaskRuntimeStats,
+    /// 若为用户任务，则附带其退出时的资源快照。
+    pub user_resources: Option<UserTaskResources>,
 }

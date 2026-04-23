@@ -1,6 +1,6 @@
 use task_api::{
     ExitedTask, KernelTaskEntry, ScheduleReason, TaskBlockReason, TaskId, TaskSnapshot,
-    TaskTick, TaskTrapFrame, TaskWaitHandle, TaskWaitResult, UserTaskEntryPc, WaitQueueId,
+    TaskTick, TaskTrapFrame, TaskWaitHandle, TaskWaitResult, UserTaskSpec, WaitQueueId,
 };
 
 use crate::queues::{QueueTarget, RoundRobinQueues};
@@ -32,8 +32,8 @@ impl RoundRobinScheduler {
         task_id
     }
 
-    pub(super) fn spawn_user_task(&mut self, entry_pc: UserTaskEntryPc) -> TaskId {
-        let task_id = self.registry.spawn_user_task(entry_pc);
+    pub(super) fn spawn_user_task_spec(&mut self, spec: UserTaskSpec) -> TaskId {
+        let task_id = self.registry.spawn_user_task_spec(spec);
         self.queues.push_spawned_task(task_id);
         log::debug!("[task-scheduler] spawned user task {}", task_id);
         task_id

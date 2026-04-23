@@ -3,7 +3,7 @@
 use task_api::{
     ExitedTask, KernelTaskEntry, ScheduleReason, TaskBlockReason, TaskExitCode, TaskId,
     TaskSnapshot, TaskTick, TaskTrapFrame, TaskWaitHandle, TaskWaitResult, UserTaskEntryPc,
-    WaitQueueId,
+    UserTaskSpec, WaitQueueId,
 };
 
 /// 调度器需要对外提供的最小能力集合。
@@ -12,8 +12,12 @@ pub trait Scheduler {
     fn init(&mut self);
     /// 创建一个新的内核任务，并返回其任务号。
     fn spawn_kernel_task(&mut self, entry: KernelTaskEntry, arg: usize) -> TaskId;
-    /// 创建一个新的用户任务骨架，并返回其任务号。
-    fn spawn_user_task(&mut self, entry_pc: UserTaskEntryPc) -> TaskId;
+    /// 按给定规格创建一个新的用户任务，并返回其任务号。
+    fn spawn_user_task_spec(&mut self, spec: UserTaskSpec) -> TaskId;
+    /// 创建一个新的最小用户任务骨架，并返回其任务号。
+    fn spawn_user_task(&mut self, entry_pc: UserTaskEntryPc) -> TaskId {
+        self.spawn_user_task_spec(UserTaskSpec::new(entry_pc))
+    }
     /// 分配一个新的等待队列编号。
     fn allocate_wait_queue(&mut self) -> WaitQueueId;
     /// 启动调度器并切入第一批任务。
