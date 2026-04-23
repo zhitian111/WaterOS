@@ -1,5 +1,5 @@
 use crate::active_impl::TaskBootstrap;
-use crate::{schedule_tick, scheduler, syscall, TaskTrapFrame};
+use crate::{schedule_tick, scheduler, TaskTrapFrame};
 use riscv::register::sstatus;
 
 unsafe extern "C" {
@@ -9,20 +9,6 @@ unsafe extern "C" {
 #[unsafe(no_mangle)]
 pub extern "C" fn __wateros_task_runtime_schedule_tick() {
     schedule_tick();
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn __wateros_task_runtime_dispatch_current_syscall(
-    syscall_nr: usize,
-    arg0: usize,
-    arg1: usize,
-    arg2: usize,
-    arg3: usize,
-    arg4: usize,
-    arg5: usize,
-) -> isize {
-    let syscall_args = abi::syscall_args::SyscallArgs::from_regs([arg0, arg1, arg2, arg3, arg4, arg5]);
-    syscall::dispatch_current_syscall(syscall_nr, syscall_args)
 }
 
 #[unsafe(no_mangle)]

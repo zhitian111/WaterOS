@@ -11,7 +11,7 @@ unsafe extern "C" {
     fn __wateros_task_runtime_record_current_trap_frame(trap_frame_ptr: *const u8);
     fn __wateros_task_runtime_begin_current_trap_frame_access(trap_frame_ptr: *mut u8) -> *mut u8;
     fn __wateros_task_runtime_restore_current_trap_frame(trap_frame_ptr: *mut u8) -> bool;
-    fn __wateros_task_runtime_dispatch_current_syscall(
+    fn __wateros_syscall_dispatch_current(
         syscall_nr: usize,
         arg0: usize,
         arg1: usize,
@@ -147,7 +147,7 @@ fn handle_user_syscall(cx: &mut TrapContext) {
     let syscall_nr = cx.syscall_nr().raw();
     let syscall_args = cx.syscall_args();
     let syscall_ret = unsafe {
-        __wateros_task_runtime_dispatch_current_syscall(
+        __wateros_syscall_dispatch_current(
             syscall_nr,
             syscall_args.arg(0),
             syscall_args.arg(1),

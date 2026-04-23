@@ -3,6 +3,7 @@
 #![feature(alloc_error_handler)]
 
 extern crate alloc;
+use syscall as _;
 
 #[cfg(feature = "qemu-riscv64-opensbi")]
 mod self_tests;

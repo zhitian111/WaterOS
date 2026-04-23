@@ -1,7 +1,6 @@
 #![no_std]
 
 mod runtime;
-mod syscall;
 
 pub mod api {
     pub use ::api_v0::*;
