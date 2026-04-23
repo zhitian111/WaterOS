@@ -4,14 +4,15 @@ pub mod api {
     pub use ::api_v0::*;
 }
 
-#[cfg(feature = "impl-dummy")]
-pub use impl_dummy as active_impl;
+#[cfg(feature = "impl-round-robin")]
+pub use impl_round_robin as active_impl;
 
 pub use api_v0::Scheduler;
 pub use task_api::{
-    ExitedTask, KernelTaskEntry, ScheduleReason, TaskBlockReason, TaskExitCode, TaskId,
-    TaskKind, TaskSnapshot, TaskState, TaskTick, TaskTrapFrame, TaskWaitHandle,
-    TaskWaitResult, TaskWaitTarget, UserTaskEntryPc, WaitQueueId, IDLE_TASK_ID,
+    AddressSpaceHandle, ExitedTask, KernelTaskEntry, ScheduleReason, TaskBlockReason,
+    TaskExitCode, TaskId, TaskKind, TaskSnapshot, TaskState, TaskTick, TaskTrapFrame,
+    TaskWaitHandle, TaskWaitResult, TaskWaitTarget, UserImageInfo, UserTaskEntryPc,
+    UserTaskResources, UserTaskSpec, WaitQueueId, IDLE_TASK_ID,
 };
 
 /// 初始化当前启用的调度器实现。
@@ -24,10 +25,16 @@ pub fn spawn_kernel_task(entry: KernelTaskEntry, arg: usize) -> TaskId {
     active_impl::spawn_kernel_task(entry, arg)
 }
 
-/// 创建一个新的用户任务骨架，并返回其任务号。
+/// 按给定规格创建一个新的用户任务，并返回其任务号。
+#[inline]
+pub fn spawn_user_task_spec(spec: UserTaskSpec) -> TaskId {
+    active_impl::spawn_user_task_spec(spec)
+}
+
+/// 创建一个新的最小用户任务骨架，并返回其任务号。
 #[inline]
 pub fn spawn_user_task(entry_pc: UserTaskEntryPc) -> TaskId {
-    active_impl::spawn_user_task(entry_pc)
+    spawn_user_task_spec(UserTaskSpec::new(entry_pc))
 }
 
 /// 为上层同步对象分配一个等待队列编号。

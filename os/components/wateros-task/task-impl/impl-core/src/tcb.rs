@@ -1,13 +1,51 @@
 use alloc::boxed::Box;
 use api_v0::{
-    ExitedTask, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskId, TaskKind,
-    TaskRuntimeStats, TaskSnapshot, TaskState, TaskTick, TaskTrapFrame, TaskWaitResult,
-    UserTaskEntryPc,
+    AddressSpaceHandle, ExitedTask, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskId,
+    TaskKind, TaskRuntimeStats, TaskSnapshot, TaskState, TaskTick, TaskTrapFrame,
+    TaskWaitResult, UserImageInfo, UserTaskEntryPc,
+    UserTaskResources as UserTaskResourcesSnapshot, UserTaskSpec,
 };
 use arch::task::ActiveArchTaskContext as TaskContext;
 
 use crate::stack::{KernelStack, UserStack};
 use crate::TaskBootstrap;
+
+struct UserTaskResources {
+    entry_pc: UserTaskEntryPc,
+    user_stack: UserStack,
+    address_space: Option<AddressSpaceHandle>,
+    image: Option<UserImageInfo>,
+}
+
+impl UserTaskResources {
+    fn new(spec: UserTaskSpec) -> Self {
+        Self {
+            entry_pc: spec.entry_pc(),
+            user_stack: UserStack::new(),
+            address_space: spec.address_space(),
+            image: spec.image(),
+        }
+    }
+
+    fn entry_pc(&self) -> UserTaskEntryPc { self.entry_pc }
+
+    fn user_stack_top(&self) -> usize { self.user_stack.top() }
+
+    fn user_stack_bottom(&self) -> usize { self.user_stack.bottom() }
+
+    fn user_stack_size(&self) -> usize { self.user_stack.size() }
+
+    fn snapshot(&self) -> UserTaskResourcesSnapshot {
+        UserTaskResourcesSnapshot {
+            entry_pc: self.entry_pc,
+            user_stack_bottom: self.user_stack_bottom(),
+            user_stack_top: self.user_stack_top(),
+            user_stack_size: self.user_stack_size(),
+            address_space: self.address_space,
+            image: self.image,
+        }
+    }
+}
 
 /// 调度器持有的任务控制块。
 pub struct TaskControlBlock {
@@ -19,7 +57,7 @@ pub struct TaskControlBlock {
     wait_result: Option<TaskWaitResult>,
     task_cx: TaskContext,
     kernel_stack: KernelStack,
-    user_stack: Option<UserStack>,
+    user_resources: Option<UserTaskResources>,
     bootstrap: Option<Box<TaskBootstrap>>,
     is_idle: bool,
 }
@@ -49,19 +87,19 @@ impl TaskControlBlock {
             wait_result: None,
             task_cx,
             kernel_stack,
-            user_stack: None,
+            user_resources: None,
             bootstrap: None,
             is_idle: true,
         }
     }
 
     /// 创建一个最小用户任务骨架。
-    pub fn new_user_task(id: TaskId, entry_stub: usize, entry_pc: UserTaskEntryPc) -> Self {
+    pub fn new_user_task(id: TaskId, entry_stub: usize, spec: UserTaskSpec) -> Self {
         let kernel_stack = KernelStack::new();
-        let user_stack = UserStack::new();
+        let user_resources = UserTaskResources::new(spec);
         let task_cx = TaskContext::goto_entry(entry_stub, kernel_stack.top());
         let mut trap_frame = TaskTrapFrame::default();
-        trap_frame.prepare_user_return(entry_pc, user_stack.top());
+        trap_frame.prepare_user_return(user_resources.entry_pc(), user_resources.user_stack_top());
         Self {
             id,
             kind: TaskKind::User,
@@ -71,7 +109,7 @@ impl TaskControlBlock {
             wait_result: None,
             task_cx,
             kernel_stack,
-            user_stack: Some(user_stack),
+            user_resources: Some(user_resources),
             bootstrap: None,
             is_idle: false,
         }
@@ -98,7 +136,7 @@ impl TaskControlBlock {
             wait_result: None,
             task_cx,
             kernel_stack,
-            user_stack: None,
+            user_resources: None,
             bootstrap: Some(bootstrap),
             is_idle,
         }
@@ -117,6 +155,7 @@ impl TaskControlBlock {
             state: self.state,
             trap_frame: self.trap_frame,
             stats: self.stats,
+            user_resources: self.user_resources_snapshot(),
         }
     }
 
@@ -143,7 +182,17 @@ impl TaskControlBlock {
     #[inline]
     /// 若该任务持有用户栈，则返回其栈顶地址。
     pub fn user_stack_top(&self) -> Option<usize> {
-        self.user_stack.as_ref().map(UserStack::top)
+        self.user_resources
+            .as_ref()
+            .map(UserTaskResources::user_stack_top)
+    }
+
+    #[inline]
+    /// 若为用户任务，则返回其资源快照。
+    pub fn user_resources_snapshot(&self) -> Option<UserTaskResourcesSnapshot> {
+        self.user_resources
+            .as_ref()
+            .map(UserTaskResources::snapshot)
     }
 
     #[inline]
@@ -166,6 +215,7 @@ impl TaskControlBlock {
             exit_code,
             trap_frame: self.trap_frame,
             stats: self.stats,
+            user_resources: self.user_resources_snapshot(),
         })
     }
 

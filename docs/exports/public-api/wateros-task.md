@@ -2,7 +2,7 @@
 
 ## 当前定位
 
-当前已具备 `task-api`、`task-impl`、`task-scheduler` 的拆分结构，且 Stage3A 已完成第一轮边界收紧：根 crate 更偏 facade，任务启动与 trap hook 已迁入内部 runtime，`task-impl/impl-dummy` 则继续承载真实任务对象。
+当前已具备 `task-api`、`task-impl`、`task-scheduler` 的拆分结构，且 Stage3A 已完成第一轮边界收紧：根 crate 更偏 facade，任务启动与 trap hook 已迁入内部 runtime，`task-impl/impl-core` 继续承载真实任务对象，而 `task-scheduler/scheduler-impl/impl-round-robin` 则承载当前主线调度策略。
 
 聚合层当前对外暴露的核心能力包括：
 
