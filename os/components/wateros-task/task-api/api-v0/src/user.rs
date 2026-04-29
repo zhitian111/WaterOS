@@ -9,11 +9,15 @@ pub struct AddressSpaceHandle {
 impl AddressSpaceHandle {
     /// 基于一个实现自定义的原始值构造地址空间句柄。
     #[inline]
-    pub const fn from_raw(raw: usize) -> Self { Self { raw } }
+    pub const fn from_raw(raw: usize) -> Self {
+        Self { raw }
+    }
 
     /// 读取该句柄对应的原始值。
     #[inline]
-    pub const fn raw(self) -> usize { self.raw }
+    pub const fn raw(self) -> usize {
+        self.raw
+    }
 }
 
 /// 用户任务关联的一段用户映像元信息。
@@ -35,11 +39,15 @@ impl UserImageInfo {
 
     /// 返回映像起始地址。
     #[inline]
-    pub const fn image_base(&self) -> usize { self.image_base }
+    pub const fn image_base(&self) -> usize {
+        self.image_base
+    }
 
     /// 返回映像大小。
     #[inline]
-    pub const fn image_size(&self) -> usize { self.image_size }
+    pub const fn image_size(&self) -> usize {
+        self.image_size
+    }
 }
 
 /// 创建用户任务时需要提供的最小启动规格。
@@ -83,15 +91,21 @@ impl UserTaskSpec {
 
     /// 返回用户态首次进入时的目标 PC。
     #[inline]
-    pub const fn entry_pc(&self) -> UserTaskEntryPc { self.entry_pc }
+    pub const fn entry_pc(&self) -> UserTaskEntryPc {
+        self.entry_pc
+    }
 
     /// 返回当前规格附带的地址空间句柄占位。
     #[inline]
-    pub const fn address_space(&self) -> Option<AddressSpaceHandle> { self.address_space }
+    pub const fn address_space(&self) -> Option<AddressSpaceHandle> {
+        self.address_space
+    }
 
     /// 返回当前规格附带的用户映像元信息。
     #[inline]
-    pub const fn image(&self) -> Option<UserImageInfo> { self.image }
+    pub const fn image(&self) -> Option<UserImageInfo> {
+        self.image
+    }
 }
 
 /// 对外暴露的用户任务资源快照。

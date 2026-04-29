@@ -1,10 +1,25 @@
 #![no_std]
 
 use task_api::{
-    ExitedTask, KernelTaskEntry, ScheduleReason, TaskBlockReason, TaskExitCode, TaskId,
-    TaskSnapshot, TaskTick, TaskTrapFrame, TaskWaitHandle, TaskWaitResult, UserTaskEntryPc,
-    UserTaskSpec, WaitQueueId,
+    ExitedTask, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskId, TaskSnapshot, TaskTick,
+    TaskWaitHandle, TaskWaitResult, UserTaskEntryPc, UserTaskSpec, WaitQueueId,
 };
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScheduleReason {
+    /// 第一次切入任务系统。
+    StartFirst,
+    /// 当前任务主动让出 CPU。
+    Yield,
+    /// 由时钟 tick 触发一次调度检查。
+    Tick,
+    /// 由于阻塞而切换出去。
+    Block(TaskBlockReason),
+    /// 由于定时睡眠而切换出去。
+    Sleep(TaskTick),
+    /// 当前任务退出。
+    Exit(TaskExitCode),
+}
 
 /// 调度器需要对外提供的最小能力集合。
 pub trait Scheduler {
@@ -36,7 +51,9 @@ pub trait Scheduler {
     ) -> TaskWaitResult;
     /// 让当前任务在指定等待队列上休眠。
     fn wait_current_on(&mut self, wait_queue_id: WaitQueueId) {
-        self.wait_current(TaskWaitHandle::for_wait_queue(wait_queue_id));
+        self.wait_current(TaskWaitHandle::for_wait_queue(
+            wait_queue_id,
+        ));
     }
     /// 让当前任务在指定等待队列上等待，并带一个超时。
     fn wait_current_on_timeout(
@@ -44,7 +61,10 @@ pub trait Scheduler {
         wait_queue_id: WaitQueueId,
         timeout_ticks: TaskTick,
     ) -> TaskWaitResult {
-        self.wait_current_timeout(TaskWaitHandle::for_wait_queue(wait_queue_id), timeout_ticks)
+        self.wait_current_timeout(
+            TaskWaitHandle::for_wait_queue(wait_queue_id),
+            timeout_ticks,
+        )
     }
     /// 让当前任务等待指定任务退出。
     fn wait_for_task_exit(&mut self, task_id: TaskId) {
@@ -56,7 +76,10 @@ pub trait Scheduler {
         task_id: TaskId,
         timeout_ticks: TaskTick,
     ) -> TaskWaitResult {
-        self.wait_current_timeout(TaskWaitHandle::for_task_exit(task_id), timeout_ticks)
+        self.wait_current_timeout(
+            TaskWaitHandle::for_task_exit(task_id),
+            timeout_ticks,
+        )
     }
     /// 让当前任务睡眠指定 tick 数。
     fn sleep_current_for_ticks(&mut self, ticks: TaskTick);
@@ -76,10 +99,4 @@ pub trait Scheduler {
     fn current_task_id(&self) -> Option<TaskId>;
     /// 读取当前正在运行任务的稳定快照。
     fn current_task_snapshot(&self) -> Option<TaskSnapshot>;
-    /// 记录当前任务最近一次 trap 的保存现场。
-    fn record_current_trap_frame(&mut self, trap_frame: TaskTrapFrame);
-    /// 将当前 trap 现场装载到当前任务对象，并返回权威 trap frame 指针。
-    fn begin_current_trap_frame_access(&mut self, trap_frame: TaskTrapFrame) -> Option<*mut TaskTrapFrame>;
-    /// 将当前任务保存的 trap 现场恢复到给定缓冲区。
-    fn restore_current_trap_frame(&self, trap_frame: &mut TaskTrapFrame) -> bool;
 }

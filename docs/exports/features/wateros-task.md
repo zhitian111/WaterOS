@@ -17,9 +17,9 @@
 - 退出任务现在会保留为可回收 zombie，并在退出时自动唤醒等待其退出的 waiter
 - task 根 crate 已收紧为 facade，trap/tick/task-entry hook 已迁入内部 runtime
 - trap 路径已开始把完整 trap frame 快照复制进当前任务对象，并在返回前回写到 trap 栈帧
-- trap 读写路径已显式区分“是否返回用户态”的语义，`TaskTrapFrame` 可直接表达 `user_pc/user_sp/syscall_ret/user return`
+- trap 读写路径已显式区分“是否返回用户态”的语义，完整 trap frame 留在 `platform-arch`/task impl 机制层，task 公共 API 通过 `TaskTrapSnapshot` 暴露架构无关语义快照
 - 已具备最小 `spawn_user_task` 骨架：用户任务可预分配用户栈，并准备首次 `sret` 进入所需的 trap frame
-- `current_task_snapshot` 可提供不含任务切换上下文、但包含最近一次 trap frame 快照的轻量任务状态快照与统计信息
+- `current_task_snapshot` 可提供不含任务切换上下文、但包含最近一次 trap 语义快照的轻量任务状态快照与统计信息
 
 ## 后续关注点
 

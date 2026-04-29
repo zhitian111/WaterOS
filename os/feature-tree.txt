@@ -532,6 +532,11 @@ wateros-task  (components/wateros-task/Cargo.toml)
       > wateros-task-impl-core
         - default [default]
         - api-v0
+    - scheduler/api-v0
+      > wateros-task-scheduler
+        - default [default]
+        - api-v0
+        - impl-round-robin [default]
   - impl-core
 
 wateros-task-api-v0  (components/wateros-task/task-api/api-v0/Cargo.toml)

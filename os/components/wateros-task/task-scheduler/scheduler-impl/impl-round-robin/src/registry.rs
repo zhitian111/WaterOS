@@ -4,13 +4,12 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use arch::task::ActiveArchTaskContext as TaskContext;
 use task_api::{
-    ExitedTask, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskId, TaskSnapshot,
-    TaskState, TaskTick, TaskTrapFrame, TaskWaitHandle, TaskWaitResult, TaskWaitTarget,
-    UserTaskSpec, IDLE_TASK_ID,
+    ExitedTask, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskId, TaskSnapshot, TaskState,
+    TaskTick, TaskWaitHandle, TaskWaitResult, TaskWaitTarget, UserTaskSpec, IDLE_TASK_ID,
 };
 use task_impl::TaskControlBlock;
 
-use crate::SwitchPair;
+use crate::{SwitchPair, TaskTrapFrame};
 
 unsafe extern "C" {
     safe fn __wateros_idle_task_runtime_main(arg: usize) -> !;
@@ -24,14 +23,19 @@ struct TaskTable {
 }
 
 impl TaskTable {
-    fn new() -> Self { Self { slots: Vec::new() } }
+    fn new() -> Self {
+        Self { slots: Vec::new() }
+    }
 
-    fn clear(&mut self) { self.slots.clear(); }
+    fn clear(&mut self) {
+        self.slots.clear();
+    }
 
     fn insert(&mut self, task: Box<TaskControlBlock>) {
         let task_id = task.id();
         if self.slots.len() <= task_id {
-            self.slots.resize_with(task_id + 1, || None);
+            self.slots
+                .resize_with(task_id + 1, || None);
         }
         assert!(
             self.slots[task_id].is_none(),
@@ -56,7 +60,9 @@ impl TaskTable {
     }
 
     fn remove(&mut self, task_id: TaskId) -> Option<Box<TaskControlBlock>> {
-        self.slots.get_mut(task_id).and_then(|slot| slot.take())
+        self.slots
+            .get_mut(task_id)
+            .and_then(|slot| slot.take())
     }
 }
 
@@ -79,36 +85,46 @@ impl TaskRegistry {
 
     pub(super) fn init(&mut self) {
         self.bootstrap_task_cx = TaskContext::zero_init();
-        self.task_table.clear();
+        self.task_table
+            .clear();
         self.current_task_id = None;
-        self.task_table.insert(Box::new(TaskControlBlock::new_idle_task(
-            IDLE_TASK_ID,
-            __arch_idle_task_entry as usize,
-            __wateros_idle_task_runtime_main,
-        )));
+        self.task_table
+            .insert(Box::new(
+                TaskControlBlock::new_idle_task(
+                    IDLE_TASK_ID,
+                    __arch_idle_task_entry as *const () as usize,
+                    __wateros_idle_task_runtime_main,
+                ),
+            ));
         self.next_task_id = IDLE_TASK_ID + 1;
     }
 
     pub(super) fn spawn_kernel_task(&mut self, entry: KernelTaskEntry, arg: usize) -> TaskId {
         let task_id = self.next_task_id;
         self.next_task_id += 1;
-        self.task_table.insert(Box::new(TaskControlBlock::new_kernel_task(
-            task_id,
-            __arch_task_entry as usize,
-            entry,
-            arg,
-        )));
+        self.task_table
+            .insert(Box::new(
+                TaskControlBlock::new_kernel_task(
+                    task_id,
+                    __arch_task_entry as *const () as usize,
+                    entry,
+                    arg,
+                ),
+            ));
         task_id
     }
 
     pub(super) fn spawn_user_task_spec(&mut self, spec: UserTaskSpec) -> TaskId {
         let task_id = self.next_task_id;
         self.next_task_id += 1;
-        self.task_table.insert(Box::new(TaskControlBlock::new_user_task(
-            task_id,
-            __arch_user_task_entry as usize,
-            spec,
-        )));
+        self.task_table
+            .insert(Box::new(
+                TaskControlBlock::new_user_task(
+                    task_id,
+                    __arch_user_task_entry as *const () as usize,
+                    spec,
+                ),
+            ));
         task_id
     }
 
@@ -119,38 +135,61 @@ impl TaskRegistry {
     }
 
     pub(super) fn take_current_switch_out(&mut self) -> Option<(TaskId, *mut TaskContext)> {
-        let current_task_id = self.current_task_id.take()?;
-        let current_ptr = self.task_table.task_mut(current_task_id).context_mut_ptr();
+        let current_task_id = self
+            .current_task_id
+            .take()?;
+        let current_ptr = self
+            .task_table
+            .task_mut(current_task_id)
+            .context_mut_ptr();
         Some((current_task_id, current_ptr))
     }
 
     pub(super) fn mark_running_and_set_current(&mut self, task_id: TaskId) -> *const TaskContext {
-        self.task_table.task_mut(task_id).mark_running();
+        self.task_table
+            .task_mut(task_id)
+            .mark_running();
         self.current_task_id = Some(task_id);
-        self.task_table.task(task_id).context_ptr()
+        self.task_table
+            .task(task_id)
+            .context_ptr()
     }
 
     pub(super) fn mark_ready(&mut self, task_id: TaskId) {
-        self.task_table.task_mut(task_id).mark_ready();
+        self.task_table
+            .task_mut(task_id)
+            .mark_ready();
     }
 
     pub(super) fn mark_blocking(&mut self, task_id: TaskId, reason: TaskBlockReason) {
-        self.task_table.task_mut(task_id).mark_blocking(reason);
+        self.task_table
+            .task_mut(task_id)
+            .mark_blocking(reason);
     }
 
     pub(super) fn mark_sleeping(&mut self, task_id: TaskId, wake_tick: TaskTick) {
-        self.task_table.task_mut(task_id).mark_sleeping(wake_tick);
+        self.task_table
+            .task_mut(task_id)
+            .mark_sleeping(wake_tick);
     }
 
     pub(super) fn mark_exited(&mut self, task_id: TaskId, exit_code: TaskExitCode) {
-        self.task_table.task_mut(task_id).mark_exited(exit_code);
+        self.task_table
+            .task_mut(task_id)
+            .mark_exited(exit_code);
     }
 
     pub(super) fn ready_to_wake(&self, task_id: TaskId, current_tick: TaskTick) -> bool {
-        self.task_table.task(task_id).ready_to_wake(current_tick)
+        self.task_table
+            .task(task_id)
+            .ready_to_wake(current_tick)
     }
 
-    pub(super) fn is_idle(&self, task_id: TaskId) -> bool { self.task_table.task(task_id).is_idle() }
+    pub(super) fn is_idle(&self, task_id: TaskId) -> bool {
+        self.task_table
+            .task(task_id)
+            .is_idle()
+    }
 
     pub(super) fn state(&self, task_id: TaskId) -> Option<TaskState> {
         self.task_table
@@ -172,41 +211,65 @@ impl TaskRegistry {
 
     pub(super) fn account_tick_for_current(&mut self) {
         if let Some(current_task_id) = self.current_task_id {
-            if !self.task_table.task(current_task_id).is_idle() {
-                self.task_table.task_mut(current_task_id).account_tick();
+            if !self
+                .task_table
+                .task(current_task_id)
+                .is_idle()
+            {
+                self.task_table
+                    .task_mut(current_task_id)
+                    .account_tick();
             }
         }
     }
 
-    pub(super) fn current_task_id(&self) -> Option<TaskId> { self.current_task_id }
+    pub(super) fn current_task_id(&self) -> Option<TaskId> {
+        self.current_task_id
+    }
 
     pub(super) fn current_task_snapshot(&self) -> Option<TaskSnapshot> {
         self.current_task_id
-            .map(|task_id| self.task_table.task(task_id).snapshot())
+            .map(|task_id| {
+                self.task_table
+                    .task(task_id)
+                    .snapshot()
+            })
     }
 
     pub(super) fn current_task_kernel_stack_top(&self) -> Option<usize> {
         self.current_task_id
-            .map(|task_id| self.task_table.task(task_id).kernel_stack_top())
+            .map(|task_id| {
+                self.task_table
+                    .task(task_id)
+                    .kernel_stack_top()
+            })
     }
 
     pub(super) fn clear_wait_result(&mut self, task_id: TaskId) {
-        self.task_table.task_mut(task_id).clear_wait_result();
+        self.task_table
+            .task_mut(task_id)
+            .clear_wait_result();
     }
 
     pub(super) fn finish_wait(&mut self, task_id: TaskId, result: TaskWaitResult) {
-        self.task_table.task_mut(task_id).finish_wait(result);
+        self.task_table
+            .task_mut(task_id)
+            .finish_wait(result);
     }
 
     pub(super) fn take_current_wait_result(&mut self) -> TaskWaitResult {
         let current_task_id = self
             .current_task_id
             .expect("wait result can only be taken for a running task");
-        self.task_table.task_mut(current_task_id).take_wait_result()
+        self.task_table
+            .task_mut(current_task_id)
+            .take_wait_result()
     }
 
     pub(super) fn reap_task(&mut self, task_id: TaskId) -> Option<ExitedTask> {
-        let task = self.task_table.remove(task_id)?;
+        let task = self
+            .task_table
+            .remove(task_id)?;
         task.exited_task()
     }
 

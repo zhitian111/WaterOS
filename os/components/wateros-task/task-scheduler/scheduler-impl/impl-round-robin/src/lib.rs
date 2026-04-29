@@ -7,16 +7,18 @@ use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, Ordering};
 use riscv::register::sstatus;
 use task_api::{
-    ExitedTask, KernelTaskEntry, ScheduleReason, TaskBlockReason, TaskExitCode, TaskId,
-    TaskSnapshot, TaskTick, TaskTrapFrame, TaskWaitHandle, TaskWaitResult, UserTaskEntryPc,
-    UserTaskSpec, WaitQueueId,
+    ExitedTask, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskId, TaskSnapshot, TaskTick,
+    TaskWaitHandle, TaskWaitResult, UserTaskEntryPc, UserTaskSpec, WaitQueueId,
 };
 
 mod queues;
 mod registry;
 mod scheduler;
 
+use api_v0::ScheduleReason;
 use scheduler::RoundRobinScheduler;
+
+pub type TaskTrapFrame = arch::trap::ActiveTrapFrame;
 
 unsafe extern "C" {
     fn __switch(current_task_cx_ptr: *mut TaskContext, next_task_cx_ptr: *const TaskContext);
@@ -24,7 +26,8 @@ unsafe extern "C" {
 
 type SwitchPair = (*mut TaskContext, *const TaskContext);
 
-static mut SCHEDULER: MaybeUninit<UniprocessorSafeCell<RoundRobinScheduler>> = MaybeUninit::uninit();
+static mut SCHEDULER: MaybeUninit<UniprocessorSafeCell<RoundRobinScheduler>> =
+    MaybeUninit::uninit();
 static SCHEDULER_READY: AtomicBool = AtomicBool::new(false);
 
 fn scheduler_cell() -> &'static UniprocessorSafeCell<RoundRobinScheduler> {
@@ -67,7 +70,9 @@ impl Drop for InterruptGuard {
 pub fn init_scheduler() {
     if !SCHEDULER_READY.load(Ordering::Acquire) {
         unsafe {
-            SCHEDULER.write(UniprocessorSafeCell::new(RoundRobinScheduler::new()));
+            SCHEDULER.write(UniprocessorSafeCell::new(
+                RoundRobinScheduler::new(),
+            ));
         }
         SCHEDULER_READY.store(true, Ordering::Release);
     }
@@ -143,7 +148,10 @@ pub fn wait_current(wait_handle: TaskWaitHandle) {
     }
 }
 
-pub fn wait_current_timeout(wait_handle: TaskWaitHandle, timeout_ticks: TaskTick) -> TaskWaitResult {
+pub fn wait_current_timeout(
+    wait_handle: TaskWaitHandle,
+    timeout_ticks: TaskTick,
+) -> TaskWaitResult {
     if timeout_ticks == 0 {
         return TaskWaitResult::TimedOut;
     }
@@ -160,11 +168,19 @@ pub fn wait_current_timeout(wait_handle: TaskWaitHandle, timeout_ticks: TaskTick
 }
 
 pub fn wait_current_on(wait_queue_id: WaitQueueId) {
-    wait_current(TaskWaitHandle::for_wait_queue(wait_queue_id));
+    wait_current(TaskWaitHandle::for_wait_queue(
+        wait_queue_id,
+    ));
 }
 
-pub fn wait_current_on_timeout(wait_queue_id: WaitQueueId, timeout_ticks: TaskTick) -> TaskWaitResult {
-    wait_current_timeout(TaskWaitHandle::for_wait_queue(wait_queue_id), timeout_ticks)
+pub fn wait_current_on_timeout(
+    wait_queue_id: WaitQueueId,
+    timeout_ticks: TaskTick,
+) -> TaskWaitResult {
+    wait_current_timeout(
+        TaskWaitHandle::for_wait_queue(wait_queue_id),
+        timeout_ticks,
+    )
 }
 
 pub fn wait_for_task_exit(task_id: TaskId) {
@@ -172,7 +188,10 @@ pub fn wait_for_task_exit(task_id: TaskId) {
 }
 
 pub fn wait_for_task_exit_timeout(task_id: TaskId, timeout_ticks: TaskTick) -> TaskWaitResult {
-    wait_current_timeout(TaskWaitHandle::for_task_exit(task_id), timeout_ticks)
+    wait_current_timeout(
+        TaskWaitHandle::for_task_exit(task_id),
+        timeout_ticks,
+    )
 }
 
 pub fn sleep_current_for_ticks(ticks: TaskTick) {
@@ -212,7 +231,8 @@ pub fn wake_all_in_wait_queue(wait_queue_id: WaitQueueId) -> usize {
 
 pub fn exit_current(exit_code: TaskExitCode) -> ! {
     let _guard = InterruptGuard::new();
-    let switch_pair = with_scheduler(|scheduler| scheduler.schedule(ScheduleReason::Exit(exit_code)));
+    let switch_pair =
+        with_scheduler(|scheduler| scheduler.schedule(ScheduleReason::Exit(exit_code)));
     if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
         unsafe {
             __switch(current_task_cx_ptr, next_task_cx_ptr);

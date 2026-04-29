@@ -50,22 +50,6 @@ pub enum TaskState {
     Exited(TaskExitCode),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ScheduleReason {
-    /// 第一次切入任务系统。
-    StartFirst,
-    /// 当前任务主动让出 CPU。
-    Yield,
-    /// 由时钟 tick 触发一次调度检查。
-    Tick,
-    /// 由于阻塞而切换出去。
-    Block(TaskBlockReason),
-    /// 由于定时睡眠而切换出去。
-    Sleep(TaskTick),
-    /// 当前任务退出。
-    Exit(TaskExitCode),
-}
-
 /// 调度器为任务维护的基础运行统计。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TaskRuntimeStats {

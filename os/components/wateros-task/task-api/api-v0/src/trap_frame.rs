@@ -1,81 +1,74 @@
-/// 任务自己持有的最近一次 trap 上下文快照。
+/// 对外暴露的 trap 现场语义快照。
 ///
-/// 布局刻意与当前 RISC-V `TrapContext` 保持一致，方便 trap 路径直接
-/// 整体复制，而不需要逐字段转换。
-#[repr(C)]
+/// 完整 trap frame 的寄存器布局属于 `wateros-platform-arch` 的具体架构实现。
+/// task API 只暴露上层通常需要观察的稳定语义，避免公共快照绑定到某个
+/// 架构的寄存器数量、状态寄存器位布局或汇编保存顺序。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct TaskTrapFrame {
-    pub x: [usize; 32],
-    pub sstatus: usize,
-    pub sepc: usize,
-    pub scause: usize,
-    pub stval: usize,
+pub struct TaskTrapSnapshot {
+    /// 原始 trap cause 编码，具体解释由当前架构约定。
+    pub raw_cause: usize,
+    /// trap 发生或恢复时关联的用户态 PC。
+    pub user_pc: usize,
+    /// trap 发生或恢复时关联的用户态 SP。
+    pub user_sp: usize,
+    /// fault 地址或架构提供的附加 trap 值。
+    pub fault_addr: usize,
+    /// 该现场恢复时是否会返回用户态。
+    pub returns_to_user: bool,
 }
 
-const RISCV_SSTATUS_SIE: usize = 1 << 1;
-const RISCV_SSTATUS_SPIE: usize = 1 << 5;
-const RISCV_SSTATUS_SPP: usize = 1 << 8;
-
-impl TaskTrapFrame {
-    /// 返回原始 trap 原因编码。
+impl TaskTrapSnapshot {
+    /// 构造一份架构无关的 trap 语义快照。
     #[inline]
-    pub const fn raw_cause(&self) -> usize { self.scause }
-
-    /// 返回发生 trap 时保存的程序计数器。
-    #[inline]
-    pub const fn user_pc(&self) -> usize { self.sepc }
-
-    /// 返回发生 trap 时保存的用户栈指针。
-    #[inline]
-    pub const fn user_sp(&self) -> usize { self.x[2] }
-
-    /// 返回与 trap 关联的故障地址或附加值。
-    #[inline]
-    pub const fn fault_addr(&self) -> usize { self.stval }
-
-    /// 判断当前 trap frame 在恢复时是否会返回到用户态。
-    #[inline]
-    pub const fn returns_to_user(&self) -> bool { (self.sstatus & RISCV_SSTATUS_SPP) == 0 }
-
-    /// 判断当前 trap frame 在恢复时是否会返回到内核态。
-    #[inline]
-    pub const fn returns_to_kernel(&self) -> bool { !self.returns_to_user() }
-
-    /// 设置恢复后的用户 PC。
-    #[inline]
-    pub fn set_user_pc(&mut self, pc: usize) { self.sepc = pc; }
-
-    /// 在当前用户 PC 基础上前进指定字节数。
-    #[inline]
-    pub fn add_user_pc(&mut self, bytes: usize) {
-        self.sepc = self.sepc.wrapping_add(bytes);
+    pub const fn new(
+        raw_cause: usize,
+        user_pc: usize,
+        user_sp: usize,
+        fault_addr: usize,
+        returns_to_user: bool,
+    ) -> Self {
+        Self {
+            raw_cause,
+            user_pc,
+            user_sp,
+            fault_addr,
+            returns_to_user,
+        }
     }
 
-    /// 设置恢复后的用户栈指针。
+    /// 返回原始 trap cause 编码。
     #[inline]
-    pub fn set_user_sp(&mut self, sp: usize) { self.x[2] = sp; }
-
-    /// 设置 syscall 返回值寄存器。
-    #[inline]
-    pub fn set_syscall_ret(&mut self, ret: isize) { self.x[10] = ret as usize; }
-
-    /// 将该 trap frame 标记为恢复到用户态。
-    #[inline]
-    pub fn set_return_to_user(&mut self) {
-        self.sstatus &= !RISCV_SSTATUS_SPP;
-        self.sstatus &= !RISCV_SSTATUS_SIE;
-        self.sstatus |= RISCV_SSTATUS_SPIE;
+    pub const fn raw_cause(&self) -> usize {
+        self.raw_cause
     }
 
-    /// 将该 trap frame 标记为恢复到内核态。
+    /// 返回 trap 关联的用户态 PC。
     #[inline]
-    pub fn set_return_to_kernel(&mut self) { self.sstatus |= RISCV_SSTATUS_SPP; }
+    pub const fn user_pc(&self) -> usize {
+        self.user_pc
+    }
 
-    /// 准备一次最小的用户态返回现场。
+    /// 返回 trap 关联的用户态 SP。
     #[inline]
-    pub fn prepare_user_return(&mut self, entry_pc: usize, user_sp: usize) {
-        self.set_user_pc(entry_pc);
-        self.set_user_sp(user_sp);
-        self.set_return_to_user();
+    pub const fn user_sp(&self) -> usize {
+        self.user_sp
+    }
+
+    /// 返回 fault 地址或架构提供的附加 trap 值。
+    #[inline]
+    pub const fn fault_addr(&self) -> usize {
+        self.fault_addr
+    }
+
+    /// 判断该现场恢复时是否会返回用户态。
+    #[inline]
+    pub const fn returns_to_user(&self) -> bool {
+        self.returns_to_user
+    }
+
+    /// 判断该现场恢复时是否会返回内核态。
+    #[inline]
+    pub const fn returns_to_kernel(&self) -> bool {
+        !self.returns_to_user
     }
 }

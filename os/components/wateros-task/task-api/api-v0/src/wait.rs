@@ -42,5 +42,7 @@ impl TaskWaitHandle {
 
     /// 返回该等待句柄指向的目标对象。
     #[inline]
-    pub const fn target(&self) -> TaskWaitTarget { self.target }
+    pub const fn target(&self) -> TaskWaitTarget {
+        self.target
+    }
 }

@@ -1,6 +1,7 @@
 use crate::active_impl::TaskBootstrap;
-use crate::{schedule_tick, scheduler, TaskTrapFrame};
+use crate::{schedule_tick, scheduler};
 use riscv::register::sstatus;
+use scheduler::TaskTrapFrame;
 
 unsafe extern "C" {
     fn __wateros_arch_restore_user_task(trap_frame_ptr: *const u8, kernel_stack_top: usize) -> !;

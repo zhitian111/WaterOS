@@ -1,5 +1,6 @@
 use crate::{
-    TaskId, TaskKind, TaskRuntimeStats, TaskState, TaskTrapFrame, TaskExitCode, UserTaskResources,
+    TaskExitCode, TaskId, TaskKind, TaskRuntimeStats, TaskState, TaskTrapSnapshot,
+    UserTaskResources,
 };
 
 /// 对外暴露的稳定任务快照。
@@ -14,8 +15,8 @@ pub struct TaskSnapshot {
     pub kind: TaskKind,
     /// 当前任务状态。
     pub state: TaskState,
-    /// 最近一次 trap 的保存现场。
-    pub trap_frame: Option<TaskTrapFrame>,
+    /// 最近一次 trap 的语义快照。
+    pub trap_frame: Option<TaskTrapSnapshot>,
     /// 调度器维护的运行统计。
     pub stats: TaskRuntimeStats,
     /// 若为用户任务，则附带其资源快照。
@@ -31,8 +32,8 @@ pub struct ExitedTask {
     pub kind: TaskKind,
     /// 退出状态码。
     pub exit_code: TaskExitCode,
-    /// 退出前最后一次 trap 现场。
-    pub trap_frame: Option<TaskTrapFrame>,
+    /// 退出前最后一次 trap 语义快照。
+    pub trap_frame: Option<TaskTrapSnapshot>,
     /// 退出时刻的运行统计。
     pub stats: TaskRuntimeStats,
     /// 若为用户任务，则附带其退出时的资源快照。

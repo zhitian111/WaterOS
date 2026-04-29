@@ -1,11 +1,12 @@
 use alloc::boxed::Box;
 use api_v0::{
     AddressSpaceHandle, ExitedTask, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskId,
-    TaskKind, TaskRuntimeStats, TaskSnapshot, TaskState, TaskTick, TaskTrapFrame,
-    TaskWaitResult, UserImageInfo, UserTaskEntryPc,
-    UserTaskResources as UserTaskResourcesSnapshot, UserTaskSpec,
+    TaskKind, TaskRuntimeStats, TaskSnapshot, TaskState, TaskTick, TaskTrapSnapshot,
+    TaskWaitResult, UserImageInfo, UserTaskEntryPc, UserTaskResources as UserTaskResourcesSnapshot,
+    UserTaskSpec,
 };
 use arch::task::ActiveArchTaskContext as TaskContext;
+use arch::trap::{ActiveTrapFrame as TaskTrapFrame, TrapContextRead, TrapContextWrite};
 
 use crate::stack::{KernelStack, UserStack};
 use crate::TaskBootstrap;
@@ -27,13 +28,24 @@ impl UserTaskResources {
         }
     }
 
-    fn entry_pc(&self) -> UserTaskEntryPc { self.entry_pc }
+    fn entry_pc(&self) -> UserTaskEntryPc {
+        self.entry_pc
+    }
 
-    fn user_stack_top(&self) -> usize { self.user_stack.top() }
+    fn user_stack_top(&self) -> usize {
+        self.user_stack
+            .top()
+    }
 
-    fn user_stack_bottom(&self) -> usize { self.user_stack.bottom() }
+    fn user_stack_bottom(&self) -> usize {
+        self.user_stack
+            .bottom()
+    }
 
-    fn user_stack_size(&self) -> usize { self.user_stack.size() }
+    fn user_stack_size(&self) -> usize {
+        self.user_stack
+            .size()
+    }
 
     fn snapshot(&self) -> UserTaskResourcesSnapshot {
         UserTaskResourcesSnapshot {
@@ -45,6 +57,16 @@ impl UserTaskResources {
             image: self.image,
         }
     }
+}
+
+fn trap_snapshot(trap_frame: TaskTrapFrame) -> TaskTrapSnapshot {
+    TaskTrapSnapshot::new(
+        <TaskTrapFrame as TrapContextRead>::raw_cause(&trap_frame),
+        <TaskTrapFrame as TrapContextRead>::user_pc(&trap_frame),
+        <TaskTrapFrame as TrapContextRead>::user_sp(&trap_frame),
+        <TaskTrapFrame as TrapContextRead>::fault_addr(&trap_frame),
+        <TaskTrapFrame as TrapContextRead>::returns_to_user(&trap_frame),
+    )
 }
 
 /// 调度器持有的任务控制块。
@@ -70,7 +92,14 @@ impl TaskControlBlock {
         entry: KernelTaskEntry,
         arg: usize,
     ) -> Self {
-        Self::new(TaskKind::Kernel, id, entry_stub, entry, arg, false)
+        Self::new(
+            TaskKind::Kernel,
+            id,
+            entry_stub,
+            entry,
+            arg,
+            false,
+        )
     }
 
     /// 创建 idle 任务。
@@ -99,7 +128,10 @@ impl TaskControlBlock {
         let user_resources = UserTaskResources::new(spec);
         let task_cx = TaskContext::goto_entry(entry_stub, kernel_stack.top());
         let mut trap_frame = TaskTrapFrame::default();
-        trap_frame.prepare_user_return(user_resources.entry_pc(), user_resources.user_stack_top());
+        trap_frame.prepare_user_return(
+            user_resources.entry_pc(),
+            user_resources.user_stack_top(),
+        );
         Self {
             id,
             kind: TaskKind::User,
@@ -126,7 +158,11 @@ impl TaskControlBlock {
         let kernel_stack = KernelStack::new();
         let bootstrap = Box::new(TaskBootstrap::new(entry, arg));
         let bootstrap_ptr = bootstrap.as_ref() as *const TaskBootstrap as usize;
-        let task_cx = TaskContext::goto_task_entry(entry_stub, kernel_stack.top(), bootstrap_ptr);
+        let task_cx = TaskContext::goto_task_entry(
+            entry_stub,
+            kernel_stack.top(),
+            bootstrap_ptr,
+        );
         Self {
             id,
             kind,
@@ -144,7 +180,9 @@ impl TaskControlBlock {
 
     #[inline]
     /// 返回任务号。
-    pub fn id(&self) -> TaskId { self.id }
+    pub fn id(&self) -> TaskId {
+        self.id
+    }
 
     #[inline]
     /// 生成对外可见的稳定任务快照。
@@ -153,7 +191,9 @@ impl TaskControlBlock {
             id: self.id,
             kind: self.kind,
             state: self.state,
-            trap_frame: self.trap_frame,
+            trap_frame: self
+                .trap_frame
+                .map(trap_snapshot),
             stats: self.stats,
             user_resources: self.user_resources_snapshot(),
         }
@@ -161,23 +201,34 @@ impl TaskControlBlock {
 
     #[inline]
     /// 返回当前任务状态。
-    pub fn state(&self) -> TaskState { self.state }
+    pub fn state(&self) -> TaskState {
+        self.state
+    }
 
     #[inline]
     /// 判断该任务是否为 idle 任务。
-    pub fn is_idle(&self) -> bool { self.is_idle }
+    pub fn is_idle(&self) -> bool {
+        self.is_idle
+    }
 
     #[inline]
     /// 返回只读任务上下文指针，供汇编切换路径使用。
-    pub fn context_ptr(&self) -> *const TaskContext { &self.task_cx as *const TaskContext }
+    pub fn context_ptr(&self) -> *const TaskContext {
+        &self.task_cx as *const TaskContext
+    }
 
     #[inline]
     /// 返回可写任务上下文指针，供汇编切换路径使用。
-    pub fn context_mut_ptr(&mut self) -> *mut TaskContext { &mut self.task_cx as *mut TaskContext }
+    pub fn context_mut_ptr(&mut self) -> *mut TaskContext {
+        &mut self.task_cx as *mut TaskContext
+    }
 
     #[inline]
     /// 返回任务内核栈顶地址。
-    pub fn kernel_stack_top(&self) -> usize { self.kernel_stack.top() }
+    pub fn kernel_stack_top(&self) -> usize {
+        self.kernel_stack
+            .top()
+    }
 
     #[inline]
     /// 若该任务持有用户栈，则返回其栈顶地址。
@@ -213,7 +264,9 @@ impl TaskControlBlock {
             id: self.id,
             kind: self.kind,
             exit_code,
-            trap_frame: self.trap_frame,
+            trap_frame: self
+                .trap_frame
+                .map(trap_snapshot),
             stats: self.stats,
             user_resources: self.user_resources_snapshot(),
         })
@@ -221,34 +274,54 @@ impl TaskControlBlock {
 
     #[inline]
     /// 将任务状态置为 Ready。
-    pub fn mark_ready(&mut self) { self.state = TaskState::Ready; }
+    pub fn mark_ready(&mut self) {
+        self.state = TaskState::Ready;
+    }
 
     #[inline]
     /// 将任务状态置为 Running，并累计一次调度计数。
     pub fn mark_running(&mut self) {
         self.state = TaskState::Running;
-        self.stats.schedule_count = self.stats.schedule_count.saturating_add(1);
+        self.stats
+            .schedule_count = self
+            .stats
+            .schedule_count
+            .saturating_add(1);
     }
 
     #[inline]
     /// 将任务状态置为阻塞，并记录阻塞原因。
-    pub fn mark_blocking(&mut self, reason: TaskBlockReason) { self.state = TaskState::Blocking(reason); }
+    pub fn mark_blocking(&mut self, reason: TaskBlockReason) {
+        self.state = TaskState::Blocking(reason);
+    }
 
     #[inline]
     /// 将任务状态置为睡眠，直到指定 tick。
-    pub fn mark_sleeping(&mut self, wake_tick: TaskTick) { self.state = TaskState::Sleeping { wake_tick }; }
+    pub fn mark_sleeping(&mut self, wake_tick: TaskTick) {
+        self.state = TaskState::Sleeping { wake_tick };
+    }
 
     #[inline]
     /// 将任务状态置为已退出。
-    pub fn mark_exited(&mut self, exit_code: TaskExitCode) { self.state = TaskState::Exited(exit_code); }
+    pub fn mark_exited(&mut self, exit_code: TaskExitCode) {
+        self.state = TaskState::Exited(exit_code);
+    }
 
     #[inline]
     /// 为任务累计一个运行 tick。
-    pub fn account_tick(&mut self) { self.stats.tick_count = self.stats.tick_count.saturating_add(1); }
+    pub fn account_tick(&mut self) {
+        self.stats
+            .tick_count = self
+            .stats
+            .tick_count
+            .saturating_add(1);
+    }
 
     #[inline]
     /// 保存最近一次 trap 现场到任务对象中。
-    pub fn record_trap_frame(&mut self, trap_frame: TaskTrapFrame) { self.trap_frame = Some(trap_frame); }
+    pub fn record_trap_frame(&mut self, trap_frame: TaskTrapFrame) {
+        self.trap_frame = Some(trap_frame);
+    }
 
     #[inline]
     /// 将给定 trap 现场装载为任务当前的权威 trap frame，并返回其可写指针。
@@ -262,16 +335,22 @@ impl TaskControlBlock {
 
     #[inline]
     /// 清除任务上次等待返回结果。
-    pub fn clear_wait_result(&mut self) { self.wait_result = None; }
+    pub fn clear_wait_result(&mut self) {
+        self.wait_result = None;
+    }
 
     #[inline]
     /// 记录一次等待结束结果。
-    pub fn finish_wait(&mut self, result: TaskWaitResult) { self.wait_result = Some(result); }
+    pub fn finish_wait(&mut self, result: TaskWaitResult) {
+        self.wait_result = Some(result);
+    }
 
     #[inline]
     /// 取出等待结果；若未显式记录则按正常唤醒处理。
     pub fn take_wait_result(&mut self) -> TaskWaitResult {
-        self.wait_result.take().unwrap_or(TaskWaitResult::Woken)
+        self.wait_result
+            .take()
+            .unwrap_or(TaskWaitResult::Woken)
     }
 
     #[inline]

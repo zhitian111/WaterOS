@@ -16,7 +16,9 @@ pub mod time {
     pub use impl_riscv64::time::Riscv64ArchTime as ArchTimeImpl;
 
     #[inline]
-    pub fn read_time_tick() -> ArchTimeResult<ArchTimeTick> { ArchTimeImpl::read_time_tick() }
+    pub fn read_time_tick() -> ArchTimeResult<ArchTimeTick> {
+        ArchTimeImpl::read_time_tick()
+    }
 
     #[inline]
     pub fn read_time_frequency() -> ArchTimeResult<ArchTimeFrequency> {
@@ -30,6 +32,17 @@ pub mod task {
 
     #[cfg(feature = "impl-riscv64")]
     pub use impl_riscv64::task::Riscv64ArchTaskContext as ActiveArchTaskContext;
+}
+
+#[cfg(feature = "api-v0")]
+pub mod trap {
+    pub use api_v0::trap::{
+        ArchTrapFrame, Exception, Interrupt, TrapCOntextWrite, TrapCause, TrapContextFrameView,
+        TrapContextRead, TrapContextWrite,
+    };
+
+    #[cfg(feature = "impl-riscv64")]
+    pub use impl_riscv64::trap::TrapContext as ActiveTrapFrame;
 }
 
 #[cfg(feature = "api-v0")]
@@ -66,8 +79,12 @@ pub mod paging {
     pub use impl_riscv64::paging::Riscv64Paging as ArchPagingImpl;
 
     #[inline]
-    pub fn read_satp() -> usize { ArchPagingImpl::read_satp() }
+    pub fn read_satp() -> usize {
+        ArchPagingImpl::read_satp()
+    }
 
     #[inline]
-    pub fn write_satp_and_flush(satp: usize) { ArchPagingImpl::write_satp_and_flush(satp) }
+    pub fn write_satp_and_flush(satp: usize) {
+        ArchPagingImpl::write_satp_and_flush(satp)
+    }
 }

@@ -8,9 +8,9 @@ mod wait;
 
 pub use snapshot::{ExitedTask, TaskSnapshot};
 pub use task::{
-    IDLE_TASK_ID, KernelTaskEntry, ScheduleReason, TaskBlockReason, TaskExitCode, TaskId,
-    TaskKind, TaskRuntimeStats, TaskState, TaskTick, UserTaskEntryPc, WaitQueueId,
+    KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskId, TaskKind, TaskRuntimeStats, TaskState,
+    TaskTick, UserTaskEntryPc, WaitQueueId, IDLE_TASK_ID,
 };
-pub use trap_frame::TaskTrapFrame;
+pub use trap_frame::TaskTrapSnapshot;
 pub use user::{AddressSpaceHandle, UserImageInfo, UserTaskResources, UserTaskSpec};
 pub use wait::{TaskWaitHandle, TaskWaitResult, TaskWaitTarget};

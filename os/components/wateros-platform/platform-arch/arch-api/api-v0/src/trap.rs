@@ -34,7 +34,7 @@ pub enum TrapCause {
 /// arch-impl 层， 或改为 `From<ArchRawCause>` 的形式避免歧义。
 impl From<usize> for TrapCause {
     #[inline]
-    fn from(scause : usize) -> Self {
+    fn from(scause: usize) -> Self {
         let is_interrupt = (scause >> 63) != 0;
         let code = scause & 0xFFF;
 
@@ -106,6 +106,7 @@ impl TrapCause {
 
 #[allow(unused)]
 pub trait TrapContextRead {
+    fn raw_cause(&self) -> usize;
     fn trap_cause(&self) -> TrapCause;
     fn fault_addr(&self) -> usize;
     fn user_pc(&self) -> usize;
@@ -115,7 +116,9 @@ pub trait TrapContextRead {
     fn syscall_nr(&self) -> SyscallNumber;
     #[inline]
     #[allow(unused)]
-    fn returns_to_kernel(&self) -> bool { !self.returns_to_user() }
+    fn returns_to_kernel(&self) -> bool {
+        !self.returns_to_user()
+    }
     #[inline]
     #[allow(unused)]
     fn syscall_context(&self) -> SyscallPacket {
@@ -124,21 +127,50 @@ pub trait TrapContextRead {
 }
 
 #[allow(unused)]
-pub trait TrapCOntextWrite {
-    fn set_syscall_ret(&mut self, ret : UserRet);
-    fn set_user_pc(&mut self, pc : usize);
-    fn add_user_pc(&mut self, bytes : usize);
-    fn set_user_sp(&mut self, sp : usize);
+pub trait TrapContextWrite {
+    fn set_syscall_ret(&mut self, ret: UserRet);
+    fn set_user_pc(&mut self, pc: usize);
+    fn add_user_pc(&mut self, bytes: usize);
+    fn set_user_sp(&mut self, sp: usize);
     fn set_return_to_user(&mut self);
     fn set_return_to_kernel(&mut self);
     #[inline]
     #[allow(unused)]
-    fn prepare_user_return(&mut self, entry_pc : usize, user_sp : usize) {
+    fn prepare_user_return(&mut self, entry_pc: usize, user_sp: usize) {
         self.set_user_pc(entry_pc);
         self.set_user_sp(user_sp);
         self.set_return_to_user();
     }
 }
 
+/// Backward-compatible alias for the earlier misspelled trait name.
 #[allow(unused)]
-pub trait TrapContextFrameView: TrapContextRead + TrapCOntextWrite {}
+pub trait TrapCOntextWrite: TrapContextWrite {}
+
+impl<T: TrapContextWrite + ?Sized> TrapCOntextWrite for T {}
+
+#[allow(unused)]
+pub trait TrapContextFrameView: TrapContextRead + TrapContextWrite {}
+
+impl<T: TrapContextRead + TrapContextWrite + ?Sized> TrapContextFrameView for T {}
+
+/// 架构层可被任务系统保存、恢复和语义读取的 trap frame。
+///
+/// 具体寄存器布局由当前架构实现决定；task 只依赖这里的语义契约，
+/// 不再在自身 API 中复制一份架构相关 frame 布局。
+pub trait ArchTrapFrame:
+    TrapContextRead + TrapContextWrite + Clone + Copy + core::fmt::Debug + Default + PartialEq + Eq
+{
+}
+
+impl<T> ArchTrapFrame for T where
+    T: TrapContextRead
+        + TrapContextWrite
+        + Clone
+        + Copy
+        + core::fmt::Debug
+        + Default
+        + PartialEq
+        + Eq
+{
+}

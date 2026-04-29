@@ -2,7 +2,7 @@ use abi::syscall_args::SyscallArgs;
 use abi::syscall_number::SyscallNumber;
 use abi::user_ret::UserRet;
 use api_v0::time::ArchTime;
-use api_v0::trap::{Exception, Interrupt, TrapCOntextWrite, TrapCause, TrapContextRead};
+use api_v0::trap::{Exception, Interrupt, TrapCause, TrapContextRead, TrapContextWrite};
 use core::arch::asm;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use firmware::timer::FirmwareTimerDeadline;
@@ -25,12 +25,13 @@ unsafe extern "C" {
 
 /// 该结构的字段顺序/大小必须与 `asm/trap.asm` 的偏移严格一致（方案A）。
 #[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TrapContext {
-    x : [usize; 32],
-    sstatus : usize,
-    sepc : usize,
-    scause : usize,
-    stval : usize,
+    x: [usize; 32],
+    sstatus: usize,
+    sepc: usize,
+    scause: usize,
+    stval: usize,
 }
 
 const RISCV_SSTATUS_SIE: usize = 1 << 1;
@@ -38,6 +39,36 @@ const RISCV_SSTATUS_SPIE: usize = 1 << 5;
 const RISCV_SSTATUS_SPP: usize = 1 << 8;
 
 impl TrapContext {
+    #[inline]
+    pub const fn raw_cause(&self) -> usize {
+        self.scause
+    }
+
+    #[inline]
+    pub const fn user_pc(&self) -> usize {
+        self.sepc
+    }
+
+    #[inline]
+    pub const fn user_sp(&self) -> usize {
+        self.x[2]
+    }
+
+    #[inline]
+    pub const fn fault_addr(&self) -> usize {
+        self.stval
+    }
+
+    #[inline]
+    pub const fn returns_to_user(&self) -> bool {
+        (self.sstatus & RISCV_SSTATUS_SPP) == 0
+    }
+
+    #[inline]
+    pub const fn returns_to_kernel(&self) -> bool {
+        !self.returns_to_user()
+    }
+
     #[inline]
     fn syscall_nr_raw(&self) -> usize {
         // Linux/riscv64：a7(x17) 保存 syscall id
@@ -47,18 +78,25 @@ impl TrapContext {
     #[inline]
     fn syscall_args_raw(&self) -> SyscallArgs {
         // Linux/riscv64：a0..a5 依次是 x10..x15
-        SyscallArgs::from_regs([self.x[10], self.x[11], self.x[12], self.x[13], self.x[14],
-                                self.x[15]])
+        SyscallArgs::from_regs([
+            self.x[10], self.x[11], self.x[12], self.x[13], self.x[14], self.x[15],
+        ])
     }
 
     #[inline]
-    fn user_sp_raw(&self) -> usize { self.x[2] }
+    fn user_sp_raw(&self) -> usize {
+        self.x[2]
+    }
 
     #[inline]
-    fn set_user_sp_raw(&mut self, sp: usize) { self.x[2] = sp; }
+    fn set_user_sp_raw(&mut self, sp: usize) {
+        self.x[2] = sp;
+    }
 
     #[inline]
-    fn returns_to_user_raw(&self) -> bool { (self.sstatus & RISCV_SSTATUS_SPP) == 0 }
+    fn returns_to_user_raw(&self) -> bool {
+        (self.sstatus & RISCV_SSTATUS_SPP) == 0
+    }
 
     #[inline]
     fn set_return_to_user_raw(&mut self) {
@@ -68,7 +106,9 @@ impl TrapContext {
     }
 
     #[inline]
-    fn set_return_to_kernel_raw(&mut self) { self.sstatus |= RISCV_SSTATUS_SPP; }
+    fn set_return_to_kernel_raw(&mut self) {
+        self.sstatus |= RISCV_SSTATUS_SPP;
+    }
 }
 
 unsafe extern "C" {
@@ -93,10 +133,9 @@ pub fn init_trap() {
 /// 方案A：入口汇编只保存上下文到栈上，然后跳转到该 Rust 入口。
 /// 第一阶段在内核态任务之间切换后，最终回到 trap 汇编完成恢复与 `sret`。
 #[unsafe(no_mangle)]
-pub extern "C" fn trap_entry_rust(cx_ptr : *mut TrapContext) {
-    let authoritative_cx_ptr = unsafe {
-        __wateros_task_runtime_begin_current_trap_frame_access(cx_ptr.cast::<u8>())
-    };
+pub extern "C" fn trap_entry_rust(cx_ptr: *mut TrapContext) {
+    let authoritative_cx_ptr =
+        unsafe { __wateros_task_runtime_begin_current_trap_frame_access(cx_ptr.cast::<u8>()) };
     let cx = unsafe { &mut *(authoritative_cx_ptr as *mut TrapContext) };
 
     let trap_cause = TrapCause::from(cx.scause);
@@ -121,7 +160,10 @@ pub extern "C" fn trap_entry_rust(cx_ptr : *mut TrapContext) {
                 .0;
             let deadline = now.saturating_add(TIMER_SLICE_TICKS);
             if let Err(err) = firmware::timer::set_timer(FirmwareTimerDeadline(deadline)) {
-                panic!("failed to re-arm timer in trap: {:?}", err);
+                panic!(
+                    "failed to re-arm timer in trap: {:?}",
+                    err
+                );
             }
             let tick = TIMER_TICK_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
             if tick % 8 == 0 {
@@ -134,9 +176,7 @@ pub extern "C" fn trap_entry_rust(cx_ptr : *mut TrapContext) {
         _ => {
             panic!(
                 "unexpected trap: cause={:?}, sepc={:#x}, stval={:#x}",
-                trap_cause,
-                cx.sepc,
-                cx.stval
+                trap_cause, cx.sepc, cx.stval
             );
         }
     }
@@ -155,7 +195,9 @@ pub extern "C" fn trap_entry_rust(cx_ptr : *mut TrapContext) {
 }
 
 fn handle_user_syscall(cx: &mut TrapContext) {
-    let syscall_nr = cx.syscall_nr().raw();
+    let syscall_nr = cx
+        .syscall_nr()
+        .raw();
     let syscall_args = cx.syscall_args();
     let syscall_ret = unsafe {
         __wateros_syscall_dispatch_current(
@@ -173,36 +215,64 @@ fn handle_user_syscall(cx: &mut TrapContext) {
 }
 
 impl TrapContextRead for TrapContext {
-    fn trap_cause(&self) -> TrapCause { TrapCause::from(self.scause) }
+    fn raw_cause(&self) -> usize {
+        self.scause
+    }
+
+    fn trap_cause(&self) -> TrapCause {
+        TrapCause::from(self.scause)
+    }
 
     fn fault_addr(&self) -> usize {
         // page fault 时，stval 是 fault address（其他异常可忽略）
         self.stval
     }
 
-    fn user_pc(&self) -> usize { self.sepc }
+    fn user_pc(&self) -> usize {
+        self.sepc
+    }
 
-    fn user_sp(&self) -> usize { self.user_sp_raw() }
+    fn user_sp(&self) -> usize {
+        self.user_sp_raw()
+    }
 
-    fn returns_to_user(&self) -> bool { self.returns_to_user_raw() }
+    fn returns_to_user(&self) -> bool {
+        self.returns_to_user_raw()
+    }
 
-    fn syscall_args(&self) -> SyscallArgs { self.syscall_args_raw() }
+    fn syscall_args(&self) -> SyscallArgs {
+        self.syscall_args_raw()
+    }
 
-    fn syscall_nr(&self) -> SyscallNumber { SyscallNumber(self.syscall_nr_raw()) }
+    fn syscall_nr(&self) -> SyscallNumber {
+        SyscallNumber(self.syscall_nr_raw())
+    }
 }
 
-impl TrapCOntextWrite for TrapContext {
-    fn set_syscall_ret(&mut self, ret : UserRet) {
+impl TrapContextWrite for TrapContext {
+    fn set_syscall_ret(&mut self, ret: UserRet) {
         self.x[10] = ret.0 as usize;
     }
 
-    fn set_user_pc(&mut self, pc : usize) { self.sepc = pc; }
+    fn set_user_pc(&mut self, pc: usize) {
+        self.sepc = pc;
+    }
 
-    fn add_user_pc(&mut self, bytes : usize) { self.sepc = self.sepc.wrapping_add(bytes); }
+    fn add_user_pc(&mut self, bytes: usize) {
+        self.sepc = self
+            .sepc
+            .wrapping_add(bytes);
+    }
 
-    fn set_user_sp(&mut self, sp : usize) { self.set_user_sp_raw(sp); }
+    fn set_user_sp(&mut self, sp: usize) {
+        self.set_user_sp_raw(sp);
+    }
 
-    fn set_return_to_user(&mut self) { self.set_return_to_user_raw(); }
+    fn set_return_to_user(&mut self) {
+        self.set_return_to_user_raw();
+    }
 
-    fn set_return_to_kernel(&mut self) { self.set_return_to_kernel_raw(); }
+    fn set_return_to_kernel(&mut self) {
+        self.set_return_to_kernel_raw();
+    }
 }
