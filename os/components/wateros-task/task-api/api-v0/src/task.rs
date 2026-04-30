@@ -1,3 +1,5 @@
+use crate::{TaskTrapSnapshot, UserTaskResources};
+
 /// 任务在系统内的唯一标识。
 pub type TaskId = usize;
 /// 调度器使用的逻辑时钟单位。
@@ -12,7 +14,7 @@ pub type KernelTaskEntry = extern "C" fn(usize) -> !;
 pub type UserTaskEntryPc = usize;
 
 /// 预留给 idle 任务的固定任务号。
-pub const IDLE_TASK_ID: TaskId = 0;
+pub const IDLE_TASK_ID : TaskId = 0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TaskKind {
@@ -45,7 +47,7 @@ pub enum TaskState {
     /// 由于某种阻塞原因暂时不可运行。
     Blocking(TaskBlockReason),
     /// 睡眠到指定 tick 后再尝试唤醒。
-    Sleeping { wake_tick: TaskTick },
+    Sleeping { wake_tick : TaskTick },
     /// 已退出，不会再被调度。
     Exited(TaskExitCode),
 }
@@ -54,7 +56,25 @@ pub enum TaskState {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TaskRuntimeStats {
     /// 该任务累计被切入运行的次数。
-    pub schedule_count: usize,
+    pub schedule_count : usize,
     /// 该任务累计消耗的 tick 数。
-    pub tick_count: usize,
+    pub tick_count : usize,
+}
+
+
+/// 已退出任务的可回收信息。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExitedTask {
+    /// 任务号。
+    pub id : TaskId,
+    /// 任务类别。
+    pub kind : TaskKind,
+    /// 退出状态码。
+    pub exit_code : TaskExitCode,
+    /// 退出前最后一次 trap 语义快照。
+    pub trap_frame : Option<TaskTrapSnapshot>,
+    /// 退出时刻的运行统计。
+    pub stats : TaskRuntimeStats,
+    /// 若为用户任务，则附带其退出时的资源快照。
+    pub user_resources : Option<UserTaskResources>,
 }

@@ -2,7 +2,10 @@ use abi::syscall_args::SyscallArgs;
 use abi::syscall_number::SyscallNumber;
 use abi::user_ret::UserRet;
 use api_v0::time::ArchTime;
-use api_v0::trap::{Exception, Interrupt, TrapCause, TrapContextRead, TrapContextWrite};
+use api_v0::trap::{
+    Exception, Interrupt, TrapCause, TrapFrameRead, TrapFrameWrite, TrapSyscallRead,
+    TrapSyscallWrite,
+};
 use core::arch::asm;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use firmware::timer::FirmwareTimerDeadline;
@@ -214,13 +217,9 @@ fn handle_user_syscall(cx: &mut TrapContext) {
     cx.set_syscall_ret(UserRet(syscall_ret));
 }
 
-impl TrapContextRead for TrapContext {
+impl TrapFrameRead for TrapContext {
     fn raw_cause(&self) -> usize {
         self.scause
-    }
-
-    fn trap_cause(&self) -> TrapCause {
-        TrapCause::from(self.scause)
     }
 
     fn fault_addr(&self) -> usize {
@@ -239,7 +238,9 @@ impl TrapContextRead for TrapContext {
     fn returns_to_user(&self) -> bool {
         self.returns_to_user_raw()
     }
+}
 
+impl TrapSyscallRead for TrapContext {
     fn syscall_args(&self) -> SyscallArgs {
         self.syscall_args_raw()
     }
@@ -249,11 +250,7 @@ impl TrapContextRead for TrapContext {
     }
 }
 
-impl TrapContextWrite for TrapContext {
-    fn set_syscall_ret(&mut self, ret: UserRet) {
-        self.x[10] = ret.0 as usize;
-    }
-
+impl TrapFrameWrite for TrapContext {
     fn set_user_pc(&mut self, pc: usize) {
         self.sepc = pc;
     }
@@ -274,5 +271,11 @@ impl TrapContextWrite for TrapContext {
 
     fn set_return_to_kernel(&mut self) {
         self.set_return_to_kernel_raw();
+    }
+}
+
+impl TrapSyscallWrite for TrapContext {
+    fn set_syscall_ret(&mut self, ret: UserRet) {
+        self.x[10] = ret.0 as usize;
     }
 }

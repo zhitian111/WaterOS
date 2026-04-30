@@ -36,9 +36,11 @@ pub mod task {
 
 #[cfg(feature = "api-v0")]
 pub mod trap {
+    #[allow(deprecated)]
     pub use api_v0::trap::{
         ArchTrapFrame, Exception, Interrupt, TrapCOntextWrite, TrapCause, TrapContextFrameView,
-        TrapContextRead, TrapContextWrite,
+        TrapContextRead, TrapContextWrite, TrapFrame, TrapFrameRead, TrapFrameWrite,
+        TrapSyscallRead, TrapSyscallWrite,
     };
 
     #[cfg(feature = "impl-riscv64")]
