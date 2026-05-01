@@ -6,13 +6,13 @@ use api_v0::KernelTaskEntry;
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct TaskBootstrap {
-    pub entry: KernelTaskEntry,
-    pub arg: usize,
+    pub entry : KernelTaskEntry,
+    pub arg : usize,
 }
 
 impl TaskBootstrap {
     #[inline]
-    pub const fn new(entry: KernelTaskEntry, arg: usize) -> Self { Self { entry, arg } }
+    pub const fn new(entry : KernelTaskEntry, arg : usize) -> Self { Self { entry, arg } }
 
     #[inline]
     pub fn run(&self) -> ! { (self.entry)(self.arg) }

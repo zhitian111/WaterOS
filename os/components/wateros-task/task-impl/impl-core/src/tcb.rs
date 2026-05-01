@@ -10,12 +10,15 @@ use arch::trap::{ActiveTrapFrame as TaskTrapFrame, TrapContextRead, TrapContextW
 
 use crate::stack::{KernelStack, UserStack};
 use crate::TaskBootstrap;
-
 struct UserTaskResources {
     entry_pc : UserTaskEntryPc,
     user_stack : UserStack,
     address_space : Option<AddressSpaceHandle>,
     image : Option<UserImageInfo>,
+}
+unsafe extern "C" {
+    fn __arch_task_entry();
+    fn __arch_user_task_entry();
 }
 
 impl UserTaskResources {
@@ -78,15 +81,11 @@ pub struct TaskControlBlock {
 
 impl TaskControlBlock {
     /// 创建一个普通内核任务，并初始化其启动上下文。
-    pub fn new_kernel_task(id : TaskId,
-                           entry_stub : usize,
-                           entry : KernelTaskEntry,
-                           arg : usize)
-                           -> Self {
+    pub fn new_kernel_task(id : TaskId, entry : KernelTaskEntry, arg : usize) -> Self {
         let kernel_stack = KernelStack::new();
         let bootstrap = Box::new(TaskBootstrap::new(entry, arg));
         let bootstrap_ptr = bootstrap.as_ref() as *const TaskBootstrap as usize;
-        let task_cx = TaskContext::goto_task_entry(entry_stub,
+        let task_cx = TaskContext::goto_task_entry(__arch_task_entry as *const () as usize,
                                                    kernel_stack.top(),
                                                    bootstrap_ptr);
         Self::new(id,
@@ -100,24 +99,29 @@ impl TaskControlBlock {
     }
 
     /// 创建 idle 任务。
-    pub fn new_idle_task(id : TaskId, entry_stub : usize, entry : KernelTaskEntry) -> Self {
+    pub fn new_idle_task(id : TaskId, entry : KernelTaskEntry) -> Self {
         let kernel_stack = KernelStack::new();
-        let task_cx = TaskContext::goto_entry(entry_stub, kernel_stack.top());
+        let bootstrap = Box::new(TaskBootstrap::new(entry, 0));
+        let bootstrap_ptr = bootstrap.as_ref() as *const TaskBootstrap as usize;
+        let task_cx = TaskContext::goto_task_entry(__arch_task_entry as *const () as usize,
+                                                   kernel_stack.top(),
+                                                   bootstrap_ptr);
         Self::new(id,
                   TaskKind::Kernel,
                   task_cx,
                   None,
                   kernel_stack,
                   None,
-                  None,
+                  Some(bootstrap),
                   true)
     }
 
     /// 创建一个最小用户任务骨架。
-    pub fn new_user_task(id : TaskId, entry_stub : usize, spec : UserTaskSpec) -> Self {
+    pub fn new_user_task(id : TaskId, spec : UserTaskSpec) -> Self {
         let kernel_stack = KernelStack::new();
         let user_resources = UserTaskResources::new(spec);
-        let task_cx = TaskContext::goto_entry(entry_stub, kernel_stack.top());
+        let task_cx = TaskContext::goto_entry(__arch_user_task_entry as *const () as usize,
+                                              kernel_stack.top());
         let mut trap_frame = TaskTrapFrame::default();
         trap_frame.prepare_user_return(user_resources.entry_pc(),
                                        user_resources.user_stack_top());

@@ -31,10 +31,6 @@ __arch_task_entry:
     mv a0, s0
     tail __wateros_arch_task_entry_trampoline
 
-    .globl __arch_idle_task_entry
-__arch_idle_task_entry:
-    tail __wateros_arch_idle_task_entry_trampoline
-
     .globl __arch_user_task_entry
 __arch_user_task_entry:
     tail __wateros_arch_user_task_entry_trampoline

@@ -1,7 +1,6 @@
 use api_v0::task::ArchTaskContext;
 
 unsafe extern "C" {
-    fn __wateros_idle_task_runtime_entry() -> !;
     fn __wateros_task_runtime_entry(bootstrap_ptr : usize) -> !;
     fn __wateros_task_runtime_enter_current_user_task() -> !;
 }
@@ -41,11 +40,6 @@ impl ArchTaskContext for Riscv64ArchTaskContext {
 #[unsafe(no_mangle)]
 pub extern "C" fn __wateros_arch_task_entry_trampoline(bootstrap_ptr : usize) -> ! {
     unsafe { __wateros_task_runtime_entry(bootstrap_ptr) }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn __wateros_arch_idle_task_entry_trampoline() -> ! {
-    unsafe { __wateros_idle_task_runtime_entry() }
 }
 
 #[unsafe(no_mangle)]

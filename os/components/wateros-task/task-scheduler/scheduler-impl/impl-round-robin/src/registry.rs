@@ -13,9 +13,6 @@ use crate::{SwitchPair, TaskTrapFrame};
 
 unsafe extern "C" {
     safe fn __wateros_idle_task_runtime_main(arg : usize) -> !;
-    fn __arch_idle_task_entry();
-    fn __arch_task_entry();
-    fn __arch_user_task_entry();
 }
 
 struct TaskTable {
@@ -82,8 +79,6 @@ impl TaskRegistry {
         self.current_task_id = None;
         self.task_table
             .insert(Box::new(TaskControlBlock::new_idle_task(IDLE_TASK_ID,
-                                                             __arch_idle_task_entry as *const ()
-                                                             as usize,
                                                              __wateros_idle_task_runtime_main)));
         self.next_task_id = IDLE_TASK_ID + 1;
     }
@@ -92,11 +87,7 @@ impl TaskRegistry {
         let task_id = self.next_task_id;
         self.next_task_id += 1;
         self.task_table
-            .insert(Box::new(TaskControlBlock::new_kernel_task(task_id,
-                                                               __arch_task_entry as *const ()
-                                                               as usize,
-                                                               entry,
-                                                               arg)));
+            .insert(Box::new(TaskControlBlock::new_kernel_task(task_id, entry, arg)));
         task_id
     }
 
@@ -104,10 +95,7 @@ impl TaskRegistry {
         let task_id = self.next_task_id;
         self.next_task_id += 1;
         self.task_table
-            .insert(Box::new(TaskControlBlock::new_user_task(task_id,
-                                                             __arch_user_task_entry as *const ()
-                                                             as usize,
-                                                             spec)));
+            .insert(Box::new(TaskControlBlock::new_user_task(task_id, spec)));
         task_id
     }
 

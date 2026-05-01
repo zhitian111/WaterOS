@@ -64,14 +64,6 @@ pub extern "C" fn __wateros_idle_task_runtime_main(_arg: usize) -> ! {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn __wateros_idle_task_runtime_entry() -> ! {
-    unsafe {
-        sstatus::set_sie();
-    }
-    __wateros_idle_task_runtime_main(0)
-}
-
-#[unsafe(no_mangle)]
 pub extern "C" fn __wateros_task_runtime_entry(bootstrap_ptr: usize) -> ! {
     let bootstrap = unsafe { &*(bootstrap_ptr as *const TaskBootstrap) };
     unsafe {
