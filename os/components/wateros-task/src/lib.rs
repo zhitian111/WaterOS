@@ -3,15 +3,15 @@
 mod runtime;
 
 pub mod api {
-    pub use ::api_v0::*;
+    pub use api_v0::*;
 }
 
 pub mod scheduler {
-    pub use ::scheduler::*;
+    pub use scheduler::*;
 }
 
-#[cfg(feature = "impl-dummy")]
-pub use impl_dummy as active_impl;
+#[cfg(feature = "impl-core")]
+pub use impl_core as active_impl;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WaitQueue {
@@ -21,11 +21,17 @@ pub struct WaitQueue {
 impl WaitQueue {
     /// 创建一个新的等待队列句柄。
     #[inline]
-    pub fn new() -> Self { Self { id: scheduler::allocate_wait_queue() } }
+    pub fn new() -> Self {
+        Self {
+            id: scheduler::allocate_wait_queue(),
+        }
+    }
 
     /// 返回该等待队列对应的内部编号。
     #[inline]
-    pub const fn id(&self) -> WaitQueueId { self.id }
+    pub const fn id(&self) -> WaitQueueId {
+        self.id
+    }
 
     /// 返回该等待队列对应的通用等待句柄。
     #[inline]
@@ -35,7 +41,9 @@ impl WaitQueue {
 
     /// 让当前任务在该等待队列上休眠，直到被显式唤醒。
     #[inline]
-    pub fn wait_current(&self) { scheduler::wait_current(self.wait_handle()); }
+    pub fn wait_current(&self) {
+        scheduler::wait_current(self.wait_handle());
+    }
 
     /// 让当前任务在该等待队列上等待，超时后返回等待结果。
     #[inline]
@@ -45,23 +53,29 @@ impl WaitQueue {
 
     /// 唤醒该等待队列中的一个任务，并返回被唤醒的任务号。
     #[inline]
-    pub fn wake_one(&self) -> Option<TaskId> { scheduler::wake_one_in_wait_queue(self.id) }
+    pub fn wake_one(&self) -> Option<TaskId> {
+        scheduler::wake_one_in_wait_queue(self.id)
+    }
 
     /// 唤醒该等待队列中的全部任务，并返回实际唤醒数量。
     #[inline]
-    pub fn wake_all(&self) -> usize { scheduler::wake_all_in_wait_queue(self.id) }
+    pub fn wake_all(&self) -> usize {
+        scheduler::wake_all_in_wait_queue(self.id)
+    }
 }
 
 pub use api_v0::{
-    ExitedTask, KernelTaskEntry, ScheduleReason, TaskBlockReason, TaskExitCode, TaskId,
-    TaskKind, TaskSnapshot, TaskState, TaskTick, TaskTrapFrame, TaskWaitHandle,
-    TaskWaitResult, TaskWaitTarget, WaitQueueId, IDLE_TASK_ID,
-    UserTaskEntryPc,
+    AddressSpaceHandle, ExitedTask, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskId,
+    TaskKind, TaskSnapshot, TaskState, TaskTick, TaskTrapSnapshot, TaskWaitHandle, TaskWaitResult,
+    TaskWaitTarget, UserImageInfo, UserTaskEntryPc, UserTaskResources, UserTaskSpec, WaitQueueId,
+    IDLE_TASK_ID,
 };
 
 /// 初始化任务系统和底层调度器状态。
 #[inline]
-pub fn init() { scheduler::init(); }
+pub fn init() {
+    scheduler::init();
+}
 
 /// 创建一个新的内核任务，并返回分配到的任务号。
 #[inline]
@@ -69,31 +83,47 @@ pub fn spawn_kernel_task(entry: KernelTaskEntry, arg: usize) -> TaskId {
     scheduler::spawn_kernel_task(entry, arg)
 }
 
-/// 创建一个新的用户任务骨架，并返回分配到的任务号。
+/// 按给定规格创建一个新的用户任务，并返回分配到的任务号。
+#[inline]
+pub fn spawn_user_task_spec(spec: UserTaskSpec) -> TaskId {
+    scheduler::spawn_user_task_spec(spec)
+}
+
+/// 创建一个新的最小用户任务骨架，并返回分配到的任务号。
 #[inline]
 pub fn spawn_user_task(entry_pc: UserTaskEntryPc) -> TaskId {
-    scheduler::spawn_user_task(entry_pc)
+    spawn_user_task_spec(UserTaskSpec::new(entry_pc))
 }
 
 /// 启动调度器并切入第一批可运行任务。
 #[inline]
-pub fn run_first_task() -> ! { scheduler::run_first_task() }
+pub fn run_first_task() -> ! {
+    scheduler::run_first_task()
+}
 
 /// 让当前任务主动让出 CPU。
 #[inline]
-pub fn yield_now() { scheduler::suspend_current_and_run_next(); }
+pub fn yield_now() {
+    scheduler::suspend_current_and_run_next();
+}
 
 /// 通知任务系统发生了一次时钟 tick。
 #[inline]
-pub fn schedule_tick() { scheduler::schedule_tick(); }
+pub fn schedule_tick() {
+    scheduler::schedule_tick();
+}
 
 /// 以指定阻塞原因挂起当前任务。
 #[inline]
-pub fn block_current(reason: TaskBlockReason) { scheduler::block_current(reason); }
+pub fn block_current(reason: TaskBlockReason) {
+    scheduler::block_current(reason);
+}
 
 /// 让当前任务等待指定的阻塞对象。
 #[inline]
-pub fn wait_on(wait_handle: TaskWaitHandle) { scheduler::wait_current(wait_handle); }
+pub fn wait_on(wait_handle: TaskWaitHandle) {
+    scheduler::wait_current(wait_handle);
+}
 
 /// 让当前任务等待指定的阻塞对象，并带一个超时。
 #[inline]
@@ -109,38 +139,57 @@ pub const fn task_exit_wait_handle(task_id: TaskId) -> TaskWaitHandle {
 
 /// 让当前任务等待指定任务退出。
 #[inline]
-pub fn wait_for_task_exit(task_id: TaskId) { wait_on(task_exit_wait_handle(task_id)); }
+pub fn wait_for_task_exit(task_id: TaskId) {
+    wait_on(task_exit_wait_handle(task_id));
+}
 
 /// 让当前任务等待指定任务退出，并带一个超时。
 #[inline]
 pub fn wait_for_task_exit_for_ticks(task_id: TaskId, timeout_ticks: TaskTick) -> TaskWaitResult {
-    wait_on_for_ticks(task_exit_wait_handle(task_id), timeout_ticks)
+    wait_on_for_ticks(
+        task_exit_wait_handle(task_id),
+        timeout_ticks,
+    )
 }
 
 /// 让当前任务睡眠指定数量的 tick。
 #[inline]
-pub fn sleep_for_ticks(ticks: TaskTick) { scheduler::sleep_current_for_ticks(ticks); }
+pub fn sleep_for_ticks(ticks: TaskTick) {
+    scheduler::sleep_current_for_ticks(ticks);
+}
 
 /// 尝试唤醒指定任务。
 #[inline]
-pub fn wake_task(task_id: TaskId) -> bool { scheduler::wake_task(task_id) }
+pub fn wake_task(task_id: TaskId) -> bool {
+    scheduler::wake_task(task_id)
+}
 
 /// 回收指定已退出任务的信息。
 #[inline]
-pub fn reap_exited_task(task_id: TaskId) -> Option<ExitedTask> { scheduler::reap_exited_task(task_id) }
+pub fn reap_exited_task(task_id: TaskId) -> Option<ExitedTask> {
+    scheduler::reap_exited_task(task_id)
+}
 
 /// 回收一个任意已退出任务的信息。
 #[inline]
-pub fn reap_one_exited_task() -> Option<ExitedTask> { scheduler::reap_one_exited_task() }
+pub fn reap_one_exited_task() -> Option<ExitedTask> {
+    scheduler::reap_one_exited_task()
+}
 
 /// 让当前任务以给定退出码结束运行。
 #[inline]
-pub fn exit_current(exit_code: TaskExitCode) -> ! { scheduler::exit_current(exit_code) }
+pub fn exit_current(exit_code: TaskExitCode) -> ! {
+    scheduler::exit_current(exit_code)
+}
 
 /// 返回当前正在运行任务的任务号。
 #[inline]
-pub fn current_task_id() -> Option<TaskId> { scheduler::current_task_id() }
+pub fn current_task_id() -> Option<TaskId> {
+    scheduler::current_task_id()
+}
 
 /// 返回当前正在运行任务的稳定快照。
 #[inline]
-pub fn current_task_snapshot() -> Option<TaskSnapshot> { scheduler::current_task_snapshot() }
+pub fn current_task_snapshot() -> Option<TaskSnapshot> {
+    scheduler::current_task_snapshot()
+}

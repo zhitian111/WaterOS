@@ -1,5 +1,5 @@
 [package]
-    name = "wateros-task-impl-dummy"
+    name = "wateros-task-impl-core"
     version = "0.1.0"
     edition = "2024"
 

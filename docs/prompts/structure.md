@@ -52,7 +52,7 @@ IPC 总入口，继续拆分为 pipe、signal、futex、event、shm、waitqueue�
 
 任务与调度相关组件。一级组件根 crate 对外聚合任务对象与调度入口，当前上层调用主要通过 `init`、`spawn_kernel_task`、`run_first_task`、`yield_now`、`schedule_tick`、`current_task_id` 等接口进入。
 
-其中 `task-api/api-v0/` 定义 `TaskId`、`TaskContext`、`KernelTask` 等基础契约，`task-scheduler/` 继续拆分 `scheduler-api/api-v0/` 与 `scheduler-impl/impl-dummy/`；`task-impl/impl-dummy/` 当前仍偏占位，实际可运行的轮转调度逻辑主要位于调度器 impl 中。
+其中 `task-api/api-v0/` 定义 `TaskId`、`TaskContext`、`KernelTask` 等基础契约，`task-scheduler/` 继续拆分 `scheduler-api/api-v0/` 与 `scheduler-impl/impl-round-robin/`；`task-impl/impl-core/` 当前承载真实任务对象与启动/runtime 机制，实际可运行的调度逻辑主要位于轮转调度实现中。
 
 修改本组件时，除检查组件根 `Cargo.toml` 与 `src/lib.rs` 外，还应同步关注 `os/src/main.rs` 的启动接线，以及平台中断/定时器路径对 `task::schedule_tick()` 的调用关系。
 

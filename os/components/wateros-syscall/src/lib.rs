@@ -2,11 +2,13 @@
 
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
+use abi::syscall_number::{ActiveSyscallNumberTable, SyscallNumberTable};
 use abi::user_ret::UserRet;
 
-const SYSCALL_YIELD_NR: usize = 124;
-const SYSCALL_EXIT_NR: usize = 93;
-const SYSCALL_EXIT_GROUP_NR: usize = 94;
+const SYSCALL_YIELD_NR: usize = <ActiveSyscallNumberTable as SyscallNumberTable>::YIELD.raw();
+const SYSCALL_EXIT_NR: usize = <ActiveSyscallNumberTable as SyscallNumberTable>::EXIT.raw();
+const SYSCALL_EXIT_GROUP_NR: usize =
+    <ActiveSyscallNumberTable as SyscallNumberTable>::EXIT_GROUP.raw();
 
 #[inline]
 fn dispatch_current_syscall(syscall_nr: usize, syscall_args: SyscallArgs) -> isize {
