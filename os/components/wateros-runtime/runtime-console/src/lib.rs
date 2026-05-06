@@ -42,7 +42,7 @@ pub fn prints<C : Console>(str : &str) {
 
 #[cfg(feature = "impl-dummy")]
 pub use impl_dummy::DummyConsoleHandle as ConsoleHandle;
-#[cfg(feature = "impl-firmware-opensbi")]
+#[cfg(any(feature = "impl-firmware-console", feature = "impl-firmware-opensbi"))]
 pub use impl_firmware_opensbi::FirmwareConsoleHandle as ConsoleHandle;
 
 #[macro_export]

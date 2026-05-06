@@ -122,6 +122,31 @@ const TIMER_SLICE_TICKS: u64 = 1_250_000;
 static TIMER_TICK_COUNT: AtomicUsize = AtomicUsize::new(0);
 const SYSCALL_INSN_BYTES: usize = 4;
 
+#[inline]
+fn decode_riscv64_trap_cause(scause: usize) -> TrapCause {
+    let is_interrupt = (scause >> (usize::BITS - 1)) != 0;
+    let code = scause & 0xFFF;
+
+    if is_interrupt {
+        match code {
+            1 => TrapCause::Interrupt(Interrupt::SupervisiorSoft),
+            5 => TrapCause::Interrupt(Interrupt::SupervisiorTimer),
+            9 => TrapCause::Interrupt(Interrupt::SupervisiorExternel),
+            other => TrapCause::Interrupt(Interrupt::Unsupported(other)),
+        }
+    } else {
+        match code {
+            8 => TrapCause::Exception(Exception::UserEnvCall),
+            12 => TrapCause::Exception(Exception::InstructionPageFault),
+            13 => TrapCause::Exception(Exception::LoadPageFault),
+            15 => TrapCause::Exception(Exception::StorePageFault),
+            2 => TrapCause::Exception(Exception::IllegalInstruction),
+            3 => TrapCause::Exception(Exception::Breakpoint),
+            other => TrapCause::Exception(Exception::Unsupported(other)),
+        }
+    }
+}
+
 /// 初始化 trap 入口：把 `stvec` 指向 `__alltraps`。
 ///
 /// 注意：更完整的实现还需要初始化 page table / trap context / 中断使能。
@@ -141,7 +166,7 @@ pub extern "C" fn trap_entry_rust(cx_ptr: *mut TrapContext) {
         unsafe { __wateros_task_runtime_begin_current_trap_frame_access(cx_ptr.cast::<u8>()) };
     let cx = unsafe { &mut *(authoritative_cx_ptr as *mut TrapContext) };
 
-    let trap_cause = TrapCause::from(cx.scause);
+    let trap_cause = decode_riscv64_trap_cause(cx.scause);
     match trap_cause {
         TrapCause::Exception(Exception::UserEnvCall) => {
             handle_user_syscall(cx);
@@ -220,6 +245,10 @@ fn handle_user_syscall(cx: &mut TrapContext) {
 impl TrapFrameRead for TrapContext {
     fn raw_cause(&self) -> usize {
         self.scause
+    }
+
+    fn trap_cause(&self) -> TrapCause {
+        decode_riscv64_trap_cause(self.scause)
     }
 
     fn fault_addr(&self) -> usize {

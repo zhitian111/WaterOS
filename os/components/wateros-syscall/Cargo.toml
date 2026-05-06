@@ -7,10 +7,12 @@
 
 [dependencies]
     abi = { path = "../wateros-abi/", package = "wateros-abi", default-features = true, features = ["impl-linux-riscv64"] }
-    task = { path = "../wateros-task/", package = "wateros-task", default-features = true }
+    task = { path = "../wateros-task/", package = "wateros-task", default-features = false }
 
 [features]
     default = []
+    impl-loongarch64 = [ "task/impl-loongarch64" ]
+    impl-riscv64 = [ "task/impl-riscv64" ]
 
 [profile.dev]
     panic = "abort"

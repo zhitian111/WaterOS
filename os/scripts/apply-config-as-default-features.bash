@@ -132,14 +132,6 @@ def update_default_features(manifest_path: Path, enabled_features: Set[str]) -> 
 
     manifest_path.write_text("".join(out), encoding="utf-8")
 
-def set_dependency_default_features(manifest_path: Path) -> bool:
-    original = manifest_path.read_text(encoding="utf-8")
-    updated = re.sub(r"default-features\s*=\s*false", "default-features = true", original)
-    if updated != original:
-        manifest_path.write_text(updated, encoding="utf-8")
-        return True
-    return False
-
 # Backup all Cargo.toml alongside source files (so revert is deterministic)
 for m in manifests:
     bak = m.with_name(f"{m.name}{backup_suffix}")
@@ -153,14 +145,7 @@ for pkg, feats in enabled_by_pkg.items():
     mp = Path(crate.manifest_path)
     update_default_features(mp, feats)
 
-# 2) Flip dependency default-features=false -> true everywhere under os/
-changed = 0
-for m in manifests:
-    if set_dependency_default_features(m):
-        changed += 1
-
-print(f"done. updated_crates={len(enabled_by_pkg)} changed_manifests={changed}")
+print(f"done. updated_crates={len(enabled_by_pkg)}")
 PY
 
 info "应用完成。建议重启 rust-analyzer / Reload 工程。"
-
