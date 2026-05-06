@@ -38,41 +38,16 @@ fn read_be_u32(raw: &[u8], offset: usize) -> Option<u32> {
     Some(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
 }
 
-fn parse_cell_value(raw: &[u8], cells: usize) -> Option<usize> {
-    if cells == 0 || cells > 2 || raw.len() < cells * 4 {
+/// 取节点 `reg` 的第一段映射（地址/长度格式由**父节点**的 `#address-cells` / `#size-cells` 决定）。
+/// 使用 `fdt` crate 的 `FdtNode::reg()`，与 QEMU virt 上 `soc` 的 2+2 cells 一致。
+fn first_mmio_region(node: fdt::node::FdtNode<'_, '_>) -> Option<MmioRegion> {
+    let mut regions = node.reg()?;
+    let region = regions.next()?;
+    let base = region.starting_address as usize;
+    let size = region.size?;
+    if size == 0 {
         return None;
     }
-
-    let mut value: u64 = 0;
-    for idx in 0..cells {
-        value = (value << 32) | u64::from(read_be_u32(raw, idx * 4)?);
-    }
-    usize::try_from(value).ok()
-}
-
-fn read_cell_count(node: &fdt::node::FdtNode<'_, '_>, key: &str, default: usize) -> usize {
-    node.property(key)
-        .and_then(|p| read_be_u32(p.value, 0))
-        .map(|v| v as usize)
-        .unwrap_or(default)
-}
-
-fn parse_mmio_from_reg_with_cells(
-    node: &fdt::node::FdtNode<'_, '_>,
-    reg: &[u8],
-) -> Option<MmioRegion> {
-    // FDT crate 0.1.5 未暴露父节点查询，这里按节点局部声明读取并回退 qemu virt 默认值。
-    let address_cells = read_cell_count(node, "#address-cells", 2);
-    let size_cells = read_cell_count(node, "#size-cells", 1);
-    let base_len = address_cells.checked_mul(4)?;
-    let size_len = size_cells.checked_mul(4)?;
-    let total = base_len.checked_add(size_len)?;
-    if reg.len() < total {
-        return None;
-    }
-
-    let base = parse_cell_value(&reg[..base_len], address_cells)?;
-    let size = parse_cell_value(&reg[base_len..base_len + size_len], size_cells)?;
     Some(MmioRegion { base, size })
 }
 
@@ -114,10 +89,6 @@ fn is_virtio_mmio_compatible(node: &fdt::node::FdtNode<'_, '_>) -> bool {
         .any(|item| item.as_str() == "virtio,mmio")
 }
 
-fn is_virtio_mmio(info: &DeviceInfo) -> bool {
-    info.compatible.as_str() == "virtio,mmio"
-}
-
 fn mmio_read32(base: usize, word_offset: usize) -> u32 {
     let ptr = (base as *const u32).wrapping_add(word_offset);
     unsafe { core::ptr::read_volatile(ptr) }
@@ -146,13 +117,35 @@ pub fn scan_device_info() -> DriverResult<usize> {
         let Some(compatible) = first_compatible(&node) else {
             continue;
         };
-        let mmio = node
-            .property("reg")
-            .and_then(|p| parse_mmio_from_reg_with_cells(&node, p.value));
+        let mmio = first_mmio_region(node);
         let mut dtype = DeviceType::Unknown;
         if let Some(region) = mmio {
             if is_virtio_mmio_compatible(&node) {
                 dtype = probe_virtio_device_type(region);
+            }
+        }
+
+        if is_virtio_mmio_compatible(&node) {
+            match mmio {
+                Some(m) => {
+                    let magic = mmio_read32(m.base, 0);
+                    let device_id = mmio_read32(m.base, 2);
+                    logging::info!(
+                        "[driver] dtb virtio-mmio: node={} mmio=base {:#x} size {:#x} magic={:#x} device_id={} -> {:?}",
+                        node.name,
+                        m.base,
+                        m.size,
+                        magic,
+                        device_id,
+                        dtype
+                    );
+                }
+                None => {
+                    logging::warn!(
+                        "[driver] dtb virtio-mmio: node={} has no MMIO region (check FdtNode::reg / #address-cells)",
+                        node.name
+                    );
+                }
             }
         }
 
@@ -233,7 +226,9 @@ fn probe_virtio_blk() {
     let mut blk = VIRTIO_BLK_MMIO.lock();
     blk.clear();
     for info in infos.iter() {
-        if info.device_type == DeviceType::Block && is_virtio_mmio(info) {
+        // `device_type` 已由 MMIO header 探测得到；`DeviceInfo.compatible` 仅保留首条字符串，
+        // 可能与 `compatible` 列表顺序不一致，故此处不再依赖 `compatible == "virtio,mmio"`。
+        if info.device_type == DeviceType::Block {
             if let Some(mmio) = info.mmio {
                 blk.push(mmio);
                 match VirtioBlkDevice::from_mmio(mmio) {
@@ -312,7 +307,15 @@ pub fn init_after_boot() -> DriverResult<()> {
     let count = scan_device_info()?;
     logging::info!("[driver] dtb scan done, devices={}", count);
     probe_virtio_blk();
-    logging::info!("[driver] block devices registered={}", block_device_count());
+    let registered = block_device_count();
+    logging::info!("[driver] block devices registered={}", registered);
+    if registered == 0 {
+        logging::warn!(
+            "[driver] no block device: devfs will stay empty (this is expected until virtio-blk is present). \
+             For QEMU virt add e.g. `-drive file=...,if=none,id=d0 -device virtio-blk-device,drive=d0`. \
+             If virtio-mmio lines above show magic!=0x74726976 or wrong mmio, check MMU maps MMIO (0x1xxxxxxx)."
+        );
+    }
     let _ = sync_devfs();
     Ok(())
 }

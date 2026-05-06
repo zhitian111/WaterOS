@@ -170,7 +170,7 @@ pub fn test_with(fs: SharedFs) -> FsResult<()> {
     let fs = fs.lock();
 
     const TEXT_PATH: &str = "/src/bin/000_hello_world.rs";
-    const ELF_PATH: &str = "/elf/000_hello_world";
+    const ELF_PATH: &str = "/elf/000_hello_world.elf";
 
     for path in [TEXT_PATH, ELF_PATH] {
         match fs.metadata(path) {

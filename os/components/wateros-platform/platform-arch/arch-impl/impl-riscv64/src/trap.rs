@@ -2,7 +2,7 @@ use abi::syscall_args::SyscallArgs;
 use abi::syscall_number::SyscallNumber;
 use abi::user_ret::UserRet;
 use api_v0::time::ArchTime;
-use api_v0::trap::{Interrupt, TrapCOntextWrite, TrapCause, TrapContextRead};
+use api_v0::trap::{Interrupt, TrapCOntextWrite, TrapCause, TrapContextRead, Exception};
 use core::arch::asm;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use firmware::timer::FirmwareTimerDeadline;
@@ -118,8 +118,9 @@ pub extern "C" fn trap_entry_rust(cx_ptr : *mut TrapContext) {
         TrapCause::Exception(Exception::UserEnvCall) => {
             // syscall 入口（目前仍用 stub，后续你会接入 abi 跳转）
             let packet = cx.syscall_context();
-            let ret = abi_syscall_entry(packet);
-            cx.set_syscall_ret(ret);
+            // let ret = abi_syscall_entry(packet);
+            let ret = 0;
+            cx.set_syscall_ret(abi::user_ret::UserRet(ret));
             cx.add_user_pc(4);
             logging::debug!("[trap] ecall (stub): scause={:#x?}",
                             cx.scause);
