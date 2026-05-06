@@ -5,11 +5,6 @@ QEMU_ENTRY_ADDRESS = 0x90000000;
 
 SECTIONS
 {
-  . = 0x0;
-  .reset : AT(0x0) {
-    KEEP(*(.text.reset))
-  }
-
   . = QEMU_ENTRY_ADDRESS;
   kernel_start = .;
 

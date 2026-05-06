@@ -1,12 +1,3 @@
-    .section .text.reset
-    .globl qemu_loongarch64_reset_vector
-    .align 2
-
-qemu_loongarch64_reset_vector:
-    ori $r12, $r0, 0x900
-    slli.d $r12, $r12, 20
-    jirl $r0, $r12, 0
-
     .section .text.entry
     .globl _start
     .align 2

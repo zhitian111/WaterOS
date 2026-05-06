@@ -13,7 +13,7 @@
 
 [features]
     api-v0 = [ "impl-core/api-v0", "scheduler/api-v0" ]
-    default = [ "api-v0", "impl-core", "impl-riscv64", "impl-round-robin" ]
+    default = [ "api-v0", "impl-core" ]
     impl-core = [  ]
     impl-loongarch64 = [ "arch/api-v0", "arch/impl-loongarch64", "impl-core/impl-loongarch64" ]
     impl-riscv64 = [ "arch/api-v0", "arch/impl-riscv64", "impl-core/impl-riscv64" ]
