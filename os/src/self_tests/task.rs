@@ -162,7 +162,11 @@ extern "C" fn stage3_exit_reaper_task(exit_target_task_id : usize) -> ! {
 
 extern "C" fn stage4_user_task_entry() -> ! {
     let yield_ret = unsafe { user_syscall0(STAGE4_USER_SYSCALL_YIELD_NR) };
-    let exit_code = if yield_ret == 0 { STAGE4_USER_EXIT_OK } else { STAGE4_USER_EXIT_BAD_RET };
+    let exit_code = if yield_ret == 0 {
+        STAGE4_USER_EXIT_OK
+    } else {
+        STAGE4_USER_EXIT_BAD_RET
+    };
     unsafe {
         user_exit_group(exit_code);
     }
@@ -175,19 +179,22 @@ extern "C" fn stage4_user_observer_task(user_task_id : usize) -> ! {
     assert_eq!(wait_result,
                task::TaskWaitResult::Woken,
                "stage4 observer must observe user task exit");
-    let exited_task = task::reap_exited_task(user_task_id).expect("stage4 observer must reap \
-                                                                   exited user task");
+    let exited_task =
+        task::reap_exited_task(user_task_id).expect("stage4 observer must reap exited user task");
     assert_eq!(exited_task.id, user_task_id,
                "reaped user task id must match spawned user task");
-    assert_eq!(exited_task.kind, task::TaskKind::User,
+    assert_eq!(exited_task.kind,
+               task::TaskKind::User,
                "reaped task must be a user task");
     assert_eq!(exited_task.exit_code, STAGE4_USER_EXIT_OK,
                "user task must observe sched_yield return 0 before exit");
-    assert!(exited_task.trap_frame.is_some(),
+    assert!(exited_task.trap_frame
+                       .is_some(),
             "user task exit should leave an observable trap frame snapshot");
-    let user_resources = exited_task.user_resources.expect("user task exit should preserve user \
-                                                            resources snapshot");
-    assert_eq!(user_resources.entry_pc, stage4_user_task_entry as usize,
+    let user_resources =
+        exited_task.user_resources
+                   .expect("user task exit should preserve user resources snapshot");
+    assert_eq!(user_resources.entry_pc, stage4_user_task_entry as *const () as usize,
                "user task resource snapshot must preserve original entry pc");
     assert!(user_resources.user_stack_bottom < user_resources.user_stack_top,
             "user task stack range must be ordered");
@@ -197,19 +204,24 @@ extern "C" fn stage4_user_observer_task(user_task_id : usize) -> ! {
     assert_eq!(user_resources.address_space,
                Some(task::AddressSpaceHandle::from_raw(STAGE4_USER_FAKE_ADDRESS_SPACE_RAW)),
                "user task resource snapshot must preserve address-space handle metadata");
-    let image = user_resources.image.expect("user task resource snapshot must preserve user \
-                                             image metadata");
-    assert_eq!(image.image_base(), STAGE4_USER_IMAGE_BASE,
+    let image =
+        user_resources.image
+                      .expect("user task resource snapshot must preserve user image metadata");
+    assert_eq!(image.image_base(),
+               STAGE4_USER_IMAGE_BASE,
                "user task image metadata must preserve image base");
-    assert_eq!(image.image_size(), STAGE4_USER_IMAGE_SIZE,
+    assert_eq!(image.image_size(),
+               STAGE4_USER_IMAGE_SIZE,
                "user task image metadata must preserve image size");
-    let trap_frame = exited_task.trap_frame.expect("user task should preserve trap frame");
+    let trap_frame = exited_task.trap_frame
+                                .expect("user task should preserve trap frame");
     let user_sp = trap_frame.user_sp();
     assert!(user_resources.user_stack_bottom <= user_sp,
             "user task trap frame user_sp must stay within the user stack range");
     assert!(user_sp <= user_resources.user_stack_top,
             "user task trap frame user_sp must not grow beyond the initial user stack top");
-    assert_eq!(user_sp & 0xf, 0,
+    assert_eq!(user_sp & 0xF,
+               0,
                "user task trap frame user_sp should keep 16-byte stack alignment");
     info!("[task-stage4] observer reaped user task {} with exit_code={}",
           exited_task.id, exited_task.exit_code);
@@ -228,12 +240,11 @@ pub fn spawn_all() {
                                                       exit_target_task_id);
     let exit_reaper_task_id = task::spawn_kernel_task(stage3_exit_reaper_task,
                                                       exit_target_task_id);
-    let user_task_id = task::spawn_user_task_spec(task::UserTaskSpec::new(stage4_user_task_entry as usize)
+    let user_task_id = task::spawn_user_task_spec(task::UserTaskSpec::new(stage4_user_task_entry as *const () as usize)
                                                       .with_address_space(task::AddressSpaceHandle::from_raw(STAGE4_USER_FAKE_ADDRESS_SPACE_RAW))
                                                       .with_image(task::UserImageInfo::new(STAGE4_USER_IMAGE_BASE,
                                                                                            STAGE4_USER_IMAGE_SIZE)));
-    let user_observer_task_id = task::spawn_kernel_task(stage4_user_observer_task,
-                                                        user_task_id);
+    let user_observer_task_id = task::spawn_kernel_task(stage4_user_observer_task, user_task_id);
     info!("[task-stage2] spawned kernel tasks: blocked={}, sleep={}, waker={}",
           blocked_task_id, sleep_task_id, waker_task_id);
     info!("[task-stage3b] spawned self-test tasks: timeout={}, exit_target={}, exit_waiter={}, \

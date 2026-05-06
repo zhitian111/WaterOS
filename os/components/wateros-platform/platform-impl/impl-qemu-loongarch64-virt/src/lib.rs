@@ -55,7 +55,14 @@ pub mod time {
     impl PlatformTime for QEMULoongArch64VirtTime {
         #[inline]
         fn time_frequency_hz() -> PlatformTimeResult<u64> {
-            Err(PlatformTimeError::Unsupported)
+            // QEMU loongarch64 virt exposes the StableCounter at 100 MHz.
+            // Later this can be derived from platform configuration/firmware data.
+            const QEMU_LOONGARCH64_TIMEBASE_HZ : u64 = 100_000_000;
+            if QEMU_LOONGARCH64_TIMEBASE_HZ == 0 {
+                Err(PlatformTimeError::InvalidFrequency)
+            } else {
+                Ok(QEMU_LOONGARCH64_TIMEBASE_HZ)
+            }
         }
     }
 }

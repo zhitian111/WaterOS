@@ -1,5 +1,5 @@
 [workspace]
-    members = [ "./abi-api/api-v0/", "./abi-impl/impl-dummy/" , "abi-impl/impl-linux-riscv64"]
+    members = [ "./abi-api/api-v0/", "./abi-impl/impl-dummy/", "abi-impl/impl-linux-generic64" ]
 [package]
     name = "wateros-abi"
     version = "0.1.0"
@@ -9,14 +9,19 @@
     config = {path = "../wateros-base/base-config/", package = "wateros-base-config", default-features = true}
     api-v0 = { path = "./abi-api/api-v0/", package = "wateros-abi-api-v0", default-features = true }
     impl-dummy = { path = "./abi-impl/impl-dummy/", package = "wateros-abi-impl-dummy", default-features = true }
-    impl-linux-riscv64 = {path = "./abi-impl/impl-linux-riscv64/", package = "wateros-abi-impl-linux-riscv64", default-features = true}
+    impl-linux-generic64 = { path = "./abi-impl/impl-linux-generic64/", package = "wateros-abi-impl-linux-generic64", default-features = true, optional = true }
 
 
 [features]
-    api-v0 = [ "impl-dummy/api-v0" ]
+    api-v0 = [
+        "impl-dummy/api-v0",
+        "impl-linux-generic64?/api-v0",
+    ]
     default = [ "api-v0", "impl-dummy" ]
     impl-dummy = [  ]
-    impl-linux-riscv64 = []
+    impl-linux-generic64 = [ "dep:impl-linux-generic64" ]
+    impl-linux-loongarch64 = [ "impl-linux-generic64" ]
+    impl-linux-riscv64 = [ "impl-linux-generic64" ]
 
 [profile.dev]
     panic = "abort"

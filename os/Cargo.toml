@@ -25,10 +25,17 @@
 
 [features]
     default = [ "qemu-riscv64-opensbi" ]
+    impl-sv39 = []
     qemu-loongarch64-virt = [
+        "dep:syscall",
+        "dep:task",
         "platform/impl-qemu-loongarch64-virt",
         "runtime/impl-debug",
         "runtime/impl-firmware-console",
+        "syscall/impl-loongarch64",
+        "task/impl-core",
+        "task/impl-loongarch64",
+        "task/impl-round-robin",
     ]
     qemu-riscv64-opensbi = [
         "dep:driver",

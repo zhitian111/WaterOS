@@ -2,7 +2,7 @@
 
 ## 当前定位
 
-当前主要承载 ABI、系统调用约定和用户内核接口语义。根组件默认仍偏骨架，但已经具备 `api-v0`、`impl-dummy` 和 `impl-linux-riscv64` 的组织结构。
+当前主要承载 ABI、系统调用约定和用户内核接口语义。根组件默认仍偏骨架，但已经具备 `api-v0`、`impl-dummy` 和 `impl-linux-generic64` 的组织结构；`impl-linux-riscv64` 与 `impl-linux-loongarch64` 作为架构选择 feature 复用 Linux generic 64-bit syscall 编号表。
 
 ## 事实来源
 

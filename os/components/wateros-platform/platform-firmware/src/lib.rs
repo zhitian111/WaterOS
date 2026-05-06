@@ -21,10 +21,10 @@ pub mod console {
     }
     #[cfg(feature = "impl-dummy")]
     pub use impl_dummy::DummyConsole as FirmwareConsoleImpl;
-    #[cfg(feature = "impl-riscv64-opensbi")]
-    pub use impl_riscv64_opensbi::console::OpenSBIConsole as FirmwareConsoleImpl;
     #[cfg(feature = "impl-qemu-loongarch64-uart16550")]
     pub use impl_qemu_loongarch64_uart16550::QemuLoongArch64Uart16550Console as FirmwareConsoleImpl;
+    #[cfg(feature = "impl-riscv64-opensbi")]
+    pub use impl_riscv64_opensbi::console::OpenSBIConsole as FirmwareConsoleImpl;
     #[inline]
     #[allow(unused)]
     pub fn console_flush() -> FirmwareConsoleResult<()> {
@@ -54,10 +54,10 @@ pub mod timer {
     }
     #[cfg(feature = "impl-dummy")]
     pub use impl_dummy::DummyTimer as FirmwareTimerImpl;
+    #[cfg(feature = "impl-qemu-loongarch64-uart16550")]
+    pub use impl_qemu_loongarch64_uart16550::QemuLoongArch64Timer as FirmwareTimerImpl;
     #[cfg(feature = "impl-riscv64-opensbi")]
     pub use impl_riscv64_opensbi::timer::OpenSBITimer as FirmwareTimerImpl;
-    #[cfg(feature = "impl-qemu-loongarch64-uart16550")]
-    pub use impl_qemu_loongarch64_uart16550::QemuLoongArch64DummyTimer as FirmwareTimerImpl;
     pub fn set_timer(time : FirmwareTimerDeadline) -> FirmwareTimerResult<()> {
         FirmwareTimerImpl::firmware_set_timer(time)
     }
@@ -89,10 +89,10 @@ pub mod reset {
     }
     #[cfg(feature = "impl-dummy")]
     use impl_dummy::DummyReset as FirmwareResetImpl;
-    #[cfg(feature = "impl-riscv64-opensbi")]
-    use impl_riscv64_opensbi::reset::OpenSBIReset as FirmwareResetImpl;
     #[cfg(feature = "impl-qemu-loongarch64-uart16550")]
     use impl_qemu_loongarch64_uart16550::QemuLoongArch64DummyReset as FirmwareResetImpl;
+    #[cfg(feature = "impl-riscv64-opensbi")]
+    use impl_riscv64_opensbi::reset::OpenSBIReset as FirmwareResetImpl;
     #[inline]
     #[allow(unused)]
     pub fn reset(reset_type : FirmwareResetType,

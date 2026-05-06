@@ -1,5 +1,5 @@
 # WaterOS feature tree (按 package 分组)
-# root: /home/kasss/WaterOS/os
+# root: /Users/x/code/WaterOS/os
 
 ipc-event  (components/wateros-ipc/ipc-event/Cargo.toml)
   (no [features])
@@ -38,7 +38,10 @@ ipc-waitqueue  (components/wateros-ipc/ipc-waitqueue/Cargo.toml)
 wateros  (Cargo.toml)
   - default [default]
     - qemu-riscv64-opensbi
+  - impl-sv39
   - qemu-loongarch64-virt
+    - dep:syscall
+    - dep:task
     - platform/impl-qemu-loongarch64-virt
       > wateros-platform
         - default [default]
@@ -68,6 +71,35 @@ wateros  (Cargo.toml)
         - impl-info
         - impl-trace
         - impl-warn
+    - syscall/impl-loongarch64
+      > wateros-syscall
+        - default [default]
+        - impl-loongarch64
+        - impl-riscv64
+    - task/impl-core
+      > wateros-task
+        - default [default]
+        - api-v0 [default]
+        - impl-core [default]
+        - impl-loongarch64
+        - impl-riscv64
+        - impl-round-robin
+    - task/impl-loongarch64
+      > wateros-task
+        - default [default]
+        - api-v0 [default]
+        - impl-core [default]
+        - impl-loongarch64
+        - impl-riscv64
+        - impl-round-robin
+    - task/impl-round-robin
+      > wateros-task
+        - default [default]
+        - api-v0 [default]
+        - impl-core [default]
+        - impl-loongarch64
+        - impl-riscv64
+        - impl-round-robin
   - qemu-riscv64-opensbi [default]
     - dep:driver
     - dep:fs
@@ -118,24 +150,24 @@ wateros  (Cargo.toml)
         - api-v0 [default]
         - impl-core [default]
         - impl-loongarch64
-        - impl-riscv64 [default]
-        - impl-round-robin [default]
+        - impl-riscv64
+        - impl-round-robin
     - task/impl-riscv64
       > wateros-task
         - default [default]
         - api-v0 [default]
         - impl-core [default]
         - impl-loongarch64
-        - impl-riscv64 [default]
-        - impl-round-robin [default]
+        - impl-riscv64
+        - impl-round-robin
     - task/impl-round-robin
       > wateros-task
         - default [default]
         - api-v0 [default]
         - impl-core [default]
         - impl-loongarch64
-        - impl-riscv64 [default]
-        - impl-round-robin [default]
+        - impl-riscv64
+        - impl-round-robin
 
 wateros-abi  (components/wateros-abi/Cargo.toml)
   - default [default]
@@ -146,8 +178,14 @@ wateros-abi  (components/wateros-abi/Cargo.toml)
       > wateros-abi-impl-dummy
         - default [default]
         - api-v0 [default]
+    - impl-linux-generic64?/api-v0
   - impl-dummy [default]
+  - impl-linux-generic64
+    - dep:impl-linux-generic64
+  - impl-linux-loongarch64
+    - impl-linux-generic64
   - impl-linux-riscv64
+    - impl-linux-generic64
 
 wateros-abi-api-v0  (components/wateros-abi/abi-api/api-v0/Cargo.toml)
   (no [features])
@@ -157,7 +195,7 @@ wateros-abi-impl-dummy  (components/wateros-abi/abi-impl/impl-dummy/Cargo.toml)
     - api-v0
   - api-v0 [default]
 
-wateros-abi-impl-linux-riscv64  (components/wateros-abi/abi-impl/impl-linux-riscv64/Cargo.toml)
+wateros-abi-impl-linux-generic64  (components/wateros-abi/abi-impl/impl-linux-generic64/Cargo.toml)
   - default [default]
   - api-v0
 
@@ -819,30 +857,44 @@ wateros-runtime-panic  (components/wateros-runtime/runtime-panic/Cargo.toml)
 wateros-syscall  (components/wateros-syscall/Cargo.toml)
   - default [default]
   - impl-loongarch64
+    - abi/impl-linux-loongarch64
+      > wateros-abi
+        - default [default]
+        - api-v0 [default]
+        - impl-dummy [default]
+        - impl-linux-generic64
+        - impl-linux-loongarch64
+        - impl-linux-riscv64
     - task/impl-loongarch64
       > wateros-task
         - default [default]
         - api-v0 [default]
         - impl-core [default]
         - impl-loongarch64
-        - impl-riscv64 [default]
-        - impl-round-robin [default]
+        - impl-riscv64
+        - impl-round-robin
   - impl-riscv64
+    - abi/impl-linux-riscv64
+      > wateros-abi
+        - default [default]
+        - api-v0 [default]
+        - impl-dummy [default]
+        - impl-linux-generic64
+        - impl-linux-loongarch64
+        - impl-linux-riscv64
     - task/impl-riscv64
       > wateros-task
         - default [default]
         - api-v0 [default]
         - impl-core [default]
         - impl-loongarch64
-        - impl-riscv64 [default]
-        - impl-round-robin [default]
+        - impl-riscv64
+        - impl-round-robin
 
 wateros-task  (components/wateros-task/Cargo.toml)
   - default [default]
     - api-v0
     - impl-core
-    - impl-riscv64
-    - impl-round-robin
   - api-v0 [default]
     - impl-core/api-v0
       > wateros-task-impl-core
@@ -877,7 +929,7 @@ wateros-task  (components/wateros-task/Cargo.toml)
         - api-v0
         - impl-loongarch64
         - impl-riscv64 [default]
-  - impl-riscv64 [default]
+  - impl-riscv64
     - arch/api-v0
       > wateros-platform-arch
         - default [default]
@@ -898,7 +950,7 @@ wateros-task  (components/wateros-task/Cargo.toml)
         - api-v0
         - impl-loongarch64
         - impl-riscv64 [default]
-  - impl-round-robin [default]
+  - impl-round-robin
     - scheduler/impl-round-robin
       > wateros-task-scheduler
         - default [default]
