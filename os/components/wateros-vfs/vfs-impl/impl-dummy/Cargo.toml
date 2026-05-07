@@ -8,4 +8,4 @@
 
 [features]
     api-v0 = [  ]
-    default = [  ]
+    default = [ "api-v0" ]

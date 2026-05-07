@@ -1,0 +1,14 @@
+[package]
+    name = "wateros-vfs-impl-fs-bridge"
+    version = "0.1.0"
+    edition = "2024"
+
+[dependencies]
+    api-v0 = { path = "../../vfs-api/api-v0/", package = "wateros-vfs-api-v0", default-features = true }
+    fs = { path = "../../../wateros-fs/", package = "wateros-fs", default-features = true, optional = true }
+
+[features]
+    # 本 crate 被选中构建时默认带 `fs`，便于工作区 `cargo check`；聚合层仍通过 optional dep 控制是否拉取本 crate。
+    default = [ "api-v0", "bridge-fs-api" ]
+    api-v0 = [  ]
+    bridge-fs-api = [ "dep:fs" ]

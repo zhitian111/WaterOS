@@ -1,4 +1,8 @@
 #![no_std]
+
+//! 文件系统 API（v0）：错误与能力枚举、只读/可写根卷 trait、[`FsImpl`] 聚合注册面及 [`SharedFs`] / [`SharedRwFs`] 共享句柄。
+//!
+//! 本 crate 为 `no_std`；共享句柄使用 `spin::Mutex`，调用方需保证与平台调度策略一致的访问边界。
 extern crate alloc;
 
 use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
@@ -6,43 +10,110 @@ use core::ops::{Deref, DerefMut};
 use driver_block_api_v0::SharedBlockDevice;
 use spin::Mutex;
 
+/// 文件系统操作错误；实现方将底层 I/O 与格式错误映射到此枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FsError {
+    /// 根卷未挂载或句柄未就绪。
     NotMounted,
+    /// 路径不存在。
     NotFound,
+    /// 期望文件但目标为目录或特殊节点等。
     NotAFile,
+    /// 路径非法、过长或不符合实现约束。
     InvalidPath,
+    /// 内容非合法 UTF-8（如 `read_to_string`）。
     NotUtf8,
+    /// 操作或组合不被当前实现支持。
     Unsupported,
+    /// 块设备驱动返回错误。
     Driver,
+    /// 卷元数据或结构损坏。
     Corrupt,
+    /// 通用 I/O 失败（非驱动分类错误）。
     Io,
 }
 
+/// [`FsError`] 上的结果别名。
 pub type FsResult<T> = core::result::Result<T, FsError>;
 
+/// 文件系统类型标识。`Other` 用于子系统级别的虚拟 FS（如 devfs），便于注册表统一登记。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FsKind {
+    /// ext2 族（探测或能力声明用）。
+    Ext2,
+    /// ext3 族。
+    Ext3,
+    /// ext4（当前 RO/RW 实现主要对应此 kind）。
+    Ext4,
+    /// 内核设备文件树（非块卷 FS）。
+    DevFs,
+    /// 其他具名子系统；字符串为稳定展示名。
+    Other(&'static str),
+}
+
+/// 文件系统挂载访问模式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FsAccessMode {
+    /// 只读挂载。
+    ReadOnly,
+    /// 读写挂载。
+    ReadWrite,
+}
+
+/// 单条能力声明：某 impl 支持的 (FsKind, FsAccessMode) 组合。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FsCapability {
+    /// 文件系统种类。
+    pub kind: FsKind,
+    /// 访问模式。
+    pub access: FsAccessMode,
+}
+
+impl FsCapability {
+    /// 构造一条 `(kind, access)` 能力声明，供 impl 的 `supported()` 静态表使用。
+    pub const fn new(kind: FsKind, access: FsAccessMode) -> Self { Self { kind, access } }
+}
+
+/// VFS/调试用的节点类型分类。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FsNodeType {
+    /// 普通文件。
     File,
+    /// 目录。
     Directory,
+    /// 符号链接。
     Symlink,
+    /// 其他特殊 inode（设备节点等），具体语义依赖实现。
     Special,
 }
 
+/// 路径对应的元数据快照。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FsMetadata {
+    /// 节点类型。
     pub node_type: FsNodeType,
+    /// 以字节为单位的大小（目录实现可能为 0 或近似值）。
     pub size: u64,
+    /// Unix 风格 mode 位（实现相关）。
     pub mode: u16,
 }
 
+/// 只读根卷：挂载后对绝对路径提供存在性、元数据与整文件读取。
+///
+/// 路径契约：实现通常要求绝对路径并以 `/` 开头；具体规则见各 impl 文档。
 pub trait ReadOnlyFs {
+    /// 从块设备加载只读卷状态；重复调用语义由实现定义（建议幂等或返回错误）。
     fn mount(&mut self, device: SharedBlockDevice) -> FsResult<()>;
+    /// 是否已完成挂载且可服务读请求。
     fn is_mounted(&self) -> bool;
+    /// 路径是否存在（文件或目录均可能为 true，依实现）。
     fn exists(&self, path: &str) -> FsResult<bool>;
+    /// 查询元数据；不存在返回 [`FsError::NotFound`]。
     fn metadata(&self, path: &str) -> FsResult<FsMetadata>;
+    /// 读取整个文件内容到内存；大文件场景调用方需注意内存边界。
     fn read(&self, path: &str) -> FsResult<Vec<u8>>;
 
+    /// 读取文件前缀，最多 `len` 字节（短于文件则截断）。
     fn read_prefix(&self, path: &str, len: usize) -> FsResult<Vec<u8>> {
         let mut data = self.read(path)?;
         if data.len() > len {
@@ -51,15 +122,88 @@ pub trait ReadOnlyFs {
         Ok(data)
     }
 
+    /// 读取整个文件并校验为 UTF-8 字符串。
     fn read_to_string(&self, path: &str) -> FsResult<String> {
         let data = self.read(path)?;
         String::from_utf8(data).map_err(|_| FsError::NotUtf8)
     }
+
+    /// 启动阶段调试：从根卷 `/` 起递归打印路径（实现方可覆盖；默认无操作）。
+    fn boot_dump_all_paths(&self) {}
 }
 
+/// 可写根卷（当前由 `ext4plus` 等实现承载；与 [`ReadOnlyFs`] 分离，避免在 `dyn ReadOnlyFs` 上混入写语义）。
+/// 可写根卷：与 [`ReadOnlyFs`] 分离，避免在 `dyn ReadOnlyFs` 上混入写语义；实现须为 `Send`。
+pub trait ReadWriteFs: Send {
+    /// 以读写方式挂载；底层写能力依赖具体实现（如 journal 完整性）。
+    fn mount_rw(&mut self, device: SharedBlockDevice) -> FsResult<()>;
+    /// 是否已完成 RW 挂载。
+    fn is_mounted(&self) -> bool;
+
+    /// 在根目录下创建或替换名为 `name` 的普通文件（不含 `/`，如 `hello`），写入 `data`。
+    fn write_regular_file_at_root(&mut self, name: &str, data: &[u8]) -> FsResult<()>;
+}
+
+/// 将 `dyn ReadWriteFs` 装箱后的本地句柄，用于装入 [`SharedRwFs`]。
+pub struct LocalRwFs(Box<dyn ReadWriteFs>);
+
+impl LocalRwFs {
+    /// 由具体 RW 实现构造本地包装。
+    pub fn new(inner: Box<dyn ReadWriteFs>) -> Self { Self(inner) }
+}
+
+impl Deref for LocalRwFs {
+    type Target = dyn ReadWriteFs;
+
+    fn deref(&self) -> &Self::Target { &*self.0 }
+}
+
+impl DerefMut for LocalRwFs {
+    fn deref_mut(&mut self) -> &mut Self::Target { &mut *self.0 }
+}
+
+// 与 LocalFs 相同：单核 bring-up 下由 Mutex 序列化；跨线程 Send 由调用方保证不数据竞争。
+unsafe impl Send for LocalRwFs {}
+
+/// 线程间共享的读写文件系统句柄（`Arc<Mutex<...>>`）。
+pub type SharedRwFs = Arc<Mutex<LocalRwFs>>;
+
+/// 单个文件系统实现的统一注册接口。`impl-*` crate 暴露一个 `'static` 实例（如 `&IMPL`）供聚合层登记。
+///
+/// 设计要点：
+/// - `name` 与 `supported` 用于运行时打印与挂载前能力查询；
+/// - `probe` 通过读取设备前若干字节返回它判断的 [`FsKind`]；不能识别返回 `Ok(None)`；
+/// - `mount_ro` 必须实现；`mount_rw` 默认返回 `Unsupported`，由能写的 impl 覆盖。
+pub trait FsImpl: Sync {
+    /// 人类可读实现名（日志与 `supported_fs` 展示）。
+    fn name(&self) -> &'static str;
+
+    /// 静态能力表：该 impl 声明支持的所有 `(kind, access)` 组合。
+    fn supported(&self) -> &'static [FsCapability];
+
+    /// 是否支持指定的 kind 与访问模式（对 `supported()` 的便捷查询）。
+    fn supports(&self, kind: FsKind, mode: FsAccessMode) -> bool {
+        self.supported().iter().any(|c| c.kind == kind && c.access == mode)
+    }
+
+    /// 通过读取设备探测当前 impl 是否能识别该卷的文件系统类型。
+    /// 默认实现返回 `Ok(None)`，例如内核 devfs 不挂在块设备上。
+    fn probe(&self, _device: &SharedBlockDevice) -> FsResult<Option<FsKind>> { Ok(None) }
+
+    /// 只读挂载并返回共享句柄。
+    fn mount_ro(&self, device: SharedBlockDevice) -> FsResult<SharedFs>;
+
+    /// 读写挂载；默认返回 [`FsError::Unsupported`]，由支持 RW 的 impl 覆盖。
+    fn mount_rw(&self, _device: SharedBlockDevice) -> FsResult<SharedRwFs> {
+        Err(FsError::Unsupported)
+    }
+}
+
+/// 将 `dyn ReadOnlyFs` 装箱后的本地句柄，用于装入 [`SharedFs`]。
 pub struct LocalFs(Box<dyn ReadOnlyFs>);
 
 impl LocalFs {
+    /// 由具体 RO 实现构造本地包装。
     pub fn new(inner: Box<dyn ReadOnlyFs>) -> Self { Self(inner) }
 }
 
@@ -73,11 +217,29 @@ impl DerefMut for LocalFs {
     fn deref_mut(&mut self) -> &mut Self::Target { &mut *self.0 }
 }
 
-// 当前阶段按单核串行访问使用文件系统对象。
+impl ReadOnlyFs for LocalFs {
+    fn mount(&mut self, device: SharedBlockDevice) -> FsResult<()> {
+        self.deref_mut().mount(device)
+    }
+
+    fn is_mounted(&self) -> bool { self.deref().is_mounted() }
+
+    fn exists(&self, path: &str) -> FsResult<bool> { self.deref().exists(path) }
+
+    fn metadata(&self, path: &str) -> FsResult<FsMetadata> { self.deref().metadata(path) }
+
+    fn read(&self, path: &str) -> FsResult<Vec<u8>> { self.deref().read(path) }
+
+    fn boot_dump_all_paths(&self) { self.deref().boot_dump_all_paths(); }
+}
+
+// 当前阶段按单核串行访问；Send 用于跨线程传递 Arc，实际互斥由 Mutex 保证。
 unsafe impl Send for LocalFs {}
 
+/// 线程间共享的只读文件系统句柄（`Arc<Mutex<...>>`）。
 pub type SharedFs = Arc<Mutex<LocalFs>>;
 
+/// 内置样例 FS 的单元级自检（日志 + assert）；供外层聚合 crate 的 `test` 入口链式调用。
 pub fn test() {
     logging::trace!("[fs-api] test begin");
     let fs = SampleFs;

@@ -1,6 +1,11 @@
 #![no_std]
+
+//! RootFS 空实现：不持有根卷，挂载调用返回不支持。
+//!
+//! 用于无存储或仅编译水分支的场景；与 `impl-kernel` 互斥由特性选择。
 extern crate alloc;
 
+/// 无状态的 [`api_v0::RootFsManager`] 实现。
 pub struct DummyRootFsManager;
 
 impl api_v0::RootFsManager for DummyRootFsManager {
@@ -15,4 +20,9 @@ impl api_v0::RootFsManager for DummyRootFsManager {
     }
 
     fn current_root_device_path(&self) -> Option<alloc::string::String> { None }
+}
+
+/// 恒为 `None`，与 [`DummyRootFsManager`] 语义一致。
+pub fn current_root_device_path() -> Option<alloc::string::String> {
+    None
 }
