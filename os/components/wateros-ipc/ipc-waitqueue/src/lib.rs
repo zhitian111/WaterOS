@@ -1,6 +1,16 @@
 #![no_std]
+//! IPC 视角下的任务等待队列：对 `wateros_task::WaitQueue` 的薄包装，便于 IPC 模块与调度子系统解耦命名。
 
-pub use wateros_task::{TaskId, TaskTick, TaskWaitHandle, TaskWaitResult, WaitQueueId};
+/// 任务标识（重导出自 `wateros_task`）。
+pub use wateros_task::TaskId;
+/// 调度 tick 类型（重导出自 `wateros_task`）。
+pub use wateros_task::TaskTick;
+/// 通用等待句柄（重导出自 `wateros_task`）。
+pub use wateros_task::TaskWaitHandle;
+/// 带超时的等待结果（重导出自 `wateros_task`）。
+pub use wateros_task::TaskWaitResult;
+/// 等待队列编号类型（重导出自 `wateros_task`）。
+pub use wateros_task::WaitQueueId;
 
 /// IPC 侧对任务等待队列的薄包装。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

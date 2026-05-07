@@ -1,4 +1,7 @@
 #![no_std]
+//! Futex 风格等待子模块占位。
+
+/// 占位函数，非正式 API。
 pub fn add(left : u64, right : u64) -> u64 { left + right }
 #[cfg(test)]
 mod tests {
