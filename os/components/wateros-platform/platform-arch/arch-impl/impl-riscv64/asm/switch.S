@@ -1,3 +1,5 @@
+# switch.S — 协作式上下文切换，与 `../src/task.rs` 中 `Riscv64ArchTaskContext` 布局一致。
+# a0 = 旧上下文指针, a1 = 新上下文指针；保存/恢复 ra、sp 与 s0–s11。
     .altmacro
     .macro SAVE_SN n
         sd s\n, (\n+2)*8(a0)

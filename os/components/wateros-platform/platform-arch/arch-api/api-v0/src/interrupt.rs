@@ -1,3 +1,5 @@
+//! 监管态下与定时器相关的中断位及全局中断开关（ISA 层，不经 SBI）。
+
 use crate::time::ArchTimeResult;
 
 /// 架构层时钟中断开关原语：

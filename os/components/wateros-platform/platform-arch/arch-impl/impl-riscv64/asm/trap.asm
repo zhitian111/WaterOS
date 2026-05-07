@@ -1,3 +1,5 @@
+# trap.asm — WaterOS RISC-V S-mode 异常/中断入口（方案A）。
+# 与 `../src/trap.rs` 中 `TrapContext`、`trap_entry_rust` 成对维护；布局变更须同步 Rust `#[repr(C)]`。
     .section .text.trampoline
     .globl __alltraps
     .align 2

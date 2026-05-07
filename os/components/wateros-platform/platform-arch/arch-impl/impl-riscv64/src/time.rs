@@ -1,3 +1,7 @@
+//! 通过 CSR **`time`** 提供单调 tick；**时钟频率**不在此硬编码，由上层根据 DTB/固件填充或返回 `ArchTimeError::Unsupported`。
+//!
+//! 与 trap 路径中定时器中断重新武装配合时，应使用同一 tick 语义。
+
 use api_v0::time::{
     ArchTime, ArchTimeError, ArchTimeFrequency, ArchTimeResult, ArchTimeTick,
 };

@@ -1,3 +1,7 @@
+//! Sv39 下 **`satp`** 读写与 **`sfence.vma`** 冲刷的最小原语。
+//!
+//! 页表内容构造与用户/内核映射策略在 `wateros-mm`；此处仅保证切换根页表时 TLB 一致性。
+
 use core::arch::asm;
 
 /// RISC-V Sv39 分页控制原语。

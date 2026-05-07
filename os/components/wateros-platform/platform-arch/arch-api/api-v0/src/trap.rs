@@ -1,3 +1,8 @@
+//! Trap 帧、异常与中断原因，以及与用户态系统调用 ABI 的读写桥接（**纯架构语义**）。
+//!
+//! [`TrapCause`] 与 [`usize`] 之间的转换**当前**约定为 RISC-V `scause` 编码；若引入
+//! 其它 ISA，应将编码含义下沉到对应 `arch-impl`，或改为专用原始原因类型以避免歧义。
+
 use abi::syscall_args::{SyscallArgs, SyscallPacket};
 use abi::syscall_number::SyscallNumber;
 use abi::user_ret::UserRet;
@@ -144,11 +149,10 @@ pub trait TrapSyscallWrite {
     fn set_syscall_ret(&mut self, ret: UserRet);
 }
 
-/// Read-only semantic view of an architecture trap context.
+/// 架构 trap 上下文的**只读**语义视图（兼容层）。
 ///
-/// This is the compatibility facade used by older task code. New
-/// architecture implementations should implement `TrapFrameRead` and
-/// `TrapSyscallRead`; this trait is provided automatically.
+/// 新实现应直接实现 [`TrapFrameRead`] 与 [`TrapSyscallRead`]；本 trait 由 blanket
+/// impl 自动提供，便于旧任务代码统一约束。
 #[allow(unused)]
 pub trait TrapContextRead: TrapFrameRead + TrapSyscallRead {
     #[inline]
@@ -204,10 +208,10 @@ pub trait TrapContextRead: TrapFrameRead + TrapSyscallRead {
 
 impl<T: TrapFrameRead + TrapSyscallRead + ?Sized> TrapContextRead for T {}
 
-/// Mutable semantic view of an architecture trap context.
+/// 架构 trap 上下文的**可变**语义视图（兼容层）。
 ///
-/// This compatibility facade joins frame-control writes with syscall-result
-/// writes while keeping the implementor side split by responsibility.
+/// 将帧控制写回与系统调用返回值写入组合在同一约束中，具体类型仍分别实现
+/// [`TrapFrameWrite`] 与 [`TrapSyscallWrite`]。
 #[allow(unused)]
 pub trait TrapContextWrite: TrapFrameWrite + TrapSyscallWrite {
     #[inline]
@@ -254,7 +258,7 @@ pub trait TrapFrame: TrapContextRead + TrapContextWrite {}
 
 impl<T: TrapContextRead + TrapContextWrite + ?Sized> TrapFrame for T {}
 
-/// Backward-compatible alias for the earlier misspelled trait name.
+/// 历史拼写错误的 trait 名别名（仅兼容保留）。
 #[allow(unused)]
 #[deprecated(note = "use TrapContextWrite instead")]
 pub trait TrapCOntextWrite: TrapContextWrite {}
@@ -269,10 +273,10 @@ pub trait TrapContextFrameView: TrapContextRead + TrapContextWrite {}
 #[allow(deprecated)]
 impl<T: TrapContextRead + TrapContextWrite + ?Sized> TrapContextFrameView for T {}
 
-/// 架构层可被任务系统保存、恢复和语义读取的 trap frame。
+/// 任务系统可保存、恢复并做语义读写的 trap 帧标记 trait。
 ///
-/// 具体寄存器布局由当前架构实现决定；task 只依赖这里的语义契约，
-/// 不再在自身 API 中复制一份架构相关 frame 布局。
+/// 寄存器布局由当前 `arch-impl` 决定；task 组件只依赖此处语义契约，不在自身 API
+/// 中重复架构相关的帧布局细节。
 pub trait ArchTrapFrame:
     TrapContextRead + TrapContextWrite + Clone + Copy + core::fmt::Debug + Default + PartialEq + Eq
 {

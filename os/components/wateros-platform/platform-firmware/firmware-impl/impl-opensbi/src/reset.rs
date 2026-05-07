@@ -1,13 +1,24 @@
+//! SBI 系统复位扩展：将关机/重启请求映射为 `system_reset`。
+//!
+//! 当前实现：调用后仍返回 `Err(Failed)`，因成功路径通常不返回；调用方应视具体
+//! 策略处理（文档化“当前行为”）。
+
 use api_v0::reset::{
     FirmwareReset, FirmwareResetError, FirmwareResetReason, FirmwareResetResult, FirmwareResetType,
 };
 use sbi::{system_reset, ResetReason, ResetType};
+
+/// OpenSBI 复位后端。
 pub struct OpenSBIReset;
+
+/// 映射到 SBI 的复位类型枚举（实现细节，非 `firmware-api` 公共面）。
 pub enum OpenSBIResetType {
     Shutdown,
     ColdReboot,
     WarmReboot,
 }
+
+/// 映射到 SBI 的复位原因枚举。
 pub enum OpenSBIResetReason {
     NoReason,
     SystemFailure,
