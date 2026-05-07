@@ -4,5 +4,5 @@
     edition = "2024"
 
 [dependencies]
-    firmware = { path = "../../wateros-platform/platform-firmware/", package = "wateros-platform-firmware", default-features = true }
+    firmware = { path = "../../wateros-platform/platform-firmware/", package = "wateros-platform-firmware", default-features = false }
     console = {path = "../runtime-console/", package = "wateros-runtime-console"}

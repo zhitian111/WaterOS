@@ -461,6 +461,12 @@ def bubble_features_to_root(
             root_flags.add(f"{dep}/{feat}")
             continue
 
+        # Transitive api-* features are shared by multiple impl features. Bubbling
+        # them upward through parent features can accidentally select every arch
+        # impl that also enables the same API (for example RISC-V + LoongArch).
+        if feat.startswith("api-"):
+            continue
+
         # Otherwise, try to bubble to one of its parents by selecting a parent feature
         # that enables "<depName>/<feat>".
         p_candidates = parents_of.get(pkg, [])
@@ -551,4 +557,3 @@ def main(argv: List[str]) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv))
-

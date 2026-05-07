@@ -65,7 +65,7 @@ pub fn write_raw_bytes(bytes : &[u8]) {
 /// 当前 feature 选中的默认控制台句柄类型，供 `print!` / `println!` 使用。
 #[cfg(feature = "impl-dummy")]
 pub use impl_dummy::DummyConsoleHandle as ConsoleHandle;
-#[cfg(feature = "impl-firmware-opensbi")]
+#[cfg(any(feature = "impl-firmware-console", feature = "impl-firmware-opensbi"))]
 pub use impl_firmware_opensbi::FirmwareConsoleHandle as ConsoleHandle;
 
 /// 使用 [`ConsoleHandle`] 的 `print!` 风格宏，等价于 `print::<ConsoleHandle>(format_args!(...))`。

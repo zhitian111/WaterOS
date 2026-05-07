@@ -1,5 +1,5 @@
 [package]
-    name = "wateros-platform-firmware-impl-opensbi"
+    name = "wateros-platform-firmware-impl-riscv64-opensbi"
     version = "0.1.0"
     edition = "2024"
 

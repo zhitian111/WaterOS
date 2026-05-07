@@ -24,6 +24,10 @@ pub mod boot {
     pub use impl_dummy::boot::PlatformDummyBootArgs as BootArgs;
     #[cfg(feature = "impl-dummy")]
     pub use impl_dummy::boot::PlatformDummyBootContext as BootContext;
+    #[cfg(feature = "impl-qemu-loongarch64-virt")]
+    pub use impl_qemu_loongarch64_virt::boot::QEMULoongArch64VirtBootArgs as BootArgs;
+    #[cfg(feature = "impl-qemu-loongarch64-virt")]
+    pub use impl_qemu_loongarch64_virt::boot::QEMULoongArch64VirtBootContext as BootContext;
     #[cfg(feature = "impl-qemu-riscv64-opensbi")]
     pub use impl_qemu_riscv64_opensbi::boot::QEMURiscv64OpenSBIBootArgs as BootArgs;
     #[cfg(feature = "impl-qemu-riscv64-opensbi")]
@@ -51,6 +55,8 @@ pub mod time {
 
     #[cfg(feature = "impl-dummy")]
     pub use impl_dummy::time::PlatformDummyTime as PlatformTimeImpl;
+    #[cfg(feature = "impl-qemu-loongarch64-virt")]
+    pub use impl_qemu_loongarch64_virt::time::QEMULoongArch64VirtTime as PlatformTimeImpl;
     #[cfg(feature = "impl-qemu-riscv64-opensbi")]
     pub use impl_qemu_riscv64_opensbi::time::QEMURiscv64OpenSBITime as PlatformTimeImpl;
 

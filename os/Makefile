@@ -7,6 +7,7 @@ BUILD_NUM = $(shell git rev-list --count HEAD 2>/dev/null || echo "0")
 
 .PHONY: clean check all all_start_info kernel configure fmt apply_features
 .PHONY: rv_check rv_elf_info rv_obj_dump rv_qemu_run rv_qemu_run_with_log rv_qemu_gdb rv_gdb
+.PHONY: la_check la_elf_info kernel-la la_qemu_run
 .PHONY: rv_user_mode_bin
 COLOR_ANSI_RED := \033[31m
 COLOR_ANSI_GREEN := \033[32m
@@ -37,6 +38,12 @@ kernel_rv_flag := --release --target riscv64gc-unknown-none-elf	\
 				  $(common_flags)
 
 kernel_rv_build_artifact_path := ./target/riscv64gc-unknown-none-elf/release
+
+kernel_la_flag := --release --target loongarch64-unknown-none-softfloat \
+				  --no-default-features \
+				  --features qemu-loongarch64-virt
+
+kernel_la_build_artifact_path := ./target/loongarch64-unknown-none-softfloat/release
 
 define TRACE
 	@echo -e "$(COLOR_ANSI_PURPLE)[MAKEFILE]$(COLOR_ANSI_CLEAR)$(COLOR_ANSI_BLUE)\t[TRACE]\t$(1)$(COLOR_ANSI_CLEAR)"
@@ -83,6 +90,14 @@ $(kernel_rv_build_artifact_path)/wateros: $(kernel_rv_dependencies) kernel
 kernel-rv:	version apply_features $(kernel_rv_build_artifact_path)/wateros
 	@cp $(kernel_rv_build_artifact_path)/wateros ./kernel-rv
 
+$(kernel_la_build_artifact_path)/wateros: $(common_dependencies) kernel
+	$(call INFO, "开始构建 loongarch64 内核...")
+	@cargo build $(kernel_la_flag)
+	$(call INFO,"构建成功！");
+
+kernel-la:	version $(kernel_la_build_artifact_path)/wateros
+	@cp $(kernel_la_build_artifact_path)/wateros ./kernel-la
+
 kernel-rv-strip-image: $(kernel_rv_build_artifact_path)/wateros
 	$(call INFO,"清除文件元数据...");
 	@rust-objcopy --strip-all $(kernel_rv_build_artifact_path)/wateros -O binary target/riscv64gc-unknown-none-elf/release/wateros.bin
@@ -96,10 +111,23 @@ rv_elf_info: kernel-rv
 	$(call INFO, "内核文件 elf 符号表")
 	@readelf -s ./kernel-rv
 
+la_elf_info: kernel-la
+	$(call INFO, "内核文件 elf 头部信息")
+	@readelf -h ./kernel-la
+	$(call INFO, "内核文件 elf 段信息")
+	@readelf -S ./kernel-la
+	$(call INFO, "内核文件 elf 符号表")
+	@readelf -s ./kernel-la
+
 rv_qemu_run: kernel-rv
 	$(call INFO, "开始运行 riscv64 内核...")
 	@bash ./scripts/rv_qemu_run.sh
 	$(call INFO, "riscv64 内核运行结束")
+
+la_qemu_run: kernel-la
+	$(call INFO, "开始运行 loongarch64 内核...")
+	@qemu-system-loongarch64 -machine virt -nographic -kernel ./kernel-la -m 2G -no-reboot
+	$(call INFO, "loongarch64 内核运行结束")
 
 rv_qemu_run_with_log: kernel-rv
 	$(call INFO, "开始运行 riscv64 内核...")
@@ -124,6 +152,11 @@ rv_check:
 	@-cargo check $(kernel_rv_flag)
 	$(call INFO, "对 riscv 平台的 cargo check 完成！")
 
+la_check:
+	$(call INFO, "开始对 loongarch64 平台进行 cargo check ...")
+	@cargo check --target loongarch64-unknown-none-softfloat --no-default-features --features qemu-loongarch64-virt
+	$(call INFO, "对 loongarch64 平台的 cargo check 完成！")
+
 # rv_link_app_asm:
 # 	$(call INFO, "开始生成批处理系统的 asm 文件...")
 # 	@bash ./scripts/rv_link_app_gen.bash
@@ -143,6 +176,7 @@ clean:
 	@cargo clean
 	@bash ./scripts/cargo_clean_all.sh ./components/
 	@rm -f ./kernel-rv >/dev/null 2>/dev/null
+	@rm -f ./kernel-la >/dev/null 2>/dev/null
 	$(call INFO, "构建产物清理完成！")
 	$(call INFO, "开始清理备份文件...")
 	$(call INFO, "以下文件将被删除！")

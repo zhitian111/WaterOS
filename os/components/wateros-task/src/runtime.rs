@@ -4,9 +4,13 @@
 //! `#[no_mangle] extern "C"` 仍由汇编（如 `switch.S`）或固件约定直接按符号名链接；Rust 侧组合逻辑集中在 [`crate::trap_runtime`]。
 
 use crate::active_impl::TaskBootstrap;
+<<<<<<< HEAD
 use crate::scheduler;
 use crate::trap_runtime;
 use riscv::register::sstatus;
+=======
+use crate::{schedule_tick, scheduler};
+>>>>>>> github/main
 use scheduler::TaskTrapFrame;
 
 unsafe extern "C" {
@@ -66,17 +70,13 @@ pub extern "C" fn __wateros_task_runtime_enter_current_user_task() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn __wateros_idle_task_runtime_main(_arg: usize) -> ! {
     loop {
-        unsafe {
-            core::arch::asm!("wfi");
-        }
+        arch::interrupt::wait_for_interrupt();
     }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn __wateros_task_runtime_entry(bootstrap_ptr: usize) -> ! {
     let bootstrap = unsafe { &*(bootstrap_ptr as *const TaskBootstrap) };
-    unsafe {
-        sstatus::set_sie();
-    }
+    arch::interrupt::enable_global_interrupt().expect("enable global interrupt for task runtime");
     bootstrap.run()
 }

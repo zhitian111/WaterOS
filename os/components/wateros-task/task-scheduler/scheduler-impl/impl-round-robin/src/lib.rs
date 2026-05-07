@@ -5,11 +5,11 @@
 #![no_std]
 #![allow(static_mut_refs)]
 
+use arch::interrupt::ArchInterruptState;
 use arch::task::ActiveArchTaskContext as TaskContext;
 use base::sync::UniprocessorSafeCell;
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, Ordering};
-use riscv::register::sstatus;
 use task_api::{
     ExitedTask, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskId, TaskSnapshot, TaskTick,
     TaskWaitHandle, TaskWaitResult, UserTaskEntryPc, UserTaskSpec, WaitQueueId,
@@ -48,26 +48,23 @@ fn with_scheduler<R>(f: impl FnOnce(&mut RoundRobinScheduler) -> R) -> R {
 }
 
 struct InterruptGuard {
-    restore_sie: bool,
+    state: ArchInterruptState,
 }
 
 impl InterruptGuard {
     fn new() -> Self {
-        let restore_sie = sstatus::read().sie();
-        unsafe {
-            sstatus::clear_sie();
-        }
-        Self { restore_sie }
+        let state = arch::interrupt::read_global_interrupt_state()
+            .expect("read global interrupt state for scheduler guard");
+        arch::interrupt::disable_global_interrupt()
+            .expect("disable global interrupt for scheduler guard");
+        Self { state }
     }
 }
 
 impl Drop for InterruptGuard {
     fn drop(&mut self) {
-        if self.restore_sie {
-            unsafe {
-                sstatus::set_sie();
-            }
-        }
+        arch::interrupt::restore_global_interrupt_state(self.state)
+            .expect("restore global interrupt state for scheduler guard");
     }
 }
 

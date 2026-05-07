@@ -25,6 +25,7 @@
 #![feature(alloc_error_handler)]
 
 extern crate alloc;
+#[cfg(feature = "qemu-riscv64-opensbi")]
 use syscall as _;
 
 #[cfg(feature = "qemu-riscv64-opensbi")]
@@ -126,5 +127,60 @@ mod qemu_riscv64_opensbi {
         platform::interrupt::enable_global_interrupt().unwrap();
         info!("[task-selftest] starting first task (ELF user created before module self-tests)");
         task::run_first_task()
+    }
+}
+
+#[cfg(feature = "qemu-loongarch64-virt")]
+mod qemu_loongarch64_virt {
+    use core::arch::global_asm;
+    use core::include_str;
+    use runtime::logging::*;
+
+    global_asm!(include_str!("../components/wateros-platform/platform-impl/\
+                              impl-qemu-loongarch64-virt/src/asm/_start.S"));
+
+    #[unsafe(no_mangle)]
+    pub fn kernel_main() -> ! {
+        runtime::console::show_logo();
+        runtime::logging::init();
+        runtime::heap_allocator::init();
+        platform::arch::init();
+        info!("[loongarch64] boot smoke ok");
+
+        loop {
+            platform::interrupt::wait_for_interrupt();
+        }
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn __wateros_task_runtime_begin_current_trap_frame_access(
+        trap_frame_ptr: *mut u8,
+    ) -> *mut u8 {
+        trap_frame_ptr
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn __wateros_task_runtime_restore_current_trap_frame(
+        _trap_frame_ptr: *mut u8,
+    ) -> bool {
+        false
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn __wateros_task_runtime_schedule_tick() {
+        panic!("loongarch64 boot smoke does not enable task scheduler");
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn __wateros_syscall_dispatch_current(
+        _syscall_nr: usize,
+        _arg0: usize,
+        _arg1: usize,
+        _arg2: usize,
+        _arg3: usize,
+        _arg4: usize,
+        _arg5: usize,
+    ) -> isize {
+        panic!("loongarch64 boot smoke does not enable syscall dispatch");
     }
 }

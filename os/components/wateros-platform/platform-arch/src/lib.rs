@@ -1,4 +1,7 @@
 #![no_std]
+#[cfg(all(feature = "impl-riscv64", feature = "impl-loongarch64"))]
+compile_error!("select only one platform-arch implementation");
+
 
 //! **架构（ISA）层**：聚合 `arch-api-v0` 与具体 `arch-impl-*`，向内核暴露 trap、
 //! 时间计数、任务硬件上下文、中断位、分页 CSR 等与指令集强相关的原语。
@@ -19,6 +22,10 @@ pub fn arch_boot() {
     #[cfg(feature = "impl-riscv64")]
     #[cfg(feature = "api-v0")]
     impl_riscv64::init_trap();
+
+    #[cfg(feature = "impl-loongarch64")]
+    #[cfg(feature = "api-v0")]
+    impl_loongarch64::init_trap();
 }
 
 /// RISC-V `time` / `timeh` 等计数与频率查询（频率在实现中可返回不支持，由 platform 层补全）。
@@ -28,6 +35,8 @@ pub mod time {
         ArchTime, ArchTimeError, ArchTimeFrequency, ArchTimeResult, ArchTimeTick,
     };
 
+    #[cfg(feature = "impl-loongarch64")]
+    pub use impl_loongarch64::time::LoongArch64ArchTime as ArchTimeImpl;
     #[cfg(feature = "impl-riscv64")]
     pub use impl_riscv64::time::Riscv64ArchTime as ArchTimeImpl;
 
@@ -47,6 +56,8 @@ pub mod time {
 pub mod task {
     pub use api_v0::task::ArchTaskContext;
 
+    #[cfg(feature = "impl-loongarch64")]
+    pub use impl_loongarch64::task::LoongArch64ArchTaskContext as ActiveArchTaskContext;
     #[cfg(feature = "impl-riscv64")]
     pub use impl_riscv64::task::Riscv64ArchTaskContext as ActiveArchTaskContext;
 }
@@ -61,6 +72,8 @@ pub mod trap {
         TrapSyscallRead, TrapSyscallWrite,
     };
 
+    #[cfg(feature = "impl-loongarch64")]
+    pub use impl_loongarch64::trap::TrapContext as ActiveTrapFrame;
     #[cfg(feature = "impl-riscv64")]
     pub use impl_riscv64::trap::TrapContext as ActiveTrapFrame;
 }
@@ -72,8 +85,12 @@ pub mod interrupt {
     pub use api_v0::interrupt::ArchTimerInterruptControl;
     pub use api_v0::time::ArchTimeResult;
 
+    #[cfg(feature = "impl-loongarch64")]
+    pub use impl_loongarch64::interrupt::LoongArch64ArchInterrupt as ArchInterruptImpl;
     #[cfg(feature = "impl-riscv64")]
     pub use impl_riscv64::interrupt::Riscv64ArchInterrupt as ArchInterruptImpl;
+
+    pub use api_v0::interrupt::ArchInterruptState;
 
     #[inline]
     pub fn enable_timer_interrupt() -> ArchTimeResult<()> {
@@ -94,10 +111,27 @@ pub mod interrupt {
     pub fn disable_global_interrupt() -> ArchTimeResult<()> {
         ArchInterruptImpl::disable_global_interrupt()
     }
+
+    #[inline]
+    pub fn read_global_interrupt_state() -> ArchTimeResult<ArchInterruptState> {
+        ArchInterruptImpl::read_global_interrupt_state()
+    }
+
+    #[inline]
+    pub fn restore_global_interrupt_state(state: ArchInterruptState) -> ArchTimeResult<()> {
+        ArchInterruptImpl::restore_global_interrupt_state(state)
+    }
+
+    #[inline]
+    pub fn wait_for_interrupt() {
+        ArchInterruptImpl::wait_for_interrupt();
+    }
 }
 
 /// 分页控制 CSR（如 `satp`）与必要的 TLB 刷新原语；页表内容管理在上层 MM 组件。
 pub mod paging {
+    #[cfg(feature = "impl-loongarch64")]
+    pub use impl_loongarch64::paging::LoongArch64Paging as ArchPagingImpl;
     #[cfg(feature = "impl-riscv64")]
     pub use impl_riscv64::paging::Riscv64Paging as ArchPagingImpl;
 

@@ -5,9 +5,12 @@
 
 [dependencies]
     log = { version = "0.4.29" }
-    console = { path = "../runtime-console/", package = "wateros-runtime-console"}
+    console = { path = "../runtime-console/", package = "wateros-runtime-console", default-features = false }
 [features]
     default = [ "impl-trace" ]
+    impl-dummy = [ "console/impl-dummy" ]
+    impl-firmware-console = [ "console/impl-firmware-console" ]
+    impl-firmware-opensbi = [ "console/impl-firmware-opensbi" ]
     impl-trace = []
     impl-debug = []
     impl-info = []

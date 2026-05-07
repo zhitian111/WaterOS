@@ -5,11 +5,17 @@
 
 [dependencies]
     api-v0 = { path = "./firmware-api/api-v0/", package = "wateros-platform-firmware-api-v0", default-features = true }
-    impl-dummy = { path = "./firmware-impl/impl-dummy/", package = "wateros-platform-firmware-impl-dummy", default-features = true }
-    impl-opensbi = { path = "./firmware-impl/impl-opensbi/", package = "wateros-platform-firmware-impl-opensbi", default-features = true }
+    impl-dummy = { path = "./firmware-impl/impl-dummy/", package = "wateros-platform-firmware-impl-dummy", default-features = true, optional = true }
+    impl-riscv64-opensbi = { path = "./firmware-impl/impl-riscv64-opensbi/", package = "wateros-platform-firmware-impl-riscv64-opensbi", default-features = true, optional = true }
+    impl-qemu-loongarch64-uart16550 = { path = "./firmware-impl/impl-qemu-loongarch64-uart16550/", package = "wateros-platform-firmware-impl-qemu-loongarch64-uart16550", default-features = true, optional = true }
 
 [features]
-    api-v0 = [ "impl-dummy/api-v0", "impl-opensbi/api-v0" ]
-    default = [ "api-v0", "impl-opensbi" ]
-    impl-dummy = [  ]
-    impl-opensbi = [  ]
+    api-v0 = [
+        "impl-dummy?/api-v0",
+        "impl-riscv64-opensbi?/api-v0",
+        "impl-qemu-loongarch64-uart16550?/api-v0",
+    ]
+    default = [ "api-v0", "impl-riscv64-opensbi" ]
+    impl-dummy = [ "dep:impl-dummy" ]
+    impl-riscv64-opensbi = [ "dep:impl-riscv64-opensbi" ]
+    impl-qemu-loongarch64-uart16550 = [ "dep:impl-qemu-loongarch64-uart16550" ]

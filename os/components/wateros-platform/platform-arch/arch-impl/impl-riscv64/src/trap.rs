@@ -105,6 +105,38 @@ unsafe extern "C" {
     fn __alltraps();
 }
 
+<<<<<<< HEAD
+=======
+const TIMER_SLICE_TICKS: u64 = 1_250_000;
+static TIMER_TICK_COUNT: AtomicUsize = AtomicUsize::new(0);
+const SYSCALL_INSN_BYTES: usize = 4;
+
+#[inline]
+fn decode_riscv64_trap_cause(scause: usize) -> TrapCause {
+    let is_interrupt = (scause >> (usize::BITS - 1)) != 0;
+    let code = scause & 0xFFF;
+
+    if is_interrupt {
+        match code {
+            1 => TrapCause::Interrupt(Interrupt::SupervisiorSoft),
+            5 => TrapCause::Interrupt(Interrupt::SupervisiorTimer),
+            9 => TrapCause::Interrupt(Interrupt::SupervisiorExternel),
+            other => TrapCause::Interrupt(Interrupt::Unsupported(other)),
+        }
+    } else {
+        match code {
+            8 => TrapCause::Exception(Exception::UserEnvCall),
+            12 => TrapCause::Exception(Exception::InstructionPageFault),
+            13 => TrapCause::Exception(Exception::LoadPageFault),
+            15 => TrapCause::Exception(Exception::StorePageFault),
+            2 => TrapCause::Exception(Exception::IllegalInstruction),
+            3 => TrapCause::Exception(Exception::Breakpoint),
+            other => TrapCause::Exception(Exception::Unsupported(other)),
+        }
+    }
+}
+
+>>>>>>> github/main
 /// 初始化 trap 入口：把 `stvec` 指向 `__alltraps`。
 pub fn init_trap() {
     let addr = __alltraps as *const () as usize;
@@ -117,12 +149,97 @@ pub fn init_trap() {
 /// 汇编入口转入：交给组合层 [`kernel_trap::invoke_kernel_trap_handler`]。
 #[unsafe(no_mangle)]
 pub extern "C" fn trap_entry_rust(cx_ptr: *mut TrapContext) {
+<<<<<<< HEAD
     kernel_trap::invoke_kernel_trap_handler(cx_ptr.cast());
+=======
+    let authoritative_cx_ptr =
+        unsafe { __wateros_task_runtime_begin_current_trap_frame_access(cx_ptr.cast::<u8>()) };
+    let cx = unsafe { &mut *(authoritative_cx_ptr as *mut TrapContext) };
+
+    let trap_cause = decode_riscv64_trap_cause(cx.scause);
+    match trap_cause {
+        TrapCause::Exception(Exception::UserEnvCall) => {
+            handle_user_syscall(cx);
+        }
+        TrapCause::Exception(Exception::InstructionPageFault)
+        | TrapCause::Exception(Exception::LoadPageFault)
+        | TrapCause::Exception(Exception::StorePageFault) => {
+            logging::debug!(
+                "[trap] page fault: cause={:?} scause={:#x?} sepc={:#x?} stval={:#x?}",
+                trap_cause,
+                cx.scause,
+                cx.sepc,
+                cx.stval
+            );
+        }
+        TrapCause::Interrupt(Interrupt::SupervisiorTimer) => {
+            let now = super::time::Riscv64ArchTime::read_time_tick()
+                .expect("read time tick during trap")
+                .0;
+            let deadline = now.saturating_add(TIMER_SLICE_TICKS);
+            if let Err(err) = firmware::timer::set_timer(FirmwareTimerDeadline(deadline)) {
+                panic!(
+                    "failed to re-arm timer in trap: {:?}",
+                    err
+                );
+            }
+            let tick = TIMER_TICK_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+            if tick % 8 == 0 {
+                logging::trace!("[trap] timer tick {}", tick);
+            }
+            unsafe {
+                __wateros_task_runtime_schedule_tick();
+            }
+        }
+        _ => {
+            panic!(
+                "unexpected trap: cause={:?}, sepc={:#x}, stval={:#x}",
+                trap_cause, cx.sepc, cx.stval
+            );
+        }
+    }
+
+    if cx.returns_to_user() {
+        logging::trace!(
+            "[trap] return to user pc={:#x} sp={:#x}",
+            cx.user_pc(),
+            cx.user_sp()
+        );
+    }
+
+    unsafe {
+        __wateros_task_runtime_restore_current_trap_frame(cx_ptr.cast::<u8>());
+    }
+}
+
+fn handle_user_syscall(cx: &mut TrapContext) {
+    let syscall_nr = cx
+        .syscall_nr()
+        .raw();
+    let syscall_args = cx.syscall_args();
+    let syscall_ret = unsafe {
+        __wateros_syscall_dispatch_current(
+            syscall_nr,
+            syscall_args.arg(0),
+            syscall_args.arg(1),
+            syscall_args.arg(2),
+            syscall_args.arg(3),
+            syscall_args.arg(4),
+            syscall_args.arg(5),
+        )
+    };
+    cx.add_user_pc(SYSCALL_INSN_BYTES);
+    cx.set_syscall_ret(UserRet(syscall_ret));
+>>>>>>> github/main
 }
 
 impl TrapFrameRead for TrapContext {
     fn raw_cause(&self) -> usize {
         self.scause
+    }
+
+    fn trap_cause(&self) -> TrapCause {
+        decode_riscv64_trap_cause(self.scause)
     }
 
     fn fault_addr(&self) -> usize {
