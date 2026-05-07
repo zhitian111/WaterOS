@@ -15,5 +15,6 @@
 
 - 编码任务：至少阅读 `general.md`、`structure.md`、`coding.md`、`architecture.md`。
 - 文档任务：至少阅读 `general.md`、`structure.md`、`documentation.md`、`architecture.md`。
+- 代码注释专项（`docs/tasks/commenting.md`）：除上述外，严格按该任务文件的**搜索范围**执行——覆盖 **`os/components/**` 全子树**、**`os/src/`**、**`user/**`** 等，**不得**仅处理一级聚合 crate 或默认 feature 路径；细则见 `documentation.md` 中「覆盖范围」。
 - 规划任务：至少阅读 `general.md`、`structure.md`、`architecture.md`。
 - 对文档体系本身做修改：额外阅读 `update_docs_task.md`。

@@ -4,6 +4,19 @@
 
 当前已具备 `task-api`、`task-impl`、`task-scheduler` 的拆分结构，且 Stage3A 已完成第一轮边界收紧：根 crate 更偏 facade，任务启动与 trap hook 已迁入内部 runtime，`task-impl/impl-core` 继续承载真实任务对象，而 `task-scheduler/scheduler-impl/impl-round-robin` 则承载当前主线调度策略。
 
+## 聚合层导出（`wateros-task` 根 `lib.rs`）
+
+| 项 | 说明 |
+|----|------|
+| **`pub mod api`** | **`pub use api_v0::*`**（含 **`TaskRuntimeStats`** 等；部分类型同时在根 **`pub use api_v0::{...}`** 显式列出）。 |
+| **`pub mod scheduler`** | **`pub use scheduler::*`**（调度器门面、**`ScheduleReason`**、**`Scheduler`** trait、**`TaskTrapFrame`**、**`active_impl`** 等，见 **`wateros-task-scheduler`**）。 |
+| **`active_impl`** | 仅 **`#[cfg(feature = "impl-core")]`**：**`impl_core`**（**`TaskBootstrap`**、**`TaskControlBlock`** 等）。 |
+| **`WaitQueue`** | 根上定义的 **`struct WaitQueue`** 及 **`new` / `id` / `wait_handle` / `wait_current` / `wait_current_for_ticks` / `wake_one` / `wake_all`**，内部委托 **`scheduler`**。 |
+| **根 `pub use api_v0::{...}`** | **`AddressSpaceHandle`**、**`ExitedTask`**、**`KernelTaskEntry`**、**`TaskBlockReason`**、**`TaskExitCode`**、**`TaskId`**、**`TaskKind`**、**`TaskSnapshot`**、**`TaskState`**、**`TaskTick`**、**`TaskTrapSnapshot`**、**`TaskWaitHandle`**、**`TaskWaitResult`**、**`TaskWaitTarget`**、**`UserImageInfo`**、**`UserTaskEntryPc`**、**`UserTaskResources`**、**`UserTaskSpec`**、**`WaitQueueId`**、**`IDLE_TASK_ID`**。 |
+| **根级函数** | **`init`**、**`init_kernel_trap_satp`**、**`spawn_kernel_task`**、**`spawn_user_task_spec`**、**`spawn_user_task`**、**`run_first_task`**、**`yield_now`**、**`schedule_tick`**、**`block_current`**、**`wait_on`**、**`wait_on_for_ticks`**、**`task_exit_wait_handle`**、**`wait_for_task_exit`**、**`wait_for_task_exit_for_ticks`**、**`sleep_for_ticks`**、**`wake_task`**、**`reap_exited_task`**、**`reap_one_exited_task`**、**`exit_current`**、**`current_task_id`**、**`current_task_snapshot`**。 |
+
+更多调度器独有入口（如 **`current_task_address_space_raw`**、trap frame 存取）仅暴露在 **`scheduler`** 模块路径下，根层不重复包装。
+
 聚合层当前对外暴露的核心能力包括：
 
 - 任务创建：`spawn_kernel_task`

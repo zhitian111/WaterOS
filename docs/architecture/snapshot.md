@@ -9,6 +9,7 @@
 - `os/feature-tree.txt`
 - 各一级组件 `Cargo.toml`
 - 各一级组件聚合 `src/lib.rs`
+- 各 crate 内 **`//!` / `///`** 等 Rust 文档注释（与 `docs/prompts/documentation.md`、`docs/tasks/commenting.md` 对齐；**含全部子 crate 与可选 feature 路径**；语义契约以源码 rustdoc 为准）
 
 ## 总体结构
 
@@ -22,6 +23,7 @@
 - `wateros-mm`
 - `wateros-platform`
 - `wateros-runtime`
+- `wateros-syscall`
 - `wateros-task`
 - `wateros-vfs`
 
@@ -40,6 +42,7 @@ flowchart TD
     mm[wateros-mm]
     platform[wateros-platform]
     runtime[wateros-runtime]
+    syscall[wateros-syscall]
     task[wateros-task]
     vfs[wateros-vfs]
 
@@ -51,6 +54,7 @@ flowchart TD
     wateros --> mm
     wateros --> platform
     wateros --> runtime
+    wateros --> syscall
     wateros --> task
     wateros --> vfs
 
@@ -71,15 +75,19 @@ flowchart TD
 - 处理 panic 与分配错误。
 - 在 `qemu-riscv64-opensbi` 路径下进入 `kernel_main`。
 - 构造平台引导上下文。
-- 初始化驱动、控制台、日志和堆分配器。
-- 执行内核态 MM 自检。
+- 记录 DTB 物理基址（`driver::init_when_boot`），并初始化控制台、日志与堆分配器。
+- 执行内核态 MM 自检（含与 feature 相关的可选分页冒烟路径）。
+- 调用 **`driver::active_impl::init_after_boot()`** 完成 DTB 扫描、virtio-blk 注册及经 **`wateros-fs`** 的 devfs 刷新；成功后再 **`fs::init()`** / **`fs::test()`**；在启用 **`vfs-bridge`** 时追加 **`vfs::test()`** 与 **`vfs::bridge`** 对根卷的 RW 烟囱读回校验（依赖 **`wateros-fs`** 公开 API，见 **`docs/exports/public-api/wateros-vfs.md`**）。
 - 初始化任务调度器并创建演示性 kernel task。
+- 通过 **`extern crate syscall as _`** 链接 **`wateros-syscall`**，供平台 trap 路径调用其分发符号（见 **`docs/exports/features/wateros-syscall.md`**）。
 - 启用中断与定时器，并进入首个任务。
+
+设备树、virtio-mmio 与 devfs 协作的细节说明见 **`docs/guides/device-driver.md`**。
 
 ## 对应导出结果
 
-- 公共 API：`docs/exports/public-api/`
+- 公共 API：`docs/exports/public-api/`（按一级组件拆分的快照 Markdown，与根 **`os/Cargo.toml`** 依赖对齐；含 **`wateros-syscall.md`** 等。）
 - 新增 impl 指南：`docs/exports/impl-guide/`
 - 架构图：`docs/exports/architecture/`
-- 功能快照：`docs/exports/features/`
+- 功能快照：`docs/exports/features/`（目录说明见该路径下 **`README.md`**）
 - 版本概述：`docs/exports/release-overview/`

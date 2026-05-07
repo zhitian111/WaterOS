@@ -30,7 +30,7 @@ ABI、系统调用和用户内核约定相关组件。
 
 ##### `wateros-fs`
 
-文件系统组件，当前已有 `impl-devfs` 与 `impl-dummy`。
+文件系统组件：含 **`fs-api`**、**`fs-devfs`**、**`fs-rootfs`**、**`fs-impl/impl-ext4`**（默认根卷）等；叙述型说明见 **`docs/guides/filesystem-current.md`**。
 
 ##### `wateros-ipc`
 

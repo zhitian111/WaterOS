@@ -1,15 +1,29 @@
 # wateros-runtime 公共 API 快照
 
-## 当前定位
+## 用途
 
-聚合层当前导出 `panic`、`console`、`logging`、`heap_allocator` 四类运行时能力。控制台组件支持通过 firmware OpenSBI 路径接入具体实现。
+**`wateros-runtime`** 根 crate **无** 自有 **`[features]`**；通过四个 **`pub mod`** 再导出子 crate：**`runtime-panic`**、**`runtime-console`**、**`runtime-logging`**、**`runtime-heap-allocator`**。各子能力的行为由 **子 crate 的 default feature** 决定（例如控制台默认 **`impl-firmware-opensbi`**，日志默认 **`impl-trace`**，堆默认 **`impl-buddy-allocator`**）。
 
 ## 事实来源
 
-- 组件根 `Cargo.toml`
-- 组件聚合 `src/lib.rs`
-- 对应 `api-v0` 与 `impl-*` 目录
+- [`os/components/wateros-runtime/Cargo.toml`](../../os/components/wateros-runtime/Cargo.toml)
+- [`os/components/wateros-runtime/src/lib.rs`](../../os/components/wateros-runtime/src/lib.rs)
+- 各 **`runtime-*`** 子目录 **`src/lib.rs`**
+
+## 聚合层导出
+
+| 模块 | 说明 |
+|------|------|
+| **`panic`** | **`panic_handler`**（来自 **`wateros-runtime-panic`**）。 |
+| **`console`** | **`wateros-runtime-console`** 根 **`pub`**：**`print`**、**`prints`**、**`write_raw_bytes`**、**`show_logo`**、**`AnsiColor`**；**`ConsoleHandle`** 随子 crate 的 **`impl-dummy`** / **`impl-firmware-opensbi`** 切换。**`print!` / `println!`** 宏在子 crate 中 **`#[macro_export]`**，**不**随 **`pub use console::*`** 进入 **`wateros_runtime::console`** 命名空间；调用方常直接 **`use wateros_runtime_console::print!`** 或依赖 prelude 习惯。 |
+| **`logging`** | **`init`**；**`trace!`**、**`debug!`**、**`info!`**、**`warn!`**、**`error!`**（来自 **`log`** 再导出）。 |
+| **`heap_allocator`** | **`init`**、**`handle_alloc_error`** 等（伙伴堆路径由子 crate feature 控制 **`#[global_allocator]`**）。 |
+
+## 缺口说明
+
+- 根层无法在单一 manifest 上统一开关子能力；需在 **`wateros`** 或依赖侧对 **`wateros-runtime-*`** 传 feature。
+- **`write_raw_bytes`** 在未启用固件控制台实现时可能为吞输出占位。
 
 ## 维护要求
 
-当聚合层导出项、默认 feature 或组件边界发生变化时，应同步更新本文件。
+子 crate 默认 feature 或再导出项变化时，同步更新本文件。

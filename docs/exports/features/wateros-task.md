@@ -1,5 +1,12 @@
 # wateros-task 功能快照
 
+## 事实来源
+
+- `os/components/wateros-task/Cargo.toml`、`src/lib.rs`
+- `task-api/api-v0`、`task-impl/impl-core`、`task-scheduler/`
+- `os/src/main.rs`（`task::init`、`init_kernel_trap_satp`、`run_first_task`）
+- `os/src/self_tests/task.rs`（多任务与等待队列自检）
+
 ## 当前状态
 
 当前已具备单核内核态任务切换、timer 驱动 round-robin 调度，以及 Stage3A 第一轮边界收紧后的任务/runtime/scheduler 分层。

@@ -22,6 +22,17 @@
 - 文档注释应描述语义契约，不只描述实现细节。
 - 对临时实现也要写清“当前行为”和“后续替换点”。
 
+### 覆盖范围（避免只写聚合层）
+
+注释与 rustdoc 的扫查范围是**路径上的全部源码**，而不是「仅一级组件聚合 crate」或「仅当前默认 feature 会编进来的 crate」。
+
+具体要求：
+
+- **`os/components/**`** 下每一个独立 `Cargo.toml` 所对应 crate 的 **`src/`**（及 crate 内其它 `.rs` 路径）均应覆盖；包括 **`api-v0`**、所有 **`impl-*`**（含 **`impl-dummy`**）、未挂 feature 的叶子子 crate。
+- **`os/src/`**、**`user/`** 中与构建或运行约定相关的文件同上。
+- **汇编、内联汇编、链接脚本**：无法用 `///` 处，用该文件惯例的注释写清与 Rust 侧结构体布局、符号名、调用约定的对应关系（参见各 `trap.asm` 与 `TrapContext` 一类注释模式）。
+- Agent **不得**因「根 `wateros` 未直接依赖」「默认 feature 未启用」而跳过子目录；若本地 `cargo check` 默认不编译某路径，仍应为其补注释，并在验证说明中注明使用了哪组 `--features` / `--target`。
+
 ## Commit 信息
 
 WaterOS 默认采用 Conventional Commits，并保留 `api(scope)` 作为核心开发专用类型。
