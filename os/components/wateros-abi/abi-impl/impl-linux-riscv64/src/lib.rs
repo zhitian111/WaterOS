@@ -1,8 +1,11 @@
 #![no_std]
+//! Linux riscv64 上与 libc 对齐的系统调用号具体取值。
+//!
+//! 变更时需与用户态工具链、内核分发及常见 `strace` 输出保持一致。
 
 use api_v0::syscall_number::{SyscallNumber, SyscallNumberTable};
 
-/// Linux/riscv64 syscall 号表（早期阶段维护 busybox / 简单进程子集）
+/// 提供 [`SyscallNumberTable`] 的 Linux riscv64 常量表（当前为 busybox / 简单进程所需子集）。
 pub struct LinuxRiscv64;
 
 impl SyscallNumberTable for LinuxRiscv64 {

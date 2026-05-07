@@ -14,7 +14,7 @@
 
 [features]
     api-v0 = [ "impl-dummy/api-v0" ]
-    default = [ "api-v0", "impl-dummy" ]
+    default = [ "api-v0", "impl-linux-riscv64" ]
     impl-dummy = [  ]
     impl-linux-riscv64 = []
 

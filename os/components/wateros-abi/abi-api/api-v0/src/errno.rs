@@ -1,16 +1,25 @@
+//! Linux 风格错误码及其与系统调用返回值的对应关系。
+//!
+//! 数值与 Linux errno 一致；与 [`crate::user_ret::UserRet`] 组合时，错误路径使用负值表示。
+
 /// 内核错误码（Linux errno 数值的用户态可用形式）
 ///
 /// 约定：系统调用返回错误时，用户态看到的是 `-errno`（通常通过 `isize` 表示）。
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ErrNo(pub isize);
+pub struct ErrNo(
+    /// 正数 errno 数值（与 Linux libc 中 `errno` 含义一致，不含符号位约定）。
+    pub isize,
+);
 
 impl ErrNo {
+    /// 取原始正数 errno（与 libc 中 `errno` 的数值一致）。
     #[inline]
     pub const fn raw(self) -> isize {
         self.0
     }
 
+    /// 转为用户态可见的负返回值（`-errno`）。
     #[inline]
     pub const fn user_ret(self) -> isize {
         -self.0
@@ -19,24 +28,43 @@ impl ErrNo {
 
 // Linux errno（riscv64 与各架构通用）
 impl ErrNo {
+    /// 操作不允许。
     pub const EPERM: Self = Self(1);
+    /// 无此文件或目录。
     pub const ENOENT: Self = Self(2);
+    /// 无此进程。
     pub const ESRCH: Self = Self(3);
+    /// 系统调用被中断。
     pub const EINTR: Self = Self(4);
+    /// 输入/输出错误。
     pub const EIO: Self = Self(5);
+    /// 文件描述符无效。
     pub const EBADF: Self = Self(9);
+    /// 无子进程。
     pub const ECHILD: Self = Self(10);
+    /// 资源暂时不可用，可重试。
     pub const EAGAIN: Self = Self(11);
+    /// 内存不足。
     pub const ENOMEM: Self = Self(12);
+    /// 权限不足。
     pub const EACCES: Self = Self(13);
+    /// 非法地址。
     pub const EFAULT: Self = Self(14);
+    /// 设备或资源忙。
     pub const EBUSY: Self = Self(16);
+    /// 文件已存在。
     pub const EEXIST: Self = Self(17);
+    /// 参数无效。
     pub const EINVAL: Self = Self(22);
+    /// 功能未实现或系统调用号未知。
     pub const ENOSYS: Self = Self(38);
+    /// 非目录。
     pub const ENOTDIR: Self = Self(20);
+    /// 管道破裂。
     pub const EPIPE: Self = Self(32);
 }
 
-/// 常用的内核返回值（避免在 syscall 层到处写魔数）
+/// 内核侧常用的 `Result` 别名：成功载荷为 `T`，失败为 [`ErrNo`]。
+///
+/// 经转换后才对应用户态可见的负返回值。
 pub type KernelResult<T> = core::result::Result<T, ErrNo>;
