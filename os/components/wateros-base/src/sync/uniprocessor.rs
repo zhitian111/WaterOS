@@ -11,10 +11,12 @@ pub struct UniprocessorSafeCell<T> {
 unsafe impl<T> Sync for UniprocessorSafeCell<T> {}
 
 impl<T> UniprocessorSafeCell<T> {
+    /// 构造容器；调用方需保证仅在单核/可互斥访问的初始化路径上调用，避免并发 `new`。
     pub unsafe fn new(value: T) -> Self {
         Self { inner: RefCell::new(value) }
     }
 
+    /// 获取对内部值的独占可变借用；若已存在未释放的借用则会在运行时 panic。
     pub fn exclusive_access(&self) -> RefMut<'_, T> {
         self.inner.borrow_mut()
     }

@@ -4,6 +4,7 @@
         "./driver-block/",
         "./driver-block/block-api/api-v0/",
         "./driver-block/block-impl/impl-dummy/",
+        "./driver-block/block-impl/impl-virtio-mmio/",
         "./driver-character/",
         "./driver-character/character-api/api-v0/",
         "./driver-character/character-impl/impl-dummy/",
@@ -25,6 +26,7 @@
     block = { path = "./driver-block/", package = "wateros-driver-block", default-features = true }
     character = { path = "./driver-character/", package = "wateros-driver-character", default-features = true }
     network = { path = "./driver-network/", package = "wateros-driver-network", default-features = true }
+    wateros-base-config = { path = "../wateros-base/base-config", package = "wateros-base-config" }
     log = { version = "0.4.29" }
 
 [features]
@@ -37,7 +39,7 @@
     ]
     default = [ "api-v0", "impl-qemu-riscv64-opensbi" ]
     impl-dummy = [  ]
-    impl-qemu-riscv64-opensbi = [  ]
+    impl-qemu-riscv64-opensbi = [ "block/impl-virtio-mmio" ]
 
 [profile.dev]
     panic = "abort"

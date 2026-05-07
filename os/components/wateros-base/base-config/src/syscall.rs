@@ -1,2 +1,5 @@
 #[allow(unused)]
+/// 单次系统调用在寄存器/参数包中可见的最大参数个数。
+///
+/// 须与陷阱帧及用户态/内核 ABI 中参数数组长度一致。
 pub const MAX_SYSCALL_ARGS : usize = 6;

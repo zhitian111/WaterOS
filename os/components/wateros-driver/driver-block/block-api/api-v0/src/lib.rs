@@ -1,3 +1,7 @@
+//! 块设备抽象：逻辑块寻址、全局注册表与默认块大小常量。
+//!
+//! [`BlockDevice`] 提供按块与按字节读取的默认实现；写路径由具体设备决定是否支持。
+
 #![no_std]
 extern crate alloc;
 
@@ -6,8 +10,10 @@ use spin::Mutex;
 
 pub use driver_api::{DriverError, DriverResult};
 
+/// 逻辑块字节长度；当前 WaterOS bring-up 固定为 512（与 virtio-blk 常见配置一致）。
 pub const BLOCK_SIZE: usize = 512;
 
+/// 逻辑块地址（LBA），从 0 起算。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Lba(pub u64);
 
@@ -19,19 +25,26 @@ impl From<u64> for Lba {
     fn from(value: u64) -> Self { Self(value) }
 }
 
+/// 可在多任务间共享的块设备句柄（内部可变性由 `spin::Mutex` 提供）。
 pub type SharedBlockDevice = Arc<Mutex<Box<dyn BlockDevice>>>;
 
 static BLOCK_DEVICES: Mutex<Vec<SharedBlockDevice>> = Mutex::new(Vec::new());
 
+/// 块设备语义契约：按块读写为必须实现；按字节读提供默认实现（内部临时缓冲整段块）。
 pub trait BlockDevice: Send {
+    /// 设备逻辑块大小；默认 [`BLOCK_SIZE`]。
     fn block_size(&self) -> usize { BLOCK_SIZE }
 
+    /// 设备总块数；未知时返回 `None`（默认）。
     fn total_blocks(&self) -> Option<u64> { None }
 
+    /// 从 `start_block` 起读取连续块到 `buf`；`buf` 长度须为块大小的整数倍。
     fn read_blocks(&mut self, start_block: Lba, buf: &mut [u8]) -> DriverResult<()>;
 
+    /// 从 `start_block` 起写入连续块；不支持写时须返回 [`DriverError::Unsupported`]。
     fn write_blocks(&mut self, start_block: Lba, buf: &[u8]) -> DriverResult<()>;
 
+    /// 任意字节对齐读取：通过整段块缓冲实现，调用方须保证 `dst` 非空且偏移合法。
     fn read_bytes(&mut self, offset: u64, dst: &mut [u8]) -> DriverResult<()> {
         if dst.is_empty() {
             return Ok(());
@@ -66,6 +79,7 @@ pub trait BlockDevice: Send {
         Ok(())
     }
 
+    /// 读取从 `offset` 起的 `len` 字节到新分配的缓冲区。
     fn read_prefix(&mut self, offset: u64, len: usize) -> DriverResult<Vec<u8>> {
         let mut buf = vec![0u8; len];
         self.read_bytes(offset, &mut buf)?;
@@ -73,24 +87,29 @@ pub trait BlockDevice: Send {
     }
 }
 
+/// 将设备追加到全局表末尾，返回其索引（从 0 起）。
 pub fn register_block_device(device: SharedBlockDevice) -> usize {
     let mut devices = BLOCK_DEVICES.lock();
     devices.push(device);
     devices.len() - 1
 }
 
+/// 当前已注册块设备数量。
 pub fn block_device_count() -> usize {
     BLOCK_DEVICES.lock().len()
 }
 
+/// 取表中第一个设备，常用于根文件系统绑定单盘场景。
 pub fn first_block_device() -> Option<SharedBlockDevice> {
     BLOCK_DEVICES.lock().first().cloned()
 }
 
+/// 按下标取设备；越界返回 `None`。
 pub fn block_device_at(index: usize) -> Option<SharedBlockDevice> {
     BLOCK_DEVICES.lock().get(index).cloned()
 }
 
+/// 自检：校验常量与样例设备的 [`read_prefix`] 行为。
 pub fn test() {
     logging::trace!("[driver-block-api] test begin");
     assert_eq!(BLOCK_SIZE, 512);
