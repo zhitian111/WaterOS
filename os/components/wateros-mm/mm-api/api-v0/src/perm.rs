@@ -1,3 +1,5 @@
+//! 页权限位集合（语义层）；与 Sv39 PTE 的 R/W/X/U 对应关系由 `mm-impl` 翻译，**不**包含 A/D/G 等硬件管理位。
+
 /// 页权限（语义层，不包含页表 PTE 具体 bit 编码）。
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

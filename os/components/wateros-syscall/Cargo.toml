@@ -8,6 +8,7 @@
 [dependencies]
     abi = { path = "../wateros-abi/", package = "wateros-abi", default-features = true, features = ["impl-linux-riscv64"] }
     task = { path = "../wateros-task/", package = "wateros-task", default-features = true }
+    console = { path = "../wateros-runtime/runtime-console/", package = "wateros-runtime-console", default-features = true }
 
 [features]
     default = []

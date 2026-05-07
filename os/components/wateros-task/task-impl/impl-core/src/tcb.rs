@@ -1,3 +1,7 @@
+//! 任务控制块（**`TaskControlBlock`**）与用户态资源快照：把 `task_api` 中的规格落到具体栈、trap 帧与地址空间句柄上。
+//!
+//! 调度器只通过 `task_api` 抽象操作本模块类型；**就绪顺序与时间片**不在此文件实现。
+
 use alloc::boxed::Box;
 use api_v0::{
     AddressSpaceHandle, ExitedTask, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskId,
@@ -10,9 +14,18 @@ use arch::trap::{ActiveTrapFrame as TaskTrapFrame, TrapContextRead, TrapContextW
 
 use crate::stack::{KernelStack, UserStack};
 use crate::TaskBootstrap;
+
+enum UserStackBacking {
+    Kernel(UserStack),
+    External {
+        bottom : usize,
+        top : usize,
+    },
+}
+
 struct UserTaskResources {
     entry_pc : UserTaskEntryPc,
-    user_stack : UserStack,
+    user_stack : UserStackBacking,
     address_space : Option<AddressSpaceHandle>,
     image : Option<UserImageInfo>,
 }
@@ -23,8 +36,13 @@ unsafe extern "C" {
 
 impl UserTaskResources {
     fn new(spec : UserTaskSpec) -> Self {
+        let user_stack = if let Some((bottom, top)) = spec.external_stack() {
+            UserStackBacking::External { bottom, top }
+        } else {
+            UserStackBacking::Kernel(UserStack::new())
+        };
         Self { entry_pc : spec.entry_pc(),
-               user_stack : UserStack::new(),
+               user_stack,
                address_space : spec.address_space(),
                image : spec.image() }
     }
@@ -32,18 +50,24 @@ impl UserTaskResources {
     fn entry_pc(&self) -> UserTaskEntryPc { self.entry_pc }
 
     fn user_stack_top(&self) -> usize {
-        self.user_stack
-            .top()
+        match &self.user_stack {
+            UserStackBacking::Kernel(s) => s.top(),
+            UserStackBacking::External { top, .. } => *top,
+        }
     }
 
     fn user_stack_bottom(&self) -> usize {
-        self.user_stack
-            .bottom()
+        match &self.user_stack {
+            UserStackBacking::Kernel(s) => s.bottom(),
+            UserStackBacking::External { bottom, .. } => *bottom,
+        }
     }
 
     fn user_stack_size(&self) -> usize {
-        self.user_stack
-            .size()
+        match &self.user_stack {
+            UserStackBacking::Kernel(s) => s.size(),
+            UserStackBacking::External { bottom, top } => top.saturating_sub(*bottom),
+        }
     }
 
     fn snapshot(&self) -> UserTaskResourcesSnapshot {
@@ -53,6 +77,12 @@ impl UserTaskResources {
                                     user_stack_size : self.user_stack_size(),
                                     address_space : self.address_space,
                                     image : self.image }
+    }
+
+    fn address_space_raw(&self) -> usize {
+        self.address_space
+            .map(|h| h.raw())
+            .unwrap_or(0)
     }
 }
 
@@ -202,6 +232,18 @@ impl TaskControlBlock {
         self.user_resources
             .as_ref()
             .map(UserTaskResources::user_stack_top)
+    }
+
+    /// 用户任务 `AddressSpaceHandle::raw()`；非用户任务或未设置时返回 `0`。
+    #[inline]
+    pub fn user_address_space_raw(&self) -> usize {
+        if self.kind != TaskKind::User {
+            return 0;
+        }
+        self.user_resources
+            .as_ref()
+            .map(UserTaskResources::address_space_raw)
+            .unwrap_or(0)
     }
 
     #[inline]

@@ -1,8 +1,12 @@
+//! 地址空间操作契约：以 **4 KiB 虚拟页** 为粒度（见 [`crate::addr::PAGE_SIZE`]），`satp_value` 供安装页表。
+//! 切换 `satp` 与 TLB 刷新由 arch/运行时完成；本 trait 本身不在 trap 内执行，也不隐含额外硬件副作用。
+
 use crate::addr::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
 use crate::error::MmResult;
 use crate::frame_allocator::PhysicalFrameAllocator;
 use crate::perm::PagePerm;
 
+/// 地址空间标识（预留；当前 Sv39 实现可固定为 0 或不使用）。
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AddressSpaceId(pub u32);

@@ -1,3 +1,13 @@
+//! RISC-V **Sv39** 页表实现（三级页表、**仅 4 KiB 叶子页**）。
+//!
+//! ## 物理访问假设
+//!
+//! `table_mut` 将 PPN 转为指针读写页表，要求 **PPN 对应物理内存在内核视角下可直接访问**（常见 bring-up：内核恒等映射 RAM/MMIO）。若改为偏移映射，必须同步改写该路径。
+//!
+//! ## 与 trap / 访问位
+//!
+//! 映射时预先置 PTE **A/D** 位，避免依赖 S 态 load/store 触发页故障（page fault）来置位（早期“先跑通”策略；若后续启用 demand paging 或严格 A/D 语义，应调整 `Sv39PteFlags::from_perm`）。
+
 #![no_std]
 
 use api_v0::addr::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum, PAGE_SIZE};
@@ -46,6 +56,24 @@ impl Sv39PteFlags {
         f.0 |= Self::A.0 | Self::D.0;
         f
     }
+
+    #[inline]
+    fn to_page_perm(self) -> PagePerm {
+        let mut p = PagePerm::empty();
+        if (self.0 & Self::R.0) != 0 {
+            p = p | PagePerm::R;
+        }
+        if (self.0 & Self::W.0) != 0 {
+            p = p | PagePerm::W;
+        }
+        if (self.0 & Self::X.0) != 0 {
+            p = p | PagePerm::X;
+        }
+        if (self.0 & Self::U.0) != 0 {
+            p = p | PagePerm::U;
+        }
+        p
+    }
 }
 
 /// Sv39 页表项（64-bit）
@@ -85,6 +113,11 @@ fn vpn_indexes(vpn: VirtPageNum) -> [usize; 3] {
     ]
 }
 
+/// 将页表帧 PPN 映射为可变的 Sv39 PTE 数组。
+///
+/// # Safety
+///
+/// 调用方保证 `ppn` 指向已映射且 **4 KiB 对齐** 的页表存储；本函数用 `ppn * PAGE_SIZE` 作为 **恒等或线性物理地址** 解引用。
 #[inline]
 unsafe fn table_mut(ppn: PhysPageNum) -> &'static mut [Sv39Pte; SV39_ENTRIES] {
     // early stage：假设物理内存可直接线性访问（裸机/恒等映射环境）。
@@ -104,12 +137,13 @@ fn alloc_table_frame_zeroed() -> MmResult<PhysPageNum> {
     Ok(ppn)
 }
 
-/// Sv39 地址空间（仅页表骨架）。
+/// Sv39 根页表与 walk 状态；所有映射均为 **4 KiB 叶子**（`translate_addr` 在 level≠0 叶子时返回 `MmError::Unsupported`）。
 pub struct Sv39AddressSpace {
     root: PhysPageNum,
 }
 
 impl Sv39AddressSpace {
+    /// 分配并清零根页表帧；依赖帧分配器与 `table_mut` 的物理访问假设。
     pub fn new() -> MmResult<Self> {
         let root = alloc_table_frame_zeroed()?;
         Ok(Self { root })
@@ -163,11 +197,22 @@ impl Sv39AddressSpace {
         }
         Ok(None)
     }
+
+    /// 已映射叶子页的 [`PagePerm`]（仅 level-0 叶子）；用于 ELF 相邻 `PT_LOAD` 同页合并权限。
+    pub(crate) fn leaf_perm(&self, vpn: VirtPageNum) -> MmResult<Option<PagePerm>> {
+        let Some((pte, level)) = self.walk_find(vpn)? else {
+            return Ok(None);
+        };
+        if level != 0 || !pte.flags().is_leaf() {
+            return Ok(None);
+        }
+        Ok(Some(pte.flags().to_page_perm()))
+    }
 }
 
 impl AddressSpaceOps for Sv39AddressSpace {
     fn satp_value(&self) -> usize {
-        // satp: MODE=8 (Sv39), ASID=0, PPN=root
+        // satp: MODE=8 (Sv39), ASID=0, PPN=root（根表须为 4K 对齐物理帧）
         (8usize << 60) | (self.root.0 & ((1usize << 44) - 1))
     }
 
@@ -235,6 +280,7 @@ impl Drop for Sv39AddressSpace {
     }
 }
 
+/// Sv39 与帧分配器自测；`start_ppn`/`end_ppn` 与 [`frame_alloctor::init_frame_allocator`] 语义一致（PPN 半开区间由平台给出）。
 pub fn test_with_range(start_ppn: BasePPN, end_ppn: BasePPN) {
     log::trace!("[mm-impl::sv39] test begin");
     frame_alloctor::test_with_range(start_ppn, end_ppn);
@@ -276,4 +322,16 @@ pub fn test_with_range(start_ppn: BasePPN, end_ppn: BasePPN) {
     frame_dealloc_result(ppn).expect("dealloc test frame");
 
     log::trace!("[mm-impl::sv39] test end");
+}
+
+mod kernel_elf;
+mod kernel_global;
+
+/// 内核全局页表与用户 ELF 装载（QEMU RISC-V bring-up）；由 `wateros-mm` 聚合为 `mm::kernel_mm`。
+pub mod kernel_mm_impl {
+    pub use crate::kernel_elf::{from_elf_bytes, from_elf_path};
+    pub use crate::kernel_global::{
+        ensure_user_execute_for_kernel_va, init, kernel_satp, map_anon_range_user,
+        map_identity_range_user,
+    };
 }

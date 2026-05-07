@@ -18,3 +18,4 @@
     default = [ "api-v0", "impl-sv39" ]
     impl-dummy = [  ]
     impl-sv39 = [  ]
+    qemu-riscv64-opensbi = [  ]

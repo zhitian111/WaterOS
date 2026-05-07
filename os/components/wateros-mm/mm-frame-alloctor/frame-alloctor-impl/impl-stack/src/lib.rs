@@ -1,3 +1,7 @@
+//! 全局栈式物理帧分配器（单核 `UniprocessorSafeCell`）：`FrameId` 为 **PPN**，与 4 KiB 物理页一一对应。
+//!
+//! 调用方须保证 `init_frame_allocator` 传入的 PPN 区间落在 **内核可安全分配/回收** 的 RAM 内；本模块不校验与页表或设备的重叠。
+
 #![no_std]
 #![allow(static_mut_refs)]
 extern crate alloc;
@@ -18,21 +22,29 @@ use core::sync::atomic::{AtomicBool, Ordering};
 /// - `dealloc_frame()` push 回栈（顺序回放）。
 ///
 /// 注意：该实现未做“重复释放/未分配校验”，属于早期阶段可接受的简化。
+///
+/// 空闲帧来自两段语义：尚未动过的连续高段 `[start_ppn, next_novel)`（惰性下推），
+/// 以及显式回收栈 `recycled`。不在 `init` 时把整段 PPN 推入 `Vec`，避免大内存下撑爆内核 heap。
 pub struct StackFrameAllocator {
     recycled: Vec<PhysPageNum>,
+    start_ppn: usize,
+    /// 仍可从连续区分配的第一页号上界（不包含）；初始为 `end_ppn`。
+    next_novel: usize,
 }
 
 impl StackFrameAllocator {
     pub fn new() -> Self {
-        Self { recycled: Vec::new() }
+        Self {
+            recycled: Vec::new(),
+            start_ppn: 0,
+            next_novel: 0,
+        }
     }
 
     pub fn init(&mut self, start_ppn: BasePPN, end_ppn: BasePPN) {
         self.recycled.clear();
-        // [start, end) 语义：end 不包含
-        for p in start_ppn.val..end_ppn.val {
-            self.recycled.push(PhysPageNum(p));
-        }
+        self.start_ppn = start_ppn.val;
+        self.next_novel = end_ppn.val;
     }
 }
 
@@ -40,7 +52,14 @@ impl PhysicalFrameAllocator for StackFrameAllocator {
     type FrameId = PhysPageNum;
 
     fn alloc_frame(&mut self) -> FrameAllocResult<Self::FrameId> {
-        self.recycled.pop().ok_or(FrameAllocError::OutOfMemory)
+        if let Some(p) = self.recycled.pop() {
+            return Ok(p);
+        }
+        if self.next_novel > self.start_ppn {
+            self.next_novel -= 1;
+            return Ok(PhysPageNum(self.next_novel));
+        }
+        Err(FrameAllocError::OutOfMemory)
     }
 
     fn dealloc_frame(&mut self, frame: Self::FrameId) -> FrameAllocResult<()> {
@@ -126,19 +145,47 @@ pub fn test_with_range(start_ppn: BasePPN, end_ppn: BasePPN) {
         return;
     }
 
-    // 分配到耗尽
-    let mut frames: Vec<PhysPageNum> = Vec::new();
-    for _ in 0..cap {
-        let f = frame_alloc_result().expect("alloc should succeed before OOM");
-        frames.push(f);
+    // 大内存下不要用单个 Vec 持有全部帧（元数据会占满内核 heap）。
+    const BATCH: usize = 256;
+    let mut buf: Vec<PhysPageNum> = Vec::new();
+    let mut done = 0usize;
+    while done < cap {
+        let n = BATCH.min(cap - done);
+        for _ in 0..n {
+            buf.push(frame_alloc_result().expect("alloc in batch"));
+            done += 1;
+        }
+        for f in buf.drain(..) {
+            frame_dealloc_result(f).expect("dealloc in batch");
+        }
     }
-    assert!(frame_alloc_result().is_err(), "should be OOM after exhausting frames");
 
-    // 释放后应可再次分配
-    for f in frames.drain(..) {
-        frame_dealloc_result(f).expect("dealloc should succeed");
+    // 池应已复原；再取一页并归还
+    let one = frame_alloc_result().expect("alloc after treadmill");
+    frame_dealloc_result(one).expect("dealloc after treadmill");
+
+    // 仅在小池上验证「耗尽后 OOM」（需同时持有 cap 个句柄，heap 可承受）
+    const MAX_FULL_HOLD: usize = 8192;
+    if cap <= MAX_FULL_HOLD {
+        let mut frames: Vec<PhysPageNum> = Vec::new();
+        for _ in 0..cap {
+            frames.push(frame_alloc_result().expect("alloc before OOM"));
+        }
+        assert!(
+            frame_alloc_result().is_err(),
+            "should be OOM after exhausting frames"
+        );
+        for f in frames.drain(..) {
+            frame_dealloc_result(f).expect("dealloc should succeed");
+        }
+        let _ = frame_alloc_result().expect("alloc should succeed after recycle");
+    } else {
+        log::info!(
+            "[frame-alloctor::impl-stack] skip full OOM witness ({} pages > {})",
+            cap,
+            MAX_FULL_HOLD
+        );
     }
-    let _ = frame_alloc_result().expect("alloc should succeed after recycle");
 
     log::trace!("[frame-alloctor::impl-stack] test end");
 }

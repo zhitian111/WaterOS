@@ -1,21 +1,29 @@
-/// MM 语义层地址/页粒度类型（与具体页表实现无关）。
-///
-/// 这些类型只做“数值语义封装 + 对齐/分解计算”，不包含任何硬件页表编码细节。
+//! MM 语义层地址与页号类型（与具体页表编码无关）。
+//!
+//! ## 固定假设
+//!
+//! - [`PAGE_SIZE`] 为 **4096**（4 KiB），与当前 WaterOS RISC-V Sv39 叶子页一致；若将来支持非 4K 页，需整体调整本模块与 `mm-impl`。
+//! - `VirtAddr`/`PhysAddr` 为 **字节地址**；`VirtPageNum`/`PhysPageNum` 为 **页号**（非 PPN 硬件字段移位后的值，而是 `addr / PAGE_SIZE`）。
 
+/// 页大小（字节）；与 RISC-V Sv39 4KiB 叶子页及本仓库 `mm-impl` 一致。
 pub const PAGE_SIZE: usize = 4096;
 
+/// 用户或内核虚拟字节地址。
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct VirtAddr(pub usize);
 
+/// 物理字节地址（语义层；是否可解引用取决于平台是否恒等映射等）。
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PhysAddr(pub usize);
 
+/// 虚拟页号：`VirtAddr::floor_page` / `ceil_page` 与 [`PAGE_SIZE`] 对齐分解得到。
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct VirtPageNum(pub usize);
 
+/// 物理页号：与 [`PhysAddr`] 的关系为 `ppn * PAGE_SIZE`（与 Sv39 PTE 中 PPN 字段同一粒度时可数值对齐）。
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PhysPageNum(pub usize);
@@ -59,6 +67,10 @@ impl PhysAddr {
 impl VirtPageNum {
     #[inline]
     pub const fn start_addr(self) -> VirtAddr { VirtAddr(self.0 * PAGE_SIZE) }
+
+    /// 恒等映射下的物理页号（`vpn == ppn`），仅用于早期 bring-up / 内核直映射区间。
+    #[inline]
+    pub const fn to_phys_page_identity(self) -> PhysPageNum { PhysPageNum(self.0) }
 }
 
 impl PhysPageNum {

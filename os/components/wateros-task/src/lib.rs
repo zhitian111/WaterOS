@@ -1,6 +1,22 @@
+//! WaterOS 任务子系统聚合 crate：对上暴露稳定 API，对下组合 **任务数据模型** 与 **调度实现**。
+//!
+//! ## 职责划分
+//!
+//! - [`api`]（`wateros-task-api-v0`）：任务 ID、状态、等待句柄、用户任务规格等 **跨层语义类型**；不含调度策略与 per-task 内存布局。
+//! - [`scheduler`]（`wateros-task-scheduler`）：**何时运行谁**——就绪队列、阻塞/睡眠/等待、tick 与主动让出、上下文切换入口；通过 `active_impl` 绑定具体算法（如轮转）。
+//! - **`impl-core`**（`wateros-task-impl-core`，feature `impl-core`）：**单个任务长什么样**——`TaskControlBlock`、内核/用户栈、trap 现场与用户态镜像的装配；供调度器实现持有并驱动切换，本 crate 通过 [`crate::active_impl::TaskBootstrap`] 等再导出给 arch 入口。
+//!
+//! 本文件中的 `spawn`/`yield`/`wait` 等函数是对 `scheduler` 的薄封装；[`trap_runtime`] 提供具名 Rust 入口，
+//! `runtime` 提供与汇编/switch 约定的 `extern "C"` 符号；组合层 `trap_handler::init` 注册 `arch-api::kernel_trap` 后由 `trap_entry_rust` 转入。
+//!
+//! ## 后续替换点
+//!
+//! 更换调度算法时改 `task-scheduler` 的 `active_impl`；更换 TCB/栈布局时改 `impl-core`。二者边界应保持：**调度器不定义 TCB 字段布局，impl-core 不决定全局就绪顺序**。
+
 #![no_std]
 
 mod runtime;
+pub mod trap_runtime;
 
 pub mod api {
     pub use api_v0::*;
@@ -75,6 +91,12 @@ pub use api_v0::{
 #[inline]
 pub fn init() {
     scheduler::init();
+}
+
+/// 在全局内核页表 `satp` 就绪后注册，供 trap 在返回内核态时写回。
+#[inline]
+pub fn init_kernel_trap_satp(v: usize) {
+    crate::trap_runtime::init_kernel_trap_satp(v);
 }
 
 /// 创建一个新的内核任务，并返回分配到的任务号。

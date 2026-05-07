@@ -94,6 +94,16 @@ impl TaskRegistry {
     pub(super) fn spawn_user_task_spec(&mut self, spec : UserTaskSpec) -> TaskId {
         let task_id = self.next_task_id;
         self.next_task_id += 1;
+        log::trace!(
+            "[task-spawn] user spec id={} entry_pc={:#x} address_space_raw={:#x} image={:?} external_stack={:?}",
+            task_id,
+            spec.entry_pc(),
+            spec.address_space()
+                .map(|h| h.raw())
+                .unwrap_or(0),
+            spec.image(),
+            spec.external_stack()
+        );
         self.task_table
             .insert(Box::new(TaskControlBlock::new_user_task(task_id, spec)));
         task_id
@@ -210,6 +220,16 @@ impl TaskRegistry {
                     .task(task_id)
                     .kernel_stack_top()
             })
+    }
+
+    pub(super) fn current_task_address_space_raw(&self) -> usize {
+        self.current_task_id
+            .map(|task_id| {
+                self.task_table
+                    .task(task_id)
+                    .user_address_space_raw()
+            })
+            .unwrap_or(0)
     }
 
     pub(super) fn clear_wait_result(&mut self, task_id : TaskId) {

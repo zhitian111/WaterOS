@@ -1,3 +1,14 @@
+//! 调度器聚合包：把 **调度算法实现** 接到统一的进程内 API 上，并转发给内核其余部分。
+//!
+//! ## 与 `impl-core` 的边界
+//!
+//! - **本 crate**：维护“当前任务”、就绪/阻塞结构、等待队列与唤醒路径，在合适时机调用 arch 的 `__switch` 等完成 **CPU 让渡与再入**；对外提供 `init`/`spawn_*`/`schedule_tick`/trap 相关委托等 **调度语义**。
+//! - **`wateros-task-impl-core`**：提供 **单任务资源与现场**（TCB、内核栈、用户栈与 trap frame 的读写在 TCB 内完成）；轮转等实现 **使用** 这些类型组装任务，但 **不负责** 定义 `task_api` 中的公共 ID/等待抽象。
+//!
+//! 因此：改“下一个运行谁”主要动 `scheduler-impl`；改“任务结构体里存什么、栈多大”主要动 `impl-core`。
+//!
+//! 具体算法由 feature（如 `impl-round-robin`）选择，通过 `active_impl` 重导出。
+
 #![no_std]
 
 pub mod api {
@@ -19,6 +30,12 @@ pub use task_api::{
 #[inline]
 pub fn init() {
     active_impl::init_scheduler();
+}
+
+/// 当前运行任务的用户态地址空间句柄 `raw`（`0` 表示使用内核 `satp`）。
+#[inline]
+pub fn current_task_address_space_raw() -> usize {
+    active_impl::current_task_address_space_raw()
 }
 
 /// 创建一个新的内核任务，并返回其任务号。

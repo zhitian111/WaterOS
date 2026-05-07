@@ -1,3 +1,7 @@
+//! 内核任务与用户任务的 **独占栈** 分配：固定大小、16 字节对齐，供 `TaskControlBlock` 与 arch 入口约定栈顶。
+//!
+//! 尺寸为 bring-up 常量；若与链接脚本或 guard 页策略冲突，应在此文件与 MM 文档中一并调整。
+
 use alloc::boxed::Box;
 
 const KERNEL_TASK_STACK_SIZE: usize = 32 * 1024;

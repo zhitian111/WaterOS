@@ -1,3 +1,7 @@
+//! 轮转调度 **具体实现**：就绪队列、等待队列注册表与一次调度决策，最终通过 arch `__switch` 切换任务上下文。
+//!
+//! 任务体与 trap 现场由 `wateros-task-impl-core` 的 TCB 承载；本 crate 内 `scheduler` 子模块中的轮转状态 **引用并更新** 这些 TCB，但 **不** 替代 `impl-core` 对栈与 trap 缓冲区的所有权与初始化逻辑。
+
 #![no_std]
 #![allow(static_mut_refs)]
 
@@ -65,6 +69,11 @@ impl Drop for InterruptGuard {
             }
         }
     }
+}
+
+pub fn current_task_address_space_raw() -> usize {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.current_task_address_space_raw())
 }
 
 pub fn init_scheduler() {

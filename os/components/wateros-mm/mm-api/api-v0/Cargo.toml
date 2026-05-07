@@ -5,4 +5,5 @@
 
 [dependencies]
 frame_alloctor_api_v0 = { path = "../../mm-frame-alloctor/frame-alloctor-api/api-v0/", package = "wateros-mm-frame-alloctor-api-v0", default-features = true }
+fs-api-v0 = { path = "../../../wateros-fs/fs-api/api-v0", package = "wateros-fs-api-v0", default-features = true }
 log = { version = "0.4.29" }

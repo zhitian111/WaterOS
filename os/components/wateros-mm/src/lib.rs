@@ -1,6 +1,19 @@
+//! WaterOS 内存管理聚合层：对外 re-export [`api`]（语义契约）、[`frame_alloctor`]（物理帧），
+//! 并按 Cargo feature 选择 Sv39 或桩实现作为 [`mm_impl`]。
+//!
+//! ## 页与地址假设
+//!
+//! - 语义层页大小固定为 **4 KiB**（见 [`api::addr::PAGE_SIZE`]），与 RISC-V Sv39 常用叶子页一致；大页不在本阶段 API 中表达。
+//! - [`kernel_mm`] 下 Sv39 实现依赖 **恒等映射或等价的物理线性访问**，以便页表 walk 时把 PPN 当可写指针用；更换映射模型时需同步改 `mm-impl`。
+//!
+//! ## 与 trap / 执行态的关系
+//!
+//! - 内核全局页表由 [`kernel_mm`] 路径安装 `satp` 后，trap 与内核代码仍在 **S 态** 下使用同一套映射（见 `kernel_global::init` 文档）；用户态任务切换时再换 `satp`。
+
 #![no_std]
 
 pub use api_v0 as api;
+pub use frame_alloctor;
 
 #[cfg(feature = "impl-sv39")]
 pub use impl_sv39 as mm_impl;
@@ -8,6 +21,25 @@ pub use impl_sv39 as mm_impl;
 #[cfg(feature = "impl-dummy")]
 pub use impl_dummy as mm_impl;
 
+/// 内核全局 Sv39 页表与用户 ELF 装载；类型契约见 [`api::kernel_bringup`]。
+pub mod kernel_mm {
+    pub use api_v0::kernel_bringup::{DEFAULT_USER_ELF_PATH, LoadElfError, LoadedElf};
+
+    #[cfg(all(feature = "impl-sv39", feature = "qemu-riscv64-opensbi"))]
+    pub use impl_sv39::kernel_mm_impl::{
+        ensure_user_execute_for_kernel_va, from_elf_bytes, from_elf_path, init, kernel_satp,
+        map_anon_range_user, map_identity_range_user,
+    };
+
+    #[cfg(not(all(feature = "impl-sv39", feature = "qemu-riscv64-opensbi")))]
+    pub use impl_dummy::kernel_mm_impl::{
+        ensure_user_execute_for_kernel_va, from_elf_path, init, kernel_satp, map_anon_range_user,
+        map_identity_range_user,
+    };
+}
+
+/// 自测入口：`start_ppn`/`end_ppn` 为 **物理页号（PPN）** 闭开区间，供栈式帧分配器初始化；
+/// 与 QEMU virt 等 bring-up 传入的可用 RAM 帧范围应对齐（具体由平台传入 `kernel_mm::init` 的区间约定）。
 pub fn test_with_range(start_ppn: wateros_base::addr::BasePPN, end_ppn: wateros_base::addr::BasePPN) {
     log::trace!("[wateros-mm] test begin");
 

@@ -1,3 +1,5 @@
+//! 物理帧分配 API v0：分配粒度为 **一帧 = 一页物理存储**（WaterOS 中与 mm-api 的 `PhysPageNum` 对齐，通常为 4 KiB 物理页号）。
+
 #![no_std]
 
 use core::result::Result;

@@ -4,6 +4,7 @@
     edition = "2024"
 
 [dependencies]
+    arch_api_v0 = { package = "wateros-platform-arch-api-v0", path = "./components/wateros-platform/platform-arch/arch-api/api-v0/", default-features = true }
     abi = { package = "wateros-abi", path = "./components/wateros-abi/", default-features = true }
     base = { package = "wateros-base", path = "./components/wateros-base/", default-features = true }
     fs = { package = "wateros-fs", path = "./components/wateros-fs/", default-features = true }
@@ -16,6 +17,7 @@
     mm = { package = "wateros-mm", path = "./components/wateros-mm/", default-features = true }
     syscall = { package = "wateros-syscall", path = "./components/wateros-syscall/", default-features = true }
     task = { package = "wateros-task", path = "./components/wateros-task/", default-features = true }
+    riscv = { version = "0.16.0" }
 
 [profile.dev]
     panic = "abort"
@@ -24,5 +26,11 @@
     panic = "abort"
 
 [features]
-    default = [ "qemu-riscv64-opensbi" ]
-    qemu-riscv64-opensbi = [ "platform/impl-qemu-riscv64-opensbi" ]
+    default = [ "impl-sv39", "qemu-riscv64-opensbi", "vfs-bridge" ]
+    qemu-riscv64-opensbi = [
+        "platform/impl-qemu-riscv64-opensbi",
+        "vfs-bridge",
+        "mm/qemu-riscv64-opensbi",
+    ]
+    vfs-bridge = [ "vfs/bridge-fs-api" ]
+    impl-sv39 = [ "mm/impl-sv39" ]

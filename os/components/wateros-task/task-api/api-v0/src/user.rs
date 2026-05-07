@@ -56,6 +56,8 @@ pub struct UserTaskSpec {
     entry_pc: UserTaskEntryPc,
     address_space: Option<AddressSpaceHandle>,
     image: Option<UserImageInfo>,
+    /// 已由 MM 映射好的用户栈 `(bottom, top]`；若 `None` 则使用内核侧 `UserStack` 分配。
+    external_stack: Option<(usize, usize)>,
 }
 
 impl UserTaskSpec {
@@ -66,6 +68,7 @@ impl UserTaskSpec {
             entry_pc,
             address_space: None,
             image: None,
+            external_stack: None,
         }
     }
 
@@ -76,6 +79,7 @@ impl UserTaskSpec {
             entry_pc: self.entry_pc,
             address_space: Some(address_space),
             image: self.image,
+            external_stack: self.external_stack,
         }
     }
 
@@ -86,6 +90,18 @@ impl UserTaskSpec {
             entry_pc: self.entry_pc,
             address_space: self.address_space,
             image: Some(image),
+            external_stack: self.external_stack,
+        }
+    }
+
+    /// 指定已由 MMU 映射的用户栈虚拟地址区间 `(bottom, top]`。
+    #[inline]
+    pub const fn with_external_stack(self, bottom: usize, top: usize) -> Self {
+        Self {
+            entry_pc: self.entry_pc,
+            address_space: self.address_space,
+            image: self.image,
+            external_stack: Some((bottom, top)),
         }
     }
 
@@ -105,6 +121,12 @@ impl UserTaskSpec {
     #[inline]
     pub const fn image(&self) -> Option<UserImageInfo> {
         self.image
+    }
+
+    /// 若已指定外部用户栈区间，则返回 `(bottom, top)`。
+    #[inline]
+    pub const fn external_stack(&self) -> Option<(usize, usize)> {
+        self.external_stack
     }
 }
 

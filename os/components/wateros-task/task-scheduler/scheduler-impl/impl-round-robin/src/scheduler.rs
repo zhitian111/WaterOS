@@ -241,6 +241,11 @@ impl RoundRobinScheduler {
             .current_task_kernel_stack_top()
     }
 
+    pub(super) fn current_task_address_space_raw(&self) -> usize {
+        self.registry
+            .current_task_address_space_raw()
+    }
+
     pub(super) fn record_current_trap_frame(&mut self, trap_frame: TaskTrapFrame) {
         self.registry
             .record_current_trap_frame(trap_frame);

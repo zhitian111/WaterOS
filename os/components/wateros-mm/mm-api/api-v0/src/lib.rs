@@ -1,3 +1,7 @@
+//! MM API v0：虚拟/物理地址、页权限、地址空间与 mmap/brk/用户访问等 **trait 契约**。
+//!
+//! 本 crate 不实现具体页表；**4 KiB 页** 与地址分解见 [`addr`]。实现侧（如 Sv39）须与这里的语义一致，并在文档中写明平台假设（恒等映射、trap 入口映射等）。
+
 #![no_std]
 
 pub mod addr;
@@ -11,6 +15,7 @@ pub mod user_access;
 
 pub mod brk;
 pub mod mmap;
+pub mod kernel_bringup;
 
 pub use frame_allocator::PhysicalFrameAllocator;
 

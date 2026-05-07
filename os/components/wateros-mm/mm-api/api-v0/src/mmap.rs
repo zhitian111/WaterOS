@@ -1,3 +1,5 @@
+//! `mmap`/`munmap` 契约：长度与地址按 **字节** 传入，实现应按 [`crate::addr::PAGE_SIZE`] 向上取整到虚拟页边界。
+
 use crate::address_space::AddressSpaceOps;
 use crate::addr::{VirtAddr, PhysPageNum};
 use crate::error::MmResult;

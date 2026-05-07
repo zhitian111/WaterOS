@@ -1,5 +1,11 @@
+//! 与平台 trap / 用户态返回路径对接的运行时胶水：**C ABI 符号** 薄转发到 [`crate::trap_runtime`]，
+//! 再委托 [`crate::scheduler`] 访问当前任务与 trap 现场。
+//!
+//! `#[no_mangle] extern "C"` 仍由汇编（如 `switch.S`）或固件约定直接按符号名链接；Rust 侧组合逻辑集中在 [`crate::trap_runtime`]。
+
 use crate::active_impl::TaskBootstrap;
-use crate::{schedule_tick, scheduler};
+use crate::scheduler;
+use crate::trap_runtime;
 use riscv::register::sstatus;
 use scheduler::TaskTrapFrame;
 
@@ -8,32 +14,34 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn __wateros_task_runtime_install_trap_satp(returns_to_user: usize) {
+    trap_runtime::install_satp_for_exception_return(returns_to_user != 0);
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn __wateros_task_runtime_schedule_tick() {
-    schedule_tick();
+    trap_runtime::schedule_tick_from_trap();
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn __wateros_task_runtime_record_current_trap_frame(trap_frame_ptr: *const u8) {
-    let trap_frame = unsafe { *(trap_frame_ptr as *const TaskTrapFrame) };
-    scheduler::record_current_trap_frame(trap_frame);
+    unsafe {
+        trap_runtime::record_current_trap_frame(trap_frame_ptr);
+    }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn __wateros_task_runtime_begin_current_trap_frame_access(
     trap_frame_ptr: *mut u8,
 ) -> *mut u8 {
-    let trap_frame = unsafe { *(trap_frame_ptr as *const TaskTrapFrame) };
-    scheduler::begin_current_trap_frame_access(trap_frame)
-        .map(|trap_frame_ptr| trap_frame_ptr.cast::<u8>())
-        .unwrap_or(trap_frame_ptr)
+    unsafe { trap_runtime::begin_current_trap_frame_access(trap_frame_ptr) }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn __wateros_task_runtime_restore_current_trap_frame(
     trap_frame_ptr: *mut u8,
 ) -> bool {
-    let trap_frame = unsafe { &mut *(trap_frame_ptr as *mut TaskTrapFrame) };
-    scheduler::restore_current_trap_frame(trap_frame)
+    unsafe { trap_runtime::restore_current_trap_frame(trap_frame_ptr) }
 }
 
 #[unsafe(no_mangle)]
@@ -47,6 +55,7 @@ pub extern "C" fn __wateros_task_runtime_enter_current_user_task() -> ! {
         "user task entry requires a prepared trap frame in the current task"
     );
     unsafe {
+        trap_runtime::install_satp_for_exception_return(true);
         __wateros_arch_restore_user_task(
             (&trap_frame as *const TaskTrapFrame).cast::<u8>(),
             kernel_stack_top,
