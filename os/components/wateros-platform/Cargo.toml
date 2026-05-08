@@ -27,7 +27,7 @@
     impl-qemu-riscv64-opensbi = { path = "./platform-impl/impl-qemu-riscv64-opensbi/", package = "wateros-platform-impl-qemu-riscv64-opensbi", default-features = false, optional = true }
     arch = { path = "./platform-arch/", package = "wateros-platform-arch", default-features = false }
     firmware = { path = "./platform-firmware/", package = "wateros-platform-firmware", default-features = false }
-    logging = {path = "../wateros-runtime/runtime-logging/", package = "wateros-runtime-logging", default-features = false}
+    logging = { path = "../wateros-runtime/runtime-logging/", package = "wateros-runtime-logging", default-features = false }
 
 [features]
     api-v0 = [
@@ -41,17 +41,17 @@
     impl-dummy = [ "dep:impl-dummy" ]
     impl-qemu-loongarch64-virt = [
         "api-v0",
-        "dep:impl-qemu-loongarch64-virt",
         "arch/impl-loongarch64",
+        "dep:impl-qemu-loongarch64-virt",
         "firmware/impl-qemu-loongarch64-uart16550",
         "logging/impl-firmware-console",
     ]
     impl-qemu-riscv64-opensbi = [
         "api-v0",
-        "dep:impl-qemu-riscv64-opensbi",
         "arch/impl-riscv64",
-        "logging/impl-firmware-opensbi",
+        "dep:impl-qemu-riscv64-opensbi",
         "firmware/impl-riscv64-opensbi",
+        "logging/impl-firmware-opensbi",
     ]
 
 [profile.dev]

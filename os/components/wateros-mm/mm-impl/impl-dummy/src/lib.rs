@@ -1,4 +1,4 @@
-//! `mm-impl` 桩：无 Sv39、无真实 `satp`；用于未启用 `impl-sv39` 或缺少 QEMU bring-up 的构建。
+//! `mm-impl` 桩：无 Sv39、无真实 `satp`；用于未启用 `wateros-mm` 的 `impl-sv39` 的构建。
 //!
 //! `kernel_mm_impl::from_elf_path` 等返回固定错误，避免链接真实 FS/页表路径。
 

@@ -25,13 +25,16 @@ pub use impl_dummy as mm_impl;
 pub mod kernel_mm {
     pub use api_v0::kernel_bringup::{DEFAULT_USER_ELF_PATH, LoadElfError, LoadedElf};
 
-    #[cfg(all(feature = "impl-sv39", feature = "qemu-riscv64-opensbi"))]
+    // 仅依赖 `impl-sv39`：根 crate 的 `qemu-riscv64-opensbi` 不会自动为依赖包打开同名 feature，
+    // 若此处再要求 `mm/qemu-riscv64-opensbi`，则从未启用该 flag 的构建会始终落到 dummy，
+    // `from_elf_path` 固定返回 `BadClass`（与磁盘/ext4 无关）。
+    #[cfg(feature = "impl-sv39")]
     pub use impl_sv39::kernel_mm_impl::{
         ensure_user_execute_for_kernel_va, from_elf_bytes, from_elf_path, init, kernel_satp,
         map_anon_range_user, map_identity_range_user,
     };
 
-    #[cfg(not(all(feature = "impl-sv39", feature = "qemu-riscv64-opensbi")))]
+    #[cfg(not(feature = "impl-sv39"))]
     pub use impl_dummy::kernel_mm_impl::{
         ensure_user_execute_for_kernel_va, from_elf_path, init, kernel_satp, map_anon_range_user,
         map_identity_range_user,

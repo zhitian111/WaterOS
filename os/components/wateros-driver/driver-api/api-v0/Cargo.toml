@@ -4,4 +4,4 @@
     edition = "2024"
 
 [dependencies]
-log = { version = "0.4.29" }
+    log = { version = "0.4.29" }

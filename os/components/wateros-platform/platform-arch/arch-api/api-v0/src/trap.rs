@@ -1,7 +1,12 @@
 //! Trap 帧、异常与中断原因，以及与用户态系统调用 ABI 的读写桥接（**纯架构语义**）。
 //!
-//! [`TrapCause`] 与 [`usize`] 之间的转换**当前**约定为 RISC-V `scause` 编码；若引入
-//! 其它 ISA，应将编码含义下沉到对应 `arch-impl`，或改为专用原始原因类型以避免歧义。
+//! ## `TrapCause` 与架构敏感解码
+//!
+//! - **`TrapCause` / `Exception` / `Interrupt`** 是跨架构的 **语义** 枚举；**原始 CSR 或硬件原因码
+//!   如何映射到 `TrapCause` 由各 `arch-impl` 负责**（例如 RISC-V 在 `impl-riscv64` 用 `Scause`
+//!   与 `From<Scause> for TrapCause`）。
+//! - **`TrapFrameRead::trap_cause`** 必须由每个 trap 帧类型 **显式实现**；`arch-api` **不**提供
+//!   从裸 `usize` 到 `TrapCause` 的默认转换，以免把某一 ISA 的编码误当成通用契约。
 
 use abi::syscall_args::{SyscallArgs, SyscallPacket};
 use abi::syscall_number::SyscallNumber;
@@ -67,7 +72,10 @@ impl TrapCause {
 #[allow(unused)]
 pub trait TrapFrameRead {
     fn raw_cause(&self) -> usize;
+
+    /// 将 `raw_cause()` 的 **架构相关** 原始编码解码为跨架构语义 `TrapCause`。
     fn trap_cause(&self) -> TrapCause;
+
     fn fault_addr(&self) -> usize;
     fn user_pc(&self) -> usize;
     fn user_sp(&self) -> usize;

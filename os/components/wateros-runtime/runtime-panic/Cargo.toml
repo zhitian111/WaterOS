@@ -5,4 +5,4 @@
 
 [dependencies]
     firmware = { path = "../../wateros-platform/platform-firmware/", package = "wateros-platform-firmware", default-features = false }
-    console = {path = "../runtime-console/", package = "wateros-runtime-console"}
+    console = { path = "../runtime-console/", package = "wateros-runtime-console" }

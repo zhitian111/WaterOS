@@ -10,7 +10,11 @@
     impl-riscv64 = { path = "./arch-impl/impl-riscv64/", package = "wateros-platform-arch-impl-riscv64", default-features = true, optional = true }
 
 [features]
-    api-v0 = [ "impl-dummy?/api-v0", "impl-loongarch64?/api-v0", "impl-riscv64?/api-v0" ]
+    api-v0 = [
+        "impl-dummy?/api-v0",
+        "impl-loongarch64?/api-v0",
+        "impl-riscv64?/api-v0",
+    ]
     default = [ "api-v0", "impl-riscv64" ]
     impl-dummy = [ "dep:impl-dummy" ]
     impl-loongarch64 = [ "dep:impl-loongarch64" ]

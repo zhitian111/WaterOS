@@ -1,12 +1,15 @@
-//! **组合层内核 trap 路由**：实现原先 `impl-riscv64/trap.rs` 中的 `TrapCause` 分支与返回路径，
-//! 经 [`arch_api_v0::kernel_trap::register_kernel_trap_handler`] 挂接到 `trap_entry_rust`。
+//! **组合层内核 trap 路由**：实现原先 `impl-riscv64/trap.rs` 中的 `TrapCause`
+//! 分支与返回路径，
+//! 经 [`arch_api_v0::kernel_trap::register_kernel_trap_handler`] 挂接到
+//! `trap_entry_rust`。
 //!
 //! **须在** `task::init()` **之后**调用 [`init`]。
 
 use abi::user_ret::UserRet;
 use arch_api_v0::kernel_trap::register_kernel_trap_handler;
 use arch_api_v0::trap::{
-    Exception, Interrupt, TrapCause, TrapFrameWrite, TrapSyscallRead, TrapSyscallWrite,
+    Exception, Interrupt, TrapCause, TrapFrameRead, TrapFrameWrite, TrapSyscallRead,
+    TrapSyscallWrite,
 };
 use core::sync::atomic::{AtomicUsize, Ordering};
 use platform::arch::paging;
@@ -18,11 +21,11 @@ use runtime::logging::*;
 use syscall::dispatch_syscall_from_trap;
 use task::trap_runtime;
 
-const TIMER_SLICE_TICKS: u64 = 1_250_000;
-static TIMER_TICK_COUNT: AtomicUsize = AtomicUsize::new(0);
-const SYSCALL_INSN_BYTES: usize = 4;
+const TIMER_SLICE_TICKS : u64 = 1_250_000;
+static TIMER_TICK_COUNT : AtomicUsize = AtomicUsize::new(0);
+const SYSCALL_INSN_BYTES : usize = 4;
 
-extern "C" fn wateros_kernel_trap_handler(frame: *mut u8) {
+extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
     let authoritative = unsafe { trap_runtime::begin_current_trap_frame_access(frame) };
     let cx = unsafe { &mut *(authoritative as *mut TrapContext) };
 
@@ -31,35 +34,33 @@ extern "C" fn wateros_kernel_trap_handler(frame: *mut u8) {
             sstatus::set_sum();
         }
     }
-
     let raw_scause = cx.raw_cause();
-    let trap_cause = TrapCause::from(raw_scause);
+    let trap_cause = cx.trap_cause();
     match trap_cause {
         TrapCause::Exception(Exception::UserEnvCall) => {
-            let syscall_nr = cx.syscall_nr().raw();
+            let syscall_nr = cx.syscall_nr()
+                               .raw();
             let syscall_args = cx.syscall_args();
             let syscall_ret = dispatch_syscall_from_trap(syscall_nr, syscall_args);
             cx.add_user_pc(SYSCALL_INSN_BYTES);
             cx.set_syscall_ret(UserRet(syscall_ret));
         }
-        TrapCause::Exception(Exception::InstructionPageFault)
-        | TrapCause::Exception(Exception::LoadPageFault)
-        | TrapCause::Exception(Exception::StorePageFault) => {
-            debug!(
-                "[trap] page fault: cause={:?} scause={:#x?} sepc={:#x?} stval={:#x?}",
-                trap_cause,
-                raw_scause,
-                cx.user_pc(),
-                cx.fault_addr()
-            );
+        TrapCause::Exception(Exception::InstructionPageFault) |
+        TrapCause::Exception(Exception::LoadPageFault) |
+        TrapCause::Exception(Exception::StorePageFault) => {
+            debug!("[trap] page fault: cause={:?} scause={:#x?} sepc={:#x?} stval={:#x?}",
+                   trap_cause,
+                   raw_scause,
+                   cx.user_pc(),
+                   cx.fault_addr());
         }
         TrapCause::Interrupt(Interrupt::SupervisiorTimer) => {
-            let now = read_time_tick()
-                .expect("read time tick during trap")
-                .0;
+            let now = read_time_tick().expect("read time tick during trap")
+                                      .0;
             let deadline = now.saturating_add(TIMER_SLICE_TICKS);
             if let Err(err) = set_timer_deadline_tick(ArchTimeTick(deadline)) {
-                panic!("failed to re-arm timer in trap: {:?}", err);
+                panic!("failed to re-arm timer in trap: {:?}",
+                       err);
             }
             let tick = TIMER_TICK_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
             if tick % 8 == 0 {
@@ -68,24 +69,20 @@ extern "C" fn wateros_kernel_trap_handler(frame: *mut u8) {
             trap_runtime::schedule_tick_from_trap();
         }
         _ => {
-            panic!(
-                "unexpected trap: cause={:?}, sepc={:#x}, stval={:#x}",
-                trap_cause,
-                cx.user_pc(),
-                cx.fault_addr()
-            );
+            panic!("unexpected trap: cause={:?}, sepc={:#x}, stval={:#x}",
+                   trap_cause,
+                   cx.user_pc(),
+                   cx.fault_addr());
         }
     }
 
     if cx.returns_to_user() {
         let satp = paging::read_satp();
-        trace!(
-            "[trap] return to user sepc={:#x} x2/sp={:#x} satp={:#x} raw_scause={:#x}",
-            cx.user_pc(),
-            cx.user_sp(),
-            satp,
-            raw_scause
-        );
+        trace!("[trap] return to user sepc={:#x} x2/sp={:#x} satp={:#x} raw_scause={:#x}",
+               cx.user_pc(),
+               cx.user_sp(),
+               satp,
+               raw_scause);
     }
 
     trap_runtime::install_satp_for_exception_return(cx.returns_to_user());
@@ -95,6 +92,4 @@ extern "C" fn wateros_kernel_trap_handler(frame: *mut u8) {
 }
 
 #[inline]
-pub fn init() {
-    register_kernel_trap_handler(wateros_kernel_trap_handler);
-}
+pub fn init() { register_kernel_trap_handler(wateros_kernel_trap_handler); }

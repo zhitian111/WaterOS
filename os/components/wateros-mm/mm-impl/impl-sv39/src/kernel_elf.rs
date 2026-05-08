@@ -5,6 +5,7 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
+use alloc::vec::Vec;
 use core::cmp;
 
 use api_v0::addr::{VirtAddr, VirtPageNum, PAGE_SIZE};
@@ -18,6 +19,53 @@ use crate::Sv39AddressSpace;
 
 const PT_LOAD: u32 = 1;
 const EM_RISCV: u16 = 243;
+
+/// 仅检查 ELF64 小端头前缀；用于在 `from_elf_path` 首读异常时决定是否重读。
+#[inline]
+fn elf_riscv64_le_prefix_ok(data: &[u8]) -> bool {
+    data.len() >= 6 && &data[0..4] == b"\x7FELF" && data[4] == 2 && data[5] == 1
+}
+
+/// 从根 RO 句柄读整文件；若首读 ELF 前缀明显损坏则 **再读一次**（ext4-view
+/// 在大量目录遍历后偶发首读损坏的 bring-up 规避，与磁盘镜像内容无关）。
+fn read_whole_file_ro_retry_bad_prefix(root: &fs::api::SharedFs, path: &str) -> Result<Vec<u8>, LoadElfError> {
+    let first = {
+        let g = root.lock();
+        g.read(path).map_err(|e| {
+            runtime::logging::trace!("[elf-load] abort: Fs::read err={:?} path={}", e, path);
+            LoadElfError::Fs(e)
+        })?
+    };
+    if elf_riscv64_le_prefix_ok(&first) {
+        return Ok(first);
+    }
+    let n = first.len().min(16);
+    runtime::logging::warn!(
+        "[elf-load] first read bad ELF64-LE prefix (len={} first{}={:02x?}); retry read once path={}",
+        first.len(),
+        n,
+        &first[..n],
+        path
+    );
+    let second = {
+        let g = root.lock();
+        g.read(path).map_err(|e| {
+            runtime::logging::trace!("[elf-load] abort: Fs::read retry err={:?} path={}", e, path);
+            LoadElfError::Fs(e)
+        })?
+    };
+    if !elf_riscv64_le_prefix_ok(&second) {
+        let n2 = second.len().min(16);
+        runtime::logging::warn!(
+            "[elf-load] retry read still bad prefix (len={} first{}={:02x?}) path={}",
+            second.len(),
+            n2,
+            &second[..n2],
+            path
+        );
+    }
+    Ok(second)
+}
 
 #[inline]
 fn rd_u16(s: &[u8], o: usize) -> Option<u16> {
@@ -186,10 +234,7 @@ pub fn from_elf_path(path: &str) -> Result<LoadedElf, LoadElfError> {
         runtime::logging::trace!("[elf-load] abort: no root_fs (mount/driver?)");
         LoadElfError::NoRootFs
     })?;
-    let data = root.lock().read(path).map_err(|e| {
-        runtime::logging::trace!("[elf-load] abort: Fs::read err={:?} path={}", e, path);
-        LoadElfError::Fs(e)
-    })?;
+    let data = read_whole_file_ro_retry_bad_prefix(&root, path)?;
     runtime::logging::trace!(
         "[elf-load] read ok bytes={} path={}",
         data.len(),
@@ -209,7 +254,14 @@ pub fn from_elf_bytes(data: &[u8]) -> Result<LoadedElf, LoadElfError> {
         return Err(LoadElfError::BadMagic);
     }
     if data.get(4) != Some(&2) {
-        runtime::logging::trace!("[elf-load] abort: BadClass ei_class={:?}", data.get(4));
+        let n = data.len().min(16);
+        runtime::logging::warn!(
+            "[elf-load] BadClass ei_class={:?} len={} first{}={:02x?}",
+            data.get(4),
+            data.len(),
+            n,
+            &data[..n]
+        );
         return Err(LoadElfError::BadClass);
     }
     if data.get(5) != Some(&1) {

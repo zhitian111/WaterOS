@@ -1,17 +1,18 @@
+//! **架构（ISA）层**：聚合 `arch-api-v0` 与具体 `arch-impl-*`，向内核暴露
+//! trap、 时间计数、任务硬件上下文、中断位、分页 CSR 等与指令集强相关的原语。
+//!
+//! ## 与 `wateros-platform-firmware` 的边界
+//! - 本 crate **仅**操作 CPU 可见的 CSR/汇编约定（如 RISC-V `stimecmp`
+//!   若将来直接 访问也属于 arch 讨论范围）；**经 SBI
+//!   设置下次中断时刻**、**经固件写串口** 等 属于 firmware 层，由依赖方分别引用
+//!   `arch` 与 `firmware` crate 组合使用。
+//! - `arch-impl-riscv64` 的 trap 路径可能**调用** firmware 以重载定时器，这是
+//!   **组合点**而非“arch API 向外暴露 SBI”：对外仍通过 `firmware` 的 trait
+//!   实现隔离。
 #![no_std]
 #[cfg(all(feature = "impl-riscv64", feature = "impl-loongarch64"))]
 compile_error!("select only one platform-arch implementation");
 
-
-//! **架构（ISA）层**：聚合 `arch-api-v0` 与具体 `arch-impl-*`，向内核暴露 trap、
-//! 时间计数、任务硬件上下文、中断位、分页 CSR 等与指令集强相关的原语。
-//!
-//! ## 与 `wateros-platform-firmware` 的边界
-//! - 本 crate **仅**操作 CPU 可见的 CSR/汇编约定（如 RISC-V `stimecmp` 若将来直接
-//!   访问也属于 arch 讨论范围）；**经 SBI 设置下次中断时刻**、**经固件写串口** 等
-//!   属于 firmware 层，由依赖方分别引用 `arch` 与 `firmware` crate 组合使用。
-//! - `arch-impl-riscv64` 的 trap 路径可能**调用** firmware 以重载定时器，这是
-//!   **组合点**而非“arch API 向外暴露 SBI”：对外仍通过 `firmware` 的 trait 实现隔离。
 
 /// 极早启动钩子：在具备 trap 能力前初始化与 trap 向量相关的一小部分 arch 状态。
 ///
@@ -28,7 +29,8 @@ pub fn arch_boot() {
     impl_loongarch64::init_trap();
 }
 
-/// RISC-V `time` / `timeh` 等计数与频率查询（频率在实现中可返回不支持，由 platform 层补全）。
+/// RISC-V `time` / `timeh` 等计数与频率查询（频率在实现中可返回不支持，由
+/// platform 层补全）。
 #[cfg(feature = "api-v0")]
 pub mod time {
     pub use api_v0::time::{
@@ -41,9 +43,7 @@ pub mod time {
     pub use impl_riscv64::time::Riscv64ArchTime as ArchTimeImpl;
 
     #[inline]
-    pub fn read_time_tick() -> ArchTimeResult<ArchTimeTick> {
-        ArchTimeImpl::read_time_tick()
-    }
+    pub fn read_time_tick() -> ArchTimeResult<ArchTimeTick> { ArchTimeImpl::read_time_tick() }
 
     #[inline]
     pub fn read_time_frequency() -> ArchTimeResult<ArchTimeFrequency> {
@@ -78,8 +78,8 @@ pub mod trap {
     pub use impl_riscv64::trap::TrapContext as ActiveTrapFrame;
 }
 
-/// 监管态中断屏蔽与使能（如 `sie` / `sstatus.SIE`），**不**包含对 CLINT/ACLINT 或
-/// SBI `set_timer` 的编程。
+/// 监管态中断屏蔽与使能（如 `sie` / `sstatus.SIE`），**不**包含对 CLINT/ACLINT
+/// 或 SBI `set_timer` 的编程。
 #[cfg(feature = "api-v0")]
 pub mod interrupt {
     pub use api_v0::interrupt::ArchTimerInterruptControl;
@@ -118,14 +118,12 @@ pub mod interrupt {
     }
 
     #[inline]
-    pub fn restore_global_interrupt_state(state: ArchInterruptState) -> ArchTimeResult<()> {
+    pub fn restore_global_interrupt_state(state : ArchInterruptState) -> ArchTimeResult<()> {
         ArchInterruptImpl::restore_global_interrupt_state(state)
     }
 
     #[inline]
-    pub fn wait_for_interrupt() {
-        ArchInterruptImpl::wait_for_interrupt();
-    }
+    pub fn wait_for_interrupt() { ArchInterruptImpl::wait_for_interrupt(); }
 }
 
 /// 分页控制 CSR（如 `satp`）与必要的 TLB 刷新原语；页表内容管理在上层 MM 组件。
@@ -136,12 +134,8 @@ pub mod paging {
     pub use impl_riscv64::paging::Riscv64Paging as ArchPagingImpl;
 
     #[inline]
-    pub fn read_satp() -> usize {
-        ArchPagingImpl::read_satp()
-    }
+    pub fn read_satp() -> usize { ArchPagingImpl::read_satp() }
 
     #[inline]
-    pub fn write_satp_and_flush(satp: usize) {
-        ArchPagingImpl::write_satp_and_flush(satp)
-    }
+    pub fn write_satp_and_flush(satp : usize) { ArchPagingImpl::write_satp_and_flush(satp) }
 }

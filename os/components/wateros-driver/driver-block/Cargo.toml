@@ -16,4 +16,3 @@
     default = [ "api-v0", "impl-virtio-mmio" ]
     impl-dummy = [  ]
     impl-virtio-mmio = [ "dep:impl-virtio-mmio" ]
-

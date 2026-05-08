@@ -1,12 +1,8 @@
-<<<<<<< HEAD
 //! RISC-V 特权级 **中断使能位** 的薄封装：`sie.STIE` 与 `sstatus.SIE`。
 //!
 //! 与 **固件定时器**（`mtime` / `set_timer`）解耦；后者在 `platform-firmware` 组合。
 
-use api_v0::interrupt::ArchTimerInterruptControl;
-=======
 use api_v0::interrupt::{ArchInterruptState, ArchTimerInterruptControl};
->>>>>>> github/main
 use api_v0::time::ArchTimeResult;
 use core::arch::asm;
 use riscv::register::{sie, sstatus};

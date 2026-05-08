@@ -1,5 +1,9 @@
 [workspace]
-    members = [ "./task-api/api-v0/", "./task-impl/impl-core/", "./task-scheduler/" ]
+    members = [
+        "./task-api/api-v0/",
+        "./task-impl/impl-core/",
+        "./task-scheduler/",
+    ]
 [package]
     name = "wateros-task"
     version = "0.1.0"
@@ -7,23 +11,24 @@
 
 [dependencies]
     api-v0 = { path = "./task-api/api-v0/", package = "wateros-task-api-v0", default-features = true }
-<<<<<<< HEAD
-    impl-core = { path = "./task-impl/impl-core/", package = "wateros-task-impl-core", default-features = true }
-    arch = { path = "../wateros-platform/platform-arch/", package = "wateros-platform-arch", default-features = true }
-    riscv = { version = "0.16.0" }
-    scheduler = { path = "./task-scheduler/", package = "wateros-task-scheduler", default-features = true }
-=======
     arch = { path = "../wateros-platform/platform-arch/", package = "wateros-platform-arch", default-features = false }
     impl-core = { path = "./task-impl/impl-core/", package = "wateros-task-impl-core", default-features = false }
     scheduler = { path = "./task-scheduler/", package = "wateros-task-scheduler", default-features = false }
->>>>>>> github/main
 
 [features]
     api-v0 = [ "impl-core/api-v0", "scheduler/api-v0" ]
     default = [ "api-v0", "impl-core" ]
     impl-core = [  ]
-    impl-loongarch64 = [ "arch/api-v0", "arch/impl-loongarch64", "impl-core/impl-loongarch64" ]
-    impl-riscv64 = [ "arch/api-v0", "arch/impl-riscv64", "impl-core/impl-riscv64" ]
+    impl-loongarch64 = [
+        "arch/api-v0",
+        "arch/impl-loongarch64",
+        "impl-core/impl-loongarch64",
+    ]
+    impl-riscv64 = [
+        "arch/api-v0",
+        "arch/impl-riscv64",
+        "impl-core/impl-riscv64",
+    ]
     impl-round-robin = [ "scheduler/impl-round-robin" ]
 
 [profile.dev]

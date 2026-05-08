@@ -1,5 +1,9 @@
 [workspace]
-    members = [ "./ipc-api/api-v0/", "./ipc-impl/impl-dummy/", "./ipc-waitqueue/" ]
+    members = [
+        "./ipc-api/api-v0/",
+        "./ipc-impl/impl-dummy/",
+        "./ipc-waitqueue/",
+    ]
 [package]
     name = "wateros-ipc"
     version = "0.1.0"

@@ -11,9 +11,9 @@
     impl-fs-bridge = { path = "./vfs-impl/impl-fs-bridge/", package = "wateros-vfs-impl-fs-bridge", default-features = true, optional = true }
 
 [features]
-    default = [ "api-v0", "bridge-fs-api" ]
     api-v0 = [ "impl-dummy/api-v0", "impl-fs-bridge?/api-v0" ]
     bridge-fs-api = [ "dep:impl-fs-bridge", "impl-fs-bridge/bridge-fs-api" ]
+    default = [ "api-v0", "bridge-fs-api" ]
     impl-dummy = [  ]
 
 [profile.dev]

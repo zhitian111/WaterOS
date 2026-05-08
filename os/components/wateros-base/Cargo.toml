@@ -1,7 +1,5 @@
 [workspace]
-members = ["base-config"
-
-]
+    members = [ "base-config" ]
 [package]
     name = "wateros-base"
     version = "0.1.0"

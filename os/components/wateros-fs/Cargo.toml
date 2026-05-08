@@ -5,13 +5,13 @@
         "./fs-devfs/devfs-api/api-v0/",
         "./fs-devfs/devfs-impl/impl-dummy/",
         "./fs-devfs/devfs-impl/impl-kernel/",
+        "./fs-impl/impl-devfs/",
+        "./fs-impl/impl-dummy/",
+        "./fs-impl/impl-ext4/",
         "./fs-rootfs/",
         "./fs-rootfs/rootfs-api/api-v0/",
         "./fs-rootfs/rootfs-impl/impl-dummy/",
         "./fs-rootfs/rootfs-impl/impl-kernel/",
-        "./fs-impl/impl-ext4/",
-        "./fs-impl/impl-devfs/",
-        "./fs-impl/impl-dummy/",
     ]
 [package]
     name = "wateros-fs"
@@ -29,7 +29,12 @@
     spin = "0.10.0"
 
 [features]
-    api-v0 = [ "impl-dummy/api-v0", "impl-ext4?/api-v0", "devfs/api-v0", "rootfs/api-v0" ]
+    api-v0 = [
+        "devfs/api-v0",
+        "impl-dummy/api-v0",
+        "impl-ext4?/api-v0",
+        "rootfs/api-v0",
+    ]
     default = [ "api-v0", "impl-devfs", "impl-ext4" ]
     impl-devfs = [  ]
     impl-dummy = [  ]

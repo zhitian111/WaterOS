@@ -1,5 +1,10 @@
 [workspace]
-    members = [ "./mm-api/api-v0/", "./mm-impl/impl-dummy/" , "mm-frame-alloctor", "mm-impl/impl-sv39"]
+    members = [
+        "./mm-api/api-v0/",
+        "./mm-impl/impl-dummy/",
+        "mm-frame-alloctor",
+        "mm-impl/impl-sv39",
+    ]
 [package]
     name = "wateros-mm"
     version = "0.1.0"

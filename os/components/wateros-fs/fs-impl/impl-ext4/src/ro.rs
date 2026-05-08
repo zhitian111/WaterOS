@@ -1,9 +1,10 @@
 //! 只读路径（基于 `ext4-view`）：实现 [`api_v0::ReadOnlyFs`] 与启动期目录树打印。
 
 use alloc::boxed::Box;
+use alloc::vec;
 use alloc::vec::Vec;
 use api_v0::{FsError, FsMetadata, FsNodeType, FsResult, ReadOnlyFs};
-use driver_block_api_v0::SharedBlockDevice;
+use driver_block_api_v0::{SharedBlockDevice, BLOCK_SIZE};
 use ext4_view::{Ext4, Ext4Error, Ext4Read, Metadata, Path};
 
 // 将驱动的按字节读适配为 ext4-view 的 Ext4Read；错误映射在 map_ext4_error。
@@ -66,7 +67,34 @@ impl ReadOnlyFs for Ext4Fs {
     }
 
     fn read(&self, path: &str) -> FsResult<Vec<u8>> {
-        self.fs()?.read(path).map_err(map_ext4_error)
+        // 不用 `Ext4::read` 单次 `read_inode_file`：在大量目录遍历 + 大块整读时，
+        // 曾与内核侧 VirtIO 512B 扇区路径组合出现首读 ELF 头损坏；按块设备逻辑块
+        // 粒度循环 `File::read_bytes` 组装整文件更稳。
+        let fs = self.fs()?;
+        let pathv = Path::try_from(path).map_err(|_| FsError::InvalidPath)?;
+        let meta = fs.metadata(pathv).map_err(map_ext4_error)?;
+        if !meta.file_type().is_regular_file() {
+            return Err(FsError::NotAFile);
+        }
+        let file_size = usize::try_from(meta.len()).map_err(|_| FsError::Io)?;
+        let mut file = fs.open(pathv).map_err(map_ext4_error)?;
+        let mut out = vec![0u8; file_size];
+        let mut filled = 0usize;
+        while filled < file_size {
+            let room = file_size - filled;
+            let chunk = room.min(BLOCK_SIZE);
+            let n = file
+                .read_bytes(&mut out[filled..filled + chunk])
+                .map_err(map_ext4_error)?;
+            if n == 0 {
+                break;
+            }
+            filled += n;
+        }
+        if filled != file_size {
+            return Err(FsError::Io);
+        }
+        Ok(out)
     }
 
     fn boot_dump_all_paths(&self) {

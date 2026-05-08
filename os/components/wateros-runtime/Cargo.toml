@@ -5,7 +5,8 @@
         "./runtime-console/console-impl/impl-firmware-opensbi/",
         "./runtime-logging/",
         "./runtime-panic/",
-        "runtime-console", "runtime-heap-allocator",
+        "runtime-console",
+        "runtime-heap-allocator",
     ]
 [package]
     name = "wateros-runtime"
@@ -16,15 +17,21 @@
     panic = { path = "./runtime-panic/", package = "wateros-runtime-panic", default-features = true }
     console = { path = "./runtime-console/", package = "wateros-runtime-console", default-features = false }
     logging = { path = "./runtime-logging/", package = "wateros-runtime-logging", default-features = false }
-    heap-allocator = {path= "./runtime-heap-allocator/",package = "wateros-runtime-heap-allocator", default-features = true}
+    heap-allocator = { path = "./runtime-heap-allocator/", package = "wateros-runtime-heap-allocator", default-features = true }
 
 [features]
     default = []
-    impl-dummy = [ "console/impl-dummy", "logging/impl-dummy" ]
-    impl-firmware-console = [ "console/impl-firmware-console", "logging/impl-firmware-console" ]
-    impl-firmware-opensbi = [ "console/impl-firmware-opensbi", "logging/impl-firmware-opensbi" ]
-    impl-trace = [ "logging/impl-trace" ]
     impl-debug = [ "logging/impl-debug" ]
-    impl-info = [ "logging/impl-info" ]
-    impl-warn = [ "logging/impl-warn" ]
+    impl-dummy = [ "console/impl-dummy", "logging/impl-dummy" ]
     impl-error = [ "logging/impl-error" ]
+    impl-firmware-console = [
+        "console/impl-firmware-console",
+        "logging/impl-firmware-console",
+    ]
+    impl-firmware-opensbi = [
+        "console/impl-firmware-opensbi",
+        "logging/impl-firmware-opensbi",
+    ]
+    impl-info = [ "logging/impl-info" ]
+    impl-trace = [ "logging/impl-trace" ]
+    impl-warn = [ "logging/impl-warn" ]

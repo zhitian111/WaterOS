@@ -7,7 +7,6 @@
     arch_api_v0 = { package = "wateros-platform-arch-api-v0", path = "./components/wateros-platform/platform-arch/arch-api/api-v0/", default-features = true }
     abi = { package = "wateros-abi", path = "./components/wateros-abi/", default-features = true }
     base = { package = "wateros-base", path = "./components/wateros-base/", default-features = true }
-<<<<<<< HEAD
     fs = { package = "wateros-fs", path = "./components/wateros-fs/", default-features = true }
     vfs = { package = "wateros-vfs", path = "./components/wateros-vfs/", default-features = true }
     platform = { package = "wateros-platform", path = "./components/wateros-platform/", default-features = true }
@@ -19,18 +18,6 @@
     syscall = { package = "wateros-syscall", path = "./components/wateros-syscall/", default-features = true }
     task = { package = "wateros-task", path = "./components/wateros-task/", default-features = true }
     riscv = { version = "0.16.0" }
-=======
-    fs = { package = "wateros-fs", path = "./components/wateros-fs/", default-features = false, optional = true }
-    vfs = { package = "wateros-vfs", path = "./components/wateros-vfs/", default-features = false, optional = true }
-    platform = { package = "wateros-platform", path = "./components/wateros-platform/", default-features = false }
-    utils = { package = "wateros-utils", path = "./components/wateros-utils/", default-features = false, optional = true }
-    driver = { package = "wateros-driver", path = "./components/wateros-driver/", default-features = false, optional = true }
-    ipc = { package = "wateros-ipc", path = "./components/wateros-ipc/", default-features = false, optional = true }
-    runtime = { package = "wateros-runtime", path = "./components/wateros-runtime/", default-features = false }
-    mm = { package = "wateros-mm", path = "./components/wateros-mm/", default-features = false, optional = true }
-    syscall = { package = "wateros-syscall", path = "./components/wateros-syscall/", default-features = false, optional = true }
-    task = { package = "wateros-task", path = "./components/wateros-task/", default-features = false, optional = true }
->>>>>>> github/main
 
 [profile.dev]
     panic = "abort"
@@ -39,32 +26,28 @@
     panic = "abort"
 
 [features]
-<<<<<<< HEAD
-    default = [ "impl-sv39", "qemu-riscv64-opensbi", "vfs-bridge" ]
-    qemu-riscv64-opensbi = [
-        "platform/impl-qemu-riscv64-opensbi",
-        "vfs-bridge",
-        "mm/qemu-riscv64-opensbi",
-    ]
+    default = [ "qemu-riscv64-opensbi" ]
     vfs-bridge = [ "vfs/bridge-fs-api" ]
     impl-sv39 = [ "mm/impl-sv39" ]
-=======
-    default = [ "qemu-riscv64-opensbi" ]
     qemu-loongarch64-virt = [
         "platform/impl-qemu-loongarch64-virt",
         "runtime/impl-debug",
         "runtime/impl-firmware-console",
     ]
     qemu-riscv64-opensbi = [
-        "dep:driver",
-        "dep:fs",
-        "dep:ipc",
-        "dep:mm",
-        "dep:syscall",
-        "dep:task",
-        "dep:utils",
-        "dep:vfs",
+        # "dep:driver",
+        # "dep:fs",
+        # "dep:ipc",
+        # "dep:mm",
+        # "dep:syscall",
+        # "dep:task",
+        # "dep:utils",
+        # "dep:vfs",
+        "vfs-bridge",
         "driver/impl-qemu-riscv64-opensbi",
+        # 根 crate 的 `impl-sv39`：`spawn_all` 里 ELF 自检与 stage4 用户栈映射用
+        # `#[cfg(feature = "impl-sv39")]`；仅给 `mm/impl-sv39` 不会打开该 cfg。
+        "impl-sv39",
         "mm/impl-sv39",
         "platform/impl-qemu-riscv64-opensbi",
         "runtime/impl-firmware-opensbi",
@@ -73,4 +56,3 @@
         "task/impl-riscv64",
         "task/impl-round-robin",
     ]
->>>>>>> github/main
