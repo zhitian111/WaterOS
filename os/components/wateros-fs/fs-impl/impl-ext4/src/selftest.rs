@@ -1,8 +1,11 @@
 //! ext4 自检：RO 端读固定文本与 ELF 头；RW 端在根目录写入 `/hello` 并由调用方再用只读栈读回校验。
+//!
+//! 路径常量与根镜像布局耦合（bring-up 镜像中的 `/src/bin/...` 与 `/elf/...`）；更换镜像时需同步调整常量或跳过自检。
 
 use alloc::string::String;
 use api_v0::{FsError, FsResult, ReadOnlyFs, SharedFs, SharedRwFs};
 
+// 仅从 ELF 头解析的烟测字段（非完整 loader 语义）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ElfHeaderInfo {
     class: u8,
@@ -11,6 +14,7 @@ struct ElfHeaderInfo {
     entry: u64,
 }
 
+// 仅覆盖 64 位（class==2）与常见 endian；其它组合返回 Unsupported/Corrupt，供日志判断镜像是否可读。
 fn parse_elf_header(data: &[u8]) -> FsResult<ElfHeaderInfo> {
     if data.len() < 0x40 {
         return Err(FsError::Io);

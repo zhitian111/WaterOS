@@ -38,13 +38,15 @@ __arch_user_task_entry:
     tail __wateros_arch_user_task_entry_trampoline
 
     .globl __wateros_arch_restore_user_task
+# a0 = `TrapContext*`（与 `trap.rs` #[repr(C)] 一致）；a1 = 下次用户态 trap 时使用的内核栈顶。
 __wateros_arch_restore_user_task:
+    # 32*8 / 33*8：`sstatus` / `sepc` 在 `TrapContext` 中的偏移。
     ld t0, 32*8(a0)
     csrw sstatus, t0
     ld t0, 33*8(a0)
     csrw sepc, t0
 
-    # a1 holds the kernel stack top that user-mode traps should switch to.
+    # 切到内核栈；`sscratch` 存用户 sp（x2 槽），与 `trap.asm` 进入路径成对。
     mv sp, a1
     ld t0, 2*8(a0)
     csrw sscratch, t0

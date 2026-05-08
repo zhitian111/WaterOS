@@ -32,6 +32,7 @@ pub enum LoadElfError {
     Mm(MmError),
 }
 
+/// 将 [`MmError`] 提升为装载错误（页表/帧分配失败路径）。
 impl From<MmError> for LoadElfError {
     fn from(e: MmError) -> Self {
         LoadElfError::Mm(e)

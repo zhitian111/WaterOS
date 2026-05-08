@@ -2,6 +2,8 @@
 //! 用户态系统调用分发：将 ABI 规定的调用号与寄存器参数映射到内核任务、控制台与最小内存桩。
 //!
 //! **契约**：[`dispatch_syscall_from_trap`] 为 Rust 侧 trap 组合入口；[`__wateros_syscall_dispatch_current`] 供 C ABI（如 `switch` 桩）使用。返回值遵循 `UserRet`/`ErrNo` 编码。
+//!
+//! **依赖与 feature**：`abi` / `task` 由 crate feature（如 `impl-riscv64`、`impl-loongarch64`）选择具体平台表与调度实现；`console` 提供内核侧原始字节输出。未实现的调用统一返回 `ENOSYS`。
 
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
@@ -9,6 +11,7 @@ use abi::syscall_number::{ActiveSyscallNumberTable, SyscallNumberTable};
 use abi::user_ret::UserRet;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+// 与当前 `ActiveSyscallNumberTable` 一致的调用号常量，供 `match` 与 trap 侧传入的 `syscall_nr` 做整数比较（避免运行时查表）。
 const SYSCALL_YIELD_NR: usize = <ActiveSyscallNumberTable as SyscallNumberTable>::YIELD.raw();
 const SYSCALL_EXIT_NR: usize = <ActiveSyscallNumberTable as SyscallNumberTable>::EXIT.raw();
 const SYSCALL_EXIT_GROUP_NR: usize =
@@ -21,6 +24,7 @@ const SYSCALL_BRK_NR: usize = <ActiveSyscallNumberTable as SyscallNumberTable>::
 /// **当前行为**：首次 `brk(0)` 返回常量初值；`brk(addr)` 仅接受不小于当前顶的地址。**后续替换点**：对接真实 `mmap`/VMA 管理后应删除此原子桩。
 static USER_BRK_FAKE: AtomicUsize = AtomicUsize::new(0);
 
+// `write`：仅允许 fd 1/2 走控制台；`len==0` 立即成功；非零长度有上限，防止用户态传入极大值拖垮内核拷贝路径。
 #[inline]
 fn dispatch_write(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
@@ -40,6 +44,7 @@ fn dispatch_write(args: SyscallArgs) -> UserRet {
     UserRet::from_success(len)
 }
 
+// `brk`：单调递增假堆顶；`addr==0` 为查询语义，首次返回 `INITIAL` 并缓存。
 #[inline]
 fn dispatch_brk(addr: usize) -> UserRet {
     // 须高于静态链接用户镜像末端（含大 `.bss` 堆）；仅作 `brk(0)` 查询桩。
@@ -65,15 +70,18 @@ fn dispatch_brk(addr: usize) -> UserRet {
 pub fn dispatch_syscall_from_trap(syscall_nr: usize, syscall_args: SyscallArgs) -> isize {
     match syscall_nr {
         SYSCALL_YIELD_NR => {
+            // 协作式让出当前任务；无额外参数。
             task::yield_now();
             UserRet::from_success(0).0
         }
         SYSCALL_EXIT_NR | SYSCALL_EXIT_GROUP_NR => {
+            // 单进程模型下 `EXIT` 与 `EXIT_GROUP` 均视为终止当前任务。
             let exit_code = syscall_args.arg(0) as isize;
             task::exit_current(exit_code)
         }
         SYSCALL_WRITE_NR => dispatch_write(syscall_args).0,
         SYSCALL_BRK_NR => dispatch_brk(syscall_args.arg(0)).0,
+        // 未在表中实现的调用：保持与 Linux 风格 `ENOSYS` 一致，便于用户态探测能力。
         _ => UserRet::from_error(ErrNo::ENOSYS).0,
     }
 }
@@ -81,6 +89,8 @@ pub fn dispatch_syscall_from_trap(syscall_nr: usize, syscall_args: SyscallArgs) 
 /// 当前任务上的系统调用分发入口：按 `ActiveSyscallNumberTable` 解析 `syscall_nr`，参数来自通用寄存器约定。
 ///
 /// 已识别调用：`YIELD`、`EXIT`/`EXIT_GROUP`、`WRITE`（仅 fd 1/2 走控制台）、`BRK`（见 [`USER_BRK_FAKE`]）；其余返回 `ENOSYS`。
+///
+/// **ABI**：`extern "C"` 且 `#[unsafe(no_mangle)]`，符号名固定，供汇编或 C 侧按平台调用约定直接跳转；六个 `usize` 与 `SyscallArgs::from_regs` 所用寄存器槽顺序一致。
 #[unsafe(no_mangle)]
 pub extern "C" fn __wateros_syscall_dispatch_current(
     syscall_nr: usize,

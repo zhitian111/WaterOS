@@ -93,3 +93,7 @@ flowchart TD
 - 架构图：`docs/exports/architecture/`
 - 功能快照：`docs/exports/features/`（目录说明见该路径下 **`README.md`**）
 - 版本概述：`docs/exports/release-overview/`
+
+## 注释覆盖维护（无行为变更）
+
+最近一次全树注释对齐以 `docs/tasks/commenting.md` 为基准，覆盖 `os/components/**`、`os/src/`、`user/**` 及板级/架构侧汇编与链接脚本中的必要说明；**未改变**根 `os/Cargo.toml` 依赖图、默认 feature 组合或运行时启动语义。对外契约仍以各 crate 内 **`///` / `//!`** 与 `documentation.md` 为准。

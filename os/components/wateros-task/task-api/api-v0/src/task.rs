@@ -1,3 +1,7 @@
+//! 任务身份、状态机与运行统计：**调度与实现层共享的语义类型**，不绑定具体 TCB 内存布局。
+//!
+//! 与 `snapshot`、`user`、`wait` 等模块共同构成 `task_api`；变更状态或阻塞原因枚举时需同步调度器与 `impl-core` 的解读路径。
+
 use crate::{TaskTrapSnapshot, UserTaskResources};
 
 /// 任务在系统内的唯一标识。
@@ -16,14 +20,16 @@ pub type UserTaskEntryPc = usize;
 /// 预留给 idle 任务的固定任务号。
 pub const IDLE_TASK_ID : TaskId = 0;
 
+/// 区分内核线程与用户态任务；影响 TCB 是否持有用户栈与 `satp` 句柄等资源路径。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TaskKind {
     /// 只在内核态运行的任务。
     Kernel,
-    /// 后续用于承载用户态任务。
+    /// 拥有用户栈与用户返回现场的用户态任务（与 `TaskControlBlock::new_user_task` 路径对应）。
     User,
 }
 
+/// 任务进入 `TaskState::Blocking` 时的原因；调度器据此分入不同等待结构。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TaskBlockReason {
     /// 主动让出 CPU。
@@ -38,6 +44,7 @@ pub enum TaskBlockReason {
     Manual,
 }
 
+/// 调度器驱动的任务生命周期状态；与就绪队列/阻塞队列表示需保持一致。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TaskState {
     /// 已就绪，等待被调度运行。

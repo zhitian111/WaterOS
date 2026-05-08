@@ -9,6 +9,10 @@
 //! ## 与 trap / 执行态的关系
 //!
 //! - 内核全局页表由 [`kernel_mm`] 路径安装 `satp` 后，trap 与内核代码仍在 **S 态** 下使用同一套映射（见 `kernel_global::init` 文档）；用户态任务切换时再换 `satp`。
+//!
+//! ## Feature 与桩路径
+//!
+//! - 默认组合为 `impl-sv39` + 帧 `impl-stack`；仅启用 `impl-dummy`（mm 或 frame）时对应子 crate 的 `//!` 说明当前无操作/固定错误语义，便于在主机或未接线目标上通过编译。
 
 #![no_std]
 

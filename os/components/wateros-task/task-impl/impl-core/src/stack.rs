@@ -79,5 +79,6 @@ impl UserStack {
     pub const fn size(&self) -> usize { USER_TASK_STACK_SIZE }
 }
 
+// `align` 必须为 2 的幂；栈顶向下对齐以满足调用约定中的 16 字节对齐要求。
 #[inline]
 const fn align_down(value: usize, align: usize) -> usize { value & !(align - 1) }

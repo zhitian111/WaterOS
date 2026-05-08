@@ -1,8 +1,14 @@
 #![no_std]
 
+//! QEMU **`virt` LoongArch64** 板级 profile：引导参数槽位与 StableCounter 频率常量。
+//!
+//! 与 `arch-impl-loongarch64`、`firmware-impl-qemu-loongarch64-uart16550` 等 feature 选中的
+//! 实现组合使用；**不**包含 trap 或 CSR 细节。
+
 pub mod boot {
     use api_v0::boot::{PlatformBootArgs, PlatformBootContext};
 
+    /// 固件传入的原始 `a0`/`a1`/`a2`（具体含义随 QEMU/固件版本以调用约定为准）。
     #[derive(Debug, Clone, Copy)]
     pub struct QEMULoongArch64VirtBootArgs {
         arg0 : usize,
@@ -28,6 +34,7 @@ pub mod boot {
         fn arg2(&self) -> Option<usize> { Some(self.arg2) }
     }
 
+    /// 与 [`QEMULoongArch64VirtBootArgs`] 一一对应的类型化视图（当前为透传三槽）。
     #[derive(Debug, Clone, Copy)]
     pub struct QEMULoongArch64VirtBootContext {
         pub arg0 : usize,
@@ -50,6 +57,7 @@ pub mod boot {
 pub mod time {
     use api_v0::time::{PlatformTime, PlatformTimeError, PlatformTimeResult};
 
+    /// QEMU virt 上 StableCounter 常用频率（Hz）；与 arch `rdtime.d` 刻度一致。
     pub struct QEMULoongArch64VirtTime;
 
     impl PlatformTime for QEMULoongArch64VirtTime {

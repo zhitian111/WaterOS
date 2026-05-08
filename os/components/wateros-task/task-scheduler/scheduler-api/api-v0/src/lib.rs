@@ -9,17 +9,18 @@ use task_api::{
     TaskWaitHandle, TaskWaitResult, UserTaskEntryPc, UserTaskSpec, WaitQueueId,
 };
 
+/// 一次调度决策的触发来源；由 `RoundRobinScheduler::schedule` 等解释为就绪/阻塞/睡眠队列目标。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScheduleReason {
-    /// 第一次切入任务系统。
+    /// 第一次切入任务系统（当前实现中主要由 `prepare_first_switch` 路径覆盖）。
     StartFirst,
     /// 当前任务主动让出 CPU。
     Yield,
-    /// 由时钟 tick 触发一次调度检查。
+    /// 由时钟 tick 触发一次调度检查（推进全局 tick 并为当前非 idle 任务累计 tick）。
     Tick,
     /// 由于阻塞而切换出去。
     Block(TaskBlockReason),
-    /// 由于定时睡眠而切换出去。
+    /// 由于定时睡眠而切换出去；`ticks == 0` 时在实现中等价于 yield。
     Sleep(TaskTick),
     /// 当前任务退出。
     Exit(TaskExitCode),

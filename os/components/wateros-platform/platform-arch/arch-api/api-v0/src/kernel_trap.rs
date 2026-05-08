@@ -14,6 +14,7 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 /// 组合层实现的 trap 处理函数：参数为 **原始** trap 帧字节指针（与各 `trap_entry_*` 传入一致）。
 pub type KernelTrapHandlerFn = extern "C" fn(*mut u8);
 
+// `Release`/`Acquire`：与首次 trap 前的注册建立 happens-before，避免看到半初始化 handler。
 static HANDLER: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
 
 /// 注册组合层 trap 路由；仅保留最后一次注册。

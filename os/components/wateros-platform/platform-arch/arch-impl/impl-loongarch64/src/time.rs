@@ -1,3 +1,6 @@
+//! LoongArch64 **StableCounter**：`rdtime.d` 读单调 tick；频率由 platform 层提供（本实现
+//! 对 `read_time_frequency` 返回不支持）。
+
 use api_v0::time::{ArchTime, ArchTimeError, ArchTimeFrequency, ArchTimeResult, ArchTimeTick};
 use core::arch::asm;
 

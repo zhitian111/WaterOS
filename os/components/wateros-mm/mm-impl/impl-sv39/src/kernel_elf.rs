@@ -67,21 +67,25 @@ fn read_whole_file_ro_retry_bad_prefix(root: &fs::api::SharedFs, path: &str) -> 
     Ok(second)
 }
 
+/// 小端读取 `u16`；越界返回 `None`（解析失败由上层映射为 [`LoadElfError::Parse`]）。
 #[inline]
 fn rd_u16(s: &[u8], o: usize) -> Option<u16> {
     s.get(o..o + 2)?.try_into().ok().map(u16::from_le_bytes)
 }
 
+/// 小端读取 `u32`。
 #[inline]
 fn rd_u32(s: &[u8], o: usize) -> Option<u32> {
     s.get(o..o + 4)?.try_into().ok().map(u32::from_le_bytes)
 }
 
+/// 小端读取 `u64`。
 #[inline]
 fn rd_u64(s: &[u8], o: usize) -> Option<u64> {
     s.get(o..o + 8)?.try_into().ok().map(u64::from_le_bytes)
 }
 
+// ELF `p_flags`：bit2=R，bit1=W，bit0=X；全无时补 `R` 以便映射可读（与常见加载器行为一致）。
 fn perm_from_pf(p_flags: u32) -> PagePerm {
     let mut p = PagePerm::U;
     if p_flags & 4 != 0 {
@@ -99,6 +103,7 @@ fn perm_from_pf(p_flags: u32) -> PagePerm {
     p
 }
 
+/// 将 `[0x8000_0000, phys_ram_end)` 以 `vpn==ppn` 恒等映射进用户页表，权限 `R|W|X`（内核辅助访问与用户段装载共用一套表时的 bring-up 约定）。
 fn map_kernel_ram_identity(aspace: &mut Sv39AddressSpace) -> Result<(), LoadElfError> {
     let lo = VirtAddr(0x8000_0000).floor_page();
     let hi = VirtAddr(crate::kernel_global::phys_ram_end_exclusive()).ceil_page();
@@ -112,6 +117,7 @@ fn map_kernel_ram_identity(aspace: &mut Sv39AddressSpace) -> Result<(), LoadElfE
     Ok(())
 }
 
+/// 为单个 `PT_LOAD` 分配/合并映射并填充内容：先按页建立映射，再第二遍按字节写入文件或 BSS 零。
 fn map_segment(
     aspace: &mut Sv39AddressSpace,
     file: &[u8],
@@ -176,6 +182,7 @@ fn map_segment(
         vpn = VirtPageNum(vpn.0 + 1);
     }
 
+    // 第二遍：逐页把文件字节或零写入已映射物理页（依赖恒等/可写物理访问）。
     let mut vpn = va_start.floor_page();
     while vpn.0 < vpn_end.0 {
         let page_va = vpn.start_addr().0;
@@ -208,6 +215,7 @@ fn map_segment(
     Ok(())
 }
 
+/// 为用户栈区间 `[stack_top - stack_size, stack_top)` 分配匿名帧并映射为 `R|W|U`。
 fn map_user_stack(aspace: &mut Sv39AddressSpace, stack_top: usize, stack_size: usize) -> Result<(), LoadElfError> {
     let bottom = stack_top - stack_size;
     let mut vpn = VirtAddr(bottom).floor_page();
@@ -228,6 +236,7 @@ fn map_user_stack(aspace: &mut Sv39AddressSpace, stack_top: usize, stack_size: u
     Ok(())
 }
 
+/// 从已挂载根文件系统读取 `path` 指向的 ELF，再调用 [`from_elf_bytes`]；读路径含一次前缀校验失败时的重试（见模块 `//!`）。
 pub fn from_elf_path(path: &str) -> Result<LoadedElf, LoadElfError> {
     runtime::logging::trace!("[elf-load] from_elf_path begin path={}", path);
     let root = fs::rootfs::active_impl::root_fs().ok_or_else(|| {
@@ -243,6 +252,9 @@ pub fn from_elf_path(path: &str) -> Result<LoadedElf, LoadElfError> {
     from_elf_bytes(&data)
 }
 
+/// 解析内存中的 ELF64 小端 RISC-V 可执行文件，建立独立 Sv39 地址空间、映射 `PT_LOAD` 与用户栈，并泄漏页表对象返回 `satp`。
+///
+/// 失败时返回具体解析或 MM 错误；成功路径下根地址空间由 `Box::leak` 持有直至复位。
 pub fn from_elf_bytes(data: &[u8]) -> Result<LoadedElf, LoadElfError> {
     runtime::logging::trace!("[elf-load] from_elf_bytes len={}", data.len());
     if data.len() < 64 {

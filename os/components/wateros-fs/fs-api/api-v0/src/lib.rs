@@ -98,6 +98,15 @@ pub struct FsMetadata {
     pub mode: u16,
 }
 
+/// 目录枚举单条结果：仅含名字与类型（不含完整路径）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FsDirEntry {
+    /// 目录项名字（非路径）。
+    pub name: String,
+    /// 节点类型。
+    pub node_type: FsNodeType,
+}
+
 /// 只读根卷：挂载后对绝对路径提供存在性、元数据与整文件读取。
 ///
 /// 路径契约：实现通常要求绝对路径并以 `/` 开头；具体规则见各 impl 文档。
@@ -128,12 +137,17 @@ pub trait ReadOnlyFs {
         String::from_utf8(data).map_err(|_| FsError::NotUtf8)
     }
 
+    /// 列出目录内容；`.` / `..` 由实现决定是否包含（ext4 实现通常跳过）。
+    fn read_dir(&self, path: &str) -> FsResult<Vec<FsDirEntry>> {
+        let _ = path;
+        Err(FsError::Unsupported)
+    }
+
     /// 启动阶段调试：从根卷 `/` 起递归打印路径（实现方可覆盖；默认无操作）。
     fn boot_dump_all_paths(&self) {}
 }
 
-/// 可写根卷（当前由 `ext4plus` 等实现承载；与 [`ReadOnlyFs`] 分离，避免在 `dyn ReadOnlyFs` 上混入写语义）。
-/// 可写根卷：与 [`ReadOnlyFs`] 分离，避免在 `dyn ReadOnlyFs` 上混入写语义；实现须为 `Send`。
+/// 可写根卷：与 [`ReadOnlyFs`] 分离，避免在 `dyn ReadOnlyFs` 上混入写语义；由 `ext4plus` 等实现承载，且实现类型须为 `Send`。
 pub trait ReadWriteFs: Send {
     /// 以读写方式挂载；底层写能力依赖具体实现（如 journal 完整性）。
     fn mount_rw(&mut self, device: SharedBlockDevice) -> FsResult<()>;
@@ -142,6 +156,12 @@ pub trait ReadWriteFs: Send {
 
     /// 在根目录下创建或替换名为 `name` 的普通文件（不含 `/`，如 `hello`），写入 `data`。
     fn write_regular_file_at_root(&mut self, name: &str, data: &[u8]) -> FsResult<()>;
+
+    /// 删除绝对路径指向的 **普通文件**；目录删除默认 [`FsError::Unsupported`]。
+    fn unlink(&mut self, path: &str) -> FsResult<()> {
+        let _ = path;
+        Err(FsError::Unsupported)
+    }
 }
 
 /// 将 `dyn ReadWriteFs` 装箱后的本地句柄，用于装入 [`SharedRwFs`]。
@@ -230,6 +250,8 @@ impl ReadOnlyFs for LocalFs {
 
     fn read(&self, path: &str) -> FsResult<Vec<u8>> { self.deref().read(path) }
 
+    fn read_dir(&self, path: &str) -> FsResult<Vec<FsDirEntry>> { self.deref().read_dir(path) }
+
     fn boot_dump_all_paths(&self) { self.deref().boot_dump_all_paths(); }
 }
 
@@ -240,6 +262,8 @@ unsafe impl Send for LocalFs {}
 pub type SharedFs = Arc<Mutex<LocalFs>>;
 
 /// 内置样例 FS 的单元级自检（日志 + assert）；供外层聚合 crate 的 `test` 入口链式调用。
+///
+/// 不变量：使用本模块内私有样例 `ReadOnlyFs` 实现，不触碰块设备与全局挂载状态。
 pub fn test() {
     logging::trace!("[fs-api] test begin");
     let fs = SampleFs;
@@ -250,6 +274,7 @@ pub fn test() {
     logging::trace!("[fs-api] test end");
 }
 
+// 纯内存样例：固定 `/hello.txt` 与 5 字节内容，仅用于 [`test`] 断言 trait 默认方法与错误分支。
 struct SampleFs;
 
 impl ReadOnlyFs for SampleFs {
@@ -274,6 +299,17 @@ impl ReadOnlyFs for SampleFs {
     fn read(&self, path: &str) -> FsResult<Vec<u8>> {
         if path == "/hello.txt" {
             Ok(b"hello".to_vec())
+        } else {
+            Err(FsError::NotFound)
+        }
+    }
+
+    fn read_dir(&self, path: &str) -> FsResult<Vec<FsDirEntry>> {
+        if path == "/" {
+            Ok(alloc::vec![FsDirEntry {
+                name: String::from("hello.txt"),
+                node_type: FsNodeType::File,
+            }])
         } else {
             Err(FsError::NotFound)
         }

@@ -6,7 +6,7 @@ use crate::error::MmResult;
 use crate::frame_allocator::PhysicalFrameAllocator;
 use crate::perm::PagePerm;
 
-/// 地址空间标识（预留；当前 Sv39 实现可固定为 0 或不使用）。
+/// 地址空间标识（ASID 等）；API 预留字段，当前 bring-up 可不使用或与 `satp` ASID 域对齐。
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AddressSpaceId(pub u32);

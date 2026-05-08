@@ -7,6 +7,7 @@ use crate::scheduler::TaskTrapFrame;
 use arch::paging;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+// 由 `init_kernel_trap_satp` 在页表就绪后写入；`install_satp_for_exception_return` 在返回内核态时读回。使用 `Release`/`Relaxed` 与单次初始化路径匹配。
 static KERNEL_TRAP_SATP: AtomicUsize = AtomicUsize::new(0);
 
 /// 在全局内核页表 `satp` 就绪后注册，供 trap 在返回内核态时写回。

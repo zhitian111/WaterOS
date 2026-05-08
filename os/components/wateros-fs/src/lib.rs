@@ -60,6 +60,7 @@ pub fn pick_fs_impl(
         .find(|imp| imp.supports(kind, mode))
 }
 
+// 启动期诊断：把各 impl 声明的能力打到日志，便于对照 probe/mount 失败原因。
 fn log_supported_fs() {
     for cap in supported_fs_summary() {
         logging::info!(

@@ -126,7 +126,10 @@ pub mod interrupt {
     pub fn wait_for_interrupt() { ArchInterruptImpl::wait_for_interrupt(); }
 }
 
-/// 分页控制 CSR（如 `satp`）与必要的 TLB 刷新原语；页表内容管理在上层 MM 组件。
+/// 分页控制 CSR（RISC-V 为 `satp` + `sfence.vma`）与必要的 TLB 刷新原语；页表内容在 MM 组件。
+///
+/// **LoongArch**：当前 `impl-loongarch64` 为占位，`read_satp`/`write_satp_and_flush` 名称为
+/// 与 `arch` facade 统一的历史命名，**不**表示真实 CSR 语义；接入页表后应替换实现或改名。
 pub mod paging {
     #[cfg(feature = "impl-loongarch64")]
     pub use impl_loongarch64::paging::LoongArch64Paging as ArchPagingImpl;

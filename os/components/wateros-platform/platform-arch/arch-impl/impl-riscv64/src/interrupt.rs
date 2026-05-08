@@ -50,6 +50,7 @@ impl ArchTimerInterruptControl for Riscv64ArchInterrupt {
     }
 
     #[inline]
+    // `sstatus.SIE` 为 bit1：与 `read_global_interrupt_state` 保存的原始位一致。
     fn restore_global_interrupt_state(state: ArchInterruptState) -> ArchTimeResult<()> {
         if (state.0 & (1 << 1)) != 0 {
             Self::enable_global_interrupt()

@@ -36,6 +36,7 @@ impl DevFsManager for KernelDevFsManager {
         inner.nodes.clear();
         inner.block_bindings.clear();
 
+        // 阶段 1：按驱动枚举顺序生成 `/dev/vblk{n}` 与块句柄绑定。
         let count = block_device_count();
         for idx in 0..count {
             if let Some(dev) = block_device_at(idx) {
@@ -47,6 +48,7 @@ impl DevFsManager for KernelDevFsManager {
                 inner.block_bindings.push((path, dev));
             }
         }
+        // 阶段 2：把 DTB 侧登记的占位路径并入节点表（类型 Unsupported，不参与 lookup）。
         let dt_paths = inner.dt_unsupported_paths.clone();
         for path in dt_paths {
             inner.nodes.push(api_v0::DevNode {
@@ -73,6 +75,7 @@ impl DevFsManager for KernelDevFsManager {
         path: &str,
         device: SharedBlockDevice,
     ) -> fs_api_v0::FsResult<()> {
+        // 已存在路径则替换句柄并保留节点表项；新路径则追加绑定与 Block 节点。
         let mut inner = DEVFS.lock();
         if let Some((_, dev)) = inner
             .block_bindings

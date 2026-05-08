@@ -24,6 +24,7 @@ impl api_v0::RootFsManager for KernelRootFsManager {
         *ROOT_FS.lock() = Some(fs);
     }
 
+    // 克隆 Arc：调用方获得独立句柄，与槽位内实例共享底层卷状态。
     fn root_fs(&self) -> Option<fs_api_v0::SharedFs> { ROOT_FS.lock().as_ref().cloned() }
 
     fn clear_root_fs(&mut self) {
@@ -32,6 +33,7 @@ impl api_v0::RootFsManager for KernelRootFsManager {
     }
 
     fn mount_root_from_block_path(&mut self, path: &str) -> fs_api_v0::FsResult<()> {
+        // devfs 解析路径 → 活动 FsImpl RO 挂载 → 记录路径，三步任一失败即向上返回。
         let device = devfs::active_impl::lookup_block_device(path)?;
         let imp = ACTIVE_FS_IMPL
             .lock()

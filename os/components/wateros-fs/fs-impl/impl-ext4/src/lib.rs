@@ -24,12 +24,11 @@ pub use ro::Ext4Fs;
 pub use rw::Ext4FsRw;
 pub use selftest::{ro_self_test, rw_smoke_self_test};
 
-// 与 Linux ext4 superblock 布局一致：卷偏移 1024 起为主 superblock，`s_magic` 固定为 0xEF53。
-/// ext4 superblock 中标识 ext2/3/4 的 magic 数。
+/// ext4 superblock 中标识 ext2/3/4 的 magic（与 Linux 布局一致：`s_magic` 固定为 0xEF53）。
 const EXT4_SUPER_MAGIC: u16 = 0xEF53;
-/// superblock 起始字节偏移（位于卷头 1024 字节之后），`s_magic` 在其内偏移 0x38。
+/// 主 superblock 起始字节偏移（卷头 1024 字节之后）。
 const SUPERBLOCK_OFFSET: u64 = 1024;
-/// `s_magic` 在 1024 字节 superblock 内的字节偏移。
+/// `s_magic` 在 1024 字节 superblock 内的字节偏移（见内核 `ext4_super_block` 布局）。
 const MAGIC_OFFSET_IN_SB: usize = 0x38;
 
 /// 通过读取 superblock magic 判定卷是否为 ext2/3/4（轻量探测，不校验完整 checksum）。

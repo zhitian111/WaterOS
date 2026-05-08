@@ -15,21 +15,28 @@ impl PagePerm {
     /// 用户态可访问
     pub const U: Self = Self(1 << 3);
 
+    /// 空权限（非法映射的常见前置；实现可拒绝或按需扩展）。
     #[inline]
     pub const fn empty() -> Self { Self(0) }
 
+    /// 是否含可读位。
     #[inline]
     pub const fn readable(self) -> bool { (self.0 & Self::R.0) != 0 }
+    /// 是否含可写位。
     #[inline]
     pub const fn writable(self) -> bool { (self.0 & Self::W.0) != 0 }
+    /// 是否含可执行位。
     #[inline]
     pub const fn executable(self) -> bool { (self.0 & Self::X.0) != 0 }
+    /// 是否含用户可访问位。
     #[inline]
     pub const fn user(self) -> bool { (self.0 & Self::U.0) != 0 }
 
+    /// 原始权限位（实现层映射到 PTE 时使用）。
     #[inline]
     pub const fn bits(self) -> u8 { self.0 }
 
+    /// 与 `other` 按位或后的新权限集合。
     #[inline]
     pub const fn with(self, other: Self) -> Self { Self(self.0 | other.0) }
 }
@@ -45,6 +52,7 @@ impl core::ops::BitOrAssign for PagePerm {
     fn bitor_assign(&mut self, rhs: Self) { self.0 |= rhs.0; }
 }
 
+/// `PagePerm` 查询与组合的单元测试。
 pub fn test() {
     log::trace!("[mm-api::perm] test begin");
     let p = PagePerm::R | PagePerm::W | PagePerm::U;

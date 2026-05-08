@@ -1,13 +1,16 @@
 //! 只读路径（基于 `ext4-view`）：实现 [`api_v0::ReadOnlyFs`] 与启动期目录树打印。
+//!
+//! 大块文件读路径刻意按 `driver_block_api_v0::BLOCK_SIZE` 分片，规避部分 VirtIO 小扇区组合下的一次性整读问题（见本文件中 `ReadOnlyFs::read` 实现内注释）。
 
 use alloc::boxed::Box;
+use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
-use api_v0::{FsError, FsMetadata, FsNodeType, FsResult, ReadOnlyFs};
+use api_v0::{FsDirEntry, FsError, FsMetadata, FsNodeType, FsResult, ReadOnlyFs};
 use driver_block_api_v0::{SharedBlockDevice, BLOCK_SIZE};
 use ext4_view::{Ext4, Ext4Error, Ext4Read, Metadata, Path};
 
-// 将驱动的按字节读适配为 ext4-view 的 Ext4Read；错误映射在 map_ext4_error。
+// `ext4-view` 需要 `&mut self` 读接口；此处仅委托 `read_bytes`，错误经 `BlockIoError` 装箱。
 struct BlockDeviceReader {
     device: SharedBlockDevice,
 }
@@ -64,6 +67,36 @@ impl ReadOnlyFs for Ext4Fs {
     fn metadata(&self, path: &str) -> FsResult<FsMetadata> {
         let metadata = self.fs()?.metadata(path).map_err(map_ext4_error)?;
         Ok(map_metadata(&metadata))
+    }
+
+    fn read_dir(&self, path: &str) -> FsResult<Vec<FsDirEntry>> {
+        let fs = self.fs()?;
+        let pathv = Path::try_from(path).map_err(|_| FsError::InvalidPath)?;
+        let rd = fs.read_dir(pathv).map_err(map_ext4_error)?;
+        let mut out = Vec::new();
+        for item in rd {
+            let ent = item.map_err(map_ext4_error)?;
+            let name = ent.file_name();
+            if name.as_ref() == b"." || name.as_ref() == b".." {
+                continue;
+            }
+            let name_str = core::str::from_utf8(name.as_ref()).map_err(|_| FsError::NotUtf8)?;
+            let ft = ent.file_type().map_err(map_ext4_error)?;
+            let node_type = if ft.is_dir() {
+                FsNodeType::Directory
+            } else if ft.is_symlink() {
+                FsNodeType::Symlink
+            } else if ft.is_regular_file() {
+                FsNodeType::File
+            } else {
+                FsNodeType::Special
+            };
+            out.push(FsDirEntry {
+                name: String::from(name_str),
+                node_type,
+            });
+        }
+        Ok(out)
     }
 
     fn read(&self, path: &str) -> FsResult<Vec<u8>> {

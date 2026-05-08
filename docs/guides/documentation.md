@@ -11,6 +11,8 @@
 
 ## 代码注释
 
+全仓库扫查范围、重要函数/变量与 `//` 相对 rustdoc 的分工见 **`docs/tasks/commenting.md`**；与 `docs/prompts/documentation.md` 配套使用。
+
 ### 普通注释
 
 要求：

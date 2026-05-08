@@ -18,16 +18,19 @@ pub const BLOCK_SIZE: usize = 512;
 pub struct Lba(pub u64);
 
 impl From<usize> for Lba {
+    /// 将 `usize` 截断/拓宽为 `u64` LBA（与平台指针宽度一致的内核路径常用）。
     fn from(value: usize) -> Self { Self(value as u64) }
 }
 
 impl From<u64> for Lba {
+    /// 直接包装为 LBA，无额外校验（非法 LBA 由具体设备在读时拒绝）。
     fn from(value: u64) -> Self { Self(value) }
 }
 
 /// 可在多任务间共享的块设备句柄（内部可变性由 `spin::Mutex` 提供）。
 pub type SharedBlockDevice = Arc<Mutex<Box<dyn BlockDevice>>>;
 
+// 注册顺序稳定：`register_block_device` 返回的下标即在此 `Vec` 中的位置。
 static BLOCK_DEVICES: Mutex<Vec<SharedBlockDevice>> = Mutex::new(Vec::new());
 
 /// 块设备语义契约：按块读写为必须实现；按字节读提供默认实现（内部临时缓冲整段块）。
@@ -55,6 +58,7 @@ pub trait BlockDevice: Send {
             return Err(DriverError::InvalidParam);
         }
 
+        // `offset` 须可落入 `usize`：内核 bring-up 路径通常远低于平台地址空间上限。
         let start_byte = usize::try_from(offset).map_err(|_| DriverError::InvalidParam)?;
         let end_byte = start_byte
             .checked_add(dst.len())
@@ -67,6 +71,7 @@ pub trait BlockDevice: Send {
         let scratch_len = block_count
             .checked_mul(block_size)
             .ok_or(DriverError::InvalidParam)?;
+        // 临时覆盖跨块区间；设备侧仍只看到整倍数 `block_size` 的 `read_blocks` 调用。
         let mut scratch = vec![0u8; scratch_len];
 
         self.read_blocks(Lba(start_block as u64), &mut scratch)?;
@@ -119,11 +124,13 @@ pub fn test() {
     logging::trace!("[driver-block-api] test end");
 }
 
+// 内存中的连续字节数组模拟两块设备；`read_blocks` 按字节偏移切片，写路径恒不支持。
 struct SampleBlockDevice {
     bytes: [u8; BLOCK_SIZE * 2],
 }
 
 impl SampleBlockDevice {
+    // 字节值等于下标 mod 256，便于 `read_prefix` 断言可读内容可预测。
     fn new() -> Self {
         let mut bytes = [0u8; BLOCK_SIZE * 2];
         for (idx, value) in bytes.iter_mut().enumerate() {

@@ -34,6 +34,7 @@ pub struct BaseVPN {
     pub val : usize,
 }
 
+// 以下为 `Into<*mut T>` 的薄转换：不检查 `T` 的对齐，也不验证 PA/VA 是否已在当前上下文中映射或可写。
 impl<T> Into<*mut T> for BasePhysAddr {
     /// 将物理地址数值解释为可写内核指针；调用方需保证该映射在内核地址空间有效。
     #[inline]

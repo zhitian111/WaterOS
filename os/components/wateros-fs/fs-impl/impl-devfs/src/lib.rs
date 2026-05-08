@@ -30,6 +30,7 @@ pub struct DevNode {
     pub index: usize,
 }
 
+// 与内核 devfs 不同：仅缓存枚举快照，无动态 register 表；单 Mutex 保护 bring-up 阶段并发。
 static DEV_NODES: Mutex<Vec<DevNode>> = Mutex::new(Vec::new());
 
 /// 根据 `block_device_count()` 重建节点表并返回节点数量。

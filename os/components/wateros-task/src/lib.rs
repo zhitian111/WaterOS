@@ -29,8 +29,10 @@ pub mod scheduler {
 #[cfg(feature = "impl-core")]
 pub use impl_core as active_impl;
 
+/// 内核同步对象侧分配的等待队列句柄：封装 `WaitQueueId` 并提供 `wait`/`wake` 便捷方法。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WaitQueue {
+    /// 调度器内部分配的队列编号，与 [`TaskWaitHandle::for_wait_queue`] 一致。
     id: WaitQueueId,
 }
 

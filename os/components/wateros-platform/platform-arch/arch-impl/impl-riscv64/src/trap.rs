@@ -81,9 +81,11 @@ impl TrapContext {
     pub const fn returns_to_kernel(&self) -> bool { !self.returns_to_user() }
 
     #[inline]
+    // `a7` = x17：RISC-V syscall 调用号约定，与 `SyscallNumber` 对应。
     fn syscall_nr_raw(&self) -> usize { self.x[17] }
 
     #[inline]
+    // `a0`–`a5` = x10–x15：与 `SyscallArgs::from_regs` 顺序一致。
     fn syscall_args_raw(&self) -> SyscallArgs {
         SyscallArgs::from_regs([self.x[10], self.x[11], self.x[12], self.x[13], self.x[14],
                                 self.x[15]])
@@ -99,6 +101,7 @@ impl TrapContext {
     fn returns_to_user_raw(&self) -> bool { (self.sstatus & RISCV_SSTATUS_SPP) == 0 }
 
     #[inline]
+    // 清 `SPP`（返回到 U 态）、清 `SIE` 避免 `sret` 瞬间嵌套、置 `SPIE` 以便在用户态恢复中断。
     fn set_return_to_user_raw(&mut self) {
         self.sstatus &= !RISCV_SSTATUS_SPP;
         self.sstatus &= !(1 << 1);

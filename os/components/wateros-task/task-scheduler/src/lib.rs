@@ -19,6 +19,7 @@ pub mod api {
 pub use impl_round_robin as active_impl;
 
 pub use api_v0::{ScheduleReason, Scheduler};
+/// 当前架构下活动 trap 帧的具体类型别名；与 `wateros-task` 聚合层及 `impl-round-robin` 一致。
 pub type TaskTrapFrame = arch::trap::ActiveTrapFrame;
 pub use task_api::{
     AddressSpaceHandle, ExitedTask, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskId,

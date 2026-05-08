@@ -21,10 +21,16 @@ use runtime::logging::*;
 use syscall::dispatch_syscall_from_trap;
 use task::trap_runtime;
 
+/// 单次定时器中断后重新武装的切片长度（`time` CSR 刻度）；与调度策略相关，非用户 ABI。
 const TIMER_SLICE_TICKS : u64 = 1_250_000;
 static TIMER_TICK_COUNT : AtomicUsize = AtomicUsize::new(0);
+/// RISC-V 上非压缩 `ecall` 占位长度，用于将 `sepc` 前进到返回到用户态的下一条指令。
 const SYSCALL_INSN_BYTES : usize = 4;
 
+/// 组合层内核 trap 入口：由 `arch` 在异常/中断向量中调用，`frame` 为当前 trap 帧字节指针。
+///
+/// 处理 `UserEnvCall`（分派 syscall）、页错日志、监督态定时器 tick（重武装 + 调度），其余
+/// cause 直接 `panic`。若返回到用户态，在帧访问期间短暂开启 `SUM` 以便访问用户页。
 extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
     let authoritative = unsafe { trap_runtime::begin_current_trap_frame_access(frame) };
     let cx = unsafe { &mut *(authoritative as *mut TrapContext) };
@@ -91,5 +97,6 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
     }
 }
 
+/// 向 `arch_api_v0` 注册本模块的 C ABI trap 回调；须在 `task::init()` 之后调用。
 #[inline]
 pub fn init() { register_kernel_trap_handler(wateros_kernel_trap_handler); }

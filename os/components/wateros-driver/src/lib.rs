@@ -4,6 +4,7 @@
 
 #![no_std]
 
+// `supported_device_entries` 等路径需要 `Vec`；子 crate 各自声明 `extern crate alloc`。
 extern crate alloc;
 
 pub mod api {
@@ -19,8 +20,11 @@ pub mod network {
     pub use ::network::*;
 }
 
+// 二选一：QEMU/OpenSBI 真实探测路径，或 dummy 占位（可同时不选，则无 `active_impl` 符号）。
 #[cfg(feature = "impl-qemu-riscv64-opensbi")]
 pub use impl_qemu_riscv64_opensbi as active_impl;
+#[cfg(feature = "impl-qemu-riscv64-opensbi")]
+pub use impl_qemu_riscv64_opensbi::uart;
 #[cfg(feature = "impl-dummy")]
 pub use impl_dummy as active_impl;
 

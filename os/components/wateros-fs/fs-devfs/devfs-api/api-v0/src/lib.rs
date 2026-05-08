@@ -3,6 +3,8 @@
 //! DevFS 管理 API（v0）：设备节点类型、枚举与块设备注册/查找契约。
 //!
 //! 与 [`fs_api_v0::FsImpl`] 解耦：本模块描述「设备树视图」，不描述具体卷文件系统。
+//!
+//! 错误类型复用 [`fs_api_v0::FsResult`] / [`fs_api_v0::FsError`]，便于与根卷挂载路径统一映射。
 extern crate alloc;
 
 use alloc::{string::String, vec::Vec};

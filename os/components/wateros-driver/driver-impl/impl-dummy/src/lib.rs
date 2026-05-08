@@ -3,6 +3,8 @@
 #![no_std]
 
 /// 占位算术函数。
+///
+/// **当前行为**：不解析 DTB、不调用 `init_after_boot` 语义；**后续替换点**：由 feature 选中的平台 impl 替代。
 pub fn add(left : u64, right : u64) -> u64 { left + right }
 #[cfg(test)]
 mod tests {

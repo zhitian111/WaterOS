@@ -23,17 +23,19 @@ pub struct BrkRegion {
 /// brk 的语义是调整堆的结束边界；当 `new_end` 超过 `current_end`
 /// 时需要为新增 **4 KiB** 虚拟页分配并映射（与 [`crate::addr::PAGE_SIZE`] 对齐的页边界）。
 pub trait HeapBrk: AddressSpaceOps {
-    /// 获取堆区间信息（用于 syscall 语义）。
+    /// 返回当前堆布局（syscall `brk` 查询路径使用）。
     fn brk_region(&self) -> BrkRegion;
 
-    /// 将堆边界调整到 `new_end`，返回最终生效的边界。
+    /// 将堆尾调整到 `new_end`；跨越新页时须分配并映射整页。
+    ///
+    /// 成功返回实际生效的堆尾（可能受 `max` 或实现策略限制而与请求不同，具体由实现约定）。
     fn brk<A: PhysicalFrameAllocator<FrameId = PhysPageNum>>(
         &mut self,
         allocator: &mut A,
         new_end: VirtAddr,
     ) -> MmResult<VirtAddr>;
 
-    /// brk 默认默认页权限：R/W/U（Linux glibc 通常需要用户可写）。
+    /// 堆扩展映射的默认页权限：R/W/U（与常见 glibc 期望一致）。
     #[inline]
     fn brk_perm() -> PagePerm { PagePerm::R | PagePerm::W | PagePerm::U }
 }

@@ -1,3 +1,7 @@
+//! **任务注册表**：稠密 `TaskId` → `TaskControlBlock` 槽位、当前运行任务指针，以及首次切换用的引导上下文。
+//!
+//! `exit_wait_queues` 按下标 `task_id` 扩容，用于「等待某任务退出」的等待者链表；与 `task_api::TaskWaitTarget::TaskExit` 一一对应。
+
 extern crate alloc;
 
 use alloc::boxed::Box;
@@ -12,9 +16,11 @@ use task_impl::TaskControlBlock;
 use crate::{SwitchPair, TaskTrapFrame};
 
 unsafe extern "C" {
+    /// 聚合 crate 提供的 idle 循环体；idle TCB 的入口地址取自此符号。
     safe fn __wateros_idle_task_runtime_main(arg : usize) -> !;
 }
 
+// `task_id` 与 `slots` 下标一致；`None` 表示槽位空闲（例如已 reap 的退出任务）。
 struct TaskTable {
     slots : Vec<Option<Box<TaskControlBlock>>>,
 }
@@ -57,10 +63,13 @@ impl TaskTable {
     }
 }
 
+/// 轮转调度器持有的 TCB 表与「当前任务」元数据；队列逻辑见 `queues` 模块。
 pub(super) struct TaskRegistry {
+    // 首次 `__switch` 时的“伪当前”上下文占位，来自引导/单核 bring-up 路径。
     bootstrap_task_cx : TaskContext,
     task_table : TaskTable,
     current_task_id : Option<TaskId>,
+    // 单调递增分配；与 `TaskTable` 稠密下标约定一致。
     next_task_id : TaskId,
 }
 
@@ -181,6 +190,7 @@ impl TaskRegistry {
     pub(super) fn wait_target_ready(&self, wait_handle : TaskWaitHandle) -> bool {
         match wait_handle.target() {
             TaskWaitTarget::WaitQueue(_) => false,
+            // 目标任务已退出或槽位不存在（视为已结束）时，等待方无需阻塞。
             TaskWaitTarget::TaskExit(task_id) => {
                 self.state(task_id)
                     .map(|state| matches!(state, TaskState::Exited(_)))

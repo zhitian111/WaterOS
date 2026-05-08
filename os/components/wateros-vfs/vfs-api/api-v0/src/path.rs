@@ -11,6 +11,7 @@ pub struct NormalizedPath {
 }
 
 impl NormalizedPath {
+    /// 以 `str` 形式借用规范化结果，可直接传给后端 FS（已保证以 `/` 开头等不变量）。
     pub fn as_str(&self) -> &str { self.inner.as_str() }
 }
 

@@ -29,17 +29,21 @@ pub struct VirtPageNum(pub usize);
 pub struct PhysPageNum(pub usize);
 
 impl VirtAddr {
+    /// 页内字节偏移 `[0, PAGE_SIZE)`。
     #[inline]
     pub const fn page_offset(self) -> usize { self.0 & (PAGE_SIZE - 1) }
 
+    /// 向下对齐到页边界对应的虚拟页号。
     #[inline]
     pub const fn floor_page(self) -> VirtPageNum { VirtPageNum(self.0 / PAGE_SIZE) }
 
+    /// 向上对齐到页边界对应的虚拟页号（`va` 恰在页边界时与 `floor_page` 相同）。
     #[inline]
     pub const fn ceil_page(self) -> VirtPageNum {
         VirtPageNum((self.0 + PAGE_SIZE - 1) / PAGE_SIZE)
     }
 
+    /// 当前虚拟地址所在页的起始字节地址。
     #[inline]
     pub const fn page_start(self) -> VirtAddr {
         VirtAddr((self.floor_page().0) * PAGE_SIZE)
@@ -47,17 +51,21 @@ impl VirtAddr {
 }
 
 impl PhysAddr {
+    /// 页内字节偏移 `[0, PAGE_SIZE)`。
     #[inline]
     pub const fn page_offset(self) -> usize { self.0 & (PAGE_SIZE - 1) }
 
+    /// 向下对齐到物理页号。
     #[inline]
     pub const fn floor_page(self) -> PhysPageNum { PhysPageNum(self.0 / PAGE_SIZE) }
 
+    /// 向上对齐到物理页号。
     #[inline]
     pub const fn ceil_page(self) -> PhysPageNum {
         PhysPageNum((self.0 + PAGE_SIZE - 1) / PAGE_SIZE)
     }
 
+    /// 当前物理地址所在页的起始字节地址。
     #[inline]
     pub const fn page_start(self) -> PhysAddr {
         PhysAddr((self.floor_page().0) * PAGE_SIZE)
@@ -65,6 +73,7 @@ impl PhysAddr {
 }
 
 impl VirtPageNum {
+    /// 该虚拟页的起始字节地址。
     #[inline]
     pub const fn start_addr(self) -> VirtAddr { VirtAddr(self.0 * PAGE_SIZE) }
 
@@ -74,10 +83,12 @@ impl VirtPageNum {
 }
 
 impl PhysPageNum {
+    /// 该物理页的起始字节地址。
     #[inline]
     pub const fn start_addr(self) -> PhysAddr { PhysAddr(self.0 * PAGE_SIZE) }
 }
 
+/// 地址类型与页对齐运算的单元测试（日志级 trace，无硬件依赖）。
 pub fn test() {
     log::trace!("[mm-api::addr] test begin");
 

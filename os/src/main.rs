@@ -149,6 +149,9 @@ mod qemu_riscv64_opensbi {
 
 #[cfg(feature = "qemu-loongarch64-virt")]
 mod qemu_loongarch64_virt {
+    //! QEMU LoongArch `virt` 板级的最小 bring-up：与 `impl-qemu-loongarch64-virt` 的 `_start.S`
+    //! 链接后进入 [`kernel_main`]，初始化 runtime/任务与两个内核忙等任务，再开定时器中断
+    //! 并进入调度。与 RISC-V OpenSBI 路径相比暂无用户态/FS 自检。
     use core::arch::global_asm;
     use core::include_str;
     use runtime::logging::*;
@@ -156,6 +159,7 @@ mod qemu_loongarch64_virt {
     global_asm!(include_str!("../components/wateros-platform/platform-impl/\
                               impl-qemu-loongarch64-virt/src/asm/_start.S"));
 
+    /// 固件/引导移交后的内核 C 入口；无 boot 参数版本，完成基础初始化后仅跑内核态烟测任务。
     #[unsafe(no_mangle)]
     pub fn kernel_main() -> ! {
         runtime::console::show_logo();
@@ -175,6 +179,7 @@ mod qemu_loongarch64_virt {
         task::run_first_task()
     }
 
+    /// 内核自检任务 A：忙循环 + 周期性日志 + `yield_now`，用于验证多任务与时间片。
     extern "C" fn loongarch64_kernel_task_a(_arg : usize) -> ! {
         let mut round = 0usize;
         loop {
@@ -186,6 +191,7 @@ mod qemu_loongarch64_virt {
         }
     }
 
+    /// 内核自检任务 B：与 [`loongarch64_kernel_task_a`] 对称，增加调度交错覆盖。
     extern "C" fn loongarch64_kernel_task_b(_arg : usize) -> ! {
         let mut round = 0usize;
         loop {

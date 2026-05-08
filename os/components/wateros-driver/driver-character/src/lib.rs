@@ -1,11 +1,18 @@
-//! 字符设备子系统入口：当前仅提供 DTB 声明表（空）与占位符号，具体 tty 等尚未接入。
+//! 字符设备子系统入口：串口 API（v0）与 DTB 声明表。
 
 #![no_std]
 
 use driver_api::SupportedDeviceEntry;
 
+/// 字符设备 API v0（[`SerialPort`](api_v0::SerialPort) 等）。
+pub mod api_v0 {
+    pub use character_api_v0::*;
+}
+
 /// 占位函数，保持与子 crate 骨架一致；非字符设备 API。
-pub fn add(left: u64, right: u64) -> u64 {
+///
+/// **当前行为**：无 I/O；**后续替换点**：接入更多子系统后可删除。
+pub fn add(left : u64, right : u64) -> u64 {
     left + right
 }
 

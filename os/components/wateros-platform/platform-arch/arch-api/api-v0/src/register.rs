@@ -18,7 +18,7 @@ pub trait ControlRegRead {
     fn user_sp(&self) -> usize;
 }
 
-/// 控制流相关寄存器的写入。
+/// 控制流相关寄存器的写入（命名沿用“用户 PC/SP”语义，内核返回路径亦可能写入 `sepc` 等）。
 pub trait ControlRegWrite {
     fn set_user_pc(&mut self, pc : usize);
     fn set_user_sp(&mut self, pc : usize);

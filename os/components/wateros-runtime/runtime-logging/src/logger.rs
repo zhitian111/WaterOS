@@ -1,10 +1,14 @@
 //! 将 `log::Log` 桥接到 `runtime-console`：按级别着色并前缀 `[WaterOS]`。
 //!
 //! 仅由 crate 根 [`crate::init`] 调用 `init`；模块本身不对外公开。
+//!
+//! **不变量**：注册 logger 后 `log::max_level` 已设置，`to_level()` 在此路径下非 `Off`；否则 `unwrap` 会 panic。
 
 use console::println;
 use core::result::Result;
 use log::{info, Level, Metadata, Record, SetLoggerError};
+
+/// 静态全局 logger 实现，无字段；与 `LOGGER` 静态实例配合满足 `log::set_logger` 要求。
 struct WaterOSLogger;
 static LOGGER : WaterOSLogger = WaterOSLogger;
 
@@ -12,6 +16,7 @@ impl log::Log for WaterOSLogger {
     #[inline]
     #[allow(unused)]
     fn enabled(&self, metadata : &Metadata) -> bool {
+        // `Off` 时无对应 `Level`，此处与 `log` 在已注册 logger 下的状态一致。
         metadata.level() <=
         log::max_level().to_level()
                         .unwrap()
@@ -41,6 +46,7 @@ impl log::Log for WaterOSLogger {
     }
     #[inline]
     #[allow(unused)]
+    // 控制台为逐条写出，无独立 flush 通道；保留空实现以满足 trait。
     fn flush(&self) {}
 }
 

@@ -1,3 +1,7 @@
+//! 对外可见的 trap 与任务快照类型：**语义视图**，不镜像平台 `TrapContext` 的完整寄存器列表。
+//!
+//! 调度器与调试接口通过 [`TaskSnapshot`] / [`TaskTrapSnapshot`] 观察任务，而具体保存顺序由 `arch::trap` 实现保证。
+
 use crate::{TaskId, TaskKind, TaskRuntimeStats, TaskState, UserTaskResources};
 
 /// 对外暴露的 trap 现场语义快照。

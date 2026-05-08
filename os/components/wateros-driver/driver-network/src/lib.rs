@@ -5,6 +5,8 @@
 use driver_api::SupportedDeviceEntry;
 
 /// 占位函数，保持与子 crate 骨架一致。
+///
+/// **当前行为**：无 NIC 绑定；**后续替换点**：与 `network-api` 对齐后移除此占位。
 pub fn add(left: u64, right: u64) -> u64 {
     left + right
 }

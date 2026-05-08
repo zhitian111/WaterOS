@@ -1,5 +1,10 @@
+//! 可等待对象与等待结果：**调度器阻塞/唤醒路径**与 `task_api` 其余模块之间的稳定句柄层。
+//!
+//! `TaskWaitHandle` 仅编码目标（等待队列或某任务退出），不包含超时；超时由调度器侧 tick 与 `TaskWaitResult` 配合表达。
+
 use crate::task::{TaskId, WaitQueueId};
 
+/// 带超时等待结束时的结果分类。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TaskWaitResult {
     /// 等待对象正常唤醒了任务。
@@ -17,9 +22,10 @@ pub enum TaskWaitTarget {
     TaskExit(TaskId),
 }
 
-/// 对一个可等待对象的稳定引用。
+/// 对一个可等待对象的稳定引用；值语义，可安全复制给调度器入队逻辑。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TaskWaitHandle {
+    /// 该句柄所指的等待目标（队列或任务退出）。
     target: TaskWaitTarget,
 }
 

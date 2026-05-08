@@ -5,24 +5,33 @@ use core::result::Result;
 /// 复位原因提示（映射到 SBI `system_reset` 的 reason 域等）。
 #[derive(Debug)]
 pub enum FirmwareResetReason {
+    /// 无附加原因。
     NoReason,
+    /// 严重错误路径触发复位。
     SystemFailure,
 }
 
 /// 请求的复位类型（关机、冷启动、热启动等）。
 #[derive(Debug)]
 pub enum FirmwareResetType {
+    /// 关机。
     Shutdown,
+    /// 冷启动。
     ColdReboot,
+    /// 热启动。
     WarmReboot,
 }
 
 /// 固件拒绝或未能执行复位时的错误。
 #[derive(Debug)]
 pub enum FirmwareResetError {
+    /// 固件不支持该复位类型。
     Unsupported,
+    /// 调用已发出但成功路径通常不返回（见各 impl 文档）。
     Failed,
+    /// 策略拒绝。
     Denied,
+    /// 复位服务不可用。
     Unavailable,
 }
 

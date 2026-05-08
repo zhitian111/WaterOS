@@ -1,11 +1,18 @@
 #![no_std]
 
+//! QEMU LoongArch64 **早期 I/O**：UART16550 MMIO 控制台 + **CSR 定时器**编程（与 arch
+//! `StableCounter` tick 同一刻度组合使用）。
+//!
+//! **假设**：`UART_BASE` 与 QEMU virt 设备树一致；CSR 编号与 LoongArch 手册及当前内核
+//! trap 路径中 `TCFG`/`TICLR` 使用保持一致。
+
 use api_v0::console::{FirmwareConsole, FirmwareConsoleResult};
 use api_v0::reset::{FirmwareReset, FirmwareResetError, FirmwareResetResult};
 use api_v0::timer::{FirmwareTimer, FirmwareTimerError, FirmwareTimerResult};
 use core::arch::asm;
 use core::ptr::{read_volatile, write_volatile};
 
+/// QEMU virt 板上 UART16550 物理基址（与设备树 `reg` 一致；换板须同步修改）。
 const UART_BASE : usize = 0x1FE0_01E0;
 const UART_THR : usize = UART_BASE;
 const UART_LSR : usize = UART_BASE + 5;
@@ -39,11 +46,14 @@ impl FirmwareConsole for QemuLoongArch64Uart16550Console {
     fn firmware_console_flush() -> FirmwareConsoleResult<()> { Ok(()) }
 }
 
+/// 定时器配置 CSR：写入 `(delta << 2) | ENABLE` 形式与硬件解码约定一致。
 const CSR_TCFG : usize = 0x41;
+/// 定时器中断清除 CSR：与 `arch-impl-loongarch64` trap 中清挂起位一致。
 const CSR_TICLR : usize = 0x44;
 const TCFG_ENABLE : usize = 1 << 0;
 const TICLR_CLEAR_TIMER : usize = 1 << 0;
 
+/// 用 **CSR 定时器**近似 SBI `set_timer`：deadline 与当前 `rdtime.d` 的差写入 `TCFG`。
 pub struct QemuLoongArch64Timer;
 
 #[inline]

@@ -19,6 +19,7 @@ pub mod kernel_bringup;
 
 pub use frame_allocator::PhysicalFrameAllocator;
 
+/// 聚合自测：地址分解、权限与 mmap 标志；不分配真实物理帧。
 pub fn test() {
     log::trace!("[mm-api] test begin");
     addr::test();

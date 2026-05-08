@@ -1,3 +1,7 @@
+//! [`RoundRobinScheduler`]：把 `ScheduleReason` 与等待路径翻译成队列操作与 `__switch` 所需的上下文指针对。
+//!
+//! Idle 任务不占时间片：tick/yield 时若下一就绪任务仍是 idle，则不发起切换（见 `schedule` 分支）。
+
 use api_v0::ScheduleReason;
 use task_api::{
     ExitedTask, KernelTaskEntry, TaskBlockReason, TaskId, TaskSnapshot, TaskTick, TaskWaitHandle,
@@ -8,6 +12,7 @@ use crate::queues::{QueueTarget, RoundRobinQueues};
 use crate::registry::TaskRegistry;
 use crate::{SwitchPair, TaskTrapFrame};
 
+/// 就绪 FIFO + 阻塞/睡眠/等待超时组合下的具体调度器状态机。
 pub(super) struct RoundRobinScheduler {
     registry: TaskRegistry,
     queues: RoundRobinQueues,
@@ -162,6 +167,7 @@ impl RoundRobinScheduler {
             .registry
             .wait_target_ready(wait_handle)
         {
+            // 目标已就绪：不切换，仅标记当前任务等待结果为已唤醒（例如等待的任务已退出）。
             if let Some(current_task_id) = self
                 .registry
                 .current_task_id()

@@ -1,3 +1,7 @@
+//! 轮转调度器的 **队列与 tick 记账**：就绪 FIFO、按原因的阻塞分桶、睡眠与退出队列，以及等待超时扫描。
+//!
+//! 与 [`crate::registry::TaskRegistry`] 协同：`enqueue_task` 同时更新 TCB 状态与队列结构；`task_id` 与 `WaitQueueId` 均为稠密下标假设。
+
 extern crate alloc;
 
 use alloc::collections::VecDeque;
@@ -9,6 +13,7 @@ use task_api::{
 
 use crate::registry::TaskRegistry;
 
+/// 将当前任务从运行态移出后应进入的调度桶。
 pub(super) enum QueueTarget {
     Ready,
     Blocked(TaskBlockReason),
@@ -16,6 +21,7 @@ pub(super) enum QueueTarget {
     Exited(TaskExitCode),
 }
 
+/// 带截止 tick 的等待项；到期时若任务仍在同一 `Wait` 阻塞上则超时唤醒。
 #[derive(Clone, Copy)]
 struct WaitTimeoutEntry {
     task_id: TaskId,
@@ -23,14 +29,20 @@ struct WaitTimeoutEntry {
     wake_tick: TaskTick,
 }
 
+/// 轮转实现中的全部队列与当前逻辑 tick；不持有 TCB，仅通过 `TaskRegistry` 查询/更新任务状态。
 pub(super) struct RoundRobinQueues {
+    // 下标为 `WaitQueueId` 的 FIFO；与 `TaskWaitTarget::WaitQueue` 对应。
     wait_queues: Vec<VecDeque<TaskId>>,
+    // 下标为被等待任务的 `TaskId`；与 `TaskWaitTarget::TaskExit` 对应。
     exit_wait_queues: Vec<VecDeque<TaskId>>,
+    // 按入队顺序扫描；到期 tick 不大于 `current_tick` 时尝试超时唤醒。
     wait_timeouts: VecDeque<WaitTimeoutEntry>,
     ready_queue: VecDeque<TaskId>,
+    // 非 `Wait` 类阻塞原因的兜底队列（与 wait 分桶并行存在）。
     blocked_queue: VecDeque<TaskId>,
     sleep_queue: VecDeque<TaskId>,
     exited_queue: VecDeque<TaskId>,
+    // 全局逻辑时钟：每次 `Tick` 调度原因时递增。
     current_tick: TaskTick,
 }
 
@@ -333,6 +345,7 @@ impl RoundRobinQueues {
     }
 }
 
+// 从 deque 中精确移除第一个匹配的 `task_id`，保持其余元素顺序；O(n) 扫描，符合当前 bring-up 规模假设。
 fn take_task_id_by_id(queue: &mut VecDeque<TaskId>, task_id: TaskId) -> bool {
     let mut remaining = VecDeque::new();
     let mut found = false;

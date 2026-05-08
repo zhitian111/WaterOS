@@ -1,3 +1,7 @@
+//! 内存布局与 QEMU `virt` 常见假设：DRAM 上界、MMIO 窗口、内核堆尺度。
+//!
+//! 真机或自定义 `-m` 时应以 DTB/固件为准；此处常量多用于 bring-up 与缺省回退。
+
 #[allow(unused)]
 /// 内核堆大小的以 2 为底的指数位宽。
 pub const KERNEL_HEAP_SIZE_BIT_WIDTH : usize = 21;

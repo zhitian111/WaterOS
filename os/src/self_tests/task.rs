@@ -24,6 +24,8 @@ use mm::api::perm::PagePerm;
 use runtime::logging::*;
 
 static BLOCK_TASK_READY : AtomicBool = AtomicBool::new(false);
+// ---- stage4 内核映射用户任务：须与 `trap_handler` / `wateros-abi` 中 syscall 号及
+// `spawn_user_task_spec` 断言一致（镜像范围仅用于元数据，代码实际在可执行内核 VA）。----
 const STAGE4_USER_EXIT_OK : isize = 88;
 const STAGE4_USER_EXIT_BAD_RET : isize = 89;
 const STAGE4_USER_SYSCALL_YIELD_NR : usize = 124;
@@ -33,6 +35,7 @@ const STAGE4_USER_IMAGE_SIZE : usize = 0x2000;
 const STAGE4_USER_STACK_TOP : usize = 0x0000_0000_7FFF_F000;
 const STAGE4_USER_STACK_SIZE : usize = 16 * 1024;
 
+/// 仅参数 `a7` 的 `ecall`；返回值在 `a0`，约定与内核对用户态 syscall 返回一致。
 #[inline]
 unsafe fn user_syscall0(nr : usize) -> isize {
     let mut ret = 0usize;
@@ -45,6 +48,7 @@ unsafe fn user_syscall0(nr : usize) -> isize {
     ret as isize
 }
 
+/// 走 `exit_group` 号直接 `noreturn` ecall，用于用户态自检片段无返回退出。
 #[inline]
 unsafe fn user_exit_group(exit_code : isize) -> ! {
     unsafe {
@@ -55,12 +59,14 @@ unsafe fn user_exit_group(exit_code : isize) -> ! {
     }
 }
 
+// 纯自旋延迟，避免日志在极短 tick 内刷屏；无硬件假设。
 fn busy_delay(rounds : usize) {
     for _ in 0..rounds {
         core::hint::spin_loop();
     }
 }
 
+/// 若存在当前任务，打印调度统计；用于 sleep/block 路径的可观测性。
 fn log_task_snapshot(label : &str) {
     if let Some(snapshot) = task::current_task_snapshot() {
         info!("[task-stage2] {} id={} state={:?} schedule_count={} tick_count={}",
@@ -77,6 +83,7 @@ fn log_task_snapshot(label : &str) {
     }
 }
 
+/// stage2：`sleep_for_ticks` 与快照日志交替。
 extern "C" fn stage2_sleep_task(_arg : usize) -> ! {
     info!("[task-stage2] sleep task started");
     for round in 1..=3usize {
@@ -91,6 +98,7 @@ extern "C" fn stage2_sleep_task(_arg : usize) -> ! {
     task::exit_current(11);
 }
 
+/// stage2：到达 `block_current` 前释放 `BLOCK_TASK_READY`，供 waker 同步。
 extern "C" fn stage2_blocked_task(_arg : usize) -> ! {
     info!("[task-stage2] blocked task started");
     log_task_snapshot("block-before");
@@ -104,6 +112,7 @@ extern "C" fn stage2_blocked_task(_arg : usize) -> ! {
     task::exit_current(22);
 }
 
+/// stage2：等待 ready 标志后延迟 tick 再 `wake_task`，验证手动阻塞/唤醒序。
 extern "C" fn stage2_waker_task(blocked_task_id : usize) -> ! {
     info!("[task-stage2] waker task started, target blocked_task_id={}",
           blocked_task_id);
@@ -134,6 +143,7 @@ extern "C" fn stage2_waker_task(blocked_task_id : usize) -> ! {
     task::exit_current(33);
 }
 
+/// stage3b：在 wait queue 上应超时返回。
 extern "C" fn stage3_wait_timeout_task(wait_queue_id : usize) -> ! {
     info!("[task-stage3b] timeout task started, wait_queue_id={}",
           wait_queue_id);
@@ -147,6 +157,7 @@ extern "C" fn stage3_wait_timeout_task(wait_queue_id : usize) -> ! {
     task::exit_current(44);
 }
 
+/// stage3b：先睡再退出，供 exit-waiter / reaper 验证。
 extern "C" fn stage3_exit_target_task(_arg : usize) -> ! {
     info!("[task-stage3b] exit-target task started");
     task::sleep_for_ticks(2);
@@ -154,6 +165,7 @@ extern "C" fn stage3_exit_target_task(_arg : usize) -> ! {
     task::exit_current(55);
 }
 
+/// stage3b：`wait_for_task_exit_for_ticks` 须在时限内被目标退出唤醒。
 extern "C" fn stage3_exit_waiter_task(exit_target_task_id : usize) -> ! {
     info!("[task-stage3b] exit-waiter task started, target={}",
           exit_target_task_id);
@@ -166,6 +178,7 @@ extern "C" fn stage3_exit_waiter_task(exit_target_task_id : usize) -> ! {
     task::exit_current(66);
 }
 
+/// stage3b：稍后 `reap_exited_task`，断言僵尸元数据与退出码。
 extern "C" fn stage3_exit_reaper_task(exit_target_task_id : usize) -> ! {
     info!("[task-stage3b] exit-reaper task started, target={}",
           exit_target_task_id);
@@ -182,6 +195,7 @@ extern "C" fn stage3_exit_reaper_task(exit_target_task_id : usize) -> ! {
     task::exit_current(77);
 }
 
+/// 映射到用户特权级的最小片段：`sched_yield` 成功则 `exit_group(OK)`，否则错误码路径。
 extern "C" fn stage4_user_task_entry() -> ! {
     let yield_ret = unsafe { user_syscall0(STAGE4_USER_SYSCALL_YIELD_NR) };
     let exit_code = if yield_ret == 0 {
@@ -194,6 +208,7 @@ extern "C" fn stage4_user_task_entry() -> ! {
     }
 }
 
+/// 等待根卷默认 ELF 用户任务退出并 reap，仅日志与资源校验。
 extern "C" fn elf_user_observer_task(elf_task_id : usize) -> ! {
     trace!("[elf-selftest] elf observer entered elf_task_id={}",
            elf_task_id);
@@ -209,6 +224,7 @@ extern "C" fn elf_user_observer_task(elf_task_id : usize) -> ! {
     task::exit_current(100);
 }
 
+/// 对 [`stage4_user_task_entry`] 派生任务做 `wait`/`reap` 与 trap/资源快照断言。
 extern "C" fn stage4_user_observer_task(user_task_id : usize) -> ! {
     info!("[task-stage4] observer task started, user_task_id={}",
           user_task_id);

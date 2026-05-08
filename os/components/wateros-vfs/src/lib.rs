@@ -23,6 +23,7 @@ pub mod bridge {
     pub use ::impl_fs_bridge::*;
 }
 
+/// 聚合自检：依次运行 `api-v0`、占位 impl 的单元测试；启用 `bridge-fs-api` 时包含桥接 crate 的 `test()`。
 pub fn test() {
     api_v0::test();
     impl_dummy::test();

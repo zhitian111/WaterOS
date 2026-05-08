@@ -36,6 +36,7 @@ pub(crate) fn phys_ram_end_exclusive() -> usize {
     }
 }
 
+// `Acquire` 与 `init` 末尾 `Release` 配对；仅在 `init` 完成后合法调用。
 #[inline]
 fn aspace_mut() -> &'static mut Sv39AddressSpace {
     let p = KERNEL_ASPACE.load(Ordering::Acquire);
@@ -94,6 +95,7 @@ pub fn init(start_ppn: usize, end_ppn: usize, ram_end_exclusive: usize) {
         "MMIO",
     );
 
+    // 选一枚位于帧池内的物理页做 satp 切换后的翻译与内存一致性探针（与 RAM 恒等区无重叠的任意 VA）。
     assert!(start_ppn + 16 < end_ppn, "kernel_mm: probe ppn out of range");
     let probe_ppn = PhysPageNum(start_ppn + 16);
     let probe_va = VirtAddr(0x4000_0000usize + 0x2A0);

@@ -1,5 +1,7 @@
 #![no_std]
 //! IPC 视角下的任务等待队列：对 `wateros_task::WaitQueue` 的薄包装，便于 IPC 模块与调度子系统解耦命名。
+//!
+//! 不变量：不在此类型上附加第二套等待状态；唤醒与 tick 超时语义与 `wateros_task` 完全一致。若 IPC 需要额外元数据，应在更高层组合本类型而非扩展 `inner`。
 
 /// 任务标识（重导出自 `wateros_task`）。
 pub use wateros_task::TaskId;
@@ -15,6 +17,7 @@ pub use wateros_task::WaitQueueId;
 /// IPC 侧对任务等待队列的薄包装。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WaitQueue {
+    // 仅委托底层队列；不在 IPC 层缓存 waiters 或附加锁。
     inner: wateros_task::WaitQueue,
 }
 

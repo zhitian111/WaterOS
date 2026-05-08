@@ -5,6 +5,8 @@
 #![no_std]
 extern crate alloc;
 
+pub mod uart;
+
 use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -63,6 +65,7 @@ pub fn physical_ram_end_exclusive() -> usize {
     }
 }
 
+// `unsafe`：`dtb_pa` 指向的 DTB 在内核存活期内常驻且布局合法；返回的 `Fdt` 仅在本 crate 扫描路径中使用。
 fn read_fdt() -> DriverResult<Fdt<'static>> {
     let dtb = DTB_BASE_ADDR.load(Ordering::Acquire);
     if dtb == 0 {
@@ -72,11 +75,13 @@ fn read_fdt() -> DriverResult<Fdt<'static>> {
     Ok(fdt)
 }
 
+// DTB 属性值为大端；`offset` 须对齐到 4 字节边界（此处由调用方保证长度）。
 fn read_be_u32(raw: &[u8], offset: usize) -> Option<u32> {
     let bytes = raw.get(offset..offset + 4)?;
     Some(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
 }
 
+// 取节点 `reg` 的第一段作为 MMIO 窗口；多段设备当前仅使用首段（virtio-mmio 在 virt 上通常一段即可）。
 fn first_mmio_region(node: fdt::node::FdtNode<'_, '_>) -> Option<MmioRegion> {
     let mut regions = node.reg()?;
     let region = regions.next()?;
@@ -88,6 +93,7 @@ fn first_mmio_region(node: fdt::node::FdtNode<'_, '_>) -> Option<MmioRegion> {
     Some(MmioRegion { base, size })
 }
 
+// 仅覆盖「单 cell 中断号 + 可选 interrupt-parent」形态；PLIC/GPIO 复用等复杂描述返回 `None` 而非误解析。
 fn parse_irq(node: &fdt::node::FdtNode<'_, '_>) -> Option<IrqLine> {
     let irq = node.property("interrupts")?.value;
     let irq_num = read_be_u32(irq, 0)?;
@@ -100,6 +106,7 @@ fn parse_irq(node: &fdt::node::FdtNode<'_, '_>) -> Option<IrqLine> {
     })
 }
 
+// `compatible` 为以 `NUL` 分隔的 C 字符串序列；非法 UTF-8 片段丢弃。
 fn compatible_list(node: &fdt::node::FdtNode<'_, '_>) -> Vec<String> {
     let mut list = Vec::new();
     let Some(raw) = node.property("compatible").map(|p| p.value) else {
@@ -116,15 +123,18 @@ fn compatible_list(node: &fdt::node::FdtNode<'_, '_>) -> Vec<String> {
     list
 }
 
+// 与块子系统 `supported_devices` 中 `virtio,mmio` 字符串精确一致才视为 virtio-mmio 节点。
 fn is_virtio_mmio_compatible(compatibles: &[String]) -> bool {
     compatibles.iter().any(|c| c.as_str() == "virtio,mmio")
 }
 
+// `word_offset` 为 u32 字偏移，与 VirtIO-MMIO 寄存器布局一致；访问须落在已映射的物理窗口内。
 fn mmio_read32(base: usize, word_offset: usize) -> u32 {
     let ptr = (base as *const u32).wrapping_add(word_offset);
     unsafe { core::ptr::read_volatile(ptr) }
 }
 
+// 魔数 0x74726976 即小端 "virt"；device id 遵循 VirtIO 规范（2=block，1=network）。
 fn probe_virtio_device_type(mmio: MmioRegion) -> DeviceType {
     let magic = mmio_read32(mmio.base, 0);
     let device_id = mmio_read32(mmio.base, 2);
@@ -138,6 +148,7 @@ fn probe_virtio_device_type(mmio: MmioRegion) -> DeviceType {
     }
 }
 
+// 生成 devfs 侧稳定路径片段；将 `@`/`/` 替换为 `_` 避免路径分隔歧义。
 fn sys_dev_path_for_dtb_node(node_name: &str) -> String {
     let safe = node_name.replace('@', "_").replace('/', "_");
     alloc::format!("/dev/sys/{}", safe)
@@ -204,6 +215,7 @@ pub fn device_infos() -> &'static Mutex<Vec<DeviceInfo>> {
     &DEVICE_INFOS
 }
 
+// 在已扫描的 `DEVICE_INFOS` 上尝试实例化 virtio-blk；失败或未声明的路径记入列表供 devfs 标注。
 fn probe_virtio_blk_and_collect_unsupported() -> Vec<String> {
     let infos = DEVICE_INFOS.lock();
     let mut blk = VIRTIO_BLK_MMIO.lock();
@@ -253,12 +265,14 @@ fn probe_virtio_blk_and_collect_unsupported() -> Vec<String> {
     unsupported
 }
 
+// 将 DTB 中未能绑定的 virtio 节点路径同步给用户态可见的 devfs 视图（具体语义由 devfs impl 定义）。
 fn sync_devfs(unsupported_paths: Vec<String>) {
     devfs_impl::set_dt_unsupported_paths(unsupported_paths);
     let node_count = devfs_impl::refresh();
     logging::info!("[driver] devfs refreshed, nodes={}", node_count);
 }
 
+// 自检日志：依赖 `logging` 级别；不改变驱动状态。
 fn dump_device_and_devfs_info() {
     let infos = DEVICE_INFOS.lock();
     for (idx, info) in infos.iter().enumerate() {
@@ -303,6 +317,7 @@ pub fn virtio_blk_probe_test() -> DriverResult<()> {
     Ok(())
 }
 
+/// DTB 扫描、virtio-blk 注册与 devfs 同步的完整 bring-up 路径；成功返回后块设备表可能仍为空（无盘场景）。
 pub fn init_after_boot() -> DriverResult<()> {
     for e in block::supported_devices() {
         logging::info!(
@@ -325,10 +340,12 @@ pub fn init_after_boot() -> DriverResult<()> {
         );
     }
     sync_devfs(unsupported);
+    uart::init_default_virt_uart();
+    logging::info!("[driver] QEMU virt UART0 MMIO ready (serial I/O)");
     Ok(())
 }
 
-/// 驱动自检：尝试完整 `init_after_boot` 路径并打印设备与 devfs 摘要。
+/// 驱动自检：尝试完整 [`init_after_boot`] 路径并打印设备与 devfs 摘要；失败仅打日志不 panic。
 pub fn test() {
     logging::trace!("[driver-impl-qemu] test begin");
     match init_after_boot() {

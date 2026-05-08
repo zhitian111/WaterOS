@@ -12,8 +12,10 @@ use api_v0::{DevFsManager, DevNode};
 pub struct DummyDevFsManager;
 
 impl DevFsManager for DummyDevFsManager {
+    // 占位：不维护任何节点或绑定表。
     fn refresh(&mut self) {}
 
+    // 占位：丢弃路径列表，无状态可更新。
     fn set_dt_unsupported_paths(&mut self, _paths: Vec<String>) {}
 
     fn list_nodes(&self) -> Vec<DevNode> { Vec::new() }

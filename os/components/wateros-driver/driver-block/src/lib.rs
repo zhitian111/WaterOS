@@ -31,6 +31,7 @@ pub fn block_subsystem_claims_device(compatibles: &[String], probed: DeviceType)
     if probed != DeviceType::Block {
         return false;
     }
+    // 与 `BLOCK_SUPPORTED_DEVICES` 中 `compatible` 精确匹配即可；不要求节点名或 reg 形态。
     supported_devices().iter().any(|s| {
         s.subsystem == "block" && compatibles.iter().any(|c| c.as_str() == s.compatible)
     })

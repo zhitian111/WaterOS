@@ -5,7 +5,10 @@
 #![no_std]
 
 /// 占位算术函数（crate 骨架）；与驱动无关，仅供依赖解析与单测通过。
+///
+/// **后续替换点**：若 dummy 需表达「无块设备」或空操作表，应替换为显式 API 而非保留此符号。
 pub fn add(left : u64, right : u64) -> u64 { left + right }
+
 #[cfg(test)]
 mod tests {
     use super::*;

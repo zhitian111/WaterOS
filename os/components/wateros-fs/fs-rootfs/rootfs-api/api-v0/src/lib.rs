@@ -3,6 +3,7 @@
 //! RootFS 管理 API（v0）：当前根只读卷句柄与根块设备路径的存取契约。
 //!
 //! 挂载语义由实现配合 devfs 与已注入的 [`fs_api_v0::FsImpl`] 完成；本 trait 不规定卷格式。
+//! 典型调用序：`set_active_fs_impl`（内核实现侧）→ `mount_root_from_block_path` / `mount_default_root`；[`RootFsManager::clear_root_fs`] 用于卸载或错误恢复路径。
 extern crate alloc;
 
 use alloc::string::String;

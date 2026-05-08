@@ -5,9 +5,13 @@ use core::result::Result;
 /// 控制台操作失败原因。
 #[derive(Debug)]
 pub enum FirmwareConsoleError {
+    /// 控制台后端未就绪。
     Unavailable,
+    /// 固件未提供该能力。
     Unsupported,
+    /// 单字节写入失败。
     WriteFailure,
+    /// flush 或缓冲语义不支持。
     BufferFailure,
 }
 

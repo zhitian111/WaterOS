@@ -1,3 +1,6 @@
+//! LoongArch64 **任务上下文**：与 `asm/switch.S` 中 `__switch` 保存的 `ra`/`sp`/`$r22`–
+//! `$r31` 顺序一致；`s[0]` 承载 `bootstrap_ptr`，由 `__arch_task_entry` 传入跳板。
+
 use api_v0::task::ArchTaskContext;
 
 unsafe extern "C" {
@@ -5,7 +8,7 @@ unsafe extern "C" {
     fn __wateros_task_runtime_enter_current_user_task() -> !;
 }
 
-/// LoongArch64 LP64 任务切换上下文。
+/// 与 `switch.S` 一致的 callee-saved 子集 + `ra`/`sp`（共 10 个 `$r22`–`$r31` 槽）。
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct LoongArch64ArchTaskContext {

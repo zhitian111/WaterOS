@@ -23,9 +23,11 @@ use virtio_drivers::{BufferDirection, Hal, PhysAddr, PAGE_SIZE};
 
 const _: () = assert!(PAGE_SIZE == mm_api::addr::PAGE_SIZE);
 
+/// 将内核帧分配器接到 `virtio-drivers` 的 [`Hal`]：恒等映射下返回的 `PhysAddr` 与可写虚拟指针相同。
 struct VirtioMmioHal;
 
 unsafe impl Hal for VirtioMmioHal {
+    /// 按页数向帧池要连续物理页；失败时释放已拿页并返回空指针对，由上层映射为 [`DriverError`]。
     fn dma_alloc(pages: usize, _direction: BufferDirection) -> (PhysAddr, NonNull<u8>) {
         if pages == 0 {
             return (0, NonNull::dangling());
@@ -106,6 +108,7 @@ unsafe impl Hal for VirtioMmioHal {
 
 /// VirtIO-MMIO 上的块设备（`virtio-blk`）。
 pub struct VirtioBlkDevice {
+    /// `virtio-drivers` 侧已握手的传输与队列状态。
     inner: VirtIOBlk<VirtioMmioHal, MmioTransport<'static>>,
 }
 
@@ -124,12 +127,14 @@ impl VirtioBlkDevice {
 }
 
 impl BlockDevice for VirtioBlkDevice {
+    /// 以 LBA 为单位读入 `buf`；长度须为块大小的整数倍，否则由 VirtIO 层返回错误。
     fn read_blocks(&mut self, start_block: Lba, buf: &mut [u8]) -> DriverResult<()> {
         self.inner
             .read_blocks(start_block.0 as usize, buf)
             .map_err(|_| DriverError::IoError)
     }
 
+    /// 将 `buf` 写回磁盘；语义与 [`read_blocks`] 对称。
     fn write_blocks(&mut self, start_block: Lba, buf: &[u8]) -> DriverResult<()> {
         self.inner
             .write_blocks(start_block.0 as usize, buf)

@@ -13,9 +13,11 @@ pub struct TaskBootstrap {
 }
 
 impl TaskBootstrap {
+    /// 构造启动载荷：`entry` 为实际内核任务体，`arg` 透传给该入口。
     #[inline]
     pub const fn new(entry : KernelTaskEntry, arg : usize) -> Self { Self { entry, arg } }
 
+    /// 跳转到内核任务入口；仅在首次被调度到该任务时由 arch 跳板调用一次。
     #[inline]
     pub fn run(&self) -> ! { (self.entry)(self.arg) }
 }

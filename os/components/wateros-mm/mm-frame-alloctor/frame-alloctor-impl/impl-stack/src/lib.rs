@@ -33,6 +33,7 @@ pub struct StackFrameAllocator {
 }
 
 impl StackFrameAllocator {
+    /// 构造空分配器；须再调用 [`Self::init`] 方可从 PPN 区间取帧。
     pub fn new() -> Self {
         Self {
             recycled: Vec::new(),
@@ -41,6 +42,7 @@ impl StackFrameAllocator {
         }
     }
 
+    /// 将可用帧限制为半开区间 `[start_ppn, end_ppn)`（PPN）；会清空回收栈并重置惰性上界。
     pub fn init(&mut self, start_ppn: BasePPN, end_ppn: BasePPN) {
         self.recycled.clear();
         self.start_ppn = start_ppn.val;
@@ -75,6 +77,7 @@ static mut FRAME_ALLOCATOR: MaybeUninit<UniprocessorSafeCell<StackFrameAllocator
     MaybeUninit::uninit();
 static FRAME_ALLOCATOR_READY: AtomicBool = AtomicBool::new(false);
 
+// `FRAME_ALLOCATOR` 仅在首次 `init_frame_allocator` 中 `write` 一次，之后只读；与 `READY` 发布顺序配对。
 fn get_frame_allocator_cell() -> &'static UniprocessorSafeCell<StackFrameAllocator> {
     assert!(
         FRAME_ALLOCATOR_READY.load(Ordering::Acquire),

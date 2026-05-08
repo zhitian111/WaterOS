@@ -15,6 +15,7 @@ use arch::trap::{ActiveTrapFrame as TaskTrapFrame, TrapContextRead, TrapContextW
 use crate::stack::{KernelStack, UserStack};
 use crate::TaskBootstrap;
 
+// 用户栈既可由本 crate 分配，也可由创建方通过 `UserTaskSpec::with_external_stack` 提供已映射区间。
 enum UserStackBacking {
     Kernel(UserStack),
     External {
@@ -23,6 +24,7 @@ enum UserStackBacking {
     },
 }
 
+// 与 `task_api::UserTaskResources` 快照对应的内部可变表示；仅在 TCB 内使用。
 struct UserTaskResources {
     entry_pc : UserTaskEntryPc,
     user_stack : UserStackBacking,
@@ -30,7 +32,9 @@ struct UserTaskResources {
     image : Option<UserImageInfo>,
 }
 unsafe extern "C" {
+    /// 内核任务通用入口桩：从栈上取出 `TaskBootstrap` 并转入 `TaskBootstrap::run`。
     fn __arch_task_entry();
+    /// 用户任务入口桩：装配完成后由调度器经 `__wateros_task_runtime_enter_current_user_task` 进入用户态。
     fn __arch_user_task_entry();
 }
 
@@ -86,6 +90,7 @@ impl UserTaskResources {
     }
 }
 
+// 从架构 trap 帧读出语义字段，供 `TaskSnapshot` / `ExitedTask` 使用。
 fn trap_snapshot(trap_frame : TaskTrapFrame) -> TaskTrapSnapshot {
     TaskTrapSnapshot::new(<TaskTrapFrame as TrapContextRead>::raw_cause(&trap_frame),
                           <TaskTrapFrame as TrapContextRead>::user_pc(&trap_frame),

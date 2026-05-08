@@ -10,12 +10,12 @@ use crate::error::MmResult;
 /// - 处理跨页拷贝与权限校验（未映射页不得静默成功）；
 /// - 对未映射/越权返回合适的 [`crate::error::MmError`]。
 pub trait UserMemoryOps {
-    /// 从用户虚拟地址拷贝到内核缓冲区。
-    /// 返回实际拷贝字节数；失败则返回 `MmError`。
+    /// 从用户虚拟地址 `src` 起读取，写入 `dst`；可跨页，遇未映射或权限不足返回错误。
+    ///
+    /// 成功返回实际拷贝的字节数（当前 API 与全量成功语义一致时可等于 `dst.len()`，以实现为准）。
     fn copy_from_user(&self, dst: &mut [u8], src: VirtAddr) -> MmResult<usize>;
 
-    /// 将内核缓冲区写入用户虚拟地址。
-    /// 返回实际写入字节数；失败则返回 `MmError`。
+    /// 将 `src` 写入用户缓冲区 `dst` 起始处；可跨页。
     fn copy_to_user(&self, dst: VirtAddr, src: &[u8]) -> MmResult<usize>;
 }
 

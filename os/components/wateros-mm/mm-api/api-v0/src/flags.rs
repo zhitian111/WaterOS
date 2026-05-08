@@ -15,12 +15,15 @@ impl MapFlags {
     /// 共享映射（当前阶段可先按 PRIVATE 语义拒绝或延后实现）
     pub const SHARED: Self = Self(1 << 2);
 
+    /// 无任何标志位。
     #[inline]
     pub const fn empty() -> Self { Self(0) }
 
+    /// 原始位模式（与 syscall/ABI 层约定一致时使用）。
     #[inline]
     pub const fn bits(self) -> u32 { self.0 }
 
+    /// 是否包含 `other` 的全部置位（子集检测）。
     #[inline]
     pub const fn contains(self, other: Self) -> bool { (self.0 & other.0) == other.0 }
 }
@@ -36,6 +39,7 @@ impl core::ops::BitOrAssign for MapFlags {
     fn bitor_assign(&mut self, rhs: Self) { self.0 |= rhs.0; }
 }
 
+/// `MapFlags` 位运算与 `contains` 的单元测试。
 pub fn test() {
     log::trace!("[mm-api::flags] test begin");
     let f = MapFlags::ANONYMOUS | MapFlags::PRIVATE;

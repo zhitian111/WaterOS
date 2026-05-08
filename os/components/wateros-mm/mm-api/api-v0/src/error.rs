@@ -25,6 +25,7 @@ pub enum MmError {
 /// `Result` 别名，错误类型为 [`MmError`]。
 pub type MmResult<T> = core::result::Result<T, MmError>;
 
+/// 将帧分配器错误并入 MM 语义错误（供 `?` 在 syscall/impl 路径使用）。
 impl From<FrameAllocError> for MmError {
     #[inline]
     fn from(value: FrameAllocError) -> Self {

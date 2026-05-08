@@ -46,6 +46,7 @@ __alltraps:
     st.d $r30, $r3, 240
     st.d $r31, $r3, 248
 
+    # CSR 编号与 `trap.rs` 中 `TrapContext` 字段：0x1=PRMD、0x6=ERA、0x5=ESTAT、0x7=BADV。
     csrrd $r12, 0x1
     st.d $r12, $r3, 256
     csrrd $r12, 0x6

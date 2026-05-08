@@ -9,10 +9,13 @@ pub trait PlatformBootContext<BootArgs : PlatformBootArgs>: From<BootArgs> {}
 ///
 /// 默认方法返回 `None`：具体板级或 QEMU profile 应覆盖需要暴露的参数槽位。
 pub trait PlatformBootArgs: Debug + Clone + Copy {
+    /// 首参（如 RISC-V OpenSBI 的 hart id）；未使用则 `None`。
     #[inline]
     fn arg0(&self) -> Option<usize> { None }
+    /// 次参（如 DTB 物理指针）；未使用则 `None`。
     #[inline]
     fn arg1(&self) -> Option<usize> { None }
+    /// 第三参（板级扩展）；未使用则 `None`。
     #[inline]
     fn arg2(&self) -> Option<usize> { None }
     // etc.

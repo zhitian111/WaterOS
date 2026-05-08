@@ -11,9 +11,13 @@ use alloc::vec::Vec;
 /// 由 MMIO 魔数与 VirtIO device id 等探测得到的设备大类，用于与子系统声明对齐。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceType {
+    /// VirtIO-MMIO 等设备探测为块设备（如 device id 2）。
     Block,
+    /// 字符类设备（预留；当前 DTB 路径可能未填充）。
     Character,
+    /// VirtIO 网络等（如 device id 1）。
     Network,
+    /// 非 virtio、魔数不匹配或未识别的节点。
     Unknown,
 }
 
@@ -81,7 +85,7 @@ pub enum DriverError {
 /// [`DriverError`] 上的 [`Result`] 别名，便于块/字符等 API 统一签名。
 pub type DriverResult<T> = core::result::Result<T, DriverError>;
 
-/// 轻量自检：构造样例 [`DeviceInfo`] 并断言字段一致性。
+/// 轻量自检：构造样例 [`DeviceInfo`] 并断言字段一致性；不访问 DTB 或硬件。
 pub fn test() {
     log::trace!("[driver-api] test begin");
     let info = DeviceInfo {

@@ -1,8 +1,13 @@
 //! 系统调用编号的类型抽象，以及按 libc ABI 对齐的调用号表接口。
 //!
 //! 表项仅表达“编号映射”，不包含内核是否已实现某调用的能力声明。
+//!
+//! English: maps symbolic syscall names to numeric IDs for libc-aligned dispatch;
+//! presence in the table does not imply the kernel implements the syscall.
 
-/// Linux/riscv64 系统调用号 newtype（只表示编号，不在类型层做合法性校验）
+/// Linux/riscv64 系统调用号 newtype（只表示编号，不在类型层做合法性校验）。
+///
+/// English: opaque syscall number carrier; does not prove the ID is implemented.
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SyscallNumber(
@@ -12,12 +17,16 @@ pub struct SyscallNumber(
 
 impl SyscallNumber {
     /// 由裸编号构造；不检查该编号在当前内核是否受支持。
+    ///
+    /// English: wraps a raw syscall number without capability checks.
     #[inline]
     pub const fn new(n: usize) -> Self {
         Self(n)
     }
 
     /// 取底层 `usize` 调用号。
+    ///
+    /// English: exposes the underlying numeric syscall ID.
     #[inline]
     pub const fn raw(self) -> usize {
         self.0
@@ -28,8 +37,11 @@ impl SyscallNumber {
 ///
 /// 目前处于早期阶段，所以只维护“跑 busybox / 简单进程”所需的常用子集；
 /// 后续按 strace/缺口逐步补齐即可。
+///
+/// English: associates symbolic names with libc syscall numbers; early subset only,
+/// extend as userland coverage grows.
 pub trait SyscallNumberTable {
-    // I/O
+    // I/O / 文件与描述符相关
     /// 从打开对象读数据（与 `read(2)` 语义对齐的编号）。
     const READ: SyscallNumber;
     /// 向打开对象写数据（与 `write(2)` 语义对齐的编号）。
@@ -53,7 +65,7 @@ pub trait SyscallNumberTable {
     /// 文件描述符控制（`fcntl(2)`）。
     const FCNTL: SyscallNumber;
 
-    // 进程/执行
+    // 进程/执行 / process & execution
     /// 终止当前线程（`exit(2)`）。
     const EXIT: SyscallNumber;
     /// 终止进程内全部线程（`exit_group(2)`）。
@@ -65,7 +77,7 @@ pub trait SyscallNumberTable {
     /// 替换当前进程映像（与 `execve` 等价的编号）。
     const EXEC: SyscallNumber;
 
-    // 调度/时间
+    // 调度/时间 / scheduling & time
     /// 主动让出 CPU（`sched_yield(2)`）。
     const YIELD: SyscallNumber;
     /// 取墙上时钟（`gettimeofday(2)`）。
@@ -73,7 +85,7 @@ pub trait SyscallNumberTable {
     /// 取指定时钟源时间（`clock_gettime(2)`）。
     const CLOCK_GETTIME: SyscallNumber;
 
-    // 内存管理（glibc/musl 常见）
+    // 内存管理（glibc/musl 常见）/ memory management
     /// 调整 program break（`brk(2)`）。
     const BRK: SyscallNumber;
     /// 建立内存映射（`mmap(2)`）。
@@ -83,7 +95,7 @@ pub trait SyscallNumberTable {
     /// 修改映射保护属性（`mprotect(2)`）。
     const MPROTECT: SyscallNumber;
 
-    // 基本信息
+    // 基本信息 / identity & misc info
     /// 内核与体系结构标识（`uname(2)`）。
     const UNAME: SyscallNumber;
     /// 进程控制杂项（`prctl(2)`）。
@@ -95,7 +107,7 @@ pub trait SyscallNumberTable {
     /// 当前线程 ID（`gettid(2)`）。
     const GETTID: SyscallNumber;
 
-    // 线程/同步/信号（glibc/musl 常见）
+    // 线程/同步/信号（glibc/musl 常见）/ threads, sync, signals
     /// 用户态快速互斥与睡眠原语（`futex(2)`）。
     const FUTEX: SyscallNumber;
     /// 安装信号处理函数（`rt_sigaction(2)`）。
@@ -109,7 +121,7 @@ pub trait SyscallNumberTable {
     /// robust futex 列表（`set_robust_list(2)`）。
     const SET_ROBUST_LIST: SyscallNumber;
 
-    // 其它常用（早期阶段优先级不高，但常见）
+    // 其它常用（早期阶段优先级不高，但常见）/ other common syscalls
     /// 从内核熵池取随机字节（`getrandom(2)`）。
     const GETRANDOM: SyscallNumber;
     /// 设置间隔定时器（`setitimer(2)`）。

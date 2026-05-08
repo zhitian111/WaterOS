@@ -19,23 +19,30 @@ pub enum MmapKind {
 /// mmap 请求结构（从 syscall/ABI 层组装）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MmapRequest {
+    /// 期望映射起始地址；`None` 表示由实现挑选（须与 `flags`/`kind` 语义一致）。
     pub addr_hint: Option<VirtAddr>,
+    /// 映射长度（字节）；实现应按页向上取整到虚拟页边界。
     pub len: usize,
+    /// 页级保护（与 [`crate::address_space::AddressSpaceOps::map_page_to_ppn`] 语义对齐）。
     pub prot: PagePerm,
+    /// 匿名/私有等 mmap 语义标志。
     pub flags: MapFlags,
+    /// 匿名或文件后备等映射种类。
     pub kind: MmapKind,
 }
 
-/// mmap/unmap 契约（先占位即可）。
+/// mmap / munmap 与地址空间组合的契约；实现须与 [`crate::addr::PAGE_SIZE`] 页粒度一致。
 pub trait MmapOps: AddressSpaceOps {
-    /// 创建映射并返回映射起始虚拟地址。
+    /// 按请求建立映射；成功返回实际映射起始虚拟地址（可与 `addr_hint` 不同）。
+    ///
+    /// 失败时不得留下半映射区间（与具体实现的原子性约定一致）。
     fn mmap<A: PhysicalFrameAllocator<FrameId = PhysPageNum>>(
         &mut self,
         allocator: &mut A,
         req: MmapRequest,
     ) -> MmResult<VirtAddr>;
 
-    /// 删除映射并回收帧。
+    /// 解除 `[addr, addr+len)` 语义范围内的映射并回收对应物理帧。
     fn munmap<A: PhysicalFrameAllocator<FrameId = PhysPageNum>>(
         &mut self,
         allocator: &mut A,

@@ -1,3 +1,5 @@
+# switch.S — 协作式切换；与 `../src/task.rs` 中 `LoongArch64ArchTaskContext` 布局一致。
+# $r4 = 旧上下文指针，$r5 = 新上下文指针；保存 ra($r1)、sp($r3)、$r22–$r31。
     .section .text
     .globl __switch
 __switch:
@@ -38,9 +40,11 @@ __arch_user_task_entry:
     b __wateros_arch_user_task_entry_trampoline
 
     .globl __wateros_arch_restore_user_task
+# Rust `TrapContext` 指针在 $r4；$r5 = 用户 trap 时应使用的内核栈顶（与 RISC-V 侧 a1 约定对齐）。
 __wateros_arch_restore_user_task:
     move $r12, $r4
 
+    # 偏移 32*8 / 33*8：Rust `TrapContext` 的 prmd / era；CSR 0x1=PRMD、0x6=ERA（手册编号）。
     ld.d $r13, $r12, 32*8
     csrwr $r13, 0x1
     ld.d $r13, $r12, 33*8

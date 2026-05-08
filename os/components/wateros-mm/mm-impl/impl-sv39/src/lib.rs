@@ -103,6 +103,7 @@ impl Sv39Pte {
 const SV39_LEVELS: usize = 3;
 const SV39_ENTRIES: usize = 512;
 
+/// Sv39 虚拟页号在三级页表中的 9-bit 索引（低→高对应 level 0→2 在 walk 中的使用顺序由 `walk_*` 决定）。
 #[inline]
 fn vpn_indexes(vpn: VirtPageNum) -> [usize; 3] {
     let v = vpn.0;
@@ -125,6 +126,7 @@ unsafe fn table_mut(ppn: PhysPageNum) -> &'static mut [Sv39Pte; SV39_ENTRIES] {
     unsafe { &mut *(pa as *mut [Sv39Pte; SV39_ENTRIES]) }
 }
 
+/// 向帧分配器索取一页作为新页表并清零全部 PTE。
 #[inline]
 fn alloc_table_frame_zeroed() -> MmResult<PhysPageNum> {
     let ppn = frame_alloc_result().map_err(MmError::from)?;
@@ -149,6 +151,9 @@ impl Sv39AddressSpace {
         Ok(Self { root })
     }
 
+    /// 自根向下创建中间表直至 `vpn` 对应 **level-0** 表项；返回该表项与层级。
+    ///
+    /// 路径上遇已存在 **叶子** 时返回 [`MmError::AlreadyMapped`]（无法下钻）。
     #[inline]
     fn walk_create(&mut self, vpn: VirtPageNum) -> MmResult<(&'static mut Sv39Pte, usize)> {
         let idx = vpn_indexes(vpn);
@@ -177,6 +182,7 @@ impl Sv39AddressSpace {
         Err(MmError::InvalidAddress)
     }
 
+    /// 查找 `vpn` 对应的 PTE：无效返回 `None`；遇中间节点或叶子则返回该表项与层级。
     #[inline]
     fn walk_find(&self, vpn: VirtPageNum) -> MmResult<Option<(&'static mut Sv39Pte, usize)>> {
         let idx = vpn_indexes(vpn);
@@ -280,7 +286,7 @@ impl Drop for Sv39AddressSpace {
     }
 }
 
-/// Sv39 与帧分配器自测；`start_ppn`/`end_ppn` 与 [`frame_alloctor::init_frame_allocator`] 语义一致（PPN 半开区间由平台给出）。
+/// Sv39 页表 walk、映射/解映射/权限与翻译的自测；依赖已初始化的全局帧分配器（区间语义同 bring-up）。
 pub fn test_with_range(start_ppn: BasePPN, end_ppn: BasePPN) {
     log::trace!("[mm-impl::sv39] test begin");
     frame_alloctor::test_with_range(start_ppn, end_ppn);

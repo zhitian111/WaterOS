@@ -1,4 +1,6 @@
 //! 读写路径（基于 `ext4plus`，beta；写路径无完整 journal，仅用于 bring-up 与小文件测试）。
+//!
+//! I/O 边界：块读写适配器将驱动错误装箱为 `ext4plus` 期望的 `Error` trait object；按块读改写见本模块中的 `block_write_bytes`。
 
 use alloc::boxed::Box;
 use api_v0::{FsError, FsResult, ReadWriteFs};
@@ -9,8 +11,10 @@ use ext4plus::dir::Dir;
 use ext4plus::error::Ext4Error;
 use ext4plus::file::write_at;
 use ext4plus::inode::{InodeCreationOptions, InodeFlags, InodeMode};
-use ext4plus::{DirEntryName, Ext4, Ext4Read, Ext4Write, FileType};
+use ext4plus::path::Path;
+use ext4plus::{DirEntryName, Ext4, Ext4Read, Ext4Write, FileType, FollowSymlinks};
 
+// 共享块设备句柄上的按字节读/写：同一 `SharedBlockDevice` 分别作为 reader 与 writer 传入 `load_with_writer`。
 struct BlockDevRw {
     device: SharedBlockDevice,
 }
@@ -136,6 +140,7 @@ impl ReadWriteFs for Ext4FsRw {
         let root_inode = fs.read_root_inode().map_err(map_ext4_plus)?;
         let mut root = Dir::open_inode(fs, root_inode).map_err(map_ext4_plus)?;
 
+        // 根目录下同名普通文件则先 unlink，保证「写」语义近似 create/replace。
         if let Ok(old) = root.get_entry(name) {
             root.unlink(name, old).map_err(map_ext4_plus)?;
         }
@@ -155,8 +160,46 @@ impl ReadWriteFs for Ext4FsRw {
             })
             .map_err(map_ext4_plus)?;
 
+        // 数据写入 inode 后再 link 进根目录，顺序依赖 ext4plus 对未链接 inode 的约定。
         write_at(fs, &mut inode, data, 0).map_err(map_ext4_plus)?;
         root.link(name, &mut inode).map_err(map_ext4_plus)?;
         Ok(())
     }
+
+    fn unlink(&mut self, path: &str) -> FsResult<()> {
+        let (parent, name) = split_parent_and_name(path)?;
+        let fs = self.fs()?;
+        let parent_path = Path::try_from(parent).map_err(|_| FsError::InvalidPath)?;
+        let parent_inode = fs
+            .path_to_inode(parent_path, FollowSymlinks::All)
+            .map_err(map_ext4_plus)?;
+        if parent_inode.file_type() != FileType::Directory {
+            return Err(FsError::NotFound);
+        }
+        let mut parent_dir = Dir::open_inode(fs, parent_inode).map_err(map_ext4_plus)?;
+        let name = DirEntryName::try_from(name).map_err(|_| FsError::InvalidPath)?;
+        let target = parent_dir.get_entry(name).map_err(map_ext4_plus)?;
+        if target.file_type() == FileType::Directory {
+            return Err(FsError::NotAFile);
+        }
+        if target.file_type() != FileType::Regular {
+            return Err(FsError::Unsupported);
+        }
+        parent_dir.unlink(name, target).map_err(map_ext4_plus)?;
+        Ok(())
+    }
+}
+
+/// 将绝对路径拆成 `(父目录路径, 最终分量名)`；`path` 须为指向文件的绝对路径。
+fn split_parent_and_name(path: &str) -> FsResult<(&str, &str)> {
+    let p = path.trim_end_matches('/');
+    if p.is_empty() || p == "/" {
+        return Err(FsError::InvalidPath);
+    }
+    let (parent, name) = p.rsplit_once('/').ok_or(FsError::InvalidPath)?;
+    let parent = if parent.is_empty() { "/" } else { parent };
+    if name.is_empty() || name.contains('/') {
+        return Err(FsError::InvalidPath);
+    }
+    Ok((parent, name))
 }

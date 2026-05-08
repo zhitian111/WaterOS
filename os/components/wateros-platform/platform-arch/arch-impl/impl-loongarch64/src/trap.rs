@@ -1,3 +1,9 @@
+//! LoongArch64 **异常入口与帧语义**：与 `asm/trap.S` 中 `__alltraps` 保存顺序一致；
+//! `TrapContext` 字段与 CSR 槽位（`prmd`/`era`/`estat`/`badv`）变更时必须同步汇编。
+//!
+//! **ABI**：用户态系统调用按 LoongArch Linux 约定使用 `$r4`–`r9` 为参数、`$r11` 为
+//! 系统调用号；返回值写入 `$r4`（见 `TrapSyscallWrite`）。
+
 use abi::syscall_args::SyscallArgs;
 use abi::syscall_number::SyscallNumber;
 use abi::user_ret::UserRet;
@@ -35,15 +41,25 @@ pub struct TrapContext {
     badv : usize,
 }
 
+/// 异常入口向量 CSR（`EENTRY`）：`trap.S` 中 `__alltraps` 的物理入口地址写入此 CSR。
 const CSR_EENTRY : usize = 0xC;
+/// 定时器中断清除 CSR：写 `TICLR` 指定位以清挂起（与 `firmware_set_timer`/硬件一致）。
 const CSR_TICLR : usize = 0x44;
+/// `PRMD.PPLV`：返回后特权级域（与 `returns_to_user` 判定一致）。
 const LOONGARCH_PRMD_PPLV_MASK : usize = 0x3;
+/// `PRMD.PIE`：返回时全局中断使能快照位（与 `set_return_to_user_raw` 配合）。
 const LOONGARCH_PRMD_PIE : usize = 1 << 2;
+/// 用户态 PLV 编码（与手册中 PLV=3 对应；用于区分返回到用户还是内核）。
 const LOONGARCH_USER_PLV : usize = 0x3;
+/// `ESTAT.IS.TI`：定时器中断挂起位（与 `decode_loongarch64_trap_cause` 一致）。
 const TIMER_INTERRUPT_PENDING : usize = 1 << 11;
+/// `TICLR.TI`：清除定时器中断挂起。
 const TICLR_CLEAR_TIMER : usize = 1 << 0;
+/// 每次时钟 tick 后重载固件 deadline 的 tick 增量（与 StableCounter 刻度一致；调参时改此处）。
 const TIMER_SLICE_TICKS : u64 = 10_000_000;
+/// 用户态 syscall 指令宽度（`era` 前进量）；与 trap 帧中 `era` 语义一致。
 const SYSCALL_INSN_BYTES : usize = 4;
+// 仅统计用；与调度 tick 路径耦合，便于将来调试或移除。
 static TIMER_TICK_COUNT : AtomicUsize = AtomicUsize::new(0);
 
 #[inline]
@@ -104,6 +120,7 @@ unsafe extern "C" {
     fn __alltraps();
 }
 
+/// `csrwr`：写 CSR 并返回旧值；此处丢弃旧值，仅作副作用写。
 #[inline]
 fn write_csr<const CSR: usize>(value : usize) {
     let old = value;
@@ -112,12 +129,14 @@ fn write_csr<const CSR: usize>(value : usize) {
     }
 }
 
-/// 初始化 LoongArch64 exception 入口。
+/// 安装异常入口：将 `__alltraps` 写入 `EENTRY`（与 `trap.S` 中符号地址一致）。
 pub fn init_trap() {
     let addr = __alltraps as *const () as usize;
     write_csr::<CSR_EENTRY>(addr);
 }
 
+/// 汇编 `bl trap_entry_rust` 转入：在权威 trap 帧指针上完成 syscall / 定时器 /
+/// 其它异常的最小分发；返回前经运行时恢复帧（与 RISC-V 的 `kernel_trap` 单入口模式不同）。
 #[unsafe(no_mangle)]
 pub extern "C" fn trap_entry_rust(cx_ptr : *mut TrapContext) {
     let authoritative_cx_ptr =
@@ -160,6 +179,7 @@ pub extern "C" fn trap_entry_rust(cx_ptr : *mut TrapContext) {
     }
 }
 
+/// 用户态 `syscall`：经链接的运行时符号派发，结果写回 `UserRet` 对应寄存器槽。
 fn handle_user_syscall(cx : &mut TrapContext) {
     let syscall_nr = cx.syscall_nr()
                        .raw();

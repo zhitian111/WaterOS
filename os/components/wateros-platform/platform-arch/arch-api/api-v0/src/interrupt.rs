@@ -5,6 +5,7 @@ use crate::time::ArchTimeResult;
 /// 架构层全局中断状态快照。
 ///
 /// 该值只由当前 arch impl 解释，上层只能保存后交回 `restore_global_interrupt_state`。
+/// 原始 CSR 位快照（如 RISC-V `sstatus` 全宽）；仅由当前 `arch-impl` 解释。
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ArchInterruptState(pub usize);

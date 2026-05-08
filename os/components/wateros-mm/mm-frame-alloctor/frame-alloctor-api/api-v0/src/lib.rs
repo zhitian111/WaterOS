@@ -24,9 +24,9 @@ pub trait PhysicalFrameAllocator {
     /// 物理帧标识类型（通常可与 PPN 对齐）
     type FrameId: Copy + Eq;
 
-    /// 分配一个物理帧。
+    /// 分配一帧；耗尽时返回 [`FrameAllocError::OutOfMemory`]。
     fn alloc_frame(&mut self) -> FrameAllocResult<Self::FrameId>;
 
-    /// 释放一个物理帧。
+    /// 释放先前由 [`Self::alloc_frame`] 返回的帧；重复释放等行为由具体实现定义（栈实现见其实现侧注释）。
     fn dealloc_frame(&mut self, frame: Self::FrameId) -> FrameAllocResult<()>;
 }

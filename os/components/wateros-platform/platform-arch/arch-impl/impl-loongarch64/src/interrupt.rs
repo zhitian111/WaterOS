@@ -1,10 +1,17 @@
+//! LoongArch64 **中断开关**：`CRMD.IE` 为全局中断，`ECFG` 中定时器使能位与手册一致；
+//! **不**编程 StableCounter 或固件 deadline（见 `firmware::timer`）。
+
 use api_v0::interrupt::{ArchInterruptState, ArchTimerInterruptControl};
 use api_v0::time::ArchTimeResult;
 use core::arch::asm;
 
+/// 当前模式配置 CSR：本文件仅用 `IE` 位反映全局中断开关快照。
 const CSR_CRMD: usize = 0x0;
+/// 异常配置 CSR：`VS=11` 位使能定时器类中断（与 `enable_timer_interrupt` 对应）。
 const CSR_ECFG: usize = 0x4;
+/// `CRMD.IE`：全局中断使能。
 const CRMD_IE: usize = 1 << 2;
+/// `ECFG` 定时器中断使能掩码（与 `TIMER_INTERRUPT_PENDING` 路径配套使用）。
 const ECFG_TIMER_INTERRUPT_ENABLE: usize = 1 << 11;
 
 /// LoongArch64 架构中断控制实现。

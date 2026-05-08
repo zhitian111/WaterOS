@@ -1,0 +1,10 @@
+[package]
+    name = "wateros-pseudo-shell"
+    version = "0.1.0"
+    edition = "2024"
+
+[dependencies]
+    mm = { path = "../wateros-mm", package = "wateros-mm", default-features = true }
+    runtime-serial = { path = "../wateros-runtime/runtime-serial", package = "wateros-runtime-serial" }
+    task = { path = "../wateros-task", package = "wateros-task", default-features = true }
+    vfs = { path = "../wateros-vfs", package = "wateros-vfs", default-features = true }
