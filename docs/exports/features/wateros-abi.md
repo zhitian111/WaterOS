@@ -9,15 +9,16 @@
 - `os/components/wateros-abi/Cargo.toml`
 - `os/components/wateros-abi/src/lib.rs`
 - `os/components/wateros-abi/abi-api/api-v0/`
-- `os/components/wateros-abi/abi-impl/impl-linux-riscv64/`、`abi-impl/impl-dummy/`
+- `os/components/wateros-abi/abi-impl/impl-linux-generic64/`、`abi-impl/impl-dummy/`
 
 ## Feature 与聚合导出
 
 - **`default`**：`api-v0`、`impl-linux-riscv64`。
 - **`api-v0`**：联动子 crate **`impl-dummy/api-v0`**（工作区成员约束）。
-- **`impl-linux-riscv64`**：启用 Linux riscv64 编号表实现。
+- **`impl-linux-generic64`**：启用 Linux asm-generic 64-bit 编号表实现（**`LinuxGeneric64`**）。
+- **`impl-linux-riscv64`** / **`impl-linux-loongarch64`**：架构侧别名，等价于启用 **`impl-linux-generic64`**。
 - **`impl-dummy`**：占位 impl crate，与号表无实质衔接。
-- 聚合层在 **`api-v0`** 下导出 **`user_re`**、**`errno`**、**`syscall_args`**、**`syscall_number`**；启用 **`impl-linux-riscv64`** 时 **`ActiveSyscallNumberTable`** 指向 **`impl_linux_riscv64::LinuxRiscv64`**。
+- 聚合层在 **`api-v0`** 下导出 **`user_ret`**、**`errno`**、**`syscall_args`**、**`syscall_number`**；启用 **`impl-linux-generic64`** 时 **`ActiveSyscallNumberTable`** 指向 **`impl_linux_generic64::LinuxGeneric64`**。
 
 ## api-v0 契约要点
 
@@ -28,12 +29,12 @@
 
 ## impl 层
 
-- **`impl-linux-riscv64`**：**真实**实现完整 **`SyscallNumberTable`**（riscv64 Linux 编号）；可提供 **`Glibc`** / **`Musl`** 类型别名指向同表。注释中说明当前子集面向 busybox / 简单进程，后续可按 strace 等补全。
+- **`impl-linux-generic64`**：**真实**实现 **`SyscallNumberTable`**（与 Linux 64 位用户态约定对齐的子集）；RISC-V 与 LoongArch 早期路径复用同一张表。注释中说明当前子集面向 busybox / 简单进程，后续可按 strace 等补全。
 - **`impl-dummy`**：**桩**，仅示例 **`add`** 与测试，**不**实现 **`SyscallNumberTable`**。
 
 ## 明确未覆盖
 
-- 除 Linux riscv64 外的其它 ABI / 架构 **`impl-*`**。
+- 与 Linux generic 64 位表有显著差异的专用架构 **`impl-*`**（若未来从别名中拆出）。
 - 将 **`impl-dummy`** 提升为可切换的完整号表后端（当前与 ABI 主路径无关）。
 
 ## 维护要求

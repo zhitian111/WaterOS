@@ -81,6 +81,8 @@ flowchart TD
 - 初始化任务调度器并创建演示性 kernel task。
 - 通过 **`extern crate syscall as _`** 链接 **`wateros-syscall`**，供平台 trap 路径调用其分发符号（见 **`docs/exports/features/wateros-syscall.md`**）。
 - 启用中断与定时器，并进入首个任务。
+- 在 `qemu-loongarch64-virt` 路径下初始化 UART 控制台、日志、堆、LoongArch trap、timer interrupt 与 round-robin 调度器，并创建两个演示性 kernel task 进行轮转。
+- LoongArch64 当前仍未接入真实 MM、driver、fs/vfs 与用户态地址空间；paging facade 仍为占位；系统调用号表与 RISC-V 路径一致复用 Linux generic 64-bit 约定（见 **`wateros-abi`** 的 **`impl-linux-generic64`**）。
 
 设备树、virtio-mmio 与 devfs 协作的细节说明见 **`docs/guides/device-driver.md`**。
 

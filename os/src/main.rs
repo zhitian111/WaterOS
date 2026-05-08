@@ -32,6 +32,8 @@
 extern crate alloc;
 #[cfg(feature = "qemu-riscv64-opensbi")]
 use syscall as _;
+#[cfg(feature = "qemu-loongarch64-virt")]
+use syscall as _;
 
 #[cfg(feature = "qemu-riscv64-opensbi")]
 mod self_tests;
@@ -92,7 +94,7 @@ mod qemu_riscv64_opensbi {
         const PAGE_SIZE : usize = 4096;
         #[inline]
         const fn align_up(v : usize, align : usize) -> usize { (v + align - 1) & !(align - 1) }
-        let start_ppn = align_up(kernel_end as usize, PAGE_SIZE) / PAGE_SIZE;
+        let start_ppn = align_up(kernel_end as *const () as usize, PAGE_SIZE) / PAGE_SIZE;
         let end_ppn = memory_end / PAGE_SIZE;
         info!("[self-test] frame range ppn=[{:#x},{:#x})",
               start_ppn, end_ppn);
@@ -162,37 +164,36 @@ mod qemu_loongarch64_virt {
         platform::arch::init();
         info!("[loongarch64] boot smoke ok");
 
+        task::init();
+        task::spawn_kernel_task(loongarch64_kernel_task_a, 0);
+        task::spawn_kernel_task(loongarch64_kernel_task_b, 0);
+
+        platform::interrupt::enable_timer_interrupt().unwrap();
+        platform::timer::set_timer_after_ms(100).unwrap();
+        platform::interrupt::enable_global_interrupt().unwrap();
+        info!("[loongarch64][task] starting first task");
+        task::run_first_task()
+    }
+
+    extern "C" fn loongarch64_kernel_task_a(_arg : usize) -> ! {
+        let mut round = 0usize;
         loop {
-            platform::interrupt::wait_for_interrupt();
+            if round % 1_000_000 == 0 {
+                info!("[loongarch64][task-a] round={}", round);
+            }
+            round = round.wrapping_add(1);
+            task::yield_now();
         }
     }
 
-    #[unsafe(no_mangle)]
-    pub extern "C" fn __wateros_task_runtime_begin_current_trap_frame_access(trap_frame_ptr: *mut u8)
-                                                                             -> *mut u8 {
-        trap_frame_ptr
-    }
-
-    #[unsafe(no_mangle)]
-    pub extern "C" fn __wateros_task_runtime_restore_current_trap_frame(_trap_frame_ptr: *mut u8)
-                                                                        -> bool {
-        false
-    }
-
-    #[unsafe(no_mangle)]
-    pub extern "C" fn __wateros_task_runtime_schedule_tick() {
-        panic!("loongarch64 boot smoke does not enable task scheduler");
-    }
-
-    #[unsafe(no_mangle)]
-    pub extern "C" fn __wateros_syscall_dispatch_current(_syscall_nr : usize,
-                                                         _arg0 : usize,
-                                                         _arg1 : usize,
-                                                         _arg2 : usize,
-                                                         _arg3 : usize,
-                                                         _arg4 : usize,
-                                                         _arg5 : usize)
-                                                         -> isize {
-        panic!("loongarch64 boot smoke does not enable syscall dispatch");
+    extern "C" fn loongarch64_kernel_task_b(_arg : usize) -> ! {
+        let mut round = 0usize;
+        loop {
+            if round % 1_000_000 == 0 {
+                info!("[loongarch64][task-b] round={}", round);
+            }
+            round = round.wrapping_add(1);
+            task::yield_now();
+        }
     }
 }

@@ -15,7 +15,7 @@
 ## 聚合层与依赖
 
 - 根 crate **`wateros`** 依赖 **`wateros-syscall`**（包名 `syscall`），默认启用子 crate 的 **`default`** feature。
-- 子 crate 依赖 **`wateros-abi`**（`impl-linux-riscv64` 号表）、**`wateros-task`**、**`wateros-runtime-console`**，用于在 trap 入口处分发到任务与控制台。
+- 子 crate 依赖 **`wateros-abi`**（由 **`impl-riscv64` / `impl-loongarch64`** 打开 **`impl-linux-generic64`** 号表）、**`wateros-task`**、**`wateros-runtime-console`**，用于在 trap 入口处分发到任务与控制台。
 
 ## 当前已具备能力
 

@@ -2,7 +2,7 @@
 
 ## 用途
 
-描述 **`wateros-abi`** 聚合层在默认 feature 下对内核与用户态共享契约的 **真实再导出**：系统调用号表、参数包、错误码与用户返回值编码。契约细节以 **`wateros-abi-api-v0`** 源码为准。
+描述 **`wateros-abi`** 聚合层在默认 feature 下对内核与用户态共享契约的 **真实再导出**：系统调用号表、参数包、错误码与用户返回值编码；契约细节以 **`wateros-abi-api-v0`** 源码为准。根组件具备 `api-v0`、`impl-dummy` 与 **`impl-linux-generic64`** 实现 crate；**`impl-linux-riscv64`** / **`impl-linux-loongarch64`** 为架构侧 feature 别名，均启用同一张 Linux generic 64-bit 系统调用号表（由 **`LinuxGeneric64`** 提供 **`ActiveSyscallNumberTable`**）。
 
 ## 事实来源
 
@@ -14,10 +14,11 @@
 
 | Feature | 说明 |
 |---------|------|
-| **`default`** | `api-v0` + **`impl-linux-riscv64`**。 |
+| **`default`** | `api-v0` + **`impl-linux-riscv64`**（启用 **`impl-linux-generic64`**）。 |
 | **`api-v0`** | 传递 **`impl-dummy/api-v0`**（依赖链占位）；根 **`lib.rs`** 中模块均受 **`cfg(feature = "api-v0")`** 保护。 |
-| **`impl-linux-riscv64`** | 在 **`syscall_number`** 子模块下提供 **`ActiveSyscallNumberTable`** 类型别名，指向 **`LinuxRiscv64`** 具体号表。 |
-| **`impl-dummy`** | 空；不与 **`impl-linux-riscv64`** 同时用于号表别名（默认走 linux 表）。 |
+| **`impl-linux-generic64`** | 可选依赖 **`wateros-abi-impl-linux-generic64`**；提供 **`LinuxGeneric64`** 号表实现。 |
+| **`impl-linux-riscv64`** / **`impl-linux-loongarch64`** | 均等价于启用 **`impl-linux-generic64`**，供 RISC-V / LoongArch 路径在聚合层选择同一号表。 |
+| **`impl-dummy`** | 占位；与 **`impl-linux-generic64`** 解耦，由 feature 链按需组合。 |
 
 ## 聚合层导出（`#[cfg(feature = "api-v0")]` 下）
 
@@ -25,7 +26,7 @@
 |------|------|
 | **`user_ret`** | `pub use api_v0::user_ret::*`：`UserRet`、`SyscallResult` 及 `from_success` / `from_error` / `from_kernel_result` 等。 |
 | **`errno`** | `pub use api_v0::errno::*`：`ErrNo`、`KernelResult`、`raw`/`user_ret` 及常用 **`E*`** 常量。 |
-| **`syscall_number`** | `SyscallNumber`、`SyscallNumberTable`；**`#[cfg(feature = "impl-linux-riscv64")]`** 下 **`ActiveSyscallNumberTable`**（默认即 Linux riscv64 表类型）。 |
+| **`syscall_number`** | `SyscallNumber`、`SyscallNumberTable`；**`#[cfg(feature = "impl-linux-generic64")]`** 下 **`ActiveSyscallNumberTable`** → **`LinuxGeneric64`**。 |
 | **`syscall_args`** | `pub use api_v0::syscall_args::*`：`SyscallArgs`、`SyscallPacket` 及 `from_regs` / `arg` / `as_regs` 等。 |
 
 根 crate **无**独立 `pub fn`；**无**未加 `api-v0` 的顶层导出。

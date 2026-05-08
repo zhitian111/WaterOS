@@ -15,7 +15,7 @@
 | 项 | 说明 |
 |----|------|
 | **`default`** | 空数组 `[]`；无根级 feature 开关。 |
-| **`abi`** | 固定 `features = ["impl-linux-riscv64"]`，与默认 **`ActiveSyscallNumberTable`**（Linux riscv64 号表）对齐。 |
+| **`abi`** | `default-features = true`；由根 feature（如 **`impl-riscv64`** / **`impl-loongarch64`**）启用 **`abi/impl-linux-riscv64`** 或 **`abi/impl-linux-loongarch64`**，二者均打开 **`impl-linux-generic64`** 号表。 |
 | **`task` / `console`** | 分别依赖 **`wateros-task`**、**`wateros-runtime-console`**（默认 OpenSBI 控制台路径），**不**经过 **`wateros-runtime`** 聚合 crate。 |
 
 ## 聚合层（根 crate）导出
