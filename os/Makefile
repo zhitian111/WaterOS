@@ -31,8 +31,10 @@ common_dependencies = $(shell find . -name "*.rs") \
 kernel_rv_dependencies = $(common_dependencies)
 
 features_flags = $(shell bash ./scripts/config-to-features-make.bash || echo "unknown")
+la_features_flags = $(shell bash ./scripts/config-to-features-make.bash ./config-loongarch64.conf || echo "unknown")
 
 common_flags = --features $(features_flags)
+la_common_flags = --features $(la_features_flags)
 
 kernel_rv_flag := --release --target riscv64gc-unknown-none-elf	\
 				  $(common_flags)
@@ -41,7 +43,7 @@ kernel_rv_build_artifact_path := ./target/riscv64gc-unknown-none-elf/release
 
 kernel_la_flag := --release --target loongarch64-unknown-none-softfloat \
 				  --no-default-features \
-				  --features qemu-loongarch64-virt
+				  $(la_common_flags)
 
 kernel_la_build_artifact_path := ./target/loongarch64-unknown-none-softfloat/release
 
@@ -154,7 +156,7 @@ rv_check:
 
 la_check:
 	$(call INFO, "开始对 loongarch64 平台进行 cargo check ...")
-	@cargo check --target loongarch64-unknown-none-softfloat --no-default-features --features qemu-loongarch64-virt
+	@cargo check --target loongarch64-unknown-none-softfloat --no-default-features $(la_common_flags)
 	$(call INFO, "对 loongarch64 平台的 cargo check 完成！")
 
 # rv_link_app_asm:

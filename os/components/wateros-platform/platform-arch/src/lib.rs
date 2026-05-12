@@ -6,9 +6,8 @@
 //!   若将来直接 访问也属于 arch 讨论范围）；**经 SBI
 //!   设置下次中断时刻**、**经固件写串口** 等 属于 firmware 层，由依赖方分别引用
 //!   `arch` 与 `firmware` crate 组合使用。
-//! - `arch-impl-riscv64` 的 trap 路径可能**调用** firmware 以重载定时器，这是
-//!   **组合点**而非“arch API 向外暴露 SBI”：对外仍通过 `firmware` 的 trait
-//!   实现隔离。
+//! - trap 路径中的定时器重载、调度 tick、syscall 分发等业务由组合层通过
+//!   `arch-api::kernel_trap` 接入；arch impl 只负责 trap 向量、帧布局和 CSR 语义。
 #![no_std]
 #[cfg(all(feature = "impl-riscv64", feature = "impl-loongarch64"))]
 compile_error!("select only one platform-arch implementation");
@@ -76,6 +75,16 @@ pub mod trap {
     pub use impl_loongarch64::trap::TrapContext as ActiveTrapFrame;
     #[cfg(feature = "impl-riscv64")]
     pub use impl_riscv64::trap::TrapContext as ActiveTrapFrame;
+
+    #[cfg(feature = "impl-loongarch64")]
+    pub use impl_loongarch64::trap::prepare_user_trap_frame_access;
+    #[cfg(feature = "impl-riscv64")]
+    pub use impl_riscv64::trap::prepare_user_trap_frame_access;
+
+    #[cfg(feature = "impl-loongarch64")]
+    pub use impl_loongarch64::trap::timer_slice_ticks;
+    #[cfg(feature = "impl-riscv64")]
+    pub use impl_riscv64::trap::timer_slice_ticks;
 }
 
 /// 监管态中断屏蔽与使能（如 `sie` / `sstatus.SIE`），**不**包含对 CLINT/ACLINT

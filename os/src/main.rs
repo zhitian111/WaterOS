@@ -1,6 +1,6 @@
 //! WaterOS 内核二进制 crate：在 `no_std` / `no_main`
-//! 下提供全局错误处理，并在启用 `qemu-riscv64-opensbi` 时挂载 QEMU RISC-V +
-//! OpenSBI 的汇编入口与 [`qemu_riscv64_opensbi::kernel_main`] 启动路径。
+//! 下提供全局错误处理，并按 board feature 挂载对应 QEMU 平台的汇编入口与
+//! `kernel_main` 启动路径。
 //!
 //! # 启动（bring-up）概要
 //!
@@ -16,8 +16,9 @@
 //! 5. 再跑 `fs` /（可选）`vfs` 的 RW 烟测，开启定时器中断后通过 [`task::run_first_task`]
 //!    进入多任务调度。
 //!
-//! **编译范围**：[`self_tests`] 与 [`qemu_riscv64_opensbi`] 仅在 `feature =
-//! "qemu-riscv64-opensbi"` 下存在；其他 board 需另行提供入口与链接脚本。
+//! **编译范围**：[`self_tests`] 仅在 `feature = "qemu-riscv64-opensbi"` 下存在；
+//! board 入口按 `qemu-riscv64-opensbi` / `qemu-loongarch64-virt`
+//! 分别编译。
 //!
 //! # 自检入口
 //!
@@ -37,7 +38,7 @@ use syscall as _;
 
 #[cfg(feature = "qemu-riscv64-opensbi")]
 mod self_tests;
-#[cfg(feature = "qemu-riscv64-opensbi")]
+#[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
 mod trap_handler;
 
 /// 将内核 panic 委托给 `wateros-runtime` 的统一 panic 处理（日志/停机策略由
@@ -152,12 +153,17 @@ mod qemu_loongarch64_virt {
     //! QEMU LoongArch `virt` 板级的最小 bring-up：与 `impl-qemu-loongarch64-virt` 的 `_start.S`
     //! 链接后进入 [`kernel_main`]，初始化 runtime/任务与两个内核忙等任务，再开定时器中断
     //! 并进入调度。与 RISC-V OpenSBI 路径相比暂无用户态/FS 自检。
-    use core::arch::global_asm;
+    use core::arch::{asm, global_asm};
     use core::include_str;
     use runtime::logging::*;
 
     global_asm!(include_str!("../components/wateros-platform/platform-impl/\
                               impl-qemu-loongarch64-virt/src/asm/_start.S"));
+
+    const LOONGARCH64_USER_SYSCALL_YIELD_NR : usize = 124;
+    const LOONGARCH64_USER_SYSCALL_EXIT_GROUP_NR : usize = 94;
+    const LOONGARCH64_USER_EXIT_OK : isize = 66;
+    const LOONGARCH64_USER_EXIT_BAD_YIELD : isize = 67;
 
     /// 固件/引导移交后的内核 C 入口；无 boot 参数版本，完成基础初始化后仅跑内核态烟测任务。
     #[unsafe(no_mangle)]
@@ -169,6 +175,9 @@ mod qemu_loongarch64_virt {
         info!("[loongarch64] boot smoke ok");
 
         task::init();
+        crate::trap_handler::init();
+        let user_task_id = task::spawn_user_task(loongarch64_user_task_entry as usize);
+        task::spawn_kernel_task(loongarch64_user_observer_task, user_task_id);
         task::spawn_kernel_task(loongarch64_kernel_task_a, 0);
         task::spawn_kernel_task(loongarch64_kernel_task_b, 0);
 
@@ -200,6 +209,67 @@ mod qemu_loongarch64_virt {
             }
             round = round.wrapping_add(1);
             task::yield_now();
+        }
+    }
+
+    /// 用户态 smoke：验证 LoongArch64 PLV3 `syscall` 可回到组合层 trap handler。
+    extern "C" fn loongarch64_user_task_entry() -> ! {
+        let yield_ret = unsafe { loongarch64_user_syscall0(LOONGARCH64_USER_SYSCALL_YIELD_NR) };
+        let exit_code = if yield_ret == 0 {
+            LOONGARCH64_USER_EXIT_OK
+        } else {
+            LOONGARCH64_USER_EXIT_BAD_YIELD
+        };
+        unsafe {
+            loongarch64_user_exit_group(exit_code);
+        }
+    }
+
+    /// 等待并回收 LoongArch64 用户态 smoke 任务；成功日志说明用户态 trap/返回闭环可用。
+    extern "C" fn loongarch64_user_observer_task(user_task_id : usize) -> ! {
+        info!("[loongarch64][user] observer waiting user_task_id={}",
+              user_task_id);
+        task::wait_for_task_exit(user_task_id);
+        match task::reap_exited_task(user_task_id) {
+            Some(exited) if exited.exit_code == LOONGARCH64_USER_EXIT_OK => {
+                info!("[loongarch64][user] smoke ok task={} exit={}",
+                      user_task_id, exited.exit_code);
+            }
+            Some(exited) => {
+                warn!("[loongarch64][user] smoke unexpected exit task={} exit={}",
+                      user_task_id, exited.exit_code);
+            }
+            None => {
+                warn!("[loongarch64][user] smoke task={} missing reap result",
+                      user_task_id);
+            }
+        }
+        task::exit_current(0);
+    }
+
+    #[inline]
+    unsafe fn loongarch64_user_syscall0(nr : usize) -> isize {
+        let ret : usize;
+        unsafe {
+            asm!("move $r11, {nr}",
+                 "move $r4, $r0",
+                 "syscall 0",
+                 "move {ret}, $r4",
+                 nr = in(reg) nr,
+                 ret = out(reg) ret);
+        }
+        ret as isize
+    }
+
+    #[inline]
+    unsafe fn loongarch64_user_exit_group(exit_code : isize) -> ! {
+        unsafe {
+            asm!("move $r11, {nr}",
+                 "move $r4, {code}",
+                 "syscall 0",
+                 nr = in(reg) LOONGARCH64_USER_SYSCALL_EXIT_GROUP_NR,
+                 code = in(reg) exit_code as usize,
+                 options(noreturn));
         }
     }
 }

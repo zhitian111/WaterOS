@@ -14,6 +14,7 @@ use api_v0::trap::{
     TrapSyscallWrite,
 };
 use core::arch::asm;
+use riscv::register::sstatus;
 
 /// 该结构的字段顺序/大小必须与 `asm/trap.asm` 的偏移严格一致（方案A）。
 #[repr(C)]
@@ -27,6 +28,8 @@ pub struct TrapContext {
 }
 
 const RISCV_SSTATUS_SPP : usize = 1 << 8;
+/// 单次定时器中断后重新武装的切片长度（`time` CSR 刻度）；与调度策略相关，非用户 ABI。
+const TIMER_SLICE_TICKS : u64 = 1_250_000;
 
 /// RISC-V 监管态 **`scause` CSR** 原始值；仅在本 crate 内表达「数值来自 `scause`」，
 /// 以便实现 **`From<Scause> for TrapCause`**（解码逻辑架构敏感，不属于 `arch-api`）。
@@ -124,6 +127,18 @@ pub fn init_trap() {
         asm!("csrw stvec, {0}", in(reg) stvec);
     }
 }
+
+/// RISC-V 返回用户态前允许内核在 trap 处理期间访问用户页。
+#[inline]
+pub fn prepare_user_trap_frame_access() {
+    unsafe {
+        sstatus::set_sum();
+    }
+}
+
+/// 当前 RISC-V trap 调度时间片长度。
+#[inline]
+pub const fn timer_slice_ticks() -> u64 { TIMER_SLICE_TICKS }
 
 /// 汇编入口转入：交给组合层 [`kernel_trap::invoke_kernel_trap_handler`]。
 #[unsafe(no_mangle)]

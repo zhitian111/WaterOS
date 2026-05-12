@@ -1,4 +1,4 @@
-//! **组合层内核 trap 路由**：实现原先 `impl-riscv64/trap.rs` 中的 `TrapCause`
+//! **组合层内核 trap 路由**：实现各架构 `trap_entry_rust` 交出的 `TrapCause`
 //! 分支与返回路径，
 //! 经 [`arch_api_v0::kernel_trap::register_kernel_trap_handler`] 挂接到
 //! `trap_entry_rust`。
@@ -16,31 +16,29 @@ use platform::arch::paging;
 use platform::arch::time::{read_time_tick, ArchTimeTick};
 use platform::arch::trap::ActiveTrapFrame as TrapContext;
 use platform::timer::set_timer_deadline_tick;
-use riscv::register::sstatus;
 use runtime::logging::*;
 use syscall::dispatch_syscall_from_trap;
 use task::trap_runtime;
 
-/// 单次定时器中断后重新武装的切片长度（`time` CSR 刻度）；与调度策略相关，非用户 ABI。
-const TIMER_SLICE_TICKS : u64 = 1_250_000;
+/// 单次定时器中断后重新武装的切片长度（`time` / StableCounter 刻度）；
+/// 与调度策略相关，非用户 ABI。
+const TIMER_SLICE_TICKS : u64 = platform::arch::trap::timer_slice_ticks();
 static TIMER_TICK_COUNT : AtomicUsize = AtomicUsize::new(0);
-/// RISC-V 上非压缩 `ecall` 占位长度，用于将 `sepc` 前进到返回到用户态的下一条指令。
+/// 当前支持架构的 syscall/trap 指令宽度，用于将用户 PC 前进到下一条指令。
 const SYSCALL_INSN_BYTES : usize = 4;
 
 /// 组合层内核 trap 入口：由 `arch` 在异常/中断向量中调用，`frame` 为当前 trap 帧字节指针。
 ///
 /// 处理 `UserEnvCall`（分派 syscall）、页错日志、监督态定时器 tick（重武装 + 调度），其余
-/// cause 直接 `panic`。若返回到用户态，在帧访问期间短暂开启 `SUM` 以便访问用户页。
+/// cause 直接 `panic`。返回用户态前由 arch 层完成必要的帧访问准备。
 extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
     let authoritative = unsafe { trap_runtime::begin_current_trap_frame_access(frame) };
     let cx = unsafe { &mut *(authoritative as *mut TrapContext) };
 
     if cx.returns_to_user() {
-        unsafe {
-            sstatus::set_sum();
-        }
+        platform::arch::trap::prepare_user_trap_frame_access();
     }
-    let raw_scause = cx.raw_cause();
+    let raw_cause = cx.raw_cause();
     let trap_cause = cx.trap_cause();
     match trap_cause {
         TrapCause::Exception(Exception::UserEnvCall) => {
@@ -54,9 +52,9 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
         TrapCause::Exception(Exception::InstructionPageFault) |
         TrapCause::Exception(Exception::LoadPageFault) |
         TrapCause::Exception(Exception::StorePageFault) => {
-            debug!("[trap] page fault: cause={:?} scause={:#x?} sepc={:#x?} stval={:#x?}",
+            debug!("[trap] page fault: cause={:?} raw_cause={:#x?} pc={:#x?} fault_addr={:#x?}",
                    trap_cause,
-                   raw_scause,
+                   raw_cause,
                    cx.user_pc(),
                    cx.fault_addr());
         }
@@ -75,7 +73,7 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             trap_runtime::schedule_tick_from_trap();
         }
         _ => {
-            panic!("unexpected trap: cause={:?}, sepc={:#x}, stval={:#x}",
+            panic!("unexpected trap: cause={:?}, pc={:#x}, fault_addr={:#x}",
                    trap_cause,
                    cx.user_pc(),
                    cx.fault_addr());
@@ -84,11 +82,11 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
 
     if cx.returns_to_user() {
         let satp = paging::read_satp();
-        trace!("[trap] return to user sepc={:#x} x2/sp={:#x} satp={:#x} raw_scause={:#x}",
+        trace!("[trap] return to user pc={:#x} sp={:#x} satp={:#x} raw_cause={:#x}",
                cx.user_pc(),
                cx.user_sp(),
                satp,
-               raw_scause);
+               raw_cause);
     }
 
     trap_runtime::install_satp_for_exception_return(cx.returns_to_user());

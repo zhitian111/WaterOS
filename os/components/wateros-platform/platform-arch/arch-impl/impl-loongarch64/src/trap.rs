@@ -7,28 +7,12 @@
 use abi::syscall_args::SyscallArgs;
 use abi::syscall_number::SyscallNumber;
 use abi::user_ret::UserRet;
-use api_v0::time::ArchTime;
+use api_v0::kernel_trap;
 use api_v0::trap::{
     Exception, Interrupt, TrapCause, TrapFrameRead, TrapFrameWrite, TrapSyscallRead,
     TrapSyscallWrite,
 };
 use core::arch::asm;
-use core::sync::atomic::{AtomicUsize, Ordering};
-use firmware::timer::FirmwareTimerDeadline;
-
-unsafe extern "C" {
-    fn __wateros_task_runtime_begin_current_trap_frame_access(trap_frame_ptr : *mut u8) -> *mut u8;
-    fn __wateros_task_runtime_restore_current_trap_frame(trap_frame_ptr : *mut u8) -> bool;
-    fn __wateros_syscall_dispatch_current(syscall_nr : usize,
-                                          arg0 : usize,
-                                          arg1 : usize,
-                                          arg2 : usize,
-                                          arg3 : usize,
-                                          arg4 : usize,
-                                          arg5 : usize)
-                                          -> isize;
-    fn __wateros_task_runtime_schedule_tick();
-}
 
 /// 字段顺序/大小必须与 `asm/trap.S` 的偏移保持一致。
 #[repr(C)]
@@ -43,8 +27,6 @@ pub struct TrapContext {
 
 /// 异常入口向量 CSR（`EENTRY`）：`trap.S` 中 `__alltraps` 的物理入口地址写入此 CSR。
 const CSR_EENTRY : usize = 0xC;
-/// 定时器中断清除 CSR：写 `TICLR` 指定位以清挂起（与 `firmware_set_timer`/硬件一致）。
-const CSR_TICLR : usize = 0x44;
 /// `PRMD.PPLV`：返回后特权级域（与 `returns_to_user` 判定一致）。
 const LOONGARCH_PRMD_PPLV_MASK : usize = 0x3;
 /// `PRMD.PIE`：返回时全局中断使能快照位（与 `set_return_to_user_raw` 配合）。
@@ -53,14 +35,8 @@ const LOONGARCH_PRMD_PIE : usize = 1 << 2;
 const LOONGARCH_USER_PLV : usize = 0x3;
 /// `ESTAT.IS.TI`：定时器中断挂起位（与 `decode_loongarch64_trap_cause` 一致）。
 const TIMER_INTERRUPT_PENDING : usize = 1 << 11;
-/// `TICLR.TI`：清除定时器中断挂起。
-const TICLR_CLEAR_TIMER : usize = 1 << 0;
-/// 每次时钟 tick 后重载固件 deadline 的 tick 增量（与 StableCounter 刻度一致；调参时改此处）。
+/// 单次定时器中断后重新武装的切片长度（StableCounter 刻度）；与调度策略相关，非用户 ABI。
 const TIMER_SLICE_TICKS : u64 = 10_000_000;
-/// 用户态 syscall 指令宽度（`era` 前进量）；与 trap 帧中 `era` 语义一致。
-const SYSCALL_INSN_BYTES : usize = 4;
-// 仅统计用；与调度 tick 路径耦合，便于将来调试或移除。
-static TIMER_TICK_COUNT : AtomicUsize = AtomicUsize::new(0);
 
 #[inline]
 fn decode_loongarch64_trap_cause(estat : usize) -> TrapCause {
@@ -135,66 +111,19 @@ pub fn init_trap() {
     write_csr::<CSR_EENTRY>(addr);
 }
 
+/// LoongArch64 当前不需要 RISC-V `SUM` 一类的用户页访问准备。
+#[inline]
+pub fn prepare_user_trap_frame_access() {}
+
+/// 当前 LoongArch64 trap 调度时间片长度。
+#[inline]
+pub const fn timer_slice_ticks() -> u64 { TIMER_SLICE_TICKS }
+
 /// 汇编 `bl trap_entry_rust` 转入：在权威 trap 帧指针上完成 syscall / 定时器 /
-/// 其它异常的最小分发；返回前经运行时恢复帧（与 RISC-V 的 `kernel_trap` 单入口模式不同）。
+/// 其它异常的组合层分发；本层只负责保持帧布局和解码语义。
 #[unsafe(no_mangle)]
 pub extern "C" fn trap_entry_rust(cx_ptr : *mut TrapContext) {
-    let authoritative_cx_ptr =
-        unsafe { __wateros_task_runtime_begin_current_trap_frame_access(cx_ptr.cast::<u8>()) };
-    let cx = unsafe { &mut *(authoritative_cx_ptr as *mut TrapContext) };
-
-    match cx.trap_cause() {
-        TrapCause::Exception(Exception::UserEnvCall) => {
-            handle_user_syscall(cx);
-        }
-        TrapCause::Exception(Exception::InstructionPageFault) |
-        TrapCause::Exception(Exception::LoadPageFault) |
-        TrapCause::Exception(Exception::StorePageFault) => {
-            let _ = (cx.estat, cx.era, cx.badv);
-        }
-        TrapCause::Interrupt(Interrupt::SupervisiorTimer) => {
-            write_csr::<CSR_TICLR>(TICLR_CLEAR_TIMER);
-            let now =
-                super::time::LoongArch64ArchTime::read_time_tick().expect("read loongarch64 time \
-                                                                           tick during trap")
-                                                                  .0;
-            let deadline = now.saturating_add(TIMER_SLICE_TICKS);
-            if let Err(err) = firmware::timer::set_timer(FirmwareTimerDeadline(deadline)) {
-                panic!("failed to re-arm loongarch64 timer in trap: {:?}",
-                       err);
-            }
-            let _tick = TIMER_TICK_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
-            unsafe {
-                __wateros_task_runtime_schedule_tick();
-            }
-        }
-        trap_cause => {
-            panic!("unexpected loongarch64 trap: cause={:?}, era={:#x}, badv={:#x}, estat={:#x}",
-                   trap_cause, cx.era, cx.badv, cx.estat);
-        }
-    }
-
-    unsafe {
-        __wateros_task_runtime_restore_current_trap_frame(cx_ptr.cast::<u8>());
-    }
-}
-
-/// 用户态 `syscall`：经链接的运行时符号派发，结果写回 `UserRet` 对应寄存器槽。
-fn handle_user_syscall(cx : &mut TrapContext) {
-    let syscall_nr = cx.syscall_nr()
-                       .raw();
-    let syscall_args = cx.syscall_args();
-    let syscall_ret = unsafe {
-        __wateros_syscall_dispatch_current(syscall_nr,
-                                           syscall_args.arg(0),
-                                           syscall_args.arg(1),
-                                           syscall_args.arg(2),
-                                           syscall_args.arg(3),
-                                           syscall_args.arg(4),
-                                           syscall_args.arg(5))
-    };
-    cx.add_user_pc(SYSCALL_INSN_BYTES);
-    cx.set_syscall_ret(UserRet(syscall_ret));
+    kernel_trap::invoke_kernel_trap_handler(cx_ptr.cast());
 }
 
 impl TrapFrameRead for TrapContext {

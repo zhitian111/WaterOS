@@ -15,7 +15,7 @@
     edition = "2024"
 
 [dependencies]
-    panic = { path = "./runtime-panic/", package = "wateros-runtime-panic", default-features = true }
+    panic = { path = "./runtime-panic/", package = "wateros-runtime-panic", default-features = false }
     console = { path = "./runtime-console/", package = "wateros-runtime-console", default-features = false }
     logging = { path = "./runtime-logging/", package = "wateros-runtime-logging", default-features = false }
     heap-allocator = { path = "./runtime-heap-allocator/", package = "wateros-runtime-heap-allocator", default-features = true }
@@ -24,15 +24,17 @@
 [features]
     default = []
     impl-debug = [ "logging/impl-debug" ]
-    impl-dummy = [ "console/impl-dummy", "logging/impl-dummy" ]
+    impl-dummy = [ "console/impl-dummy", "logging/impl-dummy", "panic/impl-dummy" ]
     impl-error = [ "logging/impl-error" ]
     impl-firmware-console = [
         "console/impl-firmware-console",
         "logging/impl-firmware-console",
+        "panic/impl-firmware-console",
     ]
     impl-firmware-opensbi = [
         "console/impl-firmware-opensbi",
         "logging/impl-firmware-opensbi",
+        "panic/impl-firmware-opensbi",
     ]
     impl-info = [ "logging/impl-info" ]
     impl-trace = [ "logging/impl-trace" ]
