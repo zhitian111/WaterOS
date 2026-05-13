@@ -6,19 +6,29 @@
     edition = "2024"
 
 [dependencies]
-    abi = { path = "../wateros-abi/", package = "wateros-abi", default-features = true }
-    task = { path = "../wateros-task/", package = "wateros-task", default-features = true }
-    console = { path = "../wateros-runtime/runtime-console/", package = "wateros-runtime-console", default-features = true }
+    abi = { path = "../wateros-abi/", package = "wateros-abi", default-features = false }
+    task = { path = "../wateros-task/", package = "wateros-task", default-features = false }
+    console = { path = "../wateros-runtime/runtime-console/", package = "wateros-runtime-console", default-features = false }
 
 [features]
     default = []
     impl-loongarch64 = [
+        "abi/api-v0",
         "abi/impl-linux-loongarch64",
+        "console/impl-firmware-console",
+        "task/api-v0",
+        "task/impl-core",
         "task/impl-loongarch64",
+        "task/impl-round-robin",
     ]
     impl-riscv64 = [
+        "abi/api-v0",
         "abi/impl-linux-riscv64",
+        "console/impl-firmware-opensbi",
+        "task/api-v0",
+        "task/impl-core",
         "task/impl-riscv64",
+        "task/impl-round-robin",
     ]
 
 [profile.dev]

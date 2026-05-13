@@ -5,4 +5,16 @@
 
 [dependencies]
     firmware = { path = "../../wateros-platform/platform-firmware/", package = "wateros-platform-firmware", default-features = false }
-    console = { path = "../runtime-console/", package = "wateros-runtime-console" }
+    console = { path = "../runtime-console/", package = "wateros-runtime-console", default-features = false }
+
+[features]
+    default = []
+    impl-dummy = [ "console/impl-dummy", "firmware/impl-dummy" ]
+    impl-firmware-console = [
+        "console/impl-firmware-console",
+        "firmware/impl-qemu-loongarch64-uart16550",
+    ]
+    impl-firmware-opensbi = [
+        "console/impl-firmware-opensbi",
+        "firmware/impl-riscv64-opensbi",
+    ]

@@ -41,8 +41,11 @@ __arch_user_task_entry:
 
     .globl __wateros_arch_restore_user_task
 # Rust `TrapContext` 指针在 $r4；$r5 = 用户 trap 时应使用的内核栈顶（与 RISC-V 侧 a1 约定对齐）。
+# CSR SAVE0(0x30) 在用户态运行期间保存该内核栈顶，供 trap.S 在 User -> Kernel
+# 时先切回内核栈再保存 TrapContext。
 __wateros_arch_restore_user_task:
     move $r12, $r4
+    csrwr $r5, 0x30
 
     # 偏移 32*8 / 33*8：Rust `TrapContext` 的 prmd / era；CSR 0x1=PRMD、0x6=ERA（手册编号）。
     ld.d $r13, $r12, 32*8

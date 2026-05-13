@@ -9,61 +9,24 @@
 # - era      : 33 * 8
 # - estat    : 34 * 8
 # - badv     : 35 * 8
+#
+# CSR SAVE0 stores the current task's kernel stack top while running in user mode.
+# User -> kernel traps swap $r3 with SAVE0 before building TrapContext, mirroring the
+# RISC-V sscratch convention used by the sibling implementation.
+    .equ TRAP_CONTEXT_SIZE, 288
+    .equ CSR_PRMD, 0x1
+    .equ CSR_ERA, 0x6
+    .equ CSR_ESTAT, 0x5
+    .equ CSR_BADV, 0x7
+    .equ CSR_SAVE0, 0x30
+    .equ CSR_SAVE1, 0x31
+    .equ CSR_SAVE2, 0x32
+    .equ CSR_SAVE3, 0x33
+    .equ CSR_SAVE4, 0x34
+    .equ PRMD_PPLV_MASK, 0x3
+    .equ USER_PLV, 0x3
 
-__alltraps:
-    addi.d $r3, $r3, -288
-
-    st.d $r0,  $r3, 0
-    st.d $r1,  $r3, 8
-    st.d $r2,  $r3, 16
-    st.d $r3,  $r3, 24
-    st.d $r4,  $r3, 32
-    st.d $r5,  $r3, 40
-    st.d $r6,  $r3, 48
-    st.d $r7,  $r3, 56
-    st.d $r8,  $r3, 64
-    st.d $r9,  $r3, 72
-    st.d $r10, $r3, 80
-    st.d $r11, $r3, 88
-    st.d $r12, $r3, 96
-    st.d $r13, $r3, 104
-    st.d $r14, $r3, 112
-    st.d $r15, $r3, 120
-    st.d $r16, $r3, 128
-    st.d $r17, $r3, 136
-    st.d $r18, $r3, 144
-    st.d $r19, $r3, 152
-    st.d $r20, $r3, 160
-    st.d $r21, $r3, 168
-    st.d $r22, $r3, 176
-    st.d $r23, $r3, 184
-    st.d $r24, $r3, 192
-    st.d $r25, $r3, 200
-    st.d $r26, $r3, 208
-    st.d $r27, $r3, 216
-    st.d $r28, $r3, 224
-    st.d $r29, $r3, 232
-    st.d $r30, $r3, 240
-    st.d $r31, $r3, 248
-
-    # CSR 编号与 `trap.rs` 中 `TrapContext` 字段：0x1=PRMD、0x6=ERA、0x5=ESTAT、0x7=BADV。
-    csrrd $r12, 0x1
-    st.d $r12, $r3, 256
-    csrrd $r12, 0x6
-    st.d $r12, $r3, 264
-    csrrd $r12, 0x5
-    st.d $r12, $r3, 272
-    csrrd $r12, 0x7
-    st.d $r12, $r3, 280
-
-    move $r4, $r3
-    bl trap_entry_rust
-
-    ld.d $r12, $r3, 256
-    csrwr $r12, 0x1
-    ld.d $r12, $r3, 264
-    csrwr $r12, 0x6
-
+    .macro RESTORE_GENERAL_REGS
     ld.d $r1,  $r3, 8
     ld.d $r2,  $r3, 16
     ld.d $r4,  $r3, 32
@@ -94,5 +57,96 @@ __alltraps:
     ld.d $r29, $r3, 232
     ld.d $r30, $r3, 240
     ld.d $r31, $r3, 248
-    addi.d $r3, $r3, 288
+    .endm
+
+__alltraps:
+    # Stash temporaries before using them to decide whether we must switch stacks.
+    csrwr $r12, CSR_SAVE1
+    csrwr $r13, CSR_SAVE2
+    csrwr $r14, CSR_SAVE3
+    csrwr $r15, CSR_SAVE4
+
+    csrrd $r12, CSR_PRMD
+    andi $r13, $r12, PRMD_PPLV_MASK
+    addi.d $r14, $r0, USER_PLV
+    beq $r13, $r14, .Ltrap_from_user
+
+.Ltrap_from_kernel:
+    move $r15, $r3
+    addi.d $r3, $r3, -TRAP_CONTEXT_SIZE
+    b .Lsave_context
+
+.Ltrap_from_user:
+    move $r15, $r3
+    csrwr $r3, CSR_SAVE0
+    addi.d $r3, $r3, -TRAP_CONTEXT_SIZE
+
+.Lsave_context:
+
+    st.d $r0,  $r3, 0
+    st.d $r1,  $r3, 8
+    st.d $r2,  $r3, 16
+    st.d $r15, $r3, 24
+    st.d $r4,  $r3, 32
+    st.d $r5,  $r3, 40
+    st.d $r6,  $r3, 48
+    st.d $r7,  $r3, 56
+    st.d $r8,  $r3, 64
+    st.d $r9,  $r3, 72
+    st.d $r10, $r3, 80
+    st.d $r11, $r3, 88
+    csrrd $r12, CSR_SAVE1
+    st.d $r12, $r3, 96
+    csrrd $r12, CSR_SAVE2
+    st.d $r12, $r3, 104
+    csrrd $r12, CSR_SAVE3
+    st.d $r12, $r3, 112
+    csrrd $r12, CSR_SAVE4
+    st.d $r12, $r3, 120
+    st.d $r16, $r3, 128
+    st.d $r17, $r3, 136
+    st.d $r18, $r3, 144
+    st.d $r19, $r3, 152
+    st.d $r20, $r3, 160
+    st.d $r21, $r3, 168
+    st.d $r22, $r3, 176
+    st.d $r23, $r3, 184
+    st.d $r24, $r3, 192
+    st.d $r25, $r3, 200
+    st.d $r26, $r3, 208
+    st.d $r27, $r3, 216
+    st.d $r28, $r3, 224
+    st.d $r29, $r3, 232
+    st.d $r30, $r3, 240
+    st.d $r31, $r3, 248
+
+    # CSR 编号与 `trap.rs` 中 `TrapContext` 字段：0x1=PRMD、0x6=ERA、0x5=ESTAT、0x7=BADV。
+    csrrd $r12, CSR_PRMD
+    st.d $r12, $r3, 256
+    csrrd $r12, CSR_ERA
+    st.d $r12, $r3, 264
+    csrrd $r12, CSR_ESTAT
+    st.d $r12, $r3, 272
+    csrrd $r12, CSR_BADV
+    st.d $r12, $r3, 280
+
+    move $r4, $r3
+    bl trap_entry_rust
+
+    ld.d $r12, $r3, 256
+    andi $r13, $r12, PRMD_PPLV_MASK
+    addi.d $r14, $r0, USER_PLV
+    csrwr $r12, CSR_PRMD
+    ld.d $r12, $r3, 264
+    csrwr $r12, CSR_ERA
+
+    beq $r13, $r14, .Lreturn_to_user
+    RESTORE_GENERAL_REGS
+    addi.d $r3, $r3, TRAP_CONTEXT_SIZE
+    ertn
+
+.Lreturn_to_user:
+    RESTORE_GENERAL_REGS
+    addi.d $r3, $r3, TRAP_CONTEXT_SIZE
+    csrwr $r3, CSR_SAVE0
     ertn
