@@ -39,6 +39,14 @@ pub trait AddressSpaceOps {
     /// 翻译用户虚拟地址到物理地址。
     fn translate_addr(&self, va: VirtAddr) -> MmResult<Option<PhysAddr>>;
 
+    /// 若 `vpn` 已映射为叶子页，返回当前语义层权限；否则 `Ok(None)`。
+    ///
+    /// 典型用途：ELF 多个 `PT_LOAD` 共享同一虚拟页时合并权限。默认实现恒为 `None`（不合并），
+    /// 仅具备叶子页语义的 mm-impl（如 Sv39）需要覆盖。
+    fn leaf_page_perm(&self, _vpn: VirtPageNum) -> MmResult<Option<PagePerm>> {
+        Ok(None)
+    }
+
     /// 为 `vpn` 分配新帧并映射（匿名映射/缺页填充常用）。
     #[inline]
     fn map_page_with_alloc<A>(
