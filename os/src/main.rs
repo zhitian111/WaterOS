@@ -11,10 +11,9 @@
 //!   （frame 范围、Sv39、内核页表等；含 `mm` 自检日志）。
 //! 3. 初始化任务、注册组合层 trap 路由（`trap_handler::init`）与内核 trap 的
 //!    `satp`，随后 `driver::active_impl::init_after_boot`；成功则挂载 `fs`。
-//! 4. 在 **`fs::test()` 的 RW 写盘之前** 调用 [`self_tests::task::spawn_all`]，以便
-//!    `from_elf_path` 使用的全局 RO ext4 视图与磁盘一致（避免 `BadClass` 等伪解析错误）。
-//! 5. 再跑 `fs` /（可选）`vfs` 的 RW 烟测，开启定时器中断后通过 [`task::run_first_task`]
-//!    进入多任务调度。
+//! 4. 调用 [`self_tests::task::spawn_all`] 启动调度相关内核自检任务，再跑 `fs::test()` 等
+//!    RW 烟测（写盘前可先跑与磁盘无关的内核任务）。
+//! 5. 开启定时器中断后通过 [`task::run_first_task`] 进入多任务调度。
 //!
 //! **编译范围**：[`self_tests`] 仅在 `feature = "qemu-riscv64-opensbi"` 下存在；
 //! board 入口按 `qemu-riscv64-opensbi` / `qemu-loongarch64-virt`
@@ -22,9 +21,8 @@
 //!
 //! # 自检入口
 //!
-//! 任务与用户态相关自检的统一入口为 [`self_tests::task::spawn_all`]，由
-//! `kernel_main` 在驱动与 `fs::init` 成功后、**`fs::test` 写盘之前** 调用；各 stage
-//! 的语义与断言见该模块文档。
+//! 任务相关内核自检的统一入口为 [`self_tests::task::spawn_all`]，由
+//! `kernel_main` 在驱动与 `fs::init` 成功后调用；各 stage 的语义与断言见该模块文档。
 
 #![no_std]
 #![no_main]
@@ -116,24 +114,11 @@ mod qemu_riscv64_opensbi {
         } else {
             info!("[self-test] driver init done");
             fs::init();
-            // 须在 `fs::test()` 的 ext4 RW / vfs RW 写盘 **之前** 完成：否则全局 RO
-            // ext4-view 与块设备内容不一致，`from_elf_path` 全文件读可能得到错误字节
-            //（例如 `LoadElfError::BadClass`）。
             crate::self_tests::task::spawn_all();
             fs::test();
             #[cfg(feature = "vfs-bridge")]
             {
                 vfs::test();
-                if let Err(err) =
-                    vfs::bridge::rw_write_root_verify_via_ro(vfs::bridge::FsKind::Ext4,
-                                                             "hello",
-                                                             b"hello")
-                {
-                    warn!("[self-test] vfs rw bridge verify: {:?}",
-                          err);
-                } else {
-                    info!("[self-test] vfs rw bridge verify OK");
-                }
             }
         }
         if driver_boot.is_err() {

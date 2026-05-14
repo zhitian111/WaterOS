@@ -1,9 +1,9 @@
 #!/bin/bash
 mem="512M"
 os_file="./kernel-rv"
-# fs="./sdcard-rv.img"
+fs="./sdcard-rv.img"
 # fs="../wateros_user_mode_program/rv_disk.img"
-fs="./rv_disk.img"
+# fs="./rv_disk.img"
 
 qemu-system-riscv64 -machine virt \
                     -nographic \

@@ -41,6 +41,10 @@
 
 分阶段路线、测例依赖表与可勾选清单见 **`docs/roadmap/test-case-full-pass-plan.md`**（与 `test_case/README.md`、`docs/prompts` 配合使用）。
 
+## RISC-V64 BusyBox bring-up（并行工作包）
+
+仅 riscv64、按模块拆分的可并行计划、各子任务独立 md、验收与 **`kernel_main` 上 init/test 总线**（不含 `self_tests`）约定见 **`docs/roadmap/riscv64-busybox/README.md`**。
+
 ## 后续阶段占位（待拆分）
 
 以下条目用于承接跨组件或尚未立项的大块工作，在具体任务文件中拆分为可评审步骤：

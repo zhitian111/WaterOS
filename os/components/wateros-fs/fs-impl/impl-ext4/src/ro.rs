@@ -3,12 +3,15 @@
 //! 大块文件读路径刻意按 `driver_block_api_v0::BLOCK_SIZE` 分片，规避部分 VirtIO 小扇区组合下的一次性整读问题（见本文件中 `ReadOnlyFs::read` 实现内注释）。
 
 use alloc::boxed::Box;
+use alloc::format;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use api_v0::{FsDirEntry, FsError, FsMetadata, FsNodeType, FsResult, ReadOnlyFs};
 use driver_block_api_v0::{SharedBlockDevice, BLOCK_SIZE};
 use ext4_view::{Ext4, Ext4Error, Ext4Read, Metadata, Path};
+
+use crate::boot_inspect;
 
 // `ext4-view` 需要 `&mut self` 读接口；此处仅委托 `read_bytes`，错误经 `BlockIoError` 装箱。
 struct BlockDeviceReader {
@@ -136,7 +139,32 @@ impl ReadOnlyFs for Ext4Fs {
     }
 }
 
-// 启动期调试：深度优先打印；遇读目录错误则静默剪枝，避免 init 失败。
+/// 启动期从 ext4 读普通文件，最多 `cap` 字节（与 [`ReadOnlyFs::read`] 相同分片策略）。
+fn read_regular_file_capped(ext4: &Ext4, path: Path<'_>, cap: usize) -> Option<Vec<u8>> {
+    let meta = ext4.metadata(path).ok()?;
+    if !meta.file_type().is_regular_file() {
+        return None;
+    }
+    let total = usize::try_from(meta.len()).ok()?;
+    let to_read = total.min(cap);
+    let mut file = ext4.open(path).ok()?;
+    let mut out = vec![0u8; to_read];
+    let mut filled = 0usize;
+    while filled < to_read {
+        let room = to_read - filled;
+        let chunk = room.min(BLOCK_SIZE);
+        let n = file
+            .read_bytes(&mut out[filled..filled + chunk])
+            .ok()?;
+        if n == 0 {
+            break;
+        }
+        filled += n;
+    }
+    (filled == to_read).then_some(out)
+}
+
+// 启动期调试：深度优先打印路径；对 `.sh` 打印正文预览，对带执行位且为 ELF64 LE 的文件打印头信息。
 fn walk_ext4_tree(ext4: &Ext4, dir: Path<'_>) {
     let Ok(rd) = ext4.read_dir(dir) else { return };
     for item in rd {
@@ -146,10 +174,27 @@ fn walk_ext4_tree(ext4: &Ext4, dir: Path<'_>) {
             continue;
         }
         let p = ent.path();
-        logging::info!("[fs::boot-tree] {}", p.display());
+        let path_display = format!("{}", p.display());
+        logging::info!("[fs::boot-tree] {}", path_display);
         if let Ok(ft) = ent.file_type() {
             if ft.is_dir() {
                 walk_ext4_tree(ext4, p.as_path());
+            } else if ft.is_regular_file() {
+                let Ok(meta) = ext4.metadata(p.as_path()) else {
+                    continue;
+                };
+                let mode = meta.mode();
+                let name_b = name.as_ref();
+                if boot_inspect::should_dump_sh_script(name_b) {
+                    if let Some(bytes) =
+                        read_regular_file_capped(ext4, p.as_path(), boot_inspect::MAX_SH_BOOT_BYTES)
+                    {
+                        boot_inspect::log_sh_file(path_display.as_str(), &bytes);
+                    }
+                }
+                if let Some(prefix) = read_regular_file_capped(ext4, p.as_path(), 64) {
+                    boot_inspect::log_elf_exec_if_applicable(path_display.as_str(), &prefix, mode);
+                }
             }
         }
     }

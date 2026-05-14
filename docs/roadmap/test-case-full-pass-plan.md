@@ -77,6 +77,8 @@
 
 **结论**：全通过仍是 **完整用户态 OS 能力栈** 的长期建设；但你们已越过「只有骨架」阶段，**应优先利用已有 fs/vfs-bridge/mm 契约/task 用户骨架做纵向切片**，而不是平行铺开所有 syscall。
 
+**riscv64-only 并行工作包**（按模块拆分、每包独立 md、init/test 总线验收约定）：见 **`docs/roadmap/riscv64-busybox/README.md`**。
+
 ---
 
 ## 四、推荐实施顺序（分阶段，已按当前仓库进度收紧）

@@ -29,8 +29,8 @@ pub enum RootVolumeReadError {
     Io,
 }
 
-/// 根卷内默认用户 ELF 路径（可按镜像修改）；与常见镜像中 `/elf/000_hello_world.elf` 一致。
-pub const DEFAULT_USER_ELF_PATH: &str = "/elf/000_hello_world.elf";
+/// 根卷内可选默认用户 ELF 路径（固定 bring-up 或工具链使用）；正式测试盘以 shell 脚本为主时镜像可不包含此文件。
+pub const DEFAULT_USER_ELF_PATH: &str = "/elf/user.elf";
 
 /// ELF 装载或 MM 操作失败原因（实现可将解析错误归并到 `Parse`）。
 #[derive(Debug)]
