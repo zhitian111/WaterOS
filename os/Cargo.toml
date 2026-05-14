@@ -55,8 +55,7 @@
         "fs/impl-ext4",
         "ipc/api-v0",
         "ipc/impl-dummy",
-        # 根 crate 的 `impl-sv39`：`spawn_all` 里 ELF 自检与 stage4 用户栈映射用
-        # `#[cfg(feature = "impl-sv39")]`；仅给 `mm/impl-sv39` 不会打开该 cfg。
+        # 根 crate 的 `impl-sv39`：其它 crate（如 `task`）里 `#[cfg(feature = "impl-sv39")]` 依赖此 flag。
         "impl-sv39",
         "mm/api-v0",
         "mm/impl-sv39",

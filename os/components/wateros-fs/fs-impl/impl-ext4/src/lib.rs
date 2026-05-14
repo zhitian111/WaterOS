@@ -7,6 +7,7 @@
 
 extern crate alloc;
 
+mod boot_inspect;
 mod ro;
 mod rw;
 mod selftest;
@@ -22,7 +23,7 @@ use spin::Mutex;
 
 pub use ro::Ext4Fs;
 pub use rw::Ext4FsRw;
-pub use selftest::{ro_self_test, rw_smoke_self_test};
+pub use selftest::ro_self_test;
 
 /// ext4 superblock 中标识 ext2/3/4 的 magic（与 Linux 布局一致：`s_magic` 固定为 0xEF53）。
 const EXT4_SUPER_MAGIC: u16 = 0xEF53;

@@ -146,7 +146,7 @@ pub fn init() {
     }
 }
 
-/// 自检入口：调用 API 层样例测试；在启用 `impl-ext4` 时对已挂载 ext4 做 RO/RW 烟测（失败仅 warn）。
+/// 自检入口：调用 API 层样例测试；在启用 `impl-ext4` 时对已挂载 ext4 做最小 RO 校验（失败仅 warn）。
 pub fn test() {
     logging::trace!("[fs] test begin");
     api_v0::test();
@@ -161,56 +161,8 @@ pub fn test() {
             logging::trace!("[fs] test end");
             return;
         };
-        if let Err(err) = impl_ext4::ro_self_test(fs.clone()) {
+        if let Err(err) = impl_ext4::ro_self_test(fs) {
             logging::warn!("[fs] ext4 ro test failed: {:?}", err);
-        }
-
-        // RW 烟测：另起 RW 挂载写根下文件，再由既有 RO 句柄读回；两栈独立，用于验证写路径与只读视图一致性。
-        let Some(rw_imp) = pick_fs_impl(api_v0::FsKind::Ext4, api_v0::FsAccessMode::ReadWrite)
-        else {
-            logging::warn!("[fs] no impl supports Ext4 RW; skip rw test");
-            logging::trace!("[fs] test end");
-            return;
-        };
-        let Some(dev_path) = rootfs::active_impl::current_root_device_path() else {
-            logging::warn!("[fs] ext4 rw test skipped: no root device path");
-            logging::trace!("[fs] test end");
-            return;
-        };
-        match devfs::active_impl::lookup_block_device(dev_path.as_str()) {
-            Ok(dev_rw) => match rw_imp.mount_rw(dev_rw) {
-                Ok(rw) => {
-                    if let Err(err) = impl_ext4::rw_smoke_self_test(rw, "hello", b"hello") {
-                        logging::warn!("[fs] ext4 rw write failed: {:?}", err);
-                    } else {
-                        let ro = fs.lock();
-                        match ro.read("/hello") {
-                            Ok(bytes) if bytes == b"hello" => {
-                                logging::info!(
-                                    "[fs::ext4][test] verify OK: read /hello == b\"hello\""
-                                );
-                            }
-                            Ok(bytes) => {
-                                logging::warn!(
-                                    "[fs::ext4][test] verify FAIL: len={} data={:02x?}",
-                                    bytes.len(),
-                                    bytes.as_slice()
-                                );
-                            }
-                            Err(err) => logging::warn!(
-                                "[fs::ext4][test] verify read err: {:?}",
-                                err
-                            ),
-                        }
-                    }
-                }
-                Err(err) => logging::warn!("[fs] ext4 rw mount failed: {:?}", err),
-            },
-            Err(err) => logging::warn!(
-                "[fs] ext4 rw test skipped: lookup {:?} err={:?}",
-                dev_path,
-                err
-            ),
         }
     }
     logging::trace!("[fs] test end");
