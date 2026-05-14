@@ -15,6 +15,11 @@ SECTIONS
     *(.text.trampoline)
     *(.text.trampoline.*)
     . = ALIGN(4K);
+    loongarch64_user_smoke_start = .;
+    *(.text.user_smoke)
+    *(.text.user_smoke.*)
+    loongarch64_user_smoke_end = .;
+    . = ALIGN(4K);
     *(.text .text.*)
   }
   text_end = .;

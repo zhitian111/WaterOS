@@ -26,6 +26,9 @@
 - trap 路径已开始把完整 trap frame 快照复制进当前任务对象，并在返回前回写到 trap 栈帧
 - trap 读写路径已显式区分“是否返回用户态”的语义，完整 trap frame 留在 `platform-arch`/task impl 机制层，task 公共 API 通过 `TaskTrapSnapshot` 暴露架构无关语义快照
 - 已具备最小 `spawn_user_task` 骨架：用户任务可预分配用户栈，并准备首次 `sret` 进入所需的 trap frame
+- 已接入 `wateros-mm-api-v0::kernel_bringup::LoadedElf`：task 根 crate 可将 MM loader 返回的 `entry_pc`、`satp`、镜像范围与外部栈区间转换为 `UserTaskSpec`，并直接生成用户态任务
+- RISC-V 自检已以根卷默认 ELF 作为唯一用户态回归路径；ELF observer 会等待、reap 并校验退出码、trap frame、地址空间、image 与外部栈元数据
+- LoongArch64 路径已用独立 `.text.user_smoke` 段创建 PLV3 用户态 syscall smoke，并通过 `UserTaskSpec` / observer 校验 entry、image、栈与 trap frame 快照；它目前不声明地址空间句柄，真实 ELF 任务仍依赖后续 LoongArch MM/FS/loader 接入
 - `current_task_snapshot` 可提供不含任务切换上下文、但包含最近一次 trap 语义快照的轻量任务状态快照与统计信息
 
 ## 后续关注点
@@ -33,5 +36,5 @@
 - 继续把当前“复制 + 回写”模式推进为完整 trap frame 归属与恢复模型
 - 继续把当前 wait handle 模型推进为更完整的通用阻塞对象 / block object 层
 - 继续补更明确的 task handle / generation 语义，以及更贴近 `waitpid` 的上层回收关系
-- 继续把当前 user task 骨架推进成真正可运行的用户态主线，包括 trap 期间内核栈切换与用户态自检
+- 继续扩展真实用户态镜像覆盖面，包括更多 syscall 与进程/地址空间场景
 - 持续补齐注释与公共 API 文档

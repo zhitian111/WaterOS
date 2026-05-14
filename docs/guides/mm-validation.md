@@ -42,23 +42,19 @@
 - `__wateros_task_runtime_install_trap_satp`：返回用户态前写入当前任务的 `AddressSpaceHandle::raw()`；`raw == 0` 表示沿用内核 `satp`。
 - 从用户态 trap 返回内核态时写回 `KERNEL_TRAP_SATP`。
 
-## 4. 用户栈与 stage4
+## 4. 用户栈与 ELF 用户任务
 
 ### `UserTaskSpec::with_external_stack`
-- 由 loader 或 `mm::kernel_mm::map_anon_range_user` 预先映射的用户栈虚拟区间 `(bottom, top]`，不再使用内核堆上的 `UserStack` 物理页（避免缺 `U` 位导致用户态不可访问）。
-
-### stage4 自检
-- 对落在内核镜像内的用户入口页调用 `mm::kernel_mm::ensure_user_execute_for_kernel_va`，为该 VPN 增加 `U` 以便用户态执行。
-- 高地址匿名栈由 `mm::kernel_mm::map_anon_range_user` 映射。
-- `AddressSpaceHandle::from_raw(mm::kernel_mm::kernel_satp())` 与 `raw == 0` 约定一致：共享全局内核页表做演示。
+- 由 ELF loader 预先映射的用户栈虚拟区间 `(bottom, top]`，不再使用内核堆上的 `UserStack` 物理页（避免缺 `U` 位导致用户态不可访问）。
+- `task::spawn_user_task_from_loaded_elf` 会把 loader 返回的 `stack_bottom` / `stack_top` 转入 `UserTaskSpec::with_external_stack`，observer 会在任务退出后断言栈区间、`satp`、image 元数据与 trap frame 快照一致。
 
 ## 5. ELF 装载（`from_elf_path`）
 
 ### 路径
-- 默认尝试 `mm::kernel_mm::DEFAULT_USER_ELF_PATH`（定义于 `wateros-mm` 的 `mm-api/api-v0/src/kernel_bringup.rs`，根卷内）；不存在时仅 `[elf-selftest] skip` 警告，不阻塞启动。
+- 默认尝试 `mm::kernel_mm::DEFAULT_USER_ELF_PATH`（定义于 `wateros-mm` 的 `mm-api/api-v0/src/kernel_bringup.rs`，根卷内）；不存在或装载失败时视为用户态回归失败并 panic。
 
 ### 行为
-- 独立 `Sv39AddressSpace`（同样 `Box::leak`）：含内核 RAM 恒等映射 + `PT_LOAD` 段 + 用户栈；`satp` 与 `entry_pc` 交给 `spawn_user_task_spec`。
+- 独立 `Sv39AddressSpace`（同样 `Box::leak`）：含内核 RAM 恒等映射 + `PT_LOAD` 段 + 用户栈；`LoadedElf` 交给 `task::spawn_user_task_from_loaded_elf`，由 task 根 crate 统一转换 `satp`、入口 PC、镜像范围与外部用户栈。
 
 ## 6. PageFault 回归（可选）
 
