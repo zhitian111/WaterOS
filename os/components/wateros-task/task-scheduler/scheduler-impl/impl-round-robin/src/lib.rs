@@ -288,6 +288,18 @@ pub fn current_task_snapshot() -> Option<TaskSnapshot> {
     with_scheduler(|scheduler| scheduler.current_task_snapshot())
 }
 
+/// 指定任务的稳定快照；任务不存在或已被回收时返回 `None`。
+pub fn task_snapshot(task_id : TaskId) -> Option<TaskSnapshot> {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.task_snapshot(task_id))
+}
+
+/// 当前调度器逻辑 tick。
+pub fn current_tick() -> TaskTick {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.current_tick())
+}
+
 /// 当前任务内核栈顶，供 trap/用户态恢复路径使用。
 pub fn current_task_kernel_stack_top() -> Option<usize> {
     let _guard = InterruptGuard::new();

@@ -191,6 +191,18 @@ pub fn current_task_snapshot() -> Option<TaskSnapshot> {
     active_impl::current_task_snapshot()
 }
 
+/// 返回指定任务的稳定快照；任务不存在或已被回收时返回 `None`。
+#[inline]
+pub fn task_snapshot(task_id : TaskId) -> Option<TaskSnapshot> {
+    active_impl::task_snapshot(task_id)
+}
+
+/// 返回当前调度器逻辑 tick。
+#[inline]
+pub fn current_tick() -> TaskTick {
+    active_impl::current_tick()
+}
+
 /// 返回当前任务用于处理 trap 的内核栈顶地址。
 #[inline]
 pub fn current_task_kernel_stack_top() -> Option<usize> {
