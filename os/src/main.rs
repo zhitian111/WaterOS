@@ -150,9 +150,12 @@ mod qemu_riscv64_opensbi {
 
 #[cfg(feature = "qemu-loongarch64-virt")]
 mod qemu_loongarch64_virt {
-    //! QEMU LoongArch `virt` 板级的最小 bring-up：与 `impl-qemu-loongarch64-virt` 的 `_start.S`
-    //! 链接后进入 [`kernel_main`]，初始化 runtime/任务与两个内核忙等任务，再开定时器中断
-    //! 并进入调度。与 RISC-V OpenSBI 路径相比暂无用户态/FS 自检。
+    //! QEMU LoongArch `virt` 板级的最小 bring-up：与
+    //! `impl-qemu-loongarch64-virt` 的 `_start.S`
+    //! 链接后进入 [`kernel_main`]，初始化 runtime/任务、PLV3 syscall smoke
+    //! 与两个内核忙等任务， 再开定时器中断并进入调度。与 RISC-V OpenSBI
+    //! 路径相比暂无真实 MM/FS/ELF loader 接入。
+    use alloc::boxed::Box;
     use core::arch::{asm, global_asm};
     use core::include_str;
     use runtime::logging::*;
@@ -164,8 +167,22 @@ mod qemu_loongarch64_virt {
     const LOONGARCH64_USER_SYSCALL_EXIT_GROUP_NR : usize = 94;
     const LOONGARCH64_USER_EXIT_OK : isize = 66;
     const LOONGARCH64_USER_EXIT_BAD_YIELD : isize = 67;
+    const LOONGARCH64_USER_WAIT_TICKS : task::TaskTick = 128;
 
-    /// 固件/引导移交后的内核 C 入口；无 boot 参数版本，完成基础初始化后仅跑内核态烟测任务。
+    struct LoongArch64UserSmokeExpected {
+        task_id : task::TaskId,
+        entry_pc : usize,
+        image_base : usize,
+        image_size : usize,
+    }
+
+    unsafe extern "C" {
+        fn loongarch64_user_smoke_start();
+        fn loongarch64_user_smoke_end();
+    }
+
+    /// 固件/引导移交后的内核 C 入口；无 boot 参数版本，完成基础初始化后运行
+    /// LoongArch64 PLV3 用户态 syscall smoke 与内核态调度烟测任务。
     #[unsafe(no_mangle)]
     pub fn kernel_main() -> ! {
         runtime::console::show_logo();
@@ -176,8 +193,20 @@ mod qemu_loongarch64_virt {
 
         task::init();
         crate::trap_handler::init();
-        let user_task_id = task::spawn_user_task(loongarch64_user_task_entry as usize);
-        task::spawn_kernel_task(loongarch64_user_observer_task, user_task_id);
+        let (user_image_base, user_image_size) = loongarch64_user_smoke_image_range();
+        let user_entry = loongarch64_user_task_entry as *const () as usize;
+        let user_spec =
+            task::UserTaskSpec::new(user_entry).with_image(task::UserImageInfo::new(user_image_base,
+                                                                                   user_image_size));
+        let user_task_id = task::spawn_user_task_spec(user_spec);
+        let expected = Box::new(LoongArch64UserSmokeExpected { task_id : user_task_id,
+                                                               entry_pc : user_entry,
+                                                               image_base : user_image_base,
+                                                               image_size : user_image_size });
+        task::spawn_kernel_task(loongarch64_user_observer_task,
+                                Box::into_raw(expected) as usize);
+        info!("[loongarch64][user] spawned PLV3 smoke task={} entry={:#x} image=[{:#x},+{:#x})",
+              user_task_id, user_entry, user_image_base, user_image_size);
         task::spawn_kernel_task(loongarch64_kernel_task_a, 0);
         task::spawn_kernel_task(loongarch64_kernel_task_b, 0);
 
@@ -188,7 +217,8 @@ mod qemu_loongarch64_virt {
         task::run_first_task()
     }
 
-    /// 内核自检任务 A：忙循环 + 周期性日志 + `yield_now`，用于验证多任务与时间片。
+    /// 内核自检任务 A：忙循环 + 周期性日志 +
+    /// `yield_now`，用于验证多任务与时间片。
     extern "C" fn loongarch64_kernel_task_a(_arg : usize) -> ! {
         let mut round = 0usize;
         loop {
@@ -200,7 +230,8 @@ mod qemu_loongarch64_virt {
         }
     }
 
-    /// 内核自检任务 B：与 [`loongarch64_kernel_task_a`] 对称，增加调度交错覆盖。
+    /// 内核自检任务 B：与 [`loongarch64_kernel_task_a`]
+    /// 对称，增加调度交错覆盖。
     extern "C" fn loongarch64_kernel_task_b(_arg : usize) -> ! {
         let mut round = 0usize;
         loop {
@@ -212,57 +243,25 @@ mod qemu_loongarch64_virt {
         }
     }
 
-    /// 用户态 smoke：验证 LoongArch64 PLV3 `syscall` 可回到组合层 trap handler。
+    /// 用户态 smoke：验证 LoongArch64 PLV3 `syscall` 可回到组合层 trap
+    /// handler。
+    #[unsafe(link_section = ".text.user_smoke")]
     extern "C" fn loongarch64_user_task_entry() -> ! {
-        let yield_ret = unsafe { loongarch64_user_syscall0(LOONGARCH64_USER_SYSCALL_YIELD_NR) };
-        let exit_code = if yield_ret == 0 {
-            LOONGARCH64_USER_EXIT_OK
-        } else {
-            LOONGARCH64_USER_EXIT_BAD_YIELD
-        };
-        unsafe {
-            loongarch64_user_exit_group(exit_code);
-        }
-    }
-
-    /// 等待并回收 LoongArch64 用户态 smoke 任务；成功日志说明用户态 trap/返回闭环可用。
-    extern "C" fn loongarch64_user_observer_task(user_task_id : usize) -> ! {
-        info!("[loongarch64][user] observer waiting user_task_id={}",
-              user_task_id);
-        task::wait_for_task_exit(user_task_id);
-        match task::reap_exited_task(user_task_id) {
-            Some(exited) if exited.exit_code == LOONGARCH64_USER_EXIT_OK => {
-                info!("[loongarch64][user] smoke ok task={} exit={}",
-                      user_task_id, exited.exit_code);
-            }
-            Some(exited) => {
-                warn!("[loongarch64][user] smoke unexpected exit task={} exit={}",
-                      user_task_id, exited.exit_code);
-            }
-            None => {
-                warn!("[loongarch64][user] smoke task={} missing reap result",
-                      user_task_id);
-            }
-        }
-        task::exit_current(0);
-    }
-
-    #[inline]
-    unsafe fn loongarch64_user_syscall0(nr : usize) -> isize {
-        let ret : usize;
+        let yield_ret : usize;
         unsafe {
             asm!("move $r11, {nr}",
                  "move $r4, $r0",
                  "syscall 0",
                  "move {ret}, $r4",
-                 nr = in(reg) nr,
-                 ret = out(reg) ret);
+                 nr = in(reg) LOONGARCH64_USER_SYSCALL_YIELD_NR,
+                 ret = out(reg) yield_ret,
+                 options(nostack));
         }
-        ret as isize
-    }
-
-    #[inline]
-    unsafe fn loongarch64_user_exit_group(exit_code : isize) -> ! {
+        let exit_code = if yield_ret == 0 {
+            LOONGARCH64_USER_EXIT_OK
+        } else {
+            LOONGARCH64_USER_EXIT_BAD_YIELD
+        };
         unsafe {
             asm!("move $r11, {nr}",
                  "move $r4, {code}",
@@ -271,5 +270,62 @@ mod qemu_loongarch64_virt {
                  code = in(reg) exit_code as usize,
                  options(noreturn));
         }
+    }
+
+    fn loongarch64_user_smoke_image_range() -> (usize, usize) {
+        let start = loongarch64_user_smoke_start as *const () as usize;
+        let end = loongarch64_user_smoke_end as *const () as usize;
+        (start, end.saturating_sub(start))
+    }
+
+    /// 等待并回收 LoongArch64 用户态 smoke 任务；成功日志说明用户态
+    /// trap/返回闭环可用， 同时覆盖 `UserTaskSpec` 到 reaped
+    /// 资源快照的元数据传递。
+    extern "C" fn loongarch64_user_observer_task(expected_ptr : usize) -> ! {
+        let expected = unsafe { Box::from_raw(expected_ptr as *mut LoongArch64UserSmokeExpected) };
+        info!("[loongarch64][user] observer waiting user_task_id={}",
+              expected.task_id);
+        let wait_result = task::wait_for_task_exit_for_ticks(expected.task_id,
+                                                             LOONGARCH64_USER_WAIT_TICKS);
+        assert_eq!(wait_result,
+                   task::TaskWaitResult::Woken,
+                   "LoongArch64 user smoke must exit before observer timeout");
+        let exited = task::reap_exited_task(expected.task_id).expect("LoongArch64 user smoke \
+                                                                      must be reapable after exit");
+        assert_eq!(exited.id, expected.task_id,
+                   "LoongArch64 user smoke reap id must match spawned task");
+        assert_eq!(exited.kind,
+                   task::TaskKind::User,
+                   "LoongArch64 user smoke must be a user task");
+        assert_eq!(exited.exit_code, LOONGARCH64_USER_EXIT_OK,
+                   "LoongArch64 user smoke must exit through successful yield path");
+        let resources = exited.user_resources
+                              .expect("LoongArch64 user smoke must preserve user resources");
+        assert_eq!(resources.entry_pc, expected.entry_pc,
+                   "LoongArch64 user smoke resources must preserve entry PC");
+        assert_eq!(resources.address_space, None,
+                   "LoongArch64 user smoke should not claim an MM address space yet");
+        let image = resources.image
+                             .expect("LoongArch64 user smoke must preserve image metadata");
+        assert_eq!(image.image_base(),
+                   expected.image_base,
+                   "LoongArch64 user smoke image base must match linker section");
+        assert_eq!(image.image_size(),
+                   expected.image_size,
+                   "LoongArch64 user smoke image size must match linker section");
+        let trap_frame = exited.trap_frame
+                               .expect("LoongArch64 user smoke exit should keep trap snapshot");
+        let user_sp = trap_frame.user_sp();
+        assert!(resources.user_stack_bottom <= user_sp,
+                "LoongArch64 user smoke SP must stay within task user stack");
+        assert!(user_sp <= resources.user_stack_top,
+                "LoongArch64 user smoke SP must not exceed task user stack top");
+        assert_eq!(user_sp & 0xF,
+                   0,
+                   "LoongArch64 user smoke SP should keep 16-byte alignment");
+        info!("[loongarch64][user] smoke ok task={} exit={} sp={:#x}",
+              exited.id, exited.exit_code, user_sp);
+        drop(expected);
+        task::exit_current(0);
     }
 }

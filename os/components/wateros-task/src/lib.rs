@@ -88,6 +88,7 @@ pub use api_v0::{
     TaskWaitTarget, UserImageInfo, UserTaskEntryPc, UserTaskResources, UserTaskSpec, WaitQueueId,
     IDLE_TASK_ID,
 };
+pub use mm_api::kernel_bringup::LoadedElf;
 
 /// 初始化任务系统和底层调度器状态。
 #[inline]
@@ -117,6 +118,24 @@ pub fn spawn_user_task_spec(spec: UserTaskSpec) -> TaskId {
 #[inline]
 pub fn spawn_user_task(entry_pc: UserTaskEntryPc) -> TaskId {
     spawn_user_task_spec(UserTaskSpec::new(entry_pc))
+}
+
+/// 将 MM ELF loader 产出的地址空间、映像与外部用户栈元数据转换为用户任务规格。
+#[inline]
+pub fn user_task_spec_from_loaded_elf(loaded: &LoadedElf) -> UserTaskSpec {
+    UserTaskSpec::new(loaded.entry_pc)
+        .with_address_space(AddressSpaceHandle::from_raw(loaded.satp))
+        .with_image(UserImageInfo::new(
+            loaded.image_base,
+            loaded.image_size,
+        ))
+        .with_external_stack(loaded.stack_bottom, loaded.stack_top)
+}
+
+/// 基于 MM 已装载的 ELF 创建一个用户任务，并返回分配到的任务号。
+#[inline]
+pub fn spawn_user_task_from_loaded_elf(loaded: &LoadedElf) -> TaskId {
+    spawn_user_task_spec(user_task_spec_from_loaded_elf(loaded))
 }
 
 /// 启动调度器并切入第一批可运行任务。

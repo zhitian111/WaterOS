@@ -2,61 +2,35 @@
 //! ELF）相关的内核自检。
 //!
 //! **用途**：在 `kernel_main` 已初始化 MM 与 `task`
-//! 子系统后，通过多组内核任务与用户任务 验证 `sleep`/`yield`、`block`/`wake`、
-//! 等待队列超时、`wait_for_exit`/`reap`、以及 `spawn_user_task_spec` 与 trap
+//! 子系统后，通过多组内核任务与真实 ELF 用户任务验证 `sleep`/`yield`、`block`/`wake`、
+//! 等待队列超时、`wait_for_exit`/`reap`、以及 `spawn_user_task_from_loaded_elf` 与 trap
 //! 快照等契约。
 //!
 //! **入口**：[`spawn_all`] 由 `kernel_main` 调用；其中在 **`wateros` 根 crate 启用
 //! `impl-sv39` feature**（`qemu-riscv64-opensbi` 已包含）时，会先尝试加载
 //! [`mm::kernel_mm::DEFAULT_USER_ELF_PATH`] 对应的真实用户 ELF
-//! 并派生观察任务，再创建 stage2/3/4
-//! 内核自检任务与内核映射的用户态自检任务，
+//! 并派生观察任务，再创建 stage2/3
+//! 内核自检任务，
 //! 以降低自检对默认用户程序首轮调度的干扰。
 //!
-//! **后续替换点**：自检任务与用户镜像地址/系统调用号为 QEMU
-//! 调试路径上的固定约定，若 用户 ABI 或镜像布局变更，
-//! 应同步调整本模块常量与断言。
+//! **后续替换点**：默认用户镜像路径来自 MM bring-up 契约，若用户 ABI 或镜像布局变更，
+//! 应同步调整根卷镜像与本模块断言。
 
-use core::arch::asm;
+use alloc::boxed::Box;
 use core::sync::atomic::{AtomicBool, Ordering};
-use mm::api::addr::VirtAddr;
-use mm::api::perm::PagePerm;
 use runtime::logging::*;
 
 static BLOCK_TASK_READY : AtomicBool = AtomicBool::new(false);
-// ---- stage4 内核映射用户任务：须与 `trap_handler` / `wateros-abi` 中 syscall 号及
-// `spawn_user_task_spec` 断言一致（镜像范围仅用于元数据，代码实际在可执行内核 VA）。----
-const STAGE4_USER_EXIT_OK : isize = 88;
-const STAGE4_USER_EXIT_BAD_RET : isize = 89;
-const STAGE4_USER_SYSCALL_YIELD_NR : usize = 124;
-const STAGE4_USER_SYSCALL_EXIT_GROUP_NR : usize = 94;
-const STAGE4_USER_IMAGE_BASE : usize = 0x1000_0000;
-const STAGE4_USER_IMAGE_SIZE : usize = 0x2000;
-const STAGE4_USER_STACK_TOP : usize = 0x0000_0000_7FFF_F000;
-const STAGE4_USER_STACK_SIZE : usize = 16 * 1024;
 
-/// 仅参数 `a7` 的 `ecall`；返回值在 `a0`，约定与内核对用户态 syscall 返回一致。
-#[inline]
-unsafe fn user_syscall0(nr : usize) -> isize {
-    let mut ret = 0usize;
-    unsafe {
-        asm!("ecall",
-             inlateout("a0") ret,
-             in("a7") nr,
-             clobber_abi("C"));
-    }
-    ret as isize
-}
-
-/// 走 `exit_group` 号直接 `noreturn` ecall，用于用户态自检片段无返回退出。
-#[inline]
-unsafe fn user_exit_group(exit_code : isize) -> ! {
-    unsafe {
-        asm!("ecall",
-             in("a0") exit_code as usize,
-             in("a7") STAGE4_USER_SYSCALL_EXIT_GROUP_NR,
-             options(noreturn));
-    }
+/// ELF observer 对 loader 输出的只读期望快照；由 spawn 方放入堆中并由 observer 回收。
+struct ElfUserTaskExpected {
+    task_id : task::TaskId,
+    entry_pc : usize,
+    satp : usize,
+    image_base : usize,
+    image_size : usize,
+    stack_bottom : usize,
+    stack_top : usize,
 }
 
 // 纯自旋延迟，避免日志在极短 tick 内刷屏；无硬件假设。
@@ -195,141 +169,106 @@ extern "C" fn stage3_exit_reaper_task(exit_target_task_id : usize) -> ! {
     task::exit_current(77);
 }
 
-/// 映射到用户特权级的最小片段：`sched_yield` 成功则 `exit_group(OK)`，否则错误码路径。
-extern "C" fn stage4_user_task_entry() -> ! {
-    let yield_ret = unsafe { user_syscall0(STAGE4_USER_SYSCALL_YIELD_NR) };
-    let exit_code = if yield_ret == 0 {
-        STAGE4_USER_EXIT_OK
-    } else {
-        STAGE4_USER_EXIT_BAD_RET
-    };
-    unsafe {
-        user_exit_group(exit_code);
-    }
-}
-
-/// 等待根卷默认 ELF 用户任务退出并 reap，仅日志与资源校验。
-extern "C" fn elf_user_observer_task(elf_task_id : usize) -> ! {
+/// 等待根卷默认 ELF 用户任务退出并断言 task/MM 元数据快照。
+extern "C" fn elf_user_observer_task(expected_ptr : usize) -> ! {
+    let expected = unsafe { Box::from_raw(expected_ptr as *mut ElfUserTaskExpected) };
     trace!("[elf-selftest] elf observer entered elf_task_id={}",
-           elf_task_id);
+           expected.task_id);
     info!("[elf-selftest] observer waiting for elf task id={}",
-          elf_task_id);
-    let _ = task::wait_for_task_exit_for_ticks(elf_task_id, 256);
-    if let Some(exited) = task::reap_exited_task(elf_task_id) {
-        info!("[elf-selftest] reaped elf task exit_code={}",
-              exited.exit_code);
-    } else {
-        warn!("[elf-selftest] elf task not in zombie state for reaping");
-    }
-    task::exit_current(100);
-}
-
-/// 对 [`stage4_user_task_entry`] 派生任务做 `wait`/`reap` 与 trap/资源快照断言。
-extern "C" fn stage4_user_observer_task(user_task_id : usize) -> ! {
-    info!("[task-stage4] observer task started, user_task_id={}",
-          user_task_id);
-    let wait_result = task::wait_for_task_exit_for_ticks(user_task_id, 16);
+          expected.task_id);
+    let wait_result = task::wait_for_task_exit_for_ticks(expected.task_id, 256);
     assert_eq!(wait_result,
                task::TaskWaitResult::Woken,
-               "stage4 observer must observe user task exit");
+               "ELF observer must observe user task exit");
     let exited_task =
-        task::reap_exited_task(user_task_id).expect("stage4 observer must reap exited user task");
-    assert_eq!(exited_task.id, user_task_id,
-               "reaped user task id must match spawned user task");
+        task::reap_exited_task(expected.task_id).expect("ELF observer must reap exited user task");
+    assert_eq!(exited_task.id, expected.task_id,
+               "reaped ELF task id must match spawned user task");
     assert_eq!(exited_task.kind,
                task::TaskKind::User,
-               "reaped task must be a user task");
-    assert_eq!(exited_task.exit_code, STAGE4_USER_EXIT_OK,
-               "user task must observe sched_yield return 0 before exit");
+               "reaped ELF task must be a user task");
+    assert_eq!(exited_task.exit_code, 0,
+               "default hello ELF must exit with status 0");
     assert!(exited_task.trap_frame
                        .is_some(),
-            "user task exit should leave an observable trap frame snapshot");
+            "ELF user task exit should leave an observable trap frame snapshot");
     let user_resources =
         exited_task.user_resources
-                   .expect("user task exit should preserve user resources snapshot");
-    assert_eq!(user_resources.entry_pc, stage4_user_task_entry as *const () as usize,
-               "user task resource snapshot must preserve original entry pc");
-    assert!(user_resources.user_stack_bottom < user_resources.user_stack_top,
-            "user task stack range must be ordered");
+                   .expect("ELF user task exit should preserve user resources snapshot");
+    assert_eq!(user_resources.entry_pc, expected.entry_pc,
+               "ELF task resource snapshot must preserve original entry pc");
+    assert_eq!(user_resources.user_stack_bottom, expected.stack_bottom,
+               "ELF task stack bottom must match loader output");
+    assert_eq!(user_resources.user_stack_top, expected.stack_top,
+               "ELF task stack top must match loader output");
     assert_eq!(user_resources.user_stack_top - user_resources.user_stack_bottom,
                user_resources.user_stack_size,
-               "user task stack range must match reported stack size");
+               "ELF task stack range must match reported stack size");
     assert_eq!(user_resources.address_space,
-               Some(task::AddressSpaceHandle::from_raw(mm::kernel_mm::kernel_satp())),
-               "user task resource snapshot must preserve address-space handle metadata");
+               Some(task::AddressSpaceHandle::from_raw(expected.satp)),
+               "ELF task resource snapshot must preserve address-space handle metadata");
     let image =
         user_resources.image
-                      .expect("user task resource snapshot must preserve user image metadata");
+                      .expect("ELF task resource snapshot must preserve user image metadata");
     assert_eq!(image.image_base(),
-               STAGE4_USER_IMAGE_BASE,
-               "user task image metadata must preserve image base");
+               expected.image_base,
+               "ELF task image metadata must preserve image base");
     assert_eq!(image.image_size(),
-               STAGE4_USER_IMAGE_SIZE,
-               "user task image metadata must preserve image size");
+               expected.image_size,
+               "ELF task image metadata must preserve image size");
     let trap_frame = exited_task.trap_frame
-                                .expect("user task should preserve trap frame");
+                                .expect("ELF user task should preserve trap frame");
     let user_sp = trap_frame.user_sp();
     assert!(user_resources.user_stack_bottom <= user_sp,
-            "user task trap frame user_sp must stay within the user stack range");
+            "ELF task trap frame user_sp must stay within the user stack range");
     assert!(user_sp <= user_resources.user_stack_top,
-            "user task trap frame user_sp must not grow beyond the initial user stack top");
+            "ELF task trap frame user_sp must not grow beyond the initial user stack top");
     assert_eq!(user_sp & 0xF,
                0,
-               "user task trap frame user_sp should keep 16-byte stack alignment");
-    info!("[task-stage4] observer reaped user task {} with exit_code={}",
+               "ELF task trap frame user_sp should keep 16-byte stack alignment");
+    info!("[elf-selftest] observer reaped ELF user task {} with exit_code={}",
           exited_task.id, exited_task.exit_code);
+    drop(expected);
+    info!("[elf-selftest] observer resource assertions passed");
     task::exit_current(99);
 }
 
-/// 先启动根卷默认 ELF 用户任务，再启动 stage2/3/4
+/// 先启动根卷默认 ELF 用户任务，再启动 stage2/3
 /// 自检任务，降低自检对真实用户程序的调度干扰。
 pub fn spawn_all() {
     #[cfg(feature = "impl-sv39")]
     {
         trace!("[elf-selftest] try load ELF path={} (before scheduler self-tests)",
                mm::kernel_mm::DEFAULT_USER_ELF_PATH);
-        match mm::kernel_mm::from_elf_path(mm::kernel_mm::DEFAULT_USER_ELF_PATH) {
-            Ok(loaded) => {
-                trace!("[elf-selftest] load ok entry={:#x} satp={:#x} image=[{:#x},+{:#x}) \
-                        stack=({:#x},{:#x}]",
-                       loaded.entry_pc,
-                       loaded.satp,
-                       loaded.image_base,
-                       loaded.image_size,
-                       loaded.stack_bottom,
-                       loaded.stack_top);
-                let elf_task_id = task::spawn_user_task_spec(
-                    task::UserTaskSpec::new(loaded.entry_pc)
-                        .with_address_space(task::AddressSpaceHandle::from_raw(loaded.satp))
-                        .with_image(task::UserImageInfo::new(
-                            loaded.image_base,
-                            loaded.image_size,
-                        ))
-                        .with_external_stack(loaded.stack_bottom, loaded.stack_top),
-                );
-                let _elf_obs = task::spawn_kernel_task(elf_user_observer_task, elf_task_id);
-                info!("[elf-selftest] spawned ELF user task id={} path={}",
-                      elf_task_id,
-                      mm::kernel_mm::DEFAULT_USER_ELF_PATH);
-            }
-            Err(err) => {
-                // 用 info：默认日志级别下须可见；否则易误以为「hello 消失」是 trap 等问题。
-                info!(
-                    "[elf-selftest] default hello ELF not loaded (no stdout from 000_hello_world). \
-                     err={:?} path={} — only kernel-mapped stage4 user self-test runs",
+        let loaded = mm::kernel_mm::from_elf_path(mm::kernel_mm::DEFAULT_USER_ELF_PATH)
+            .unwrap_or_else(|err| {
+                panic!(
+                    "[elf-selftest] required default ELF failed to load: err={:?} path={}",
                     err,
                     mm::kernel_mm::DEFAULT_USER_ELF_PATH
-                );
-            }
-        }
-
-        mm::kernel_mm::ensure_user_execute_for_kernel_va(stage4_user_task_entry as *const ()
-                                                         as usize);
-        let stack_bottom = VirtAddr(STAGE4_USER_STACK_TOP - STAGE4_USER_STACK_SIZE);
-        let stack_top = VirtAddr(STAGE4_USER_STACK_TOP);
-        mm::kernel_mm::map_anon_range_user(stack_bottom,
-                                           stack_top,
-                                           PagePerm::R | PagePerm::W | PagePerm::U);
+                )
+            });
+        trace!("[elf-selftest] load ok entry={:#x} satp={:#x} image=[{:#x},+{:#x}) \
+                stack=({:#x},{:#x}]",
+               loaded.entry_pc,
+               loaded.satp,
+               loaded.image_base,
+               loaded.image_size,
+               loaded.stack_bottom,
+               loaded.stack_top);
+        let elf_task_id = task::spawn_user_task_from_loaded_elf(&loaded);
+        let expected = Box::new(ElfUserTaskExpected { task_id : elf_task_id,
+                                                      entry_pc : loaded.entry_pc,
+                                                      satp : loaded.satp,
+                                                      image_base : loaded.image_base,
+                                                      image_size : loaded.image_size,
+                                                      stack_bottom : loaded.stack_bottom,
+                                                      stack_top : loaded.stack_top });
+        let expected_ptr = Box::into_raw(expected) as usize;
+        let _elf_obs = task::spawn_kernel_task(elf_user_observer_task, expected_ptr);
+        info!("[elf-selftest] spawned ELF user task id={} path={}",
+              elf_task_id,
+              mm::kernel_mm::DEFAULT_USER_ELF_PATH);
     }
 
     let wait_timeout_queue = task::WaitQueue::new();
@@ -343,31 +282,6 @@ pub fn spawn_all() {
                                                       exit_target_task_id);
     let exit_reaper_task_id = task::spawn_kernel_task(stage3_exit_reaper_task,
                                                       exit_target_task_id);
-    let stage4_entry = stage4_user_task_entry as *const () as usize;
-    trace!("[task-stage4] spawn kernel-mapped user task entry={:#x} kernel_satp={:#x} \
-            image=[{:#x},+{:#x}) stack_top={:#x}",
-           stage4_entry,
-           mm::kernel_mm::kernel_satp(),
-           STAGE4_USER_IMAGE_BASE,
-           STAGE4_USER_IMAGE_SIZE,
-           STAGE4_USER_STACK_TOP);
-    let user_task_id = task::spawn_user_task_spec(
-        task::UserTaskSpec::new(stage4_entry)
-            .with_address_space(task::AddressSpaceHandle::from_raw(
-                mm::kernel_mm::kernel_satp(),
-            ))
-            .with_image(task::UserImageInfo::new(
-                STAGE4_USER_IMAGE_BASE,
-                STAGE4_USER_IMAGE_SIZE,
-            ))
-            .with_external_stack(
-                STAGE4_USER_STACK_TOP - STAGE4_USER_STACK_SIZE,
-                STAGE4_USER_STACK_TOP,
-            ),
-    );
-    trace!("[task-stage4] kernel-mapped user_task_id={}",
-           user_task_id);
-    let user_observer_task_id = task::spawn_kernel_task(stage4_user_observer_task, user_task_id);
     info!("[task-stage2] spawned kernel tasks: blocked={}, sleep={}, waker={}",
           blocked_task_id, sleep_task_id, waker_task_id);
     info!("[task-stage3b] spawned self-test tasks: timeout={}, exit_target={}, exit_waiter={}, \
@@ -377,6 +291,5 @@ pub fn spawn_all() {
           exit_waiter_task_id,
           exit_reaper_task_id,
           wait_timeout_queue.id());
-    info!("[task-stage4] spawned user self-test tasks: user={}, observer={}",
-          user_task_id, user_observer_task_id);
+    info!("[elf-selftest] spawned default ELF user self-test observer");
 }
