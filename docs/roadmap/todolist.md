@@ -37,6 +37,10 @@
 - **文档与导出**：默认 feature 变更（如 ext4、vfs-bridge、virtio）已反映到 `docs/exports/` 与 **`docs/architecture/snapshot.md`** 时，继续按组件维护 `public-api`、`impl-guide`、`features`；与对外 API 相关的 **`///`** 变更应同时反映到导出文档或功能快照。
 - **新增 impl**：同步 **`docs/guides/task-board.md`** 与路线图本节表格。
 
+## 赛题 test_case 全通过专项
+
+分阶段路线、测例依赖表与可勾选清单见 **`docs/roadmap/test-case-full-pass-plan.md`**（与 `test_case/README.md`、`docs/prompts` 配合使用）。
+
 ## 后续阶段占位（待拆分）
 
 以下条目用于承接跨组件或尚未立项的大块工作，在具体任务文件中拆分为可评审步骤：

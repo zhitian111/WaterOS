@@ -15,4 +15,4 @@ config.conf
 *.wosbak
 *backup*
 *.img
-
+./.DS_Store
