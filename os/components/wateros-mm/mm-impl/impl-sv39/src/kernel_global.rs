@@ -19,7 +19,7 @@ use api_v0::error::MmError;
 use api_v0::perm::PagePerm;
 use frame_alloctor::frame_alloc_result;
 
-use crate::Sv39AddressSpace;
+use crate::pagetable::Sv39AddressSpace;
 
 static KERNEL_ASPACE: AtomicPtr<Sv39AddressSpace> = AtomicPtr::new(core::ptr::null_mut());
 

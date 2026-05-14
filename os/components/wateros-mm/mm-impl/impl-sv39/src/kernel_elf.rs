@@ -1,4 +1,4 @@
-//! 从根文件系统装载 RISC-V ELF64（小端），建立独立 Sv39 地址空间并映射 `PT_LOAD` 与用户栈。
+//! 从根文件系统装载 RISC-V ELF64（小端），建立独立用户地址空间并映射 `PT_LOAD` 与用户栈（分页格式由 mm-impl 完成，当前为 Sv39）。
 //!
 //! 用户地址空间内 **额外** 恒等映射内核 RAM（与 [`crate::kernel_global`] 的 `phys_ram_end_exclusive` 一致），便于同一套页表里内核辅助访问；用户段不得与用户 VPN 或 `0x8000_0000` 以上恒等区非法重叠（重叠时返回 `Parse`）。
 
@@ -11,11 +11,27 @@ use core::cmp;
 use api_v0::addr::{VirtAddr, VirtPageNum, PAGE_SIZE};
 use api_v0::address_space::AddressSpaceOps;
 use api_v0::error::MmError;
-use api_v0::kernel_bringup::{LoadElfError, LoadedElf};
+use api_v0::kernel_bringup::{LoadElfError, LoadedElf, RootVolumeReadError};
+use fs::api::{FsError, SharedFs};
 use api_v0::perm::PagePerm;
 use frame_alloctor::frame_alloc_result;
 
-use crate::Sv39AddressSpace;
+use crate::pagetable::Sv39AddressSpace;
+
+#[inline]
+fn map_fs_to_root_vol(e: FsError) -> RootVolumeReadError {
+    match e {
+        FsError::NotMounted => RootVolumeReadError::NotMounted,
+        FsError::NotFound => RootVolumeReadError::NotFound,
+        FsError::NotAFile => RootVolumeReadError::NotAFile,
+        FsError::InvalidPath => RootVolumeReadError::InvalidPath,
+        FsError::NotUtf8 => RootVolumeReadError::NotUtf8,
+        FsError::Unsupported => RootVolumeReadError::Unsupported,
+        FsError::Driver => RootVolumeReadError::Driver,
+        FsError::Corrupt => RootVolumeReadError::Corrupt,
+        FsError::Io => RootVolumeReadError::Io,
+    }
+}
 
 const PT_LOAD: u32 = 1;
 const EM_RISCV: u16 = 243;
@@ -28,12 +44,12 @@ fn elf_riscv64_le_prefix_ok(data: &[u8]) -> bool {
 
 /// 从根 RO 句柄读整文件；若首读 ELF 前缀明显损坏则 **再读一次**（ext4-view
 /// 在大量目录遍历后偶发首读损坏的 bring-up 规避，与磁盘镜像内容无关）。
-fn read_whole_file_ro_retry_bad_prefix(root: &fs::api::SharedFs, path: &str) -> Result<Vec<u8>, LoadElfError> {
+fn read_whole_file_ro_retry_bad_prefix(root: &SharedFs, path: &str) -> Result<Vec<u8>, LoadElfError> {
     let first = {
         let g = root.lock();
         g.read(path).map_err(|e| {
             runtime::logging::trace!("[elf-load] abort: Fs::read err={:?} path={}", e, path);
-            LoadElfError::Fs(e)
+            LoadElfError::RootVolume(map_fs_to_root_vol(e))
         })?
     };
     if elf_riscv64_le_prefix_ok(&first) {
@@ -51,7 +67,7 @@ fn read_whole_file_ro_retry_bad_prefix(root: &fs::api::SharedFs, path: &str) -> 
         let g = root.lock();
         g.read(path).map_err(|e| {
             runtime::logging::trace!("[elf-load] abort: Fs::read retry err={:?} path={}", e, path);
-            LoadElfError::Fs(e)
+            LoadElfError::RootVolume(map_fs_to_root_vol(e))
         })?
     };
     if !elf_riscv64_le_prefix_ok(&second) {
@@ -104,7 +120,7 @@ fn perm_from_pf(p_flags: u32) -> PagePerm {
 }
 
 /// 将 `[0x8000_0000, phys_ram_end)` 以 `vpn==ppn` 恒等映射进用户页表，权限 `R|W|X`（内核辅助访问与用户段装载共用一套表时的 bring-up 约定）。
-fn map_kernel_ram_identity(aspace: &mut Sv39AddressSpace) -> Result<(), LoadElfError> {
+fn map_kernel_ram_identity<A: AddressSpaceOps>(aspace: &mut A) -> Result<(), LoadElfError> {
     let lo = VirtAddr(0x8000_0000).floor_page();
     let hi = VirtAddr(crate::kernel_global::phys_ram_end_exclusive()).ceil_page();
     for vpn_raw in lo.0..hi.0 {
@@ -118,8 +134,8 @@ fn map_kernel_ram_identity(aspace: &mut Sv39AddressSpace) -> Result<(), LoadElfE
 }
 
 /// 为单个 `PT_LOAD` 分配/合并映射并填充内容：先按页建立映射，再第二遍按字节写入文件或 BSS 零。
-fn map_segment(
-    aspace: &mut Sv39AddressSpace,
+fn map_segment<A: AddressSpaceOps>(
+    aspace: &mut A,
     file: &[u8],
     p_vaddr: u64,
     p_offset: u64,
@@ -152,7 +168,7 @@ fn map_segment(
                 return Err(LoadElfError::Parse);
             }
             let old = aspace
-                .leaf_perm(vpn)
+                .leaf_page_perm(vpn)
                 .map_err(LoadElfError::Mm)?
                 .unwrap_or(PagePerm::empty());
             let merged = old | perm;
@@ -216,7 +232,7 @@ fn map_segment(
 }
 
 /// 为用户栈区间 `[stack_top - stack_size, stack_top)` 分配匿名帧并映射为 `R|W|U`。
-fn map_user_stack(aspace: &mut Sv39AddressSpace, stack_top: usize, stack_size: usize) -> Result<(), LoadElfError> {
+fn map_user_stack<A: AddressSpaceOps>(aspace: &mut A, stack_top: usize, stack_size: usize) -> Result<(), LoadElfError> {
     let bottom = stack_top - stack_size;
     let mut vpn = VirtAddr(bottom).floor_page();
     let vpn_end = VirtAddr(stack_top).ceil_page();

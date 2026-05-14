@@ -1,5 +1,5 @@
 //! WaterOS 内存管理聚合层：对外 re-export [`api`]（语义契约）、[`frame_alloctor`]（物理帧），
-//! 并按 Cargo feature 选择 Sv39 或桩实现作为 [`mm_impl`]。
+//! 以及经 [`kernel_mm`] 暴露的 bring-up 能力；具体 Sv39/桩代码 **不** 以 `mm_impl` 别名整包导出，避免页表实现细节泄漏到依赖方。
 //!
 //! ## 页与地址假设
 //!
@@ -19,15 +19,11 @@
 pub use api_v0 as api;
 pub use frame_alloctor;
 
-#[cfg(feature = "impl-sv39")]
-pub use impl_sv39 as mm_impl;
-
-#[cfg(feature = "impl-dummy")]
-pub use impl_dummy as mm_impl;
-
-/// 内核全局 Sv39 页表与用户 ELF 装载；类型契约见 [`api::kernel_bringup`]。
+/// 内核全局页表与用户 ELF 装载；类型契约见 [`api::kernel_bringup`]。
 pub mod kernel_mm {
-    pub use api_v0::kernel_bringup::{DEFAULT_USER_ELF_PATH, LoadElfError, LoadedElf};
+    pub use api_v0::kernel_bringup::{
+        DEFAULT_USER_ELF_PATH, LoadElfError, LoadedElf, RootVolumeReadError,
+    };
 
     // 仅依赖 `impl-sv39`：根 crate 的 `qemu-riscv64-opensbi` 不会自动为依赖包打开同名 feature，
     // 若此处再要求 `mm/qemu-riscv64-opensbi`，则从未启用该 flag 的构建会始终落到 dummy，
