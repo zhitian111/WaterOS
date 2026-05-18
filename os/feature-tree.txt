@@ -108,11 +108,13 @@ wateros  (Cargo.toml)
   - qemu-riscv64-opensbi [default]
     - vfs-bridge
     - driver/impl-qemu-riscv64-opensbi
+    - driver/impl-block-cache
       > wateros-driver
         - default [default]
         - api-v0 [default]
         - impl-dummy
         - impl-qemu-riscv64-opensbi [default]
+        - impl-block-cache
     - mm/impl-sv39
       > wateros-mm
         - default [default]
@@ -248,6 +250,19 @@ wateros-driver  (components/wateros-driver/Cargo.toml)
         - api-v0 [default]
         - impl-dummy
         - impl-virtio-mmio [default]
+  - impl-block-cache
+    - block/impl-block-cache
+      > wateros-driver-block
+        - default [default]
+        - api-v0 [default]
+        - impl-dummy
+        - impl-virtio-mmio [default]
+        - impl-block-cache
+    - impl-qemu-riscv64-opensbi/block-cache
+      > wateros-driver-impl-qemu-riscv64-opensbi
+        - default [default]
+        - api-v0 [default]
+        - block-cache
 
 wateros-driver-api-v0  (components/wateros-driver/driver-api/api-v0/Cargo.toml)
   (no [features])
@@ -264,9 +279,14 @@ wateros-driver-block  (components/wateros-driver/driver-block/Cargo.toml)
   - impl-dummy
   - impl-virtio-mmio [default]
     - dep:impl-virtio-mmio
+  - impl-block-cache
+    - dep:impl-block-cache
 
 wateros-driver-block-api-v0  (components/wateros-driver/driver-block/block-api/api-v0/Cargo.toml)
-  (no [features])
+  - default [default]
+    - logging
+  - logging [default]
+    - dep:logging
 
 wateros-driver-block-impl-dummy  (components/wateros-driver/driver-block/block-impl/impl-dummy/Cargo.toml)
   - default [default]
@@ -274,6 +294,11 @@ wateros-driver-block-impl-dummy  (components/wateros-driver/driver-block/block-i
   - api-v0 [default]
 
 wateros-driver-block-impl-virtio-mmio  (components/wateros-driver/driver-block/block-impl/impl-virtio-mmio/Cargo.toml)
+  - default [default]
+    - api-v0
+  - api-v0 [default]
+
+wateros-driver-block-impl-block-cache  (components/wateros-driver/driver-block/block-impl/impl-block-cache/Cargo.toml)
   - default [default]
     - api-v0
   - api-v0 [default]
@@ -306,6 +331,8 @@ wateros-driver-impl-qemu-riscv64-opensbi  (components/wateros-driver/driver-impl
   - default [default]
     - api-v0
   - api-v0 [default]
+  - block-cache
+    - block/impl-block-cache
 
 wateros-driver-network  (components/wateros-driver/driver-network/Cargo.toml)
   - default [default]

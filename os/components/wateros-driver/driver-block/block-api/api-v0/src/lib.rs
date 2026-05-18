@@ -116,11 +116,13 @@ pub fn block_device_at(index: usize) -> Option<SharedBlockDevice> {
 
 /// 自检：校验常量与样例设备的 [`read_prefix`] 行为。
 pub fn test() {
+    #[cfg(feature = "logging")]
     logging::trace!("[driver-block-api] test begin");
     assert_eq!(BLOCK_SIZE, 512);
     let mut sample = SampleBlockDevice::new();
     let prefix = sample.read_prefix(3, 5).expect("prefix read should work");
     assert_eq!(&prefix, &[3, 4, 5, 6, 7]);
+    #[cfg(feature = "logging")]
     logging::trace!("[driver-block-api] test end");
 }
 

@@ -30,12 +30,24 @@ struct UserTaskResources {
     user_stack : UserStackBacking,
     address_space : Option<AddressSpaceHandle>,
     image : Option<UserImageInfo>,
+    user_aspace_ptr : usize,
 }
 unsafe extern "C" {
     /// 内核任务通用入口桩：从栈上取出 `TaskBootstrap` 并转入 `TaskBootstrap::run`。
     fn __arch_task_entry();
     /// 用户任务入口桩：装配完成后由调度器经 `__wateros_task_runtime_enter_current_user_task` 进入用户态。
     fn __arch_user_task_entry();
+}
+
+/// 用户栈映射为 `[bottom, top)`（`top` 为不包含上界）时，初始 `sp` 必须落在已映射页内并满足 RISC-V psABI 的 16 字节对齐。
+#[inline]
+fn initial_user_sp(top_exclusive : usize, bottom : usize) -> usize {
+    let sp = top_exclusive.saturating_sub(16);
+    if sp < bottom {
+        bottom
+    } else {
+        sp
+    }
 }
 
 impl UserTaskResources {
@@ -48,7 +60,8 @@ impl UserTaskResources {
         Self { entry_pc : spec.entry_pc(),
                user_stack,
                address_space : spec.address_space(),
-               image : spec.image() }
+               image : spec.image(),
+               user_aspace_ptr : spec.user_aspace_ptr().unwrap_or(0) }
     }
 
     fn entry_pc(&self) -> UserTaskEntryPc { self.entry_pc }
@@ -80,7 +93,8 @@ impl UserTaskResources {
                                     user_stack_top : self.user_stack_top(),
                                     user_stack_size : self.user_stack_size(),
                                     address_space : self.address_space,
-                                    image : self.image }
+                                    image : self.image,
+                                    user_aspace_ptr : self.user_aspace_ptr }
     }
 
     fn address_space_raw(&self) -> usize {
@@ -158,8 +172,11 @@ impl TaskControlBlock {
         let task_cx = TaskContext::goto_entry(__arch_user_task_entry as *const () as usize,
                                               kernel_stack.top());
         let mut trap_frame = TaskTrapFrame::default();
-        trap_frame.prepare_user_return(user_resources.entry_pc(),
-                                       user_resources.user_stack_top());
+        trap_frame.prepare_user_return(
+            user_resources.entry_pc(),
+            initial_user_sp(user_resources.user_stack_top(),
+                            user_resources.user_stack_bottom()),
+        );
         Self::new(id,
                   TaskKind::User,
                   task_cx,

@@ -26,17 +26,18 @@
 - **地址与错误**：**`PAGE_SIZE`**、**`VirtAddr` / `PhysAddr` / `VirtPageNum` / `PhysPageNum`**、**`MmError` / `MmResult`**。
 - **地址空间契约**：**`AddressSpaceId`**、**`AddressSpaceOps`**（`satp_value`、`map_page_to_ppn`、`unmap_page_to_ppn`、`protect_page`、`translate_addr` 及带分配器的默认方法）。
 - **帧分配契约**：**`PhysicalFrameAllocator`** 及帧分配相关类型。
-- **用户内存与堆扩展契约**：**`UserMemoryOps`**、**`HeapBrk` / `BrkRegion`**、**`MmapOps` / `MmapRequest` / `MmapKind`**（实现厚度因 impl 而异）。
+- **用户内存与堆扩展契约**：**`UserMemoryOps`**、**`HeapBrk` / `BrkRegion`**、**`MmapOps` / `MmapRequest` / `MmapKind`**（**`mprotect`** 为 **`MmapOps`** 方法；**`impl-sv39`** 已实现 **`HeapBrk` + `MmapOps`**）。
 - **内核 bring-up**：**`kernel_bringup`** 模块（**`DEFAULT_USER_ELF_PATH`**、**`LoadElfError`**、**`LoadedElf`** 等），与 **`impl-sv39`** 中 ELF 解析衔接。
 
 ## impl-sv39 与 impl-dummy
 
-- **`impl-sv39`**：**`Sv39AddressSpace`** 实现 **`AddressSpaceOps`**；**`kernel_elf`**（**`from_elf_path`**、**`from_elf_bytes`** → **`LoadedElf`**）、**`kernel_global`**（全局 **`Sv39AddressSpace`**、**`init`**、**`kernel_satp`**、恒等/用户映射辅助、**`phys_ram_end_exclusive`** 等）。**`Drop`** 当前仅回收根页表，注释说明未递归回收中间页表（早期简化）。
+- **`impl-sv39`**：**`Sv39AddressSpace`** 实现 **`AddressSpaceOps`**、**`HeapBrk`**、**`MmapOps`**（含 **`mprotect`**）；**`kernel_elf`**（**`from_elf_path`**、**`from_elf_bytes`** → **`LoadedElf`**，含 **`user_aspace_ptr`** / **`brk_*`** / **`mmap_arena_base`**）、**`kernel_global`**（全局 **`Sv39AddressSpace`**、**`init`**、**`kernel_satp`**、恒等/用户映射辅助、**`phys_ram_end_exclusive`** 等）。**`user_syscall`** 供 **`wateros-syscall`** 在用户页表上执行 **`brk`/`mmap`/`munmap`/`mprotect`**。**`Drop`** 当前仅回收根页表，注释说明未递归回收中间页表（早期简化）。
 - **`impl-dummy`**：**`kernel_mm_impl`** 桩：**`init`** 空操作、**`kernel_satp`** 恒 0、映射无操作、**`from_elf_path`** 固定错误类；**无** **`from_elf_bytes`**。
 
 ## 帧分配器（impl-stack）
 
 - **`StackFrameAllocator`** 实现 **`PhysicalFrameAllocator`**；提供 **`init_frame_allocator`**、**`frame_alloc`** / **`frame_dealloc`** 及带 **`MmResult`** 的变体等全局入口。
+- **`GlobalPhysFrameAllocator`**：零大小类型，实现 **`PhysicalFrameAllocator`** 时委托 **`frame_alloc_result`** / **`frame_dealloc_result`**（短借 `RefCell`）。传给 **`HeapBrk`/`MmapOps`** 等与长期持有 **`frame_allocator_cell().exclusive_access()`** 互斥，避免与页表 walk 内再次申请帧重入 panic。
 
 ## 聚合层注意点
 
@@ -44,7 +45,7 @@
 
 ## 明确未覆盖
 
-- **`brk` / `mmap` / `UserMemoryOps`** 在 **`impl-sv39`** 上的完整用户态语义落地（需与 task、syscall 联调对照）。
+- **`brk` / `mmap` / `munmap` / `mprotect`**：已在 **`impl-sv39`** 的 **`Sv39AddressSpace`** 上 **饥渴映射** 落地；**`wateros-syscall`**（**`impl-riscv64`**）在任务携带 **`LoadedElf::user_aspace_ptr`** 时走真实路径，否则 **`brk`** 仍回落到假顶桩。**`UserMemoryOps`** 仍待与 trap 拷贝路径完整对接。
 - 页表递归回收与更完整的地址空间生命周期管理。
 
 ## 维护要求

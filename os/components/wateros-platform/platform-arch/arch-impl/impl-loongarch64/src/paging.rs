@@ -14,4 +14,7 @@ impl LoongArch64Paging {
 
     #[inline]
     pub fn write_satp_and_flush(_satp: usize) {}
+
+    #[inline]
+    pub fn sfence_vma_all() {}
 }

@@ -139,7 +139,7 @@ pub fn init() {
                 );
             }
             if let Some(root) = rootfs::active_impl::root_fs() {
-                root.lock().boot_dump_all_paths();
+                // root.lock().boot_dump_all_paths();
             }
         }
         Err(err) => logging::warn!("[fs] init failed: {:?}", err),

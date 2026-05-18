@@ -131,6 +131,27 @@ pub fn frame_dealloc_result(frame: PhysPageNum) -> FrameAllocResult<()> {
         .dealloc_frame(frame)
 }
 
+/// 零大小适配器：实现 [`PhysicalFrameAllocator`] 时每次调用短借全局栈式分配器。
+///
+/// 供 `HeapBrk` / `MmapOps` 等路径使用。**不得**在已持有 [`frame_allocator_cell`]
+/// 的 [`UniprocessorSafeCell::exclusive_access`] 期间再跑会嵌套调用 [`frame_alloc_result`]
+/// 的页表 walk，否则重入同一 `RefCell` 会 panic。
+pub struct GlobalPhysFrameAllocator;
+
+impl PhysicalFrameAllocator for GlobalPhysFrameAllocator {
+    type FrameId = PhysPageNum;
+
+    #[inline]
+    fn alloc_frame(&mut self) -> FrameAllocResult<Self::FrameId> {
+        frame_alloc_result()
+    }
+
+    #[inline]
+    fn dealloc_frame(&mut self, frame: Self::FrameId) -> FrameAllocResult<()> {
+        frame_dealloc_result(frame)
+    }
+}
+
 pub fn test_with_range(start_ppn: BasePPN, end_ppn: BasePPN) {
     log::trace!("[frame-alloctor::impl-stack] test begin");
     log::trace!(

@@ -150,4 +150,8 @@ pub mod paging {
 
     #[inline]
     pub fn write_satp_and_flush(satp : usize) { ArchPagingImpl::write_satp_and_flush(satp) }
+
+    /// 当前根页表下 PTE 已就地修改时，刷新本地 hart 的地址翻译缓存（RISC-V：`sfence.vma`）。
+    #[inline]
+    pub fn sfence_vma_all() { ArchPagingImpl::sfence_vma_all() }
 }

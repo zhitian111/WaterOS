@@ -394,23 +394,49 @@ pub fn from_elf_bytes(data: &[u8]) -> Result<LoadedElf, LoadElfError> {
     map_user_stack(&mut aspace, ELF_STACK_TOP, ELF_STACK_SIZE)?;
     runtime::logging::trace!("[elf-load] user stack pages mapped");
 
+    let stack_bottom = ELF_STACK_TOP - ELF_STACK_SIZE;
+    let heap_start = VirtAddr(max_vaddr).ceil_page().start_addr();
+    let gap = 256usize * PAGE_SIZE;
+    let brk_max = VirtAddr(stack_bottom.saturating_sub(gap));
+    if brk_max.0 <= heap_start.0 {
+        runtime::logging::trace!("[elf-load] abort: image/stack gap too small for brk arena");
+        return Err(LoadElfError::Parse);
+    }
+    const PREFERRED_MMAP_BASE: usize = 0x1000_0000;
+    let mmap_base = VirtAddr(cmp::max(
+        heap_start.0.saturating_add(PAGE_SIZE),
+        PREFERRED_MMAP_BASE,
+    ));
+    aspace.init_user_layout(heap_start, heap_start, brk_max, mmap_base);
+
     let leaked = Box::leak(Box::new(aspace));
     let satp = leaked.satp_value();
+    let user_aspace_ptr = leaked as *mut crate::pagetable::Sv39AddressSpace as usize;
     runtime::logging::info!(
-        "[elf-load] loaded ELF entry={:#x} satp={:#x} image=[{:#x},{:#x}) stack=({:#x},{:#x}]",
+        "[elf-load] loaded ELF entry={:#x} satp={:#x} image=[{:#x},{:#x}) stack=[{:#x},{:#x}) \
+         brk=[{:#x},{:#x}) mmap_arena_base={:#x} aspace_ptr={:#x}",
         e_entry,
         satp,
         min_vaddr,
         max_vaddr,
-        ELF_STACK_TOP - ELF_STACK_SIZE,
-        ELF_STACK_TOP
+        stack_bottom,
+        ELF_STACK_TOP,
+        heap_start.0,
+        brk_max.0,
+        mmap_base.0,
+        user_aspace_ptr
     );
     Ok(LoadedElf {
         entry_pc: e_entry,
         satp,
-        stack_bottom: ELF_STACK_TOP - ELF_STACK_SIZE,
+        stack_bottom,
         stack_top: ELF_STACK_TOP,
         image_base: min_vaddr,
         image_size: max_vaddr.saturating_sub(min_vaddr),
+        user_aspace_ptr,
+        brk_start: heap_start.0,
+        brk_current: heap_start.0,
+        brk_max: brk_max.0,
+        mmap_arena_base: mmap_base.0,
     })
 }

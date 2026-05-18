@@ -1,0 +1,59 @@
+//! `stage-02-mm`：在根卷已挂载后，从 **`/glibc/basic/`** 加载 MM 相关测程 ELF 并 `spawn` 用户任务
+//!（与 `os/tem/glibc/basic` 等镜像布局一致；缺失文件则 `warn` 跳过）。
+//!
+//! 须在 `fs::init` 之后调用。**`spawn` 只把用户任务放入就绪队列**；此时尚未发生 `__switch`，
+//! 测程的 `ecall` 等要到 `kernel_main` 末尾 `task::run_first_task()` 切入多任务后才会在 CPU 上执行。
+
+use runtime::logging::*;
+
+/// 默认尝试的 MM 子集路径（可按镜像增量增删）。
+const MM_GLIBC_BASIC_PATHS: &[&str] = &[
+    "/glibc/basic/brk",
+    "/glibc/basic/mmap",
+    "/glibc/basic/munmap",
+];
+
+/// 执行 `stage-02-mm`：装载并登记用户测程。
+pub fn run_stage_02() {
+    info!("[bringup][stage-02-mm] BEGIN");
+    #[cfg(not(feature = "impl-sv39"))]
+    {
+        warn!("[mm-bringup] impl-sv39 off: skip glibc/basic ELF load");
+        info!("[bringup][stage-02-mm] END");
+        return;
+    }
+    #[cfg(feature = "impl-sv39")]
+    {
+        info!(
+            "[mm-bringup] will try {} ELF(s) under /glibc/basic/",
+            MM_GLIBC_BASIC_PATHS.len()
+        );
+        info!("[mm-bringup] spawn only enqueues user tasks; CPU-side user code runs after task::run_first_task()");
+        for path in MM_GLIBC_BASIC_PATHS {
+            match mm::kernel_mm::from_elf_path(path) {
+                Ok(loaded) => {
+                    info!(
+                        "[mm-bringup] loaded path={} entry={:#x} image=[{:#x},+{:#x}) \
+                         stack=[{:#x},{:#x}) brk=[{:#x},{:#x}) mmap_base={:#x} aspace_ptr={:#x}",
+                        path,
+                        loaded.entry_pc,
+                        loaded.image_base,
+                        loaded.image_size,
+                        loaded.stack_bottom,
+                        loaded.stack_top,
+                        loaded.brk_start,
+                        loaded.brk_max,
+                        loaded.mmap_arena_base,
+                        loaded.user_aspace_ptr
+                    );
+                    let tid = task::spawn_user_task_from_loaded_elf(&loaded);
+                    info!("[mm-bringup] spawned user task {} for {}", tid, path);
+                }
+                Err(e) => {
+                    warn!("[mm-bringup] skip path={}: {:?}", path, e);
+                }
+            }
+        }
+    }
+    info!("[bringup][stage-02-mm] END");
+}

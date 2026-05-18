@@ -130,6 +130,7 @@ pub fn user_task_spec_from_loaded_elf(loaded: &LoadedElf) -> UserTaskSpec {
             loaded.image_size,
         ))
         .with_external_stack(loaded.stack_bottom, loaded.stack_top)
+        .with_user_aspace_ptr(loaded.user_aspace_ptr)
 }
 
 /// 基于 MM 已装载的 ELF 创建一个用户任务，并返回分配到的任务号。

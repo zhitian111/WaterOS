@@ -1,5 +1,5 @@
 #!/bin/bash
-mem="256M"
+mem="512M"
 os_file="./kernel-rv"
 fs="./sdcard-rv.img"
 

@@ -131,13 +131,41 @@ fn alloc_table_frame_zeroed() -> MmResult<PhysPageNum> {
 /// Sv39 根页表与 walk 状态；所有映射均为 **4 KiB 叶子**。
 pub(crate) struct Sv39AddressSpace {
     root: PhysPageNum,
+    /// 用户堆起点（页对齐，位于 ELF 镜像尾之后）。
+    pub(crate) user_brk_start: VirtAddr,
+    /// 当前 program break（堆尾上界，可非页对齐）。
+    pub(crate) user_brk_current_end: VirtAddr,
+    /// `brk` 允许增长到的最大虚拟地址（不含）。
+    pub(crate) user_brk_max: VirtAddr,
+    /// 匿名 `mmap` bump 指针（下一段匿名映射的起始 VA）。
+    pub(crate) mmap_anon_cursor: VirtAddr,
 }
 
 impl Sv39AddressSpace {
     /// 分配并清零根页表帧；依赖帧分配器与 [`table_mut`] 的物理访问假设。
     pub(crate) fn new() -> MmResult<Self> {
         let root = alloc_table_frame_zeroed()?;
-        Ok(Self { root })
+        Ok(Self {
+            root,
+            user_brk_start: VirtAddr(0),
+            user_brk_current_end: VirtAddr(0),
+            user_brk_max: VirtAddr(0),
+            mmap_anon_cursor: VirtAddr(0),
+        })
+    }
+
+    /// ELF 装载完成后初始化用户堆与匿名映射区游标（须在泄漏页表对象前调用一次）。
+    pub(crate) fn init_user_layout(
+        &mut self,
+        brk_start: VirtAddr,
+        brk_current_end: VirtAddr,
+        brk_max: VirtAddr,
+        mmap_anon_cursor: VirtAddr,
+    ) {
+        self.user_brk_start = brk_start;
+        self.user_brk_current_end = brk_current_end;
+        self.user_brk_max = brk_max;
+        self.mmap_anon_cursor = mmap_anon_cursor;
     }
 
     #[inline]

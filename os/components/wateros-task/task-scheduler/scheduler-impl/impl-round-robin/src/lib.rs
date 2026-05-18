@@ -65,6 +65,15 @@ impl InterruptGuard {
             .expect("disable global interrupt for scheduler guard");
         Self { state }
     }
+
+    /// 在即将 `__switch` 且 **不会** 再回到本栈帧（例如 `exit_current`）时调用：立刻恢复关中断前状态，
+    /// 并用 `forget` 避免 `Drop` 二次恢复。否则下一条任务会永远继承「中断仍关闭」。
+    fn release_before_switch(self) {
+        let state = self.state;
+        core::mem::forget(self);
+        arch::interrupt::restore_global_interrupt_state(state)
+            .expect("restore global interrupt state before context switch");
+    }
 }
 
 impl Drop for InterruptGuard {
@@ -265,14 +274,20 @@ pub fn wake_all_in_wait_queue(wait_queue_id: WaitQueueId) -> usize {
 
 /// 标记当前任务退出并切换到其他任务；不应返回到已退出任务。
 pub fn exit_current(exit_code: TaskExitCode) -> ! {
-    let _guard = InterruptGuard::new();
+    let guard = InterruptGuard::new();
     let switch_pair =
         with_scheduler(|scheduler| scheduler.schedule(ScheduleReason::Exit(exit_code)));
     if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
+        guard.release_before_switch();
         unsafe {
             __switch(current_task_cx_ptr, next_task_cx_ptr);
         }
+        // `__switch` 不回到本帧；仅为满足 `-> !` 类型检查。
+        unsafe {
+            core::hint::unreachable_unchecked();
+        }
     }
+    guard.release_before_switch();
     panic!("exit_current must not resume the exited task");
 }
 
