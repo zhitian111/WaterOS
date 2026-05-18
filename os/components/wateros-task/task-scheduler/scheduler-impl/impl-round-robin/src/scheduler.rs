@@ -242,6 +242,16 @@ impl RoundRobinScheduler {
             .current_task_snapshot()
     }
 
+    pub(super) fn task_snapshot(&self, task_id : TaskId) -> Option<TaskSnapshot> {
+        self.registry
+            .task_snapshot(task_id)
+    }
+
+    pub(super) fn current_tick(&self) -> TaskTick {
+        self.queues
+            .current_tick()
+    }
+
     pub(super) fn current_task_kernel_stack_top(&self) -> Option<usize> {
         self.registry
             .current_task_kernel_stack_top()

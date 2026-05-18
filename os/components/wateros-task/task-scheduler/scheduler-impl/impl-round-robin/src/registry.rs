@@ -56,6 +56,12 @@ impl TaskTable {
             .expect("task must exist in task table")
     }
 
+    fn task_opt(&self, task_id : TaskId) -> Option<&TaskControlBlock> {
+        self.slots
+            .get(task_id)
+            .and_then(|slot| slot.as_deref())
+    }
+
     fn remove(&mut self, task_id : TaskId) -> Option<Box<TaskControlBlock>> {
         self.slots
             .get_mut(task_id)
@@ -221,6 +227,12 @@ impl TaskRegistry {
                     .task(task_id)
                     .snapshot()
             })
+    }
+
+    pub(super) fn task_snapshot(&self, task_id : TaskId) -> Option<TaskSnapshot> {
+        self.task_table
+            .task_opt(task_id)
+            .map(TaskControlBlock::snapshot)
     }
 
     pub(super) fn current_task_kernel_stack_top(&self) -> Option<usize> {

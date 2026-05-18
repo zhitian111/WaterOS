@@ -62,7 +62,7 @@
         "mm/impl-sv39",
         "platform/impl-qemu-riscv64-opensbi",
         "runtime/impl-firmware-opensbi",
-        "runtime/impl-trace",
+        "runtime/impl-info",
         "syscall/impl-riscv64",
         "task/api-v0",
         "task/impl-core",

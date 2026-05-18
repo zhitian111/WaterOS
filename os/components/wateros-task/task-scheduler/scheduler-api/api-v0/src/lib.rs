@@ -104,4 +104,8 @@ pub trait Scheduler {
     fn current_task_id(&self) -> Option<TaskId>;
     /// 读取当前正在运行任务的稳定快照。
     fn current_task_snapshot(&self) -> Option<TaskSnapshot>;
+    /// 读取指定任务的稳定快照。
+    fn task_snapshot(&self, task_id : TaskId) -> Option<TaskSnapshot>;
+    /// 读取当前调度器逻辑 tick。
+    fn current_tick(&self) -> TaskTick;
 }
