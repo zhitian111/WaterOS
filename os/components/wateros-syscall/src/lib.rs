@@ -22,17 +22,6 @@ const SYSCALL_YIELD_NR : usize = <ActiveSyscallNumberTable as SyscallNumberTable
 const SYSCALL_EXIT_NR : usize = <ActiveSyscallNumberTable as SyscallNumberTable>::EXIT.raw();
 const SYSCALL_EXIT_GROUP_NR : usize =
     <ActiveSyscallNumberTable as SyscallNumberTable>::EXIT_GROUP.raw();
-const SYSCALL_WRITE_NR: usize = <ActiveSyscallNumberTable as SyscallNumberTable>::WRITE.raw();
-const SYSCALL_BRK_NR: usize = <ActiveSyscallNumberTable as SyscallNumberTable>::BRK.raw();
-const SYSCALL_WAITPID_NR: usize = <ActiveSyscallNumberTable as SyscallNumberTable>::WAITPID.raw();
-const SYSCALL_GET_TIME_NR: usize = <ActiveSyscallNumberTable as SyscallNumberTable>::GET_TIME.raw();
-const SYSCALL_GETPID_NR: usize = <ActiveSyscallNumberTable as SyscallNumberTable>::GETPID.raw();
-const SYSCALL_GETTID_NR: usize = <ActiveSyscallNumberTable as SyscallNumberTable>::GETTID.raw();
-const SYSCALL_NANOSLEEP_NR: usize =
-    <ActiveSyscallNumberTable as SyscallNumberTable>::NANOSLEEP.raw();
-const SYSCALL_MMAP_NR: usize = <ActiveSyscallNumberTable as SyscallNumberTable>::MMAP.raw();
-const SYSCALL_MUNMAP_NR: usize = <ActiveSyscallNumberTable as SyscallNumberTable>::MUNMAP.raw();
-const SYSCALL_MPROTECT_NR: usize =
 const SYSCALL_WRITE_NR : usize = <ActiveSyscallNumberTable as SyscallNumberTable>::WRITE.raw();
 const SYSCALL_BRK_NR : usize = <ActiveSyscallNumberTable as SyscallNumberTable>::BRK.raw();
 const SYSCALL_MMAP_NR : usize = <ActiveSyscallNumberTable as SyscallNumberTable>::MMAP.raw();
@@ -54,11 +43,6 @@ static USER_BRK_FAKE : AtomicUsize = AtomicUsize::new(0);
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct UserTimespec {
-    sec: isize,
-    nsec: isize,
-}
-
-// `write`：仅允许 fd 1/2 走控制台；`len==0` 立即成功；非零长度有上限，防止用户态传入极大值拖垮内核拷贝路径。
     sec : isize,
     nsec : isize,
 }
@@ -160,67 +144,6 @@ fn dispatch_brk_fake(addr : usize) -> UserRet {
 }
 
 #[inline]
-fn dispatch_current_task_id() -> UserRet {
-    task::current_task_id()
-        .map(UserRet::from_success)
-        .unwrap_or_else(|| UserRet::from_error(ErrNo::ESRCH))
-}
-
-#[inline]
-fn write_exit_code(exit_code_ptr: usize, exit_code: isize) {
-    if exit_code_ptr != 0 {
-        unsafe {
-            (exit_code_ptr as *mut i32).write(exit_code as i32);
-        }
-    }
-}
-
-#[inline]
-fn finish_wait_result(exited: task::ExitedTask, exit_code_ptr: usize) -> UserRet {
-    write_exit_code(exit_code_ptr, exited.exit_code);
-    UserRet::from_success(exited.id)
-}
-
-// `waitpid`/`wait4` 早期语义：不维护父子关系，也不阻塞；仅回收已退出任务。
-#[inline]
-fn dispatch_waitpid(args: SyscallArgs) -> UserRet {
-    let pid = args.arg(0) as isize;
-    let exit_code_ptr = args.arg(1);
-    if pid == -1 {
-        return task::reap_one_exited_task()
-            .map(|exited| finish_wait_result(exited, exit_code_ptr))
-            .unwrap_or_else(|| UserRet::from_error(ErrNo::ENOENT));
-    }
-    if pid <= 0 {
-        return UserRet::from_error(ErrNo::EINVAL);
-    }
-
-    let task_id = pid as usize;
-    if task::task_snapshot(task_id).is_none() {
-        return UserRet::from_error(ErrNo::ENOENT);
-    }
-    task::reap_exited_task(task_id)
-        .map(|exited| finish_wait_result(exited, exit_code_ptr))
-        .unwrap_or_else(|| UserRet::from_error(ErrNo::ENOENT))
-}
-
-// `nanosleep` 临时映射到一个调度 tick；真实时间换算待平台频率语义接入后再替换。
-#[inline]
-fn dispatch_nanosleep(args: SyscallArgs) -> UserRet {
-    let req_ptr = args.arg(0);
-    if req_ptr == 0 {
-        return UserRet::from_error(ErrNo::EFAULT);
-    }
-    let req = unsafe { (req_ptr as *const UserTimespec).read() };
-    if req.sec < 0 || req.nsec < 0 || req.nsec >= 1_000_000_000 {
-        return UserRet::from_error(ErrNo::EINVAL);
-    }
-    if req.sec == 0 && req.nsec == 0 {
-        return UserRet::from_success(0);
-    }
-    task::sleep_for_ticks(1);
-    UserRet::from_success(0)
-fn dispatch_brk(addr: usize) -> UserRet {
 fn dispatch_brk(addr : usize) -> UserRet {
     #[cfg(feature = "impl-riscv64")]
     if let Some(r) = dispatch_brk_sv39(addr) {
@@ -369,10 +292,6 @@ pub fn dispatch_syscall_from_trap(syscall_nr : usize, syscall_args : SyscallArgs
         }
         SYSCALL_WRITE_NR => dispatch_write(syscall_args).0,
         SYSCALL_BRK_NR => dispatch_brk(syscall_args.arg(0)).0,
-        SYSCALL_GET_TIME_NR => UserRet::from_success(task::current_tick() as usize).0,
-        SYSCALL_GETPID_NR | SYSCALL_GETTID_NR => dispatch_current_task_id().0,
-        SYSCALL_WAITPID_NR => dispatch_waitpid(syscall_args).0,
-        SYSCALL_NANOSLEEP_NR => dispatch_nanosleep(syscall_args).0,
         SYSCALL_MMAP_NR => dispatch_mmap(syscall_args).0,
         SYSCALL_MUNMAP_NR => dispatch_munmap(syscall_args).0,
         SYSCALL_MPROTECT_NR => dispatch_mprotect(syscall_args).0,
@@ -388,10 +307,6 @@ pub fn dispatch_syscall_from_trap(syscall_nr : usize, syscall_args : SyscallArgs
 /// 当前任务上的系统调用分发入口：按 `ActiveSyscallNumberTable` 解析
 /// `syscall_nr`，参数来自通用寄存器约定。
 ///
-/// 已识别调用：`YIELD`、`EXIT`/`EXIT_GROUP`、`WRITE`（仅 fd 1/2 走控制台）、`BRK`（见 [`USER_BRK_FAKE`]）、
-/// `GET_TIME`、`GETPID`/`GETTID`、`WAITPID` 与 `NANOSLEEP`；其余返回 `ENOSYS`。
-/// 已识别调用：`YIELD`、`EXIT`/`EXIT_GROUP`、`WRITE`、`BRK`（Sv39 真路径或假顶桩）、
-/// `MMAP`/`MUNMAP`/`MPROTECT`（RISC-V + `user_aspace_ptr` 时）。
 /// 已识别调用：`YIELD`、`EXIT`/`EXIT_GROUP`、`WRITE`、`BRK`（Sv39
 /// 真路径或假顶桩）、 `MMAP`/`MUNMAP`/`MPROTECT`（RISC-V + `user_aspace_ptr`
 /// 时）、 `GET_TIME`、`GETPID`/`GETTID`、`WAITPID` 与 `NANOSLEEP`；其余返回
