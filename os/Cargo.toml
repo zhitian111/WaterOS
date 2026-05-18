@@ -50,6 +50,7 @@
         "vfs-bridge",
         "abi/api-v0",
         "driver/impl-qemu-riscv64-opensbi",
+        "driver/impl-block-cache",
         "fs/api-v0",
         "fs/impl-devfs",
         "fs/impl-ext4",

@@ -8,6 +8,8 @@
 
 **VirtIO 块设备实现位置**：`driver-block/block-impl/impl-virtio-mmio/`（crate `wateros-driver-block-impl-virtio-mmio`），由 **`wateros-driver-block`** 的 feature **`impl-virtio-mmio`** 接入；平台 impl **`impl-qemu-riscv64-opensbi`** 通过依赖 `driver-block` 并启用该 feature 完成注册。
 
+**可选块缓存**：`driver-block/block-impl/impl-block-cache/`（`CachingBlockDevice`），由 **`wateros-driver-block`** 的 **`impl-block-cache`** 与聚合层 **`impl-block-cache`**、平台 **`impl-qemu-riscv64-opensbi`** 的 **`block-cache`** 联动；根 **`qemu-riscv64-opensbi`** 已打开 **`driver/impl-block-cache`**，使主线 QEMU 路径默认带写穿缓存。
+
 ## 通用检查清单
 
 - 新 impl 目录是否加入 workspace members

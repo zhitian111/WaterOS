@@ -11,18 +11,27 @@
 //!   （frame 范围、Sv39、内核页表等；含 `mm` 自检日志）。
 //! 3. 初始化任务、注册组合层 trap 路由（`trap_handler::init`）与内核 trap 的
 //!    `satp`，随后 `driver::active_impl::init_after_boot`；成功则挂载 `fs`。
-//! 4. 调用 [`self_tests::task::spawn_all`] 启动调度相关内核自检任务，再跑 `fs::test()` 等
-//!    RW 烟测（写盘前可先跑与磁盘无关的内核任务）。
-//! 5. 开启定时器中断后通过 [`task::run_first_task`] 进入多任务调度。
+//! 4. 在驱动与 `fs::init` 成功后，先跑 [`user_bringup_bus::run`]（含
+//!    [`crate::user_bringup_mm::run_stage_02`]： 从根卷 **`/glibc/basic/`**
+//!    加载 MM 测程 ELF 并 **spawn（仅入就绪队列）**），再调用
+//!    [`self_tests::task::spawn_all`] 启动调度相关 内核自检任务，随后
+//!    `fs::test()` 等 RW 烟测。
+//! 5. 开启定时器中断后通过 [`task::run_first_task`] **首次**从引导上下文
+//!    `__switch` 到就绪任务；此前 步骤 3 的 `task::init()`
+//!    已初始化调度器数据结构，但 **CPU 尚未执行** 任何 spawn
+//!    出的任务体（含用户态测程）。
 //!
-//! **编译范围**：[`self_tests`] 仅在 `feature = "qemu-riscv64-opensbi"` 下存在；
-//! board 入口按 `qemu-riscv64-opensbi` / `qemu-loongarch64-virt`
+//! **编译范围**：[`self_tests`] 仅在 `feature = "qemu-riscv64-opensbi"`
+//! 下存在； board 入口按 `qemu-riscv64-opensbi` / `qemu-loongarch64-virt`
 //! 分别编译。
 //!
 //! # 自检入口
 //!
-//! 任务相关内核自检的统一入口为 [`self_tests::task::spawn_all`]，由
-//! `kernel_main` 在驱动与 `fs::init` 成功后调用；各 stage 的语义与断言见该模块文档。
+//! 任务相关内核自检的统一入口为 [`self_tests::task::spawn_all`]；用户态
+//! bring-up 里程碑 总线为 [`crate::user_bringup_bus::run`]（内含
+//! **`/glibc/basic/`** MM 测程装载）；二者在 `kernel_main`
+//! 中的先后与语义见模块文档与 `docs/roadmap/riscv64-busybox/wp-init-test-bus.
+//! md`。
 
 #![no_std]
 #![no_main]
@@ -38,6 +47,10 @@ use syscall as _;
 mod self_tests;
 #[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
 mod trap_handler;
+#[cfg(feature = "qemu-riscv64-opensbi")]
+mod user_bringup_bus;
+#[cfg(feature = "qemu-riscv64-opensbi")]
+mod user_bringup_mm;
 
 /// 将内核 panic 委托给 `wateros-runtime` 的统一 panic 处理（日志/停机策略由
 /// runtime 决定）。
@@ -93,7 +106,9 @@ mod qemu_riscv64_opensbi {
         const PAGE_SIZE : usize = 4096;
         #[inline]
         const fn align_up(v : usize, align : usize) -> usize { (v + align - 1) & !(align - 1) }
-        let start_ppn = align_up(kernel_end as *const () as usize, PAGE_SIZE) / PAGE_SIZE;
+        let start_ppn = align_up(kernel_end as *const () as usize,
+                                 PAGE_SIZE) /
+                        PAGE_SIZE;
         let end_ppn = memory_end / PAGE_SIZE;
         info!("[self-test] frame range ppn=[{:#x},{:#x})",
               start_ppn, end_ppn);
@@ -114,6 +129,12 @@ mod qemu_riscv64_opensbi {
         } else {
             info!("[self-test] driver init done");
             fs::init();
+            // ----- 用户态 bring-up 总线（阶段顺序与失败策略见 `user_bringup_bus`） -----
+            // 约束：依赖根卷一致视图的用户 ELF 类阶段须在本块内、且位于下方
+            // `fs::test()` 的 RW 写盘段之前。
+            // 注意：`run()` 内 `spawn_user_task_*` 只入队；用户测程的 `ecall` 在下方
+            // `run_first_task()` 之后才会出现。
+            crate::user_bringup_bus::run();
             crate::self_tests::task::spawn_all();
             fs::test();
             #[cfg(feature = "vfs-bridge")]

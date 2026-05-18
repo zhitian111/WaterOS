@@ -19,6 +19,12 @@
 pub use api_v0 as api;
 pub use frame_alloctor;
 
+/// RISC-V Sv39 用户内存 syscall 薄封装（页表指针由 `LoadedElf::user_aspace_ptr` 提供）。
+#[cfg(feature = "impl-sv39")]
+pub mod user_sv39_syscall {
+    pub use impl_sv39::user_syscall::*;
+}
+
 /// 内核全局页表与用户 ELF 装载；类型契约见 [`api::kernel_bringup`]。
 pub mod kernel_mm {
     pub use api_v0::kernel_bringup::{

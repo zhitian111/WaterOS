@@ -49,5 +49,8 @@ pub trait MmapOps: AddressSpaceOps {
         addr: VirtAddr,
         len: usize,
     ) -> MmResult<()>;
+
+    /// 将 `[addr, addr+len)` 内已映射的叶子页权限更新为 `perm`（按页对齐到边界）。
+    fn mprotect(&mut self, addr: VirtAddr, len: usize, perm: PagePerm) -> MmResult<()>;
 }
 

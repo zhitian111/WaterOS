@@ -78,4 +78,14 @@ pub struct LoadedElf {
     pub image_base: usize,
     /// 镜像虚拟范围大小（字节）。
     pub image_size: usize,
+    /// 用户地址空间对象指针（**仅 `impl-sv39` 路径**；`brk`/`mmap` 等 syscall 通过此指针修改页表；`0` 表示无）。
+    pub user_aspace_ptr: usize,
+    /// 初始 program break（堆尾虚拟地址，与 `brk(0)` 初值一致）。
+    pub brk_start: usize,
+    /// 装载完成时的 `brk` 当前值（与 `brk_start` 相同直至首次扩展）。
+    pub brk_current: usize,
+    /// `brk` 允许增长的上限虚拟地址（不含）。
+    pub brk_max: usize,
+    /// 匿名 `mmap` 区 bump 起点（日志与调试；实现以页表内游标为准）。
+    pub mmap_arena_base: usize,
 }

@@ -69,9 +69,14 @@ pub extern "C" fn __wateros_task_runtime_enter_current_user_task() -> ! {
     }
 }
 
-/// Idle 任务体：关闭抢占时在内核态自旋等待中断（与 `IDLE_TASK_ID` 绑定）。
+/// Idle 任务体：在内核态 `wfi` 等待中断。
+///
+/// **须**在首次进入时打开全局中断：[`schedule_tick`] 等路径在持有 [`InterruptGuard`] 时可能
+/// `__switch` 到本任务，此时上一任务的 guard 尚未 `drop`，`SIE` 仍为关；若此处不 `enable`，
+/// `wfi` 在 QEMU/常见 RISC-V 上可能等不到已挂起的 S 态定时器，表现为整机「卡死」在用户 `sret` 之后。
 #[unsafe(no_mangle)]
 pub extern "C" fn __wateros_idle_task_runtime_main(_arg : usize) -> ! {
+    let _ = arch::interrupt::enable_global_interrupt();
     loop {
         arch::interrupt::wait_for_interrupt();
     }

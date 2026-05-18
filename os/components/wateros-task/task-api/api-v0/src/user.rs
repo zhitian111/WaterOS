@@ -62,6 +62,8 @@ pub struct UserTaskSpec {
     image: Option<UserImageInfo>,
     /// 已由 MM 映射好的用户栈 `(bottom, top]`；若 `None` 则使用内核侧 `UserStack` 分配。
     external_stack: Option<(usize, usize)>,
+    /// Sv39 用户页表对象指针（`impl-sv39` 下为 `&mut Sv39AddressSpace` 泄漏地址）；无则为 `None`。
+    user_aspace_ptr: Option<usize>,
 }
 
 impl UserTaskSpec {
@@ -73,6 +75,7 @@ impl UserTaskSpec {
             address_space: None,
             image: None,
             external_stack: None,
+            user_aspace_ptr: None,
         }
     }
 
@@ -84,6 +87,7 @@ impl UserTaskSpec {
             address_space: Some(address_space),
             image: self.image,
             external_stack: self.external_stack,
+            user_aspace_ptr: self.user_aspace_ptr,
         }
     }
 
@@ -95,6 +99,7 @@ impl UserTaskSpec {
             address_space: self.address_space,
             image: Some(image),
             external_stack: self.external_stack,
+            user_aspace_ptr: self.user_aspace_ptr,
         }
     }
 
@@ -106,6 +111,19 @@ impl UserTaskSpec {
             address_space: self.address_space,
             image: self.image,
             external_stack: Some((bottom, top)),
+            user_aspace_ptr: self.user_aspace_ptr,
+        }
+    }
+
+    /// 附加 MM 提供的用户地址空间对象指针（供 `brk`/`mmap` 等 syscall 修改页表）。
+    #[inline]
+    pub const fn with_user_aspace_ptr(self, ptr: usize) -> Self {
+        Self {
+            entry_pc: self.entry_pc,
+            address_space: self.address_space,
+            image: self.image,
+            external_stack: self.external_stack,
+            user_aspace_ptr: Some(ptr),
         }
     }
 
@@ -132,6 +150,12 @@ impl UserTaskSpec {
     pub const fn external_stack(&self) -> Option<(usize, usize)> {
         self.external_stack
     }
+
+    /// 若已指定 Sv39 用户页表对象指针，则返回其裸地址。
+    #[inline]
+    pub const fn user_aspace_ptr(&self) -> Option<usize> {
+        self.user_aspace_ptr
+    }
 }
 
 /// 对外暴露的用户任务资源快照。
@@ -149,4 +173,6 @@ pub struct UserTaskResources {
     pub address_space: Option<AddressSpaceHandle>,
     /// 若创建时已知用户映像信息，则在这里保留稳定快照。
     pub image: Option<UserImageInfo>,
+    /// 用户 Sv39 页表对象指针（`wateros-mm` `impl-sv39`）；`0` 表示无。
+    pub user_aspace_ptr: usize,
 }

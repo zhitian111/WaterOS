@@ -9,6 +9,10 @@
     abi = { path = "../wateros-abi/", package = "wateros-abi", default-features = false }
     task = { path = "../wateros-task/", package = "wateros-task", default-features = false }
     console = { path = "../wateros-runtime/runtime-console/", package = "wateros-runtime-console", default-features = false }
+    mm = { path = "../wateros-mm/", package = "wateros-mm", default-features = false, optional = true, features = [
+        "api-v0",
+        "impl-sv39",
+    ] }
 
 [features]
     default = []
@@ -25,6 +29,7 @@
         "abi/api-v0",
         "abi/impl-linux-riscv64",
         "console/impl-firmware-opensbi",
+        "dep:mm",
         "task/api-v0",
         "task/impl-core",
         "task/impl-riscv64",

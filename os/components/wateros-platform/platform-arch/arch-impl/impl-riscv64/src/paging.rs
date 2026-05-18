@@ -26,4 +26,12 @@ impl Riscv64Paging {
             asm!("sfence.vma x0, x0");
         }
     }
+
+    /// 在不切换 `satp` 的前提下，对当前根页表已修改的 PTE 做全局 TLB 一致性冲刷。
+    #[inline]
+    pub fn sfence_vma_all() {
+        unsafe {
+            asm!("sfence.vma x0, x0");
+        }
+    }
 }

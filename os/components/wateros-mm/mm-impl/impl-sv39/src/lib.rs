@@ -16,6 +16,8 @@ mod pagetable;
 
 mod kernel_elf;
 mod kernel_global;
+mod user_heap_mmap;
+pub mod user_syscall;
 
 /// Sv39 页表 walk、映射/解映射/权限与翻译的自测；依赖已初始化的全局帧分配器（区间语义同 bring-up）。
 pub fn test_with_range(start_ppn: BasePPN, end_ppn: BasePPN) {

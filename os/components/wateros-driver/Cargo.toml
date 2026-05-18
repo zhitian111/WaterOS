@@ -14,6 +14,7 @@
         "./driver-network/network-api/api-v0/",
         "./driver-network/network-impl/impl-dummy/",
     ]
+    exclude = [ "./driver-block/block-impl/impl-block-cache/" ]
 [package]
     name = "wateros-driver"
     version = "0.1.0"
@@ -40,6 +41,7 @@
     default = [ "api-v0", "impl-qemu-riscv64-opensbi" ]
     impl-dummy = [  ]
     impl-qemu-riscv64-opensbi = [ "block/impl-virtio-mmio" ]
+    impl-block-cache = [ "block/impl-block-cache", "impl-qemu-riscv64-opensbi/block-cache" ]
 
 [profile.dev]
     panic = "abort"

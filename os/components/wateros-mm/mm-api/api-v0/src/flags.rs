@@ -14,6 +14,8 @@ impl MapFlags {
     pub const PRIVATE: Self = Self(1 << 1);
     /// 共享映射（当前阶段可先按 PRIVATE 语义拒绝或延后实现）
     pub const SHARED: Self = Self(1 << 2);
+    /// 固定地址映射（若目标已映射则失败；语义子集，与 Linux `MAP_FIXED` 对齐程度见 syscall 层）。
+    pub const FIXED: Self = Self(1 << 4);
 
     /// 无任何标志位。
     #[inline]
