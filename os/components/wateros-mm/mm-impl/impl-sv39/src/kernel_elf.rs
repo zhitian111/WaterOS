@@ -18,10 +18,15 @@ use api_v0::error::MmError;
 use api_v0::kernel_bringup::{LoadElfError, LoadedElf, RootVolumeReadError};
 use api_v0::perm::PagePerm;
 use frame_alloctor::frame_alloc_result;
+#[cfg(not(feature = "vfs-root-read"))]
 use fs::api::{FsError, SharedFs};
 
 use crate::pagetable::Sv39AddressSpace;
 
+#[cfg(feature = "vfs-root-read")]
+use vfs::api::{SingleRootReadView, VfsError};
+
+#[cfg(not(feature = "vfs-root-read"))]
 #[inline]
 fn map_fs_to_root_vol(e : FsError) -> RootVolumeReadError {
     match e {
@@ -37,6 +42,25 @@ fn map_fs_to_root_vol(e : FsError) -> RootVolumeReadError {
     }
 }
 
+#[cfg(feature = "vfs-root-read")]
+#[inline]
+fn map_vfs_to_root_vol(e : VfsError) -> RootVolumeReadError {
+    match e {
+        VfsError::NotMounted => RootVolumeReadError::NotMounted,
+        VfsError::NotFound => RootVolumeReadError::NotFound,
+        VfsError::NotAFile => RootVolumeReadError::NotAFile,
+        VfsError::InvalidPath => RootVolumeReadError::InvalidPath,
+        VfsError::NotUtf8 => RootVolumeReadError::NotUtf8,
+        VfsError::Unsupported => RootVolumeReadError::Unsupported,
+        VfsError::Driver => RootVolumeReadError::Driver,
+        VfsError::Corrupt => RootVolumeReadError::Corrupt,
+        VfsError::Io => RootVolumeReadError::Io,
+        VfsError::BadFd | VfsError::WouldBlock | VfsError::BrokenPipe | VfsError::NoTask => {
+            RootVolumeReadError::Unsupported
+        }
+    }
+}
+
 const PT_LOAD : u32 = 1;
 const EM_RISCV : u16 = 243;
 
@@ -48,6 +72,7 @@ fn elf_riscv64_le_prefix_ok(data : &[u8]) -> bool {
 
 /// 从根 RO 句柄读整文件；若首读 ELF 前缀明显损坏则 **再读一次**（ext4-view
 /// 在大量目录遍历后偶发首读损坏的 bring-up 规避，与磁盘镜像内容无关）。
+#[cfg(not(feature = "vfs-root-read"))]
 fn read_whole_file_ro_retry_bad_prefix(root : &SharedFs,
                                        path : &str)
                                        -> Result<Vec<u8>, LoadElfError> {
@@ -81,6 +106,44 @@ fn read_whole_file_ro_retry_bad_prefix(root : &SharedFs,
              LoadElfError::RootVolume(map_fs_to_root_vol(e))
          })?
     };
+    if !elf_riscv64_le_prefix_ok(&second) {
+        let n2 = second.len().min(16);
+        runtime::logging::warn!("[elf-load] retry read still bad prefix (len={} first{}={:02x?}) \
+                                 path={}",
+                                second.len(),
+                                n2,
+                                &second[..n2],
+                                path);
+    }
+    Ok(second)
+}
+
+#[cfg(feature = "vfs-root-read")]
+fn read_whole_file_ro_retry_bad_prefix_vfs(view : &dyn SingleRootReadView,
+                                           path : &str)
+                                           -> Result<Vec<u8>, LoadElfError> {
+    let first = view.read(path).map_err(|e| {
+        runtime::logging::trace!("[elf-load] abort: Vfs::read err={:?} path={}",
+                                 e,
+                                 path);
+        LoadElfError::RootVolume(map_vfs_to_root_vol(e))
+    })?;
+    if elf_riscv64_le_prefix_ok(&first) {
+        return Ok(first);
+    }
+    let n = first.len().min(16);
+    runtime::logging::warn!("[elf-load] first read bad ELF64-LE prefix (len={} first{}={:02x?}); \
+                             retry read once path={}",
+                            first.len(),
+                            n,
+                            &first[..n],
+                            path);
+    let second = view.read(path).map_err(|e| {
+        runtime::logging::trace!("[elf-load] abort: Vfs::read retry err={:?} path={}",
+                                 e,
+                                 path);
+        LoadElfError::RootVolume(map_vfs_to_root_vol(e))
+    })?;
     if !elf_riscv64_le_prefix_ok(&second) {
         let n2 = second.len().min(16);
         runtime::logging::warn!("[elf-load] retry read still bad prefix (len={} first{}={:02x?}) \
@@ -277,17 +340,27 @@ fn map_user_stack<A : AddressSpaceOps>(aspace : &mut A,
 pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
     runtime::logging::trace!("[elf-load] from_elf_path begin path={}",
                              path);
-    let root = fs::rootfs::active_impl::root_fs().ok_or_else(|| {
-                                                     runtime::logging::trace!("[elf-load] abort: \
-                                                                               no root_fs \
-                                                                               (mount/driver?)");
-                                                     LoadElfError::NoRootFs
-                                                 })?;
-    let data = read_whole_file_ro_retry_bad_prefix(&root, path)?;
-    runtime::logging::trace!("[elf-load] read ok bytes={} path={}",
-                             data.len(),
-                             path);
-    from_elf_bytes(&data)
+    #[cfg(feature = "vfs-root-read")]
+    {
+        let view = vfs::root::read_view();
+        let data = read_whole_file_ro_retry_bad_prefix_vfs(view, path)?;
+        runtime::logging::trace!("[elf-load] read ok bytes={} path={}",
+                                 data.len(),
+                                 path);
+        return from_elf_bytes(&data);
+    }
+    #[cfg(not(feature = "vfs-root-read"))]
+    {
+        let root = fs::rootfs::active_impl::root_fs().ok_or_else(|| {
+            runtime::logging::trace!("[elf-load] abort: no root_fs (mount/driver?)");
+            LoadElfError::NoRootFs
+        })?;
+        let data = read_whole_file_ro_retry_bad_prefix(&root, path)?;
+        runtime::logging::trace!("[elf-load] read ok bytes={} path={}",
+                                 data.len(),
+                                 path);
+        from_elf_bytes(&data)
+    }
 }
 
 /// 解析内存中的 ELF64 小端 RISC-V 可执行文件，建立独立 Sv39 地址空间、映射

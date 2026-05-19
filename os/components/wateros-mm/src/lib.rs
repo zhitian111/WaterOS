@@ -19,10 +19,10 @@
 pub use api_v0 as api;
 pub use frame_alloctor;
 
-/// RISC-V Sv39 用户内存 syscall 薄封装（页表指针由 `LoadedElf::user_aspace_ptr` 提供）。
+/// 用户地址空间句柄解析（`LoadedElf::user_aspace_ptr` → 可调用 `HeapBrk` / `MmapOps` 的实例）。
 #[cfg(feature = "impl-sv39")]
-pub mod user_sv39_syscall {
-    pub use impl_sv39::user_syscall::*;
+pub mod user_aspace {
+    pub use impl_sv39::user_aspace::*;
 }
 
 /// 内核全局页表与用户 ELF 装载；类型契约见 [`api::kernel_bringup`]。

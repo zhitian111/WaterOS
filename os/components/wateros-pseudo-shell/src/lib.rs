@@ -1,4 +1,4 @@
-//! 阻塞式伪 shell：经 MMIO UART 读行，调用 VFS 桥与（RISC-V 下）用户 ELF 装载做 bring-up 验证。
+//! 阻塞式伪 shell：经 MMIO UART 读行，调用 VFS 组合接口与（RISC-V 下）用户 ELF 装载做 bring-up 验证。
 //!
 //! 本 crate 独立于 `wateros-runtime`，避免与 `mm-impl-sv39` → `runtime` 的依赖形成环。
 //!
@@ -9,20 +9,18 @@
 extern crate alloc;
 
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::String;
 use alloc::vec::Vec;
 
 use runtime_serial::SerialPort;
-use vfs::bridge::{
-    mount_rw_session, normalize_absolute_path, FsBridge, FsKind, MountedRwSession, VfsNodeType,
+use vfs::{
+    RootRwSession, SingleRootReadView, VfsDirEntry, VfsError, VfsFsKind, VfsNodeType, VfsResult,
+    mount, resolve_against_cwd, root,
 };
-use vfs::{RootRwSession, SingleRootReadView, VfsDirEntry, VfsError, VfsResult};
 
-const MAX_LINE : usize = 512;
+const MAX_LINE: usize = 512;
 
 /// 进入阻塞式 REPL；**不返回**。UART 经 [`runtime_serial::with_default_uart`] 访问。
-///
-/// 若 UART 未初始化，读行将得不到数据（表现为持续阻塞在提示符后等待输入）。
 pub fn run_pseudo_shell() -> ! {
     let mut cwd = String::from("/");
     loop {
@@ -47,9 +45,9 @@ pub fn run_pseudo_shell() -> ! {
         let mut parts = cmdline.split_whitespace();
         let cmd = parts.next().unwrap_or("");
         let arg = parts.next();
-        let rest : Vec<&str> = parts.collect();
+        let rest: Vec<&str> = parts.collect();
 
-        let res : Result<(), VfsError> = match cmd {
+        let res: Result<(), VfsError> = match cmd {
             "help" | "?" => {
                 let _ = runtime_serial::with_default_uart(|uart| {
                     let _ = uart.write_all(
@@ -80,7 +78,7 @@ pub fn run_pseudo_shell() -> ! {
     }
 }
 
-fn read_line_into(buf : &mut [u8]) -> usize {
+fn read_line_into(buf: &mut [u8]) -> usize {
     runtime_serial::with_default_uart(|uart| {
         let mut i = 0usize;
         loop {
@@ -99,30 +97,16 @@ fn read_line_into(buf : &mut [u8]) -> usize {
     .unwrap_or(0)
 }
 
-fn resolve_against_cwd(cwd : &str, p : Option<&str>) -> VfsResult<String> {
-    let Some(p) = p else {
-        return Err(VfsError::InvalidPath);
-    };
-    let combined = if p.starts_with('/') {
-        String::from(p)
-    } else if cwd == "/" {
-        format!("/{}", p.trim_start_matches('/'))
-    } else {
-        format!("{}/{}", cwd.trim_end_matches('/'), p.trim_start_matches('/'))
-    };
-    Ok(String::from(normalize_absolute_path(combined.as_str())?.as_str()))
-}
-
-fn do_cd(cwd : &mut String, arg : Option<&str>) -> Result<(), VfsError> {
+fn do_cd(cwd: &mut String, arg: Option<&str>) -> Result<(), VfsError> {
     let path = match arg {
         None | Some("") | Some("/") => String::from("/"),
         Some(a) => resolve_against_cwd(cwd.as_str(), Some(a))?,
     };
-    let fb = FsBridge;
-    if !fb.exists(path.as_str())? {
+    let view = root::read_view();
+    if !view.exists(path.as_str())? {
         return Err(VfsError::NotFound);
     }
-    let m = fb.metadata(path.as_str())?;
+    let m = view.metadata(path.as_str())?;
     if m.node_type != VfsNodeType::Directory {
         return Err(VfsError::NotAFile);
     }
@@ -130,20 +114,20 @@ fn do_cd(cwd : &mut String, arg : Option<&str>) -> Result<(), VfsError> {
     Ok(())
 }
 
-fn do_ls(cwd : &str, arg : Option<&str>) -> Result<(), VfsError> {
+fn do_ls(cwd: &str, arg: Option<&str>) -> Result<(), VfsError> {
     let path = match arg {
         None | Some("") => cwd.to_string(),
         Some(a) => resolve_against_cwd(cwd, Some(a))?,
     };
-    let fb = FsBridge;
-    let entries = fb.read_dir(path.as_str())?;
+    let view = root::read_view();
+    let entries = view.read_dir(path.as_str())?;
     for e in entries {
         let _ = reply_dir_entry(&e);
     }
     Ok(())
 }
 
-fn reply_dir_entry(e : &VfsDirEntry) -> Result<(), ()> {
+fn reply_dir_entry(e: &VfsDirEntry) -> Result<(), ()> {
     let kind = match e.node_type {
         VfsNodeType::File => "f",
         VfsNodeType::Directory => "d",
@@ -157,10 +141,10 @@ fn reply_dir_entry(e : &VfsDirEntry) -> Result<(), ()> {
     Ok(())
 }
 
-fn do_stat(cwd : &str, arg : Option<&str>) -> Result<(), VfsError> {
+fn do_stat(cwd: &str, arg: Option<&str>) -> Result<(), VfsError> {
     let path = resolve_against_cwd(cwd, arg)?;
-    let fb = FsBridge;
-    let m = fb.metadata(path.as_str())?;
+    let view = root::read_view();
+    let m = view.metadata(path.as_str())?;
     let line = format!(
         "{:?} size={} mode={:#o}\n",
         m.node_type, m.size, m.mode
@@ -171,19 +155,19 @@ fn do_stat(cwd : &str, arg : Option<&str>) -> Result<(), VfsError> {
     Ok(())
 }
 
-fn do_rm(cwd : &str, arg : Option<&str>) -> Result<(), VfsError> {
+fn do_rm(cwd: &str, arg: Option<&str>) -> Result<(), VfsError> {
     let path = resolve_against_cwd(cwd, arg)?;
-    let mut sess : MountedRwSession = mount_rw_session(FsKind::Ext4)?;
+    let mut sess = mount::open_rw_session(VfsFsKind::Ext4)?;
     sess.unlink(path.as_str())?;
     Ok(())
 }
 
-fn do_exec(cwd : &str, arg : Option<&str>, _rest : &[&str]) -> Result<(), VfsError> {
+fn do_exec(cwd: &str, arg: Option<&str>, _rest: &[&str]) -> Result<(), VfsError> {
     #[cfg(target_arch = "riscv64")]
     {
         let path = resolve_against_cwd(cwd, arg)?;
-        let fb = FsBridge;
-        let m = fb.metadata(path.as_str())?;
+        let view = root::read_view();
+        let m = view.metadata(path.as_str())?;
         if m.node_type != VfsNodeType::File {
             return Err(VfsError::NotAFile);
         }
@@ -200,8 +184,8 @@ fn do_exec(cwd : &str, arg : Option<&str>, _rest : &[&str]) -> Result<(), VfsErr
                 );
                 task::wait_for_task_exit(tid);
                 let code = task::reap_exited_task(tid)
-                               .map(|e| e.exit_code)
-                               .unwrap_or(-1);
+                    .map(|e| e.exit_code)
+                    .unwrap_or(-1);
                 let line = format!("exec exit_code={}\n", code);
                 let _ = runtime_serial::with_default_uart(|uart| {
                     let _ = uart.write_all(line.as_bytes());

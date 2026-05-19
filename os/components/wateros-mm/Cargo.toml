@@ -23,4 +23,5 @@
     default = [ "api-v0", "impl-sv39" ]
     impl-dummy = [  ]
     impl-sv39 = [  ]
+    vfs-root-read = [ "impl-sv39/vfs-root-read" ]
     qemu-riscv64-opensbi = [  ]

@@ -129,7 +129,7 @@ fn alloc_table_frame_zeroed() -> MmResult<PhysPageNum> {
 }
 
 /// Sv39 根页表与 walk 状态；所有映射均为 **4 KiB 叶子**。
-pub(crate) struct Sv39AddressSpace {
+pub struct Sv39AddressSpace {
     root: PhysPageNum,
     /// 用户堆起点（页对齐，位于 ELF 镜像尾之后）。
     pub(crate) user_brk_start: VirtAddr,

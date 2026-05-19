@@ -30,6 +30,9 @@
     vfs-bridge = [ "vfs/bridge-fs-api" ]
     impl-sv39 = [ "mm/impl-sv39" ]
     qemu-loongarch64-virt = [
+        "dep:vfs",
+        "vfs/fd-session",
+        "vfs/impl-loongarch64",
         "platform/impl-qemu-loongarch64-virt",
         "runtime/impl-debug",
         "runtime/impl-firmware-console",
@@ -61,10 +64,13 @@
         "impl-sv39",
         "mm/api-v0",
         "mm/impl-sv39",
+        "mm/vfs-root-read",
         "platform/impl-qemu-riscv64-opensbi",
         "runtime/impl-firmware-opensbi",
         "runtime/impl-info",
         "syscall/impl-riscv64",
+        "vfs/fd-session",
+        "vfs/impl-riscv64",
         "task/api-v0",
         "task/impl-core",
         "task/impl-riscv64",
