@@ -18,7 +18,7 @@
 - **`pub mod api`**：**`ipc-api/api-v0`** 占位面（示例级 API）。
 - **`active_impl`**：在 **`impl-dummy`** 下指向 **`impl_dummy`**。
 - **`pub mod waitqueue`**：**`ipc-waitqueue`** — 对 **`wateros-task::WaitQueue`** 的薄封装（**`TaskId`**、**`TaskWaitHandle`**、**`WaitQueueId`** 等来自 task）。
-- **`pipe` feature**：接入 **`ipc-pipe`**；导出内核内部 **`Pipe`**、可放入 fd 表的 **`PipeEndpoint`** / **`PipeEndpointKind`**、**`PipeError`**、**`PipeResult`** 与默认容量常量。当前 pipe 使用固定容量 ring buffer 与 waitqueue，覆盖阻塞读写、非阻塞 `try_*`、EOF 与 BrokenPipe。
+- **`pipe` feature**：接入 **`ipc-pipe`**（`pipe-api/api-v0` 契约 + `pipe-impl/impl-dummy` 实现）。API 层定义 **`KernelPipe`** / **`PipeEndpointOps`** trait 与 **`PipeEndpointKind`** 等稳定类型；聚合层导出 **`Pipe`**、**`PipeEndpoint`** 及错误契约。当前实现为固定容量 ring buffer + waitqueue，覆盖阻塞读写、非阻塞 `try_*`、EOF 与 BrokenPipe。
 
 ## 子目录但未接入聚合默认构建
 

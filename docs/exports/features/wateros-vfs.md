@@ -2,19 +2,28 @@
 
 ## 当前状态
 
-- **`vfs-api-v0`**：VFS 侧错误、路径规范化、`SingleRootReadView` / `RootRwSession` 契约（不依赖 **`wateros-fs`**）。
-- **`vfs-impl-dummy`**：无后端占位，供默认 feature 下独立编译。
-- **`vfs-impl-fs-bridge`**（feature **`bridge-fs-api`**）：通过 **`wateros-fs`** 公开 API 提供单根只读委托、RW 挂载会话、能力查询与 devfs 枚举；与多挂载 inode 树无关，属 bring-up 桥接层。
+- **`vfs-api-v0`**：VFS 模块基本能力（路径、单根只读、RW 会话、挂载、dev 视图、`VfsIoHandle` / `VfsFdSession`、多挂载占位 trait）；**不**依赖 `wateros-fs`。
+- **`vfs-impl-dummy`**：实现 `VfsBackend` 路径/挂载相关 trait 的占位后端。
+- **`vfs-impl-fs-bridge`**（`bridge-fs-api`）：经 `wateros-fs` 实现当前可落地的 trait 子集。
+- **`vfs-impl-fd-session`**（`fd-session`）：per-task fd 表、控制台与 pipe 的 `VfsIoHandle` 实现。
+- **聚合层**：`active_impl` + `root` / `mount` / `self_test` / `fd` 组合对外接口。
 
 ## 根 crate 接线
 
-- **`wateros`** 默认 **`qemu-riscv64-opensbi`** 启用 **`vfs-bridge`**，从而在驱动与 **`fs::init` / `fs::test`** 成功后调用 **`vfs::test()`** 及 **`vfs::bridge::rw_write_root_verify_via_ro`**（与 fs 自检可重复写同一根文件，语义与 fs 聚合测试 RW 段一致）。
+- **`wateros`** 在 **`qemu-riscv64-opensbi`** 下启用 **`vfs-bridge`**、**`vfs/fd-session`**、**`vfs/impl-riscv64`**，在 `fs::init` / `fs::test` 之后调用 **`vfs::test()`**（含 `fd::self_test` 与 RW 读回烟囱）。
+- **`wateros-mm`** 在相同 feature 下启用 **`vfs-root-read`**，`from_elf_path` 经 **`vfs::root::read_view()`** 读 ELF。
+- **`wateros-syscall`** 经 **`fd-session`** feature 依赖 **`vfs::fd`** 完成 `read` / `write` / `close` / `pipe2`。
 
 ## 工作区说明
 
-- **`wateros-vfs`/`Cargo.toml` 的 `[workspace].members`** 仅包含 **`vfs-api/api-v0`** 与 **`vfs-impl/impl-dummy`**，避免在宿主目标上对 **`wateros-vfs-impl-fs-bridge`** 执行 `cargo check` 时误拉 **`wateros-fs`** 的 RISC-V 专用依赖链；桥接 crate 仍作为路径依赖在 **`riscv64gc-unknown-none-elf`** 等目标下由 **`wateros`** 正常编译。
+- **`[workspace].members`** 含 `api-v0`、`impl-dummy`、`impl-fd-session`；`impl-fs-bridge` 由 `wateros` 在 RISC-V 目标下路径依赖编译。
 
 ## 后续关注点
 
-- 多挂载、vnode、与 task/fd 打通时扩展 **`vfs-api`**，并保持 **`wateros-fs`** 作为具体 FS impl 的后端。
-- 能力或导出变化时同步 [`docs/exports/public-api/wateros-vfs.md`](../public-api/wateros-vfs.md) 与本文件。
+- `VfsOpenOps` 与 ext4 文件句柄打通（`wp-syscall-file-io`）。
+- 任务退出时 fd 批量关闭、`dup` / fork 继承。
+- 多挂载与 vnode 扩展 `vfs-api` 占位模块。
+
+## 维护
+
+能力或组合接口变化时同步 [`public-api/wateros-vfs.md`](../public-api/wateros-vfs.md) 与本文件。

@@ -66,12 +66,17 @@ pub fn self_test() {
     let mut reg = registry().exclusive_access();
     let a: task::TaskId = 10;
     let b: task::TaskId = 11;
-    let fd_a = reg.alloc_fd_for_task(a, Box::new(impl_fd_session::ConsoleOutHandle));
+    let fd = reg.alloc_fd_for_task(a, Box::new(impl_fd_session::ConsoleOutHandle));
     let fd_b = reg.alloc_fd_for_task(b, Box::new(impl_fd_session::ConsoleOutHandle));
-    assert_ne!(fd_a, fd_b);
-    assert!(reg.close_fd_for_task(a, fd_a).is_ok());
-    assert!(reg.close_fd_for_task(a, fd_a).is_err());
+    // 各任务独立 fd 表，首个动态 fd 号可以相同，隔离体现在句柄互不影响。
+    assert_eq!(fd, fd_b);
+    assert!(reg.get_io_for_task(a, fd).is_ok());
+    assert!(reg.get_io_for_task(b, fd_b).is_ok());
+    assert!(reg.close_fd_for_task(a, fd).is_ok());
+    assert!(reg.get_io_for_task(a, fd).is_err());
+    assert!(reg.get_io_for_task(b, fd_b).is_ok());
+    assert!(reg.close_fd_for_task(a, fd).is_err());
     let fd_reuse = reg.alloc_fd_for_task(a, Box::new(impl_fd_session::ConsoleOutHandle));
-    assert_eq!(fd_reuse, fd_a);
+    assert_eq!(fd_reuse, fd);
     let _ = reg.close_fd_for_task(b, fd_b);
 }

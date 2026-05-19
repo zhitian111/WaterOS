@@ -29,7 +29,7 @@
 | **`pub mod api`** | **`pub use ::api_v0::*`**，完整 **`wateros-ipc-api-v0`** 根公共项。 |
 | **`active_impl`** | 仅 **`#[cfg(feature = "impl-dummy")]`**：**`impl_dummy`** 模块别名，占位实现命名空间。 |
 | **`pub mod waitqueue`** | **`pub use ::waitqueue::*`**：重导出 **`TaskId`**、**`TaskTick`**、**`TaskWaitHandle`**、**`TaskWaitResult`**、**`WaitQueueId`**；**`WaitQueue`** 为对 **`wateros_task::WaitQueue`** 的薄包装（含条件等待方法），并实现 **`Default`**。 |
-| **`pub mod pipe`** | 仅 **`feature = "pipe"`**：重导出 **`ipc-pipe`**，包括 **`Pipe`**、**`PipeEndpoint`**、**`PipeEndpointKind`**、**`PipeError`**、**`PipeResult`**、**`DEFAULT_PIPE_CAPACITY`**。 |
+| **`pub mod pipe`** | 仅 **`feature = "pipe"`**：重导出 **`ipc-pipe`**。契约层含 **`KernelPipe`**、**`PipeEndpointOps`**、**`PipeEndpointKind`**、**`PipeError`**、**`PipeResult`**、**`DEFAULT_PIPE_CAPACITY`** 与 **`api`** 子模块；实现类型 **`Pipe`**、**`PipeEndpoint`** 由 **`active_impl`**（当前 **`impl-dummy`**）提供。 |
 
 ## 缺口说明
 

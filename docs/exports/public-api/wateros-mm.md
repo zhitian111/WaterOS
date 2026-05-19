@@ -30,6 +30,7 @@
 | **`kernel_mm`** | 再导出 **`DEFAULT_USER_ELF_PATH`**、**`LoadElfError`**、**`LoadedElf`**。 |
 | **`kernel_mm`（Sv39 + `qemu-riscv64-opensbi`）** | **`impl_sv39::kernel_mm_impl`**：**`init`**、**`kernel_satp`**、**`from_elf_path`**、**`from_elf_bytes`**、**`ensure_user_execute_for_kernel_va`**、**`map_anon_range_user`**、**`map_identity_range_user`**。 |
 | **`kernel_mm`（非上述组合）** | **`impl_dummy::kernel_mm_impl`**：同上集合但 **无 `from_elf_bytes`**。 |
+| **`user_aspace`（`impl-sv39`）** | **`with_user_aspace_mut(handle, f)`**：将 **`LoadedElf::user_aspace_ptr`** 解析为可调用 **`HeapBrk`/`MmapOps`** 的地址空间；**不**封装 Linux syscall 语义（由 **`wateros-syscall`** 拼合）。 |
 | **`test_with_range`** | 根级自检：传入 **`BasePPN`** 闭开区间，串联 **`api::test`**、**`frame_alloctor::test_with_range`** 与（若启用 Sv39）**`impl_sv39::test_with_range`**。 |
 
 ## 缺口说明

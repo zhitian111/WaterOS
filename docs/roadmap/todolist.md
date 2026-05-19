@@ -25,7 +25,7 @@
 | wateros-ipc | 聚合层导出 **waitqueue**；**pipe** 已通过 feature 接入并具备内核内部 ring-buffer 与 fd endpoint；signal/futex/shm/event 仍为占位或未接入 | pipe fork/dup/close-on-exit 语义；继续接入 signal、futex、shm 等 feature |
 | wateros-task | **`impl-core` + 轮转调度**；RISC-V 主线与用户态自检一致；已提供条件等待、最小父子关系与 child-exit 等待服务 IPC/syscall；LoongArch64 上可跑 kernel task 轮转 | trap 驱动抢占、用户任务恢复、block object 抽象、TaskHandle generation 与跨架构文档 |
 | wateros-abi | **`api-v0`** 与 **`impl-linux-generic64`**（经 **`impl-linux-riscv64`** 等别名）默认启用；errno、号表、参数与 `UserRet` 已供 syscall 使用 | 调用号与内核实际支持集合对齐；版本化 ABI 文档 |
-| wateros-syscall | 独立一级 crate，根依赖 **`use syscall as _`**；RISC-V 路径在 ELF 用户任务上分发 **read / write / close / pipe2 / yield / exit / waitpid / brk / mmap / munmap / mprotect** 等，并以内部 per-task fd registry 支撑 pipe smoke | 扩展 syscall 表、与 VFS 全路径对齐；补 fd 继承/dup/自动关闭，弱化或替换纯假顶语义 |
+| wateros-syscall | 独立一级 crate，根依赖 **`use syscall as _`**；RISC-V 主线默认链接 **`wateros-mm`**，在 syscall 层拼合 **`brk`/`mmap`/`munmap`/`mprotect`**；read/write/close/pipe2 经 **`wateros-vfs::fd`** | 扩展 syscall 表、**`openat`** 与 VFS 文件句柄；补 fd 继承/dup/自动关闭；**`UserMemoryOps`** 与 write 安全拷贝 |
 | wateros-base | 基础类型与 **base-config**（含 MM 相关常量等） | 避免向上层泄漏板级魔法数；配置与平台边界清晰化 |
 | wateros-utils | 通用轻量工具 | 保持无跨层耦合 |
 

@@ -6,7 +6,7 @@
 ## 要做什么
 
 1. 在 **Sv39** 默认路径上，为 **单个用户任务** 建立可用的用户虚拟地址区间契约（与 `spawn_user_task` / ELF loader 输出对齐）：代码段、数据、BSS、用户栈的映射与权限。
-2. 将当前 `wateros-syscall` 中 **`brk` 原子桩** 的替换点落实为可调用的 **MM API**：在任务携带 **`LoadedElf::user_aspace_ptr`**（Sv39 用户页表）时走 **`mm::user_sv39_syscall::brk`**；否则仍使用假顶桩（如 LoongArch 或未走 ELF 装载的用户任务）。**`brk` 与匿名 `mmap`** 协同策略：**堆**仅通过 **`brk`** 在 **`[brk_start, brk_max)`** 内饥渴扩页；**匿名私有映射**通过 **`mmap`** 自 **`mmap_arena_base`** bump 分配（详见 `docs/exports/features/wateros-mm.md`）。
+2. 将当前 `wateros-syscall` 中 **`brk` 原子桩** 的替换点落实为可调用的 **MM 原语**：在任务携带 **`LoadedElf::user_aspace_ptr`**（Sv39 用户页表）时经 **`mm::user_aspace::with_user_aspace_mut`** 调用 **`HeapBrk`/`MmapOps`**；否则仍使用假顶桩（如 LoongArch 或未走 ELF 装载的用户任务）。**`brk` 与匿名 `mmap`** 协同策略：**堆**仅通过 **`brk`** 在 **`[brk_start, brk_max)`** 内饥渴扩页；**匿名私有映射**通过 **`mmap`** 自 **`mmap_arena_base`** bump 分配（详见 `docs/exports/features/wateros-mm.md`）。
 3. **`mmap`/`munmap`/`mprotect` 第一版**：满足后续 `execve` 装载与简单 `mmap(MAP_ANONYMOUS)` 测例；错误路径返回 Linux 风格 errno 映射（经 `wateros-abi`）。
 4. 与 **trap 页错误** 策略对齐：采用 **饥渴（eager）映射**（见 `impl-sv39` `pagetable` 模块说明）；用户访问已 **`munmap`** 的 VA 在 U 态触发 **page fault**。
 
@@ -20,7 +20,7 @@
 
 1. **`stage-02-mm`**（`os/src/user_bringup_mm.rs`）：根卷存在 **`/glibc/basic/brk`**、**`mmap`**、**`munmap`** 等测程（与 `os/tem/glibc/basic` 等镜像产物一致）时，`from_elf_path` + `spawn_user_task_from_loaded_elf`；串口日志 **`[mm-bringup]`** 含 `loaded`/`spawned` 行，缺文件为 **`skip`**。
 2. QEMU 跑一轮，**`grep '\[mm-bringup\]'`** 对照路径与任务号；测程实际 syscall 行为在 **`run_first_task`** 后与 `self_tests` 并行调度中执行。
-3. 内核侧 **`mm::user_sv39_syscall`** 仍可供其它 bring-up 或调试路径直接调用页表指针。
+3. bring-up 或调试路径可通过 **`mm::user_aspace::with_user_aspace_mut`** 与 **`api::HeapBrk`/`MmapOps`** 直接操作页表指针（与 syscall 拼合路径一致）。
 
 ## 依赖
 

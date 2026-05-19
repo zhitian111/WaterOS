@@ -2,63 +2,73 @@
 
 ## 用途
 
-描述一级组件 **`wateros-vfs`** 的聚合导出、`vfs-api-v0` 契约，以及可选 **`bridge-fs-api`** 下对 **`wateros-fs`** 的只读桥接与 RW 烟囱 API。
+描述一级组件 **`wateros-vfs`**：`vfs-api-v0` 基本能力契约、聚合层组合接口，以及 feature `bridge-fs-api` / `fd-session` 下的实现。
 
 ## 事实来源
 
 - [`os/components/wateros-vfs/Cargo.toml`](../../os/components/wateros-vfs/Cargo.toml)
 - [`os/components/wateros-vfs/src/lib.rs`](../../os/components/wateros-vfs/src/lib.rs)
-- [`os/components/wateros-vfs/vfs-api/api-v0/src/lib.rs`](../../os/components/wateros-vfs/vfs-api/api-v0/src/lib.rs)
-- [`os/components/wateros-vfs/vfs-impl/impl-fs-bridge/src/lib.rs`](../../os/components/wateros-vfs/vfs-impl/impl-fs-bridge/src/lib.rs)
-- [`os/components/wateros-vfs/vfs-impl/impl-dummy/src/lib.rs`](../../os/components/wateros-vfs/vfs-impl/impl-dummy/src/lib.rs)
+- [`os/components/wateros-vfs/vfs-api/api-v0/`](../../os/components/wateros-vfs/vfs-api/api-v0/)
 
-## 聚合层（`wateros-vfs` 根 crate）
+---
 
-| 项 | 说明 |
-|----|------|
-| **`pub mod api`** | 重导出 **`wateros-vfs-api-v0`** |
-| **`pub use api_v0::*`** | `VfsError`、`VfsResult`、`VfsMetadata`、`VfsNodeType`、`normalize_absolute_path`、`NormalizedPath`、`SingleRootReadView`、`RootRwSession` 等 |
-| **`pub mod dummy`** | 重导出 **`wateros-vfs-impl-dummy`**（`DummyRootView`、`DummyRwSession`） |
-| **`pub mod bridge`** | 仅 **`feature = "bridge-fs-api"`** 时存在；重导出 **`wateros-vfs-impl-fs-bridge`** |
-| **`test()`** | 调用 `api_v0::test`、`impl_dummy::test`；启用 bridge 时另跑 `impl_fs_bridge::test` |
+## 一、`vfs-api-v0` 基本能力（契约层）
+
+本 crate **不** 依赖 `wateros-fs`。按能力域拆分模块：
+
+| 模块 | 能力 |
+|------|------|
+| `error` | `VfsError`、`VfsResult`（含 `BadFd`、`WouldBlock`、`BrokenPipe`、`NoTask`） |
+| `path` | `normalize_absolute_path`、`NormalizedPath`、`validate_root_file_name` |
+| `meta` | `VfsNodeType`、`VfsMetadata`、`VfsDirEntry` |
+| `kind` | `VfsFsKind`、`VfsAccessMode`、`VfsCapability` |
+| `root_read` | `trait SingleRootReadView` |
+| `rw_session` | `trait RootRwSession` |
+| `mount` | `trait VfsMountOps` |
+| `dev` | `trait VfsDevInventory`、`VfsDevNode` |
+| `resolve` | `resolve_against_cwd` |
+| `handle` | `trait VfsIoHandle`、`trait VfsFileHandle`、`trait VfsOpenOps`、`VfsOpenFlags` |
+| `fd` | `trait VfsFdSession`、`VfsFd`、`VFS_STDIN_FD` 等常量 |
+| `namespace` | `trait VfsMountTable`（占位） |
+| `backend` | `trait VfsBackend`（路径/挂载/设备/打开；**不含** per-task fd 表） |
+
+`impl-*` **只实现**这些 trait，不得 `pub use wateros-fs::*`。
+
+---
+
+## 二、聚合层组合接口（`wateros-vfs` 根 crate）
+
+| 模块 / 项 | 说明 |
+|-----------|------|
+| **`pub use api_v0 as api`** | 重导出契约层 |
+| **`active_impl::backend()`** | 当前 feature 选中的 `VfsBackend`（`bridge-fs-api` → `FsBridge`，否则 `DummyBackend`） |
+| **`root::read_view()`** | `&'static impl SingleRootReadView` |
+| **`mount::open_rw_session(kind)`** | `Box<dyn RootRwSession>` |
+| **`mount::supported_capabilities()`** | 已注册后端能力列表 |
+| **`fd`**（`fd-session`） | `registry()`、`with_current_io`、`alloc_fd`、`close_fd`、`self_test` |
+| **`self_test::rw_write_root_verify_via_ro`** | RW 写后 RO 读回校验 |
+| **`self_test::run()`** | 组合自检（`vfs::test()` 内调用） |
+| **`test()`** | `api::test` + dummy + bridge + `fd::self_test` + `self_test::run` |
+| **`dummy`**（`#[doc(hidden)]`） | 占位 impl，供 workspace 独立编译 |
+
+**已移除：** `VfsFdTable` 作为 `VfsBackend` 子 trait；per-task fd 由 **`fd`** 模块与 **`impl-fd-session`** 承载。
+
+---
 
 ## Feature
 
 | Feature | 说明 |
 |---------|------|
-| **`default`** | `api-v0` + **`bridge-fs-api`**：默认即链接 **`wateros-vfs-impl-fs-bridge`**（依赖 **`wateros-fs`**），并仍通过硬依赖保留 **`impl-dummy`** 供占位根视图。 |
-| **`api-v0`** | 向下传递 **`impl-dummy/api-v0`** 与（在启用 bridge 时）**`impl-fs-bridge?/api-v0`**。 |
-| **`bridge-fs-api`** | `dep:impl-fs-bridge` + **`impl-fs-bridge/bridge-fs-api`**。 |
-| **`impl-dummy`** | 当前为空数组占位 feature 名；与 **`impl-dummy`** crate 依赖并存，用于命名对齐。 |
+| **`default`** | `api-v0` + `bridge-fs-api` |
+| **`api-v0`** | 向下传递子 crate `api-v0` |
+| **`bridge-fs-api`** | 启用 `impl_fs_bridge`（依赖 `wateros-fs`） |
+| **`fd-session`** | 启用 `impl-fd-session`、聚合层 `fd` 模块 |
+| **`impl-riscv64` / `impl-loongarch64`** | 为 fd-session 传递平台 console / ipc / task feature |
 
-根 crate **`wateros`** 在 **`default`** 下启用 **`vfs-bridge`** → **`vfs/bridge-fs-api`**；**`qemu-riscv64-opensbi`** 亦包含 **`vfs-bridge`**。若对 **`wateros-vfs`** 使用 **`default-features = false`** 且未开 **`bridge-fs-api`**，则聚合层无 **`pub mod bridge`**，仅剩 **`api`**、**`dummy`** 与根 **`pub use api_v0::*`**。
+根 **`wateros`** 在 `qemu-riscv64-opensbi` 下启用 `vfs-bridge`、`vfs/fd-session`、`vfs/impl-riscv64`，并传递 `mm/vfs-root-read` 使 ELF 装载经 `vfs::root::read_view()`。
 
-## `wateros-vfs-api-v0`
-
-- **错误与结果**：`VfsError`、`VfsResult`。
-- **元数据**：`VfsNodeType`、`VfsMetadata`（与 `fs-api` 语义对齐，类型独立，便于桥接映射）。
-- **路径**：`normalize_absolute_path`、`NormalizedPath`。
-- **Trait**：`SingleRootReadView`（`exists` / `metadata` / `read` / 默认 `read_prefix` / `read_to_string` / `boot_dump_all_paths`）；`RootRwSession`（`write_regular_file_at_root`）。
-
-## `wateros-vfs-impl-fs-bridge`（`bridge-fs-api`）
-
-仅通过 **`wateros-fs`** 聚合公开 API 访问根卷与 devfs，不修改 fs 实现源码。
-
-| 项 | 说明 |
-|----|------|
-| **`FsBridge`** | 实现 `SingleRootReadView`：路径规范化后委托 `rootfs::active_impl::root_fs()` 上的 `ReadOnlyFs` |
-| **`MountedRwSession`** | 包装 `SharedRwFs`，实现 `RootRwSession` |
-| **`validate_root_file_name`** | 根目录文件名校验（无 `/`、非空） |
-| **`supported_fs_capabilities` / `pick_fs_impl`** | 委托 `fs::supported_fs_summary` / `fs::pick_fs_impl` |
-| **`mount_rw_session` / `rw_write_root_verify_via_ro`** | 与 `wateros-fs` 聚合层 `test()` 中 RW 段同构的 RW 挂载与只读读回校验 |
-| **`list_dev_nodes` / `default_root_block_path`** | 委托 `devfs::active_impl` |
-| **`pub use fs::{devfs, rootfs, FsAccessMode, FsCapability, FsImpl, FsKind}`** | 便于调用方使用与 fs 一致的类型 |
-
-## `wateros-vfs-impl-dummy`
-
-- **`DummyRootView`**：实现 `SingleRootReadView`；路径合法时卷访问返回 `NotMounted`。
-- **`DummyRwSession`**：实现 `RootRwSession`，返回 `Unsupported`。
+---
 
 ## 维护要求
 
-契约、聚合导出、默认 feature 或 bridge 行为变化时，同步更新本文件、[`docs/exports/features/wateros-vfs.md`](./features/wateros-vfs.md) 与 [`docs/architecture/snapshot.md`](../architecture/snapshot.md)。
+契约或组合接口变化时，同步本文件、[`features/wateros-vfs.md`](./features/wateros-vfs.md) 与 [`docs/architecture/snapshot.md`](../architecture/snapshot.md)。

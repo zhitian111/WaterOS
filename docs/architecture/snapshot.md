@@ -77,10 +77,10 @@ flowchart TD
 - 构造平台引导上下文。
 - 记录 DTB 物理基址（`driver::init_when_boot`），并初始化控制台、日志与堆分配器。
 - 执行内核态 MM 自检（含与 feature 相关的可选分页冒烟路径）。
-- 调用 **`driver::active_impl::init_after_boot()`** 完成 DTB 扫描、virtio-blk 注册及经 **`wateros-fs`** 的 devfs 刷新；成功后再 **`fs::init()`** / **`fs::test()`**；在启用 **`vfs-bridge`** 时追加 **`vfs::test()`** 与 **`vfs::bridge`** 对根卷的 RW 烟囱读回校验（依赖 **`wateros-fs`** 公开 API，见 **`docs/exports/public-api/wateros-vfs.md`**）。
+- 调用 **`driver::active_impl::init_after_boot()`** 完成 DTB 扫描、virtio-blk 注册及经 **`wateros-fs`** 的 devfs 刷新；成功后再 **`fs::init()`** / **`fs::test()`**；在启用 **`vfs-bridge`** 时追加 **`vfs::test()`**（内含 **`self_test`** RW 读回烟囱，见 **`docs/exports/public-api/wateros-vfs.md`**）。
 - 初始化任务调度器并创建演示性 kernel task。
 - `wateros-task` 条件等待、最小父子关系与 child-exit wait 已服务 `wateros-ipc` / `wateros-syscall`；RISC-V 自检会启动根卷 **`/elf/000_hello_world.elf`** 与 **`/elf/010_pipe_smoke.elf`** 用户任务，并创建内核内部 ring-buffer pipe 覆盖阻塞读写、EOF、BrokenPipe 与非阻塞 WouldBlock。
-- 通过 **`extern crate syscall as _`** 链接 **`wateros-syscall`**，供平台 trap 路径调用其分发符号；当前 syscall 层含最小 per-task fd registry，可为用户态 `pipe` / `read` / `write` / `close` smoke 提供 pipe fd（见 **`docs/exports/features/wateros-syscall.md`**）。
+- 通过 **`extern crate syscall as _`** 链接 **`wateros-syscall`**，供平台 trap 路径调用其分发符号；per-task fd 表在 **`wateros-vfs`**（`fd-session`），syscall 经 **`vfs::fd`** 完成 `pipe` / `read` / `write` / `close`（见 **`docs/exports/features/wateros-syscall.md`**、**`docs/exports/features/wateros-vfs.md`**）。
 - 启用中断与定时器，并进入首个任务。
 - 在 `qemu-loongarch64-virt` 路径下初始化 UART 控制台、日志、堆、LoongArch trap、timer interrupt 与 round-robin 调度器，并创建两个演示性 kernel task 进行轮转；同时创建一个独立 `.text.user_smoke` 段内的 PLV3 用户态 syscall smoke，用 `UserTaskSpec` 记录 entry/image 元数据并由 observer 回收断言。
 - LoongArch64 当前仍未接入真实 MM、driver、fs/vfs 与 ELF loader；paging facade 仍为占位，用户 smoke 不声明地址空间句柄；系统调用号表与 RISC-V 路径一致复用 Linux generic 64-bit 约定（见 **`wateros-abi`** 的 **`impl-linux-generic64`**）。要运行真实 ELF 用户任务，下一步需要补齐 LoongArch 页表/MMU 切换、根卷块设备/FS 接入，以及按 LoongArch 页表格式实现 `from_elf_path`。

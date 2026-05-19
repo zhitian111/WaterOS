@@ -31,7 +31,7 @@
 
 ## impl-sv39 与 impl-dummy
 
-- **`impl-sv39`**：**`Sv39AddressSpace`** 实现 **`AddressSpaceOps`**、**`HeapBrk`**、**`MmapOps`**（含 **`mprotect`**）；**`kernel_elf`**（**`from_elf_path`**、**`from_elf_bytes`** → **`LoadedElf`**，含 **`user_aspace_ptr`** / **`brk_*`** / **`mmap_arena_base`**）、**`kernel_global`**（全局 **`Sv39AddressSpace`**、**`init`**、**`kernel_satp`**、恒等/用户映射辅助、**`phys_ram_end_exclusive`** 等）。**`user_syscall`** 供 **`wateros-syscall`** 在用户页表上执行 **`brk`/`mmap`/`munmap`/`mprotect`**。**`Drop`** 当前仅回收根页表，注释说明未递归回收中间页表（早期简化）。
+- **`impl-sv39`**：**`Sv39AddressSpace`** 实现 **`AddressSpaceOps`**、**`HeapBrk`**、**`MmapOps`**（含 **`mprotect`**）；**`kernel_elf`**（**`from_elf_path`**、**`from_elf_bytes`** → **`LoadedElf`**，含 **`user_aspace_ptr`** / **`brk_*`** / **`mmap_arena_base`**）、**`kernel_global`**（全局 **`Sv39AddressSpace`**、**`init`**、**`kernel_satp`**、恒等/用户映射辅助、**`phys_ram_end_exclusive`** 等）。**`user_aspace::with_user_aspace_mut`** 将 **`user_aspace_ptr`** 解析为可调用上述 trait 的实例（**不**封装 Linux syscall 语义）。**`Drop`** 当前仅回收根页表，注释说明未递归回收中间页表（早期简化）。
 - **`impl-dummy`**：**`kernel_mm_impl`** 桩：**`init`** 空操作、**`kernel_satp`** 恒 0、映射无操作、**`from_elf_path`** 固定错误类；**无** **`from_elf_bytes`**。
 
 ## 帧分配器（impl-stack）
@@ -45,7 +45,7 @@
 
 ## 明确未覆盖
 
-- **`brk` / `mmap` / `munmap` / `mprotect`**：已在 **`impl-sv39`** 的 **`Sv39AddressSpace`** 上 **饥渴映射** 落地；**`wateros-syscall`**（**`impl-riscv64`**）在任务携带 **`LoadedElf::user_aspace_ptr`** 时走真实路径，否则 **`brk`** 仍回落到假顶桩。**`UserMemoryOps`** 仍待与 trap 拷贝路径完整对接。
+- **`brk` / `mmap` / `munmap` / `mprotect`**：机制在 **`impl-sv39`** 的 **`HeapBrk`/`MmapOps`** 上 **饥渴映射** 落地；**`wateros-syscall`**（RISC-V 主线链接 **`wateros-mm`**）在任务携带 **`user_aspace_ptr`** 时拼合 Linux 语义并调原语，否则 **`brk`** 仍回落到假顶桩。**`UserMemoryOps`** 仍待与 trap 拷贝路径完整对接。
 - 页表递归回收与更完整的地址空间生命周期管理。
 
 ## 维护要求

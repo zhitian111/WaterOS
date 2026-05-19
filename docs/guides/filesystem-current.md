@@ -15,7 +15,7 @@
 - 设备文件抽象：`os/components/wateros-fs/fs-devfs/`（`devfs-api`、`impl-kernel` / `impl-dummy`）
 - 根卷管理：`os/components/wateros-fs/fs-rootfs/`（`rootfs-api`、`impl-kernel` / `impl-dummy`）
 - ext4 实现（RO + RW 合一）：`os/components/wateros-fs/fs-impl/impl-ext4/src/{lib.rs,ro.rs,rw.rs,selftest.rs}`
-- 内核启动接线：`os/src/main.rs`（在 `driver::active_impl::init_after_boot()` 成功后调用 `fs::init()` / `fs::test()`；默认 QEMU feature 下可再跑 `vfs::test()` 与 `vfs::bridge` RW 读回校验，见 `docs/exports/public-api/wateros-vfs.md`）
+- 内核启动接线：`os/src/main.rs`（在 `driver::active_impl::init_after_boot()` 成功后调用 `fs::init()` / `fs::test()`；默认 QEMU feature 下可再跑 `vfs::test()`（含 `self_test` RW 读回校验），见 `docs/exports/public-api/wateros-vfs.md`）
 - QEMU 块设备（VirtIO-MMIO 实现）：`os/components/wateros-driver/driver-block/block-impl/impl-virtio-mmio/src/lib.rs`；DTB 枚举与注册：`os/components/wateros-driver/driver-impl/impl-qemu-riscv64-opensbi/src/lib.rs`
 
 ## 一级组件与目录结构
