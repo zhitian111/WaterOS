@@ -1,0 +1,56 @@
+[package]
+    name = "wateros-syscall-impl-kernel"
+    version = "0.1.0"
+    edition = "2024"
+
+[dependencies]
+    api-v0 = { path = "../../syscall-api/api-v0/", package = "wateros-syscall-api-v0", default-features = true }
+    abi = { path = "../../../wateros-abi/", package = "wateros-abi", default-features = false }
+    task = { path = "../../../wateros-task/", package = "wateros-task", default-features = false }
+    ipc = { path = "../../../wateros-ipc/", package = "wateros-ipc", default-features = false, optional = true }
+    mm = { path = "../../../wateros-mm/", package = "wateros-mm", default-features = true, optional = true }
+    vfs = { path = "../../../wateros-vfs/", package = "wateros-vfs", default-features = false, optional = true }
+
+[features]
+    api-v0 = [
+        "api-v0/api-v0",
+        "abi/api-v0",
+        "fd-session",
+    ]
+    default = [ "api-v0", "impl-riscv64" ]
+    fd-session = [
+        "dep:ipc",
+        "dep:mm",
+        "dep:vfs",
+        "ipc/pipe",
+        "mm/api-v0",
+        "mm/impl-sv39",
+        "vfs/bridge-fs-api",
+        "vfs/fd-session",
+    ]
+    impl-loongarch64 = [
+        "api-v0",
+        "abi/impl-linux-loongarch64",
+        "ipc/impl-loongarch64",
+        "task/api-v0",
+        "task/impl-core",
+        "task/impl-loongarch64",
+        "task/impl-round-robin",
+        "vfs/impl-loongarch64",
+    ]
+    impl-riscv64 = [
+        "api-v0",
+        "abi/impl-linux-riscv64",
+        "ipc/impl-riscv64",
+        "task/api-v0",
+        "task/impl-core",
+        "task/impl-riscv64",
+        "task/impl-round-robin",
+        "vfs/impl-riscv64",
+    ]
+
+[profile.dev]
+    panic = "abort"
+
+[profile.release]
+    panic = "abort"

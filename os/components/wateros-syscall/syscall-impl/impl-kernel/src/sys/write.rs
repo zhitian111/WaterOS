@@ -6,7 +6,7 @@ use abi::user_ret::UserRet;
 
 use crate::vfs_util::vfs_error_to_errno;
 
-pub(crate) fn sys_write(args: SyscallArgs) -> UserRet {
+pub(crate) fn sys_write(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let ptr = args.arg(1) as *const u8;
     let len = args.arg(2);

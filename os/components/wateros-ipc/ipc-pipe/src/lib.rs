@@ -10,19 +10,19 @@ pub mod api {
     pub use ::api_v0::*;
 }
 
-#[cfg(feature = "impl-dummy")]
+#[cfg(feature = "impl-ringbuf")]
 /// 当前 pipe 实现命名空间。
-pub use impl_dummy as active_impl;
+pub use impl_ringbuf as active_impl;
 
 pub use api_v0::{
     KernelPipe, PipeEndpointKind, PipeEndpointOps, PipeError, PipeResult, DEFAULT_PIPE_CAPACITY,
 };
 
-#[cfg(feature = "impl-dummy")]
+#[cfg(feature = "impl-ringbuf")]
 pub use active_impl::{Pipe, PipeEndpoint};
 
 /// 聚合层自检：串联 API 与当前激活 impl。
-#[cfg(feature = "impl-dummy")]
+#[cfg(feature = "impl-ringbuf")]
 pub fn test() {
     api_v0::test();
     active_impl::test();

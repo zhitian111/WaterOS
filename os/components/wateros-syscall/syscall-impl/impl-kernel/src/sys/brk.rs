@@ -11,13 +11,14 @@ fn sys_brk_mm(handle : usize, addr : usize) -> UserRet {
     use mm::api::brk::HeapBrk;
     use mm::frame_alloctor::GlobalPhysFrameAllocator;
     match mm::user_aspace::with_user_aspace_mut(handle, |aspace| {
-        let mut alloc = GlobalPhysFrameAllocator;
-        if addr == 0 {
-            return Ok(HeapBrk::brk_region(aspace).current_end.0);
-        }
-        let new = HeapBrk::brk(aspace, &mut alloc, VirtAddr(addr))?;
-        Ok(new.0)
-    }) {
+              let mut alloc = GlobalPhysFrameAllocator;
+              if addr == 0 {
+                  return Ok(HeapBrk::brk_region(aspace).current_end
+                                                       .0);
+              }
+              let new = HeapBrk::brk(aspace, &mut alloc, VirtAddr(addr))?;
+              Ok(new.0)
+          }) {
         Ok(v) => UserRet::from_success(v),
         Err(e) => UserRet::from_error(mm_err_to_errno(e)),
     }

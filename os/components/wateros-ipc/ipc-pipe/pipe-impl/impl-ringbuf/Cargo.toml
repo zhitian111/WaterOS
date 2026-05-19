@@ -1,5 +1,5 @@
 [package]
-    name = "wateros-ipc-pipe-impl-dummy"
+    name = "wateros-ipc-pipe-impl-ringbuf"
     version = "0.1.0"
     edition = "2024"
 

@@ -1,4 +1,5 @@
-//! 任务相关系统调用：`yield`、`exit`、`waitpid`、`getpid`/`gettid`、`get_time`、`nanosleep`。
+//! 任务相关系统调用：`yield`、`exit`、`waitpid`、`getpid`/`gettid`、
+//! `get_time`、`nanosleep`。
 
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
@@ -18,9 +19,7 @@ pub(crate) fn sys_yield() -> UserRet {
 
 pub(crate) fn sys_exit(exit_code : isize) -> isize { task::exit_current(exit_code) }
 
-pub(crate) fn sys_get_time() -> UserRet {
-    UserRet::from_success(task::current_tick() as usize)
-}
+pub(crate) fn sys_get_time() -> UserRet { UserRet::from_success(task::current_tick() as usize) }
 
 pub(crate) fn sys_getpid() -> UserRet {
     task::current_task_id().map(UserRet::from_success)
@@ -40,7 +39,8 @@ fn finish_wait_result(exited : task::ExitedTask, exit_code_ptr : usize) -> UserR
     UserRet::from_success(exited.id)
 }
 
-/// `waitpid`/`wait4` 早期语义：维护最小父子关系并阻塞等待子任务退出；暂不解析 options。
+/// `waitpid`/`wait4` 早期语义：维护最小父子关系并阻塞等待子任务退出；暂不解析
+/// options。
 pub(crate) fn sys_waitpid(args : SyscallArgs) -> UserRet {
     let pid = args.arg(0) as isize;
     let exit_code_ptr = args.arg(1);
@@ -80,7 +80,8 @@ pub(crate) fn sys_waitpid(args : SyscallArgs) -> UserRet {
     }
 }
 
-/// `nanosleep` 临时映射到一个调度 tick；真实时间换算待平台频率语义接入后再替换。
+/// `nanosleep` 临时映射到一个调度
+/// tick；真实时间换算待平台频率语义接入后再替换。
 pub(crate) fn sys_nanosleep(args : SyscallArgs) -> UserRet {
     let req_ptr = args.arg(0);
     if req_ptr == 0 {

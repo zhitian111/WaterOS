@@ -1,4 +1,5 @@
-//! 各 Linux 风格系统调用的 `sys_*` 实现；由 [`crate::dispatch`] 按号表路由。
+//! 各 Linux 风格系统调用的 `sys_*` 实现；由 [`crate::KernelSyscallDispatcher`]
+//! 按号表路由。
 
 mod brk;
 mod close;

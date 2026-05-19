@@ -2,7 +2,8 @@
 
 use abi::errno::ErrNo;
 
-/// 用户态 `brk` 的单调递增假顶：在无 ELF 用户页表（`user_aspace_ptr==0`）时兜底。
+/// 用户态 `brk` 的单调递增假顶：在无 ELF
+/// 用户页表（`user_aspace_ptr==0`）时兜底。
 pub(crate) static USER_BRK_FAKE : core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(0);
 

@@ -1,7 +1,7 @@
 #![no_std]
-//! 管道 v0 dummy 实现：固定容量 ring buffer + task waitqueue。
+//! 管道 v0 ring buffer 实现：固定容量 ring buffer + task waitqueue。
 //!
-//! 包名沿用 `impl-dummy` 以维持 feature 链；行为为可用的内核内部 pipe，实现 [`api_v0::KernelPipe`] 与 [`api_v0::PipeEndpointOps`]。
+//! 行为为可用的内核内部 pipe，实现 [`api_v0::KernelPipe`] 与 [`api_v0::PipeEndpointOps`]。
 
 mod endpoint;
 mod kernel_pipe;

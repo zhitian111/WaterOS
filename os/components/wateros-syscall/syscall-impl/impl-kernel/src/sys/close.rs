@@ -5,7 +5,7 @@ use abi::user_ret::UserRet;
 
 use crate::vfs_util::vfs_error_to_errno;
 
-pub(crate) fn sys_close(args: SyscallArgs) -> UserRet {
+pub(crate) fn sys_close(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     match vfs::fd::close_fd(fd) {
         Ok(()) => UserRet::from_success(0),

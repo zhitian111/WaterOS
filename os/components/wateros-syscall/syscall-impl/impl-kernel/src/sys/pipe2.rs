@@ -9,9 +9,9 @@ use vfs::{PipeReadHandle, PipeWriteHandle};
 
 use crate::vfs_util::vfs_error_to_errno;
 
-pub(crate) const O_NONBLOCK: usize = 0o0004000;
+pub(crate) const O_NONBLOCK : usize = 0o0004000;
 
-pub(crate) fn sys_pipe2(args: SyscallArgs) -> UserRet {
+pub(crate) fn sys_pipe2(args : SyscallArgs) -> UserRet {
     let pipefd_ptr = args.arg(0) as *mut i32;
     let flags = args.arg(1);
     if pipefd_ptr.is_null() {
@@ -27,12 +27,15 @@ pub(crate) fn sys_pipe2(args: SyscallArgs) -> UserRet {
     let nonblocking = flags & O_NONBLOCK != 0;
     let (read_end, write_end) = ipc::pipe::PipeEndpoint::pair(nonblocking);
     let mut reg = vfs::fd::registry().exclusive_access();
-    let read_fd = reg.alloc_fd_for_task(task_id, Box::new(PipeReadHandle(read_end)));
-    let write_fd = reg.alloc_fd_for_task(task_id, Box::new(PipeWriteHandle(write_end)));
+    let read_fd = reg.alloc_fd_for_task(task_id,
+                                        Box::new(PipeReadHandle(read_end)));
+    let write_fd = reg.alloc_fd_for_task(task_id,
+                                         Box::new(PipeWriteHandle(write_end)));
     drop(reg);
     unsafe {
         pipefd_ptr.write(read_fd as i32);
-        pipefd_ptr.add(1).write(write_fd as i32);
+        pipefd_ptr.add(1)
+                  .write(write_fd as i32);
     }
     UserRet::from_success(0)
 }

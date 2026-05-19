@@ -1,27 +1,41 @@
 #![no_std]
-#![allow(static_mut_refs)]
-//! 用户态系统调用分发：将 ABI 规定的调用号与寄存器参数映射到 `sys::*` 实现。
+//! WaterOS syscall aggregate crate.
 //!
-//! **分层**：[`dispatch`] 负责号表路由与 C ABI 入口；[`sys`] 承载各 `sys_*`
-//! 语义实现；[`vfs_util`]、[`mm_util`] 提供 VFS fd 与内存相关辅助。
-//!
-//! **契约**：[`dispatch_syscall_from_trap`] 为 Rust 侧 trap 组合入口；
-//! [`__wateros_syscall_dispatch_current`] 供 C ABI（如 `switch` 桩）使用。
-//! 返回值遵循 `UserRet`/`ErrNo` 编码。
-//!
-//! **依赖**：`wateros-ipc`、`wateros-mm`；fd 表经 `wateros-vfs`（`fd-session`）；
-//! `abi` / `task` 由 feature（`impl-riscv64`、`impl-loongarch64`）选择平台表与调度。
+//! `api` exposes the v0 trap-facing contract, while `active_impl` points at the
+//! kernel dispatcher selected by feature flags.
 
-extern crate alloc;
+#[cfg(feature = "api-v0")]
+pub mod api {
+    pub use api_v0::*;
+}
 
-#[cfg(feature = "fd-session")]
-extern crate vfs;
+#[cfg(feature = "impl-kernel")]
+pub use impl_kernel as active_impl;
 
-mod dispatch;
-mod mm_util;
-mod sys;
-#[cfg(feature = "fd-session")]
-mod vfs_util;
+#[cfg(feature = "api-v0")]
+pub use api_v0::SyscallDispatcher;
 
-pub use dispatch::dispatch_syscall_from_trap;
-pub use dispatch::__wateros_syscall_dispatch_current;
+#[cfg(feature = "impl-kernel")]
+use abi::syscall_args::SyscallArgs;
+
+/// Trap / exception return path syscall dispatch entry.
+#[cfg(feature = "impl-kernel")]
+#[inline]
+pub fn dispatch_syscall_from_trap(syscall_nr : usize, syscall_args : SyscallArgs) -> isize {
+    active_impl::dispatch_syscall_from_trap(syscall_nr, syscall_args)
+}
+
+/// Current-task syscall dispatch entry for assembly or C ABI callers.
+#[cfg(feature = "impl-kernel")]
+#[unsafe(no_mangle)]
+pub extern "C" fn __wateros_syscall_dispatch_current(syscall_nr : usize,
+                                                     arg0 : usize,
+                                                     arg1 : usize,
+                                                     arg2 : usize,
+                                                     arg3 : usize,
+                                                     arg4 : usize,
+                                                     arg5 : usize)
+                                                     -> isize {
+    let syscall_args = SyscallArgs::from_regs([arg0, arg1, arg2, arg3, arg4, arg5]);
+    dispatch_syscall_from_trap(syscall_nr, syscall_args)
+}
