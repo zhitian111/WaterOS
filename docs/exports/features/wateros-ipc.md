@@ -6,25 +6,28 @@
 
 ## 事实来源
 
-- `os/components/wateros-ipc/Cargo.toml`（**`[workspace].members`** 列表）
+- `os/components/wateros-ipc/Cargo.toml`
 - `os/components/wateros-ipc/src/lib.rs`
 - `os/components/wateros-ipc/ipc-waitqueue/`
+- `os/components/wateros-ipc/ipc-pipe/`
 - `os/feature-tree.txt`（子包 feature 树）
 
 ## 聚合层当前接线
 
-- **`default`**：`api-v0`、`impl-dummy`。
+- **`default`**：`api-v0`、`impl-dummy`、`impl-riscv64`。
 - **`pub mod api`**：**`ipc-api/api-v0`** 占位面（示例级 API）。
 - **`active_impl`**：在 **`impl-dummy`** 下指向 **`impl_dummy`**。
 - **`pub mod waitqueue`**：**`ipc-waitqueue`** — 对 **`wateros-task::WaitQueue`** 的薄封装（**`TaskId`**、**`TaskWaitHandle`**、**`WaitQueueId`** 等来自 task）。
+- **`pipe` feature**：接入 **`ipc-pipe`**；导出内核内部 **`Pipe`**、可放入 fd 表的 **`PipeEndpoint`** / **`PipeEndpointKind`**、**`PipeError`**、**`PipeResult`** 与默认容量常量。当前 pipe 使用固定容量 ring buffer 与 waitqueue，覆盖阻塞读写、非阻塞 `try_*`、EOF 与 BrokenPipe。
 
 ## 子目录但未接入聚合默认构建
 
-- **`ipc-pipe`**、**`ipc-signal`**、**`ipc-shm`**、**`ipc-futex`**、**`ipc-event`** 等子 crate 在仓库中存在各自 **`Cargo.toml`** 与占位实现，**未**列入 **`wateros-ipc`** 根 workspace members，**根聚合 **`Cargo.toml`** 亦未依赖它们**；内核 **`os/src`** 当前**无** **`ipc::`** 业务引用（根 **`wateros`** 仍声明 **`ipc`** 依赖，属「可链接、待接线」状态）。
+- **`ipc-signal`**、**`ipc-shm`**、**`ipc-futex`**、**`ipc-event`** 等子 crate 在仓库中存在各自 **`Cargo.toml`** 与占位实现，尚未列入 **`wateros-ipc`** 根依赖图。
 
 ## 明确未覆盖
 
-- pipe、signal、shm、futex、event 等完整 IPC 语义与 syscall / task fd 表打通。
+- pipe 的最小用户态 fd/syscall 接线已在 `wateros-syscall` 内完成；仍不承诺完整 Linux pipe ABI，也尚未覆盖 fork/dup 继承语义。
+- signal、shm、futex、event 等完整 IPC 语义仍未落地。
 - **`ipc-api`** 从占位演进为稳定契约并实现非 dummy **`impl-*`**。
 
 ## 维护要求

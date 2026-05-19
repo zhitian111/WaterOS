@@ -116,6 +116,7 @@ fn trap_snapshot(trap_frame : TaskTrapFrame) -> TaskTrapSnapshot {
 /// 调度器持有的任务控制块。
 pub struct TaskControlBlock {
     id : TaskId,
+    parent_id : Option<TaskId>,
     kind : TaskKind,
     state : TaskState,
     stats : TaskRuntimeStats,
@@ -130,7 +131,11 @@ pub struct TaskControlBlock {
 
 impl TaskControlBlock {
     /// 创建一个普通内核任务，并初始化其启动上下文。
-    pub fn new_kernel_task(id : TaskId, entry : KernelTaskEntry, arg : usize) -> Self {
+    pub fn new_kernel_task(id : TaskId,
+                           parent_id : Option<TaskId>,
+                           entry : KernelTaskEntry,
+                           arg : usize)
+                           -> Self {
         let kernel_stack = KernelStack::new();
         let bootstrap = Box::new(TaskBootstrap::new(entry, arg));
         let bootstrap_ptr = bootstrap.as_ref() as *const TaskBootstrap as usize;
@@ -138,6 +143,7 @@ impl TaskControlBlock {
                                                    kernel_stack.top(),
                                                    bootstrap_ptr);
         Self::new(id,
+                  parent_id,
                   TaskKind::Kernel,
                   task_cx,
                   None,
@@ -156,6 +162,7 @@ impl TaskControlBlock {
                                                    kernel_stack.top(),
                                                    bootstrap_ptr);
         Self::new(id,
+                  None,
                   TaskKind::Kernel,
                   task_cx,
                   None,
@@ -166,7 +173,7 @@ impl TaskControlBlock {
     }
 
     /// 创建一个最小用户任务骨架。
-    pub fn new_user_task(id : TaskId, spec : UserTaskSpec) -> Self {
+    pub fn new_user_task(id : TaskId, parent_id : Option<TaskId>, spec : UserTaskSpec) -> Self {
         let kernel_stack = KernelStack::new();
         let user_resources = UserTaskResources::new(spec);
         let task_cx = TaskContext::goto_entry(__arch_user_task_entry as *const () as usize,
@@ -178,6 +185,7 @@ impl TaskControlBlock {
                             user_resources.user_stack_bottom()),
         );
         Self::new(id,
+                  parent_id,
                   TaskKind::User,
                   task_cx,
                   Some(trap_frame),
@@ -188,6 +196,7 @@ impl TaskControlBlock {
     }
 
     fn new(id : TaskId,
+           parent_id : Option<TaskId>,
            kind : TaskKind,
            task_cx : TaskContext,
            trap_frame : Option<TaskTrapFrame>,
@@ -197,6 +206,7 @@ impl TaskControlBlock {
            is_idle : bool)
            -> Self {
         Self { id,
+               parent_id,
                kind,
                state : TaskState::Ready,
                stats : TaskRuntimeStats::default(),
@@ -214,9 +224,14 @@ impl TaskControlBlock {
     pub fn id(&self) -> TaskId { self.id }
 
     #[inline]
+    /// 返回父任务号。
+    pub fn parent_id(&self) -> Option<TaskId> { self.parent_id }
+
+    #[inline]
     /// 生成对外可见的稳定任务快照。
     pub fn snapshot(&self) -> TaskSnapshot {
         TaskSnapshot { id : self.id,
+                       parent_id : self.parent_id,
                        kind : self.kind,
                        state : self.state,
                        trap_frame : self.trap_frame
@@ -291,6 +306,7 @@ impl TaskControlBlock {
             return None;
         };
         Some(ExitedTask { id : self.id,
+                          parent_id : self.parent_id,
                           kind : self.kind,
                           exit_code,
                           trap_frame : self.trap_frame

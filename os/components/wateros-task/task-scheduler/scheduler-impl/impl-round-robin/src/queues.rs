@@ -35,6 +35,8 @@ pub(super) struct RoundRobinQueues {
     wait_queues: Vec<VecDeque<TaskId>>,
     // 下标为被等待任务的 `TaskId`；与 `TaskWaitTarget::TaskExit` 对应。
     exit_wait_queues: Vec<VecDeque<TaskId>>,
+    // 下标为父任务 `TaskId`；与 `TaskWaitTarget::ChildExit` 对应。
+    child_exit_wait_queues: Vec<VecDeque<TaskId>>,
     // 按入队顺序扫描；到期 tick 不大于 `current_tick` 时尝试超时唤醒。
     wait_timeouts: VecDeque<WaitTimeoutEntry>,
     ready_queue: VecDeque<TaskId>,
@@ -51,6 +53,7 @@ impl RoundRobinQueues {
         Self {
             wait_queues: Vec::new(),
             exit_wait_queues: Vec::new(),
+            child_exit_wait_queues: Vec::new(),
             wait_timeouts: VecDeque::new(),
             ready_queue: VecDeque::new(),
             blocked_queue: VecDeque::new(),
@@ -64,6 +67,8 @@ impl RoundRobinQueues {
         self.wait_queues
             .clear();
         self.exit_wait_queues
+            .clear();
+        self.child_exit_wait_queues
             .clear();
         self.wait_timeouts
             .clear();
@@ -245,6 +250,15 @@ impl RoundRobinQueues {
                 return true;
             }
         }
+        for wait_queue in &mut self.child_exit_wait_queues {
+            if take_task_id_by_id(wait_queue, task_id) {
+                registry.finish_wait(task_id, TaskWaitResult::Woken);
+                registry.mark_ready(task_id);
+                self.ready_queue
+                    .push_back(task_id);
+                return true;
+            }
+        }
         false
     }
 
@@ -325,6 +339,7 @@ impl RoundRobinQueues {
         match wait_handle.target() {
             TaskWaitTarget::WaitQueue(wait_queue_id) => self.wait_queue_mut(wait_queue_id),
             TaskWaitTarget::TaskExit(task_id) => self.exit_wait_queue_mut(task_id),
+            TaskWaitTarget::ChildExit(parent_id) => self.child_exit_wait_queue_mut(parent_id),
         }
     }
 
@@ -342,6 +357,29 @@ impl RoundRobinQueues {
             self.ready_queue
                 .push_back(waiter_task_id);
         }
+        if let Some(parent_id) = registry.parent_id(task_id) {
+            while let Some(waiter_task_id) = self
+                .child_exit_wait_queue_mut(parent_id)
+                .pop_front()
+            {
+                registry.finish_wait(waiter_task_id, TaskWaitResult::Woken);
+                registry.mark_ready(waiter_task_id);
+                self.ready_queue
+                    .push_back(waiter_task_id);
+            }
+        }
+    }
+
+    fn child_exit_wait_queue_mut(&mut self, parent_id: TaskId) -> &mut VecDeque<TaskId> {
+        if self
+            .child_exit_wait_queues
+            .len()
+            <= parent_id
+        {
+            self.child_exit_wait_queues
+                .resize_with(parent_id + 1, VecDeque::new);
+        }
+        &mut self.child_exit_wait_queues[parent_id]
     }
 }
 

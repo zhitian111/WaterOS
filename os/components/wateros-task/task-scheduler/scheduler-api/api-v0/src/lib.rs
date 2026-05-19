@@ -48,12 +48,37 @@ pub trait Scheduler {
     fn block_current(&mut self, reason: TaskBlockReason);
     /// 让当前任务等待指定的阻塞对象。
     fn wait_current(&mut self, wait_handle: TaskWaitHandle);
+    /// 在实现持有调度临界区时复查条件；条件为真才等待指定阻塞对象。
+    fn wait_current_while<F>(
+        &mut self,
+        wait_handle: TaskWaitHandle,
+        condition: F,
+    )
+        where F: FnOnce() -> bool {
+        if condition() {
+            self.wait_current(wait_handle);
+        }
+    }
     /// 让当前任务等待指定的阻塞对象，并带一个超时。
     fn wait_current_timeout(
         &mut self,
         wait_handle: TaskWaitHandle,
         timeout_ticks: TaskTick,
     ) -> TaskWaitResult;
+    /// 在实现持有调度临界区时复查条件；条件为真才带超时等待指定阻塞对象。
+    fn wait_current_timeout_while<F>(
+        &mut self,
+        wait_handle: TaskWaitHandle,
+        timeout_ticks: TaskTick,
+        condition: F,
+    ) -> TaskWaitResult
+        where F: FnOnce() -> bool {
+        if condition() {
+            self.wait_current_timeout(wait_handle, timeout_ticks)
+        } else {
+            TaskWaitResult::Woken
+        }
+    }
     /// 让当前任务在指定等待队列上休眠。
     fn wait_current_on(&mut self, wait_queue_id: WaitQueueId) {
         self.wait_current(TaskWaitHandle::for_wait_queue(
@@ -94,6 +119,10 @@ pub trait Scheduler {
     fn reap_exited_task(&mut self, task_id: TaskId) -> Option<ExitedTask>;
     /// 回收一个任意已退出任务的退出信息。
     fn reap_one_exited_task(&mut self) -> Option<ExitedTask>;
+    /// 回收指定父任务的一个已退出子任务。
+    fn reap_one_exited_child(&mut self, parent_id: TaskId) -> Option<ExitedTask>;
+    /// 判断指定任务当前是否仍有未回收子任务。
+    fn has_child(&self, parent_id: TaskId) -> bool;
     /// 从指定等待队列中唤醒一个任务。
     fn wake_one_in_wait_queue(&mut self, wait_queue_id: WaitQueueId) -> Option<TaskId>;
     /// 唤醒指定等待队列中的全部任务，并返回唤醒数量。

@@ -180,6 +180,26 @@ pub fn wait_current(wait_handle: TaskWaitHandle) {
     }
 }
 
+/// 在关中断调度临界区内复查条件；仅当条件仍成立时才把当前任务挂入等待队列。
+pub fn wait_current_while(
+    wait_handle: TaskWaitHandle,
+    condition: impl FnOnce() -> bool,
+) {
+    let _guard = InterruptGuard::new();
+    let switch_pair = with_scheduler(|scheduler| {
+        if condition() {
+            scheduler.schedule_wait(wait_handle, None)
+        } else {
+            None
+        }
+    });
+    if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
+        unsafe {
+            __switch(current_task_cx_ptr, next_task_cx_ptr);
+        }
+    }
+}
+
 /// 带超时的等待；`timeout_ticks == 0` 时立即返回 [`TaskWaitResult::TimedOut`] 且不切换。
 pub fn wait_current_timeout(
     wait_handle: TaskWaitHandle,
@@ -196,6 +216,37 @@ pub fn wait_current_timeout(
         unsafe {
             __switch(current_task_cx_ptr, next_task_cx_ptr);
         }
+    }
+    with_scheduler(|scheduler| scheduler.take_current_wait_result())
+}
+
+/// 带超时的条件等待；条件为假时立即按正常唤醒返回。
+pub fn wait_current_timeout_while(
+    wait_handle: TaskWaitHandle,
+    timeout_ticks: TaskTick,
+    condition: impl FnOnce() -> bool,
+) -> TaskWaitResult {
+    if timeout_ticks == 0 {
+        return TaskWaitResult::TimedOut;
+    }
+
+    let _guard = InterruptGuard::new();
+    let mut skipped_wait = false;
+    let switch_pair = with_scheduler(|scheduler| {
+        if condition() {
+            scheduler.schedule_wait(wait_handle, Some(timeout_ticks))
+        } else {
+            skipped_wait = true;
+            None
+        }
+    });
+    if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
+        unsafe {
+            __switch(current_task_cx_ptr, next_task_cx_ptr);
+        }
+    }
+    if skipped_wait {
+        return TaskWaitResult::Woken;
     }
     with_scheduler(|scheduler| scheduler.take_current_wait_result())
 }
@@ -258,6 +309,18 @@ pub fn reap_exited_task(task_id: TaskId) -> Option<ExitedTask> {
 pub fn reap_one_exited_task() -> Option<ExitedTask> {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.reap_one_exited_task())
+}
+
+/// 按 FIFO 近似顺序回收当前父任务下任意已退出子任务。
+pub fn reap_one_exited_child(parent_id: TaskId) -> Option<ExitedTask> {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.reap_one_exited_child(parent_id))
+}
+
+/// 判断指定任务是否仍有子任务。
+pub fn has_child(parent_id: TaskId) -> bool {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.has_child(parent_id))
 }
 
 /// 从显式等待队列头部唤醒一个任务。

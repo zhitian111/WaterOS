@@ -12,12 +12,16 @@
 [dependencies]
     api-v0 = { path = "./ipc-api/api-v0/", package = "wateros-ipc-api-v0", default-features = true }
     impl-dummy = { path = "./ipc-impl/impl-dummy/", package = "wateros-ipc-impl-dummy", default-features = true }
+    pipe = { path = "./ipc-pipe/", package = "ipc-pipe", default-features = false, optional = true }
     waitqueue = { path = "./ipc-waitqueue/", package = "ipc-waitqueue", default-features = true }
 
 [features]
     api-v0 = [ "impl-dummy/api-v0" ]
     default = [ "api-v0", "impl-dummy" ]
     impl-dummy = [  ]
+    impl-loongarch64 = [ "waitqueue/impl-loongarch64", "pipe?/impl-loongarch64" ]
+    impl-riscv64 = [ "waitqueue/impl-riscv64", "pipe?/impl-riscv64" ]
+    pipe = [ "dep:pipe", "pipe/api-v0", "pipe/impl-dummy" ]
 
 [profile.dev]
     panic = "abort"

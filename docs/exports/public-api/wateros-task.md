@@ -11,9 +11,9 @@
 | **`pub mod api`** | **`pub use api_v0::*`**（含 **`TaskRuntimeStats`** 等；部分类型同时在根 **`pub use api_v0::{...}`** 显式列出）。 |
 | **`pub mod scheduler`** | **`pub use scheduler::*`**（调度器门面、**`ScheduleReason`**、**`Scheduler`** trait、**`TaskTrapFrame`**、**`active_impl`** 等，见 **`wateros-task-scheduler`**）。 |
 | **`active_impl`** | 仅 **`#[cfg(feature = "impl-core")]`**：**`impl_core`**（**`TaskBootstrap`**、**`TaskControlBlock`** 等）。 |
-| **`WaitQueue`** | 根上定义的 **`struct WaitQueue`** 及 **`new` / `id` / `wait_handle` / `wait_current` / `wait_current_for_ticks` / `wake_one` / `wake_all`**，内部委托 **`scheduler`**。 |
+| **`WaitQueue`** | 根上定义的 **`struct WaitQueue`** 及 **`new` / `id` / `wait_handle` / `wait_current` / `wait_current_for_ticks` / `wait_current_while` / `wait_current_while_for_ticks` / `wake_one` / `wake_all`**，内部委托 **`scheduler`**。 |
 | **根 `pub use api_v0::{...}`** | **`AddressSpaceHandle`**、**`ExitedTask`**、**`KernelTaskEntry`**、**`TaskBlockReason`**、**`TaskExitCode`**、**`TaskId`**、**`TaskKind`**、**`TaskSnapshot`**、**`TaskState`**、**`TaskTick`**、**`TaskTrapSnapshot`**、**`TaskWaitHandle`**、**`TaskWaitResult`**、**`TaskWaitTarget`**、**`UserImageInfo`**、**`UserTaskEntryPc`**、**`UserTaskResources`**、**`UserTaskSpec`**、**`WaitQueueId`**、**`IDLE_TASK_ID`**；另从 **`wateros-mm-api-v0`** 再导出 **`LoadedElf`**。 |
-| **根级函数** | **`init`**、**`init_kernel_trap_satp`**、**`spawn_kernel_task`**、**`spawn_user_task_spec`**、**`spawn_user_task`**、**`user_task_spec_from_loaded_elf`**、**`spawn_user_task_from_loaded_elf`**、**`run_first_task`**、**`yield_now`**、**`schedule_tick`**、**`block_current`**、**`wait_on`**、**`wait_on_for_ticks`**、**`task_exit_wait_handle`**、**`wait_for_task_exit`**、**`wait_for_task_exit_for_ticks`**、**`sleep_for_ticks`**、**`wake_task`**、**`reap_exited_task`**、**`reap_one_exited_task`**、**`exit_current`**、**`current_task_id`**、**`current_task_snapshot`**。 |
+| **根级函数** | **`init`**、**`init_kernel_trap_satp`**、**`spawn_kernel_task`**、**`spawn_user_task_spec`**、**`spawn_user_task`**、**`user_task_spec_from_loaded_elf`**、**`spawn_user_task_from_loaded_elf`**、**`run_first_task`**、**`yield_now`**、**`schedule_tick`**、**`block_current`**、**`wait_on`**、**`wait_on_while`**、**`wait_on_for_ticks`**、**`wait_on_while_for_ticks`**、**`task_exit_wait_handle`**、**`wait_for_task_exit`**、**`wait_for_task_exit_for_ticks`**、**`sleep_for_ticks`**、**`wake_task`**、**`reap_exited_task`**、**`reap_one_exited_task`**、**`reap_one_exited_child`**、**`has_child`**、**`exit_current`**、**`current_task_id`**、**`current_task_snapshot`**、**`task_snapshot`**。 |
 
 更多调度器独有入口（如 **`current_task_address_space_raw`**、trap frame 存取）仅暴露在 **`scheduler`** 模块路径下，根层不重复包装。
 
@@ -26,14 +26,15 @@
 - 主动让出：`yield_now`
 - 时钟驱动调度：`schedule_tick`
 - 阻塞与睡眠：`block_current`、`sleep_for_ticks`
-- 通用等待：`wait_on`、`wait_on_for_ticks`、`task_exit_wait_handle`
-- wait queue：`WaitQueue::new`、`wait_current`、`wait_current_for_ticks`、`wake_one`、`wake_all`
+- 通用等待：`wait_on`、`wait_on_while`、`wait_on_for_ticks`、`wait_on_while_for_ticks`、`task_exit_wait_handle`
+- wait queue：`WaitQueue::new`、`wait_current`、`wait_current_for_ticks`、`wait_current_while`、`wait_current_while_for_ticks`、`wake_one`、`wake_all`
 - 任务退出等待：`wait_for_task_exit`、`wait_for_task_exit_for_ticks`
 - 唤醒与退出：`wake_task`、`exit_current`
-- 退出回收：`reap_exited_task`、`reap_one_exited_task`
-- 当前任务查询：`current_task_id`、`current_task_snapshot`
+- 退出回收：`reap_exited_task`、`reap_one_exited_task`、`reap_one_exited_child`
+- 父子关系查询：`has_child`
+- 当前与指定任务查询：`current_task_id`、`current_task_snapshot`、`task_snapshot`
 
-`task-api` 当前已补齐 `TaskKind`、`TaskState`、`TaskBlockReason`、`TaskExitCode`、`TaskTick`、`TaskTrapSnapshot`、`TaskSnapshot` 等基础语义，并进一步收紧为稳定任务视图层：`TaskSnapshot` 现在是显式快照结构，只暴露 `id`、`kind`、`state`、`stats` 和最近一次 trap 语义快照，不再暴露内核栈顶、启动入口、bootstrap 协议细节或完整架构 trap frame 布局。任务启动协议对象已经从公共 API 中移出，转而留在 `task-impl` 与 `wateros-task` runtime 的内部机制路径中。寄存器级切换上下文和完整 trap frame 仍只保留在 `task-impl`、`task-scheduler` 与 runtime 机制层，并由 `platform-arch` 提供当前架构实现；`task-scheduler` 内部则进一步收敛为“任务注册表 + round-robin 队列”结构，并补出 `TaskWaitHandle` / `TaskWaitTarget` 这一层，把 waitqueue、任务退出等待和 timeout 统一到了同一条等待路径上，退出任务也会以 zombie 形式保留直到被显式回收。调度原因 `ScheduleReason` 已从 task 公共契约移动到 scheduler API，trap frame record/restore hook 也不再属于 `Scheduler` 公共 trait。当前用户态主线通过 `spawn_user_task_from_loaded_elf` 承接 MM loader 返回的真实 ELF 地址空间、入口、image 与外部栈元数据，RISC-V 自检以根卷默认 ELF 作为用户态回归来源。
+`task-api` 当前已补齐 `TaskKind`、`TaskState`、`TaskBlockReason`、`TaskExitCode`、`TaskTick`、`TaskTrapSnapshot`、`TaskSnapshot` 等基础语义，并进一步收紧为稳定任务视图层：`TaskSnapshot` 现在是显式快照结构，只暴露 `id`、`parent_id`、`kind`、`state`、`stats` 和最近一次 trap 语义快照，不再暴露内核栈顶、启动入口、bootstrap 协议细节或完整架构 trap frame 布局。任务启动协议对象已经从公共 API 中移出，转而留在 `task-impl` 与 `wateros-task` runtime 的内部机制路径中。寄存器级切换上下文和完整 trap frame 仍只保留在 `task-impl`、`task-scheduler` 与 runtime 机制层，并由 `platform-arch` 提供当前架构实现；`task-scheduler` 内部则进一步收敛为“任务注册表 + round-robin 队列”结构，并补出 `TaskWaitHandle` / `TaskWaitTarget` 这一层，把 waitqueue、任务退出等待、任意子任务退出等待和 timeout 统一到了同一条等待路径上，退出任务也会以 zombie 形式保留直到被显式回收。条件等待接口在调度器关中断临界区内复查闭包，供 pipe 等 IPC 对象避免检查状态与入队等待之间的丢唤醒窗口。当前 spawn 会记录最小 `parent_id`，供 syscall `waitpid` 阻塞等待和回收子任务。调度原因 `ScheduleReason` 已从 task 公共契约移动到 scheduler API，trap frame record/restore hook 也不再属于 `Scheduler` 公共 trait。当前用户态主线通过 `spawn_user_task_from_loaded_elf` 承接 MM loader 返回的真实 ELF 地址空间、入口、image 与外部栈元数据，RISC-V 自检以根卷默认 ELF 作为用户态回归来源。
 
 ## 事实来源
 

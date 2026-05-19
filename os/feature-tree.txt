@@ -11,12 +11,27 @@ ipc-pipe  (components/wateros-ipc/ipc-pipe/Cargo.toml)
   - default [default]
     - api-v0
     - impl-dummy
+    - impl-riscv64
   - api-v0 [default]
     - impl-dummy/api-v0
       > wateros-ipc-pipe-impl-dummy
         - default [default]
         - api-v0 [default]
+        - impl-riscv64 [default]
   - impl-dummy [default]
+  - impl-loongarch64
+    - impl-dummy/impl-loongarch64
+      > wateros-ipc-pipe-impl-dummy
+        - default [default]
+        - api-v0 [default]
+        - impl-riscv64 [default]
+        - impl-loongarch64
+  - impl-riscv64 [default]
+    - impl-dummy/impl-riscv64
+      > wateros-ipc-pipe-impl-dummy
+        - default [default]
+        - api-v0 [default]
+        - impl-riscv64 [default]
 
 ipc-shm  (components/wateros-ipc/ipc-shm/Cargo.toml)
   (no [features])
@@ -33,7 +48,20 @@ ipc-signal  (components/wateros-ipc/ipc-signal/Cargo.toml)
   - impl-dummy [default]
 
 ipc-waitqueue  (components/wateros-ipc/ipc-waitqueue/Cargo.toml)
-  (no [features])
+  - default [default]
+    - impl-riscv64
+  - api-v0
+    - wateros-task/api-v0
+  - impl-loongarch64
+    - api-v0
+    - wateros-task/impl-core
+    - wateros-task/impl-loongarch64
+    - wateros-task/impl-round-robin
+  - impl-riscv64 [default]
+    - api-v0
+    - wateros-task/impl-core
+    - wateros-task/impl-riscv64
+    - wateros-task/impl-round-robin
 
 wateros  (Cargo.toml)
   - default [default]
@@ -165,11 +193,26 @@ wateros  (Cargo.toml)
         - default [default]
         - api-v0 [default]
         - impl-dummy [default]
+        - impl-riscv64 [default]
     - ipc/impl-dummy
       > wateros-ipc
         - default [default]
         - api-v0 [default]
         - impl-dummy [default]
+        - impl-riscv64 [default]
+    - ipc/impl-riscv64
+      > wateros-ipc
+        - default [default]
+        - api-v0 [default]
+        - impl-dummy [default]
+        - impl-riscv64 [default]
+    - ipc/pipe
+      > wateros-ipc
+        - default [default]
+        - api-v0 [default]
+        - impl-dummy [default]
+        - impl-riscv64 [default]
+        - pipe
     - impl-sv39
     - mm/api-v0
       > wateros-mm
@@ -569,12 +612,41 @@ wateros-ipc  (components/wateros-ipc/Cargo.toml)
   - default [default]
     - api-v0
     - impl-dummy
+    - impl-riscv64
   - api-v0 [default]
     - impl-dummy/api-v0
       > wateros-ipc-impl-dummy
         - default [default]
         - api-v0 [default]
   - impl-dummy [default]
+  - impl-loongarch64
+    - waitqueue/impl-loongarch64
+      > ipc-waitqueue
+        - default [default]
+        - impl-riscv64 [default]
+        - api-v0
+        - impl-loongarch64
+    - pipe?/impl-loongarch64
+  - impl-riscv64 [default]
+    - waitqueue/impl-riscv64
+      > ipc-waitqueue
+        - default [default]
+        - impl-riscv64 [default]
+    - pipe?/impl-riscv64
+  - pipe
+    - dep:pipe
+    - pipe/api-v0
+      > ipc-pipe
+        - default [default]
+        - api-v0 [default]
+        - impl-dummy [default]
+        - impl-riscv64 [default]
+    - pipe/impl-dummy
+      > ipc-pipe
+        - default [default]
+        - api-v0 [default]
+        - impl-dummy [default]
+        - impl-riscv64 [default]
 
 wateros-ipc-api-v0  (components/wateros-ipc/ipc-api/api-v0/Cargo.toml)
   (no [features])
@@ -590,7 +662,12 @@ wateros-ipc-pipe-api-v0  (components/wateros-ipc/ipc-pipe/pipe-api/api-v0/Cargo.
 wateros-ipc-pipe-impl-dummy  (components/wateros-ipc/ipc-pipe/pipe-impl/impl-dummy/Cargo.toml)
   - default [default]
     - api-v0
+    - impl-riscv64
   - api-v0 [default]
+  - impl-loongarch64
+    - waitqueue/impl-loongarch64
+  - impl-riscv64 [default]
+    - waitqueue/impl-riscv64
 
 wateros-ipc-signal-api-v0  (components/wateros-ipc/ipc-signal/signal-api/api-v0/Cargo.toml)
   (no [features])
@@ -1105,6 +1182,22 @@ wateros-syscall  (components/wateros-syscall/Cargo.toml)
         - impl-dummy
         - impl-firmware-console
         - impl-firmware-opensbi [default]
+    - dep:ipc
+    - ipc/impl-loongarch64
+      > wateros-ipc
+        - default [default]
+        - api-v0 [default]
+        - impl-dummy [default]
+        - impl-riscv64 [default]
+        - impl-loongarch64
+        - pipe
+    - ipc/pipe
+      > wateros-ipc
+        - default [default]
+        - api-v0 [default]
+        - impl-dummy [default]
+        - impl-riscv64 [default]
+        - pipe
     - task/api-v0
       > wateros-task
         - default [default]
@@ -1161,6 +1254,21 @@ wateros-syscall  (components/wateros-syscall/Cargo.toml)
         - impl-dummy
         - impl-firmware-console
         - impl-firmware-opensbi [default]
+    - dep:ipc
+    - ipc/impl-riscv64
+      > wateros-ipc
+        - default [default]
+        - api-v0 [default]
+        - impl-dummy [default]
+        - impl-riscv64 [default]
+        - pipe
+    - ipc/pipe
+      > wateros-ipc
+        - default [default]
+        - api-v0 [default]
+        - impl-dummy [default]
+        - impl-riscv64 [default]
+        - pipe
     - dep:mm
     - task/api-v0
       > wateros-task

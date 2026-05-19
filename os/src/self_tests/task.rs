@@ -1,194 +1,205 @@
-//! 任务调度、等待/超时、退出与回收相关的内核自检（内核任务，无固定根卷 ELF /
-//! 伪用户进程）。
+//! 任务子系统最小自检：启动固定用户 ELF，并运行 pipe IPC 内核自检任务。
 //!
-//! **用途**：在 `kernel_main` 已初始化 MM 与 `task`
-//! 子系统后，通过多组内核任务与真实 ELF 用户任务验证
-//! `sleep`/`yield`、`block`/`wake`、 等待队列超时、`wait_for_exit`/`reap`、以及
-//! `spawn_user_task_from_loaded_elf` 与 trap 快照等契约。
-//!
-//! **入口**：[`spawn_all`] 由 `kernel_main` 调用；其中在 **`wateros` 根 crate
-//! 启用 `impl-sv39` feature**（`qemu-riscv64-opensbi` 已包含）时，会先尝试加载
-//! [`mm::kernel_mm::DEFAULT_USER_ELF_PATH`] 对应的真实用户 ELF
-//! 并派生观察任务，再创建 stage2/3
-//! 内核自检任务，
-//! 以降低自检对默认用户程序首轮调度的干扰。
-//!
-//! **后续替换点**：默认用户镜像路径来自 MM bring-up 契约，若用户 ABI
-//! 或镜像布局变更， 应同步调整根卷镜像与本模块断言。
+//! **入口**：[`spawn_all`] 由 `kernel_main` 在 `fs::init` 之后调用。用户 ELF
+//! 只负责从根卷装载并入队，真实用户态执行会在 `task::run_first_task()` 后发生。
+//! pipe 自检任务覆盖阻塞读写、非阻塞错误、EOF 与 BrokenPipe。
 
-use core::sync::atomic::{AtomicBool, Ordering};
+use alloc::boxed::Box;
 use runtime::logging::*;
 
-static BLOCK_TASK_READY : AtomicBool = AtomicBool::new(false);
+/// 固定启动的用户态 hello world ELF。
+const HELLO_WORLD_ELF_PATH : &str = "/elf/000_hello_world.elf";
+const PIPE_SMOKE_ELF_PATH : &str = "/elf/010_pipe_smoke.elf";
 
-/// ELF observer 对 loader 输出的只读期望快照；由 spawn 方放入堆中并由 observer
-/// 回收。
-struct ElfUserTaskExpected {
-    task_id : task::TaskId,
-    entry_pc : usize,
-    satp : usize,
-    image_base : usize,
-    image_size : usize,
-    stack_bottom : usize,
-    stack_top : usize,
-}
-
-// 纯自旋延迟，避免日志在极短 tick 内刷屏；无硬件假设。
-fn busy_delay(rounds : usize) {
-    for _ in 0..rounds {
-        core::hint::spin_loop();
+/// 从根卷装载并启动 hello world 用户任务；若当前路径无根卷或 ELF，记录 warning 后跳过。
+fn spawn_user_elf_task(path : &str, label : &str) {
+    #[cfg(not(feature = "impl-sv39"))]
+    {
+        warn!("[task-selftest] impl-sv39 off: skip {}", path);
     }
-}
 
-/// 若存在当前任务，打印调度统计；用于 sleep/block 路径的可观测性。
-fn log_task_snapshot(label : &str) {
-    if let Some(snapshot) = task::current_task_snapshot() {
-        info!("[task-stage2] {} id={} state={:?} schedule_count={} tick_count={}",
-              label,
-              snapshot.id,
-              snapshot.state,
-              snapshot.stats
-                      .schedule_count,
-              snapshot.stats
-                      .tick_count);
-    } else {
-        warn!("[task-stage2] {} no current task snapshot",
-              label);
-    }
-}
-
-/// stage2：`sleep_for_ticks` 与快照日志交替。
-extern "C" fn stage2_sleep_task(_arg : usize) -> ! {
-    info!("[task-stage2] sleep task started");
-    for round in 1..=3usize {
-        log_task_snapshot("sleep-before");
-        info!("[task-stage2] sleep task round {} -> sleep_for_ticks(2)",
-              round);
-        task::sleep_for_ticks(2);
-        log_task_snapshot("sleep-after");
-        busy_delay(250_000);
-    }
-    info!("[task-stage2] sleep task exiting with code 11");
-    task::exit_current(11);
-}
-
-/// stage2：到达 `block_current` 前释放 `BLOCK_TASK_READY`，供 waker 同步。
-extern "C" fn stage2_blocked_task(_arg : usize) -> ! {
-    info!("[task-stage2] blocked task started");
-    log_task_snapshot("block-before");
-    BLOCK_TASK_READY.store(true, Ordering::Release);
-    info!("[task-stage2] blocked task entering manual block");
-    task::block_current(task::TaskBlockReason::Manual);
-    info!("[task-stage2] blocked task resumed after wake");
-    log_task_snapshot("block-after");
-    busy_delay(250_000);
-    info!("[task-stage2] blocked task exiting with code 22");
-    task::exit_current(22);
-}
-
-/// stage2：等待 ready 标志后延迟 tick 再 `wake_task`，验证手动阻塞/唤醒序。
-extern "C" fn stage2_waker_task(blocked_task_id : usize) -> ! {
-    info!("[task-stage2] waker task started, target blocked_task_id={}",
-          blocked_task_id);
-    let mut attempt = 0usize;
-    while !BLOCK_TASK_READY.load(Ordering::Acquire) {
-        attempt = attempt.wrapping_add(1);
-        if attempt % 2 == 0 {
-            info!("[task-stage2] waker waiting for blocked task to reach block point, attempt={}",
-                  attempt);
+    #[cfg(feature = "impl-sv39")]
+    {
+        match mm::kernel_mm::from_elf_path(path) {
+            Ok(loaded) => {
+                info!(
+                    "[task-selftest] loaded {} path={} entry={:#x} image=[{:#x},+{:#x}) \
+                     stack=[{:#x},{:#x}) satp={:#x} aspace_ptr={:#x}",
+                    label,
+                    path,
+                    loaded.entry_pc,
+                    loaded.image_base,
+                    loaded.image_size,
+                    loaded.stack_bottom,
+                    loaded.stack_top,
+                    loaded.satp,
+                    loaded.user_aspace_ptr
+                );
+                let tid = task::spawn_user_task_from_loaded_elf(&loaded);
+                info!("[task-selftest] spawned {} user task {}", label, tid);
+            }
+            Err(err) => {
+                warn!(
+                    "[task-selftest] skip {} path={}: {:?}",
+                    label,
+                    path,
+                    err
+                );
+            }
         }
-        task::yield_now();
     }
-
-    info!("[task-stage2] waker observed blocked task ready, delaying wake by 3 ticks");
-    task::sleep_for_ticks(3);
-    let woke = task::wake_task(blocked_task_id);
-    info!("[task-stage2] waker invoked wake_task({}) -> {}",
-          blocked_task_id, woke);
-    log_task_snapshot("waker-after-wake");
-
-    for round in 1..=3usize {
-        info!("[task-stage2] waker observation round {}",
-              round);
-        task::yield_now();
-    }
-
-    info!("[task-stage2] waker task exiting with code 33");
-    task::exit_current(33);
 }
 
-/// stage3b：在 wait queue 上应超时返回。
-extern "C" fn stage3_wait_timeout_task(wait_queue_id : usize) -> ! {
-    info!("[task-stage3b] timeout task started, wait_queue_id={}",
-          wait_queue_id);
-    let wait_result = task::wait_on_for_ticks(task::TaskWaitHandle::for_wait_queue(wait_queue_id),
-                                              2);
-    assert_eq!(wait_result,
-               task::TaskWaitResult::TimedOut,
-               "wait queue timeout task must observe TimedOut");
-    info!("[task-stage3b] timeout task observed {:?} as expected",
-          wait_result);
-    task::exit_current(44);
+fn pipe_from_arg(pipe_ptr : usize) -> &'static ipc::pipe::Pipe {
+    unsafe { &*(pipe_ptr as *const ipc::pipe::Pipe) }
 }
 
-/// stage3b：先睡再退出，供 exit-waiter / reaper 验证。
-extern "C" fn stage3_exit_target_task(_arg : usize) -> ! {
-    info!("[task-stage3b] exit-target task started");
+/// 读者先阻塞在空 pipe，写者稍后写入后应唤醒读者。
+extern "C" fn pipe_reader_task(pipe_ptr : usize) -> ! {
+    let pipe = pipe_from_arg(pipe_ptr);
+    let mut buf = [0u8; 5];
+    let n = pipe
+        .read(&mut buf)
+        .expect("pipe reader should be woken by writer");
+    assert_eq!(n, buf.len(),
+               "pipe reader must receive the full smoke payload");
+    assert_eq!(&buf, b"water",
+               "pipe reader payload must match writer payload");
+    info!("[ipc-pipe] reader received {:?}", buf);
+    task::exit_current(88);
+}
+
+/// 延迟写入，验证空 pipe reader 的条件等待不会丢唤醒。
+extern "C" fn pipe_writer_task(pipe_ptr : usize) -> ! {
+    let pipe = pipe_from_arg(pipe_ptr);
     task::sleep_for_ticks(2);
-    info!("[task-stage3b] exit-target task exiting with code 55");
-    task::exit_current(55);
+    let n = pipe
+        .write(b"water")
+        .expect("pipe writer should write while read end is open");
+    assert_eq!(n, 5,
+               "pipe writer must report the full smoke payload");
+    info!("[ipc-pipe] writer sent {} bytes", n);
+    task::exit_current(89);
 }
 
-/// stage3b：`wait_for_task_exit_for_ticks` 须在时限内被目标退出唤醒。
-extern "C" fn stage3_exit_waiter_task(exit_target_task_id : usize) -> ! {
-    info!("[task-stage3b] exit-waiter task started, target={}",
-          exit_target_task_id);
-    let wait_result = task::wait_for_task_exit_for_ticks(exit_target_task_id, 8);
-    assert_eq!(wait_result,
-               task::TaskWaitResult::Woken,
-               "wait-for-exit task must be woken by target exit");
-    info!("[task-stage3b] exit-waiter observed target {} exit via {:?}",
-          exit_target_task_id, wait_result);
-    task::exit_current(66);
+/// pipe 已满时写者应阻塞，直到 reader 读出空间。
+extern "C" fn pipe_full_writer_task(pipe_ptr : usize) -> ! {
+    let pipe = pipe_from_arg(pipe_ptr);
+    let n = pipe
+        .write(&[9])
+        .expect("full pipe writer should resume after reader frees space");
+    assert_eq!(n, 1,
+               "full pipe writer must write one byte after wake");
+    info!("[ipc-pipe] full writer resumed");
+    task::exit_current(90);
 }
 
-/// stage3b：稍后 `reap_exited_task`，断言僵尸元数据与退出码。
-extern "C" fn stage3_exit_reaper_task(exit_target_task_id : usize) -> ! {
-    info!("[task-stage3b] exit-reaper task started, target={}",
-          exit_target_task_id);
-    task::sleep_for_ticks(5);
-    let exited_task = task::reap_exited_task(exit_target_task_id).expect("exit-reaper must \
-                                                                          observe zombie task \
-                                                                          before reaping");
-    assert_eq!(exited_task.id, exit_target_task_id,
-               "reaped task id must match exit target");
-    assert_eq!(exited_task.exit_code, 55,
-               "reaped task exit code must match exit target");
-    info!("[task-stage3b] exit-reaper reaped task {} with exit_code={}",
-          exited_task.id, exited_task.exit_code);
-    task::exit_current(77);
+/// 稍后读出一个字节，释放满 pipe 的写者。
+extern "C" fn pipe_full_reader_task(pipe_ptr : usize) -> ! {
+    let pipe = pipe_from_arg(pipe_ptr);
+    task::sleep_for_ticks(3);
+    let mut buf = [0u8; 1];
+    let n = pipe
+        .read(&mut buf)
+        .expect("full pipe reader should read prefilled byte");
+    assert_eq!(n, 1,
+               "full pipe reader must read one byte");
+    assert_eq!(buf[0], 1,
+               "full pipe reader must observe FIFO order");
+    info!("[ipc-pipe] full reader freed one byte");
+    task::exit_current(91);
 }
 
-/// 启动 stage2 / stage3b 内核自检任务。
+/// 关闭写端后，空 pipe 读取应返回 EOF。
+extern "C" fn pipe_eof_task(_arg : usize) -> ! {
+    let pipe = ipc::pipe::Pipe::with_capacity(2).expect("pipe capacity should be valid");
+    pipe.close_write();
+    let mut buf = [0u8; 1];
+    let n = pipe
+        .read(&mut buf)
+        .expect("closed write end should produce EOF");
+    assert_eq!(n, 0,
+               "empty pipe with closed writer must return EOF");
+    info!("[ipc-pipe] eof check ok");
+    task::exit_current(92);
+}
+
+/// 关闭读端后，写入应返回 BrokenPipe。
+extern "C" fn pipe_broken_task(_arg : usize) -> ! {
+    let pipe = ipc::pipe::Pipe::with_capacity(2).expect("pipe capacity should be valid");
+    pipe.close_read();
+    let err = pipe
+        .write(&[1])
+        .expect_err("closed read end should reject writes");
+    assert_eq!(err,
+               ipc::pipe::PipeError::BrokenPipe,
+               "closed read end must map to BrokenPipe");
+    info!("[ipc-pipe] broken pipe check ok");
+    task::exit_current(93);
+}
+
+/// 非阻塞读空/写满路径应返回 WouldBlock。
+extern "C" fn pipe_try_task(_arg : usize) -> ! {
+    let pipe = ipc::pipe::Pipe::with_capacity(2).expect("pipe capacity should be valid");
+    let mut buf = [0u8; 2];
+    let read_err = pipe
+        .try_read(&mut buf)
+        .expect_err("empty open pipe should not be readable without blocking");
+    assert_eq!(read_err,
+               ipc::pipe::PipeError::WouldBlock,
+               "empty open pipe try_read must return WouldBlock");
+    assert_eq!(pipe
+                   .try_write(&[7, 8])
+                   .expect("try_write should fill empty pipe"),
+               2,
+               "try_write should fill two-byte pipe");
+    let write_err = pipe
+        .try_write(&[9])
+        .expect_err("full pipe should not be writable without blocking");
+    assert_eq!(write_err,
+               ipc::pipe::PipeError::WouldBlock,
+               "full pipe try_write must return WouldBlock");
+    assert_eq!(pipe
+                   .read(&mut buf)
+                   .expect("pipe should read back buffered bytes"),
+               2,
+               "pipe should read back both buffered bytes");
+    assert_eq!(&buf, &[7, 8],
+               "pipe must preserve FIFO order in try path");
+    info!("[ipc-pipe] try path check ok");
+    task::exit_current(94);
+}
+
+/// 启动 hello world 用户任务与 pipe 内核自检任务。
 pub fn spawn_all() {
-    let wait_timeout_queue = task::WaitQueue::new();
-    let blocked_task_id = task::spawn_kernel_task(stage2_blocked_task, 0);
-    let sleep_task_id = task::spawn_kernel_task(stage2_sleep_task, 0);
-    let waker_task_id = task::spawn_kernel_task(stage2_waker_task, blocked_task_id);
-    let wait_timeout_task_id = task::spawn_kernel_task(stage3_wait_timeout_task,
-                                                       wait_timeout_queue.id());
-    let exit_target_task_id = task::spawn_kernel_task(stage3_exit_target_task, 0);
-    let exit_waiter_task_id = task::spawn_kernel_task(stage3_exit_waiter_task,
-                                                      exit_target_task_id);
-    let exit_reaper_task_id = task::spawn_kernel_task(stage3_exit_reaper_task,
-                                                      exit_target_task_id);
-    info!("[task-stage2] spawned kernel tasks: blocked={}, sleep={}, waker={}",
-          blocked_task_id, sleep_task_id, waker_task_id);
-    info!("[task-stage3b] spawned self-test tasks: timeout={}, exit_target={}, exit_waiter={}, \
-           exit_reaper={}, wait_queue_id={}",
-          wait_timeout_task_id,
-          exit_target_task_id,
-          exit_waiter_task_id,
-          exit_reaper_task_id,
-          wait_timeout_queue.id());
+    spawn_user_elf_task(HELLO_WORLD_ELF_PATH, "hello-world");
+    spawn_user_elf_task(PIPE_SMOKE_ELF_PATH, "pipe-smoke");
+
+    let pipe_smoke = Box::into_raw(Box::new(ipc::pipe::Pipe::with_capacity(8)
+        .expect("pipe smoke capacity should be valid"))) as usize;
+    let pipe_full = ipc::pipe::Pipe::with_capacity(4).expect("pipe full capacity should be valid");
+    assert_eq!(pipe_full
+                   .try_write(&[1, 2, 3, 4])
+                   .expect("prefill pipe should succeed"),
+               4,
+               "prefill pipe should occupy full capacity");
+    let pipe_full = Box::into_raw(Box::new(pipe_full)) as usize;
+
+    let pipe_reader_task_id = task::spawn_kernel_task(pipe_reader_task, pipe_smoke);
+    let pipe_writer_task_id = task::spawn_kernel_task(pipe_writer_task, pipe_smoke);
+    let pipe_full_writer_task_id = task::spawn_kernel_task(pipe_full_writer_task, pipe_full);
+    let pipe_full_reader_task_id = task::spawn_kernel_task(pipe_full_reader_task, pipe_full);
+    let pipe_eof_task_id = task::spawn_kernel_task(pipe_eof_task, 0);
+    let pipe_broken_task_id = task::spawn_kernel_task(pipe_broken_task, 0);
+    let pipe_try_task_id = task::spawn_kernel_task(pipe_try_task, 0);
+
+    info!("[ipc-pipe] spawned self-test tasks: reader={}, writer={}, full_writer={}, \
+           full_reader={}, eof={}, broken={}, try={}",
+          pipe_reader_task_id,
+          pipe_writer_task_id,
+          pipe_full_writer_task_id,
+          pipe_full_reader_task_id,
+          pipe_eof_task_id,
+          pipe_broken_task_id,
+          pipe_try_task_id);
 }

@@ -69,6 +69,22 @@ impl WaitQueue {
         scheduler::wait_current_timeout(self.wait_handle(), timeout_ticks)
     }
 
+    /// 在调度临界区内复查条件；条件仍成立才让当前任务在该队列上休眠。
+    #[inline]
+    pub fn wait_current_while(&self, condition: impl FnOnce() -> bool) {
+        scheduler::wait_current_while(self.wait_handle(), condition);
+    }
+
+    /// 在调度临界区内复查条件；条件仍成立才让当前任务在该队列上带超时等待。
+    #[inline]
+    pub fn wait_current_while_for_ticks(
+        &self,
+        timeout_ticks: TaskTick,
+        condition: impl FnOnce() -> bool,
+    ) -> TaskWaitResult {
+        scheduler::wait_current_timeout_while(self.wait_handle(), timeout_ticks, condition)
+    }
+
     /// 唤醒该等待队列中的一个任务，并返回被唤醒的任务号。
     #[inline]
     pub fn wake_one(&self) -> Option<TaskId> {
@@ -169,10 +185,26 @@ pub fn wait_on(wait_handle: TaskWaitHandle) {
     scheduler::wait_current(wait_handle);
 }
 
+/// 在调度临界区内复查条件；条件仍成立才等待指定的阻塞对象。
+#[inline]
+pub fn wait_on_while(wait_handle: TaskWaitHandle, condition: impl FnOnce() -> bool) {
+    scheduler::wait_current_while(wait_handle, condition);
+}
+
 /// 让当前任务等待指定的阻塞对象，并带一个超时。
 #[inline]
 pub fn wait_on_for_ticks(wait_handle: TaskWaitHandle, timeout_ticks: TaskTick) -> TaskWaitResult {
     scheduler::wait_current_timeout(wait_handle, timeout_ticks)
+}
+
+/// 在调度临界区内复查条件；条件仍成立才带超时等待指定阻塞对象。
+#[inline]
+pub fn wait_on_while_for_ticks(
+    wait_handle: TaskWaitHandle,
+    timeout_ticks: TaskTick,
+    condition: impl FnOnce() -> bool,
+) -> TaskWaitResult {
+    scheduler::wait_current_timeout_while(wait_handle, timeout_ticks, condition)
 }
 
 /// 返回“等待指定任务退出”的通用等待句柄。
@@ -218,6 +250,18 @@ pub fn reap_exited_task(task_id: TaskId) -> Option<ExitedTask> {
 #[inline]
 pub fn reap_one_exited_task() -> Option<ExitedTask> {
     scheduler::reap_one_exited_task()
+}
+
+/// 回收指定父任务下任意一个已退出子任务的信息。
+#[inline]
+pub fn reap_one_exited_child(parent_id: TaskId) -> Option<ExitedTask> {
+    scheduler::reap_one_exited_child(parent_id)
+}
+
+/// 判断指定任务是否仍有子任务。
+#[inline]
+pub fn has_child(parent_id: TaskId) -> bool {
+    scheduler::has_child(parent_id)
 }
 
 /// 让当前任务以给定退出码结束运行。

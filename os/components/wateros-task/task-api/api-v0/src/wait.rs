@@ -20,6 +20,8 @@ pub enum TaskWaitTarget {
     WaitQueue(WaitQueueId),
     /// 等待某个任务进入退出状态。
     TaskExit(TaskId),
+    /// 等待某个父任务的任意子任务进入退出状态。
+    ChildExit(TaskId),
 }
 
 /// 对一个可等待对象的稳定引用；值语义，可安全复制给调度器入队逻辑。
@@ -43,6 +45,14 @@ impl TaskWaitHandle {
     pub const fn for_task_exit(task_id: TaskId) -> Self {
         Self {
             target: TaskWaitTarget::TaskExit(task_id),
+        }
+    }
+
+    /// 为指定父任务的任意子任务退出事件构造等待句柄。
+    #[inline]
+    pub const fn for_child_exit(parent_task_id: TaskId) -> Self {
+        Self {
+            target: TaskWaitTarget::ChildExit(parent_task_id),
         }
     }
 

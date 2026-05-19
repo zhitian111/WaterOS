@@ -1,18 +1,18 @@
 #![no_std]
-//! 管道 IPC 聚合占位：子 crate（`pipe-api` / `pipe-impl`）尚未挂入主 workspace。
+//! 管道 IPC 聚合：重导出 pipe API v0 与当前启用的实现。
 //!
-//! 与 `ipc-pipe/pipe-api`、`pipe-impl` 的职责划分：本 crate 将来可作为管道子树的聚合门面；现阶段仅保证目录与 Cargo 边界存在。
+//! 与 `ipc-pipe/pipe-api`、`pipe-impl` 的职责划分：API 层固定错误与结果契约，实现层提供内核内部 ring-buffer pipe。
 
-/// 占位算术：无 read/write/EOF 等管道语义；正式管道 API 在 `pipe-api` 演进后应由本 crate 或上层聚合重导出。
-pub fn add(left : u64, right : u64) -> u64 { left + right }
-
-// 占位 crate 的编译期自检。
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
+/// 版本化 pipe API。
+pub mod api {
+    pub use ::api_v0::*;
 }
+
+#[cfg(feature = "impl-dummy")]
+/// 当前 pipe 实现命名空间；包名沿用 dummy，行为已替换为真实 ring buffer。
+pub use impl_dummy as active_impl;
+
+pub use api_v0::{PipeError, PipeResult, DEFAULT_PIPE_CAPACITY};
+
+#[cfg(feature = "impl-dummy")]
+pub use active_impl::{Pipe, PipeEndpoint, PipeEndpointKind};

@@ -93,6 +93,15 @@ pub fn wait_current(wait_handle: TaskWaitHandle) {
     active_impl::wait_current(wait_handle);
 }
 
+/// 在调度临界区内复查条件；条件为真才阻塞当前任务。
+#[inline]
+pub fn wait_current_while(
+    wait_handle: TaskWaitHandle,
+    condition: impl FnOnce() -> bool,
+) {
+    active_impl::wait_current_while(wait_handle, condition);
+}
+
 /// 让当前任务等待指定的阻塞对象，并带一个超时。
 #[inline]
 pub fn wait_current_timeout(
@@ -100,6 +109,16 @@ pub fn wait_current_timeout(
     timeout_ticks: TaskTick,
 ) -> TaskWaitResult {
     active_impl::wait_current_timeout(wait_handle, timeout_ticks)
+}
+
+/// 在调度临界区内复查条件；条件为真才执行带超时等待。
+#[inline]
+pub fn wait_current_timeout_while(
+    wait_handle: TaskWaitHandle,
+    timeout_ticks: TaskTick,
+    condition: impl FnOnce() -> bool,
+) -> TaskWaitResult {
+    active_impl::wait_current_timeout_while(wait_handle, timeout_ticks, condition)
 }
 
 /// 让当前任务在指定等待队列上休眠，直到被唤醒。
@@ -159,6 +178,18 @@ pub fn reap_exited_task(task_id: TaskId) -> Option<ExitedTask> {
 #[inline]
 pub fn reap_one_exited_task() -> Option<ExitedTask> {
     active_impl::reap_one_exited_task()
+}
+
+/// 回收指定父任务下一个已退出子任务的信息。
+#[inline]
+pub fn reap_one_exited_child(parent_id: TaskId) -> Option<ExitedTask> {
+    active_impl::reap_one_exited_child(parent_id)
+}
+
+/// 判断指定任务是否仍有子任务。
+#[inline]
+pub fn has_child(parent_id: TaskId) -> bool {
+    active_impl::has_child(parent_id)
 }
 
 /// 从指定等待队列中唤醒一个任务。

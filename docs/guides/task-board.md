@@ -15,7 +15,9 @@
 |------|------|------|------|--------|------|
 | 待办 | 实现 | wateros-fs | 完善 `impl-devfs` 的根目录与设备节点能力 | - | - |
 | 待办 | 实现 | wateros-driver | 补充具体块设备实现并完善导出文档 | - | - |
-| 待办 | 实现 | wateros-ipc | 将 `ipc-pipe` 从占位实现推进到真实实现 | - | - |
+| 已完成 | 实现 | wateros-ipc | 将 `ipc-pipe` 从占位实现推进到内核内部 ring-buffer pipe | Codex | `wateros-ipc` `pipe` feature |
+| 已完成 | 实现 | wateros-syscall | 接入最小 pipe fd/syscall 与用户态 pipe smoke | Codex | `pipe2/read/write/close` |
+| 已完成 | 实现 | wateros-task | 补最小父子关系与 child-exit 等待供 `waitpid` 使用 | Codex | `TaskWaitTarget::ChildExit` |
 | 待办 | 设计 | wateros-mm | 继续收敛地址空间与映射接口 | 核心开发 | - |
 | 待办 | 文档 | docs | 持续刷新 `exports/` 下的组件快照 | 核心开发 | - |
 

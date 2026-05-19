@@ -1,4 +1,5 @@
 #![no_std]
+#![allow(static_mut_refs)]
 //! 用户态系统调用分发：将 ABI
 //! 规定的调用号与寄存器参数映射到内核任务、控制台与最小内存桩。
 //!
@@ -10,10 +11,15 @@
 //! `impl-riscv64`、`impl-loongarch64`）选择具体平台表与调度实现；`console`
 //! 提供内核侧原始字节输出。未实现的调用统一返回 `ENOSYS`。
 
+extern crate alloc;
+
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::syscall_number::{ActiveSyscallNumberTable, SyscallNumberTable};
 use abi::user_ret::UserRet;
+use alloc::vec::Vec;
+use base::sync::UniprocessorSafeCell;
+use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 // 与当前 `ActiveSyscallNumberTable` 一致的调用号常量，供 `match` 与 trap
@@ -22,7 +28,10 @@ const SYSCALL_YIELD_NR : usize = <ActiveSyscallNumberTable as SyscallNumberTable
 const SYSCALL_EXIT_NR : usize = <ActiveSyscallNumberTable as SyscallNumberTable>::EXIT.raw();
 const SYSCALL_EXIT_GROUP_NR : usize =
     <ActiveSyscallNumberTable as SyscallNumberTable>::EXIT_GROUP.raw();
+const SYSCALL_READ_NR : usize = <ActiveSyscallNumberTable as SyscallNumberTable>::READ.raw();
 const SYSCALL_WRITE_NR : usize = <ActiveSyscallNumberTable as SyscallNumberTable>::WRITE.raw();
+const SYSCALL_CLOSE_NR : usize = <ActiveSyscallNumberTable as SyscallNumberTable>::CLOSE.raw();
+const SYSCALL_PIPE2_NR : usize = <ActiveSyscallNumberTable as SyscallNumberTable>::PIPE2.raw();
 const SYSCALL_BRK_NR : usize = <ActiveSyscallNumberTable as SyscallNumberTable>::BRK.raw();
 const SYSCALL_MMAP_NR : usize = <ActiveSyscallNumberTable as SyscallNumberTable>::MMAP.raw();
 const SYSCALL_MUNMAP_NR : usize = <ActiveSyscallNumberTable as SyscallNumberTable>::MUNMAP.raw();
@@ -39,6 +48,14 @@ const SYSCALL_NANOSLEEP_NR : usize =
 /// 用户态 `brk` 的单调递增假顶：在无 ELF
 /// 用户页表（`user_aspace_ptr==0`）时兜底。
 static USER_BRK_FAKE : AtomicUsize = AtomicUsize::new(0);
+static mut FD_REGISTRY : MaybeUninit<UniprocessorSafeCell<FdRegistry>> = MaybeUninit::uninit();
+static FD_REGISTRY_READY : AtomicUsize = AtomicUsize::new(0);
+
+const STDIN_FD : usize = 0;
+const STDOUT_FD : usize = 1;
+const STDERR_FD : usize = 2;
+const FIRST_DYNAMIC_FD : usize = 3;
+const O_NONBLOCK : usize = 0o0004000;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -47,25 +64,209 @@ struct UserTimespec {
     nsec : isize,
 }
 
-// `write`：仅允许 fd 1/2 走控制台；`len==0`
-// 立即成功；非零长度有上限，防止用户态传入极大值拖垮内核拷贝路径。
+#[derive(Clone)]
+enum FdEntry {
+    ConsoleIn,
+    ConsoleOut,
+    Pipe(ipc::pipe::PipeEndpoint),
+}
+
+struct FdRegistry {
+    tables : Vec<Vec<Option<FdEntry>>>,
+}
+
+impl FdRegistry {
+    fn new() -> Self { Self { tables : Vec::new() } }
+
+    fn table_mut(&mut self, task_id : task::TaskId) -> &mut Vec<Option<FdEntry>> {
+        if self.tables.len() <= task_id {
+            self.tables
+                .resize_with(task_id + 1, Vec::new);
+        }
+        let table = &mut self.tables[task_id];
+        if table.len() < FIRST_DYNAMIC_FD {
+            table.resize_with(FIRST_DYNAMIC_FD, || None);
+            table[STDIN_FD] = Some(FdEntry::ConsoleIn);
+            table[STDOUT_FD] = Some(FdEntry::ConsoleOut);
+            table[STDERR_FD] = Some(FdEntry::ConsoleOut);
+        }
+        table
+    }
+
+    fn get(&mut self, task_id : task::TaskId, fd : usize) -> Option<FdEntry> {
+        self.table_mut(task_id)
+            .get(fd)
+            .and_then(Clone::clone)
+    }
+
+    fn alloc(&mut self, task_id : task::TaskId, entry : FdEntry) -> usize {
+        let table = self.table_mut(task_id);
+        for fd in FIRST_DYNAMIC_FD..table.len() {
+            if table[fd].is_none() {
+                table[fd] = Some(entry);
+                return fd;
+            }
+        }
+        table.push(Some(entry));
+        table.len() - 1
+    }
+
+    fn close(&mut self, task_id : task::TaskId, fd : usize) -> Option<FdEntry> {
+        if fd < FIRST_DYNAMIC_FD {
+            return None;
+        }
+        self.table_mut(task_id)
+            .get_mut(fd)
+            .and_then(Option::take)
+    }
+}
+
+fn fd_registry_cell() -> &'static UniprocessorSafeCell<FdRegistry> {
+    if FD_REGISTRY_READY.load(Ordering::Acquire) == 0 {
+        unsafe {
+            FD_REGISTRY.write(UniprocessorSafeCell::new(FdRegistry::new()));
+        }
+        FD_REGISTRY_READY.store(1, Ordering::Release);
+    }
+    unsafe { &*FD_REGISTRY.as_ptr() }
+}
+
+fn current_task_id_or_errno() -> Result<task::TaskId, ErrNo> {
+    task::current_task_id().ok_or(ErrNo::ESRCH)
+}
+
+fn fd_entry(fd : usize) -> Result<FdEntry, ErrNo> {
+    let task_id = current_task_id_or_errno()?;
+    fd_registry_cell()
+        .exclusive_access()
+        .get(task_id, fd)
+        .ok_or(ErrNo::EBADF)
+}
+
+fn pipe_err_to_errno(err : ipc::pipe::PipeError) -> ErrNo {
+    match err {
+        ipc::pipe::PipeError::WouldBlock => ErrNo::EAGAIN,
+        ipc::pipe::PipeError::BrokenPipe => ErrNo::EPIPE,
+        ipc::pipe::PipeError::InvalidCapacity => ErrNo::EINVAL,
+    }
+}
+
+// `read`：支持 pipe read endpoint；stdin 暂未接真实输入。
+#[inline]
+fn dispatch_read(args : SyscallArgs) -> UserRet {
+    let fd = args.arg(0);
+    let ptr = args.arg(1) as *mut u8;
+    let len = args.arg(2);
+    if len == 0 {
+        return UserRet::from_success(0);
+    }
+    if ptr.is_null() {
+        return UserRet::from_error(ErrNo::EFAULT);
+    }
+    if len > 4 * 1024 * 1024 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    let entry = match fd_entry(fd) {
+        Ok(entry) => entry,
+        Err(err) => return UserRet::from_error(err),
+    };
+    let buf = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
+    match entry {
+        FdEntry::Pipe(endpoint) => {
+            if endpoint.kind() != ipc::pipe::PipeEndpointKind::Read {
+                return UserRet::from_error(ErrNo::EBADF);
+            }
+            endpoint.read(buf)
+                    .map(UserRet::from_success)
+                    .unwrap_or_else(|err| UserRet::from_error(pipe_err_to_errno(err)))
+        }
+        _ => UserRet::from_error(ErrNo::EBADF),
+    }
+}
+
+// `write`：fd 1/2 走控制台；pipe write endpoint 走 IPC pipe。
 #[inline]
 fn dispatch_write(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
-    if fd != 1 && fd != 2 {
-        return UserRet::from_error(ErrNo::EBADF);
-    }
     let ptr = args.arg(1) as *const u8;
     let len = args.arg(2);
     if len == 0 {
         return UserRet::from_success(0);
     }
+    if ptr.is_null() {
+        return UserRet::from_error(ErrNo::EFAULT);
+    }
     if len > 4 * 1024 * 1024 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
     let buf = unsafe { core::slice::from_raw_parts(ptr, len) };
-    console::write_raw_bytes(buf);
-    UserRet::from_success(len)
+    let entry = match fd_entry(fd) {
+        Ok(entry) => entry,
+        Err(err) => return UserRet::from_error(err),
+    };
+    match entry {
+        FdEntry::ConsoleOut => {
+            console::write_raw_bytes(buf);
+            UserRet::from_success(len)
+        }
+        FdEntry::Pipe(endpoint) => {
+            if endpoint.kind() != ipc::pipe::PipeEndpointKind::Write {
+                return UserRet::from_error(ErrNo::EBADF);
+            }
+            endpoint.write(buf)
+                    .map(UserRet::from_success)
+                    .unwrap_or_else(|err| UserRet::from_error(pipe_err_to_errno(err)))
+        }
+        _ => UserRet::from_error(ErrNo::EBADF),
+    }
+}
+
+#[inline]
+fn dispatch_close(args : SyscallArgs) -> UserRet {
+    let fd = args.arg(0);
+    let task_id = match current_task_id_or_errno() {
+        Ok(task_id) => task_id,
+        Err(err) => return UserRet::from_error(err),
+    };
+    let entry = fd_registry_cell()
+        .exclusive_access()
+        .close(task_id, fd);
+    match entry {
+        Some(FdEntry::Pipe(endpoint)) => {
+            endpoint.close();
+            UserRet::from_success(0)
+        }
+        Some(_) => UserRet::from_success(0),
+        None => UserRet::from_error(ErrNo::EBADF),
+    }
+}
+
+#[inline]
+fn dispatch_pipe2(args : SyscallArgs) -> UserRet {
+    let pipefd_ptr = args.arg(0) as *mut i32;
+    let flags = args.arg(1);
+    if pipefd_ptr.is_null() {
+        return UserRet::from_error(ErrNo::EFAULT);
+    }
+    if flags & !O_NONBLOCK != 0 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    let task_id = match current_task_id_or_errno() {
+        Ok(task_id) => task_id,
+        Err(err) => return UserRet::from_error(err),
+    };
+    let nonblocking = flags & O_NONBLOCK != 0;
+    let (read_end, write_end) = ipc::pipe::PipeEndpoint::pair(nonblocking);
+    let mut registry = fd_registry_cell()
+        .exclusive_access();
+    let read_fd = registry.alloc(task_id, FdEntry::Pipe(read_end));
+    let write_fd = registry.alloc(task_id, FdEntry::Pipe(write_end));
+    drop(registry);
+    unsafe {
+        pipefd_ptr.write(read_fd as i32);
+        pipefd_ptr.add(1).write(write_fd as i32);
+    }
+    UserRet::from_success(0)
 }
 
 // `brk`：优先走 Sv39
@@ -234,27 +435,45 @@ fn finish_wait_result(exited : task::ExitedTask, exit_code_ptr : usize) -> UserR
     UserRet::from_success(exited.id)
 }
 
-// `waitpid`/`wait4` 早期语义：不维护父子关系，也不阻塞；仅回收已退出任务。
+// `waitpid`/`wait4` 早期语义：维护最小父子关系并阻塞等待子任务退出；暂不解析 options。
 #[inline]
 fn dispatch_waitpid(args : SyscallArgs) -> UserRet {
     let pid = args.arg(0) as isize;
     let exit_code_ptr = args.arg(1);
+    let current_task_id = match task::current_task_id() {
+        Some(task_id) => task_id,
+        None => return UserRet::from_error(ErrNo::ESRCH),
+    };
     if pid == -1 {
-        return task::reap_one_exited_task().map(|exited| {
-                                               finish_wait_result(exited, exit_code_ptr)
-                                           })
-                                           .unwrap_or_else(|| UserRet::from_error(ErrNo::ENOENT));
+        loop {
+            if let Some(exited) = task::reap_one_exited_child(current_task_id) {
+                return finish_wait_result(exited, exit_code_ptr);
+            }
+            if !task::has_child(current_task_id) {
+                return UserRet::from_error(ErrNo::ECHILD);
+            }
+            task::wait_on(task::TaskWaitHandle::for_child_exit(current_task_id));
+        }
     }
     if pid <= 0 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
 
     let task_id = pid as usize;
-    if task::task_snapshot(task_id).is_none() {
-        return UserRet::from_error(ErrNo::ENOENT);
+    match task::task_snapshot(task_id) {
+        Some(snapshot) if snapshot.parent_id == Some(current_task_id) => {}
+        Some(_) => return UserRet::from_error(ErrNo::ECHILD),
+        None => return UserRet::from_error(ErrNo::ECHILD),
     }
-    task::reap_exited_task(task_id).map(|exited| finish_wait_result(exited, exit_code_ptr))
-                                   .unwrap_or_else(|| UserRet::from_error(ErrNo::ENOENT))
+    loop {
+        if let Some(exited) = task::reap_exited_task(task_id) {
+            return finish_wait_result(exited, exit_code_ptr);
+        }
+        if task::task_snapshot(task_id).is_none() {
+            return UserRet::from_error(ErrNo::ECHILD);
+        }
+        task::wait_for_task_exit(task_id);
+    }
 }
 
 // `nanosleep` 临时映射到一个调度 tick；真实时间换算待平台频率语义接入后再替换。
@@ -290,7 +509,10 @@ pub fn dispatch_syscall_from_trap(syscall_nr : usize, syscall_args : SyscallArgs
             let exit_code = syscall_args.arg(0) as isize;
             task::exit_current(exit_code)
         }
+        SYSCALL_READ_NR => dispatch_read(syscall_args).0,
         SYSCALL_WRITE_NR => dispatch_write(syscall_args).0,
+        SYSCALL_CLOSE_NR => dispatch_close(syscall_args).0,
+        SYSCALL_PIPE2_NR => dispatch_pipe2(syscall_args).0,
         SYSCALL_BRK_NR => dispatch_brk(syscall_args.arg(0)).0,
         SYSCALL_MMAP_NR => dispatch_mmap(syscall_args).0,
         SYSCALL_MUNMAP_NR => dispatch_munmap(syscall_args).0,

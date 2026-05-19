@@ -1,18 +1,21 @@
 #![no_std]
-//! 管道 API v0 占位：后续在此定义句柄、缓冲区与非阻塞标志等契约。
+//! 管道 API v0：定义内核内部 pipe 的错误与结果契约。
 //!
-//! 与 `ipc-pipe` 聚合及 `pipe-impl` 的边界：用户可见类型与错误应在此定义；实现 crate 只依赖本 API 而不反向暴露内核细节。
+//! 与 `ipc-pipe` 聚合及 `pipe-impl` 的边界：用户可见类型与错误在此定义；实现 crate 只依赖本 API 而不反向暴露内核细节。
 
-/// 占位算术：无管道 I/O 契约；句柄类型与缓冲语义落地后应移除或改名以避免与正式 API 混淆。
-pub fn add(left : u64, right : u64) -> u64 { left + right }
+/// 默认 pipe 缓冲区大小，面向内核自检与早期 IPC 对象。
+pub const DEFAULT_PIPE_CAPACITY : usize = 4096;
 
-// 管道 API v0 占位 crate 的编译期自检。
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
+/// pipe 操作错误。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PipeError {
+    /// 非阻塞尝试无法立即完成。
+    WouldBlock,
+    /// 对端已经关闭，继续执行当前方向的 I/O 没有意义。
+    BrokenPipe,
+    /// pipe 容量为零或不满足实现约束。
+    InvalidCapacity,
 }
+
+/// pipe 操作结果。
+pub type PipeResult<T> = Result<T, PipeError>;

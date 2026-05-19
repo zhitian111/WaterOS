@@ -101,8 +101,12 @@ impl TaskRegistry {
     pub(super) fn spawn_kernel_task(&mut self, entry : KernelTaskEntry, arg : usize) -> TaskId {
         let task_id = self.next_task_id;
         self.next_task_id += 1;
+        let parent_id = self.current_task_id;
         self.task_table
-            .insert(Box::new(TaskControlBlock::new_kernel_task(task_id, entry, arg)));
+            .insert(Box::new(TaskControlBlock::new_kernel_task(task_id,
+                                                               parent_id,
+                                                               entry,
+                                                               arg)));
         task_id
     }
 
@@ -119,8 +123,9 @@ impl TaskRegistry {
             spec.image(),
             spec.external_stack()
         );
+        let parent_id = self.current_task_id;
         self.task_table
-            .insert(Box::new(TaskControlBlock::new_user_task(task_id, spec)));
+            .insert(Box::new(TaskControlBlock::new_user_task(task_id, parent_id, spec)));
         task_id
     }
 
@@ -202,7 +207,38 @@ impl TaskRegistry {
                     .map(|state| matches!(state, TaskState::Exited(_)))
                     .unwrap_or(true)
             }
+            TaskWaitTarget::ChildExit(parent_id) => {
+                self.find_exited_child(parent_id)
+                    .is_some() ||
+                !self.has_child(parent_id)
+            }
         }
+    }
+
+    pub(super) fn parent_id(&self, task_id : TaskId) -> Option<TaskId> {
+        self.task_table
+            .task_opt(task_id)
+            .and_then(TaskControlBlock::parent_id)
+    }
+
+    pub(super) fn has_child(&self, parent_id : TaskId) -> bool {
+        self.task_table
+            .slots
+            .iter()
+            .filter_map(|slot| slot.as_deref())
+            .any(|task| task.parent_id() == Some(parent_id))
+    }
+
+    pub(super) fn find_exited_child(&self, parent_id : TaskId) -> Option<TaskId> {
+        self.task_table
+            .slots
+            .iter()
+            .filter_map(|slot| slot.as_deref())
+            .find(|task| {
+                task.parent_id() == Some(parent_id) &&
+                matches!(task.state(), TaskState::Exited(_))
+            })
+            .map(TaskControlBlock::id)
     }
 
     pub(super) fn account_tick_for_current(&mut self) {

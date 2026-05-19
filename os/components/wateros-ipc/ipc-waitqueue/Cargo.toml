@@ -6,6 +6,22 @@
 [dependencies]
     wateros-task = { path = "../../wateros-task/", default-features = false }
 
+[features]
+    api-v0 = [ "wateros-task/api-v0" ]
+    default = []
+    impl-loongarch64 = [
+        "api-v0",
+        "wateros-task/impl-core",
+        "wateros-task/impl-loongarch64",
+        "wateros-task/impl-round-robin",
+    ]
+    impl-riscv64 = [
+        "api-v0",
+        "wateros-task/impl-core",
+        "wateros-task/impl-riscv64",
+        "wateros-task/impl-round-robin",
+    ]
+
 [profile.dev]
     panic = "abort"
 

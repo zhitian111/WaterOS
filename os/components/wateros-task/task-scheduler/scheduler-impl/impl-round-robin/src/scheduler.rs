@@ -222,6 +222,16 @@ impl RoundRobinScheduler {
             .reap_one_exited_task(&mut self.registry)
     }
 
+    pub(super) fn reap_one_exited_child(&mut self, parent_id: TaskId) -> Option<ExitedTask> {
+        let task_id = self.registry.find_exited_child(parent_id)?;
+        self.queues
+            .reap_exited_task(&mut self.registry, task_id)
+    }
+
+    pub(super) fn has_child(&self, parent_id: TaskId) -> bool {
+        self.registry.has_child(parent_id)
+    }
+
     pub(super) fn wake_one_in_wait_queue(&mut self, wait_queue_id: WaitQueueId) -> Option<TaskId> {
         self.queues
             .wake_one_in_wait_queue(&mut self.registry, wait_queue_id)

@@ -5,7 +5,7 @@
 - `os/components/wateros-task/Cargo.toml`、`src/lib.rs`
 - `task-api/api-v0`、`task-impl/impl-core`、`task-scheduler/`
 - `os/src/main.rs`（`task::init`、`init_kernel_trap_satp`、`run_first_task`）
-- `os/src/self_tests/task.rs`（多任务与等待队列自检）
+- `os/src/self_tests/task.rs`（固定 hello world ELF 启动与 pipe IPC 自检）
 
 ## 当前状态
 
@@ -19,9 +19,11 @@
 - 调度器已可区分 `yield`、timer tick、阻塞、睡眠与退出等调度原因
 - 调度器已开始收敛为“任务注册表 + TaskId 队列”，并具备最小的阻塞队列、睡眠队列、退出队列和显式唤醒入口
 - 已具备最小 `WaitQueue` 能力，可显式 `wait_current`、`wait_current_for_ticks`、`wake_one`、`wake_all`
+- 已具备条件等待能力：`wait_on_while` / `wait_on_while_for_ticks` 与 `WaitQueue::wait_current_while*` 会在调度临界区内复查条件，服务 pipe 等 IPC 对象的无丢唤醒等待
 - 已具备最小的 timed wait 与退出回收入口，可显式 `reap_exited_task`、`reap_one_exited_task`
-- 已引入通用 `TaskWaitHandle` / `TaskWaitTarget`，`waitqueue` 与“等待任务退出”已共用同一条等待与 timeout 路径
-- 退出任务现在会保留为可回收 zombie，并在退出时自动唤醒等待其退出的 waiter
+- 已引入通用 `TaskWaitHandle` / `TaskWaitTarget`，`waitqueue`、“等待任务退出”与“等待任意子任务退出”已共用同一条等待与 timeout 路径
+- spawn 会记录最小 `parent_id`，`TaskSnapshot` / `ExitedTask` 暴露该关系，供 syscall `waitpid` 判断与回收子任务
+- 退出任务现在会保留为可回收 zombie，并在退出时自动唤醒等待其退出的 waiter 或父任务的 child-exit waiter
 - task 根 crate 已收紧为 facade，trap/tick/task-entry hook 已迁入内部 runtime
 - trap 路径已开始把完整 trap frame 快照复制进当前任务对象，并在返回前回写到 trap 栈帧
 - trap 读写路径已显式区分“是否返回用户态”的语义，完整 trap frame 留在 `platform-arch`/task impl 机制层，task 公共 API 通过 `TaskTrapSnapshot` 暴露架构无关语义快照
@@ -34,7 +36,7 @@
 ## 后续关注点
 
 - 继续把当前“复制 + 回写”模式推进为完整 trap frame 归属与恢复模型
-- 继续把当前 wait handle 模型推进为更完整的通用阻塞对象 / block object 层
-- 继续补更明确的 task handle / generation 语义，以及更贴近 `waitpid` 的上层回收关系
+- 继续把当前 wait handle 与条件等待模型推进为更完整的通用阻塞对象 / block object 层
+- 继续补更明确的 task handle / generation 语义，并在 fork/exec 完成后收敛完整父子进程生命周期
 - 继续扩展真实用户态镜像覆盖面，包括更多 syscall 与进程/地址空间场景
 - 持续补齐注释与公共 API 文档

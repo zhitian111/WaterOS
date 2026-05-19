@@ -48,6 +48,22 @@ impl WaitQueue {
         self.inner.wait_current_for_ticks(timeout_ticks)
     }
 
+    /// 在调度临界区内复查条件；条件仍成立才让当前任务在该 IPC 等待队列上休眠。
+    #[inline]
+    pub fn wait_current_while(&self, condition: impl FnOnce() -> bool) {
+        self.inner.wait_current_while(condition);
+    }
+
+    /// 在调度临界区内复查条件；条件仍成立才让当前任务带超时等待。
+    #[inline]
+    pub fn wait_current_while_for_ticks(
+        &self,
+        timeout_ticks: TaskTick,
+        condition: impl FnOnce() -> bool,
+    ) -> TaskWaitResult {
+        self.inner.wait_current_while_for_ticks(timeout_ticks, condition)
+    }
+
     /// 唤醒一个等待中的任务，并返回被唤醒的任务号。
     #[inline]
     pub fn wake_one(&self) -> Option<TaskId> { self.inner.wake_one() }

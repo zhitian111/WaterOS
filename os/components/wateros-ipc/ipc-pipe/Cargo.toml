@@ -1,5 +1,3 @@
-[workspace]
-    members = [ "./pipe-api/api-v0/", "./pipe-impl/impl-dummy/" ]
 [package]
     name = "ipc-pipe"
     version = "0.1.0"
@@ -11,8 +9,10 @@
 
 [features]
     api-v0 = [ "impl-dummy/api-v0" ]
-    default = [ "api-v0", "impl-dummy" ]
+    default = [ "api-v0", "impl-dummy", "impl-riscv64" ]
     impl-dummy = [  ]
+    impl-loongarch64 = [ "impl-dummy/impl-loongarch64" ]
+    impl-riscv64 = [ "impl-dummy/impl-riscv64" ]
 
 [profile.dev]
     panic = "abort"

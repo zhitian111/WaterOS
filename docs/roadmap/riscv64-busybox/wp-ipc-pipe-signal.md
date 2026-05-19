@@ -5,7 +5,7 @@
 
 ## 要做什么
 
-1. **`pipe2`/`pipe`**：创建一对 fd，接入 per-task fd 表；支持 **阻塞读/写** 与 **非阻塞** 可先二选一（文档说明）。
+1. **`pipe2`/`pipe`**：创建一对 fd，接入 per-task fd 表；支持 **阻塞读/写** 与 **非阻塞** 可先二选一（文档说明）。当前状态：内核 ring-buffer pipe 已完成，最小 fd/syscall 接入与单任务 pipe smoke 已完成；fork/dup/关闭继承语义待进程包联调。
 2. **最小 signal**：
    - `rt_sigaction`、`rt_sigprocmask`、`rt_sigreturn` 中与 **忽略/默认** 及 **单 handler** 相关的子集；
    - `kill`/`tkill` 之一，能向 **子进程** 投递至少 `SIGCHLD` 相关路径或测例所需信号（与 `wp-ash-job-control.md` 对齐）。
@@ -14,6 +14,7 @@
 
 ## 验收要求
 
+- [x] 用户程序：单任务 `pipe` → `write` → `read` → `close` 得到固定字节串。
 - [ ] 用户程序：`pipe` → fork → 子 `write` 父 `read` 得到固定字节串。
 - [ ] 用户程序：安装 handler 后 `kill(getpid(), SIGUSR1)`（或约定信号）能观察到 **用户态 handler 运行**（日志经 write(1) 输出）。
 - [ ] 未实现信号集全量功能时，对未支持 syscall 仍返回 **`ENOSYS`**，不 panic。

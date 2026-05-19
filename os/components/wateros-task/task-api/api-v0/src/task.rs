@@ -74,6 +74,8 @@ pub struct TaskRuntimeStats {
 pub struct ExitedTask {
     /// 任务号。
     pub id : TaskId,
+    /// 父任务号；无父任务时为 `None`。
+    pub parent_id : Option<TaskId>,
     /// 任务类别。
     pub kind : TaskKind,
     /// 退出状态码。
