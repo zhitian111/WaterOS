@@ -6,3 +6,5 @@
 pub mod syscall;
 
 pub mod mm;
+
+pub mod ipc;
