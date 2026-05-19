@@ -8,21 +8,23 @@
 [dependencies]
     abi = { path = "../wateros-abi/", package = "wateros-abi", default-features = false }
     task = { path = "../wateros-task/", package = "wateros-task", default-features = false }
-    ipc = { path = "../wateros-ipc/", package = "wateros-ipc", default-features = false, optional = true }
+    ipc = { path = "../wateros-ipc/", package = "wateros-ipc", default-features = true }
     base = { path = "../wateros-base/", package = "wateros-base", default-features = true }
-    console = { path = "../wateros-runtime/runtime-console/", package = "wateros-runtime-console", default-features = false }
-    mm = { path = "../wateros-mm/", package = "wateros-mm", default-features = false, optional = true, features = [
-        "api-v0",
-        "impl-sv39",
-    ] }
+    mm = { path = "../wateros-mm/", package = "wateros-mm", default-features = true }
+    vfs = { path = "../wateros-vfs/", package = "wateros-vfs", default-features = false, optional = true }
 
 [features]
     default = []
+    fd-session = [
+        "dep:vfs",
+        "vfs/fd-session",
+    ]
     impl-loongarch64 = [
+        "default",
+        "fd-session",
+        "vfs/impl-loongarch64",
         "abi/api-v0",
         "abi/impl-linux-loongarch64",
-        "console/impl-firmware-console",
-        "dep:ipc",
         "ipc/impl-loongarch64",
         "ipc/pipe",
         "task/api-v0",
@@ -31,13 +33,13 @@
         "task/impl-round-robin",
     ]
     impl-riscv64 = [
+        "default",
+        "fd-session",
+        "vfs/impl-riscv64",
         "abi/api-v0",
         "abi/impl-linux-riscv64",
-        "console/impl-firmware-opensbi",
-        "dep:ipc",
         "ipc/impl-riscv64",
         "ipc/pipe",
-        "dep:mm",
         "task/api-v0",
         "task/impl-core",
         "task/impl-riscv64",
