@@ -3,6 +3,8 @@
         "./ipc-api/api-v0/",
         "./ipc-impl/impl-dummy/",
         "./ipc-waitqueue/",
+        "./ipc-waitqueue/waitqueue-api/api-v0/",
+        "./ipc-waitqueue/waitqueue-impl/impl-task/",
     ]
 [package]
     name = "wateros-ipc"

@@ -4,22 +4,22 @@
     edition = "2024"
 
 [dependencies]
-    wateros-task = { path = "../../wateros-task/", default-features = false }
+    api-v0 = { path = "./waitqueue-api/api-v0/", package = "wateros-ipc-waitqueue-api-v0", default-features = true, optional = true }
+    impl-task = { path = "./waitqueue-impl/impl-task/", package = "wateros-ipc-waitqueue-impl-task", default-features = false, optional = true }
 
 [features]
-    api-v0 = [ "wateros-task/api-v0" ]
-    default = []
+    api-v0 = [ "dep:api-v0", "impl-task?/api-v0" ]
+    default = [ "api-v0" ]
+    impl-task = [ "api-v0", "dep:impl-task" ]
     impl-loongarch64 = [
         "api-v0",
-        "wateros-task/impl-core",
-        "wateros-task/impl-loongarch64",
-        "wateros-task/impl-round-robin",
+        "impl-task",
+        "impl-task/impl-loongarch64",
     ]
     impl-riscv64 = [
         "api-v0",
-        "wateros-task/impl-core",
-        "wateros-task/impl-riscv64",
-        "wateros-task/impl-round-robin",
+        "impl-task",
+        "impl-task/impl-riscv64",
     ]
 
 [profile.dev]

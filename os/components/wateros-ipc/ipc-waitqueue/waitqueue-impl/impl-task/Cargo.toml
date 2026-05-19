@@ -1,0 +1,30 @@
+[package]
+    name = "wateros-ipc-waitqueue-impl-task"
+    version = "0.1.0"
+    edition = "2024"
+
+[dependencies]
+    api-v0 = { path = "../../waitqueue-api/api-v0/", package = "wateros-ipc-waitqueue-api-v0", default-features = true }
+    wateros-task = { path = "../../../../wateros-task/", default-features = false }
+
+[features]
+    api-v0 = [ "api-v0/api-v0", "wateros-task/api-v0" ]
+    default = []
+    impl-loongarch64 = [
+        "api-v0",
+        "wateros-task/impl-core",
+        "wateros-task/impl-loongarch64",
+        "wateros-task/impl-round-robin",
+    ]
+    impl-riscv64 = [
+        "api-v0",
+        "wateros-task/impl-core",
+        "wateros-task/impl-riscv64",
+        "wateros-task/impl-round-robin",
+    ]
+
+[profile.dev]
+    panic = "abort"
+
+[profile.release]
+    panic = "abort"
