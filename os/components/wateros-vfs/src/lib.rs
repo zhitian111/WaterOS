@@ -1,32 +1,138 @@
-//! 虚拟文件系统 **聚合 crate**：对上重导出 [`api_v0`]  trait 与类型，对下挂载占位或真实桥接实现。
-//!
-//! - [`api`]：单根只读视图 [`api_v0::SingleRootReadView`]、可写会话 [`api_v0::RootRwSession`] 及错误/元数据等 **语义契约**。
-//! - [`dummy`]：无块设备时的占位根视图，路径规范化仍可用，卷访问返回未挂载。
-//! - [`bridge`]（feature `bridge-fs-api`）：通过 `wateros-fs` 将根卷与 devfs 接到上述 trait，供内核启动与自检使用。
-//!
-//! 路径形状统一由 `api-v0` 的 [`api_v0::normalize_absolute_path`] 处理；**不** 在此 crate 内实现具体文件系统格式。
+//! 虚拟文件系统 **聚合 crate**：[`api`] 定义基本能力，[`active_impl`] 选择后端，
+//! [`root`] / [`mount`] / [`self_test`] 将能力组合为对外稳定接口。
 
 #![no_std]
+#![allow(static_mut_refs)]
 
-pub mod api {
-    pub use ::api_v0::*;
+extern crate alloc;
+
+#[cfg(feature = "bridge-fs-api")]
+extern crate impl_fs_bridge;
+
+#[cfg(feature = "fd-session")]
+extern crate base;
+#[cfg(feature = "fd-session")]
+extern crate impl_fd_session;
+#[cfg(feature = "fd-session")]
+extern crate task;
+
+pub use api_v0 as api;
+pub use api_v0::{
+    normalize_absolute_path, resolve_against_cwd, validate_root_file_name, NormalizedPath,
+    RootRwSession, SingleRootReadView, VfsAccessMode, VfsBackend, VfsCapability, VfsDevInventory,
+    VfsDevNode, VfsDevNodeType, VfsDirEntry, VfsError, VfsFd, VfsFdSession, VfsFileHandle,
+    VfsFsKind, VfsIoHandle, VfsMetadata, VfsMountOps, VfsMountTable, VfsNodeType, VfsOpenFlags,
+    VfsOpenOps, VfsResult, VfsSeekWhence, VFS_FIRST_DYNAMIC_FD, VFS_STDERR_FD, VFS_STDIN_FD,
+    VFS_STDOUT_FD,
+};
+
+/// per-task 文件描述符会话（`fd-session` feature）。
+#[cfg(feature = "fd-session")]
+pub mod fd;
+
+#[cfg(feature = "fd-session")]
+pub use impl_fd_session::{PipeReadHandle, PipeWriteHandle};
+
+/// 当前 feature 选中的 VFS 后端（`bridge-fs-api` → fs 桥接，否则占位）。
+pub mod active_impl {
+    use super::api::VfsBackend;
+
+    #[cfg(feature = "bridge-fs-api")]
+    pub fn backend() -> &'static impl VfsBackend {
+        static B: impl_fs_bridge::FsBridge = impl_fs_bridge::FsBridge;
+        &B
+    }
+
+    #[cfg(not(feature = "bridge-fs-api"))]
+    pub fn backend() -> &'static impl VfsBackend {
+        static B: crate::impl_dummy::DummyBackend = crate::impl_dummy::DummyBackend;
+        &B
+    }
 }
 
-pub use api_v0::*;
+/// 单根路径级只读访问。
+pub mod root {
+    use super::active_impl;
+    use super::api::SingleRootReadView;
 
+    pub fn read_view() -> &'static impl SingleRootReadView {
+        active_impl::backend()
+    }
+}
+
+/// RW 挂载会话。
+pub mod mount {
+    use alloc::boxed::Box;
+
+    use super::active_impl;
+    use super::api::{RootRwSession, VfsFsKind, VfsMountOps, VfsResult};
+
+    pub fn open_rw_session(kind: VfsFsKind) -> VfsResult<Box<dyn RootRwSession>> {
+        active_impl::backend().mount_rw_session(kind)
+    }
+
+    pub fn supported_capabilities() -> alloc::vec::Vec<super::api::VfsCapability> {
+        active_impl::backend().supported_capabilities()
+    }
+}
+
+/// 模块自检：组合挂载与只读读回等（warn 不 panic）。
+pub mod self_test {
+    extern crate alloc;
+
+    use alloc::string::String;
+
+    use super::active_impl;
+    use super::api::{
+        SingleRootReadView, VfsDevInventory, VfsFsKind, VfsMountOps, VfsResult,
+        validate_root_file_name,
+    };
+
+    /// RW 写入后通过只读根视图读回校验（语义对齐 `wateros-fs` 聚合 `test()` RW 段）。
+    pub fn rw_write_root_verify_via_ro(
+        kind: VfsFsKind,
+        name: &str,
+        data: &[u8],
+    ) -> VfsResult<()> {
+        validate_root_file_name(name)?;
+        let backend = active_impl::backend();
+        let mut session = backend.mount_rw_session(kind)?;
+        session.write_regular_file_at_root(name, data)?;
+        let ro = backend;
+        let mut path = String::from("/");
+        path.push_str(name);
+        let bytes = ro.read(path.as_str())?;
+        if bytes.as_slice() == data {
+            Ok(())
+        } else {
+            Err(super::api::VfsError::Io)
+        }
+    }
+
+    pub fn run() {
+        #[cfg(feature = "bridge-fs-api")]
+        {
+            const NAME: &str = "vfs_rw_smoke";
+            const DATA: &[u8] = b"vfs-smoke";
+            if let Err(e) = rw_write_root_verify_via_ro(VfsFsKind::Ext4, NAME, DATA) {
+                log::warn!("[vfs] self_test rw verify skipped or failed: {:?}", e);
+            }
+        }
+        let _ = active_impl::backend().list_dev_nodes();
+    }
+}
+
+#[doc(hidden)]
 pub mod dummy {
     pub use ::impl_dummy::*;
 }
 
-#[cfg(feature = "bridge-fs-api")]
-pub mod bridge {
-    pub use ::impl_fs_bridge::*;
-}
-
-/// 聚合自检：依次运行 `api-v0`、占位 impl 的单元测试；启用 `bridge-fs-api` 时包含桥接 crate 的 `test()`。
 pub fn test() {
     api_v0::test();
     impl_dummy::test();
     #[cfg(feature = "bridge-fs-api")]
     impl_fs_bridge::test();
+    #[cfg(feature = "fd-session")]
+    fd::self_test();
+    self_test::run();
 }

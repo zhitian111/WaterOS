@@ -1,0 +1,14 @@
+//! 根级可写会话（与只读根视图分离）。
+
+use crate::error::{VfsError, VfsResult};
+
+/// 可写会话：由 [`crate::mount::VfsMountOps::mount_rw_session`] 等创建。
+pub trait RootRwSession {
+    /// 在根目录下创建或覆盖普通文件；`name` 不得含 `/`。
+    fn write_regular_file_at_root(&mut self, name: &str, data: &[u8]) -> VfsResult<()>;
+
+    fn unlink(&mut self, path: &str) -> VfsResult<()> {
+        let _ = path;
+        Err(VfsError::Unsupported)
+    }
+}

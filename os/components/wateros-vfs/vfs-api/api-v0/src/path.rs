@@ -51,3 +51,11 @@ pub fn normalize_absolute_path(path: &str) -> VfsResult<NormalizedPath> {
     }
     Ok(NormalizedPath { inner: out })
 }
+
+/// 根目录下文件名不得包含 `/` 或为空。
+pub fn validate_root_file_name(name: &str) -> VfsResult<()> {
+    if name.is_empty() || name.contains('/') {
+        return Err(VfsError::InvalidPath);
+    }
+    Ok(())
+}

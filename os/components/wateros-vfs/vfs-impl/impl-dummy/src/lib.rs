@@ -1,23 +1,21 @@
-//! 无后端存储时的 **占位 VFS 实现**：满足 trait 形状，读路径在规范化后返回 [`VfsError::NotMounted`]，可写接口返回不支持或未挂载。
-//!
-//! 用于默认 feature 组合下仍可链接、自检路径逻辑；真实卷由 `impl-fs-bridge` 等替换。
+//! 无后端存储时的 **占位 VFS 实现**：实现 [`api_v0::VfsBackend`] 全部 trait，卷访问返回未挂载/不支持。
 
 #![no_std]
 extern crate alloc;
 
-use alloc::vec::Vec;
+use alloc::{boxed::Box, vec::Vec};
 
-pub use api_v0::{
-    normalize_absolute_path, RootRwSession, SingleRootReadView, VfsDirEntry, VfsError,
-    VfsMetadata, VfsResult,
+use api_v0::{
+    RootRwSession, SingleRootReadView, VfsBackend, VfsCapability, VfsDevInventory, VfsDevNode,
+    VfsDirEntry, VfsError, VfsFsKind, VfsMetadata, VfsMountOps, VfsMountTable,
+    VfsOpenOps, VfsResult, normalize_absolute_path,
 };
 
-/// 无后端时的占位根视图：路径规范化仍可用；卷访问返回 [`VfsError::NotMounted`]。
+/// 占位后端：路径规范化可用；卷与挂载相关能力返回 [`VfsError::NotMounted`] 或 [`VfsError::Unsupported`]。
 #[derive(Debug, Clone, Copy, Default)]
-pub struct DummyRootView;
+pub struct DummyBackend;
 
-impl SingleRootReadView for DummyRootView {
-    // 仅校验路径形状，不访问任何卷；无后端时统一返回未挂载。
+impl SingleRootReadView for DummyBackend {
     fn exists(&self, path: &str) -> VfsResult<bool> {
         let _ = normalize_absolute_path(path)?;
         Err(VfsError::NotMounted)
@@ -39,19 +37,33 @@ impl SingleRootReadView for DummyRootView {
     }
 }
 
-/// 占位可写会话。
-#[derive(Debug, Clone, Copy, Default)]
-pub struct DummyRwSession;
+impl VfsMountOps for DummyBackend {
+    fn supported_capabilities(&self) -> Vec<VfsCapability> {
+        Vec::new()
+    }
 
-impl RootRwSession for DummyRwSession {
-    // 占位：无可写后端，与「未接块设备」场景一致。
-    fn write_regular_file_at_root(&mut self, _name: &str, _data: &[u8]) -> VfsResult<()> {
+    fn mount_rw_session(&self, _kind: VfsFsKind) -> VfsResult<Box<dyn RootRwSession>> {
         Err(VfsError::Unsupported)
     }
 }
 
-/// 占位 impl 自检：只读路径经规范化后应得到 [`VfsError::NotMounted`]。
+impl VfsDevInventory for DummyBackend {
+    fn list_dev_nodes(&self) -> Vec<VfsDevNode> {
+        Vec::new()
+    }
+
+    fn default_root_block_path(&self) -> Option<alloc::string::String> {
+        None
+    }
+}
+
+impl VfsOpenOps for DummyBackend {}
+impl VfsMountTable for DummyBackend {}
+
+impl VfsBackend for DummyBackend {}
+
+/// 占位 impl 自检。
 pub fn test() {
-    let v = DummyRootView;
-    assert!(matches!(v.read("/x"), Err(VfsError::NotMounted)));
+    let b = DummyBackend;
+    assert!(matches!(b.read("/x"), Err(VfsError::NotMounted)));
 }
