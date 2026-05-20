@@ -6,9 +6,11 @@
 [dependencies]
     api-v0 = { path = "../../vfs-api/api-v0/", package = "wateros-vfs-api-v0", default-features = true }
     fs = { path = "../../../wateros-fs/", package = "wateros-fs", default-features = true, optional = true }
+    impl_page_cache = { path = "../impl-page-cache/", package = "wateros-vfs-impl-page-cache", default-features = true, optional = true }
+    wateros-base-config = { path = "../../../wateros-base/base-config", package = "wateros-base-config" }
 
 [features]
     # 本 crate 被选中构建时默认带 `fs`，便于工作区 `cargo check`；聚合层仍通过 optional dep 控制是否拉取本 crate。
     api-v0 = [  ]
-    bridge-fs-api = [ "dep:fs" ]
+    bridge-fs-api = [ "dep:fs", "dep:impl_page_cache" ]
     default = [ "api-v0", "bridge-fs-api" ]

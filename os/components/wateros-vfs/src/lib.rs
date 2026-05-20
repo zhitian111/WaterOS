@@ -18,7 +18,8 @@ extern crate task;
 
 pub use api_v0 as api;
 pub use api_v0::{
-    normalize_absolute_path, resolve_against_cwd, validate_root_file_name, NormalizedPath,
+    normalize_absolute_path, register_open_path_resolver, resolve_against_cwd, resolve_open_path,
+    validate_root_file_name, NormalizedPath,
     RootRwSession, SingleRootReadView, VfsAccessMode, VfsBackend, VfsCapability, VfsDevInventory,
     VfsDevNode, VfsDevNodeType, VfsDirEntry, VfsError, VfsFd, VfsFdSession, VfsFileHandle,
     VfsFsKind, VfsIoHandle, VfsMetadata, VfsMountOps, VfsMountTable, VfsNodeType, VfsOpenFlags,
@@ -29,6 +30,10 @@ pub use api_v0::{
 /// per-task 文件描述符会话（`fd-session` feature）。
 #[cfg(feature = "fd-session")]
 pub mod fd;
+
+/// per-task 工作目录（`fd-session` feature）。
+#[cfg(feature = "fd-session")]
+pub mod cwd;
 
 #[cfg(feature = "fd-session")]
 pub use impl_fd_session::{PipeReadHandle, PipeWriteHandle};
@@ -164,6 +169,9 @@ pub fn test() {
     #[cfg(feature = "bridge-fs-api")]
     impl_fs_bridge::test();
     #[cfg(feature = "fd-session")]
-    fd::self_test();
+    {
+        fd::self_test();
+        cwd::self_test();
+    }
     self_test::run();
 }

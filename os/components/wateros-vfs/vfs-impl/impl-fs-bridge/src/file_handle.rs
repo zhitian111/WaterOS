@@ -1,4 +1,4 @@
-//! ext4 根卷普通文件的内存句柄（打开时整文件读入，关闭时可写回）。
+//! ext4 根卷普通文件句柄：小文件整文件缓冲，大文件走页缓存（见 [`super::paged_handle`]）。
 
 extern crate alloc;
 
@@ -15,8 +15,8 @@ use fs::{FsAccessMode, FsKind};
 use crate::map_fs_err;
 use crate::FsBridge;
 
-/// 已打开的根卷普通文件（缓冲于内存）。
-pub struct RootFileHandle {
+/// 已打开的根卷普通文件（小文件：全文缓冲于内存）。
+pub struct BufferedFileHandle {
     path: String,
     data: Vec<u8>,
     offset: u64,
@@ -25,7 +25,10 @@ pub struct RootFileHandle {
     dirty: bool,
 }
 
-impl RootFileHandle {
+/// 与历史命名兼容的别名。
+pub type RootFileHandle = BufferedFileHandle;
+
+impl BufferedFileHandle {
     pub(crate) fn open(
         bridge: &FsBridge,
         path: String,
@@ -96,6 +99,14 @@ impl RootFileHandle {
         })
     }
 
+    pub(crate) fn open_boxed(
+        bridge: &FsBridge,
+        path: String,
+        flags: VfsOpenFlags,
+    ) -> VfsResult<Box<dyn VfsIoHandle>> {
+        Ok(Box::new(Self::open(bridge, path, flags)?))
+    }
+
     fn sync_dirty(&mut self) -> VfsResult<()> {
         if !self.dirty {
             return Ok(());
@@ -116,7 +127,7 @@ impl RootFileHandle {
     }
 }
 
-impl VfsIoHandle for RootFileHandle {
+impl VfsIoHandle for BufferedFileHandle {
     fn read(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
         if buf.is_empty() {
             return Ok(0);
@@ -208,8 +219,7 @@ impl FsBridge {
         path: &str,
         flags: VfsOpenFlags,
     ) -> VfsResult<Box<dyn VfsIoHandle>> {
-        let abs = api_v0::resolve_against_cwd("/", Some(path))?;
-        let handle = RootFileHandle::open(self, abs, flags)?;
-        Ok(Box::new(handle))
+        let abs = api_v0::resolve_open_path(path)?;
+        super::paged_handle::open_file(self, abs, flags)
     }
 }

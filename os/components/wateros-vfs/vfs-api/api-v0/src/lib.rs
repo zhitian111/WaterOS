@@ -33,7 +33,7 @@ pub use meta::{VfsDirEntry, VfsMetadata, VfsNodeType};
 pub use mount::VfsMountOps;
 pub use namespace::VfsMountTable;
 pub use path::{normalize_absolute_path, validate_root_file_name, NormalizedPath};
-pub use resolve::resolve_against_cwd;
+pub use resolve::{register_open_path_resolver, resolve_against_cwd, resolve_open_path};
 pub use root_read::SingleRootReadView;
 pub use rw_session::RootRwSession;
 

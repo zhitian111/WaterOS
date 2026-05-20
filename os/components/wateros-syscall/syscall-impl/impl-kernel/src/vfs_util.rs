@@ -1,7 +1,12 @@
 //! [`VfsError`] 到 ABI [`ErrNo`] 的映射。
 
+extern crate alloc;
+
+use alloc::vec::Vec;
+
 use abi::errno::ErrNo;
-use vfs::api::{VfsError, VfsOpenFlags};
+use vfs::api::{VfsError, VfsNodeType, VfsOpenFlags, VfsSeekWhence};
+
 
 pub(crate) fn vfs_error_to_errno(err : VfsError) -> ErrNo {
     match err {
@@ -45,4 +50,34 @@ pub(crate) fn linux_open_flags_to_vfs(flags : u32) -> VfsOpenFlags {
         vf.0 |= VfsOpenFlags::APPEND;
     }
     vf
+}
+
+/// 从当前任务 `fd` 的 `offset` 起读取 `len` 字节到内核缓冲（供文件 `mmap` 等使用）。
+pub(crate) fn read_fd_bytes_at(fd : usize, offset : usize, len : usize) -> Result<Vec<u8>, ErrNo> {
+    use vfs::api::VfsResult;
+    if len == 0 {
+        return Err(ErrNo::EINVAL);
+    }
+    vfs::fd::with_current_io(fd, |handle| -> VfsResult<Vec<u8>> {
+        let meta = handle.metadata()?;
+        if meta.node_type != VfsNodeType::File {
+            return Err(VfsError::NotAFile);
+        }
+        let file_size = meta.size as usize;
+        let end = offset
+            .checked_add(len)
+            .ok_or(VfsError::InvalidPath)?;
+        if end > file_size {
+            return Err(VfsError::InvalidPath);
+        }
+        let mut buf = Vec::with_capacity(len);
+        buf.resize(len, 0);
+        handle.seek(offset as i64, VfsSeekWhence::Set)?;
+        let n = handle.read(&mut buf)?;
+        if n != len {
+            return Err(VfsError::Io);
+        }
+        Ok(buf)
+    })
+    .map_err(vfs_error_to_errno)
 }

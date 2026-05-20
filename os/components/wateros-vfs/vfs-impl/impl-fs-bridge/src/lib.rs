@@ -13,8 +13,10 @@ use api_v0::{
 };
 
 mod file_handle;
+mod paged_handle;
 
-pub use file_handle::RootFileHandle;
+pub use file_handle::{BufferedFileHandle, RootFileHandle};
+pub use paged_handle::PagedFileHandle;
 use fs::{FsAccessMode, FsCapability, FsDirEntry, FsError, FsKind, FsMetadata, FsNodeType, SharedRwFs};
 
 /// 通过 `wateros-fs` 访问根卷与 devfs 的零大小后端。
@@ -132,6 +134,19 @@ impl SingleRootReadView for FsBridge {
     }
 }
 
+impl FsBridge {
+    /// 从根卷只读句柄按偏移读取（页缓存 miss 路径）。
+    pub(crate) fn read_range(&self, path: &str, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+        let n = normalize_absolute_path(path)?;
+        let Some(fs) = fs::rootfs::active_impl::root_fs() else {
+            return Err(VfsError::NotMounted);
+        };
+        fs.lock()
+            .read_range(n.as_str(), offset, buf)
+            .map_err(map_fs_err)
+    }
+}
+
 /// 与只读根句柄分离的可写挂载会话。
 pub struct MountedRwSession {
     inner: SharedRwFs,
@@ -163,6 +178,14 @@ impl RootRwSession for MountedRwSession {
     fn unlink(&mut self, path: &str) -> VfsResult<()> {
         let n = normalize_absolute_path(path)?;
         self.inner.lock().unlink(n.as_str()).map_err(map_fs_err)
+    }
+
+    fn write_range(&mut self, path: &str, offset: u64, data: &[u8]) -> VfsResult<usize> {
+        let n = normalize_absolute_path(path)?;
+        self.inner
+            .lock()
+            .write_range(n.as_str(), offset, data)
+            .map_err(map_fs_err)
     }
 }
 
