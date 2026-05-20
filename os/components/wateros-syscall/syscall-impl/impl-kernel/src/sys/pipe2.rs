@@ -12,9 +12,9 @@ use crate::vfs_util::vfs_error_to_errno;
 pub(crate) const O_NONBLOCK : usize = 0o0004000;
 
 pub(crate) fn sys_pipe2(args : SyscallArgs) -> UserRet {
-    let pipefd_ptr = args.arg(0) as *mut i32;
+    let pipefd_ptr = args.arg(0);
     let flags = args.arg(1);
-    if pipefd_ptr.is_null() {
+    if pipefd_ptr == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
     }
     if flags & !O_NONBLOCK != 0 {
@@ -32,10 +32,14 @@ pub(crate) fn sys_pipe2(args : SyscallArgs) -> UserRet {
     let write_fd = reg.alloc_fd_for_task(task_id,
                                          Box::new(PipeWriteHandle(write_end)));
     drop(reg);
-    unsafe {
-        pipefd_ptr.write(read_fd as i32);
-        pipefd_ptr.add(1)
-                  .write(write_fd as i32);
+    let fds = [read_fd as i32, write_fd as i32];
+    match crate::user_copy::copy_to_user(pipefd_ptr, unsafe {
+        core::slice::from_raw_parts(
+            fds.as_ptr() as *const u8,
+            core::mem::size_of_val(&fds),
+        )
+    }) {
+        Ok(n) if n == core::mem::size_of_val(&fds) => UserRet::from_success(0),
+        _ => UserRet::from_error(ErrNo::EFAULT),
     }
-    UserRet::from_success(0)
 }

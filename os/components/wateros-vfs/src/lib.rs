@@ -33,6 +33,9 @@ pub mod fd;
 #[cfg(feature = "fd-session")]
 pub use impl_fd_session::{PipeReadHandle, PipeWriteHandle};
 
+#[cfg(feature = "bridge-fs-api")]
+pub use impl_fs_bridge::RootFileHandle;
+
 /// 当前 feature 选中的 VFS 后端（`bridge-fs-api` → fs 桥接，否则占位）。
 pub mod active_impl {
     use super::api::VfsBackend;
@@ -84,8 +87,8 @@ pub mod self_test {
 
     use super::active_impl;
     use super::api::{
-        SingleRootReadView, VfsDevInventory, VfsFsKind, VfsMountOps, VfsResult,
-        validate_root_file_name,
+        SingleRootReadView, VfsDevInventory, VfsFsKind, VfsMountOps, VfsOpenFlags, VfsOpenOps,
+        VfsResult, VfsSeekWhence, validate_root_file_name,
     };
 
     /// RW 写入后通过只读根视图读回校验（语义对齐 `wateros-fs` 聚合 `test()` RW 段）。
@@ -109,6 +112,29 @@ pub mod self_test {
         }
     }
 
+    /// `open` → `read` → `seek` → `metadata` 烟囱（依赖 RW 先写入测试文件）。
+    #[cfg(feature = "bridge-fs-api")]
+    pub fn open_read_seek_smoke() -> VfsResult<()> {
+        const NAME: &str = "vfs_open_smoke";
+        const DATA: &[u8] = b"open-smoke";
+        rw_write_root_verify_via_ro(VfsFsKind::Ext4, NAME, DATA)?;
+        let mut path = String::from("/");
+        path.push_str(NAME);
+        let backend = active_impl::backend();
+        let mut handle = backend.open(path.as_str(), VfsOpenFlags::read())?;
+        let mut buf = [0u8; 16];
+        let n = handle.read(&mut buf)?;
+        if &buf[..n] != DATA {
+            return Err(super::api::VfsError::Io);
+        }
+        let _ = handle.seek(0, VfsSeekWhence::Set)?;
+        let m = handle.metadata()?;
+        if m.size != DATA.len() as u64 {
+            return Err(super::api::VfsError::Io);
+        }
+        Ok(())
+    }
+
     pub fn run() {
         #[cfg(feature = "bridge-fs-api")]
         {
@@ -116,6 +142,11 @@ pub mod self_test {
             const DATA: &[u8] = b"vfs-smoke";
             if let Err(e) = rw_write_root_verify_via_ro(VfsFsKind::Ext4, NAME, DATA) {
                 log::warn!("[vfs] self_test rw verify skipped or failed: {:?}", e);
+            }
+            if let Err(e) = open_read_seek_smoke() {
+                log::warn!("[vfs] self_test open/seek skipped or failed: {:?}", e);
+            } else {
+                log::info!("[vfs] self_test open/seek ok");
             }
         }
         let _ = active_impl::backend().list_dev_nodes();

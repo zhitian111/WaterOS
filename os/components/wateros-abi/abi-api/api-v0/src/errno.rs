@@ -70,6 +70,12 @@ impl ErrNo {
     pub const ENOSYS: Self = Self(38);
     /// 非目录。
     pub const ENOTDIR: Self = Self(20);
+    /// 是目录。
+    pub const EISDIR: Self = Self(21);
+    /// 文件名过长。
+    pub const ENAMETOOLONG: Self = Self(36);
+    /// 非法 seek。
+    pub const ESPIPE: Self = Self(29);
     /// 管道破裂。
     pub const EPIPE: Self = Self(32);
 }

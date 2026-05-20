@@ -17,7 +17,10 @@ pub enum SyscallKind {
     Exit,
     Read,
     Write,
+    OpenAt,
     Close,
+    Fstat,
+    Lseek,
     Pipe2,
     Brk,
     Mmap,
@@ -44,8 +47,14 @@ impl SyscallKind {
             Self::Read
         } else if syscall_nr == T::WRITE.raw() {
             Self::Write
+        } else if syscall_nr == T::OPENAT.raw() {
+            Self::OpenAt
         } else if syscall_nr == T::CLOSE.raw() {
             Self::Close
+        } else if syscall_nr == T::FSTAT.raw() {
+            Self::Fstat
+        } else if syscall_nr == T::LSEEK.raw() {
+            Self::Lseek
         } else if syscall_nr == T::PIPE2.raw() {
             Self::Pipe2
         } else if syscall_nr == T::BRK.raw() {
@@ -86,7 +95,13 @@ pub trait SyscallDispatcher {
 
     fn dispatch_write(args : SyscallArgs) -> isize;
 
+    fn dispatch_openat(args : SyscallArgs) -> isize;
+
     fn dispatch_close(args : SyscallArgs) -> isize;
+
+    fn dispatch_fstat(args : SyscallArgs) -> isize;
+
+    fn dispatch_lseek(args : SyscallArgs) -> isize;
 
     fn dispatch_pipe2(args : SyscallArgs) -> isize;
 
@@ -119,7 +134,10 @@ pub trait SyscallDispatcher {
             SyscallKind::Exit => Self::dispatch_exit(syscall_args),
             SyscallKind::Read => Self::dispatch_read(syscall_args),
             SyscallKind::Write => Self::dispatch_write(syscall_args),
+            SyscallKind::OpenAt => Self::dispatch_openat(syscall_args),
             SyscallKind::Close => Self::dispatch_close(syscall_args),
+            SyscallKind::Fstat => Self::dispatch_fstat(syscall_args),
+            SyscallKind::Lseek => Self::dispatch_lseek(syscall_args),
             SyscallKind::Pipe2 => Self::dispatch_pipe2(syscall_args),
             SyscallKind::Brk => Self::dispatch_brk(syscall_args),
             SyscallKind::Mmap => Self::dispatch_mmap(syscall_args),

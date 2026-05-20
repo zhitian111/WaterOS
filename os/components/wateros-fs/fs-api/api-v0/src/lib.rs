@@ -157,6 +157,12 @@ pub trait ReadWriteFs: Send {
     /// 在根目录下创建或替换名为 `name` 的普通文件（不含 `/`，如 `hello`），写入 `data`。
     fn write_regular_file_at_root(&mut self, name: &str, data: &[u8]) -> FsResult<()>;
 
+    /// 在绝对路径 `path` 处创建或替换普通文件并写入 `data`。
+    fn write_regular_file(&mut self, path: &str, data: &[u8]) -> FsResult<()> {
+        let _ = (path, data);
+        Err(FsError::Unsupported)
+    }
+
     /// 删除绝对路径指向的 **普通文件**；目录删除默认 [`FsError::Unsupported`]。
     fn unlink(&mut self, path: &str) -> FsResult<()> {
         let _ = path;

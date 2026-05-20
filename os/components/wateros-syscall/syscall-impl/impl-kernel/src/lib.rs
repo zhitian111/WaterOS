@@ -9,8 +9,10 @@ extern crate alloc;
 use abi::syscall_args::SyscallArgs;
 use abi::syscall_number::ActiveSyscallNumberTable;
 
+mod linux_stat;
 mod mm_util;
 mod sys;
+mod user_copy;
 mod vfs_util;
 
 /// Trap / exception return path syscall dispatch entry.
@@ -39,7 +41,16 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     fn dispatch_write(args : SyscallArgs) -> isize { sys::sys_write(args).0 }
 
     #[inline]
+    fn dispatch_openat(args : SyscallArgs) -> isize { sys::sys_openat(args).0 }
+
+    #[inline]
     fn dispatch_close(args : SyscallArgs) -> isize { sys::sys_close(args).0 }
+
+    #[inline]
+    fn dispatch_fstat(args : SyscallArgs) -> isize { sys::sys_fstat(args).0 }
+
+    #[inline]
+    fn dispatch_lseek(args : SyscallArgs) -> isize { sys::sys_lseek(args).0 }
 
     #[inline]
     fn dispatch_pipe2(args : SyscallArgs) -> isize { sys::sys_pipe2(args).0 }

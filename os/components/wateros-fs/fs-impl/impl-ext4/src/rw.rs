@@ -134,15 +134,29 @@ impl ReadWriteFs for Ext4FsRw {
         if name.is_empty() || name.contains('/') {
             return Err(FsError::InvalidPath);
         }
+        let mut path = alloc::string::String::from("/");
+        path.push_str(name);
+        self.write_regular_file(path.as_str(), data)
+    }
+
+    fn write_regular_file(&mut self, path: &str, data: &[u8]) -> FsResult<()> {
+        let (parent, name) = split_parent_and_name(path)?;
         let fs = self.fs()?;
         let name = DirEntryName::try_from(name).map_err(|_| FsError::InvalidPath)?;
+        let parent_path = Path::try_from(parent).map_err(|_| FsError::InvalidPath)?;
+        let parent_inode = fs
+            .path_to_inode(parent_path, FollowSymlinks::All)
+            .map_err(map_ext4_plus)?;
+        if parent_inode.file_type() != FileType::Directory {
+            return Err(FsError::NotFound);
+        }
+        let mut parent_dir = Dir::open_inode(fs, parent_inode).map_err(map_ext4_plus)?;
 
-        let root_inode = fs.read_root_inode().map_err(map_ext4_plus)?;
-        let mut root = Dir::open_inode(fs, root_inode).map_err(map_ext4_plus)?;
-
-        // 根目录下同名普通文件则先 unlink，保证「写」语义近似 create/replace。
-        if let Ok(old) = root.get_entry(name) {
-            root.unlink(name, old).map_err(map_ext4_plus)?;
+        if let Ok(old) = parent_dir.get_entry(name) {
+            if old.file_type() == FileType::Directory {
+                return Err(FsError::NotAFile);
+            }
+            parent_dir.unlink(name, old).map_err(map_ext4_plus)?;
         }
 
         let mut inode = fs
@@ -160,9 +174,8 @@ impl ReadWriteFs for Ext4FsRw {
             })
             .map_err(map_ext4_plus)?;
 
-        // 数据写入 inode 后再 link 进根目录，顺序依赖 ext4plus 对未链接 inode 的约定。
         write_at(fs, &mut inode, data, 0).map_err(map_ext4_plus)?;
-        root.link(name, &mut inode).map_err(map_ext4_plus)?;
+        parent_dir.link(name, &mut inode).map_err(map_ext4_plus)?;
         Ok(())
     }
 

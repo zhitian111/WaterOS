@@ -7,6 +7,11 @@ pub trait RootRwSession {
     /// 在根目录下创建或覆盖普通文件；`name` 不得含 `/`。
     fn write_regular_file_at_root(&mut self, name: &str, data: &[u8]) -> VfsResult<()>;
 
+    fn write_regular_file(&mut self, path: &str, data: &[u8]) -> VfsResult<()> {
+        let _ = (path, data);
+        Err(VfsError::Unsupported)
+    }
+
     fn unlink(&mut self, path: &str) -> VfsResult<()> {
         let _ = path;
         Err(VfsError::Unsupported)

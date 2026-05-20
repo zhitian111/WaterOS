@@ -3,7 +3,10 @@
 
 mod brk;
 mod close;
+mod fstat;
+mod lseek;
 mod mmap;
+mod openat;
 mod pipe2;
 mod read;
 mod task;
@@ -11,7 +14,10 @@ mod write;
 
 pub(crate) use brk::sys_brk;
 pub(crate) use close::sys_close;
+pub(crate) use fstat::sys_fstat;
+pub(crate) use lseek::sys_lseek;
 pub(crate) use mmap::{sys_mmap, sys_mprotect, sys_munmap};
+pub(crate) use openat::sys_openat;
 pub(crate) use pipe2::sys_pipe2;
 pub(crate) use read::sys_read;
 pub(crate) use task::{sys_exit, sys_get_time, sys_getpid, sys_nanosleep, sys_waitpid, sys_yield};

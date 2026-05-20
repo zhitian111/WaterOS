@@ -12,9 +12,16 @@ use crate::meta::VfsMetadata;
 pub struct VfsOpenFlags(pub u32);
 
 impl VfsOpenFlags {
+    /// 语义层读（与 Linux `O_RDONLY` 对应，Linux 值为 0）。
     pub const READ: u32 = 1;
+    /// 语义层写（对应 `O_WRONLY` / `O_RDWR` 的写侧）。
     pub const WRITE: u32 = 2;
+    /// 不存在则创建（`O_CREAT`）。
     pub const CREATE: u32 = 4;
+    /// 打开时截断（`O_TRUNC`）。
+    pub const TRUNC: u32 = 8;
+    /// 追加写（`O_APPEND`）。
+    pub const APPEND: u32 = 16;
 
     pub const fn read() -> Self {
         Self(Self::READ)
@@ -38,6 +45,18 @@ pub trait VfsIoHandle {
     }
 
     fn close(&mut self) -> VfsResult<()> {
+        Ok(())
+    }
+
+    fn metadata(&self) -> VfsResult<VfsMetadata> {
+        Err(VfsError::Unsupported)
+    }
+
+    fn seek(&mut self, _offset: i64, _whence: VfsSeekWhence) -> VfsResult<u64> {
+        Err(VfsError::Unsupported)
+    }
+
+    fn flush(&mut self) -> VfsResult<()> {
         Ok(())
     }
 }

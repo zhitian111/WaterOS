@@ -7,17 +7,21 @@ use alloc::{boxed::Box, string::String, vec::Vec};
 
 use api_v0::{
     RootRwSession, SingleRootReadView, VfsAccessMode, VfsBackend, VfsCapability, VfsDevInventory,
-    VfsDevNode, VfsDevNodeType, VfsDirEntry, VfsError, VfsFsKind, VfsMetadata,
-    VfsMountOps, VfsMountTable, VfsNodeType, VfsOpenOps, VfsResult, normalize_absolute_path,
-    validate_root_file_name,
+    VfsDevNode, VfsDevNodeType, VfsDirEntry, VfsError, VfsFsKind, VfsIoHandle, VfsMetadata,
+    VfsMountOps, VfsMountTable, VfsNodeType, VfsOpenFlags, VfsOpenOps, VfsResult,
+    normalize_absolute_path, validate_root_file_name,
 };
+
+mod file_handle;
+
+pub use file_handle::RootFileHandle;
 use fs::{FsAccessMode, FsCapability, FsDirEntry, FsError, FsKind, FsMetadata, FsNodeType, SharedRwFs};
 
 /// 通过 `wateros-fs` 访问根卷与 devfs 的零大小后端。
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FsBridge;
 
-fn map_fs_err(e: FsError) -> VfsError {
+pub(crate) fn map_fs_err(e: FsError) -> VfsError {
     match e {
         FsError::NotMounted => VfsError::NotMounted,
         FsError::NotFound => VfsError::NotFound,
@@ -148,6 +152,14 @@ impl RootRwSession for MountedRwSession {
             .map_err(map_fs_err)
     }
 
+    fn write_regular_file(&mut self, path: &str, data: &[u8]) -> VfsResult<()> {
+        let n = normalize_absolute_path(path)?;
+        self.inner
+            .lock()
+            .write_regular_file(n.as_str(), data)
+            .map_err(map_fs_err)
+    }
+
     fn unlink(&mut self, path: &str) -> VfsResult<()> {
         let n = normalize_absolute_path(path)?;
         self.inner.lock().unlink(n.as_str()).map_err(map_fs_err)
@@ -194,7 +206,12 @@ impl VfsDevInventory for FsBridge {
     }
 }
 
-impl VfsOpenOps for FsBridge {}
+impl VfsOpenOps for FsBridge {
+    fn open(&self, path: &str, flags: VfsOpenFlags) -> VfsResult<Box<dyn VfsIoHandle>> {
+        self.open_path(path, flags)
+    }
+}
+
 impl VfsMountTable for FsBridge {}
 
 impl VfsBackend for FsBridge {}

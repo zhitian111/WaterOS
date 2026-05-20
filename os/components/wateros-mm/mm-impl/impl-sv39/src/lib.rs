@@ -17,6 +17,7 @@ mod pagetable;
 mod kernel_elf;
 mod kernel_global;
 mod user_heap_mmap;
+pub mod user_access;
 pub mod user_aspace;
 
 /// Sv39 页表 walk、映射/解映射/权限与翻译的自测；依赖已初始化的全局帧分配器（区间语义同 bring-up）。

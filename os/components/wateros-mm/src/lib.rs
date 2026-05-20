@@ -25,6 +25,12 @@ pub mod user_aspace {
     pub use impl_sv39::user_aspace::*;
 }
 
+/// Sv39 用户缓冲区访问（syscall 路径）。
+#[cfg(feature = "impl-sv39")]
+pub mod user_access {
+    pub use impl_sv39::user_access::Sv39UserMemoryOps;
+}
+
 /// 内核全局页表与用户 ELF 装载；类型契约见 [`api::kernel_bringup`]。
 pub mod kernel_mm {
     pub use api_v0::kernel_bringup::{
