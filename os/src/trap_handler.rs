@@ -16,7 +16,6 @@ use platform::arch::paging;
 use platform::arch::trap::ActiveTrapFrame as TrapContext;
 use runtime::logging::*;
 use syscall::dispatch_syscall_from_trap;
-use task::trap_runtime;
 
 /// 监督态定时器中断后，用 **与 `kernel_main` 相同的 wall-clock 语义** 重新武装固件定时器。
 ///
@@ -34,7 +33,7 @@ const SYSCALL_INSN_BYTES : usize = 4;
 /// 处理 `UserEnvCall`（分派 syscall）、页错日志、监督态定时器 tick（重武装 + 调度），其余
 /// cause 直接 `panic`。返回用户态前由 arch 层完成必要的帧访问准备。
 extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
-    let authoritative = unsafe { trap_runtime::begin_current_trap_frame_access(frame) };
+    let authoritative = unsafe { task::begin_current_trap_frame_access(frame) };
     let cx = unsafe { &mut *(authoritative as *mut TrapContext) };
 
     if cx.returns_to_user() {
@@ -50,28 +49,28 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             let regs = syscall_args.as_regs();
             match task::current_task_snapshot() {
                 Some(snap) => {
-                    let (entry_pc, aspace_raw, mm_ptr, img_base, img_sz) =
+                    let (entry_pc, address_space_token, mm_ptr, img_base, img_sz) =
                         match snap.user_resources {
                             Some(u) => {
-                                let satp_raw = u.address_space
+                                let address_space_token = u.address_space
                                     .map(|h| h.raw())
                                     .unwrap_or(0);
                                 let (ib, isz) = u.image
                                     .map(|i| (i.image_base(), i.image_size()))
                                     .unwrap_or((0, 0));
-                                (u.entry_pc, satp_raw, u.user_aspace_ptr, ib, isz)
+                                (u.entry_pc, address_space_token, u.user_aspace_ptr, ib, isz)
                             }
                             None => (0usize, 0usize, 0usize, 0usize, 0usize),
                         };
                     info!(
-                        "[syscall] task_id={} kind={:?} state={:?} user_pc={:#x} user_sp={:#x} entry_pc={:#x} satp_raw={:#x} user_aspace_ptr={:#x} image=[{:#x},+{:#x}) nr={} args=[{:#x},{:#x},{:#x},{:#x},{:#x},{:#x}]",
+                        "[syscall] task_id={} kind={:?} state={:?} user_pc={:#x} user_sp={:#x} entry_pc={:#x} address_space_token={:#x} user_aspace_ptr={:#x} image=[{:#x},+{:#x}) nr={} args=[{:#x},{:#x},{:#x},{:#x},{:#x},{:#x}]",
                         snap.id,
                         snap.kind,
                         snap.state,
                         cx.user_pc(),
                         cx.user_sp(),
                         entry_pc,
-                        aspace_raw,
+                        address_space_token,
                         mm_ptr,
                         img_base,
                         img_sz,
@@ -141,7 +140,7 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             if tick % 8 == 0 {
                 trace!("[trap] timer tick {}", tick);
             }
-            trap_runtime::schedule_tick_from_trap();
+            task::schedule_tick();
         }
         _ => {
             panic!("unexpected trap: cause={:?}, pc={:#x}, fault_addr={:#x}",
@@ -152,14 +151,14 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
     }
 
     if cx.returns_to_user() {
-        let satp = paging::read_satp();
+        let address_space_token = paging::active_address_space_token();
         // `raw_cause` 来自 TrapContext.scause 快照，即 **本次** 进入内核的原因（如 ecall=0x8），
         // 不是硬件 CSR 的“下一异常预告”；`sret` 前也不会用该槽位预测下一次 trap。
         trace!(
-            "[trap] sret to user pc={:#x} sp={:#x} satp={:#x} frame_scause={:#x} (this trap's scause snapshot)",
+            "[trap] sret to user pc={:#x} sp={:#x} address_space_token={:#x} frame_scause={:#x} (this trap's scause snapshot)",
             cx.user_pc(),
             cx.user_sp(),
-            satp,
+            address_space_token,
             raw_cause,
         );
     }
@@ -172,11 +171,10 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
     // 1. `begin_current_trap_frame_access(frame)`：把内核栈上的快照写入当前 TCB 的 `trap_frame`，并返回
     //    TCB 内权威缓冲区的指针（`cx`）；若尚无当前任务则仍用栈上 `frame`。
     // 2. 业务分支（如 syscall）在 `cx` 上改 `sepc`/`a0`/…。
-    // 3. `install_satp_for_exception_return`：按是否回用户写 `satp` 并刷新 TLB。
-    // 4. `restore_current_trap_frame(frame)`：把 TCB 内已更新的 `TrapContext` **拷回** `trap.asm` 传入的
-    //    `frame`（内核栈上的那份），供下面汇编 `ld`/`csrw`/`sret` 使用。`false` 且回用户则 panic。
-    trap_runtime::install_satp_for_exception_return(cx.returns_to_user());    
-    let restored = unsafe { trap_runtime::restore_current_trap_frame(frame) };
+    // 3. `restore_current_trap_frame(frame)`：把 TCB 内已更新的 `TrapContext` **拷回** `trap.asm` 传入的
+    //    `frame`（内核栈上的那份），并按返回目标写入地址空间 token，供下面汇编 `ld`/`csrw`/`sret`
+    //    使用。`false` 且回用户则 panic。
+    let restored = unsafe { task::restore_current_trap_frame(frame) };
     trace!("[trap] restore_current_trap_frame restored={}", restored);
     if cx.returns_to_user() && !restored {
         panic!(

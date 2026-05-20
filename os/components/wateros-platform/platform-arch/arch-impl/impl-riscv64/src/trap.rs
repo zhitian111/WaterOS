@@ -10,7 +10,8 @@ use abi::syscall_number::SyscallNumber;
 use abi::user_ret::UserRet;
 use api_v0::kernel_trap;
 use api_v0::trap::{
-    Exception, Interrupt, TrapCause, TrapFrameRead, TrapFrameWrite, TrapSyscallRead,
+    Exception, Interrupt, TrapAddressSpaceWrite, TrapCause, TrapFrameRead, TrapFrameWrite,
+    TrapSyscallRead,
     TrapSyscallWrite,
 };
 use core::arch::asm;
@@ -25,6 +26,7 @@ pub struct TrapContext {
     pub(crate) sepc : usize,
     pub(crate) scause : usize,
     pub(crate) stval : usize,
+    pub(crate) return_address_space_token : usize,
 }
 
 const RISCV_SSTATUS_SPP : usize = 1 << 8;
@@ -185,6 +187,12 @@ impl TrapFrameWrite for TrapContext {
     fn set_return_to_user(&mut self) { self.set_return_to_user_raw(); }
 
     fn set_return_to_kernel(&mut self) { self.set_return_to_kernel_raw(); }
+}
+
+impl TrapAddressSpaceWrite for TrapContext {
+    fn set_return_address_space_token(&mut self, token : usize) {
+        self.return_address_space_token = token;
+    }
 }
 
 impl TrapSyscallWrite for TrapContext {

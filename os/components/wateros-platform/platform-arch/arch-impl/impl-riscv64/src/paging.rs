@@ -8,9 +8,9 @@ use core::arch::asm;
 pub struct Riscv64Paging;
 
 impl Riscv64Paging {
-    /// 读取 satp 当前值，用于分页启用前后的观测。
+    /// 读取当前地址空间 token；在 RISC-V Sv39 下即 `satp` 当前值。
     #[inline]
-    pub fn read_satp() -> usize {
+    pub fn active_address_space_token() -> usize {
         let value: usize;
         unsafe {
             asm!("csrr {0}, satp", out(reg) value);
@@ -18,18 +18,18 @@ impl Riscv64Paging {
         value
     }
 
-    /// 写入 satp 后立刻执行全局 sfence.vma，确保页表切换后翻译可见。
+    /// 激活指定地址空间 token；在 RISC-V Sv39 下即写入 `satp` 并执行全局 `sfence.vma`。
     #[inline]
-    pub fn write_satp_and_flush(satp: usize) {
+    pub fn activate_address_space_token_and_flush(token: usize) {
         unsafe {
-            asm!("csrw satp, {0}", in(reg) satp);
+            asm!("csrw satp, {0}", in(reg) token);
             asm!("sfence.vma x0, x0");
         }
     }
 
-    /// 在不切换 `satp` 的前提下，对当前根页表已修改的 PTE 做全局 TLB 一致性冲刷。
+    /// 刷新当前地址空间下的地址翻译缓存；在 RISC-V 下即全局 `sfence.vma`。
     #[inline]
-    pub fn sfence_vma_all() {
+    pub fn flush_address_space_translations() {
         unsafe {
             asm!("sfence.vma x0, x0");
         }

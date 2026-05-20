@@ -33,7 +33,7 @@ pub fn init() {
     active_impl::init_scheduler();
 }
 
-/// 当前运行任务的用户态地址空间句柄 `raw`（`0` 表示使用内核 `satp`）。
+/// 当前运行任务的用户态地址空间 token（`0` 表示使用内核地址空间）。
 #[inline]
 pub fn current_task_address_space_raw() -> usize {
     active_impl::current_task_address_space_raw()
@@ -238,12 +238,6 @@ pub fn current_tick() -> TaskTick {
 #[inline]
 pub fn current_task_kernel_stack_top() -> Option<usize> {
     active_impl::current_task_kernel_stack_top()
-}
-
-/// 将当前 trap 保存现场记录到当前任务对象中。
-#[inline]
-pub fn record_current_trap_frame(trap_frame: TaskTrapFrame) {
-    active_impl::record_current_trap_frame(trap_frame);
 }
 
 /// 将当前 trap 现场装载到当前任务对象，并返回权威 trap frame 指针。

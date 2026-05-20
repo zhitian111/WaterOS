@@ -1,6 +1,6 @@
 //! 用户任务规格与资源快照：地址空间句柄占位、映像区间与外部用户栈选项，供 `impl-core` 装配 TCB。
 //!
-//! `AddressSpaceHandle` 仅为稳定 ABI 形状；具体 MMU/`satp` 绑定在平台与后续 MM 子系统中完成。
+//! `AddressSpaceHandle` 仅为稳定 ABI 形状；具体 MMU 地址空间 token 绑定在平台与后续 MM 子系统中完成。
 
 use crate::task::UserTaskEntryPc;
 

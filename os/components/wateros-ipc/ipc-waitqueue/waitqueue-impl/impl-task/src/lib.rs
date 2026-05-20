@@ -17,17 +17,19 @@ pub use api_v0::TaskWaitResult;
 /// 等待队列编号类型（重导出自 `api-v0`）。
 pub use api_v0::WaitQueueId;
 
+use wateros_task::wait_queue::WaitQueue as TaskWaitQueue;
+
 /// IPC 侧对任务等待队列的薄包装。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WaitQueue {
     // 仅委托底层队列；不在 IPC 层缓存 waiters 或附加锁。
-    inner : wateros_task::WaitQueue,
+    inner : TaskWaitQueue,
 }
 
 impl WaitQueue {
     /// 创建一个新的 IPC 等待队列。
     #[inline]
-    pub fn new() -> Self { Self { inner : wateros_task::WaitQueue::new() } }
+    pub fn new() -> Self { Self { inner : TaskWaitQueue::new() } }
 
     /// 返回该等待队列在底层任务系统中的编号。
     #[inline]

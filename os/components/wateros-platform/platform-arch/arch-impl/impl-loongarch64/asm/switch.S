@@ -52,6 +52,7 @@ __wateros_arch_restore_user_task:
     csrwr $r13, 0x1
     ld.d $r13, $r12, 33*8
     csrwr $r13, 0x6
+    # 36*8：return_address_space_token。LoongArch 页表实现尚未接入，当前占位不恢复硬件页表寄存器。
 
     ld.d $r1,  $r12, 1*8
     ld.d $r5,  $r12, 5*8

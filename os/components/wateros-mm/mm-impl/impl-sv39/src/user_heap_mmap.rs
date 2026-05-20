@@ -18,7 +18,7 @@ use crate::pagetable::Sv39AddressSpace;
 
 #[inline]
 fn fence_user_ptes() {
-    platform::arch::paging::sfence_vma_all();
+    platform::arch::paging::flush_address_space_translations();
 }
 
 impl HeapBrk for Sv39AddressSpace {

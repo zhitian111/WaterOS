@@ -357,12 +357,6 @@ impl TaskControlBlock {
     }
 
     #[inline]
-    /// 保存最近一次 trap 现场到任务对象中。
-    pub fn record_trap_frame(&mut self, trap_frame : TaskTrapFrame) {
-        self.trap_frame = Some(trap_frame);
-    }
-
-    #[inline]
     /// 将给定 trap 现场装载为任务当前的权威 trap frame，并返回其可写指针。
     pub fn begin_trap_frame_access(&mut self, trap_frame : TaskTrapFrame) -> *mut TaskTrapFrame {
         self.trap_frame = Some(trap_frame);

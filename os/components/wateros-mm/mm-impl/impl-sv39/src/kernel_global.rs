@@ -112,9 +112,9 @@ pub fn init(start_ppn: usize, end_ppn: usize, ram_end_exclusive: usize) {
         wateros_base_config::mm::QEMU_VIRT_MMIO_PHYS_END,
         satp_target
     );
-    platform::arch::paging::write_satp_and_flush(satp_target);
+    platform::arch::paging::activate_address_space_token_and_flush(satp_target);
     assert_eq!(
-        platform::arch::paging::read_satp(),
+        platform::arch::paging::active_address_space_token(),
         satp_target,
         "kernel_mm: satp mismatch"
     );

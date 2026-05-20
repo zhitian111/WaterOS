@@ -316,14 +316,6 @@ impl TaskRegistry {
         task.exited_task()
     }
 
-    pub(super) fn record_current_trap_frame(&mut self, trap_frame : TaskTrapFrame) {
-        if let Some(current_task_id) = self.current_task_id {
-            self.task_table
-                .task_mut(current_task_id)
-                .record_trap_frame(trap_frame);
-        }
-    }
-
     pub(super) fn begin_current_trap_frame_access(&mut self,
                                                   trap_frame : TaskTrapFrame)
                                                   -> Option<*mut TaskTrapFrame> {

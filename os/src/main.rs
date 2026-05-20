@@ -121,7 +121,7 @@ mod qemu_riscv64_opensbi {
 
         task::init();
         crate::trap_handler::init();
-        task::init_kernel_trap_satp(mm::kernel_mm::kernel_satp());
+        task::init_kernel_address_space_token(mm::kernel_mm::kernel_satp());
 
         // 设备驱动扫描与根文件系统挂载自检。
         let driver_boot = driver::active_impl::init_after_boot();
