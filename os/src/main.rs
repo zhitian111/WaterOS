@@ -12,8 +12,8 @@
 //! 3. 初始化任务、注册组合层 trap 路由（`trap_handler::init`）与内核 trap 的
 //!    `satp`，随后 `driver::active_impl::init_after_boot`；成功则挂载 `fs`。
 //! 4. 在驱动与 `fs::init` 成功后，先跑 [`user_bringup_bus::run`]（含
-//!    [`crate::user_bringup_mm::run_stage_02`]： 从根卷 **`/glibc/basic/`**
-//!    加载 MM 测程 ELF 并 **spawn（仅入就绪队列）**），再调用
+//!    [`crate::user_bringup_mm::run_stage_02`] / [`crate::user_bringup_basic::run_stage_03`]：
+//!    从根卷 **`/glibc/basic/`**、**`/musl/basic/`** 加载测程 ELF 并 **spawn（仅入就绪队列）**），再调用
 //!    [`self_tests::task::spawn_all`] 启动调度相关 内核自检任务，随后
 //!    `fs::test()` 等 RW 烟测。
 //! 5. 开启定时器中断后通过 [`task::run_first_task`] **首次**从引导上下文
@@ -29,7 +29,7 @@
 //!
 //! 任务相关内核自检的统一入口为 [`self_tests::task::spawn_all`]；用户态
 //! bring-up 里程碑 总线为 [`crate::user_bringup_bus::run`]（内含
-//! **`/glibc/basic/`** MM 测程装载）；二者在 `kernel_main`
+//! **`/glibc/basic/`**、**`/musl/basic/`** 测程装载）；二者在 `kernel_main`
 //! 中的先后与语义见模块文档与 `docs/roadmap/riscv64-busybox/wp-init-test-bus.
 //! md`。
 
@@ -51,6 +51,8 @@ mod trap_handler;
 mod user_bringup_bus;
 #[cfg(feature = "qemu-riscv64-opensbi")]
 mod user_bringup_mm;
+#[cfg(feature = "qemu-riscv64-opensbi")]
+mod user_bringup_basic;
 
 /// 将内核 panic 委托给 `wateros-runtime` 的统一 panic 处理（日志/停机策略由
 /// runtime 决定）。

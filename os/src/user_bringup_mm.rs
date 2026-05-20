@@ -1,5 +1,5 @@
-//! `stage-02-mm`：在根卷已挂载后，从 **`/glibc/basic/`** 加载 MM 相关测程 ELF 并 `spawn` 用户任务
-//!（与 `os/tem/glibc/basic` 等镜像布局一致；缺失文件则 `warn` 跳过）。
+//! `stage-02-mm`：在根卷已挂载后，从 **`/glibc/basic/`** 与 **`/musl/basic/`** 加载 MM 相关测程
+//! ELF 并 `spawn` 用户任务（与 `os/tem/glibc/basic`、`os/tem/musl/basic` 等镜像布局一致；缺失文件则 `warn` 跳过）。
 //!
 //! 须在 `fs::init` 之后调用。**`spawn` 只把用户任务放入就绪队列**；此时尚未发生 `__switch`，
 //! 测程的 `ecall` 等要到 `kernel_main` 末尾 `task::run_first_task()` 切入多任务后才会在 CPU 上执行。
@@ -7,10 +7,15 @@
 use runtime::logging::*;
 
 /// 默认尝试的 MM 子集路径（可按镜像增量增删）。
-const MM_GLIBC_BASIC_PATHS: &[&str] = &[
+const MM_GLIBC_PATHS: &[&str] = &[
     "/glibc/basic/brk",
     "/glibc/basic/mmap",
     "/glibc/basic/munmap",
+];
+const MM_MUSL_PATHS: &[&str] = &[
+    "/musl/basic/brk",
+    "/musl/basic/mmap",
+    "/musl/basic/munmap",
 ];
 
 /// 执行 `stage-02-mm`：装载并登记用户测程。
@@ -18,18 +23,19 @@ pub fn run_stage_02() {
     info!("[bringup][stage-02-mm] BEGIN");
     #[cfg(not(feature = "impl-sv39"))]
     {
-        warn!("[mm-bringup] impl-sv39 off: skip glibc/basic ELF load");
+        warn!("[mm-bringup] impl-sv39 off: skip glibc/musl basic ELF load");
         info!("[bringup][stage-02-mm] END");
         return;
     }
     #[cfg(feature = "impl-sv39")]
     {
+        let n = MM_GLIBC_PATHS.len() + MM_MUSL_PATHS.len();
         info!(
-            "[mm-bringup] will try {} ELF(s) under /glibc/basic/",
-            MM_GLIBC_BASIC_PATHS.len()
+            "[mm-bringup] will try {} ELF(s) under /glibc/basic/ and /musl/basic/",
+            n
         );
         info!("[mm-bringup] spawn only enqueues user tasks; CPU-side user code runs after task::run_first_task()");
-        for path in MM_GLIBC_BASIC_PATHS {
+        for path in MM_GLIBC_PATHS.iter().chain(MM_MUSL_PATHS) {
             match mm::kernel_mm::from_elf_path(path) {
                 Ok(loaded) => {
                     info!(
