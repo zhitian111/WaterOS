@@ -9,6 +9,7 @@
 2. 将当前 `wateros-syscall` 中 **`brk` 原子桩** 的替换点落实为可调用的 **MM 原语**：在任务携带 **`LoadedElf::user_aspace_ptr`**（Sv39 用户页表）时经 **`mm::user_aspace::with_user_aspace_mut`** 调用 **`HeapBrk`/`MmapOps`**；否则仍使用假顶桩（如 LoongArch 或未走 ELF 装载的用户任务）。**`brk` 与匿名 `mmap`** 协同策略：**堆**仅通过 **`brk`** 在 **`[brk_start, brk_max)`** 内饥渴扩页；**匿名私有映射**通过 **`mmap`** 自 **`mmap_arena_base`** bump 分配（详见 `docs/exports/features/wateros-mm.md`）。
 3. **`mmap`/`munmap`/`mprotect` 第一版**：满足后续 `execve` 装载与简单 `mmap(MAP_ANONYMOUS)` 测例；错误路径返回 Linux 风格 errno 映射（经 `wateros-abi`）。
 4. 与 **trap 页错误** 策略对齐：采用 **饥渴（eager）映射**（见 `impl-sv39` `pagetable` 模块说明）；用户访问已 **`munmap`** 的 VA 在 U 态触发 **page fault**。
+5. **Trap / `satp`（与 syscall 联调）**：用户 ELF 装载仅 **`map_kernel_ram_identity`**（不含 MMIO）；来自用户的 trap 在 **`wateros_kernel_trap_handler`** 内切 **内核 `satp`** 再跑 syscall/FS，**`sret` 前** 装回用户 **`satp`**（见 `task::trap_runtime`、`os/src/trap_handler.rs`）。避免在用户表嵌 MMIO 或与 **`mmap` @ `0x10000000`** 抢 VA 的权宜方案。
 
 ## 验收要求
 
@@ -21,6 +22,7 @@
 1. **`stage-02-mm`**（`os/src/user_bringup_mm.rs`）：根卷存在 **`/glibc/basic/brk`**、**`mmap`**、**`munmap`** 等测程（与 `os/tem/glibc/basic` 等镜像产物一致）时，`from_elf_path` + `spawn_user_task_from_loaded_elf`；串口日志 **`[mm-bringup]`** 含 `loaded`/`spawned` 行，缺文件为 **`skip`**。
 2. QEMU 跑一轮，**`grep '\[mm-bringup\]'`** 对照路径与任务号；测程实际 syscall 行为在 **`run_first_task`** 后与 `self_tests` 并行调度中执行。
 3. bring-up 或调试路径可通过 **`mm::user_aspace::with_user_aspace_mut`** 与 **`api::HeapBrk`/`MmapOps`** 直接操作页表指针（与 syscall 拼合路径一致）。
+4. VFS 路径：**`write` → `munmap` → `close(fd)`** 后无内核 **StorePageFault @ `0x10001050`**（MMIO 区）；确认 handler 内已切内核 **`satp`**。
 
 ## 依赖
 

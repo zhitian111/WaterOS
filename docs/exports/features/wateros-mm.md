@@ -31,7 +31,8 @@
 
 ## impl-sv39 与 impl-dummy
 
-- **`impl-sv39`**：**`Sv39AddressSpace`** 实现 **`AddressSpaceOps`**、**`HeapBrk`**、**`MmapOps`**（含 **`mprotect`**）；**`kernel_elf`**（**`from_elf_path`**、**`from_elf_bytes`** → **`LoadedElf`**，含 **`user_aspace_ptr`** / **`brk_*`** / **`mmap_arena_base`**）、**`kernel_global`**（全局 **`Sv39AddressSpace`**、**`init`**、**`kernel_satp`**、恒等/用户映射辅助、**`phys_ram_end_exclusive`** 等）。**`user_aspace::with_user_aspace_mut`** 将 **`user_aspace_ptr`** 解析为可调用上述 trait 的实例（**不**封装 Linux syscall 语义）。**`Drop`** 当前仅回收根页表，注释说明未递归回收中间页表（早期简化）。
+- **`impl-sv39`**：**`Sv39AddressSpace`** 实现 **`AddressSpaceOps`**、**`HeapBrk`**、**`MmapOps`**（含 **`mprotect`**）；**`kernel_elf`**（**`from_elf_path`**、**`from_elf_bytes`** → **`LoadedElf`**，含 **`user_aspace_ptr`** / **`brk_*`** / **`mmap_arena_base`**）、**`kernel_global`**（全局 **`Sv39AddressSpace`**、**`init`**、**`kernel_satp`**、恒等/用户映射辅助、**`phys_ram_end_exclusive`** 等）。装载用户 ELF 时仅在用户页表内 **`map_kernel_ram_identity`**（**`[0x8000_0000, phys_ram_end)`**，无 **`U`**），供 **`trap.asm` / `trap_entry_rust`** 短路径；**不**在用户表映射 MMIO。**`user_aspace::with_user_aspace_mut`** 将 **`user_aspace_ptr`** 解析为可调用上述 trait 的实例（**不**封装 Linux syscall 语义）。**`Drop`** 当前仅回收根页表，注释说明未递归回收中间页表（早期简化）。
+- **Trap / syscall 与 `satp`**：来自用户的 trap 在 **`wateros_kernel_trap_handler`**（`os/src/trap_handler.rs`）内、**`begin_current_trap_frame_access`** 之后调用 **`task::trap_runtime::install_kernel_satp_for_trap_handler`**，syscall / FS / 驱动在**内核 `satp`** 下执行（MMIO 仅内核全局页表）；**`sret` 前** **`install_satp_for_exception_return`** 装回用户 **`satp`**。用户缓冲区经 **`UserMemoryOps`** / **`wateros-syscall` `user_copy`**（页表 walk + 物理拷贝），不依赖 syscall 期间保持 user **`satp`**。
 - **`impl-dummy`**：**`kernel_mm_impl`** 桩：**`init`** 空操作、**`kernel_satp`** 恒 0、映射无操作、**`from_elf_path`** 固定错误类；**无** **`from_elf_bytes`**。
 
 ## 帧分配器（impl-stack）
@@ -46,7 +47,7 @@
 ## 明确未覆盖
 
 - **`brk` / `mmap` / `munmap` / `mprotect`**：机制在 **`impl-sv39`** 的 **`HeapBrk`/`MmapOps`** 上 **饥渴映射** 落地；**`wateros-syscall`** 在任务携带 **`user_aspace_ptr`** 时拼合 Linux 语义。当前已支持：**匿名 `MAP_PRIVATE|ANONYMOUS`**；**文件 `MAP_SHARED`/`MAP_PRIVATE`**（syscall 经 VFS 预读，`file_backing` 传入 `MmapOps::mmap`，独立 **`mmap_file_cursor`** bump）。不支持 demand paging、`msync`、写回文件、真 COW。
-- **`UserMemoryOps`** 仍待与 trap 拷贝路径完整对接。
+- **`UserMemoryOps`** 已由 **`wateros-syscall` `user_copy`** 在 syscall 路径使用；trap 侧 satp 策略见上节。
 - 页表递归回收与更完整的地址空间生命周期管理。
 
 ## 维护要求

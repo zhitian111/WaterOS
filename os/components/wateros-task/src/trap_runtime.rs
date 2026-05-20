@@ -16,14 +16,25 @@ pub fn init_kernel_trap_satp(v: usize) {
     KERNEL_TRAP_SATP.store(v, Ordering::Release);
 }
 
+/// 在 [`wateros_kernel_trap_handler`] 内、确认 trap 来自用户态后切换到全局内核 `satp`。
+///
+/// trap 汇编与 `trap_entry_rust` 仍运行在用户 `satp`（用户表内 RAM 恒等映射）；syscall / FS /
+/// 驱动等 handler 体内逻辑在此之后使用内核页表（含 MMIO）。
+#[inline]
+pub fn install_kernel_satp_for_trap_handler() {
+    let kernel_satp = KERNEL_TRAP_SATP.load(Ordering::Relaxed);
+    paging::write_satp_and_flush(kernel_satp);
+}
+
 /// 根据即将返回的特权级（用户 / 内核）切换 `satp` 并刷新 TLB。
 ///
 /// **注意**：本函数在 **仍为 S 态** 的 trap 返回路径上调用，随后还要继续执行 Rust / `trap.asm`
 ///（例如 `restore_current_trap_frame`、`ld`/`sret`）。因此 **不能** 假设「切到用户 `satp` 后内核虚拟地址立刻失效」。
 ///
-/// 当前 WaterOS 约定（见 `wateros-mm` `kernel_elf::map_kernel_ram_identity`）：每个用户 Sv39 根表在装载 ELF 时
-/// 已将 **`[0x8000_0000, phys_ram_end_exclusive)`** 以 `vpn==ppn` 映射为 **`R|W|X`（无 `U`）**，供 **S 态**
-/// 在同一 `satp` 下继续取指、访问内核栈与恒等 RAM；`sret` 进入 U 态后才依赖带 `U` 的用户段映射。
+/// 进入 handler 之前：`trap.asm` / `trap_entry_rust` 仍可能处于用户 `satp`，依赖用户表内
+/// **`[0x8000_0000, phys_ram_end_exclusive)`** RAM 恒等映射（见 `wateros-mm` `kernel_elf`）。
+/// handler 内来自用户的 trap 会先 [`install_kernel_satp_for_trap_handler`]，再执行 syscall 等；
+/// `sret` 前由本函数装回用户 `satp`。
 #[inline]
 pub fn install_satp_for_exception_return(returns_to_user: bool) {
     let kernel_satp = KERNEL_TRAP_SATP.load(Ordering::Relaxed);
