@@ -106,6 +106,20 @@ pub trait TrapFrameWrite {
 }
 
 #[allow(unused)]
+pub trait TrapAddressSpaceWrite {
+    /// 设置 trap 返回路径要激活的地址空间 token。
+    ///
+    /// 具体 token 编码由当前 arch/mm 实现决定；RISC-V Sv39 下为 `satp` 编码值。
+    fn set_return_address_space_token(&mut self, token: usize);
+
+    /// 准备 trap 返回路径的地址空间恢复信息。
+    #[inline]
+    fn prepare_address_space_for_return(&mut self, token: usize) {
+        self.set_return_address_space_token(token);
+    }
+}
+
+#[allow(unused)]
 pub trait TrapSyscallRead {
     fn syscall_args(&self) -> SyscallArgs;
     fn syscall_nr(&self) -> SyscallNumber;
@@ -186,7 +200,7 @@ impl<T: TrapFrameRead + TrapSyscallRead + ?Sized> TrapContextRead for T {}
 /// 将帧控制写回与系统调用返回值写入组合在同一约束中，具体类型仍分别实现
 /// [`TrapFrameWrite`] 与 [`TrapSyscallWrite`]。
 #[allow(unused)]
-pub trait TrapContextWrite: TrapFrameWrite + TrapSyscallWrite {
+pub trait TrapContextWrite: TrapFrameWrite + TrapSyscallWrite + TrapAddressSpaceWrite {
     #[inline]
     fn set_syscall_ret(&mut self, ret: UserRet) {
         TrapSyscallWrite::set_syscall_ret(self, ret);
@@ -218,13 +232,23 @@ pub trait TrapContextWrite: TrapFrameWrite + TrapSyscallWrite {
     }
 
     #[inline]
+    fn set_return_address_space_token(&mut self, token: usize) {
+        TrapAddressSpaceWrite::set_return_address_space_token(self, token);
+    }
+
+    #[inline]
+    fn prepare_address_space_for_return(&mut self, token: usize) {
+        TrapAddressSpaceWrite::prepare_address_space_for_return(self, token);
+    }
+
+    #[inline]
     #[allow(unused)]
     fn prepare_user_return(&mut self, entry_pc: usize, user_sp: usize) {
         TrapFrameWrite::prepare_user_return(self, entry_pc, user_sp);
     }
 }
 
-impl<T: TrapFrameWrite + TrapSyscallWrite + ?Sized> TrapContextWrite for T {}
+impl<T: TrapFrameWrite + TrapSyscallWrite + TrapAddressSpaceWrite + ?Sized> TrapContextWrite for T {}
 
 #[allow(unused)]
 pub trait TrapFrame: TrapContextRead + TrapContextWrite {}

@@ -13,7 +13,8 @@
 # - sepc     : 33 * 8
 # - scause   : 34 * 8
 # - stval    : 35 * 8
-# 总大小：36 * 8 = 288 字节
+# - return_address_space_token : 36 * 8
+# 总大小：37 * 8 = 296 字节
 #
 # a0 = TrapContext*  (交给 trap_entry_rust)
 #
@@ -29,13 +30,13 @@ __alltraps:
 gdb_point_0:
     # User -> kernel: swap to the task's kernel stack first.
     csrrw sp, sscratch, sp
-    addi sp, sp, -288
+    addi sp, sp, -296
     csrr t0, sscratch
     j .Lsave_context
 
 .Ltrap_from_kernel:
     mv t0, sp
-    addi sp, sp, -288
+    addi sp, sp, -296
 
 .Lsave_context:
 
@@ -81,6 +82,8 @@ gdb_point_0:
     sd t0, 34*8(sp)
     csrr t0, stval
     sd t0, 35*8(sp)
+    csrr t0, satp
+    sd t0, 36*8(sp)
 
     # a0 = cx_ptr
     mv a0, sp
@@ -95,6 +98,10 @@ gdb_point_1:
     ld t0, 33*8(sp)
     csrw sepc, t0
     bnez t1, .Ltrap_return_kernel
+
+    ld t0, 36*8(sp)
+    csrw satp, t0
+    sfence.vma x0, x0
 
     ld x1,  1*8(sp)
     ld x3,  3*8(sp)
@@ -129,7 +136,7 @@ gdb_point_1:
 gdb_point_2:
 
 
-    addi sp, sp, 288
+    addi sp, sp, 296
     csrrw sp, sscratch, sp
 
 gdb_point_3:
@@ -169,6 +176,9 @@ gdb_point_3:
     ld x30, 30*8(sp)
     ld x31, 31*8(sp)
 
+    ld t0, 36*8(sp)
+    csrw satp, t0
+    sfence.vma x0, x0
     ld t0, 2*8(sp)
     mv sp, t0
     sret

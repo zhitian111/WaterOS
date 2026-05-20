@@ -9,7 +9,8 @@ use abi::syscall_number::SyscallNumber;
 use abi::user_ret::UserRet;
 use api_v0::kernel_trap;
 use api_v0::trap::{
-    Exception, Interrupt, TrapCause, TrapFrameRead, TrapFrameWrite, TrapSyscallRead,
+    Exception, Interrupt, TrapAddressSpaceWrite, TrapCause, TrapFrameRead, TrapFrameWrite,
+    TrapSyscallRead,
     TrapSyscallWrite,
 };
 use core::arch::asm;
@@ -23,6 +24,7 @@ pub struct TrapContext {
     era : usize,
     estat : usize,
     badv : usize,
+    return_address_space_token : usize,
 }
 
 /// 异常入口向量 CSR（`EENTRY`）：`trap.S` 中 `__alltraps` 的物理入口地址写入此 CSR。
@@ -159,6 +161,12 @@ impl TrapFrameWrite for TrapContext {
     fn set_return_to_user(&mut self) { self.set_return_to_user_raw(); }
 
     fn set_return_to_kernel(&mut self) { self.set_return_to_kernel_raw(); }
+}
+
+impl TrapAddressSpaceWrite for TrapContext {
+    fn set_return_address_space_token(&mut self, token : usize) {
+        self.return_address_space_token = token;
+    }
 }
 
 impl TrapSyscallWrite for TrapContext {

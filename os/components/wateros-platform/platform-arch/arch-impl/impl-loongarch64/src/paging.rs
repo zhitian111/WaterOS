@@ -8,13 +8,13 @@ pub struct LoongArch64Paging;
 
 impl LoongArch64Paging {
     #[inline]
-    pub fn read_satp() -> usize {
+    pub fn active_address_space_token() -> usize {
         0
     }
 
     #[inline]
-    pub fn write_satp_and_flush(_satp: usize) {}
+    pub fn activate_address_space_token_and_flush(_token: usize) {}
 
     #[inline]
-    pub fn sfence_vma_all() {}
+    pub fn flush_address_space_translations() {}
 }

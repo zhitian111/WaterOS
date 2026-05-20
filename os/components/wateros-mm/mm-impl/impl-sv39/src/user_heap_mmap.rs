@@ -20,7 +20,7 @@ use crate::pagetable::Sv39AddressSpace;
 
 #[inline]
 fn fence_user_ptes() {
-    platform::arch::paging::sfence_vma_all();
+    platform::arch::paging::flush_address_space_translations();
 }
 
 /// 将 `src` 中对应页切片写入已分配物理页（恒等映射假设）。

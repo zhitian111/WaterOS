@@ -7,7 +7,8 @@
 //!   设置下次中断时刻**、**经固件写串口** 等 属于 firmware 层，由依赖方分别引用
 //!   `arch` 与 `firmware` crate 组合使用。
 //! - trap 路径中的定时器重载、调度 tick、syscall 分发等业务由组合层通过
-//!   `arch-api::kernel_trap` 接入；arch impl 只负责 trap 向量、帧布局和 CSR 语义。
+//!   `arch-api::kernel_trap` 接入；arch impl 只负责 trap 向量、帧布局和 CSR
+//!   语义。
 #![no_std]
 #[cfg(all(feature = "impl-riscv64", feature = "impl-loongarch64"))]
 compile_error!("select only one platform-arch implementation");
@@ -66,9 +67,9 @@ pub mod task {
 pub mod trap {
     #[allow(deprecated)]
     pub use api_v0::trap::{
-        ArchTrapFrame, Exception, Interrupt, TrapCOntextWrite, TrapCause, TrapContextFrameView,
-        TrapContextRead, TrapContextWrite, TrapFrame, TrapFrameRead, TrapFrameWrite,
-        TrapSyscallRead, TrapSyscallWrite,
+        ArchTrapFrame, Exception, Interrupt, TrapAddressSpaceWrite, TrapCOntextWrite, TrapCause,
+        TrapContextFrameView, TrapContextRead, TrapContextWrite, TrapFrame, TrapFrameRead,
+        TrapFrameWrite, TrapSyscallRead, TrapSyscallWrite,
     };
 
     #[cfg(feature = "impl-loongarch64")]
@@ -135,10 +136,12 @@ pub mod interrupt {
     pub fn wait_for_interrupt() { ArchInterruptImpl::wait_for_interrupt(); }
 }
 
-/// 分页控制 CSR（RISC-V 为 `satp` + `sfence.vma`）与必要的 TLB 刷新原语；页表内容在 MM 组件。
+/// 地址空间激活与必要的地址翻译缓存刷新原语；页表内容在 MM 组件。
 ///
-/// **LoongArch**：当前 `impl-loongarch64` 为占位，`read_satp`/`write_satp_and_flush` 名称为
-/// 与 `arch` facade 统一的历史命名，**不**表示真实 CSR 语义；接入页表后应替换实现或改名。
+/// RISC-V 的 token 是 `satp` 编码值；其它架构可使用自己的根页表/ASID 编码。
+///
+/// 内核自身的地址空间 token 由 MM 层维护并通过 [`mm::kernel_mm::kernel_satp`]
+/// 提供。
 pub mod paging {
     #[cfg(feature = "impl-loongarch64")]
     pub use impl_loongarch64::paging::LoongArch64Paging as ArchPagingImpl;
@@ -146,12 +149,14 @@ pub mod paging {
     pub use impl_riscv64::paging::Riscv64Paging as ArchPagingImpl;
 
     #[inline]
-    pub fn read_satp() -> usize { ArchPagingImpl::read_satp() }
+    pub fn active_address_space_token() -> usize { ArchPagingImpl::active_address_space_token() }
 
     #[inline]
-    pub fn write_satp_and_flush(satp : usize) { ArchPagingImpl::write_satp_and_flush(satp) }
+    pub fn activate_address_space_token_and_flush(token : usize) {
+        ArchPagingImpl::activate_address_space_token_and_flush(token)
+    }
 
-    /// 当前根页表下 PTE 已就地修改时，刷新本地 hart 的地址翻译缓存（RISC-V：`sfence.vma`）。
+    /// 当前地址空间下 PTE 已就地修改时，刷新本地 CPU/hart 的地址翻译缓存。
     #[inline]
-    pub fn sfence_vma_all() { ArchPagingImpl::sfence_vma_all() }
+    pub fn flush_address_space_translations() { ArchPagingImpl::flush_address_space_translations() }
 }

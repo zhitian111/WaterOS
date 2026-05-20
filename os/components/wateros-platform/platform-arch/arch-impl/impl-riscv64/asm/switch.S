@@ -45,6 +45,9 @@ __wateros_arch_restore_user_task:
     csrw sstatus, t0
     ld t0, 33*8(a0)
     csrw sepc, t0
+    ld t0, 36*8(a0)
+    csrw satp, t0
+    sfence.vma x0, x0
 
     # 切到内核栈；`sscratch` 存用户 sp（x2 槽），与 `trap.asm` 进入路径成对。
     mv sp, a1

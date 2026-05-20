@@ -83,7 +83,7 @@ impl Drop for InterruptGuard {
     }
 }
 
-/// 返回当前运行任务的用户地址空间原始句柄；`0` 表示回落到内核全局 `satp`。
+/// 返回当前运行任务的用户地址空间 token；`0` 表示回落到内核地址空间。
 pub fn current_task_address_space_raw() -> usize {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.current_task_address_space_raw())
@@ -382,12 +382,6 @@ pub fn current_tick() -> TaskTick {
 pub fn current_task_kernel_stack_top() -> Option<usize> {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.current_task_kernel_stack_top())
-}
-
-/// 将 trap 帧快照写入当前 TCB。
-pub fn record_current_trap_frame(trap_frame: TaskTrapFrame) {
-    let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.record_current_trap_frame(trap_frame));
 }
 
 /// 开始由 Rust 修改当前任务的权威 trap 上下文，返回可写指针（若尚无当前任务则为 `None`）。

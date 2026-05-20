@@ -9,11 +9,12 @@
 # - era      : 33 * 8
 # - estat    : 34 * 8
 # - badv     : 35 * 8
+# - return_address_space_token : 36 * 8
 #
 # CSR SAVE0 stores the current task's kernel stack top while running in user mode.
 # User -> kernel traps swap $r3 with SAVE0 before building TrapContext, mirroring the
 # RISC-V sscratch convention used by the sibling implementation.
-    .equ TRAP_CONTEXT_SIZE, 288
+    .equ TRAP_CONTEXT_SIZE, 296
     .equ CSR_PRMD, 0x1
     .equ CSR_ERA, 0x6
     .equ CSR_ESTAT, 0x5
@@ -129,6 +130,7 @@ __alltraps:
     st.d $r12, $r3, 272
     csrrd $r12, CSR_BADV
     st.d $r12, $r3, 280
+    st.d $r0,  $r3, 288
 
     move $r4, $r3
     bl trap_entry_rust

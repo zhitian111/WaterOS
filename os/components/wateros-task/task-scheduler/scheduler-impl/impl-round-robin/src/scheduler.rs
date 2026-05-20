@@ -272,11 +272,6 @@ impl RoundRobinScheduler {
             .current_task_address_space_raw()
     }
 
-    pub(super) fn record_current_trap_frame(&mut self, trap_frame: TaskTrapFrame) {
-        self.registry
-            .record_current_trap_frame(trap_frame);
-    }
-
     pub(super) fn begin_current_trap_frame_access(
         &mut self,
         trap_frame: TaskTrapFrame,

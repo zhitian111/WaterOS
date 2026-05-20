@@ -24,8 +24,8 @@ enum UserStackBacking {
     },
 }
 
-// 与 `task_api::UserTaskResources` 快照对应的内部可变表示；仅在 TCB 内使用。
-struct UserTaskResources {
+// 与 `task_api::UserTaskResources` 快照对应的内部运行时表示；仅在 TCB 内使用。
+struct UserTaskRuntimeResources {
     entry_pc : UserTaskEntryPc,
     user_stack : UserStackBacking,
     address_space : Option<AddressSpaceHandle>,
@@ -50,7 +50,7 @@ fn initial_user_sp(top_exclusive : usize, bottom : usize) -> usize {
     }
 }
 
-impl UserTaskResources {
+impl UserTaskRuntimeResources {
     fn new(spec : UserTaskSpec) -> Self {
         let user_stack = if let Some((bottom, top)) = spec.external_stack() {
             UserStackBacking::External { bottom, top }
@@ -124,7 +124,7 @@ pub struct TaskControlBlock {
     wait_result : Option<TaskWaitResult>,
     task_cx : TaskContext,
     kernel_stack : KernelStack,
-    user_resources : Option<UserTaskResources>,
+    user_resources : Option<UserTaskRuntimeResources>,
     bootstrap : Option<Box<TaskBootstrap>>,
     is_idle : bool,
 }
@@ -175,7 +175,7 @@ impl TaskControlBlock {
     /// 创建一个最小用户任务骨架。
     pub fn new_user_task(id : TaskId, parent_id : Option<TaskId>, spec : UserTaskSpec) -> Self {
         let kernel_stack = KernelStack::new();
-        let user_resources = UserTaskResources::new(spec);
+        let user_resources = UserTaskRuntimeResources::new(spec);
         let task_cx = TaskContext::goto_entry(__arch_user_task_entry as *const () as usize,
                                               kernel_stack.top());
         let mut trap_frame = TaskTrapFrame::default();
@@ -201,7 +201,7 @@ impl TaskControlBlock {
            task_cx : TaskContext,
            trap_frame : Option<TaskTrapFrame>,
            kernel_stack : KernelStack,
-           user_resources : Option<UserTaskResources>,
+           user_resources : Option<UserTaskRuntimeResources>,
            bootstrap : Option<Box<TaskBootstrap>>,
            is_idle : bool)
            -> Self {
@@ -268,7 +268,7 @@ impl TaskControlBlock {
     pub fn user_stack_top(&self) -> Option<usize> {
         self.user_resources
             .as_ref()
-            .map(UserTaskResources::user_stack_top)
+            .map(UserTaskRuntimeResources::user_stack_top)
     }
 
     /// 用户任务 `AddressSpaceHandle::raw()`；非用户任务或未设置时返回 `0`。
@@ -279,7 +279,7 @@ impl TaskControlBlock {
         }
         self.user_resources
             .as_ref()
-            .map(UserTaskResources::address_space_raw)
+            .map(UserTaskRuntimeResources::address_space_raw)
             .unwrap_or(0)
     }
 
@@ -288,7 +288,7 @@ impl TaskControlBlock {
     pub fn user_resources_snapshot(&self) -> Option<UserTaskResourcesSnapshot> {
         self.user_resources
             .as_ref()
-            .map(UserTaskResources::snapshot)
+            .map(UserTaskRuntimeResources::snapshot)
     }
 
     #[inline]
@@ -354,12 +354,6 @@ impl TaskControlBlock {
             .tick_count = self.stats
                               .tick_count
                               .saturating_add(1);
-    }
-
-    #[inline]
-    /// 保存最近一次 trap 现场到任务对象中。
-    pub fn record_trap_frame(&mut self, trap_frame : TaskTrapFrame) {
-        self.trap_frame = Some(trap_frame);
     }
 
     #[inline]
