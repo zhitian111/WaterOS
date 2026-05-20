@@ -133,6 +133,46 @@ impl ReadOnlyFs for Ext4Fs {
         Ok(out)
     }
 
+    fn read_range(&self, path: &str, offset: u64, buf: &mut [u8]) -> FsResult<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        let fs = self.fs()?;
+        let pathv = Path::try_from(path).map_err(|_| FsError::InvalidPath)?;
+        let meta = fs.metadata(pathv).map_err(map_ext4_error)?;
+        if !meta.file_type().is_regular_file() {
+            return Err(FsError::NotAFile);
+        }
+        let file_size = meta.len();
+        if offset >= file_size {
+            return Ok(0);
+        }
+        let mut file = fs.open(pathv).map_err(map_ext4_error)?;
+        file.seek_to(offset).map_err(map_ext4_error)?;
+        let max_read = usize::try_from(file_size - offset).map_err(|_| FsError::Io)?;
+        let to_read = buf.len().min(max_read);
+        let mut filled = 0usize;
+        while filled < to_read {
+            let room = to_read - filled;
+            let chunk = room.min(BLOCK_SIZE);
+            let n = file
+                .read_bytes(&mut buf[filled..filled + chunk])
+                .map_err(map_ext4_error)?;
+            if n == 0 {
+                break;
+            }
+            filled += n;
+        }
+        Ok(filled)
+    }
+
+    fn read_prefix(&self, path: &str, len: usize) -> FsResult<Vec<u8>> {
+        let mut buf = vec![0u8; len];
+        let n = self.read_range(path, 0, &mut buf)?;
+        buf.truncate(n);
+        Ok(buf)
+    }
+
     fn boot_dump_all_paths(&self) {
         let Some(ext4) = self.fs.as_ref() else { return };
         walk_ext4_tree(ext4, Path::ROOT);

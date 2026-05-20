@@ -81,8 +81,9 @@ flowchart TD
 
 ### `fs-api`
 
-- **只读契约 `ReadOnlyFs`**：`mount`、`is_mounted`、`exists`、`metadata`、`read`；默认实现的 `read_prefix`、`read_to_string`；**`boot_dump_all_paths`**（默认空，ext4 实现覆盖）。
-- **读写契约 `ReadWriteFs`**：`mount_rw`、`is_mounted`、`write_regular_file_at_root`。
+- **只读契约 `ReadOnlyFs`**：`mount`、`is_mounted`、`exists`、`metadata`、`read`、**`read_range`**；`read_prefix` 在 ext4 上覆盖为区间读前缀（避免大文件整读）；**`boot_dump_all_paths`**（默认空，ext4 实现覆盖）。
+- **读写契约 `ReadWriteFs`**：`mount_rw`、`is_mounted`、`write_regular_file_at_root`、**`write_range`**（ext4 基于 `write_at`）。
+- **尺度常量**：`wateros-base-config::fs`（`FILE_LARGE_THRESHOLD`、`FILE_PAGE_SIZE`、全局页 LRU 容量、预取步长、`FILE_IO_MODE::Direct`、块缓存容量）。
 - **能力描述**：`FsKind`（Ext4 / Ext2 / Ext3 / DevFs / Other）、`FsAccessMode`（ReadOnly / ReadWrite）、`FsCapability { kind, access }`。
 - **统一注册接口 `FsImpl`**：`name() / supported() / supports(kind, mode) / probe(device) / mount_ro(device) / mount_rw(device)`；`probe` 与 `mount_rw` 有默认实现（不识别 / 不支持）。
 - **句柄**：**`SharedFs = Arc<Mutex<LocalFs>>`** 包装 `Box<dyn ReadOnlyFs>`；**`SharedRwFs = Arc<Mutex<LocalRwFs>>`** 包装 `Box<dyn ReadWriteFs>`；当前阶段假定单核串行访问。
@@ -108,7 +109,13 @@ flowchart TD
 
 ## 与 `wateros-vfs` 的边界
 
-当前 **`wateros-fs`** 栈提供 **「块设备 + devfs 路径 + ext4 根卷（RO+RW）」** 的 bring-up 能力。**`wateros-vfs`** 在启用 **`bridge-fs-api`** 时仅通过本组件**公开 API** 提供单根路径视图与 RW 烟囱（`SingleRootReadView` / `RootRwSession` 等），**仍不**提供统一 inode/dentry 或 syscall 级 `open/read`。若后续要做用户态或完整内核 VFS，需要在架构上扩展挂载表与 vnode，并明确与 **`ReadOnlyFs`/`SharedFs`** 的边界；超出本文档所述 bring-up 范围。
+当前 **`wateros-fs`** 栈提供 **「块设备 + devfs 路径 + ext4 根卷（RO+RW）」** 的 bring-up 能力。**`wateros-vfs`** 在启用 **`bridge-fs-api`** 时通过本组件**公开 API** 提供单根路径视图、RW 烟囱与 **`open`/`read`/`write`**（`impl-fs-bridge` + `fd-session`）。
+
+**大文件路径（页缓存）**：`open` 时若 `metadata.size >= FILE_LARGE_THRESHOLD`（默认 64KiB），`RootFileHandle` 分流为 **`PagedFileHandle`**，经 **`vfs-impl-page-cache`** 全局 LRU 页帧缓存访问 **`read_range`/`write_range`**，不在打开时整文件读入 RAM；小于阈值仍用内存 **`BufferedFileHandle`**。缓存键为 **`(mount_generation, path)`**（`rootfs` 每次成功挂载递增代次）。并发 v1：`Arc<RwLock<FileEntryInner>>` 允许多读、写/刷盘独占。`FILE_IO_MODE::Async` 仅占位。
+
+**块设备 LBA 缓存**：`driver-block` 的 **`CachingBlockDevice`** 与文件页缓存分层；QEMU 可选 feature **`block-cache`** 经 **`BlockCacheManager::wrap`** 注册，容量读 `BLOCK_CACHE_CAPACITY_BLOCKS`。
+
+若后续要做完整 inode/dentry 或多挂载，需扩展挂载表与 vnode；超出本文档所述 bring-up 范围。
 
 ## 日志约定
 
@@ -131,7 +138,8 @@ flowchart TD
 |------|----------|
 | 写路径稳定性 | RW 由 `ext4plus`（beta）承载，无完整 journal；仅用于 bring-up 与小文件测试 |
 | 多挂载点、命名空间 | 仅单全局根卷句柄 |
-| 与 `wateros-vfs` 统一 | 仅可选 **桥接**（路径委托 + RW 烟囱）；无多挂载 inode 树 |
+| 与 `wateros-vfs` 统一 | **桥接** + syscall fd；大文件 **Direct 页缓存**；无多挂载 inode 树 |
+| 异步文件 I/O | `FsIoMode::Async` / `FsAsyncIo` 占位，未实现 |
 | 字符设备 devfs | API 有 **`DevNodeType::Character`**，kernel devfs 当前主要填充块设备节点 |
 | 错误与恢复策略 | 挂载失败仅打日志；无重试或备用根卷策略 |
 | 并发 | `SharedFs` / `SharedRwFs` 使用互斥锁；多核策略未定义 |

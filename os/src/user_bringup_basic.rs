@@ -12,7 +12,7 @@ use runtime::logging::*;
 /// 生成某 libc 前缀下的基础测程路径表（不含 MM 三者）。
 macro_rules! basic_elf_paths {
     ($prefix:literal) => {
-        &[// concat!($prefix, "/chdir"),
+        &[concat!($prefix, "/chdir"),
           // concat!($prefix, "/clone"),
           // concat!($prefix, "/close"),
           // concat!($prefix, "/dup"),
@@ -21,7 +21,7 @@ macro_rules! basic_elf_paths {
           // concat!($prefix, "/exit"),
           // concat!($prefix, "/fork"),
           // concat!($prefix, "/fstat"),
-          // concat!($prefix, "/getcwd"),
+          concat!($prefix, "/getcwd"),
           // concat!($prefix, "/getdents"),
           // concat!($prefix, "/getpid"),
           // concat!($prefix, "/getppid"),
@@ -83,6 +83,8 @@ pub fn run_stage_03() {
                           loaded.mmap_arena_base,
                           loaded.user_aspace_ptr);
                     let tid = task::spawn_user_task_from_loaded_elf(&loaded);
+                    #[cfg(feature = "vfs")]
+                    vfs::cwd::on_user_task_spawned(tid);
                     info!("[basic-bringup] spawned user task {} for {}",
                           tid, path);
                 }

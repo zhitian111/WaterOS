@@ -85,6 +85,7 @@ flowchart LR
 | 编号 | 阶段 id | 入口位置 | 说明 |
 |------|---------|----------|------|
 | 00 | `stage-00-bus` | `os/src/user_bringup_bus.rs` 内 `run()` | 总线骨架占位，BEGIN/END 日志前缀验收 |
-| 02 | `stage-02-mm` | `os/src/user_bringup_mm.rs` 的 `run_stage_02`（由 `user_bringup_bus` 调用） | 从根卷 `/glibc/basic/{brk,mmap,munmap}` 装载 ELF 并 spawn；缺文件 `warn` 跳过；`[mm-bringup]` 日志 |
+| 02 | `stage-02-mm` | `os/src/user_bringup_mm.rs` 的 `run_stage_02`（由 `user_bringup_bus` 调用） | 从根卷 `/glibc/basic/`、`/musl/basic/` 各装载 `{brk,mmap,munmap}`；缺文件 `warn` 跳过；`[mm-bringup]` 日志 |
+| 03 | `stage-03-basic` | `os/src/user_bringup_basic.rs` 的 `run_stage_03`（由 `user_bringup_bus` 调用） | 从根卷 `/glibc/basic/`、`/musl/basic/` 装载其余基础测程 ELF（不含 stage-02 三者）；缺文件 `warn` 跳过；`[basic-bringup]` 日志 |
 
 后续工作包合并时在本表追加行，并在 `user_bringup_bus::run` 中按编号插入调用。

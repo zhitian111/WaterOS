@@ -97,7 +97,9 @@ pub(crate) fn sys_times(args : SyscallArgs) -> UserRet {
             Some(snapshot) => snapshot,
             None => return UserRet::from_error(ErrNo::ESRCH),
         };
-        let tms = UserTms { utime : snapshot.stats.tick_count as isize,
+        let tms = UserTms { utime : snapshot.stats
+                                            .tick_count
+                                    as isize,
                             stime : 0,
                             cutime : 0,
                             cstime : 0 };
@@ -117,10 +119,9 @@ fn write_exit_code(exit_code_ptr : usize, exit_code : isize) -> Result<(), ErrNo
 }
 
 fn finish_wait_result(exited : task::ExitedTask, exit_code_ptr : usize) -> UserRet {
-    match write_exit_code(exit_code_ptr, exited.exit_code) {
-        Ok(()) => UserRet::from_success(exited.id),
-        Err(e) => UserRet::from_error(e),
-    }
+    write_exit_code(exit_code_ptr, exited.exit_code);
+    vfs::cwd::drop_task_cwd(exited.id);
+    UserRet::from_success(exited.id)
 }
 
 /// `waitpid`/`wait4` 早期语义：维护最小父子关系并阻塞等待子任务退出；暂不解析

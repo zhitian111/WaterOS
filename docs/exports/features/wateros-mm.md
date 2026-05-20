@@ -45,7 +45,8 @@
 
 ## 明确未覆盖
 
-- **`brk` / `mmap` / `munmap` / `mprotect`**：机制在 **`impl-sv39`** 的 **`HeapBrk`/`MmapOps`** 上 **饥渴映射** 落地；**`wateros-syscall`**（RISC-V 主线链接 **`wateros-mm`**）在任务携带 **`user_aspace_ptr`** 时拼合 Linux 语义并调原语，否则 **`brk`** 仍回落到假顶桩。**`UserMemoryOps`** 仍待与 trap 拷贝路径完整对接。
+- **`brk` / `mmap` / `munmap` / `mprotect`**：机制在 **`impl-sv39`** 的 **`HeapBrk`/`MmapOps`** 上 **饥渴映射** 落地；**`wateros-syscall`** 在任务携带 **`user_aspace_ptr`** 时拼合 Linux 语义。当前已支持：**匿名 `MAP_PRIVATE|ANONYMOUS`**；**文件 `MAP_SHARED`/`MAP_PRIVATE`**（syscall 经 VFS 预读，`file_backing` 传入 `MmapOps::mmap`，独立 **`mmap_file_cursor`** bump）。不支持 demand paging、`msync`、写回文件、真 COW。
+- **`UserMemoryOps`** 仍待与 trap 拷贝路径完整对接。
 - 页表递归回收与更完整的地址空间生命周期管理。
 
 ## 维护要求

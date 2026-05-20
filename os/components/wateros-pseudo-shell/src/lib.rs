@@ -182,9 +182,13 @@ fn do_exec(cwd: &str, arg: Option<&str>, _rest: &[&str]) -> Result<(), VfsError>
                         ))
                         .with_external_stack(loaded.stack_bottom, loaded.stack_top),
                 );
+                vfs::cwd::on_user_task_spawned(tid);
                 task::wait_for_task_exit(tid);
                 let code = task::reap_exited_task(tid)
-                    .map(|e| e.exit_code)
+                    .map(|e| {
+                        vfs::cwd::drop_task_cwd(e.id);
+                        e.exit_code
+                    })
                     .unwrap_or(-1);
                 let line = format!("exec exit_code={}\n", code);
                 let _ = runtime_serial::with_default_uart(|uart| {

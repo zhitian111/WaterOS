@@ -207,6 +207,8 @@ mod qemu_loongarch64_virt {
             task::UserTaskSpec::new(user_entry).with_image(task::UserImageInfo::new(user_image_base,
                                                                                    user_image_size));
         let user_task_id = task::spawn_user_task_spec(user_spec);
+        #[cfg(feature = "vfs")]
+        vfs::cwd::on_user_task_spawned(user_task_id);
         let expected = Box::new(LoongArch64UserSmokeExpected { task_id : user_task_id,
                                                                entry_pc : user_entry,
                                                                image_base : user_image_base,
@@ -300,6 +302,8 @@ mod qemu_loongarch64_virt {
                    "LoongArch64 user smoke must exit before observer timeout");
         let exited = task::reap_exited_task(expected.task_id).expect("LoongArch64 user smoke \
                                                                       must be reapable after exit");
+        #[cfg(feature = "vfs")]
+        vfs::cwd::drop_task_cwd(exited.id);
         assert_eq!(exited.id, expected.task_id,
                    "LoongArch64 user smoke reap id must match spawned task");
         assert_eq!(exited.kind,

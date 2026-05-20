@@ -16,7 +16,7 @@ pub use impl_virtio_mmio::VirtioBlkDevice;
 
 #[cfg(feature = "impl-block-cache")]
 #[doc(inline)]
-pub use impl_block_cache::{BlockCacheConfig, CachingBlockDevice};
+pub use impl_block_cache::{BlockCacheConfig, BlockCacheManager, CachingBlockDevice};
 
 /// 块子系统在 DTB 中声明可尝试绑定的设备（与 feature 无关；用于扫描阶段匹配）。
 pub const BLOCK_SUPPORTED_DEVICES: &[SupportedDeviceEntry] = &[SupportedDeviceEntry {

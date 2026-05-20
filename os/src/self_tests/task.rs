@@ -36,6 +36,8 @@ fn spawn_user_elf_task(path : &str, label : &str) {
                     loaded.user_aspace_ptr
                 );
                 let tid = task::spawn_user_task_from_loaded_elf(&loaded);
+                #[cfg(feature = "vfs")]
+                vfs::cwd::on_user_task_spawned(tid);
                 info!("[task-selftest] spawned {} user task {}", label, tid);
             }
             Err(err) => {

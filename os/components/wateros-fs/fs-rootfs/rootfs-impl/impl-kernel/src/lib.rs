@@ -7,8 +7,11 @@ extern crate alloc;
 
 use alloc::string::{String, ToString};
 use api_v0::RootFsManager;
+use core::sync::atomic::{AtomicU64, Ordering};
 use fs_api_v0::FsImpl;
 use spin::Mutex;
+
+static MOUNT_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 /// 零大小 [`RootFsManager`] 句柄；读写 `static ROOT_FS` 等状态。
 pub struct KernelRootFsManager;
@@ -41,6 +44,7 @@ impl api_v0::RootFsManager for KernelRootFsManager {
         let root = imp.mount_ro(device)?;
         self.set_root_fs(root);
         *ROOT_DEV_PATH.lock() = Some(path.to_string());
+        MOUNT_GENERATION.fetch_add(1, Ordering::Release);
         Ok(())
     }
 
@@ -75,4 +79,9 @@ pub fn root_fs() -> Option<fs_api_v0::SharedFs> {
 pub fn current_root_device_path() -> Option<String> {
     let mgr = KernelRootFsManager;
     mgr.current_root_device_path()
+}
+
+/// 根卷挂载代次：每次成功 `mount_root_from_block_path` 后递增，供 VFS 页缓存失效。
+pub fn mount_generation() -> u64 {
+    MOUNT_GENERATION.load(Ordering::Acquire)
 }
