@@ -31,6 +31,8 @@ pub enum SyscallKind {
     GetTid,
     WaitPid,
     Nanosleep,
+    GetCwd,
+    Chdir,
     Unknown(usize),
 }
 
@@ -75,6 +77,10 @@ impl SyscallKind {
             Self::WaitPid
         } else if syscall_nr == T::NANOSLEEP.raw() {
             Self::Nanosleep
+        } else if syscall_nr == T::GETCWD.raw() {
+            Self::GetCwd
+        } else if syscall_nr == T::CHDIR.raw() {
+            Self::Chdir
         } else {
             Self::Unknown(syscall_nr)
         }
@@ -123,6 +129,10 @@ pub trait SyscallDispatcher {
 
     fn dispatch_nanosleep(args : SyscallArgs) -> isize;
 
+    fn dispatch_getcwd(args : SyscallArgs) -> isize;
+
+    fn dispatch_chdir(args : SyscallArgs) -> isize;
+
     fn dispatch_unknown(_syscall_nr : usize, _args : SyscallArgs) -> isize {
         UserRet::from_error(ErrNo::ENOSYS).0
     }
@@ -148,6 +158,8 @@ pub trait SyscallDispatcher {
             SyscallKind::GetTid => Self::dispatch_gettid(syscall_args),
             SyscallKind::WaitPid => Self::dispatch_waitpid(syscall_args),
             SyscallKind::Nanosleep => Self::dispatch_nanosleep(syscall_args),
+            SyscallKind::GetCwd => Self::dispatch_getcwd(syscall_args),
+            SyscallKind::Chdir => Self::dispatch_chdir(syscall_args),
             SyscallKind::Unknown(nr) => Self::dispatch_unknown(nr, syscall_args),
         }
     }

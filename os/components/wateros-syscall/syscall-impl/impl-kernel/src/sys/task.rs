@@ -36,6 +36,7 @@ fn write_exit_code(exit_code_ptr : usize, exit_code : isize) {
 
 fn finish_wait_result(exited : task::ExitedTask, exit_code_ptr : usize) -> UserRet {
     write_exit_code(exit_code_ptr, exited.exit_code);
+    vfs::cwd::drop_task_cwd(exited.id);
     UserRet::from_success(exited.id)
 }
 

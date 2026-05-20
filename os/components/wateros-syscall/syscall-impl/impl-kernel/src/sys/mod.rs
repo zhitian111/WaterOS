@@ -2,8 +2,10 @@
 //! 按号表路由。
 
 mod brk;
+mod chdir;
 mod close;
 mod fstat;
+mod getcwd;
 mod lseek;
 mod mmap;
 mod openat;
@@ -13,7 +15,9 @@ mod task;
 mod write;
 
 pub(crate) use brk::sys_brk;
+pub(crate) use chdir::sys_chdir;
 pub(crate) use close::sys_close;
+pub(crate) use getcwd::sys_getcwd;
 pub(crate) use fstat::sys_fstat;
 pub(crate) use lseek::sys_lseek;
 pub(crate) use mmap::{sys_mmap, sys_mprotect, sys_munmap};

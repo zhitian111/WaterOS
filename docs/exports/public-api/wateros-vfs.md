@@ -46,12 +46,14 @@
 | **`mount::open_rw_session(kind)`** | `Box<dyn RootRwSession>` |
 | **`mount::supported_capabilities()`** | 已注册后端能力列表 |
 | **`fd`**（`fd-session`） | `registry()`、`with_current_io`、`alloc_fd`、`close_fd`、`self_test` |
+| **`cwd`**（`fd-session`） | `init_task_cwd`、`chdir_current`、`write_cwd_to_buf`、`drop_task_cwd`、`copy_cwd_from_parent`、`self_test` |
+| **`resolve_open_path`**（api-v0） | `open` 前路径解析；注册后含 per-task cwd |
 | **`self_test::rw_write_root_verify_via_ro`** | RW 写后 RO 读回校验 |
 | **`self_test::run()`** | 组合自检（`vfs::test()` 内调用） |
 | **`test()`** | `api::test` + dummy + bridge + `fd::self_test` + `self_test::run` |
 | **`dummy`**（`#[doc(hidden)]`） | 占位 impl，供 workspace 独立编译 |
 
-**已移除：** `VfsFdTable` 作为 `VfsBackend` 子 trait；per-task fd 由 **`fd`** 模块与 **`impl-fd-session`** 承载。
+**已移除：** `VfsFdTable` 作为 `VfsBackend` 子 trait；per-task fd 由 **`fd`** 模块、per-task cwd 由 **`cwd`** 模块与 **`impl-fd-session`** 承载。
 
 ---
 

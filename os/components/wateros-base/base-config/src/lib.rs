@@ -8,3 +8,5 @@ pub mod syscall;
 pub mod mm;
 
 pub mod ipc;
+
+pub mod fs;

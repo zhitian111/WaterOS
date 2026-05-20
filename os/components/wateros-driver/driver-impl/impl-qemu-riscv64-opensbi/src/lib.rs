@@ -16,7 +16,7 @@ use block::{
     VirtioBlkDevice, BLOCK_SIZE,
 };
 #[cfg(feature = "block-cache")]
-use block::{BlockCacheConfig, CachingBlockDevice};
+use block::BlockCacheManager;
 use fdt::Fdt;
 use fs::devfs::active_impl as devfs_impl;
 use spin::Mutex;
@@ -241,14 +241,21 @@ fn probe_virtio_blk_and_collect_unsupported() -> Vec<String> {
         if claimed && info.device_type == DeviceType::Block {
             match VirtioBlkDevice::from_mmio(mmio) {
                 Ok(dev) => {
-                    #[cfg(feature = "block-cache")]
-                    let dev: Box<dyn BlockDevice + Send> = Box::new(CachingBlockDevice::new(
-                        Box::new(dev),
-                        BlockCacheConfig { capacity_blocks: 64 },
-                    ));
-                    #[cfg(not(feature = "block-cache"))]
-                    let dev: Box<dyn BlockDevice + Send> = Box::new(dev);
-                    let idx = register_block_device(Arc::new(Mutex::new(dev)));
+                    let shared = {
+                        #[cfg(feature = "block-cache")]
+                        {
+                            BlockCacheManager::wrap(
+                                Box::new(dev),
+                                BlockCacheManager::default_config(),
+                            )
+                        }
+                        #[cfg(not(feature = "block-cache"))]
+                        {
+                            let dev: Box<dyn BlockDevice> = Box::new(dev);
+                            Arc::new(Mutex::new(dev))
+                        }
+                    };
+                    let idx = register_block_device(shared);
                     blk.push(mmio);
                     logging::info!("[driver] registered virtio-blk #{}", idx);
                     logging::info!(

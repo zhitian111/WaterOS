@@ -32,13 +32,15 @@
   - **PIPE2**：创建 pipe 句柄并 **`alloc_fd_for_task`** 登记；支持 `O_NONBLOCK`。
   - **BRK**：RISC-V + `user_aspace_ptr` 时走 Sv39 用户地址空间；否则回落桩。
   - **MMAP / MUNMAP / MPROTECT**：RISC-V 主线且有效 `user_aspace_ptr` 时拼合 `MmapOps`。
-  - **WAITPID**：基于 task 最小 `parent_id` 与 child-exit wait queue。
+  - **WAITPID**：基于 task 最小 `parent_id` 与 child-exit wait queue；回收子任务时丢弃其 cwd 槽位。
+  - **OPENAT**：VFS `open` + `alloc_fd`；`open` 路径经 **`resolve_open_path`**（per-task cwd）。
+  - **GETCWD / CHDIR**：经 **`vfs::cwd`** 读写 per-task 工作目录。
   - **其余号码**：统一 **`ENOSYS`**。
 
 ## 明确未覆盖
 
 - 完整 Linux 兼容 syscall 面（仅子集）。
-- 与 **`VfsOpenOps`** / ext4 的 **`openat`** 路径打通（fd 表已就绪，syscall 未接）。
+- **`fchdir`**、`openat` 非 **`AT_FDCWD`** 的 `dirfd`、fork 时 cwd/fd 继承策略的完整 Linux 语义。
 - fork/dup 继承、任务退出时自动关闭、fd limit。
 - **`wateros-ipc`** 的 signal、futex 等上层语义。
 - 用户缓冲 **`copy_from_user` / `copy_to_user`** 安全路径（仍依赖 bring-up 约束下的直接切片）。

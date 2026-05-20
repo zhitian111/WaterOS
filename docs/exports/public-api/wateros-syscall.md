@@ -46,13 +46,16 @@
 | **`BRK`** | RISC-V + `user_aspace_ptr` 优先走 Sv39 用户地址空间；无地址空间时回落单调递增 **`USER_BRK_FAKE`** 原子桩。 |
 | **`MMAP` / `MUNMAP` / `MPROTECT`** | RISC-V 主线（已链接 `wateros-mm`）且有效 `user_aspace_ptr` 时在 syscall 拼合 `MmapOps`；LoongArch 或无用户地址空间返回 **`ENOSYS`**。 |
 | **`GET_TIME`、`GETPID` / `GETTID`、`NANOSLEEP`** | 分别返回当前 tick、当前 task id，或按一个调度 tick 近似睡眠。 |
-| **`WAITPID`** | 维护最小父子关系；`pid == -1` 等待任意子任务退出，指定 pid 时要求其父任务为当前任务；退出后回收 zombie 并写回 exit code。 |
+| **`WAITPID`** | 维护最小父子关系；`pid == -1` 等待任意子任务退出，指定 pid 时要求其父任务为当前任务；退出后回收 zombie 并写回 exit code；回收时 **`vfs::cwd::drop_task_cwd`**。 |
+| **`OPENAT`** | 经 **`vfs::active_impl::backend().open`**；相对路径按当前任务 cwd 解析（**`resolve_open_path`**）。 |
+| **`GETCWD`** | 将当前任务 cwd（含 NUL）写入用户缓冲；过小返回 **`ERANGE`**。 |
+| **`CHDIR`** | 经 **`vfs::cwd::chdir_current`** 校验目录存在后更新 per-task cwd。 |
 | **其它** | 一律 **`ENOSYS`**。 |
 
 ## 缺口与后续替换点
 
 - 覆盖面仍是 Linux-like 子集；大量 ABI 表中已有号未实现。
-- **`READ` / `WRITE` / `PIPE2`** 已接入 **`wateros-vfs`** per-task fd 表；尚未实现 **`openat`** 文件 fd、`dup`/fork 继承或任务退出时批量关闭。
+- **`READ` / `WRITE` / `PIPE2` / `OPENAT` / `GETCWD` / `CHDIR`** 已接入 **`wateros-vfs`**（fd 表 + cwd 会话）；尚未实现 **`dup`** / fork 继承或任务退出时 fd 批量关闭。
 - 用户指针安全与完整地址校验叙事依赖 trap/MM 协作，当前直接构造 slice 或写用户指针的路径仍是 bring-up 约束下的早期实现。
 - 若需与「WaterOS 自有 ABI」号表并存，应通过 **`wateros-abi`** 的 feature 组合调整，并同步本 crate 的 **`abi`** 依赖 feature。
 

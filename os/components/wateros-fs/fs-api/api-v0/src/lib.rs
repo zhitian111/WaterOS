@@ -98,6 +98,15 @@ pub struct FsMetadata {
     pub mode: u16,
 }
 
+/// 根卷文件 I/O 模式（与 `wateros-base-config::fs::FileIoMode` 对齐）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FsIoMode {
+    /// 同步区间读写。
+    Direct,
+    /// 异步区间读写（v1 未实现）。
+    Async,
+}
+
 /// 目录枚举单条结果：仅含名字与类型（不含完整路径）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FsDirEntry {
@@ -122,7 +131,15 @@ pub trait ReadOnlyFs {
     /// 读取整个文件内容到内存；大文件场景调用方需注意内存边界。
     fn read(&self, path: &str) -> FsResult<Vec<u8>>;
 
+    /// 从 `offset` 起读取最多 `buf.len()` 字节到 `buf`；返回实际读取长度（EOF 为短读或 `0`）。
+    fn read_range(&self, path: &str, offset: u64, buf: &mut [u8]) -> FsResult<usize> {
+        let _ = (path, offset, buf);
+        Err(FsError::Unsupported)
+    }
+
     /// 读取文件前缀，最多 `len` 字节（短于文件则截断）。
+    ///
+    /// 默认回退为整文件 [`read`] 后截断；实现方应覆盖为 [`read_range`] 以避免大文件全量分配。
     fn read_prefix(&self, path: &str, len: usize) -> FsResult<Vec<u8>> {
         let mut data = self.read(path)?;
         if data.len() > len {
@@ -166,6 +183,37 @@ pub trait ReadWriteFs: Send {
     /// 删除绝对路径指向的 **普通文件**；目录删除默认 [`FsError::Unsupported`]。
     fn unlink(&mut self, path: &str) -> FsResult<()> {
         let _ = path;
+        Err(FsError::Unsupported)
+    }
+
+    /// 从 `offset` 起写入 `data`；返回实际写入字节数。
+    fn write_range(&mut self, path: &str, offset: u64, data: &[u8]) -> FsResult<usize> {
+        let _ = (path, offset, data);
+        Err(FsError::Unsupported)
+    }
+}
+
+/// 异步区间 I/O 占位（v1 未实现）。
+pub trait FsAsyncIo {
+    /// 异步从 `offset` 读取；v1 应返回 [`FsError::Unsupported`]。
+    fn async_read_range(
+        &self,
+        path: &str,
+        offset: u64,
+        len: usize,
+    ) -> FsResult<()> {
+        let _ = (path, offset, len);
+        Err(FsError::Unsupported)
+    }
+
+    /// 异步写入；v1 应返回 [`FsError::Unsupported`]。
+    fn async_write_range(
+        &mut self,
+        path: &str,
+        offset: u64,
+        data: &[u8],
+    ) -> FsResult<()> {
+        let _ = (path, offset, data);
         Err(FsError::Unsupported)
     }
 }
@@ -255,6 +303,10 @@ impl ReadOnlyFs for LocalFs {
     fn metadata(&self, path: &str) -> FsResult<FsMetadata> { self.deref().metadata(path) }
 
     fn read(&self, path: &str) -> FsResult<Vec<u8>> { self.deref().read(path) }
+
+    fn read_range(&self, path: &str, offset: u64, buf: &mut [u8]) -> FsResult<usize> {
+        self.deref().read_range(path, offset, buf)
+    }
 
     fn read_dir(&self, path: &str) -> FsResult<Vec<FsDirEntry>> { self.deref().read_dir(path) }
 

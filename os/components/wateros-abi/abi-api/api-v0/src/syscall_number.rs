@@ -104,6 +104,8 @@ pub trait SyscallNumberTable {
     const GETPID: SyscallNumber;
     /// 取当前工作目录（`getcwd(2)`）。
     const GETCWD: SyscallNumber;
+    /// 切换当前工作目录（`chdir(2)`）。
+    const CHDIR: SyscallNumber;
     /// 当前线程 ID（`gettid(2)`）。
     const GETTID: SyscallNumber;
 

@@ -74,6 +74,8 @@ impl ErrNo {
     pub const EISDIR: Self = Self(21);
     /// 文件名过长。
     pub const ENAMETOOLONG: Self = Self(36);
+    /// 结果缓冲区过小（如 `getcwd`）。
+    pub const ERANGE: Self = Self(34);
     /// 非法 seek。
     pub const ESPIPE: Self = Self(29);
     /// 管道破裂。
