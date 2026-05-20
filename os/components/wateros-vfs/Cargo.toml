@@ -3,6 +3,7 @@
         "./vfs-api/api-v0/",
         "./vfs-impl/impl-dummy/",
         "./vfs-impl/impl-fd-session/",
+        "./vfs-impl/impl-page-cache/",
     ]
 [package]
     name = "wateros-vfs"
