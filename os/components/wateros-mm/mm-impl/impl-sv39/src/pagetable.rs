@@ -139,6 +139,8 @@ pub struct Sv39AddressSpace {
     pub(crate) user_brk_max: VirtAddr,
     /// 匿名 `mmap` bump 指针（下一段匿名映射的起始 VA）。
     pub(crate) mmap_anon_cursor: VirtAddr,
+    /// 文件 `mmap` bump 指针（与匿名区分离，避免交错碎片）。
+    pub(crate) mmap_file_cursor: VirtAddr,
 }
 
 impl Sv39AddressSpace {
@@ -151,6 +153,7 @@ impl Sv39AddressSpace {
             user_brk_current_end: VirtAddr(0),
             user_brk_max: VirtAddr(0),
             mmap_anon_cursor: VirtAddr(0),
+            mmap_file_cursor: VirtAddr(0),
         })
     }
 
@@ -166,6 +169,7 @@ impl Sv39AddressSpace {
         self.user_brk_current_end = brk_current_end;
         self.user_brk_max = brk_max;
         self.mmap_anon_cursor = mmap_anon_cursor;
+        self.mmap_file_cursor = mmap_anon_cursor;
     }
 
     #[inline]

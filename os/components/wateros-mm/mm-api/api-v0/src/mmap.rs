@@ -35,11 +35,13 @@ pub struct MmapRequest {
 pub trait MmapOps: AddressSpaceOps {
     /// 按请求建立映射；成功返回实际映射起始虚拟地址（可与 `addr_hint` 不同）。
     ///
+    /// `file_backing`：仅当 [`MmapKind::File`] 时由 syscall 预读文件内容传入；匿名映射须为 `None`。
     /// 失败时不得留下半映射区间（与具体实现的原子性约定一致）。
     fn mmap<A: PhysicalFrameAllocator<FrameId = PhysPageNum>>(
         &mut self,
         allocator: &mut A,
         req: MmapRequest,
+        file_backing: Option<&[u8]>,
     ) -> MmResult<VirtAddr>;
 
     /// 解除 `[addr, addr+len)` 语义范围内的映射并回收对应物理帧。
