@@ -7,7 +7,8 @@
 //!   设置下次中断时刻**、**经固件写串口** 等 属于 firmware 层，由依赖方分别引用
 //!   `arch` 与 `firmware` crate 组合使用。
 //! - trap 路径中的定时器重载、调度 tick、syscall 分发等业务由组合层通过
-//!   `arch-api::kernel_trap` 接入；arch impl 只负责 trap 向量、帧布局和 CSR 语义。
+//!   `arch-api::kernel_trap` 接入；arch impl 只负责 trap 向量、帧布局和 CSR
+//!   语义。
 #![no_std]
 #[cfg(all(feature = "impl-riscv64", feature = "impl-loongarch64"))]
 compile_error!("select only one platform-arch implementation");
@@ -67,8 +68,8 @@ pub mod trap {
     #[allow(deprecated)]
     pub use api_v0::trap::{
         ArchTrapFrame, Exception, Interrupt, TrapAddressSpaceWrite, TrapCOntextWrite, TrapCause,
-        TrapContextFrameView, TrapContextRead, TrapContextWrite, TrapFrame, TrapFrameRead, TrapFrameWrite,
-        TrapSyscallRead, TrapSyscallWrite,
+        TrapContextFrameView, TrapContextRead, TrapContextWrite, TrapFrame, TrapFrameRead,
+        TrapFrameWrite, TrapSyscallRead, TrapSyscallWrite,
     };
 
     #[cfg(feature = "impl-loongarch64")]
@@ -138,6 +139,9 @@ pub mod interrupt {
 /// 地址空间激活与必要的地址翻译缓存刷新原语；页表内容在 MM 组件。
 ///
 /// RISC-V 的 token 是 `satp` 编码值；其它架构可使用自己的根页表/ASID 编码。
+///
+/// 内核自身的地址空间 token 由 MM 层维护并通过 [`mm::kernel_mm::kernel_satp`]
+/// 提供。
 pub mod paging {
     #[cfg(feature = "impl-loongarch64")]
     pub use impl_loongarch64::paging::LoongArch64Paging as ArchPagingImpl;

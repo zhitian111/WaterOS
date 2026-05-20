@@ -14,8 +14,8 @@
 //!   [`crate::active_impl::TaskBootstrap`] 等再导出给 arch 入口。
 //!
 //! 本文件中的 `spawn`/`yield`/`wait` 等函数是对 `scheduler`
-//! 的薄封装；私有 `trap_runtime` 提供 trap 返回路径的 Rust 入口，私有 `entry_runtime`
-//! 提供与汇编/switch 约定的 `extern "C"` 任务入口符号；组合层 `trap_handler::init` 注册
+//! 的薄封装；私有 `runtime` 提供 trap 返回路径的 Rust 入口及与汇编/switch
+//! 约定的 `extern "C"` 任务入口符号；组合层 `trap_handler::init` 注册
 //! `arch-api::kernel_trap` 后由 `trap_entry_rust` 转入。
 //!
 //! ## 后续替换点
@@ -26,8 +26,7 @@
 
 #![no_std]
 
-mod entry_runtime;
-mod trap_runtime;
+mod runtime;
 pub mod wait_queue;
 pub use self::wait_queue::WaitQueue;
 mod scheduler {
@@ -46,22 +45,18 @@ use mm_api::kernel_bringup::LoadedElf;
 #[inline]
 pub fn init() { scheduler::init(); }
 
-/// 在全局内核地址空间 token 就绪后注册，供 trap 返回内核态时恢复。
-#[inline]
-pub fn init_kernel_address_space_token(v : usize) {
-    crate::trap_runtime::init_kernel_address_space_token(v);
-}
-
-/// Trap handler 进入时，把栈上 trap frame 交给当前任务保存区，并返回后续应修改的权威 frame。
+/// Trap handler 进入时，把栈上 trap frame
+/// 交给当前任务保存区，并返回后续应修改的权威 frame。
 #[inline]
 pub unsafe fn begin_current_trap_frame_access(frame : *mut u8) -> *mut u8 {
-    unsafe { crate::trap_runtime::begin_current_trap_frame_access(frame) }
+    unsafe { crate::runtime::begin_current_trap_frame_access(frame) }
 }
 
-/// Trap handler 返回前，把当前任务保存区的 trap frame 写回栈上 frame，并准备返回地址空间 token。
+/// Trap handler 返回前，把当前任务保存区的 trap frame 写回栈上
+/// frame，并准备返回地址空间 token。
 #[inline]
 pub unsafe fn restore_current_trap_frame(frame : *mut u8) -> bool {
-    unsafe { crate::trap_runtime::restore_current_trap_frame(frame) }
+    unsafe { crate::runtime::restore_current_trap_frame(frame) }
 }
 
 /// 创建一个新的内核任务，并返回分配到的任务号。

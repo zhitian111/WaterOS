@@ -12,10 +12,11 @@
 //! 3. 初始化任务、注册组合层 trap 路由（`trap_handler::init`）与内核 trap 的
 //!    `satp`，随后 `driver::active_impl::init_after_boot`；成功则挂载 `fs`。
 //! 4. 在驱动与 `fs::init` 成功后，先跑 [`user_bringup_bus::run`]（含
-//!    [`crate::user_bringup_mm::run_stage_02`] / [`crate::user_bringup_basic::run_stage_03`]：
-//!    从根卷 **`/glibc/basic/`**、**`/musl/basic/`** 加载测程 ELF 并 **spawn（仅入就绪队列）**），再调用
-//!    [`self_tests::task::spawn_all`] 启动调度相关 内核自检任务，随后
-//!    `fs::test()` 等 RW 烟测。
+//!    [`crate::user_bringup_mm::run_stage_02`] /
+//!    [`crate::user_bringup_basic::run_stage_03`]： 从根卷
+//!    **`/glibc/basic/`**、**`/musl/basic/`** 加载测程 ELF 并
+//!    **spawn（仅入就绪队列）**），再调用 [`self_tests::task::spawn_all`]
+//!    启动调度相关 内核自检任务，随后 `fs::test()` 等 RW 烟测。
 //! 5. 开启定时器中断后通过 [`task::run_first_task`] **首次**从引导上下文
 //!    `__switch` 到就绪任务；此前 步骤 3 的 `task::init()`
 //!    已初始化调度器数据结构，但 **CPU 尚未执行** 任何 spawn
@@ -48,11 +49,11 @@ mod self_tests;
 #[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
 mod trap_handler;
 #[cfg(feature = "qemu-riscv64-opensbi")]
+mod user_bringup_basic;
+#[cfg(feature = "qemu-riscv64-opensbi")]
 mod user_bringup_bus;
 #[cfg(feature = "qemu-riscv64-opensbi")]
 mod user_bringup_mm;
-#[cfg(feature = "qemu-riscv64-opensbi")]
-mod user_bringup_basic;
 
 /// 将内核 panic 委托给 `wateros-runtime` 的统一 panic 处理（日志/停机策略由
 /// runtime 决定）。
@@ -121,7 +122,6 @@ mod qemu_riscv64_opensbi {
 
         task::init();
         crate::trap_handler::init();
-        task::init_kernel_address_space_token(mm::kernel_mm::kernel_satp());
 
         // 设备驱动扫描与根文件系统挂载自检。
         let driver_boot = driver::active_impl::init_after_boot();
