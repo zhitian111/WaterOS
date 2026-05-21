@@ -64,6 +64,16 @@ pub trait SyscallNumberTable {
     const IOCTL: SyscallNumber;
     /// 文件描述符控制（`fcntl(2)`）。
     const FCNTL: SyscallNumber;
+    /// 读取目录项（`getdents64(2)`）。
+    const GETDENTS64: SyscallNumber;
+    /// 相对目录创建目录（`mkdirat(2)`）。
+    const MKDIRAT: SyscallNumber;
+    /// 相对目录删除目录项（`unlinkat(2)`）。
+    const UNLINKAT: SyscallNumber;
+    /// 挂载文件系统（`mount(2)`）。
+    const MOUNT: SyscallNumber;
+    /// 卸载文件系统（`umount2(2)`）。
+    const UMOUNT2: SyscallNumber;
 
     // 进程/执行 / process & execution
     /// 终止当前线程（`exit(2)`）。
