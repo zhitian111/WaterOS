@@ -17,6 +17,10 @@ use block::{
 };
 #[cfg(feature = "block-cache")]
 use block::BlockCacheManager;
+use network::{
+    network_device_count, network_subsystem_claims_device, register_network_device,
+    NetworkDevice, VirtioNetDevice,
+};
 use fdt::Fdt;
 use fs::devfs::active_impl as devfs_impl;
 use spin::Mutex;
@@ -27,6 +31,8 @@ static DTB_BASE_ADDR: AtomicUsize = AtomicUsize::new(0);
 static DEVICE_INFOS: Mutex<Vec<DeviceInfo>> = Mutex::new(Vec::new());
 // 成功注册为 virtio-blk 的 MMIO 窗口列表（供自检读取块 0）。
 static VIRTIO_BLK_MMIO: Mutex<Vec<MmioRegion>> = Mutex::new(Vec::new());
+// 成功注册为 virtio-net 的 MMIO 窗口列表。
+static VIRTIO_NET_MMIO: Mutex<Vec<MmioRegion>> = Mutex::new(Vec::new());
 
 /// 与上层 `wateros-driver` 聚合入口的引导约定一致：仅保存 `dtb_pa`。
 pub fn init_when_boot(dtb_pa: usize) {
@@ -217,11 +223,13 @@ pub fn device_infos() -> &'static Mutex<Vec<DeviceInfo>> {
     &DEVICE_INFOS
 }
 
-// 在已扫描的 `DEVICE_INFOS` 上尝试实例化 virtio-blk；失败或未声明的路径记入列表供 devfs 标注。
+// 在已扫描的 `DEVICE_INFOS` 上尝试实例化 virtio-blk 与 virtio-net；失败或未声明的路径记入列表供 devfs 标注。
 fn probe_virtio_blk_and_collect_unsupported() -> Vec<String> {
     let infos = DEVICE_INFOS.lock();
     let mut blk = VIRTIO_BLK_MMIO.lock();
     blk.clear();
+    let mut net = VIRTIO_NET_MMIO.lock();
+    net.clear();
     let mut unsupported = Vec::new();
 
     for info in infos.iter() {
@@ -236,9 +244,11 @@ fn probe_virtio_blk_and_collect_unsupported() -> Vec<String> {
             continue;
         };
 
-        let claimed = block_subsystem_claims_device(&info.compatibles, info.device_type);
+        let claimed_by_block = block_subsystem_claims_device(&info.compatibles, info.device_type);
+        let claimed_by_network =
+            network_subsystem_claims_device(&info.compatibles, info.device_type);
 
-        if claimed && info.device_type == DeviceType::Block {
+        if claimed_by_block && info.device_type == DeviceType::Block {
             match VirtioBlkDevice::from_mmio(mmio) {
                 Ok(dev) => {
                     let shared = {
@@ -268,6 +278,30 @@ fn probe_virtio_blk_and_collect_unsupported() -> Vec<String> {
                 Err(err) => {
                     logging::warn!(
                         "[driver] failed to init virtio-blk at base={:#x}: {:?}",
+                        mmio.base,
+                        err
+                    );
+                    unsupported.push(path);
+                }
+            }
+        } else if claimed_by_network && info.device_type == DeviceType::Network {
+            match VirtioNetDevice::from_mmio(mmio) {
+                Ok(dev) => {
+                    let mac = dev.mac_address();
+                    let idx = register_network_device(Arc::new(Mutex::new(Box::new(dev))));
+                    net.push(mmio);
+                    logging::info!("[driver] registered virtio-net #{}", idx);
+                    logging::info!(
+                        "[driver] found virtio-net: node={} mac={:02x?} base={:#x} size={:#x}",
+                        info.node_name,
+                        mac,
+                        mmio.base,
+                        mmio.size
+                    );
+                }
+                Err(err) => {
+                    logging::warn!(
+                        "[driver] failed to init virtio-net at base={:#x}: {:?}",
                         mmio.base,
                         err
                     );
@@ -333,9 +367,17 @@ pub fn virtio_blk_probe_test() -> DriverResult<()> {
     Ok(())
 }
 
-/// DTB 扫描、virtio-blk 注册与 devfs 同步的完整 bring-up 路径；成功返回后块设备表可能仍为空（无盘场景）。
+/// DTB 扫描、virtio-blk / virtio-net 注册与 devfs 同步的完整 bring-up 路径；成功返回后设备表可能仍为空。
 pub fn init_after_boot() -> DriverResult<()> {
     for e in block::supported_devices() {
+        logging::info!(
+            "[driver] supported-device catalog: subsystem={} name={} compatible={}",
+            e.subsystem,
+            e.name,
+            e.compatible
+        );
+    }
+    for e in network::supported_devices() {
         logging::info!(
             "[driver] supported-device catalog: subsystem={} name={} compatible={}",
             e.subsystem,
@@ -347,12 +389,23 @@ pub fn init_after_boot() -> DriverResult<()> {
     let count = scan_device_info()?;
     logging::trace!("[driver] dtb scan done, devices={}", count);
     let unsupported = probe_virtio_blk_and_collect_unsupported();
-    let registered = block_device_count();
-    logging::info!("[driver] block devices registered={}", registered);
-    if registered == 0 {
+    let registered_blk = block_device_count();
+    let registered_net = network_device_count();
+    logging::info!(
+        "[driver] devices registered: block={} network={}",
+        registered_blk,
+        registered_net
+    );
+    if registered_blk == 0 {
         logging::warn!(
             "[driver] no block device registered; root fs may use NotMounted unless a virtio-blk is present. \
              QEMU virt example: `-drive file=...,if=none,id=d0 -device virtio-blk-device,drive=d0`."
+        );
+    }
+    if registered_net == 0 {
+        logging::warn!(
+            "[driver] no network device registered; NIC may not be present. \
+             QEMU virt example: `-netdev user,id=n0 -device virtio-net-device,netdev=n0`."
         );
     }
     sync_devfs(unsupported);
