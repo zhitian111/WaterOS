@@ -120,6 +120,14 @@ pub fn spawn_user_task(entry_pc: UserTaskEntryPc) -> TaskId {
     spawn_user_task_spec(UserTaskSpec::new(entry_pc))
 }
 
+/// 从当前用户任务 fork 一个子任务，并返回子任务 id。
+///
+/// 子任务获得父任务 trap 帧副本（a0 置 0），共享地址空间。无当前任务或非用户任务时返回 `None`。
+pub fn fork_current() -> Option<TaskId> {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.fork_current())
+}
+
 /// 分配新的显式等待队列编号。
 pub fn allocate_wait_queue() -> WaitQueueId {
     let _guard = InterruptGuard::new();
