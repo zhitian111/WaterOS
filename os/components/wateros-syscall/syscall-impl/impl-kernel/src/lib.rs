@@ -68,14 +68,26 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     fn dispatch_mprotect(args : SyscallArgs) -> isize { sys::sys_mprotect(args).0 }
 
     #[inline]
-    fn dispatch_get_time(_args : SyscallArgs) -> isize { sys::sys_get_time().0 }
+    fn dispatch_get_time(args : SyscallArgs) -> isize { sys::sys_gettimeofday(args).0 }
+
+    #[inline]
+    fn dispatch_clock_gettime(args : SyscallArgs) -> isize { sys::sys_clock_gettime(args).0 }
 
     #[inline]
     fn dispatch_getpid(_args : SyscallArgs) -> isize { sys::sys_getpid().0 }
+
+    #[inline]
+    fn dispatch_getppid(_args : SyscallArgs) -> isize { sys::sys_getppid().0 }
 
     #[inline]
     fn dispatch_waitpid(args : SyscallArgs) -> isize { sys::sys_waitpid(args).0 }
 
     #[inline]
     fn dispatch_nanosleep(args : SyscallArgs) -> isize { sys::sys_nanosleep(args).0 }
+
+    #[inline]
+    fn dispatch_times(args : SyscallArgs) -> isize { sys::sys_times(args).0 }
+
+    #[inline]
+    fn dispatch_set_tid_address(_args : SyscallArgs) -> isize { sys::sys_set_tid_address().0 }
 }

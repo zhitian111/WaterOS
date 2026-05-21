@@ -34,11 +34,9 @@ pub(crate) fn sys_pipe2(args : SyscallArgs) -> UserRet {
     drop(reg);
     let fds = [read_fd as i32, write_fd as i32];
     match crate::user_copy::copy_to_user(pipefd_ptr, unsafe {
-        core::slice::from_raw_parts(
-            fds.as_ptr() as *const u8,
-            core::mem::size_of_val(&fds),
-        )
-    }) {
+              core::slice::from_raw_parts(fds.as_ptr() as *const u8,
+                                          core::mem::size_of_val(&fds))
+          }) {
         Ok(n) if n == core::mem::size_of_val(&fds) => UserRet::from_success(0),
         _ => UserRet::from_error(ErrNo::EFAULT),
     }

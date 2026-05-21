@@ -10,9 +10,9 @@ use crate::user_copy::copy_user_path_cstr;
 use crate::vfs_util::{linux_open_flags_to_vfs, vfs_error_to_errno};
 
 /// Linux `AT_FDCWD`。
-const AT_FDCWD: isize = -100;
+const AT_FDCWD : isize = -100;
 
-pub(crate) fn sys_openat(args: SyscallArgs) -> UserRet {
+pub(crate) fn sys_openat(args : SyscallArgs) -> UserRet {
     let dirfd = args.arg(0) as isize;
     let path_ptr = args.arg(1);
     let flags = args.arg(2) as u32;

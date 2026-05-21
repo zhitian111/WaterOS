@@ -20,5 +20,8 @@ pub(crate) use mmap::{sys_mmap, sys_mprotect, sys_munmap};
 pub(crate) use openat::sys_openat;
 pub(crate) use pipe2::sys_pipe2;
 pub(crate) use read::sys_read;
-pub(crate) use task::{sys_exit, sys_get_time, sys_getpid, sys_nanosleep, sys_waitpid, sys_yield};
+pub(crate) use task::{
+    sys_clock_gettime, sys_exit, sys_getpid, sys_getppid, sys_gettimeofday, sys_nanosleep,
+    sys_set_tid_address, sys_times, sys_waitpid, sys_yield,
+};
 pub(crate) use write::sys_write;
