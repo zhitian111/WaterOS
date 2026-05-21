@@ -9,7 +9,7 @@ use crate::linux_stat::fill_linux_stat;
 use crate::user_copy::copy_to_user_struct;
 use crate::vfs_util::vfs_error_to_errno;
 
-pub(crate) fn sys_fstat(args: SyscallArgs) -> UserRet {
+pub(crate) fn sys_fstat(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let stat_ptr = args.arg(1);
     if stat_ptr == 0 {
@@ -23,9 +23,9 @@ pub(crate) fn sys_fstat(args: SyscallArgs) -> UserRet {
     }
 
     match vfs::fd::with_current_io(fd, |handle| {
-        let meta = handle.metadata()?;
-        Ok(fill_linux_stat(&meta, meta.size))
-    }) {
+              let meta = handle.metadata()?;
+              Ok(fill_linux_stat(&meta, meta.size))
+          }) {
         Ok(stat) => match copy_to_user_struct(stat_ptr, &stat) {
             Ok(()) => UserRet::from_success(0),
             Err(e) => UserRet::from_error(e),

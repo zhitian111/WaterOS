@@ -84,3 +84,18 @@ pub(crate) fn copy_to_user_struct<T: Copy>(ptr: usize, value: &T) -> Result<(), 
         }
     })?
 }
+
+pub(crate) fn copy_from_user_struct<T: Copy>(ptr: usize) -> Result<T, ErrNo> {
+    let mut value = core::mem::MaybeUninit::<T>::uninit();
+    let bytes = unsafe {
+        core::slice::from_raw_parts_mut(
+            value.as_mut_ptr() as *mut u8,
+            core::mem::size_of::<T>(),
+        )
+    };
+    let copied = copy_from_user(bytes, ptr)?;
+    if copied != bytes.len() {
+        return Err(ErrNo::EFAULT);
+    }
+    Ok(unsafe { value.assume_init() })
+}

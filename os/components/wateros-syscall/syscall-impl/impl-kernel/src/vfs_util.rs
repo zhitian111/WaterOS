@@ -26,13 +26,13 @@ pub(crate) fn vfs_error_to_errno(err : VfsError) -> ErrNo {
 }
 
 /// Linux `openat(2)` flags → [`VfsOpenFlags`]。
-pub(crate) fn linux_open_flags_to_vfs(flags: u32) -> VfsOpenFlags {
-    const O_ACCMODE: u32 = 3;
-    const O_WRONLY: u32 = 1;
-    const O_RDWR: u32 = 2;
-    const O_CREAT: u32 = 0o100;
-    const O_TRUNC: u32 = 0o1000;
-    const O_APPEND: u32 = 0o2000;
+pub(crate) fn linux_open_flags_to_vfs(flags : u32) -> VfsOpenFlags {
+    const O_ACCMODE : u32 = 3;
+    const O_WRONLY : u32 = 1;
+    const O_RDWR : u32 = 2;
+    const O_CREAT : u32 = 0o100;
+    const O_TRUNC : u32 = 0o1000;
+    const O_APPEND : u32 = 0o2000;
 
     let mut vf = VfsOpenFlags(0);
     match flags & O_ACCMODE {

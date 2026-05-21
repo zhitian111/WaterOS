@@ -7,11 +7,11 @@ use vfs::api::VfsSeekWhence;
 
 use crate::vfs_util::vfs_error_to_errno;
 
-const SEEK_SET: usize = 0;
-const SEEK_CUR: usize = 1;
-const SEEK_END: usize = 2;
+const SEEK_SET : usize = 0;
+const SEEK_CUR : usize = 1;
+const SEEK_END : usize = 2;
 
-pub(crate) fn sys_lseek(args: SyscallArgs) -> UserRet {
+pub(crate) fn sys_lseek(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let offset = args.arg(1) as i64;
     let whence = args.arg(2);

@@ -54,9 +54,11 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const UNAME : SyscallNumber = SyscallNumber(160); // uname
     const PRCTL : SyscallNumber = SyscallNumber(167); // prctl
     const GETPID : SyscallNumber = SyscallNumber(172);
+    const GETPPID : SyscallNumber = SyscallNumber(173);
     const GETCWD : SyscallNumber = SyscallNumber(17);
     const CHDIR : SyscallNumber = SyscallNumber(49);
     const GETTID : SyscallNumber = SyscallNumber(178);
+    const TIMES : SyscallNumber = SyscallNumber(153);
 
     // 线程/同步/信号 / threads, sync, signals
     const FUTEX : SyscallNumber = SyscallNumber(98);

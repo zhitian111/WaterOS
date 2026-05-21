@@ -102,12 +102,16 @@ pub trait SyscallNumberTable {
     const PRCTL: SyscallNumber;
     /// 当前进程 ID（`getpid(2)`）。
     const GETPID: SyscallNumber;
+    /// 父进程 ID（`getppid(2)`）。
+    const GETPPID: SyscallNumber;
     /// 取当前工作目录（`getcwd(2)`）。
     const GETCWD: SyscallNumber;
     /// 切换当前工作目录（`chdir(2)`）。
     const CHDIR: SyscallNumber;
     /// 当前线程 ID（`gettid(2)`）。
     const GETTID: SyscallNumber;
+    /// 读取进程时间统计（`times(2)`）。
+    const TIMES: SyscallNumber;
 
     // 线程/同步/信号（glibc/musl 常见）/ threads, sync, signals
     /// 用户态快速互斥与睡眠原语（`futex(2)`）。

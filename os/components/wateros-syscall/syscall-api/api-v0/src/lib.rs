@@ -27,12 +27,16 @@ pub enum SyscallKind {
     Munmap,
     Mprotect,
     GetTime,
+    ClockGetTime,
     GetPid,
+    GetPPid,
     GetTid,
+    Times,
     WaitPid,
     Nanosleep,
     GetCwd,
     Chdir,
+    SetTidAddress,
     Unknown(usize),
 }
 
@@ -69,10 +73,16 @@ impl SyscallKind {
             Self::Mprotect
         } else if syscall_nr == T::GET_TIME.raw() {
             Self::GetTime
+        } else if syscall_nr == T::CLOCK_GETTIME.raw() {
+            Self::ClockGetTime
         } else if syscall_nr == T::GETPID.raw() {
             Self::GetPid
+        } else if syscall_nr == T::GETPPID.raw() {
+            Self::GetPPid
         } else if syscall_nr == T::GETTID.raw() {
             Self::GetTid
+        } else if syscall_nr == T::TIMES.raw() {
+            Self::Times
         } else if syscall_nr == T::WAITPID.raw() {
             Self::WaitPid
         } else if syscall_nr == T::NANOSLEEP.raw() {
@@ -81,6 +91,8 @@ impl SyscallKind {
             Self::GetCwd
         } else if syscall_nr == T::CHDIR.raw() {
             Self::Chdir
+        } else if syscall_nr == T::SET_TID_ADDRESS.raw() {
+            Self::SetTidAddress
         } else {
             Self::Unknown(syscall_nr)
         }
@@ -121,9 +133,15 @@ pub trait SyscallDispatcher {
 
     fn dispatch_get_time(args : SyscallArgs) -> isize;
 
+    fn dispatch_clock_gettime(args : SyscallArgs) -> isize;
+
     fn dispatch_getpid(args : SyscallArgs) -> isize;
 
+    fn dispatch_getppid(args : SyscallArgs) -> isize;
+
     fn dispatch_gettid(args : SyscallArgs) -> isize { Self::dispatch_getpid(args) }
+
+    fn dispatch_times(args : SyscallArgs) -> isize;
 
     fn dispatch_waitpid(args : SyscallArgs) -> isize;
 
@@ -132,6 +150,8 @@ pub trait SyscallDispatcher {
     fn dispatch_getcwd(args : SyscallArgs) -> isize;
 
     fn dispatch_chdir(args : SyscallArgs) -> isize;
+
+    fn dispatch_set_tid_address(args : SyscallArgs) -> isize;
 
     fn dispatch_unknown(_syscall_nr : usize, _args : SyscallArgs) -> isize {
         UserRet::from_error(ErrNo::ENOSYS).0
@@ -154,12 +174,16 @@ pub trait SyscallDispatcher {
             SyscallKind::Munmap => Self::dispatch_munmap(syscall_args),
             SyscallKind::Mprotect => Self::dispatch_mprotect(syscall_args),
             SyscallKind::GetTime => Self::dispatch_get_time(syscall_args),
+            SyscallKind::ClockGetTime => Self::dispatch_clock_gettime(syscall_args),
             SyscallKind::GetPid => Self::dispatch_getpid(syscall_args),
+            SyscallKind::GetPPid => Self::dispatch_getppid(syscall_args),
             SyscallKind::GetTid => Self::dispatch_gettid(syscall_args),
+            SyscallKind::Times => Self::dispatch_times(syscall_args),
             SyscallKind::WaitPid => Self::dispatch_waitpid(syscall_args),
             SyscallKind::Nanosleep => Self::dispatch_nanosleep(syscall_args),
             SyscallKind::GetCwd => Self::dispatch_getcwd(syscall_args),
             SyscallKind::Chdir => Self::dispatch_chdir(syscall_args),
+            SyscallKind::SetTidAddress => Self::dispatch_set_tid_address(syscall_args),
             SyscallKind::Unknown(nr) => Self::dispatch_unknown(nr, syscall_args),
         }
     }
