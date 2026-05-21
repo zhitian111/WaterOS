@@ -1,0 +1,8 @@
+feat(os): 文件类 syscall、mmap 与 trap 页表切换
+
+新增 openat、lseek、fstat、getcwd、chdir、mmap 等系统调用，支持大文件
+读写缓冲与 mmap 共享映射权限；补充进程生命周期相关 syscall。重构 trap
+runtime，将页表寄存器访问下沉至 mm，kernel_satp 初始化迁入 mm 模块；
+在陷入 trap 时根据进入前是否为用户态切换页表，保证内核与用户地址空间
+隔离。合并并稳定 trap_handler 与 task/syscall 分支的冲突修复，完善
+内核侧测试用例覆盖。
