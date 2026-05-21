@@ -1,5 +1,9 @@
 # WaterOS feature tree (按 package 分组)
+<<<<<<< HEAD
 # root: /home/kasss/WaterOS/os
+=======
+# root: /mnt/c/Users/lili/wateros/os
+>>>>>>> 3db1883 ([feat] 网络子系统：virtio-net驱动 + smoltcp协议栈集成)
 
 ipc-event  (components/wateros-ipc/ipc-event/Cargo.toml)
   (no [features])
@@ -88,7 +92,10 @@ wateros  (Cargo.toml)
         - impl-dummy
         - impl-sv39 [default]
         - qemu-riscv64-opensbi
+<<<<<<< HEAD
         - vfs-root-read
+=======
+>>>>>>> 3db1883 ([feat] 网络子系统：virtio-net驱动 + smoltcp协议栈集成)
   - pseudo-shell
     - dep:pseudo_shell
   - qemu-loongarch64-virt
@@ -221,14 +228,18 @@ wateros  (Cargo.toml)
         - default [default]
         - api-v0 [default]
         - impl-dummy [default]
+<<<<<<< HEAD
         - impl-loongarch64
         - impl-riscv64
         - pipe
+=======
+>>>>>>> 3db1883 ([feat] 网络子系统：virtio-net驱动 + smoltcp协议栈集成)
     - ipc/impl-dummy
       > wateros-ipc
         - default [default]
         - api-v0 [default]
         - impl-dummy [default]
+<<<<<<< HEAD
         - impl-loongarch64
         - impl-riscv64
         - pipe
@@ -248,6 +259,8 @@ wateros  (Cargo.toml)
         - impl-loongarch64
         - impl-riscv64
         - pipe
+=======
+>>>>>>> 3db1883 ([feat] 网络子系统：virtio-net驱动 + smoltcp协议栈集成)
     - impl-sv39
     - mm/api-v0
       > wateros-mm
@@ -256,7 +269,10 @@ wateros  (Cargo.toml)
         - impl-dummy
         - impl-sv39 [default]
         - qemu-riscv64-opensbi
+<<<<<<< HEAD
         - vfs-root-read
+=======
+>>>>>>> 3db1883 ([feat] 网络子系统：virtio-net驱动 + smoltcp协议栈集成)
     - mm/impl-sv39
       > wateros-mm
         - default [default]
@@ -292,7 +308,11 @@ wateros  (Cargo.toml)
         - impl-trace
         - impl-warn
         - serial-uart-virt
+<<<<<<< HEAD
     - runtime/impl-info
+=======
+    - runtime/impl-trace
+>>>>>>> 3db1883 ([feat] 网络子系统：virtio-net驱动 + smoltcp协议栈集成)
       > wateros-runtime
         - default [default]
         - impl-debug
@@ -311,6 +331,7 @@ wateros  (Cargo.toml)
         - impl-kernel
         - impl-loongarch64
         - impl-riscv64
+<<<<<<< HEAD
     - vfs/fd-session
       > wateros-vfs
         - default [default]
@@ -329,6 +350,8 @@ wateros  (Cargo.toml)
         - impl-dummy
         - impl-loongarch64
         - impl-riscv64
+=======
+>>>>>>> 3db1883 ([feat] 网络子系统：virtio-net驱动 + smoltcp协议栈集成)
     - task/api-v0
       > wateros-task
         - default [default]
@@ -1328,6 +1351,7 @@ wateros-syscall  (components/wateros-syscall/Cargo.toml)
         - impl-loongarch64
         - impl-riscv64 [default]
   - impl-loongarch64
+<<<<<<< HEAD
     - api-v0
     - impl-kernel
     - impl-kernel/impl-loongarch64
@@ -1352,6 +1376,8 @@ wateros-syscall-api-v0  (components/wateros-syscall/syscall-api/api-v0/Cargo.tom
   - default [default]
     - api-v0
   - api-v0 [default]
+=======
+>>>>>>> 3db1883 ([feat] 网络子系统：virtio-net驱动 + smoltcp协议栈集成)
     - abi/api-v0
       > wateros-abi
         - default [default]
@@ -1360,6 +1386,7 @@ wateros-syscall-api-v0  (components/wateros-syscall/syscall-api/api-v0/Cargo.tom
         - impl-linux-generic64
         - impl-linux-loongarch64
         - impl-linux-riscv64 [default]
+<<<<<<< HEAD
 
 wateros-syscall-impl-kernel  (components/wateros-syscall/syscall-impl/impl-kernel/Cargo.toml)
   - default [default]
@@ -1427,6 +1454,8 @@ wateros-syscall-impl-kernel  (components/wateros-syscall/syscall-impl/impl-kerne
         - impl-riscv64
   - impl-loongarch64
     - api-v0
+=======
+>>>>>>> 3db1883 ([feat] 网络子系统：virtio-net驱动 + smoltcp协议栈集成)
     - abi/impl-linux-loongarch64
       > wateros-abi
         - default [default]
@@ -1435,6 +1464,7 @@ wateros-syscall-impl-kernel  (components/wateros-syscall/syscall-impl/impl-kerne
         - impl-linux-generic64
         - impl-linux-loongarch64
         - impl-linux-riscv64 [default]
+<<<<<<< HEAD
     - ipc/impl-loongarch64
       > wateros-ipc
         - default [default]
@@ -1443,6 +1473,15 @@ wateros-syscall-impl-kernel  (components/wateros-syscall/syscall-impl/impl-kerne
         - impl-loongarch64
         - impl-riscv64
         - pipe
+=======
+    - console/impl-firmware-console
+      > wateros-runtime-console
+        - default [default]
+        - api-v0 [default]
+        - impl-dummy
+        - impl-firmware-console
+        - impl-firmware-opensbi [default]
+>>>>>>> 3db1883 ([feat] 网络子系统：virtio-net驱动 + smoltcp协议栈集成)
     - task/api-v0
       > wateros-task
         - default [default]
@@ -1475,6 +1514,7 @@ wateros-syscall-impl-kernel  (components/wateros-syscall/syscall-impl/impl-kerne
         - impl-loongarch64
         - impl-riscv64
         - impl-round-robin
+<<<<<<< HEAD
     - vfs/impl-loongarch64
       > wateros-vfs
         - default [default]
@@ -1486,6 +1526,17 @@ wateros-syscall-impl-kernel  (components/wateros-syscall/syscall-impl/impl-kerne
         - impl-riscv64
   - impl-riscv64 [default]
     - api-v0
+=======
+  - impl-riscv64
+    - abi/api-v0
+      > wateros-abi
+        - default [default]
+        - api-v0 [default]
+        - impl-dummy
+        - impl-linux-generic64
+        - impl-linux-loongarch64
+        - impl-linux-riscv64 [default]
+>>>>>>> 3db1883 ([feat] 网络子系统：virtio-net驱动 + smoltcp协议栈集成)
     - abi/impl-linux-riscv64
       > wateros-abi
         - default [default]
@@ -1494,6 +1545,7 @@ wateros-syscall-impl-kernel  (components/wateros-syscall/syscall-impl/impl-kerne
         - impl-linux-generic64
         - impl-linux-loongarch64
         - impl-linux-riscv64 [default]
+<<<<<<< HEAD
     - ipc/impl-riscv64
       > wateros-ipc
         - default [default]
@@ -1502,6 +1554,15 @@ wateros-syscall-impl-kernel  (components/wateros-syscall/syscall-impl/impl-kerne
         - impl-loongarch64
         - impl-riscv64
         - pipe
+=======
+    - console/impl-firmware-opensbi
+      > wateros-runtime-console
+        - default [default]
+        - api-v0 [default]
+        - impl-dummy
+        - impl-firmware-console
+        - impl-firmware-opensbi [default]
+>>>>>>> 3db1883 ([feat] 网络子系统：virtio-net驱动 + smoltcp协议栈集成)
     - task/api-v0
       > wateros-task
         - default [default]
@@ -1534,6 +1595,7 @@ wateros-syscall-impl-kernel  (components/wateros-syscall/syscall-impl/impl-kerne
         - impl-loongarch64
         - impl-riscv64
         - impl-round-robin
+<<<<<<< HEAD
     - vfs/impl-riscv64
       > wateros-vfs
         - default [default]
@@ -1543,6 +1605,8 @@ wateros-syscall-impl-kernel  (components/wateros-syscall/syscall-impl/impl-kerne
         - impl-dummy
         - impl-loongarch64
         - impl-riscv64
+=======
+>>>>>>> 3db1883 ([feat] 网络子系统：virtio-net驱动 + smoltcp协议栈集成)
 
 wateros-task  (components/wateros-task/Cargo.toml)
   - default [default]

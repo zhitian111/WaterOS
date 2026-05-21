@@ -78,6 +78,7 @@ pub fn test() {
     log::trace!("[driver] test begin");
     api_v0::test();
     block::test();
+    network::test();
     #[cfg(feature = "impl-qemu-riscv64-opensbi")]
     impl_qemu_riscv64_opensbi::test();
     #[cfg(feature = "impl-dummy")]
