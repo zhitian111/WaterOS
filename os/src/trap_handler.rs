@@ -179,15 +179,13 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
     // 1. `begin_current_trap_frame_access(frame)`：把内核栈上的快照写入当前 TCB 的
     //    `trap_frame`，并返回 TCB
     //    内权威缓冲区的指针（`cx`）；若尚无当前任务则仍用栈上 `frame`。
-    // 2. 若来自用户：`install_kernel_satp_for_trap_handler`（syscall/FS 等在内核
-    //    satp 下执行）。
+    // 2. 若来自用户：入口已切到内核地址空间（syscall/FS 等在内核 token 下执行）。
     // 3. 业务分支（如 syscall）在 `cx` 上改 `sepc`/`a0`/…。
-    // 4. `install_satp_for_exception_return`：按是否回用户写 `satp` 并刷新 TLB。
-    // 5. `restore_current_trap_frame(frame)`：把 TCB 内已更新的 `TrapContext`
-    //    **拷回** `trap.asm` 传入的 `frame`（内核栈上的那份），供下面汇编
+    // 4. `restore_current_trap_frame(frame)`：把 TCB 内已更新的 `TrapContext`
+    //    **拷回** `trap.asm` 传入的
+    //    `frame`（内核栈上的那份），并按返回目标写入地址空间 token，供下面汇编
     //    `ld`/`csrw`/`sret` 使用。`false` 且回用户则 panic。
-    trap_runtime::install_satp_for_exception_return(cx.returns_to_user());
-    let restored = unsafe { trap_runtime::restore_current_trap_frame(frame) };
+    let restored = unsafe { task::restore_current_trap_frame(frame) };
     trace!("[trap] restore_current_trap_frame restored={}",
            restored);
     if cx.returns_to_user() && !restored {

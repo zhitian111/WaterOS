@@ -31,6 +31,11 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const PIPE2 : SyscallNumber = SyscallNumber(59);
     const IOCTL : SyscallNumber = SyscallNumber(29);
     const FCNTL : SyscallNumber = SyscallNumber(25);
+    const GETDENTS64 : SyscallNumber = SyscallNumber(61);
+    const MKDIRAT : SyscallNumber = SyscallNumber(34);
+    const UNLINKAT : SyscallNumber = SyscallNumber(35);
+    const MOUNT : SyscallNumber = SyscallNumber(40);
+    const UMOUNT2 : SyscallNumber = SyscallNumber(39);
 
     // 进程/执行 / process & execution
     const EXIT : SyscallNumber = SyscallNumber(93);
