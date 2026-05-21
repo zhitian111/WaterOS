@@ -3,7 +3,9 @@
 
 mod brk;
 mod chdir;
+mod clone;
 mod close;
+mod dup;
 mod fstat;
 mod getcwd;
 mod lseek;
@@ -16,16 +18,19 @@ mod write;
 
 pub(crate) use brk::sys_brk;
 pub(crate) use chdir::sys_chdir;
+pub(crate) use clone::sys_clone;
 pub(crate) use close::sys_close;
-pub(crate) use getcwd::sys_getcwd;
+pub(crate) use dup::{sys_dup, sys_dup3};
 pub(crate) use fstat::sys_fstat;
+pub(crate) use getcwd::sys_getcwd;
 pub(crate) use lseek::sys_lseek;
 pub(crate) use mmap::{sys_mmap, sys_mprotect, sys_munmap};
 pub(crate) use openat::sys_openat;
 pub(crate) use pipe2::sys_pipe2;
 pub(crate) use read::sys_read;
 pub(crate) use task::{
-    sys_clock_gettime, sys_exit, sys_getpid, sys_getppid, sys_gettimeofday, sys_nanosleep,
-    sys_set_tid_address, sys_times, sys_waitpid, sys_yield,
+    sys_clock_gettime, sys_exit, sys_getpid, sys_getppid, sys_getrlimit, sys_gettid,
+    sys_gettimeofday, sys_nanosleep, sys_prctl, sys_set_tid_address, sys_setrlimit, sys_times,
+    sys_uname, sys_waitpid, sys_yield,
 };
 pub(crate) use write::sys_write;

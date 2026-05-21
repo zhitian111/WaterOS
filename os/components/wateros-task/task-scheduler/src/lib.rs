@@ -63,6 +63,12 @@ pub fn allocate_wait_queue() -> WaitQueueId {
     active_impl::allocate_wait_queue()
 }
 
+/// 从当前用户任务 fork 一个子任务，并返回子任务 id。
+#[inline]
+pub fn fork_current() -> Option<TaskId> {
+    active_impl::fork_current()
+}
+
 /// 启动调度器并切入第一个可运行任务。
 #[inline]
 pub fn run_first_task() -> ! {

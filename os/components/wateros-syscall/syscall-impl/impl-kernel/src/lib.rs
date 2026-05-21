@@ -33,6 +33,9 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     fn dispatch_yield(_args : SyscallArgs) -> isize { sys::sys_yield().0 }
 
     #[inline]
+    fn dispatch_clone(_args : SyscallArgs) -> isize { sys::sys_clone().0 }
+
+    #[inline]
     fn dispatch_exit(args : SyscallArgs) -> isize { sys::sys_exit(args.arg(0) as isize) }
 
     #[inline]
@@ -52,6 +55,12 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
 
     #[inline]
     fn dispatch_lseek(args : SyscallArgs) -> isize { sys::sys_lseek(args).0 }
+
+    #[inline]
+    fn dispatch_dup(_args : SyscallArgs) -> isize { sys::sys_dup(_args).0 }
+
+    #[inline]
+    fn dispatch_dup3(_args : SyscallArgs) -> isize { sys::sys_dup3(_args).0 }
 
     #[inline]
     fn dispatch_pipe2(args : SyscallArgs) -> isize { sys::sys_pipe2(args).0 }
@@ -81,6 +90,9 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     fn dispatch_getppid(_args : SyscallArgs) -> isize { sys::sys_getppid().0 }
 
     #[inline]
+    fn dispatch_gettid(_args : SyscallArgs) -> isize { sys::sys_gettid().0 }
+
+    #[inline]
     fn dispatch_waitpid(args : SyscallArgs) -> isize { sys::sys_waitpid(args).0 }
 
     #[inline]
@@ -91,6 +103,21 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
 
     #[inline]
     fn dispatch_chdir(args : SyscallArgs) -> isize { sys::sys_chdir(args).0 }
+
+    #[inline]
+    fn dispatch_uname(args : SyscallArgs) -> isize { sys::sys_uname(args).0 }
+
+    #[inline]
+    fn dispatch_prctl(args : SyscallArgs) -> isize { sys::sys_prctl(args).0 }
+
+    #[inline]
+    fn dispatch_getrlimit(args : SyscallArgs) -> isize { sys::sys_getrlimit(args).0 }
+
+    #[inline]
+    fn dispatch_setrlimit(args : SyscallArgs) -> isize { sys::sys_setrlimit(args).0 }
+
+    #[inline]
+    fn dispatch_set_tid_address(_args : SyscallArgs) -> isize { sys::sys_set_tid_address().0 }
 
     #[inline]
     fn dispatch_unknown(syscall_nr : usize, args : SyscallArgs) -> isize {

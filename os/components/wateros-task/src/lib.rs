@@ -163,6 +163,13 @@ pub fn reap_exited_task(task_id : TaskId) -> Option<ExitedTask> {
     scheduler::reap_exited_task(task_id)
 }
 
+/// 从当前用户任务 fork 一个子任务，并返回子任务 id。
+///
+/// 子任务获得父任务 trap 帧副本（a0 置 0），共享地址空间与文件描述符表。
+/// 无当前任务或当前不是用户任务时返回 `None`。
+#[inline]
+pub fn fork_current() -> Option<TaskId> { scheduler::fork_current() }
+
 /// 回收一个任意已退出任务的信息。
 #[inline]
 pub fn reap_one_exited_task() -> Option<ExitedTask> { scheduler::reap_one_exited_task() }
