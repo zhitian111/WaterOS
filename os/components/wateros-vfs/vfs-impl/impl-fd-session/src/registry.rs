@@ -14,17 +14,16 @@ use crate::handles::{ConsoleInHandle, ConsoleOutHandle};
 
 /// 全局 per-task fd 注册表。
 pub struct PerTaskFdRegistry {
-    tables: Vec<Vec<Option<Box<dyn VfsIoHandle>>>>,
+    tables : Vec<Vec<Option<Box<dyn VfsIoHandle>>>>,
 }
 
 impl PerTaskFdRegistry {
-    pub const fn new() -> Self {
-        Self { tables: Vec::new() }
-    }
+    pub const fn new() -> Self { Self { tables : Vec::new() } }
 
-    fn table_mut(&mut self, task_id: task::TaskId) -> &mut Vec<Option<Box<dyn VfsIoHandle>>> {
+    fn table_mut(&mut self, task_id : task::TaskId) -> &mut Vec<Option<Box<dyn VfsIoHandle>>> {
         if self.tables.len() <= task_id {
-            self.tables.resize_with(task_id + 1, Vec::new);
+            self.tables
+                .resize_with(task_id + 1, Vec::new);
         }
         let table = &mut self.tables[task_id];
         if table.len() < VFS_FIRST_DYNAMIC_FD {
@@ -38,15 +37,17 @@ impl PerTaskFdRegistry {
 }
 
 impl VfsFdSession for PerTaskFdRegistry {
-    fn get_io(&mut self, fd: usize) -> VfsResult<&mut (dyn VfsIoHandle + '_)> {
+    fn get_io(&mut self, fd : usize) -> VfsResult<&mut (dyn VfsIoHandle + '_)> {
         let task_id = task::current_task_id().ok_or(VfsError::NoTask)?;
-        match self.table_mut(task_id).get_mut(fd) {
+        match self.table_mut(task_id)
+                  .get_mut(fd)
+        {
             Some(Some(h)) => Ok(h.as_mut()),
             _ => Err(VfsError::BadFd),
         }
     }
 
-    fn alloc_fd(&mut self, handle: Box<dyn VfsIoHandle>) -> VfsResult<usize> {
+    fn alloc_fd(&mut self, handle : Box<dyn VfsIoHandle>) -> VfsResult<usize> {
         let task_id = task::current_task_id().ok_or(VfsError::NoTask)?;
         let table = self.table_mut(task_id);
         for fd in VFS_FIRST_DYNAMIC_FD..table.len() {
@@ -59,28 +60,26 @@ impl VfsFdSession for PerTaskFdRegistry {
         Ok(table.len() - 1)
     }
 
-    fn close_fd(&mut self, fd: usize) -> VfsResult<()> {
+    fn close_fd(&mut self, fd : usize) -> VfsResult<()> {
         if fd < VFS_FIRST_DYNAMIC_FD {
             return Err(VfsError::BadFd);
         }
         let task_id = task::current_task_id().ok_or(VfsError::NoTask)?;
-        let mut handle = self
-            .table_mut(task_id)
-            .get_mut(fd)
-            .ok_or(VfsError::BadFd)?
-            .take()
-            .ok_or(VfsError::BadFd)?;
+        let mut handle = self.table_mut(task_id)
+                             .get_mut(fd)
+                             .ok_or(VfsError::BadFd)?
+                             .take()
+                             .ok_or(VfsError::BadFd)?;
         handle.close()
     }
 }
 
 impl PerTaskFdRegistry {
     /// 为指定任务分配 fd（`pipe2` 等可在已知 `task_id` 下使用）。
-    pub fn alloc_fd_for_task(
-        &mut self,
-        task_id: task::TaskId,
-        handle: Box<dyn VfsIoHandle>,
-    ) -> usize {
+    pub fn alloc_fd_for_task(&mut self,
+                             task_id : task::TaskId,
+                             handle : Box<dyn VfsIoHandle>)
+                             -> usize {
         let table = self.table_mut(task_id);
         for fd in VFS_FIRST_DYNAMIC_FD..table.len() {
             if table[fd].is_none() {
@@ -93,28 +92,28 @@ impl PerTaskFdRegistry {
     }
 
     /// 按任务与 fd 号取可变句柄。
-    pub fn get_io_for_task(
-        &mut self,
-        task_id: task::TaskId,
-        fd: usize,
-    ) -> VfsResult<&mut (dyn VfsIoHandle + '_)> {
-        match self.table_mut(task_id).get_mut(fd) {
+    pub fn get_io_for_task(&mut self,
+                           task_id : task::TaskId,
+                           fd : usize)
+                           -> VfsResult<&mut (dyn VfsIoHandle + '_)> {
+        match self.table_mut(task_id)
+                  .get_mut(fd)
+        {
             Some(Some(h)) => Ok(h.as_mut()),
             _ => Err(VfsError::BadFd),
         }
     }
 
     /// 按任务关闭 fd；关闭时调用句柄的 `close`。
-    pub fn close_fd_for_task(&mut self, task_id: task::TaskId, fd: usize) -> VfsResult<()> {
+    pub fn close_fd_for_task(&mut self, task_id : task::TaskId, fd : usize) -> VfsResult<()> {
         if fd < VFS_FIRST_DYNAMIC_FD {
             return Err(VfsError::BadFd);
         }
-        let mut handle = self
-            .table_mut(task_id)
-            .get_mut(fd)
-            .ok_or(VfsError::BadFd)?
-            .take()
-            .ok_or(VfsError::BadFd)?;
+        let mut handle = self.table_mut(task_id)
+                             .get_mut(fd)
+                             .ok_or(VfsError::BadFd)?
+                             .take()
+                             .ok_or(VfsError::BadFd)?;
         handle.close()
     }
 }

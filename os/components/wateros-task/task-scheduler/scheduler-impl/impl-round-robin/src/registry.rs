@@ -1,6 +1,9 @@
-//! **任务注册表**：稠密 `TaskId` → `TaskControlBlock` 槽位、当前运行任务指针，以及首次切换用的引导上下文。
+//! **任务注册表**：稠密 `TaskId` → `TaskControlBlock`
+//! 槽位、当前运行任务指针，以及首次切换用的引导上下文。
 //!
-//! `exit_wait_queues` 按下标 `task_id` 扩容，用于「等待某任务退出」的等待者链表；与 `task_api::TaskWaitTarget::TaskExit` 一一对应。
+//! `exit_wait_queues` 按下标 `task_id`
+//! 扩容，用于「等待某任务退出」的等待者链表；与
+//! `task_api::TaskWaitTarget::TaskExit` 一一对应。
 
 extern crate alloc;
 
@@ -20,7 +23,8 @@ unsafe extern "C" {
     safe fn __wateros_idle_task_runtime_main(arg : usize) -> !;
 }
 
-// `task_id` 与 `slots` 下标一致；`None` 表示槽位空闲（例如已 reap 的退出任务）。
+// `task_id` 与 `slots` 下标一致；`None` 表示槽位空闲（例如已 reap
+// 的退出任务）。
 struct TaskTable {
     slots : Vec<Option<Box<TaskControlBlock>>>,
 }
@@ -103,30 +107,47 @@ impl TaskRegistry {
         self.next_task_id += 1;
         let parent_id = self.current_task_id;
         self.task_table
-            .insert(Box::new(TaskControlBlock::new_kernel_task(task_id,
-                                                               parent_id,
-                                                               entry,
-                                                               arg)));
+            .insert(Box::new(TaskControlBlock::new_kernel_task(task_id, parent_id, entry, arg)));
         task_id
     }
 
     pub(super) fn spawn_user_task_spec(&mut self, spec : UserTaskSpec) -> TaskId {
         let task_id = self.next_task_id;
         self.next_task_id += 1;
-        log::trace!(
-            "[task-spawn] user spec id={} entry_pc={:#x} address_space_raw={:#x} image={:?} external_stack={:?}",
-            task_id,
-            spec.entry_pc(),
-            spec.address_space()
-                .map(|h| h.raw())
-                .unwrap_or(0),
-            spec.image(),
-            spec.external_stack()
-        );
+        log::trace!("[task-spawn] user spec id={} entry_pc={:#x} address_space_raw={:#x} \
+                     image={:?} external_stack={:?}",
+                    task_id,
+                    spec.entry_pc(),
+                    spec.address_space()
+                        .map(|h| h.raw())
+                        .unwrap_or(0),
+                    spec.image(),
+                    spec.external_stack());
         let parent_id = self.current_task_id;
         self.task_table
             .insert(Box::new(TaskControlBlock::new_user_task(task_id, parent_id, spec)));
         task_id
+    }
+
+    /// 从当前任务 fork 一个子用户任务。
+    ///
+    /// 子任务继承父任务的 trap 帧（a0 置
+    /// 0）、地址空间与用户栈，使用独立内核栈。
+    pub(super) fn fork_current(&mut self) -> Option<TaskId> {
+        let parent_id = self.current_task_id?;
+        let child_id = self.next_task_id;
+        self.next_task_id += 1;
+
+        // 从父任务的 TCB fork 出子任务
+        let child = TaskControlBlock::fork_user_task(self.task_table
+                                                         .task(parent_id),
+                                                     child_id);
+        self.task_table
+            .insert(Box::new(child));
+        log::debug!("[task-scheduler] forked child task {} from parent {}",
+                    child_id,
+                    parent_id);
+        Some(child_id)
     }
 
     pub(super) fn first_switch_to(&mut self, next_task_id : TaskId) -> SwitchPair {
@@ -235,8 +256,7 @@ impl TaskRegistry {
             .iter()
             .filter_map(|slot| slot.as_deref())
             .find(|task| {
-                task.parent_id() == Some(parent_id) &&
-                matches!(task.state(), TaskState::Exited(_))
+                task.parent_id() == Some(parent_id) && matches!(task.state(), TaskState::Exited(_))
             })
             .map(TaskControlBlock::id)
     }

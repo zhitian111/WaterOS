@@ -1,7 +1,10 @@
-//! 任务控制块（**`TaskControlBlock`**）与用户态资源快照：把 `task_api` 中的规格落到具体栈、trap 帧与地址空间句柄上。
+//! 任务控制块（**`TaskControlBlock`**）与用户态资源快照：把 `task_api`
+//! 中的规格落到具体栈、trap 帧与地址空间句柄上。
 //!
-//! 调度器只通过 `task_api` 抽象操作本模块类型；**就绪顺序与时间片**不在此文件实现。
+//! 调度器只通过 `task_api`
+//! 抽象操作本模块类型；**就绪顺序与时间片**不在此文件实现。
 
+use abi::user_ret::UserRet;
 use alloc::boxed::Box;
 use api_v0::{
     AddressSpaceHandle, ExitedTask, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskId,
@@ -15,13 +18,11 @@ use arch::trap::{ActiveTrapFrame as TaskTrapFrame, TrapContextRead, TrapContextW
 use crate::stack::{KernelStack, UserStack};
 use crate::TaskBootstrap;
 
-// 用户栈既可由本 crate 分配，也可由创建方通过 `UserTaskSpec::with_external_stack` 提供已映射区间。
+// 用户栈既可由本 crate 分配，也可由创建方通过
+// `UserTaskSpec::with_external_stack` 提供已映射区间。
 enum UserStackBacking {
     Kernel(UserStack),
-    External {
-        bottom : usize,
-        top : usize,
-    },
+    External { bottom : usize, top : usize },
 }
 
 // 与 `task_api::UserTaskResources` 快照对应的内部运行时表示；仅在 TCB 内使用。
@@ -33,13 +34,16 @@ struct UserTaskRuntimeResources {
     user_aspace_ptr : usize,
 }
 unsafe extern "C" {
-    /// 内核任务通用入口桩：从栈上取出 `TaskBootstrap` 并转入 `TaskBootstrap::run`。
+    /// 内核任务通用入口桩：从栈上取出 `TaskBootstrap` 并转入
+    /// `TaskBootstrap::run`。
     fn __arch_task_entry();
-    /// 用户任务入口桩：装配完成后由调度器经 `__wateros_task_runtime_enter_current_user_task` 进入用户态。
+    /// 用户任务入口桩：装配完成后由调度器经
+    /// `__wateros_task_runtime_enter_current_user_task` 进入用户态。
     fn __arch_user_task_entry();
 }
 
-/// 用户栈映射为 `[bottom, top)`（`top` 为不包含上界）时，初始 `sp` 必须落在已映射页内并满足 RISC-V psABI 的 16 字节对齐。
+/// 用户栈映射为 `[bottom, top)`（`top` 为不包含上界）时，初始 `sp`
+/// 必须落在已映射页内并满足 RISC-V psABI 的 16 字节对齐。
 #[inline]
 fn initial_user_sp(top_exclusive : usize, bottom : usize) -> usize {
     let sp = top_exclusive.saturating_sub(16);
@@ -61,7 +65,8 @@ impl UserTaskRuntimeResources {
                user_stack,
                address_space : spec.address_space(),
                image : spec.image(),
-               user_aspace_ptr : spec.user_aspace_ptr().unwrap_or(0) }
+               user_aspace_ptr : spec.user_aspace_ptr()
+                                     .unwrap_or(0) }
     }
 
     fn entry_pc(&self) -> UserTaskEntryPc { self.entry_pc }
@@ -179,11 +184,9 @@ impl TaskControlBlock {
         let task_cx = TaskContext::goto_entry(__arch_user_task_entry as *const () as usize,
                                               kernel_stack.top());
         let mut trap_frame = TaskTrapFrame::default();
-        trap_frame.prepare_user_return(
-            user_resources.entry_pc(),
-            initial_user_sp(user_resources.user_stack_top(),
-                            user_resources.user_stack_bottom()),
-        );
+        trap_frame.prepare_user_return(user_resources.entry_pc(),
+                                       initial_user_sp(user_resources.user_stack_top(),
+                                                       user_resources.user_stack_bottom()));
         Self::new(id,
                   parent_id,
                   TaskKind::User,
@@ -191,6 +194,55 @@ impl TaskControlBlock {
                   Some(trap_frame),
                   kernel_stack,
                   Some(user_resources),
+                  None,
+                  false)
+    }
+
+    /// 从当前用户任务 fork 出一个子任务。
+    ///
+    /// 子任务获得父任务 trap 帧的副本（a0 置 0），共享地址空间与映像信息，
+    /// 并使用独立的内核栈。
+    pub fn fork_user_task(parent : &Self, child_id : TaskId) -> Self {
+        assert_eq!(parent.kind,
+                   TaskKind::User,
+                   "fork only supported for user tasks");
+
+        let kernel_stack = KernelStack::new();
+        let task_cx = TaskContext::goto_entry(__arch_user_task_entry as *const () as usize,
+                                              kernel_stack.top());
+
+        // 克隆父任务的 trap 帧，并将子任务返回值 a0 置 0
+        let mut trap_frame = parent.trap_frame;
+        if let Some(ref mut tf) = trap_frame {
+            <TaskTrapFrame as TrapContextWrite>::set_syscall_ret(tf, UserRet::from_success(0));
+        }
+
+        // 子任务继承父任务的用户资源（新分配用户栈若为 Kernel 类型，否则共享外部栈）
+        let user_resources =
+            parent.user_resources
+                  .as_ref()
+                  .map(|ur| {
+                      let new_stack = match &ur.user_stack {
+                          UserStackBacking::Kernel(_) => UserStackBacking::Kernel(UserStack::new()),
+                          UserStackBacking::External { bottom, top } => {
+                              UserStackBacking::External { bottom : *bottom,
+                                                           top : *top }
+                          }
+                      };
+                      UserTaskRuntimeResources { entry_pc : ur.entry_pc,
+                                                 user_stack : new_stack,
+                                                 address_space : ur.address_space,
+                                                 image : ur.image,
+                                                 user_aspace_ptr : ur.user_aspace_ptr }
+                  });
+
+        Self::new(child_id,
+                  Some(parent.id),
+                  TaskKind::User,
+                  task_cx,
+                  trap_frame,
+                  kernel_stack,
+                  user_resources,
                   None,
                   false)
     }
