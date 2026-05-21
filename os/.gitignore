@@ -7,7 +7,7 @@
 /sdcard-la.img
 *.log
 *log.txt
-*cache*
+cache*
 **/Cargo.lock
 config.conf
 ./feature-tree.txt

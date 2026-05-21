@@ -1,0 +1,11 @@
+[package]
+    name = "wateros-vfs-impl-page-cache"
+    version = "0.1.0"
+    edition = "2024"
+
+[dependencies]
+    spin = "0.10.0"
+    wateros-base-config = { path = "../../../wateros-base/base-config", package = "wateros-base-config" }
+
+[features]
+    default = [  ]
