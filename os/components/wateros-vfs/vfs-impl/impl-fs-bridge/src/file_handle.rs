@@ -220,6 +220,9 @@ impl FsBridge {
         flags: VfsOpenFlags,
     ) -> VfsResult<Box<dyn VfsIoHandle>> {
         let abs = api_v0::resolve_open_path(path)?;
+        if flags.contains(VfsOpenFlags::DIRECTORY) {
+            return super::dir_handle::DirectoryHandle::open(self, abs);
+        }
         super::paged_handle::open_file(self, abs, flags)
     }
 }

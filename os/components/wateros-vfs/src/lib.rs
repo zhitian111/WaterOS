@@ -35,6 +35,14 @@ pub mod fd;
 #[cfg(feature = "fd-session")]
 pub mod cwd;
 
+/// 相对当前任务 cwd 创建目录（`fd-session` + `bridge-fs-api`）。
+#[cfg(all(feature = "fd-session", feature = "bridge-fs-api"))]
+pub fn mkdir_at_current(path: &str, mode: u32) -> VfsResult<()> {
+    let abs = cwd::resolve_for_current_task(path)?;
+    let mut sess = mount::open_rw_session(VfsFsKind::Ext4)?;
+    sess.mkdir(abs.as_str(), mode)
+}
+
 #[cfg(feature = "fd-session")]
 pub use impl_fd_session::{PipeReadHandle, PipeWriteHandle};
 
@@ -117,6 +125,24 @@ pub mod self_test {
         }
     }
 
+    /// RW `mkdir` 后 RO `metadata` 校验为目录。
+    #[cfg(feature = "bridge-fs-api")]
+    pub fn rw_mkdir_verify_via_ro(kind: VfsFsKind, dir_name: &str) -> VfsResult<()> {
+        use super::api::VfsNodeType;
+
+        validate_root_file_name(dir_name)?;
+        let backend = active_impl::backend();
+        let mut path = String::from("/");
+        path.push_str(dir_name);
+        let mut session = backend.mount_rw_session(kind)?;
+        session.mkdir(path.as_str(), 0o755)?;
+        let meta = backend.metadata(path.as_str())?;
+        if meta.node_type != VfsNodeType::Directory {
+            return Err(super::api::VfsError::Io);
+        }
+        Ok(())
+    }
+
     /// `open` → `read` → `seek` → `metadata` 烟囱（依赖 RW 先写入测试文件）。
     #[cfg(feature = "bridge-fs-api")]
     pub fn open_read_seek_smoke() -> VfsResult<()> {
@@ -152,6 +178,12 @@ pub mod self_test {
                 log::warn!("[vfs] self_test open/seek skipped or failed: {:?}", e);
             } else {
                 log::info!("[vfs] self_test open/seek ok");
+            }
+            const MKDIR_NAME: &str = "vfs_mkdir_smoke";
+            if let Err(e) = rw_mkdir_verify_via_ro(VfsFsKind::Ext4, MKDIR_NAME) {
+                log::warn!("[vfs] self_test mkdir skipped or failed: {:?}", e);
+            } else {
+                log::info!("[vfs] self_test mkdir ok");
             }
         }
         let _ = active_impl::backend().list_dev_nodes();

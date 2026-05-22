@@ -12,9 +12,11 @@ use api_v0::{
     normalize_absolute_path, validate_root_file_name,
 };
 
+mod dir_handle;
 mod file_handle;
 mod paged_handle;
 
+pub use dir_handle::DirectoryHandle;
 pub use file_handle::{BufferedFileHandle, RootFileHandle};
 pub use paged_handle::PagedFileHandle;
 use fs::{FsAccessMode, FsCapability, FsDirEntry, FsError, FsKind, FsMetadata, FsNodeType, SharedRwFs};
@@ -29,6 +31,7 @@ pub(crate) fn map_fs_err(e: FsError) -> VfsError {
         FsError::NotFound => VfsError::NotFound,
         FsError::NotAFile => VfsError::NotAFile,
         FsError::InvalidPath => VfsError::InvalidPath,
+        FsError::Exists => VfsError::Exists,
         FsError::NotUtf8 => VfsError::NotUtf8,
         FsError::Unsupported => VfsError::Unsupported,
         FsError::Driver => VfsError::Driver,
@@ -186,6 +189,11 @@ impl RootRwSession for MountedRwSession {
             .lock()
             .write_range(n.as_str(), offset, data)
             .map_err(map_fs_err)
+    }
+
+    fn mkdir(&mut self, path: &str, mode: u32) -> VfsResult<()> {
+        let n = normalize_absolute_path(path)?;
+        self.inner.lock().mkdir(n.as_str(), mode).map_err(map_fs_err)
     }
 }
 

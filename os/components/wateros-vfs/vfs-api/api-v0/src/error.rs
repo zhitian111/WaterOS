@@ -11,6 +11,8 @@ pub enum VfsError {
     NotAFile,
     /// 路径非法（如非绝对、空段约定违反、根文件名含 `/` 等）。
     InvalidPath,
+    /// 目标路径已存在。
+    Exists,
     /// 按 UTF-8 解释文件内容失败。
     NotUtf8,
     /// 当前构建或后端不支持该操作。

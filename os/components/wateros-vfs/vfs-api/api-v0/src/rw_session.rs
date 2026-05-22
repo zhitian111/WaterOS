@@ -22,4 +22,10 @@ pub trait RootRwSession {
         let _ = (path, offset, data);
         Err(VfsError::Unsupported)
     }
+
+    /// 在绝对路径 `path` 处创建目录。
+    fn mkdir(&mut self, path: &str, mode: u32) -> VfsResult<()> {
+        let _ = (path, mode);
+        Err(VfsError::Unsupported)
+    }
 }
