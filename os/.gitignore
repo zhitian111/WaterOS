@@ -5,6 +5,9 @@
 /kernel-la
 /sdcard-rv.img
 /sdcard-la.img
+__pycache__/
+*.py[cod]
+*.pyc
 *.log
 *log.txt
 cache*
