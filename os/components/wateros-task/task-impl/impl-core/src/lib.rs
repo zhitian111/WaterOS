@@ -17,3 +17,5 @@ mod tcb;
 
 pub use runtime::TaskBootstrap;
 pub use tcb::TaskControlBlock;
+pub use tcb::{prepare_pending_fork_user_stack_copy, prepare_pending_fork_user_stack_range,
+			  take_pending_fork_user_stack_copy};

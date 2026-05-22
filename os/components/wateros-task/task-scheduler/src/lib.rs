@@ -223,3 +223,17 @@ pub fn begin_current_trap_frame_access(trap_frame : TaskTrapFrame) -> Option<*mu
 pub fn restore_current_trap_frame(trap_frame : &mut TaskTrapFrame) -> bool {
     active_impl::restore_current_trap_frame(trap_frame)
 }
+
+#[inline]
+pub fn restore_current_trap_frame_and_address_space_raw(
+    trap_frame : &mut TaskTrapFrame,
+) -> (bool, usize) {
+    active_impl::restore_current_trap_frame_and_address_space_raw(trap_frame)
+}
+
+#[inline]
+pub fn restore_current_trap_frame_and_metadata(
+    trap_frame : &mut TaskTrapFrame,
+) -> (bool, usize, usize) {
+    active_impl::restore_current_trap_frame_and_metadata(trap_frame)
+}

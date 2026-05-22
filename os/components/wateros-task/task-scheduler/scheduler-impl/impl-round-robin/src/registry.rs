@@ -131,8 +131,9 @@ impl TaskRegistry {
 
     /// 从当前任务 fork 一个子用户任务。
     ///
-    /// 子任务继承父任务的 trap 帧（a0 置 0）、地址空间与用户栈，使用独立内核栈。
-    /// `child_stack` 非零时，子任务初始用户 sp 设为该值（用于 clone 新栈场景）。
+    /// 子任务继承父任务的 trap 帧（a0 置
+    /// 0）、地址空间与用户栈，使用独立内核栈。 `child_stack`
+    /// 非零时，子任务初始用户 sp 设为该值（用于 clone 新栈场景）。
     pub(super) fn fork_current(&mut self, child_stack : usize) -> Option<TaskId> {
         let parent_id = self.current_task_id?;
         let child_id = self.next_task_id;
@@ -145,9 +146,6 @@ impl TaskRegistry {
                                                      child_stack);
         self.task_table
             .insert(Box::new(child));
-        log::debug!("[task-scheduler] forked child task {} from parent {}",
-                    child_id,
-                    parent_id);
         Some(child_id)
     }
 
@@ -354,5 +352,31 @@ impl TaskRegistry {
                     .restore_trap_frame_into(trap_frame)
             })
             .unwrap_or(false)
+    }
+
+    pub(super) fn restore_current_trap_frame_and_address_space_raw(&self,
+                                                                   trap_frame : &mut TaskTrapFrame)
+                                                                   -> (bool, usize) {
+        self.current_task_id
+            .map(|current_task_id| {
+                let task = self.task_table
+                               .task(current_task_id);
+                let restored = task.restore_trap_frame_into(trap_frame);
+                (restored, task.user_address_space_raw())
+            })
+            .unwrap_or((false, 0))
+    }
+
+    pub(super) fn restore_current_trap_frame_and_metadata(&self,
+                                                          trap_frame : &mut TaskTrapFrame)
+                                                          -> (bool, usize, usize) {
+        self.current_task_id
+            .map(|current_task_id| {
+                let task = self.task_table
+                               .task(current_task_id);
+                let restored = task.restore_trap_frame_into(trap_frame);
+                (restored, task.kernel_stack_top(), task.user_address_space_raw())
+            })
+            .unwrap_or((false, 0, 0))
     }
 }
