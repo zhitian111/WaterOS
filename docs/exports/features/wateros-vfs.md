@@ -13,7 +13,7 @@
 
 - **`wateros`** 在 **`qemu-riscv64-opensbi`** 下启用 **`vfs-bridge`**、**`vfs/fd-session`**、**`vfs/impl-riscv64`**，在 `fs::init` / `fs::test` 之后调用 **`vfs::test()`**（含 `fd::self_test` 与 RW 读回烟囱）。
 - **`wateros-mm`** 在相同 feature 下启用 **`vfs-root-read`**，`from_elf_path` 经 **`vfs::root::read_view()`** 读 ELF。
-- **`wateros-syscall`** 经 **`fd-session`** feature 依赖 **`vfs::fd`** 与 **`vfs::cwd`** 完成 `read` / `write` / `close` / `pipe2` / `getcwd` / `chdir`；`open` 经 **`resolve_open_path`** 相对 cwd 解析。
+- **`wateros-syscall`** 经 **`fd-session`** feature 依赖 **`vfs::fd`** 与 **`vfs::cwd`** 完成 `read` / `write` / `close` / `pipe2` / `getcwd` / `chdir` / `mkdirat`；`open` 经 **`resolve_open_path`** 相对 cwd 解析。
 
 ## 工作区说明
 
