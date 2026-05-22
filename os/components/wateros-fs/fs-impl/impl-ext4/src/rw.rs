@@ -102,7 +102,7 @@ pub(crate) fn map_ext4_plus(err: Ext4Error) -> FsError {
         Ext4Error::Incompatible(_) => FsError::Unsupported,
         Ext4Error::Corrupt(_) => FsError::Corrupt,
         Ext4Error::Readonly => FsError::Unsupported,
-        Ext4Error::AlreadyExists => FsError::InvalidPath,
+        Ext4Error::AlreadyExists => FsError::Exists,
         _ => FsError::Unsupported,
     }
 }
@@ -194,6 +194,39 @@ impl ReadWriteFs for Ext4FsRw {
         write_at(fs, &mut inode, data, offset).map_err(map_ext4_plus)
     }
 
+    fn mkdir(&mut self, path: &str, mode: u32) -> FsResult<()> {
+        let (parent, name) = split_parent_and_name(path)?;
+        let fs = self.fs()?;
+        let name = DirEntryName::try_from(name).map_err(|_| FsError::InvalidPath)?;
+        let parent_path = Path::try_from(parent).map_err(|_| FsError::InvalidPath)?;
+        let parent_inode = fs
+            .path_to_inode(parent_path, FollowSymlinks::All)
+            .map_err(map_ext4_plus)?;
+        if parent_inode.file_type() != FileType::Directory {
+            return Err(FsError::NotAFile);
+        }
+        let mut parent_dir = Dir::open_inode(fs, parent_inode).map_err(map_ext4_plus)?;
+
+        if parent_dir.get_entry(name).is_ok() {
+            return Err(FsError::Exists);
+        }
+
+        let inode_mode = linux_mkdir_mode_to_inode_mode(mode);
+        let mut inode = fs
+            .create_inode(InodeCreationOptions {
+                file_type: FileType::Directory,
+                mode: inode_mode,
+                uid: 0,
+                gid: 0,
+                time: Duration::from_secs(0),
+                flags: InodeFlags::empty(),
+            })
+            .map_err(map_ext4_plus)?;
+
+        parent_dir.link(name, &mut inode).map_err(map_ext4_plus)?;
+        Ok(())
+    }
+
     fn unlink(&mut self, path: &str) -> FsResult<()> {
         let (parent, name) = split_parent_and_name(path)?;
         let fs = self.fs()?;
@@ -216,6 +249,40 @@ impl ReadWriteFs for Ext4FsRw {
         parent_dir.unlink(name, target).map_err(map_ext4_plus)?;
         Ok(())
     }
+}
+
+/// 将 Linux `mkdir(2)` 的 `mode`（权限位，可含 `S_IFDIR`）映射为 ext4 `InodeMode`。
+fn linux_mkdir_mode_to_inode_mode(mode: u32) -> InodeMode {
+    let perm = mode & 0o777;
+    let mut m = InodeMode::S_IFDIR;
+    if perm & 0o400 != 0 {
+        m |= InodeMode::S_IRUSR;
+    }
+    if perm & 0o200 != 0 {
+        m |= InodeMode::S_IWUSR;
+    }
+    if perm & 0o100 != 0 {
+        m |= InodeMode::S_IXUSR;
+    }
+    if perm & 0o040 != 0 {
+        m |= InodeMode::S_IRGRP;
+    }
+    if perm & 0o020 != 0 {
+        m |= InodeMode::S_IWGRP;
+    }
+    if perm & 0o010 != 0 {
+        m |= InodeMode::S_IXGRP;
+    }
+    if perm & 0o004 != 0 {
+        m |= InodeMode::S_IROTH;
+    }
+    if perm & 0o002 != 0 {
+        m |= InodeMode::S_IWOTH;
+    }
+    if perm & 0o001 != 0 {
+        m |= InodeMode::S_IXOTH;
+    }
+    m
 }
 
 /// 将绝对路径拆成 `(父目录路径, 最终分量名)`；`path` 须为指向文件的绝对路径。

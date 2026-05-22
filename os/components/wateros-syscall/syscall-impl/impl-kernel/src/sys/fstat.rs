@@ -15,10 +15,7 @@ pub(crate) fn sys_fstat(args : SyscallArgs) -> UserRet {
     if stat_ptr == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
     }
-    if fd <= VFS_STDERR_FD && fd >= VFS_STDIN_FD {
-        return UserRet::from_error(ErrNo::EINVAL);
-    }
-    if fd < VFS_FIRST_DYNAMIC_FD {
+    if fd < VFS_FIRST_DYNAMIC_FD && (fd > VFS_STDERR_FD || fd < VFS_STDIN_FD) {
         return UserRet::from_error(ErrNo::EBADF);
     }
 

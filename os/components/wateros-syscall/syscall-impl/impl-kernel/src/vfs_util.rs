@@ -15,6 +15,7 @@ pub(crate) fn vfs_error_to_errno(err : VfsError) -> ErrNo {
         VfsError::BrokenPipe => ErrNo::EPIPE,
         VfsError::NoTask => ErrNo::ESRCH,
         VfsError::InvalidPath | VfsError::Unsupported => ErrNo::EINVAL,
+        VfsError::Exists => ErrNo::EEXIST,
         VfsError::NotFound => ErrNo::ENOENT,
         VfsError::NotAFile => ErrNo::EISDIR,
         VfsError::NotMounted |
@@ -33,6 +34,7 @@ pub(crate) fn linux_open_flags_to_vfs(flags : u32) -> VfsOpenFlags {
     const O_CREAT : u32 = 0o100;
     const O_TRUNC : u32 = 0o1000;
     const O_APPEND : u32 = 0o2000;
+    const O_DIRECTORY : u32 = 0o200_000;
 
     let mut vf = VfsOpenFlags(0);
     match flags & O_ACCMODE {
@@ -48,6 +50,9 @@ pub(crate) fn linux_open_flags_to_vfs(flags : u32) -> VfsOpenFlags {
     }
     if flags & O_APPEND != 0 {
         vf.0 |= VfsOpenFlags::APPEND;
+    }
+    if flags & O_DIRECTORY != 0 {
+        vf.0 |= VfsOpenFlags::DIRECTORY;
     }
     vf
 }

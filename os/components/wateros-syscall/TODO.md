@@ -15,15 +15,15 @@
 | --- | --- | --- |
 | `read` | 部分接入 | 走 per-task fd/VFS handle；stdin 真实输入未接。 |
 | `write` | 部分接入 | 走 per-task fd/VFS handle；stdout/stderr 依赖 VFS 标准 fd。 |
-| `open`/`openat` | 部分接入 | 目前主要支持 `AT_FDCWD`；目录 fd、`O_DIRECTORY` 语义仍不足。 |
+| `open`/`openat` | 部分接入 | `AT_FDCWD` + 目录 fd 相对路径、`O_DIRECTORY`；bring-up 任务 cwd 设为 ELF 父目录。 |
 | `close` | 已接入 | 关闭动态 fd。 |
-| `fstat` | 部分接入 | 支持动态 fd 元数据；stdio fd 尚非完整 Linux 语义。 |
+| `fstat` | 部分接入 | 128B `kstat` 布局；动态 fd 与 stdio 元数据；依赖 open 成功。 |
 | `lseek` | 部分接入 | 支持普通 VFS handle；pipe 等返回 `ESPIPE`。 |
 | `dup` | 待实现 | 需要复制 fd handle，并维护引用/关闭语义。 |
 | `dup2`/`dup3` | 待实现 | `basic` 的 `dup2` wrapper 使用 `dup3(old, new, 0)`。 |
 | `pipe`/`pipe2` | 部分接入 | 已创建 pipe fd 对；需要和 `fork` 后 fd 继承联调。 |
 | `getdents64` | 待实现 | `getdents` 测例依赖目录枚举和 `linux_dirent64` 布局。 |
-| `mkdir`/`mkdirat` | 待实现 | 需要 VFS/FS 创建目录语义。 |
+| `mkdir`/`mkdirat` | 部分接入 | `mkdirat` 经 `vfs::mkdir_at_current`；仅 `AT_FDCWD`；无 umask。 |
 | `unlink`/`unlinkat` | 待实现 | 需要删除目录项和打开文件生命周期语义。 |
 | `mount` | 待实现 | basic 期可先支持赛题所需最小挂载/伪成功策略。 |
 | `umount`/`umount2` | 待实现 | 与 `mount` 成对。 |
@@ -44,7 +44,7 @@
 | `nanosleep` | 部分接入 | 非零睡眠临时映射为 1 个 tick。 |
 | `times` | 部分接入 | 返回当前 tick 和最小 `tms`。 |
 | `getcwd` | 部分接入 | 依赖 per-task cwd 注册。 |
-| `chdir` | 部分接入 | 依赖 VFS cwd；目录/文件类型判断仍需补齐。 |
+| `chdir` | 已接入 | 经 `vfs::cwd::chdir_current`；目标须为已存在目录。 |
 | `uname` | 待实现 | 需要填充 Linux `utsname` 结构。 |
 
 ## busybox/libc/benchmark 后续常见项

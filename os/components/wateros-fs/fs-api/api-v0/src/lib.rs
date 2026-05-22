@@ -21,6 +21,8 @@ pub enum FsError {
     NotAFile,
     /// 路径非法、过长或不符合实现约束。
     InvalidPath,
+    /// 目标路径已存在（如 `mkdir` 时目录项冲突）。
+    Exists,
     /// 内容非合法 UTF-8（如 `read_to_string`）。
     NotUtf8,
     /// 操作或组合不被当前实现支持。
@@ -189,6 +191,12 @@ pub trait ReadWriteFs: Send {
     /// 从 `offset` 起写入 `data`；返回实际写入字节数。
     fn write_range(&mut self, path: &str, offset: u64, data: &[u8]) -> FsResult<usize> {
         let _ = (path, offset, data);
+        Err(FsError::Unsupported)
+    }
+
+    /// 在绝对路径 `path` 处创建目录；`mode` 为 Linux `mkdir` 权限位（不含 umask）。
+    fn mkdir(&mut self, path: &str, mode: u32) -> FsResult<()> {
+        let _ = (path, mode);
         Err(FsError::Unsupported)
     }
 }
