@@ -213,27 +213,29 @@ impl TaskControlBlock {
         let task_cx = TaskContext::goto_entry(__arch_user_task_entry as *const () as usize,
                                               kernel_stack.top());
 
-        // 克隆父任务的 trap 帧，并将子任务返回值 a0 置 0
-        let mut trap_frame = parent.trap_frame;
-        if let Some(ref mut tf) = trap_frame {
-            <TaskTrapFrame as TrapContextWrite>::set_syscall_ret(tf, UserRet::from_success(0));
-            // sepc 指向 ecall 指令地址；需推进 4 字节以越过 ecall，
-            // 否则子进程 sret 后会再次执行 ecall 而非子路径。
-            <TaskTrapFrame as TrapContextWrite>::add_user_pc(tf, 4);
-            // 若调用者提供了子栈指针，设置子任务的用户栈指针
-            if child_stack != 0 {
-                <TaskTrapFrame as TrapContextWrite>::set_user_sp(tf, child_stack);
-            }
-        }
+        // 确定子任务的用户栈分配与初始 SP。
+        //
+        // 当 child_stack!=0（clone 新栈）：使用调用者提供的栈。
+        // 当 child_stack==0（fork 语义）：
+        //   - Kernel 栈：分配新栈（原行为）
+        //   - External 栈：仍在同一片物理栈页上，但把子进程 SP 放在栈底附近，
+        //     避免子进程写栈破坏父进程栈帧。
+        const CHILD_STACK_GUARD : usize = 4096; // 子进程从栈底向上预留的空间
 
-        // 子任务继承父任务的用户资源（新分配用户栈若为 Kernel 类型，否则共享外部栈）
+        // 先构建 user_resources
         let user_resources =
             parent.user_resources
                   .as_ref()
                   .map(|ur| {
                       let new_stack = match &ur.user_stack {
                           UserStackBacking::Kernel(_) => UserStackBacking::Kernel(UserStack::new()),
+                          UserStackBacking::External { bottom, top } if child_stack != 0 => {
+                              UserStackBacking::External { bottom : *bottom,
+                                                           top : *top }
+                          }
                           UserStackBacking::External { bottom, top } => {
+                              // fork：共享 External 栈（物理页不变），
+                              // 但子进程 SP 从栈底附近开始，避免覆盖父进程栈帧
                               UserStackBacking::External { bottom : *bottom,
                                                            top : *top }
                           }
@@ -244,6 +246,51 @@ impl TaskControlBlock {
                                                  image : ur.image,
                                                  user_aspace_ptr : ur.user_aspace_ptr }
                   });
+
+        // 计算子进程初始 SP：优先使用 child_stack（clone），否则根据栈类型计算
+        let child_sp = if child_stack != 0 {
+            child_stack
+        } else if let Some(ref ur) = parent.user_resources {
+            match &ur.user_stack {
+                UserStackBacking::External { bottom, top } => {
+                    // fork 语义：放在栈底往上 CHILD_STACK_GUARD 字节处
+                    let sp = bottom + CHILD_STACK_GUARD;
+                    if sp < *top {
+                        sp
+                    } else {
+                        0
+                    }
+                }
+                UserStackBacking::Kernel(_) => {
+                    // Kernel 栈：使用新分配的 UserStack（在上面 map 中创建）
+                    // 从 user_resources 中获取
+                    match user_resources.as_ref()
+                                        .and_then(|ur| match &ur.user_stack {
+                                            UserStackBacking::Kernel(s) => Some(s.top()),
+                                            _ => None,
+                                        }) {
+                        Some(top) => top,
+                        None => 0,
+                    }
+                }
+            }
+        } else {
+            0
+        };
+
+        // 克隆父任务的 trap 帧，并将子任务返回值 a0 置 0
+        let mut trap_frame = parent.trap_frame;
+        if let Some(ref mut tf) = trap_frame {
+            <TaskTrapFrame as TrapContextWrite>::set_syscall_ret(tf, UserRet::from_success(0));
+            // sepc 指向 ecall 指令地址；需推进 4 字节以越过 ecall，
+            // 否则子进程 sret 后会再次执行 ecall 而非子路径。
+            <TaskTrapFrame as TrapContextWrite>::add_user_pc(tf, 4);
+            // 设置子任务的用户栈指针
+            if child_sp != 0 {
+                <TaskTrapFrame as TrapContextWrite>::set_user_sp(tf, child_sp);
+            }
+            // child_sp==0 时保留父任务的 sp（继承自 trap_frame 克隆）
+        }
 
         Self::new(child_id,
                   Some(parent.id),

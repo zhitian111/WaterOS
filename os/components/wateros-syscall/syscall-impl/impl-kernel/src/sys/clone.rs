@@ -1,10 +1,11 @@
 //! `clone`/`fork` 系统调用实现。
 //!
 //! 当前仅支持最小 fork 语义（`clone` 不带 `CLONE_VM`/`CLONE_THREAD` 等标志）：
-//! 创建一个子任务，共享父任务地址空间与用户栈，子任务获得父任务 trap 帧副本
+//! 创建一个子任务，共享父任务地址空间与用户栈区间，子任务获得父任务 trap 帧副本
 //! （a0 置 0），并继承父任务的 cwd。
 //!
-//! 父任务返回子任务 PID，子任务返回 0。
+//! fork（`child_stack=0`）时子任务获得用户栈底部区域的独立 SP，
+//! 避免子进程在共享栈上写数据破坏父进程栈帧。
 
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;

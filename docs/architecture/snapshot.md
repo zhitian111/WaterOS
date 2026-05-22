@@ -98,3 +98,17 @@ flowchart TD
 ## 注释覆盖维护（无行为变更）
 
 最近一次全树注释对齐以 `docs/tasks/commenting.md` 为基准，覆盖 `os/components/**`、`os/src/`、`user/**` 及板级/架构侧汇编与链接脚本中的必要说明；**未改变**根 `os/Cargo.toml` 依赖图、默认 feature 组合或运行时启动语义。对外契约仍以各 crate 内 **`///` / `//!`** 与 `documentation.md` 为准。
+
+### fork/clone 实现状态
+
+当前 `clone` 系统调用（`syscall nr=220`）在 `wateros-syscall-impl-kernel` 的 `sys::clone::sys_clone` 中实现，经 `task::fork_current` 进入 `fork_user_task`。
+
+用户栈策略：
+
+| 场景 | 实现 |
+|------|------|
+| `clone(child_stack≠0)` | 子进程使用调用者提供的独立栈 |
+| `fork()`（`child_stack=0`）+ `Kernel` 栈 | 分配新 `UserStack` |
+| `fork()` + `External` 栈 | **共享物理栈页，子进程 SP 从栈底+4KB 开始** |
+
+**当前方案是临时性的。** 地址空间（页表）在父子进程间完全共享，长期需要实现独立地址空间或 COW。详情见 `docs/exports/features/wateros-task.md` 的 fork/clone 实现说明。
