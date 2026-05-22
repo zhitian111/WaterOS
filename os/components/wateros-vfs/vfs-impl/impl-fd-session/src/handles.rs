@@ -1,7 +1,13 @@
 //! 控制台与 pipe 的 [`VfsIoHandle`] 实现。
 
-use api_v0::{VfsError, VfsIoHandle, VfsResult};
+use api_v0::{VfsError, VfsIoHandle, VfsMetadata, VfsNodeType, VfsResult};
 use ipc::pipe::{PipeEndpoint, PipeError};
+
+fn console_chr_meta() -> VfsMetadata {
+    VfsMetadata { node_type: VfsNodeType::Special,
+                  size: 0,
+                  mode: 0o20666 }
+}
 
 /// 标准输入占位：`read` 暂不支持（与迁移前 syscall 对 stdin 的 `EBADF` 一致）。
 #[derive(Debug, Clone, Copy, Default)]
@@ -10,6 +16,10 @@ pub struct ConsoleInHandle;
 impl VfsIoHandle for ConsoleInHandle {
     fn read(&mut self, _buf: &mut [u8]) -> VfsResult<usize> {
         Err(VfsError::BadFd)
+    }
+
+    fn metadata(&self) -> VfsResult<VfsMetadata> {
+        Ok(console_chr_meta())
     }
 }
 
@@ -21,6 +31,10 @@ impl VfsIoHandle for ConsoleOutHandle {
     fn write(&mut self, buf: &[u8]) -> VfsResult<usize> {
         console::write_raw_bytes(buf);
         Ok(buf.len())
+    }
+
+    fn metadata(&self) -> VfsResult<VfsMetadata> {
+        Ok(console_chr_meta())
     }
 }
 

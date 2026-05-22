@@ -9,8 +9,8 @@ use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use api_v0::{
-    register_open_path_resolver, resolve_against_cwd, SingleRootReadView, VfsError, VfsNodeType,
-    VfsResult,
+    normalize_absolute_path, register_open_path_resolver, resolve_against_cwd,
+    SingleRootReadView, VfsError, VfsNodeType, VfsResult,
 };
 use base::sync::UniprocessorSafeCell;
 use impl_fd_session::{PerTaskCwdRegistry, PATH_MAX};
@@ -50,6 +50,38 @@ pub fn init_task_cwd(task_id: task::TaskId) {
 /// `spawn_user_task_*` 返回后调用，显式建立 cwd（与惰性 `ensure_task_cwd` 等价）。
 pub fn on_user_task_spawned(task_id: task::TaskId) {
     init_task_cwd(task_id);
+}
+
+/// 将指定任务 cwd 设为已存在的绝对目录路径（bring-up / exec 前使用）。
+pub fn set_task_cwd(task_id: task::TaskId, cwd: &str) -> VfsResult<()> {
+    if cwd.is_empty() || cwd.len() >= PATH_MAX {
+        return Err(VfsError::InvalidPath);
+    }
+    let abs = String::from(normalize_absolute_path(cwd)?.as_str());
+    if abs.len() >= PATH_MAX {
+        return Err(VfsError::InvalidPath);
+    }
+    let view = root::read_view();
+    if !view.exists(abs.as_str())? {
+        return Err(VfsError::NotFound);
+    }
+    let meta = view.metadata(abs.as_str())?;
+    if meta.node_type != VfsNodeType::Directory {
+        return Err(VfsError::NotAFile);
+    }
+    let mut reg = registry().exclusive_access();
+    reg.ensure_task_cwd(task_id);
+    *reg.get_cwd_mut(task_id) = abs;
+    Ok(())
+}
+
+/// 根据根卷 ELF 路径（如 `/glibc/basic/read`）将任务 cwd 设为所在目录。
+pub fn on_user_task_spawned_for_elf(task_id: task::TaskId, elf_vfs_path: &str) {
+    init_task_cwd(task_id);
+    if let Some((dir, _)) = elf_vfs_path.rsplit_once('/') {
+        let cwd = if dir.is_empty() { "/" } else { dir };
+        let _ = set_task_cwd(task_id, cwd);
+    }
 }
 
 /// 任务回收后丢弃 cwd 槽位。
@@ -128,4 +160,7 @@ pub fn self_test() {
     assert_eq!(reg.get_cwd(b), "/");
     reg.drop_task(a);
     assert_eq!(reg.get_cwd(a), "/");
+
+    let resolved = resolve_against_cwd("/glibc/basic", Some("./text.txt")).expect("resolve");
+    assert_eq!(resolved, "/glibc/basic/text.txt");
 }

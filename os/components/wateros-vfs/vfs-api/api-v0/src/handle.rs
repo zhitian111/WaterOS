@@ -22,6 +22,8 @@ impl VfsOpenFlags {
     pub const TRUNC: u32 = 8;
     /// 追加写（`O_APPEND`）。
     pub const APPEND: u32 = 16;
+    /// 仅打开目录（`O_DIRECTORY`）。
+    pub const DIRECTORY: u32 = 32;
 
     pub const fn read() -> Self {
         Self(Self::READ)
@@ -58,6 +60,11 @@ pub trait VfsIoHandle {
 
     fn flush(&mut self) -> VfsResult<()> {
         Ok(())
+    }
+
+    /// 若本句柄表示已打开目录，返回其绝对路径（供 `openat(dirfd, …)` 解析相对路径）。
+    fn directory_path(&self) -> Option<&str> {
+        None
     }
 }
 
