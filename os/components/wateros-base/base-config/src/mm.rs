@@ -4,7 +4,7 @@
 
 #[allow(unused)]
 /// 内核堆大小的以 2 为底的指数位宽。
-pub const KERNEL_HEAP_SIZE_BIT_WIDTH : usize = 21;
+pub const KERNEL_HEAP_SIZE_BIT_WIDTH : usize = 23;
 #[allow(unused)]
 /// 内核堆字节容量，即 `1 << KERNEL_HEAP_SIZE_BIT_WIDTH`。
 pub const KERNEL_HEAP_SIZE : usize = 1 << KERNEL_HEAP_SIZE_BIT_WIDTH;
@@ -13,8 +13,10 @@ pub const KERNEL_HEAP_SIZE : usize = 1 << KERNEL_HEAP_SIZE_BIT_WIDTH;
 /// 与常见 `-m 256M` 一致；若 DTB 解析失败则作为回退值。
 pub const QEMU_VIRT_PHYS_RAM_END : usize = 0x9000_0000;
 
-/// QEMU `virt` 低地址 MMIO 恒等映射区间（半开）：UART、`virtio,mmio` 等外设所在物理地址。
-/// 与 OpenSBI/QEMU 设备树常见布局一致；**不是** DRAM，扩大 RAM 映射无法替代。
+/// QEMU `virt` 低地址 MMIO 恒等映射区间（半开）：UART、`virtio,mmio`
+/// 等外设所在物理地址。 与 OpenSBI/QEMU 设备树常见布局一致；**不是** DRAM，扩大
+/// RAM 映射无法替代。
 pub const QEMU_VIRT_MMIO_PHYS_START : usize = 0x1000_0000;
-/// QEMU `virt` MMIO 区间上界（不包含）；与 `QEMU_VIRT_MMIO_PHYS_START` 组成半开区间。
+/// QEMU `virt` MMIO 区间上界（不包含）；与 `QEMU_VIRT_MMIO_PHYS_START`
+/// 组成半开区间。
 pub const QEMU_VIRT_MMIO_PHYS_END : usize = 0x1200_0000;

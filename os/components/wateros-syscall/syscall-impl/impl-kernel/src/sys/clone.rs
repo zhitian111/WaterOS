@@ -7,6 +7,7 @@
 //! 父任务返回子任务 PID，子任务返回 0。
 
 use abi::errno::ErrNo;
+use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 
 /// clone/fork 系统调用入口。
@@ -15,13 +16,14 @@ use abi::user_ret::UserRet;
 /// - `arg0`: flags（当前仅忽略）
 /// - `arg1`: child_stack（0 表示复用父任务栈指针）
 /// - 其余参数暂未处理
-pub(crate) fn sys_clone() -> UserRet {
+pub(crate) fn sys_clone(args : SyscallArgs) -> UserRet {
     let parent_id = match task::current_task_id() {
         Some(id) => id,
         None => return UserRet::from_error(ErrNo::ESRCH),
     };
 
-    match task::fork_current() {
+    let child_stack = args.arg(1);
+    match task::fork_current(child_stack) {
         Some(child_id) => {
             // 继承父任务的 cwd
             #[cfg(feature = "fd-session")]

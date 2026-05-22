@@ -130,7 +130,7 @@ pub fn init() {
     match rootfs::active_impl::mount_default_root() {
         Ok(()) => {
             logging::info!("[fs] root fs mounted");
-            logging::info!("[fs::boot-tree] /");
+            logging::trace!("[fs::boot-tree] /");
             for node in devfs::active_impl::list_nodes() {
                 logging::info!(
                     "[fs::boot-tree] {} type={:?}",

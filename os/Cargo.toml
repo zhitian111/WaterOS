@@ -67,7 +67,7 @@
         "mm/vfs-root-read",
         "platform/impl-qemu-riscv64-opensbi",
         "runtime/impl-firmware-opensbi",
-        "runtime/impl-info",
+        # "runtime/impl-info",   ← 注释掉，由 config.conf 控制
         "syscall/impl-riscv64",
         "vfs/fd-session",
         "vfs/impl-riscv64",

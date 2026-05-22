@@ -345,7 +345,7 @@ pub fn init_after_boot() -> DriverResult<()> {
     }
 
     let count = scan_device_info()?;
-    logging::info!("[driver] dtb scan done, devices={}", count);
+    logging::trace!("[driver] dtb scan done, devices={}", count);
     let unsupported = probe_virtio_blk_and_collect_unsupported();
     let registered = block_device_count();
     logging::info!("[driver] block devices registered={}", registered);

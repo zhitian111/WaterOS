@@ -33,7 +33,7 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     fn dispatch_yield(_args : SyscallArgs) -> isize { sys::sys_yield().0 }
 
     #[inline]
-    fn dispatch_clone(_args : SyscallArgs) -> isize { sys::sys_clone().0 }
+    fn dispatch_clone(args : SyscallArgs) -> isize { sys::sys_clone(args).0 }
 
     #[inline]
     fn dispatch_exit(args : SyscallArgs) -> isize { sys::sys_exit(args.arg(0) as isize) }

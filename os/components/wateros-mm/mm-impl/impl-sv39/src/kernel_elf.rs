@@ -122,28 +122,31 @@ fn read_whole_file_ro_retry_bad_prefix(root : &SharedFs,
 fn read_whole_file_ro_retry_bad_prefix_vfs(view : &dyn SingleRootReadView,
                                            path : &str)
                                            -> Result<Vec<u8>, LoadElfError> {
-    let first = view.read(path).map_err(|e| {
-        runtime::logging::trace!("[elf-load] abort: Vfs::read err={:?} path={}",
-                                 e,
-                                 path);
-        LoadElfError::RootVolume(map_vfs_to_root_vol(e))
-    })?;
+    let first = view.read(path)
+                    .map_err(|e| {
+                        runtime::logging::trace!("[elf-load] abort: Vfs::read err={:?} path={}",
+                                                 e,
+                                                 path);
+                        LoadElfError::RootVolume(map_vfs_to_root_vol(e))
+                    })?;
     if elf_riscv64_le_prefix_ok(&first) {
         return Ok(first);
     }
     let n = first.len().min(16);
-    runtime::logging::warn!("[elf-load] first read bad ELF64-LE prefix (len={} first{}={:02x?}); \
-                             retry read once path={}",
+    runtime::logging::warn!(" first read bad ELF64-LE prefix (len={} first{}={:02x?}); retry \
+                             read once path={}",
                             first.len(),
                             n,
                             &first[..n],
                             path);
-    let second = view.read(path).map_err(|e| {
-        runtime::logging::trace!("[elf-load] abort: Vfs::read retry err={:?} path={}",
-                                 e,
-                                 path);
-        LoadElfError::RootVolume(map_vfs_to_root_vol(e))
-    })?;
+    let second = view.read(path)
+                     .map_err(|e| {
+                         runtime::logging::trace!("[elf-load] abort: Vfs::read retry err={:?} \
+                                                   path={}",
+                                                  e,
+                                                  path);
+                         LoadElfError::RootVolume(map_vfs_to_root_vol(e))
+                     })?;
     if !elf_riscv64_le_prefix_ok(&second) {
         let n2 = second.len().min(16);
         runtime::logging::warn!("[elf-load] retry read still bad prefix (len={} first{}={:02x?}) \
@@ -326,10 +329,10 @@ fn map_user_stack<A : AddressSpaceOps>(aspace : &mut A,
                                ppn,
                                PagePerm::R | PagePerm::W | PagePerm::U)
               .map_err(LoadElfError::Mm)?;
-        runtime::logging::info!("[elf-load] stack alloc-map VPN={:#x} PPN={:#x} stack_top={:#x}",
-                                vpn.0,
-                                ppn.0,
-                                stack_top);
+        // stack alloc-map VPN={:#x} PPN={:#x} stack_top={:#x}",
+        //                        vpn.0,
+        //                        ppn.0,
+        //                       stack_top);
         vpn = VirtPageNum(vpn.0 + 1);
     }
     Ok(())
@@ -352,9 +355,9 @@ pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
     #[cfg(not(feature = "vfs-root-read"))]
     {
         let root = fs::rootfs::active_impl::root_fs().ok_or_else(|| {
-            runtime::logging::trace!("[elf-load] abort: no root_fs (mount/driver?)");
-            LoadElfError::NoRootFs
-        })?;
+                       runtime::logging::trace!("[elf-load] abort: no root_fs (mount/driver?)");
+                       LoadElfError::NoRootFs
+                   })?;
         let data = read_whole_file_ro_retry_bad_prefix(&root, path)?;
         runtime::logging::trace!("[elf-load] read ok bytes={} path={}",
                                  data.len(),
@@ -502,7 +505,7 @@ pub fn from_elf_bytes(data : &[u8]) -> Result<LoadedElf, LoadElfError> {
     let leaked = Box::leak(Box::new(aspace));
     let satp = leaked.satp_value();
     let user_aspace_ptr = leaked as *mut crate::pagetable::Sv39AddressSpace as usize;
-    runtime::logging::info!("[elf-load] loaded ELF entry={:#x} satp={:#x} image=[{:#x},{:#x}) \
+    runtime::logging::trace!("[elf-load] loaded ELF entry={:#x} satp={:#x} image=[{:#x},{:#x}) \
                              stack=[{:#x},{:#x}) brk=[{:#x},{:#x}) mmap_arena_base={:#x} \
                              aspace_ptr={:#x}",
                             e_entry,
