@@ -114,7 +114,7 @@ pub fn init(start_ppn : usize, end_ppn : usize, ram_end_exclusive : usize) {
           .expect("kernel_mm: map probe page");
 
     let satp_target = aspace.satp_value();
-    runtime::logging::info!("[kernel-mm] identity map RAM [0x80000000,{:#x}) MMIO [{:#x},{:#x}) \
+    runtime::logging::trace!("[kernel-mm] identity map RAM [0x80000000,{:#x}) MMIO [{:#x},{:#x}) \
                              satp target={:#x}",
                             ram_end_exclusive,
                             wateros_base_config::mm::QEMU_VIRT_MMIO_PHYS_START,
@@ -140,7 +140,7 @@ pub fn init(start_ppn : usize, end_ppn : usize, ram_end_exclusive : usize) {
     let phys_ptr = probe_pa.0 as *const u64;
     let observed = unsafe { phys_ptr.read_volatile() };
     assert_eq!(observed, 0x1122_3344_5566_7788);
-    runtime::logging::info!("[kernel-mm] paging probe ok va={:#x} -> pa={:#x}",
+    runtime::logging::trace!("[kernel-mm] paging probe ok va={:#x} -> pa={:#x}",
                             probe_va.0,
                             probe_pa.0);
 

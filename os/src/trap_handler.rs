@@ -6,6 +6,7 @@
 //! **须在** `task::init()` **之后**调用 [`init`]。
 
 use abi::user_ret::UserRet;
+use alloc::format;
 use arch_api_v0::kernel_trap::register_kernel_trap_handler;
 use arch_api_v0::trap::{
     Exception, Interrupt, TrapCause, TrapFrameRead, TrapFrameWrite, TrapSyscallRead,
@@ -69,48 +70,52 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                             }
                             None => (0usize, 0usize, 0usize, 0usize, 0usize),
                         };
-                    info!("[syscall] task_id={} kind={:?} state={:?} user_pc={:#x} user_sp={:#x} \
-                           entry_pc={:#x} address_space_token={:#x} user_aspace_ptr={:#x} \
-                           image=[{:#x},+{:#x}) nr={} args=[{:#x},{:#x},{:#x},{:#x},{:#x},{:#x}]",
-                          snap.id,
-                          snap.kind,
-                          snap.state,
-                          cx.user_pc(),
-                          cx.user_sp(),
-                          entry_pc,
-                          address_space_token,
-                          mm_ptr,
-                          img_base,
-                          img_sz,
-                          syscall_nr,
-                          regs[0],
-                          regs[1],
-                          regs[2],
-                          regs[3],
-                          regs[4],
-                          regs[5],);
+                    trace!("[syscall] task_id={} kind={:?} state={:?} user_pc={:#x} \
+                            user_sp={:#x} entry_pc={:#x} address_space_token={:#x} \
+                            user_aspace_ptr={:#x} image=[{:#x},+{:#x}) nr={} \
+                            args=[{:#x},{:#x},{:#x},{:#x},{:#x},{:#x}]",
+                           snap.id,
+                           snap.kind,
+                           snap.state,
+                           cx.user_pc(),
+                           cx.user_sp(),
+                           entry_pc,
+                           address_space_token,
+                           mm_ptr,
+                           img_base,
+                           img_sz,
+                           syscall_nr,
+                           regs[0],
+                           regs[1],
+                           regs[2],
+                           regs[3],
+                           regs[4],
+                           regs[5],);
                 }
                 None => {
-                    info!("[syscall] task=<no snapshot> user_pc={:#x} user_sp={:#x} nr={} \
-                           args=[{:#x},{:#x},{:#x},{:#x},{:#x},{:#x}]",
-                          cx.user_pc(),
-                          cx.user_sp(),
-                          syscall_nr,
-                          regs[0],
-                          regs[1],
-                          regs[2],
-                          regs[3],
-                          regs[4],
-                          regs[5],);
+                    trace!("[syscall] task=<no snapshot> user_pc={:#x} user_sp={:#x} nr={} \
+                            args=[{:#x},{:#x},{:#x},{:#x},{:#x},{:#x}]",
+                           cx.user_pc(),
+                           cx.user_sp(),
+                           syscall_nr,
+                           regs[0],
+                           regs[1],
+                           regs[2],
+                           regs[3],
+                           regs[4],
+                           regs[5],);
                 }
             }
             let syscall_ret = dispatch_syscall_from_trap(syscall_nr, syscall_args);
             if let Some(snap) = task::current_task_snapshot() {
-                info!("[syscall] task_id={} nr={} ret={}",
-                      snap.id, syscall_nr, syscall_ret);
+                trace!("[syscall] task_id={} nr={} ret={}",
+                       snap.id,
+                       syscall_nr,
+                       syscall_ret);
             } else {
-                info!("[syscall] task=<no snapshot> nr={} ret={}",
-                      syscall_nr, syscall_ret);
+                trace!("[syscall] task=<no snapshot> nr={} ret={}",
+                       syscall_nr,
+                       syscall_ret);
             }
             cx.add_user_pc(SYSCALL_INSN_BYTES);
             cx.set_syscall_ret(UserRet(syscall_ret));
@@ -148,10 +153,26 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             task::schedule_tick();
         }
         _ => {
-            panic!("unexpected trap: cause={:?}, pc={:#x}, fault_addr={:#x}",
-                   trap_cause,
-                   cx.user_pc(),
-                   cx.fault_addr());
+            if cx.returns_to_user() {
+                // 用户态异常（非法指令、断点等）：杀死当前任务而非 panic 内核
+                let task_info = task::current_task_snapshot().map(|s| format!("task_id={}", s.id))
+                                                             .unwrap_or_else(|| "no_task".into());
+                warn!("[trap] killing user task {} cause={:?} pc={:#x} fault_addr={:#x}",
+                      task_info,
+                      trap_cause,
+                      cx.user_pc(),
+                      cx.fault_addr());
+                task::exit_current(0);
+            }
+            let task_info = task::current_task_snapshot().map(|s| format!("task_id={}", s.id))
+                                                         .unwrap_or_else(|| "no_task".into());
+            warn!("[trap] unexpected trap task={} cause={:?} pc={:#x} fault_addr={:#x} \
+                   returns_to_user={}",
+                  task_info,
+                  trap_cause,
+                  cx.user_pc(),
+                  cx.fault_addr(),
+                  cx.returns_to_user());
         }
     }
 

@@ -131,9 +131,9 @@ impl TaskRegistry {
 
     /// 从当前任务 fork 一个子用户任务。
     ///
-    /// 子任务继承父任务的 trap 帧（a0 置
-    /// 0）、地址空间与用户栈，使用独立内核栈。
-    pub(super) fn fork_current(&mut self) -> Option<TaskId> {
+    /// 子任务继承父任务的 trap 帧（a0 置 0）、地址空间与用户栈，使用独立内核栈。
+    /// `child_stack` 非零时，子任务初始用户 sp 设为该值（用于 clone 新栈场景）。
+    pub(super) fn fork_current(&mut self, child_stack : usize) -> Option<TaskId> {
         let parent_id = self.current_task_id?;
         let child_id = self.next_task_id;
         self.next_task_id += 1;
@@ -141,7 +141,8 @@ impl TaskRegistry {
         // 从父任务的 TCB fork 出子任务
         let child = TaskControlBlock::fork_user_task(self.task_table
                                                          .task(parent_id),
-                                                     child_id);
+                                                     child_id,
+                                                     child_stack);
         self.task_table
             .insert(Box::new(child));
         log::debug!("[task-scheduler] forked child task {} from parent {}",

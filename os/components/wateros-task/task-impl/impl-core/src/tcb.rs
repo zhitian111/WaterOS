@@ -202,7 +202,9 @@ impl TaskControlBlock {
     ///
     /// 子任务获得父任务 trap 帧的副本（a0 置 0），共享地址空间与映像信息，
     /// 并使用独立的内核栈。
-    pub fn fork_user_task(parent : &Self, child_id : TaskId) -> Self {
+    /// `child_stack` 非零时，子任务的初始用户栈指针设为该值（用于 clone
+    /// 新栈场景， 如 `__clone` 汇编包装在子进程路径中从 sp 加载函数指针）。
+    pub fn fork_user_task(parent : &Self, child_id : TaskId, child_stack : usize) -> Self {
         assert_eq!(parent.kind,
                    TaskKind::User,
                    "fork only supported for user tasks");
@@ -215,6 +217,13 @@ impl TaskControlBlock {
         let mut trap_frame = parent.trap_frame;
         if let Some(ref mut tf) = trap_frame {
             <TaskTrapFrame as TrapContextWrite>::set_syscall_ret(tf, UserRet::from_success(0));
+            // sepc 指向 ecall 指令地址；需推进 4 字节以越过 ecall，
+            // 否则子进程 sret 后会再次执行 ecall 而非子路径。
+            <TaskTrapFrame as TrapContextWrite>::add_user_pc(tf, 4);
+            // 若调用者提供了子栈指针，设置子任务的用户栈指针
+            if child_stack != 0 {
+                <TaskTrapFrame as TrapContextWrite>::set_user_sp(tf, child_stack);
+            }
         }
 
         // 子任务继承父任务的用户资源（新分配用户栈若为 Kernel 类型，否则共享外部栈）

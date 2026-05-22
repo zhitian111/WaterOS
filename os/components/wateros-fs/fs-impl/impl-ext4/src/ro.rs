@@ -215,7 +215,7 @@ fn walk_ext4_tree(ext4: &Ext4, dir: Path<'_>) {
         }
         let p = ent.path();
         let path_display = format!("{}", p.display());
-        logging::info!("[fs::boot-tree] {}", path_display);
+        logging::trace!("[fs::boot-tree] {}", path_display);
         if let Ok(ft) = ent.file_type() {
             if ft.is_dir() {
                 walk_ext4_tree(ext4, p.as_path());

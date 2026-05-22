@@ -45,7 +45,7 @@ pub fn refresh() -> usize {
             index: idx,
         });
     }
-    logging::info!("[fs::devfs] refresh done, block_nodes={}", nodes.len());
+    logging::trace!("[fs::devfs] refresh done, block_nodes={}", nodes.len());
     nodes.len()
 }
 

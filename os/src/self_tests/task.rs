@@ -162,36 +162,8 @@ extern "C" fn pipe_try_task(_arg : usize) -> ! {
 }
 
 /// 启动 hello world 用户任务与 pipe 内核自检任务。
+/// **已禁用**：仅保留 basic bringup（stage-02-mm + stage-03-basic）。
 pub fn spawn_all() {
-    spawn_user_elf_task(HELLO_WORLD_ELF_PATH, "hello-world");
-    spawn_user_elf_task(PIPE_SMOKE_ELF_PATH, "pipe-smoke");
-
-    let pipe_smoke =
-        Box::into_raw(Box::new(ipc::pipe::Pipe::with_capacity(8).expect("pipe smoke capacity \
-                                                                         should be valid")))
-        as usize;
-    let pipe_full = ipc::pipe::Pipe::with_capacity(4).expect("pipe full capacity should be valid");
-    assert_eq!(pipe_full.try_write(&[1, 2, 3, 4])
-                        .expect("prefill pipe should succeed"),
-               4,
-               "prefill pipe should occupy full capacity");
-    let pipe_full = Box::into_raw(Box::new(pipe_full)) as usize;
-
-    let pipe_reader_task_id = task::spawn_kernel_task(pipe_reader_task, pipe_smoke);
-    let pipe_writer_task_id = task::spawn_kernel_task(pipe_writer_task, pipe_smoke);
-    let pipe_full_writer_task_id = task::spawn_kernel_task(pipe_full_writer_task, pipe_full);
-    let pipe_full_reader_task_id = task::spawn_kernel_task(pipe_full_reader_task, pipe_full);
-    let pipe_eof_task_id = task::spawn_kernel_task(pipe_eof_task, 0);
-    let pipe_broken_task_id = task::spawn_kernel_task(pipe_broken_task, 0);
-    let pipe_try_task_id = task::spawn_kernel_task(pipe_try_task, 0);
-
-    info!("[ipc-pipe] spawned self-test tasks: reader={}, writer={}, full_writer={}, \
-           full_reader={}, eof={}, broken={}, try={}",
-          pipe_reader_task_id,
-          pipe_writer_task_id,
-          pipe_full_writer_task_id,
-          pipe_full_reader_task_id,
-          pipe_eof_task_id,
-          pipe_broken_task_id,
-          pipe_try_task_id);
+    // 已禁用 — 全部跳过
+    info!("[task-selftest] spawn_all disabled, skipping all user ELF and pipe tasks");
 }
