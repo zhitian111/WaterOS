@@ -49,7 +49,7 @@ fn map_vfs_to_root_vol(e : VfsError) -> RootVolumeReadError {
         VfsError::NotMounted => RootVolumeReadError::NotMounted,
         VfsError::NotFound => RootVolumeReadError::NotFound,
         VfsError::NotAFile => RootVolumeReadError::NotAFile,
-        VfsError::InvalidPath => RootVolumeReadError::InvalidPath,
+        VfsError::InvalidPath | VfsError::Exists => RootVolumeReadError::InvalidPath,
         VfsError::NotUtf8 => RootVolumeReadError::NotUtf8,
         VfsError::Unsupported => RootVolumeReadError::Unsupported,
         VfsError::Driver => RootVolumeReadError::Driver,

@@ -53,6 +53,8 @@ pub fn run_stage_02() {
                           loaded.mmap_arena_base,
                           loaded.user_aspace_ptr);
                     let tid = task::spawn_user_task_from_loaded_elf(&loaded);
+                    #[cfg(feature = "vfs-bridge")]
+                    vfs::cwd::on_user_task_spawned_for_elf(tid, path);
                     info!("[mm-bringup] spawned user task {} for {}",
                           tid, path);
                 }

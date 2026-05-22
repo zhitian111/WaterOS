@@ -109,15 +109,25 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                 }
             }
             let syscall_ret = dispatch_syscall_from_trap(syscall_nr, syscall_args);
-            if let Some(snap) = task::current_task_snapshot() {
-                trace!("[syscall] task_id={} nr={} ret={}",
-                       snap.id,
-                       syscall_nr,
-                       syscall_ret);
+            if syscall_ret < 0 {
+                if let Some(snap) = task::current_task_snapshot() {
+                    warn!("[syscall] syscall failed ! task_id={} nr={} ret={}",
+                          snap.id, syscall_nr, syscall_ret);
+                } else {
+                    warn!("[syscall] syscall failed ! task=<no snapshot> nr={} ret={}",
+                          syscall_nr, syscall_ret);
+                }
             } else {
-                trace!("[syscall] task=<no snapshot> nr={} ret={}",
-                       syscall_nr,
-                       syscall_ret);
+                if let Some(snap) = task::current_task_snapshot() {
+                    trace!("[syscall] task_id={} nr={} ret={}",
+                           snap.id,
+                           syscall_nr,
+                           syscall_ret);
+                } else {
+                    trace!("[syscall] task=<no snapshot> nr={} ret={}",
+                           syscall_nr,
+                           syscall_ret);
+                }
             }
             cx.add_user_pc(SYSCALL_INSN_BYTES);
             cx.set_syscall_ret(UserRet(syscall_ret));

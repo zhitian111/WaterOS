@@ -105,6 +105,9 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     fn dispatch_chdir(args : SyscallArgs) -> isize { sys::sys_chdir(args).0 }
 
     #[inline]
+    fn dispatch_mkdirat(args : SyscallArgs) -> isize { sys::sys_mkdirat(args).0 }
+
+    #[inline]
     fn dispatch_uname(args : SyscallArgs) -> isize { sys::sys_uname(args).0 }
 
     #[inline]

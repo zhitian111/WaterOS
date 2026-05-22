@@ -25,15 +25,21 @@ pub struct LinuxStat {
     pub st_mtime_nsec : i64,
     pub st_ctime_sec : i64,
     pub st_ctime_nsec : i64,
-    pub __unused : [i64; 3],
+    /// 与 oscomp `struct kstat` 尾部 `unsigned __unused[2]` 一致。
+    pub __unused : [u32; 2],
 }
 
+const _: () = assert!(core::mem::size_of::<LinuxStat>() == 128);
+
 const S_IFREG : u32 = 0o100_000;
+const S_IFDIR : u32 = 0o40_000;
+const S_IFCHR : u32 = 0o20_000;
 
 pub(crate) fn fill_linux_stat(meta : &VfsMetadata, size : u64) -> LinuxStat {
     let mode = match meta.node_type {
-        VfsNodeType::File => S_IFREG | (meta.mode as u32),
-        VfsNodeType::Directory => 0o40_000 | (meta.mode as u32),
+        VfsNodeType::File => S_IFREG | (meta.mode as u32 & 0o7777),
+        VfsNodeType::Directory => S_IFDIR | (meta.mode as u32 & 0o7777),
+        VfsNodeType::Special => S_IFCHR | (meta.mode as u32 & 0o7777),
         _ => meta.mode as u32,
     };
     LinuxStat { st_dev : 0,
@@ -54,5 +60,5 @@ pub(crate) fn fill_linux_stat(meta : &VfsMetadata, size : u64) -> LinuxStat {
                 st_mtime_nsec : 0,
                 st_ctime_sec : 0,
                 st_ctime_nsec : 0,
-                __unused : [0; 3] }
+                __unused : [0; 2] }
 }

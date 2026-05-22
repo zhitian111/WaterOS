@@ -13,31 +13,31 @@ use runtime::logging::*;
 macro_rules! basic_elf_paths {
     ($prefix:literal) => {
         &[concat!($prefix, "/chdir"),
-          concat!($prefix, "/clone"),
-          // concat!($prefix, "/close"),
+          // concat!($prefix, "/clone"),
+          concat!($prefix, "/close"),
           // concat!($prefix, "/dup"),
           // concat!($prefix, "/dup2"),
           // concat!($prefix, "/execve"),
           // concat!($prefix, "/exit"),
           // concat!($prefix, "/fork"),
-          // concat!($prefix, "/fstat"),
-          // concat!($prefix, "/getcwd"),
+          concat!($prefix, "/fstat"),
+          concat!($prefix, "/getcwd"),
           // concat!($prefix, "/getdents"),
-          concat!($prefix, "/getpid"),
-          concat!($prefix, "/getppid"),
+          // concat!($prefix, "/getpid"),
+          // concat!($prefix, "/getppid"),
           // concat!($prefix, "/gettimeofday"),
-          // concat!($prefix, "/mkdir_"),
+          concat!($prefix, "/mkdir_"),
           // concat!($prefix, "/mnt"),
           // concat!($prefix, "/mount"),
-          // concat!($prefix, "/open"),
-          // concat!($prefix, "/openat"),
+          concat!($prefix, "/open"),
+          concat!($prefix, "/openat"),
           // concat!($prefix, "/pipe"),
-          // concat!($prefix, "/read"),
+          concat!($prefix, "/read"),
           // concat!($prefix, "/sleep"),
           // concat!($prefix, "/test_echo"),
           // concat!($prefix, "/times"),
           // concat!($prefix, "/umount"),
-          concat!($prefix, "/uname"),
+          // concat!($prefix, "/uname"),
           // concat!($prefix, "/unlink"),
           // concat!($prefix, "/wait"),
           // concat!($prefix, "/waitpid"),
@@ -47,6 +47,28 @@ macro_rules! basic_elf_paths {
 
 const BASIC_GLIBC_PATHS : &[&str] = basic_elf_paths!("/glibc/basic");
 const BASIC_MUSL_PATHS : &[&str] = basic_elf_paths!("/musl/basic");
+
+/// 启动期检查 oscomp basic 测例依赖的根卷路径。
+#[cfg(feature = "vfs-bridge")]
+fn warn_missing_basic_assets() {
+    use vfs::api::SingleRootReadView;
+    let view = vfs::root::read_view();
+    for path in ["/glibc/basic/text.txt",
+                 "/glibc/basic/mnt",
+                 "/musl/basic/text.txt",
+                 "/musl/basic/mnt"]
+    {
+        match view.exists(path) {
+            Ok(true) => info!("[basic-bringup] rootfs asset present: {}",
+                               path),
+            Ok(false) => warn!("[basic-bringup] rootfs asset MISSING: {} \
+                                (oscomp fstat/openat may fail)",
+                               path),
+            Err(e) => warn!("[basic-bringup] rootfs check {}: {:?}",
+                            path, e),
+        }
+    }
+}
 
 /// 执行 `stage-03-basic`：装载并登记用户测程。
 pub fn run_stage_03() {
@@ -65,6 +87,8 @@ pub fn run_stage_03() {
               n);
         info!("[basic-bringup] spawn only enqueues user tasks; CPU-side user code runs after \
                task::run_first_task()");
+        #[cfg(feature = "vfs-bridge")]
+        warn_missing_basic_assets();
         for path in BASIC_GLIBC_PATHS.iter()
                                      .chain(BASIC_MUSL_PATHS)
         {
@@ -83,8 +107,8 @@ pub fn run_stage_03() {
                           loaded.mmap_arena_base,
                           loaded.user_aspace_ptr);
                     let tid = task::spawn_user_task_from_loaded_elf(&loaded);
-                    #[cfg(feature = "vfs")]
-                    vfs::cwd::on_user_task_spawned(tid);
+                    #[cfg(feature = "vfs-bridge")]
+                    vfs::cwd::on_user_task_spawned_for_elf(tid, path);
                     info!("[basic-bringup] spawned user task {} for {}",
                           tid, path);
                 }
