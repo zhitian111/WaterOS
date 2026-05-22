@@ -50,12 +50,13 @@
 | **`OPENAT`** | 经 **`vfs::active_impl::backend().open`**；相对路径按当前任务 cwd 解析（**`resolve_open_path`**）。 |
 | **`GETCWD`** | 将当前任务 cwd（含 NUL）写入用户缓冲；过小返回 **`ERANGE`**。 |
 | **`CHDIR`** | 经 **`vfs::cwd::chdir_current`** 校验目录存在后更新 per-task cwd。 |
+| **`MKDIRAT`** | 经 **`vfs::mkdir_at_current`** 创建目录；首期仅 **`AT_FDCWD`**。 |
 | **其它** | 一律 **`ENOSYS`**。 |
 
 ## 缺口与后续替换点
 
 - 覆盖面仍是 Linux-like 子集；大量 ABI 表中已有号未实现。
-- **`READ` / `WRITE` / `PIPE2` / `OPENAT` / `GETCWD` / `CHDIR`** 已接入 **`wateros-vfs`**（fd 表 + cwd 会话）；尚未实现 **`dup`** / fork 继承或任务退出时 fd 批量关闭。
+- **`READ` / `WRITE` / `PIPE2` / `OPENAT` / `GETCWD` / `CHDIR` / `MKDIRAT`** 已接入 **`wateros-vfs`**（fd 表 + cwd 会话）；尚未实现 **`dup`** / fork 继承或任务退出时 fd 批量关闭。
 - 用户指针安全与完整地址校验叙事依赖 trap/MM 协作，当前直接构造 slice 或写用户指针的路径仍是 bring-up 约束下的早期实现。
 - 若需与「WaterOS 自有 ABI」号表并存，应通过 **`wateros-abi`** 的 feature 组合调整，并同步本 crate 的 **`abi`** 依赖 feature。
 
