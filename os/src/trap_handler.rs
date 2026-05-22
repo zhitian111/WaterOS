@@ -57,77 +57,24 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                                .raw();
             let syscall_args = cx.syscall_args();
             let regs = syscall_args.as_regs();
-            match task::current_task_snapshot() {
-                Some(snap) => {
-                    let (entry_pc, address_space_token, mm_ptr, img_base, img_sz) =
-                        match snap.user_resources {
-                            Some(u) => {
-                                let address_space_token = u.address_space
-                                                           .map(|h| h.raw())
-                                                           .unwrap_or(0);
-                                let (ib, isz) = u.image
-                                                 .map(|i| (i.image_base(), i.image_size()))
-                                                 .unwrap_or((0, 0));
-                                (u.entry_pc, address_space_token, u.user_aspace_ptr, ib, isz)
-                            }
-                            None => (0usize, 0usize, 0usize, 0usize, 0usize),
-                        };
-                    trace!("[syscall] task_id={} kind={:?} state={:?} user_pc={:#x} \
-                            user_sp={:#x} entry_pc={:#x} address_space_token={:#x} \
-                            user_aspace_ptr={:#x} image=[{:#x},+{:#x}) nr={} \
-                            args=[{:#x},{:#x},{:#x},{:#x},{:#x},{:#x}]",
-                           snap.id,
-                           snap.kind,
-                           snap.state,
-                           cx.user_pc(),
-                           cx.user_sp(),
-                           entry_pc,
-                           address_space_token,
-                           mm_ptr,
-                           img_base,
-                           img_sz,
-                           syscall_nr,
-                           regs[0],
-                           regs[1],
-                           regs[2],
-                           regs[3],
-                           regs[4],
-                           regs[5],);
-                }
-                None => {
-                    trace!("[syscall] task=<no snapshot> user_pc={:#x} user_sp={:#x} nr={} \
-                            args=[{:#x},{:#x},{:#x},{:#x},{:#x},{:#x}]",
-                           cx.user_pc(),
-                           cx.user_sp(),
-                           syscall_nr,
-                           regs[0],
-                           regs[1],
-                           regs[2],
-                           regs[3],
-                           regs[4],
-                           regs[5],);
-                }
-            }
+            trace!("[syscall] nr={} user_pc={:#x} user_sp={:#x} args=[{:#x},{:#x},{:#x},{:#x},{:#x},{:#x}]",
+                   syscall_nr,
+                   cx.user_pc(),
+                   cx.user_sp(),
+                   regs[0],
+                   regs[1],
+                   regs[2],
+                   regs[3],
+                   regs[4],
+                   regs[5],);
             let syscall_ret = dispatch_syscall_from_trap(syscall_nr, syscall_args);
             if syscall_ret < 0 {
-                if let Some(snap) = task::current_task_snapshot() {
-                    warn!("[syscall] syscall failed ! task_id={} nr={} ret={}",
-                          snap.id, syscall_nr, syscall_ret);
-                } else {
-                    warn!("[syscall] syscall failed ! task=<no snapshot> nr={} ret={}",
-                          syscall_nr, syscall_ret);
-                }
+                warn!("[syscall] syscall failed ! nr={} ret={}",
+                      syscall_nr, syscall_ret);
             } else {
-                if let Some(snap) = task::current_task_snapshot() {
-                    trace!("[syscall] task_id={} nr={} ret={}",
-                           snap.id,
-                           syscall_nr,
-                           syscall_ret);
-                } else {
-                    trace!("[syscall] task=<no snapshot> nr={} ret={}",
-                           syscall_nr,
-                           syscall_ret);
-                }
+                trace!("[syscall] nr={} ret={}",
+                       syscall_nr,
+                       syscall_ret);
             }
             cx.add_user_pc(SYSCALL_INSN_BYTES);
             cx.set_syscall_ret(UserRet(syscall_ret));
@@ -139,12 +86,13 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             // fault， 形成无限 trap 风暴；在 INFO
             // 日志级别下毫无输出，表现为「sret 后卡死」。
             if cx.returns_to_user() {
-                panic!("[trap] user memory fault {:?} sepc={:#x} stval={:#x} frame_scause={:#x} \
-                        (fatal; was spinning in fault loop if only debug logged)",
-                       trap_cause,
-                       cx.user_pc(),
-                       cx.fault_addr(),
-                       raw_cause,);
+                warn!("[trap] user memory fault {:?} sepc={:#x} stval={:#x} user_sp={:#x} \
+                       — killing task",
+                      trap_cause,
+                      cx.user_pc(),
+                      cx.fault_addr(),
+                      cx.user_sp());
+                task::exit_current(0);
             }
             debug!("[trap] kernel page fault: cause={:?} raw_cause={:#x?} pc={:#x?} \
                     fault_addr={:#x?}",
@@ -167,20 +115,13 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
         _ => {
             if cx.returns_to_user() {
                 // 用户态异常（非法指令、断点等）：杀死当前任务而非 panic 内核
-                let task_info = task::current_task_snapshot().map(|s| format!("task_id={}", s.id))
-                                                             .unwrap_or_else(|| "no_task".into());
-                warn!("[trap] killing user task {} cause={:?} pc={:#x} fault_addr={:#x}",
-                      task_info,
+                warn!("[trap] killing user task cause={:?} pc={:#x} fault_addr={:#x}",
                       trap_cause,
                       cx.user_pc(),
                       cx.fault_addr());
                 task::exit_current(0);
             }
-            let task_info = task::current_task_snapshot().map(|s| format!("task_id={}", s.id))
-                                                         .unwrap_or_else(|| "no_task".into());
-            warn!("[trap] unexpected trap task={} cause={:?} pc={:#x} fault_addr={:#x} \
-                   returns_to_user={}",
-                  task_info,
+            warn!("[trap] unexpected trap cause={:?} pc={:#x} fault_addr={:#x} returns_to_user={}",
                   trap_cause,
                   cx.user_pc(),
                   cx.fault_addr(),

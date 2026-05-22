@@ -6,6 +6,7 @@
 
 use abi::user_ret::UserRet;
 use alloc::boxed::Box;
+use alloc::vec::Vec;
 use api_v0::{
     AddressSpaceHandle, ExitedTask, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskId,
     TaskKind, TaskRuntimeStats, TaskSnapshot, TaskState, TaskTick, TaskTrapSnapshot,
@@ -14,6 +15,7 @@ use api_v0::{
 };
 use arch::task::{ActiveArchTaskContext as TaskContext, ArchTaskContext};
 use arch::trap::{ActiveTrapFrame as TaskTrapFrame, TrapContextRead, TrapContextWrite};
+use core::ptr;
 
 use crate::stack::{KernelStack, UserStack};
 use crate::TaskBootstrap;
@@ -51,6 +53,81 @@ fn initial_user_sp(top_exclusive : usize, bottom : usize) -> usize {
         bottom
     } else {
         sp
+    }
+}
+
+#[inline]
+fn copy_user_stack_bytes(src_bottom : usize, dst_bottom : usize, size : usize) {
+    unsafe {
+        ptr::copy_nonoverlapping(src_bottom as *const u8,
+                                 dst_bottom as *mut u8,
+                                 size);
+    }
+}
+
+#[inline]
+#[allow(dead_code)]
+pub fn prepare_pending_fork_user_stack_copy(bytes : Vec<u8>) {
+    unsafe {
+        PENDING_FORK_USER_STACK_COPY = Some(bytes);
+    }
+}
+
+#[inline]
+#[allow(dead_code)]
+pub fn take_pending_fork_user_stack_copy() -> Option<Vec<u8>> {
+    unsafe {
+        let slot = core::ptr::addr_of_mut!(PENDING_FORK_USER_STACK_COPY);
+        let bytes = core::ptr::read(slot);
+        core::ptr::write(slot, None);
+        bytes
+    }
+}
+
+static mut PENDING_FORK_USER_STACK_COPY : Option<Vec<u8>> = None;
+
+#[inline]
+#[allow(dead_code)]
+pub fn prepare_pending_fork_user_stack_range(bottom : usize, top : usize) {
+    unsafe {
+        PENDING_FORK_USER_STACK_RANGE = Some((bottom, top));
+    }
+}
+
+#[inline]
+fn take_pending_fork_user_stack_range() -> Option<(usize, usize)> {
+    unsafe {
+        let slot = core::ptr::addr_of_mut!(PENDING_FORK_USER_STACK_RANGE);
+        let range = core::ptr::read(slot);
+        core::ptr::write(slot, None);
+        range
+    }
+}
+
+static mut PENDING_FORK_USER_STACK_RANGE : Option<(usize, usize)> = None;
+
+#[inline]
+fn fork_user_stack_backing(user_stack : &UserStackBacking,
+                           _child_stack : usize)
+                           -> UserStackBacking {
+    match user_stack {
+        UserStackBacking::Kernel(parent_stack) => {
+            let child_stack = UserStack::new();
+            copy_user_stack_bytes(parent_stack.bottom(),
+                                  child_stack.bottom(),
+                                  parent_stack.size());
+            UserStackBacking::Kernel(child_stack)
+        }
+        UserStackBacking::External { bottom, top } => {
+            // 优先使用 syscall 层预先准备好的独立子栈范围
+            if let Some((child_bottom, child_top)) = take_pending_fork_user_stack_range() {
+                UserStackBacking::External { bottom : child_bottom,
+                                             top : child_top }
+            } else {
+                UserStackBacking::External { bottom : *bottom,
+                                             top : *top }
+            }
+        }
     }
 }
 
@@ -213,33 +290,13 @@ impl TaskControlBlock {
         let task_cx = TaskContext::goto_entry(__arch_user_task_entry as *const () as usize,
                                               kernel_stack.top());
 
-        // 确定子任务的用户栈分配与初始 SP。
-        //
-        // 当 child_stack!=0（clone 新栈）：使用调用者提供的栈。
-        // 当 child_stack==0（fork 语义）：
-        //   - Kernel 栈：分配新栈（原行为）
-        //   - External 栈：仍在同一片物理栈页上，但把子进程 SP 放在栈底附近，
-        //     避免子进程写栈破坏父进程栈帧。
-        const CHILD_STACK_GUARD : usize = 4096; // 子进程从栈底向上预留的空间
-
-        // 先构建 user_resources
         let user_resources =
             parent.user_resources
                   .as_ref()
                   .map(|ur| {
-                      let new_stack = match &ur.user_stack {
-                          UserStackBacking::Kernel(_) => UserStackBacking::Kernel(UserStack::new()),
-                          UserStackBacking::External { bottom, top } if child_stack != 0 => {
-                              UserStackBacking::External { bottom : *bottom,
-                                                           top : *top }
-                          }
-                          UserStackBacking::External { bottom, top } => {
-                              // fork：共享 External 栈（物理页不变），
-                              // 但子进程 SP 从栈底附近开始，避免覆盖父进程栈帧
-                              UserStackBacking::External { bottom : *bottom,
-                                                           top : *top }
-                          }
-                      };
+                      // fork 语义：子任务获得父任务用户栈内容的私有副本；
+                      // clone 语义（child_stack!=0）则保留调用者指定的外部栈区间。
+                      let new_stack = fork_user_stack_backing(&ur.user_stack, child_stack);
                       UserTaskRuntimeResources { entry_pc : ur.entry_pc,
                                                  user_stack : new_stack,
                                                  address_space : ur.address_space,
@@ -247,35 +304,22 @@ impl TaskControlBlock {
                                                  user_aspace_ptr : ur.user_aspace_ptr }
                   });
 
-        // 计算子进程初始 SP：优先使用 child_stack（clone），否则根据栈类型计算
+        // 计算子进程 sp：child_stack_top == 父进程有效栈底，sp 偏移量 = parent_sp -
+        // child_stack_top
         let child_sp = if child_stack != 0 {
             child_stack
-        } else if let Some(ref ur) = parent.user_resources {
-            match &ur.user_stack {
-                UserStackBacking::External { bottom, top } => {
-                    // fork 语义：放在栈底往上 CHILD_STACK_GUARD 字节处
-                    let sp = bottom + CHILD_STACK_GUARD;
-                    if sp < *top {
-                        sp
-                    } else {
-                        0
-                    }
-                }
-                UserStackBacking::Kernel(_) => {
-                    // Kernel 栈：使用新分配的 UserStack（在上面 map 中创建）
-                    // 从 user_resources 中获取
-                    match user_resources.as_ref()
-                                        .and_then(|ur| match &ur.user_stack {
-                                            UserStackBacking::Kernel(s) => Some(s.top()),
-                                            _ => None,
-                                        }) {
-                        Some(top) => top,
-                        None => 0,
-                    }
-                }
-            }
         } else {
-            0
+            let parent_sp =
+                <TaskTrapFrame as TrapContextRead>::user_sp(parent.trap_frame
+                                                                  .as_ref()
+                                                                  .expect("fork requires parent \
+                                                                           trap frame"));
+            user_resources.as_ref()
+                          .map_or(parent_sp, |ur| {
+                              let child_top = ur.user_stack_top(); // = effective_bottom
+                              ur.user_stack_bottom()
+                                .saturating_add(parent_sp.saturating_sub(child_top))
+                          })
         };
 
         // 克隆父任务的 trap 帧，并将子任务返回值 a0 置 0
@@ -289,7 +333,26 @@ impl TaskControlBlock {
             if child_sp != 0 {
                 <TaskTrapFrame as TrapContextWrite>::set_user_sp(tf, child_sp);
             }
-            // child_sp==0 时保留父任务的 sp（继承自 trap_frame 克隆）
+            // 平移 callee-saved 寄存器中的栈指针
+            if let (Some(ur), Some(parent_ur)) = (user_resources.as_ref(),
+                                                  parent.user_resources
+                                                        .as_ref())
+            {
+                let child_top = ur.user_stack_top();
+                let child_bottom = ur.user_stack_bottom();
+                let parent_top = parent_ur.user_stack_top();
+                if child_top != parent_top {
+                    let tf_ptr = tf as *mut TaskTrapFrame as *mut usize;
+                    for i in [8usize, 9, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27] {
+                        unsafe {
+                            let v = *tf_ptr.add(i);
+                            if v >= child_top && v < parent_top {
+                                *tf_ptr.add(i) = child_bottom + (v - child_top);
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         Self::new(child_id,
@@ -510,3 +573,5 @@ impl TaskControlBlock {
         )
     }
 }
+
+// ----- end of TaskControlBlock impl -----

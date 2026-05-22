@@ -297,6 +297,22 @@ impl RoundRobinScheduler {
             .restore_current_trap_frame(trap_frame)
     }
 
+    pub(super) fn restore_current_trap_frame_and_address_space_raw(
+        &self,
+        trap_frame : &mut TaskTrapFrame,
+    ) -> (bool, usize) {
+        self.registry
+            .restore_current_trap_frame_and_address_space_raw(trap_frame)
+    }
+
+    pub(super) fn restore_current_trap_frame_and_metadata(
+        &self,
+        trap_frame : &mut TaskTrapFrame,
+    ) -> (bool, usize, usize) {
+        self.registry
+            .restore_current_trap_frame_and_metadata(trap_frame)
+    }
+
     pub(super) fn take_current_wait_result(&mut self) -> TaskWaitResult {
         self.registry
             .take_current_wait_result()

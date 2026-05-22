@@ -8,7 +8,7 @@ use alloc::boxed::Box;
 use core::alloc::Layout;
 
 const KERNEL_TASK_STACK_SIZE : usize = 32 * 1024;
-const USER_TASK_STACK_SIZE : usize = 16 * 1024;
+const USER_TASK_STACK_SIZE : usize = 32 * 1024;
 
 #[repr(align(16))]
 struct AlignedKernelStack([u8; KERNEL_TASK_STACK_SIZE]);

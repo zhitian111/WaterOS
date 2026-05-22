@@ -27,23 +27,6 @@ use arch::trap::TrapAddressSpaceWrite;
 
 // 内核地址空间 token 由 `mm_api::kernel_satp` 模块缓存，此处直接读取。
 
-fn return_address_space_token(returns_to_user : bool) -> usize {
-    let kernel_token = mm_api::kernel_satp::get();
-    if !returns_to_user {
-        return kernel_token;
-    }
-    let raw = scheduler::current_task_address_space_raw();
-    if raw == 0 {
-        kernel_token
-    } else {
-        raw
-    }
-}
-
-/// 当前任务返回用户态时应使用的地址空间 token。
-#[inline]
-fn current_user_return_address_space_token() -> usize { return_address_space_token(true) }
-
 /// 解析 trap 帧归属任务，返回应被 Rust 侧修改的权威 `TrapContext` 指针。
 #[inline]
 pub(crate) unsafe fn begin_current_trap_frame_access(trap_frame_ptr : *mut u8) -> *mut u8 {
@@ -56,12 +39,7 @@ pub(crate) unsafe fn begin_current_trap_frame_access(trap_frame_ptr : *mut u8) -
 #[inline]
 pub(crate) unsafe fn restore_current_trap_frame(trap_frame_ptr : *mut u8) -> bool {
     let trap_frame = unsafe { &mut *(trap_frame_ptr as *mut TaskTrapFrame) };
-    let restored = scheduler::restore_current_trap_frame(trap_frame);
-    let token = return_address_space_token(
-        <TaskTrapFrame as arch::trap::TrapFrameRead>::returns_to_user(trap_frame),
-    );
-    trap_frame.prepare_address_space_for_return(token);
-    restored
+    scheduler::restore_current_trap_frame(trap_frame)
 }
 
 // ============================================================================
@@ -79,13 +57,11 @@ unsafe extern "C" {
 #[unsafe(no_mangle)]
 pub extern "C" fn __wateros_task_runtime_enter_current_user_task() -> ! {
     let mut trap_frame = TaskTrapFrame::default();
-    let restored = scheduler::restore_current_trap_frame(&mut trap_frame);
-    let kernel_stack_top = scheduler::current_task_kernel_stack_top().expect("user task entry \
-                                                                              requires a current \
-                                                                              task kernel stack");
+    let (restored, kernel_stack_top, token) = scheduler::restore_current_trap_frame_and_metadata(&mut trap_frame);
     assert!(restored,
             "user task entry requires a prepared trap frame in the current task");
-    trap_frame.set_return_address_space_token(current_user_return_address_space_token());
+    let token = if token == 0 { mm_api::kernel_satp::get() } else { token };
+    trap_frame.set_return_address_space_token(token);
     unsafe {
         __wateros_arch_restore_user_task((&trap_frame as *const TaskTrapFrame).cast::<u8>(),
                                          kernel_stack_top)

@@ -26,6 +26,8 @@
 
 #![no_std]
 
+extern crate alloc;
+
 mod runtime;
 pub mod wait_queue;
 pub use self::wait_queue::WaitQueue;
@@ -170,6 +172,18 @@ pub fn reap_exited_task(task_id : TaskId) -> Option<ExitedTask> {
 /// 无当前任务或当前不是用户任务时返回 `None`。
 #[inline]
 pub fn fork_current(child_stack : usize) -> Option<TaskId> { scheduler::fork_current(child_stack) }
+
+/// 预先准备当前 fork 所需的用户栈内核副本。
+#[inline]
+pub fn prepare_fork_user_stack_copy(bytes : alloc::vec::Vec<u8>) {
+    active_impl::prepare_pending_fork_user_stack_copy(bytes);
+}
+
+/// 预先准备当前 fork 所需的用户栈外部范围。
+#[inline]
+pub fn prepare_fork_user_stack_range(bottom : usize, top : usize) {
+    active_impl::prepare_pending_fork_user_stack_range(bottom, top);
+}
 
 /// 回收一个任意已退出任务的信息。
 #[inline]

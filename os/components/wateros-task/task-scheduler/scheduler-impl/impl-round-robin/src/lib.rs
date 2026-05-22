@@ -403,3 +403,15 @@ pub fn restore_current_trap_frame(trap_frame : &mut TaskTrapFrame) -> bool {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.restore_current_trap_frame(trap_frame))
 }
+
+pub fn restore_current_trap_frame_and_address_space_raw(
+    trap_frame : &mut TaskTrapFrame,
+) -> (bool, usize) {
+    with_scheduler(|scheduler| scheduler.restore_current_trap_frame_and_address_space_raw(trap_frame))
+}
+
+pub fn restore_current_trap_frame_and_metadata(
+    trap_frame : &mut TaskTrapFrame,
+) -> (bool, usize, usize) {
+    with_scheduler(|scheduler| scheduler.restore_current_trap_frame_and_metadata(trap_frame))
+}

@@ -19,7 +19,7 @@ macro_rules! basic_elf_paths {
           // concat!($prefix, "/dup2"),
           // concat!($prefix, "/execve"),
           //concat!($prefix, "/exit"),
-          //concat!($prefix, "/fork"),
+          concat!($prefix, "/fork"),
           // concat!($prefix, "/fstat"),
           // concat!($prefix, "/getcwd"),
           // concat!($prefix, "/getdents"),
