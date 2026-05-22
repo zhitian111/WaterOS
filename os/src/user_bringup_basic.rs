@@ -13,26 +13,26 @@ use runtime::logging::*;
 macro_rules! basic_elf_paths {
     ($prefix:literal) => {
         &[concat!($prefix, "/chdir"),
-          // concat!($prefix, "/clone"),
-          concat!($prefix, "/close"),
+          concat!($prefix, "/clone"),
+          //concat!($prefix, "/close"),
           // concat!($prefix, "/dup"),
           // concat!($prefix, "/dup2"),
           // concat!($prefix, "/execve"),
-          // concat!($prefix, "/exit"),
-          // concat!($prefix, "/fork"),
-          concat!($prefix, "/fstat"),
-          concat!($prefix, "/getcwd"),
+          //concat!($prefix, "/exit"),
+          //concat!($prefix, "/fork"),
+          // concat!($prefix, "/fstat"),
+          // concat!($prefix, "/getcwd"),
           // concat!($prefix, "/getdents"),
           // concat!($prefix, "/getpid"),
           // concat!($prefix, "/getppid"),
           // concat!($prefix, "/gettimeofday"),
-          concat!($prefix, "/mkdir_"),
+          // concat!($prefix, "/mkdir_"),
           // concat!($prefix, "/mnt"),
           // concat!($prefix, "/mount"),
-          concat!($prefix, "/open"),
-          concat!($prefix, "/openat"),
+          // concat!($prefix, "/open"),
+          // concat!($prefix, "/openat"),
           // concat!($prefix, "/pipe"),
-          concat!($prefix, "/read"),
+          // concat!($prefix, "/read"),
           // concat!($prefix, "/sleep"),
           // concat!($prefix, "/test_echo"),
           // concat!($prefix, "/times"),
@@ -41,7 +41,8 @@ macro_rules! basic_elf_paths {
           // concat!($prefix, "/unlink"),
           // concat!($prefix, "/wait"),
           // concat!($prefix, "/waitpid"),
-          concat!($prefix, "/write") /* concat!($prefix, "/yield"), */]
+          //concat!($prefix, "/write") /* concat!($prefix, "/yield"), */
+          ]
     };
 }
 
@@ -60,9 +61,9 @@ fn warn_missing_basic_assets() {
     {
         match view.exists(path) {
             Ok(true) => info!("[basic-bringup] rootfs asset present: {}",
-                               path),
-            Ok(false) => warn!("[basic-bringup] rootfs asset MISSING: {} \
-                                (oscomp fstat/openat may fail)",
+                              path),
+            Ok(false) => warn!("[basic-bringup] rootfs asset MISSING: {} (oscomp fstat/openat \
+                                may fail)",
                                path),
             Err(e) => warn!("[basic-bringup] rootfs check {}: {:?}",
                             path, e),
