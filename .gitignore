@@ -1,5 +1,8 @@
 .DS_Store
 **/.DS_Store
+__pycache__/
+*.py[cod]
+*.pyc
 feature-tree.txt
 /todo_docs/
 2025a-rcore-kasss233/
