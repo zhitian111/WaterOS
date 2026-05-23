@@ -36,7 +36,7 @@ mod scheduler {
 }
 pub(crate) use api_v0::{
     AddressSpaceHandle, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskSnapshot, TaskTick,
-    TaskWaitResult, UserImageInfo, UserTaskEntryPc, UserTaskSpec, WaitQueueId,
+    TaskWaitResult, UserImageInfo, UserStack, UserTask, WaitQueueId,
 };
 pub use api_v0::{ExitedTask, TaskId, TaskWaitHandle};
 #[cfg(feature = "impl-core")]
@@ -69,28 +69,22 @@ pub fn spawn_kernel_task(entry : KernelTaskEntry, arg : usize) -> TaskId {
 
 /// 按给定规格创建一个新的用户任务，并返回分配到的任务号。
 #[inline]
-pub fn spawn_user_task_spec(spec : UserTaskSpec) -> TaskId { scheduler::spawn_user_task_spec(spec) }
-
-/// 创建一个新的最小用户任务骨架，并返回分配到的任务号。
-#[inline]
-pub fn spawn_user_task(entry_pc : UserTaskEntryPc) -> TaskId {
-    spawn_user_task_spec(UserTaskSpec::new(entry_pc))
-}
+pub fn spawn_user_task(user : UserTask) -> TaskId { scheduler::spawn_user_task(user) }
 
 /// 将 MM ELF loader 产出的地址空间、映像与外部用户栈元数据转换为用户任务规格。
 #[inline]
-pub fn user_task_spec_from_loaded_elf(loaded : &LoadedElf) -> UserTaskSpec {
-    UserTaskSpec::new(loaded.entry_pc).with_address_space(AddressSpaceHandle::from_raw(loaded.satp))
-                                      .with_image(UserImageInfo::new(loaded.image_base,
-                                                                     loaded.image_size))
-                                      .with_external_stack(loaded.stack_bottom, loaded.stack_top)
-                                      .with_user_aspace_ptr(loaded.user_aspace_ptr)
+pub fn user_task_from_loaded_elf(loaded : &LoadedElf) -> UserTask {
+    UserTask::new(loaded.entry_pc,
+                  AddressSpaceHandle::from_raw(loaded.satp),
+                  UserImageInfo::new(loaded.image_base, loaded.image_size),
+                  UserStack::from_range(loaded.stack_bottom, loaded.stack_top),
+                  loaded.user_aspace_ptr)
 }
 
 /// 基于 MM 已装载的 ELF 创建一个用户任务，并返回分配到的任务号。
 #[inline]
 pub fn spawn_user_task_from_loaded_elf(loaded : &LoadedElf) -> TaskId {
-    spawn_user_task_spec(user_task_spec_from_loaded_elf(loaded))
+    spawn_user_task(user_task_from_loaded_elf(loaded))
 }
 
 /// 启动调度器并切入第一批可运行任务。
@@ -173,18 +167,6 @@ pub fn reap_exited_task(task_id : TaskId) -> Option<ExitedTask> {
 #[inline]
 pub fn fork_current(child_stack : usize) -> Option<TaskId> { scheduler::fork_current(child_stack) }
 
-/// 预先准备当前 fork 所需的用户栈内核副本。
-#[inline]
-pub fn prepare_fork_user_stack_copy(bytes : alloc::vec::Vec<u8>) {
-    active_impl::prepare_pending_fork_user_stack_copy(bytes);
-}
-
-/// 预先准备当前 fork 所需的用户栈外部范围。
-#[inline]
-pub fn prepare_fork_user_stack_range(bottom : usize, top : usize) {
-    active_impl::prepare_pending_fork_user_stack_range(bottom, top);
-}
-
 /// 回收一个任意已退出任务的信息。
 #[inline]
 pub fn reap_one_exited_task() -> Option<ExitedTask> { scheduler::reap_one_exited_task() }
@@ -218,3 +200,5 @@ pub fn task_snapshot(task_id : TaskId) -> Option<TaskSnapshot> { scheduler::task
 /// 返回当前调度器逻辑 tick。
 #[inline]
 pub fn current_tick() -> TaskTick { scheduler::current_tick() }
+#[inline]
+pub fn current_task_user_aspace_ptr() -> usize { scheduler::current_task_user_aspace_ptr() }

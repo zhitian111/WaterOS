@@ -1,8 +1,10 @@
-//! 对外可见的 trap 与任务快照类型：**语义视图**，不镜像平台 `TrapContext` 的完整寄存器列表。
+//! 对外可见的 trap 与任务快照类型：**语义视图**，不镜像平台 `TrapContext`
+//! 的完整寄存器列表。
 //!
-//! 调度器与调试接口通过 [`TaskSnapshot`] / [`TaskTrapSnapshot`] 观察任务，而具体保存顺序由 `arch::trap` 实现保证。
+//! 调度器与调试接口通过 [`TaskSnapshot`] / [`TaskTrapSnapshot`]
+//! 观察任务，而具体保存顺序由 `arch::trap` 实现保证。
 
-use crate::{TaskId, TaskKind, TaskRuntimeStats, TaskState, UserTaskResources};
+use crate::{TaskId, TaskKind, TaskRuntimeStats, TaskState};
 
 /// 对外暴露的 trap 现场语义快照。
 ///
@@ -17,6 +19,8 @@ pub struct TaskTrapSnapshot {
     pub user_pc : usize,
     /// trap 发生或恢复时关联的用户态 SP。
     pub user_sp : usize,
+    /// trap 发生或恢复时关联的用户态地址空间指针。
+    pub user_aspace_ptr : usize,
     /// fault 地址或架构提供的附加 trap 值。
     pub fault_addr : usize,
     /// 该现场恢复时是否会返回用户态。
@@ -29,12 +33,14 @@ impl TaskTrapSnapshot {
     pub const fn new(raw_cause : usize,
                      user_pc : usize,
                      user_sp : usize,
+                     user_aspace_ptr : usize,
                      fault_addr : usize,
                      returns_to_user : bool)
                      -> Self {
         Self { raw_cause,
                user_pc,
                user_sp,
+               user_aspace_ptr,
                fault_addr,
                returns_to_user }
     }
@@ -62,6 +68,7 @@ impl TaskTrapSnapshot {
     /// 判断该现场恢复时是否会返回内核态。
     #[inline]
     pub const fn returns_to_kernel(&self) -> bool { !self.returns_to_user }
+    pub const fn user_aspace_ptr(&self) -> usize { self.user_aspace_ptr }
 }
 
 /// 对外暴露的稳定任务快照。
@@ -82,6 +89,4 @@ pub struct TaskSnapshot {
     pub trap_frame : Option<TaskTrapSnapshot>,
     /// 调度器维护的运行统计。
     pub stats : TaskRuntimeStats,
-    /// 若为用户任务，则附带其资源快照。
-    pub user_resources : Option<UserTaskResources>,
 }
