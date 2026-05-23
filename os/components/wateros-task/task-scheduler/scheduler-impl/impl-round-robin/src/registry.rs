@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 use arch::task::{ActiveArchTaskContext as TaskContext, ArchTaskContext};
 use task_api::{
     ExitedTask, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskId, TaskSnapshot, TaskState,
-    TaskTick, TaskWaitHandle, TaskWaitResult, TaskWaitTarget, UserTaskSpec, IDLE_TASK_ID,
+    TaskTick, TaskWaitHandle, TaskWaitResult, TaskWaitTarget, UserTask, IDLE_TASK_ID,
 };
 use task_impl::TaskControlBlock;
 
@@ -111,7 +111,7 @@ impl TaskRegistry {
         task_id
     }
 
-    pub(super) fn spawn_user_task_spec(&mut self, spec : UserTaskSpec) -> TaskId {
+    pub(super) fn spawn_user_task_spec(&mut self, spec : UserTask) -> TaskId {
         let task_id = self.next_task_id;
         self.next_task_id += 1;
         log::trace!("[task-spawn] user spec id={} entry_pc={:#x} address_space_raw={:#x} \
@@ -122,7 +122,7 @@ impl TaskRegistry {
                         .map(|h| h.raw())
                         .unwrap_or(0),
                     spec.image(),
-                    spec.external_stack());
+                    spec.stack());
         let parent_id = self.current_task_id;
         self.task_table
             .insert(Box::new(TaskControlBlock::new_user_task(task_id, parent_id, spec)));
@@ -134,19 +134,9 @@ impl TaskRegistry {
     /// 子任务继承父任务的 trap 帧（a0 置
     /// 0）、地址空间与用户栈，使用独立内核栈。 `child_stack`
     /// 非零时，子任务初始用户 sp 设为该值（用于 clone 新栈场景）。
-    pub(super) fn fork_current(&mut self, child_stack : usize) -> Option<TaskId> {
-        let parent_id = self.current_task_id?;
-        let child_id = self.next_task_id;
-        self.next_task_id += 1;
-
-        // 从父任务的 TCB fork 出子任务
-        let child = TaskControlBlock::fork_user_task(self.task_table
-                                                         .task(parent_id),
-                                                     child_id,
-                                                     child_stack);
-        self.task_table
-            .insert(Box::new(child));
-        Some(child_id)
+    pub(super) fn fork_current(&mut self, _child_stack : usize) -> Option<TaskId> {
+        // TODO: 在新 TCB 设计下恢复 fork 路径
+        None
     }
 
     pub(super) fn first_switch_to(&mut self, next_task_id : TaskId) -> SwitchPair {
@@ -309,6 +299,16 @@ impl TaskRegistry {
             .unwrap_or(0)
     }
 
+    pub(super) fn current_task_user_aspace_ptr(&self) -> usize {
+        self.current_task_id
+            .map(|task_id| {
+                self.task_table
+                    .task(task_id)
+                    .user_aspace_ptr()
+            })
+            .unwrap_or(0)
+    }
+
     pub(super) fn clear_wait_result(&mut self, task_id : TaskId) {
         self.task_table
             .task_mut(task_id)
@@ -352,31 +352,5 @@ impl TaskRegistry {
                     .restore_trap_frame_into(trap_frame)
             })
             .unwrap_or(false)
-    }
-
-    pub(super) fn restore_current_trap_frame_and_address_space_raw(&self,
-                                                                   trap_frame : &mut TaskTrapFrame)
-                                                                   -> (bool, usize) {
-        self.current_task_id
-            .map(|current_task_id| {
-                let task = self.task_table
-                               .task(current_task_id);
-                let restored = task.restore_trap_frame_into(trap_frame);
-                (restored, task.user_address_space_raw())
-            })
-            .unwrap_or((false, 0))
-    }
-
-    pub(super) fn restore_current_trap_frame_and_metadata(&self,
-                                                          trap_frame : &mut TaskTrapFrame)
-                                                          -> (bool, usize, usize) {
-        self.current_task_id
-            .map(|current_task_id| {
-                let task = self.task_table
-                               .task(current_task_id);
-                let restored = task.restore_trap_frame_into(trap_frame);
-                (restored, task.kernel_stack_top(), task.user_address_space_raw())
-            })
-            .unwrap_or((false, 0, 0))
     }
 }

@@ -32,7 +32,7 @@ pub type TaskTrapFrame = arch::trap::ActiveTrapFrame;
 pub use task_api::{
     AddressSpaceHandle, ExitedTask, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskId,
     TaskKind, TaskSnapshot, TaskState, TaskTick, TaskWaitHandle, TaskWaitResult, TaskWaitTarget,
-    UserImageInfo, UserTaskEntryPc, UserTaskResources, UserTaskSpec, WaitQueueId, IDLE_TASK_ID,
+    UserImageInfo, UserTask, UserTaskEntryPc, WaitQueueId, IDLE_TASK_ID,
 };
 
 /// 初始化当前启用的调度器实现。
@@ -43,6 +43,10 @@ pub fn init() { active_impl::init_scheduler(); }
 #[inline]
 pub fn current_task_address_space_raw() -> usize { active_impl::current_task_address_space_raw() }
 
+/// 当前运行任务的 Sv39 用户页表对象指针；`0` 表示无。
+#[inline]
+pub fn current_task_user_aspace_ptr() -> usize { active_impl::current_task_user_aspace_ptr() }
+
 /// 创建一个新的内核任务，并返回其任务号。
 #[inline]
 pub fn spawn_kernel_task(entry : KernelTaskEntry, arg : usize) -> TaskId {
@@ -51,16 +55,7 @@ pub fn spawn_kernel_task(entry : KernelTaskEntry, arg : usize) -> TaskId {
 
 /// 按给定规格创建一个新的用户任务，并返回其任务号。
 #[inline]
-pub fn spawn_user_task_spec(spec : UserTaskSpec) -> TaskId {
-    active_impl::spawn_user_task_spec(spec)
-}
-
-/// 创建一个新的最小用户任务骨架，并返回其任务号。
-#[inline]
-pub fn spawn_user_task(entry_pc : UserTaskEntryPc) -> TaskId {
-    spawn_user_task_spec(UserTaskSpec::new(entry_pc))
-}
-
+pub fn spawn_user_task(spec : UserTask) -> TaskId { active_impl::spawn_user_task_spec(spec) }
 /// 为上层同步对象分配一个等待队列编号。
 #[inline]
 pub fn allocate_wait_queue() -> WaitQueueId { active_impl::allocate_wait_queue() }
@@ -222,18 +217,4 @@ pub fn begin_current_trap_frame_access(trap_frame : TaskTrapFrame) -> Option<*mu
 #[inline]
 pub fn restore_current_trap_frame(trap_frame : &mut TaskTrapFrame) -> bool {
     active_impl::restore_current_trap_frame(trap_frame)
-}
-
-#[inline]
-pub fn restore_current_trap_frame_and_address_space_raw(
-    trap_frame : &mut TaskTrapFrame,
-) -> (bool, usize) {
-    active_impl::restore_current_trap_frame_and_address_space_raw(trap_frame)
-}
-
-#[inline]
-pub fn restore_current_trap_frame_and_metadata(
-    trap_frame : &mut TaskTrapFrame,
-) -> (bool, usize, usize) {
-    active_impl::restore_current_trap_frame_and_metadata(trap_frame)
 }

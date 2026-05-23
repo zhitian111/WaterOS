@@ -176,6 +176,9 @@ mod qemu_loongarch64_virt {
     const LOONGARCH64_USER_EXIT_OK : isize = 66;
     const LOONGARCH64_USER_EXIT_BAD_YIELD : isize = 67;
     const LOONGARCH64_USER_WAIT_TICKS : task::TaskTick = 128;
+    /// 用户 smoke 栈的虚拟地址区间（由链接脚本 `.bss` 段后分配）。
+    const LOONGARCH64_USER_STACK_BOTTOM : usize = 0x8000_0000;
+    const LOONGARCH64_USER_STACK_TOP : usize = 0x8000_4000;
 
     struct LoongArch64UserSmokeExpected {
         task_id : task::TaskId,
@@ -203,10 +206,15 @@ mod qemu_loongarch64_virt {
         crate::trap_handler::init();
         let (user_image_base, user_image_size) = loongarch64_user_smoke_image_range();
         let user_entry = loongarch64_user_task_entry as *const () as usize;
+        // 为 smoke 用户任务分配一个最小用户栈（loader 未就绪时直接指定区间）。
         let user_spec =
-            task::UserTaskSpec::new(user_entry).with_image(task::UserImageInfo::new(user_image_base,
-                                                                                   user_image_size));
-        let user_task_id = task::spawn_user_task_spec(user_spec);
+            task::UserTask::new(user_entry,
+                                task::AddressSpaceHandle::from_raw(1),
+                                task::UserImageInfo::new(user_image_base, user_image_size),
+                                task::UserStack::from_range(LOONGARCH64_USER_STACK_BOTTOM,
+                                                            LOONGARCH64_USER_STACK_TOP),
+                                0);
+        let user_task_id = task::spawn_user_task(user_spec);
         #[cfg(feature = "vfs")]
         vfs::cwd::on_user_task_spawned(user_task_id);
         let expected = Box::new(LoongArch64UserSmokeExpected { task_id : user_task_id,
@@ -311,26 +319,15 @@ mod qemu_loongarch64_virt {
                    "LoongArch64 user smoke must be a user task");
         assert_eq!(exited.exit_code, LOONGARCH64_USER_EXIT_OK,
                    "LoongArch64 user smoke must exit through successful yield path");
-        let resources = exited.user_resources
-                              .expect("LoongArch64 user smoke must preserve user resources");
-        assert_eq!(resources.entry_pc, expected.entry_pc,
-                   "LoongArch64 user smoke resources must preserve entry PC");
-        assert_eq!(resources.address_space, None,
-                   "LoongArch64 user smoke should not claim an MM address space yet");
-        let image = resources.image
-                             .expect("LoongArch64 user smoke must preserve image metadata");
-        assert_eq!(image.image_base(),
-                   expected.image_base,
-                   "LoongArch64 user smoke image base must match linker section");
-        assert_eq!(image.image_size(),
-                   expected.image_size,
-                   "LoongArch64 user smoke image size must match linker section");
+        assert_eq!(exited.kind,
+                   task::TaskKind::User,
+                   "LoongArch64 user smoke must be a user task");
         let trap_frame = exited.trap_frame
                                .expect("LoongArch64 user smoke exit should keep trap snapshot");
         let user_sp = trap_frame.user_sp();
-        assert!(resources.user_stack_bottom <= user_sp,
+        assert!(LOONGARCH64_USER_STACK_BOTTOM <= user_sp,
                 "LoongArch64 user smoke SP must stay within task user stack");
-        assert!(user_sp <= resources.user_stack_top,
+        assert!(user_sp <= LOONGARCH64_USER_STACK_TOP,
                 "LoongArch64 user smoke SP must not exceed task user stack top");
         assert_eq!(user_sp & 0xF,
                    0,

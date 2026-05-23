@@ -6,7 +6,6 @@
 //! **须在** `task::init()` **之后**调用 [`init`]。
 
 use abi::user_ret::UserRet;
-use alloc::format;
 use arch_api_v0::kernel_trap::register_kernel_trap_handler;
 use arch_api_v0::trap::{
     Exception, Interrupt, TrapCause, TrapFrameRead, TrapFrameWrite, TrapSyscallRead,
@@ -55,7 +54,8 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                                .raw();
             let syscall_args = cx.syscall_args();
             let regs = syscall_args.as_regs();
-            trace!("[syscall] nr={} user_pc={:#x} user_sp={:#x} args=[{:#x},{:#x},{:#x},{:#x},{:#x},{:#x}]",
+            trace!("[syscall] nr={} user_pc={:#x} user_sp={:#x} \
+                    args=[{:#x},{:#x},{:#x},{:#x},{:#x},{:#x}]",
                    syscall_nr,
                    cx.user_pc(),
                    cx.user_sp(),
@@ -84,8 +84,8 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             // fault， 形成无限 trap 风暴；在 INFO
             // 日志级别下毫无输出，表现为「sret 后卡死」。
             if cx.returns_to_user() {
-                warn!("[trap] user memory fault {:?} sepc={:#x} stval={:#x} user_sp={:#x} \
-                       — killing task",
+                warn!("[trap] user memory fault {:?} sepc={:#x} stval={:#x} user_sp={:#x} — \
+                       killing task",
                       trap_cause,
                       cx.user_pc(),
                       cx.fault_addr(),

@@ -10,7 +10,7 @@
 use api_v0::ScheduleReason;
 use task_api::{
     ExitedTask, KernelTaskEntry, TaskBlockReason, TaskId, TaskSnapshot, TaskTick, TaskWaitHandle,
-    TaskWaitResult, UserTaskSpec, WaitQueueId,
+    TaskWaitResult, UserTask, WaitQueueId,
 };
 
 use crate::queues::{QueueTarget, RoundRobinQueues};
@@ -51,7 +51,7 @@ impl RoundRobinScheduler {
         task_id
     }
 
-    pub(super) fn spawn_user_task_spec(&mut self, spec : UserTaskSpec) -> TaskId {
+    pub(super) fn spawn_user_task_spec(&mut self, spec : UserTask) -> TaskId {
         let task_id = self.registry
                           .spawn_user_task_spec(spec);
         self.queues
@@ -285,6 +285,11 @@ impl RoundRobinScheduler {
             .current_task_address_space_raw()
     }
 
+    pub(super) fn current_task_user_aspace_ptr(&self) -> usize {
+        self.registry
+            .current_task_user_aspace_ptr()
+    }
+
     pub(super) fn begin_current_trap_frame_access(&mut self,
                                                   trap_frame : TaskTrapFrame)
                                                   -> Option<*mut TaskTrapFrame> {
@@ -295,22 +300,6 @@ impl RoundRobinScheduler {
     pub(super) fn restore_current_trap_frame(&self, trap_frame : &mut TaskTrapFrame) -> bool {
         self.registry
             .restore_current_trap_frame(trap_frame)
-    }
-
-    pub(super) fn restore_current_trap_frame_and_address_space_raw(
-        &self,
-        trap_frame : &mut TaskTrapFrame,
-    ) -> (bool, usize) {
-        self.registry
-            .restore_current_trap_frame_and_address_space_raw(trap_frame)
-    }
-
-    pub(super) fn restore_current_trap_frame_and_metadata(
-        &self,
-        trap_frame : &mut TaskTrapFrame,
-    ) -> (bool, usize, usize) {
-        self.registry
-            .restore_current_trap_frame_and_metadata(trap_frame)
     }
 
     pub(super) fn take_current_wait_result(&mut self) -> TaskWaitResult {

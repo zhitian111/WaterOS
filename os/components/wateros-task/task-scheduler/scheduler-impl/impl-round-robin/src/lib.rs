@@ -15,7 +15,7 @@ use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, Ordering};
 use task_api::{
     ExitedTask, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskId, TaskSnapshot, TaskTick,
-    TaskWaitHandle, TaskWaitResult, UserTaskEntryPc, UserTaskSpec, WaitQueueId,
+    TaskWaitHandle, TaskWaitResult, UserTask, WaitQueueId,
 };
 
 mod queues;
@@ -99,6 +99,11 @@ pub fn current_task_address_space_raw() -> usize {
     with_scheduler(|scheduler| scheduler.current_task_address_space_raw())
 }
 
+pub fn current_task_user_aspace_ptr() -> usize {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.current_task_user_aspace_ptr())
+}
+
 /// 幂等初始化全局调度器与内部 `RoundRobinScheduler` 状态。
 pub fn init_scheduler() {
     if !SCHEDULER_READY.load(Ordering::Acquire) {
@@ -118,14 +123,9 @@ pub fn spawn_kernel_task(entry : KernelTaskEntry, arg : usize) -> TaskId {
 }
 
 /// 按规格创建用户任务并入就绪队列尾部。
-pub fn spawn_user_task_spec(spec : UserTaskSpec) -> TaskId {
+pub fn spawn_user_task_spec(spec : UserTask) -> TaskId {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.spawn_user_task_spec(spec))
-}
-
-/// 最小用户任务骨架创建（委托 `UserTaskSpec::new`）。
-pub fn spawn_user_task(entry_pc : UserTaskEntryPc) -> TaskId {
-    spawn_user_task_spec(UserTaskSpec::new(entry_pc))
 }
 
 /// 从当前用户任务 fork 一个子任务，并返回子任务 id。
@@ -402,16 +402,4 @@ pub fn begin_current_trap_frame_access(trap_frame : TaskTrapFrame) -> Option<*mu
 pub fn restore_current_trap_frame(trap_frame : &mut TaskTrapFrame) -> bool {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.restore_current_trap_frame(trap_frame))
-}
-
-pub fn restore_current_trap_frame_and_address_space_raw(
-    trap_frame : &mut TaskTrapFrame,
-) -> (bool, usize) {
-    with_scheduler(|scheduler| scheduler.restore_current_trap_frame_and_address_space_raw(trap_frame))
-}
-
-pub fn restore_current_trap_frame_and_metadata(
-    trap_frame : &mut TaskTrapFrame,
-) -> (bool, usize, usize) {
-    with_scheduler(|scheduler| scheduler.restore_current_trap_frame_and_metadata(trap_frame))
 }
