@@ -364,6 +364,9 @@ impl TaskRegistry {
                                                   trap_frame : TaskTrapFrame)
                                                   -> Option<*mut TaskTrapFrame> {
         let current_task_id = self.current_task_id?;
+        if self.is_idle(current_task_id) {
+            return None;
+        }
         Some(self.task_table
                  .task_mut(current_task_id)
                  .begin_trap_frame_access(trap_frame))
