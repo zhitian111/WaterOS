@@ -16,7 +16,6 @@
 use crate::active_impl::TaskBootstrap;
 use crate::scheduler;
 use crate::scheduler::TaskTrapFrame;
-use arch::trap::{TrapContextRead, TrapSyscallRead};
 // ============================================================================
 // Rust 入口：地址空间 token 管理 & trap 帧访问
 // ============================================================================
@@ -50,14 +49,8 @@ unsafe extern "C" {
 /// arch 恢复例程。
 #[unsafe(no_mangle)]
 pub extern "C" fn __wateros_task_runtime_enter_current_user_task() -> ! {
-    let task_id = scheduler::current_task_id();
     let mut trap_frame = TaskTrapFrame::default();
     let restored = scheduler::restore_current_trap_frame(&mut trap_frame);
-    log::trace!("[trampoline] task={:?} restored={} a0={:#x} user_pc={:#x}",
-                task_id,
-                restored,
-                TrapSyscallRead::syscall_args(&trap_frame).arg(0),
-                TrapContextRead::user_pc(&trap_frame));
     assert!(restored,
             "user task entry requires a prepared trap frame in the current task");
     let kernel_stack_top =
