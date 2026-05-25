@@ -13,13 +13,13 @@ use runtime::logging::*;
 macro_rules! basic_elf_paths {
     ($prefix:literal) => {
         &[concat!($prefix, "/chdir"),
-          //concat!($prefix, "/clone"),
+          concat!($prefix, "/clone"),
           //concat!($prefix, "/close"),
           // concat!($prefix, "/dup"),
           // concat!($prefix, "/dup2"),
           // concat!($prefix, "/execve"),
           //concat!($prefix, "/exit"),
-          concat!($prefix, "/fork"),
+          //concat!($prefix, "/fork"),
           // concat!($prefix, "/fstat"),
           // concat!($prefix, "/getcwd"),
           // concat!($prefix, "/getdents"),

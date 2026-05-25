@@ -8,7 +8,7 @@ use alloc::boxed::Box;
 use api_v0::{
     AddressSpaceHandle, ExitedTask, KernelStack, KernelTaskEntry, TaskBlockReason, TaskBootstrap,
     TaskExitCode, TaskId, TaskKind, TaskRuntimeStats, TaskSnapshot, TaskState, TaskTick,
-    TaskTrapSnapshot, TaskWaitResult, UserImageInfo, UserStack, UserTask,
+    TaskTrapSnapshot, TaskWaitResult, UserTask,
 };
 use arch::task::{ActiveArchTaskContext as TaskContext, ArchTaskContext};
 use arch::trap::{
