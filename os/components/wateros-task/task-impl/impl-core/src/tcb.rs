@@ -3,14 +3,17 @@
 //!
 //! 调度器只通过 `task_api` 抽象操作本模块类型。
 
+use abi::user_ret::UserRet;
 use alloc::boxed::Box;
 use api_v0::{
-    ExitedTask, KernelStack, KernelTaskEntry, TaskBlockReason, TaskBootstrap, TaskExitCode, TaskId,
-    TaskKind, TaskRuntimeStats, TaskSnapshot, TaskState, TaskTick, TaskTrapSnapshot,
-    TaskWaitResult, UserTask,
+    AddressSpaceHandle, ExitedTask, KernelStack, KernelTaskEntry, TaskBlockReason, TaskBootstrap,
+    TaskExitCode, TaskId, TaskKind, TaskRuntimeStats, TaskSnapshot, TaskState, TaskTick,
+    TaskTrapSnapshot, TaskWaitResult, UserImageInfo, UserStack, UserTask,
 };
 use arch::task::{ActiveArchTaskContext as TaskContext, ArchTaskContext};
-use arch::trap::{ActiveTrapFrame as TaskTrapFrame, TrapContextRead, TrapContextWrite};
+use arch::trap::{
+    ActiveTrapFrame as TaskTrapFrame, TrapContextRead, TrapContextWrite, TrapSyscallWrite,
+};
 
 unsafe extern "C" {
     fn __arch_task_entry();
@@ -140,6 +143,68 @@ impl TaskControlBlock {
                wait_result : None,
                task_cx,
                inner : TaskInner::User(user) }
+    }
+
+    /// 从父任务 fork 一个子用户任务。
+    ///
+    /// - `child_stack` 非零时（clone）：子任务初始用户 SP 设为该值。
+    /// - `child_stack == 0`（fork）：子任务继承父任务的 SP。
+    /// - `new_aspace_ptr` / `new_satp`：由 `mm::kernel_mm::fork_user_aspace()`
+    ///   返回的独立地址空间。
+    ///
+    /// 子 trap 帧中 a0=0（fork 对子进程返回 0），地址空间 token 指向新页表。
+    pub fn fork_from(&self,
+                     child_id : TaskId,
+                     child_stack : usize,
+                     new_aspace_ptr : usize,
+                     new_satp : usize)
+                     -> Option<Self> {
+        let parent_user = match &self.inner {
+            TaskInner::User(u) => u,
+            _ => return None,
+        };
+
+        // 复制父 trap 帧
+        let mut child_trap = parent_user.trap_frame;
+
+        // 子进程从 fork/clone 返回 0（a0 = 0）
+        <TaskTrapFrame as TrapSyscallWrite>::set_syscall_ret(&mut child_trap,
+                                                             UserRet::from_success(0));
+
+        // 子进程 sepc 前进到下一条指令（跳过已完成的 ecall）
+        <TaskTrapFrame as TrapContextWrite>::add_user_pc(&mut child_trap, 4);
+
+        // clone 提供独立栈时，覆盖用户 SP
+        if child_stack != 0 {
+            <TaskTrapFrame as TrapContextWrite>::set_user_sp(&mut child_trap, child_stack);
+        }
+
+        // 安装新的独立地址空间
+        <TaskTrapFrame as TrapContextWrite>::set_return_address_space_token(&mut child_trap,
+                                                                            new_satp);
+
+        // 构造子 UserTask 规格（元数据继承父，aspace 用新的）
+        let parent_spec = &parent_user.user;
+        let child_spec = UserTask::new(parent_spec.entry_pc(),
+                                       AddressSpaceHandle::from_raw(new_satp),
+                                       parent_spec.image()
+                                                  .expect("parent user task must have image"),
+                                       parent_spec.stack()
+                                                  .expect("parent user task must have stack"),
+                                       new_aspace_ptr);
+
+        let kernel_stack = KernelStack::new();
+        let task_cx = TaskContext::goto_entry(__arch_user_task_entry as *const () as usize,
+                                              kernel_stack.top());
+        Some(Self { id : child_id,
+                    parent_id : Some(self.id),
+                    state : TaskState::Ready,
+                    stats : TaskRuntimeStats::default(),
+                    wait_result : None,
+                    task_cx,
+                    inner : TaskInner::User(UserResources { kernel_stack,
+                                                            trap_frame : child_trap,
+                                                            user : child_spec }) })
     }
 
     // ── 通用访问器 ──────────────────────────────────────────────

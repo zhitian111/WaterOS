@@ -262,9 +262,13 @@ impl RoundRobinScheduler {
             .task_snapshot(task_id)
     }
 
-    pub(super) fn fork_current(&mut self, child_stack : usize) -> Option<TaskId> {
+    pub(super) fn fork_current(&mut self,
+                                child_stack : usize,
+                                new_aspace_ptr : usize,
+                                new_satp : usize)
+                                -> Option<TaskId> {
         let child_id = self.registry
-                           .fork_current(child_stack)?;
+                           .fork_current(child_stack, new_aspace_ptr, new_satp)?;
         self.queues
             .push_spawned_task(child_id);
         Some(child_id)

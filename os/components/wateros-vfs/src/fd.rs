@@ -61,6 +61,12 @@ pub fn close_fd(fd: usize) -> VfsResult<()> {
     with_current_task(|reg, task_id| reg.close_fd_for_task(task_id, fd))
 }
 
+/// fork 时初始化子任务 fd 表（stdin/stdout/stderr）。
+pub fn init_child_fd_table(child_id: task::TaskId) {
+    let mut reg = registry().exclusive_access();
+    reg.init_child_fd_table(child_id);
+}
+
 /// bring-up：两任务 fd 表隔离与 close 语义烟囱。
 pub fn self_test() {
     let mut reg = registry().exclusive_access();

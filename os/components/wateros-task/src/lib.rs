@@ -161,11 +161,14 @@ pub fn reap_exited_task(task_id : TaskId) -> Option<ExitedTask> {
 
 /// 从当前用户任务 fork 一个子任务，并返回子任务 id。
 ///
-/// 子任务获得父任务 trap 帧副本（a0 置 0），共享地址空间与文件描述符表。
+/// 子任务获得父任务 trap 帧副本（a0 置 0），使用独立地址空间。
 /// `child_stack` 非零时，子任务初始用户栈指针设为该值（用于 clone 新栈场景）。
+/// `new_aspace_ptr` / `new_satp` 由 `mm::kernel_mm::fork_user_aspace()` 提供。
 /// 无当前任务或当前不是用户任务时返回 `None`。
 #[inline]
-pub fn fork_current(child_stack : usize) -> Option<TaskId> { scheduler::fork_current(child_stack) }
+pub fn fork_current(child_stack : usize, new_aspace_ptr : usize, new_satp : usize) -> Option<TaskId> {
+    scheduler::fork_current(child_stack, new_aspace_ptr, new_satp)
+}
 
 /// 回收一个任意已退出任务的信息。
 #[inline]

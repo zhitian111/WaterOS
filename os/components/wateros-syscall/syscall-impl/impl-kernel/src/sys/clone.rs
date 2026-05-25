@@ -1,27 +1,14 @@
 //! `clone`/`fork` 系统调用实现。
 //!
-//! 当前仅支持最小 fork 语义（`clone` 不带 `CLONE_VM`/`CLONE_THREAD` 等标志）：
-//! 创建一个子任务，共享父任务地址空间与用户栈区间，子任务获得父任务 trap 帧副本
-//! （a0 置 0），并继承父任务的 cwd。
+//! fork 时会为子进程创建**独立地址空间**（通过 `mm::kernel_mm::fork_user_aspace`），
+//! 复制父进程 trap 帧（a0 置 0 作为子进程返回值），继承 cwd 与 fd 表。
 //!
-//! fork（`child_stack=0`）时子任务获得用户栈底部区域的独立 SP，
-//! 避免子进程在共享栈上写数据破坏父进程栈帧。
+//! clone（`child_stack ≠ 0`）时子进程使用调用者提供的独立栈。
+//! fork（`child_stack == 0`）时子进程沿用父进程栈指针。
 
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
-use alloc::vec::Vec;
-use mm::{
-    api::user_access::UserMemoryOps,
-    api::{
-        addr::{PhysPageNum, VirtAddr, VirtPageNum},
-        address_space::AddressSpaceOps,
-        perm::PagePerm,
-    },
-    frame_alloctor::frame_alloc_result,
-    user_access::Sv39UserMemoryOps,
-    user_aspace::with_user_aspace_mut,
-};
 
 /// clone/fork 系统调用入口。
 ///
@@ -36,20 +23,24 @@ pub(crate) fn sys_clone(args : SyscallArgs) -> UserRet {
 
 #[inline(never)]
 fn do_clone(child_stack : usize) -> UserRet {
-    // TODO: 在新 TCB 设计下恢复 fork 路径（user_resources 已从 TaskSnapshot 移除）
-    match task::fork_current(child_stack) {
-        Some(child_id) => UserRet::from_success(child_id),
-        None => UserRet::from_error(ErrNo::EAGAIN),
-    }
-}
+    let parent_aspace = task::current_task_user_aspace_ptr();
+    let (new_aspace_ptr, new_satp) = match mm::kernel_mm::fork_user_aspace(parent_aspace) {
+        Ok(p) => p,
+        Err(_) => return UserRet::from_error(ErrNo::ENOMEM),
+    };
 
-fn remap_stack_refs(buf : &mut [u8], parent_lo : usize, parent_hi : usize, child_lo : usize) {
-    for word in buf.chunks_exact_mut(core::mem::size_of::<usize>()) {
-        let val = usize::from_ne_bytes(word.try_into()
-                                           .unwrap());
-        if val >= parent_lo && val < parent_hi {
-            let translated = child_lo + (val - parent_lo);
-            word.copy_from_slice(&translated.to_ne_bytes());
-        }
-    }
+    let child_id = match task::fork_current(child_stack, new_aspace_ptr, new_satp) {
+        Some(id) => id,
+        None => return UserRet::from_error(ErrNo::EAGAIN),
+    };
+
+    // 子任务继承父任务 cwd
+    let parent_id = task::current_task_id()
+        .expect("current task must exist after fork");
+    vfs::cwd::copy_cwd_from_parent(child_id, parent_id);
+
+    // 初始化子任务 fd 表
+    vfs::fd::init_child_fd_table(child_id);
+
+    UserRet::from_success(child_id)
 }
