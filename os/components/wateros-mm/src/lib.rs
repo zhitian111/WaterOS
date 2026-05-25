@@ -42,14 +42,14 @@ pub mod kernel_mm {
     // `from_elf_path` 固定返回 `BadClass`（与磁盘/ext4 无关）。
     #[cfg(feature = "impl-sv39")]
     pub use impl_sv39::kernel_mm_impl::{
-        ensure_user_execute_for_kernel_va, from_elf_bytes, from_elf_path, init, kernel_satp,
-        map_anon_range_user, map_identity_range_user,
+        ensure_user_execute_for_kernel_va, fork_user_aspace, from_elf_bytes, from_elf_path, init,
+        kernel_satp, map_anon_range_user, map_identity_range_user,
     };
 
     #[cfg(not(feature = "impl-sv39"))]
     pub use impl_dummy::kernel_mm_impl::{
-        ensure_user_execute_for_kernel_va, from_elf_path, init, kernel_satp, map_anon_range_user,
-        map_identity_range_user,
+        ensure_user_execute_for_kernel_va, fork_user_aspace, from_elf_path, init, kernel_satp,
+        map_anon_range_user, map_identity_range_user,
     };
 }
 

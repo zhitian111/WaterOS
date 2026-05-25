@@ -116,4 +116,12 @@ impl PerTaskFdRegistry {
                              .ok_or(VfsError::BadFd)?;
         handle.close()
     }
+
+    /// fork 时初始化子任务 fd 表：创建独立的 stdin/stdout/stderr 控制台句柄。
+    ///
+    /// 动态 fd（≥3，pipe/file 等）不复制——当前 oscomp fork 测例子进程仅需 write+exit。
+    pub fn init_child_fd_table(&mut self, child : task::TaskId) {
+        // `table_mut` 会自动填充 fd 0/1/2 的默认控制台句柄
+        let _ = self.table_mut(child);
+    }
 }

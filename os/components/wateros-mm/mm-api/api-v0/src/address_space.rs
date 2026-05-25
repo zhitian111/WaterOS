@@ -2,7 +2,7 @@
 //! 切换 `satp` 与 TLB 刷新由 arch/运行时完成；本 trait 本身不在 trap 内执行，也不隐含额外硬件副作用。
 
 use crate::addr::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
-use crate::error::MmResult;
+use crate::error::{MmError, MmResult};
 use crate::frame_allocator::PhysicalFrameAllocator;
 use crate::perm::PagePerm;
 
@@ -45,6 +45,17 @@ pub trait AddressSpaceOps {
     /// 仅具备叶子页语义的 mm-impl（如 Sv39）需要覆盖。
     fn leaf_page_perm(&self, _vpn: VirtPageNum) -> MmResult<Option<PagePerm>> {
         Ok(None)
+    }
+
+    /// 创建一个独立的地址空间副本：所有带 `U`（用户态可访问）权限的叶子页逐帧复制，
+    /// 不带 `U` 的内核恒等映射等页保持共享。
+    ///
+    /// 默认实现返回 [`MmError::Unsupported`]（dummy / 不支持独立地址空间的情形）。
+    fn fork(&self) -> MmResult<Self>
+    where
+        Self: Sized,
+    {
+        Err(MmError::Unsupported)
     }
 
     /// 为 `vpn` 分配新帧并映射（匿名映射/缺页填充常用）。

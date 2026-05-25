@@ -131,12 +131,37 @@ impl TaskRegistry {
 
     /// 从当前任务 fork 一个子用户任务。
     ///
-    /// 子任务继承父任务的 trap 帧（a0 置
-    /// 0）、地址空间与用户栈，使用独立内核栈。 `child_stack`
-    /// 非零时，子任务初始用户 sp 设为该值（用于 clone 新栈场景）。
-    pub(super) fn fork_current(&mut self, _child_stack : usize) -> Option<TaskId> {
-        // TODO: 在新 TCB 设计下恢复 fork 路径
-        None
+    /// 子任务继承父任务的 trap 帧（a0 置 0）、使用独立地址空间
+    /// (`new_aspace_ptr` / `new_satp`，由 `mm::kernel_mm::fork_user_aspace`
+    /// 提供)、 独立内核栈。
+    ///
+    /// `child_stack` 非零时（clone），子任务初始用户 SP 设为该值。
+    pub(super) fn fork_current(&mut self,
+                               child_stack : usize,
+                               new_aspace_ptr : usize,
+                               new_satp : usize)
+                               -> Option<TaskId> {
+        let parent_id = self.current_task_id?;
+        let child_id = self.next_task_id;
+        self.next_task_id += 1;
+
+        let parent = self.task_table
+                         .task(parent_id);
+        log::trace!("[fork] parent={} child_stack={:#x} new_satp={:#x}",
+                    parent_id,
+                    child_stack,
+                    new_satp);
+        let child = parent.fork_from(child_id,
+                                     child_stack,
+                                     new_aspace_ptr,
+                                     new_satp)?;
+
+        self.task_table
+            .insert(Box::new(child));
+        log::trace!("[fork] child={} created parent={}",
+                    child_id,
+                    parent_id);
+        Some(child_id)
     }
 
     pub(super) fn first_switch_to(&mut self, next_task_id : TaskId) -> SwitchPair {

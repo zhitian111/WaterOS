@@ -4,6 +4,8 @@
 
 #![no_std]
 
+extern crate alloc;
+
 use api_v0::addr::{VirtAddr, VirtPageNum, PAGE_SIZE};
 use api_v0::address_space::AddressSpaceOps;
 use api_v0::error::MmError;
@@ -67,4 +69,29 @@ pub mod kernel_mm_impl {
         ensure_user_execute_for_kernel_va, init, kernel_satp, map_anon_range_user,
         map_identity_range_user,
     };
+
+    /// 基于父地址空间创建独立子地址空间：分配新页表树并逐帧复制所有带 `U`
+    /// 权限的用户页。
+    ///
+    /// `parent_aspace_ptr` 来自 `LoadedElf::user_aspace_ptr` / `UserTask::user_aspace_ptr()`，
+    /// 即 `Sv39AddressSpace` 的泄漏裸指针。
+    ///
+    /// 返回 `(子地址空间裸指针, 子 satp 编码值)`；`parent_aspace_ptr == 0` 时返回
+    /// [`api_v0::error::MmError::InvalidAddress`]。
+    pub fn fork_user_aspace(parent_aspace_ptr: usize) -> api_v0::error::MmResult<(usize, usize)> {
+        use alloc::boxed::Box;
+        use api_v0::address_space::AddressSpaceOps;
+        use api_v0::error::MmError;
+        use crate::pagetable::Sv39AddressSpace;
+
+        if parent_aspace_ptr == 0 {
+            return Err(MmError::InvalidAddress);
+        }
+        // SAFETY: 调用方保证 parent_aspace_ptr 指向一直存活（泄漏）的 Sv39AddressSpace
+        let parent = unsafe { &*(parent_aspace_ptr as *const Sv39AddressSpace) };
+        let child = parent.fork()?;
+        let satp = child.satp_value();
+        let child_ptr = Box::into_raw(Box::new(child)) as usize;
+        Ok((child_ptr, satp))
+    }
 }
