@@ -14,7 +14,8 @@ macro_rules! basic_elf_paths {
     ($prefix:literal) => {
         &[concat!($prefix, "/chdir"),
           concat!($prefix, "/clone"),
-          //concat!($prefix, "/close"),
+          concat!($prefix, "/execve"),
+          // concat!($prefix, "/close"),
           // concat!($prefix, "/dup"),
           // concat!($prefix, "/dup2"),
           // concat!($prefix, "/execve"),

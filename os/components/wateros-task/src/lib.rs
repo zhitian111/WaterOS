@@ -34,7 +34,7 @@ pub use self::wait_queue::WaitQueue;
 mod scheduler {
     pub use scheduler::*;
 }
-pub(crate) use api_v0::{
+pub use api_v0::{
     AddressSpaceHandle, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskSnapshot, TaskTick,
     TaskWaitResult, UserImageInfo, UserStack, UserTask, WaitQueueId,
 };
@@ -168,6 +168,17 @@ pub fn reap_exited_task(task_id : TaskId) -> Option<ExitedTask> {
 #[inline]
 pub fn fork_current(child_stack : usize, new_aspace_ptr : usize, new_satp : usize) -> Option<TaskId> {
     scheduler::fork_current(child_stack, new_aspace_ptr, new_satp)
+}
+
+/// execve：替换当前任务的进程映像。
+#[inline]
+pub fn execve_current(entry_pc : usize,
+                      sp : usize,
+                      satp : usize,
+                      user_aspace_ptr : usize,
+                      image_info : UserImageInfo,
+                      stack_info : UserStack) {
+    scheduler::execve_current(entry_pc, sp, satp, user_aspace_ptr, image_info, stack_info)
 }
 
 /// 回收一个任意已退出任务的信息。

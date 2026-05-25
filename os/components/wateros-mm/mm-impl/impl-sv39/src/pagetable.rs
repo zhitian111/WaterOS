@@ -245,6 +245,43 @@ impl Sv39AddressSpace {
                               mmap_anon_cursor : self.mmap_anon_cursor,
                               mmap_file_cursor : self.mmap_file_cursor })
     }
+
+    /// 递归释放所有用户页帧及页表帧，不触碰内核恒等映射。
+    ///
+    /// 调用后本地址空间不再可用。
+    pub fn destroy(&mut self) {
+        unsafe {
+            destroy_table(self.root, SV39_LEVELS - 1);
+        }
+        self.root = PhysPageNum(0);
+    }
+}
+
+/// 递归销毁页表树：释放 U 标志的叶子页对应的物理帧，递归释放子页表帧。
+///
+/// # Safety
+/// 调用方确保 `ppn` 指向有效的 4 KiB 页表帧。
+unsafe fn destroy_table(ppn : PhysPageNum, level : usize) {
+    let table = unsafe { table_mut(ppn) };
+    for pte in table.iter() {
+        let flags = pte.flags();
+        if !flags.is_valid() {
+            continue;
+        }
+        let child_ppn = pte.ppn();
+
+        if flags.is_leaf() &&
+           flags.to_page_perm()
+                .user()
+        {
+            let _ = frame_dealloc_result(child_ppn);
+        } else if level > 0 {
+            unsafe {
+                destroy_table(child_ppn, level - 1);
+            }
+        }
+    }
+    let _ = frame_dealloc_result(ppn);
 }
 
 /// 递归复制一级页表：遍历 `parent_ppn` 对应的 Sv39 页表项，将
@@ -378,5 +415,9 @@ impl AddressSpaceOps for Sv39AddressSpace {
 }
 
 impl Drop for Sv39AddressSpace {
-    fn drop(&mut self) { let _ = frame_dealloc_result(self.root); }
+    fn drop(&mut self) {
+        if self.root.0 != 0 {
+            let _ = frame_dealloc_result(self.root);
+        }
+    }
 }

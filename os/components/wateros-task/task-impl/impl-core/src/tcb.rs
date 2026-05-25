@@ -8,7 +8,7 @@ use alloc::boxed::Box;
 use api_v0::{
     AddressSpaceHandle, ExitedTask, KernelStack, KernelTaskEntry, TaskBlockReason, TaskBootstrap,
     TaskExitCode, TaskId, TaskKind, TaskRuntimeStats, TaskSnapshot, TaskState, TaskTick,
-    TaskTrapSnapshot, TaskWaitResult, UserTask,
+    TaskTrapSnapshot, TaskWaitResult, UserImageInfo, UserStack, UserTask,
 };
 use arch::task::{ActiveArchTaskContext as TaskContext, ArchTaskContext};
 use arch::trap::{
@@ -205,6 +205,48 @@ impl TaskControlBlock {
                     inner : TaskInner::User(UserResources { kernel_stack,
                                                             trap_frame : child_trap,
                                                             user : child_spec }) })
+    }
+
+    /// execve：替换当前任务的地址空间、栈和入口。
+    ///
+    /// - 销毁旧 `UserResources`（内核栈、旧地址空间）
+    /// - 安装新的 `entry_pc`、`sp`、`satp`、`user_aspace_ptr`
+    pub fn execve_from(&mut self,
+                       entry_pc : usize,
+                       sp : usize,
+                       satp : usize,
+                       user_aspace_ptr : usize,
+                       image_info : UserImageInfo,
+                       stack_info : UserStack) {
+        let user_inner = match &mut self.inner {
+            TaskInner::User(u) => u,
+            _ => return,
+        };
+
+        // 构造新 UserTask 规格
+        let new_spec = UserTask::new(entry_pc,
+                                     AddressSpaceHandle::from_raw(satp),
+                                     image_info,
+                                     stack_info,
+                                     user_aspace_ptr);
+
+        // 替换内核栈
+        let new_kernel_stack = KernelStack::new();
+
+        // 新 trap 帧：入口 + 用户栈 + satp（trap_handler 对 execve 跳过 add_user_pc）
+        let mut new_trap = TaskTrapFrame::default();
+        <TaskTrapFrame as TrapContextWrite>::prepare_user_return(&mut new_trap, entry_pc, sp);
+        <TaskTrapFrame as TrapContextWrite>::set_return_address_space_token(&mut new_trap, satp);
+
+        // 替换内部资源
+        user_inner.kernel_stack = new_kernel_stack;
+        user_inner.trap_frame = new_trap;
+        user_inner.user = new_spec;
+
+        // 重构 task_cx，指向新内核栈
+        self.task_cx = TaskContext::goto_entry(__arch_user_task_entry as *const () as usize,
+                                               user_inner.kernel_stack
+                                                         .top());
     }
 
     // ── 通用访问器 ──────────────────────────────────────────────

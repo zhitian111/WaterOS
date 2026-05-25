@@ -5,6 +5,7 @@
 //!
 //! **须在** `task::init()` **之后**调用 [`init`]。
 
+use abi::syscall_number::{ActiveSyscallNumberTable, SyscallNumberTable};
 use abi::user_ret::UserRet;
 use arch_api_v0::kernel_trap::register_kernel_trap_handler;
 use arch_api_v0::trap::{
@@ -74,8 +75,11 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                        syscall_nr,
                        syscall_ret);
             }
-            cx.add_user_pc(SYSCALL_INSN_BYTES);
-            cx.set_syscall_ret(UserRet(syscall_ret));
+            // execve 已替换整个 trap 帧，跳过 sepc 推进与返回值写入
+            if syscall_nr != <ActiveSyscallNumberTable as SyscallNumberTable>::EXEC.raw() {
+                cx.add_user_pc(SYSCALL_INSN_BYTES);
+                cx.set_syscall_ret(UserRet(syscall_ret));
+            }
         }
         TrapCause::Exception(Exception::InstructionPageFault) |
         TrapCause::Exception(Exception::LoadPageFault) |

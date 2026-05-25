@@ -96,6 +96,12 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     fn dispatch_futex(args : SyscallArgs) -> isize { sys::sys_futex(args).0 }
 
     #[inline]
+    fn dispatch_fcntl(args : SyscallArgs) -> isize { sys::sys_fcntl(args).0 }
+
+    #[inline]
+    fn dispatch_execve(args : SyscallArgs) -> isize { sys::sys_execve(args).0 }
+
+    #[inline]
     fn dispatch_waitpid(args : SyscallArgs) -> isize { sys::sys_waitpid(args).0 }
 
     #[inline]
