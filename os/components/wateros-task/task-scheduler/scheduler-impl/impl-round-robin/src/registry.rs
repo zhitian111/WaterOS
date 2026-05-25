@@ -164,6 +164,26 @@ impl TaskRegistry {
         Some(child_id)
     }
 
+    /// execve：替换当前任务的地址空间、入口和栈。
+    pub(super) fn execve_current(&mut self,
+                                 entry_pc : usize,
+                                 sp : usize,
+                                 satp : usize,
+                                 user_aspace_ptr : usize,
+                                 image_info : task_api::UserImageInfo,
+                                 stack_info : task_api::UserStack) {
+        let current_id = self.current_task_id
+                             .expect("execve requires a current task");
+        self.task_table
+            .task_mut(current_id)
+            .execve_from(entry_pc,
+                         sp,
+                         satp,
+                         user_aspace_ptr,
+                         image_info,
+                         stack_info);
+    }
+
     pub(super) fn first_switch_to(&mut self, next_task_id : TaskId) -> SwitchPair {
         let current_task_cx_ptr = &mut self.bootstrap_task_cx as *mut TaskContext;
         let next_task_cx_ptr = self.mark_running_and_set_current(next_task_id);

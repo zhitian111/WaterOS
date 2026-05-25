@@ -62,11 +62,31 @@ pub fn allocate_wait_queue() -> WaitQueueId { active_impl::allocate_wait_queue()
 
 /// 从当前用户任务 fork 一个子任务，并返回子任务 id。
 ///
-/// 子任务获得父 trap 帧副本（a0 置 0）、独立地址空间（`new_aspace_ptr` / `new_satp`）。
-/// `child_stack` 非零时，子任务初始用户栈指针设为该值（用于 clone 新栈场景）。
+/// 子任务获得父 trap 帧副本（a0 置 0）、独立地址空间（`new_aspace_ptr` /
+/// `new_satp`）。 `child_stack` 非零时，子任务初始用户栈指针设为该值（用于
+/// clone 新栈场景）。
 #[inline]
-pub fn fork_current(child_stack : usize, new_aspace_ptr : usize, new_satp : usize) -> Option<TaskId> {
+pub fn fork_current(child_stack : usize,
+                    new_aspace_ptr : usize,
+                    new_satp : usize)
+                    -> Option<TaskId> {
     active_impl::fork_current(child_stack, new_aspace_ptr, new_satp)
+}
+
+/// execve：替换当前任务进程映像。
+#[inline]
+pub fn execve_current(entry_pc : usize,
+                      sp : usize,
+                      satp : usize,
+                      user_aspace_ptr : usize,
+                      image_info : task_api::UserImageInfo,
+                      stack_info : task_api::UserStack) {
+    active_impl::execve_current(entry_pc,
+                                sp,
+                                satp,
+                                user_aspace_ptr,
+                                image_info,
+                                stack_info)
 }
 
 /// 启动调度器并切入第一个可运行任务。

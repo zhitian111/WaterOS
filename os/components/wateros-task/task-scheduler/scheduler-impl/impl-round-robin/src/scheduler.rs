@@ -263,15 +263,31 @@ impl RoundRobinScheduler {
     }
 
     pub(super) fn fork_current(&mut self,
-                                child_stack : usize,
-                                new_aspace_ptr : usize,
-                                new_satp : usize)
-                                -> Option<TaskId> {
+                               child_stack : usize,
+                               new_aspace_ptr : usize,
+                               new_satp : usize)
+                               -> Option<TaskId> {
         let child_id = self.registry
                            .fork_current(child_stack, new_aspace_ptr, new_satp)?;
         self.queues
             .push_spawned_task(child_id);
         Some(child_id)
+    }
+
+    pub(super) fn execve_current(&mut self,
+                                 entry_pc : usize,
+                                 sp : usize,
+                                 satp : usize,
+                                 user_aspace_ptr : usize,
+                                 image_info : task_api::UserImageInfo,
+                                 stack_info : task_api::UserStack) {
+        self.registry
+            .execve_current(entry_pc,
+                            sp,
+                            satp,
+                            user_aspace_ptr,
+                            image_info,
+                            stack_info);
     }
 
     pub(super) fn current_tick(&self) -> TaskTick {
