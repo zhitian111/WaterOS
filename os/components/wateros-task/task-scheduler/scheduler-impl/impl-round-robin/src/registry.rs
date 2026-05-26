@@ -276,6 +276,17 @@ impl TaskRegistry {
             .and_then(TaskControlBlock::parent_id)
     }
 
+    pub(super) fn is_schedulable(&self, task_id : TaskId) -> bool {
+        if task_id == IDLE_TASK_ID {
+            return self.task_table
+                       .task_opt(task_id)
+                       .is_some();
+        }
+        self.task_table
+            .task_opt(task_id)
+            .is_some_and(|task| !matches!(task.state(), TaskState::Exited(_)))
+    }
+
     pub(super) fn has_child(&self, parent_id : TaskId) -> bool {
         self.task_table
             .slots

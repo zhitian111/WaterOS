@@ -8,9 +8,10 @@
 //! 运行的 tick 数。增大此值可使调度行为更接近 FCFS。
 
 use api_v0::ScheduleReason;
+use arch::task::ActiveArchTaskContext as TaskContext;
 use task_api::{
     ExitedTask, KernelTaskEntry, TaskBlockReason, TaskId, TaskSnapshot, TaskTick, TaskWaitHandle,
-    TaskWaitResult, UserTask, WaitQueueId,
+    TaskWaitResult, UserTask, WaitQueueId, IDLE_TASK_ID,
 };
 
 use crate::queues::{QueueTarget, RoundRobinQueues};
@@ -72,10 +73,38 @@ impl RoundRobinScheduler {
         self.queues
             .promote_wait_timeouts(&mut self.registry);
         let next_task_id = self.queues
-                               .pick_next_task_id();
+                               .pick_next_runnable_task_id(&self.registry);
         self.current_task_ticks = 0;
         self.registry
             .first_switch_to(next_task_id)
+    }
+
+    fn finish_schedule_switch(&mut self,
+                              current_task_id : TaskId,
+                              current_ptr : *mut TaskContext,
+                              is_exit : bool)
+                              -> Option<SwitchPair> {
+        let next_task_id = self.queues
+                               .pick_next_runnable_task_id(&self.registry);
+        if next_task_id == current_task_id {
+            if is_exit {
+                if !self.registry
+                        .is_idle(current_task_id)
+                {
+                    let next_ptr = self.registry
+                                       .mark_running_and_set_current(IDLE_TASK_ID);
+                    return Some((current_ptr, next_ptr));
+                }
+                panic!("exit_current: no runnable task after exit");
+            }
+            let _ = self.registry
+                        .mark_running_and_set_current(next_task_id);
+            return None;
+        }
+
+        let next_ptr = self.registry
+                           .mark_running_and_set_current(next_task_id);
+        Some((current_ptr, next_ptr))
     }
 
     pub(super) fn schedule(&mut self, reason : ScheduleReason) -> Option<SwitchPair> {
@@ -120,7 +149,7 @@ impl RoundRobinScheduler {
                .is_idle(current_task_id)
         {
             let next_task_id = self.queues
-                                   .pick_next_task_id();
+                                   .pick_next_runnable_task_id(&self.registry);
             if next_task_id == current_task_id {
                 let _ = self.registry
                             .mark_running_and_set_current(next_task_id);
@@ -131,6 +160,7 @@ impl RoundRobinScheduler {
             return Some((current_ptr, next_ptr));
         }
 
+        let is_exit = matches!(reason, ScheduleReason::Exit(_));
         let queue_target = match reason {
             ScheduleReason::StartFirst => QueueTarget::Ready,
             ScheduleReason::Yield | ScheduleReason::Tick => QueueTarget::Ready,
@@ -149,17 +179,7 @@ impl RoundRobinScheduler {
                           current_task_id,
                           queue_target);
 
-        let next_task_id = self.queues
-                               .pick_next_task_id();
-        if next_task_id == current_task_id {
-            let _ = self.registry
-                        .mark_running_and_set_current(next_task_id);
-            return None;
-        }
-
-        let next_ptr = self.registry
-                           .mark_running_and_set_current(next_task_id);
-        Some((current_ptr, next_ptr))
+        self.finish_schedule_switch(current_task_id, current_ptr, is_exit)
     }
 
     pub(super) fn schedule_wait(&mut self,
@@ -204,7 +224,7 @@ impl RoundRobinScheduler {
         }
 
         let next_task_id = self.queues
-                               .pick_next_task_id();
+                               .pick_next_runnable_task_id(&self.registry);
         let next_ptr = self.registry
                            .mark_running_and_set_current(next_task_id);
         Some((current_ptr, next_ptr))
