@@ -172,10 +172,31 @@ fn write_exit_code(exit_code_ptr : usize, exit_code : isize) -> Result<(), ErrNo
     copy_to_user_struct(exit_code_ptr, &wait_status)
 }
 
+/// waitpid 回收用户任务时释放其 Sv39 地址空间（execve 已 drop 的旧 aspace 不在
+/// TCB 中）。
+fn drop_exited_user_aspace(exited : &task::ExitedTask) {
+    if let Some(trap) = exited.trap_frame {
+        let aspace_ptr = trap.user_aspace_ptr();
+        if aspace_ptr == 0 {
+            return;
+        }
+        // 勿释放仍在运行的任务地址空间（例如误 reap 当前任务）。
+        if task::current_task_user_aspace_ptr() == aspace_ptr {
+            return;
+        }
+        mm::kernel_mm::drop_user_aspace(aspace_ptr);
+    }
+}
+
 fn finish_wait_result(exited : task::ExitedTask, exit_code_ptr : usize) -> UserRet {
-    write_exit_code(exit_code_ptr, exited.exit_code);
-    vfs::cwd::drop_task_cwd(exited.id);
-    UserRet::from_success(exited.id)
+    match write_exit_code(exit_code_ptr, exited.exit_code) {
+        Ok(()) => {
+            drop_exited_user_aspace(&exited);
+            vfs::cwd::drop_task_cwd(exited.id);
+            UserRet::from_success(exited.id)
+        }
+        Err(e) => UserRet::from_error(e),
+    }
 }
 
 /// `waitpid`/`wait4` 早期语义：维护最小父子关系并阻塞等待子任务退出；暂不解析

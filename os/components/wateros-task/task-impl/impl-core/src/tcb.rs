@@ -23,7 +23,9 @@ unsafe extern "C" {
 // ── 任务类型专属资源 ──────────────────────────────────────────────
 
 enum TaskInner {
-    Idle,
+    /// Idle 须与 [`KernelResources`] 一样持有内核栈与 bootstrap，否则 `task_cx.sp` /
+    /// `s[0]` 会指向创建后立即 drop 的堆内存，堆复用后上下文损坏。
+    Idle(KernelResources),
     Kernel(KernelResources),
     User(UserResources),
 }
@@ -127,7 +129,8 @@ impl TaskControlBlock {
                stats : TaskRuntimeStats::default(),
                wait_result : None,
                task_cx,
-               inner : TaskInner::Idle }
+               inner : TaskInner::Idle(KernelResources { kernel_stack,
+                                                          bootstrap }) }
     }
 
     /// 创建一个用户任务。
@@ -261,7 +264,7 @@ impl TaskControlBlock {
     pub fn state(&self) -> TaskState { self.state }
 
     #[inline]
-    pub fn is_idle(&self) -> bool { matches!(self.inner, TaskInner::Idle) }
+    pub fn is_idle(&self) -> bool { matches!(self.inner, TaskInner::Idle(_)) }
 
     #[inline]
     pub fn context_ptr(&self) -> *const TaskContext { &self.task_cx as *const TaskContext }
@@ -272,7 +275,7 @@ impl TaskControlBlock {
     #[inline]
     pub fn snapshot(&self) -> TaskSnapshot {
         let kind = match &self.inner {
-            TaskInner::Idle | TaskInner::Kernel(_) => TaskKind::Kernel,
+            TaskInner::Idle(_) | TaskInner::Kernel(_) => TaskKind::Kernel,
             TaskInner::User(_) => TaskKind::User,
         };
         let trap_frame = match &self.inner {
@@ -295,8 +298,7 @@ impl TaskControlBlock {
     #[inline]
     pub fn kernel_stack_top(&self) -> usize {
         match &self.inner {
-            TaskInner::Idle => 0,
-            TaskInner::Kernel(k) => k.kernel_stack.top(),
+            TaskInner::Idle(k) | TaskInner::Kernel(k) => k.kernel_stack.top(),
             TaskInner::User(u) => u.kernel_stack.top(),
         }
     }
@@ -376,7 +378,7 @@ impl TaskControlBlock {
             return None;
         };
         let kind = match &self.inner {
-            TaskInner::Idle | TaskInner::Kernel(_) => TaskKind::Kernel,
+            TaskInner::Idle(_) | TaskInner::Kernel(_) => TaskKind::Kernel,
             TaskInner::User(_) => TaskKind::User,
         };
         let trap_frame = match &self.inner {

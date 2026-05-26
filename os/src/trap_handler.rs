@@ -32,6 +32,44 @@ static TIMER_TICK_COUNT : AtomicUsize = AtomicUsize::new(0);
 /// 当前支持架构的 syscall/trap 指令宽度，用于将用户 PC 前进到下一条指令。
 const SYSCALL_INSN_BYTES : usize = 4;
 
+/// 记录用户任务 trap 杀进程上下文并终止当前任务。
+fn kill_current_user_task(context : &str, trap_cause : TrapCause, cx : &TrapContext) -> ! {
+    if let Some(snapshot) = task::current_task_snapshot() {
+        warn!("[trap] killing user task ({}) cause={:?} pc={:#x} fault_addr={:#x} \
+               task_id={} parent_id={:?} state={:?}",
+              context,
+              trap_cause,
+              cx.user_pc(),
+              cx.fault_addr(),
+              snapshot.id,
+              snapshot.parent_id,
+              snapshot.state);
+    } else {
+        warn!("[trap] killing user task ({}) cause={:?} pc={:#x} fault_addr={:#x} \
+               (no current task snapshot)",
+              context,
+              trap_cause,
+              cx.user_pc(),
+              cx.fault_addr());
+    }
+    task::exit_current(0);
+}
+
+/// 内核态不可恢复 trap：记录诊断后停机，避免 `sret` 到损坏 PC 形成级联 fault。
+fn fatal_kernel_trap(context : &str, trap_cause : TrapCause, raw_cause : usize, cx : &TrapContext) -> ! {
+    error!("[trap] fatal kernel trap ({}) cause={:?} raw_cause={:#x} pc={:#x} fault_addr={:#x} \
+            returns_to_user={}",
+           context,
+           trap_cause,
+           raw_cause,
+           cx.user_pc(),
+           cx.fault_addr(),
+           cx.returns_to_user());
+    loop {
+        let _ = platform::arch::interrupt::wait_for_interrupt();
+    }
+}
+
 /// 组合层内核 trap 入口：由 `arch` 在异常/中断向量中调用，`frame` 为当前 trap
 /// 帧字节指针。
 ///
@@ -96,14 +134,9 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                       cx.user_pc(),
                       cx.fault_addr(),
                       cx.user_sp());
-                task::exit_current(0);
+                kill_current_user_task("user memory fault", trap_cause, cx);
             }
-            debug!("[trap] kernel page fault: cause={:?} raw_cause={:#x?} pc={:#x?} \
-                    fault_addr={:#x?}",
-                   trap_cause,
-                   raw_cause,
-                   cx.user_pc(),
-                   cx.fault_addr());
+            fatal_kernel_trap("kernel page fault", trap_cause, raw_cause, cx);
         }
         TrapCause::Interrupt(Interrupt::SupervisiorTimer) => {
             if let Err(err) = platform::timer::set_timer_after_ms(TIMER_REARM_MS) {
@@ -119,17 +152,9 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
         _ => {
             if cx.returns_to_user() {
                 // 用户态异常（非法指令、断点等）：杀死当前任务而非 panic 内核
-                warn!("[trap] killing user task cause={:?} pc={:#x} fault_addr={:#x}",
-                      trap_cause,
-                      cx.user_pc(),
-                      cx.fault_addr());
-                task::exit_current(0);
+                kill_current_user_task("user exception", trap_cause, cx);
             }
-            warn!("[trap] unexpected trap cause={:?} pc={:#x} fault_addr={:#x} returns_to_user={}",
-                  trap_cause,
-                  cx.user_pc(),
-                  cx.fault_addr(),
-                  cx.returns_to_user());
+            fatal_kernel_trap("unexpected trap", trap_cause, raw_cause, cx);
         }
     }
 

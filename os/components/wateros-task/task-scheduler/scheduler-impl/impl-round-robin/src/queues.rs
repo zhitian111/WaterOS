@@ -107,10 +107,43 @@ impl RoundRobinQueues {
         self.current_tick
     }
 
-    pub(super) fn pick_next_task_id(&mut self) -> TaskId {
-        self.ready_queue
-            .pop_front()
-            .unwrap_or(IDLE_TASK_ID)
+    /// 从就绪队列中弹出第一个 **存在且未退出** 的任务；跳过 stale / zombie 项。
+    pub(super) fn pick_next_runnable_task_id(&mut self, registry : &TaskRegistry) -> TaskId {
+        while let Some(task_id) = self.ready_queue
+                                        .pop_front()
+        {
+            if registry.is_schedulable(task_id) {
+                return task_id;
+            }
+            log::trace!("[task-scheduler] skip unrunnable task {} in ready_queue",
+                        task_id);
+        }
+        IDLE_TASK_ID
+    }
+
+    /// 将任务从一切 **可运行/等待** 队列中移除（不含 `exited_queue`）。
+    pub(super) fn detach_task_from_run_queues(&mut self, task_id : TaskId) {
+        let _ = take_task_id_by_id(&mut self.ready_queue, task_id);
+        let _ = take_task_id_by_id(&mut self.blocked_queue, task_id);
+        let _ = take_task_id_by_id(&mut self.sleep_queue, task_id);
+        for wait_queue in &mut self.wait_queues {
+            let _ = take_task_id_by_id(wait_queue, task_id);
+        }
+        for wait_queue in &mut self.exit_wait_queues {
+            let _ = take_task_id_by_id(wait_queue, task_id);
+        }
+        for wait_queue in &mut self.child_exit_wait_queues {
+            let _ = take_task_id_by_id(wait_queue, task_id);
+        }
+        let mut pending = VecDeque::new();
+        while let Some(entry) = self.wait_timeouts
+                                        .pop_front()
+        {
+            if entry.task_id != task_id {
+                pending.push_back(entry);
+            }
+        }
+        self.wait_timeouts = pending;
     }
 
     pub(super) fn enqueue_task(
@@ -143,6 +176,7 @@ impl RoundRobinQueues {
                     .push_back(task_id);
             }
             QueueTarget::Exited(exit_code) => {
+                self.detach_task_from_run_queues(task_id);
                 registry.mark_exited(task_id, exit_code);
                 self.exited_queue
                     .push_back(task_id);
@@ -304,6 +338,7 @@ impl RoundRobinQueues {
         if !take_task_id_by_id(&mut self.exited_queue, task_id) {
             return None;
         }
+        self.detach_task_from_run_queues(task_id);
         registry.reap_task(task_id)
     }
 
@@ -314,6 +349,7 @@ impl RoundRobinQueues {
         let task_id = self
             .exited_queue
             .pop_front()?;
+        self.detach_task_from_run_queues(task_id);
         registry.reap_task(task_id)
     }
 
