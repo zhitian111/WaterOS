@@ -1,10 +1,10 @@
 //! `clone`/`fork` 系统调用实现。
 //!
-//! 当前仅支持最小 fork 语义（`clone` 不带 `CLONE_VM`/`CLONE_THREAD` 等标志）：
-//! 创建一个子任务，共享父任务地址空间与用户栈，子任务获得父任务 trap 帧副本
-//! （a0 置 0），并继承父任务的 cwd。
+//! fork 时会为子进程创建**独立地址空间**（通过 `mm::kernel_mm::fork_user_aspace`），
+//! 复制父进程 trap 帧（a0 置 0 作为子进程返回值），继承 cwd 与 fd 表。
 //!
-//! 父任务返回子任务 PID，子任务返回 0。
+//! clone（`child_stack ≠ 0`）时子进程使用调用者提供的独立栈。
+//! fork（`child_stack == 0`）时子进程沿用父进程栈指针。
 
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
@@ -17,20 +17,30 @@ use abi::user_ret::UserRet;
 /// - `arg1`: child_stack（0 表示复用父任务栈指针）
 /// - 其余参数暂未处理
 pub(crate) fn sys_clone(args : SyscallArgs) -> UserRet {
-    let parent_id = match task::current_task_id() {
-        Some(id) => id,
-        None => return UserRet::from_error(ErrNo::ESRCH),
+    let child_stack = args.arg(1);
+    do_clone(child_stack)
+}
+
+#[inline(never)]
+fn do_clone(child_stack : usize) -> UserRet {
+    let parent_aspace = task::current_task_user_aspace_ptr();
+    let (new_aspace_ptr, new_satp) = match mm::kernel_mm::fork_user_aspace(parent_aspace) {
+        Ok(p) => p,
+        Err(_) => return UserRet::from_error(ErrNo::ENOMEM),
     };
 
-    let child_stack = args.arg(1);
-    match task::fork_current(child_stack) {
-        Some(child_id) => {
-            // 继承父任务的 cwd
-            #[cfg(feature = "fd-session")]
-            vfs::cwd::copy_cwd_from_parent(child_id, parent_id);
-            // 父任务返回子任务 id
-            UserRet::from_success(child_id)
-        }
-        None => UserRet::from_error(ErrNo::EAGAIN),
-    }
+    let child_id = match task::fork_current(child_stack, new_aspace_ptr, new_satp) {
+        Some(id) => id,
+        None => return UserRet::from_error(ErrNo::EAGAIN),
+    };
+
+    // 子任务继承父任务 cwd
+    let parent_id = task::current_task_id()
+        .expect("current task must exist after fork");
+    vfs::cwd::copy_cwd_from_parent(child_id, parent_id);
+
+    // 初始化子任务 fd 表
+    vfs::fd::init_child_fd_table(child_id);
+
+    UserRet::from_success(child_id)
 }

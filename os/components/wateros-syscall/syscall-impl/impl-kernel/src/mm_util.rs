@@ -1,8 +1,7 @@
 //! 系统调用层与 [`wateros-mm`] API 之间的错误与标志转换。
 
-use abi::errno::ErrNo;
-
 use crate::unsupported::syscall_unsupported;
+use abi::errno::ErrNo;
 
 /// 用户态 `brk` 的单调递增假顶：在无 ELF
 /// 用户页表（`user_aspace_ptr==0`）时兜底。
@@ -64,9 +63,7 @@ pub(crate) fn linux_mmap_is_anonymous(flags : u32) -> bool {
 }
 
 pub(crate) fn current_user_aspace_handle() -> Option<usize> {
-    let snap = task::current_task_snapshot()?;
-    let ur = snap.user_resources?;
-    let p = ur.user_aspace_ptr;
+    let p = task::current_task_user_aspace_ptr();
     if p == 0 {
         None
     } else {

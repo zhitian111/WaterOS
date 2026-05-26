@@ -3,6 +3,7 @@
 //! 不提供自旋锁；跨 hart 或抢占重入场景须由调用方另行同步。
 
 use core::cell::{RefCell, RefMut};
+use core::any::type_name;
 
 /// 单核环境下的“安全单例容器”：
 /// - 通过 `RefCell` 在运行时保证 `exclusive_access()` 产生的 `&mut T` 唯一性；
@@ -23,7 +24,10 @@ impl<T> UniprocessorSafeCell<T> {
 
     /// 获取对内部值的独占可变借用；若已存在未释放的借用则会在运行时 panic。
     pub fn exclusive_access(&self) -> RefMut<'_, T> {
-        self.inner.borrow_mut()
+        self.inner
+            .try_borrow_mut()
+            .unwrap_or_else(|_| panic!("RefCell already borrowed: {}",
+                                       type_name::<T>()))
     }
 }
 

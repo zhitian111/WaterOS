@@ -1,0 +1,66 @@
+//! 内核任务首次运行时的 **不透明启动载荷**：由 arch
+//! 任务入口跳板传入，再调用实际 `KernelTaskEntry`。
+//!
+//! 留在实现层，避免在公共 `task_api` 中暴露具体启动协议。
+use alloc::boxed::Box;
+use core::alloc::Layout;
+const KERNEL_TASK_STACK_SIZE : usize = 32 * 1024;
+
+pub type KernelTaskEntry = extern "C" fn(usize) -> !;
+
+/// 由 arch 任务入口跳板交给任务运行时的不透明启动数据；公共任务 API
+/// 无需暴露启动协议细节。
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TaskBootstrap {
+    pub entry : KernelTaskEntry,
+    pub arg : usize,
+}
+
+impl TaskBootstrap {
+    /// 构造启动载荷：`entry` 为实际内核任务体，`arg` 透传给该入口。
+    #[inline]
+    pub const fn new(entry : KernelTaskEntry, arg : usize) -> Self { Self { entry, arg } }
+
+    /// 跳转到内核任务入口；仅在首次被调度到该任务时由 arch 跳板调用一次。
+    #[inline]
+    pub fn run(&self) -> ! { (self.entry)(self.arg) }
+}
+
+
+#[repr(align(16))]
+struct AlignedKernelStack([u8; KERNEL_TASK_STACK_SIZE]);
+/// 内核任务独占的内核栈封装。
+pub struct KernelStack {
+    storage : Box<AlignedKernelStack>,
+    top : usize,
+}
+impl KernelStack {
+    pub fn new() -> Self {
+        // 使用 alloc_zeroed 避免 [0; 32KB] 在任务内核栈上产生临时量
+        let layout = Layout::new::<AlignedKernelStack>();
+        let ptr = unsafe { alloc::alloc::alloc_zeroed(layout) as *mut AlignedKernelStack };
+        let storage = unsafe { Box::from_raw(ptr) };
+        let stack_bottom = storage.0.as_ptr() as usize;
+        let top = align_down(stack_bottom + KERNEL_TASK_STACK_SIZE,
+                             16);
+        Self { storage, top }
+    }
+
+    #[inline]
+    /// 返回当前内核栈的栈顶地址。
+    pub fn top(&self) -> usize {
+        debug_assert_eq!(align_down(self.storage
+                                        .0
+                                        .as_ptr() as usize +
+                                    KERNEL_TASK_STACK_SIZE,
+                                    16),
+                         self.top);
+        self.top
+    }
+}
+
+
+// `align` 必须为 2 的幂；栈顶向下对齐以满足调用约定中的 16 字节对齐要求。
+#[inline]
+const fn align_down(value : usize, align : usize) -> usize { value & !(align - 1) }

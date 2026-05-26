@@ -7,7 +7,7 @@
     log = { version = "0.4.29" }
     console = { path = "../runtime-console/", package = "wateros-runtime-console", default-features = false }
 [features]
-    default = [ "impl-trace" ]
+    default = [ "impl-info" ]
     impl-debug = [  ]
     impl-dummy = [ "console/impl-dummy" ]
     impl-error = [  ]

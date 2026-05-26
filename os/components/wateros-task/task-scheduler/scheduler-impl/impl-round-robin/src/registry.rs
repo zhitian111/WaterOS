@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 use arch::task::{ActiveArchTaskContext as TaskContext, ArchTaskContext};
 use task_api::{
     ExitedTask, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskId, TaskSnapshot, TaskState,
-    TaskTick, TaskWaitHandle, TaskWaitResult, TaskWaitTarget, UserTaskSpec, IDLE_TASK_ID,
+    TaskTick, TaskWaitHandle, TaskWaitResult, TaskWaitTarget, UserTask, IDLE_TASK_ID,
 };
 use task_impl::TaskControlBlock;
 
@@ -111,7 +111,7 @@ impl TaskRegistry {
         task_id
     }
 
-    pub(super) fn spawn_user_task_spec(&mut self, spec : UserTaskSpec) -> TaskId {
+    pub(super) fn spawn_user_task_spec(&mut self, spec : UserTask) -> TaskId {
         let task_id = self.next_task_id;
         self.next_task_id += 1;
         log::trace!("[task-spawn] user spec id={} entry_pc={:#x} address_space_raw={:#x} \
@@ -122,7 +122,7 @@ impl TaskRegistry {
                         .map(|h| h.raw())
                         .unwrap_or(0),
                     spec.image(),
-                    spec.external_stack());
+                    spec.stack());
         let parent_id = self.current_task_id;
         self.task_table
             .insert(Box::new(TaskControlBlock::new_user_task(task_id, parent_id, spec)));
@@ -131,24 +131,57 @@ impl TaskRegistry {
 
     /// 从当前任务 fork 一个子用户任务。
     ///
-    /// 子任务继承父任务的 trap 帧（a0 置 0）、地址空间与用户栈，使用独立内核栈。
-    /// `child_stack` 非零时，子任务初始用户 sp 设为该值（用于 clone 新栈场景）。
-    pub(super) fn fork_current(&mut self, child_stack : usize) -> Option<TaskId> {
+    /// 子任务继承父任务的 trap 帧（a0 置 0）、使用独立地址空间
+    /// (`new_aspace_ptr` / `new_satp`，由 `mm::kernel_mm::fork_user_aspace`
+    /// 提供)、 独立内核栈。
+    ///
+    /// `child_stack` 非零时（clone），子任务初始用户 SP 设为该值。
+    pub(super) fn fork_current(&mut self,
+                               child_stack : usize,
+                               new_aspace_ptr : usize,
+                               new_satp : usize)
+                               -> Option<TaskId> {
         let parent_id = self.current_task_id?;
         let child_id = self.next_task_id;
         self.next_task_id += 1;
 
-        // 从父任务的 TCB fork 出子任务
-        let child = TaskControlBlock::fork_user_task(self.task_table
-                                                         .task(parent_id),
-                                                     child_id,
-                                                     child_stack);
+        let parent = self.task_table
+                         .task(parent_id);
+        log::trace!("[fork] parent={} child_stack={:#x} new_satp={:#x}",
+                    parent_id,
+                    child_stack,
+                    new_satp);
+        let child = parent.fork_from(child_id,
+                                     child_stack,
+                                     new_aspace_ptr,
+                                     new_satp)?;
+
         self.task_table
             .insert(Box::new(child));
-        log::debug!("[task-scheduler] forked child task {} from parent {}",
+        log::trace!("[fork] child={} created parent={}",
                     child_id,
                     parent_id);
         Some(child_id)
+    }
+
+    /// execve：替换当前任务的地址空间、入口和栈。
+    pub(super) fn execve_current(&mut self,
+                                 entry_pc : usize,
+                                 sp : usize,
+                                 satp : usize,
+                                 user_aspace_ptr : usize,
+                                 image_info : task_api::UserImageInfo,
+                                 stack_info : task_api::UserStack) {
+        let current_id = self.current_task_id
+                             .expect("execve requires a current task");
+        self.task_table
+            .task_mut(current_id)
+            .execve_from(entry_pc,
+                         sp,
+                         satp,
+                         user_aspace_ptr,
+                         image_info,
+                         stack_info);
     }
 
     pub(super) fn first_switch_to(&mut self, next_task_id : TaskId) -> SwitchPair {
@@ -311,6 +344,16 @@ impl TaskRegistry {
             .unwrap_or(0)
     }
 
+    pub(super) fn current_task_user_aspace_ptr(&self) -> usize {
+        self.current_task_id
+            .map(|task_id| {
+                self.task_table
+                    .task(task_id)
+                    .user_aspace_ptr()
+            })
+            .unwrap_or(0)
+    }
+
     pub(super) fn clear_wait_result(&mut self, task_id : TaskId) {
         self.task_table
             .task_mut(task_id)
@@ -341,6 +384,9 @@ impl TaskRegistry {
                                                   trap_frame : TaskTrapFrame)
                                                   -> Option<*mut TaskTrapFrame> {
         let current_task_id = self.current_task_id?;
+        if self.is_idle(current_task_id) {
+            return None;
+        }
         Some(self.task_table
                  .task_mut(current_task_id)
                  .begin_trap_frame_access(trap_frame))

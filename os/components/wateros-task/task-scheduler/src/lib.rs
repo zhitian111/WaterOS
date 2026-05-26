@@ -32,7 +32,7 @@ pub type TaskTrapFrame = arch::trap::ActiveTrapFrame;
 pub use task_api::{
     AddressSpaceHandle, ExitedTask, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskId,
     TaskKind, TaskSnapshot, TaskState, TaskTick, TaskWaitHandle, TaskWaitResult, TaskWaitTarget,
-    UserImageInfo, UserTaskEntryPc, UserTaskResources, UserTaskSpec, WaitQueueId, IDLE_TASK_ID,
+    UserImageInfo, UserTask, UserTaskEntryPc, WaitQueueId, IDLE_TASK_ID,
 };
 
 /// 初始化当前启用的调度器实现。
@@ -43,6 +43,10 @@ pub fn init() { active_impl::init_scheduler(); }
 #[inline]
 pub fn current_task_address_space_raw() -> usize { active_impl::current_task_address_space_raw() }
 
+/// 当前运行任务的 Sv39 用户页表对象指针；`0` 表示无。
+#[inline]
+pub fn current_task_user_aspace_ptr() -> usize { active_impl::current_task_user_aspace_ptr() }
+
 /// 创建一个新的内核任务，并返回其任务号。
 #[inline]
 pub fn spawn_kernel_task(entry : KernelTaskEntry, arg : usize) -> TaskId {
@@ -51,26 +55,38 @@ pub fn spawn_kernel_task(entry : KernelTaskEntry, arg : usize) -> TaskId {
 
 /// 按给定规格创建一个新的用户任务，并返回其任务号。
 #[inline]
-pub fn spawn_user_task_spec(spec : UserTaskSpec) -> TaskId {
-    active_impl::spawn_user_task_spec(spec)
-}
-
-/// 创建一个新的最小用户任务骨架，并返回其任务号。
-#[inline]
-pub fn spawn_user_task(entry_pc : UserTaskEntryPc) -> TaskId {
-    spawn_user_task_spec(UserTaskSpec::new(entry_pc))
-}
-
+pub fn spawn_user_task(spec : UserTask) -> TaskId { active_impl::spawn_user_task_spec(spec) }
 /// 为上层同步对象分配一个等待队列编号。
 #[inline]
 pub fn allocate_wait_queue() -> WaitQueueId { active_impl::allocate_wait_queue() }
 
 /// 从当前用户任务 fork 一个子任务，并返回子任务 id。
 ///
-/// `child_stack` 非零时，子任务初始用户栈指针设为该值（用于 clone 新栈场景）。
+/// 子任务获得父 trap 帧副本（a0 置 0）、独立地址空间（`new_aspace_ptr` /
+/// `new_satp`）。 `child_stack` 非零时，子任务初始用户栈指针设为该值（用于
+/// clone 新栈场景）。
 #[inline]
-pub fn fork_current(child_stack : usize) -> Option<TaskId> {
-    active_impl::fork_current(child_stack)
+pub fn fork_current(child_stack : usize,
+                    new_aspace_ptr : usize,
+                    new_satp : usize)
+                    -> Option<TaskId> {
+    active_impl::fork_current(child_stack, new_aspace_ptr, new_satp)
+}
+
+/// execve：替换当前任务进程映像。
+#[inline]
+pub fn execve_current(entry_pc : usize,
+                      sp : usize,
+                      satp : usize,
+                      user_aspace_ptr : usize,
+                      image_info : task_api::UserImageInfo,
+                      stack_info : task_api::UserStack) {
+    active_impl::execve_current(entry_pc,
+                                sp,
+                                satp,
+                                user_aspace_ptr,
+                                image_info,
+                                stack_info)
 }
 
 /// 启动调度器并切入第一个可运行任务。

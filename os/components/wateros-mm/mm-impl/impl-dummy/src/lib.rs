@@ -5,6 +5,7 @@
 #![no_std]
 
 use api_v0::addr::VirtAddr;
+use api_v0::error::MmError;
 use api_v0::kernel_bringup::{LoadElfError, LoadedElf};
 use api_v0::perm::PagePerm;
 
@@ -33,5 +34,11 @@ pub mod kernel_mm_impl {
     /// 固定返回 [`LoadElfError::BadClass`]，避免在未启用 Sv39 时链接 FS/ELF 路径。
     pub fn from_elf_path(_path: &str) -> Result<LoadedElf, LoadElfError> {
         Err(LoadElfError::BadClass)
+    }
+
+    /// 桩实现：返回 [`MmError::Unsupported`]，未启用真实页表实现时不能 fork。
+    #[inline]
+    pub fn fork_user_aspace(_parent_aspace_ptr: usize) -> api_v0::error::MmResult<(usize, usize)> {
+        Err(MmError::Unsupported)
     }
 }

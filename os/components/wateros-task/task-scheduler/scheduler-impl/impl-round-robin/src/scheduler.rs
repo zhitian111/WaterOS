@@ -10,7 +10,7 @@
 use api_v0::ScheduleReason;
 use task_api::{
     ExitedTask, KernelTaskEntry, TaskBlockReason, TaskId, TaskSnapshot, TaskTick, TaskWaitHandle,
-    TaskWaitResult, UserTaskSpec, WaitQueueId,
+    TaskWaitResult, UserTask, WaitQueueId,
 };
 
 use crate::queues::{QueueTarget, RoundRobinQueues};
@@ -51,7 +51,7 @@ impl RoundRobinScheduler {
         task_id
     }
 
-    pub(super) fn spawn_user_task_spec(&mut self, spec : UserTaskSpec) -> TaskId {
+    pub(super) fn spawn_user_task_spec(&mut self, spec : UserTask) -> TaskId {
         let task_id = self.registry
                           .spawn_user_task_spec(spec);
         self.queues
@@ -262,12 +262,32 @@ impl RoundRobinScheduler {
             .task_snapshot(task_id)
     }
 
-    pub(super) fn fork_current(&mut self, child_stack : usize) -> Option<TaskId> {
+    pub(super) fn fork_current(&mut self,
+                               child_stack : usize,
+                               new_aspace_ptr : usize,
+                               new_satp : usize)
+                               -> Option<TaskId> {
         let child_id = self.registry
-                           .fork_current(child_stack)?;
+                           .fork_current(child_stack, new_aspace_ptr, new_satp)?;
         self.queues
             .push_spawned_task(child_id);
         Some(child_id)
+    }
+
+    pub(super) fn execve_current(&mut self,
+                                 entry_pc : usize,
+                                 sp : usize,
+                                 satp : usize,
+                                 user_aspace_ptr : usize,
+                                 image_info : task_api::UserImageInfo,
+                                 stack_info : task_api::UserStack) {
+        self.registry
+            .execve_current(entry_pc,
+                            sp,
+                            satp,
+                            user_aspace_ptr,
+                            image_info,
+                            stack_info);
     }
 
     pub(super) fn current_tick(&self) -> TaskTick {
@@ -283,6 +303,11 @@ impl RoundRobinScheduler {
     pub(super) fn current_task_address_space_raw(&self) -> usize {
         self.registry
             .current_task_address_space_raw()
+    }
+
+    pub(super) fn current_task_user_aspace_ptr(&self) -> usize {
+        self.registry
+            .current_task_user_aspace_ptr()
     }
 
     pub(super) fn begin_current_trap_frame_access(&mut self,
