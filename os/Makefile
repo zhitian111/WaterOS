@@ -5,7 +5,7 @@ STAGE := prototype
 BRANCH=$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
 BUILD_NUM = $(shell git rev-list --count HEAD 2>/dev/null || echo "0")
 
-.PHONY: clean check all all_start_info kernel configure fmt apply_features
+.PHONY: clean check all all_start_info kernel configure fmt apply_features flush_img
 .PHONY: rv_check rv_elf_info rv_obj_dump rv_qemu_run rv_qemu_run_with_log rv_qemu_gdb rv_gdb
 .PHONY: la_check la_elf_info kernel-la la_qemu_run
 .PHONY: rv_user_mode_bin
@@ -203,3 +203,13 @@ apply_features: ./config.conf
 	$(call INFO, "开始写入 features...")
 	@bash ./scripts/apply-config-as-default-features.bash
 	$(call INFO, "features 写入完成！")
+flush_img:
+	$(call INFO, "开始删除旧磁盘镜像...")
+	@rm -f ./sdcard-la.img
+	@rm -f ./sdcard-rv.img
+	$(call INFO, "旧磁盘镜像已删除！")
+	$(call INFO, "开始拷贝新磁盘镜像...")
+	@cp ../test_case/sdcard-rv.img ./
+	@cp ../test_case/sdcard-la.img ./
+	$(call INFO, "新磁盘镜像已拷贝完成！")
+	

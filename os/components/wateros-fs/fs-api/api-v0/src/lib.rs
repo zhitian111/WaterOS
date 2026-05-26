@@ -199,6 +199,36 @@ pub trait ReadWriteFs: Send {
         let _ = (path, mode);
         Err(FsError::Unsupported)
     }
+
+    /// 路径是否存在（RW 实现可覆盖，供单 RW 根卷统一读路径）。
+    fn exists(&self, path: &str) -> FsResult<bool> {
+        let _ = path;
+        Err(FsError::Unsupported)
+    }
+
+    /// 路径元数据。
+    fn metadata(&self, path: &str) -> FsResult<FsMetadata> {
+        let _ = path;
+        Err(FsError::Unsupported)
+    }
+
+    /// 读取整个普通文件。
+    fn read(&self, path: &str) -> FsResult<Vec<u8>> {
+        let _ = path;
+        Err(FsError::Unsupported)
+    }
+
+    /// 从 `offset` 起读取。
+    fn read_range(&self, path: &str, offset: u64, buf: &mut [u8]) -> FsResult<usize> {
+        let _ = (path, offset, buf);
+        Err(FsError::Unsupported)
+    }
+
+    /// 列出目录项。
+    fn read_dir(&self, path: &str) -> FsResult<Vec<FsDirEntry>> {
+        let _ = path;
+        Err(FsError::Unsupported)
+    }
 }
 
 /// 异步区间 I/O 占位（v1 未实现）。
@@ -242,6 +272,44 @@ impl Deref for LocalRwFs {
 
 impl DerefMut for LocalRwFs {
     fn deref_mut(&mut self) -> &mut Self::Target { &mut *self.0 }
+}
+
+impl ReadWriteFs for LocalRwFs {
+    fn mount_rw(&mut self, device: SharedBlockDevice) -> FsResult<()> {
+        self.deref_mut().mount_rw(device)
+    }
+
+    fn is_mounted(&self) -> bool { self.deref().is_mounted() }
+
+    fn write_regular_file_at_root(&mut self, name: &str, data: &[u8]) -> FsResult<()> {
+        self.deref_mut().write_regular_file_at_root(name, data)
+    }
+
+    fn write_regular_file(&mut self, path: &str, data: &[u8]) -> FsResult<()> {
+        self.deref_mut().write_regular_file(path, data)
+    }
+
+    fn unlink(&mut self, path: &str) -> FsResult<()> { self.deref_mut().unlink(path) }
+
+    fn write_range(&mut self, path: &str, offset: u64, data: &[u8]) -> FsResult<usize> {
+        self.deref_mut().write_range(path, offset, data)
+    }
+
+    fn mkdir(&mut self, path: &str, mode: u32) -> FsResult<()> {
+        self.deref_mut().mkdir(path, mode)
+    }
+
+    fn exists(&self, path: &str) -> FsResult<bool> { self.deref().exists(path) }
+
+    fn metadata(&self, path: &str) -> FsResult<FsMetadata> { self.deref().metadata(path) }
+
+    fn read(&self, path: &str) -> FsResult<Vec<u8>> { self.deref().read(path) }
+
+    fn read_range(&self, path: &str, offset: u64, buf: &mut [u8]) -> FsResult<usize> {
+        self.deref().read_range(path, offset, buf)
+    }
+
+    fn read_dir(&self, path: &str) -> FsResult<Vec<FsDirEntry>> { self.deref().read_dir(path) }
 }
 
 // 与 LocalFs 相同：单核 bring-up 下由 Mutex 序列化；跨线程 Send 由调用方保证不数据竞争。

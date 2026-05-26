@@ -94,36 +94,35 @@ fn map_dir_entry(e: FsDirEntry) -> VfsDirEntry {
     }
 }
 
+fn root_rw() -> VfsResult<SharedRwFs> {
+    fs::rootfs::active_impl::root_rw_fs().ok_or(VfsError::NotMounted)
+}
+
 impl SingleRootReadView for FsBridge {
     fn exists(&self, path: &str) -> VfsResult<bool> {
         let n = normalize_absolute_path(path)?;
-        let Some(fs) = fs::rootfs::active_impl::root_fs() else {
-            return Err(VfsError::NotMounted);
-        };
+        let fs = root_rw()?;
         fs.lock().exists(n.as_str()).map_err(map_fs_err)
     }
 
     fn metadata(&self, path: &str) -> VfsResult<VfsMetadata> {
         let n = normalize_absolute_path(path)?;
-        let Some(fs) = fs::rootfs::active_impl::root_fs() else {
-            return Err(VfsError::NotMounted);
-        };
-        fs.lock().metadata(n.as_str()).map_err(map_fs_err).map(map_meta)
+        let fs = root_rw()?;
+        fs.lock()
+            .metadata(n.as_str())
+            .map_err(map_fs_err)
+            .map(map_meta)
     }
 
     fn read(&self, path: &str) -> VfsResult<Vec<u8>> {
         let n = normalize_absolute_path(path)?;
-        let Some(fs) = fs::rootfs::active_impl::root_fs() else {
-            return Err(VfsError::NotMounted);
-        };
+        let fs = root_rw()?;
         fs.lock().read(n.as_str()).map_err(map_fs_err)
     }
 
     fn read_dir(&self, path: &str) -> VfsResult<Vec<VfsDirEntry>> {
         let n = normalize_absolute_path(path)?;
-        let Some(fs) = fs::rootfs::active_impl::root_fs() else {
-            return Err(VfsError::NotMounted);
-        };
+        let fs = root_rw()?;
         fs.lock()
             .read_dir(n.as_str())
             .map_err(map_fs_err)
@@ -131,9 +130,7 @@ impl SingleRootReadView for FsBridge {
     }
 
     fn boot_dump_all_paths(&self) {
-        if let Some(fs) = fs::rootfs::active_impl::root_fs() {
-            fs.lock().boot_dump_all_paths();
-        }
+        // bring-up 单 RW 根卷：启动树打印仍可由 fs 层自检触发。
     }
 }
 
@@ -141,9 +138,7 @@ impl FsBridge {
     /// 从根卷只读句柄按偏移读取（页缓存 miss 路径）。
     pub(crate) fn read_range(&self, path: &str, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
         let n = normalize_absolute_path(path)?;
-        let Some(fs) = fs::rootfs::active_impl::root_fs() else {
-            return Err(VfsError::NotMounted);
-        };
+        let fs = root_rw()?;
         fs.lock()
             .read_range(n.as_str(), offset, buf)
             .map_err(map_fs_err)
@@ -205,15 +200,8 @@ impl VfsMountOps for FsBridge {
             .collect()
     }
 
-    fn mount_rw_session(&self, kind: VfsFsKind) -> VfsResult<Box<dyn RootRwSession>> {
-        let fs_kind = map_vfs_kind(kind);
-        let imp = fs::pick_fs_impl(fs_kind, FsAccessMode::ReadWrite).ok_or(VfsError::Unsupported)?;
-        let dev_path = fs::rootfs::active_impl::current_root_device_path()
-            .ok_or(VfsError::NotMounted)?;
-        let dev = fs::devfs::active_impl::lookup_block_device(dev_path.as_str())
-            .map_err(map_fs_err)?;
-        let rw = imp.mount_rw(dev).map_err(map_fs_err)?;
-        Ok(Box::new(MountedRwSession::new(rw)))
+    fn mount_rw_session(&self, _kind: VfsFsKind) -> VfsResult<Box<dyn RootRwSession>> {
+        Ok(Box::new(MountedRwSession::new(root_rw()?)))
     }
 }
 

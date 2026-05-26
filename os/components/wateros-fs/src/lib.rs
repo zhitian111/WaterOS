@@ -1,8 +1,9 @@
 #![no_std]
 
-//! 文件系统聚合层：统一 [`api_v0::FsImpl`] 注册、启动期根卷探测与挂载，并转发 devfs / rootfs 子 crate。
+//! 文件系统聚合层：统一 [`api_v0::FsImpl`] 注册、启动期根卷探测，并转发 devfs / rootfs 子 crate。
 //!
-//! 语义契约：[`init`] 在成功探测块设备后注入 rootfs 所选 impl 并尝试挂载；[`test`] 依赖特性与当前挂载状态，失败时仅记录日志不 panic。
+//! 语义契约：[`init`] 刷新 devfs 并探测块设备、注入 rootfs 所选 impl，**不**挂载根卷；
+//! bring-up 通过 [`mount_default_root_rw`] 挂载单一 ext4 RW 视图；[`test`] 依赖该挂载状态。
 extern crate alloc;
 
 use alloc::vec::Vec;
@@ -71,9 +72,7 @@ fn log_supported_fs() {
     }
 }
 
-/// 文件系统子系统初始化：打印已注册能力、刷新 devfs，按默认根块路径探测并挂载只读根卷。
-///
-/// 当前行为：若无块设备、查找失败或无任何 impl 识别该卷，则提前返回并打日志。后续可扩展为多设备策略或用户态挂载协议。
+/// 文件系统子系统初始化：打印能力、刷新 devfs，探测根块设备并注入活动 impl（不挂载根卷）。
 pub fn init() {
     logging::info!("[fs] init begin");
     log_supported_fs();
@@ -82,6 +81,7 @@ pub fn init() {
 
     let Some(dev_path) = devfs::active_impl::default_root_block_path() else {
         logging::warn!("[fs] init: no root block device available");
+        logging::info!("[fs] init end (no block device)");
         return;
     };
     let device = match devfs::active_impl::lookup_block_device(dev_path.as_str()) {
@@ -92,14 +92,18 @@ pub fn init() {
                 dev_path,
                 err
             );
+            logging::info!("[fs] init end (lookup failed)");
             return;
         }
     };
 
-    // 边界：探测顺序即注册表顺序，首个同时通过 probe 且支持 RO 的 impl 被选中；无优先级 API。
     let mut chosen: Option<(&'static dyn api_v0::FsImpl, api_v0::FsKind)> = None;
     for imp in registered_fs_impls() {
         match imp.probe(&device) {
+            Ok(Some(kind)) if imp.supports(kind, api_v0::FsAccessMode::ReadWrite) => {
+                chosen = Some((*imp, kind));
+                break;
+            }
             Ok(Some(kind)) if imp.supports(kind, api_v0::FsAccessMode::ReadOnly) => {
                 chosen = Some((*imp, kind));
                 break;
@@ -118,51 +122,48 @@ pub fn init() {
             "[fs] init: no impl recognizes block device {:?}",
             dev_path
         );
+        logging::info!("[fs] init end (probe miss)");
         return;
     };
     logging::info!(
-        "[fs] init: probe matched impl={} kind={:?}",
+        "[fs] init: probe matched impl={} kind={:?} (mount deferred to bring-up RW)",
         imp.name(),
         kind
     );
     rootfs::active_impl::set_active_fs_impl(imp);
-
-    match rootfs::active_impl::mount_default_root() {
-        Ok(()) => {
-            logging::info!("[fs] root fs mounted");
-            logging::trace!("[fs::boot-tree] /");
-            for node in devfs::active_impl::list_nodes() {
-                logging::info!(
-                    "[fs::boot-tree] {} type={:?}",
-                    node.path,
-                    node.node_type
-                );
-            }
-            if let Some(root) = rootfs::active_impl::root_fs() {
-                // root.lock().boot_dump_all_paths();
-            }
-        }
-        Err(err) => logging::warn!("[fs] init failed: {:?}", err),
-    }
+    logging::info!("[fs] init end");
 }
 
-/// 自检入口：调用 API 层样例测试；在启用 `impl-ext4` 时对已挂载 ext4 做最小 RO 校验（失败仅 warn）。
+/// bring-up：在 [`init`] 之后将默认根块设备以 **RW**（`ext4plus`）挂载为全局根卷。
+pub fn mount_default_root_rw() -> api_v0::FsResult<()> {
+    rootfs::active_impl::mount_default_root_rw()
+}
+
+/// 当前根读写句柄；未挂载时为 `None`。
+pub fn root_rw_fs() -> Option<api_v0::SharedRwFs> {
+    rootfs::active_impl::root_rw_fs()
+}
+
+/// 自检入口：调用 API 层样例测试；在启用 `impl-ext4` 时对已挂载 RW ext4 做最小校验。
 pub fn test() {
     logging::trace!("[fs] test begin");
     api_v0::test();
 
     #[cfg(feature = "impl-ext4")]
     {
-        let Some(fs) = rootfs::active_impl::root_fs() else {
+        let Some(rw) = rootfs::active_impl::root_rw_fs() else {
             logging::warn!(
-                "[fs] ext4 ro test skipped: {:?}",
+                "[fs] ext4 rw test skipped: {:?}",
                 api_v0::FsError::NotMounted
             );
             logging::trace!("[fs] test end");
             return;
         };
-        if let Err(err) = impl_ext4::ro_self_test(fs) {
-            logging::warn!("[fs] ext4 ro test failed: {:?}", err);
+        if let Err(err) = impl_ext4::rw_self_test(rw.clone()) {
+            logging::warn!("[fs] ext4 rw test failed: {:?}", err);
+        }
+        if let Err(err) = impl_ext4::rw_mkdir_verify(rw, "fs_mkdir_smoke") {
+            logging::warn!("[fs] ext4 mkdir smoke failed: {:?}", err);
         }
     }
     logging::trace!("[fs] test end");

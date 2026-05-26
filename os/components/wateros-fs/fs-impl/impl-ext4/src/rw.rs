@@ -3,7 +3,13 @@
 //! I/O 边界：块读写适配器将驱动错误装箱为 `ext4plus` 期望的 `Error` trait object；按块读改写见本模块中的 `block_write_bytes`。
 
 use alloc::boxed::Box;
-use api_v0::{FsError, FsResult, ReadWriteFs};
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
+use api_v0::{FsDirEntry, FsError, FsMetadata, FsNodeType, FsResult, ReadWriteFs};
+use driver_block_api_v0::BLOCK_SIZE;
+use ext4plus::file::File;
+use ext4plus::Metadata;
 use core::error::Error;
 use core::time::Duration;
 use driver_block_api_v0::{DriverError, Lba, SharedBlockDevice};
@@ -248,6 +254,133 @@ impl ReadWriteFs for Ext4FsRw {
         }
         parent_dir.unlink(name, target).map_err(map_ext4_plus)?;
         Ok(())
+    }
+
+    fn exists(&self, path: &str) -> FsResult<bool> {
+        let fs = self.fs()?;
+        let pathv = Path::try_from(path).map_err(|_| FsError::InvalidPath)?;
+        fs.exists(pathv).map_err(map_ext4_plus)
+    }
+
+    fn metadata(&self, path: &str) -> FsResult<FsMetadata> {
+        let fs = self.fs()?;
+        let pathv = Path::try_from(path).map_err(|_| FsError::InvalidPath)?;
+        let meta = fs.metadata(pathv).map_err(map_ext4_plus)?;
+        Ok(map_rw_metadata(&meta))
+    }
+
+    fn read(&self, path: &str) -> FsResult<Vec<u8>> {
+        let fs = self.fs()?;
+        let pathv = Path::try_from(path).map_err(|_| FsError::InvalidPath)?;
+        let meta = fs.metadata(pathv).map_err(map_ext4_plus)?;
+        if !meta.file_type().is_regular_file() {
+            return Err(FsError::NotAFile);
+        }
+        let file_size = usize::try_from(meta.len()).map_err(|_| FsError::Io)?;
+        let inode = fs
+            .path_to_inode(pathv, FollowSymlinks::All)
+            .map_err(map_ext4_plus)?;
+        let mut file = File::open_inode(fs, inode).map_err(map_ext4_plus)?;
+        let mut out = vec![0u8; file_size];
+        let mut filled = 0usize;
+        while filled < file_size {
+            let room = file_size - filled;
+            let chunk = room.min(BLOCK_SIZE);
+            let n = file
+                .read_bytes(&mut out[filled..filled + chunk])
+                .map_err(map_ext4_plus)?;
+            if n == 0 {
+                break;
+            }
+            filled += n;
+        }
+        if filled != file_size {
+            return Err(FsError::Io);
+        }
+        Ok(out)
+    }
+
+    fn read_range(&self, path: &str, offset: u64, buf: &mut [u8]) -> FsResult<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        let fs = self.fs()?;
+        let pathv = Path::try_from(path).map_err(|_| FsError::InvalidPath)?;
+        let meta = fs.metadata(pathv).map_err(map_ext4_plus)?;
+        if !meta.file_type().is_regular_file() {
+            return Err(FsError::NotAFile);
+        }
+        let file_size = meta.len();
+        if offset >= file_size {
+            return Ok(0);
+        }
+        let inode = fs
+            .path_to_inode(pathv, FollowSymlinks::All)
+            .map_err(map_ext4_plus)?;
+        let mut file = File::open_inode(fs, inode).map_err(map_ext4_plus)?;
+        file.seek_to(offset).map_err(map_ext4_plus)?;
+        let max_read = usize::try_from(file_size - offset).map_err(|_| FsError::Io)?;
+        let to_read = buf.len().min(max_read);
+        let mut filled = 0usize;
+        while filled < to_read {
+            let room = to_read - filled;
+            let chunk = room.min(BLOCK_SIZE);
+            let n = file
+                .read_bytes(&mut buf[filled..filled + chunk])
+                .map_err(map_ext4_plus)?;
+            if n == 0 {
+                break;
+            }
+            filled += n;
+        }
+        Ok(filled)
+    }
+
+    fn read_dir(&self, path: &str) -> FsResult<Vec<FsDirEntry>> {
+        let fs = self.fs()?;
+        let pathv = Path::try_from(path).map_err(|_| FsError::InvalidPath)?;
+        let mut rd = fs.read_dir(pathv).map_err(map_ext4_plus)?;
+        let mut out = Vec::new();
+        while let Some(item) = rd.next() {
+            let ent = item.map_err(map_ext4_plus)?;
+            let name = ent.file_name();
+            if name.as_ref() == b"." || name.as_ref() == b".." {
+                continue;
+            }
+            let name_str = core::str::from_utf8(name.as_ref()).map_err(|_| FsError::NotUtf8)?;
+            let ft = ent.file_type().map_err(map_ext4_plus)?;
+            let node_type = if ft.is_dir() {
+                FsNodeType::Directory
+            } else if ft.is_symlink() {
+                FsNodeType::Symlink
+            } else if ft.is_regular_file() {
+                FsNodeType::File
+            } else {
+                FsNodeType::Special
+            };
+            out.push(FsDirEntry {
+                name: String::from(name_str),
+                node_type,
+            });
+        }
+        Ok(out)
+    }
+}
+
+fn map_rw_metadata(meta: &Metadata) -> FsMetadata {
+    let node_type = if meta.is_dir() {
+        FsNodeType::Directory
+    } else if meta.is_symlink() {
+        FsNodeType::Symlink
+    } else if meta.file_type().is_regular_file() {
+        FsNodeType::File
+    } else {
+        FsNodeType::Special
+    };
+    FsMetadata {
+        node_type,
+        size: meta.len(),
+        mode: meta.mode(),
     }
 }
 
