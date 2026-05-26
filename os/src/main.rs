@@ -11,12 +11,10 @@
 //!   （frame 范围、Sv39、内核页表等；含 `mm` 自检日志）。
 //! 3. 初始化任务、注册组合层 trap 路由（`trap_handler::init`）与内核 trap 的
 //!    `satp`，随后 `driver::active_impl::init_after_boot`；成功则挂载 `fs`。
-//! 4. 在驱动与 `fs::init` 成功后，先跑 [`user_bringup_bus::run`]（含
-//!    [`crate::user_bringup_mm::run_stage_02`] /
-//!    [`crate::user_bringup_basic::run_stage_03`]： 从根卷
-//!    **`/glibc/basic/`**、**`/musl/basic/`** 加载测程 ELF 并
-//!    **spawn（仅入就绪队列）**），再调用 [`self_tests::task::spawn_all`]
-//!    启动调度相关 内核自检任务，随后 `fs::test()` 等 RW 烟测。
+//! 4. 在驱动与 `fs::init`（探测 + 注入 impl，不挂载）成功后，先跑
+//!    [`user_bringup_bus::run`]：在总线内 **RW 挂载 ext4 根卷**，再
+//!    [`crate::user_bringup_basic::run_stage_03`] 从 **`/glibc/basic/`**、
+//!    **`/musl/basic/`** 加载测程 ELF 并 **spawn**；随后 `fs::test()` 等烟测。
 //! 5. 开启定时器中断后通过 [`task::run_first_task`] **首次**从引导上下文
 //!    `__switch` 到就绪任务；此前 步骤 3 的 `task::init()`
 //!    已初始化调度器数据结构，但 **CPU 尚未执行** 任何 spawn
@@ -131,9 +129,7 @@ mod qemu_riscv64_opensbi {
         } else {
             info!("[self-test] driver init done");
             fs::init();
-            // ----- 用户态 bring-up 总线（阶段顺序与失败策略见 `user_bringup_bus`） -----
-            // 约束：依赖根卷一致视图的用户 ELF 类阶段须在本块内、且位于下方
-            // `fs::test()` 的 RW 写盘段之前。
+            // ----- 用户态 bring-up 总线：RW 挂载根卷 + 用户 ELF spawn（见 `user_bringup_bus`） -----
             // 注意：`run()` 内 `spawn_user_task_*` 只入队；用户测程的 `ecall` 在下方
             // `run_first_task()` 之后才会出现。
             crate::user_bringup_bus::run();

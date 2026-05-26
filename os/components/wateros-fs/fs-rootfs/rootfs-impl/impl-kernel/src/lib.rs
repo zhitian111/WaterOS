@@ -17,6 +17,7 @@ static MOUNT_GENERATION: AtomicU64 = AtomicU64::new(0);
 pub struct KernelRootFsManager;
 
 static ROOT_FS: Mutex<Option<fs_api_v0::SharedFs>> = Mutex::new(None);
+static ROOT_RW_FS: Mutex<Option<fs_api_v0::SharedRwFs>> = Mutex::new(None);
 static ROOT_DEV_PATH: Mutex<Option<String>> = Mutex::new(None);
 // 生命周期：'static 引用指向注册表中的 impl，由链接期/聚合 init 保证长于内核运行期。
 /// 由聚合层在启动期注入的「当前根 FS impl」。聚合层根据 `probe` 选定后调用 [`set_active_fs_impl`]。
@@ -32,6 +33,7 @@ impl api_v0::RootFsManager for KernelRootFsManager {
 
     fn clear_root_fs(&mut self) {
         *ROOT_FS.lock() = None;
+        *ROOT_RW_FS.lock() = None;
         *ROOT_DEV_PATH.lock() = None;
     }
 
@@ -59,20 +61,47 @@ pub fn set_active_fs_impl(imp: &'static dyn FsImpl) {
 /// 返回当前注入的活动 [`FsImpl`]；未注入时为 `None`。
 pub fn active_fs_impl() -> Option<&'static dyn FsImpl> { *ACTIVE_FS_IMPL.lock() }
 
-/// 查询 `devfs` 活动实现的默认根块路径并调用 [`RootFsManager::mount_root_from_block_path`]。
+/// 查询 `devfs` 活动实现的默认根块路径并调用 [`RootFsManager::mount_root_from_block_path`]（只读）。
 pub fn mount_default_root() -> fs_api_v0::FsResult<()> {
     let Some(path) = devfs::active_impl::default_root_block_path() else {
         return Err(fs_api_v0::FsError::NotMounted);
     };
-    logging::info!("[fs::rootfs] mount default root from {}", path);
+    logging::info!("[fs::rootfs] mount default root RO from {}", path);
     let mut mgr = KernelRootFsManager;
     mgr.mount_root_from_block_path(path.as_str())
+}
+
+/// 在已注入 [`FsImpl`] 的前提下，从默认根块设备路径挂载读写根卷（bring-up 主路径）。
+pub fn mount_default_root_rw() -> fs_api_v0::FsResult<()> {
+    let Some(path) = devfs::active_impl::default_root_block_path() else {
+        return Err(fs_api_v0::FsError::NotMounted);
+    };
+    mount_root_rw_from_block_path(path.as_str())
+}
+
+/// 从块设备路径挂载读写根卷并保存全局 [`SharedRwFs`]。
+pub fn mount_root_rw_from_block_path(path: &str) -> fs_api_v0::FsResult<()> {
+    let device = devfs::active_impl::lookup_block_device(path)?;
+    let imp = ACTIVE_FS_IMPL
+        .lock()
+        .ok_or(fs_api_v0::FsError::Unsupported)?;
+    logging::info!("[fs::rootfs] mount root RW from {}", path);
+    let root = imp.mount_rw(device)?;
+    *ROOT_RW_FS.lock() = Some(root);
+    *ROOT_DEV_PATH.lock() = Some(path.to_string());
+    MOUNT_GENERATION.fetch_add(1, Ordering::Release);
+    Ok(())
 }
 
 /// 当前根只读文件系统句柄；未挂载返回 `None`。
 pub fn root_fs() -> Option<fs_api_v0::SharedFs> {
     let mgr = KernelRootFsManager;
     mgr.root_fs()
+}
+
+/// 当前根读写文件系统句柄；未挂载返回 `None`。
+pub fn root_rw_fs() -> Option<fs_api_v0::SharedRwFs> {
+    ROOT_RW_FS.lock().as_ref().cloned()
 }
 
 /// 最近一次成功挂载根卷所使用的块设备路径。
@@ -85,3 +114,4 @@ pub fn current_root_device_path() -> Option<String> {
 pub fn mount_generation() -> u64 {
     MOUNT_GENERATION.load(Ordering::Acquire)
 }
+

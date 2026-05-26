@@ -23,7 +23,7 @@
 | `dup2`/`dup3` | 待实现 | `basic` 的 `dup2` wrapper 使用 `dup3(old, new, 0)`。 |
 | `pipe`/`pipe2` | 部分接入 | 已创建 pipe fd 对；需要和 `fork` 后 fd 继承联调。 |
 | `getdents64` | 待实现 | `getdents` 测例依赖目录枚举和 `linux_dirent64` 布局。 |
-| `mkdir`/`mkdirat` | 部分接入 | `mkdirat` 经 `vfs::mkdir_at_current`；仅 `AT_FDCWD`；无 umask。 |
+| `mkdir`/`mkdirat` | 部分接入 | `mkdirat` 经 `vfs::mkdir_at_current` 走全局 RW 根卷；仅 `AT_FDCWD`。 |
 | `unlink`/`unlinkat` | 待实现 | 需要删除目录项和打开文件生命周期语义。 |
 | `mount` | 待实现 | basic 期可先支持赛题所需最小挂载/伪成功策略。 |
 | `umount`/`umount2` | 待实现 | 与 `mount` 成对。 |

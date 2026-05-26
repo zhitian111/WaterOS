@@ -42,13 +42,7 @@ impl PageCacheIo for FsPageIo<'_> {
 }
 
 fn mount_rw_session() -> VfsResult<MountedRwSession> {
-    let imp = fs::pick_fs_impl(fs::FsKind::Ext4, fs::FsAccessMode::ReadWrite)
-        .ok_or(VfsError::Unsupported)?;
-    let dev_path = fs::rootfs::active_impl::current_root_device_path()
-        .ok_or(VfsError::NotMounted)?;
-    let dev = fs::devfs::active_impl::lookup_block_device(dev_path.as_str())
-        .map_err(map_fs_err)?;
-    let rw = imp.mount_rw(dev).map_err(map_fs_err)?;
+    let rw = fs::rootfs::active_impl::root_rw_fs().ok_or(VfsError::NotMounted)?;
     Ok(MountedRwSession::new(rw))
 }
 

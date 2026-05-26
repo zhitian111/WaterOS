@@ -104,8 +104,8 @@ pub mod self_test {
         VfsResult, VfsSeekWhence, validate_root_file_name,
     };
 
-    /// RW 写入后通过只读根视图读回校验（语义对齐 `wateros-fs` 聚合 `test()` RW 段）。
-    pub fn rw_write_root_verify_via_ro(
+    /// RW 写入后通过同一根 RW 视图读回校验。
+    pub fn rw_write_root_verify(
         kind: VfsFsKind,
         name: &str,
         data: &[u8],
@@ -125,9 +125,9 @@ pub mod self_test {
         }
     }
 
-    /// RW `mkdir` 后 RO `metadata` 校验为目录。
+    /// RW `mkdir` 后同一 RW 视图 `metadata` 校验为目录。
     #[cfg(feature = "bridge-fs-api")]
-    pub fn rw_mkdir_verify_via_ro(kind: VfsFsKind, dir_name: &str) -> VfsResult<()> {
+    pub fn rw_mkdir_verify(kind: VfsFsKind, dir_name: &str) -> VfsResult<()> {
         use super::api::VfsNodeType;
 
         validate_root_file_name(dir_name)?;
@@ -148,7 +148,7 @@ pub mod self_test {
     pub fn open_read_seek_smoke() -> VfsResult<()> {
         const NAME: &str = "vfs_open_smoke";
         const DATA: &[u8] = b"open-smoke";
-        rw_write_root_verify_via_ro(VfsFsKind::Ext4, NAME, DATA)?;
+        rw_write_root_verify(VfsFsKind::Ext4, NAME, DATA)?;
         let mut path = String::from("/");
         path.push_str(NAME);
         let backend = active_impl::backend();
@@ -171,7 +171,7 @@ pub mod self_test {
         {
             const NAME: &str = "vfs_rw_smoke";
             const DATA: &[u8] = b"vfs-smoke";
-            if let Err(e) = rw_write_root_verify_via_ro(VfsFsKind::Ext4, NAME, DATA) {
+            if let Err(e) = rw_write_root_verify(VfsFsKind::Ext4, NAME, DATA) {
                 log::warn!("[vfs] self_test rw verify skipped or failed: {:?}", e);
             }
             if let Err(e) = open_read_seek_smoke() {
@@ -180,7 +180,7 @@ pub mod self_test {
                 log::info!("[vfs] self_test open/seek ok");
             }
             const MKDIR_NAME: &str = "vfs_mkdir_smoke";
-            if let Err(e) = rw_mkdir_verify_via_ro(VfsFsKind::Ext4, MKDIR_NAME) {
+            if let Err(e) = rw_mkdir_verify(VfsFsKind::Ext4, MKDIR_NAME) {
                 log::warn!("[vfs] self_test mkdir skipped or failed: {:?}", e);
             } else {
                 log::info!("[vfs] self_test mkdir ok");
