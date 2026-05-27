@@ -204,34 +204,13 @@ mod qemu_loongarch64_virt {
                                  PAGE_SIZE) /
                         PAGE_SIZE;
         let end_ppn = LOONGARCH64_RAM_END / PAGE_SIZE;
-        info!("[self-test] frame range ppn=[{:#x},{:#x})",
-              start_ppn, end_ppn);
-        mm::test_with_range(base::addr::BasePPN { val : start_ppn },
-                            base::addr::BasePPN { val : end_ppn });
-        // FIXME: kernel_mm::init 在 LoongArch 上触发页错（固件 MMU 未可靠关闭），
-        // 暂时跳过内核页表构建，先验证 driver/FS 路径。
-        // mm::kernel_mm::init(start_ppn, end_ppn, LOONGARCH64_RAM_END);
-        info!("[self-test] mm self-test done (frame allocator ready, kernel paging deferred)");
-
-        // 设备驱动扫描与根文件系统挂载自检。
-        // envp 可能携带 FDT 物理地址（QEMU +UEFI 通过系统表传递），传给 driver 用于 PCI
-        // ECAM 解析。
-        driver::init_when_boot(envp);
-        let driver_boot = driver::active_impl::init_after_boot();
-        if let Err(ref err) = driver_boot {
-            warn!("[self-test] driver init failed: {:?}",
-                  err);
-        } else {
-            info!("[self-test] driver init done");
-            fs::init();
-            // ----- 用户态 bring-up 总线：RW 挂载根卷 + 用户 ELF spawn -----
-            crate::user_bringup_bus::run();
-            fs::test();
-            #[cfg(feature = "vfs-bridge")]
-            {
-                vfs::test();
-            }
-        }
+        // FIXME: LoongArch64 UEFI 页表（DMW）不覆盖 MMIO/ECAM/高端 RAM。
+        // 在实现内核页表接管之前，跳过 MM 自检与 driver 初始化。
+        let _ = (start_ppn, end_ppn);
+        warn!("[self-test] mm self-test & driver init skipped (UEFI paging; kernel paging is \
+               blocked by DMW — need independent kernel page table takeover first)");
+        // driver::init_when_boot(envp);
+        // driver::active_impl::init_after_boot();
 
         // 内核态轮转烟测任务。
         task::spawn_kernel_task(loongarch64_kernel_task_a, 0);
