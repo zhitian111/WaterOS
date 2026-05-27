@@ -34,6 +34,7 @@ pub enum SyscallKind {
     Clone,
     Execve,
     WaitPid,
+    Kill,
     Brk,
     Mmap,
     Munmap,
@@ -109,6 +110,8 @@ impl SyscallKind {
             Self::Execve
         } else if syscall_nr == T::WAITPID.raw() {
             Self::WaitPid
+        } else if syscall_nr == T::KILL.raw() {
+            Self::Kill
         } else if syscall_nr == T::BRK.raw() {
             Self::Brk
         } else if syscall_nr == T::MMAP.raw() {
@@ -238,6 +241,8 @@ pub trait SyscallDispatcher {
 
     fn dispatch_waitpid(args : SyscallArgs) -> isize;
 
+    fn dispatch_kill(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
     fn dispatch_nanosleep(args : SyscallArgs) -> isize;
 
     fn dispatch_uname(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
@@ -304,6 +309,7 @@ pub trait SyscallDispatcher {
             SyscallKind::GetTid => Self::dispatch_gettid(syscall_args),
             SyscallKind::Times => Self::dispatch_times(syscall_args),
             SyscallKind::WaitPid => Self::dispatch_waitpid(syscall_args),
+            SyscallKind::Kill => Self::dispatch_kill(syscall_args),
             SyscallKind::Nanosleep => Self::dispatch_nanosleep(syscall_args),
             SyscallKind::Uname => Self::dispatch_uname(syscall_args),
             SyscallKind::Prctl => Self::dispatch_prctl(syscall_args),

@@ -327,6 +327,12 @@ pub fn wake_task(task_id : TaskId) -> bool {
     with_scheduler(|scheduler| scheduler.wake_task(task_id))
 }
 
+/// 终止指定任务（非当前任务）；成功返回 `true`，任务不存在或 idle 返回 `false`。
+pub fn kill_task(task_id : TaskId, exit_code : TaskExitCode) -> bool {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.kill_task(task_id, exit_code))
+}
+
 /// 从已退出队列中按任务号回收退出信息。
 pub fn reap_exited_task(task_id : TaskId) -> Option<ExitedTask> {
     let _guard = InterruptGuard::new();

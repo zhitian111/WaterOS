@@ -168,6 +168,12 @@ pub fn sleep_current_for_ticks(ticks : TaskTick) { active_impl::sleep_current_fo
 #[inline]
 pub fn wake_task(task_id : TaskId) -> bool { active_impl::wake_task(task_id) }
 
+/// 终止指定任务（非当前任务）；当前任务应使用 [`exit_current`].
+#[inline]
+pub fn kill_task(task_id : TaskId, exit_code : TaskExitCode) -> bool {
+    active_impl::kill_task(task_id, exit_code)
+}
+
 /// 回收指定已退出任务的退出信息。
 #[inline]
 pub fn reap_exited_task(task_id : TaskId) -> Option<ExitedTask> {

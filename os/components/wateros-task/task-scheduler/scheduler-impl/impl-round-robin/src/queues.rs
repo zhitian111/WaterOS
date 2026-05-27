@@ -296,6 +296,28 @@ impl RoundRobinQueues {
         false
     }
 
+    /// 将非当前任务标记为已退出；当前任务须由调用方走 `exit_current`。
+    pub(super) fn kill_task(&mut self,
+                           registry : &mut TaskRegistry,
+                           task_id : TaskId,
+                           exit_code : TaskExitCode)
+                           -> bool {
+        if task_id == IDLE_TASK_ID || registry.is_idle(task_id) {
+            return false;
+        }
+        if registry.state(task_id).is_none() {
+            return false;
+        }
+        if matches!(registry.state(task_id), Some(TaskState::Exited(_))) {
+            return true;
+        }
+        if registry.current_task_id() == Some(task_id) {
+            return false;
+        }
+        self.enqueue_task(registry, task_id, QueueTarget::Exited(exit_code));
+        true
+    }
+
     pub(super) fn wake_one_in_wait_queue(
         &mut self,
         registry: &mut TaskRegistry,
