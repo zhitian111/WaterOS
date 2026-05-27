@@ -66,6 +66,17 @@ pub trait VfsIoHandle {
     fn directory_path(&self) -> Option<&str> {
         None
     }
+
+    /// 将目录项写入 `buf`（`getdents64` 布局）；非目录句柄默认 [`VfsError::Unsupported`]。
+    fn fill_getdents64(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
+        let _ = buf;
+        Err(VfsError::Unsupported)
+    }
+
+    /// 复制本句柄为新的独立 fd 对象（`dup` / `fork` 继承）。
+    fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {
+        Err(VfsError::Unsupported)
+    }
 }
 
 /// 已打开文件的偏移读写（由 [`VfsOpenOps`] 创建）。

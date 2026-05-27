@@ -192,6 +192,7 @@ fn do_exec(cwd : &str, arg : Option<&str>, _rest : &[&str]) -> Result<(), VfsErr
                 task::wait_for_task_exit(tid);
                 let code = task::reap_exited_task(tid).map(|e| {
                                                           vfs::cwd::drop_task_cwd(e.id);
+                                                          vfs::fd::drop_task_fd_table(e.id);
                                                           e.exit_code
                                                       })
                                                       .unwrap_or(-1);

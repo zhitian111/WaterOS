@@ -17,6 +17,7 @@ use mm::api::user_access::UserMemoryOps;
 use mm::ActiveUserMemoryOps;
 
 use crate::user_copy::copy_user_path_cstr;
+use crate::vfs_util::vfs_error_to_errno;
 
 // ── auxv 常量 ─────────────────────────────────────────────────────
 
@@ -106,8 +107,9 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
     let old_aspace = task::current_task_user_aspace_ptr();
     mm::kernel_mm::drop_user_aspace(old_aspace);
 
-    // 7. 关闭 CLOEXEC fd（单线程下暂无，跳过）
-    // TODO: 遍历 fd 表关闭 FD_CLOEXEC
+    // 7. 关闭带 FD_CLOEXEC 的 fd
+    vfs::fd::close_cloexec_fds_for_current_task()
+        .map_err(vfs_error_to_errno)?;
 
     // 8. 更新 TCB：替换地址空间、入口、栈
     let image_info = task::UserImageInfo::new(new_elf.image_base, new_elf.image_size);

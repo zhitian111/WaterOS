@@ -12,18 +12,28 @@ use api_v0::{
 
 use crate::handles::{ConsoleInHandle, ConsoleOutHandle};
 
+/// Linux `FD_CLOEXEC`（`fcntl` / `dup3`）。
+pub const FD_CLOEXEC: u8 = 1;
+
 /// 全局 per-task fd 注册表。
 pub struct PerTaskFdRegistry {
-    tables : Vec<Vec<Option<Box<dyn VfsIoHandle>>>>,
+    tables: Vec<Vec<Option<Box<dyn VfsIoHandle>>>>,
+    fd_flags: Vec<Vec<u8>>,
 }
 
 impl PerTaskFdRegistry {
-    pub const fn new() -> Self { Self { tables : Vec::new() } }
+    pub const fn new() -> Self {
+        Self {
+            tables: Vec::new(),
+            fd_flags: Vec::new(),
+        }
+    }
 
-    fn table_mut(&mut self, task_id : task::TaskId) -> &mut Vec<Option<Box<dyn VfsIoHandle>>> {
+    fn ensure_task(&mut self, task_id: task::TaskId) {
         if self.tables.len() <= task_id {
             self.tables
                 .resize_with(task_id + 1, Vec::new);
+            self.fd_flags.resize_with(task_id + 1, Vec::new);
         }
         let table = &mut self.tables[task_id];
         if table.len() < VFS_FIRST_DYNAMIC_FD {
@@ -31,97 +41,269 @@ impl PerTaskFdRegistry {
             table[VFS_STDIN_FD] = Some(Box::new(ConsoleInHandle));
             table[VFS_STDOUT_FD] = Some(Box::new(ConsoleOutHandle));
             table[VFS_STDERR_FD] = Some(Box::new(ConsoleOutHandle));
+            let flags = &mut self.fd_flags[task_id];
+            if flags.len() < VFS_FIRST_DYNAMIC_FD {
+                flags.resize(VFS_FIRST_DYNAMIC_FD, 0);
+            }
         }
-        table
+    }
+
+    fn table_mut(&mut self, task_id: task::TaskId) -> &mut Vec<Option<Box<dyn VfsIoHandle>>> {
+        self.ensure_task(task_id);
+        &mut self.tables[task_id]
+    }
+
+    fn ensure_flags_len(&mut self, task_id: task::TaskId, len: usize) {
+        self.ensure_task(task_id);
+        let flags = &mut self.fd_flags[task_id];
+        if flags.len() < len {
+            flags.resize(len, 0);
+        }
+    }
+
+    fn close_slot(&mut self, task_id: task::TaskId, fd: usize) -> VfsResult<()> {
+        self.ensure_task(task_id);
+        let mut handle = self.tables[task_id]
+            .get_mut(fd)
+            .ok_or(VfsError::BadFd)?
+            .take()
+            .ok_or(VfsError::BadFd)?;
+        handle.close()?;
+        if fd < self.fd_flags[task_id].len() {
+            self.fd_flags[task_id][fd] = 0;
+        }
+        Ok(())
     }
 }
 
 impl VfsFdSession for PerTaskFdRegistry {
-    fn get_io(&mut self, fd : usize) -> VfsResult<&mut (dyn VfsIoHandle + '_)> {
+    fn get_io(&mut self, fd: usize) -> VfsResult<&mut (dyn VfsIoHandle + '_)> {
         let task_id = task::current_task_id().ok_or(VfsError::NoTask)?;
-        match self.table_mut(task_id)
-                  .get_mut(fd)
-        {
+        match self.table_mut(task_id).get_mut(fd) {
             Some(Some(h)) => Ok(h.as_mut()),
             _ => Err(VfsError::BadFd),
         }
     }
 
-    fn alloc_fd(&mut self, handle : Box<dyn VfsIoHandle>) -> VfsResult<usize> {
+    fn alloc_fd(&mut self, handle: Box<dyn VfsIoHandle>) -> VfsResult<usize> {
         let task_id = task::current_task_id().ok_or(VfsError::NoTask)?;
-        let table = self.table_mut(task_id);
-        for fd in VFS_FIRST_DYNAMIC_FD..table.len() {
-            if table[fd].is_none() {
+        let newfd = {
+            let table = self.table_mut(task_id);
+            if let Some(fd) = (VFS_FIRST_DYNAMIC_FD..table.len()).find(|&fd| table[fd].is_none())
+            {
                 table[fd] = Some(handle);
-                return Ok(fd);
+                fd
+            } else {
+                table.push(Some(handle));
+                table.len() - 1
             }
-        }
-        table.push(Some(handle));
-        Ok(table.len() - 1)
+        };
+        self.ensure_flags_len(task_id, self.tables[task_id].len());
+        Ok(newfd)
     }
 
-    fn close_fd(&mut self, fd : usize) -> VfsResult<()> {
+    fn close_fd(&mut self, fd: usize) -> VfsResult<()> {
         if fd < VFS_FIRST_DYNAMIC_FD {
             return Err(VfsError::BadFd);
         }
         let task_id = task::current_task_id().ok_or(VfsError::NoTask)?;
-        let mut handle = self.table_mut(task_id)
-                             .get_mut(fd)
-                             .ok_or(VfsError::BadFd)?
-                             .take()
-                             .ok_or(VfsError::BadFd)?;
-        handle.close()
+        self.close_fd_for_task(task_id, fd)
     }
 }
 
 impl PerTaskFdRegistry {
     /// 为指定任务分配 fd（`pipe2` 等可在已知 `task_id` 下使用）。
-    pub fn alloc_fd_for_task(&mut self,
-                             task_id : task::TaskId,
-                             handle : Box<dyn VfsIoHandle>)
-                             -> usize {
-        let table = self.table_mut(task_id);
-        for fd in VFS_FIRST_DYNAMIC_FD..table.len() {
-            if table[fd].is_none() {
+    pub fn alloc_fd_for_task(
+        &mut self,
+        task_id: task::TaskId,
+        handle: Box<dyn VfsIoHandle>,
+    ) -> usize {
+        let (newfd, len) = {
+            let table = self.table_mut(task_id);
+            if let Some(fd) = (VFS_FIRST_DYNAMIC_FD..table.len()).find(|&fd| table[fd].is_none())
+            {
                 table[fd] = Some(handle);
-                return fd;
+                (fd, table.len())
+            } else {
+                table.push(Some(handle));
+                let nf = table.len() - 1;
+                (nf, table.len())
             }
-        }
-        table.push(Some(handle));
-        table.len() - 1
+        };
+        self.ensure_flags_len(task_id, len);
+        newfd
     }
 
     /// 按任务与 fd 号取可变句柄。
-    pub fn get_io_for_task(&mut self,
-                           task_id : task::TaskId,
-                           fd : usize)
-                           -> VfsResult<&mut (dyn VfsIoHandle + '_)> {
-        match self.table_mut(task_id)
-                  .get_mut(fd)
-        {
+    pub fn get_io_for_task(
+        &mut self,
+        task_id: task::TaskId,
+        fd: usize,
+    ) -> VfsResult<&mut (dyn VfsIoHandle + '_)> {
+        self.ensure_task(task_id);
+        match self.tables[task_id].get_mut(fd) {
             Some(Some(h)) => Ok(h.as_mut()),
             _ => Err(VfsError::BadFd),
         }
     }
 
     /// 按任务关闭 fd；关闭时调用句柄的 `close`。
-    pub fn close_fd_for_task(&mut self, task_id : task::TaskId, fd : usize) -> VfsResult<()> {
+    pub fn close_fd_for_task(&mut self, task_id: task::TaskId, fd: usize) -> VfsResult<()> {
         if fd < VFS_FIRST_DYNAMIC_FD {
             return Err(VfsError::BadFd);
         }
-        let mut handle = self.table_mut(task_id)
-                             .get_mut(fd)
-                             .ok_or(VfsError::BadFd)?
-                             .take()
-                             .ok_or(VfsError::BadFd)?;
-        handle.close()
+        self.close_slot(task_id, fd)
     }
 
-    /// fork 时初始化子任务 fd 表：创建独立的 stdin/stdout/stderr 控制台句柄。
-    ///
-    /// 动态 fd（≥3，pipe/file 等）不复制——当前 oscomp fork 测例子进程仅需 write+exit。
-    pub fn init_child_fd_table(&mut self, child : task::TaskId) {
-        // `table_mut` 会自动填充 fd 0/1/2 的默认控制台句柄
+    /// `dup(oldfd)`：复制到 ≥ `minfd` 的最低可用 fd。
+    pub fn dup_fd_for_task(
+        &mut self,
+        task_id: task::TaskId,
+        oldfd: usize,
+        minfd: usize,
+    ) -> VfsResult<usize> {
+        let dup_handle = {
+            let handle = self.get_io_for_task(task_id, oldfd)?;
+            handle.duplicate()?
+        };
+        self.ensure_task(task_id);
+        let newfd = {
+            let table = &mut self.tables[task_id];
+            if let Some(fd) = (minfd..table.len()).find(|&fd| table[fd].is_none()) {
+                table[fd] = Some(dup_handle);
+                fd
+            } else {
+                table.push(Some(dup_handle));
+                table.len() - 1
+            }
+        };
+        self.ensure_flags_len(task_id, self.tables[task_id].len());
+        self.fd_flags[task_id][newfd] = 0;
+        Ok(newfd)
+    }
+
+    /// `dup3(oldfd, newfd, cloexec)`。
+    pub fn dup3_fd_for_task(
+        &mut self,
+        task_id: task::TaskId,
+        oldfd: usize,
+        newfd: usize,
+        cloexec: bool,
+    ) -> VfsResult<usize> {
+        if oldfd == newfd {
+            self.get_io_for_task(task_id, oldfd)?;
+            if cloexec {
+                self.set_fd_cloexec(task_id, newfd, true)?;
+            }
+            return Ok(newfd);
+        }
+
+        let dup_handle = {
+            let handle = self.get_io_for_task(task_id, oldfd)?;
+            handle.duplicate()?
+        };
+
+        self.ensure_task(task_id);
+        if newfd < self.tables[task_id].len() && self.tables[task_id][newfd].is_some() {
+            self.close_slot(task_id, newfd)?;
+        }
+        {
+            let table = &mut self.tables[task_id];
+            while table.len() <= newfd {
+                table.push(None);
+            }
+            table[newfd] = Some(dup_handle);
+        }
+        self.ensure_flags_len(task_id, self.tables[task_id].len());
+        self.fd_flags[task_id][newfd] = if cloexec { FD_CLOEXEC } else { 0 };
+        Ok(newfd)
+    }
+
+    /// `fcntl(F_GETFD)`。
+    pub fn get_fd_flags(&mut self, task_id: task::TaskId, fd: usize) -> VfsResult<usize> {
+        self.get_io_for_task(task_id, fd)?;
+        self.ensure_task(task_id);
+        let flags = &self.fd_flags[task_id];
+        let v = if fd < flags.len() { flags[fd] } else { 0 };
+        Ok(usize::from(v & FD_CLOEXEC))
+    }
+
+    /// `fcntl(F_SETFD)`：当前仅支持 `FD_CLOEXEC` 位。
+    pub fn set_fd_flags(&mut self, task_id: task::TaskId, fd: usize, val: usize) -> VfsResult<()> {
+        self.get_io_for_task(task_id, fd)?;
+        let cloexec = (val & usize::from(FD_CLOEXEC)) != 0;
+        self.set_fd_cloexec(task_id, fd, cloexec)
+    }
+
+    fn set_fd_cloexec(&mut self, task_id: task::TaskId, fd: usize, cloexec: bool) -> VfsResult<()> {
+        self.ensure_flags_len(task_id, fd + 1);
+        self.fd_flags[task_id][fd] = if cloexec { FD_CLOEXEC } else { 0 };
+        Ok(())
+    }
+
+    /// fork 时初始化子任务 fd 表：仅默认 stdin/stdout/stderr（spawn 路径）。
+    pub fn init_child_fd_table(&mut self, child: task::TaskId) {
         let _ = self.table_mut(child);
+    }
+
+    /// fork 时复制父任务 fd 表（含 pipe/文件等动态 fd）。
+    pub fn copy_fd_table_from_parent(&mut self, child: task::TaskId, parent: task::TaskId) {
+        self.ensure_task(parent);
+        let parent_len = self.tables[parent].len();
+        let parent_flags = self.fd_flags[parent].clone();
+
+        let mut entries: Vec<(usize, Box<dyn VfsIoHandle>)> = Vec::new();
+        for (fd, slot) in self.tables[parent].iter().enumerate() {
+            if let Some(handle) = slot {
+                if let Ok(dup) = handle.duplicate() {
+                    entries.push((fd, dup));
+                }
+            }
+        }
+
+        self.ensure_task(child);
+        self.tables[child].clear();
+        self.fd_flags[child].clear();
+
+        for (fd, dup) in entries {
+            let table = &mut self.tables[child];
+            while table.len() <= fd {
+                table.push(None);
+            }
+            table[fd] = Some(dup);
+        }
+
+        self.ensure_flags_len(child, parent_len.max(self.tables[child].len()));
+        for fd in 0..parent_len.min(parent_flags.len()) {
+            self.fd_flags[child][fd] = parent_flags[fd];
+        }
+    }
+
+    /// `execve` 前关闭带 `FD_CLOEXEC` 的 fd。
+    pub fn close_cloexec_fds_for_task(&mut self, task_id: task::TaskId) {
+        self.ensure_task(task_id);
+        let table_len = self.tables[task_id].len();
+        let flags_len = self.fd_flags[task_id].len();
+        for fd in (0..table_len).rev() {
+            let cloexec = fd < flags_len && (self.fd_flags[task_id][fd] & FD_CLOEXEC) != 0;
+            if cloexec {
+                let _ = self.close_slot(task_id, fd);
+            }
+        }
+    }
+
+    /// 任务退出后关闭全部 fd 并清空槽位。
+    pub fn drop_task_fd_table(&mut self, task_id: task::TaskId) {
+        if let Some(table) = self.tables.get_mut(task_id) {
+            for slot in table.iter_mut() {
+                if let Some(mut h) = slot.take() {
+                    let _ = h.close();
+                }
+            }
+            table.clear();
+        }
+        if let Some(flags) = self.fd_flags.get_mut(task_id) {
+            flags.clear();
+        }
     }
 }

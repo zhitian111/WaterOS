@@ -75,7 +75,7 @@
         "mm/vfs-root-read",
         "platform/impl-qemu-riscv64-opensbi",
         "runtime/impl-firmware-opensbi",
-        "runtime/impl-info",
+        "runtime/impl-trace",
         #"runtime/impl-info",
         "syscall/impl-riscv64",
         "vfs/fd-session",

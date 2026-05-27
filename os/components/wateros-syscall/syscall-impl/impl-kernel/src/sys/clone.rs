@@ -1,7 +1,7 @@
 //! `clone`/`fork` 系统调用实现。
 //!
 //! fork 时会为子进程创建**独立地址空间**（通过 `mm::kernel_mm::fork_user_aspace`），
-//! 复制父进程 trap 帧（a0 置 0 作为子进程返回值），继承 cwd 与 fd 表。
+//! 复制父进程 trap 帧（a0 置 0 作为子进程返回值），继承 cwd 与 fd 表（经 VFS duplicate）。
 //!
 //! clone（`child_stack ≠ 0`）时子进程使用调用者提供的独立栈。
 //! fork（`child_stack == 0`）时子进程沿用父进程栈指针。
@@ -39,8 +39,7 @@ fn do_clone(child_stack : usize) -> UserRet {
         .expect("current task must exist after fork");
     vfs::cwd::copy_cwd_from_parent(child_id, parent_id);
 
-    // 初始化子任务 fd 表
-    vfs::fd::init_child_fd_table(child_id);
+    vfs::fd::copy_fd_table_from_parent(child_id, parent_id);
 
     UserRet::from_success(child_id)
 }

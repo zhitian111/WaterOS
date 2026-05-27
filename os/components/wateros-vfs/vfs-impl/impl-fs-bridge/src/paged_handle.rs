@@ -47,6 +47,7 @@ fn mount_rw_session() -> VfsResult<MountedRwSession> {
 }
 
 /// 页缓存-backed 根卷普通文件句柄。
+#[derive(Clone)]
 pub struct PagedFileHandle {
     path: String,
     offset: u64,
@@ -208,6 +209,10 @@ impl VfsIoHandle for PagedFileHandle {
 
     fn flush(&mut self) -> VfsResult<()> {
         self.sync_dirty()
+    }
+
+    fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {
+        Ok(Box::new(self.clone()))
     }
 }
 

@@ -57,6 +57,10 @@
 | Times / Nanosleep | `times` / `nanosleep` | `sys/task.rs` | tick 映射；非零 sleep → 1 tick |
 | GetCwd / Chdir | `getcwd` / `chdir` | `sys/getcwd.rs`、`sys/chdir.rs` | per-task cwd |
 | MkdirAt | `mkdirat` | `sys/mkdirat.rs` | 仅 `AT_FDCWD` |
+| GetDents64 | `getdents64` | `sys/getdents64.rs` | 目录 fd；无 `.`/`..`（与 ext4 一致） |
+| UnlinkAt | `unlinkat` | `sys/unlinkat.rs` | `AT_FDCWD`/目录 fd；`AT_REMOVEDIR`→`rmdir` |
+| Mount | `mount` | `sys/mount.rs` | ext4 辅助卷；须空挂载点 |
+| Umount2 | `umount2` | `sys/umount2.rs` | 与 mount 成对 |
 | Uname | `uname` | `sys/task.rs` | 填充固定 `utsname` 字段 |
 | Prctl | `prctl` | `sys/task.rs` | 常用 op 子集；未知 op → `ENOSYS` |
 | Getrlimit / Setrlimit | `getrlimit` / `setrlimit` | `sys/task.rs` | 最小桩 |
@@ -78,10 +82,6 @@
 | SyscallKind | Linux 号（generic64） | BusyBox 相关性 |
 |-------------|----------------------|----------------|
 | Ioctl | 29 | TTY、`TIOCGPGRP` 等 |
-| GetDents64 | 61 | `ls`、目录遍历 |
-| UnlinkAt | 35 | `rm`、临时文件 |
-| Mount | 40 | basic / 赛题挂载 |
-| Umount2 | 39 | 与 mount 成对 |
 | RtSigaction | 134 | 信号安装 |
 | RtSigprocmask | 135 | 与 ash/pthread |
 | RtSigreturn | 139 | 用户 handler 返回 |
@@ -103,7 +103,7 @@
 |------|------|------|
 | **fork fd 继承** | `vfs::fd::init_child_fd_table` 仅建 0/1/2，**不复制**父进程 pipe/文件 fd | `pipe` + `fork`、shell 管道 |
 | **execve CLOEXEC** | `execve.rs` 中 TODO，未遍历关闭 | 脚本/exec 语义 |
-| **VFS 目录读** | `FsBridge::read_dir` 已有；缺 `getdents64` syscall 与 `linux_dirent64` | `ls`、`busybox ls` |
+| **VFS 多挂载** | 辅助卷 `mount`/`umount2` + 最长前缀路由；单盘 QEMU 下 basic `mount` 可能 `ENOENT` | 赛题多盘、`mnt` 测程 |
 | **bring-up 回归** | `stage-02-mm` 在总线中被注释；`stage-03-basic` 仅 `chdir`/`clone`/`execve` | basic 全表未跑 |
 | **BusyBox 镜像与总线阶段** | 仓库无 busybox 二进制；无 `stage-busybox-ash` | 无法集成验收 |
 | **赛题脚手架** | 无 `*_testcode.sh` 调度、START/END、关机 | 正式 busybox 组评测 |
@@ -141,7 +141,7 @@
 | 1-D | `syscall` | 路径 `stat`/`newfstatat`（若 `fstat` 不足以支撑 `ls -l`） | ✓ |
 | 1-E | `os/src/user_bringup_*` | 总线阶段 `[bringup][posix-fs-meta]` 静态验收 ELF | ✓ |
 
-**验收**：用户态 mkdir → write → getdents → unlink；basic 中对应测程通过。
+**验收**：用户态 mkdir → write → getdents → unlink；basic 中对应测程通过。单盘 QEMU 下 `mount`/`umount`/`mnt` 若硬编码 `/dev/vblk1` 可能 `ENOENT`，不视为阶段 1 本地失败；多盘环境再验。
 
 **参考工作包**：`wp-syscall-posix-directory-mount.md`。
 

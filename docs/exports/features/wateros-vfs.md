@@ -13,7 +13,7 @@
 
 - **`wateros`** 在 **`qemu-riscv64-opensbi`** 下启用 **`vfs-bridge`**、**`vfs/fd-session`**、**`vfs/impl-riscv64`**，在 `fs::init` / `fs::test` 之后调用 **`vfs::test()`**（含 `fd::self_test` 与 RW 读回烟囱）。
 - **`wateros-mm`** 在相同 feature 下启用 **`vfs-root-read`**，`from_elf_path` 经 **`vfs::root::read_view()`** 读 ELF。
-- **`wateros-syscall`** 经 **`fd-session`** feature 依赖 **`vfs::fd`** 与 **`vfs::cwd`** 完成 `read` / `write` / `close` / `pipe2` / `getcwd` / `chdir` / `mkdirat`；`open` 经 **`resolve_open_path`** 相对 cwd 解析。
+- **`wateros-syscall`** 经 **`fd-session`** feature 依赖 **`vfs::fd`** 与 **`vfs::cwd`** 完成 `read` / `write` / `close` / `dup` / `dup3` / `pipe2` / `getcwd` / `chdir` / `mkdirat`；`fork` 经 **`copy_fd_table_from_parent`** 继承 fd；`execve` 经 **`close_cloexec_fds_for_current_task`** 关闭 CLOEXEC fd。
 
 ## 工作区说明
 
@@ -22,7 +22,8 @@
 ## 后续关注点
 
 - 文件 **Async I/O**（`FILE_IO_MODE::Async`）与跨 fd 细粒度页锁。
-- 任务退出时 fd 批量关闭（cwd 已在 `waitpid` reap 与显式 reap 路径 **`drop_task_cwd`**）、`dup` / fork 时 **`copy_cwd_from_parent`** 接线。
+- 文件 **Async I/O** 细项与 `fcntl` 非阻塞 / `F_DUPFD_CLOEXEC` 扩展。
+- fork 后文件 offset 共享（当前 `duplicate` 为句柄级 `Clone`，pipe 共享 `Arc<Pipe>`）。
 - 多挂载与 vnode 扩展 `vfs-api` 占位模块。
 
 ## 维护

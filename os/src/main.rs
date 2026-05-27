@@ -51,6 +51,8 @@ mod user_bringup_basic;
 #[cfg(feature = "qemu-riscv64-opensbi")]
 mod user_bringup_bus;
 #[cfg(feature = "qemu-riscv64-opensbi")]
+mod user_bringup_posix_fs;
+#[cfg(feature = "qemu-riscv64-opensbi")]
 mod user_bringup_mm;
 
 /// 将内核 panic 委托给 `wateros-runtime` 的统一 panic 处理（日志/停机策略由
@@ -309,6 +311,7 @@ mod qemu_loongarch64_virt {
                                                                       must be reapable after exit");
         #[cfg(feature = "qemu-loongarch64-virt")]
         vfs::cwd::drop_task_cwd(exited.id);
+        vfs::fd::drop_task_fd_table(exited.id);
         assert_eq!(exited.id, expected.task_id,
                    "LoongArch64 user smoke reap id must match spawned task");
         assert_eq!(exited.kind,

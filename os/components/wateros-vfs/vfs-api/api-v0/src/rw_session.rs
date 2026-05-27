@@ -17,6 +17,12 @@ pub trait RootRwSession {
         Err(VfsError::Unsupported)
     }
 
+    /// 删除空目录（`unlinkat` + `AT_REMOVEDIR`）。
+    fn rmdir(&mut self, path: &str) -> VfsResult<()> {
+        let _ = path;
+        Err(VfsError::Unsupported)
+    }
+
     /// 从 `offset` 起写入 `data`；返回实际写入字节数。
     fn write_range(&mut self, path: &str, offset: u64, data: &[u8]) -> VfsResult<usize> {
         let _ = (path, offset, data);

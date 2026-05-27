@@ -61,28 +61,80 @@ pub fn close_fd(fd: usize) -> VfsResult<()> {
     with_current_task(|reg, task_id| reg.close_fd_for_task(task_id, fd))
 }
 
-/// fork 时初始化子任务 fd 表（stdin/stdout/stderr）。
+/// `dup(oldfd)`：复制到 ≥ `minfd` 的最低可用 fd。
+pub fn dup_fd(oldfd: usize, minfd: usize) -> VfsResult<usize> {
+    with_current_task(|reg, task_id| reg.dup_fd_for_task(task_id, oldfd, minfd))
+}
+
+/// `dup3(oldfd, newfd, cloexec)`。
+pub fn dup3_fd(oldfd: usize, newfd: usize, cloexec: bool) -> VfsResult<usize> {
+    with_current_task(|reg, task_id| reg.dup3_fd_for_task(task_id, oldfd, newfd, cloexec))
+}
+
+/// `fcntl(F_GETFD)`。
+pub fn get_fd_flags(fd: usize) -> VfsResult<usize> {
+    with_current_task(|reg, task_id| reg.get_fd_flags(task_id, fd))
+}
+
+/// `fcntl(F_SETFD)`。
+pub fn set_fd_flags(fd: usize, val: usize) -> VfsResult<()> {
+    with_current_task(|reg, task_id| reg.set_fd_flags(task_id, fd, val))
+}
+
+/// fork 时初始化子任务 fd 表（仅默认 stdio，spawn 路径）。
 pub fn init_child_fd_table(child_id: task::TaskId) {
     let mut reg = registry().exclusive_access();
     reg.init_child_fd_table(child_id);
 }
 
-/// bring-up：两任务 fd 表隔离与 close 语义烟囱。
+/// fork 时复制父任务 fd 表。
+pub fn copy_fd_table_from_parent(child_id: task::TaskId, parent_id: task::TaskId) {
+    let mut reg = registry().exclusive_access();
+    reg.copy_fd_table_from_parent(child_id, parent_id);
+}
+
+/// `execve` 前关闭带 `FD_CLOEXEC` 的 fd。
+pub fn close_cloexec_fds_for_current_task() -> VfsResult<()> {
+    let task_id = current_task_id()?;
+    let mut reg = registry().exclusive_access();
+    reg.close_cloexec_fds_for_task(task_id);
+    Ok(())
+}
+
+/// 任务退出后释放 fd 表。
+pub fn drop_task_fd_table(task_id: task::TaskId) {
+    let mut reg = registry().exclusive_access();
+    reg.drop_task_fd_table(task_id);
+}
+
+/// bring-up：两任务 fd 表隔离、dup 与 fork 继承烟囱。
 pub fn self_test() {
     let mut reg = registry().exclusive_access();
     let a: task::TaskId = 10;
     let b: task::TaskId = 11;
     let fd = reg.alloc_fd_for_task(a, Box::new(impl_fd_session::ConsoleOutHandle));
     let fd_b = reg.alloc_fd_for_task(b, Box::new(impl_fd_session::ConsoleOutHandle));
-    // 各任务独立 fd 表，首个动态 fd 号可以相同，隔离体现在句柄互不影响。
     assert_eq!(fd, fd_b);
     assert!(reg.get_io_for_task(a, fd).is_ok());
     assert!(reg.get_io_for_task(b, fd_b).is_ok());
+    let dup_fd = reg.dup_fd_for_task(a, fd, 0).expect("dup");
+    assert_ne!(dup_fd, fd);
+    assert!(reg.get_io_for_task(a, dup_fd).is_ok());
+    assert!(reg.close_fd_for_task(a, dup_fd).is_ok());
     assert!(reg.close_fd_for_task(a, fd).is_ok());
     assert!(reg.get_io_for_task(a, fd).is_err());
     assert!(reg.get_io_for_task(b, fd_b).is_ok());
-    assert!(reg.close_fd_for_task(a, fd).is_err());
+
+    let parent_extra = reg.alloc_fd_for_task(a, Box::new(impl_fd_session::ConsoleOutHandle));
+    reg.copy_fd_table_from_parent(b, a);
+    assert!(reg.get_io_for_task(b, parent_extra).is_ok());
+    assert!(reg.get_io_for_task(a, parent_extra).is_ok());
+
+    let _ = reg.close_fd_for_task(b, fd_b);
+    let _ = reg.close_fd_for_task(a, parent_extra);
+    let _ = reg.close_fd_for_task(b, parent_extra);
     let fd_reuse = reg.alloc_fd_for_task(a, Box::new(impl_fd_session::ConsoleOutHandle));
     assert_eq!(fd_reuse, fd);
-    let _ = reg.close_fd_for_task(b, fd_b);
+    reg.drop_task_fd_table(a);
+    reg.drop_task_fd_table(b);
 }

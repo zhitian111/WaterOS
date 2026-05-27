@@ -31,5 +31,6 @@ pub fn run() {
     }
     info!("[bringup][stage-00-bus] END");
     // crate::user_bringup_mm::run_stage_02();
+    crate::user_bringup_posix_fs::run_stage_posix_fs_meta();
     crate::user_bringup_basic::run_stage_03();
 }

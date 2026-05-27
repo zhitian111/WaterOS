@@ -14,12 +14,14 @@ use api_v0::{
 
 mod dir_handle;
 mod file_handle;
+mod mount_table;
 mod paged_handle;
 
 pub use dir_handle::DirectoryHandle;
 pub use file_handle::{BufferedFileHandle, RootFileHandle};
 pub use paged_handle::PagedFileHandle;
 use fs::{FsAccessMode, FsCapability, FsDirEntry, FsError, FsKind, FsMetadata, FsNodeType, SharedRwFs};
+use mount_table::{resolve_route, FsRoute};
 
 /// 通过 `wateros-fs` 访问根卷与 devfs 的零大小后端。
 #[derive(Debug, Clone, Copy, Default)]
@@ -94,37 +96,40 @@ fn map_dir_entry(e: FsDirEntry) -> VfsDirEntry {
     }
 }
 
-fn root_rw() -> VfsResult<SharedRwFs> {
+pub(crate) fn root_rw() -> VfsResult<SharedRwFs> {
     fs::rootfs::active_impl::root_rw_fs().ok_or(VfsError::NotMounted)
+}
+
+fn fs_and_rel(path: &str) -> VfsResult<(SharedRwFs, String)> {
+    match resolve_route(path)? {
+        FsRoute::Root { abs } => Ok((root_rw()?, abs)),
+        FsRoute::Aux { fs, rel } => Ok((fs, rel)),
+    }
 }
 
 impl SingleRootReadView for FsBridge {
     fn exists(&self, path: &str) -> VfsResult<bool> {
-        let n = normalize_absolute_path(path)?;
-        let fs = root_rw()?;
-        fs.lock().exists(n.as_str()).map_err(map_fs_err)
+        let (fs, rel) = fs_and_rel(path)?;
+        fs.lock().exists(rel.as_str()).map_err(map_fs_err)
     }
 
     fn metadata(&self, path: &str) -> VfsResult<VfsMetadata> {
-        let n = normalize_absolute_path(path)?;
-        let fs = root_rw()?;
+        let (fs, rel) = fs_and_rel(path)?;
         fs.lock()
-            .metadata(n.as_str())
+            .metadata(rel.as_str())
             .map_err(map_fs_err)
             .map(map_meta)
     }
 
     fn read(&self, path: &str) -> VfsResult<Vec<u8>> {
-        let n = normalize_absolute_path(path)?;
-        let fs = root_rw()?;
-        fs.lock().read(n.as_str()).map_err(map_fs_err)
+        let (fs, rel) = fs_and_rel(path)?;
+        fs.lock().read(rel.as_str()).map_err(map_fs_err)
     }
 
     fn read_dir(&self, path: &str) -> VfsResult<Vec<VfsDirEntry>> {
-        let n = normalize_absolute_path(path)?;
-        let fs = root_rw()?;
+        let (fs, rel) = fs_and_rel(path)?;
         fs.lock()
-            .read_dir(n.as_str())
+            .read_dir(rel.as_str())
             .map_err(map_fs_err)
             .map(|v| v.into_iter().map(map_dir_entry).collect())
     }
@@ -135,14 +140,52 @@ impl SingleRootReadView for FsBridge {
 }
 
 impl FsBridge {
-    /// 从根卷只读句柄按偏移读取（页缓存 miss 路径）。
-    pub(crate) fn read_range(&self, path: &str, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+    /// 仅在根卷上列目录（挂载点须为空目录检查）。
+    pub(crate) fn read_dir_on_root(path: &str) -> VfsResult<Vec<VfsDirEntry>> {
         let n = normalize_absolute_path(path)?;
         let fs = root_rw()?;
         fs.lock()
-            .read_range(n.as_str(), offset, buf)
+            .read_dir(n.as_str())
+            .map_err(map_fs_err)
+            .map(|v| v.into_iter().map(map_dir_entry).collect())
+    }
+
+    /// 从根卷只读句柄按偏移读取（页缓存 miss 路径）。
+    pub(crate) fn read_range(&self, path: &str, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+        let (fs, rel) = fs_and_rel(path)?;
+        fs.lock()
+            .read_range(rel.as_str(), offset, buf)
             .map_err(map_fs_err)
     }
+}
+
+/// 将 ext4 块设备挂到根卷内 `mount_point`（须为空目录）。
+pub fn mount_ext4_block_at(mount_point: &str, block_dev: &str) -> VfsResult<()> {
+    let aux = fs::mount_aux_rw_from_block_path(block_dev).map_err(map_fs_err)?;
+    mount_table::mount_aux_at(mount_point, aux)
+}
+
+/// 卸载 `mount_point` 上的辅助卷。
+pub fn unmount_at(mount_point: &str) -> VfsResult<()> {
+    mount_table::unmount_aux_at(mount_point)
+}
+
+/// 删除绝对路径（经挂载表路由）。
+pub fn unlink_path(path: &str, remove_dir: bool) -> VfsResult<()> {
+    let (fs, rel) = fs_and_rel(path)?;
+    let mut sess = MountedRwSession::new(fs);
+    if remove_dir {
+        sess.rmdir(rel.as_str())
+    } else {
+        sess.unlink(rel.as_str())
+    }
+}
+
+/// 创建目录（经挂载表路由）。
+pub fn mkdir_path(path: &str, mode: u32) -> VfsResult<()> {
+    let (fs, rel) = fs_and_rel(path)?;
+    let mut sess = MountedRwSession::new(fs);
+    sess.mkdir(rel.as_str(), mode)
 }
 
 /// 与只读根句柄分离的可写挂载会话。
@@ -176,6 +219,11 @@ impl RootRwSession for MountedRwSession {
     fn unlink(&mut self, path: &str) -> VfsResult<()> {
         let n = normalize_absolute_path(path)?;
         self.inner.lock().unlink(n.as_str()).map_err(map_fs_err)
+    }
+
+    fn rmdir(&mut self, path: &str) -> VfsResult<()> {
+        let n = normalize_absolute_path(path)?;
+        self.inner.lock().rmdir(n.as_str()).map_err(map_fs_err)
     }
 
     fn write_range(&mut self, path: &str, offset: u64, data: &[u8]) -> VfsResult<usize> {
@@ -231,11 +279,26 @@ impl VfsOpenOps for FsBridge {
     }
 }
 
-impl VfsMountTable for FsBridge {}
+impl VfsMountTable for FsBridge {
+    fn mount_at(&mut self, mount_point: &str, _kind: VfsFsKind) -> VfsResult<()> {
+        let _ = mount_point;
+        Err(VfsError::Unsupported)
+    }
+
+    fn unmount_at(&mut self, mount_point: &str) -> VfsResult<()> {
+        mount_table::unmount_aux_at(mount_point)
+    }
+
+    fn resolve_mount(&self, path: &str) -> VfsResult<&str> {
+        let _ = path;
+        Err(VfsError::Unsupported)
+    }
+}
 
 impl VfsBackend for FsBridge {}
 
 pub fn test() {
     api_v0::test();
     let _ = FsBridge::default();
+    let _ = mount_table::mount_table_self_test();
 }
