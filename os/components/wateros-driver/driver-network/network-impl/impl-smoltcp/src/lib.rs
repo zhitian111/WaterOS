@@ -105,7 +105,9 @@ impl phy::RxToken for SmoltcpRxToken<'_> {
 impl phy::TxToken for SmoltcpTxToken<'_> {
     fn consume<R, F: FnOnce(&mut [u8]) -> R>(self, len: usize, f: F) -> R {
         let result = f(&mut self.buf[..len]);
-        self.dev.lock().send(&self.buf[..len]).ok();
+        if let Err(e) = self.dev.lock().send(&self.buf[..len]) {
+            log::warn!("[smoltcp-adapter] tx send failed: {:?}", e);
+        }
         result
     }
 }

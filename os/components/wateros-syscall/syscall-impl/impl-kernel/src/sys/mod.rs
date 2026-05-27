@@ -20,6 +20,20 @@ mod read;
 mod task;
 mod write;
 
+// socket / 网络
+mod accept;
+mod bind;
+mod connect;
+mod listen;
+mod poll;
+mod recvfrom;
+mod sendmsg;
+mod sendto;
+mod shutdown;
+mod sockname;
+mod socket;
+mod sockopt;
+
 pub(crate) use brk::sys_brk;
 pub(crate) use chdir::sys_chdir;
 pub(crate) use clone::sys_clone;
@@ -42,3 +56,17 @@ pub(crate) use task::{
     sys_uname, sys_waitpid, sys_yield,
 };
 pub(crate) use write::sys_write;
+
+// socket / 网络
+pub(crate) use accept::sys_accept4;
+pub(crate) use bind::sys_bind;
+pub(crate) use connect::sys_connect;
+pub(crate) use listen::sys_listen;
+pub(crate) use poll::sys_poll;
+pub(crate) use recvfrom::sys_recvfrom;
+pub(crate) use sendmsg::{sys_recvmsg, sys_sendmsg};
+pub(crate) use sendto::sys_sendto;
+pub(crate) use shutdown::sys_shutdown;
+pub(crate) use sockname::{sys_getpeername, sys_getsockname};
+pub(crate) use socket::sys_socket;
+pub(crate) use sockopt::{sys_getsockopt, sys_setsockopt};

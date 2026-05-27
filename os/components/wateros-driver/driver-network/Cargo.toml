@@ -11,11 +11,12 @@
     impl-smoltcp = { path = "./network-impl/impl-smoltcp/", package = "wateros-driver-network-impl-smoltcp", default-features = true, optional = true }
     log = { version = "0.4.29" }
     smoltcp = { version = "0.13", default-features = false, features = ["alloc", "log", "medium-ethernet", "proto-ipv4", "socket-udp", "socket-tcp"], optional = true }
-    spin = { version = "0.9", optional = true }
+    spin = "0.10.0"
+    vfs-api = { path = "../../wateros-vfs/vfs-api/api-v0/", package = "wateros-vfs-api-v0", default-features = true, optional = true }
 
 [features]
     api-v0 = [ "impl-dummy/api-v0" ]
     default = [ "api-v0", "impl-dummy", "impl-smoltcp", "impl-virtio-mmio" ]
     impl-dummy = [  ]
     impl-virtio-mmio = [ "dep:impl-virtio-mmio" ]
-    impl-smoltcp = [ "dep:impl-smoltcp", "dep:smoltcp", "dep:spin" ]
+    impl-smoltcp = [ "dep:impl-smoltcp", "dep:smoltcp", "dep:vfs-api" ]

@@ -144,6 +144,12 @@ impl NetworkDevice for VirtioNetDevice {
         match self.inner.receive() {
             Ok(rx_buf) => {
                 let packet = rx_buf.packet();
+                if packet.len() > buf.len() {
+                    if let Err(e) = self.inner.recycle_rx_buffer(rx_buf) {
+                        logging::warn!("[virtio-net] recycle_rx_buffer failed: {:?}", e);
+                    }
+                    return Err(DriverError::InvalidParam);
+                }
                 let len = packet.len().min(buf.len());
                 buf[..len].copy_from_slice(&packet[..len]);
                 let packet_len = rx_buf.packet_len();
