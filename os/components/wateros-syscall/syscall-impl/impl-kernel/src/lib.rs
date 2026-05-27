@@ -11,6 +11,7 @@ use abi::syscall_number::ActiveSyscallNumberTable;
 
 mod linux_stat;
 mod mm_util;
+mod socket_fd;
 mod sys;
 mod unsupported;
 mod user_copy;
@@ -153,4 +154,51 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     fn dispatch_unknown(syscall_nr : usize, args : SyscallArgs) -> isize {
         unsupported::syscall_unknown(syscall_nr, args);
     }
+
+    // ——— socket / 网络 ———
+
+    #[inline]
+    fn dispatch_socket(args: SyscallArgs) -> isize { sys::sys_socket(args).0 }
+
+    #[inline]
+    fn dispatch_bind(args: SyscallArgs) -> isize { sys::sys_bind(args).0 }
+
+    #[inline]
+    fn dispatch_listen(args: SyscallArgs) -> isize { sys::sys_listen(args).0 }
+
+    #[inline]
+    fn dispatch_accept4(args: SyscallArgs) -> isize { sys::sys_accept4(args).0 }
+
+    #[inline]
+    fn dispatch_connect(args: SyscallArgs) -> isize { sys::sys_connect(args).0 }
+
+    #[inline]
+    fn dispatch_getsockname(args: SyscallArgs) -> isize { sys::sys_getsockname(args).0 }
+
+    #[inline]
+    fn dispatch_getpeername(args: SyscallArgs) -> isize { sys::sys_getpeername(args).0 }
+
+    #[inline]
+    fn dispatch_sendto(args: SyscallArgs) -> isize { sys::sys_sendto(args).0 }
+
+    #[inline]
+    fn dispatch_recvfrom(args: SyscallArgs) -> isize { sys::sys_recvfrom(args).0 }
+
+    #[inline]
+    fn dispatch_sendmsg(args: SyscallArgs) -> isize { sys::sys_sendmsg(args).0 }
+
+    #[inline]
+    fn dispatch_recvmsg(args: SyscallArgs) -> isize { sys::sys_recvmsg(args).0 }
+
+    #[inline]
+    fn dispatch_setsockopt(args: SyscallArgs) -> isize { sys::sys_setsockopt(args).0 }
+
+    #[inline]
+    fn dispatch_getsockopt(args: SyscallArgs) -> isize { sys::sys_getsockopt(args).0 }
+
+    #[inline]
+    fn dispatch_shutdown(args: SyscallArgs) -> isize { sys::sys_shutdown(args).0 }
+
+    #[inline]
+    fn dispatch_poll(args: SyscallArgs) -> isize { sys::sys_poll(args).0 }
 }

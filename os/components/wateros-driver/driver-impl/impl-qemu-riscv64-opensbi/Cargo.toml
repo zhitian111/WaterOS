@@ -13,6 +13,10 @@
         "api-v0",
         "impl-virtio-mmio",
     ] }
+    network = { path = "../../driver-network", package = "wateros-driver-network", default-features = true, features = [
+        "api-v0",
+        "impl-virtio-mmio",
+    ] }
     fs = { path = "../../../wateros-fs", package = "wateros-fs", default-features = true }
     wateros-base-config = { path = "../../../wateros-base/base-config", package = "wateros-base-config" }
 

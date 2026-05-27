@@ -80,6 +80,36 @@ impl ErrNo {
     pub const ESPIPE: Self = Self(29);
     /// 管道破裂。
     pub const EPIPE: Self = Self(32);
+    /// 操作不被支持（socket 等场景）。
+    pub const EOPNOTSUPP: Self = Self(95);
+    /// 协议不支持。
+    pub const EPROTONOSUPPORT: Self = Self(93);
+    /// 地址族不支持。
+    pub const EAFNOSUPPORT: Self = Self(97);
+    /// 地址已被占用。
+    pub const EADDRINUSE: Self = Self(98);
+    /// 地址不可用。
+    pub const EADDRNOTAVAIL: Self = Self(99);
+    /// 网络不可达。
+    pub const ENETUNREACH: Self = Self(101);
+    /// 连接被重置。
+    pub const ECONNRESET: Self = Self(104);
+    /// 发送时连接已关闭。
+    pub const ESHUTDOWN: Self = Self(108);
+    /// 消息太大。
+    pub const EMSGSIZE: Self = Self(90);
+    /// 未连接。
+    pub const ENOTCONN: Self = Self(107);
+    /// 连接超时。
+    pub const ETIMEDOUT: Self = Self(110);
+    /// 连接被拒绝。
+    pub const ECONNREFUSED: Self = Self(111);
+    /// 正在进行连接（非阻塞 connect）。
+    pub const EINPROGRESS: Self = Self(115);
+    /// 连接已在建立中。
+    pub const EALREADY: Self = Self(114);
+    /// 不是 socket 描述符。
+    pub const ENOTSOCK: Self = Self(88);
 }
 
 /// 内核侧常用的 `Result` 别名：成功载荷为 `T`，失败为 [`ErrNo`]。
