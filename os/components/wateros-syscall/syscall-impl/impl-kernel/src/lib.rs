@@ -105,6 +105,9 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     fn dispatch_waitpid(args : SyscallArgs) -> isize { sys::sys_waitpid(args).0 }
 
     #[inline]
+    fn dispatch_kill(args : SyscallArgs) -> isize { sys::sys_kill(args).0 }
+
+    #[inline]
     fn dispatch_nanosleep(args : SyscallArgs) -> isize { sys::sys_nanosleep(args).0 }
 
     #[inline]

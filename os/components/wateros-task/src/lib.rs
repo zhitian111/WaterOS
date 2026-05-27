@@ -199,6 +199,12 @@ pub fn has_child(parent_id : TaskId) -> bool { scheduler::has_child(parent_id) }
 #[inline]
 pub fn exit_current(exit_code : TaskExitCode) -> ! { scheduler::exit_current(exit_code) }
 
+/// 终止指定任务（非当前任务）。
+#[inline]
+pub fn kill_task(task_id : TaskId, exit_code : TaskExitCode) -> bool {
+    scheduler::kill_task(task_id, exit_code)
+}
+
 /// 返回当前正在运行任务的任务号。
 #[inline]
 pub fn current_task_id() -> Option<TaskId> { scheduler::current_task_id() }

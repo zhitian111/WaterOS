@@ -10,8 +10,8 @@
 use api_v0::ScheduleReason;
 use arch::task::ActiveArchTaskContext as TaskContext;
 use task_api::{
-    ExitedTask, KernelTaskEntry, TaskBlockReason, TaskId, TaskSnapshot, TaskTick, TaskWaitHandle,
-    TaskWaitResult, UserTask, WaitQueueId, IDLE_TASK_ID,
+    ExitedTask, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskId, TaskSnapshot, TaskTick,
+    TaskWaitHandle, TaskWaitResult, UserTask, WaitQueueId, IDLE_TASK_ID,
 };
 
 use crate::queues::{QueueTarget, RoundRobinQueues};
@@ -233,6 +233,12 @@ impl RoundRobinScheduler {
     pub(super) fn wake_task(&mut self, task_id : TaskId) -> bool {
         self.queues
             .wake_task(&mut self.registry, task_id)
+    }
+
+    /// 将指定任务标记为已退出（非当前任务）；当前任务须走 `exit_current`。
+    pub(super) fn kill_task(&mut self, task_id : TaskId, exit_code : TaskExitCode) -> bool {
+        self.queues
+            .kill_task(&mut self.registry, task_id, exit_code)
     }
 
     pub(super) fn reap_exited_task(&mut self, task_id : TaskId) -> Option<ExitedTask> {

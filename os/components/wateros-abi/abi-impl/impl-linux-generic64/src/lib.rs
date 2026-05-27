@@ -42,6 +42,7 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const EXIT_GROUP : SyscallNumber = SyscallNumber(94);
     const FORK : SyscallNumber = SyscallNumber(220); // 常见用户态 fork -> clone
     const WAITPID : SyscallNumber = SyscallNumber(260); // wait4
+    const KILL : SyscallNumber = SyscallNumber(129);
     const EXEC : SyscallNumber = SyscallNumber(221); // execve
 
     // 调度/时间 / scheduling & time

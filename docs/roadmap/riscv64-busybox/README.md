@@ -4,6 +4,7 @@
 
 ## 事实来源与范围
 
+- **分阶段总览（syscall 清单 + 并行任务）**：[busybox-phased-plan.md](./busybox-phased-plan.md)（以 `os/components/wateros-syscall` 源码核对为准）。
 - 与 `docs/roadmap/test-case-full-pass-plan.md` 中阶段 **B0 → B1 → C** 对齐，但 **不包含 LoongArch64**。
 - 与 `docs/architecture/snapshot.md`、`docs/roadmap/todolist.md` 当前缺口一致。
 - **刻意不扩展** `os/src/self_tests/`：回归与阶段验收通过 **`kernel_main` 既有 init/test 总线** 接入（见 `wp-init-test-bus.md`）。

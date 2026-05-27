@@ -129,9 +129,10 @@ mod qemu_riscv64_opensbi {
         } else {
             info!("[self-test] driver init done");
             fs::init();
-            // ----- 用户态 bring-up 总线：RW 挂载根卷 + 用户 ELF spawn（见 `user_bringup_bus`） -----
-            // 注意：`run()` 内 `spawn_user_task_*` 只入队；用户测程的 `ecall` 在下方
-            // `run_first_task()` 之后才会出现。
+            // ----- 用户态 bring-up 总线：RW 挂载根卷 + 用户 ELF spawn（见
+            // `user_bringup_bus`） ----- 注意：`run()` 内 `spawn_user_task_*`
+            // 只入队；用户测程的 `ecall` 在下方 `run_first_task()`
+            // 之后才会出现。
             crate::user_bringup_bus::run();
             // crate::self_tests::task::spawn_all();  // 禁用，仅保留 basic bringup
             fs::test();
