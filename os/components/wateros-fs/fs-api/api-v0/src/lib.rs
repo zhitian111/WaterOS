@@ -182,8 +182,14 @@ pub trait ReadWriteFs: Send {
         Err(FsError::Unsupported)
     }
 
-    /// 删除绝对路径指向的 **普通文件**；目录删除默认 [`FsError::Unsupported`]。
+    /// 删除绝对路径指向的 **普通文件**；目录删除见 [`ReadWriteFs::rmdir`].
     fn unlink(&mut self, path: &str) -> FsResult<()> {
+        let _ = path;
+        Err(FsError::Unsupported)
+    }
+
+    /// 删除空目录（`rmdir` / `unlinkat` + `AT_REMOVEDIR`）。
+    fn rmdir(&mut self, path: &str) -> FsResult<()> {
         let _ = path;
         Err(FsError::Unsupported)
     }
@@ -290,6 +296,8 @@ impl ReadWriteFs for LocalRwFs {
     }
 
     fn unlink(&mut self, path: &str) -> FsResult<()> { self.deref_mut().unlink(path) }
+
+    fn rmdir(&mut self, path: &str) -> FsResult<()> { self.deref_mut().rmdir(path) }
 
     fn write_range(&mut self, path: &str, offset: u64, data: &[u8]) -> FsResult<usize> {
         self.deref_mut().write_range(path, offset, data)

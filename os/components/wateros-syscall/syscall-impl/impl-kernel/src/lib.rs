@@ -123,6 +123,18 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     fn dispatch_mkdirat(args : SyscallArgs) -> isize { sys::sys_mkdirat(args).0 }
 
     #[inline]
+    fn dispatch_getdents64(args : SyscallArgs) -> isize { sys::sys_getdents64(args).0 }
+
+    #[inline]
+    fn dispatch_unlinkat(args : SyscallArgs) -> isize { sys::sys_unlinkat(args).0 }
+
+    #[inline]
+    fn dispatch_mount(args : SyscallArgs) -> isize { sys::sys_mount(args).0 }
+
+    #[inline]
+    fn dispatch_umount2(args : SyscallArgs) -> isize { sys::sys_umount2(args).0 }
+
+    #[inline]
     fn dispatch_uname(args : SyscallArgs) -> isize { sys::sys_uname(args).0 }
 
     #[inline]

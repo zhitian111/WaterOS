@@ -16,6 +16,7 @@ use crate::map_fs_err;
 use crate::FsBridge;
 
 /// 已打开的根卷普通文件（小文件：全文缓冲于内存）。
+#[derive(Clone)]
 pub struct BufferedFileHandle {
     path: String,
     data: Vec<u8>,
@@ -210,6 +211,10 @@ impl VfsIoHandle for BufferedFileHandle {
 
     fn flush(&mut self) -> VfsResult<()> {
         self.sync_dirty()
+    }
+
+    fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {
+        Ok(Box::new(self.clone()))
     }
 }
 

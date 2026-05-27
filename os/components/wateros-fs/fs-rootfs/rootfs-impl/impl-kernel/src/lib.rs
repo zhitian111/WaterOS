@@ -115,3 +115,20 @@ pub fn mount_generation() -> u64 {
     MOUNT_GENERATION.load(Ordering::Acquire)
 }
 
+/// 辅助卷挂载或卸载后递增代次（供 VFS 页缓存失效）。
+pub fn bump_mount_generation() {
+    MOUNT_GENERATION.fetch_add(1, Ordering::Release);
+}
+
+/// 从块设备路径挂载 **独立** RW 卷（不替换 [`root_rw_fs`]）。
+pub fn mount_aux_rw_from_block_path(path: &str) -> fs_api_v0::FsResult<fs_api_v0::SharedRwFs> {
+    let device = devfs::active_impl::lookup_block_device(path)?;
+    let imp = ACTIVE_FS_IMPL
+        .lock()
+        .ok_or(fs_api_v0::FsError::Unsupported)?;
+    logging::info!("[fs::rootfs] mount aux RW from {}", path);
+    let aux = imp.mount_rw(device)?;
+    bump_mount_generation();
+    Ok(aux)
+}
+

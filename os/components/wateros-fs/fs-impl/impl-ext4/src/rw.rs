@@ -256,6 +256,35 @@ impl ReadWriteFs for Ext4FsRw {
         Ok(())
     }
 
+    fn rmdir(&mut self, path: &str) -> FsResult<()> {
+        let (parent, name) = split_parent_and_name(path)?;
+        let fs = self.fs()?;
+        let parent_path = Path::try_from(parent).map_err(|_| FsError::InvalidPath)?;
+        let parent_inode = fs
+            .path_to_inode(parent_path, FollowSymlinks::All)
+            .map_err(map_ext4_plus)?;
+        if parent_inode.file_type() != FileType::Directory {
+            return Err(FsError::NotFound);
+        }
+        let mut parent_dir = Dir::open_inode(fs, parent_inode).map_err(map_ext4_plus)?;
+        let name = DirEntryName::try_from(name).map_err(|_| FsError::InvalidPath)?;
+        let target = parent_dir.get_entry(name).map_err(map_ext4_plus)?;
+        if target.file_type() != FileType::Directory {
+            return Err(FsError::NotAFile);
+        }
+        let pathv = Path::try_from(path).map_err(|_| FsError::InvalidPath)?;
+        let mut rd = fs.read_dir(pathv).map_err(map_ext4_plus)?;
+        while let Some(item) = rd.next() {
+            let ent = item.map_err(map_ext4_plus)?;
+            let n = ent.file_name();
+            if n.as_ref() != b"." && n.as_ref() != b".." {
+                return Err(FsError::Exists);
+            }
+        }
+        parent_dir.unlink(name, target).map_err(map_ext4_plus)?;
+        Ok(())
+    }
+
     fn exists(&self, path: &str) -> FsResult<bool> {
         let fs = self.fs()?;
         let pathv = Path::try_from(path).map_err(|_| FsError::InvalidPath)?;

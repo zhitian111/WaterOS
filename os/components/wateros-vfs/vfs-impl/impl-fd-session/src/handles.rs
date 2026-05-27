@@ -1,5 +1,9 @@
 //! 控制台与 pipe 的 [`VfsIoHandle`] 实现。
 
+extern crate alloc;
+
+use alloc::boxed::Box;
+
 use api_v0::{VfsError, VfsIoHandle, VfsMetadata, VfsNodeType, VfsResult};
 use ipc::pipe::{PipeEndpoint, PipeError};
 
@@ -21,6 +25,10 @@ impl VfsIoHandle for ConsoleInHandle {
     fn metadata(&self) -> VfsResult<VfsMetadata> {
         Ok(console_chr_meta())
     }
+
+    fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {
+        Ok(Box::new(*self))
+    }
 }
 
 /// 标准输出/错误：写入走控制台驱动。
@@ -36,6 +44,10 @@ impl VfsIoHandle for ConsoleOutHandle {
     fn metadata(&self) -> VfsResult<VfsMetadata> {
         Ok(console_chr_meta())
     }
+
+    fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {
+        Ok(Box::new(*self))
+    }
 }
 
 /// pipe 读端。
@@ -50,6 +62,10 @@ impl VfsIoHandle for PipeReadHandle {
         self.0.close();
         Ok(())
     }
+
+    fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {
+        Ok(Box::new(Self(self.0.clone())))
+    }
 }
 
 /// pipe 写端。
@@ -63,6 +79,10 @@ impl VfsIoHandle for PipeWriteHandle {
     fn close(&mut self) -> VfsResult<()> {
         self.0.close();
         Ok(())
+    }
+
+    fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {
+        Ok(Box::new(Self(self.0.clone())))
     }
 }
 

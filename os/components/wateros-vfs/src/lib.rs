@@ -39,8 +39,33 @@ pub mod cwd;
 #[cfg(all(feature = "fd-session", feature = "bridge-fs-api"))]
 pub fn mkdir_at_current(path: &str, mode: u32) -> VfsResult<()> {
     let abs = cwd::resolve_for_current_task(path)?;
-    let mut sess = mount::open_rw_session(VfsFsKind::Ext4)?;
-    sess.mkdir(abs.as_str(), mode)
+    impl_fs_bridge::mkdir_path(abs.as_str(), mode)
+}
+
+/// 删除已解析的绝对路径（`fd-session` + `bridge-fs-api`）。
+#[cfg(all(feature = "fd-session", feature = "bridge-fs-api"))]
+pub fn unlink_absolute(path: &str, remove_dir: bool) -> VfsResult<()> {
+    let abs = normalize_absolute_path(path)?;
+    impl_fs_bridge::unlink_path(abs.as_str(), remove_dir)
+}
+
+/// 将 ext4 块设备挂到绝对路径 `mount_point`。
+#[cfg(feature = "bridge-fs-api")]
+pub fn mount_ext4_block_at(mount_point: &str, block_dev: &str) -> VfsResult<()> {
+    impl_fs_bridge::mount_ext4_block_at(mount_point, block_dev)
+}
+
+/// 卸载 `mount_point`。
+#[cfg(feature = "bridge-fs-api")]
+pub fn unmount_at(mount_point: &str) -> VfsResult<()> {
+    impl_fs_bridge::unmount_at(mount_point)
+}
+
+/// 相对当前任务 cwd 删除路径。
+#[cfg(all(feature = "fd-session", feature = "bridge-fs-api"))]
+pub fn unlink_at_current(path: &str, remove_dir: bool) -> VfsResult<()> {
+    let abs = cwd::resolve_for_current_task(path)?;
+    unlink_absolute(abs.as_str(), remove_dir)
 }
 
 #[cfg(feature = "fd-session")]
