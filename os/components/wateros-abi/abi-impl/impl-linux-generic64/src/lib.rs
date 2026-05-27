@@ -79,4 +79,21 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const GETRLIMIT : SyscallNumber = SyscallNumber(163);
     const SETRLIMIT : SyscallNumber = SyscallNumber(164);
     const NANOSLEEP : SyscallNumber = SyscallNumber(101);
+
+    // Socket / 网络
+    const SOCKET : SyscallNumber = SyscallNumber(198);
+    const BIND : SyscallNumber = SyscallNumber(200);
+    const LISTEN : SyscallNumber = SyscallNumber(201);
+    const ACCEPT4 : SyscallNumber = SyscallNumber(242);
+    const CONNECT : SyscallNumber = SyscallNumber(203);
+    const GETSOCKNAME : SyscallNumber = SyscallNumber(204);
+    const GETPEERNAME : SyscallNumber = SyscallNumber(205);
+    const SENDTO : SyscallNumber = SyscallNumber(206);
+    const RECVFROM : SyscallNumber = SyscallNumber(207);
+    const SENDMSG : SyscallNumber = SyscallNumber(211);
+    const RECVMSG : SyscallNumber = SyscallNumber(212);
+    const SETSOCKOPT : SyscallNumber = SyscallNumber(208);
+    const GETSOCKOPT : SyscallNumber = SyscallNumber(209);
+    const SHUTDOWN : SyscallNumber = SyscallNumber(210);
+    const POLL : SyscallNumber = SyscallNumber(271);
 }

@@ -59,6 +59,21 @@ pub enum SyscallKind {
     SetItimer,
     GetRlimit,
     SetRlimit,
+    Socket,
+    Bind,
+    Listen,
+    Accept4,
+    Connect,
+    GetSockName,
+    GetPeerName,
+    SendTo,
+    RecvFrom,
+    SendMsg,
+    RecvMsg,
+    SetSockOpt,
+    GetSockOpt,
+    Shutdown,
+    Poll,
     Unknown(usize),
 }
 
@@ -159,6 +174,36 @@ impl SyscallKind {
             Self::GetRlimit
         } else if syscall_nr == T::SETRLIMIT.raw() {
             Self::SetRlimit
+        } else if syscall_nr == T::SOCKET.raw() {
+            Self::Socket
+        } else if syscall_nr == T::BIND.raw() {
+            Self::Bind
+        } else if syscall_nr == T::LISTEN.raw() {
+            Self::Listen
+        } else if syscall_nr == T::ACCEPT4.raw() {
+            Self::Accept4
+        } else if syscall_nr == T::CONNECT.raw() {
+            Self::Connect
+        } else if syscall_nr == T::GETSOCKNAME.raw() {
+            Self::GetSockName
+        } else if syscall_nr == T::GETPEERNAME.raw() {
+            Self::GetPeerName
+        } else if syscall_nr == T::SENDTO.raw() {
+            Self::SendTo
+        } else if syscall_nr == T::RECVFROM.raw() {
+            Self::RecvFrom
+        } else if syscall_nr == T::SENDMSG.raw() {
+            Self::SendMsg
+        } else if syscall_nr == T::RECVMSG.raw() {
+            Self::RecvMsg
+        } else if syscall_nr == T::SETSOCKOPT.raw() {
+            Self::SetSockOpt
+        } else if syscall_nr == T::GETSOCKOPT.raw() {
+            Self::GetSockOpt
+        } else if syscall_nr == T::SHUTDOWN.raw() {
+            Self::Shutdown
+        } else if syscall_nr == T::POLL.raw() {
+            Self::Poll
         } else {
             Self::Unknown(syscall_nr)
         }
@@ -268,6 +313,38 @@ pub trait SyscallDispatcher {
 
     fn dispatch_setrlimit(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
 
+    // ——— socket / 网络 ———
+
+    fn dispatch_socket(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_bind(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_listen(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_accept4(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_connect(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_getsockname(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_getpeername(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_sendto(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_recvfrom(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_sendmsg(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_recvmsg(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_setsockopt(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_getsockopt(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_shutdown(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_poll(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
     fn dispatch_unknown(_syscall_nr : usize, _args : SyscallArgs) -> isize {
         syscall_enosys_ret()
     }
@@ -321,6 +398,21 @@ pub trait SyscallDispatcher {
             SyscallKind::SetItimer => Self::dispatch_setitimer(syscall_args),
             SyscallKind::GetRlimit => Self::dispatch_getrlimit(syscall_args),
             SyscallKind::SetRlimit => Self::dispatch_setrlimit(syscall_args),
+            SyscallKind::Socket => Self::dispatch_socket(syscall_args),
+            SyscallKind::Bind => Self::dispatch_bind(syscall_args),
+            SyscallKind::Listen => Self::dispatch_listen(syscall_args),
+            SyscallKind::Accept4 => Self::dispatch_accept4(syscall_args),
+            SyscallKind::Connect => Self::dispatch_connect(syscall_args),
+            SyscallKind::GetSockName => Self::dispatch_getsockname(syscall_args),
+            SyscallKind::GetPeerName => Self::dispatch_getpeername(syscall_args),
+            SyscallKind::SendTo => Self::dispatch_sendto(syscall_args),
+            SyscallKind::RecvFrom => Self::dispatch_recvfrom(syscall_args),
+            SyscallKind::SendMsg => Self::dispatch_sendmsg(syscall_args),
+            SyscallKind::RecvMsg => Self::dispatch_recvmsg(syscall_args),
+            SyscallKind::SetSockOpt => Self::dispatch_setsockopt(syscall_args),
+            SyscallKind::GetSockOpt => Self::dispatch_getsockopt(syscall_args),
+            SyscallKind::Shutdown => Self::dispatch_shutdown(syscall_args),
+            SyscallKind::Poll => Self::dispatch_poll(syscall_args),
             SyscallKind::Unknown(nr) => Self::dispatch_unknown(nr, syscall_args),
         }
     }
