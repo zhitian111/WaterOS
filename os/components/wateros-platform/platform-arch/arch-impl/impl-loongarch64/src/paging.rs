@@ -1,23 +1,27 @@
 //! LoongArch64 **分页控制原语**：通过 CSR.PGDL 读写根页表物理页号，
-//! 通过 `invtlb` 指令刷新 TLB。
+//! 通过 `invtlb` 指令刷新 TLB，以及 `CRMD.PG` 分页使能位控制。
 //!
 //! 页表内容构造与用户/内核映射策略在 `wateros-mm`；此处仅保证切换根页表时 TLB
-//! 一致性。
+//! 一致性与 MMU 使能/禁用。
 
 use core::arch::asm;
+
+/// CRMD 寄存器编号。
+const CSR_CRMD : usize = 0x0;
+/// PGDL 寄存器编号。
+const CSR_PGDL : usize = 0x19;
+/// CRMD.PG（bit 4）：分页使能。
+const CRMD_PG : usize = 1 << 4;
 
 /// LoongArch64 分页控制原语。
 pub struct LoongArch64Paging;
 
 impl LoongArch64Paging {
-    /// PGDL 寄存器编号 = 0x19。
-    const CSR_PGDL : usize = 0x19;
-
     #[inline]
     fn read_pgdl() -> usize {
         let value : usize;
         unsafe {
-            asm!("csrrd {0}, {1}", out(reg) value, const Self::CSR_PGDL);
+            asm!("csrrd {0}, {1}", out(reg) value, const CSR_PGDL);
         }
         value
     }
@@ -25,7 +29,7 @@ impl LoongArch64Paging {
     #[inline]
     fn write_pgdl(token : usize) {
         unsafe {
-            asm!("csrwr {0}, {1}", in(reg) token, const Self::CSR_PGDL);
+            asm!("csrwr {0}, {1}", in(reg) token, const CSR_PGDL);
         }
     }
 
@@ -48,4 +52,41 @@ impl LoongArch64Paging {
 
     #[inline]
     pub fn flush_address_space_translations() { Self::invtlb_all(); }
+
+    /// 关闭 MMU（CRMD.PG = 0），使后续访存直接使用物理地址。
+    /// 在构建内核页表前调用，避免固件页表无法覆盖全部 RAM 导致的页错误。
+    ///
+    /// 读取 CRMD 后清除 PG 位，用 `csrwr` + `inout(reg)` 确保写入不被优化。
+    #[inline]
+    pub fn init_paging_disable_mmu() {
+        let mut crmd : usize;
+        unsafe {
+            asm!("csrrd {0}, {1}", out(reg) crmd, const CSR_CRMD);
+        }
+        if (crmd & CRMD_PG) != 0 {
+            crmd &= !CRMD_PG;
+            unsafe {
+                asm!("csrwr {0}, {1}", inout(reg) crmd => _, const CSR_CRMD);
+            }
+            Self::invtlb_all();
+        }
+    }
+
+    /// 开启 MMU（CRMD.PG = 1），与 `activate_address_space_token_and_flush`
+    /// 配合完成内核页表切换。
+    ///
+    /// 读取 CRMD 后设置 PG 位，用 `csrwr` + `inout(reg)` 确保写入不被优化。
+    #[inline]
+    pub fn enable_paging() {
+        let mut crmd : usize;
+        unsafe {
+            asm!("csrrd {0}, {1}", out(reg) crmd, const CSR_CRMD);
+        }
+        if (crmd & CRMD_PG) == 0 {
+            crmd |= CRMD_PG;
+            unsafe {
+                asm!("csrwr {0}, {1}", inout(reg) crmd => _, const CSR_CRMD);
+            }
+        }
+    }
 }

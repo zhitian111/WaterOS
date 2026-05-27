@@ -1,8 +1,9 @@
-//! LoongArch64 **异常入口与帧语义**：与 `asm/trap.S` 中 `__alltraps` 保存顺序一致；
-//! `TrapContext` 字段与 CSR 槽位（`prmd`/`era`/`estat`/`badv`）变更时必须同步汇编。
+//! LoongArch64 **异常入口与帧语义**：与 `asm/trap.S` 中 `__alltraps`
+//! 保存顺序一致； `TrapContext` 字段与 CSR
+//! 槽位（`prmd`/`era`/`estat`/`badv`）变更时必须同步汇编。
 //!
-//! **ABI**：用户态系统调用按 LoongArch Linux 约定使用 `$r4`–`r9` 为参数、`$r11` 为
-//! 系统调用号；返回值写入 `$r4`（见 `TrapSyscallWrite`）。
+//! **ABI**：用户态系统调用按 LoongArch Linux 约定使用 `$r4`–`r9` 为参数、`$r11`
+//! 为 系统调用号；返回值写入 `$r4`（见 `TrapSyscallWrite`）。
 
 use abi::syscall_args::SyscallArgs;
 use abi::syscall_number::SyscallNumber;
@@ -10,8 +11,7 @@ use abi::user_ret::UserRet;
 use api_v0::kernel_trap;
 use api_v0::trap::{
     Exception, Interrupt, TrapAddressSpaceWrite, TrapCause, TrapFrameRead, TrapFrameWrite,
-    TrapSyscallRead,
-    TrapSyscallWrite,
+    TrapSyscallRead, TrapSyscallWrite,
 };
 use core::arch::asm;
 
@@ -27,7 +27,8 @@ pub struct TrapContext {
     return_address_space_token : usize,
 }
 
-/// 异常入口向量 CSR（`EENTRY`）：`trap.S` 中 `__alltraps` 的物理入口地址写入此 CSR。
+/// 异常入口向量 CSR（`EENTRY`）：`trap.S` 中 `__alltraps` 的物理入口地址写入此
+/// CSR。
 const CSR_EENTRY : usize = 0xC;
 /// `PRMD.PPLV`：返回后特权级域（与 `returns_to_user` 判定一致）。
 const LOONGARCH_PRMD_PPLV_MASK : usize = 0x3;
@@ -37,7 +38,8 @@ const LOONGARCH_PRMD_PIE : usize = 1 << 2;
 const LOONGARCH_USER_PLV : usize = 0x3;
 /// `ESTAT.IS.TI`：定时器中断挂起位（与 `decode_loongarch64_trap_cause` 一致）。
 const TIMER_INTERRUPT_PENDING : usize = 1 << 11;
-/// 单次定时器中断后重新武装的切片长度（StableCounter 刻度）；与调度策略相关，非用户 ABI。
+/// 单次定时器中断后重新武装的切片长度（StableCounter
+/// 刻度）；与调度策略相关，非用户 ABI。
 const TIMER_SLICE_TICKS : u64 = 10_000_000;
 
 #[inline]
@@ -48,7 +50,8 @@ fn decode_loongarch64_trap_cause(estat : usize) -> TrapCause {
 
     let ecode = (estat >> 16) & 0x3F;
     match ecode {
-        1 | 2 | 7 => TrapCause::Exception(Exception::LoadPageFault),
+        1 | 2 | 7 | 8 => TrapCause::Exception(Exception::LoadPageFault),
+        // ecode 8 = PPI (Page Privilege Illegal)
         3 | 6 => TrapCause::Exception(Exception::InstructionPageFault),
         4 => TrapCause::Exception(Exception::StorePageFault),
         9 => TrapCause::Exception(Exception::Breakpoint),
