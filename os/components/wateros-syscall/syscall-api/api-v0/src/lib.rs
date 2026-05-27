@@ -60,6 +60,21 @@ pub enum SyscallKind {
     SetItimer,
     GetRlimit,
     SetRlimit,
+    Socket,
+    Bind,
+    Listen,
+    Accept4,
+    Connect,
+    GetSockName,
+    GetPeerName,
+    SendTo,
+    RecvFrom,
+    SendMsg,
+    RecvMsg,
+    SetSockOpt,
+    GetSockOpt,
+    Shutdown,
+    Poll,
     Unknown(usize),
 }
 
@@ -162,6 +177,36 @@ impl SyscallKind {
             Self::GetRlimit
         } else if syscall_nr == T::SETRLIMIT.raw() {
             Self::SetRlimit
+        } else if syscall_nr == T::SOCKET.raw() {
+            Self::Socket
+        } else if syscall_nr == T::BIND.raw() {
+            Self::Bind
+        } else if syscall_nr == T::LISTEN.raw() {
+            Self::Listen
+        } else if syscall_nr == T::ACCEPT4.raw() {
+            Self::Accept4
+        } else if syscall_nr == T::CONNECT.raw() {
+            Self::Connect
+        } else if syscall_nr == T::GETSOCKNAME.raw() {
+            Self::GetSockName
+        } else if syscall_nr == T::GETPEERNAME.raw() {
+            Self::GetPeerName
+        } else if syscall_nr == T::SENDTO.raw() {
+            Self::SendTo
+        } else if syscall_nr == T::RECVFROM.raw() {
+            Self::RecvFrom
+        } else if syscall_nr == T::SENDMSG.raw() {
+            Self::SendMsg
+        } else if syscall_nr == T::RECVMSG.raw() {
+            Self::RecvMsg
+        } else if syscall_nr == T::SETSOCKOPT.raw() {
+            Self::SetSockOpt
+        } else if syscall_nr == T::GETSOCKOPT.raw() {
+            Self::GetSockOpt
+        } else if syscall_nr == T::SHUTDOWN.raw() {
+            Self::Shutdown
+        } else if syscall_nr == T::POLL.raw() {
+            Self::Poll
         } else {
             Self::Unknown(syscall_nr)
         }
@@ -179,9 +224,131 @@ pub trait SyscallDispatcher {
     /// ABI number table used to decode raw syscall IDs.
     type NumberTable: SyscallNumberTable;
 
-    fn dispatch_yield(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::YIELD.raw(), args)
-    }
+    fn dispatch_yield(args : SyscallArgs) -> isize;
+
+    fn dispatch_exit(args : SyscallArgs) -> isize;
+
+    fn dispatch_read(args : SyscallArgs) -> isize;
+
+    fn dispatch_write(args : SyscallArgs) -> isize;
+
+    fn dispatch_openat(args : SyscallArgs) -> isize;
+
+    fn dispatch_close(args : SyscallArgs) -> isize;
+
+    fn dispatch_fstat(args : SyscallArgs) -> isize;
+
+    fn dispatch_lseek(args : SyscallArgs) -> isize;
+
+    fn dispatch_dup(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_dup3(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_pipe2(args : SyscallArgs) -> isize;
+
+    fn dispatch_ioctl(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_fcntl(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_getdents64(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_mkdirat(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_unlinkat(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_mount(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_umount2(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_clone(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_execve(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_brk(args : SyscallArgs) -> isize;
+
+    fn dispatch_mmap(args : SyscallArgs) -> isize;
+
+    fn dispatch_munmap(args : SyscallArgs) -> isize;
+
+    fn dispatch_mprotect(args : SyscallArgs) -> isize;
+
+    fn dispatch_get_time(args : SyscallArgs) -> isize;
+
+    fn dispatch_clock_gettime(args : SyscallArgs) -> isize;
+
+    fn dispatch_getpid(args : SyscallArgs) -> isize;
+
+    fn dispatch_getppid(args : SyscallArgs) -> isize;
+
+    fn dispatch_gettid(args : SyscallArgs) -> isize { Self::dispatch_getpid(args) }
+
+    fn dispatch_times(args : SyscallArgs) -> isize;
+
+    fn dispatch_waitpid(args : SyscallArgs) -> isize;
+
+    fn dispatch_nanosleep(args : SyscallArgs) -> isize;
+
+    fn dispatch_uname(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_prctl(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_getcwd(args : SyscallArgs) -> isize;
+
+    fn dispatch_chdir(args : SyscallArgs) -> isize;
+
+    fn dispatch_futex(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_rt_sigaction(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_rt_sigprocmask(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_rt_sigreturn(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_set_tid_address(args : SyscallArgs) -> isize;
+
+    fn dispatch_set_robust_list(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_getrandom(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_setitimer(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_getrlimit(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_setrlimit(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    // ——— socket / 网络 ———
+
+    fn dispatch_socket(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_bind(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_listen(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_accept4(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_connect(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_getsockname(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_getpeername(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_sendto(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_recvfrom(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_sendmsg(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_recvmsg(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_setsockopt(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_getsockopt(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_shutdown(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_poll(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+
+    fn dispatch_unknown(_syscall_nr : usize, _args : SyscallArgs) -> isize { syscall_enosys_ret() }
 
     fn dispatch_exit(args : SyscallArgs) -> isize {
         Self::dispatch_unknown(Self::NumberTable::EXIT.raw(), args)
@@ -232,7 +399,8 @@ pub trait SyscallDispatcher {
     }
 
     fn dispatch_getdents64(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::GETDENTS64.raw(), args)
+        Self::dispatch_unknown(Self::NumberTable::GETDENTS64.raw(),
+                               args)
     }
 
     fn dispatch_mkdirat(args : SyscallArgs) -> isize {
@@ -280,7 +448,8 @@ pub trait SyscallDispatcher {
     }
 
     fn dispatch_clock_gettime(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::CLOCK_GETTIME.raw(), args)
+        Self::dispatch_unknown(Self::NumberTable::CLOCK_GETTIME.raw(),
+                               args)
     }
 
     fn dispatch_getpid(args : SyscallArgs) -> isize {
@@ -332,23 +501,28 @@ pub trait SyscallDispatcher {
     }
 
     fn dispatch_rt_sigaction(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::RT_SIGACTION.raw(), args)
+        Self::dispatch_unknown(Self::NumberTable::RT_SIGACTION.raw(),
+                               args)
     }
 
     fn dispatch_rt_sigprocmask(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::RT_SIGPROCMASK.raw(), args)
+        Self::dispatch_unknown(Self::NumberTable::RT_SIGPROCMASK.raw(),
+                               args)
     }
 
     fn dispatch_rt_sigreturn(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::RT_SIGRETURN.raw(), args)
+        Self::dispatch_unknown(Self::NumberTable::RT_SIGRETURN.raw(),
+                               args)
     }
 
     fn dispatch_set_tid_address(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::SET_TID_ADDRESS.raw(), args)
+        Self::dispatch_unknown(Self::NumberTable::SET_TID_ADDRESS.raw(),
+                               args)
     }
 
     fn dispatch_set_robust_list(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::SET_ROBUST_LIST.raw(), args)
+        Self::dispatch_unknown(Self::NumberTable::SET_ROBUST_LIST.raw(),
+                               args)
     }
 
     fn dispatch_getrandom(args : SyscallArgs) -> isize {
@@ -419,6 +593,21 @@ pub trait SyscallDispatcher {
             SyscallKind::SetItimer => Self::dispatch_setitimer(syscall_args),
             SyscallKind::GetRlimit => Self::dispatch_getrlimit(syscall_args),
             SyscallKind::SetRlimit => Self::dispatch_setrlimit(syscall_args),
+            SyscallKind::Socket => Self::dispatch_socket(syscall_args),
+            SyscallKind::Bind => Self::dispatch_bind(syscall_args),
+            SyscallKind::Listen => Self::dispatch_listen(syscall_args),
+            SyscallKind::Accept4 => Self::dispatch_accept4(syscall_args),
+            SyscallKind::Connect => Self::dispatch_connect(syscall_args),
+            SyscallKind::GetSockName => Self::dispatch_getsockname(syscall_args),
+            SyscallKind::GetPeerName => Self::dispatch_getpeername(syscall_args),
+            SyscallKind::SendTo => Self::dispatch_sendto(syscall_args),
+            SyscallKind::RecvFrom => Self::dispatch_recvfrom(syscall_args),
+            SyscallKind::SendMsg => Self::dispatch_sendmsg(syscall_args),
+            SyscallKind::RecvMsg => Self::dispatch_recvmsg(syscall_args),
+            SyscallKind::SetSockOpt => Self::dispatch_setsockopt(syscall_args),
+            SyscallKind::GetSockOpt => Self::dispatch_getsockopt(syscall_args),
+            SyscallKind::Shutdown => Self::dispatch_shutdown(syscall_args),
+            SyscallKind::Poll => Self::dispatch_poll(syscall_args),
             SyscallKind::Unknown(nr) => Self::dispatch_unknown(nr, syscall_args),
         }
     }

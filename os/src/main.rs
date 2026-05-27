@@ -83,6 +83,7 @@ mod qemu_riscv64_opensbi {
     extern "C" fn network_poller_task(_arg: usize) -> ! {
         loop {
             driver::network::stack::poll();
+            driver::network::stack::poll_socket_events();
             task::sleep_for_ticks(1);
         }
     }
@@ -138,8 +139,16 @@ mod qemu_riscv64_opensbi {
                   err);
         } else {
             info!("[self-test] driver init done");
-            driver::network::stack::init([10, 0, 2, 15], [10, 0, 2, 2]);
-            task::spawn_kernel_task(network_poller_task, 0);
+            match driver::network::stack::init([10, 0, 2, 15], [10, 0, 2, 2]) {
+                Ok(()) => {
+                    task::spawn_kernel_task(network_poller_task, 0);
+                    // 同步烟测：在调度器启动前验证核心 API
+                    crate::self_tests::network::run_sync_smoke();
+                }
+                Err(e) => {
+                    warn!("[self-test] network stack init skipped: {}", e);
+                }
+            }
             fs::init();
             // ----- 用户态 bring-up 总线：RW 挂载根卷 + 用户 ELF spawn（见
             // `user_bringup_bus`） ----- 注意：`run()` 内 `spawn_user_task_*`
