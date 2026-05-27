@@ -75,13 +75,13 @@ fn warn_missing_basic_assets() {
 /// 执行 `stage-03-basic`：装载并登记用户测程。
 pub fn run_stage_03() {
     info!("[bringup][stage-03-basic] BEGIN");
-    #[cfg(not(feature = "impl-sv39"))]
+    #[cfg(not(any(feature = "impl-sv39", feature = "impl-loongarch64")))]
     {
-        warn!("[basic-bringup] impl-sv39 off: skip glibc/musl basic ELF load");
+        warn!("[basic-bringup] no mm impl active: skip glibc/musl basic ELF load");
         info!("[bringup][stage-03-basic] END");
         return;
     }
-    #[cfg(feature = "impl-sv39")]
+    #[cfg(any(feature = "impl-sv39", feature = "impl-loongarch64"))]
     {
         let n = BASIC_GLIBC_PATHS.len() + BASIC_MUSL_PATHS.len();
         info!("[basic-bringup] will try {} ELF(s) under /glibc/basic/ and /musl/basic/ \

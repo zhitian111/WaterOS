@@ -46,14 +46,14 @@ use syscall as _;
 mod self_tests;
 #[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
 mod trap_handler;
-#[cfg(feature = "qemu-riscv64-opensbi")]
+#[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
 mod user_bringup_basic;
-#[cfg(feature = "qemu-riscv64-opensbi")]
+#[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
 mod user_bringup_bus;
 #[cfg(feature = "qemu-riscv64-opensbi")]
-mod user_bringup_posix_fs;
-#[cfg(feature = "qemu-riscv64-opensbi")]
 mod user_bringup_mm;
+#[cfg(feature = "qemu-riscv64-opensbi")]
+mod user_bringup_posix_fs;
 
 /// 将内核 panic 委托给 `wateros-runtime` 的统一 panic 处理（日志/停机策略由
 /// runtime 决定）。
@@ -162,37 +162,15 @@ mod qemu_loongarch64_virt {
     //! 链接后进入 [`kernel_main`]，初始化 runtime/任务、PLV3 syscall smoke
     //! 与两个内核忙等任务， 再开定时器中断并进入调度。与 RISC-V OpenSBI
     //! 路径相比暂无真实 MM/FS/ELF loader 接入。
-    use alloc::boxed::Box;
-    use core::arch::{asm, global_asm};
+    use core::arch::global_asm;
     use core::include_str;
     use runtime::logging::*;
 
     global_asm!(include_str!("../components/wateros-platform/platform-impl/\
                               impl-qemu-loongarch64-virt/src/asm/_start.S"));
 
-    const LOONGARCH64_USER_SYSCALL_YIELD_NR : usize = 124;
-    const LOONGARCH64_USER_SYSCALL_EXIT_GROUP_NR : usize = 94;
-    const LOONGARCH64_USER_EXIT_OK : isize = 66;
-    const LOONGARCH64_USER_EXIT_BAD_YIELD : isize = 67;
-    const LOONGARCH64_USER_WAIT_TICKS : task::TaskTick = 128;
-    /// 用户 smoke 栈的虚拟地址区间（由链接脚本 `.bss` 段后分配）。
-    const LOONGARCH64_USER_STACK_BOTTOM : usize = 0x8000_0000;
-    const LOONGARCH64_USER_STACK_TOP : usize = 0x8000_4000;
-
-    struct LoongArch64UserSmokeExpected {
-        task_id : task::TaskId,
-        entry_pc : usize,
-        image_base : usize,
-        image_size : usize,
-    }
-
-    unsafe extern "C" {
-        fn loongarch64_user_smoke_start();
-        fn loongarch64_user_smoke_end();
-    }
-
-    /// 固件/引导移交后的内核 C 入口；无 boot 参数版本，完成基础初始化后运行
-    /// LoongArch64 PLV3 用户态 syscall smoke 与内核态调度烟测任务。
+    /// 固件/引导移交后的内核 C 入口；完成 MM bring-up、驱动、FS、VFS 与用户 ELF
+    /// 装载后进入调度。
     #[unsafe(no_mangle)]
     pub fn kernel_main() -> ! {
         runtime::console::show_logo();
@@ -201,29 +179,51 @@ mod qemu_loongarch64_virt {
         platform::arch::init();
         info!("[loongarch64] boot smoke ok");
 
+        // ===== 内核态自检：MM / FrameAllocator / LoongArch64 三级页表 =====
+        unsafe extern "C" {
+            fn kernel_end();
+        }
+        const PAGE_SIZE : usize = 4096;
+        #[inline]
+        const fn align_up(v : usize, align : usize) -> usize { (v + align - 1) & !(align - 1) }
+
+        // QEMU la virt RAM 基址（与 link.ld 一致）；当前 la_qemu_run 使用 -m 2G。
+        const LOONGARCH64_RAM_BASE : usize = 0x9000_0000;
+        const LOONGARCH64_RAM_END : usize = LOONGARCH64_RAM_BASE + 0x8000_0000;
+
+        let start_ppn = align_up(kernel_end as *const () as usize,
+                                 PAGE_SIZE) /
+                        PAGE_SIZE;
+        let end_ppn = LOONGARCH64_RAM_END / PAGE_SIZE;
+        info!("[self-test] frame range ppn=[{:#x},{:#x})",
+              start_ppn, end_ppn);
+        mm::test_with_range(base::addr::BasePPN { val : start_ppn },
+                            base::addr::BasePPN { val : end_ppn });
+        mm::kernel_mm::init(start_ppn, end_ppn, LOONGARCH64_RAM_END);
+        info!("[self-test] mm self-test done");
+
         task::init();
         crate::trap_handler::init();
-        let (user_image_base, user_image_size) = loongarch64_user_smoke_image_range();
-        let user_entry = loongarch64_user_task_entry as *const () as usize;
-        // 为 smoke 用户任务分配一个最小用户栈（loader 未就绪时直接指定区间）。
-        let user_spec =
-            task::UserTask::new(user_entry,
-                                task::AddressSpaceHandle::from_raw(1),
-                                task::UserImageInfo::new(user_image_base, user_image_size),
-                                task::UserStack::from_range(LOONGARCH64_USER_STACK_BOTTOM,
-                                                            LOONGARCH64_USER_STACK_TOP),
-                                0);
-        let user_task_id = task::spawn_user_task(user_spec);
-        #[cfg(feature = "qemu-loongarch64-virt")]
-        vfs::cwd::on_user_task_spawned(user_task_id);
-        let expected = Box::new(LoongArch64UserSmokeExpected { task_id : user_task_id,
-                                                               entry_pc : user_entry,
-                                                               image_base : user_image_base,
-                                                               image_size : user_image_size });
-        task::spawn_kernel_task(loongarch64_user_observer_task,
-                                Box::into_raw(expected) as usize);
-        info!("[loongarch64][user] spawned PLV3 smoke task={} entry={:#x} image=[{:#x},+{:#x})",
-              user_task_id, user_entry, user_image_base, user_image_size);
+
+        // 设备驱动扫描与根文件系统挂载自检。
+        driver::init_when_boot(0); // LoongArch 当前不使用 DTB；driver 回退到硬编码 virtio-mmio 槽位
+        let driver_boot = driver::active_impl::init_after_boot();
+        if let Err(ref err) = driver_boot {
+            warn!("[self-test] driver init failed: {:?}",
+                  err);
+        } else {
+            info!("[self-test] driver init done");
+            fs::init();
+            // ----- 用户态 bring-up 总线：RW 挂载根卷 + 用户 ELF spawn -----
+            crate::user_bringup_bus::run();
+            fs::test();
+            #[cfg(feature = "vfs-bridge")]
+            {
+                vfs::test();
+            }
+        }
+
+        // 内核态轮转烟测任务。
         task::spawn_kernel_task(loongarch64_kernel_task_a, 0);
         task::spawn_kernel_task(loongarch64_kernel_task_b, 0);
 
