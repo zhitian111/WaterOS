@@ -35,8 +35,8 @@ const SYSCALL_INSN_BYTES : usize = 4;
 /// 记录用户任务 trap 杀进程上下文并终止当前任务。
 fn kill_current_user_task(context : &str, trap_cause : TrapCause, cx : &TrapContext) -> ! {
     if let Some(snapshot) = task::current_task_snapshot() {
-        warn!("[trap] killing user task ({}) cause={:?} pc={:#x} fault_addr={:#x} \
-               task_id={} parent_id={:?} state={:?}",
+        warn!("[trap] killing user task ({}) cause={:?} pc={:#x} fault_addr={:#x} task_id={} \
+               parent_id={:?} state={:?}",
               context,
               trap_cause,
               cx.user_pc(),
@@ -45,8 +45,8 @@ fn kill_current_user_task(context : &str, trap_cause : TrapCause, cx : &TrapCont
               snapshot.parent_id,
               snapshot.state);
     } else {
-        warn!("[trap] killing user task ({}) cause={:?} pc={:#x} fault_addr={:#x} \
-               (no current task snapshot)",
+        warn!("[trap] killing user task ({}) cause={:?} pc={:#x} fault_addr={:#x} (no current \
+               task snapshot)",
               context,
               trap_cause,
               cx.user_pc(),
@@ -56,7 +56,11 @@ fn kill_current_user_task(context : &str, trap_cause : TrapCause, cx : &TrapCont
 }
 
 /// 内核态不可恢复 trap：记录诊断后停机，避免 `sret` 到损坏 PC 形成级联 fault。
-fn fatal_kernel_trap(context : &str, trap_cause : TrapCause, raw_cause : usize, cx : &TrapContext) -> ! {
+fn fatal_kernel_trap(context : &str,
+                     trap_cause : TrapCause,
+                     raw_cause : usize,
+                     cx : &TrapContext)
+                     -> ! {
     error!("[trap] fatal kernel trap ({}) cause={:?} raw_cause={:#x} pc={:#x} fault_addr={:#x} \
             returns_to_user={}",
            context,
@@ -81,10 +85,8 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
     let cx = unsafe { &mut *(authoritative as *mut TrapContext) };
 
     if cx.returns_to_user() {
-        trap_runtime::install_kernel_satp_for_trap_handler();
-    }
-
-    if cx.returns_to_user() {
+        #[cfg(any(feature = "impl-sv39", feature = "impl-loongarch64"))]
+        paging::activate_address_space_token_and_flush(mm::kernel_mm::kernel_satp());
         platform::arch::trap::prepare_user_trap_frame_access();
     }
     let raw_cause = cx.raw_cause();
@@ -136,7 +138,10 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                       cx.user_sp());
                 kill_current_user_task("user memory fault", trap_cause, cx);
             }
-            fatal_kernel_trap("kernel page fault", trap_cause, raw_cause, cx);
+            fatal_kernel_trap("kernel page fault",
+                              trap_cause,
+                              raw_cause,
+                              cx);
         }
         TrapCause::Interrupt(Interrupt::SupervisiorTimer) => {
             if let Err(err) = platform::timer::set_timer_after_ms(TIMER_REARM_MS) {
@@ -154,7 +159,10 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                 // 用户态异常（非法指令、断点等）：杀死当前任务而非 panic 内核
                 kill_current_user_task("user exception", trap_cause, cx);
             }
-            fatal_kernel_trap("unexpected trap", trap_cause, raw_cause, cx);
+            fatal_kernel_trap("unexpected trap",
+                              trap_cause,
+                              raw_cause,
+                              cx);
         }
     }
 

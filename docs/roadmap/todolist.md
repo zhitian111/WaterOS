@@ -33,7 +33,6 @@
 
 - **IPC**：pipe 已作为内核内部对象接入 `wateros-ipc` 聚合层，并完成最小 fd/syscall smoke；下一步补 fork/dup/任务退出关闭语义，并继续推进 signal、futex、shm 等子模块。
 - **syscall / ABI**：在保持 `__wateros_syscall_dispatch_current` 稳定的前提下，扩展系统调用集合并与 task/mm/fs 对齐。
-- **LoongArch64**：推进 paging、driver 与用户态 syscall 验证，避免直接复用 RISC-V 设备与 Sv39 细节。
 - **文档与导出**：默认 feature 变更（如 ext4、vfs-bridge、virtio）已反映到 `docs/exports/` 与 **`docs/architecture/snapshot.md`** 时，继续按组件维护 `public-api`、`impl-guide`、`features`；与对外 API 相关的 **`///`** 变更应同时反映到导出文档或功能快照。
 - **新增 impl**：同步 **`docs/guides/task-board.md`** 与路线图本节表格。
 

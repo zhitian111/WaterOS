@@ -22,13 +22,13 @@ const MM_MUSL_PATHS : &[&str] = &[
 /// 执行 `stage-02-mm`：装载并登记用户测程。
 pub fn run_stage_02() {
     info!("[bringup][stage-02-mm] BEGIN");
-    #[cfg(not(feature = "impl-sv39"))]
+    #[cfg(not(any(feature = "impl-sv39", feature = "impl-loongarch64")))]
     {
-        warn!("[mm-bringup] impl-sv39 off: skip glibc/musl basic ELF load");
+        warn!("[mm-bringup] no mm impl active: skip glibc/musl basic ELF load");
         info!("[bringup][stage-02-mm] END");
         return;
     }
-    #[cfg(feature = "impl-sv39")]
+    #[cfg(any(feature = "impl-sv39", feature = "impl-loongarch64"))]
     {
         let n = MM_GLIBC_PATHS.len() + MM_MUSL_PATHS.len();
         info!("[mm-bringup] will try {} ELF(s) under /glibc/basic/ and /musl/basic/",
