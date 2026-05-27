@@ -127,7 +127,7 @@ rv_qemu_run: kernel-rv
 	@bash ./scripts/rv_qemu_run.sh
 	$(call INFO, "riscv64 内核运行结束")
 
-la_qemu_run: kernel-la flush_img
+la_qemu_run: kernel-la
 	$(call INFO, "开始运行 loongarch64 内核...")
 	@qemu-system-loongarch64 -machine virt -nographic \
 		-kernel ./kernel-la -m 2G -no-reboot \
