@@ -23,8 +23,9 @@ unsafe extern "C" {
 // ── 任务类型专属资源 ──────────────────────────────────────────────
 
 enum TaskInner {
-    /// Idle 须与 [`KernelResources`] 一样持有内核栈与 bootstrap，否则 `task_cx.sp` /
-    /// `s[0]` 会指向创建后立即 drop 的堆内存，堆复用后上下文损坏。
+    /// Idle 须与 [`KernelResources`] 一样持有内核栈与 bootstrap，否则
+    /// `task_cx.sp` / `s[0]` 会指向创建后立即 drop
+    /// 的堆内存，堆复用后上下文损坏。
     Idle(KernelResources),
     Kernel(KernelResources),
     User(UserResources),
@@ -130,7 +131,7 @@ impl TaskControlBlock {
                wait_result : None,
                task_cx,
                inner : TaskInner::Idle(KernelResources { kernel_stack,
-                                                          bootstrap }) }
+                                                         bootstrap }) }
     }
 
     /// 创建一个用户任务。
@@ -265,6 +266,9 @@ impl TaskControlBlock {
 
     #[inline]
     pub fn is_idle(&self) -> bool { matches!(self.inner, TaskInner::Idle(_)) }
+
+    #[inline]
+    pub fn is_user(&self) -> bool { matches!(self.inner, TaskInner::User(_)) }
 
     #[inline]
     pub fn context_ptr(&self) -> *const TaskContext { &self.task_cx as *const TaskContext }
