@@ -1,20 +1,51 @@
-//! LoongArch64 **分页占位**：满足 `wateros-platform-arch` facade 链接；接入真实 MMU
-//! 后应实现根页表切换与 TLB 刷新，并与 `wateros-mm` 策略对齐。
+//! LoongArch64 **分页控制原语**：通过 CSR.PGDL 读写根页表物理页号，
+//! 通过 `invtlb` 指令刷新 TLB。
+//!
+//! 页表内容构造与用户/内核映射策略在 `wateros-mm`；此处仅保证切换根页表时 TLB
+//! 一致性。
 
-/// LoongArch64 页表控制占位实现。
-///
-/// 当前仓库尚未提供 LoongArch 页表 impl；这些入口只保证 arch facade 可编译。
+use core::arch::asm;
+
+/// LoongArch64 分页控制原语。
 pub struct LoongArch64Paging;
 
 impl LoongArch64Paging {
+    /// PGDL 寄存器编号 = 0x19。
+    const CSR_PGDL : usize = 0x19;
+
     #[inline]
-    pub fn active_address_space_token() -> usize {
-        0
+    fn read_pgdl() -> usize {
+        let value : usize;
+        unsafe {
+            asm!("csrrd {0}, {1}", out(reg) value, const Self::CSR_PGDL);
+        }
+        value
     }
 
     #[inline]
-    pub fn activate_address_space_token_and_flush(_token: usize) {}
+    fn write_pgdl(token : usize) {
+        unsafe {
+            asm!("csrwr {0}, {1}", in(reg) token, const Self::CSR_PGDL);
+        }
+    }
+
+    /// 全局 TLB 刷新。
+    #[inline]
+    fn invtlb_all() {
+        unsafe {
+            asm!("invtlb 0, $zero, $zero");
+        }
+    }
 
     #[inline]
-    pub fn flush_address_space_translations() {}
+    pub fn active_address_space_token() -> usize { Self::read_pgdl() }
+
+    #[inline]
+    pub fn activate_address_space_token_and_flush(token : usize) {
+        Self::write_pgdl(token);
+        Self::invtlb_all();
+    }
+
+    #[inline]
+    pub fn flush_address_space_translations() { Self::invtlb_all(); }
 }

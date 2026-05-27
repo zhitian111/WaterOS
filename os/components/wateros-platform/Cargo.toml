@@ -37,7 +37,7 @@
         "impl-qemu-loongarch64-virt?/api-v0",
         "impl-qemu-riscv64-opensbi?/api-v0",
     ]
-    default = [ "api-v0", "impl-qemu-riscv64-opensbi" ]
+    default = [ "api-v0" ]
     impl-dummy = [ "dep:impl-dummy" ]
     impl-qemu-loongarch64-virt = [
         "api-v0",

@@ -129,9 +129,10 @@ mod qemu_riscv64_opensbi {
         } else {
             info!("[self-test] driver init done");
             fs::init();
-            // ----- 用户态 bring-up 总线：RW 挂载根卷 + 用户 ELF spawn（见 `user_bringup_bus`） -----
-            // 注意：`run()` 内 `spawn_user_task_*` 只入队；用户测程的 `ecall` 在下方
-            // `run_first_task()` 之后才会出现。
+            // ----- 用户态 bring-up 总线：RW 挂载根卷 + 用户 ELF spawn（见
+            // `user_bringup_bus`） ----- 注意：`run()` 内 `spawn_user_task_*`
+            // 只入队；用户测程的 `ecall` 在下方 `run_first_task()`
+            // 之后才会出现。
             crate::user_bringup_bus::run();
             // crate::self_tests::task::spawn_all();  // 禁用，仅保留 basic bringup
             fs::test();
@@ -211,7 +212,7 @@ mod qemu_loongarch64_virt {
                                                             LOONGARCH64_USER_STACK_TOP),
                                 0);
         let user_task_id = task::spawn_user_task(user_spec);
-        #[cfg(feature = "vfs")]
+        #[cfg(feature = "qemu-loongarch64-virt")]
         vfs::cwd::on_user_task_spawned(user_task_id);
         let expected = Box::new(LoongArch64UserSmokeExpected { task_id : user_task_id,
                                                                entry_pc : user_entry,
@@ -306,7 +307,7 @@ mod qemu_loongarch64_virt {
                    "LoongArch64 user smoke must exit before observer timeout");
         let exited = task::reap_exited_task(expected.task_id).expect("LoongArch64 user smoke \
                                                                       must be reapable after exit");
-        #[cfg(feature = "vfs")]
+        #[cfg(feature = "qemu-loongarch64-virt")]
         vfs::cwd::drop_task_cwd(exited.id);
         assert_eq!(exited.id, expected.task_id,
                    "LoongArch64 user smoke reap id must match spawned task");

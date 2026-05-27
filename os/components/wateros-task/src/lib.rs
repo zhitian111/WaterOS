@@ -38,7 +38,7 @@ pub use api_v0::{
     AddressSpaceHandle, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskSnapshot, TaskTick,
     TaskWaitResult, UserImageInfo, UserStack, UserTask, WaitQueueId,
 };
-pub use api_v0::{ExitedTask, TaskId, TaskWaitHandle};
+pub use api_v0::{ExitedTask, TaskId, TaskKind, TaskWaitHandle};
 #[cfg(feature = "impl-core")]
 pub(crate) use impl_core as active_impl;
 use mm_api::kernel_bringup::LoadedElf;
@@ -166,7 +166,10 @@ pub fn reap_exited_task(task_id : TaskId) -> Option<ExitedTask> {
 /// `new_aspace_ptr` / `new_satp` 由 `mm::kernel_mm::fork_user_aspace()` 提供。
 /// 无当前任务或当前不是用户任务时返回 `None`。
 #[inline]
-pub fn fork_current(child_stack : usize, new_aspace_ptr : usize, new_satp : usize) -> Option<TaskId> {
+pub fn fork_current(child_stack : usize,
+                    new_aspace_ptr : usize,
+                    new_satp : usize)
+                    -> Option<TaskId> {
     scheduler::fork_current(child_stack, new_aspace_ptr, new_satp)
 }
 
@@ -178,7 +181,12 @@ pub fn execve_current(entry_pc : usize,
                       user_aspace_ptr : usize,
                       image_info : UserImageInfo,
                       stack_info : UserStack) {
-    scheduler::execve_current(entry_pc, sp, satp, user_aspace_ptr, image_info, stack_info)
+    scheduler::execve_current(entry_pc,
+                              sp,
+                              satp,
+                              user_aspace_ptr,
+                              image_info,
+                              stack_info)
 }
 
 /// 回收一个任意已退出任务的信息。

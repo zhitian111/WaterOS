@@ -9,7 +9,7 @@
 
 [features]
     api-v0 = [ "impl-ringbuf/api-v0" ]
-    default = [ "api-v0", "impl-ringbuf", "impl-riscv64" ]
+    default = [ "api-v0" ]
     impl-ringbuf = [  ]
     impl-loongarch64 = [ "impl-ringbuf/impl-loongarch64" ]
     impl-riscv64 = [ "impl-ringbuf/impl-riscv64" ]
