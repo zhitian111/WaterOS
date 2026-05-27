@@ -9,17 +9,12 @@ use block::{block_device_count, register_block_device, BlockDevice, VirtioBlkDev
 use fs::devfs::active_impl as devfs_impl;
 use spin::Mutex;
 
-/// DTB 物理基址；为 0 时 DTB 扫描退化至硬编码布局。
+mod pci;
+
+/// DTB 物理基址；为 0 时退化至硬编码 ECAM 基址。
 static DTB_BASE_ADDR : AtomicUsize = AtomicUsize::new(0);
 /// 成功注册为 virtio-blk 的 MMIO 窗口列表。
 static VIRTIO_BLK_MMIO : Mutex<Vec<MmioRegion>> = Mutex::new(Vec::new());
-
-/// QEMU loongarch64 virt 上 virtio-mmio 运输层的标准 MMIO 基址（与 QEMU 源码
-/// `hw/loongarch/virt.c` 中 `VIRT_MMIO_BASE` 一致）。
-const LOONGARCH_VIRTIO_MMIO_BASE : usize = 0x1000_8000;
-const LOONGARCH_VIRTIO_MMIO_SIZE : usize = 0x200;
-/// 至多尝试探测的 virtio-mmio 槽位数。
-const LOONGARCH_VIRTIO_MAX_SLOTS : usize = 8;
 
 pub fn init_when_boot(dtb_pa : usize) { DTB_BASE_ADDR.store(dtb_pa, Ordering::Release); }
 
@@ -69,45 +64,7 @@ fn read_fdt() -> DriverResult<fdt::Fdt<'static>> {
     Ok(fdt)
 }
 
-fn mmio_read32(base : usize, word_offset : usize) -> u32 {
-    let ptr = (base as *const u32).wrapping_add(word_offset);
-    unsafe { core::ptr::read_volatile(ptr) }
-}
-
-fn probe_virtio_blk_at_slot(slot : usize) -> Option<VirtioBlkDevice> {
-    let base = LOONGARCH_VIRTIO_MMIO_BASE + slot * LOONGARCH_VIRTIO_MMIO_SIZE;
-    let magic = mmio_read32(base, 0);
-    let device_id = mmio_read32(base, 2);
-    if magic != 0x74726976 {
-        // 小端 "virt"
-        return None;
-    }
-    logging::info!("[driver-la] virtio-mmio slot={} base={:#x} magic={:#x} device_id={}",
-                   slot,
-                   base,
-                   magic,
-                   device_id);
-    if device_id != 2 {
-        logging::warn!("[driver-la] virtio-mmio slot={} is not a block device (device_id={})",
-                       slot,
-                       device_id);
-        return None;
-    }
-    let region = MmioRegion { base,
-                              size : LOONGARCH_VIRTIO_MMIO_SIZE };
-    match VirtioBlkDevice::from_mmio(region) {
-        Ok(dev) => Some(dev),
-        Err(err) => {
-            logging::warn!("[driver-la] failed to init virtio-blk at slot={} base={:#x}: {:?}",
-                           slot,
-                           base,
-                           err);
-            None
-        }
-    }
-}
-
-/// 扫描 LoongArch virt 平台的标准 virtio-mmio 槽位，注册块设备。
+/// 扫描 PCIe ECAM 总线寻找 virtio-blk 设备并注册。
 pub fn init_after_boot() -> DriverResult<()> {
     for e in block::supported_devices() {
         logging::info!("[driver-la] supported-device catalog: subsystem={} name={} compatible={}",
@@ -119,19 +76,30 @@ pub fn init_after_boot() -> DriverResult<()> {
     let mut blk = VIRTIO_BLK_MMIO.lock();
     blk.clear();
 
-    for slot in 0..LOONGARCH_VIRTIO_MAX_SLOTS {
-        if let Some(dev) = probe_virtio_blk_at_slot(slot) {
-            let shared = {
-                let dev : Box<dyn BlockDevice> = Box::new(dev);
-                Arc::new(Mutex::new(dev))
-            };
-            let idx = register_block_device(shared);
-            blk.push(MmioRegion { base : LOONGARCH_VIRTIO_MMIO_BASE +
-                                         slot * LOONGARCH_VIRTIO_MMIO_SIZE,
-                                  size : LOONGARCH_VIRTIO_MMIO_SIZE });
-            logging::info!("[driver-la] registered virtio-blk #{} at slot={}",
-                           idx,
-                           slot);
+    // 尝试 PCIe ECAM 枚举 virtio-blk 设备
+    let ecam_base = pci::find_ecam_base(DTB_BASE_ADDR.load(Ordering::Acquire));
+    logging::info!("[driver-la] PCIe ECAM base = {:#x}",
+                   ecam_base);
+    if let Some(bar0_addr) = pci::probe_virtio_blk_pci(ecam_base) {
+        let region = MmioRegion { base : bar0_addr,
+                                  size : 0x200 };
+        match VirtioBlkDevice::from_mmio(region) {
+            Ok(dev) => {
+                let shared = {
+                    let dev : Box<dyn BlockDevice> = Box::new(dev);
+                    Arc::new(Mutex::new(dev))
+                };
+                let idx = register_block_device(shared);
+                blk.push(region);
+                logging::info!("[driver-la] registered virtio-blk #{} via PCI at BAR0={:#x}",
+                               idx,
+                               bar0_addr);
+            }
+            Err(err) => {
+                logging::warn!("[driver-la] failed to init virtio-blk via PCI BAR0={:#x}: {:?}",
+                               bar0_addr,
+                               err);
+            }
         }
     }
 
@@ -140,8 +108,8 @@ pub fn init_after_boot() -> DriverResult<()> {
                    registered);
     if registered == 0 {
         logging::warn!("[driver-la] no block device registered; root fs may use NotMounted \
-                        unless a virtio-blk is present. QEMU virt example: `-drive \
-                        file=...,if=none,id=d0 -device virtio-blk-device,drive=d0`.");
+                        unless a virtio-blk is present. QEMU example: `-device \
+                        virtio-blk-pci,drive=x0 -drive file=...,if=none,format=raw,id=x0`.");
     }
 
     // devfs 同步：填充 /dev/sys/* 视图
