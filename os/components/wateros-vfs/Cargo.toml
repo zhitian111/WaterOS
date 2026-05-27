@@ -30,11 +30,10 @@
         "impl_fd_session/fd-session",
         "task/api-v0",
         "task/impl-core",
-        "task/impl-round-robin",
     ]
     impl-dummy = [  ]
-    impl-loongarch64 = [ "fd-session", "impl_fd_session/impl-loongarch64", "task/impl-loongarch64" ]
-    impl-riscv64 = [ "fd-session", "impl_fd_session/impl-riscv64", "task/impl-riscv64" ]
+    impl-loongarch64 = [ "fd-session", "impl_fd_session/impl-loongarch64" ]
+    impl-riscv64 = [ "fd-session", "impl_fd_session/impl-riscv64" ]
 
 [profile.dev]
     panic = "abort"

@@ -10,7 +10,8 @@ OS_DIR="${1:-${OS_DIR_DEFAULT}}"
 
 MODE="${2:-apply}" # apply | revert
 
-CONF_PATH="${OS_DIR}/config.conf"
+CONF_REL="${3:-config.conf}"
+CONF_PATH="${OS_DIR}/${CONF_REL}"
 if [[ ! -f "${CONF_PATH}" ]]; then
   error "找不到配置文件: ${CONF_PATH}（先运行 configure.bash）" 2
 fi

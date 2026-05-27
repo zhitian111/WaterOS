@@ -15,7 +15,7 @@
         "impl-qemu-loongarch64-uart16550?/api-v0",
         "impl-riscv64-opensbi?/api-v0",
     ]
-    default = [ "api-v0", "impl-riscv64-opensbi" ]
+    default = [ "api-v0" ]
     impl-dummy = [ "dep:impl-dummy" ]
     impl-qemu-loongarch64-uart16550 = [ "dep:impl-qemu-loongarch64-uart16550" ]
     impl-riscv64-opensbi = [ "dep:impl-riscv64-opensbi" ]

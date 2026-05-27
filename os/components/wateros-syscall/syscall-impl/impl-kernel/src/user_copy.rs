@@ -8,13 +8,13 @@ use alloc::vec::Vec;
 use abi::errno::ErrNo;
 use mm::api::addr::VirtAddr;
 use mm::api::user_access::UserMemoryOps;
-use mm::user_access::Sv39UserMemoryOps;
+use mm::ActiveUserMemoryOps;
 
 use crate::mm_util::{current_user_aspace_handle, mm_err_to_errno};
 
-pub(crate) fn user_aspace_required() -> Result<Sv39UserMemoryOps, ErrNo> {
+pub(crate) fn user_aspace_required() -> Result<ActiveUserMemoryOps, ErrNo> {
     let handle = current_user_aspace_handle().ok_or(ErrNo::EFAULT)?;
-    Ok(Sv39UserMemoryOps::new(handle))
+    Ok(ActiveUserMemoryOps::new(handle))
 }
 
 pub(crate) fn copy_from_user(buf: &mut [u8], ptr: usize) -> Result<usize, ErrNo> {
