@@ -10,6 +10,4 @@
 
 [features]
     api-v0 = [  ]
-    default = [ "impl-riscv64" ]
-    impl-loongarch64 = [ "arch/api-v0", "arch/impl-loongarch64" ]
-    impl-riscv64 = [ "arch/api-v0", "arch/impl-riscv64" ]
+    default = []

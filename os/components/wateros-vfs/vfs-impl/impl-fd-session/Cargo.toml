@@ -13,17 +13,9 @@
 [features]
     api-v0 = [  ]
     default = [ "api-v0" ]
-    fd-session = [
-        "ipc/pipe",
-        "task/api-v0",
-        "console/impl-firmware-console",
-    ]
-    impl-loongarch64 = [ "fd-session", "ipc/impl-loongarch64", "console/impl-firmware-console" ]
-    impl-riscv64 = [
-        "fd-session",
-        "ipc/impl-riscv64",
-        "console/impl-firmware-opensbi",
-    ]
+    fd-session = [ "ipc/pipe", "task/api-v0" ]
+    impl-loongarch64 = [ "fd-session" ]
+    impl-riscv64 = [ "fd-session" ]
 
 [profile.dev]
     panic = "abort"

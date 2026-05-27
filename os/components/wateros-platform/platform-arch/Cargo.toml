@@ -15,7 +15,7 @@
         "impl-loongarch64?/api-v0",
         "impl-riscv64?/api-v0",
     ]
-    default = [ "api-v0", "impl-riscv64" ]
+    default = [ "api-v0" ]
     impl-dummy = [ "dep:impl-dummy" ]
     impl-loongarch64 = [ "dep:impl-loongarch64" ]
     impl-riscv64 = [ "dep:impl-riscv64" ]

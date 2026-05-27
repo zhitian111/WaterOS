@@ -17,36 +17,29 @@
         "abi/api-v0",
         "fd-session",
     ]
-    default = [ "api-v0", "impl-riscv64" ]
+    default = [ "api-v0" ]
     fd-session = [
         "dep:ipc",
         "dep:mm",
         "dep:vfs",
         "ipc/pipe",
         "mm/api-v0",
-        "mm/impl-sv39",
         "vfs/bridge-fs-api",
         "vfs/fd-session",
     ]
     impl-loongarch64 = [
         "api-v0",
-        "abi/impl-linux-loongarch64",
-        "ipc/impl-loongarch64",
+        "abi/api-v0",
         "task/api-v0",
         "task/impl-core",
-        "task/impl-loongarch64",
-        "task/impl-round-robin",
-        "vfs/impl-loongarch64",
+        "fd-session",
     ]
     impl-riscv64 = [
         "api-v0",
-        "abi/impl-linux-riscv64",
-        "ipc/impl-riscv64",
+        "abi/api-v0",
         "task/api-v0",
         "task/impl-core",
-        "task/impl-riscv64",
-        "task/impl-round-robin",
-        "vfs/impl-riscv64",
+        "fd-session",
     ]
 
 [profile.dev]

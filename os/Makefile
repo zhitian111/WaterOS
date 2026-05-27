@@ -30,20 +30,20 @@ common_dependencies = $(shell find . -name "*.rs") \
 
 kernel_rv_dependencies = $(common_dependencies)
 
-features_flags = $(shell bash ./scripts/config-to-features-make.bash || echo "unknown")
-la_features_flags = $(shell bash ./scripts/config-to-features-make.bash ./config-loongarch64.conf || echo "unknown")
+# (方案B) 直接使用根 crate feature，不再依赖 config-to-features-make.bash
+# features_flags = $(shell bash ./scripts/config-to-features-make.bash || echo "unknown")
+# la_features_flags = $(shell bash ./scripts/config-to-features-make.bash ./config-loongarch64.conf || echo "unknown")
+# common_flags = --features $(features_flags)
+# la_common_flags = --features $(la_features_flags)
 
-common_flags = --features $(features_flags)
-la_common_flags = --features $(la_features_flags)
-
-kernel_rv_flag := --release --target riscv64gc-unknown-none-elf	\
-				  $(common_flags)
+kernel_rv_flag := --release --target riscv64gc-unknown-none-elf \
+                  --features qemu-riscv64-opensbi
 
 kernel_rv_build_artifact_path := ./target/riscv64gc-unknown-none-elf/release
 
 kernel_la_flag := --release --target loongarch64-unknown-none-softfloat \
-				  --no-default-features \
-				  $(la_common_flags)
+                  --no-default-features \
+                  --features qemu-loongarch64-virt
 
 kernel_la_build_artifact_path := ./target/loongarch64-unknown-none-softfloat/release
 
@@ -75,12 +75,13 @@ stat: version
 	@bash ./scripts/stat_contribute.bash
 	$(call INFO, "项目贡献度统计完成！")
 
-configure: ./config.conf ./feature-tree.txt
-
-./config.conf ./feature-tree.txt:
-	$(call INFO, "正在生成配置文件...")
-	@bash ./scripts/configure.bash 2> /dev/null
-	$(call INFO, "配置文件生成完毕！")
+# (方案B) 不再需要 config 文件，直接用根 crate feature
+# configure: ./config.conf ./feature-tree.txt
+#
+# ./config.conf ./feature-tree.txt:
+# 	$(call INFO, "正在生成配置文件...")
+# 	@bash ./scripts/configure.bash 2> /dev/null
+# 	$(call INFO, "配置文件生成完毕！")
 
 kernel:
 
@@ -89,7 +90,7 @@ $(kernel_rv_build_artifact_path)/wateros: $(kernel_rv_dependencies) kernel
 	@cargo build $(kernel_rv_flag)
 	$(call INFO,"构建成功！");
 
-kernel-rv:	version apply_features $(kernel_rv_build_artifact_path)/wateros
+kernel-rv:	version $(kernel_rv_build_artifact_path)/wateros
 	@cp $(kernel_rv_build_artifact_path)/wateros ./kernel-rv
 
 $(kernel_la_build_artifact_path)/wateros: $(common_dependencies) kernel
@@ -156,7 +157,7 @@ rv_check:
 
 la_check:
 	$(call INFO, "开始对 loongarch64 平台进行 cargo check ...")
-	@cargo check --target loongarch64-unknown-none-softfloat --no-default-features $(la_common_flags)
+	@cargo check $(kernel_la_flag)
 	$(call INFO, "对 loongarch64 平台的 cargo check 完成！")
 
 # rv_link_app_asm:
@@ -185,9 +186,9 @@ clean:
 	$(call INFO, "$(shell find . -name "*.wosbak")")
 	@rm -f $(shell find . -name "*.wosbak")
 	$(call INFO, "备份文件清理完成！")
-	$(call INFO, "开始清理 feature 配置文件...")
-	@rm -f ./config.conf ./feature-tree.txt
-	$(call INFO, "feature 配置文件清理完成！")
+	# $(call INFO, "开始清理 feature 配置文件...")
+	# @rm -f ./config.conf ./feature-tree.txt
+	# $(call INFO, "feature 配置文件清理完成！")
 	$(call INFO, "清理完成！")
 
 all_start_info:
@@ -199,10 +200,21 @@ fmt:
 	@taplo fmt **/Cargo.toml
 	@rustfmt **/*.rs
 	$(call INFO, "项目文件格式化完成！")
-apply_features: ./config.conf
-	$(call INFO, "开始写入 features...")
-	@bash ./scripts/apply-config-as-default-features.bash
-	$(call INFO, "features 写入完成！")
+# (方案B) apply_features 不再被任何构建目标依赖，仅保留供手动/rust-analyzer 使用
+# apply_features: ./config.conf
+# 	$(call INFO, "开始写入 features riscv64 ...")
+# 	@bash ./scripts/apply-config-as-default-features.bash
+# 	$(call INFO, "riscv64 features 写入完成！")
+#
+# apply_features_la: ./config-loongarch64.conf
+# 	$(call INFO, "开始写入 features loongarch64 ...")
+# 	@bash ./scripts/apply-config-as-default-features.bash ./ apply config-loongarch64.conf
+# 	$(call INFO, "loongarch64 features 写入完成！")
+#
+# revert_features:
+# 	$(call INFO, "开始回滚 features...")
+# 	@bash ./scripts/apply-config-as-default-features.bash ./ os revert
+# 	$(call INFO, "features 回滚完成！")
 flush_img:
 	$(call INFO, "开始删除旧磁盘镜像...")
 	@rm -f ./sdcard-la.img

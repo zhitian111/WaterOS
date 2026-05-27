@@ -1,9 +1,9 @@
-//! 从根文件系统装载 RISC-V ELF64（小端），建立独立用户地址空间并映射 `PT_LOAD`
-//! 与用户栈（分页格式由 mm-impl 完成，当前为 Sv39）。
+//! 从根文件系统装载 LoongArch ELF64（小端），建立独立用户地址空间并映射
+//! `PT_LOAD` 与用户栈（分页格式由 mm-impl 完成，当前为 LoongArch64 三级页表）。
 //!
 //! 用户地址空间内 **额外** 恒等映射内核 RAM（与 [`crate::kernel_global`] 的
 //! `phys_ram_end_exclusive`
-//! 一致），便于同一套页表里内核辅助访问；用户段不得与用户 VPN 或 `0x8000_0000`
+//! 一致），便于同一套页表里内核辅助访问；用户段不得与用户 VPN 或 `0x9000_0000`
 //! 以上恒等区非法重叠（重叠时返回 `Parse`）。
 
 extern crate alloc;
@@ -21,7 +21,7 @@ use frame_alloctor::frame_alloc_result;
 #[cfg(not(feature = "vfs-root-read"))]
 use fs::api::{FsError, SharedFs};
 
-use crate::pagetable::Sv39AddressSpace;
+use crate::pagetable::LoongArch64AddressSpace;
 
 #[cfg(feature = "vfs-root-read")]
 use vfs::api::{SingleRootReadView, VfsError};
@@ -63,16 +63,15 @@ fn map_vfs_to_root_vol(e : VfsError) -> RootVolumeReadError {
 }
 
 const PT_LOAD : u32 = 1;
-const EM_RISCV : u16 = 243;
+const EM_LOONGARCH : u16 = 258;
 
 /// 仅检查 ELF64 小端头前缀；用于在 `from_elf_path` 首读异常时决定是否重读。
 #[inline]
-fn elf_riscv64_le_prefix_ok(data : &[u8]) -> bool {
+fn elf_loongarch64_le_prefix_ok(data : &[u8]) -> bool {
     data.len() >= 6 && &data[0..4] == b"\x7FELF" && data[4] == 2 && data[5] == 1
 }
 
-/// 从根 RO 句柄读整文件；若首读 ELF 前缀明显损坏则 **再读一次**（ext4-view
-/// 在大量目录遍历后偶发首读损坏的 bring-up 规避，与磁盘镜像内容无关）。
+/// 从根 RO 句柄读整文件；若首读 ELF 前缀明显损坏则 **再读一次**。
 #[cfg(not(feature = "vfs-root-read"))]
 fn read_whole_file_ro_retry_bad_prefix(root : &SharedFs,
                                        path : &str)
@@ -87,7 +86,7 @@ fn read_whole_file_ro_retry_bad_prefix(root : &SharedFs,
              LoadElfError::RootVolume(map_fs_to_root_vol(e))
          })?
     };
-    if elf_riscv64_le_prefix_ok(&first) {
+    if elf_loongarch64_le_prefix_ok(&first) {
         return Ok(first);
     }
     let n = first.len().min(16);
@@ -107,7 +106,7 @@ fn read_whole_file_ro_retry_bad_prefix(root : &SharedFs,
              LoadElfError::RootVolume(map_fs_to_root_vol(e))
          })?
     };
-    if !elf_riscv64_le_prefix_ok(&second) {
+    if !elf_loongarch64_le_prefix_ok(&second) {
         let n2 = second.len().min(16);
         runtime::logging::warn!("[elf-load] retry read still bad prefix (len={} first{}={:02x?}) \
                                  path={}",
@@ -130,12 +129,12 @@ fn read_whole_file_ro_retry_bad_prefix_vfs(view : &dyn SingleRootReadView,
                                                  path);
                         LoadElfError::RootVolume(map_vfs_to_root_vol(e))
                     })?;
-    if elf_riscv64_le_prefix_ok(&first) {
+    if elf_loongarch64_le_prefix_ok(&first) {
         return Ok(first);
     }
     let n = first.len().min(16);
-    runtime::logging::warn!(" first read bad ELF64-LE prefix (len={} first{}={:02x?}); retry \
-                             read once path={}",
+    runtime::logging::warn!("[elf-load] first read bad ELF64-LE prefix (len={} first{}={:02x?}); \
+                             retry read once path={}",
                             first.len(),
                             n,
                             &first[..n],
@@ -148,7 +147,7 @@ fn read_whole_file_ro_retry_bad_prefix_vfs(view : &dyn SingleRootReadView,
                                                   path);
                          LoadElfError::RootVolume(map_vfs_to_root_vol(e))
                      })?;
-    if !elf_riscv64_le_prefix_ok(&second) {
+    if !elf_loongarch64_le_prefix_ok(&second) {
         let n2 = second.len().min(16);
         runtime::logging::warn!("[elf-load] retry read still bad prefix (len={} first{}={:02x?}) \
                                  path={}",
@@ -160,8 +159,7 @@ fn read_whole_file_ro_retry_bad_prefix_vfs(view : &dyn SingleRootReadView,
     Ok(second)
 }
 
-/// 小端读取 `u16`；越界返回 `None`（解析失败由上层映射为
-/// [`LoadElfError::Parse`]）。
+/// 小端读取 `u16`；越界返回 `None`。
 #[inline]
 fn rd_u16(s : &[u8], o : usize) -> Option<u16> {
     s.get(o..o + 2)?
@@ -188,8 +186,7 @@ fn rd_u64(s : &[u8], o : usize) -> Option<u64> {
      .map(u64::from_le_bytes)
 }
 
-// ELF `p_flags`：bit2=R，bit1=W，bit0=X；全无时补 `R`
-// 以便映射可读（与常见加载器行为一致）。
+// ELF `p_flags`：bit2=R，bit1=W，bit0=X；全无时补 `R`。
 fn perm_from_pf(p_flags : u32) -> PagePerm {
     let mut p = PagePerm::U;
     if p_flags & 4 != 0 {
@@ -207,10 +204,10 @@ fn perm_from_pf(p_flags : u32) -> PagePerm {
     p
 }
 
-/// 将 `[0x8000_0000, phys_ram_end)` 以 `vpn==ppn` 恒等映射进用户页表，权限
+/// 将 `[0x9000_0000, phys_ram_end)` 以 `vpn==ppn` 恒等映射进用户页表，权限
 /// `R|W|X`（内核辅助访问与用户段装载共用一套表时的 bring-up 约定）。
 fn map_kernel_ram_identity<A : AddressSpaceOps>(aspace : &mut A) -> Result<(), LoadElfError> {
-    let lo = VirtAddr(0x8000_0000).floor_page();
+    let lo = VirtAddr(0x9000_0000).floor_page();
     let hi = VirtAddr(crate::kernel_global::phys_ram_end_exclusive()).ceil_page();
     for vpn_raw in lo.0..hi.0 {
         let vpn = VirtPageNum(vpn_raw);
@@ -223,8 +220,7 @@ fn map_kernel_ram_identity<A : AddressSpaceOps>(aspace : &mut A) -> Result<(), L
     Ok(())
 }
 
-/// 为单个 `PT_LOAD`
-/// 分配/合并映射并填充内容：先按页建立映射，再第二遍按字节写入文件或 BSS 零。
+/// 为单个 `PT_LOAD` 分配/合并映射并填充内容。
 fn map_segment<A : AddressSpaceOps>(aspace : &mut A,
                                     file : &[u8],
                                     p_vaddr : u64,
@@ -248,9 +244,8 @@ fn map_segment<A : AddressSpaceOps>(aspace : &mut A,
         if let Some(_pa) = aspace.translate_addr(vpn.start_addr())
                                  .map_err(LoadElfError::Mm)?
         {
-            // 与上一段 PT_LOAD 共享页（例如 text/data 尾与 .bss 头同
-            // VPN）：合并权限，勿再分配帧。
-            if vpn.start_addr().0 >= 0x8000_0000 {
+            // 与上一段 PT_LOAD 共享页：合并权限，勿再分配帧。
+            if vpn.start_addr().0 >= 0x9000_0000 {
                 runtime::logging::trace!("[elf-load] PT_LOAD refuse overlap with kernel identity \
                                           VPN={:#x}",
                                          vpn.0);
@@ -274,12 +269,6 @@ fn map_segment<A : AddressSpaceOps>(aspace : &mut A,
         let ppn = frame_alloc_result().map_err(|e| LoadElfError::Mm(MmError::from(e)))?;
         aspace.map_page_to_ppn(vpn, ppn, perm)
               .map_err(LoadElfError::Mm)?;
-        //#runtime::logging::info!(
-        //    "[elf-load] PT_LOAD alloc-map VPN={:/x} PPN={:#x} vbase={:#x}",
-        //    vpn.0,
-        //    ppn.0,
-        //    vbase
-        //);
         vpn = VirtPageNum(vpn.0 + 1);
     }
 
@@ -330,17 +319,12 @@ fn map_user_stack<A : AddressSpaceOps>(aspace : &mut A,
                                ppn,
                                PagePerm::R | PagePerm::W | PagePerm::U)
               .map_err(LoadElfError::Mm)?;
-        // stack alloc-map VPN={:#x} PPN={:#x} stack_top={:#x}",
-        //                        vpn.0,
-        //                        ppn.0,
-        //                       stack_top);
         vpn = VirtPageNum(vpn.0 + 1);
     }
     Ok(())
 }
 
-/// 从已挂载根文件系统读取 `path` 指向的 ELF，再调用
-/// [`from_elf_bytes`]；读路径含一次前缀校验失败时的重试（见模块 `//!`）。
+/// 从已挂载根文件系统读取 `path` 指向的 ELF，再调用 [`from_elf_bytes`]。
 pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
     runtime::logging::trace!("[elf-load] from_elf_path begin path={}",
                              path);
@@ -367,8 +351,8 @@ pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
     }
 }
 
-/// 解析内存中的 ELF64 小端 RISC-V 可执行文件，建立独立 Sv39 地址空间、映射
-/// `PT_LOAD` 与用户栈，并泄漏页表对象返回 `satp`。
+/// 解析内存中的 ELF64 小端 LoongArch 可执行文件，建立独立三级页表地址空间、映射
+/// `PT_LOAD` 与用户栈，并泄漏页表对象返回 PGDL 值。
 ///
 /// 失败时返回具体解析或 MM 错误；成功路径下根地址空间由 `Box::leak`
 /// 持有直至复位。
@@ -400,10 +384,11 @@ pub fn from_elf_bytes(data : &[u8]) -> Result<LoadedElf, LoadElfError> {
         return Err(LoadElfError::BadEndian);
     }
     let e_machine = rd_u16(data, 18).ok_or(LoadElfError::TooSmall)?;
-    if e_machine != EM_RISCV {
-        runtime::logging::trace!("[elf-load] abort: BadMachine e_machine={} (expect EM_RISCV={})",
+    if e_machine != EM_LOONGARCH {
+        runtime::logging::trace!("[elf-load] abort: BadMachine e_machine={} (expect \
+                                  EM_LOONGARCH={})",
                                  e_machine,
-                                 EM_RISCV);
+                                 EM_LOONGARCH);
         return Err(LoadElfError::BadMachine);
     }
     let e_entry = rd_u64(data, 0x18).ok_or(LoadElfError::TooSmall)? as usize;
@@ -423,8 +408,8 @@ pub fn from_elf_bytes(data : &[u8]) -> Result<LoadedElf, LoadElfError> {
                              e_phentsize,
                              e_phnum);
 
-    let mut aspace = Sv39AddressSpace::new().map_err(LoadElfError::Mm)?;
-    runtime::logging::trace!("[elf-load] new user aspace satp will be assigned after map");
+    let mut aspace = LoongArch64AddressSpace::new().map_err(LoadElfError::Mm)?;
+    runtime::logging::trace!("[elf-load] new user aspace pgdl will be assigned after map");
     map_kernel_ram_identity(&mut aspace)?;
     runtime::logging::trace!("[elf-load] kernel RAM identity map in user aspace ok");
 
@@ -473,8 +458,7 @@ pub fn from_elf_bytes(data : &[u8]) -> Result<LoadedElf, LoadElfError> {
         return Err(LoadElfError::Parse);
     }
 
-    // 用户栈：固定顶与 16KiB 大小（均为 4K
-    // 页的整数倍）；与具体用户镜像链接脚本无关，属 bring-up 约定。
+    // 用户栈：固定顶与 16KiB 大小（均为 4K 页的整数倍）。
     const ELF_STACK_TOP : usize = 0x0000_0000_7FFF_A000;
     const ELF_STACK_SIZE : usize = 16 * 1024;
     runtime::logging::trace!("[elf-load] image range [{:#x},{:#x}) mapping done; map user stack \
@@ -504,13 +488,13 @@ pub fn from_elf_bytes(data : &[u8]) -> Result<LoadedElf, LoadElfError> {
     aspace.init_user_layout(heap_start, heap_start, brk_max, mmap_base);
 
     let leaked = Box::leak(Box::new(aspace));
-    let satp = leaked.satp_value();
-    let user_aspace_ptr = leaked as *mut crate::pagetable::Sv39AddressSpace as usize;
-    runtime::logging::trace!("[elf-load] loaded ELF entry={:#x} satp={:#x} image=[{:#x},{:#x}) \
+    let pgdl = leaked.satp_value();
+    let user_aspace_ptr = leaked as *mut crate::pagetable::LoongArch64AddressSpace as usize;
+    runtime::logging::trace!("[elf-load] loaded ELF entry={:#x} pgdl={:#x} image=[{:#x},{:#x}) \
                               stack=[{:#x},{:#x}) brk=[{:#x},{:#x}) mmap_arena_base={:#x} \
                               aspace_ptr={:#x}",
                              e_entry,
-                             satp,
+                             pgdl,
                              min_vaddr,
                              max_vaddr,
                              stack_bottom,
@@ -520,7 +504,7 @@ pub fn from_elf_bytes(data : &[u8]) -> Result<LoadedElf, LoadElfError> {
                              mmap_base.0,
                              user_aspace_ptr);
     Ok(LoadedElf { entry_pc : e_entry,
-                   satp,
+                   satp : pgdl, // `satp` 字段名保留，实际内容为 LoongArch PGDL 值
                    stack_bottom,
                    stack_top : ELF_STACK_TOP,
                    image_base : min_vaddr,

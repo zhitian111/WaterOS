@@ -14,7 +14,7 @@ use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use mm::api::kernel_bringup::LoadedElf;
 use mm::api::user_access::UserMemoryOps;
-use mm::user_access::Sv39UserMemoryOps;
+use mm::ActiveUserMemoryOps;
 
 use crate::user_copy::copy_user_path_cstr;
 
@@ -34,7 +34,7 @@ const PAGE_SIZE : usize = 4096;
 // ── stack 辅助 ────────────────────────────────────────────────────
 
 /// 将 `data` 写入 `sp` 下方的用户栈，返回新的 sp（向下增长）。
-fn push_to_user_stack(ops : &Sv39UserMemoryOps,
+fn push_to_user_stack(ops : &ActiveUserMemoryOps,
                       sp : &mut usize,
                       data : &[u8])
                       -> Result<(), ErrNo> {
@@ -132,7 +132,7 @@ fn read_string_array(array_ptr : usize) -> Result<Vec<String>, ErrNo> {
     if array_ptr == 0 {
         return Ok(result);
     }
-    let ops = Sv39UserMemoryOps::new(task::current_task_user_aspace_ptr());
+    let ops = ActiveUserMemoryOps::new(task::current_task_user_aspace_ptr());
     let mut ptr_size = [0u8; 8];
     loop {
         if ops.copy_from_user(&mut ptr_size,
@@ -176,7 +176,7 @@ fn read_string_array(array_ptr : usize) -> Result<Vec<String>, ErrNo> {
 /// sp →
 /// ```
 fn build_user_stack(elf : &LoadedElf, argv : &[String], envp : &[String]) -> Result<usize, ErrNo> {
-    let ops = Sv39UserMemoryOps::new(elf.user_aspace_ptr);
+    let ops = ActiveUserMemoryOps::new(elf.user_aspace_ptr);
     let mut sp = elf.stack_top;
 
     // 把字符串数据压入栈
