@@ -8,11 +8,17 @@
 #![no_std]
 extern crate alloc;
 mod kernel;
+mod process;
 mod snapshot;
 mod task;
 mod user;
 mod wait;
 pub use kernel::{KernelStack, KernelTaskEntry, TaskBootstrap};
+pub use process::{
+    AddressSpaceRef, CloneFlags, CwdRef, FileTableRef, ProcessDescriptor, ProcessId, ProcessState,
+    ProcessTaskDescriptor, ProcessTaskRole, ProcessTaskState, ResourceHandle, SignalHandlersRef,
+    TaskClearTid, TaskGroupId,
+};
 pub use snapshot::{TaskSnapshot, TaskTrapSnapshot};
 pub use task::{
     ExitedTask, TaskBlockReason, TaskExitCode, TaskId, TaskKind, TaskRuntimeStats, TaskState,

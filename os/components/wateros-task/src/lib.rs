@@ -35,8 +35,11 @@ mod scheduler {
     pub use scheduler::*;
 }
 pub use api_v0::{
-    AddressSpaceHandle, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskSnapshot, TaskTick,
-    TaskWaitResult, UserImageInfo, UserStack, UserTask, WaitQueueId,
+    AddressSpaceHandle, AddressSpaceRef, CloneFlags, CwdRef, FileTableRef, KernelTaskEntry,
+    ProcessDescriptor, ProcessId, ProcessState, ResourceHandle, SignalHandlersRef, TaskBlockReason,
+    TaskClearTid, TaskExitCode, TaskGroupId, TaskSnapshot, TaskTick, TaskWaitResult,
+    ProcessTaskDescriptor, ProcessTaskRole, ProcessTaskState, UserImageInfo, UserStack, UserTask,
+    WaitQueueId,
 };
 pub use api_v0::{ExitedTask, TaskId, TaskKind, TaskWaitHandle};
 #[cfg(feature = "impl-core")]
@@ -45,7 +48,11 @@ use mm_api::kernel_bringup::LoadedElf;
 
 /// 初始化任务系统和底层调度器状态。
 #[inline]
-pub fn init() { scheduler::init(); }
+pub fn init() {
+    active_impl::init_process_registry();
+    active_impl::process_model_self_test();
+    scheduler::init();
+}
 
 /// Trap handler 进入时，把栈上 trap frame
 /// 交给当前任务保存区，并返回后续应修改的权威 frame。
@@ -230,3 +237,34 @@ pub fn task_snapshot(task_id : TaskId) -> Option<TaskSnapshot> { scheduler::task
 pub fn current_tick() -> TaskTick { scheduler::current_tick() }
 #[inline]
 pub fn current_task_user_aspace_ptr() -> usize { scheduler::current_task_user_aspace_ptr() }
+
+/// 查询进程语义快照；第一阶段仅供内部 bring-up / 后续 syscall 迁移使用。
+#[inline]
+pub fn process_snapshot(pid : ProcessId) -> Option<ProcessDescriptor> {
+    active_impl::lookup_process(pid)
+}
+
+/// 查询进程内任务语义快照。
+#[inline]
+pub fn process_task_snapshot(task_id : TaskId) -> Option<ProcessTaskDescriptor> {
+    active_impl::lookup_task(task_id)
+}
+
+/// 按调度实体 `TaskId` 反查其进程归属快照。
+#[inline]
+pub fn process_task_snapshot_by_task(task_id : TaskId) -> Option<ProcessTaskDescriptor> {
+    active_impl::lookup_task(task_id)
+}
+
+/// 当前运行任务对应的进程归属快照；未接入真实 spawn 前可能为 `None`。
+#[inline]
+pub fn current_process_task_snapshot() -> Option<ProcessTaskDescriptor> {
+    let task_id = current_task_id()?;
+    process_task_snapshot_by_task(task_id)
+}
+
+/// 进程 registry 自检。
+#[inline]
+pub fn process_model_self_test() {
+    active_impl::process_model_self_test();
+}
