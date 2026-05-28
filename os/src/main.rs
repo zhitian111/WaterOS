@@ -78,6 +78,15 @@ mod qemu_riscv64_opensbi {
                               impl-qemu-riscv64-opensbi/src/asm/_start.S"
     ));
 
+    /// 网络协议栈轮询任务：周期性驱动 smoltcp 收发包，永久运行。
+    extern "C" fn network_poller_task(_arg : usize) -> ! {
+        loop {
+            driver::network::stack::poll();
+            driver::network::stack::poll_socket_events();
+            task::sleep_for_ticks(1);
+        }
+    }
+
     /// 引导加载器 / OpenSBI 传入的引导参数；与 [`crate`] 顶层文档中的 bring-up
     /// 步骤一致。
     ///
@@ -138,13 +147,25 @@ mod qemu_riscv64_opensbi {
             );
         } else {
             info!("[self-test] driver init done");
+            match driver::network::stack::init([10, 0, 2, 15], [10, 0, 2, 2]) {
+                Ok(()) => {
+                    task::spawn_kernel_task(network_poller_task, 0);
+                    // 同步烟测：在调度器启动前验证核心 API
+                    crate::self_tests::network::run_sync_smoke();
+                }
+                Err(e) => {
+                    warn!("[self-test] network stack init skipped: {}",
+                          e);
+                }
+            }
             fs::init();
             // ----- 用户态 bring-up 总线：RW 挂载根卷 + 用户 ELF spawn（见
             // `user_bringup_bus`） ----- 注意：`run()` 内 `spawn_user_task_*`
             // 只入队；用户测程的 `ecall` 在下方 `run_first_task()`
             // 之后才会出现。
             crate::user_bringup_bus::run();
-            // crate::self_tests::task::spawn_all();  // 禁用，仅保留 basic bringup
+            crate::self_tests::task::spawn_all();
+            crate::self_tests::network::spawn_all();
             fs::test();
             #[cfg(feature = "vfs-bridge")]
             {

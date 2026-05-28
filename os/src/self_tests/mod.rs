@@ -6,3 +6,5 @@
 //!
 //! **入口**：任务相关自检的统一入口为 [`task::spawn_all`]；模块级说明与各 stage
 //! 语义见 [`task`]。
+pub mod network;
+pub mod task;

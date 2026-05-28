@@ -172,4 +172,36 @@ pub trait SyscallNumberTable {
     const SETRLIMIT: SyscallNumber;
     /// 可中断的纳秒级睡眠（`nanosleep(2)`）。
     const NANOSLEEP: SyscallNumber;
+
+    // Socket / 网络 / socket & networking
+    /// 创建 socket（`socket(2)`）。
+    const SOCKET: SyscallNumber;
+    /// 绑定地址到 socket（`bind(2)`）。
+    const BIND: SyscallNumber;
+    /// 开始监听（`listen(2)`）。
+    const LISTEN: SyscallNumber;
+    /// 接受连接（`accept4(2)`）。
+    const ACCEPT4: SyscallNumber;
+    /// 发起连接（`connect(2)`）。
+    const CONNECT: SyscallNumber;
+    /// 获取本地地址（`getsockname(2)`）。
+    const GETSOCKNAME: SyscallNumber;
+    /// 获取远端地址（`getpeername(2)`）。
+    const GETPEERNAME: SyscallNumber;
+    /// 发送数据报到指定地址（`sendto(2)`）。
+    const SENDTO: SyscallNumber;
+    /// 从指定地址接收数据报（`recvfrom(2)`）。
+    const RECVFROM: SyscallNumber;
+    /// 发送消息（`sendmsg(2)`）。
+    const SENDMSG: SyscallNumber;
+    /// 接收消息（`recvmsg(2)`）。
+    const RECVMSG: SyscallNumber;
+    /// 设置 socket 选项（`setsockopt(2)`）。
+    const SETSOCKOPT: SyscallNumber;
+    /// 获取 socket 选项（`getsockopt(2)`）。
+    const GETSOCKOPT: SyscallNumber;
+    /// 关闭 socket 发送/接收（`shutdown(2)`）。
+    const SHUTDOWN: SyscallNumber;
+    /// I/O 多路复用（`ppoll(2)`）。
+    const POLL: SyscallNumber;
 }

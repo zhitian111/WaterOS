@@ -31,6 +31,47 @@ pub struct LinuxStat {
 
 const _: () = assert!(core::mem::size_of::<LinuxStat>() == 128);
 
+/// Linux `struct statx_timestamp`。
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct LinuxStatxTimestamp {
+    pub tv_sec : i64,
+    pub tv_nsec : u32,
+    pub __reserved : i32,
+}
+
+/// Linux asm-generic `struct statx`（256 字节）。
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct LinuxStatx {
+    pub stx_mask : u32,
+    pub stx_blksize : u32,
+    pub stx_attributes : u64,
+    pub stx_nlink : u32,
+    pub stx_uid : u32,
+    pub stx_gid : u32,
+    pub stx_mode : u16,
+    pub __spare0 : u16,
+    pub stx_ino : u64,
+    pub stx_size : u64,
+    pub stx_blocks : u64,
+    pub stx_attributes_mask : u64,
+    pub stx_atime : LinuxStatxTimestamp,
+    pub stx_btime : LinuxStatxTimestamp,
+    pub stx_ctime : LinuxStatxTimestamp,
+    pub stx_mtime : LinuxStatxTimestamp,
+    pub stx_rdev_major : u32,
+    pub stx_rdev_minor : u32,
+    pub stx_dev_major : u32,
+    pub stx_dev_minor : u32,
+    pub stx_mnt_id : u64,
+    pub stx_dio_mem_align : u32,
+    pub stx_dio_offset_align : u32,
+    pub __spare3 : [u64; 12],
+}
+
+const _: () = assert!(core::mem::size_of::<LinuxStatx>() == 256);
+
 const S_IFREG : u32 = 0o100_000;
 const S_IFDIR : u32 = 0o40_000;
 const S_IFCHR : u32 = 0o20_000;
@@ -63,4 +104,21 @@ pub(crate) fn fill_linux_stat(meta : &VfsMetadata, size : u64) -> LinuxStat {
                 st_ctime_sec : 0,
                 st_ctime_nsec : 0,
                 __unused : [0; 2] }
+}
+
+pub(crate) fn fill_linux_statx(meta : &VfsMetadata, size : u64, requested_mask : u32) -> LinuxStatx {
+    let mode = match meta.node_type {
+        VfsNodeType::File => S_IFREG | (meta.mode as u32 & 0o7777),
+        VfsNodeType::Directory => S_IFDIR | (meta.mode as u32 & 0o7777),
+        VfsNodeType::Special => S_IFCHR | (meta.mode as u32 & 0o7777),
+        _ => meta.mode as u32,
+    };
+    LinuxStatx { stx_mask : requested_mask,
+                 stx_blksize : 4096,
+                 stx_nlink : 1,
+                 stx_mode : mode as u16,
+                 stx_ino : 1,
+                 stx_size : size,
+                 stx_blocks : (size + 511) / 512,
+                 ..LinuxStatx::default() }
 }

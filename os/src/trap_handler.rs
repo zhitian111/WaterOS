@@ -145,9 +145,11 @@ extern "C" fn wateros_kernel_trap_handler(frame: *mut u8) {
             // 日志级别下毫无输出，表现为「sret 后卡死」。
             if cx.returns_to_user() {
                 warn!(
-                    "[trap] user memory fault {:?} sepc={:#x} stval={:#x} user_sp={:#x} — \
-                       killing task",
+                    "[trap] user memory fault {:?} raw={:#x} ecode={:#x} sepc={:#x} \
+                       stval={:#x} user_sp={:#x} — killing task",
                     trap_cause,
+                    raw_cause,
+                    (raw_cause >> 16) & 0x3f,
                     cx.user_pc(),
                     cx.fault_addr(),
                     cx.user_sp()
