@@ -13,23 +13,27 @@ pub fn run_sync_smoke() {
     // 1. TCP socket 创建 + bind + listen
     let server = match stack::create_tcp_socket() {
         Ok(h) => {
-            info!("[socket-smoke] TCP server created, handle={:?}", h);
+            info!("[socket-smoke] TCP server created, handle={:?}",
+                  h);
             h
         }
         Err(e) => {
-            warn!("[socket-smoke] TCP server create failed: {}", e);
+            warn!("[socket-smoke] TCP server create failed: {}",
+                  e);
             return;
         }
     };
 
     match stack::socket_bind(server, 12345) {
         Ok(()) => info!("[socket-smoke] TCP server bind port=12345 ok"),
-        Err(e) => warn!("[socket-smoke] TCP server bind failed: {}", e),
+        Err(e) => warn!("[socket-smoke] TCP server bind failed: {}",
+                        e),
     }
 
     match stack::socket_listen(server) {
         Ok(()) => info!("[socket-smoke] TCP server listen ok"),
-        Err(e) => warn!("[socket-smoke] TCP server listen failed: {}", e),
+        Err(e) => warn!("[socket-smoke] TCP server listen failed: {}",
+                        e),
     }
 
     match stack::socket_state(server) {
@@ -40,11 +44,13 @@ pub fn run_sync_smoke() {
     // 2. 客户端 connect — 127.0.0.1 loopback
     let client = match stack::create_tcp_socket() {
         Ok(h) => {
-            info!("[socket-smoke] TCP client created, handle={:?}", h);
+            info!("[socket-smoke] TCP client created, handle={:?}",
+                  h);
             h
         }
         Err(e) => {
-            warn!("[socket-smoke] TCP client create failed: {}", e);
+            warn!("[socket-smoke] TCP client create failed: {}",
+                  e);
             let _ = stack::socket_close(server);
             return;
         }
@@ -52,17 +58,20 @@ pub fn run_sync_smoke() {
 
     match stack::socket_connect(client, [127, 0, 0, 1], 12345) {
         Ok(()) => info!("[socket-smoke] TCP connect to 127.0.0.1:12345 ok"),
-        Err(e) => warn!("[socket-smoke] TCP connect to 127.0.0.1:12345 failed: {}", e),
+        Err(e) => warn!("[socket-smoke] TCP connect to 127.0.0.1:12345 failed: {}",
+                        e),
     }
 
     // 3. 客户端 connect — 10.0.2.15（接口自身 IP）
     let client2 = match stack::create_tcp_socket() {
         Ok(h) => {
-            info!("[socket-smoke] TCP client2 created, handle={:?}", h);
+            info!("[socket-smoke] TCP client2 created, handle={:?}",
+                  h);
             h
         }
         Err(e) => {
-            warn!("[socket-smoke] TCP client2 create failed: {}", e);
+            warn!("[socket-smoke] TCP client2 create failed: {}",
+                  e);
             let _ = stack::socket_close(client);
             let _ = stack::socket_close(server);
             return;
@@ -71,16 +80,19 @@ pub fn run_sync_smoke() {
 
     match stack::socket_connect(client2, [10, 0, 2, 15], 12345) {
         Ok(()) => info!("[socket-smoke] TCP connect to 10.0.2.15:12345 ok"),
-        Err(e) => warn!("[socket-smoke] TCP connect to 10.0.2.15:12345 failed: {}", e),
+        Err(e) => warn!("[socket-smoke] TCP connect to 10.0.2.15:12345 failed: {}",
+                        e),
     }
 
     // 4. UDP socket 创建
     match stack::create_udp_socket() {
         Ok(h) => {
-            info!("[socket-smoke] UDP socket created, handle={:?}", h);
+            info!("[socket-smoke] UDP socket created, handle={:?}",
+                  h);
             let _ = stack::socket_close(h);
         }
-        Err(e) => warn!("[socket-smoke] UDP socket create failed: {}", e),
+        Err(e) => warn!("[socket-smoke] UDP socket create failed: {}",
+                        e),
     }
 
     // 清理

@@ -21,10 +21,8 @@ pub fn run() {
     match fs::mount_default_root_rw() {
         Ok(()) => info!("[bringup][stage-00-bus] ext4 root mounted (RW)"),
         Err(err) => {
-            warn!(
-                "[bringup][stage-00-bus] mount root RW failed: {:?} — skip user ELF stages",
-                err
-            );
+            warn!("[bringup][stage-00-bus] mount root RW failed: {:?} — skip user ELF stages",
+                  err);
             info!("[bringup][stage-00-bus] END");
             return;
         }

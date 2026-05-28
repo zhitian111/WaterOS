@@ -13,13 +13,16 @@ pub fn run_stage_posix_fs_meta() {
     }
     #[cfg(all(feature = "vfs-bridge", feature = "fd-session"))]
     {
-        const DIR: &str = "/__posix_fs_meta_dir";
-        const FILE: &str = "/__posix_fs_meta_dir/entry.txt";
-        const DATA: &[u8] = b"posix-fs-meta";
+        const DIR : &str = "/__posix_fs_meta_dir";
+        const FILE : &str = "/__posix_fs_meta_dir/entry.txt";
+        const DATA : &[u8] = b"posix-fs-meta";
 
         match run_smoke(DIR, FILE, DATA) {
             Ok(count) => {
-                info!("[posix-fs-meta] PASS entry_count={} path={}", count, DIR);
+                info!(
+                    "[posix-fs-meta] PASS entry_count={} path={}",
+                    count, DIR
+                );
             }
             Err(e) => {
                 warn!("[posix-fs-meta] FAIL: {:?}", e);
@@ -30,7 +33,7 @@ pub fn run_stage_posix_fs_meta() {
 }
 
 #[cfg(all(feature = "vfs-bridge", feature = "fd-session"))]
-fn run_smoke(dir: &str, file: &str, data: &[u8]) -> Result<usize, vfs::api::VfsError> {
+fn run_smoke(dir : &str, file : &str, data : &[u8]) -> Result<usize, vfs::api::VfsError> {
     use vfs::api::SingleRootReadView;
 
     let mut sess = vfs::mount::open_rw_session(vfs::api::VfsFsKind::Ext4)?;

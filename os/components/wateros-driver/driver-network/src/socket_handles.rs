@@ -68,7 +68,7 @@ impl VfsIoHandle for UdpSocketHandle {
             .map_err(map_stack_err)
     }
 
-    fn write(&mut self, buf: &[u8]) -> VfsResult<usize> {
+    fn write(&mut self, _buf: &[u8]) -> VfsResult<usize> {
         // UDP write without destination → error if not connected
         Err(VfsError::Unsupported)
     }

@@ -58,13 +58,13 @@ mod user_bringup_posix_fs;
 /// 将内核 panic 委托给 `wateros-runtime` 的统一 panic 处理（日志/停机策略由
 /// runtime 决定）。
 #[panic_handler]
-pub fn panic_handler(_panic_info : &core::panic::PanicInfo) -> ! {
+pub fn panic_handler(_panic_info: &core::panic::PanicInfo) -> ! {
     runtime::panic::panic_handler(_panic_info)
 }
 
 /// 堆分配失败时委托给 runtime 的全局分配错误处理；语义为不可恢复错误路径。
 #[alloc_error_handler]
-pub fn alloc_error_handler(layout : core::alloc::Layout) -> ! {
+pub fn alloc_error_handler(layout: core::alloc::Layout) -> ! {
     runtime::heap_allocator::handle_alloc_error(layout)
 }
 
@@ -76,11 +76,13 @@ mod qemu_riscv64_opensbi {
     use core::arch::global_asm;
     use core::include_str;
     use runtime::logging::*;
-    global_asm!(include_str!("../components/wateros-platform/platform-impl/\
-                              impl-qemu-riscv64-opensbi/src/asm/_start.S"));
+    global_asm!(include_str!(
+        "../components/wateros-platform/platform-impl/\
+                              impl-qemu-riscv64-opensbi/src/asm/_start.S"
+    ));
 
     /// 网络协议栈轮询任务：周期性驱动 smoltcp 收发包，永久运行。
-    extern "C" fn network_poller_task(_arg: usize) -> ! {
+    extern "C" fn network_poller_task(_arg : usize) -> ! {
         loop {
             driver::network::stack::poll();
             driver::network::stack::poll_socket_events();
@@ -94,7 +96,7 @@ mod qemu_riscv64_opensbi {
     /// **契约**：在此返回前完成本路径上的初始化与自检日志；正常路径以
     /// [`task::run_first_task`] 转入调度且不返回。
     #[unsafe(no_mangle)]
-    pub fn kernel_main(boot_arg0 : usize, boot_arg1 : usize) -> ! {
+    pub fn kernel_main(boot_arg0: usize, boot_arg1: usize) -> ! {
         use platform::boot::{BootArgs, BootContext};
         let _boot_context = BootContext::from(BootArgs::new(boot_arg0, boot_arg1));
         driver::init_when_boot(boot_arg1);
@@ -115,17 +117,24 @@ mod qemu_riscv64_opensbi {
         // 与 DTB `/memory` 或 `wateros-base-config::QEMU_VIRT_PHYS_RAM_END` 对齐（如
         // QEMU `-m 256M` → 0x9000_0000）
         let memory_end = driver::physical_ram_end_exclusive();
-        const PAGE_SIZE : usize = 4096;
+        const PAGE_SIZE: usize = 4096;
         #[inline]
-        const fn align_up(v : usize, align : usize) -> usize { (v + align - 1) & !(align - 1) }
-        let start_ppn = align_up(kernel_end as *const () as usize,
-                                 PAGE_SIZE) /
-                        PAGE_SIZE;
+        const fn align_up(v: usize, align: usize) -> usize {
+            (v + align - 1) & !(align - 1)
+        }
+        let start_ppn = align_up(
+            kernel_end as *const () as usize,
+            PAGE_SIZE,
+        ) / PAGE_SIZE;
         let end_ppn = memory_end / PAGE_SIZE;
-        info!("[self-test] frame range ppn=[{:#x},{:#x})",
-              start_ppn, end_ppn);
-        mm::test_with_range(base::addr::BasePPN { val : start_ppn },
-                            base::addr::BasePPN { val : end_ppn });
+        info!(
+            "[self-test] frame range ppn=[{:#x},{:#x})",
+            start_ppn, end_ppn
+        );
+        mm::test_with_range(
+            base::addr::BasePPN { val: start_ppn },
+            base::addr::BasePPN { val: end_ppn },
+        );
         mm::kernel_mm::init(start_ppn, end_ppn, memory_end);
         info!("[self-test] mm self-test done");
 
@@ -135,8 +144,10 @@ mod qemu_riscv64_opensbi {
         // 设备驱动扫描与根文件系统挂载自检。
         let driver_boot = driver::active_impl::init_after_boot();
         if let Err(ref err) = driver_boot {
-            warn!("[self-test] driver init failed: {:?}",
-                  err);
+            warn!(
+                "[self-test] driver init failed: {:?}",
+                err
+            );
         } else {
             info!("[self-test] driver init done");
             match driver::network::stack::init([10, 0, 2, 15], [10, 0, 2, 2]) {
@@ -146,7 +157,8 @@ mod qemu_riscv64_opensbi {
                     crate::self_tests::network::run_sync_smoke();
                 }
                 Err(e) => {
-                    warn!("[self-test] network stack init skipped: {}", e);
+                    warn!("[self-test] network stack init skipped: {}",
+                          e);
                 }
             }
             fs::init();
@@ -186,51 +198,78 @@ mod qemu_loongarch64_virt {
     use core::include_str;
     use runtime::logging::*;
 
-    global_asm!(include_str!("../components/wateros-platform/platform-impl/\
-                              impl-qemu-loongarch64-virt/src/asm/_start.S"));
+    global_asm!(include_str!(
+        "../components/wateros-platform/platform-impl/\
+                              impl-qemu-loongarch64-virt/src/asm/_start.S"
+    ));
 
     /// 固件/引导移交后的内核 C 入口；完成 MM bring-up、驱动、FS、VFS 与用户 ELF
     /// 装载后进入调度。
     ///
     /// `$r4` = argc, `$r5` = argv, `$r6` = envp（部分固件在此传递 FDT 指针）。
     #[unsafe(no_mangle)]
-    pub fn kernel_main(_argc : usize, _argv : usize, envp : usize) -> ! {
+    pub fn kernel_main(_argc: usize, _argv: usize, envp: usize) -> ! {
         runtime::console::show_logo();
         runtime::logging::init();
         runtime::heap_allocator::init();
         platform::arch::init();
         info!("[loongarch64] boot smoke ok");
+        driver::init_when_boot(envp);
 
         // 必须在 MM 初始化之前注册 trap handler：页表激活后的探针访问可能触发页错误。
         task::init();
         crate::trap_handler::init();
 
-        // 关闭固件可能已开启的 MMU，确认为后续页表构建中的物理地址访问使用直接寻址。
+        // 关闭固件可能已开启的 MMU，确认为后续页表构建与 PCI ECAM/MMIO 访问使用直接寻址。
         platform::arch::paging::init_paging_disable_mmu();
 
         // ===== 内核态自检：MM / FrameAllocator / LoongArch64 三级页表 =====
         unsafe extern "C" {
             fn kernel_end();
         }
-        const PAGE_SIZE : usize = 4096;
+        const PAGE_SIZE: usize = mm::api::addr::PAGE_SIZE;
         #[inline]
-        const fn align_up(v : usize, align : usize) -> usize { (v + align - 1) & !(align - 1) }
+        const fn align_up(v: usize, align: usize) -> usize {
+            (v + align - 1) & !(align - 1)
+        }
 
-        // QEMU la virt RAM 基址（与 link.ld 一致）；当前 la_qemu_run 使用 -m 2G。
-        const LOONGARCH64_RAM_BASE : usize = 0x9000_0000;
-        const LOONGARCH64_RAM_END : usize = LOONGARCH64_RAM_BASE + 0x8000_0000;
+        let start_ppn = align_up(
+            kernel_end as *const () as usize,
+            PAGE_SIZE,
+        ) / PAGE_SIZE;
+        let memory_end = driver::physical_ram_end_exclusive();
+        let end_ppn = memory_end / PAGE_SIZE;
+        let usable_end_ppn = end_ppn.min(0x1_0000_0000usize / PAGE_SIZE);
+        info!(
+            "[loongarch64][self-test] frame range ppn=[{:#x},{:#x}) detected_end_ppn={:#x} \
+             ram_end={:#x}",
+            start_ppn, usable_end_ppn, end_ppn, memory_end
+        );
+        mm::test_with_range(
+            base::addr::BasePPN { val: start_ppn },
+            base::addr::BasePPN {
+                val: usable_end_ppn,
+            },
+        );
+        info!("[loongarch64][self-test] mm self-test done");
 
-        let start_ppn = align_up(kernel_end as *const () as usize,
-                                 PAGE_SIZE) /
-                        PAGE_SIZE;
-        let end_ppn = LOONGARCH64_RAM_END / PAGE_SIZE;
-        // FIXME: LoongArch64 UEFI 页表（DMW）不覆盖 MMIO/ECAM/高端 RAM。
-        // 在实现内核页表接管之前，跳过 MM 自检与 driver 初始化。
-        let _ = (start_ppn, end_ppn);
-        warn!("[self-test] mm self-test & driver init skipped (UEFI paging; kernel paging is \
-               blocked by DMW — need independent kernel page table takeover first)");
-        // driver::init_when_boot(envp);
-        // driver::active_impl::init_after_boot();
+        // 第一阶段保持 LoongArch 运行在直接地址模式；完整 PGDL/TLB 接管在后续阶段启用。
+        let driver_boot = driver::active_impl::init_after_boot();
+        if let Err(ref err) = driver_boot {
+            warn!(
+                "[loongarch64][self-test] driver init failed: {:?}",
+                err
+            );
+        } else {
+            info!("[loongarch64][self-test] driver init done");
+            fs::init();
+            crate::user_bringup_bus::run();
+            fs::test();
+            #[cfg(feature = "vfs-bridge")]
+            {
+                vfs::test();
+            }
+        }
 
         // 内核态轮转烟测任务。
         task::spawn_kernel_task(loongarch64_kernel_task_a, 0);
@@ -245,7 +284,7 @@ mod qemu_loongarch64_virt {
 
     /// 内核自检任务 A：忙循环 + 周期性日志 +
     /// `yield_now`，用于验证多任务与时间片。
-    extern "C" fn loongarch64_kernel_task_a(_arg : usize) -> ! {
+    extern "C" fn loongarch64_kernel_task_a(_arg: usize) -> ! {
         let mut round = 0usize;
         loop {
             if round % 1_000_000 == 0 {
@@ -258,7 +297,7 @@ mod qemu_loongarch64_virt {
 
     /// 内核自检任务 B：与 [`loongarch64_kernel_task_a`]
     /// 对称，增加调度交错覆盖。
-    extern "C" fn loongarch64_kernel_task_b(_arg : usize) -> ! {
+    extern "C" fn loongarch64_kernel_task_b(_arg: usize) -> ! {
         let mut round = 0usize;
         loop {
             if round % 1_000_000 == 0 {
