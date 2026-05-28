@@ -44,42 +44,52 @@ __arch_user_task_entry:
 # CSR SAVE0(0x30) 在用户态运行期间保存该内核栈顶，供 trap.S 在 User -> Kernel
 # 时先切回内核栈再保存 TrapContext。
 __wateros_arch_restore_user_task:
-    move $r12, $r4
+    move $r21, $r4
     csrwr $r5, 0x30
 
     # 偏移 32*8 / 33*8：Rust `TrapContext` 的 prmd / era；CSR 0x1=PRMD、0x6=ERA（手册编号）。
-    ld.d $r13, $r12, 32*8
+    ld.d $r13, $r21, 32*8
     csrwr $r13, 0x1
-    ld.d $r13, $r12, 33*8
+    ld.d $r13, $r21, 33*8
     csrwr $r13, 0x6
-    # 36*8：return_address_space_token。LoongArch 页表实现尚未接入，当前占位不恢复硬件页表寄存器。
+    # 36*8：return_address_space_token，即用户 PGDL 物理基址。
+    ld.d $r13, $r21, 36*8
+    csrwr $r13, 0x19
+    invtlb 0, $r0, $r0
+    csrrd $r13, 0x0
+    addi.d $r14, $r0, -9
+    and $r13, $r13, $r14
+    ori $r13, $r13, 0x10
+    csrwr $r13, 0x0
 
-    ld.d $r1,  $r12, 1*8
-    ld.d $r5,  $r12, 5*8
-    ld.d $r6,  $r12, 6*8
-    ld.d $r7,  $r12, 7*8
-    ld.d $r8,  $r12, 8*8
-    ld.d $r9,  $r12, 9*8
-    ld.d $r10, $r12, 10*8
-    ld.d $r11, $r12, 11*8
-    ld.d $r14, $r12, 14*8
-    ld.d $r15, $r12, 15*8
-    ld.d $r16, $r12, 16*8
-    ld.d $r17, $r12, 17*8
-    ld.d $r18, $r12, 18*8
-    ld.d $r19, $r12, 19*8
-    ld.d $r20, $r12, 20*8
-    ld.d $r21, $r12, 21*8
-    ld.d $r22, $r12, 22*8
-    ld.d $r23, $r12, 23*8
-    ld.d $r24, $r12, 24*8
-    ld.d $r25, $r12, 25*8
-    ld.d $r26, $r12, 26*8
-    ld.d $r27, $r12, 27*8
-    ld.d $r28, $r12, 28*8
-    ld.d $r29, $r12, 29*8
-    ld.d $r30, $r12, 30*8
-    ld.d $r31, $r12, 31*8
-    ld.d $r3,  $r12, 3*8
-    ld.d $r4,  $r12, 4*8
+    ld.d $r1,  $r21, 1*8
+    ld.d $r5,  $r21, 5*8
+    ld.d $r6,  $r21, 6*8
+    ld.d $r7,  $r21, 7*8
+    ld.d $r8,  $r21, 8*8
+    ld.d $r9,  $r21, 9*8
+    ld.d $r10, $r21, 10*8
+    ld.d $r11, $r21, 11*8
+    ld.d $r12, $r21, 12*8
+    ld.d $r13, $r21, 13*8
+    ld.d $r14, $r21, 14*8
+    ld.d $r15, $r21, 15*8
+    ld.d $r16, $r21, 16*8
+    ld.d $r17, $r21, 17*8
+    ld.d $r18, $r21, 18*8
+    ld.d $r19, $r21, 19*8
+    ld.d $r20, $r21, 20*8
+    ld.d $r22, $r21, 22*8
+    ld.d $r23, $r21, 23*8
+    ld.d $r24, $r21, 24*8
+    ld.d $r25, $r21, 25*8
+    ld.d $r26, $r21, 26*8
+    ld.d $r27, $r21, 27*8
+    ld.d $r28, $r21, 28*8
+    ld.d $r29, $r21, 29*8
+    ld.d $r30, $r21, 30*8
+    ld.d $r31, $r21, 31*8
+    ld.d $r3,  $r21, 3*8
+    ld.d $r4,  $r21, 4*8
+    ld.d $r21, $r21, 21*8
     ertn

@@ -19,13 +19,18 @@
     .equ CSR_ERA, 0x6
     .equ CSR_ESTAT, 0x5
     .equ CSR_BADV, 0x7
+    .equ CSR_CRMD, 0x0
+    .equ CSR_PGDL, 0x19
+    .equ CSR_PGD, 0x1B
     .equ CSR_SAVE0, 0x30
     .equ CSR_SAVE1, 0x31
     .equ CSR_SAVE2, 0x32
     .equ CSR_SAVE3, 0x33
     .equ CSR_SAVE4, 0x34
+    .equ CSR_TLBRSAVE, 0x8B
     .equ PRMD_PPLV_MASK, 0x3
     .equ USER_PLV, 0x3
+    .equ CRMD_PG, 0x10
 
     .macro RESTORE_GENERAL_REGS
     ld.d $r1,  $r3, 8
@@ -78,8 +83,11 @@ __alltraps:
     b .Lsave_context
 
 .Ltrap_from_user:
+    # SAVE0 holds the current task's kernel stack top while PLV3 is running.
+    # Preserve the user stack in r15 for x[3], then build TrapContext on the
+    # kernel stack.
     move $r15, $r3
-    csrwr $r3, CSR_SAVE0
+    csrrd $r3, CSR_SAVE0
     addi.d $r3, $r3, -TRAP_CONTEXT_SIZE
 
 .Lsave_context:
@@ -148,7 +156,31 @@ __alltraps:
     ertn
 
 .Lreturn_to_user:
+    # TrapContext.return_address_space_token is the PGDL base address to use in user mode.
+    ld.d $r12, $r3, 36*8
+    csrwr $r12, CSR_PGDL
+    invtlb 0, $r0, $r0
+    csrrd $r12, CSR_CRMD
+    addi.d $r13, $r0, -9
+    and $r12, $r12, $r13
+    ori $r12, $r12, CRMD_PG
+    csrwr $r12, CSR_CRMD
+    addi.d $r12, $r3, TRAP_CONTEXT_SIZE
+    csrwr $r12, CSR_SAVE0
     RESTORE_GENERAL_REGS
-    addi.d $r3, $r3, TRAP_CONTEXT_SIZE
-    csrwr $r3, CSR_SAVE0
+    ld.d $r3, $r3, 3*8
+    ertn
+
+    .section .text.tlb_refill
+    .globl __tlb_refill
+    .align 12
+__tlb_refill:
+    csrwr $r12, CSR_TLBRSAVE
+    csrrd $r12, CSR_PGD
+    lddir $r12, $r12, 2
+    lddir $r12, $r12, 1
+    ldpte $r12, 0
+    ldpte $r12, 1
+    tlbfill
+    csrrd $r12, CSR_TLBRSAVE
     ertn

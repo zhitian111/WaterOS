@@ -19,9 +19,9 @@ use api_v0::perm::PagePerm;
 
 use frame_alloctor::{frame_alloc_result, frame_dealloc_result};
 
-/// LoongArch64 PTE 标志位（低 12 位）。
+/// LoongArch64 PTE 标志位。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct LoongArch64PteFlags(u16);
+struct LoongArch64PteFlags(usize);
 
 impl LoongArch64PteFlags {
     const V : Self = Self(1 << 0); // Valid
@@ -31,33 +31,34 @@ impl LoongArch64PteFlags {
     const G : Self = Self(1 << 6); // Global
     const P : Self = Self(1 << 7); // Present (physical page exists)
     const W : Self = Self(1 << 8); // Writable
-    const NR : Self = Self(1 << 9); // Not Readable
-    const NX : Self = Self(1 << 10); // Not Executable
-                                     // bit 11 = RPLV (restricted privilege level, reserved for future)
+    const NR : Self = Self(1 << 61); // Not Readable
+    const NX : Self = Self(1 << 62); // Not Executable
+    const RPLV : Self = Self(1 << 63); // Restricted PLV, reserved for future
 
     /// PLV = 3（用户态可访问）。
-    const PLV_USER : u16 = 3u16 << 2;
+    const PLV_USER : usize = 3usize << 2;
     /// MAT = 1（Coherent Cached，一致可缓存）。
-    const MAT_CACHED : u16 = 1u16 << 4;
+    const MAT_CACHED : usize = 1usize << 4;
 
-    const PLV_MASK : u16 = 3u16 << 2;
+    const PLV_MASK : usize = 3usize << 2;
 
     #[inline]
     const fn empty() -> Self { Self(0) }
 
     #[inline]
-    const fn bits(self) -> u16 { self.0 }
+    const fn bits(self) -> usize { self.0 }
 
     #[inline]
     const fn is_valid(self) -> bool { (self.0 & Self::V.0) != 0 }
 
-    /// 判断是否为叶子页表项：满足 V==1 且（W==1 或 NR==1 或 NX==1 或 PLV!=0）。
-    /// 与 Sv39 语义一致：若除 V 之外还设置了页属性位，则为叶子。
     #[inline]
-    const fn is_leaf(self) -> bool {
-        (self.0 & Self::V.0) != 0 &&
-        ((self.0 & (Self::W.0 | Self::NR.0 | Self::NX.0)) != 0 || (self.0 & Self::PLV_MASK) != 0)
-    }
+    const fn is_present(self) -> bool { (self.0 & Self::P.0) != 0 }
+
+    /// 判断是否为叶子页表项：LoongArch 普通页 PTE 使用 P 位表示物理页存在；
+    /// 非叶目录项是纯物理地址，不能设置 V/P 等低位标志，否则硬件 LDDIR 会把
+    /// 这些低位当作下一级表基址的一部分。
+    #[inline]
+    const fn is_leaf(self) -> bool { self.is_valid() && self.is_present() }
 
     /// 从 [`PagePerm`] 构造 PTE 标志：V=1, D=1 (pre-fault), MAT=CoherentCached,
     /// PLV 由 `perm.user()` 决定。
@@ -112,15 +113,23 @@ impl LoongArch64Pte {
     const fn zero() -> Self { Self(0) }
 
     #[inline]
-    fn flags(self) -> LoongArch64PteFlags { LoongArch64PteFlags((self.0 & 0xFFF) as u16) }
+    fn flags(self) -> LoongArch64PteFlags {
+        LoongArch64PteFlags((self.0 & 0x1FF) |
+                             (self.0 & (LoongArch64PteFlags::NR.0 |
+                                        LoongArch64PteFlags::NX.0 |
+                                        LoongArch64PteFlags::RPLV.0)))
+    }
 
     #[inline]
-    fn ppn(self) -> PhysPageNum { PhysPageNum(self.0 >> 12 & ((1usize << 52) - 1)) }
+    fn ppn(self) -> PhysPageNum { PhysPageNum((self.0 >> 12) & ((1usize << (48 - 12)) - 1)) }
 
     #[inline]
     fn set(&mut self, ppn : PhysPageNum, flags : LoongArch64PteFlags) {
-        self.0 = (ppn.0 << 12) | (flags.bits() as usize);
+        self.0 = (ppn.0 << 12) | flags.bits();
     }
+
+    #[inline]
+    fn set_table(&mut self, ppn : PhysPageNum) { self.0 = ppn.0 << 12; }
 
     #[inline]
     fn clear(&mut self) { self.0 = 0; }
@@ -212,9 +221,9 @@ impl LoongArch64AddressSpace {
                 return Ok((pte, level));
             }
 
-            if !flags.is_valid() {
+            if pte.0 == 0 {
                 let child = alloc_table_frame_zeroed()?;
-                pte.set(child, LoongArch64PteFlags::V);
+                pte.set_table(child);
             } else if flags.is_leaf() {
                 return Err(MmError::AlreadyMapped);
             }
@@ -237,7 +246,7 @@ impl LoongArch64AddressSpace {
             let pte = &mut table[idx[level]];
             let flags = pte.flags();
 
-            if !flags.is_valid() {
+            if pte.0 == 0 {
                 return Ok(None);
             }
             if level == 0 || flags.is_leaf() {
@@ -292,7 +301,7 @@ unsafe fn destroy_table(ppn : PhysPageNum, level : usize) {
     let table = unsafe { table_mut(ppn) };
     for pte in table.iter() {
         let flags = pte.flags();
-        if !flags.is_valid() {
+        if pte.0 == 0 {
             continue;
         }
         let child_ppn = pte.ppn();
@@ -330,7 +339,7 @@ unsafe fn fork_table(parent_ppn : PhysPageNum,
                                 .enumerate()
     {
         let flags = pte.flags();
-        if !flags.is_valid() {
+        if pte.0 == 0 {
             continue;
         }
         let ppn = pte.ppn();
@@ -352,7 +361,7 @@ unsafe fn fork_table(parent_ppn : PhysPageNum,
             }
         } else if level > 0 {
             let child_sub = alloc_table_frame_zeroed()?;
-            child_table[i].set(child_sub, LoongArch64PteFlags::V);
+            child_table[i].set_table(child_sub);
             unsafe {
                 fork_table(ppn, child_sub, level - 1)?;
             }
@@ -362,9 +371,9 @@ unsafe fn fork_table(parent_ppn : PhysPageNum,
 }
 
 impl AddressSpaceOps for LoongArch64AddressSpace {
-    /// LoongArch64 用 CSR.PGDL 存储根页表物理页号（不是 Sv39 的 satp 编码）。
-    /// 此方法返回 PGDL 兼容值：`root.0`（PPN）。
-    fn satp_value(&self) -> usize { self.root.0 }
+    /// LoongArch64 用 CSR.PGDL 存储根页表物理基址（不是 Sv39 的 satp 编码）。
+    /// 此方法返回 PGDL 可直接写入值：`root_ppn * PAGE_SIZE`。
+    fn satp_value(&self) -> usize { self.root.0 * PAGE_SIZE }
 
     fn map_page_to_ppn(&mut self,
                        vpn : VirtPageNum,

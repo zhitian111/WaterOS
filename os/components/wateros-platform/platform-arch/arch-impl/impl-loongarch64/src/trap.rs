@@ -30,6 +30,20 @@ pub struct TrapContext {
 /// 异常入口向量 CSR（`EENTRY`）：`trap.S` 中 `__alltraps` 的物理入口地址写入此
 /// CSR。
 const CSR_EENTRY : usize = 0xC;
+const CSR_ASID : usize = 0x18;
+const CSR_PWCL : usize = 0x1C;
+const CSR_PWCH : usize = 0x1D;
+const CSR_STLBPS : usize = 0x1E;
+const CSR_TLBRENTRY : usize = 0x88;
+const CSR_TLBREHI : usize = 0x8E;
+const CSR_DMW0 : usize = 0x180;
+const LOONGARCH_PAGE_SIZE_BITS : usize = 12;
+const LOONGARCH_PWCL_4K_3LEVEL : usize =
+    12 | (9 << 5) | (21 << 10) | (9 << 15) | (30 << 20) | (9 << 25);
+/// PLV0-only direct-map window for VA[47:0] -> PA[47:0], MAT=coherent cached.
+/// Keeping PLV3 disabled here forces user code through PGDL/TLB while making
+/// trap/refill entry and kernel stacks independent of the current user PGDL.
+const LOONGARCH_DMW0_PLV0_CACHED : usize = 0x11;
 /// `PRMD.PPLV`：返回后特权级域（与 `returns_to_user` 判定一致）。
 const LOONGARCH_PRMD_PPLV_MASK : usize = 0x3;
 /// `PRMD.PIE`：返回时全局中断使能快照位（与 `set_return_to_user_raw` 配合）。
@@ -99,6 +113,7 @@ impl TrapContext {
 
 unsafe extern "C" {
     fn __alltraps();
+    fn __tlb_refill();
 }
 
 /// `csrwr`：写 CSR 并返回旧值；此处丢弃旧值，仅作副作用写。
@@ -113,7 +128,17 @@ fn write_csr<const CSR: usize>(value : usize) {
 /// 安装异常入口：将 `__alltraps` 写入 `EENTRY`（与 `trap.S` 中符号地址一致）。
 pub fn init_trap() {
     let addr = __alltraps as *const () as usize;
+    write_csr::<CSR_DMW0>(LOONGARCH_DMW0_PLV0_CACHED);
     write_csr::<CSR_EENTRY>(addr);
+    write_csr::<CSR_TLBRENTRY>(__tlb_refill as *const () as usize);
+    write_csr::<CSR_STLBPS>(LOONGARCH_PAGE_SIZE_BITS);
+    write_csr::<CSR_TLBREHI>(LOONGARCH_PAGE_SIZE_BITS);
+    write_csr::<CSR_PWCL>(LOONGARCH_PWCL_4K_3LEVEL);
+    write_csr::<CSR_PWCH>(0);
+    write_csr::<CSR_ASID>(0);
+    unsafe {
+        asm!("invtlb 0, $zero, $zero");
+    }
 }
 
 /// LoongArch64 当前不需要 RISC-V `SUM` 一类的用户页访问准备。

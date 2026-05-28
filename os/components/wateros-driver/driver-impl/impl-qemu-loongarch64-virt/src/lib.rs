@@ -23,8 +23,10 @@ pub fn init_when_boot(dtb_pa: usize) {
     DTB_BASE_ADDR.store(dtb_pa, Ordering::Release);
 }
 
-/// 物理 RAM 上界（不包含）：loongarch64 virt 当前硬编码为 2 GiB（与 QEMU `-m
-/// 2G` 及 `kernel_main` 一致）。
+/// 物理 RAM 上界（不包含）：QEMU LoongArch64 `virt -m 2G` 的可用 RAM
+/// 分为低 256MiB 与 `0x8000_0000..0xf000_0000` 两段；内核从
+/// `0x9000_0000` 启动，因此 frame allocator 的高段 fallback 必须停在
+/// `0xf000_0000`，不能把中间 MMIO/空洞当作 RAM。
 pub fn physical_ram_end_exclusive() -> usize {
     let _fallback = wateros_base_config::mm::QEMU_VIRT_PHYS_RAM_END;
     let dtb = DTB_BASE_ADDR.load(Ordering::Acquire);
@@ -57,8 +59,8 @@ pub fn physical_ram_end_exclusive() -> usize {
             }
         }
     }
-    // 回退：LoongArch RAM 基址 0x9000_0000 + 2 GiB = 0x1_1000_0000
-    0x9000_0000usize.saturating_add(0x8000_0000)
+    // 回退：DTB 不可用时使用 QEMU `virt -m 2G` 的高 RAM 段上界。
+    0xf000_0000
 }
 
 fn read_fdt() -> DriverResult<fdt::Fdt<'static>> {
