@@ -47,7 +47,7 @@ pub(crate) use close::sys_close;
 pub(crate) use dup::{sys_dup, sys_dup3};
 pub(crate) use execve::sys_execve;
 pub(crate) use fcntl::sys_fcntl;
-pub(crate) use fstat::sys_fstat;
+pub(crate) use fstat::{sys_fstat, sys_statx};
 pub(crate) use futex::sys_futex;
 pub(crate) use getcwd::sys_getcwd;
 pub(crate) use getdents64::sys_getdents64;

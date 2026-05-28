@@ -28,6 +28,7 @@
 [features]
     default = [ "qemu-riscv64-opensbi" ]
     vfs-bridge = [ "vfs/bridge-fs-api" ]
+    fd-session = [ "vfs/fd-session" ]
     impl-sv39 = [ "mm/impl-sv39" ]
     impl-loongarch64 = [ "mm/impl-loongarch64" ]
     qemu-loongarch64-virt = [
@@ -38,14 +39,14 @@
         "dep:vfs",
         "vfs-bridge",
         "abi/impl-linux-loongarch64",
-        "vfs/fd-session",
+        "fd-session",
         "vfs/impl-loongarch64",
         "driver/impl-qemu-loongarch64-virt",
         "fs/api-v0",
         "fs/impl-devfs",
         "fs/impl-ext4",
         "platform/impl-qemu-loongarch64-virt",
-        "runtime/impl-debug",
+        #"runtime/impl-debug",
         "runtime/impl-firmware-console",
         "syscall/impl-loongarch64",
         "task/api-v0",
@@ -54,6 +55,7 @@
         "impl-loongarch64",
         "mm/api-v0",
         "mm/impl-loongarch64",
+        "mm/vfs-root-read",
         "ipc/impl-loongarch64",
         "ipc/pipe",
     ]
@@ -86,7 +88,7 @@
         "runtime/impl-trace",
         #"runtime/impl-info",
         "syscall/impl-riscv64",
-        "vfs/fd-session",
+        "fd-session",
         "vfs/impl-riscv64",
         "task/api-v0",
         "task/impl-core",

@@ -36,6 +36,10 @@ static PHYS_RAM_END_EXCL : AtomicUsize = AtomicUsize::new(0);
 
 /// QEMU virt LoongArch64 RAM 基址（与 link.ld 一致）。
 const LOONGARCH64_RAM_BASE : usize = 0x9000_0000;
+const LOONGARCH64_LOW_MMIO_START : usize = 0x1000_0000;
+const LOONGARCH64_LOW_MMIO_END : usize = 0x3000_0000;
+const LOONGARCH64_PCI_MMIO_START : usize = 0x4000_0000;
+const LOONGARCH64_PCI_MMIO_END : usize = 0x8000_0000;
 
 #[inline]
 pub(crate) fn phys_ram_end_exclusive() -> usize {
@@ -43,8 +47,8 @@ pub(crate) fn phys_ram_end_exclusive() -> usize {
     if v != 0 {
         v
     } else {
-        // 回退值：2GB RAM (QEMU default `-m 2G`)
-        LOONGARCH64_RAM_BASE + 0x8000_0000
+        // 回退值：QEMU LoongArch64 `virt -m 2G` 高 RAM 段上界。
+        0xf000_0000
     }
 }
 
@@ -100,12 +104,19 @@ pub fn init(start_ppn : usize, end_ppn : usize, ram_end_exclusive : usize) {
                  PagePerm::R | PagePerm::W | PagePerm::X,
                  "RAM");
 
-    // 访问 virtio / UART 等 MMIO（如 0x1000_8000）必须映射；与 `-m` 无关。
+    // 访问 UART、PLIC/MSI、PCI ECAM 等低地址 MMIO 必须映射；与 `-m` 无关。
     map_identity(&mut aspace,
-                 wateros_base_config::mm::QEMU_VIRT_MMIO_PHYS_START,
-                 wateros_base_config::mm::QEMU_VIRT_MMIO_PHYS_END,
+                 LOONGARCH64_LOW_MMIO_START,
+                 LOONGARCH64_LOW_MMIO_END,
                  PagePerm::R | PagePerm::W,
-                 "MMIO");
+                 "low MMIO");
+
+    // VirtIO PCI transport 会在该窗口内分配 BAR，启用 PGDL 后也要恒等映射。
+    map_identity(&mut aspace,
+                 LOONGARCH64_PCI_MMIO_START,
+                 LOONGARCH64_PCI_MMIO_END,
+                 PagePerm::R | PagePerm::W,
+                 "PCI MMIO");
 
     // 选一枚位于帧池内的物理页做 PGDL 切换后的翻译与内存一致性探针（与 RAM
     // 恒等区无重叠的任意 VA）。
@@ -124,10 +135,11 @@ pub fn init(start_ppn : usize, end_ppn : usize, ram_end_exclusive : usize) {
                               target={:#x}",
                              LOONGARCH64_RAM_BASE,
                              ram_end_exclusive,
-                             wateros_base_config::mm::QEMU_VIRT_MMIO_PHYS_START,
-                             wateros_base_config::mm::QEMU_VIRT_MMIO_PHYS_END,
+                             LOONGARCH64_LOW_MMIO_START,
+                             LOONGARCH64_LOW_MMIO_END,
                              pgdl_target);
     platform::arch::paging::activate_address_space_token_and_flush(pgdl_target);
+    platform::arch::paging::enable_paging();
     assert_eq!(platform::arch::paging::active_address_space_token(),
                pgdl_target,
                "kernel_mm: pgdl mismatch");

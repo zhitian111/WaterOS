@@ -19,7 +19,10 @@ pub fn run_stage_posix_fs_meta() {
 
         match run_smoke(DIR, FILE, DATA) {
             Ok(count) => {
-                info!("[posix-fs-meta] PASS entry_count={} path={}", count, DIR);
+                info!(
+                    "[posix-fs-meta] PASS entry_count={} path={}",
+                    count, DIR
+                );
             }
             Err(e) => {
                 warn!("[posix-fs-meta] FAIL: {:?}", e);
