@@ -1,6 +1,6 @@
 //! 系统调用层与 [`wateros-mm`] API 之间的错误与标志转换。
 
-use crate::unsupported::syscall_unsupported;
+use api_v0::unsupported::syscall_unsupported;
 use abi::errno::ErrNo;
 
 /// 用户态 `brk` 的单调递增假顶：在无 ELF

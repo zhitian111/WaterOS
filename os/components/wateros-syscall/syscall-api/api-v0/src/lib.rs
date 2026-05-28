@@ -244,6 +244,129 @@ impl SyscallKind {
             Self::Unknown(syscall_nr)
         }
     }
+
+    /// Stable syscall slot name for logs and bring-up diagnostics.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Write => "write",
+            Self::OpenAt => "openat",
+            Self::Close => "close",
+            Self::Fstat => "fstat",
+            Self::Lseek => "lseek",
+            Self::Dup => "dup",
+            Self::Dup3 => "dup3",
+            Self::Pipe2 => "pipe2",
+            Self::Ioctl => "ioctl",
+            Self::Fcntl => "fcntl",
+            Self::GetDents64 => "getdents64",
+            Self::MkdirAt => "mkdirat",
+            Self::UnlinkAt => "unlinkat",
+            Self::Mount => "mount",
+            Self::Umount2 => "umount2",
+            Self::Yield => "sched_yield",
+            Self::Exit => "exit",
+            Self::Clone => "clone",
+            Self::Execve => "execve",
+            Self::WaitPid => "waitpid",
+            Self::Kill => "kill",
+            Self::Brk => "brk",
+            Self::Mmap => "mmap",
+            Self::Munmap => "munmap",
+            Self::Mprotect => "mprotect",
+            Self::GetTime => "gettimeofday",
+            Self::ClockGetTime => "clock_gettime",
+            Self::Nanosleep => "nanosleep",
+            Self::GetPid => "getpid",
+            Self::GetPPid => "getppid",
+            Self::GetTid => "gettid",
+            Self::GetUid => "getuid",
+            Self::GetEuid => "geteuid",
+            Self::GetGid => "getgid",
+            Self::GetEgid => "getegid",
+            Self::GetGroups => "getgroups",
+            Self::SetUid => "setuid",
+            Self::SetGid => "setgid",
+            Self::SetReuid => "setreuid",
+            Self::SetRegid => "setregid",
+            Self::SetResuid => "setresuid",
+            Self::SetResgid => "setresgid",
+            Self::Times => "times",
+            Self::Uname => "uname",
+            Self::Prctl => "prctl",
+            Self::GetCwd => "getcwd",
+            Self::Chdir => "chdir",
+            Self::Futex => "futex",
+            Self::RtSigaction => "rt_sigaction",
+            Self::RtSigprocmask => "rt_sigprocmask",
+            Self::RtSigreturn => "rt_sigreturn",
+            Self::SetTidAddress => "set_tid_address",
+            Self::SetRobustList => "set_robust_list",
+            Self::GetRandom => "getrandom",
+            Self::SetItimer => "setitimer",
+            Self::GetRlimit => "getrlimit",
+            Self::SetRlimit => "setrlimit",
+            Self::Socket => "socket",
+            Self::Bind => "bind",
+            Self::Listen => "listen",
+            Self::Accept4 => "accept4",
+            Self::Connect => "connect",
+            Self::GetSockName => "getsockname",
+            Self::GetPeerName => "getpeername",
+            Self::SendTo => "sendto",
+            Self::RecvFrom => "recvfrom",
+            Self::SendMsg => "sendmsg",
+            Self::RecvMsg => "recvmsg",
+            Self::SetSockOpt => "setsockopt",
+            Self::GetSockOpt => "getsockopt",
+            Self::Shutdown => "shutdown",
+            Self::Poll => "poll",
+            Self::Unknown(_) => "unknown",
+        }
+    }
+}
+
+/// Bring-up helpers for decoded-but-unimplemented syscall slots and unknown numbers.
+#[cfg(feature = "api-v0")]
+pub mod unsupported {
+    extern crate alloc;
+
+    use abi::syscall_args::SyscallArgs;
+
+    use super::SyscallKind;
+
+    /// Label for a decoded syscall slot (same as [`SyscallKind::label`]).
+    #[inline]
+    #[must_use]
+    pub const fn slot_label(kind : SyscallKind) -> &'static str { kind.label() }
+
+    /// 报告不支持的 syscall 语义并终止内核（不返回用户态）。
+    #[inline(never)]
+    pub fn syscall_unsupported(detail : &str) -> ! {
+        panic!("[syscall] unsupported: {detail}");
+    }
+
+    /// 已解码槽位尚未实现（见 [`SyscallKind::label`]）。
+    #[inline(never)]
+    pub fn syscall_unsupported_decoded(kind : SyscallKind, nr : usize, args : SyscallArgs) -> ! {
+        syscall_unsupported_slot(kind.label(), nr, args);
+    }
+
+    #[inline(never)]
+    pub fn syscall_unsupported_slot(label : &str, nr : usize, args : SyscallArgs) -> ! {
+        let r = args.as_regs();
+        syscall_unsupported(&alloc::format!(
+            "{label} nr={nr} args=[{:#x},{:#x},{:#x},{:#x},{:#x},{:#x}]",
+            r[0], r[1], r[2], r[3], r[4], r[5]
+        ));
+    }
+
+    /// 号表未收录的 syscall 号（[`SyscallKind::Unknown`]）。
+    #[inline(never)]
+    pub fn syscall_unknown(nr : usize, args : SyscallArgs) -> ! {
+        syscall_unsupported_slot("unknown", nr, args);
+    }
 }
 
 /// Standard return value for decoded but not-yet-implemented syscall slots.
@@ -258,269 +381,305 @@ pub trait SyscallDispatcher {
     type NumberTable: SyscallNumberTable;
 
     fn dispatch_yield(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::YIELD.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::Yield, Self::NumberTable::YIELD.raw(), args)
     }
 
     fn dispatch_exit(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::EXIT.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::Exit, Self::NumberTable::EXIT.raw(), args)
     }
 
     fn dispatch_read(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::READ.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::Read, Self::NumberTable::READ.raw(), args)
     }
 
     fn dispatch_write(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::WRITE.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::Write, Self::NumberTable::WRITE.raw(), args)
     }
 
     fn dispatch_openat(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::OPENAT.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::OpenAt, Self::NumberTable::OPENAT.raw(), args)
     }
 
     fn dispatch_close(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::CLOSE.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::Close, Self::NumberTable::CLOSE.raw(), args)
     }
 
     fn dispatch_fstat(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::FSTAT.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::Fstat, Self::NumberTable::FSTAT.raw(), args)
     }
 
     fn dispatch_lseek(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::LSEEK.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::Lseek, Self::NumberTable::LSEEK.raw(), args)
     }
 
     fn dispatch_dup(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::DUP.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::Dup, Self::NumberTable::DUP.raw(), args)
     }
 
     fn dispatch_dup3(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::DUP3.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::Dup3, Self::NumberTable::DUP3.raw(), args)
     }
 
     fn dispatch_pipe2(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::PIPE2.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::Pipe2, Self::NumberTable::PIPE2.raw(), args)
     }
 
     fn dispatch_ioctl(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::IOCTL.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::Ioctl, Self::NumberTable::IOCTL.raw(), args)
     }
 
     fn dispatch_fcntl(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::FCNTL.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::Fcntl, Self::NumberTable::FCNTL.raw(), args)
     }
 
     fn dispatch_getdents64(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::GETDENTS64.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::GetDents64, Self::NumberTable::GETDENTS64.raw(), args)
     }
 
     fn dispatch_mkdirat(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::MKDIRAT.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::MkdirAt, Self::NumberTable::MKDIRAT.raw(), args)
     }
 
     fn dispatch_unlinkat(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::UNLINKAT.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::UnlinkAt, Self::NumberTable::UNLINKAT.raw(), args)
     }
 
     fn dispatch_mount(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::MOUNT.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::Mount, Self::NumberTable::MOUNT.raw(), args)
     }
 
     fn dispatch_umount2(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::UMOUNT2.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::Umount2, Self::NumberTable::UMOUNT2.raw(), args)
     }
 
     fn dispatch_clone(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::FORK.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::Clone, Self::NumberTable::FORK.raw(), args)
     }
 
     fn dispatch_execve(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::EXEC.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::Execve, Self::NumberTable::EXEC.raw(), args)
     }
 
     fn dispatch_brk(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::BRK.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::Brk, Self::NumberTable::BRK.raw(), args)
     }
 
     fn dispatch_mmap(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::MMAP.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::Mmap, Self::NumberTable::MMAP.raw(), args)
     }
 
     fn dispatch_munmap(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::MUNMAP.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::Munmap, Self::NumberTable::MUNMAP.raw(), args)
     }
 
     fn dispatch_mprotect(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::MPROTECT.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::Mprotect, Self::NumberTable::MPROTECT.raw(), args)
     }
 
     fn dispatch_get_time(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::GET_TIME.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::GetTime, Self::NumberTable::GET_TIME.raw(), args)
     }
 
     fn dispatch_clock_gettime(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::CLOCK_GETTIME.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::ClockGetTime, Self::NumberTable::CLOCK_GETTIME.raw(), args)
     }
 
     fn dispatch_getpid(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::GETPID.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::GetPid, Self::NumberTable::GETPID.raw(), args)
     }
 
     fn dispatch_getppid(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::GETPPID.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::GetPPid, Self::NumberTable::GETPPID.raw(), args)
     }
 
     fn dispatch_gettid(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::GETTID.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::GetTid, Self::NumberTable::GETTID.raw(), args)
     }
 
     fn dispatch_getuid(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::GETUID.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::GetUid, Self::NumberTable::GETUID.raw(), args)
     }
 
     fn dispatch_geteuid(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::GETEUID.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::GetEuid, Self::NumberTable::GETEUID.raw(), args)
     }
 
     fn dispatch_getgid(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::GETGID.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::GetGid, Self::NumberTable::GETGID.raw(), args)
     }
 
     fn dispatch_getegid(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::GETEGID.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::GetEgid, Self::NumberTable::GETEGID.raw(), args)
     }
 
     fn dispatch_getgroups(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::GETGROUPS.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::GetGroups, Self::NumberTable::GETGROUPS.raw(), args)
     }
 
     fn dispatch_setuid(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::SETUID.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::SetUid, Self::NumberTable::SETUID.raw(), args)
     }
 
     fn dispatch_setgid(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::SETGID.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::SetGid, Self::NumberTable::SETGID.raw(), args)
     }
 
     fn dispatch_setreuid(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::SETREUID.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::SetReuid, Self::NumberTable::SETREUID.raw(), args)
     }
 
     fn dispatch_setregid(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::SETREGID.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::SetRegid, Self::NumberTable::SETREGID.raw(), args)
     }
 
     fn dispatch_setresuid(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::SETRESUID.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::SetResuid, Self::NumberTable::SETRESUID.raw(), args)
     }
 
     fn dispatch_setresgid(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::SETRESGID.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::SetResgid, Self::NumberTable::SETRESGID.raw(), args)
     }
 
     fn dispatch_times(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::TIMES.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::Times, Self::NumberTable::TIMES.raw(), args)
     }
 
     fn dispatch_waitpid(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::WAITPID.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::WaitPid, Self::NumberTable::WAITPID.raw(), args)
     }
 
     fn dispatch_kill(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::KILL.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::Kill, Self::NumberTable::KILL.raw(), args)
     }
 
     fn dispatch_nanosleep(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::NANOSLEEP.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::Nanosleep, Self::NumberTable::NANOSLEEP.raw(), args)
     }
 
     fn dispatch_uname(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::UNAME.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::Uname, Self::NumberTable::UNAME.raw(), args)
     }
 
     fn dispatch_prctl(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::PRCTL.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::Prctl, Self::NumberTable::PRCTL.raw(), args)
     }
 
     fn dispatch_getcwd(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::GETCWD.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::GetCwd, Self::NumberTable::GETCWD.raw(), args)
     }
 
     fn dispatch_chdir(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::CHDIR.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::Chdir, Self::NumberTable::CHDIR.raw(), args)
     }
 
     fn dispatch_futex(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::FUTEX.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::Futex, Self::NumberTable::FUTEX.raw(), args)
     }
 
     fn dispatch_rt_sigaction(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::RT_SIGACTION.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::RtSigaction, Self::NumberTable::RT_SIGACTION.raw(), args)
     }
 
     fn dispatch_rt_sigprocmask(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::RT_SIGPROCMASK.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::RtSigprocmask, Self::NumberTable::RT_SIGPROCMASK.raw(), args)
     }
 
     fn dispatch_rt_sigreturn(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::RT_SIGRETURN.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::RtSigreturn, Self::NumberTable::RT_SIGRETURN.raw(), args)
     }
 
     fn dispatch_set_tid_address(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::SET_TID_ADDRESS.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::SetTidAddress, Self::NumberTable::SET_TID_ADDRESS.raw(), args)
     }
 
     fn dispatch_set_robust_list(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::SET_ROBUST_LIST.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::SetRobustList, Self::NumberTable::SET_ROBUST_LIST.raw(), args)
     }
 
     fn dispatch_getrandom(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::GETRANDOM.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::GetRandom, Self::NumberTable::GETRANDOM.raw(), args)
     }
 
     fn dispatch_setitimer(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::SETITIMER.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::SetItimer, Self::NumberTable::SETITIMER.raw(), args)
     }
 
     fn dispatch_getrlimit(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::GETRLIMIT.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::GetRlimit, Self::NumberTable::GETRLIMIT.raw(), args)
     }
 
     fn dispatch_setrlimit(args : SyscallArgs) -> isize {
-        Self::dispatch_unknown(Self::NumberTable::SETRLIMIT.raw(), args)
+        Self::dispatch_unsupported(SyscallKind::SetRlimit, Self::NumberTable::SETRLIMIT.raw(), args)
     }
 
     // ——— socket / 网络 ———
 
-    fn dispatch_socket(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+    fn dispatch_socket(args : SyscallArgs) -> isize {
+        Self::dispatch_unsupported(SyscallKind::Socket, Self::NumberTable::SOCKET.raw(), args)
+    }
 
-    fn dispatch_bind(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+    fn dispatch_bind(args : SyscallArgs) -> isize {
+        Self::dispatch_unsupported(SyscallKind::Bind, Self::NumberTable::BIND.raw(), args)
+    }
 
-    fn dispatch_listen(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+    fn dispatch_listen(args : SyscallArgs) -> isize {
+        Self::dispatch_unsupported(SyscallKind::Listen, Self::NumberTable::LISTEN.raw(), args)
+    }
 
-    fn dispatch_accept4(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+    fn dispatch_accept4(args : SyscallArgs) -> isize {
+        Self::dispatch_unsupported(SyscallKind::Accept4, Self::NumberTable::ACCEPT4.raw(), args)
+    }
 
-    fn dispatch_connect(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+    fn dispatch_connect(args : SyscallArgs) -> isize {
+        Self::dispatch_unsupported(SyscallKind::Connect, Self::NumberTable::CONNECT.raw(), args)
+    }
 
-    fn dispatch_getsockname(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+    fn dispatch_getsockname(args : SyscallArgs) -> isize {
+        Self::dispatch_unsupported(SyscallKind::GetSockName, Self::NumberTable::GETSOCKNAME.raw(), args)
+    }
 
-    fn dispatch_getpeername(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+    fn dispatch_getpeername(args : SyscallArgs) -> isize {
+        Self::dispatch_unsupported(SyscallKind::GetPeerName, Self::NumberTable::GETPEERNAME.raw(), args)
+    }
 
-    fn dispatch_sendto(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+    fn dispatch_sendto(args : SyscallArgs) -> isize {
+        Self::dispatch_unsupported(SyscallKind::SendTo, Self::NumberTable::SENDTO.raw(), args)
+    }
 
-    fn dispatch_recvfrom(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+    fn dispatch_recvfrom(args : SyscallArgs) -> isize {
+        Self::dispatch_unsupported(SyscallKind::RecvFrom, Self::NumberTable::RECVFROM.raw(), args)
+    }
 
-    fn dispatch_sendmsg(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+    fn dispatch_sendmsg(args : SyscallArgs) -> isize {
+        Self::dispatch_unsupported(SyscallKind::SendMsg, Self::NumberTable::SENDMSG.raw(), args)
+    }
 
-    fn dispatch_recvmsg(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+    fn dispatch_recvmsg(args : SyscallArgs) -> isize {
+        Self::dispatch_unsupported(SyscallKind::RecvMsg, Self::NumberTable::RECVMSG.raw(), args)
+    }
 
-    fn dispatch_setsockopt(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+    fn dispatch_setsockopt(args : SyscallArgs) -> isize {
+        Self::dispatch_unsupported(SyscallKind::SetSockOpt, Self::NumberTable::SETSOCKOPT.raw(), args)
+    }
 
-    fn dispatch_getsockopt(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+    fn dispatch_getsockopt(args : SyscallArgs) -> isize {
+        Self::dispatch_unsupported(SyscallKind::GetSockOpt, Self::NumberTable::GETSOCKOPT.raw(), args)
+    }
 
-    fn dispatch_shutdown(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+    fn dispatch_shutdown(args : SyscallArgs) -> isize {
+        Self::dispatch_unsupported(SyscallKind::Shutdown, Self::NumberTable::SHUTDOWN.raw(), args)
+    }
 
-    fn dispatch_poll(_args : SyscallArgs) -> isize { syscall_enosys_ret() }
+    fn dispatch_poll(args : SyscallArgs) -> isize {
+        Self::dispatch_unsupported(SyscallKind::Poll, Self::NumberTable::POLL.raw(), args)
+    }
 
+    /// Decoded syscall slot with no kernel `dispatch_*` override yet.
+    fn dispatch_unsupported(_kind : SyscallKind, _syscall_nr : usize, _args : SyscallArgs) -> isize {
+        syscall_enosys_ret()
+    }
+
+    /// Raw syscall number not present in the active ABI number table decode map.
     fn dispatch_unknown(_syscall_nr : usize, _args : SyscallArgs) -> isize {
         syscall_enosys_ret()
     }

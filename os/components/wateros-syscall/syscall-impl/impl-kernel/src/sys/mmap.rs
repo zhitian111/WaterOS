@@ -12,7 +12,7 @@ use crate::mm_util::{
     current_user_aspace_handle, linux_mmap_flags_to_map_flags, linux_mmap_is_anonymous,
     linux_mmap_prot_to_perm, mm_err_to_errno,
 };
-use crate::unsupported::syscall_unsupported;
+use api_v0::unsupported::syscall_unsupported;
 use crate::vfs_util::read_fd_bytes_at;
 
 pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {

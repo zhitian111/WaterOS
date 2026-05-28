@@ -4,7 +4,7 @@ use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use cred::api::SUPPLEMENTARY_GROUP_COUNT;
 
-use crate::unsupported;
+use api_v0::unsupported;
 use crate::user_copy::copy_to_user;
 
 pub(crate) fn sys_getuid() -> UserRet {

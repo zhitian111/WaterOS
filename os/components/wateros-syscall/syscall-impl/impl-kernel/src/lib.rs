@@ -13,7 +13,6 @@ mod linux_stat;
 mod mm_util;
 mod socket_fd;
 mod sys;
-mod unsupported;
 mod user_copy;
 mod vfs_util;
 
@@ -186,11 +185,16 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     fn dispatch_set_tid_address(_args : SyscallArgs) -> isize { sys::sys_set_tid_address().0 }
 
     #[inline]
+    fn dispatch_unsupported(kind : api_v0::SyscallKind, syscall_nr : usize, args : SyscallArgs) -> isize {
+        api_v0::unsupported::syscall_unsupported_decoded(kind, syscall_nr, args);
+    }
+
+    #[inline]
     fn dispatch_unknown(syscall_nr : usize, args : SyscallArgs) -> isize {
         if syscall_nr == SYS_STATX {
             return sys::sys_statx(args).0;
         }
-        unsupported::syscall_unknown(syscall_nr, args);
+        api_v0::unsupported::syscall_unknown(syscall_nr, args);
     }
 
     // ——— socket / 网络 ———
