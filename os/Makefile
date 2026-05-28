@@ -129,7 +129,10 @@ rv_qemu_run: kernel-rv
 
 la_qemu_run: kernel-la
 	$(call INFO, "开始运行 loongarch64 内核...")
-	@qemu-system-loongarch64 -machine virt -nographic -kernel ./kernel-la -m 2G -no-reboot
+	@qemu-system-loongarch64 -machine virt -nographic \
+		-kernel ./kernel-la -m 2G -no-reboot \
+		-device virtio-blk-pci,drive=x0 \
+		-drive file=./sdcard-la.img,if=none,format=raw,id=x0
 	$(call INFO, "loongarch64 内核运行结束")
 
 rv_qemu_run_with_log: kernel-rv

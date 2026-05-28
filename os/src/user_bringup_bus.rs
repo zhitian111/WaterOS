@@ -30,7 +30,17 @@ pub fn run() {
         }
     }
     info!("[bringup][stage-00-bus] END");
-    // crate::user_bringup_mm::run_stage_02();
-    crate::user_bringup_posix_fs::run_stage_posix_fs_meta();
-    crate::user_bringup_basic::run_stage_03();
+    #[cfg(feature = "impl-loongarch64")]
+    {
+        warn!(
+            "[bringup][stage-01-loongarch64] user ELF stages skipped until PGDL/TLB user page \
+               switching is enabled"
+        );
+    }
+    #[cfg(not(feature = "impl-loongarch64"))]
+    {
+        // crate::user_bringup_mm::run_stage_02();
+        crate::user_bringup_posix_fs::run_stage_posix_fs_meta();
+        crate::user_bringup_basic::run_stage_03();
+    }
 }

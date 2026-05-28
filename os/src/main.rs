@@ -46,25 +46,25 @@ use syscall as _;
 mod self_tests;
 #[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
 mod trap_handler;
-#[cfg(feature = "qemu-riscv64-opensbi")]
+#[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
 mod user_bringup_basic;
-#[cfg(feature = "qemu-riscv64-opensbi")]
+#[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
 mod user_bringup_bus;
-#[cfg(feature = "qemu-riscv64-opensbi")]
-mod user_bringup_posix_fs;
-#[cfg(feature = "qemu-riscv64-opensbi")]
+#[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
 mod user_bringup_mm;
+#[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
+mod user_bringup_posix_fs;
 
 /// 将内核 panic 委托给 `wateros-runtime` 的统一 panic 处理（日志/停机策略由
 /// runtime 决定）。
 #[panic_handler]
-pub fn panic_handler(_panic_info : &core::panic::PanicInfo) -> ! {
+pub fn panic_handler(_panic_info: &core::panic::PanicInfo) -> ! {
     runtime::panic::panic_handler(_panic_info)
 }
 
 /// 堆分配失败时委托给 runtime 的全局分配错误处理；语义为不可恢复错误路径。
 #[alloc_error_handler]
-pub fn alloc_error_handler(layout : core::alloc::Layout) -> ! {
+pub fn alloc_error_handler(layout: core::alloc::Layout) -> ! {
     runtime::heap_allocator::handle_alloc_error(layout)
 }
 
@@ -76,8 +76,10 @@ mod qemu_riscv64_opensbi {
     use core::arch::global_asm;
     use core::include_str;
     use runtime::logging::*;
-    global_asm!(include_str!("../components/wateros-platform/platform-impl/\
-                              impl-qemu-riscv64-opensbi/src/asm/_start.S"));
+    global_asm!(include_str!(
+        "../components/wateros-platform/platform-impl/\
+                              impl-qemu-riscv64-opensbi/src/asm/_start.S"
+    ));
 
     /// 引导加载器 / OpenSBI 传入的引导参数；与 [`crate`] 顶层文档中的 bring-up
     /// 步骤一致。
@@ -85,7 +87,7 @@ mod qemu_riscv64_opensbi {
     /// **契约**：在此返回前完成本路径上的初始化与自检日志；正常路径以
     /// [`task::run_first_task`] 转入调度且不返回。
     #[unsafe(no_mangle)]
-    pub fn kernel_main(boot_arg0 : usize, boot_arg1 : usize) -> ! {
+    pub fn kernel_main(boot_arg0: usize, boot_arg1: usize) -> ! {
         use platform::boot::{BootArgs, BootContext};
         let _boot_context = BootContext::from(BootArgs::new(boot_arg0, boot_arg1));
         driver::init_when_boot(boot_arg1);
@@ -106,17 +108,24 @@ mod qemu_riscv64_opensbi {
         // 与 DTB `/memory` 或 `wateros-base-config::QEMU_VIRT_PHYS_RAM_END` 对齐（如
         // QEMU `-m 256M` → 0x9000_0000）
         let memory_end = driver::physical_ram_end_exclusive();
-        const PAGE_SIZE : usize = 4096;
+        const PAGE_SIZE: usize = 4096;
         #[inline]
-        const fn align_up(v : usize, align : usize) -> usize { (v + align - 1) & !(align - 1) }
-        let start_ppn = align_up(kernel_end as *const () as usize,
-                                 PAGE_SIZE) /
-                        PAGE_SIZE;
+        const fn align_up(v: usize, align: usize) -> usize {
+            (v + align - 1) & !(align - 1)
+        }
+        let start_ppn = align_up(
+            kernel_end as *const () as usize,
+            PAGE_SIZE,
+        ) / PAGE_SIZE;
         let end_ppn = memory_end / PAGE_SIZE;
-        info!("[self-test] frame range ppn=[{:#x},{:#x})",
-              start_ppn, end_ppn);
-        mm::test_with_range(base::addr::BasePPN { val : start_ppn },
-                            base::addr::BasePPN { val : end_ppn });
+        info!(
+            "[self-test] frame range ppn=[{:#x},{:#x})",
+            start_ppn, end_ppn
+        );
+        mm::test_with_range(
+            base::addr::BasePPN { val: start_ppn },
+            base::addr::BasePPN { val: end_ppn },
+        );
         mm::kernel_mm::init(start_ppn, end_ppn, memory_end);
         info!("[self-test] mm self-test done");
 
@@ -126,8 +135,10 @@ mod qemu_riscv64_opensbi {
         // 设备驱动扫描与根文件系统挂载自检。
         let driver_boot = driver::active_impl::init_after_boot();
         if let Err(ref err) = driver_boot {
-            warn!("[self-test] driver init failed: {:?}",
-                  err);
+            warn!(
+                "[self-test] driver init failed: {:?}",
+                err
+            );
         } else {
             info!("[self-test] driver init done");
             fs::init();
@@ -162,68 +173,84 @@ mod qemu_loongarch64_virt {
     //! 链接后进入 [`kernel_main`]，初始化 runtime/任务、PLV3 syscall smoke
     //! 与两个内核忙等任务， 再开定时器中断并进入调度。与 RISC-V OpenSBI
     //! 路径相比暂无真实 MM/FS/ELF loader 接入。
-    use alloc::boxed::Box;
-    use core::arch::{asm, global_asm};
+    use core::arch::global_asm;
     use core::include_str;
     use runtime::logging::*;
 
-    global_asm!(include_str!("../components/wateros-platform/platform-impl/\
-                              impl-qemu-loongarch64-virt/src/asm/_start.S"));
+    global_asm!(include_str!(
+        "../components/wateros-platform/platform-impl/\
+                              impl-qemu-loongarch64-virt/src/asm/_start.S"
+    ));
 
-    const LOONGARCH64_USER_SYSCALL_YIELD_NR : usize = 124;
-    const LOONGARCH64_USER_SYSCALL_EXIT_GROUP_NR : usize = 94;
-    const LOONGARCH64_USER_EXIT_OK : isize = 66;
-    const LOONGARCH64_USER_EXIT_BAD_YIELD : isize = 67;
-    const LOONGARCH64_USER_WAIT_TICKS : task::TaskTick = 128;
-    /// 用户 smoke 栈的虚拟地址区间（由链接脚本 `.bss` 段后分配）。
-    const LOONGARCH64_USER_STACK_BOTTOM : usize = 0x8000_0000;
-    const LOONGARCH64_USER_STACK_TOP : usize = 0x8000_4000;
-
-    struct LoongArch64UserSmokeExpected {
-        task_id : task::TaskId,
-        entry_pc : usize,
-        image_base : usize,
-        image_size : usize,
-    }
-
-    unsafe extern "C" {
-        fn loongarch64_user_smoke_start();
-        fn loongarch64_user_smoke_end();
-    }
-
-    /// 固件/引导移交后的内核 C 入口；无 boot 参数版本，完成基础初始化后运行
-    /// LoongArch64 PLV3 用户态 syscall smoke 与内核态调度烟测任务。
+    /// 固件/引导移交后的内核 C 入口；完成 MM bring-up、驱动、FS、VFS 与用户 ELF
+    /// 装载后进入调度。
+    ///
+    /// `$r4` = argc, `$r5` = argv, `$r6` = envp（部分固件在此传递 FDT 指针）。
     #[unsafe(no_mangle)]
-    pub fn kernel_main() -> ! {
+    pub fn kernel_main(_argc: usize, _argv: usize, envp: usize) -> ! {
         runtime::console::show_logo();
         runtime::logging::init();
         runtime::heap_allocator::init();
         platform::arch::init();
         info!("[loongarch64] boot smoke ok");
+        driver::init_when_boot(envp);
 
+        // 必须在 MM 初始化之前注册 trap handler：页表激活后的探针访问可能触发页错误。
         task::init();
         crate::trap_handler::init();
-        let (user_image_base, user_image_size) = loongarch64_user_smoke_image_range();
-        let user_entry = loongarch64_user_task_entry as *const () as usize;
-        // 为 smoke 用户任务分配一个最小用户栈（loader 未就绪时直接指定区间）。
-        let user_spec =
-            task::UserTask::new(user_entry,
-                                task::AddressSpaceHandle::from_raw(1),
-                                task::UserImageInfo::new(user_image_base, user_image_size),
-                                task::UserStack::from_range(LOONGARCH64_USER_STACK_BOTTOM,
-                                                            LOONGARCH64_USER_STACK_TOP),
-                                0);
-        let user_task_id = task::spawn_user_task(user_spec);
-        #[cfg(feature = "qemu-loongarch64-virt")]
-        vfs::cwd::on_user_task_spawned(user_task_id);
-        let expected = Box::new(LoongArch64UserSmokeExpected { task_id : user_task_id,
-                                                               entry_pc : user_entry,
-                                                               image_base : user_image_base,
-                                                               image_size : user_image_size });
-        task::spawn_kernel_task(loongarch64_user_observer_task,
-                                Box::into_raw(expected) as usize);
-        info!("[loongarch64][user] spawned PLV3 smoke task={} entry={:#x} image=[{:#x},+{:#x})",
-              user_task_id, user_entry, user_image_base, user_image_size);
+
+        // 关闭固件可能已开启的 MMU，确认为后续页表构建与 PCI ECAM/MMIO 访问使用直接寻址。
+        platform::arch::paging::init_paging_disable_mmu();
+
+        // ===== 内核态自检：MM / FrameAllocator / LoongArch64 三级页表 =====
+        unsafe extern "C" {
+            fn kernel_end();
+        }
+        const PAGE_SIZE: usize = mm::api::addr::PAGE_SIZE;
+        #[inline]
+        const fn align_up(v: usize, align: usize) -> usize {
+            (v + align - 1) & !(align - 1)
+        }
+
+        let start_ppn = align_up(
+            kernel_end as *const () as usize,
+            PAGE_SIZE,
+        ) / PAGE_SIZE;
+        let memory_end = driver::physical_ram_end_exclusive();
+        let end_ppn = memory_end / PAGE_SIZE;
+        let usable_end_ppn = end_ppn.min(0x1_0000_0000usize / PAGE_SIZE);
+        info!(
+            "[loongarch64][self-test] frame range ppn=[{:#x},{:#x}) detected_end_ppn={:#x} \
+             ram_end={:#x}",
+            start_ppn, usable_end_ppn, end_ppn, memory_end
+        );
+        mm::test_with_range(
+            base::addr::BasePPN { val: start_ppn },
+            base::addr::BasePPN {
+                val: usable_end_ppn,
+            },
+        );
+        info!("[loongarch64][self-test] mm self-test done");
+
+        // 第一阶段保持 LoongArch 运行在直接地址模式；完整 PGDL/TLB 接管在后续阶段启用。
+        let driver_boot = driver::active_impl::init_after_boot();
+        if let Err(ref err) = driver_boot {
+            warn!(
+                "[loongarch64][self-test] driver init failed: {:?}",
+                err
+            );
+        } else {
+            info!("[loongarch64][self-test] driver init done");
+            fs::init();
+            crate::user_bringup_bus::run();
+            fs::test();
+            #[cfg(feature = "vfs-bridge")]
+            {
+                vfs::test();
+            }
+        }
+
+        // 内核态轮转烟测任务。
         task::spawn_kernel_task(loongarch64_kernel_task_a, 0);
         task::spawn_kernel_task(loongarch64_kernel_task_b, 0);
 
@@ -236,7 +263,7 @@ mod qemu_loongarch64_virt {
 
     /// 内核自检任务 A：忙循环 + 周期性日志 +
     /// `yield_now`，用于验证多任务与时间片。
-    extern "C" fn loongarch64_kernel_task_a(_arg : usize) -> ! {
+    extern "C" fn loongarch64_kernel_task_a(_arg: usize) -> ! {
         let mut round = 0usize;
         loop {
             if round % 1_000_000 == 0 {
@@ -249,7 +276,7 @@ mod qemu_loongarch64_virt {
 
     /// 内核自检任务 B：与 [`loongarch64_kernel_task_a`]
     /// 对称，增加调度交错覆盖。
-    extern "C" fn loongarch64_kernel_task_b(_arg : usize) -> ! {
+    extern "C" fn loongarch64_kernel_task_b(_arg: usize) -> ! {
         let mut round = 0usize;
         loop {
             if round % 1_000_000 == 0 {
@@ -258,83 +285,5 @@ mod qemu_loongarch64_virt {
             round = round.wrapping_add(1);
             task::yield_now();
         }
-    }
-
-    /// 用户态 smoke：验证 LoongArch64 PLV3 `syscall` 可回到组合层 trap
-    /// handler。
-    #[unsafe(link_section = ".text.user_smoke")]
-    extern "C" fn loongarch64_user_task_entry() -> ! {
-        let yield_ret : usize;
-        unsafe {
-            asm!("move $r11, {nr}",
-                 "move $r4, $r0",
-                 "syscall 0",
-                 "move {ret}, $r4",
-                 nr = in(reg) LOONGARCH64_USER_SYSCALL_YIELD_NR,
-                 ret = out(reg) yield_ret,
-                 options(nostack));
-        }
-        let exit_code = if yield_ret == 0 {
-            LOONGARCH64_USER_EXIT_OK
-        } else {
-            LOONGARCH64_USER_EXIT_BAD_YIELD
-        };
-        unsafe {
-            asm!("move $r11, {nr}",
-                 "move $r4, {code}",
-                 "syscall 0",
-                 nr = in(reg) LOONGARCH64_USER_SYSCALL_EXIT_GROUP_NR,
-                 code = in(reg) exit_code as usize,
-                 options(noreturn));
-        }
-    }
-
-    fn loongarch64_user_smoke_image_range() -> (usize, usize) {
-        let start = loongarch64_user_smoke_start as *const () as usize;
-        let end = loongarch64_user_smoke_end as *const () as usize;
-        (start, end.saturating_sub(start))
-    }
-
-    /// 等待并回收 LoongArch64 用户态 smoke 任务；成功日志说明用户态
-    /// trap/返回闭环可用， 同时覆盖 `UserTaskSpec` 到 reaped
-    /// 资源快照的元数据传递。
-    extern "C" fn loongarch64_user_observer_task(expected_ptr : usize) -> ! {
-        let expected = unsafe { Box::from_raw(expected_ptr as *mut LoongArch64UserSmokeExpected) };
-        info!("[loongarch64][user] observer waiting user_task_id={}",
-              expected.task_id);
-        let wait_result = task::wait_for_task_exit_for_ticks(expected.task_id,
-                                                             LOONGARCH64_USER_WAIT_TICKS);
-        assert_eq!(wait_result,
-                   task::TaskWaitResult::Woken,
-                   "LoongArch64 user smoke must exit before observer timeout");
-        let exited = task::reap_exited_task(expected.task_id).expect("LoongArch64 user smoke \
-                                                                      must be reapable after exit");
-        #[cfg(feature = "qemu-loongarch64-virt")]
-        vfs::cwd::drop_task_cwd(exited.id);
-        vfs::fd::drop_task_fd_table(exited.id);
-        assert_eq!(exited.id, expected.task_id,
-                   "LoongArch64 user smoke reap id must match spawned task");
-        assert_eq!(exited.kind,
-                   task::TaskKind::User,
-                   "LoongArch64 user smoke must be a user task");
-        assert_eq!(exited.exit_code, LOONGARCH64_USER_EXIT_OK,
-                   "LoongArch64 user smoke must exit through successful yield path");
-        assert_eq!(exited.kind,
-                   task::TaskKind::User,
-                   "LoongArch64 user smoke must be a user task");
-        let trap_frame = exited.trap_frame
-                               .expect("LoongArch64 user smoke exit should keep trap snapshot");
-        let user_sp = trap_frame.user_sp();
-        assert!(LOONGARCH64_USER_STACK_BOTTOM <= user_sp,
-                "LoongArch64 user smoke SP must stay within task user stack");
-        assert!(user_sp <= LOONGARCH64_USER_STACK_TOP,
-                "LoongArch64 user smoke SP must not exceed task user stack top");
-        assert_eq!(user_sp & 0xF,
-                   0,
-                   "LoongArch64 user smoke SP should keep 16-byte alignment");
-        info!("[loongarch64][user] smoke ok task={} exit={} sp={:#x}",
-              exited.id, exited.exit_code, user_sp);
-        drop(expected);
-        task::exit_current(0);
     }
 }

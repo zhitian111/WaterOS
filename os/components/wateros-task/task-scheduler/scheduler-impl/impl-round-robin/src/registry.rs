@@ -398,6 +398,13 @@ impl TaskRegistry {
         if self.is_idle(current_task_id) {
             return None;
         }
+        // 内核任务没有用户态 trap 帧需要保存，trap handler 直接使用栈上帧
+        if !self.task_table
+                .task(current_task_id)
+                .is_user()
+        {
+            return None;
+        }
         Some(self.task_table
                  .task_mut(current_task_id)
                  .begin_trap_frame_access(trap_frame))

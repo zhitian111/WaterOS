@@ -159,4 +159,13 @@ pub mod paging {
     /// 当前地址空间下 PTE 已就地修改时，刷新本地 CPU/hart 的地址翻译缓存。
     #[inline]
     pub fn flush_address_space_translations() { ArchPagingImpl::flush_address_space_translations() }
+
+    /// 关闭 MMU（CRMD.PG = 0），在构建内核页表前确认为直接物理寻址。
+    #[inline]
+    pub fn init_paging_disable_mmu() { ArchPagingImpl::init_paging_disable_mmu(); }
+
+    /// 开启 MMU（CRMD.PG = 1），在页表构建完成后与
+    /// activate_address_space_token_and_flush 配合使用。
+    #[inline]
+    pub fn enable_paging() { ArchPagingImpl::enable_paging(); }
 }
