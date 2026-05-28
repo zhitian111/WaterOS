@@ -27,6 +27,8 @@ pub fn dispatch_syscall_from_trap(syscall_nr : usize, syscall_args : SyscallArgs
 /// Kernel syscall implementation selected by the aggregate crate.
 pub struct KernelSyscallDispatcher;
 
+const SYS_STATX : usize = 291;
+
 impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     type NumberTable = ActiveSyscallNumberTable;
 
@@ -149,6 +151,9 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
 
     #[inline]
     fn dispatch_unknown(syscall_nr : usize, args : SyscallArgs) -> isize {
+        if syscall_nr == SYS_STATX {
+            return sys::sys_statx(args).0;
+        }
         unsupported::syscall_unknown(syscall_nr, args);
     }
 

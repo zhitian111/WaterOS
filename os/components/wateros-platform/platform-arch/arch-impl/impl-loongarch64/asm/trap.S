@@ -138,7 +138,10 @@ __alltraps:
     st.d $r12, $r3, 272
     csrrd $r12, CSR_BADV
     st.d $r12, $r3, 280
-    st.d $r0,  $r3, 288
+    # Preserve the address-space token active at trap entry. User traps carry
+    # the user PGDL here; kernel traps carry the kernel PGDL.
+    csrrd $r12, CSR_PGDL
+    st.d $r12, $r3, 288
 
     move $r4, $r3
     bl trap_entry_rust
