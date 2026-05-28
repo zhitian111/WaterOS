@@ -45,6 +45,17 @@ pub enum SyscallKind {
     GetPid,
     GetPPid,
     GetTid,
+    GetUid,
+    GetEuid,
+    GetGid,
+    GetEgid,
+    GetGroups,
+    SetUid,
+    SetGid,
+    SetReuid,
+    SetRegid,
+    SetResuid,
+    SetResgid,
     Times,
     Uname,
     Prctl,
@@ -132,6 +143,28 @@ impl SyscallKind {
             Self::GetPPid
         } else if syscall_nr == T::GETTID.raw() {
             Self::GetTid
+        } else if syscall_nr == T::GETUID.raw() {
+            Self::GetUid
+        } else if syscall_nr == T::GETEUID.raw() {
+            Self::GetEuid
+        } else if syscall_nr == T::GETGID.raw() {
+            Self::GetGid
+        } else if syscall_nr == T::GETEGID.raw() {
+            Self::GetEgid
+        } else if syscall_nr == T::GETGROUPS.raw() {
+            Self::GetGroups
+        } else if syscall_nr == T::SETUID.raw() {
+            Self::SetUid
+        } else if syscall_nr == T::SETGID.raw() {
+            Self::SetGid
+        } else if syscall_nr == T::SETREUID.raw() {
+            Self::SetReuid
+        } else if syscall_nr == T::SETREGID.raw() {
+            Self::SetRegid
+        } else if syscall_nr == T::SETRESUID.raw() {
+            Self::SetResuid
+        } else if syscall_nr == T::SETRESGID.raw() {
+            Self::SetResgid
         } else if syscall_nr == T::TIMES.raw() {
             Self::Times
         } else if syscall_nr == T::UNAME.raw() {
@@ -295,6 +328,50 @@ pub trait SyscallDispatcher {
         Self::dispatch_unknown(Self::NumberTable::GETTID.raw(), args)
     }
 
+    fn dispatch_getuid(args : SyscallArgs) -> isize {
+        Self::dispatch_unknown(Self::NumberTable::GETUID.raw(), args)
+    }
+
+    fn dispatch_geteuid(args : SyscallArgs) -> isize {
+        Self::dispatch_unknown(Self::NumberTable::GETEUID.raw(), args)
+    }
+
+    fn dispatch_getgid(args : SyscallArgs) -> isize {
+        Self::dispatch_unknown(Self::NumberTable::GETGID.raw(), args)
+    }
+
+    fn dispatch_getegid(args : SyscallArgs) -> isize {
+        Self::dispatch_unknown(Self::NumberTable::GETEGID.raw(), args)
+    }
+
+    fn dispatch_getgroups(args : SyscallArgs) -> isize {
+        Self::dispatch_unknown(Self::NumberTable::GETGROUPS.raw(), args)
+    }
+
+    fn dispatch_setuid(args : SyscallArgs) -> isize {
+        Self::dispatch_unknown(Self::NumberTable::SETUID.raw(), args)
+    }
+
+    fn dispatch_setgid(args : SyscallArgs) -> isize {
+        Self::dispatch_unknown(Self::NumberTable::SETGID.raw(), args)
+    }
+
+    fn dispatch_setreuid(args : SyscallArgs) -> isize {
+        Self::dispatch_unknown(Self::NumberTable::SETREUID.raw(), args)
+    }
+
+    fn dispatch_setregid(args : SyscallArgs) -> isize {
+        Self::dispatch_unknown(Self::NumberTable::SETREGID.raw(), args)
+    }
+
+    fn dispatch_setresuid(args : SyscallArgs) -> isize {
+        Self::dispatch_unknown(Self::NumberTable::SETRESUID.raw(), args)
+    }
+
+    fn dispatch_setresgid(args : SyscallArgs) -> isize {
+        Self::dispatch_unknown(Self::NumberTable::SETRESGID.raw(), args)
+    }
+
     fn dispatch_times(args : SyscallArgs) -> isize {
         Self::dispatch_unknown(Self::NumberTable::TIMES.raw(), args)
     }
@@ -403,6 +480,17 @@ pub trait SyscallDispatcher {
             SyscallKind::GetPid => Self::dispatch_getpid(syscall_args),
             SyscallKind::GetPPid => Self::dispatch_getppid(syscall_args),
             SyscallKind::GetTid => Self::dispatch_gettid(syscall_args),
+            SyscallKind::GetUid => Self::dispatch_getuid(syscall_args),
+            SyscallKind::GetEuid => Self::dispatch_geteuid(syscall_args),
+            SyscallKind::GetGid => Self::dispatch_getgid(syscall_args),
+            SyscallKind::GetEgid => Self::dispatch_getegid(syscall_args),
+            SyscallKind::GetGroups => Self::dispatch_getgroups(syscall_args),
+            SyscallKind::SetUid => Self::dispatch_setuid(syscall_args),
+            SyscallKind::SetGid => Self::dispatch_setgid(syscall_args),
+            SyscallKind::SetReuid => Self::dispatch_setreuid(syscall_args),
+            SyscallKind::SetRegid => Self::dispatch_setregid(syscall_args),
+            SyscallKind::SetResuid => Self::dispatch_setresuid(syscall_args),
+            SyscallKind::SetResgid => Self::dispatch_setresgid(syscall_args),
             SyscallKind::Times => Self::dispatch_times(syscall_args),
             SyscallKind::WaitPid => Self::dispatch_waitpid(syscall_args),
             SyscallKind::Kill => Self::dispatch_kill(syscall_args),

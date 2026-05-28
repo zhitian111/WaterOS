@@ -16,6 +16,7 @@
     runtime = { package = "wateros-runtime", path = "./components/wateros-runtime/", default-features = false }
     pseudo_shell = { package = "wateros-pseudo-shell", path = "./components/wateros-pseudo-shell/", default-features = true, optional = true }
     mm = { package = "wateros-mm", path = "./components/wateros-mm/", default-features = false, optional = true }
+    cred = { package = "wateros-cred", path = "./components/wateros-cred/", default-features = false, optional = true }
     syscall = { package = "wateros-syscall", path = "./components/wateros-syscall/", default-features = false }
     task = { package = "wateros-task", path = "./components/wateros-task/", default-features = false }
 
@@ -37,8 +38,11 @@
         "dep:ipc",
         "dep:mm",
         "dep:vfs",
+        "dep:cred",
         "vfs-bridge",
         "abi/impl-linux-loongarch64",
+        "cred/api-v0",
+        "cred/impl-root",
         "vfs/fd-session",
         "vfs/impl-loongarch64",
         "driver/impl-qemu-loongarch64-virt",
@@ -67,8 +71,11 @@
         "dep:mm",
         # "dep:utils",
         "dep:vfs",
+        "dep:cred",
         "vfs-bridge",
         "fd-session",
+        "cred/api-v0",
+        "cred/impl-root",
         "abi/api-v0",
         "driver/impl-qemu-riscv64-opensbi",
         "fs/api-v0",

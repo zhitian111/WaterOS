@@ -26,6 +26,7 @@
 | wateros-task | **`impl-core` + 轮转调度**；RISC-V 主线与用户态自检一致；已提供条件等待、最小父子关系与 child-exit 等待服务 IPC/syscall；LoongArch64 上可跑 kernel task 轮转 | trap 驱动抢占、用户任务恢复、block object 抽象、TaskHandle generation 与跨架构文档 |
 | wateros-abi | **`api-v0`** 与 **`impl-linux-generic64`**（经 **`impl-linux-riscv64`** 等别名）默认启用；errno、号表、参数与 `UserRet` 已供 syscall 使用 | 调用号与内核实际支持集合对齐；版本化 ABI 文档 |
 | wateros-syscall | 独立一级 crate，根依赖 **`use syscall as _`**；RISC-V 主线默认链接 **`wateros-mm`**，在 syscall 层拼合 **`brk`/`mmap`/`munmap`/`mprotect`**；read/write/close/pipe2 经 **`wateros-vfs::fd`** | 扩展 syscall 表、**`openat`** 与 VFS 文件句柄；补 fd 继承/dup/自动关闭；**`UserMemoryOps`** 与 write 安全拷贝 |
+| wateros-cred | **设计已定稿**（见 **`docs/guides/cred-module-design.md`**）；代码尚未 scaffold | 实现 `cred-api` + `impl-root`；getuid/euid/gid/egid/getgroups；fork/exec 生命周期；VFS stat 占位 |
 | wateros-base | 基础类型与 **base-config**（含 MM 相关常量等） | 避免向上层泄漏板级魔法数；配置与平台边界清晰化 |
 | wateros-utils | 通用轻量工具 | 保持无跨层耦合 |
 
@@ -49,7 +50,7 @@
 以下条目用于承接跨组件或尚未立项的大块工作，在具体任务文件中拆分为可评审步骤：
 
 - 用户态完整 libc/运行时与内核 syscall 表的联合验证（`user/` 与内核自检协同）。
-- 安全与权限模型（能力、命名空间等）仅在设计文档层预留，不默认进入代码路径。
+- **进程凭证（`wateros-cred`）**：设计方案见 **`docs/guides/cred-module-design.md`**；首版 MVP 后逐步对接 ext4 inode owner 与 VFS 权限。
 
 ## 新增任务入口
 

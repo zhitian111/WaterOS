@@ -93,6 +93,39 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     fn dispatch_gettid(_args : SyscallArgs) -> isize { sys::sys_gettid().0 }
 
     #[inline]
+    fn dispatch_getuid(_args : SyscallArgs) -> isize { sys::sys_getuid().0 }
+
+    #[inline]
+    fn dispatch_geteuid(_args : SyscallArgs) -> isize { sys::sys_geteuid().0 }
+
+    #[inline]
+    fn dispatch_getgid(_args : SyscallArgs) -> isize { sys::sys_getgid().0 }
+
+    #[inline]
+    fn dispatch_getegid(_args : SyscallArgs) -> isize { sys::sys_getegid().0 }
+
+    #[inline]
+    fn dispatch_getgroups(args : SyscallArgs) -> isize { sys::sys_getgroups(args).0 }
+
+    #[inline]
+    fn dispatch_setuid(args : SyscallArgs) -> isize { sys::sys_setuid(args) }
+
+    #[inline]
+    fn dispatch_setgid(args : SyscallArgs) -> isize { sys::sys_setgid(args) }
+
+    #[inline]
+    fn dispatch_setreuid(args : SyscallArgs) -> isize { sys::sys_setreuid(args) }
+
+    #[inline]
+    fn dispatch_setregid(args : SyscallArgs) -> isize { sys::sys_setregid(args) }
+
+    #[inline]
+    fn dispatch_setresuid(args : SyscallArgs) -> isize { sys::sys_setresuid(args) }
+
+    #[inline]
+    fn dispatch_setresgid(args : SyscallArgs) -> isize { sys::sys_setresgid(args) }
+
+    #[inline]
     fn dispatch_futex(args : SyscallArgs) -> isize { sys::sys_futex(args).0 }
 
     #[inline]

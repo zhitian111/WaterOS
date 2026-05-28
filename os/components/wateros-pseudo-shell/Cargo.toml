@@ -7,4 +7,8 @@
     mm = { path = "../wateros-mm", package = "wateros-mm", default-features = true }
     runtime-serial = { path = "../wateros-runtime/runtime-serial", package = "wateros-runtime-serial" }
     task = { path = "../wateros-task", package = "wateros-task", default-features = true }
+    cred = { path = "../wateros-cred", package = "wateros-cred", default-features = false }
     vfs = { path = "../wateros-vfs", package = "wateros-vfs", default-features = true }
+
+[features]
+    default = ["cred/impl-root"]

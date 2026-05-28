@@ -39,6 +39,9 @@
 | `getpid` | 已接入 | 返回当前 task id。 |
 | `getppid` | 部分接入 | orphan parent 暂返回 1。 |
 | `gettid` | 部分接入 | 当前默认等同 `getpid`。 |
+| `getuid`/`geteuid`/`getgid`/`getegid` | 已接入 | 经 `wateros-cred` impl-root 恒返回 0。 |
+| `getgroups` | 已接入 | G1：`[0]`；未实现边界 panic。 |
+| `setuid`/`setgid`/`setreuid`/`setregid`/`setresuid`/`setresgid` | 已登记 | 显式 `syscall_unsupported` panic。 |
 | `gettimeofday` | 部分接入 | 基于调度 tick 的临时时间。 |
 | `clock_gettime` | 部分接入 | 基于调度 tick 的临时时间。 |
 | `nanosleep` | 部分接入 | 非零睡眠临时映射为 1 个 tick。 |

@@ -101,6 +101,7 @@
 
 | 缺口 | 现状 | 影响 |
 |------|------|------|
+| **进程凭证 / getuid 族** | 无 `wateros-cred`；get* 未登记 → panic；设计见 **`docs/guides/cred-module-design.md`** | BusyBox/musl 自检 identity |
 | **fork fd 继承** | `vfs::fd::init_child_fd_table` 仅建 0/1/2，**不复制**父进程 pipe/文件 fd | `pipe` + `fork`、shell 管道 |
 | **execve CLOEXEC** | `execve.rs` 中 TODO，未遍历关闭 | 脚本/exec 语义 |
 | **VFS 多挂载** | 辅助卷 `mount`/`umount2` + 最长前缀路由；单盘 QEMU 下 basic `mount` 可能 `ENOENT` | 赛题多盘、`mnt` 测程 |
@@ -264,6 +265,7 @@ flowchart TB
 | [wp-syscall-process-exec.md](./wp-syscall-process-exec.md) | fork/exec/wait |
 | [wp-ipc-pipe-signal.md](./wp-ipc-pipe-signal.md) | pipe 与信号 |
 | [wp-ash-job-control.md](./wp-ash-job-control.md) | BusyBox ash 验收 |
+| [`cred-module-design.md`](../../guides/cred-module-design.md) | `wateros-cred` 进程凭证模块设计方案 |
 | `os/components/wateros-syscall/TODO.md` | syscall 状态维护（须与 §二同步） |
 | `docs/roadmap/test-case-full-pass-plan.md` | 全赛题阶段 B1→C |
 

@@ -65,6 +65,17 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const CHDIR : SyscallNumber = SyscallNumber(49);
     const GETTID : SyscallNumber = SyscallNumber(178);
     const TIMES : SyscallNumber = SyscallNumber(153);
+    const GETUID : SyscallNumber = SyscallNumber(174);
+    const GETEUID : SyscallNumber = SyscallNumber(175);
+    const GETGID : SyscallNumber = SyscallNumber(176);
+    const GETEGID : SyscallNumber = SyscallNumber(177);
+    const GETGROUPS : SyscallNumber = SyscallNumber(155);
+    const SETGID : SyscallNumber = SyscallNumber(144);
+    const SETREGID : SyscallNumber = SyscallNumber(143);
+    const SETREUID : SyscallNumber = SyscallNumber(145);
+    const SETUID : SyscallNumber = SyscallNumber(146);
+    const SETRESUID : SyscallNumber = SyscallNumber(147);
+    const SETRESGID : SyscallNumber = SyscallNumber(149);
 
     // 线程/同步/信号 / threads, sync, signals
     const FUTEX : SyscallNumber = SyscallNumber(98);

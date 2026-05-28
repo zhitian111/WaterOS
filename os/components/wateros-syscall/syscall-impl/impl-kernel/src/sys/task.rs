@@ -193,6 +193,7 @@ fn finish_wait_result(exited : task::ExitedTask, exit_code_ptr : usize) -> UserR
             drop_exited_user_aspace(&exited);
             vfs::cwd::drop_task_cwd(exited.id);
             vfs::fd::drop_task_fd_table(exited.id);
+            cred::drop_task_cred(exited.id);
             UserRet::from_success(exited.id)
         }
         Err(e) => UserRet::from_error(e),

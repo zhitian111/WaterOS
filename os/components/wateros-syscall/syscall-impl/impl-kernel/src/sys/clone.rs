@@ -40,5 +40,7 @@ fn do_clone(child_stack : usize) -> UserRet {
 
     vfs::fd::copy_fd_table_from_parent(child_id, parent_id);
 
+    cred::fork_cred(parent_id, child_id);
+
     UserRet::from_success(child_id)
 }

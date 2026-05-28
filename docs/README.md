@@ -20,3 +20,4 @@
 5. 需要做内存管理验证时查看 `guides/mm-validation.md`。
 6. 需要了解当前文件系统 bring-up 栈时查看 `guides/filesystem-current.md`。
 6. 需要了解设备树、virtio 与 devfs 协作时查看 `guides/device-driver.md`。
+7. 需要了解进程凭证（cred）模块设计与 BusyBox identity syscall 方案时查看 `guides/cred-module-design.md`。

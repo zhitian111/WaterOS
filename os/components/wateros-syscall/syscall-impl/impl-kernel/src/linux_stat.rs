@@ -46,6 +46,8 @@ pub(crate) fn fill_linux_stat(meta : &VfsMetadata, size : u64) -> LinuxStat {
                 st_ino : 1,
                 st_mode : mode,
                 st_nlink : 1,
+                // TODO(cred-vfs): st_uid/st_gid 当前硬编码 0；后续从 VfsMetadata 读 ext4 inode owner，
+                // 并结合 cred.fs_uid/fs_gid 决定 stat 返回值。
                 st_uid : 0,
                 st_gid : 0,
                 st_rdev : 0,

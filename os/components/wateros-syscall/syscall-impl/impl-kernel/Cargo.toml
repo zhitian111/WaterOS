@@ -8,6 +8,7 @@
     abi = { path = "../../../wateros-abi/", package = "wateros-abi", default-features = false }
     task = { path = "../../../wateros-task/", package = "wateros-task", default-features = false }
     ipc = { path = "../../../wateros-ipc/", package = "wateros-ipc", default-features = false, optional = true }
+    cred = { path = "../../../wateros-cred/", package = "wateros-cred", default-features = false, optional = true }
     mm = { path = "../../../wateros-mm/", package = "wateros-mm", default-features = true, optional = true }
     vfs = { path = "../../../wateros-vfs/", package = "wateros-vfs", default-features = false, optional = true }
 
@@ -18,7 +19,13 @@
         "fd-session",
     ]
     default = [ "api-v0" ]
+    cred-session = [
+        "dep:cred",
+        "cred/api-v0",
+        "cred/impl-root",
+    ]
     fd-session = [
+        "cred-session",
         "dep:ipc",
         "dep:mm",
         "dep:vfs",

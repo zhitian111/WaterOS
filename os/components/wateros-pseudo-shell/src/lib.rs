@@ -189,8 +189,10 @@ fn do_exec(cwd : &str, arg : Option<&str>, _rest : &[&str]) -> Result<(), VfsErr
                                         loaded.user_aspace_ptr),
                 );
                 vfs::cwd::on_user_task_spawned(tid);
+                cred::on_user_task_spawned(tid);
                 task::wait_for_task_exit(tid);
                 let code = task::reap_exited_task(tid).map(|e| {
+                                                          cred::drop_task_cred(e.id);
                                                           vfs::cwd::drop_task_cwd(e.id);
                                                           vfs::fd::drop_task_fd_table(e.id);
                                                           e.exit_code

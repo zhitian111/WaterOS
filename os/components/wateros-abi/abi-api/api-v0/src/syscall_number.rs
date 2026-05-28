@@ -124,6 +124,28 @@ pub trait SyscallNumberTable {
     const GETTID: SyscallNumber;
     /// 读取进程时间统计（`times(2)`）。
     const TIMES: SyscallNumber;
+    /// 当前进程真实用户 ID（`getuid(2)`）。
+    const GETUID: SyscallNumber;
+    /// 当前进程有效用户 ID（`geteuid(2)`）。
+    const GETEUID: SyscallNumber;
+    /// 当前进程真实组 ID（`getgid(2)`）。
+    const GETGID: SyscallNumber;
+    /// 当前进程有效组 ID（`getegid(2)`）。
+    const GETEGID: SyscallNumber;
+    /// 读取 supplementary 组列表（`getgroups(2)`）。
+    const GETGROUPS: SyscallNumber;
+    /// 设置真实组 ID（`setgid(2)`）。
+    const SETGID: SyscallNumber;
+    /// 设置真实/有效组 ID（`setregid(2)`）。
+    const SETREGID: SyscallNumber;
+    /// 设置真实/有效用户 ID（`setreuid(2)`）。
+    const SETREUID: SyscallNumber;
+    /// 设置有效用户 ID（`setuid(2)`）。
+    const SETUID: SyscallNumber;
+    /// 设置 real/effective/saved 用户 ID（`setresuid(2)`）。
+    const SETRESUID: SyscallNumber;
+    /// 设置 real/effective/saved 组 ID（`setresgid(2)`）。
+    const SETRESGID: SyscallNumber;
 
     // 线程/同步/信号（glibc/musl 常见）/ threads, sync, signals
     /// 用户态快速互斥与睡眠原语（`futex(2)`）。

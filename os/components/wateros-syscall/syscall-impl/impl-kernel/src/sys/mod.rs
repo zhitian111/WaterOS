@@ -5,6 +5,7 @@ mod brk;
 mod chdir;
 mod clone;
 mod close;
+mod cred;
 mod dup;
 mod execve;
 mod fcntl;
@@ -30,6 +31,10 @@ pub(crate) use brk::sys_brk;
 pub(crate) use chdir::sys_chdir;
 pub(crate) use clone::sys_clone;
 pub(crate) use close::sys_close;
+pub(crate) use cred::{
+    sys_getegid, sys_geteuid, sys_getgid, sys_getgroups, sys_getuid, sys_setregid, sys_setresgid,
+    sys_setresuid, sys_setreuid, sys_setgid, sys_setuid,
+};
 pub(crate) use dup::{sys_dup, sys_dup3};
 pub(crate) use execve::sys_execve;
 pub(crate) use fcntl::sys_fcntl;

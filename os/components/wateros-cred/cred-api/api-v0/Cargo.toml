@@ -1,0 +1,10 @@
+[package]
+    name = "wateros-cred-api-v0"
+    version = "0.1.0"
+    edition = "2024"
+
+[dependencies]
+
+[features]
+    api-v0 = []
+    default = ["api-v0"]

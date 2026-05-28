@@ -51,6 +51,11 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
     vfs::fd::close_cloexec_fds_for_current_task()
         .map_err(vfs_error_to_errno)?;
 
+    let current_tid = task::current_task_id()
+        .expect("execve requires a current task");
+    // TODO(cred-exec-setuid): 可执行文件 S_ISUID/S_ISGID 应在 cred::on_exec 内更新凭证。
+    cred::on_exec(current_tid);
+
     let image_info = task::UserImageInfo::new(new_elf.image_base, new_elf.image_size);
     let stack_info = task::UserStack::from_range(new_elf.stack_bottom, new_elf.stack_top);
     task::execve_current(new_elf.entry_pc,

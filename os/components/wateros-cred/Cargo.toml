@@ -1,0 +1,26 @@
+[workspace]
+    members = [
+        "./cred-api/api-v0/",
+        "./cred-impl/impl-root/",
+    ]
+
+[package]
+    name = "wateros-cred"
+    version = "0.1.0"
+    edition = "2024"
+
+[dependencies]
+    api-v0 = { path = "./cred-api/api-v0/", package = "wateros-cred-api-v0", default-features = true }
+    impl-root = { path = "./cred-impl/impl-root/", package = "wateros-cred-impl-root", default-features = true }
+    task = { path = "../wateros-task/", package = "wateros-task", default-features = false, optional = true }
+
+[features]
+    api-v0 = []
+    default = ["api-v0", "impl-root"]
+    impl-root = ["api-v0", "dep:task", "task/api-v0"]
+
+[profile.dev]
+    panic = "abort"
+
+[profile.release]
+    panic = "abort"
