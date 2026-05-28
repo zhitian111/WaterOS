@@ -1,6 +1,6 @@
 #![no_std]
 
-//! 用户态/测试向的简化 devfs 视图：仅枚举 `driver_block_api_v0` 已注册的块设备为 `/dev/vblk{n}`。
+//! 用户态/测试向的简化 devfs 视图：枚举块设备为 Linux 风格 `/dev/vda*` 与兼容 `/dev/vblk{n}`。
 //!
 //! 与 `devfs-impl/impl-kernel` 的差异：无 DTB 占位、无动态 `register_block_device`；路径解析规则见 `parse_block_index`（模块内私有）。
 extern crate alloc;
@@ -33,17 +33,35 @@ pub struct DevNode {
 // 与内核 devfs 不同：仅缓存枚举快照，无动态 register 表；单 Mutex 保护 bring-up 阶段并发。
 static DEV_NODES: Mutex<Vec<DevNode>> = Mutex::new(Vec::new());
 
+fn linux_vd_disk_path(index: usize) -> String {
+    let letter = (b'a' + (index as u8).min(25)) as char;
+    format!("/dev/vd{}", letter)
+}
+
+fn push_node(nodes: &mut Vec<DevNode>, path: String, index: usize) {
+    if nodes.iter().any(|n| n.path == path) {
+        return;
+    }
+    nodes.push(DevNode {
+        path,
+        node_type: DevNodeType::Block,
+        index,
+    });
+}
+
 /// 根据 `block_device_count()` 重建节点表并返回节点数量。
 pub fn refresh() -> usize {
     let count = block_device_count();
     let mut nodes = DEV_NODES.lock();
     nodes.clear();
     for idx in 0..count {
-        nodes.push(DevNode {
-            path: make_block_path(idx),
-            node_type: DevNodeType::Block,
-            index: idx,
-        });
+        let vd = linux_vd_disk_path(idx);
+        push_node(&mut nodes, format!("/dev/vblk{}", idx), idx);
+        push_node(&mut nodes, vd.clone(), idx);
+        if idx == 0 {
+            push_node(&mut nodes, format!("{vd}1"), idx);
+            push_node(&mut nodes, format!("{vd}2"), idx);
+        }
     }
     logging::trace!("[fs::devfs] refresh done, block_nodes={}", nodes.len());
     nodes.len()
@@ -54,27 +72,38 @@ pub fn list_nodes() -> Vec<DevNode> {
     DEV_NODES.lock().clone()
 }
 
-/// 将 `/dev/vblk{n}` 解析为索引并向驱动查询共享块设备句柄。
+/// 将设备路径解析为索引并向驱动查询共享块设备句柄。
 pub fn lookup_block_device(path: &str) -> FsResult<SharedBlockDevice> {
     let idx = parse_block_index(path).ok_or(FsError::NotFound)?;
     block_device_at(idx).ok_or(FsError::NotFound)
 }
 
-/// 存在至少一块设备时返回 `/dev/vblk0`，否则 `None`。
+/// 存在至少一块设备时返回 `/dev/vda`，否则 `None`。
 pub fn default_root_block_path() -> Option<String> {
     if block_device_count() == 0 {
         None
     } else {
-        Some(make_block_path(0))
+        Some(linux_vd_disk_path(0))
     }
 }
 
-fn make_block_path(index: usize) -> String {
-    format!("/dev/vblk{}", index)
-}
-
-// 路径格式与 impl-kernel 默认命名保持一致，便于测试共享镜像。
+// 路径格式与 impl-kernel 命名保持一致，便于测试共享镜像。
 fn parse_block_index(path: &str) -> Option<usize> {
-    let suffix = path.strip_prefix("/dev/vblk")?;
-    suffix.parse::<usize>().ok()
+    if let Some(suffix) = path.strip_prefix("/dev/vblk") {
+        return suffix.parse::<usize>().ok();
+    }
+    if let Some(rest) = path.strip_prefix("/dev/vd") {
+        let mut chars = rest.chars();
+        let disk_letter = chars.next()?;
+        if !disk_letter.is_ascii_lowercase() {
+            return None;
+        }
+        let disk_idx = (disk_letter as u8 - b'a') as usize;
+        let part: String = chars.collect();
+        if part.is_empty() || part.chars().all(|c| c.is_ascii_digit()) {
+            return Some(disk_idx);
+        }
+        return None;
+    }
+    None
 }

@@ -4,7 +4,7 @@
 //! 复制父进程 trap 帧（a0 置 0 作为子进程返回值），继承 cwd 与 fd 表（经 VFS duplicate）。
 //!
 //! clone（`child_stack ≠ 0`）时子进程使用调用者提供的独立栈。
-//! fork（`child_stack == 0`）时子进程沿用父进程栈指针。
+//! fork（`child_stack == 0`）时子进程 SP 由 [`task`] 层 `fork_from` 按父栈区间设置。
 
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
@@ -17,8 +17,7 @@ use abi::user_ret::UserRet;
 /// - `arg1`: child_stack（0 表示复用父任务栈指针）
 /// - 其余参数暂未处理
 pub(crate) fn sys_clone(args : SyscallArgs) -> UserRet {
-    let child_stack = args.arg(1);
-    do_clone(child_stack)
+    do_clone(args.arg(1))
 }
 
 #[inline(never)]

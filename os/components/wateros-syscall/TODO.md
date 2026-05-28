@@ -19,20 +19,20 @@
 | `close` | 已接入 | 关闭动态 fd。 |
 | `fstat` | 部分接入 | 128B `kstat` 布局；动态 fd 与 stdio 元数据；依赖 open 成功。 |
 | `lseek` | 部分接入 | 支持普通 VFS handle；pipe 等返回 `ESPIPE`。 |
-| `dup` | 已接入 | 经 `vfs::fd::dup_fd` / `VfsIoHandle::duplicate`。 |
-| `dup2`/`dup3` | 已接入 | `dup2` 走 `dup3(old, new, 0)`；支持 `O_CLOEXEC`。 |
-| `pipe`/`pipe2` | 已接入 | pipe fd 对；`fork` 经 `copy_fd_table_from_parent` 继承。 |
-| `getdents64` | 已接入 | 目录 fd + `linux_dirent64`；ext4 `read_dir` 不含 `.`/`..`。 |
-| `mkdir`/`mkdirat` | 部分接入 | `mkdirat` 经 `vfs::mkdir_at_current`；`AT_FDCWD` + 目录 fd。 |
-| `unlink`/`unlinkat` | 已接入 | `unlinkat` + `AT_REMOVEDIR`→`rmdir`；路径经挂载表路由。 |
-| `mount` | 已接入 | ext4 块设备挂到根卷内空目录；单盘 QEMU 无 `vblk1` 时测程可能 `ENOENT`。 |
-| `umount`/`umount2` | 已接入 | 卸载辅助卷挂载点；`/` 不可卸载。 |
+| `dup` | 待实现 | 需要复制 fd handle，并维护引用/关闭语义。 |
+| `dup2`/`dup3` | 待实现 | `basic` 的 `dup2` wrapper 使用 `dup3(old, new, 0)`。 |
+| `pipe`/`pipe2` | 部分接入 | 已创建 pipe fd 对；需要和 `fork` 后 fd 继承联调。 |
+| `getdents64` | 待实现 | `getdents` 测例依赖目录枚举和 `linux_dirent64` 布局。 |
+| `mkdir`/`mkdirat` | 部分接入 | `mkdirat` 经 `vfs::mkdir_at_current` 走全局 RW 根卷；仅 `AT_FDCWD`。 |
+| `unlink`/`unlinkat` | 待实现 | 需要删除目录项和打开文件生命周期语义。 |
+| `mount` | 待实现 | basic 期可先支持赛题所需最小挂载/伪成功策略。 |
+| `umount`/`umount2` | 待实现 | 与 `mount` 成对。 |
 | `brk` | 部分接入 | 有 Sv39 用户地址空间路径；无句柄时仍有假顶 fallback。 |
 | `mmap` | 部分接入 | 支持匿名/文件映射骨架；共享写回、权限边界仍需补强。 |
 | `munmap` | 部分接入 | 走 MM `MmapOps`。 |
 | `mprotect` | 部分接入 | libc/动态链接后续会继续依赖。 |
-| `clone`/`fork` | 部分接入 | 独立地址空间 + cwd/fd 表继承；`clone` flags 子集。 |
-| `execve` | 部分接入 | ELF 替换与 argv/envp；`FD_CLOEXEC` 关闭已接。 |
+| `clone`/`fork` | 待实现 | basic 的 `fork()` 实际调用 `clone(SIGCHLD, 0)`。 |
+| `execve` | 待实现 | 需要替换当前用户地址空间、argv/envp 拷贝和 fd 继承规则。 |
 | `exit`/`exit_group` | 已接入 | 目前同一路径退出当前任务。 |
 | `wait`/`wait4` | 部分接入 | 支持最小父子等待和 `WNOHANG`。 |
 | `sched_yield` | 已接入 | 映射到 `task::yield_now()`。 |
@@ -52,7 +52,7 @@
 | syscall 能力 | 当前状态 | 说明 |
 | --- | --- | --- |
 | `ioctl` | 待实现 | TTY、设备、网络工具会大量触发。 |
-| `fcntl` | 部分接入 | `F_DUPFD`、`F_GETFD`/`SETFD`（CLOEXEC）；`F_GETFL` 仍为桩。 |
+| `fcntl` | 待实现 | fd flags、`F_DUPFD_CLOEXEC`、非阻塞等。 |
 | `prctl` | 待实现 | libc/线程运行时常见探测项，可先兼容常用 no-op。 |
 | `futex` | 待实现 | pthread、动态链接、benchmark 的关键同步原语。 |
 | `rt_sigaction` | 待实现 | busybox、lmbench、cyclictest 需要信号安装。 |

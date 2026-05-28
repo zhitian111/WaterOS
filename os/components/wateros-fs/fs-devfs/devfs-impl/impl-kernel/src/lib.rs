@@ -30,22 +30,41 @@ static DEVFS: Mutex<DevFsImpl> = Mutex::new(DevFsImpl {
     dt_unsupported_paths: Vec::new(),
 });
 
+/// 块设备索引 → Linux 风格磁盘名（`0` → `vda`）。
+fn linux_vd_disk_path(idx: usize) -> String {
+    let letter = (b'a' + (idx as u8).min(25)) as char;
+    format!("/dev/vd{}", letter)
+}
+
+fn push_block_alias(inner: &mut DevFsImpl, path: String, dev: SharedBlockDevice) {
+    if inner.block_bindings.iter().any(|(p, _)| p == &path) {
+        return;
+    }
+    inner.nodes.push(api_v0::DevNode {
+        path: path.clone(),
+        node_type: api_v0::DevNodeType::Block,
+    });
+    inner.block_bindings.push((path, dev));
+}
+
 impl DevFsManager for KernelDevFsManager {
     fn refresh(&mut self) {
         let mut inner = DEVFS.lock();
         inner.nodes.clear();
         inner.block_bindings.clear();
 
-        // 阶段 1：按驱动枚举顺序生成 `/dev/vblk{n}` 与块句柄绑定。
+        // 阶段 1：按驱动枚举顺序注册 Linux 主名 `/dev/vda`、兼容名 `/dev/vblk{n}`，
+        // 以及 bring-up 用分区别名（尚无分区表时与整盘同句柄）。
         let count = block_device_count();
         for idx in 0..count {
             if let Some(dev) = block_device_at(idx) {
-                let path = format!("/dev/vblk{}", idx);
-                inner.nodes.push(api_v0::DevNode {
-                    path: path.clone(),
-                    node_type: api_v0::DevNodeType::Block,
-                });
-                inner.block_bindings.push((path, dev));
+                let vd = linux_vd_disk_path(idx);
+                push_block_alias(&mut inner, format!("/dev/vblk{}", idx), dev.clone());
+                push_block_alias(&mut inner, vd.clone(), dev.clone());
+                if idx == 0 {
+                    push_block_alias(&mut inner, alloc::format!("{vd}1"), dev.clone());
+                    push_block_alias(&mut inner, alloc::format!("{vd}2"), dev.clone());
+                }
             }
         }
         // 阶段 2：把 DTB 侧登记的占位路径并入节点表（类型 Unsupported，不参与 lookup）。
@@ -104,11 +123,16 @@ impl DevFsManager for KernelDevFsManager {
     }
 
     fn default_root_block_path(&self) -> Option<String> {
-        DEVFS
-            .lock()
+        let inner = DEVFS.lock();
+        inner
             .nodes
             .iter()
-            .find(|n| matches!(n.node_type, api_v0::DevNodeType::Block))
+            .find(|n| n.path == "/dev/vda")
+            .or_else(|| {
+                inner.nodes.iter().find(|n| {
+                    matches!(n.node_type, api_v0::DevNodeType::Block)
+                })
+            })
             .map(|n| n.path.clone())
     }
 }

@@ -70,6 +70,21 @@ fn initial_user_sp(top_exclusive : usize, bottom : usize) -> usize {
     }
 }
 
+/// fork 子进程与父进程共享 External 栈时，子进程 SP 落在栈底 guard 之后（见 task 文档）。
+const CHILD_STACK_GUARD: usize = 4096;
+
+fn fork_child_user_sp(child_stack: usize, parent_stack: &UserStack) -> usize {
+    if child_stack != 0 {
+        return child_stack;
+    }
+    let base = parent_stack.bottom().saturating_add(CHILD_STACK_GUARD);
+    if base >= parent_stack.top() {
+        parent_stack.top().saturating_sub(16)
+    } else {
+        base
+    }
+}
+
 fn trap_snapshot(trap_frame : TaskTrapFrame, user_aspace_ptr : usize) -> TaskTrapSnapshot {
     TaskTrapSnapshot::new(<TaskTrapFrame as TrapContextRead>::raw_cause(&trap_frame),
                           <TaskTrapFrame as TrapContextRead>::user_pc(&trap_frame),
@@ -151,7 +166,7 @@ impl TaskControlBlock {
     /// 从父任务 fork 一个子用户任务。
     ///
     /// - `child_stack` 非零时（clone）：子任务初始用户 SP 设为该值。
-    /// - `child_stack == 0`（fork）：子任务继承父任务的 SP。
+    /// - `child_stack == 0`（fork）：子任务 SP 为父栈 `bottom + CHILD_STACK_GUARD`。
     /// - `new_aspace_ptr` / `new_satp`：由 `mm::kernel_mm::fork_user_aspace()`
     ///   返回的独立地址空间。
     ///
@@ -177,17 +192,17 @@ impl TaskControlBlock {
         // 子进程 sepc 前进到下一条指令（跳过已完成的 ecall）
         <TaskTrapFrame as TrapContextWrite>::add_user_pc(&mut child_trap, 4);
 
-        // clone 提供独立栈时，覆盖用户 SP
-        if child_stack != 0 {
-            <TaskTrapFrame as TrapContextWrite>::set_user_sp(&mut child_trap, child_stack);
-        }
+        let parent_spec = &parent_user.user;
+        let parent_stack = parent_spec.stack()
+            .expect("parent user task must have stack");
+        let child_user_sp = fork_child_user_sp(child_stack, &parent_stack);
+        <TaskTrapFrame as TrapContextWrite>::set_user_sp(&mut child_trap, child_user_sp);
 
         // 安装新的独立地址空间
         <TaskTrapFrame as TrapContextWrite>::set_return_address_space_token(&mut child_trap,
                                                                             new_satp);
 
         // 构造子 UserTask 规格（元数据继承父，aspace 用新的）
-        let parent_spec = &parent_user.user;
         let child_spec = UserTask::new(parent_spec.entry_pc(),
                                        AddressSpaceHandle::from_raw(new_satp),
                                        parent_spec.image()

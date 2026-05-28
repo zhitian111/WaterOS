@@ -8,6 +8,7 @@ extern crate alloc;
 use alloc::string::{String, ToString};
 use api_v0::RootFsManager;
 use core::sync::atomic::{AtomicU64, Ordering};
+use alloc::sync::Arc;
 use fs_api_v0::FsImpl;
 use spin::Mutex;
 
@@ -123,6 +124,20 @@ pub fn bump_mount_generation() {
 /// 从块设备路径挂载 **独立** RW 卷（不替换 [`root_rw_fs`]）。
 pub fn mount_aux_rw_from_block_path(path: &str) -> fs_api_v0::FsResult<fs_api_v0::SharedRwFs> {
     let device = devfs::active_impl::lookup_block_device(path)?;
+    if let Some(root_path) = current_root_device_path() {
+        if let Ok(root_dev) = devfs::active_impl::lookup_block_device(root_path.as_str()) {
+            if Arc::ptr_eq(&device, &root_dev) {
+                if let Some(root) = root_rw_fs() {
+                    logging::info!(
+                        "[fs::rootfs] mount aux RW reuse root (alias {})",
+                        path
+                    );
+                    bump_mount_generation();
+                    return Ok(root);
+                }
+            }
+        }
+    }
     let imp = ACTIVE_FS_IMPL
         .lock()
         .ok_or(fs_api_v0::FsError::Unsupported)?;

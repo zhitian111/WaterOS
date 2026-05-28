@@ -330,12 +330,15 @@ fn map_user_stack<A : AddressSpaceOps>(aspace : &mut A,
                                ppn,
                                PagePerm::R | PagePerm::W | PagePerm::U)
               .map_err(LoadElfError::Mm)?;
-        // stack alloc-map VPN={:#x} PPN={:#x} stack_top={:#x}",
-        //                        vpn.0,
-        //                        ppn.0,
-        //                       stack_top);
         vpn = VirtPageNum(vpn.0 + 1);
     }
+    // 栈顶再映射一页，避免测程将 SP 顶到 `stack_top` 时立即缺页（`0x7fffa000+`）。
+    let ppn = frame_alloc_result().map_err(|e| LoadElfError::Mm(MmError::from(e)))?;
+    aspace
+        .map_page_to_ppn(vpn_end,
+                         ppn,
+                         PagePerm::R | PagePerm::W | PagePerm::U)
+        .map_err(LoadElfError::Mm)?;
     Ok(())
 }
 

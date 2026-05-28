@@ -38,7 +38,10 @@ pub(crate) fn sys_mount(args: SyscallArgs) -> UserRet {
             Ok(s) => s,
             Err(e) => return UserRet::from_error(e),
         };
-        if fstype != "ext4" {
+        // oscomp 测例常传空串表示由内核按块设备探测；非空时仅接受 ext2/3/4。
+        if !fstype.is_empty()
+            && !matches!(fstype.as_str(), "ext4" | "ext3" | "ext2")
+        {
             return UserRet::from_error(ErrNo::EINVAL);
         }
     }
@@ -51,6 +54,7 @@ pub(crate) fn sys_mount(args: SyscallArgs) -> UserRet {
     match vfs::mount_ext4_block_at(mount_point.as_str(), source.as_str()) {
         Ok(()) => UserRet::from_success(0),
         Err(VfsError::Driver) | Err(VfsError::NotFound) => UserRet::from_error(ErrNo::ENOENT),
+        Err(VfsError::Exists) => UserRet::from_error(ErrNo::EBUSY),
         Err(e) => UserRet::from_error(vfs_error_to_errno(e)),
     }
 }

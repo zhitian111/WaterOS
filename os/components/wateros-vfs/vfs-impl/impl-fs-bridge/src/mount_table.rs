@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 use fs::SharedRwFs;
 use spin::Mutex;
 
-use api_v0::{normalize_absolute_path, VfsError, VfsResult};
+use api_v0::{normalize_absolute_path, VfsDirEntry, VfsError, VfsResult};
 
 struct MountEntry {
     mount_point: String,
@@ -53,6 +53,13 @@ fn longest_aux_mount(abs: &str) -> Option<(SharedRwFs, String)> {
     best.map(|(_, fs, mp)| (fs, rel_under_mount(abs, mp.as_str())))
 }
 
+/// 挂载点目录是否仅含 `.` / `..`（oscomp 预置 `mnt` 目录可能非空展示项）。
+fn mount_point_dir_is_empty(entries: &[VfsDirEntry]) -> bool {
+    entries
+        .iter()
+        .all(|e| e.name == "." || e.name == "..")
+}
+
 pub(crate) fn resolve_route(path: &str) -> VfsResult<FsRoute> {
     let abs = String::from(normalize_absolute_path(path)?.as_str());
     if let Some((fs, rel)) = longest_aux_mount(abs.as_str()) {
@@ -74,7 +81,7 @@ pub(crate) fn mount_aux_at(mount_point: &str, fs: SharedRwFs) -> VfsResult<()> {
         }
     }
     let entries = super::FsBridge::read_dir_on_root(mp.as_str())?;
-    if !entries.is_empty() {
+    if !mount_point_dir_is_empty(entries.as_slice()) {
         return Err(VfsError::Exists);
     }
     AUX_MOUNTS.lock().push(MountEntry {

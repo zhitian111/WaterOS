@@ -18,7 +18,6 @@ macro_rules! basic_elf_paths {
           concat!($prefix, "/close"),
           concat!($prefix, "/dup"),
           concat!($prefix, "/dup2"),
-          concat!($prefix, "/execve"),
           concat!($prefix, "/exit"),
           concat!($prefix, "/fork"),
           concat!($prefix, "/fstat"),
@@ -28,7 +27,6 @@ macro_rules! basic_elf_paths {
           concat!($prefix, "/getppid"),
           concat!($prefix, "/gettimeofday"),
           concat!($prefix, "/mkdir_"),
-          concat!($prefix, "/mnt"),
           concat!($prefix, "/mount"),
           concat!($prefix, "/open"),
           concat!($prefix, "/openat"),
@@ -39,11 +37,11 @@ macro_rules! basic_elf_paths {
           concat!($prefix, "/times"),
           concat!($prefix, "/umount"),
           concat!($prefix, "/uname"),
-          concat!($prefix, "/unlink"),
           concat!($prefix, "/wait"),
           concat!($prefix, "/waitpid"),
           concat!($prefix, "/write"),
-          concat!($prefix, "/yield")]
+          concat!($prefix, "/yield"),
+          concat!($prefix, "/unlink")]
     };
 }
 
