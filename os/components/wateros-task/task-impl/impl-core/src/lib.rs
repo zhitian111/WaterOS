@@ -8,10 +8,16 @@
 //!   等路径上更新状态并触发上下文切换。
 
 #![no_std]
+#![allow(static_mut_refs)]
 
 extern crate alloc;
 
+mod process;
 mod tcb;
 
 pub use api_v0::TaskBootstrap;
+pub use process::{
+    init_process_registry, lookup_process, lookup_task, self_test as process_model_self_test,
+    with_process_registry, ProcessControlBlock, ProcessRegistry,
+};
 pub use tcb::TaskControlBlock;

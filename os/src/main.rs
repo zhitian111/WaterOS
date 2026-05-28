@@ -79,7 +79,7 @@ mod qemu_riscv64_opensbi {
     ));
 
     /// 网络协议栈轮询任务：周期性驱动 smoltcp 收发包，永久运行。
-    extern "C" fn network_poller_task(_arg : usize) -> ! {
+    extern "C" fn network_poller_task(_arg: usize) -> ! {
         loop {
             driver::network::stack::poll();
             driver::network::stack::poll_socket_events();
@@ -154,8 +154,7 @@ mod qemu_riscv64_opensbi {
                     crate::self_tests::network::run_sync_smoke();
                 }
                 Err(e) => {
-                    warn!("[self-test] network stack init skipped: {}",
-                          e);
+                    warn!("[self-test] network stack init skipped: {}", e);
                 }
             }
             fs::init();

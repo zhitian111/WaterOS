@@ -10,7 +10,6 @@ use crate::user_copy::{copy_from_user_struct, copy_to_user_struct};
 
 const POLLIN: i16 = 0x001;
 const POLLOUT: i16 = 0x004;
-
 const POLLHUP: i16 = 0x010;
 
 #[repr(C)]
