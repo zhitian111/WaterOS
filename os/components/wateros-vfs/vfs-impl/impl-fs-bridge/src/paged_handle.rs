@@ -226,6 +226,10 @@ pub(crate) fn open_file(
         || (!flags.contains(VfsOpenFlags::WRITE) && !flags.contains(VfsOpenFlags::CREATE));
     let want_write = flags.contains(VfsOpenFlags::WRITE);
 
+    if want_write || flags.contains(VfsOpenFlags::CREATE) {
+        super::mount_table::assert_path_writable(path.as_str())?;
+    }
+
     let exists = bridge.exists(path.as_str())?;
     if !exists {
         if !flags.contains(VfsOpenFlags::CREATE) {

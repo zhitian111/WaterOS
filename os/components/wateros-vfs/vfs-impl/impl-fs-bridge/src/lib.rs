@@ -20,8 +20,11 @@ mod paged_handle;
 pub use dir_handle::DirectoryHandle;
 pub use file_handle::{BufferedFileHandle, RootFileHandle};
 pub use paged_handle::PagedFileHandle;
-use fs::{FsAccessMode, FsCapability, FsDirEntry, FsError, FsKind, FsMetadata, FsNodeType, SharedRwFs};
-use mount_table::{resolve_route, FsRoute};
+use fs::{
+    FsAccessMode, FsCapability, FsDirEntry, FsError, FsKind, FsMetadata, FsNodeType, ReadOnlyFs,
+    SharedRwFs,
+};
+use mount_table::{assert_path_writable, resolve_route, FsRoute};
 
 /// 通过 `wateros-fs` 访问根卷与 devfs 的零大小后端。
 #[derive(Debug, Clone, Copy, Default)]
@@ -100,38 +103,69 @@ pub(crate) fn root_rw() -> VfsResult<SharedRwFs> {
     fs::rootfs::active_impl::root_rw_fs().ok_or(VfsError::NotMounted)
 }
 
-fn fs_and_rel(path: &str) -> VfsResult<(SharedRwFs, String)> {
+fn fs_and_rel_rw(path: &str) -> VfsResult<(SharedRwFs, String)> {
     match resolve_route(path)? {
         FsRoute::Root { abs } => Ok((root_rw()?, abs)),
-        FsRoute::Aux { fs, rel } => Ok((fs, rel)),
+        FsRoute::AuxRw { fs, rel } => Ok((fs, rel)),
+        FsRoute::AuxRo { .. } => Err(VfsError::ReadOnlyFs),
     }
 }
 
 impl SingleRootReadView for FsBridge {
     fn exists(&self, path: &str) -> VfsResult<bool> {
-        let (fs, rel) = fs_and_rel(path)?;
-        fs.lock().exists(rel.as_str()).map_err(map_fs_err)
+        match resolve_route(path)? {
+            FsRoute::Root { abs } => root_rw()?.lock().exists(abs.as_str()).map_err(map_fs_err),
+            FsRoute::AuxRw { fs, rel } => {
+                fs.lock().exists(rel.as_str()).map_err(map_fs_err)
+            }
+            FsRoute::AuxRo { fs, rel } => {
+                fs.lock().exists(rel.as_str()).map_err(map_fs_err)
+            }
+        }
     }
 
     fn metadata(&self, path: &str) -> VfsResult<VfsMetadata> {
-        let (fs, rel) = fs_and_rel(path)?;
-        fs.lock()
-            .metadata(rel.as_str())
-            .map_err(map_fs_err)
-            .map(map_meta)
+        let meta = match resolve_route(path)? {
+            FsRoute::Root { abs } => root_rw()?
+                .lock()
+                .metadata(abs.as_str())
+                .map_err(map_fs_err)?,
+            FsRoute::AuxRw { fs, rel } => fs
+                .lock()
+                .metadata(rel.as_str())
+                .map_err(map_fs_err)?,
+            FsRoute::AuxRo { fs, rel } => fs
+                .lock()
+                .metadata(rel.as_str())
+                .map_err(map_fs_err)?,
+        };
+        Ok(map_meta(meta))
     }
 
     fn read(&self, path: &str) -> VfsResult<Vec<u8>> {
-        let (fs, rel) = fs_and_rel(path)?;
-        fs.lock().read(rel.as_str()).map_err(map_fs_err)
+        match resolve_route(path)? {
+            FsRoute::Root { abs } => root_rw()?.lock().read(abs.as_str()).map_err(map_fs_err),
+            FsRoute::AuxRw { fs, rel } => fs.lock().read(rel.as_str()).map_err(map_fs_err),
+            FsRoute::AuxRo { fs, rel } => fs.lock().read(rel.as_str()).map_err(map_fs_err),
+        }
     }
 
     fn read_dir(&self, path: &str) -> VfsResult<Vec<VfsDirEntry>> {
-        let (fs, rel) = fs_and_rel(path)?;
-        fs.lock()
-            .read_dir(rel.as_str())
-            .map_err(map_fs_err)
-            .map(|v| v.into_iter().map(map_dir_entry).collect())
+        let entries = match resolve_route(path)? {
+            FsRoute::Root { abs } => root_rw()?
+                .lock()
+                .read_dir(abs.as_str())
+                .map_err(map_fs_err)?,
+            FsRoute::AuxRw { fs, rel } => fs
+                .lock()
+                .read_dir(rel.as_str())
+                .map_err(map_fs_err)?,
+            FsRoute::AuxRo { fs, rel } => fs
+                .lock()
+                .read_dir(rel.as_str())
+                .map_err(map_fs_err)?,
+        };
+        Ok(entries.into_iter().map(map_dir_entry).collect())
     }
 
     fn boot_dump_all_paths(&self) {
@@ -152,17 +186,32 @@ impl FsBridge {
 
     /// 从根卷只读句柄按偏移读取（页缓存 miss 路径）。
     pub(crate) fn read_range(&self, path: &str, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
-        let (fs, rel) = fs_and_rel(path)?;
-        fs.lock()
-            .read_range(rel.as_str(), offset, buf)
-            .map_err(map_fs_err)
+        match resolve_route(path)? {
+            FsRoute::Root { abs } => root_rw()?
+                .lock()
+                .read_range(abs.as_str(), offset, buf)
+                .map_err(map_fs_err),
+            FsRoute::AuxRw { fs, rel } => fs
+                .lock()
+                .read_range(rel.as_str(), offset, buf)
+                .map_err(map_fs_err),
+            FsRoute::AuxRo { fs, rel } => fs
+                .lock()
+                .read_range(rel.as_str(), offset, buf)
+                .map_err(map_fs_err),
+        }
     }
 }
 
 /// 将 ext4 块设备挂到根卷内 `mount_point`（须为空目录）。
-pub fn mount_ext4_block_at(mount_point: &str, block_dev: &str) -> VfsResult<()> {
-    let aux = fs::mount_aux_rw_from_block_path(block_dev).map_err(map_fs_err)?;
-    mount_table::mount_aux_at(mount_point, aux)
+pub fn mount_ext4_block_at(mount_point: &str, block_dev: &str, readonly: bool) -> VfsResult<()> {
+    if readonly {
+        let aux = fs::mount_aux_ro_from_block_path(block_dev).map_err(map_fs_err)?;
+        mount_table::mount_aux_at_ro(mount_point, aux)
+    } else {
+        let aux = fs::mount_aux_rw_from_block_path(block_dev).map_err(map_fs_err)?;
+        mount_table::mount_aux_at_rw(mount_point, aux)
+    }
 }
 
 /// 卸载 `mount_point` 上的辅助卷。
@@ -172,7 +221,8 @@ pub fn unmount_at(mount_point: &str) -> VfsResult<()> {
 
 /// 删除绝对路径（经挂载表路由）。
 pub fn unlink_path(path: &str, remove_dir: bool) -> VfsResult<()> {
-    let (fs, rel) = fs_and_rel(path)?;
+    assert_path_writable(path)?;
+    let (fs, rel) = fs_and_rel_rw(path)?;
     let mut sess = MountedRwSession::new(fs);
     if remove_dir {
         sess.rmdir(rel.as_str())
@@ -183,7 +233,8 @@ pub fn unlink_path(path: &str, remove_dir: bool) -> VfsResult<()> {
 
 /// 创建目录（经挂载表路由）。
 pub fn mkdir_path(path: &str, mode: u32) -> VfsResult<()> {
-    let (fs, rel) = fs_and_rel(path)?;
+    assert_path_writable(path)?;
+    let (fs, rel) = fs_and_rel_rw(path)?;
     let mut sess = MountedRwSession::new(fs);
     sess.mkdir(rel.as_str(), mode)
 }

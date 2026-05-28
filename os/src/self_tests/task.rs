@@ -162,7 +162,7 @@ extern "C" fn pipe_try_task(_arg : usize) -> ! {
 }
 
 /// 启动 hello world 用户任务与 pipe 内核自检任务。
-/// **已禁用**：仅保留 basic bringup（stage-02-mm + stage-03-basic）。
+/// **已禁用**：用户态回归改由 bringup `stage-busybox`（busybox + testcode.sh）。
 pub fn spawn_all() {
     // 已禁用 — 全部跳过
     info!("[task-selftest] spawn_all disabled, skipping all user ELF and pipe tasks");

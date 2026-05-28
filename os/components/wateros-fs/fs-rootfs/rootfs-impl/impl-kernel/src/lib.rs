@@ -121,6 +121,32 @@ pub fn bump_mount_generation() {
     MOUNT_GENERATION.fetch_add(1, Ordering::Release);
 }
 
+/// 从块设备路径挂载 **独立** RO 卷（不替换 [`root_fs`]）。
+pub fn mount_aux_ro_from_block_path(path: &str) -> fs_api_v0::FsResult<fs_api_v0::SharedFs> {
+    let device = devfs::active_impl::lookup_block_device(path)?;
+    if let Some(root_path) = current_root_device_path() {
+        if let Ok(root_dev) = devfs::active_impl::lookup_block_device(root_path.as_str()) {
+            if Arc::ptr_eq(&device, &root_dev) {
+                if let Some(root) = root_fs() {
+                    logging::info!(
+                        "[fs::rootfs] mount aux RO reuse root (alias {})",
+                        path
+                    );
+                    bump_mount_generation();
+                    return Ok(root);
+                }
+            }
+        }
+    }
+    let imp = ACTIVE_FS_IMPL
+        .lock()
+        .ok_or(fs_api_v0::FsError::Unsupported)?;
+    logging::info!("[fs::rootfs] mount aux RO from {}", path);
+    let aux = imp.mount_ro(device)?;
+    bump_mount_generation();
+    Ok(aux)
+}
+
 /// 从块设备路径挂载 **独立** RW 卷（不替换 [`root_rw_fs`]）。
 pub fn mount_aux_rw_from_block_path(path: &str) -> fs_api_v0::FsResult<fs_api_v0::SharedRwFs> {
     let device = devfs::active_impl::lookup_block_device(path)?;

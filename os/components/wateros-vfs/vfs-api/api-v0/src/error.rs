@@ -31,6 +31,8 @@ pub enum VfsError {
     BrokenPipe,
     /// 无当前任务上下文（如 `ESRCH` 语义）。
     NoTask,
+    /// 目标位于只读挂载卷上，拒绝写或创建。
+    ReadOnlyFs,
 }
 
 /// [`VfsError`] 上的 [`core::result::Result`] 别名。

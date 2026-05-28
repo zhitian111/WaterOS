@@ -78,6 +78,8 @@ impl ErrNo {
     pub const ERANGE: Self = Self(34);
     /// 非法 seek。
     pub const ESPIPE: Self = Self(29);
+    /// 只读文件系统。
+    pub const EROFS: Self = Self(30);
     /// 管道破裂。
     pub const EPIPE: Self = Self(32);
 }

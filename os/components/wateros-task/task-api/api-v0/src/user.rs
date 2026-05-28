@@ -56,6 +56,8 @@ pub struct UserTask {
     /// Sv39 用户页表对象指针（`impl-sv39` 下为 `&mut Sv39AddressSpace`
     /// 泄漏地址）；无则为 `None`。
     user_aspace_ptr : Option<usize>,
+    /// 首次 `sret` 进入用户态时的栈指针；`None` 时使用栈顶减 16 字节空栈。
+    initial_user_sp : Option<usize>,
 }
 
 impl UserTask {
@@ -71,7 +73,15 @@ impl UserTask {
                address_space : Some(address_space),
                image : Some(image),
                stack : Some(stack),
-               user_aspace_ptr : Some(aspace_ptr) }
+               user_aspace_ptr : Some(aspace_ptr),
+               initial_user_sp : None }
+    }
+
+    /// 指定首次进入用户态时的栈指针（须已由 MM 写入 argc/argv 等）。
+    #[inline]
+    pub const fn with_initial_user_sp(self, sp : usize) -> Self {
+        Self { initial_user_sp : Some(sp),
+               ..self }
     }
     /// 返回用户态首次进入时的目标 PC。
     #[inline]
@@ -92,6 +102,10 @@ impl UserTask {
     /// 若已指定 Sv39 用户页表对象指针，则返回其裸地址。
     #[inline]
     pub const fn user_aspace_ptr(&self) -> Option<usize> { self.user_aspace_ptr }
+
+    /// 若已指定首次用户栈指针，则返回该值。
+    #[inline]
+    pub const fn initial_user_sp(&self) -> Option<usize> { self.initial_user_sp }
 }
 
 /// 用户任务的栈封装：记录外部（MM ELF loader）已映射的虚拟地址区间。

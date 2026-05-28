@@ -4,10 +4,9 @@
 //! `docs/roadmap/riscv64-busybox/wp-init-test-bus.md`.
 //!
 //! 当前登记：`stage-00-bus`（挂载 ext4 **RW** 根卷）、
-//! `stage-02-mm`（[`crate::user_bringup_mm::run_stage_02`]：
-//! MM 子集）、`stage-03-basic`（[`crate::user_bringup_basic::run_stage_03`]：
-//! 其余 `/glibc/basic/`、`/musl/basic/` 测程）。策略与 `fs::test` 一致（warn
-//! 后继续）。用户 ELF 校验须在本总线内、位于 `fs::test` 之前，且依赖已挂载的
+//! `stage-busybox`（[`crate::user_bringup_busybox::run_stage_busybox`]：
+//! 内核 runner 串行 `busybox sh *_testcode.sh`）。策略与 `fs::test` 一致（warn
+//! 后继续）。用户态 bring-up 须在本总线内、位于 `fs::test` 之前，且依赖已挂载的
 //! 单一 RW 根卷视图。
 
 use runtime::logging::*;
@@ -39,8 +38,6 @@ pub fn run() {
     }
     #[cfg(not(feature = "impl-loongarch64"))]
     {
-        // crate::user_bringup_mm::run_stage_02();
-        crate::user_bringup_posix_fs::run_stage_posix_fs_meta();
-        crate::user_bringup_basic::run_stage_03();
+        crate::user_bringup_busybox::run_stage_busybox();
     }
 }

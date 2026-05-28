@@ -52,8 +52,19 @@ pub type ActiveUserMemoryOps = impl_loongarch64::user_access::LoongArch64UserMem
 /// 内核全局页表与用户 ELF 装载；类型契约见 [`api::kernel_bringup`]。
 pub mod kernel_mm {
     pub use api_v0::kernel_bringup::{
-        LoadElfError, LoadedElf, RootVolumeReadError, DEFAULT_USER_ELF_PATH,
+        LoadElfError, LoadedElf, PrepareUserStackError, RootVolumeReadError, DEFAULT_USER_ELF_PATH,
     };
+
+    /// 在已装载 ELF 的用户栈上写入 argc/argv/envp/auxv，返回初始 `sp`。
+    #[cfg(any(feature = "impl-sv39", feature = "impl-loongarch64"))]
+    pub fn prepare_elf_user_stack(
+        elf: &LoadedElf,
+        argv: &[&str],
+        envp: &[&str],
+    ) -> Result<usize, PrepareUserStackError> {
+        let ops = crate::ActiveUserMemoryOps::new(elf.user_aspace_ptr);
+        api_v0::elf_user_stack::prepare_elf_user_stack(&ops, elf, argv, envp)
+    }
 
     #[cfg(feature = "impl-sv39")]
     pub use impl_sv39::kernel_mm_impl::{

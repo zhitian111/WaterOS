@@ -16,6 +16,7 @@ pub(crate) fn vfs_error_to_errno(err : VfsError) -> ErrNo {
         VfsError::NoTask => ErrNo::ESRCH,
         VfsError::InvalidPath | VfsError::Unsupported => ErrNo::EINVAL,
         VfsError::Exists => ErrNo::EEXIST,
+        VfsError::ReadOnlyFs => ErrNo::EROFS,
         VfsError::NotFound => ErrNo::ENOENT,
         VfsError::NotAFile => ErrNo::EISDIR,
         VfsError::NotMounted |

@@ -144,6 +144,11 @@ pub fn root_rw_fs() -> Option<api_v0::SharedRwFs> {
     rootfs::active_impl::root_rw_fs()
 }
 
+/// 从块设备挂载独立 RO 卷（用户态 `mount` + `MS_RDONLY`）；不替换根卷句柄。
+pub fn mount_aux_ro_from_block_path(path: &str) -> api_v0::FsResult<api_v0::SharedFs> {
+    rootfs::active_impl::mount_aux_ro_from_block_path(path)
+}
+
 /// 从块设备挂载独立 RW 卷（用户态 `mount`）；不替换根卷句柄。
 pub fn mount_aux_rw_from_block_path(path: &str) -> api_v0::FsResult<api_v0::SharedRwFs> {
     rootfs::active_impl::mount_aux_rw_from_block_path(path)

@@ -20,9 +20,7 @@ pub(crate) fn sys_mount(args: SyscallArgs) -> UserRet {
     if source_ptr == 0 || target_ptr == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
     }
-    if flags & MS_RDONLY != 0 {
-        return UserRet::from_error(ErrNo::EINVAL);
-    }
+    let readonly = flags & MS_RDONLY != 0;
 
     let source = match copy_user_path_cstr(source_ptr, 256) {
         Ok(s) => s,
@@ -51,7 +49,7 @@ pub(crate) fn sys_mount(args: SyscallArgs) -> UserRet {
         Err(e) => return UserRet::from_error(e),
     };
 
-    match vfs::mount_ext4_block_at(mount_point.as_str(), source.as_str()) {
+    match vfs::mount_ext4_block_at(mount_point.as_str(), source.as_str(), readonly) {
         Ok(()) => UserRet::from_success(0),
         Err(VfsError::Driver) | Err(VfsError::NotFound) => UserRet::from_error(ErrNo::ENOENT),
         Err(VfsError::Exists) => UserRet::from_error(ErrNo::EBUSY),

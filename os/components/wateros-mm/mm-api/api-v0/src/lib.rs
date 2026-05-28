@@ -8,6 +8,8 @@
 
 #![no_std]
 
+extern crate alloc;
+
 pub mod addr;
 pub mod error;
 pub mod flags;
@@ -18,6 +20,7 @@ pub mod frame_allocator;
 pub mod user_access;
 
 pub mod brk;
+pub mod elf_user_stack;
 pub mod kernel_bringup;
 pub mod kernel_satp;
 pub mod mmap;

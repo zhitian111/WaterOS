@@ -51,8 +51,8 @@ pub fn unlink_absolute(path: &str, remove_dir: bool) -> VfsResult<()> {
 
 /// 将 ext4 块设备挂到绝对路径 `mount_point`。
 #[cfg(feature = "bridge-fs-api")]
-pub fn mount_ext4_block_at(mount_point: &str, block_dev: &str) -> VfsResult<()> {
-    impl_fs_bridge::mount_ext4_block_at(mount_point, block_dev)
+pub fn mount_ext4_block_at(mount_point: &str, block_dev: &str, readonly: bool) -> VfsResult<()> {
+    impl_fs_bridge::mount_ext4_block_at(mount_point, block_dev, readonly)
 }
 
 /// 卸载 `mount_point`。

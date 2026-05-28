@@ -19,20 +19,20 @@
 | `close` | 已接入 | 关闭动态 fd。 |
 | `fstat` | 部分接入 | 128B `kstat` 布局；动态 fd 与 stdio 元数据；依赖 open 成功。 |
 | `lseek` | 部分接入 | 支持普通 VFS handle；pipe 等返回 `ESPIPE`。 |
-| `dup` | 待实现 | 需要复制 fd handle，并维护引用/关闭语义。 |
-| `dup2`/`dup3` | 待实现 | `basic` 的 `dup2` wrapper 使用 `dup3(old, new, 0)`。 |
-| `pipe`/`pipe2` | 部分接入 | 已创建 pipe fd 对；需要和 `fork` 后 fd 继承联调。 |
-| `getdents64` | 待实现 | `getdents` 测例依赖目录枚举和 `linux_dirent64` 布局。 |
-| `mkdir`/`mkdirat` | 部分接入 | `mkdirat` 经 `vfs::mkdir_at_current` 走全局 RW 根卷；仅 `AT_FDCWD`。 |
-| `unlink`/`unlinkat` | 待实现 | 需要删除目录项和打开文件生命周期语义。 |
-| `mount` | 待实现 | basic 期可先支持赛题所需最小挂载/伪成功策略。 |
-| `umount`/`umount2` | 待实现 | 与 `mount` 成对。 |
+| `dup` | 已接入 | `vfs::fd::dup_fd`。 |
+| `dup2`/`dup3` | 已接入 | `dup3`；`dup2` wrapper 使用 `dup3(old, new, 0)`。 |
+| `pipe`/`pipe2` | 部分接入 | pipe fd 对；fork 经 `copy_fd_table_from_parent` 继承。 |
+| `getdents64` | 部分接入 | `linux_dirent64`；目录 open 须 `O_DIRECTORY`（否则 `EISDIR`）。 |
+| `mkdir`/`mkdirat` | 部分接入 | `mkdirat` 仅 `AT_FDCWD`；RO 辅助卷返回 `EROFS`。 |
+| `unlink`/`unlinkat` | 部分接入 | `unlinkat` 经 VFS；RO 辅助卷 `EROFS`。 |
+| `mount` | 部分接入 | `MS_RDONLY` → `mount_aux_ro` + 辅助 RO 表；否则 RW。 |
+| `umount`/`umount2` | 部分接入 | `vfs::unmount_at`。 |
 | `brk` | 部分接入 | 有 Sv39 用户地址空间路径；无句柄时仍有假顶 fallback。 |
 | `mmap` | 部分接入 | 支持匿名/文件映射骨架；共享写回、权限边界仍需补强。 |
 | `munmap` | 部分接入 | 走 MM `MmapOps`。 |
 | `mprotect` | 部分接入 | libc/动态链接后续会继续依赖。 |
-| `clone`/`fork` | 待实现 | basic 的 `fork()` 实际调用 `clone(SIGCHLD, 0)`。 |
-| `execve` | 待实现 | 需要替换当前用户地址空间、argv/envp 拷贝和 fd 继承规则。 |
+| `clone`/`fork` | 部分接入 | `fork_user_aspace` + 子进程保留父 fork 点 `user_sp`；继承 cwd/fd。 |
+| `execve` | 部分接入 | 替换地址空间/入口/栈；CLOEXEC 等待关闭未完整。 |
 | `exit`/`exit_group` | 已接入 | 目前同一路径退出当前任务。 |
 | `wait`/`wait4` | 部分接入 | 支持最小父子等待和 `WNOHANG`。 |
 | `sched_yield` | 已接入 | 映射到 `task::yield_now()`。 |
@@ -45,7 +45,7 @@
 | `times` | 部分接入 | 返回当前 tick 和最小 `tms`。 |
 | `getcwd` | 部分接入 | 依赖 per-task cwd 注册。 |
 | `chdir` | 已接入 | 经 `vfs::cwd::chdir_current`；目标须为已存在目录。 |
-| `uname` | 待实现 | 需要填充 Linux `utsname` 结构。 |
+| `uname` | 部分接入 | 固定 WaterOS `utsname` 字段。 |
 
 ## busybox/libc/benchmark 后续常见项
 

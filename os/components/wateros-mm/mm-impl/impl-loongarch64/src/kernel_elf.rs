@@ -56,9 +56,11 @@ fn map_vfs_to_root_vol(e : VfsError) -> RootVolumeReadError {
         VfsError::Driver => RootVolumeReadError::Driver,
         VfsError::Corrupt => RootVolumeReadError::Corrupt,
         VfsError::Io => RootVolumeReadError::Io,
-        VfsError::BadFd | VfsError::WouldBlock | VfsError::BrokenPipe | VfsError::NoTask => {
-            RootVolumeReadError::Unsupported
-        }
+        VfsError::BadFd
+        | VfsError::WouldBlock
+        | VfsError::BrokenPipe
+        | VfsError::NoTask
+        | VfsError::ReadOnlyFs => RootVolumeReadError::Unsupported,
     }
 }
 

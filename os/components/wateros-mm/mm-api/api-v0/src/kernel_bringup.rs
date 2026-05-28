@@ -62,6 +62,17 @@ impl From<MmError> for LoadElfError {
     }
 }
 
+/// [`crate::elf_user_stack::prepare_elf_user_stack`] 失败原因。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrepareUserStackError {
+    /// 用户栈向下增长越界。
+    StackOverflow,
+    /// 写入用户栈失败（未映射或权限不足）。
+    AccessViolation,
+    /// `LoadedElf::user_aspace_ptr` 为 0，无法访问用户地址空间。
+    NoUserAspace,
+}
+
 /// 从根 FS 装载后的用户 ELF 视图（独立用户地址空间，**4 KiB 页**；具体分页格式由 mm-impl 决定）。
 ///
 /// 虚拟地址区间与栈顶等由实现固定或计算；用户入口在 `entry_pc`，须在 **`satp` 已安装且 U 态可执行映射** 下跳转到该 PC。
