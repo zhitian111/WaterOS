@@ -1,8 +1,5 @@
 [workspace]
-    members = [
-        "./syscall-api/api-v0/",
-        "./syscall-impl/impl-kernel/",
-    ]
+    members = [ "./syscall-api/api-v0/", "./syscall-impl/impl-kernel/" ]
 
 [package]
     name = "wateros-syscall"
@@ -15,19 +12,15 @@
     impl-kernel = { path = "./syscall-impl/impl-kernel/", package = "wateros-syscall-impl-kernel", default-features = false, optional = true }
 
 [features]
-    api-v0 = [ "dep:abi", "abi/api-v0", "dep:api-v0", "impl-kernel?/api-v0" ]
-    default = []
+    api-v0 = [ "abi/api-v0", "dep:abi", "dep:api-v0", "impl-kernel?/api-v0" ]
+    default = [  ]
     impl-kernel = [ "api-v0", "dep:impl-kernel", "impl-kernel/fd-session" ]
     impl-loongarch64 = [
         "api-v0",
         "impl-kernel",
         "impl-kernel/impl-loongarch64",
     ]
-    impl-riscv64 = [
-        "api-v0",
-        "impl-kernel",
-        "impl-kernel/impl-riscv64",
-    ]
+    impl-riscv64 = [ "api-v0", "impl-kernel", "impl-kernel/impl-riscv64" ]
 
 [profile.dev]
     panic = "abort"

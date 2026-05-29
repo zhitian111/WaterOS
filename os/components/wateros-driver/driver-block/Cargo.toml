@@ -16,7 +16,7 @@
 [features]
     api-v0 = [ "impl-dummy/api-v0" ]
     default = [ "api-v0", "impl-virtio-mmio" ]
+    impl-block-cache = [ "dep:impl-block-cache" ]
     impl-dummy = [  ]
     impl-virtio-mmio = [ "dep:impl-virtio-mmio" ]
     impl-virtio-pci = [ "dep:impl-virtio-pci" ]
-    impl-block-cache = [ "dep:impl-block-cache" ]

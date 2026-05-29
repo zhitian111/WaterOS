@@ -28,41 +28,41 @@
 
 [features]
     default = [ "qemu-riscv64-opensbi" ]
-    vfs-bridge = [ "vfs/bridge-fs-api" ]
     fd-session = [ "vfs/fd-session" ]
-    impl-sv39 = [ "mm/impl-sv39" ]
     impl-loongarch64 = [ "mm/impl-loongarch64" ]
+    impl-sv39 = [ "mm/impl-sv39" ]
     qemu-loongarch64-virt = [
+        "abi/impl-linux-loongarch64",
+        "cred/api-v0",
+        "cred/impl-root",
+        "dep:cred",
         "dep:driver",
         "dep:fs",
         "dep:ipc",
         "dep:mm",
         "dep:vfs",
-        "dep:cred",
-        "vfs-bridge",
-        "abi/impl-linux-loongarch64",
-        "cred/api-v0",
-        "cred/impl-root",
-        "fd-session",
-        "vfs/impl-loongarch64",
         "driver/impl-qemu-loongarch64-virt",
+        "fd-session",
         "fs/api-v0",
         "fs/impl-devfs",
         "fs/impl-ext4",
+        "impl-loongarch64",
+        "ipc/impl-loongarch64",
+        "ipc/pipe",
+        "mm/api-v0",
+        "mm/impl-loongarch64",
+        "mm/vfs-root-read",
         "platform/impl-qemu-loongarch64-virt",
-        "runtime/impl-info",
         "runtime/impl-firmware-console",
+        "runtime/impl-info",
         "syscall/impl-loongarch64",
         "task/api-v0",
         "task/impl-core",
         "task/impl-round-robin",
-        "impl-loongarch64",
-        "mm/api-v0",
-        "mm/impl-loongarch64",
-        "mm/vfs-root-read",
-        "ipc/impl-loongarch64",
-        "ipc/pipe",
+        "vfs-bridge",
+        "vfs/impl-loongarch64",
     ]
+    vfs-bridge = [ "vfs/bridge-fs-api" ]
     # 启用阻塞式伪 shell：`pseudo_shell::run_pseudo_shell`；需自行在合适上下文调用。
     pseudo-shell = [ "dep:pseudo_shell" ]
     qemu-riscv64-opensbi = [
@@ -71,14 +71,13 @@
         "dep:ipc",
         "dep:mm",
         # "dep:utils",
-        "dep:vfs",
-        "dep:cred",
-        "vfs-bridge",
-        "fd-session",
+        "abi/api-v0",
         "cred/api-v0",
         "cred/impl-root",
-        "abi/api-v0",
+        "dep:cred",
+        "dep:vfs",
         "driver/impl-qemu-riscv64-opensbi",
+        "fd-session",
         "fs/api-v0",
         "fs/impl-devfs",
         "fs/impl-ext4",
@@ -86,6 +85,7 @@
         "ipc/impl-dummy",
         "ipc/impl-riscv64",
         "ipc/pipe",
+        "vfs-bridge",
         # 根 crate 的 `impl-sv39`：其它 crate（如 `task`）里 `#[cfg(feature = "impl-sv39")]` 依赖此 flag。
         "impl-sv39",
         "mm/api-v0",
@@ -94,12 +94,12 @@
         "platform/impl-qemu-riscv64-opensbi",
         "runtime/impl-firmware-opensbi",
         #"runtime/impl-trace",
+        "abi/impl-linux-riscv64",
+        "fd-session",
         "runtime/impl-info",
         "syscall/impl-riscv64",
-        "fd-session",
-        "vfs/impl-riscv64",
         "task/api-v0",
         "task/impl-core",
         "task/impl-round-robin",
-        "abi/impl-linux-riscv64",
+        "vfs/impl-riscv64",
     ]

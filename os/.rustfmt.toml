@@ -14,16 +14,16 @@ fn_call_width = 40                  # 函数调用参数换行阈值
 attr_fn_like_width = 70             # 属性宏参数换行宽度
 struct_lit_width = 18               # 结构体字面量单行最大宽度
 struct_variant_width = 35           # 结构体变体单行最大宽度
-array_width = 60                    # 数组/元组换行宽度阈值
+array_width = 0                    # 数组始终垂直展开，避免注释行被合并为 /* */ 块
 chain_width = 20                    # 方法链换行宽度
 single_line_if_else_max_width = 50  # if-else单行最大宽度
 single_line_let_else_max_width = 50 # let-else单行最大宽度
 # 注释处理 
-wrap_comments = true                # 自动换行注释（true/false）
+wrap_comments = false               # 不折行/改写注释，配合 array_width 保留逐行 //
 format_code_in_doc_comments = true  # 格式化文档注释中的代码块
 doc_comment_code_block_width = 100  # 文档代码块最大宽度
 comment_width = 80                  # 注释行最大宽度
-normalize_comments = true           # 标准化注释格式（删除多余空格）
+normalize_comments = false           # 保留逐行 // 注释，不标准化为块注释
 normalize_doc_attributes = false    # 标准化文档属性格式
 
 # 字符串与字面量 
@@ -129,3 +129,4 @@ error_on_unformatted = false        # 未格式化代码不报错
 ignore = []                         # 忽略文件列表（正则表达式）
 emit_mode = "Files"                 # 输出模式（Files/Stdout）
 make_backup = false                 # 不生成备份文件
+

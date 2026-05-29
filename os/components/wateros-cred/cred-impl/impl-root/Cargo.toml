@@ -8,5 +8,5 @@
     base = { path = "../../../wateros-base/", package = "wateros-base", default-features = true }
 
 [features]
-    api-v0 = []
-    default = ["api-v0"]
+    api-v0 = [  ]
+    default = [ "api-v0" ]

@@ -9,18 +9,10 @@
 
 [features]
     api-v0 = [ "dep:api-v0", "impl-task?/api-v0" ]
-    default = []
+    default = [  ]
+    impl-loongarch64 = [ "api-v0", "impl-task", "impl-task/impl-loongarch64" ]
+    impl-riscv64 = [ "api-v0", "impl-task", "impl-task/impl-riscv64" ]
     impl-task = [ "api-v0", "dep:impl-task" ]
-    impl-loongarch64 = [
-        "api-v0",
-        "impl-task",
-        "impl-task/impl-loongarch64",
-    ]
-    impl-riscv64 = [
-        "api-v0",
-        "impl-task",
-        "impl-task/impl-riscv64",
-    ]
 
 [profile.dev]
     panic = "abort"

@@ -8,7 +8,7 @@
     console = { path = "../runtime-console/", package = "wateros-runtime-console", default-features = false }
 
 [features]
-    default = []
+    default = [  ]
     impl-dummy = [ "console/impl-dummy", "firmware/impl-dummy" ]
     impl-firmware-console = [
         "console/impl-firmware-console",

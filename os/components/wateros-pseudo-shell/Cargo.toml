@@ -11,4 +11,4 @@
     vfs = { path = "../wateros-vfs", package = "wateros-vfs", default-features = true }
 
 [features]
-    default = ["cred/impl-root"]
+    default = [ "cred/impl-root" ]

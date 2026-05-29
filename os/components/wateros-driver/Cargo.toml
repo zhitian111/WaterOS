@@ -1,4 +1,5 @@
 [workspace]
+    exclude = [ "./driver-block/block-impl/impl-block-cache/" ]
     members = [
         "./driver-api/api-v0/",
         "./driver-block/",
@@ -10,15 +11,14 @@
         "./driver-character/character-api/api-v0/",
         "./driver-character/character-impl/impl-dummy/",
         "./driver-impl/impl-dummy/",
-        "./driver-impl/impl-qemu-riscv64-opensbi/",
         "./driver-impl/impl-qemu-loongarch64-virt/",
+        "./driver-impl/impl-qemu-riscv64-opensbi/",
         "./driver-network/",
         "./driver-network/network-api/api-v0/",
         "./driver-network/network-impl/impl-dummy/",
+        "./driver-network/network-impl/impl-smoltcp/",
         "./driver-network/network-impl/impl-virtio-mmio/",
-    "./driver-network/network-impl/impl-smoltcp/",
     ]
-    exclude = [ "./driver-block/block-impl/impl-block-cache/" ]
 [package]
     name = "wateros-driver"
     version = "0.1.0"
@@ -40,15 +40,21 @@
         "block/api-v0",
         "character/api-v0",
         "impl-dummy/api-v0",
-        "impl-qemu-riscv64-opensbi/api-v0",
         "impl-qemu-loongarch64-virt/api-v0",
+        "impl-qemu-riscv64-opensbi/api-v0",
         "network/api-v0",
     ]
     default = [ "api-v0" ]
+    impl-block-cache = [
+        "block/impl-block-cache",
+        "impl-qemu-riscv64-opensbi/block-cache",
+    ]
     impl-dummy = [  ]
-    impl-block-cache = [ "block/impl-block-cache", "impl-qemu-riscv64-opensbi/block-cache" ]
-    impl-qemu-riscv64-opensbi = [ "block/impl-virtio-mmio", "network/impl-virtio-mmio" ]
     impl-qemu-loongarch64-virt = [ "block/impl-virtio-pci" ]
+    impl-qemu-riscv64-opensbi = [
+        "block/impl-virtio-mmio",
+        "network/impl-virtio-mmio",
+    ]
 
 [profile.dev]
     panic = "abort"

@@ -86,8 +86,9 @@ fn warn_missing_basic_assets() {
     {
         match view.exists(path) {
             Ok(true) => info!("[{LOG_TAG}] rootfs asset present: {path}"),
-            Ok(false) => warn!("[{LOG_TAG}] rootfs asset MISSING: {path} (oscomp fstat/openat \
-                                may fail)"),
+            Ok(false) => {
+                warn!("[{LOG_TAG}] rootfs asset MISSING: {path} (oscomp fstat/openat may fail)")
+            }
             Err(e) => warn!("[{LOG_TAG}] rootfs check {path}: {e:?}"),
         }
     }

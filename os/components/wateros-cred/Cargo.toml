@@ -1,8 +1,5 @@
 [workspace]
-    members = [
-        "./cred-api/api-v0/",
-        "./cred-impl/impl-root/",
-    ]
+    members = [ "./cred-api/api-v0/", "./cred-impl/impl-root/" ]
 
 [package]
     name = "wateros-cred"
@@ -15,9 +12,9 @@
     task = { path = "../wateros-task/", package = "wateros-task", default-features = false, optional = true }
 
 [features]
-    api-v0 = []
-    default = ["api-v0", "impl-root"]
-    impl-root = ["api-v0", "dep:task", "task/api-v0"]
+    api-v0 = [  ]
+    default = [ "api-v0", "impl-root" ]
+    impl-root = [ "api-v0", "dep:task", "task/api-v0" ]
 
 [profile.dev]
     panic = "abort"

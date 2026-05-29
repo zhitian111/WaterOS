@@ -22,5 +22,5 @@
 
 [features]
     api-v0 = [  ]
-    default = [ "api-v0" ]
     block-cache = [ "block/impl-block-cache" ]
+    default = [ "api-v0" ]

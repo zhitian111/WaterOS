@@ -16,8 +16,7 @@ pub const LIBC_PREFIXES : &[&str] = &["/glibc", "/musl"];
 pub fn spawn_user_task_from_loaded_elf_with_argv(loaded : &LoadedElf,
                                                  argv : &[&str],
                                                  envp : &[&str])
-                                                 -> Result<task::TaskId,
-                                                            PrepareUserStackError> {
+                                                 -> Result<task::TaskId, PrepareUserStackError> {
     let sp = mm::kernel_mm::prepare_elf_user_stack(loaded, argv, envp)?;
     let spec = task::user_task_from_loaded_elf(loaded).with_initial_user_sp(sp);
     Ok(task::spawn_user_task(spec))
@@ -57,17 +56,16 @@ pub fn run_one_elf_argv(log_tag : &str, elf_path : &str, argv : &[&str]) {
     info!("[{log_tag}] START path={elf_path} tid={tid}");
 
     task::wait_for_task_exit(tid);
-    let exit_code = task::reap_exited_task(tid)
-                        .map(|e| {
-                            cred::drop_task_cred(e.id);
-                            #[cfg(feature = "vfs-bridge")]
-                            {
-                                vfs::cwd::drop_task_cwd(e.id);
-                                vfs::fd::drop_task_fd_table(e.id);
-                            }
-                            e.exit_code
-                        })
-                        .unwrap_or(-1);
+    let exit_code = task::reap_exited_task(tid).map(|e| {
+                                                   cred::drop_task_cred(e.id);
+                                                   #[cfg(feature = "vfs-bridge")]
+                                                   {
+                                                       vfs::cwd::drop_task_cwd(e.id);
+                                                       vfs::fd::drop_task_fd_table(e.id);
+                                                   }
+                                                   e.exit_code
+                                               })
+                                               .unwrap_or(-1);
 
     info!("[{log_tag}] END path={elf_path} exit_code={exit_code}");
 }
@@ -99,7 +97,9 @@ pub fn run_one_busybox_script(log_tag : &str, script_path : &str) {
         return;
     }
 
-    let argv : Vec<&str> = vec![busybox_path.as_str(), "sh", script_path];
+    let argv : Vec<&str> = vec![busybox_path.as_str(),
+                                "sh",
+                                script_path];
     run_one_elf_argv(log_tag, busybox_path.as_str(), &argv);
 }
 

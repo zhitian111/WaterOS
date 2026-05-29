@@ -18,17 +18,9 @@
     spin = "0.10.0"
 
 [features]
-    api-v0 = [
-        "api-v0/api-v0",
-        "abi/api-v0",
-        "fd-session",
-    ]
+    api-v0 = [ "abi/api-v0", "api-v0/api-v0", "fd-session" ]
+    cred-session = [ "cred/api-v0", "cred/impl-root", "dep:cred" ]
     default = [ "api-v0" ]
-    cred-session = [
-        "dep:cred",
-        "cred/api-v0",
-        "cred/impl-root",
-    ]
     fd-session = [
         "cred-session",
         "dep:ipc",
@@ -40,22 +32,22 @@
         "vfs/fd-session",
     ]
     impl-loongarch64 = [
-        "api-v0",
         "abi/api-v0",
+        "api-v0",
+        "fd-session",
         "ipc/impl-loongarch64",
         "socket-net",
         "task/api-v0",
         "task/impl-core",
-        "fd-session",
     ]
     impl-riscv64 = [
-        "api-v0",
         "abi/api-v0",
+        "api-v0",
+        "fd-session",
         "ipc/impl-riscv64",
         "socket-net",
         "task/api-v0",
         "task/impl-core",
-        "fd-session",
     ]
     socket-net = [
         "dep:driver",

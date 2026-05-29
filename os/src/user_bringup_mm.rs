@@ -31,12 +31,13 @@ pub fn run_stage_02() {
         info!("[mm-bringup] will try {n} ELF(s) under /glibc/basic/ and /musl/basic/");
         info!("[mm-bringup] spawn only enqueues user tasks; CPU-side user code runs after \
                task::run_first_task()");
-        for path in MM_GLIBC_PATHS.iter().chain(MM_MUSL_PATHS) {
+        for path in MM_GLIBC_PATHS.iter()
+                                  .chain(MM_MUSL_PATHS)
+        {
             match mm::kernel_mm::from_elf_path(path) {
                 Ok(loaded) => {
                     info!("[mm-bringup] loaded path={path} entry={:#x} image=[{:#x},+{:#x}) \
-                           stack=[{:#x},{:#x}) brk=[{:#x},{:#x}) mmap_base={:#x} \
-                           aspace_ptr={:#x}",
+                           stack=[{:#x},{:#x}) brk=[{:#x},{:#x}) mmap_base={:#x} aspace_ptr={:#x}",
                           loaded.entry_pc,
                           loaded.image_base,
                           loaded.image_size,

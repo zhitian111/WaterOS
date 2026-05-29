@@ -22,9 +22,13 @@
     runtime-serial = { path = "./runtime-serial/", package = "wateros-runtime-serial", default-features = true, optional = true }
 
 [features]
-    default = []
+    default = [  ]
     impl-debug = [ "logging/impl-debug" ]
-    impl-dummy = [ "console/impl-dummy", "logging/impl-dummy", "panic/impl-dummy" ]
+    impl-dummy = [
+        "console/impl-dummy",
+        "logging/impl-dummy",
+        "panic/impl-dummy",
+    ]
     impl-error = [ "logging/impl-error" ]
     impl-firmware-console = [
         "console/impl-firmware-console",
