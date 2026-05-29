@@ -12,9 +12,10 @@
 //! 3. 初始化任务、注册组合层 trap 路由（`trap_handler::init`）与内核 trap 的
 //!    `satp`，随后 `driver::active_impl::init_after_boot`；成功则挂载 `fs`。
 //! 4. 在驱动与 `fs::init`（探测 + 注入 impl，不挂载）成功后，先跑
-//!    [`user_bringup_bus::run`]：在总线内 **RW 挂载 ext4 根卷**，再
-//!    [`crate::user_bringup_basic::run_stage_basic`] 登记内核 runner，直接执行
-//!    **`/{glibc,musl}/basic/clone`**；随后 `fs::test()` 等烟测。
+//!    [`user_bringup_bus::run`]：在总线内 **RW 挂载 ext4 根卷**，再按总线内
+//!    登记顺序执行 **`stage-basic`**（直接装载 **`/{glibc,musl}/basic/*` ELF**）、
+//!    **`stage-busybox`**（busybox + `*_testcode.sh`）等阶段（不需要的注释掉）；
+//!    随后 `fs::test()` 等烟测。
 //! 5. 开启定时器中断后通过 [`task::run_first_task`] **首次**从引导上下文
 //!    `__switch` 到就绪任务；此前 步骤 3 的 `task::init()`
 //!    已初始化调度器数据结构，但 **CPU 尚未执行** 任何 spawn
@@ -27,8 +28,8 @@
 //! # 自检入口
 //!
 //! 任务相关内核自检的统一入口为 [`self_tests::task::spawn_all`]；用户态
-//! bring-up 里程碑 总线为 [`crate::user_bringup_bus::run`]（内含
-//! **basic clone ELF** 串行调度）；二者在 `kernel_main`
+//! bring-up 里程碑 总线为 [`crate::user_bringup_bus::run`]（内含 **basic ELF** /
+//! **busybox** 等阶段，注释行调控）；二者在 `kernel_main`
 //! 中的先后与语义见模块文档与 `docs/roadmap/riscv64-busybox/wp-init-test-bus.
 //! md`。
 
@@ -49,7 +50,15 @@ mod trap_handler;
 #[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
 mod user_bringup_basic;
 #[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
+mod user_bringup_busybox;
+#[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
 mod user_bringup_bus;
+#[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
+mod user_bringup_common;
+#[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
+mod user_bringup_mm;
+#[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
+mod user_bringup_posix_fs;
 
 /// 将内核 panic 委托给 `wateros-runtime` 的统一 panic 处理（日志/停机策略由
 /// runtime 决定）。
