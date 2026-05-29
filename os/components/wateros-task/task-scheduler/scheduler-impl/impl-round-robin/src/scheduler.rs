@@ -300,6 +300,18 @@ impl RoundRobinScheduler {
         Some(child_id)
     }
 
+    pub(super) fn clone_current_thread(&mut self,
+                                       child_stack : usize,
+                                       tls : usize,
+                                       set_tls : bool)
+                                       -> Option<TaskId> {
+        let child_id = self.registry
+                           .clone_current_thread(child_stack, tls, set_tls)?;
+        self.queues
+            .push_spawned_task(child_id);
+        Some(child_id)
+    }
+
     pub(super) fn execve_current(&mut self,
                                  entry_pc : usize,
                                  sp : usize,

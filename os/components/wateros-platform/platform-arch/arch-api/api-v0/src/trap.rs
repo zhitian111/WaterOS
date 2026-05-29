@@ -136,6 +136,14 @@ pub trait TrapSyscallWrite {
     fn set_syscall_ret(&mut self, ret: UserRet);
 }
 
+/// 线程相关 trap 帧写入接口。
+///
+/// 目前仅暴露用户态 TLS 寄存器写入，用于 `clone(CLONE_SETTLS)` 初始化新线程。
+#[allow(unused)]
+pub trait TrapThreadWrite {
+    fn set_user_tls(&mut self, tls: usize);
+}
+
 /// 架构 trap 上下文的**只读**语义视图（兼容层）。
 ///
 /// 新实现应直接实现 [`TrapFrameRead`] 与 [`TrapSyscallRead`]；本 trait 由 blanket

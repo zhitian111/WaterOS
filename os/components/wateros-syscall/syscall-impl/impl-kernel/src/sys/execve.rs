@@ -38,12 +38,20 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
     let argv = read_string_array(argv_ptr)?;
     let envp = read_string_array(envp_ptr)?;
 
+    let killed_threads = task::terminate_other_threads_for_exec().map_err(|_| ErrNo::EINVAL)?;
+
     let new_elf = mm::kernel_mm::from_elf_path(&abs_path).map_err(|_| ErrNo::ENOENT)?;
 
     let argv_refs : Vec<&str> = argv.iter().map(String::as_str).collect();
     let envp_refs : Vec<&str> = envp.iter().map(String::as_str).collect();
     let new_sp = mm::kernel_mm::prepare_elf_user_stack(&new_elf, &argv_refs, &envp_refs)
         .map_err(prepare_stack_to_errno)?;
+
+    for exited in &killed_threads {
+        vfs::cwd::drop_task_cwd(exited.id);
+        vfs::fd::drop_task_fd_table(exited.id);
+        cred::drop_task_cred(exited.id);
+    }
 
     let old_aspace = task::current_task_user_aspace_ptr();
     mm::kernel_mm::drop_user_aspace(old_aspace);

@@ -164,6 +164,30 @@ impl TaskRegistry {
         Some(child_id)
     }
 
+    /// 从当前用户任务 clone 一个同进程线程。
+    pub(super) fn clone_current_thread(&mut self,
+                                       child_stack : usize,
+                                       tls : usize,
+                                       set_tls : bool)
+                                       -> Option<TaskId> {
+        let parent_id = self.current_task_id?;
+        let child_id = self.next_task_id;
+        self.next_task_id += 1;
+
+        let parent = self.task_table
+                         .task(parent_id);
+        let child = parent.clone_thread_from(child_id, child_stack, tls, set_tls)?;
+
+        self.task_table
+            .insert(Box::new(child));
+        log::trace!("[clone-thread] child={} created parent={} child_stack={:#x} set_tls={}",
+                    child_id,
+                    parent_id,
+                    child_stack,
+                    set_tls);
+        Some(child_id)
+    }
+
     /// execve：替换当前任务的地址空间、入口和栈。
     pub(super) fn execve_current(&mut self,
                                  entry_pc : usize,

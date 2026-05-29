@@ -141,6 +141,12 @@ pub fn fork_current(child_stack : usize,
     with_scheduler(|scheduler| scheduler.fork_current(child_stack, new_aspace_ptr, new_satp))
 }
 
+/// 从当前用户任务 clone 一个同进程线程；线程共享用户地址空间但有独立执行现场。
+pub fn clone_current_thread(child_stack : usize, tls : usize, set_tls : bool) -> Option<TaskId> {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.clone_current_thread(child_stack, tls, set_tls))
+}
+
 /// execve：替换当前任务的进程映像（地址空间、入口、栈）。
 pub fn execve_current(entry_pc : usize,
                       sp : usize,

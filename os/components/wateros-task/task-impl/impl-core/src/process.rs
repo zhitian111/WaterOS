@@ -82,20 +82,17 @@ impl ProcessControlBlock {
 /// 单核 bring-up 用进程注册表。
 pub struct ProcessRegistry {
     processes: Vec<Option<ProcessControlBlock>>,
-    next_pid: usize,
 }
 
 impl ProcessRegistry {
     pub fn new() -> Self {
         Self {
             processes: Vec::new(),
-            next_pid: 1,
         }
     }
 
     pub fn clear(&mut self) {
         self.processes.clear();
-        self.next_pid = 1;
     }
 
     pub fn create_process_for_task(
@@ -109,7 +106,7 @@ impl ProcessRegistry {
             "task {} is already registered in a process",
             task_id
         );
-        let pid = self.alloc_pid();
+        let pid = ProcessId::from_raw(task_id);
         let process = ProcessControlBlock {
             pid,
             task_group_id: TaskGroupId::from_raw(pid.raw()),
@@ -192,10 +189,79 @@ impl ProcessRegistry {
         let Some(process) = self.process_mut(pid) else {
             return false;
         };
-        process.state = ProcessState::Exited(exit_code);
+        process.state = ProcessState::Exiting(exit_code);
         for task in &mut process.tasks {
             task.state = ProcessTaskState::Exited(exit_code);
         }
+        process.state = ProcessState::Exited(exit_code);
+        true
+    }
+
+    pub fn task_ids_for_process(&self, pid: ProcessId) -> Option<Vec<TaskId>> {
+        let process = self.processes.get(pid.raw())?.as_ref()?;
+        Some(process.tasks.iter().map(|task| task.task_id).collect())
+    }
+
+    pub fn retain_only_task_in_process(
+        &mut self,
+        pid: ProcessId,
+        keep_task_id: TaskId,
+    ) -> Option<Vec<TaskId>> {
+        let process = self.process_mut(pid)?;
+        let mut removed = Vec::new();
+        process.tasks.retain(|task| {
+            let keep = task.task_id == keep_task_id;
+            if !keep {
+                removed.push(task.task_id);
+            }
+            keep
+        });
+        process.leader_task_id = keep_task_id;
+        process.state = ProcessState::Running;
+        Some(removed)
+    }
+
+    pub fn set_task_clear_child_tid(
+        &mut self,
+        task_id: TaskId,
+        clear_child_tid: Option<TaskClearTid>,
+    ) -> bool {
+        for process in self
+            .processes
+            .iter_mut()
+            .filter_map(|slot| slot.as_mut())
+        {
+            let Some(task) = process.tasks.iter_mut().find(|task| task.task_id == task_id) else {
+                continue;
+            };
+            task.clear_child_tid = clear_child_tid;
+            return true;
+        }
+        false
+    }
+
+    pub fn task_clear_child_tid(&self, task_id: TaskId) -> Option<TaskClearTid> {
+        self.processes
+            .iter()
+            .filter_map(|slot| slot.as_ref())
+            .find_map(|process| {
+                process
+                    .tasks
+                    .iter()
+                    .find(|task| task.task_id == task_id)
+                    .and_then(|task| task.clear_child_tid)
+            })
+    }
+
+    pub fn update_process_address_space(
+        &mut self,
+        pid: ProcessId,
+        address_space: Option<AddressSpaceRef>,
+    ) -> bool {
+        let Some(process) = self.process_mut(pid) else {
+            return false;
+        };
+        process.address_space = address_space;
         true
     }
 
@@ -213,10 +279,46 @@ impl ProcessRegistry {
             .find_map(|process| process.task_descriptor(task_id))
     }
 
-    fn alloc_pid(&mut self) -> ProcessId {
-        let pid = ProcessId::from_raw(self.next_pid);
-        self.next_pid += 1;
-        pid
+    pub fn leader_task_for_process(&self, pid: ProcessId) -> Option<TaskId> {
+        self.processes
+            .get(pid.raw())
+            .and_then(|slot| slot.as_ref())
+            .map(|process| process.leader_task_id)
+    }
+
+    pub fn find_exited_child_process(&self, parent_pid: ProcessId) -> Option<ProcessDescriptor> {
+        self.processes
+            .iter()
+            .filter_map(|slot| slot.as_ref())
+            .find(|process| {
+                process.parent_pid == Some(parent_pid) &&
+                matches!(process.state, ProcessState::Exited(_))
+            })
+            .map(ProcessControlBlock::descriptor)
+    }
+
+    pub fn has_child_process(&self, parent_pid: ProcessId) -> bool {
+        self.processes
+            .iter()
+            .filter_map(|slot| slot.as_ref())
+            .any(|process| process.parent_pid == Some(parent_pid))
+    }
+
+    pub fn reap_process(&mut self, pid: ProcessId) -> Option<ProcessDescriptor> {
+        self.reap_process_with_tasks(pid)
+            .map(|(descriptor, _)| descriptor)
+    }
+
+    pub fn reap_process_with_tasks(&mut self, pid: ProcessId) -> Option<(ProcessDescriptor, Vec<TaskId>)> {
+        let slot = self.processes.get_mut(pid.raw())?;
+        let process = slot.as_ref()?;
+        if !matches!(process.state, ProcessState::Exited(_)) {
+            return None;
+        }
+        slot.take().map(|process| {
+            let task_ids = process.tasks.iter().map(|task| task.task_id).collect();
+            (process.descriptor(), task_ids)
+        })
     }
 
     fn insert_process(&mut self, process: ProcessControlBlock) {
@@ -274,6 +376,38 @@ pub fn lookup_task(task_id: TaskId) -> Option<ProcessTaskDescriptor> {
     with_process_registry(|registry| registry.lookup_task(task_id))
 }
 
+pub fn leader_task_for_process(pid: ProcessId) -> Option<TaskId> {
+    with_process_registry(|registry| registry.leader_task_for_process(pid))
+}
+
+pub fn task_ids_for_process(pid: ProcessId) -> Option<Vec<TaskId>> {
+    with_process_registry(|registry| registry.task_ids_for_process(pid))
+}
+
+pub fn find_exited_child_process(parent_pid: ProcessId) -> Option<ProcessDescriptor> {
+    with_process_registry(|registry| registry.find_exited_child_process(parent_pid))
+}
+
+pub fn has_child_process(parent_pid: ProcessId) -> bool {
+    with_process_registry(|registry| registry.has_child_process(parent_pid))
+}
+
+pub fn set_task_clear_child_tid(task_id: TaskId, clear_child_tid: Option<TaskClearTid>) -> bool {
+    with_process_registry(|registry| registry.set_task_clear_child_tid(task_id, clear_child_tid))
+}
+
+pub fn task_clear_child_tid(task_id: TaskId) -> Option<TaskClearTid> {
+    with_process_registry(|registry| registry.task_clear_child_tid(task_id))
+}
+
+pub fn reap_process(pid: ProcessId) -> Option<ProcessDescriptor> {
+    with_process_registry(|registry| registry.reap_process(pid))
+}
+
+pub fn reap_process_with_tasks(pid: ProcessId) -> Option<(ProcessDescriptor, Vec<TaskId>)> {
+    with_process_registry(|registry| registry.reap_process_with_tasks(pid))
+}
+
 pub fn self_test() {
     let mut registry = ProcessRegistry::new();
     let aspace = Some(AddressSpaceRef::new(
@@ -282,6 +416,7 @@ pub fn self_test() {
     ));
 
     let pid = registry.create_process_for_task(100, None, aspace);
+    assert_eq!(pid.raw(), 100);
     let leader = registry.lookup_task(100).expect("leader task must be indexed");
     assert_eq!(leader.task_id, 100);
     assert_eq!(leader.pid, pid);
@@ -309,10 +444,12 @@ pub fn self_test() {
     let forked = registry
         .create_process_like_fork(pid, 102, aspace)
         .expect("fork-style process");
+    assert_eq!(forked.raw(), 102);
     let forked_leader = registry.lookup_task(102).expect("forked leader");
     assert_eq!(forked_leader.task_id, 102);
     assert_eq!(forked_leader.pid, forked);
     assert_eq!(registry.lookup_process(forked).unwrap().parent_pid, Some(pid));
+    assert!(registry.has_child_process(pid));
 
     assert!(registry.mark_task_exited(101, 7));
     assert!(matches!(
@@ -324,4 +461,11 @@ pub fn self_test() {
         registry.lookup_process(pid).unwrap().state,
         ProcessState::Exited(9)
     ));
+    assert!(registry.set_task_clear_child_tid(100, Some(TaskClearTid::new(0x5000))));
+    assert_eq!(registry.task_clear_child_tid(100).unwrap().user_addr(), 0x5000);
+
+    assert!(registry.mark_task_exited(102, 3));
+    assert_eq!(registry.find_exited_child_process(pid).unwrap().pid, forked);
+    assert!(registry.reap_process(forked).is_some());
+    assert!(!registry.has_child_process(pid));
 }

@@ -13,8 +13,8 @@
 //!    `satp`，随后 `driver::active_impl::init_after_boot`；成功则挂载 `fs`。
 //! 4. 在驱动与 `fs::init`（探测 + 注入 impl，不挂载）成功后，先跑
 //!    [`user_bringup_bus::run`]：在总线内 **RW 挂载 ext4 根卷**，再
-//!    [`crate::user_bringup_busybox::run_stage_busybox`] 登记内核 runner，串行
-//!    **`busybox sh *_testcode.sh`**（`/glibc` 后 `/musl`）；随后 `fs::test()` 等烟测。
+//!    [`crate::user_bringup_basic::run_stage_basic`] 登记内核 runner，直接执行
+//!    **`/{glibc,musl}/basic/clone`**；随后 `fs::test()` 等烟测。
 //! 5. 开启定时器中断后通过 [`task::run_first_task`] **首次**从引导上下文
 //!    `__switch` 到就绪任务；此前 步骤 3 的 `task::init()`
 //!    已初始化调度器数据结构，但 **CPU 尚未执行** 任何 spawn
@@ -28,7 +28,7 @@
 //!
 //! 任务相关内核自检的统一入口为 [`self_tests::task::spawn_all`]；用户态
 //! bring-up 里程碑 总线为 [`crate::user_bringup_bus::run`]（内含
-//! **busybox + testcode.sh** 串行调度）；二者在 `kernel_main`
+//! **basic clone ELF** 串行调度）；二者在 `kernel_main`
 //! 中的先后与语义见模块文档与 `docs/roadmap/riscv64-busybox/wp-init-test-bus.
 //! md`。
 
@@ -47,8 +47,7 @@ mod self_tests;
 #[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
 mod trap_handler;
 #[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
-#[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
-mod user_bringup_busybox;
+mod user_bringup_basic;
 #[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
 mod user_bringup_bus;
 
@@ -187,9 +186,8 @@ mod qemu_riscv64_opensbi {
 mod qemu_loongarch64_virt {
     //! QEMU LoongArch `virt` 板级的最小 bring-up：与
     //! `impl-qemu-loongarch64-virt` 的 `_start.S`
-    //! 链接后进入 [`kernel_main`]，初始化 runtime/任务、PLV3 syscall smoke
-    //! 与两个内核忙等任务， 再开定时器中断并进入调度。与 RISC-V OpenSBI
-    //! 路径相比暂无真实 MM/FS/ELF loader 接入。
+    //! 链接后进入 [`kernel_main`]，初始化 runtime/任务、MM/FS/ELF bring-up
+    //! 与两个内核忙等任务， 再开定时器中断并进入调度。
     use core::arch::global_asm;
     use core::include_str;
     use runtime::logging::*;
@@ -249,7 +247,9 @@ mod qemu_loongarch64_virt {
         );
         info!("[loongarch64][self-test] mm self-test done");
 
-        // 第一阶段保持 LoongArch 运行在直接地址模式；完整 PGDL/TLB 接管在后续阶段启用。
+        mm::kernel_mm::init(start_ppn, usable_end_ppn, memory_end);
+        info!("[loongarch64][self-test] kernel paging enabled");
+
         let driver_boot = driver::active_impl::init_after_boot();
         if let Err(ref err) = driver_boot {
             warn!(

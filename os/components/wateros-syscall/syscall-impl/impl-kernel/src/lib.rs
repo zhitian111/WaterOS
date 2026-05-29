@@ -41,6 +41,11 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     fn dispatch_exit(args : SyscallArgs) -> isize { sys::sys_exit(args.arg(0) as isize) }
 
     #[inline]
+    fn dispatch_exit_group(args : SyscallArgs) -> isize {
+        sys::sys_exit_group(args.arg(0) as isize)
+    }
+
+    #[inline]
     fn dispatch_read(args : SyscallArgs) -> isize { sys::sys_read(args).0 }
 
     #[inline]
@@ -182,7 +187,7 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     fn dispatch_setrlimit(args : SyscallArgs) -> isize { sys::sys_setrlimit(args).0 }
 
     #[inline]
-    fn dispatch_set_tid_address(_args : SyscallArgs) -> isize { sys::sys_set_tid_address().0 }
+    fn dispatch_set_tid_address(args : SyscallArgs) -> isize { sys::sys_set_tid_address(args).0 }
 
     #[inline]
     fn dispatch_unsupported(kind : api_v0::SyscallKind, syscall_nr : usize, args : SyscallArgs) -> isize {

@@ -23,12 +23,12 @@ const FUTEX_REQUEUE : u32 = 3;
 const FUTEX_PRIVATE_FLAG : u32 = 128;
 const FUTEX_CMD_MASK : u32 = !(FUTEX_PRIVATE_FLAG);
 
-/// 按 futex 用户地址派生的队列键（页对齐以汇聚同一页内的 futex 变量）。
+/// 按 futex 用户地址派生的队列键；同页不同 futex 变量必须互不影响。
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct FutexKey(usize);
 
 impl FutexKey {
-    fn from_uaddr(uaddr : usize) -> Self { Self(uaddr & !0xFFF) }
+    fn from_uaddr(uaddr : usize) -> Self { Self(uaddr) }
 }
 
 // ── 全局 futex 表（单核下无需 Mutex） ─────────────────────────────
@@ -104,6 +104,12 @@ fn futex_wake(uaddr : usize, max_wake : u32, bitset : u32) -> Result<usize, ErrN
         woken += 1;
     }
     Ok(woken)
+}
+
+pub(crate) fn wake_user_addr(uaddr : usize) -> usize {
+    let key = FutexKey::from_uaddr(uaddr);
+    let wq = get_queue(key);
+    wq.wake_all()
 }
 
 // ── 公开入口 ─────────────────────────────────────────────────────

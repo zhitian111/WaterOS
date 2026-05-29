@@ -2,6 +2,8 @@
 //! `gettimeofday`、`clock_gettime`、`times`、`nanosleep`、`uname`、`prctl`、
 //! `getrlimit`/`setrlimit`。
 
+use alloc::vec::Vec;
+
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
@@ -87,19 +89,44 @@ pub(crate) fn sys_yield() -> UserRet {
     UserRet::from_success(0)
 }
 
-pub(crate) fn sys_exit(exit_code : isize) -> isize { task::exit_current(exit_code) }
+pub(crate) fn sys_exit(exit_code : isize) -> isize {
+    if let Some(task_id) = task::current_task_id() {
+        if let Some(clear_child_tid) = task::task_clear_child_tid(task_id) {
+            let addr = clear_child_tid.user_addr();
+            if addr != 0 {
+                let _ = copy_to_user_struct(addr, &0u32);
+                let _ = super::futex::wake_user_addr(addr);
+            }
+        }
+    }
+    task::exit_current(exit_code)
+}
+
+pub(crate) fn sys_exit_group(exit_code : isize) -> isize {
+    if let Some(task_id) = task::current_task_id() {
+        if let Some(clear_child_tid) = task::task_clear_child_tid(task_id) {
+            let addr = clear_child_tid.user_addr();
+            if addr != 0 {
+                let _ = copy_to_user_struct(addr, &0u32);
+                let _ = super::futex::wake_user_addr(addr);
+            }
+        }
+    }
+    task::exit_group_current(exit_code)
+}
 
 pub(crate) fn sys_getpid() -> UserRet {
-    task::current_task_id().map(UserRet::from_success)
-                           .unwrap_or_else(|| UserRet::from_error(ErrNo::ESRCH))
+    task::current_process_task_snapshot().map(|snapshot| UserRet::from_success(snapshot.pid.raw()))
+                                         .unwrap_or_else(|| UserRet::from_error(ErrNo::ESRCH))
 }
 
 pub(crate) fn sys_getppid() -> UserRet {
-    let snapshot = match task::current_task_snapshot() {
+    let snapshot = match task::current_process_snapshot() {
         Some(snapshot) => snapshot,
         None => return UserRet::from_error(ErrNo::ESRCH),
     };
-    UserRet::from_success(snapshot.parent_id
+    UserRet::from_success(snapshot.parent_pid
+                                  .map(|pid| pid.raw())
                                   .unwrap_or(ORPHAN_PARENT_PID))
 }
 
@@ -108,10 +135,19 @@ pub(crate) fn sys_gettid() -> UserRet {
                            .unwrap_or_else(|| UserRet::from_error(ErrNo::ESRCH))
 }
 
-pub(crate) fn sys_set_tid_address() -> UserRet {
-    // 当前 WaterOS 还没有用户线程组和 clear_child_tid 唤醒语义；按 Linux 约定先返回
-    // 当前 tid，地址本身在后续线程/信号工作包中接入 TCB。
-    sys_gettid()
+pub(crate) fn sys_set_tid_address(args : SyscallArgs) -> UserRet {
+    let tid = match task::current_task_id() {
+        Some(tid) => tid,
+        None => return UserRet::from_error(ErrNo::ESRCH),
+    };
+    let user_addr = args.arg(0);
+    let clear_child_tid = if user_addr == 0 {
+        None
+    } else {
+        Some(task::TaskClearTid::new(user_addr))
+    };
+    let _ = task::set_task_clear_child_tid(tid, clear_child_tid);
+    UserRet::from_success(tid)
 }
 
 fn current_tick_for_user_time() -> u64 { task::current_tick().max(1) }
@@ -187,14 +223,34 @@ fn drop_exited_user_aspace(exited : &task::ExitedTask) {
     }
 }
 
-fn finish_wait_result(exited : task::ExitedTask, exit_code_ptr : usize) -> UserRet {
-    match write_exit_code(exit_code_ptr, exited.exit_code) {
+fn drop_exited_task_resources(exited : &task::ExitedTask) {
+    vfs::cwd::drop_task_cwd(exited.id);
+    vfs::fd::drop_task_fd_table(exited.id);
+    cred::drop_task_cred(exited.id);
+}
+
+fn finish_wait_process_result(pid : task::ProcessId,
+                              exited_tasks : Vec<task::ExitedTask>,
+                              exit_code_ptr : usize)
+                              -> UserRet {
+    let Some(status_task) = exited_tasks.iter()
+                                        .find(|task| task.id == pid.raw())
+                                        .or_else(|| exited_tasks.first())
+    else {
+        return UserRet::from_error(ErrNo::ECHILD);
+    };
+    match write_exit_code(exit_code_ptr, status_task.exit_code) {
         Ok(()) => {
-            drop_exited_user_aspace(&exited);
-            vfs::cwd::drop_task_cwd(exited.id);
-            vfs::fd::drop_task_fd_table(exited.id);
-            cred::drop_task_cred(exited.id);
-            UserRet::from_success(exited.id)
+            if let Some(owner) = exited_tasks.iter()
+                                             .find(|task| task.id == pid.raw())
+                                             .or_else(|| exited_tasks.first())
+            {
+                drop_exited_user_aspace(owner);
+            }
+            for exited in &exited_tasks {
+                drop_exited_task_resources(exited);
+            }
+            UserRet::from_success(pid.raw())
         }
         Err(e) => UserRet::from_error(e),
     }
@@ -210,16 +266,20 @@ pub(crate) fn sys_waitpid(args : SyscallArgs) -> UserRet {
     if options & !WNOHANG != 0 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
-    let current_task_id = match task::current_task_id() {
-        Some(task_id) => task_id,
+    let current_process = match task::current_process_snapshot() {
+        Some(process) => process,
         None => return UserRet::from_error(ErrNo::ESRCH),
     };
+    let current_task_id = task::current_task_id().expect("process snapshot requires current task");
     if pid == -1 {
         loop {
-            if let Some(exited) = task::reap_one_exited_child(current_task_id) {
-                return finish_wait_result(exited, exit_code_ptr);
+            if let Some(child) = task::find_exited_child_process(current_process.pid) {
+                let Some(exited) = task::reap_exited_process(child.pid) else {
+                    return UserRet::from_error(ErrNo::ECHILD);
+                };
+                return finish_wait_process_result(child.pid, exited, exit_code_ptr);
             }
-            if !task::has_child(current_task_id) {
+            if !task::has_child_process(current_process.pid) {
                 return UserRet::from_error(ErrNo::ECHILD);
             }
             if nohang {
@@ -232,23 +292,26 @@ pub(crate) fn sys_waitpid(args : SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EINVAL);
     }
 
-    let task_id = pid as usize;
-    match task::task_snapshot(task_id) {
-        Some(snapshot) if snapshot.parent_id == Some(current_task_id) => {}
+    let child_pid = task::ProcessId::from_raw(pid as usize);
+    match task::process_snapshot(child_pid) {
+        Some(snapshot) if snapshot.parent_pid == Some(current_process.pid) => {}
         Some(_) => return UserRet::from_error(ErrNo::ECHILD),
         None => return UserRet::from_error(ErrNo::ECHILD),
     }
+    let Some(leader_task_id) = task::leader_task_for_process(child_pid) else {
+        return UserRet::from_error(ErrNo::ECHILD);
+    };
     loop {
-        if let Some(exited) = task::reap_exited_task(task_id) {
-            return finish_wait_result(exited, exit_code_ptr);
+        if let Some(exited) = task::reap_exited_process(child_pid) {
+            return finish_wait_process_result(child_pid, exited, exit_code_ptr);
         }
-        if task::task_snapshot(task_id).is_none() {
+        if task::process_snapshot(child_pid).is_none() {
             return UserRet::from_error(ErrNo::ECHILD);
         }
         if nohang {
             return UserRet::from_success(0);
         }
-        task::wait_for_task_exit(task_id);
+        task::wait_for_task_exit(leader_task_id);
     }
 }
 

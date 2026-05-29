@@ -11,8 +11,7 @@ use abi::user_ret::UserRet;
 use api_v0::kernel_trap;
 use api_v0::trap::{
     Exception, Interrupt, TrapAddressSpaceWrite, TrapCause, TrapFrameRead, TrapFrameWrite,
-    TrapSyscallRead,
-    TrapSyscallWrite,
+    TrapSyscallRead, TrapSyscallWrite, TrapThreadWrite,
 };
 use core::arch::asm;
 use riscv::register::sstatus;
@@ -197,4 +196,11 @@ impl TrapAddressSpaceWrite for TrapContext {
 
 impl TrapSyscallWrite for TrapContext {
     fn set_syscall_ret(&mut self, ret : UserRet) { self.x[10] = ret.0 as usize; }
+}
+
+impl TrapThreadWrite for TrapContext {
+    fn set_user_tls(&mut self, tls : usize) {
+        // RISC-V psABI: tp is x4.
+        self.x[4] = tls;
+    }
 }

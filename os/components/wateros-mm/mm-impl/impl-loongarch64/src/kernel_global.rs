@@ -20,7 +20,7 @@ extern crate alloc;
 use alloc::boxed::Box;
 use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
-use api_v0::addr::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum, PAGE_SIZE};
+use api_v0::addr::{PhysAddr, VirtAddr, VirtPageNum, PAGE_SIZE};
 use api_v0::address_space::AddressSpaceOps;
 use api_v0::error::MmError;
 use api_v0::perm::PagePerm;
@@ -72,7 +72,7 @@ pub fn kernel_satp() -> usize { api_v0::kernel_satp::get() }
 ///
 /// `ram_end_exclusive` 为物理 RAM 上界（不包含），应与 DTB `/memory` 或
 /// bring-up 约定一致。
-pub fn init(start_ppn : usize, end_ppn : usize, ram_end_exclusive : usize) {
+pub fn init(_start_ppn : usize, _end_ppn : usize, ram_end_exclusive : usize) {
     assert!(ram_end_exclusive > LOONGARCH64_RAM_BASE,
             "kernel_mm: ram_end_exclusive must be above RAM base");
     PHYS_RAM_END_EXCL.store(ram_end_exclusive, Ordering::Release);
@@ -118,17 +118,10 @@ pub fn init(start_ppn : usize, end_ppn : usize, ram_end_exclusive : usize) {
                  PagePerm::R | PagePerm::W,
                  "PCI MMIO");
 
-    // 选一枚位于帧池内的物理页做 PGDL 切换后的翻译与内存一致性探针（与 RAM
-    // 恒等区无重叠的任意 VA）。
-    assert!(start_ppn + 16 < end_ppn,
-            "kernel_mm: probe ppn out of range");
-    let probe_ppn = PhysPageNum(start_ppn + 16);
-    let probe_va = VirtAddr(0x5000_0000usize + 0x2A0);
-    let probe_vpn = probe_va.floor_page();
-    aspace.map_page_to_ppn(probe_vpn,
-                           probe_ppn,
-                           PagePerm::R | PagePerm::W)
-          .expect("kernel_mm: map probe page");
+    // 选一枚帧池内真实 RAM 帧，用已建立的 RAM 恒等映射做 PGDL 切换后的访存探针。
+    // 避免额外低地址 VA 受 LoongArch64 PGDL/PGDH 选择规则影响。
+    let probe_ppn = frame_alloc_result().expect("kernel_mm: frame oom for probe");
+    let probe_va = VirtAddr(probe_ppn.0 * PAGE_SIZE + 0x2A0);
 
     let pgdl_target = aspace.satp_value();
     runtime::logging::trace!("[kernel-mm] identity map RAM [{:#x},{:#x}) MMIO [{:#x},{:#x}) pgdl \

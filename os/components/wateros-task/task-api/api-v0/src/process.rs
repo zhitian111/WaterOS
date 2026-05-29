@@ -51,7 +51,8 @@ impl CloneFlags {
     pub const CLONE_FS: Self = Self(0x0000_0200);
     pub const CLONE_FILES: Self = Self(0x0000_0400);
     pub const CLONE_SIGHAND: Self = Self(0x0000_0800);
-    pub const CLONE_TASK_GROUP: Self = Self(0x0001_0000);
+    pub const CLONE_THREAD: Self = Self(0x0001_0000);
+    pub const CLONE_TASK_GROUP: Self = Self::CLONE_THREAD;
     pub const CLONE_SETTLS: Self = Self(0x0008_0000);
     pub const CLONE_PARENT_SETTID: Self = Self(0x0010_0000);
     pub const CLONE_CHILD_CLEARTID: Self = Self(0x0020_0000);
@@ -175,6 +176,7 @@ pub enum ProcessTaskState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProcessState {
     Running,
+    Exiting(TaskExitCode),
     Exited(TaskExitCode),
 }
 

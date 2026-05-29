@@ -28,6 +28,8 @@
 
 extern crate alloc;
 
+use alloc::vec::Vec;
+
 mod runtime;
 pub mod wait_queue;
 pub use self::wait_queue::WaitQueue;
@@ -76,7 +78,19 @@ pub fn spawn_kernel_task(entry : KernelTaskEntry, arg : usize) -> TaskId {
 
 /// 按给定规格创建一个新的用户任务，并返回分配到的任务号。
 #[inline]
-pub fn spawn_user_task(user : UserTask) -> TaskId { scheduler::spawn_user_task(user) }
+pub fn spawn_user_task(user : UserTask) -> TaskId {
+    let task_id = scheduler::spawn_user_task(user);
+    let parent_pid = current_process_task_snapshot().map(|task| task.pid);
+    let address_space = user_address_space_ref(user);
+    active_impl::with_process_registry(|registry| {
+        registry.create_process_for_task(task_id, parent_pid, address_space);
+    });
+    task_id
+}
+
+/// 兼容旧调用点的用户任务创建别名。
+#[inline]
+pub fn spawn_user_task_spec(user : UserTask) -> TaskId { spawn_user_task(user) }
 
 /// 将 MM ELF loader 产出的地址空间、映像与外部用户栈元数据转换为用户任务规格。
 #[inline]
@@ -163,7 +177,21 @@ pub fn wake_task(task_id : TaskId) -> bool { scheduler::wake_task(task_id) }
 /// 回收指定已退出任务的信息。
 #[inline]
 pub fn reap_exited_task(task_id : TaskId) -> Option<ExitedTask> {
-    scheduler::reap_exited_task(task_id)
+    if let Some(process_task) = active_impl::lookup_task(task_id) {
+        if process_task.pid.raw() == task_id {
+            let process = active_impl::lookup_process(process_task.pid)?;
+            if !matches!(process.state, ProcessState::Exited(_)) {
+                return None;
+            }
+        }
+    }
+    let exited = scheduler::reap_exited_task(task_id)?;
+    if let Some(process_task) = active_impl::lookup_task(task_id) {
+        if process_task.pid.raw() == task_id {
+            let _ = active_impl::reap_process(process_task.pid);
+        }
+    }
+    Some(exited)
 }
 
 /// 从当前用户任务 fork 一个子任务，并返回子任务 id。
@@ -177,7 +205,35 @@ pub fn fork_current(child_stack : usize,
                     new_aspace_ptr : usize,
                     new_satp : usize)
                     -> Option<TaskId> {
-    scheduler::fork_current(child_stack, new_aspace_ptr, new_satp)
+    let parent_pid = current_process_task_snapshot().map(|task| task.pid)?;
+    let child_id = scheduler::fork_current(child_stack, new_aspace_ptr, new_satp)?;
+    let address_space =
+        Some(AddressSpaceRef::new(AddressSpaceHandle::from_raw(new_satp), new_aspace_ptr));
+    active_impl::with_process_registry(|registry| {
+        let _ = registry.create_process_like_fork(parent_pid, child_id, address_space);
+    });
+    Some(child_id)
+}
+
+/// 从当前用户任务 clone 一个同进程线程，并登记到当前进程。
+#[inline]
+pub fn clone_current_thread(child_stack : usize,
+                            tls : usize,
+                            clone_flags : CloneFlags,
+                            clear_child_tid : Option<TaskClearTid>)
+                            -> Option<TaskId> {
+    let process_task = current_process_task_snapshot()?;
+    let child_id = scheduler::clone_current_thread(child_stack,
+                                                   tls,
+                                                   clone_flags.contains(CloneFlags::CLONE_SETTLS))?;
+    active_impl::with_process_registry(|registry| {
+        let _ = registry.add_task_to_process(process_task.pid,
+                                             child_id,
+                                             clone_flags,
+                                             tls,
+                                             clear_child_tid);
+    });
+    Some(child_id)
 }
 
 /// execve：替换当前任务的进程映像。
@@ -188,17 +244,37 @@ pub fn execve_current(entry_pc : usize,
                       user_aspace_ptr : usize,
                       image_info : UserImageInfo,
                       stack_info : UserStack) {
+    let current_pid = current_process_task_snapshot().map(|task| task.pid);
     scheduler::execve_current(entry_pc,
                               sp,
                               satp,
                               user_aspace_ptr,
                               image_info,
-                              stack_info)
+                              stack_info);
+    if let Some(pid) = current_pid {
+        active_impl::with_process_registry(|registry| {
+            let _ = registry.update_process_address_space(
+                pid,
+                Some(AddressSpaceRef::new(AddressSpaceHandle::from_raw(satp), user_aspace_ptr)),
+            );
+        });
+    }
 }
 
 /// 回收一个任意已退出任务的信息。
 #[inline]
-pub fn reap_one_exited_task() -> Option<ExitedTask> { scheduler::reap_one_exited_task() }
+pub fn reap_one_exited_task() -> Option<ExitedTask> {
+    let exited = scheduler::reap_one_exited_task()?;
+    if let Some(process_task) = active_impl::lookup_task(exited.id) {
+        if process_task.pid.raw() == exited.id &&
+           active_impl::lookup_process(process_task.pid)
+               .is_some_and(|process| matches!(process.state, ProcessState::Exited(_)))
+        {
+            let _ = active_impl::reap_process(process_task.pid);
+        }
+    }
+    Some(exited)
+}
 
 /// 回收指定父任务下任意一个已退出子任务的信息。
 #[inline]
@@ -212,12 +288,74 @@ pub fn has_child(parent_id : TaskId) -> bool { scheduler::has_child(parent_id) }
 
 /// 让当前任务以给定退出码结束运行。
 #[inline]
-pub fn exit_current(exit_code : TaskExitCode) -> ! { scheduler::exit_current(exit_code) }
+pub fn exit_current(exit_code : TaskExitCode) -> ! {
+    if let Some(task_id) = current_task_id() {
+        active_impl::with_process_registry(|registry| {
+            let _ = registry.mark_task_exited(task_id, exit_code);
+        });
+    }
+    scheduler::exit_current(exit_code)
+}
+
+/// 以 exit_group 语义终止当前进程内所有线程。
+#[inline]
+pub fn exit_group_current(exit_code : TaskExitCode) -> ! {
+    let current_id = current_task_id().expect("exit_group requires a current task");
+    if let Some(process_task) = current_process_task_snapshot() {
+        let task_ids = active_impl::task_ids_for_process(process_task.pid).unwrap_or_default();
+        active_impl::with_process_registry(|registry| {
+            let _ = registry.mark_process_exiting(process_task.pid, exit_code);
+        });
+        for task_id in task_ids {
+            if task_id != current_id {
+                let _ = scheduler::kill_task(task_id, exit_code);
+            }
+        }
+    }
+    scheduler::exit_current(exit_code)
+}
 
 /// 终止指定任务（非当前任务）。
 #[inline]
 pub fn kill_task(task_id : TaskId, exit_code : TaskExitCode) -> bool {
-    scheduler::kill_task(task_id, exit_code)
+    let killed = scheduler::kill_task(task_id, exit_code);
+    if killed {
+        active_impl::with_process_registry(|registry| {
+            let _ = registry.mark_task_exited(task_id, exit_code);
+        });
+    }
+    killed
+}
+
+/// execve 前清理同进程其它线程；当前保守实现要求多线程 exec 由 leader 发起。
+#[inline]
+pub fn terminate_other_threads_for_exec() -> Result<Vec<ExitedTask>, ()> {
+    let current_id = current_task_id().ok_or(())?;
+    let process_task = current_process_task_snapshot().ok_or(())?;
+    let process = process_snapshot(process_task.pid).ok_or(())?;
+    if process.task_count <= 1 {
+        return Ok(Vec::new());
+    }
+    if process_task.role != ProcessTaskRole::Leader {
+        return Err(());
+    }
+
+    let task_ids = active_impl::task_ids_for_process(process_task.pid).ok_or(())?;
+    let mut reaped = Vec::new();
+    for task_id in task_ids {
+        if task_id == current_id {
+            continue;
+        }
+        if kill_task(task_id, 0) {
+            if let Some(exited) = scheduler::reap_exited_task(task_id) {
+                reaped.push(exited);
+            }
+        }
+    }
+    active_impl::with_process_registry(|registry| {
+        let _ = registry.retain_only_task_in_process(process_task.pid, current_id);
+    });
+    Ok(reaped)
 }
 
 /// 返回当前正在运行任务的任务号。
@@ -237,6 +375,11 @@ pub fn task_snapshot(task_id : TaskId) -> Option<TaskSnapshot> { scheduler::task
 pub fn current_tick() -> TaskTick { scheduler::current_tick() }
 #[inline]
 pub fn current_task_user_aspace_ptr() -> usize { scheduler::current_task_user_aspace_ptr() }
+
+#[inline]
+fn user_address_space_ref(user : UserTask) -> Option<AddressSpaceRef> {
+    Some(AddressSpaceRef::new(user.address_space()?, user.user_aspace_ptr()?))
+}
 
 /// 查询进程语义快照；第一阶段仅供内部 bring-up / 后续 syscall 迁移使用。
 #[inline]
@@ -261,6 +404,55 @@ pub fn process_task_snapshot_by_task(task_id : TaskId) -> Option<ProcessTaskDesc
 pub fn current_process_task_snapshot() -> Option<ProcessTaskDescriptor> {
     let task_id = current_task_id()?;
     process_task_snapshot_by_task(task_id)
+}
+
+/// 当前运行任务所属进程快照。
+#[inline]
+pub fn current_process_snapshot() -> Option<ProcessDescriptor> {
+    let pid = current_process_task_snapshot()?.pid;
+    process_snapshot(pid)
+}
+
+/// 按进程号查找 leader task。
+#[inline]
+pub fn leader_task_for_process(pid : ProcessId) -> Option<TaskId> {
+    active_impl::leader_task_for_process(pid)
+}
+
+/// 查找当前进程下一个已退出子进程。
+#[inline]
+pub fn find_exited_child_process(parent_pid : ProcessId) -> Option<ProcessDescriptor> {
+    active_impl::find_exited_child_process(parent_pid)
+}
+
+/// 判断当前进程是否仍有子进程。
+#[inline]
+pub fn has_child_process(parent_pid : ProcessId) -> bool {
+    active_impl::has_child_process(parent_pid)
+}
+
+/// 回收已退出进程的所有线程 task 与 process registry 记录。
+#[inline]
+pub fn reap_exited_process(pid : ProcessId) -> Option<Vec<ExitedTask>> {
+    let (_process, task_ids) = active_impl::reap_process_with_tasks(pid)?;
+    let mut exited = Vec::new();
+    for task_id in task_ids {
+        if let Some(task) = scheduler::reap_exited_task(task_id) {
+            exited.push(task);
+        }
+    }
+    Some(exited)
+}
+
+/// 更新当前/指定任务的 clear-child-tid 地址。
+#[inline]
+pub fn set_task_clear_child_tid(task_id : TaskId, clear_child_tid : Option<TaskClearTid>) -> bool {
+    active_impl::set_task_clear_child_tid(task_id, clear_child_tid)
+}
+
+#[inline]
+pub fn task_clear_child_tid(task_id : TaskId) -> Option<TaskClearTid> {
+    active_impl::task_clear_child_tid(task_id)
 }
 
 /// 进程 registry 自检。

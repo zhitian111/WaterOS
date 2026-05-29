@@ -31,6 +31,7 @@ pub enum SyscallKind {
     Umount2,
     Yield,
     Exit,
+    ExitGroup,
     Clone,
     Execve,
     WaitPid,
@@ -128,8 +129,10 @@ impl SyscallKind {
             Self::Umount2
         } else if syscall_nr == T::YIELD.raw() {
             Self::Yield
-        } else if syscall_nr == T::EXIT.raw() || syscall_nr == T::EXIT_GROUP.raw() {
+        } else if syscall_nr == T::EXIT.raw() {
             Self::Exit
+        } else if syscall_nr == T::EXIT_GROUP.raw() {
+            Self::ExitGroup
         } else if syscall_nr == T::FORK.raw() {
             Self::Clone
         } else if syscall_nr == T::EXEC.raw() {
@@ -267,6 +270,7 @@ impl SyscallKind {
             Self::Umount2 => "umount2",
             Self::Yield => "sched_yield",
             Self::Exit => "exit",
+            Self::ExitGroup => "exit_group",
             Self::Clone => "clone",
             Self::Execve => "execve",
             Self::WaitPid => "waitpid",
@@ -386,6 +390,10 @@ pub trait SyscallDispatcher {
 
     fn dispatch_exit(args : SyscallArgs) -> isize {
         Self::dispatch_unsupported(SyscallKind::Exit, Self::NumberTable::EXIT.raw(), args)
+    }
+
+    fn dispatch_exit_group(args : SyscallArgs) -> isize {
+        Self::dispatch_unsupported(SyscallKind::ExitGroup, Self::NumberTable::EXIT_GROUP.raw(), args)
     }
 
     fn dispatch_read(args : SyscallArgs) -> isize {
@@ -689,6 +697,7 @@ pub trait SyscallDispatcher {
         match SyscallKind::decode::<Self::NumberTable>(syscall_nr) {
             SyscallKind::Yield => Self::dispatch_yield(syscall_args),
             SyscallKind::Exit => Self::dispatch_exit(syscall_args),
+            SyscallKind::ExitGroup => Self::dispatch_exit_group(syscall_args),
             SyscallKind::Read => Self::dispatch_read(syscall_args),
             SyscallKind::Write => Self::dispatch_write(syscall_args),
             SyscallKind::OpenAt => Self::dispatch_openat(syscall_args),

@@ -67,7 +67,7 @@ pub(crate) use unlinkat::sys_unlinkat;
 pub(crate) use umount2::sys_umount2;
 pub(crate) use read::sys_read;
 pub(crate) use task::{
-    sys_clock_gettime, sys_exit, sys_getpid, sys_getppid, sys_getrlimit, sys_gettid,
+    sys_clock_gettime, sys_exit, sys_exit_group, sys_getpid, sys_getppid, sys_getrlimit, sys_gettid,
     sys_gettimeofday, sys_nanosleep, sys_prctl, sys_set_tid_address, sys_setrlimit, sys_times,
     sys_uname, sys_waitpid, sys_yield,
 };

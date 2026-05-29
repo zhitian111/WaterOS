@@ -10,18 +10,40 @@ use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 
+use crate::user_copy::copy_to_user_struct;
+
 /// clone/fork 系统调用入口。
 ///
 /// 参数（Linux riscv64 clone ABI）：
-/// - `arg0`: flags（当前仅忽略）
+/// - `arg0`: flags
 /// - `arg1`: child_stack（0 表示复用父任务栈指针）
-/// - 其余参数暂未处理
+/// - `arg2`: parent_tid
+/// - `arg3`: tls
+/// - `arg4`: child_tid
 pub(crate) fn sys_clone(args : SyscallArgs) -> UserRet {
-    do_clone(args.arg(1))
+    do_clone(args)
 }
 
 #[inline(never)]
-fn do_clone(child_stack : usize) -> UserRet {
+fn do_clone(args : SyscallArgs) -> UserRet {
+    let clone_flags = task::CloneFlags::from_bits(args.arg(0));
+    let child_stack = args.arg(1);
+    let parent_tid = args.arg(2);
+    let tls = args.arg(3);
+    let child_tid = args.arg(4);
+
+    if clone_flags.contains(task::CloneFlags::CLONE_THREAD) &&
+       !clone_flags.contains(task::CloneFlags::CLONE_VM)
+    {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+
+    let is_thread = clone_flags.contains(task::CloneFlags::CLONE_VM) &&
+                    clone_flags.contains(task::CloneFlags::CLONE_THREAD);
+    if is_thread {
+        return do_clone_thread(clone_flags, child_stack, parent_tid, tls, child_tid);
+    }
+
     let parent_aspace = task::current_task_user_aspace_ptr();
     let (new_aspace_ptr, new_satp) = match mm::kernel_mm::fork_user_aspace(parent_aspace) {
         Ok(p) => p,
@@ -40,6 +62,43 @@ fn do_clone(child_stack : usize) -> UserRet {
 
     vfs::fd::copy_fd_table_from_parent(child_id, parent_id);
 
+    cred::fork_cred(parent_id, child_id);
+
+    UserRet::from_success(child_id)
+}
+
+fn do_clone_thread(clone_flags : task::CloneFlags,
+                   child_stack : usize,
+                   parent_tid : usize,
+                   tls : usize,
+                   child_tid : usize)
+                   -> UserRet {
+    let clear_child_tid = if clone_flags.contains(task::CloneFlags::CLONE_CHILD_CLEARTID) {
+        Some(task::TaskClearTid::new(child_tid))
+    } else {
+        None
+    };
+    let child_id = match task::clone_current_thread(child_stack, tls, clone_flags, clear_child_tid) {
+        Some(id) => id,
+        None => return UserRet::from_error(ErrNo::EAGAIN),
+    };
+
+    if clone_flags.contains(task::CloneFlags::CLONE_PARENT_SETTID) &&
+       parent_tid != 0 &&
+       copy_to_user_struct(parent_tid, &child_id).is_err()
+    {
+        return UserRet::from_error(ErrNo::EFAULT);
+    }
+    if clone_flags.contains(task::CloneFlags::CLONE_CHILD_SETTID) &&
+       child_tid != 0 &&
+       copy_to_user_struct(child_tid, &child_id).is_err()
+    {
+        return UserRet::from_error(ErrNo::EFAULT);
+    }
+
+    let parent_id = task::current_task_id().expect("current task must exist after clone");
+    vfs::cwd::copy_cwd_from_parent(child_id, parent_id);
+    vfs::fd::copy_fd_table_from_parent(child_id, parent_id);
     cred::fork_cred(parent_id, child_id);
 
     UserRet::from_success(child_id)

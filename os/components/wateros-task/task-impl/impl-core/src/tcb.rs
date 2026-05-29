@@ -13,6 +13,7 @@ use api_v0::{
 use arch::task::{ActiveArchTaskContext as TaskContext, ArchTaskContext};
 use arch::trap::{
     ActiveTrapFrame as TaskTrapFrame, TrapContextRead, TrapContextWrite, TrapSyscallWrite,
+    TrapThreadWrite,
 };
 
 unsafe extern "C" {
@@ -210,6 +211,46 @@ impl TaskControlBlock {
                     inner : TaskInner::User(UserResources { kernel_stack,
                                                             trap_frame : child_trap,
                                                             user : child_spec }) })
+    }
+
+    /// 从当前用户任务 clone 一个同进程线程。
+    ///
+    /// 子线程共享父线程的用户地址空间规格，但拥有独立 trap frame、内核栈与
+    /// `TaskContext`。`set_tls` 为真时按当前架构 ABI 写入用户 TLS 寄存器。
+    pub fn clone_thread_from(&self,
+                             child_id : TaskId,
+                             child_stack : usize,
+                             tls : usize,
+                             set_tls : bool)
+                             -> Option<Self> {
+        let parent_user = match &self.inner {
+            TaskInner::User(u) => u,
+            _ => return None,
+        };
+
+        let mut child_trap = parent_user.trap_frame;
+        <TaskTrapFrame as TrapSyscallWrite>::set_syscall_ret(&mut child_trap,
+                                                             UserRet::from_success(0));
+        <TaskTrapFrame as TrapContextWrite>::add_user_pc(&mut child_trap, 4);
+        if child_stack != 0 {
+            <TaskTrapFrame as TrapContextWrite>::set_user_sp(&mut child_trap, child_stack);
+        }
+        if set_tls {
+            <TaskTrapFrame as TrapThreadWrite>::set_user_tls(&mut child_trap, tls);
+        }
+
+        let kernel_stack = KernelStack::new();
+        let task_cx = TaskContext::goto_entry(__arch_user_task_entry as *const () as usize,
+                                              kernel_stack.top());
+        Some(Self { id : child_id,
+                    parent_id : Some(self.id),
+                    state : TaskState::Ready,
+                    stats : TaskRuntimeStats::default(),
+                    wait_result : None,
+                    task_cx,
+                    inner : TaskInner::User(UserResources { kernel_stack,
+                                                            trap_frame : child_trap,
+                                                            user : parent_user.user }) })
     }
 
     /// execve：替换当前任务的地址空间、栈和入口。

@@ -69,7 +69,7 @@ pub mod trap {
     pub use api_v0::trap::{
         ArchTrapFrame, Exception, Interrupt, TrapAddressSpaceWrite, TrapCOntextWrite, TrapCause,
         TrapContextFrameView, TrapContextRead, TrapContextWrite, TrapFrame, TrapFrameRead,
-        TrapFrameWrite, TrapSyscallRead, TrapSyscallWrite,
+        TrapFrameWrite, TrapSyscallRead, TrapSyscallWrite, TrapThreadWrite,
     };
 
     #[cfg(feature = "impl-loongarch64")]
