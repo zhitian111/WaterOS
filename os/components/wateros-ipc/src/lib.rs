@@ -24,3 +24,9 @@ pub mod waitqueue {
 pub mod pipe {
     pub use ::pipe::*;
 }
+
+#[cfg(feature = "futex")]
+/// Futex 等待/唤醒与 robust 链表契约。
+pub mod futex {
+    pub use ::futex::*;
+}

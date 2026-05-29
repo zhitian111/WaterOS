@@ -1,18 +1,29 @@
 #![no_std]
-//! Futex 风格等待子模块占位。
+//! Futex IPC 聚合：导出版本化 API 契约与当前启用的实现类型。
 //!
-//! 用途：为基于 futex 的睡眠/唤醒路径预留 crate 与 feature 接线点。当前无用户可见地址字、队列或调度交互；与 `ipc-waitqueue` 的关系待架构收敛后写明。
+//! - [`api`]：队列键、错误、[`KernelFutexOps`] trait 与 robust 布局占位（`futex-api/api-v0`）。
+//! - [`active_impl`]：当前 feature 选中的实现命名空间。
+//! - 根层再导出调用方常用的具体类型名（[`FutexHub`] 等）。
 
-/// 占位算术：仅供构建与单测；**无** futex 等待语义。真实实现需与 MMU、任务阻塞原语对齐后再提供对外 API。
-pub fn add(left : u64, right : u64) -> u64 { left + right }
+/// 版本化 futex API 契约。
+pub mod api {
+    pub use ::api_v0::*;
+}
 
-// 占位符号可被测试 harness 引用。
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
+#[cfg(feature = "impl-dummy")]
+/// 当前 futex 实现命名空间。
+pub use impl_dummy as active_impl;
+
+pub use api_v0::{
+    FutexError, FutexKey, FutexResult, KernelFutexOps, RobustListHead, ROBUST_LIST_HEAD_SIZE,
+};
+
+#[cfg(feature = "impl-dummy")]
+pub use active_impl::FutexHub;
+
+/// 聚合层自检：串联 API 与当前激活 impl。
+#[cfg(feature = "impl-dummy")]
+pub fn test() {
+    api_v0::test();
+    active_impl::test();
 }
