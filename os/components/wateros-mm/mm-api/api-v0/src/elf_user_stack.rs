@@ -36,7 +36,20 @@ fn push_to_user_stack<Ops: UserMemoryOps>(
     Ok(())
 }
 
-fn build_auxv(elf: &LoadedElf) -> Vec<usize> {
+fn push_user_word<Ops: UserMemoryOps>(
+    ops: &Ops,
+    sp: &mut usize,
+    word: usize,
+) -> Result<(), PrepareUserStackError> {
+    *sp = sp
+        .checked_sub(core::mem::size_of::<usize>())
+        .ok_or(PrepareUserStackError::StackOverflow)?;
+    ops.copy_to_user(VirtAddr(*sp), &word.to_le_bytes())
+        .map_err(|_| PrepareUserStackError::AccessViolation)?;
+    Ok(())
+}
+
+fn build_auxv(elf: &LoadedElf, random_addr: usize) -> Vec<usize> {
     alloc::vec![
         AT_PAGESZ,
         PAGE_SIZE,
@@ -49,7 +62,7 @@ fn build_auxv(elf: &LoadedElf) -> Vec<usize> {
         AT_ENTRY,
         elf.entry_pc,
         AT_RANDOM,
-        0,
+        random_addr,
         AT_NULL,
         0,
     ]
@@ -94,28 +107,36 @@ pub fn prepare_elf_user_stack<Ops: UserMemoryOps>(
         envp_addrs.push(sp);
     }
 
-    let auxv = build_auxv(elf);
+    let random = [0x42u8; 16];
+    push_to_user_stack(ops, &mut sp, &random)?;
+    let random_addr = sp;
+    let auxv = build_auxv(elf, random_addr);
     sp &= !15;
+
+    let word_count = 1 + argv_addrs.len() + 1 + envp_addrs.len() + 1 + auxv.len();
+    if word_count % 2 != 0 {
+        push_user_word(ops, &mut sp, 0)?;
+    }
 
     for chunk in auxv.chunks(2).rev() {
         let pair = [
-            chunk.get(1).copied().unwrap_or(0),
             chunk.get(0).copied().unwrap_or(0),
+            chunk.get(1).copied().unwrap_or(0),
         ];
         push_to_user_stack(ops, &mut sp, &usize_pair_to_bytes(pair))?;
     }
 
-    push_to_user_stack(ops, &mut sp, &0usize.to_le_bytes())?;
+    push_user_word(ops, &mut sp, 0)?;
     for &addr in envp_addrs.iter().rev() {
-        push_to_user_stack(ops, &mut sp, &addr.to_le_bytes())?;
+        push_user_word(ops, &mut sp, addr)?;
     }
 
-    push_to_user_stack(ops, &mut sp, &0usize.to_le_bytes())?;
+    push_user_word(ops, &mut sp, 0)?;
     for &addr in argv_addrs.iter().rev() {
-        push_to_user_stack(ops, &mut sp, &addr.to_le_bytes())?;
+        push_user_word(ops, &mut sp, addr)?;
     }
 
-    push_to_user_stack(ops, &mut sp, &argv.len().to_le_bytes())?;
+    push_user_word(ops, &mut sp, argv.len())?;
 
     Ok(sp)
 }

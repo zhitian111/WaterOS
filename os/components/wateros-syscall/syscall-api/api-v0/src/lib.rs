@@ -15,6 +15,7 @@ use abi::{
 pub enum SyscallKind {
     Read,
     Write,
+    Writev,
     OpenAt,
     Close,
     Fstat,
@@ -72,6 +73,7 @@ pub enum SyscallKind {
     SetItimer,
     GetRlimit,
     SetRlimit,
+    PrLimit64,
     Socket,
     Bind,
     Listen,
@@ -99,6 +101,8 @@ impl SyscallKind {
             Self::Read
         } else if syscall_nr == T::WRITE.raw() {
             Self::Write
+        } else if syscall_nr == T::WRITEV.raw() {
+            Self::Writev
         } else if syscall_nr == T::OPENAT.raw() {
             Self::OpenAt
         } else if syscall_nr == T::CLOSE.raw() {
@@ -213,6 +217,8 @@ impl SyscallKind {
             Self::GetRlimit
         } else if syscall_nr == T::SETRLIMIT.raw() {
             Self::SetRlimit
+        } else if syscall_nr == T::PRLIMIT64.raw() {
+            Self::PrLimit64
         } else if syscall_nr == T::SOCKET.raw() {
             Self::Socket
         } else if syscall_nr == T::BIND.raw() {
@@ -254,6 +260,7 @@ impl SyscallKind {
         match self {
             Self::Read => "read",
             Self::Write => "write",
+            Self::Writev => "writev",
             Self::OpenAt => "openat",
             Self::Close => "close",
             Self::Fstat => "fstat",
@@ -311,6 +318,7 @@ impl SyscallKind {
             Self::SetItimer => "setitimer",
             Self::GetRlimit => "getrlimit",
             Self::SetRlimit => "setrlimit",
+            Self::PrLimit64 => "prlimit64",
             Self::Socket => "socket",
             Self::Bind => "bind",
             Self::Listen => "listen",
@@ -402,6 +410,10 @@ pub trait SyscallDispatcher {
 
     fn dispatch_write(args : SyscallArgs) -> isize {
         Self::dispatch_unsupported(SyscallKind::Write, Self::NumberTable::WRITE.raw(), args)
+    }
+
+    fn dispatch_writev(args : SyscallArgs) -> isize {
+        Self::dispatch_unsupported(SyscallKind::Writev, Self::NumberTable::WRITEV.raw(), args)
     }
 
     fn dispatch_openat(args : SyscallArgs) -> isize {
@@ -620,6 +632,10 @@ pub trait SyscallDispatcher {
         Self::dispatch_unsupported(SyscallKind::SetRlimit, Self::NumberTable::SETRLIMIT.raw(), args)
     }
 
+    fn dispatch_prlimit64(args : SyscallArgs) -> isize {
+        Self::dispatch_unsupported(SyscallKind::PrLimit64, Self::NumberTable::PRLIMIT64.raw(), args)
+    }
+
     // ——— socket / 网络 ———
 
     fn dispatch_socket(args : SyscallArgs) -> isize {
@@ -700,6 +716,7 @@ pub trait SyscallDispatcher {
             SyscallKind::ExitGroup => Self::dispatch_exit_group(syscall_args),
             SyscallKind::Read => Self::dispatch_read(syscall_args),
             SyscallKind::Write => Self::dispatch_write(syscall_args),
+            SyscallKind::Writev => Self::dispatch_writev(syscall_args),
             SyscallKind::OpenAt => Self::dispatch_openat(syscall_args),
             SyscallKind::Close => Self::dispatch_close(syscall_args),
             SyscallKind::Fstat => Self::dispatch_fstat(syscall_args),
@@ -754,6 +771,7 @@ pub trait SyscallDispatcher {
             SyscallKind::SetItimer => Self::dispatch_setitimer(syscall_args),
             SyscallKind::GetRlimit => Self::dispatch_getrlimit(syscall_args),
             SyscallKind::SetRlimit => Self::dispatch_setrlimit(syscall_args),
+            SyscallKind::PrLimit64 => Self::dispatch_prlimit64(syscall_args),
             SyscallKind::Socket => Self::dispatch_socket(syscall_args),
             SyscallKind::Bind => Self::dispatch_bind(syscall_args),
             SyscallKind::Listen => Self::dispatch_listen(syscall_args),

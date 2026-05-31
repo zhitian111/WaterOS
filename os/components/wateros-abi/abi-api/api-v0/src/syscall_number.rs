@@ -46,6 +46,8 @@ pub trait SyscallNumberTable {
     const READ: SyscallNumber;
     /// 向打开对象写数据（与 `write(2)` 语义对齐的编号）。
     const WRITE: SyscallNumber;
+    /// 向打开对象写入多段缓冲（`writev(2)`）。
+    const WRITEV: SyscallNumber;
     /// 相对目录打开路径（`openat(2)`）。
     const OPENAT: SyscallNumber;
     /// 关闭文件描述符（`close(2)`）。
@@ -170,6 +172,8 @@ pub trait SyscallNumberTable {
     const GETRLIMIT: SyscallNumber;
     /// 设置资源软/硬上限（`setrlimit(2)`）。
     const SETRLIMIT: SyscallNumber;
+    /// 查询或设置指定进程资源限制（`prlimit64(2)`）。
+    const PRLIMIT64: SyscallNumber;
     /// 可中断的纳秒级睡眠（`nanosleep(2)`）。
     const NANOSLEEP: SyscallNumber;
 

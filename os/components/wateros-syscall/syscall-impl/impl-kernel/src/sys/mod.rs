@@ -68,10 +68,11 @@ pub(crate) use umount2::sys_umount2;
 pub(crate) use read::sys_read;
 pub(crate) use task::{
     sys_clock_gettime, sys_exit, sys_exit_group, sys_getpid, sys_getppid, sys_getrlimit, sys_gettid,
-    sys_gettimeofday, sys_nanosleep, sys_prctl, sys_set_tid_address, sys_setrlimit, sys_times,
+    sys_gettimeofday, sys_nanosleep, sys_prctl, sys_prlimit64, sys_set_robust_list,
+    sys_set_tid_address, sys_rt_sigaction, sys_rt_sigprocmask, sys_setrlimit, sys_times,
     sys_uname, sys_waitpid, sys_yield,
 };
-pub(crate) use write::sys_write;
+pub(crate) use write::{sys_write, sys_writev};
 
 // socket / 网络
 pub(crate) use accept::sys_accept4;

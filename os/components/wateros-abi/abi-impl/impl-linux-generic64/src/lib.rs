@@ -22,6 +22,7 @@ impl SyscallNumberTable for LinuxGeneric64 {
     // I/O / 文件与描述符
     const READ : SyscallNumber = SyscallNumber(63);
     const WRITE : SyscallNumber = SyscallNumber(64);
+    const WRITEV : SyscallNumber = SyscallNumber(66);
     const OPENAT : SyscallNumber = SyscallNumber(56);
     const CLOSE : SyscallNumber = SyscallNumber(57);
     const FSTAT : SyscallNumber = SyscallNumber(80);
@@ -90,6 +91,7 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const SETITIMER : SyscallNumber = SyscallNumber(103);
     const GETRLIMIT : SyscallNumber = SyscallNumber(163);
     const SETRLIMIT : SyscallNumber = SyscallNumber(164);
+    const PRLIMIT64 : SyscallNumber = SyscallNumber(261);
     const NANOSLEEP : SyscallNumber = SyscallNumber(101);
 
     // Socket / 网络

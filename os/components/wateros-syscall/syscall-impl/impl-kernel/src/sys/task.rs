@@ -8,7 +8,7 @@ use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 
-use crate::user_copy::{copy_from_user_struct, copy_to_user_struct};
+use crate::user_copy::{copy_from_user_struct, copy_to_user, copy_to_user_struct};
 
 const ORPHAN_PARENT_PID : usize = 1;
 const WNOHANG : usize = 1;
@@ -29,6 +29,9 @@ const RLIMIT_DATA : usize = 2;
 const RLIMIT_CORE : usize = 4;
 const RLIMIT_MEMLOCK : usize = 8;
 const RLIMIT_NPROC : usize = 6;
+const ROBUST_LIST_HEAD_SIZE_64 : usize = 24;
+const RT_SIGSET_SIZE_64 : usize = 8;
+const RT_SIGACTION_SIZE_MIN : usize = 32;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -148,6 +151,56 @@ pub(crate) fn sys_set_tid_address(args : SyscallArgs) -> UserRet {
     };
     let _ = task::set_task_clear_child_tid(tid, clear_child_tid);
     UserRet::from_success(tid)
+}
+
+pub(crate) fn sys_set_robust_list(args : SyscallArgs) -> UserRet {
+    let _head = args.arg(0);
+    let len = args.arg(1);
+    if len != ROBUST_LIST_HEAD_SIZE_64 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    UserRet::from_success(0)
+}
+
+pub(crate) fn sys_rt_sigprocmask(args : SyscallArgs) -> UserRet {
+    let how = args.arg(0);
+    let _set = args.arg(1);
+    let oldset = args.arg(2);
+    let sigset_size = args.arg(3);
+
+    if how > 2 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    if sigset_size != RT_SIGSET_SIZE_64 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    if oldset != 0 {
+        if copy_to_user_struct(oldset, &0u64).is_err() {
+            return UserRet::from_error(ErrNo::EFAULT);
+        }
+    }
+    UserRet::from_success(0)
+}
+
+pub(crate) fn sys_rt_sigaction(args : SyscallArgs) -> UserRet {
+    let sig = args.arg(0);
+    let _act = args.arg(1);
+    let oldact = args.arg(2);
+    let sigset_size = args.arg(3);
+
+    if sig == 0 || sig >= 64 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    if sigset_size != RT_SIGSET_SIZE_64 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    if oldact != 0 {
+        let zero = [0u8; RT_SIGACTION_SIZE_MIN];
+        if copy_to_user(oldact, &zero).is_err() {
+            return UserRet::from_error(ErrNo::EFAULT);
+        }
+    }
+    UserRet::from_success(0)
 }
 
 fn current_tick_for_user_time() -> u64 { task::current_tick().max(1) }
@@ -349,7 +402,7 @@ pub(crate) fn sys_uname(args : SyscallArgs) -> UserRet {
     let machine = "unknown";
     let uts = UserUtsName { sysname : make_uts_field("WaterOS"),
                             nodename : make_uts_field("wateros"),
-                            release : make_uts_field("0.1.0-prototype"),
+                            release : make_uts_field("5.15.0"),
                             version : make_uts_field("WaterOS #1 SMP"),
                             machine : make_uts_field(machine),
                             domainname : make_uts_field("") };
@@ -429,5 +482,27 @@ pub(crate) fn sys_setrlimit(args : SyscallArgs) -> UserRet {
     let _resource = args.arg(0);
     let _rlim_ptr = args.arg(1);
     // 当前不做实际限制，总是返回成功
+    UserRet::from_success(0)
+}
+
+/// `prlimit64(pid, resource, new_limit, old_limit)` — 最小兼容当前进程资源限制查询。
+pub(crate) fn sys_prlimit64(args : SyscallArgs) -> UserRet {
+    let pid = args.arg(0);
+    let resource = args.arg(1);
+    let new_limit = args.arg(2);
+    let old_limit = args.arg(3);
+
+    if pid != 0 {
+        return UserRet::from_error(ErrNo::ESRCH);
+    }
+    if new_limit != 0 && copy_from_user_struct::<UserRLimit>(new_limit).is_err() {
+        return UserRet::from_error(ErrNo::EFAULT);
+    }
+    if old_limit != 0 {
+        let rlim = default_rlimit(resource);
+        if let Err(e) = copy_to_user_struct(old_limit, &rlim) {
+            return UserRet::from_error(e);
+        }
+    }
     UserRet::from_success(0)
 }

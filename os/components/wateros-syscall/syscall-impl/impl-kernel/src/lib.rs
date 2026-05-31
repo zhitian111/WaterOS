@@ -52,6 +52,9 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     fn dispatch_write(args : SyscallArgs) -> isize { sys::sys_write(args).0 }
 
     #[inline]
+    fn dispatch_writev(args : SyscallArgs) -> isize { sys::sys_writev(args).0 }
+
+    #[inline]
     fn dispatch_openat(args : SyscallArgs) -> isize { sys::sys_openat(args).0 }
 
     #[inline]
@@ -187,7 +190,21 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     fn dispatch_setrlimit(args : SyscallArgs) -> isize { sys::sys_setrlimit(args).0 }
 
     #[inline]
+    fn dispatch_prlimit64(args : SyscallArgs) -> isize { sys::sys_prlimit64(args).0 }
+
+    #[inline]
     fn dispatch_set_tid_address(args : SyscallArgs) -> isize { sys::sys_set_tid_address(args).0 }
+
+    #[inline]
+    fn dispatch_set_robust_list(args : SyscallArgs) -> isize {
+        sys::sys_set_robust_list(args).0
+    }
+
+    #[inline]
+    fn dispatch_rt_sigaction(args : SyscallArgs) -> isize { sys::sys_rt_sigaction(args).0 }
+
+    #[inline]
+    fn dispatch_rt_sigprocmask(args : SyscallArgs) -> isize { sys::sys_rt_sigprocmask(args).0 }
 
     #[inline]
     fn dispatch_unsupported(kind : api_v0::SyscallKind, syscall_nr : usize, args : SyscallArgs) -> isize {
