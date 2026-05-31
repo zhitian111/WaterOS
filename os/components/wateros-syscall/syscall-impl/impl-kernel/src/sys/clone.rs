@@ -37,6 +37,16 @@ fn do_clone(args : SyscallArgs) -> UserRet {
     {
         return UserRet::from_error(ErrNo::EINVAL);
     }
+    if clone_flags.contains(task::CloneFlags::CLONE_SIGHAND) &&
+       !clone_flags.contains(task::CloneFlags::CLONE_VM)
+    {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    if clone_flags.contains(task::CloneFlags::CLONE_THREAD) &&
+       !clone_flags.contains(task::CloneFlags::CLONE_SIGHAND)
+    {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
 
     let is_thread = clone_flags.contains(task::CloneFlags::CLONE_VM) &&
                     clone_flags.contains(task::CloneFlags::CLONE_THREAD);
@@ -97,9 +107,9 @@ fn do_clone_thread(clone_flags : task::CloneFlags,
     }
 
     let parent_id = task::current_task_id().expect("current task must exist after clone");
-    vfs::cwd::copy_cwd_from_parent(child_id, parent_id);
-    vfs::fd::copy_fd_table_from_parent(child_id, parent_id);
-    cred::fork_cred(parent_id, child_id);
+    vfs::cwd::share_cwd_from_parent(child_id, parent_id);
+    vfs::fd::share_fd_table_from_parent(child_id, parent_id);
+    cred::share_cred(parent_id, child_id);
 
     UserRet::from_success(child_id)
 }

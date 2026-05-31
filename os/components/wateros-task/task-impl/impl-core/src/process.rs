@@ -12,7 +12,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use api_v0::{
     AddressSpaceRef, CloneFlags, CwdRef, FileTableRef, ProcessDescriptor, ProcessId,
     ProcessState, ProcessTaskDescriptor, ProcessTaskRole, ProcessTaskState, SignalHandlersRef,
-    TaskClearTid, TaskExitCode, TaskGroupId, TaskId,
+    ResourceHandle, TaskClearTid, TaskExitCode, TaskGroupId, TaskId,
 };
 use base::sync::UniprocessorSafeCell;
 
@@ -107,14 +107,15 @@ impl ProcessRegistry {
             task_id
         );
         let pid = ProcessId::from_raw(task_id);
+        let resource_handle = ResourceHandle::from_raw(task_id);
         let process = ProcessControlBlock {
             pid,
             task_group_id: TaskGroupId::from_raw(pid.raw()),
             leader_task_id: task_id,
             parent_pid,
             address_space,
-            file_table: None,
-            cwd: None,
+            file_table: Some(resource_handle),
+            cwd: Some(resource_handle),
             signal_handlers: None,
             tasks: alloc::vec![ProcessTask {
                 task_id,
@@ -422,6 +423,8 @@ pub fn self_test() {
     assert_eq!(leader.pid, pid);
     assert_eq!(leader.role, ProcessTaskRole::Leader);
     assert_eq!(registry.lookup_process(pid).unwrap().task_count, 1);
+    assert_eq!(registry.lookup_process(pid).unwrap().file_table.unwrap().raw(), 100);
+    assert_eq!(registry.lookup_process(pid).unwrap().cwd.unwrap().raw(), 100);
 
     let task101 = registry
         .add_task_to_process(

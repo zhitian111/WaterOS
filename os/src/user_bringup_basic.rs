@@ -1,24 +1,27 @@
 //! `stage-basic`：挂载根卷后登记内核 runner，串行执行
 //! `/{glibc,musl}/basic/{test}` ELF，用于绕开 BusyBox/shell 依赖验证 syscall 路径。
 //!
-//! 测例名写在 [`BASIC_TESTS`] 中，不需要的项注释掉即可。
+//! 测例名写在 [`BASIC_TESTS`] 中；当前先启用进程/线程生命周期小集合，
+//! fd/cwd/io 与 mount 类测例待共享资源语义稳定后继续打开。
 
 use runtime::logging::*;
 
 /// basic ELF 测例名（对应 `/{prefix}/basic/{name}`）；按推荐顺序排列。
 const BASIC_TESTS : &[&str] = &["clone",
+                               "fork",
+                               "wait",
+                               "waitpid",
+                               "getpid",
+                               "getppid",
+                               "exit",
+                               "execve",
                                // "chdir",
-                               // "execve",
                                // "close",
                                // "dup",
                                // "dup2",
-                               // "exit",
-                               // "fork",
                                // "fstat",
                                // "getcwd",
                                // "getdents",
-                               // "getpid",
-                               // "getppid",
                                // "gettimeofday",
                                // "mkdir_",
                                // "mnt",
@@ -33,8 +36,6 @@ const BASIC_TESTS : &[&str] = &["clone",
                                // "umount",
                                // "uname",
                                // "unlink",
-                               // "wait",
-                               // "waitpid",
                                // "write",
                                // "yield",
 ];

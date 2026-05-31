@@ -27,6 +27,12 @@ pub fn fork_cred(parent: TaskId, child: TaskId) {
 }
 
 #[cfg(feature = "impl-root")]
+/// thread clone 后共享父任务凭证。
+pub fn share_cred(parent: TaskId, child: TaskId) {
+    active_impl::share_cred(parent, child);
+}
+
+#[cfg(feature = "impl-root")]
 /// execve 后更新凭证（首版 no-op，保留 TODO(cred-exec-setuid) 扩展点）。
 pub fn on_exec(tid: TaskId) {
     active_impl::on_exec(tid);

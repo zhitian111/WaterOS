@@ -93,6 +93,12 @@ pub fn copy_fd_table_from_parent(child_id: task::TaskId, parent_id: task::TaskId
     reg.copy_fd_table_from_parent(child_id, parent_id);
 }
 
+/// thread clone 时共享父任务 fd 表。
+pub fn share_fd_table_from_parent(child_id: task::TaskId, parent_id: task::TaskId) {
+    let mut reg = registry().exclusive_access();
+    reg.share_fd_table_from_parent(child_id, parent_id);
+}
+
 /// `execve` 前关闭带 `FD_CLOEXEC` 的 fd。
 pub fn close_cloexec_fds_for_current_task() -> VfsResult<()> {
     let task_id = current_task_id()?;
@@ -128,6 +134,11 @@ pub fn self_test() {
     let parent_extra = reg.alloc_fd_for_task(a, Box::new(impl_fd_session::ConsoleOutHandle));
     reg.copy_fd_table_from_parent(b, a);
     assert!(reg.get_io_for_task(b, parent_extra).is_ok());
+    assert!(reg.get_io_for_task(a, parent_extra).is_ok());
+    let c: task::TaskId = 12;
+    reg.share_fd_table_from_parent(c, a);
+    assert!(reg.get_io_for_task(c, parent_extra).is_ok());
+    reg.drop_task_fd_table(c);
     assert!(reg.get_io_for_task(a, parent_extra).is_ok());
 
     let _ = reg.close_fd_for_task(b, fd_b);

@@ -15,25 +15,72 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 /// 按 `TaskId` 索引的 per-task 凭证侧表。
 pub struct PerTaskCredRegistry {
     creds: Vec<Option<ProcessCredentials>>,
+    owners: Vec<Option<TaskId>>,
+    ref_counts: Vec<usize>,
 }
 
 impl PerTaskCredRegistry {
     pub const fn new() -> Self {
-        Self { creds: Vec::new() }
+        Self {
+            creds: Vec::new(),
+            owners: Vec::new(),
+            ref_counts: Vec::new(),
+        }
     }
 
     fn slot_mut(&mut self, tid: TaskId) -> &mut Option<ProcessCredentials> {
         if self.creds.len() <= tid {
             self.creds.resize_with(tid + 1, || None);
+            self.owners.resize_with(tid + 1, || None);
+            self.ref_counts.resize(tid + 1, 0);
         }
-        &mut self.creds[tid]
+        if self.owners[tid].is_none() {
+            self.owners[tid] = Some(tid);
+            self.ref_counts[tid] = 1;
+        }
+        let owner = self.effective_owner(tid);
+        &mut self.creds[owner]
+    }
+
+    fn effective_owner(&self, tid: TaskId) -> TaskId {
+        self.owners
+            .get(tid)
+            .and_then(|owner| *owner)
+            .unwrap_or(tid)
+    }
+
+    fn release_owner(&mut self, tid: TaskId) -> Option<TaskId> {
+        let owner = self.owners.get_mut(tid)?.take()?;
+        if owner < self.ref_counts.len() && self.ref_counts[owner] > 0 {
+            self.ref_counts[owner] -= 1;
+        }
+        Some(owner)
     }
 
     fn cred_or_panic(&self, tid: TaskId, context: &str) -> ProcessCredentials {
+        let owner = self.effective_owner(tid);
         self.creds
-            .get(tid)
+            .get(owner)
             .and_then(|o| *o)
             .unwrap_or_else(|| panic!("[cred] no cred for tid={tid} ({context})"))
+    }
+
+    fn share_cred(&mut self, child: TaskId, parent: TaskId) {
+        let _ = self.cred_or_panic(parent, "share_cred parent");
+        if self.owners.get(child).and_then(|owner| *owner).is_some() {
+            self.drop_task_cred(child);
+        }
+        if self.creds.len() <= child {
+            self.creds.resize_with(child + 1, || None);
+            self.owners.resize_with(child + 1, || None);
+            self.ref_counts.resize(child + 1, 0);
+        }
+        let owner = self.effective_owner(parent);
+        self.owners[child] = Some(owner);
+        if owner >= self.ref_counts.len() {
+            self.ref_counts.resize(owner + 1, 0);
+        }
+        self.ref_counts[owner] = self.ref_counts[owner].saturating_add(1);
     }
 }
 
@@ -48,6 +95,9 @@ impl CredentialBackend for PerTaskCredRegistry {
 
     fn fork_cred(&mut self, parent: TaskId, child: TaskId) {
         let parent_cred = self.cred_or_panic(parent, "fork_cred parent");
+        if self.owners.get(child).and_then(|owner| *owner).is_some() {
+            self.drop_task_cred(child);
+        }
         *self.slot_mut(child) = Some(parent_cred);
     }
 
@@ -56,8 +106,16 @@ impl CredentialBackend for PerTaskCredRegistry {
     }
 
     fn drop_task_cred(&mut self, tid: TaskId) {
-        if let Some(slot) = self.creds.get_mut(tid) {
-            *slot = None;
+        let Some(owner) = self.release_owner(tid) else {
+            return;
+        };
+        if self.ref_counts.get(owner).copied().unwrap_or(0) == 0 {
+            if let Some(slot) = self.creds.get_mut(owner) {
+                *slot = None;
+            }
+        }
+        if tid != owner && tid < self.creds.len() {
+            self.creds[tid] = None;
         }
     }
 }
@@ -98,6 +156,10 @@ pub fn on_user_task_spawned(tid: TaskId) {
 
 pub fn fork_cred(parent: TaskId, child: TaskId) {
     registry().exclusive_access().fork_cred(parent, child);
+}
+
+pub fn share_cred(parent: TaskId, child: TaskId) {
+    registry().exclusive_access().share_cred(child, parent);
 }
 
 pub fn on_exec(tid: TaskId) {

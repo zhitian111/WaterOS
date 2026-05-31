@@ -96,6 +96,12 @@ pub fn copy_cwd_from_parent(child: task::TaskId, parent: task::TaskId) {
     reg.copy_cwd_from_parent(child, parent);
 }
 
+/// thread clone 时共享父任务 cwd。
+pub fn share_cwd_from_parent(child: task::TaskId, parent: task::TaskId) {
+    let mut reg = registry().exclusive_access();
+    reg.share_cwd_from_parent(child, parent);
+}
+
 /// 将 `path` 相对当前任务 cwd 解析为绝对路径。
 pub fn resolve_for_current_task(path: &str) -> VfsResult<String> {
     let task_id = crate::fd::current_task_id()?;
@@ -158,6 +164,12 @@ pub fn self_test() {
     assert_eq!(reg.get_cwd(a), "/");
     reg.copy_cwd_from_parent(b, a);
     assert_eq!(reg.get_cwd(b), "/");
+    *reg.get_cwd_mut(a) = String::from("/glibc/basic");
+    let c: task::TaskId = 22;
+    reg.share_cwd_from_parent(c, a);
+    assert_eq!(reg.get_cwd(c), "/glibc/basic");
+    reg.drop_task(c);
+    assert_eq!(reg.get_cwd(a), "/glibc/basic");
     reg.drop_task(a);
     assert_eq!(reg.get_cwd(a), "/");
 
