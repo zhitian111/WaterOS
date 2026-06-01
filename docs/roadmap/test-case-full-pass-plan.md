@@ -1,145 +1,187 @@
 # test_case 全通过路线图
 
-**事实来源**：`test_case/README.md`、`test_case/sdcard/**/**_testcode.sh`、`test_case/scripts/**/_testcode.sh`、`docs/roadmap/todolist.md`、`docs/architecture/snapshot.md`、`docs/exports/features/` 与 `docs/exports/release-overview/current.md`、`docs/prompts/`（规划类任务请配合 `general.md`、`structure.md`、`architecture.md`）。
+**事实来源**：`testsuits-for-oskernel/README.md`、`os/components/wateros-syscall/syscall-impl/impl-kernel/src/lib.rs`（dispatch 表）、`os/components/wateros-vfs/vfs-impl/impl-fd-session/src/registry.rs`（fd 实现）、`os/src/main.rs`、`os/src/user_bringup_*.rs`（bring-up 实际状态）、`docs/roadmap/todolist.md`。
 
-**范围说明**：「全通过」指赛题磁盘镜像中的各组 `*_testcode.sh` 在 **RISC-V 与 LoongArch**、**glibc 与 musl** 变体下均能按评测要求跑完并得到预期输出。工作量极大，下文按**依赖顺序**拆分阶段，便于迭代验证。
+**⚠️ 本文档在 2026-06 已根据实际代码状态重写。此前版本（基于旧导出文档的"缺口"描述）已落后。**
+
+**范围说明**：「全通过」指赛题磁盘镜像中的各组 `*_testcode.sh` 在 **RISC-V 与 LoongArch**、**glibc 与 musl** 变体下均能按评测要求跑完并得到预期输出。
 
 ---
 
-## 零、基于导出文档的当前进度（与源码细读无关的共识）
+## 零、实际代码进度（2026-06）
 
-以下归纳自 **`docs/architecture/snapshot.md`** 与各组件 **`docs/exports/features/*.md`**，用于把「全通过路线图」锚定到仓库**已有进度**，避免从零假设。
+以下基于 `os/components/` 下实际代码，而非旧导出文档。
 
-### 已具备或较成熟的底座（RISC-V 主线为主）
+### 已实现且稳定的底座（RISC-V 主线）
 
-- **启动与平台**：QEMU riscv64 + OpenSBI 下 `kernel_main` 流程完整；控制台、日志、堆、panic；定时器与中断已接入调度主线（见架构快照）。
-- **驱动**：DTB 扫描、**virtio-mmio 块设备**注册、与 **devfs** 刷新协作；**virtio-net 仅识别类 device_id，无驱动与栈**（`wateros-driver` 功能快照）。
-- **文件系统**：**ext4** RO + **RW（ext4plus beta）**；devfs **`/dev/vblkN`**；根卷挂载与启动期 **`fs::test`** 树遍历/自检（`wateros-fs` 功能快照）。
-- **VFS**：**`vfs-impl-fs-bridge`** 烟囱能力（单根 RO 委托、RW 会话、与 `fs` 自检对齐）；**尚未**与 per-task fd、syscall 打通（`wateros-vfs` 功能快照）。
-- **内存管理**：**Sv39**、内核 ELF 装载、全局内核页表、**栈式物理帧分配器**；**`UserMemoryOps` / `mmap` / `brk` 在用户态路径上仍属未完整落地**（`wateros-mm` 功能快照）。
-- **任务与调度**：轮转、**阻塞/睡眠队列**、zombie 与回收、`WaitQueue`、trap 帧与任务对象协作；**`spawn_user_task` 骨架已存在**，用户态主线与完整恢复模型仍在推进（`wateros-task` 功能快照）。
-- **系统调用**：**仅** `yield` / `exit` / `exit_group` / **`write` 仅 fd 1、2 走控制台** / **`brk` 桩**；其余 **`ENOSYS`**（`wateros-syscall` 功能快照）。
-- **IPC**：聚合层默认 **dummy** + **`waitqueue` 薄封装**；**pipe/signal/shm/futex 等子 crate 未进入默认依赖图**（`wateros-ipc` 功能快照）。
+| 子系统 | 实际状态 |
+|--------|----------|
+| **启动与平台** | QEMU riscv64 + OpenSBI 下 `kernel_main` 流程完整；控制台、日志、堆、panic；定时器与中断已接入调度主线 |
+| **驱动** | DTB 扫描、**virtio-mmio 块设备**注册、与 **devfs** 刷新协作；**virtio-net + smoltcp 已集成**（`driver::network::stack::init` + 轮询任务 + 同步烟测） |
+| **文件系统** | **ext4** RO + **RW（beta）**；devfs **`/dev/vblkN`**；根卷挂载与启动期 `fs::test` 树遍历/自检 |
+| **VFS** | **`impl-fs-bridge`** 稳定；**`impl-fd-session`** 完整支持 per-task fd 表——dup/dup3/fork 继承/CLOEXEC/refcount 全部实现并自测；VFS 自检通过 |
+| **内存管理** | **Sv39**、内核 ELF 装载、全局内核页表、栈式物理帧分配器；**用户态 `brk`/`mmap`/`munmap`/`mprotect`** 全部接线到 syscall 并有真实语义；`from_elf_path` 可完整装载 ELF |
+| **任务与调度** | 轮转、阻塞/睡眠队列、zombie 回收、WaitQueue、trap 帧协作；`spawn_user_task_from_loaded_elf` 完整；条件等待与 child-exit 等待服务 |
+| **系统调用** | **~80 个 syscall 已接线**（见 todolist.md），包括：文件 IO（read/write/writev/readlinkat/openat/close/lseek/fstat/dup/dup3/pipe2）、内存（brk/mmap/munmap/mprotect）、进程（clone/execve/waitpid/exit/exit_group/yield/kill/getpid/getppid/gettid）、凭证（get*id/set*id 全族）、时间（gettimeofday/clock_gettime/times/nanosleep）、目录（getcwd/chdir/mkdirat/getdents64/unlinkat/mount/umount2）、信号（rt_sigaction/rt_sigprocmask）、同步（futex/fcntl/poll）、网络（socket/bind/listen/accept4/connect/sendto/recvfrom/sendmsg/recvmsg/setsockopt/getsockopt/shutdown）、通用（uname/prctl/getrlimit/setrlimit/prlimit64/set_tid_address/set_robust_list/getrandom/statx）。**ioctl 仍未接线。** |
+| **IPC** | 聚合层默认含 **waitqueue**、**pipe**（内核 ring-buffer + fd endpoint）；**futex** 已接线（WAIT/WAKE）；signal dispatch 函数已实现但用户态 handler trap 返回路径待联调 |
+| **凭证** | **代码已实现**——`cred-api` + `impl-root`；dispatch 表含完整的 get/set*id 族；fork/exec 生命周期已接入 |
+| **网络栈** | **socket/bind/listen/accept4/connect/getsockname/getpeername/sendto/recvfrom/sendmsg/recvmsg/setsockopt/getsockopt/shutdown/poll 全部接线**；smoltcp 协议栈已集成；`network_poller_task` 周期性收发包 |
 
-### LoongArch 与评测脚手架
+### LoongArch64
 
-- **LoongArch64**：UART、trap、timer、**演示性 kernel task 轮转**；架构快照明确：**未接入真实 MM、driver、fs/vfs 与用户态地址空间**。
-- **赛题对齐**：多 virtio-blk、**virtio-net**、RTC、根目录串行跑 `*_testcode.sh`、**关机** 等仍属路线图基础设施（见下文第一节），与当前「内核自检 + 演示任务」主线不同。
+- QEMU loongarch64 virt 板级可完整启动并运行与 RISC-V **相同**的 bring-up 总线：`mm::kernel_mm::init`（三级页表）、`driver::active_impl::init_after_boot`（virtio 块设备）、`fs::init`（ext4 挂载）、`crate::user_bringup_bus::run()`（用户 ELF 加载）、`fs::test`、`vfs::test`。
+- 内核轮转烟测任务 `kernel_task_a/b` 作为演示性负载。
+- 当前与 RISC-V 的差距主要在：**可用物理内存上限较低**（0x1_0000_0000），**syscall dispatch 表中 loongarch 特定实现路径的验证覆盖**未齐全，以及**赛题评测环境的多盘/RTC/关机路径**未对齐。
+- LoongArch 侧的工作是「补齐验证覆盖」而非「从零实现」。
 
-### 规划含义（在已有代码上的「下一步」）
+### Bring-up 总线当前激活阶段（`os/src/user_bringup_bus.rs`）
 
-你们**不是空仓库**：**块设备 + ext4 + VFS 桥 + MM 契约 + 任务/调度骨架**已减轻后续工作量；当前瓶颈集中在 **（1）syscall ↔ fd ↔ vfs/fs 闭环**、**（2）用户地址空间与 mmap/brk 真语义**、**（3）fork/exec/wait 与 IPC 最小集**、**（4）virtio-net 与协议栈**、**（5）LoongArch 能力对齐 RISC-V**。下文阶段划分在保持赛题顺序的前提下，应优先把 **RISC-V 上「第一个磁盘 ELF + basic 子集」** 做成可回归里程碑，再并行推进 LoongArch 分页/驱动。
+| 阶段 | 状态 | 说明 |
+|------|------|------|
+| `stage-00-bus` (挂载根卷) | ✅ 激活 | RW 挂载 ext4 根卷 |
+| `stage-02-mm` | ❌ 注释 | 加载 `/glibc/basic/brk`/`mmap`/`munmap` |
+| `stage-posix-fs-meta` | ❌ 注释 | POSIX 文件系统元数据阶段 |
+| `stage-basic` | ✅ 激活 | 8 个 ELF 测程（clone/fork/wait/waitpid/getpid/getppid/exit/execve）启用，其余 20+ 个注释 |
+| `stage-busybox` | ✅ 激活 | 仅 `/glibc/basic_testcode.sh` 启用，其余 12 组脚本注释 |
 
 ---
 
 ## 一、赛题侧硬性要求（基础设施）
 
-来自 `test_case/README.md` 的评测约定，与具体测例脚本无关但必须先满足：
+来自 `testsuits-for-oskernel/README.md` 的评测约定，与具体测例脚本无关但必须先满足：
 
 1. **产物**：项目根 `Makefile` 的 `all` 能构建 **`kernel-rv`**、**`kernel-la`**（ELF）；可选 **`disk.img`**。
 2. **QEMU 环境**：`virtio-blk` 挂载含测试点的 **EXT4 无分区表** 磁盘；评测命令还包含 **`virtio-net`** 与 **RTC**；可选第二块盘 `disk.img`。
 3. **自举测例**：内核启动后需能发现并**串行**执行各 `*_testcode.sh`，输出形如 `#### OS COMP TEST GROUP START … ####` / `END` 的标记。
 4. **收尾**：全部测试点后主动**关机/退出 QEMU**。
 
-**对应内核工作**：多 `virtio-blk` 实例、块设备与 EXT4 用户态可见路径、**virtio-net + 用户态协议栈或兼容层**、时钟源与 wall-clock、进程内执行脚本（或等价解释器）、**poweroff/reboot** 路径。当前仓库 `os/scripts/test_in_qemu_riscv.sh` 仍缺网卡与第二磁盘，与赛题完整命令不一致，需对齐。
+**对应内核工作**：多 `virtio-blk` 实例、块设备与 EXT4 用户态可见路径、virtio-net 已集成但需 QEMU 参数对齐、时钟源与 wall-clock、进程内执行脚本（已通过 BusyBox sh 实现）、**poweroff/reboot** 路径。QEMU 启动脚本 `os/scripts/test_in_qemu_riscv.sh` 需要与赛题命令对齐。
 
 ---
 
 ## 二、测例分组与能力依赖（12 组）
 
-| 组别 | 典型入口脚本 | 主要依赖 |
-|------|----------------|----------|
-| **basic** | `basic_testcode.sh` → `basic/run-all.sh` | `brk/chdir/clone/close/dup/dup2/execve/exit/fork/fstat/getcwd/getdents/getpid/getppid/gettimeofday/mkdir/mmap/mount/munmap/open/openat/pipe/read/sleep/times/umount/uname/unlink/wait/waitpid/write/yield` 等 POSIX 子集；可执行文件加载；根文件系统挂载语义 |
-| **busybox** | `busybox_testcode.sh` + `busybox_cmd.txt` | 上述 syscall 子集 + **ash/sh**、大量文件与管道命令、**后台作业 `&`、kill、sleep、进程表** |
-| **lua** | `lua_testcode.sh` | `busybox` + 解释执行多个 `.lua`；动态链接与文件 IO |
-| **libctest** | `libctest_testcode.sh` | **静态与动态**链接测例、`dlopen` 相关 so（`sdcard/.../lib/`） |
-| **iozone** | `iozone_testcode.sh` | 多线程/多进程 IO（`-t 4`）、多种读写模式、`pread/pwrite/preadv/pwritev`、**fsync**、临时文件 |
-| **unixbench** | `unixbench_testcode.sh` | 多进程/管道/算术等综合负载（与调度、pipe、fork 等相关） |
-| **lmbench** | `lmbench_testcode.sh` | **null/read/write/stat/fstat/open** 延迟、`select`、**signal 安装/捕获/保护**、**pipe**、**fork/exec/shell**、**mmap/page fault**、**上下文切换**、目录 `/var/tmp`、`/tmp` |
-| **iperf** | `iperf_testcode.sh` | **TCP/UDP**、本机 `127.0.0.1`、多流、`-R` 反向；后台 **iperf3 server** |
-| **netperf** | `netperf_testcode.sh` | **netserver** 后台 + TCP/UDP STREAM/RR/CRR |
-| **libcbench** | `libcbench_testcode.sh` | libc 密集场景（与 VDSO、锁、内存分配等相关，依具体脚本与二进制） |
-| **cyclictest** | `cyclictest_testcode.sh` | **高精度定时器/时钟**、`pthread`、**SCHED_FIFO 等**、`cyclictest` + **hackbench** 负载、**SIGINT（kill -2）** |
-| **LTP** | `ltp_testcode.sh` | 遍历 `ltp/testcases/bin` 下全部用例，**POSIX 覆盖面最大**，应置最后 |
+| 组别 | 典型入口脚本 | 内核覆盖情况 | 剩余风险 |
+|------|----------------|----------|----------|
+| **basic** | `basic_testcode.sh` → `basic/run-all.sh` | 所有 ~24 个 syscall 已接线；basic 测程注释中 | 需逐项取消注释并修复边界 |
+| **busybox** | `busybox_testcode.sh` + `busybox_cmd.txt` | 依赖 syscall 均已接线；`ioctl` 缺失可能阻塞部分命令 | ioctl TTY 子集 |
+| **lua** | `lua_testcode.sh` | 依赖 busybox + 动态链接 + 文件 IO | 动态链接器路径验证 |
+| **libctest** | `libctest_testcode.sh` | 静态/动态链接 | TLS、dlopen、`sdcard/.../lib/` 协同 |
+| **iozone** | `iozone_testcode.sh` | 多线程/多进程 IO | preadv/pwritev、fsync |
+| **unixbench** | `unixbench_testcode.sh` | 多进程/管道/算术 | 综合调度稳定 |
+| **lmbench** | `lmbench_testcode.sh` | signal/select/pipe/ctx switch | 信号用户 handler 路径 |
+| **iperf** | `iperf_testcode.sh` | **socket 族已全线接线** | loopback + 后台 server 模型 |
+| **netperf** | `netperf_testcode.sh` | **socket 族已全线接线** | netserver 后台进程 |
+| **libcbench** | `libcbench_testcode.sh` | libc 密集场景 | 实际按需验证 |
+| **cyclictest** | `cyclictest_testcode.sh` | 高精度定时器、SCHED_FIFO | SIGINT（kill -2） |
+| **LTP** | `ltp_testcode.sh` | 遍历范围最广 | 置最后，分桶收敛 |
 
 `sdcard` 下同时存在 **riscv/loongarch × glibc/musl** 四套用户态二进制，内核需在两条架构上达到相近的 Linux 兼容度。
 
 ---
 
-## 三、与当前内核的差距（摘要）
+## 三、实际剩余工作量（而非"差距"）
 
-在 **第二节零** 所述「已有底座」之上，与 **basic～LTP** 测例之间的主要缺口仍是：
+**不再是从零实现内核功能，而是「现有功能已相当全面，需要集成和验证」**。剩余工作以解锁注释和修复边界问题为主：
 
-- **系统调用面**：与 fd、文件、进程、IPC、网络相关的绝大多数号码仍为 **`ENOSYS`**（导出文档与 `wateros-syscall` 快照一致）。
-- **纵向打通**：**`wateros-vfs` 桥接层**尚未接到 per-task fd 与 syscall；**`wateros-mm`** 的用户 `mmap`/`brk` 语义未与 syscall/task 联调闭环；**`wateros-ipc`** 的 pipe/signal 未进默认构建。
-- **驱动与平台**：**virtio-net**、DTB 对齐的计时频率、**IrqLine 端到端** 等仍在驱动/平台快照的「后续关注点」中。
-- **LoongArch**：与 RISC-V 主线差距大，需单独里程碑，避免与「赛题全通过」混为单线排期。
-
-**结论**：全通过仍是 **完整用户态 OS 能力栈** 的长期建设；但你们已越过「只有骨架」阶段，**应优先利用已有 fs/vfs-bridge/mm 契约/task 用户骨架做纵向切片**，而不是平行铺开所有 syscall。
-
-**riscv64-only 并行工作包**（按模块拆分、每包独立 md、init/test 总线验收约定）：见 **`docs/roadmap/riscv64-busybox/README.md`**。
+| 序号 | 工作项 | 类型 | 预计时间 |
+|------|--------|------|----------|
+| 1 | **补 `dispatch_ioctl`** | 新增代码 | 1-2 天 |
+| 2 | **basic 测例全解锁** | 取消注释 + 修复 | 1-2 周 |
+| 3 | **busybox 多脚本解锁** | 取消注释 + 修复 | 1-2 周 |
+| 4 | **重激活 stage-02-mm / stage-posix-fs-meta** | 取消注释 | 0.5 天 |
+| 5 | **赛题脚手架**（多盘/RTC/关机/START-END/脚本调度） | 新增代码 | 1 周 |
+| 6 | **benchmark 组**（lmbench/unixbench/libcbench/iozone） | 解锁脚本 + 修复 | 1-2 周 |
+| 7 | **网络组**（iperf/netperf） | 解锁脚本 + QEMU 参数对齐 | 1 周 |
+| 8 | **lua/libctest** | 解锁脚本 + 修复 | 1 周 |
+| 9 | **cyclictest** | 解锁脚本 + 信号修复 | 0.5 周 |
+| 10 | **LTP** | 分桶收敛 | 1-2 周 |
+| 11 | **LoongArch 用户路径** | 分页/驱动/fs/ELF/syscall | 2-3 周 |
+| 12 | **四套交叉验证 + CI** | 验证与自动化 | 1 周 |
 
 ---
 
-## 四、推荐实施顺序（分阶段，已按当前仓库进度收紧）
+## 四、推荐实施顺序（分阶段，基于实际代码状态）
 
-阶段划分原则：**先纵向打通「用户任务 + fd + vfs/fs + 最小 open/read/write/close + exit」**，再扩展 **basic 全表**，再 busybox/lua，再 benchmark/网络，最后 LTP；LoongArch 在 RISC-V 用户路径稳定后按平台组件并行。
+阶段划分原则：**先解锁 basic → 再解锁 busybox/脚本 → 再 benchmark/网络 → 最后 LTP 和 LoongArch**。每个阶段的核心工作是"取消 script/elf 路径的注释 + 修复暴露的 bug"，而非从零实现。
 
-1. **阶段 A — 评测脚手架对齐**  
-   Makefile 产物；QEMU 参数与赛题一致（含 **virtio-net**、RTC、可选第二盘）；内核能枚举测试脚本并输出 **START/END** 标记；**关机**。
+| 阶段 | 聚焦 | 包含的剩余工作量 | 预计时间 |
+|------|------|-----------------|----------|
+| **P1** | 基础回归 & ioctl | 补 ioctl；basic 首批 12 个测程解锁；恢复 stage-02-mm/posix-fs-meta | 2 周 |
+| **P2** | basic 全表 & busybox | basic 剩余测程；busybox 多脚本；lua 首测 | 2 周 |
+| **P3** | benchmark & 网络 | lmbench/unixbench/libcbench/iozone/iperf/netperf | 2 周 |
+| **P4** | 赛题脚手架 + cyclictest | 多盘/RTC/关机/脚本调度/START-END；cyclictest | 1 周 |
+| **P5** | LTP + libctest | LTP 分桶收敛；libctest 动态/静态 | 2 周 |
+| **P6** | LoongArch 验证 + 交叉验证 | LoongArch 验证覆盖补齐；四套 sdcard CI | 2 周 |
 
-2. **阶段 B0 — 用户态纵向切片（利用现有桥，不必等「完整 VFS」）**  
-   在 **`spawn_user_task` 骨架**上跑通 **从 ext4 加载的一个静态 ELF**；建立 **per-task fd 表**；`open/read/write/close`、`exit`（及必要 `write` 到文件）走 **`vfs`↔`fs` 已有桥与 ext4**；替换或收紧当前 **`brk` 桩**与 **`wateros-mm`** 用户语义的第一版对齐。  
-   **验收**：不依赖赛题 shell，即可在 QEMU 下用户程序读写根目录文件并退出。
+### 阶段依赖简图
 
-3. **阶段 B1 — basic 闭环**  
-   按 `basic/run-all.sh` 补齐其余 syscall（`fork/execve/wait*`、`pipe`、`mmap/munmap`、`getdents`、`mount/umount`、`chdir/getcwd`、`unlink/mkdir`、`times/gettimeofday/sleep`、`uname/fstat`、`clone` 等），与 **`wateros-abi`** 号表及 trap 参数约定一致。
+```mermaid
+flowchart LR
+  P1[P1 ioctl+basic首批] --> P2[P2 basic全表+busybox]
+  P2 --> P3[P3 benchmark+网络]
+  P2 --> P4[P4 赛题脚手架]
+  P3 --> P5[P5 LTP+libctest]
+  P4 --> P5
+  P5 --> P6[P6 LoongArch验证+交叉验证]
+```
 
-4. **阶段 C — busybox + lua**  
-   **dup/dup2**、作业与 **`kill`** 所需的最小信号/进程组语义；`busybox_cmd.txt` 覆盖的命令路径。
-
-5. **阶段 D — libctest（静态/动态）**  
-   动态链接器、`mmap` 可执行映射、**TLS**、与 `sdcard/.../lib/` 协同。
-
-6. **阶段 E — lmbench / unixbench / libcbench**  
-   `select`/`poll`、**signal** 完整化、pipe 带宽、抢占/多核（若赛题要求）。
-
-7. **阶段 F — iozone**  
-   多线程/多进程 IO、`preadv/pwritev`、**fsync**、临时目录语义。
-
-8. **阶段 G — 网络（iperf、netperf）**  
-   **virtio-net** + 协议栈（loopback + TCP/UDP）+ 后台 server 进程模型。
-
-9. **阶段 H — cyclictest**  
-   高精度计时、实时调度、**SIGINT**、hackbench 联调。
-
-10. **阶段 I — LTP**  
-    分桶收敛；**riscv/loongarch × glibc/musl** 交叉验证置于此后的持续集成策略中。
-
-**并行建议**：LoongArch 侧优先 **分页 facade 真实化 + 块设备/fs 最小挂载**，再复用 RISC-V 上已验证的 syscall/VFS 分层；业务层避免硬编码 Sv39 细节（见 `docs/prompts/architecture.md`）。
+P1-P4 可集中 RISC-V 人力；P5 可与 P6 部分并行；P6 建议独立人力。
 
 ---
 
 ## 五、Markdown 勾选清单（维护用）
 
-- [ ] 阶段 A：Makefile、`kernel-rv`/`kernel-la`、QEMU 赛题参数、测试脚本调度、START/END 输出、关机  
-- [ ] 阶段 B0：用户任务 + fd 表 + `open/read/write/close` 走 vfs↔fs 桥与 ext4；首用户 ELF；brk/mmap 与 mm 第一版对齐  
-- [ ] 阶段 B1：`basic/run-all.sh` 全 syscall + 进程/fork/exec/wait/pipe/mount 等  
-- [ ] 阶段 C：busybox + lua  
-- [ ] 阶段 D：libctest 静态/动态 + TLS/dlopen  
-- [ ] 阶段 E：lmbench、unixbench、libcbench  
-- [ ] 阶段 F：iozone  
-- [ ] 阶段 G：iperf、netperf（含 loopback 与后台服务）  
-- [ ] 阶段 H：cyclictest（含 hackbench、SIGINT）  
-- [ ] 阶段 I：LTP 全量遍历与分桶修复  
-- [ ] 交叉验证：riscv/loongarch × glibc/musl 四套 sdcard 镜像抽样与 CI 策略  
+### P1：基础回归 & ioctl
+
+- [ ] 回归基线确认：`make all` + QEMU riscv64 内核启动、自检、8 个 basic 测程通过
+- [ ] `dispatch_ioctl` 实现（TCGETS/TIOCGPGRP 等 TTY 子集）
+- [ ] `user_bringup_bus.rs` 恢复 `stage-02-mm` 注释
+- [ ] `user_bringup_bus.rs` 恢复 `stage-posix-fs-meta` 注释
+- [ ] basic 测程首批解锁：`chdir` `close` `fstat` `getcwd` `gettimeofday` `open` `openat` `read` `write` `yield` `sleep` `times` `uname` `test_echo`
+
+### P2：basic 全表 & busybox
+
+- [ ] basic 测程二批解锁：`dup` `dup2` `getdents` `mkdir_` `pipe` `unlink` `mount` `umount` `mnt`
+- [ ] basic 24 测程全部通过验收
+- [ ] `/musl/basic_testcode.sh` 解锁
+- [ ] `/glibc/busybox_testcode.sh` 解锁
+- [ ] busybox 探针（echo、sh -c）通过
+- [ ] `/glibc/lua_testcode.sh` 解锁
+
+### P3：benchmark & 网络
+
+- [ ] `/glibc/lmbench_testcode.sh` 解锁
+- [ ] `/glibc/unixbench_testcode.sh` 解锁
+- [ ] `/glibc/libcbench_testcode.sh` 解锁
+- [ ] `/glibc/iozone_testcode.sh` 解锁
+- [ ] `/glibc/iperf_testcode.sh` 解锁
+- [ ] `/glibc/netperf_testcode.sh` 解锁
+
+### P4：赛题脚手架 + cyclictest
+
+- [ ] QEMU 启动脚本与赛题命令对齐（virtio-net/RTC/多盘）
+- [ ] `*_testcode.sh` 串行调度 + `#### OS COMP TEST GROUP START/END ####` 输出
+- [ ] SBI 关机/退出 QEMU
+- [ ] `make all` → `kernel-rv`/`kernel-la` 产物确认
+- [ ] `/glibc/cyclictest_testcode.sh` 解锁
+
+### P5：LTP + libctest
+
+- [ ] `/glibc/libctest_testcode.sh` 解锁
+- [ ] `/glibc/ltp_testcode.sh` 解锁
+- [ ] `/musl/` 下全部脚本对应解锁
+
+### P6：LoongArch + 交叉验证
+
+- [ ] LoongArch 验证覆盖补齐（分页/驱动/fs/VFS/syscall 在两条架构上一致）
+- [ ] riscv/loongarch × glibc/musl 四套交叉验证
+- [ ] CI 策略落地
 
 ---
 
 ## 六、与 `docs/prompts` 的协作方式
 
-- 编码与 feature 切换：遵循 `structure.md` 的同步文件列表与 `architecture.md` 的 API/impl 分层。  
-- 扩展 syscall 与 ABI：对齐 `wateros-abi` 与 `docs/exports/`，并回写 `docs/roadmap/todolist.md` / `docs/architecture/snapshot.md`。  
-- 大规模规划或冲突策略：可先走 `general.md` 中的规划类交付结构（目标、依赖、顺序、风险、同步文档）。
-
-本文档应随 `test_case` 或内核能力变更**增量修订**，避免与 `todolist.md` 长期矛盾。
+- 编码与 feature 切换：遵循 `structure.md` 的同步文件列表与 `architecture.md` 的 API/impl 分层。
+- 扩展 syscall 与 ABI：对齐 `wateros-abi` 与 `docs/exports/`，并回写 `docs/roadmap/todolist.md`。
+- 本文档应随内核能力变更**增量修订**，避免与 `todolist.md` 长期矛盾。

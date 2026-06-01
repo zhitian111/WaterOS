@@ -1,93 +1,72 @@
-# RISC-V64-only：BusyBox  bring-up 并行计划
+# RISC-V64-only：BusyBox bring-up 并行计划
 
-本目录描述在 **仅 QEMU riscv64 + OpenSBI** 目标下，为跑通 BusyBox（及赛题 busybox 组前置能力）所需的工作包。每个工作包独立成文，含**目标、范围、验收标准、验证方式**。
+本目录描述在 **仅 QEMU riscv64 + OpenSBI** 目标下，为跑通 BusyBox（及赛题 busybox 组前置能力）所需的工作包。
+
+> **⚠️ 本文档在 2026-06 更新：此前版本基于旧导出文档描述的「缺口」（如 dup/fork fd 继承、信号 dispatch、进程凭证、网络 socket 族等）已在代码中实现。当前工作性质从「从零实现」变为「解锁注释 + 修复暴露的 bug」。**
 
 ## 事实来源与范围
 
-- **分阶段总览（syscall 清单 + 并行任务）**：[busybox-phased-plan.md](./busybox-phased-plan.md)（以 `os/components/wateros-syscall` 源码核对为准）。
-- 与 `docs/roadmap/test-case-full-pass-plan.md` 中阶段 **B0 → B1 → C** 对齐，但 **不包含 LoongArch64**。
-- 与 `docs/architecture/snapshot.md`、`docs/roadmap/todolist.md` 当前缺口一致。
-- **刻意不扩展** `os/src/self_tests/`：回归与阶段验收通过 **`kernel_main` 既有 init/test 总线** 接入（见 `wp-init-test-bus.md`）。
+- **分阶段总览（syscall 清单 + 并行任务）**：[busybox-phased-plan.md](./busybox-phased-plan.md)（以 `os/components/wateros-syscall/impl-kernel/src/lib.rs` dispatch 表为准）。
+- 与 `docs/roadmap/test-case-full-pass-plan.md` 中阶段 **P1 → P2** 对齐；**不包含 LoongArch64**。
+- 与 `docs/architecture/snapshot.md`、`docs/roadmap/todolist.md` 当前状态一致。
+- **不包含 LoongArch64**（LoongArch 已具备与 RISC-V 相同的 bring-up 总线，其验证覆盖补齐工作见 `docs/roadmap/test-case-full-pass-plan.md` 阶段 P6）。
 
 ## 工作包索引（按一级模块归类）
 
-| 文件 | 模块侧重 | 与其它包的依赖 |
-|------|----------|----------------|
-| [wp-init-test-bus.md](./wp-init-test-bus.md) | 根 crate 总线、`kernel_main` 顺序 | 所有包最终需挂到此总线 |
-| [wp-mm-user-riscv64.md](./wp-mm-user-riscv64.md) | `wateros-mm`（用户地址空间、brk/mmap） | 阻塞：无；被 syscall/exec 依赖 |
-| [wp-vfs-fd-session.md](./wp-vfs-fd-session.md) | `wateros-vfs`（per-task fd、会话） | 依赖 mm 用户映射契约稳定 |
-| [wp-syscall-file-io.md](./wp-syscall-file-io.md) | `wateros-syscall` + vfs/fs（open/read/write/close/dup） | 依赖 fd 表与 VFS 桥 |
-| [wp-syscall-posix-directory-mount.md](./wp-syscall-posix-directory-mount.md) | 目录项、元数据、mount/umount 子集 | 依赖文件 IO；与 exec 脚本 cwd 交叉 |
-| [wp-syscall-mem-time.md](./wp-syscall-mem-time.md) | `wateros-syscall` + mm（mmap/munmap、时间类） | 依赖 mm 用户路径 |
-| [wp-syscall-process-exec.md](./wp-syscall-process-exec.md) | `wateros-syscall` + `wateros-task`（fork/exec/wait） | 依赖文件 IO、目录/mount 子集（脚本 cwd）与 mm |
-| [wp-ipc-pipe-signal.md](./wp-ipc-pipe-signal.md) | `wateros-ipc`（pipe、最小 signal） | 可与进程包部分并行，BusyBox ash 前需 pipe |
-| [wp-ash-job-control.md](./wp-ash-job-control.md) | task + signal + fd（`&`、kill、dup2） | 依赖进程与 signal 最小集 |
-| [wp-platform-driver-scaffold.md](./wp-platform-driver-scaffold.md) | `wateros-platform`、`wateros-driver`（RTC、多盘、关机） | 与纯用户路径可并行；赛题满分需要 |
+| 文件 | 模块侧重 | 实际状态 (2026-06) |
+|------|----------|-------------------|
+| [wp-init-test-bus.md](./wp-init-test-bus.md) | 根 crate 总线、`kernel_main` 顺序 | 总线骨架已运行（stage-00 / stage-basic / stage-busybox）；stage-02-mm / posix-fs-meta 注释中 |
+| [wp-mm-user-riscv64.md](./wp-mm-user-riscv64.md) | `wateros-mm`（用户地址空间、brk/mmap） | **已实现** — `user_aspace_ptr`、brk/mmap/munmap/mprotect 全部接线；`from_elf_path` 完整装载 ELF |
+| [wp-vfs-fd-session.md](./wp-vfs-fd-session.md) | `wateros-vfs`（per-task fd、会话） | **已实现** — dup/dup3/fork 继承/CLOEXEC/refcount 全部实现并测试 |
+| [wp-syscall-file-io.md](./wp-syscall-file-io.md) | `wateros-syscall` + vfs/fs（open/read/write/close/dup） | **已实现** — read/write/writev/readlinkat/openat/close/lseek/fstat/dup/dup3/pipe2 全部接线 |
+| [wp-syscall-posix-directory-mount.md](./wp-syscall-posix-directory-mount.md) | 目录项、元数据、mount/umount 子集 | **已实现** — getcwd/chdir/mkdirat/getdents64/unlinkat/mount/umount2 全部接线 |
+| [wp-syscall-mem-time.md](./wp-syscall-mem-time.md) | `wateros-syscall` + mm（mmap/munmap、时间类） | **已实现** — brk/mmap/munmap/mprotect/gettimeofday/clock_gettime/times/nanosleep 全部接线 |
+| [wp-syscall-process-exec.md](./wp-syscall-process-exec.md) | `wateros-syscall` + `wateros-task`（fork/exec/wait） | **已实现** — clone/execve/waitpid/exit/exit_group 全部接线；fd 表继承/CLOEXEC 完整 |
+| [wp-ipc-pipe-signal.md](./wp-ipc-pipe-signal.md) | `wateros-ipc`（pipe、最小 signal） | **大部分实现** — pipe+FIFO 已接入；rt_sigaction/rt_sigprocmask 已接线；用户态 handler 返回路径待联调 |
+| [wp-ash-job-control.md](./wp-ash-job-control.md) | task + signal + fd（`&`、kill、dup2） | 依赖 signal 用户 handler 完成 |
+| [wp-platform-driver-scaffold.md](./wp-platform-driver-scaffold.md) | `wateros-platform`、`wateros-driver`（RTC、多盘、关机） | 仍为待办 — 不影响本地单盘 BusyBox，阻塞赛题评测环境 |
 
 ## 可并行执行分组
 
-以下分组表示 **人力上可拆给不同开发者并行**，组内仍有先后依赖。
-
 ```mermaid
 flowchart LR
-  subgraph TrackA[轨道 A 用户 ABI 纵轴]
-    MM[wp-mm-user]
-    FD[wp-vfs-fd]
-    IO[wp-syscall-io]
-    POSIX[wp-posix-dir]
-    MEM[wp-syscall-mem-time]
-    PROC[wp-syscall-process]
+  subgraph TrackA[轨道 A — 解锁注释（当前瓶颈）]
+    IOCTL[补 ioctl]
+    BASIC[basic 测程全解锁]
+    BUSY[busybox 多脚本]
   end
-  subgraph TrackB[轨道 B IPC]
-    IPC[wp-ipc-pipe-signal]
+  subgraph TrackB[轨道 B — 赛题脚手架]
+    SCAFFOLD[多盘/RTC/关机/脚本调度]
   end
-  subgraph TrackC[轨道 C 板级与评测]
-    PLAT[wp-platform-driver-scaffold]
+  subgraph TrackC[轨道 C — 信号联调]
+    SIGNAL[signal user handler]
+    ASH[ash 作业控制]
   end
-  subgraph TrackD[轨道 D 集成]
-    BUS[wp-init-test-bus]
-    ASH[wp-ash-job-control]
-  end
-  MM --> FD --> IO
-  IO --> POSIX
-  IO --> MEM
-  IO --> PROC
-  POSIX --> PROC
-  IPC --> ASH
-  PROC --> ASH
-  BUS
+  IOCTL --> BASIC
+  BASIC --> BUSY
+  BASIC --> SIGNAL
+  SIGNAL --> ASH
+  SCAFFOLD
 ```
 
-- **轨道 A（关键路径）**：`MM → FD → IO → POSIX → PROC`；**`MEM` 与 `POSIX` 在 `IO` 稳定后可并行**。`execve` 与动态装载强依赖 **`wp-syscall-mem-time.md`** 与 **`wp-mm-user-riscv64.md`**，与 **`wp-syscall-posix-directory-mount.md`** 中的 `chdir`/路径解析联调。
-- **轨道 B**：在 `open/read/write` 雏形可用后，即可开始 pipe 内核数据结构；**signal** 可与进程包后半并行。
-- **轨道 C**：RTC、第二块 virtio-blk、SBI 关机与 Makefile/QEMU 对齐，**不阻塞**本地「单盘跑 BusyBox」的最小闭环，但阻塞赛题脚本环境。
-- **轨道 D**：`wp-init-test-bus` 应尽早定义 **稳定日志前缀与阶段编号**，各工作包将各自的 `::test()` 或 `bringup_stageN()` 登记到总线；`wp-ash-job-control` 在 fork/pipe/signal 就绪后接棒。
+- **轨道 A（关键路径）**：补 ioctl → basic 全解锁 → busybox 多脚本。这是当前最有价值的工作。
+- **轨道 B**：赛题脚手架不影响本地单盘验证，可随时开始。
+- **轨道 C**：与轨道 A 的后半并行。
 
-## 与仓库其它文档的关系
+## 建议的里程碑顺序
 
-- 全量赛题依赖表仍以 `docs/roadmap/test-case-full-pass-plan.md` 为准。
-- 一级组件清单与同步文件仍以 `docs/prompts/structure.md` 为准。
-- 本目录随里程碑增量修订；完成某工作包后应在 `docs/roadmap/todolist.md` 对应行补充「已验收」指向本文档路径。
-
-## 建议的里程碑顺序（与并行不矛盾）
-
-1. **M1**：总线骨架 + mm 用户路径第一版（可映射用户 ELF）。
-2. **M2**：fd 表 + `open/read/write/close` 经 VFS 桥读写 ext4 上测试文件。
-3. **M2.5**：`getdents`/`mkdir`/`unlink`/最小 `stat` 与（若需要）`mount` 子集，支撑根目录与临时路径操作。
-4. **M3**：`fork` + `execve` + `wait`，跑通非 shell 的多进程用户程序。
-5. **M4**：`pipe` + `dup`/`dup2`，跑通 `sh -c 'echo ok'` 类最小脚本。
-6. **M5**：signal/kill 最小集 + 作业控制，BusyBox ash 脚本测例。
-7. **M6**（可选并行）：赛题脚手架（多盘、RTC、关机、根目录测例调度）。
-
-各工作包文中的验收条款应对应上述里程碑之一。
+1. **M1**（`~2 周`）：ioctl 补齐 + basic 首批 12 个测程通过 + 恢复 stage-02-mm/posix-fs-meta
+2. **M2**（`~2 周`）：basic 全表 24 测程通过 + busybox 多脚本 + lua 首测
+3. **M3**（`~2 周`）：benchmark 组（lmbench/unixbench/libcbench/iozone）+ 网络组（iperf/netperf）
+4. **M4**（`~1 周`）：赛题脚手架（多盘/RTC/关机/脚本调度/START-END）+ cyclictest
+5. **M5**（`~2 周`）：LTP + libctest + LoongArch 起步
 
 ## 已在 `user_bringup_bus` 登记的阶段（`kernel_main` 顺序）
 
-| 编号 | 阶段 id | 入口位置 | 说明 |
+| 编号 | 阶段 id | 入口位置 | 状态 |
 |------|---------|----------|------|
-| 00 | `stage-00-bus` | `os/src/user_bringup_bus.rs` 内 `run()` | RW 挂载 ext4 根卷，BEGIN/END 日志前缀验收 |
-| busybox | `stage-busybox` | `os/src/user_bringup_busybox.rs` 的 `run_stage_busybox` | 内核 runner 串行 `/{glibc,musl}/busybox sh *_testcode.sh`；测例表 `TESTCASES` 可 `enabled: false`；`[busybox-bringup]` 日志 |
-
-已废弃（文件已删除）：`stage-02-mm`、`stage-03-basic`（逐 ELF 装载 `/glibc/basic/`、`/musl/basic/`）。
-
-后续工作包合并时在本表追加行，并在 `user_bringup_bus::run` 中按编号插入调用。
+| 00 | `stage-00-bus` | `os/src/user_bringup_bus.rs` 内 `run()` | ✅ 激活 — RW 挂载 ext4 根卷 |
+| 02 | `stage-02-mm` | `os/src/user_bringup_mm.rs` | ❌ 被注释 — 需恢复 |
+| — | `stage-posix-fs-meta` | `os/src/user_bringup_posix_fs.rs` | ❌ 被注释 — 需恢复 |
+| basic | `stage-basic` | `os/src/user_bringup_basic.rs` | ✅ 激活 — 仅 8/24 测程启用 |
+| busybox | `stage-busybox` | `os/src/user_bringup_busybox.rs` | ✅ 激活 — 仅 1/12 脚本启用 |
