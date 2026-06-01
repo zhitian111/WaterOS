@@ -55,6 +55,9 @@ impl UserResources {
                         .unwrap_or_else(|| initial_user_sp(stack.top(), stack.bottom()));
         let mut trap_frame = TaskTrapFrame::default();
         trap_frame.prepare_user_return(entry_pc, user_sp);
+        if let Some((argc, argv, envp)) = user.initial_user_args() {
+            trap_frame.set_user_entry_args(argc, argv, envp);
+        }
         trap_frame.set_return_address_space_token(token);
         Self { kernel_stack,
                trap_frame,
@@ -260,6 +263,9 @@ impl TaskControlBlock {
     pub fn execve_from(&mut self,
                        entry_pc : usize,
                        sp : usize,
+                       argc : usize,
+                       argv : usize,
+                       envp : usize,
                        satp : usize,
                        user_aspace_ptr : usize,
                        image_info : UserImageInfo,
@@ -274,7 +280,9 @@ impl TaskControlBlock {
                                      AddressSpaceHandle::from_raw(satp),
                                      image_info,
                                      stack_info,
-                                     user_aspace_ptr);
+                                     user_aspace_ptr)
+            .with_initial_user_sp(sp)
+            .with_initial_user_args(argc, argv, envp);
 
         // 替换内核栈
         let new_kernel_stack = KernelStack::new();
@@ -282,6 +290,10 @@ impl TaskControlBlock {
         // 新 trap 帧：入口 + 用户栈 + satp（trap_handler 对 execve 跳过 add_user_pc）
         let mut new_trap = TaskTrapFrame::default();
         <TaskTrapFrame as TrapContextWrite>::prepare_user_return(&mut new_trap, entry_pc, sp);
+        <TaskTrapFrame as TrapContextWrite>::set_user_entry_args(&mut new_trap,
+                                                                 argc,
+                                                                 argv,
+                                                                 envp);
         <TaskTrapFrame as TrapContextWrite>::set_return_address_space_token(&mut new_trap, satp);
 
         // 替换内部资源

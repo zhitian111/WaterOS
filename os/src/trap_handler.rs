@@ -52,7 +52,7 @@ fn kill_current_user_task(context : &str, trap_cause : TrapCause, cx : &TrapCont
               cx.user_pc(),
               cx.fault_addr());
     }
-    task::exit_current(0);
+    task::exit_current(-1);
 }
 
 /// 内核态不可恢复 trap：记录诊断后停机，避免 `sret` 到损坏 PC 形成级联 fault。

@@ -46,6 +46,7 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
     let envp_refs : Vec<&str> = envp.iter().map(String::as_str).collect();
     let new_sp = mm::kernel_mm::prepare_elf_user_stack(&new_elf, &argv_refs, &envp_refs)
         .map_err(prepare_stack_to_errno)?;
+    let (argc, argv_ptr, envp_ptr) = initial_entry_args(new_sp, argv_refs.len());
 
     for exited in &killed_threads {
         vfs::cwd::drop_task_cwd(exited.id);
@@ -63,17 +64,29 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
         .expect("execve requires a current task");
     // TODO(cred-exec-setuid): 可执行文件 S_ISUID/S_ISGID 应在 cred::on_exec 内更新凭证。
     cred::on_exec(current_tid);
+    vfs::cwd::set_task_exe_path(current_tid, abs_path.as_str())
+        .map_err(vfs_error_to_errno)?;
 
     let image_info = task::UserImageInfo::new(new_elf.image_base, new_elf.image_size);
     let stack_info = task::UserStack::from_range(new_elf.stack_bottom, new_elf.stack_top);
     task::execve_current(new_elf.entry_pc,
                          new_sp,
+                         argc,
+                         argv_ptr,
+                         envp_ptr,
                          new_elf.satp,
                          new_elf.user_aspace_ptr,
                          image_info,
                          stack_info);
 
     Ok(())
+}
+
+fn initial_entry_args(sp : usize, argc : usize) -> (usize, usize, usize) {
+    let word = core::mem::size_of::<usize>();
+    let argv = sp + word;
+    let envp = argv + (argc + 1) * word;
+    (argc, argv, envp)
 }
 
 fn prepare_stack_to_errno(e : PrepareUserStackError) -> ErrNo {

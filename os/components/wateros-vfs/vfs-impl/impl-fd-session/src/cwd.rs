@@ -11,6 +11,7 @@ pub const PATH_MAX: usize = 256;
 /// 全局 per-task cwd 表。
 pub struct PerTaskCwdRegistry {
     cwd_tables: Vec<Option<String>>,
+    exe_paths: Vec<Option<String>>,
     owners: Vec<Option<task::TaskId>>,
     ref_counts: Vec<usize>,
 }
@@ -19,6 +20,7 @@ impl PerTaskCwdRegistry {
     pub const fn new() -> Self {
         Self {
             cwd_tables: Vec::new(),
+            exe_paths: Vec::new(),
             owners: Vec::new(),
             ref_counts: Vec::new(),
         }
@@ -27,6 +29,7 @@ impl PerTaskCwdRegistry {
     fn slot_mut(&mut self, task_id: task::TaskId) -> &mut Option<String> {
         if self.cwd_tables.len() <= task_id {
             self.cwd_tables.resize_with(task_id + 1, || None);
+            self.exe_paths.resize_with(task_id + 1, || None);
             self.owners.resize_with(task_id + 1, || None);
             self.ref_counts.resize(task_id + 1, 0);
         }
@@ -90,15 +93,20 @@ impl PerTaskCwdRegistry {
             if let Some(slot) = self.cwd_tables.get_mut(owner) {
                 *slot = None;
             }
+            if let Some(slot) = self.exe_paths.get_mut(owner) {
+                *slot = None;
+            }
         }
         if task_id != owner && task_id < self.cwd_tables.len() {
             self.cwd_tables[task_id] = None;
+            self.exe_paths[task_id] = None;
         }
     }
 
     /// 供未来 `fork`/`clone`：复制父任务 cwd。
     pub fn copy_cwd_from_parent(&mut self, child: task::TaskId, parent: task::TaskId) {
         let parent_cwd = self.get_cwd(parent).to_string();
+        let parent_exe = self.get_exe_path(parent).map(ToString::to_string);
         if self.owners.get(child).and_then(|owner| *owner).is_some() {
             self.drop_task(child);
         }
@@ -106,6 +114,10 @@ impl PerTaskCwdRegistry {
             *self.slot_mut(child) = Some(String::from("/"));
         } else {
             *self.slot_mut(child) = Some(parent_cwd);
+        }
+        let child_owner = self.effective_owner(child);
+        if let Some(exe) = parent_exe {
+            self.exe_paths[child_owner] = Some(exe);
         }
     }
 
@@ -117,6 +129,7 @@ impl PerTaskCwdRegistry {
         }
         if self.cwd_tables.len() <= child {
             self.cwd_tables.resize_with(child + 1, || None);
+            self.exe_paths.resize_with(child + 1, || None);
             self.owners.resize_with(child + 1, || None);
             self.ref_counts.resize(child + 1, 0);
         }
@@ -126,5 +139,20 @@ impl PerTaskCwdRegistry {
             self.ref_counts.resize(owner + 1, 0);
         }
         self.ref_counts[owner] = self.ref_counts[owner].saturating_add(1);
+    }
+
+    /// 设置任务当前可执行文件路径；thread clone 会通过 owner 共享该路径。
+    pub fn set_exe_path(&mut self, task_id: task::TaskId, exe_path: &str) {
+        let _ = self.slot_mut(task_id);
+        let owner = self.effective_owner(task_id);
+        self.exe_paths[owner] = Some(String::from(exe_path));
+    }
+
+    /// 查询任务当前可执行文件路径。
+    pub fn get_exe_path(&self, task_id: task::TaskId) -> Option<&str> {
+        let owner = self.effective_owner(task_id);
+        self.exe_paths
+            .get(owner)
+            .and_then(|path| path.as_deref())
     }
 }

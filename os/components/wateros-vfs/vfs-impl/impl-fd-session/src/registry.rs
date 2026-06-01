@@ -215,6 +215,9 @@ impl PerTaskFdRegistry {
         let newfd = {
             let owner = self.effective_owner(task_id);
             let table = &mut self.tables[owner];
+            while table.len() < minfd {
+                table.push(None);
+            }
             if let Some(fd) = (minfd..table.len()).find(|&fd| table[fd].is_none()) {
                 table[fd] = Some(dup_handle);
                 fd

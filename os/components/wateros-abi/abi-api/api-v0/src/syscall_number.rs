@@ -48,6 +48,8 @@ pub trait SyscallNumberTable {
     const WRITE: SyscallNumber;
     /// 向打开对象写入多段缓冲（`writev(2)`）。
     const WRITEV: SyscallNumber;
+    /// 读取符号链接目标（`readlinkat(2)`）。
+    const READLINKAT: SyscallNumber;
     /// 相对目录打开路径（`openat(2)`）。
     const OPENAT: SyscallNumber;
     /// 关闭文件描述符（`close(2)`）。

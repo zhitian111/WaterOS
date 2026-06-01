@@ -78,10 +78,35 @@ pub fn set_task_cwd(task_id: task::TaskId, cwd: &str) -> VfsResult<()> {
 /// 根据根卷 ELF 路径（如 `/glibc/basic/read`）将任务 cwd 设为所在目录。
 pub fn on_user_task_spawned_for_elf(task_id: task::TaskId, elf_vfs_path: &str) {
     init_task_cwd(task_id);
+    let _ = set_task_exe_path(task_id, elf_vfs_path);
     if let Some((dir, _)) = elf_vfs_path.rsplit_once('/') {
         let cwd = if dir.is_empty() { "/" } else { dir };
         let _ = set_task_cwd(task_id, cwd);
     }
+}
+
+/// 记录任务当前可执行文件路径，供 `/proc/self/exe` 兼容路径使用。
+pub fn set_task_exe_path(task_id: task::TaskId, exe_path: &str) -> VfsResult<()> {
+    if exe_path.is_empty() || exe_path.len() >= PATH_MAX {
+        return Err(VfsError::InvalidPath);
+    }
+    let abs = String::from(normalize_absolute_path(exe_path)?.as_str());
+    if abs.len() >= PATH_MAX {
+        return Err(VfsError::InvalidPath);
+    }
+    let mut reg = registry().exclusive_access();
+    reg.set_exe_path(task_id, abs.as_str());
+    Ok(())
+}
+
+/// 读取当前任务的可执行文件路径。
+pub fn current_exe_path() -> VfsResult<String> {
+    let task_id = crate::fd::current_task_id()?;
+    let mut reg = registry().exclusive_access();
+    reg.ensure_task_cwd(task_id);
+    reg.get_exe_path(task_id)
+        .map(String::from)
+        .ok_or(VfsError::NotFound)
 }
 
 /// 任务回收后丢弃 cwd 槽位。
@@ -168,6 +193,8 @@ pub fn self_test() {
     let c: task::TaskId = 22;
     reg.share_cwd_from_parent(c, a);
     assert_eq!(reg.get_cwd(c), "/glibc/basic");
+    reg.set_exe_path(a, "/glibc/basic/read");
+    assert_eq!(reg.get_exe_path(c), Some("/glibc/basic/read"));
     reg.drop_task(c);
     assert_eq!(reg.get_cwd(a), "/glibc/basic");
     reg.drop_task(a);

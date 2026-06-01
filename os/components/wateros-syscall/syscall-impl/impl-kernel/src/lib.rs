@@ -55,6 +55,9 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     fn dispatch_writev(args : SyscallArgs) -> isize { sys::sys_writev(args).0 }
 
     #[inline]
+    fn dispatch_readlinkat(args : SyscallArgs) -> isize { sys::sys_readlinkat(args).0 }
+
+    #[inline]
     fn dispatch_openat(args : SyscallArgs) -> isize { sys::sys_openat(args).0 }
 
     #[inline]
@@ -199,6 +202,9 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     fn dispatch_set_robust_list(args : SyscallArgs) -> isize {
         sys::sys_set_robust_list(args).0
     }
+
+    #[inline]
+    fn dispatch_getrandom(args : SyscallArgs) -> isize { sys::sys_getrandom(args).0 }
 
     #[inline]
     fn dispatch_rt_sigaction(args : SyscallArgs) -> isize { sys::sys_rt_sigaction(args).0 }

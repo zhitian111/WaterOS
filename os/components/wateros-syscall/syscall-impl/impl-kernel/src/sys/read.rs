@@ -33,6 +33,11 @@ pub(crate) fn sys_read(args : SyscallArgs) -> UserRet {
     if n == 0 {
         return UserRet::from_success(0);
     }
+    if fd >= 10 && n <= 4096 {
+        if let Ok(text) = core::str::from_utf8(&kbuf[..n]) {
+            log::trace!("[read-debug] fd={fd} n={n} text={text:?}");
+        }
+    }
     match copy_to_user(ptr, &kbuf[..n]) {
         Ok(written) if written == n => UserRet::from_success(n),
         _ => UserRet::from_error(ErrNo::EFAULT),

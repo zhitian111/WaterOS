@@ -18,32 +18,50 @@ pub fn spawn_user_task_from_loaded_elf_with_argv(loaded : &LoadedElf,
                                                  envp : &[&str])
                                                  -> Result<task::TaskId, PrepareUserStackError> {
     let sp = mm::kernel_mm::prepare_elf_user_stack(loaded, argv, envp)?;
-    let spec = task::user_task_from_loaded_elf(loaded).with_initial_user_sp(sp);
+    let (argc, argv_ptr, envp_ptr) = initial_entry_args(sp, argv.len());
+    let spec = task::user_task_from_loaded_elf(loaded)
+        .with_initial_user_sp(sp)
+        .with_initial_user_args(argc, argv_ptr, envp_ptr);
     Ok(task::spawn_user_task(spec))
+}
+
+fn initial_entry_args(sp : usize, argc : usize) -> (usize, usize, usize) {
+    let word = core::mem::size_of::<usize>();
+    let argv = sp + word;
+    let envp = argv + (argc + 1) * word;
+    (argc, argv, envp)
 }
 
 /// 串行执行单个 ELF：装载 → spawn → wait → reap；失败或跳过仅 `warn`。
 pub fn run_one_elf_argv(log_tag : &str, elf_path : &str, argv : &[&str]) {
+    let _ = run_one_elf_argv_exit(log_tag, elf_path, argv);
+}
+
+/// 串行执行单个 ELF 并返回退出码；装载/创建失败返回 `None`。
+pub fn run_one_elf_argv_exit(log_tag : &str, elf_path : &str, argv : &[&str]) -> Option<isize> {
     #[cfg(feature = "vfs-bridge")]
     if let Err(e) = warn_if_elf_missing(log_tag, elf_path) {
         warn!("[{log_tag}] skip path={elf_path}: rootfs check: {e:?}");
-        return;
+        return None;
     }
 
-    let loaded = match mm::kernel_mm::from_elf_path(elf_path) {
+    let loaded_result = load_elf_without_timer_preemption(elf_path);
+    let loaded = match loaded_result {
         Ok(l) => l,
         Err(e) => {
             warn!("[{log_tag}] skip load path={elf_path}: {e:?}");
-            return;
+            return None;
         }
     };
+
+    info!("[{log_tag}] ARGV path={elf_path} argv={argv:?}");
 
     let tid = match spawn_user_task_from_loaded_elf_with_argv(&loaded, argv, &[]) {
         Ok(t) => t,
         Err(e) => {
             warn!("[{log_tag}] skip spawn path={elf_path}: {e:?}");
             mm::kernel_mm::drop_user_aspace(loaded.user_aspace_ptr);
-            return;
+            return None;
         }
     };
 
@@ -68,6 +86,7 @@ pub fn run_one_elf_argv(log_tag : &str, elf_path : &str, argv : &[&str]) {
                                                .unwrap_or(-1);
 
     info!("[{log_tag}] END path={elf_path} exit_code={exit_code}");
+    Some(exit_code)
 }
 
 /// 串行执行 `/{prefix}/basic/{name}`，argv 仅含 ELF 自身路径。
@@ -101,6 +120,39 @@ pub fn run_one_busybox_script(log_tag : &str, script_path : &str) {
                                 "sh",
                                 script_path];
     run_one_elf_argv(log_tag, busybox_path.as_str(), &argv);
+}
+
+/// 串行执行 BusyBox applet，供 bring-up 分阶段探针使用。
+pub fn run_one_busybox_argv(log_tag : &str,
+                            busybox_path : &str,
+                            argv : &[&str])
+                            -> Option<isize> {
+    #[cfg(feature = "vfs-bridge")]
+    if let Err(e) = warn_if_elf_missing(log_tag, busybox_path) {
+        warn!("[{log_tag}] skip busybox argv={argv:?}: rootfs check: {e:?}");
+        return None;
+    }
+    run_one_elf_argv_exit(log_tag, busybox_path, argv)
+}
+
+#[cfg(any(feature = "impl-sv39", feature = "impl-loongarch64"))]
+fn load_elf_without_timer_preemption(
+    elf_path : &str,
+) -> Result<LoadedElf, mm::kernel_mm::LoadElfError> {
+    let state = platform::interrupt::read_global_interrupt_state().ok();
+    let _ = platform::interrupt::disable_global_interrupt();
+    let result = mm::kernel_mm::from_elf_path(elf_path);
+    if let Some(state) = state {
+        let _ = platform::interrupt::restore_global_interrupt_state(state);
+    }
+    result
+}
+
+#[cfg(not(any(feature = "impl-sv39", feature = "impl-loongarch64")))]
+fn load_elf_without_timer_preemption(
+    elf_path : &str,
+) -> Result<LoadedElf, mm::kernel_mm::LoadElfError> {
+    mm::kernel_mm::from_elf_path(elf_path)
 }
 
 #[cfg(all(any(feature = "impl-sv39", feature = "impl-loongarch64"),

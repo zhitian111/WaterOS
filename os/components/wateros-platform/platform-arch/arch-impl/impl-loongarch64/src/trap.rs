@@ -186,6 +186,12 @@ impl TrapFrameWrite for TrapContext {
 
     fn set_user_sp(&mut self, sp : usize) { self.set_user_sp_raw(sp); }
 
+    fn set_user_entry_args(&mut self, argc : usize, argv : usize, envp : usize) {
+        self.x[4] = argc;
+        self.x[5] = argv;
+        self.x[6] = envp;
+    }
+
     fn set_return_to_user(&mut self) { self.set_return_to_user_raw(); }
 
     fn set_return_to_kernel(&mut self) { self.set_return_to_kernel_raw(); }

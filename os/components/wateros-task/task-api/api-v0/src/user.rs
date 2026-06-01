@@ -58,6 +58,8 @@ pub struct UserTask {
     user_aspace_ptr : Option<usize>,
     /// 首次 `sret` 进入用户态时的栈指针；`None` 时使用栈顶减 16 字节空栈。
     initial_user_sp : Option<usize>,
+    /// 首次进入用户态时传给 C runtime 的入口参数；具体架构决定是否写寄存器。
+    initial_user_args : Option<(usize, usize, usize)>,
 }
 
 impl UserTask {
@@ -74,13 +76,21 @@ impl UserTask {
                image : Some(image),
                stack : Some(stack),
                user_aspace_ptr : Some(aspace_ptr),
-               initial_user_sp : None }
+               initial_user_sp : None,
+               initial_user_args : None }
     }
 
     /// 指定首次进入用户态时的栈指针（须已由 MM 写入 argc/argv 等）。
     #[inline]
     pub const fn with_initial_user_sp(self, sp : usize) -> Self {
         Self { initial_user_sp : Some(sp),
+               ..self }
+    }
+
+    /// 指定首次进入用户态时的 argc/argv/envp 入口参数。
+    #[inline]
+    pub const fn with_initial_user_args(self, argc : usize, argv : usize, envp : usize) -> Self {
+        Self { initial_user_args : Some((argc, argv, envp)),
                ..self }
     }
     /// 返回用户态首次进入时的目标 PC。
@@ -106,6 +116,12 @@ impl UserTask {
     /// 若已指定首次用户栈指针，则返回该值。
     #[inline]
     pub const fn initial_user_sp(&self) -> Option<usize> { self.initial_user_sp }
+
+    /// 若已指定首次用户态入口参数，则返回 `(argc, argv, envp)`。
+    #[inline]
+    pub const fn initial_user_args(&self) -> Option<(usize, usize, usize)> {
+        self.initial_user_args
+    }
 }
 
 /// 用户任务的栈封装：记录外部（MM ELF loader）已映射的虚拟地址区间。

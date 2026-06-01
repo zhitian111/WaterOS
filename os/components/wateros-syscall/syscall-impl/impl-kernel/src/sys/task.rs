@@ -32,6 +32,10 @@ const RLIMIT_NPROC : usize = 6;
 const ROBUST_LIST_HEAD_SIZE_64 : usize = 24;
 const RT_SIGSET_SIZE_64 : usize = 8;
 const RT_SIGACTION_SIZE_MIN : usize = 32;
+const GRND_NONBLOCK : usize = 0x0001;
+const GRND_RANDOM : usize = 0x0002;
+const GRND_INSECURE : usize = 0x0004;
+const GETRANDOM_ALLOWED_FLAGS : usize = GRND_NONBLOCK | GRND_RANDOM | GRND_INSECURE;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -160,6 +164,62 @@ pub(crate) fn sys_set_robust_list(args : SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EINVAL);
     }
     UserRet::from_success(0)
+}
+
+pub(crate) fn sys_getrandom(args : SyscallArgs) -> UserRet {
+    let buf_ptr = args.arg(0);
+    let buflen = args.arg(1);
+    let flags = args.arg(2);
+
+    if flags & !GETRANDOM_ALLOWED_FLAGS != 0 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    if buflen == 0 {
+        return UserRet::from_success(0);
+    }
+    if buf_ptr == 0 {
+        return UserRet::from_error(ErrNo::EFAULT);
+    }
+
+    let tid = task::current_task_id().unwrap_or(0);
+    let mut state = random_seed(buf_ptr, buflen, flags, tid);
+    let mut written = 0usize;
+    let mut chunk = [0u8; 64];
+    while written < buflen {
+        let n = core::cmp::min(chunk.len(), buflen - written);
+        fill_pseudo_random(&mut state, &mut chunk[..n]);
+        match copy_to_user(buf_ptr + written, &chunk[..n]) {
+            Ok(copied) if copied == n => written += n,
+            _ => return UserRet::from_error(ErrNo::EFAULT),
+        }
+    }
+
+    UserRet::from_success(written)
+}
+
+fn random_seed(buf_ptr : usize, buflen : usize, flags : usize, tid : usize) -> u64 {
+    let tick = task::current_tick() as u64;
+    let mixed = (buf_ptr as u64).rotate_left(17) ^
+                (buflen as u64).rotate_left(31) ^
+                (flags as u64).rotate_left(7) ^
+                (tid as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) ^
+                tick.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    if mixed == 0 {
+        0x6a09_e667_f3bc_c909
+    } else {
+        mixed
+    }
+}
+
+fn fill_pseudo_random(state : &mut u64, out : &mut [u8]) {
+    for byte in out {
+        let mut x = *state;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        *state = x;
+        *byte = (x >> 24) as u8;
+    }
 }
 
 pub(crate) fn sys_rt_sigprocmask(args : SyscallArgs) -> UserRet {

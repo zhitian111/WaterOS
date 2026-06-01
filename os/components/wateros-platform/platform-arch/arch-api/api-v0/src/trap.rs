@@ -93,6 +93,7 @@ pub trait TrapFrameWrite {
     fn set_user_pc(&mut self, pc: usize);
     fn add_user_pc(&mut self, bytes: usize);
     fn set_user_sp(&mut self, sp: usize);
+    fn set_user_entry_args(&mut self, _argc: usize, _argv: usize, _envp: usize) {}
     fn set_return_to_user(&mut self);
     fn set_return_to_kernel(&mut self);
 
@@ -227,6 +228,11 @@ pub trait TrapContextWrite: TrapFrameWrite + TrapSyscallWrite + TrapAddressSpace
     #[inline]
     fn set_user_sp(&mut self, sp: usize) {
         TrapFrameWrite::set_user_sp(self, sp);
+    }
+
+    #[inline]
+    fn set_user_entry_args(&mut self, argc: usize, argv: usize, envp: usize) {
+        TrapFrameWrite::set_user_entry_args(self, argc, argv, envp);
     }
 
     #[inline]

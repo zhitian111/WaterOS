@@ -23,6 +23,7 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const READ : SyscallNumber = SyscallNumber(63);
     const WRITE : SyscallNumber = SyscallNumber(64);
     const WRITEV : SyscallNumber = SyscallNumber(66);
+    const READLINKAT : SyscallNumber = SyscallNumber(78);
     const OPENAT : SyscallNumber = SyscallNumber(56);
     const CLOSE : SyscallNumber = SyscallNumber(57);
     const FSTAT : SyscallNumber = SyscallNumber(80);

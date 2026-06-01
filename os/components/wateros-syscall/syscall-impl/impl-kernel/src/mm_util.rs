@@ -20,7 +20,7 @@ pub(crate) fn mm_err_to_errno(e : mm::api::error::MmError) -> ErrNo {
 
 pub(crate) fn linux_mmap_prot_to_perm(prot : i32) -> mm::api::perm::PagePerm {
     use mm::api::perm::PagePerm;
-    let mut p = PagePerm::empty();
+    let mut p = PagePerm::U;
     if prot & 1 != 0 {
         p |= PagePerm::R;
     }

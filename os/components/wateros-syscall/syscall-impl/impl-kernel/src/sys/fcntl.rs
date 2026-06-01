@@ -11,6 +11,7 @@ const F_GETFD: usize = 1;
 const F_SETFD: usize = 2;
 const F_GETFL: usize = 3;
 const F_SETFL: usize = 4;
+const F_DUPFD_CLOEXEC: usize = 1030;
 
 const FD_CLOEXEC: usize = 1;
 
@@ -25,6 +26,7 @@ pub(crate) fn sys_fcntl(args: SyscallArgs) -> UserRet {
         F_SETFD => fcntl_setfd(fd, arg),
         F_GETFL => fcntl_getfl(fd),
         F_SETFL => fcntl_setfl(fd, arg),
+        F_DUPFD_CLOEXEC => fcntl_dupfd_cloexec(fd, arg),
         _ => Err(ErrNo::ENOSYS),
     };
 
@@ -36,6 +38,12 @@ pub(crate) fn sys_fcntl(args: SyscallArgs) -> UserRet {
 
 fn fcntl_dupfd(fd: usize, minfd: usize) -> Result<usize, ErrNo> {
     vfs::fd::dup_fd(fd, minfd).map_err(vfs_error_to_errno)
+}
+
+fn fcntl_dupfd_cloexec(fd: usize, minfd: usize) -> Result<usize, ErrNo> {
+    let newfd = vfs::fd::dup_fd(fd, minfd).map_err(vfs_error_to_errno)?;
+    vfs::fd::set_fd_flags(newfd, FD_CLOEXEC).map_err(vfs_error_to_errno)?;
+    Ok(newfd)
 }
 
 fn fcntl_getfd(fd: usize) -> Result<usize, ErrNo> {

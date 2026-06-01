@@ -30,7 +30,9 @@ use core::sync::atomic::{AtomicBool, Ordering};
 /// PPN 推入 `Vec`，避免大内存下撑爆内核 heap。
 pub struct StackFrameAllocator {
     recycled : Vec<PhysPageNum>,
+    allocated : Vec<bool>,
     start_ppn : usize,
+    end_ppn : usize,
     /// 仍可从连续区分配的第一页号上界（不包含）；初始为 `end_ppn`。
     next_novel : usize,
 }
@@ -39,7 +41,9 @@ impl StackFrameAllocator {
     /// 构造空分配器；须再调用 [`Self::init`] 方可从 PPN 区间取帧。
     pub fn new() -> Self {
         Self { recycled : Vec::new(),
+               allocated : Vec::new(),
                start_ppn : 0,
+               end_ppn : 0,
                next_novel : 0 }
     }
 
@@ -49,7 +53,21 @@ impl StackFrameAllocator {
         self.recycled
             .clear();
         self.start_ppn = start_ppn.val;
+        self.end_ppn = end_ppn.val;
         self.next_novel = end_ppn.val;
+        self.allocated
+            .clear();
+        self.allocated
+            .resize(end_ppn.val.saturating_sub(start_ppn.val), false);
+    }
+
+    #[inline]
+    fn index(&self, frame : PhysPageNum) -> Option<usize> {
+        if frame.0 < self.start_ppn || frame.0 >= self.end_ppn {
+            None
+        } else {
+            Some(frame.0 - self.start_ppn)
+        }
     }
 }
 
@@ -57,18 +75,55 @@ impl PhysicalFrameAllocator for StackFrameAllocator {
     type FrameId = PhysPageNum;
 
     fn alloc_frame(&mut self) -> FrameAllocResult<Self::FrameId> {
-        if let Some(p) = self.recycled.pop() {
+        while let Some(p) = self.recycled.pop() {
+            let Some(idx) = self.index(p) else {
+                log::warn!("[frame-allocator] drop invalid recycled ppn={:#x} range=[{:#x},{:#x})",
+                           p.0,
+                           self.start_ppn,
+                           self.end_ppn);
+                continue;
+            };
+            if self.allocated[idx] {
+                log::warn!("[frame-allocator] drop duplicate recycled ppn={:#x}",
+                           p.0);
+                continue;
+            }
+            self.allocated[idx] = true;
             return Ok(p);
         }
         if self.next_novel > self.start_ppn {
             self.next_novel -= 1;
-            return Ok(PhysPageNum(self.next_novel));
+            let p = PhysPageNum(self.next_novel);
+            let idx = self.next_novel - self.start_ppn;
+            if self.allocated[idx] {
+                log::warn!("[frame-allocator] novel ppn already allocated ppn={:#x}",
+                           p.0);
+                return Err(FrameAllocError::InvalidFrame);
+            }
+            self.allocated[idx] = true;
+            return Ok(p);
         }
         Err(FrameAllocError::OutOfMemory)
     }
 
     fn dealloc_frame(&mut self, frame : Self::FrameId) -> FrameAllocResult<()> {
-        // early stage：不校验重复释放
+        let Some(idx) = self.index(frame) else {
+            log::warn!("[frame-allocator] invalid dealloc ppn={:#x} range=[{:#x},{:#x})",
+                       frame.0,
+                       self.start_ppn,
+                       self.end_ppn);
+            return Err(FrameAllocError::InvalidFrame);
+        };
+        if frame.0 < self.next_novel || self.recycled.contains(&frame) || !self.allocated[idx] {
+            log::warn!("[frame-allocator] invalid dealloc ppn={:#x} next_novel={:#x} \
+                        recycled={} allocated={}",
+                       frame.0,
+                       self.next_novel,
+                       self.recycled.contains(&frame),
+                       self.allocated[idx]);
+            return Err(FrameAllocError::InvalidFrame);
+        }
+        self.allocated[idx] = false;
         self.recycled
             .push(frame);
         Ok(())
@@ -115,8 +170,13 @@ pub fn frame_alloc() -> Option<PhysPageNum> {
 
 /// 回收一个物理帧。
 pub fn frame_dealloc(frame : PhysPageNum) {
-    let _ = frame_allocator_cell().exclusive_access()
-                                  .dealloc_frame(frame);
+    if let Err(err) = frame_allocator_cell().exclusive_access()
+                                           .dealloc_frame(frame)
+    {
+        log::warn!("[frame-allocator] ignored dealloc ppn={:#x}: {:?}",
+                   frame.0,
+                   err);
+    }
 }
 
 pub fn frame_alloc_result() -> FrameAllocResult<PhysPageNum> {

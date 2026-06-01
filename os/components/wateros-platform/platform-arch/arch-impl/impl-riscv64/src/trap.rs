@@ -29,6 +29,7 @@ pub struct TrapContext {
 }
 
 const RISCV_SSTATUS_SPP : usize = 1 << 8;
+const RISCV_SSTATUS_FS_DIRTY : usize = 3 << 13;
 /// 单次定时器中断后重新武装的切片长度（`time` CSR 刻度）；与调度策略相关，非用户 ABI。
 const TIMER_SLICE_TICKS : u64 = 1_250_000;
 
@@ -110,6 +111,9 @@ impl TrapContext {
         self.sstatus &= !RISCV_SSTATUS_SPP;
         self.sstatus &= !(1 << 1);
         self.sstatus |= 1 << 5;
+        // Userspace is built for riscv64gc/lp64d and may execute F/D instructions
+        // during libc startup. Keep FS enabled until full FPU context switching lands.
+        self.sstatus |= RISCV_SSTATUS_FS_DIRTY;
     }
 
     #[inline]
@@ -182,6 +186,12 @@ impl TrapFrameWrite for TrapContext {
     }
 
     fn set_user_sp(&mut self, sp : usize) { self.set_user_sp_raw(sp); }
+
+    fn set_user_entry_args(&mut self, _argc : usize, _argv : usize, _envp : usize) {
+        // Linux/RISC-V libc start code reads argc/argv/envp from the user stack.
+        // a0 is reserved for rtld_fini; for static binaries it must remain 0.
+        self.x[10] = 0;
+    }
 
     fn set_return_to_user(&mut self) { self.set_return_to_user_raw(); }
 

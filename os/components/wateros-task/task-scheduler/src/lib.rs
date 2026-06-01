@@ -83,12 +83,18 @@ pub fn clone_current_thread(child_stack : usize, tls : usize, set_tls : bool) ->
 #[inline]
 pub fn execve_current(entry_pc : usize,
                       sp : usize,
+                      argc : usize,
+                      argv : usize,
+                      envp : usize,
                       satp : usize,
                       user_aspace_ptr : usize,
                       image_info : task_api::UserImageInfo,
                       stack_info : task_api::UserStack) {
     active_impl::execve_current(entry_pc,
                                 sp,
+                                argc,
+                                argv,
+                                envp,
                                 satp,
                                 user_aspace_ptr,
                                 image_info,

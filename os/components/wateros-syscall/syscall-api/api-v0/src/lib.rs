@@ -16,6 +16,7 @@ pub enum SyscallKind {
     Read,
     Write,
     Writev,
+    ReadLinkAt,
     OpenAt,
     Close,
     Fstat,
@@ -103,6 +104,8 @@ impl SyscallKind {
             Self::Write
         } else if syscall_nr == T::WRITEV.raw() {
             Self::Writev
+        } else if syscall_nr == T::READLINKAT.raw() {
+            Self::ReadLinkAt
         } else if syscall_nr == T::OPENAT.raw() {
             Self::OpenAt
         } else if syscall_nr == T::CLOSE.raw() {
@@ -261,6 +264,7 @@ impl SyscallKind {
             Self::Read => "read",
             Self::Write => "write",
             Self::Writev => "writev",
+            Self::ReadLinkAt => "readlinkat",
             Self::OpenAt => "openat",
             Self::Close => "close",
             Self::Fstat => "fstat",
@@ -414,6 +418,12 @@ pub trait SyscallDispatcher {
 
     fn dispatch_writev(args : SyscallArgs) -> isize {
         Self::dispatch_unsupported(SyscallKind::Writev, Self::NumberTable::WRITEV.raw(), args)
+    }
+
+    fn dispatch_readlinkat(args : SyscallArgs) -> isize {
+        Self::dispatch_unsupported(SyscallKind::ReadLinkAt,
+                                   Self::NumberTable::READLINKAT.raw(),
+                                   args)
     }
 
     fn dispatch_openat(args : SyscallArgs) -> isize {
@@ -717,6 +727,7 @@ pub trait SyscallDispatcher {
             SyscallKind::Read => Self::dispatch_read(syscall_args),
             SyscallKind::Write => Self::dispatch_write(syscall_args),
             SyscallKind::Writev => Self::dispatch_writev(syscall_args),
+            SyscallKind::ReadLinkAt => Self::dispatch_readlinkat(syscall_args),
             SyscallKind::OpenAt => Self::dispatch_openat(syscall_args),
             SyscallKind::Close => Self::dispatch_close(syscall_args),
             SyscallKind::Fstat => Self::dispatch_fstat(syscall_args),
