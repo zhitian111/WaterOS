@@ -12,7 +12,7 @@ use arch::interrupt::ArchInterruptState;
 use arch::task::ActiveArchTaskContext as TaskContext;
 use base::sync::UniprocessorSafeCell;
 use core::mem::MaybeUninit;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use task_api::{
     ExitedTask, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskId, TaskSnapshot, TaskTick,
     TaskWaitHandle, TaskWaitResult, UserTask, WaitQueueId,
@@ -42,6 +42,8 @@ type SwitchPair = (*mut TaskContext, *const TaskContext);
 static mut SCHEDULER : MaybeUninit<UniprocessorSafeCell<RoundRobinScheduler>> =
     MaybeUninit::uninit();
 static SCHEDULER_READY : AtomicBool = AtomicBool::new(false);
+static SCHEDULER_BORROWED : AtomicBool = AtomicBool::new(false);
+static SCHEDULER_BORROW_LINE : AtomicUsize = AtomicUsize::new(0);
 
 // 仅在 `SCHEDULER_READY` 为真后解引用；否则 panic，避免未初始化访问。
 fn scheduler_cell() -> &'static UniprocessorSafeCell<RoundRobinScheduler> {
@@ -52,7 +54,24 @@ fn scheduler_cell() -> &'static UniprocessorSafeCell<RoundRobinScheduler> {
 
 // 在单调度器 cell 上取得独占引用并执行闭包；调用方已通过 `InterruptGuard`
 // 关中断时保证不与其他 CPU 交错（当前为 UP 假设）。
+#[track_caller]
 fn with_scheduler<R>(f : impl FnOnce(&mut RoundRobinScheduler) -> R) -> R {
+    let caller = core::panic::Location::caller();
+    if SCHEDULER_BORROWED.swap(true, Ordering::AcqRel) {
+        panic!("scheduler borrow reentered at {}:{}, previous borrower line={}",
+               caller.file(),
+               caller.line(),
+               SCHEDULER_BORROW_LINE.load(Ordering::Acquire));
+    }
+    SCHEDULER_BORROW_LINE.store(caller.line() as usize, Ordering::Release);
+    struct BorrowFlag;
+    impl Drop for BorrowFlag {
+        fn drop(&mut self) {
+            SCHEDULER_BORROW_LINE.store(0, Ordering::Release);
+            SCHEDULER_BORROWED.store(false, Ordering::Release);
+        }
+    }
+    let _borrow_flag = BorrowFlag;
     let mut scheduler = scheduler_cell().exclusive_access();
     f(&mut scheduler)
 }

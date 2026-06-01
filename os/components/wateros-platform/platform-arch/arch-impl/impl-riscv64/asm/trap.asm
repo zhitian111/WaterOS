@@ -103,6 +103,12 @@ gdb_point_1:
     csrw satp, t0
     sfence.vma x0, x0
 
+    # `sscratch` is per-hart, not per-task. A syscall may block and switch to
+    # another user task before resuming this trap frame, so refresh it from the
+    # authoritative TrapContext user-sp slot before returning to U-mode.
+    ld t0, 2*8(sp)
+    csrw sscratch, t0
+
     ld x1,  1*8(sp)
     ld x3,  3*8(sp)
     ld x4,  4*8(sp)

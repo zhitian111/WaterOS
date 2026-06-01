@@ -173,25 +173,44 @@ impl TaskControlBlock {
             TaskInner::User(u) => u,
             _ => return None,
         };
+        log::warn!("[fork-debug] tcb fork_from enter parent={} child={} child_stack={:#x}",
+                   self.id,
+                   child_id,
+                   child_stack);
 
         // 复制父 trap 帧
         let mut child_trap = parent_user.trap_frame;
+        log::warn!("[fork-debug] tcb copied trap parent={} child={}",
+                   self.id,
+                   child_id);
 
         // 子进程从 fork/clone 返回 0（a0 = 0）
         <TaskTrapFrame as TrapSyscallWrite>::set_syscall_ret(&mut child_trap,
                                                              UserRet::from_success(0));
+        log::warn!("[fork-debug] tcb set ret parent={} child={}",
+                   self.id,
+                   child_id);
 
         // 子进程 sepc 前进到下一条指令（跳过已完成的 ecall）
         <TaskTrapFrame as TrapContextWrite>::add_user_pc(&mut child_trap, 4);
+        log::warn!("[fork-debug] tcb advanced pc parent={} child={}",
+                   self.id,
+                   child_id);
 
         let parent_spec = &parent_user.user;
         if child_stack != 0 {
             <TaskTrapFrame as TrapContextWrite>::set_user_sp(&mut child_trap, child_stack);
         }
+        log::warn!("[fork-debug] tcb set sp parent={} child={}",
+                   self.id,
+                   child_id);
 
         // 安装新的独立地址空间
         <TaskTrapFrame as TrapContextWrite>::set_return_address_space_token(&mut child_trap,
                                                                             new_satp);
+        log::warn!("[fork-debug] tcb set satp parent={} child={}",
+                   self.id,
+                   child_id);
 
         // 构造子 UserTask 规格（元数据继承父，aspace 用新的）
         let child_spec = UserTask::new(parent_spec.entry_pc(),
@@ -201,10 +220,21 @@ impl TaskControlBlock {
                                        parent_spec.stack()
                                                   .expect("parent user task must have stack"),
                                        new_aspace_ptr);
+        log::warn!("[fork-debug] tcb child spec parent={} child={}",
+                   self.id,
+                   child_id);
 
         let kernel_stack = KernelStack::new();
+        log::warn!("[fork-debug] tcb kernel stack parent={} child={} top={:#x}",
+                   self.id,
+                   child_id,
+                   kernel_stack.top());
         let task_cx = TaskContext::goto_entry(__arch_user_task_entry as *const () as usize,
                                               kernel_stack.top());
+        log::warn!("[fork-debug] tcb task cx parent={} child={} entry={:#x}",
+                   self.id,
+                   child_id,
+                   __arch_user_task_entry as *const () as usize);
         Some(Self { id : child_id,
                     parent_id : Some(self.id),
                     state : TaskState::Ready,

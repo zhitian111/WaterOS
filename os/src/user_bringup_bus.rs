@@ -25,6 +25,6 @@ pub fn run() {
 
     // crate::user_bringup_mm::run_stage_02();
     // crate::user_bringup_posix_fs::run_stage_posix_fs_meta();
-    // crate::user_bringup_basic::run_stage_basic();
+    //crate::user_bringup_basic::run_stage_basic();
     crate::user_bringup_busybox::run_stage_busybox();
 }

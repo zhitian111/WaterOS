@@ -81,7 +81,12 @@ fn fatal_kernel_trap(context : &str,
 /// 调度），其余 cause 直接 `panic`。返回用户态前由 arch
 /// 层完成必要的帧访问准备。
 extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
-    let authoritative = unsafe { task::begin_current_trap_frame_access(frame) };
+    let stack_cx = unsafe { &mut *(frame as *mut TrapContext) };
+    let authoritative = if stack_cx.returns_to_user() {
+        unsafe { task::begin_current_trap_frame_access(frame) }
+    } else {
+        frame
+    };
     let cx = unsafe { &mut *(authoritative as *mut TrapContext) };
 
     if cx.returns_to_user() {
@@ -196,7 +201,11 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
     //    **拷回** `trap.asm` 传入的
     //    `frame`（内核栈上的那份），并按返回目标写入地址空间 token，供下面汇编
     //    `ld`/`csrw`/`sret` 使用。`false` 且回用户则 panic。
-    let restored = unsafe { task::restore_current_trap_frame(frame) };
+    let restored = if cx.returns_to_user() {
+        unsafe { task::restore_current_trap_frame(frame) }
+    } else {
+        true
+    };
     trace!("[trap] restore_current_trap_frame restored={}",
            restored);
     if cx.returns_to_user() && !restored {

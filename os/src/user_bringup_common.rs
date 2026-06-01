@@ -9,7 +9,9 @@ use mm::api::kernel_bringup::{LoadedElf, PrepareUserStackError};
 use runtime::logging::*;
 
 /// glibc / musl 根卷前缀。
-pub const LIBC_PREFIXES : &[&str] = &["/glibc", "/musl"];
+pub const LIBC_PREFIXES : &[&str] = &["/glibc", 
+//"/musl"
+];
 
 /// 基于已装载 ELF 创建用户任务，并在用户栈上写入 `argv` / `envp`（与 `execve`
 /// 布局一致）。
@@ -19,9 +21,9 @@ pub fn spawn_user_task_from_loaded_elf_with_argv(loaded : &LoadedElf,
                                                  -> Result<task::TaskId, PrepareUserStackError> {
     let sp = mm::kernel_mm::prepare_elf_user_stack(loaded, argv, envp)?;
     let (argc, argv_ptr, envp_ptr) = initial_entry_args(sp, argv.len());
-    let spec = task::user_task_from_loaded_elf(loaded)
-        .with_initial_user_sp(sp)
-        .with_initial_user_args(argc, argv_ptr, envp_ptr);
+    let spec =
+        task::user_task_from_loaded_elf(loaded).with_initial_user_sp(sp)
+                                               .with_initial_user_args(argc, argv_ptr, envp_ptr);
     Ok(task::spawn_user_task(spec))
 }
 
@@ -123,10 +125,7 @@ pub fn run_one_busybox_script(log_tag : &str, script_path : &str) {
 }
 
 /// 串行执行 BusyBox applet，供 bring-up 分阶段探针使用。
-pub fn run_one_busybox_argv(log_tag : &str,
-                            busybox_path : &str,
-                            argv : &[&str])
-                            -> Option<isize> {
+pub fn run_one_busybox_argv(log_tag : &str, busybox_path : &str, argv : &[&str]) -> Option<isize> {
     #[cfg(feature = "vfs-bridge")]
     if let Err(e) = warn_if_elf_missing(log_tag, busybox_path) {
         warn!("[{log_tag}] skip busybox argv={argv:?}: rootfs check: {e:?}");
@@ -136,9 +135,8 @@ pub fn run_one_busybox_argv(log_tag : &str,
 }
 
 #[cfg(any(feature = "impl-sv39", feature = "impl-loongarch64"))]
-fn load_elf_without_timer_preemption(
-    elf_path : &str,
-) -> Result<LoadedElf, mm::kernel_mm::LoadElfError> {
+fn load_elf_without_timer_preemption(elf_path : &str)
+                                     -> Result<LoadedElf, mm::kernel_mm::LoadElfError> {
     let state = platform::interrupt::read_global_interrupt_state().ok();
     let _ = platform::interrupt::disable_global_interrupt();
     let result = mm::kernel_mm::from_elf_path(elf_path);
@@ -149,9 +147,8 @@ fn load_elf_without_timer_preemption(
 }
 
 #[cfg(not(any(feature = "impl-sv39", feature = "impl-loongarch64")))]
-fn load_elf_without_timer_preemption(
-    elf_path : &str,
-) -> Result<LoadedElf, mm::kernel_mm::LoadElfError> {
+fn load_elf_without_timer_preemption(elf_path : &str)
+                                     -> Result<LoadedElf, mm::kernel_mm::LoadElfError> {
     mm::kernel_mm::from_elf_path(elf_path)
 }
 
