@@ -13,6 +13,7 @@ mod fstat;
 mod futex;
 mod getcwd;
 mod getdents64;
+mod ioctl;
 mod kill;
 mod lseek;
 mod mkdirat;
@@ -21,11 +22,11 @@ mod mount;
 mod openat;
 mod path_at;
 mod pipe2;
-mod readlinkat;
-mod unlinkat;
-mod umount2;
 mod read;
+mod readlinkat;
 mod task;
+mod umount2;
+mod unlinkat;
 mod write;
 
 // socket / 网络
@@ -38,8 +39,8 @@ mod recvfrom;
 mod sendmsg;
 mod sendto;
 mod shutdown;
-mod sockname;
 mod socket;
+mod sockname;
 mod sockopt;
 
 pub(crate) use brk::sys_brk;
@@ -47,16 +48,17 @@ pub(crate) use chdir::sys_chdir;
 pub(crate) use clone::sys_clone;
 pub(crate) use close::sys_close;
 pub(crate) use cred::{
-    sys_getegid, sys_geteuid, sys_getgid, sys_getgroups, sys_getuid, sys_setregid, sys_setresgid,
-    sys_setresuid, sys_setreuid, sys_setgid, sys_setuid,
+    sys_getegid, sys_geteuid, sys_getgid, sys_getgroups, sys_getuid, sys_setgid, sys_setregid,
+    sys_setresgid, sys_setresuid, sys_setreuid, sys_setuid,
 };
 pub(crate) use dup::{sys_dup, sys_dup3};
 pub(crate) use execve::sys_execve;
 pub(crate) use fcntl::sys_fcntl;
-pub(crate) use fstat::{sys_fstat, sys_statx};
+pub(crate) use fstat::{sys_fstat, sys_fstatat, sys_statx};
 pub(crate) use futex::sys_futex;
 pub(crate) use getcwd::sys_getcwd;
 pub(crate) use getdents64::sys_getdents64;
+pub(crate) use ioctl::sys_ioctl;
 pub(crate) use kill::sys_kill;
 pub(crate) use lseek::sys_lseek;
 pub(crate) use mkdirat::sys_mkdirat;
@@ -64,16 +66,16 @@ pub(crate) use mmap::{sys_mmap, sys_mprotect, sys_munmap};
 pub(crate) use mount::sys_mount;
 pub(crate) use openat::sys_openat;
 pub(crate) use pipe2::sys_pipe2;
-pub(crate) use readlinkat::sys_readlinkat;
-pub(crate) use unlinkat::sys_unlinkat;
-pub(crate) use umount2::sys_umount2;
 pub(crate) use read::sys_read;
+pub(crate) use readlinkat::sys_readlinkat;
 pub(crate) use task::{
-    sys_clock_gettime, sys_exit, sys_exit_group, sys_getpid, sys_getppid, sys_getrlimit, sys_gettid,
-    sys_getrandom, sys_gettimeofday, sys_nanosleep, sys_prctl, sys_prlimit64, sys_set_robust_list,
-    sys_set_tid_address, sys_rt_sigaction, sys_rt_sigprocmask, sys_setrlimit, sys_times,
-    sys_uname, sys_waitpid, sys_yield,
+    sys_clock_gettime, sys_exit, sys_exit_group, sys_getpid, sys_getppid, sys_getrandom,
+    sys_getrlimit, sys_gettid, sys_gettimeofday, sys_nanosleep, sys_prctl, sys_prlimit64,
+    sys_rt_sigaction, sys_rt_sigprocmask, sys_set_robust_list, sys_set_tid_address, sys_setrlimit,
+    sys_times, sys_uname, sys_waitpid, sys_yield,
 };
+pub(crate) use umount2::sys_umount2;
+pub(crate) use unlinkat::sys_unlinkat;
 pub(crate) use write::{sys_write, sys_writev};
 
 // socket / 网络
@@ -86,6 +88,6 @@ pub(crate) use recvfrom::sys_recvfrom;
 pub(crate) use sendmsg::{sys_recvmsg, sys_sendmsg};
 pub(crate) use sendto::sys_sendto;
 pub(crate) use shutdown::sys_shutdown;
-pub(crate) use sockname::{sys_getpeername, sys_getsockname};
 pub(crate) use socket::sys_socket;
+pub(crate) use sockname::{sys_getpeername, sys_getsockname};
 pub(crate) use sockopt::{sys_getsockopt, sys_setsockopt};

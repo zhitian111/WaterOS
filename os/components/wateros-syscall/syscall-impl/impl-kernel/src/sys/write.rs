@@ -14,11 +14,11 @@ use crate::vfs_util::vfs_error_to_errno;
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct UserIoVec {
-    base : usize,
-    len : usize,
+    base: usize,
+    len: usize,
 }
 
-pub(crate) fn sys_write(args : SyscallArgs) -> UserRet {
+pub(crate) fn sys_write(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let ptr = args.arg(1);
     let len = args.arg(2);
@@ -43,7 +43,7 @@ pub(crate) fn sys_write(args : SyscallArgs) -> UserRet {
     }
 }
 
-pub(crate) fn sys_writev(args : SyscallArgs) -> UserRet {
+pub(crate) fn sys_writev(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let iov_ptr = args.arg(1);
     let iovcnt = args.arg(2);
@@ -70,7 +70,10 @@ pub(crate) fn sys_writev(args : SyscallArgs) -> UserRet {
         if iov.base == 0 {
             return UserRet::from_error(ErrNo::EFAULT);
         }
-        let new_len = match out.len().checked_add(iov.len) {
+        let new_len = match out
+            .len()
+            .checked_add(iov.len)
+        {
             Some(v) => v,
             None => return UserRet::from_error(ErrNo::EINVAL),
         };

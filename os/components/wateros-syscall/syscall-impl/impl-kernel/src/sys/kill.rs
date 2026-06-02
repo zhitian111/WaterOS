@@ -6,22 +6,24 @@ use abi::user_ret::UserRet;
 use task::TaskExitCode;
 
 /// Linux 标准信号号上界（不含实时信号）。
-const _NSIG : i32 = 64;
+const _NSIG: i32 = 64;
 
-const SIGKILL : i32 = 9;
-const SIGTERM : i32 = 15;
-const SIGINT : i32 = 2;
-const SIGHUP : i32 = 1;
+const SIGKILL: i32 = 9;
+const SIGTERM: i32 = 15;
+const SIGINT: i32 = 2;
+const SIGHUP: i32 = 1;
 
 /// 默认动作为终止进程的信号；其它信号仅校验存在性并返回成功。
-fn signal_terminates(sig : i32) -> bool {
+fn signal_terminates(sig: i32) -> bool {
     matches!(sig, SIGKILL | SIGTERM | SIGINT | SIGHUP)
 }
 
 /// 与 wait 状态字节一致：`(sig & 0x7f) << 8`。
-fn exit_code_for_signal(sig : i32) -> TaskExitCode { ((sig & 0x7f) as isize) << 8 }
+fn exit_code_for_signal(sig: i32) -> TaskExitCode {
+    ((sig & 0x7f) as isize) << 8
+}
 
-fn resolve_task_id(pid : isize) -> Result<usize, ErrNo> {
+fn resolve_task_id(pid: isize) -> Result<usize, ErrNo> {
     if pid <= 0 {
         return Err(ErrNo::EINVAL);
     }
@@ -33,7 +35,7 @@ fn resolve_task_id(pid : isize) -> Result<usize, ErrNo> {
 }
 
 /// `kill(pid, sig)` — riscv64 系统调用号 129。
-pub(crate) fn sys_kill(args : SyscallArgs) -> UserRet {
+pub(crate) fn sys_kill(args: SyscallArgs) -> UserRet {
     let pid = args.arg(0) as isize;
     let sig = args.arg(1) as i32;
 

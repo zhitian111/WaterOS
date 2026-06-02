@@ -1,14 +1,14 @@
 //! 系统调用层与 [`wateros-mm`] API 之间的错误与标志转换。
 
-use api_v0::unsupported::syscall_unsupported;
 use abi::errno::ErrNo;
+use api_v0::unsupported::syscall_unsupported;
 
 /// 用户态 `brk` 的单调递增假顶：在无 ELF
 /// 用户页表（`user_aspace_ptr==0`）时兜底。
-pub(crate) static USER_BRK_FAKE : core::sync::atomic::AtomicUsize =
+pub(crate) static USER_BRK_FAKE: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(0);
 
-pub(crate) fn mm_err_to_errno(e : mm::api::error::MmError) -> ErrNo {
+pub(crate) fn mm_err_to_errno(e: mm::api::error::MmError) -> ErrNo {
     use mm::api::error::MmError;
     match e {
         MmError::OutOfMemory | MmError::FrameAlloc(_) => ErrNo::ENOMEM,
@@ -18,7 +18,7 @@ pub(crate) fn mm_err_to_errno(e : mm::api::error::MmError) -> ErrNo {
     }
 }
 
-pub(crate) fn linux_mmap_prot_to_perm(prot : i32) -> mm::api::perm::PagePerm {
+pub(crate) fn linux_mmap_prot_to_perm(prot: i32) -> mm::api::perm::PagePerm {
     use mm::api::perm::PagePerm;
     let mut p = PagePerm::U;
     if prot & 1 != 0 {
@@ -33,12 +33,12 @@ pub(crate) fn linux_mmap_prot_to_perm(prot : i32) -> mm::api::perm::PagePerm {
     p
 }
 
-pub(crate) fn linux_mmap_flags_to_map_flags(flags : u32) -> mm::api::flags::MapFlags {
+pub(crate) fn linux_mmap_flags_to_map_flags(flags: u32) -> mm::api::flags::MapFlags {
     use mm::api::flags::MapFlags;
-    const MAP_SHARED : u32 = 0x01;
-    const MAP_PRIVATE : u32 = 0x02;
-    const MAP_FIXED : u32 = 0x10;
-    const MAP_ANONYMOUS : u32 = 0x20;
+    const MAP_SHARED: u32 = 0x01;
+    const MAP_PRIVATE: u32 = 0x02;
+    const MAP_FIXED: u32 = 0x10;
+    const MAP_ANONYMOUS: u32 = 0x20;
     let mut mf = MapFlags::empty();
     if flags & MAP_SHARED != 0 {
         mf |= MapFlags::SHARED;
@@ -57,8 +57,8 @@ pub(crate) fn linux_mmap_flags_to_map_flags(flags : u32) -> mm::api::flags::MapF
 
 /// Linux `mmap` 是否带 `MAP_ANONYMOUS`。
 #[inline]
-pub(crate) fn linux_mmap_is_anonymous(flags : u32) -> bool {
-    const MAP_ANONYMOUS : u32 = 0x20;
+pub(crate) fn linux_mmap_is_anonymous(flags: u32) -> bool {
+    const MAP_ANONYMOUS: u32 = 0x20;
     flags & MAP_ANONYMOUS != 0
 }
 

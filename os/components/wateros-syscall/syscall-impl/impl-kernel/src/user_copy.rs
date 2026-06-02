@@ -55,7 +55,8 @@ pub(crate) fn copy_user_path_cstr(ptr: usize, max: usize) -> Result<String, ErrN
     let mut len = 0usize;
     while len < max {
         let mut byte = [0u8; 1];
-        ops.copy_from_user(&mut byte, VirtAddr(ptr + len)).map_err(mm_err_to_errno)?;
+        ops.copy_from_user(&mut byte, VirtAddr(ptr + len))
+            .map_err(mm_err_to_errno)?;
         if byte[0] == 0 {
             break;
         }

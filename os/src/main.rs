@@ -252,11 +252,6 @@ mod qemu_loongarch64_virt {
                 vfs::test();
             }
         }
-
-        // 内核态轮转烟测任务。
-        task::spawn_kernel_task(loongarch64_kernel_task_a, 0);
-        task::spawn_kernel_task(loongarch64_kernel_task_b, 0);
-
         platform::interrupt::enable_timer_interrupt().unwrap();
         platform::timer::set_timer_after_ms(100).unwrap();
         platform::interrupt::enable_global_interrupt().unwrap();

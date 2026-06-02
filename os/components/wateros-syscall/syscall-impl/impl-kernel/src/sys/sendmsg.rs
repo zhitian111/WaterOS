@@ -169,18 +169,14 @@ pub(crate) fn sys_recvmsg(args: SyscallArgs) -> UserRet {
 
     // 根据 socket 类型接收，写回发送方地址
     let (n, from_ip, from_port) = match stack::socket_kind(handle) {
-        Ok(stack::SocketKind::Tcp) => {
-            match stack::socket_recv(handle, &mut kbuf) {
-                Ok(n) if n > 0 => (n, [0u8; 4], 0u16),
-                _ => return UserRet::from_error(ErrNo::EAGAIN),
-            }
-        }
-        Ok(stack::SocketKind::Udp) => {
-            match stack::socket_recvfrom(handle, &mut kbuf) {
-                Ok((n, ip, port)) if n > 0 => (n, ip, port),
-                _ => return UserRet::from_error(ErrNo::EAGAIN),
-            }
-        }
+        Ok(stack::SocketKind::Tcp) => match stack::socket_recv(handle, &mut kbuf) {
+            Ok(n) if n > 0 => (n, [0u8; 4], 0u16),
+            _ => return UserRet::from_error(ErrNo::EAGAIN),
+        },
+        Ok(stack::SocketKind::Udp) => match stack::socket_recvfrom(handle, &mut kbuf) {
+            Ok((n, ip, port)) if n > 0 => (n, ip, port),
+            _ => return UserRet::from_error(ErrNo::EAGAIN),
+        },
         _ => return UserRet::from_error(ErrNo::ENOTSOCK),
     };
 
@@ -191,9 +187,16 @@ pub(crate) fn sys_recvmsg(args: SyscallArgs) -> UserRet {
         if remaining == 0 {
             break;
         }
-        let chunk = iov.iov_len.min(remaining);
+        let chunk = iov
+            .iov_len
+            .min(remaining);
         if chunk > 0 {
-            if copy_to_user(iov.iov_base, &kbuf[offset..offset + chunk]).is_err() {
+            if copy_to_user(
+                iov.iov_base,
+                &kbuf[offset..offset + chunk],
+            )
+            .is_err()
+            {
                 return UserRet::from_error(ErrNo::EFAULT);
             }
             offset += chunk;
@@ -211,7 +214,10 @@ pub(crate) fn sys_recvmsg(args: SyscallArgs) -> UserRet {
         };
         let write_len = core::mem::size_of::<SockAddrIn>().min(msg.msg_namelen as usize);
         let addr_bytes = unsafe {
-            core::slice::from_raw_parts(&addr as *const SockAddrIn as *const u8, write_len)
+            core::slice::from_raw_parts(
+                &addr as *const SockAddrIn as *const u8,
+                write_len,
+            )
         };
         let _ = copy_to_user(msg.msg_name, addr_bytes);
     }

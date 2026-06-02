@@ -22,7 +22,10 @@ pub(crate) fn sys_umount2(args: SyscallArgs) -> UserRet {
         Err(e) => return UserRet::from_error(e),
     };
 
-    let mount_point = match resolve_path_at(crate::sys::path_at::AT_FDCWD, target.as_str()) {
+    let mount_point = match resolve_path_at(
+        crate::sys::path_at::AT_FDCWD,
+        target.as_str(),
+    ) {
         Ok(p) => p,
         Err(e) => return UserRet::from_error(e),
     };

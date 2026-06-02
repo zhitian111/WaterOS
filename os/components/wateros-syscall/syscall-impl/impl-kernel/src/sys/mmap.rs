@@ -12,10 +12,10 @@ use crate::mm_util::{
     current_user_aspace_handle, linux_mmap_flags_to_map_flags, linux_mmap_is_anonymous,
     linux_mmap_prot_to_perm, mm_err_to_errno,
 };
-use api_v0::unsupported::syscall_unsupported;
 use crate::vfs_util::read_fd_bytes_at;
+use api_v0::unsupported::syscall_unsupported;
 
-pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
+pub(crate) fn sys_mmap(args: SyscallArgs) -> UserRet {
     let Some(handle) = current_user_aspace_handle() else {
         syscall_unsupported("mmap: no user_aspace_ptr");
     };
@@ -65,7 +65,7 @@ pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
         };
         (
             MmapKind::File {
-                fd : fd as usize,
+                fd: fd as usize,
                 offset,
             },
             Some(backing),
@@ -75,8 +75,8 @@ pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
     let req = MmapRequest {
         addr_hint,
         len,
-        prot : perm,
-        flags : mf,
+        prot: perm,
+        flags: mf,
         kind,
     };
 
@@ -90,10 +90,15 @@ pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
             Err(e) => UserRet::from_error(mm_err_to_errno(e)),
         },
         Some(backing) => {
-            let backing : Vec<u8> = backing;
+            let backing: Vec<u8> = backing;
             match mm::user_aspace::with_user_aspace_mut(handle, |aspace| {
                 let mut alloc = GlobalPhysFrameAllocator;
-                let base = MmapOps::mmap(aspace, &mut alloc, req, Some(backing.as_slice()))?;
+                let base = MmapOps::mmap(
+                    aspace,
+                    &mut alloc,
+                    req,
+                    Some(backing.as_slice()),
+                )?;
                 Ok(base.0)
             }) {
                 Ok(base) => UserRet::from_success(base),
@@ -103,7 +108,7 @@ pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
     }
 }
 
-pub(crate) fn sys_munmap(args : SyscallArgs) -> UserRet {
+pub(crate) fn sys_munmap(args: SyscallArgs) -> UserRet {
     let Some(handle) = current_user_aspace_handle() else {
         syscall_unsupported("mmap: no user_aspace_ptr");
     };
@@ -113,15 +118,15 @@ pub(crate) fn sys_munmap(args : SyscallArgs) -> UserRet {
     let addr = args.arg(0);
     let len = args.arg(1);
     match mm::user_aspace::with_user_aspace_mut(handle, |aspace| {
-              let mut alloc = GlobalPhysFrameAllocator;
-              MmapOps::munmap(aspace, &mut alloc, VirtAddr(addr), len)
-          }) {
+        let mut alloc = GlobalPhysFrameAllocator;
+        MmapOps::munmap(aspace, &mut alloc, VirtAddr(addr), len)
+    }) {
         Ok(()) => UserRet::from_success(0),
         Err(e) => UserRet::from_error(mm_err_to_errno(e)),
     }
 }
 
-pub(crate) fn sys_mprotect(args : SyscallArgs) -> UserRet {
+pub(crate) fn sys_mprotect(args: SyscallArgs) -> UserRet {
     let Some(handle) = current_user_aspace_handle() else {
         syscall_unsupported("mmap: no user_aspace_ptr");
     };
@@ -132,8 +137,8 @@ pub(crate) fn sys_mprotect(args : SyscallArgs) -> UserRet {
     let prot = args.arg(2) as i32;
     let perm = linux_mmap_prot_to_perm(prot);
     match mm::user_aspace::with_user_aspace_mut(handle, |aspace| {
-              MmapOps::mprotect(aspace, VirtAddr(addr), len, perm)
-          }) {
+        MmapOps::mprotect(aspace, VirtAddr(addr), len, perm)
+    }) {
         Ok(()) => UserRet::from_success(0),
         Err(e) => UserRet::from_error(mm_err_to_errno(e)),
     }

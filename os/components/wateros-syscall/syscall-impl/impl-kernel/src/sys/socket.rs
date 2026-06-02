@@ -2,10 +2,10 @@
 
 extern crate alloc;
 
-use alloc::boxed::Box;
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
+use alloc::boxed::Box;
 use driver::network::socket_handles::{TcpStreamHandle, UdpSocketHandle};
 use driver::network::stack;
 use vfs::api::handle::VfsIoHandle;
@@ -42,8 +42,12 @@ pub(crate) fn sys_socket(args: SyscallArgs) -> UserRet {
     };
 
     let io_handle: Box<dyn VfsIoHandle> = match typ {
-        SOCK_STREAM => Box::new(TcpStreamHandle { handle: smoltcp_handle }),
-        SOCK_DGRAM => Box::new(UdpSocketHandle { handle: smoltcp_handle }),
+        SOCK_STREAM => Box::new(TcpStreamHandle {
+            handle: smoltcp_handle,
+        }),
+        SOCK_DGRAM => Box::new(UdpSocketHandle {
+            handle: smoltcp_handle,
+        }),
         _ => unreachable!(),
     };
 

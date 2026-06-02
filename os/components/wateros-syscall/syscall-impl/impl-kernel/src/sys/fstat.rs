@@ -4,18 +4,16 @@ use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use vfs::active_impl;
-use vfs::api::{
-    SingleRootReadView, VFS_FIRST_DYNAMIC_FD, VFS_STDERR_FD, VFS_STDIN_FD,
-};
+use vfs::api::{SingleRootReadView, VFS_FIRST_DYNAMIC_FD, VFS_STDERR_FD, VFS_STDIN_FD};
 
 use crate::linux_stat::{fill_linux_stat, fill_linux_statx};
 use crate::sys::path_at::resolve_path_at;
 use crate::user_copy::{copy_to_user_struct, copy_user_path_cstr};
 use crate::vfs_util::vfs_error_to_errno;
 
-const AT_EMPTY_PATH : u32 = 0x1000;
+const AT_EMPTY_PATH: u32 = 0x1000;
 
-pub(crate) fn sys_fstat(args : SyscallArgs) -> UserRet {
+pub(crate) fn sys_fstat(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let stat_ptr = args.arg(1);
     if stat_ptr == 0 {
@@ -26,9 +24,9 @@ pub(crate) fn sys_fstat(args : SyscallArgs) -> UserRet {
     }
 
     match vfs::fd::with_current_io(fd, |handle| {
-              let meta = handle.metadata()?;
-              Ok(fill_linux_stat(&meta, meta.size))
-          }) {
+        let meta = handle.metadata()?;
+        Ok(fill_linux_stat(&meta, meta.size))
+    }) {
         Ok(stat) => match copy_to_user_struct(stat_ptr, &stat) {
             Ok(()) => UserRet::from_success(0),
             Err(e) => UserRet::from_error(e),
@@ -37,7 +35,50 @@ pub(crate) fn sys_fstat(args : SyscallArgs) -> UserRet {
     }
 }
 
-pub(crate) fn sys_statx(args : SyscallArgs) -> UserRet {
+pub(crate) fn sys_fstatat(args: SyscallArgs) -> UserRet {
+    let dirfd = args.arg(0) as isize;
+    let path_ptr = args.arg(1);
+    let stat_ptr = args.arg(2);
+    let flags = args.arg(3) as u32;
+    if stat_ptr == 0 {
+        return UserRet::from_error(ErrNo::EFAULT);
+    }
+
+    let path = if path_ptr == 0 && (flags & AT_EMPTY_PATH) != 0 {
+        alloc::string::String::new()
+    } else {
+        match copy_user_path_cstr(path_ptr, 256) {
+            Ok(p) => p,
+            Err(e) => return UserRet::from_error(e),
+        }
+    };
+
+    let stat = if path.is_empty() && (flags & AT_EMPTY_PATH) != 0 && dirfd >= 0 {
+        match vfs::fd::with_current_io(dirfd as usize, |handle| {
+            let meta = handle.metadata()?;
+            Ok(fill_linux_stat(&meta, meta.size))
+        }) {
+            Ok(stat) => stat,
+            Err(e) => return UserRet::from_error(vfs_error_to_errno(e)),
+        }
+    } else {
+        let resolved = match resolve_path_at(dirfd, path.as_str()) {
+            Ok(path) => path,
+            Err(e) => return UserRet::from_error(e),
+        };
+        match active_impl::backend().metadata(resolved.as_str()) {
+            Ok(meta) => fill_linux_stat(&meta, meta.size),
+            Err(e) => return UserRet::from_error(vfs_error_to_errno(e)),
+        }
+    };
+
+    match copy_to_user_struct(stat_ptr, &stat) {
+        Ok(()) => UserRet::from_success(0),
+        Err(e) => UserRet::from_error(e),
+    }
+}
+
+pub(crate) fn sys_statx(args: SyscallArgs) -> UserRet {
     let dirfd = args.arg(0) as isize;
     let path_ptr = args.arg(1);
     let flags = args.arg(2) as u32;
@@ -58,9 +99,9 @@ pub(crate) fn sys_statx(args : SyscallArgs) -> UserRet {
 
     let statx = if path.is_empty() && (flags & AT_EMPTY_PATH) != 0 && dirfd >= 0 {
         match vfs::fd::with_current_io(dirfd as usize, |handle| {
-                  let meta = handle.metadata()?;
-                  Ok(fill_linux_statx(&meta, meta.size, mask))
-              }) {
+            let meta = handle.metadata()?;
+            Ok(fill_linux_statx(&meta, meta.size, mask))
+        }) {
             Ok(statx) => statx,
             Err(e) => return UserRet::from_error(vfs_error_to_errno(e)),
         }

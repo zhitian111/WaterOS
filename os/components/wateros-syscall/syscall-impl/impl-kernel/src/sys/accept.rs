@@ -1,9 +1,9 @@
 //! `accept4(2)`：接受 TCP 连接并返回新 fd。
 
-use alloc::boxed::Box;
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
+use alloc::boxed::Box;
 use driver::network::socket_handles::TcpStreamHandle;
 use driver::network::stack;
 use vfs::api::handle::VfsIoHandle;
@@ -44,7 +44,9 @@ pub(crate) fn sys_accept4(args: SyscallArgs) -> UserRet {
     };
 
     // 为新连接分配 fd
-    let io_handle: Box<dyn VfsIoHandle> = Box::new(TcpStreamHandle { handle: established_handle });
+    let io_handle: Box<dyn VfsIoHandle> = Box::new(TcpStreamHandle {
+        handle: established_handle,
+    });
     let new_fd = match vfs::fd::alloc_fd(io_handle) {
         Ok(fd) => fd,
         Err(_) => return UserRet::from_error(ErrNo::ENOMEM),
@@ -54,15 +56,20 @@ pub(crate) fn sys_accept4(args: SyscallArgs) -> UserRet {
     // 写回客户端地址（如果有 addr 缓冲区）
     if addr_ptr != 0 && addrlen_ptr != 0 {
         let addr = SockAddrIn {
-            sin_family: 2, // AF_INET
+            sin_family: 2,          // AF_INET
             sin_port: 0u16.to_be(), // unknown client port from smoltcp
-            sin_addr: [127, 0, 0, 1],
+            sin_addr: [
+                127, 0, 0, 1,
+            ],
             sin_zero: [0; 8],
         };
         if let Ok(addrlen_val) = crate::user_copy::copy_from_user_struct::<u32>(addrlen_ptr) {
             let write_len = core::mem::size_of::<SockAddrIn>().min(addrlen_val as usize);
             let addr_bytes = unsafe {
-                core::slice::from_raw_parts(&addr as *const SockAddrIn as *const u8, write_len)
+                core::slice::from_raw_parts(
+                    &addr as *const SockAddrIn as *const u8,
+                    write_len,
+                )
             };
             let _ = crate::user_copy::copy_to_user(addr_ptr, addr_bytes);
             let _ = copy_to_user_struct(addrlen_ptr, &(write_len as u32));

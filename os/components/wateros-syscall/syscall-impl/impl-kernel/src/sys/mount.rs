@@ -38,18 +38,28 @@ pub(crate) fn sys_mount(args: SyscallArgs) -> UserRet {
         };
         // oscomp 测例常传空串表示由内核按块设备探测；非空时仅接受 ext2/3/4。
         if !fstype.is_empty()
-            && !matches!(fstype.as_str(), "ext4" | "ext3" | "ext2")
+            && !matches!(
+                fstype.as_str(),
+                "ext4" | "ext3" | "ext2"
+            )
         {
             return UserRet::from_error(ErrNo::EINVAL);
         }
     }
 
-    let mount_point = match resolve_path_at(crate::sys::path_at::AT_FDCWD, target.as_str()) {
+    let mount_point = match resolve_path_at(
+        crate::sys::path_at::AT_FDCWD,
+        target.as_str(),
+    ) {
         Ok(p) => p,
         Err(e) => return UserRet::from_error(e),
     };
 
-    match vfs::mount_ext4_block_at(mount_point.as_str(), source.as_str(), readonly) {
+    match vfs::mount_ext4_block_at(
+        mount_point.as_str(),
+        source.as_str(),
+        readonly,
+    ) {
         Ok(()) => UserRet::from_success(0),
         Err(VfsError::Driver) | Err(VfsError::NotFound) => UserRet::from_error(ErrNo::ENOENT),
         Err(VfsError::Exists) => UserRet::from_error(ErrNo::EBUSY),

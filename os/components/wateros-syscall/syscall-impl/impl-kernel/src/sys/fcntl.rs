@@ -54,8 +54,7 @@ fn fcntl_setfd(fd: usize, arg: usize) -> Result<usize, ErrNo> {
     if arg & !FD_CLOEXEC != 0 {
         return Err(ErrNo::EINVAL);
     }
-    vfs::fd::set_fd_flags(fd, arg)
-        .map_err(vfs_error_to_errno)?;
+    vfs::fd::set_fd_flags(fd, arg).map_err(vfs_error_to_errno)?;
     Ok(0)
 }
 

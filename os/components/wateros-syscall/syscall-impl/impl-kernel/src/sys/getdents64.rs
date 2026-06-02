@@ -25,7 +25,10 @@ pub(crate) fn sys_getdents64(args: SyscallArgs) -> UserRet {
     kbuf.resize(count, 0);
 
     let written = match vfs::fd::with_current_io(fd, |handle| {
-        if handle.directory_path().is_none() {
+        if handle
+            .directory_path()
+            .is_none()
+        {
             return Err(VfsError::NotAFile);
         }
         handle.fill_getdents64(&mut kbuf)

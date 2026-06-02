@@ -9,13 +9,20 @@ use spin::Mutex;
 static SOCKET_FD_MAP: Mutex<BTreeMap<usize, SocketHandle>> = Mutex::new(BTreeMap::new());
 
 pub(crate) fn register(fd: usize, handle: SocketHandle) {
-    SOCKET_FD_MAP.lock().insert(fd, handle);
+    SOCKET_FD_MAP
+        .lock()
+        .insert(fd, handle);
 }
 
 pub(crate) fn lookup(fd: usize) -> Option<SocketHandle> {
-    SOCKET_FD_MAP.lock().get(&fd).copied()
+    SOCKET_FD_MAP
+        .lock()
+        .get(&fd)
+        .copied()
 }
 
 pub(crate) fn remove(fd: usize) {
-    SOCKET_FD_MAP.lock().remove(&fd);
+    SOCKET_FD_MAP
+        .lock()
+        .remove(&fd);
 }

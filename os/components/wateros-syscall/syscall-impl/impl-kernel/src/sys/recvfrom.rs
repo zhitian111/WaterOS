@@ -57,16 +57,22 @@ pub(crate) fn sys_recvfrom(args: SyscallArgs) -> UserRet {
                         return UserRet::from_error(ErrNo::EFAULT);
                     }
                     if addr_ptr != 0 && addrlen_ptr != 0 {
-                        if let Ok(addrlen_val) = crate::user_copy::copy_from_user_struct::<u32>(addrlen_ptr) {
+                        if let Ok(addrlen_val) =
+                            crate::user_copy::copy_from_user_struct::<u32>(addrlen_ptr)
+                        {
                             let sockaddr = SockAddrIn {
                                 sin_family: 2,
                                 sin_port: port.to_be(),
                                 sin_addr: ip,
                                 sin_zero: [0; 8],
                             };
-                            let write_len: usize = core::mem::size_of::<SockAddrIn>().min(addrlen_val as usize);
+                            let write_len: usize =
+                                core::mem::size_of::<SockAddrIn>().min(addrlen_val as usize);
                             let addr_bytes = unsafe {
-                                core::slice::from_raw_parts(&sockaddr as *const SockAddrIn as *const u8, write_len)
+                                core::slice::from_raw_parts(
+                                    &sockaddr as *const SockAddrIn as *const u8,
+                                    write_len,
+                                )
                             };
                             let _ = copy_to_user(addr_ptr, addr_bytes);
                             let _ = copy_to_user_struct(addrlen_ptr, &(write_len as u32));

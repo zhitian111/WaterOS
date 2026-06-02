@@ -46,7 +46,10 @@ pub(crate) fn sys_sendto(args: SyscallArgs) -> UserRet {
     // 解析目标地址
     let (ip, port) = if addr_ptr != 0 && addrlen >= 16 {
         match copy_from_user_struct::<SockAddrIn>(addr_ptr) {
-            Ok(addr) => (addr.sin_addr, u16::from_be(addr.sin_port)),
+            Ok(addr) => (
+                addr.sin_addr,
+                u16::from_be(addr.sin_port),
+            ),
             Err(_) => return UserRet::from_error(ErrNo::EFAULT),
         }
     } else {

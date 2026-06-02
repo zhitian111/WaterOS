@@ -66,6 +66,8 @@ impl ErrNo {
     pub const EEXIST: Self = Self(17);
     /// 参数无效。
     pub const EINVAL: Self = Self(22);
+    /// 不是终端设备。
+    pub const ENOTTY: Self = Self(25);
     /// 功能未实现或系统调用号未知。
     pub const ENOSYS: Self = Self(38);
     /// 非目录。
