@@ -11,7 +11,8 @@ use alloc::vec::Vec;
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
-use mm::api::kernel_bringup::PrepareUserStackError;
+use mm::api::executable::ExecResolveError;
+use mm::api::kernel_bringup::{LoadElfError, LoadProgramError, PrepareUserStackError, RootVolumeReadError};
 use mm::api::user_access::UserMemoryOps;
 use mm::ActiveUserMemoryOps;
 
@@ -41,9 +42,13 @@ fn do_execve(path_ptr: usize, argv_ptr: usize, envp_ptr: usize) -> Result<(), Er
     super::robust::robust_exit_cleanup_siblings_for_exec();
     let killed_threads = task::terminate_other_threads_for_exec().map_err(|_| ErrNo::EINVAL)?;
 
-    let new_elf = mm::kernel_mm::from_elf_path(&abs_path).map_err(|_| ErrNo::ENOENT)?;
-
     let argv_refs: Vec<&str> = argv
+        .iter()
+        .map(String::as_str)
+        .collect();
+    let (new_elf, final_argv) =
+        mm::kernel_mm::load_program_from_path(&abs_path, &argv_refs).map_err(load_program_to_errno)?;
+    let final_argv_refs: Vec<&str> = final_argv
         .iter()
         .map(String::as_str)
         .collect();
@@ -51,9 +56,9 @@ fn do_execve(path_ptr: usize, argv_ptr: usize, envp_ptr: usize) -> Result<(), Er
         .iter()
         .map(String::as_str)
         .collect();
-    let new_sp = mm::kernel_mm::prepare_elf_user_stack(&new_elf, &argv_refs, &envp_refs)
+    let new_sp = mm::kernel_mm::prepare_elf_user_stack(&new_elf, &final_argv_refs, &envp_refs)
         .map_err(prepare_stack_to_errno)?;
-    let (argc, argv_ptr, envp_ptr) = initial_entry_args(new_sp, argv_refs.len());
+    let (argc, argv_ptr, envp_ptr) = initial_entry_args(new_sp, final_argv_refs.len());
 
     for exited in &killed_threads {
         vfs::cwd::drop_task_cwd(exited.id);
@@ -100,6 +105,46 @@ fn prepare_stack_to_errno(e: PrepareUserStackError) -> ErrNo {
         PrepareUserStackError::StackOverflow
         | PrepareUserStackError::AccessViolation
         | PrepareUserStackError::NoUserAspace => ErrNo::EFAULT,
+    }
+}
+
+fn load_program_to_errno(e: LoadProgramError) -> ErrNo {
+    match e {
+        LoadProgramError::Script(ExecResolveError::NotExecutable) => ErrNo::ENOEXEC,
+        LoadProgramError::Script(ExecResolveError::InvalidShebang)
+        | LoadProgramError::Script(ExecResolveError::RecursionLimit) => ErrNo::EINVAL,
+        LoadProgramError::Elf(elf_err) => load_elf_to_errno(elf_err),
+    }
+}
+
+fn load_elf_to_errno(e: LoadElfError) -> ErrNo {
+    use mm::api::error::MmError;
+
+    match e {
+        LoadElfError::NoRootFs => ErrNo::ENOENT,
+        LoadElfError::RootVolume(r) => root_volume_to_errno(r),
+        LoadElfError::Mm(MmError::OutOfMemory) => ErrNo::ENOMEM,
+        LoadElfError::Mm(_) => ErrNo::EFAULT,
+        LoadElfError::TooSmall
+        | LoadElfError::BadMagic
+        | LoadElfError::BadClass
+        | LoadElfError::BadEndian
+        | LoadElfError::BadMachine
+        | LoadElfError::Parse => ErrNo::ENOEXEC,
+    }
+}
+
+fn root_volume_to_errno(e: RootVolumeReadError) -> ErrNo {
+    match e {
+        RootVolumeReadError::NotFound => ErrNo::ENOENT,
+        RootVolumeReadError::NotAFile => ErrNo::EACCES,
+        RootVolumeReadError::NotMounted
+        | RootVolumeReadError::InvalidPath
+        | RootVolumeReadError::NotUtf8
+        | RootVolumeReadError::Unsupported
+        | RootVolumeReadError::Driver
+        | RootVolumeReadError::Corrupt
+        | RootVolumeReadError::Io => ErrNo::EIO,
     }
 }
 

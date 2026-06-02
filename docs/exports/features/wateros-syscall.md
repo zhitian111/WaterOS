@@ -33,7 +33,7 @@
 | `umount2` | 部分 | `vfs::unmount_at` |
 | `brk` / `mmap` / `munmap` / `mprotect` | 部分 | Sv39 `user_aspace_ptr` |
 | `clone`（含 `fork`） | 部分 | `fork_user_aspace` + 子进程保留父 `user_sp`；继承 cwd/fd |
-| `execve` | 部分 | 替换地址空间/入口/栈 |
+| `execve` | 部分 | 替换地址空间/入口/栈；非 ELF 文本脚本经 shebang 解析后加载解释器 ELF |
 | `waitpid` | 部分 | 最小父子等待、`WNOHANG` |
 | `getpid` / `getppid` / `gettid` | 部分 | orphan ppid 为 1 |
 | `gettimeofday` / `clock_gettime` / `times` / `nanosleep` | 部分 | 基于调度 tick |
@@ -43,6 +43,7 @@
 ## 明确未覆盖
 
 - 完整 Linux syscall 面、`clone` flags、完整 `mount` flags（`MS_BIND` 等）。
+- `#!/usr/bin/env` + PATH 搜索（首版 shebang 仅支持解释器路径直写）。
 - 用户缓冲严格 `copy_from_user` / `copy_to_user`。
 - signal、futex、完整 `fcntl`/`ioctl` 等 busybox 后续项。
 

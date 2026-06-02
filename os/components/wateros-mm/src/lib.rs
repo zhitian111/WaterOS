@@ -52,8 +52,9 @@ pub type ActiveUserMemoryOps = impl_loongarch64::user_access::LoongArch64UserMem
 /// 内核全局页表与用户 ELF 装载；类型契约见 [`api::kernel_bringup`]。
 pub mod kernel_mm {
     pub use api_v0::kernel_bringup::{
-        LoadElfError, LoadedElf, PrepareUserStackError, RootVolumeReadError, DEFAULT_USER_ELF_PATH,
+        LoadElfError, LoadProgramError, LoadedElf, PrepareUserStackError, RootVolumeReadError, DEFAULT_USER_ELF_PATH,
     };
+    pub use api_v0::executable::ExecResolveError;
 
     /// 在已装载 ELF 的用户栈上写入 argc/argv/envp/auxv，返回初始 `sp`。
     #[cfg(any(feature = "impl-sv39", feature = "impl-loongarch64"))]
@@ -69,19 +70,21 @@ pub mod kernel_mm {
     #[cfg(feature = "impl-sv39")]
     pub use impl_sv39::kernel_mm_impl::{
         drop_user_aspace, ensure_user_execute_for_kernel_va, fork_user_aspace, from_elf_bytes,
-        from_elf_path, init, kernel_satp, map_anon_range_user, map_identity_range_user,
+        from_elf_path, init, kernel_satp, load_program_from_path, map_anon_range_user,
+        map_identity_range_user,
     };
 
     #[cfg(feature = "impl-loongarch64")]
     pub use impl_loongarch64::kernel_mm_impl::{
         drop_user_aspace, ensure_user_execute_for_kernel_va, fork_user_aspace, from_elf_bytes,
-        from_elf_path, init, kernel_satp, map_anon_range_user, map_identity_range_user,
+        from_elf_path, init, kernel_satp, load_program_from_path, map_anon_range_user,
+        map_identity_range_user,
     };
 
     #[cfg(not(any(feature = "impl-sv39", feature = "impl-loongarch64")))]
     pub use impl_dummy::kernel_mm_impl::{
         ensure_user_execute_for_kernel_va, fork_user_aspace, from_elf_path, init, kernel_satp,
-        map_anon_range_user, map_identity_range_user,
+        load_program_from_path, map_anon_range_user, map_identity_range_user,
     };
 }
 

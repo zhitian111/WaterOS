@@ -177,16 +177,22 @@ fn do_exec(cwd : &str, arg : Option<&str>, _rest : &[&str]) -> Result<(), VfsErr
         if m.node_type != VfsNodeType::File {
             return Err(VfsError::NotAFile);
         }
-        match mm::kernel_mm::from_elf_path(path.as_str()) {
-            Ok(loaded) => {
+        let argv = [path.as_str()];
+        match mm::kernel_mm::load_program_from_path(path.as_str(), &argv) {
+            Ok((loaded, final_argv)) => {
+                let final_argv_refs: alloc::vec::Vec<&str> =
+                    final_argv.iter().map(alloc::string::String::as_str).collect();
+                let sp = mm::kernel_mm::prepare_elf_user_stack(&loaded, &final_argv_refs, &[])
+                    .map_err(|_| VfsError::Unsupported)?;
+                let (argc, argv_ptr, envp_ptr) = {
+                    let word = core::mem::size_of::<usize>();
+                    let argv_base = sp + word;
+                    let envp = argv_base + (final_argv_refs.len() + 1) * word;
+                    (final_argv_refs.len(), argv_base, envp)
+                };
                 let tid = task::spawn_user_task_spec(
-                    task::UserTask::new(loaded.entry_pc,
-                                        task::AddressSpaceHandle::from_raw(loaded.satp),
-                                        task::UserImageInfo::new(loaded.image_base,
-                                                                 loaded.image_size),
-                                        task::UserStack::from_range(loaded.stack_bottom,
-                                                                    loaded.stack_top),
-                                        loaded.user_aspace_ptr),
+                    task::user_task_from_loaded_elf(&loaded).with_initial_user_sp(sp)
+                                                           .with_initial_user_args(argc, argv_ptr, envp_ptr),
                 );
                 vfs::cwd::on_user_task_spawned(tid);
                 cred::on_user_task_spawned(tid);

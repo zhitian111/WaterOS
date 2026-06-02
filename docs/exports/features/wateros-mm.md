@@ -27,11 +27,11 @@
 - **地址空间契约**：**`AddressSpaceId`**、**`AddressSpaceOps`**（`satp_value`、`map_page_to_ppn`、`unmap_page_to_ppn`、`protect_page`、`translate_addr` 及带分配器的默认方法）。
 - **帧分配契约**：**`PhysicalFrameAllocator`** 及帧分配相关类型。
 - **用户内存与堆扩展契约**：**`UserMemoryOps`**、**`HeapBrk` / `BrkRegion`**、**`MmapOps` / `MmapRequest` / `MmapKind`**（**`mprotect`** 为 **`MmapOps`** 方法；**`impl-sv39`** 已实现 **`HeapBrk` + `MmapOps`**）。
-- **内核 bring-up**：**`kernel_bringup`** 模块（**`DEFAULT_USER_ELF_PATH`**、**`LoadElfError`**、**`LoadedElf`** 等），与 **`impl-sv39`** 中 ELF 解析衔接。
+- **内核 bring-up**：**`kernel_bringup`** 模块（**`DEFAULT_USER_ELF_PATH`**、**`LoadElfError`**、**`LoadProgramError`**、**`LoadedElf`** 等），**`executable`** 模块（shebang 解析），与 **`impl-sv39`** 中 ELF 解析衔接。
 
 ## impl-sv39 与 impl-dummy
 
-- **`impl-sv39`**：**`Sv39AddressSpace`** 实现 **`AddressSpaceOps`**、**`HeapBrk`**、**`MmapOps`**（含 **`mprotect`**）；**`kernel_elf`**（**`from_elf_path`**、**`from_elf_bytes`** → **`LoadedElf`**，含 **`user_aspace_ptr`** / **`brk_*`** / **`mmap_arena_base`**）、**`kernel_global`**（全局 **`Sv39AddressSpace`**、**`init`**、**`kernel_satp`**、恒等/用户映射辅助、**`phys_ram_end_exclusive`** 等）。装载用户 ELF 时仅在用户页表内 **`map_kernel_ram_identity`**（**`[0x8000_0000, phys_ram_end)`**，无 **`U`**），供 **`trap.asm` / `trap_entry_rust`** 短路径；**不**在用户表映射 MMIO。**`user_aspace::with_user_aspace_mut`** 将 **`user_aspace_ptr`** 解析为可调用上述 trait 的实例（**不**封装 Linux syscall 语义）。**`Drop`** 当前仅回收根页表，注释说明未递归回收中间页表（早期简化）。
+- **`impl-sv39`**：**`Sv39AddressSpace`** 实现 **`AddressSpaceOps`**、**`HeapBrk`**、**`MmapOps`**（含 **`mprotect`**）；**`kernel_elf`**（**`from_elf_path`**、**`from_elf_bytes`** → **`LoadedElf`**）、**`kernel_executable`**（**`load_program_from_path`**：ELF 或 shebang 脚本 → 解释器 ELF + 重组 argv，含 **`user_aspace_ptr`** / **`brk_*`** / **`mmap_arena_base`**）、**`kernel_global`**（全局 **`Sv39AddressSpace`**、**`init`**、**`kernel_satp`**、恒等/用户映射辅助、**`phys_ram_end_exclusive`** 等）。装载用户 ELF 时仅在用户页表内 **`map_kernel_ram_identity`**（**`[0x8000_0000, phys_ram_end)`**，无 **`U`**），供 **`trap.asm` / `trap_entry_rust`** 短路径；**不**在用户表映射 MMIO。**`user_aspace::with_user_aspace_mut`** 将 **`user_aspace_ptr`** 解析为可调用上述 trait 的实例（**不**封装 Linux syscall 语义）。**`Drop`** 当前仅回收根页表，注释说明未递归回收中间页表（早期简化）。
 - **Trap / syscall 与 `satp`**：来自用户的 trap 在 **`wateros_kernel_trap_handler`**（`os/src/trap_handler.rs`）内、**`begin_current_trap_frame_access`** 之后调用 **`task::trap_runtime::install_kernel_satp_for_trap_handler`**，syscall / FS / 驱动在**内核 `satp`** 下执行（MMIO 仅内核全局页表）；**`sret` 前** **`install_satp_for_exception_return`** 装回用户 **`satp`**。用户缓冲区经 **`UserMemoryOps`** / **`wateros-syscall` `user_copy`**（页表 walk + 物理拷贝），不依赖 syscall 期间保持 user **`satp`**。
 - **`impl-dummy`**：**`kernel_mm_impl`** 桩：**`init`** 空操作、**`kernel_satp`** 恒 0、映射无操作、**`from_elf_path`** 固定错误类；**无** **`from_elf_bytes`**。
 

@@ -19,6 +19,7 @@ use wateros_base::addr::BasePPN;
 mod pagetable;
 
 mod kernel_elf;
+mod kernel_executable;
 mod kernel_global;
 pub mod user_access;
 pub mod user_aspace;
@@ -76,7 +77,8 @@ pub fn test_with_range(start_ppn : BasePPN, end_ppn : BasePPN) {
 /// 内核全局页表与用户 ELF 装载（QEMU LoongArch64 bring-up）；由 `wateros-mm`
 /// 聚合为 `mm::kernel_mm`。
 pub mod kernel_mm_impl {
-    pub use crate::kernel_elf::{from_elf_bytes, from_elf_path};
+    pub use crate::kernel_elf::{from_elf_bytes, from_elf_path, read_path_bytes};
+    pub use crate::kernel_executable::load_program_from_path;
     pub use crate::kernel_global::{
         ensure_user_execute_for_kernel_va, init, kernel_satp, map_anon_range_user,
         map_identity_range_user,

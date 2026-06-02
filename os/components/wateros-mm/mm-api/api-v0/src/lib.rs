@@ -21,6 +21,7 @@ pub mod user_access;
 
 pub mod brk;
 pub mod elf_user_stack;
+pub mod executable;
 pub mod kernel_bringup;
 pub mod kernel_satp;
 pub mod mmap;
@@ -33,5 +34,6 @@ pub fn test() {
     addr::test();
     perm::test();
     flags::test();
+    executable::test();
     log::trace!("[mm-api] test end");
 }

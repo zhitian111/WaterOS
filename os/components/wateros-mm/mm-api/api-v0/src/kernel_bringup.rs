@@ -5,6 +5,7 @@
 //! 根卷读错误使用 [`RootVolumeReadError`]，由 `mm-impl` 从具体 FS 错误映射而来，**不**依赖 `wateros-fs` API crate，以保持 mm-api 与文件系统实现解耦。
 
 use crate::error::MmError;
+use crate::executable::ExecResolveError;
 
 /// 根卷只读访问错误（语义对齐常见 FS 错误，但不绑定 `wateros-fs-api` 类型）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,6 +61,15 @@ impl From<MmError> for LoadElfError {
     fn from(e: MmError) -> Self {
         LoadElfError::Mm(e)
     }
+}
+
+/// ELF 装载或 shebang 脚本解析失败（exec/spawn 统一入口）。
+#[derive(Debug)]
+pub enum LoadProgramError {
+    /// 解释器 ELF 装载或 MM 失败。
+    Elf(LoadElfError),
+    /// 非 ELF 脚本的 shebang 解析失败。
+    Script(ExecResolveError),
 }
 
 /// [`crate::elf_user_stack::prepare_elf_user_stack`] 失败原因。

@@ -42,6 +42,8 @@ impl ErrNo {
     pub const EPERM: Self = Self(1);
     /// 无此文件或目录。
     pub const ENOENT: Self = Self(2);
+    /// 可执行文件格式错误。
+    pub const ENOEXEC: Self = Self(8);
     /// 无此进程。
     pub const ESRCH: Self = Self(3);
     /// 系统调用被中断。

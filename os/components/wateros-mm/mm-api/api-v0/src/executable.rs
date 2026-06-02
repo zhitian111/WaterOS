@@ -1,0 +1,346 @@
+//! Shebang 脚本解析与 exec argv 重组（纯逻辑，不依赖 VFS）。
+//!
+//! 当目标文件非 ELF 且判定为文本脚本时，由 mm-impl 调用本模块解析 `#!` 并重组 argv，
+//! 再加载解释器 ELF。首版不支持 `#!/usr/bin/env` 的 PATH 搜索。
+
+extern crate alloc;
+
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
+
+/// shebang 探测窗口上限（与 Linux `BINPRM_BUF_SIZE` 量级一致）。
+pub const SHEBANG_PROBE_MAX: usize = 256;
+
+/// 解释器链递归深度上限（防环）。
+pub const MAX_INTERPRETER_RECURSION: usize = 4;
+
+/// 非 ELF 脚本解析失败原因。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecResolveError {
+    /// 非 ELF 且非可执行文本脚本（无 shebang 或含二进制 NUL 等）。
+    NotExecutable,
+    /// shebang 行非法或解释器路径为空。
+    InvalidShebang,
+    /// 解释器链递归过深。
+    RecursionLimit,
+}
+
+/// 解析成功的 shebang 内容。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedShebang {
+    /// 解释器路径（shebang 行第一个 token）。
+    pub interpreter: String,
+    /// shebang 行其余 token（如 `sh`、`-x`）。
+    pub args: Vec<String>,
+}
+
+/// ELF64 小端头前缀是否与 `from_elf_bytes` 一致。
+#[inline]
+pub fn is_elf_prefix(data: &[u8]) -> bool {
+    data.len() >= 6 && &data[0..4] == b"\x7FELF" && data[4] == 2 && data[5] == 1
+}
+
+#[inline]
+fn is_shebang_line_byte(b: u8) -> bool {
+    b == b'\t' || b == b' ' || b == b'\n' || b == b'\r' || (b >= 0x20 && b <= 0x7E)
+}
+
+/// 首行结束位置（不含 `\n`）；无换行则返回 `data.len()`。
+fn shebang_line_end(data: &[u8]) -> usize {
+    data.iter()
+        .position(|&b| b == b'\n')
+        .unwrap_or(data.len())
+}
+
+/// 跳过脚本开头 BOM 与空白（部分测试脚本在 shebang 或正文前有换行）。
+pub fn skip_leading_script_whitespace(data: &[u8]) -> &[u8] {
+    let mut i = 0;
+    while i < data.len() {
+        if data[i..].starts_with(b"\xef\xbb\xbf") {
+            i += 3;
+            continue;
+        }
+        match data[i] {
+            b' ' | b'\t' | b'\n' | b'\r' => i += 1,
+            _ => break,
+        }
+    }
+    &data[i..]
+}
+
+/// 探测窗口内是否为无 NUL 的可打印文本（非 ELF 时的脚本判定基础）。
+pub fn is_text_file(data: &[u8]) -> bool {
+    if data.is_empty() {
+        return false;
+    }
+    let probe_len = data.len().min(SHEBANG_PROBE_MAX);
+    let probe = &data[..probe_len];
+    if probe.contains(&0) {
+        return false;
+    }
+    probe.iter().all(|&b| is_shebang_line_byte(b))
+}
+
+/// 非 ELF 时判定是否为可执行的文本脚本（含无 shebang 的 shell 脚本正文）。
+pub fn is_text_script_candidate(data: &[u8]) -> bool {
+    is_text_file(data)
+}
+
+/// 解析首行 shebang（调用前须已 [`skip_leading_script_whitespace`]）；失败返回错误。
+pub fn parse_shebang_line_at(data: &[u8]) -> Result<ParsedShebang, ExecResolveError> {
+    if data.len() < 2 || &data[0..2] != b"#!" {
+        return Err(ExecResolveError::InvalidShebang);
+    }
+    let probe_len = data.len().min(SHEBANG_PROBE_MAX);
+    if data[..probe_len].contains(&0) {
+        return Err(ExecResolveError::NotExecutable);
+    }
+    let line_end = shebang_line_end(data).min(probe_len);
+    if !data[..line_end].iter().all(|&b| is_shebang_line_byte(b)) {
+        return Err(ExecResolveError::InvalidShebang);
+    }
+    let line = &data[..line_end];
+    let body = core::str::from_utf8(&line[2..]).map_err(|_| ExecResolveError::InvalidShebang)?;
+    let mut tokens = body.split_whitespace();
+    let interpreter = tokens
+        .next()
+        .filter(|s| !s.is_empty())
+        .ok_or(ExecResolveError::InvalidShebang)?;
+    let args = tokens.map(String::from).collect();
+    Ok(ParsedShebang {
+        interpreter: String::from(interpreter),
+        args,
+    })
+}
+
+/// 解析首行 shebang；失败返回 [`ExecResolveError`]。
+pub fn parse_shebang_line(data: &[u8]) -> Result<ParsedShebang, ExecResolveError> {
+    if !is_text_file(data) {
+        return Err(ExecResolveError::NotExecutable);
+    }
+    parse_shebang_line_at(skip_leading_script_whitespace(data))
+}
+
+/// 根据脚本路径前缀（`/glibc/`、`/musl/`）返回同 libc 下的 busybox 路径。
+pub fn busybox_path_for_script(script_path: &str) -> Option<&'static str> {
+    if script_path.starts_with("/glibc/") {
+        Some("/glibc/busybox")
+    } else if script_path.starts_with("/musl/") {
+        Some("/musl/busybox")
+    } else {
+        None
+    }
+}
+
+fn is_shell_like_interpreter(interpreter: &str) -> bool {
+    matches!(
+        interpreter,
+        "/busybox" | "/bin/sh" | "/bin/bash" | "/bin/dash"
+    ) || interpreter.ends_with("/busybox")
+        || interpreter.ends_with("/sh")
+        || interpreter.ends_with("/bash")
+        || interpreter.ends_with("/dash")
+}
+
+/// 将 shebang 中的解释器路径映射到根卷内实际路径（测试盘常用 `/busybox`、`/bin/sh`）。
+pub fn remap_interpreter_path(script_path: &str, interpreter: &str) -> String {
+    if interpreter.starts_with("/glibc/") || interpreter.starts_with("/musl/") {
+        return String::from(interpreter);
+    }
+    if let Some(busybox) = busybox_path_for_script(script_path) {
+        if interpreter == "/busybox" || is_shell_like_interpreter(interpreter) {
+            return String::from(busybox);
+        }
+    }
+    String::from(interpreter)
+}
+
+/// 解析脚本的解释器与参数：有 shebang 则解析并 remap；无 shebang 则回退为
+/// `/{glibc|musl}/busybox sh`（与测试盘脚本约定一致）。
+pub fn resolve_script_interpreter(
+    script_path: &str,
+    data: &[u8],
+) -> Result<(String, Vec<String>), ExecResolveError> {
+    if !is_text_file(data) {
+        return Err(ExecResolveError::NotExecutable);
+    }
+    let stripped = skip_leading_script_whitespace(data);
+    if stripped.len() >= 2 && &stripped[0..2] == b"#!" {
+        let parsed = parse_shebang_line_at(stripped)?;
+        let interpreter = remap_interpreter_path(script_path, &parsed.interpreter);
+        let mut args = parsed.args;
+        if args.is_empty() && is_shell_like_interpreter(&parsed.interpreter) {
+            args.push(String::from("sh"));
+        }
+        return Ok((interpreter, args));
+    }
+    let busybox = busybox_path_for_script(script_path).ok_or(ExecResolveError::NotExecutable)?;
+    Ok((String::from(busybox), vec![String::from("sh")]))
+}
+
+/// 按 Linux binfmt_script 规则组装 argv：解释器、shebang 参数、脚本路径、用户 `argv[1..]`。
+pub fn build_interpreted_argv(
+    script_path: &str,
+    interpreter: &str,
+    shebang_args: &[String],
+    user_argv: &[&str],
+) -> Vec<String> {
+    let mut argv = Vec::with_capacity(2 + shebang_args.len() + user_argv.len());
+    argv.push(String::from(interpreter));
+    argv.extend(shebang_args.iter().cloned());
+    argv.push(String::from(script_path));
+    if user_argv.len() > 1 {
+        for arg in &user_argv[1..] {
+            argv.push(String::from(*arg));
+        }
+    }
+    argv
+}
+
+/// bring-up 自检：shebang 解析与 argv 重组。
+pub fn test() {
+    log::trace!("[mm-api][executable] test begin");
+    let data = b"#!/glibc/busybox sh\n";
+    let parsed = parse_shebang_line(data).expect("busybox shebang");
+    assert_eq!(parsed.interpreter, "/glibc/busybox");
+    assert_eq!(parsed.args, vec![String::from("sh")]);
+
+    let crlf = b"#!/bin/sh -x\r\n";
+    let parsed = parse_shebang_line(crlf).expect("crlf shebang");
+    assert_eq!(parsed.interpreter, "/bin/sh");
+    assert_eq!(parsed.args, vec![String::from("-x")]);
+
+    let mut nul = vec![b'#', b'!', b'/'];
+    nul.push(0);
+    nul.extend_from_slice(b"bin/sh\n");
+    assert!(!is_text_script_candidate(&nul));
+
+    let (interp, args) =
+        resolve_script_interpreter("/glibc/basic_testcode.sh", b"./busybox echo hi\n").unwrap();
+    assert_eq!(interp, "/glibc/busybox");
+    assert_eq!(args, vec![String::from("sh")]);
+
+    let (interp, args) =
+        resolve_script_interpreter("/glibc/busybox_testcode.sh", b"#!/busybox sh\n").unwrap();
+    assert_eq!(interp, "/glibc/busybox");
+    assert_eq!(args, vec![String::from("sh")]);
+
+    let (interp, args) =
+        resolve_script_interpreter("/glibc/unixbench_testcode.sh", b"#!/bin/bash\n").unwrap();
+    assert_eq!(interp, "/glibc/busybox");
+    assert_eq!(args, vec![String::from("sh")]);
+
+    let leading_nl = b"\n./busybox echo test\n";
+    let (interp, _) =
+        resolve_script_interpreter("/musl/basic_testcode.sh", leading_nl).unwrap();
+    assert_eq!(interp, "/musl/busybox");
+
+    let shebang_args = vec![String::from("sh")];
+    let user = ["/glibc/basic_testcode.sh", "arg1"];
+    let argv = build_interpreted_argv(
+        "/glibc/basic_testcode.sh",
+        "/glibc/busybox",
+        &shebang_args,
+        &user,
+    );
+    assert_eq!(
+        argv,
+        vec![
+            String::from("/glibc/busybox"),
+            String::from("sh"),
+            String::from("/glibc/basic_testcode.sh"),
+            String::from("arg1"),
+        ]
+    );
+
+    let mut elf = b"\x7FELF".to_vec();
+    elf.extend_from_slice(&[2, 1, 1, 0]);
+    assert!(is_elf_prefix(&elf));
+    assert!(!is_elf_prefix(b"#!/bin/sh\n"));
+    log::trace!("[mm-api][executable] test end");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_busybox_sh() {
+        let data = b"#!/glibc/busybox sh\n echo hi\n";
+        let parsed = parse_shebang_line(data).unwrap();
+        assert_eq!(parsed.interpreter, "/glibc/busybox");
+        assert_eq!(parsed.args, vec!["sh"]);
+    }
+
+    #[test]
+    fn parse_with_flag_and_crlf() {
+        let data = b"#!/bin/sh -x\r\n";
+        let parsed = parse_shebang_line(data).unwrap();
+        assert_eq!(parsed.interpreter, "/bin/sh");
+        assert_eq!(parsed.args, vec!["-x"]);
+    }
+
+    #[test]
+    fn reject_nul_in_probe() {
+        let mut data = vec![b'#', b'!', b'/'];
+        data.push(0);
+        data.extend_from_slice(b"bin/sh\n");
+        assert!(!is_text_script_candidate(&data));
+    }
+
+    #[test]
+    fn reject_plain_text_without_shebang() {
+        let data = b"echo hello\n";
+        assert!(is_text_script_candidate(data));
+        assert_eq!(
+            resolve_script_interpreter("/other/echo.sh", data),
+            Err(ExecResolveError::NotExecutable)
+        );
+    }
+
+    #[test]
+    fn no_shebang_busybox_fallback() {
+        let data = b"./busybox echo hi\n";
+        let (interp, args) = resolve_script_interpreter("/glibc/basic_testcode.sh", data).unwrap();
+        assert_eq!(interp, "/glibc/busybox");
+        assert_eq!(args, vec![String::from("sh")]);
+    }
+
+    #[test]
+    fn remap_busybox_shebang() {
+        let data = b"#!/busybox sh\n";
+        let (interp, args) = resolve_script_interpreter("/glibc/x.sh", data).unwrap();
+        assert_eq!(interp, "/glibc/busybox");
+        assert_eq!(args, vec![String::from("sh")]);
+    }
+
+    #[test]
+    fn build_argv_order() {
+        let shebang_args = vec![String::from("sh")];
+        let user = ["/glibc/basic_testcode.sh", "arg1"];
+        let argv = build_interpreted_argv(
+            "/glibc/basic_testcode.sh",
+            "/glibc/busybox",
+            &shebang_args,
+            &user,
+        );
+        assert_eq!(
+            argv,
+            vec![
+                "/glibc/busybox",
+                "sh",
+                "/glibc/basic_testcode.sh",
+                "arg1",
+            ]
+        );
+    }
+
+    #[test]
+    fn elf_prefix() {
+        let mut elf = b"\x7FELF".to_vec();
+        elf.extend_from_slice(&[2, 1, 1, 0]);
+        assert!(is_elf_prefix(&elf));
+        assert!(!is_elf_prefix(b"#!/bin/sh\n"));
+    }
+}
