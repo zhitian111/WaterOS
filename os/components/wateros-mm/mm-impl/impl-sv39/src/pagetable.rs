@@ -250,6 +250,9 @@ impl Sv39AddressSpace {
     ///
     /// 调用后本地址空间不再可用。
     pub fn destroy(&mut self) {
+        if self.root.0 == 0 {
+            return;
+        }
         unsafe {
             destroy_table(self.root, SV39_LEVELS - 1);
         }
@@ -416,8 +419,6 @@ impl AddressSpaceOps for Sv39AddressSpace {
 
 impl Drop for Sv39AddressSpace {
     fn drop(&mut self) {
-        if self.root.0 != 0 {
-            let _ = frame_dealloc_result(self.root);
-        }
+        self.destroy();
     }
 }

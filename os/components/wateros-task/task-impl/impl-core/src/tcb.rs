@@ -472,6 +472,11 @@ impl TaskControlBlock {
 
     #[inline]
     pub fn mark_exited(&mut self, exit_code : TaskExitCode) {
+        if let TaskInner::User(u) = &mut self.inner {
+            // 用户页表由进程 registry 在 reap_process 时统一释放；线程 exit
+            // 时仅丢弃 TCB 内句柄，避免 CLONE_VM 共享 aspace 被提前 destroy。
+            u.user = u.user.without_user_aspace();
+        }
         self.state = TaskState::Exited(exit_code);
     }
 

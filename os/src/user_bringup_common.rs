@@ -6,7 +6,7 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use mm::api::kernel_bringup::{LoadedElf, LoadProgramError, PrepareUserStackError};
+use mm::api::kernel_bringup::{LoadProgramError, LoadedElf, PrepareUserStackError};
 use runtime::logging::*;
 
 /// glibc / musl 根卷前缀。
@@ -57,7 +57,11 @@ pub fn run_one_elf_argv_exit(log_tag : &str, elf_path : &str, argv : &[&str]) ->
         }
     };
 
-    let final_argv_refs: Vec<&str> = final_argv.iter().map(String::as_str).collect();
+    let final_argv_refs : Vec<&str> = final_argv.iter()
+                                                .map(String::as_str)
+                                                .collect();
+    info!("[{log_tag}] spawn path={elf_path} entry_pc={:#x} satp={:#x} argv={final_argv:?}",
+          loaded.entry_pc, loaded.satp);
     let tid = match spawn_user_task_from_loaded_elf_with_argv(&loaded, &final_argv_refs, &[]) {
         Ok(t) => t,
         Err(e) => {
@@ -85,6 +89,24 @@ pub fn run_one_elf_argv_exit(log_tag : &str, elf_path : &str, argv : &[&str]) ->
                                                })
                                                .unwrap_or(-1);
 
+    let (purge, stray_exited) = task::purge_all_user_processes();
+    for exited in &stray_exited {
+        cred::drop_task_cred(exited.id);
+        #[cfg(feature = "vfs-bridge")]
+        {
+            vfs::cwd::drop_task_cwd(exited.id);
+            vfs::fd::drop_task_fd_table(exited.id);
+        }
+    }
+    if purge.killed_tasks > 0 {
+        warn!("[{log_tag}] script cleanup killed {} stray user task(s) after path={elf_path}",
+              purge.killed_tasks);
+    }
+    if purge.reaped_processes > 0 {
+        trace!("[{log_tag}] script cleanup reaped {} exited process(es) after path={elf_path}",
+               purge.reaped_processes);
+    }
+
     trace!("[{log_tag}] END path={elf_path} exit_code={exit_code}");
     Some(exit_code)
 }
@@ -96,10 +118,25 @@ pub fn run_one_basic_elf(log_tag : &str, prefix : &str, name : &str) {
     run_one_elf_argv(log_tag, elf_path.as_str(), &argv);
 }
 
-/// 串行执行带 shebang 的脚本；`script_path` 为根卷内完整路径。
+/// 串行执行 shell 脚本：直接装载同 libc 下的 busybox，argv 为 `sh <脚本>`。
 pub fn run_one_busybox_script(log_tag : &str, script_path : &str) {
-    let argv : Vec<&str> = vec![script_path];
-    run_one_elf_argv(log_tag, script_path, &argv);
+    let busybox_path = match mm::api::executable::busybox_path_for_script(script_path) {
+        Some(path) => path,
+        None => {
+            warn!("[{log_tag}] skip script={script_path}: unknown libc prefix");
+            return;
+        }
+    };
+
+    #[cfg(feature = "vfs-bridge")]
+    if let Err(e) = warn_if_path_missing(log_tag, script_path) {
+        warn!("[{log_tag}] skip script={script_path}: rootfs check: {e:?}");
+        return;
+    }
+
+    let argv : Vec<&str> = vec!["sh",
+                                script_path];
+    run_one_elf_argv(log_tag, busybox_path, &argv);
 }
 
 #[cfg(any(feature = "impl-sv39", feature = "impl-loongarch64"))]

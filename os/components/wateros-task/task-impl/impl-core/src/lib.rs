@@ -17,9 +17,10 @@ mod tcb;
 
 pub use api_v0::TaskBootstrap;
 pub use process::{
-    find_exited_child_process, has_child_process, init_process_registry,
-    leader_task_for_process, lookup_process, lookup_task, self_test as process_model_self_test,
-    reap_process, reap_process_with_tasks, set_task_clear_child_tid, task_clear_child_tid,
-    task_ids_for_process, with_process_registry, ProcessControlBlock, ProcessRegistry,
+    all_process_pids, collect_exited_process_pids, find_exited_child_process, has_child_process,
+    init_process_registry, leader_task_for_process, lookup_process, lookup_task,
+    self_test as process_model_self_test, reap_process, reap_process_with_tasks,
+    set_task_clear_child_tid, task_clear_child_tid, task_ids_for_process,
+    with_process_registry, ProcessControlBlock, ProcessRegistry,
 };
 pub use tcb::TaskControlBlock;

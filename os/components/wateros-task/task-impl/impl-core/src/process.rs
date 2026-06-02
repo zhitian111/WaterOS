@@ -305,6 +305,25 @@ impl ProcessRegistry {
             .any(|process| process.parent_pid == Some(parent_pid))
     }
 
+    /// 列出 registry 中仍占槽的全部进程 id（含 Running / Exited）。
+    pub fn all_process_pids(&self) -> Vec<ProcessId> {
+        self.processes
+            .iter()
+            .filter_map(|slot| slot.as_ref())
+            .map(|process| process.pid)
+            .collect()
+    }
+
+    /// 列出 registry 中所有已退出、尚未 reap 的进程。
+    pub fn collect_exited_process_pids(&self) -> Vec<ProcessId> {
+        self.processes
+            .iter()
+            .filter_map(|slot| slot.as_ref())
+            .filter(|process| matches!(process.state, ProcessState::Exited(_)))
+            .map(|process| process.pid)
+            .collect()
+    }
+
     pub fn reap_process(&mut self, pid: ProcessId) -> Option<ProcessDescriptor> {
         self.reap_process_with_tasks(pid)
             .map(|(descriptor, _)| descriptor)
@@ -317,6 +336,12 @@ impl ProcessRegistry {
             return None;
         }
         slot.take().map(|process| {
+            if let Some(aspace) = process.address_space {
+                let ptr = aspace.user_aspace_ptr();
+                if ptr != 0 {
+                    mm_api::user_aspace_lifecycle::drop_user_aspace_on_task_exit(ptr);
+                }
+            }
             let task_ids = process.tasks.iter().map(|task| task.task_id).collect();
             (process.descriptor(), task_ids)
         })
@@ -391,6 +416,14 @@ pub fn find_exited_child_process(parent_pid: ProcessId) -> Option<ProcessDescrip
 
 pub fn has_child_process(parent_pid: ProcessId) -> bool {
     with_process_registry(|registry| registry.has_child_process(parent_pid))
+}
+
+pub fn all_process_pids() -> Vec<ProcessId> {
+    with_process_registry(|registry| registry.all_process_pids())
+}
+
+pub fn collect_exited_process_pids() -> Vec<ProcessId> {
+    with_process_registry(|registry| registry.collect_exited_process_pids())
 }
 
 pub fn set_task_clear_child_tid(task_id: TaskId, clear_child_tid: Option<TaskClearTid>) -> bool {

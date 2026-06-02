@@ -121,8 +121,8 @@ pub mod kernel_mm_impl {
         if aspace_ptr == 0 {
             return;
         }
-        let mut aspace = unsafe { Box::from_raw(aspace_ptr as *mut Sv39AddressSpace) };
-        aspace.destroy();
-        // Box 在此 drop，destroy 已将 root 置 0，Drop 不会重复释放
+        let aspace = unsafe { Box::from_raw(aspace_ptr as *mut Sv39AddressSpace) };
+        // `Drop` 调用 `destroy()` 递归释放用户页帧与页表；`destroy` 对 root=0 为 no-op。
+        drop(aspace);
     }
 }

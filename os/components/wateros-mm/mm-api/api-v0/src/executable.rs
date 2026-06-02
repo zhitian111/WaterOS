@@ -179,13 +179,38 @@ pub fn resolve_script_interpreter(
     Ok((String::from(busybox), vec![String::from("sh")]))
 }
 
-/// 按 Linux binfmt_script 规则组装 argv：解释器、shebang 参数、脚本路径、用户 `argv[1..]`。
+/// 测试盘 busybox 为静态链接，`argv[0]` 须为 applet 名（如 `sh`），而非解释器完整路径。
+#[inline]
+fn is_busybox_interpreter(interpreter: &str) -> bool {
+    interpreter.ends_with("/busybox") || interpreter == "busybox"
+}
+
+/// 组装解释器加载时的 argv。
+///
+/// - 普通 ELF：遵循 Linux binfmt_script（`argv[0]` = 解释器路径）。
+/// - busybox：与 bring-up 约定一致（`argv[0]` = `sh` 等 applet 名）。
 pub fn build_interpreted_argv(
     script_path: &str,
     interpreter: &str,
     shebang_args: &[String],
     user_argv: &[&str],
 ) -> Vec<String> {
+    if is_busybox_interpreter(interpreter) {
+        let mut argv = Vec::with_capacity(1 + shebang_args.len() + user_argv.len());
+        if shebang_args.is_empty() {
+            argv.push(String::from("sh"));
+        } else {
+            argv.extend(shebang_args.iter().cloned());
+        }
+        argv.push(String::from(script_path));
+        if user_argv.len() > 1 {
+            for arg in &user_argv[1..] {
+                argv.push(String::from(*arg));
+            }
+        }
+        return argv;
+    }
+
     let mut argv = Vec::with_capacity(2 + shebang_args.len() + user_argv.len());
     argv.push(String::from(interpreter));
     argv.extend(shebang_args.iter().cloned());
@@ -247,7 +272,6 @@ pub fn test() {
     assert_eq!(
         argv,
         vec![
-            String::from("/glibc/busybox"),
             String::from("sh"),
             String::from("/glibc/basic_testcode.sh"),
             String::from("arg1"),
@@ -328,12 +352,22 @@ mod tests {
         assert_eq!(
             argv,
             vec![
-                "/glibc/busybox",
                 "sh",
                 "/glibc/basic_testcode.sh",
                 "arg1",
             ]
         );
+    }
+
+    #[test]
+    fn build_argv_linux_interpreter() {
+        let argv = build_interpreted_argv(
+            "/usr/bin/script",
+            "/bin/sh",
+            &[],
+            &["/usr/bin/script"],
+        );
+        assert_eq!(argv, vec!["/bin/sh", "/usr/bin/script"]);
     }
 
     #[test]

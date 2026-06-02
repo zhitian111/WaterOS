@@ -353,21 +353,6 @@ fn write_exit_code(exit_code_ptr: usize, exit_code: isize) -> Result<(), ErrNo> 
     copy_to_user_struct(exit_code_ptr, &wait_status)
 }
 
-/// waitpid 回收用户任务时释放其 Sv39 地址空间（execve 已 drop 的旧 aspace 不在 TCB 中）。
-fn drop_exited_user_aspace(exited: &task::ExitedTask) {
-    if let Some(trap) = exited.trap_frame {
-        let aspace_ptr = trap.user_aspace_ptr();
-        if aspace_ptr == 0 {
-            return;
-        }
-        // 勿释放仍在运行的任务地址空间（例如误 reap 当前任务）。
-        if task::current_task_user_aspace_ptr() == aspace_ptr {
-            return;
-        }
-        mm::kernel_mm::drop_user_aspace(aspace_ptr);
-    }
-}
-
 fn drop_exited_task_resources(exited: &task::ExitedTask) {
     vfs::cwd::drop_task_cwd(exited.id);
     vfs::fd::drop_task_fd_table(exited.id);
@@ -388,13 +373,6 @@ fn finish_wait_process_result(
     };
     match write_exit_code(exit_code_ptr, status_task.exit_code) {
         Ok(()) => {
-            if let Some(owner) = exited_tasks
-                .iter()
-                .find(|task| task.id == pid.raw())
-                .or_else(|| exited_tasks.first())
-            {
-                drop_exited_user_aspace(owner);
-            }
             for exited in &exited_tasks {
                 drop_exited_task_resources(exited);
             }

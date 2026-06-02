@@ -498,6 +498,7 @@ pub fn from_elf_bytes(data : &[u8]) -> Result<LoadedElf, LoadElfError> {
                                       PREFERRED_MMAP_BASE));
     aspace.init_user_layout(heap_start, heap_start, brk_max, mmap_base);
 
+    let phdr_va = min_vaddr.saturating_add(e_phoff);
     let leaked = Box::leak(Box::new(aspace));
     let pgdl = leaked.satp_value();
     let user_aspace_ptr = leaked as *mut crate::pagetable::LoongArch64AddressSpace as usize;
@@ -524,5 +525,8 @@ pub fn from_elf_bytes(data : &[u8]) -> Result<LoadedElf, LoadElfError> {
                    brk_start : heap_start.0,
                    brk_current : heap_start.0,
                    brk_max : brk_max.0,
-                   mmap_arena_base : mmap_base.0 })
+                   mmap_arena_base : mmap_base.0,
+                   phdr_va,
+                   phnum : e_phnum,
+                   phentsize : e_phentsize })
 }

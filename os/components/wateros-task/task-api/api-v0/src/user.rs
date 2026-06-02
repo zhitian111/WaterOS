@@ -113,6 +113,14 @@ impl UserTask {
     #[inline]
     pub const fn user_aspace_ptr(&self) -> Option<usize> { self.user_aspace_ptr }
 
+    /// 退出后丢弃地址空间句柄（页表已在 `exit` 时销毁）。
+    #[inline]
+    pub const fn without_user_aspace(self) -> Self {
+        Self { address_space : None,
+               user_aspace_ptr : None,
+               ..self }
+    }
+
     /// 若已指定首次用户栈指针，则返回该值。
     #[inline]
     pub const fn initial_user_sp(&self) -> Option<usize> { self.initial_user_sp }

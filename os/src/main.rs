@@ -9,8 +9,8 @@
 //! 2. 解析引导参数、初始化驱动桩、控制台与日志、堆分配器，再做 `platform::arch`
 //!    与 MM
 //!   （frame 范围、Sv39、内核页表等；含 `mm` 自检日志）。
-//! 3. 初始化任务、注册组合层 trap 路由（`trap_handler::init`）与内核 trap 的
-//!    `satp`，随后 `driver::active_impl::init_after_boot`；成功则挂载 `fs`。
+//! 3. 初始化任务、注册组合层 trap 路由（`trap_handler::init`），再做 MM
+//!    （frame 范围、Sv39、内核页表等；含 `mm` 自检日志）；随后 `driver::active_impl::init_after_boot`；成功则挂载 `fs`。
 //! 4. 在驱动与 `fs::init`（探测 + 注入 impl，不挂载）成功后，先跑
 //!    [`user_bringup_bus::run`]：在总线内 **RW 挂载 ext4 根卷**，再按总线内
 //!    登记顺序执行 **`stage-basic`**（直接装载 **`/{glibc,musl}/basic/*` ELF**）、
@@ -113,6 +113,10 @@ mod qemu_riscv64_opensbi {
 
         platform::arch::init();
 
+        // 须在 MM 安装 satp 之前注册 trap 路由：satp 切换后定时器/页故障会立即进 trap。
+        task::init();
+        crate::trap_handler::init();
+
         // ===== 内核态自检：MM / FrameAllocator / Sv39 =====
         unsafe extern "C" {
             fn kernel_end();
@@ -133,9 +137,6 @@ mod qemu_riscv64_opensbi {
                             base::addr::BasePPN { val : end_ppn });
         mm::kernel_mm::init(start_ppn, end_ppn, memory_end);
         info!("[self-test] mm self-test done");
-
-        task::init();
-        crate::trap_handler::init();
 
         // 设备驱动扫描与根文件系统挂载自检。
         let driver_boot = driver::active_impl::init_after_boot();

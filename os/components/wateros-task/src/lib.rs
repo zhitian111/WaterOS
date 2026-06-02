@@ -177,19 +177,19 @@ pub fn wake_task(task_id : TaskId) -> bool { scheduler::wake_task(task_id) }
 /// 回收指定已退出任务的信息。
 #[inline]
 pub fn reap_exited_task(task_id : TaskId) -> Option<ExitedTask> {
-    if let Some(process_task) = active_impl::lookup_task(task_id) {
-        if process_task.pid.raw() == task_id {
-            let process = active_impl::lookup_process(process_task.pid)?;
-            if !matches!(process.state, ProcessState::Exited(_)) {
-                return None;
-            }
+    let leader_pid = active_impl::lookup_task(task_id).and_then(|process_task| {
+        if process_task.pid.raw() != task_id {
+            return None;
         }
-    }
+        let process = active_impl::lookup_process(process_task.pid)?;
+        if !matches!(process.state, ProcessState::Exited(_)) {
+            return None;
+        }
+        Some(process_task.pid)
+    });
     let exited = scheduler::reap_exited_task(task_id)?;
-    if let Some(process_task) = active_impl::lookup_task(task_id) {
-        if process_task.pid.raw() == task_id {
-            let _ = active_impl::reap_process(process_task.pid);
-        }
+    if let Some(pid) = leader_pid {
+        let _ = active_impl::reap_process(pid);
     }
     Some(exited)
 }
@@ -441,6 +441,92 @@ pub fn find_exited_child_process(parent_pid : ProcessId) -> Option<ProcessDescri
 #[inline]
 pub fn has_child_process(parent_pid : ProcessId) -> bool {
     active_impl::has_child_process(parent_pid)
+}
+
+/// bring-up 脚本结束后清理统计。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ProcessPurgeStats {
+    /// 被强制 kill 的用户任务数。
+    pub killed_tasks : usize,
+    /// 被 reap 的已退出进程数。
+    pub reaped_processes : usize,
+}
+
+/// 强制结束并回收 registry 中全部用户进程（含 basic 测试遗留的 Running 孤儿）。
+///
+/// 每个 bring-up 脚本结束后调用，避免 fork 子进程泄漏页帧或破坏后续 spawn。
+/// 返回 `(统计, 本次 reap 到的已退出任务)`，便于上层释放 cred / fd 等资源。
+#[inline]
+pub fn purge_all_user_processes() -> (ProcessPurgeStats, Vec<ExitedTask>) {
+    let mut stats = ProcessPurgeStats::default();
+    let mut reaped_tasks = Vec::new();
+    for _ in 0..256 {
+        let pids = active_impl::all_process_pids();
+        if pids.is_empty() {
+            break;
+        }
+        let mut progress = false;
+        for pid in &pids {
+            let Some(snapshot) = active_impl::lookup_process(*pid) else {
+                continue;
+            };
+            if matches!(snapshot.state, ProcessState::Exited(_)) {
+                continue;
+            }
+            let Some(task_ids) = active_impl::task_ids_for_process(*pid) else {
+                continue;
+            };
+            for task_id in task_ids {
+                if kill_task(task_id, -1) {
+                    stats.killed_tasks = stats.killed_tasks.saturating_add(1);
+                    progress = true;
+                }
+            }
+        }
+        for pid in active_impl::collect_exited_process_pids() {
+            if let Some(exited) = reap_exited_process(pid) {
+                stats.reaped_processes = stats.reaped_processes.saturating_add(1);
+                reaped_tasks.extend(exited);
+                progress = true;
+            }
+        }
+        if active_impl::all_process_pids().is_empty() {
+            break;
+        }
+        if !progress {
+            break;
+        }
+    }
+    (stats, reaped_tasks)
+}
+
+/// 列出 registry 中所有已退出、尚未 reap 的进程 id。
+#[inline]
+pub fn collect_exited_process_pids() -> Vec<ProcessId> {
+    active_impl::collect_exited_process_pids()
+}
+
+/// 回收 registry 中所有已退出进程（含 basic 测试遗留、父进程已 reap 的僵尸子进程）。
+#[inline]
+pub fn reap_all_exited_processes() -> usize {
+    let mut total = 0usize;
+    loop {
+        let pids = active_impl::collect_exited_process_pids();
+        if pids.is_empty() {
+            break;
+        }
+        let mut progress = false;
+        for pid in pids {
+            if reap_exited_process(pid).is_some() {
+                total = total.saturating_add(1);
+                progress = true;
+            }
+        }
+        if !progress {
+            break;
+        }
+    }
+    total
 }
 
 /// 回收已退出进程的所有线程 task 与 process registry 记录。

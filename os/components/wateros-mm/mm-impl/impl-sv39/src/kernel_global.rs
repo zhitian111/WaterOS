@@ -148,6 +148,7 @@ pub fn init(start_ppn : usize, end_ppn : usize, ram_end_exclusive : usize) {
     KERNEL_ASPACE.store(leaked as *mut Sv39AddressSpace,
                         Ordering::Release);
     api_v0::kernel_satp::set(satp_target);
+    api_v0::user_aspace_lifecycle::register_drop_user_aspace_hook(crate::kernel_mm_impl::drop_user_aspace);
 }
 
 /// 将 `[va_start, va_end)` 内每一虚拟页映射到 **恒等物理页**，并设置

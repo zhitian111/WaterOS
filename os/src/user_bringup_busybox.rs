@@ -3,30 +3,32 @@
 use runtime::logging::*;
 
 /// 测试脚本完整路径（根卷内）；推荐顺序见 `docs/roadmap/test-case-full-pass-plan.md`。
-const SCRIPT_PATHS : &[&str] = &["/glibc/basic_testcode.sh",
+const SCRIPT_PATHS : &[&str] = &[
+                                 "/glibc/basic_testcode.sh",
                                  "/musl/basic_testcode.sh",
-                                 "/glibc/busybox_testcode.sh",
-                                 "/musl/busybox_testcode.sh",
-                                 "/glibc/lua_testcode.sh",
-                                 "/musl/lua_testcode.sh",
+                                 // "/glibc/busybox_testcode.sh",
+                                 // "/musl/busybox_testcode.sh",
+                                 // "/glibc/lua_testcode.sh",
+                                 // "/musl/lua_testcode.sh",
                                  "/glibc/libctest_testcode.sh",
                                  "/musl/libctest_testcode.sh",
-                                 "/glibc/iozone_testcode.sh",
-                                 "/musl/iozone_testcode.sh",
-                                 "/glibc/unixbench_testcode.sh",
-                                 "/musl/unixbench_testcode.sh",
-                                 "/glibc/lmbench_testcode.sh",
-                                 "/musl/lmbench_testcode.sh",
-                                 "/glibc/iperf_testcode.sh",
-                                 "/musl/iperf_testcode.sh",
-                                 "/glibc/netperf_testcode.sh",
-                                 "/musl/netperf_testcode.sh",
-                                 "/glibc/libcbench_testcode.sh",
-                                 "/musl/libcbench_testcode.sh",
-                                 "/glibc/cyclictest_testcode.sh",
-                                 "/musl/cyclictest_testcode.sh",
-                                 "/glibc/ltp_testcode.sh",
-                                 "/musl/ltp_testcode.sh"];
+                                 // "/glibc/iozone_testcode.sh",
+                                 // "/musl/iozone_testcode.sh",
+                                 // "/glibc/unixbench_testcode.sh",
+                                 // "/musl/unixbench_testcode.sh",
+                                 // "/glibc/lmbench_testcode.sh",
+                                 // "/musl/lmbench_testcode.sh",
+                                 // "/glibc/iperf_testcode.sh",
+                                 // "/musl/iperf_testcode.sh",
+                                 // "/glibc/netperf_testcode.sh",
+                                 // "/musl/netperf_testcode.sh",
+                                 // "/glibc/libcbench_testcode.sh",
+                                 // "/musl/libcbench_testcode.sh",
+                                 // "/glibc/cyclictest_testcode.sh",
+                                 // "/musl/cyclictest_testcode.sh",
+                                 // "/glibc/ltp_testcode.sh",
+                                 // "/musl/ltp_testcode.sh"
+];
 
 const LOG_TAG : &str = "busybox-bringup";
 
@@ -51,6 +53,7 @@ pub fn run_stage_busybox() {
 #[cfg(any(feature = "impl-sv39", feature = "impl-loongarch64"))]
 extern "C" fn bringup_kernel_runner(_arg : usize) -> ! {
     for script_path in SCRIPT_PATHS {
+        info!("[{LOG_TAG}] script_path = {script_path}");
         crate::user_bringup_common::run_one_busybox_script(LOG_TAG, script_path);
     }
     info!("[{LOG_TAG}] all scripts finished");

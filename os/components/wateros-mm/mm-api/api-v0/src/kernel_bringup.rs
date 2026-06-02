@@ -109,4 +109,10 @@ pub struct LoadedElf {
     pub brk_max: usize,
     /// 匿名 `mmap` 区 bump 起点（日志与调试；实现以页表内游标为准）。
     pub mmap_arena_base: usize,
+    /// 用户 auxv `AT_PHDR`：程序头表在用户地址空间中的虚拟地址。
+    pub phdr_va: usize,
+    /// 用户 auxv `AT_PHNUM`：程序头数量。
+    pub phnum: usize,
+    /// 用户 auxv `AT_PHENT`：单个程序头字节大小。
+    pub phentsize: usize,
 }

@@ -25,6 +25,7 @@ pub mod executable;
 pub mod kernel_bringup;
 pub mod kernel_satp;
 pub mod mmap;
+pub mod user_aspace_lifecycle;
 
 pub use frame_allocator::PhysicalFrameAllocator;
 
