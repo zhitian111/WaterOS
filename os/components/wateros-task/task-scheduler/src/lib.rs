@@ -46,6 +46,12 @@ pub fn current_task_address_space_raw() -> usize { active_impl::current_task_add
 /// 当前运行任务的 Sv39 用户页表对象指针；`0` 表示无。
 #[inline]
 pub fn current_task_user_aspace_ptr() -> usize { active_impl::current_task_user_aspace_ptr() }
+pub fn current_task_user_address_space_token() -> usize {
+    active_impl::current_task_user_address_space_token()
+}
+pub fn current_task_trap_return_address_space_token() -> usize {
+    active_impl::current_task_trap_return_address_space_token()
+}
 
 /// 创建一个新的内核任务，并返回其任务号。
 #[inline]

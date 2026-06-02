@@ -102,6 +102,9 @@ pub fn run_one_elf_argv_exit(log_tag : &str, elf_path : &str, argv : &[&str]) ->
         warn!("[{log_tag}] script cleanup killed {} stray user task(s) after path={elf_path}",
               purge.killed_tasks);
     }
+    trace!("[{log_tag}] script cleanup summary killed={} reaped={} after path={elf_path}",
+           purge.killed_tasks,
+           purge.reaped_processes);
     if purge.reaped_processes > 0 {
         trace!("[{log_tag}] script cleanup reaped {} exited process(es) after path={elf_path}",
                purge.reaped_processes);

@@ -381,6 +381,14 @@ pub fn task_snapshot(task_id : TaskId) -> Option<TaskSnapshot> { scheduler::task
 pub fn current_tick() -> TaskTick { scheduler::current_tick() }
 #[inline]
 pub fn current_task_user_aspace_ptr() -> usize { scheduler::current_task_user_aspace_ptr() }
+#[inline]
+pub fn current_task_user_address_space_token() -> usize {
+    scheduler::current_task_user_address_space_token()
+}
+#[inline]
+pub fn current_task_trap_return_address_space_token() -> usize {
+    scheduler::current_task_trap_return_address_space_token()
+}
 
 #[inline]
 fn user_address_space_ref(user : UserTask) -> Option<AddressSpaceRef> {

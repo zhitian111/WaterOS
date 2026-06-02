@@ -16,7 +16,7 @@ use api_v0::frame_allocator::PhysicalFrameAllocator;
 use api_v0::mmap::{MmapKind, MmapOps, MmapRequest};
 use api_v0::perm::PagePerm;
 
-use crate::pagetable::Sv39AddressSpace;
+use crate::pagetable::{zero_phys_page, Sv39AddressSpace};
 
 #[inline]
 fn fence_user_ptes() {
@@ -69,7 +69,9 @@ impl HeapBrk for Sv39AddressSpace {
             while vpn_i < end_vpn_excl {
                 let vpn = VirtPageNum(vpn_i);
                 if self.translate_addr(vpn.start_addr())?.is_none() {
-                    self.map_page_with_alloc(allocator, vpn, Self::brk_perm())?;
+                    let ppn = allocator.alloc_frame()?;
+                    zero_phys_page(ppn);
+                    self.map_page_to_ppn(vpn, ppn, Self::brk_perm())?;
                 }
                 vpn_i += 1;
             }
@@ -81,6 +83,27 @@ impl HeapBrk for Sv39AddressSpace {
 }
 
 impl Sv39AddressSpace {
+    fn map_zeroed_range_with_alloc<A: PhysicalFrameAllocator<FrameId = PhysPageNum>>(
+        &mut self,
+        allocator: &mut A,
+        start: VirtAddr,
+        end: VirtAddr,
+        perm: PagePerm,
+    ) -> MmResult<()> {
+        if start.0 >= end.0 {
+            return Ok(());
+        }
+        let mut vpn = start.floor_page();
+        let vpn_end = end.ceil_page();
+        while vpn.0 < vpn_end.0 {
+            let ppn = allocator.alloc_frame()?;
+            zero_phys_page(ppn);
+            self.map_page_to_ppn(vpn, ppn, perm)?;
+            vpn = VirtPageNum(vpn.0 + 1);
+        }
+        Ok(())
+    }
+
     fn mmap_map_end(base: VirtAddr, len: usize) -> MmResult<VirtAddr> {
         let n_pages = len
             .checked_add(PAGE_SIZE - 1)
@@ -132,7 +155,7 @@ impl Sv39AddressSpace {
         if perm == PagePerm::U {
             return Err(MmError::InvalidAddress);
         }
-        self.map_range_with_alloc(allocator, base, end, perm)?;
+        self.map_zeroed_range_with_alloc(allocator, base, end, perm)?;
         if req.addr_hint.is_none() {
             self.mmap_anon_cursor = end;
         }

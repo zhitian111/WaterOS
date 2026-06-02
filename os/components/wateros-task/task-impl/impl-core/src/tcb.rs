@@ -12,8 +12,8 @@ use api_v0::{
 };
 use arch::task::{ActiveArchTaskContext as TaskContext, ArchTaskContext};
 use arch::trap::{
-    ActiveTrapFrame as TaskTrapFrame, TrapContextRead, TrapContextWrite, TrapSyscallWrite,
-    TrapThreadWrite,
+    ActiveTrapFrame as TaskTrapFrame, TrapContextRead, TrapContextWrite, TrapFrameRead,
+    TrapSyscallWrite, TrapThreadWrite,
 };
 
 unsafe extern "C" {
@@ -382,6 +382,16 @@ impl TaskControlBlock {
             TaskInner::User(u) => u.user
                                    .user_aspace_ptr()
                                    .unwrap_or(0),
+            _ => 0,
+        }
+    }
+
+    #[inline]
+    pub fn trap_return_address_space_token(&self) -> usize {
+        match &self.inner {
+            TaskInner::User(u) => {
+                TrapFrameRead::return_address_space_token(&u.trap_frame)
+            }
             _ => 0,
         }
     }

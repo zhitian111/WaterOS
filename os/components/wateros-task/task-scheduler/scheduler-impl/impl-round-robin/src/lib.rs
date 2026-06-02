@@ -104,6 +104,16 @@ pub fn current_task_user_aspace_ptr() -> usize {
     with_scheduler(|scheduler| scheduler.current_task_user_aspace_ptr())
 }
 
+pub fn current_task_user_address_space_token() -> usize {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.current_task_user_address_space_token())
+}
+
+pub fn current_task_trap_return_address_space_token() -> usize {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.current_task_trap_return_address_space_token())
+}
+
 /// 幂等初始化全局调度器与内部 `RoundRobinScheduler` 状态。
 pub fn init_scheduler() {
     if !SCHEDULER_READY.load(Ordering::Acquire) {

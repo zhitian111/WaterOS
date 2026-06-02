@@ -41,6 +41,8 @@ pub mod user_access {
     pub use impl_loongarch64::user_access::LoongArch64UserMemoryOps;
     #[cfg(feature = "impl-sv39")]
     pub use impl_sv39::user_access::Sv39UserMemoryOps;
+    #[cfg(feature = "impl-sv39")]
+    pub use impl_sv39::user_access::{debug_probe_user_virt, UserVirtProbe};
 }
 
 /// 当前活动架构的用户缓冲区实现类型别名。

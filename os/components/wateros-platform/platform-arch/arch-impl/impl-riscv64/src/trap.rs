@@ -169,6 +169,8 @@ impl TrapFrameRead for TrapContext {
     fn user_sp(&self) -> usize { self.user_sp_raw() }
 
     fn returns_to_user(&self) -> bool { self.returns_to_user_raw() }
+
+    fn return_address_space_token(&self) -> usize { self.return_address_space_token }
 }
 
 impl TrapSyscallRead for TrapContext {

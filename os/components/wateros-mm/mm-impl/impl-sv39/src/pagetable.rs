@@ -123,6 +123,15 @@ unsafe fn table_mut(ppn : PhysPageNum) -> &'static mut [Sv39Pte; SV39_ENTRIES] {
     unsafe { &mut *(pa as *mut [Sv39Pte; SV39_ENTRIES]) }
 }
 
+/// 将已分配的用户数据帧清零（匿名 brk/mmap/栈复用帧时避免残留指针）。
+#[inline]
+pub(crate) fn zero_phys_page(ppn: PhysPageNum) {
+    let pa = ppn.0 * PAGE_SIZE;
+    unsafe {
+        core::ptr::write_bytes(pa as *mut u8, 0, PAGE_SIZE);
+    }
+}
+
 #[inline]
 fn alloc_table_frame_zeroed() -> MmResult<PhysPageNum> {
     let ppn = frame_alloc_result().map_err(MmError::from)?;

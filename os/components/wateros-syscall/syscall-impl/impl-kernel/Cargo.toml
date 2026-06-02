@@ -13,7 +13,7 @@
     vfs = { path = "../../../wateros-vfs/", package = "wateros-vfs", default-features = false, optional = true }
     driver = { path = "../../../wateros-driver/", package = "wateros-driver", default-features = false, optional = true }
     driver-network = { path = "../../../wateros-driver/driver-network/", package = "wateros-driver-network", default-features = false, optional = true }
-    log = { version = "0.4.29", optional = true }
+    log = { version = "0.4.29" }
     smoltcp = { version = "0.13", default-features = false, optional = true }
     spin = "0.10.0"
 
@@ -41,10 +41,12 @@
         "task/api-v0",
         "task/impl-core",
     ]
+    impl-sv39 = []
     impl-riscv64 = [
         "abi/api-v0",
         "api-v0",
         "fd-session",
+        "impl-sv39",
         "ipc/impl-riscv64",
         "socket-net",
         "task/api-v0",
@@ -53,7 +55,6 @@
     socket-net = [
         "dep:driver",
         "dep:driver-network",
-        "dep:log",
         "dep:smoltcp",
         "driver-network/impl-smoltcp",
         "driver-network/impl-virtio-mmio",

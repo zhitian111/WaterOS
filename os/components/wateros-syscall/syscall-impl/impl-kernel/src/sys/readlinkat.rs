@@ -54,8 +54,38 @@ fn read_current_exe(buf_ptr: usize, bufsiz: usize) -> UserRet {
     };
     let bytes = exe_path.as_bytes();
     let write_len = core::cmp::min(bytes.len(), bufsiz);
+    if write_len == 0 {
+        return UserRet::from_success(0);
+    }
+
     match copy_to_user(buf_ptr, &bytes[..write_len]) {
-        Ok(n) if n == write_len => UserRet::from_success(write_len),
-        _ => UserRet::from_error(ErrNo::EFAULT),
+        Ok(n) if n == write_len => {
+            if bufsiz > write_len {
+                let nul = [0u8];
+                if copy_to_user(buf_ptr + write_len, &nul).is_err() {
+                    return UserRet::from_error(ErrNo::EFAULT);
+                }
+            }
+            UserRet::from_success(write_len)
+        }
+        Ok(n) => {
+            log::trace!(
+                "[readlinkat] /proc/self/exe partial copy n={n} expected={write_len} \
+                 buf={buf_ptr:#x} path={exe_path:?}"
+            );
+            UserRet::from_error(ErrNo::EFAULT)
+        }
+        Err(e) => {
+            log::trace!(
+                "[readlinkat] /proc/self/exe copy failed errno={e:?} buf={buf_ptr:#x} \
+                 bufsiz={bufsiz} path={exe_path:?} task={:?} aspace_ptr={:#x} \
+                 task_satp={:#x} trap_satp={:#x}",
+                task::current_task_id(),
+                task::current_task_user_aspace_ptr(),
+                task::current_task_user_address_space_token(),
+                task::current_task_trap_return_address_space_token(),
+            );
+            UserRet::from_error(e)
+        }
     }
 }

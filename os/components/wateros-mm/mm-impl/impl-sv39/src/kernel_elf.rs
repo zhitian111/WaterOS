@@ -404,6 +404,7 @@ fn map_user_stack<A : AddressSpaceOps>(aspace : &mut A,
     let vpn_end = VirtAddr(stack_top).ceil_page();
     while vpn.0 < vpn_end.0 {
         let ppn = frame_alloc_result().map_err(|e| LoadElfError::Mm(MmError::from(e)))?;
+        crate::pagetable::zero_phys_page(ppn);
         aspace.map_page_to_ppn(vpn,
                                ppn,
                                PagePerm::R | PagePerm::W | PagePerm::U)
@@ -412,6 +413,7 @@ fn map_user_stack<A : AddressSpaceOps>(aspace : &mut A,
     }
     // 栈顶再映射一页，避免测程将 SP 顶到 `stack_top` 时立即缺页（`0x7fffa000+`）。
     let ppn = frame_alloc_result().map_err(|e| LoadElfError::Mm(MmError::from(e)))?;
+    crate::pagetable::zero_phys_page(ppn);
     aspace
         .map_page_to_ppn(vpn_end,
                          ppn,

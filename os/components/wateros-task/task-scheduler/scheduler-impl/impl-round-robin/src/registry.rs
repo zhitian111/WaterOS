@@ -395,6 +395,20 @@ impl TaskRegistry {
             .unwrap_or(0)
     }
 
+    pub(super) fn current_task_user_address_space_token(&self) -> usize {
+        self.current_task_address_space_raw()
+    }
+
+    pub(super) fn current_task_trap_return_address_space_token(&self) -> usize {
+        self.current_task_id
+            .map(|task_id| {
+                self.task_table
+                    .task(task_id)
+                    .trap_return_address_space_token()
+            })
+            .unwrap_or(0)
+    }
+
     pub(super) fn clear_wait_result(&mut self, task_id : TaskId) {
         self.task_table
             .task_mut(task_id)

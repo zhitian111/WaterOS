@@ -131,13 +131,15 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             // 日志级别下毫无输出，表现为「sret 后卡死」。
             if cx.returns_to_user() {
                 warn!("[trap] user memory fault {:?} raw={:#x} ecode={:#x} sepc={:#x} \
-                       stval={:#x} user_sp={:#x} — killing task",
+                       stval={:#x} user_sp={:#x} return_satp={:#x} aspace_ptr={:#x} — killing task",
                       trap_cause,
                       raw_cause,
                       (raw_cause >> 16) & 0x3F,
                       cx.user_pc(),
                       cx.fault_addr(),
-                      cx.user_sp());
+                      cx.user_sp(),
+                      cx.return_address_space_token(),
+                      task::current_task_user_aspace_ptr());
                 kill_current_user_task("user memory fault", trap_cause, cx);
             }
             fatal_kernel_trap("kernel page fault",
@@ -169,15 +171,17 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
     }
 
     if cx.returns_to_user() {
-        let address_space_token = paging::active_address_space_token();
+        let return_satp = cx.return_address_space_token();
+        let kernel_satp = paging::active_address_space_token();
         // `raw_cause` 来自 TrapContext.scause 快照，即 **本次** 进入内核的原因（如
         // ecall=0x8）， 不是硬件 CSR 的“下一异常预告”；`sret`
         // 前也不会用该槽位预测下一次 trap。
-        trace!("[trap] sret to user pc={:#x} sp={:#x} address_space_token={:#x} \
+        trace!("[trap] sret to user pc={:#x} sp={:#x} return_satp={:#x} kernel_satp={:#x} \
                 frame_scause={:#x} (this trap's scause snapshot)",
                cx.user_pc(),
                cx.user_sp(),
-               address_space_token,
+               return_satp,
+               kernel_satp,
                raw_cause,);
     }
 

@@ -354,6 +354,16 @@ impl RoundRobinScheduler {
             .current_task_user_aspace_ptr()
     }
 
+    pub(super) fn current_task_user_address_space_token(&self) -> usize {
+        self.registry
+            .current_task_user_address_space_token()
+    }
+
+    pub(super) fn current_task_trap_return_address_space_token(&self) -> usize {
+        self.registry
+            .current_task_trap_return_address_space_token()
+    }
+
     pub(super) fn begin_current_trap_frame_access(&mut self,
                                                   trap_frame : TaskTrapFrame)
                                                   -> Option<*mut TaskTrapFrame> {

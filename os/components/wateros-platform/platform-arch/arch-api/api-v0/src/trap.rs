@@ -81,6 +81,9 @@ pub trait TrapFrameRead {
     fn user_sp(&self) -> usize;
     fn returns_to_user(&self) -> bool;
 
+    /// trap 返回用户态时将激活的地址空间 token（RISC-V Sv39 下为 `satp` 编码）。
+    fn return_address_space_token(&self) -> usize;
+
     #[inline]
     #[allow(unused)]
     fn returns_to_kernel(&self) -> bool {
