@@ -145,16 +145,8 @@ impl TaskRegistry {
         let child_id = self.next_task_id;
         self.next_task_id += 1;
 
-        log::warn!("[fork-debug] begin parent={} child={} child_stack={:#x} new_satp={:#x}",
-                   parent_id,
-                   child_id,
-                   child_stack,
-                   new_satp);
         let parent = self.task_table
                          .task(parent_id);
-        log::warn!("[fork-debug] got parent parent={} child={}",
-                   parent_id,
-                   child_id);
         log::trace!("[fork] parent={} child_stack={:#x} new_satp={:#x}",
                     parent_id,
                     child_stack,
@@ -163,14 +155,9 @@ impl TaskRegistry {
                                      child_stack,
                                      new_aspace_ptr,
                                      new_satp)?;
-        log::warn!("[fork-debug] fork_from done parent={} child={}",
-                   parent_id,
-                   child_id);
 
         self.task_table
             .insert(Box::new(child));
-        log::warn!("[fork-debug] inserted child={}",
-                   child_id);
         log::trace!("[fork] child={} created parent={}",
                     child_id,
                     parent_id);

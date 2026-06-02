@@ -114,14 +114,9 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                    regs[4],
                    regs[5],);
             let syscall_ret = dispatch_syscall_from_trap(syscall_nr, syscall_args);
-            if syscall_ret < 0 {
-                warn!("[syscall] syscall failed ! nr={} ret={}",
-                      syscall_nr, syscall_ret);
-            } else {
-                trace!("[syscall] nr={} ret={}",
-                       syscall_nr,
-                       syscall_ret);
-            }
+            trace!("[syscall] nr={} ret={}",
+                   syscall_nr,
+                   syscall_ret);
             // execve 已替换整个 trap 帧，跳过 sepc 推进与返回值写入
             if syscall_nr != <ActiveSyscallNumberTable as SyscallNumberTable>::EXEC.raw() {
                 cx.add_user_pc(SYSCALL_INSN_BYTES);
