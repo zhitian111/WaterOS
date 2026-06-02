@@ -166,6 +166,8 @@ pub trait SyscallNumberTable {
     const SET_TID_ADDRESS: SyscallNumber;
     /// robust futex 列表（`set_robust_list(2)`）。
     const SET_ROBUST_LIST: SyscallNumber;
+    /// 读取 robust futex 列表（`get_robust_list(2)`）。
+    const GET_ROBUST_LIST: SyscallNumber;
 
     // 其它常用（早期阶段优先级不高，但常见）/ other common syscalls
     /// 从内核熵池取随机字节（`getrandom(2)`）。

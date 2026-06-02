@@ -57,12 +57,13 @@
 | `ioctl` | 待实现 | TTY、设备、网络工具会大量触发。 |
 | `fcntl` | 待实现 | fd flags、`F_DUPFD_CLOEXEC`、非阻塞等。 |
 | `prctl` | 待实现 | libc/线程运行时常见探测项，可先兼容常用 no-op。 |
-| `futex` | 待实现 | pthread、动态链接、benchmark 的关键同步原语。 |
+| `futex` | 已接入 | WAIT/WAKE（含 bitset）；委托 `ipc-futex/impl-task`；带超时；非 private → `EINVAL`。 |
 | `rt_sigaction` | 待实现 | busybox、lmbench、cyclictest 需要信号安装。 |
 | `rt_sigprocmask` | 待实现 | 与 signal/pthread 联动。 |
 | `rt_sigreturn` | 待实现 | 完整用户信号返回路径。 |
 | `set_tid_address` | 部分接入 | 当前返回 tid；未实现 clear-child-tid 唤醒。 |
-| `set_robust_list` | 待实现 | pthread robust futex 兼容项。 |
+| `set_robust_list` | 已接入 | 校验头长 24；状态存 `FutexHub`；退出深清理。 |
+| `get_robust_list` | 已接入 | ABI 号 100；读回 per-task robust 头。 |
 | `getrandom` | 待实现 | libc 初始化和测试程序可能探测。 |
 | `setitimer` | 待实现 | signal/timer 相关测例会用。 |
 | `getrlimit` | 待实现 | shell/libc 常见探测项。 |

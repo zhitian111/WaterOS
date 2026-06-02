@@ -5,6 +5,10 @@
         "./ipc-waitqueue/",
         "./ipc-waitqueue/waitqueue-api/api-v0/",
         "./ipc-waitqueue/waitqueue-impl/impl-task/",
+        "./ipc-futex/",
+        "./ipc-futex/futex-api/api-v0/",
+        "./ipc-futex/futex-impl/impl-dummy/",
+        "./ipc-futex/futex-impl/impl-task/",
     ]
 [package]
     name = "wateros-ipc"
@@ -21,15 +25,17 @@
 [features]
     api-v0 = [ "impl-dummy/api-v0" ]
     default = [ "api-v0", "impl-dummy" ]
-    futex = [ "dep:futex", "futex/api-v0", "futex/impl-dummy" ]
+    futex = [ "dep:futex", "futex/api-v0", "futex/impl-task" ]
     impl-dummy = [  ]
     impl-loongarch64 = [
-        "futex?/impl-dummy",
+        "futex?/impl-task",
+        "futex?/impl-loongarch64",
         "pipe?/impl-loongarch64",
         "waitqueue/impl-loongarch64",
     ]
     impl-riscv64 = [
-        "futex?/impl-dummy",
+        "futex?/impl-task",
+        "futex?/impl-riscv64",
         "pipe?/impl-riscv64",
         "waitqueue/impl-riscv64",
     ]

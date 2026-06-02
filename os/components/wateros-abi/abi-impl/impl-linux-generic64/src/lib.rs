@@ -87,6 +87,7 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const RT_SIGRETURN: SyscallNumber = SyscallNumber(139);
     const SET_TID_ADDRESS: SyscallNumber = SyscallNumber(96);
     const SET_ROBUST_LIST: SyscallNumber = SyscallNumber(99);
+    const GET_ROBUST_LIST: SyscallNumber = SyscallNumber(100);
 
     // 其它常用 / other common syscalls
     const GETRANDOM: SyscallNumber = SyscallNumber(278);

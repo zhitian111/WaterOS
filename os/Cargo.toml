@@ -82,6 +82,7 @@
         "fs/impl-devfs",
         "fs/impl-ext4",
         "ipc/api-v0",
+        "ipc/futex",
         "ipc/impl-dummy",
         "ipc/impl-riscv64",
         "ipc/pipe",

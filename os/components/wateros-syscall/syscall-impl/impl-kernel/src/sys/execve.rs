@@ -38,6 +38,7 @@ fn do_execve(path_ptr: usize, argv_ptr: usize, envp_ptr: usize) -> Result<(), Er
     let argv = read_string_array(argv_ptr)?;
     let envp = read_string_array(envp_ptr)?;
 
+    super::robust::robust_exit_cleanup_siblings_for_exec();
     let killed_threads = task::terminate_other_threads_for_exec().map_err(|_| ErrNo::EINVAL)?;
 
     let new_elf = mm::kernel_mm::from_elf_path(&abs_path).map_err(|_| ErrNo::ENOENT)?;

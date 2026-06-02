@@ -1,8 +1,7 @@
 #![no_std]
 //! Futex dummy 实现占位。
 //!
-//! 与 `futex-api` 对齐前的链接桩：不阻塞、不唤醒、不遍历 robust 链表；
-//! 真实实现（如基于 `ipc-waitqueue` 的 `impl-task`）接入后在此替换。
+//! 与 `futex-api` 对齐的链接桩：不阻塞、不唤醒；真实实现见 `impl-task`。
 
 mod hub;
 
@@ -14,9 +13,10 @@ pub fn test() {
 
     let hub = FutexHub::new();
     assert_eq!(
-        hub.wait(api_v0::FutexKey::from_uaddr(0), 0),
+        hub.wake(api_v0::FutexKey::from_uaddr(0), 0),
         Err(api_v0::FutexError::Nosys)
     );
+    assert!(hub.set_robust_list(1, 0, api_v0::ROBUST_LIST_HEAD_SIZE).is_ok());
 }
 
 #[cfg(test)]

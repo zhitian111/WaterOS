@@ -1,0 +1,130 @@
+//! 基于 `ipc-waitqueue` 的全局 futex 枢纽。
+
+extern crate alloc;
+
+use alloc::collections::BTreeMap;
+
+use api_v0::{FutexError, FutexKey, FutexResult, FutexWaitOutcome, KernelFutexOps, ROBUST_LIST_HEAD_SIZE};
+use ipc_waitqueue::WaitQueue;
+use spin::Mutex;
+use task_api::{TaskId, TaskTick, TaskWaitResult};
+
+use crate::robust::RobustState;
+
+struct FutexTables {
+    queues: BTreeMap<FutexKey, WaitQueue>,
+    robust: BTreeMap<TaskId, RobustState>,
+}
+
+/// 全局 futex 表：等待队列 + per-task robust 状态。
+pub struct FutexHub {
+    inner: Mutex<FutexTables>,
+}
+
+impl FutexHub {
+    /// 返回全局 futex 枢纽单例。
+    pub fn global() -> &'static Self {
+        &GLOBAL_HUB
+    }
+
+    fn with_tables<R>(&self, f: impl FnOnce(&mut FutexTables) -> R) -> R {
+        let mut guard = self.inner.lock();
+        f(&mut guard)
+    }
+
+    fn get_queue(tables: &mut FutexTables, key: FutexKey) -> WaitQueue {
+        *tables
+            .queues
+            .entry(key)
+            .or_insert_with(WaitQueue::new)
+    }
+
+    /// 在 `key` 对应队列上带条件等待；用户内存复查由 `condition` 闭包完成（S1）。
+    pub fn wait_while(
+        &self,
+        key: FutexKey,
+        timeout: Option<TaskTick>,
+        mut condition: impl FnMut() -> bool,
+    ) -> FutexWaitOutcome {
+        self.with_tables(|tables| {
+            let wq = Self::get_queue(tables, key);
+            match timeout {
+                None => {
+                    wq.wait_current_while(|| condition());
+                    FutexWaitOutcome::Woken
+                }
+                Some(0) => {
+                    if condition() {
+                        FutexWaitOutcome::TimedOut
+                    } else {
+                        FutexWaitOutcome::Woken
+                    }
+                }
+                Some(ticks) => match wq.wait_current_while_for_ticks(ticks, || condition()) {
+                    TaskWaitResult::Woken => FutexWaitOutcome::Woken,
+                    TaskWaitResult::TimedOut => FutexWaitOutcome::TimedOut,
+                },
+            }
+        })
+    }
+}
+
+static GLOBAL_HUB: FutexHub = FutexHub {
+    inner: Mutex::new(FutexTables {
+        queues: BTreeMap::new(),
+        robust: BTreeMap::new(),
+    }),
+};
+
+impl KernelFutexOps for FutexHub {
+    fn wake(&self, key: FutexKey, max_wake: u32) -> FutexResult<usize> {
+        self.with_tables(|tables| {
+            let wq = Self::get_queue(tables, key);
+            let limit = if max_wake == 0 { 1 } else { max_wake as usize };
+            let mut woken = 0usize;
+            for _ in 0..limit {
+                if wq.wake_one().is_none() {
+                    break;
+                }
+                woken += 1;
+            }
+            Ok(woken)
+        })
+    }
+
+    fn wake_all(&self, key: FutexKey) -> FutexResult<usize> {
+        self.with_tables(|tables| {
+            let wq = Self::get_queue(tables, key);
+            Ok(wq.wake_all())
+        })
+    }
+
+    fn set_robust_list(&self, task: TaskId, head: usize, len: usize) -> FutexResult<()> {
+        if len != ROBUST_LIST_HEAD_SIZE {
+            return Err(FutexError::Invalid);
+        }
+        self.with_tables(|tables| {
+            tables.robust.insert(
+                task,
+                RobustState { head, len },
+            );
+        });
+        Ok(())
+    }
+
+    fn get_robust_list(&self, task: TaskId) -> FutexResult<(usize, usize)> {
+        Ok(self.with_tables(|tables| {
+            tables
+                .robust
+                .get(&task)
+                .map(|state| (state.head, state.len))
+                .unwrap_or((0, 0))
+        }))
+    }
+
+    fn drop_robust_list(&self, task: TaskId) {
+        self.with_tables(|tables| {
+            tables.robust.remove(&task);
+        });
+    }
+}

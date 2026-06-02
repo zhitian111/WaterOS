@@ -26,6 +26,7 @@
         "dep:ipc",
         "dep:mm",
         "dep:vfs",
+        "ipc/futex",
         "ipc/pipe",
         "mm/api-v0",
         "vfs/bridge-fs-api",

@@ -393,6 +393,12 @@ pub fn process_snapshot(pid : ProcessId) -> Option<ProcessDescriptor> {
     active_impl::lookup_process(pid)
 }
 
+/// 返回进程内全部调度实体 `TaskId`（供 syscall robust 清理等路径使用）。
+#[inline]
+pub fn task_ids_for_process(pid : ProcessId) -> Option<Vec<TaskId>> {
+    active_impl::task_ids_for_process(pid)
+}
+
 /// 查询进程内任务语义快照。
 #[inline]
 pub fn process_task_snapshot(task_id : TaskId) -> Option<ProcessTaskDescriptor> {

@@ -60,9 +60,11 @@ pub(crate) fn sys_kill(args: SyscallArgs) -> UserRet {
     let current = task::current_task_id();
 
     if current == Some(task_id) {
+        super::robust::robust_exit_cleanup(task_id);
         task::exit_current(exit_code);
     }
 
+    super::robust::robust_exit_cleanup(task_id);
     if task::kill_task(task_id, exit_code) {
         UserRet::from_success(0)
     } else {

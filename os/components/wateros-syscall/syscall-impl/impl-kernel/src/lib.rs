@@ -320,6 +320,11 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     }
 
     #[inline]
+    fn dispatch_get_robust_list(args: SyscallArgs) -> isize {
+        sys::sys_get_robust_list(args).0
+    }
+
+    #[inline]
     fn dispatch_getrandom(args: SyscallArgs) -> isize {
         sys::sys_getrandom(args).0
     }

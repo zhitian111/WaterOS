@@ -29,7 +29,6 @@ const RLIMIT_DATA: usize = 2;
 const RLIMIT_CORE: usize = 4;
 const RLIMIT_MEMLOCK: usize = 8;
 const RLIMIT_NPROC: usize = 6;
-const ROBUST_LIST_HEAD_SIZE_64: usize = 24;
 const RT_SIGSET_SIZE_64: usize = 8;
 const RT_SIGACTION_SIZE_MIN: usize = 32;
 const GRND_NONBLOCK: usize = 0x0001;
@@ -106,6 +105,7 @@ pub(crate) fn sys_exit(exit_code: isize) -> isize {
                 let _ = super::futex::wake_user_addr(addr);
             }
         }
+        super::robust::robust_exit_cleanup(task_id);
     }
     task::exit_current(exit_code)
 }
@@ -119,6 +119,16 @@ pub(crate) fn sys_exit_group(exit_code: isize) -> isize {
                 let _ = super::futex::wake_user_addr(addr);
             }
         }
+        if let Some(process_task) = task::current_process_task_snapshot() {
+            if let Some(task_ids) = task::task_ids_for_process(process_task.pid) {
+                for sibling in task_ids {
+                    if sibling != task_id {
+                        super::robust::robust_exit_cleanup(sibling);
+                    }
+                }
+            }
+        }
+        super::robust::robust_exit_cleanup(task_id);
     }
     task::exit_group_current(exit_code)
 }
@@ -161,15 +171,6 @@ pub(crate) fn sys_set_tid_address(args: SyscallArgs) -> UserRet {
     };
     let _ = task::set_task_clear_child_tid(tid, clear_child_tid);
     UserRet::from_success(tid)
-}
-
-pub(crate) fn sys_set_robust_list(args: SyscallArgs) -> UserRet {
-    let _head = args.arg(0);
-    let len = args.arg(1);
-    if len != ROBUST_LIST_HEAD_SIZE_64 {
-        return UserRet::from_error(ErrNo::EINVAL);
-    }
-    UserRet::from_success(0)
 }
 
 pub(crate) fn sys_getrandom(args: SyscallArgs) -> UserRet {

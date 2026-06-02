@@ -71,6 +71,7 @@ pub enum SyscallKind {
     RtSigreturn,
     SetTidAddress,
     SetRobustList,
+    GetRobustList,
     GetRandom,
     SetItimer,
     GetRlimit,
@@ -215,6 +216,8 @@ impl SyscallKind {
             Self::SetTidAddress
         } else if syscall_nr == T::SET_ROBUST_LIST.raw() {
             Self::SetRobustList
+        } else if syscall_nr == T::GET_ROBUST_LIST.raw() {
+            Self::GetRobustList
         } else if syscall_nr == T::GETRANDOM.raw() {
             Self::GetRandom
         } else if syscall_nr == T::SETITIMER.raw() {
@@ -322,6 +325,7 @@ impl SyscallKind {
             Self::RtSigreturn => "rt_sigreturn",
             Self::SetTidAddress => "set_tid_address",
             Self::SetRobustList => "set_robust_list",
+            Self::GetRobustList => "get_robust_list",
             Self::GetRandom => "getrandom",
             Self::SetItimer => "setitimer",
             Self::GetRlimit => "getrlimit",
@@ -873,6 +877,14 @@ pub trait SyscallDispatcher {
         )
     }
 
+    fn dispatch_get_robust_list(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::GetRobustList,
+            Self::NumberTable::GET_ROBUST_LIST.raw(),
+            args,
+        )
+    }
+
     fn dispatch_getrandom(args: SyscallArgs) -> isize {
         Self::dispatch_unsupported(
             SyscallKind::GetRandom,
@@ -1106,6 +1118,7 @@ pub trait SyscallDispatcher {
             SyscallKind::RtSigreturn => Self::dispatch_rt_sigreturn(syscall_args),
             SyscallKind::SetTidAddress => Self::dispatch_set_tid_address(syscall_args),
             SyscallKind::SetRobustList => Self::dispatch_set_robust_list(syscall_args),
+            SyscallKind::GetRobustList => Self::dispatch_get_robust_list(syscall_args),
             SyscallKind::GetRandom => Self::dispatch_getrandom(syscall_args),
             SyscallKind::SetItimer => Self::dispatch_setitimer(syscall_args),
             SyscallKind::GetRlimit => Self::dispatch_getrlimit(syscall_args),

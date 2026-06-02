@@ -11,6 +11,8 @@ pub enum FutexError {
     Invalid,
     /// 操作码或变体尚未支持（`ENOSYS`）。
     Nosys,
+    /// 带超时等待超时（`ETIMEDOUT`）。
+    TimedOut,
 }
 
 /// Futex 操作结果。

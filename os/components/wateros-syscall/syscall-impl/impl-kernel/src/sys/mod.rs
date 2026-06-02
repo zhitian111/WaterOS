@@ -24,6 +24,7 @@ mod path_at;
 mod pipe2;
 mod read;
 mod readlinkat;
+mod robust;
 mod task;
 mod umount2;
 mod unlinkat;
@@ -55,7 +56,11 @@ pub(crate) use dup::{sys_dup, sys_dup3};
 pub(crate) use execve::sys_execve;
 pub(crate) use fcntl::sys_fcntl;
 pub(crate) use fstat::{sys_fstat, sys_fstatat, sys_statx};
-pub(crate) use futex::sys_futex;
+pub(crate) use futex::{sys_futex, wake_user_addr};
+pub(crate) use robust::{
+    robust_exit_cleanup, robust_exit_cleanup_siblings_for_exec, sys_get_robust_list,
+    sys_set_robust_list,
+};
 pub(crate) use getcwd::sys_getcwd;
 pub(crate) use getdents64::sys_getdents64;
 pub(crate) use ioctl::sys_ioctl;
@@ -71,8 +76,7 @@ pub(crate) use readlinkat::sys_readlinkat;
 pub(crate) use task::{
     sys_clock_gettime, sys_exit, sys_exit_group, sys_getpid, sys_getppid, sys_getrandom,
     sys_getrlimit, sys_gettid, sys_gettimeofday, sys_nanosleep, sys_prctl, sys_prlimit64,
-    sys_rt_sigaction, sys_rt_sigprocmask, sys_rt_sigtimedwait, sys_set_robust_list,
-    sys_set_tid_address, sys_setrlimit, sys_times, sys_uname, sys_waitpid, sys_yield,
+    sys_rt_sigaction, sys_rt_sigprocmask, sys_rt_sigtimedwait, sys_set_tid_address, sys_setrlimit, sys_times, sys_uname, sys_waitpid, sys_yield,
 };
 pub(crate) use umount2::sys_umount2;
 pub(crate) use unlinkat::sys_unlinkat;
