@@ -335,6 +335,11 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     }
 
     #[inline]
+    fn dispatch_rt_sigtimedwait(args: SyscallArgs) -> isize {
+        sys::sys_rt_sigtimedwait(args).0
+    }
+
+    #[inline]
     fn dispatch_unsupported(
         kind: api_v0::SyscallKind,
         syscall_nr: usize,

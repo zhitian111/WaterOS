@@ -158,6 +158,8 @@ pub trait SyscallNumberTable {
     const RT_SIGACTION: SyscallNumber;
     /// 阻塞/解除阻塞信号集（`rt_sigprocmask(2)`）。
     const RT_SIGPROCMASK: SyscallNumber;
+    /// 等待一组实时信号（`rt_sigtimedwait(2)`）。
+    const RT_SIGTIMEDWAIT: SyscallNumber;
     /// 从信号处理返回（`rt_sigreturn(2)`）。
     const RT_SIGRETURN: SyscallNumber;
     /// 设置 clear_child_tid 地址（`set_tid_address(2)`）。

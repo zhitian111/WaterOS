@@ -20,95 +20,96 @@ pub struct LinuxGeneric64;
 
 impl SyscallNumberTable for LinuxGeneric64 {
     // I/O / 文件与描述符
-    const READ : SyscallNumber = SyscallNumber(63);
-    const WRITE : SyscallNumber = SyscallNumber(64);
-    const WRITEV : SyscallNumber = SyscallNumber(66);
-    const READLINKAT : SyscallNumber = SyscallNumber(78);
-    const OPENAT : SyscallNumber = SyscallNumber(56);
-    const CLOSE : SyscallNumber = SyscallNumber(57);
-    const FSTAT : SyscallNumber = SyscallNumber(80);
-    const LSEEK : SyscallNumber = SyscallNumber(62);
-    const DUP : SyscallNumber = SyscallNumber(23);
-    const DUP3 : SyscallNumber = SyscallNumber(24);
-    const PIPE2 : SyscallNumber = SyscallNumber(59);
-    const IOCTL : SyscallNumber = SyscallNumber(29);
-    const FCNTL : SyscallNumber = SyscallNumber(25);
-    const GETDENTS64 : SyscallNumber = SyscallNumber(61);
-    const MKDIRAT : SyscallNumber = SyscallNumber(34);
-    const UNLINKAT : SyscallNumber = SyscallNumber(35);
-    const MOUNT : SyscallNumber = SyscallNumber(40);
-    const UMOUNT2 : SyscallNumber = SyscallNumber(39);
+    const READ: SyscallNumber = SyscallNumber(63);
+    const WRITE: SyscallNumber = SyscallNumber(64);
+    const WRITEV: SyscallNumber = SyscallNumber(66);
+    const READLINKAT: SyscallNumber = SyscallNumber(78);
+    const OPENAT: SyscallNumber = SyscallNumber(56);
+    const CLOSE: SyscallNumber = SyscallNumber(57);
+    const FSTAT: SyscallNumber = SyscallNumber(80);
+    const LSEEK: SyscallNumber = SyscallNumber(62);
+    const DUP: SyscallNumber = SyscallNumber(23);
+    const DUP3: SyscallNumber = SyscallNumber(24);
+    const PIPE2: SyscallNumber = SyscallNumber(59);
+    const IOCTL: SyscallNumber = SyscallNumber(29);
+    const FCNTL: SyscallNumber = SyscallNumber(25);
+    const GETDENTS64: SyscallNumber = SyscallNumber(61);
+    const MKDIRAT: SyscallNumber = SyscallNumber(34);
+    const UNLINKAT: SyscallNumber = SyscallNumber(35);
+    const MOUNT: SyscallNumber = SyscallNumber(40);
+    const UMOUNT2: SyscallNumber = SyscallNumber(39);
 
     // 进程/执行 / process & execution
-    const EXIT : SyscallNumber = SyscallNumber(93);
-    const EXIT_GROUP : SyscallNumber = SyscallNumber(94);
-    const FORK : SyscallNumber = SyscallNumber(220); // 常见用户态 fork -> clone
-    const WAITPID : SyscallNumber = SyscallNumber(260); // wait4
-    const KILL : SyscallNumber = SyscallNumber(129);
-    const EXEC : SyscallNumber = SyscallNumber(221); // execve
+    const EXIT: SyscallNumber = SyscallNumber(93);
+    const EXIT_GROUP: SyscallNumber = SyscallNumber(94);
+    const FORK: SyscallNumber = SyscallNumber(220); // 常见用户态 fork -> clone
+    const WAITPID: SyscallNumber = SyscallNumber(260); // wait4
+    const KILL: SyscallNumber = SyscallNumber(129);
+    const EXEC: SyscallNumber = SyscallNumber(221); // execve
 
     // 调度/时间 / scheduling & time
-    const YIELD : SyscallNumber = SyscallNumber(124); // sched_yield
-    const GET_TIME : SyscallNumber = SyscallNumber(169); // gettimeofday
-    const CLOCK_GETTIME : SyscallNumber = SyscallNumber(113); // clock_gettime
+    const YIELD: SyscallNumber = SyscallNumber(124); // sched_yield
+    const GET_TIME: SyscallNumber = SyscallNumber(169); // gettimeofday
+    const CLOCK_GETTIME: SyscallNumber = SyscallNumber(113); // clock_gettime
 
     // 内存管理 / memory management
-    const BRK : SyscallNumber = SyscallNumber(214); // brk
-    const MMAP : SyscallNumber = SyscallNumber(222); // mmap
-    const MUNMAP : SyscallNumber = SyscallNumber(215); // munmap
-    const MPROTECT : SyscallNumber = SyscallNumber(226); // mprotect
+    const BRK: SyscallNumber = SyscallNumber(214); // brk
+    const MMAP: SyscallNumber = SyscallNumber(222); // mmap
+    const MUNMAP: SyscallNumber = SyscallNumber(215); // munmap
+    const MPROTECT: SyscallNumber = SyscallNumber(226); // mprotect
 
     // 基本信息 / identity & misc info
-    const UNAME : SyscallNumber = SyscallNumber(160); // uname
-    const PRCTL : SyscallNumber = SyscallNumber(167); // prctl
-    const GETPID : SyscallNumber = SyscallNumber(172);
-    const GETPPID : SyscallNumber = SyscallNumber(173);
-    const GETCWD : SyscallNumber = SyscallNumber(17);
-    const CHDIR : SyscallNumber = SyscallNumber(49);
-    const GETTID : SyscallNumber = SyscallNumber(178);
-    const TIMES : SyscallNumber = SyscallNumber(153);
-    const GETUID : SyscallNumber = SyscallNumber(174);
-    const GETEUID : SyscallNumber = SyscallNumber(175);
-    const GETGID : SyscallNumber = SyscallNumber(176);
-    const GETEGID : SyscallNumber = SyscallNumber(177);
-    const GETGROUPS : SyscallNumber = SyscallNumber(155);
-    const SETGID : SyscallNumber = SyscallNumber(144);
-    const SETREGID : SyscallNumber = SyscallNumber(143);
-    const SETREUID : SyscallNumber = SyscallNumber(145);
-    const SETUID : SyscallNumber = SyscallNumber(146);
-    const SETRESUID : SyscallNumber = SyscallNumber(147);
-    const SETRESGID : SyscallNumber = SyscallNumber(149);
+    const UNAME: SyscallNumber = SyscallNumber(160); // uname
+    const PRCTL: SyscallNumber = SyscallNumber(167); // prctl
+    const GETPID: SyscallNumber = SyscallNumber(172);
+    const GETPPID: SyscallNumber = SyscallNumber(173);
+    const GETCWD: SyscallNumber = SyscallNumber(17);
+    const CHDIR: SyscallNumber = SyscallNumber(49);
+    const GETTID: SyscallNumber = SyscallNumber(178);
+    const TIMES: SyscallNumber = SyscallNumber(153);
+    const GETUID: SyscallNumber = SyscallNumber(174);
+    const GETEUID: SyscallNumber = SyscallNumber(175);
+    const GETGID: SyscallNumber = SyscallNumber(176);
+    const GETEGID: SyscallNumber = SyscallNumber(177);
+    const GETGROUPS: SyscallNumber = SyscallNumber(155);
+    const SETGID: SyscallNumber = SyscallNumber(144);
+    const SETREGID: SyscallNumber = SyscallNumber(143);
+    const SETREUID: SyscallNumber = SyscallNumber(145);
+    const SETUID: SyscallNumber = SyscallNumber(146);
+    const SETRESUID: SyscallNumber = SyscallNumber(147);
+    const SETRESGID: SyscallNumber = SyscallNumber(149);
 
     // 线程/同步/信号 / threads, sync, signals
-    const FUTEX : SyscallNumber = SyscallNumber(98);
-    const RT_SIGACTION : SyscallNumber = SyscallNumber(134);
-    const RT_SIGPROCMASK : SyscallNumber = SyscallNumber(135);
-    const RT_SIGRETURN : SyscallNumber = SyscallNumber(139);
-    const SET_TID_ADDRESS : SyscallNumber = SyscallNumber(96);
-    const SET_ROBUST_LIST : SyscallNumber = SyscallNumber(99);
+    const FUTEX: SyscallNumber = SyscallNumber(98);
+    const RT_SIGACTION: SyscallNumber = SyscallNumber(134);
+    const RT_SIGPROCMASK: SyscallNumber = SyscallNumber(135);
+    const RT_SIGTIMEDWAIT: SyscallNumber = SyscallNumber(137);
+    const RT_SIGRETURN: SyscallNumber = SyscallNumber(139);
+    const SET_TID_ADDRESS: SyscallNumber = SyscallNumber(96);
+    const SET_ROBUST_LIST: SyscallNumber = SyscallNumber(99);
 
     // 其它常用 / other common syscalls
-    const GETRANDOM : SyscallNumber = SyscallNumber(278);
-    const SETITIMER : SyscallNumber = SyscallNumber(103);
-    const GETRLIMIT : SyscallNumber = SyscallNumber(163);
-    const SETRLIMIT : SyscallNumber = SyscallNumber(164);
-    const PRLIMIT64 : SyscallNumber = SyscallNumber(261);
-    const NANOSLEEP : SyscallNumber = SyscallNumber(101);
+    const GETRANDOM: SyscallNumber = SyscallNumber(278);
+    const SETITIMER: SyscallNumber = SyscallNumber(103);
+    const GETRLIMIT: SyscallNumber = SyscallNumber(163);
+    const SETRLIMIT: SyscallNumber = SyscallNumber(164);
+    const PRLIMIT64: SyscallNumber = SyscallNumber(261);
+    const NANOSLEEP: SyscallNumber = SyscallNumber(101);
 
     // Socket / 网络
-    const SOCKET : SyscallNumber = SyscallNumber(198);
-    const BIND : SyscallNumber = SyscallNumber(200);
-    const LISTEN : SyscallNumber = SyscallNumber(201);
-    const ACCEPT4 : SyscallNumber = SyscallNumber(242);
-    const CONNECT : SyscallNumber = SyscallNumber(203);
-    const GETSOCKNAME : SyscallNumber = SyscallNumber(204);
-    const GETPEERNAME : SyscallNumber = SyscallNumber(205);
-    const SENDTO : SyscallNumber = SyscallNumber(206);
-    const RECVFROM : SyscallNumber = SyscallNumber(207);
-    const SENDMSG : SyscallNumber = SyscallNumber(211);
-    const RECVMSG : SyscallNumber = SyscallNumber(212);
-    const SETSOCKOPT : SyscallNumber = SyscallNumber(208);
-    const GETSOCKOPT : SyscallNumber = SyscallNumber(209);
-    const SHUTDOWN : SyscallNumber = SyscallNumber(210);
-    const POLL : SyscallNumber = SyscallNumber(271);
+    const SOCKET: SyscallNumber = SyscallNumber(198);
+    const BIND: SyscallNumber = SyscallNumber(200);
+    const LISTEN: SyscallNumber = SyscallNumber(201);
+    const ACCEPT4: SyscallNumber = SyscallNumber(242);
+    const CONNECT: SyscallNumber = SyscallNumber(203);
+    const GETSOCKNAME: SyscallNumber = SyscallNumber(204);
+    const GETPEERNAME: SyscallNumber = SyscallNumber(205);
+    const SENDTO: SyscallNumber = SyscallNumber(206);
+    const RECVFROM: SyscallNumber = SyscallNumber(207);
+    const SENDMSG: SyscallNumber = SyscallNumber(211);
+    const RECVMSG: SyscallNumber = SyscallNumber(212);
+    const SETSOCKOPT: SyscallNumber = SyscallNumber(208);
+    const GETSOCKOPT: SyscallNumber = SyscallNumber(209);
+    const SHUTDOWN: SyscallNumber = SyscallNumber(210);
+    const POLL: SyscallNumber = SyscallNumber(271);
 }

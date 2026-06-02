@@ -248,6 +248,23 @@ pub(crate) fn sys_rt_sigprocmask(args: SyscallArgs) -> UserRet {
     UserRet::from_success(0)
 }
 
+pub(crate) fn sys_rt_sigtimedwait(args: SyscallArgs) -> UserRet {
+    let set = args.arg(0);
+    let _info = args.arg(1);
+    let _timeout = args.arg(2);
+    let sigset_size = args.arg(3);
+
+    if set == 0 {
+        return UserRet::from_error(ErrNo::EFAULT);
+    }
+    if sigset_size != RT_SIGSET_SIZE_64 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    // No per-task pending signal queue yet: report "nothing available" instead
+    // of panicking, which is enough for libc probes that sanity-check the call.
+    UserRet::from_error(ErrNo::EAGAIN)
+}
+
 pub(crate) fn sys_rt_sigaction(args: SyscallArgs) -> UserRet {
     let sig = args.arg(0);
     let _act = args.arg(1);
