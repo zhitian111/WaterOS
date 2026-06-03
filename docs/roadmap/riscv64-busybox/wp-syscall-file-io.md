@@ -12,6 +12,7 @@
    - `lseek`（若 BusyBox/基础脚本需要）
    - `pread64` / `pwrite64` / `preadv` / `pwritev`（iozone 等）
    - `sendfile`（最小：文件→socket/文件）
+   - `ppoll` (73) / `pselect6` (72) / `select` (23)
    - `dup`、`dup3`（至少 `dup`）
 2. 用户指针参数须经 **MM 安全拷贝** 路径访问（`copy_from_user` / `copy_to_user` 或项目等价 API），禁止信任用户 VA 直接 `slice::from_raw_parts` 跨边界。
 3. `fstat` / `newfstatat` 中与 **路径打开** 强相关的部分可与本包拆分，但须在 `wp-syscall-mem-time.md` 或本文件交叉引用避免重复实现。

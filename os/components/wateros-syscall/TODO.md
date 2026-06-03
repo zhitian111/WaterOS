@@ -52,6 +52,10 @@
 | `pread64` / `pwrite64` | 已接入 | `sys/posix_at_io.rs`；`vfs_io_at_error_to_errno` |
 | `preadv` / `pwritev` | 已接入 | 与 `writev` 同 iovec 布局；上限 4MiB |
 | `sendfile` | 部分接入 | `sys/sendfile.rs`；文件 in → 文件/socket out；无零拷贝 |
+| `ppoll` (73) | 已接入 | `poll_engine` + `sys/poll_multiplex.rs` |
+| `pselect6` (72) | 已接入 | `fd_set` + 共享引擎 |
+| `select` (23) | 已接入 | `timeval` → timespec；不写回剩余超时 |
+| `poll` (271) | 已接入 | 毫秒 timeout；委托 `poll_engine` |
 
 ## busybox/libc/benchmark 后续常见项
 

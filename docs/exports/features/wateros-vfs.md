@@ -8,6 +8,7 @@
 - **`vfs-impl-page-cache`**：全局共享页缓存（Direct、`FILE_PAGE_SIZE` 行、LRU 容量与可选预取步长）；键 `(mount_generation, path)`。
 - **`vfs-impl-fd-session`**（`fd-session`）：per-task fd 表、**per-task cwd**（`PerTaskCwdRegistry`）、控制台与 pipe 的 `VfsIoHandle` 实现。
 - **按偏移 I/O**：`VfsIoHandle::read_at`/`write_at` 在 `BufferedFileHandle`/`PagedFileHandle` 实现（不改变顺序 `read` 使用的 `offset`）；供 `pread`/`pwrite`/`sendfile` syscall 使用。
+- **`poll` 就绪**：`VfsIoHandle::poll_revents` / `poll_wait_for_ticks`；pipe 经 `ipc-pipe` waitqueue；常规文件恒就绪。
 - **聚合层**：`active_impl` + `root` / `mount` / `self_test` / `fd` / **`cwd`** 组合对外接口。
 
 ## 根 crate 接线

@@ -9,5 +9,7 @@ pub mod handles;
 pub mod registry;
 
 pub use cwd::{PerTaskCwdRegistry, PATH_MAX};
-pub use handles::{ConsoleInHandle, ConsoleOutHandle, PipeReadHandle, PipeWriteHandle};
+pub use handles::{
+    ConsoleInHandle, ConsoleOutHandle, PipeReadHandle, PipeWriteHandle, poll_pipe_smoke,
+};
 pub use registry::PerTaskFdRegistry;

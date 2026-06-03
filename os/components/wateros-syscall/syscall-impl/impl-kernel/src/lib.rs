@@ -11,6 +11,7 @@ use abi::syscall_number::ActiveSyscallNumberTable;
 
 mod linux_stat;
 mod mm_util;
+mod poll_engine;
 mod socket_fd;
 mod sys;
 mod user_copy;
@@ -459,6 +460,21 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     #[inline]
     fn dispatch_shutdown(args: SyscallArgs) -> isize {
         sys::sys_shutdown(args).0
+    }
+
+    #[inline]
+    fn dispatch_ppoll(args: SyscallArgs) -> isize {
+        sys::sys_ppoll(args).0
+    }
+
+    #[inline]
+    fn dispatch_pselect6(args: SyscallArgs) -> isize {
+        sys::sys_pselect6(args).0
+    }
+
+    #[inline]
+    fn dispatch_select(args: SyscallArgs) -> isize {
+        sys::sys_select(args).0
     }
 
     #[inline]

@@ -96,6 +96,9 @@ pub enum SyscallKind {
     SetSockOpt,
     GetSockOpt,
     Shutdown,
+    Ppoll,
+    Pselect6,
+    Select,
     Poll,
     Unknown(usize),
 }
@@ -271,6 +274,12 @@ impl SyscallKind {
             Self::GetSockOpt
         } else if syscall_nr == T::SHUTDOWN.raw() {
             Self::Shutdown
+        } else if syscall_nr == T::PPOLL.raw() {
+            Self::Ppoll
+        } else if syscall_nr == T::PSELECT6.raw() {
+            Self::Pselect6
+        } else if syscall_nr == T::SELECT.raw() {
+            Self::Select
         } else if syscall_nr == T::POLL.raw() {
             Self::Poll
         } else {
@@ -365,6 +374,9 @@ impl SyscallKind {
             Self::SetSockOpt => "setsockopt",
             Self::GetSockOpt => "getsockopt",
             Self::Shutdown => "shutdown",
+            Self::Ppoll => "ppoll",
+            Self::Pselect6 => "pselect6",
+            Self::Select => "select",
             Self::Poll => "poll",
             Self::Unknown(_) => "unknown",
         }
@@ -1099,6 +1111,30 @@ pub trait SyscallDispatcher {
         )
     }
 
+    fn dispatch_ppoll(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Ppoll,
+            Self::NumberTable::PPOLL.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_pselect6(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Pselect6,
+            Self::NumberTable::PSELECT6.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_select(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Select,
+            Self::NumberTable::SELECT.raw(),
+            args,
+        )
+    }
+
     fn dispatch_poll(args: SyscallArgs) -> isize {
         Self::dispatch_unsupported(
             SyscallKind::Poll,
@@ -1203,6 +1239,9 @@ pub trait SyscallDispatcher {
             SyscallKind::SetSockOpt => Self::dispatch_setsockopt(syscall_args),
             SyscallKind::GetSockOpt => Self::dispatch_getsockopt(syscall_args),
             SyscallKind::Shutdown => Self::dispatch_shutdown(syscall_args),
+            SyscallKind::Ppoll => Self::dispatch_ppoll(syscall_args),
+            SyscallKind::Pselect6 => Self::dispatch_pselect6(syscall_args),
+            SyscallKind::Select => Self::dispatch_select(syscall_args),
             SyscallKind::Poll => Self::dispatch_poll(syscall_args),
             SyscallKind::Unknown(nr) => Self::dispatch_unknown(nr, syscall_args),
         }

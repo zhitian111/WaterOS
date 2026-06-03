@@ -33,6 +33,23 @@ pub trait PipeEndpointOps {
     /// 显式关闭该端点。
     fn close(&self);
 
+    /// 非阻塞查询 poll 就绪位（与请求的 `events` 掩码相交）。
+    fn poll_revents(&self, events: i16) -> PipeResult<i16> {
+        let _ = events;
+        Ok(0)
+    }
+
+    /// 在 pipe 等待队列上带超时阻塞；`still_waiting` 为假时结束（供多 fd poll 重扫）。
+    fn poll_wait_for_ticks(
+        &self,
+        events: i16,
+        timeout_ticks: u64,
+        still_waiting: &mut dyn FnMut() -> bool,
+    ) -> PipeResult<()> {
+        let _ = (events, timeout_ticks, still_waiting);
+        Ok(())
+    }
+
     /// 从读端读取；方向错误时返回 [`PipeError::BrokenPipe`]。
     #[inline]
     fn read_checked(&self, out: &mut [u8]) -> PipeResult<usize> {

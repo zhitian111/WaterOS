@@ -42,4 +42,16 @@ pub trait KernelPipe {
 
     /// 关闭写端并唤醒可能阻塞的读者。
     fn close_write(&self);
+
+    /// 读端 poll 就绪位（`POLLIN` / `POLLHUP` 等，与 Linux 语义对齐的原始位）。
+    fn poll_revents_read(&self) -> i16 {
+        let _ = self;
+        0
+    }
+
+    /// 写端 poll 就绪位（`POLLOUT` / `POLLHUP` 等）。
+    fn poll_revents_write(&self) -> i16 {
+        let _ = self;
+        0
+    }
 }

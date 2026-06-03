@@ -28,6 +28,9 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const PREADV: SyscallNumber = SyscallNumber(69);
     const PWRITEV: SyscallNumber = SyscallNumber(70);
     const SENDFILE: SyscallNumber = SyscallNumber(71);
+    const PSELECT6: SyscallNumber = SyscallNumber(72);
+    const PPOLL: SyscallNumber = SyscallNumber(73);
+    const SELECT: SyscallNumber = SyscallNumber(23);
     const READLINKAT: SyscallNumber = SyscallNumber(78);
     const OPENAT: SyscallNumber = SyscallNumber(56);
     const CLOSE: SyscallNumber = SyscallNumber(57);

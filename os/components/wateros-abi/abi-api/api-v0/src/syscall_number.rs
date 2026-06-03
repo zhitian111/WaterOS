@@ -223,5 +223,11 @@ pub trait SyscallNumberTable {
     /// 关闭 socket 发送/接收（`shutdown(2)`）。
     const SHUTDOWN: SyscallNumber;
     /// I/O 多路复用（`ppoll(2)`）。
+    const PPOLL: SyscallNumber;
+    /// `pselect6(2)`。
+    const PSELECT6: SyscallNumber;
+    /// `select(2)`。
+    const SELECT: SyscallNumber;
+    /// 历史/扩展 `poll(2)` 号（WaterOS 曾用 271）。
     const POLL: SyscallNumber;
 }

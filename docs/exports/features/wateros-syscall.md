@@ -25,6 +25,9 @@
 | `read` / `write` / `close` | 部分 | VFS fd；stdin 仍 `EBADF` |
 | `pread64` / `pwrite64` / `preadv` / `pwritev` | 部分 | `VfsIoHandle::read_at`/`write_at`；pipe/socket → `ESPIPE` |
 | `sendfile` | 部分 | 文件→文件/socket；内核 64KiB 缓冲循环；`offset*` 可选 |
+| `ppoll` (73) | 部分 | 共享 `poll_engine`；pipe waitqueue 阻塞；`sigmask` 首期忽略 |
+| `pselect6` (72) / `select` (23) | 部分 | `fd_set` 扫描；`select` 不写回剩余 `timeval` |
+| `poll` (271) | 部分 | 同引擎；`timeout` 为毫秒 |
 | `openat` | 部分 | `AT_FDCWD`、目录 fd、`O_DIRECTORY` |
 | `dup` / `dup3` | 已接入 | `vfs::fd::dup_fd` / `dup3_fd` |
 | `pipe2` | 部分 | 创建 pipe fd；fork 后 `copy_fd_table_from_parent` |

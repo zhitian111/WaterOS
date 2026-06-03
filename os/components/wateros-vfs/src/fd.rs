@@ -148,4 +148,10 @@ pub fn self_test() {
     assert_eq!(fd_reuse, fd);
     reg.drop_task_fd_table(a);
     reg.drop_task_fd_table(b);
+
+    if impl_fd_session::poll_pipe_smoke() {
+        log::info!("[poll] ppoll pipe ok");
+    } else {
+        log::warn!("[poll] ppoll pipe smoke failed");
+    }
 }

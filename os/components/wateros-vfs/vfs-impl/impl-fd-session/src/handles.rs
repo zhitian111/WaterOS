@@ -5,7 +5,7 @@ extern crate alloc;
 use alloc::boxed::Box;
 
 use api_v0::{VfsError, VfsIoHandle, VfsMetadata, VfsNodeType, VfsResult};
-use ipc::pipe::{PipeEndpoint, PipeError};
+use ipc::pipe::{PipeEndpoint, PipeEndpointOps, PipeError};
 
 fn console_chr_meta() -> VfsMetadata {
     VfsMetadata { node_type: VfsNodeType::Special,
@@ -41,6 +41,15 @@ impl VfsIoHandle for ConsoleOutHandle {
         Ok(buf.len())
     }
 
+    fn poll_revents(&mut self, events: i16) -> VfsResult<i16> {
+        const POLLOUT: i16 = 0x004;
+        if events & POLLOUT != 0 {
+            Ok(POLLOUT)
+        } else {
+            Ok(0)
+        }
+    }
+
     fn metadata(&self) -> VfsResult<VfsMetadata> {
         Ok(console_chr_meta())
     }
@@ -56,6 +65,21 @@ pub struct PipeReadHandle(pub PipeEndpoint);
 impl VfsIoHandle for PipeReadHandle {
     fn read(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
         self.0.read(buf).map_err(map_pipe_err)
+    }
+
+    fn poll_revents(&mut self, events: i16) -> VfsResult<i16> {
+        self.0.poll_revents(events).map_err(map_pipe_err)
+    }
+
+    fn poll_wait_for_ticks(
+        &mut self,
+        events: i16,
+        timeout_ticks: u64,
+        still_waiting: &mut dyn FnMut() -> bool,
+    ) -> VfsResult<()> {
+        self.0
+            .poll_wait_for_ticks(events, timeout_ticks, still_waiting)
+            .map_err(map_pipe_err)
     }
 
     fn close(&mut self) -> VfsResult<()> {
@@ -76,6 +100,21 @@ impl VfsIoHandle for PipeWriteHandle {
         self.0.write(buf).map_err(map_pipe_err)
     }
 
+    fn poll_revents(&mut self, events: i16) -> VfsResult<i16> {
+        self.0.poll_revents(events).map_err(map_pipe_err)
+    }
+
+    fn poll_wait_for_ticks(
+        &mut self,
+        events: i16,
+        timeout_ticks: u64,
+        still_waiting: &mut dyn FnMut() -> bool,
+    ) -> VfsResult<()> {
+        self.0
+            .poll_wait_for_ticks(events, timeout_ticks, still_waiting)
+            .map_err(map_pipe_err)
+    }
+
     fn close(&mut self) -> VfsResult<()> {
         self.0.close();
         Ok(())
@@ -84,6 +123,21 @@ impl VfsIoHandle for PipeWriteHandle {
     fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {
         Ok(Box::new(Self(self.0.clone())))
     }
+}
+
+/// bring-up：空 pipe 读端无 `POLLIN`，写入后应就绪（供 `ppoll` 路径使用）。
+pub fn poll_pipe_smoke() -> bool {
+    const POLLIN: i16 = 0x001;
+    let (read_ep, write_ep) = PipeEndpoint::pair(false);
+    let mut read = PipeReadHandle(read_ep);
+    let mut write = PipeWriteHandle(write_ep);
+    if read.poll_revents(POLLIN).ok() != Some(0) {
+        return false;
+    }
+    if write.write(b"x").is_err() {
+        return false;
+    }
+    read.poll_revents(POLLIN).ok() == Some(POLLIN)
 }
 
 fn map_pipe_err(err: PipeError) -> VfsError {

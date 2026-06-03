@@ -247,6 +247,19 @@ impl VfsIoHandle for BufferedFileHandle {
     fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {
         Ok(Box::new(self.clone()))
     }
+
+    fn poll_revents(&mut self, events: i16) -> VfsResult<i16> {
+        const POLLIN: i16 = 0x001;
+        const POLLOUT: i16 = 0x004;
+        let mut revents = 0i16;
+        if events & POLLIN != 0 {
+            revents |= POLLIN;
+        }
+        if events & POLLOUT != 0 && self.writable {
+            revents |= POLLOUT;
+        }
+        Ok(revents)
+    }
 }
 
 impl FsBridge {

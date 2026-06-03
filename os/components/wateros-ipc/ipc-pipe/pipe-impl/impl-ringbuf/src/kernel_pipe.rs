@@ -6,7 +6,12 @@ use alloc::vec;
 use alloc::vec::Vec;
 use api_v0::{KernelPipe, PipeError, PipeResult};
 use base::sync::UniprocessorSafeCell;
-use waitqueue::WaitQueue;
+use waitqueue::{TaskWaitResult, WaitQueue};
+
+const POLLIN: i16 = 0x001;
+const POLLOUT: i16 = 0x004;
+const POLLHUP: i16 = 0x010;
+const POLLERR: i16 = 0x008;
 
 struct PipeState {
     buf: Vec<u8>,
@@ -135,6 +140,70 @@ impl Pipe {
     pub fn close_write(&self) {
         KernelPipe::close_write(self);
     }
+
+    /// 读端在 `poll(2)` 中的就绪位。
+    pub fn poll_revents_read(&self) -> i16 {
+        let state = self.state.exclusive_access();
+        if !state.read_open {
+            return POLLHUP;
+        }
+        let mut revents = 0i16;
+        if !state.is_empty() || !state.write_open {
+            revents |= POLLIN;
+        }
+        if !state.write_open {
+            revents |= POLLHUP;
+        }
+        revents
+    }
+
+    /// 写端在 `poll(2)` 中的就绪位。
+    pub fn poll_revents_write(&self) -> i16 {
+        let state = self.state.exclusive_access();
+        if !state.write_open {
+            return POLLHUP | POLLERR;
+        }
+        let mut revents = 0i16;
+        if state.read_open && !state.is_full() {
+            revents |= POLLOUT;
+        }
+        if !state.read_open {
+            revents |= POLLHUP | POLLERR;
+        }
+        revents
+    }
+
+    /// 阻塞直到读端可读或 `still_waiting` 为假（用于多 fd `poll` 重扫）。
+    pub fn poll_wait_read_for_ticks(
+        &self,
+        timeout_ticks: u64,
+        still_waiting: &mut dyn FnMut() -> bool,
+    ) -> TaskWaitResult {
+        self.read_wait.wait_current_while_for_ticks(timeout_ticks, || {
+            still_waiting() && self.read_poll_blocked()
+        })
+    }
+
+    /// 阻塞直到写端可写或 `still_waiting` 为假。
+    pub fn poll_wait_write_for_ticks(
+        &self,
+        timeout_ticks: u64,
+        still_waiting: &mut dyn FnMut() -> bool,
+    ) -> TaskWaitResult {
+        self.write_wait.wait_current_while_for_ticks(timeout_ticks, || {
+            still_waiting() && self.write_poll_blocked()
+        })
+    }
+
+    fn read_poll_blocked(&self) -> bool {
+        let state = self.state.exclusive_access();
+        state.is_empty() && state.write_open
+    }
+
+    fn write_poll_blocked(&self) -> bool {
+        let state = self.state.exclusive_access();
+        state.is_full() && state.read_open
+    }
 }
 
 impl Default for Pipe {
@@ -237,5 +306,13 @@ impl KernelPipe for Pipe {
     fn close_write(&self) {
         self.state.exclusive_access().write_open = false;
         self.read_wait.wake_all();
+    }
+
+    fn poll_revents_read(&self) -> i16 {
+        Pipe::poll_revents_read(self)
+    }
+
+    fn poll_revents_write(&self) -> i16 {
+        Pipe::poll_revents_write(self)
     }
 }

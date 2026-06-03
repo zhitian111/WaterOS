@@ -102,4 +102,45 @@ impl PipeEndpointOps for PipeEndpoint {
             PipeEndpointKind::Write => self.pipe.close_write(),
         }
     }
+
+    fn poll_revents(&self, events: i16) -> PipeResult<i16> {
+        const POLLIN: i16 = 0x001;
+        const POLLOUT: i16 = 0x004;
+        let raw = match self.kind {
+            PipeEndpointKind::Read => self.pipe.poll_revents_read(),
+            PipeEndpointKind::Write => self.pipe.poll_revents_write(),
+        };
+        let mut out = 0i16;
+        if events & POLLIN != 0 && raw & POLLIN != 0 {
+            out |= POLLIN;
+        }
+        if events & POLLOUT != 0 && raw & POLLOUT != 0 {
+            out |= POLLOUT;
+        }
+        if raw & (0x008 | 0x010) != 0 {
+            out |= raw & (0x008 | 0x010);
+        }
+        Ok(out)
+    }
+
+    fn poll_wait_for_ticks(
+        &self,
+        events: i16,
+        timeout_ticks: u64,
+        still_waiting: &mut dyn FnMut() -> bool,
+    ) -> PipeResult<()> {
+        const POLLIN: i16 = 0x001;
+        const POLLOUT: i16 = 0x004;
+        if events & POLLIN != 0 && self.kind == PipeEndpointKind::Read {
+            let _ = self
+                .pipe
+                .poll_wait_read_for_ticks(timeout_ticks, still_waiting);
+        }
+        if events & POLLOUT != 0 && self.kind == PipeEndpointKind::Write {
+            let _ = self
+                .pipe
+                .poll_wait_write_for_ticks(timeout_ticks, still_waiting);
+        }
+        Ok(())
+    }
 }

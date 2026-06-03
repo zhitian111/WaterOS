@@ -88,6 +88,23 @@ pub trait VfsIoHandle {
     fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {
         Err(VfsError::Unsupported)
     }
+
+    /// `poll`/`ppoll` 就绪位查询；默认不支持（`POLLNVAL` 由 syscall 层处理）。
+    fn poll_revents(&mut self, events: i16) -> VfsResult<i16> {
+        let _ = events;
+        Err(VfsError::Unsupported)
+    }
+
+    /// 在句柄对应 waitqueue 上阻塞；`still_waiting` 为假时返回（多 fd poll 重扫）。
+    fn poll_wait_for_ticks(
+        &mut self,
+        events: i16,
+        timeout_ticks: u64,
+        still_waiting: &mut dyn FnMut() -> bool,
+    ) -> VfsResult<()> {
+        let _ = (events, timeout_ticks, still_waiting);
+        Err(VfsError::Unsupported)
+    }
 }
 
 /// 已打开文件的偏移读写（由 [`VfsOpenOps`] 创建）；`read_at`/`write_at` 见 [`VfsIoHandle`]。
