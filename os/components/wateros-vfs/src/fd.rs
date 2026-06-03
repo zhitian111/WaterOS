@@ -1,6 +1,6 @@
 //! per-task fd 会话：全局注册表与当前任务便捷访问。
 
-#![cfg(feature = "fd-session")]
+#![cfg(feature = "impl-fd-session")]
 
 extern crate alloc;
 

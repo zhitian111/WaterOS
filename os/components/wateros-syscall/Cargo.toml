@@ -13,15 +13,8 @@
 
 [features]
     api-v0 = [ "abi/api-v0", "dep:abi", "dep:api-v0", "impl-kernel?/api-v0" ]
-    default = [  ]
-    impl-kernel = [ "api-v0", "dep:impl-kernel", "impl-kernel/fd-session" ]
-    impl-loongarch64 = [
-        "api-v0",
-        "impl-kernel",
-        "impl-kernel/impl-loongarch64",
-    ]
-    impl-riscv64 = [ "api-v0", "impl-kernel", "impl-kernel/impl-riscv64" ]
-
+    default = [ "impl-kernel" ]
+    impl-kernel = [ "api-v0", "dep:impl-kernel", "impl-kernel/impl-kernel" ]
 [profile.dev]
     panic = "abort"
 

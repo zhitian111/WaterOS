@@ -1,6 +1,7 @@
 [workspace]
     members = [
         "./mm-api/api-v0/",
+        "./mm-impl/common/",
         "./mm-impl/impl-dummy/",
         "mm-frame-alloctor",
         "mm-impl/impl-loongarch64",
@@ -14,6 +15,7 @@
 [dependencies]
     api-v0 = { path = "./mm-api/api-v0/", package = "wateros-mm-api-v0", default-features = true }
     impl-dummy = { path = "./mm-impl/impl-dummy/", package = "wateros-mm-impl-dummy", default-features = true }
+    impl-common = { path = "./mm-impl/common/", package = "wateros-mm-impl-common", default-features = true }
     impl-sv39 = { path = "./mm-impl/impl-sv39/", package = "wateros-mm-impl-sv39", default-features = true }
     impl-loongarch64 = { path = "./mm-impl/impl-loongarch64/", package = "wateros-mm-impl-loongarch64", default-features = true }
     log = { version = "0.4.29" }
@@ -24,8 +26,8 @@
     api-v0 = [ "impl-dummy/api-v0" ]
     default = [ "api-v0" ]
     impl-dummy = [  ]
-    impl-loongarch64 = [ "impl-loongarch64/api-v0" ]
-    impl-sv39 = [ "impl-sv39/api-v0" ]
+    impl-loongarch64 = [ "impl-loongarch64/api-v0","api-v0" ]
+    impl-sv39 = [ "impl-sv39/api-v0","api-v0" ]
     qemu-riscv64-opensbi = [  ]
     vfs-root-read = [
         "impl-loongarch64/vfs-root-read",

@@ -1,5 +1,8 @@
-//! 地址空间操作契约：以 **4 KiB 虚拟页** 为粒度（见 [`crate::addr::PAGE_SIZE`]），`satp_value` 供安装页表。
-//! 切换 `satp` 与 TLB 刷新由 arch/运行时完成；本 trait 本身不在 trap 内执行，也不隐含额外硬件副作用。
+//! 地址空间操作契约：以 **4 KiB 虚拟页** 为粒度（见 [`crate::addr::PAGE_SIZE`]）。
+//!
+//! `satp_value` 是历史命名，实际含义是当前架构可安装的地址空间 token：
+//! RISC-V 为 `satp` 编码，LoongArch64 为 PGDL 物理基址。安装 token 与 TLB
+//! 刷新由 arch/platform 层完成；本 trait 本身不隐含额外硬件副作用。
 
 use crate::addr::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
 use crate::error::{MmError, MmResult};
@@ -17,7 +20,7 @@ pub struct AddressSpaceId(pub u32);
 /// - 默认方法提供“基于帧分配器分配/回收”的便利封装；
 /// - `satp_value()` 用于在 arch-impl 中安装页表并刷新 TLB。
 pub trait AddressSpaceOps {
-    /// 安装页表所需的 `satp` 值（由 mm-impl/sv39 决定编码）。
+    /// 安装页表所需的地址空间 token（历史命名为 `satp`）。
     fn satp_value(&self) -> usize;
 
     /// 将 `vpn -> ppn` 映射到页表，并应用页权限 `perm`。
@@ -136,4 +139,3 @@ pub trait AddressSpaceOps {
         Ok(())
     }
 }
-

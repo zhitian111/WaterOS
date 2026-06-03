@@ -22,18 +22,16 @@
 [features]
     api-v0 = [ "impl-dummy/api-v0", "impl_fs_bridge?/api-v0" ]
     bridge-fs-api = [ "dep:impl_fs_bridge", "impl_fs_bridge/bridge-fs-api" ]
-    default = [ "api-v0", "bridge-fs-api" ]
-    fd-session = [
+    default = [ "api-v0", "bridge-fs-api","impl-fd-session" ]
+    impl-fd-session = [
         "dep:base",
         "dep:impl_fd_session",
         "dep:task",
-        "impl_fd_session/fd-session",
+        "impl_fd_session/impl-fd-session",
         "task/api-v0",
         "task/impl-core",
     ]
     impl-dummy = [  ]
-    impl-loongarch64 = [ "fd-session", "impl_fd_session/impl-loongarch64" ]
-    impl-riscv64 = [ "fd-session", "impl_fd_session/impl-riscv64" ]
 
 [profile.dev]
     panic = "abort"

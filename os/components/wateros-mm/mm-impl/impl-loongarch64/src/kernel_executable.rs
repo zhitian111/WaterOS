@@ -11,7 +11,7 @@ use api_v0::executable::{
 };
 use api_v0::kernel_bringup::{LoadProgramError, LoadedElf};
 
-use crate::kernel_elf::{from_elf_bytes, read_path_bytes};
+use crate::kernel_elf::{from_elf_path, read_path_prefix};
 
 /// 装载 `path` 指向的程序：ELF 直载，或解析 shebang 后递归加载解释器。
 ///
@@ -29,11 +29,12 @@ fn load_program_from_path_rec(
         return Err(LoadProgramError::Script(ExecResolveError::RecursionLimit));
     }
 
-    let data = read_path_bytes(path).map_err(LoadProgramError::Elf)?;
+    let data = read_path_prefix(path, executable::SHEBANG_PROBE_MAX)
+        .map_err(LoadProgramError::Elf)?;
 
     if executable::is_elf_prefix(&data) {
         let final_argv = argv_vec(path, argv);
-        let loaded = from_elf_bytes(&data).map_err(LoadProgramError::Elf)?;
+        let loaded = from_elf_path(path).map_err(LoadProgramError::Elf)?;
         return Ok((loaded, final_argv));
     }
 

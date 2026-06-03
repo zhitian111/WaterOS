@@ -28,7 +28,6 @@ impl LoongArch64PteFlags {
     const D : Self = Self(1 << 1); // Dirty
                                    // bits [2:3] = PLV (privilege level)
                                    // bits [4:5] = MAT (memory access type)
-    const G : Self = Self(1 << 6); // Global
     const P : Self = Self(1 << 7); // Present (physical page exists)
     const W : Self = Self(1 << 8); // Writable
     const NR : Self = Self(1 << 61); // Not Readable
@@ -41,9 +40,6 @@ impl LoongArch64PteFlags {
     const MAT_CACHED : usize = 1usize << 4;
 
     const PLV_MASK : usize = 3usize << 2;
-
-    #[inline]
-    const fn empty() -> Self { Self(0) }
 
     #[inline]
     const fn bits(self) -> usize { self.0 }
@@ -153,6 +149,15 @@ fn vpn_indexes(vpn : VirtPageNum) -> [usize; 3] {
 unsafe fn table_mut(ppn : PhysPageNum) -> &'static mut [LoongArch64Pte; LOONGARCH64_ENTRIES] {
     let pa = ppn.0 * PAGE_SIZE;
     unsafe { &mut *(pa as *mut [LoongArch64Pte; LOONGARCH64_ENTRIES]) }
+}
+
+/// 将已分配的用户数据帧清零，避免匿名页/栈页复用时暴露旧内容。
+#[inline]
+pub(crate) fn zero_phys_page(ppn : PhysPageNum) {
+    let pa = ppn.0 * PAGE_SIZE;
+    unsafe {
+        core::ptr::write_bytes(pa as *mut u8, 0, PAGE_SIZE);
+    }
 }
 
 #[inline]
@@ -286,6 +291,9 @@ impl LoongArch64AddressSpace {
     ///
     /// 调用后本地址空间不再可用。
     pub fn destroy(&mut self) {
+        if self.root.0 == 0 {
+            return;
+        }
         unsafe {
             destroy_table(self.root, LOONGARCH64_LEVELS - 1);
         }
@@ -456,8 +464,6 @@ impl AddressSpaceOps for LoongArch64AddressSpace {
 
 impl Drop for LoongArch64AddressSpace {
     fn drop(&mut self) {
-        if self.root.0 != 0 {
-            let _ = frame_dealloc_result(self.root);
-        }
+        self.destroy();
     }
 }

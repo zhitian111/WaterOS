@@ -9,11 +9,11 @@ extern crate alloc;
 #[cfg(feature = "bridge-fs-api")]
 extern crate impl_fs_bridge;
 
-#[cfg(feature = "fd-session")]
+#[cfg(feature = "impl-fd-session")]
 extern crate base;
-#[cfg(feature = "fd-session")]
+#[cfg(feature = "impl-fd-session")]
 extern crate impl_fd_session;
-#[cfg(feature = "fd-session")]
+#[cfg(feature = "impl-fd-session")]
 extern crate task;
 
 pub use api_v0 as api;
@@ -27,23 +27,23 @@ pub use api_v0::{
     VFS_STDOUT_FD,
 };
 
-/// per-task 文件描述符会话（`fd-session` feature）。
-#[cfg(feature = "fd-session")]
+/// per-task 文件描述符会话（`impl-fd-session` feature）。
+#[cfg(feature = "impl-fd-session")]
 pub mod fd;
 
-/// per-task 工作目录（`fd-session` feature）。
-#[cfg(feature = "fd-session")]
+/// per-task 工作目录（`impl-fd-session` feature）。
+#[cfg(feature = "impl-fd-session")]
 pub mod cwd;
 
-/// 相对当前任务 cwd 创建目录（`fd-session` + `bridge-fs-api`）。
-#[cfg(all(feature = "fd-session", feature = "bridge-fs-api"))]
+/// 相对当前任务 cwd 创建目录（`impl-fd-session` + `bridge-fs-api`）。
+#[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
 pub fn mkdir_at_current(path: &str, mode: u32) -> VfsResult<()> {
     let abs = cwd::resolve_for_current_task(path)?;
     impl_fs_bridge::mkdir_path(abs.as_str(), mode)
 }
 
-/// 删除已解析的绝对路径（`fd-session` + `bridge-fs-api`）。
-#[cfg(all(feature = "fd-session", feature = "bridge-fs-api"))]
+/// 删除已解析的绝对路径（`impl-fd-session` + `bridge-fs-api`）。
+#[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
 pub fn unlink_absolute(path: &str, remove_dir: bool) -> VfsResult<()> {
     let abs = normalize_absolute_path(path)?;
     impl_fs_bridge::unlink_path(abs.as_str(), remove_dir)
@@ -62,13 +62,13 @@ pub fn unmount_at(mount_point: &str) -> VfsResult<()> {
 }
 
 /// 相对当前任务 cwd 删除路径。
-#[cfg(all(feature = "fd-session", feature = "bridge-fs-api"))]
+#[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
 pub fn unlink_at_current(path: &str, remove_dir: bool) -> VfsResult<()> {
     let abs = cwd::resolve_for_current_task(path)?;
     unlink_absolute(abs.as_str(), remove_dir)
 }
 
-#[cfg(feature = "fd-session")]
+#[cfg(feature = "impl-fd-session")]
 pub use impl_fd_session::{PipeReadHandle, PipeWriteHandle};
 
 #[cfg(feature = "bridge-fs-api")]
@@ -259,7 +259,7 @@ pub fn test() {
     impl_dummy::test();
     #[cfg(feature = "bridge-fs-api")]
     impl_fs_bridge::test();
-    #[cfg(feature = "fd-session")]
+    #[cfg(feature = "impl-fd-session")]
     {
         fd::self_test();
         cwd::self_test();

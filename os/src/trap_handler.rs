@@ -90,7 +90,6 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
     let cx = unsafe { &mut *(authoritative as *mut TrapContext) };
 
     if cx.returns_to_user() {
-        #[cfg(any(feature = "impl-sv39", feature = "impl-loongarch64"))]
         paging::activate_address_space_token_and_flush(mm::kernel_mm::kernel_satp());
         platform::arch::trap::prepare_user_trap_frame_access();
     }

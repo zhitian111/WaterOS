@@ -58,7 +58,7 @@ pub(crate) fn copy_to_user(ptr: usize, buf: &[u8]) -> Result<usize, ErrNo> {
         })
 }
 
-#[cfg(feature = "impl-sv39")]
+#[cfg(target_arch = "riscv64")]
 fn trace_user_copy_failure(op: &str, va: usize, len: usize, err: mm::api::error::MmError) {
     let handle = current_user_aspace_handle().unwrap_or(0);
     let task_satp = task::current_task_user_address_space_token();
@@ -68,7 +68,7 @@ fn trace_user_copy_failure(op: &str, va: usize, len: usize, err: mm::api::error:
             task_satp={task_satp:#x} trap_satp={trap_satp:#x} probe={probe:?}");
 }
 
-#[cfg(feature = "impl-loongarch64")]
+#[cfg(target_arch = "loongarch64")]
 fn trace_user_copy_failure(op: &str, va: usize, len: usize, err: mm::api::error::MmError) {
     let handle = current_user_aspace_handle().unwrap_or(0);
     let task_satp = task::current_task_user_address_space_token();
@@ -78,7 +78,7 @@ fn trace_user_copy_failure(op: &str, va: usize, len: usize, err: mm::api::error:
     let _ = (handle, task_satp, trap_satp);
 }
 
-#[cfg(not(any(feature = "impl-sv39", feature = "impl-loongarch64")))]
+#[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
 fn trace_user_copy_failure(_op: &str, _va: usize, _len: usize, _err: mm::api::error::MmError) {}
 
 /// 读取以 NUL 结尾的用户路径（上限 `max` 字节，含终止符空间）。

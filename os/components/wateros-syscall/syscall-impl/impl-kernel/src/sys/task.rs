@@ -12,6 +12,9 @@ use crate::user_copy::{copy_from_user_struct, copy_to_user, copy_to_user_struct}
 
 const ORPHAN_PARENT_PID: usize = 1;
 const WNOHANG: usize = 1;
+const WUNTRACED: usize = 2;
+const WCONTINUED: usize = 8;
+const WAITPID_IGNORED_OPTIONS: usize = WUNTRACED | WCONTINUED;
 const UTS_LEN: usize = 65;
 
 // prctl 操作码
@@ -382,14 +385,16 @@ fn finish_wait_process_result(
     }
 }
 
-/// `waitpid`/`wait4` 早期语义：维护最小父子关系并阻塞等待子任务退出；暂不解析
-/// 除 `WNOHANG` 之外的 options。
+/// `waitpid`/`wait4` 早期语义：维护最小父子关系并阻塞等待子任务退出。
+///
+/// `WUNTRACED`/`WCONTINUED` 目前没有 stop/continue 状态可报告，按 no-op 接受以
+/// 兼容 busybox shell 的 wait4 调用。
 pub(crate) fn sys_waitpid(args: SyscallArgs) -> UserRet {
     let pid = args.arg(0) as isize;
     let exit_code_ptr = args.arg(1);
     let options = args.arg(2);
     let nohang = (options & WNOHANG) != 0;
-    if options & !WNOHANG != 0 {
+    if options & !(WNOHANG | WAITPID_IGNORED_OPTIONS) != 0 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
     let current_process = match task::current_process_snapshot() {
@@ -470,10 +475,11 @@ pub(crate) fn sys_uname(args: SyscallArgs) -> UserRet {
     if buf_ptr == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
     }
-    // 根据目标架构填充 machine 字段
-    #[cfg(any(feature = "impl-riscv64", feature = "impl-loongarch64"))]
+    #[cfg(target_arch = "riscv64")]
     let machine = "riscv64";
-    #[cfg(not(any(feature = "impl-riscv64", feature = "impl-loongarch64")))]
+    #[cfg(target_arch = "loongarch64")]
+    let machine = "loongarch64";
+    #[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
     let machine = "unknown";
     let uts = UserUtsName {
         sysname: make_uts_field("WaterOS"),

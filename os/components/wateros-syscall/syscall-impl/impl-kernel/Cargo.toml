@@ -20,7 +20,7 @@
 [features]
     api-v0 = [ "abi/api-v0", "api-v0/api-v0", "fd-session" ]
     cred-session = [ "cred/api-v0", "cred/impl-root", "dep:cred" ]
-    default = [ "api-v0" ]
+    default = [ "impl-kernel" ]
     fd-session = [
         "cred-session",
         "dep:ipc",
@@ -30,24 +30,11 @@
         "ipc/pipe",
         "mm/api-v0",
         "vfs/bridge-fs-api",
-        "vfs/fd-session",
+        "vfs/impl-fd-session",
     ]
-    impl-loongarch64 = [
-        "abi/api-v0",
+    impl-kernel = [
         "api-v0",
         "fd-session",
-        "ipc/impl-loongarch64",
-        "socket-net",
-        "task/api-v0",
-        "task/impl-core",
-    ]
-    impl-sv39 = []
-    impl-riscv64 = [
-        "abi/api-v0",
-        "api-v0",
-        "fd-session",
-        "impl-sv39",
-        "ipc/impl-riscv64",
         "socket-net",
         "task/api-v0",
         "task/impl-core",

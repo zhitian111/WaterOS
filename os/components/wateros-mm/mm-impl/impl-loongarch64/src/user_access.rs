@@ -3,7 +3,6 @@
 use api_v0::addr::{VirtAddr, PAGE_SIZE};
 use api_v0::address_space::AddressSpaceOps;
 use api_v0::error::{MmError, MmResult};
-use api_v0::perm::PagePerm;
 use api_v0::user_access::UserMemoryOps;
 
 use crate::pagetable::LoongArch64AddressSpace;

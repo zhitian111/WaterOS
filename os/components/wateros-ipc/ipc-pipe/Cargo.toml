@@ -9,10 +9,8 @@
 
 [features]
     api-v0 = [ "impl-ringbuf/api-v0" ]
-    default = [ "api-v0" ]
-    impl-loongarch64 = [ "impl-ringbuf/impl-loongarch64" ]
-    impl-ringbuf = [  ]
-    impl-riscv64 = [ "impl-ringbuf/impl-riscv64" ]
+    default = [ "impl-ringbuf" ]
+    impl-ringbuf = [ "api-v0", "impl-ringbuf/impl-ringbuf" ]
 
 [profile.dev]
     panic = "abort"

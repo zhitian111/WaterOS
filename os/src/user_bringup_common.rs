@@ -71,7 +71,6 @@ pub fn run_one_elf_argv_exit(log_tag : &str, elf_path : &str, argv : &[&str]) ->
         }
     };
 
-    #[cfg(any(feature = "impl-sv39", feature = "impl-loongarch64"))]
     cred::on_user_task_spawned(tid);
 
     #[cfg(feature = "vfs-bridge")]
@@ -142,7 +141,6 @@ pub fn run_one_busybox_script(log_tag : &str, script_path : &str) {
     run_one_elf_argv(log_tag, busybox_path, &argv);
 }
 
-#[cfg(any(feature = "impl-sv39", feature = "impl-loongarch64"))]
 fn load_program_without_timer_preemption(path : &str,
                                          argv : &[&str])
                                          -> Result<(LoadedElf, Vec<String>), LoadProgramError> {
@@ -155,15 +153,7 @@ fn load_program_without_timer_preemption(path : &str,
     result
 }
 
-#[cfg(not(any(feature = "impl-sv39", feature = "impl-loongarch64")))]
-fn load_program_without_timer_preemption(path : &str,
-                                         argv : &[&str])
-                                         -> Result<(LoadedElf, Vec<String>), LoadProgramError> {
-    mm::kernel_mm::load_program_from_path(path, argv)
-}
-
-#[cfg(all(any(feature = "impl-sv39", feature = "impl-loongarch64"),
-          feature = "vfs-bridge"))]
+#[cfg(feature = "vfs-bridge")]
 fn warn_if_path_missing(log_tag : &str, path : &str) -> Result<(), vfs::api::VfsError> {
     use vfs::api::SingleRootReadView;
     let view = vfs::root::read_view();

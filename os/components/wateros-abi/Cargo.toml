@@ -18,11 +18,9 @@
 
 [features]
     api-v0 = [ "impl-dummy/api-v0", "impl-linux-generic64?/api-v0" ]
-    default = [ "api-v0" ]
+    default = [ ]
     impl-dummy = [  ]
-    impl-linux-generic64 = [ "dep:impl-linux-generic64" ]
-    impl-linux-loongarch64 = [ "impl-linux-generic64" ]
-    impl-linux-riscv64 = [ "impl-linux-generic64" ]
+    impl-linux-generic64 = [ "dep:impl-linux-generic64","api-v0" ]
 
 [profile.dev]
     panic = "abort"

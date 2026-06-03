@@ -259,30 +259,4 @@ mod qemu_loongarch64_virt {
         info!("[loongarch64][task] starting first task");
         task::run_first_task()
     }
-
-    /// 内核自检任务 A：忙循环 + 周期性日志 +
-    /// `yield_now`，用于验证多任务与时间片。
-    extern "C" fn loongarch64_kernel_task_a(_arg : usize) -> ! {
-        let mut round = 0usize;
-        loop {
-            if round % 1_000_000 == 0 {
-                info!("[loongarch64][task-a] round={}", round);
-            }
-            round = round.wrapping_add(1);
-            task::yield_now();
-        }
-    }
-
-    /// 内核自检任务 B：与 [`loongarch64_kernel_task_a`]
-    /// 对称，增加调度交错覆盖。
-    extern "C" fn loongarch64_kernel_task_b(_arg : usize) -> ! {
-        let mut round = 0usize;
-        loop {
-            if round % 1_000_000 == 0 {
-                info!("[loongarch64][task-b] round={}", round);
-            }
-            round = round.wrapping_add(1);
-            task::yield_now();
-        }
-    }
 }

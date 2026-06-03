@@ -138,6 +138,10 @@ pub mod interrupt {
 
 /// 地址空间激活与必要的地址翻译缓存刷新原语；页表内容在 MM 组件。
 ///
+/// 本模块是 **paging control primitives**：只负责读写 ISA CSR、开关 MMU、刷新
+/// TLB/地址翻译缓存。具体页表格式、PTE 编码、地址空间构造仍由
+/// `wateros-mm/mm-impl/*/pagetable.rs` 负责。
+///
 /// RISC-V 的 token 是 `satp` 编码值；其它架构可使用自己的根页表/ASID 编码。
 ///
 /// 内核自身的地址空间 token 由 MM 层维护并通过 [`mm::kernel_mm::kernel_satp`]

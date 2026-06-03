@@ -9,9 +9,8 @@
 
 [features]
     api-v0 = [ "api-v0/api-v0", "wateros-task/api-v0" ]
-    default = [  ]
-    impl-loongarch64 = [ "api-v0", "wateros-task/impl-core" ]
-    impl-riscv64 = [ "api-v0", "wateros-task/impl-core" ]
+    default = [ "impl-task" ]
+    impl-task = [ "api-v0", "wateros-task/impl-core" ]
 
 [profile.dev]
     panic = "abort"
