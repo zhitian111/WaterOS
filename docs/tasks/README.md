@@ -41,3 +41,4 @@ WaterOS 的大部分重复任务都可以按一级组件并行拆分。默认拆
 - `export_features.md`
 - `maintain_todolist.md`
 - `export_release_overview.md`
+- `run_testsuits_qemu.md`

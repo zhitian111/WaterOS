@@ -12,6 +12,8 @@
 
 内核主工程。根 crate `wateros` 聚合各一级组件，并在 `src/main.rs` 中组织启动、自检、驱动初始化、中断与计时器流程。
 
+**构建与运行入口**：`os/Makefile`（`make kernel-rv`、`make rv_qemu_run` 等）。Agent 编译或执行内核时必须使用该 Makefile，详见 `general.md`「构建与运行」与 `coding.md` §6。
+
 #### `/home/zhitian/project/WaterOS_refactor/os/components`
 
 内核一级组件集合。当前主要组件包括：

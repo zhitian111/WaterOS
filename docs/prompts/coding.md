@@ -78,13 +78,38 @@
 
 ## 6. 构建入口
 
-适用范围：`Makefile`、`build.rs`。
+适用范围：`os/Makefile`、`build.rs`。
+
+**所有内核编译、QEMU 运行、架构 check 均通过 `os/Makefile` 调用**（见 `general.md`「构建与运行」）。Agent 在任务中需要 build/run 时必须 `cd os` 后执行 make 目标，不得默认使用裸 `cargo build` / 手写 qemu 命令替代。
+
+### `os/Makefile` 目标速查
+
+工作目录：`cd os`。
+
+| 分类 | 目标 | 说明 |
+|------|------|------|
+| 构建 | `kernel-rv` | riscv64 内核 → `./kernel-rv` |
+| 构建 | `kernel-la` | loongarch64 内核 → `./kernel-la` |
+| 构建 | `all` | `kernel-rv` + strip 镜像 |
+| 运行 | `rv_qemu_run` | 编译并 QEMU 运行 RISC-V（bring-up / 测例） |
+| 运行 | `la_qemu_run` | QEMU 运行 LoongArch |
+| 运行 | `rv_qemu_run_with_log` | RISC-V + QEMU int/cpu 日志 |
+| 调试 | `rv_qemu_gdb` / `rv_gdb` | GDB 调试 RISC-V |
+| 检查 | `rv_check` / `la_check` / `check` | cargo check（feature 已对齐） |
+| 分析 | `rv_elf_info` / `la_elf_info` | readelf 内核 ELF |
+| 维护 | `clean` | 清理构建产物 |
+| 维护 | `flush_img` | 从 `../test_case/` 拷贝 sdcard 镜像 |
+| 维护 | `fmt` | taplo + rustfmt |
+| 其他 | `version` / `stat` | 版本与仓库统计 |
+
+底层脚本：`os/scripts/rv_qemu_run.sh`、`rv_qemu_run_with_log.sh`、`rv_qemu_gdb.sh` 等；修改 QEMU 参数时同步检查 `docs/tasks/run_testsuits_qemu.md` 中的环境说明。
 
 要求：
 
 - 命令命名应稳定、可读、可组合。
 - 自动化入口应尽量可复现，不依赖模糊的本地状态。
 - 变更构建参数时，应同步检查文档和脚本说明。
+- 新增 make 目标或变更行为时，同步更新 `general.md` 本表与相关 task 文档。
 
 ## 7. 自动化脚本
 

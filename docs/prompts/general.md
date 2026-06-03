@@ -17,6 +17,58 @@
 4. 再进行修改、文档导出或规划。
 5. 完成后同步检查是否需要更新关键文档与导出结果。
 
+## 构建与运行（必须使用 `os/Makefile`）
+
+内核与 QEMU 相关操作**一律在 `os/` 目录下通过 Makefile 完成**，不要绕过 Makefile 直接调用 `cargo build`、`qemu-system-*`，也不要在项目根目录臆造命令。
+
+```bash
+cd os   # 工作目录固定为 os/
+```
+
+### 原则
+
+- **编译**：用 `make <target>`，Makefile 已封装 target、feature、产物拷贝路径。
+- **运行 / 调试**：用 `make rv_qemu_run`、`make la_qemu_run` 等，底层脚本在 `os/scripts/`。
+- **静态检查**：用 `make rv_check` / `make la_check` / `make check`，不要默认对整个 workspace 裸跑 `cargo check`（feature 与 target 可能不一致）。
+- **Agent 必须亲自执行**：需要验证时自己跑命令并读输出，不要只「建议用户运行」。
+- **测例回归**：赛题 `*_testcode.sh` 通过 `user_bringup_busybox.rs` 的 `SCRIPT_PATHS` 分阶段启用，再 `make rv_qemu_run`；细则见 `docs/tasks/run_testsuits_qemu.md`。
+
+### 常用 Make 目标（RISC-V 主线）
+
+| 目标 | 用途 |
+|------|------|
+| `make kernel-rv` | 编译 riscv64 内核，产物 `./kernel-rv` |
+| `make rv_qemu_run` | **编译并**在 QEMU 中运行 riscv64 内核（日常 bring-up / 测例首选） |
+| `make rv_qemu_run_with_log` | 运行并写 QEMU 调试日志 |
+| `make rv_qemu_gdb` / `make rv_gdb` | QEMU + GDB 调试 |
+| `make rv_check` | `cargo check`（riscv64 feature 已配置） |
+| `make rv_elf_info` | 查看 `kernel-rv` 的 readelf 信息 |
+| `make check` | 版本信息 + `rv_check` |
+| `make all` | `kernel-rv` + strip 二进制（赛题交付向） |
+| `make clean` | 清理 cargo 与 `kernel-rv` / `kernel-la` |
+| `make flush_img` | 从 `../test_case/` 刷新 `sdcard-rv.img` / `sdcard-la.img` |
+
+### LoongArch
+
+| 目标 | 用途 |
+|------|------|
+| `make kernel-la` | 编译 loongarch64 内核 → `./kernel-la` |
+| `make la_qemu_run` | QEMU 运行 loongarch64（根卷 `./sdcard-la.img`） |
+| `make la_check` | loongarch64 `cargo check` |
+
+### 相关路径
+
+- Makefile：`os/Makefile`
+- RISC-V QEMU 脚本：`os/scripts/rv_qemu_run.sh`（virtio-blk + `sdcard-rv.img`；网络参数见脚本内注释）
+- 测例开关：`os/src/user_bringup_busybox.rs`（`SCRIPT_PATHS`，分 P1–P6 阶段注释）
+- 测例日志解析：`os/scripts/parse_qemu_test_log.py`
+
+### 编码类任务的默认验证顺序
+
+1. `cd os && make rv_check`（或改动跨架构时再加 `make la_check`）
+2. `cd os && make rv_qemu_run`（需要运行时行为时）
+3. 涉及赛题测例时，按 `docs/tasks/run_testsuits_qemu.md` 只启用一个阶段后再跑
+
 ## 回答与交付风格
 
 - 回答应优先简洁、结构清晰、面向协作。
@@ -42,7 +94,7 @@
 
 - 修改的组件范围
 - 修改的实现层级：聚合层、API 层、impl 层、脚本层或文档层
-- 验证方式
+- 验证方式（**优先写具体 make 目标**，例如 `cd os && make rv_check`、`make rv_qemu_run`）
 - 需要同步更新的文档
 
 ### 文档类任务
