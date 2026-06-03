@@ -150,6 +150,10 @@ impl SingleRootReadView for FsBridge {
         }
     }
 
+    fn read_range(&self, path: &str, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+        FsBridge::read_range(self, path, offset, buf)
+    }
+
     fn read_dir(&self, path: &str) -> VfsResult<Vec<VfsDirEntry>> {
         let entries = match resolve_route(path)? {
             FsRoute::Root { abs } => root_rw()?

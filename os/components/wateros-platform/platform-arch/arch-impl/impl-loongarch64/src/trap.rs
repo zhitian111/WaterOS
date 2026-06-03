@@ -37,6 +37,7 @@ const CSR_STLBPS : usize = 0x1E;
 const CSR_TLBRENTRY : usize = 0x88;
 const CSR_TLBREHI : usize = 0x8E;
 const CSR_DMW0 : usize = 0x180;
+const CSR_EUEN : usize = 0x2;
 const LOONGARCH_PAGE_SIZE_BITS : usize = 12;
 const LOONGARCH_PWCL_4K_3LEVEL : usize =
     12 | (9 << 5) | (21 << 10) | (9 << 15) | (30 << 20) | (9 << 25);
@@ -55,6 +56,11 @@ const TIMER_INTERRUPT_PENDING : usize = 1 << 11;
 /// 单次定时器中断后重新武装的切片长度（StableCounter
 /// 刻度）；与调度策略相关，非用户 ABI。
 const TIMER_SLICE_TICKS : u64 = 10_000_000;
+/// `EUEN.FPE`：允许当前执行流使用基础浮点寄存器。
+///
+/// bring-up 阶段用户任务串行运行，先全局打开以支持 hard-float glibc/musl
+/// busybox；后续多任务并发时应在任务切换路径补充 FPU 上下文保存/恢复。
+const LOONGARCH_EUEN_FPE : usize = 1 << 0;
 
 #[inline]
 fn decode_loongarch64_trap_cause(estat : usize) -> TrapCause {
@@ -136,6 +142,7 @@ pub fn init_trap() {
     write_csr::<CSR_PWCL>(LOONGARCH_PWCL_4K_3LEVEL);
     write_csr::<CSR_PWCH>(0);
     write_csr::<CSR_ASID>(0);
+    write_csr::<CSR_EUEN>(LOONGARCH_EUEN_FPE);
     unsafe {
         asm!("invtlb 0, $zero, $zero");
     }
