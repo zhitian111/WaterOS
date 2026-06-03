@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 use fs::{SharedFs, SharedRwFs};
 use spin::Mutex;
 
-use api_v0::{normalize_absolute_path, VfsDirEntry, VfsError, VfsResult};
+use api_v0::{normalize_absolute_path, VfsError, VfsResult};
 
 /// 辅助挂载句柄：RW 或 RO。
 pub(crate) enum AuxMount {
@@ -70,13 +70,6 @@ impl AuxMount {
 
 }
 
-/// 挂载点目录是否仅含 `.` / `..`（oscomp 预置 `mnt` 目录可能非空展示项）。
-fn mount_point_dir_is_empty(entries: &[VfsDirEntry]) -> bool {
-    entries
-        .iter()
-        .all(|e| e.name == "." || e.name == "..")
-}
-
 fn mount_aux_common(mount_point: &str, fs: AuxMount) -> VfsResult<()> {
     let mp = String::from(normalize_absolute_path(mount_point)?.as_str());
     if mp == "/" {
@@ -88,10 +81,8 @@ fn mount_aux_common(mount_point: &str, fs: AuxMount) -> VfsResult<()> {
             return Err(VfsError::Exists);
         }
     }
-    let entries = super::FsBridge::read_dir_on_root(mp.as_str())?;
-    if !mount_point_dir_is_empty(entries.as_slice()) {
-        return Err(VfsError::Exists);
-    }
+    // 与 Linux 一致：非空挂载点允许 mount，原目录项在挂载期间被新视图覆盖。
+    let _ = super::FsBridge::read_dir_on_root(mp.as_str())?;
     AUX_MOUNTS.lock().push(MountEntry {
         mount_point: mp,
         fs,

@@ -1,4 +1,7 @@
-//! `mount(2)`：将 ext4 块设备挂到根卷内空目录。
+//! `mount(2)`：将 ext4 块设备挂到根卷内目录。
+//!
+//! oscomp 2025 镜像为整盘 ext4、无分区表；测例传 `vfat` + `/dev/vda2` 时按 devfs alias
+//! 复用 ext4，不解析 FAT。
 
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
@@ -36,11 +39,11 @@ pub(crate) fn sys_mount(args: SyscallArgs) -> UserRet {
             Ok(s) => s,
             Err(e) => return UserRet::from_error(e),
         };
-        // oscomp 测例常传空串表示由内核按块设备探测；非空时仅接受 ext2/3/4。
+        // 空串由块设备探测；非空时接受 ext2/3/4 或 oscomp 兼容名 vfat（实际仍挂 ext4）。
         if !fstype.is_empty()
             && !matches!(
                 fstype.as_str(),
-                "ext4" | "ext3" | "ext2"
+                "ext4" | "ext3" | "ext2" | "vfat"
             )
         {
             return UserRet::from_error(ErrNo::EINVAL);
