@@ -17,6 +17,7 @@ use platform::arch::paging;
 use platform::arch::trap::ActiveTrapFrame as TrapContext;
 use runtime::logging::*;
 use syscall::dispatch_syscall_from_trap;
+use base_config::task::SCHED_TIMER_PERIOD_MS;
 
 /// 监督态定时器中断后，用 **与 `kernel_main` 相同的 wall-clock 语义**
 /// 重新武装固件定时器。
@@ -27,7 +28,7 @@ use syscall::dispatch_syscall_from_trap;
 /// 或极近，从而 **S 态定时器中断连发**。此时 GDB `SIGINT` 常在
 /// `trampoline_start`（`__alltraps`） 处采样到 PC，看起来像「卡在
 /// trampoline」，实为 **trap 风暴**而非 `sret` 损坏。
-const TIMER_REARM_MS : u64 = 10;
+const TIMER_REARM_MS : u64 = SCHED_TIMER_PERIOD_MS;
 static TIMER_TICK_COUNT : AtomicUsize = AtomicUsize::new(0);
 /// 当前支持架构的 syscall/trap 指令宽度，用于将用户 PC 前进到下一条指令。
 const SYSCALL_INSN_BYTES : usize = 4;

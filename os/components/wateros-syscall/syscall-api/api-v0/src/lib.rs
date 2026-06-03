@@ -48,7 +48,10 @@ pub enum SyscallKind {
     Munmap,
     Mprotect,
     GetTime,
+    ClockSetTime,
     ClockGetTime,
+    ClockGetRes,
+    ClockNanosleep,
     Nanosleep,
     GetPid,
     GetPPid,
@@ -178,8 +181,14 @@ impl SyscallKind {
             Self::Mprotect
         } else if syscall_nr == T::GET_TIME.raw() {
             Self::GetTime
+        } else if syscall_nr == T::CLOCK_SETTIME.raw() {
+            Self::ClockSetTime
         } else if syscall_nr == T::CLOCK_GETTIME.raw() {
             Self::ClockGetTime
+        } else if syscall_nr == T::CLOCK_GETRES.raw() {
+            Self::ClockGetRes
+        } else if syscall_nr == T::CLOCK_NANOSLEEP.raw() {
+            Self::ClockNanosleep
         } else if syscall_nr == T::NANOSLEEP.raw() {
             Self::Nanosleep
         } else if syscall_nr == T::GETPID.raw() {
@@ -326,7 +335,10 @@ impl SyscallKind {
             Self::Munmap => "munmap",
             Self::Mprotect => "mprotect",
             Self::GetTime => "gettimeofday",
+            Self::ClockSetTime => "clock_settime",
             Self::ClockGetTime => "clock_gettime",
+            Self::ClockGetRes => "clock_getres",
+            Self::ClockNanosleep => "clock_nanosleep",
             Self::Nanosleep => "nanosleep",
             Self::GetPid => "getpid",
             Self::GetPPid => "getppid",
@@ -713,6 +725,30 @@ pub trait SyscallDispatcher {
         Self::dispatch_unsupported(
             SyscallKind::ClockGetTime,
             Self::NumberTable::CLOCK_GETTIME.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_clock_settime(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::ClockSetTime,
+            Self::NumberTable::CLOCK_SETTIME.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_clock_getres(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::ClockGetRes,
+            Self::NumberTable::CLOCK_GETRES.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_clock_nanosleep(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::ClockNanosleep,
+            Self::NumberTable::CLOCK_NANOSLEEP.raw(),
             args,
         )
     }
@@ -1189,7 +1225,10 @@ pub trait SyscallDispatcher {
             SyscallKind::Munmap => Self::dispatch_munmap(syscall_args),
             SyscallKind::Mprotect => Self::dispatch_mprotect(syscall_args),
             SyscallKind::GetTime => Self::dispatch_get_time(syscall_args),
+            SyscallKind::ClockSetTime => Self::dispatch_clock_settime(syscall_args),
             SyscallKind::ClockGetTime => Self::dispatch_clock_gettime(syscall_args),
+            SyscallKind::ClockGetRes => Self::dispatch_clock_getres(syscall_args),
+            SyscallKind::ClockNanosleep => Self::dispatch_clock_nanosleep(syscall_args),
             SyscallKind::GetPid => Self::dispatch_getpid(syscall_args),
             SyscallKind::GetPPid => Self::dispatch_getppid(syscall_args),
             SyscallKind::GetTid => Self::dispatch_gettid(syscall_args),

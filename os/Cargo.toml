@@ -7,6 +7,7 @@
     arch_api_v0 = { package = "wateros-platform-arch-api-v0", path = "./components/wateros-platform/platform-arch/arch-api/api-v0/", default-features = true }
     abi = { package = "wateros-abi", path = "./components/wateros-abi/", default-features = false }
     base = { package = "wateros-base", path = "./components/wateros-base/", default-features = true }
+    base_config = { package = "wateros-base-config", path = "./components/wateros-base/base-config/", default-features = true }
     fs = { package = "wateros-fs", path = "./components/wateros-fs/", default-features = true, optional = true }
     vfs = { package = "wateros-vfs", path = "./components/wateros-vfs/", default-features = true, optional = true }
     platform = { package = "wateros-platform", path = "./components/wateros-platform/", default-features = false }

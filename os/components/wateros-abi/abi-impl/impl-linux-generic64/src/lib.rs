@@ -58,7 +58,10 @@ impl SyscallNumberTable for LinuxGeneric64 {
     // 调度/时间 / scheduling & time
     const YIELD: SyscallNumber = SyscallNumber(124); // sched_yield
     const GET_TIME: SyscallNumber = SyscallNumber(169); // gettimeofday
+    const CLOCK_SETTIME: SyscallNumber = SyscallNumber(112); // clock_settime
     const CLOCK_GETTIME: SyscallNumber = SyscallNumber(113); // clock_gettime
+    const CLOCK_GETRES: SyscallNumber = SyscallNumber(114); // clock_getres
+    const CLOCK_NANOSLEEP: SyscallNumber = SyscallNumber(115); // clock_nanosleep
 
     // 内存管理 / memory management
     const BRK: SyscallNumber = SyscallNumber(214); // brk

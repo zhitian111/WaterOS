@@ -8,11 +8,24 @@ use api_v0::{PipeEndpointKind, PipeEndpointOps, PipeError, PipeResult};
 use crate::kernel_pipe::Pipe;
 
 /// 可放入 fd table 的 pipe 端点。
-#[derive(Clone)]
 pub struct PipeEndpoint {
     pipe: Arc<Pipe>,
     kind: PipeEndpointKind,
     nonblocking: bool,
+}
+
+impl Clone for PipeEndpoint {
+    fn clone(&self) -> Self {
+        match self.kind {
+            PipeEndpointKind::Read => self.pipe.acquire_read(),
+            PipeEndpointKind::Write => self.pipe.acquire_write(),
+        }
+        Self {
+            pipe: self.pipe.clone(),
+            kind: self.kind,
+            nonblocking: self.nonblocking,
+        }
+    }
 }
 
 impl PipeEndpoint {
@@ -52,6 +65,8 @@ impl PipeEndpoint {
 impl PipeEndpointOps for PipeEndpoint {
     fn pair(nonblocking: bool) -> (Self, Self) {
         let pipe = Arc::new(Pipe::new());
+        pipe.acquire_read();
+        pipe.acquire_write();
         (
             Self {
                 pipe: pipe.clone(),
@@ -98,8 +113,8 @@ impl PipeEndpointOps for PipeEndpoint {
 
     fn close(&self) {
         match self.kind {
-            PipeEndpointKind::Read => self.pipe.close_read(),
-            PipeEndpointKind::Write => self.pipe.close_write(),
+            PipeEndpointKind::Read => self.pipe.release_read(),
+            PipeEndpointKind::Write => self.pipe.release_write(),
         }
     }
 

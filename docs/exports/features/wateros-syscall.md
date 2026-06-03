@@ -41,7 +41,7 @@
 | `execve` | 部分 | 替换地址空间/入口/栈；非 ELF 文本脚本经 shebang 解析后加载解释器 ELF |
 | `waitpid` | 部分 | 最小父子等待、`WNOHANG` |
 | `getpid` / `getppid` / `gettid` | 部分 | orphan ppid 为 1 |
-| `gettimeofday` / `clock_gettime` / `times` / `nanosleep` | 部分 | 基于调度 tick |
+| `gettimeofday` / `clock_settime` / `clock_gettime` / `clock_getres` / `clock_nanosleep` / `times` / `nanosleep` | 部分 | `platform::timer` 单调时钟 + REALTIME offset；sleep 精度 ~10ms |
 | `getcwd` / `chdir` | 部分 | per-task cwd |
 | `uname` | 部分 | 固定 `utsname` 字段 |
 

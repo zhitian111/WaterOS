@@ -14,8 +14,10 @@
     driver = { path = "../../../wateros-driver/", package = "wateros-driver", default-features = false, optional = true }
     driver-network = { path = "../../../wateros-driver/driver-network/", package = "wateros-driver-network", default-features = false, optional = true }
     log = { version = "0.4.29" }
+    platform = { path = "../../../wateros-platform/", package = "wateros-platform", default-features = false }
     smoltcp = { version = "0.13", default-features = false, optional = true }
     spin = "0.10.0"
+    wateros-base-config = { path = "../../../wateros-base/base-config/", package = "wateros-base-config", default-features = true }
 
 [features]
     api-v0 = [ "abi/api-v0", "api-v0/api-v0", "fd-session" ]
@@ -35,6 +37,7 @@
     impl-kernel = [
         "api-v0",
         "fd-session",
+        "platform/api-v0",
         "socket-net",
         "task/api-v0",
         "task/impl-core",

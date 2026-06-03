@@ -1,6 +1,5 @@
 //! 任务相关系统调用：`yield`、`exit`、`waitpid`、`getpid`/`getppid`/`gettid`、
-//! `gettimeofday`、`clock_gettime`、`times`、`nanosleep`、`uname`、`prctl`、
-//! `getrlimit`/`setrlimit`。
+//! `times`、`uname`、`prctl`、`getrlimit`/`setrlimit`。
 
 use alloc::vec::Vec;
 
@@ -38,20 +37,6 @@ const GRND_NONBLOCK: usize = 0x0001;
 const GRND_RANDOM: usize = 0x0002;
 const GRND_INSECURE: usize = 0x0004;
 const GETRANDOM_ALLOWED_FLAGS: usize = GRND_NONBLOCK | GRND_RANDOM | GRND_INSECURE;
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct UserTimeVal {
-    sec: isize,
-    usec: isize,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct UserTimespec {
-    sec: isize,
-    nsec: isize,
-}
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -290,42 +275,6 @@ pub(crate) fn sys_rt_sigaction(args: SyscallArgs) -> UserRet {
     UserRet::from_success(0)
 }
 
-fn current_tick_for_user_time() -> u64 {
-    task::current_tick().max(1)
-}
-
-pub(crate) fn sys_gettimeofday(args: SyscallArgs) -> UserRet {
-    let timeval_ptr = args.arg(0);
-    if timeval_ptr == 0 {
-        return UserRet::from_success(0);
-    }
-    let tick = current_tick_for_user_time();
-    let timeval = UserTimeVal {
-        sec: (tick / 1000) as isize,
-        usec: ((tick % 1000) * 1000) as isize,
-    };
-    match copy_to_user_struct(timeval_ptr, &timeval) {
-        Ok(()) => UserRet::from_success(0),
-        Err(e) => UserRet::from_error(e),
-    }
-}
-
-pub(crate) fn sys_clock_gettime(args: SyscallArgs) -> UserRet {
-    let timespec_ptr = args.arg(1);
-    if timespec_ptr == 0 {
-        return UserRet::from_error(ErrNo::EFAULT);
-    }
-    let tick = current_tick_for_user_time();
-    let timespec = UserTimespec {
-        sec: (tick / 1000) as isize,
-        nsec: ((tick % 1000) * 1_000_000) as isize,
-    };
-    match copy_to_user_struct(timespec_ptr, &timespec) {
-        Ok(()) => UserRet::from_success(0),
-        Err(e) => UserRet::from_error(e),
-    }
-}
-
 pub(crate) fn sys_times(args: SyscallArgs) -> UserRet {
     let tms_ptr = args.arg(0);
     if tms_ptr != 0 {
@@ -446,27 +395,6 @@ pub(crate) fn sys_waitpid(args: SyscallArgs) -> UserRet {
         }
         task::wait_for_task_exit(leader_task_id);
     }
-}
-
-/// `nanosleep` 临时映射到一个调度
-/// tick；真实时间换算待平台频率语义接入后再替换。
-pub(crate) fn sys_nanosleep(args: SyscallArgs) -> UserRet {
-    let req_ptr = args.arg(0);
-    if req_ptr == 0 {
-        return UserRet::from_error(ErrNo::EFAULT);
-    }
-    let req = match copy_from_user_struct::<UserTimespec>(req_ptr) {
-        Ok(req) => req,
-        Err(e) => return UserRet::from_error(e),
-    };
-    if req.sec < 0 || req.nsec < 0 || req.nsec >= 1_000_000_000 {
-        return UserRet::from_error(ErrNo::EINVAL);
-    }
-    if req.sec == 0 && req.nsec == 0 {
-        return UserRet::from_success(0);
-    }
-    task::sleep_for_ticks(1);
-    UserRet::from_success(0)
 }
 
 /// `uname(buf)` — 返回系统信息。

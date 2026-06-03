@@ -19,6 +19,10 @@ struct PipeState {
     len: usize,
     read_open: bool,
     write_open: bool,
+    /// 读端 fd 引用计数；归零时 `read_open` 置 false。
+    read_refs: usize,
+    /// 写端 fd 引用计数；归零时 `write_open` 置 false。
+    write_refs: usize,
 }
 
 impl PipeState {
@@ -32,6 +36,8 @@ impl PipeState {
             len: 0,
             read_open: true,
             write_open: true,
+            read_refs: 0,
+            write_refs: 0,
         })
     }
 
@@ -139,6 +145,42 @@ impl Pipe {
     /// 关闭写端并唤醒可能阻塞的读者。
     pub fn close_write(&self) {
         KernelPipe::close_write(self);
+    }
+
+    /// 读端 fd 引用 +1（`dup` / `fork` 继承 / `Clone`）。
+    pub fn acquire_read(&self) {
+        self.state.exclusive_access().read_refs += 1;
+    }
+
+    /// 写端 fd 引用 +1（`dup` / `fork` 继承 / `Clone`）。
+    pub fn acquire_write(&self) {
+        self.state.exclusive_access().write_refs += 1;
+    }
+
+    /// 读端 fd 引用 -1；归零时关闭读端。
+    pub fn release_read(&self) {
+        let mut state = self.state.exclusive_access();
+        if state.read_refs > 0 {
+            state.read_refs -= 1;
+        }
+        if state.read_refs == 0 {
+            state.read_open = false;
+            drop(state);
+            self.write_wait.wake_all();
+        }
+    }
+
+    /// 写端 fd 引用 -1；归零时关闭写端。
+    pub fn release_write(&self) {
+        let mut state = self.state.exclusive_access();
+        if state.write_refs > 0 {
+            state.write_refs -= 1;
+        }
+        if state.write_refs == 0 {
+            state.write_open = false;
+            drop(state);
+            self.read_wait.wake_all();
+        }
     }
 
     /// 读端在 `poll(2)` 中的就绪位。

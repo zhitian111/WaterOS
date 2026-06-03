@@ -108,8 +108,14 @@ pub trait SyscallNumberTable {
     const YIELD: SyscallNumber;
     /// 取墙上时钟（`gettimeofday(2)`）。
     const GET_TIME: SyscallNumber;
+    /// 设置指定时钟源时间（`clock_settime(2)`）。
+    const CLOCK_SETTIME: SyscallNumber;
     /// 取指定时钟源时间（`clock_gettime(2)`）。
     const CLOCK_GETTIME: SyscallNumber;
+    /// 查询时钟分辨率（`clock_getres(2)`）。
+    const CLOCK_GETRES: SyscallNumber;
+    /// 可指定时钟源的纳秒级睡眠（`clock_nanosleep(2)`）。
+    const CLOCK_NANOSLEEP: SyscallNumber;
 
     // 内存管理（glibc/musl 常见）/ memory management
     /// 调整 program break（`brk(2)`）。

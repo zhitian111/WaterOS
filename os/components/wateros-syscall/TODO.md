@@ -42,9 +42,12 @@
 | `getuid`/`geteuid`/`getgid`/`getegid` | 已接入 | 经 `wateros-cred` impl-root 恒返回 0。 |
 | `getgroups` | 已接入 | G1：`[0]`；未实现边界 panic。 |
 | `setuid`/`setgid`/`setreuid`/`setregid`/`setresuid`/`setresgid` | 已登记 | 显式 `syscall_unsupported` panic。 |
-| `gettimeofday` | 部分接入 | 基于调度 tick 的临时时间。 |
-| `clock_gettime` | 部分接入 | 基于调度 tick 的临时时间。 |
-| `nanosleep` | 部分接入 | 非零睡眠临时映射为 1 个 tick。 |
+| `gettimeofday` | 部分接入 | REALTIME，基于 `platform::timer` + 可调 offset。 |
+| `clock_settime` | 部分接入 | 仅 `CLOCK_REALTIME`；无 `CAP_SYS_TIME` 校验。 |
+| `clock_gettime` | 部分接入 | REALTIME/MONOTONIC/CPUTIME 等子集；`platform::timer` 优先。 |
+| `clock_getres` | 部分接入 | 返回 timer Hz 或调度 tick 分辨率。 |
+| `clock_nanosleep` | 部分接入 | 相对/绝对 sleep；精度受 10ms 调度 tick 约束。 |
+| `nanosleep` | 部分接入 | 与 `clock_nanosleep` 共享 sleep 换算。 |
 | `times` | 部分接入 | 返回当前 tick 和最小 `tms`。 |
 | `getcwd` | 部分接入 | 依赖 per-task cwd 注册。 |
 | `chdir` | 已接入 | 经 `vfs::cwd::chdir_current`；目标须为已存在目录。 |

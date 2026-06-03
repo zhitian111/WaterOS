@@ -166,6 +166,21 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     }
 
     #[inline]
+    fn dispatch_clock_settime(args: SyscallArgs) -> isize {
+        sys::sys_clock_settime(args).0
+    }
+
+    #[inline]
+    fn dispatch_clock_getres(args: SyscallArgs) -> isize {
+        sys::sys_clock_getres(args).0
+    }
+
+    #[inline]
+    fn dispatch_clock_nanosleep(args: SyscallArgs) -> isize {
+        sys::sys_clock_nanosleep(args).0
+    }
+
+    #[inline]
     fn dispatch_getpid(_args: SyscallArgs) -> isize {
         sys::sys_getpid().0
     }

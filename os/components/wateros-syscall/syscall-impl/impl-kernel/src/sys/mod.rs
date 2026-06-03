@@ -3,6 +3,7 @@
 
 mod brk;
 mod chdir;
+mod clock;
 mod clone;
 mod close;
 mod cred;
@@ -80,9 +81,13 @@ pub(crate) use posix_at_io::{sys_pread64, sys_preadv, sys_pwrite64, sys_pwritev}
 pub(crate) use read::sys_read;
 pub(crate) use readlinkat::sys_readlinkat;
 pub(crate) use sendfile::sys_sendfile;
+pub(crate) use clock::{
+    sys_clock_getres, sys_clock_gettime, sys_clock_nanosleep, sys_clock_settime, sys_gettimeofday,
+    sys_nanosleep,
+};
 pub(crate) use task::{
-    sys_clock_gettime, sys_exit, sys_exit_group, sys_getpid, sys_getppid, sys_getrandom,
-    sys_getrlimit, sys_gettid, sys_gettimeofday, sys_nanosleep, sys_prctl, sys_prlimit64,
+    sys_exit, sys_exit_group, sys_getpid, sys_getppid, sys_getrandom,
+    sys_getrlimit, sys_gettid, sys_prctl, sys_prlimit64,
     sys_rt_sigaction, sys_rt_sigprocmask, sys_rt_sigtimedwait, sys_set_tid_address, sys_setrlimit, sys_times, sys_uname, sys_waitpid, sys_yield,
 };
 pub(crate) use umount2::sys_umount2;
