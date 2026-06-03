@@ -70,6 +70,31 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     }
 
     #[inline]
+    fn dispatch_pread64(args: SyscallArgs) -> isize {
+        sys::sys_pread64(args).0
+    }
+
+    #[inline]
+    fn dispatch_pwrite64(args: SyscallArgs) -> isize {
+        sys::sys_pwrite64(args).0
+    }
+
+    #[inline]
+    fn dispatch_preadv(args: SyscallArgs) -> isize {
+        sys::sys_preadv(args).0
+    }
+
+    #[inline]
+    fn dispatch_pwritev(args: SyscallArgs) -> isize {
+        sys::sys_pwritev(args).0
+    }
+
+    #[inline]
+    fn dispatch_sendfile(args: SyscallArgs) -> isize {
+        sys::sys_sendfile(args).0
+    }
+
+    #[inline]
     fn dispatch_readlinkat(args: SyscallArgs) -> isize {
         sys::sys_readlinkat(args).0
     }

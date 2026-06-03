@@ -48,6 +48,16 @@ pub trait SyscallNumberTable {
     const WRITE: SyscallNumber;
     /// 向打开对象写入多段缓冲（`writev(2)`）。
     const WRITEV: SyscallNumber;
+    /// 在指定偏移读（`pread64(2)`）。
+    const PREAD64: SyscallNumber;
+    /// 在指定偏移写（`pwrite64(2)`）。
+    const PWRITE64: SyscallNumber;
+    /// 在指定偏移分散读（`preadv(2)`）。
+    const PREADV: SyscallNumber;
+    /// 在指定偏移聚集写（`pwritev(2)`）。
+    const PWRITEV: SyscallNumber;
+    /// 内核态 fd 间拷贝（`sendfile(2)`）。
+    const SENDFILE: SyscallNumber;
     /// 读取符号链接目标（`readlinkat(2)`）。
     const READLINKAT: SyscallNumber;
     /// 相对目录打开路径（`openat(2)`）。

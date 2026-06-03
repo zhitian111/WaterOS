@@ -16,6 +16,11 @@ pub enum SyscallKind {
     Read,
     Write,
     Writev,
+    Pread64,
+    Pwrite64,
+    Preadv,
+    Pwritev,
+    Sendfile,
     ReadLinkAt,
     OpenAt,
     Close,
@@ -106,6 +111,16 @@ impl SyscallKind {
             Self::Write
         } else if syscall_nr == T::WRITEV.raw() {
             Self::Writev
+        } else if syscall_nr == T::PREAD64.raw() {
+            Self::Pread64
+        } else if syscall_nr == T::PWRITE64.raw() {
+            Self::Pwrite64
+        } else if syscall_nr == T::PREADV.raw() {
+            Self::Preadv
+        } else if syscall_nr == T::PWRITEV.raw() {
+            Self::Pwritev
+        } else if syscall_nr == T::SENDFILE.raw() {
+            Self::Sendfile
         } else if syscall_nr == T::READLINKAT.raw() {
             Self::ReadLinkAt
         } else if syscall_nr == T::OPENAT.raw() {
@@ -270,6 +285,11 @@ impl SyscallKind {
             Self::Read => "read",
             Self::Write => "write",
             Self::Writev => "writev",
+            Self::Pread64 => "pread64",
+            Self::Pwrite64 => "pwrite64",
+            Self::Preadv => "preadv",
+            Self::Pwritev => "pwritev",
+            Self::Sendfile => "sendfile",
             Self::ReadLinkAt => "readlinkat",
             Self::OpenAt => "openat",
             Self::Close => "close",
@@ -457,6 +477,46 @@ pub trait SyscallDispatcher {
         Self::dispatch_unsupported(
             SyscallKind::Writev,
             Self::NumberTable::WRITEV.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_pread64(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Pread64,
+            Self::NumberTable::PREAD64.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_pwrite64(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Pwrite64,
+            Self::NumberTable::PWRITE64.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_preadv(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Preadv,
+            Self::NumberTable::PREADV.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_pwritev(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Pwritev,
+            Self::NumberTable::PWRITEV.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_sendfile(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Sendfile,
+            Self::NumberTable::SENDFILE.raw(),
             args,
         )
     }
@@ -1066,6 +1126,11 @@ pub trait SyscallDispatcher {
             SyscallKind::Read => Self::dispatch_read(syscall_args),
             SyscallKind::Write => Self::dispatch_write(syscall_args),
             SyscallKind::Writev => Self::dispatch_writev(syscall_args),
+            SyscallKind::Pread64 => Self::dispatch_pread64(syscall_args),
+            SyscallKind::Pwrite64 => Self::dispatch_pwrite64(syscall_args),
+            SyscallKind::Preadv => Self::dispatch_preadv(syscall_args),
+            SyscallKind::Pwritev => Self::dispatch_pwritev(syscall_args),
+            SyscallKind::Sendfile => Self::dispatch_sendfile(syscall_args),
             SyscallKind::ReadLinkAt => Self::dispatch_readlinkat(syscall_args),
             SyscallKind::OpenAt => Self::dispatch_openat(syscall_args),
             SyscallKind::Close => Self::dispatch_close(syscall_args),

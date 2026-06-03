@@ -168,6 +168,35 @@ pub mod self_test {
         Ok(())
     }
 
+    /// `read_at` / `write_at` 不改变顺序读偏移。
+    #[cfg(feature = "bridge-fs-api")]
+    pub fn read_at_write_at_smoke() -> VfsResult<()> {
+        use super::api::VfsIoHandle;
+
+        const NAME: &str = "vfs_at_io_smoke";
+        let mut path = String::from("/");
+        path.push_str(NAME);
+        let backend = active_impl::backend();
+        let mut handle = backend.open(
+            path.as_str(),
+            VfsOpenFlags(VfsOpenFlags::READ | VfsOpenFlags::WRITE | VfsOpenFlags::CREATE),
+        )?;
+        handle.write_at(0, b"hello")?;
+        handle.write_at(5, b" world")?;
+        let _ = handle.seek(0, VfsSeekWhence::Set)?;
+        let mut buf = [0u8; 11];
+        let n = handle.read_at(0, &mut buf)?;
+        if n != 11 || &buf != b"hello world" {
+            return Err(super::api::VfsError::Io);
+        }
+        let mut seq = [0u8; 2];
+        let n2 = handle.read(&mut seq)?;
+        if n2 != 2 || &seq != b"he" {
+            return Err(super::api::VfsError::Io);
+        }
+        Ok(())
+    }
+
     /// `open` → `read` → `seek` → `metadata` 烟囱（依赖 RW 先写入测试文件）。
     #[cfg(feature = "bridge-fs-api")]
     pub fn open_read_seek_smoke() -> VfsResult<()> {
@@ -203,6 +232,11 @@ pub mod self_test {
                 log::warn!("[vfs] self_test open/seek skipped or failed: {:?}", e);
             } else {
                 log::info!("[vfs] self_test open/seek ok");
+            }
+            if let Err(e) = read_at_write_at_smoke() {
+                log::warn!("[vfs] self_test read_at/write_at skipped or failed: {:?}", e);
+            } else {
+                log::info!("[vfs] self_test read_at/write_at ok");
             }
             const MKDIR_NAME: &str = "vfs_mkdir_smoke";
             if let Err(e) = rw_mkdir_verify(VfsFsKind::Ext4, MKDIR_NAME) {

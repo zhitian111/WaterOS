@@ -58,6 +58,17 @@ pub trait VfsIoHandle {
         Err(VfsError::Unsupported)
     }
 
+    /// 在绝对文件偏移处读（`pread` 族）；默认不支持（pipe/socket 等）。
+    /// 不得修改顺序 `read` 使用的当前偏移。
+    fn read_at(&mut self, _offset: u64, _buf: &mut [u8]) -> VfsResult<usize> {
+        Err(VfsError::Unsupported)
+    }
+
+    /// 在绝对文件偏移处写（`pwrite` 族）；默认不支持。
+    fn write_at(&mut self, _offset: u64, _buf: &[u8]) -> VfsResult<usize> {
+        Err(VfsError::Unsupported)
+    }
+
     fn flush(&mut self) -> VfsResult<()> {
         Ok(())
     }
@@ -79,18 +90,8 @@ pub trait VfsIoHandle {
     }
 }
 
-/// 已打开文件的偏移读写（由 [`VfsOpenOps`] 创建）。
+/// 已打开文件的偏移读写（由 [`VfsOpenOps`] 创建）；`read_at`/`write_at` 见 [`VfsIoHandle`]。
 pub trait VfsFileHandle: VfsIoHandle {
-    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
-        let _ = (offset, buf);
-        Err(VfsError::Unsupported)
-    }
-
-    fn write_at(&mut self, offset: u64, buf: &[u8]) -> VfsResult<usize> {
-        let _ = (offset, buf);
-        Err(VfsError::Unsupported)
-    }
-
     fn seek(&mut self, offset: i64, whence: VfsSeekWhence) -> VfsResult<u64> {
         let _ = (offset, whence);
         Err(VfsError::Unsupported)

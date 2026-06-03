@@ -49,6 +49,9 @@
 | `getcwd` | 部分接入 | 依赖 per-task cwd 注册。 |
 | `chdir` | 已接入 | 经 `vfs::cwd::chdir_current`；目标须为已存在目录。 |
 | `uname` | 部分接入 | 固定 WaterOS `utsname` 字段。 |
+| `pread64` / `pwrite64` | 已接入 | `sys/posix_at_io.rs`；`vfs_io_at_error_to_errno` |
+| `preadv` / `pwritev` | 已接入 | 与 `writev` 同 iovec 布局；上限 4MiB |
+| `sendfile` | 部分接入 | `sys/sendfile.rs`；文件 in → 文件/socket out；无零拷贝 |
 
 ## busybox/libc/benchmark 后续常见项
 

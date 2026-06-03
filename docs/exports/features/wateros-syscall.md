@@ -23,6 +23,8 @@
 |------|------|------|
 | `yield` / `exit` / `exit_group` | 已接入 | `task::yield_now` / `exit_current` |
 | `read` / `write` / `close` | 部分 | VFS fd；stdin 仍 `EBADF` |
+| `pread64` / `pwrite64` / `preadv` / `pwritev` | 部分 | `VfsIoHandle::read_at`/`write_at`；pipe/socket → `ESPIPE` |
+| `sendfile` | 部分 | 文件→文件/socket；内核 64KiB 缓冲循环；`offset*` 可选 |
 | `openat` | 部分 | `AT_FDCWD`、目录 fd、`O_DIRECTORY` |
 | `dup` / `dup3` | 已接入 | `vfs::fd::dup_fd` / `dup3_fd` |
 | `pipe2` | 部分 | 创建 pipe fd；fork 后 `copy_fd_table_from_parent` |

@@ -26,6 +26,14 @@ pub(crate) fn vfs_error_to_errno(err: VfsError) -> ErrNo {
     }
 }
 
+/// `pread`/`pwrite`/`sendfile` 路径：不可 seek 的句柄（pipe/socket 等）→ `ESPIPE`。
+pub(crate) fn vfs_io_at_error_to_errno(err: VfsError) -> ErrNo {
+    match err {
+        VfsError::Unsupported => ErrNo::ESPIPE,
+        other => vfs_error_to_errno(other),
+    }
+}
+
 /// Linux `openat(2)` flags → [`VfsOpenFlags`]。
 pub(crate) fn linux_open_flags_to_vfs(flags: u32) -> VfsOpenFlags {
     const O_ACCMODE: u32 = 3;

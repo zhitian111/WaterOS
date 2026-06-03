@@ -22,8 +22,10 @@ mod mount;
 mod openat;
 mod path_at;
 mod pipe2;
+mod posix_at_io;
 mod read;
 mod readlinkat;
+mod sendfile;
 mod robust;
 mod task;
 mod umount2;
@@ -71,8 +73,10 @@ pub(crate) use mmap::{sys_mmap, sys_mprotect, sys_munmap};
 pub(crate) use mount::sys_mount;
 pub(crate) use openat::sys_openat;
 pub(crate) use pipe2::sys_pipe2;
+pub(crate) use posix_at_io::{sys_pread64, sys_preadv, sys_pwrite64, sys_pwritev};
 pub(crate) use read::sys_read;
 pub(crate) use readlinkat::sys_readlinkat;
+pub(crate) use sendfile::sys_sendfile;
 pub(crate) use task::{
     sys_clock_gettime, sys_exit, sys_exit_group, sys_getpid, sys_getppid, sys_getrandom,
     sys_getrlimit, sys_gettid, sys_gettimeofday, sys_nanosleep, sys_prctl, sys_prlimit64,

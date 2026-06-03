@@ -163,6 +163,49 @@ impl VfsIoHandle for PagedFileHandle {
         Ok(n)
     }
 
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        let size = self.current_size();
+        if offset >= size {
+            return Ok(0);
+        }
+        let mut io = FsPageIo { rw: None };
+        let cache = global_cache(self.mount_gen);
+        cache.read(
+            &mut io,
+            self.path.as_str(),
+            size,
+            offset,
+            buf,
+            core::convert::identity,
+        )
+    }
+
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> VfsResult<usize> {
+        if !self.writable {
+            return Err(VfsError::Unsupported);
+        }
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        let size = self.current_size();
+        let mut rw = mount_rw_session()?;
+        let mut io = FsPageIo { rw: Some(&mut rw) };
+        let cache = global_cache(self.mount_gen);
+        let n = cache.write(
+            &mut io,
+            self.path.as_str(),
+            size,
+            offset,
+            buf,
+            core::convert::identity,
+        )?;
+        self.meta.size = self.current_size();
+        Ok(n)
+    }
+
     fn close(&mut self) -> VfsResult<()> {
         self.sync_dirty()
     }

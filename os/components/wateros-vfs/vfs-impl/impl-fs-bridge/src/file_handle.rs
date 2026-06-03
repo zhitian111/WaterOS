@@ -175,6 +175,37 @@ impl VfsIoHandle for BufferedFileHandle {
         Ok(m)
     }
 
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        let off = usize::try_from(offset).map_err(|_| VfsError::Io)?;
+        if off >= self.data.len() {
+            return Ok(0);
+        }
+        let n = buf.len().min(self.data.len() - off);
+        buf[..n].copy_from_slice(&self.data[off..off + n]);
+        Ok(n)
+    }
+
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> VfsResult<usize> {
+        if !self.writable {
+            return Err(VfsError::Unsupported);
+        }
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        let off = usize::try_from(offset).map_err(|_| VfsError::Io)?;
+        let end = off.checked_add(buf.len()).ok_or(VfsError::Io)?;
+        if end > self.data.len() {
+            self.data.resize(end, 0);
+        }
+        self.data[off..end].copy_from_slice(buf);
+        self.meta.size = self.data.len() as u64;
+        self.dirty = true;
+        Ok(buf.len())
+    }
+
     fn seek(&mut self, offset: i64, whence: VfsSeekWhence) -> VfsResult<u64> {
         let new_off = match whence {
             VfsSeekWhence::Set => {

@@ -7,6 +7,7 @@
 - **`vfs-impl-fs-bridge`**（`bridge-fs-api`）：经 `wateros-fs` 实现当前可落地的 trait 子集；`open` 按 `wateros-base-config::fs::FILE_LARGE_THRESHOLD` 分流 **`BufferedFileHandle`** / **`PagedFileHandle`**。
 - **`vfs-impl-page-cache`**：全局共享页缓存（Direct、`FILE_PAGE_SIZE` 行、LRU 容量与可选预取步长）；键 `(mount_generation, path)`。
 - **`vfs-impl-fd-session`**（`fd-session`）：per-task fd 表、**per-task cwd**（`PerTaskCwdRegistry`）、控制台与 pipe 的 `VfsIoHandle` 实现。
+- **按偏移 I/O**：`VfsIoHandle::read_at`/`write_at` 在 `BufferedFileHandle`/`PagedFileHandle` 实现（不改变顺序 `read` 使用的 `offset`）；供 `pread`/`pwrite`/`sendfile` syscall 使用。
 - **聚合层**：`active_impl` + `root` / `mount` / `self_test` / `fd` / **`cwd`** 组合对外接口。
 
 ## 根 crate 接线
