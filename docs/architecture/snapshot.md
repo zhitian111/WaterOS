@@ -20,6 +20,7 @@
 - `wateros-driver`
 - `wateros-fs`
 - `wateros-ipc`
+- `wateros-klog`（**设计中**，见 [`docs/architecture/wateros-klog.md`](wateros-klog.md)；尚未加入根 `Cargo.toml`）
 - `wateros-mm`
 - `wateros-platform`
 - `wateros-runtime`
@@ -75,7 +76,7 @@ flowchart TD
 - 处理 panic 与分配错误。
 - 在 `qemu-riscv64-opensbi` 路径下进入 `kernel_main`。
 - 构造平台引导上下文。
-- 记录 DTB 物理基址（`driver::init_when_boot`），并初始化控制台、日志与堆分配器。
+- 记录 DTB 物理基址（`driver::init_when_boot`），并初始化控制台、日志与堆分配器。（计划在此前后插入 **`klog::init()`**，见 [`docs/architecture/wateros-klog.md`](wateros-klog.md)。）
 - 执行内核态 MM 自检（含与 feature 相关的可选分页冒烟路径）。
 - 调用 **`driver::active_impl::init_after_boot()`** 完成 DTB 扫描、virtio-blk 注册及经 **`wateros-fs`** 的 devfs 刷新；成功后再 **`fs::init()`** / **`fs::test()`**；在启用 **`vfs-bridge`** 时追加 **`vfs::test()`**（内含 **`self_test`** RW 读回烟囱，见 **`docs/exports/public-api/wateros-vfs.md`**）。
 - 初始化任务调度器并创建演示性 kernel task。
@@ -93,6 +94,7 @@ flowchart TD
 - 新增 impl 指南：`docs/exports/impl-guide/`
 - 架构图：`docs/exports/architecture/`
 - 功能快照：`docs/exports/features/`（目录说明见该路径下 **`README.md`**）
+- klog 设计（组件未落地）：[`docs/architecture/wateros-klog.md`](wateros-klog.md)
 - 版本概述：`docs/exports/release-overview/`
 
 ## 注释覆盖维护（无行为变更）

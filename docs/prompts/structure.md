@@ -46,6 +46,10 @@ IPC 总入口，继续拆分为 pipe、signal、futex、event、shm、waitqueue�
 
 平台组件，继续拆分为 platform-api、arch、firmware 和 platform-impl。
 
+##### `wateros-klog`
+
+内核消息环组件（**设计中**，详见 **`docs/architecture/wateros-klog.md`**）。计划拆分为 `klog-api/api-v0`、`klog-impl/klog-ringbuf` 与聚合 `src/lib.rs`；提供可查询的 desc + 变长正文环，并适配 Linux **`syslog(2)`**（**`__NR_syslog` = 116**）。与 **`wateros-runtime-logging`** 零耦合：`log!` 仅控制台，持久记录走 `klog_*!` / `klog::record`。
+
 ##### `wateros-runtime`
 
 运行时组件，继续拆分为 console、logging、panic、heap-allocator。

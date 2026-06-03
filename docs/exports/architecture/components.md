@@ -11,6 +11,8 @@ flowchart TD
     mm[wateros-mm]
     platform[wateros-platform]
     runtime[wateros-runtime]
+    klog[wateros-klog planned]
+    syscall[wateros-syscall]
     task[wateros-task]
     utils[wateros-utils]
     vfs[wateros-vfs]
@@ -23,7 +25,9 @@ flowchart TD
     wateros --> mm
     wateros --> platform
     wateros --> runtime
+    wateros --> syscall
     wateros --> vfs
+    syscall --> klog
 
     platform --> task
     driver --> utils

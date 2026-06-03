@@ -33,3 +33,26 @@ WaterOS 主要使用以下模块关系：
 - `mm-frame-alloctor`：帧分配子组件。
 - `mm-impl/impl-sv39`：当前默认实现。
 - `mm/src/lib.rs`：聚合导出并组织自检。
+
+### klog（设计中）
+
+- `klog-api/api-v0`：`KlogRecordMeta`、`KlogStore`、`SyslogAction` 等契约。
+- `klog-impl/klog-ringbuf`：desc + 变长 text 环、全局单例、spin 锁。
+- `wateros-klog/src/lib.rs`：`init`、`klog_*!` 宏、`export`、`syscall::dispatch`。
+- `wateros-syscall`：`sys_syslog`（116）薄适配；**不**经过 `wateros-runtime-logging`。
+- 完整设计：[`docs/architecture/wateros-klog.md`](../../architecture/wateros-klog.md)。
+
+```mermaid
+flowchart LR
+  klogApi[klog-api]
+  klogRb[klog-ringbuf]
+  klogAgg[wateros-klog]
+  syscall[wateros-syscall]
+  platform[wateros-platform]
+
+  klogAgg --> klogApi
+  klogAgg --> klogRb
+  klogRb --> klogApi
+  klogAgg --> platform
+  syscall --> klogAgg
+```

@@ -5,6 +5,7 @@
 ## 子目录
 
 - `architecture/`：组件图、模块图和连接关系。
+- `../architecture/wateros-klog.md`：**`wateros-klog`** 详细设计（一级组件待落地）。
 - `public-api/`：按组件拆分的当前公共接口导出。
 - `impl-guide/`：按组件拆分的新增 impl 指南。
 - `features/`：按组件拆分的当前能力快照。
