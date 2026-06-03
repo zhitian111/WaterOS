@@ -195,10 +195,11 @@ impl TrapFrameWrite for TrapContext {
 
     fn set_user_sp(&mut self, sp : usize) { self.set_user_sp_raw(sp); }
 
-    fn set_user_entry_args(&mut self, argc : usize, argv : usize, envp : usize) {
-        self.x[4] = argc;
-        self.x[5] = argv;
-        self.x[6] = envp;
+    fn set_user_entry_args(&mut self, _argc : usize, _argv : usize, _envp : usize) {
+        // Linux/LoongArch libc start code reads argc/argv/envp from the user
+        // stack. a0 carries rtld_fini for the dynamic loader handoff; for direct
+        // kernel exec, static binaries need it to be null.
+        self.x[4] = 0;
     }
 
     fn set_return_to_user(&mut self) { self.set_return_to_user_raw(); }
