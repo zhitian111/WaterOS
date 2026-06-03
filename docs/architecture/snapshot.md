@@ -17,6 +17,7 @@
 
 - `wateros-abi`
 - `wateros-base`
+- `wateros-cred`
 - `wateros-driver`
 - `wateros-fs`
 - `wateros-ipc`
@@ -38,6 +39,7 @@ flowchart TD
     wateros[wateros]
     abi[wateros-abi]
     base[wateros-base]
+    cred[wateros-cred]
     driver[wateros-driver]
     fs[wateros-fs]
     ipc[wateros-ipc]
@@ -50,6 +52,7 @@ flowchart TD
 
     wateros --> abi
     wateros --> base
+    wateros --> cred
     wateros --> driver
     wateros --> fs
     wateros --> ipc
@@ -84,6 +87,7 @@ flowchart TD
 - 初始化任务调度器并创建演示性 kernel task。
 - `wateros-task` 条件等待、最小父子关系与 child-exit wait 已服务 `wateros-ipc` / `wateros-syscall`；RISC-V 自检会启动根卷 **`/elf/000_hello_world.elf`** 与 **`/elf/010_pipe_smoke.elf`** 用户任务，并创建内核内部 ring-buffer pipe 覆盖阻塞读写、EOF、BrokenPipe 与非阻塞 WouldBlock。
 - 通过 **`extern crate syscall as _`** 链接 **`wateros-syscall`**，供平台 trap 路径调用其分发符号；per-task fd 表在 **`wateros-vfs`**（`fd-session`），syscall 经 **`vfs::fd`** 完成 `pipe` / `read` / `write` / `close`（见 **`docs/exports/features/wateros-syscall.md`**、**`docs/exports/features/wateros-vfs.md`**）。
+- **`wateros-cred`** 在 QEMU 平台 feature 下启用 `api-v0` + `impl-root`，由 bring-up call site 初始化用户任务 root 凭证，并由 syscall identity 路径读取/更新当前任务凭证；`wateros-task` 不反向依赖 cred。
 - 启用中断与定时器，并进入首个任务。
 - 在 `qemu-loongarch64-virt` 路径下初始化 UART 控制台、日志、堆、LoongArch trap、timer interrupt 与 round-robin 调度器；已完成 **LoongArch64 三级页表 MM bring-up**（帧分配器、内核全局页表、恒等映射 RAM/MMIO、PGDL 切换探针）、**驱动层**（硬编码 virtio-mmio 槽位扫描 0x1000_8000，注册 virtio-blk 块设备）、**FS/VFS 自检**（devfs 刷新 + ext4 根卷挂载 + VFS 桥自检）。同时保留 PLV3 用户态 syscall smoke 用于验证用户态 trap 环路闭环。
 - `wateros-mm` 的 **`impl-loongarch64`** 已实现完整的三级页表 walk、map/unmap/protect/translate、fork/destroy 以及 `from_elf_path` / `from_elf_bytes` ELF 装载器；用户地址空间与内核恒等映射共用一套页表。系统调用号表与 RISC-V 路径一致复用 Linux generic 64-bit 约定（见 **`wateros-abi`** 的 **`impl-linux-generic64`**）。`trap_handler` 已在返回用户态时为 `impl-loongarch64` 切换到内核地址空间 token。下一步用 `from_elf_path` 替代硬编码 PLV3 smoke，从根卷加载真实 ELF 用户任务。

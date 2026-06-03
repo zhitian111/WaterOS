@@ -1,7 +1,8 @@
 #![no_std]
 //! 进程凭证（credentials）v0 契约：对齐 Linux `struct cred` 子集。
 //!
-//! 首版 impl-root 恒为 root；capabilities 与 VFS 权限检查在此 trait 层预留。
+//! impl-root 初始凭证为 root，并按 privileged 语义放行 set*id 更新；capabilities
+//! 与 VFS 权限检查在此 trait 层预留。
 //! `prctl(PR_CAPBSET_*)` 的权威语义最终将归口 `AccessCheck::has_cap`。
 
 /// 任务在 cred 侧表中的索引（与 `task::TaskId` 数值一致，但不依赖 task crate）。
@@ -15,7 +16,7 @@ pub struct Uid(pub u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Gid(pub u32);
 
-/// 首版 supplementary 组数量（G1：`getgroups` 返回 `[0]`）。
+/// 当前 supplementary 组数量（G1：`getgroups` 返回 `[0]`）。
 pub const SUPPLEMENTARY_GROUP_COUNT: usize = 1;
 
 /// 进程凭证快照（八 ID + 固定长度 supplementary 组）。
@@ -51,9 +52,97 @@ impl ProcessCredentials {
     pub const fn supplementary_group_count(&self) -> isize {
         SUPPLEMENTARY_GROUP_COUNT as isize
     }
+
+    /// privileged `setuid(2)` 语义：real/effective/saved/fs uid 全部更新。
+    #[inline]
+    pub fn set_uid(&mut self, uid: Uid) {
+        self.real_uid = uid;
+        self.effective_uid = uid;
+        self.saved_uid = uid;
+        self.fs_uid = uid;
+    }
+
+    /// privileged `setgid(2)` 语义：real/effective/saved/fs gid 全部更新。
+    #[inline]
+    pub fn set_gid(&mut self, gid: Gid) {
+        self.real_gid = gid;
+        self.effective_gid = gid;
+        self.saved_gid = gid;
+        self.fs_gid = gid;
+    }
+
+    /// privileged `setreuid(2)` 语义；`None` 表示 Linux 的 `-1` 保持不变。
+    #[inline]
+    pub fn set_reuid(&mut self, real_uid: Option<Uid>, effective_uid: Option<Uid>) {
+        if let Some(uid) = real_uid {
+            self.real_uid = uid;
+        }
+        if let Some(uid) = effective_uid {
+            self.effective_uid = uid;
+        }
+        if real_uid.is_some() || effective_uid.is_some() {
+            self.saved_uid = self.effective_uid;
+            self.fs_uid = self.effective_uid;
+        }
+    }
+
+    /// privileged `setregid(2)` 语义；`None` 表示 Linux 的 `-1` 保持不变。
+    #[inline]
+    pub fn set_regid(&mut self, real_gid: Option<Gid>, effective_gid: Option<Gid>) {
+        if let Some(gid) = real_gid {
+            self.real_gid = gid;
+        }
+        if let Some(gid) = effective_gid {
+            self.effective_gid = gid;
+        }
+        if real_gid.is_some() || effective_gid.is_some() {
+            self.saved_gid = self.effective_gid;
+            self.fs_gid = self.effective_gid;
+        }
+    }
+
+    /// privileged `setresuid(2)` 语义；`None` 表示 Linux 的 `-1` 保持不变。
+    #[inline]
+    pub fn set_resuid(
+        &mut self,
+        real_uid: Option<Uid>,
+        effective_uid: Option<Uid>,
+        saved_uid: Option<Uid>,
+    ) {
+        if let Some(uid) = real_uid {
+            self.real_uid = uid;
+        }
+        if let Some(uid) = effective_uid {
+            self.effective_uid = uid;
+        }
+        if let Some(uid) = saved_uid {
+            self.saved_uid = uid;
+        }
+        self.fs_uid = self.effective_uid;
+    }
+
+    /// privileged `setresgid(2)` 语义；`None` 表示 Linux 的 `-1` 保持不变。
+    #[inline]
+    pub fn set_resgid(
+        &mut self,
+        real_gid: Option<Gid>,
+        effective_gid: Option<Gid>,
+        saved_gid: Option<Gid>,
+    ) {
+        if let Some(gid) = real_gid {
+            self.real_gid = gid;
+        }
+        if let Some(gid) = effective_gid {
+            self.effective_gid = gid;
+        }
+        if let Some(gid) = saved_gid {
+            self.saved_gid = gid;
+        }
+        self.fs_gid = self.effective_gid;
+    }
 }
 
-/// 占位 capability 枚举；impl-root 恒返回 true。
+/// 占位 capability 枚举；impl-root 当前恒返回 true。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Capability {
     /// 占位项，后续按 Linux cap 编号扩展。
@@ -78,12 +167,33 @@ pub trait CredentialBackend {
     fn drop_task_cred(&mut self, tid: TaskId);
 }
 
+/// per-task 凭证 ID 更新后端。
+pub trait CredentialMutation {
+    /// 更新 uid 三元组；`None` 表示 Linux set*id API 的 `-1` 保持不变。
+    fn set_resuid(
+        &mut self,
+        tid: TaskId,
+        real_uid: Option<Uid>,
+        effective_uid: Option<Uid>,
+        saved_uid: Option<Uid>,
+    );
+
+    /// 更新 gid 三元组；`None` 表示 Linux set*id API 的 `-1` 保持不变。
+    fn set_resgid(
+        &mut self,
+        tid: TaskId,
+        real_gid: Option<Gid>,
+        effective_gid: Option<Gid>,
+        saved_gid: Option<Gid>,
+    );
+}
+
 /// 权限与 capability 检查（P1 占位）。
 pub trait AccessCheck {
-    /// 是否拥有指定 capability（impl-root：恒 true）。
+    /// 是否拥有指定 capability（impl-root 当前恒 true）。
     fn has_cap(&self, cred: &ProcessCredentials, cap: Capability) -> bool;
 
-    /// 是否允许对 inode 元数据执行 access 类操作（impl-root：恒 true）。
+    /// 是否允许对 inode 元数据执行 access 类操作（impl-root 当前恒 true）。
     fn may_access_inode(
         &self,
         cred: &ProcessCredentials,

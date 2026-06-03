@@ -15,6 +15,7 @@
 
 - 根 crate **`wateros`** 依赖 **`wateros-syscall`**（包名 `syscall`），平台 feature 启用 **`impl-riscv64`** / **`impl-loongarch64`**。
 - **`fd-session`** 下依赖 **`wateros-vfs`**：`vfs::fd` per-task fd 表、`vfs::cwd`、`vfs::mount_ext4_block_at`。
+- **`cred-session`** 下依赖 **`wateros-cred`**：identity syscall 读取/更新当前任务 `ProcessCredentials`。
 - **`read` / `write` / `close` / `pipe2` / `openat` / `getdents64` / `unlinkat` / `mkdirat`** 等经 **`vfs_util::vfs_error_to_errno`** 映射 **`VfsError`**（含 **`ReadOnlyFs` → `EROFS`**）。
 
 ## 当前已具备能力（basic bring-up 相关）
@@ -42,6 +43,8 @@
 | `execve` | 部分 | 替换地址空间/入口/栈；非 ELF 文本脚本经 shebang 解析后加载解释器 ELF |
 | `waitpid` | 部分 | 最小父子等待、`WNOHANG` |
 | `getpid` / `getppid` / `gettid` | 部分 | orphan ppid 为 1 |
+| `getuid` / `geteuid` / `getgid` / `getegid` / `getgroups` | 已接入 | 经 `wateros-cred`；`getgroups` G1 返回 `[0]` |
+| `setuid` / `setgid` / `setreuid` / `setregid` / `setresuid` / `setresgid` | 已接入 | impl-root 放行 ID 更新；非法超宽 uid/gid 返回 `EINVAL` |
 | `gettimeofday` / `clock_settime` / `clock_gettime` / `clock_getres` / `clock_nanosleep` / `times` / `nanosleep` | 部分 | `platform::timer` 单调时钟 + REALTIME offset；sleep 精度 ~10ms |
 | `getcwd` / `chdir` | 部分 | per-task cwd |
 | `uname` | 部分 | 固定 `utsname` 字段 |

@@ -68,17 +68,26 @@ fn do_faccessat(dirfd: isize, path_ptr: usize, mode: u32, flags: u32) -> UserRet
             Ok(p) => p,
             Err(e) => return UserRet::from_error(e),
         };
-        let resolved = match resolve_path_at(dirfd, path.as_str()) {
-            Ok(p) => p,
-            Err(e) => return UserRet::from_error(e),
-        };
-        match active_impl::backend().metadata(resolved.as_str()) {
-            Ok(meta) => meta.mode,
-            Err(e) => return UserRet::from_error(vfs_error_to_errno(e)),
+        if path.is_empty() && (flags & AT_EMPTY_PATH) != 0 && dirfd >= 0 {
+            match vfs::fd::with_current_io(dirfd as usize, |handle| handle.metadata()) {
+                Ok(meta) => meta.mode,
+                Err(e) => return UserRet::from_error(vfs_error_to_errno(e)),
+            }
+        } else {
+            let resolved = match resolve_path_at(dirfd, path.as_str()) {
+                Ok(p) => p,
+                Err(e) => return UserRet::from_error(e),
+            };
+            match active_impl::backend().metadata(resolved.as_str()) {
+                Ok(meta) => meta.mode,
+                Err(e) => return UserRet::from_error(vfs_error_to_errno(e)),
+            }
         }
     };
 
     let cred = cred::current_credentials();
+    // TODO(cred-vfs): VfsMetadata 尚无 inode owner；后续应改为
+    // cred::may_access_inode(cred, owner_uid, owner_gid, mode, access_mask)。
     if mode == F_OK || access_mode_allowed(file_mode, mode, &cred, use_effective) {
         UserRet::from_success(0)
     } else {

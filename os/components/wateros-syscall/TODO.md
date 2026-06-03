@@ -43,9 +43,9 @@
 | `getpid` | 已接入 | 返回当前 task id。 |
 | `getppid` | 部分接入 | orphan parent 暂返回 1。 |
 | `gettid` | 部分接入 | 当前默认等同 `getpid`。 |
-| `getuid`/`geteuid`/`getgid`/`getegid` | 已接入 | 经 `wateros-cred` impl-root 恒返回 0。 |
+| `getuid`/`geteuid`/`getgid`/`getegid` | 已接入 | 经 `wateros-cred` 读取当前任务凭证。 |
 | `getgroups` | 已接入 | G1：`[0]`；未实现边界 panic。 |
-| `setuid`/`setgid`/`setreuid`/`setregid`/`setresuid`/`setresgid` | 已登记 | 显式 `syscall_unsupported` panic。 |
+| `setuid`/`setgid`/`setreuid`/`setregid`/`setresuid`/`setresgid` | 已接入 | impl-root 允许 ID 更新；非法超宽 uid/gid 返回 `EINVAL`。 |
 | `gettimeofday` | 部分接入 | REALTIME，基于 `platform::timer` + 可调 offset。 |
 | `clock_settime` | 部分接入 | 仅 `CLOCK_REALTIME`；无 `CAP_SYS_TIME` 校验。 |
 | `clock_gettime` | 部分接入 | REALTIME/MONOTONIC/CPUTIME 等子集；`platform::timer` 优先。 |

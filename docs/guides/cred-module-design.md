@@ -7,14 +7,14 @@
 **首版范围（MVP）**：
 
 - 新建 `wateros-cred` 组件（api-v0 + impl-root），按 `TaskId` 侧表存储凭证。
-- 实现上述 5 个 get* syscall；所有 ID 恒为 root（0）。
+- 实现上述 5 个 get* syscall；用户任务初始 ID 为 root（0），set*id 可更新当前任务凭证。
 - fork 继承父凭证；execve 预留 `on_exec` 钩子（首版 no-op）。
 - 权限检查 trait 占位（P1），impl-root 恒通过。
 - VFS `fstat` 仍返回硬编码 `st_uid/st_gid = 0`（V1），但在三处代码位置留下 **ext4 inode 用户信息** 对接占位。
 
 **明确不在首版**：
 
-- 真实多用户、setuid/setgid 语义、capabilities 位图、namespace。
+- 真实多用户安全模型、setuid/setgid 权限拒绝语义、capabilities 位图、namespace。
 - VFS 路径权限检查（open/mkdir 等仍不校验 owner）。
 - `prctl(PR_CAPBSET_*)` 迁移至 cred 模块（保留现有 syscall 桩，文档标明最终归口）。
 
@@ -40,7 +40,7 @@
 | Q7 | 生命周期 hook | **H2**：`task` 不依赖 `cred`；fork/exec/waitpid 在 syscall；spawn/reap 在 call site |
 | Q8 | 权限框架 | **P1**：`has_cap` / `may_access` trait 占位，impl-root 恒 true |
 | R1 | 首 spawn init | 接受与 vfs 同模式：`cred::on_user_task_spawned(tid)` 在 call site 调用 |
-| R2 | set* 未实现 | **S-登记+显式 panic**：号表登记，`dispatch_set*` → `syscall_unsupported("setuid")` 等 |
+| R2 | set*id | **已推进**：号表登记，`dispatch_set*` 调用 `wateros-cred` 更新当前任务凭证；impl-root 暂按 privileged 语义允许更新 |
 | R3 | 无 cred 条目 | **M-panic**：`current_credentials()` 无条目时 panic，消息含 `tid` |
 | R4 | getgroups 边界 | **E-minimal**：happy path 正常返回；其余情况 panic 并说明原因 |
 | R5 | 命名 | 一级组件 **`wateros-cred`** |
@@ -57,13 +57,13 @@ os/components/wateros-cred/
     src/lib.rs                    # Uid, Gid, ProcessCredentials, CredentialBackend, AccessCheck
   cred-impl/impl-root/
     Cargo.toml
-    src/lib.rs                    # B2 侧表 + 恒 root 实现
+    src/lib.rs                    # B2 侧表 + 初始 root / privileged set*id 实现
 ```
 
 与现有组件一致：
 
 - **`cred-api/api-v0`**：稳定契约，不含平台/策略细节。
-- **`cred-impl/impl-root`**：bring-up 阶段「全员 root」策略。
+- **`cred-impl/impl-root`**：bring-up 阶段「初始 root + privileged set*id」策略。
 - **`src/lib.rs`**：根据 feature 导出统一门面函数。
 
 ## api-v0 类型与 trait
@@ -77,7 +77,7 @@ pub struct Uid(u32);
 /// Linux 语义下的组 ID。
 pub struct Gid(u32);
 
-/// 进程凭证快照（对齐 Linux cred 子集；首版八 ID 相同均为 0）。
+/// 进程凭证快照（对齐 Linux cred 子集；用户任务初始八 ID 均为 0）。
 pub struct ProcessCredentials {
     pub real_uid: Uid,
     pub real_gid: Gid,
@@ -178,15 +178,15 @@ pub fn current_credentials() -> ProcessCredentials;  // 内部取 current_task_i
 | `GETEUID` | 175 | 返回 `effective_uid` |
 | `GETGID` | 176 | 返回 `real_gid` |
 | `GETEGID` | 177 | 返回 `effective_gid` |
-| `GETGROUPS` | 155 | G1 语义（见下） |
-| `SETUID` | 146 | `syscall_unsupported("setuid")` |
-| `SETGID` | 144 | `syscall_unsupported("setgid")` |
-| `SETREUID` | 145 | `syscall_unsupported("setreuid")` |
-| `SETREGID` | 143 | `syscall_unsupported("setregid")` |
-| `SETRESUID` | 147 | `syscall_unsupported("setresuid")` |
-| `SETRESGID` | 149 | `syscall_unsupported("setresgid")` |
+| `GETGROUPS` | 158 | G1 语义（见下） |
+| `SETUID` | 146 | 更新 real/effective/saved/fs uid |
+| `SETGID` | 144 | 更新 real/effective/saved/fs gid |
+| `SETREUID` | 145 | 更新 real/effective uid；`-1` 保持不变 |
+| `SETREGID` | 143 | 更新 real/effective gid；`-1` 保持不变 |
+| `SETRESUID` | 147 | 更新 real/effective/saved uid；`-1` 保持不变 |
+| `SETRESGID` | 149 | 更新 real/effective/saved gid；`-1` 保持不变 |
 
-set* 族：**登记 + 显式 dispatch + panic**（R2），避免落入 API trait 默认 `ENOSYS`。
+set* 族：**登记 + 显式 dispatch + 更新凭证**（R2）。impl-root 当前不做非 root 权限拒绝，后续 capability 位图落地后补 `EPERM` 语义。
 
 未列入上表的 identity syscall（如 `getresuid`）：仍走 `dispatch_unknown` → panic；strace 看到后再补登记。
 
@@ -313,22 +313,24 @@ cred = { package = "wateros-cred", path = "./components/wateros-cred/", ... }
 
 按建议顺序实施：
 
-1. [ ]  scaffold `os/components/wateros-cred/`（Cargo workspace 成员、`src/lib.rs`）
-2. [ ] `cred-api/api-v0`：类型 + trait + 模块级 `//!` 说明
-3. [ ] `cred-impl/impl-root`：B2 侧表 + M-panic
-4. [ ] `wateros-abi`：号表常量（get* + set* 登记）
-5. [ ] `wateros-syscall`：`SyscallKind`、decode、`sys/cred.rs`、dispatcher
-6. [ ] `sys/clone.rs`、`sys/execve.rs`、`sys/task.rs`：生命周期 hook
-7. [ ] bring-up / pseudo-shell / self_tests：spawn & reap call site
-8. [ ] 三处 VFS/exec 占位注释
-9. [ ] `os/feature-tree.txt` 与 `docs/exports/features/wateros-cred.md`（实现完成后导出）
+1. [x] scaffold `os/components/wateros-cred/`（Cargo workspace 成员、`src/lib.rs`）
+2. [x] `cred-api/api-v0`：类型 + trait + 模块级 `//!` 说明
+3. [x] `cred-impl/impl-root`：B2 侧表 + M-panic
+4. [x] `wateros-abi`：号表常量（get* + set* 登记）
+5. [x] `wateros-syscall`：`SyscallKind`、decode、`sys/cred.rs`、dispatcher
+6. [x] `sys/clone.rs`、`sys/execve.rs`、`sys/task.rs`：生命周期 hook
+7. [x] bring-up / pseudo-shell / self_tests：spawn & reap call site
+8. [x] 三处 VFS/exec 占位注释
+9. [x] `os/feature-tree.txt` 与 `docs/exports/features/wateros-cred.md`（实现完成后导出）
+
+当前实现已额外完成 set*id identity syscall：impl-root 按 privileged 语义更新当前任务凭证；非 root 权限拒绝、capability 位图与 namespace 仍属于后续安全语义工作。
 
 ## 验收标准
 
 1. BusyBox bring-up 调用 `getuid/geteuid/getgid/getegid/getgroups` **不 panic**，均返回 0 / G1 语义。
 2. `fork` 后子进程 get* 仍返回 0（凭证已复制）。
 3. 故意省略 `on_user_task_spawned` 时，get* **panic** 且消息含 `tid`。
-4. 用户态调用 `setuid` **panic**，消息为 `[syscall] unsupported: setuid`（或等价）。
+4. 用户态调用 `setuid` 成功返回 0，后续 `getuid/geteuid` 反映新 uid。
 5. `fstat` 仍返回 `st_uid/st_gid = 0`（V1 回归不变）。
 
 ## 后续工作索引
@@ -340,7 +342,7 @@ cred = { package = "wateros-cred", path = "./components/wateros-cred/", ... }
 | P3 | execve S_ISUID/S_ISGID | strace / setuid 测例 |
 | P3 | VFS path permission（`may_access_inode`） | open/mkdir 权限拒绝 |
 | P4 | capabilities 位图 + prctl 迁移 | 安全/容器测例 |
-| P4 | setuid/setgid 真实现 | 显式实现 set* syscall 族 |
+| P4 | setuid/setgid 权限语义 | 补非 root 权限拒绝、capability 位图与 namespace 规则 |
 
 ## 相关文档
 

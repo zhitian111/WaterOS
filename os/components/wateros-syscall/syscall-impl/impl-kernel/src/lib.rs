@@ -258,32 +258,32 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
 
     #[inline]
     fn dispatch_setuid(args: SyscallArgs) -> isize {
-        sys::sys_setuid(args)
+        sys::sys_setuid(args).0
     }
 
     #[inline]
     fn dispatch_setgid(args: SyscallArgs) -> isize {
-        sys::sys_setgid(args)
+        sys::sys_setgid(args).0
     }
 
     #[inline]
     fn dispatch_setreuid(args: SyscallArgs) -> isize {
-        sys::sys_setreuid(args)
+        sys::sys_setreuid(args).0
     }
 
     #[inline]
     fn dispatch_setregid(args: SyscallArgs) -> isize {
-        sys::sys_setregid(args)
+        sys::sys_setregid(args).0
     }
 
     #[inline]
     fn dispatch_setresuid(args: SyscallArgs) -> isize {
-        sys::sys_setresuid(args)
+        sys::sys_setresuid(args).0
     }
 
     #[inline]
     fn dispatch_setresgid(args: SyscallArgs) -> isize {
-        sys::sys_setresgid(args)
+        sys::sys_setresgid(args).0
     }
 
     #[inline]

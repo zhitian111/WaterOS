@@ -1,12 +1,13 @@
 #![no_std]
 #![allow(static_mut_refs)]
-//! impl-root：全员 root 凭证策略，按 `TaskId` 侧表存储（B2）。
+//! impl-root：初始 root + privileged set*id 策略，按 `TaskId` 侧表存储（B2）。
 
 extern crate alloc;
 
 use alloc::vec::Vec;
 use api_v0::{
-    AccessCheck, Capability, CredentialBackend, Gid, ProcessCredentials, TaskId, Uid,
+    AccessCheck, Capability, CredentialBackend, CredentialMutation, Gid, ProcessCredentials, TaskId,
+    Uid,
 };
 use base::sync::UniprocessorSafeCell;
 use core::mem::MaybeUninit;
@@ -65,6 +66,14 @@ impl PerTaskCredRegistry {
             .unwrap_or_else(|| panic!("[cred] no cred for tid={tid} ({context})"))
     }
 
+    fn cred_mut_or_panic(&mut self, tid: TaskId, context: &str) -> &mut ProcessCredentials {
+        let owner = self.effective_owner(tid);
+        self.creds
+            .get_mut(owner)
+            .and_then(|o| o.as_mut())
+            .unwrap_or_else(|| panic!("[cred] no cred for tid={tid} ({context})"))
+    }
+
     fn share_cred(&mut self, child: TaskId, parent: TaskId) {
         let _ = self.cred_or_panic(parent, "share_cred parent");
         if self.owners.get(child).and_then(|owner| *owner).is_some() {
@@ -84,12 +93,39 @@ impl PerTaskCredRegistry {
     }
 }
 
+impl CredentialMutation for PerTaskCredRegistry {
+    fn set_resuid(
+        &mut self,
+        tid: TaskId,
+        real_uid: Option<Uid>,
+        effective_uid: Option<Uid>,
+        saved_uid: Option<Uid>,
+    ) {
+        self.cred_mut_or_panic(tid, "set_resuid")
+            .set_resuid(real_uid, effective_uid, saved_uid);
+    }
+
+    fn set_resgid(
+        &mut self,
+        tid: TaskId,
+        real_gid: Option<Gid>,
+        effective_gid: Option<Gid>,
+        saved_gid: Option<Gid>,
+    ) {
+        self.cred_mut_or_panic(tid, "set_resgid")
+            .set_resgid(real_gid, effective_gid, saved_gid);
+    }
+}
+
 impl CredentialBackend for PerTaskCredRegistry {
     fn current(&self, tid: TaskId) -> ProcessCredentials {
         self.cred_or_panic(tid, "current")
     }
 
     fn on_user_task_spawned(&mut self, tid: TaskId) {
+        if self.owners.get(tid).and_then(|owner| *owner).is_some() {
+            self.drop_task_cred(tid);
+        }
         *self.slot_mut(tid) = Some(ProcessCredentials::ROOT);
     }
 
@@ -172,6 +208,28 @@ pub fn drop_task_cred(tid: TaskId) {
 
 pub fn current_credentials_for(tid: TaskId) -> ProcessCredentials {
     registry().exclusive_access().current(tid)
+}
+
+pub fn set_resuid(
+    tid: TaskId,
+    real_uid: Option<Uid>,
+    effective_uid: Option<Uid>,
+    saved_uid: Option<Uid>,
+) {
+    registry()
+        .exclusive_access()
+        .set_resuid(tid, real_uid, effective_uid, saved_uid);
+}
+
+pub fn set_resgid(
+    tid: TaskId,
+    real_gid: Option<Gid>,
+    effective_gid: Option<Gid>,
+    saved_gid: Option<Gid>,
+) {
+    registry()
+        .exclusive_access()
+        .set_resgid(tid, real_gid, effective_gid, saved_gid);
 }
 
 pub fn has_cap(cred: &ProcessCredentials, cap: Capability) -> bool {

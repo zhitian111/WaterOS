@@ -1,8 +1,9 @@
-//! 进程凭证相关系统调用：`getuid`/`geteuid`/`getgid`/`getegid`/`getgroups` 与 set* panic 桩。
+//! 进程凭证相关系统调用：`getuid`/`geteuid`/`getgid`/`getegid`/`getgroups` 与 set*id。
 
+use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
-use cred::api::SUPPLEMENTARY_GROUP_COUNT;
+use cred::api::{Gid, Uid, SUPPLEMENTARY_GROUP_COUNT};
 
 use crate::user_copy::copy_to_user;
 use api_v0::unsupported;
@@ -72,26 +73,96 @@ pub(crate) fn sys_getgroups(args: SyscallArgs) -> UserRet {
     UserRet::from_success(ngroups)
 }
 
-pub(crate) fn sys_setuid(_args: SyscallArgs) -> ! {
-    unsupported::syscall_unsupported("setuid");
+pub(crate) fn sys_setuid(args: SyscallArgs) -> UserRet {
+    let uid = match parse_required_u32_id(args.arg(0)) {
+        Some(uid) => Uid(uid),
+        None => return UserRet::from_error(ErrNo::EINVAL),
+    };
+    cred::set_uid(uid);
+    UserRet::from_success(0)
 }
 
-pub(crate) fn sys_setgid(_args: SyscallArgs) -> ! {
-    unsupported::syscall_unsupported("setgid");
+pub(crate) fn sys_setgid(args: SyscallArgs) -> UserRet {
+    let gid = match parse_required_u32_id(args.arg(0)) {
+        Some(gid) => Gid(gid),
+        None => return UserRet::from_error(ErrNo::EINVAL),
+    };
+    cred::set_gid(gid);
+    UserRet::from_success(0)
 }
 
-pub(crate) fn sys_setreuid(_args: SyscallArgs) -> ! {
-    unsupported::syscall_unsupported("setreuid");
+pub(crate) fn sys_setreuid(args: SyscallArgs) -> UserRet {
+    let real_uid = match parse_optional_u32_id(args.arg(0)) {
+        Some(uid) => uid.map(Uid),
+        None => return UserRet::from_error(ErrNo::EINVAL),
+    };
+    let effective_uid = match parse_optional_u32_id(args.arg(1)) {
+        Some(uid) => uid.map(Uid),
+        None => return UserRet::from_error(ErrNo::EINVAL),
+    };
+    cred::set_reuid(real_uid, effective_uid);
+    UserRet::from_success(0)
 }
 
-pub(crate) fn sys_setregid(_args: SyscallArgs) -> ! {
-    unsupported::syscall_unsupported("setregid");
+pub(crate) fn sys_setregid(args: SyscallArgs) -> UserRet {
+    let real_gid = match parse_optional_u32_id(args.arg(0)) {
+        Some(gid) => gid.map(Gid),
+        None => return UserRet::from_error(ErrNo::EINVAL),
+    };
+    let effective_gid = match parse_optional_u32_id(args.arg(1)) {
+        Some(gid) => gid.map(Gid),
+        None => return UserRet::from_error(ErrNo::EINVAL),
+    };
+    cred::set_regid(real_gid, effective_gid);
+    UserRet::from_success(0)
 }
 
-pub(crate) fn sys_setresuid(_args: SyscallArgs) -> ! {
-    unsupported::syscall_unsupported("setresuid");
+pub(crate) fn sys_setresuid(args: SyscallArgs) -> UserRet {
+    let real_uid = match parse_optional_u32_id(args.arg(0)) {
+        Some(uid) => uid.map(Uid),
+        None => return UserRet::from_error(ErrNo::EINVAL),
+    };
+    let effective_uid = match parse_optional_u32_id(args.arg(1)) {
+        Some(uid) => uid.map(Uid),
+        None => return UserRet::from_error(ErrNo::EINVAL),
+    };
+    let saved_uid = match parse_optional_u32_id(args.arg(2)) {
+        Some(uid) => uid.map(Uid),
+        None => return UserRet::from_error(ErrNo::EINVAL),
+    };
+    cred::set_resuid(real_uid, effective_uid, saved_uid);
+    UserRet::from_success(0)
 }
 
-pub(crate) fn sys_setresgid(_args: SyscallArgs) -> ! {
-    unsupported::syscall_unsupported("setresgid");
+pub(crate) fn sys_setresgid(args: SyscallArgs) -> UserRet {
+    let real_gid = match parse_optional_u32_id(args.arg(0)) {
+        Some(gid) => gid.map(Gid),
+        None => return UserRet::from_error(ErrNo::EINVAL),
+    };
+    let effective_gid = match parse_optional_u32_id(args.arg(1)) {
+        Some(gid) => gid.map(Gid),
+        None => return UserRet::from_error(ErrNo::EINVAL),
+    };
+    let saved_gid = match parse_optional_u32_id(args.arg(2)) {
+        Some(gid) => gid.map(Gid),
+        None => return UserRet::from_error(ErrNo::EINVAL),
+    };
+    cred::set_resgid(real_gid, effective_gid, saved_gid);
+    UserRet::from_success(0)
+}
+
+fn parse_required_u32_id(raw: usize) -> Option<u32> {
+    if raw <= u32::MAX as usize {
+        Some(raw as u32)
+    } else {
+        None
+    }
+}
+
+fn parse_optional_u32_id(raw: usize) -> Option<Option<u32>> {
+    if raw == usize::MAX || raw == u32::MAX as usize {
+        Some(None)
+    } else {
+        parse_required_u32_id(raw).map(Some)
+    }
 }

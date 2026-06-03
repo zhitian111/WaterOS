@@ -90,7 +90,7 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const GETEUID: SyscallNumber = SyscallNumber(175);
     const GETGID: SyscallNumber = SyscallNumber(176);
     const GETEGID: SyscallNumber = SyscallNumber(177);
-    const GETGROUPS: SyscallNumber = SyscallNumber(155);
+    const GETGROUPS: SyscallNumber = SyscallNumber(158);
     const SYSINFO: SyscallNumber = SyscallNumber(179);
     const SETGID: SyscallNumber = SyscallNumber(144);
     const SETREGID: SyscallNumber = SyscallNumber(143);
