@@ -18,10 +18,11 @@ use api_v0::error::MmError;
 use api_v0::kernel_bringup::{LoadElfError, LoadedElf, RootVolumeReadError};
 use api_v0::perm::PagePerm;
 use frame_alloctor::frame_alloc_result;
+use impl_common::{entry_file_offset, finalize_elf_read, rd_u16, rd_u32, rd_u64, PT_LOAD};
 #[cfg(not(feature = "vfs-root-read"))]
 use fs::api::{FsError, SharedFs};
 
-use crate::pagetable::LoongArch64AddressSpace;
+use crate::pagetable::{zero_phys_page, LoongArch64AddressSpace};
 
 #[cfg(feature = "vfs-root-read")]
 use vfs::api::{SingleRootReadView, VfsError};
@@ -64,23 +65,14 @@ fn map_vfs_to_root_vol(e : VfsError) -> RootVolumeReadError {
     }
 }
 
-const PT_LOAD : u32 = 1;
 const EM_LOONGARCH : u16 = 258;
 
-/// 仅检查 ELF64 小端头前缀；用于在 `from_elf_path` 首读异常时决定是否重读。
-#[inline]
-fn elf_loongarch64_le_prefix_ok(data : &[u8]) -> bool { api_v0::executable::is_elf_prefix(data) }
-
-/// 文本/脚本文件不需要 ELF 前缀重试（避免对 `.sh` 误报警）。
-#[inline]
-fn skip_elf_prefix_retry(data : &[u8]) -> bool { api_v0::executable::is_text_file(data) }
-
-/// 从根 RO 句柄读整文件；若首读 ELF 前缀明显损坏则 **再读一次**。
+/// 从根 RO 句柄读整文件；ELF 路径双读校验（见 common `finalize_elf_read`）。
 #[cfg(not(feature = "vfs-root-read"))]
 fn read_whole_file_ro_retry_bad_prefix(root : &SharedFs,
                                        path : &str)
                                        -> Result<Vec<u8>, LoadElfError> {
-    let first = {
+    let read_once = || {
         let g = root.lock();
         g.read(path)
          .map_err(|e| {
@@ -88,44 +80,13 @@ fn read_whole_file_ro_retry_bad_prefix(root : &SharedFs,
                                       e,
                                       path);
              LoadElfError::RootVolume(map_fs_to_root_vol(e))
-         })?
+         })
     };
-    if elf_loongarch64_le_prefix_ok(&first) {
-        return Ok(first);
-    }
-    if skip_elf_prefix_retry(&first) {
-        return Ok(first);
-    }
-    let n = first.len().min(16);
-    runtime::logging::warn!("[elf-load] first read bad ELF64-LE prefix (len={} first{}={:02x?}); \
-                             retry read once path={}",
-                            first.len(),
-                            n,
-                            &first[..n],
-                            path);
-    let second = {
-        let g = root.lock();
-        g.read(path)
-         .map_err(|e| {
-             runtime::logging::trace!("[elf-load] abort: Fs::read retry err={:?} path={}",
-                                      e,
-                                      path);
-             LoadElfError::RootVolume(map_fs_to_root_vol(e))
-         })?
-    };
-    if !elf_loongarch64_le_prefix_ok(&second) {
-        let n2 = second.len().min(16);
-        runtime::logging::warn!("[elf-load] retry read still bad prefix (len={} first{}={:02x?}) \
-                                 path={}",
-                                second.len(),
-                                n2,
-                                &second[..n2],
-                                path);
-    }
-    Ok(second)
+    let first = read_once()?;
+    finalize_elf_read(path, first, read_once)
 }
 
-/// 从根卷读取 `path` 的完整字节（含 ELF 前缀损坏时的一次重试）。
+/// 从根卷读取 `path` 的完整字节（含 ELF 双读校验）。
 pub fn read_path_bytes(path : &str) -> Result<Vec<u8>, LoadElfError> {
     #[cfg(feature = "vfs-root-read")]
     {
@@ -146,71 +107,17 @@ pub fn read_path_bytes(path : &str) -> Result<Vec<u8>, LoadElfError> {
 fn read_whole_file_ro_retry_bad_prefix_vfs(view : &dyn SingleRootReadView,
                                            path : &str)
                                            -> Result<Vec<u8>, LoadElfError> {
-    let first = view.read(path)
-                    .map_err(|e| {
-                        runtime::logging::trace!("[elf-load] abort: Vfs::read err={:?} path={}",
-                                                 e,
-                                                 path);
-                        LoadElfError::RootVolume(map_vfs_to_root_vol(e))
-                    })?;
-    if elf_loongarch64_le_prefix_ok(&first) {
-        return Ok(first);
-    }
-    if skip_elf_prefix_retry(&first) {
-        return Ok(first);
-    }
-    let n = first.len().min(16);
-    runtime::logging::warn!("[elf-load] first read bad ELF64-LE prefix (len={} first{}={:02x?}); \
-                             retry read once path={}",
-                            first.len(),
-                            n,
-                            &first[..n],
-                            path);
-    let second = view.read(path)
-                     .map_err(|e| {
-                         runtime::logging::trace!("[elf-load] abort: Vfs::read retry err={:?} \
-                                                   path={}",
-                                                  e,
-                                                  path);
-                         LoadElfError::RootVolume(map_vfs_to_root_vol(e))
-                     })?;
-    if !elf_loongarch64_le_prefix_ok(&second) {
-        let n2 = second.len().min(16);
-        runtime::logging::warn!("[elf-load] retry read still bad prefix (len={} first{}={:02x?}) \
-                                 path={}",
-                                second.len(),
-                                n2,
-                                &second[..n2],
-                                path);
-    }
-    Ok(second)
-}
-
-/// 小端读取 `u16`；越界返回 `None`。
-#[inline]
-fn rd_u16(s : &[u8], o : usize) -> Option<u16> {
-    s.get(o..o + 2)?
-     .try_into()
-     .ok()
-     .map(u16::from_le_bytes)
-}
-
-/// 小端读取 `u32`。
-#[inline]
-fn rd_u32(s : &[u8], o : usize) -> Option<u32> {
-    s.get(o..o + 4)?
-     .try_into()
-     .ok()
-     .map(u32::from_le_bytes)
-}
-
-/// 小端读取 `u64`。
-#[inline]
-fn rd_u64(s : &[u8], o : usize) -> Option<u64> {
-    s.get(o..o + 8)?
-     .try_into()
-     .ok()
-     .map(u64::from_le_bytes)
+    let read_once = || {
+        view.read(path)
+            .map_err(|e| {
+                runtime::logging::trace!("[elf-load] abort: Vfs::read err={:?} path={}",
+                                         e,
+                                         path);
+                LoadElfError::RootVolume(map_vfs_to_root_vol(e))
+            })
+    };
+    let first = read_once()?;
+    finalize_elf_read(path, first, read_once)
 }
 
 // ELF `p_flags`：bit2=R，bit1=W，bit0=X；全无时补 `R`。
@@ -294,6 +201,7 @@ fn map_segment<A : AddressSpaceOps>(aspace : &mut A,
             continue;
         }
         let ppn = frame_alloc_result().map_err(|e| LoadElfError::Mm(MmError::from(e)))?;
+        zero_phys_page(ppn);
         aspace.map_page_to_ppn(vpn, ppn, perm)
               .map_err(LoadElfError::Mm)?;
         vpn = VirtPageNum(vpn.0 + 1);
@@ -342,11 +250,45 @@ fn map_user_stack<A : AddressSpaceOps>(aspace : &mut A,
     let vpn_end = VirtAddr(stack_top).ceil_page();
     while vpn.0 < vpn_end.0 {
         let ppn = frame_alloc_result().map_err(|e| LoadElfError::Mm(MmError::from(e)))?;
+        zero_phys_page(ppn);
         aspace.map_page_to_ppn(vpn,
                                ppn,
                                PagePerm::R | PagePerm::W | PagePerm::U)
               .map_err(LoadElfError::Mm)?;
         vpn = VirtPageNum(vpn.0 + 1);
+    }
+    // 栈顶再映射一页，避免测程将 SP 顶到 `stack_top` 时立即缺页。
+    let ppn = frame_alloc_result().map_err(|e| LoadElfError::Mm(MmError::from(e)))?;
+    zero_phys_page(ppn);
+    aspace.map_page_to_ppn(vpn_end,
+                           ppn,
+                           PagePerm::R | PagePerm::W | PagePerm::U)
+          .map_err(LoadElfError::Mm)?;
+    Ok(())
+}
+
+/// 映射完成后核对 entry 处指令与缓冲区一致，捕获「头合法、体损坏」的读损。
+fn verify_mapped_entry(aspace : &LoongArch64AddressSpace,
+                       entry_pc : usize,
+                       data : &[u8])
+                       -> Result<(), LoadElfError> {
+    let fo = entry_file_offset(data, entry_pc).ok_or(LoadElfError::Parse)?;
+    if fo + 4 > data.len() {
+        return Err(LoadElfError::Parse);
+    }
+    let expected = &data[fo..fo + 4];
+    let pa = aspace.translate_addr(VirtAddr(entry_pc))
+                   .map_err(LoadElfError::Mm)?
+                   .ok_or(LoadElfError::Parse)?
+                   .0;
+    let mapped = unsafe { core::slice::from_raw_parts(pa as *const u8, 4) };
+    if mapped != expected {
+        runtime::logging::warn!("[elf-load] abort: entry {:#x} mapped insn {:02x?} != file \
+                                 {:02x?}",
+                                entry_pc,
+                                mapped,
+                                expected);
+        return Err(LoadElfError::Parse);
     }
     Ok(())
 }
@@ -468,6 +410,13 @@ pub fn from_elf_bytes(data : &[u8]) -> Result<LoadedElf, LoadElfError> {
         runtime::logging::trace!("[elf-load] abort: Parse no PT_LOAD segments");
         return Err(LoadElfError::Parse);
     }
+    if e_entry == 0 || e_entry < min_vaddr || e_entry >= max_vaddr {
+        runtime::logging::warn!("[elf-load] abort: Parse bad e_entry={:#x} image=[{:#x},{:#x})",
+                                e_entry,
+                                min_vaddr,
+                                max_vaddr);
+        return Err(LoadElfError::Parse);
+    }
 
     // 用户栈：固定顶与 16KiB 大小（均为 4K 页的整数倍）。
     const ELF_STACK_TOP : usize = 0x0000_0000_7FFF_A000;
@@ -497,6 +446,8 @@ pub fn from_elf_bytes(data : &[u8]) -> Result<LoadedElf, LoadElfError> {
                                                 .saturating_add(PAGE_SIZE),
                                       PREFERRED_MMAP_BASE));
     aspace.init_user_layout(heap_start, heap_start, brk_max, mmap_base);
+
+    verify_mapped_entry(&aspace, e_entry, data)?;
 
     let phdr_va = min_vaddr.saturating_add(e_phoff);
     let leaked = Box::leak(Box::new(aspace));

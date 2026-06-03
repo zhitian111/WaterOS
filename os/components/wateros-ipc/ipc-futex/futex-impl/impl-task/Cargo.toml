@@ -11,9 +11,8 @@
 
 [features]
     api-v0 = [ "api-v0/api-v0", "ipc-waitqueue/impl-task" ]
-    default = [  ]
-    impl-loongarch64 = [ "api-v0", "ipc-waitqueue/impl-loongarch64" ]
-    impl-riscv64 = [ "api-v0", "ipc-waitqueue/impl-riscv64" ]
+    default = [ "impl-task" ]
+    impl-task = [ "api-v0", "ipc-waitqueue/impl-task" ]
 
 [profile.dev]
     panic = "abort"

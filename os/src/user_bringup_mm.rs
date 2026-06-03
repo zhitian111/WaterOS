@@ -19,42 +19,33 @@ const MM_MUSL_PATHS : &[&str] = &[
 /// 执行 `stage-02-mm`：装载并登记用户测程（并行 spawn）。
 pub fn run_stage_02() {
     info!("[bringup][stage-02-mm] BEGIN");
-    #[cfg(not(any(feature = "impl-sv39", feature = "impl-loongarch64")))]
+    let n = MM_GLIBC_PATHS.len() + MM_MUSL_PATHS.len();
+    info!("[mm-bringup] will try {n} ELF(s) under /glibc/basic/ and /musl/basic/");
+    info!("[mm-bringup] spawn only enqueues user tasks; CPU-side user code runs after \
+           task::run_first_task()");
+    for path in MM_GLIBC_PATHS.iter()
+                              .chain(MM_MUSL_PATHS)
     {
-        warn!("[mm-bringup] no mm impl active: skip glibc/musl basic ELF load");
-        info!("[bringup][stage-02-mm] END");
-        return;
-    }
-    #[cfg(any(feature = "impl-sv39", feature = "impl-loongarch64"))]
-    {
-        let n = MM_GLIBC_PATHS.len() + MM_MUSL_PATHS.len();
-        info!("[mm-bringup] will try {n} ELF(s) under /glibc/basic/ and /musl/basic/");
-        info!("[mm-bringup] spawn only enqueues user tasks; CPU-side user code runs after \
-               task::run_first_task()");
-        for path in MM_GLIBC_PATHS.iter()
-                                  .chain(MM_MUSL_PATHS)
-        {
-            match mm::kernel_mm::from_elf_path(path) {
-                Ok(loaded) => {
-                    info!("[mm-bringup] loaded path={path} entry={:#x} image=[{:#x},+{:#x}) \
-                           stack=[{:#x},{:#x}) brk=[{:#x},{:#x}) mmap_base={:#x} aspace_ptr={:#x}",
-                          loaded.entry_pc,
-                          loaded.image_base,
-                          loaded.image_size,
-                          loaded.stack_bottom,
-                          loaded.stack_top,
-                          loaded.brk_start,
-                          loaded.brk_max,
-                          loaded.mmap_arena_base,
-                          loaded.user_aspace_ptr);
-                    let tid = task::spawn_user_task_from_loaded_elf(&loaded);
-                    #[cfg(feature = "vfs-bridge")]
-                    vfs::cwd::on_user_task_spawned_for_elf(tid, path);
-                    info!("[mm-bringup] spawned user task {tid} for {path}");
-                }
-                Err(e) => {
-                    warn!("[mm-bringup] skip path={path}: {e:?}");
-                }
+        match mm::kernel_mm::from_elf_path(path) {
+            Ok(loaded) => {
+                info!("[mm-bringup] loaded path={path} entry={:#x} image=[{:#x},+{:#x}) \
+                       stack=[{:#x},{:#x}) brk=[{:#x},{:#x}) mmap_base={:#x} aspace_ptr={:#x}",
+                      loaded.entry_pc,
+                      loaded.image_base,
+                      loaded.image_size,
+                      loaded.stack_bottom,
+                      loaded.stack_top,
+                      loaded.brk_start,
+                      loaded.brk_max,
+                      loaded.mmap_arena_base,
+                      loaded.user_aspace_ptr);
+                let tid = task::spawn_user_task_from_loaded_elf(&loaded);
+                #[cfg(feature = "vfs-bridge")]
+                vfs::cwd::on_user_task_spawned_for_elf(tid, path);
+                info!("[mm-bringup] spawned user task {tid} for {path}");
+            }
+            Err(e) => {
+                warn!("[mm-bringup] skip path={path}: {e:?}");
             }
         }
     }

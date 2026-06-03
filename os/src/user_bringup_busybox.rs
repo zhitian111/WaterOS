@@ -35,22 +35,12 @@ const LOG_TAG : &str = "busybox-bringup";
 /// 执行 `stage-busybox`：登记内核串行 runner（不阻塞；用户态在 `run_first_task` 后运行）。
 pub fn run_stage_busybox() {
     info!("[bringup][stage-busybox] BEGIN");
-    #[cfg(not(any(feature = "impl-sv39", feature = "impl-loongarch64")))]
-    {
-        warn!("[{LOG_TAG}] no mm impl: skip");
-        info!("[bringup][stage-busybox] END");
-        return;
-    }
-    #[cfg(any(feature = "impl-sv39", feature = "impl-loongarch64"))]
-    {
-        task::spawn_kernel_task(bringup_kernel_runner, 0);
-        info!("[{LOG_TAG}] kernel runner enqueued ({} script(s))",
-              SCRIPT_PATHS.len());
-    }
+    task::spawn_kernel_task(bringup_kernel_runner, 0);
+    info!("[{LOG_TAG}] kernel runner enqueued ({} script(s))",
+          SCRIPT_PATHS.len());
     info!("[bringup][stage-busybox] END");
 }
 
-#[cfg(any(feature = "impl-sv39", feature = "impl-loongarch64"))]
 extern "C" fn bringup_kernel_runner(_arg : usize) -> ! {
     for script_path in SCRIPT_PATHS {
         info!("[{LOG_TAG}] script_path = {script_path}");

@@ -46,23 +46,13 @@ const LOG_TAG : &str = "basic-bringup";
 /// 执行 `stage-basic`：登记内核串行 runner（不阻塞；用户态在 `run_first_task` 后运行）。
 pub fn run_stage_basic() {
     info!("[bringup][stage-basic] BEGIN");
-    #[cfg(not(any(feature = "impl-sv39", feature = "impl-loongarch64")))]
-    {
-        warn!("[{LOG_TAG}] no mm impl: skip");
-        info!("[bringup][stage-basic] END");
-        return;
-    }
-    #[cfg(any(feature = "impl-sv39", feature = "impl-loongarch64"))]
-    {
-        task::spawn_kernel_task(bringup_kernel_runner, 0);
-        info!("[{LOG_TAG}] kernel runner enqueued ({} test(s) × {} libc)",
-              BASIC_TESTS.len(),
-              crate::user_bringup_common::LIBC_PREFIXES.len());
-    }
+    task::spawn_kernel_task(bringup_kernel_runner, 0);
+    info!("[{LOG_TAG}] kernel runner enqueued ({} test(s) × {} libc)",
+          BASIC_TESTS.len(),
+          crate::user_bringup_common::LIBC_PREFIXES.len());
     info!("[bringup][stage-basic] END");
 }
 
-#[cfg(any(feature = "impl-sv39", feature = "impl-loongarch64"))]
 extern "C" fn bringup_kernel_runner(_arg : usize) -> ! {
     #[cfg(feature = "vfs-bridge")]
     warn_missing_basic_assets();
@@ -76,8 +66,7 @@ extern "C" fn bringup_kernel_runner(_arg : usize) -> ! {
 }
 
 /// 启动期检查 oscomp basic 测例依赖的根卷路径。
-#[cfg(all(any(feature = "impl-sv39", feature = "impl-loongarch64"),
-          feature = "vfs-bridge"))]
+#[cfg(feature = "vfs-bridge")]
 fn warn_missing_basic_assets() {
     use vfs::api::SingleRootReadView;
     let view = vfs::root::read_view();

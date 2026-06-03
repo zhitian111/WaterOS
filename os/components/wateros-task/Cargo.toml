@@ -18,7 +18,7 @@
 
 [features]
     api-v0 = [ "impl-core/api-v0", "scheduler/api-v0" ]
-    default = [ "api-v0", "impl-core" ]
+    default = [ "api-v0", "impl-core","impl-round-robin" ]
     impl-core = [  ]
     impl-round-robin = [ "scheduler/impl-round-robin" ]
 

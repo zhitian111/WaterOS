@@ -26,21 +26,9 @@
     api-v0 = [ "impl-dummy/api-v0" ]
     default = [ "api-v0", "impl-dummy" ]
     futex = [ "dep:futex", "futex/api-v0", "futex/impl-task" ]
-    impl-dummy = [  ]
-    impl-loongarch64 = [
-        "futex?/impl-loongarch64",
-        "futex?/impl-task",
-        "pipe?/impl-loongarch64",
-        "waitqueue/impl-loongarch64",
-    ]
-    impl-riscv64 = [
-        "futex?/impl-riscv64",
-        "futex?/impl-task",
-        "pipe?/impl-riscv64",
-        "waitqueue/impl-riscv64",
-    ]
+    impl-dummy = [ "impl-dummy/impl-dummy" ]
     pipe = [ "dep:pipe", "pipe/api-v0", "pipe/impl-ringbuf" ]
-
+    all=[ "api-v0", "impl-dummy", "futex", "pipe" ]
 [profile.dev]
     panic = "abort"
 

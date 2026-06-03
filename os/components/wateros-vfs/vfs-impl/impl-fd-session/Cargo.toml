@@ -12,10 +12,8 @@
 
 [features]
     api-v0 = [  ]
-    default = [ "api-v0" ]
-    fd-session = [ "ipc/pipe", "task/api-v0" ]
-    impl-loongarch64 = [ "fd-session" ]
-    impl-riscv64 = [ "fd-session" ]
+    default = [ "impl-fd-session" ]
+    impl-fd-session = [ "api-v0", "ipc/pipe", "task/api-v0" ]
 
 [profile.dev]
     panic = "abort"

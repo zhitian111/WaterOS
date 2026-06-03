@@ -1,6 +1,6 @@
 //! per-task 工作目录：全局注册表、`chdir`/`getcwd` 支撑与 `open` 路径解析。
 
-#![cfg(feature = "fd-session")]
+#![cfg(feature = "impl-fd-session")]
 
 extern crate alloc;
 

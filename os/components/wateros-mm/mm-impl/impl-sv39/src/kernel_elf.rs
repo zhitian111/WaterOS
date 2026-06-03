@@ -18,6 +18,7 @@ use api_v0::error::MmError;
 use api_v0::kernel_bringup::{LoadElfError, LoadedElf, RootVolumeReadError};
 use api_v0::perm::PagePerm;
 use frame_alloctor::frame_alloc_result;
+use impl_common::{entry_file_offset, finalize_elf_read, rd_u16, rd_u32, rd_u64, PT_LOAD};
 #[cfg(not(feature = "vfs-root-read"))]
 use fs::api::{FsError, SharedFs};
 
@@ -64,126 +65,7 @@ fn map_vfs_to_root_vol(e : VfsError) -> RootVolumeReadError {
     }
 }
 
-const PT_LOAD : u32 = 1;
 const EM_RISCV : u16 = 243;
-
-/// 仅检查 ELF64 小端头前缀；用于在 `from_elf_path` 首读异常时决定是否重读。
-#[inline]
-fn elf_riscv64_le_prefix_ok(data : &[u8]) -> bool { api_v0::executable::is_elf_prefix(data) }
-
-/// 校验 `e_entry` 落在某个 `PT_LOAD` 映射区间内；用于 ext4 偶发读损后的二次重读。
-fn elf_riscv64_entry_plausible(data : &[u8]) -> bool {
-    if data.len() < 0x40 {
-        return false;
-    }
-    let e_entry = match rd_u64(data, 0x18) {
-        Some(v) => v as usize,
-        None => return false,
-    };
-    if e_entry == 0 {
-        return false;
-    }
-    let e_phoff = match rd_u64(data, 0x20) {
-        Some(v) => v as usize,
-        None => return false,
-    };
-    let e_phentsize = match rd_u16(data, 0x36) {
-        Some(v) => v as usize,
-        None => return false,
-    };
-    let e_phnum = match rd_u16(data, 0x38) {
-        Some(v) => v as usize,
-        None => return false,
-    };
-    if e_phentsize < 56 || e_phnum == 0 {
-        return false;
-    }
-    for i in 0..e_phnum {
-        let ph = e_phoff + i * e_phentsize;
-        if ph + 56 > data.len() {
-            return false;
-        }
-        let p_type = match rd_u32(data, ph) {
-            Some(v) => v,
-            None => return false,
-        };
-        if p_type != PT_LOAD {
-            continue;
-        }
-        let p_vaddr = match rd_u64(data, ph + 16) {
-            Some(v) => v as usize,
-            None => return false,
-        };
-        let p_memsz = match rd_u64(data, ph + 40) {
-            Some(v) => v as usize,
-            None => return false,
-        };
-        if p_memsz == 0 {
-            continue;
-        }
-        if e_entry >= p_vaddr && e_entry < p_vaddr + p_memsz {
-            return true;
-        }
-    }
-    false
-}
-
-#[inline]
-fn elf_read_acceptable(data : &[u8]) -> bool {
-    elf_riscv64_le_prefix_ok(data) && elf_riscv64_entry_plausible(data)
-}
-
-/// 文本/脚本文件不需要 ELF 前缀重试（避免对 `.sh` 误报警）。
-#[inline]
-fn skip_elf_prefix_retry(data : &[u8]) -> bool { api_v0::executable::is_text_file(data) }
-
-/// ext4 在大量目录遍历后偶发两次读不一致：对 ELF 做双读比对，必要时第三次裁决。
-fn finalize_elf_read(
-    path: &str,
-    first: Vec<u8>,
-    read_again: impl Fn() -> Result<Vec<u8>, LoadElfError>,
-) -> Result<Vec<u8>, LoadElfError> {
-    if skip_elf_prefix_retry(&first) || !elf_riscv64_le_prefix_ok(&first) {
-        return Ok(first);
-    }
-    let second = read_again()?;
-    if first == second {
-        if elf_read_acceptable(&first) {
-            return Ok(first);
-        }
-        if !elf_read_acceptable(&second) {
-            let n = second.len().min(16);
-            runtime::logging::warn!("[elf-load] stable read bad ELF64-LE image (len={} first{}={:02x?}) \
-                                     path={}",
-                                    second.len(),
-                                    n,
-                                    &second[..n],
-                                    path);
-        }
-        return Ok(second);
-    }
-    runtime::logging::warn!("[elf-load] inconsistent ELF reads path={} len {} vs {}; third read",
-                            path,
-                            first.len(),
-                            second.len());
-    let third = read_again()?;
-    if second == third && elf_read_acceptable(&second) {
-        return Ok(second);
-    }
-    if first == third && elf_read_acceptable(&first) {
-        return Ok(first);
-    }
-    if elf_read_acceptable(&second) {
-        return Ok(second);
-    }
-    if elf_read_acceptable(&third) {
-        return Ok(third);
-    }
-    if elf_read_acceptable(&first) {
-        return Ok(first);
-    }
-    Ok(second)
-}
 
 /// 从根 RO 句柄读整文件；ELF 路径双读校验（见 [`finalize_elf_read`]）。
 #[cfg(not(feature = "vfs-root-read"))]
@@ -236,34 +118,6 @@ fn read_whole_file_ro_retry_bad_prefix_vfs(view : &dyn SingleRootReadView,
     };
     let first = read_once()?;
     finalize_elf_read(path, first, read_once)
-}
-
-/// 小端读取 `u16`；越界返回 `None`（解析失败由上层映射为
-/// [`LoadElfError::Parse`]）。
-#[inline]
-fn rd_u16(s : &[u8], o : usize) -> Option<u16> {
-    s.get(o..o + 2)?
-     .try_into()
-     .ok()
-     .map(u16::from_le_bytes)
-}
-
-/// 小端读取 `u32`。
-#[inline]
-fn rd_u32(s : &[u8], o : usize) -> Option<u32> {
-    s.get(o..o + 4)?
-     .try_into()
-     .ok()
-     .map(u32::from_le_bytes)
-}
-
-/// 小端读取 `u64`。
-#[inline]
-fn rd_u64(s : &[u8], o : usize) -> Option<u64> {
-    s.get(o..o + 8)?
-     .try_into()
-     .ok()
-     .map(u64::from_le_bytes)
 }
 
 // ELF `p_flags`：bit2=R，bit1=W，bit0=X；全无时补 `R`
@@ -420,32 +274,6 @@ fn map_user_stack<A : AddressSpaceOps>(aspace : &mut A,
                          PagePerm::R | PagePerm::W | PagePerm::U)
         .map_err(LoadElfError::Mm)?;
     Ok(())
-}
-
-fn entry_file_offset(data: &[u8], entry_pc: usize) -> Option<usize> {
-    let e_phoff = rd_u64(data, 0x20)? as usize;
-    let e_phentsize = rd_u16(data, 0x36)? as usize;
-    let e_phnum = rd_u16(data, 0x38)? as usize;
-    if e_phentsize < 56 || e_phnum == 0 {
-        return None;
-    }
-    for i in 0..e_phnum {
-        let ph = e_phoff + i * e_phentsize;
-        if ph + 56 > data.len() {
-            return None;
-        }
-        let p_type = rd_u32(data, ph)?;
-        if p_type != PT_LOAD {
-            continue;
-        }
-        let p_vaddr = rd_u64(data, ph + 16)? as usize;
-        let p_offset = rd_u64(data, ph + 8)? as usize;
-        let p_memsz = rd_u64(data, ph + 40)? as usize;
-        if entry_pc >= p_vaddr && entry_pc < p_vaddr + p_memsz {
-            return Some(p_offset + (entry_pc - p_vaddr));
-        }
-    }
-    None
 }
 
 /// 映射完成后核对 entry 处指令与缓冲区一致，捕获「头合法、体损坏」的 ext4 读损。

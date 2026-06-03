@@ -470,10 +470,11 @@ pub(crate) fn sys_uname(args: SyscallArgs) -> UserRet {
     if buf_ptr == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
     }
-    // 根据目标架构填充 machine 字段
-    #[cfg(any(feature = "impl-riscv64", feature = "impl-loongarch64"))]
+    #[cfg(target_arch = "riscv64")]
     let machine = "riscv64";
-    #[cfg(not(any(feature = "impl-riscv64", feature = "impl-loongarch64")))]
+    #[cfg(target_arch = "loongarch64")]
+    let machine = "loongarch64";
+    #[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
     let machine = "unknown";
     let uts = UserUtsName {
         sysname: make_uts_field("WaterOS"),
