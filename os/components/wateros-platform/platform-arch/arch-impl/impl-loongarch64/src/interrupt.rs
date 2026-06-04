@@ -1,5 +1,5 @@
 //! LoongArch64 **中断开关**：`CRMD.IE` 为全局中断，`ECFG` 中定时器使能位与手册一致；
-//! **不**编程 StableCounter 或固件 deadline（见 `firmware::timer`）。
+//! **不**编程 StableCounter deadline（见 `platform::timer`）。
 
 use api_v0::interrupt::{ArchInterruptState, ArchTimerInterruptControl};
 use api_v0::time::ArchTimeResult;

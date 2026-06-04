@@ -1,11 +1,12 @@
 #![no_std]
-//! 控制台输出抽象与便捷 API：基于 `api_v0::Console` 的类型参数化输出，并在 feature 下绑定具体 `ConsoleHandle`。
+//! 控制台输出抽象与便捷 API：基于 `api_v0::Console`
+//! 的类型参数化输出，并在 feature 下绑定具体 `ConsoleHandle`。
 //!
 //! - 带泛型的 `print` / `prints` 供库代码在已知 `Console` 实现时调用。
-//! - `print!` / `println!` 宏默认使用本 crate 选中的 `ConsoleHandle`（dummy 或 OpenSBI 固件）。
-//! - `write_raw_bytes` 面向非 UTF-8 或 syscall 路径；未启用 `impl-firmware-opensbi` 时为吞掉输出的占位行为。
+//! - `print!` / `println!` 宏默认使用本 crate 选中的 `ConsoleHandle`。
+//! - `write_raw_bytes` 面向非 UTF-8 或 syscall 路径；未启用平台控制台时为吞掉输出的占位行为。
 //!
-//! **平台假设**：ANSI 转义序列依赖接收端（串口终端或 QEMU）对 SGR 的支持；固件路径下与 OpenSBI 控制台扩展一致。
+//! **平台假设**：ANSI 转义序列依赖接收端（串口终端或 QEMU）对 SGR 的支持。
 
 use core::fmt;
 
@@ -55,26 +56,26 @@ pub fn prints<C : Console>(str : &str) {
      .unwrap();
 }
 
-/// 将任意字节写入固件控制台（不要求 UTF-8）；供 `write` 系统调用等路径使用。
+/// 将任意字节写入平台控制台（不要求 UTF-8）；供 `write` 系统调用等路径使用。
 ///
-/// **契约**：无固件后端时静默丢弃，避免在无串口构建中引入链接依赖；有后端时按字节原样下发。
+/// **契约**：无平台控制台后端时静默丢弃，避免在无串口构建中引入链接依赖；
+/// 有后端时按字节原样下发。
 #[inline]
 pub fn write_raw_bytes(bytes : &[u8]) {
-    #[cfg(feature = "impl-firmware-opensbi")]
-    impl_firmware_opensbi::firmware_write_a_buffer(bytes);
-    // 未链 OpenSBI 控制台实现时保持无操作，便于仅编译/单测场景。
-    #[cfg(not(feature = "impl-firmware-opensbi"))]
+    #[cfg(feature = "impl-platform-console")]
+    impl_platform_console::platform_console_write_a_buffer(bytes);
+    // 未链平台控制台实现时保持无操作，便于仅编译/单测场景。
+    #[cfg(not(feature = "impl-platform-console"))]
     {
         let _ = bytes;
     }
 }
 
 /// 当前 feature 选中的默认控制台句柄类型，供 `print!` / `println!` 使用。
-// `impl-firmware-console` 与 `impl-firmware-opensbi` 为历史/别名关系，均指向同一固件实现 crate。
 #[cfg(feature = "impl-dummy")]
 pub use impl_dummy::DummyConsoleHandle as ConsoleHandle;
-#[cfg(any(feature = "impl-firmware-console", feature = "impl-firmware-opensbi"))]
-pub use impl_firmware_opensbi::FirmwareConsoleHandle as ConsoleHandle;
+#[cfg(feature = "impl-platform-console")]
+pub use impl_platform_console::PlatformConsoleHandle as ConsoleHandle;
 
 /// 使用 [`ConsoleHandle`] 的 `print!` 风格宏，等价于 `print::<ConsoleHandle>(format_args!(...))`。
 #[macro_export]

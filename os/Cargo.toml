@@ -41,8 +41,8 @@
         "mm/impl-loongarch64",
         "mm/vfs-root-read",
         "platform/impl-qemu-loongarch64-virt",
-        "runtime/impl-firmware-console",
         "runtime/impl-info",
+        "runtime/impl-platform-console",
         "syscall/impl-kernel",
         "vfs-bridge",
     ]
@@ -62,8 +62,8 @@
         "impl-sv39",
         "mm/vfs-root-read",
         "platform/impl-qemu-riscv64-opensbi",
-        "runtime/impl-firmware-opensbi",
         # "runtime/impl-trace",
         "runtime/impl-info",
+        "runtime/impl-platform-console",
         "syscall/impl-kernel",
     ]

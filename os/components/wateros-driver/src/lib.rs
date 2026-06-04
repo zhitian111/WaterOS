@@ -29,6 +29,8 @@ pub mod network {
 pub use impl_dummy as active_impl;
 #[cfg(feature = "impl-qemu-loongarch64-virt")]
 pub use impl_qemu_loongarch64_virt as active_impl;
+#[cfg(feature = "impl-qemu-loongarch64-virt")]
+pub use impl_qemu_loongarch64_virt::uart;
 #[cfg(feature = "impl-qemu-riscv64-opensbi")]
 pub use impl_qemu_riscv64_opensbi as active_impl;
 #[cfg(feature = "impl-qemu-riscv64-opensbi")]

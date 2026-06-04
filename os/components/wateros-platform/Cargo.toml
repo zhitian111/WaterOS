@@ -6,11 +6,6 @@
         "./platform-arch/arch-impl/impl-dummy/",
         "./platform-arch/arch-impl/impl-loongarch64/",
         "./platform-arch/arch-impl/impl-riscv64/",
-        "./platform-firmware/",
-        "./platform-firmware/firmware-api/api-v0/",
-        "./platform-firmware/firmware-impl/impl-dummy/",
-        "./platform-firmware/firmware-impl/impl-qemu-loongarch64-uart16550/",
-        "./platform-firmware/firmware-impl/impl-riscv64-opensbi/",
         "./platform-impl/impl-dummy/",
         "./platform-impl/impl-qemu-loongarch64-virt/",
         "./platform-impl/impl-qemu-riscv64-opensbi/",
@@ -26,13 +21,11 @@
     impl-qemu-loongarch64-virt = { path = "./platform-impl/impl-qemu-loongarch64-virt/", package = "wateros-platform-impl-qemu-loongarch64-virt", default-features = true, optional = true }
     impl-qemu-riscv64-opensbi = { path = "./platform-impl/impl-qemu-riscv64-opensbi/", package = "wateros-platform-impl-qemu-riscv64-opensbi", default-features = false, optional = true }
     arch = { path = "./platform-arch/", package = "wateros-platform-arch", default-features = false }
-    firmware = { path = "./platform-firmware/", package = "wateros-platform-firmware", default-features = false }
-    logging = { path = "../wateros-runtime/runtime-logging/", package = "wateros-runtime-logging", default-features = false }
+    log = { version = "0.4.29" }
 
 [features]
     api-v0 = [
         "arch/api-v0",
-        "firmware/api-v0",
         "impl-dummy?/api-v0",
         "impl-qemu-loongarch64-virt?/api-v0",
         "impl-qemu-riscv64-opensbi?/api-v0",
@@ -43,15 +36,11 @@
         "api-v0",
         "arch/impl-loongarch64",
         "dep:impl-qemu-loongarch64-virt",
-        "firmware/impl-qemu-loongarch64-uart16550",
-        "logging/impl-firmware-console",
     ]
     impl-qemu-riscv64-opensbi = [
         "api-v0",
         "arch/impl-riscv64",
         "dep:impl-qemu-riscv64-opensbi",
-        "firmware/impl-riscv64-opensbi",
-        "logging/impl-firmware-opensbi",
     ]
 
 [profile.dev]

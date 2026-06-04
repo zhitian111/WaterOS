@@ -2,7 +2,7 @@
     members = [
         "./runtime-console/console-api/api-v0/",
         "./runtime-console/console-impl/impl-dummy/",
-        "./runtime-console/console-impl/impl-firmware-opensbi/",
+        "./runtime-console/console-impl/impl-platform-console/",
         "./runtime-logging/",
         "./runtime-panic/",
         "runtime-console",
@@ -30,15 +30,10 @@
         "panic/impl-dummy",
     ]
     impl-error = [ "logging/impl-error" ]
-    impl-firmware-console = [
-        "console/impl-firmware-console",
-        "logging/impl-firmware-console",
-        "panic/impl-firmware-console",
-    ]
-    impl-firmware-opensbi = [
-        "console/impl-firmware-opensbi",
-        "logging/impl-firmware-opensbi",
-        "panic/impl-firmware-opensbi",
+    impl-platform-console = [
+        "console/impl-platform-console",
+        "logging/impl-platform-console",
+        "panic/impl-platform-console",
     ]
     impl-info = [ "logging/impl-info" ]
     impl-trace = [ "logging/impl-trace" ]

@@ -5,6 +5,59 @@
 //! 与 `impl-qemu-riscv64-opensbi` 由 `wateros-platform` feature 切换；方法体多为
 //! `unimplemented!()`，不得当作可启动内核的配置。
 
+pub mod console {
+    use api_v0::console::{PlatformConsoleError, PlatformConsoleResult};
+
+    #[inline]
+    pub fn console_flush() -> PlatformConsoleResult<()> { Err(PlatformConsoleError::Unsupported) }
+
+    #[inline]
+    pub fn console_write_a_byte(_byte : u8) -> PlatformConsoleResult<()> {
+        Err(PlatformConsoleError::Unsupported)
+    }
+
+    #[inline]
+    pub fn console_write_a_buffer(_bytes : &[u8]) -> PlatformConsoleResult<()> {
+        Err(PlatformConsoleError::Unsupported)
+    }
+}
+
+pub mod timer {
+    use api_v0::timer::{
+        PlatformDeadlineTimerError, PlatformDeadlineTimerResult, PlatformTimerDeadline,
+    };
+
+    #[inline]
+    pub fn set_timer(_time : PlatformTimerDeadline) -> PlatformDeadlineTimerResult<()> {
+        Err(PlatformDeadlineTimerError::Unsupported)
+    }
+}
+
+pub mod reset {
+    use api_v0::reset::{
+        PlatformResetError, PlatformResetReason, PlatformResetResult, PlatformResetType,
+    };
+
+    #[inline]
+    pub fn reset(_reset_type : PlatformResetType,
+                 _reset_reason : PlatformResetReason)
+                 -> PlatformResetResult<()> {
+        Err(PlatformResetError::Unsupported)
+    }
+
+    #[inline]
+    pub fn reboot(reset_reason : PlatformResetReason) -> PlatformResetResult<()> {
+        reset(PlatformResetType::ColdReboot,
+              reset_reason)
+    }
+
+    #[inline]
+    pub fn shutdown(reset_reason : PlatformResetReason) -> PlatformResetResult<()> {
+        reset(PlatformResetType::Shutdown,
+              reset_reason)
+    }
+}
+
 pub mod boot {
     use api_v0::boot::*;
 
@@ -28,6 +81,9 @@ pub mod boot {
         fn from(value : PlatformDummyBootArgs) -> Self { unimplemented!() }
     }
     impl PlatformBootContext<PlatformDummyBootArgs> for PlatformDummyBootContext {}
+
+    pub use PlatformDummyBootArgs as BootArgs;
+    pub use PlatformDummyBootContext as BootContext;
 }
 
 pub mod time {
@@ -42,4 +98,6 @@ pub mod time {
             Err(PlatformTimeError::Unsupported)
         }
     }
+
+    pub use PlatformDummyTime as PlatformTimeImpl;
 }

@@ -4,8 +4,12 @@
 //! 与 DTB 物理地址等常见调用约定，时间频率当前为常量（可后续改为读 DTB）。
 //!
 //! 本 crate 属于 **platform-impl**：描述运行环境假设，不包含 ISA 细节实现
-//!（见 `wateros-platform-arch-impl-riscv64`）也不直接封装 SBI（见
-//! `wateros-platform-firmware-impl-opensbi`）。
+//!（见 `wateros-platform-arch-impl-riscv64`），但会接线该平台 profile 使用的
+//! OpenSBI console、timer 与 reset 后端。
+
+pub mod console;
+pub mod reset;
+pub mod timer;
 
 pub mod boot {
     use api_v0::boot::{PlatformBootArgs, PlatformBootContext};
@@ -51,6 +55,9 @@ pub mod boot {
         }
     }
     impl PlatformBootContext<QEMURiscv64OpenSBIBootArgs> for QEMURiscv64OpenSBIBootContext {}
+
+    pub use QEMURiscv64OpenSBIBootArgs as BootArgs;
+    pub use QEMURiscv64OpenSBIBootContext as BootContext;
 }
 
 pub mod time {
@@ -72,4 +79,6 @@ pub mod time {
             }
         }
     }
+
+    pub use QEMURiscv64OpenSBITime as PlatformTimeImpl;
 }

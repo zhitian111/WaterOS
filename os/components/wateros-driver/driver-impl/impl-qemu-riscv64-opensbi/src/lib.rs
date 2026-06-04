@@ -187,7 +187,7 @@ pub fn scan_device_info() -> DriverResult<usize> {
                 Some(m) => {
                     let magic = mmio_read32(m.base, 0);
                     let device_id = mmio_read32(m.base, 2);
-                    logging::info!(
+                    log::info!(
                         "[driver] dtb virtio-mmio: node={} mmio=base {:#x} size {:#x} magic={:#x} device_id={} -> {:?}",
                         node.name,
                         m.base,
@@ -198,7 +198,7 @@ pub fn scan_device_info() -> DriverResult<usize> {
                     );
                 }
                 None => {
-                    logging::warn!(
+                    log::warn!(
                         "[driver] dtb virtio-mmio: node={} has no MMIO region (check FdtNode::reg / #address-cells)",
                         node.name
                     );
@@ -267,8 +267,8 @@ fn probe_virtio_blk_and_collect_unsupported() -> Vec<String> {
                     };
                     let idx = register_block_device(shared);
                     blk.push(mmio);
-                    logging::info!("[driver] registered virtio-blk #{}", idx);
-                    logging::info!(
+                    log::info!("[driver] registered virtio-blk #{}", idx);
+                    log::info!(
                         "[driver] found virtio-blk: node={} base={:#x} size={:#x}",
                         info.node_name,
                         mmio.base,
@@ -276,7 +276,7 @@ fn probe_virtio_blk_and_collect_unsupported() -> Vec<String> {
                     );
                 }
                 Err(err) => {
-                    logging::warn!(
+                    log::warn!(
                         "[driver] failed to init virtio-blk at base={:#x}: {:?}",
                         mmio.base,
                         err
@@ -290,8 +290,8 @@ fn probe_virtio_blk_and_collect_unsupported() -> Vec<String> {
                     let mac = dev.mac_address();
                     let idx = register_network_device(Arc::new(Mutex::new(Box::new(dev))));
                     net.push(mmio);
-                    logging::info!("[driver] registered virtio-net #{}", idx);
-                    logging::info!(
+                    log::info!("[driver] registered virtio-net #{}", idx);
+                    log::info!(
                         "[driver] found virtio-net: node={} mac={:02x?} base={:#x} size={:#x}",
                         info.node_name,
                         mac,
@@ -300,7 +300,7 @@ fn probe_virtio_blk_and_collect_unsupported() -> Vec<String> {
                     );
                 }
                 Err(err) => {
-                    logging::warn!(
+                    log::warn!(
                         "[driver] failed to init virtio-net at base={:#x}: {:?}",
                         mmio.base,
                         err
@@ -319,14 +319,14 @@ fn probe_virtio_blk_and_collect_unsupported() -> Vec<String> {
 fn sync_devfs(unsupported_paths: Vec<String>) {
     devfs_impl::set_dt_unsupported_paths(unsupported_paths);
     let node_count = devfs_impl::refresh();
-    logging::info!("[driver] devfs refreshed, nodes={}", node_count);
+    log::info!("[driver] devfs refreshed, nodes={}", node_count);
 }
 
 // 自检日志：依赖 `logging` 级别；不改变驱动状态。
 fn dump_device_and_devfs_info() {
     let infos = DEVICE_INFOS.lock();
     for (idx, info) in infos.iter().enumerate() {
-        logging::info!(
+        log::info!(
             "[driver][test] dev#{} node={} compatible={} compatibles={:?} type={:?} mmio={:?} irq={:?}",
             idx,
             info.node_name,
@@ -341,7 +341,7 @@ fn dump_device_and_devfs_info() {
 
     let dev_nodes = devfs_impl::list_nodes();
     for (idx, node) in dev_nodes.iter().enumerate() {
-        logging::info!(
+        log::info!(
             "[driver][test] devfs-node#{} path={} type={:?}",
             idx,
             node.path,
@@ -350,7 +350,7 @@ fn dump_device_and_devfs_info() {
     }
 
     let root_path = devfs_impl::default_root_block_path();
-    logging::info!("[driver][test] devfs default root path={:?}", root_path);
+    log::info!("[driver][test] devfs default root path={:?}", root_path);
 }
 
 /// 对已注册的首个 virtio-blk 执行块 0 读取自检；无设备时 [`DriverError::NotFound`]。
@@ -363,14 +363,14 @@ pub fn virtio_blk_probe_test() -> DriverResult<()> {
     let mut dev = VirtioBlkDevice::from_mmio(mmio)?;
     let mut buf = [0u8; BLOCK_SIZE];
     dev.read_blocks(Lba(0), &mut buf)?;
-    logging::info!("[driver] virtio-blk read block0 ok, first16={:02x?}", &buf[..16]);
+    log::info!("[driver] virtio-blk read block0 ok, first16={:02x?}", &buf[..16]);
     Ok(())
 }
 
 /// DTB 扫描、virtio-blk / virtio-net 注册与 devfs 同步的完整 bring-up 路径；成功返回后设备表可能仍为空。
 pub fn init_after_boot() -> DriverResult<()> {
     for e in block::supported_devices() {
-        logging::info!(
+        log::info!(
             "[driver] supported-device catalog: subsystem={} name={} compatible={}",
             e.subsystem,
             e.name,
@@ -378,7 +378,7 @@ pub fn init_after_boot() -> DriverResult<()> {
         );
     }
     for e in network::supported_devices() {
-        logging::info!(
+        log::info!(
             "[driver] supported-device catalog: subsystem={} name={} compatible={}",
             e.subsystem,
             e.name,
@@ -387,44 +387,44 @@ pub fn init_after_boot() -> DriverResult<()> {
     }
 
     let count = scan_device_info()?;
-    logging::trace!("[driver] dtb scan done, devices={}", count);
+    log::trace!("[driver] dtb scan done, devices={}", count);
     let unsupported = probe_virtio_blk_and_collect_unsupported();
     let registered_blk = block_device_count();
     let registered_net = network_device_count();
-    logging::info!(
+    log::info!(
         "[driver] devices registered: block={} network={}",
         registered_blk,
         registered_net
     );
     if registered_blk == 0 {
-        logging::warn!(
+        log::warn!(
             "[driver] no block device registered; root fs may use NotMounted unless a virtio-blk is present. \
              QEMU virt example: `-drive file=...,if=none,id=d0 -device virtio-blk-device,drive=d0`."
         );
     }
     if registered_net == 0 {
-        logging::warn!(
+        log::warn!(
             "[driver] no network device registered; NIC may not be present. \
              QEMU virt example: `-netdev user,id=n0 -device virtio-net-device,netdev=n0`."
         );
     }
     sync_devfs(unsupported);
     uart::init_default_virt_uart();
-    logging::info!("[driver] QEMU virt UART0 MMIO ready (serial I/O)");
+    log::info!("[driver] QEMU virt UART0 MMIO ready (serial I/O)");
     Ok(())
 }
 
 /// 驱动自检：尝试完整 [`init_after_boot`] 路径并打印设备与 devfs 摘要；失败仅打日志不 panic。
 pub fn test() {
-    logging::trace!("[driver-impl-qemu] test begin");
+    log::trace!("[driver-impl-qemu] test begin");
     match init_after_boot() {
         Ok(()) => {
             dump_device_and_devfs_info();
             let _ = virtio_blk_probe_test();
         }
         Err(e) => {
-            logging::warn!("[driver-impl-qemu] init_after_boot failed: {:?}", e);
+            log::warn!("[driver-impl-qemu] init_after_boot failed: {:?}", e);
         }
     }
-    logging::trace!("[driver-impl-qemu] test end");
+    log::trace!("[driver-impl-qemu] test end");
 }

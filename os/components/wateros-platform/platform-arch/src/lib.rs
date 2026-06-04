@@ -1,7 +1,7 @@
 //! **架构（ISA）层**：聚合 `arch-api-v0` 与具体 `arch-impl-*`，向内核暴露
 //! trap、 时间计数、任务硬件上下文、中断位、分页 CSR 等与指令集强相关的原语。
 //!
-//! ## 与 `wateros-platform-firmware` 的边界
+//! ## 与 `wateros-platform-impl` 的边界
 //! - 本 crate **仅**操作 CPU 可见的 CSR/汇编约定（如 RISC-V `stimecmp`
 //!   若将来直接 访问也属于 arch 讨论范围）；**经 SBI
 //!   设置下次中断时刻**、**经固件写串口** 等 属于 firmware 层，由依赖方分别引用

@@ -2,7 +2,7 @@
 
 //! **架构 API v0**：ISA 相关的类型与 trait（trap、时间、任务上下文、中断控制等）。
 //!
-//! 本 crate **不**依赖任何固件或 SBI；与 `wateros-platform-firmware-api-v0` 正交，
+//! 本 crate **不**依赖任何固件、SBI 或板级 profile；与 `wateros-platform-api-v0` 正交，
 //! 由上层 `wateros-platform` 或 `arch-impl` 在必要时组合调用。
 
 /// 特权级抽象（与 `sstatus` 等配合的语义，不包含固件调用）。

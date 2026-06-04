@@ -13,6 +13,7 @@ use fs::devfs::active_impl as devfs_impl;
 use spin::Mutex;
 
 mod pci;
+pub mod uart;
 
 /// DTB 物理基址；为 0 时退化至硬编码 PCI 配置空间基址。
 static DTB_BASE_ADDR: AtomicUsize = AtomicUsize::new(0);
@@ -21,6 +22,7 @@ static VIRTIO_BLK_PCI: Mutex<Vec<VirtioPciProbeInfo>> = Mutex::new(Vec::new());
 
 pub fn init_when_boot(dtb_pa: usize) {
     DTB_BASE_ADDR.store(dtb_pa, Ordering::Release);
+    uart::init_early_default_uart();
 }
 
 /// 物理 RAM 上界（不包含）：QEMU LoongArch64 `virt -m 2G` 的可用 RAM
@@ -76,7 +78,7 @@ fn read_fdt() -> DriverResult<fdt::Fdt<'static>> {
 /// 扫描 PCIe ECAM 总线寻找 virtio-blk 设备并注册。
 pub fn init_after_boot() -> DriverResult<()> {
     for e in block::supported_devices() {
-        logging::info!(
+        log::info!(
             "[driver-la] supported-device catalog: subsystem={} name={} compatible={}",
             e.subsystem,
             e.name,
@@ -89,7 +91,7 @@ pub fn init_after_boot() -> DriverResult<()> {
 
     // 尝试 PCIe ECAM 枚举 virtio-blk 设备。
     let config_base = pci::find_config_base(DTB_BASE_ADDR.load(Ordering::Acquire));
-    logging::info!(
+    log::info!(
         "[driver-la] PCI config base = {:#x}",
         config_base
     );
@@ -101,7 +103,7 @@ pub fn init_after_boot() -> DriverResult<()> {
             };
             let idx = register_block_device(shared);
             blk.push(info);
-            logging::info!(
+            log::info!(
                 "[driver-la] registered virtio-blk #{} via PCI {}:{}.{} vendor={:#06x} \
                             device={:#06x}",
                 idx,
@@ -113,10 +115,10 @@ pub fn init_after_boot() -> DriverResult<()> {
             );
         }
         Ok(None) => {
-            logging::warn!("[driver-la][pci] no virtio-blk device found on PCI bus 0");
+            log::warn!("[driver-la][pci] no virtio-blk device found on PCI bus 0");
         }
         Err(err) => {
-            logging::warn!(
+            log::warn!(
                 "[driver-la] failed to init virtio-blk via PCI: {:?}",
                 err
             );
@@ -124,18 +126,18 @@ pub fn init_after_boot() -> DriverResult<()> {
     }
 
     let registered = block_device_count();
-    logging::info!(
+    log::info!(
         "[driver-la] block devices registered={}",
         registered
     );
     if registered == 0 {
-        logging::warn!(
+        log::warn!(
             "[driver-la] no block device registered; root fs may use NotMounted \
                         unless a virtio-blk is present. QEMU example: `-device \
                         virtio-blk-pci,drive=x0 -drive file=...,if=none,format=raw,id=x0`."
         );
     } else if let Err(err) = virtio_blk_probe_test() {
-        logging::warn!(
+        log::warn!(
             "[driver-la] virtio-blk block0 read self-test failed: {:?}",
             err
         );
@@ -143,10 +145,12 @@ pub fn init_after_boot() -> DriverResult<()> {
 
     // devfs 同步：填充 /dev/sys/* 视图
     let node_count = devfs_impl::refresh();
-    logging::info!(
+    log::info!(
         "[driver-la] devfs refreshed, nodes={}",
         node_count
     );
+    uart::init_default_virt_uart();
+    log::info!("[driver-la] QEMU LoongArch64 UART16550 ready (serial I/O)");
 
     Ok(())
 }
@@ -159,7 +163,7 @@ pub fn virtio_blk_probe_test() -> DriverResult<()> {
     let mut dev = dev.lock();
     let mut buf = [0u8; BLOCK_SIZE];
     dev.read_blocks(Lba(0), &mut buf)?;
-    logging::info!(
+    log::info!(
         "[driver-la] virtio-blk read block0 ok, first16={:02x?}",
         &buf[..16]
     );
@@ -168,17 +172,17 @@ pub fn virtio_blk_probe_test() -> DriverResult<()> {
 
 /// 驱动自检：尝试完整 init_after_boot 路径。
 pub fn test() {
-    logging::trace!("[driver-la] test begin");
+    log::trace!("[driver-la] test begin");
     match init_after_boot() {
         Ok(()) => {
             let _ = virtio_blk_probe_test();
         }
         Err(e) => {
-            logging::warn!(
+            log::warn!(
                 "[driver-la] init_after_boot failed: {:?}",
                 e
             );
         }
     }
-    logging::trace!("[driver-la] test end");
+    log::trace!("[driver-la] test end");
 }

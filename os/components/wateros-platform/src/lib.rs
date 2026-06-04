@@ -1,45 +1,39 @@
 #![no_std]
 
-//! WaterOS **平台聚合**：把 `arch`（指令集 / CSR 原语）、`firmware`（固件 / SBI 能力）与
-//! `platform-impl`（板级或 QEMU 等具体环境）组合成内核可直接调用的入口。
+//! WaterOS **平台聚合**：把 `arch`（指令集 / CSR 原语）与 `platform-impl`
+//!（板级或 QEMU 等具体环境）组合成内核可直接调用的入口。
 //!
 //! ## 分层与边界
 //! - **`arch`（`wateros-platform-arch`）**：与 ISA 强相关的最小原语（trap 上下文、
-//!   `time` CSR、中断屏蔽位、`satp` 等）。**不**承担“经 SBI 写下次定时器”“串口经固件输出”
-//!   等固件契约——这些属于 `firmware`。
-//! - **`firmware`（`wateros-platform-firmware`）**：固件 ABI 封装（控制台、
-//!   `set_timer`、系统复位等）。实现随 feature 切换（如 OpenSBI、dummy）。
+//!   `time` CSR、中断屏蔽位、`satp` 等）。
+//! - **`platform-impl`**：当前板级 profile，负责 boot 参数、时间频率、early console、
+//!   deadline timer、reset 等平台能力。后端可以是 OpenSBI、MMIO UART 或其它机制。
 //! - **本 crate**：在以上两层之上提供**组合语义**（例如 [`timer`] 将 arch 的 tick
-//!   与 firmware 的 deadline 编程衔接），并由 `platform-api-v0` 定义跨实现的 trait
-//!   契约；**板级时间频率**等可来自 DTB/常量/固件，由选中的 `platform-impl` 决定。
+//!   与平台 deadline timer 编程衔接），并由 `platform-api-v0` 定义跨实现的 trait
+//!   契约。
 //!
 //! 默认 feature 与成员 crate 对应关系以根目录 `Cargo.toml` 为准；文档描述的是各层
 //! **语义契约**与替换点，而非单一硬件路径的实现细节。
+
+#[cfg(feature = "impl-dummy")]
+pub use impl_dummy as active_impl;
+#[cfg(feature = "impl-qemu-loongarch64-virt")]
+pub use impl_qemu_loongarch64_virt as active_impl;
+#[cfg(feature = "impl-qemu-riscv64-opensbi")]
+pub use impl_qemu_riscv64_opensbi as active_impl;
 
 /// 启动参数与引导上下文：具体类型由 feature 选中的 `platform-impl` 提供。
 #[cfg(feature = "api-v0")]
 pub mod boot {
     pub use api_v0::boot::{PlatformBootArgs, PlatformBootContext};
-    #[cfg(feature = "impl-dummy")]
-    pub use impl_dummy::boot::PlatformDummyBootArgs as BootArgs;
-    #[cfg(feature = "impl-dummy")]
-    pub use impl_dummy::boot::PlatformDummyBootContext as BootContext;
-    #[cfg(feature = "impl-qemu-loongarch64-virt")]
-    pub use impl_qemu_loongarch64_virt::boot::QEMULoongArch64VirtBootArgs as BootArgs;
-    #[cfg(feature = "impl-qemu-loongarch64-virt")]
-    pub use impl_qemu_loongarch64_virt::boot::QEMULoongArch64VirtBootContext as BootContext;
-    #[cfg(feature = "impl-qemu-riscv64-opensbi")]
-    pub use impl_qemu_riscv64_opensbi::boot::QEMURiscv64OpenSBIBootArgs as BootArgs;
-    #[cfg(feature = "impl-qemu-riscv64-opensbi")]
-    pub use impl_qemu_riscv64_opensbi::boot::QEMURiscv64OpenSBIBootContext as BootContext;
+    pub use crate::active_impl::boot::{BootArgs, BootContext};
 }
 
 /// 架构层再导出：trap、时间计数、中断控制、分页等与 ISA 直接相关的 API。
 ///
-/// 与 **firmware** 子系统（`wateros-platform-firmware` 依赖）的边界：仅操作 CPU /
-/// 监管态可见的硬件与 CSR，不调用 SBI。
+/// 与 **platform-impl** 的边界：仅操作 CPU / 监管态可见的硬件与 CSR，不选择板级后端。
 pub mod arch {
-    pub use ::arch::*;
+    pub use arch::*;
 
     #[inline]
     pub fn init() {
@@ -53,35 +47,34 @@ pub mod arch {
 pub mod time {
     pub use api_v0::time::{PlatformTime, PlatformTimeError, PlatformTimeResult};
 
-    #[cfg(feature = "impl-dummy")]
-    pub use impl_dummy::time::PlatformDummyTime as PlatformTimeImpl;
-    #[cfg(feature = "impl-qemu-loongarch64-virt")]
-    pub use impl_qemu_loongarch64_virt::time::QEMULoongArch64VirtTime as PlatformTimeImpl;
-    #[cfg(feature = "impl-qemu-riscv64-opensbi")]
-    pub use impl_qemu_riscv64_opensbi::time::QEMURiscv64OpenSBITime as PlatformTimeImpl;
+    pub use crate::active_impl::time::PlatformTimeImpl;
 
     #[inline]
-    pub fn frequency_hz() -> PlatformTimeResult<u64> { PlatformTimeImpl::time_frequency_hz() }
+    pub fn frequency_hz() -> PlatformTimeResult<u64> {
+        PlatformTimeImpl::time_frequency_hz()
+    }
 }
 
 /// 组合定时器：用 arch 的 tick 与 [`crate::time`] 给出的 Hz 换算时刻，再经
-/// **firmware** 子系统编程固件定时器。
+/// 平台后端编程下一次定时器中断。
 ///
-/// 错误变体区分 `Arch` / `Platform` / `Firmware` 三层来源，便于定位是 CSR、
-/// 频率配置还是 SBI 调用失败。
+/// 错误变体区分 `Arch` / `Platform` / `DeadlineTimer` 三层来源，便于定位是 CSR、
+/// 频率配置还是平台定时器后端调用失败。
 pub mod timer {
     use core::time::Duration;
 
     pub use api_v0::time::PlatformTimeError;
     pub use arch::time::{ArchTimeError, ArchTimeFrequency, ArchTimeTick};
-    pub use firmware::timer::{FirmwareTimerDeadline, FirmwareTimerError};
+    pub use api_v0::timer::{
+        PlatformDeadlineTimerError, PlatformDeadlineTimerResult, PlatformTimerDeadline,
+    };
 
     /// 组合定时器路径上各层失败的归并类型。
     #[derive(Debug)]
     pub enum PlatformTimerError {
         Arch(ArchTimeError),
         Platform(PlatformTimeError),
-        Firmware(FirmwareTimerError),
+        DeadlineTimer(PlatformDeadlineTimerError),
         NoFrequency,
         Overflow,
     }
@@ -101,31 +94,33 @@ pub mod timer {
     }
 
     #[inline]
-    pub fn set_timer_deadline_tick(deadline_tick : ArchTimeTick) -> PlatformTimerResult<()> {
-        firmware::timer::set_timer(FirmwareTimerDeadline(deadline_tick.0))
-            .map_err(PlatformTimerError::Firmware)
+    pub fn set_timer_deadline_tick(deadline_tick: ArchTimeTick) -> PlatformTimerResult<()> {
+        crate::active_impl::timer::set_timer(PlatformTimerDeadline(deadline_tick.0))
+            .map_err(PlatformTimerError::DeadlineTimer)
     }
 
     #[inline]
-    fn duration_to_ticks(d : Duration, hz : u64) -> PlatformTimerResult<u64> {
+    fn duration_to_ticks(d: Duration, hz: u64) -> PlatformTimerResult<u64> {
         // 向上取整，避免过早触发（例如 1ns 在低频下被截断成 0 tick）。
         let nanos = d.as_nanos();
-        let ticks = nanos.checked_mul(hz as u128)
-                         .ok_or(PlatformTimerError::Overflow)?
-                         .checked_add(1_000_000_000u128 - 1)
-                         .ok_or(PlatformTimerError::Overflow)? /
-                    1_000_000_000u128;
+        let ticks = nanos
+            .checked_mul(hz as u128)
+            .ok_or(PlatformTimerError::Overflow)?
+            .checked_add(1_000_000_000u128 - 1)
+            .ok_or(PlatformTimerError::Overflow)?
+            / 1_000_000_000u128;
         u64::try_from(ticks).map_err(|_| PlatformTimerError::Overflow)
     }
 
     #[inline]
-    fn ticks_to_duration(ticks : u64, hz : u64) -> PlatformTimerResult<Duration> {
+    fn ticks_to_duration(ticks: u64, hz: u64) -> PlatformTimerResult<Duration> {
         if hz == 0 {
             return Err(PlatformTimerError::NoFrequency);
         }
-        let nanos = (ticks as u128).checked_mul(1_000_000_000u128)
-                                   .ok_or(PlatformTimerError::Overflow)? /
-                    (hz as u128);
+        let nanos = (ticks as u128)
+            .checked_mul(1_000_000_000u128)
+            .ok_or(PlatformTimerError::Overflow)?
+            / (hz as u128);
         let nanos_u64 = u64::try_from(nanos).map_err(|_| PlatformTimerError::Overflow)?;
         Ok(Duration::from_nanos(nanos_u64))
     }
@@ -138,43 +133,52 @@ pub mod timer {
     }
 
     #[inline]
-    pub fn set_timer_after(d : Duration) -> PlatformTimerResult<()> {
+    pub fn set_timer_after(d: Duration) -> PlatformTimerResult<()> {
         let now = now_tick()?.0;
         let hz = tick_hz()?.0;
         if hz == 0 {
             return Err(PlatformTimerError::NoFrequency);
         }
         let delta = duration_to_ticks(d, hz)?;
-        let deadline = now.checked_add(delta)
-                          .ok_or(PlatformTimerError::Overflow)?;
-        logging::debug!("now is :{:?}, and will set to :{:?}",
-                        now,
-                        deadline);
+        let deadline = now
+            .checked_add(delta)
+            .ok_or(PlatformTimerError::Overflow)?;
+        log::debug!(
+            "now is :{:?}, and will set to :{:?}",
+            now,
+            deadline
+        );
         set_timer_deadline_tick(ArchTimeTick(deadline))
     }
 
     #[inline]
-    pub fn set_timer_after_ms(ms : u64) -> PlatformTimerResult<()> {
+    pub fn set_timer_after_ms(ms: u64) -> PlatformTimerResult<()> {
         set_timer_after(Duration::from_millis(ms))
     }
 
     #[inline]
-    pub fn set_timer_after_s(s : u64) -> PlatformTimerResult<()> {
+    pub fn set_timer_after_s(s: u64) -> PlatformTimerResult<()> {
         set_timer_after(Duration::from_secs(s))
     }
 }
 
-/// 系统复位与关机：纯固件 / SBI 语义，不经由 arch 特权指令封装（与 `arch` 解耦）。
+/// 系统复位与关机：由当前 platform impl 提供，不经由 arch 特权指令封装。
 pub mod reset {
-    pub use firmware::reset::*;
+    pub use api_v0::reset::{
+        PlatformResetError, PlatformResetReason, PlatformResetResult, PlatformResetType,
+    };
+    pub use crate::active_impl::reset::{reboot, reset, shutdown};
 }
 
-/// 早期控制台输出：走固件或 SBI，不直接操作 UART MMIO（与裸机驱动层解耦）。
+/// 早期控制台输出：由当前 board feature 选择 OpenSBI、UART 或其它平台后端。
 pub mod console {
-    pub use firmware::console::*;
+    pub use api_v0::console::{PlatformConsoleError, PlatformConsoleResult};
+    pub use crate::active_impl::console::{
+        console_flush, console_write_a_buffer, console_write_a_byte,
+    };
 }
 
-/// 中断控制原语再导出：属于 **arch** 层（如 `sie` / `sstatus`），非 firmware。
+/// 中断控制原语再导出：属于 **arch** 层（如 `sie` / `sstatus`），非 platform impl。
 pub mod interrupt {
     pub use arch::interrupt::*;
 }

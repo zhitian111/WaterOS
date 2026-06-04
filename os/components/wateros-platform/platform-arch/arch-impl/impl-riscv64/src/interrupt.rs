@@ -1,6 +1,6 @@
 //! RISC-V 特权级 **中断使能位** 的薄封装：`sie.STIE` 与 `sstatus.SIE`。
 //!
-//! 与 **固件定时器**（`mtime` / `set_timer`）解耦；后者在 `platform-firmware` 组合。
+//! 与 **平台 deadline timer**（`mtime` / `set_timer`）解耦；后者在 `platform-impl` 组合。
 
 use api_v0::interrupt::{ArchInterruptState, ArchTimerInterruptControl};
 use api_v0::time::ArchTimeResult;
