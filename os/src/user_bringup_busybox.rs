@@ -66,6 +66,6 @@ extern "C" fn bringup_kernel_runner(_arg : usize) -> ! {
         crate::user_bringup_common::run_one_busybox_script(LOG_TAG, script_path);
     }
     info!("[{LOG_TAG}] all scripts finished");
-    shutdown(platform::reset::FirmwareResetReason::NoReason);
+    let _ = shutdown(platform::reset::PlatformResetReason::NoReason);
     task::exit_current(0);
 }
