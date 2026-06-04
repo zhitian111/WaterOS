@@ -19,6 +19,7 @@
     mm = { package = "wateros-mm", path = "./components/wateros-mm/", default-features = false }
     cred = { package = "wateros-cred", path = "./components/wateros-cred/", default-features = true, optional = true }
     syscall = { package = "wateros-syscall", path = "./components/wateros-syscall/", default-features = false }
+    klog = { package = "wateros-klog", path = "./components/wateros-klog/", default-features = false, optional = true }
     task = { package = "wateros-task", path = "./components/wateros-task/", default-features = true }
 
 [profile.dev]
@@ -44,6 +45,8 @@
         "runtime/impl-info",
         "runtime/impl-platform-console",
         "syscall/impl-kernel",
+        "klog/default",
+        "dep:klog",
         "vfs-bridge",
     ]
     vfs-bridge = [ "dep:vfs" ]
@@ -66,4 +69,6 @@
         "runtime/impl-info",
         "runtime/impl-platform-console",
         "syscall/impl-kernel",
+        "klog/default",
+        "dep:klog",
     ]

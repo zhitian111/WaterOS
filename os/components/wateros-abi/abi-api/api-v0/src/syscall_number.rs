@@ -198,6 +198,8 @@ pub trait SyscallNumberTable {
     const PRLIMIT64: SyscallNumber;
     /// 可中断的纳秒级睡眠（`nanosleep(2)`）。
     const NANOSLEEP: SyscallNumber;
+    /// 内核日志环（`syslog(2)` / `sys_syslog`）。
+    const SYSLOG: SyscallNumber;
 
     // Socket / 网络 / socket & networking
     /// 创建 socket（`socket(2)`）。

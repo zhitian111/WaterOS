@@ -10,7 +10,7 @@
 - **与用户态兼容**：通过 `wateros-syscall` 导出**传统 syslog 读路径**线格式（如 `"<3>..."`），满足 busybox / `dmesg` 类测例。
 - **与 `wateros-runtime-logging` 分离**：`log!` / 控制台着色输出面向开发调试；**持久环与 syscall 只走 klog 自有 API**，两组件零耦合。
 
-**实现状态**：截至文档编写时，组件目录与代码**尚未落地**；本文档为实现的权威设计基线。落地后须同步 `docs/exports/features/wateros-klog.md` 与源码 rustdoc。
+**实现状态**：组件已落地于 `os/components/wateros-klog/`；本文档为设计基线与实现对照。变更时须同步 `docs/exports/features/wateros-klog.md` 与源码 rustdoc。
 
 ## 事实来源与关联文档
 

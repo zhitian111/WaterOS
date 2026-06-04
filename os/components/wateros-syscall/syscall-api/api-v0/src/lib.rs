@@ -69,6 +69,7 @@ pub enum SyscallKind {
     SetResgid,
     Times,
     Uname,
+    Syslog,
     Prctl,
     GetCwd,
     Chdir,
@@ -223,6 +224,8 @@ impl SyscallKind {
             Self::Times
         } else if syscall_nr == T::UNAME.raw() {
             Self::Uname
+        } else if syscall_nr == T::SYSLOG.raw() {
+            Self::Syslog
         } else if syscall_nr == T::PRCTL.raw() {
             Self::Prctl
         } else if syscall_nr == T::GETCWD.raw() {
@@ -356,6 +359,7 @@ impl SyscallKind {
             Self::SetResgid => "setresgid",
             Self::Times => "times",
             Self::Uname => "uname",
+            Self::Syslog => "syslog",
             Self::Prctl => "prctl",
             Self::GetCwd => "getcwd",
             Self::Chdir => "chdir",
@@ -905,6 +909,14 @@ pub trait SyscallDispatcher {
         )
     }
 
+    fn dispatch_syslog(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Syslog,
+            Self::NumberTable::SYSLOG.raw(),
+            args,
+        )
+    }
+
     fn dispatch_prctl(args: SyscallArgs) -> isize {
         Self::dispatch_unsupported(
             SyscallKind::Prctl,
@@ -1248,6 +1260,7 @@ pub trait SyscallDispatcher {
             SyscallKind::Kill => Self::dispatch_kill(syscall_args),
             SyscallKind::Nanosleep => Self::dispatch_nanosleep(syscall_args),
             SyscallKind::Uname => Self::dispatch_uname(syscall_args),
+            SyscallKind::Syslog => Self::dispatch_syslog(syscall_args),
             SyscallKind::Prctl => Self::dispatch_prctl(syscall_args),
             SyscallKind::GetCwd => Self::dispatch_getcwd(syscall_args),
             SyscallKind::Chdir => Self::dispatch_chdir(syscall_args),

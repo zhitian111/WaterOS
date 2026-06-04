@@ -36,7 +36,7 @@
 
 - 与 Linux generic 64 位表有显著差异的专用架构 **`impl-*`**（若未来从别名中拆出）。
 - 将 **`impl-dummy`** 提升为可切换的完整号表后端（当前与 ABI 主路径无关）。
-- **`SYSLOG` / `__NR_syslog` (116)**：号表与 `SyscallKind::Syslog` 待 **`wateros-klog`** 落地时补齐（设计见 [`docs/architecture/wateros-klog.md`](../../architecture/wateros-klog.md)）。
+- **`SYSLOG` / `__NR_syslog` (116)**：已在 **`impl-linux-generic64`** 与 **`SyscallKind::Syslog`** 中登记。
 
 ## 维护要求
 

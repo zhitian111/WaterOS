@@ -20,11 +20,12 @@
 - `wateros-driver`
 - `wateros-fs`
 - `wateros-ipc`
-- `wateros-klog`（**设计中**，见 [`docs/architecture/wateros-klog.md`](wateros-klog.md)；尚未加入根 `Cargo.toml`）
+- `wateros-klog`（见 [`docs/architecture/wateros-klog.md`](wateros-klog.md)）
 - `wateros-mm`
 - `wateros-platform`
 - `wateros-runtime`
 - `wateros-syscall`
+- `wateros-klog`
 - `wateros-task`
 - `wateros-vfs`
 

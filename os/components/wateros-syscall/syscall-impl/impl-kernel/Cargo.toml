@@ -18,6 +18,7 @@
     smoltcp = { version = "0.13", default-features = false, optional = true }
     spin = "0.10.0"
     wateros-base-config = { path = "../../../wateros-base/base-config/", package = "wateros-base-config", default-features = true }
+    klog = { path = "../../../wateros-klog/", package = "wateros-klog", default-features = true }
 
 [features]
     api-v0 = [ "abi/api-v0", "api-v0/api-v0", "fd-session" ]
@@ -37,6 +38,7 @@
     impl-kernel = [
         "api-v0",
         "fd-session",
+        "klog/default",
         "platform/api-v0",
         "socket-net",
         "task/api-v0",

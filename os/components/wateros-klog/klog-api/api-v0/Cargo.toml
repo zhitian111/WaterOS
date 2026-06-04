@@ -1,0 +1,7 @@
+[package]
+    name = "wateros-klog-api-v0"
+    version = "0.1.0"
+    edition = "2024"
+
+[dependencies]
+    wateros-base-config = { path = "../../../wateros-base/base-config/", package = "wateros-base-config", default-features = true }

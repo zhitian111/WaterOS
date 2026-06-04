@@ -107,6 +107,7 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const SETRLIMIT: SyscallNumber = SyscallNumber(164);
     const PRLIMIT64: SyscallNumber = SyscallNumber(261);
     const NANOSLEEP: SyscallNumber = SyscallNumber(101);
+    const SYSLOG: SyscallNumber = SyscallNumber(116);
 
     // Socket / 网络
     const SOCKET: SyscallNumber = SyscallNumber(198);

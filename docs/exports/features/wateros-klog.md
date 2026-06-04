@@ -14,10 +14,11 @@
 
 | 项 | 状态 |
 |----|------|
-| 组件目录与 Cargo workspace 成员 | **未实现** |
-| `klog-api` / `klog-ringbuf` | **未实现** |
-| `sys_syslog` 接线 | **未实现**（当前 nr=116 → panic） |
-| 设计文档 | **已就绪** |
+| 组件目录与 Cargo workspace 成员 | **已实现**（`os/components/wateros-klog/`） |
+| `klog-api` / `klog-ringbuf` | **已实现** |
+| `sys_syslog` 接线 | **已实现**（`__NR_syslog` = 116） |
+| 根 `wateros` | `klog::init()` 早于 `runtime::logging::init()` |
+| 设计文档 | [docs/architecture/wateros-klog.md](../../architecture/wateros-klog.md) |
 
 ## 设计目标（已评审）
 

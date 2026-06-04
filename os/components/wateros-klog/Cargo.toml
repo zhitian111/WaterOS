@@ -1,0 +1,29 @@
+[workspace]
+    members = [
+        "./klog-api/api-v0/",
+        "./klog-impl/klog-ringbuf/",
+    ]
+
+[package]
+    name = "wateros-klog"
+    version = "0.1.0"
+    edition = "2024"
+
+[dependencies]
+    api-v0 = { path = "./klog-api/api-v0/", package = "wateros-klog-api-v0", default-features = true }
+    impl_ringbuf = { path = "./klog-impl/klog-ringbuf/", package = "wateros-klog-impl-ringbuf", default-features = true }
+    platform = { path = "../wateros-platform/", package = "wateros-platform", default-features = false }
+    task = { path = "../wateros-task/", package = "wateros-task", default-features = false }
+
+[features]
+    api-v0 = []
+    default = [ "api-v0", "impl-ringbuf", "platform-timer", "task-api" ]
+    impl-ringbuf = []
+    platform-timer = [ "platform/api-v0" ]
+    task-api = [ "task/api-v0", "task/impl-core" ]
+
+[profile.dev]
+    panic = "abort"
+
+[profile.release]
+    panic = "abort"

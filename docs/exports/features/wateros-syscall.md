@@ -44,7 +44,7 @@
 | `gettimeofday` / `clock_settime` / `clock_gettime` / `clock_getres` / `clock_nanosleep` / `times` / `nanosleep` | 部分 | `platform::timer` 单调时钟 + REALTIME offset；sleep 精度 ~10ms |
 | `getcwd` / `chdir` | 部分 | per-task cwd |
 | `uname` | 部分 | 固定 `utsname` 字段 |
-| `syslog` (116) | **未实现** | 设计由 **`wateros-klog`** 承载，见 [`docs/architecture/wateros-klog.md`](../../architecture/wateros-klog.md)；当前 **unknown nr=116 → panic** |
+| `syslog` (116) | **已接入** | `sys_syslog` → **`wateros-klog`**；传统 ASCII 读路径；见 [`docs/architecture/wateros-klog.md`](../../architecture/wateros-klog.md) |
 
 ## 明确未覆盖
 
@@ -52,7 +52,6 @@
 - `#!/usr/bin/env` + PATH 搜索（首版 shebang 仅支持解释器路径直写）。
 - 用户缓冲严格 `copy_from_user` / `copy_to_user`。
 - signal、futex、完整 `fcntl`/`ioctl` 等 busybox 后续项。
-- **`syslog` (116)**：待 **`wateros-klog`** 落地后由 `sys_syslog` 适配（传统 ASCII 读路径、全 action 子集，见 klog 设计文档）。
 
 ## 维护要求
 

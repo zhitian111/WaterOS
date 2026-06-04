@@ -2,7 +2,7 @@
 
 ## 用途
 
-描述 **`wateros-klog`** 聚合 crate 计划对内核其它模块暴露的稳定入口。组件**尚未实现**；下列接口以 [`docs/architecture/wateros-klog.md`](../../architecture/wateros-klog.md) 为准，落地后须与本文件及源码 rustdoc 对齐。
+描述 **`wateros-klog`** 聚合 crate 对内核其它模块暴露的稳定入口。组件已实现于 `os/components/wateros-klog/`；下列接口以 [`docs/architecture/wateros-klog.md`](../../architecture/wateros-klog.md) 与源码 rustdoc 为准。
 
 ## 事实来源
 
@@ -13,7 +13,8 @@
 
 | 符号 | 说明 |
 |------|------|
-| **`init()`** | 初始化全局 `KlogRingbuf`、统计与读游标；须在 `runtime::logging::init()` **之前**调用。 |
+| **`init()`** | 初始化全局 `KlogRingbuf`（清空）；须在 `runtime::logging::init()` **之前**调用。 |
+| **`post_init_hello()`** | 内核主线初始化完成后写入 `hello wateros\n`（`main` 在 `run_first_task` 前调用）。 |
 | **`record(level, facility, text)`** | 底层写入一条记录；返回 `AppendResult`（成功序号或错误）。 |
 | **`klog_trace!` / `klog_debug!` / `klog_info!` / `klog_warn!` / `klog_error!`** | 宏层：`format_args!` → `record`；**不**转发 `log!`。 |
 | **`stats()`** | 返回 `KlogStats` 快照。 |
@@ -49,8 +50,9 @@
 
 ## 缺口说明
 
-- 当前仓库无 `os/components/wateros-klog/`；`__NR_syslog` 116 仍走 syscall **unknown panic**。
-- 测试期 `syscall::dispatch` 对未实现 action **panic**；稳定后可能改为 errno + 可选 strict feature。
+- 存储为 desc 槽 + 每槽上限 `KLOG_MAX_RECORD_BYTES` 正文（非独立 byte-ring 碎片管理）。
+- `CONSOLE_ON/OFF/LEVEL` 首期 no-op；未接 `runtime-console`。
+- 测试期未知 syslog action **panic**。
 
 ## 维护要求
 

@@ -42,6 +42,8 @@ extern crate alloc;
 use syscall as _;
 #[cfg(feature = "qemu-loongarch64-virt")]
 use syscall as _;
+#[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
+use klog as _;
 
 #[cfg(feature = "qemu-riscv64-opensbi")]
 mod self_tests;
@@ -104,6 +106,7 @@ mod qemu_riscv64_opensbi {
         let _boot_context = BootContext::from(BootArgs::new(boot_arg0, boot_arg1));
         driver::init_when_boot(boot_arg1);
         runtime::console::show_logo();
+        klog::init();
         runtime::logging::init();
         info!("log test pass!");
         runtime::heap_allocator::init();
@@ -177,6 +180,7 @@ mod qemu_riscv64_opensbi {
         platform::interrupt::enable_timer_interrupt().unwrap();
         platform::timer::set_timer_after_ms(100).unwrap();
         platform::interrupt::enable_global_interrupt().unwrap();
+        klog::post_init_hello();
         info!("[task-selftest] starting first task");
         task::run_first_task()
     }
@@ -202,6 +206,7 @@ mod qemu_loongarch64_virt {
     #[unsafe(no_mangle)]
     pub fn kernel_main(_argc : usize, _argv : usize, envp : usize) -> ! {
         runtime::console::show_logo();
+        klog::init();
         runtime::logging::init();
         runtime::heap_allocator::init();
         platform::arch::init();
@@ -256,6 +261,7 @@ mod qemu_loongarch64_virt {
         platform::interrupt::enable_timer_interrupt().unwrap();
         platform::timer::set_timer_after_ms(100).unwrap();
         platform::interrupt::enable_global_interrupt().unwrap();
+        klog::post_init_hello();
         info!("[loongarch64][task] starting first task");
         task::run_first_task()
     }

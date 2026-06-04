@@ -30,6 +30,7 @@ mod read;
 mod readlinkat;
 mod sendfile;
 mod robust;
+mod syslog;
 mod task;
 mod umount2;
 mod unlinkat;
@@ -85,6 +86,7 @@ pub(crate) use clock::{
     sys_clock_getres, sys_clock_gettime, sys_clock_nanosleep, sys_clock_settime, sys_gettimeofday,
     sys_nanosleep,
 };
+pub(crate) use syslog::sys_syslog;
 pub(crate) use task::{
     sys_exit, sys_exit_group, sys_getpid, sys_getppid, sys_getrandom,
     sys_getrlimit, sys_gettid, sys_prctl, sys_prlimit64,

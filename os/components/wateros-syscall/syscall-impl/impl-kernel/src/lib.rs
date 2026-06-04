@@ -331,6 +331,11 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     }
 
     #[inline]
+    fn dispatch_syslog(args: SyscallArgs) -> isize {
+        sys::sys_syslog(args).0
+    }
+
+    #[inline]
     fn dispatch_prctl(args: SyscallArgs) -> isize {
         sys::sys_prctl(args).0
     }
