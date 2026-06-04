@@ -67,7 +67,29 @@ struct UserRLimit {
     max: u64,
 }
 
+/// Linux 64-bit `struct sysinfo`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct UserSysInfo {
+    uptime: isize,
+    loads: [usize; 3],
+    totalram: usize,
+    freeram: usize,
+    sharedram: usize,
+    bufferram: usize,
+    totalswap: usize,
+    freeswap: usize,
+    procs: u16,
+    pad: u16,
+    totalhigh: usize,
+    freehigh: usize,
+    mem_unit: u32,
+}
+
+const _: () = assert!(core::mem::size_of::<UserSysInfo>() == 112);
 const RLIM_INFINITY: u64 = !0u64;
+const SYSINFO_TOTAL_RAM: usize = 2 * 1024 * 1024 * 1024;
+const SYSINFO_FREE_RAM: usize = 1 * 1024 * 1024 * 1024;
 
 fn make_uts_field(s: &str) -> [u8; UTS_LEN] {
     let mut buf = [0u8; UTS_LEN];
@@ -190,6 +212,33 @@ pub(crate) fn sys_getrandom(args: SyscallArgs) -> UserRet {
     }
 
     UserRet::from_success(written)
+}
+
+pub(crate) fn sys_sysinfo(args: SyscallArgs) -> UserRet {
+    let info_ptr = args.arg(0);
+    if info_ptr == 0 {
+        return UserRet::from_error(ErrNo::EFAULT);
+    }
+
+    let info = UserSysInfo {
+        uptime: task::current_tick() as isize,
+        loads: [0; 3],
+        totalram: SYSINFO_TOTAL_RAM,
+        freeram: SYSINFO_FREE_RAM,
+        sharedram: 0,
+        bufferram: 0,
+        totalswap: 0,
+        freeswap: 0,
+        procs: 1,
+        pad: 0,
+        totalhigh: 0,
+        freehigh: 0,
+        mem_unit: 1,
+    };
+    match copy_to_user_struct(info_ptr, &info) {
+        Ok(()) => UserRet::from_success(0),
+        Err(e) => UserRet::from_error(e),
+    }
 }
 
 fn random_seed(buf_ptr: usize, buflen: usize, flags: usize, tid: usize) -> u64 {

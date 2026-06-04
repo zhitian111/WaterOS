@@ -192,6 +192,40 @@ impl PerTaskFdRegistry {
         }
     }
 
+    /// 临时取出指定 fd 的句柄，让调用方可在不持有 fd 注册表借用时执行 I/O。
+    pub fn take_io_for_task(
+        &mut self,
+        task_id: task::TaskId,
+        fd: usize,
+    ) -> VfsResult<Box<dyn VfsIoHandle>> {
+        self.ensure_task(task_id);
+        let owner = self.effective_owner(task_id);
+        match self.tables[owner].get_mut(fd) {
+            Some(slot @ Some(_)) => Ok(slot.take().expect("checked Some")),
+            _ => Err(VfsError::BadFd),
+        }
+    }
+
+    /// 将 [`take_io_for_task`] 取出的句柄放回原 fd 槽位。
+    pub fn restore_io_for_task(
+        &mut self,
+        task_id: task::TaskId,
+        fd: usize,
+        handle: Box<dyn VfsIoHandle>,
+    ) -> VfsResult<()> {
+        self.ensure_task(task_id);
+        let owner = self.effective_owner(task_id);
+        let table = &mut self.tables[owner];
+        if fd >= table.len() {
+            return Err(VfsError::BadFd);
+        }
+        if table[fd].is_some() {
+            return Err(VfsError::BadFd);
+        }
+        table[fd] = Some(handle);
+        Ok(())
+    }
+
     /// 按任务关闭 fd；关闭时调用句柄的 `close`。
     pub fn close_fd_for_task(&mut self, task_id: task::TaskId, fd: usize) -> VfsResult<()> {
         if fd < VFS_FIRST_DYNAMIC_FD {

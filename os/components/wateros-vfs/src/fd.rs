@@ -45,10 +45,18 @@ pub fn with_current_io<R>(
     fd: usize,
     f: impl FnOnce(&mut (dyn VfsIoHandle + '_)) -> VfsResult<R>,
 ) -> VfsResult<R> {
-    with_current_task(|reg, task_id| {
-        let handle = reg.get_io_for_task(task_id, fd)?;
-        f(handle)
-    })
+    let task_id = current_task_id()?;
+    let mut handle = {
+        let mut reg = registry().exclusive_access();
+        reg.take_io_for_task(task_id, fd)?
+    };
+    let result = f(handle.as_mut());
+    let restore_result = {
+        let mut reg = registry().exclusive_access();
+        reg.restore_io_for_task(task_id, fd, handle)
+    };
+    restore_result?;
+    result
 }
 
 /// 为当前任务分配 fd。

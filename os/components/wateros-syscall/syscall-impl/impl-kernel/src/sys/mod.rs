@@ -9,6 +9,7 @@ mod close;
 mod cred;
 mod dup;
 mod execve;
+mod faccessat;
 mod fcntl;
 mod fstat;
 mod futex;
@@ -59,6 +60,7 @@ pub(crate) use cred::{
 };
 pub(crate) use dup::{sys_dup, sys_dup3};
 pub(crate) use execve::sys_execve;
+pub(crate) use faccessat::sys_faccessat;
 pub(crate) use fcntl::sys_fcntl;
 pub(crate) use fstat::{sys_fstat, sys_fstatat, sys_statx};
 pub(crate) use futex::{sys_futex, wake_user_addr};
@@ -89,7 +91,7 @@ pub(crate) use clock::{
 pub(crate) use syslog::sys_syslog;
 pub(crate) use task::{
     sys_exit, sys_exit_group, sys_getpid, sys_getppid, sys_getrandom,
-    sys_getrlimit, sys_gettid, sys_prctl, sys_prlimit64,
+    sys_getrlimit, sys_gettid, sys_prctl, sys_prlimit64, sys_sysinfo,
     sys_rt_sigaction, sys_rt_sigprocmask, sys_rt_sigtimedwait, sys_set_tid_address, sys_setrlimit, sys_times, sys_uname, sys_waitpid, sys_yield,
 };
 pub(crate) use umount2::sys_umount2;

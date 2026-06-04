@@ -22,6 +22,7 @@ pub enum SyscallKind {
     Pwritev,
     Sendfile,
     ReadLinkAt,
+    FaccessAt,
     OpenAt,
     Close,
     Fstat,
@@ -61,6 +62,7 @@ pub enum SyscallKind {
     GetGid,
     GetEgid,
     GetGroups,
+    Sysinfo,
     SetUid,
     SetGid,
     SetReuid,
@@ -130,6 +132,8 @@ impl SyscallKind {
             Self::Sendfile
         } else if syscall_nr == T::READLINKAT.raw() {
             Self::ReadLinkAt
+        } else if syscall_nr == T::FACCESSAT.raw() {
+            Self::FaccessAt
         } else if syscall_nr == T::OPENAT.raw() {
             Self::OpenAt
         } else if syscall_nr == T::CLOSE.raw() {
@@ -208,6 +212,8 @@ impl SyscallKind {
             Self::GetEgid
         } else if syscall_nr == T::GETGROUPS.raw() {
             Self::GetGroups
+        } else if syscall_nr == T::SYSINFO.raw() {
+            Self::Sysinfo
         } else if syscall_nr == T::SETUID.raw() {
             Self::SetUid
         } else if syscall_nr == T::SETGID.raw() {
@@ -312,6 +318,7 @@ impl SyscallKind {
             Self::Pwritev => "pwritev",
             Self::Sendfile => "sendfile",
             Self::ReadLinkAt => "readlinkat",
+            Self::FaccessAt => "faccessat",
             Self::OpenAt => "openat",
             Self::Close => "close",
             Self::Fstat => "fstat",
@@ -351,6 +358,7 @@ impl SyscallKind {
             Self::GetGid => "getgid",
             Self::GetEgid => "getegid",
             Self::GetGroups => "getgroups",
+            Self::Sysinfo => "sysinfo",
             Self::SetUid => "setuid",
             Self::SetGid => "setgid",
             Self::SetReuid => "setreuid",
@@ -553,6 +561,14 @@ pub trait SyscallDispatcher {
         Self::dispatch_unsupported(
             SyscallKind::ReadLinkAt,
             Self::NumberTable::READLINKAT.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_faccessat(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::FaccessAt,
+            Self::NumberTable::FACCESSAT.raw(),
             args,
         )
     }
@@ -817,6 +833,14 @@ pub trait SyscallDispatcher {
         Self::dispatch_unsupported(
             SyscallKind::GetGroups,
             Self::NumberTable::GETGROUPS.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_sysinfo(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Sysinfo,
+            Self::NumberTable::SYSINFO.raw(),
             args,
         )
     }
@@ -1216,6 +1240,7 @@ pub trait SyscallDispatcher {
             SyscallKind::Pwritev => Self::dispatch_pwritev(syscall_args),
             SyscallKind::Sendfile => Self::dispatch_sendfile(syscall_args),
             SyscallKind::ReadLinkAt => Self::dispatch_readlinkat(syscall_args),
+            SyscallKind::FaccessAt => Self::dispatch_faccessat(syscall_args),
             SyscallKind::OpenAt => Self::dispatch_openat(syscall_args),
             SyscallKind::Close => Self::dispatch_close(syscall_args),
             SyscallKind::Fstat => Self::dispatch_fstat(syscall_args),
@@ -1249,6 +1274,7 @@ pub trait SyscallDispatcher {
             SyscallKind::GetGid => Self::dispatch_getgid(syscall_args),
             SyscallKind::GetEgid => Self::dispatch_getegid(syscall_args),
             SyscallKind::GetGroups => Self::dispatch_getgroups(syscall_args),
+            SyscallKind::Sysinfo => Self::dispatch_sysinfo(syscall_args),
             SyscallKind::SetUid => Self::dispatch_setuid(syscall_args),
             SyscallKind::SetGid => Self::dispatch_setgid(syscall_args),
             SyscallKind::SetReuid => Self::dispatch_setreuid(syscall_args),

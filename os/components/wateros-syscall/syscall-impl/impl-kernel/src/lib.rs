@@ -101,6 +101,11 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     }
 
     #[inline]
+    fn dispatch_faccessat(args: SyscallArgs) -> isize {
+        sys::sys_faccessat(args).0
+    }
+
+    #[inline]
     fn dispatch_openat(args: SyscallArgs) -> isize {
         sys::sys_openat(args).0
     }
@@ -218,6 +223,11 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     #[inline]
     fn dispatch_getgroups(args: SyscallArgs) -> isize {
         sys::sys_getgroups(args).0
+    }
+
+    #[inline]
+    fn dispatch_sysinfo(args: SyscallArgs) -> isize {
+        sys::sys_sysinfo(args).0
     }
 
     #[inline]

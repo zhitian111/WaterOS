@@ -32,6 +32,7 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const PPOLL: SyscallNumber = SyscallNumber(73);
     const SELECT: SyscallNumber = SyscallNumber(23);
     const READLINKAT: SyscallNumber = SyscallNumber(78);
+    const FACCESSAT: SyscallNumber = SyscallNumber(48);
     const OPENAT: SyscallNumber = SyscallNumber(56);
     const CLOSE: SyscallNumber = SyscallNumber(57);
     const FSTAT: SyscallNumber = SyscallNumber(80);
@@ -83,6 +84,7 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const GETGID: SyscallNumber = SyscallNumber(176);
     const GETEGID: SyscallNumber = SyscallNumber(177);
     const GETGROUPS: SyscallNumber = SyscallNumber(155);
+    const SYSINFO: SyscallNumber = SyscallNumber(179);
     const SETGID: SyscallNumber = SyscallNumber(144);
     const SETREGID: SyscallNumber = SyscallNumber(143);
     const SETREUID: SyscallNumber = SyscallNumber(145);

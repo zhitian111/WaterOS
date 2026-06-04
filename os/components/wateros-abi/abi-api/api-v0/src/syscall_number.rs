@@ -60,6 +60,8 @@ pub trait SyscallNumberTable {
     const SENDFILE: SyscallNumber;
     /// 读取符号链接目标（`readlinkat(2)`）。
     const READLINKAT: SyscallNumber;
+    /// 检查相对目录路径可访问性（`faccessat(2)`）。
+    const FACCESSAT: SyscallNumber;
     /// 相对目录打开路径（`openat(2)`）。
     const OPENAT: SyscallNumber;
     /// 关闭文件描述符（`close(2)`）。
@@ -154,6 +156,8 @@ pub trait SyscallNumberTable {
     const GETEGID: SyscallNumber;
     /// 读取 supplementary 组列表（`getgroups(2)`）。
     const GETGROUPS: SyscallNumber;
+    /// 查询系统内存与负载摘要（`sysinfo(2)`）。
+    const SYSINFO: SyscallNumber;
     /// 设置真实组 ID（`setgid(2)`）。
     const SETGID: SyscallNumber;
     /// 设置真实/有效组 ID（`setregid(2)`）。
