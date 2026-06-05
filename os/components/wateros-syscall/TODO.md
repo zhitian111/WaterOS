@@ -25,7 +25,7 @@
 | `getdents64` | 部分接入 | `linux_dirent64`；目录 open 须 `O_DIRECTORY`（否则 `EISDIR`）。 |
 | `mkdir`/`mkdirat` | 部分接入 | `mkdirat` 仅 `AT_FDCWD`；RO 辅助卷返回 `EROFS`。 |
 | `unlink`/`unlinkat` | 部分接入 | `unlinkat` 经 VFS；RO 辅助卷 `EROFS`。 |
-| `renameat2` | 部分接入 | bring-up stub：仅支持 `flags=0` 的普通文件，使用 read/write/unlink 拼接，非原子；后续需补 VFS/FS rename API 与目录/覆盖语义。 |
+| `renameat2` | 部分接入 | `flags=0` 同父目录 rename（文件与目录），经 VFS/FS `rename` + ext4 link/unlink；跨目录、覆盖目标、`RENAME_*` flags 未实现。 |
 | `utimensat` | 部分接入 | bring-up stub：校验路径/flags/timespec 后成功返回，暂不持久化 atime/mtime；后续需扩展 VFS/FS 时间戳接口并落到 ext4。 |
 | `mount` | 部分接入 | `MS_RDONLY` → `mount_aux_ro` + 辅助 RO 表；否则 RW。 |
 | `umount`/`umount2` | 部分接入 | `vfs::unmount_at`。 |

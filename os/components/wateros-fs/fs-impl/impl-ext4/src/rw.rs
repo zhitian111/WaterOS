@@ -256,6 +256,34 @@ impl ReadWriteFs for Ext4FsRw {
         Ok(())
     }
 
+    fn rename(&mut self, old_path: &str, new_path: &str) -> FsResult<()> {
+        let (old_parent, old_name) = split_parent_and_name(old_path)?;
+        let (new_parent, new_name) = split_parent_and_name(new_path)?;
+        if old_parent != new_parent {
+            return Err(FsError::Unsupported);
+        }
+        let fs = self.fs()?;
+        let parent_path = Path::try_from(old_parent).map_err(|_| FsError::InvalidPath)?;
+        let parent_inode = fs
+            .path_to_inode(parent_path, FollowSymlinks::All)
+            .map_err(map_ext4_plus)?;
+        if parent_inode.file_type() != FileType::Directory {
+            return Err(FsError::NotFound);
+        }
+        let mut parent_dir = Dir::open_inode(fs, parent_inode).map_err(map_ext4_plus)?;
+        let old_name = DirEntryName::try_from(old_name).map_err(|_| FsError::InvalidPath)?;
+        let new_name = DirEntryName::try_from(new_name).map_err(|_| FsError::InvalidPath)?;
+        let mut inode = parent_dir.get_entry(old_name).map_err(map_ext4_plus)?;
+        if parent_dir.get_entry(new_name).is_ok() {
+            return Err(FsError::Exists);
+        }
+        parent_dir
+            .link(new_name, &mut inode)
+            .map_err(map_ext4_plus)?;
+        parent_dir.unlink(old_name, inode).map_err(map_ext4_plus)?;
+        Ok(())
+    }
+
     fn rmdir(&mut self, path: &str) -> FsResult<()> {
         let (parent, name) = split_parent_and_name(path)?;
         let fs = self.fs()?;

@@ -34,4 +34,10 @@ pub trait RootRwSession {
         let _ = (path, mode);
         Err(VfsError::Unsupported)
     }
+
+    /// 将 `old_path` 重命名为 `new_path`（实现可限制为同父目录）。
+    fn rename(&mut self, old_path: &str, new_path: &str) -> VfsResult<()> {
+        let _ = (old_path, new_path);
+        Err(VfsError::Unsupported)
+    }
 }

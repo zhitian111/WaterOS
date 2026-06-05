@@ -13,10 +13,9 @@
 
 ### P1：文件/目录语义
 
-- [ ] 完善 `renameat2` 的目录 rename 支持。
-  - 现象：`busybox mv test_dir test` 返回 `Function not implemented`。
-  - 当前限制：`sys/renameat2.rs` 仅支持 `flags=0` 的普通文件，且用 read/write/unlink 拼接，非原子。
-  - 方向：补 VFS/FS 层 rename API，并在 ext4 RW 实现中支持普通文件与目录 rename、覆盖语义、同路径 no-op。
+- [x] 完善 `renameat2` 的目录 rename 支持（同父目录、`flags=0`）。
+  - 已实现：VFS/FS `rename` + ext4 link/unlink；`sys/renameat2` 经 `vfs::rename_absolute`。
+  - 剩余限制：跨目录 rename、覆盖已有目标、`RENAME_*` flags、journal 原子语义。
 
 - [ ] 处理 busybox 文件测试残留目录。
   - 现象：`mkdir test_dir` 报 `File exists`。

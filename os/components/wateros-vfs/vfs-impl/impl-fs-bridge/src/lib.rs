@@ -3,7 +3,7 @@
 #![no_std]
 extern crate alloc;
 
-use alloc::{boxed::Box, string::String, vec::Vec};
+use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
 
 use api_v0::{
     RootRwSession, SingleRootReadView, VfsAccessMode, VfsBackend, VfsCapability, VfsDevInventory,
@@ -243,6 +243,19 @@ pub fn mkdir_path(path: &str, mode: u32) -> VfsResult<()> {
     sess.mkdir(rel.as_str(), mode)
 }
 
+/// 重命名绝对路径（经挂载表路由；要求 old/new 落在同一 RW 卷）。
+pub fn rename_path(old_path: &str, new_path: &str) -> VfsResult<()> {
+    assert_path_writable(old_path)?;
+    assert_path_writable(new_path)?;
+    let (fs_old, rel_old) = fs_and_rel_rw(old_path)?;
+    let (fs_new, rel_new) = fs_and_rel_rw(new_path)?;
+    if !Arc::ptr_eq(&fs_old, &fs_new) {
+        return Err(VfsError::Unsupported);
+    }
+    let mut sess = MountedRwSession::new(fs_old);
+    sess.rename(rel_old.as_str(), rel_new.as_str())
+}
+
 /// 与只读根句柄分离的可写挂载会话。
 pub struct MountedRwSession {
     inner: SharedRwFs,
@@ -292,6 +305,15 @@ impl RootRwSession for MountedRwSession {
     fn mkdir(&mut self, path: &str, mode: u32) -> VfsResult<()> {
         let n = normalize_absolute_path(path)?;
         self.inner.lock().mkdir(n.as_str(), mode).map_err(map_fs_err)
+    }
+
+    fn rename(&mut self, old_path: &str, new_path: &str) -> VfsResult<()> {
+        let old = normalize_absolute_path(old_path)?;
+        let new = normalize_absolute_path(new_path)?;
+        self.inner
+            .lock()
+            .rename(old.as_str(), new.as_str())
+            .map_err(map_fs_err)
     }
 }
 

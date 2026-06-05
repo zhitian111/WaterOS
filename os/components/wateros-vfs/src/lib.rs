@@ -49,6 +49,14 @@ pub fn unlink_absolute(path: &str, remove_dir: bool) -> VfsResult<()> {
     impl_fs_bridge::unlink_path(abs.as_str(), remove_dir)
 }
 
+/// 重命名已解析的绝对路径（`impl-fd-session` + `bridge-fs-api`）。
+#[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
+pub fn rename_absolute(old_path: &str, new_path: &str) -> VfsResult<()> {
+    let old = normalize_absolute_path(old_path)?;
+    let new = normalize_absolute_path(new_path)?;
+    impl_fs_bridge::rename_path(old.as_str(), new.as_str())
+}
+
 /// 将 ext4 块设备挂到绝对路径 `mount_point`。
 #[cfg(feature = "bridge-fs-api")]
 pub fn mount_ext4_block_at(mount_point: &str, block_dev: &str, readonly: bool) -> VfsResult<()> {
