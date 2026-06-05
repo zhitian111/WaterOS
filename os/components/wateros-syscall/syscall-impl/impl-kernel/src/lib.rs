@@ -31,6 +31,7 @@ pub struct KernelSyscallDispatcher;
 
 const SYS_STATX: usize = 291;
 const SYS_FSTATAT: usize = 79;
+const SYS_FACCESSAT2: usize = 439;
 
 impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     type NumberTable = ActiveSyscallNumberTable;
@@ -436,6 +437,9 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
         }
         if syscall_nr == SYS_STATX {
             return sys::sys_statx(args).0;
+        }
+        if syscall_nr == SYS_FACCESSAT2 {
+            return sys::sys_faccessat2(args).0;
         }
         api_v0::unsupported::syscall_unknown(syscall_nr, args);
     }

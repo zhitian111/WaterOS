@@ -29,6 +29,7 @@
 | `pselect6` (72) / `select` (23) | 部分 | `fd_set` 扫描；`select` 不写回剩余 `timeval` |
 | `poll` (271) | 部分 | 同引擎；`timeout` 为毫秒 |
 | `openat` | 部分 | `AT_FDCWD`、目录 fd、`O_DIRECTORY` |
+| `faccessat` (48) / `faccessat2` (439) | 部分 | 48 忽略 a3（Linux 三参 ABI）；439 经 `dispatch_unknown`；`AT_EACCESS`/`AT_EMPTY_PATH`；symlink nofollow 待 VFS |
 | `dup` / `dup3` | 已接入 | `vfs::fd::dup_fd` / `dup3_fd` |
 | `pipe2` | 部分 | 创建 pipe fd；fork 后 `copy_fd_table_from_parent` |
 | `fstat` / `lseek` | 部分 | 128B `kstat`；pipe `ESPIPE` |

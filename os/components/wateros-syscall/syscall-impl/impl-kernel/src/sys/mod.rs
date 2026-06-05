@@ -62,7 +62,7 @@ pub(crate) use cred::{
 };
 pub(crate) use dup::{sys_dup, sys_dup3};
 pub(crate) use execve::sys_execve;
-pub(crate) use faccessat::sys_faccessat;
+pub(crate) use faccessat::{sys_faccessat, sys_faccessat2};
 pub(crate) use fcntl::sys_fcntl;
 pub(crate) use fstat::{sys_fstat, sys_fstatat, sys_statx};
 pub(crate) use futex::{sys_futex, wake_user_addr};

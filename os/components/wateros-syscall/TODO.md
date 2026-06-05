@@ -16,6 +16,8 @@
 | `read` | 部分接入 | 走 per-task fd/VFS handle；stdin 真实输入未接。 |
 | `write` | 部分接入 | 走 per-task fd/VFS handle；stdout/stderr 依赖 VFS 标准 fd。 |
 | `open`/`openat` | 部分接入 | `AT_FDCWD` + 目录 fd 相对路径、`O_DIRECTORY`；bring-up 任务 cwd 设为 ELF 父目录。 |
+| `faccessat` (48) | 部分接入 | Linux 三参数 ABI：`flags` 恒为 0、忽略 a3；经 VFS `metadata` + mode 位检查。 |
+| `faccessat2` (439) | 部分接入 | `dispatch_unknown` 旁路；支持 `AT_EACCESS`/`AT_EMPTY_PATH`；`AT_SYMLINK_NOFOLLOW` 仅校验（VFS 尚无 nofollow 元数据路径）。 |
 | `close` | 已接入 | 关闭动态 fd。 |
 | `fstat` | 部分接入 | 128B `kstat` 布局；动态 fd 与 stdio 元数据；依赖 open 成功。 |
 | `lseek` | 部分接入 | 支持普通 VFS handle；pipe 等返回 `ESPIPE`。 |
