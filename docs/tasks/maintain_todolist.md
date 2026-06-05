@@ -11,6 +11,8 @@
 - `docs/prompts/documentation.md`
 - `docs/prompts/architecture.md`
 
+本任务为规划类，输出写入 `docs/roadmap/todolist.md`，**不需要**预先阅读 `docs/exports/`。
+
 ## 需要优先查看的源文件
 
 - `os/Cargo.toml`

@@ -13,9 +13,12 @@
 
 ## 使用建议
 
-- 编码任务：至少阅读 `general.md`、`structure.md`、`coding.md`、`architecture.md`。
+向 Agent 提供 `docs/tasks/` 下的任务文件即可（如 `@docs/tasks/commenting.md`），无需再单独 @ 本目录；任务文件内已列出须阅读的 prompt 与导出文档**完整路径**。下表仅为速查。
+
+- 编码任务：至少阅读 `general.md`、`structure.md`、`coding.md`、`architecture.md`；另读 `docs/exports/` 中相关组件导出（见 `docs/tasks/README.md`）。
 - 文档任务：至少阅读 `general.md`、`structure.md`、`documentation.md`、`architecture.md`。
 - 代码注释专项（`docs/tasks/commenting.md`）：除上述外，严格按该任务文件的**搜索范围**执行——覆盖 **`os/components/**` 全子树**、**`os/src/`**、**`user/**`** 等，**不得**仅处理一级聚合 crate 或默认 feature 路径；细则见 `documentation.md` 中「覆盖范围」。
 - 规划任务：至少阅读 `general.md`、`structure.md`、`architecture.md`。
 - **编译 / QEMU 运行 / 测例回归**：阅读 `general.md`「构建与运行」、`coding.md` §6，以及 `docs/tasks/run_testsuits_qemu.md`。
+- **日志分析**（`docs/tasks/analyze_kernel_log.md`）：阅读 `general.md`、`structure.md`、`architecture.md`，并按失败子系统选读 `docs/exports/`。
 - 对文档体系本身做修改：额外阅读 `update_docs_task.md`。

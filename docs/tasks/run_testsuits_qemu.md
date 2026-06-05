@@ -12,6 +12,8 @@
 - `docs/prompts/structure.md`
 - `docs/prompts/coding.md`（§6 Makefile 目标速查）
 
+本任务为运行/判读类，**不需要**预先阅读 `docs/exports/`；若 PANIC 后需规划修复，再按需选读相关组件导出。
+
 ## 需要优先查看的源文件
 
 | 文件 | 用途 |

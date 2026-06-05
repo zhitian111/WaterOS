@@ -10,8 +10,23 @@
 
 - `docs/prompts/general.md`
 - `docs/prompts/structure.md`
+- `docs/prompts/coding.md`
 - `docs/prompts/documentation.md`
 - `docs/prompts/architecture.md`
+
+## 执行前必须参考的导出文档
+
+先读全局索引，再按当前注释范围选读对应一级组件文件：
+
+- `docs/exports/README.md`
+- `docs/exports/snapshot/current.md`
+- `docs/exports/architecture/components.md`
+- `docs/exports/architecture/module-relations.md`
+- `docs/exports/features/<component>.md`（按组件，如 `wateros-syscall`）
+- `docs/exports/public-api/<component>.md`
+- `docs/exports/impl-guide/<component>.md`
+
+一级组件名列表见 `docs/tasks/README.md`「一级组件导出路径模式」。
 
 ## 需要优先查看的源文件（用于理解接线，不表示注释只写在这些文件）
 

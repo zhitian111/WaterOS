@@ -11,6 +11,8 @@
 - `docs/prompts/documentation.md`
 - `docs/prompts/architecture.md`
 
+本任务为导出类，输出写入 `docs/exports/public-api/`，**不需要**预先阅读现有导出结果（除非做增量对比）。
+
 ## 需要优先查看的源文件
 
 - `os/Cargo.toml`
