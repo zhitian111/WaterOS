@@ -88,6 +88,7 @@ pub enum SyscallKind {
     GetRandom,
     SetItimer,
     GetRlimit,
+    GetRusage,
     SetRlimit,
     PrLimit64,
     Socket,
@@ -266,6 +267,8 @@ impl SyscallKind {
             Self::SetItimer
         } else if syscall_nr == T::GETRLIMIT.raw() {
             Self::GetRlimit
+        } else if syscall_nr == T::GETRUSAGE.raw() {
+            Self::GetRusage
         } else if syscall_nr == T::SETRLIMIT.raw() {
             Self::SetRlimit
         } else if syscall_nr == T::PRLIMIT64.raw() {
@@ -390,6 +393,7 @@ impl SyscallKind {
             Self::GetRandom => "getrandom",
             Self::SetItimer => "setitimer",
             Self::GetRlimit => "getrlimit",
+            Self::GetRusage => "getrusage",
             Self::SetRlimit => "setrlimit",
             Self::PrLimit64 => "prlimit64",
             Self::Socket => "socket",
@@ -1077,6 +1081,14 @@ pub trait SyscallDispatcher {
         )
     }
 
+    fn dispatch_getrusage(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::GetRusage,
+            Self::NumberTable::GETRUSAGE.raw(),
+            args,
+        )
+    }
+
     fn dispatch_setrlimit(args: SyscallArgs) -> isize {
         Self::dispatch_unsupported(
             SyscallKind::SetRlimit,
@@ -1327,6 +1339,7 @@ pub trait SyscallDispatcher {
             SyscallKind::GetRandom => Self::dispatch_getrandom(syscall_args),
             SyscallKind::SetItimer => Self::dispatch_setitimer(syscall_args),
             SyscallKind::GetRlimit => Self::dispatch_getrlimit(syscall_args),
+            SyscallKind::GetRusage => Self::dispatch_getrusage(syscall_args),
             SyscallKind::SetRlimit => Self::dispatch_setrlimit(syscall_args),
             SyscallKind::PrLimit64 => Self::dispatch_prlimit64(syscall_args),
             SyscallKind::Socket => Self::dispatch_socket(syscall_args),

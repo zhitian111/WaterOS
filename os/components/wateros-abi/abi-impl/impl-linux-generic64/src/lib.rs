@@ -108,6 +108,7 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const GETRANDOM: SyscallNumber = SyscallNumber(278);
     const SETITIMER: SyscallNumber = SyscallNumber(103);
     const GETRLIMIT: SyscallNumber = SyscallNumber(163);
+    const GETRUSAGE: SyscallNumber = SyscallNumber(165);
     const SETRLIMIT: SyscallNumber = SyscallNumber(164);
     const PRLIMIT64: SyscallNumber = SyscallNumber(261);
     const NANOSLEEP: SyscallNumber = SyscallNumber(101);

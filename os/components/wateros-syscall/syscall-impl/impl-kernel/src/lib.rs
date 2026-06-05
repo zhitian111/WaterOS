@@ -366,6 +366,16 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     }
 
     #[inline]
+    fn dispatch_getrusage(args: SyscallArgs) -> isize {
+        sys::sys_getrusage(args).0
+    }
+
+    #[inline]
+    fn dispatch_setitimer(args: SyscallArgs) -> isize {
+        sys::sys_setitimer(args).0
+    }
+
+    #[inline]
     fn dispatch_setrlimit(args: SyscallArgs) -> isize {
         sys::sys_setrlimit(args).0
     }

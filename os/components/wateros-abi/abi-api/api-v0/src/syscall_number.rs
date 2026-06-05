@@ -200,6 +200,8 @@ pub trait SyscallNumberTable {
     const SETITIMER: SyscallNumber;
     /// 查询资源软/硬上限（`getrlimit(2)`）。
     const GETRLIMIT: SyscallNumber;
+    /// 查询进程/线程资源使用统计（`getrusage(2)`）。
+    const GETRUSAGE: SyscallNumber;
     /// 设置资源软/硬上限（`setrlimit(2)`）。
     const SETRLIMIT: SyscallNumber;
     /// 查询或设置指定进程资源限制（`prlimit64(2)`）。

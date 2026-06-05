@@ -51,6 +51,7 @@
 | `clock_nanosleep` | 部分接入 | 相对/绝对 sleep；精度受 10ms 调度 tick 约束。 |
 | `nanosleep` | 部分接入 | 与 `clock_nanosleep` 共享 sleep 换算。 |
 | `times` | 部分接入 | 返回当前 tick 和最小 `tms`。 |
+| `getrusage` | 部分接入 | 返回 Linux 64-bit `struct rusage`；SELF/THREAD 仅填最小 user tick，children 与资源计数暂为 0。 |
 | `getcwd` | 部分接入 | 依赖 per-task cwd 注册。 |
 | `chdir` | 已接入 | 经 `vfs::cwd::chdir_current`；目标须为已存在目录。 |
 | `uname` | 部分接入 | 固定 WaterOS `utsname` 字段。 |
@@ -77,7 +78,7 @@
 | `set_robust_list` | 已接入 | 校验头长 24；状态存 `FutexHub`；退出深清理。 |
 | `get_robust_list` | 已接入 | ABI 号 100；读回 per-task robust 头。 |
 | `getrandom` | 待实现 | libc 初始化和测试程序可能探测。 |
-| `setitimer` | 待实现 | signal/timer 相关测例会用。 |
+| `setitimer` | 部分接入 | 校验 `itimerval` 并写回零值 old timer；暂不维护真实 interval timer / SIGALRM。 |
 | `getrlimit` | 待实现 | shell/libc 常见探测项。 |
 | `setrlimit` | 待实现 | 可先支持最小 no-op/参数校验。 |
 

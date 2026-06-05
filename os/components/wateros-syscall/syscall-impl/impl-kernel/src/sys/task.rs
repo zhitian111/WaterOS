@@ -47,6 +47,42 @@ struct UserTms {
     cstime: isize,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct UserTimeVal {
+    sec: isize,
+    usec: isize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct UserITimerVal {
+    interval: UserTimeVal,
+    value: UserTimeVal,
+}
+
+/// Linux 64-bit `struct rusage`.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct UserRUsage {
+    utime: UserTimeVal,
+    stime: UserTimeVal,
+    maxrss: isize,
+    ixrss: isize,
+    idrss: isize,
+    isrss: isize,
+    minflt: isize,
+    majflt: isize,
+    nswap: isize,
+    inblock: isize,
+    oublock: isize,
+    msgsnd: isize,
+    msgrcv: isize,
+    nsignals: isize,
+    nvcsw: isize,
+    nivcsw: isize,
+}
+
 /// Linux `struct utsname`（与 libc 对齐）。
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -87,9 +123,17 @@ struct UserSysInfo {
 }
 
 const _: () = assert!(core::mem::size_of::<UserSysInfo>() == 112);
+const _: () = assert!(core::mem::size_of::<UserRUsage>() == 144);
+const _: () = assert!(core::mem::size_of::<UserITimerVal>() == 32);
 const RLIM_INFINITY: u64 = !0u64;
 const SYSINFO_TOTAL_RAM: usize = 2 * 1024 * 1024 * 1024;
 const SYSINFO_FREE_RAM: usize = 1 * 1024 * 1024 * 1024;
+const ITIMER_REAL: usize = 0;
+const ITIMER_VIRTUAL: usize = 1;
+const ITIMER_PROF: usize = 2;
+const RUSAGE_CHILDREN: isize = -1;
+const RUSAGE_SELF: isize = 0;
+const RUSAGE_THREAD: isize = 1;
 
 fn make_uts_field(s: &str) -> [u8; UTS_LEN] {
     let mut buf = [0u8; UTS_LEN];
@@ -344,6 +388,64 @@ pub(crate) fn sys_times(args: SyscallArgs) -> UserRet {
         }
     }
     UserRet::from_success(task::current_tick() as usize)
+}
+
+pub(crate) fn sys_getrusage(args: SyscallArgs) -> UserRet {
+    let who = args.arg(0) as isize;
+    let usage_ptr = args.arg(1);
+    if usage_ptr == 0 {
+        return UserRet::from_error(ErrNo::EFAULT);
+    }
+    let mut usage = UserRUsage::default();
+    match who {
+        RUSAGE_SELF | RUSAGE_THREAD => {
+            let snapshot = match task::current_task_snapshot() {
+                Some(snapshot) => snapshot,
+                None => return UserRet::from_error(ErrNo::ESRCH),
+            };
+            let ticks = snapshot.stats.tick_count as isize;
+            usage.utime.sec = ticks / 100;
+            usage.utime.usec = (ticks % 100) * 10_000;
+        }
+        RUSAGE_CHILDREN => {}
+        _ => return UserRet::from_error(ErrNo::EINVAL),
+    }
+    match copy_to_user_struct(usage_ptr, &usage) {
+        Ok(()) => UserRet::from_success(0),
+        Err(e) => UserRet::from_error(e),
+    }
+}
+
+pub(crate) fn sys_setitimer(args: SyscallArgs) -> UserRet {
+    let which = args.arg(0);
+    let new_value = args.arg(1);
+    let old_value = args.arg(2);
+
+    match which {
+        ITIMER_REAL | ITIMER_VIRTUAL | ITIMER_PROF => {}
+        _ => return UserRet::from_error(ErrNo::EINVAL),
+    }
+    if new_value == 0 {
+        return UserRet::from_error(ErrNo::EFAULT);
+    }
+    let value = match copy_from_user_struct::<UserITimerVal>(new_value) {
+        Ok(value) => value,
+        Err(e) => return UserRet::from_error(e),
+    };
+    if !valid_timeval(value.interval) || !valid_timeval(value.value) {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    if old_value != 0 {
+        let old = UserITimerVal::default();
+        if let Err(e) = copy_to_user_struct(old_value, &old) {
+            return UserRet::from_error(e);
+        }
+    }
+    UserRet::from_success(0)
+}
+
+fn valid_timeval(tv: UserTimeVal) -> bool {
+    tv.sec >= 0 && tv.usec >= 0 && tv.usec < 1_000_000
 }
 
 fn write_exit_code(exit_code_ptr: usize, exit_code: isize) -> Result<(), ErrNo> {
