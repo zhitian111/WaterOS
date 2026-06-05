@@ -6,6 +6,9 @@
         "./ipc-futex/futex-impl/impl-dummy/",
         "./ipc-futex/futex-impl/impl-task/",
         "./ipc-impl/impl-dummy/",
+        "./ipc-signal/",
+        "./ipc-signal/signal-api/api-v0/",
+        "./ipc-signal/signal-impl/impl-dummy/",
         "./ipc-waitqueue/",
         "./ipc-waitqueue/waitqueue-api/api-v0/",
         "./ipc-waitqueue/waitqueue-impl/impl-task/",
@@ -20,6 +23,7 @@
     impl-dummy = { path = "./ipc-impl/impl-dummy/", package = "wateros-ipc-impl-dummy", default-features = true }
     futex = { path = "./ipc-futex/", package = "ipc-futex", default-features = false, optional = true }
     pipe = { path = "./ipc-pipe/", package = "ipc-pipe", default-features = false, optional = true }
+    signal = { path = "./ipc-signal/", package = "ipc-signal", default-features = false, optional = true }
     waitqueue = { path = "./ipc-waitqueue/", package = "ipc-waitqueue", default-features = true }
 
 [features]
@@ -28,7 +32,8 @@
     futex = [ "dep:futex", "futex/api-v0", "futex/impl-task" ]
     impl-dummy = [ "impl-dummy/impl-dummy" ]
     pipe = [ "dep:pipe", "pipe/api-v0", "pipe/impl-ringbuf" ]
-    all=[ "api-v0", "impl-dummy", "futex", "pipe" ]
+    signal = [ "dep:signal", "signal/api-v0" ]
+    all=[ "api-v0", "impl-dummy", "futex", "pipe", "signal" ]
 [profile.dev]
     panic = "abort"
 

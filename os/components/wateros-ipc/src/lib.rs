@@ -30,3 +30,9 @@ pub mod pipe {
 pub mod futex {
     pub use ::futex::*;
 }
+
+#[cfg(feature = "signal")]
+/// Signal action, mask and pending-set state.
+pub mod signal {
+    pub use ::signal::*;
+}

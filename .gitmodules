@@ -1,3 +1,6 @@
 [submodule "user"]
 	path = user
 	url = https://github.com/zhitian111/wateros_user_mode_program.git
+[submodule "testsuits-for-oskernel"]
+	path = testsuits-for-oskernel
+	url = https://github.com/oscomp/testsuits-for-oskernel.git

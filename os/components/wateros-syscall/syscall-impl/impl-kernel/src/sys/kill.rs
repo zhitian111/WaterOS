@@ -3,20 +3,11 @@
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
+use ipc::signal::SignalDelivery;
 use task::TaskExitCode;
 
 /// Linux 标准信号号上界（不含实时信号）。
 const _NSIG: i32 = 64;
-
-const SIGKILL: i32 = 9;
-const SIGTERM: i32 = 15;
-const SIGINT: i32 = 2;
-const SIGHUP: i32 = 1;
-
-/// 默认动作为终止进程的信号；其它信号仅校验存在性并返回成功。
-fn signal_terminates(sig: i32) -> bool {
-    matches!(sig, SIGKILL | SIGTERM | SIGINT | SIGHUP)
-}
 
 /// 与 wait 状态字节一致：`(sig & 0x7f) << 8`。
 fn exit_code_for_signal(sig: i32) -> TaskExitCode {
@@ -52,7 +43,12 @@ pub(crate) fn sys_kill(args: SyscallArgs) -> UserRet {
         return UserRet::from_success(0);
     }
 
-    if !signal_terminates(sig) {
+    let delivery = match ipc::signal::with_registry(|registry| registry.send(task_id, sig as usize)) {
+        Ok(delivery) => delivery,
+        Err(_) => return UserRet::from_error(ErrNo::EINVAL),
+    };
+
+    if !matches!(delivery, SignalDelivery::Terminate) {
         return UserRet::from_success(0);
     }
 

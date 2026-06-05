@@ -6,6 +6,7 @@ use alloc::vec::Vec;
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
+use ipc::signal::{SignalAction, SignalError, SignalSet};
 
 use crate::user_copy::{copy_from_user_struct, copy_to_user, copy_to_user_struct};
 
@@ -32,11 +33,41 @@ const RLIMIT_CORE: usize = 4;
 const RLIMIT_MEMLOCK: usize = 8;
 const RLIMIT_NPROC: usize = 6;
 const RT_SIGSET_SIZE_64: usize = 8;
-const RT_SIGACTION_SIZE_MIN: usize = 32;
+const RT_SIGACTION_SIZE: usize = 32;
 const GRND_NONBLOCK: usize = 0x0001;
 const GRND_RANDOM: usize = 0x0002;
 const GRND_INSECURE: usize = 0x0004;
 const GETRANDOM_ALLOWED_FLAGS: usize = GRND_NONBLOCK | GRND_RANDOM | GRND_INSECURE;
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct UserSigAction {
+    handler: usize,
+    flags: usize,
+    restorer: usize,
+    mask: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct UserSigInfo {
+    signo: i32,
+    errno: i32,
+    code: i32,
+    payload: [u8; 116],
+}
+
+impl UserSigInfo {
+    fn for_signal(sig: usize) -> Self {
+        Self { signo: sig as i32,
+               errno: 0,
+               code: 0,
+               payload: [0; 116] }
+    }
+}
+
+const _: () = assert!(core::mem::size_of::<UserSigAction>() == RT_SIGACTION_SIZE);
+const _: () = assert!(core::mem::size_of::<UserSigInfo>() == 128);
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -312,19 +343,35 @@ fn fill_pseudo_random(state: &mut u64, out: &mut [u8]) {
 
 pub(crate) fn sys_rt_sigprocmask(args: SyscallArgs) -> UserRet {
     let how = args.arg(0);
-    let _set = args.arg(1);
+    let set = args.arg(1);
     let oldset = args.arg(2);
     let sigset_size = args.arg(3);
 
-    if how > 2 {
-        return UserRet::from_error(ErrNo::EINVAL);
-    }
     if sigset_size != RT_SIGSET_SIZE_64 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
+    let task_id = match task::current_task_id() {
+        Some(task_id) => task_id,
+        None => return UserRet::from_error(ErrNo::ESRCH),
+    };
+    let new_set = if set == 0 {
+        None
+    } else {
+        match copy_from_user_struct::<u64>(set) {
+            Ok(bits) => Some(SignalSet::from_bits(bits)),
+            Err(e) => return UserRet::from_error(e),
+        }
+    };
+    let old = match ipc::signal::with_registry(|registry| {
+        registry.update_mask(task_id, how, new_set)
+    }) {
+        Ok(old) => old,
+        Err(SignalError::InvalidHow) => return UserRet::from_error(ErrNo::EINVAL),
+        Err(_) => return UserRet::from_error(ErrNo::EINVAL),
+    };
     if oldset != 0 {
-        if copy_to_user_struct(oldset, &0u64).is_err() {
-            return UserRet::from_error(ErrNo::EFAULT);
+        if let Err(e) = copy_to_user_struct(oldset, &old.bits()) {
+            return UserRet::from_error(e);
         }
     }
     UserRet::from_success(0)
@@ -332,7 +379,7 @@ pub(crate) fn sys_rt_sigprocmask(args: SyscallArgs) -> UserRet {
 
 pub(crate) fn sys_rt_sigtimedwait(args: SyscallArgs) -> UserRet {
     let set = args.arg(0);
-    let _info = args.arg(1);
+    let info = args.arg(1);
     let _timeout = args.arg(2);
     let sigset_size = args.arg(3);
 
@@ -342,27 +389,65 @@ pub(crate) fn sys_rt_sigtimedwait(args: SyscallArgs) -> UserRet {
     if sigset_size != RT_SIGSET_SIZE_64 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
-    // No per-task pending signal queue yet: report "nothing available" instead
-    // of panicking, which is enough for libc probes that sanity-check the call.
-    UserRet::from_error(ErrNo::EAGAIN)
+    let task_id = match task::current_task_id() {
+        Some(task_id) => task_id,
+        None => return UserRet::from_error(ErrNo::ESRCH),
+    };
+    let wait_set = match copy_from_user_struct::<u64>(set) {
+        Ok(bits) => SignalSet::from_bits(bits),
+        Err(e) => return UserRet::from_error(e),
+    };
+    let sig = ipc::signal::with_registry(|registry| registry.take_pending(task_id, wait_set));
+    let Some(sig) = sig else {
+        return UserRet::from_error(ErrNo::EAGAIN);
+    };
+    if info != 0 {
+        let siginfo = UserSigInfo::for_signal(sig);
+        if let Err(e) = copy_to_user_struct(info, &siginfo) {
+            return UserRet::from_error(e);
+        }
+    }
+    UserRet::from_success(sig)
 }
 
 pub(crate) fn sys_rt_sigaction(args: SyscallArgs) -> UserRet {
     let sig = args.arg(0);
-    let _act = args.arg(1);
+    let act = args.arg(1);
     let oldact = args.arg(2);
     let sigset_size = args.arg(3);
 
-    if sig == 0 || sig >= 64 {
-        return UserRet::from_error(ErrNo::EINVAL);
-    }
     if sigset_size != RT_SIGSET_SIZE_64 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
+    let task_id = match task::current_task_id() {
+        Some(task_id) => task_id,
+        None => return UserRet::from_error(ErrNo::ESRCH),
+    };
+    let old = match ipc::signal::with_registry(|registry| registry.get_action(task_id, sig)) {
+        Ok(old) => old,
+        Err(_) => return UserRet::from_error(ErrNo::EINVAL),
+    };
     if oldact != 0 {
-        let zero = [0u8; RT_SIGACTION_SIZE_MIN];
-        if copy_to_user(oldact, &zero).is_err() {
-            return UserRet::from_error(ErrNo::EFAULT);
+        let user_old = UserSigAction { handler: old.handler,
+                                       flags: old.flags,
+                                       restorer: old.restorer,
+                                       mask: old.mask.bits() };
+        if let Err(e) = copy_to_user_struct(oldact, &user_old) {
+            return UserRet::from_error(e);
+        }
+    }
+    if act != 0 {
+        let user_action = match copy_from_user_struct::<UserSigAction>(act) {
+            Ok(action) => action,
+            Err(e) => return UserRet::from_error(e),
+        };
+        let action = SignalAction { handler: user_action.handler,
+                                    flags: user_action.flags,
+                                    restorer: user_action.restorer,
+                                    mask: SignalSet::from_bits(user_action.mask) };
+        match ipc::signal::with_registry(|registry| registry.set_action(task_id, sig, action)) {
+            Ok(_) => {}
+            Err(_) => return UserRet::from_error(ErrNo::EINVAL),
         }
     }
     UserRet::from_success(0)
