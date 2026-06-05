@@ -86,6 +86,10 @@ pub trait SyscallNumberTable {
     const MKDIRAT: SyscallNumber;
     /// 相对目录删除目录项（`unlinkat(2)`）。
     const UNLINKAT: SyscallNumber;
+    /// 相对目录重命名目录项（`renameat2(2)`）。
+    const RENAMEAT2: SyscallNumber;
+    /// 相对目录更新时间戳（`utimensat(2)`）。
+    const UTIMENSAT: SyscallNumber;
     /// 挂载文件系统（`mount(2)`）。
     const MOUNT: SyscallNumber;
     /// 卸载文件系统（`umount2(2)`）。

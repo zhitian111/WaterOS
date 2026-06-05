@@ -45,6 +45,8 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const GETDENTS64: SyscallNumber = SyscallNumber(61);
     const MKDIRAT: SyscallNumber = SyscallNumber(34);
     const UNLINKAT: SyscallNumber = SyscallNumber(35);
+    const RENAMEAT2: SyscallNumber = SyscallNumber(276);
+    const UTIMENSAT: SyscallNumber = SyscallNumber(88);
     const MOUNT: SyscallNumber = SyscallNumber(40);
     const UMOUNT2: SyscallNumber = SyscallNumber(39);
 

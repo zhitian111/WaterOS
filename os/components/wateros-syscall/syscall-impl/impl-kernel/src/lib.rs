@@ -326,6 +326,16 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     }
 
     #[inline]
+    fn dispatch_renameat2(args: SyscallArgs) -> isize {
+        sys::sys_renameat2(args).0
+    }
+
+    #[inline]
+    fn dispatch_utimensat(args: SyscallArgs) -> isize {
+        sys::sys_utimensat(args).0
+    }
+
+    #[inline]
     fn dispatch_mount(args: SyscallArgs) -> isize {
         sys::sys_mount(args).0
     }

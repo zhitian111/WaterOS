@@ -29,12 +29,14 @@ mod poll_multiplex;
 mod posix_at_io;
 mod read;
 mod readlinkat;
+mod renameat2;
 mod sendfile;
 mod robust;
 mod syslog;
 mod task;
 mod umount2;
 mod unlinkat;
+mod utimensat;
 mod write;
 
 // socket / 网络
@@ -83,6 +85,7 @@ pub(crate) use poll_multiplex::{sys_ppoll, sys_pselect6, sys_select};
 pub(crate) use posix_at_io::{sys_pread64, sys_preadv, sys_pwrite64, sys_pwritev};
 pub(crate) use read::sys_read;
 pub(crate) use readlinkat::sys_readlinkat;
+pub(crate) use renameat2::sys_renameat2;
 pub(crate) use sendfile::sys_sendfile;
 pub(crate) use clock::{
     sys_clock_getres, sys_clock_gettime, sys_clock_nanosleep, sys_clock_settime, sys_gettimeofday,
@@ -96,6 +99,7 @@ pub(crate) use task::{
 };
 pub(crate) use umount2::sys_umount2;
 pub(crate) use unlinkat::sys_unlinkat;
+pub(crate) use utimensat::sys_utimensat;
 pub(crate) use write::{sys_write, sys_writev};
 
 // socket / 网络

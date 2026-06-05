@@ -35,6 +35,8 @@ pub enum SyscallKind {
     GetDents64,
     MkdirAt,
     UnlinkAt,
+    RenameAt2,
+    UtimensAt,
     Mount,
     Umount2,
     Yield,
@@ -158,6 +160,10 @@ impl SyscallKind {
             Self::MkdirAt
         } else if syscall_nr == T::UNLINKAT.raw() {
             Self::UnlinkAt
+        } else if syscall_nr == T::RENAMEAT2.raw() {
+            Self::RenameAt2
+        } else if syscall_nr == T::UTIMENSAT.raw() {
+            Self::UtimensAt
         } else if syscall_nr == T::MOUNT.raw() {
             Self::Mount
         } else if syscall_nr == T::UMOUNT2.raw() {
@@ -331,6 +337,8 @@ impl SyscallKind {
             Self::GetDents64 => "getdents64",
             Self::MkdirAt => "mkdirat",
             Self::UnlinkAt => "unlinkat",
+            Self::RenameAt2 => "renameat2",
+            Self::UtimensAt => "utimensat",
             Self::Mount => "mount",
             Self::Umount2 => "umount2",
             Self::Yield => "sched_yield",
@@ -665,6 +673,22 @@ pub trait SyscallDispatcher {
         Self::dispatch_unsupported(
             SyscallKind::UnlinkAt,
             Self::NumberTable::UNLINKAT.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_renameat2(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::RenameAt2,
+            Self::NumberTable::RENAMEAT2.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_utimensat(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::UtimensAt,
+            Self::NumberTable::UTIMENSAT.raw(),
             args,
         )
     }
@@ -1253,6 +1277,8 @@ pub trait SyscallDispatcher {
             SyscallKind::GetDents64 => Self::dispatch_getdents64(syscall_args),
             SyscallKind::MkdirAt => Self::dispatch_mkdirat(syscall_args),
             SyscallKind::UnlinkAt => Self::dispatch_unlinkat(syscall_args),
+            SyscallKind::RenameAt2 => Self::dispatch_renameat2(syscall_args),
+            SyscallKind::UtimensAt => Self::dispatch_utimensat(syscall_args),
             SyscallKind::Mount => Self::dispatch_mount(syscall_args),
             SyscallKind::Umount2 => Self::dispatch_umount2(syscall_args),
             SyscallKind::Brk => Self::dispatch_brk(syscall_args),
