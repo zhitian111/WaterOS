@@ -4,9 +4,12 @@
 
 extern crate alloc;
 
+pub mod char_dev_handle;
 pub mod cwd;
 pub mod handles;
 pub mod registry;
+
+pub use char_dev_handle::{CharDevHandle, is_rtc_dev_path};
 
 pub use cwd::{PerTaskCwdRegistry, PATH_MAX};
 pub use handles::{

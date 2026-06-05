@@ -111,9 +111,30 @@ fn fs_and_rel_rw(path: &str) -> VfsResult<(SharedRwFs, String)> {
     }
 }
 
+fn char_dev_exists(abs: &str) -> bool {
+    fs::devfs::active_impl::lookup_character_device(abs).is_ok()
+}
+
+fn char_dev_metadata(abs: &str) -> VfsMetadata {
+    let mode = if matches!(abs, "/dev/misc/rtc" | "/dev/rtc0" | "/dev/rtc") {
+        0o20644u16
+    } else {
+        0o20660u16
+    };
+    VfsMetadata {
+        node_type: VfsNodeType::Special,
+        size: 0,
+        mode,
+    }
+}
+
 impl SingleRootReadView for FsBridge {
     fn exists(&self, path: &str) -> VfsResult<bool> {
-        match resolve_route(path)? {
+        let abs = normalize_absolute_path(path)?;
+        if char_dev_exists(abs.as_str()) {
+            return Ok(true);
+        }
+        match resolve_route(abs.as_str())? {
             FsRoute::Root { abs } => root_rw()?.lock().exists(abs.as_str()).map_err(map_fs_err),
             FsRoute::AuxRw { fs, rel } => {
                 fs.lock().exists(rel.as_str()).map_err(map_fs_err)
@@ -125,7 +146,11 @@ impl SingleRootReadView for FsBridge {
     }
 
     fn metadata(&self, path: &str) -> VfsResult<VfsMetadata> {
-        let meta = match resolve_route(path)? {
+        let abs = normalize_absolute_path(path)?;
+        if char_dev_exists(abs.as_str()) {
+            return Ok(char_dev_metadata(abs.as_str()));
+        }
+        let meta = match resolve_route(abs.as_str())? {
             FsRoute::Root { abs } => root_rw()?
                 .lock()
                 .metadata(abs.as_str())

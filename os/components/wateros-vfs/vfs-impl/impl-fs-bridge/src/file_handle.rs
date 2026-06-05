@@ -269,6 +269,12 @@ impl FsBridge {
         flags: VfsOpenFlags,
     ) -> VfsResult<Box<dyn VfsIoHandle>> {
         let abs = api_v0::resolve_open_path(path)?;
+        if let Ok(dev) = fs::devfs::active_impl::lookup_character_device(abs.as_str()) {
+            return Ok(Box::new(impl_fd_session::CharDevHandle::from_devfs_path(
+                dev,
+                abs.as_str(),
+            )));
+        }
         if flags.contains(VfsOpenFlags::DIRECTORY) {
             return super::dir_handle::DirectoryHandle::open(self, abs);
         }

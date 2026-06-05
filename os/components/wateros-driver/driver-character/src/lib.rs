@@ -1,33 +1,72 @@
-//! 字符设备子系统入口：串口 API（v0）与 DTB 声明表。
+//! 字符设备子系统入口：[`CharacterDevice`] 注册表与 DTB 声明表。
 
 #![no_std]
 
-use driver_api::SupportedDeviceEntry;
+extern crate alloc;
 
-/// 字符设备 API v0（[`SerialPort`](api_v0::SerialPort) 等）。
+use alloc::string::String;
+use driver_api::{DeviceType, SupportedDeviceEntry};
+
+pub use api_v0::{
+    character_device_at, character_device_count, first_character_device,
+    register_character_device, with_character_device, CharacterDevice, SerialError,
+    SerialPort, SerialPortCharacterDevice, SerialResult, SharedCharacterDevice,
+};
+
+/// 字符设备 API v0。
 pub mod api_v0 {
     pub use character_api_v0::*;
 }
 
-/// 占位函数，保持与子 crate 骨架一致；非字符设备 API。
-///
-/// **当前行为**：无 I/O；**后续替换点**：接入更多子系统后可删除。
-pub fn add(left : u64, right : u64) -> u64 {
-    left + right
-}
+#[cfg(feature = "impl-rtc-stub")]
+pub use impl_rtc_stub::{register_rtc_stub, RtcCharacterDevice, RtcTime};
 
-/// 字符设备子系统当前未声明任何 DTB 绑定条目；占位供聚合层遍历。
+/// 字符子系统在 DTB 中声明可尝试绑定的设备。
+pub const CHARACTER_SUPPORTED_DEVICES: &[SupportedDeviceEntry] = &[
+    SupportedDeviceEntry {
+        subsystem: "character",
+        name: "ns16550a-mmio",
+        compatible: "ns16550a",
+    },
+    SupportedDeviceEntry {
+        subsystem: "character",
+        name: "ns8250-mmio",
+        compatible: "ns8250",
+    },
+];
+
+/// 返回本子系统声明支持的设备条目。
 pub fn supported_devices() -> &'static [SupportedDeviceEntry] {
-    &[]
+    CHARACTER_SUPPORTED_DEVICES
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
+/// 字符子系统是否声明可处理该 DTB 设备。
+pub fn character_subsystem_claims_device(compatibles: &[String], probed: DeviceType) -> bool {
+    if probed != DeviceType::Character {
+        return false;
     }
+    supported_devices().iter().any(|s| {
+        s.subsystem == "character"
+            && compatibles
+                .iter()
+                .any(|c| c.as_str() == s.compatible)
+    })
 }
+
+/// 是否识别为 NS16550 类 UART 节点（用于 DTB 探测）。
+pub fn is_uart_compatible(compatibles: &[String]) -> bool {
+    compatibles.iter().any(|c| {
+        matches!(
+            c.as_str(),
+            "ns16550a" | "ns8250" | "snps,dw-apb-uart"
+        )
+    })
+}
+
+#[cfg(feature = "impl-rtc-stub")]
+pub fn register_builtin_character_devices() {
+    register_rtc_stub();
+}
+
+#[cfg(not(feature = "impl-rtc-stub"))]
+pub fn register_builtin_character_devices() {}

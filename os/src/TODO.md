@@ -23,10 +23,8 @@
 
 ### P1：标准输入/管道兼容
 
-- [ ] 评估非交互 stdin 的 EOF 语义。
-  - 现象：`busybox od test.txt` 打印文件内容后仍报 `standard input: Bad file descriptor`。
-  - 当前限制：`ConsoleInHandle::read` 返回 `BadFd`。
-  - 方向：对于无真实输入的 bring-up 场景，可考虑 stdin read 返回 `Ok(0)` 表示 EOF，提升 busybox 过滤器类 applet 兼容性。
+- [x] 评估非交互 stdin 的 EOF 语义。
+  - 已实现：fd 0 经 UART 字符设备，`read` 无数据时返回 EOF（`Ok(0)`）。
 
 ### P2：伪文件系统与设备 stub
 
@@ -34,9 +32,8 @@
   - 现象：`ps` 无法打开 `/proc`，`free` 无法打开 `/proc/meminfo`。
   - 方向：先提供 `/proc` 目录、`/proc/meminfo`、必要的进程目录或空目录行为，让 busybox 探测类命令可降级通过。
 
-- [ ] 补最小 RTC 设备节点。
-  - 现象：`hwclock` 无法打开 `/dev/misc/rtc`。
-  - 方向：可先提供只读/返回固定时间或 `ENOSYS` 语义明确的 devfs stub。
+- [x] 补最小 RTC 设备节点。
+  - 已实现：`/dev/misc/rtc` 等 devfs 字符节点 + `RTC_RD_TIME`/`RTC_SET_TIME` ioctl stub，时间语义与 `CLOCK_REALTIME` 对齐。
 
 ### P2：环境与路径
 

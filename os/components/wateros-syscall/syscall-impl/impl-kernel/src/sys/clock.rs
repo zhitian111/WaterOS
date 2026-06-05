@@ -1,28 +1,25 @@
 //! 时钟类系统调用：`clock_gettime` / `clock_settime` / `clock_getres` /
 //! `clock_nanosleep`，以及 `gettimeofday` / `nanosleep` 的统一时间语义。
 
-use core::sync::atomic::{AtomicI64, Ordering};
-
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use platform::timer;
+use platform::wall_clock::{realtime_ns, set_realtime_ns};
 use wateros_base_config::task::SCHED_TIMER_PERIOD_MS;
 
 use crate::user_copy::{copy_from_user_struct, copy_to_user_struct};
 
-const CLOCK_REALTIME : usize = 0;
-const CLOCK_MONOTONIC : usize = 1;
-const CLOCK_PROCESS_CPUTIME_ID : usize = 2;
-const CLOCK_MONOTONIC_RAW : usize = 4;
-const CLOCK_REALTIME_COARSE : usize = 5;
-const CLOCK_MONOTONIC_COARSE : usize = 6;
+const CLOCK_REALTIME: usize = 0;
+const CLOCK_MONOTONIC: usize = 1;
+const CLOCK_PROCESS_CPUTIME_ID: usize = 2;
+const CLOCK_MONOTONIC_RAW: usize = 4;
+const CLOCK_REALTIME_COARSE: usize = 5;
+const CLOCK_MONOTONIC_COARSE: usize = 6;
 
-const TIMER_ABSTIME : usize = 1;
+const TIMER_ABSTIME: usize = 1;
 
-static REALTIME_OFFSET_NS : AtomicI64 = AtomicI64::new(0);
-
-const SCHED_TICK_NS : u128 = (SCHED_TIMER_PERIOD_MS as u128) * 1_000_000;
+const SCHED_TICK_NS: u128 = (SCHED_TIMER_PERIOD_MS as u128) * 1_000_000;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -88,9 +85,7 @@ fn is_sleepable_clock(clock_id : usize) -> bool {
 fn clock_id_to_ns(clock_id : usize) -> Result<u128, ErrNo> {
     match clock_id {
         CLOCK_REALTIME | CLOCK_REALTIME_COARSE => {
-            let mono = monotonic_now_ns()?;
-            let offset = REALTIME_OFFSET_NS.load(Ordering::Relaxed) as i128;
-            Ok(((mono as i128) + offset).max(0) as u128)
+            realtime_ns().map_err(|_| ErrNo::EIO)
         }
         CLOCK_MONOTONIC | CLOCK_MONOTONIC_RAW | CLOCK_MONOTONIC_COARSE => monotonic_now_ns(),
         CLOCK_PROCESS_CPUTIME_ID => {
@@ -175,14 +170,9 @@ pub(crate) fn sys_clock_settime(args : SyscallArgs) -> UserRet {
         Ok(ns) => ns,
         Err(e) => return UserRet::from_error(e),
     };
-    let mono = match monotonic_now_ns() {
-        Ok(ns) => ns,
-        Err(e) => return UserRet::from_error(e),
-    };
-    // TODO: check CAP_SYS_TIME when cred capabilities are wired.
-    let offset = (target_ns as i128) - (mono as i128);
-    let offset = i64::try_from(offset).unwrap_or(i64::MAX);
-    REALTIME_OFFSET_NS.store(offset, Ordering::Relaxed);
+    if set_realtime_ns(target_ns).is_err() {
+        return UserRet::from_error(ErrNo::EIO);
+    }
     UserRet::from_success(0)
 }
 

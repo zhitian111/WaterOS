@@ -15,7 +15,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use runtime_serial::SerialPort;
+use runtime_serial::CharacterDevice;
 use vfs::{
     mount, resolve_against_cwd, root, RootRwSession, SingleRootReadView, VfsDirEntry, VfsError,
     VfsFsKind, VfsNodeType, VfsResult,
@@ -29,7 +29,7 @@ pub fn run_pseudo_shell() -> ! {
     let mut cwd = String::from("/");
     loop {
         let _ = runtime_serial::with_default_uart(|uart| {
-            let _ = uart.write_all(b"wateros> ");
+            let _ = uart.write(b"wateros> ");
         });
         let mut line = [0u8; MAX_LINE];
         let n = read_line_into(&mut line);
@@ -38,7 +38,7 @@ pub fn run_pseudo_shell() -> ! {
         }
         let Ok(cmdline) = core::str::from_utf8(&line[..n]) else {
             let _ = runtime_serial::with_default_uart(|uart| {
-                let _ = uart.write_all(b"error: invalid utf-8\n");
+                let _ = uart.write(b"error: invalid utf-8\n");
             });
             continue;
         };
@@ -55,7 +55,7 @@ pub fn run_pseudo_shell() -> ! {
         let res : Result<(), VfsError> = match cmd {
             "help" | "?" => {
                 let _ = runtime_serial::with_default_uart(|uart| {
-                    let _ = uart.write_all(
+                    let _ = uart.write(
                         b"commands: cd ls stat rm exec help\npaths: absolute or relative to cwd\n",
                     );
                 });
@@ -68,7 +68,7 @@ pub fn run_pseudo_shell() -> ! {
             "exec" => do_exec(&cwd, arg, rest.as_slice()),
             _ => {
                 let _ = runtime_serial::with_default_uart(|uart| {
-                    let _ = uart.write_all(b"error: unknown command (try help)\n");
+                    let _ = uart.write(b"error: unknown command (try help)\n");
                 });
                 Ok(())
             }
@@ -77,7 +77,7 @@ pub fn run_pseudo_shell() -> ! {
         if let Err(e) = res {
             let msg = format!("error: {:?}\n", e);
             let _ = runtime_serial::with_default_uart(|uart| {
-                let _ = uart.write_all(msg.as_bytes());
+                let _ = uart.write(msg.as_bytes());
             });
         }
     }
@@ -87,7 +87,7 @@ fn read_line_into(buf : &mut [u8]) -> usize {
     runtime_serial::with_default_uart(|uart| {
         let mut i = 0usize;
         loop {
-            let b = uart.read_byte_blocking();
+            let b = runtime_serial::read_byte_blocking(uart);
             if b == b'\r' {
                 continue;
             }
@@ -144,7 +144,7 @@ fn reply_dir_entry(e : &VfsDirEntry) -> Result<(), ()> {
     };
     let line = format!("{} {}\n", kind, e.name);
     let _ = runtime_serial::with_default_uart(|uart| {
-        let _ = uart.write_all(line.as_bytes());
+        let _ = uart.write(line.as_bytes());
     });
     Ok(())
 }
@@ -156,7 +156,7 @@ fn do_stat(cwd : &str, arg : Option<&str>) -> Result<(), VfsError> {
     let line = format!("{:?} size={} mode={:#o}\n",
                        m.node_type, m.size, m.mode);
     let _ = runtime_serial::with_default_uart(|uart| {
-        let _ = uart.write_all(line.as_bytes());
+        let _ = uart.write(line.as_bytes());
     });
     Ok(())
 }
@@ -206,14 +206,14 @@ fn do_exec(cwd : &str, arg : Option<&str>, _rest : &[&str]) -> Result<(), VfsErr
                                                       .unwrap_or(-1);
                 let line = format!("exec exit_code={}\n", code);
                 let _ = runtime_serial::with_default_uart(|uart| {
-                    let _ = uart.write_all(line.as_bytes());
+                    let _ = uart.write(line.as_bytes());
                 });
                 Ok(())
             }
             Err(e) => {
                 let line = format!("exec load err: {:?}\n", e);
                 let _ = runtime_serial::with_default_uart(|uart| {
-                    let _ = uart.write_all(line.as_bytes());
+                    let _ = uart.write(line.as_bytes());
                 });
                 Ok(())
             }
@@ -224,7 +224,7 @@ fn do_exec(cwd : &str, arg : Option<&str>, _rest : &[&str]) -> Result<(), VfsErr
         let _ = cwd;
         let _ = arg;
         let _ = runtime_serial::with_default_uart(|uart| {
-            let _ = uart.write_all(b"exec: unsupported on this arch\n");
+            let _ = uart.write(b"exec: unsupported on this arch\n");
         });
         Ok(())
     }

@@ -11,10 +11,11 @@
         "spin_mutex",
     ] }
     impl_page_cache = { path = "../impl-page-cache/", package = "wateros-vfs-impl-page-cache", default-features = true, optional = true }
+    impl_fd_session = { path = "../impl-fd-session/", package = "wateros-vfs-impl-fd-session", default-features = true, optional = true }
     wateros-base-config = { path = "../../../wateros-base/base-config", package = "wateros-base-config" }
 
 [features]
     # 本 crate 被选中构建时默认带 `fs`，便于工作区 `cargo check`；聚合层仍通过 optional dep 控制是否拉取本 crate。
     api-v0 = [  ]
-    bridge-fs-api = [ "dep:fs", "dep:impl_page_cache" ]
+    bridge-fs-api = [ "dep:fs", "dep:impl_page_cache", "dep:impl_fd_session" ]
     default = [ "api-v0", "bridge-fs-api" ]

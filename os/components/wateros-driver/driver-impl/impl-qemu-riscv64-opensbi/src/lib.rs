@@ -21,9 +21,15 @@ use network::{
     network_device_count, network_subsystem_claims_device, register_network_device,
     NetworkDevice, VirtioNetDevice,
 };
+use character::{
+    character_device_count, character_subsystem_claims_device, is_uart_compatible,
+    register_builtin_character_devices, register_character_device, CharacterDevice,
+    SerialPortCharacterDevice,
+};
 use fdt::Fdt;
 use fs::devfs::active_impl as devfs_impl;
 use spin::Mutex;
+use uart::QemuVirtUart16550;
 
 // DTB 物理基址；为 0 时 read_fdt 返回 NotFound（尚未 boot 或未调用 init_when_boot）。
 static DTB_BASE_ADDR: AtomicUsize = AtomicUsize::new(0);
@@ -179,7 +185,11 @@ pub fn scan_device_info() -> DriverResult<usize> {
         if let Some(region) = mmio {
             if is_virtio_mmio_compatible(&compatibles) {
                 dtype = probe_virtio_device_type(region);
+            } else if is_uart_compatible(&compatibles) {
+                dtype = DeviceType::Character;
             }
+        } else if is_uart_compatible(&compatibles) {
+            dtype = DeviceType::Character;
         }
 
         if is_virtio_mmio_compatible(&compatibles) {
@@ -315,6 +325,55 @@ fn probe_virtio_blk_and_collect_unsupported() -> Vec<String> {
     unsupported
 }
 
+fn register_uart_character_device(base: usize) -> usize {
+    let mut u = QemuVirtUart16550::new(base);
+    u.init_minimal();
+    let shared: character::SharedCharacterDevice = Arc::new(Mutex::new(
+        Box::new(SerialPortCharacterDevice::new(u)) as Box<dyn CharacterDevice>,
+    ));
+    register_character_device(shared)
+}
+
+/// 绑定 DTB 中的 UART 字符设备；若无匹配则回退到 QEMU virt 默认 UART0。
+fn probe_character_devices() {
+    let infos = DEVICE_INFOS.lock();
+    for info in infos.iter() {
+        if !character_subsystem_claims_device(&info.compatibles, info.device_type) {
+            continue;
+        }
+        let Some(mmio) = info.mmio else {
+            log::warn!(
+                "[driver] dtb uart: node={} has no MMIO region",
+                info.node_name
+            );
+            continue;
+        };
+        let idx = register_uart_character_device(mmio.base);
+        log::info!(
+            "[driver] registered character #{} (uart node={} base={:#x})",
+            idx,
+            info.node_name,
+            mmio.base
+        );
+    }
+    drop(infos);
+
+    if character_device_count() == 0 {
+        let idx = register_uart_character_device(QemuVirtUart16550::qemu_virt_default().base);
+        log::info!(
+            "[driver] registered character #{} (fallback virt uart0 base={:#x})",
+            idx,
+            QemuVirtUart16550::qemu_virt_default().base
+        );
+    }
+
+    register_builtin_character_devices();
+    log::info!(
+        "[driver] character devices registered: count={}",
+        character_device_count()
+    );
+}
+
 // 将 DTB 中未能绑定的 virtio 节点路径同步给用户态可见的 devfs 视图（具体语义由 devfs impl 定义）。
 fn sync_devfs(unsupported_paths: Vec<String>) {
     devfs_impl::set_dt_unsupported_paths(unsupported_paths);
@@ -385,16 +444,27 @@ pub fn init_after_boot() -> DriverResult<()> {
             e.compatible
         );
     }
+    for e in character::supported_devices() {
+        log::info!(
+            "[driver] supported-device catalog: subsystem={} name={} compatible={}",
+            e.subsystem,
+            e.name,
+            e.compatible
+        );
+    }
 
     let count = scan_device_info()?;
     log::trace!("[driver] dtb scan done, devices={}", count);
+    probe_character_devices();
     let unsupported = probe_virtio_blk_and_collect_unsupported();
     let registered_blk = block_device_count();
     let registered_net = network_device_count();
+    let registered_chr = character_device_count();
     log::info!(
-        "[driver] devices registered: block={} network={}",
+        "[driver] devices registered: block={} network={} character={}",
         registered_blk,
-        registered_net
+        registered_net,
+        registered_chr
     );
     if registered_blk == 0 {
         log::warn!(
@@ -409,7 +479,6 @@ pub fn init_after_boot() -> DriverResult<()> {
         );
     }
     sync_devfs(unsupported);
-    uart::init_default_virt_uart();
     log::info!("[driver] QEMU virt UART0 MMIO ready (serial I/O)");
     Ok(())
 }

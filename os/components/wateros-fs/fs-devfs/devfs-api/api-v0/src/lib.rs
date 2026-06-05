@@ -9,6 +9,7 @@ extern crate alloc;
 
 use alloc::{string::String, vec::Vec};
 use driver_block_api_v0::SharedBlockDevice;
+use driver_character_api_v0::SharedCharacterDevice;
 use fs_api_v0::FsResult;
 
 /// devfs 中节点的粗分类。
@@ -43,6 +44,14 @@ pub trait DevFsManager {
     fn register_block_device(&mut self, path: &str, device: SharedBlockDevice) -> FsResult<()>;
     /// 按路径查找已注册的块设备句柄。
     fn lookup_block_device(&self, path: &str) -> FsResult<SharedBlockDevice>;
+    /// 将字符设备绑定到给定路径。
+    fn register_character_device(
+        &mut self,
+        path: &str,
+        device: SharedCharacterDevice,
+    ) -> FsResult<()>;
+    /// 按路径查找已注册的字符设备句柄。
+    fn lookup_character_device(&self, path: &str) -> FsResult<SharedCharacterDevice>;
     /// 默认用于根卷探测的块设备路径；无可用设备时返回 `None`。
     fn default_root_block_path(&self) -> Option<String>;
 }

@@ -7,8 +7,10 @@
     character_api_v0 = { path = "./character-api/api-v0/", package = "wateros-driver-character-api-v0", default-features = true }
     driver-api = { path = "../driver-api/api-v0/", package = "wateros-driver-api-v0", default-features = true }
     impl-dummy = { path = "./character-impl/impl-dummy/", package = "wateros-driver-character-impl-dummy", default-features = true }
+    impl-rtc-stub = { path = "./character-impl/impl-rtc-stub/", package = "wateros-driver-character-impl-rtc-stub", default-features = true, optional = true }
 
 [features]
-    api-v0 = [ "impl-dummy/api-v0" ]
-    default = [ "api-v0", "impl-dummy" ]
+    api-v0 = [ "impl-dummy/api-v0", "impl-rtc-stub?/api-v0" ]
+    default = [ "api-v0", "impl-rtc-stub" ]
     impl-dummy = [  ]
+    impl-rtc-stub = [ "dep:impl-rtc-stub" ]

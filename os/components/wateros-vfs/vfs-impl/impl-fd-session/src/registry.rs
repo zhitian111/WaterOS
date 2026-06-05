@@ -5,11 +5,12 @@ extern crate alloc;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
-use api_v0::{
-    VfsError, VfsFdSession, VfsIoHandle, VfsResult, VFS_FIRST_DYNAMIC_FD, VFS_STDERR_FD,
-    VFS_STDIN_FD, VFS_STDOUT_FD,
+use api_v0::{VfsError, VfsFdSession, VfsIoHandle, VfsResult, VFS_FIRST_DYNAMIC_FD,
+    VFS_STDERR_FD, VFS_STDIN_FD, VFS_STDOUT_FD,
 };
+use driver_character_api_v0::character_device_at;
 
+use crate::char_dev_handle::CharDevHandle;
 use crate::handles::{ConsoleInHandle, ConsoleOutHandle};
 
 /// Linux `FD_CLOEXEC`（`fcntl` / `dup3`）。
@@ -35,8 +36,7 @@ impl PerTaskFdRegistry {
 
     fn ensure_task(&mut self, task_id: task::TaskId) {
         if self.tables.len() <= task_id {
-            self.tables
-                .resize_with(task_id + 1, Vec::new);
+            self.tables.resize_with(task_id + 1, Vec::new);
             self.fd_flags.resize_with(task_id + 1, Vec::new);
             self.owners.resize_with(task_id + 1, || None);
             self.ref_counts.resize(task_id + 1, 0);
@@ -49,9 +49,9 @@ impl PerTaskFdRegistry {
         let table = &mut self.tables[owner];
         if table.len() < VFS_FIRST_DYNAMIC_FD {
             table.resize_with(VFS_FIRST_DYNAMIC_FD, || None);
-            table[VFS_STDIN_FD] = Some(Box::new(ConsoleInHandle));
-            table[VFS_STDOUT_FD] = Some(Box::new(ConsoleOutHandle));
-            table[VFS_STDERR_FD] = Some(Box::new(ConsoleOutHandle));
+            table[VFS_STDIN_FD] = Some(default_stdin_handle());
+            table[VFS_STDOUT_FD] = Some(default_stdout_handle());
+            table[VFS_STDERR_FD] = Some(default_stdout_handle());
             let flags = &mut self.fd_flags[owner];
             if flags.len() < VFS_FIRST_DYNAMIC_FD {
                 flags.resize(VFS_FIRST_DYNAMIC_FD, 0);
@@ -410,5 +410,21 @@ impl PerTaskFdRegistry {
             self.tables[task_id].clear();
             self.fd_flags[task_id].clear();
         }
+    }
+}
+
+fn default_stdin_handle() -> Box<dyn VfsIoHandle> {
+    if let Some(dev) = character_device_at(0) {
+        Box::new(CharDevHandle::new_stdin(dev))
+    } else {
+        Box::new(ConsoleInHandle)
+    }
+}
+
+fn default_stdout_handle() -> Box<dyn VfsIoHandle> {
+    if let Some(dev) = character_device_at(0) {
+        Box::new(CharDevHandle::new_stdout(dev))
+    } else {
+        Box::new(ConsoleOutHandle)
     }
 }

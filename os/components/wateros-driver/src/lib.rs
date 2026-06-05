@@ -105,6 +105,7 @@ pub fn test() {
     log::trace!("[driver] test begin");
     api_v0::test();
     block::test();
+    character::api_v0::character_device_count();
     network::test();
     #[cfg(feature = "impl-qemu-riscv64-opensbi")]
     impl_qemu_riscv64_opensbi::test();

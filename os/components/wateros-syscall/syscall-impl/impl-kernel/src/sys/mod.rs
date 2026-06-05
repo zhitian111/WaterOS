@@ -30,6 +30,7 @@ mod posix_at_io;
 mod read;
 mod readlinkat;
 mod renameat2;
+mod rtc;
 mod sendfile;
 mod robust;
 mod syslog;

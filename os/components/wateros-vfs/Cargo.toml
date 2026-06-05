@@ -16,12 +16,13 @@
     impl-dummy = { path = "./vfs-impl/impl-dummy/", package = "wateros-vfs-impl-dummy", default-features = true }
     impl_fd_session = { path = "./vfs-impl/impl-fd-session/", package = "wateros-vfs-impl-fd-session", default-features = false, optional = true }
     impl_fs_bridge = { path = "./vfs-impl/impl-fs-bridge/", package = "wateros-vfs-impl-fs-bridge", default-features = true, optional = true }
+    fs = { path = "../wateros-fs/", package = "wateros-fs", default-features = true, optional = true }
     log = { version = "0.4.29" }
     task = { path = "../wateros-task/", package = "wateros-task", default-features = false, optional = true }
 
 [features]
     api-v0 = [ "impl-dummy/api-v0", "impl_fs_bridge?/api-v0" ]
-    bridge-fs-api = [ "dep:impl_fs_bridge", "impl_fs_bridge/bridge-fs-api" ]
+    bridge-fs-api = [ "dep:impl_fs_bridge", "dep:fs", "impl_fs_bridge/bridge-fs-api" ]
     default = [ "api-v0", "bridge-fs-api","impl-fd-session" ]
     impl-fd-session = [
         "dep:base",

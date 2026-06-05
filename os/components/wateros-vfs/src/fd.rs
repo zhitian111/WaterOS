@@ -69,6 +69,20 @@ pub fn close_fd(fd: usize) -> VfsResult<()> {
     with_current_task(|reg, task_id| reg.close_fd_for_task(task_id, fd))
 }
 
+/// 当前任务下 `fd` 是否为软件 RTC 字符设备。
+pub fn current_fd_is_rtc(fd: usize) -> VfsResult<bool> {
+    with_current_task(|reg, task_id| {
+        let handle = reg.get_io_for_task(task_id, fd)?;
+        if handle.is_rtc_device() {
+            return Ok(true);
+        }
+        Ok(handle
+            .metadata()
+            .map(|m| m.mode == 0o20644)
+            .unwrap_or(false))
+    })
+}
+
 /// `dup(oldfd)`：复制到 ≥ `minfd` 的最低可用 fd。
 pub fn dup_fd(oldfd: usize, minfd: usize) -> VfsResult<usize> {
     with_current_task(|reg, task_id| reg.dup_fd_for_task(task_id, oldfd, minfd))

@@ -89,6 +89,15 @@ pub trait VfsIoHandle {
         Err(VfsError::Unsupported)
     }
 
+    fn ioctl(&mut self, _request: usize, _arg: usize) -> VfsResult<isize> {
+        Err(VfsError::Unsupported)
+    }
+
+    /// 是否为软件 RTC 字符设备（syscall 层对 rtc fd 分发专用 ioctl）。
+    fn is_rtc_device(&self) -> bool {
+        false
+    }
+
     /// `poll`/`ppoll` 就绪位查询；默认不支持（`POLLNVAL` 由 syscall 层处理）。
     fn poll_revents(&mut self, events: i16) -> VfsResult<i16> {
         let _ = events;
