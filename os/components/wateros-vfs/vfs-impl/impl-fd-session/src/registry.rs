@@ -147,9 +147,6 @@ impl VfsFdSession for PerTaskFdRegistry {
     }
 
     fn close_fd(&mut self, fd: usize) -> VfsResult<()> {
-        if fd < VFS_FIRST_DYNAMIC_FD {
-            return Err(VfsError::BadFd);
-        }
         let task_id = task::current_task_id().ok_or(VfsError::NoTask)?;
         self.close_fd_for_task(task_id, fd)
     }
@@ -228,9 +225,6 @@ impl PerTaskFdRegistry {
 
     /// 按任务关闭 fd；关闭时调用句柄的 `close`。
     pub fn close_fd_for_task(&mut self, task_id: task::TaskId, fd: usize) -> VfsResult<()> {
-        if fd < VFS_FIRST_DYNAMIC_FD {
-            return Err(VfsError::BadFd);
-        }
         self.close_slot(task_id, fd)
     }
 

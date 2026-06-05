@@ -124,6 +124,12 @@ pub fn drop_task_fd_table(task_id: task::TaskId) {
 /// bring-up：两任务 fd 表隔离、dup 与 fork 继承烟囱。
 pub fn self_test() {
     let mut reg = registry().exclusive_access();
+    let stdio_task: task::TaskId = 20;
+    assert!(reg.close_fd_for_task(stdio_task, api_v0::VFS_STDIN_FD).is_ok());
+    assert!(reg.close_fd_for_task(stdio_task, api_v0::VFS_STDIN_FD).is_err());
+    assert!(reg.get_io_for_task(stdio_task, api_v0::VFS_STDIN_FD).is_err());
+    reg.drop_task_fd_table(stdio_task);
+
     let a: task::TaskId = 10;
     let b: task::TaskId = 11;
     let fd = reg.alloc_fd_for_task(a, Box::new(impl_fd_session::ConsoleOutHandle));

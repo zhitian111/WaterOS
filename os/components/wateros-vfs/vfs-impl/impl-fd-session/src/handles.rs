@@ -4,7 +4,9 @@ extern crate alloc;
 
 use alloc::boxed::Box;
 
-use api_v0::{VfsError, VfsIoHandle, VfsMetadata, VfsNodeType, VfsResult};
+use api_v0::{
+    VfsError, VfsIoHandle, VfsMetadata, VfsNodeType, VfsResult, VfsSeekWhence,
+};
 use ipc::pipe::{PipeEndpoint, PipeEndpointOps, PipeError};
 
 fn console_chr_meta() -> VfsMetadata {
@@ -13,13 +15,17 @@ fn console_chr_meta() -> VfsMetadata {
                   mode: 0o20666 }
 }
 
-/// 标准输入占位：`read` 暂不支持（与迁移前 syscall 对 stdin 的 `EBADF` 一致）。
+/// 标准输入占位：bring-up 无真实输入源时 `read` 返回 EOF。
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ConsoleInHandle;
 
 impl VfsIoHandle for ConsoleInHandle {
     fn read(&mut self, _buf: &mut [u8]) -> VfsResult<usize> {
-        Err(VfsError::BadFd)
+        Ok(0)
+    }
+
+    fn seek(&mut self, _offset: i64, _whence: VfsSeekWhence) -> VfsResult<u64> {
+        Err(VfsError::Unsupported)
     }
 
     fn metadata(&self) -> VfsResult<VfsMetadata> {
