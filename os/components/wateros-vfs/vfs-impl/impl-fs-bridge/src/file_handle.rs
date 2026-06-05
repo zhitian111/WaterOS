@@ -13,6 +13,8 @@ use api_v0::{
 use fs::{FsAccessMode, FsKind};
 
 use crate::map_fs_err;
+use crate::mount_table::{resolve_route, FsRoute};
+use crate::proc_handle;
 use crate::FsBridge;
 
 /// 已打开的根卷普通文件（小文件：全文缓冲于内存）。
@@ -269,6 +271,12 @@ impl FsBridge {
         flags: VfsOpenFlags,
     ) -> VfsResult<Box<dyn VfsIoHandle>> {
         let abs = api_v0::resolve_open_path(path)?;
+        match resolve_route(abs.as_str())? {
+            FsRoute::PseudoProc { rel } => {
+                return super::proc_handle::open_proc(rel, abs, flags);
+            }
+            _ => {}
+        }
         if let Ok(dev) = fs::devfs::active_impl::lookup_character_device(abs.as_str()) {
             return Ok(Box::new(impl_fd_session::CharDevHandle::from_devfs_path(
                 dev,
@@ -276,7 +284,7 @@ impl FsBridge {
             )));
         }
         if flags.contains(VfsOpenFlags::DIRECTORY) {
-            return super::dir_handle::DirectoryHandle::open(self, abs);
+            return super::dir_handle::DirectoryHandle::open(self, abs.clone());
         }
         super::paged_handle::open_file(self, abs, flags)
     }

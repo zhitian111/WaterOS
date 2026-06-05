@@ -45,6 +45,12 @@ pub fn drop_task_cred(tid: TaskId) {
 }
 
 #[cfg(feature = "impl-root")]
+/// 读取指定任务的凭证；无侧表条目时 panic（与 bring-up root 模型一致）。
+pub fn credentials_for(tid: TaskId) -> ProcessCredentials {
+    active_impl::current_credentials_for(tid)
+}
+
+#[cfg(feature = "impl-root")]
 /// 读取当前运行任务的凭证；无当前任务或无侧表条目时 panic。
 pub fn current_credentials() -> ProcessCredentials {
     let tid = task::current_task_id()

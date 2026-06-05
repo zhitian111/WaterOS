@@ -4,6 +4,14 @@
 
 pub use api_v0::*;
 
+/// 全局帧池只读统计（[`impl_stack::frame_mem_stats`] 或 dummy 零值）。
+pub fn frame_mem_stats() -> FrameMemStats {
+    #[cfg(feature = "impl-stack")]
+    return impl_stack::frame_mem_stats();
+    #[cfg(not(feature = "impl-stack"))]
+    FrameMemStats::default()
+}
+
 #[cfg(feature = "impl-stack")]
 pub use impl_stack::*;
 

@@ -75,6 +75,8 @@ fn do_execve(path_ptr: usize, argv_ptr: usize, envp_ptr: usize) -> Result<(), Er
     // TODO(cred-exec-setuid): 可执行文件 S_ISUID/S_ISGID 应在 cred::on_exec 内更新凭证。
     cred::on_exec(current_tid);
     vfs::cwd::set_task_exe_path(current_tid, abs_path.as_str()).map_err(vfs_error_to_errno)?;
+    vfs::cwd::set_task_argv(current_tid, final_argv.iter().map(String::as_str))
+        .map_err(vfs_error_to_errno)?;
 
     let image_info = task::UserImageInfo::new(new_elf.image_base, new_elf.image_size);
     let stack_info = task::UserStack::from_range(new_elf.stack_bottom, new_elf.stack_top);

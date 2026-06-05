@@ -5,6 +5,8 @@
 extern crate alloc;
 
 use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -75,10 +77,15 @@ pub fn set_task_cwd(task_id: task::TaskId, cwd: &str) -> VfsResult<()> {
     Ok(())
 }
 
-/// 根据根卷 ELF 路径（如 `/glibc/basic/read`）将任务 cwd 设为所在目录。
-pub fn on_user_task_spawned_for_elf(task_id: task::TaskId, elf_vfs_path: &str) {
+/// 根据根卷 ELF 路径（如 `/glibc/basic/read`）将任务 cwd 设为所在目录，并记录 exe/argv。
+pub fn on_user_task_spawned_for_elf(
+    task_id: task::TaskId,
+    elf_vfs_path: &str,
+    argv: &[&str],
+) {
     init_task_cwd(task_id);
     let _ = set_task_exe_path(task_id, elf_vfs_path);
+    let _ = set_task_argv(task_id, argv.iter().copied());
     if let Some((dir, _)) = elf_vfs_path.rsplit_once('/') {
         let cwd = if dir.is_empty() { "/" } else { dir };
         let _ = set_task_cwd(task_id, cwd);
@@ -97,6 +104,55 @@ pub fn set_task_exe_path(task_id: task::TaskId, exe_path: &str) -> VfsResult<()>
     let mut reg = registry().exclusive_access();
     reg.set_exe_path(task_id, abs.as_str());
     Ok(())
+}
+
+/// 记录任务 argv，供 `/proc/<pid>/cmdline` 使用。
+pub fn set_task_argv<I>(task_id: task::TaskId, argv: I) -> VfsResult<()>
+where
+    I: IntoIterator,
+    I::Item: AsRef<str>,
+{
+    let argv: Vec<String> = argv
+        .into_iter()
+        .map(|s| String::from(s.as_ref()))
+        .collect();
+    let mut reg = registry().exclusive_access();
+    reg.set_argv(task_id, argv);
+    Ok(())
+}
+
+/// 读取指定任务的 argv。
+pub fn task_argv(task_id: task::TaskId) -> VfsResult<Vec<String>> {
+    let mut reg = registry().exclusive_access();
+    reg.ensure_task_cwd(task_id);
+    reg.get_argv(task_id)
+        .map(|v| v.to_vec())
+        .ok_or(VfsError::NotFound)
+}
+
+/// 读取当前任务 argv；无记录时返回空 vec。
+pub fn current_argv() -> Vec<String> {
+    let task_id = match crate::fd::current_task_id() {
+        Ok(id) => id,
+        Err(_) => return Vec::new(),
+    };
+    let mut reg = registry().exclusive_access();
+    reg.ensure_task_cwd(task_id);
+    reg.get_argv(task_id).map(|v| v.to_vec()).unwrap_or_default()
+}
+
+/// 读取指定任务 argv（procfs 回调用）。
+pub fn lookup_argv_for_task(task_id: task::TaskId) -> Option<Vec<String>> {
+    let mut reg = registry().exclusive_access();
+    reg.ensure_task_cwd(task_id);
+    reg.get_argv(task_id).map(|v| v.to_vec())
+}
+
+/// 读取指定任务 exe 路径（procfs 回调用）。
+pub fn lookup_exe_for_task(task_id: task::TaskId) -> Option<String> {
+    let mut reg = registry().exclusive_access();
+    reg.ensure_task_cwd(task_id);
+    reg.get_exe_path(task_id).map(String::from)
 }
 
 /// 读取当前任务的可执行文件路径。
@@ -194,7 +250,17 @@ pub fn self_test() {
     reg.share_cwd_from_parent(c, a);
     assert_eq!(reg.get_cwd(c), "/glibc/basic");
     reg.set_exe_path(a, "/glibc/basic/read");
+    reg.set_argv(a, vec![String::from("read"), String::from("arg1")]);
     assert_eq!(reg.get_exe_path(c), Some("/glibc/basic/read"));
+    assert_eq!(
+        reg.get_argv(c).map(|v| v.to_vec()),
+        Some(vec![String::from("read"), String::from("arg1")])
+    );
+    reg.copy_cwd_from_parent(b, a);
+    assert_eq!(
+        reg.get_argv(b).map(|v| v.to_vec()),
+        Some(vec![String::from("read"), String::from("arg1")])
+    );
     reg.drop_task(c);
     assert_eq!(reg.get_cwd(a), "/glibc/basic");
     reg.drop_task(a);

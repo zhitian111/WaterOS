@@ -12,6 +12,7 @@ pub const PATH_MAX: usize = 256;
 pub struct PerTaskCwdRegistry {
     cwd_tables: Vec<Option<String>>,
     exe_paths: Vec<Option<String>>,
+    argv_vectors: Vec<Option<Vec<String>>>,
     owners: Vec<Option<task::TaskId>>,
     ref_counts: Vec<usize>,
 }
@@ -21,6 +22,7 @@ impl PerTaskCwdRegistry {
         Self {
             cwd_tables: Vec::new(),
             exe_paths: Vec::new(),
+            argv_vectors: Vec::new(),
             owners: Vec::new(),
             ref_counts: Vec::new(),
         }
@@ -30,6 +32,7 @@ impl PerTaskCwdRegistry {
         if self.cwd_tables.len() <= task_id {
             self.cwd_tables.resize_with(task_id + 1, || None);
             self.exe_paths.resize_with(task_id + 1, || None);
+            self.argv_vectors.resize_with(task_id + 1, || None);
             self.owners.resize_with(task_id + 1, || None);
             self.ref_counts.resize(task_id + 1, 0);
         }
@@ -56,12 +59,10 @@ impl PerTaskCwdRegistry {
         Some(owner)
     }
 
-    /// 新任务默认工作目录为 `/`。
     pub fn init_task_cwd(&mut self, task_id: task::TaskId) {
         *self.slot_mut(task_id) = Some(String::from("/"));
     }
 
-    /// 无记录时视为 `/`（不自动分配槽位）。
     pub fn get_cwd(&self, task_id: task::TaskId) -> &str {
         let owner = self.effective_owner(task_id);
         self.cwd_tables
@@ -70,7 +71,6 @@ impl PerTaskCwdRegistry {
             .unwrap_or("/")
     }
 
-    /// 确保任务已有 cwd 槽位（默认 `/`）。
     pub fn ensure_task_cwd(&mut self, task_id: task::TaskId) {
         let owner = self.effective_owner(task_id);
         if self.cwd_tables.get(owner).and_then(|o| o.as_ref()).is_none() {
@@ -78,13 +78,11 @@ impl PerTaskCwdRegistry {
         }
     }
 
-    /// 取当前任务 cwd 的可变引用（调用方需已持有注册表锁且已 `ensure_task_cwd`）。
     pub fn get_cwd_mut(&mut self, task_id: task::TaskId) -> &mut String {
         self.ensure_task_cwd(task_id);
         self.slot_mut(task_id).as_mut().expect("init_task_cwd")
     }
 
-    /// 任务退出后丢弃槽位，避免 `TaskId` 复用污染。
     pub fn drop_task(&mut self, task_id: task::TaskId) {
         let Some(owner) = self.release_owner(task_id) else {
             return;
@@ -96,17 +94,21 @@ impl PerTaskCwdRegistry {
             if let Some(slot) = self.exe_paths.get_mut(owner) {
                 *slot = None;
             }
+            if let Some(slot) = self.argv_vectors.get_mut(owner) {
+                *slot = None;
+            }
         }
         if task_id != owner && task_id < self.cwd_tables.len() {
             self.cwd_tables[task_id] = None;
             self.exe_paths[task_id] = None;
+            self.argv_vectors[task_id] = None;
         }
     }
 
-    /// 供未来 `fork`/`clone`：复制父任务 cwd。
     pub fn copy_cwd_from_parent(&mut self, child: task::TaskId, parent: task::TaskId) {
         let parent_cwd = self.get_cwd(parent).to_string();
         let parent_exe = self.get_exe_path(parent).map(ToString::to_string);
+        let parent_argv = self.get_argv(parent).map(|v| v.to_vec());
         if self.owners.get(child).and_then(|owner| *owner).is_some() {
             self.drop_task(child);
         }
@@ -119,9 +121,11 @@ impl PerTaskCwdRegistry {
         if let Some(exe) = parent_exe {
             self.exe_paths[child_owner] = Some(exe);
         }
+        if let Some(argv) = parent_argv {
+            self.argv_vectors[child_owner] = Some(argv);
+        }
     }
 
-    /// thread clone 时共享父任务 cwd。
     pub fn share_cwd_from_parent(&mut self, child: task::TaskId, parent: task::TaskId) {
         self.ensure_task_cwd(parent);
         if self.owners.get(child).and_then(|owner| *owner).is_some() {
@@ -130,6 +134,7 @@ impl PerTaskCwdRegistry {
         if self.cwd_tables.len() <= child {
             self.cwd_tables.resize_with(child + 1, || None);
             self.exe_paths.resize_with(child + 1, || None);
+            self.argv_vectors.resize_with(child + 1, || None);
             self.owners.resize_with(child + 1, || None);
             self.ref_counts.resize(child + 1, 0);
         }
@@ -141,18 +146,29 @@ impl PerTaskCwdRegistry {
         self.ref_counts[owner] = self.ref_counts[owner].saturating_add(1);
     }
 
-    /// 设置任务当前可执行文件路径；thread clone 会通过 owner 共享该路径。
     pub fn set_exe_path(&mut self, task_id: task::TaskId, exe_path: &str) {
         let _ = self.slot_mut(task_id);
         let owner = self.effective_owner(task_id);
         self.exe_paths[owner] = Some(String::from(exe_path));
     }
 
-    /// 查询任务当前可执行文件路径。
     pub fn get_exe_path(&self, task_id: task::TaskId) -> Option<&str> {
         let owner = self.effective_owner(task_id);
         self.exe_paths
             .get(owner)
             .and_then(|path| path.as_deref())
+    }
+
+    pub fn set_argv(&mut self, task_id: task::TaskId, argv: Vec<String>) {
+        let _ = self.slot_mut(task_id);
+        let owner = self.effective_owner(task_id);
+        self.argv_vectors[owner] = Some(argv);
+    }
+
+    pub fn get_argv(&self, task_id: task::TaskId) -> Option<&[String]> {
+        let owner = self.effective_owner(task_id);
+        self.argv_vectors
+            .get(owner)
+            .and_then(|v| v.as_deref())
     }
 }

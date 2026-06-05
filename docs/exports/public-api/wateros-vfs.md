@@ -46,8 +46,10 @@
 | **`mount::open_rw_session(kind)`** | `Box<dyn RootRwSession>` |
 | **`mount::supported_capabilities()`** | 已注册后端能力列表 |
 | **`fd`**（`fd-session`） | `registry()`、`with_current_io`、`alloc_fd`、`close_fd`、`self_test` |
-| **`cwd`**（`fd-session`） | `init_task_cwd`、`chdir_current`、`write_cwd_to_buf`、`drop_task_cwd`、`copy_cwd_from_parent`、`self_test` |
+| **`cwd`**（`fd-session`） | `init_task_cwd`、`set_task_argv`、`lookup_argv_for_task`、`lookup_exe_for_task`、`chdir_current`、`write_cwd_to_buf`、`drop_task_cwd`、`copy_cwd_from_parent`、`self_test` |
 | **`mkdir_at_current`**（`fd-session` + `bridge-fs-api`） | 相对当前任务 cwd 解析路径后经 RW 会话 `mkdir` |
+| **`ensure_proc_mount_point` / `mount_procfs_at` / `is_proc_mounted_at`**（`bridge-fs-api` + `fd-session`） | procfs 伪挂载；`mount_procfs_at` 注册 procfs 回调并调用 `impl_fs_bridge::mount_aux_proc_at` |
+| **`mount_ext4_block_at` / `unmount_at`**（`bridge-fs-api`） | 辅助 ext4 块设备挂载 |
 | **`resolve_open_path`**（api-v0） | `open` 前路径解析；注册后含 per-task cwd |
 | **`self_test::rw_write_root_verify_via_ro`** | RW 写后 RO 读回校验 |
 | **`self_test::run()`** | 组合自检（`vfs::test()` 内调用） |

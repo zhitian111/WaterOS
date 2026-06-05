@@ -80,6 +80,7 @@ flowchart TD
 - 记录 DTB 物理基址（`driver::init_when_boot`），并初始化控制台、日志与堆分配器。（计划在此前后插入 **`klog::init()`**，见 [`docs/architecture/wateros-klog.md`](wateros-klog.md)。）
 - 执行内核态 MM 自检（含与 feature 相关的可选分页冒烟路径）。
 - 调用 **`driver::active_impl::init_after_boot()`** 完成 DTB 扫描、virtio-blk 注册及经 **`wateros-fs`** 的 devfs 刷新；成功后再 **`fs::init()`** / **`fs::test()`**；在启用 **`vfs-bridge`** 时追加 **`vfs::test()`**（内含 **`self_test`** RW 读回烟囱，见 **`docs/exports/public-api/wateros-vfs.md`**）。
+- **bring-up 总线**（`user_bringup_bus`）：**`mount_default_root_rw`** → **`vfs::ensure_proc_mount_point`** → **`vfs::mount_procfs_at("/proc")`**（详见 [`docs/architecture/wateros-procfs.md`](wateros-procfs.md)）。
 - 初始化任务调度器并创建演示性 kernel task。
 - `wateros-task` 条件等待、最小父子关系与 child-exit wait 已服务 `wateros-ipc` / `wateros-syscall`；RISC-V 自检会启动根卷 **`/elf/000_hello_world.elf`** 与 **`/elf/010_pipe_smoke.elf`** 用户任务，并创建内核内部 ring-buffer pipe 覆盖阻塞读写、EOF、BrokenPipe 与非阻塞 WouldBlock。
 - 通过 **`extern crate syscall as _`** 链接 **`wateros-syscall`**，供平台 trap 路径调用其分发符号；per-task fd 表在 **`wateros-vfs`**（`fd-session`），syscall 经 **`vfs::fd`** 完成 `pipe` / `read` / `write` / `close`（见 **`docs/exports/features/wateros-syscall.md`**、**`docs/exports/features/wateros-vfs.md`**）。
@@ -96,6 +97,7 @@ flowchart TD
 - 架构图：`docs/exports/architecture/`
 - 功能快照：`docs/exports/features/`（目录说明见该路径下 **`README.md`**）
 - klog 设计（组件未落地）：[`docs/architecture/wateros-klog.md`](wateros-klog.md)
+- procfs 设计：[`docs/architecture/wateros-procfs.md`](wateros-procfs.md)
 - 版本概述：`docs/exports/release-overview/`
 
 ## 注释覆盖维护（无行为变更）

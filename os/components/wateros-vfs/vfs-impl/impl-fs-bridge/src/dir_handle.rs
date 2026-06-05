@@ -58,7 +58,7 @@ fn dirent64_reclen(name_len: usize) -> usize {
     (with_name + 7) & !7
 }
 
-fn node_type_to_dt(t: VfsNodeType) -> u8 {
+pub(crate) fn node_type_to_dt(t: VfsNodeType) -> u8 {
     match t {
         VfsNodeType::File => DT_REG,
         VfsNodeType::Directory => DT_DIR,
@@ -67,7 +67,17 @@ fn node_type_to_dt(t: VfsNodeType) -> u8 {
     }
 }
 
-fn encode_one(buf: &mut [u8], ino: u64, next_off: i64, name: &str, d_type: u8) -> Option<usize> {
+pub(crate) fn dirent64_encode_slice(
+    buf: &mut [u8],
+    ino: u64,
+    next_off: i64,
+    name: &str,
+    d_type: u8,
+) -> Option<usize> {
+    encode_one(buf, ino, next_off, name, d_type)
+}
+
+pub(crate) fn encode_one(buf: &mut [u8], ino: u64, next_off: i64, name: &str, d_type: u8) -> Option<usize> {
     let reclen = dirent64_reclen(name.len());
     if buf.len() < reclen {
         return None;

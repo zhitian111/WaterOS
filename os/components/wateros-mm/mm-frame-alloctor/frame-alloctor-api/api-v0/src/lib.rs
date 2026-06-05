@@ -17,6 +17,34 @@ pub enum FrameAllocError {
 
 pub type FrameAllocResult<T> = Result<T, FrameAllocError>;
 
+/// 物理帧池只读统计（供 `/proc/meminfo` 等）；字节数基于 4 KiB 页。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FrameMemStats {
+    /// 池内总帧数。
+    pub total_frames: usize,
+    /// 当前空闲帧数。
+    pub free_frames: usize,
+    /// 页大小（字节）。
+    pub page_bytes: usize,
+}
+
+impl FrameMemStats {
+    #[inline]
+    pub const fn total_bytes(self) -> u64 {
+        (self.total_frames as u64).saturating_mul(self.page_bytes as u64)
+    }
+
+    #[inline]
+    pub const fn free_bytes(self) -> u64 {
+        (self.free_frames as u64).saturating_mul(self.page_bytes as u64)
+    }
+
+    #[inline]
+    pub const fn used_bytes(self) -> u64 {
+        self.total_bytes().saturating_sub(self.free_bytes())
+    }
+}
+
 /// 物理帧分配器：为页表映射提供“分配/回收最小粒度”的能力。
 ///
 /// 该 trait 本身只关心“帧标识（FrameId）”，不直接绑定特定页表格式（Sv39等属于 mm-impl 的职责）。

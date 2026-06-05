@@ -21,6 +21,15 @@ pub fn run() {
             return;
         }
     }
+    match vfs::ensure_proc_mount_point() {
+        Ok(()) => {}
+        Err(err) => warn!("[bringup][stage-00-bus] ensure /proc dir failed: {err:?}"),
+    }
+    match vfs::mount_procfs_at("/proc") {
+        Ok(()) => info!("[bringup][stage-00-bus] procfs mounted at /proc"),
+        Err(vfs::api::VfsError::Exists) => info!("[bringup][stage-00-bus] procfs already at /proc"),
+        Err(err) => warn!("[bringup][stage-00-bus] mount procfs failed: {err:?}"),
+    }
     info!("[bringup][stage-00-bus] END");
 
     // crate::user_bringup_mm::run_stage_02();

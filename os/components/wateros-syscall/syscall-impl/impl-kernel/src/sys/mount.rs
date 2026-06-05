@@ -34,12 +34,32 @@ pub(crate) fn sys_mount(args: SyscallArgs) -> UserRet {
         Err(e) => return UserRet::from_error(e),
     };
 
+    let mount_point = match resolve_path_at(
+        crate::sys::path_at::AT_FDCWD,
+        target.as_str(),
+    ) {
+        Ok(p) => p,
+        Err(e) => return UserRet::from_error(e),
+    };
+
     if fstype_ptr != 0 {
         let fstype = match copy_user_path_cstr(fstype_ptr, 32) {
             Ok(s) => s,
             Err(e) => return UserRet::from_error(e),
         };
-        // 空串由块设备探测；非空时接受 ext2/3/4 或 oscomp 兼容名 vfat（实际仍挂 ext4）。
+        if fstype == "proc" {
+            if vfs::is_proc_mounted_at(mount_point.as_str()) {
+                return UserRet::from_error(ErrNo::EBUSY);
+            }
+            if let Err(e) = vfs::ensure_proc_mount_point() {
+                return UserRet::from_error(vfs_error_to_errno(e));
+            }
+            return match vfs::mount_procfs_at(mount_point.as_str()) {
+                Ok(()) => UserRet::from_success(0),
+                Err(VfsError::Exists) => UserRet::from_error(ErrNo::EBUSY),
+                Err(e) => UserRet::from_error(vfs_error_to_errno(e)),
+            };
+        }
         if !fstype.is_empty()
             && !matches!(
                 fstype.as_str(),
@@ -49,14 +69,6 @@ pub(crate) fn sys_mount(args: SyscallArgs) -> UserRet {
             return UserRet::from_error(ErrNo::EINVAL);
         }
     }
-
-    let mount_point = match resolve_path_at(
-        crate::sys::path_at::AT_FDCWD,
-        target.as_str(),
-    ) {
-        Ok(p) => p,
-        Err(e) => return UserRet::from_error(e),
-    };
 
     match vfs::mount_ext4_block_at(
         mount_point.as_str(),

@@ -401,6 +401,12 @@ pub fn process_snapshot(pid : ProcessId) -> Option<ProcessDescriptor> {
     active_impl::lookup_process(pid)
 }
 
+/// 返回 registry 中全部进程 PID（含未 reap 的 zombie）。
+#[inline]
+pub fn all_process_pids() -> Vec<ProcessId> {
+    active_impl::all_process_pids()
+}
+
 /// 返回进程内全部调度实体 `TaskId`（供 syscall robust 清理等路径使用）。
 #[inline]
 pub fn task_ids_for_process(pid : ProcessId) -> Option<Vec<TaskId>> {

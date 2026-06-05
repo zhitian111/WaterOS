@@ -16,6 +16,7 @@ mod dir_handle;
 mod file_handle;
 mod mount_table;
 mod paged_handle;
+mod proc_handle;
 
 pub use dir_handle::DirectoryHandle;
 pub use file_handle::{BufferedFileHandle, RootFileHandle};
@@ -24,7 +25,12 @@ use fs::{
     FsAccessMode, FsCapability, FsDirEntry, FsError, FsKind, FsMetadata, FsNodeType, ReadOnlyFs,
     SharedRwFs,
 };
+use fs::procfs::api::ProcFsView;
 use mount_table::{assert_path_writable, resolve_route, FsRoute};
+
+fn proc_view() -> &'static impl ProcFsView {
+    fs::procfs::active_impl::view()
+}
 
 /// 通过 `wateros-fs` 访问根卷与 devfs 的零大小后端。
 #[derive(Debug, Clone, Copy, Default)]
@@ -83,7 +89,7 @@ fn map_meta(m: FsMetadata) -> VfsMetadata {
     }
 }
 
-fn map_fs_node(t: FsNodeType) -> VfsNodeType {
+pub(crate) fn map_fs_node(t: FsNodeType) -> VfsNodeType {
     match t {
         FsNodeType::File => VfsNodeType::File,
         FsNodeType::Directory => VfsNodeType::Directory,
@@ -107,7 +113,7 @@ fn fs_and_rel_rw(path: &str) -> VfsResult<(SharedRwFs, String)> {
     match resolve_route(path)? {
         FsRoute::Root { abs } => Ok((root_rw()?, abs)),
         FsRoute::AuxRw { fs, rel } => Ok((fs, rel)),
-        FsRoute::AuxRo { .. } => Err(VfsError::ReadOnlyFs),
+        FsRoute::AuxRo { .. } | FsRoute::PseudoProc { .. } => Err(VfsError::ReadOnlyFs),
     }
 }
 
@@ -135,6 +141,9 @@ impl SingleRootReadView for FsBridge {
             return Ok(true);
         }
         match resolve_route(abs.as_str())? {
+            FsRoute::PseudoProc { rel } => {
+                proc_view().exists(rel.as_str()).map_err(map_fs_err)
+            }
             FsRoute::Root { abs } => root_rw()?.lock().exists(abs.as_str()).map_err(map_fs_err),
             FsRoute::AuxRw { fs, rel } => {
                 fs.lock().exists(rel.as_str()).map_err(map_fs_err)
@@ -151,6 +160,9 @@ impl SingleRootReadView for FsBridge {
             return Ok(char_dev_metadata(abs.as_str()));
         }
         let meta = match resolve_route(abs.as_str())? {
+            FsRoute::PseudoProc { rel } => {
+                proc_view().metadata(rel.as_str()).map_err(map_fs_err)?
+            }
             FsRoute::Root { abs } => root_rw()?
                 .lock()
                 .metadata(abs.as_str())
@@ -168,7 +180,9 @@ impl SingleRootReadView for FsBridge {
     }
 
     fn read(&self, path: &str) -> VfsResult<Vec<u8>> {
-        match resolve_route(path)? {
+        let abs = normalize_absolute_path(path)?;
+        match resolve_route(abs.as_str())? {
+            FsRoute::PseudoProc { rel } => proc_view().read(rel.as_str()).map_err(map_fs_err),
             FsRoute::Root { abs } => root_rw()?.lock().read(abs.as_str()).map_err(map_fs_err),
             FsRoute::AuxRw { fs, rel } => fs.lock().read(rel.as_str()).map_err(map_fs_err),
             FsRoute::AuxRo { fs, rel } => fs.lock().read(rel.as_str()).map_err(map_fs_err),
@@ -180,7 +194,11 @@ impl SingleRootReadView for FsBridge {
     }
 
     fn read_dir(&self, path: &str) -> VfsResult<Vec<VfsDirEntry>> {
-        let entries = match resolve_route(path)? {
+        let abs = normalize_absolute_path(path)?;
+        let entries = match resolve_route(abs.as_str())? {
+            FsRoute::PseudoProc { rel } => {
+                proc_view().read_dir(rel.as_str()).map_err(map_fs_err)?
+            }
             FsRoute::Root { abs } => root_rw()?
                 .lock()
                 .read_dir(abs.as_str())
@@ -216,6 +234,16 @@ impl FsBridge {
     /// 从根卷只读句柄按偏移读取（页缓存 miss 路径）。
     pub(crate) fn read_range(&self, path: &str, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
         match resolve_route(path)? {
+            FsRoute::PseudoProc { rel } => {
+                let data = proc_view().read(rel.as_str()).map_err(map_fs_err)?;
+                let start = offset as usize;
+                if start >= data.len() {
+                    return Ok(0);
+                }
+                let n = core::cmp::min(buf.len(), data.len() - start);
+                buf[..n].copy_from_slice(&data[start..start + n]);
+                Ok(n)
+            }
             FsRoute::Root { abs } => root_rw()?
                 .lock()
                 .read_range(abs.as_str(), offset, buf)
@@ -247,6 +275,23 @@ pub fn mount_ext4_block_at(mount_point: &str, block_dev: &str, readonly: bool) -
 pub fn unmount_at(mount_point: &str) -> VfsResult<()> {
     mount_table::unmount_aux_at(mount_point)
 }
+
+/// 在 ext4 根卷上创建 `/proc` 挂载点目录（已存在则忽略）。
+pub fn ensure_proc_mount_point() -> VfsResult<()> {
+    let path = "/proc";
+    let bridge = FsBridge;
+    if bridge.exists(path)? {
+        return Ok(());
+    }
+    mkdir_path(path, 0o755)
+}
+
+/// 将 procfs 挂到 `mount_point`（须先 [`ensure_proc_mount_point`]）。
+pub fn mount_procfs_at(mount_point: &str) -> VfsResult<()> {
+    mount_table::mount_aux_proc_at(mount_point)
+}
+
+pub use mount_table::{is_proc_mounted_at, list_proc_mount_lines, mount_aux_proc_at};
 
 /// 删除绝对路径（经挂载表路由）。
 pub fn unlink_path(path: &str, remove_dir: bool) -> VfsResult<()> {

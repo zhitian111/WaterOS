@@ -10,8 +10,8 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use api_v0::{FrameAllocError, FrameAllocResult, PhysicalFrameAllocator};
-use mm_api::addr::PhysPageNum;
+use api_v0::{FrameAllocError, FrameAllocResult, FrameMemStats, PhysicalFrameAllocator};
+use mm_api::addr::{PhysPageNum, PAGE_SIZE};
 use wateros_base::addr::BasePPN;
 use wateros_base::sync::UniprocessorSafeCell;
 
@@ -67,6 +67,18 @@ impl StackFrameAllocator {
             None
         } else {
             Some(frame.0 - self.start_ppn)
+        }
+    }
+
+    /// 只读内存池统计：总帧 = 区间大小；空闲 = 回收栈 + 未分配连续段。
+    pub fn mem_stats(&self) -> FrameMemStats {
+        let total_frames = self.end_ppn.saturating_sub(self.start_ppn);
+        let novel_free = self.next_novel.saturating_sub(self.start_ppn);
+        let free_frames = self.recycled.len().saturating_add(novel_free);
+        FrameMemStats {
+            total_frames,
+            free_frames: free_frames.min(total_frames),
+            page_bytes: PAGE_SIZE,
         }
     }
 }
@@ -187,6 +199,17 @@ pub fn frame_alloc_result() -> FrameAllocResult<PhysPageNum> {
 pub fn frame_dealloc_result(frame : PhysPageNum) -> FrameAllocResult<()> {
     get_frame_allocator_cell().exclusive_access()
                               .dealloc_frame(frame)
+}
+
+/// 全局帧池只读统计；未初始化时返回零值。
+pub fn frame_mem_stats() -> FrameMemStats {
+    if !FRAME_ALLOCATOR_READY.load(Ordering::Acquire) {
+        return FrameMemStats {
+            page_bytes: PAGE_SIZE,
+            ..FrameMemStats::default()
+        };
+    }
+    get_frame_allocator_cell().exclusive_access().mem_stats()
 }
 
 /// 零大小适配器：实现 [`PhysicalFrameAllocator`] 时每次调用短借全局栈式分配器。

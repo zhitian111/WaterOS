@@ -25,7 +25,7 @@
 | 项 | 说明 |
 |----|------|
 | **`pub use api_v0 as api`** | 整包 **`wateros-mm-api-v0`**：`addr`、`error`、`perm`、`flags`、`frame_allocator`、`address_space`、`user_access`、`brk`、`mmap`、`kernel_bringup` 等子模块及根级再导出（含 **`PhysicalFrameAllocator`**、**`test`**）。 |
-| **`pub use frame_alloctor`** | 帧分配错误/结果类型、默认 **`impl-stack`** 下的 **`StackFrameAllocator`**、**`init_frame_allocator`**、**`frame_alloc`** / **`frame_dealloc`** 等。 |
+| **`pub use frame_alloctor`** | 帧分配错误/结果类型、默认 **`impl-stack`** 下的 **`StackFrameAllocator`**、**`init_frame_allocator`**、**`frame_alloc`** / **`frame_dealloc`**、**`frame_mem_stats()`**（`FrameMemStats`）等。 |
 | **`mm_impl`** | **`#[cfg(feature = "impl-sv39")]`** → **`impl_sv39`**；**`#[cfg(feature = "impl-dummy")]`** → **`impl_dummy`**（二者勿同时用于别名）。 |
 | **`kernel_mm`** | 再导出 **`DEFAULT_USER_ELF_PATH`**、**`LoadElfError`**、**`LoadedElf`**。 |
 | **`kernel_mm`（Sv39 + `qemu-riscv64-opensbi`）** | **`impl_sv39::kernel_mm_impl`**：**`init`**、**`kernel_satp`**、**`from_elf_path`**、**`from_elf_bytes`**、**`ensure_user_execute_for_kernel_va`**、**`map_anon_range_user`**、**`map_identity_range_user`**。 |

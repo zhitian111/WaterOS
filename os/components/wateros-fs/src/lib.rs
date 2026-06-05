@@ -16,6 +16,10 @@ pub mod api {
 pub mod devfs {
     pub use ::devfs::*;
 }
+/// 进程信息伪文件系统（procfs）子系统。
+pub mod procfs {
+    pub use ::procfs::*;
+}
 /// 根文件系统（rootfs）子系统：当前根卷句柄与挂载入口。
 pub mod rootfs {
     pub use ::rootfs::*;
@@ -35,6 +39,7 @@ pub fn registered_fs_impls() -> &'static [&'static dyn api_v0::FsImpl] {
         #[cfg(feature = "impl-ext4")]
         &impl_ext4::IMPL,
         &devfs::active_impl::IMPL,
+        &procfs::active_impl::IMPL,
     ];
     TABLE
 }
@@ -158,6 +163,7 @@ pub fn mount_aux_rw_from_block_path(path: &str) -> api_v0::FsResult<api_v0::Shar
 pub fn test() {
     logging::trace!("[fs] test begin");
     api_v0::test();
+    procfs::active_impl::test();
 
     #[cfg(feature = "impl-ext4")]
     {

@@ -7,6 +7,8 @@
 extern crate alloc;
 
 #[cfg(feature = "bridge-fs-api")]
+extern crate fs;
+#[cfg(feature = "bridge-fs-api")]
 extern crate impl_fs_bridge;
 
 #[cfg(feature = "impl-fd-session")]
@@ -61,6 +63,29 @@ pub fn rename_absolute(old_path: &str, new_path: &str) -> VfsResult<()> {
 #[cfg(feature = "bridge-fs-api")]
 pub fn mount_ext4_block_at(mount_point: &str, block_dev: &str, readonly: bool) -> VfsResult<()> {
     impl_fs_bridge::mount_ext4_block_at(mount_point, block_dev, readonly)
+}
+
+/// 在 ext4 根卷创建 `/proc` 目录（若不存在）。
+#[cfg(all(feature = "bridge-fs-api", feature = "impl-fd-session"))]
+pub fn ensure_proc_mount_point() -> VfsResult<()> {
+    impl_fs_bridge::ensure_proc_mount_point()
+}
+
+/// 挂载 procfs 到 `mount_point`（默认 `/proc`）。
+#[cfg(all(feature = "bridge-fs-api", feature = "impl-fd-session"))]
+pub fn mount_procfs_at(mount_point: &str) -> VfsResult<()> {
+    fs::procfs::active_impl::register_task_argv_lookup(|tid| cwd::lookup_argv_for_task(tid));
+    fs::procfs::active_impl::register_task_exe_lookup(|tid| cwd::lookup_exe_for_task(tid));
+    fs::procfs::active_impl::register_mount_list_lookup(|| {
+        impl_fs_bridge::list_proc_mount_lines()
+    });
+    impl_fs_bridge::mount_procfs_at(mount_point)
+}
+
+/// procfs 是否已挂在 `mount_point`。
+#[cfg(feature = "bridge-fs-api")]
+pub fn is_proc_mounted_at(mount_point: &str) -> bool {
+    impl_fs_bridge::is_proc_mounted_at(mount_point)
 }
 
 /// 卸载 `mount_point`。

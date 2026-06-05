@@ -1,18 +1,20 @@
-//! 辅助卷挂载表（最长前缀路由）；支持 RW 与 RO 辅助挂载。
+//! 辅助卷挂载表（最长前缀路由）；支持 RW、RO 与 procfs 伪挂载。
 
 extern crate alloc;
 
 use alloc::string::String;
 use alloc::vec::Vec;
 use fs::{SharedFs, SharedRwFs};
+use fs::procfs::api::ProcMountLine;
 use spin::Mutex;
 
 use api_v0::{normalize_absolute_path, VfsError, VfsResult};
 
-/// 辅助挂载句柄：RW 或 RO。
+/// 辅助挂载句柄：RW、RO 或 procfs 伪挂载。
 pub(crate) enum AuxMount {
     Rw(SharedRwFs),
     Ro(SharedFs),
+    PseudoProc,
 }
 
 struct MountEntry {
@@ -22,11 +24,12 @@ struct MountEntry {
 
 static AUX_MOUNTS: Mutex<Vec<MountEntry>> = Mutex::new(Vec::new());
 
-/// 路径路由：根卷相对路径，或辅助卷 + 卷内相对路径。
+/// 路径路由：根卷相对路径，或辅助卷 + 卷内相对路径，或 procfs 伪挂载。
 pub(crate) enum FsRoute {
     Root { abs: String },
     AuxRw { fs: SharedRwFs, rel: String },
     AuxRo { fs: SharedFs, rel: String },
+    PseudoProc { rel: String },
 }
 
 fn rel_under_mount(full: &str, mount_point: &str) -> String {
@@ -65,9 +68,9 @@ impl AuxMount {
         match self {
             Self::Rw(fs) => Self::Rw(fs.clone()),
             Self::Ro(fs) => Self::Ro(fs.clone()),
+            Self::PseudoProc => Self::PseudoProc,
         }
     }
-
 }
 
 fn mount_aux_common(mount_point: &str, fs: AuxMount) -> VfsResult<()> {
@@ -81,7 +84,6 @@ fn mount_aux_common(mount_point: &str, fs: AuxMount) -> VfsResult<()> {
             return Err(VfsError::Exists);
         }
     }
-    // 与 Linux 一致：非空挂载点允许 mount，原目录项在挂载期间被新视图覆盖。
     let _ = super::FsBridge::read_dir_on_root(mp.as_str())?;
     AUX_MOUNTS.lock().push(MountEntry {
         mount_point: mp,
@@ -97,27 +99,64 @@ pub(crate) fn resolve_route(path: &str) -> VfsResult<FsRoute> {
         return match mount {
             AuxMount::Rw(fs) => Ok(FsRoute::AuxRw { fs, rel }),
             AuxMount::Ro(fs) => Ok(FsRoute::AuxRo { fs, rel }),
+            AuxMount::PseudoProc => Ok(FsRoute::PseudoProc { rel }),
         };
     }
     Ok(FsRoute::Root { abs })
 }
 
-/// 写路径、带 `O_CREAT`/`O_WRONLY` 的 open 等须先调用；RO 辅助卷返回 [`VfsError::ReadOnlyFs`]。
+/// 写路径、带 `O_CREAT`/`O_WRONLY` 的 open 等须先调用；RO / procfs 返回 [`VfsError::ReadOnlyFs`]。
 pub(crate) fn assert_path_writable(path: &str) -> VfsResult<()> {
     match resolve_route(path)? {
-        FsRoute::AuxRo { .. } => Err(VfsError::ReadOnlyFs),
+        FsRoute::AuxRo { .. } | FsRoute::PseudoProc { .. } => Err(VfsError::ReadOnlyFs),
         _ => Ok(()),
     }
 }
 
-/// 将 RW 句柄挂到 `mount_point`（须为根卷上的空目录）。
 pub(crate) fn mount_aux_at_rw(mount_point: &str, fs: SharedRwFs) -> VfsResult<()> {
     mount_aux_common(mount_point, AuxMount::Rw(fs))
 }
 
-/// 将 RO 句柄挂到 `mount_point`（须为根卷上的空目录）。
 pub(crate) fn mount_aux_at_ro(mount_point: &str, fs: SharedFs) -> VfsResult<()> {
     mount_aux_common(mount_point, AuxMount::Ro(fs))
+}
+
+pub fn mount_aux_proc_at(mount_point: &str) -> VfsResult<()> {
+    mount_aux_common(mount_point, AuxMount::PseudoProc)
+}
+
+pub fn is_proc_mounted_at(mount_point: &str) -> bool {
+    let Ok(mp) = normalize_absolute_path(mount_point) else {
+        return false;
+    };
+    AUX_MOUNTS
+        .lock()
+        .iter()
+        .any(|e| e.mount_point == mp.as_str() && matches!(e.fs, AuxMount::PseudoProc))
+}
+
+fn fstype_for(entry: &MountEntry) -> &'static str {
+    match entry.fs {
+        AuxMount::PseudoProc => "proc",
+        AuxMount::Rw(_) | AuxMount::Ro(_) => "ext4",
+    }
+}
+
+pub fn list_proc_mount_lines() -> Vec<ProcMountLine> {
+    let mut out = Vec::new();
+    if fs::rootfs::active_impl::root_rw_fs().is_some() {
+        out.push(ProcMountLine {
+            mount_point: String::from("/"),
+            fstype: String::from("ext4"),
+        });
+    }
+    for ent in AUX_MOUNTS.lock().iter() {
+        out.push(ProcMountLine {
+            mount_point: ent.mount_point.clone(),
+            fstype: String::from(fstype_for(ent)),
+        });
+    }
+    out
 }
 
 pub(crate) fn unmount_aux_at(mount_point: &str) -> VfsResult<()> {
@@ -135,7 +174,6 @@ pub(crate) fn unmount_aux_at(mount_point: &str) -> VfsResult<()> {
     Ok(())
 }
 
-/// 挂载表逻辑自测（不依赖第二块盘）：注册/解析/卸载。
 pub fn mount_table_self_test() -> VfsResult<()> {
     let n_before = AUX_MOUNTS.lock().len();
     let root = super::root_rw()?;
