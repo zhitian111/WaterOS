@@ -126,6 +126,31 @@ pub(crate) fn sys_munmap(args: SyscallArgs) -> UserRet {
     }
 }
 
+pub(crate) fn sys_msync(args: SyscallArgs) -> UserRet {
+    use mm::api::addr::PAGE_SIZE;
+
+    const MS_ASYNC: usize = 0x1;
+    const MS_INVALIDATE: usize = 0x2;
+    const MS_SYNC: usize = 0x4;
+    const MS_KNOWN: usize = MS_ASYNC | MS_INVALIDATE | MS_SYNC;
+
+    let addr = args.arg(0);
+    let _len = args.arg(1);
+    let flags = args.arg(2);
+
+    if addr % PAGE_SIZE != 0 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    if flags & !MS_KNOWN != 0 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    if flags & MS_ASYNC != 0 && flags & MS_SYNC != 0 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+
+    UserRet::from_success(0)
+}
+
 pub(crate) fn sys_mprotect(args: SyscallArgs) -> UserRet {
     let Some(handle) = current_user_aspace_handle() else {
         syscall_unsupported("mmap: no user_aspace_ptr");

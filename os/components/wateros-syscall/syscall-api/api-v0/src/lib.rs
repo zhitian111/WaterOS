@@ -25,6 +25,8 @@ pub enum SyscallKind {
     ReadLinkAt,
     FaccessAt,
     StatFs,
+    Fsync,
+    Fdatasync,
     OpenAt,
     Close,
     Fstat,
@@ -51,6 +53,7 @@ pub enum SyscallKind {
     Brk,
     Mmap,
     Munmap,
+    Msync,
     Mprotect,
     GetTime,
     ClockSetTime,
@@ -92,6 +95,7 @@ pub enum SyscallKind {
     GetRlimit,
     GetRusage,
     SetRlimit,
+    Umask,
     PrLimit64,
     Socket,
     Bind,
@@ -143,6 +147,10 @@ impl SyscallKind {
             Self::FaccessAt
         } else if syscall_nr == T::STATFS.raw() {
             Self::StatFs
+        } else if syscall_nr == T::FSYNC.raw() {
+            Self::Fsync
+        } else if syscall_nr == T::FDATASYNC.raw() {
+            Self::Fdatasync
         } else if syscall_nr == T::OPENAT.raw() {
             Self::OpenAt
         } else if syscall_nr == T::CLOSE.raw() {
@@ -195,6 +203,8 @@ impl SyscallKind {
             Self::Mmap
         } else if syscall_nr == T::MUNMAP.raw() {
             Self::Munmap
+        } else if syscall_nr == T::MSYNC.raw() {
+            Self::Msync
         } else if syscall_nr == T::MPROTECT.raw() {
             Self::Mprotect
         } else if syscall_nr == T::GET_TIME.raw() {
@@ -277,6 +287,8 @@ impl SyscallKind {
             Self::GetRusage
         } else if syscall_nr == T::SETRLIMIT.raw() {
             Self::SetRlimit
+        } else if syscall_nr == T::UMASK.raw() {
+            Self::Umask
         } else if syscall_nr == T::PRLIMIT64.raw() {
             Self::PrLimit64
         } else if syscall_nr == T::SOCKET.raw() {
@@ -336,6 +348,8 @@ impl SyscallKind {
             Self::ReadLinkAt => "readlinkat",
             Self::FaccessAt => "faccessat",
             Self::StatFs => "statfs",
+            Self::Fsync => "fsync",
+            Self::Fdatasync => "fdatasync",
             Self::OpenAt => "openat",
             Self::Close => "close",
             Self::Fstat => "fstat",
@@ -362,6 +376,7 @@ impl SyscallKind {
             Self::Brk => "brk",
             Self::Mmap => "mmap",
             Self::Munmap => "munmap",
+            Self::Msync => "msync",
             Self::Mprotect => "mprotect",
             Self::GetTime => "gettimeofday",
             Self::ClockSetTime => "clock_settime",
@@ -403,6 +418,7 @@ impl SyscallKind {
             Self::GetRlimit => "getrlimit",
             Self::GetRusage => "getrusage",
             Self::SetRlimit => "setrlimit",
+            Self::Umask => "umask",
             Self::PrLimit64 => "prlimit64",
             Self::Socket => "socket",
             Self::Bind => "bind",
@@ -609,6 +625,22 @@ pub trait SyscallDispatcher {
         )
     }
 
+    fn dispatch_fsync(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Fsync,
+            Self::NumberTable::FSYNC.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_fdatasync(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Fdatasync,
+            Self::NumberTable::FDATASYNC.raw(),
+            args,
+        )
+    }
+
     fn dispatch_openat(args: SyscallArgs) -> isize {
         Self::dispatch_unsupported(
             SyscallKind::OpenAt,
@@ -773,6 +805,14 @@ pub trait SyscallDispatcher {
         Self::dispatch_unsupported(
             SyscallKind::Munmap,
             Self::NumberTable::MUNMAP.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_msync(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Msync,
+            Self::NumberTable::MSYNC.raw(),
             args,
         )
     }
@@ -1121,6 +1161,14 @@ pub trait SyscallDispatcher {
         )
     }
 
+    fn dispatch_umask(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Umask,
+            Self::NumberTable::UMASK.raw(),
+            args,
+        )
+    }
+
     fn dispatch_prlimit64(args: SyscallArgs) -> isize {
         Self::dispatch_unsupported(
             SyscallKind::PrLimit64,
@@ -1303,6 +1351,8 @@ pub trait SyscallDispatcher {
             SyscallKind::ReadLinkAt => Self::dispatch_readlinkat(syscall_args),
             SyscallKind::FaccessAt => Self::dispatch_faccessat(syscall_args),
             SyscallKind::StatFs => Self::dispatch_statfs(syscall_args),
+            SyscallKind::Fsync => Self::dispatch_fsync(syscall_args),
+            SyscallKind::Fdatasync => Self::dispatch_fdatasync(syscall_args),
             SyscallKind::OpenAt => Self::dispatch_openat(syscall_args),
             SyscallKind::Close => Self::dispatch_close(syscall_args),
             SyscallKind::Fstat => Self::dispatch_fstat(syscall_args),
@@ -1324,6 +1374,7 @@ pub trait SyscallDispatcher {
             SyscallKind::Execve => Self::dispatch_execve(syscall_args),
             SyscallKind::Mmap => Self::dispatch_mmap(syscall_args),
             SyscallKind::Munmap => Self::dispatch_munmap(syscall_args),
+            SyscallKind::Msync => Self::dispatch_msync(syscall_args),
             SyscallKind::Mprotect => Self::dispatch_mprotect(syscall_args),
             SyscallKind::GetTime => Self::dispatch_get_time(syscall_args),
             SyscallKind::ClockSetTime => Self::dispatch_clock_settime(syscall_args),
@@ -1367,6 +1418,7 @@ pub trait SyscallDispatcher {
             SyscallKind::GetRlimit => Self::dispatch_getrlimit(syscall_args),
             SyscallKind::GetRusage => Self::dispatch_getrusage(syscall_args),
             SyscallKind::SetRlimit => Self::dispatch_setrlimit(syscall_args),
+            SyscallKind::Umask => Self::dispatch_umask(syscall_args),
             SyscallKind::PrLimit64 => Self::dispatch_prlimit64(syscall_args),
             SyscallKind::Socket => Self::dispatch_socket(syscall_args),
             SyscallKind::Bind => Self::dispatch_bind(syscall_args),

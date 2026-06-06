@@ -66,6 +66,10 @@ pub trait SyscallNumberTable {
     const FACCESSAT: SyscallNumber;
     /// 查询路径所在文件系统统计信息（`statfs(2)`）。
     const STATFS: SyscallNumber;
+    /// 将 fd 对应文件脏数据同步到存储（`fsync(2)`）。
+    const FSYNC: SyscallNumber;
+    /// 将 fd 对应文件数据同步到存储（`fdatasync(2)`）。
+    const FDATASYNC: SyscallNumber;
     /// 相对目录打开路径（`openat(2)`）。
     const OPENAT: SyscallNumber;
     /// 关闭文件描述符（`close(2)`）。
@@ -134,6 +138,8 @@ pub trait SyscallNumberTable {
     const MMAP: SyscallNumber;
     /// 解除映射（`munmap(2)`）。
     const MUNMAP: SyscallNumber;
+    /// 同步/失效内存映射页（`msync(2)`）。
+    const MSYNC: SyscallNumber;
     /// 修改映射保护属性（`mprotect(2)`）。
     const MPROTECT: SyscallNumber;
 
@@ -208,6 +214,8 @@ pub trait SyscallNumberTable {
     const GETRUSAGE: SyscallNumber;
     /// 设置资源软/硬上限（`setrlimit(2)`）。
     const SETRLIMIT: SyscallNumber;
+    /// 设置文件创建权限掩码（`umask(2)`）。
+    const UMASK: SyscallNumber;
     /// 查询或设置指定进程资源限制（`prlimit64(2)`）。
     const PRLIMIT64: SyscallNumber;
     /// 可中断的纳秒级睡眠（`nanosleep(2)`）。

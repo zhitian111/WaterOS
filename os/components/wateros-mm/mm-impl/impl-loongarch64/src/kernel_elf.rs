@@ -761,7 +761,7 @@ pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
     }
 
     const ELF_STACK_TOP : usize = LOONGARCH64_USER_STACK_TOP;
-    const ELF_STACK_SIZE : usize = 16 * 1024;
+    const ELF_STACK_SIZE : usize = 256 * 1024;
     runtime::logging::trace!("[elf-load] image range [{:#x},{:#x}) mapping done; map user stack \
                               top={:#x} size={}",
                              min_vaddr,
@@ -964,9 +964,9 @@ pub fn from_elf_bytes(data : &[u8]) -> Result<LoadedElf, LoadElfError> {
         return Err(LoadElfError::Parse);
     }
 
-    // 用户栈：固定顶与 16KiB 大小（均为 4K 页的整数倍）。
+    // 用户栈：固定顶与 256KiB 大小（均为 4K 页的整数倍）。
     const ELF_STACK_TOP : usize = LOONGARCH64_USER_STACK_TOP;
-    const ELF_STACK_SIZE : usize = 16 * 1024;
+    const ELF_STACK_SIZE : usize = 256 * 1024;
     runtime::logging::trace!("[elf-load] image range [{:#x},{:#x}) mapping done; map user stack \
                               top={:#x} size={}",
                              min_vaddr,

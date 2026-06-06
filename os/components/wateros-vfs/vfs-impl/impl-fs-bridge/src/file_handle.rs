@@ -14,7 +14,6 @@ use fs::{FsAccessMode, FsKind};
 
 use crate::map_fs_err;
 use crate::mount_table::{resolve_route, FsRoute};
-use crate::proc_handle;
 use crate::FsBridge;
 
 /// 已打开的根卷普通文件（小文件：全文缓冲于内存）。
@@ -275,6 +274,11 @@ impl FsBridge {
             FsRoute::PseudoProc { rel } => {
                 return super::proc_handle::open_proc(rel, abs, flags);
             }
+            _ => {}
+        }
+        match abs.as_str() {
+            "/dev/null" => return Ok(Box::new(impl_fd_session::NullDeviceHandle)),
+            "/dev/zero" => return Ok(Box::new(impl_fd_session::ZeroDeviceHandle)),
             _ => {}
         }
         if let Ok(dev) = fs::devfs::active_impl::lookup_character_device(abs.as_str()) {

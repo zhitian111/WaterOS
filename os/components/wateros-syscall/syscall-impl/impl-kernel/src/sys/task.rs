@@ -2,6 +2,7 @@
 //! `times`、`uname`、`prctl`、`getrlimit`/`setrlimit`。
 
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
@@ -38,6 +39,7 @@ const GRND_NONBLOCK: usize = 0x0001;
 const GRND_RANDOM: usize = 0x0002;
 const GRND_INSECURE: usize = 0x0004;
 const GETRANDOM_ALLOWED_FLAGS: usize = GRND_NONBLOCK | GRND_RANDOM | GRND_INSECURE;
+static CURRENT_UMASK: AtomicUsize = AtomicUsize::new(0o022);
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -750,6 +752,13 @@ pub(crate) fn sys_setrlimit(args: SyscallArgs) -> UserRet {
     let _rlim_ptr = args.arg(1);
     // 当前不做实际限制，总是返回成功
     UserRet::from_success(0)
+}
+
+/// `umask(mask)` — 设置文件创建权限掩码并返回旧值。
+pub(crate) fn sys_umask(args: SyscallArgs) -> UserRet {
+    let new_mask = args.arg(0) & 0o777;
+    let old_mask = CURRENT_UMASK.swap(new_mask, Ordering::SeqCst);
+    UserRet::from_success(old_mask)
 }
 
 /// `prlimit64(pid, resource, new_limit, old_limit)` — 最小兼容当前进程资源限制查询。

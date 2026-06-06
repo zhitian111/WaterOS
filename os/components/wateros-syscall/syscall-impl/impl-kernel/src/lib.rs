@@ -117,6 +117,16 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     }
 
     #[inline]
+    fn dispatch_fsync(args: SyscallArgs) -> isize {
+        sys::sys_fsync(args).0
+    }
+
+    #[inline]
+    fn dispatch_fdatasync(args: SyscallArgs) -> isize {
+        sys::sys_fdatasync(args).0
+    }
+
+    #[inline]
     fn dispatch_openat(args: SyscallArgs) -> isize {
         sys::sys_openat(args).0
     }
@@ -164,6 +174,11 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     #[inline]
     fn dispatch_munmap(args: SyscallArgs) -> isize {
         sys::sys_munmap(args).0
+    }
+
+    #[inline]
+    fn dispatch_msync(args: SyscallArgs) -> isize {
+        sys::sys_msync(args).0
     }
 
     #[inline]
@@ -389,6 +404,11 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     #[inline]
     fn dispatch_setrlimit(args: SyscallArgs) -> isize {
         sys::sys_setrlimit(args).0
+    }
+
+    #[inline]
+    fn dispatch_umask(args: SyscallArgs) -> isize {
+        sys::sys_umask(args).0
     }
 
     #[inline]

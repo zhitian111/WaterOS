@@ -35,6 +35,8 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const READLINKAT: SyscallNumber = SyscallNumber(78);
     const FACCESSAT: SyscallNumber = SyscallNumber(48);
     const STATFS: SyscallNumber = SyscallNumber(43);
+    const FSYNC: SyscallNumber = SyscallNumber(82);
+    const FDATASYNC: SyscallNumber = SyscallNumber(83);
     const OPENAT: SyscallNumber = SyscallNumber(56);
     const CLOSE: SyscallNumber = SyscallNumber(57);
     const FSTAT: SyscallNumber = SyscallNumber(80);
@@ -72,6 +74,7 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const BRK: SyscallNumber = SyscallNumber(214); // brk
     const MMAP: SyscallNumber = SyscallNumber(222); // mmap
     const MUNMAP: SyscallNumber = SyscallNumber(215); // munmap
+    const MSYNC: SyscallNumber = SyscallNumber(227); // msync
     const MPROTECT: SyscallNumber = SyscallNumber(226); // mprotect
 
     // 基本信息 / identity & misc info
@@ -112,6 +115,7 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const GETRLIMIT: SyscallNumber = SyscallNumber(163);
     const GETRUSAGE: SyscallNumber = SyscallNumber(165);
     const SETRLIMIT: SyscallNumber = SyscallNumber(164);
+    const UMASK: SyscallNumber = SyscallNumber(166);
     const PRLIMIT64: SyscallNumber = SyscallNumber(261);
     const NANOSLEEP: SyscallNumber = SyscallNumber(101);
     const SYSLOG: SyscallNumber = SyscallNumber(116);

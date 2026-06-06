@@ -118,6 +118,9 @@ fn fs_and_rel_rw(path: &str) -> VfsResult<(SharedRwFs, String)> {
 }
 
 fn char_dev_exists(abs: &str) -> bool {
+    if is_builtin_dev_path(abs) {
+        return true;
+    }
     fs::devfs::active_impl::lookup_character_device(abs).is_ok()
 }
 
@@ -132,6 +135,10 @@ fn char_dev_metadata(abs: &str) -> VfsMetadata {
         size: 0,
         mode,
     }
+}
+
+fn is_builtin_dev_path(abs: &str) -> bool {
+    matches!(abs, "/dev/null" | "/dev/zero")
 }
 
 impl SingleRootReadView for FsBridge {
@@ -307,6 +314,10 @@ pub fn unlink_path(path: &str, remove_dir: bool) -> VfsResult<()> {
 
 /// 创建目录（经挂载表路由）。
 pub fn mkdir_path(path: &str, mode: u32) -> VfsResult<()> {
+    let normalized = normalize_absolute_path(path)?;
+    if normalized.as_str() == "/" {
+        return Err(VfsError::Exists);
+    }
     assert_path_writable(path)?;
     let (fs, rel) = fs_and_rel_rw(path)?;
     let mut sess = MountedRwSession::new(fs);
@@ -402,7 +413,7 @@ impl VfsMountOps for FsBridge {
 
 impl VfsDevInventory for FsBridge {
     fn list_dev_nodes(&self) -> Vec<VfsDevNode> {
-        fs::devfs::active_impl::list_nodes()
+        let mut nodes: Vec<VfsDevNode> = fs::devfs::active_impl::list_nodes()
             .into_iter()
             .map(|n| VfsDevNode {
                 path: n.path,
@@ -412,7 +423,20 @@ impl VfsDevInventory for FsBridge {
                     fs::devfs::DevNodeType::Unsupported => VfsDevNodeType::Unsupported,
                 },
             })
-            .collect()
+            .collect();
+        if !nodes.iter().any(|n| n.path == "/dev/null") {
+            nodes.push(VfsDevNode {
+                path: String::from("/dev/null"),
+                node_type: VfsDevNodeType::Character,
+            });
+        }
+        if !nodes.iter().any(|n| n.path == "/dev/zero") {
+            nodes.push(VfsDevNode {
+                path: String::from("/dev/zero"),
+                node_type: VfsDevNodeType::Character,
+            });
+        }
+        nodes
     }
 
     fn default_root_block_path(&self) -> Option<String> {

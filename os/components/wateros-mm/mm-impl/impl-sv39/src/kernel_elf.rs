@@ -430,10 +430,10 @@ pub fn from_elf_bytes(data : &[u8]) -> Result<LoadedElf, LoadElfError> {
         return Err(LoadElfError::Parse);
     }
 
-    // 用户栈：固定顶与 16KiB 大小（均为 4K
+    // 用户栈：固定顶与 256KiB 大小（均为 4K
     // 页的整数倍）；与具体用户镜像链接脚本无关，属 bring-up 约定。
     const ELF_STACK_TOP : usize = 0x0000_0000_7FFF_A000;
-    const ELF_STACK_SIZE : usize = 16 * 1024;
+    const ELF_STACK_SIZE : usize = 256 * 1024;
     runtime::logging::trace!("[elf-load] image range [{:#x},{:#x}) mapping done; map user stack \
                               top={:#x} size={}",
                              min_vaddr,
