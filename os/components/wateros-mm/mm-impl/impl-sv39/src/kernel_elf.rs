@@ -480,6 +480,8 @@ pub fn from_elf_bytes(data : &[u8]) -> Result<LoadedElf, LoadElfError> {
                              mmap_base.0,
                              user_aspace_ptr);
     Ok(LoadedElf { entry_pc : e_entry,
+                   program_entry : e_entry,
+                   interp_base : 0,
                    satp,
                    stack_bottom,
                    stack_top : ELF_STACK_TOP,

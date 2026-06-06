@@ -14,6 +14,7 @@ const AT_PAGESZ: usize = 6;
 const AT_PHDR: usize = 3;
 const AT_PHENT: usize = 4;
 const AT_PHNUM: usize = 5;
+const AT_BASE: usize = 7;
 const AT_ENTRY: usize = 9;
 const AT_RANDOM: usize = 25;
 
@@ -59,8 +60,10 @@ fn build_auxv(elf: &LoadedElf, random_addr: usize) -> Vec<usize> {
         elf.phentsize,
         AT_PHNUM,
         elf.phnum,
+        AT_BASE,
+        elf.interp_base,
         AT_ENTRY,
-        elf.entry_pc,
+        elf.program_entry,
         AT_RANDOM,
         random_addr,
         AT_NULL,

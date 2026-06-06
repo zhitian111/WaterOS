@@ -89,8 +89,8 @@ impl LoongArch64AddressSpace {
         };
         let end = mmap_map_end(base, req.len)?;
         let perm = req.prot | PagePerm::U;
-        if perm == PagePerm::U {
-            return Err(MmError::InvalidAddress);
+        if req.flags.contains(MapFlags::FIXED) {
+            self.unmap_range_with_alloc(allocator, base, end)?;
         }
         map_zeroed_range_with_alloc(self, allocator, base, end, perm)?;
         if req.addr_hint
@@ -133,8 +133,8 @@ impl LoongArch64AddressSpace {
         };
         let end = mmap_map_end(base, req.len)?;
         let perm = req.prot | PagePerm::U;
-        if perm == PagePerm::U {
-            return Err(MmError::InvalidAddress);
+        if req.flags.contains(MapFlags::FIXED) {
+            self.unmap_range_with_alloc(allocator, base, end)?;
         }
         map_range_from_backing(self, allocator, base, end, perm, file_backing)?;
         if req.addr_hint

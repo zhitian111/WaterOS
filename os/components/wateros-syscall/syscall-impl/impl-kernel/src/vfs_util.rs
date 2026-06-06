@@ -65,7 +65,10 @@ pub(crate) fn linux_open_flags_to_vfs(flags: u32) -> VfsOpenFlags {
     vf
 }
 
-/// 从当前任务 `fd` 的 `offset` 起读取 `len` 字节到内核缓冲（供文件 `mmap` 等使用）。
+/// 从当前任务 `fd` 的 `offset` 起读取最多 `len` 字节到内核缓冲（供文件 `mmap` 等使用）。
+///
+/// Linux 的文件 `mmap` 允许映射长度覆盖文件末尾所在页；页内越过 EOF 的部分按 0
+/// 填充。这里采用 eager backing，因此返回固定 `len` 字节，无法从文件读出的尾部补零。
 pub(crate) fn read_fd_bytes_at(fd: usize, offset: usize, len: usize) -> Result<Vec<u8>, ErrNo> {
     use vfs::api::VfsResult;
     if len == 0 {
@@ -77,18 +80,20 @@ pub(crate) fn read_fd_bytes_at(fd: usize, offset: usize, len: usize) -> Result<V
             return Err(VfsError::NotAFile);
         }
         let file_size = meta.size as usize;
-        let end = offset
-            .checked_add(len)
-            .ok_or(VfsError::InvalidPath)?;
-        if end > file_size {
-            return Err(VfsError::InvalidPath);
-        }
         let mut buf = Vec::with_capacity(len);
         buf.resize(len, 0);
+        if offset >= file_size {
+            return Ok(buf);
+        }
+        let readable = len.min(file_size - offset);
         handle.seek(offset as i64, VfsSeekWhence::Set)?;
-        let n = handle.read(&mut buf)?;
-        if n != len {
-            return Err(VfsError::Io);
+        let mut done = 0usize;
+        while done < readable {
+            let n = handle.read(&mut buf[done..readable])?;
+            if n == 0 {
+                break;
+            }
+            done += n;
         }
         Ok(buf)
     })

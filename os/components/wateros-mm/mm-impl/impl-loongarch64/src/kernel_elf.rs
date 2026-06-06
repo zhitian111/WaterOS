@@ -9,6 +9,8 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::String;
 use alloc::vec::Vec;
 use core::cmp;
 
@@ -66,9 +68,18 @@ fn map_vfs_to_root_vol(e : VfsError) -> RootVolumeReadError {
 }
 
 const EM_LOONGARCH : u16 = 258;
+const PT_INTERP : u32 = 3;
 const LOONGARCH64_USER_STACK_TOP : usize = 0x0000_007F_FFFF_A000;
+const LOONGARCH64_INTERP_BASE : usize = 0x0000_0000_7000_0000;
 const PREFERRED_MMAP_BASE : usize = 0x1000_0000;
 const USER_HEAP_MMAP_GAP : usize = 64 * 1024 * 1024;
+
+struct ElfHeaderInfo {
+    entry : usize,
+    phentsize : usize,
+    phnum : usize,
+    phdrs : Vec<u8>,
+}
 
 #[inline]
 fn initial_mmap_base(heap_start : VirtAddr) -> VirtAddr {
@@ -160,6 +171,39 @@ fn read_path_exact(path : &str, offset : u64, buf : &mut [u8]) -> Result<(), Loa
         filled += n;
     }
     Ok(())
+}
+
+fn read_elf_header_info(path : &str) -> Result<ElfHeaderInfo, LoadElfError> {
+    let mut ehdr = [0u8; 64];
+    read_path_exact(path, 0, &mut ehdr)?;
+    if &ehdr[0..4] != b"\x7FELF" {
+        return Err(LoadElfError::BadMagic);
+    }
+    if ehdr.get(4) != Some(&2) {
+        return Err(LoadElfError::BadClass);
+    }
+    if ehdr.get(5) != Some(&1) {
+        return Err(LoadElfError::BadEndian);
+    }
+    if rd_u16(&ehdr, 18).ok_or(LoadElfError::TooSmall)? != EM_LOONGARCH {
+        return Err(LoadElfError::BadMachine);
+    }
+    let entry = rd_u64(&ehdr, 0x18).ok_or(LoadElfError::TooSmall)? as usize;
+    let phoff = rd_u64(&ehdr, 0x20).ok_or(LoadElfError::TooSmall)? as usize;
+    let phentsize = rd_u16(&ehdr, 0x36).ok_or(LoadElfError::TooSmall)? as usize;
+    let phnum = rd_u16(&ehdr, 0x38).ok_or(LoadElfError::TooSmall)? as usize;
+    if phentsize < 56 || phnum == 0 {
+        return Err(LoadElfError::Parse);
+    }
+
+    let phdr_len = phentsize.checked_mul(phnum).ok_or(LoadElfError::Parse)?;
+    let mut phdrs = Vec::new();
+    phdrs.resize(phdr_len, 0);
+    read_path_exact(path, phoff as u64, &mut phdrs)?;
+    Ok(ElfHeaderInfo { entry,
+                       phentsize,
+                       phnum,
+                       phdrs })
 }
 
 /// 从根卷读取 `path` 的前缀，最多 `len` 字节；用于 exec 探测，避免大 ELF 整读。
@@ -405,6 +449,50 @@ fn map_segment_from_path<A : AddressSpaceOps>(aspace : &mut A,
     Ok(())
 }
 
+fn map_load_segments_from_path_at<A : AddressSpaceOps>(
+    aspace : &mut A,
+    path : &str,
+    phdrs : &[u8],
+    phentsize : usize,
+    phnum : usize,
+    load_bias : usize,
+) -> Result<(usize, usize), LoadElfError> {
+    let mut min_vaddr = usize::MAX;
+    let mut max_vaddr = 0usize;
+    for i in 0..phnum {
+        let ph = i * phentsize;
+        if ph + phentsize > phdrs.len() {
+            return Err(LoadElfError::Parse);
+        }
+        if rd_u32(phdrs, ph).ok_or(LoadElfError::Parse)? != PT_LOAD {
+            continue;
+        }
+        let p_flags = rd_u32(phdrs, ph + 4).ok_or(LoadElfError::Parse)?;
+        let p_offset = rd_u64(phdrs, ph + 8).ok_or(LoadElfError::Parse)?;
+        let p_vaddr = rd_u64(phdrs, ph + 16).ok_or(LoadElfError::Parse)? as usize;
+        let p_filesz = rd_u64(phdrs, ph + 32).ok_or(LoadElfError::Parse)?;
+        let p_memsz = rd_u64(phdrs, ph + 40).ok_or(LoadElfError::Parse)?;
+        let biased_vaddr = load_bias.checked_add(p_vaddr).ok_or(LoadElfError::Parse)?;
+        map_segment_from_path(aspace,
+                              path,
+                              biased_vaddr as u64,
+                              p_offset,
+                              p_filesz,
+                              p_memsz,
+                              perm_from_pf(p_flags))?;
+        let end = biased_vaddr
+            .checked_add(p_memsz as usize)
+            .ok_or(LoadElfError::Parse)?;
+        min_vaddr = cmp::min(min_vaddr, biased_vaddr);
+        max_vaddr = cmp::max(max_vaddr, end);
+    }
+    if min_vaddr == usize::MAX {
+        Err(LoadElfError::Parse)
+    } else {
+        Ok((min_vaddr, max_vaddr))
+    }
+}
+
 /// 为用户栈区间 `[stack_top - stack_size, stack_top)` 分配匿名帧并映射为
 /// `R|W|U`。
 fn map_user_stack<A : AddressSpaceOps>(aspace : &mut A,
@@ -462,7 +550,8 @@ fn verify_mapped_entry(aspace : &LoongArch64AddressSpace,
 fn entry_file_offset_from_phdrs(phdrs : &[u8],
                                 e_phentsize : usize,
                                 e_phnum : usize,
-                                entry_pc : usize)
+                                entry_pc : usize,
+                                load_bias : usize)
                                 -> Option<usize> {
     for i in 0..e_phnum {
         let ph = i * e_phentsize;
@@ -473,7 +562,7 @@ fn entry_file_offset_from_phdrs(phdrs : &[u8],
             continue;
         }
         let p_offset = rd_u64(phdrs, ph + 8)? as usize;
-        let p_vaddr = rd_u64(phdrs, ph + 16)? as usize;
+        let p_vaddr = load_bias.checked_add(rd_u64(phdrs, ph + 16)? as usize)?;
         let p_memsz = rd_u64(phdrs, ph + 40)? as usize;
         let p_end = p_vaddr.checked_add(p_memsz)?;
         if entry_pc >= p_vaddr && entry_pc < p_end {
@@ -490,7 +579,18 @@ fn verify_mapped_entry_from_path(aspace : &LoongArch64AddressSpace,
                                  e_phentsize : usize,
                                  e_phnum : usize)
                                  -> Result<(), LoadElfError> {
-    let fo = entry_file_offset_from_phdrs(phdrs, e_phentsize, e_phnum, entry_pc)
+    verify_mapped_entry_from_path_at(aspace, path, entry_pc, phdrs, e_phentsize, e_phnum, 0)
+}
+
+fn verify_mapped_entry_from_path_at(aspace : &LoongArch64AddressSpace,
+                                    path : &str,
+                                    entry_pc : usize,
+                                    phdrs : &[u8],
+                                    e_phentsize : usize,
+                                    e_phnum : usize,
+                                    load_bias : usize)
+                                    -> Result<(), LoadElfError> {
+    let fo = entry_file_offset_from_phdrs(phdrs, e_phentsize, e_phnum, entry_pc, load_bias)
         .ok_or(LoadElfError::Parse)?;
     let mut expected = [0u8; 4];
     read_path_exact(path, fo as u64, &mut expected)?;
@@ -508,6 +608,46 @@ fn verify_mapped_entry_from_path(aspace : &LoongArch64AddressSpace,
         return Err(LoadElfError::Parse);
     }
     Ok(())
+}
+
+fn read_interp_path(path : &str,
+                    phdrs : &[u8],
+                    phentsize : usize,
+                    phnum : usize)
+                    -> Result<Option<String>, LoadElfError> {
+    for i in 0..phnum {
+        let ph = i * phentsize;
+        if ph + phentsize > phdrs.len() {
+            return Err(LoadElfError::Parse);
+        }
+        if rd_u32(phdrs, ph).ok_or(LoadElfError::Parse)? != PT_INTERP {
+            continue;
+        }
+        let offset = rd_u64(phdrs, ph + 8).ok_or(LoadElfError::Parse)?;
+        let filesz = rd_u64(phdrs, ph + 32).ok_or(LoadElfError::Parse)? as usize;
+        if filesz == 0 || filesz > 256 {
+            return Err(LoadElfError::Parse);
+        }
+        let mut buf = Vec::new();
+        buf.resize(filesz, 0);
+        read_path_exact(path, offset, &mut buf)?;
+        let nul = buf.iter().position(|b| *b == 0).unwrap_or(buf.len());
+        let interp = core::str::from_utf8(&buf[..nul]).map_err(|_| LoadElfError::Parse)?;
+        return Ok(Some(remap_interp_path(path, interp)));
+    }
+    Ok(None)
+}
+
+fn remap_interp_path(program_path : &str, interp : &str) -> String {
+    if let Some(name) = interp.strip_prefix("/lib64/") {
+        if program_path.starts_with("/glibc/") {
+            return format!("/glibc/lib/{name}");
+        }
+        if program_path.starts_with("/musl/") {
+            return format!("/musl/lib/{name}");
+        }
+    }
+    String::from(interp)
 }
 
 /// 从已挂载根文件系统按区间读取 `path` 指向的 ELF，避免大文件整读撑爆内核堆。
@@ -647,6 +787,34 @@ pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
 
     verify_mapped_entry_from_path(&aspace, path, e_entry, &phdrs, e_phentsize, e_phnum)?;
 
+    let mut entry_pc = e_entry;
+    let program_entry = e_entry;
+    let mut interp_base = 0usize;
+    if let Some(interp_path) = read_interp_path(path, &phdrs, e_phentsize, e_phnum)? {
+        let interp = read_elf_header_info(interp_path.as_str())?;
+        map_load_segments_from_path_at(&mut aspace,
+                                       interp_path.as_str(),
+                                       &interp.phdrs,
+                                       interp.phentsize,
+                                       interp.phnum,
+                                       LOONGARCH64_INTERP_BASE)?;
+        interp_base = LOONGARCH64_INTERP_BASE;
+        entry_pc = interp_base
+            .checked_add(interp.entry)
+            .ok_or(LoadElfError::Parse)?;
+        verify_mapped_entry_from_path_at(&aspace,
+                                         interp_path.as_str(),
+                                         entry_pc,
+                                         &interp.phdrs,
+                                         interp.phentsize,
+                                         interp.phnum,
+                                         interp_base)?;
+        runtime::logging::trace!("[elf-load] interpreter path={} base={:#x} entry={:#x}",
+                                 interp_path,
+                                 interp_base,
+                                 entry_pc);
+    }
+
     let phdr_va = min_vaddr.saturating_add(e_phoff);
     let leaked = Box::leak(Box::new(aspace));
     let pgdl = leaked.satp_value();
@@ -654,7 +822,7 @@ pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
     runtime::logging::trace!("[elf-load] loaded ELF entry={:#x} pgdl={:#x} image=[{:#x},{:#x}) \
                               stack=[{:#x},{:#x}) brk=[{:#x},{:#x}) mmap_arena_base={:#x} \
                               aspace_ptr={:#x}",
-                             e_entry,
+                             entry_pc,
                              pgdl,
                              min_vaddr,
                              max_vaddr,
@@ -664,7 +832,9 @@ pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
                              brk_max.0,
                              mmap_base.0,
                              user_aspace_ptr);
-    Ok(LoadedElf { entry_pc : e_entry,
+    Ok(LoadedElf { entry_pc,
+                   program_entry,
+                   interp_base,
                    satp : pgdl,
                    stack_bottom,
                    stack_top : ELF_STACK_TOP,
@@ -840,6 +1010,8 @@ pub fn from_elf_bytes(data : &[u8]) -> Result<LoadedElf, LoadElfError> {
                              mmap_base.0,
                              user_aspace_ptr);
     Ok(LoadedElf { entry_pc : e_entry,
+                   program_entry : e_entry,
+                   interp_base : 0,
                    satp : pgdl, // `satp` 字段名保留，实际内容为 LoongArch PGDL 值
                    stack_bottom,
                    stack_top : ELF_STACK_TOP,

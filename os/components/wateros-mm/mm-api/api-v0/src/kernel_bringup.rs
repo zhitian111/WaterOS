@@ -87,8 +87,12 @@ pub enum PrepareUserStackError {
 ///
 /// 虚拟地址区间与栈顶等由实现固定或计算；用户入口在 `entry_pc`，须在 **`satp` 已安装且 U 态可执行映射** 下跳转到该 PC。
 pub struct LoadedElf {
-    /// 用户程序入口虚拟地址（通常为 ELF `e_entry`）。
+    /// 首次进入用户态的入口虚拟地址；动态 ELF 时为解释器入口。
     pub entry_pc: usize,
+    /// 主程序入口虚拟地址；用于 auxv `AT_ENTRY`。
+    pub program_entry: usize,
+    /// 动态解释器装载基址；无解释器时为 0，用于 auxv `AT_BASE`。
+    pub interp_base: usize,
     /// 该地址空间对应的 `satp`（实现相关编码）。
     pub satp: usize,
     /// 用户栈下界（虚拟地址，含）。

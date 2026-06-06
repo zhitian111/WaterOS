@@ -63,6 +63,7 @@ __wateros_arch_restore_user_task:
     csrwr $r13, 0x0
 
     ld.d $r1,  $r21, 1*8
+    ld.d $r2,  $r21, 2*8
     ld.d $r5,  $r21, 5*8
     ld.d $r6,  $r21, 6*8
     ld.d $r7,  $r21, 7*8

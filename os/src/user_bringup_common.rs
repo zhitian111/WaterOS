@@ -62,7 +62,8 @@ pub fn run_one_elf_argv_exit(log_tag : &str, elf_path : &str, argv : &[&str]) ->
                                                 .collect();
     info!("[{log_tag}] spawn path={elf_path} entry_pc={:#x} satp={:#x} argv={final_argv:?}",
           loaded.entry_pc, loaded.satp);
-    let tid = match spawn_user_task_from_loaded_elf_with_argv(&loaded, &final_argv_refs, &[]) {
+    let envp = libc_envp_for_path(elf_path);
+    let tid = match spawn_user_task_from_loaded_elf_with_argv(&loaded, &final_argv_refs, &envp) {
         Ok(t) => t,
         Err(e) => {
             warn!("[{log_tag}] skip spawn path={elf_path}: {e:?}");
@@ -111,6 +112,16 @@ pub fn run_one_elf_argv_exit(log_tag : &str, elf_path : &str, argv : &[&str]) ->
 
     trace!("[{log_tag}] END path={elf_path} exit_code={exit_code}");
     Some(exit_code)
+}
+
+fn libc_envp_for_path(path : &str) -> Vec<&'static str> {
+    if path.starts_with("/glibc/") {
+        vec!["LD_LIBRARY_PATH=/glibc/lib"]
+    } else if path.starts_with("/musl/") {
+        vec!["LD_LIBRARY_PATH=/musl/lib"]
+    } else {
+        Vec::new()
+    }
 }
 
 /// 串行执行 `/{prefix}/basic/{name}`，argv 仅含 ELF 自身路径。
