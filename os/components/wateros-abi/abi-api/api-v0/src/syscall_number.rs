@@ -44,6 +44,8 @@ pub trait SyscallNumberTable {
     // I/O / 文件与描述符相关
     /// 从打开对象读数据（与 `read(2)` 语义对齐的编号）。
     const READ: SyscallNumber;
+    /// 从打开对象读入多段缓冲（`readv(2)`）。
+    const READV: SyscallNumber;
     /// 向打开对象写数据（与 `write(2)` 语义对齐的编号）。
     const WRITE: SyscallNumber;
     /// 向打开对象写入多段缓冲（`writev(2)`）。
@@ -62,6 +64,8 @@ pub trait SyscallNumberTable {
     const READLINKAT: SyscallNumber;
     /// 检查相对目录路径可访问性（`faccessat(2)`）。
     const FACCESSAT: SyscallNumber;
+    /// 查询路径所在文件系统统计信息（`statfs(2)`）。
+    const STATFS: SyscallNumber;
     /// 相对目录打开路径（`openat(2)`）。
     const OPENAT: SyscallNumber;
     /// 关闭文件描述符（`close(2)`）。

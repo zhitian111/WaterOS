@@ -12,12 +12,12 @@ use arch_api_v0::trap::{
     Exception, Interrupt, TrapCause, TrapFrameRead, TrapFrameWrite, TrapSyscallRead,
     TrapSyscallWrite,
 };
+use base_config::task::SCHED_TIMER_PERIOD_MS;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use platform::arch::paging;
 use platform::arch::trap::ActiveTrapFrame as TrapContext;
 use runtime::logging::*;
 use syscall::dispatch_syscall_from_trap;
-use base_config::task::SCHED_TIMER_PERIOD_MS;
 
 /// 监督态定时器中断后，用 **与 `kernel_main` 相同的 wall-clock 语义**
 /// 重新武装固件定时器。
@@ -119,9 +119,9 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                    syscall_ret);
             // execve 成功时已替换整个 trap 帧，跳过 sepc 推进与返回值写入；
             // 失败时必须像普通 syscall 一样把 -errno 返回给原用户态，否则会反复执行同一条 ecall。
-            let exec_succeeded =
-                syscall_nr == <ActiveSyscallNumberTable as SyscallNumberTable>::EXEC.raw()
-                    && syscall_ret >= 0;
+            let exec_succeeded = syscall_nr ==
+                                 <ActiveSyscallNumberTable as SyscallNumberTable>::EXEC.raw() &&
+                                 syscall_ret >= 0;
             if !exec_succeeded {
                 cx.add_user_pc(SYSCALL_INSN_BYTES);
                 cx.set_syscall_ret(UserRet(syscall_ret));
@@ -135,7 +135,8 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             // 日志级别下毫无输出，表现为「sret 后卡死」。
             if cx.returns_to_user() {
                 warn!("[trap] user memory fault {:?} raw={:#x} ecode={:#x} sepc={:#x} \
-                       stval={:#x} user_sp={:#x} return_satp={:#x} aspace_ptr={:#x} — killing task",
+                       stval={:#x} user_sp={:#x} return_satp={:#x} aspace_ptr={:#x} — killing \
+                       task",
                       trap_cause,
                       raw_cause,
                       (raw_cause >> 16) & 0x3F,

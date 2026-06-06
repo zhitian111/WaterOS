@@ -82,18 +82,78 @@ impl PerTaskFdRegistry {
     }
 
     fn close_slot(&mut self, task_id: task::TaskId, fd: usize) -> VfsResult<()> {
+        let mut handle = self.take_fd_for_close(task_id, fd)?;
+        handle.close()?;
+        Ok(())
+    }
+
+    fn take_table_handles(&mut self, owner: task::TaskId) -> Vec<Box<dyn VfsIoHandle>> {
+        let mut handles = Vec::new();
+        if let Some(table) = self.tables.get_mut(owner) {
+            for slot in table.iter_mut() {
+                if let Some(handle) = slot.take() {
+                    handles.push(handle);
+                }
+            }
+            table.clear();
+        }
+        if let Some(flags) = self.fd_flags.get_mut(owner) {
+            flags.clear();
+        }
+        handles
+    }
+
+    pub fn take_fd_for_close(
+        &mut self,
+        task_id: task::TaskId,
+        fd: usize,
+    ) -> VfsResult<Box<dyn VfsIoHandle>> {
         self.ensure_task(task_id);
         let owner = self.effective_owner(task_id);
-        let mut handle = self.tables[owner]
+        let handle = self.tables[owner]
             .get_mut(fd)
             .ok_or(VfsError::BadFd)?
             .take()
             .ok_or(VfsError::BadFd)?;
-        handle.close()?;
         if fd < self.fd_flags[owner].len() {
             self.fd_flags[owner][fd] = 0;
         }
-        Ok(())
+        Ok(handle)
+    }
+
+    pub fn take_cloexec_fds_for_task(
+        &mut self,
+        task_id: task::TaskId,
+    ) -> Vec<Box<dyn VfsIoHandle>> {
+        self.ensure_task(task_id);
+        let owner = self.effective_owner(task_id);
+        let table_len = self.tables[owner].len();
+        let flags_len = self.fd_flags[owner].len();
+        let mut handles = Vec::new();
+        for fd in (0..table_len).rev() {
+            let cloexec = fd < flags_len && (self.fd_flags[owner][fd] & FD_CLOEXEC) != 0;
+            if cloexec {
+                if let Ok(handle) = self.take_fd_for_close(task_id, fd) {
+                    handles.push(handle);
+                }
+            }
+        }
+        handles
+    }
+
+    pub fn drain_task_fd_table(&mut self, task_id: task::TaskId) -> Vec<Box<dyn VfsIoHandle>> {
+        let Some(owner) = self.release_owner(task_id) else {
+            return Vec::new();
+        };
+        let mut handles = if self.ref_counts.get(owner).copied().unwrap_or(0) == 0 {
+            self.take_table_handles(owner)
+        } else {
+            Vec::new()
+        };
+        if task_id != owner {
+            handles.extend(self.take_table_handles(task_id));
+        }
+        handles
     }
 
     fn release_owner(&mut self, task_id: task::TaskId) -> Option<task::TaskId> {
@@ -105,17 +165,7 @@ impl PerTaskFdRegistry {
     }
 
     fn close_table(&mut self, owner: task::TaskId) {
-        if let Some(table) = self.tables.get_mut(owner) {
-            for slot in table.iter_mut() {
-                if let Some(mut h) = slot.take() {
-                    let _ = h.close();
-                }
-            }
-            table.clear();
-        }
-        if let Some(flags) = self.fd_flags.get_mut(owner) {
-            flags.clear();
-        }
+        let _ = self.take_table_handles(owner);
     }
 }
 

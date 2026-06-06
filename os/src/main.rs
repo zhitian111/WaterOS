@@ -38,12 +38,12 @@
 #![feature(alloc_error_handler)]
 
 extern crate alloc;
+#[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
+use klog as _;
 #[cfg(feature = "qemu-riscv64-opensbi")]
 use syscall as _;
 #[cfg(feature = "qemu-loongarch64-virt")]
 use syscall as _;
-#[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
-use klog as _;
 
 #[cfg(feature = "qemu-riscv64-opensbi")]
 mod self_tests;

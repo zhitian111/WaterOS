@@ -14,6 +14,7 @@ use abi::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SyscallKind {
     Read,
+    Readv,
     Write,
     Writev,
     Pread64,
@@ -23,6 +24,7 @@ pub enum SyscallKind {
     Sendfile,
     ReadLinkAt,
     FaccessAt,
+    StatFs,
     OpenAt,
     Close,
     Fstat,
@@ -119,6 +121,8 @@ impl SyscallKind {
     pub fn decode<T: SyscallNumberTable>(syscall_nr: usize) -> Self {
         if syscall_nr == T::READ.raw() {
             Self::Read
+        } else if syscall_nr == T::READV.raw() {
+            Self::Readv
         } else if syscall_nr == T::WRITE.raw() {
             Self::Write
         } else if syscall_nr == T::WRITEV.raw() {
@@ -137,6 +141,8 @@ impl SyscallKind {
             Self::ReadLinkAt
         } else if syscall_nr == T::FACCESSAT.raw() {
             Self::FaccessAt
+        } else if syscall_nr == T::STATFS.raw() {
+            Self::StatFs
         } else if syscall_nr == T::OPENAT.raw() {
             Self::OpenAt
         } else if syscall_nr == T::CLOSE.raw() {
@@ -319,6 +325,7 @@ impl SyscallKind {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Read => "read",
+            Self::Readv => "readv",
             Self::Write => "write",
             Self::Writev => "writev",
             Self::Pread64 => "pread64",
@@ -328,6 +335,7 @@ impl SyscallKind {
             Self::Sendfile => "sendfile",
             Self::ReadLinkAt => "readlinkat",
             Self::FaccessAt => "faccessat",
+            Self::StatFs => "statfs",
             Self::OpenAt => "openat",
             Self::Close => "close",
             Self::Fstat => "fstat",
@@ -513,6 +521,14 @@ pub trait SyscallDispatcher {
         )
     }
 
+    fn dispatch_readv(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Readv,
+            Self::NumberTable::READV.raw(),
+            args,
+        )
+    }
+
     fn dispatch_write(args: SyscallArgs) -> isize {
         Self::dispatch_unsupported(
             SyscallKind::Write,
@@ -581,6 +597,14 @@ pub trait SyscallDispatcher {
         Self::dispatch_unsupported(
             SyscallKind::FaccessAt,
             Self::NumberTable::FACCESSAT.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_statfs(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::StatFs,
+            Self::NumberTable::STATFS.raw(),
             args,
         )
     }
@@ -1268,6 +1292,7 @@ pub trait SyscallDispatcher {
             SyscallKind::Exit => Self::dispatch_exit(syscall_args),
             SyscallKind::ExitGroup => Self::dispatch_exit_group(syscall_args),
             SyscallKind::Read => Self::dispatch_read(syscall_args),
+            SyscallKind::Readv => Self::dispatch_readv(syscall_args),
             SyscallKind::Write => Self::dispatch_write(syscall_args),
             SyscallKind::Writev => Self::dispatch_writev(syscall_args),
             SyscallKind::Pread64 => Self::dispatch_pread64(syscall_args),
@@ -1277,6 +1302,7 @@ pub trait SyscallDispatcher {
             SyscallKind::Sendfile => Self::dispatch_sendfile(syscall_args),
             SyscallKind::ReadLinkAt => Self::dispatch_readlinkat(syscall_args),
             SyscallKind::FaccessAt => Self::dispatch_faccessat(syscall_args),
+            SyscallKind::StatFs => Self::dispatch_statfs(syscall_args),
             SyscallKind::OpenAt => Self::dispatch_openat(syscall_args),
             SyscallKind::Close => Self::dispatch_close(syscall_args),
             SyscallKind::Fstat => Self::dispatch_fstat(syscall_args),

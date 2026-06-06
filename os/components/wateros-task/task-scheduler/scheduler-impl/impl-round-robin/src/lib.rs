@@ -244,13 +244,10 @@ pub fn wait_current(wait_handle : TaskWaitHandle) {
 /// 在关中断调度临界区内复查条件；仅当条件仍成立时才把当前任务挂入等待队列。
 pub fn wait_current_while(wait_handle : TaskWaitHandle, condition : impl FnOnce() -> bool) {
     let _guard = InterruptGuard::new();
-    let switch_pair = with_scheduler(|scheduler| {
-        if condition() {
-            scheduler.schedule_wait(wait_handle, None)
-        } else {
-            None
-        }
-    });
+    if !condition() {
+        return;
+    }
+    let switch_pair = with_scheduler(|scheduler| scheduler.schedule_wait(wait_handle, None));
     if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
         unsafe {
             __switch(current_task_cx_ptr, next_task_cx_ptr);
@@ -288,22 +285,15 @@ pub fn wait_current_timeout_while(wait_handle : TaskWaitHandle,
     }
 
     let _guard = InterruptGuard::new();
-    let mut skipped_wait = false;
-    let switch_pair = with_scheduler(|scheduler| {
-        if condition() {
-            scheduler.schedule_wait(wait_handle, Some(timeout_ticks))
-        } else {
-            skipped_wait = true;
-            None
-        }
-    });
+    if !condition() {
+        return TaskWaitResult::Woken;
+    }
+    let switch_pair =
+        with_scheduler(|scheduler| scheduler.schedule_wait(wait_handle, Some(timeout_ticks)));
     if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
         unsafe {
             __switch(current_task_cx_ptr, next_task_cx_ptr);
         }
-    }
-    if skipped_wait {
-        return TaskWaitResult::Woken;
     }
     with_scheduler(|scheduler| scheduler.take_current_wait_result())
 }

@@ -21,6 +21,7 @@ pub struct LinuxGeneric64;
 impl SyscallNumberTable for LinuxGeneric64 {
     // I/O / 文件与描述符
     const READ: SyscallNumber = SyscallNumber(63);
+    const READV: SyscallNumber = SyscallNumber(65);
     const WRITE: SyscallNumber = SyscallNumber(64);
     const WRITEV: SyscallNumber = SyscallNumber(66);
     const PREAD64: SyscallNumber = SyscallNumber(67);
@@ -33,6 +34,7 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const SELECT: SyscallNumber = SyscallNumber(23);
     const READLINKAT: SyscallNumber = SyscallNumber(78);
     const FACCESSAT: SyscallNumber = SyscallNumber(48);
+    const STATFS: SyscallNumber = SyscallNumber(43);
     const OPENAT: SyscallNumber = SyscallNumber(56);
     const CLOSE: SyscallNumber = SyscallNumber(57);
     const FSTAT: SyscallNumber = SyscallNumber(80);

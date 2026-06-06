@@ -191,6 +191,7 @@ pub(crate) fn sys_exit(exit_code: isize) -> isize {
             }
         }
         super::robust::robust_exit_cleanup(task_id);
+        drop_task_runtime_resources(task_id);
     }
     task::exit_current(exit_code)
 }
@@ -214,6 +215,7 @@ pub(crate) fn sys_exit_group(exit_code: isize) -> isize {
             }
         }
         super::robust::robust_exit_cleanup(task_id);
+        drop_task_runtime_resources(task_id);
     }
     task::exit_group_current(exit_code)
 }
@@ -542,9 +544,13 @@ fn write_exit_code(exit_code_ptr: usize, exit_code: isize) -> Result<(), ErrNo> 
 }
 
 fn drop_exited_task_resources(exited: &task::ExitedTask) {
-    vfs::cwd::drop_task_cwd(exited.id);
-    vfs::fd::drop_task_fd_table(exited.id);
-    cred::drop_task_cred(exited.id);
+    drop_task_runtime_resources(exited.id);
+}
+
+fn drop_task_runtime_resources(task_id: task::TaskId) {
+    vfs::cwd::drop_task_cwd(task_id);
+    vfs::fd::drop_task_fd_table(task_id);
+    cred::drop_task_cred(task_id);
 }
 
 fn finish_wait_process_result(

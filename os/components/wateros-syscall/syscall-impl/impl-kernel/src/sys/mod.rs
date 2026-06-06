@@ -34,6 +34,7 @@ mod rtc;
 mod sendfile;
 mod robust;
 mod syslog;
+mod statfs;
 mod task;
 mod umount2;
 mod unlinkat;
@@ -84,7 +85,7 @@ pub(crate) use pipe2::sys_pipe2;
 pub(crate) use poll::sys_poll;
 pub(crate) use poll_multiplex::{sys_ppoll, sys_pselect6, sys_select};
 pub(crate) use posix_at_io::{sys_pread64, sys_preadv, sys_pwrite64, sys_pwritev};
-pub(crate) use read::sys_read;
+pub(crate) use read::{sys_read, sys_readv};
 pub(crate) use readlinkat::sys_readlinkat;
 pub(crate) use renameat2::sys_renameat2;
 pub(crate) use sendfile::sys_sendfile;
@@ -92,6 +93,7 @@ pub(crate) use clock::{
     sys_clock_getres, sys_clock_gettime, sys_clock_nanosleep, sys_clock_settime, sys_gettimeofday,
     sys_nanosleep,
 };
+pub(crate) use statfs::sys_statfs;
 pub(crate) use syslog::sys_syslog;
 pub(crate) use task::{
     sys_exit, sys_exit_group, sys_getpid, sys_getppid, sys_getrandom,

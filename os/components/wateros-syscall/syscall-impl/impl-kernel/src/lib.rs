@@ -62,6 +62,11 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     }
 
     #[inline]
+    fn dispatch_readv(args: SyscallArgs) -> isize {
+        sys::sys_readv(args).0
+    }
+
+    #[inline]
     fn dispatch_write(args: SyscallArgs) -> isize {
         sys::sys_write(args).0
     }
@@ -104,6 +109,11 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     #[inline]
     fn dispatch_faccessat(args: SyscallArgs) -> isize {
         sys::sys_faccessat(args).0
+    }
+
+    #[inline]
+    fn dispatch_statfs(args: SyscallArgs) -> isize {
+        sys::sys_statfs(args).0
     }
 
     #[inline]

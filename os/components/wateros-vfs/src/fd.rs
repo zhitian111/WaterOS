@@ -66,7 +66,12 @@ pub fn alloc_fd(handle: Box<dyn VfsIoHandle>) -> VfsResult<usize> {
 
 /// 关闭当前任务的 fd（调用句柄 `close`）。
 pub fn close_fd(fd: usize) -> VfsResult<()> {
-    with_current_task(|reg, task_id| reg.close_fd_for_task(task_id, fd))
+    let task_id = current_task_id()?;
+    let mut handle = {
+        let mut reg = registry().exclusive_access();
+        reg.take_fd_for_close(task_id, fd)?
+    };
+    handle.close()
 }
 
 /// 当前任务下 `fd` 是否为软件 RTC 字符设备。
@@ -124,15 +129,25 @@ pub fn share_fd_table_from_parent(child_id: task::TaskId, parent_id: task::TaskI
 /// `execve` 前关闭带 `FD_CLOEXEC` 的 fd。
 pub fn close_cloexec_fds_for_current_task() -> VfsResult<()> {
     let task_id = current_task_id()?;
-    let mut reg = registry().exclusive_access();
-    reg.close_cloexec_fds_for_task(task_id);
+    let handles = {
+        let mut reg = registry().exclusive_access();
+        reg.take_cloexec_fds_for_task(task_id)
+    };
+    for mut handle in handles {
+        handle.close()?;
+    }
     Ok(())
 }
 
 /// 任务退出后释放 fd 表。
 pub fn drop_task_fd_table(task_id: task::TaskId) {
-    let mut reg = registry().exclusive_access();
-    reg.drop_task_fd_table(task_id);
+    let handles = {
+        let mut reg = registry().exclusive_access();
+        reg.drain_task_fd_table(task_id)
+    };
+    for mut handle in handles {
+        let _ = handle.close();
+    }
 }
 
 /// bring-up：两任务 fd 表隔离、dup 与 fork 继承烟囱。

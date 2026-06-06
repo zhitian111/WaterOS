@@ -23,7 +23,12 @@ impl<T> UniprocessorSafeCell<T> {
 
     /// 获取对内部值的独占可变借用；若已存在未释放的借用则会在运行时 panic。
     pub fn exclusive_access(&self) -> RefMut<'_, T> {
-        self.inner
-            .borrow_mut()
+        match self.inner.try_borrow_mut() {
+            Ok(inner) => inner,
+            Err(_) => panic!(
+                "RefCell already borrowed: {}",
+                core::any::type_name::<T>()
+            ),
+        }
     }
 }

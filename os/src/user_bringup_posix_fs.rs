@@ -13,10 +13,10 @@ pub fn run_stage_posix_fs_meta() {
     }
     #[cfg(feature = "vfs-bridge")]
     {
-        const DIR: &str = "/__posix_fs_meta_dir";
-        const DIR_RENAMED: &str = "/__posix_fs_meta_dir_renamed";
-        const FILE: &str = "/__posix_fs_meta_dir/entry.txt";
-        const DATA: &[u8] = b"posix-fs-meta";
+        const DIR : &str = "/__posix_fs_meta_dir";
+        const DIR_RENAMED : &str = "/__posix_fs_meta_dir_renamed";
+        const FILE : &str = "/__posix_fs_meta_dir/entry.txt";
+        const DATA : &[u8] = b"posix-fs-meta";
 
         match run_smoke(DIR, DIR_RENAMED, FILE, DATA) {
             Ok(count) => {
@@ -31,12 +31,11 @@ pub fn run_stage_posix_fs_meta() {
 }
 
 #[cfg(feature = "vfs-bridge")]
-fn run_smoke(
-    dir: &str,
-    dir_renamed: &str,
-    file: &str,
-    data: &[u8],
-) -> Result<usize, vfs::api::VfsError> {
+fn run_smoke(dir : &str,
+             dir_renamed : &str,
+             file : &str,
+             data : &[u8])
+             -> Result<usize, vfs::api::VfsError> {
     use vfs::api::SingleRootReadView;
 
     let mut sess = vfs::mount::open_rw_session(vfs::api::VfsFsKind::Ext4)?;
