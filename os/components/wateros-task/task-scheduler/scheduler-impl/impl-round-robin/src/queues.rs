@@ -1,10 +1,10 @@
 //! 轮转调度器的 **队列与 tick 记账**：就绪 FIFO、按原因的阻塞分桶、睡眠与退出队列，以及等待超时扫描。
 //!
-//! 与 [`crate::registry::TaskRegistry`] 协同：`enqueue_task` 同时更新 TCB 状态与队列结构；`task_id` 与 `WaitQueueId` 均为稠密下标假设。
+//! 与 [`crate::registry::TaskRegistry`] 协同：`enqueue_task` 同时更新 TCB 状态与队列结构。
 
 extern crate alloc;
 
-use alloc::collections::VecDeque;
+use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec::Vec;
 use task_api::{
     ExitedTask, TaskBlockReason, TaskExitCode, TaskId, TaskState, TaskTick, TaskWaitHandle,
@@ -33,10 +33,10 @@ struct WaitTimeoutEntry {
 pub(super) struct RoundRobinQueues {
     // 下标为 `WaitQueueId` 的 FIFO；与 `TaskWaitTarget::WaitQueue` 对应。
     wait_queues: Vec<VecDeque<TaskId>>,
-    // 下标为被等待任务的 `TaskId`；与 `TaskWaitTarget::TaskExit` 对应。
-    exit_wait_queues: Vec<VecDeque<TaskId>>,
-    // 下标为父任务 `TaskId`；与 `TaskWaitTarget::ChildExit` 对应。
-    child_exit_wait_queues: Vec<VecDeque<TaskId>>,
+    // key 为被等待任务的完整 packed `TaskId`；与 `TaskWaitTarget::TaskExit` 对应。
+    exit_wait_queues: BTreeMap<TaskId, VecDeque<TaskId>>,
+    // key 为父任务完整 packed `TaskId`；与 `TaskWaitTarget::ChildExit` 对应。
+    child_exit_wait_queues: BTreeMap<TaskId, VecDeque<TaskId>>,
     // 按入队顺序扫描；到期 tick 不大于 `current_tick` 时尝试超时唤醒。
     wait_timeouts: VecDeque<WaitTimeoutEntry>,
     ready_queue: VecDeque<TaskId>,
@@ -52,8 +52,8 @@ impl RoundRobinQueues {
     pub(super) fn new() -> Self {
         Self {
             wait_queues: Vec::new(),
-            exit_wait_queues: Vec::new(),
-            child_exit_wait_queues: Vec::new(),
+            exit_wait_queues: BTreeMap::new(),
+            child_exit_wait_queues: BTreeMap::new(),
             wait_timeouts: VecDeque::new(),
             ready_queue: VecDeque::new(),
             blocked_queue: VecDeque::new(),
@@ -129,12 +129,14 @@ impl RoundRobinQueues {
         for wait_queue in &mut self.wait_queues {
             let _ = take_task_id_by_id(wait_queue, task_id);
         }
-        for wait_queue in &mut self.exit_wait_queues {
+        for wait_queue in self.exit_wait_queues.values_mut() {
             let _ = take_task_id_by_id(wait_queue, task_id);
         }
-        for wait_queue in &mut self.child_exit_wait_queues {
+        for wait_queue in self.child_exit_wait_queues.values_mut() {
             let _ = take_task_id_by_id(wait_queue, task_id);
         }
+        self.exit_wait_queues.remove(&task_id);
+        self.child_exit_wait_queues.remove(&task_id);
         let mut pending = VecDeque::new();
         while let Some(entry) = self.wait_timeouts
                                         .pop_front()
@@ -154,11 +156,17 @@ impl RoundRobinQueues {
     ) {
         match target {
             QueueTarget::Ready => {
+                if registry.state(task_id).is_none() {
+                    return;
+                }
                 registry.mark_ready(task_id);
                 self.ready_queue
                     .push_back(task_id);
             }
             QueueTarget::Blocked(reason) => {
+                if registry.state(task_id).is_none() {
+                    return;
+                }
                 registry.mark_blocking(task_id, reason);
                 match reason {
                     TaskBlockReason::Wait(wait_handle) => {
@@ -171,11 +179,17 @@ impl RoundRobinQueues {
                 }
             }
             QueueTarget::Sleeping(wake_tick) => {
+                if registry.state(task_id).is_none() {
+                    return;
+                }
                 registry.mark_sleeping(task_id, wake_tick);
                 self.sleep_queue
                     .push_back(task_id);
             }
             QueueTarget::Exited(exit_code) => {
+                if registry.state(task_id).is_none() {
+                    return;
+                }
                 self.detach_task_from_run_queues(task_id);
                 registry.mark_exited(task_id, exit_code);
                 self.exited_queue
@@ -205,6 +219,9 @@ impl RoundRobinQueues {
             .sleep_queue
             .pop_front()
         {
+            if registry.state(task_id).is_none() {
+                continue;
+            }
             if registry.ready_to_wake(task_id, self.current_tick) {
                 registry.mark_ready(task_id);
                 self.ready_queue
@@ -253,6 +270,9 @@ impl RoundRobinQueues {
 
     pub(super) fn wake_task(&mut self, registry: &mut TaskRegistry, task_id: TaskId) -> bool {
         if take_task_id_by_id(&mut self.blocked_queue, task_id) {
+            if registry.state(task_id).is_none() {
+                return false;
+            }
             registry.finish_wait(task_id, TaskWaitResult::Woken);
             registry.mark_ready(task_id);
             self.ready_queue
@@ -260,6 +280,9 @@ impl RoundRobinQueues {
             return true;
         }
         if take_task_id_by_id(&mut self.sleep_queue, task_id) {
+            if registry.state(task_id).is_none() {
+                return false;
+            }
             registry.finish_wait(task_id, TaskWaitResult::Woken);
             registry.mark_ready(task_id);
             self.ready_queue
@@ -268,6 +291,9 @@ impl RoundRobinQueues {
         }
         for wait_queue in &mut self.wait_queues {
             if take_task_id_by_id(wait_queue, task_id) {
+                if registry.state(task_id).is_none() {
+                    return false;
+                }
                 registry.finish_wait(task_id, TaskWaitResult::Woken);
                 registry.mark_ready(task_id);
                 self.ready_queue
@@ -275,8 +301,11 @@ impl RoundRobinQueues {
                 return true;
             }
         }
-        for wait_queue in &mut self.exit_wait_queues {
+        for wait_queue in self.exit_wait_queues.values_mut() {
             if take_task_id_by_id(wait_queue, task_id) {
+                if registry.state(task_id).is_none() {
+                    return false;
+                }
                 registry.finish_wait(task_id, TaskWaitResult::Woken);
                 registry.mark_ready(task_id);
                 self.ready_queue
@@ -284,8 +313,11 @@ impl RoundRobinQueues {
                 return true;
             }
         }
-        for wait_queue in &mut self.child_exit_wait_queues {
+        for wait_queue in self.child_exit_wait_queues.values_mut() {
             if take_task_id_by_id(wait_queue, task_id) {
+                if registry.state(task_id).is_none() {
+                    return false;
+                }
                 registry.finish_wait(task_id, TaskWaitResult::Woken);
                 registry.mark_ready(task_id);
                 self.ready_queue
@@ -323,14 +355,20 @@ impl RoundRobinQueues {
         registry: &mut TaskRegistry,
         wait_queue_id: WaitQueueId,
     ) -> Option<TaskId> {
-        let task_id = self
+        while let Some(task_id) = self
             .wait_queue_mut(wait_queue_id)
-            .pop_front()?;
-        registry.finish_wait(task_id, TaskWaitResult::Woken);
-        registry.mark_ready(task_id);
-        self.ready_queue
-            .push_back(task_id);
-        Some(task_id)
+            .pop_front()
+        {
+            if registry.state(task_id).is_none() {
+                continue;
+            }
+            registry.finish_wait(task_id, TaskWaitResult::Woken);
+            registry.mark_ready(task_id);
+            self.ready_queue
+                .push_back(task_id);
+            return Some(task_id);
+        }
+        None
     }
 
     pub(super) fn wake_all_in_wait_queue(
@@ -343,6 +381,9 @@ impl RoundRobinQueues {
             .wait_queue_mut(wait_queue_id)
             .pop_front()
         {
+            if registry.state(task_id).is_none() {
+                continue;
+            }
             registry.finish_wait(task_id, TaskWaitResult::Woken);
             registry.mark_ready(task_id);
             self.ready_queue
@@ -361,6 +402,8 @@ impl RoundRobinQueues {
             return None;
         }
         self.detach_task_from_run_queues(task_id);
+        self.exit_wait_queues.remove(&task_id);
+        self.child_exit_wait_queues.remove(&task_id);
         registry.reap_task(task_id)
     }
 
@@ -368,11 +411,18 @@ impl RoundRobinQueues {
         &mut self,
         registry: &mut TaskRegistry,
     ) -> Option<ExitedTask> {
-        let task_id = self
+        while let Some(task_id) = self
             .exited_queue
-            .pop_front()?;
-        self.detach_task_from_run_queues(task_id);
-        registry.reap_task(task_id)
+            .pop_front()
+        {
+            self.detach_task_from_run_queues(task_id);
+            self.exit_wait_queues.remove(&task_id);
+            self.child_exit_wait_queues.remove(&task_id);
+            if let Some(exited) = registry.reap_task(task_id) {
+                return Some(exited);
+            }
+        }
+        None
     }
 
     fn wait_queue_mut(&mut self, wait_queue_id: WaitQueueId) -> &mut VecDeque<TaskId> {
@@ -382,15 +432,9 @@ impl RoundRobinQueues {
     }
 
     fn exit_wait_queue_mut(&mut self, task_id: TaskId) -> &mut VecDeque<TaskId> {
-        if self
-            .exit_wait_queues
-            .len()
-            <= task_id
-        {
-            self.exit_wait_queues
-                .resize_with(task_id + 1, VecDeque::new);
-        }
-        &mut self.exit_wait_queues[task_id]
+        self.exit_wait_queues
+            .entry(task_id)
+            .or_insert_with(VecDeque::new)
     }
 
     fn wait_list_mut(&mut self, wait_handle: TaskWaitHandle) -> &mut VecDeque<TaskId> {
@@ -410,6 +454,9 @@ impl RoundRobinQueues {
             .exit_wait_queue_mut(task_id)
             .pop_front()
         {
+            if registry.state(waiter_task_id).is_none() {
+                continue;
+            }
             registry.finish_wait(waiter_task_id, TaskWaitResult::Woken);
             registry.mark_ready(waiter_task_id);
             self.ready_queue
@@ -420,6 +467,9 @@ impl RoundRobinQueues {
                 .child_exit_wait_queue_mut(parent_id)
                 .pop_front()
             {
+                if registry.state(waiter_task_id).is_none() {
+                    continue;
+                }
                 registry.finish_wait(waiter_task_id, TaskWaitResult::Woken);
                 registry.mark_ready(waiter_task_id);
                 self.ready_queue
@@ -429,15 +479,9 @@ impl RoundRobinQueues {
     }
 
     fn child_exit_wait_queue_mut(&mut self, parent_id: TaskId) -> &mut VecDeque<TaskId> {
-        if self
-            .child_exit_wait_queues
-            .len()
-            <= parent_id
-        {
-            self.child_exit_wait_queues
-                .resize_with(parent_id + 1, VecDeque::new);
-        }
-        &mut self.child_exit_wait_queues[parent_id]
+        self.child_exit_wait_queues
+            .entry(parent_id)
+            .or_insert_with(VecDeque::new)
     }
 }
 

@@ -1,9 +1,5 @@
-//! **任务注册表**：稠密 `TaskId` → `TaskControlBlock`
-//! 槽位、当前运行任务指针，以及首次切换用的引导上下文。
-//!
-//! `exit_wait_queues` 按下标 `task_id`
-//! 扩容，用于「等待某任务退出」的等待者链表；与
-//! `task_api::TaskWaitTarget::TaskExit` 一一对应。
+//! **任务注册表**：可复用槽位 + generation 编码的 `TaskId` → `TaskControlBlock`
+//! 表、当前运行任务指针，以及首次切换用的引导上下文。
 
 extern crate alloc;
 
@@ -23,53 +19,124 @@ unsafe extern "C" {
     safe fn __wateros_idle_task_runtime_main(arg : usize) -> !;
 }
 
-// `task_id` 与 `slots` 下标一致；`None` 表示槽位空闲（例如已 reap
-// 的退出任务）。
+const TASK_ID_SLOT_BITS : usize = 32;
+const TASK_ID_SLOT_MASK : usize = (1usize << TASK_ID_SLOT_BITS) - 1;
+
+#[inline]
+fn task_slot(task_id : TaskId) -> usize { task_id & TASK_ID_SLOT_MASK }
+
+#[inline]
+fn task_generation(task_id : TaskId) -> usize { task_id >> TASK_ID_SLOT_BITS }
+
+#[inline]
+fn make_task_id(slot : usize, generation : usize) -> TaskId {
+    (generation << TASK_ID_SLOT_BITS) | slot
+}
+
+struct TaskSlot {
+    generation : usize,
+    task : Option<Box<TaskControlBlock>>,
+}
+
+impl TaskSlot {
+    fn empty(generation : usize) -> Self {
+        Self { generation,
+               task : None }
+    }
+}
+
+// `TaskId` 低位为槽号，高位为 generation。reap 后槽位进入 free-list；
+// 下一次复用时 generation 已增加，因此旧 TaskId 无法命中新任务。
 struct TaskTable {
-    slots : Vec<Option<Box<TaskControlBlock>>>,
+    slots : Vec<TaskSlot>,
+    free_slots : Vec<usize>,
 }
 
 impl TaskTable {
-    fn new() -> Self { Self { slots : Vec::new() } }
+    fn new() -> Self {
+        Self { slots : Vec::new(),
+               free_slots : Vec::new() }
+    }
 
-    fn clear(&mut self) { self.slots.clear(); }
+    fn clear(&mut self) {
+        self.slots.clear();
+        self.free_slots.clear();
+    }
+
+    fn allocate_id(&mut self) -> TaskId {
+        if let Some(slot) = self.free_slots.pop() {
+            let generation = self.slots[slot].generation;
+            return make_task_id(slot, generation);
+        }
+        let slot = self.slots.len();
+        self.slots.push(TaskSlot::empty(0));
+        make_task_id(slot, 0)
+    }
 
     fn insert(&mut self, task : Box<TaskControlBlock>) {
         let task_id = task.id();
-        if self.slots.len() <= task_id {
+        let slot = task_slot(task_id);
+        let generation = task_generation(task_id);
+        if self.slots.len() <= slot {
             self.slots
-                .resize_with(task_id + 1, || None);
+                .resize_with(slot + 1, || TaskSlot::empty(0));
         }
-        assert!(self.slots[task_id].is_none(),
-                "task slot {} already occupied",
+        assert!(self.slots[slot].generation == generation,
+                "task slot {} generation mismatch for id {}",
+                slot,
                 task_id);
-        self.slots[task_id] = Some(task);
+        assert!(self.slots[slot].task.is_none(),
+                "task slot {} already occupied",
+                slot);
+        self.slots[slot].task = Some(task);
     }
 
     fn task(&self, task_id : TaskId) -> &TaskControlBlock {
-        self.slots
-            .get(task_id)
-            .and_then(|slot| slot.as_deref())
+        self.task_opt(task_id)
             .expect("task must exist in task table")
     }
 
     fn task_mut(&mut self, task_id : TaskId) -> &mut TaskControlBlock {
-        self.slots
-            .get_mut(task_id)
-            .and_then(|slot| slot.as_deref_mut())
+        self.task_mut_opt(task_id)
             .expect("task must exist in task table")
     }
 
-    fn task_opt(&self, task_id : TaskId) -> Option<&TaskControlBlock> {
+    fn task_mut_opt(&mut self, task_id : TaskId) -> Option<&mut TaskControlBlock> {
+        let slot = task_slot(task_id);
+        let generation = task_generation(task_id);
         self.slots
-            .get(task_id)
-            .and_then(|slot| slot.as_deref())
+            .get_mut(slot)
+            .filter(|entry| entry.generation == generation)
+            .and_then(|entry| entry.task.as_deref_mut())
+    }
+
+    fn task_opt(&self, task_id : TaskId) -> Option<&TaskControlBlock> {
+        let slot = task_slot(task_id);
+        let generation = task_generation(task_id);
+        self.slots
+            .get(slot)
+            .filter(|entry| entry.generation == generation)
+            .and_then(|entry| entry.task.as_deref())
     }
 
     fn remove(&mut self, task_id : TaskId) -> Option<Box<TaskControlBlock>> {
-        self.slots
-            .get_mut(task_id)
-            .and_then(|slot| slot.take())
+        let slot = task_slot(task_id);
+        let generation = task_generation(task_id);
+        let entry = self.slots
+                        .get_mut(slot)?;
+        if entry.generation != generation {
+            return None;
+        }
+        let task = entry.task.take()?;
+        if slot != task_slot(IDLE_TASK_ID) {
+            entry.generation = entry.generation.saturating_add(1);
+            self.free_slots.push(slot);
+        }
+        Some(task)
+    }
+
+    fn iter_tasks(&self) -> impl Iterator<Item = &TaskControlBlock> {
+        self.slots.iter().filter_map(|slot| slot.task.as_deref())
     }
 }
 
@@ -79,16 +146,13 @@ pub(super) struct TaskRegistry {
     bootstrap_task_cx : TaskContext,
     task_table : TaskTable,
     current_task_id : Option<TaskId>,
-    // 单调递增分配；与 `TaskTable` 稠密下标约定一致。
-    next_task_id : TaskId,
 }
 
 impl TaskRegistry {
     pub(super) fn new() -> Self {
         Self { bootstrap_task_cx : TaskContext::zero_init(),
                task_table : TaskTable::new(),
-               current_task_id : None,
-               next_task_id : IDLE_TASK_ID + 1 }
+               current_task_id : None }
     }
 
     pub(super) fn init(&mut self) {
@@ -99,12 +163,10 @@ impl TaskRegistry {
         self.task_table
             .insert(Box::new(TaskControlBlock::new_idle_task(IDLE_TASK_ID,
                                                              __wateros_idle_task_runtime_main)));
-        self.next_task_id = IDLE_TASK_ID + 1;
     }
 
     pub(super) fn spawn_kernel_task(&mut self, entry : KernelTaskEntry, arg : usize) -> TaskId {
-        let task_id = self.next_task_id;
-        self.next_task_id += 1;
+        let task_id = self.task_table.allocate_id();
         let parent_id = self.current_task_id;
         self.task_table
             .insert(Box::new(TaskControlBlock::new_kernel_task(task_id, parent_id, entry, arg)));
@@ -112,8 +174,7 @@ impl TaskRegistry {
     }
 
     pub(super) fn spawn_user_task_spec(&mut self, spec : UserTask) -> TaskId {
-        let task_id = self.next_task_id;
-        self.next_task_id += 1;
+        let task_id = self.task_table.allocate_id();
         log::trace!("[task-spawn] user spec id={} entry_pc={:#x} address_space_raw={:#x} \
                      image={:?} external_stack={:?}",
                     task_id,
@@ -142,8 +203,7 @@ impl TaskRegistry {
                                new_satp : usize)
                                -> Option<TaskId> {
         let parent_id = self.current_task_id?;
-        let child_id = self.next_task_id;
-        self.next_task_id += 1;
+        let child_id = self.task_table.allocate_id();
 
         let parent = self.task_table
                          .task(parent_id);
@@ -171,8 +231,7 @@ impl TaskRegistry {
                                        set_tls : bool)
                                        -> Option<TaskId> {
         let parent_id = self.current_task_id?;
-        let child_id = self.next_task_id;
-        self.next_task_id += 1;
+        let child_id = self.task_table.allocate_id();
 
         let parent = self.task_table
                          .task(parent_id);
@@ -240,46 +299,44 @@ impl TaskRegistry {
     }
 
     pub(super) fn mark_ready(&mut self, task_id : TaskId) {
-        self.task_table
-            .task_mut(task_id)
-            .mark_ready();
+        if let Some(task) = self.task_table.task_mut_opt(task_id) {
+            task.mark_ready();
+        }
     }
 
     pub(super) fn mark_blocking(&mut self, task_id : TaskId, reason : TaskBlockReason) {
-        self.task_table
-            .task_mut(task_id)
-            .mark_blocking(reason);
+        if let Some(task) = self.task_table.task_mut_opt(task_id) {
+            task.mark_blocking(reason);
+        }
     }
 
     pub(super) fn mark_sleeping(&mut self, task_id : TaskId, wake_tick : TaskTick) {
-        self.task_table
-            .task_mut(task_id)
-            .mark_sleeping(wake_tick);
+        if let Some(task) = self.task_table.task_mut_opt(task_id) {
+            task.mark_sleeping(wake_tick);
+        }
     }
 
     pub(super) fn mark_exited(&mut self, task_id : TaskId, exit_code : TaskExitCode) {
-        self.task_table
-            .task_mut(task_id)
-            .mark_exited(exit_code);
+        if let Some(task) = self.task_table.task_mut_opt(task_id) {
+            task.mark_exited(exit_code);
+        }
     }
 
     pub(super) fn ready_to_wake(&self, task_id : TaskId, current_tick : TaskTick) -> bool {
         self.task_table
-            .task(task_id)
-            .ready_to_wake(current_tick)
+            .task_opt(task_id)
+            .is_some_and(|task| task.ready_to_wake(current_tick))
     }
 
     pub(super) fn is_idle(&self, task_id : TaskId) -> bool {
         self.task_table
-            .task(task_id)
-            .is_idle()
+            .task_opt(task_id)
+            .is_some_and(TaskControlBlock::is_idle)
     }
 
     pub(super) fn state(&self, task_id : TaskId) -> Option<TaskState> {
         self.task_table
-            .slots
-            .get(task_id)
-            .and_then(|slot| slot.as_deref())
+            .task_opt(task_id)
             .map(TaskControlBlock::state)
     }
 
@@ -319,17 +376,13 @@ impl TaskRegistry {
 
     pub(super) fn has_child(&self, parent_id : TaskId) -> bool {
         self.task_table
-            .slots
-            .iter()
-            .filter_map(|slot| slot.as_deref())
+            .iter_tasks()
             .any(|task| task.parent_id() == Some(parent_id))
     }
 
     pub(super) fn find_exited_child(&self, parent_id : TaskId) -> Option<TaskId> {
         self.task_table
-            .slots
-            .iter()
-            .filter_map(|slot| slot.as_deref())
+            .iter_tasks()
             .find(|task| {
                 task.parent_id() == Some(parent_id) && matches!(task.state(), TaskState::Exited(_))
             })
@@ -410,15 +463,15 @@ impl TaskRegistry {
     }
 
     pub(super) fn clear_wait_result(&mut self, task_id : TaskId) {
-        self.task_table
-            .task_mut(task_id)
-            .clear_wait_result();
+        if let Some(task) = self.task_table.task_mut_opt(task_id) {
+            task.clear_wait_result();
+        }
     }
 
     pub(super) fn finish_wait(&mut self, task_id : TaskId, result : TaskWaitResult) {
-        self.task_table
-            .task_mut(task_id)
-            .finish_wait(result);
+        if let Some(task) = self.task_table.task_mut_opt(task_id) {
+            task.finish_wait(result);
+        }
     }
 
     pub(super) fn take_current_wait_result(&mut self) -> TaskWaitResult {

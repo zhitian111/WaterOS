@@ -1,10 +1,10 @@
 #![no_std]
 #![allow(static_mut_refs)]
-//! impl-root：初始 root + privileged set*id 策略，按 `TaskId` 侧表存储（B2）。
+//! impl-root：初始 root + privileged set*id 策略，以 `TaskId` 为 key 存储侧表（B2）。
 
 extern crate alloc;
 
-use alloc::vec::Vec;
+use alloc::collections::BTreeMap;
 use api_v0::{
     AccessCheck, Capability, CredentialBackend, CredentialMutation, Gid, ProcessCredentials, TaskId,
     Uid,
@@ -13,47 +13,42 @@ use base::sync::UniprocessorSafeCell;
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-/// 按 `TaskId` 索引的 per-task 凭证侧表。
+/// 以 `TaskId` 为 key 的 per-task 凭证侧表。
 pub struct PerTaskCredRegistry {
-    creds: Vec<Option<ProcessCredentials>>,
-    owners: Vec<Option<TaskId>>,
-    ref_counts: Vec<usize>,
+    creds: BTreeMap<TaskId, ProcessCredentials>,
+    owners: BTreeMap<TaskId, TaskId>,
+    ref_counts: BTreeMap<TaskId, usize>,
 }
 
 impl PerTaskCredRegistry {
     pub const fn new() -> Self {
         Self {
-            creds: Vec::new(),
-            owners: Vec::new(),
-            ref_counts: Vec::new(),
+            creds: BTreeMap::new(),
+            owners: BTreeMap::new(),
+            ref_counts: BTreeMap::new(),
         }
     }
 
-    fn slot_mut(&mut self, tid: TaskId) -> &mut Option<ProcessCredentials> {
-        if self.creds.len() <= tid {
-            self.creds.resize_with(tid + 1, || None);
-            self.owners.resize_with(tid + 1, || None);
-            self.ref_counts.resize(tid + 1, 0);
-        }
-        if self.owners[tid].is_none() {
-            self.owners[tid] = Some(tid);
-            self.ref_counts[tid] = 1;
-        }
-        let owner = self.effective_owner(tid);
-        &mut self.creds[owner]
+    fn ensure_owner(&mut self, tid: TaskId) -> TaskId {
+        self.owners.entry(tid).or_insert(tid);
+        self.ref_counts.entry(tid).or_insert(1);
+        self.effective_owner(tid)
     }
 
     fn effective_owner(&self, tid: TaskId) -> TaskId {
         self.owners
-            .get(tid)
-            .and_then(|owner| *owner)
+            .get(&tid)
+            .copied()
             .unwrap_or(tid)
     }
 
     fn release_owner(&mut self, tid: TaskId) -> Option<TaskId> {
-        let owner = self.owners.get_mut(tid)?.take()?;
-        if owner < self.ref_counts.len() && self.ref_counts[owner] > 0 {
-            self.ref_counts[owner] -= 1;
+        let owner = self.owners.remove(&tid)?;
+        if let Some(count) = self.ref_counts.get_mut(&owner) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                self.ref_counts.remove(&owner);
+            }
         }
         Some(owner)
     }
@@ -61,35 +56,27 @@ impl PerTaskCredRegistry {
     fn cred_or_panic(&self, tid: TaskId, context: &str) -> ProcessCredentials {
         let owner = self.effective_owner(tid);
         self.creds
-            .get(owner)
-            .and_then(|o| *o)
+            .get(&owner)
+            .copied()
             .unwrap_or_else(|| panic!("[cred] no cred for tid={tid} ({context})"))
     }
 
     fn cred_mut_or_panic(&mut self, tid: TaskId, context: &str) -> &mut ProcessCredentials {
         let owner = self.effective_owner(tid);
         self.creds
-            .get_mut(owner)
-            .and_then(|o| o.as_mut())
+            .get_mut(&owner)
             .unwrap_or_else(|| panic!("[cred] no cred for tid={tid} ({context})"))
     }
 
     fn share_cred(&mut self, child: TaskId, parent: TaskId) {
         let _ = self.cred_or_panic(parent, "share_cred parent");
-        if self.owners.get(child).and_then(|owner| *owner).is_some() {
+        if self.owners.contains_key(&child) {
             self.drop_task_cred(child);
         }
-        if self.creds.len() <= child {
-            self.creds.resize_with(child + 1, || None);
-            self.owners.resize_with(child + 1, || None);
-            self.ref_counts.resize(child + 1, 0);
-        }
         let owner = self.effective_owner(parent);
-        self.owners[child] = Some(owner);
-        if owner >= self.ref_counts.len() {
-            self.ref_counts.resize(owner + 1, 0);
-        }
-        self.ref_counts[owner] = self.ref_counts[owner].saturating_add(1);
+        self.owners.insert(child, owner);
+        let count = self.ref_counts.entry(owner).or_insert(0);
+        *count = count.saturating_add(1);
     }
 }
 
@@ -123,18 +110,20 @@ impl CredentialBackend for PerTaskCredRegistry {
     }
 
     fn on_user_task_spawned(&mut self, tid: TaskId) {
-        if self.owners.get(tid).and_then(|owner| *owner).is_some() {
+        if self.owners.contains_key(&tid) {
             self.drop_task_cred(tid);
         }
-        *self.slot_mut(tid) = Some(ProcessCredentials::ROOT);
+        let owner = self.ensure_owner(tid);
+        self.creds.insert(owner, ProcessCredentials::ROOT);
     }
 
     fn fork_cred(&mut self, parent: TaskId, child: TaskId) {
         let parent_cred = self.cred_or_panic(parent, "fork_cred parent");
-        if self.owners.get(child).and_then(|owner| *owner).is_some() {
+        if self.owners.contains_key(&child) {
             self.drop_task_cred(child);
         }
-        *self.slot_mut(child) = Some(parent_cred);
+        let owner = self.ensure_owner(child);
+        self.creds.insert(owner, parent_cred);
     }
 
     fn on_exec(&mut self, _tid: TaskId) {
@@ -145,13 +134,11 @@ impl CredentialBackend for PerTaskCredRegistry {
         let Some(owner) = self.release_owner(tid) else {
             return;
         };
-        if self.ref_counts.get(owner).copied().unwrap_or(0) == 0 {
-            if let Some(slot) = self.creds.get_mut(owner) {
-                *slot = None;
-            }
+        if self.ref_counts.get(&owner).copied().unwrap_or(0) == 0 {
+            self.creds.remove(&owner);
         }
-        if tid != owner && tid < self.creds.len() {
-            self.creds[tid] = None;
+        if tid != owner {
+            self.creds.remove(&tid);
         }
     }
 }

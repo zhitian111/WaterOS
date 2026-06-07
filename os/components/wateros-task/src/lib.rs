@@ -178,10 +178,10 @@ pub fn wake_task(task_id : TaskId) -> bool { scheduler::wake_task(task_id) }
 #[inline]
 pub fn reap_exited_task(task_id : TaskId) -> Option<ExitedTask> {
     let leader_pid = active_impl::lookup_task(task_id).and_then(|process_task| {
-        if process_task.pid.raw() != task_id {
+        let process = active_impl::lookup_process(process_task.pid)?;
+        if process.leader_task_id != task_id {
             return None;
         }
-        let process = active_impl::lookup_process(process_task.pid)?;
         if !matches!(process.state, ProcessState::Exited(_)) {
             return None;
         }
@@ -272,10 +272,9 @@ pub fn execve_current(entry_pc : usize,
 pub fn reap_one_exited_task() -> Option<ExitedTask> {
     let exited = scheduler::reap_one_exited_task()?;
     if let Some(process_task) = active_impl::lookup_task(exited.id) {
-        if process_task.pid.raw() == exited.id &&
-           active_impl::lookup_process(process_task.pid)
-               .is_some_and(|process| matches!(process.state, ProcessState::Exited(_)))
-        {
+        if active_impl::lookup_process(process_task.pid).is_some_and(|process| {
+            process.leader_task_id == exited.id && matches!(process.state, ProcessState::Exited(_))
+        }) {
             let _ = active_impl::reap_process(process_task.pid);
         }
     }

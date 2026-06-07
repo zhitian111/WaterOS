@@ -1,8 +1,9 @@
-//! 按 [`task::TaskId`] 索引的 per-task fd 表。
+//! 以 [`task::TaskId`] 为 key 的 per-task fd 表。
 
 extern crate alloc;
 
 use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
 use api_v0::{VfsError, VfsFdSession, VfsIoHandle, VfsResult, VFS_FIRST_DYNAMIC_FD,
@@ -18,41 +19,33 @@ pub const FD_CLOEXEC: u8 = 1;
 
 /// 全局 per-task fd 注册表。
 pub struct PerTaskFdRegistry {
-    tables: Vec<Vec<Option<Box<dyn VfsIoHandle>>>>,
-    fd_flags: Vec<Vec<u8>>,
-    owners: Vec<Option<task::TaskId>>,
-    ref_counts: Vec<usize>,
+    tables: BTreeMap<task::TaskId, Vec<Option<Box<dyn VfsIoHandle>>>>,
+    fd_flags: BTreeMap<task::TaskId, Vec<u8>>,
+    owners: BTreeMap<task::TaskId, task::TaskId>,
+    ref_counts: BTreeMap<task::TaskId, usize>,
 }
 
 impl PerTaskFdRegistry {
     pub const fn new() -> Self {
         Self {
-            tables: Vec::new(),
-            fd_flags: Vec::new(),
-            owners: Vec::new(),
-            ref_counts: Vec::new(),
+            tables: BTreeMap::new(),
+            fd_flags: BTreeMap::new(),
+            owners: BTreeMap::new(),
+            ref_counts: BTreeMap::new(),
         }
     }
 
     fn ensure_task(&mut self, task_id: task::TaskId) {
-        if self.tables.len() <= task_id {
-            self.tables.resize_with(task_id + 1, Vec::new);
-            self.fd_flags.resize_with(task_id + 1, Vec::new);
-            self.owners.resize_with(task_id + 1, || None);
-            self.ref_counts.resize(task_id + 1, 0);
-        }
-        if self.owners[task_id].is_none() {
-            self.owners[task_id] = Some(task_id);
-            self.ref_counts[task_id] = 1;
-        }
+        self.owners.entry(task_id).or_insert(task_id);
+        self.ref_counts.entry(task_id).or_insert(1);
         let owner = self.effective_owner(task_id);
-        let table = &mut self.tables[owner];
+        let table = self.tables.entry(owner).or_insert_with(Vec::new);
         if table.len() < VFS_FIRST_DYNAMIC_FD {
             table.resize_with(VFS_FIRST_DYNAMIC_FD, || None);
             table[VFS_STDIN_FD] = Some(default_stdin_handle());
             table[VFS_STDOUT_FD] = Some(default_stdout_handle());
             table[VFS_STDERR_FD] = Some(default_stdout_handle());
-            let flags = &mut self.fd_flags[owner];
+            let flags = self.fd_flags.entry(owner).or_insert_with(Vec::new);
             if flags.len() < VFS_FIRST_DYNAMIC_FD {
                 flags.resize(VFS_FIRST_DYNAMIC_FD, 0);
             }
@@ -61,21 +54,21 @@ impl PerTaskFdRegistry {
 
     fn effective_owner(&self, task_id: task::TaskId) -> task::TaskId {
         self.owners
-            .get(task_id)
-            .and_then(|owner| *owner)
+            .get(&task_id)
+            .copied()
             .unwrap_or(task_id)
     }
 
     fn table_mut(&mut self, task_id: task::TaskId) -> &mut Vec<Option<Box<dyn VfsIoHandle>>> {
         self.ensure_task(task_id);
         let owner = self.effective_owner(task_id);
-        &mut self.tables[owner]
+        self.tables.get_mut(&owner).expect("fd table owner")
     }
 
     fn ensure_flags_len(&mut self, task_id: task::TaskId, len: usize) {
         self.ensure_task(task_id);
         let owner = self.effective_owner(task_id);
-        let flags = &mut self.fd_flags[owner];
+        let flags = self.fd_flags.entry(owner).or_insert_with(Vec::new);
         if flags.len() < len {
             flags.resize(len, 0);
         }
@@ -89,17 +82,14 @@ impl PerTaskFdRegistry {
 
     fn take_table_handles(&mut self, owner: task::TaskId) -> Vec<Box<dyn VfsIoHandle>> {
         let mut handles = Vec::new();
-        if let Some(table) = self.tables.get_mut(owner) {
+        if let Some(mut table) = self.tables.remove(&owner) {
             for slot in table.iter_mut() {
                 if let Some(handle) = slot.take() {
                     handles.push(handle);
                 }
             }
-            table.clear();
         }
-        if let Some(flags) = self.fd_flags.get_mut(owner) {
-            flags.clear();
-        }
+        self.fd_flags.remove(&owner);
         handles
     }
 
@@ -110,13 +100,16 @@ impl PerTaskFdRegistry {
     ) -> VfsResult<Box<dyn VfsIoHandle>> {
         self.ensure_task(task_id);
         let owner = self.effective_owner(task_id);
-        let handle = self.tables[owner]
+        let handle = self.tables.get_mut(&owner)
+            .ok_or(VfsError::BadFd)?
             .get_mut(fd)
             .ok_or(VfsError::BadFd)?
             .take()
             .ok_or(VfsError::BadFd)?;
-        if fd < self.fd_flags[owner].len() {
-            self.fd_flags[owner][fd] = 0;
+        if let Some(flags) = self.fd_flags.get_mut(&owner) {
+            if fd < flags.len() {
+                flags[fd] = 0;
+            }
         }
         Ok(handle)
     }
@@ -127,11 +120,11 @@ impl PerTaskFdRegistry {
     ) -> Vec<Box<dyn VfsIoHandle>> {
         self.ensure_task(task_id);
         let owner = self.effective_owner(task_id);
-        let table_len = self.tables[owner].len();
-        let flags_len = self.fd_flags[owner].len();
+        let table_len = self.tables.get(&owner).map(Vec::len).unwrap_or(0);
+        let flags = self.fd_flags.get(&owner).cloned().unwrap_or_default();
         let mut handles = Vec::new();
         for fd in (0..table_len).rev() {
-            let cloexec = fd < flags_len && (self.fd_flags[owner][fd] & FD_CLOEXEC) != 0;
+            let cloexec = fd < flags.len() && (flags[fd] & FD_CLOEXEC) != 0;
             if cloexec {
                 if let Ok(handle) = self.take_fd_for_close(task_id, fd) {
                     handles.push(handle);
@@ -145,7 +138,7 @@ impl PerTaskFdRegistry {
         let Some(owner) = self.release_owner(task_id) else {
             return Vec::new();
         };
-        let mut handles = if self.ref_counts.get(owner).copied().unwrap_or(0) == 0 {
+        let mut handles = if self.ref_counts.get(&owner).copied().unwrap_or(0) == 0 {
             self.take_table_handles(owner)
         } else {
             Vec::new()
@@ -157,9 +150,12 @@ impl PerTaskFdRegistry {
     }
 
     fn release_owner(&mut self, task_id: task::TaskId) -> Option<task::TaskId> {
-        let owner = self.owners.get_mut(task_id)?.take()?;
-        if owner < self.ref_counts.len() && self.ref_counts[owner] > 0 {
-            self.ref_counts[owner] -= 1;
+        let owner = self.owners.remove(&task_id)?;
+        if let Some(count) = self.ref_counts.get_mut(&owner) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                self.ref_counts.remove(&owner);
+            }
         }
         Some(owner)
     }
@@ -192,7 +188,8 @@ impl VfsFdSession for PerTaskFdRegistry {
             }
         };
         let owner = self.effective_owner(task_id);
-        self.ensure_flags_len(task_id, self.tables[owner].len());
+        let len = self.tables.get(&owner).map(Vec::len).unwrap_or(0);
+        self.ensure_flags_len(task_id, len);
         Ok(newfd)
     }
 
@@ -233,7 +230,7 @@ impl PerTaskFdRegistry {
     ) -> VfsResult<&mut (dyn VfsIoHandle + '_)> {
         self.ensure_task(task_id);
         let owner = self.effective_owner(task_id);
-        match self.tables[owner].get_mut(fd) {
+        match self.tables.get_mut(&owner).and_then(|table| table.get_mut(fd)) {
             Some(Some(h)) => Ok(h.as_mut()),
             _ => Err(VfsError::BadFd),
         }
@@ -247,7 +244,7 @@ impl PerTaskFdRegistry {
     ) -> VfsResult<Box<dyn VfsIoHandle>> {
         self.ensure_task(task_id);
         let owner = self.effective_owner(task_id);
-        match self.tables[owner].get_mut(fd) {
+        match self.tables.get_mut(&owner).and_then(|table| table.get_mut(fd)) {
             Some(slot @ Some(_)) => Ok(slot.take().expect("checked Some")),
             _ => Err(VfsError::BadFd),
         }
@@ -262,7 +259,7 @@ impl PerTaskFdRegistry {
     ) -> VfsResult<()> {
         self.ensure_task(task_id);
         let owner = self.effective_owner(task_id);
-        let table = &mut self.tables[owner];
+        let table = self.tables.get_mut(&owner).ok_or(VfsError::BadFd)?;
         if fd >= table.len() {
             return Err(VfsError::BadFd);
         }
@@ -292,7 +289,7 @@ impl PerTaskFdRegistry {
         self.ensure_task(task_id);
         let newfd = {
             let owner = self.effective_owner(task_id);
-            let table = &mut self.tables[owner];
+            let table = self.tables.get_mut(&owner).expect("fd table owner");
             while table.len() < minfd {
                 table.push(None);
             }
@@ -305,8 +302,9 @@ impl PerTaskFdRegistry {
             }
         };
         let owner = self.effective_owner(task_id);
-        self.ensure_flags_len(task_id, self.tables[owner].len());
-        self.fd_flags[owner][newfd] = 0;
+        let len = self.tables.get(&owner).map(Vec::len).unwrap_or(0);
+        self.ensure_flags_len(task_id, len);
+        self.fd_flags.get_mut(&owner).expect("fd flags owner")[newfd] = 0;
         Ok(newfd)
     }
 
@@ -333,18 +331,24 @@ impl PerTaskFdRegistry {
 
         self.ensure_task(task_id);
         let owner = self.effective_owner(task_id);
-        if newfd < self.tables[owner].len() && self.tables[owner][newfd].is_some() {
+        if self.tables.get(&owner)
+                      .and_then(|table| table.get(newfd))
+                      .and_then(|slot| slot.as_ref())
+                      .is_some()
+        {
             self.close_slot(task_id, newfd)?;
         }
         {
-            let table = &mut self.tables[owner];
+            let table = self.tables.get_mut(&owner).expect("fd table owner");
             while table.len() <= newfd {
                 table.push(None);
             }
             table[newfd] = Some(dup_handle);
         }
-        self.ensure_flags_len(task_id, self.tables[owner].len());
-        self.fd_flags[owner][newfd] = if cloexec { FD_CLOEXEC } else { 0 };
+        let len = self.tables.get(&owner).map(Vec::len).unwrap_or(0);
+        self.ensure_flags_len(task_id, len);
+        self.fd_flags.get_mut(&owner).expect("fd flags owner")[newfd] =
+            if cloexec { FD_CLOEXEC } else { 0 };
         Ok(newfd)
     }
 
@@ -353,7 +357,9 @@ impl PerTaskFdRegistry {
         self.get_io_for_task(task_id, fd)?;
         self.ensure_task(task_id);
         let owner = self.effective_owner(task_id);
-        let flags = &self.fd_flags[owner];
+        let Some(flags) = self.fd_flags.get(&owner) else {
+            return Ok(0);
+        };
         let v = if fd < flags.len() { flags[fd] } else { 0 };
         Ok(usize::from(v & FD_CLOEXEC))
     }
@@ -368,7 +374,8 @@ impl PerTaskFdRegistry {
     fn set_fd_cloexec(&mut self, task_id: task::TaskId, fd: usize, cloexec: bool) -> VfsResult<()> {
         self.ensure_flags_len(task_id, fd + 1);
         let owner = self.effective_owner(task_id);
-        self.fd_flags[owner][fd] = if cloexec { FD_CLOEXEC } else { 0 };
+        self.fd_flags.get_mut(&owner).expect("fd flags owner")[fd] =
+            if cloexec { FD_CLOEXEC } else { 0 };
         Ok(())
     }
 
@@ -380,68 +387,63 @@ impl PerTaskFdRegistry {
     /// fork 时复制父任务 fd 表（含 pipe/文件等动态 fd）。
     pub fn copy_fd_table_from_parent(&mut self, child: task::TaskId, parent: task::TaskId) {
         self.ensure_task(parent);
-        if self.owners.get(child).and_then(|owner| *owner).is_some() {
+        if self.owners.contains_key(&child) {
             self.drop_task_fd_table(child);
         }
         let parent_owner = self.effective_owner(parent);
-        let parent_len = self.tables[parent_owner].len();
-        let parent_flags = self.fd_flags[parent_owner].clone();
+        let parent_len = self.tables.get(&parent_owner).map(Vec::len).unwrap_or(0);
+        let parent_flags = self.fd_flags.get(&parent_owner).cloned().unwrap_or_default();
 
         let mut entries: Vec<(usize, Box<dyn VfsIoHandle>)> = Vec::new();
-        for (fd, slot) in self.tables[parent_owner].iter().enumerate() {
-            if let Some(handle) = slot {
-                if let Ok(dup) = handle.duplicate() {
-                    entries.push((fd, dup));
+        if let Some(parent_table) = self.tables.get(&parent_owner) {
+            for (fd, slot) in parent_table.iter().enumerate() {
+                if let Some(handle) = slot {
+                    if let Ok(dup) = handle.duplicate() {
+                        entries.push((fd, dup));
+                    }
                 }
             }
         }
 
         self.ensure_task(child);
-        self.tables[child].clear();
-        self.fd_flags[child].clear();
+        self.tables.entry(child).or_insert_with(Vec::new).clear();
+        self.fd_flags.entry(child).or_insert_with(Vec::new).clear();
 
         for (fd, dup) in entries {
-            let table = &mut self.tables[child];
+            let table = self.tables.get_mut(&child).expect("child fd table");
             while table.len() <= fd {
                 table.push(None);
             }
             table[fd] = Some(dup);
         }
 
-        self.ensure_flags_len(child, parent_len.max(self.tables[child].len()));
+        let child_len = self.tables.get(&child).map(Vec::len).unwrap_or(0);
+        self.ensure_flags_len(child, parent_len.max(child_len));
         for fd in 0..parent_len.min(parent_flags.len()) {
-            self.fd_flags[child][fd] = parent_flags[fd];
+            self.fd_flags.get_mut(&child).expect("child fd flags")[fd] = parent_flags[fd];
         }
     }
 
     /// thread clone 时共享父任务 fd 表。
     pub fn share_fd_table_from_parent(&mut self, child: task::TaskId, parent: task::TaskId) {
         self.ensure_task(parent);
-        if self.owners.get(child).and_then(|owner| *owner).is_some() {
+        if self.owners.contains_key(&child) {
             self.drop_task_fd_table(child);
         }
-        if self.tables.len() <= child {
-            self.tables.resize_with(child + 1, Vec::new);
-            self.fd_flags.resize_with(child + 1, Vec::new);
-            self.owners.resize_with(child + 1, || None);
-            self.ref_counts.resize(child + 1, 0);
-        }
         let owner = self.effective_owner(parent);
-        self.owners[child] = Some(owner);
-        if owner >= self.ref_counts.len() {
-            self.ref_counts.resize(owner + 1, 0);
-        }
-        self.ref_counts[owner] = self.ref_counts[owner].saturating_add(1);
+        self.owners.insert(child, owner);
+        let count = self.ref_counts.entry(owner).or_insert(0);
+        *count = count.saturating_add(1);
     }
 
     /// `execve` 前关闭带 `FD_CLOEXEC` 的 fd。
     pub fn close_cloexec_fds_for_task(&mut self, task_id: task::TaskId) {
         self.ensure_task(task_id);
         let owner = self.effective_owner(task_id);
-        let table_len = self.tables[owner].len();
-        let flags_len = self.fd_flags[owner].len();
+        let table_len = self.tables.get(&owner).map(Vec::len).unwrap_or(0);
+        let flags = self.fd_flags.get(&owner).cloned().unwrap_or_default();
         for fd in (0..table_len).rev() {
-            let cloexec = fd < flags_len && (self.fd_flags[owner][fd] & FD_CLOEXEC) != 0;
+            let cloexec = fd < flags.len() && (flags[fd] & FD_CLOEXEC) != 0;
             if cloexec {
                 let _ = self.close_slot(task_id, fd);
             }
@@ -453,12 +455,12 @@ impl PerTaskFdRegistry {
         let Some(owner) = self.release_owner(task_id) else {
             return;
         };
-        if self.ref_counts.get(owner).copied().unwrap_or(0) == 0 {
+        if self.ref_counts.get(&owner).copied().unwrap_or(0) == 0 {
             self.close_table(owner);
         }
         if task_id != owner {
-            self.tables[task_id].clear();
-            self.fd_flags[task_id].clear();
+            self.tables.remove(&task_id);
+            self.fd_flags.remove(&task_id);
         }
     }
 }

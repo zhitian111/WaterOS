@@ -3,6 +3,7 @@
 //! 这里不参与调度决策；调度器仍只处理 `TaskId`。在 WaterOS 当前模型里，
 //! `ProcessRegistry` 只维护 process 对共享资源的归属，以及 process 下有哪些 task。
 
+use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
 use api_v0::{
@@ -76,18 +77,31 @@ impl ProcessControlBlock {
 
 /// 单核 bring-up 用进程注册表。
 pub struct ProcessRegistry {
-    processes: Vec<Option<ProcessControlBlock>>,
+    processes: BTreeMap<ProcessId, ProcessControlBlock>,
+    next_pid: usize,
 }
 
 impl ProcessRegistry {
     pub fn new() -> Self {
         Self {
-            processes: Vec::new(),
+            processes: BTreeMap::new(),
+            next_pid: 1,
         }
     }
 
     pub fn clear(&mut self) {
         self.processes.clear();
+        self.next_pid = 1;
+    }
+
+    fn alloc_pid(&mut self) -> ProcessId {
+        loop {
+            let pid = ProcessId::from_raw(self.next_pid);
+            self.next_pid = self.next_pid.saturating_add(1);
+            if !self.processes.contains_key(&pid) {
+                return pid;
+            }
+        }
     }
 
     pub fn create_process_for_task(
@@ -101,7 +115,7 @@ impl ProcessRegistry {
             "task {} is already registered in a process",
             task_id
         );
-        let pid = ProcessId::from_raw(task_id);
+        let pid = self.alloc_pid();
         let resource_handle = ResourceHandle::from_raw(task_id);
         let process = ProcessControlBlock {
             pid,
@@ -160,11 +174,7 @@ impl ProcessRegistry {
     }
 
     pub fn mark_task_exited(&mut self, task_id: TaskId, exit_code: TaskExitCode) -> bool {
-        for process in self
-            .processes
-            .iter_mut()
-            .filter_map(|slot| slot.as_mut())
-        {
+        for process in self.processes.values_mut() {
             let Some(task) = process.tasks.iter_mut().find(|task| task.task_id == task_id) else {
                 continue;
             };
@@ -194,7 +204,7 @@ impl ProcessRegistry {
     }
 
     pub fn task_ids_for_process(&self, pid: ProcessId) -> Option<Vec<TaskId>> {
-        let process = self.processes.get(pid.raw())?.as_ref()?;
+        let process = self.processes.get(&pid)?;
         Some(process.tasks.iter().map(|task| task.task_id).collect())
     }
 
@@ -222,11 +232,7 @@ impl ProcessRegistry {
         task_id: TaskId,
         clear_child_tid: Option<TaskClearTid>,
     ) -> bool {
-        for process in self
-            .processes
-            .iter_mut()
-            .filter_map(|slot| slot.as_mut())
-        {
+        for process in self.processes.values_mut() {
             let Some(task) = process.tasks.iter_mut().find(|task| task.task_id == task_id) else {
                 continue;
             };
@@ -238,8 +244,7 @@ impl ProcessRegistry {
 
     pub fn task_clear_child_tid(&self, task_id: TaskId) -> Option<TaskClearTid> {
         self.processes
-            .iter()
-            .filter_map(|slot| slot.as_ref())
+            .values()
             .find_map(|process| {
                 process
                     .tasks
@@ -263,29 +268,25 @@ impl ProcessRegistry {
 
     pub fn lookup_process(&self, pid: ProcessId) -> Option<ProcessDescriptor> {
         self.processes
-            .get(pid.raw())
-            .and_then(|slot| slot.as_ref())
+            .get(&pid)
             .map(ProcessControlBlock::descriptor)
     }
 
     pub fn lookup_task(&self, task_id: TaskId) -> Option<ProcessTaskDescriptor> {
         self.processes
-            .iter()
-            .filter_map(|slot| slot.as_ref())
+            .values()
             .find_map(|process| process.task_descriptor(task_id))
     }
 
     pub fn leader_task_for_process(&self, pid: ProcessId) -> Option<TaskId> {
         self.processes
-            .get(pid.raw())
-            .and_then(|slot| slot.as_ref())
+            .get(&pid)
             .map(|process| process.leader_task_id)
     }
 
     pub fn find_exited_child_process(&self, parent_pid: ProcessId) -> Option<ProcessDescriptor> {
         self.processes
-            .iter()
-            .filter_map(|slot| slot.as_ref())
+            .values()
             .find(|process| {
                 process.parent_pid == Some(parent_pid) &&
                 matches!(process.state, ProcessState::Exited(_))
@@ -295,16 +296,14 @@ impl ProcessRegistry {
 
     pub fn has_child_process(&self, parent_pid: ProcessId) -> bool {
         self.processes
-            .iter()
-            .filter_map(|slot| slot.as_ref())
+            .values()
             .any(|process| process.parent_pid == Some(parent_pid))
     }
 
     /// 列出 registry 中仍占槽的全部进程 id（含 Running / Exited）。
     pub fn all_process_pids(&self) -> Vec<ProcessId> {
         self.processes
-            .iter()
-            .filter_map(|slot| slot.as_ref())
+            .values()
             .map(|process| process.pid)
             .collect()
     }
@@ -312,8 +311,7 @@ impl ProcessRegistry {
     /// 列出 registry 中所有已退出、尚未 reap 的进程。
     pub fn collect_exited_process_pids(&self) -> Vec<ProcessId> {
         self.processes
-            .iter()
-            .filter_map(|slot| slot.as_ref())
+            .values()
             .filter(|process| matches!(process.state, ProcessState::Exited(_)))
             .map(|process| process.pid)
             .collect()
@@ -325,12 +323,11 @@ impl ProcessRegistry {
     }
 
     pub fn reap_process_with_tasks(&mut self, pid: ProcessId) -> Option<(ProcessDescriptor, Vec<TaskId>)> {
-        let slot = self.processes.get_mut(pid.raw())?;
-        let process = slot.as_ref()?;
+        let process = self.processes.get(&pid)?;
         if !matches!(process.state, ProcessState::Exited(_)) {
             return None;
         }
-        slot.take().map(|process| {
+        self.processes.remove(&pid).map(|process| {
             if let Some(aspace) = process.address_space {
                 let ptr = aspace.user_aspace_ptr();
                 if ptr != 0 {
@@ -343,21 +340,17 @@ impl ProcessRegistry {
     }
 
     fn insert_process(&mut self, process: ProcessControlBlock) {
-        let idx = process.pid.raw();
-        if self.processes.len() <= idx {
-            self.processes.resize_with(idx + 1, || None);
-        }
+        let pid = process.pid;
         assert!(
-            self.processes[idx].is_none(),
+            !self.processes.contains_key(&pid),
             "process slot {} already occupied",
-            idx
+            pid.raw()
         );
-        self.processes[idx] = Some(process);
+        self.processes.insert(pid, process);
     }
 
     fn process_mut(&mut self, pid: ProcessId) -> Option<&mut ProcessControlBlock> {
         self.processes
-            .get_mut(pid.raw())
-            .and_then(|slot| slot.as_mut())
+            .get_mut(&pid)
     }
 }

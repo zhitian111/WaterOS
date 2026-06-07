@@ -112,7 +112,7 @@ pub fn process_model_self_test() {
     ));
 
     let pid = registry.create_process_for_task(100, None, aspace);
-    assert_eq!(pid.raw(), 100);
+    assert_eq!(pid.raw(), 1);
     let leader = registry.lookup_task(100).expect("leader task must be indexed");
     assert_eq!(leader.task_id, 100);
     assert_eq!(leader.pid, pid);
@@ -142,7 +142,7 @@ pub fn process_model_self_test() {
     let forked = registry
         .create_process_like_fork(pid, 102, aspace)
         .expect("fork-style process");
-    assert_eq!(forked.raw(), 102);
+    assert_eq!(forked.raw(), 2);
     let forked_leader = registry.lookup_task(102).expect("forked leader");
     assert_eq!(forked_leader.task_id, 102);
     assert_eq!(forked_leader.pid, forked);
