@@ -13,7 +13,10 @@ use api_v0::flags::MapFlags;
 use api_v0::frame_allocator::PhysicalFrameAllocator;
 use api_v0::mmap::{MmapKind, MmapOps, MmapRequest};
 use api_v0::perm::PagePerm;
-use impl_common::{map_range_from_backing, map_zeroed_page_with_alloc, map_zeroed_range_with_alloc, mmap_map_end};
+use impl_common::{
+    find_free_mmap_base, map_range_from_backing, map_zeroed_page_with_alloc,
+    map_zeroed_range_with_alloc, mmap_map_end,
+};
 
 use crate::pagetable::Sv39AddressSpace;
 
@@ -78,7 +81,7 @@ impl Sv39AddressSpace {
         let base = match req.addr_hint {
             Some(hint) if req.flags.contains(MapFlags::FIXED) => hint,
             Some(_) => return Err(MmError::InvalidAddress),
-            None => self.mmap_anon_cursor,
+            None => find_free_mmap_base(self, self.mmap_anon_cursor, req.len)?,
         };
         let end = mmap_map_end(base, req.len)?;
         let perm = req.prot | PagePerm::U;
@@ -110,7 +113,7 @@ impl Sv39AddressSpace {
         let base = match req.addr_hint {
             Some(hint) if req.flags.contains(MapFlags::FIXED) => hint,
             Some(_) => return Err(MmError::InvalidAddress),
-            None => self.mmap_file_cursor,
+            None => find_free_mmap_base(self, self.mmap_file_cursor, req.len)?,
         };
         let end = mmap_map_end(base, req.len)?;
         let perm = req.prot | PagePerm::U;

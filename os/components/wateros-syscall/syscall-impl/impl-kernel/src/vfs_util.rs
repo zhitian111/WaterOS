@@ -74,7 +74,7 @@ pub(crate) fn read_fd_bytes_at(fd: usize, offset: usize, len: usize) -> Result<V
     if len == 0 {
         return Err(ErrNo::EINVAL);
     }
-    vfs::fd::with_current_io(fd, |handle| -> VfsResult<Vec<u8>> {
+    let result = vfs::fd::with_current_io(fd, |handle| -> VfsResult<Vec<u8>> {
         let meta = handle.metadata()?;
         if meta.node_type != VfsNodeType::File {
             return Err(VfsError::NotAFile);
@@ -96,6 +96,12 @@ pub(crate) fn read_fd_bytes_at(fd: usize, offset: usize, len: usize) -> Result<V
             done += n;
         }
         Ok(buf)
-    })
-    .map_err(vfs_error_to_errno)
+    });
+    match result {
+        Ok(buf) => Ok(buf),
+        Err(err) => {
+            let errno = vfs_error_to_errno(err);
+            Err(errno)
+        }
+    }
 }

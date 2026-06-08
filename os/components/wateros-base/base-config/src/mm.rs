@@ -1,10 +1,11 @@
 //! 内存布局与 QEMU `virt` 常见假设：DRAM 上界、MMIO 窗口、内核堆尺度。
 //!
 //! 真机或自定义 `-m` 时应以 DTB/固件为准；此处常量多用于 bring-up 与缺省回退。
+//! 堆容量等配置只在本 crate 维护，基础类型包 `wateros-base` 不再复制这些数值。
 
 #[allow(unused)]
 /// 内核堆大小的以 2 为底的指数位宽。
-pub const KERNEL_HEAP_SIZE_BIT_WIDTH : usize = 23;
+pub const KERNEL_HEAP_SIZE_BIT_WIDTH : usize = 26;
 #[allow(unused)]
 /// 内核堆字节容量，即 `1 << KERNEL_HEAP_SIZE_BIT_WIDTH`。
 pub const KERNEL_HEAP_SIZE : usize = 1 << KERNEL_HEAP_SIZE_BIT_WIDTH;

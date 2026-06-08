@@ -225,6 +225,43 @@ pub fn mmap_map_end(base: VirtAddr, len: usize) -> MmResult<VirtAddr> {
     ))
 }
 
+/// Finds the first fully unmapped page range large enough for an mmap request.
+pub fn find_free_mmap_base<S>(
+    aspace: &S,
+    cursor: VirtAddr,
+    len: usize,
+) -> MmResult<VirtAddr>
+where
+    S: AddressSpaceOps,
+{
+    if len == 0 {
+        return Err(MmError::InvalidAddress);
+    }
+    let n_pages = len
+        .checked_add(PAGE_SIZE - 1)
+        .ok_or(MmError::InvalidAddress)?
+        / PAGE_SIZE;
+    let mut base = cursor.ceil_page().start_addr();
+    loop {
+        let mut free = true;
+        for i in 0..n_pages {
+            let va = VirtAddr(
+                base.0
+                    .checked_add(i.checked_mul(PAGE_SIZE).ok_or(MmError::InvalidAddress)?)
+                    .ok_or(MmError::InvalidAddress)?,
+            );
+            if aspace.translate_addr(va)?.is_some() {
+                free = false;
+                break;
+            }
+        }
+        if free {
+            return Ok(base);
+        }
+        base = VirtAddr(base.0.checked_add(PAGE_SIZE).ok_or(MmError::InvalidAddress)?);
+    }
+}
+
 /// Maps `[start, end)` to freshly allocated zeroed frames.
 pub fn map_zeroed_range_with_alloc<S, A>(
     aspace: &mut S,

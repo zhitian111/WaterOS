@@ -87,7 +87,10 @@ pub(crate) fn sys_mmap(args: SyscallArgs) -> UserRet {
             Ok(base.0)
         }) {
             Ok(base) => UserRet::from_success(base),
-            Err(e) => UserRet::from_error(mm_err_to_errno(e)),
+            Err(e) => {
+                let errno = mm_err_to_errno(e);
+                UserRet::from_error(errno)
+            }
         },
         Some(backing) => {
             let backing: Vec<u8> = backing;
@@ -102,7 +105,10 @@ pub(crate) fn sys_mmap(args: SyscallArgs) -> UserRet {
                 Ok(base.0)
             }) {
                 Ok(base) => UserRet::from_success(base),
-                Err(e) => UserRet::from_error(mm_err_to_errno(e)),
+                Err(e) => {
+                    let errno = mm_err_to_errno(e);
+                    UserRet::from_error(errno)
+                }
             }
         }
     }
