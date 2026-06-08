@@ -9,19 +9,20 @@ use crate::socket_fd;
 
 pub(crate) fn sys_shutdown(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
-    let _how = args.arg(1);
+    let how = args.arg(1);
 
-    let handle = match socket_fd::lookup(fd) {
-        Some(h) => h,
+    if how > 2 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+
+    let socket = match socket_fd::lookup(fd) {
+        Some(s) => s,
         None => return UserRet::from_error(ErrNo::ENOTSOCK),
     };
 
-    // smoltcp 的 TCP close 即是 shutdown
-    match stack::socket_close(handle) {
-        Ok(()) => {
-            socket_fd::remove(fd);
-            UserRet::from_success(0)
-        }
+    match stack::socket_shutdown(socket.handle()) {
+        Ok(()) => UserRet::from_success(0),
+        Err("shutdown unsupported for udp") => UserRet::from_error(ErrNo::EOPNOTSUPP),
         Err(_) => UserRet::from_error(ErrNo::EIO),
     }
 }

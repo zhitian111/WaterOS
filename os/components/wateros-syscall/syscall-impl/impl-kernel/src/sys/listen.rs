@@ -11,12 +11,12 @@ pub(crate) fn sys_listen(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let _backlog = args.arg(1);
 
-    let handle = match socket_fd::lookup(fd) {
-        Some(h) => h,
+    let socket = match socket_fd::lookup(fd) {
+        Some(s) => s,
         None => return UserRet::from_error(ErrNo::ENOTSOCK),
     };
 
-    match stack::socket_listen(handle) {
+    match stack::socket_listen(socket.handle()) {
         Ok(()) => UserRet::from_success(0),
         Err(e) => {
             log::warn!("[syscall] listen failed: {}", e);

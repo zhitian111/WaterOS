@@ -10,6 +10,7 @@ use block::{
     VirtioPciProbeInfo, BLOCK_SIZE,
 };
 use fs::devfs::active_impl as devfs_impl;
+use network::{network_device_count, register_network_device, NetworkDevice, VirtioNetPciProbeInfo};
 use spin::Mutex;
 
 mod pci;
@@ -19,6 +20,8 @@ pub mod uart;
 static DTB_BASE_ADDR: AtomicUsize = AtomicUsize::new(0);
 /// 成功注册为 virtio-blk 的 PCI 设备列表。
 static VIRTIO_BLK_PCI: Mutex<Vec<VirtioPciProbeInfo>> = Mutex::new(Vec::new());
+/// 成功注册为 virtio-net 的 PCI 设备列表。
+static VIRTIO_NET_PCI: Mutex<Vec<VirtioNetPciProbeInfo>> = Mutex::new(Vec::new());
 
 pub fn init_when_boot(dtb_pa: usize) {
     DTB_BASE_ADDR.store(dtb_pa, Ordering::Release);
@@ -85,9 +88,19 @@ pub fn init_after_boot() -> DriverResult<()> {
             e.compatible
         );
     }
+    for e in network::supported_devices() {
+        log::info!(
+            "[driver-la] supported-device catalog: subsystem={} name={} compatible={}",
+            e.subsystem,
+            e.name,
+            e.compatible
+        );
+    }
 
     let mut blk = VIRTIO_BLK_PCI.lock();
     blk.clear();
+    drop(blk);
+    VIRTIO_NET_PCI.lock().clear();
 
     // 尝试 PCIe ECAM 枚举 virtio-blk 设备。
     let config_base = pci::find_config_base(DTB_BASE_ADDR.load(Ordering::Acquire));
@@ -102,7 +115,7 @@ pub fn init_after_boot() -> DriverResult<()> {
                 Arc::new(Mutex::new(dev))
             };
             let idx = register_block_device(shared);
-            blk.push(info);
+            VIRTIO_BLK_PCI.lock().push(info);
             log::info!(
                 "[driver-la] registered virtio-blk #{} via PCI {}:{}.{} vendor={:#06x} \
                             device={:#06x}",
@@ -125,10 +138,44 @@ pub fn init_after_boot() -> DriverResult<()> {
         }
     }
 
+    match pci::probe_virtio_net_pci(config_base) {
+        Ok(Some((dev, info))) => {
+            let mac = dev.mac_address();
+            let shared = {
+                let dev: Box<dyn NetworkDevice> = Box::new(dev);
+                Arc::new(Mutex::new(dev))
+            };
+            let idx = register_network_device(shared);
+            VIRTIO_NET_PCI.lock().push(info);
+            log::info!(
+                "[driver-la] registered virtio-net #{} via PCI {}:{}.{} vendor={:#06x} \
+                            device={:#06x}",
+                idx,
+                info.bus,
+                info.device,
+                info.function,
+                info.vendor_id,
+                info.device_id
+            );
+            log::info!("[driver-la] found virtio-net-pci mac={:02x?}", mac);
+        }
+        Ok(None) => {
+            log::warn!("[driver-la][pci] no virtio-net device found on PCI bus 0");
+        }
+        Err(err) => {
+            log::warn!(
+                "[driver-la] failed to init virtio-net via PCI: {:?}",
+                err
+            );
+        }
+    }
+
     let registered = block_device_count();
+    let registered_net = network_device_count();
     log::info!(
-        "[driver-la] block devices registered={}",
-        registered
+        "[driver-la] devices registered: block={} network={}",
+        registered,
+        registered_net
     );
     if registered == 0 {
         log::warn!(
@@ -140,6 +187,12 @@ pub fn init_after_boot() -> DriverResult<()> {
         log::warn!(
             "[driver-la] virtio-blk block0 read self-test failed: {:?}",
             err
+        );
+    }
+    if registered_net == 0 {
+        log::warn!(
+            "[driver-la] no network device registered; NIC may not be present. \
+                        QEMU example: `-netdev user,id=net0 -device virtio-net-pci,netdev=net0`."
         );
     }
 

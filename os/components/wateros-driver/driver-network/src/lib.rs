@@ -16,19 +16,30 @@ pub use impl_dummy::DummyNetworkDevice;
 #[cfg(feature = "impl-virtio-mmio")]
 #[doc(inline)]
 pub use impl_virtio_mmio::VirtioNetDevice;
+#[cfg(feature = "impl-virtio-pci")]
+#[doc(inline)]
+pub use impl_virtio_pci::{VirtioNetPciBarAllocator, VirtioNetPciProbeInfo, VirtioPciNetDevice};
 #[cfg(feature = "impl-smoltcp")]
 #[doc(inline)]
 pub use impl_smoltcp::SmoltcpAdapter;
 #[cfg(feature = "impl-smoltcp")]
 pub mod socket_handles;
 #[cfg(feature = "impl-smoltcp")]
-pub use socket_handles::{TcpListenerHandle, TcpStreamHandle, UdpSocketHandle};
+pub use socket_handles::{SocketRef, TcpListenerHandle, TcpStreamHandle, UdpSocketHandle};
 
 /// 网络子系统在 DTB 中声明可尝试绑定的设备（与 feature 无关；用于扫描阶段匹配）。
 pub const NETWORK_SUPPORTED_DEVICES: &[SupportedDeviceEntry] = &[SupportedDeviceEntry {
     subsystem: "network",
     name: "virtio-net-mmio",
     compatible: "virtio,mmio",
+}, SupportedDeviceEntry {
+    subsystem: "network",
+    name: "virtio-net-pci-transitional",
+    compatible: "pci1af4,1000",
+}, SupportedDeviceEntry {
+    subsystem: "network",
+    name: "virtio-net-pci-modern",
+    compatible: "pci1af4,1041",
 }];
 
 /// 返回本子系统声明支持的设备条目（非排他；可与其它子系统条目并存）。
@@ -66,10 +77,12 @@ pub mod stack {
     use smoltcp::iface::{Config, Interface, SocketHandle, SocketSet};
     use smoltcp::socket::{tcp, udp};
     use smoltcp::time::Instant;
-    use smoltcp::wire::{EthernetAddress, HardwareAddress, IpCidr, Ipv4Address};
+    use smoltcp::wire::{EthernetAddress, HardwareAddress, IpAddress, IpCidr, IpListenEndpoint, Ipv4Address};
     use spin::Mutex;
 
     use crate::{first_network_device, SmoltcpAdapter};
+
+    pub type StackSocketHandle = SocketHandle;
 
     /// Socket 状态机（内核侧跟踪，非 smoltcp 内部状态）。
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -91,6 +104,8 @@ pub mod stack {
     struct SocketMeta {
         kind: SocketKind,
         state: SocketState,
+        /// None 表示绑定到 0.0.0.0，即任意本机地址。
+        local_ip: Option<[u8; 4]>,
         /// TCP 监听 socket 标记：accept 后本 socket 变为已连接，需创建新监听器。
         is_listener: bool,
         /// 对端地址（connect 时填入，accept 后由上层填入）。
@@ -104,19 +119,23 @@ pub mod stack {
         iface: Interface,
         sockets: SocketSet<'static>,
         metas: BTreeMap<SocketHandle, SocketMeta>,
+        local_ip: [u8; 4],
         ephemeral_port: u16,
     }
 
     static NETWORK_STACK: Mutex<Option<NetworkStack>> = Mutex::new(None);
 
-    /// 从全局注册表取出第一个网卡，创建 smoltcp 协议栈并配置 IP。
-    ///
-    /// 无已注册网卡时返回 `Err`，调用方应跳过网络相关任务的 spawn。
+    /// 创建 smoltcp 协议栈并配置 IP；无真实网卡时仍启用 loopback-only 模式。
     pub fn init(ip: [u8; 4], gateway: [u8; 4]) -> Result<(), &'static str> {
-        let device =
-            first_network_device().ok_or("no network device registered")?;
-        let mac = device.lock().mac_address();
-        let mut adapter = SmoltcpAdapter::new(device);
+        let mut adapter = match first_network_device() {
+            Some(device) => SmoltcpAdapter::new(device),
+            None => {
+                log::warn!("[network-stack] no network device registered; using loopback-only mode");
+                SmoltcpAdapter::loopback_only()
+            }
+        };
+        let mac = adapter.mac_address();
+        adapter.set_local_ipv4(ip);
 
         let config = Config::new(HardwareAddress::Ethernet(EthernetAddress(mac)));
         let mut iface = Interface::new(config, &mut adapter, Instant::ZERO);
@@ -172,6 +191,7 @@ pub mod stack {
             iface,
             sockets: SocketSet::new(vec![]),
             metas: BTreeMap::new(),
+            local_ip: ip,
             ephemeral_port: 49152,
         });
 
@@ -187,6 +207,11 @@ pub mod stack {
     ///
     /// 需要在定时任务中周期性调用。
     pub fn poll() {
+        poll_at_millis(0);
+    }
+
+    /// 使用调用方提供的单调毫秒时间驱动协议栈。
+    pub fn poll_at_millis(millis: i64) {
         let mut guard = NETWORK_STACK.lock();
         if let Some(stack) = guard.as_mut() {
             let NetworkStack {
@@ -195,7 +220,7 @@ pub mod stack {
                 sockets,
                 ..
             } = stack;
-            iface.poll(Instant::ZERO, adapter, sockets);
+            iface.poll(Instant::from_millis(millis), adapter, sockets);
         }
     }
 
@@ -226,6 +251,7 @@ pub mod stack {
         stack.metas.insert(h, SocketMeta {
             kind: SocketKind::Tcp,
             state: SocketState::Created,
+            local_ip: None,
             is_listener: false,
             peer_ip: [0; 4],
             peer_port: 0,
@@ -244,6 +270,7 @@ pub mod stack {
         stack.metas.insert(h, SocketMeta {
             kind: SocketKind::Udp,
             state: SocketState::Created,
+            local_ip: None,
             is_listener: false,
             peer_ip: [0; 4],
             peer_port: 0,
@@ -253,25 +280,41 @@ pub mod stack {
 
     // ——— socket 操作 ———
 
-    /// 将 socket 绑定到本机端口。TCP 使用 listen 语义绑定；UDP 使用 bind。
-    pub fn socket_bind(handle: SocketHandle, port: u16) -> Result<(), &'static str> {
+    fn is_valid_local_addr(addr: Option<[u8; 4]>, configured: [u8; 4]) -> bool {
+        match addr {
+            None => true,
+            Some(ip) => ip == configured || ip[0] == 127,
+        }
+    }
+
+    fn listen_endpoint(addr: Option<[u8; 4]>, port: u16) -> IpListenEndpoint {
+        IpListenEndpoint {
+            addr: addr.map(|ip| IpAddress::v4(ip[0], ip[1], ip[2], ip[3])),
+            port,
+        }
+    }
+
+    /// 将 socket 绑定到本机地址/端口。None 表示 0.0.0.0 wildcard。
+    /// TCP 仅记录本地端点；真正监听在 [`socket_listen`] 中执行。
+    pub fn socket_bind(handle: SocketHandle, local_ip: Option<[u8; 4]>, port: u16) -> Result<(), &'static str> {
         let mut guard = NETWORK_STACK.lock();
         let stack = guard.as_mut().ok_or("stack not initialized")?;
+        if !is_valid_local_addr(local_ip, stack.local_ip) {
+            return Err("address not available");
+        }
         let meta = stack.metas.get_mut(&handle).ok_or("invalid socket handle")?;
         match meta.kind {
             SocketKind::Tcp => {
-                stack.sockets
-                    .get_mut::<tcp::Socket>(handle)
-                    .listen(port)
-                    .map_err(|_| "tcp listen failed")?;
                 meta.state = SocketState::Bound { port };
+                meta.local_ip = local_ip;
             }
             SocketKind::Udp => {
                 stack.sockets
                     .get_mut::<udp::Socket>(handle)
-                    .bind(port)
+                    .bind(listen_endpoint(local_ip, port))
                     .map_err(|_| "udp bind failed")?;
                 meta.state = SocketState::Bound { port };
+                meta.local_ip = local_ip;
             }
         }
         Ok(())
@@ -289,6 +332,11 @@ pub mod stack {
             SocketState::Bound { port } => port,
             _ => return Err("socket not bound"),
         };
+        let local_ip = meta.local_ip;
+        stack.sockets
+            .get_mut::<tcp::Socket>(handle)
+            .listen(listen_endpoint(local_ip, port))
+            .map_err(|_| "tcp listen failed")?;
         meta.state = SocketState::Listening { port };
         meta.is_listener = true;
         Ok(())
@@ -436,14 +484,36 @@ pub mod stack {
         Ok(())
     }
 
+    /// 关闭 socket 的通信方向；当前 TCP 以全关闭近似实现，fd 仍由调用方保留。
+    pub fn socket_shutdown(handle: SocketHandle) -> Result<(), &'static str> {
+        let mut guard = NETWORK_STACK.lock();
+        let stack = guard.as_mut().ok_or("stack not initialized")?;
+        let meta = stack.metas.get_mut(&handle).ok_or("invalid socket handle")?;
+        match meta.kind {
+            SocketKind::Tcp => {
+                stack.sockets.get_mut::<tcp::Socket>(handle).close();
+                meta.state = SocketState::Closed;
+                Ok(())
+            }
+            SocketKind::Udp => Err("shutdown unsupported for udp"),
+        }
+    }
+
     /// 检查 TCP 监听 socket 是否有入连接已完成握手。
     pub fn socket_has_pending_accept(handle: SocketHandle) -> Result<bool, &'static str> {
+        let guard = NETWORK_STACK.lock();
+        let stack = guard.as_ref().ok_or("stack not initialized")?;
+        let meta = stack.metas.get(&handle).ok_or("invalid socket handle")?;
+        if !meta.is_listener {
+            return Err("not a listening socket");
+        }
+        drop(guard);
         with_tcp_socket(handle, |s| s.is_active()).ok_or("stack not initialized")
     }
 
-    /// 接受 TCP 连接：监听 socket 变为已连接 fd，并创建新的监听 socket 替换。
-    /// 返回 (已建立连接的 socket_handle, 本地端口)。
-    pub fn socket_accept(handle: SocketHandle) -> Result<(SocketHandle, u16), &'static str> {
+    /// 接受 TCP 连接：原监听 socket 变为已连接 socket，并创建新的监听 socket 替换原 fd。
+    /// 返回 (已建立连接的 socket_handle, 新监听 socket_handle, 本地端口)。
+    pub fn socket_accept(handle: SocketHandle) -> Result<(SocketHandle, SocketHandle, u16), &'static str> {
         let mut guard = NETWORK_STACK.lock();
         let stack = guard.as_mut().ok_or("stack not initialized")?;
         let meta = stack.metas.get(&handle).ok_or("invalid socket handle")?;
@@ -471,16 +541,20 @@ pub mod stack {
         let rx = tcp::SocketBuffer::new(vec![0; 4096]);
         let tx = tcp::SocketBuffer::new(vec![0; 4096]);
         let mut new_listener = tcp::Socket::new(rx, tx);
-        new_listener.listen(port).map_err(|_| "failed to create replacement listener")?;
+        let local_ip = meta.local_ip;
+        new_listener
+            .listen(listen_endpoint(local_ip, port))
+            .map_err(|_| "failed to create replacement listener")?;
         let new_h = stack.sockets.add(new_listener);
         stack.metas.insert(new_h, SocketMeta {
             kind: SocketKind::Tcp,
             state: SocketState::Listening { port },
+            local_ip,
             is_listener: true,
             peer_ip: [0; 4],
             peer_port: 0,
         });
-        Ok((handle, port))
+        Ok((handle, new_h, port))
     }
 
     /// 查询 socket 的对端地址（connect 或 accept 后有效）。

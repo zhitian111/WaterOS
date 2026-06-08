@@ -38,12 +38,12 @@ pub(crate) fn sys_connect(args: SyscallArgs) -> UserRet {
     let port = u16::from_be(addr.sin_port);
     let ip = addr.sin_addr;
 
-    let handle = match socket_fd::lookup(fd) {
-        Some(h) => h,
+    let socket = match socket_fd::lookup(fd) {
+        Some(s) => s,
         None => return UserRet::from_error(ErrNo::ENOTSOCK),
     };
 
-    match stack::socket_connect(handle, ip, port) {
+    match stack::socket_connect(socket.handle(), ip, port) {
         Ok(()) => UserRet::from_success(0),
         Err(_) => UserRet::from_error(ErrNo::ECONNREFUSED),
     }

@@ -145,9 +145,10 @@ impl ScanCtx {
 }
 
 pub(crate) fn poll_socket_revents(fd: usize, events: i16) -> i16 {
-    let Some(handle) = socket_fd::lookup(fd) else {
+    let Some(socket) = socket_fd::lookup(fd) else {
         return 0;
     };
+    let handle = socket.handle();
     let mut revents = 0i16;
     let kind = stack::socket_kind(handle);
     let state = stack::socket_state(handle);
@@ -564,4 +565,3 @@ pub(crate) fn do_pselect_with_deadline(
         Err(e) => UserRet::from_error(e),
     }
 }
-

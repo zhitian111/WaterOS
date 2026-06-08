@@ -18,6 +18,7 @@
         "./driver-network/network-api/api-v0/",
         "./driver-network/network-impl/impl-dummy/",
         "./driver-network/network-impl/impl-smoltcp/",
+        "./driver-network/network-impl/impl-virtio-pci/",
         "./driver-network/network-impl/impl-virtio-mmio/",
     ]
 [package]
@@ -53,7 +54,10 @@
         "impl-qemu-riscv64-opensbi/block-cache",
     ]
     impl-dummy = [  ]
-    impl-qemu-loongarch64-virt = [ "block/impl-virtio-pci" ]
+    impl-qemu-loongarch64-virt = [
+        "block/impl-virtio-pci",
+        "network/impl-virtio-pci",
+    ]
     impl-qemu-riscv64-opensbi = [
         "block/impl-virtio-mmio",
         "network/impl-virtio-mmio",

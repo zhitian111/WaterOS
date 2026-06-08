@@ -32,10 +32,11 @@ pub(crate) fn sys_sendto(args: SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EINVAL);
     }
 
-    let handle = match socket_fd::lookup(fd) {
-        Some(h) => h,
+    let socket = match socket_fd::lookup(fd) {
+        Some(s) => s,
         None => return UserRet::from_error(ErrNo::ENOTSOCK),
     };
+    let handle = socket.handle();
 
     let mut kbuf = alloc::vec![0u8; len];
     match copy_from_user(&mut kbuf, buf_ptr) {

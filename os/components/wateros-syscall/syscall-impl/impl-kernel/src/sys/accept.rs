@@ -4,7 +4,7 @@ use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use alloc::boxed::Box;
-use driver::network::socket_handles::TcpStreamHandle;
+use driver::network::socket_handles::{SocketRef, TcpStreamHandle};
 use driver::network::stack;
 use vfs::api::handle::VfsIoHandle;
 
@@ -26,32 +26,37 @@ pub(crate) fn sys_accept4(args: SyscallArgs) -> UserRet {
     let addrlen_ptr = args.arg(2);
     let _flags = args.arg(3);
 
-    let handle = match socket_fd::lookup(fd) {
-        Some(h) => h,
+    let socket = match socket_fd::lookup(fd) {
+        Some(s) => s,
         None => return UserRet::from_error(ErrNo::ENOTSOCK),
     };
 
     // 检查是否有入连接
-    match stack::socket_has_pending_accept(handle) {
+    match stack::socket_has_pending_accept(socket.handle()) {
         Ok(true) => {}
         Ok(false) => return UserRet::from_error(ErrNo::EAGAIN),
         Err(_) => return UserRet::from_error(ErrNo::ENOTSOCK),
     }
 
-    let (established_handle, _port) = match stack::socket_accept(handle) {
+    let (established_handle, replacement_listener, _port) = match stack::socket_accept(socket.handle()) {
         Ok(v) => v,
         Err(_) => return UserRet::from_error(ErrNo::ECONNRESET),
     };
+    socket.replace_handle(replacement_listener);
+    let established_socket = SocketRef::new(established_handle);
 
     // 为新连接分配 fd
     let io_handle: Box<dyn VfsIoHandle> = Box::new(TcpStreamHandle {
-        handle: established_handle,
+        socket: established_socket.clone(),
     });
     let new_fd = match vfs::fd::alloc_fd(io_handle) {
         Ok(fd) => fd,
-        Err(_) => return UserRet::from_error(ErrNo::ENOMEM),
+        Err(_) => {
+            let _ = stack::socket_close(established_handle);
+            return UserRet::from_error(ErrNo::ENOMEM);
+        }
     };
-    socket_fd::register(new_fd, established_handle);
+    socket_fd::register(new_fd, established_socket);
 
     // 写回客户端地址（如果有 addr 缓冲区）
     if addr_ptr != 0 && addrlen_ptr != 0 {

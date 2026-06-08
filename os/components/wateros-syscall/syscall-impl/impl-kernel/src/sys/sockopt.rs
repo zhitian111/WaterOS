@@ -1,24 +1,79 @@
 //! `setsockopt(2)` / `getsockopt(2)` — 极简存根。
 
+use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
+use alloc::vec;
+use driver::network::stack;
+
+use crate::socket_fd;
+use crate::user_copy::{copy_from_user, copy_from_user_struct, copy_to_user, copy_to_user_struct};
 
 pub(crate) fn sys_setsockopt(args: SyscallArgs) -> UserRet {
-    let _fd = args.arg(0);
-    let _level = args.arg(1);
-    let _optname = args.arg(2);
-    let _optval = args.arg(3);
-    let _optlen = args.arg(4);
-    // 极简实现：所有选项默认成功
-    UserRet::from_success(0)
+    let fd = args.arg(0);
+    let level = args.arg(1);
+    let optname = args.arg(2);
+    let optval = args.arg(3);
+    let optlen = args.arg(4);
+
+    let socket = match socket_fd::lookup(fd) {
+        Some(s) => s,
+        None => return UserRet::from_error(ErrNo::ENOTSOCK),
+    };
+    if optlen > 4096 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    if optlen > 0 && optval == 0 {
+        return UserRet::from_error(ErrNo::EFAULT);
+    }
+
+    let mut kbuf = vec![0u8; optlen];
+    if optlen > 0 {
+        match copy_from_user(&mut kbuf, optval) {
+            Ok(n) if n == optlen => {}
+            _ => return UserRet::from_error(ErrNo::EFAULT),
+        }
+    }
+
+    match stack::socket_setsockopt(socket.handle(), level, optname, &kbuf) {
+        Ok(()) => UserRet::from_success(0),
+        Err(_) => UserRet::from_error(ErrNo::EOPNOTSUPP),
+    }
 }
 
 pub(crate) fn sys_getsockopt(args: SyscallArgs) -> UserRet {
-    let _fd = args.arg(0);
-    let _level = args.arg(1);
-    let _optname = args.arg(2);
-    let _optval = args.arg(3);
-    let _optlen = args.arg(4);
-    // 极简实现：默认成功
-    UserRet::from_success(0)
+    let fd = args.arg(0);
+    let level = args.arg(1);
+    let optname = args.arg(2);
+    let optval = args.arg(3);
+    let optlen_ptr = args.arg(4);
+
+    let socket = match socket_fd::lookup(fd) {
+        Some(s) => s,
+        None => return UserRet::from_error(ErrNo::ENOTSOCK),
+    };
+    if optval == 0 || optlen_ptr == 0 {
+        return UserRet::from_error(ErrNo::EFAULT);
+    }
+
+    let user_len = match copy_from_user_struct::<u32>(optlen_ptr) {
+        Ok(v) => v as usize,
+        Err(e) => return UserRet::from_error(e),
+    };
+
+    let value = match stack::socket_getsockopt(socket.handle(), level, optname) {
+        Ok(v) => v,
+        Err(_) => return UserRet::from_error(ErrNo::EOPNOTSUPP),
+    };
+    let write_len = value.len().min(user_len);
+    if write_len > 0 {
+        match copy_to_user(optval, &value[..write_len]) {
+            Ok(n) if n == write_len => {}
+            _ => return UserRet::from_error(ErrNo::EFAULT),
+        }
+    }
+    match copy_to_user_struct(optlen_ptr, &(write_len as u32)) {
+        Ok(()) => UserRet::from_success(0),
+        Err(e) => UserRet::from_error(e),
+    }
 }

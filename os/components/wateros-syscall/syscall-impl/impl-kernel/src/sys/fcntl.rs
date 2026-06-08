@@ -4,6 +4,7 @@ use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 
+use crate::socket_fd;
 use crate::vfs_util::vfs_error_to_errno;
 
 const F_DUPFD: usize = 0;
@@ -37,12 +38,21 @@ pub(crate) fn sys_fcntl(args: SyscallArgs) -> UserRet {
 }
 
 fn fcntl_dupfd(fd: usize, minfd: usize) -> Result<usize, ErrNo> {
-    vfs::fd::dup_fd(fd, minfd).map_err(vfs_error_to_errno)
+    let socket = socket_fd::lookup(fd);
+    let newfd = vfs::fd::dup_fd(fd, minfd).map_err(vfs_error_to_errno)?;
+    if let Some(socket) = socket {
+        socket_fd::register(newfd, socket);
+    }
+    Ok(newfd)
 }
 
 fn fcntl_dupfd_cloexec(fd: usize, minfd: usize) -> Result<usize, ErrNo> {
+    let socket = socket_fd::lookup(fd);
     let newfd = vfs::fd::dup_fd(fd, minfd).map_err(vfs_error_to_errno)?;
     vfs::fd::set_fd_flags(newfd, FD_CLOEXEC).map_err(vfs_error_to_errno)?;
+    if let Some(socket) = socket {
+        socket_fd::register(newfd, socket);
+    }
     Ok(newfd)
 }
 

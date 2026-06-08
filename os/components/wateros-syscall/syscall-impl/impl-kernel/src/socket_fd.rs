@@ -1,24 +1,24 @@
-//! Socket fd → smoltcp [`SocketHandle`] 映射表。
+//! Socket fd → network [`SocketRef`] 映射表。
 //!
-//! 因 [`VfsIoHandle`] 不支持向下转型，每个 socket fd 的 smoltcp 句柄在此独立维护。
+//! 因 [`VfsIoHandle`] 不支持向下转型，每个 socket fd 的共享 socket 状态在此独立维护。
 
 use alloc::collections::BTreeMap;
-use smoltcp::iface::SocketHandle;
+use driver_network::SocketRef;
 use spin::Mutex;
 
-static SOCKET_FD_MAP: Mutex<BTreeMap<usize, SocketHandle>> = Mutex::new(BTreeMap::new());
+static SOCKET_FD_MAP: Mutex<BTreeMap<usize, SocketRef>> = Mutex::new(BTreeMap::new());
 
-pub(crate) fn register(fd: usize, handle: SocketHandle) {
+pub(crate) fn register(fd: usize, socket: SocketRef) {
     SOCKET_FD_MAP
         .lock()
-        .insert(fd, handle);
+        .insert(fd, socket);
 }
 
-pub(crate) fn lookup(fd: usize) -> Option<SocketHandle> {
+pub(crate) fn lookup(fd: usize) -> Option<SocketRef> {
     SOCKET_FD_MAP
         .lock()
         .get(&fd)
-        .copied()
+        .cloned()
 }
 
 pub(crate) fn remove(fd: usize) {

@@ -13,6 +13,10 @@
         "api-v0",
         "impl-virtio-pci",
     ] }
+    network = { path = "../../driver-network", package = "wateros-driver-network", default-features = false, features = [
+        "api-v0",
+        "impl-virtio-pci",
+    ] }
     fs = { path = "../../../wateros-fs", package = "wateros-fs", default-features = true }
     wateros-base-config = { path = "../../../wateros-base/base-config", package = "wateros-base-config" }
 

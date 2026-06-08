@@ -6,7 +6,7 @@ use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use alloc::boxed::Box;
-use driver::network::socket_handles::{TcpStreamHandle, UdpSocketHandle};
+use driver::network::socket_handles::{SocketRef, TcpStreamHandle, UdpSocketHandle};
 use driver::network::stack;
 use vfs::api::handle::VfsIoHandle;
 
@@ -40,13 +40,14 @@ pub(crate) fn sys_socket(args: SyscallArgs) -> UserRet {
         Ok(h) => h,
         Err(_) => return UserRet::from_error(ErrNo::ENOMEM),
     };
+    let socket_ref = SocketRef::new(smoltcp_handle);
 
     let io_handle: Box<dyn VfsIoHandle> = match typ {
         SOCK_STREAM => Box::new(TcpStreamHandle {
-            handle: smoltcp_handle,
+            socket: socket_ref.clone(),
         }),
         SOCK_DGRAM => Box::new(UdpSocketHandle {
-            handle: smoltcp_handle,
+            socket: socket_ref.clone(),
         }),
         _ => unreachable!(),
     };
@@ -55,7 +56,7 @@ pub(crate) fn sys_socket(args: SyscallArgs) -> UserRet {
         Ok(fd) => fd,
         Err(_) => return UserRet::from_error(ErrNo::ENOMEM),
     };
-    socket_fd::register(fd, smoltcp_handle);
+    socket_fd::register(fd, socket_ref);
 
     UserRet::from_success(fd)
 }

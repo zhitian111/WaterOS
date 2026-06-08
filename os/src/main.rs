@@ -45,7 +45,7 @@ use syscall as _;
 #[cfg(feature = "qemu-loongarch64-virt")]
 use syscall as _;
 
-#[cfg(feature = "qemu-riscv64-opensbi")]
+#[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
 mod self_tests;
 #[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
 mod trap_handler;
@@ -89,7 +89,14 @@ mod qemu_riscv64_opensbi {
     /// 网络协议栈轮询任务：周期性驱动 smoltcp 收发包，永久运行。
     extern "C" fn network_poller_task(_arg : usize) -> ! {
         loop {
-            driver::network::stack::poll();
+            match platform::timer::now_duration() {
+                Ok(now) => {
+                    let millis = now.as_millis()
+                                    .min(i64::MAX as u128) as i64;
+                    driver::network::stack::poll_at_millis(millis);
+                }
+                Err(_) => driver::network::stack::poll(),
+            }
             driver::network::stack::poll_socket_events();
             task::sleep_for_ticks(1);
         }
@@ -199,6 +206,22 @@ mod qemu_loongarch64_virt {
     global_asm!(include_str!("../components/wateros-platform/platform-impl/\
                               impl-qemu-loongarch64-virt/src/asm/_start.S"));
 
+    /// 网络协议栈轮询任务：周期性驱动 smoltcp 收发包，永久运行。
+    extern "C" fn network_poller_task(_arg : usize) -> ! {
+        loop {
+            match platform::timer::now_duration() {
+                Ok(now) => {
+                    let millis = now.as_millis()
+                                    .min(i64::MAX as u128) as i64;
+                    driver::network::stack::poll_at_millis(millis);
+                }
+                Err(_) => driver::network::stack::poll(),
+            }
+            driver::network::stack::poll_socket_events();
+            task::sleep_for_ticks(1);
+        }
+    }
+
     /// 固件/引导移交后的内核 C 入口；完成 MM bring-up、驱动、FS、VFS 与用户 ELF
     /// 装载后进入调度。
     ///
@@ -250,8 +273,19 @@ mod qemu_loongarch64_virt {
                   err);
         } else {
             info!("[loongarch64][self-test] driver init done");
+            match driver::network::stack::init([10, 0, 2, 15], [10, 0, 2, 2]) {
+                Ok(()) => {
+                    task::spawn_kernel_task(network_poller_task, 0);
+                    crate::self_tests::network::run_sync_smoke();
+                }
+                Err(e) => {
+                    warn!("[loongarch64][self-test] network stack init skipped: {}",
+                          e);
+                }
+            }
             fs::init();
             crate::user_bringup_bus::run();
+            crate::self_tests::network::spawn_all();
             fs::test();
             #[cfg(feature = "vfs-bridge")]
             {

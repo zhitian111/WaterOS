@@ -32,10 +32,11 @@ pub(crate) fn sys_recvfrom(args: SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EFAULT);
     }
 
-    let handle = match socket_fd::lookup(fd) {
-        Some(h) => h,
+    let socket = match socket_fd::lookup(fd) {
+        Some(s) => s,
         None => return UserRet::from_error(ErrNo::ENOTSOCK),
     };
+    let handle = socket.handle();
 
     // 根据 socket 类型选择 recv 或 recvfrom
     match stack::socket_kind(handle) {

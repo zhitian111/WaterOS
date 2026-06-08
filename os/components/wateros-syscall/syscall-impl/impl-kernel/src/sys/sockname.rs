@@ -22,12 +22,12 @@ pub(crate) fn sys_getsockname(args: SyscallArgs) -> UserRet {
     let addr_ptr = args.arg(1);
     let addrlen_ptr = args.arg(2);
 
-    let handle = match socket_fd::lookup(fd) {
-        Some(h) => h,
+    let socket = match socket_fd::lookup(fd) {
+        Some(s) => s,
         None => return UserRet::from_error(ErrNo::ENOTSOCK),
     };
 
-    let port: u16 = match stack::socket_local_port(handle) {
+    let port: u16 = match stack::socket_local_port(socket.handle()) {
         Ok(p) => p,
         Err(_) => 0,
     };
@@ -63,12 +63,12 @@ pub(crate) fn sys_getpeername(args: SyscallArgs) -> UserRet {
     let addr_ptr = args.arg(1);
     let addrlen_ptr = args.arg(2);
 
-    let handle = match socket_fd::lookup(fd) {
-        Some(h) => h,
+    let socket = match socket_fd::lookup(fd) {
+        Some(s) => s,
         None => return UserRet::from_error(ErrNo::ENOTSOCK),
     };
 
-    let (ip, port) = match stack::socket_peername(handle) {
+    let (ip, port) = match stack::socket_peername(socket.handle()) {
         Ok(v) => v,
         Err(_) => return UserRet::from_error(ErrNo::ENOTCONN),
     };

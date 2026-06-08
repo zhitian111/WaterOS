@@ -37,13 +37,19 @@ pub(crate) fn sys_bind(args: SyscallArgs) -> UserRet {
     }
 
     let port = u16::from_be(addr.sin_port);
-    let handle = match socket_fd::lookup(fd) {
-        Some(h) => h,
+    let local_ip = if addr.sin_addr == [0; 4] {
+        None
+    } else {
+        Some(addr.sin_addr)
+    };
+    let socket = match socket_fd::lookup(fd) {
+        Some(s) => s,
         None => return UserRet::from_error(ErrNo::ENOTSOCK),
     };
 
-    match stack::socket_bind(handle, port) {
+    match stack::socket_bind(socket.handle(), local_ip, port) {
         Ok(()) => UserRet::from_success(0),
+        Err("address not available") => UserRet::from_error(ErrNo::EADDRNOTAVAIL),
         Err(_) => UserRet::from_error(ErrNo::EADDRINUSE),
     }
 }

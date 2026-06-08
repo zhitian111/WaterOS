@@ -95,10 +95,11 @@ pub(crate) fn sys_sendmsg(args: SyscallArgs) -> UserRet {
         }
     }
 
-    let handle = match socket_fd::lookup(fd) {
-        Some(h) => h,
+    let socket = match socket_fd::lookup(fd) {
+        Some(s) => s,
         None => return UserRet::from_error(ErrNo::ENOTSOCK),
     };
+    let handle = socket.handle();
 
     // 有目标地址 → sendto；否则 → send
     let sent = if msg.msg_name != 0 && msg.msg_namelen >= 16 {
@@ -160,10 +161,11 @@ pub(crate) fn sys_recvmsg(args: SyscallArgs) -> UserRet {
         return UserRet::from_success(0);
     }
 
-    let handle = match socket_fd::lookup(fd) {
-        Some(h) => h,
+    let socket = match socket_fd::lookup(fd) {
+        Some(s) => s,
         None => return UserRet::from_error(ErrNo::ENOTSOCK),
     };
+    let handle = socket.handle();
 
     let mut kbuf = alloc::vec![0u8; total_len];
 
