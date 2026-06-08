@@ -41,7 +41,7 @@ pub use api_v0::{
     ProcessDescriptor, ProcessId, ProcessState, ResourceHandle, SignalHandlersRef, TaskBlockReason,
     TaskClearTid, TaskExitCode, TaskGroupId, TaskSnapshot, TaskTick, TaskWaitResult,
     ProcessTaskDescriptor, ProcessTaskRole, ProcessTaskState, UserImageInfo, UserStack, UserTask,
-    WaitQueueId,
+    ThreadId, WaitQueueId,
 };
 pub use api_v0::{ExitedTask, TaskId, TaskKind, TaskWaitHandle};
 #[cfg(feature = "impl-core")]
@@ -412,6 +412,12 @@ pub fn task_ids_for_process(pid : ProcessId) -> Option<Vec<TaskId>> {
     active_impl::task_ids_for_process(pid)
 }
 
+/// 按用户态线程号反查内部调度实体。
+#[inline]
+pub fn task_id_for_thread(tid : ThreadId) -> Option<TaskId> {
+    active_impl::task_id_for_thread(tid)
+}
+
 /// 查询进程内任务语义快照。
 #[inline]
 pub fn process_task_snapshot(task_id : TaskId) -> Option<ProcessTaskDescriptor> {
@@ -429,6 +435,12 @@ pub fn process_task_snapshot_by_task(task_id : TaskId) -> Option<ProcessTaskDesc
 pub fn current_process_task_snapshot() -> Option<ProcessTaskDescriptor> {
     let task_id = current_task_id()?;
     process_task_snapshot_by_task(task_id)
+}
+
+/// 当前运行任务的用户态线程 ID。
+#[inline]
+pub fn current_thread_id() -> Option<ThreadId> {
+    current_process_task_snapshot().map(|snapshot| snapshot.tid)
 }
 
 /// 当前运行任务所属进程快照。

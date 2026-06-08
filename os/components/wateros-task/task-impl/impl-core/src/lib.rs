@@ -18,7 +18,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use api_v0::{
     AddressSpaceRef, CloneFlags, ProcessDescriptor, ProcessId, ProcessState, ProcessTaskDescriptor,
-    ProcessTaskRole, TaskClearTid, TaskId,
+    ProcessTaskRole, TaskClearTid, TaskId, ThreadId,
 };
 use base::sync::UniprocessorSafeCell;
 
@@ -72,6 +72,10 @@ pub fn task_ids_for_process(pid: ProcessId) -> Option<Vec<TaskId>> {
     with_process_registry(|registry| registry.task_ids_for_process(pid))
 }
 
+pub fn task_id_for_thread(tid: ThreadId) -> Option<TaskId> {
+    with_process_registry(|registry| registry.task_id_for_thread(tid))
+}
+
 pub fn find_exited_child_process(parent_pid: ProcessId) -> Option<ProcessDescriptor> {
     with_process_registry(|registry| registry.find_exited_child_process(parent_pid))
 }
@@ -115,6 +119,7 @@ pub fn process_model_self_test() {
     assert_eq!(pid.raw(), 1);
     let leader = registry.lookup_task(100).expect("leader task must be indexed");
     assert_eq!(leader.task_id, 100);
+    assert_eq!(leader.tid.raw(), pid.raw());
     assert_eq!(leader.pid, pid);
     assert_eq!(leader.role, ProcessTaskRole::Leader);
     assert_eq!(registry.lookup_process(pid).unwrap().task_count, 1);
@@ -134,6 +139,9 @@ pub fn process_model_self_test() {
         .lookup_task(task101)
         .expect("member task must be indexed");
     assert_eq!(member101.task_id, 101);
+    assert_eq!(member101.tid.raw(), 2);
+    assert_ne!(member101.tid.raw(), member101.pid.raw());
+    assert_eq!(registry.task_id_for_thread(member101.tid), Some(101));
     assert_eq!(member101.role, ProcessTaskRole::Member);
     assert_eq!(member101.tls, 0x3000);
     assert_eq!(member101.clear_child_tid.unwrap().user_addr(), 0x4000);
@@ -142,9 +150,10 @@ pub fn process_model_self_test() {
     let forked = registry
         .create_process_like_fork(pid, 102, aspace)
         .expect("fork-style process");
-    assert_eq!(forked.raw(), 2);
+    assert_eq!(forked.raw(), 3);
     let forked_leader = registry.lookup_task(102).expect("forked leader");
     assert_eq!(forked_leader.task_id, 102);
+    assert_eq!(forked_leader.tid.raw(), forked.raw());
     assert_eq!(forked_leader.pid, forked);
     assert_eq!(registry.lookup_process(forked).unwrap().parent_pid, Some(pid));
     assert!(registry.has_child_process(pid));

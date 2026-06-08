@@ -225,6 +225,8 @@ pub fn mmap_map_end(base: VirtAddr, len: usize) -> MmResult<VirtAddr> {
     ))
 }
 
+const MAX_MMAP_SEARCH_PAGES: usize = 1 << 20;
+
 /// Finds the first fully unmapped page range large enough for an mmap request.
 pub fn find_free_mmap_base<S>(
     aspace: &S,
@@ -242,7 +244,11 @@ where
         .ok_or(MmError::InvalidAddress)?
         / PAGE_SIZE;
     let mut base = cursor.ceil_page().start_addr();
+    let mut skipped = 0usize;
     loop {
+        if skipped > MAX_MMAP_SEARCH_PAGES {
+            return Err(MmError::InvalidAddress);
+        }
         let mut free = true;
         for i in 0..n_pages {
             let va = VirtAddr(
@@ -258,6 +264,7 @@ where
         if free {
             return Ok(base);
         }
+        skipped += 1;
         base = VirtAddr(base.0.checked_add(PAGE_SIZE).ok_or(MmError::InvalidAddress)?);
     }
 }

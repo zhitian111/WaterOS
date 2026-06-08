@@ -9,12 +9,13 @@ use alloc::vec::Vec;
 use api_v0::{
     AddressSpaceRef, CloneFlags, CwdRef, FileTableRef, ProcessDescriptor, ProcessId,
     ProcessState, ProcessTaskDescriptor, ProcessTaskRole, ProcessTaskState, SignalHandlersRef,
-    ResourceHandle, TaskClearTid, TaskExitCode, TaskGroupId, TaskId,
+    ResourceHandle, TaskClearTid, TaskExitCode, TaskGroupId, TaskId, ThreadId,
 };
 
 #[derive(Clone, Debug)]
 struct ProcessTask {
     task_id: TaskId,
+    tid: ThreadId,
     state: ProcessTaskState,
     tls: usize,
     clear_child_tid: Option<TaskClearTid>,
@@ -24,6 +25,7 @@ impl ProcessTask {
     fn descriptor(&self, pid: ProcessId, leader_task_id: TaskId) -> ProcessTaskDescriptor {
         ProcessTaskDescriptor {
             task_id: self.task_id,
+            tid: self.tid,
             pid,
             role: if self.task_id == leader_task_id {
                 ProcessTaskRole::Leader
@@ -79,6 +81,7 @@ impl ProcessControlBlock {
 pub struct ProcessRegistry {
     processes: BTreeMap<ProcessId, ProcessControlBlock>,
     next_pid: usize,
+    next_tid: usize,
 }
 
 impl ProcessRegistry {
@@ -86,20 +89,34 @@ impl ProcessRegistry {
         Self {
             processes: BTreeMap::new(),
             next_pid: 1,
+            next_tid: 1,
         }
     }
 
     pub fn clear(&mut self) {
         self.processes.clear();
         self.next_pid = 1;
+        self.next_tid = 1;
     }
 
     fn alloc_pid(&mut self) -> ProcessId {
         loop {
             let pid = ProcessId::from_raw(self.next_pid);
             self.next_pid = self.next_pid.saturating_add(1);
-            if !self.processes.contains_key(&pid) {
+            if !self.processes.contains_key(&pid) &&
+               self.task_id_for_thread(ThreadId::from_raw(pid.raw())).is_none()
+            {
                 return pid;
+            }
+        }
+    }
+
+    fn alloc_tid(&mut self) -> ThreadId {
+        loop {
+            let tid = ThreadId::from_raw(self.next_tid);
+            self.next_tid = self.next_tid.saturating_add(1);
+            if self.task_id_for_thread(tid).is_none() {
+                return tid;
             }
         }
     }
@@ -116,6 +133,10 @@ impl ProcessRegistry {
             task_id
         );
         let pid = self.alloc_pid();
+        if self.next_tid <= pid.raw() {
+            self.next_tid = pid.raw().saturating_add(1);
+        }
+        let tid = ThreadId::from_raw(pid.raw());
         let resource_handle = ResourceHandle::from_raw(task_id);
         let process = ProcessControlBlock {
             pid,
@@ -128,6 +149,7 @@ impl ProcessRegistry {
             signal_handlers: None,
             tasks: alloc::vec![ProcessTask {
                 task_id,
+                tid,
                 state: ProcessTaskState::Runnable,
                 tls: 0,
                 clear_child_tid: None,
@@ -159,9 +181,11 @@ impl ProcessRegistry {
         if self.lookup_task(task_id).is_some() {
             return None;
         }
+        let tid = self.alloc_tid();
         let process = self.process_mut(pid)?;
         process.tasks.push(ProcessTask {
             task_id,
+            tid,
             state: ProcessTaskState::Runnable,
             tls: if clone_flags.contains(CloneFlags::CLONE_SETTLS) {
                 tls
@@ -206,6 +230,18 @@ impl ProcessRegistry {
     pub fn task_ids_for_process(&self, pid: ProcessId) -> Option<Vec<TaskId>> {
         let process = self.processes.get(&pid)?;
         Some(process.tasks.iter().map(|task| task.task_id).collect())
+    }
+
+    pub fn task_id_for_thread(&self, tid: ThreadId) -> Option<TaskId> {
+        self.processes
+            .values()
+            .find_map(|process| {
+                process
+                    .tasks
+                    .iter()
+                    .find(|task| task.tid == tid)
+                    .map(|task| task.task_id)
+            })
     }
 
     pub fn retain_only_task_in_process(

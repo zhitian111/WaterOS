@@ -1,18 +1,35 @@
 //! 进程语义层的稳定类型。
 //!
-//! `TaskId` 表示调度器中的可运行实体；`ProcessId` 表示用户态进程身份和资源
-//! 归属。第一阶段仅定义模型，不改变现有 syscall 行为。
+//! `TaskId` 表示调度器中的内部可运行实体；`ProcessId` / `ThreadId` 表示用户态
+//! 可见的进程与线程身份。
 
 use core::ops::{BitOr, BitOrAssign};
 
 use crate::{AddressSpaceHandle, TaskExitCode, TaskId};
 
-/// 用户态进程 ID；未来 `getpid()` 返回该值。
+/// 用户态进程 ID；`getpid()` / `waitpid()` / `/proc/<pid>` 使用该值。
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ProcessId(pub usize);
 
 impl ProcessId {
+    #[inline]
+    pub const fn from_raw(raw: usize) -> Self {
+        Self(raw)
+    }
+
+    #[inline]
+    pub const fn raw(self) -> usize {
+        self.0
+    }
+}
+
+/// 用户态线程 ID；`gettid()` / `clone(*TID)` / robust futex owner 使用该值。
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ThreadId(pub usize);
+
+impl ThreadId {
     #[inline]
     pub const fn from_raw(raw: usize) -> Self {
         Self(raw)
@@ -184,6 +201,7 @@ pub enum ProcessState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProcessTaskDescriptor {
     pub task_id: TaskId,
+    pub tid: ThreadId,
     pub pid: ProcessId,
     pub role: ProcessTaskRole,
     pub state: ProcessTaskState,

@@ -11,11 +11,28 @@ use abi::user_ret::UserRet;
 use crate::user_copy::{copy_from_user_struct, copy_to_user};
 use crate::vfs_util::vfs_error_to_errno;
 
+const SMALL_READ_BUF_SIZE: usize = 256;
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct UserIoVec {
     base: usize,
     len: usize,
+}
+
+fn finish_read(fd: usize, ptr: usize, buf: &[u8], n: usize) -> UserRet {
+    if n == 0 {
+        return UserRet::from_success(0);
+    }
+    if fd >= 10 && n <= 4096 {
+        if let Ok(text) = core::str::from_utf8(&buf[..n]) {
+            log::trace!("[read-debug] fd={fd} n={n} text={text:?}");
+        }
+    }
+    match copy_to_user(ptr, &buf[..n]) {
+        Ok(written) if written == n => UserRet::from_success(n),
+        _ => UserRet::from_error(ErrNo::EFAULT),
+    }
 }
 
 pub(crate) fn sys_read(args : SyscallArgs) -> UserRet {
@@ -31,24 +48,21 @@ pub(crate) fn sys_read(args : SyscallArgs) -> UserRet {
     if len > 4 * 1024 * 1024 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
+    if len <= SMALL_READ_BUF_SIZE {
+        let mut kbuf = [0u8; SMALL_READ_BUF_SIZE];
+        let n = match vfs::fd::with_current_io(fd, |handle| handle.read(&mut kbuf[..len])) {
+            Ok(n) => n,
+            Err(err) => return UserRet::from_error(vfs_error_to_errno(err)),
+        };
+        return finish_read(fd, ptr, &kbuf[..len], n);
+    }
     let mut kbuf = Vec::with_capacity(len);
     kbuf.resize(len, 0);
     let n = match vfs::fd::with_current_io(fd, |handle| handle.read(&mut kbuf)) {
         Ok(n) => n,
         Err(err) => return UserRet::from_error(vfs_error_to_errno(err)),
     };
-    if n == 0 {
-        return UserRet::from_success(0);
-    }
-    if fd >= 10 && n <= 4096 {
-        if let Ok(text) = core::str::from_utf8(&kbuf[..n]) {
-            log::trace!("[read-debug] fd={fd} n={n} text={text:?}");
-        }
-    }
-    match copy_to_user(ptr, &kbuf[..n]) {
-        Ok(written) if written == n => UserRet::from_success(n),
-        _ => UserRet::from_error(ErrNo::EFAULT),
-    }
+    finish_read(fd, ptr, &kbuf, n)
 }
 
 pub(crate) fn sys_readv(args : SyscallArgs) -> UserRet {

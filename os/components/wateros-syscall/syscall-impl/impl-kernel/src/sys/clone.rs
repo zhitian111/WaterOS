@@ -70,6 +70,10 @@ fn do_clone(args: SyscallArgs) -> UserRet {
         Some(id) => id,
         None => return UserRet::from_error(ErrNo::EAGAIN),
     };
+    let child_pid = match task::process_task_snapshot(child_id) {
+        Some(snapshot) => snapshot.pid.raw(),
+        None => return UserRet::from_error(ErrNo::ESRCH),
+    };
 
     // 子任务继承父任务 cwd
     let parent_id = task::current_task_id().expect("current task must exist after fork");
@@ -79,7 +83,7 @@ fn do_clone(args: SyscallArgs) -> UserRet {
 
     cred::fork_cred(parent_id, child_id);
 
-    UserRet::from_success(child_id)
+    UserRet::from_success(child_pid)
 }
 
 fn do_clone_thread(
@@ -103,16 +107,21 @@ fn do_clone_thread(
         Some(id) => id,
         None => return UserRet::from_error(ErrNo::EAGAIN),
     };
+    let child_tid_raw = match task::process_task_snapshot(child_id) {
+        Some(snapshot) => snapshot.tid.raw(),
+        None => return UserRet::from_error(ErrNo::ESRCH),
+    };
+    let child_tid_value = child_tid_raw as u32;
 
     if clone_flags.contains(task::CloneFlags::CLONE_PARENT_SETTID)
         && parent_tid != 0
-        && copy_to_user_struct(parent_tid, &child_id).is_err()
+        && copy_to_user_struct(parent_tid, &child_tid_value).is_err()
     {
         return UserRet::from_error(ErrNo::EFAULT);
     }
     if clone_flags.contains(task::CloneFlags::CLONE_CHILD_SETTID)
         && child_tid != 0
-        && copy_to_user_struct(child_tid, &child_id).is_err()
+        && copy_to_user_struct(child_tid, &child_tid_value).is_err()
     {
         return UserRet::from_error(ErrNo::EFAULT);
     }
@@ -122,5 +131,5 @@ fn do_clone_thread(
     vfs::fd::share_fd_table_from_parent(child_id, parent_id);
     cred::share_cred(parent_id, child_id);
 
-    UserRet::from_success(child_id)
+    UserRet::from_success(child_tid_raw)
 }

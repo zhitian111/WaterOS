@@ -242,13 +242,17 @@ pub(crate) fn sys_getppid() -> UserRet {
 }
 
 pub(crate) fn sys_gettid() -> UserRet {
-    task::current_task_id()
-        .map(UserRet::from_success)
+    task::current_thread_id()
+        .map(|tid| UserRet::from_success(tid.raw()))
         .unwrap_or_else(|| UserRet::from_error(ErrNo::ESRCH))
 }
 
 pub(crate) fn sys_set_tid_address(args: SyscallArgs) -> UserRet {
-    let tid = match task::current_task_id() {
+    let task_id = match task::current_task_id() {
+        Some(task_id) => task_id,
+        None => return UserRet::from_error(ErrNo::ESRCH),
+    };
+    let tid = match task::current_thread_id() {
         Some(tid) => tid,
         None => return UserRet::from_error(ErrNo::ESRCH),
     };
@@ -258,8 +262,8 @@ pub(crate) fn sys_set_tid_address(args: SyscallArgs) -> UserRet {
     } else {
         Some(task::TaskClearTid::new(user_addr))
     };
-    let _ = task::set_task_clear_child_tid(tid, clear_child_tid);
-    UserRet::from_success(tid)
+    let _ = task::set_task_clear_child_tid(task_id, clear_child_tid);
+    UserRet::from_success(tid.raw())
 }
 
 pub(crate) fn sys_getrandom(args: SyscallArgs) -> UserRet {
@@ -560,11 +564,7 @@ fn finish_wait_process_result(
     exited_tasks: Vec<task::ExitedTask>,
     exit_code_ptr: usize,
 ) -> UserRet {
-    let Some(status_task) = exited_tasks
-        .iter()
-        .find(|task| task.id == pid.raw())
-        .or_else(|| exited_tasks.first())
-    else {
+    let Some(status_task) = exited_tasks.first() else {
         return UserRet::from_error(ErrNo::ECHILD);
     };
     match write_exit_code(exit_code_ptr, status_task.exit_code) {
@@ -624,9 +624,6 @@ pub(crate) fn sys_waitpid(args: SyscallArgs) -> UserRet {
         Some(_) => return UserRet::from_error(ErrNo::ECHILD),
         None => return UserRet::from_error(ErrNo::ECHILD),
     }
-    let Some(leader_task_id) = task::leader_task_for_process(child_pid) else {
-        return UserRet::from_error(ErrNo::ECHILD);
-    };
     loop {
         if let Some(exited) = task::reap_exited_process(child_pid) {
             return finish_wait_process_result(child_pid, exited, exit_code_ptr);
@@ -637,7 +634,9 @@ pub(crate) fn sys_waitpid(args: SyscallArgs) -> UserRet {
         if nohang {
             return UserRet::from_success(0);
         }
-        task::wait_for_task_exit(leader_task_id);
+        task::wait_on(task::TaskWaitHandle::for_child_exit(
+            current_task_id,
+        ));
     }
 }
 

@@ -17,7 +17,7 @@ pub use kernel::{KernelStack, KernelTaskEntry, TaskBootstrap};
 pub use process::{
     AddressSpaceRef, CloneFlags, CwdRef, FileTableRef, ProcessDescriptor, ProcessId, ProcessState,
     ProcessTaskDescriptor, ProcessTaskRole, ProcessTaskState, ResourceHandle, SignalHandlersRef,
-    TaskClearTid, TaskGroupId,
+    TaskClearTid, TaskGroupId, ThreadId,
 };
 pub use snapshot::{TaskSnapshot, TaskTrapSnapshot};
 pub use task::{

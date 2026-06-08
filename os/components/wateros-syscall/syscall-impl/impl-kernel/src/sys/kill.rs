@@ -4,7 +4,7 @@ use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use ipc::signal::SignalDelivery;
-use task::TaskExitCode;
+use task::{ProcessId, TaskExitCode, TaskId};
 
 /// Linux 标准信号号上界（不含实时信号）。
 const _NSIG: i32 = 64;
@@ -14,15 +14,11 @@ fn exit_code_for_signal(sig: i32) -> TaskExitCode {
     ((sig & 0x7f) as isize) << 8
 }
 
-fn resolve_task_id(pid: isize) -> Result<usize, ErrNo> {
+fn resolve_task_id(pid: isize) -> Result<TaskId, ErrNo> {
     if pid <= 0 {
         return Err(ErrNo::EINVAL);
     }
-    let task_id = pid as usize;
-    if task::task_snapshot(task_id).is_none() {
-        return Err(ErrNo::ESRCH);
-    }
-    Ok(task_id)
+    task::leader_task_for_process(ProcessId::from_raw(pid as usize)).ok_or(ErrNo::ESRCH)
 }
 
 /// `kill(pid, sig)` — riscv64 系统调用号 129。

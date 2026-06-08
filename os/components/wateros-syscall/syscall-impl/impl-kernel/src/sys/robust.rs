@@ -42,6 +42,13 @@ fn read_user_list_next(entry: usize) -> Result<usize, ErrNo> {
 /// 线程退出前遍历用户 robust 链表并唤醒 waiters。
 pub(crate) fn robust_exit_cleanup(task_id: TaskId) {
     let hub = FutexHub::global();
+    let tid = match task::process_task_snapshot(task_id) {
+        Some(snapshot) => snapshot.tid.raw(),
+        None => {
+            hub.drop_robust_list(task_id);
+            return;
+        }
+    };
     let (head_ptr, _len) = match hub.get_robust_list(task_id) {
         Ok(state) => state,
         Err(_) => return,
@@ -73,7 +80,7 @@ pub(crate) fn robust_exit_cleanup(task_id: TaskId) {
         let futex_uaddr = entry.wrapping_add_signed(futex_offset);
         if let Ok(val) = read_user_u32(futex_uaddr) {
             let owner = val & FUTEX_TID_MASK;
-            if owner as usize == task_id {
+            if owner as usize == tid {
                 let new_val = (val & FUTEX_TID_MASK) | FUTEX_OWNER_DIED;
                 let _ = copy_to_user_struct(futex_uaddr, &new_val);
                 let key = FutexKey {
