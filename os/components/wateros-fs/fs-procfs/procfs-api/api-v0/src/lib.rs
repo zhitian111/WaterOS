@@ -11,10 +11,14 @@ pub use fs_api_v0::{FsDirEntry, FsError, FsMetadata, FsNodeType, FsResult};
 /// 与 `task::TaskId` 数值一致，api 层不依赖 task crate。
 pub type TaskId = usize;
 
-/// `/proc/mounts` 单行：挂载点与文件系统类型。
+/// `/proc/mounts` 单行：`device mount_point fstype ...`。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProcMountLine {
+    /// `mnt_fsname`（第 1 列）。
+    pub device: String,
+    /// `mnt_dir`（第 2 列）。
     pub mount_point: String,
+    /// `mnt_type`（第 3 列）。
     pub fstype: String,
 }
 

@@ -142,16 +142,29 @@ fn fstype_for(entry: &MountEntry) -> &'static str {
     }
 }
 
+fn device_for(entry: &MountEntry) -> String {
+    match entry.fs {
+        AuxMount::PseudoProc => String::from("proc"),
+        AuxMount::Rw(_) | AuxMount::Ro(_) => entry.mount_point.clone(),
+    }
+}
+
+fn root_mount_device() -> String {
+    fs::devfs::active_impl::default_root_block_path().unwrap_or_else(|| String::from("/dev/root"))
+}
+
 pub fn list_proc_mount_lines() -> Vec<ProcMountLine> {
     let mut out = Vec::new();
     if fs::rootfs::active_impl::root_rw_fs().is_some() {
         out.push(ProcMountLine {
+            device: root_mount_device(),
             mount_point: String::from("/"),
             fstype: String::from("ext4"),
         });
     }
     for ent in AUX_MOUNTS.lock().iter() {
         out.push(ProcMountLine {
+            device: device_for(ent),
             mount_point: ent.mount_point.clone(),
             fstype: String::from(fstype_for(ent)),
         });

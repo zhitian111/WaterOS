@@ -223,8 +223,8 @@ fn format_mounts() -> Vec<u8> {
     let mut out = Vec::new();
     for line in mount_lines() {
         let row = format!(
-            "{} {} rw,relatime 0 0\n",
-            line.mount_point, line.fstype
+            "{} {} {} rw,relatime 0 0\n",
+            line.device, line.mount_point, line.fstype
         );
         out.extend_from_slice(row.as_bytes());
     }
