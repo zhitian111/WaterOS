@@ -115,10 +115,11 @@ pub fn run_one_elf_argv_exit(log_tag : &str, elf_path : &str, argv : &[&str]) ->
 }
 
 fn libc_envp_for_path(path : &str) -> Vec<&'static str> {
+    const PATH : &str = "PATH=/bin:/usr/bin:/sbin:/usr/sbin";
     if path.starts_with("/glibc/") {
-        vec!["LD_LIBRARY_PATH=/glibc/lib"]
+        vec!["LD_LIBRARY_PATH=/glibc/lib", PATH]
     } else if path.starts_with("/musl/") {
-        vec!["LD_LIBRARY_PATH=/musl/lib"]
+        vec!["LD_LIBRARY_PATH=/musl/lib", PATH]
     } else {
         Vec::new()
     }

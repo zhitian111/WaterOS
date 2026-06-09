@@ -212,6 +212,12 @@ pub trait ReadWriteFs: Send {
         Err(FsError::Unsupported)
     }
 
+    /// 为已存在的 `existing_path` 创建硬链接 `new_path`。
+    fn hardlink(&mut self, existing_path: &str, new_path: &str) -> FsResult<()> {
+        let _ = (existing_path, new_path);
+        Err(FsError::Unsupported)
+    }
+
     /// 路径是否存在（RW 实现可覆盖，供单 RW 根卷统一读路径）。
     fn exists(&self, path: &str) -> FsResult<bool> {
         let _ = path;
@@ -315,6 +321,10 @@ impl ReadWriteFs for LocalRwFs {
 
     fn rename(&mut self, old_path: &str, new_path: &str) -> FsResult<()> {
         self.deref_mut().rename(old_path, new_path)
+    }
+
+    fn hardlink(&mut self, existing_path: &str, new_path: &str) -> FsResult<()> {
+        self.deref_mut().hardlink(existing_path, new_path)
     }
 
     fn exists(&self, path: &str) -> FsResult<bool> { self.deref().exists(path) }

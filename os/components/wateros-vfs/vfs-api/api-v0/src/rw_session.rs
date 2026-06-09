@@ -40,4 +40,10 @@ pub trait RootRwSession {
         let _ = (old_path, new_path);
         Err(VfsError::Unsupported)
     }
+
+    /// 为 `existing_path` 创建硬链接 `new_path`。
+    fn hardlink(&mut self, existing_path: &str, new_path: &str) -> VfsResult<()> {
+        let _ = (existing_path, new_path);
+        Err(VfsError::Unsupported)
+    }
 }

@@ -396,6 +396,15 @@ impl RootRwSession for MountedRwSession {
             .rename(old.as_str(), new.as_str())
             .map_err(map_fs_err)
     }
+
+    fn hardlink(&mut self, existing_path: &str, new_path: &str) -> VfsResult<()> {
+        let existing = normalize_absolute_path(existing_path)?;
+        let new = normalize_absolute_path(new_path)?;
+        self.inner
+            .lock()
+            .hardlink(existing.as_str(), new.as_str())
+            .map_err(map_fs_err)
+    }
 }
 
 impl VfsMountOps for FsBridge {

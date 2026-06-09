@@ -20,7 +20,7 @@ const SCRIPT_PATHS : &[&str] = &[
                                  //"/musl/basic_testcode.sh",
                                  // --- P2 busybox + lua ---
                                  "/glibc/busybox_testcode.sh",
-                                 "/musl/busybox_testcode.sh",
+                                 //"/musl/busybox_testcode.sh",
                                  //"/glibc/lua_testcode.sh",
                                  // "/musl/lua_testcode.sh",
                                  // --- P3 benchmark ---

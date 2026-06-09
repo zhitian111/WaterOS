@@ -284,6 +284,38 @@ impl ReadWriteFs for Ext4FsRw {
         Ok(())
     }
 
+    fn hardlink(&mut self, existing_path: &str, new_path: &str) -> FsResult<()> {
+        let fs = self.fs()?;
+        let existing_pathv = Path::try_from(existing_path).map_err(|_| FsError::InvalidPath)?;
+        let mut inode = fs
+            .path_to_inode(existing_pathv, FollowSymlinks::All)
+            .map_err(map_ext4_plus)?;
+        if inode.file_type() == FileType::Directory {
+            return Err(FsError::NotAFile);
+        }
+        if inode.file_type() != FileType::Regular {
+            return Err(FsError::Unsupported);
+        }
+
+        let (new_parent, new_name) = split_parent_and_name(new_path)?;
+        let parent_path = Path::try_from(new_parent).map_err(|_| FsError::InvalidPath)?;
+        let parent_inode = fs
+            .path_to_inode(parent_path, FollowSymlinks::All)
+            .map_err(map_ext4_plus)?;
+        if parent_inode.file_type() != FileType::Directory {
+            return Err(FsError::NotFound);
+        }
+        let mut parent_dir = Dir::open_inode(fs, parent_inode).map_err(map_ext4_plus)?;
+        let new_name = DirEntryName::try_from(new_name).map_err(|_| FsError::InvalidPath)?;
+
+        if parent_dir.get_entry(new_name).is_ok() {
+            return Err(FsError::Exists);
+        }
+
+        parent_dir.link(new_name, &mut inode).map_err(map_ext4_plus)?;
+        Ok(())
+    }
+
     fn rmdir(&mut self, path: &str) -> FsResult<()> {
         let (parent, name) = split_parent_and_name(path)?;
         let fs = self.fs()?;

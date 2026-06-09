@@ -37,5 +37,4 @@
 
 ### P2：环境与路径
 
-- [ ] 排查 `busybox which ls` 失败。
-  - 方向：检查脚本中的 `PATH`、busybox applet 安装方式，以及 `access/openat` 对相对路径和可执行权限的处理。
+- [x] 排查 `busybox which ls` 失败（启动期 hardlink `/bin/ls` + `PATH` envp）。
