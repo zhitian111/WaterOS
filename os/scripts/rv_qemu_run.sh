@@ -15,8 +15,8 @@ qemu-system-riscv64 -machine virt \
                     -rtc base=utc \
                     -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 \
                     -drive file=$fs,if=none,format=raw,id=x0 \
-                    #-device virtio-net-device,netdev=net \
-                    #-netdev user,id=net \
+                    -device virtio-net-device,netdev=net \
+                    -netdev user,id=net \
 # qemu-system-riscv64 -machine virt -kernel {os_file} -m {mem} -nographic -smp {smp} -bios default -drive file={fs},if=none,format=raw,id=x0 \
 #                     -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 -no-reboot -device virtio-net-device,netdev=net -netdev user,id=net \
 #                     -rtc base=utc \

@@ -24,9 +24,11 @@
 # - 返回用户态时，用 csrrw 把 sp 切回用户栈，同时把新的内核栈顶重新留在 sscratch
 
 __alltraps:
-    csrr t1, sstatus
-    andi t2, t1, 1 << 8
-    bnez t2, .Ltrap_from_kernel
+    # glibc stack-canary wrappers keep t1 (ioctl) or t3 (openat) across ecall; only use
+    # caller-saved x31/t6 for the SPP probe before the GPR snapshot.
+    csrr t6, sstatus
+    andi t6, t6, 1 << 8
+    bnez t6, .Ltrap_from_kernel
 gdb_point_0:
     # User -> kernel: swap to the task's kernel stack first.
     csrrw sp, sscratch, sp
@@ -74,8 +76,9 @@ gdb_point_0:
     sd x30, 30*8(sp)
     sd x31, 31*8(sp)
 
-    # 保存控制寄存器
-    sd t1, 32*8(sp)
+    # 保存控制寄存器（GPR 快照完成后再读 sstatus，避免入口临时寄存器污染 x6/x28）
+    csrr t0, sstatus
+    sd t0, 32*8(sp)
     csrr t0, sepc
     sd t0, 33*8(sp)
     csrr t0, scause
@@ -93,11 +96,11 @@ gdb_point_1:
 
     # 恢复控制寄存器
     ld t0, 32*8(sp)
-    andi t1, t0, 1 << 8
+    andi t6, t0, 1 << 8
     csrw sstatus, t0
     ld t0, 33*8(sp)
     csrw sepc, t0
-    bnez t1, .Ltrap_return_kernel
+    bnez t6, .Ltrap_return_kernel
 
     ld t0, 36*8(sp)
     csrw satp, t0

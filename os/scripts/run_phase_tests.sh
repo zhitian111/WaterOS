@@ -37,8 +37,8 @@ for ln in lines:
         in_phase = True
     elif in_phase and ln.strip().startswith("// --- P") and start not in ln:
         in_phase = False
-    if in_phase and ln.strip().startswith('// "/'):
-        ln = ln.replace('// "', '"', 1)
+    if in_phase and re.match(r'\s*//\s*"/', ln):
+        ln = re.sub(r'//\s*"', '"', ln, count=1)
     out.append(ln)
 open(path, "w").write("".join(out))
 PY

@@ -6,7 +6,7 @@
 
 ## 当前阶段目标
 
-- **RISC-V QEMU 主线**：在已有 ~80 个 syscall（含信号、凭证、网络 socket 族、futex、poll）和完整 fd-session（dup/fork 继承/CLOEXEC）的基础上，继续解锁测例集注释并将 basic/busybox/lua/benchmark 各组从「已接线但注释」变为「通过验收」。
+- **RISC-V QEMU 主线**：在已有 ~80 个 syscall（含信号、凭证、网络 socket 族、futex、poll、**ioctl TTY 子集**）和完整 fd-session（dup/fork 继承/CLOEXEC）的基础上，继续解锁测例集注释并将 basic/lua/benchmark 各组从「已接线但注释」变为「通过验收」。**busybox 组（glibc+musl）已于 2026-06-10 验收 55/55。**
 - **LoongArch64**：LoongArch64 virt 板级已具备与 RISC-V **相同**的 bring-up 总线（三级页表、virtio 块设备、ext4 挂载、用户 ELF 加载、VFS 桥接），需继续补齐验证覆盖并与 RISC-V 对齐赛题评测环境。
 - **赛题脚手架**：多 virtio-blk、virtio-net、RTC、`*_testcode.sh` 串行调度与 START/END 输出、SBI 关机，与赛题发布 QEMU 命令对齐。
 - **文档同步**：当前现有文档（`docs/roadmap/` 下各阶段计划与工作包）落后于实现进度，需在完成里程碑后按实际代码状态增量刷新。
@@ -25,16 +25,16 @@
 | wateros-task | **`impl-core` + 轮转调度**；用户任务 spawn 完整（`spawn_user_task_from_loaded_elf`）；阻塞/睡眠队列、WaitQueue、zombie 回收、最小父子关系与 wait 服务 | trap 驱动抢占；TaskHandle generation；跨架构文档 |
 | wateros-abi | **`api-v0`** 与 **`impl-linux-generic64`** 默认启用；errno、号表、参数与 `UserRet` 已供 syscall 使用 | 调用号与内核实际支持集合对齐；**`SYSLOG` (116)** 待 klog 落地时加入号表 |
 | wateros-klog | **已落地**（[`docs/architecture/wateros-klog.md`](../architecture/wateros-klog.md)） | `CONSOLE_*` 接 runtime-console；权限；`/dev/kmsg` 线格式 |
-| wateros-syscall | **独立一级 crate**，RISC-V 主线默认链接；dispatch 表已覆盖以下单元：read/write/writev/readlinkat/openat/close/lseek/fstat/dup/dup3/pipe2/brk/mmap/munmap/mprotect/gettimeofday/clock_gettime/getpid/getppid/gettid/getuid/geteuid/getgid/getegid/getgroups/setuid/setgid/setreuid/setregid/setresuid/setresgid/futex/fcntl/clone/execve/waitpid/kill/nanosleep/times/getcwd/chdir/mkdirat/getdents64/unlinkat/mount/umount2/uname/prctl/getrlimit/setrlimit/prlimit64/set_tid_address/set_robust_list/getrandom/rt_sigaction/rt_sigprocmask/socket/bind/listen/accept4/connect/getsockname/getpeername/sendto/recvfrom/sendmsg/recvmsg/setsockopt/getsockopt/shutdown/poll + statx（未知号路由）+ exit/exit_group/yield。**ioctl 仍未接线**。 | 补 `dispatch_ioctl`（TTY 子集）；basic 测例全解锁；busybox 多脚本验收 |
+| wateros-syscall | **独立一级 crate**，RISC-V 主线默认链接；dispatch 表已覆盖以下单元：read/write/writev/readlinkat/openat/close/lseek/fstat/dup/dup3/pipe2/brk/mmap/munmap/mprotect/gettimeofday/clock_gettime/getpid/getppid/gettid/getuid/geteuid/getgid/getegid/getgroups/setuid/setgid/setreuid/setregid/setresuid/setresgid/futex/fcntl/clone/execve/waitpid/kill/nanosleep/times/getcwd/chdir/mkdirat/getdents64/unlinkat/mount/umount2/uname/prctl/getrlimit/setrlimit/prlimit64/set_tid_address/set_robust_list/getrandom/rt_sigaction/rt_sigprocmask/socket/bind/listen/accept4/connect/getsockname/getpeername/sendto/recvfrom/sendmsg/recvmsg/setsockopt/getsockopt/shutdown/poll + statx（未知号路由）+ exit/exit_group/yield + **ioctl（TTY 子集）**。 | basic 测例全解锁；lua/benchmark 脚本验收 |
 | wateros-cred | **代码已实现**——`cred-api` + `impl-root`；dispatch 表含 getuid/geteuid/getgid/getegid/getgroups/setuid/setgid/setreuid/setregid/setresuid/setresgid；fork/exec 生命周期已接入 | VFS stat 占位；与 ext4 inode owner 对接 |
 | wateros-base | 基础类型与 **base-config**（含 MM 相关常量） | 避免向上层泄漏板级魔法数 |
 | wateros-utils | 通用轻量工具 | 保持无跨层耦合 |
 
 ## 当前优先任务
 
-- **ioctl 补齐**：syscall dispatch 表中唯一缺少的关键 POSIX 调用；BusyBox ash TTY 交互需要 `TCGETS`/`TIOCGPGRP` 等。
 - **basic 测例全解锁**：`os/src/user_bringup_basic.rs` 中当前仅启用 8 个测例（clone/fork/wait/waitpid/getpid/getppid/exit/execve），其余 20+ 个为注释状态；需要逐项取消注释并修复边界失败。
-- **busybox 多脚本解锁**：`os/src/user_bringup_busybox.rs` 的 `SCRIPT_PATHS` 仅 `/glibc/basic_testcode.sh` 启用，其余 ~12 组的 glibc/musl 双路径均为注释状态。
+- **lua 脚本解锁**：`user_bringup_busybox.rs` 中 P2 lua 路径仍注释；P2 busybox 已于 2026-06-10 通过（glibc/musl 各 55/55，日志 `/tmp/wateros_P2_busybox.log`）。
+- **devfs `/dev/null`**：busybox 后台 job 重定向时报 `can't open '/dev/null'`（不影响当前 55/55 判读，但应补节点）。
 - **赛题脚手架**：多盘、RTC、关机、`*_testcode.sh` 串行调度与 START/END 输出，与 `testsuits-for-oskernel/README.md` 评测命令对齐。
 
 ## 赛题 test_case 全通过专项

@@ -127,9 +127,9 @@ sleep  times  uname  test_echo
 | 4.6 | 修复 lua 运行问题（动态链接/文件 IO） | mm/syscall/vfs | 1-2d |
 
 ### 验收标准
-- [ ] `busybox echo __ok__` 探针通过
-- [ ] `busybox sh -c 'echo hello'` 探针通过
-- [ ] busybox_testcode.sh 脚本开始运行
+- [x] `busybox echo __ok__` 探针通过 — 2026-06-10 P2 回归（含 `echo "#### independent command test"` 等）
+- [x] `busybox sh -c 'echo hello'` 探针通过 — `sh -c exit`、`ash -c exit` 均 success
+- [x] busybox_testcode.sh 脚本开始运行 — glibc/musl 各 **55/55** success（`/tmp/wateros_P2_busybox.log`）
 - [ ] lua 解释器可执行简单 `.lua` 文件
 
 ---
@@ -280,7 +280,7 @@ sleep  times  uname  test_echo
 | 里程碑 | 周次 | 验收条件 |
 |--------|------|----------|
 | **M1** | W2 | ioctl 补齐 + basic 首批 14 测程通过 + stage-02-mm/posix-fs-meta 恢复 |
-| **M2** | W4 | basic 24 测程全通过 + busybox sh 探针通过 + lua 解释器可运行 |
+| **M2** | W4 | basic 24 测程全通过 + busybox sh 探针通过 + lua 解释器可运行 | **busybox 55×2 已通过（2026-06-10）**；basic 全表与 lua 待测 |
 | **M3** | W6 | benchmark 4 组 + 网络 2 组脚本运行超 50% 测项 |
 | **M4** | W7 | 赛题 QEMU 命令对齐 + START/END 输出 + 关机 |
 | **M5** | W9 | LTP + libctest 通过 + musl 全量 |

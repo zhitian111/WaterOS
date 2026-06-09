@@ -7,7 +7,7 @@ extern crate alloc;
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use character_api_v0::{
-    register_character_device, CharacterDevice, SharedCharacterDevice,
+    register_character_device, CharacterDevice, CharacterDeviceKind, SharedCharacterDevice,
 };
 use driver_api::{DriverError, DriverResult};
 use spin::Mutex;
@@ -39,6 +39,10 @@ impl CharacterDevice for RtcCharacterDevice {
     fn write(&mut self, buf: &[u8]) -> DriverResult<usize> {
         let _ = buf;
         Err(DriverError::Unsupported)
+    }
+
+    fn device_kind(&self) -> CharacterDeviceKind {
+        CharacterDeviceKind::Rtc
     }
 }
 

@@ -98,6 +98,11 @@ pub trait VfsIoHandle {
         false
     }
 
+    /// 是否为 TTY 类字符设备（UART/console 等；syscall 层分发 TTY ioctl）。
+    fn is_tty_char_device(&self) -> bool {
+        false
+    }
+
     /// `poll`/`ppoll` 就绪位查询；默认不支持（`POLLNVAL` 由 syscall 层处理）。
     fn poll_revents(&mut self, events: i16) -> VfsResult<i16> {
         let _ = events;

@@ -9,7 +9,8 @@ use alloc::{format, string::String, string::ToString, vec::Vec};
 use api_v0::{DevFsManager, DevNode};
 use driver_block_api_v0::{block_device_at, block_device_count, SharedBlockDevice};
 use driver_character_api_v0::{
-    character_device_at, character_device_count, SharedCharacterDevice,
+    character_device_at, character_device_count, character_device_kind_at,
+    CharacterDeviceKind, SharedCharacterDevice,
 };
 use fs_api_v0::{
     FsAccessMode, FsCapability, FsError, FsImpl, FsKind, FsResult, SharedFs,
@@ -85,16 +86,24 @@ impl DevFsManager for KernelDevFsManager {
             let Some(dev) = character_device_at(idx) else {
                 continue;
             };
+            let kind = character_device_kind_at(idx).unwrap_or(CharacterDeviceKind::Serial);
             push_char_alias(&mut inner, format!("/dev/ttyS{idx}"), dev.clone());
             if idx == 0 {
                 push_char_alias(&mut inner, String::from("/dev/console"), dev.clone());
+                push_char_alias(&mut inner, String::from("/dev/tty"), dev.clone());
+            }
+            if kind == CharacterDeviceKind::Rtc {
+                push_char_alias(&mut inner, String::from("/dev/misc/rtc"), dev.clone());
+                push_char_alias(&mut inner, String::from("/dev/rtc0"), dev.clone());
+                push_char_alias(&mut inner, String::from("/dev/rtc"), dev.clone());
             }
         }
-        if char_count >= 2 {
-            if let Some(rtc) = character_device_at(1) {
-                push_char_alias(&mut inner, String::from("/dev/misc/rtc"), rtc.clone());
-                push_char_alias(&mut inner, String::from("/dev/rtc0"), rtc.clone());
-                push_char_alias(&mut inner, String::from("/dev/rtc"), rtc.clone());
+        for path in ["/dev/null", "/dev/zero"] {
+            if !inner.nodes.iter().any(|n| n.path == path) {
+                inner.nodes.push(api_v0::DevNode {
+                    path: String::from(path),
+                    node_type: api_v0::DevNodeType::Character,
+                });
             }
         }
 

@@ -93,12 +93,19 @@ impl VfsIoHandle for CharDevHandle {
     }
 
     fn ioctl(&mut self, request: usize, arg: usize) -> VfsResult<isize> {
+        if !self.rtc {
+            return Err(VfsError::Unsupported);
+        }
         let mut guard = self.device.lock();
         guard.ioctl(request, arg).map_err(map_driver_err)
     }
 
     fn is_rtc_device(&self) -> bool {
         self.rtc
+    }
+
+    fn is_tty_char_device(&self) -> bool {
+        !self.rtc
     }
 
     fn metadata(&self) -> VfsResult<VfsMetadata> {

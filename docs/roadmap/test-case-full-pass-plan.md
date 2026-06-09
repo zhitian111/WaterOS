@@ -22,7 +22,7 @@
 | **VFS** | **`impl-fs-bridge`** 稳定；**`impl-fd-session`** 完整支持 per-task fd 表——dup/dup3/fork 继承/CLOEXEC/refcount 全部实现并自测；VFS 自检通过 |
 | **内存管理** | **Sv39**、内核 ELF 装载、全局内核页表、栈式物理帧分配器；**用户态 `brk`/`mmap`/`munmap`/`mprotect`** 全部接线到 syscall 并有真实语义；`from_elf_path` 可完整装载 ELF |
 | **任务与调度** | 轮转、阻塞/睡眠队列、zombie 回收、WaitQueue、trap 帧协作；`spawn_user_task_from_loaded_elf` 完整；条件等待与 child-exit 等待服务 |
-| **系统调用** | **~80 个 syscall 已接线**（见 todolist.md），包括：文件 IO（read/write/writev/readlinkat/openat/close/lseek/fstat/dup/dup3/pipe2）、内存（brk/mmap/munmap/mprotect）、进程（clone/execve/waitpid/exit/exit_group/yield/kill/getpid/getppid/gettid）、凭证（get*id/set*id 全族）、时间（gettimeofday/clock_gettime/times/nanosleep）、目录（getcwd/chdir/mkdirat/getdents64/unlinkat/mount/umount2）、信号（rt_sigaction/rt_sigprocmask）、同步（futex/fcntl/poll）、网络（socket/bind/listen/accept4/connect/sendto/recvfrom/sendmsg/recvmsg/setsockopt/getsockopt/shutdown）、通用（uname/prctl/getrlimit/setrlimit/prlimit64/set_tid_address/set_robust_list/getrandom/statx）。**ioctl 仍未接线。** |
+| **系统调用** | **~80 个 syscall 已接线**（见 todolist.md），包括：文件 IO（read/write/writev/readlinkat/openat/close/lseek/fstat/dup/dup3/pipe2）、内存（brk/mmap/munmap/mprotect）、进程（clone/execve/waitpid/exit/exit_group/yield/kill/getpid/getppid/gettid）、凭证（get*id/set*id 全族）、时间（gettimeofday/clock_gettime/times/nanosleep）、目录（getcwd/chdir/mkdirat/getdents64/unlinkat/mount/umount2）、信号（rt_sigaction/rt_sigprocmask）、同步（futex/fcntl/poll）、网络（socket/bind/listen/accept4/connect/sendto/recvfrom/sendmsg/recvmsg/setsockopt/getsockopt/shutdown）、通用（uname/prctl/getrlimit/setrlimit/prlimit64/set_tid_address/set_robust_list/getrandom/statx/**ioctl**（TTY 子集））。 |
 | **IPC** | 聚合层默认含 **waitqueue**、**pipe**（内核 ring-buffer + fd endpoint）；**futex** 已接线（WAIT/WAKE）；signal dispatch 函数已实现但用户态 handler trap 返回路径待联调 |
 | **凭证** | **代码已实现**——`cred-api` + `impl-root`；dispatch 表含完整的 get/set*id 族；fork/exec 生命周期已接入 |
 | **网络栈** | **socket/bind/listen/accept4/connect/getsockname/getpeername/sendto/recvfrom/sendmsg/recvmsg/setsockopt/getsockopt/shutdown/poll 全部接线**；smoltcp 协议栈已集成；`network_poller_task` 周期性收发包 |
@@ -42,7 +42,7 @@
 | `stage-02-mm` | ❌ 注释 | 加载 `/glibc/basic/brk`/`mmap`/`munmap` |
 | `stage-posix-fs-meta` | ❌ 注释 | POSIX 文件系统元数据阶段 |
 | `stage-basic` | ✅ 激活 | 8 个 ELF 测程（clone/fork/wait/waitpid/getpid/getppid/exit/execve）启用，其余 20+ 个注释 |
-| `stage-busybox` | ✅ 激活 | 仅 `/glibc/basic_testcode.sh` 启用，其余 12 组脚本注释 |
+| `stage-busybox` | ✅ 激活 | **P2 回归基线**：`/glibc/busybox_testcode.sh` + `/musl/busybox_testcode.sh` 启用（2026-06-10，55/55 全通过）；其余阶段脚本注释 |
 
 ---
 
@@ -135,7 +135,7 @@ P1-P4 可集中 RISC-V 人力；P5 可与 P6 部分并行；P6 建议独立人�
 ### P1：基础回归 & ioctl
 
 - [ ] 回归基线确认：`make all` + QEMU riscv64 内核启动、自检、8 个 basic 测程通过
-- [ ] `dispatch_ioctl` 实现（TCGETS/TIOCGPGRP 等 TTY 子集）
+- [x] `dispatch_ioctl` 实现（TCGETS/TIOCGPGRP 等 TTY 子集）— 2026-06-10 P2 busybox 回归未触发 unknown nr
 - [ ] `user_bringup_bus.rs` 恢复 `stage-02-mm` 注释
 - [ ] `user_bringup_bus.rs` 恢复 `stage-posix-fs-meta` 注释
 - [ ] basic 测程首批解锁：`chdir` `close` `fstat` `getcwd` `gettimeofday` `open` `openat` `read` `write` `yield` `sleep` `times` `uname` `test_echo`
@@ -145,9 +145,12 @@ P1-P4 可集中 RISC-V 人力；P5 可与 P6 部分并行；P6 建议独立人�
 - [ ] basic 测程二批解锁：`dup` `dup2` `getdents` `mkdir_` `pipe` `unlink` `mount` `umount` `mnt`
 - [ ] basic 24 测程全部通过验收
 - [ ] `/musl/basic_testcode.sh` 解锁
-- [ ] `/glibc/busybox_testcode.sh` 解锁
-- [ ] busybox 探针（echo、sh -c）通过
+- [x] `/glibc/busybox_testcode.sh` 解锁 — 2026-06-10：**55/55** success，无 fail/PANIC（日志 `/tmp/wateros_P2_busybox.log`）
+- [x] `/musl/busybox_testcode.sh` 解锁 — 2026-06-10：**55/55** success（同上）
+- [x] busybox 探针（echo、sh -c）通过 — 含 `ash -c exit`、`sh -c exit`、管道/重定向全表
 - [ ] `/glibc/lua_testcode.sh` 解锁
+
+**P2 busybox 已知环境噪声**（不影响 55/55 判读）：`sh -c 'sleep 5' & kill $!` 时 shell 报 `can't open '/dev/null'`（glibc/musl 均有），测例仍记 success；待 devfs 补 `/dev/null` 节点。
 
 ### P3：benchmark & 网络
 

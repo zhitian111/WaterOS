@@ -40,6 +40,13 @@ pub trait SerialPort: Send {
     fn try_read_byte(&mut self) -> Option<u8>;
 }
 
+/// 字符设备类别（供 devfs 路径别名与 syscall 分发）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CharacterDeviceKind {
+    Serial,
+    Rtc,
+}
+
 /// 可在多任务间共享的字符设备句柄。
 pub type SharedCharacterDevice = Arc<Mutex<Box<dyn CharacterDevice>>>;
 
@@ -66,6 +73,11 @@ pub trait CharacterDevice: Send {
 
     fn ioctl(&mut self, _request: usize, _arg: usize) -> DriverResult<isize> {
         Err(DriverError::Unsupported)
+    }
+
+    /// devfs 与 VFS 用于区分 UART 与 RTC 等设备。
+    fn device_kind(&self) -> CharacterDeviceKind {
+        CharacterDeviceKind::Serial
     }
 }
 
@@ -144,4 +156,9 @@ where
     let dev = character_device_at(index)?;
     let mut guard = dev.lock();
     Some(f(guard.as_mut()))
+}
+
+/// 查询指定下标设备的类别。
+pub fn character_device_kind_at(index: usize) -> Option<CharacterDeviceKind> {
+    with_character_device(index, |dev| dev.device_kind())
 }

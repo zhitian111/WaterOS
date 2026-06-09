@@ -74,6 +74,14 @@ pub fn close_fd(fd: usize) -> VfsResult<()> {
     handle.close()
 }
 
+/// 当前任务下 `fd` 是否为 TTY 类字符设备。
+pub fn current_fd_is_tty_char(fd: usize) -> VfsResult<bool> {
+    with_current_task(|reg, task_id| {
+        let handle = reg.get_io_for_task(task_id, fd)?;
+        Ok(handle.is_tty_char_device())
+    })
+}
+
 /// 当前任务下 `fd` 是否为软件 RTC 字符设备。
 pub fn current_fd_is_rtc(fd: usize) -> VfsResult<bool> {
     with_current_task(|reg, task_id| {
