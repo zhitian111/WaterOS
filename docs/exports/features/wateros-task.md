@@ -24,6 +24,7 @@
 - 已引入通用 `TaskWaitHandle` / `TaskWaitTarget`，`waitqueue`、“等待任务退出”与“等待任意子任务退出”已共用同一条等待与 timeout 路径
 - spawn 会记录最小 `parent_id`，`TaskSnapshot` / `ExitedTask` 暴露该关系，供 syscall `waitpid` 判断与回收子任务
 - 退出任务现在会保留为可回收 zombie，并在退出时自动唤醒等待其退出的 waiter 或父任务的 child-exit waiter
+- round-robin 调度器在 `QueueTarget::Exited` 路径上**先** `wake_all_waiters_for_task_exit`、**再** `detach_task_from_run_queues`；若顺序颠倒，`detach` 会 `remove(exit_wait_queues[task_id])`，导致 `wait_for_task_exit` 的 waiter 永久丢失（bringup runner 等路径会卡死）
 - task 根 crate 已收紧为 facade，trap/tick/task-entry hook 已迁入内部 runtime
 - trap 路径已开始把完整 trap frame 快照复制进当前任务对象，并在返回前回写到 trap 栈帧
 - trap 读写路径已显式区分“是否返回用户态”的语义，完整 trap frame 留在 `platform-arch`/task impl 机制层，task 公共 API 通过 `TaskTrapSnapshot` 暴露架构无关语义快照

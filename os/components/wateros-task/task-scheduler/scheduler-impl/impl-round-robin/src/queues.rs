@@ -190,11 +190,12 @@ impl RoundRobinQueues {
                 if registry.state(task_id).is_none() {
                     return;
                 }
+                // Wake before detach: detach removes exit_wait_queues[task_id].
+                self.wake_all_waiters_for_task_exit(registry, task_id);
                 self.detach_task_from_run_queues(task_id);
                 registry.mark_exited(task_id, exit_code);
                 self.exited_queue
                     .push_back(task_id);
-                self.wake_all_waiters_for_task_exit(registry, task_id);
             }
         }
     }
