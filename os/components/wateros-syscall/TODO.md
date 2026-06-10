@@ -36,10 +36,10 @@
 | `munmap` | 部分接入 | 走 MM `MmapOps`。 |
 | `mprotect` | 部分接入 | libc/动态链接后续会继续依赖。 |
 | `get_mempolicy` (236) | 部分接入 | 语义在 `mm::mempolicy`；syscall 薄封装。 |
-| `sched_setparam` (118) | 部分接入 | 语义在 `task::sched`；非零 priority → `EPERM`。 |
-| `sched_setscheduler` (119) | 部分接入 | RT 策略 → `EPERM`；`SCHED_OTHER`+0 可 no-op。 |
-| `sched_getscheduler` (120) | 部分接入 | 委托 `task::get_scheduler`，有效策略 `SCHED_OTHER`。 |
-| `sched_getparam` (121) | 部分接入 | 委托 `task::get_param`，priority 0。 |
+| `sched_setparam` (118) | 已接入 | 委托 `task::set_param`；`SCHED_OTHER` 仅 priority 0；RT 策略允许 1–99。 |
+| `sched_setscheduler` (119) | 已接入 | 委托 `task::set_scheduler`；`SCHED_FIFO`/`SCHED_RR` 经 `impl-multi-class` 迁移 run-queue。 |
+| `sched_getscheduler` (120) | 已接入 | 委托 `task::get_scheduler`，返回 TCB 有效策略。 |
+| `sched_getparam` (121) | 已接入 | 委托 `task::get_param`，返回 TCB `sched_priority`。 |
 | `sched_setaffinity` (122) | 部分接入 | 未实现绑定，恒 `EPERM`。 |
 | `sched_getaffinity` (123) | 部分接入 | 委托 `task::fill_cpu_affinity_mask`，单核 CPU 0。 |
 | `clone`/`fork` | 部分接入 | `fork_user_aspace` + 子进程保留父 fork 点 `user_sp`；继承 cwd/fd。 |

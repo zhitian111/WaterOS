@@ -21,7 +21,8 @@ pub use process::{
     TaskClearTid, TaskGroupId, ThreadId,
 };
 pub use sched::{
-    SchedError, SchedParam, SchedPolicy, SCHED_CPU_MASK_MIN_BYTES, SCHED_CPU_MASK_RET_BYTES,
+    SchedError, SchedParam, SchedPolicy, SchedulableCheck, SCHED_CPU_MASK_MIN_BYTES,
+    SCHED_CPU_MASK_RET_BYTES,
 };
 pub use snapshot::{TaskSnapshot, TaskTrapSnapshot};
 pub use task::{

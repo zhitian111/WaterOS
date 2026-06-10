@@ -1,11 +1,11 @@
-//! 调度策略与 CPU 亲和性 **原语**（轮转 bring-up：有效策略恒为 `SCHED_OTHER`）。
+//! 调度策略与 CPU 亲和性 **原语**。
 
 use api_v0::{
     SchedError, SchedParam, SchedPolicy, SCHED_CPU_MASK_MIN_BYTES, SCHED_CPU_MASK_RET_BYTES,
     TaskId,
 };
 
-use crate::scheduler;
+use crate::scheduler::{self, SchedPolicyChangeAction};
 
 /// 将 Linux `pid`（0 = 当前线程）解析为 [`TaskId`]。
 pub fn resolve_sched_pid(pid: isize) -> Result<TaskId, SchedError> {
@@ -26,13 +26,19 @@ pub fn resolve_sched_pid(pid: isize) -> Result<TaskId, SchedError> {
 /// 查询任务的有效调度策略。
 pub fn get_scheduler(task_id: TaskId) -> Result<SchedPolicy, SchedError> {
     ensure_task_exists(task_id)?;
-    Ok(SchedPolicy::effective_for_bringup())
+    Ok(scheduler::task_snapshot(task_id)
+        .expect("task exists")
+        .sched_policy)
 }
 
 /// 查询任务的调度参数。
 pub fn get_param(task_id: TaskId) -> Result<SchedParam, SchedError> {
     ensure_task_exists(task_id)?;
-    Ok(SchedParam::default())
+    Ok(SchedParam {
+        priority: scheduler::task_snapshot(task_id)
+            .expect("task exists")
+            .sched_priority,
+    })
 }
 
 /// 将单节点 CPU 0 亲和性 mask 写入 `out`（长度至少为 `cpusetsize` 字节）。
@@ -60,31 +66,36 @@ pub fn validate_cpu_affinity_buf_len(cpusetsize: usize) -> Result<(), SchedError
     }
 }
 
-/// 设置调度策略；bring-up 仅接受 `SCHED_OTHER` + priority 0，RT 策略返回 [`SchedError::NotPermitted`]。
+/// 设置调度策略。
 pub fn set_scheduler(
     task_id: TaskId,
     policy: SchedPolicy,
     param: SchedParam,
 ) -> Result<(), SchedError> {
     ensure_task_exists(task_id)?;
-    match policy {
-        SchedPolicy::Other => {
-            if param.priority != 0 {
-                return Err(SchedError::InvalidArg);
-            }
+    validate_policy_param(policy, param)?;
+    match scheduler::apply_sched_policy_change(task_id, policy, param)? {
+        SchedPolicyChangeAction::NoReschedule => Ok(()),
+        SchedPolicyChangeAction::RescheduleNow => {
+            scheduler::suspend_current_and_run_next();
             Ok(())
         }
-        SchedPolicy::Fifo | SchedPolicy::Rr => Err(SchedError::NotPermitted),
     }
 }
 
-/// 设置调度参数；非零 priority 在 bring-up 下不允许。
+/// 设置调度参数（保持当前 policy 不变）。
 pub fn set_param(task_id: TaskId, param: SchedParam) -> Result<(), SchedError> {
     ensure_task_exists(task_id)?;
-    if param.priority != 0 {
-        return Err(SchedError::NotPermitted);
+    let policy = get_scheduler(task_id)?;
+    validate_policy_param(policy, param)?;
+    let full_param = SchedParam { priority: param.priority };
+    match scheduler::apply_sched_policy_change(task_id, policy, full_param)? {
+        SchedPolicyChangeAction::NoReschedule => Ok(()),
+        SchedPolicyChangeAction::RescheduleNow => {
+            scheduler::suspend_current_and_run_next();
+            Ok(())
+        }
     }
-    Ok(())
 }
 
 /// 设置 CPU 亲和性；bring-up 未实现，恒返回 [`SchedError::NotPermitted`]。
@@ -97,5 +108,24 @@ fn ensure_task_exists(task_id: TaskId) -> Result<(), SchedError> {
         Ok(())
     } else {
         Err(SchedError::NoSuchTask)
+    }
+}
+
+fn validate_policy_param(policy: SchedPolicy, param: SchedParam) -> Result<(), SchedError> {
+    match policy {
+        SchedPolicy::Other => {
+            if param.priority != 0 {
+                Err(SchedError::InvalidArg)
+            } else {
+                Ok(())
+            }
+        }
+        SchedPolicy::Fifo | SchedPolicy::Rr => {
+            if (1..=99).contains(&param.priority) {
+                Ok(())
+            } else {
+                Err(SchedError::InvalidArg)
+            }
+        }
     }
 }

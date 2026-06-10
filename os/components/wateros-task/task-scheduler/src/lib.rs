@@ -22,10 +22,13 @@ pub mod api {
     pub use api_v0::*;
 }
 
-#[cfg(feature = "impl-round-robin")]
+#[cfg(feature = "impl-multi-class")]
+pub use impl_multi_class as active_impl;
+
+#[cfg(all(feature = "impl-round-robin", not(feature = "impl-multi-class")))]
 pub use impl_round_robin as active_impl;
 
-pub use api_v0::{ScheduleReason, Scheduler};
+pub use api_v0::{ScheduleReason, SchedPolicyChangeAction, Scheduler};
 /// 当前架构下活动 trap 帧的具体类型别名；与 `wateros-task` 聚合层及
 /// `impl-round-robin` 一致。
 pub type TaskTrapFrame = arch::trap::ActiveTrapFrame;
@@ -38,6 +41,16 @@ pub use task_api::{
 /// 初始化当前启用的调度器实现。
 #[inline]
 pub fn init() { active_impl::init_scheduler(); }
+
+/// 应用调度策略变更；由 [`wateros-task::sched`] 在 syscall 路径调用。
+#[inline]
+pub fn apply_sched_policy_change(task_id : TaskId,
+                                 policy : task_api::SchedPolicy,
+                                 param : task_api::SchedParam)
+                                 -> Result<SchedPolicyChangeAction, task_api::SchedError>
+{
+    active_impl::apply_sched_policy_change(task_id, policy, param)
+}
 
 /// 当前运行任务的用户态地址空间 token（`0` 表示使用内核地址空间）。
 #[inline]

@@ -49,6 +49,12 @@ pub enum SchedError {
     NotPermitted,
 }
 
+/// 查询任务是否仍在就绪选取路径上可见（由 [`TaskRegistry`] 等实现）。
+pub trait SchedulableCheck {
+    /// 任务是否可被选中运行。
+    fn is_schedulable(&self, task_id: crate::TaskId) -> bool;
+}
+
 /// lp64 下返回给 userspace 的有效 CPU mask 字节数。
 pub const SCHED_CPU_MASK_RET_BYTES: usize = 8;
 

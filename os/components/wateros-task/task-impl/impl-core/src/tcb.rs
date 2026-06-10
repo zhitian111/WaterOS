@@ -6,9 +6,9 @@
 use abi::user_ret::UserRet;
 use alloc::boxed::Box;
 use api_v0::{
-    AddressSpaceHandle, ExitedTask, KernelStack, KernelTaskEntry, TaskBlockReason, TaskBootstrap,
-    TaskExitCode, TaskId, TaskKind, TaskRuntimeStats, TaskSnapshot, TaskState, TaskTick,
-    TaskTrapSnapshot, TaskWaitResult, UserImageInfo, UserStack, UserTask,
+    AddressSpaceHandle, ExitedTask, KernelStack, KernelTaskEntry, SchedPolicy, TaskBlockReason,
+    TaskBootstrap, TaskExitCode, TaskId, TaskKind, TaskRuntimeStats, TaskSnapshot, TaskState,
+    TaskTick, TaskTrapSnapshot, TaskWaitResult, UserImageInfo, UserStack, UserTask,
 };
 use arch::task::{ActiveArchTaskContext as TaskContext, ArchTaskContext};
 use arch::trap::{
@@ -92,6 +92,8 @@ pub struct TaskControlBlock {
     id : TaskId,
     parent_id : Option<TaskId>,
     state : TaskState,
+    sched_policy : SchedPolicy,
+    sched_priority : i32,
     stats : TaskRuntimeStats,
     wait_result : Option<TaskWaitResult>,
     task_cx : TaskContext,
@@ -114,6 +116,8 @@ impl TaskControlBlock {
         Self { id,
                parent_id,
                state : TaskState::Ready,
+               sched_policy : SchedPolicy::Other,
+               sched_priority : 0,
                stats : TaskRuntimeStats::default(),
                wait_result : None,
                task_cx,
@@ -132,6 +136,8 @@ impl TaskControlBlock {
         Self { id,
                parent_id : None,
                state : TaskState::Ready,
+               sched_policy : SchedPolicy::Other,
+               sched_priority : 0,
                stats : TaskRuntimeStats::default(),
                wait_result : None,
                task_cx,
@@ -148,6 +154,8 @@ impl TaskControlBlock {
         Self { id,
                parent_id,
                state : TaskState::Ready,
+               sched_policy : SchedPolicy::Other,
+               sched_priority : 0,
                stats : TaskRuntimeStats::default(),
                wait_result : None,
                task_cx,
@@ -208,6 +216,8 @@ impl TaskControlBlock {
         Some(Self { id : child_id,
                     parent_id : Some(self.id),
                     state : TaskState::Ready,
+                    sched_policy : self.sched_policy,
+                    sched_priority : self.sched_priority,
                     stats : TaskRuntimeStats::default(),
                     wait_result : None,
                     task_cx,
@@ -248,6 +258,8 @@ impl TaskControlBlock {
         Some(Self { id : child_id,
                     parent_id : Some(self.id),
                     state : TaskState::Ready,
+                    sched_policy : self.sched_policy,
+                    sched_priority : self.sched_priority,
                     stats : TaskRuntimeStats::default(),
                     wait_result : None,
                     task_cx,
@@ -311,6 +323,18 @@ impl TaskControlBlock {
     pub fn state(&self) -> TaskState { self.state }
 
     #[inline]
+    pub fn sched_policy(&self) -> SchedPolicy { self.sched_policy }
+
+    #[inline]
+    pub fn sched_priority(&self) -> i32 { self.sched_priority }
+
+    #[inline]
+    pub fn set_sched(&mut self, policy : SchedPolicy, priority : i32) {
+        self.sched_policy = policy;
+        self.sched_priority = priority;
+    }
+
+    #[inline]
     pub fn is_idle(&self) -> bool { matches!(self.inner, TaskInner::Idle(_)) }
 
     #[inline]
@@ -339,6 +363,8 @@ impl TaskControlBlock {
                        parent_id : self.parent_id,
                        kind,
                        state : self.state,
+                       sched_policy : self.sched_policy,
+                       sched_priority : self.sched_priority,
                        trap_frame,
                        stats : self.stats }
     }

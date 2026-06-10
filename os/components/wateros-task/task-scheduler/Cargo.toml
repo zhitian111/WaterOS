@@ -6,12 +6,14 @@
 [dependencies]
     api-v0 = { path = "./scheduler-api/api-v0/", package = "wateros-task-scheduler-api-v0", default-features = true }
     arch = { path = "../../wateros-platform/platform-arch/", package = "wateros-platform-arch", default-features = false }
+    impl-multi-class = { path = "./scheduler-impl/impl-multi-class/", package = "wateros-task-scheduler-impl-multi-class", default-features = false, optional = true }
     impl-round-robin = { path = "./scheduler-impl/impl-round-robin/", package = "wateros-task-scheduler-impl-round-robin", default-features = false, optional = true }
     task-api = { path = "../task-api/api-v0/", package = "wateros-task-api-v0", default-features = true }
 
 [features]
-    api-v0 = [ "impl-round-robin/api-v0" ]
-    default = [ "api-v0", "impl-round-robin" ]
+    api-v0 = [  ]
+    default = [ "api-v0", "impl-multi-class" ]
+    impl-multi-class = [ "dep:impl-multi-class", "impl-multi-class/api-v0" ]
     impl-round-robin = [ "dep:impl-round-robin", "impl-round-robin/api-v0" ]
 
 [profile.dev]

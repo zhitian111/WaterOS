@@ -6,10 +6,29 @@
 
 #![no_std]
 
+extern crate alloc;
+
+mod other_ready;
+mod registry;
+mod sched_policy;
+mod wait_queues;
+
 use task_api::{
     ExitedTask, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskId, TaskSnapshot, TaskTick,
     TaskWaitHandle, TaskWaitResult, UserTask, WaitQueueId,
 };
+
+pub use other_ready::OtherReadyQueue;
+pub use registry::TaskRegistry;
+pub use sched_policy::{QueueTarget, SchedPolicyChangeAction};
+pub use task_api::SchedulableCheck;
+pub use wait_queues::WaitQueues;
+
+/// 首次上下文切换所需的指针对（bootstrap/current → next）。
+pub type SwitchPair = (
+    *mut arch::task::ActiveArchTaskContext,
+    *const arch::task::ActiveArchTaskContext,
+);
 
 /// 一次调度决策的触发来源；由 `RoundRobinScheduler::schedule`
 /// 等解释为就绪/阻塞/睡眠队列目标。

@@ -4,7 +4,7 @@
 //! 调度器与调试接口通过 [`TaskSnapshot`] / [`TaskTrapSnapshot`]
 //! 观察任务，而具体保存顺序由 `arch::trap` 实现保证。
 
-use crate::{TaskId, TaskKind, TaskRuntimeStats, TaskState};
+use crate::{SchedPolicy, TaskId, TaskKind, TaskRuntimeStats, TaskState};
 
 /// 对外暴露的 trap 现场语义快照。
 ///
@@ -85,6 +85,10 @@ pub struct TaskSnapshot {
     pub kind : TaskKind,
     /// 当前任务状态。
     pub state : TaskState,
+    /// 有效调度策略。
+    pub sched_policy : SchedPolicy,
+    /// `sched_priority`；`SCHED_OTHER` 下恒为 0。
+    pub sched_priority : i32,
     /// 最近一次 trap 的语义快照。
     pub trap_frame : Option<TaskTrapSnapshot>,
     /// 调度器维护的运行统计。

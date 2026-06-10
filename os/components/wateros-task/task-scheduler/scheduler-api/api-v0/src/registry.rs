@@ -1,18 +1,17 @@
 //! **任务注册表**：可复用槽位 + generation 编码的 `TaskId` → `TaskControlBlock`
 //! 表、当前运行任务指针，以及首次切换用的引导上下文。
 
-extern crate alloc;
-
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use arch::task::{ActiveArchTaskContext as TaskContext, ArchTaskContext};
+use arch::trap::ActiveTrapFrame as TaskTrapFrame;
 use task_api::{
-    ExitedTask, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskId, TaskSnapshot, TaskState,
-    TaskTick, TaskWaitHandle, TaskWaitResult, TaskWaitTarget, UserTask, IDLE_TASK_ID,
+    ExitedTask, KernelTaskEntry, SchedPolicy, TaskBlockReason, TaskExitCode, TaskId, TaskSnapshot,
+    TaskState, TaskTick, TaskWaitHandle, TaskWaitResult, TaskWaitTarget, UserTask, IDLE_TASK_ID,
 };
 use task_impl::TaskControlBlock;
 
-use crate::{SwitchPair, TaskTrapFrame};
+use crate::{SchedulableCheck, SwitchPair};
 
 unsafe extern "C" {
     /// 聚合 crate 提供的 idle 循环体；idle TCB 的入口地址取自此符号。
@@ -45,8 +44,6 @@ impl TaskSlot {
     }
 }
 
-// `TaskId` 低位为槽号，高位为 generation。reap 后槽位进入 free-list；
-// 下一次复用时 generation 已增加，因此旧 TaskId 无法命中新任务。
 struct TaskTable {
     slots : Vec<TaskSlot>,
     free_slots : Vec<usize>,
@@ -140,22 +137,23 @@ impl TaskTable {
     }
 }
 
-/// 轮转调度器持有的 TCB 表与「当前任务」元数据；队列逻辑见 `queues` 模块。
-pub(super) struct TaskRegistry {
-    // 首次 `__switch` 时的“伪当前”上下文占位，来自引导/单核 bring-up 路径。
+/// 各调度器实现共享的 TCB 表与「当前任务」元数据。
+pub struct TaskRegistry {
     bootstrap_task_cx : TaskContext,
     task_table : TaskTable,
     current_task_id : Option<TaskId>,
 }
 
 impl TaskRegistry {
-    pub(super) fn new() -> Self {
+    /// 构造空注册表（须再调用 [`Self::init`]）。
+    pub fn new() -> Self {
         Self { bootstrap_task_cx : TaskContext::zero_init(),
                task_table : TaskTable::new(),
                current_task_id : None }
     }
 
-    pub(super) fn init(&mut self) {
+    /// 重置并插入 idle 任务。
+    pub fn init(&mut self) {
         self.bootstrap_task_cx = TaskContext::zero_init();
         self.task_table
             .clear();
@@ -165,7 +163,8 @@ impl TaskRegistry {
                                                              __wateros_idle_task_runtime_main)));
     }
 
-    pub(super) fn spawn_kernel_task(&mut self, entry : KernelTaskEntry, arg : usize) -> TaskId {
+    /// 创建内核任务并返回其 id。
+    pub fn spawn_kernel_task(&mut self, entry : KernelTaskEntry, arg : usize) -> TaskId {
         let task_id = self.task_table.allocate_id();
         let parent_id = self.current_task_id;
         self.task_table
@@ -173,7 +172,8 @@ impl TaskRegistry {
         task_id
     }
 
-    pub(super) fn spawn_user_task_spec(&mut self, spec : UserTask) -> TaskId {
+    /// 按规格创建用户任务并返回其 id。
+    pub fn spawn_user_task_spec(&mut self, spec : UserTask) -> TaskId {
         let task_id = self.task_table.allocate_id();
         log::trace!("[task-spawn] user spec id={} entry_pc={:#x} address_space_raw={:#x} \
                      image={:?} external_stack={:?}",
@@ -190,21 +190,14 @@ impl TaskRegistry {
         task_id
     }
 
-    /// 从当前任务 fork 一个子用户任务。
-    ///
-    /// 子任务继承父任务的 trap 帧（a0 置 0）、使用独立地址空间
-    /// (`new_aspace_ptr` / `new_satp`，由 `mm::kernel_mm::fork_user_aspace`
-    /// 提供)、 独立内核栈。
-    ///
-    /// `child_stack` 非零时（clone），子任务初始用户 SP 设为该值。
-    pub(super) fn fork_current(&mut self,
-                               child_stack : usize,
-                               new_aspace_ptr : usize,
-                               new_satp : usize)
-                               -> Option<TaskId> {
+    /// 从当前任务 fork 子用户任务。
+    pub fn fork_current(&mut self,
+                        child_stack : usize,
+                        new_aspace_ptr : usize,
+                        new_satp : usize)
+                        -> Option<TaskId> {
         let parent_id = self.current_task_id?;
         let child_id = self.task_table.allocate_id();
-
         let parent = self.task_table
                          .task(parent_id);
         log::trace!("[fork] parent={} child_stack={:#x} new_satp={:#x}",
@@ -215,7 +208,6 @@ impl TaskRegistry {
                                      child_stack,
                                      new_aspace_ptr,
                                      new_satp)?;
-
         self.task_table
             .insert(Box::new(child));
         log::trace!("[fork] child={} created parent={}",
@@ -224,19 +216,17 @@ impl TaskRegistry {
         Some(child_id)
     }
 
-    /// 从当前用户任务 clone 一个同进程线程。
-    pub(super) fn clone_current_thread(&mut self,
-                                       child_stack : usize,
-                                       tls : usize,
-                                       set_tls : bool)
-                                       -> Option<TaskId> {
+    /// 从当前用户任务 clone 同进程线程。
+    pub fn clone_current_thread(&mut self,
+                                child_stack : usize,
+                                tls : usize,
+                                set_tls : bool)
+                                -> Option<TaskId> {
         let parent_id = self.current_task_id?;
         let child_id = self.task_table.allocate_id();
-
         let parent = self.task_table
                          .task(parent_id);
         let child = parent.clone_thread_from(child_id, child_stack, tls, set_tls)?;
-
         self.task_table
             .insert(Box::new(child));
         log::trace!("[clone-thread] child={} created parent={} child_stack={:#x} set_tls={}",
@@ -248,16 +238,16 @@ impl TaskRegistry {
     }
 
     /// execve：替换当前任务的地址空间、入口和栈。
-    pub(super) fn execve_current(&mut self,
-                                 entry_pc : usize,
-                                 sp : usize,
-                                 argc : usize,
-                                 argv : usize,
-                                 envp : usize,
-                                 satp : usize,
-                                 user_aspace_ptr : usize,
-                                 image_info : task_api::UserImageInfo,
-                                 stack_info : task_api::UserStack) {
+    pub fn execve_current(&mut self,
+                          entry_pc : usize,
+                          sp : usize,
+                          argc : usize,
+                          argv : usize,
+                          envp : usize,
+                          satp : usize,
+                          user_aspace_ptr : usize,
+                          image_info : task_api::UserImageInfo,
+                          stack_info : task_api::UserStack) {
         let current_id = self.current_task_id
                              .expect("execve requires a current task");
         self.task_table
@@ -273,13 +263,15 @@ impl TaskRegistry {
                          stack_info);
     }
 
-    pub(super) fn first_switch_to(&mut self, next_task_id : TaskId) -> SwitchPair {
+    /// 首次切入调度：从 bootstrap 上下文切换到 `next_task_id`。
+    pub fn first_switch_to(&mut self, next_task_id : TaskId) -> SwitchPair {
         let current_task_cx_ptr = &mut self.bootstrap_task_cx as *mut TaskContext;
         let next_task_cx_ptr = self.mark_running_and_set_current(next_task_id);
         (current_task_cx_ptr, next_task_cx_ptr)
     }
 
-    pub(super) fn take_current_switch_out(&mut self) -> Option<(TaskId, *mut TaskContext)> {
+    /// 取出当前运行任务及其可写上下文指针，并清除「当前任务」标记。
+    pub fn take_current_switch_out(&mut self) -> Option<(TaskId, *mut TaskContext)> {
         let current_task_id = self.current_task_id
                                   .take()?;
         let current_ptr = self.task_table
@@ -288,7 +280,8 @@ impl TaskRegistry {
         Some((current_task_id, current_ptr))
     }
 
-    pub(super) fn mark_running_and_set_current(&mut self, task_id : TaskId) -> *const TaskContext {
+    /// 将 `task_id` 标为 Running 并设为当前任务，返回其只读上下文指针。
+    pub fn mark_running_and_set_current(&mut self, task_id : TaskId) -> *const TaskContext {
         self.task_table
             .task_mut(task_id)
             .mark_running();
@@ -298,52 +291,61 @@ impl TaskRegistry {
             .context_ptr()
     }
 
-    pub(super) fn mark_ready(&mut self, task_id : TaskId) {
+    /// 更新任务的调度策略与优先级（仅 TCB 字段，不迁移 run-queue）。
+    pub fn set_task_sched(&mut self, task_id : TaskId, policy : SchedPolicy, priority : i32) -> bool {
+        if let Some(task) = self.task_table.task_mut_opt(task_id) {
+            task.set_sched(policy, priority);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn mark_ready(&mut self, task_id : TaskId) {
         if let Some(task) = self.task_table.task_mut_opt(task_id) {
             task.mark_ready();
         }
     }
 
-    pub(super) fn mark_blocking(&mut self, task_id : TaskId, reason : TaskBlockReason) {
+    pub fn mark_blocking(&mut self, task_id : TaskId, reason : TaskBlockReason) {
         if let Some(task) = self.task_table.task_mut_opt(task_id) {
             task.mark_blocking(reason);
         }
     }
 
-    pub(super) fn mark_sleeping(&mut self, task_id : TaskId, wake_tick : TaskTick) {
+    pub fn mark_sleeping(&mut self, task_id : TaskId, wake_tick : TaskTick) {
         if let Some(task) = self.task_table.task_mut_opt(task_id) {
             task.mark_sleeping(wake_tick);
         }
     }
 
-    pub(super) fn mark_exited(&mut self, task_id : TaskId, exit_code : TaskExitCode) {
+    pub fn mark_exited(&mut self, task_id : TaskId, exit_code : TaskExitCode) {
         if let Some(task) = self.task_table.task_mut_opt(task_id) {
             task.mark_exited(exit_code);
         }
     }
 
-    pub(super) fn ready_to_wake(&self, task_id : TaskId, current_tick : TaskTick) -> bool {
+    pub fn ready_to_wake(&self, task_id : TaskId, current_tick : TaskTick) -> bool {
         self.task_table
             .task_opt(task_id)
             .is_some_and(|task| task.ready_to_wake(current_tick))
     }
 
-    pub(super) fn is_idle(&self, task_id : TaskId) -> bool {
+    pub fn is_idle(&self, task_id : TaskId) -> bool {
         self.task_table
             .task_opt(task_id)
             .is_some_and(TaskControlBlock::is_idle)
     }
 
-    pub(super) fn state(&self, task_id : TaskId) -> Option<TaskState> {
+    pub fn state(&self, task_id : TaskId) -> Option<TaskState> {
         self.task_table
             .task_opt(task_id)
             .map(TaskControlBlock::state)
     }
 
-    pub(super) fn wait_target_ready(&self, wait_handle : TaskWaitHandle) -> bool {
+    pub fn wait_target_ready(&self, wait_handle : TaskWaitHandle) -> bool {
         match wait_handle.target() {
             TaskWaitTarget::WaitQueue(_) => false,
-            // 目标任务已退出或槽位不存在（视为已结束）时，等待方无需阻塞。
             TaskWaitTarget::TaskExit(task_id) => {
                 self.state(task_id)
                     .map(|state| matches!(state, TaskState::Exited(_)))
@@ -357,30 +359,19 @@ impl TaskRegistry {
         }
     }
 
-    pub(super) fn parent_id(&self, task_id : TaskId) -> Option<TaskId> {
+    pub fn parent_id(&self, task_id : TaskId) -> Option<TaskId> {
         self.task_table
             .task_opt(task_id)
             .and_then(TaskControlBlock::parent_id)
     }
 
-    pub(super) fn is_schedulable(&self, task_id : TaskId) -> bool {
-        if task_id == IDLE_TASK_ID {
-            return self.task_table
-                       .task_opt(task_id)
-                       .is_some();
-        }
-        self.task_table
-            .task_opt(task_id)
-            .is_some_and(|task| !matches!(task.state(), TaskState::Exited(_)))
-    }
-
-    pub(super) fn has_child(&self, parent_id : TaskId) -> bool {
+    pub fn has_child(&self, parent_id : TaskId) -> bool {
         self.task_table
             .iter_tasks()
             .any(|task| task.parent_id() == Some(parent_id))
     }
 
-    pub(super) fn find_exited_child(&self, parent_id : TaskId) -> Option<TaskId> {
+    pub fn find_exited_child(&self, parent_id : TaskId) -> Option<TaskId> {
         self.task_table
             .iter_tasks()
             .find(|task| {
@@ -389,7 +380,7 @@ impl TaskRegistry {
             .map(TaskControlBlock::id)
     }
 
-    pub(super) fn account_tick_for_current(&mut self) {
+    pub fn account_tick_for_current(&mut self) {
         if let Some(current_task_id) = self.current_task_id {
             if !self.task_table
                     .task(current_task_id)
@@ -402,9 +393,9 @@ impl TaskRegistry {
         }
     }
 
-    pub(super) fn current_task_id(&self) -> Option<TaskId> { self.current_task_id }
+    pub fn current_task_id(&self) -> Option<TaskId> { self.current_task_id }
 
-    pub(super) fn current_task_snapshot(&self) -> Option<TaskSnapshot> {
+    pub fn current_task_snapshot(&self) -> Option<TaskSnapshot> {
         self.current_task_id
             .map(|task_id| {
                 self.task_table
@@ -413,13 +404,13 @@ impl TaskRegistry {
             })
     }
 
-    pub(super) fn task_snapshot(&self, task_id : TaskId) -> Option<TaskSnapshot> {
+    pub fn task_snapshot(&self, task_id : TaskId) -> Option<TaskSnapshot> {
         self.task_table
             .task_opt(task_id)
             .map(TaskControlBlock::snapshot)
     }
 
-    pub(super) fn current_task_kernel_stack_top(&self) -> Option<usize> {
+    pub fn current_task_kernel_stack_top(&self) -> Option<usize> {
         self.current_task_id
             .map(|task_id| {
                 self.task_table
@@ -428,7 +419,7 @@ impl TaskRegistry {
             })
     }
 
-    pub(super) fn current_task_address_space_raw(&self) -> usize {
+    pub fn current_task_address_space_raw(&self) -> usize {
         self.current_task_id
             .map(|task_id| {
                 self.task_table
@@ -438,7 +429,7 @@ impl TaskRegistry {
             .unwrap_or(0)
     }
 
-    pub(super) fn current_task_user_aspace_ptr(&self) -> usize {
+    pub fn current_task_user_aspace_ptr(&self) -> usize {
         self.current_task_id
             .map(|task_id| {
                 self.task_table
@@ -448,11 +439,11 @@ impl TaskRegistry {
             .unwrap_or(0)
     }
 
-    pub(super) fn current_task_user_address_space_token(&self) -> usize {
+    pub fn current_task_user_address_space_token(&self) -> usize {
         self.current_task_address_space_raw()
     }
 
-    pub(super) fn current_task_trap_return_address_space_token(&self) -> usize {
+    pub fn current_task_trap_return_address_space_token(&self) -> usize {
         self.current_task_id
             .map(|task_id| {
                 self.task_table
@@ -462,19 +453,19 @@ impl TaskRegistry {
             .unwrap_or(0)
     }
 
-    pub(super) fn clear_wait_result(&mut self, task_id : TaskId) {
+    pub fn clear_wait_result(&mut self, task_id : TaskId) {
         if let Some(task) = self.task_table.task_mut_opt(task_id) {
             task.clear_wait_result();
         }
     }
 
-    pub(super) fn finish_wait(&mut self, task_id : TaskId, result : TaskWaitResult) {
+    pub fn finish_wait(&mut self, task_id : TaskId, result : TaskWaitResult) {
         if let Some(task) = self.task_table.task_mut_opt(task_id) {
             task.finish_wait(result);
         }
     }
 
-    pub(super) fn take_current_wait_result(&mut self) -> TaskWaitResult {
+    pub fn take_current_wait_result(&mut self) -> TaskWaitResult {
         let current_task_id = self.current_task_id
                                   .expect("wait result can only be taken for a running task");
         self.task_table
@@ -482,20 +473,19 @@ impl TaskRegistry {
             .take_wait_result()
     }
 
-    pub(super) fn reap_task(&mut self, task_id : TaskId) -> Option<ExitedTask> {
+    pub fn reap_task(&mut self, task_id : TaskId) -> Option<ExitedTask> {
         let task = self.task_table
                        .remove(task_id)?;
         task.exited_task()
     }
 
-    pub(super) fn begin_current_trap_frame_access(&mut self,
-                                                  trap_frame : TaskTrapFrame)
-                                                  -> Option<*mut TaskTrapFrame> {
+    pub fn begin_current_trap_frame_access(&mut self,
+                                           trap_frame : TaskTrapFrame)
+                                           -> Option<*mut TaskTrapFrame> {
         let current_task_id = self.current_task_id?;
         if self.is_idle(current_task_id) {
             return None;
         }
-        // 内核任务没有用户态 trap 帧需要保存，trap handler 直接使用栈上帧
         if !self.task_table
                 .task(current_task_id)
                 .is_user()
@@ -507,7 +497,7 @@ impl TaskRegistry {
                  .begin_trap_frame_access(trap_frame))
     }
 
-    pub(super) fn restore_current_trap_frame(&self, trap_frame : &mut TaskTrapFrame) -> bool {
+    pub fn restore_current_trap_frame(&self, trap_frame : &mut TaskTrapFrame) -> bool {
         self.current_task_id
             .map(|current_task_id| {
                 self.task_table
@@ -515,5 +505,18 @@ impl TaskRegistry {
                     .restore_trap_frame_into(trap_frame)
             })
             .unwrap_or(false)
+    }
+}
+
+impl SchedulableCheck for TaskRegistry {
+    fn is_schedulable(&self, task_id : TaskId) -> bool {
+        if task_id == IDLE_TASK_ID {
+            return self.task_table
+                       .task_opt(task_id)
+                       .is_some();
+        }
+        self.task_table
+            .task_opt(task_id)
+            .is_some_and(|task| !matches!(task.state(), TaskState::Exited(_)))
     }
 }

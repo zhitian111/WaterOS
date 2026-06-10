@@ -4,4 +4,7 @@
     edition = "2024"
 
 [dependencies]
+    arch = { path = "../../../../wateros-platform/platform-arch/", package = "wateros-platform-arch", default-features = false }
+    log = "0.4"
     task-api = { path = "../../../task-api/api-v0/", package = "wateros-task-api-v0", default-features = true }
+    task-impl = { path = "../../../task-impl/impl-core/", package = "wateros-task-impl-core", default-features = true }

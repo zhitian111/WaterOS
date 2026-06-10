@@ -4,4 +4,4 @@
     edition = "2024"
 
 [dependencies]
-    abi = { path = "../../../../wateros-abi/", package = "wateros-abi" }
+    abi = { path = "../../../../wateros-abi/", package = "wateros-abi", features = [ "api-v0" ] }

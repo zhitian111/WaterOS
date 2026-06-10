@@ -19,11 +19,11 @@ use task_api::{
 };
 
 mod queues;
-mod registry;
 mod scheduler;
 
-use api_v0::ScheduleReason;
+use api_v0::{ScheduleReason, SchedPolicyChangeAction};
 use scheduler::RoundRobinScheduler;
+use task_api::{SchedError, SchedParam, SchedPolicy};
 
 /// 与本实现 crate 中 `RoundRobinScheduler` 使用的 trap
 /// 帧类型一致，供聚合层类型别名复用。
@@ -35,7 +35,7 @@ unsafe extern "C" {
     fn __switch(current_task_cx_ptr : *mut TaskContext, next_task_cx_ptr : *const TaskContext);
 }
 
-type SwitchPair = (*mut TaskContext, *const TaskContext);
+pub type SwitchPair = api_v0::SwitchPair;
 
 // 单处理器 bring-up：全局唯一调度器实例，由 `init_scheduler`
 // 一次性写入；`SCHEDULER_READY` 保证可见性。
@@ -112,6 +112,16 @@ pub fn current_task_user_address_space_token() -> usize {
 pub fn current_task_trap_return_address_space_token() -> usize {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.current_task_trap_return_address_space_token())
+}
+
+/// 应用调度策略变更（Wave 1：仅更新 TCB，不迁移 run-queue）。
+pub fn apply_sched_policy_change(task_id : TaskId,
+                                 policy : SchedPolicy,
+                                 param : SchedParam)
+                                 -> Result<SchedPolicyChangeAction, SchedError>
+{
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.apply_sched_policy_change(task_id, policy, param))
 }
 
 /// 幂等初始化全局调度器与内部 `RoundRobinScheduler` 状态。
