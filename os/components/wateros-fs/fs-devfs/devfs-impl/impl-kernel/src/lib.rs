@@ -97,13 +97,8 @@ impl DevFsManager for KernelDevFsManager {
                 push_char_alias(&mut inner, String::from("/dev/rtc0"), dev.clone());
                 push_char_alias(&mut inner, String::from("/dev/rtc"), dev.clone());
             }
-        }
-        for path in ["/dev/null", "/dev/zero"] {
-            if !inner.nodes.iter().any(|n| n.path == path) {
-                inner.nodes.push(api_v0::DevNode {
-                    path: String::from(path),
-                    node_type: api_v0::DevNodeType::Character,
-                });
+            if kind == CharacterDeviceKind::Null {
+                push_char_alias(&mut inner, String::from("/dev/null"), dev.clone());
             }
         }
 

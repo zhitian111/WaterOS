@@ -45,6 +45,7 @@ pub trait SerialPort: Send {
 pub enum CharacterDeviceKind {
     Serial,
     Rtc,
+    Null,
 }
 
 /// 可在多任务间共享的字符设备句柄。

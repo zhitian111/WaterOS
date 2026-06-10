@@ -1,0 +1,13 @@
+[package]
+    name = "wateros-driver-character-impl-null-stub"
+    version = "0.1.0"
+    edition = "2024"
+
+[dependencies]
+    character_api_v0 = { path = "../../character-api/api-v0/", package = "wateros-driver-character-api-v0", default-features = true }
+    driver-api = { path = "../../../driver-api/api-v0/", package = "wateros-driver-api-v0", default-features = true }
+    spin = "0.10.0"
+
+[features]
+    api-v0 = [  ]
+    default = [ "api-v0" ]

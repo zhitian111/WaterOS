@@ -21,6 +21,9 @@ pub mod api_v0 {
 #[cfg(feature = "impl-rtc-stub")]
 pub use impl_rtc_stub::{register_rtc_stub, RtcCharacterDevice, RtcTime};
 
+#[cfg(feature = "impl-null-stub")]
+pub use impl_null_stub::{register_null_stub, NullCharacterDevice};
+
 /// 字符子系统在 DTB 中声明可尝试绑定的设备。
 pub const CHARACTER_SUPPORTED_DEVICES: &[SupportedDeviceEntry] = &[
     SupportedDeviceEntry {
@@ -63,10 +66,21 @@ pub fn is_uart_compatible(compatibles: &[String]) -> bool {
     })
 }
 
-#[cfg(feature = "impl-rtc-stub")]
+#[cfg(all(feature = "impl-rtc-stub", feature = "impl-null-stub"))]
+pub fn register_builtin_character_devices() {
+    register_rtc_stub();
+    register_null_stub();
+}
+
+#[cfg(all(feature = "impl-rtc-stub", not(feature = "impl-null-stub")))]
 pub fn register_builtin_character_devices() {
     register_rtc_stub();
 }
 
-#[cfg(not(feature = "impl-rtc-stub"))]
+#[cfg(all(not(feature = "impl-rtc-stub"), feature = "impl-null-stub"))]
+pub fn register_builtin_character_devices() {
+    register_null_stub();
+}
+
+#[cfg(not(any(feature = "impl-rtc-stub", feature = "impl-null-stub")))]
 pub fn register_builtin_character_devices() {}

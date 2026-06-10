@@ -53,7 +53,14 @@ impl CharDevHandle {
     }
 
     pub fn from_devfs_path(device: SharedCharacterDevice, path: &str) -> Self {
-        if path == "/dev/misc/rtc" || path == "/dev/rtc0" || path == "/dev/rtc" {
+        if path == "/dev/null" {
+            Self {
+                device,
+                stdin_eof: false,
+                rtc: false,
+                mode: 0o20666,
+            }
+        } else if is_rtc_dev_path(path) {
             Self::new_rtc(device)
         } else {
             Self::new(device, false)
@@ -125,4 +132,19 @@ impl VfsIoHandle for CharDevHandle {
 /// 若 `path` 为 RTC 别名则返回 true。
 pub fn is_rtc_dev_path(path: &str) -> bool {
     matches!(path, "/dev/misc/rtc" | "/dev/rtc0" | "/dev/rtc")
+}
+
+fn mode_for_devfs_path(path: &str) -> u16 {
+    if path == "/dev/null" {
+        0o20666
+    } else if is_rtc_dev_path(path) {
+        0o20644
+    } else {
+        0o20660
+    }
+}
+
+/// 未打开 fd 时按 devfs 路径返回字符设备元数据（`fstatat` / `faccessat`）。
+pub fn metadata_for_devfs_path(path: &str) -> VfsMetadata {
+    char_metadata(mode_for_devfs_path(path))
 }

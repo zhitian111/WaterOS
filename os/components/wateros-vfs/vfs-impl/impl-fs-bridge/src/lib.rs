@@ -118,27 +118,11 @@ fn fs_and_rel_rw(path: &str) -> VfsResult<(SharedRwFs, String)> {
 }
 
 fn char_dev_exists(abs: &str) -> bool {
-    if is_builtin_dev_path(abs) {
-        return true;
-    }
     fs::devfs::active_impl::lookup_character_device(abs).is_ok()
 }
 
 fn char_dev_metadata(abs: &str) -> VfsMetadata {
-    let mode = if matches!(abs, "/dev/misc/rtc" | "/dev/rtc0" | "/dev/rtc") {
-        0o20644u16
-    } else {
-        0o20660u16
-    };
-    VfsMetadata {
-        node_type: VfsNodeType::Special,
-        size: 0,
-        mode,
-    }
-}
-
-fn is_builtin_dev_path(abs: &str) -> bool {
-    matches!(abs, "/dev/null" | "/dev/zero")
+    impl_fd_session::metadata_for_devfs_path(abs)
 }
 
 impl SingleRootReadView for FsBridge {
@@ -422,7 +406,7 @@ impl VfsMountOps for FsBridge {
 
 impl VfsDevInventory for FsBridge {
     fn list_dev_nodes(&self) -> Vec<VfsDevNode> {
-        let mut nodes: Vec<VfsDevNode> = fs::devfs::active_impl::list_nodes()
+        fs::devfs::active_impl::list_nodes()
             .into_iter()
             .map(|n| VfsDevNode {
                 path: n.path,
@@ -432,20 +416,7 @@ impl VfsDevInventory for FsBridge {
                     fs::devfs::DevNodeType::Unsupported => VfsDevNodeType::Unsupported,
                 },
             })
-            .collect();
-        if !nodes.iter().any(|n| n.path == "/dev/null") {
-            nodes.push(VfsDevNode {
-                path: String::from("/dev/null"),
-                node_type: VfsDevNodeType::Character,
-            });
-        }
-        if !nodes.iter().any(|n| n.path == "/dev/zero") {
-            nodes.push(VfsDevNode {
-                path: String::from("/dev/zero"),
-                node_type: VfsDevNodeType::Character,
-            });
-        }
-        nodes
+            .collect()
     }
 
     fn default_root_block_path(&self) -> Option<String> {

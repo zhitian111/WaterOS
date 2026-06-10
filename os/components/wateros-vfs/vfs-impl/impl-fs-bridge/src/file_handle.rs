@@ -276,11 +276,6 @@ impl FsBridge {
             }
             _ => {}
         }
-        match abs.as_str() {
-            "/dev/null" => return Ok(Box::new(impl_fd_session::NullDeviceHandle)),
-            "/dev/zero" => return Ok(Box::new(impl_fd_session::ZeroDeviceHandle)),
-            _ => {}
-        }
         if let Ok(dev) = fs::devfs::active_impl::lookup_character_device(abs.as_str()) {
             return Ok(Box::new(impl_fd_session::CharDevHandle::from_devfs_path(
                 dev,

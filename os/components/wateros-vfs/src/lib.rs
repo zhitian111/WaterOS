@@ -230,6 +230,20 @@ pub mod self_test {
         Ok(())
     }
 
+    /// `/dev/null`：devfs 绑定与元数据（启动期无用户任务，不测 open/fd）。
+    #[cfg(feature = "bridge-fs-api")]
+    pub fn null_dev_smoke() -> VfsResult<()> {
+        let backend = active_impl::backend();
+        if !backend.exists("/dev/null")? {
+            return Err(super::api::VfsError::NotFound);
+        }
+        let meta = backend.metadata("/dev/null")?;
+        if meta.mode != 0o20666 {
+            return Err(super::api::VfsError::Io);
+        }
+        Ok(())
+    }
+
     /// `open` → `read` → `seek` → `metadata` 烟囱（依赖 RW 先写入测试文件）。
     #[cfg(feature = "bridge-fs-api")]
     pub fn open_read_seek_smoke() -> VfsResult<()> {
@@ -276,6 +290,11 @@ pub mod self_test {
                 log::warn!("[vfs] self_test mkdir skipped or failed: {:?}", e);
             } else {
                 log::info!("[vfs] self_test mkdir ok");
+            }
+            if let Err(e) = null_dev_smoke() {
+                log::warn!("[vfs] self_test /dev/null skipped or failed: {:?}", e);
+            } else {
+                log::info!("[vfs] self_test /dev/null ok");
             }
         }
         let _ = active_impl::backend().list_dev_nodes();

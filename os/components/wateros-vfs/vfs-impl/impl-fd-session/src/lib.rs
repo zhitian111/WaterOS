@@ -9,11 +9,10 @@ pub mod cwd;
 pub mod handles;
 pub mod registry;
 
-pub use char_dev_handle::{CharDevHandle, is_rtc_dev_path};
+pub use char_dev_handle::{CharDevHandle, is_rtc_dev_path, metadata_for_devfs_path};
 
 pub use cwd::{PerTaskCwdRegistry, PATH_MAX};
 pub use handles::{
-    ConsoleInHandle, ConsoleOutHandle, NullDeviceHandle, PipeReadHandle, PipeWriteHandle,
-    ZeroDeviceHandle, poll_pipe_smoke,
+    ConsoleInHandle, ConsoleOutHandle, PipeReadHandle, PipeWriteHandle, poll_pipe_smoke,
 };
 pub use registry::PerTaskFdRegistry;
