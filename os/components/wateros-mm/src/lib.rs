@@ -22,6 +22,8 @@
 pub use api_v0 as api;
 pub use frame_alloctor;
 
+pub mod mempolicy;
+
 // ── 互斥的 impl 选择 ────────────────────────────────────────────
 // 三个 impl 各提供同名的模块与类型，但它们通过 `optional` 依赖 + feature flag
 // 被条件编译， 因此只要不两条 feature chain 同时激活，就不会冲突。

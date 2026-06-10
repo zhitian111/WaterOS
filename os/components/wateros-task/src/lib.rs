@@ -31,6 +31,7 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 mod runtime;
+pub mod sched;
 pub mod wait_queue;
 pub use self::wait_queue::WaitQueue;
 mod scheduler {
@@ -38,10 +39,10 @@ mod scheduler {
 }
 pub use api_v0::{
     AddressSpaceHandle, AddressSpaceRef, CloneFlags, CwdRef, FileTableRef, KernelTaskEntry,
-    ProcessDescriptor, ProcessId, ProcessState, ResourceHandle, SignalHandlersRef, TaskBlockReason,
-    TaskClearTid, TaskExitCode, TaskGroupId, TaskSnapshot, TaskTick, TaskWaitResult,
-    ProcessTaskDescriptor, ProcessTaskRole, ProcessTaskState, UserImageInfo, UserStack, UserTask,
-    ThreadId, WaitQueueId,
+    ProcessDescriptor, ProcessId, ProcessState, ResourceHandle, SchedError, SchedParam,
+    SchedPolicy, SignalHandlersRef, TaskBlockReason, TaskClearTid, TaskExitCode, TaskGroupId,
+    TaskSnapshot, TaskTick, TaskWaitResult, ProcessTaskDescriptor, ProcessTaskRole,
+    ProcessTaskState, UserImageInfo, UserStack, UserTask, ThreadId, WaitQueueId,
 };
 pub use api_v0::{ExitedTask, TaskId, TaskKind, TaskWaitHandle};
 #[cfg(feature = "impl-core")]
@@ -115,6 +116,11 @@ pub fn run_first_task() -> ! { scheduler::run_first_task() }
 /// 让当前任务主动让出 CPU。
 #[inline]
 pub fn yield_now() { scheduler::suspend_current_and_run_next(); }
+
+pub use sched::{
+    cpu_affinity_ret_bytes, fill_cpu_affinity_mask, get_param, get_scheduler, resolve_sched_pid,
+    set_affinity, set_param, set_scheduler, validate_cpu_affinity_buf_len,
+};
 
 /// 通知任务系统发生了一次时钟 tick。
 #[inline]

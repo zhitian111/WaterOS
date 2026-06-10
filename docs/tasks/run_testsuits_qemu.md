@@ -125,7 +125,7 @@ python3 os/scripts/parse_qemu_test_log.py /tmp/wateros_P1.log
 grep -E 'unsupported: unknown nr=|Panicked at' /tmp/wateros_P1.log
 ```
 
-riscv64 常用对照（遇 panic 时查表）：65=`readv`，123=`sched_getaffinity`，157=`setsid`，165=`getrusage`（236=`get_mempolicy` 已 stub）。
+riscv64 常用对照（遇 panic 时查表）：65=`readv`，118–123=`sched_*`，157=`setsid`，165=`getrusage`，236=`get_mempolicy`。
 
 ## 各组测例的「通过」判读标准
 

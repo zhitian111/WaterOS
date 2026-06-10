@@ -75,7 +75,10 @@ pub(crate) use robust::{
     robust_exit_cleanup, robust_exit_cleanup_siblings_for_exec, sys_get_robust_list,
     sys_set_robust_list,
 };
-pub(crate) use sched::sys_sched_getaffinity;
+pub(crate) use sched::{
+    sys_sched_getaffinity, sys_sched_getparam, sys_sched_getscheduler, sys_sched_setaffinity,
+    sys_sched_setparam, sys_sched_setscheduler,
+};
 pub(crate) use getcwd::sys_getcwd;
 pub(crate) use getdents64::sys_getdents64;
 pub(crate) use ioctl::sys_ioctl;

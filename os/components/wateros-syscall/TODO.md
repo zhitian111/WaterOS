@@ -35,8 +35,13 @@
 | `mmap` | 部分接入 | 支持匿名/文件映射骨架；共享写回、权限边界仍需补强。 |
 | `munmap` | 部分接入 | 走 MM `MmapOps`。 |
 | `mprotect` | 部分接入 | libc/动态链接后续会继续依赖。 |
-| `get_mempolicy` (236) | 部分接入 | 单节点 stub：返回 `MPOL_DEFAULT` + nodemask node 0；`MPOL_F_ADDR` 校验映射；无真 NUMA。 |
-| `sched_getaffinity` (123) | 部分接入 | 单核 stub：mask 置 CPU 0，返回 8；`pid==0` 或已存在 tid；无真亲和性绑定。 |
+| `get_mempolicy` (236) | 部分接入 | 语义在 `mm::mempolicy`；syscall 薄封装。 |
+| `sched_setparam` (118) | 部分接入 | 语义在 `task::sched`；非零 priority → `EPERM`。 |
+| `sched_setscheduler` (119) | 部分接入 | RT 策略 → `EPERM`；`SCHED_OTHER`+0 可 no-op。 |
+| `sched_getscheduler` (120) | 部分接入 | 委托 `task::get_scheduler`，有效策略 `SCHED_OTHER`。 |
+| `sched_getparam` (121) | 部分接入 | 委托 `task::get_param`，priority 0。 |
+| `sched_setaffinity` (122) | 部分接入 | 未实现绑定，恒 `EPERM`。 |
+| `sched_getaffinity` (123) | 部分接入 | 委托 `task::fill_cpu_affinity_mask`，单核 CPU 0。 |
 | `clone`/`fork` | 部分接入 | `fork_user_aspace` + 子进程保留父 fork 点 `user_sp`；继承 cwd/fd。 |
 | `execve` | 部分接入 | 替换地址空间/入口/栈；CLOEXEC 等待关闭未完整。 |
 | `exit`/`exit_group` | 已接入 | 目前同一路径退出当前任务。 |

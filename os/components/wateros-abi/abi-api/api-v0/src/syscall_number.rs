@@ -118,6 +118,16 @@ pub trait SyscallNumberTable {
     const EXEC: SyscallNumber;
 
     // 调度/时间 / scheduling & time
+    /// 设置调度参数（`sched_setparam(2)`）。
+    const SCHED_SETPARAM: SyscallNumber;
+    /// 设置调度策略（`sched_setscheduler(2)`）。
+    const SCHED_SETSCHEDULER: SyscallNumber;
+    /// 查询调度策略（`sched_getscheduler(2)`）。
+    const SCHED_GETSCHEDULER: SyscallNumber;
+    /// 查询调度参数（`sched_getparam(2)`）。
+    const SCHED_GETPARAM: SyscallNumber;
+    /// 设置 CPU 亲和性（`sched_setaffinity(2)`）。
+    const SCHED_SETAFFINITY: SyscallNumber;
     /// 查询 CPU 亲和性掩码（`sched_getaffinity(2)`）。
     const SCHED_GETAFFINITY: SyscallNumber;
     /// 主动让出 CPU（`sched_yield(2)`）。

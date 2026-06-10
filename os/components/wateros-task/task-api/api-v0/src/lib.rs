@@ -9,6 +9,7 @@
 extern crate alloc;
 mod kernel;
 mod process;
+mod sched;
 mod snapshot;
 mod task;
 mod user;
@@ -18,6 +19,9 @@ pub use process::{
     AddressSpaceRef, CloneFlags, CwdRef, FileTableRef, ProcessDescriptor, ProcessId, ProcessState,
     ProcessTaskDescriptor, ProcessTaskRole, ProcessTaskState, ResourceHandle, SignalHandlersRef,
     TaskClearTid, TaskGroupId, ThreadId,
+};
+pub use sched::{
+    SchedError, SchedParam, SchedPolicy, SCHED_CPU_MASK_MIN_BYTES, SCHED_CPU_MASK_RET_BYTES,
 };
 pub use snapshot::{TaskSnapshot, TaskTrapSnapshot};
 pub use task::{

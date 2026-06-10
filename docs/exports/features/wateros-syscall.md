@@ -39,8 +39,8 @@
 | `mount` | 部分 | `MS_RDONLY` → `mount_ro` 辅助卷；否则 `mount_rw` |
 | `umount2` | 部分 | `vfs::unmount_at` |
 | `brk` / `mmap` / `munmap` / `mprotect` | 部分 | Sv39 `user_aspace_ptr` |
-| `get_mempolicy` (236) | 部分 | 单节点 stub：`MPOL_DEFAULT` + nodemask node 0；`MPOL_F_ADDR` 映射校验 |
-| `sched_getaffinity` (123) | 部分 | 单核 stub：CPU 0 mask，返回 8；无 `sched_setaffinity` |
+| `get_mempolicy` (236) | 部分 | 语义在 `wateros-mm::mempolicy` |
+| `sched_setparam` (118)–`sched_getaffinity` (123) | 部分 | 语义在 `wateros-task::sched`；set RT/affinity → `EPERM` |
 | `clone`（含 `fork`） | 部分 | `fork_user_aspace` + 子进程保留父 `user_sp`；继承 cwd/fd |
 | `execve` | 部分 | 替换地址空间/入口/栈；非 ELF 文本脚本经 shebang 解析后加载解释器 ELF |
 | `waitpid` | 部分 | 最小父子等待、`WNOHANG` |

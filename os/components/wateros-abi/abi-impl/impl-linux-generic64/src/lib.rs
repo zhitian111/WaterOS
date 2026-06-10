@@ -63,6 +63,11 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const EXEC: SyscallNumber = SyscallNumber(221); // execve
 
     // 调度/时间 / scheduling & time
+    const SCHED_SETPARAM: SyscallNumber = SyscallNumber(118); // sched_setparam
+    const SCHED_SETSCHEDULER: SyscallNumber = SyscallNumber(119); // sched_setscheduler
+    const SCHED_GETSCHEDULER: SyscallNumber = SyscallNumber(120); // sched_getscheduler
+    const SCHED_GETPARAM: SyscallNumber = SyscallNumber(121); // sched_getparam
+    const SCHED_SETAFFINITY: SyscallNumber = SyscallNumber(122); // sched_setaffinity
     const SCHED_GETAFFINITY: SyscallNumber = SyscallNumber(123); // sched_getaffinity
     const YIELD: SyscallNumber = SyscallNumber(124); // sched_yield
     const GET_TIME: SyscallNumber = SyscallNumber(169); // gettimeofday

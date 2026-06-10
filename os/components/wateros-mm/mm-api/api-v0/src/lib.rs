@@ -24,6 +24,7 @@ pub mod elf_user_stack;
 pub mod executable;
 pub mod kernel_bringup;
 pub mod kernel_satp;
+pub mod mempolicy;
 pub mod mmap;
 pub mod user_aspace_lifecycle;
 

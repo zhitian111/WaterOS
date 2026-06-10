@@ -44,6 +44,11 @@ pub enum SyscallKind {
     Mount,
     Umount2,
     Yield,
+    SchedSetparam,
+    SchedSetscheduler,
+    SchedGetscheduler,
+    SchedGetparam,
+    SchedSetaffinity,
     SchedGetaffinity,
     Exit,
     ExitGroup,
@@ -185,6 +190,16 @@ impl SyscallKind {
             Self::Mount
         } else if syscall_nr == T::UMOUNT2.raw() {
             Self::Umount2
+        } else if syscall_nr == T::SCHED_SETPARAM.raw() {
+            Self::SchedSetparam
+        } else if syscall_nr == T::SCHED_SETSCHEDULER.raw() {
+            Self::SchedSetscheduler
+        } else if syscall_nr == T::SCHED_GETSCHEDULER.raw() {
+            Self::SchedGetscheduler
+        } else if syscall_nr == T::SCHED_GETPARAM.raw() {
+            Self::SchedGetparam
+        } else if syscall_nr == T::SCHED_SETAFFINITY.raw() {
+            Self::SchedSetaffinity
         } else if syscall_nr == T::SCHED_GETAFFINITY.raw() {
             Self::SchedGetaffinity
         } else if syscall_nr == T::YIELD.raw() {
@@ -373,6 +388,11 @@ impl SyscallKind {
             Self::Mount => "mount",
             Self::Umount2 => "umount2",
             Self::Yield => "sched_yield",
+            Self::SchedSetparam => "sched_setparam",
+            Self::SchedSetscheduler => "sched_setscheduler",
+            Self::SchedGetscheduler => "sched_getscheduler",
+            Self::SchedGetparam => "sched_getparam",
+            Self::SchedSetaffinity => "sched_setaffinity",
             Self::SchedGetaffinity => "sched_getaffinity",
             Self::Exit => "exit",
             Self::ExitGroup => "exit_group",
@@ -517,6 +537,46 @@ pub trait SyscallDispatcher {
         Self::dispatch_unsupported(
             SyscallKind::Yield,
             Self::NumberTable::YIELD.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_sched_setparam(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::SchedSetparam,
+            Self::NumberTable::SCHED_SETPARAM.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_sched_setscheduler(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::SchedSetscheduler,
+            Self::NumberTable::SCHED_SETSCHEDULER.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_sched_getparam(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::SchedGetparam,
+            Self::NumberTable::SCHED_GETPARAM.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_sched_getscheduler(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::SchedGetscheduler,
+            Self::NumberTable::SCHED_GETSCHEDULER.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_sched_setaffinity(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::SchedSetaffinity,
+            Self::NumberTable::SCHED_SETAFFINITY.raw(),
             args,
         )
     }
@@ -1361,6 +1421,11 @@ pub trait SyscallDispatcher {
     fn dispatch_syscall_from_trap(syscall_nr: usize, syscall_args: SyscallArgs) -> isize {
         match SyscallKind::decode::<Self::NumberTable>(syscall_nr) {
             SyscallKind::Yield => Self::dispatch_yield(syscall_args),
+            SyscallKind::SchedSetparam => Self::dispatch_sched_setparam(syscall_args),
+            SyscallKind::SchedSetscheduler => Self::dispatch_sched_setscheduler(syscall_args),
+            SyscallKind::SchedGetscheduler => Self::dispatch_sched_getscheduler(syscall_args),
+            SyscallKind::SchedGetparam => Self::dispatch_sched_getparam(syscall_args),
+            SyscallKind::SchedSetaffinity => Self::dispatch_sched_setaffinity(syscall_args),
             SyscallKind::SchedGetaffinity => Self::dispatch_sched_getaffinity(syscall_args),
             SyscallKind::Exit => Self::dispatch_exit(syscall_args),
             SyscallKind::ExitGroup => Self::dispatch_exit_group(syscall_args),

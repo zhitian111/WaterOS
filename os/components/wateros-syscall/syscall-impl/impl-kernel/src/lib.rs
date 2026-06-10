@@ -42,6 +42,31 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     }
 
     #[inline]
+    fn dispatch_sched_setparam(args: SyscallArgs) -> isize {
+        sys::sys_sched_setparam(args).0
+    }
+
+    #[inline]
+    fn dispatch_sched_setscheduler(args: SyscallArgs) -> isize {
+        sys::sys_sched_setscheduler(args).0
+    }
+
+    #[inline]
+    fn dispatch_sched_getparam(args: SyscallArgs) -> isize {
+        sys::sys_sched_getparam(args).0
+    }
+
+    #[inline]
+    fn dispatch_sched_getscheduler(args: SyscallArgs) -> isize {
+        sys::sys_sched_getscheduler(args).0
+    }
+
+    #[inline]
+    fn dispatch_sched_setaffinity(args: SyscallArgs) -> isize {
+        sys::sys_sched_setaffinity(args).0
+    }
+
+    #[inline]
     fn dispatch_sched_getaffinity(args: SyscallArgs) -> isize {
         sys::sys_sched_getaffinity(args).0
     }
