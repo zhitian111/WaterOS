@@ -19,6 +19,7 @@ mod ioctl;
 mod kill;
 mod lseek;
 mod mkdirat;
+mod mempolicy;
 mod mmap;
 mod mount;
 mod openat;
@@ -33,6 +34,7 @@ mod renameat2;
 mod rtc;
 mod sendfile;
 mod robust;
+mod sched;
 mod syslog;
 mod statfs;
 mod sync;
@@ -73,12 +75,14 @@ pub(crate) use robust::{
     robust_exit_cleanup, robust_exit_cleanup_siblings_for_exec, sys_get_robust_list,
     sys_set_robust_list,
 };
+pub(crate) use sched::sys_sched_getaffinity;
 pub(crate) use getcwd::sys_getcwd;
 pub(crate) use getdents64::sys_getdents64;
 pub(crate) use ioctl::sys_ioctl;
 pub(crate) use kill::sys_kill;
 pub(crate) use lseek::sys_lseek;
 pub(crate) use mkdirat::sys_mkdirat;
+pub(crate) use mempolicy::sys_get_mempolicy;
 pub(crate) use mmap::{sys_mmap, sys_mprotect, sys_msync, sys_munmap};
 pub(crate) use mount::sys_mount;
 pub(crate) use openat::sys_openat;

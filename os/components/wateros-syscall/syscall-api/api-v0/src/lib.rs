@@ -44,6 +44,7 @@ pub enum SyscallKind {
     Mount,
     Umount2,
     Yield,
+    SchedGetaffinity,
     Exit,
     ExitGroup,
     Clone,
@@ -55,6 +56,7 @@ pub enum SyscallKind {
     Munmap,
     Msync,
     Mprotect,
+    GetMempolicy,
     GetTime,
     ClockSetTime,
     ClockGetTime,
@@ -183,6 +185,8 @@ impl SyscallKind {
             Self::Mount
         } else if syscall_nr == T::UMOUNT2.raw() {
             Self::Umount2
+        } else if syscall_nr == T::SCHED_GETAFFINITY.raw() {
+            Self::SchedGetaffinity
         } else if syscall_nr == T::YIELD.raw() {
             Self::Yield
         } else if syscall_nr == T::EXIT.raw() {
@@ -207,6 +211,8 @@ impl SyscallKind {
             Self::Msync
         } else if syscall_nr == T::MPROTECT.raw() {
             Self::Mprotect
+        } else if syscall_nr == T::GET_MEMPOLICY.raw() {
+            Self::GetMempolicy
         } else if syscall_nr == T::GET_TIME.raw() {
             Self::GetTime
         } else if syscall_nr == T::CLOCK_SETTIME.raw() {
@@ -367,6 +373,7 @@ impl SyscallKind {
             Self::Mount => "mount",
             Self::Umount2 => "umount2",
             Self::Yield => "sched_yield",
+            Self::SchedGetaffinity => "sched_getaffinity",
             Self::Exit => "exit",
             Self::ExitGroup => "exit_group",
             Self::Clone => "clone",
@@ -378,6 +385,7 @@ impl SyscallKind {
             Self::Munmap => "munmap",
             Self::Msync => "msync",
             Self::Mprotect => "mprotect",
+            Self::GetMempolicy => "get_mempolicy",
             Self::GetTime => "gettimeofday",
             Self::ClockSetTime => "clock_settime",
             Self::ClockGetTime => "clock_gettime",
@@ -509,6 +517,14 @@ pub trait SyscallDispatcher {
         Self::dispatch_unsupported(
             SyscallKind::Yield,
             Self::NumberTable::YIELD.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_sched_getaffinity(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::SchedGetaffinity,
+            Self::NumberTable::SCHED_GETAFFINITY.raw(),
             args,
         )
     }
@@ -821,6 +837,14 @@ pub trait SyscallDispatcher {
         Self::dispatch_unsupported(
             SyscallKind::Mprotect,
             Self::NumberTable::MPROTECT.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_getmempolicy(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::GetMempolicy,
+            Self::NumberTable::GET_MEMPOLICY.raw(),
             args,
         )
     }
@@ -1337,6 +1361,7 @@ pub trait SyscallDispatcher {
     fn dispatch_syscall_from_trap(syscall_nr: usize, syscall_args: SyscallArgs) -> isize {
         match SyscallKind::decode::<Self::NumberTable>(syscall_nr) {
             SyscallKind::Yield => Self::dispatch_yield(syscall_args),
+            SyscallKind::SchedGetaffinity => Self::dispatch_sched_getaffinity(syscall_args),
             SyscallKind::Exit => Self::dispatch_exit(syscall_args),
             SyscallKind::ExitGroup => Self::dispatch_exit_group(syscall_args),
             SyscallKind::Read => Self::dispatch_read(syscall_args),
@@ -1376,6 +1401,7 @@ pub trait SyscallDispatcher {
             SyscallKind::Munmap => Self::dispatch_munmap(syscall_args),
             SyscallKind::Msync => Self::dispatch_msync(syscall_args),
             SyscallKind::Mprotect => Self::dispatch_mprotect(syscall_args),
+            SyscallKind::GetMempolicy => Self::dispatch_getmempolicy(syscall_args),
             SyscallKind::GetTime => Self::dispatch_get_time(syscall_args),
             SyscallKind::ClockSetTime => Self::dispatch_clock_settime(syscall_args),
             SyscallKind::ClockGetTime => Self::dispatch_clock_gettime(syscall_args),

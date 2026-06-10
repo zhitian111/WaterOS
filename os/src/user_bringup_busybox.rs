@@ -16,13 +16,13 @@ use runtime::logging::*;
 /// - **P6 LTP**：用例量最大，单独跑
 const SCRIPT_PATHS : &[&str] = &[
                                  // --- P1 basic ---
-                                 //"/glibc/basic_testcode.sh",
-                                 //"/musl/basic_testcode.sh",
+                                 // "/glibc/basic_testcode.sh",        // done
+                                 // "/musl/basic_testcode.sh",         // done
                                  // --- P2 busybox + lua ---
-                                 //"/glibc/busybox_testcode.sh",
-                                 //"/musl/busybox_testcode.sh",
-                                 "/glibc/lua_testcode.sh",
-                                 "/musl/lua_testcode.sh",
+                                 // "/glibc/busybox_testcode.sh",      // done
+                                 // "/musl/busybox_testcode.sh",       // done
+                                 // "/glibc/lua_testcode.sh",          // done
+                                 // "/musl/lua_testcode.sh",           // done
                                  // --- P3 benchmark ---
                                  // "/glibc/lmbench_testcode.sh",
                                  // "/musl/lmbench_testcode.sh",
@@ -38,10 +38,10 @@ const SCRIPT_PATHS : &[&str] = &[
                                  // "/glibc/netperf_testcode.sh",
                                  // "/musl/netperf_testcode.sh",
                                  // --- P5 libctest + cyclictest ---
-                                 // "/glibc/libctest_testcode.sh",
-                                 // "/musl/libctest_testcode.sh",
-                                 // "/glibc/cyclictest_testcode.sh",
-                                 // "/musl/cyclictest_testcode.sh",
+                                 // "/glibc/libctest_testcode.sh",     // done
+                                 // "/musl/libctest_testcode.sh",      // done
+                                 "/glibc/cyclictest_testcode.sh",
+                                 "/musl/cyclictest_testcode.sh",
                                  // --- P6 LTP ---
                                  // "/glibc/ltp_testcode.sh",
                                  // "/musl/ltp_testcode.sh",

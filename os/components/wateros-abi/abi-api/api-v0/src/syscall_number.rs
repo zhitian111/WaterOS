@@ -118,6 +118,8 @@ pub trait SyscallNumberTable {
     const EXEC: SyscallNumber;
 
     // 调度/时间 / scheduling & time
+    /// 查询 CPU 亲和性掩码（`sched_getaffinity(2)`）。
+    const SCHED_GETAFFINITY: SyscallNumber;
     /// 主动让出 CPU（`sched_yield(2)`）。
     const YIELD: SyscallNumber;
     /// 取墙上时钟（`gettimeofday(2)`）。
@@ -142,6 +144,8 @@ pub trait SyscallNumberTable {
     const MSYNC: SyscallNumber;
     /// 修改映射保护属性（`mprotect(2)`）。
     const MPROTECT: SyscallNumber;
+    /// 查询 NUMA 内存策略（`get_mempolicy(2)`）。
+    const GET_MEMPOLICY: SyscallNumber;
 
     // 基本信息 / identity & misc info
     /// 内核与体系结构标识（`uname(2)`）。

@@ -42,6 +42,11 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     }
 
     #[inline]
+    fn dispatch_sched_getaffinity(args: SyscallArgs) -> isize {
+        sys::sys_sched_getaffinity(args).0
+    }
+
+    #[inline]
     fn dispatch_clone(args: SyscallArgs) -> isize {
         sys::sys_clone(args).0
     }
@@ -184,6 +189,11 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     #[inline]
     fn dispatch_mprotect(args: SyscallArgs) -> isize {
         sys::sys_mprotect(args).0
+    }
+
+    #[inline]
+    fn dispatch_getmempolicy(args: SyscallArgs) -> isize {
+        sys::sys_get_mempolicy(args).0
     }
 
     #[inline]

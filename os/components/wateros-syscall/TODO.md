@@ -35,6 +35,8 @@
 | `mmap` | 部分接入 | 支持匿名/文件映射骨架；共享写回、权限边界仍需补强。 |
 | `munmap` | 部分接入 | 走 MM `MmapOps`。 |
 | `mprotect` | 部分接入 | libc/动态链接后续会继续依赖。 |
+| `get_mempolicy` (236) | 部分接入 | 单节点 stub：返回 `MPOL_DEFAULT` + nodemask node 0；`MPOL_F_ADDR` 校验映射；无真 NUMA。 |
+| `sched_getaffinity` (123) | 部分接入 | 单核 stub：mask 置 CPU 0，返回 8；`pid==0` 或已存在 tid；无真亲和性绑定。 |
 | `clone`/`fork` | 部分接入 | `fork_user_aspace` + 子进程保留父 fork 点 `user_sp`；继承 cwd/fd。 |
 | `execve` | 部分接入 | 替换地址空间/入口/栈；CLOEXEC 等待关闭未完整。 |
 | `exit`/`exit_group` | 已接入 | 目前同一路径退出当前任务。 |

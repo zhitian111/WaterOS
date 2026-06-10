@@ -63,6 +63,7 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const EXEC: SyscallNumber = SyscallNumber(221); // execve
 
     // 调度/时间 / scheduling & time
+    const SCHED_GETAFFINITY: SyscallNumber = SyscallNumber(123); // sched_getaffinity
     const YIELD: SyscallNumber = SyscallNumber(124); // sched_yield
     const GET_TIME: SyscallNumber = SyscallNumber(169); // gettimeofday
     const CLOCK_SETTIME: SyscallNumber = SyscallNumber(112); // clock_settime
@@ -76,6 +77,7 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const MUNMAP: SyscallNumber = SyscallNumber(215); // munmap
     const MSYNC: SyscallNumber = SyscallNumber(227); // msync
     const MPROTECT: SyscallNumber = SyscallNumber(226); // mprotect
+    const GET_MEMPOLICY: SyscallNumber = SyscallNumber(236); // get_mempolicy
 
     // 基本信息 / identity & misc info
     const UNAME: SyscallNumber = SyscallNumber(160); // uname
