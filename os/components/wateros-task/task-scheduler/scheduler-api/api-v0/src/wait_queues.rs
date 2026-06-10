@@ -7,7 +7,7 @@ use task_api::{
     TaskWaitResult, TaskWaitTarget, WaitQueueId,
 };
 
-use crate::{QueueTarget, TaskRegistry};
+use crate::{QueueTarget, ReadyTaskSink, TaskRegistry};
 
 #[derive(Clone, Copy)]
 struct WaitTimeoutEntry {
@@ -104,7 +104,7 @@ impl WaitQueues {
                         registry : &mut TaskRegistry,
                         task_id : TaskId,
                         target : QueueTarget,
-                        ready_queue : &mut VecDeque<TaskId>)
+                        ready_queue : &mut impl ReadyTaskSink)
     {
         match target {
             QueueTarget::Ready => {
@@ -112,7 +112,7 @@ impl WaitQueues {
                     return;
                 }
                 registry.mark_ready(task_id);
-                ready_queue.push_back(task_id);
+                ready_queue.enqueue_ready_task(task_id);
             }
             QueueTarget::Blocked(reason) => {
                 if registry.state(task_id).is_none() {
@@ -160,7 +160,7 @@ impl WaitQueues {
     /// 将到期的睡眠任务移入 `ready_queue`。
     pub fn promote_sleeping_tasks(&mut self,
                                   registry : &mut TaskRegistry,
-                                  ready_queue : &mut VecDeque<TaskId>)
+                                  ready_queue : &mut impl ReadyTaskSink)
     {
         let mut still_sleeping = VecDeque::new();
         while let Some(task_id) = self.sleep_queue.pop_front() {
@@ -169,7 +169,7 @@ impl WaitQueues {
             }
             if registry.ready_to_wake(task_id, self.current_tick) {
                 registry.mark_ready(task_id);
-                ready_queue.push_back(task_id);
+                ready_queue.enqueue_ready_task(task_id);
                 log::trace!("[task-scheduler] wake sleeping task {} at tick {}",
                             task_id,
                             self.current_tick);
@@ -183,7 +183,7 @@ impl WaitQueues {
     /// 将到期的等待超时任务移入 `ready_queue`。
     pub fn promote_wait_timeouts(&mut self,
                                  registry : &mut TaskRegistry,
-                                 ready_queue : &mut VecDeque<TaskId>)
+                                 ready_queue : &mut impl ReadyTaskSink)
     {
         let mut pending = VecDeque::new();
         while let Some(entry) = self.wait_timeouts.pop_front() {
@@ -202,7 +202,7 @@ impl WaitQueues {
             if self.remove_from_wait_list(entry.wait_handle, entry.task_id) {
                 registry.finish_wait(entry.task_id, TaskWaitResult::TimedOut);
                 registry.mark_ready(entry.task_id);
-                ready_queue.push_back(entry.task_id);
+                ready_queue.enqueue_ready_task(entry.task_id);
             }
         }
         self.wait_timeouts = pending;
@@ -212,7 +212,7 @@ impl WaitQueues {
     pub fn wake_task(&mut self,
                      registry : &mut TaskRegistry,
                      task_id : TaskId,
-                     ready_queue : &mut VecDeque<TaskId>)
+                     ready_queue : &mut impl ReadyTaskSink)
                      -> bool
     {
         if take_task_id_by_id(&mut self.blocked_queue, task_id) {
@@ -221,7 +221,7 @@ impl WaitQueues {
             }
             registry.finish_wait(task_id, TaskWaitResult::Woken);
             registry.mark_ready(task_id);
-            ready_queue.push_back(task_id);
+            ready_queue.enqueue_ready_task(task_id);
             return true;
         }
         if take_task_id_by_id(&mut self.sleep_queue, task_id) {
@@ -230,7 +230,7 @@ impl WaitQueues {
             }
             registry.finish_wait(task_id, TaskWaitResult::Woken);
             registry.mark_ready(task_id);
-            ready_queue.push_back(task_id);
+            ready_queue.enqueue_ready_task(task_id);
             return true;
         }
         for wait_queue in &mut self.wait_queues {
@@ -240,7 +240,7 @@ impl WaitQueues {
                 }
                 registry.finish_wait(task_id, TaskWaitResult::Woken);
                 registry.mark_ready(task_id);
-                ready_queue.push_back(task_id);
+                ready_queue.enqueue_ready_task(task_id);
                 return true;
             }
         }
@@ -251,7 +251,7 @@ impl WaitQueues {
                 }
                 registry.finish_wait(task_id, TaskWaitResult::Woken);
                 registry.mark_ready(task_id);
-                ready_queue.push_back(task_id);
+                ready_queue.enqueue_ready_task(task_id);
                 return true;
             }
         }
@@ -262,7 +262,7 @@ impl WaitQueues {
                 }
                 registry.finish_wait(task_id, TaskWaitResult::Woken);
                 registry.mark_ready(task_id);
-                ready_queue.push_back(task_id);
+                ready_queue.enqueue_ready_task(task_id);
                 return true;
             }
         }
@@ -274,7 +274,7 @@ impl WaitQueues {
                      registry : &mut TaskRegistry,
                      task_id : TaskId,
                      exit_code : TaskExitCode,
-                     ready_queue : &mut VecDeque<TaskId>)
+                     ready_queue : &mut impl ReadyTaskSink)
                      -> bool
     {
         use task_api::IDLE_TASK_ID;
@@ -298,7 +298,7 @@ impl WaitQueues {
     pub fn wake_one_in_wait_queue(&mut self,
                                   registry : &mut TaskRegistry,
                                   wait_queue_id : WaitQueueId,
-                                  ready_queue : &mut VecDeque<TaskId>)
+                                  ready_queue : &mut impl ReadyTaskSink)
                                   -> Option<TaskId>
     {
         while let Some(task_id) = self.wait_queue_mut(wait_queue_id).pop_front() {
@@ -307,7 +307,7 @@ impl WaitQueues {
             }
             registry.finish_wait(task_id, TaskWaitResult::Woken);
             registry.mark_ready(task_id);
-            ready_queue.push_back(task_id);
+            ready_queue.enqueue_ready_task(task_id);
             return Some(task_id);
         }
         None
@@ -317,7 +317,7 @@ impl WaitQueues {
     pub fn wake_all_in_wait_queue(&mut self,
                                   registry : &mut TaskRegistry,
                                   wait_queue_id : WaitQueueId,
-                                  ready_queue : &mut VecDeque<TaskId>)
+                                  ready_queue : &mut impl ReadyTaskSink)
                                   -> usize
     {
         let mut woken = 0usize;
@@ -327,7 +327,7 @@ impl WaitQueues {
             }
             registry.finish_wait(task_id, TaskWaitResult::Woken);
             registry.mark_ready(task_id);
-            ready_queue.push_back(task_id);
+            ready_queue.enqueue_ready_task(task_id);
             woken = woken.saturating_add(1);
         }
         woken
@@ -388,7 +388,7 @@ impl WaitQueues {
     fn wake_all_waiters_for_task_exit(&mut self,
                                       registry : &mut TaskRegistry,
                                       task_id : TaskId,
-                                      ready_queue : &mut VecDeque<TaskId>)
+                                      ready_queue : &mut impl ReadyTaskSink)
     {
         while let Some(waiter_task_id) = self.exit_wait_queue_mut(task_id).pop_front() {
             if registry.state(waiter_task_id).is_none() {
@@ -396,7 +396,7 @@ impl WaitQueues {
             }
             registry.finish_wait(waiter_task_id, TaskWaitResult::Woken);
             registry.mark_ready(waiter_task_id);
-            ready_queue.push_back(waiter_task_id);
+            ready_queue.enqueue_ready_task(waiter_task_id);
         }
         if let Some(parent_id) = registry.parent_id(task_id) {
             while let Some(waiter_task_id) = self.child_exit_wait_queue_mut(parent_id).pop_front()
@@ -406,7 +406,7 @@ impl WaitQueues {
                 }
                 registry.finish_wait(waiter_task_id, TaskWaitResult::Woken);
                 registry.mark_ready(waiter_task_id);
-                ready_queue.push_back(waiter_task_id);
+                ready_queue.enqueue_ready_task(waiter_task_id);
             }
         }
     }
@@ -419,15 +419,7 @@ impl WaitQueues {
 }
 
 fn take_task_id_by_id(queue : &mut VecDeque<TaskId>, task_id : TaskId) -> bool {
-    let mut remaining = VecDeque::new();
-    let mut found = false;
-    while let Some(candidate_task_id) = queue.pop_front() {
-        if candidate_task_id == task_id && !found {
-            found = true;
-        } else {
-            remaining.push_back(candidate_task_id);
-        }
-    }
-    *queue = remaining;
-    found
+    let old_len = queue.len();
+    queue.retain(|candidate_task_id| *candidate_task_id != task_id);
+    queue.len() != old_len
 }

@@ -16,7 +16,7 @@ use runtime::logging::*;
 /// - **P6 LTP**：用例量最大，单独跑
 const SCRIPT_PATHS : &[&str] = &[
                                  // --- P1 basic ---
-                                 // "/glibc/basic_testcode.sh",        // done
+                                 "/glibc/basic_testcode.sh",        // done
                                  // "/musl/basic_testcode.sh",         // done
                                  // --- P2 busybox + lua ---
                                  // "/glibc/busybox_testcode.sh",      // done
@@ -40,8 +40,8 @@ const SCRIPT_PATHS : &[&str] = &[
                                  // --- P5 libctest + cyclictest ---
                                  // "/glibc/libctest_testcode.sh",     // done
                                  // "/musl/libctest_testcode.sh",      // done
-                                 "/glibc/cyclictest_testcode.sh",
-                                 "/musl/cyclictest_testcode.sh",
+                                 //"/glibc/cyclictest_testcode.sh",
+                                 //"/musl/cyclictest_testcode.sh",
                                  // --- P6 LTP ---
                                  // "/glibc/ltp_testcode.sh",
                                  // "/musl/ltp_testcode.sh",

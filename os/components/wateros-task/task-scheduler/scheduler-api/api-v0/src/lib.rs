@@ -8,7 +8,7 @@
 
 extern crate alloc;
 
-mod other_ready;
+mod queue_traits;
 mod registry;
 mod sched_policy;
 mod wait_queues;
@@ -18,7 +18,7 @@ use task_api::{
     TaskWaitHandle, TaskWaitResult, UserTask, WaitQueueId,
 };
 
-pub use other_ready::OtherReadyQueue;
+pub use queue_traits::{ReadyQueue, ReadyTaskSink};
 pub use registry::TaskRegistry;
 pub use sched_policy::{QueueTarget, SchedPolicyChangeAction};
 pub use task_api::SchedulableCheck;
@@ -47,6 +47,19 @@ pub enum ScheduleReason {
     Sleep(TaskTick),
     /// 当前任务退出。
     Exit(TaskExitCode),
+}
+
+/// 会产出上下文切换指针对的调度核心。
+pub trait SwitchScheduler {
+    /// 准备首次任务切换。
+    fn prepare_first_switch(&mut self) -> SwitchPair;
+    /// 执行一次普通调度。
+    fn schedule(&mut self, reason : ScheduleReason) -> Option<SwitchPair>;
+    /// 执行一次等待路径调度。
+    fn schedule_wait(&mut self,
+                     wait_handle : TaskWaitHandle,
+                     timeout_ticks : Option<TaskTick>)
+                     -> Option<SwitchPair>;
 }
 
 /// 调度器需要对外提供的最小能力集合。

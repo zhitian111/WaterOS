@@ -18,6 +18,12 @@
 
 #![no_std]
 
+#[cfg(all(feature = "impl-multi-class", feature = "impl-round-robin"))]
+compile_error!("features `impl-multi-class` and `impl-round-robin` are mutually exclusive");
+
+#[cfg(not(any(feature = "impl-multi-class", feature = "impl-round-robin")))]
+compile_error!("one scheduler implementation feature must be enabled");
+
 pub mod api {
     pub use api_v0::*;
 }
@@ -25,10 +31,10 @@ pub mod api {
 #[cfg(feature = "impl-multi-class")]
 pub use impl_multi_class as active_impl;
 
-#[cfg(all(feature = "impl-round-robin", not(feature = "impl-multi-class")))]
+#[cfg(feature = "impl-round-robin")]
 pub use impl_round_robin as active_impl;
 
-pub use api_v0::{ScheduleReason, SchedPolicyChangeAction, Scheduler};
+pub use api_v0::{ScheduleReason, SchedPolicyChangeAction, Scheduler, SwitchScheduler};
 /// 当前架构下活动 trap 帧的具体类型别名；与 `wateros-task` 聚合层及
 /// `impl-round-robin` 一致。
 pub type TaskTrapFrame = arch::trap::ActiveTrapFrame;

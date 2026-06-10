@@ -83,9 +83,6 @@ impl RtRrRunQueue {
         }
         if self.remaining_ticks <= 1 {
             self.remaining_ticks = 0;
-            if let Some(index) = bucket_index(priority) {
-                self.buckets[index].push_back(current);
-            }
             self.current = None;
             RrTickAction::YieldToSamePriority
         } else {
@@ -111,15 +108,8 @@ impl RtRrRunQueue {
     }
 
     /// 当前 RR 任务是否应继续占用 CPU（时间片未耗尽）。
-    pub fn should_continue_current(&self,
-                                   check : &impl SchedulableCheck,
-                                   current : TaskId,
-                                   priority : i32)
-                                   -> bool
-    {
-        self.current == Some((current, priority)) &&
-            self.remaining_ticks > 0 &&
-            check.is_schedulable(current)
+    pub fn should_continue_current(&self, current : TaskId, priority : i32) -> bool {
+        self.current == Some((current, priority)) && self.remaining_ticks > 0
     }
 
     /// 在指定优先级选取 RR 任务（含当前运行且时间片未尽的情况）。
@@ -158,17 +148,9 @@ impl RtRrRunQueue {
 }
 
 fn take_task_id_by_id(queue : &mut VecDeque<TaskId>, task_id : TaskId) -> bool {
-    let mut remaining = VecDeque::new();
-    let mut found = false;
-    while let Some(candidate) = queue.pop_front() {
-        if candidate == task_id && !found {
-            found = true;
-        } else {
-            remaining.push_back(candidate);
-        }
-    }
-    *queue = remaining;
-    found
+    let old_len = queue.len();
+    queue.retain(|candidate| *candidate != task_id);
+    queue.len() != old_len
 }
 
 #[cfg(test)]

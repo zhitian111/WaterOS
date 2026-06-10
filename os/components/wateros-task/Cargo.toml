@@ -5,8 +5,6 @@
         "./task-scheduler/",
         "./task-scheduler/scheduler-api/api-v0/",
         "./task-scheduler/scheduler-impl/impl-round-robin/",
-        "./task-scheduler/scheduler-impl/impl-rt-fifo/",
-        "./task-scheduler/scheduler-impl/impl-rt-rr/",
         "./task-scheduler/scheduler-impl/impl-multi-class/",
     ]
 [package]

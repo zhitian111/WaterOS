@@ -19,9 +19,11 @@ use task_api::{
 };
 
 
+mod queues;
+mod rt_fifo_queue;
+mod rt_rr_queue;
 mod scheduler;
-
-use api_v0::{ScheduleReason, SchedPolicyChangeAction};
+use api_v0::{SchedPolicyChangeAction, ScheduleReason};
 use scheduler::MultiClassScheduler;
 use task_api::{SchedError, SchedParam, SchedPolicy};
 
@@ -118,8 +120,7 @@ pub fn current_task_trap_return_address_space_token() -> usize {
 pub fn apply_sched_policy_change(task_id : TaskId,
                                  policy : SchedPolicy,
                                  param : SchedParam)
-                                 -> Result<SchedPolicyChangeAction, SchedError>
-{
+                                 -> Result<SchedPolicyChangeAction, SchedError> {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.apply_sched_policy_change(task_id, policy, param))
 }

@@ -76,17 +76,9 @@ impl RtFifoRunQueue {
 }
 
 fn take_task_id_by_id(queue : &mut VecDeque<TaskId>, task_id : TaskId) -> bool {
-    let mut remaining = VecDeque::new();
-    let mut found = false;
-    while let Some(candidate) = queue.pop_front() {
-        if candidate == task_id && !found {
-            found = true;
-        } else {
-            remaining.push_back(candidate);
-        }
-    }
-    *queue = remaining;
-    found
+    let old_len = queue.len();
+    queue.retain(|candidate| *candidate != task_id);
+    queue.len() != old_len
 }
 
 #[cfg(test)]
