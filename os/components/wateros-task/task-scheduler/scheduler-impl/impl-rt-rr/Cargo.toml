@@ -1,0 +1,14 @@
+[package]
+    name = "wateros-task-scheduler-impl-rt-rr"
+    version = "0.1.0"
+    edition = "2024"
+
+[dependencies]
+    config = { path = "../../../../wateros-base/base-config/", package = "wateros-base-config" }
+    task-api = { path = "../../../task-api/api-v0/", package = "wateros-task-api-v0", default-features = true }
+
+[profile.dev]
+    panic = "abort"
+
+[profile.release]
+    panic = "abort"
