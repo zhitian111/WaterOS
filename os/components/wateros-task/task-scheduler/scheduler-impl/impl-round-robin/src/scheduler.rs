@@ -160,6 +160,10 @@ impl RoundRobinScheduler {
 
         let (current_task_id, current_ptr) = self.registry
                                                  .take_current_switch_out()?;
+        if matches!(reason, ScheduleReason::Sleep(_)) {
+            self.registry
+                .clear_wait_result(current_task_id);
+        }
 
         if self.registry
                .is_idle(current_task_id)
@@ -269,6 +273,13 @@ impl RoundRobinScheduler {
             .wake_task(&mut self.registry,
                        task_id,
                        self.other_ready.ready_queue_mut())
+    }
+
+    pub(super) fn interrupt_task(&mut self, task_id : TaskId) -> bool {
+        self.wait
+            .interrupt_task(&mut self.registry,
+                            task_id,
+                            self.other_ready.ready_queue_mut())
     }
 
     pub(super) fn kill_task(&mut self, task_id : TaskId, exit_code : TaskExitCode) -> bool {

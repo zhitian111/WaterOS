@@ -35,6 +35,7 @@ mod rtc;
 mod sendfile;
 mod robust;
 mod sched;
+mod signal;
 mod syslog;
 mod statfs;
 mod sync;
@@ -79,6 +80,10 @@ pub(crate) use sched::{
     sys_sched_getaffinity, sys_sched_getparam, sys_sched_getscheduler, sys_sched_setaffinity,
     sys_sched_setparam, sys_sched_setscheduler,
 };
+pub(crate) use signal::{
+    deliver_pending_signal, restore_signal_frame, sys_rt_sigpending, sys_rt_sigsuspend,
+    sys_tgkill, sys_tkill, timer_tick, raise_current_thread,
+};
 pub(crate) use getcwd::sys_getcwd;
 pub(crate) use getdents64::sys_getdents64;
 pub(crate) use ioctl::sys_ioctl;
@@ -102,13 +107,14 @@ pub(crate) use clock::{
     sys_nanosleep,
 };
 pub(crate) use statfs::sys_statfs;
-pub(crate) use sync::{sys_fdatasync, sys_fsync};
+pub(crate) use sync::{sys_fdatasync, sys_fsync, sys_sync};
 pub(crate) use syslog::sys_syslog;
 pub(crate) use task::{
     sys_exit, sys_exit_group, sys_getpid, sys_getppid, sys_getrandom,
     sys_getrlimit, sys_getrusage, sys_gettid, sys_prctl, sys_prlimit64, sys_sysinfo,
     sys_rt_sigaction, sys_rt_sigprocmask, sys_rt_sigtimedwait, sys_set_tid_address,
-    sys_setitimer, sys_setrlimit, sys_times, sys_umask, sys_uname, sys_waitpid, sys_yield,
+    sys_getitimer, sys_setitimer, sys_setrlimit, sys_times, sys_umask, sys_uname, sys_waitpid,
+    sys_yield,
 };
 pub(crate) use umount2::sys_umount2;
 pub(crate) use unlinkat::sys_unlinkat;

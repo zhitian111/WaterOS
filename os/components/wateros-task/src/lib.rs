@@ -132,12 +132,16 @@ pub fn block_current(reason : TaskBlockReason) { scheduler::block_current(reason
 
 /// 让当前任务等待指定的阻塞对象。
 #[inline]
-pub fn wait_on(wait_handle : TaskWaitHandle) { scheduler::wait_current(wait_handle); }
+pub fn wait_on(wait_handle : TaskWaitHandle) -> TaskWaitResult {
+    scheduler::wait_current(wait_handle)
+}
 
 /// 在调度临界区内复查条件；条件仍成立才等待指定的阻塞对象。
 #[inline]
-pub fn wait_on_while(wait_handle : TaskWaitHandle, condition : impl FnOnce() -> bool) {
-    scheduler::wait_current_while(wait_handle, condition);
+pub fn wait_on_while(wait_handle : TaskWaitHandle,
+                     condition : impl FnOnce() -> bool)
+                     -> TaskWaitResult {
+    scheduler::wait_current_while(wait_handle, condition)
 }
 
 /// 让当前任务等待指定的阻塞对象，并带一个超时。
@@ -163,7 +167,9 @@ pub const fn task_exit_wait_handle(task_id : TaskId) -> TaskWaitHandle {
 
 /// 让当前任务等待指定任务退出。
 #[inline]
-pub fn wait_for_task_exit(task_id : TaskId) { wait_on(task_exit_wait_handle(task_id)); }
+pub fn wait_for_task_exit(task_id : TaskId) -> TaskWaitResult {
+    wait_on(task_exit_wait_handle(task_id))
+}
 
 /// 让当前任务等待指定任务退出，并带一个超时。
 #[inline]
@@ -174,11 +180,17 @@ pub fn wait_for_task_exit_for_ticks(task_id : TaskId, timeout_ticks : TaskTick) 
 
 /// 让当前任务睡眠指定数量的 tick。
 #[inline]
-pub fn sleep_for_ticks(ticks : TaskTick) { scheduler::sleep_current_for_ticks(ticks); }
+pub fn sleep_for_ticks(ticks : TaskTick) -> TaskWaitResult {
+    scheduler::sleep_current_for_ticks(ticks)
+}
 
 /// 尝试唤醒指定任务。
 #[inline]
 pub fn wake_task(task_id : TaskId) -> bool { scheduler::wake_task(task_id) }
+
+/// 以 `Interrupted` 结果将指定任务从等待与超时队列中同时移除。
+#[inline]
+pub fn interrupt_task(task_id : TaskId) -> bool { scheduler::interrupt_task(task_id) }
 
 /// 回收指定已退出任务的信息。
 #[inline]

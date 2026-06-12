@@ -4,15 +4,10 @@ use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use ipc::signal::SignalDelivery;
-use task::{ProcessId, TaskExitCode, TaskId};
+use task::{ProcessId, TaskId};
 
 /// Linux 标准信号号上界（不含实时信号）。
 const _NSIG: i32 = 64;
-
-/// 与 wait 状态字节一致：`(sig & 0x7f) << 8`。
-fn exit_code_for_signal(sig: i32) -> TaskExitCode {
-    ((sig & 0x7f) as isize) << 8
-}
 
 fn resolve_task_id(pid: isize) -> Result<TaskId, ErrNo> {
     if pid <= 0 {
@@ -39,27 +34,24 @@ pub(crate) fn sys_kill(args: SyscallArgs) -> UserRet {
         return UserRet::from_success(0);
     }
 
-    let delivery = match ipc::signal::with_registry(|registry| registry.send(task_id, sig as usize)) {
-        Ok(delivery) => delivery,
+    let process = match task::process_task_snapshot(task_id) {
+        Some(snapshot) => snapshot.pid,
+        None => return UserRet::from_error(ErrNo::ESRCH),
+    };
+    if super::signal::ensure_process_signal_state(process).is_err() {
+        return UserRet::from_error(ErrNo::ESRCH);
+    }
+    let dispatch = match ipc::signal::with_registry(|registry| {
+        registry.send_process(process.raw(), sig as usize)
+    }) {
+        Ok(dispatch) => dispatch,
         Err(_) => return UserRet::from_error(ErrNo::EINVAL),
     };
 
-    if !matches!(delivery, SignalDelivery::Terminate) {
+    if !matches!(dispatch.delivery, SignalDelivery::Terminate) {
+        super::signal::apply_signal_dispatch(dispatch, sig as usize);
         return UserRet::from_success(0);
     }
-
-    let exit_code = exit_code_for_signal(sig);
-    let current = task::current_task_id();
-
-    if current == Some(task_id) {
-        super::robust::robust_exit_cleanup(task_id);
-        task::exit_current(exit_code);
-    }
-
-    super::robust::robust_exit_cleanup(task_id);
-    if task::kill_task(task_id, exit_code) {
-        UserRet::from_success(0)
-    } else {
-        UserRet::from_error(ErrNo::ESRCH)
-    }
+    super::signal::apply_signal_dispatch(dispatch, sig as usize);
+    UserRet::from_success(0)
 }

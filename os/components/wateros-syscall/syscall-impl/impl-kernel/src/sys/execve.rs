@@ -41,6 +41,7 @@ fn do_execve(path_ptr: usize, argv_ptr: usize, envp_ptr: usize) -> Result<(), Er
 
     super::robust::robust_exit_cleanup_siblings_for_exec();
     let killed_threads = task::terminate_other_threads_for_exec().map_err(|_| ErrNo::EINVAL)?;
+    let current_signal_task = super::signal::ensure_current_signal_state()?.task_id;
 
     let argv_refs: Vec<&str> = argv
         .iter()
@@ -65,6 +66,7 @@ fn do_execve(path_ptr: usize, argv_ptr: usize, envp_ptr: usize) -> Result<(), Er
         vfs::fd::drop_task_fd_table(exited.id);
         cred::drop_task_cred(exited.id);
     }
+    super::signal::on_exec(current_signal_task, &killed_threads);
 
     let old_aspace = task::current_task_user_aspace_ptr();
     mm::kernel_mm::drop_user_aspace(old_aspace);

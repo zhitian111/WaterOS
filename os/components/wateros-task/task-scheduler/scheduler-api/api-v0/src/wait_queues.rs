@@ -260,13 +260,32 @@ impl WaitQueues {
                      task_id : TaskId,
                      ready_queue : &mut impl ReadyTaskSink)
                      -> bool {
+        self.finish_blocked_task(registry, task_id, ready_queue, TaskWaitResult::Woken)
+    }
+
+    /// 从任意等待/睡眠队列移除任务，并记录信号中断结果。
+    pub fn interrupt_task(&mut self,
+                          registry : &mut TaskRegistry,
+                          task_id : TaskId,
+                          ready_queue : &mut impl ReadyTaskSink)
+                          -> bool {
+        self.finish_blocked_task(registry, task_id, ready_queue, TaskWaitResult::Interrupted)
+    }
+
+    fn finish_blocked_task(&mut self,
+                           registry : &mut TaskRegistry,
+                           task_id : TaskId,
+                           ready_queue : &mut impl ReadyTaskSink,
+                           result : TaskWaitResult)
+                           -> bool {
+        self.wait_timeouts.retain(|entry| entry.task_id != task_id);
         if take_task_id_by_id(&mut self.blocked_queue, task_id) {
             if registry.state(task_id)
                        .is_none()
             {
                 return false;
             }
-            registry.finish_wait(task_id, TaskWaitResult::Woken);
+            registry.finish_wait(task_id, result);
             registry.mark_ready(task_id);
             ready_queue.enqueue_ready_task(task_id);
             return true;
@@ -277,7 +296,7 @@ impl WaitQueues {
             {
                 return false;
             }
-            registry.finish_wait(task_id, TaskWaitResult::Woken);
+            registry.finish_wait(task_id, result);
             registry.mark_ready(task_id);
             ready_queue.enqueue_ready_task(task_id);
             return true;
@@ -289,7 +308,7 @@ impl WaitQueues {
                 {
                     return false;
                 }
-                registry.finish_wait(task_id, TaskWaitResult::Woken);
+                registry.finish_wait(task_id, result);
                 registry.mark_ready(task_id);
                 ready_queue.enqueue_ready_task(task_id);
                 return true;
@@ -304,7 +323,7 @@ impl WaitQueues {
                 {
                     return false;
                 }
-                registry.finish_wait(task_id, TaskWaitResult::Woken);
+                registry.finish_wait(task_id, result);
                 registry.mark_ready(task_id);
                 ready_queue.enqueue_ready_task(task_id);
                 return true;
@@ -319,7 +338,7 @@ impl WaitQueues {
                 {
                     return false;
                 }
-                registry.finish_wait(task_id, TaskWaitResult::Woken);
+                registry.finish_wait(task_id, result);
                 registry.mark_ready(task_id);
                 ready_queue.enqueue_ready_task(task_id);
                 return true;

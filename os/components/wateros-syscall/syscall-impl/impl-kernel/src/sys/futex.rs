@@ -3,7 +3,7 @@
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
-use ipc::futex::{FutexKey, FutexHub, FutexWaitOutcome, KernelFutexOps};
+use ipc::futex::{FutexKey, FutexHub, KernelFutexOps};
 use task::TaskTick;
 
 use crate::user_copy::{copy_from_user, copy_from_user_struct};

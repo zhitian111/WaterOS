@@ -25,6 +25,7 @@ pub enum SyscallKind {
     ReadLinkAt,
     FaccessAt,
     StatFs,
+    Sync,
     Fsync,
     Fdatasync,
     OpenAt,
@@ -92,12 +93,17 @@ pub enum SyscallKind {
     Futex,
     RtSigaction,
     RtSigprocmask,
+    RtSigpending,
+    RtSigsuspend,
     RtSigtimedwait,
     RtSigreturn,
+    Tkill,
+    Tgkill,
     SetTidAddress,
     SetRobustList,
     GetRobustList,
     GetRandom,
+    GetItimer,
     SetItimer,
     GetRlimit,
     GetRusage,
@@ -154,6 +160,8 @@ impl SyscallKind {
             Self::FaccessAt
         } else if syscall_nr == T::STATFS.raw() {
             Self::StatFs
+        } else if syscall_nr == T::SYNC.raw() {
+            Self::Sync
         } else if syscall_nr == T::FSYNC.raw() {
             Self::Fsync
         } else if syscall_nr == T::FDATASYNC.raw() {
@@ -288,10 +296,18 @@ impl SyscallKind {
             Self::RtSigaction
         } else if syscall_nr == T::RT_SIGPROCMASK.raw() {
             Self::RtSigprocmask
+        } else if syscall_nr == T::RT_SIGPENDING.raw() {
+            Self::RtSigpending
+        } else if syscall_nr == T::RT_SIGSUSPEND.raw() {
+            Self::RtSigsuspend
         } else if syscall_nr == T::RT_SIGTIMEDWAIT.raw() {
             Self::RtSigtimedwait
         } else if syscall_nr == T::RT_SIGRETURN.raw() {
             Self::RtSigreturn
+        } else if syscall_nr == T::TKILL.raw() {
+            Self::Tkill
+        } else if syscall_nr == T::TGKILL.raw() {
+            Self::Tgkill
         } else if syscall_nr == T::SET_TID_ADDRESS.raw() {
             Self::SetTidAddress
         } else if syscall_nr == T::SET_ROBUST_LIST.raw() {
@@ -300,6 +316,8 @@ impl SyscallKind {
             Self::GetRobustList
         } else if syscall_nr == T::GETRANDOM.raw() {
             Self::GetRandom
+        } else if syscall_nr == T::GETITIMER.raw() {
+            Self::GetItimer
         } else if syscall_nr == T::SETITIMER.raw() {
             Self::SetItimer
         } else if syscall_nr == T::GETRLIMIT.raw() {
@@ -369,6 +387,7 @@ impl SyscallKind {
             Self::ReadLinkAt => "readlinkat",
             Self::FaccessAt => "faccessat",
             Self::StatFs => "statfs",
+            Self::Sync => "sync",
             Self::Fsync => "fsync",
             Self::Fdatasync => "fdatasync",
             Self::OpenAt => "openat",
@@ -436,12 +455,17 @@ impl SyscallKind {
             Self::Futex => "futex",
             Self::RtSigaction => "rt_sigaction",
             Self::RtSigprocmask => "rt_sigprocmask",
+            Self::RtSigpending => "rt_sigpending",
+            Self::RtSigsuspend => "rt_sigsuspend",
             Self::RtSigtimedwait => "rt_sigtimedwait",
             Self::RtSigreturn => "rt_sigreturn",
+            Self::Tkill => "tkill",
+            Self::Tgkill => "tgkill",
             Self::SetTidAddress => "set_tid_address",
             Self::SetRobustList => "set_robust_list",
             Self::GetRobustList => "get_robust_list",
             Self::GetRandom => "getrandom",
+            Self::GetItimer => "getitimer",
             Self::SetItimer => "setitimer",
             Self::GetRlimit => "getrlimit",
             Self::GetRusage => "getrusage",
@@ -697,6 +721,14 @@ pub trait SyscallDispatcher {
         Self::dispatch_unsupported(
             SyscallKind::StatFs,
             Self::NumberTable::STATFS.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_sync(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Sync,
+            Self::NumberTable::SYNC.raw(),
             args,
         )
     }
@@ -1165,6 +1197,22 @@ pub trait SyscallDispatcher {
         )
     }
 
+    fn dispatch_rt_sigpending(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::RtSigpending,
+            Self::NumberTable::RT_SIGPENDING.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_rt_sigsuspend(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::RtSigsuspend,
+            Self::NumberTable::RT_SIGSUSPEND.raw(),
+            args,
+        )
+    }
+
     fn dispatch_rt_sigtimedwait(args: SyscallArgs) -> isize {
         Self::dispatch_unsupported(
             SyscallKind::RtSigtimedwait,
@@ -1179,6 +1227,14 @@ pub trait SyscallDispatcher {
             Self::NumberTable::RT_SIGRETURN.raw(),
             args,
         )
+    }
+
+    fn dispatch_tkill(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(SyscallKind::Tkill, Self::NumberTable::TKILL.raw(), args)
+    }
+
+    fn dispatch_tgkill(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(SyscallKind::Tgkill, Self::NumberTable::TGKILL.raw(), args)
     }
 
     fn dispatch_set_tid_address(args: SyscallArgs) -> isize {
@@ -1209,6 +1265,14 @@ pub trait SyscallDispatcher {
         Self::dispatch_unsupported(
             SyscallKind::GetRandom,
             Self::NumberTable::GETRANDOM.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_getitimer(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::GetItimer,
+            Self::NumberTable::GETITIMER.raw(),
             args,
         )
     }
@@ -1441,6 +1505,7 @@ pub trait SyscallDispatcher {
             SyscallKind::ReadLinkAt => Self::dispatch_readlinkat(syscall_args),
             SyscallKind::FaccessAt => Self::dispatch_faccessat(syscall_args),
             SyscallKind::StatFs => Self::dispatch_statfs(syscall_args),
+            SyscallKind::Sync => Self::dispatch_sync(syscall_args),
             SyscallKind::Fsync => Self::dispatch_fsync(syscall_args),
             SyscallKind::Fdatasync => Self::dispatch_fdatasync(syscall_args),
             SyscallKind::OpenAt => Self::dispatch_openat(syscall_args),
@@ -1499,12 +1564,17 @@ pub trait SyscallDispatcher {
             SyscallKind::Futex => Self::dispatch_futex(syscall_args),
             SyscallKind::RtSigaction => Self::dispatch_rt_sigaction(syscall_args),
             SyscallKind::RtSigprocmask => Self::dispatch_rt_sigprocmask(syscall_args),
+            SyscallKind::RtSigpending => Self::dispatch_rt_sigpending(syscall_args),
+            SyscallKind::RtSigsuspend => Self::dispatch_rt_sigsuspend(syscall_args),
             SyscallKind::RtSigtimedwait => Self::dispatch_rt_sigtimedwait(syscall_args),
             SyscallKind::RtSigreturn => Self::dispatch_rt_sigreturn(syscall_args),
+            SyscallKind::Tkill => Self::dispatch_tkill(syscall_args),
+            SyscallKind::Tgkill => Self::dispatch_tgkill(syscall_args),
             SyscallKind::SetTidAddress => Self::dispatch_set_tid_address(syscall_args),
             SyscallKind::SetRobustList => Self::dispatch_set_robust_list(syscall_args),
             SyscallKind::GetRobustList => Self::dispatch_get_robust_list(syscall_args),
             SyscallKind::GetRandom => Self::dispatch_getrandom(syscall_args),
+            SyscallKind::GetItimer => Self::dispatch_getitimer(syscall_args),
             SyscallKind::SetItimer => Self::dispatch_setitimer(syscall_args),
             SyscallKind::GetRlimit => Self::dispatch_getrlimit(syscall_args),
             SyscallKind::GetRusage => Self::dispatch_getrusage(syscall_args),

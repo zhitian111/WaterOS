@@ -262,14 +262,12 @@ fn poll_wait_pipe_fds(
         if socket_fd::lookup(fd).is_some() {
             continue;
         }
-        let waited = matches!(
-            vfs::fd::with_current_io(fd, |handle| {
-                handle.poll_wait_for_ticks(pfd.events, remaining, still_waiting)
-            }),
-            Ok(())
-        );
-        if waited {
-            any_pipe = true;
+        match vfs::fd::with_current_io(fd, |handle| {
+            handle.poll_wait_for_ticks(pfd.events, remaining, still_waiting)
+        }) {
+            Ok(()) => any_pipe = true,
+            Err(vfs::api::VfsError::Interrupted) => return Err(ErrNo::EINTR),
+            Err(_) => {}
         }
     }
     Ok(any_pipe)
@@ -299,7 +297,11 @@ pub(crate) fn poll_block_until_ready(
         };
         let any_pipe = poll_wait_pipe_fds(fds_ptr, nfds, &deadline, &mut still_waiting)?;
         if !any_pipe {
-            task::sleep_for_ticks(1.min(remaining) as TaskTick);
+            if task::sleep_for_ticks(1.min(remaining) as TaskTick) ==
+               task::TaskWaitResult::Interrupted
+            {
+                return Err(ErrNo::EINTR);
+            }
         }
     }
 }
@@ -491,14 +493,12 @@ fn poll_wait_monitored_fds(
         if socket_fd::lookup(fd).is_some() {
             continue;
         }
-        let waited = matches!(
-            vfs::fd::with_current_io(fd, |handle| {
-                handle.poll_wait_for_ticks(events, remaining, still_waiting)
-            }),
-            Ok(())
-        );
-        if waited {
-            any_pipe = true;
+        match vfs::fd::with_current_io(fd, |handle| {
+            handle.poll_wait_for_ticks(events, remaining, still_waiting)
+        }) {
+            Ok(()) => any_pipe = true,
+            Err(vfs::api::VfsError::Interrupted) => return Err(ErrNo::EINTR),
+            Err(_) => {}
         }
     }
     Ok(any_pipe)
@@ -538,7 +538,11 @@ pub(crate) fn poll_block_fd_sets(
             &mut still_waiting,
         )?;
         if !any_pipe {
-            task::sleep_for_ticks(1.min(remaining) as TaskTick);
+            if task::sleep_for_ticks(1.min(remaining) as TaskTick) ==
+               task::TaskWaitResult::Interrupted
+            {
+                return Err(ErrNo::EINTR);
+            }
         }
     }
 }

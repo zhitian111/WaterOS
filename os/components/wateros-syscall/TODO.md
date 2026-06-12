@@ -80,14 +80,15 @@
 | `fcntl` | 待实现 | fd flags、`F_DUPFD_CLOEXEC`、非阻塞等。 |
 | `prctl` | 待实现 | libc/线程运行时常见探测项，可先兼容常用 no-op。 |
 | `futex` | 已接入 | WAIT/WAKE（含 bitset）；委托 `ipc-futex/impl-task`；带超时；非 private → `EINVAL`。 |
-| `rt_sigaction` | 待实现 | busybox、lmbench、cyclictest 需要信号安装。 |
-| `rt_sigprocmask` | 待实现 | 与 signal/pthread 联动。 |
-| `rt_sigreturn` | 待实现 | 完整用户信号返回路径。 |
+| `rt_sigaction` / `rt_sigprocmask` | 已接入 | 进程共享 disposition、线程 mask/pending；支持 `SA_SIGINFO`、`SA_RESTART`、`SA_NODEFER`、`SA_RESETHAND`。 |
+| `rt_sigreturn` | 已接入 | RISC-V64/LoongArch64 signal frame、标量 FP/FCSR、只读可执行 trampoline 与用户态上下文恢复。 |
+| `rt_sigpending` / `rt_sigsuspend` / `rt_sigtimedwait` | 已接入 | 标准信号位图合并；suspend 临时 mask 与阻塞 timed wait。 |
+| `tkill` / `tgkill` | 已接入 | 线程定向 pending 与阻塞任务中断。 |
 | `set_tid_address` | 部分接入 | 当前返回 tid；未实现 clear-child-tid 唤醒。 |
 | `set_robust_list` | 已接入 | 校验头长 24；状态存 `FutexHub`；退出深清理。 |
 | `get_robust_list` | 已接入 | ABI 号 100；读回 per-task robust 头。 |
 | `getrandom` | 待实现 | libc 初始化和测试程序可能探测。 |
-| `setitimer` | 部分接入 | 校验 `itimerval` 并写回零值 old timer；暂不维护真实 interval timer / SIGALRM。 |
+| `setitimer` / `getitimer` | 已接入 | REAL/VIRTUAL/PROF 三类进程 timer；周期 deadline 无漂移推进，标准信号 pending 合并。 |
 | `getrlimit` | 待实现 | shell/libc 常见探测项。 |
 | `setrlimit` | 待实现 | 可先支持最小 no-op/参数校验。 |
 

@@ -35,6 +35,7 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const READLINKAT: SyscallNumber = SyscallNumber(78);
     const FACCESSAT: SyscallNumber = SyscallNumber(48);
     const STATFS: SyscallNumber = SyscallNumber(43);
+    const SYNC: SyscallNumber = SyscallNumber(81);
     const FSYNC: SyscallNumber = SyscallNumber(82);
     const FDATASYNC: SyscallNumber = SyscallNumber(83);
     const OPENAT: SyscallNumber = SyscallNumber(56);
@@ -110,14 +111,19 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const FUTEX: SyscallNumber = SyscallNumber(98);
     const RT_SIGACTION: SyscallNumber = SyscallNumber(134);
     const RT_SIGPROCMASK: SyscallNumber = SyscallNumber(135);
+    const RT_SIGPENDING: SyscallNumber = SyscallNumber(136);
     const RT_SIGTIMEDWAIT: SyscallNumber = SyscallNumber(137);
+    const RT_SIGSUSPEND: SyscallNumber = SyscallNumber(133);
     const RT_SIGRETURN: SyscallNumber = SyscallNumber(139);
+    const TKILL: SyscallNumber = SyscallNumber(130);
+    const TGKILL: SyscallNumber = SyscallNumber(131);
     const SET_TID_ADDRESS: SyscallNumber = SyscallNumber(96);
     const SET_ROBUST_LIST: SyscallNumber = SyscallNumber(99);
     const GET_ROBUST_LIST: SyscallNumber = SyscallNumber(100);
 
     // 其它常用 / other common syscalls
     const GETRANDOM: SyscallNumber = SyscallNumber(278);
+    const GETITIMER: SyscallNumber = SyscallNumber(102);
     const SETITIMER: SyscallNumber = SyscallNumber(103);
     const GETRLIMIT: SyscallNumber = SyscallNumber(163);
     const GETRUSAGE: SyscallNumber = SyscallNumber(165);

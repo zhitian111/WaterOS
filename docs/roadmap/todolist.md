@@ -21,7 +21,7 @@
 | wateros-runtime | console/logging/panic/heap allocator 子 crate 已接入；`pub` 与模块级 rustdoc 已补齐 | 随子 impl 或默认 feature 变更同步文档 |
 | wateros-fs | 默认 **`impl-ext4`**（RO + RW beta）；**devfs/rootfs 的 `impl-kernel`**；与驱动协作完成根块探测与挂载 | 多根设备策略、挂载协议扩展 |
 | wateros-vfs | **`impl-fs-bridge`**（VFS 桥接）稳定；**`impl-fd-session`** 已完整支持 per-task fd 表（dup/dup3/fork 继承/CLOEXEC 全部实现+测试） | 路径/会话语义与 fs 侧 RW/RO 视图一致性；VFS 自检回归 |
-| wateros-ipc | 聚合层默认含 **waitqueue**、**pipe**（内核 ring-buffer + fd endpoint）；**futex** 通过 dispatch 表接入（WAIT/WAKE）；signal 相关结构已构建但用户态 handler 路径待联调 | signal handler trap 返回路径完整验证；shm/event 继续推进 |
+| wateros-ipc | 聚合层默认含 **waitqueue**、**pipe**、**futex**；signal 已拆分进程共享 disposition/pending/itimer 与线程 mask/pending，并接入双架构 handler/`rt_sigreturn` 路径 | 扩展实时信号队列、altstack 与 job control；shm/event 继续推进 |
 | wateros-task | **`impl-core` + 轮转调度**；用户任务 spawn 完整（`spawn_user_task_from_loaded_elf`）；阻塞/睡眠队列、WaitQueue、zombie 回收、最小父子关系与 wait 服务 | trap 驱动抢占；TaskHandle generation；跨架构文档 |
 | wateros-abi | **`api-v0`** 与 **`impl-linux-generic64`** 默认启用；errno、号表、参数与 `UserRet` 已供 syscall 使用 | 调用号与内核实际支持集合对齐；**`SYSLOG` (116)** 待 klog 落地时加入号表 |
 | wateros-klog | **已落地**（[`docs/architecture/wateros-klog.md`](../architecture/wateros-klog.md)） | `CONSOLE_*` 接 runtime-console；权限；`/dev/kmsg` 线格式 |

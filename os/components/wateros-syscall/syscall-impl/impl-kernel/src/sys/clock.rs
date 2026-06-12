@@ -101,14 +101,29 @@ fn clock_id_to_timespec(clock_id : usize) -> Result<UserTimespec, ErrNo> {
     Ok(ns_to_timespec(clock_id_to_ns(clock_id)?))
 }
 
-fn sleep_for_ns(total_ns : u128) -> UserRet {
+fn sleep_for_ns(total_ns : u128, rem_ptr : usize) -> UserRet {
     if total_ns == 0 {
         return UserRet::from_success(0);
     }
+    let start = match monotonic_now_ns() {
+        Ok(now) => now,
+        Err(error) => return UserRet::from_error(error),
+    };
     let ticks = ((total_ns + SCHED_TICK_NS - 1) / SCHED_TICK_NS).max(1);
     let ticks = u64::try_from(ticks).unwrap_or(u64::MAX);
-    task::sleep_for_ticks(ticks);
-    UserRet::from_success(0)
+    if task::sleep_for_ticks(ticks) != task::TaskWaitResult::Interrupted {
+        return UserRet::from_success(0);
+    }
+    if rem_ptr != 0 {
+        let elapsed = monotonic_now_ns()
+            .unwrap_or(start)
+            .saturating_sub(start);
+        let remaining = total_ns.saturating_sub(elapsed);
+        if let Err(error) = copy_to_user_struct(rem_ptr, &ns_to_timespec(remaining)) {
+            return UserRet::from_error(error);
+        }
+    }
+    UserRet::from_error(ErrNo::EINTR)
 }
 
 fn write_zero_timespec(ptr : usize) -> Result<(), ErrNo> {
@@ -242,8 +257,8 @@ pub(crate) fn sys_clock_nanosleep(args : SyscallArgs) -> UserRet {
     let ret = sleep_for_ns(match timespec_to_ns(rel) {
         Ok(ns) => ns,
         Err(e) => return UserRet::from_error(e),
-    });
-    if rem_ptr != 0 {
+    }, if flags & TIMER_ABSTIME == 0 { rem_ptr } else { 0 });
+    if ret.0 >= 0 && rem_ptr != 0 {
         if let Err(e) = write_zero_timespec(rem_ptr) {
             return UserRet::from_error(e);
         }
@@ -253,6 +268,7 @@ pub(crate) fn sys_clock_nanosleep(args : SyscallArgs) -> UserRet {
 
 pub(crate) fn sys_nanosleep(args : SyscallArgs) -> UserRet {
     let req_ptr = args.arg(0);
+    let rem_ptr = args.arg(1);
     if req_ptr == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
     }
@@ -267,5 +283,5 @@ pub(crate) fn sys_nanosleep(args : SyscallArgs) -> UserRet {
         Ok(ns) => ns,
         Err(e) => return UserRet::from_error(e),
     };
-    sleep_for_ns(total_ns)
+    sleep_for_ns(total_ns, rem_ptr)
 }

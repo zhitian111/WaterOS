@@ -11,6 +11,8 @@ pub enum TaskWaitResult {
     Woken,
     /// 超时时间先到，任务因超时返回。
     TimedOut,
+    /// 信号或其它异步事件中断了等待。
+    Interrupted,
 }
 
 /// 可被任务等待的目标对象。

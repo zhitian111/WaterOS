@@ -11,7 +11,7 @@ use abi::user_ret::UserRet;
 use api_v0::kernel_trap;
 use api_v0::trap::{
     Exception, Interrupt, TrapAddressSpaceWrite, TrapCause, TrapFrameRead, TrapFrameWrite,
-    TrapSyscallRead, TrapSyscallWrite, TrapThreadWrite,
+    SignalFrameCodec, SignalMachineContext, TrapSyscallRead, TrapSyscallWrite, TrapThreadWrite,
 };
 use core::arch::asm;
 
@@ -61,6 +61,65 @@ const TIMER_SLICE_TICKS : u64 = 10_000_000;
 /// bring-up 阶段用户任务串行运行，先全局打开以支持 hard-float glibc/musl
 /// busybox；后续多任务并发时应在任务切换路径补充 FPU 上下文保存/恢复。
 const LOONGARCH_EUEN_FPE : usize = 1 << 0;
+
+unsafe fn save_fp_state() -> ([u64; 32], u32) {
+    let mut regs = [0u64; 32];
+    let mut fcsr: usize;
+    let base = regs.as_mut_ptr();
+    unsafe {
+        asm!(
+            "fst.d $f0, {base}, 0", "fst.d $f1, {base}, 8",
+            "fst.d $f2, {base}, 16", "fst.d $f3, {base}, 24",
+            "fst.d $f4, {base}, 32", "fst.d $f5, {base}, 40",
+            "fst.d $f6, {base}, 48", "fst.d $f7, {base}, 56",
+            "fst.d $f8, {base}, 64", "fst.d $f9, {base}, 72",
+            "fst.d $f10, {base}, 80", "fst.d $f11, {base}, 88",
+            "fst.d $f12, {base}, 96", "fst.d $f13, {base}, 104",
+            "fst.d $f14, {base}, 112", "fst.d $f15, {base}, 120",
+            "fst.d $f16, {base}, 128", "fst.d $f17, {base}, 136",
+            "fst.d $f18, {base}, 144", "fst.d $f19, {base}, 152",
+            "fst.d $f20, {base}, 160", "fst.d $f21, {base}, 168",
+            "fst.d $f22, {base}, 176", "fst.d $f23, {base}, 184",
+            "fst.d $f24, {base}, 192", "fst.d $f25, {base}, 200",
+            "fst.d $f26, {base}, 208", "fst.d $f27, {base}, 216",
+            "fst.d $f28, {base}, 224", "fst.d $f29, {base}, 232",
+            "fst.d $f30, {base}, 240", "fst.d $f31, {base}, 248",
+            "movfcsr2gr {fcsr}, $fcsr0",
+            base = in(reg) base,
+            fcsr = out(reg) fcsr,
+            options(nostack),
+        );
+    }
+    (regs, fcsr as u32)
+}
+
+unsafe fn restore_fp_state(regs: &[u64; 32], fcsr: u32) {
+    let base = regs.as_ptr();
+    unsafe {
+        asm!(
+            "fld.d $f0, {base}, 0", "fld.d $f1, {base}, 8",
+            "fld.d $f2, {base}, 16", "fld.d $f3, {base}, 24",
+            "fld.d $f4, {base}, 32", "fld.d $f5, {base}, 40",
+            "fld.d $f6, {base}, 48", "fld.d $f7, {base}, 56",
+            "fld.d $f8, {base}, 64", "fld.d $f9, {base}, 72",
+            "fld.d $f10, {base}, 80", "fld.d $f11, {base}, 88",
+            "fld.d $f12, {base}, 96", "fld.d $f13, {base}, 104",
+            "fld.d $f14, {base}, 112", "fld.d $f15, {base}, 120",
+            "fld.d $f16, {base}, 128", "fld.d $f17, {base}, 136",
+            "fld.d $f18, {base}, 144", "fld.d $f19, {base}, 152",
+            "fld.d $f20, {base}, 160", "fld.d $f21, {base}, 168",
+            "fld.d $f22, {base}, 176", "fld.d $f23, {base}, 184",
+            "fld.d $f24, {base}, 192", "fld.d $f25, {base}, 200",
+            "fld.d $f26, {base}, 208", "fld.d $f27, {base}, 216",
+            "fld.d $f28, {base}, 224", "fld.d $f29, {base}, 232",
+            "fld.d $f30, {base}, 240", "fld.d $f31, {base}, 248",
+            "movgr2fcsr $fcsr0, {fcsr}",
+            base = in(reg) base,
+            fcsr = in(reg) fcsr as usize,
+            options(nostack),
+        );
+    }
+}
 
 #[inline]
 fn decode_loongarch64_trap_cause(estat : usize) -> TrapCause {
@@ -221,5 +280,62 @@ impl TrapThreadWrite for TrapContext {
     fn set_user_tls(&mut self, tls : usize) {
         // LoongArch64 psABI: tp is $r2.
         self.x[2] = tls;
+    }
+}
+
+impl SignalFrameCodec for TrapContext {
+    fn capture_signal_context(&self) -> SignalMachineContext {
+        let (fpregs, fcsr) = unsafe { save_fp_state() };
+        SignalMachineContext {
+            gprs: self.x,
+            pc: self.era,
+            status: self.prmd,
+            fpregs,
+            fcsr,
+            reserved: 0,
+        }
+    }
+
+    fn restore_signal_context(&mut self, context: &SignalMachineContext) -> bool {
+        if context.pc == 0 || context.pc & 3 != 0 {
+            return false;
+        }
+        self.x = context.gprs;
+        self.x[0] = 0;
+        self.era = context.pc;
+        unsafe {
+            restore_fp_state(&context.fpregs, context.fcsr);
+        }
+        self.set_return_to_user_raw();
+        true
+    }
+
+    fn prepare_signal_handler(
+        &mut self,
+        handler: usize,
+        restorer: usize,
+        frame_sp: usize,
+        signal: usize,
+        siginfo: usize,
+        ucontext: usize,
+    ) {
+        self.x[1] = restorer;
+        self.x[3] = frame_sp;
+        self.x[4] = signal;
+        self.x[5] = siginfo;
+        self.x[6] = ucontext;
+        self.era = handler;
+        self.set_return_to_user_raw();
+    }
+
+    fn prepare_syscall_restart(
+        context: &mut SignalMachineContext,
+        syscall_nr: usize,
+        args: [usize; 6],
+        instruction_bytes: usize,
+    ) {
+        context.pc = context.pc.wrapping_sub(instruction_bytes);
+        context.gprs[4..10].copy_from_slice(&args);
+        context.gprs[11] = syscall_nr;
     }
 }

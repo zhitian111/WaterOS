@@ -144,12 +144,16 @@ pub fn block_current(reason : TaskBlockReason) { active_impl::block_current(reas
 
 /// 让当前任务等待指定的阻塞对象。
 #[inline]
-pub fn wait_current(wait_handle : TaskWaitHandle) { active_impl::wait_current(wait_handle); }
+pub fn wait_current(wait_handle : TaskWaitHandle) -> TaskWaitResult {
+    active_impl::wait_current(wait_handle)
+}
 
 /// 在调度临界区内复查条件；条件为真才阻塞当前任务。
 #[inline]
-pub fn wait_current_while(wait_handle : TaskWaitHandle, condition : impl FnOnce() -> bool) {
-    active_impl::wait_current_while(wait_handle, condition);
+pub fn wait_current_while(wait_handle : TaskWaitHandle,
+                          condition : impl FnOnce() -> bool)
+                          -> TaskWaitResult {
+    active_impl::wait_current_while(wait_handle, condition)
 }
 
 /// 让当前任务等待指定的阻塞对象，并带一个超时。
@@ -171,8 +175,8 @@ pub fn wait_current_timeout_while(wait_handle : TaskWaitHandle,
 
 /// 让当前任务在指定等待队列上休眠，直到被唤醒。
 #[inline]
-pub fn wait_current_on(wait_queue_id : WaitQueueId) {
-    wait_current(TaskWaitHandle::for_wait_queue(wait_queue_id));
+pub fn wait_current_on(wait_queue_id : WaitQueueId) -> TaskWaitResult {
+    wait_current(TaskWaitHandle::for_wait_queue(wait_queue_id))
 }
 
 /// 让当前任务在指定等待队列上等待，并附带超时时间。
@@ -186,8 +190,8 @@ pub fn wait_current_on_timeout(wait_queue_id : WaitQueueId,
 
 /// 让当前任务等待指定任务退出。
 #[inline]
-pub fn wait_for_task_exit(task_id : TaskId) {
-    wait_current(TaskWaitHandle::for_task_exit(task_id));
+pub fn wait_for_task_exit(task_id : TaskId) -> TaskWaitResult {
+    wait_current(TaskWaitHandle::for_task_exit(task_id))
 }
 
 /// 让当前任务等待指定任务退出，并附带超时时间。
@@ -199,11 +203,16 @@ pub fn wait_for_task_exit_timeout(task_id : TaskId, timeout_ticks : TaskTick) ->
 
 /// 让当前任务睡眠指定数量的 tick。
 #[inline]
-pub fn sleep_current_for_ticks(ticks : TaskTick) { active_impl::sleep_current_for_ticks(ticks); }
+pub fn sleep_current_for_ticks(ticks : TaskTick) -> TaskWaitResult {
+    active_impl::sleep_current_for_ticks(ticks)
+}
 
 /// 尝试唤醒指定任务。
 #[inline]
 pub fn wake_task(task_id : TaskId) -> bool { active_impl::wake_task(task_id) }
+
+#[inline]
+pub fn interrupt_task(task_id : TaskId) -> bool { active_impl::interrupt_task(task_id) }
 
 /// 终止指定任务（非当前任务）；当前任务应使用 [`exit_current`].
 #[inline]

@@ -66,6 +66,8 @@ pub trait SyscallNumberTable {
     const FACCESSAT: SyscallNumber;
     /// 查询路径所在文件系统统计信息（`statfs(2)`）。
     const STATFS: SyscallNumber;
+    /// 请求所有已挂载文件系统写回脏数据（`sync(2)`）。
+    const SYNC: SyscallNumber;
     /// 将 fd 对应文件脏数据同步到存储（`fsync(2)`）。
     const FSYNC: SyscallNumber;
     /// 将 fd 对应文件数据同步到存储（`fdatasync(2)`）。
@@ -206,10 +208,18 @@ pub trait SyscallNumberTable {
     const RT_SIGACTION: SyscallNumber;
     /// 阻塞/解除阻塞信号集（`rt_sigprocmask(2)`）。
     const RT_SIGPROCMASK: SyscallNumber;
+    /// 查询 pending 信号集（`rt_sigpending(2)`）。
+    const RT_SIGPENDING: SyscallNumber;
+    /// 临时替换 mask 并等待信号（`rt_sigsuspend(2)`）。
+    const RT_SIGSUSPEND: SyscallNumber;
     /// 等待一组实时信号（`rt_sigtimedwait(2)`）。
     const RT_SIGTIMEDWAIT: SyscallNumber;
     /// 从信号处理返回（`rt_sigreturn(2)`）。
     const RT_SIGRETURN: SyscallNumber;
+    /// 向指定线程发送信号（`tkill(2)`）。
+    const TKILL: SyscallNumber;
+    /// 向指定线程组内线程发送信号（`tgkill(2)`）。
+    const TGKILL: SyscallNumber;
     /// 设置 clear_child_tid 地址（`set_tid_address(2)`）。
     const SET_TID_ADDRESS: SyscallNumber;
     /// robust futex 列表（`set_robust_list(2)`）。
@@ -222,6 +232,8 @@ pub trait SyscallNumberTable {
     const GETRANDOM: SyscallNumber;
     /// 设置间隔定时器（`setitimer(2)`）。
     const SETITIMER: SyscallNumber;
+    /// 查询间隔定时器（`getitimer(2)`）。
+    const GETITIMER: SyscallNumber;
     /// 查询资源软/硬上限（`getrlimit(2)`）。
     const GETRLIMIT: SyscallNumber;
     /// 查询进程/线程资源使用统计（`getrusage(2)`）。

@@ -26,6 +26,10 @@ pub(crate) fn sys_clone(args: SyscallArgs) -> UserRet {
 
 #[inline(never)]
 fn do_clone(args: SyscallArgs) -> UserRet {
+    let parent_signal = match super::signal::ensure_current_signal_state() {
+        Ok(snapshot) => snapshot,
+        Err(error) => return UserRet::from_error(error),
+    };
     let clone_flags = task::CloneFlags::from_bits(args.arg(0));
     let child_stack = args.arg(1);
     let parent_tid = args.arg(2);
@@ -70,10 +74,19 @@ fn do_clone(args: SyscallArgs) -> UserRet {
         Some(id) => id,
         None => return UserRet::from_error(ErrNo::EAGAIN),
     };
-    let child_pid = match task::process_task_snapshot(child_id) {
-        Some(snapshot) => snapshot.pid.raw(),
+    let child_snapshot = match task::process_task_snapshot(child_id) {
+        Some(snapshot) => snapshot,
         None => return UserRet::from_error(ErrNo::ESRCH),
     };
+    let child_pid = child_snapshot.pid.raw();
+    if super::signal::on_fork(parent_signal.task_id,
+                              child_pid,
+                              child_id,
+                              child_snapshot.tid.raw())
+        .is_err()
+    {
+        return UserRet::from_error(ErrNo::EAGAIN);
+    }
 
     // 子任务继承父任务 cwd
     let parent_id = task::current_task_id().expect("current task must exist after fork");
@@ -111,6 +124,10 @@ fn do_clone_thread(
         Some(snapshot) => snapshot.tid.raw(),
         None => return UserRet::from_error(ErrNo::ESRCH),
     };
+    let parent_id = task::current_task_id().expect("current task must exist after clone");
+    if super::signal::on_clone_thread(parent_id, child_id, child_tid_raw).is_err() {
+        return UserRet::from_error(ErrNo::EAGAIN);
+    }
     let child_tid_value = child_tid_raw as u32;
 
     if clone_flags.contains(task::CloneFlags::CLONE_PARENT_SETTID)
@@ -126,7 +143,6 @@ fn do_clone_thread(
         return UserRet::from_error(ErrNo::EFAULT);
     }
 
-    let parent_id = task::current_task_id().expect("current task must exist after clone");
     vfs::cwd::share_cwd_from_parent(child_id, parent_id);
     vfs::fd::share_fd_table_from_parent(child_id, parent_id);
     cred::share_cred(parent_id, child_id);

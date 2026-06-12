@@ -20,11 +20,11 @@ pub trait IpcWaitQueueOps: Sized {
 
     fn wait_handle(&self) -> TaskWaitHandle;
 
-    fn wait_current(&self);
+    fn wait_current(&self) -> TaskWaitResult;
 
     fn wait_current_for_ticks(&self, timeout_ticks : TaskTick) -> TaskWaitResult;
 
-    fn wait_current_while<F>(&self, condition : F)
+    fn wait_current_while<F>(&self, condition : F) -> TaskWaitResult
         where F : FnOnce() -> bool;
 
     fn wait_current_while_for_ticks<F>(&self,

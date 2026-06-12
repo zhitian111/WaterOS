@@ -39,6 +39,10 @@ pub(crate) fn sys_write(args: SyscallArgs) -> UserRet {
     }
     match vfs::fd::with_current_io(fd, |handle| handle.write(&kbuf)) {
         Ok(n) => UserRet::from_success(n),
+        Err(vfs::api::VfsError::BrokenPipe) => {
+            let _ = super::signal::raise_current_thread(ipc::signal::SIGPIPE);
+            UserRet::from_error(ErrNo::EPIPE)
+        }
         Err(err) => UserRet::from_error(vfs_error_to_errno(err)),
     }
 }
@@ -90,6 +94,10 @@ pub(crate) fn sys_writev(args: SyscallArgs) -> UserRet {
 
     match vfs::fd::with_current_io(fd, |handle| handle.write(&out)) {
         Ok(n) => UserRet::from_success(n),
+        Err(vfs::api::VfsError::BrokenPipe) => {
+            let _ = super::signal::raise_current_thread(ipc::signal::SIGPIPE);
+            UserRet::from_error(ErrNo::EPIPE)
+        }
         Err(err) => UserRet::from_error(vfs_error_to_errno(err)),
     }
 }

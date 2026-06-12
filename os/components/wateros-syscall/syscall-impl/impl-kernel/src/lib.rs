@@ -26,6 +26,32 @@ pub fn dispatch_syscall_from_trap(syscall_nr: usize, syscall_args: SyscallArgs) 
     )
 }
 
+#[inline]
+pub fn timer_tick(interrupted_user: bool) {
+    sys::timer_tick(interrupted_user);
+}
+
+#[inline]
+pub fn deliver_pending_signal(
+    frame: *mut u8,
+    restart: Option<(usize, SyscallArgs)>,
+) -> isize {
+    match sys::deliver_pending_signal(frame, restart) {
+        Ok(false) => 0,
+        Ok(true) => 1,
+        Err(_) => -1,
+    }
+}
+
+#[inline]
+pub fn restore_signal_frame(frame: *mut u8) -> bool {
+    sys::restore_signal_frame(frame).is_ok()
+}
+
+pub fn raise_current_signal(signal: usize) -> bool {
+    sys::raise_current_thread(signal).is_ok()
+}
+
 /// Kernel syscall implementation selected by the aggregate crate.
 pub struct KernelSyscallDispatcher;
 
@@ -144,6 +170,11 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     #[inline]
     fn dispatch_statfs(args: SyscallArgs) -> isize {
         sys::sys_statfs(args).0
+    }
+
+    #[inline]
+    fn dispatch_sync(args: SyscallArgs) -> isize {
+        sys::sys_sync(args).0
     }
 
     #[inline]
@@ -434,6 +465,31 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     #[inline]
     fn dispatch_setitimer(args: SyscallArgs) -> isize {
         sys::sys_setitimer(args).0
+    }
+
+    #[inline]
+    fn dispatch_getitimer(args: SyscallArgs) -> isize {
+        sys::sys_getitimer(args).0
+    }
+
+    #[inline]
+    fn dispatch_rt_sigpending(args: SyscallArgs) -> isize {
+        sys::sys_rt_sigpending(args).0
+    }
+
+    #[inline]
+    fn dispatch_rt_sigsuspend(args: SyscallArgs) -> isize {
+        sys::sys_rt_sigsuspend(args).0
+    }
+
+    #[inline]
+    fn dispatch_tkill(args: SyscallArgs) -> isize {
+        sys::sys_tkill(args).0
+    }
+
+    #[inline]
+    fn dispatch_tgkill(args: SyscallArgs) -> isize {
+        sys::sys_tgkill(args).0
     }
 
     #[inline]

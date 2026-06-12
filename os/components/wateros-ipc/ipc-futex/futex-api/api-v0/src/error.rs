@@ -13,6 +13,8 @@ pub enum FutexError {
     Nosys,
     /// 带超时等待超时（`ETIMEDOUT`）。
     TimedOut,
+    /// 等待被信号中断（`EINTR`）。
+    Interrupted,
 }
 
 /// Futex 操作结果。

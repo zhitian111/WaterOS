@@ -366,6 +366,10 @@ impl MultiClassScheduler {
 
         let (current_task_id, current_ptr) = self.registry
                                                  .take_current_switch_out()?;
+        if matches!(reason, ScheduleReason::Sleep(_)) {
+            self.registry
+                .clear_wait_result(current_task_id);
+        }
 
         if self.registry
                .is_idle(current_task_id)
@@ -485,6 +489,16 @@ impl MultiClassScheduler {
                                    &mut staging);
         self.drain_staging(&mut staging);
         woken
+    }
+
+    pub(super) fn interrupt_task(&mut self, task_id : TaskId) -> bool {
+        let mut staging = VecDeque::new();
+        let interrupted = self.wait
+                              .interrupt_task(&mut self.registry,
+                                              task_id,
+                                              &mut staging);
+        self.drain_staging(&mut staging);
+        interrupted
     }
 
     pub(super) fn kill_task(&mut self, task_id : TaskId, exit_code : TaskExitCode) -> bool {

@@ -236,6 +236,19 @@ impl PerTaskFdRegistry {
         }
     }
 
+    /// 刷新全部实际 fd 表中的打开句柄；发生错误后仍继续其余写回。
+    pub fn flush_all(&mut self) -> VfsResult<()> {
+        let mut first_error = None;
+        for table in self.tables.values_mut() {
+            for handle in table.iter_mut().flatten() {
+                if let Err(err) = handle.flush() {
+                    first_error.get_or_insert(err);
+                }
+            }
+        }
+        first_error.map_or(Ok(()), Err)
+    }
+
     /// 临时取出指定 fd 的句柄，让调用方可在不持有 fd 注册表借用时执行 I/O。
     pub fn take_io_for_task(
         &mut self,

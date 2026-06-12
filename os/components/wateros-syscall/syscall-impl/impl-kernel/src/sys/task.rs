@@ -7,7 +7,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
-use ipc::signal::{SignalAction, SignalError, SignalSet};
+use ipc::signal::{IntervalTimerSpec, SignalAction, SignalError, SignalSet};
 
 use crate::user_copy::{copy_from_user_struct, copy_to_user, copy_to_user_struct};
 
@@ -34,7 +34,7 @@ const RLIMIT_CORE: usize = 4;
 const RLIMIT_MEMLOCK: usize = 8;
 const RLIMIT_NPROC: usize = 6;
 const RT_SIGSET_SIZE_64: usize = 8;
-const RT_SIGACTION_SIZE: usize = 32;
+const RT_SIGACTION_SIZE: usize = 24;
 const GRND_NONBLOCK: usize = 0x0001;
 const GRND_RANDOM: usize = 0x0002;
 const GRND_INSECURE: usize = 0x0004;
@@ -46,7 +46,6 @@ static CURRENT_UMASK: AtomicUsize = AtomicUsize::new(0o022);
 struct UserSigAction {
     handler: usize,
     flags: usize,
-    restorer: usize,
     mask: u64,
 }
 
@@ -85,6 +84,13 @@ struct UserTms {
 struct UserTimeVal {
     sec: isize,
     usec: isize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct UserTimespec {
+    sec: isize,
+    nsec: isize,
 }
 
 #[repr(C)]
@@ -161,9 +167,6 @@ const _: () = assert!(core::mem::size_of::<UserITimerVal>() == 32);
 const RLIM_INFINITY: u64 = !0u64;
 const SYSINFO_TOTAL_RAM: usize = 2 * 1024 * 1024 * 1024;
 const SYSINFO_FREE_RAM: usize = 1 * 1024 * 1024 * 1024;
-const ITIMER_REAL: usize = 0;
-const ITIMER_VIRTUAL: usize = 1;
-const ITIMER_PROF: usize = 2;
 const RUSAGE_CHILDREN: isize = -1;
 const RUSAGE_SELF: isize = 0;
 const RUSAGE_THREAD: isize = 1;
@@ -185,6 +188,14 @@ pub(crate) fn sys_yield() -> UserRet {
 
 pub(crate) fn sys_exit(exit_code: isize) -> isize {
     if let Some(task_id) = task::current_task_id() {
+        if let Some(process_task) = task::process_task_snapshot(task_id) {
+            let last_thread = task::process_snapshot(process_task.pid)
+                .is_some_and(|process| process.task_count <= 1);
+            if last_thread {
+                super::signal::notify_parent_sigchld(process_task.pid);
+            }
+            super::signal::on_thread_exit(task_id, process_task.pid.raw(), last_thread);
+        }
         if let Some(clear_child_tid) = task::task_clear_child_tid(task_id) {
             let addr = clear_child_tid.user_addr();
             if addr != 0 {
@@ -208,6 +219,7 @@ pub(crate) fn sys_exit_group(exit_code: isize) -> isize {
             }
         }
         if let Some(process_task) = task::current_process_task_snapshot() {
+            super::signal::notify_parent_sigchld(process_task.pid);
             if let Some(task_ids) = task::task_ids_for_process(process_task.pid) {
                 for sibling in task_ids {
                     if sibling != task_id {
@@ -215,6 +227,7 @@ pub(crate) fn sys_exit_group(exit_code: isize) -> isize {
                     }
                 }
             }
+            super::signal::on_thread_exit(task_id, process_task.pid.raw(), true);
         }
         super::robust::robust_exit_cleanup(task_id);
         drop_task_runtime_resources(task_id);
@@ -358,9 +371,9 @@ pub(crate) fn sys_rt_sigprocmask(args: SyscallArgs) -> UserRet {
     if sigset_size != RT_SIGSET_SIZE_64 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
-    let task_id = match task::current_task_id() {
-        Some(task_id) => task_id,
-        None => return UserRet::from_error(ErrNo::ESRCH),
+    let task_id = match super::signal::ensure_current_signal_state() {
+        Ok(snapshot) => snapshot.task_id,
+        Err(error) => return UserRet::from_error(error),
     };
     let new_set = if set == 0 {
         None
@@ -388,7 +401,7 @@ pub(crate) fn sys_rt_sigprocmask(args: SyscallArgs) -> UserRet {
 pub(crate) fn sys_rt_sigtimedwait(args: SyscallArgs) -> UserRet {
     let set = args.arg(0);
     let info = args.arg(1);
-    let _timeout = args.arg(2);
+    let timeout = args.arg(2);
     let sigset_size = args.arg(3);
 
     if set == 0 {
@@ -397,17 +410,75 @@ pub(crate) fn sys_rt_sigtimedwait(args: SyscallArgs) -> UserRet {
     if sigset_size != RT_SIGSET_SIZE_64 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
-    let task_id = match task::current_task_id() {
-        Some(task_id) => task_id,
-        None => return UserRet::from_error(ErrNo::ESRCH),
+    let task_id = match super::signal::ensure_current_signal_state() {
+        Ok(snapshot) => snapshot.task_id,
+        Err(error) => return UserRet::from_error(error),
     };
     let wait_set = match copy_from_user_struct::<u64>(set) {
         Ok(bits) => SignalSet::from_bits(bits),
         Err(e) => return UserRet::from_error(e),
     };
-    let sig = ipc::signal::with_registry(|registry| registry.take_pending(task_id, wait_set));
-    let Some(sig) = sig else {
-        return UserRet::from_error(ErrNo::EAGAIN);
+    let deadline = if timeout == 0 {
+        None
+    } else {
+        let timeout = match copy_from_user_struct::<UserTimespec>(timeout) {
+            Ok(timeout) if timeout.sec >= 0 &&
+                           timeout.nsec >= 0 &&
+                           timeout.nsec < 1_000_000_000 => timeout,
+            Ok(_) => return UserRet::from_error(ErrNo::EINVAL),
+            Err(error) => return UserRet::from_error(error),
+        };
+        let duration = (timeout.sec as u128)
+            .saturating_mul(1_000_000_000)
+            .saturating_add(timeout.nsec as u128);
+        let now = platform::wall_clock::monotonic_ns().unwrap_or(0);
+        Some(now.saturating_add(duration))
+    };
+    let sig = loop {
+        if let Some(sig) =
+            ipc::signal::with_registry(|registry| registry.take_pending(task_id, wait_set))
+        {
+            break sig;
+        }
+        let ticks = match deadline {
+            Some(deadline) => {
+                let now = platform::wall_clock::monotonic_ns().unwrap_or(deadline);
+                if now >= deadline {
+                    return UserRet::from_error(ErrNo::EAGAIN);
+                }
+                let tick_ns =
+                    (wateros_base_config::task::SCHED_TIMER_PERIOD_MS as u128) * 1_000_000;
+                u64::try_from((deadline - now).saturating_add(tick_ns - 1) / tick_ns)
+                    .unwrap_or(u64::MAX)
+                    .max(1)
+            }
+            None => u64::MAX,
+        };
+        let _ = ipc::signal::with_registry(|registry| {
+            registry.begin_signal_wait(task_id, wait_set)
+        });
+        let wait_queue = task::wait_queue::WaitQueue::new();
+        let still_waiting = || {
+            ipc::signal::with_registry(|registry| {
+                registry.pending(task_id)
+                    .map(|pending| pending.intersection(wait_set).is_empty())
+                    .unwrap_or(false)
+            })
+        };
+        let wait_result = if deadline.is_some() {
+            wait_queue.wait_current_while_for_ticks(ticks, still_waiting)
+        } else {
+            wait_queue.wait_current_while(still_waiting)
+        };
+        let _ = ipc::signal::with_registry(|registry| registry.end_signal_wait(task_id));
+        if wait_result == task::TaskWaitResult::Interrupted {
+            if let Some(sig) =
+                ipc::signal::with_registry(|registry| registry.take_pending(task_id, wait_set))
+            {
+                break sig;
+            }
+            return UserRet::from_error(ErrNo::EINTR);
+        }
     };
     if info != 0 {
         let siginfo = UserSigInfo::for_signal(sig);
@@ -427,9 +498,9 @@ pub(crate) fn sys_rt_sigaction(args: SyscallArgs) -> UserRet {
     if sigset_size != RT_SIGSET_SIZE_64 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
-    let task_id = match task::current_task_id() {
-        Some(task_id) => task_id,
-        None => return UserRet::from_error(ErrNo::ESRCH),
+    let task_id = match super::signal::ensure_current_signal_state() {
+        Ok(snapshot) => snapshot.task_id,
+        Err(error) => return UserRet::from_error(error),
     };
     let old = match ipc::signal::with_registry(|registry| registry.get_action(task_id, sig)) {
         Ok(old) => old,
@@ -438,7 +509,6 @@ pub(crate) fn sys_rt_sigaction(args: SyscallArgs) -> UserRet {
     if oldact != 0 {
         let user_old = UserSigAction { handler: old.handler,
                                        flags: old.flags,
-                                       restorer: old.restorer,
                                        mask: old.mask.bits() };
         if let Err(e) = copy_to_user_struct(oldact, &user_old) {
             return UserRet::from_error(e);
@@ -451,7 +521,7 @@ pub(crate) fn sys_rt_sigaction(args: SyscallArgs) -> UserRet {
         };
         let action = SignalAction { handler: user_action.handler,
                                     flags: user_action.flags,
-                                    restorer: user_action.restorer,
+                                    restorer: 0,
                                     mask: SignalSet::from_bits(user_action.mask) };
         match ipc::signal::with_registry(|registry| registry.set_action(task_id, sig, action)) {
             Ok(_) => {}
@@ -514,9 +584,8 @@ pub(crate) fn sys_setitimer(args: SyscallArgs) -> UserRet {
     let new_value = args.arg(1);
     let old_value = args.arg(2);
 
-    match which {
-        ITIMER_REAL | ITIMER_VIRTUAL | ITIMER_PROF => {}
-        _ => return UserRet::from_error(ErrNo::EINVAL),
+    if !ipc::signal::valid_itimer(which) {
+        return UserRet::from_error(ErrNo::EINVAL);
     }
     if new_value == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
@@ -528,8 +597,31 @@ pub(crate) fn sys_setitimer(args: SyscallArgs) -> UserRet {
     if !valid_timeval(value.interval) || !valid_timeval(value.value) {
         return UserRet::from_error(ErrNo::EINVAL);
     }
+    let snapshot = match super::signal::ensure_current_signal_state() {
+        Ok(snapshot) => snapshot,
+        Err(error) => return UserRet::from_error(error),
+    };
+    let now = match platform::wall_clock::monotonic_ns() {
+        Ok(now) => now,
+        Err(_) => return UserRet::from_error(ErrNo::EIO),
+    };
+    let spec = IntervalTimerSpec {
+        interval_ns: timeval_to_ns(value.interval),
+        value_ns: timeval_to_ns(value.value),
+    };
     if old_value != 0 {
-        let old = UserITimerVal::default();
+        if let Err(error) = copy_to_user_struct(old_value, &UserITimerVal::default()) {
+            return UserRet::from_error(error);
+        }
+    }
+    let old = match ipc::signal::with_registry(|registry| {
+        registry.set_timer(snapshot.pid.raw(), which, spec, now)
+    }) {
+        Ok(old) => old,
+        Err(_) => return UserRet::from_error(ErrNo::EINVAL),
+    };
+    if old_value != 0 {
+        let old = timer_spec_to_user(old);
         if let Err(e) = copy_to_user_struct(old_value, &old) {
             return UserRet::from_error(e);
         }
@@ -537,8 +629,60 @@ pub(crate) fn sys_setitimer(args: SyscallArgs) -> UserRet {
     UserRet::from_success(0)
 }
 
+pub(crate) fn sys_getitimer(args: SyscallArgs) -> UserRet {
+    let which = args.arg(0);
+    let current_value = args.arg(1);
+    if !ipc::signal::valid_itimer(which) {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    if current_value == 0 {
+        return UserRet::from_error(ErrNo::EFAULT);
+    }
+    let snapshot = match super::signal::ensure_current_signal_state() {
+        Ok(snapshot) => snapshot,
+        Err(error) => return UserRet::from_error(error),
+    };
+    let now = match platform::wall_clock::monotonic_ns() {
+        Ok(now) => now,
+        Err(_) => return UserRet::from_error(ErrNo::EIO),
+    };
+    let spec = match ipc::signal::with_registry(|registry| {
+        registry.get_timer(snapshot.pid.raw(), which, now)
+    }) {
+        Ok(spec) => spec,
+        Err(_) => return UserRet::from_error(ErrNo::EINVAL),
+    };
+    match copy_to_user_struct(current_value, &timer_spec_to_user(spec)) {
+        Ok(()) => UserRet::from_success(0),
+        Err(error) => UserRet::from_error(error),
+    }
+}
+
 fn valid_timeval(tv: UserTimeVal) -> bool {
     tv.sec >= 0 && tv.usec >= 0 && tv.usec < 1_000_000
+}
+
+fn timeval_to_ns(tv: UserTimeVal) -> u128 {
+    (tv.sec as u128)
+        .saturating_mul(1_000_000_000)
+        .saturating_add((tv.usec as u128).saturating_mul(1_000))
+}
+
+fn timer_spec_to_user(spec: IntervalTimerSpec) -> UserITimerVal {
+    fn ns_to_timeval_ceil(ns: u128) -> UserTimeVal {
+        if ns == 0 {
+            return UserTimeVal::default();
+        }
+        let usec = ns.saturating_add(999) / 1_000;
+        UserTimeVal {
+            sec: (usec / 1_000_000) as isize,
+            usec: (usec % 1_000_000) as isize,
+        }
+    }
+    UserITimerVal {
+        interval: ns_to_timeval_ceil(spec.interval_ns),
+        value: ns_to_timeval_ceil(spec.value_ns),
+    }
 }
 
 fn write_exit_code(exit_code_ptr: usize, exit_code: isize) -> Result<(), ErrNo> {
@@ -609,9 +753,11 @@ pub(crate) fn sys_waitpid(args: SyscallArgs) -> UserRet {
             if nohang {
                 return UserRet::from_success(0);
             }
-            task::wait_on(task::TaskWaitHandle::for_child_exit(
-                current_task_id,
-            ));
+            if task::wait_on(task::TaskWaitHandle::for_child_exit(current_task_id)) ==
+               task::TaskWaitResult::Interrupted
+            {
+                return UserRet::from_error(ErrNo::EINTR);
+            }
         }
     }
     if pid <= 0 {
@@ -634,9 +780,11 @@ pub(crate) fn sys_waitpid(args: SyscallArgs) -> UserRet {
         if nohang {
             return UserRet::from_success(0);
         }
-        task::wait_on(task::TaskWaitHandle::for_child_exit(
-            current_task_id,
-        ));
+        if task::wait_on(task::TaskWaitHandle::for_child_exit(current_task_id)) ==
+           task::TaskWaitResult::Interrupted
+        {
+            return UserRet::from_error(ErrNo::EINTR);
+        }
     }
 }
 

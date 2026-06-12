@@ -74,6 +74,11 @@ pub fn close_fd(fd: usize) -> VfsResult<()> {
     handle.close()
 }
 
+/// 请求全部打开句柄写回脏数据。
+pub fn flush_all_open_files() -> VfsResult<()> {
+    registry().exclusive_access().flush_all()
+}
+
 /// 当前任务下 `fd` 是否为 TTY 类字符设备。
 pub fn current_fd_is_tty_char(fd: usize) -> VfsResult<bool> {
     with_current_task(|reg, task_id| {

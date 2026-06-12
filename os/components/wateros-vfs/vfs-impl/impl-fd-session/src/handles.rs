@@ -206,6 +206,7 @@ pub fn poll_pipe_smoke() -> bool {
 fn map_pipe_err(err: PipeError) -> VfsError {
     match err {
         PipeError::WouldBlock => VfsError::WouldBlock,
+        PipeError::Interrupted => VfsError::Interrupted,
         PipeError::BrokenPipe => VfsError::BrokenPipe,
         PipeError::InvalidCapacity => VfsError::Unsupported,
     }

@@ -86,6 +86,7 @@ flowchart TD
 - **bring-up 总线**（`user_bringup_bus`）：**`mount_default_root_rw`** → **`vfs::ensure_proc_mount_point`** → **`vfs::mount_procfs_at("/proc")`**（详见 [`docs/architecture/wateros-procfs.md`](wateros-procfs.md)）。
 - 初始化任务调度器并创建演示性 kernel task。
 - `wateros-task` 条件等待、最小父子关系与 child-exit wait 已服务 `wateros-ipc` / `wateros-syscall`；RISC-V 自检会启动根卷 **`/elf/000_hello_world.elf`** 与 **`/elf/010_pipe_smoke.elf`** 用户任务，并创建内核内部 ring-buffer pipe 覆盖阻塞读写、EOF、BrokenPipe 与非阻塞 WouldBlock。
+- `ipc-signal` 维护进程共享 disposition、标准 pending 与 REAL/VIRTUAL/PROF interval timer，以及线程私有 mask/pending；公共 trap 返回路径在 RISC-V64 和 LoongArch64 上构造 signal frame，保存 GPR、标量 FP/FCSR，并通过只读可执行 trampoline 完成 `rt_sigreturn`。
 - 通过 **`extern crate syscall as _`** 链接 **`wateros-syscall`**，供平台 trap 路径调用其分发符号；per-task fd 表在 **`wateros-vfs`**（`fd-session`），syscall 经 **`vfs::fd`** 完成 `pipe` / `read` / `write` / `close`（见 **`docs/exports/features/wateros-syscall.md`**、**`docs/exports/features/wateros-vfs.md`**）。
 - **`wateros-cred`** 在 QEMU 平台 feature 下启用 `api-v0` + `impl-root`，由 bring-up call site 初始化用户任务 root 凭证，并由 syscall identity 路径读取/更新当前任务凭证；`wateros-task` 不反向依赖 cred。
 - 启用中断与定时器，并进入首个任务。

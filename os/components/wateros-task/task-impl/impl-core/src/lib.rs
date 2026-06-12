@@ -20,6 +20,7 @@ use api_v0::{
     AddressSpaceRef, CloneFlags, ProcessDescriptor, ProcessId, ProcessState, ProcessTaskDescriptor,
     ProcessTaskRole, TaskClearTid, TaskId, ThreadId,
 };
+use arch::interrupt::ArchInterruptState;
 use base::sync::UniprocessorSafeCell;
 
 mod process;
@@ -51,7 +52,29 @@ pub fn init_process_registry() {
     registry_cell().exclusive_access().clear();
 }
 
+struct ProcessRegistryInterruptGuard {
+    state : ArchInterruptState,
+}
+
+impl ProcessRegistryInterruptGuard {
+    fn new() -> Self {
+        let state = arch::interrupt::read_global_interrupt_state()
+            .expect("read interrupt state for process registry");
+        arch::interrupt::disable_global_interrupt()
+            .expect("disable interrupts for process registry");
+        Self { state }
+    }
+}
+
+impl Drop for ProcessRegistryInterruptGuard {
+    fn drop(&mut self) {
+        arch::interrupt::restore_global_interrupt_state(self.state)
+            .expect("restore interrupt state for process registry");
+    }
+}
+
 pub fn with_process_registry<R>(f: impl FnOnce(&mut ProcessRegistry) -> R) -> R {
+    let _guard = ProcessRegistryInterruptGuard::new();
     let mut registry = registry_cell().exclusive_access();
     f(&mut registry)
 }

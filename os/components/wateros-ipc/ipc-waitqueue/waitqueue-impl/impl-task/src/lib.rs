@@ -44,9 +44,9 @@ impl WaitQueue {
 
     /// 让当前任务在该 IPC 等待队列上休眠。
     #[inline]
-    pub fn wait_current(&self) {
+    pub fn wait_current(&self) -> TaskWaitResult {
         self.inner
-            .wait_current();
+            .wait_current()
     }
 
     /// 让当前任务在该 IPC 等待队列上等待，并带一个 tick 级超时。
@@ -58,9 +58,11 @@ impl WaitQueue {
 
     /// 在调度临界区内复查条件；条件仍成立才让当前任务在该 IPC 等待队列上休眠。
     #[inline]
-    pub fn wait_current_while(&self, condition : impl FnOnce() -> bool) {
+    pub fn wait_current_while(&self,
+                              condition : impl FnOnce() -> bool)
+                              -> TaskWaitResult {
         self.inner
-            .wait_current_while(condition);
+            .wait_current_while(condition)
     }
 
     /// 在调度临界区内复查条件；条件仍成立才让当前任务带超时等待。
@@ -107,9 +109,9 @@ impl api_v0::IpcWaitQueueOps for WaitQueue {
     }
 
     #[inline]
-    fn wait_current(&self) {
+    fn wait_current(&self) -> TaskWaitResult {
         self.inner
-            .wait_current();
+            .wait_current()
     }
 
     #[inline]
@@ -119,10 +121,10 @@ impl api_v0::IpcWaitQueueOps for WaitQueue {
     }
 
     #[inline]
-    fn wait_current_while<F>(&self, condition : F)
+    fn wait_current_while<F>(&self, condition : F) -> TaskWaitResult
         where F : FnOnce() -> bool {
         self.inner
-            .wait_current_while(condition);
+            .wait_current_while(condition)
     }
 
     #[inline]
