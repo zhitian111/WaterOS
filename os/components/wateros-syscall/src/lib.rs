@@ -25,6 +25,12 @@ pub fn dispatch_syscall_from_trap(syscall_nr : usize, syscall_args : SyscallArgs
     active_impl::dispatch_syscall_from_trap(syscall_nr, syscall_args)
 }
 
+#[cfg(feature = "impl-kernel")]
+#[inline]
+pub fn take_due_current_real_timer() -> Option<(usize, usize)> {
+    active_impl::take_due_current_real_timer()
+}
+
 /// Current-task syscall dispatch entry for assembly or C ABI callers.
 #[cfg(feature = "impl-kernel")]
 #[unsafe(no_mangle)]

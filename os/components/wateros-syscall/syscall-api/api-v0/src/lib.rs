@@ -25,6 +25,7 @@ pub enum SyscallKind {
     ReadLinkAt,
     FaccessAt,
     StatFs,
+    Sync,
     Fsync,
     Fdatasync,
     OpenAt,
@@ -154,6 +155,8 @@ impl SyscallKind {
             Self::FaccessAt
         } else if syscall_nr == T::STATFS.raw() {
             Self::StatFs
+        } else if syscall_nr == T::SYNC.raw() {
+            Self::Sync
         } else if syscall_nr == T::FSYNC.raw() {
             Self::Fsync
         } else if syscall_nr == T::FDATASYNC.raw() {
@@ -369,6 +372,7 @@ impl SyscallKind {
             Self::ReadLinkAt => "readlinkat",
             Self::FaccessAt => "faccessat",
             Self::StatFs => "statfs",
+            Self::Sync => "sync",
             Self::Fsync => "fsync",
             Self::Fdatasync => "fdatasync",
             Self::OpenAt => "openat",
@@ -697,6 +701,14 @@ pub trait SyscallDispatcher {
         Self::dispatch_unsupported(
             SyscallKind::StatFs,
             Self::NumberTable::STATFS.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_sync(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Sync,
+            Self::NumberTable::SYNC.raw(),
             args,
         )
     }
@@ -1441,6 +1453,7 @@ pub trait SyscallDispatcher {
             SyscallKind::ReadLinkAt => Self::dispatch_readlinkat(syscall_args),
             SyscallKind::FaccessAt => Self::dispatch_faccessat(syscall_args),
             SyscallKind::StatFs => Self::dispatch_statfs(syscall_args),
+            SyscallKind::Sync => Self::dispatch_sync(syscall_args),
             SyscallKind::Fsync => Self::dispatch_fsync(syscall_args),
             SyscallKind::Fdatasync => Self::dispatch_fdatasync(syscall_args),
             SyscallKind::OpenAt => Self::dispatch_openat(syscall_args),

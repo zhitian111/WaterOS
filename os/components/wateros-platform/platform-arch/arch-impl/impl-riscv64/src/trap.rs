@@ -30,6 +30,9 @@ pub struct TrapContext {
 
 const RISCV_SSTATUS_SPP : usize = 1 << 8;
 const RISCV_SSTATUS_FS_DIRTY : usize = 3 << 13;
+/// 临时 signal handler 返回入口。该页故意不映射，由取指异常触发内核恢复
+/// 被 signal 打断前的 trap frame。
+const USER_SIGNAL_RETURN_SENTINEL : usize = 0x1000;
 /// 单次定时器中断后重新武装的切片长度（`time` CSR 刻度）；与调度策略相关，非用户 ABI。
 const TIMER_SLICE_TICKS : u64 = 1_250_000;
 
@@ -170,6 +173,12 @@ impl TrapFrameRead for TrapContext {
 
     fn returns_to_user(&self) -> bool { self.returns_to_user_raw() }
 
+    fn is_user_signal_return(&self) -> bool {
+        self.returns_to_user_raw() &&
+        self.sepc == USER_SIGNAL_RETURN_SENTINEL &&
+        matches!(self.trap_cause(), TrapCause::Exception(Exception::InstructionPageFault))
+    }
+
     fn return_address_space_token(&self) -> usize { self.return_address_space_token }
 }
 
@@ -193,6 +202,15 @@ impl TrapFrameWrite for TrapContext {
         // Linux/RISC-V libc start code reads argc/argv/envp from the user stack.
         // a0 is reserved for rtld_fini; for static binaries it must remain 0.
         self.x[10] = 0;
+    }
+
+    fn enter_user_signal_handler(&mut self, handler : usize, signal : usize) {
+        let signal_sp = self.user_sp_raw()
+                            .saturating_sub(4096) & !0xf;
+        self.set_user_sp_raw(signal_sp);
+        self.x[1] = USER_SIGNAL_RETURN_SENTINEL;
+        self.x[10] = signal;
+        self.sepc = handler;
     }
 
     fn set_return_to_user(&mut self) { self.set_return_to_user_raw(); }

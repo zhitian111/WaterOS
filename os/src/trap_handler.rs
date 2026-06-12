@@ -17,6 +17,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use platform::arch::paging;
 use platform::arch::trap::ActiveTrapFrame as TrapContext;
 use runtime::logging::*;
+use spin::Mutex;
 use syscall::dispatch_syscall_from_trap;
 
 /// 监督态定时器中断后，用 **与 `kernel_main` 相同的 wall-clock 语义**
@@ -32,6 +33,33 @@ const TIMER_REARM_MS : u64 = SCHED_TIMER_PERIOD_MS;
 static TIMER_TICK_COUNT : AtomicUsize = AtomicUsize::new(0);
 /// 当前支持架构的 syscall/trap 指令宽度，用于将用户 PC 前进到下一条指令。
 const SYSCALL_INSN_BYTES : usize = 4;
+static ACTIVE_SIGNAL_FRAME : Mutex<Option<(task::TaskId, TrapContext)>> = Mutex::new(None);
+
+fn enter_user_signal_handler(cx : &mut TrapContext,
+                             signal : usize,
+                             handler : usize) {
+    let Some(task_id) = task::current_task_id() else {
+        return;
+    };
+    *ACTIVE_SIGNAL_FRAME.lock() = Some((task_id, *cx));
+    cx.enter_user_signal_handler(handler, signal);
+}
+
+fn restore_user_signal_frame(cx : &mut TrapContext) -> bool {
+    let Some(task_id) = task::current_task_id() else {
+        return false;
+    };
+    let mut active = ACTIVE_SIGNAL_FRAME.lock();
+    let Some((saved_task_id, saved_frame)) = active.take() else {
+        return false;
+    };
+    if saved_task_id != task_id {
+        *active = Some((saved_task_id, saved_frame));
+        return false;
+    }
+    *cx = saved_frame;
+    true
+}
 
 /// 记录用户任务 trap 杀进程上下文并终止当前任务。
 fn kill_current_user_task(context : &str, trap_cause : TrapCause, cx : &TrapContext) -> ! {
@@ -133,7 +161,9 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             // 先前仅 `debug!` 并继续 `sret`：若 fault 发生在用户态，会回到同一 sepc 立即再
             // fault， 形成无限 trap 风暴；在 INFO
             // 日志级别下毫无输出，表现为「sret 后卡死」。
-            if cx.returns_to_user() {
+            if cx.is_user_signal_return() && restore_user_signal_frame(cx) {
+                // Signal handler returned normally; resume the interrupted frame.
+            } else if cx.returns_to_user() {
                 warn!("[trap] user memory fault {:?} raw={:#x} ecode={:#x} sepc={:#x} \
                        stval={:#x} user_sp={:#x} return_satp={:#x} aspace_ptr={:#x} — killing \
                        task",
@@ -146,11 +176,12 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                       cx.return_address_space_token(),
                       task::current_task_user_aspace_ptr());
                 kill_current_user_task("user memory fault", trap_cause, cx);
+            } else {
+                fatal_kernel_trap("kernel page fault",
+                                  trap_cause,
+                                  raw_cause,
+                                  cx);
             }
-            fatal_kernel_trap("kernel page fault",
-                              trap_cause,
-                              raw_cause,
-                              cx);
         }
         TrapCause::Interrupt(Interrupt::SupervisiorTimer) => {
             if let Err(err) = platform::timer::set_timer_after_ms(TIMER_REARM_MS) {
@@ -160,6 +191,11 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             let tick = TIMER_TICK_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
             if tick % 8 == 0 {
                 trace!("[trap] timer tick {}", tick);
+            }
+            if cx.returns_to_user() {
+                if let Some((signal, handler)) = syscall::take_due_current_real_timer() {
+                    enter_user_signal_handler(cx, signal, handler);
+                }
             }
             task::schedule_tick();
         }

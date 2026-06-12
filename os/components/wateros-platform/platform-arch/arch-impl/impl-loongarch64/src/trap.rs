@@ -51,6 +51,9 @@ const LOONGARCH_PRMD_PPLV_MASK : usize = 0x3;
 const LOONGARCH_PRMD_PIE : usize = 1 << 2;
 /// 用户态 PLV 编码（与手册中 PLV=3 对应；用于区分返回到用户还是内核）。
 const LOONGARCH_USER_PLV : usize = 0x3;
+/// 临时 signal handler 返回入口。该页故意不映射，由取指异常触发内核恢复
+/// 被 signal 打断前的 trap frame。
+const USER_SIGNAL_RETURN_SENTINEL : usize = 0x1000;
 /// `ESTAT.IS.TI`：定时器中断挂起位（与 `decode_loongarch64_trap_cause` 一致）。
 const TIMER_INTERRUPT_PENDING : usize = 1 << 11;
 /// 单次定时器中断后重新武装的切片长度（StableCounter
@@ -176,6 +179,12 @@ impl TrapFrameRead for TrapContext {
 
     fn returns_to_user(&self) -> bool { self.returns_to_user_raw() }
 
+    fn is_user_signal_return(&self) -> bool {
+        self.returns_to_user_raw() &&
+        self.era == USER_SIGNAL_RETURN_SENTINEL &&
+        matches!(self.trap_cause(), TrapCause::Exception(Exception::InstructionPageFault))
+    }
+
     fn return_address_space_token(&self) -> usize { self.return_address_space_token }
 }
 
@@ -200,6 +209,15 @@ impl TrapFrameWrite for TrapContext {
         // stack. a0 carries rtld_fini for the dynamic loader handoff; for direct
         // kernel exec, static binaries need it to be null.
         self.x[4] = 0;
+    }
+
+    fn enter_user_signal_handler(&mut self, handler : usize, signal : usize) {
+        let signal_sp = self.user_sp_raw()
+                            .saturating_sub(4096) & !0xf;
+        self.set_user_sp_raw(signal_sp);
+        self.x[1] = USER_SIGNAL_RETURN_SENTINEL;
+        self.x[4] = signal;
+        self.era = handler;
     }
 
     fn set_return_to_user(&mut self) { self.set_return_to_user_raw(); }

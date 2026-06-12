@@ -66,6 +66,8 @@ pub trait SyscallNumberTable {
     const FACCESSAT: SyscallNumber;
     /// 查询路径所在文件系统统计信息（`statfs(2)`）。
     const STATFS: SyscallNumber;
+    /// 将所有文件系统的脏数据同步到存储（`sync(2)`）。
+    const SYNC: SyscallNumber;
     /// 将 fd 对应文件脏数据同步到存储（`fsync(2)`）。
     const FSYNC: SyscallNumber;
     /// 将 fd 对应文件数据同步到存储（`fdatasync(2)`）。
