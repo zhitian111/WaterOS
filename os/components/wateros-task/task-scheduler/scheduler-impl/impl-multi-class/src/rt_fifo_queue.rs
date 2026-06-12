@@ -24,9 +24,7 @@ pub struct RtFifoRunQueue {
 
 impl RtFifoRunQueue {
     /// 构造空队列。
-    pub fn new() -> Self {
-        Self { buckets : core::array::from_fn(|_| VecDeque::new()) }
-    }
+    pub fn new() -> Self { Self { buckets : core::array::from_fn(|_| VecDeque::new()) } }
 
     /// 按优先级将任务入队尾。
     pub fn enqueue(&mut self, task_id : TaskId, priority : i32) {
@@ -37,7 +35,10 @@ impl RtFifoRunQueue {
 
     /// 从最高优先级非空桶弹出首个可调度任务。
     pub fn pick_next(&mut self, check : &impl SchedulableCheck) -> Option<TaskId> {
-        for bucket in self.buckets.iter_mut().rev() {
+        for bucket in self.buckets
+                          .iter_mut()
+                          .rev()
+        {
             while let Some(task_id) = bucket.pop_front() {
                 if check.is_schedulable(task_id) {
                     return Some(task_id);
@@ -59,12 +60,25 @@ impl RtFifoRunQueue {
         self.enqueue(task_id, priority);
     }
 
+    /// 返回当前最高的可运行优先级，不改变队列内容。
+    pub fn highest_runnable_priority(&self, check : &impl SchedulableCheck) -> Option<i32> {
+        self.buckets
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, bucket)| {
+                bucket.iter()
+                      .copied()
+                      .any(|task_id| check.is_schedulable(task_id))
+            })
+            .map(|(index, _)| (index as i32) + RT_PRIORITY_MIN)
+    }
+
     /// 从指定优先级桶弹出首个可调度任务（供 multi-class 按优先级扫描）。
     pub fn pop_front_at_priority(&mut self,
                                  priority : i32,
                                  check : &impl SchedulableCheck)
-                                 -> Option<TaskId>
-    {
+                                 -> Option<TaskId> {
         let index = bucket_index(priority)?;
         while let Some(task_id) = self.buckets[index].pop_front() {
             if check.is_schedulable(task_id) {
@@ -94,13 +108,16 @@ mod tests {
 
     impl MockCheck {
         fn new(ids : &[TaskId]) -> Self {
-            Self { live : ids.iter().copied().collect() }
+            Self { live : ids.iter()
+                             .copied()
+                             .collect() }
         }
     }
 
     impl SchedulableCheck for MockCheck {
         fn is_schedulable(&self, task_id : TaskId) -> bool {
-            self.live.contains(&task_id)
+            self.live
+                .contains(&task_id)
         }
     }
 
@@ -115,5 +132,16 @@ mod tests {
         assert_eq!(q.pick_next(&check), Some(2));
         assert_eq!(q.pick_next(&check), Some(1));
         assert_eq!(q.pick_next(&check), None);
+    }
+
+    #[test]
+    fn highest_priority_does_not_consume_queue() {
+        let mut q = RtFifoRunQueue::new();
+        q.enqueue(1, 10);
+        q.enqueue(2, 80);
+        let check = MockCheck::new(&[1, 2]);
+        assert_eq!(q.highest_runnable_priority(&check),
+                   Some(80));
+        assert_eq!(q.pick_next(&check), Some(2));
     }
 }

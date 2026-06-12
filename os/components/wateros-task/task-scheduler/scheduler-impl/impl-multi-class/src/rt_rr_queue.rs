@@ -18,9 +18,7 @@ fn bucket_index(priority : i32) -> Option<usize> {
     }
 }
 
-fn priority_from_index(index : usize) -> i32 {
-    (index as i32) + RT_PRIORITY_MIN
-}
+fn priority_from_index(index : usize) -> i32 { (index as i32) + RT_PRIORITY_MIN }
 
 /// RR tick 处理结果。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -62,7 +60,11 @@ impl RtRrRunQueue {
             self.current = None;
             self.remaining_ticks = 0;
         }
-        for (index, bucket) in self.buckets.iter_mut().enumerate().rev() {
+        for (index, bucket) in self.buckets
+                                   .iter_mut()
+                                   .enumerate()
+                                   .rev()
+        {
             while let Some(task_id) = bucket.pop_front() {
                 if check.is_schedulable(task_id) {
                     let priority = priority_from_index(index);
@@ -86,14 +88,18 @@ impl RtRrRunQueue {
             self.current = None;
             RrTickAction::YieldToSamePriority
         } else {
-            self.remaining_ticks = self.remaining_ticks.saturating_sub(1);
+            self.remaining_ticks = self.remaining_ticks
+                                       .saturating_sub(1);
             RrTickAction::ContinueRunning
         }
     }
 
     /// 从所有桶移除任务；若为当前运行任务则清除时间片状态。
     pub fn remove(&mut self, task_id : TaskId) {
-        if self.current.map(|(id, _)| id) == Some(task_id) {
+        if self.current
+               .map(|(id, _)| id) ==
+           Some(task_id)
+        {
             self.current = None;
             self.remaining_ticks = 0;
         }
@@ -107,6 +113,20 @@ impl RtRrRunQueue {
         self.enqueue(task_id, priority);
     }
 
+    /// 返回就绪桶中最高的可运行优先级，不包含当前运行任务。
+    pub fn highest_ready_priority(&self, check : &impl SchedulableCheck) -> Option<i32> {
+        self.buckets
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, bucket)| {
+                bucket.iter()
+                      .copied()
+                      .any(|task_id| check.is_schedulable(task_id))
+            })
+            .map(|(index, _)| priority_from_index(index))
+    }
+
     /// 当前 RR 任务是否应继续占用 CPU（时间片未耗尽）。
     pub fn should_continue_current(&self, current : TaskId, priority : i32) -> bool {
         self.current == Some((current, priority)) && self.remaining_ticks > 0
@@ -116,8 +136,7 @@ impl RtRrRunQueue {
     pub fn pick_at_priority(&mut self,
                             priority : i32,
                             check : &impl SchedulableCheck)
-                            -> Option<TaskId>
-    {
+                            -> Option<TaskId> {
         if let Some((current, prio)) = self.current {
             if prio == priority && check.is_schedulable(current) && self.remaining_ticks > 0 {
                 return Some(current);
@@ -166,13 +185,16 @@ mod tests {
 
     impl MockCheck {
         fn new(ids : &[TaskId]) -> Self {
-            Self { live : ids.iter().copied().collect() }
+            Self { live : ids.iter()
+                             .copied()
+                             .collect() }
         }
     }
 
     impl SchedulableCheck for MockCheck {
         fn is_schedulable(&self, task_id : TaskId) -> bool {
-            self.live.contains(&task_id)
+            self.live
+                .contains(&task_id)
         }
     }
 
@@ -193,9 +215,21 @@ mod tests {
         let check = MockCheck::new(&[1, 2]);
         assert_eq!(q.pick_next(&check), Some(1));
         for _ in 0..MAX_RT_TICKS_PER_TASK - 1 {
-            assert_eq!(q.on_tick_current(1, 50), RrTickAction::ContinueRunning);
+            assert_eq!(q.on_tick_current(1, 50),
+                       RrTickAction::ContinueRunning);
         }
-        assert_eq!(q.on_tick_current(1, 50), RrTickAction::YieldToSamePriority);
+        assert_eq!(q.on_tick_current(1, 50),
+                   RrTickAction::YieldToSamePriority);
         assert_eq!(q.pick_next(&check), Some(2));
+    }
+
+    #[test]
+    fn highest_ready_priority_ignores_unrunnable_entries() {
+        let mut q = RtRrRunQueue::new();
+        q.enqueue(1, 90);
+        q.enqueue(2, 40);
+        let check = MockCheck::new(&[2]);
+        assert_eq!(q.highest_ready_priority(&check),
+                   Some(40));
     }
 }

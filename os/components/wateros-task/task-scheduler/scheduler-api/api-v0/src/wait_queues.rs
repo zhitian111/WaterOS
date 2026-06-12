@@ -62,14 +62,17 @@ impl WaitQueues {
 
     /// 分配新的显式等待队列 id。
     pub fn allocate_wait_queue(&mut self) -> WaitQueueId {
-        let wait_queue_id = self.wait_queues.len();
-        self.wait_queues.push(VecDeque::new());
+        let wait_queue_id = self.wait_queues
+                                .len();
+        self.wait_queues
+            .push(VecDeque::new());
         wait_queue_id
     }
 
     /// 推进全局逻辑 tick。
     pub fn on_tick(&mut self) {
-        self.current_tick = self.current_tick.saturating_add(1);
+        self.current_tick = self.current_tick
+                                .saturating_add(1);
     }
 
     /// 当前逻辑 tick。
@@ -82,16 +85,24 @@ impl WaitQueues {
         for wait_queue in &mut self.wait_queues {
             let _ = take_task_id_by_id(wait_queue, task_id);
         }
-        for wait_queue in self.exit_wait_queues.values_mut() {
+        for wait_queue in self.exit_wait_queues
+                              .values_mut()
+        {
             let _ = take_task_id_by_id(wait_queue, task_id);
         }
-        for wait_queue in self.child_exit_wait_queues.values_mut() {
+        for wait_queue in self.child_exit_wait_queues
+                              .values_mut()
+        {
             let _ = take_task_id_by_id(wait_queue, task_id);
         }
-        self.exit_wait_queues.remove(&task_id);
-        self.child_exit_wait_queues.remove(&task_id);
+        self.exit_wait_queues
+            .remove(&task_id);
+        self.child_exit_wait_queues
+            .remove(&task_id);
         let mut pending = VecDeque::new();
-        while let Some(entry) = self.wait_timeouts.pop_front() {
+        while let Some(entry) = self.wait_timeouts
+                                    .pop_front()
+        {
             if entry.task_id != task_id {
                 pending.push_back(entry);
             }
@@ -104,18 +115,21 @@ impl WaitQueues {
                         registry : &mut TaskRegistry,
                         task_id : TaskId,
                         target : QueueTarget,
-                        ready_queue : &mut impl ReadyTaskSink)
-    {
+                        ready_queue : &mut impl ReadyTaskSink) {
         match target {
             QueueTarget::Ready => {
-                if registry.state(task_id).is_none() {
+                if registry.state(task_id)
+                           .is_none()
+                {
                     return;
                 }
                 registry.mark_ready(task_id);
                 ready_queue.enqueue_ready_task(task_id);
             }
             QueueTarget::Blocked(reason) => {
-                if registry.state(task_id).is_none() {
+                if registry.state(task_id)
+                           .is_none()
+                {
                     return;
                 }
                 registry.mark_blocking(task_id, reason);
@@ -124,24 +138,43 @@ impl WaitQueues {
                         self.wait_list_mut(wait_handle)
                             .push_back(task_id);
                     }
-                    _ => self.blocked_queue.push_back(task_id),
+                    _ => self.blocked_queue
+                             .push_back(task_id),
                 }
             }
             QueueTarget::Sleeping(wake_tick) => {
-                if registry.state(task_id).is_none() {
+                if registry.state(task_id)
+                           .is_none()
+                {
                     return;
                 }
                 registry.mark_sleeping(task_id, wake_tick);
-                self.sleep_queue.push_back(task_id);
+                let insert_at = self.sleep_queue
+                                    .iter()
+                                    .position(|queued_id| {
+                                        matches!(
+                                            registry.state(*queued_id),
+                                            Some(TaskState::Sleeping {
+                                                wake_tick: queued_tick
+                                            }) if queued_tick > wake_tick
+                                        )
+                                    })
+                                    .unwrap_or(self.sleep_queue
+                                                   .len());
+                self.sleep_queue
+                    .insert(insert_at, task_id);
             }
             QueueTarget::Exited(exit_code) => {
-                if registry.state(task_id).is_none() {
+                if registry.state(task_id)
+                           .is_none()
+                {
                     return;
                 }
                 self.wake_all_waiters_for_task_exit(registry, task_id, ready_queue);
                 self.detach_task_from_run_queues(task_id);
                 registry.mark_exited(task_id, exit_code);
-                self.exited_queue.push_back(task_id);
+                self.exited_queue
+                    .push_back(task_id);
             }
         }
     }
@@ -150,47 +183,61 @@ impl WaitQueues {
     pub fn enqueue_wait_timeout(&mut self,
                                 task_id : TaskId,
                                 wait_handle : TaskWaitHandle,
-                                wake_tick : TaskTick)
-    {
-        self.wait_timeouts.push_back(WaitTimeoutEntry { task_id,
-                                                      wait_handle,
-                                                      wake_tick });
+                                wake_tick : TaskTick) {
+        let entry = WaitTimeoutEntry { task_id,
+                                       wait_handle,
+                                       wake_tick };
+        let insert_at = self.wait_timeouts
+                            .iter()
+                            .position(|queued| queued.wake_tick > wake_tick)
+                            .unwrap_or(self.wait_timeouts
+                                           .len());
+        self.wait_timeouts
+            .insert(insert_at, entry);
     }
 
     /// 将到期的睡眠任务移入 `ready_queue`。
     pub fn promote_sleeping_tasks(&mut self,
                                   registry : &mut TaskRegistry,
-                                  ready_queue : &mut impl ReadyTaskSink)
-    {
-        let mut still_sleeping = VecDeque::new();
-        while let Some(task_id) = self.sleep_queue.pop_front() {
-            if registry.state(task_id).is_none() {
-                continue;
-            }
-            if registry.ready_to_wake(task_id, self.current_tick) {
-                registry.mark_ready(task_id);
-                ready_queue.enqueue_ready_task(task_id);
-                log::trace!("[task-scheduler] wake sleeping task {} at tick {}",
-                            task_id,
-                            self.current_tick);
-            } else {
-                still_sleeping.push_back(task_id);
+                                  ready_queue : &mut impl ReadyTaskSink) {
+        while let Some(task_id) = self.sleep_queue
+                                      .front()
+                                      .copied()
+        {
+            match registry.state(task_id) {
+                None => {
+                    self.sleep_queue
+                        .pop_front();
+                }
+                Some(TaskState::Sleeping { wake_tick }) if wake_tick <= self.current_tick => {
+                    self.sleep_queue
+                        .pop_front();
+                    registry.mark_ready(task_id);
+                    ready_queue.enqueue_ready_task(task_id);
+                    log::trace!("[task-scheduler] wake sleeping task {} at tick {}",
+                                task_id,
+                                self.current_tick);
+                }
+                Some(TaskState::Sleeping { .. }) => break,
+                Some(_) => {
+                    self.sleep_queue
+                        .pop_front();
+                }
             }
         }
-        self.sleep_queue = still_sleeping;
     }
 
     /// 将到期的等待超时任务移入 `ready_queue`。
     pub fn promote_wait_timeouts(&mut self,
                                  registry : &mut TaskRegistry,
-                                 ready_queue : &mut impl ReadyTaskSink)
-    {
-        let mut pending = VecDeque::new();
-        while let Some(entry) = self.wait_timeouts.pop_front() {
-            if entry.wake_tick > self.current_tick {
-                pending.push_back(entry);
-                continue;
-            }
+                                 ready_queue : &mut impl ReadyTaskSink) {
+        while self.wait_timeouts
+                  .front()
+                  .is_some_and(|entry| entry.wake_tick <= self.current_tick)
+        {
+            let entry = self.wait_timeouts
+                            .pop_front()
+                            .expect("front entry checked above");
             let still_waiting = matches!(
                 registry.state(entry.task_id),
                 Some(TaskState::Blocking(TaskBlockReason::Wait(wait_handle)))
@@ -205,7 +252,6 @@ impl WaitQueues {
                 ready_queue.enqueue_ready_task(entry.task_id);
             }
         }
-        self.wait_timeouts = pending;
     }
 
     /// 尝试唤醒指定任务。
@@ -213,10 +259,11 @@ impl WaitQueues {
                      registry : &mut TaskRegistry,
                      task_id : TaskId,
                      ready_queue : &mut impl ReadyTaskSink)
-                     -> bool
-    {
+                     -> bool {
         if take_task_id_by_id(&mut self.blocked_queue, task_id) {
-            if registry.state(task_id).is_none() {
+            if registry.state(task_id)
+                       .is_none()
+            {
                 return false;
             }
             registry.finish_wait(task_id, TaskWaitResult::Woken);
@@ -225,7 +272,9 @@ impl WaitQueues {
             return true;
         }
         if take_task_id_by_id(&mut self.sleep_queue, task_id) {
-            if registry.state(task_id).is_none() {
+            if registry.state(task_id)
+                       .is_none()
+            {
                 return false;
             }
             registry.finish_wait(task_id, TaskWaitResult::Woken);
@@ -235,7 +284,9 @@ impl WaitQueues {
         }
         for wait_queue in &mut self.wait_queues {
             if take_task_id_by_id(wait_queue, task_id) {
-                if registry.state(task_id).is_none() {
+                if registry.state(task_id)
+                           .is_none()
+                {
                     return false;
                 }
                 registry.finish_wait(task_id, TaskWaitResult::Woken);
@@ -244,9 +295,13 @@ impl WaitQueues {
                 return true;
             }
         }
-        for wait_queue in self.exit_wait_queues.values_mut() {
+        for wait_queue in self.exit_wait_queues
+                              .values_mut()
+        {
             if take_task_id_by_id(wait_queue, task_id) {
-                if registry.state(task_id).is_none() {
+                if registry.state(task_id)
+                           .is_none()
+                {
                     return false;
                 }
                 registry.finish_wait(task_id, TaskWaitResult::Woken);
@@ -255,9 +310,13 @@ impl WaitQueues {
                 return true;
             }
         }
-        for wait_queue in self.child_exit_wait_queues.values_mut() {
+        for wait_queue in self.child_exit_wait_queues
+                              .values_mut()
+        {
             if take_task_id_by_id(wait_queue, task_id) {
-                if registry.state(task_id).is_none() {
+                if registry.state(task_id)
+                           .is_none()
+                {
                     return false;
                 }
                 registry.finish_wait(task_id, TaskWaitResult::Woken);
@@ -275,22 +334,28 @@ impl WaitQueues {
                      task_id : TaskId,
                      exit_code : TaskExitCode,
                      ready_queue : &mut impl ReadyTaskSink)
-                     -> bool
-    {
+                     -> bool {
         use task_api::IDLE_TASK_ID;
         if task_id == IDLE_TASK_ID || registry.is_idle(task_id) {
             return false;
         }
-        if registry.state(task_id).is_none() {
+        if registry.state(task_id)
+                   .is_none()
+        {
             return false;
         }
-        if matches!(registry.state(task_id), Some(TaskState::Exited(_))) {
+        if matches!(registry.state(task_id),
+                    Some(TaskState::Exited(_)))
+        {
             return true;
         }
         if registry.current_task_id() == Some(task_id) {
             return false;
         }
-        self.enqueue_task(registry, task_id, QueueTarget::Exited(exit_code), ready_queue);
+        self.enqueue_task(registry,
+                          task_id,
+                          QueueTarget::Exited(exit_code),
+                          ready_queue);
         true
     }
 
@@ -299,10 +364,13 @@ impl WaitQueues {
                                   registry : &mut TaskRegistry,
                                   wait_queue_id : WaitQueueId,
                                   ready_queue : &mut impl ReadyTaskSink)
-                                  -> Option<TaskId>
-    {
-        while let Some(task_id) = self.wait_queue_mut(wait_queue_id).pop_front() {
-            if registry.state(task_id).is_none() {
+                                  -> Option<TaskId> {
+        while let Some(task_id) = self.wait_queue_mut(wait_queue_id)
+                                      .pop_front()
+        {
+            if registry.state(task_id)
+                       .is_none()
+            {
                 continue;
             }
             registry.finish_wait(task_id, TaskWaitResult::Woken);
@@ -318,11 +386,14 @@ impl WaitQueues {
                                   registry : &mut TaskRegistry,
                                   wait_queue_id : WaitQueueId,
                                   ready_queue : &mut impl ReadyTaskSink)
-                                  -> usize
-    {
+                                  -> usize {
         let mut woken = 0usize;
-        while let Some(task_id) = self.wait_queue_mut(wait_queue_id).pop_front() {
-            if registry.state(task_id).is_none() {
+        while let Some(task_id) = self.wait_queue_mut(wait_queue_id)
+                                      .pop_front()
+        {
+            if registry.state(task_id)
+                       .is_none()
+            {
                 continue;
             }
             registry.finish_wait(task_id, TaskWaitResult::Woken);
@@ -337,23 +408,28 @@ impl WaitQueues {
     pub fn reap_exited_task(&mut self,
                             registry : &mut TaskRegistry,
                             task_id : TaskId)
-                            -> Option<ExitedTask>
-    {
+                            -> Option<ExitedTask> {
         if !take_task_id_by_id(&mut self.exited_queue, task_id) {
             return None;
         }
         self.detach_task_from_run_queues(task_id);
-        self.exit_wait_queues.remove(&task_id);
-        self.child_exit_wait_queues.remove(&task_id);
+        self.exit_wait_queues
+            .remove(&task_id);
+        self.child_exit_wait_queues
+            .remove(&task_id);
         registry.reap_task(task_id)
     }
 
     /// 按 FIFO 回收一个已退出任务。
     pub fn reap_one_exited_task(&mut self, registry : &mut TaskRegistry) -> Option<ExitedTask> {
-        while let Some(task_id) = self.exited_queue.pop_front() {
+        while let Some(task_id) = self.exited_queue
+                                      .pop_front()
+        {
             self.detach_task_from_run_queues(task_id);
-            self.exit_wait_queues.remove(&task_id);
-            self.child_exit_wait_queues.remove(&task_id);
+            self.exit_wait_queues
+                .remove(&task_id);
+            self.child_exit_wait_queues
+                .remove(&task_id);
             if let Some(exited) = registry.reap_task(task_id) {
                 return Some(exited);
             }
@@ -388,10 +464,13 @@ impl WaitQueues {
     fn wake_all_waiters_for_task_exit(&mut self,
                                       registry : &mut TaskRegistry,
                                       task_id : TaskId,
-                                      ready_queue : &mut impl ReadyTaskSink)
-    {
-        while let Some(waiter_task_id) = self.exit_wait_queue_mut(task_id).pop_front() {
-            if registry.state(waiter_task_id).is_none() {
+                                      ready_queue : &mut impl ReadyTaskSink) {
+        while let Some(waiter_task_id) = self.exit_wait_queue_mut(task_id)
+                                             .pop_front()
+        {
+            if registry.state(waiter_task_id)
+                       .is_none()
+            {
                 continue;
             }
             registry.finish_wait(waiter_task_id, TaskWaitResult::Woken);
@@ -399,9 +478,12 @@ impl WaitQueues {
             ready_queue.enqueue_ready_task(waiter_task_id);
         }
         if let Some(parent_id) = registry.parent_id(task_id) {
-            while let Some(waiter_task_id) = self.child_exit_wait_queue_mut(parent_id).pop_front()
+            while let Some(waiter_task_id) = self.child_exit_wait_queue_mut(parent_id)
+                                                 .pop_front()
             {
-                if registry.state(waiter_task_id).is_none() {
+                if registry.state(waiter_task_id)
+                           .is_none()
+                {
                     continue;
                 }
                 registry.finish_wait(waiter_task_id, TaskWaitResult::Woken);

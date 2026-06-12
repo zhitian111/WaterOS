@@ -91,6 +91,37 @@ impl MultiClassScheduler {
         self.drain_staging(&mut staging);
     }
 
+    fn highest_ready_rt_priority(&self) -> Option<i32> {
+        match (self.fifo_ready
+                   .highest_runnable_priority(&self.registry),
+               self.rr_ready
+                   .highest_ready_priority(&self.registry))
+        {
+            (Some(fifo), Some(rr)) => Some(fifo.max(rr)),
+            (fifo, rr) => fifo.or(rr),
+        }
+    }
+
+    fn ready_task_should_preempt(&self, current_id : TaskId, current : TaskSnapshot) -> bool {
+        if self.registry
+               .is_idle(current_id)
+        {
+            return self.highest_ready_rt_priority()
+                       .is_some() ||
+                   self.other_ready
+                       .has_runnable(&self.registry);
+        }
+
+        match current.sched_policy {
+            SchedPolicy::Other => self.highest_ready_rt_priority()
+                                      .is_some(),
+            SchedPolicy::Fifo | SchedPolicy::Rr => {
+                self.highest_ready_rt_priority()
+                    .is_some_and(|priority| priority > current.sched_priority)
+            }
+        }
+    }
+
     fn clear_rr_if_yielding(&mut self, current_id : TaskId) {
         if let Some(snap) = self.registry
                                 .task_snapshot(current_id)
@@ -287,35 +318,36 @@ impl MultiClassScheduler {
                 self.registry
                     .account_tick_for_current();
 
-                let need_reschedule = if let Some(current_id) = self.registry
-                                                                    .current_task_id()
-                {
-                    if let Some(snap) = self.registry
-                                            .task_snapshot(current_id)
-                    {
-                        match snap.sched_policy {
-                            SchedPolicy::Other => {
-                                self.current_task_ticks = self.current_task_ticks
-                                                              .saturating_add(1);
-                                self.current_task_ticks >= MAX_TICKS_PER_TASK
-                            }
-                            SchedPolicy::Rr => {
-                                matches!(self.rr_ready
-                                             .on_tick_current(current_id, snap.sched_priority),
-                                         RrTickAction::YieldToSamePriority)
-                            }
-                            SchedPolicy::Fifo => false,
-                        }
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
+                let current = self.registry
+                                  .current_task_id()
+                                  .and_then(|task_id| {
+                                      self.registry
+                                          .task_snapshot(task_id)
+                                          .map(|snapshot| (task_id, snapshot))
+                                  });
+                let quantum_expired =
+                    current.map(|(current_id, snap)| match snap.sched_policy {
+                                    SchedPolicy::Other => {
+                                        self.current_task_ticks = self.current_task_ticks
+                                                                      .saturating_add(1);
+                                        self.current_task_ticks >= MAX_TICKS_PER_TASK
+                                    }
+                                    SchedPolicy::Rr => {
+                                        matches!(self.rr_ready
+                                                     .on_tick_current(current_id,
+                                                                      snap.sched_priority),
+                                                 RrTickAction::YieldToSamePriority)
+                                    }
+                                    SchedPolicy::Fifo => false,
+                                })
+                           .unwrap_or(false);
 
                 self.promote_sleep_and_timeouts();
 
-                if !need_reschedule {
+                let ready_preempts = current.is_some_and(|(current_id, snap)| {
+                                                self.ready_task_should_preempt(current_id, snap)
+                                            });
+                if !quantum_expired && !ready_preempts {
                     return None;
                 }
                 self.current_task_ticks = 0;
@@ -328,7 +360,9 @@ impl MultiClassScheduler {
             }
         }
 
-        self.promote_sleep_and_timeouts();
+        if !matches!(reason, ScheduleReason::Tick) {
+            self.promote_sleep_and_timeouts();
+        }
 
         let (current_task_id, current_ptr) = self.registry
                                                  .take_current_switch_out()?;
