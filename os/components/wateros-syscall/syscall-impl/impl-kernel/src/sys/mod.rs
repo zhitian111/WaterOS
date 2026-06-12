@@ -102,10 +102,9 @@ pub(crate) use clock::{
     sys_nanosleep,
 };
 pub(crate) use statfs::sys_statfs;
-pub(crate) use sync::{sys_fdatasync, sys_fsync, sys_sync};
+pub(crate) use sync::{sys_fdatasync, sys_fsync};
 pub(crate) use syslog::sys_syslog;
 pub(crate) use task::{
-    take_due_current_real_timer,
     sys_exit, sys_exit_group, sys_getpid, sys_getppid, sys_getrandom,
     sys_getrlimit, sys_getrusage, sys_gettid, sys_prctl, sys_prlimit64, sys_sysinfo,
     sys_rt_sigaction, sys_rt_sigprocmask, sys_rt_sigtimedwait, sys_set_tid_address,

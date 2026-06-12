@@ -21,7 +21,6 @@
     syscall = { package = "wateros-syscall", path = "./components/wateros-syscall/", default-features = false }
     klog = { package = "wateros-klog", path = "./components/wateros-klog/", default-features = false, optional = true }
     task = { package = "wateros-task", path = "./components/wateros-task/", default-features = true }
-    spin = "0.10.0"
 
 [profile.dev]
     panic = "abort"

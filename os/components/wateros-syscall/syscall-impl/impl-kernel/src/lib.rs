@@ -26,11 +26,6 @@ pub fn dispatch_syscall_from_trap(syscall_nr: usize, syscall_args: SyscallArgs) 
     )
 }
 
-pub fn take_due_current_real_timer() -> Option<(usize, usize)> {
-    let (signal, action) = sys::take_due_current_real_timer()?;
-    Some((signal, action.handler))
-}
-
 /// Kernel syscall implementation selected by the aggregate crate.
 pub struct KernelSyscallDispatcher;
 
@@ -149,11 +144,6 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     #[inline]
     fn dispatch_statfs(args: SyscallArgs) -> isize {
         sys::sys_statfs(args).0
-    }
-
-    #[inline]
-    fn dispatch_sync(_args: SyscallArgs) -> isize {
-        sys::sys_sync().0
     }
 
     #[inline]

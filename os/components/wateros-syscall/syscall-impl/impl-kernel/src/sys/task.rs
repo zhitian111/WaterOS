@@ -1,16 +1,13 @@
 //! 任务相关系统调用：`yield`、`exit`、`waitpid`、`getpid`/`getppid`/`gettid`、
 //! `times`、`uname`、`prctl`、`getrlimit`/`setrlimit`。
 
-use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
-use ipc::signal::api::SIGALRM;
 use ipc::signal::{SignalAction, SignalError, SignalSet};
-use spin::Mutex;
 
 use crate::user_copy::{copy_from_user_struct, copy_to_user, copy_to_user_struct};
 
@@ -167,64 +164,9 @@ const SYSINFO_FREE_RAM: usize = 1 * 1024 * 1024 * 1024;
 const ITIMER_REAL: usize = 0;
 const ITIMER_VIRTUAL: usize = 1;
 const ITIMER_PROF: usize = 2;
-const USECS_PER_SEC: u128 = 1_000_000;
 const RUSAGE_CHILDREN: isize = -1;
 const RUSAGE_SELF: isize = 0;
 const RUSAGE_THREAD: isize = 1;
-
-#[derive(Clone, Copy, Default)]
-struct RealTimer {
-    deadline_usecs: u128,
-    interval_usecs: u128,
-}
-
-static REAL_TIMERS: Mutex<BTreeMap<task::TaskId, RealTimer>> = Mutex::new(BTreeMap::new());
-
-fn monotonic_now_usecs() -> Option<u128> {
-    platform::timer::now_duration()
-        .ok()
-        .map(|duration| duration.as_micros())
-}
-
-fn timeval_to_usecs(value: UserTimeVal) -> u128 {
-    (value.sec as u128)
-        .saturating_mul(USECS_PER_SEC)
-        .saturating_add(value.usec as u128)
-}
-
-fn usecs_to_timeval(usecs: u128) -> UserTimeVal {
-    let seconds = (usecs / USECS_PER_SEC).min(isize::MAX as u128);
-    UserTimeVal {
-        sec: seconds as isize,
-        usec: (usecs % USECS_PER_SEC) as isize,
-    }
-}
-
-pub(crate) fn take_due_current_real_timer() -> Option<(usize, SignalAction)> {
-    let task_id = task::current_task_id()?;
-    let now_usecs = monotonic_now_usecs()?;
-    {
-        let mut timers = REAL_TIMERS.lock();
-        let timer = *timers.get(&task_id)?;
-        if timer.deadline_usecs > now_usecs {
-            return None;
-        }
-        if timer.interval_usecs == 0 {
-            timers.remove(&task_id);
-        } else {
-            timers.insert(
-                task_id,
-                RealTimer {
-                    deadline_usecs: now_usecs.saturating_add(timer.interval_usecs),
-                    ..timer
-                },
-            );
-        }
-    }
-    let action =
-        ipc::signal::with_registry(|registry| registry.get_action(task_id, SIGALRM).ok())?;
-    action.has_user_handler().then_some((SIGALRM, action))
-}
 
 fn make_uts_field(s: &str) -> [u8; UTS_LEN] {
     let mut buf = [0u8; UTS_LEN];
@@ -573,8 +515,7 @@ pub(crate) fn sys_setitimer(args: SyscallArgs) -> UserRet {
     let old_value = args.arg(2);
 
     match which {
-        ITIMER_REAL => {}
-        ITIMER_VIRTUAL | ITIMER_PROF => return UserRet::from_error(ErrNo::ENOSYS),
+        ITIMER_REAL | ITIMER_VIRTUAL | ITIMER_PROF => {}
         _ => return UserRet::from_error(ErrNo::EINVAL),
     }
     if new_value == 0 {
@@ -587,35 +528,8 @@ pub(crate) fn sys_setitimer(args: SyscallArgs) -> UserRet {
     if !valid_timeval(value.interval) || !valid_timeval(value.value) {
         return UserRet::from_error(ErrNo::EINVAL);
     }
-    let task_id = match task::current_task_id() {
-        Some(task_id) => task_id,
-        None => return UserRet::from_error(ErrNo::ESRCH),
-    };
-    let now_usecs = match monotonic_now_usecs() {
-        Some(now) => now,
-        None => return UserRet::from_error(ErrNo::ENOSYS),
-    };
-    let value_usecs = timeval_to_usecs(value.value);
-    let interval_usecs = timeval_to_usecs(value.interval);
-    let old_timer = {
-        let mut timers = REAL_TIMERS.lock();
-        let old = timers.remove(&task_id);
-        if value_usecs != 0 {
-            timers.insert(
-                task_id,
-                RealTimer {
-                    deadline_usecs: now_usecs.saturating_add(value_usecs),
-                    interval_usecs,
-                },
-            );
-        }
-        old
-    };
     if old_value != 0 {
-        let old = old_timer.map_or_else(UserITimerVal::default, |timer| UserITimerVal {
-            interval: usecs_to_timeval(timer.interval_usecs),
-            value: usecs_to_timeval(timer.deadline_usecs.saturating_sub(now_usecs)),
-        });
+        let old = UserITimerVal::default();
         if let Err(e) = copy_to_user_struct(old_value, &old) {
             return UserRet::from_error(e);
         }

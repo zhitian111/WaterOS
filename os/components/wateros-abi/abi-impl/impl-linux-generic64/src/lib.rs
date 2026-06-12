@@ -35,7 +35,6 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const READLINKAT: SyscallNumber = SyscallNumber(78);
     const FACCESSAT: SyscallNumber = SyscallNumber(48);
     const STATFS: SyscallNumber = SyscallNumber(43);
-    const SYNC: SyscallNumber = SyscallNumber(81);
     const FSYNC: SyscallNumber = SyscallNumber(82);
     const FDATASYNC: SyscallNumber = SyscallNumber(83);
     const OPENAT: SyscallNumber = SyscallNumber(56);

@@ -81,9 +81,6 @@ pub trait TrapFrameRead {
     fn user_sp(&self) -> usize;
     fn returns_to_user(&self) -> bool;
 
-    /// 当前 trap 是否由架构的临时用户 signal 返回入口触发。
-    fn is_user_signal_return(&self) -> bool;
-
     /// trap 返回用户态时将激活的地址空间 token（RISC-V Sv39 下为 `satp` 编码）。
     fn return_address_space_token(&self) -> usize;
 
@@ -100,7 +97,6 @@ pub trait TrapFrameWrite {
     fn add_user_pc(&mut self, bytes: usize);
     fn set_user_sp(&mut self, sp: usize);
     fn set_user_entry_args(&mut self, _argc: usize, _argv: usize, _envp: usize) {}
-    fn enter_user_signal_handler(&mut self, handler: usize, signal: usize);
     fn set_return_to_user(&mut self);
     fn set_return_to_kernel(&mut self);
 
