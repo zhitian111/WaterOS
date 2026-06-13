@@ -1,4 +1,4 @@
-//! 只读路径（基于 `ext4-view`）：实现 [`api_v0::ReadOnlyFs`] 与启动期目录树打印。
+//! 只读路径（基于 `ext4plus`）：实现 [`api_v0::ReadOnlyFs`] 与启动期目录树打印。
 //!
 //! 大块文件读路径刻意按 `driver_block_api_v0::BLOCK_SIZE` 分片，规避部分 VirtIO 小扇区组合下的一次性整读问题（见本文件中 `ReadOnlyFs::read` 实现内注释）。
 
@@ -9,18 +9,20 @@ use alloc::vec;
 use alloc::vec::Vec;
 use api_v0::{FsDirEntry, FsError, FsMetadata, FsNodeType, FsResult, ReadOnlyFs};
 use driver_block_api_v0::{SharedBlockDevice, BLOCK_SIZE};
-use ext4_view::{Ext4, Ext4Error, Ext4Read, Metadata, Path};
+use ext4plus::path::Path;
+use ext4plus::{Ext4, Ext4Read, FollowSymlinks, Metadata};
 
 use crate::boot_inspect;
+use crate::rw::map_ext4_plus;
 
-// `ext4-view` 需要 `&mut self` 读接口；此处仅委托 `read_bytes`，错误经 `BlockIoError` 装箱。
+// 只读块设备适配器；错误经 `BlockIoError` 装箱给 ext4plus。
 struct BlockDeviceReader {
     device: SharedBlockDevice,
 }
 
 impl Ext4Read for BlockDeviceReader {
     fn read(
-        &mut self,
+        &self,
         start_byte: u64,
         dst: &mut [u8],
     ) -> Result<(), Box<dyn core::error::Error + Send + Sync + 'static>> {
@@ -42,7 +44,7 @@ impl core::fmt::Display for BlockIoError {
 
 impl core::error::Error for BlockIoError {}
 
-/// 只读 ext4 句柄。挂载成功后内部持有 `ext4-view::Ext4`。
+/// 只读 ext4 句柄。挂载成功后内部持有 `ext4plus::Ext4`。
 pub struct Ext4Fs {
     fs: Option<Ext4>,
 }
@@ -56,7 +58,7 @@ impl Ext4Fs {
 
 impl ReadOnlyFs for Ext4Fs {
     fn mount(&mut self, device: SharedBlockDevice) -> FsResult<()> {
-        let fs = Ext4::load(Box::new(BlockDeviceReader { device })).map_err(map_ext4_error)?;
+        let fs = Ext4::load(Box::new(BlockDeviceReader { device })).map_err(map_ext4_plus)?;
         self.fs = Some(fs);
         Ok(())
     }
@@ -64,27 +66,33 @@ impl ReadOnlyFs for Ext4Fs {
     fn is_mounted(&self) -> bool { self.fs.is_some() }
 
     fn exists(&self, path: &str) -> FsResult<bool> {
-        self.fs()?.exists(path).map_err(map_ext4_error)
+        let path = Path::try_from(path).map_err(|_| FsError::InvalidPath)?;
+        self.fs()?.exists(path).map_err(map_ext4_plus)
     }
 
     fn metadata(&self, path: &str) -> FsResult<FsMetadata> {
-        let metadata = self.fs()?.metadata(path).map_err(map_ext4_error)?;
-        Ok(map_metadata(&metadata))
+        let fs = self.fs()?;
+        let path = Path::try_from(path).map_err(|_| FsError::InvalidPath)?;
+        let inode = fs
+            .path_to_inode(path, FollowSymlinks::All)
+            .map_err(map_ext4_plus)?;
+        let metadata = fs.metadata(path).map_err(map_ext4_plus)?;
+        Ok(map_metadata(&metadata, u64::from(inode.index.get())))
     }
 
     fn read_dir(&self, path: &str) -> FsResult<Vec<FsDirEntry>> {
         let fs = self.fs()?;
         let pathv = Path::try_from(path).map_err(|_| FsError::InvalidPath)?;
-        let rd = fs.read_dir(pathv).map_err(map_ext4_error)?;
+        let rd = fs.read_dir(pathv).map_err(map_ext4_plus)?;
         let mut out = Vec::new();
         for item in rd {
-            let ent = item.map_err(map_ext4_error)?;
+            let ent = item.map_err(map_ext4_plus)?;
             let name = ent.file_name();
             if name.as_ref() == b"." || name.as_ref() == b".." {
                 continue;
             }
             let name_str = core::str::from_utf8(name.as_ref()).map_err(|_| FsError::NotUtf8)?;
-            let ft = ent.file_type().map_err(map_ext4_error)?;
+            let ft = ent.file_type().map_err(map_ext4_plus)?;
             let node_type = if ft.is_dir() {
                 FsNodeType::Directory
             } else if ft.is_symlink() {
@@ -108,12 +116,12 @@ impl ReadOnlyFs for Ext4Fs {
         // 粒度循环 `File::read_bytes` 组装整文件更稳。
         let fs = self.fs()?;
         let pathv = Path::try_from(path).map_err(|_| FsError::InvalidPath)?;
-        let meta = fs.metadata(pathv).map_err(map_ext4_error)?;
+        let meta = fs.metadata(pathv).map_err(map_ext4_plus)?;
         if !meta.file_type().is_regular_file() {
             return Err(FsError::NotAFile);
         }
         let file_size = usize::try_from(meta.len()).map_err(|_| FsError::Io)?;
-        let mut file = fs.open(pathv).map_err(map_ext4_error)?;
+        let mut file = fs.open(pathv).map_err(map_ext4_plus)?;
         let mut out = vec![0u8; file_size];
         let mut filled = 0usize;
         while filled < file_size {
@@ -121,7 +129,7 @@ impl ReadOnlyFs for Ext4Fs {
             let chunk = room.min(BLOCK_SIZE);
             let n = file
                 .read_bytes(&mut out[filled..filled + chunk])
-                .map_err(map_ext4_error)?;
+                .map_err(map_ext4_plus)?;
             if n == 0 {
                 break;
             }
@@ -139,7 +147,7 @@ impl ReadOnlyFs for Ext4Fs {
         }
         let fs = self.fs()?;
         let pathv = Path::try_from(path).map_err(|_| FsError::InvalidPath)?;
-        let meta = fs.metadata(pathv).map_err(map_ext4_error)?;
+        let meta = fs.metadata(pathv).map_err(map_ext4_plus)?;
         if !meta.file_type().is_regular_file() {
             return Err(FsError::NotAFile);
         }
@@ -147,8 +155,8 @@ impl ReadOnlyFs for Ext4Fs {
         if offset >= file_size {
             return Ok(0);
         }
-        let mut file = fs.open(pathv).map_err(map_ext4_error)?;
-        file.seek_to(offset).map_err(map_ext4_error)?;
+        let mut file = fs.open(pathv).map_err(map_ext4_plus)?;
+        file.seek_to(offset).map_err(map_ext4_plus)?;
         let max_read = usize::try_from(file_size - offset).map_err(|_| FsError::Io)?;
         let to_read = buf.len().min(max_read);
         let mut filled = 0usize;
@@ -157,7 +165,7 @@ impl ReadOnlyFs for Ext4Fs {
             let chunk = room.min(BLOCK_SIZE);
             let n = file
                 .read_bytes(&mut buf[filled..filled + chunk])
-                .map_err(map_ext4_error)?;
+                .map_err(map_ext4_plus)?;
             if n == 0 {
                 break;
             }
@@ -240,7 +248,7 @@ fn walk_ext4_tree(ext4: &Ext4, dir: Path<'_>) {
     }
 }
 
-fn map_metadata(meta: &Metadata) -> FsMetadata {
+fn map_metadata(meta: &Metadata, inode: u64) -> FsMetadata {
     let node_type = if meta.is_dir() {
         FsNodeType::Directory
     } else if meta.is_symlink() {
@@ -252,23 +260,11 @@ fn map_metadata(meta: &Metadata) -> FsMetadata {
     };
 
     // TODO(cred-vfs): ext4 inode 含 uid/gid；后续填充 VfsMetadata owner 字段供 stat/权限检查。
-    FsMetadata { node_type, size: meta.len(), mode: meta.mode() }
-}
-
-/// 将 `ext4-view` 错误映射为公共 [`FsError`]（供 ro 与测试复用）。
-pub(crate) fn map_ext4_error(err: Ext4Error) -> FsError {
-    match err {
-        Ext4Error::NotFound => FsError::NotFound,
-        Ext4Error::NotAbsolute | Ext4Error::MalformedPath | Ext4Error::PathTooLong => {
-            FsError::InvalidPath
-        }
-        Ext4Error::IsADirectory | Ext4Error::IsASpecialFile | Ext4Error::NotADirectory => {
-            FsError::NotAFile
-        }
-        Ext4Error::NotUtf8 => FsError::NotUtf8,
-        Ext4Error::Io(_) => FsError::Io,
-        Ext4Error::Incompatible(_) => FsError::Unsupported,
-        Ext4Error::Corrupt(_) => FsError::Corrupt,
-        _ => FsError::Unsupported,
+    FsMetadata {
+        node_type,
+        size: meta.len(),
+        mode: meta.mode(),
+        inode,
+        nlink: u32::from(meta.links_count),
     }
 }

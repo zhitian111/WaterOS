@@ -75,19 +75,49 @@ const _: () = assert!(core::mem::size_of::<LinuxStatx>() == 256);
 const S_IFREG: u32 = 0o100_000;
 const S_IFDIR: u32 = 0o40_000;
 const S_IFCHR: u32 = 0o20_000;
+const S_IFLNK: u32 = 0o120_000;
+const S_IFMT: u32 = 0o170_000;
+
+const STATX_TYPE: u32 = 0x0001;
+const STATX_MODE: u32 = 0x0002;
+const STATX_NLINK: u32 = 0x0004;
+const STATX_INO: u32 = 0x0100;
+const STATX_SIZE: u32 = 0x0200;
+const STATX_BLOCKS: u32 = 0x0400;
+const STATX_MNT_ID: u32 = 0x1000;
+const STATX_SUPPORTED: u32 =
+    STATX_TYPE | STATX_MODE | STATX_NLINK | STATX_INO | STATX_SIZE | STATX_BLOCKS | STATX_MNT_ID;
+
+fn linux_mode(meta: &VfsMetadata) -> u32 {
+    let raw = u32::from(meta.mode);
+    if raw & S_IFMT != 0 {
+        return raw;
+    }
+    let file_type = match meta.node_type {
+        VfsNodeType::File => S_IFREG,
+        VfsNodeType::Directory => S_IFDIR,
+        VfsNodeType::Symlink => S_IFLNK,
+        VfsNodeType::Special => S_IFCHR,
+    };
+    file_type | (raw & 0o7777)
+}
+
+fn linux_dev(major: u32, minor: u32) -> u64 {
+    let major = u64::from(major);
+    let minor = u64::from(minor);
+    (minor & 0xff)
+        | ((major & 0xfff) << 8)
+        | ((minor & !0xff) << 12)
+        | ((major & !0xfff) << 32)
+}
 
 pub(crate) fn fill_linux_stat(meta: &VfsMetadata, size: u64) -> LinuxStat {
-    let mode = match meta.node_type {
-        VfsNodeType::File => S_IFREG | (meta.mode as u32 & 0o7777),
-        VfsNodeType::Directory => S_IFDIR | (meta.mode as u32 & 0o7777),
-        VfsNodeType::Special => S_IFCHR | (meta.mode as u32 & 0o7777),
-        _ => meta.mode as u32,
-    };
+    let mode = linux_mode(meta);
     LinuxStat {
-        st_dev: 0,
-        st_ino: 1,
+        st_dev: linux_dev(meta.device_major, meta.device_minor),
+        st_ino: meta.inode,
         st_mode: mode,
-        st_nlink: 1,
+        st_nlink: meta.nlink,
         // TODO(cred-vfs): st_uid/st_gid 当前硬编码 0；后续从 VfsMetadata 读 ext4 inode owner，
         // 并结合 cred.fs_uid/fs_gid 决定 stat 返回值。
         st_uid: 0,
@@ -108,21 +138,55 @@ pub(crate) fn fill_linux_stat(meta: &VfsMetadata, size: u64) -> LinuxStat {
     }
 }
 
-pub(crate) fn fill_linux_statx(meta: &VfsMetadata, size: u64, requested_mask: u32) -> LinuxStatx {
-    let mode = match meta.node_type {
-        VfsNodeType::File => S_IFREG | (meta.mode as u32 & 0o7777),
-        VfsNodeType::Directory => S_IFDIR | (meta.mode as u32 & 0o7777),
-        VfsNodeType::Special => S_IFCHR | (meta.mode as u32 & 0o7777),
-        _ => meta.mode as u32,
-    };
+pub(crate) fn fill_linux_statx(meta: &VfsMetadata, size: u64, _requested_mask: u32) -> LinuxStatx {
+    let mode = linux_mode(meta);
     LinuxStatx {
-        stx_mask: requested_mask,
+        stx_mask: STATX_SUPPORTED,
         stx_blksize: 4096,
-        stx_nlink: 1,
+        stx_nlink: meta.nlink,
         stx_mode: mode as u16,
-        stx_ino: 1,
+        stx_ino: meta.inode,
         stx_size: size,
         stx_blocks: (size + 511) / 512,
+        stx_dev_major: meta.device_major,
+        stx_dev_minor: meta.device_minor,
+        stx_mnt_id: meta.mount_id,
         ..LinuxStatx::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linux_device_encoding_matches_small_and_extended_values() {
+        assert_eq!(linux_dev(8, 1), 0x801);
+        assert_eq!(linux_dev(0x1234, 0x56789), 0x1000_5672_3489);
+    }
+
+    #[test]
+    fn stat_and_statx_preserve_vfs_identity() {
+        let meta = VfsMetadata {
+            node_type: VfsNodeType::File,
+            size: 4097,
+            mode: 0o644,
+            device_major: 8,
+            device_minor: 2,
+            inode: 42,
+            mount_id: 7,
+            nlink: 3,
+        };
+        let stat = fill_linux_stat(&meta, meta.size);
+        assert_eq!(stat.st_dev, linux_dev(8, 2));
+        assert_eq!(stat.st_ino, 42);
+        assert_eq!(stat.st_nlink, 3);
+
+        let statx = fill_linux_statx(&meta, meta.size, u32::MAX);
+        assert_eq!(statx.stx_ino, 42);
+        assert_eq!(statx.stx_dev_major, 8);
+        assert_eq!(statx.stx_dev_minor, 2);
+        assert_eq!(statx.stx_mnt_id, 7);
+        assert_eq!(statx.stx_mask, STATX_SUPPORTED);
     }
 }

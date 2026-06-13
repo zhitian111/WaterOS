@@ -4,6 +4,7 @@
 
 use alloc::boxed::Box;
 use alloc::sync::Arc;
+use core::sync::atomic::{AtomicU64, Ordering};
 use smoltcp::iface::SocketHandle;
 use spin::Mutex;
 use vfs_api::error::{VfsError, VfsResult};
@@ -12,11 +13,18 @@ use vfs_api::meta::{VfsMetadata, VfsNodeType};
 
 use crate::stack;
 
-fn socket_meta() -> VfsMetadata {
+static NEXT_SOCKET_INODE: AtomicU64 = AtomicU64::new(1);
+
+fn socket_meta(inode: u64) -> VfsMetadata {
     VfsMetadata {
         node_type: VfsNodeType::Special,
         size: 0,
         mode: 0o140777, // srwxrwxrwx
+        device_major: 0,
+        device_minor: 0x7fff_0002,
+        inode,
+        mount_id: 0,
+        nlink: 1,
     }
 }
 
@@ -24,12 +32,14 @@ fn socket_meta() -> VfsMetadata {
 #[derive(Clone)]
 pub struct SocketRef {
     inner: Arc<Mutex<SocketHandle>>,
+    inode: u64,
 }
 
 impl SocketRef {
     pub fn new(handle: SocketHandle) -> Self {
         Self {
             inner: Arc::new(Mutex::new(handle)),
+            inode: NEXT_SOCKET_INODE.fetch_add(1, Ordering::Relaxed),
         }
     }
 
@@ -43,6 +53,10 @@ impl SocketRef {
 
     fn should_close_underlying(&self) -> bool {
         Arc::strong_count(&self.inner) <= 2
+    }
+
+    fn inode(&self) -> u64 {
+        self.inode
     }
 }
 
@@ -69,7 +83,7 @@ impl VfsIoHandle for TcpStreamHandle {
     }
 
     fn metadata(&self) -> VfsResult<VfsMetadata> {
-        Ok(socket_meta())
+        Ok(socket_meta(self.socket.inode()))
     }
 
     fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {
@@ -94,7 +108,7 @@ impl VfsIoHandle for TcpListenerHandle {
     }
 
     fn metadata(&self) -> VfsResult<VfsMetadata> {
-        Ok(socket_meta())
+        Ok(socket_meta(self.socket.inode()))
     }
 
     fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {
@@ -131,7 +145,7 @@ impl VfsIoHandle for UdpSocketHandle {
     }
 
     fn metadata(&self) -> VfsResult<VfsMetadata> {
-        Ok(socket_meta())
+        Ok(socket_meta(self.socket.inode()))
     }
 
     fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {

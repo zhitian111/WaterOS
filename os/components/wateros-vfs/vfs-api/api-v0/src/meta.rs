@@ -17,6 +17,15 @@ pub struct VfsMetadata {
     pub node_type: VfsNodeType,
     pub size: u64,
     pub mode: u16,
+    /// Linux `st_dev` 的 major/minor 组成部分。
+    pub device_major: u32,
+    pub device_minor: u32,
+    /// 文件系统内 inode 编号。
+    pub inode: u64,
+    /// 挂载实例编号，对应 `statx.stx_mnt_id`。
+    pub mount_id: u64,
+    /// 指向该 inode 的硬链接数量。
+    pub nlink: u32,
 }
 
 /// 目录枚举单条结果。
