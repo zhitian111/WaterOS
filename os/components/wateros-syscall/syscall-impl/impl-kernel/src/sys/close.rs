@@ -6,7 +6,7 @@ use abi::user_ret::UserRet;
 use crate::socket_fd;
 use crate::vfs_util::vfs_error_to_errno;
 
-pub(crate) fn sys_close(args : SyscallArgs) -> UserRet {
+pub(crate) fn sys_close(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let was_socket = socket_fd::lookup(fd).is_some();
     let result = vfs::fd::close_fd(fd);

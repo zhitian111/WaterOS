@@ -14,10 +14,11 @@ const O_CLOEXEC: usize = 0o2000000;
 pub(crate) fn sys_dup(args: SyscallArgs) -> UserRet {
     let oldfd = args.arg(0);
     let socket = socket_fd::lookup(oldfd);
+    let status_flags = socket_fd::status_flags(oldfd).unwrap_or(0);
     match vfs::fd::dup_fd(oldfd, 0) {
         Ok(newfd) => {
             if let Some(socket) = socket {
-                socket_fd::register(newfd, socket);
+                socket_fd::register_with_flags(newfd, socket, status_flags);
             }
             UserRet::from_success(newfd)
         }
@@ -38,6 +39,7 @@ pub(crate) fn sys_dup3(args: SyscallArgs) -> UserRet {
     }
     let cloexec = (flags & O_CLOEXEC) != 0;
     let socket = socket_fd::lookup(oldfd);
+    let status_flags = socket_fd::status_flags(oldfd).unwrap_or(0);
     let overwritten_socket = socket_fd::lookup(newfd).is_some();
     match vfs::fd::dup3_fd(oldfd, newfd, cloexec) {
         Ok(fd) => {
@@ -45,7 +47,7 @@ pub(crate) fn sys_dup3(args: SyscallArgs) -> UserRet {
                 socket_fd::remove(newfd);
             }
             if let Some(socket) = socket {
-                socket_fd::register(fd, socket);
+                socket_fd::register_with_flags(fd, socket, status_flags);
             }
             UserRet::from_success(fd)
         }

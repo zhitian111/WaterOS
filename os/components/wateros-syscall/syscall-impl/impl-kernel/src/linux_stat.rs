@@ -122,7 +122,7 @@ pub(crate) fn fill_linux_stat(meta: &VfsMetadata, size: u64) -> LinuxStat {
         // 并结合 cred.fs_uid/fs_gid 决定 stat 返回值。
         st_uid: 0,
         st_gid: 0,
-        st_rdev: 0,
+        st_rdev: linux_dev(meta.device_major, meta.device_minor),
         __pad1: 0,
         st_size: size as i64,
         st_blksize: 4096,

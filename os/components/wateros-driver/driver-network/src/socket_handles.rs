@@ -14,6 +14,9 @@ use vfs_api::meta::{VfsMetadata, VfsNodeType};
 use crate::stack;
 
 static NEXT_SOCKET_INODE: AtomicU64 = AtomicU64::new(1);
+const POLLIN: i16 = 0x001;
+const POLLOUT: i16 = 0x004;
+const POLLHUP: i16 = 0x010;
 
 fn socket_meta(inode: u64) -> VfsMetadata {
     VfsMetadata {
@@ -74,6 +77,28 @@ impl VfsIoHandle for TcpStreamHandle {
         stack::socket_send(self.socket.handle(), buf).map_err(map_stack_err)
     }
 
+    fn poll_revents(&mut self, events: i16) -> VfsResult<i16> {
+        let handle = self.socket.handle();
+        let mut revents = 0;
+        if events & POLLIN != 0 {
+            let can_recv = stack::socket_can_recv(handle).unwrap_or(false);
+            let may_recv = stack::socket_may_recv(handle).unwrap_or(false);
+            if can_recv || !may_recv {
+                revents |= POLLIN;
+            }
+        }
+        if events & POLLOUT != 0
+            && stack::socket_may_send(handle).unwrap_or(false)
+            && stack::socket_send_capacity(handle).unwrap_or(0) > 0
+        {
+            revents |= POLLOUT;
+        }
+        if matches!(stack::socket_state(handle), Ok(stack::SocketState::Closed)) {
+            revents |= POLLHUP;
+        }
+        Ok(revents)
+    }
+
     fn close(&mut self) -> VfsResult<()> {
         if self.socket.should_close_underlying() {
             stack::socket_close(self.socket.handle()).map_err(map_stack_err)
@@ -131,9 +156,20 @@ impl VfsIoHandle for UdpSocketHandle {
             .map_err(map_stack_err)
     }
 
-    fn write(&mut self, _buf: &[u8]) -> VfsResult<usize> {
-        // UDP write without destination → error if not connected
-        Err(VfsError::Unsupported)
+    fn write(&mut self, buf: &[u8]) -> VfsResult<usize> {
+        stack::socket_send(self.socket.handle(), buf).map_err(map_stack_err)
+    }
+
+    fn poll_revents(&mut self, events: i16) -> VfsResult<i16> {
+        let handle = self.socket.handle();
+        let mut revents = 0;
+        if events & POLLIN != 0 && stack::socket_udp_can_recv(handle).unwrap_or(false) {
+            revents |= POLLIN;
+        }
+        if events & POLLOUT != 0 {
+            revents |= POLLOUT;
+        }
+        Ok(revents)
     }
 
     fn close(&mut self) -> VfsResult<()> {

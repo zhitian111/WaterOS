@@ -15,6 +15,8 @@ const F_SETFL: usize = 4;
 const F_DUPFD_CLOEXEC: usize = 1030;
 
 const FD_CLOEXEC: usize = 1;
+const O_ACCMODE_RDWR: usize = 0x2;
+const O_NONBLOCK: usize = 0o0004000;
 
 pub(crate) fn sys_fcntl(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
@@ -39,19 +41,21 @@ pub(crate) fn sys_fcntl(args: SyscallArgs) -> UserRet {
 
 fn fcntl_dupfd(fd: usize, minfd: usize) -> Result<usize, ErrNo> {
     let socket = socket_fd::lookup(fd);
+    let status_flags = socket_fd::status_flags(fd).unwrap_or(0);
     let newfd = vfs::fd::dup_fd(fd, minfd).map_err(vfs_error_to_errno)?;
     if let Some(socket) = socket {
-        socket_fd::register(newfd, socket);
+        socket_fd::register_with_flags(newfd, socket, status_flags);
     }
     Ok(newfd)
 }
 
 fn fcntl_dupfd_cloexec(fd: usize, minfd: usize) -> Result<usize, ErrNo> {
     let socket = socket_fd::lookup(fd);
+    let status_flags = socket_fd::status_flags(fd).unwrap_or(0);
     let newfd = vfs::fd::dup_fd(fd, minfd).map_err(vfs_error_to_errno)?;
     vfs::fd::set_fd_flags(newfd, FD_CLOEXEC).map_err(vfs_error_to_errno)?;
     if let Some(socket) = socket {
-        socket_fd::register(newfd, socket);
+        socket_fd::register_with_flags(newfd, socket, status_flags);
     }
     Ok(newfd)
 }
@@ -68,10 +72,18 @@ fn fcntl_setfd(fd: usize, arg: usize) -> Result<usize, ErrNo> {
     Ok(0)
 }
 
-fn fcntl_getfl(_fd: usize) -> Result<usize, ErrNo> {
-    Ok(0x2)
+fn fcntl_getfl(fd: usize) -> Result<usize, ErrNo> {
+    if let Some(flags) = socket_fd::status_flags(fd) {
+        return Ok(O_ACCMODE_RDWR | (flags & O_NONBLOCK));
+    }
+    Ok(O_ACCMODE_RDWR)
 }
 
-fn fcntl_setfl(_fd: usize, _arg: usize) -> Result<usize, ErrNo> {
+fn fcntl_setfl(fd: usize, arg: usize) -> Result<usize, ErrNo> {
+    if socket_fd::lookup(fd).is_some() {
+        let flags = arg & O_NONBLOCK;
+        socket_fd::set_status_flags(fd, flags).ok_or(ErrNo::EBADF)?;
+        return Ok(0);
+    }
     Ok(0)
 }

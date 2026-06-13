@@ -1,0 +1,18 @@
+//! `ftruncate(2)`：调整已打开普通文件长度。
+
+use abi::errno::ErrNo;
+use abi::syscall_args::SyscallArgs;
+use abi::user_ret::UserRet;
+
+use crate::vfs_util::vfs_error_to_errno;
+
+pub(crate) fn sys_ftruncate(args: SyscallArgs) -> UserRet {
+    let fd = args.arg(0);
+    let len = args.arg(1);
+
+    match vfs::fd::with_current_io(fd, |handle| handle.truncate(len as u64)) {
+        Ok(()) => UserRet::from_success(0),
+        Err(vfs::api::VfsError::Unsupported) => UserRet::from_error(ErrNo::EINVAL),
+        Err(e) => UserRet::from_error(vfs_error_to_errno(e)),
+    }
+}

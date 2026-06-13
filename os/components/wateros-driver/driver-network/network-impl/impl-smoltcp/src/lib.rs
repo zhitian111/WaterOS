@@ -13,7 +13,7 @@ use smoltcp::time::Instant;
 
 const RX_BUF: usize = 2048;
 const TX_BUF: usize = 2048;
-const MAX_LOOPBACK_FRAMES: usize = 64;
+const MAX_LOOPBACK_FRAMES: usize = 4096;
 const ETHERTYPE_IPV4: u16 = 0x0800;
 const ETHERTYPE_ARP: u16 = 0x0806;
 

@@ -28,6 +28,7 @@ pub enum SyscallKind {
     Sync,
     Fsync,
     Fdatasync,
+    Ftruncate,
     OpenAt,
     Close,
     Fstat,
@@ -76,6 +77,7 @@ pub enum SyscallKind {
     GetEuid,
     GetGid,
     GetEgid,
+    SetSid,
     GetGroups,
     Sysinfo,
     SetUid,
@@ -113,6 +115,7 @@ pub enum SyscallKind {
     Socket,
     Bind,
     Listen,
+    Accept,
     Accept4,
     Connect,
     GetSockName,
@@ -166,6 +169,8 @@ impl SyscallKind {
             Self::Fsync
         } else if syscall_nr == T::FDATASYNC.raw() {
             Self::Fdatasync
+        } else if syscall_nr == T::FTRUNCATE.raw() {
+            Self::Ftruncate
         } else if syscall_nr == T::OPENAT.raw() {
             Self::OpenAt
         } else if syscall_nr == T::CLOSE.raw() {
@@ -262,6 +267,8 @@ impl SyscallKind {
             Self::GetGid
         } else if syscall_nr == T::GETEGID.raw() {
             Self::GetEgid
+        } else if syscall_nr == T::SETSID.raw() {
+            Self::SetSid
         } else if syscall_nr == T::GETGROUPS.raw() {
             Self::GetGroups
         } else if syscall_nr == T::SYSINFO.raw() {
@@ -336,6 +343,8 @@ impl SyscallKind {
             Self::Bind
         } else if syscall_nr == T::LISTEN.raw() {
             Self::Listen
+        } else if syscall_nr == T::ACCEPT.raw() {
+            Self::Accept
         } else if syscall_nr == T::ACCEPT4.raw() {
             Self::Accept4
         } else if syscall_nr == T::CONNECT.raw() {
@@ -390,6 +399,7 @@ impl SyscallKind {
             Self::Sync => "sync",
             Self::Fsync => "fsync",
             Self::Fdatasync => "fdatasync",
+            Self::Ftruncate => "ftruncate",
             Self::OpenAt => "openat",
             Self::Close => "close",
             Self::Fstat => "fstat",
@@ -438,6 +448,7 @@ impl SyscallKind {
             Self::GetEuid => "geteuid",
             Self::GetGid => "getgid",
             Self::GetEgid => "getegid",
+            Self::SetSid => "setsid",
             Self::GetGroups => "getgroups",
             Self::Sysinfo => "sysinfo",
             Self::SetUid => "setuid",
@@ -475,6 +486,7 @@ impl SyscallKind {
             Self::Socket => "socket",
             Self::Bind => "bind",
             Self::Listen => "listen",
+            Self::Accept => "accept",
             Self::Accept4 => "accept4",
             Self::Connect => "connect",
             Self::GetSockName => "getsockname",
@@ -745,6 +757,14 @@ pub trait SyscallDispatcher {
         Self::dispatch_unsupported(
             SyscallKind::Fdatasync,
             Self::NumberTable::FDATASYNC.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_ftruncate(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Ftruncate,
+            Self::NumberTable::FTRUNCATE.raw(),
             args,
         )
     }
@@ -1033,6 +1053,14 @@ pub trait SyscallDispatcher {
         Self::dispatch_unsupported(
             SyscallKind::GetEgid,
             Self::NumberTable::GETEGID.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_setsid(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::SetSid,
+            Self::NumberTable::SETSID.raw(),
             args,
         )
     }
@@ -1359,6 +1387,14 @@ pub trait SyscallDispatcher {
         )
     }
 
+    fn dispatch_accept(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Accept,
+            Self::NumberTable::ACCEPT.raw(),
+            args,
+        )
+    }
+
     fn dispatch_connect(args: SyscallArgs) -> isize {
         Self::dispatch_unsupported(
             SyscallKind::Connect,
@@ -1508,6 +1544,7 @@ pub trait SyscallDispatcher {
             SyscallKind::Sync => Self::dispatch_sync(syscall_args),
             SyscallKind::Fsync => Self::dispatch_fsync(syscall_args),
             SyscallKind::Fdatasync => Self::dispatch_fdatasync(syscall_args),
+            SyscallKind::Ftruncate => Self::dispatch_ftruncate(syscall_args),
             SyscallKind::OpenAt => Self::dispatch_openat(syscall_args),
             SyscallKind::Close => Self::dispatch_close(syscall_args),
             SyscallKind::Fstat => Self::dispatch_fstat(syscall_args),
@@ -1544,6 +1581,7 @@ pub trait SyscallDispatcher {
             SyscallKind::GetEuid => Self::dispatch_geteuid(syscall_args),
             SyscallKind::GetGid => Self::dispatch_getgid(syscall_args),
             SyscallKind::GetEgid => Self::dispatch_getegid(syscall_args),
+            SyscallKind::SetSid => Self::dispatch_setsid(syscall_args),
             SyscallKind::GetGroups => Self::dispatch_getgroups(syscall_args),
             SyscallKind::Sysinfo => Self::dispatch_sysinfo(syscall_args),
             SyscallKind::SetUid => Self::dispatch_setuid(syscall_args),
@@ -1584,6 +1622,7 @@ pub trait SyscallDispatcher {
             SyscallKind::Socket => Self::dispatch_socket(syscall_args),
             SyscallKind::Bind => Self::dispatch_bind(syscall_args),
             SyscallKind::Listen => Self::dispatch_listen(syscall_args),
+            SyscallKind::Accept => Self::dispatch_accept(syscall_args),
             SyscallKind::Accept4 => Self::dispatch_accept4(syscall_args),
             SyscallKind::Connect => Self::dispatch_connect(syscall_args),
             SyscallKind::GetSockName => Self::dispatch_getsockname(syscall_args),

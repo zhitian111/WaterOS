@@ -260,6 +260,12 @@ pub(crate) fn sys_gettid() -> UserRet {
         .unwrap_or_else(|| UserRet::from_error(ErrNo::ESRCH))
 }
 
+pub(crate) fn sys_setsid() -> UserRet {
+    task::current_process_task_snapshot()
+        .map(|snapshot| UserRet::from_success(snapshot.pid.raw()))
+        .unwrap_or_else(|| UserRet::from_error(ErrNo::ESRCH))
+}
+
 pub(crate) fn sys_set_tid_address(args: SyscallArgs) -> UserRet {
     let task_id = match task::current_task_id() {
         Some(task_id) => task_id,
@@ -700,6 +706,7 @@ fn drop_exited_task_resources(exited: &task::ExitedTask) {
 fn drop_task_runtime_resources(task_id: task::TaskId) {
     vfs::cwd::drop_task_cwd(task_id);
     vfs::fd::drop_task_fd_table(task_id);
+    crate::socket_fd::drop_task(task_id);
     cred::drop_task_cred(task_id);
 }
 

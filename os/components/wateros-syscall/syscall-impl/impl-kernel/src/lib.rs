@@ -188,6 +188,11 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     }
 
     #[inline]
+    fn dispatch_ftruncate(args: SyscallArgs) -> isize {
+        sys::sys_ftruncate(args).0
+    }
+
+    #[inline]
     fn dispatch_openat(args: SyscallArgs) -> isize {
         sys::sys_openat(args).0
     }
@@ -310,6 +315,11 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     #[inline]
     fn dispatch_getegid(_args: SyscallArgs) -> isize {
         sys::sys_getegid().0
+    }
+
+    #[inline]
+    fn dispatch_setsid(_args: SyscallArgs) -> isize {
+        sys::sys_setsid().0
     }
 
     #[inline]
@@ -585,6 +595,11 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     #[inline]
     fn dispatch_accept4(args: SyscallArgs) -> isize {
         sys::sys_accept4(args).0
+    }
+
+    #[inline]
+    fn dispatch_accept(args: SyscallArgs) -> isize {
+        sys::sys_accept(args).0
     }
 
     #[inline]

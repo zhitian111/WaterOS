@@ -158,7 +158,7 @@ fn synthetic_path_inode(path: &str) -> u64 {
 }
 
 fn is_builtin_dev_path(abs: &str) -> bool {
-    matches!(abs, "/dev/null" | "/dev/zero")
+    matches!(abs, "/dev/null" | "/dev/zero" | "/dev/urandom")
 }
 
 impl SingleRootReadView for FsBridge {

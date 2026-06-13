@@ -72,6 +72,8 @@ pub trait SyscallNumberTable {
     const FSYNC: SyscallNumber;
     /// 将 fd 对应文件数据同步到存储（`fdatasync(2)`）。
     const FDATASYNC: SyscallNumber;
+    /// 调整 fd 对应文件长度（`ftruncate(2)`）。
+    const FTRUNCATE: SyscallNumber;
     /// 相对目录打开路径（`openat(2)`）。
     const OPENAT: SyscallNumber;
     /// 关闭文件描述符（`close(2)`）。
@@ -184,6 +186,8 @@ pub trait SyscallNumberTable {
     const GETGID: SyscallNumber;
     /// 当前进程有效组 ID（`getegid(2)`）。
     const GETEGID: SyscallNumber;
+    /// 创建新会话（`setsid(2)`）。
+    const SETSID: SyscallNumber;
     /// 读取 supplementary 组列表（`getgroups(2)`）。
     const GETGROUPS: SyscallNumber;
     /// 查询系统内存与负载摘要（`sysinfo(2)`）。
@@ -256,6 +260,8 @@ pub trait SyscallNumberTable {
     const BIND: SyscallNumber;
     /// 开始监听（`listen(2)`）。
     const LISTEN: SyscallNumber;
+    /// 接受连接（`accept(2)`）。
+    const ACCEPT: SyscallNumber;
     /// 接受连接（`accept4(2)`）。
     const ACCEPT4: SyscallNumber;
     /// 发起连接（`connect(2)`）。

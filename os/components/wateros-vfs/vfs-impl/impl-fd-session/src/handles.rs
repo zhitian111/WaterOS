@@ -11,6 +11,7 @@ use api_v0::{
 use ipc::pipe::{PipeEndpoint, PipeEndpointOps, PipeError};
 
 static NEXT_PIPE_INODE: AtomicU64 = AtomicU64::new(1);
+static URANDOM_STATE: AtomicU64 = AtomicU64::new(0x6a09_e667_f3bc_c909);
 
 fn special_meta(mode: u16, inode: u64) -> VfsMetadata {
     VfsMetadata {
@@ -125,6 +126,50 @@ impl VfsIoHandle for ZeroDeviceHandle {
 
     fn metadata(&self) -> VfsResult<VfsMetadata> {
         Ok(special_meta(0o20666, 3))
+    }
+
+    fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {
+        Ok(Box::new(*self))
+    }
+}
+
+/// `/dev/urandom`：早期兼容伪随机字节流，满足 libc/benchmark 对随机设备的读取需求。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct UrandomDeviceHandle;
+
+impl VfsIoHandle for UrandomDeviceHandle {
+    fn read(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
+        let mut state = URANDOM_STATE.fetch_add(
+            0x9e37_79b9_7f4a_7c15u64 ^ (buf.as_ptr() as u64).rotate_left(17),
+            Ordering::Relaxed,
+        );
+        for byte in buf.iter_mut() {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            *byte = (state >> 24) as u8;
+        }
+        URANDOM_STATE.store(state, Ordering::Relaxed);
+        Ok(buf.len())
+    }
+
+    fn write(&mut self, buf: &[u8]) -> VfsResult<usize> {
+        let mut mix = buf.len() as u64;
+        for byte in buf.iter().take(32) {
+            mix = mix.rotate_left(5) ^ (*byte as u64);
+        }
+        URANDOM_STATE.fetch_xor(mix, Ordering::Relaxed);
+        Ok(buf.len())
+    }
+
+    fn poll_revents(&mut self, events: i16) -> VfsResult<i16> {
+        const POLLIN: i16 = 0x001;
+        const POLLOUT: i16 = 0x004;
+        Ok(events & (POLLIN | POLLOUT))
+    }
+
+    fn metadata(&self) -> VfsResult<VfsMetadata> {
+        Ok(special_meta(0o20666, 4))
     }
 
     fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {

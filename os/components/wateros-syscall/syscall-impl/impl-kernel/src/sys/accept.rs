@@ -11,6 +11,9 @@ use vfs::api::handle::VfsIoHandle;
 use crate::socket_fd;
 use crate::user_copy::copy_to_user_struct;
 
+const SOCK_NONBLOCK: usize = 0o0004000;
+const SOCK_CLOEXEC: usize = 0o2000000;
+
 #[repr(C)]
 #[derive(Copy, Clone)]
 struct SockAddrIn {
@@ -24,7 +27,21 @@ pub(crate) fn sys_accept4(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let addr_ptr = args.arg(1);
     let addrlen_ptr = args.arg(2);
-    let _flags = args.arg(3);
+    let flags = args.arg(3);
+    accept_inner(fd, addr_ptr, addrlen_ptr, flags)
+}
+
+pub(crate) fn sys_accept(args: SyscallArgs) -> UserRet {
+    let fd = args.arg(0);
+    let addr_ptr = args.arg(1);
+    let addrlen_ptr = args.arg(2);
+    accept_inner(fd, addr_ptr, addrlen_ptr, 0)
+}
+
+fn accept_inner(fd: usize, addr_ptr: usize, addrlen_ptr: usize, flags: usize) -> UserRet {
+    if flags & !(SOCK_NONBLOCK | SOCK_CLOEXEC) != 0 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
 
     let socket = match socket_fd::lookup(fd) {
         Some(s) => s,
@@ -56,7 +73,12 @@ pub(crate) fn sys_accept4(args: SyscallArgs) -> UserRet {
             return UserRet::from_error(ErrNo::ENOMEM);
         }
     };
-    socket_fd::register(new_fd, established_socket);
+    let status_flags = if flags & SOCK_NONBLOCK != 0 {
+        SOCK_NONBLOCK
+    } else {
+        0
+    };
+    socket_fd::register_with_flags(new_fd, established_socket, status_flags);
 
     // 写回客户端地址（如果有 addr 缓冲区）
     if addr_ptr != 0 && addrlen_ptr != 0 {

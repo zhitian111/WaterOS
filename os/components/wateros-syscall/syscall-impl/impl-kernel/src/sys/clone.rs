@@ -93,6 +93,7 @@ fn do_clone(args: SyscallArgs) -> UserRet {
     vfs::cwd::copy_cwd_from_parent(child_id, parent_id);
 
     vfs::fd::copy_fd_table_from_parent(child_id, parent_id);
+    crate::socket_fd::copy_from_parent(child_id, parent_id);
 
     cred::fork_cred(parent_id, child_id);
 
@@ -145,6 +146,7 @@ fn do_clone_thread(
 
     vfs::cwd::share_cwd_from_parent(child_id, parent_id);
     vfs::fd::share_fd_table_from_parent(child_id, parent_id);
+    crate::socket_fd::share_from_parent(child_id, parent_id);
     cred::share_cred(parent_id, child_id);
 
     UserRet::from_success(child_tid_raw)
