@@ -12,6 +12,7 @@ use crate::vfs_util::vfs_error_to_errno;
 const TCGETS: u32 = 0x5401;
 const TIOCGPGRP: u32 = 0x540f;
 const TIOCGWINSZ: u32 = 0x5413;
+const TIOCNOTTY: u32 = 0x5422;
 const RTC_RD_TIME: u32 = 0x8024_7009;
 const RTC_SET_TIME: u32 = 0x4024_700a;
 
@@ -57,6 +58,9 @@ fn tty_char_ioctl(request: u32, argp: usize) -> UserRet {
                 Err(e) => UserRet::from_error(e),
             }
         }
+        // Daemonization commonly detaches from the controlling TTY with this ioctl.
+        // WaterOS does not model controlling terminals yet, so the detach is a no-op.
+        TIOCNOTTY => UserRet::from_success(0),
         _ => UserRet::from_error(ErrNo::ENOTTY),
     }
 }
@@ -90,6 +94,7 @@ fn global_ioctl_fallback(request: u32, argp: usize) -> UserRet {
     match request {
         TCGETS => UserRet::from_error(ErrNo::ENOTTY),
         TIOCGWINSZ => tty_char_ioctl(TIOCGWINSZ, argp),
+        TIOCNOTTY => UserRet::from_success(0),
         _ => UserRet::from_error(ErrNo::ENOTTY),
     }
 }

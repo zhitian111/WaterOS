@@ -472,6 +472,12 @@ impl VfsDevInventory for FsBridge {
                 node_type: VfsDevNodeType::Character,
             });
         }
+        if !nodes.iter().any(|n| n.path == "/dev/urandom") {
+            nodes.push(VfsDevNode {
+                path: String::from("/dev/urandom"),
+                node_type: VfsDevNodeType::Character,
+            });
+        }
         nodes
     }
 

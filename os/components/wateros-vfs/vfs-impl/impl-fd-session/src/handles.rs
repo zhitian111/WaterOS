@@ -14,12 +14,16 @@ static NEXT_PIPE_INODE: AtomicU64 = AtomicU64::new(1);
 static URANDOM_STATE: AtomicU64 = AtomicU64::new(0x6a09_e667_f3bc_c909);
 
 fn special_meta(mode: u16, inode: u64) -> VfsMetadata {
+    special_dev_meta(mode, inode, 0, 0x7fff_0001)
+}
+
+fn special_dev_meta(mode: u16, inode: u64, device_major: u32, device_minor: u32) -> VfsMetadata {
     VfsMetadata {
         node_type: VfsNodeType::Special,
         size: 0,
         mode,
-        device_major: 0,
-        device_minor: 0x7fff_0001,
+        device_major,
+        device_minor,
         inode,
         mount_id: 0,
         nlink: 1,
@@ -96,7 +100,7 @@ impl VfsIoHandle for NullDeviceHandle {
     }
 
     fn metadata(&self) -> VfsResult<VfsMetadata> {
-        Ok(special_meta(0o20666, 2))
+        Ok(special_dev_meta(0o20666, 2, 1, 3))
     }
 
     fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {
@@ -125,7 +129,7 @@ impl VfsIoHandle for ZeroDeviceHandle {
     }
 
     fn metadata(&self) -> VfsResult<VfsMetadata> {
-        Ok(special_meta(0o20666, 3))
+        Ok(special_dev_meta(0o20666, 3, 1, 5))
     }
 
     fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {
@@ -169,7 +173,7 @@ impl VfsIoHandle for UrandomDeviceHandle {
     }
 
     fn metadata(&self) -> VfsResult<VfsMetadata> {
-        Ok(special_meta(0o20666, 4))
+        Ok(special_dev_meta(0o20666, 4, 1, 9))
     }
 
     fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {

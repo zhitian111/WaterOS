@@ -148,6 +148,8 @@ pub(crate) fn fill_linux_statx(meta: &VfsMetadata, size: u64, _requested_mask: u
         stx_ino: meta.inode,
         stx_size: size,
         stx_blocks: (size + 511) / 512,
+        stx_rdev_major: meta.device_major,
+        stx_rdev_minor: meta.device_minor,
         stx_dev_major: meta.device_major,
         stx_dev_minor: meta.device_minor,
         stx_mnt_id: meta.mount_id,

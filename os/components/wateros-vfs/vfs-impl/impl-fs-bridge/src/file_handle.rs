@@ -184,6 +184,20 @@ impl VfsIoHandle for BufferedFileHandle {
         Ok(buf.len())
     }
 
+    fn truncate(&mut self, len: u64) -> VfsResult<()> {
+        if !self.writable {
+            return Err(VfsError::Unsupported);
+        }
+        let len = usize::try_from(len).map_err(|_| VfsError::InvalidPath)?;
+        self.data.resize(len, 0);
+        self.meta.size = len as u64;
+        if self.offset > self.meta.size {
+            self.offset = self.meta.size;
+        }
+        self.dirty = true;
+        Ok(())
+    }
+
     fn seek(&mut self, offset: i64, whence: VfsSeekWhence) -> VfsResult<u64> {
         let new_off = match whence {
             VfsSeekWhence::Set => {
