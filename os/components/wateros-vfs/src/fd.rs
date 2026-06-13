@@ -170,6 +170,9 @@ pub fn self_test() {
     assert!(reg.close_fd_for_task(stdio_task, api_v0::VFS_STDIN_FD).is_ok());
     assert!(reg.close_fd_for_task(stdio_task, api_v0::VFS_STDIN_FD).is_err());
     assert!(reg.get_io_for_task(stdio_task, api_v0::VFS_STDIN_FD).is_err());
+    let reused_stdin =
+        reg.alloc_fd_for_task(stdio_task, Box::new(impl_fd_session::NullDeviceHandle));
+    assert_eq!(reused_stdin, api_v0::VFS_STDIN_FD);
     reg.drop_task_fd_table(stdio_task);
 
     let a: task::TaskId = 10;

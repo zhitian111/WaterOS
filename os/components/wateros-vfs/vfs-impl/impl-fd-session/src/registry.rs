@@ -178,7 +178,7 @@ impl VfsFdSession for PerTaskFdRegistry {
         let task_id = task::current_task_id().ok_or(VfsError::NoTask)?;
         let newfd = {
             let table = self.table_mut(task_id);
-            if let Some(fd) = (VFS_FIRST_DYNAMIC_FD..table.len()).find(|&fd| table[fd].is_none())
+            if let Some(fd) = (0..table.len()).find(|&fd| table[fd].is_none())
             {
                 table[fd] = Some(handle);
                 fd
@@ -208,7 +208,7 @@ impl PerTaskFdRegistry {
     ) -> usize {
         let (newfd, len) = {
             let table = self.table_mut(task_id);
-            if let Some(fd) = (VFS_FIRST_DYNAMIC_FD..table.len()).find(|&fd| table[fd].is_none())
+            if let Some(fd) = (0..table.len()).find(|&fd| table[fd].is_none())
             {
                 table[fd] = Some(handle);
                 (fd, table.len())
