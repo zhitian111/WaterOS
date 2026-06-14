@@ -15,7 +15,7 @@ use crate::user_copy::{copy_from_user_struct, copy_to_user};
 use crate::vfs_util::vfs_error_to_errno;
 
 const SMALL_READ_BUF_SIZE: usize = 256;
-const SOCKET_READ_WAIT_TICKS: usize = 128;
+const SOCKET_READ_WAIT_TICKS: usize = 4096;
 
 #[repr(C)]
 #[derive(Clone, Copy)]

@@ -144,7 +144,9 @@ fn write_tcp_socket_blocking(fd: usize, buf: &[u8]) -> Result<usize, ErrNo> {
                     return Ok(n);
                 }
                 Ok(_) => {}
-                Err(_) => return Err(ErrNo::EIO),
+                Err(_) => {
+                    return Err(ErrNo::EIO);
+                }
             }
         }
         if !connected {

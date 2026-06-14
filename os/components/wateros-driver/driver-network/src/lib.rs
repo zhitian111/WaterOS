@@ -489,21 +489,38 @@ pub mod stack {
         if !is_valid_local_addr(local_ip, stack.local_ip) {
             return Err("address not available");
         }
-        let meta = stack.metas.get_mut(&handle).ok_or("invalid socket handle")?;
-        match meta.kind {
+        // 先只读获取 socket 类型，避免后续与 next_ephemeral_port 的借用冲突
+        let kind = stack.metas.get(&handle).ok_or("invalid socket handle")?.kind;
+        match kind {
             SocketKind::Tcp => {
-                meta.state = SocketState::Bound { port };
+                // smoltcp 的 TCP listen 拒绝 port=0，且 getsockname 在 listen 之前
+                // 就可能被调用（netperf 服务端流程：bind→getsockname→listen），
+                // 因此必须在此处预分配 ephemeral port。
+                let actual_port = if port == 0 {
+                    next_ephemeral_port(stack)
+                } else {
+                    port
+                };
+                let meta = stack.metas.get_mut(&handle).ok_or("invalid socket handle")?;
+                meta.state = SocketState::Bound { port: actual_port };
                 meta.local_ip = local_ip;
-                meta.local_port = port;
+                meta.local_port = actual_port;
             }
             SocketKind::Udp => {
+                // smoltcp 的 UDP bind 拒绝 port=0，必须预分配 ephemeral port
+                let actual_port = if port == 0 {
+                    next_ephemeral_port(stack)
+                } else {
+                    port
+                };
                 stack.sockets
                     .get_mut::<udp::Socket>(handle)
-                    .bind(listen_endpoint(local_ip, port))
+                    .bind(listen_endpoint(local_ip, actual_port))
                     .map_err(|_| "udp bind failed")?;
-                meta.state = SocketState::Bound { port };
+                let meta = stack.metas.get_mut(&handle).ok_or("invalid socket handle")?;
+                meta.state = SocketState::Bound { port: actual_port };
                 meta.local_ip = local_ip;
-                meta.local_port = port;
+                meta.local_port = actual_port;
             }
         }
         Ok(())
@@ -513,19 +530,30 @@ pub mod stack {
     pub fn socket_listen(handle: SocketHandle) -> Result<(), &'static str> {
         let mut guard = NETWORK_STACK.lock();
         let stack = guard.as_mut().ok_or("stack not initialized")?;
-        let meta = stack.metas.get_mut(&handle).ok_or("invalid socket handle")?;
-        if meta.kind != SocketKind::Tcp {
-            return Err("not a tcp socket");
-        }
-        let port = match meta.state {
-            SocketState::Bound { port } => port,
-            _ => return Err("socket not bound"),
+        // 先只读提取端口和本地 IP
+        let (mut port, local_ip) = {
+            let meta = stack.metas.get(&handle).ok_or("invalid socket handle")?;
+            if meta.kind != SocketKind::Tcp {
+                return Err("not a tcp socket");
+            }
+            let port = match meta.state {
+                SocketState::Bound { port } => port,
+                _ => return Err("socket not bound"),
+            };
+            (port, meta.local_ip)
         };
-        let local_ip = meta.local_ip;
+        // 若 bind 时指定 port=0，自动分配 ephemeral port
+        if port == 0 {
+            port = next_ephemeral_port(stack);
+            let meta = stack.metas.get_mut(&handle).ok_or("invalid socket handle")?;
+            meta.state = SocketState::Bound { port };
+            meta.local_port = port;
+        }
         stack.sockets
             .get_mut::<tcp::Socket>(handle)
             .listen(listen_endpoint(local_ip, port))
             .map_err(|_| "tcp listen failed")?;
+        let meta = stack.metas.get_mut(&handle).ok_or("invalid socket handle")?;
         meta.state = SocketState::Listening { port };
         meta.local_port = port;
         meta.is_listener = true;
@@ -1025,6 +1053,12 @@ pub mod stack {
                 poll();
                 poll_socket_events();
             }
+            let mut guard = NETWORK_STACK.lock();
+            if let Some(stack) = guard.as_mut() {
+                stack.metas.remove(&handle);
+                stack.udp_loopback.remove(&handle);
+                stack.sockets.remove(handle);
+            }
         }
         Ok(())
     }
@@ -1058,7 +1092,10 @@ pub mod stack {
             return Err("not a listening socket");
         }
         drop(guard);
-        with_tcp_socket(handle, |s| s.is_active()).ok_or("stack not initialized")
+        // 只有当底层 smoltcp socket 不再处于 Listen 状态时（即已完成握手），
+        // 才表示有真正的入连接。is_active() 对 Listen 状态也返回 true，
+        // 所以必须同时检查 !is_listening()。
+        with_tcp_socket(handle, |s| s.is_active() && !s.is_listening()).ok_or("stack not initialized")
     }
 
     /// 接受 TCP 连接：原监听 socket 变为已连接 socket，并创建新的监听 socket 替换原 fd。

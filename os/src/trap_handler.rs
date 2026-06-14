@@ -34,7 +34,7 @@ static TIMER_TICK_COUNT : AtomicUsize = AtomicUsize::new(0);
 /// 当前支持架构的 syscall/trap 指令宽度，用于将用户 PC 前进到下一条指令。
 const SYSCALL_INSN_BYTES : usize = 4;
 
-/// 记录用户任务 trap 杀进程上下文并终止当前任务。
+/// 记录用户任务 trap 杀进程上下文并终止当前进程。
 fn kill_current_user_task(context : &str, trap_cause : TrapCause, cx : &TrapContext) -> ! {
     if let Some(snapshot) = task::current_task_snapshot() {
         warn!("[trap] killing user task ({}) cause={:?} pc={:#x} fault_addr={:#x} task_id={} \
@@ -54,7 +54,7 @@ fn kill_current_user_task(context : &str, trap_cause : TrapCause, cx : &TrapCont
               cx.user_pc(),
               cx.fault_addr());
     }
-    task::exit_current(-1);
+    task::exit_group_current(-1);
 }
 
 /// 内核态不可恢复 trap：记录诊断后停机，避免 `sret` 到损坏 PC 形成级联 fault。
@@ -153,8 +153,8 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             // 日志级别下毫无输出，表现为「sret 后卡死」。
             if cx.returns_to_user() {
                 warn!("[trap] user memory fault {:?} raw={:#x} ecode={:#x} sepc={:#x} \
-                       stval={:#x} user_sp={:#x} return_satp={:#x} aspace_ptr={:#x} — killing \
-                       task",
+                       stval={:#x} user_sp={:#x} return_satp={:#x} aspace_ptr={:#x} — delivering \
+                       SIGSEGV",
                       trap_cause,
                       raw_cause,
                       (raw_cause >> 16) & 0x3F,

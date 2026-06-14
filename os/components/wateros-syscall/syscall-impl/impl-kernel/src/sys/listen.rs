@@ -19,7 +19,7 @@ pub(crate) fn sys_listen(args: SyscallArgs) -> UserRet {
     match stack::socket_listen(socket.handle()) {
         Ok(()) => UserRet::from_success(0),
         Err(e) => {
-            log::warn!("[syscall] listen failed: {}", e);
+            log::warn!("[syscall] listen failed fd={} err={}", fd, e);
             UserRet::from_error(ErrNo::EINVAL)
         }
     }

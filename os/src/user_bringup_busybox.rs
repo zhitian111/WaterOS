@@ -33,9 +33,9 @@ const SCRIPT_PATHS : &[&str] = &[
                                  // "/glibc/iozone_testcode.sh",
                                  // "/musl/iozone_testcode.sh",
                                  // --- P4 网络（需 rv_qemu_run.sh 启用 virtio-net）---
-                                 // "/glibc/iperf_testcode.sh",        //done
+                                 // "/glibc/iperf_testcode.sh",        // done
                                  // "/musl/iperf_testcode.sh",
-                                 // "/glibc/netperf_testcode.sh",
+                                 // "/glibc/netperf_testcode.sh",      // done
                                  // "/musl/netperf_testcode.sh",
                                  // --- P5 libctest + cyclictest ---
                                  // "/glibc/libctest_testcode.sh",     // done

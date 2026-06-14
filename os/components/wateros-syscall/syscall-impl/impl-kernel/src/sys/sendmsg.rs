@@ -41,7 +41,7 @@ struct SockAddrIn {
 
 const IOV_MAX: usize = 256;
 const MSG_DONTWAIT: usize = 0x40;
-const SOCKET_RECVMSG_WAIT_TICKS: usize = 256;
+const SOCKET_RECVMSG_WAIT_TICKS: usize = 4096;
 
 pub(crate) fn sys_sendmsg(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);

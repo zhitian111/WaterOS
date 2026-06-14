@@ -9,7 +9,6 @@ use crate::socket_fd;
 use crate::user_copy::copy_from_user_struct;
 
 const CONNECT_WAIT_TICKS: usize = 256;
-const CONNECT_RETRY_TICKS: usize = 16;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -61,15 +60,14 @@ pub(crate) fn sys_connect(args: SyscallArgs) -> UserRet {
 }
 
 fn wait_connected(handle: smoltcp::iface::SocketHandle) -> UserRet {
-    for i in 0..CONNECT_WAIT_TICKS {
+    for _ in 0..CONNECT_WAIT_TICKS {
         drive_network_stack();
+        // socket_is_connected 使用 is_active() 在 SynSent 即返回 true，
+        // 必须同时检查 may_send 确认握手已完成（Established 状态）。
         if stack::socket_is_connected(handle).unwrap_or(false)
             && stack::socket_may_send(handle).unwrap_or(false)
         {
             return UserRet::from_success(0);
-        }
-        if i > 0 && i % CONNECT_RETRY_TICKS == 0 {
-            let _ = stack::socket_retry_connect(handle);
         }
         task::sleep_for_ticks(1);
     }

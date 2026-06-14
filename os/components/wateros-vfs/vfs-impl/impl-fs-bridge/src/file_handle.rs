@@ -99,6 +99,10 @@ impl BufferedFileHandle {
         if !self.dirty {
             return Ok(());
         }
+        if !FsBridge.exists(self.path.as_str())? {
+            self.dirty = false;
+            return Ok(());
+        }
         replace_file_contents(self.path.as_str(), &self.data)?;
         self.dirty = false;
         self.meta.size = self.data.len() as u64;
