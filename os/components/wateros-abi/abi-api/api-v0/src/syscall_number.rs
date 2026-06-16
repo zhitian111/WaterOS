@@ -162,6 +162,14 @@ pub trait SyscallNumberTable {
     const MPROTECT: SyscallNumber;
     /// 查询 NUMA 内存策略（`get_mempolicy(2)`）。
     const GET_MEMPOLICY: SyscallNumber;
+    /// 获取或创建 SysV shared memory segment（`shmget(2)`）。
+    const SHMGET: SyscallNumber;
+    /// 控制 SysV shared memory segment（`shmctl(2)`）。
+    const SHMCTL: SyscallNumber;
+    /// attach SysV shared memory segment（`shmat(2)`）。
+    const SHMAT: SyscallNumber;
+    /// detach SysV shared memory segment（`shmdt(2)`）。
+    const SHMDT: SyscallNumber;
 
     // 基本信息 / identity & misc info
     /// 内核与体系结构标识（`uname(2)`）。

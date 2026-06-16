@@ -263,6 +263,26 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     }
 
     #[inline]
+    fn dispatch_shmget(args: SyscallArgs) -> isize {
+        sys::sys_shmget(args).0
+    }
+
+    #[inline]
+    fn dispatch_shmctl(args: SyscallArgs) -> isize {
+        sys::sys_shmctl(args).0
+    }
+
+    #[inline]
+    fn dispatch_shmat(args: SyscallArgs) -> isize {
+        sys::sys_shmat(args).0
+    }
+
+    #[inline]
+    fn dispatch_shmdt(args: SyscallArgs) -> isize {
+        sys::sys_shmdt(args).0
+    }
+
+    #[inline]
     fn dispatch_get_time(args: SyscallArgs) -> isize {
         sys::sys_gettimeofday(args).0
     }

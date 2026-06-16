@@ -65,6 +65,10 @@ pub enum SyscallKind {
     Msync,
     Mprotect,
     GetMempolicy,
+    ShmGet,
+    ShmCtl,
+    ShmAt,
+    ShmDt,
     GetTime,
     ClockSetTime,
     ClockGetTime,
@@ -244,6 +248,14 @@ impl SyscallKind {
             Self::Mprotect
         } else if syscall_nr == T::GET_MEMPOLICY.raw() {
             Self::GetMempolicy
+        } else if syscall_nr == T::SHMGET.raw() {
+            Self::ShmGet
+        } else if syscall_nr == T::SHMCTL.raw() {
+            Self::ShmCtl
+        } else if syscall_nr == T::SHMAT.raw() {
+            Self::ShmAt
+        } else if syscall_nr == T::SHMDT.raw() {
+            Self::ShmDt
         } else if syscall_nr == T::GET_TIME.raw() {
             Self::GetTime
         } else if syscall_nr == T::CLOCK_SETTIME.raw() {
@@ -439,6 +451,10 @@ impl SyscallKind {
             Self::Msync => "msync",
             Self::Mprotect => "mprotect",
             Self::GetMempolicy => "get_mempolicy",
+            Self::ShmGet => "shmget",
+            Self::ShmCtl => "shmctl",
+            Self::ShmAt => "shmat",
+            Self::ShmDt => "shmdt",
             Self::GetTime => "gettimeofday",
             Self::ClockSetTime => "clock_settime",
             Self::ClockGetTime => "clock_gettime",
@@ -971,6 +987,22 @@ pub trait SyscallDispatcher {
             Self::NumberTable::GET_MEMPOLICY.raw(),
             args,
         )
+    }
+
+    fn dispatch_shmget(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(SyscallKind::ShmGet, Self::NumberTable::SHMGET.raw(), args)
+    }
+
+    fn dispatch_shmctl(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(SyscallKind::ShmCtl, Self::NumberTable::SHMCTL.raw(), args)
+    }
+
+    fn dispatch_shmat(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(SyscallKind::ShmAt, Self::NumberTable::SHMAT.raw(), args)
+    }
+
+    fn dispatch_shmdt(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(SyscallKind::ShmDt, Self::NumberTable::SHMDT.raw(), args)
     }
 
     fn dispatch_get_time(args: SyscallArgs) -> isize {
@@ -1582,6 +1614,10 @@ pub trait SyscallDispatcher {
             SyscallKind::Msync => Self::dispatch_msync(syscall_args),
             SyscallKind::Mprotect => Self::dispatch_mprotect(syscall_args),
             SyscallKind::GetMempolicy => Self::dispatch_getmempolicy(syscall_args),
+            SyscallKind::ShmGet => Self::dispatch_shmget(syscall_args),
+            SyscallKind::ShmCtl => Self::dispatch_shmctl(syscall_args),
+            SyscallKind::ShmAt => Self::dispatch_shmat(syscall_args),
+            SyscallKind::ShmDt => Self::dispatch_shmdt(syscall_args),
             SyscallKind::GetTime => Self::dispatch_get_time(syscall_args),
             SyscallKind::ClockSetTime => Self::dispatch_clock_settime(syscall_args),
             SyscallKind::ClockGetTime => Self::dispatch_clock_gettime(syscall_args),

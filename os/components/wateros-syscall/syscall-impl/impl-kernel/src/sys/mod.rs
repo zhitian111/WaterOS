@@ -54,6 +54,7 @@ mod listen;
 mod recvfrom;
 mod sendmsg;
 mod sendto;
+mod shm;
 mod shutdown;
 mod socket;
 mod sockname;
@@ -104,6 +105,7 @@ pub(crate) use read::{sys_read, sys_readv};
 pub(crate) use readlinkat::sys_readlinkat;
 pub(crate) use renameat2::sys_renameat2;
 pub(crate) use sendfile::sys_sendfile;
+pub(crate) use shm::{sys_shmat, sys_shmctl, sys_shmdt, sys_shmget};
 pub(crate) use clock::{
     sys_clock_getres, sys_clock_gettime, sys_clock_nanosleep, sys_clock_settime, sys_gettimeofday,
     sys_nanosleep,

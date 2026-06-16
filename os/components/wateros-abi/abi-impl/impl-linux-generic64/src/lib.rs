@@ -86,6 +86,10 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const MSYNC: SyscallNumber = SyscallNumber(227); // msync
     const MPROTECT: SyscallNumber = SyscallNumber(226); // mprotect
     const GET_MEMPOLICY: SyscallNumber = SyscallNumber(236); // get_mempolicy
+    const SHMGET: SyscallNumber = SyscallNumber(194);
+    const SHMCTL: SyscallNumber = SyscallNumber(195);
+    const SHMAT: SyscallNumber = SyscallNumber(196);
+    const SHMDT: SyscallNumber = SyscallNumber(197);
 
     // 基本信息 / identity & misc info
     const UNAME: SyscallNumber = SyscallNumber(160); // uname

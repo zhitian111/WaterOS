@@ -142,6 +142,9 @@ fn do_clone(args: SyscallArgs) -> UserRet {
     crate::socket_fd::copy_from_parent(child_id, parent_id);
 
     cred::fork_cred(parent_id, child_id);
+    if let Err(error) = super::shm::fork_task_attachments(parent_id, child_id, new_aspace_ptr) {
+        log::warn!("[sys_clone] failed to inherit shm attachments: {:?}", error);
+    }
 
     UserRet::from_success(child_pid)
 }

@@ -221,9 +221,11 @@ pub(crate) fn sys_exit_group(exit_code: isize) -> isize {
         if let Some(process_task) = task::current_process_task_snapshot() {
             super::signal::notify_parent_sigchld(process_task.pid);
             if let Some(task_ids) = task::task_ids_for_process(process_task.pid) {
+                let user_aspace = task::current_task_user_aspace_ptr();
                 for sibling in task_ids {
                     if sibling != task_id {
                         super::robust::robust_exit_cleanup(sibling);
+                        super::shm::drop_task_attachments(sibling, user_aspace);
                     }
                 }
             }
@@ -700,10 +702,25 @@ fn write_exit_code(exit_code_ptr: usize, exit_code: isize) -> Result<(), ErrNo> 
 }
 
 fn drop_exited_task_resources(exited: &task::ExitedTask) {
-    drop_task_runtime_resources(exited.id);
+    let aspace = exited
+        .trap_frame
+        .as_ref()
+        .map(|frame| frame.user_aspace_ptr())
+        .unwrap_or(0);
+    drop_task_runtime_resources_with_aspace(exited.id, aspace);
 }
 
 fn drop_task_runtime_resources(task_id: task::TaskId) {
+    let aspace = if task::current_task_id() == Some(task_id) {
+        task::current_task_user_aspace_ptr()
+    } else {
+        0
+    };
+    drop_task_runtime_resources_with_aspace(task_id, aspace);
+}
+
+fn drop_task_runtime_resources_with_aspace(task_id: task::TaskId, aspace: usize) {
+    super::shm::drop_task_attachments(task_id, aspace);
     vfs::cwd::drop_task_cwd(task_id);
     vfs::fd::drop_task_fd_table(task_id);
     crate::socket_fd::drop_task(task_id);
