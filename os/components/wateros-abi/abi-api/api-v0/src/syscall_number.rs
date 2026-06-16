@@ -114,6 +114,8 @@ pub trait SyscallNumberTable {
     const EXIT_GROUP: SyscallNumber;
     /// 创建子进程；用户态常映射为 `clone` 族调用。
     const FORK: SyscallNumber;
+    /// 使用结构体参数创建进程/线程（`clone3(2)`）。
+    const CLONE3: SyscallNumber;
     /// 等待子进程状态变更（与 `wait4` 等价的编号）。
     const WAITPID: SyscallNumber;
     /// 向进程发送信号（`kill(2)`）。

@@ -61,7 +61,7 @@ mod sockopt;
 
 pub(crate) use brk::sys_brk;
 pub(crate) use chdir::sys_chdir;
-pub(crate) use clone::sys_clone;
+pub(crate) use clone::{sys_clone, sys_clone3};
 pub(crate) use close::sys_close;
 pub(crate) use cred::{
     sys_getegid, sys_geteuid, sys_getgid, sys_getgroups, sys_getuid, sys_setgid, sys_setregid,

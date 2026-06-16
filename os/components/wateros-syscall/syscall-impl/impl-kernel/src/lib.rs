@@ -103,6 +103,11 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     }
 
     #[inline]
+    fn dispatch_clone3(args: SyscallArgs) -> isize {
+        sys::sys_clone3(args).0
+    }
+
+    #[inline]
     fn dispatch_exit(args: SyscallArgs) -> isize {
         sys::sys_exit(args.arg(0) as isize)
     }

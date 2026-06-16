@@ -26,9 +26,9 @@ const SCRIPT_PATHS : &[&str] = &[
                                  // --- P3 benchmark ---
                                  // "/glibc/lmbench_testcode.sh",
                                  // "/musl/lmbench_testcode.sh",
-                                 "/glibc/unixbench_testcode.sh",
+                                 //"/glibc/unixbench_testcode.sh",
                                  // "/musl/unixbench_testcode.sh",
-                                 // "/glibc/libcbench_testcode.sh",
+                                 "/glibc/libcbench_testcode.sh",
                                  // "/musl/libcbench_testcode.sh",
                                  // "/glibc/iozone_testcode.sh",
                                  // "/musl/iozone_testcode.sh",

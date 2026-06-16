@@ -55,6 +55,7 @@ pub enum SyscallKind {
     Exit,
     ExitGroup,
     Clone,
+    Clone3,
     Execve,
     WaitPid,
     Kill,
@@ -223,6 +224,8 @@ impl SyscallKind {
             Self::ExitGroup
         } else if syscall_nr == T::FORK.raw() {
             Self::Clone
+        } else if syscall_nr == T::CLONE3.raw() {
+            Self::Clone3
         } else if syscall_nr == T::EXEC.raw() {
             Self::Execve
         } else if syscall_nr == T::WAITPID.raw() {
@@ -426,6 +429,7 @@ impl SyscallKind {
             Self::Exit => "exit",
             Self::ExitGroup => "exit_group",
             Self::Clone => "clone",
+            Self::Clone3 => "clone3",
             Self::Execve => "execve",
             Self::WaitPid => "waitpid",
             Self::Kill => "kill",
@@ -901,6 +905,14 @@ pub trait SyscallDispatcher {
         Self::dispatch_unsupported(
             SyscallKind::Clone,
             Self::NumberTable::FORK.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_clone3(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Clone3,
+            Self::NumberTable::CLONE3.raw(),
             args,
         )
     }
@@ -1563,6 +1575,7 @@ pub trait SyscallDispatcher {
             SyscallKind::Umount2 => Self::dispatch_umount2(syscall_args),
             SyscallKind::Brk => Self::dispatch_brk(syscall_args),
             SyscallKind::Clone => Self::dispatch_clone(syscall_args),
+            SyscallKind::Clone3 => Self::dispatch_clone3(syscall_args),
             SyscallKind::Execve => Self::dispatch_execve(syscall_args),
             SyscallKind::Mmap => Self::dispatch_mmap(syscall_args),
             SyscallKind::Munmap => Self::dispatch_munmap(syscall_args),
