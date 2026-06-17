@@ -78,6 +78,19 @@ pub mod kernel_mm {
         map_identity_range_user,
     };
 
+    pub fn handle_cow_fault(aspace_ptr: usize, fault_addr: usize) -> bool {
+        #[cfg(feature = "impl-sv39")]
+        {
+            return impl_sv39::kernel_mm_impl::handle_cow_fault(aspace_ptr, fault_addr)
+                .unwrap_or(false);
+        }
+        #[cfg(not(feature = "impl-sv39"))]
+        {
+            let _ = (aspace_ptr, fault_addr);
+            false
+        }
+    }
+
     #[cfg(feature = "impl-loongarch64")]
     pub use impl_loongarch64::kernel_mm_impl::{
         drop_user_aspace, ensure_user_execute_for_kernel_va, fork_user_aspace, from_elf_bytes,

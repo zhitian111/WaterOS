@@ -104,11 +104,25 @@ pub mod kernel_mm_impl {
             return Err(MmError::InvalidAddress);
         }
         // SAFETY: 调用方保证 parent_aspace_ptr 指向一直存活（泄漏）的 Sv39AddressSpace
-        let parent = unsafe { &*(parent_aspace_ptr as *const Sv39AddressSpace) };
-        let child = parent.fork()?;
+        let parent = unsafe { &mut *(parent_aspace_ptr as *mut Sv39AddressSpace) };
+        let child = parent.fork_cow()?;
         let satp = child.satp_value();
         let child_ptr = Box::into_raw(Box::new(child)) as usize;
         Ok((child_ptr, satp))
+    }
+
+    pub fn handle_cow_fault(parent_aspace_ptr : usize,
+                            fault_addr : usize)
+                            -> api_v0::error::MmResult<bool> {
+        use crate::pagetable::Sv39AddressSpace;
+        use api_v0::addr::VirtAddr;
+        use api_v0::error::MmError;
+
+        if parent_aspace_ptr == 0 {
+            return Err(MmError::InvalidAddress);
+        }
+        let aspace = unsafe { &mut *(parent_aspace_ptr as *mut Sv39AddressSpace) };
+        aspace.handle_cow_fault(VirtAddr(fault_addr))
     }
 
     /// 销毁用户地址空间：递归释放所有用户页帧和页表帧。

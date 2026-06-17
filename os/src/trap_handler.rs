@@ -152,6 +152,16 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             // fault， 形成无限 trap 风暴；在 INFO
             // 日志级别下毫无输出，表现为「sret 后卡死」。
             if cx.returns_to_user() {
+                if matches!(trap_cause, TrapCause::Exception(Exception::StorePageFault)) &&
+                   mm::kernel_mm::handle_cow_fault(task::current_task_user_aspace_ptr(),
+                                                   cx.fault_addr())
+                {
+                    trace!("[trap] handled user COW fault sepc={:#x} stval={:#x}",
+                           cx.user_pc(),
+                           cx.fault_addr());
+                    finish_trap_return(frame, cx, raw_cause);
+                    return;
+                }
                 warn!("[trap] user memory fault {:?} raw={:#x} ecode={:#x} sepc={:#x} \
                        stval={:#x} user_sp={:#x} return_satp={:#x} aspace_ptr={:#x} — delivering \
                        SIGSEGV",

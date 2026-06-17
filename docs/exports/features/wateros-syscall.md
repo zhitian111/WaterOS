@@ -51,6 +51,7 @@
 | `getcwd` / `chdir` | 部分 | per-task cwd |
 | `uname` | 部分 | 固定 `utsname` 字段 |
 | `syslog` (116) | **已接入** | `sys_syslog` → **`wateros-klog`**；传统 ASCII 读路径；见 [`docs/architecture/wateros-klog.md`](../../architecture/wateros-klog.md) |
+| `socketpair` (199) | 部分 | `AF_UNIX` + `SOCK_STREAM`；VFS 双 pipe 交叉；BusyBox shell IPC |
 
 ## 明确未覆盖
 

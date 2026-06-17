@@ -177,15 +177,15 @@ impl MmapOps for Sv39AddressSpace {
         if len == 0 {
             return Ok(());
         }
-        if perm == PagePerm::empty() {
-            return Err(MmError::InvalidAddress);
-        }
         let end = VirtAddr(addr.0.checked_add(len).ok_or(MmError::InvalidAddress)?);
         let mut vpn = addr.floor_page();
         let vpn_end = end.ceil_page();
         let perm_u = perm | PagePerm::U;
         while vpn.0 < vpn_end.0 {
             if self.translate_addr(vpn.start_addr())?.is_none() {
+                return Err(MmError::NotMapped);
+            }
+            if perm_u.writable() && !self.ensure_private_for_write(vpn)? {
                 return Err(MmError::NotMapped);
             }
             self.protect_page(vpn, perm_u)?;

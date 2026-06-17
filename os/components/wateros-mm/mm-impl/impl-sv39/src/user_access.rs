@@ -105,22 +105,35 @@ fn copy_from_user_in_aspace(
 }
 
 fn copy_to_user_in_aspace(
-    aspace: &Sv39AddressSpace,
+    aspace: &mut Sv39AddressSpace,
     mut user_addr: VirtAddr,
     kernel_src: &[u8],
 ) -> MmResult<usize> {
     let mut done = 0usize;
     while done < kernel_src.len() {
+        let vpn = user_addr.floor_page();
+        let mut perm = aspace
+            .leaf_page_perm(user_addr.floor_page())?
+            .ok_or(MmError::AccessViolation)?;
+        if !perm.user() {
+            return Err(MmError::AccessViolation);
+        }
+        if perm.writable() {
+            if !aspace.ensure_private_for_write(vpn)? {
+                return Err(MmError::AccessViolation);
+            }
+        } else if aspace.handle_cow_fault(user_addr)? {
+            perm = aspace
+                .leaf_page_perm(vpn)?
+                .ok_or(MmError::AccessViolation)?;
+        }
+        if !perm.writable() {
+            return Err(MmError::AccessViolation);
+        }
         let pa = match aspace.translate_addr(user_addr)? {
             Some(pa) => pa,
             None => return Err(MmError::AccessViolation),
         };
-        let perm = aspace
-            .leaf_page_perm(user_addr.floor_page())?
-            .ok_or(MmError::AccessViolation)?;
-        if !perm.user() || !perm.writable() {
-            return Err(MmError::AccessViolation);
-        }
 
         let page_room = PAGE_SIZE - user_addr.page_offset();
         let chunk = page_room.min(kernel_src.len() - done);

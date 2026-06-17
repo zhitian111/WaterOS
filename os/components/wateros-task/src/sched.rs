@@ -1,13 +1,17 @@
 //! 调度策略与 CPU 亲和性 **原语**。
 
 use api_v0::{
-    SchedError, SchedParam, SchedPolicy, SCHED_CPU_MASK_MIN_BYTES, SCHED_CPU_MASK_RET_BYTES,
-    TaskId,
+    ProcessId, SchedError, SchedParam, SchedPolicy, ThreadId, SCHED_CPU_MASK_MIN_BYTES,
+    SCHED_CPU_MASK_RET_BYTES, TaskId,
 };
 
 use crate::scheduler::{self, SchedPolicyChangeAction};
 
-/// 将 Linux `pid`（0 = 当前线程）解析为 [`TaskId`]。
+fn existing_task_id(task_id: TaskId) -> Option<TaskId> {
+    scheduler::task_snapshot(task_id).map(|_| task_id)
+}
+
+/// 将 Linux `pid`（0 = 当前线程；正数 = 用户可见 tid/pid）解析为内部 [`TaskId`]。
 pub fn resolve_sched_pid(pid: isize) -> Result<TaskId, SchedError> {
     if pid == 0 {
         return scheduler::current_task_id().ok_or(SchedError::NoSuchTask);
@@ -15,12 +19,20 @@ pub fn resolve_sched_pid(pid: isize) -> Result<TaskId, SchedError> {
     if pid < 0 {
         return Err(SchedError::InvalidArg);
     }
-    let task_id = pid as TaskId;
-    if scheduler::task_snapshot(task_id).is_some() {
-        Ok(task_id)
-    } else {
-        Err(SchedError::NoSuchTask)
+
+    let raw = pid as usize;
+    if let Some(task_id) =
+        crate::task_id_for_thread(ThreadId::from_raw(raw)).and_then(existing_task_id)
+    {
+        return Ok(task_id);
     }
+    if let Some(task_id) =
+        crate::leader_task_for_process(ProcessId::from_raw(raw)).and_then(existing_task_id)
+    {
+        return Ok(task_id);
+    }
+
+    Err(SchedError::NoSuchTask)
 }
 
 /// 查询任务的有效调度策略。
@@ -98,9 +110,14 @@ pub fn set_param(task_id: TaskId, param: SchedParam) -> Result<(), SchedError> {
     }
 }
 
-/// 设置 CPU 亲和性；bring-up 未实现，恒返回 [`SchedError::NotPermitted`]。
-pub fn set_affinity(_task_id: TaskId, _mask: &[u8]) -> Result<(), SchedError> {
-    Err(SchedError::NotPermitted)
+/// 设置 CPU 亲和性；单核 bring-up 仅支持 CPU0，mask 包含 CPU0 即成功。
+pub fn set_affinity(task_id: TaskId, mask: &[u8]) -> Result<(), SchedError> {
+    ensure_task_exists(task_id)?;
+    if mask.first().is_some_and(|byte| (byte & 1) != 0) {
+        Ok(())
+    } else {
+        Err(SchedError::InvalidArg)
+    }
 }
 
 fn ensure_task_exists(task_id: TaskId) -> Result<(), SchedError> {

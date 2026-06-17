@@ -277,8 +277,12 @@ fn poll_wait_pipe_fds(
     if remaining == 0 {
         return Ok(false);
     }
+    let wait_ticks = remaining.min(1);
     let mut any_pipe = false;
     for i in 0..nfds {
+        if !still_waiting() {
+            return Ok(true);
+        }
         let ptr = fds_ptr + i * pollfd_size;
         let pfd: PollFd = copy_from_user_struct(ptr)?;
         if pfd.fd < 0 {
@@ -288,8 +292,12 @@ fn poll_wait_pipe_fds(
         if socket_fd::lookup(fd).is_some() {
             continue;
         }
+        // `with_current_io` temporarily removes this fd's handle from the fd table.
+        // Do not rescan all pollfds from inside the wait condition, or a poll on
+        // the same fd observes `POLLNVAL` and busy-loops without yielding.
+        let mut wait_on_this_fd = || !deadline.expired();
         match vfs::fd::with_current_io(fd, |handle| {
-            handle.poll_wait_for_ticks(pfd.events, remaining, still_waiting)
+            handle.poll_wait_for_ticks(pfd.events, wait_ticks, &mut wait_on_this_fd)
         }) {
             Ok(()) => any_pipe = true,
             Err(vfs::api::VfsError::Interrupted) => return Err(ErrNo::EINTR),
@@ -521,8 +529,12 @@ fn poll_wait_monitored_fds(
     if remaining == 0 {
         return Ok(false);
     }
+    let wait_ticks = remaining.min(1);
     let mut any_pipe = false;
     for fd in 0..nfds {
+        if !still_waiting() {
+            return Ok(true);
+        }
         let events = fd_monitored_in_sets(fd, readfds_ptr, writefds_ptr, exceptfds_ptr)?;
         if events == 0 {
             continue;
@@ -530,8 +542,11 @@ fn poll_wait_monitored_fds(
         if socket_fd::lookup(fd).is_some() {
             continue;
         }
+        // See `poll_wait_pipe_fds`: while the handle is borrowed out of the fd
+        // table, recursive scans of the same fd would falsely report `POLLNVAL`.
+        let mut wait_on_this_fd = || !deadline.expired();
         match vfs::fd::with_current_io(fd, |handle| {
-            handle.poll_wait_for_ticks(events, remaining, still_waiting)
+            handle.poll_wait_for_ticks(events, wait_ticks, &mut wait_on_this_fd)
         }) {
             Ok(()) => any_pipe = true,
             Err(vfs::api::VfsError::Interrupted) => return Err(ErrNo::EINTR),

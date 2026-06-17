@@ -20,6 +20,8 @@ const CLOCK_MONOTONIC_COARSE: usize = 6;
 const TIMER_ABSTIME: usize = 1;
 
 const SCHED_TICK_NS: u128 = (SCHED_TIMER_PERIOD_MS as u128) * 1_000_000;
+const HIGH_RES_CLOCK_NS: u128 = 1;
+const HIGH_RES_FALLBACK_NS: u128 = 1_000;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -48,7 +50,7 @@ fn monotonic_now_ns() -> Result<u128, ErrNo> {
 fn timespec_resolution_ns() -> u128 {
     match timer::tick_hz() {
         Ok(hz) if hz.0 > 0 => 1_000_000_000u128 / (hz.0 as u128),
-        _ => SCHED_TICK_NS,
+        _ => HIGH_RES_FALLBACK_NS,
     }
 }
 
@@ -202,6 +204,7 @@ pub(crate) fn sys_clock_getres(args : SyscallArgs) -> UserRet {
     }
     let res_ns = match clock_id {
         CLOCK_REALTIME_COARSE | CLOCK_MONOTONIC_COARSE | CLOCK_PROCESS_CPUTIME_ID => SCHED_TICK_NS,
+        CLOCK_REALTIME | CLOCK_MONOTONIC | CLOCK_MONOTONIC_RAW => HIGH_RES_CLOCK_NS,
         _ => timespec_resolution_ns(),
     };
     let res = ns_to_timespec(res_ns);

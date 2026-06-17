@@ -31,6 +31,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 pub struct StackFrameAllocator {
     recycled : Vec<PhysPageNum>,
     allocated : Vec<bool>,
+    ref_counts : Vec<usize>,
     start_ppn : usize,
     end_ppn : usize,
     /// 仍可从连续区分配的第一页号上界（不包含）；初始为 `end_ppn`。
@@ -42,6 +43,7 @@ impl StackFrameAllocator {
     pub fn new() -> Self {
         Self { recycled : Vec::new(),
                allocated : Vec::new(),
+               ref_counts : Vec::new(),
                start_ppn : 0,
                end_ppn : 0,
                next_novel : 0 }
@@ -59,6 +61,10 @@ impl StackFrameAllocator {
             .clear();
         self.allocated
             .resize(end_ppn.val.saturating_sub(start_ppn.val), false);
+        self.ref_counts
+            .clear();
+        self.ref_counts
+            .resize(end_ppn.val.saturating_sub(start_ppn.val), 0);
     }
 
     #[inline]
@@ -101,6 +107,7 @@ impl PhysicalFrameAllocator for StackFrameAllocator {
                 continue;
             }
             self.allocated[idx] = true;
+            self.ref_counts[idx] = 1;
             return Ok(p);
         }
         if self.next_novel > self.start_ppn {
@@ -113,6 +120,7 @@ impl PhysicalFrameAllocator for StackFrameAllocator {
                 return Err(FrameAllocError::InvalidFrame);
             }
             self.allocated[idx] = true;
+            self.ref_counts[idx] = 1;
             return Ok(p);
         }
         Err(FrameAllocError::OutOfMemory)
@@ -126,19 +134,59 @@ impl PhysicalFrameAllocator for StackFrameAllocator {
                        self.end_ppn);
             return Err(FrameAllocError::InvalidFrame);
         };
-        if frame.0 < self.next_novel || self.recycled.contains(&frame) || !self.allocated[idx] {
+        if frame.0 < self.next_novel || self.recycled.contains(&frame) || !self.allocated[idx] ||
+           self.ref_counts[idx] == 0
+        {
             log::warn!("[frame-allocator] invalid dealloc ppn={:#x} next_novel={:#x} \
-                        recycled={} allocated={}",
+                        recycled={} allocated={} ref_count={}",
                        frame.0,
                        self.next_novel,
                        self.recycled.contains(&frame),
-                       self.allocated[idx]);
+                       self.allocated[idx],
+                       self.ref_counts[idx]);
             return Err(FrameAllocError::InvalidFrame);
         }
+        if self.ref_counts[idx] > 1 {
+            self.ref_counts[idx] -= 1;
+            return Ok(());
+        }
+        self.ref_counts[idx] = 0;
         self.allocated[idx] = false;
         self.recycled
             .push(frame);
         Ok(())
+    }
+}
+
+impl StackFrameAllocator {
+    pub fn inc_ref(&mut self, frame : PhysPageNum) -> FrameAllocResult<usize> {
+        let Some(idx) = self.index(frame) else {
+            log::warn!("[frame-allocator] invalid inc_ref ppn={:#x} range=[{:#x},{:#x})",
+                       frame.0,
+                       self.start_ppn,
+                       self.end_ppn);
+            return Err(FrameAllocError::InvalidFrame);
+        };
+        if !self.allocated[idx] || self.ref_counts[idx] == 0 {
+            log::warn!("[frame-allocator] inc_ref on unallocated ppn={:#x} allocated={} \
+                        ref_count={}",
+                       frame.0,
+                       self.allocated[idx],
+                       self.ref_counts[idx]);
+            return Err(FrameAllocError::InvalidFrame);
+        }
+        self.ref_counts[idx] = self.ref_counts[idx].saturating_add(1);
+        Ok(self.ref_counts[idx])
+    }
+
+    pub fn ref_count(&self, frame : PhysPageNum) -> FrameAllocResult<usize> {
+        let Some(idx) = self.index(frame) else {
+            return Err(FrameAllocError::InvalidFrame);
+        };
+        if !self.allocated[idx] || self.ref_counts[idx] == 0 {
+            return Err(FrameAllocError::InvalidFrame);
+        }
+        Ok(self.ref_counts[idx])
     }
 }
 
@@ -199,6 +247,16 @@ pub fn frame_alloc_result() -> FrameAllocResult<PhysPageNum> {
 pub fn frame_dealloc_result(frame : PhysPageNum) -> FrameAllocResult<()> {
     get_frame_allocator_cell().exclusive_access()
                               .dealloc_frame(frame)
+}
+
+pub fn frame_inc_ref(frame : PhysPageNum) -> FrameAllocResult<usize> {
+    get_frame_allocator_cell().exclusive_access()
+                              .inc_ref(frame)
+}
+
+pub fn frame_ref_count(frame : PhysPageNum) -> FrameAllocResult<usize> {
+    get_frame_allocator_cell().exclusive_access()
+                              .ref_count(frame)
 }
 
 /// 全局帧池只读统计；未初始化时返回零值。

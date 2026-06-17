@@ -17,7 +17,7 @@ use api_v0::address_space::AddressSpaceOps;
 use api_v0::error::{MmError, MmResult};
 use api_v0::perm::PagePerm;
 
-use frame_alloctor::{frame_alloc_result, frame_dealloc_result};
+use frame_alloctor::{frame_alloc_result, frame_dealloc_result, frame_inc_ref, frame_ref_count};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Sv39PteFlags(u16);
@@ -30,6 +30,8 @@ impl Sv39PteFlags {
     const U : Self = Self(1 << 4);
     const A : Self = Self(1 << 6);
     const D : Self = Self(1 << 7);
+    const COW : Self = Self(1 << 8);
+    const COW_WAS_WRITABLE : Self = Self(1 << 9);
 
     #[inline]
     const fn empty() -> Self { Self(0) }
@@ -42,6 +44,35 @@ impl Sv39PteFlags {
 
     #[inline]
     const fn is_leaf(self) -> bool { (self.0 & (Self::R.0 | Self::W.0 | Self::X.0)) != 0 }
+
+    #[inline]
+    const fn writable(self) -> bool { (self.0 & Self::W.0) != 0 }
+
+    #[inline]
+    const fn cow(self) -> bool { (self.0 & Self::COW.0) != 0 }
+
+    #[inline]
+    const fn cow_was_writable(self) -> bool { (self.0 & Self::COW_WAS_WRITABLE.0) != 0 }
+
+    #[inline]
+    fn prepare_cow(self) -> Self {
+        let mut f = self;
+        f.0 &= !Self::W.0;
+        f.0 |= Self::COW.0 | Self::COW_WAS_WRITABLE.0;
+        f
+    }
+
+    #[inline]
+    fn clear_cow(self) -> Self {
+        Self(self.0 & !(Self::COW.0 | Self::COW_WAS_WRITABLE.0))
+    }
+
+    #[inline]
+    fn restore_cow_writable(self) -> Self {
+        let mut f = self.clear_cow();
+        f.0 |= Self::W.0 | Self::A.0 | Self::D.0;
+        f
+    }
 
     /// Sv39 在 level 0 的有效 PTE 即 4 KiB 叶子（含 `PROT_NONE`：V|U 无 R/W/X）；
     /// 更高层级仅 R/W/X 置位时为 superpage 叶子，否则为下一级页表指针。
@@ -248,14 +279,18 @@ impl Sv39AddressSpace {
     /// - 用户页（PTE 中 `U` 位置位）：分配新物理帧，逐字节复制数据。
     /// - 内核恒等映射页（无 `U`）：共享原始 PPN，不复制数据帧。
     /// - 中间页表帧：分配新帧，仅设 `V` 标志（非叶子）。
-    pub fn fork(&self) -> MmResult<Sv39AddressSpace> {
+    pub fn fork_cow(&mut self) -> MmResult<Sv39AddressSpace> {
         log::trace!("[mm-fork] Sv39AddressSpace::fork begin root_ppn={}",
                     self.root.0);
         let child_root = alloc_table_frame_zeroed()?;
         // SAFETY: 刚分配并清零的帧作为子地址空间根页表。
-        unsafe {
-            fork_table(self.root, child_root, SV39_LEVELS - 1)?;
+        if let Err(err) = unsafe { fork_table(self.root, child_root, SV39_LEVELS - 1) } {
+            unsafe {
+                destroy_table(child_root, SV39_LEVELS - 1);
+            }
+            return Err(err);
         }
+        platform::arch::paging::flush_address_space_translations();
         log::trace!("[mm-fork] Sv39AddressSpace::fork done child_root={}",
                     child_root.0);
         Ok(Sv39AddressSpace { root : child_root,
@@ -278,6 +313,68 @@ impl Sv39AddressSpace {
         }
         self.root = PhysPageNum(0);
     }
+
+    fn handle_cow_page(&mut self, vpn : VirtPageNum) -> MmResult<bool> {
+        let Some((pte, level)) = self.walk_find(vpn)? else {
+            return Ok(false);
+        };
+        let flags = pte.flags();
+        if !flags.is_leaf_at_level(level) || !flags.cow() || !flags.cow_was_writable() {
+            return Ok(false);
+        }
+        let old_ppn = pte.ppn();
+        let new_flags = flags.restore_cow_writable();
+        if frame_ref_count(old_ppn).map_err(MmError::from)? <= 1 {
+            pte.set(old_ppn, new_flags);
+            platform::arch::paging::flush_address_space_translations();
+            return Ok(true);
+        }
+
+        let new_ppn = frame_alloc_result().map_err(MmError::from)?;
+        let src = old_ppn.0 * PAGE_SIZE;
+        let dst = new_ppn.0 * PAGE_SIZE;
+        unsafe {
+            core::ptr::copy_nonoverlapping(src as *const u8, dst as *mut u8, PAGE_SIZE);
+        }
+        frame_dealloc_result(old_ppn).map_err(MmError::from)?;
+        pte.set(new_ppn, new_flags);
+        platform::arch::paging::flush_address_space_translations();
+        Ok(true)
+    }
+
+    pub fn handle_cow_fault(&mut self, fault_addr : VirtAddr) -> MmResult<bool> {
+        self.handle_cow_page(fault_addr.floor_page())
+    }
+
+    pub fn ensure_private_for_write(&mut self, vpn : VirtPageNum) -> MmResult<bool> {
+        if self.handle_cow_page(vpn)? {
+            return Ok(true);
+        }
+        let Some((pte, level)) = self.walk_find(vpn)? else {
+            return Ok(false);
+        };
+        let flags = pte.flags();
+        if !flags.is_leaf_at_level(level) ||
+           !flags.to_page_perm()
+                 .user()
+        {
+            return Ok(false);
+        }
+        let old_ppn = pte.ppn();
+        if frame_ref_count(old_ppn).map_err(MmError::from)? <= 1 {
+            return Ok(true);
+        }
+        let new_ppn = frame_alloc_result().map_err(MmError::from)?;
+        let src = old_ppn.0 * PAGE_SIZE;
+        let dst = new_ppn.0 * PAGE_SIZE;
+        unsafe {
+            core::ptr::copy_nonoverlapping(src as *const u8, dst as *mut u8, PAGE_SIZE);
+        }
+        frame_dealloc_result(old_ppn).map_err(MmError::from)?;
+        pte.set(new_ppn, flags.clear_cow());
+        platform::arch::paging::flush_address_space_translations();
+        Ok(true)
+    }
 }
 
 /// 递归销毁页表树：释放 U 标志的叶子页对应的物理帧，递归释放子页表帧。
@@ -298,13 +395,37 @@ unsafe fn destroy_table(ppn : PhysPageNum, level : usize) {
                 .user()
         {
             let _ = frame_dealloc_result(child_ppn);
-        } else if level > 0 {
+        } else if level > 0 && unsafe { subtree_has_user_mapping(child_ppn, level - 1) } {
             unsafe {
                 destroy_table(child_ppn, level - 1);
             }
         }
     }
     let _ = frame_dealloc_result(ppn);
+}
+
+/// 判断一个页表子树内是否包含用户叶子映射。
+///
+/// 用户地址空间会额外携带高地址的内核 RAM 恒等映射（无 `U`），fork 时这些纯内核
+/// 子树可以直接共享，否则 400 个 hackbench 进程会把同一份内核映射页表复制数百遍。
+unsafe fn subtree_has_user_mapping(ppn : PhysPageNum, level : usize) -> bool {
+    let table = unsafe { table_mut(ppn) };
+    for pte in table.iter() {
+        let flags = pte.flags();
+        if !flags.is_valid() {
+            continue;
+        }
+        if flags.is_leaf_at_level(level) {
+            if flags.to_page_perm()
+                    .user()
+            {
+                return true;
+            }
+        } else if level > 0 && unsafe { subtree_has_user_mapping(pte.ppn(), level - 1) } {
+            return true;
+        }
+    }
+    false
 }
 
 /// 递归复制一级页表：遍历 `parent_ppn` 对应的 Sv39 页表项，将
@@ -322,9 +443,8 @@ unsafe fn fork_table(parent_ppn : PhysPageNum,
     let parent_table = unsafe { table_mut(parent_ppn) };
     let child_table = unsafe { table_mut(child_ppn) };
 
-    for (i, pte) in parent_table.iter()
-                                .enumerate()
-    {
+    for i in 0..SV39_ENTRIES {
+        let pte = parent_table[i];
         let flags = pte.flags();
         if !flags.is_valid() {
             continue;
@@ -334,24 +454,31 @@ unsafe fn fork_table(parent_ppn : PhysPageNum,
         if flags.is_leaf_at_level(level) {
             let perm = flags.to_page_perm();
             if perm.user() {
-                let new_ppn = frame_alloc_result().map_err(MmError::from)?;
-                let src = ppn.0 * PAGE_SIZE;
-                let dst = new_ppn.0 * PAGE_SIZE;
-                unsafe {
-                    core::ptr::copy_nonoverlapping(src as *const u8,
-                                                   dst as *mut u8,
-                                                   PAGE_SIZE);
-                }
-                child_table[i].set(new_ppn, flags);
+                frame_inc_ref(ppn).map_err(MmError::from)?;
+                let child_flags = if flags.writable() {
+                    let cow_flags = flags.prepare_cow();
+                    parent_table[i].set(ppn, cow_flags);
+                    cow_flags
+                } else {
+                    flags
+                };
+                child_table[i].set(ppn, child_flags);
             } else {
                 child_table[i].set(ppn, flags);
             }
         } else if level > 0 {
-            let child_sub = alloc_table_frame_zeroed()?;
-            child_table[i].set(child_sub, Sv39PteFlags::V);
-            unsafe {
-                fork_table(ppn, child_sub, level - 1)?;
+            if !unsafe { subtree_has_user_mapping(ppn, level - 1) } {
+                child_table[i].set(ppn, flags);
+                continue;
             }
+            let child_sub = alloc_table_frame_zeroed()?;
+            if let Err(err) = unsafe { fork_table(ppn, child_sub, level - 1) } {
+                unsafe {
+                    destroy_table(child_sub, level - 1);
+                }
+                return Err(err);
+            }
+            child_table[i].set(child_sub, Sv39PteFlags::V);
         }
     }
     Ok(())
@@ -433,7 +560,7 @@ impl AddressSpaceOps for Sv39AddressSpace {
                    .to_page_perm()))
     }
 
-    fn fork(&self) -> MmResult<Self> { Sv39AddressSpace::fork(self) }
+    fn fork(&self) -> MmResult<Self> { Err(MmError::Unsupported) }
 }
 
 impl Drop for Sv39AddressSpace {
