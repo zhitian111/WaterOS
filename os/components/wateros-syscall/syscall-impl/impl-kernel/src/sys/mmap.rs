@@ -174,3 +174,85 @@ pub(crate) fn sys_mprotect(args: SyscallArgs) -> UserRet {
         Err(e) => UserRet::from_error(mm_err_to_errno(e)),
     }
 }
+
+pub(crate) fn sys_mremap(args: SyscallArgs) -> UserRet {
+    let Some(handle) = current_user_aspace_handle() else {
+        syscall_unsupported("mremap: no user_aspace_ptr");
+    };
+    use mm::api::addr::VirtAddr;
+    use mm::api::mmap::MmapOps;
+    use mm::frame_alloctor::GlobalPhysFrameAllocator;
+
+    let old_addr = args.arg(0);
+    let old_size = args.arg(1);
+    let new_size = args.arg(2);
+    let flags = args.arg(3);
+    let new_address = args.arg(4);
+
+    match mm::user_aspace::with_user_aspace_mut(handle, |aspace| {
+        let mut alloc = GlobalPhysFrameAllocator;
+        let base = MmapOps::mremap(
+            aspace,
+            &mut alloc,
+            VirtAddr(old_addr),
+            old_size,
+            new_size,
+            flags,
+            VirtAddr(new_address),
+        )?;
+        Ok(base.0)
+    }) {
+        Ok(base) => UserRet::from_success(base),
+        Err(e) => UserRet::from_error(mm_err_to_errno(e)),
+    }
+}
+
+fn validate_mlock_range(addr: usize, len: usize) -> Result<(), ErrNo> {
+    use mm::api::addr::PAGE_SIZE;
+
+    if len == 0 {
+        return Err(ErrNo::EINVAL);
+    }
+    if addr % PAGE_SIZE != 0 {
+        return Err(ErrNo::EINVAL);
+    }
+    addr
+        .checked_add(len)
+        .ok_or(ErrNo::EINVAL)?;
+    Ok(())
+}
+
+pub(crate) fn sys_mlock(args: SyscallArgs) -> UserRet {
+    let addr = args.arg(0);
+    let len = args.arg(1);
+    if validate_mlock_range(addr, len).is_err() {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    UserRet::from_success(0)
+}
+
+pub(crate) fn sys_munlock(args: SyscallArgs) -> UserRet {
+    let addr = args.arg(0);
+    let len = args.arg(1);
+    if validate_mlock_range(addr, len).is_err() {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    UserRet::from_success(0)
+}
+
+pub(crate) fn sys_mlockall(args: SyscallArgs) -> UserRet {
+    const MCL_CURRENT: usize = 0x1;
+    const MCL_FUTURE: usize = 0x2;
+    const MCL_ONFAULT: usize = 0x4;
+    const MCL_KNOWN: usize = MCL_CURRENT | MCL_FUTURE | MCL_ONFAULT;
+
+    let flags = args.arg(0);
+    if flags & !MCL_KNOWN != 0 || flags == 0 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    UserRet::from_success(0)
+}
+
+pub(crate) fn sys_munlockall(_args: SyscallArgs) -> UserRet {
+    UserRet::from_success(0)
+}

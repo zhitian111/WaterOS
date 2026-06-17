@@ -54,5 +54,16 @@ pub trait MmapOps: AddressSpaceOps {
 
     /// 将 `[addr, addr+len)` 内已映射的叶子页权限更新为 `perm`（按页对齐到边界）。
     fn mprotect(&mut self, addr: VirtAddr, len: usize, perm: PagePerm) -> MmResult<()>;
+
+    /// 调整已有映射大小或地址（Linux `mremap(2)` 语义子集）。
+    fn mremap<A: PhysicalFrameAllocator<FrameId = PhysPageNum>>(
+        &mut self,
+        allocator: &mut A,
+        old_addr: VirtAddr,
+        old_size: usize,
+        new_size: usize,
+        flags: usize,
+        new_address: VirtAddr,
+    ) -> MmResult<VirtAddr>;
 }
 

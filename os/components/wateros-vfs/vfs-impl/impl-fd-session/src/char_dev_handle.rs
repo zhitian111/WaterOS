@@ -160,6 +160,8 @@ pub fn is_rtc_dev_path(path: &str) -> bool {
 fn mode_for_devfs_path(path: &str) -> u16 {
     if path == "/dev/null" {
         0o20666
+    } else if path == "/dev/cpu_dma_latency" {
+        0o20600
     } else if is_rtc_dev_path(path) {
         0o20644
     } else {

@@ -95,7 +95,10 @@ pub(crate) use kill::sys_kill;
 pub(crate) use lseek::sys_lseek;
 pub(crate) use mkdirat::sys_mkdirat;
 pub(crate) use mempolicy::sys_get_mempolicy;
-pub(crate) use mmap::{sys_mmap, sys_mprotect, sys_msync, sys_munmap};
+pub(crate) use mmap::{
+    sys_mmap, sys_mlock, sys_mlockall, sys_mprotect, sys_mremap, sys_msync, sys_munlock,
+    sys_munlockall, sys_munmap,
+};
 pub(crate) use mount::sys_mount;
 pub(crate) use openat::sys_openat;
 pub(crate) use pipe2::sys_pipe2;

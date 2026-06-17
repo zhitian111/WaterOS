@@ -134,7 +134,10 @@ fn char_dev_metadata(abs: &str) -> VfsMetadata {
 }
 
 fn is_builtin_dev_path(abs: &str) -> bool {
-    matches!(abs, "/dev/zero" | "/dev/urandom")
+    matches!(
+        abs,
+        "/dev/zero" | "/dev/urandom" | "/dev/cpu_dma_latency"
+    )
 }
 
 impl SingleRootReadView for FsBridge {

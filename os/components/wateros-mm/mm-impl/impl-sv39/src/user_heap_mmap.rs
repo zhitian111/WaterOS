@@ -15,7 +15,7 @@ use api_v0::mmap::{MmapKind, MmapOps, MmapRequest};
 use api_v0::perm::PagePerm;
 use impl_common::{
     find_free_mmap_base, map_range_from_backing, map_zeroed_page_with_alloc,
-    map_zeroed_range_with_alloc, mmap_map_end,
+    map_zeroed_range_with_alloc, mmap_map_end, mremap_range,
 };
 
 use crate::pagetable::Sv39AddressSpace;
@@ -193,5 +193,26 @@ impl MmapOps for Sv39AddressSpace {
         }
         fence_user_ptes();
         Ok(())
+    }
+
+    fn mremap<A: PhysicalFrameAllocator<FrameId = PhysPageNum>>(
+        &mut self,
+        allocator: &mut A,
+        old_addr: VirtAddr,
+        old_size: usize,
+        new_size: usize,
+        flags: usize,
+        new_address: VirtAddr,
+    ) -> MmResult<VirtAddr> {
+        mremap_range(
+            self,
+            allocator,
+            old_addr,
+            old_size,
+            new_size,
+            flags,
+            new_address,
+            self.mmap_anon_cursor,
+        )
     }
 }

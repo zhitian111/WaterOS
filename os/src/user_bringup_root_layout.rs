@@ -31,6 +31,24 @@ pub fn ensure_busybox_path_links() {
             }
         }
 
+        match sess.mkdir("/dev", 0o755) {
+            Ok(()) => info!("[{LOG_TAG}] mkdir /dev ok"),
+            Err(VfsError::Exists) => trace!("[{LOG_TAG}] /dev already present"),
+            Err(e) => {
+                warn!("[{LOG_TAG}] mkdir /dev failed: {e:?}");
+                return;
+            }
+        }
+
+        match sess.mkdir("/dev/shm", 0o1777) {
+            Ok(()) => info!("[{LOG_TAG}] mkdir /dev/shm ok"),
+            Err(VfsError::Exists) => trace!("[{LOG_TAG}] /dev/shm already present"),
+            Err(e) => {
+                warn!("[{LOG_TAG}] mkdir /dev/shm failed: {e:?}");
+                return;
+            }
+        }
+
         match sess.mkdir("/tmp", 0o777) {
             Ok(()) => info!("[{LOG_TAG}] mkdir /tmp ok"),
             Err(VfsError::Exists) => info!("[{LOG_TAG}] /tmp already present"),
@@ -44,6 +62,12 @@ pub fn ensure_busybox_path_links() {
             Ok(()) => info!("[{LOG_TAG}] hardlink /bin/ls -> /glibc/busybox"),
             Err(VfsError::Exists) => trace!("[{LOG_TAG}] /bin/ls already present"),
             Err(e) => warn!("[{LOG_TAG}] hardlink /bin/ls failed: {e:?}"),
+        }
+
+        match sess.hardlink("/glibc/busybox", "/bin/sleep") {
+            Ok(()) => info!("[{LOG_TAG}] hardlink /bin/sleep -> /glibc/busybox"),
+            Err(VfsError::Exists) => trace!("[{LOG_TAG}] /bin/sleep already present"),
+            Err(e) => warn!("[{LOG_TAG}] hardlink /bin/sleep failed: {e:?}"),
         }
     }
 }

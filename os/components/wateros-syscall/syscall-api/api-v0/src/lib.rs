@@ -64,6 +64,11 @@ pub enum SyscallKind {
     Munmap,
     Msync,
     Mprotect,
+    Mremap,
+    Mlock,
+    Munlock,
+    Mlockall,
+    Munlockall,
     GetMempolicy,
     ShmGet,
     ShmCtl,
@@ -247,6 +252,16 @@ impl SyscallKind {
             Self::Msync
         } else if syscall_nr == T::MPROTECT.raw() {
             Self::Mprotect
+        } else if syscall_nr == T::MREMAP.raw() {
+            Self::Mremap
+        } else if syscall_nr == T::MLOCK.raw() {
+            Self::Mlock
+        } else if syscall_nr == T::MUNLOCK.raw() {
+            Self::Munlock
+        } else if syscall_nr == T::MLOCKALL.raw() {
+            Self::Mlockall
+        } else if syscall_nr == T::MUNLOCKALL.raw() {
+            Self::Munlockall
         } else if syscall_nr == T::GET_MEMPOLICY.raw() {
             Self::GetMempolicy
         } else if syscall_nr == T::SHMGET.raw() {
@@ -453,6 +468,11 @@ impl SyscallKind {
             Self::Munmap => "munmap",
             Self::Msync => "msync",
             Self::Mprotect => "mprotect",
+            Self::Mremap => "mremap",
+            Self::Mlock => "mlock",
+            Self::Munlock => "munlock",
+            Self::Mlockall => "mlockall",
+            Self::Munlockall => "munlockall",
             Self::GetMempolicy => "get_mempolicy",
             Self::ShmGet => "shmget",
             Self::ShmCtl => "shmctl",
@@ -981,6 +1001,46 @@ pub trait SyscallDispatcher {
         Self::dispatch_unsupported(
             SyscallKind::Mprotect,
             Self::NumberTable::MPROTECT.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_mremap(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Mremap,
+            Self::NumberTable::MREMAP.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_mlock(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Mlock,
+            Self::NumberTable::MLOCK.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_munlock(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Munlock,
+            Self::NumberTable::MUNLOCK.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_mlockall(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Mlockall,
+            Self::NumberTable::MLOCKALL.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_munlockall(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Munlockall,
+            Self::NumberTable::MUNLOCKALL.raw(),
             args,
         )
     }
@@ -1625,6 +1685,11 @@ pub trait SyscallDispatcher {
             SyscallKind::Munmap => Self::dispatch_munmap(syscall_args),
             SyscallKind::Msync => Self::dispatch_msync(syscall_args),
             SyscallKind::Mprotect => Self::dispatch_mprotect(syscall_args),
+            SyscallKind::Mremap => Self::dispatch_mremap(syscall_args),
+            SyscallKind::Mlock => Self::dispatch_mlock(syscall_args),
+            SyscallKind::Munlock => Self::dispatch_munlock(syscall_args),
+            SyscallKind::Mlockall => Self::dispatch_mlockall(syscall_args),
+            SyscallKind::Munlockall => Self::dispatch_munlockall(syscall_args),
             SyscallKind::GetMempolicy => Self::dispatch_getmempolicy(syscall_args),
             SyscallKind::ShmGet => Self::dispatch_shmget(syscall_args),
             SyscallKind::ShmCtl => Self::dispatch_shmctl(syscall_args),

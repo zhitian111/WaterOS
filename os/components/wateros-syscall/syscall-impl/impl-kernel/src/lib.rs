@@ -258,6 +258,31 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     }
 
     #[inline]
+    fn dispatch_mremap(args: SyscallArgs) -> isize {
+        sys::sys_mremap(args).0
+    }
+
+    #[inline]
+    fn dispatch_mlock(args: SyscallArgs) -> isize {
+        sys::sys_mlock(args).0
+    }
+
+    #[inline]
+    fn dispatch_munlock(args: SyscallArgs) -> isize {
+        sys::sys_munlock(args).0
+    }
+
+    #[inline]
+    fn dispatch_mlockall(args: SyscallArgs) -> isize {
+        sys::sys_mlockall(args).0
+    }
+
+    #[inline]
+    fn dispatch_munlockall(args: SyscallArgs) -> isize {
+        sys::sys_munlockall(args).0
+    }
+
+    #[inline]
     fn dispatch_getmempolicy(args: SyscallArgs) -> isize {
         sys::sys_get_mempolicy(args).0
     }

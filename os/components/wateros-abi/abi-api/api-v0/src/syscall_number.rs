@@ -160,6 +160,16 @@ pub trait SyscallNumberTable {
     const MSYNC: SyscallNumber;
     /// 修改映射保护属性（`mprotect(2)`）。
     const MPROTECT: SyscallNumber;
+    /// 调整映射大小或地址（`mremap(2)`）。
+    const MREMAP: SyscallNumber;
+    /// 锁定内存页（`mlock(2)`）。
+    const MLOCK: SyscallNumber;
+    /// 解锁内存页（`munlock(2)`）。
+    const MUNLOCK: SyscallNumber;
+    /// 锁定进程全部或未来映射（`mlockall(2)`）。
+    const MLOCKALL: SyscallNumber;
+    /// 解除 `mlockall` 锁定（`munlockall(2)`）。
+    const MUNLOCKALL: SyscallNumber;
     /// 查询 NUMA 内存策略（`get_mempolicy(2)`）。
     const GET_MEMPOLICY: SyscallNumber;
     /// 获取或创建 SysV shared memory segment（`shmget(2)`）。
