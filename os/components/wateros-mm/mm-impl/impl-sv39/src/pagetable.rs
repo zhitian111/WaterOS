@@ -43,6 +43,17 @@ impl Sv39PteFlags {
     #[inline]
     const fn is_leaf(self) -> bool { (self.0 & (Self::R.0 | Self::W.0 | Self::X.0)) != 0 }
 
+    /// Sv39 在 level 0 的有效 PTE 即 4 KiB 叶子（含 `PROT_NONE`：V|U 无 R/W/X）；
+    /// 更高层级仅 R/W/X 置位时为 superpage 叶子，否则为下一级页表指针。
+    #[inline]
+    const fn is_leaf_at_level(self, level : usize) -> bool {
+        if level == 0 {
+            self.is_valid()
+        } else {
+            self.is_leaf()
+        }
+    }
+
     #[inline]
     fn from_perm(perm : PagePerm) -> Self {
         let mut f = Self::empty();
@@ -282,7 +293,7 @@ unsafe fn destroy_table(ppn : PhysPageNum, level : usize) {
         }
         let child_ppn = pte.ppn();
 
-        if flags.is_leaf() &&
+        if flags.is_leaf_at_level(level) &&
            flags.to_page_perm()
                 .user()
         {
@@ -320,7 +331,7 @@ unsafe fn fork_table(parent_ppn : PhysPageNum,
         }
         let ppn = pte.ppn();
 
-        if flags.is_leaf() {
+        if flags.is_leaf_at_level(level) {
             let perm = flags.to_page_perm();
             if perm.user() {
                 let new_ppn = frame_alloc_result().map_err(MmError::from)?;
@@ -365,11 +376,11 @@ impl AddressSpaceOps for Sv39AddressSpace {
     }
 
     fn unmap_page_to_ppn(&mut self, vpn : VirtPageNum) -> MmResult<Option<PhysPageNum>> {
-        let Some((pte, _level)) = self.walk_find(vpn)? else {
+        let Some((pte, level)) = self.walk_find(vpn)? else {
             return Ok(None);
         };
         if !pte.flags()
-               .is_leaf()
+               .is_leaf_at_level(level)
         {
             return Ok(None);
         }
@@ -379,11 +390,11 @@ impl AddressSpaceOps for Sv39AddressSpace {
     }
 
     fn protect_page(&mut self, vpn : VirtPageNum, perm : PagePerm) -> MmResult<()> {
-        let Some((pte, _level)) = self.walk_find(vpn)? else {
+        let Some((pte, level)) = self.walk_find(vpn)? else {
             return Err(MmError::NotMapped);
         };
         if !pte.flags()
-               .is_leaf()
+               .is_leaf_at_level(level)
         {
             return Err(MmError::NotMapped);
         }
@@ -399,7 +410,7 @@ impl AddressSpaceOps for Sv39AddressSpace {
             return Ok(None);
         };
         if !pte.flags()
-               .is_leaf()
+               .is_leaf_at_level(level)
         {
             return Ok(None);
         }
@@ -413,9 +424,8 @@ impl AddressSpaceOps for Sv39AddressSpace {
         let Some((pte, level)) = self.walk_find(vpn)? else {
             return Ok(None);
         };
-        if level != 0 ||
-           !pte.flags()
-               .is_leaf()
+        if !pte.flags()
+               .is_leaf_at_level(level)
         {
             return Ok(None);
         }
