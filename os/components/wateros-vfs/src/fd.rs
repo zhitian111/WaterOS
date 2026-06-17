@@ -212,6 +212,11 @@ pub fn self_test() {
     } else {
         log::warn!("[poll] ppoll pipe smoke failed");
     }
+    if impl_fd_session::stream_pair_smoke() {
+        log::info!("[socketpair] stream pair ok");
+    } else {
+        log::warn!("[socketpair] stream pair smoke failed");
+    }
 }
 
 fn stdio_replacement_handle() -> Box<dyn VfsIoHandle> {

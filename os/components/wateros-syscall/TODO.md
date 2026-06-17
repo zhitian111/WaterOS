@@ -91,6 +91,7 @@
 | `setitimer` / `getitimer` | 已接入 | REAL/VIRTUAL/PROF 三类进程 timer；周期 deadline 无漂移推进，标准信号 pending 合并。 |
 | `getrlimit` | 待实现 | shell/libc 常见探测项。 |
 | `setrlimit` | 待实现 | 可先支持最小 no-op/参数校验。 |
+| `socketpair` (199) | 部分接入 | `AF_UNIX` + `SOCK_STREAM`；双 pipe 交叉实现双向读写；不经 `socket_fd`/smoltcp。 |
 
 ## 维护规则
 

@@ -266,6 +266,8 @@ pub trait SyscallNumberTable {
     // Socket / 网络 / socket & networking
     /// 创建 socket（`socket(2)`）。
     const SOCKET: SyscallNumber;
+    /// 创建一对已连接的本地 socket（`socketpair(2)`）。
+    const SOCKETPAIR: SyscallNumber;
     /// 绑定地址到 socket（`bind(2)`）。
     const BIND: SyscallNumber;
     /// 开始监听（`listen(2)`）。

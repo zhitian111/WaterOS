@@ -142,6 +142,7 @@ impl SyscallNumberTable for LinuxGeneric64 {
 
     // Socket / 网络
     const SOCKET: SyscallNumber = SyscallNumber(198);
+    const SOCKETPAIR: SyscallNumber = SyscallNumber(199);
     const BIND: SyscallNumber = SyscallNumber(200);
     const LISTEN: SyscallNumber = SyscallNumber(201);
     const ACCEPT: SyscallNumber = SyscallNumber(202);

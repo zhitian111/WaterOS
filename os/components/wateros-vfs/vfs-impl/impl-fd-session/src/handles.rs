@@ -11,6 +11,7 @@ use api_v0::{
 use ipc::pipe::{PipeEndpoint, PipeEndpointOps, PipeError};
 
 static NEXT_PIPE_INODE: AtomicU64 = AtomicU64::new(1);
+static NEXT_STREAM_PAIR_INODE: AtomicU64 = AtomicU64::new(1);
 static URANDOM_STATE: AtomicU64 = AtomicU64::new(0x6a09_e667_f3bc_c909);
 
 fn special_meta(mode: u16, inode: u64) -> VfsMetadata {
@@ -246,6 +247,116 @@ impl VfsIoHandle for PipeWriteHandle {
             inode: self.inode,
         }))
     }
+}
+
+/// Unix domain stream socket pair 的一端：读/写分别连到交叉 pipe。
+pub struct UnixStreamPairEnd {
+    read_end: PipeEndpoint,
+    write_end: PipeEndpoint,
+    inode: u64,
+}
+
+pub fn stream_pair_handle_pair(nonblocking: bool) -> (UnixStreamPairEnd, UnixStreamPairEnd) {
+    let (read_ab, write_ab) = PipeEndpoint::pair(nonblocking);
+    let (read_ba, write_ba) = PipeEndpoint::pair(nonblocking);
+    let inode = NEXT_STREAM_PAIR_INODE.fetch_add(1, Ordering::Relaxed);
+    (
+        UnixStreamPairEnd {
+            read_end: read_ba,
+            write_end: write_ab,
+            inode,
+        },
+        UnixStreamPairEnd {
+            read_end: read_ab,
+            write_end: write_ba,
+            inode,
+        },
+    )
+}
+
+impl VfsIoHandle for UnixStreamPairEnd {
+    fn read(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
+        self.read_end.read(buf).map_err(map_pipe_err)
+    }
+
+    fn write(&mut self, buf: &[u8]) -> VfsResult<usize> {
+        self.write_end.write(buf).map_err(map_pipe_err)
+    }
+
+    fn poll_revents(&mut self, events: i16) -> VfsResult<i16> {
+        const POLLIN: i16 = 0x001;
+        const POLLOUT: i16 = 0x004;
+        let mut revents = 0i16;
+        if events & POLLIN != 0 {
+            revents |= self.read_end.poll_revents(POLLIN).map_err(map_pipe_err)?;
+        }
+        if events & POLLOUT != 0 {
+            revents |= self.write_end.poll_revents(POLLOUT).map_err(map_pipe_err)?;
+        }
+        Ok(revents)
+    }
+
+    fn poll_wait_for_ticks(
+        &mut self,
+        events: i16,
+        timeout_ticks: u64,
+        still_waiting: &mut dyn FnMut() -> bool,
+    ) -> VfsResult<()> {
+        const POLLIN: i16 = 0x001;
+        const POLLOUT: i16 = 0x004;
+        if events & POLLIN != 0 {
+            self.read_end
+                .poll_wait_for_ticks(POLLIN, timeout_ticks, still_waiting)
+                .map_err(map_pipe_err)?;
+        }
+        if events & POLLOUT != 0 && still_waiting() {
+            self.write_end
+                .poll_wait_for_ticks(POLLOUT, timeout_ticks, still_waiting)
+                .map_err(map_pipe_err)?;
+        }
+        Ok(())
+    }
+
+    fn close(&mut self) -> VfsResult<()> {
+        self.read_end.close();
+        self.write_end.close();
+        Ok(())
+    }
+
+    fn metadata(&self) -> VfsResult<VfsMetadata> {
+        Ok(special_meta(0o140600, self.inode))
+    }
+
+    fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {
+        Ok(Box::new(Self {
+            read_end: self.read_end.clone(),
+            write_end: self.write_end.clone(),
+            inode: self.inode,
+        }))
+    }
+}
+
+/// bring-up：验证 socketpair 双向读写与 poll。
+pub fn stream_pair_smoke() -> bool {
+    const POLLIN: i16 = 0x001;
+    let (mut a, mut b) = stream_pair_handle_pair(false);
+    if a.write(b"ab").is_err() {
+        return false;
+    }
+    let mut buf = [0u8; 2];
+    if b.read(&mut buf).ok() != Some(2) || &buf != b"ab" {
+        return false;
+    }
+    if b.write(b"xy").is_err() {
+        return false;
+    }
+    if a.read(&mut buf).ok() != Some(2) || &buf != b"xy" {
+        return false;
+    }
+    if a.poll_revents(POLLIN).ok() != Some(0) {
+        return false;
+    }
+    true
 }
 
 /// bring-up：空 pipe 读端无 `POLLIN`，写入后应就绪（供 `ppoll` 路径使用）。

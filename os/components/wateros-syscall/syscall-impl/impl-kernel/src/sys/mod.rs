@@ -57,6 +57,7 @@ mod sendto;
 mod shm;
 mod shutdown;
 mod socket;
+mod socketpair;
 mod sockname;
 mod sockopt;
 
@@ -135,5 +136,6 @@ pub(crate) use sendmsg::{sys_recvmsg, sys_sendmsg};
 pub(crate) use sendto::sys_sendto;
 pub(crate) use shutdown::sys_shutdown;
 pub(crate) use socket::sys_socket;
+pub(crate) use socketpair::sys_socketpair;
 pub(crate) use sockname::{sys_getpeername, sys_getsockname};
 pub(crate) use sockopt::{sys_getsockopt, sys_setsockopt};

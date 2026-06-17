@@ -608,6 +608,11 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     }
 
     #[inline]
+    fn dispatch_socketpair(args: SyscallArgs) -> isize {
+        sys::sys_socketpair(args).0
+    }
+
+    #[inline]
     fn dispatch_bind(args: SyscallArgs) -> isize {
         sys::sys_bind(args).0
     }

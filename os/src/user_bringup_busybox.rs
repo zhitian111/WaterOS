@@ -30,7 +30,7 @@ const SCRIPT_PATHS : &[&str] = &[
                                  // "/musl/unixbench_testcode.sh",
                                  //"/glibc/libcbench_testcode.sh",
                                  // "/musl/libcbench_testcode.sh",
-                                  "/glibc/iozone_testcode.sh",
+                                  // "/glibc/iozone_testcode.sh",
                                  // "/musl/iozone_testcode.sh",
                                  // --- P4 网络（需 rv_qemu_run.sh 启用 virtio-net）---
                                  // "/glibc/iperf_testcode.sh",        // done
@@ -40,8 +40,8 @@ const SCRIPT_PATHS : &[&str] = &[
                                  // --- P5 libctest + cyclictest ---
                                  // "/glibc/libctest_testcode.sh",     // done
                                  // "/musl/libctest_testcode.sh",      // done
-                                 //"/glibc/cyclictest_testcode.sh",
-                                 //"/musl/cyclictest_testcode.sh",
+                                 "/glibc/cyclictest_testcode.sh",
+                                 "/musl/cyclictest_testcode.sh",
                                  // --- P6 LTP ---
                                  // "/glibc/ltp_testcode.sh",
                                  // "/musl/ltp_testcode.sh",

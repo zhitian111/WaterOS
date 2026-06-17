@@ -118,6 +118,7 @@ pub enum SyscallKind {
     Umask,
     PrLimit64,
     Socket,
+    Socketpair,
     Bind,
     Listen,
     Accept,
@@ -354,6 +355,8 @@ impl SyscallKind {
             Self::PrLimit64
         } else if syscall_nr == T::SOCKET.raw() {
             Self::Socket
+        } else if syscall_nr == T::SOCKETPAIR.raw() {
+            Self::Socketpair
         } else if syscall_nr == T::BIND.raw() {
             Self::Bind
         } else if syscall_nr == T::LISTEN.raw() {
@@ -504,6 +507,7 @@ impl SyscallKind {
             Self::Umask => "umask",
             Self::PrLimit64 => "prlimit64",
             Self::Socket => "socket",
+            Self::Socketpair => "socketpair",
             Self::Bind => "bind",
             Self::Listen => "listen",
             Self::Accept => "accept",
@@ -1407,6 +1411,14 @@ pub trait SyscallDispatcher {
         )
     }
 
+    fn dispatch_socketpair(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Socketpair,
+            Self::NumberTable::SOCKETPAIR.raw(),
+            args,
+        )
+    }
+
     fn dispatch_bind(args: SyscallArgs) -> isize {
         Self::dispatch_unsupported(
             SyscallKind::Bind,
@@ -1669,6 +1681,7 @@ pub trait SyscallDispatcher {
             SyscallKind::Umask => Self::dispatch_umask(syscall_args),
             SyscallKind::PrLimit64 => Self::dispatch_prlimit64(syscall_args),
             SyscallKind::Socket => Self::dispatch_socket(syscall_args),
+            SyscallKind::Socketpair => Self::dispatch_socketpair(syscall_args),
             SyscallKind::Bind => Self::dispatch_bind(syscall_args),
             SyscallKind::Listen => Self::dispatch_listen(syscall_args),
             SyscallKind::Accept => Self::dispatch_accept(syscall_args),
