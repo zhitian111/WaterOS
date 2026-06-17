@@ -27,6 +27,8 @@ pub enum VfsError {
     BadFd,
     /// 非阻塞 I/O 暂不可用（如 pipe 读/写）。
     WouldBlock,
+    /// 阻塞操作被信号中断。
+    Interrupted,
     /// 管道对端已关闭。
     BrokenPipe,
     /// 无当前任务上下文（如 `ESRCH` 语义）。

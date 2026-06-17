@@ -2,16 +2,20 @@
 
 extern crate alloc;
 
+use crate::queues::OtherReadyQueue;
+use crate::rt_fifo_queue::RtFifoRunQueue;
+use crate::rt_rr_queue::{RrTickAction, RtRrRunQueue};
 use alloc::collections::VecDeque;
-use api_v0::{OtherReadyQueue, QueueTarget, SchedPolicyChangeAction, TaskRegistry, WaitQueues};
+use api_v0::{
+    QueueTarget, ReadyQueue, ReadyTaskSink, SchedPolicyChangeAction, SwitchScheduler, TaskRegistry,
+    WaitQueues,
+};
 use arch::task::ActiveArchTaskContext as TaskContext;
 use config::task::MAX_TICKS_PER_TASK;
-use impl_rt_fifo::RtFifoRunQueue;
-use impl_rt_rr::{RrTickAction, RtRrRunQueue};
 use task_api::{
-    ExitedTask, KernelTaskEntry, SchedError, SchedParam, SchedPolicy, TaskBlockReason, TaskExitCode,
-    TaskId, TaskSnapshot, TaskState, TaskTick, TaskWaitHandle, TaskWaitResult, UserTask, WaitQueueId,
-    IDLE_TASK_ID,
+    ExitedTask, KernelTaskEntry, SchedError, SchedParam, SchedPolicy, TaskBlockReason,
+    TaskExitCode, TaskId, TaskSnapshot, TaskState, TaskTick, TaskWaitHandle, TaskWaitResult,
+    UserTask, WaitQueueId, IDLE_TASK_ID,
 };
 
 use crate::{SwitchPair, TaskTrapFrame};
@@ -38,10 +42,8 @@ impl MultiClassScheduler {
     }
 
     pub(super) fn init(&mut self) {
-        self.registry
-            .init();
-        self.wait
-            .init();
+        self.registry.init();
+        self.wait.init();
         self.other_ready
             .init();
         self.fifo_ready = RtFifoRunQueue::new();
@@ -60,13 +62,13 @@ impl MultiClassScheduler {
 
     fn enqueue_ready_by_policy(&mut self, task_id : TaskId) {
         let Some(snap) = self.registry
-                              .task_snapshot(task_id)
+                             .task_snapshot(task_id)
         else {
             return;
         };
         match snap.sched_policy {
             SchedPolicy::Other => self.other_ready
-                                      .push_spawned_task(task_id),
+                                      .enqueue_ready_task(task_id),
             SchedPolicy::Fifo => self.fifo_ready
                                      .enqueue(task_id, snap.sched_priority),
             SchedPolicy::Rr => self.rr_ready
@@ -89,6 +91,37 @@ impl MultiClassScheduler {
         self.drain_staging(&mut staging);
     }
 
+    fn highest_ready_rt_priority(&self) -> Option<i32> {
+        match (self.fifo_ready
+                   .highest_runnable_priority(&self.registry),
+               self.rr_ready
+                   .highest_ready_priority(&self.registry))
+        {
+            (Some(fifo), Some(rr)) => Some(fifo.max(rr)),
+            (fifo, rr) => fifo.or(rr),
+        }
+    }
+
+    fn ready_task_should_preempt(&self, current_id : TaskId, current : TaskSnapshot) -> bool {
+        if self.registry
+               .is_idle(current_id)
+        {
+            return self.highest_ready_rt_priority()
+                       .is_some() ||
+                   self.other_ready
+                       .has_runnable(&self.registry);
+        }
+
+        match current.sched_policy {
+            SchedPolicy::Other => self.highest_ready_rt_priority()
+                                      .is_some(),
+            SchedPolicy::Fifo | SchedPolicy::Rr => {
+                self.highest_ready_rt_priority()
+                    .is_some_and(|priority| priority > current.sched_priority)
+            }
+        }
+    }
+
     fn clear_rr_if_yielding(&mut self, current_id : TaskId) {
         if let Some(snap) = self.registry
                                 .task_snapshot(current_id)
@@ -109,9 +142,7 @@ impl MultiClassScheduler {
             {
                 if snap.sched_policy == SchedPolicy::Rr {
                     if self.rr_ready
-                            .should_continue_current(&self.registry,
-                                                     current_id,
-                                                     snap.sched_priority)
+                           .should_continue_current(current_id, snap.sched_priority)
                     {
                         return current_id;
                     }
@@ -121,14 +152,14 @@ impl MultiClassScheduler {
 
         for priority in (1..=99).rev() {
             if let Some(task_id) = self.fifo_ready
-                                         .pop_front_at_priority(priority, &self.registry)
+                                       .pop_front_at_priority(priority, &self.registry)
             {
                 self.rr_ready
                     .clear_running();
                 return task_id;
             }
             if let Some(task_id) = self.rr_ready
-                                         .pick_at_priority(priority, &self.registry)
+                                       .pick_at_priority(priority, &self.registry)
             {
                 return task_id;
             }
@@ -138,10 +169,7 @@ impl MultiClassScheduler {
             .clear_running();
         let other = self.other_ready
                         .pick_next_runnable_task_id(&self.registry);
-        if other != IDLE_TASK_ID {
-            return other;
-        }
-        IDLE_TASK_ID
+        other.unwrap_or(IDLE_TASK_ID)
     }
 
     fn sched_class(policy : SchedPolicy) -> u8 {
@@ -155,8 +183,7 @@ impl MultiClassScheduler {
                      challenger_priority : i32,
                      runner_policy : SchedPolicy,
                      runner_priority : i32)
-                     -> bool
-    {
+                     -> bool {
         let challenger_class = Self::sched_class(challenger_policy);
         let runner_class = Self::sched_class(runner_policy);
         if challenger_class > runner_class {
@@ -172,8 +199,7 @@ impl MultiClassScheduler {
                                             task_id : TaskId,
                                             policy : SchedPolicy,
                                             param : SchedParam)
-                                            -> Result<SchedPolicyChangeAction, SchedError>
-    {
+                                            -> Result<SchedPolicyChangeAction, SchedError> {
         let old_snap = self.registry
                            .task_snapshot(task_id)
                            .ok_or(SchedError::NoSuchTask)?;
@@ -191,12 +217,12 @@ impl MultiClassScheduler {
         }
 
         if let Some(current_id) = self.registry
-                                       .current_task_id()
+                                      .current_task_id()
         {
             if current_id != task_id {
                 let new_snap = self.registry
-                                    .task_snapshot(task_id)
-                                    .expect("task exists after set_task_sched");
+                                   .task_snapshot(task_id)
+                                   .expect("task exists after set_task_sched");
                 let cur_snap = self.registry
                                    .task_snapshot(current_id)
                                    .expect("current task exists");
@@ -247,8 +273,7 @@ impl MultiClassScheduler {
                               current_task_id : TaskId,
                               current_ptr : *mut TaskContext,
                               is_exit : bool)
-                              -> Option<SwitchPair>
-    {
+                              -> Option<SwitchPair> {
         let next_task_id = self.pick_next_runnable();
         if next_task_id == current_task_id {
             if is_exit {
@@ -289,42 +314,40 @@ impl MultiClassScheduler {
     pub(super) fn schedule(&mut self, reason : ScheduleReason) -> Option<SwitchPair> {
         match reason {
             ScheduleReason::Tick => {
-                self.wait
-                    .on_tick();
+                self.wait.on_tick();
                 self.registry
                     .account_tick_for_current();
 
-                let need_reschedule =
-                    if let Some(current_id) = self.registry
-                                                   .current_task_id()
-                    {
-                        if let Some(snap) = self.registry
-                                                .task_snapshot(current_id)
-                        {
-                            match snap.sched_policy {
-                                SchedPolicy::Other => {
-                                    self.current_task_ticks =
-                                        self.current_task_ticks.saturating_add(1);
-                                    self.current_task_ticks >= MAX_TICKS_PER_TASK
-                                }
-                                SchedPolicy::Rr => {
-                                    matches!(self.rr_ready
-                                                 .on_tick_current(current_id,
-                                                                  snap.sched_priority),
-                                             RrTickAction::YieldToSamePriority)
-                                }
-                                SchedPolicy::Fifo => false,
-                            }
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    };
+                let current = self.registry
+                                  .current_task_id()
+                                  .and_then(|task_id| {
+                                      self.registry
+                                          .task_snapshot(task_id)
+                                          .map(|snapshot| (task_id, snapshot))
+                                  });
+                let quantum_expired =
+                    current.map(|(current_id, snap)| match snap.sched_policy {
+                                    SchedPolicy::Other => {
+                                        self.current_task_ticks = self.current_task_ticks
+                                                                      .saturating_add(1);
+                                        self.current_task_ticks >= MAX_TICKS_PER_TASK
+                                    }
+                                    SchedPolicy::Rr => {
+                                        matches!(self.rr_ready
+                                                     .on_tick_current(current_id,
+                                                                      snap.sched_priority),
+                                                 RrTickAction::YieldToSamePriority)
+                                    }
+                                    SchedPolicy::Fifo => false,
+                                })
+                           .unwrap_or(false);
 
                 self.promote_sleep_and_timeouts();
 
-                if !need_reschedule {
+                let ready_preempts = current.is_some_and(|(current_id, snap)| {
+                                                self.ready_task_should_preempt(current_id, snap)
+                                            });
+                if !quantum_expired && !ready_preempts {
                     return None;
                 }
                 self.current_task_ticks = 0;
@@ -337,10 +360,16 @@ impl MultiClassScheduler {
             }
         }
 
-        self.promote_sleep_and_timeouts();
+        if !matches!(reason, ScheduleReason::Tick) {
+            self.promote_sleep_and_timeouts();
+        }
 
         let (current_task_id, current_ptr) = self.registry
                                                  .take_current_switch_out()?;
+        if matches!(reason, ScheduleReason::Sleep(_)) {
+            self.registry
+                .clear_wait_result(current_task_id);
+        }
 
         if self.registry
                .is_idle(current_task_id)
@@ -400,8 +429,7 @@ impl MultiClassScheduler {
     pub(super) fn schedule_wait(&mut self,
                                 wait_handle : TaskWaitHandle,
                                 timeout_ticks : Option<TaskTick>)
-                                -> Option<SwitchPair>
-    {
+                                -> Option<SwitchPair> {
         self.current_task_ticks = 0;
         self.promote_sleep_and_timeouts();
 
@@ -455,18 +483,33 @@ impl MultiClassScheduler {
 
     pub(super) fn wake_task(&mut self, task_id : TaskId) -> bool {
         let mut staging = VecDeque::new();
-        self.wait
-            .wake_task(&mut self.registry, task_id, &mut staging);
+        let woken = self.wait
+                        .wake_task(&mut self.registry,
+                                   task_id,
+                                   &mut staging);
         self.drain_staging(&mut staging);
-        true
+        woken
+    }
+
+    pub(super) fn interrupt_task(&mut self, task_id : TaskId) -> bool {
+        let mut staging = VecDeque::new();
+        let interrupted = self.wait
+                              .interrupt_task(&mut self.registry,
+                                              task_id,
+                                              &mut staging);
+        self.drain_staging(&mut staging);
+        interrupted
     }
 
     pub(super) fn kill_task(&mut self, task_id : TaskId, exit_code : TaskExitCode) -> bool {
         let mut staging = VecDeque::new();
-        self.wait
-            .kill_task(&mut self.registry, task_id, exit_code, &mut staging);
+        let killed = self.wait
+                         .kill_task(&mut self.registry,
+                                    task_id,
+                                    exit_code,
+                                    &mut staging);
         self.drain_staging(&mut staging);
-        true
+        killed
     }
 
     pub(super) fn reap_exited_task(&mut self, task_id : TaskId) -> Option<ExitedTask> {
@@ -494,9 +537,9 @@ impl MultiClassScheduler {
     pub(super) fn wake_one_in_wait_queue(&mut self, wait_queue_id : WaitQueueId) -> Option<TaskId> {
         let mut staging = VecDeque::new();
         let task_id = self.wait
-                           .wake_one_in_wait_queue(&mut self.registry,
-                                                   wait_queue_id,
-                                                   &mut staging);
+                          .wake_one_in_wait_queue(&mut self.registry,
+                                                  wait_queue_id,
+                                                  &mut staging);
         self.drain_staging(&mut staging);
         task_id
     }
@@ -615,5 +658,22 @@ impl MultiClassScheduler {
     pub(super) fn take_current_wait_result(&mut self) -> TaskWaitResult {
         self.registry
             .take_current_wait_result()
+    }
+}
+
+impl SwitchScheduler for MultiClassScheduler {
+    fn prepare_first_switch(&mut self) -> SwitchPair {
+        MultiClassScheduler::prepare_first_switch(self)
+    }
+
+    fn schedule(&mut self, reason : ScheduleReason) -> Option<SwitchPair> {
+        MultiClassScheduler::schedule(self, reason)
+    }
+
+    fn schedule_wait(&mut self,
+                     wait_handle : TaskWaitHandle,
+                     timeout_ticks : Option<TaskTick>)
+                     -> Option<SwitchPair> {
+        MultiClassScheduler::schedule_wait(self, wait_handle, timeout_ticks)
     }
 }

@@ -8,7 +8,7 @@
 
 extern crate alloc;
 
-mod other_ready;
+mod queue_traits;
 mod registry;
 mod sched_policy;
 mod wait_queues;
@@ -18,7 +18,7 @@ use task_api::{
     TaskWaitHandle, TaskWaitResult, UserTask, WaitQueueId,
 };
 
-pub use other_ready::OtherReadyQueue;
+pub use queue_traits::{ReadyQueue, ReadyTaskSink};
 pub use registry::TaskRegistry;
 pub use sched_policy::{QueueTarget, SchedPolicyChangeAction};
 pub use task_api::SchedulableCheck;
@@ -49,6 +49,19 @@ pub enum ScheduleReason {
     Exit(TaskExitCode),
 }
 
+/// 会产出上下文切换指针对的调度核心。
+pub trait SwitchScheduler {
+    /// 准备首次任务切换。
+    fn prepare_first_switch(&mut self) -> SwitchPair;
+    /// 执行一次普通调度。
+    fn schedule(&mut self, reason : ScheduleReason) -> Option<SwitchPair>;
+    /// 执行一次等待路径调度。
+    fn schedule_wait(&mut self,
+                     wait_handle : TaskWaitHandle,
+                     timeout_ticks : Option<TaskTick>)
+                     -> Option<SwitchPair>;
+}
+
 /// 调度器需要对外提供的最小能力集合。
 pub trait Scheduler {
     /// 初始化调度器内部状态。
@@ -66,12 +79,15 @@ pub trait Scheduler {
     /// 将当前任务标记为阻塞，并切换到其他任务。
     fn block_current(&mut self, reason : TaskBlockReason);
     /// 让当前任务等待指定的阻塞对象。
-    fn wait_current(&mut self, wait_handle : TaskWaitHandle);
+    fn wait_current(&mut self, wait_handle : TaskWaitHandle) -> TaskWaitResult;
     /// 在实现持有调度临界区时复查条件；条件为真才等待指定阻塞对象。
     fn wait_current_while<F>(&mut self, wait_handle : TaskWaitHandle, condition : F)
+                             -> TaskWaitResult
         where F : FnOnce() -> bool {
         if condition() {
-            self.wait_current(wait_handle);
+            self.wait_current(wait_handle)
+        } else {
+            TaskWaitResult::Woken
         }
     }
     /// 让当前任务等待指定的阻塞对象，并带一个超时。
@@ -94,8 +110,8 @@ pub trait Scheduler {
         }
     }
     /// 让当前任务在指定等待队列上休眠。
-    fn wait_current_on(&mut self, wait_queue_id : WaitQueueId) {
-        self.wait_current(TaskWaitHandle::for_wait_queue(wait_queue_id));
+    fn wait_current_on(&mut self, wait_queue_id : WaitQueueId) -> TaskWaitResult {
+        self.wait_current(TaskWaitHandle::for_wait_queue(wait_queue_id))
     }
     /// 让当前任务在指定等待队列上等待，并带一个超时。
     fn wait_current_on_timeout(&mut self,
@@ -106,8 +122,8 @@ pub trait Scheduler {
                                   timeout_ticks)
     }
     /// 让当前任务等待指定任务退出。
-    fn wait_for_task_exit(&mut self, task_id : TaskId) {
-        self.wait_current(TaskWaitHandle::for_task_exit(task_id));
+    fn wait_for_task_exit(&mut self, task_id : TaskId) -> TaskWaitResult {
+        self.wait_current(TaskWaitHandle::for_task_exit(task_id))
     }
     /// 让当前任务等待指定任务退出，并带一个超时。
     fn wait_for_task_exit_timeout(&mut self,
@@ -118,9 +134,11 @@ pub trait Scheduler {
                                   timeout_ticks)
     }
     /// 让当前任务睡眠指定 tick 数。
-    fn sleep_current_for_ticks(&mut self, ticks : TaskTick);
+    fn sleep_current_for_ticks(&mut self, ticks : TaskTick) -> TaskWaitResult;
     /// 尝试唤醒指定任务，成功返回 `true`。
     fn wake_task(&mut self, task_id : TaskId) -> bool;
+    /// 以异步中断结果移除指定任务的等待。
+    fn interrupt_task(&mut self, task_id : TaskId) -> bool;
     /// 回收指定已退出任务的退出信息。
     fn reap_exited_task(&mut self, task_id : TaskId) -> Option<ExitedTask>;
     /// 回收一个任意已退出任务的退出信息。

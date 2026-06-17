@@ -1,4 +1,4 @@
-//! `fsync(2)` / `fdatasync(2)`：将已打开文件的脏数据刷回后端。
+//! `sync(2)` / `fsync(2)` / `fdatasync(2)`：将脏数据刷回后端。
 
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
@@ -18,4 +18,10 @@ pub(crate) fn sys_fsync(args: SyscallArgs) -> UserRet {
 
 pub(crate) fn sys_fdatasync(args: SyscallArgs) -> UserRet {
     sync_fd(args.arg(0))
+}
+
+pub(crate) fn sys_sync(_args: SyscallArgs) -> UserRet {
+    // Linux sync(2) 发起系统级写回并始终返回 0；单个写回错误由后续文件操作报告。
+    let _ = vfs::fd::flush_all_open_files();
+    UserRet::from_success(0)
 }

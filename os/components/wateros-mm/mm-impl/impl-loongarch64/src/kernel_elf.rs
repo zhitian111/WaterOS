@@ -61,6 +61,7 @@ fn map_vfs_to_root_vol(e : VfsError) -> RootVolumeReadError {
         VfsError::Io => RootVolumeReadError::Io,
         VfsError::BadFd
         | VfsError::WouldBlock
+        | VfsError::Interrupted
         | VfsError::BrokenPipe
         | VfsError::NoTask
         | VfsError::ReadOnlyFs => RootVolumeReadError::Unsupported,
@@ -518,7 +519,28 @@ fn map_user_stack<A : AddressSpaceOps>(aspace : &mut A,
                            ppn,
                            PagePerm::R | PagePerm::W | PagePerm::U)
           .map_err(LoadElfError::Mm)?;
+    map_signal_trampoline(aspace, VirtPageNum(vpn_end.0 + 1))?;
     Ok(())
+}
+
+fn map_signal_trampoline<A : AddressSpaceOps>(
+    aspace : &mut A,
+    vpn : VirtPageNum,
+) -> Result<(), LoadElfError> {
+    const CODE : [u8; 8] = [
+        0x0b, 0x2c, 0xc2, 0x02, // addi.d $a7, $zero, 139
+        0x00, 0x00, 0x2b, 0x00, // syscall 0
+    ];
+    let ppn = frame_alloc_result().map_err(|e| LoadElfError::Mm(MmError::from(e)))?;
+    zero_phys_page(ppn);
+    let dst = ppn.start_addr().0 as *mut u8;
+    unsafe {
+        core::ptr::copy_nonoverlapping(CODE.as_ptr(), dst, CODE.len());
+    }
+    aspace.map_page_to_ppn(vpn,
+                           ppn,
+                           PagePerm::R | PagePerm::X | PagePerm::U)
+          .map_err(LoadElfError::Mm)
 }
 
 /// 映射完成后核对 entry 处指令与缓冲区一致，捕获「头合法、体损坏」的读损。

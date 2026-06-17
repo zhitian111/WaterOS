@@ -5,8 +5,6 @@ use alloc::boxed::Box;
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
-use vfs::{PipeReadHandle, PipeWriteHandle};
-
 use crate::vfs_util::vfs_error_to_errno;
 
 pub(crate) const O_NONBLOCK: usize = 0o0004000;
@@ -25,15 +23,15 @@ pub(crate) fn sys_pipe2(args: SyscallArgs) -> UserRet {
         Err(err) => return UserRet::from_error(vfs_error_to_errno(err)),
     };
     let nonblocking = flags & O_NONBLOCK != 0;
-    let (read_end, write_end) = ipc::pipe::PipeEndpoint::pair(nonblocking);
+    let (read_end, write_end) = vfs::pipe_handle_pair(nonblocking);
     let mut reg = vfs::fd::registry().exclusive_access();
     let read_fd = reg.alloc_fd_for_task(
         task_id,
-        Box::new(PipeReadHandle(read_end)),
+        Box::new(read_end),
     );
     let write_fd = reg.alloc_fd_for_task(
         task_id,
-        Box::new(PipeWriteHandle(write_end)),
+        Box::new(write_end),
     );
     drop(reg);
     let fds = [

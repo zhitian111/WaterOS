@@ -294,10 +294,13 @@ impl KernelPipe for Pipe {
         loop {
             match self.try_read(out) {
                 Err(PipeError::WouldBlock) => {
-                    self.read_wait.wait_current_while(|| {
+                    let result = self.read_wait.wait_current_while(|| {
                         let state = self.state.exclusive_access();
                         state.is_empty() && state.write_open
                     });
+                    if result == TaskWaitResult::Interrupted {
+                        return Err(PipeError::Interrupted);
+                    }
                 }
                 other => return other,
             }
@@ -328,10 +331,17 @@ impl KernelPipe for Pipe {
                 Ok(0) => break,
                 Ok(n) => written = written.saturating_add(n),
                 Err(PipeError::WouldBlock) => {
-                    self.write_wait.wait_current_while(|| {
+                    let result = self.write_wait.wait_current_while(|| {
                         let state = self.state.exclusive_access();
                         state.is_full() && state.read_open
                     });
+                    if result == TaskWaitResult::Interrupted {
+                        return if written == 0 {
+                            Err(PipeError::Interrupted)
+                        } else {
+                            Ok(written)
+                        };
+                    }
                 }
                 Err(PipeError::BrokenPipe) if written > 0 => return Ok(written),
                 Err(err) => return Err(err),

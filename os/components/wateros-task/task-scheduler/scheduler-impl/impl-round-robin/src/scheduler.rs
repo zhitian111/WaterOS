@@ -1,6 +1,9 @@
 //! [`RoundRobinScheduler`]：`SCHED_OTHER` 轮转 + 共享 registry/等待队列。
 
-use api_v0::{QueueTarget, SchedPolicyChangeAction, TaskRegistry, WaitQueues};
+use api_v0::{
+    QueueTarget, ReadyQueue, ReadyTaskSink, SchedPolicyChangeAction, SwitchScheduler, TaskRegistry,
+    WaitQueues,
+};
 use arch::task::ActiveArchTaskContext as TaskContext;
 use task_api::{
     ExitedTask, KernelTaskEntry, SchedError, SchedParam, SchedPolicy, TaskBlockReason, TaskExitCode,
@@ -56,7 +59,7 @@ impl RoundRobinScheduler {
         let task_id = self.registry
                           .spawn_kernel_task(entry, arg);
         self.other_ready
-            .push_spawned_task(task_id);
+            .enqueue_ready_task(task_id);
         log::debug!("[task-scheduler] spawned task {}",
                     task_id);
         task_id
@@ -66,7 +69,7 @@ impl RoundRobinScheduler {
         let task_id = self.registry
                           .spawn_user_task_spec(spec);
         self.other_ready
-            .push_spawned_task(task_id);
+            .enqueue_ready_task(task_id);
         log::debug!("[task-scheduler] spawned user task {}",
                     task_id);
         task_id
@@ -84,7 +87,8 @@ impl RoundRobinScheduler {
         self.wait
             .promote_wait_timeouts(&mut self.registry, ready);
         let next_task_id = self.other_ready
-                               .pick_next_runnable_task_id(&self.registry);
+                               .pick_next_runnable_task_id(&self.registry)
+                               .unwrap_or(IDLE_TASK_ID);
         self.current_task_ticks = 0;
         self.registry
             .first_switch_to(next_task_id)
@@ -97,7 +101,8 @@ impl RoundRobinScheduler {
                               -> Option<SwitchPair>
     {
         let next_task_id = self.other_ready
-                               .pick_next_runnable_task_id(&self.registry);
+                               .pick_next_runnable_task_id(&self.registry)
+                               .unwrap_or(IDLE_TASK_ID);
         if next_task_id == current_task_id {
             if is_exit {
                 if !self.registry
@@ -155,12 +160,17 @@ impl RoundRobinScheduler {
 
         let (current_task_id, current_ptr) = self.registry
                                                  .take_current_switch_out()?;
+        if matches!(reason, ScheduleReason::Sleep(_)) {
+            self.registry
+                .clear_wait_result(current_task_id);
+        }
 
         if self.registry
                .is_idle(current_task_id)
         {
             let next_task_id = self.other_ready
-                                   .pick_next_runnable_task_id(&self.registry);
+                                   .pick_next_runnable_task_id(&self.registry)
+                                   .unwrap_or(IDLE_TASK_ID);
             if next_task_id == current_task_id {
                 let _ = self.registry
                             .mark_running_and_set_current(next_task_id);
@@ -251,7 +261,8 @@ impl RoundRobinScheduler {
         }
 
         let next_task_id = self.other_ready
-                               .pick_next_runnable_task_id(&self.registry);
+                               .pick_next_runnable_task_id(&self.registry)
+                               .unwrap_or(IDLE_TASK_ID);
         let next_ptr = self.registry
                            .mark_running_and_set_current(next_task_id);
         Some((current_ptr, next_ptr))
@@ -262,6 +273,13 @@ impl RoundRobinScheduler {
             .wake_task(&mut self.registry,
                        task_id,
                        self.other_ready.ready_queue_mut())
+    }
+
+    pub(super) fn interrupt_task(&mut self, task_id : TaskId) -> bool {
+        self.wait
+            .interrupt_task(&mut self.registry,
+                            task_id,
+                            self.other_ready.ready_queue_mut())
     }
 
     pub(super) fn kill_task(&mut self, task_id : TaskId, exit_code : TaskExitCode) -> bool {
@@ -331,7 +349,7 @@ impl RoundRobinScheduler {
         let child_id = self.registry
                            .fork_current(child_stack, new_aspace_ptr, new_satp)?;
         self.other_ready
-            .push_spawned_task(child_id);
+            .enqueue_ready_task(child_id);
         Some(child_id)
     }
 
@@ -343,7 +361,7 @@ impl RoundRobinScheduler {
         let child_id = self.registry
                            .clone_current_thread(child_stack, tls, set_tls)?;
         self.other_ready
-            .push_spawned_task(child_id);
+            .enqueue_ready_task(child_id);
         Some(child_id)
     }
 
@@ -414,5 +432,22 @@ impl RoundRobinScheduler {
     pub(super) fn take_current_wait_result(&mut self) -> TaskWaitResult {
         self.registry
             .take_current_wait_result()
+    }
+}
+
+impl SwitchScheduler for RoundRobinScheduler {
+    fn prepare_first_switch(&mut self) -> SwitchPair {
+        RoundRobinScheduler::prepare_first_switch(self)
+    }
+
+    fn schedule(&mut self, reason : ScheduleReason) -> Option<SwitchPair> {
+        RoundRobinScheduler::schedule(self, reason)
+    }
+
+    fn schedule_wait(&mut self,
+                     wait_handle : TaskWaitHandle,
+                     timeout_ticks : Option<TaskTick>)
+                     -> Option<SwitchPair> {
+        RoundRobinScheduler::schedule_wait(self, wait_handle, timeout_ticks)
     }
 }

@@ -4,9 +4,12 @@ use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use driver::network::stack;
+use wateros_base_config::task::SCHED_TIMER_PERIOD_MS;
 
 use crate::socket_fd;
 use crate::user_copy::{copy_to_user, copy_to_user_struct};
+
+const SOCKET_RECV_WAIT_TICKS: usize = 4096;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -42,17 +45,20 @@ pub(crate) fn sys_recvfrom(args: SyscallArgs) -> UserRet {
     match stack::socket_kind(handle) {
         Ok(driver::network::stack::SocketKind::Tcp) => {
             let mut kbuf = alloc::vec![0u8; len];
-            match stack::socket_recv(handle, &mut kbuf) {
+            match recv_tcp_blocking(fd, handle, &mut kbuf) {
                 Ok(n) if n > 0 => {
-                    let _ = copy_to_user(buf_ptr, &kbuf[..n]);
-                    UserRet::from_success(n)
+                    match copy_to_user(buf_ptr, &kbuf[..n]) {
+                        Ok(written) if written == n => UserRet::from_success(n),
+                        _ => UserRet::from_error(ErrNo::EFAULT),
+                    }
                 }
-                _ => UserRet::from_error(ErrNo::EAGAIN),
+                Ok(_) => UserRet::from_success(0),
+                Err(e) => UserRet::from_error(e),
             }
         }
         Ok(driver::network::stack::SocketKind::Udp) => {
             let mut kbuf = alloc::vec![0u8; len];
-            match stack::socket_recvfrom(handle, &mut kbuf) {
+            match recv_udp_blocking(fd, handle, &mut kbuf) {
                 Ok((n, ip, port)) if n > 0 => {
                     if copy_to_user(buf_ptr, &kbuf[..n]).is_err() {
                         return UserRet::from_error(ErrNo::EFAULT);
@@ -81,9 +87,93 @@ pub(crate) fn sys_recvfrom(args: SyscallArgs) -> UserRet {
                     }
                     UserRet::from_success(n)
                 }
-                _ => UserRet::from_error(ErrNo::EAGAIN),
+                Ok(_) => UserRet::from_success(0),
+                Err(e) => UserRet::from_error(e),
             }
         }
         _ => UserRet::from_error(ErrNo::ENOTSOCK),
     }
+}
+
+fn recv_tcp_blocking(
+    fd: usize,
+    handle: smoltcp::iface::SocketHandle,
+    buf: &mut [u8],
+) -> Result<usize, ErrNo> {
+    let nonblocking = socket_fd::is_nonblocking(fd);
+    let wait_ticks = socket_recv_wait_ticks(handle, SOCKET_RECV_WAIT_TICKS);
+    let task_id = task::current_task_id().unwrap_or(0);
+    for i in 0..wait_ticks {
+        drive_network_stack();
+        if stack::socket_can_recv(handle).unwrap_or(false) {
+            let n = stack::socket_recv(handle, buf).map_err(|_| ErrNo::EIO)?;
+            return Ok(n);
+        }
+        // 对端已关闭写端（smoltcp CloseWait），且缓冲区无数据 → EOF
+        if !stack::socket_may_recv(handle).unwrap_or(true) {
+            return Ok(0);
+        }
+        if matches!(stack::socket_state(handle), Ok(stack::SocketState::Closed)) {
+            return Ok(0);
+        }
+        if nonblocking {
+            return Err(ErrNo::EAGAIN);
+        }
+        task::sleep_for_ticks(1);
+        if i % 16 == 0
+            && ipc::signal::with_registry(|r| r.has_deliverable(task_id).unwrap_or(false))
+        {
+            return Err(ErrNo::EINTR);
+        }
+    }
+    Err(ErrNo::EINTR)
+}
+
+fn recv_udp_blocking(
+    fd: usize,
+    handle: smoltcp::iface::SocketHandle,
+    buf: &mut [u8],
+) -> Result<(usize, [u8; 4], u16), ErrNo> {
+    let nonblocking = socket_fd::is_nonblocking(fd);
+    let wait_ticks = socket_recv_wait_ticks(handle, SOCKET_RECV_WAIT_TICKS);
+    let task_id = task::current_task_id().unwrap_or(0);
+    for i in 0..wait_ticks {
+        drive_network_stack();
+        if stack::socket_udp_can_recv(handle).unwrap_or(false) {
+            return stack::socket_recvfrom(handle, buf).map_err(|_| ErrNo::EIO);
+        }
+        if nonblocking {
+            return Err(ErrNo::EAGAIN);
+        }
+        task::sleep_for_ticks(1);
+        // 每 16 tick 检查信号（如 SIGALRM）
+        if i % 16 == 0
+            && ipc::signal::with_registry(|r| r.has_deliverable(task_id).unwrap_or(false))
+        {
+            return Err(ErrNo::EINTR);
+        }
+    }
+    Err(ErrNo::EAGAIN)
+}
+
+fn socket_recv_wait_ticks(handle: smoltcp::iface::SocketHandle, default_ticks: usize) -> usize {
+    match stack::socket_recv_timeout_ms(handle) {
+        Ok(Some(ms)) => {
+            let tick_ms = (SCHED_TIMER_PERIOD_MS as u64).max(1);
+            let ticks = ms.saturating_add(tick_ms - 1) / tick_ms;
+            usize::try_from(ticks).unwrap_or(usize::MAX).max(1)
+        }
+        _ => default_ticks,
+    }
+}
+
+fn drive_network_stack() {
+    match platform::timer::now_duration() {
+        Ok(now) => {
+            let millis = now.as_millis().min(i64::MAX as u128) as i64;
+            stack::poll_at_millis(millis);
+        }
+        Err(_) => stack::poll(),
+    }
+    stack::poll_socket_events();
 }

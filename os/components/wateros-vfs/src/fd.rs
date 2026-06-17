@@ -74,6 +74,11 @@ pub fn close_fd(fd: usize) -> VfsResult<()> {
     handle.close()
 }
 
+/// 请求全部打开句柄写回脏数据。
+pub fn flush_all_open_files() -> VfsResult<()> {
+    registry().exclusive_access().flush_all()
+}
+
 /// 当前任务下 `fd` 是否为 TTY 类字符设备。
 pub fn current_fd_is_tty_char(fd: usize) -> VfsResult<bool> {
     with_current_task(|reg, task_id| {
@@ -165,6 +170,8 @@ pub fn self_test() {
     assert!(reg.close_fd_for_task(stdio_task, api_v0::VFS_STDIN_FD).is_ok());
     assert!(reg.close_fd_for_task(stdio_task, api_v0::VFS_STDIN_FD).is_err());
     assert!(reg.get_io_for_task(stdio_task, api_v0::VFS_STDIN_FD).is_err());
+    let reused_stdin = reg.alloc_fd_for_task(stdio_task, stdio_replacement_handle());
+    assert_eq!(reused_stdin, api_v0::VFS_STDIN_FD);
     reg.drop_task_fd_table(stdio_task);
 
     let a: task::TaskId = 10;
@@ -204,5 +211,17 @@ pub fn self_test() {
         log::info!("[poll] ppoll pipe ok");
     } else {
         log::warn!("[poll] ppoll pipe smoke failed");
+    }
+}
+
+fn stdio_replacement_handle() -> Box<dyn VfsIoHandle> {
+    #[cfg(feature = "bridge-fs-api")]
+    {
+        let dev = fs::devfs::active_impl::lookup_character_device("/dev/null").expect("null");
+        Box::new(impl_fd_session::CharDevHandle::from_devfs_path(dev, "/dev/null"))
+    }
+    #[cfg(not(feature = "bridge-fs-api"))]
+    {
+        Box::new(impl_fd_session::ZeroDeviceHandle)
     }
 }

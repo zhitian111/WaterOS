@@ -15,7 +15,7 @@ use core::time::Duration;
 use driver_block_api_v0::{DriverError, Lba, SharedBlockDevice};
 use ext4plus::dir::Dir;
 use ext4plus::error::Ext4Error;
-use ext4plus::file::write_at;
+use ext4plus::file::{truncate, write_at};
 use ext4plus::inode::{InodeCreationOptions, InodeFlags, InodeMode};
 use ext4plus::path::Path;
 use ext4plus::{DirEntryName, Ext4, Ext4Read, Ext4Write, FileType, FollowSymlinks};
@@ -158,11 +158,19 @@ impl ReadWriteFs for Ext4FsRw {
         }
         let mut parent_dir = Dir::open_inode(fs, parent_inode).map_err(map_ext4_plus)?;
 
-        if let Ok(old) = parent_dir.get_entry(name) {
-            if old.file_type() == FileType::Directory {
-                return Err(FsError::NotAFile);
+        match parent_dir.get_entry(name) {
+            Ok(mut inode) => {
+                if inode.file_type() != FileType::Regular {
+                    return Err(FsError::NotAFile);
+                }
+                truncate(fs, &mut inode, 0).map_err(map_ext4_plus)?;
+                if !data.is_empty() {
+                    write_at(fs, &mut inode, data, 0).map_err(map_ext4_plus)?;
+                }
+                return Ok(());
             }
-            parent_dir.unlink(name, old).map_err(map_ext4_plus)?;
+            Err(Ext4Error::NotFound) => {}
+            Err(err) => return Err(map_ext4_plus(err)),
         }
 
         let mut inode = fs
@@ -180,7 +188,9 @@ impl ReadWriteFs for Ext4FsRw {
             })
             .map_err(map_ext4_plus)?;
 
-        write_at(fs, &mut inode, data, 0).map_err(map_ext4_plus)?;
+        if !data.is_empty() {
+            write_at(fs, &mut inode, data, 0).map_err(map_ext4_plus)?;
+        }
         parent_dir.link(name, &mut inode).map_err(map_ext4_plus)?;
         Ok(())
     }
@@ -354,8 +364,11 @@ impl ReadWriteFs for Ext4FsRw {
     fn metadata(&self, path: &str) -> FsResult<FsMetadata> {
         let fs = self.fs()?;
         let pathv = Path::try_from(path).map_err(|_| FsError::InvalidPath)?;
+        let inode = fs
+            .path_to_inode(pathv, FollowSymlinks::All)
+            .map_err(map_ext4_plus)?;
         let meta = fs.metadata(pathv).map_err(map_ext4_plus)?;
-        Ok(map_rw_metadata(&meta))
+        Ok(map_rw_metadata(&meta, u64::from(inode.index.get())))
     }
 
     fn read(&self, path: &str) -> FsResult<Vec<u8>> {
@@ -456,7 +469,7 @@ impl ReadWriteFs for Ext4FsRw {
     }
 }
 
-fn map_rw_metadata(meta: &Metadata) -> FsMetadata {
+fn map_rw_metadata(meta: &Metadata, inode: u64) -> FsMetadata {
     let node_type = if meta.is_dir() {
         FsNodeType::Directory
     } else if meta.is_symlink() {
@@ -470,6 +483,8 @@ fn map_rw_metadata(meta: &Metadata) -> FsMetadata {
         node_type,
         size: meta.len(),
         mode: meta.mode(),
+        inode,
+        nlink: u32::from(meta.links_count),
     }
 }
 

@@ -17,12 +17,26 @@ fn map_driver_err(e: DriverError) -> VfsError {
     }
 }
 
-fn char_metadata(mode: u16) -> VfsMetadata {
+fn char_metadata(mode: u16, inode: u64) -> VfsMetadata {
     VfsMetadata {
         node_type: VfsNodeType::Special,
         size: 0,
         mode,
+        device_major: 0,
+        device_minor: 0x7fff_0001,
+        inode,
+        mount_id: 0,
+        nlink: 1,
     }
+}
+
+fn path_inode(path: &str) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for byte in path.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100_0000_01b3);
+    }
+    hash | (1u64 << 63)
 }
 
 /// 已打开的字符设备句柄。
@@ -31,6 +45,7 @@ pub struct CharDevHandle {
     stdin_eof: bool,
     rtc: bool,
     mode: u16,
+    inode: u64,
 }
 
 impl CharDevHandle {
@@ -40,6 +55,7 @@ impl CharDevHandle {
             stdin_eof,
             rtc: false,
             mode: if stdin_eof { 0o20600 } else { 0o20660 },
+            inode: if stdin_eof { 1 } else { 2 },
         }
     }
 
@@ -49,6 +65,7 @@ impl CharDevHandle {
             stdin_eof: false,
             rtc: true,
             mode: 0o20644,
+            inode: path_inode("/dev/rtc0"),
         }
     }
 
@@ -59,11 +76,16 @@ impl CharDevHandle {
                 stdin_eof: false,
                 rtc: false,
                 mode: 0o20666,
+                inode: path_inode(path),
             }
         } else if is_rtc_dev_path(path) {
-            Self::new_rtc(device)
+            let mut handle = Self::new_rtc(device);
+            handle.inode = path_inode(path);
+            handle
         } else {
-            Self::new(device, false)
+            let mut handle = Self::new(device, false);
+            handle.inode = path_inode(path);
+            handle
         }
     }
 
@@ -116,7 +138,7 @@ impl VfsIoHandle for CharDevHandle {
     }
 
     fn metadata(&self) -> VfsResult<VfsMetadata> {
-        Ok(char_metadata(self.mode))
+        Ok(char_metadata(self.mode, self.inode))
     }
 
     fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {
@@ -125,6 +147,7 @@ impl VfsIoHandle for CharDevHandle {
             stdin_eof: self.stdin_eof,
             rtc: self.rtc,
             mode: self.mode,
+            inode: self.inode,
         }))
     }
 }
@@ -146,5 +169,5 @@ fn mode_for_devfs_path(path: &str) -> u16 {
 
 /// 未打开 fd 时按 devfs 路径返回字符设备元数据（`fstatat` / `faccessat`）。
 pub fn metadata_for_devfs_path(path: &str) -> VfsMetadata {
-    char_metadata(mode_for_devfs_path(path))
+    char_metadata(mode_for_devfs_path(path), path_inode(path))
 }

@@ -22,7 +22,9 @@ impl WaitQueue {
 
     /// 让当前任务在该等待队列上休眠，直到被显式唤醒。
     #[inline]
-    pub fn wait_current(&self) { scheduler::wait_current(self.wait_handle()); }
+    pub fn wait_current(&self) -> TaskWaitResult {
+        scheduler::wait_current(self.wait_handle())
+    }
 
     /// 让当前任务在该等待队列上等待，超时后返回等待结果。
     #[inline]
@@ -32,8 +34,10 @@ impl WaitQueue {
 
     /// 在调度临界区内复查条件；条件仍成立才让当前任务在该队列上休眠。
     #[inline]
-    pub fn wait_current_while(&self, condition : impl FnOnce() -> bool) {
-        scheduler::wait_current_while(self.wait_handle(), condition);
+    pub fn wait_current_while(&self,
+                              condition : impl FnOnce() -> bool)
+                              -> TaskWaitResult {
+        scheduler::wait_current_while(self.wait_handle(), condition)
     }
 
     /// 在调度临界区内复查条件；条件仍成立才让当前任务在该队列上带超时等待。

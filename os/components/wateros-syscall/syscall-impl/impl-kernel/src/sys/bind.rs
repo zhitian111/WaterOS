@@ -48,7 +48,9 @@ pub(crate) fn sys_bind(args: SyscallArgs) -> UserRet {
     };
 
     match stack::socket_bind(socket.handle(), local_ip, port) {
-        Ok(()) => UserRet::from_success(0),
+        Ok(()) => {
+            UserRet::from_success(0)
+        }
         Err("address not available") => UserRet::from_error(ErrNo::EADDRNOTAVAIL),
         Err(_) => UserRet::from_error(ErrNo::EADDRINUSE),
     }

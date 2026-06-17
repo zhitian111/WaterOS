@@ -12,6 +12,7 @@ mod execve;
 mod faccessat;
 mod fcntl;
 mod fstat;
+mod ftruncate;
 mod futex;
 mod getcwd;
 mod getdents64;
@@ -35,6 +36,7 @@ mod rtc;
 mod sendfile;
 mod robust;
 mod sched;
+mod signal;
 mod syslog;
 mod statfs;
 mod sync;
@@ -52,6 +54,7 @@ mod listen;
 mod recvfrom;
 mod sendmsg;
 mod sendto;
+mod shm;
 mod shutdown;
 mod socket;
 mod sockname;
@@ -59,7 +62,7 @@ mod sockopt;
 
 pub(crate) use brk::sys_brk;
 pub(crate) use chdir::sys_chdir;
-pub(crate) use clone::sys_clone;
+pub(crate) use clone::{sys_clone, sys_clone3};
 pub(crate) use close::sys_close;
 pub(crate) use cred::{
     sys_getegid, sys_geteuid, sys_getgid, sys_getgroups, sys_getuid, sys_setgid, sys_setregid,
@@ -70,6 +73,7 @@ pub(crate) use execve::sys_execve;
 pub(crate) use faccessat::{sys_faccessat, sys_faccessat2};
 pub(crate) use fcntl::sys_fcntl;
 pub(crate) use fstat::{sys_fstat, sys_fstatat, sys_statx};
+pub(crate) use ftruncate::sys_ftruncate;
 pub(crate) use futex::{sys_futex, wake_user_addr};
 pub(crate) use robust::{
     robust_exit_cleanup, robust_exit_cleanup_siblings_for_exec, sys_get_robust_list,
@@ -78,6 +82,10 @@ pub(crate) use robust::{
 pub(crate) use sched::{
     sys_sched_getaffinity, sys_sched_getparam, sys_sched_getscheduler, sys_sched_setaffinity,
     sys_sched_setparam, sys_sched_setscheduler,
+};
+pub(crate) use signal::{
+    deliver_pending_signal, restore_signal_frame, sys_rt_sigpending, sys_rt_sigsuspend,
+    sys_tgkill, sys_tkill, timer_tick, raise_current_thread,
 };
 pub(crate) use getcwd::sys_getcwd;
 pub(crate) use getdents64::sys_getdents64;
@@ -97,18 +105,20 @@ pub(crate) use read::{sys_read, sys_readv};
 pub(crate) use readlinkat::sys_readlinkat;
 pub(crate) use renameat2::sys_renameat2;
 pub(crate) use sendfile::sys_sendfile;
+pub(crate) use shm::{sys_shmat, sys_shmctl, sys_shmdt, sys_shmget};
 pub(crate) use clock::{
     sys_clock_getres, sys_clock_gettime, sys_clock_nanosleep, sys_clock_settime, sys_gettimeofday,
     sys_nanosleep,
 };
 pub(crate) use statfs::sys_statfs;
-pub(crate) use sync::{sys_fdatasync, sys_fsync};
+pub(crate) use sync::{sys_fdatasync, sys_fsync, sys_sync};
 pub(crate) use syslog::sys_syslog;
 pub(crate) use task::{
     sys_exit, sys_exit_group, sys_getpid, sys_getppid, sys_getrandom,
     sys_getrlimit, sys_getrusage, sys_gettid, sys_prctl, sys_prlimit64, sys_sysinfo,
     sys_rt_sigaction, sys_rt_sigprocmask, sys_rt_sigtimedwait, sys_set_tid_address,
-    sys_setitimer, sys_setrlimit, sys_times, sys_umask, sys_uname, sys_waitpid, sys_yield,
+    sys_getitimer, sys_setitimer, sys_setrlimit, sys_times, sys_umask, sys_uname, sys_waitpid,
+    sys_setsid, sys_yield,
 };
 pub(crate) use umount2::sys_umount2;
 pub(crate) use unlinkat::sys_unlinkat;
@@ -116,7 +126,7 @@ pub(crate) use utimensat::sys_utimensat;
 pub(crate) use write::{sys_write, sys_writev};
 
 // socket / 网络
-pub(crate) use accept::sys_accept4;
+pub(crate) use accept::{sys_accept, sys_accept4};
 pub(crate) use bind::sys_bind;
 pub(crate) use connect::sys_connect;
 pub(crate) use listen::sys_listen;

@@ -32,6 +32,8 @@ pub enum FutexWaitOutcome {
     Woken,
     /// `timeout_ticks` 到期且条件仍成立。
     TimedOut,
+    /// 等待被信号中断。
+    Interrupted,
 }
 
 /// 供 syscall 映射 `FutexWaitOutcome` → `FutexError`。
@@ -42,6 +44,7 @@ impl FutexWaitOutcome {
         match self {
             Self::Woken => Ok(()),
             Self::TimedOut => Err(FutexError::TimedOut),
+            Self::Interrupted => Err(FutexError::Interrupted),
         }
     }
 }

@@ -4,6 +4,7 @@ extern crate alloc;
 
 use alloc::sync::Arc;
 use api_v0::{PipeEndpointKind, PipeEndpointOps, PipeError, PipeResult};
+use waitqueue::TaskWaitResult;
 
 use crate::kernel_pipe::Pipe;
 
@@ -147,14 +148,20 @@ impl PipeEndpointOps for PipeEndpoint {
         const POLLIN: i16 = 0x001;
         const POLLOUT: i16 = 0x004;
         if events & POLLIN != 0 && self.kind == PipeEndpointKind::Read {
-            let _ = self
+            let result = self
                 .pipe
                 .poll_wait_read_for_ticks(timeout_ticks, still_waiting);
+            if result == TaskWaitResult::Interrupted {
+                return Err(PipeError::Interrupted);
+            }
         }
         if events & POLLOUT != 0 && self.kind == PipeEndpointKind::Write {
-            let _ = self
+            let result = self
                 .pipe
                 .poll_wait_write_for_ticks(timeout_ticks, still_waiting);
+            if result == TaskWaitResult::Interrupted {
+                return Err(PipeError::Interrupted);
+            }
         }
         Ok(())
     }

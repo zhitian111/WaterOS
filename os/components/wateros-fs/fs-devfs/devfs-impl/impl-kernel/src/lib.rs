@@ -101,6 +101,14 @@ impl DevFsManager for KernelDevFsManager {
                 push_char_alias(&mut inner, String::from("/dev/null"), dev.clone());
             }
         }
+        for path in ["/dev/zero", "/dev/urandom"] {
+            if !inner.nodes.iter().any(|n| n.path == path) {
+                inner.nodes.push(api_v0::DevNode {
+                    path: String::from(path),
+                    node_type: api_v0::DevNodeType::Character,
+                });
+            }
+        }
 
         let dt_paths = inner.dt_unsupported_paths.clone();
         for path in dt_paths {

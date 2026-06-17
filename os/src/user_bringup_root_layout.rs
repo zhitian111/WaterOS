@@ -2,9 +2,9 @@
 
 use runtime::logging::*;
 
-const LOG_TAG: &str = "root-layout";
+const LOG_TAG : &str = "root-layout";
 
-/// 在 RW 根卷挂载后创建 `/bin` 与 `/bin/ls` → `/glibc/busybox` 硬链接（幂等）。
+/// 在 RW 根卷挂载后创建 busybox 与 libc 测例需要的基础目录/链接（幂等）。
 pub fn ensure_busybox_path_links() {
     #[cfg(not(feature = "vfs-bridge"))]
     {
@@ -27,6 +27,15 @@ pub fn ensure_busybox_path_links() {
         if let Err(e) = sess.mkdir("/bin", 0o755) {
             if e != VfsError::Exists {
                 warn!("[{LOG_TAG}] mkdir /bin failed: {e:?}");
+                return;
+            }
+        }
+
+        match sess.mkdir("/tmp", 0o777) {
+            Ok(()) => info!("[{LOG_TAG}] mkdir /tmp ok"),
+            Err(VfsError::Exists) => info!("[{LOG_TAG}] /tmp already present"),
+            Err(e) => {
+                warn!("[{LOG_TAG}] mkdir /tmp failed: {e:?}");
                 return;
             }
         }

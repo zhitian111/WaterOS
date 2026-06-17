@@ -1,6 +1,6 @@
 #![no_std]
 
-//! 单一 ext4 文件系统实现：RO 路径基于 `ext4-view`，RW 路径基于 `ext4plus`，
+//! 单一 ext4 文件系统实现：RO 与 RW 路径均基于 `ext4plus`，
 //! 通过 [`api_v0::FsImpl`] 向聚合层注册一条能力（[`api_v0::FsKind::Ext4`] 同时支持 RO 与 RW）。
 //!
 //! 后续替换点：RW 路径依赖 `ext4plus` beta 能力，生产级 journal 与崩溃一致性需另行评估。

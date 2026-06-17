@@ -28,6 +28,11 @@ pub(crate) fn sys_socket(args: SyscallArgs) -> UserRet {
     }
 
     let _cloexec = typ & SOCK_CLOEXEC != 0;
+    let status_flags = if typ & SOCK_NONBLOCK != 0 {
+        SOCK_NONBLOCK
+    } else {
+        0
+    };
     typ &= !(SOCK_NONBLOCK | SOCK_CLOEXEC);
 
     let handle_result = match typ {
@@ -56,7 +61,7 @@ pub(crate) fn sys_socket(args: SyscallArgs) -> UserRet {
         Ok(fd) => fd,
         Err(_) => return UserRet::from_error(ErrNo::ENOMEM),
     };
-    socket_fd::register(fd, socket_ref);
+    socket_fd::register_with_flags(fd, socket_ref, status_flags);
 
     UserRet::from_success(fd)
 }

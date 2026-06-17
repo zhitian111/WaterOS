@@ -8,6 +8,8 @@ use driver::network::stack;
 use crate::socket_fd;
 use crate::user_copy::copy_from_user_struct;
 
+const CONNECT_WAIT_TICKS: usize = 256;
+
 #[repr(C)]
 #[derive(Copy, Clone)]
 struct SockAddrIn {
@@ -43,8 +45,42 @@ pub(crate) fn sys_connect(args: SyscallArgs) -> UserRet {
         None => return UserRet::from_error(ErrNo::ENOTSOCK),
     };
 
-    match stack::socket_connect(socket.handle(), ip, port) {
-        Ok(()) => UserRet::from_success(0),
+    let handle = socket.handle();
+    let kind = match stack::socket_kind(handle) {
+        Ok(kind) => kind,
+        Err(_) => return UserRet::from_error(ErrNo::ENOTSOCK),
+    };
+
+    match stack::socket_connect(handle, ip, port) {
+        Ok(()) if matches!(kind, stack::SocketKind::Udp) => UserRet::from_success(0),
+        Ok(()) if socket_fd::is_nonblocking(fd) => UserRet::from_error(ErrNo::EINPROGRESS),
+        Ok(()) => wait_connected(handle),
         Err(_) => UserRet::from_error(ErrNo::ECONNREFUSED),
     }
+}
+
+fn wait_connected(handle: smoltcp::iface::SocketHandle) -> UserRet {
+    for _ in 0..CONNECT_WAIT_TICKS {
+        drive_network_stack();
+        // socket_is_connected 使用 is_active() 在 SynSent 即返回 true，
+        // 必须同时检查 may_send 确认握手已完成（Established 状态）。
+        if stack::socket_is_connected(handle).unwrap_or(false)
+            && stack::socket_may_send(handle).unwrap_or(false)
+        {
+            return UserRet::from_success(0);
+        }
+        task::sleep_for_ticks(1);
+    }
+    UserRet::from_error(ErrNo::ETIMEDOUT)
+}
+
+fn drive_network_stack() {
+    match platform::timer::now_duration() {
+        Ok(now) => {
+            let millis = now.as_millis().min(i64::MAX as u128) as i64;
+            stack::poll_at_millis(millis);
+        }
+        Err(_) => stack::poll(),
+    }
+    stack::poll_socket_events();
 }

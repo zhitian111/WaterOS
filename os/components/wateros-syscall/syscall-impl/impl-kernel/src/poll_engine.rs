@@ -6,6 +6,7 @@ use abi::errno::ErrNo;
 use abi::user_ret::UserRet;
 use driver::network::stack;
 use task::TaskTick;
+use wateros_base_config::task::SCHED_TIMER_PERIOD_MS;
 
 use crate::socket_fd;
 use crate::user_copy::{copy_from_user_struct, copy_to_user_struct};
@@ -19,6 +20,7 @@ pub(crate) const POLLNVAL: i16 = 0x020;
 
 pub(crate) const FD_SETSIZE: usize = 1024;
 const FD_SET_WORDS: usize = FD_SETSIZE / 64;
+const SOCKET_READY_YIELD_SPINS: usize = 4;
 
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
@@ -49,6 +51,15 @@ pub(crate) struct PollDeadline {
 }
 
 impl PollDeadline {
+    fn duration_to_ticks(sec: isize, nsec: isize) -> u64 {
+        let total_ns = (sec as u128)
+            .saturating_mul(1_000_000_000)
+            .saturating_add(nsec as u128);
+        let tick_ns = (SCHED_TIMER_PERIOD_MS as u128).max(1) * 1_000_000;
+        let ticks = total_ns.saturating_add(tick_ns - 1) / tick_ns;
+        u64::try_from(ticks).unwrap_or(u64::MAX).max(1)
+    }
+
     pub(crate) fn infinite() -> Self {
         Self { expire_tick: None }
     }
@@ -71,11 +82,7 @@ impl PollDeadline {
             });
         }
         let base = task::current_tick();
-        let extra = if ts.sec > 0 || ts.nsec > 0 {
-            1u64
-        } else {
-            0
-        };
+        let extra = Self::duration_to_ticks(ts.sec, ts.nsec);
         Ok(Self {
             expire_tick: Some(base.saturating_add(extra)),
         })
@@ -90,8 +97,10 @@ impl PollDeadline {
                 expire_tick: Some(task::current_tick()),
             });
         }
+        let tick_ms = (SCHED_TIMER_PERIOD_MS as u64).max(1);
+        let extra = (timeout_ms as u64).saturating_add(tick_ms - 1) / tick_ms;
         Ok(Self {
-            expire_tick: Some(task::current_tick().saturating_add(1)),
+            expire_tick: Some(task::current_tick().saturating_add(extra.max(1))),
         })
     }
 
@@ -139,9 +148,21 @@ struct ScanCtx {
 
 impl ScanCtx {
     fn scan_count(&self) -> Result<usize, ErrNo> {
+        drive_network_stack();
         let (n, _) = scan_pollfds(self.fds_ptr, self.nfds)?;
         Ok(n)
     }
+}
+
+fn drive_network_stack() {
+    match platform::timer::now_duration() {
+        Ok(now) => {
+            let millis = now.as_millis().min(i64::MAX as u128) as i64;
+            stack::poll_at_millis(millis);
+        }
+        Err(_) => stack::poll(),
+    }
+    stack::poll_socket_events();
 }
 
 pub(crate) fn poll_socket_revents(fd: usize, events: i16) -> i16 {
@@ -156,17 +177,21 @@ pub(crate) fn poll_socket_revents(fd: usize, events: i16) -> i16 {
     match kind {
         Ok(stack::SocketKind::Tcp) => match state {
             Ok(stack::SocketState::Listening { .. }) => {
-                if events & POLLIN != 0
-                    && stack::socket_has_pending_accept(handle).unwrap_or(false)
-                {
+                let pending = stack::socket_has_pending_accept(handle).unwrap_or(false);
+                if events & POLLIN != 0 && pending {
                     revents |= POLLIN;
                 }
             }
             Ok(stack::SocketState::Connecting) | Ok(stack::SocketState::Connected) => {
-                if events & POLLIN != 0 && stack::socket_may_recv(handle).unwrap_or(false) {
+                let can_recv = stack::socket_can_recv(handle).unwrap_or(false);
+                let peer_read_closed = matches!(state, Ok(stack::SocketState::Connected))
+                    && !stack::socket_may_recv(handle).unwrap_or(true);
+                if events & POLLIN != 0 && (can_recv || peer_read_closed) {
                     revents |= POLLIN;
                 }
-                if events & POLLOUT != 0 && stack::socket_may_send(handle).unwrap_or(false) {
+                let can_send = stack::socket_may_send(handle).unwrap_or(false)
+                    && stack::socket_send_capacity(handle).unwrap_or(0) > 0;
+                if events & POLLOUT != 0 && can_send {
                     revents |= POLLOUT;
                 }
                 if stack::socket_is_connected(handle).unwrap_or(true) == false {
@@ -200,6 +225,7 @@ pub(crate) fn poll_revents_fd(fd: usize, events: i16) -> i16 {
 }
 
 pub(crate) fn scan_pollfds(fds_ptr: usize, nfds: usize) -> Result<(usize, usize), ErrNo> {
+    drive_network_stack();
     if nfds == 0 {
         return Ok((0, 0));
     }
@@ -262,14 +288,12 @@ fn poll_wait_pipe_fds(
         if socket_fd::lookup(fd).is_some() {
             continue;
         }
-        let waited = matches!(
-            vfs::fd::with_current_io(fd, |handle| {
-                handle.poll_wait_for_ticks(pfd.events, remaining, still_waiting)
-            }),
-            Ok(())
-        );
-        if waited {
-            any_pipe = true;
+        match vfs::fd::with_current_io(fd, |handle| {
+            handle.poll_wait_for_ticks(pfd.events, remaining, still_waiting)
+        }) {
+            Ok(()) => any_pipe = true,
+            Err(vfs::api::VfsError::Interrupted) => return Err(ErrNo::EINTR),
+            Err(_) => {}
         }
     }
     Ok(any_pipe)
@@ -299,7 +323,11 @@ pub(crate) fn poll_block_until_ready(
         };
         let any_pipe = poll_wait_pipe_fds(fds_ptr, nfds, &deadline, &mut still_waiting)?;
         if !any_pipe {
-            task::sleep_for_ticks(1.min(remaining) as TaskTick);
+            if task::sleep_for_ticks(1.min(remaining) as TaskTick) ==
+               task::TaskWaitResult::Interrupted
+            {
+                return Err(ErrNo::EINTR);
+            }
         }
     }
 }
@@ -393,6 +421,17 @@ pub(crate) fn scan_fd_sets(
     writefds_ptr: usize,
     exceptfds_ptr: usize,
 ) -> Result<usize, ErrNo> {
+    scan_fd_sets_inner(nfds, readfds_ptr, writefds_ptr, exceptfds_ptr, true)
+}
+
+fn scan_fd_sets_inner(
+    nfds: usize,
+    readfds_ptr: usize,
+    writefds_ptr: usize,
+    exceptfds_ptr: usize,
+    writeback: bool,
+) -> Result<usize, ErrNo> {
+    drive_network_stack();
     if nfds > FD_SETSIZE {
         return Err(ErrNo::EINVAL);
     }
@@ -435,13 +474,13 @@ pub(crate) fn scan_fd_sets(
         }
     }
 
-    if read_in.is_some() {
+    if writeback && read_in.is_some() {
         copy_fd_set_to_user(readfds_ptr, &read_out)?;
     }
-    if write_in.is_some() {
+    if writeback && write_in.is_some() {
         copy_fd_set_to_user(writefds_ptr, &write_out)?;
     }
-    if except_in.is_some() {
+    if writeback && except_in.is_some() {
         copy_fd_set_to_user(exceptfds_ptr, &except_out)?;
     }
 
@@ -491,14 +530,12 @@ fn poll_wait_monitored_fds(
         if socket_fd::lookup(fd).is_some() {
             continue;
         }
-        let waited = matches!(
-            vfs::fd::with_current_io(fd, |handle| {
-                handle.poll_wait_for_ticks(events, remaining, still_waiting)
-            }),
-            Ok(())
-        );
-        if waited {
-            any_pipe = true;
+        match vfs::fd::with_current_io(fd, |handle| {
+            handle.poll_wait_for_ticks(events, remaining, still_waiting)
+        }) {
+            Ok(()) => any_pipe = true,
+            Err(vfs::api::VfsError::Interrupted) => return Err(ErrNo::EINTR),
+            Err(_) => {}
         }
     }
     Ok(any_pipe)
@@ -512,11 +549,12 @@ pub(crate) fn poll_block_fd_sets(
     deadline: PollDeadline,
 ) -> Result<usize, ErrNo> {
     loop {
-        let n = scan_fd_sets(nfds, readfds_ptr, writefds_ptr, exceptfds_ptr)?;
+        let n = scan_fd_sets_inner(nfds, readfds_ptr, writefds_ptr, exceptfds_ptr, false)?;
         if n > 0 {
-            return Ok(n);
+            return scan_fd_sets_inner(nfds, readfds_ptr, writefds_ptr, exceptfds_ptr, true);
         }
         if deadline.expired() {
+            scan_fd_sets_inner(nfds, readfds_ptr, writefds_ptr, exceptfds_ptr, true)?;
             return Ok(0);
         }
         let remaining = deadline.remaining_ticks();
@@ -524,7 +562,7 @@ pub(crate) fn poll_block_fd_sets(
             return Ok(0);
         }
         let mut still_waiting = || -> bool {
-            scan_fd_sets(nfds, readfds_ptr, writefds_ptr, exceptfds_ptr)
+            scan_fd_sets_inner(nfds, readfds_ptr, writefds_ptr, exceptfds_ptr, false)
                 .map(|c| c == 0)
                 .unwrap_or(true)
                 && !deadline.expired()
@@ -538,7 +576,25 @@ pub(crate) fn poll_block_fd_sets(
             &mut still_waiting,
         )?;
         if !any_pipe {
-            task::sleep_for_ticks(1.min(remaining) as TaskTick);
+            let mut became_ready = false;
+            for _ in 0..SOCKET_READY_YIELD_SPINS {
+                task::yield_now();
+                if scan_fd_sets_inner(nfds, readfds_ptr, writefds_ptr, exceptfds_ptr, false)? > 0 {
+                    became_ready = true;
+                    break;
+                }
+                if deadline.expired() {
+                    break;
+                }
+            }
+            if became_ready {
+                continue;
+            }
+            if task::sleep_for_ticks(1.min(remaining) as TaskTick) ==
+               task::TaskWaitResult::Interrupted
+            {
+                return Err(ErrNo::EINTR);
+            }
         }
     }
 }
@@ -550,12 +606,21 @@ pub(crate) fn do_pselect_with_deadline(
     exceptfds_ptr: usize,
     deadline: PollDeadline,
 ) -> UserRet {
-    let n = match scan_fd_sets(nfds, readfds_ptr, writefds_ptr, exceptfds_ptr) {
+    let n = match scan_fd_sets_inner(nfds, readfds_ptr, writefds_ptr, exceptfds_ptr, false) {
         Ok(v) => v,
         Err(e) => return UserRet::from_error(e),
     };
-    if n > 0 || deadline.expired() {
-        return UserRet::from_success(n);
+    if n > 0 {
+        return match scan_fd_sets_inner(nfds, readfds_ptr, writefds_ptr, exceptfds_ptr, true) {
+            Ok(n) => UserRet::from_success(n),
+            Err(e) => UserRet::from_error(e),
+        };
+    }
+    if deadline.expired() {
+        return match scan_fd_sets_inner(nfds, readfds_ptr, writefds_ptr, exceptfds_ptr, true) {
+            Ok(_) => UserRet::from_success(0),
+            Err(e) => UserRet::from_error(e),
+        };
     }
     if deadline.remaining_ticks() == 0 {
         return UserRet::from_success(0);

@@ -18,6 +18,7 @@ use platform::arch::paging;
 use platform::arch::trap::ActiveTrapFrame as TrapContext;
 use runtime::logging::*;
 use syscall::dispatch_syscall_from_trap;
+use syscall::api::SyscallKind;
 
 /// 监督态定时器中断后，用 **与 `kernel_main` 相同的 wall-clock 语义**
 /// 重新武装固件定时器。
@@ -33,7 +34,7 @@ static TIMER_TICK_COUNT : AtomicUsize = AtomicUsize::new(0);
 /// 当前支持架构的 syscall/trap 指令宽度，用于将用户 PC 前进到下一条指令。
 const SYSCALL_INSN_BYTES : usize = 4;
 
-/// 记录用户任务 trap 杀进程上下文并终止当前任务。
+/// 记录用户任务 trap 杀进程上下文并终止当前进程。
 fn kill_current_user_task(context : &str, trap_cause : TrapCause, cx : &TrapContext) -> ! {
     if let Some(snapshot) = task::current_task_snapshot() {
         warn!("[trap] killing user task ({}) cause={:?} pc={:#x} fault_addr={:#x} task_id={} \
@@ -53,7 +54,7 @@ fn kill_current_user_task(context : &str, trap_cause : TrapCause, cx : &TrapCont
               cx.user_pc(),
               cx.fault_addr());
     }
-    task::exit_current(-1);
+    task::exit_group_current(-1);
 }
 
 /// 内核态不可恢复 trap：记录诊断后停机，避免 `sret` 到损坏 PC 形成级联 fault。
@@ -96,6 +97,7 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
     }
     let raw_cause = cx.raw_cause();
     let trap_cause = cx.trap_cause();
+    let mut restart = None;
     match trap_cause {
         TrapCause::Exception(Exception::UserEnvCall) => {
             let syscall_nr = cx.syscall_nr()
@@ -113,6 +115,17 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                    regs[3],
                    regs[4],
                    regs[5],);
+            if syscall_nr ==
+               <ActiveSyscallNumberTable as SyscallNumberTable>::RT_SIGRETURN.raw()
+            {
+                if !syscall::restore_signal_frame(authoritative) {
+                    kill_current_user_task("invalid rt_sigreturn frame", trap_cause, cx);
+                }
+                trace!("[syscall] nr={} restored signal frame", syscall_nr);
+                return_to_user_signal_delivery(authoritative, trap_cause, cx, None);
+                finish_trap_return(frame, cx, raw_cause);
+                return;
+            }
             let syscall_ret = dispatch_syscall_from_trap(syscall_nr, syscall_args);
             trace!("[syscall] nr={} ret={}",
                    syscall_nr,
@@ -125,6 +138,11 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             if !exec_succeeded {
                 cx.add_user_pc(SYSCALL_INSN_BYTES);
                 cx.set_syscall_ret(UserRet(syscall_ret));
+                if syscall_ret == abi::errno::ErrNo::EINTR.user_ret() &&
+                   restartable_syscall(syscall_nr)
+                {
+                    restart = Some((syscall_nr, syscall_args));
+                }
             }
         }
         TrapCause::Exception(Exception::InstructionPageFault) |
@@ -135,8 +153,8 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             // 日志级别下毫无输出，表现为「sret 后卡死」。
             if cx.returns_to_user() {
                 warn!("[trap] user memory fault {:?} raw={:#x} ecode={:#x} sepc={:#x} \
-                       stval={:#x} user_sp={:#x} return_satp={:#x} aspace_ptr={:#x} — killing \
-                       task",
+                       stval={:#x} user_sp={:#x} return_satp={:#x} aspace_ptr={:#x} — delivering \
+                       SIGSEGV",
                       trap_cause,
                       raw_cause,
                       (raw_cause >> 16) & 0x3F,
@@ -145,7 +163,12 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                       cx.user_sp(),
                       cx.return_address_space_token(),
                       task::current_task_user_aspace_ptr());
-                kill_current_user_task("user memory fault", trap_cause, cx);
+                if !syscall::raise_current_signal(11) {
+                    kill_current_user_task("user memory fault", trap_cause, cx);
+                }
+                return_to_user_signal_delivery(authoritative, trap_cause, cx, None);
+                finish_trap_return(frame, cx, raw_cause);
+                return;
             }
             fatal_kernel_trap("kernel page fault",
                               trap_cause,
@@ -161,12 +184,21 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             if tick % 8 == 0 {
                 trace!("[trap] timer tick {}", tick);
             }
+            syscall::timer_tick(cx.returns_to_user());
             task::schedule_tick();
         }
         _ => {
             if cx.returns_to_user() {
-                // 用户态异常（非法指令、断点等）：杀死当前任务而非 panic 内核
-                kill_current_user_task("user exception", trap_cause, cx);
+                let signal = match trap_cause {
+                    TrapCause::Exception(Exception::IllegalInstruction) => 4,
+                    _ => 11,
+                };
+                if !syscall::raise_current_signal(signal) {
+                    kill_current_user_task("user exception", trap_cause, cx);
+                }
+                return_to_user_signal_delivery(authoritative, trap_cause, cx, None);
+                finish_trap_return(frame, cx, raw_cause);
+                return;
             }
             fatal_kernel_trap("unexpected trap",
                               trap_cause,
@@ -176,6 +208,7 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
     }
 
     if cx.returns_to_user() {
+        return_to_user_signal_delivery(authoritative, trap_cause, cx, restart);
         let return_satp = cx.return_address_space_token();
         let kernel_satp = paging::active_address_space_token();
         // `raw_cause` 来自 TrapContext.scause 快照，即 **本次** 进入内核的原因（如
@@ -215,6 +248,50 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
     if cx.returns_to_user() && !restored {
         panic!("restore_current_trap_frame failed before sret to user (current task trap_frame \
                 missing?)");
+    }
+}
+
+fn return_to_user_signal_delivery(
+    frame: *mut u8,
+    trap_cause: TrapCause,
+    cx: &TrapContext,
+    restart: Option<(usize, abi::syscall_args::SyscallArgs)>,
+) {
+    if syscall::deliver_pending_signal(frame, restart) < 0 {
+        kill_current_user_task("signal frame setup failed", trap_cause, cx);
+    }
+}
+
+fn restartable_syscall(syscall_nr: usize) -> bool {
+    matches!(
+        SyscallKind::decode::<ActiveSyscallNumberTable>(syscall_nr),
+        SyscallKind::Read
+            | SyscallKind::Readv
+            | SyscallKind::Write
+            | SyscallKind::Writev
+            | SyscallKind::WaitPid
+            | SyscallKind::Accept4
+            | SyscallKind::Connect
+            | SyscallKind::SendTo
+            | SyscallKind::RecvFrom
+            | SyscallKind::SendMsg
+            | SyscallKind::RecvMsg
+    )
+}
+
+fn finish_trap_return(frame: *mut u8, cx: &TrapContext, raw_cause: usize) {
+    let return_satp = cx.return_address_space_token();
+    let kernel_satp = paging::active_address_space_token();
+    trace!("[trap] sret to user pc={:#x} sp={:#x} return_satp={:#x} kernel_satp={:#x} \
+            frame_scause={:#x}",
+           cx.user_pc(),
+           cx.user_sp(),
+           return_satp,
+           kernel_satp,
+           raw_cause);
+    let restored = unsafe { task::restore_current_trap_frame(frame) };
+    if !restored {
+        panic!("restore_current_trap_frame failed before signal return");
     }
 }
 

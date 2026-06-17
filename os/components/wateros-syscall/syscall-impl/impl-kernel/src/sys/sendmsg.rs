@@ -4,6 +4,7 @@ use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use driver::network::stack;
+use wateros_base_config::task::SCHED_TIMER_PERIOD_MS;
 
 use crate::socket_fd;
 use crate::user_copy::{copy_from_user, copy_from_user_struct, copy_to_user};
@@ -39,6 +40,8 @@ struct SockAddrIn {
 }
 
 const IOV_MAX: usize = 256;
+const MSG_DONTWAIT: usize = 0x40;
+const SOCKET_RECVMSG_WAIT_TICKS: usize = 4096;
 
 pub(crate) fn sys_sendmsg(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
@@ -125,7 +128,7 @@ pub(crate) fn sys_sendmsg(args: SyscallArgs) -> UserRet {
 pub(crate) fn sys_recvmsg(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let msg_ptr = args.arg(1);
-    let _flags = args.arg(2);
+    let flags = args.arg(2);
 
     if msg_ptr == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
@@ -171,13 +174,15 @@ pub(crate) fn sys_recvmsg(args: SyscallArgs) -> UserRet {
 
     // 根据 socket 类型接收，写回发送方地址
     let (n, from_ip, from_port) = match stack::socket_kind(handle) {
-        Ok(stack::SocketKind::Tcp) => match stack::socket_recv(handle, &mut kbuf) {
+        Ok(stack::SocketKind::Tcp) => match recvmsg_tcp_blocking(fd, handle, flags, &mut kbuf) {
             Ok(n) if n > 0 => (n, [0u8; 4], 0u16),
-            _ => return UserRet::from_error(ErrNo::EAGAIN),
+            Ok(_) => return UserRet::from_success(0),
+            Err(e) => return UserRet::from_error(e),
         },
-        Ok(stack::SocketKind::Udp) => match stack::socket_recvfrom(handle, &mut kbuf) {
+        Ok(stack::SocketKind::Udp) => match recvmsg_udp_blocking(fd, handle, flags, &mut kbuf) {
             Ok((n, ip, port)) if n > 0 => (n, ip, port),
-            _ => return UserRet::from_error(ErrNo::EAGAIN),
+            Ok(_) => return UserRet::from_success(0),
+            Err(e) => return UserRet::from_error(e),
         },
         _ => return UserRet::from_error(ErrNo::ENOTSOCK),
     };
@@ -225,4 +230,78 @@ pub(crate) fn sys_recvmsg(args: SyscallArgs) -> UserRet {
     }
 
     UserRet::from_success(n)
+}
+
+fn recvmsg_is_nonblocking(fd: usize, flags: usize) -> bool {
+    socket_fd::is_nonblocking(fd) || (flags & MSG_DONTWAIT) != 0
+}
+
+fn recvmsg_tcp_blocking(
+    fd: usize,
+    handle: smoltcp::iface::SocketHandle,
+    flags: usize,
+    buf: &mut [u8],
+) -> Result<usize, ErrNo> {
+    let nonblocking = recvmsg_is_nonblocking(fd, flags);
+    let wait_ticks = socket_recv_wait_ticks(handle, SOCKET_RECVMSG_WAIT_TICKS);
+    for _ in 0..wait_ticks {
+        drive_network_stack();
+        if stack::socket_can_recv(handle).unwrap_or(false) {
+            return stack::socket_recv(handle, buf).map_err(|_| ErrNo::EIO);
+        }
+        if !stack::socket_may_recv(handle).unwrap_or(false) {
+            return Ok(0);
+        }
+        if matches!(stack::socket_state(handle), Ok(stack::SocketState::Closed)) {
+            return Ok(0);
+        }
+        if nonblocking {
+            return Err(ErrNo::EAGAIN);
+        }
+        task::sleep_for_ticks(1);
+    }
+    Err(ErrNo::EAGAIN)
+}
+
+fn recvmsg_udp_blocking(
+    fd: usize,
+    handle: smoltcp::iface::SocketHandle,
+    flags: usize,
+    buf: &mut [u8],
+) -> Result<(usize, [u8; 4], u16), ErrNo> {
+    let nonblocking = recvmsg_is_nonblocking(fd, flags);
+    let wait_ticks = socket_recv_wait_ticks(handle, SOCKET_RECVMSG_WAIT_TICKS);
+    for _ in 0..wait_ticks {
+        drive_network_stack();
+        if stack::socket_udp_can_recv(handle).unwrap_or(false) {
+            return stack::socket_recvfrom(handle, buf).map_err(|_| ErrNo::EIO);
+        }
+        if nonblocking {
+            return Err(ErrNo::EAGAIN);
+        }
+        task::sleep_for_ticks(1);
+    }
+    Err(ErrNo::EAGAIN)
+}
+
+fn socket_recv_wait_ticks(handle: smoltcp::iface::SocketHandle, default_ticks: usize) -> usize {
+    match stack::socket_recv_timeout_ms(handle) {
+        Ok(Some(ms)) => {
+            let tick_ms = (SCHED_TIMER_PERIOD_MS as u64).max(1);
+            let ticks = ms.saturating_add(tick_ms - 1) / tick_ms;
+            usize::try_from(ticks).unwrap_or(usize::MAX).max(1)
+        }
+        _ => default_ticks,
+    }
+}
+
+fn drive_network_stack() {
+    match platform::timer::now_duration() {
+        Ok(now) => {
+            let millis = now.as_millis().min(i64::MAX as u128) as i64;
+            stack::poll_at_millis(millis);
+        }
+        Err(_) => stack::poll(),
+    }
+    stack::poll_socket_events();
 }

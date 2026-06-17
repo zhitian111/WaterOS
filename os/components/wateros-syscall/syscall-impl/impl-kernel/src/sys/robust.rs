@@ -18,6 +18,7 @@ pub(crate) fn futex_error_to_errno(error: FutexError) -> ErrNo {
         FutexError::Invalid => ErrNo::EINVAL,
         FutexError::Nosys => ErrNo::ENOSYS,
         FutexError::TimedOut => ErrNo::ETIMEDOUT,
+        FutexError::Interrupted => ErrNo::EINTR,
     }
 }
 

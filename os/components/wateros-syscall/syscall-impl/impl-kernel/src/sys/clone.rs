@@ -10,7 +10,13 @@ use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 
-use crate::user_copy::copy_to_user_struct;
+use crate::user_copy::{copy_from_user, copy_to_user_struct};
+
+const CLONE3_ARGS_SIZE_V0: usize = 64;
+const CLONE3_ARGS_SIZE_CURRENT: usize = 88;
+const CLONE3_EXIT_SIGNAL_MASK: usize = 0xff;
+const CLONE_PIDFD: usize = 0x0000_1000;
+const CLONE_INTO_CGROUP: usize = 0x0000_0002_0000_0000;
 
 /// clone/fork 系统调用入口。
 ///
@@ -24,8 +30,52 @@ pub(crate) fn sys_clone(args: SyscallArgs) -> UserRet {
     do_clone(args)
 }
 
+/// clone3 系统调用入口。
+///
+/// Linux `struct clone_args` 通过 `(uaddr, size)` 传入；当前实现读取内核认识的
+/// 88 字节版本，并将可支持字段转换为已有 `clone` 入口。
+pub(crate) fn sys_clone3(args: SyscallArgs) -> UserRet {
+    let clone_args = match Clone3Args::read_from_user(args.arg(0), args.arg(1)) {
+        Ok(args) => args,
+        Err(error) => return UserRet::from_error(error),
+    };
+    if clone_args.flags & CLONE3_EXIT_SIGNAL_MASK != 0 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    if clone_args.exit_signal & !CLONE3_EXIT_SIGNAL_MASK != 0 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    if clone_args.flags & CLONE_PIDFD != 0 || clone_args.pidfd != 0 {
+        return UserRet::from_error(ErrNo::ENOSYS);
+    }
+    if clone_args.set_tid != 0 || clone_args.set_tid_size != 0 {
+        return UserRet::from_error(ErrNo::ENOSYS);
+    }
+    if clone_args.flags & CLONE_INTO_CGROUP != 0 || clone_args.cgroup != 0 {
+        return UserRet::from_error(ErrNo::ENOSYS);
+    }
+
+    let child_stack = match clone3_child_stack(clone_args.stack, clone_args.stack_size) {
+        Some(sp) => sp,
+        None => return UserRet::from_error(ErrNo::EINVAL),
+    };
+    let legacy_flags = clone_args.flags | clone_args.exit_signal;
+    do_clone(SyscallArgs::from_regs([
+        legacy_flags,
+        child_stack,
+        clone_args.parent_tid,
+        clone_args.tls,
+        clone_args.child_tid,
+        0,
+    ]))
+}
+
 #[inline(never)]
 fn do_clone(args: SyscallArgs) -> UserRet {
+    let parent_signal = match super::signal::ensure_current_signal_state() {
+        Ok(snapshot) => snapshot,
+        Err(error) => return UserRet::from_error(error),
+    };
     let clone_flags = task::CloneFlags::from_bits(args.arg(0));
     let child_stack = args.arg(1);
     let parent_tid = args.arg(2);
@@ -70,18 +120,31 @@ fn do_clone(args: SyscallArgs) -> UserRet {
         Some(id) => id,
         None => return UserRet::from_error(ErrNo::EAGAIN),
     };
-    let child_pid = match task::process_task_snapshot(child_id) {
-        Some(snapshot) => snapshot.pid.raw(),
+    let child_snapshot = match task::process_task_snapshot(child_id) {
+        Some(snapshot) => snapshot,
         None => return UserRet::from_error(ErrNo::ESRCH),
     };
+    let child_pid = child_snapshot.pid.raw();
+    if super::signal::on_fork(parent_signal.task_id,
+                              child_pid,
+                              child_id,
+                              child_snapshot.tid.raw())
+        .is_err()
+    {
+        return UserRet::from_error(ErrNo::EAGAIN);
+    }
 
     // 子任务继承父任务 cwd
     let parent_id = task::current_task_id().expect("current task must exist after fork");
     vfs::cwd::copy_cwd_from_parent(child_id, parent_id);
 
     vfs::fd::copy_fd_table_from_parent(child_id, parent_id);
+    crate::socket_fd::copy_from_parent(child_id, parent_id);
 
     cred::fork_cred(parent_id, child_id);
+    if let Err(error) = super::shm::fork_task_attachments(parent_id, child_id, new_aspace_ptr) {
+        log::warn!("[sys_clone] failed to inherit shm attachments: {:?}", error);
+    }
 
     UserRet::from_success(child_pid)
 }
@@ -111,6 +174,10 @@ fn do_clone_thread(
         Some(snapshot) => snapshot.tid.raw(),
         None => return UserRet::from_error(ErrNo::ESRCH),
     };
+    let parent_id = task::current_task_id().expect("current task must exist after clone");
+    if super::signal::on_clone_thread(parent_id, child_id, child_tid_raw).is_err() {
+        return UserRet::from_error(ErrNo::EAGAIN);
+    }
     let child_tid_value = child_tid_raw as u32;
 
     if clone_flags.contains(task::CloneFlags::CLONE_PARENT_SETTID)
@@ -126,10 +193,71 @@ fn do_clone_thread(
         return UserRet::from_error(ErrNo::EFAULT);
     }
 
-    let parent_id = task::current_task_id().expect("current task must exist after clone");
     vfs::cwd::share_cwd_from_parent(child_id, parent_id);
     vfs::fd::share_fd_table_from_parent(child_id, parent_id);
+    crate::socket_fd::share_from_parent(child_id, parent_id);
     cred::share_cred(parent_id, child_id);
 
     UserRet::from_success(child_tid_raw)
+}
+
+#[derive(Clone, Copy, Default)]
+struct Clone3Args {
+    flags: usize,
+    pidfd: usize,
+    child_tid: usize,
+    parent_tid: usize,
+    exit_signal: usize,
+    stack: usize,
+    stack_size: usize,
+    tls: usize,
+    set_tid: usize,
+    set_tid_size: usize,
+    cgroup: usize,
+}
+
+impl Clone3Args {
+    fn read_from_user(ptr: usize, size: usize) -> Result<Self, ErrNo> {
+        if ptr == 0 {
+            return Err(ErrNo::EFAULT);
+        }
+        if size < CLONE3_ARGS_SIZE_V0 {
+            return Err(ErrNo::EINVAL);
+        }
+        let mut raw = [0u8; CLONE3_ARGS_SIZE_CURRENT];
+        let copy_len = size.min(CLONE3_ARGS_SIZE_CURRENT);
+        let copied = copy_from_user(&mut raw[..copy_len], ptr)?;
+        if copied != copy_len {
+            return Err(ErrNo::EFAULT);
+        }
+        Ok(Self {
+            flags: clone3_arg_word(&raw, 0),
+            pidfd: clone3_arg_word(&raw, 8),
+            child_tid: clone3_arg_word(&raw, 16),
+            parent_tid: clone3_arg_word(&raw, 24),
+            exit_signal: clone3_arg_word(&raw, 32),
+            stack: clone3_arg_word(&raw, 40),
+            stack_size: clone3_arg_word(&raw, 48),
+            tls: clone3_arg_word(&raw, 56),
+            set_tid: clone3_arg_word(&raw, 64),
+            set_tid_size: clone3_arg_word(&raw, 72),
+            cgroup: clone3_arg_word(&raw, 80),
+        })
+    }
+}
+
+fn clone3_arg_word(raw: &[u8; CLONE3_ARGS_SIZE_CURRENT], offset: usize) -> usize {
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&raw[offset..offset + 8]);
+    u64::from_ne_bytes(bytes) as usize
+}
+
+fn clone3_child_stack(stack: usize, stack_size: usize) -> Option<usize> {
+    if stack == 0 {
+        return Some(0);
+    }
+    if stack_size == 0 {
+        return Some(stack);
+    }
+    stack.checked_add(stack_size)
 }

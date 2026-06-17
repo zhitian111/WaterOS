@@ -26,6 +26,32 @@ pub fn dispatch_syscall_from_trap(syscall_nr: usize, syscall_args: SyscallArgs) 
     )
 }
 
+#[inline]
+pub fn timer_tick(interrupted_user: bool) {
+    sys::timer_tick(interrupted_user);
+}
+
+#[inline]
+pub fn deliver_pending_signal(
+    frame: *mut u8,
+    restart: Option<(usize, SyscallArgs)>,
+) -> isize {
+    match sys::deliver_pending_signal(frame, restart) {
+        Ok(false) => 0,
+        Ok(true) => 1,
+        Err(_) => -1,
+    }
+}
+
+#[inline]
+pub fn restore_signal_frame(frame: *mut u8) -> bool {
+    sys::restore_signal_frame(frame).is_ok()
+}
+
+pub fn raise_current_signal(signal: usize) -> bool {
+    sys::raise_current_thread(signal).is_ok()
+}
+
 /// Kernel syscall implementation selected by the aggregate crate.
 pub struct KernelSyscallDispatcher;
 
@@ -74,6 +100,11 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     #[inline]
     fn dispatch_clone(args: SyscallArgs) -> isize {
         sys::sys_clone(args).0
+    }
+
+    #[inline]
+    fn dispatch_clone3(args: SyscallArgs) -> isize {
+        sys::sys_clone3(args).0
     }
 
     #[inline]
@@ -147,6 +178,11 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     }
 
     #[inline]
+    fn dispatch_sync(args: SyscallArgs) -> isize {
+        sys::sys_sync(args).0
+    }
+
+    #[inline]
     fn dispatch_fsync(args: SyscallArgs) -> isize {
         sys::sys_fsync(args).0
     }
@@ -154,6 +190,11 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     #[inline]
     fn dispatch_fdatasync(args: SyscallArgs) -> isize {
         sys::sys_fdatasync(args).0
+    }
+
+    #[inline]
+    fn dispatch_ftruncate(args: SyscallArgs) -> isize {
+        sys::sys_ftruncate(args).0
     }
 
     #[inline]
@@ -222,6 +263,26 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     }
 
     #[inline]
+    fn dispatch_shmget(args: SyscallArgs) -> isize {
+        sys::sys_shmget(args).0
+    }
+
+    #[inline]
+    fn dispatch_shmctl(args: SyscallArgs) -> isize {
+        sys::sys_shmctl(args).0
+    }
+
+    #[inline]
+    fn dispatch_shmat(args: SyscallArgs) -> isize {
+        sys::sys_shmat(args).0
+    }
+
+    #[inline]
+    fn dispatch_shmdt(args: SyscallArgs) -> isize {
+        sys::sys_shmdt(args).0
+    }
+
+    #[inline]
     fn dispatch_get_time(args: SyscallArgs) -> isize {
         sys::sys_gettimeofday(args).0
     }
@@ -279,6 +340,11 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     #[inline]
     fn dispatch_getegid(_args: SyscallArgs) -> isize {
         sys::sys_getegid().0
+    }
+
+    #[inline]
+    fn dispatch_setsid(_args: SyscallArgs) -> isize {
+        sys::sys_setsid().0
     }
 
     #[inline]
@@ -437,6 +503,31 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     }
 
     #[inline]
+    fn dispatch_getitimer(args: SyscallArgs) -> isize {
+        sys::sys_getitimer(args).0
+    }
+
+    #[inline]
+    fn dispatch_rt_sigpending(args: SyscallArgs) -> isize {
+        sys::sys_rt_sigpending(args).0
+    }
+
+    #[inline]
+    fn dispatch_rt_sigsuspend(args: SyscallArgs) -> isize {
+        sys::sys_rt_sigsuspend(args).0
+    }
+
+    #[inline]
+    fn dispatch_tkill(args: SyscallArgs) -> isize {
+        sys::sys_tkill(args).0
+    }
+
+    #[inline]
+    fn dispatch_tgkill(args: SyscallArgs) -> isize {
+        sys::sys_tgkill(args).0
+    }
+
+    #[inline]
     fn dispatch_setrlimit(args: SyscallArgs) -> isize {
         sys::sys_setrlimit(args).0
     }
@@ -529,6 +620,11 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     #[inline]
     fn dispatch_accept4(args: SyscallArgs) -> isize {
         sys::sys_accept4(args).0
+    }
+
+    #[inline]
+    fn dispatch_accept(args: SyscallArgs) -> isize {
+        sys::sys_accept(args).0
     }
 
     #[inline]

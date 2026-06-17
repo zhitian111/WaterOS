@@ -10,11 +10,8 @@ use api_v0::{
     SingleRootReadView, VfsError, VfsIoHandle, VfsMetadata, VfsNodeType, VfsOpenFlags, VfsResult,
     VfsSeekWhence,
 };
-use fs::{FsAccessMode, FsKind};
-
-use crate::map_fs_err;
 use crate::mount_table::{resolve_route, FsRoute};
-use crate::FsBridge;
+use crate::{replace_file_contents, FsBridge};
 
 /// 已打开的根卷普通文件（小文件：全文缓冲于内存）。
 #[derive(Clone)]
@@ -51,22 +48,10 @@ impl BufferedFileHandle {
             if !want_write {
                 return Err(VfsError::Unsupported);
             }
-            let meta = VfsMetadata {
-                node_type: VfsNodeType::File,
-                size: 0,
-                mode: 0o100644,
-            };
-            return Ok(Self {
-                path,
-                data: Vec::new(),
-                offset: 0,
-                meta,
-                writable: true,
-                dirty: true,
-            });
+            replace_file_contents(path.as_str(), &[])?;
         }
 
-        let meta = bridge.metadata(path.as_str())?;
+        let mut meta = bridge.metadata(path.as_str())?;
         if meta.node_type != VfsNodeType::File {
             return Err(VfsError::NotAFile);
         }
@@ -77,10 +62,11 @@ impl BufferedFileHandle {
             Vec::new()
         };
 
-        let mut dirty = false;
+        let dirty = false;
         if flags.contains(VfsOpenFlags::TRUNC) && want_write {
+            replace_file_contents(path.as_str(), &[])?;
             data.clear();
-            dirty = true;
+            meta = bridge.metadata(path.as_str())?;
         }
 
         let mut offset = 0u64;
@@ -113,16 +99,11 @@ impl BufferedFileHandle {
         if !self.dirty {
             return Ok(());
         }
-        let imp = fs::pick_fs_impl(FsKind::Ext4, FsAccessMode::ReadWrite)
-            .ok_or(VfsError::Unsupported)?;
-        let dev_path = fs::rootfs::active_impl::current_root_device_path()
-            .ok_or(VfsError::NotMounted)?;
-        let dev = fs::devfs::active_impl::lookup_block_device(dev_path.as_str())
-            .map_err(map_fs_err)?;
-        let rw = imp.mount_rw(dev).map_err(map_fs_err)?;
-        rw.lock()
-            .write_regular_file(self.path.as_str(), &self.data)
-            .map_err(map_fs_err)?;
+        if !FsBridge.exists(self.path.as_str())? {
+            self.dirty = false;
+            return Ok(());
+        }
+        replace_file_contents(self.path.as_str(), &self.data)?;
         self.dirty = false;
         self.meta.size = self.data.len() as u64;
         Ok(())
@@ -207,6 +188,20 @@ impl VfsIoHandle for BufferedFileHandle {
         Ok(buf.len())
     }
 
+    fn truncate(&mut self, len: u64) -> VfsResult<()> {
+        if !self.writable {
+            return Err(VfsError::Unsupported);
+        }
+        let len = usize::try_from(len).map_err(|_| VfsError::InvalidPath)?;
+        self.data.resize(len, 0);
+        self.meta.size = len as u64;
+        if self.offset > self.meta.size {
+            self.offset = self.meta.size;
+        }
+        self.dirty = true;
+        Ok(())
+    }
+
     fn seek(&mut self, offset: i64, whence: VfsSeekWhence) -> VfsResult<u64> {
         let new_off = match whence {
             VfsSeekWhence::Set => {
@@ -271,9 +266,14 @@ impl FsBridge {
     ) -> VfsResult<Box<dyn VfsIoHandle>> {
         let abs = api_v0::resolve_open_path(path)?;
         match resolve_route(abs.as_str())? {
-            FsRoute::PseudoProc { rel } => {
-                return super::proc_handle::open_proc(rel, abs, flags);
+            FsRoute::PseudoProc { rel, identity } => {
+                return super::proc_handle::open_proc(rel, abs, flags, identity);
             }
+            _ => {}
+        }
+        match abs.as_str() {
+            "/dev/zero" => return Ok(Box::new(impl_fd_session::ZeroDeviceHandle)),
+            "/dev/urandom" => return Ok(Box::new(impl_fd_session::UrandomDeviceHandle)),
             _ => {}
         }
         if let Ok(dev) = fs::devfs::active_impl::lookup_character_device(abs.as_str()) {

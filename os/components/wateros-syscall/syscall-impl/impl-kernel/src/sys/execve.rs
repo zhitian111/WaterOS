@@ -41,6 +41,7 @@ fn do_execve(path_ptr: usize, argv_ptr: usize, envp_ptr: usize) -> Result<(), Er
 
     super::robust::robust_exit_cleanup_siblings_for_exec();
     let killed_threads = task::terminate_other_threads_for_exec().map_err(|_| ErrNo::EINVAL)?;
+    let current_signal_task = super::signal::ensure_current_signal_state()?.task_id;
 
     let argv_refs: Vec<&str> = argv
         .iter()
@@ -65,13 +66,18 @@ fn do_execve(path_ptr: usize, argv_ptr: usize, envp_ptr: usize) -> Result<(), Er
         vfs::fd::drop_task_fd_table(exited.id);
         cred::drop_task_cred(exited.id);
     }
+    super::signal::on_exec(current_signal_task, &killed_threads);
 
     let old_aspace = task::current_task_user_aspace_ptr();
+    let current_tid = task::current_task_id().expect("execve requires a current task");
+    super::shm::drop_task_attachments(current_tid, old_aspace);
+    for exited in &killed_threads {
+        super::shm::drop_task_attachments(exited.id, old_aspace);
+    }
     mm::kernel_mm::drop_user_aspace(old_aspace);
 
     vfs::fd::close_cloexec_fds_for_current_task().map_err(vfs_error_to_errno)?;
 
-    let current_tid = task::current_task_id().expect("execve requires a current task");
     // TODO(cred-exec-setuid): 可执行文件 S_ISUID/S_ISGID 应在 cred::on_exec 内更新凭证。
     cred::on_exec(current_tid);
     vfs::cwd::set_task_exe_path(current_tid, abs_path.as_str()).map_err(vfs_error_to_errno)?;

@@ -178,7 +178,7 @@ impl VfsFdSession for PerTaskFdRegistry {
         let task_id = task::current_task_id().ok_or(VfsError::NoTask)?;
         let newfd = {
             let table = self.table_mut(task_id);
-            if let Some(fd) = (VFS_FIRST_DYNAMIC_FD..table.len()).find(|&fd| table[fd].is_none())
+            if let Some(fd) = (0..table.len()).find(|&fd| table[fd].is_none())
             {
                 table[fd] = Some(handle);
                 fd
@@ -208,7 +208,7 @@ impl PerTaskFdRegistry {
     ) -> usize {
         let (newfd, len) = {
             let table = self.table_mut(task_id);
-            if let Some(fd) = (VFS_FIRST_DYNAMIC_FD..table.len()).find(|&fd| table[fd].is_none())
+            if let Some(fd) = (0..table.len()).find(|&fd| table[fd].is_none())
             {
                 table[fd] = Some(handle);
                 (fd, table.len())
@@ -234,6 +234,19 @@ impl PerTaskFdRegistry {
             Some(Some(h)) => Ok(h.as_mut()),
             _ => Err(VfsError::BadFd),
         }
+    }
+
+    /// 刷新全部实际 fd 表中的打开句柄；发生错误后仍继续其余写回。
+    pub fn flush_all(&mut self) -> VfsResult<()> {
+        let mut first_error = None;
+        for table in self.tables.values_mut() {
+            for handle in table.iter_mut().flatten() {
+                if let Err(err) = handle.flush() {
+                    first_error.get_or_insert(err);
+                }
+            }
+        }
+        first_error.map_or(Ok(()), Err)
     }
 
     /// 临时取出指定 fd 的句柄，让调用方可在不持有 fd 注册表借用时执行 I/O。

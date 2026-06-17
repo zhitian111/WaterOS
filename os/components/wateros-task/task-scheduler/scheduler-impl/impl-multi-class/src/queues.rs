@@ -12,12 +12,13 @@ pub(super) struct OtherReadyQueue {
 }
 
 impl OtherReadyQueue {
-    pub(super) fn new() -> Self {
-        Self { ready_queue : VecDeque::new() }
-    }
+    pub(super) fn new() -> Self { Self { ready_queue : VecDeque::new() } }
 
-    pub(super) fn ready_queue_mut(&mut self) -> &mut VecDeque<TaskId> {
-        &mut self.ready_queue
+    pub(super) fn has_runnable(&self, check : &impl SchedulableCheck) -> bool {
+        self.ready_queue
+            .iter()
+            .copied()
+            .any(|task_id| check.is_schedulable(task_id))
     }
 }
 
@@ -39,7 +40,9 @@ impl ReadyQueue for OtherReadyQueue {
     }
 
     fn pick_next_runnable_task_id(&mut self, check : &impl SchedulableCheck) -> Option<TaskId> {
-        while let Some(task_id) = self.ready_queue.pop_front() {
+        while let Some(task_id) = self.ready_queue
+                                      .pop_front()
+        {
             if check.is_schedulable(task_id) {
                 return Some(task_id);
             }

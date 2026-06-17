@@ -25,8 +25,10 @@ pub enum SyscallKind {
     ReadLinkAt,
     FaccessAt,
     StatFs,
+    Sync,
     Fsync,
     Fdatasync,
+    Ftruncate,
     OpenAt,
     Close,
     Fstat,
@@ -53,6 +55,7 @@ pub enum SyscallKind {
     Exit,
     ExitGroup,
     Clone,
+    Clone3,
     Execve,
     WaitPid,
     Kill,
@@ -62,6 +65,10 @@ pub enum SyscallKind {
     Msync,
     Mprotect,
     GetMempolicy,
+    ShmGet,
+    ShmCtl,
+    ShmAt,
+    ShmDt,
     GetTime,
     ClockSetTime,
     ClockGetTime,
@@ -75,6 +82,7 @@ pub enum SyscallKind {
     GetEuid,
     GetGid,
     GetEgid,
+    SetSid,
     GetGroups,
     Sysinfo,
     SetUid,
@@ -92,12 +100,17 @@ pub enum SyscallKind {
     Futex,
     RtSigaction,
     RtSigprocmask,
+    RtSigpending,
+    RtSigsuspend,
     RtSigtimedwait,
     RtSigreturn,
+    Tkill,
+    Tgkill,
     SetTidAddress,
     SetRobustList,
     GetRobustList,
     GetRandom,
+    GetItimer,
     SetItimer,
     GetRlimit,
     GetRusage,
@@ -107,6 +120,7 @@ pub enum SyscallKind {
     Socket,
     Bind,
     Listen,
+    Accept,
     Accept4,
     Connect,
     GetSockName,
@@ -154,10 +168,14 @@ impl SyscallKind {
             Self::FaccessAt
         } else if syscall_nr == T::STATFS.raw() {
             Self::StatFs
+        } else if syscall_nr == T::SYNC.raw() {
+            Self::Sync
         } else if syscall_nr == T::FSYNC.raw() {
             Self::Fsync
         } else if syscall_nr == T::FDATASYNC.raw() {
             Self::Fdatasync
+        } else if syscall_nr == T::FTRUNCATE.raw() {
+            Self::Ftruncate
         } else if syscall_nr == T::OPENAT.raw() {
             Self::OpenAt
         } else if syscall_nr == T::CLOSE.raw() {
@@ -210,6 +228,8 @@ impl SyscallKind {
             Self::ExitGroup
         } else if syscall_nr == T::FORK.raw() {
             Self::Clone
+        } else if syscall_nr == T::CLONE3.raw() {
+            Self::Clone3
         } else if syscall_nr == T::EXEC.raw() {
             Self::Execve
         } else if syscall_nr == T::WAITPID.raw() {
@@ -228,6 +248,14 @@ impl SyscallKind {
             Self::Mprotect
         } else if syscall_nr == T::GET_MEMPOLICY.raw() {
             Self::GetMempolicy
+        } else if syscall_nr == T::SHMGET.raw() {
+            Self::ShmGet
+        } else if syscall_nr == T::SHMCTL.raw() {
+            Self::ShmCtl
+        } else if syscall_nr == T::SHMAT.raw() {
+            Self::ShmAt
+        } else if syscall_nr == T::SHMDT.raw() {
+            Self::ShmDt
         } else if syscall_nr == T::GET_TIME.raw() {
             Self::GetTime
         } else if syscall_nr == T::CLOCK_SETTIME.raw() {
@@ -254,6 +282,8 @@ impl SyscallKind {
             Self::GetGid
         } else if syscall_nr == T::GETEGID.raw() {
             Self::GetEgid
+        } else if syscall_nr == T::SETSID.raw() {
+            Self::SetSid
         } else if syscall_nr == T::GETGROUPS.raw() {
             Self::GetGroups
         } else if syscall_nr == T::SYSINFO.raw() {
@@ -288,10 +318,18 @@ impl SyscallKind {
             Self::RtSigaction
         } else if syscall_nr == T::RT_SIGPROCMASK.raw() {
             Self::RtSigprocmask
+        } else if syscall_nr == T::RT_SIGPENDING.raw() {
+            Self::RtSigpending
+        } else if syscall_nr == T::RT_SIGSUSPEND.raw() {
+            Self::RtSigsuspend
         } else if syscall_nr == T::RT_SIGTIMEDWAIT.raw() {
             Self::RtSigtimedwait
         } else if syscall_nr == T::RT_SIGRETURN.raw() {
             Self::RtSigreturn
+        } else if syscall_nr == T::TKILL.raw() {
+            Self::Tkill
+        } else if syscall_nr == T::TGKILL.raw() {
+            Self::Tgkill
         } else if syscall_nr == T::SET_TID_ADDRESS.raw() {
             Self::SetTidAddress
         } else if syscall_nr == T::SET_ROBUST_LIST.raw() {
@@ -300,6 +338,8 @@ impl SyscallKind {
             Self::GetRobustList
         } else if syscall_nr == T::GETRANDOM.raw() {
             Self::GetRandom
+        } else if syscall_nr == T::GETITIMER.raw() {
+            Self::GetItimer
         } else if syscall_nr == T::SETITIMER.raw() {
             Self::SetItimer
         } else if syscall_nr == T::GETRLIMIT.raw() {
@@ -318,6 +358,8 @@ impl SyscallKind {
             Self::Bind
         } else if syscall_nr == T::LISTEN.raw() {
             Self::Listen
+        } else if syscall_nr == T::ACCEPT.raw() {
+            Self::Accept
         } else if syscall_nr == T::ACCEPT4.raw() {
             Self::Accept4
         } else if syscall_nr == T::CONNECT.raw() {
@@ -369,8 +411,10 @@ impl SyscallKind {
             Self::ReadLinkAt => "readlinkat",
             Self::FaccessAt => "faccessat",
             Self::StatFs => "statfs",
+            Self::Sync => "sync",
             Self::Fsync => "fsync",
             Self::Fdatasync => "fdatasync",
+            Self::Ftruncate => "ftruncate",
             Self::OpenAt => "openat",
             Self::Close => "close",
             Self::Fstat => "fstat",
@@ -397,6 +441,7 @@ impl SyscallKind {
             Self::Exit => "exit",
             Self::ExitGroup => "exit_group",
             Self::Clone => "clone",
+            Self::Clone3 => "clone3",
             Self::Execve => "execve",
             Self::WaitPid => "waitpid",
             Self::Kill => "kill",
@@ -406,6 +451,10 @@ impl SyscallKind {
             Self::Msync => "msync",
             Self::Mprotect => "mprotect",
             Self::GetMempolicy => "get_mempolicy",
+            Self::ShmGet => "shmget",
+            Self::ShmCtl => "shmctl",
+            Self::ShmAt => "shmat",
+            Self::ShmDt => "shmdt",
             Self::GetTime => "gettimeofday",
             Self::ClockSetTime => "clock_settime",
             Self::ClockGetTime => "clock_gettime",
@@ -419,6 +468,7 @@ impl SyscallKind {
             Self::GetEuid => "geteuid",
             Self::GetGid => "getgid",
             Self::GetEgid => "getegid",
+            Self::SetSid => "setsid",
             Self::GetGroups => "getgroups",
             Self::Sysinfo => "sysinfo",
             Self::SetUid => "setuid",
@@ -436,12 +486,17 @@ impl SyscallKind {
             Self::Futex => "futex",
             Self::RtSigaction => "rt_sigaction",
             Self::RtSigprocmask => "rt_sigprocmask",
+            Self::RtSigpending => "rt_sigpending",
+            Self::RtSigsuspend => "rt_sigsuspend",
             Self::RtSigtimedwait => "rt_sigtimedwait",
             Self::RtSigreturn => "rt_sigreturn",
+            Self::Tkill => "tkill",
+            Self::Tgkill => "tgkill",
             Self::SetTidAddress => "set_tid_address",
             Self::SetRobustList => "set_robust_list",
             Self::GetRobustList => "get_robust_list",
             Self::GetRandom => "getrandom",
+            Self::GetItimer => "getitimer",
             Self::SetItimer => "setitimer",
             Self::GetRlimit => "getrlimit",
             Self::GetRusage => "getrusage",
@@ -451,6 +506,7 @@ impl SyscallKind {
             Self::Socket => "socket",
             Self::Bind => "bind",
             Self::Listen => "listen",
+            Self::Accept => "accept",
             Self::Accept4 => "accept4",
             Self::Connect => "connect",
             Self::GetSockName => "getsockname",
@@ -701,6 +757,14 @@ pub trait SyscallDispatcher {
         )
     }
 
+    fn dispatch_sync(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Sync,
+            Self::NumberTable::SYNC.raw(),
+            args,
+        )
+    }
+
     fn dispatch_fsync(args: SyscallArgs) -> isize {
         Self::dispatch_unsupported(
             SyscallKind::Fsync,
@@ -713,6 +777,14 @@ pub trait SyscallDispatcher {
         Self::dispatch_unsupported(
             SyscallKind::Fdatasync,
             Self::NumberTable::FDATASYNC.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_ftruncate(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Ftruncate,
+            Self::NumberTable::FTRUNCATE.raw(),
             args,
         )
     }
@@ -853,6 +925,14 @@ pub trait SyscallDispatcher {
         )
     }
 
+    fn dispatch_clone3(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Clone3,
+            Self::NumberTable::CLONE3.raw(),
+            args,
+        )
+    }
+
     fn dispatch_execve(args: SyscallArgs) -> isize {
         Self::dispatch_unsupported(
             SyscallKind::Execve,
@@ -907,6 +987,22 @@ pub trait SyscallDispatcher {
             Self::NumberTable::GET_MEMPOLICY.raw(),
             args,
         )
+    }
+
+    fn dispatch_shmget(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(SyscallKind::ShmGet, Self::NumberTable::SHMGET.raw(), args)
+    }
+
+    fn dispatch_shmctl(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(SyscallKind::ShmCtl, Self::NumberTable::SHMCTL.raw(), args)
+    }
+
+    fn dispatch_shmat(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(SyscallKind::ShmAt, Self::NumberTable::SHMAT.raw(), args)
+    }
+
+    fn dispatch_shmdt(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(SyscallKind::ShmDt, Self::NumberTable::SHMDT.raw(), args)
     }
 
     fn dispatch_get_time(args: SyscallArgs) -> isize {
@@ -1001,6 +1097,14 @@ pub trait SyscallDispatcher {
         Self::dispatch_unsupported(
             SyscallKind::GetEgid,
             Self::NumberTable::GETEGID.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_setsid(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::SetSid,
+            Self::NumberTable::SETSID.raw(),
             args,
         )
     }
@@ -1165,6 +1269,22 @@ pub trait SyscallDispatcher {
         )
     }
 
+    fn dispatch_rt_sigpending(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::RtSigpending,
+            Self::NumberTable::RT_SIGPENDING.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_rt_sigsuspend(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::RtSigsuspend,
+            Self::NumberTable::RT_SIGSUSPEND.raw(),
+            args,
+        )
+    }
+
     fn dispatch_rt_sigtimedwait(args: SyscallArgs) -> isize {
         Self::dispatch_unsupported(
             SyscallKind::RtSigtimedwait,
@@ -1179,6 +1299,14 @@ pub trait SyscallDispatcher {
             Self::NumberTable::RT_SIGRETURN.raw(),
             args,
         )
+    }
+
+    fn dispatch_tkill(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(SyscallKind::Tkill, Self::NumberTable::TKILL.raw(), args)
+    }
+
+    fn dispatch_tgkill(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(SyscallKind::Tgkill, Self::NumberTable::TGKILL.raw(), args)
     }
 
     fn dispatch_set_tid_address(args: SyscallArgs) -> isize {
@@ -1209,6 +1337,14 @@ pub trait SyscallDispatcher {
         Self::dispatch_unsupported(
             SyscallKind::GetRandom,
             Self::NumberTable::GETRANDOM.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_getitimer(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::GetItimer,
+            Self::NumberTable::GETITIMER.raw(),
             args,
         )
     }
@@ -1291,6 +1427,14 @@ pub trait SyscallDispatcher {
         Self::dispatch_unsupported(
             SyscallKind::Accept4,
             Self::NumberTable::ACCEPT4.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_accept(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Accept,
+            Self::NumberTable::ACCEPT.raw(),
             args,
         )
     }
@@ -1441,8 +1585,10 @@ pub trait SyscallDispatcher {
             SyscallKind::ReadLinkAt => Self::dispatch_readlinkat(syscall_args),
             SyscallKind::FaccessAt => Self::dispatch_faccessat(syscall_args),
             SyscallKind::StatFs => Self::dispatch_statfs(syscall_args),
+            SyscallKind::Sync => Self::dispatch_sync(syscall_args),
             SyscallKind::Fsync => Self::dispatch_fsync(syscall_args),
             SyscallKind::Fdatasync => Self::dispatch_fdatasync(syscall_args),
+            SyscallKind::Ftruncate => Self::dispatch_ftruncate(syscall_args),
             SyscallKind::OpenAt => Self::dispatch_openat(syscall_args),
             SyscallKind::Close => Self::dispatch_close(syscall_args),
             SyscallKind::Fstat => Self::dispatch_fstat(syscall_args),
@@ -1461,12 +1607,17 @@ pub trait SyscallDispatcher {
             SyscallKind::Umount2 => Self::dispatch_umount2(syscall_args),
             SyscallKind::Brk => Self::dispatch_brk(syscall_args),
             SyscallKind::Clone => Self::dispatch_clone(syscall_args),
+            SyscallKind::Clone3 => Self::dispatch_clone3(syscall_args),
             SyscallKind::Execve => Self::dispatch_execve(syscall_args),
             SyscallKind::Mmap => Self::dispatch_mmap(syscall_args),
             SyscallKind::Munmap => Self::dispatch_munmap(syscall_args),
             SyscallKind::Msync => Self::dispatch_msync(syscall_args),
             SyscallKind::Mprotect => Self::dispatch_mprotect(syscall_args),
             SyscallKind::GetMempolicy => Self::dispatch_getmempolicy(syscall_args),
+            SyscallKind::ShmGet => Self::dispatch_shmget(syscall_args),
+            SyscallKind::ShmCtl => Self::dispatch_shmctl(syscall_args),
+            SyscallKind::ShmAt => Self::dispatch_shmat(syscall_args),
+            SyscallKind::ShmDt => Self::dispatch_shmdt(syscall_args),
             SyscallKind::GetTime => Self::dispatch_get_time(syscall_args),
             SyscallKind::ClockSetTime => Self::dispatch_clock_settime(syscall_args),
             SyscallKind::ClockGetTime => Self::dispatch_clock_gettime(syscall_args),
@@ -1479,6 +1630,7 @@ pub trait SyscallDispatcher {
             SyscallKind::GetEuid => Self::dispatch_geteuid(syscall_args),
             SyscallKind::GetGid => Self::dispatch_getgid(syscall_args),
             SyscallKind::GetEgid => Self::dispatch_getegid(syscall_args),
+            SyscallKind::SetSid => Self::dispatch_setsid(syscall_args),
             SyscallKind::GetGroups => Self::dispatch_getgroups(syscall_args),
             SyscallKind::Sysinfo => Self::dispatch_sysinfo(syscall_args),
             SyscallKind::SetUid => Self::dispatch_setuid(syscall_args),
@@ -1499,12 +1651,17 @@ pub trait SyscallDispatcher {
             SyscallKind::Futex => Self::dispatch_futex(syscall_args),
             SyscallKind::RtSigaction => Self::dispatch_rt_sigaction(syscall_args),
             SyscallKind::RtSigprocmask => Self::dispatch_rt_sigprocmask(syscall_args),
+            SyscallKind::RtSigpending => Self::dispatch_rt_sigpending(syscall_args),
+            SyscallKind::RtSigsuspend => Self::dispatch_rt_sigsuspend(syscall_args),
             SyscallKind::RtSigtimedwait => Self::dispatch_rt_sigtimedwait(syscall_args),
             SyscallKind::RtSigreturn => Self::dispatch_rt_sigreturn(syscall_args),
+            SyscallKind::Tkill => Self::dispatch_tkill(syscall_args),
+            SyscallKind::Tgkill => Self::dispatch_tgkill(syscall_args),
             SyscallKind::SetTidAddress => Self::dispatch_set_tid_address(syscall_args),
             SyscallKind::SetRobustList => Self::dispatch_set_robust_list(syscall_args),
             SyscallKind::GetRobustList => Self::dispatch_get_robust_list(syscall_args),
             SyscallKind::GetRandom => Self::dispatch_getrandom(syscall_args),
+            SyscallKind::GetItimer => Self::dispatch_getitimer(syscall_args),
             SyscallKind::SetItimer => Self::dispatch_setitimer(syscall_args),
             SyscallKind::GetRlimit => Self::dispatch_getrlimit(syscall_args),
             SyscallKind::GetRusage => Self::dispatch_getrusage(syscall_args),
@@ -1514,6 +1671,7 @@ pub trait SyscallDispatcher {
             SyscallKind::Socket => Self::dispatch_socket(syscall_args),
             SyscallKind::Bind => Self::dispatch_bind(syscall_args),
             SyscallKind::Listen => Self::dispatch_listen(syscall_args),
+            SyscallKind::Accept => Self::dispatch_accept(syscall_args),
             SyscallKind::Accept4 => Self::dispatch_accept4(syscall_args),
             SyscallKind::Connect => Self::dispatch_connect(syscall_args),
             SyscallKind::GetSockName => Self::dispatch_getsockname(syscall_args),

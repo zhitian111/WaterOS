@@ -517,6 +517,6 @@ impl SchedulableCheck for TaskRegistry {
         }
         self.task_table
             .task_opt(task_id)
-            .is_some_and(|task| !matches!(task.state(), TaskState::Exited(_)))
+            .is_some_and(|task| matches!(task.state(), TaskState::Ready))
     }
 }

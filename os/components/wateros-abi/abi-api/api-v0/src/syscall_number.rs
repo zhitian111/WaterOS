@@ -66,10 +66,14 @@ pub trait SyscallNumberTable {
     const FACCESSAT: SyscallNumber;
     /// 查询路径所在文件系统统计信息（`statfs(2)`）。
     const STATFS: SyscallNumber;
+    /// 请求所有已挂载文件系统写回脏数据（`sync(2)`）。
+    const SYNC: SyscallNumber;
     /// 将 fd 对应文件脏数据同步到存储（`fsync(2)`）。
     const FSYNC: SyscallNumber;
     /// 将 fd 对应文件数据同步到存储（`fdatasync(2)`）。
     const FDATASYNC: SyscallNumber;
+    /// 调整 fd 对应文件长度（`ftruncate(2)`）。
+    const FTRUNCATE: SyscallNumber;
     /// 相对目录打开路径（`openat(2)`）。
     const OPENAT: SyscallNumber;
     /// 关闭文件描述符（`close(2)`）。
@@ -110,6 +114,8 @@ pub trait SyscallNumberTable {
     const EXIT_GROUP: SyscallNumber;
     /// 创建子进程；用户态常映射为 `clone` 族调用。
     const FORK: SyscallNumber;
+    /// 使用结构体参数创建进程/线程（`clone3(2)`）。
+    const CLONE3: SyscallNumber;
     /// 等待子进程状态变更（与 `wait4` 等价的编号）。
     const WAITPID: SyscallNumber;
     /// 向进程发送信号（`kill(2)`）。
@@ -156,6 +162,14 @@ pub trait SyscallNumberTable {
     const MPROTECT: SyscallNumber;
     /// 查询 NUMA 内存策略（`get_mempolicy(2)`）。
     const GET_MEMPOLICY: SyscallNumber;
+    /// 获取或创建 SysV shared memory segment（`shmget(2)`）。
+    const SHMGET: SyscallNumber;
+    /// 控制 SysV shared memory segment（`shmctl(2)`）。
+    const SHMCTL: SyscallNumber;
+    /// attach SysV shared memory segment（`shmat(2)`）。
+    const SHMAT: SyscallNumber;
+    /// detach SysV shared memory segment（`shmdt(2)`）。
+    const SHMDT: SyscallNumber;
 
     // 基本信息 / identity & misc info
     /// 内核与体系结构标识（`uname(2)`）。
@@ -182,6 +196,8 @@ pub trait SyscallNumberTable {
     const GETGID: SyscallNumber;
     /// 当前进程有效组 ID（`getegid(2)`）。
     const GETEGID: SyscallNumber;
+    /// 创建新会话（`setsid(2)`）。
+    const SETSID: SyscallNumber;
     /// 读取 supplementary 组列表（`getgroups(2)`）。
     const GETGROUPS: SyscallNumber;
     /// 查询系统内存与负载摘要（`sysinfo(2)`）。
@@ -206,10 +222,18 @@ pub trait SyscallNumberTable {
     const RT_SIGACTION: SyscallNumber;
     /// 阻塞/解除阻塞信号集（`rt_sigprocmask(2)`）。
     const RT_SIGPROCMASK: SyscallNumber;
+    /// 查询 pending 信号集（`rt_sigpending(2)`）。
+    const RT_SIGPENDING: SyscallNumber;
+    /// 临时替换 mask 并等待信号（`rt_sigsuspend(2)`）。
+    const RT_SIGSUSPEND: SyscallNumber;
     /// 等待一组实时信号（`rt_sigtimedwait(2)`）。
     const RT_SIGTIMEDWAIT: SyscallNumber;
     /// 从信号处理返回（`rt_sigreturn(2)`）。
     const RT_SIGRETURN: SyscallNumber;
+    /// 向指定线程发送信号（`tkill(2)`）。
+    const TKILL: SyscallNumber;
+    /// 向指定线程组内线程发送信号（`tgkill(2)`）。
+    const TGKILL: SyscallNumber;
     /// 设置 clear_child_tid 地址（`set_tid_address(2)`）。
     const SET_TID_ADDRESS: SyscallNumber;
     /// robust futex 列表（`set_robust_list(2)`）。
@@ -222,6 +246,8 @@ pub trait SyscallNumberTable {
     const GETRANDOM: SyscallNumber;
     /// 设置间隔定时器（`setitimer(2)`）。
     const SETITIMER: SyscallNumber;
+    /// 查询间隔定时器（`getitimer(2)`）。
+    const GETITIMER: SyscallNumber;
     /// 查询资源软/硬上限（`getrlimit(2)`）。
     const GETRLIMIT: SyscallNumber;
     /// 查询进程/线程资源使用统计（`getrusage(2)`）。
@@ -244,6 +270,8 @@ pub trait SyscallNumberTable {
     const BIND: SyscallNumber;
     /// 开始监听（`listen(2)`）。
     const LISTEN: SyscallNumber;
+    /// 接受连接（`accept(2)`）。
+    const ACCEPT: SyscallNumber;
     /// 接受连接（`accept4(2)`）。
     const ACCEPT4: SyscallNumber;
     /// 发起连接（`connect(2)`）。

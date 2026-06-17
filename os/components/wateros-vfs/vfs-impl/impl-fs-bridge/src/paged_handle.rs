@@ -12,7 +12,6 @@ use api_v0::{
 use impl_page_cache::{global_cache, PageCacheIo};
 use wateros_base_config::fs::{FileIoMode, FILE_IO_MODE, FILE_LARGE_THRESHOLD};
 
-use crate::map_fs_err;
 use crate::file_handle::BufferedFileHandle;
 use crate::{FsBridge, MountedRwSession};
 
@@ -59,10 +58,10 @@ pub struct PagedFileHandle {
 
 impl PagedFileHandle {
     pub(crate) fn open(
-        _bridge: &FsBridge,
+        bridge: &FsBridge,
         path: String,
         flags: VfsOpenFlags,
-        meta: VfsMetadata,
+        mut meta: VfsMetadata,
     ) -> VfsResult<Self> {
         match FILE_IO_MODE {
             FileIoMode::Direct => {}
@@ -76,6 +75,8 @@ impl PagedFileHandle {
 
         let mut on_disk_size = meta.size;
         if flags.contains(VfsOpenFlags::TRUNC) && want_write {
+            crate::replace_file_contents(path.as_str(), &[])?;
+            meta = bridge.metadata(path.as_str())?;
             cache.set_logical_size(path.as_str(), 0);
             on_disk_size = 0;
         }

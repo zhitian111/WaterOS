@@ -148,6 +148,58 @@ pub trait TrapThreadWrite {
     fn set_user_tls(&mut self, tls: usize);
 }
 
+/// Architecture-neutral subset saved in a userspace signal frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(C)]
+pub struct SignalMachineContext {
+    pub gprs: [usize; 32],
+    pub pc: usize,
+    pub status: usize,
+    pub fpregs: [u64; 32],
+    pub fcsr: u32,
+    pub reserved: u32,
+}
+
+impl Default for SignalMachineContext {
+    fn default() -> Self {
+        Self {
+            gprs: [0; 32],
+            pc: 0,
+            status: 0,
+            fpregs: [0; 32],
+            fcsr: 0,
+            reserved: 0,
+        }
+    }
+}
+
+/// Signal frame register codec implemented by every supported userspace ISA.
+pub trait SignalFrameCodec {
+    fn capture_signal_context(&self) -> SignalMachineContext;
+
+    /// Restores only state legal at user privilege. Returns false for a malformed context.
+    fn restore_signal_context(&mut self, context: &SignalMachineContext) -> bool;
+
+    fn prepare_signal_handler(
+        &mut self,
+        handler: usize,
+        restorer: usize,
+        frame_sp: usize,
+        signal: usize,
+        siginfo: usize,
+        ucontext: usize,
+    );
+
+    /// Rewrite a saved userspace context so `rt_sigreturn` re-enters the
+    /// interrupted syscall with its original number and arguments.
+    fn prepare_syscall_restart(
+        context: &mut SignalMachineContext,
+        syscall_nr: usize,
+        args: [usize; 6],
+        instruction_bytes: usize,
+    );
+}
+
 /// 架构 trap 上下文的**只读**语义视图（兼容层）。
 ///
 /// 新实现应直接实现 [`TrapFrameRead`] 与 [`TrapSyscallRead`]；本 trait 由 blanket

@@ -98,6 +98,10 @@ pub struct FsMetadata {
     pub size: u64,
     /// Unix 风格 mode 位（实现相关）。
     pub mode: u16,
+    /// 文件系统内部 inode 编号；同一文件的硬链接必须返回相同编号。
+    pub inode: u64,
+    /// 指向该 inode 的硬链接数量。
+    pub nlink: u32,
 }
 
 /// 根卷文件 I/O 模式（与 `wateros-base-config::fs::FileIoMode` 对齐）。
@@ -433,6 +437,8 @@ pub fn test() {
     assert_eq!(text, "hello");
     let meta = fs.metadata("/hello.txt").expect("sample metadata");
     assert_eq!(meta.size, 5);
+    assert_eq!(meta.inode, 2);
+    assert_eq!(meta.nlink, 1);
     logging::trace!("[fs-api] test end");
 }
 
@@ -452,6 +458,8 @@ impl ReadOnlyFs for SampleFs {
                 node_type: FsNodeType::File,
                 size: 5,
                 mode: 0o644,
+                inode: 2,
+                nlink: 1,
             })
         } else {
             Err(FsError::NotFound)

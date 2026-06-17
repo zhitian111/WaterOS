@@ -16,7 +16,8 @@
 
 - [x] 用户程序：单任务 `pipe` → `write` → `read` → `close` 得到固定字节串。
 - [ ] 用户程序：`pipe` → fork → 子 `write` 父 `read` 得到固定字节串。
-- [ ] 用户程序：安装 handler 后 `kill(getpid(), SIGUSR1)`（或约定信号）能观察到 **用户态 handler 运行**（日志经 write(1) 输出）。
+- [x] 内核路径：handler frame、trampoline、`rt_sigreturn`、mask 恢复及 `SA_RESTART` 已接入双架构公共返回路径。
+- [ ] 用户程序：安装 handler 后 `kill(getpid(), SIGUSR1)`（或约定信号）能观察到 **用户态 handler 运行**（仍需在可正常装载动态 ELF 的 RISC-V 测试环境验收）。
 - [ ] 未实现信号集全量功能时，对未支持 syscall 仍返回 **`ENOSYS`**，不 panic。
 
 ## 验证方式

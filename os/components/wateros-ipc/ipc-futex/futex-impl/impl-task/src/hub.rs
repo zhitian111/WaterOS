@@ -50,8 +50,10 @@ impl FutexHub {
             let wq = Self::get_queue(tables, key);
             match timeout {
                 None => {
-                    wq.wait_current_while(|| condition());
-                    FutexWaitOutcome::Woken
+                    match wq.wait_current_while(|| condition()) {
+                        TaskWaitResult::Interrupted => FutexWaitOutcome::Interrupted,
+                        _ => FutexWaitOutcome::Woken,
+                    }
                 }
                 Some(0) => {
                     if condition() {
@@ -63,6 +65,7 @@ impl FutexHub {
                 Some(ticks) => match wq.wait_current_while_for_ticks(ticks, || condition()) {
                     TaskWaitResult::Woken => FutexWaitOutcome::Woken,
                     TaskWaitResult::TimedOut => FutexWaitOutcome::TimedOut,
+                    TaskWaitResult::Interrupted => FutexWaitOutcome::Interrupted,
                 },
             }
         })

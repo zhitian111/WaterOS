@@ -25,6 +25,32 @@ pub fn dispatch_syscall_from_trap(syscall_nr : usize, syscall_args : SyscallArgs
     active_impl::dispatch_syscall_from_trap(syscall_nr, syscall_args)
 }
 
+#[cfg(feature = "impl-kernel")]
+#[inline]
+pub fn timer_tick(interrupted_user: bool) {
+    active_impl::timer_tick(interrupted_user);
+}
+
+#[cfg(feature = "impl-kernel")]
+#[inline]
+pub fn deliver_pending_signal(
+    frame: *mut u8,
+    restart: Option<(usize, SyscallArgs)>,
+) -> isize {
+    active_impl::deliver_pending_signal(frame, restart)
+}
+
+#[cfg(feature = "impl-kernel")]
+#[inline]
+pub fn restore_signal_frame(frame: *mut u8) -> bool {
+    active_impl::restore_signal_frame(frame)
+}
+
+#[inline]
+pub fn raise_current_signal(signal: usize) -> bool {
+    active_impl::raise_current_signal(signal)
+}
+
 /// Current-task syscall dispatch entry for assembly or C ABI callers.
 #[cfg(feature = "impl-kernel")]
 #[unsafe(no_mangle)]

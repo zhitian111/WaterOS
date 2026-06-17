@@ -11,6 +11,7 @@ use api_v0::{
 use fs::procfs::api::ProcFsView;
 
 use crate::dir_handle::{encode_one, node_type_to_dt};
+use crate::mount_table::MountIdentity;
 use crate::{map_fs_err, map_fs_node, map_meta};
 
 fn proc_view() -> &'static impl ProcFsView {
@@ -36,7 +37,12 @@ pub struct ProcFileHandle {
     offset: u64,
 }
 
-pub fn open_proc(rel: String, abs: String, flags: VfsOpenFlags) -> VfsResult<Box<dyn VfsIoHandle>> {
+pub fn open_proc(
+    rel: String,
+    abs: String,
+    flags: VfsOpenFlags,
+    identity: MountIdentity,
+) -> VfsResult<Box<dyn VfsIoHandle>> {
     if flags.contains(VfsOpenFlags::WRITE) {
         return Err(VfsError::ReadOnlyFs);
     }
@@ -45,7 +51,7 @@ pub fn open_proc(rel: String, abs: String, flags: VfsOpenFlags) -> VfsResult<Box
         return Err(VfsError::NotFound);
     }
     let fs_meta = view.metadata(rel.as_str()).map_err(map_fs_err)?;
-    let meta = map_meta(fs_meta);
+    let meta = map_meta(fs_meta, identity);
     if meta.node_type == VfsNodeType::Directory {
         if flags.contains(VfsOpenFlags::DIRECTORY) || !flags.contains(VfsOpenFlags::WRITE) {
             return Ok(Box::new(ProcDirectoryHandle {

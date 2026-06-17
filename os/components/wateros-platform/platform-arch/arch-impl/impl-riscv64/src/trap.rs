@@ -11,7 +11,7 @@ use abi::user_ret::UserRet;
 use api_v0::kernel_trap;
 use api_v0::trap::{
     Exception, Interrupt, TrapAddressSpaceWrite, TrapCause, TrapFrameRead, TrapFrameWrite,
-    TrapSyscallRead, TrapSyscallWrite, TrapThreadWrite,
+    SignalFrameCodec, SignalMachineContext, TrapSyscallRead, TrapSyscallWrite, TrapThreadWrite,
 };
 use core::arch::asm;
 use riscv::register::sstatus;
@@ -32,6 +32,65 @@ const RISCV_SSTATUS_SPP : usize = 1 << 8;
 const RISCV_SSTATUS_FS_DIRTY : usize = 3 << 13;
 /// 单次定时器中断后重新武装的切片长度（`time` CSR 刻度）；与调度策略相关，非用户 ABI。
 const TIMER_SLICE_TICKS : u64 = 1_250_000;
+
+unsafe fn save_fp_state() -> ([u64; 32], u32) {
+    let mut regs = [0u64; 32];
+    let mut fcsr: usize;
+    let base = regs.as_mut_ptr();
+    unsafe {
+        asm!(
+            "fsd f0, 0({base})", "fsd f1, 8({base})",
+            "fsd f2, 16({base})", "fsd f3, 24({base})",
+            "fsd f4, 32({base})", "fsd f5, 40({base})",
+            "fsd f6, 48({base})", "fsd f7, 56({base})",
+            "fsd f8, 64({base})", "fsd f9, 72({base})",
+            "fsd f10, 80({base})", "fsd f11, 88({base})",
+            "fsd f12, 96({base})", "fsd f13, 104({base})",
+            "fsd f14, 112({base})", "fsd f15, 120({base})",
+            "fsd f16, 128({base})", "fsd f17, 136({base})",
+            "fsd f18, 144({base})", "fsd f19, 152({base})",
+            "fsd f20, 160({base})", "fsd f21, 168({base})",
+            "fsd f22, 176({base})", "fsd f23, 184({base})",
+            "fsd f24, 192({base})", "fsd f25, 200({base})",
+            "fsd f26, 208({base})", "fsd f27, 216({base})",
+            "fsd f28, 224({base})", "fsd f29, 232({base})",
+            "fsd f30, 240({base})", "fsd f31, 248({base})",
+            "csrr {fcsr}, fcsr",
+            base = in(reg) base,
+            fcsr = out(reg) fcsr,
+            options(nostack),
+        );
+    }
+    (regs, fcsr as u32)
+}
+
+unsafe fn restore_fp_state(regs: &[u64; 32], fcsr: u32) {
+    let base = regs.as_ptr();
+    unsafe {
+        asm!(
+            "fld f0, 0({base})", "fld f1, 8({base})",
+            "fld f2, 16({base})", "fld f3, 24({base})",
+            "fld f4, 32({base})", "fld f5, 40({base})",
+            "fld f6, 48({base})", "fld f7, 56({base})",
+            "fld f8, 64({base})", "fld f9, 72({base})",
+            "fld f10, 80({base})", "fld f11, 88({base})",
+            "fld f12, 96({base})", "fld f13, 104({base})",
+            "fld f14, 112({base})", "fld f15, 120({base})",
+            "fld f16, 128({base})", "fld f17, 136({base})",
+            "fld f18, 144({base})", "fld f19, 152({base})",
+            "fld f20, 160({base})", "fld f21, 168({base})",
+            "fld f22, 176({base})", "fld f23, 184({base})",
+            "fld f24, 192({base})", "fld f25, 200({base})",
+            "fld f26, 208({base})", "fld f27, 216({base})",
+            "fld f28, 224({base})", "fld f29, 232({base})",
+            "fld f30, 240({base})", "fld f31, 248({base})",
+            "csrw fcsr, {fcsr}",
+            base = in(reg) base,
+            fcsr = in(reg) fcsr as usize,
+            options(nostack),
+        );
+    }
+}
 
 /// RISC-V 监管态 **`scause` CSR** 原始值；仅在本 crate 内表达「数值来自 `scause`」，
 /// 以便实现 **`From<Scause> for TrapCause`**（解码逻辑架构敏感，不属于 `arch-api`）。
@@ -214,5 +273,62 @@ impl TrapThreadWrite for TrapContext {
     fn set_user_tls(&mut self, tls : usize) {
         // RISC-V psABI: tp is x4.
         self.x[4] = tls;
+    }
+}
+
+impl SignalFrameCodec for TrapContext {
+    fn capture_signal_context(&self) -> SignalMachineContext {
+        let (fpregs, fcsr) = unsafe { save_fp_state() };
+        SignalMachineContext {
+            gprs: self.x,
+            pc: self.sepc,
+            status: self.sstatus,
+            fpregs,
+            fcsr,
+            reserved: 0,
+        }
+    }
+
+    fn restore_signal_context(&mut self, context: &SignalMachineContext) -> bool {
+        if context.pc == 0 || context.pc & 1 != 0 {
+            return false;
+        }
+        self.x = context.gprs;
+        self.x[0] = 0;
+        self.sepc = context.pc;
+        unsafe {
+            restore_fp_state(&context.fpregs, context.fcsr);
+        }
+        self.set_return_to_user_raw();
+        true
+    }
+
+    fn prepare_signal_handler(
+        &mut self,
+        handler: usize,
+        restorer: usize,
+        frame_sp: usize,
+        signal: usize,
+        siginfo: usize,
+        ucontext: usize,
+    ) {
+        self.x[1] = restorer;
+        self.x[2] = frame_sp;
+        self.x[10] = signal;
+        self.x[11] = siginfo;
+        self.x[12] = ucontext;
+        self.sepc = handler;
+        self.set_return_to_user_raw();
+    }
+
+    fn prepare_syscall_restart(
+        context: &mut SignalMachineContext,
+        syscall_nr: usize,
+        args: [usize; 6],
+        instruction_bytes: usize,
+    ) {
+        context.pc = context.pc.wrapping_sub(instruction_bytes);
+        context.gprs[10..16].copy_from_slice(&args);
+        context.gprs[17] = syscall_nr;
     }
 }

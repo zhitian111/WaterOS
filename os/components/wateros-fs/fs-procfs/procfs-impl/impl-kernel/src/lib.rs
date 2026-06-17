@@ -62,6 +62,18 @@ enum ProcNode {
     PidCmdline(ProcessId),
 }
 
+fn proc_inode(node: ProcNode) -> u64 {
+    match node {
+        ProcNode::Root => 1,
+        ProcNode::Meminfo => 2,
+        ProcNode::Mounts => 3,
+        ProcNode::PidDir(pid) => 0x1000_0000 | ((pid.raw() as u64) << 4),
+        ProcNode::PidStat(pid) => 0x1000_0001 | ((pid.raw() as u64) << 4),
+        ProcNode::PidStatus(pid) => 0x1000_0002 | ((pid.raw() as u64) << 4),
+        ProcNode::PidCmdline(pid) => 0x1000_0003 | ((pid.raw() as u64) << 4),
+    }
+}
+
 fn normalize_rel(path: &str) -> String {
     if path.is_empty() {
         return String::from("/");
@@ -258,11 +270,15 @@ impl ProcFsView for KernelProcFs {
                 node_type: FsNodeType::Directory,
                 size: 0,
                 mode: 0o555,
+                inode: proc_inode(node),
+                nlink: 1,
             }),
             ProcNode::Meminfo | ProcNode::Mounts => Ok(FsMetadata {
                 node_type: FsNodeType::File,
                 size: self.read(rel_path)?.len() as u64,
                 mode: 0o444,
+                inode: proc_inode(node),
+                nlink: 1,
             }),
             ProcNode::PidStat(pid)
             | ProcNode::PidStatus(pid)
@@ -274,6 +290,8 @@ impl ProcFsView for KernelProcFs {
                     node_type: FsNodeType::File,
                     size: self.read(rel_path)?.len() as u64,
                     mode: 0o444,
+                    inode: proc_inode(node),
+                    nlink: 1,
                 })
             }
         }

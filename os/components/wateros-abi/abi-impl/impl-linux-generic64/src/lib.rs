@@ -35,8 +35,10 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const READLINKAT: SyscallNumber = SyscallNumber(78);
     const FACCESSAT: SyscallNumber = SyscallNumber(48);
     const STATFS: SyscallNumber = SyscallNumber(43);
+    const SYNC: SyscallNumber = SyscallNumber(81);
     const FSYNC: SyscallNumber = SyscallNumber(82);
     const FDATASYNC: SyscallNumber = SyscallNumber(83);
+    const FTRUNCATE: SyscallNumber = SyscallNumber(46);
     const OPENAT: SyscallNumber = SyscallNumber(56);
     const CLOSE: SyscallNumber = SyscallNumber(57);
     const FSTAT: SyscallNumber = SyscallNumber(80);
@@ -58,6 +60,7 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const EXIT: SyscallNumber = SyscallNumber(93);
     const EXIT_GROUP: SyscallNumber = SyscallNumber(94);
     const FORK: SyscallNumber = SyscallNumber(220); // 常见用户态 fork -> clone
+    const CLONE3: SyscallNumber = SyscallNumber(435);
     const WAITPID: SyscallNumber = SyscallNumber(260); // wait4
     const KILL: SyscallNumber = SyscallNumber(129);
     const EXEC: SyscallNumber = SyscallNumber(221); // execve
@@ -83,6 +86,10 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const MSYNC: SyscallNumber = SyscallNumber(227); // msync
     const MPROTECT: SyscallNumber = SyscallNumber(226); // mprotect
     const GET_MEMPOLICY: SyscallNumber = SyscallNumber(236); // get_mempolicy
+    const SHMGET: SyscallNumber = SyscallNumber(194);
+    const SHMCTL: SyscallNumber = SyscallNumber(195);
+    const SHMAT: SyscallNumber = SyscallNumber(196);
+    const SHMDT: SyscallNumber = SyscallNumber(197);
 
     // 基本信息 / identity & misc info
     const UNAME: SyscallNumber = SyscallNumber(160); // uname
@@ -97,6 +104,7 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const GETEUID: SyscallNumber = SyscallNumber(175);
     const GETGID: SyscallNumber = SyscallNumber(176);
     const GETEGID: SyscallNumber = SyscallNumber(177);
+    const SETSID: SyscallNumber = SyscallNumber(157);
     const GETGROUPS: SyscallNumber = SyscallNumber(158);
     const SYSINFO: SyscallNumber = SyscallNumber(179);
     const SETGID: SyscallNumber = SyscallNumber(144);
@@ -110,14 +118,19 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const FUTEX: SyscallNumber = SyscallNumber(98);
     const RT_SIGACTION: SyscallNumber = SyscallNumber(134);
     const RT_SIGPROCMASK: SyscallNumber = SyscallNumber(135);
+    const RT_SIGPENDING: SyscallNumber = SyscallNumber(136);
     const RT_SIGTIMEDWAIT: SyscallNumber = SyscallNumber(137);
+    const RT_SIGSUSPEND: SyscallNumber = SyscallNumber(133);
     const RT_SIGRETURN: SyscallNumber = SyscallNumber(139);
+    const TKILL: SyscallNumber = SyscallNumber(130);
+    const TGKILL: SyscallNumber = SyscallNumber(131);
     const SET_TID_ADDRESS: SyscallNumber = SyscallNumber(96);
     const SET_ROBUST_LIST: SyscallNumber = SyscallNumber(99);
     const GET_ROBUST_LIST: SyscallNumber = SyscallNumber(100);
 
     // 其它常用 / other common syscalls
     const GETRANDOM: SyscallNumber = SyscallNumber(278);
+    const GETITIMER: SyscallNumber = SyscallNumber(102);
     const SETITIMER: SyscallNumber = SyscallNumber(103);
     const GETRLIMIT: SyscallNumber = SyscallNumber(163);
     const GETRUSAGE: SyscallNumber = SyscallNumber(165);
@@ -131,6 +144,7 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const SOCKET: SyscallNumber = SyscallNumber(198);
     const BIND: SyscallNumber = SyscallNumber(200);
     const LISTEN: SyscallNumber = SyscallNumber(201);
+    const ACCEPT: SyscallNumber = SyscallNumber(202);
     const ACCEPT4: SyscallNumber = SyscallNumber(242);
     const CONNECT: SyscallNumber = SyscallNumber(203);
     const GETSOCKNAME: SyscallNumber = SyscallNumber(204);

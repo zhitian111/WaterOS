@@ -102,7 +102,7 @@ pub fn unlink_at_current(path: &str, remove_dir: bool) -> VfsResult<()> {
 }
 
 #[cfg(feature = "impl-fd-session")]
-pub use impl_fd_session::{PipeReadHandle, PipeWriteHandle};
+pub use impl_fd_session::{pipe_handle_pair, PipeReadHandle, PipeWriteHandle};
 
 #[cfg(feature = "bridge-fs-api")]
 pub use impl_fs_bridge::RootFileHandle;
