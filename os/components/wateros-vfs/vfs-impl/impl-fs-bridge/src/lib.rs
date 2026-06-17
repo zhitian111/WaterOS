@@ -389,6 +389,14 @@ impl RootRwSession for MountedRwSession {
             .map_err(map_fs_err)
     }
 
+    fn truncate(&mut self, path: &str, len: u64) -> VfsResult<()> {
+        let n = normalize_absolute_path(path)?;
+        self.inner
+            .lock()
+            .truncate(n.as_str(), len)
+            .map_err(map_fs_err)
+    }
+
     fn mkdir(&mut self, path: &str, mode: u32) -> VfsResult<()> {
         let n = normalize_absolute_path(path)?;
         self.inner.lock().mkdir(n.as_str(), mode).map_err(map_fs_err)

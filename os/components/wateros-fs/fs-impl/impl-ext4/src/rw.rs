@@ -210,6 +210,18 @@ impl ReadWriteFs for Ext4FsRw {
         write_at(fs, &mut inode, data, offset).map_err(map_ext4_plus)
     }
 
+    fn truncate(&mut self, path: &str, len: u64) -> FsResult<()> {
+        let fs = self.fs()?;
+        let pathv = Path::try_from(path).map_err(|_| FsError::InvalidPath)?;
+        let mut inode = fs
+            .path_to_inode(pathv, FollowSymlinks::All)
+            .map_err(map_ext4_plus)?;
+        if inode.file_type() != FileType::Regular {
+            return Err(FsError::NotAFile);
+        }
+        truncate(fs, &mut inode, len).map_err(map_ext4_plus)
+    }
+
     fn mkdir(&mut self, path: &str, mode: u32) -> FsResult<()> {
         let (parent, name) = split_parent_and_name(path)?;
         let fs = self.fs()?;

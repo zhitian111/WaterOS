@@ -9,6 +9,7 @@ use block::{
     block_device_count, first_block_device, register_block_device, BlockDevice, Lba,
     VirtioPciProbeInfo, BLOCK_SIZE,
 };
+use character::{character_device_count, register_builtin_character_devices};
 use fs::devfs::active_impl as devfs_impl;
 use network::{network_device_count, register_network_device, NetworkDevice, VirtioNetPciProbeInfo};
 use spin::Mutex;
@@ -170,12 +171,16 @@ pub fn init_after_boot() -> DriverResult<()> {
         }
     }
 
+    register_builtin_character_devices();
+
     let registered = block_device_count();
     let registered_net = network_device_count();
+    let registered_chr = character_device_count();
     log::info!(
-        "[driver-la] devices registered: block={} network={}",
+        "[driver-la] devices registered: block={} network={} character={}",
         registered,
-        registered_net
+        registered_net,
+        registered_chr
     );
     if registered == 0 {
         log::warn!(

@@ -13,6 +13,10 @@
         "api-v0",
         "impl-virtio-pci",
     ] }
+    character = { path = "../../driver-character", package = "wateros-driver-character", default-features = true, features = [
+        "impl-rtc-stub",
+        "impl-null-stub",
+    ] }
     network = { path = "../../driver-network", package = "wateros-driver-network", default-features = false, features = [
         "api-v0",
         "impl-virtio-pci",

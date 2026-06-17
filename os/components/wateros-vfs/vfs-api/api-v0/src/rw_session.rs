@@ -29,6 +29,12 @@ pub trait RootRwSession {
         Err(VfsError::Unsupported)
     }
 
+    /// 调整普通文件长度。
+    fn truncate(&mut self, path: &str, len: u64) -> VfsResult<()> {
+        let _ = (path, len);
+        Err(VfsError::Unsupported)
+    }
+
     /// 在绝对路径 `path` 处创建目录。
     fn mkdir(&mut self, path: &str, mode: u32) -> VfsResult<()> {
         let _ = (path, mode);
