@@ -9,7 +9,10 @@ use alloc::vec::Vec;
 use api_v0::{VfsError, VfsFdSession, VfsIoHandle, VfsResult, VFS_FIRST_DYNAMIC_FD,
     VFS_STDERR_FD, VFS_STDIN_FD, VFS_STDOUT_FD,
 };
-use driver_character_api_v0::character_device_at;
+use driver_character_api_v0::{
+    character_device_at, character_device_count, character_device_kind_at, CharacterDeviceKind,
+    SharedCharacterDevice,
+};
 
 use crate::char_dev_handle::CharDevHandle;
 use crate::handles::{ConsoleInHandle, ConsoleOutHandle};
@@ -479,7 +482,7 @@ impl PerTaskFdRegistry {
 }
 
 fn default_stdin_handle() -> Box<dyn VfsIoHandle> {
-    if let Some(dev) = character_device_at(0) {
+    if let Some(dev) = default_serial_device() {
         Box::new(CharDevHandle::new_stdin(dev))
     } else {
         Box::new(ConsoleInHandle)
@@ -487,9 +490,15 @@ fn default_stdin_handle() -> Box<dyn VfsIoHandle> {
 }
 
 fn default_stdout_handle() -> Box<dyn VfsIoHandle> {
-    if let Some(dev) = character_device_at(0) {
+    if let Some(dev) = default_serial_device() {
         Box::new(CharDevHandle::new_stdout(dev))
     } else {
         Box::new(ConsoleOutHandle)
     }
+}
+
+fn default_serial_device() -> Option<SharedCharacterDevice> {
+    (0..character_device_count())
+        .find(|&idx| character_device_kind_at(idx) == Some(CharacterDeviceKind::Serial))
+        .and_then(character_device_at)
 }
