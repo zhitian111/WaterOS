@@ -204,6 +204,12 @@ pub trait ReadWriteFs: Send {
         Err(FsError::Unsupported)
     }
 
+    /// 调整普通文件长度；缩短时丢弃 EOF 之后数据，增长时新区域读为零。
+    fn truncate(&mut self, path: &str, len: u64) -> FsResult<()> {
+        let _ = (path, len);
+        Err(FsError::Unsupported)
+    }
+
     /// 在绝对路径 `path` 处创建目录；`mode` 为 Linux `mkdir` 权限位（不含 umask）。
     fn mkdir(&mut self, path: &str, mode: u32) -> FsResult<()> {
         let _ = (path, mode);
@@ -317,6 +323,10 @@ impl ReadWriteFs for LocalRwFs {
 
     fn write_range(&mut self, path: &str, offset: u64, data: &[u8]) -> FsResult<usize> {
         self.deref_mut().write_range(path, offset, data)
+    }
+
+    fn truncate(&mut self, path: &str, len: u64) -> FsResult<()> {
+        self.deref_mut().truncate(path, len)
     }
 
     fn mkdir(&mut self, path: &str, mode: u32) -> FsResult<()> {
