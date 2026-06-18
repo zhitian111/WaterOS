@@ -84,8 +84,7 @@ pub mod kernel_mm_impl {
         map_identity_range_user,
     };
 
-    /// 基于父地址空间创建独立子地址空间：分配新页表树并逐帧复制所有带 `U`
-    /// 权限的用户页。
+    /// 基于父地址空间创建 COW 子地址空间：复制页表树，用户页共享到写时复制。
     ///
     /// `parent_aspace_ptr` 来自 `LoadedElf::user_aspace_ptr` /
     /// `UserTask::user_aspace_ptr()`， 即 `LoongArch64AddressSpace`
@@ -104,11 +103,25 @@ pub mod kernel_mm_impl {
         }
         // SAFETY: 调用方保证 parent_aspace_ptr 指向一直存活（泄漏）的
         // LoongArch64AddressSpace
-        let parent = unsafe { &*(parent_aspace_ptr as *const LoongArch64AddressSpace) };
-        let child = parent.fork()?;
+        let parent = unsafe { &mut *(parent_aspace_ptr as *mut LoongArch64AddressSpace) };
+        let child = parent.fork_cow()?;
         let pgdl = child.satp_value();
         let child_ptr = Box::into_raw(Box::new(child)) as usize;
         Ok((child_ptr, pgdl))
+    }
+
+    pub fn handle_cow_fault(parent_aspace_ptr : usize,
+                            fault_addr : usize)
+                            -> api_v0::error::MmResult<bool> {
+        use crate::pagetable::LoongArch64AddressSpace;
+        use api_v0::addr::VirtAddr;
+        use api_v0::error::MmError;
+
+        if parent_aspace_ptr == 0 {
+            return Err(MmError::InvalidAddress);
+        }
+        let aspace = unsafe { &mut *(parent_aspace_ptr as *mut LoongArch64AddressSpace) };
+        aspace.handle_cow_fault(VirtAddr(fault_addr))
     }
 
     /// 销毁用户地址空间：递归释放所有用户页帧和页表帧。

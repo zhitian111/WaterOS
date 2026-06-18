@@ -101,7 +101,7 @@ impl DevFsManager for KernelDevFsManager {
                 push_char_alias(&mut inner, String::from("/dev/null"), dev.clone());
             }
         }
-        for path in ["/dev/zero", "/dev/urandom", "/dev/cpu_dma_latency"] {
+        for path in ["/dev/null", "/dev/zero", "/dev/urandom", "/dev/cpu_dma_latency"] {
             if !inner.nodes.iter().any(|n| n.path == path) {
                 inner.nodes.push(api_v0::DevNode {
                     path: String::from(path),

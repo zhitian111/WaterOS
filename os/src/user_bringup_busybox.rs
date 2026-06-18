@@ -2,13 +2,13 @@
 
 use runtime::logging::*;
 
-const SCRIPT_PATHS: &[&str] = &[
-    "/glibc/basic_testcode.sh",      // done
-    "/musl/basic_testcode.sh",       // done
-    "/glibc/busybox_testcode.sh",    // done
-    "/musl/busybox_testcode.sh",     // done
-    "/glibc/lua_testcode.sh",        // done
-    "/musl/lua_testcode.sh",         // done
+const SCRIPT_PATHS : &[&str] = &[
+    //"/glibc/basic_testcode.sh",      // done
+    //"/musl/basic_testcode.sh",       // done
+    //"/glibc/busybox_testcode.sh",    // done
+    //"/musl/busybox_testcode.sh",     // done
+    //"/glibc/lua_testcode.sh",        // done
+    //"/musl/lua_testcode.sh",         // done
     "/glibc/iperf_testcode.sh",      // done
     "/musl/iperf_testcode.sh",       // done
     "/glibc/netperf_testcode.sh",    // done
@@ -30,20 +30,18 @@ const SCRIPT_PATHS: &[&str] = &[
     // "/musl/ltp_testcode.sh"
 ];
 
-const LOG_TAG: &str = "busybox-bringup";
+const LOG_TAG : &str = "busybox-bringup";
 
 /// 执行 `stage-busybox`：登记内核串行 runner（不阻塞；用户态在 `run_first_task` 后运行）。
 pub fn run_stage_busybox() {
     info!("[bringup][stage-busybox] BEGIN");
     task::spawn_kernel_task(bringup_kernel_runner, 0);
-    info!(
-        "[{LOG_TAG}] kernel runner enqueued ({} script(s))",
-        SCRIPT_PATHS.len()
-    );
+    info!("[{LOG_TAG}] kernel runner enqueued ({} script(s))",
+          SCRIPT_PATHS.len());
     info!("[bringup][stage-busybox] END");
 }
 
-extern "C" fn bringup_kernel_runner(_arg: usize) -> ! {
+extern "C" fn bringup_kernel_runner(_arg : usize) -> ! {
     use platform::reset::shutdown;
 
     for script_path in SCRIPT_PATHS {

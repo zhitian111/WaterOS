@@ -13,8 +13,8 @@ pub use char_dev_handle::{CharDevHandle, is_rtc_dev_path, metadata_for_devfs_pat
 
 pub use cwd::{PerTaskCwdRegistry, PATH_MAX};
 pub use handles::{
-    ConsoleInHandle, ConsoleOutHandle, CpuDmaLatencyDeviceHandle, PipeReadHandle,
-    PipeWriteHandle, UnixStreamPairEnd, UrandomDeviceHandle, ZeroDeviceHandle,
+    ConsoleInHandle, ConsoleOutHandle, CpuDmaLatencyDeviceHandle, NullDeviceHandle,
+    PipeReadHandle, PipeWriteHandle, UnixStreamPairEnd, UrandomDeviceHandle, ZeroDeviceHandle,
     pipe_handle_pair, poll_pipe_smoke, stream_pair_handle_pair, stream_pair_smoke,
 };
 pub use registry::PerTaskFdRegistry;

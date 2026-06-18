@@ -129,10 +129,10 @@ fn decode_loongarch64_trap_cause(estat : usize) -> TrapCause {
 
     let ecode = (estat >> 16) & 0x3F;
     match ecode {
-        1 | 2 | 7 | 8 => TrapCause::Exception(Exception::LoadPageFault),
-        // ecode 8 = PPI (Page Privilege Illegal)
+        1 | 7 | 8 => TrapCause::Exception(Exception::LoadPageFault),
+        // ecode 2 = PIS (store invalid), ecode 4 = PME (page modified).
+        2 | 4 => TrapCause::Exception(Exception::StorePageFault),
         3 | 6 => TrapCause::Exception(Exception::InstructionPageFault),
-        4 => TrapCause::Exception(Exception::StorePageFault),
         9 => TrapCause::Exception(Exception::Breakpoint),
         11 => TrapCause::Exception(Exception::UserEnvCall),
         12 => TrapCause::Exception(Exception::Breakpoint),
