@@ -61,7 +61,7 @@ impl core::fmt::Display for DriverErr {
 
 impl Error for DriverErr {}
 
-// 按块读-改-写：依赖驱动提供块对齐 I/O；非块对齐尾段通过整块缓冲完成。
+// 按字节写入块设备：完整覆盖块直接写，非块对齐头尾才读-改-写。
 fn block_write_bytes(
     dev: &SharedBlockDevice,
     start_byte: u64,
@@ -73,24 +73,54 @@ fn block_write_bytes(
     let mut guard = dev.lock();
     let bdev: &mut dyn driver_block_api_v0::BlockDevice = &mut **guard;
     let bs = bdev.block_size();
+    if bs == 0 {
+        return Err(DriverError::InvalidParam);
+    }
+    let start = usize::try_from(start_byte).map_err(|_| DriverError::InvalidParam)?;
+    let end = start
+        .checked_add(src.len())
+        .ok_or(DriverError::InvalidParam)?;
+
     let mut pos = 0usize;
-    while pos < src.len() {
-        let abs = usize::try_from(start_byte)
-            .map_err(|_| DriverError::InvalidParam)?
-            .checked_add(pos)
-            .ok_or(DriverError::InvalidParam)?;
-        let start_block = abs / bs;
-        let o = abs % bs;
-        let room = bs.checked_sub(o).ok_or(DriverError::InvalidParam)?;
-        let take = room.min(src.len() - pos);
-        let mut block_buf = alloc::vec::Vec::new();
-        block_buf.resize(bs, 0);
-        bdev.read_blocks(Lba(start_block as u64), &mut block_buf)?;
-        block_buf[o..o + take].copy_from_slice(&src[pos..pos + take]);
-        bdev.write_blocks(Lba(start_block as u64), &block_buf)?;
+
+    let head_off = start % bs;
+    if head_off != 0 {
+        let take = (bs - head_off).min(src.len());
+        write_partial_block(bdev, start / bs, head_off, &src[..take])?;
         pos += take;
     }
+
+    let full_bytes = ((src.len() - pos) / bs) * bs;
+    if full_bytes > 0 {
+        let block = (start + pos) / bs;
+        bdev.write_blocks(Lba(block as u64), &src[pos..pos + full_bytes])?;
+        pos += full_bytes;
+    }
+
+    if pos < src.len() {
+        let abs = start + pos;
+        debug_assert_eq!(abs % bs, 0);
+        debug_assert!(end > abs);
+        write_partial_block(bdev, abs / bs, 0, &src[pos..])?;
+    }
     Ok(())
+}
+
+fn write_partial_block(
+    bdev: &mut dyn driver_block_api_v0::BlockDevice,
+    block: usize,
+    offset: usize,
+    data: &[u8],
+) -> Result<(), DriverError> {
+    let bs = bdev.block_size();
+    if bs == 0 || offset >= bs || data.is_empty() || offset + data.len() > bs {
+        return Err(DriverError::InvalidParam);
+    }
+    let mut block_buf = alloc::vec::Vec::new();
+    block_buf.resize(bs, 0);
+    bdev.read_blocks(Lba(block as u64), &mut block_buf)?;
+    block_buf[offset..offset + data.len()].copy_from_slice(data);
+    bdev.write_blocks(Lba(block as u64), &block_buf)
 }
 
 /// 将 `ext4plus` 错误映射为公共 [`FsError`]。
@@ -603,4 +633,112 @@ fn split_parent_and_name(path: &str) -> FsResult<(&str, &str)> {
         return Err(FsError::InvalidPath);
     }
     Ok((parent, name))
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+
+    use super::*;
+    use alloc::sync::Arc;
+    use alloc::vec;
+    use driver_block_api_v0::{BlockDevice, BLOCK_SIZE};
+    use spin::Mutex;
+
+    struct CountingBlockDevice {
+        bytes: Arc<Mutex<Vec<u8>>>,
+        reads: Arc<Mutex<usize>>,
+        writes: Arc<Mutex<usize>>,
+    }
+
+    impl CountingBlockDevice {
+        fn shared(
+            blocks: usize,
+        ) -> (
+            SharedBlockDevice,
+            Arc<Mutex<Vec<u8>>>,
+            Arc<Mutex<usize>>,
+            Arc<Mutex<usize>>,
+        ) {
+            let bytes = Arc::new(Mutex::new(vec![0xaau8; blocks * BLOCK_SIZE]));
+            let reads = Arc::new(Mutex::new(0));
+            let writes = Arc::new(Mutex::new(0));
+            let dev = Self {
+                bytes: bytes.clone(),
+                reads: reads.clone(),
+                writes: writes.clone(),
+            };
+            (
+                Arc::new(Mutex::new(Box::new(dev) as Box<dyn BlockDevice>)),
+                bytes,
+                reads,
+                writes,
+            )
+        }
+    }
+
+    impl BlockDevice for CountingBlockDevice {
+        fn read_blocks(&mut self, start_block: Lba, buf: &mut [u8]) -> Result<(), DriverError> {
+            if buf.len() % BLOCK_SIZE != 0 {
+                return Err(DriverError::InvalidParam);
+            }
+            *self.reads.lock() += 1;
+            let start = usize::try_from(start_block.0)
+                .map_err(|_| DriverError::InvalidParam)?
+                .checked_mul(BLOCK_SIZE)
+                .ok_or(DriverError::InvalidParam)?;
+            let end = start.checked_add(buf.len()).ok_or(DriverError::InvalidParam)?;
+            let bytes = self.bytes.lock();
+            let src = bytes.get(start..end).ok_or(DriverError::InvalidParam)?;
+            buf.copy_from_slice(src);
+            Ok(())
+        }
+
+        fn write_blocks(&mut self, start_block: Lba, buf: &[u8]) -> Result<(), DriverError> {
+            if buf.len() % BLOCK_SIZE != 0 {
+                return Err(DriverError::InvalidParam);
+            }
+            *self.writes.lock() += 1;
+            let start = usize::try_from(start_block.0)
+                .map_err(|_| DriverError::InvalidParam)?
+                .checked_mul(BLOCK_SIZE)
+                .ok_or(DriverError::InvalidParam)?;
+            let end = start.checked_add(buf.len()).ok_or(DriverError::InvalidParam)?;
+            let mut bytes = self.bytes.lock();
+            let dst = bytes.get_mut(start..end).ok_or(DriverError::InvalidParam)?;
+            dst.copy_from_slice(buf);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn aligned_full_blocks_write_without_read_modify_write() {
+        let (dev, bytes, reads, writes) = CountingBlockDevice::shared(4);
+        let src = vec![0x5au8; BLOCK_SIZE * 2];
+
+        block_write_bytes(&dev, BLOCK_SIZE as u64, &src).unwrap();
+
+        assert_eq!(*reads.lock(), 0);
+        assert_eq!(*writes.lock(), 1);
+        let bytes = bytes.lock();
+        assert_eq!(&bytes[..BLOCK_SIZE], &[0xaau8; BLOCK_SIZE]);
+        assert_eq!(&bytes[BLOCK_SIZE..BLOCK_SIZE * 3], src.as_slice());
+        assert_eq!(&bytes[BLOCK_SIZE * 3..BLOCK_SIZE * 4], &[0xaau8; BLOCK_SIZE]);
+    }
+
+    #[test]
+    fn unaligned_head_and_tail_preserve_uncovered_bytes() {
+        let (dev, bytes, reads, writes) = CountingBlockDevice::shared(4);
+        let len = (BLOCK_SIZE - 3) + BLOCK_SIZE + 7;
+        let src: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
+
+        block_write_bytes(&dev, 3, &src).unwrap();
+
+        assert_eq!(*reads.lock(), 2);
+        assert_eq!(*writes.lock(), 3);
+        let bytes = bytes.lock();
+        assert_eq!(&bytes[..3], &[0xaau8; 3]);
+        assert_eq!(&bytes[3..3 + len], src.as_slice());
+        assert_eq!(&bytes[3 + len..BLOCK_SIZE * 3], &[0xaau8; BLOCK_SIZE - 7]);
+    }
 }

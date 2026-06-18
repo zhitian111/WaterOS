@@ -231,6 +231,57 @@ impl GlobalFilePageCache {
         Ok(())
     }
 
+    fn install_zero_page<Io, E>(
+        &self,
+        io: &mut Io,
+        path: &str,
+        page_idx: u64,
+        map_err: fn(Io::Error) -> E,
+    ) -> Result<(), E>
+    where
+        Io: PageCacheIo,
+    {
+        let key = self.file_key(path);
+        {
+            let mut cache = self.state.lock();
+            if cache.capacity == 0 {
+                return Ok(());
+            }
+            if let Some(&idx) = cache.index.get(&(key.clone(), page_idx)) {
+                cache.touch_lru(idx);
+                return Ok(());
+            }
+        }
+
+        let mut cache = self.state.lock();
+        if cache.capacity == 0 {
+            return Ok(());
+        }
+        if let Some(&idx) = cache.index.get(&(key.clone(), page_idx)) {
+            cache.touch_lru(idx);
+            return Ok(());
+        }
+
+        let idx = cache.pop_free_or_lru_index();
+        if cache.frames[idx].dirty {
+            drop(cache);
+            self.flush_frame(io, idx, None, map_err)?;
+            cache = self.state.lock();
+        }
+        if let Some(old) = cache.frames[idx].key.take() {
+            cache.index.remove(&old);
+            if let Some(p) = cache.lru.iter().position(|&x| x == idx) {
+                cache.lru.remove(p);
+            }
+        }
+        cache.frames[idx].data.fill(0);
+        cache.frames[idx].dirty = false;
+        cache.frames[idx].key = Some((key.clone(), page_idx));
+        cache.index.insert((key, page_idx), idx);
+        cache.touch_lru(idx);
+        Ok(())
+    }
+
     /// Direct 模式：从 `offset` 读入 `buf`。
     pub fn read<Io, E>(
         &self,
@@ -309,7 +360,11 @@ impl GlobalFilePageCache {
             let page_off = (pos % FILE_PAGE_SIZE as u64) as usize;
             let chunk = (FILE_PAGE_SIZE - page_off).min(buf.len() - written);
             let hint_size = guard.logical_size.max(pos + chunk as u64);
-            self.install_page(io, path, page_idx, hint_size, map_err)?;
+            if page_off == 0 && chunk == FILE_PAGE_SIZE {
+                self.install_zero_page(io, path, page_idx, map_err)?;
+            } else {
+                self.install_page(io, path, page_idx, hint_size, map_err)?;
+            }
             {
                 let mut cache = self.state.lock();
                 let idx = *cache
@@ -457,4 +512,67 @@ pub fn global_cache(mount_gen: u64) -> Arc<GlobalFilePageCache> {
         *g = Some(Arc::new(GlobalFilePageCache::new(mount_gen)));
     }
     g.as_ref().unwrap().clone()
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+
+    use super::*;
+    use alloc::vec;
+    use core::cell::Cell;
+
+    struct CountingIo {
+        reads: Cell<usize>,
+        writes: usize,
+        data: Vec<u8>,
+    }
+
+    impl CountingIo {
+        fn new() -> Self {
+            Self {
+                reads: Cell::new(0),
+                writes: 0,
+                data: Vec::new(),
+            }
+        }
+    }
+
+    impl PageCacheIo for CountingIo {
+        type Error = ();
+
+        fn read_range(&self, _path: &str, _offset: u64, buf: &mut [u8]) -> Result<usize, ()> {
+            self.reads.set(self.reads.get() + 1);
+            buf.fill(0xcc);
+            Ok(buf.len())
+        }
+
+        fn write_range(&mut self, _path: &str, offset: u64, data: &[u8]) -> Result<usize, ()> {
+            self.writes += 1;
+            let start = usize::try_from(offset).map_err(|_| ())?;
+            let end = start.checked_add(data.len()).ok_or(())?;
+            if end > self.data.len() {
+                self.data.resize(end, 0);
+            }
+            self.data[start..end].copy_from_slice(data);
+            Ok(data.len())
+        }
+    }
+
+    #[test]
+    fn full_page_write_does_not_read_before_overwrite() {
+        let cache = GlobalFilePageCache::new(7);
+        let mut io = CountingIo::new();
+        let payload = vec![0x5au8; FILE_PAGE_SIZE];
+
+        let n = cache
+            .write(&mut io, "/tmp/full-page", 0, 0, &payload, |e| e)
+            .unwrap();
+        assert_eq!(n, FILE_PAGE_SIZE);
+        assert_eq!(io.reads.get(), 0);
+
+        cache.flush(&mut io, "/tmp/full-page", |e| e).unwrap();
+        assert_eq!(io.writes, 1);
+        assert_eq!(io.data, payload);
+    }
 }

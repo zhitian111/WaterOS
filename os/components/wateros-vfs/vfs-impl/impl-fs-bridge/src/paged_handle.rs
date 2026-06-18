@@ -302,7 +302,10 @@ pub(crate) fn open_file(bridge : &FsBridge,
         if !want_write {
             return Err(VfsError::Unsupported);
         }
-        return BufferedFileHandle::open_boxed(bridge, path, flags);
+        crate::replace_file_contents(path.as_str(), &[])?;
+        let meta = bridge.metadata(path.as_str())?;
+        let h = PagedFileHandle::open(bridge, path, flags, meta)?;
+        return Ok(Box::new(h));
     }
 
     let meta = bridge.metadata(path.as_str())?;
@@ -310,7 +313,10 @@ pub(crate) fn open_file(bridge : &FsBridge,
         return Err(VfsError::NotAFile);
     }
 
-    let use_paged = (want_read || want_write) && meta.size >= FILE_LARGE_THRESHOLD;
+    let creates_or_truncates =
+        want_write && (flags.contains(VfsOpenFlags::CREATE) || flags.contains(VfsOpenFlags::TRUNC));
+    let use_paged =
+        (want_read || want_write) && (meta.size >= FILE_LARGE_THRESHOLD || creates_or_truncates);
 
     if use_paged {
         let h = PagedFileHandle::open(bridge, path, flags, meta)?;
