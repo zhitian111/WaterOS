@@ -24,11 +24,14 @@ pub enum SyscallKind {
     Sendfile,
     ReadLinkAt,
     FaccessAt,
+    Fchmodat,
+    Fchownat,
     StatFs,
     Sync,
     Fsync,
     Fdatasync,
     Ftruncate,
+    Fallocate,
     OpenAt,
     Close,
     Fstat,
@@ -97,6 +100,7 @@ pub enum SyscallKind {
     SetResuid,
     SetResgid,
     Times,
+    SetPgid,
     Uname,
     Syslog,
     Prctl,
@@ -172,6 +176,10 @@ impl SyscallKind {
             Self::ReadLinkAt
         } else if syscall_nr == T::FACCESSAT.raw() {
             Self::FaccessAt
+        } else if syscall_nr == T::FCHMODAT.raw() {
+            Self::Fchmodat
+        } else if syscall_nr == T::FCHOWNAT.raw() {
+            Self::Fchownat
         } else if syscall_nr == T::STATFS.raw() {
             Self::StatFs
         } else if syscall_nr == T::SYNC.raw() {
@@ -182,6 +190,8 @@ impl SyscallKind {
             Self::Fdatasync
         } else if syscall_nr == T::FTRUNCATE.raw() {
             Self::Ftruncate
+        } else if syscall_nr == T::FALLOCATE.raw() {
+            Self::Fallocate
         } else if syscall_nr == T::OPENAT.raw() {
             Self::OpenAt
         } else if syscall_nr == T::CLOSE.raw() {
@@ -318,6 +328,8 @@ impl SyscallKind {
             Self::SetResgid
         } else if syscall_nr == T::TIMES.raw() {
             Self::Times
+        } else if syscall_nr == T::SETPGID.raw() {
+            Self::SetPgid
         } else if syscall_nr == T::UNAME.raw() {
             Self::Uname
         } else if syscall_nr == T::SYSLOG.raw() {
@@ -428,11 +440,14 @@ impl SyscallKind {
             Self::Sendfile => "sendfile",
             Self::ReadLinkAt => "readlinkat",
             Self::FaccessAt => "faccessat",
+            Self::Fchmodat => "fchmodat",
+            Self::Fchownat => "fchownat",
             Self::StatFs => "statfs",
             Self::Sync => "sync",
             Self::Fsync => "fsync",
             Self::Fdatasync => "fdatasync",
             Self::Ftruncate => "ftruncate",
+            Self::Fallocate => "fallocate",
             Self::OpenAt => "openat",
             Self::Close => "close",
             Self::Fstat => "fstat",
@@ -501,6 +516,7 @@ impl SyscallKind {
             Self::SetResuid => "setresuid",
             Self::SetResgid => "setresgid",
             Self::Times => "times",
+            Self::SetPgid => "setpgid",
             Self::Uname => "uname",
             Self::Syslog => "syslog",
             Self::Prctl => "prctl",
@@ -773,6 +789,22 @@ pub trait SyscallDispatcher {
         )
     }
 
+    fn dispatch_fchmodat(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Fchmodat,
+            Self::NumberTable::FCHMODAT.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_fchownat(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Fchownat,
+            Self::NumberTable::FCHOWNAT.raw(),
+            args,
+        )
+    }
+
     fn dispatch_statfs(args: SyscallArgs) -> isize {
         Self::dispatch_unsupported(
             SyscallKind::StatFs,
@@ -809,6 +841,14 @@ pub trait SyscallDispatcher {
         Self::dispatch_unsupported(
             SyscallKind::Ftruncate,
             Self::NumberTable::FTRUNCATE.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_fallocate(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Fallocate,
+            Self::NumberTable::FALLOCATE.raw(),
             args,
         )
     }
@@ -1245,6 +1285,14 @@ pub trait SyscallDispatcher {
         )
     }
 
+    fn dispatch_setpgid(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::SetPgid,
+            Self::NumberTable::SETPGID.raw(),
+            args,
+        )
+    }
+
     fn dispatch_waitpid(args: SyscallArgs) -> isize {
         Self::dispatch_unsupported(
             SyscallKind::WaitPid,
@@ -1656,11 +1704,14 @@ pub trait SyscallDispatcher {
             SyscallKind::Sendfile => Self::dispatch_sendfile(syscall_args),
             SyscallKind::ReadLinkAt => Self::dispatch_readlinkat(syscall_args),
             SyscallKind::FaccessAt => Self::dispatch_faccessat(syscall_args),
+            SyscallKind::Fchmodat => Self::dispatch_fchmodat(syscall_args),
+            SyscallKind::Fchownat => Self::dispatch_fchownat(syscall_args),
             SyscallKind::StatFs => Self::dispatch_statfs(syscall_args),
             SyscallKind::Sync => Self::dispatch_sync(syscall_args),
             SyscallKind::Fsync => Self::dispatch_fsync(syscall_args),
             SyscallKind::Fdatasync => Self::dispatch_fdatasync(syscall_args),
             SyscallKind::Ftruncate => Self::dispatch_ftruncate(syscall_args),
+            SyscallKind::Fallocate => Self::dispatch_fallocate(syscall_args),
             SyscallKind::OpenAt => Self::dispatch_openat(syscall_args),
             SyscallKind::Close => Self::dispatch_close(syscall_args),
             SyscallKind::Fstat => Self::dispatch_fstat(syscall_args),
@@ -1717,6 +1768,7 @@ pub trait SyscallDispatcher {
             SyscallKind::SetResuid => Self::dispatch_setresuid(syscall_args),
             SyscallKind::SetResgid => Self::dispatch_setresgid(syscall_args),
             SyscallKind::Times => Self::dispatch_times(syscall_args),
+            SyscallKind::SetPgid => Self::dispatch_setpgid(syscall_args),
             SyscallKind::WaitPid => Self::dispatch_waitpid(syscall_args),
             SyscallKind::Kill => Self::dispatch_kill(syscall_args),
             SyscallKind::Nanosleep => Self::dispatch_nanosleep(syscall_args),

@@ -323,6 +323,34 @@ pub fn mkdir_path(path: &str, mode: u32) -> VfsResult<()> {
     sess.mkdir(rel.as_str(), mode)
 }
 
+/// 修改路径权限（经挂载表路由）。
+pub fn chmod_path(path: &str, mode: u32) -> VfsResult<()> {
+    let normalized = normalize_absolute_path(path)?;
+    if char_dev_exists(normalized.as_str()) {
+        return Err(VfsError::Unsupported);
+    }
+    assert_path_writable(path)?;
+    let (fs, rel) = fs_and_rel_rw(path)?;
+    let mut sess = MountedRwSession::new(fs);
+    sess.chmod(rel.as_str(), mode)
+}
+
+/// 修改路径 uid/gid（经挂载表路由）。
+pub fn chown_path(path: &str, uid: Option<u32>, gid: Option<u32>) -> VfsResult<()> {
+    let normalized = normalize_absolute_path(path)?;
+    if char_dev_exists(normalized.as_str()) {
+        return Err(VfsError::Unsupported);
+    }
+    if uid.is_none() && gid.is_none() {
+        let bridge = FsBridge;
+        return bridge.metadata(normalized.as_str()).map(|_| ());
+    }
+    assert_path_writable(path)?;
+    let (fs, rel) = fs_and_rel_rw(path)?;
+    let mut sess = MountedRwSession::new(fs);
+    sess.chown(rel.as_str(), uid, gid)
+}
+
 pub(crate) fn replace_file_contents(path: &str, data: &[u8]) -> VfsResult<()> {
     assert_path_writable(path)?;
     let (fs, rel) = fs_and_rel_rw(path)?;
@@ -400,6 +428,19 @@ impl RootRwSession for MountedRwSession {
     fn mkdir(&mut self, path: &str, mode: u32) -> VfsResult<()> {
         let n = normalize_absolute_path(path)?;
         self.inner.lock().mkdir(n.as_str(), mode).map_err(map_fs_err)
+    }
+
+    fn chmod(&mut self, path: &str, mode: u32) -> VfsResult<()> {
+        let n = normalize_absolute_path(path)?;
+        self.inner.lock().chmod(n.as_str(), mode).map_err(map_fs_err)
+    }
+
+    fn chown(&mut self, path: &str, uid: Option<u32>, gid: Option<u32>) -> VfsResult<()> {
+        let n = normalize_absolute_path(path)?;
+        self.inner
+            .lock()
+            .chown(n.as_str(), uid, gid)
+            .map_err(map_fs_err)
     }
 
     fn rename(&mut self, old_path: &str, new_path: &str) -> VfsResult<()> {

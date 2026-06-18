@@ -165,8 +165,8 @@ const _: () = assert!(core::mem::size_of::<UserSysInfo>() == 112);
 const _: () = assert!(core::mem::size_of::<UserRUsage>() == 144);
 const _: () = assert!(core::mem::size_of::<UserITimerVal>() == 32);
 const RLIM_INFINITY: u64 = !0u64;
-const SYSINFO_TOTAL_RAM: usize = 2 * 1024 * 1024 * 1024;
-const SYSINFO_FREE_RAM: usize = 1 * 1024 * 1024 * 1024;
+const SYSINFO_TOTAL_RAM: usize = wateros_base_config::mm::QEMU_VIRT_PHYS_RAM_SIZE;
+const SYSINFO_FREE_RAM: usize = SYSINFO_TOTAL_RAM / 2;
 const RUSAGE_CHILDREN: isize = -1;
 const RUSAGE_SELF: isize = 0;
 const RUSAGE_THREAD: isize = 1;
@@ -266,6 +266,29 @@ pub(crate) fn sys_setsid() -> UserRet {
     task::current_process_task_snapshot()
         .map(|snapshot| UserRet::from_success(snapshot.pid.raw()))
         .unwrap_or_else(|| UserRet::from_error(ErrNo::ESRCH))
+}
+
+/// `setpgid(2)`：bring-up 最小实现；尚未维护真实 pgid，仅校验常见自调用语义。
+pub(crate) fn sys_setpgid(args: SyscallArgs) -> UserRet {
+    let pid_arg = args.arg(0) as i32;
+    let pgid_arg = args.arg(1) as i32;
+
+    if pgid_arg < 0 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+
+    let current_pid = match task::current_process_task_snapshot() {
+        Some(snapshot) => i32::try_from(snapshot.pid.raw()).unwrap_or(i32::MAX),
+        None => return UserRet::from_error(ErrNo::ESRCH),
+    };
+
+    let target_pid = if pid_arg == 0 { current_pid } else { pid_arg };
+    if target_pid != current_pid {
+        return UserRet::from_error(ErrNo::ESRCH);
+    }
+
+    let _new_pgid = if pgid_arg == 0 { target_pid } else { pgid_arg };
+    UserRet::from_success(0)
 }
 
 pub(crate) fn sys_set_tid_address(args: SyscallArgs) -> UserRet {

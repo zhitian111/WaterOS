@@ -64,6 +64,10 @@ pub trait SyscallNumberTable {
     const READLINKAT: SyscallNumber;
     /// 检查相对目录路径可访问性（`faccessat(2)`）。
     const FACCESSAT: SyscallNumber;
+    /// 相对目录修改路径权限（`fchmodat(2)`）。
+    const FCHMODAT: SyscallNumber;
+    /// 相对目录修改路径属主/属组（`fchownat(2)`）。
+    const FCHOWNAT: SyscallNumber;
     /// 查询路径所在文件系统统计信息（`statfs(2)`）。
     const STATFS: SyscallNumber;
     /// 请求所有已挂载文件系统写回脏数据（`sync(2)`）。
@@ -74,6 +78,8 @@ pub trait SyscallNumberTable {
     const FDATASYNC: SyscallNumber;
     /// 调整 fd 对应文件长度（`ftruncate(2)`）。
     const FTRUNCATE: SyscallNumber;
+    /// 预分配 fd 对应文件区间（`fallocate(2)`）。
+    const FALLOCATE: SyscallNumber;
     /// 相对目录打开路径（`openat(2)`）。
     const OPENAT: SyscallNumber;
     /// 关闭文件描述符（`close(2)`）。
@@ -198,6 +204,8 @@ pub trait SyscallNumberTable {
     const GETTID: SyscallNumber;
     /// 读取进程时间统计（`times(2)`）。
     const TIMES: SyscallNumber;
+    /// 设置进程组 ID（`setpgid(2)`）。
+    const SETPGID: SyscallNumber;
     /// 当前进程真实用户 ID（`getuid(2)`）。
     const GETUID: SyscallNumber;
     /// 当前进程有效用户 ID（`geteuid(2)`）。

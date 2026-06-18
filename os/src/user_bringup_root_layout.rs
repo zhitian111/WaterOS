@@ -1,4 +1,4 @@
-//! 启动期根卷布局：为 busybox PATH 探测补齐 `/bin/ls` 等链接（不修改赛题镜像）。
+//! 启动期根卷布局：为 busybox PATH 探测补齐 `/bin/ls`、`/bin/basename` 等链接（不修改赛题镜像）。
 
 use runtime::logging::*;
 
@@ -14,7 +14,7 @@ pub fn ensure_busybox_path_links() {
 
     #[cfg(feature = "vfs-bridge")]
     {
-        use vfs::api::{RootRwSession, VfsError, VfsFsKind};
+        use vfs::api::{VfsError, VfsFsKind};
 
         let mut sess = match vfs::mount::open_rw_session(VfsFsKind::Ext4) {
             Ok(s) => s,
@@ -58,16 +58,22 @@ pub fn ensure_busybox_path_links() {
             }
         }
 
-        match sess.hardlink("/glibc/busybox", "/bin/ls") {
-            Ok(()) => info!("[{LOG_TAG}] hardlink /bin/ls -> /glibc/busybox"),
-            Err(VfsError::Exists) => trace!("[{LOG_TAG}] /bin/ls already present"),
-            Err(e) => warn!("[{LOG_TAG}] hardlink /bin/ls failed: {e:?}"),
-        }
+        /// busybox 多用途小程序：与 `/glibc/busybox` 硬链接到 `/bin/<name>`，供 PATH 解析。
+        const BUSYBOX_APPLET_LINKS: &[&str] = &["/bin/ls", "/bin/sleep", "/bin/basename"];
 
-        match sess.hardlink("/glibc/busybox", "/bin/sleep") {
-            Ok(()) => info!("[{LOG_TAG}] hardlink /bin/sleep -> /glibc/busybox"),
-            Err(VfsError::Exists) => trace!("[{LOG_TAG}] /bin/sleep already present"),
-            Err(e) => warn!("[{LOG_TAG}] hardlink /bin/sleep failed: {e:?}"),
+        for dest in BUSYBOX_APPLET_LINKS {
+            try_hardlink_busybox_applet(sess.as_mut(), dest);
         }
+    }
+}
+
+#[cfg(feature = "vfs-bridge")]
+fn try_hardlink_busybox_applet(sess: &mut (impl vfs::api::RootRwSession + ?Sized), dest: &str) {
+    use vfs::api::VfsError;
+
+    match sess.hardlink("/glibc/busybox", dest) {
+        Ok(()) => info!("[{LOG_TAG}] hardlink {dest} -> /glibc/busybox"),
+        Err(VfsError::Exists) => trace!("[{LOG_TAG}] {dest} already present"),
+        Err(e) => warn!("[{LOG_TAG}] hardlink {dest} failed: {e:?}"),
     }
 }

@@ -41,6 +41,18 @@ pub trait RootRwSession {
         Err(VfsError::Unsupported)
     }
 
+    /// 修改绝对路径 `path` 的权限位。
+    fn chmod(&mut self, path: &str, mode: u32) -> VfsResult<()> {
+        let _ = (path, mode);
+        Err(VfsError::Unsupported)
+    }
+
+    /// 修改绝对路径 `path` 的 uid/gid；`None` 表示不修改。
+    fn chown(&mut self, path: &str, uid: Option<u32>, gid: Option<u32>) -> VfsResult<()> {
+        let _ = (path, uid, gid);
+        Err(VfsError::Unsupported)
+    }
+
     /// 将 `old_path` 重命名为 `new_path`（实现可限制为同父目录）。
     fn rename(&mut self, old_path: &str, new_path: &str) -> VfsResult<()> {
         let _ = (old_path, new_path);

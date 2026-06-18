@@ -134,7 +134,7 @@ mod qemu_riscv64_opensbi {
             fn kernel_end();
         }
         // 与 DTB `/memory` 或 `wateros-base-config::QEMU_VIRT_PHYS_RAM_END` 对齐（如
-        // QEMU `-m 256M` → 0x9000_0000）
+        // QEMU `-m 1G` → 0xC000_0000）
         let memory_end = driver::physical_ram_end_exclusive();
         const PAGE_SIZE : usize = 4096;
         #[inline]

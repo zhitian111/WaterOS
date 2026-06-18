@@ -34,11 +34,14 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const SELECT: SyscallNumber = SyscallNumber(23);
     const READLINKAT: SyscallNumber = SyscallNumber(78);
     const FACCESSAT: SyscallNumber = SyscallNumber(48);
+    const FCHMODAT: SyscallNumber = SyscallNumber(53);
+    const FCHOWNAT: SyscallNumber = SyscallNumber(54);
     const STATFS: SyscallNumber = SyscallNumber(43);
     const SYNC: SyscallNumber = SyscallNumber(81);
     const FSYNC: SyscallNumber = SyscallNumber(82);
     const FDATASYNC: SyscallNumber = SyscallNumber(83);
     const FTRUNCATE: SyscallNumber = SyscallNumber(46);
+    const FALLOCATE: SyscallNumber = SyscallNumber(47);
     const OPENAT: SyscallNumber = SyscallNumber(56);
     const CLOSE: SyscallNumber = SyscallNumber(57);
     const FSTAT: SyscallNumber = SyscallNumber(80);
@@ -105,6 +108,7 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const CHDIR: SyscallNumber = SyscallNumber(49);
     const GETTID: SyscallNumber = SyscallNumber(178);
     const TIMES: SyscallNumber = SyscallNumber(153);
+    const SETPGID: SyscallNumber = SyscallNumber(154);
     const GETUID: SyscallNumber = SyscallNumber(174);
     const GETEUID: SyscallNumber = SyscallNumber(175);
     const GETGID: SyscallNumber = SyscallNumber(176);

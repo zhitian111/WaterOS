@@ -216,6 +216,18 @@ pub trait ReadWriteFs: Send {
         Err(FsError::Unsupported)
     }
 
+    /// 修改绝对路径 `path` 的权限位；`mode` 取 Linux `chmod` 语义（`mode & 0o7777`）。
+    fn chmod(&mut self, path: &str, mode: u32) -> FsResult<()> {
+        let _ = (path, mode);
+        Err(FsError::Unsupported)
+    }
+
+    /// 修改绝对路径 `path` 的 uid/gid；`None` 表示对应字段不修改（Linux `-1`）。
+    fn chown(&mut self, path: &str, uid: Option<u32>, gid: Option<u32>) -> FsResult<()> {
+        let _ = (path, uid, gid);
+        Err(FsError::Unsupported)
+    }
+
     /// 将 `old_path` 重命名为 `new_path`（实现可限制为同父目录）。
     fn rename(&mut self, old_path: &str, new_path: &str) -> FsResult<()> {
         let _ = (old_path, new_path);
@@ -331,6 +343,14 @@ impl ReadWriteFs for LocalRwFs {
 
     fn mkdir(&mut self, path: &str, mode: u32) -> FsResult<()> {
         self.deref_mut().mkdir(path, mode)
+    }
+
+    fn chmod(&mut self, path: &str, mode: u32) -> FsResult<()> {
+        self.deref_mut().chmod(path, mode)
+    }
+
+    fn chown(&mut self, path: &str, uid: Option<u32>, gid: Option<u32>) -> FsResult<()> {
+        self.deref_mut().chown(path, uid, gid)
     }
 
     fn rename(&mut self, old_path: &str, new_path: &str) -> FsResult<()> {

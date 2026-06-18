@@ -44,6 +44,20 @@ pub fn mkdir_at_current(path: &str, mode: u32) -> VfsResult<()> {
     impl_fs_bridge::mkdir_path(abs.as_str(), mode)
 }
 
+/// 修改已解析绝对路径的权限（`impl-fd-session` + `bridge-fs-api`）。
+#[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
+pub fn chmod_absolute(path: &str, mode: u32) -> VfsResult<()> {
+    let abs = normalize_absolute_path(path)?;
+    impl_fs_bridge::chmod_path(abs.as_str(), mode)
+}
+
+/// 修改已解析绝对路径的 uid/gid（`impl-fd-session` + `bridge-fs-api`）。
+#[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
+pub fn chown_absolute(path: &str, uid: Option<u32>, gid: Option<u32>) -> VfsResult<()> {
+    let abs = normalize_absolute_path(path)?;
+    impl_fs_bridge::chown_path(abs.as_str(), uid, gid)
+}
+
 /// 删除已解析的绝对路径（`impl-fd-session` + `bridge-fs-api`）。
 #[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
 pub fn unlink_absolute(path: &str, remove_dir: bool) -> VfsResult<()> {

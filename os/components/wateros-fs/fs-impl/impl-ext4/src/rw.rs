@@ -255,6 +255,38 @@ impl ReadWriteFs for Ext4FsRw {
         Ok(())
     }
 
+    fn chmod(&mut self, path: &str, mode: u32) -> FsResult<()> {
+        let fs = self.fs()?;
+        let pathv = Path::try_from(path).map_err(|_| FsError::InvalidPath)?;
+        let mut inode = fs
+            .path_to_inode(pathv, FollowSymlinks::All)
+            .map_err(map_ext4_plus)?;
+        let current = inode.mode();
+        let new_mode = inode_type_bits(current) | linux_mode_perm_to_inode_mode(mode);
+        inode.set_mode(new_mode).map_err(map_ext4_plus)?;
+        inode.write(fs).map_err(map_ext4_plus)?;
+        Ok(())
+    }
+
+    fn chown(&mut self, path: &str, uid: Option<u32>, gid: Option<u32>) -> FsResult<()> {
+        if uid.is_none() && gid.is_none() {
+            return self.metadata(path).map(|_| ());
+        }
+        let fs = self.fs()?;
+        let pathv = Path::try_from(path).map_err(|_| FsError::InvalidPath)?;
+        let mut inode = fs
+            .path_to_inode(pathv, FollowSymlinks::All)
+            .map_err(map_ext4_plus)?;
+        if let Some(uid) = uid {
+            inode.set_uid(uid);
+        }
+        if let Some(gid) = gid {
+            inode.set_gid(gid);
+        }
+        inode.write(fs).map_err(map_ext4_plus)?;
+        Ok(())
+    }
+
     fn unlink(&mut self, path: &str) -> FsResult<()> {
         let (parent, name) = split_parent_and_name(path)?;
         let fs = self.fs()?;
@@ -502,8 +534,33 @@ fn map_rw_metadata(meta: &Metadata, inode: u64) -> FsMetadata {
 
 /// 将 Linux `mkdir(2)` 的 `mode`（权限位，可含 `S_IFDIR`）映射为 ext4 `InodeMode`。
 fn linux_mkdir_mode_to_inode_mode(mode: u32) -> InodeMode {
-    let perm = mode & 0o777;
-    let mut m = InodeMode::S_IFDIR;
+    InodeMode::S_IFDIR | linux_mode_perm_to_inode_mode(mode)
+}
+
+/// 保留 ext4 inode 的文件类型位。
+fn inode_type_bits(mode: InodeMode) -> InodeMode {
+    mode & (InodeMode::S_IFIFO
+        | InodeMode::S_IFCHR
+        | InodeMode::S_IFDIR
+        | InodeMode::S_IFBLK
+        | InodeMode::S_IFREG
+        | InodeMode::S_IFLNK
+        | InodeMode::S_IFSOCK)
+}
+
+/// 将 Linux `chmod(2)` / `fchmodat(2)` 的权限位（`mode & 0o7777`）映射为 ext4 `InodeMode`。
+fn linux_mode_perm_to_inode_mode(mode: u32) -> InodeMode {
+    let perm = mode & 0o7777;
+    let mut m = InodeMode::empty();
+    if perm & 0o4000 != 0 {
+        m |= InodeMode::S_ISUID;
+    }
+    if perm & 0o2000 != 0 {
+        m |= InodeMode::S_ISGID;
+    }
+    if perm & 0o1000 != 0 {
+        m |= InodeMode::S_ISVTX;
+    }
     if perm & 0o400 != 0 {
         m |= InodeMode::S_IRUSR;
     }

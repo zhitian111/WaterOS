@@ -10,9 +10,15 @@ pub const KERNEL_HEAP_SIZE_BIT_WIDTH : usize = 26;
 /// 内核堆字节容量，即 `1 << KERNEL_HEAP_SIZE_BIT_WIDTH`。
 pub const KERNEL_HEAP_SIZE : usize = 1 << KERNEL_HEAP_SIZE_BIT_WIDTH;
 
-/// QEMU `virt` 物理 RAM 上界（不包含）：`0x8000_0000 + 256MiB`。
-/// 与常见 `-m 256M` 一致；若 DTB 解析失败则作为回退值。
-pub const QEMU_VIRT_PHYS_RAM_END : usize = 0x9000_0000;
+/// QEMU `virt` 物理 RAM 起始（包含）。
+pub const QEMU_VIRT_PHYS_RAM_BASE : usize = 0x8000_0000;
+
+/// QEMU `virt` 物理 RAM 上界（不包含）：`QEMU_VIRT_PHYS_RAM_BASE + 1GiB`。
+/// 与赛题/常见 `-m 1G` 一致；若 DTB 解析失败则作为回退值。
+pub const QEMU_VIRT_PHYS_RAM_END : usize = 0xC000_0000;
+
+/// QEMU `virt` 物理 RAM 字节容量。
+pub const QEMU_VIRT_PHYS_RAM_SIZE : usize = QEMU_VIRT_PHYS_RAM_END - QEMU_VIRT_PHYS_RAM_BASE;
 
 /// QEMU `virt` 低地址 MMIO 恒等映射区间（半开）：UART、`virtio,mmio`
 /// 等外设所在物理地址。 与 OpenSBI/QEMU 设备树常见布局一致；**不是** DRAM，扩大

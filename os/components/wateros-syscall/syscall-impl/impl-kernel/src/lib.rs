@@ -173,6 +173,16 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     }
 
     #[inline]
+    fn dispatch_fchmodat(args: SyscallArgs) -> isize {
+        sys::sys_fchmodat(args).0
+    }
+
+    #[inline]
+    fn dispatch_fchownat(args: SyscallArgs) -> isize {
+        sys::sys_fchownat(args).0
+    }
+
+    #[inline]
     fn dispatch_statfs(args: SyscallArgs) -> isize {
         sys::sys_statfs(args).0
     }
@@ -195,6 +205,11 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     #[inline]
     fn dispatch_ftruncate(args: SyscallArgs) -> isize {
         sys::sys_ftruncate(args).0
+    }
+
+    #[inline]
+    fn dispatch_fallocate(args: SyscallArgs) -> isize {
+        sys::sys_fallocate(args).0
     }
 
     #[inline]
@@ -450,6 +465,11 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     #[inline]
     fn dispatch_times(args: SyscallArgs) -> isize {
         sys::sys_times(args).0
+    }
+
+    #[inline]
+    fn dispatch_setpgid(args: SyscallArgs) -> isize {
+        sys::sys_setpgid(args).0
     }
 
     #[inline]
