@@ -41,11 +41,11 @@ kernel_rv_flag := --release --target riscv64gc-unknown-none-elf \
 
 kernel_rv_build_artifact_path := ./target/riscv64gc-unknown-none-elf/release
 
-kernel_la_flag := --release --target loongarch64-unknown-none-softfloat \
+kernel_la_flag := --release --target loongarch64-unknown-none \
                   --no-default-features \
                   --features qemu-loongarch64-virt
 
-kernel_la_build_artifact_path := ./target/loongarch64-unknown-none-softfloat/release
+kernel_la_build_artifact_path := ./target/loongarch64-unknown-none/release
 
 define TRACE
 	@echo -e "$(COLOR_ANSI_PURPLE)[MAKEFILE]$(COLOR_ANSI_CLEAR)$(COLOR_ANSI_BLUE)\t[TRACE]\t$(1)$(COLOR_ANSI_CLEAR)"

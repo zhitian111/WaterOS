@@ -85,7 +85,7 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const MUNMAP: SyscallNumber = SyscallNumber(215); // munmap
     const MSYNC: SyscallNumber = SyscallNumber(227); // msync
     const MPROTECT: SyscallNumber = SyscallNumber(226); // mprotect
-    const MREMAP: SyscallNumber = SyscallNumber(233); // mremap
+    const MREMAP: SyscallNumber = SyscallNumber(216); // mremap
     const MLOCK: SyscallNumber = SyscallNumber(228); // mlock
     const MUNLOCK: SyscallNumber = SyscallNumber(229); // munlock
     const MLOCKALL: SyscallNumber = SyscallNumber(230); // mlockall

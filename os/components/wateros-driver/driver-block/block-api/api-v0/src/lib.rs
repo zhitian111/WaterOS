@@ -144,7 +144,7 @@ impl SampleBlockDevice {
 
 impl BlockDevice for SampleBlockDevice {
     fn read_blocks(&mut self, start_block: Lba, buf: &mut [u8]) -> DriverResult<()> {
-        if !buf.len().is_multiple_of(BLOCK_SIZE) {
+        if buf.len() % BLOCK_SIZE != 0 {
             return Err(DriverError::InvalidParam);
         }
         let start = usize::try_from(start_block.0)
