@@ -1,22 +1,19 @@
 #!/bin/bash
-mem="512M"
 os_file="./kernel-rv"
 fs="./sdcard-rv.img"
-# fs="../wateros_user_mode_program/rv_disk.img"
-# fs="./rv_disk.img"
 
 qemu-system-riscv64 -machine virt \
-                    -nographic \
                     -kernel $os_file \
-                    -serial mon:stdio \
+                    -m 1G \
+                    -nographic \
+                    -smp 1 \
                     -bios default \
-                    -no-reboot \
-                    -m $mem \
-                    -rtc base=utc \
-                    -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 \
                     -drive file=$fs,if=none,format=raw,id=x0 \
+                    -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 \
+                    -no-reboot \
                     -device virtio-net-device,netdev=net \
                     -netdev user,id=net \
+                    -rtc base=utc
 # qemu-system-riscv64 -machine virt -kernel {os_file} -m {mem} -nographic -smp {smp} -bios default -drive file={fs},if=none,format=raw,id=x0 \
 #                     -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 -no-reboot -device virtio-net-device,netdev=net -netdev user,id=net \
 #                     -rtc base=utc \
