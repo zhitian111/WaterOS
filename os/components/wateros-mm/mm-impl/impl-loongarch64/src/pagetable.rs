@@ -17,7 +17,7 @@ use api_v0::address_space::AddressSpaceOps;
 use api_v0::error::{MmError, MmResult};
 use api_v0::perm::PagePerm;
 
-use frame_alloctor::{frame_alloc_result, frame_dealloc_result};
+use frame_alloctor::{frame_alloc_result, frame_dealloc_result, frame_inc_ref, frame_ref_count};
 
 /// LoongArch64 PTE 标志位。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,6 +30,8 @@ impl LoongArch64PteFlags {
                                    // bits [4:5] = MAT (memory access type)
     const P : Self = Self(1 << 7); // Present (physical page exists)
     const W : Self = Self(1 << 8); // Writable
+    const COW : Self = Self(1 << 9);
+    const COW_WAS_WRITABLE : Self = Self(1 << 10);
     const NR : Self = Self(1 << 61); // Not Readable
     const NX : Self = Self(1 << 62); // Not Executable
     const RPLV : Self = Self(1 << 63); // Restricted PLV, reserved for future
@@ -55,6 +57,37 @@ impl LoongArch64PteFlags {
     /// 这些低位当作下一级表基址的一部分。
     #[inline]
     const fn is_leaf(self) -> bool { self.is_valid() && self.is_present() }
+
+    #[inline]
+    const fn writable(self) -> bool { (self.0 & Self::W.0) != 0 }
+
+    #[inline]
+    const fn cow(self) -> bool { (self.0 & Self::COW.0) != 0 }
+
+    #[inline]
+    const fn cow_was_writable(self) -> bool { (self.0 & Self::COW_WAS_WRITABLE.0) != 0 }
+
+    #[inline]
+    fn prepare_cow(self) -> Self {
+        let mut f = self;
+        // LoongArch 的 W/P 是软件页表遍历辅助位，不会进入 TLB 权限检查；
+        // 清 D 位让用户 store 触发 PME，再由 trap 路径完成写时复制。
+        f.0 &= !(Self::W.0 | Self::D.0);
+        f.0 |= Self::COW.0 | Self::COW_WAS_WRITABLE.0;
+        f
+    }
+
+    #[inline]
+    fn clear_cow(self) -> Self {
+        Self(self.0 & !(Self::COW.0 | Self::COW_WAS_WRITABLE.0))
+    }
+
+    #[inline]
+    fn restore_cow_writable(self) -> Self {
+        let mut f = self.clear_cow();
+        f.0 |= Self::W.0 | Self::D.0;
+        f
+    }
 
     /// 从 [`PagePerm`] 构造 PTE 标志：V=1, D=1 (pre-fault), MAT=CoherentCached,
     /// PLV 由 `perm.user()` 决定。
@@ -110,7 +143,7 @@ impl LoongArch64Pte {
 
     #[inline]
     fn flags(self) -> LoongArch64PteFlags {
-        LoongArch64PteFlags((self.0 & 0x1FF) |
+        LoongArch64PteFlags((self.0 & 0x7FF) |
                              (self.0 & (LoongArch64PteFlags::NR.0 |
                                         LoongArch64PteFlags::NX.0 |
                                         LoongArch64PteFlags::RPLV.0)))
@@ -262,21 +295,23 @@ impl LoongArch64AddressSpace {
         Ok(None)
     }
 
-    /// 创建独立的地址空间副本：递归复制三级页表树。
+    /// 创建 COW 地址空间副本：递归复制三级页表树。
     ///
-    /// - 用户页（PTE 中 `PLV == 3`）：分配新物理帧，逐字节复制数据。
+    /// - 用户页（PTE 中 `PLV == 3`）：共享原物理帧，写页清 `W` 并标记 COW。
     /// - 内核恒等映射页（PLV != 3）：共享原始 PPN，不复制数据帧。
-    /// - 中间页表帧：分配新帧，仅设 `V` 标志（非叶子）。
-    pub fn fork(&self) -> MmResult<LoongArch64AddressSpace> {
+    /// - 含用户映射的中间页表帧：为子地址空间复制页表结构。
+    pub fn fork_cow(&mut self) -> MmResult<LoongArch64AddressSpace> {
         log::trace!("[mm-fork] LoongArch64AddressSpace::fork begin root_ppn={}",
                     self.root.0);
         let child_root = alloc_table_frame_zeroed()?;
         // SAFETY: 刚分配并清零的帧作为子地址空间根页表。
-        unsafe {
-            fork_table(self.root,
-                       child_root,
-                       LOONGARCH64_LEVELS - 1)?;
+        if let Err(err) = unsafe { fork_table(self.root, child_root, LOONGARCH64_LEVELS - 1) } {
+            unsafe {
+                destroy_table(child_root, LOONGARCH64_LEVELS - 1);
+            }
+            return Err(err);
         }
+        platform::arch::paging::flush_address_space_translations();
         log::trace!("[mm-fork] LoongArch64AddressSpace::fork done child_root={}",
                     child_root.0);
         Ok(LoongArch64AddressSpace { root : child_root,
@@ -285,6 +320,69 @@ impl LoongArch64AddressSpace {
                                      user_brk_max : self.user_brk_max,
                                      mmap_anon_cursor : self.mmap_anon_cursor,
                                      mmap_file_cursor : self.mmap_file_cursor })
+    }
+
+    fn handle_cow_page(&mut self, vpn : VirtPageNum) -> MmResult<bool> {
+        let Some((pte, level)) = self.walk_find(vpn)? else {
+            return Ok(false);
+        };
+        let flags = pte.flags();
+        if level != 0 || !flags.is_leaf() || !flags.cow() || !flags.cow_was_writable() {
+            return Ok(false);
+        }
+        let old_ppn = pte.ppn();
+        let new_flags = flags.restore_cow_writable();
+        if frame_ref_count(old_ppn).map_err(MmError::from)? <= 1 {
+            pte.set(old_ppn, new_flags);
+            platform::arch::paging::flush_address_space_translations();
+            return Ok(true);
+        }
+
+        let new_ppn = frame_alloc_result().map_err(MmError::from)?;
+        let src = old_ppn.0 * PAGE_SIZE;
+        let dst = new_ppn.0 * PAGE_SIZE;
+        unsafe {
+            core::ptr::copy_nonoverlapping(src as *const u8, dst as *mut u8, PAGE_SIZE);
+        }
+        frame_dealloc_result(old_ppn).map_err(MmError::from)?;
+        pte.set(new_ppn, new_flags);
+        platform::arch::paging::flush_address_space_translations();
+        Ok(true)
+    }
+
+    pub fn handle_cow_fault(&mut self, fault_addr : VirtAddr) -> MmResult<bool> {
+        self.handle_cow_page(fault_addr.floor_page())
+    }
+
+    pub fn ensure_private_for_write(&mut self, vpn : VirtPageNum) -> MmResult<bool> {
+        if self.handle_cow_page(vpn)? {
+            return Ok(true);
+        }
+        let Some((pte, level)) = self.walk_find(vpn)? else {
+            return Ok(false);
+        };
+        let flags = pte.flags();
+        if level != 0 ||
+           !flags.is_leaf() ||
+           !flags.to_page_perm()
+                 .user()
+        {
+            return Ok(false);
+        }
+        let old_ppn = pte.ppn();
+        if frame_ref_count(old_ppn).map_err(MmError::from)? <= 1 {
+            return Ok(true);
+        }
+        let new_ppn = frame_alloc_result().map_err(MmError::from)?;
+        let src = old_ppn.0 * PAGE_SIZE;
+        let dst = new_ppn.0 * PAGE_SIZE;
+        unsafe {
+            core::ptr::copy_nonoverlapping(src as *const u8, dst as *mut u8, PAGE_SIZE);
+        }
+        frame_dealloc_result(old_ppn).map_err(MmError::from)?;
+        pte.set(new_ppn, flags.clear_cow());
+        platform::arch::paging::flush_address_space_translations();
+        Ok(true)
     }
 
     /// 递归释放所有用户页帧及页表帧，不触碰内核恒等映射。
@@ -319,13 +417,37 @@ unsafe fn destroy_table(ppn : PhysPageNum, level : usize) {
                 .user()
         {
             let _ = frame_dealloc_result(child_ppn);
-        } else if level > 0 {
+        } else if level > 0 && unsafe { subtree_has_user_mapping(child_ppn, level - 1) } {
             unsafe {
                 destroy_table(child_ppn, level - 1);
             }
         }
     }
     let _ = frame_dealloc_result(ppn);
+}
+
+/// 判断一个页表子树内是否包含用户叶子映射。
+///
+/// 用户地址空间包含高地址内核恒等映射；纯内核子树在 fork 时直接共享，销毁子
+/// 地址空间时也不能释放。
+unsafe fn subtree_has_user_mapping(ppn : PhysPageNum, level : usize) -> bool {
+    let table = unsafe { table_mut(ppn) };
+    for pte in table.iter() {
+        let flags = pte.flags();
+        if pte.0 == 0 {
+            continue;
+        }
+        if flags.is_leaf() {
+            if flags.to_page_perm()
+                    .user()
+            {
+                return true;
+            }
+        } else if level > 0 && unsafe { subtree_has_user_mapping(pte.ppn(), level - 1) } {
+            return true;
+        }
+    }
+    false
 }
 
 /// 递归复制一级页表：遍历 `parent_ppn` 对应的页表项，将
@@ -343,9 +465,8 @@ unsafe fn fork_table(parent_ppn : PhysPageNum,
     let parent_table = unsafe { table_mut(parent_ppn) };
     let child_table = unsafe { table_mut(child_ppn) };
 
-    for (i, pte) in parent_table.iter()
-                                .enumerate()
-    {
+    for i in 0..LOONGARCH64_ENTRIES {
+        let pte = parent_table[i];
         let flags = pte.flags();
         if pte.0 == 0 {
             continue;
@@ -355,24 +476,31 @@ unsafe fn fork_table(parent_ppn : PhysPageNum,
         if flags.is_leaf() {
             let perm = flags.to_page_perm();
             if perm.user() {
-                let new_ppn = frame_alloc_result().map_err(MmError::from)?;
-                let src = ppn.0 * PAGE_SIZE;
-                let dst = new_ppn.0 * PAGE_SIZE;
-                unsafe {
-                    core::ptr::copy_nonoverlapping(src as *const u8,
-                                                   dst as *mut u8,
-                                                   PAGE_SIZE);
-                }
-                child_table[i].set(new_ppn, flags);
+                frame_inc_ref(ppn).map_err(MmError::from)?;
+                let child_flags = if flags.writable() {
+                    let cow_flags = flags.prepare_cow();
+                    parent_table[i].set(ppn, cow_flags);
+                    cow_flags
+                } else {
+                    flags
+                };
+                child_table[i].set(ppn, child_flags);
             } else {
                 child_table[i].set(ppn, flags);
             }
         } else if level > 0 {
-            let child_sub = alloc_table_frame_zeroed()?;
-            child_table[i].set_table(child_sub);
-            unsafe {
-                fork_table(ppn, child_sub, level - 1)?;
+            if !unsafe { subtree_has_user_mapping(ppn, level - 1) } {
+                child_table[i].set_table(ppn);
+                continue;
             }
+            let child_sub = alloc_table_frame_zeroed()?;
+            if let Err(err) = unsafe { fork_table(ppn, child_sub, level - 1) } {
+                unsafe {
+                    destroy_table(child_sub, level - 1);
+                }
+                return Err(err);
+            }
+            child_table[i].set_table(child_sub);
         }
     }
     Ok(())
@@ -459,7 +587,7 @@ impl AddressSpaceOps for LoongArch64AddressSpace {
                    .to_page_perm()))
     }
 
-    fn fork(&self) -> MmResult<Self> { LoongArch64AddressSpace::fork(self) }
+    fn fork(&self) -> MmResult<Self> { Err(MmError::Unsupported) }
 }
 
 impl Drop for LoongArch64AddressSpace {

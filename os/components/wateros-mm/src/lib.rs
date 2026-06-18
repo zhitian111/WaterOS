@@ -84,7 +84,12 @@ pub mod kernel_mm {
             return impl_sv39::kernel_mm_impl::handle_cow_fault(aspace_ptr, fault_addr)
                 .unwrap_or(false);
         }
-        #[cfg(not(feature = "impl-sv39"))]
+        #[cfg(all(not(feature = "impl-sv39"), feature = "impl-loongarch64"))]
+        {
+            return impl_loongarch64::kernel_mm_impl::handle_cow_fault(aspace_ptr, fault_addr)
+                .unwrap_or(false);
+        }
+        #[cfg(not(any(feature = "impl-sv39", feature = "impl-loongarch64")))]
         {
             let _ = (aspace_ptr, fault_addr);
             false

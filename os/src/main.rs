@@ -139,10 +139,21 @@ mod qemu_riscv64_opensbi {
         const PAGE_SIZE : usize = 4096;
         #[inline]
         const fn align_up(v : usize, align : usize) -> usize { (v + align - 1) & !(align - 1) }
+        #[inline]
+        const fn align_down(v : usize, align : usize) -> usize { v & !(align - 1) }
+        let alloc_end = if boot_arg1 >= 0x8000_0000 && boot_arg1 < memory_end {
+            let reserved = align_down(boot_arg1, PAGE_SIZE);
+            info!("[self-test] reserve DTB/top RAM for firmware data: dtb={:#x} alloc_end={:#x} \
+                   memory_end={:#x}",
+                  boot_arg1, reserved, memory_end);
+            reserved
+        } else {
+            memory_end
+        };
         let start_ppn = align_up(kernel_end as *const () as usize,
                                  PAGE_SIZE) /
                         PAGE_SIZE;
-        let end_ppn = memory_end / PAGE_SIZE;
+        let end_ppn = alloc_end / PAGE_SIZE;
         info!("[self-test] frame range ppn=[{:#x},{:#x})",
               start_ppn, end_ppn);
         mm::test_with_range(base::addr::BasePPN { val : start_ppn },
@@ -252,16 +263,27 @@ mod qemu_loongarch64_virt {
         const PAGE_SIZE : usize = mm::api::addr::PAGE_SIZE;
         #[inline]
         const fn align_up(v : usize, align : usize) -> usize { (v + align - 1) & !(align - 1) }
+        #[inline]
+        const fn align_down(v : usize, align : usize) -> usize { v & !(align - 1) }
 
         let start_ppn = align_up(kernel_end as *const () as usize,
                                  PAGE_SIZE) /
                         PAGE_SIZE;
         let memory_end = driver::physical_ram_end_exclusive();
-        let end_ppn = memory_end / PAGE_SIZE;
+        let alloc_end = if envp >= 0x8000_0000 && envp < memory_end {
+            let reserved = align_down(envp, PAGE_SIZE);
+            info!("[loongarch64][self-test] reserve DTB/top RAM for firmware data: envp={:#x} \
+                   alloc_end={:#x} memory_end={:#x}",
+                  envp, reserved, memory_end);
+            reserved
+        } else {
+            memory_end
+        };
+        let end_ppn = alloc_end / PAGE_SIZE;
         let usable_end_ppn = end_ppn.min(0x1_0000_0000usize / PAGE_SIZE);
         info!("[loongarch64][self-test] frame range ppn=[{:#x},{:#x}) detected_end_ppn={:#x} \
-               ram_end={:#x}",
-              start_ppn, usable_end_ppn, end_ppn, memory_end);
+               alloc_end={:#x} ram_end={:#x}",
+              start_ppn, usable_end_ppn, end_ppn, alloc_end, memory_end);
         mm::test_with_range(base::addr::BasePPN { val : start_ppn },
                             base::addr::BasePPN { val : usable_end_ppn });
         info!("[loongarch64][self-test] mm self-test done");

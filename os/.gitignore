@@ -12,6 +12,7 @@ __pycache__/
 *log.txt
 cache*
 **/Cargo.lock
+!/Cargo.lock
 config.conf
 ./feature-tree.txt
 **/target/

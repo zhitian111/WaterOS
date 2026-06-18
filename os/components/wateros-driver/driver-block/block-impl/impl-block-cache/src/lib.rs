@@ -143,7 +143,7 @@ impl BlockDevice for CachingBlockDevice {
 
     fn read_blocks(&mut self, start_block: Lba, buf: &mut [u8]) -> DriverResult<()> {
         let bs = self.block_size;
-        if bs == 0 || !buf.len().is_multiple_of(bs) {
+        if bs == 0 || buf.len() % bs != 0 {
             return Err(DriverError::InvalidParam);
         }
         if self.capacity == 0 {
@@ -181,7 +181,7 @@ impl BlockDevice for CachingBlockDevice {
 
     fn write_blocks(&mut self, start_block: Lba, buf: &[u8]) -> DriverResult<()> {
         let bs = self.block_size;
-        if bs == 0 || !buf.len().is_multiple_of(bs) {
+        if bs == 0 || buf.len() % bs != 0 {
             return Err(DriverError::InvalidParam);
         }
         self.inner.write_blocks(start_block, buf)?;
@@ -227,7 +227,7 @@ mod tests {
         fn read_blocks(&mut self, start_block: Lba, buf: &mut [u8]) -> DriverResult<()> {
             *self.reads.lock().unwrap() += 1;
             let bs = self.block_size();
-            if !buf.len().is_multiple_of(bs) {
+            if buf.len() % bs != 0 {
                 return Err(DriverError::InvalidParam);
             }
             let start = (start_block.0 as usize).checked_mul(bs).ok_or(DriverError::InvalidParam)?;
@@ -240,7 +240,7 @@ mod tests {
         fn write_blocks(&mut self, start_block: Lba, buf: &[u8]) -> DriverResult<()> {
             *self.writes.lock().unwrap() += 1;
             let bs = self.block_size();
-            if !buf.len().is_multiple_of(bs) {
+            if buf.len() % bs != 0 {
                 return Err(DriverError::InvalidParam);
             }
             let start = (start_block.0 as usize).checked_mul(bs).ok_or(DriverError::InvalidParam)?;

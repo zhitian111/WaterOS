@@ -43,15 +43,27 @@ fn user_copy_to(handle : usize, kernel_src : &[u8], mut user_addr : VirtAddr) ->
     user_aspace::with_user_aspace_mut(handle, |aspace| {
         let mut done = 0usize;
         while done < kernel_src.len() {
+            let vpn = user_addr.floor_page();
+            let mut perm = aspace.leaf_page_perm(vpn)?
+                                  .ok_or(MmError::AccessViolation)?;
+            if !perm.user() {
+                return Err(MmError::AccessViolation);
+            }
+            if perm.writable() {
+                if !aspace.ensure_private_for_write(vpn)? {
+                    return Err(MmError::AccessViolation);
+                }
+            } else if aspace.handle_cow_fault(user_addr)? {
+                perm = aspace.leaf_page_perm(vpn)?
+                              .ok_or(MmError::AccessViolation)?;
+            }
+            if !perm.writable() {
+                return Err(MmError::AccessViolation);
+            }
             let pa = match aspace.translate_addr(user_addr)? {
                 Some(pa) => pa,
                 None => return Err(MmError::AccessViolation),
             };
-            let perm = aspace.leaf_page_perm(user_addr.floor_page())?
-                             .ok_or(MmError::AccessViolation)?;
-            if !perm.user() || !perm.writable() {
-                return Err(MmError::AccessViolation);
-            }
             let page_room = PAGE_SIZE - user_addr.page_offset();
             let chunk = page_room.min(kernel_src.len() - done);
             let dst = unsafe { core::slice::from_raw_parts_mut(pa.0 as *mut u8, chunk) };

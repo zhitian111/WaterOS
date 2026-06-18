@@ -35,7 +35,7 @@
 | `mmap` | 部分接入 | 支持匿名/文件映射骨架；共享写回、权限边界仍需补强。 |
 | `munmap` | 部分接入 | 走 MM `MmapOps`。 |
 | `mprotect` | 部分接入 | libc/动态链接后续会继续依赖。 |
-| `mremap` (233) | 部分接入 | 匿名 grow/shrink、`MREMAP_MAYMOVE`/`MREMAP_FIXED`；pthread 栈扩展路径。 |
+| `mremap` (216) | 部分接入 | 匿名 grow/shrink、`MREMAP_MAYMOVE`/`MREMAP_FIXED`；pthread 栈扩展路径。 |
 | `mlock`/`munlock` (228/229) | 部分接入 | bring-up no-op 成功；glibc pthread 栈锁定路径。 |
 | `mlockall`/`munlockall` (230/231) | 部分接入 | bring-up no-op 成功。 |
 | `get_mempolicy` (236) | 部分接入 | 语义在 `mm::mempolicy`；syscall 薄封装。 |

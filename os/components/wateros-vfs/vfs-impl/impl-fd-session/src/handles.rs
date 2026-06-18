@@ -81,6 +81,34 @@ impl VfsIoHandle for ConsoleOutHandle {
     }
 }
 
+/// `/dev/null`：读 EOF，写入丢弃。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NullDeviceHandle;
+
+impl VfsIoHandle for NullDeviceHandle {
+    fn read(&mut self, _buf: &mut [u8]) -> VfsResult<usize> {
+        Ok(0)
+    }
+
+    fn write(&mut self, buf: &[u8]) -> VfsResult<usize> {
+        Ok(buf.len())
+    }
+
+    fn poll_revents(&mut self, events: i16) -> VfsResult<i16> {
+        const POLLIN: i16 = 0x001;
+        const POLLOUT: i16 = 0x004;
+        Ok(events & (POLLIN | POLLOUT))
+    }
+
+    fn metadata(&self) -> VfsResult<VfsMetadata> {
+        Ok(special_dev_meta(0o20666, 2, 1, 3))
+    }
+
+    fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {
+        Ok(Box::new(*self))
+    }
+}
+
 /// `/dev/zero`：读出零字节，写入丢弃。
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ZeroDeviceHandle;

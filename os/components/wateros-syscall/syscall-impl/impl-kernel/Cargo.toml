@@ -16,7 +16,7 @@
     log = { version = "0.4.29" }
     platform = { path = "../../../wateros-platform/", package = "wateros-platform", default-features = false }
     wateros-platform-arch-api-v0 = { path = "../../../wateros-platform/platform-arch/arch-api/api-v0/", default-features = true }
-    smoltcp = { version = "0.13", default-features = false, optional = true }
+    smoltcp = { version = "=0.12.0", default-features = false, optional = true }
     spin = "0.10.0"
     wateros-base-config = { path = "../../../wateros-base/base-config/", package = "wateros-base-config", default-features = true }
     klog = { path = "../../../wateros-klog/", package = "wateros-klog", default-features = true }

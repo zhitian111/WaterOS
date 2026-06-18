@@ -2,36 +2,33 @@
 
 use runtime::logging::*;
 
-const SCRIPT_PATHS : &[&str] = &[// --- P1 basic ---
-                                 // "/glibc/basic_testcode.sh",        // done
-                                 // "/musl/basic_testcode.sh",         // done
-                                 // --- P2 busybox + lua ---
-                                 // "/glibc/busybox_testcode.sh",      // done
-                                 // "/musl/busybox_testcode.sh",       // done
-                                 // "/glibc/lua_testcode.sh",          // done
-                                 // "/musl/lua_testcode.sh",           // done
-                                 // --- P3 benchmark ---
-                                 // "/glibc/lmbench_testcode.sh",
-                                 // "/musl/lmbench_testcode.sh",
-                                 // "/glibc/unixbench_testcode.sh",
-                                 // "/musl/unixbench_testcode.sh",
-                                 // "/glibc/libcbench_testcode.sh",
-                                 // "/musl/libcbench_testcode.sh",
-                                 //  "/glibc/iozone_testcode.sh",
-                                 // "/musl/iozone_testcode.sh",
-                                 // --- P4 网络（需 rv_qemu_run.sh 启用 virtio-net）---
-                                 // "/glibc/iperf_testcode.sh",        // done
-                                 // "/musl/iperf_testcode.sh",         // done
-                                 // "/glibc/netperf_testcode.sh",      // done
-                                 // "/musl/netperf_testcode.sh",       // done
-                                 // --- P5 libctest + cyclictest ---
-                                 // "/glibc/libctest_testcode.sh",     // done
-                                 // "/musl/libctest_testcode.sh",      // done
-                                 // "/glibc/cyclictest_testcode.sh",   // done
-                                 // "/musl/cyclictest_testcode.sh",    // done
-                                 // --- P6 LTP ---
-                                 "/glibc/ltp_testcode.sh",
-                                 "/musl/ltp_testcode.sh"];
+const SCRIPT_PATHS : &[&str] = &[
+    //"/glibc/basic_testcode.sh",      // done
+    //"/musl/basic_testcode.sh",       // done
+    //"/glibc/busybox_testcode.sh",    // done
+    //"/musl/busybox_testcode.sh",     // done
+    //"/glibc/lua_testcode.sh",        // done
+    //"/musl/lua_testcode.sh",         // done
+    "/glibc/iperf_testcode.sh",      // done
+    "/musl/iperf_testcode.sh",       // done
+    "/glibc/netperf_testcode.sh",    // done
+    "/musl/netperf_testcode.sh",     // done
+    //"/glibc/libctest_testcode.sh",   // done
+    //"/musl/libctest_testcode.sh",    // done
+    "/glibc/cyclictest_testcode.sh", // done
+    "/musl/cyclictest_testcode.sh",  // done
+    "/glibc/lmbench_testcode.sh",
+    "/musl/lmbench_testcode.sh",
+    "/glibc/unixbench_testcode.sh",
+    "/musl/unixbench_testcode.sh",
+    "/glibc/libcbench_testcode.sh",
+    "/musl/libcbench_testcode.sh",
+    "/glibc/iozone_testcode.sh",
+    "/musl/iozone_testcode.sh",
+    // --- P6 LTP ---
+    // "/glibc/ltp_testcode.sh",
+    // "/musl/ltp_testcode.sh"
+];
 
 const LOG_TAG : &str = "busybox-bringup";
 
