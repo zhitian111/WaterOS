@@ -344,5 +344,8 @@ pub fn test_with_range(start_ppn : BasePPN, end_ppn : BasePPN) {
                     MAX_FULL_HOLD);
     }
 
+    // Leave the global allocator in the same pristine state expected by bring-up callers.
+    init_frame_allocator(start_ppn, end_ppn);
+
     log::trace!("[frame-alloctor::impl-stack] test end");
 }

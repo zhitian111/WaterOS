@@ -29,10 +29,10 @@ pub fn init_when_boot(dtb_pa: usize) {
     uart::init_early_default_uart();
 }
 
-/// 物理 RAM 上界（不包含）：QEMU LoongArch64 `virt -m 2G` 的可用 RAM
-/// 分为低 256MiB 与 `0x8000_0000..0xf000_0000` 两段；内核从
+/// 物理 RAM 上界（不包含）：QEMU LoongArch64 `virt -m 1G` 的可用 RAM
+/// 包含内核所在的 `0x8000_0000..0xb000_0000` 高段；内核从
 /// `0x9000_0000` 启动，因此 frame allocator 的高段 fallback 必须停在
-/// `0xf000_0000`，不能把中间 MMIO/空洞当作 RAM。
+/// `0xb000_0000`，不能把中间 MMIO/空洞当作 RAM。
 pub fn physical_ram_end_exclusive() -> usize {
     let _fallback = wateros_base_config::mm::QEMU_VIRT_PHYS_RAM_END;
     let dtb = DTB_BASE_ADDR.load(Ordering::Acquire);
@@ -65,8 +65,8 @@ pub fn physical_ram_end_exclusive() -> usize {
             }
         }
     }
-    // 回退：DTB 不可用时使用 QEMU `virt -m 2G` 的高 RAM 段上界。
-    0xf000_0000
+    // 回退：DTB 不可用时匹配仓库 Makefile 的 QEMU `virt -m 1G`。
+    0xb000_0000
 }
 
 fn read_fdt() -> DriverResult<fdt::Fdt<'static>> {
