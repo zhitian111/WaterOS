@@ -168,6 +168,8 @@ pub trait SyscallNumberTable {
     const MPROTECT: SyscallNumber;
     /// 调整映射大小或地址（`mremap(2)`）。
     const MREMAP: SyscallNumber;
+    /// 提供内存访问模式提示（`madvise(2)`）。
+    const MADVISE: SyscallNumber;
     /// 锁定内存页（`mlock(2)`）。
     const MLOCK: SyscallNumber;
     /// 解锁内存页（`munlock(2)`）。

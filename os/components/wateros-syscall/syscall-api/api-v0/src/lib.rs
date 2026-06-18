@@ -68,6 +68,7 @@ pub enum SyscallKind {
     Msync,
     Mprotect,
     Mremap,
+    Madvise,
     Mlock,
     Munlock,
     Mlockall,
@@ -264,6 +265,8 @@ impl SyscallKind {
             Self::Mprotect
         } else if syscall_nr == T::MREMAP.raw() {
             Self::Mremap
+        } else if syscall_nr == T::MADVISE.raw() {
+            Self::Madvise
         } else if syscall_nr == T::MLOCK.raw() {
             Self::Mlock
         } else if syscall_nr == T::MUNLOCK.raw() {
@@ -484,6 +487,7 @@ impl SyscallKind {
             Self::Msync => "msync",
             Self::Mprotect => "mprotect",
             Self::Mremap => "mremap",
+            Self::Madvise => "madvise",
             Self::Mlock => "mlock",
             Self::Munlock => "munlock",
             Self::Mlockall => "mlockall",
@@ -1049,6 +1053,14 @@ pub trait SyscallDispatcher {
         Self::dispatch_unsupported(
             SyscallKind::Mremap,
             Self::NumberTable::MREMAP.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_madvise(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Madvise,
+            Self::NumberTable::MADVISE.raw(),
             args,
         )
     }
@@ -1737,6 +1749,7 @@ pub trait SyscallDispatcher {
             SyscallKind::Msync => Self::dispatch_msync(syscall_args),
             SyscallKind::Mprotect => Self::dispatch_mprotect(syscall_args),
             SyscallKind::Mremap => Self::dispatch_mremap(syscall_args),
+            SyscallKind::Madvise => Self::dispatch_madvise(syscall_args),
             SyscallKind::Mlock => Self::dispatch_mlock(syscall_args),
             SyscallKind::Munlock => Self::dispatch_munlock(syscall_args),
             SyscallKind::Mlockall => Self::dispatch_mlockall(syscall_args),

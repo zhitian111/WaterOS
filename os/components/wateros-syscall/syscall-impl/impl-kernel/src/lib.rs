@@ -278,6 +278,11 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     }
 
     #[inline]
+    fn dispatch_madvise(args: SyscallArgs) -> isize {
+        sys::sys_madvise(args).0
+    }
+
+    #[inline]
     fn dispatch_mlock(args: SyscallArgs) -> isize {
         sys::sys_mlock(args).0
     }

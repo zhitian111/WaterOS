@@ -207,6 +207,56 @@ pub(crate) fn sys_mremap(args: SyscallArgs) -> UserRet {
     }
 }
 
+pub(crate) fn sys_madvise(args: SyscallArgs) -> UserRet {
+    use mm::api::addr::PAGE_SIZE;
+
+    const MADV_NORMAL: usize = 0;
+    const MADV_RANDOM: usize = 1;
+    const MADV_SEQUENTIAL: usize = 2;
+    const MADV_WILLNEED: usize = 3;
+    const MADV_DONTNEED: usize = 4;
+    const MADV_FREE: usize = 8;
+    const MADV_REMOVE: usize = 9;
+    const MADV_DONTFORK: usize = 10;
+    const MADV_DOFORK: usize = 11;
+    const MADV_MERGEABLE: usize = 12;
+    const MADV_UNMERGEABLE: usize = 13;
+    const MADV_HUGEPAGE: usize = 14;
+    const MADV_NOHUGEPAGE: usize = 15;
+    const MADV_DONTDUMP: usize = 16;
+    const MADV_DODUMP: usize = 17;
+    const MADV_WIPEONFORK: usize = 18;
+    const MADV_KEEPONFORK: usize = 19;
+    const MADV_COLD: usize = 20;
+    const MADV_PAGEOUT: usize = 21;
+    const MADV_POPULATE_READ: usize = 22;
+    const MADV_POPULATE_WRITE: usize = 23;
+    const MADV_DONTNEED_LOCKED: usize = 24;
+    const MADV_COLLAPSE: usize = 25;
+
+    let addr = args.arg(0);
+    let len = args.arg(1);
+    let advice = args.arg(2);
+
+    if addr % PAGE_SIZE != 0 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    if addr.checked_add(len).is_none() {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+
+    match advice {
+        MADV_NORMAL | MADV_RANDOM | MADV_SEQUENTIAL | MADV_WILLNEED | MADV_DONTNEED |
+        MADV_FREE | MADV_REMOVE | MADV_DONTFORK | MADV_DOFORK | MADV_MERGEABLE |
+        MADV_UNMERGEABLE | MADV_HUGEPAGE | MADV_NOHUGEPAGE | MADV_DONTDUMP |
+        MADV_DODUMP | MADV_WIPEONFORK | MADV_KEEPONFORK | MADV_COLD | MADV_PAGEOUT |
+        MADV_POPULATE_READ | MADV_POPULATE_WRITE | MADV_DONTNEED_LOCKED | MADV_COLLAPSE => {
+            UserRet::from_success(0)
+        }
+        _ => UserRet::from_error(ErrNo::EINVAL),
+    }
+}
+
 fn validate_mlock_range(addr: usize, len: usize) -> Result<(), ErrNo> {
     use mm::api::addr::PAGE_SIZE;
 
