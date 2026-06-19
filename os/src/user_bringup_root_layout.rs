@@ -58,8 +58,29 @@ pub fn ensure_busybox_path_links() {
             }
         }
 
+        match sess.mkdir("/var", 0o755) {
+            Ok(()) => info!("[{LOG_TAG}] mkdir /var ok"),
+            Err(VfsError::Exists) => trace!("[{LOG_TAG}] /var already present"),
+            Err(e) => {
+                warn!("[{LOG_TAG}] mkdir /var failed: {e:?}");
+                return;
+            }
+        }
+
+        match sess.mkdir("/var/tmp", 0o777) {
+            Ok(()) => info!("[{LOG_TAG}] mkdir /var/tmp ok"),
+            Err(VfsError::Exists) => trace!("[{LOG_TAG}] /var/tmp already present"),
+            Err(e) => {
+                warn!("[{LOG_TAG}] mkdir /var/tmp failed: {e:?}");
+                return;
+            }
+        }
+
         /// busybox 多用途小程序：与 `/glibc/busybox` 硬链接到 `/bin/<name>`，供 PATH 解析。
-        const BUSYBOX_APPLET_LINKS: &[&str] = &["/bin/ls", "/bin/sleep", "/bin/basename"];
+        const BUSYBOX_APPLET_LINKS : &[&str] = &["/bin/ls",
+                                                 "/bin/sleep",
+                                                 "/bin/basename",
+                                                 "/bin/cp"];
 
         for dest in BUSYBOX_APPLET_LINKS {
             try_hardlink_busybox_applet(sess.as_mut(), dest);
@@ -68,7 +89,7 @@ pub fn ensure_busybox_path_links() {
 }
 
 #[cfg(feature = "vfs-bridge")]
-fn try_hardlink_busybox_applet(sess: &mut (impl vfs::api::RootRwSession + ?Sized), dest: &str) {
+fn try_hardlink_busybox_applet(sess : &mut (impl vfs::api::RootRwSession + ?Sized), dest : &str) {
     use vfs::api::VfsError;
 
     match sess.hardlink("/glibc/busybox", dest) {

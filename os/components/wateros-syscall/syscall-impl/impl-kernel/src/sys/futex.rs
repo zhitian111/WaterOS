@@ -17,8 +17,10 @@ const FUTEX_WAKE: u32 = 1;
 const FUTEX_WAIT_BITSET: u32 = 9;
 const FUTEX_WAKE_BITSET: u32 = 10;
 const FUTEX_REQUEUE: u32 = 3;
+const FUTEX_CMP_REQUEUE: u32 = 4;
+const FUTEX_CLOCK_REALTIME: u32 = 256;
 
-const FUTEX_CMD_MASK: u32 = !(ipc::futex::FUTEX_PRIVATE_FLAG);
+const FUTEX_CMD_MASK: u32 = !(ipc::futex::FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME);
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -51,14 +53,6 @@ fn parse_futex_timeout(timeout_ptr: usize) -> Result<Option<TaskTick>, ErrNo> {
     Ok(Some(1))
 }
 
-fn require_private_key(futex_op: u32, uaddr: usize) -> Result<FutexKey, ErrNo> {
-    let key = FutexKey::from_syscall(uaddr, futex_op);
-    if !key.is_private {
-        return Err(ErrNo::EINVAL);
-    }
-    Ok(key)
-}
-
 fn futex_wait(
     uaddr: usize,
     val: u32,
@@ -73,7 +67,7 @@ fn futex_wait(
         return Err(ErrNo::EAGAIN);
     }
 
-    let key = require_private_key(futex_op, uaddr)?;
+    let key = FutexKey::from_syscall(uaddr, futex_op);
     let timeout = parse_futex_timeout(timeout_ptr)?;
     if timeout == Some(0) {
         return Err(ErrNo::ETIMEDOUT);
@@ -88,9 +82,24 @@ fn futex_wait(
 
 fn futex_wake(uaddr: usize, max_wake: u32, bitset: u32, futex_op: u32) -> Result<usize, ErrNo> {
     let _ = bitset;
-    let key = require_private_key(futex_op, uaddr)?;
+    let key = FutexKey::from_syscall(uaddr, futex_op);
     FutexHub::global()
         .wake(key, max_wake)
+        .map_err(futex_error_to_errno)
+}
+
+fn futex_requeue(
+    uaddr: usize,
+    wake_count: u32,
+    requeue_count: u32,
+    uaddr2: usize,
+    futex_op: u32,
+) -> Result<usize, ErrNo> {
+    let _ = uaddr2;
+    let key = FutexKey::from_syscall(uaddr, futex_op);
+    let total = wake_count.saturating_add(requeue_count);
+    FutexHub::global()
+        .wake(key, total)
         .map_err(futex_error_to_errno)
 }
 
@@ -106,6 +115,7 @@ pub(crate) fn sys_futex(args: SyscallArgs) -> UserRet {
     let uaddr = args.arg(0);
     let val = args.arg(2) as u32;
     let timeout_ptr = args.arg(3);
+    let uaddr2 = args.arg(4);
     let val3 = args.arg(5) as u32;
 
     let cmd = futex_op & FUTEX_CMD_MASK;
@@ -115,7 +125,13 @@ pub(crate) fn sys_futex(args: SyscallArgs) -> UserRet {
         FUTEX_WAIT_BITSET => futex_wait(uaddr, val, val3, futex_op, timeout_ptr),
         FUTEX_WAKE => futex_wake(uaddr, val, 0, futex_op),
         FUTEX_WAKE_BITSET => futex_wake(uaddr, val, val3, futex_op),
-        FUTEX_REQUEUE => Err(ErrNo::ENOSYS),
+        FUTEX_REQUEUE => futex_requeue(uaddr, val, timeout_ptr as u32, uaddr2, futex_op),
+        FUTEX_CMP_REQUEUE => match read_user_u32(uaddr) {
+            Ok(cur) if cur == val3 => futex_requeue(uaddr, val, timeout_ptr as u32, uaddr2,
+                                                    futex_op),
+            Ok(_) => Err(ErrNo::EAGAIN),
+            Err(e) => Err(e),
+        },
         _ => Err(ErrNo::ENOSYS),
     };
 

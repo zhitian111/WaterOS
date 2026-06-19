@@ -120,10 +120,10 @@ fn wait_for_script_exit(log_tag : &str, elf_path : &str, argv : &[&str], tid : t
         return;
     }
 
-    // Maximum rounds before breaking out: 600 * 100 ticks = 60,000 ticks.
+    // Maximum rounds before breaking out: 60 * 100 ticks = 6,000 ticks (≈ 1 minute).
     // Stray background processes (e.g. hackbench) will be force-killed by
     // `purge_all_user_processes` in the caller after we return.
-    const MAX_ROUNDS : usize = 600;
+    const MAX_ROUNDS : usize = 60;
     const INTERVAL_TICKS : task::TaskTick = 100;
     let mut rounds = 0usize;
     loop {
@@ -133,9 +133,10 @@ fn wait_for_script_exit(log_tag : &str, elf_path : &str, argv : &[&str], tid : t
                 rounds = rounds.saturating_add(1);
                 if rounds >= MAX_ROUNDS {
                     warn!("[{log_tag}] cyclictest script timed out after {rounds} rounds \
-                           ({ticks} ticks), path={elf_path}, breaking out to force-clean stray \
+                           ({ticks} ticks), path={elf_path}, killing sh and force-clean stray \
                            processes",
                           ticks = rounds.saturating_mul(INTERVAL_TICKS as usize));
+                    task::kill_task(tid, -1);
                     break;
                 }
             }

@@ -10,9 +10,8 @@ use api_v0::{
     VfsSeekWhence,
 };
 use impl_page_cache::{global_cache, PageCacheIo};
-use wateros_base_config::fs::{FileIoMode, FILE_IO_MODE, FILE_LARGE_THRESHOLD};
+use wateros_base_config::fs::{FileIoMode, FILE_IO_MODE};
 
-use crate::file_handle::BufferedFileHandle;
 use crate::{FsBridge, MountedRwSession};
 
 /// 委托根卷 RO/RW 区间 I/O，供页缓存 flush 与 miss 加载使用。
@@ -305,14 +304,12 @@ impl VfsIoHandle for PagedFileHandle {
     }
 }
 
-/// 按阈值在缓冲句柄与页缓存句柄间分流。
+/// 打开根卷普通文件。所有普通文件都走页缓存/range I/O，避免 benchmark
+/// 逐步扩展文件时反复整文件读写。
 pub(crate) fn open_file(bridge : &FsBridge,
                         path : String,
                         flags : VfsOpenFlags)
                         -> VfsResult<Box<dyn VfsIoHandle>> {
-    let want_read = flags.contains(VfsOpenFlags::READ) ||
-                    (!flags.contains(VfsOpenFlags::WRITE) &&
-                     !flags.contains(VfsOpenFlags::CREATE));
     let want_write = flags.contains(VfsOpenFlags::WRITE);
 
     if want_write || flags.contains(VfsOpenFlags::CREATE) {
@@ -338,15 +335,6 @@ pub(crate) fn open_file(bridge : &FsBridge,
         return Err(VfsError::NotAFile);
     }
 
-    let creates_or_truncates =
-        want_write && (flags.contains(VfsOpenFlags::CREATE) || flags.contains(VfsOpenFlags::TRUNC));
-    let use_paged =
-        (want_read || want_write) && (meta.size >= FILE_LARGE_THRESHOLD || creates_or_truncates);
-
-    if use_paged {
-        let h = PagedFileHandle::open(bridge, path, flags, meta)?;
-        return Ok(Box::new(h));
-    }
-
-    BufferedFileHandle::open_boxed(bridge, path, flags)
+    let h = PagedFileHandle::open(bridge, path, flags, meta)?;
+    Ok(Box::new(h))
 }

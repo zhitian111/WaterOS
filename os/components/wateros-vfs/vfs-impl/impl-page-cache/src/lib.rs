@@ -15,6 +15,8 @@ use wateros_base_config::fs::{
     FILE_PAGE_CACHE_CAPACITY, FILE_PAGE_SIZE, FILE_READ_AHEAD_STRIDE,
 };
 
+const FLUSH_RUN_MAX_PAGES: usize = 64;
+
 /// 区间读写下层（通常由 `FsBridge` 委托 `ReadOnlyFs` / `ReadWriteFs`）。
 pub trait PageCacheIo {
     type Error;
@@ -161,6 +163,78 @@ impl GlobalFilePageCache {
         drop(cache);
         io.write_range(key.path.as_ref(), off, &data).map_err(map_err)?;
         Ok(())
+    }
+
+    fn queue_flush_batch(
+        batches: &mut Vec<(u64, Vec<u8>)>,
+        batch_start: &mut Option<u64>,
+        batch_data: &mut Vec<u8>,
+    ) {
+        if let Some(start_page) = batch_start.take() {
+            if !batch_data.is_empty() {
+                batches.push((start_page, core::mem::take(batch_data)));
+            }
+        }
+    }
+
+    fn flush_dirty_run<Io, E>(
+        &self,
+        io: &mut Io,
+        key: &FileCacheKey,
+        pages: &[u64],
+        logical_size: u64,
+        map_err: fn(Io::Error) -> E,
+    ) -> Result<Vec<u64>, E>
+    where
+        Io: PageCacheIo,
+    {
+        let mut batches: Vec<(u64, Vec<u8>)> = Vec::new();
+        let mut batch_start = None;
+        let mut batch_last = None;
+        let mut batch_data =
+            Vec::with_capacity(pages.len().min(FLUSH_RUN_MAX_PAGES) * FILE_PAGE_SIZE);
+        let mut flushed_pages = Vec::new();
+
+        {
+            let mut cache = self.state.lock();
+            for &page_idx in pages {
+                let off = page_idx * FILE_PAGE_SIZE as u64;
+                let slot = cache.index.get(&(key.clone(), page_idx)).copied();
+                let Some(slot) = slot else {
+                    Self::queue_flush_batch(&mut batches, &mut batch_start, &mut batch_data);
+                    batch_last = None;
+                    flushed_pages.push(page_idx);
+                    continue;
+                };
+                if off >= logical_size || !cache.frames[slot].dirty {
+                    cache.frames[slot].dirty = false;
+                    Self::queue_flush_batch(&mut batches, &mut batch_start, &mut batch_data);
+                    batch_last = None;
+                    flushed_pages.push(page_idx);
+                    continue;
+                }
+                if batch_last.is_some_and(|last| last + 1 != page_idx) {
+                    Self::queue_flush_batch(&mut batches, &mut batch_start, &mut batch_data);
+                }
+                if batch_start.is_none() {
+                    batch_start = Some(page_idx);
+                }
+
+                let len = FILE_PAGE_SIZE.min(usize::try_from(logical_size - off).unwrap_or(0));
+                batch_data.extend_from_slice(&cache.frames[slot].data[..len]);
+                cache.frames[slot].dirty = false;
+                batch_last = Some(page_idx);
+                flushed_pages.push(page_idx);
+            }
+            Self::queue_flush_batch(&mut batches, &mut batch_start, &mut batch_data);
+        }
+
+        for (start_page, data) in batches {
+            let off = start_page * FILE_PAGE_SIZE as u64;
+            io.write_range(key.path.as_ref(), off, &data).map_err(map_err)?;
+        }
+
+        Ok(flushed_pages)
     }
 
     fn install_page<Io, E>(
@@ -421,17 +495,27 @@ impl GlobalFilePageCache {
         };
         let mut guard = entry.write();
         let dirty: Vec<u64> = guard.dirty_pages.keys().copied().collect();
+        let mut run = Vec::new();
         for page_idx in dirty {
-            let slot = {
-                let cache = self.state.lock();
-                cache.index.get(&(key.clone(), page_idx)).copied()
-            };
-            let Some(slot) = slot else {
-                guard.dirty_pages.remove(&page_idx);
-                continue;
-            };
-            self.flush_frame(io, slot, Some(guard.logical_size), map_err)?;
-            guard.dirty_pages.remove(&page_idx);
+            let should_flush = run
+                .last()
+                .is_some_and(|last| *last + 1 != page_idx)
+                || run.len() >= FLUSH_RUN_MAX_PAGES;
+            if should_flush {
+                let flushed =
+                    self.flush_dirty_run(io, &key, &run, guard.logical_size, map_err)?;
+                for flushed_page in flushed {
+                    guard.dirty_pages.remove(&flushed_page);
+                }
+                run.clear();
+            }
+            run.push(page_idx);
+        }
+        if !run.is_empty() {
+            let flushed = self.flush_dirty_run(io, &key, &run, guard.logical_size, map_err)?;
+            for flushed_page in flushed {
+                guard.dirty_pages.remove(&flushed_page);
+            }
         }
         Ok(())
     }
@@ -572,6 +656,22 @@ mod tests {
         assert_eq!(io.reads.get(), 0);
 
         cache.flush(&mut io, "/tmp/full-page", |e| e).unwrap();
+        assert_eq!(io.writes, 1);
+        assert_eq!(io.data, payload);
+    }
+
+    #[test]
+    fn flush_coalesces_consecutive_dirty_pages() {
+        let cache = GlobalFilePageCache::new(7);
+        let mut io = CountingIo::new();
+        let payload = vec![0x7bu8; FILE_PAGE_SIZE * 3];
+
+        let n = cache
+            .write(&mut io, "/tmp/three-pages", 0, 0, &payload, |e| e)
+            .unwrap();
+        assert_eq!(n, payload.len());
+
+        cache.flush(&mut io, "/tmp/three-pages", |e| e).unwrap();
         assert_eq!(io.writes, 1);
         assert_eq!(io.data, payload);
     }

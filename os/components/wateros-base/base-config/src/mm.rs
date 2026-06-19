@@ -5,8 +5,11 @@
 
 #[allow(unused)]
 /// 内核堆大小的以 2 为底的指数位宽。
-/// 降低此值可释放更多物理内存给用户态（64MB → 8MB 释放 56MB）。
-pub const KERNEL_HEAP_SIZE_BIT_WIDTH : usize = 23;
+/// 降低此值可释放更多物理内存给用户态。
+/// 注意：不能设太低，因为 StackFrameAllocator 的 ref_counts Vec (~2MB)
+/// 和 allocated Vec (~250KB) 也从内核堆分配。
+/// 2^26 = 64MB，给长 benchmark bring-up 留出足够内核对象余量。
+pub const KERNEL_HEAP_SIZE_BIT_WIDTH : usize = 26;
 #[allow(unused)]
 /// 内核堆字节容量，即 `1 << KERNEL_HEAP_SIZE_BIT_WIDTH`。
 pub const KERNEL_HEAP_SIZE : usize = 1 << KERNEL_HEAP_SIZE_BIT_WIDTH;

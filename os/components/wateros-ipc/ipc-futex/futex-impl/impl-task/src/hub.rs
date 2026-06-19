@@ -46,29 +46,27 @@ impl FutexHub {
         timeout: Option<TaskTick>,
         mut condition: impl FnMut() -> bool,
     ) -> FutexWaitOutcome {
-        self.with_tables(|tables| {
-            let wq = Self::get_queue(tables, key);
-            match timeout {
-                None => {
-                    match wq.wait_current_while(|| condition()) {
-                        TaskWaitResult::Interrupted => FutexWaitOutcome::Interrupted,
-                        _ => FutexWaitOutcome::Woken,
-                    }
-                }
-                Some(0) => {
-                    if condition() {
-                        FutexWaitOutcome::TimedOut
-                    } else {
-                        FutexWaitOutcome::Woken
-                    }
-                }
-                Some(ticks) => match wq.wait_current_while_for_ticks(ticks, || condition()) {
-                    TaskWaitResult::Woken => FutexWaitOutcome::Woken,
-                    TaskWaitResult::TimedOut => FutexWaitOutcome::TimedOut,
+        let wq = self.with_tables(|tables| Self::get_queue(tables, key));
+        match timeout {
+            None => {
+                match wq.wait_current_while(|| condition()) {
                     TaskWaitResult::Interrupted => FutexWaitOutcome::Interrupted,
-                },
+                    _ => FutexWaitOutcome::Woken,
+                }
             }
-        })
+            Some(0) => {
+                if condition() {
+                    FutexWaitOutcome::TimedOut
+                } else {
+                    FutexWaitOutcome::Woken
+                }
+            }
+            Some(ticks) => match wq.wait_current_while_for_ticks(ticks, || condition()) {
+                TaskWaitResult::Woken => FutexWaitOutcome::Woken,
+                TaskWaitResult::TimedOut => FutexWaitOutcome::TimedOut,
+                TaskWaitResult::Interrupted => FutexWaitOutcome::Interrupted,
+            },
+        }
     }
 }
 
@@ -82,7 +80,9 @@ static GLOBAL_HUB: FutexHub = FutexHub {
 impl KernelFutexOps for FutexHub {
     fn wake(&self, key: FutexKey, max_wake: u32) -> FutexResult<usize> {
         self.with_tables(|tables| {
-            let wq = Self::get_queue(tables, key);
+            let Some(wq) = tables.queues.get(&key).copied() else {
+                return Ok(0);
+            };
             let limit = if max_wake == 0 { 1 } else { max_wake as usize };
             let mut woken = 0usize;
             for _ in 0..limit {
@@ -97,8 +97,12 @@ impl KernelFutexOps for FutexHub {
 
     fn wake_all(&self, key: FutexKey) -> FutexResult<usize> {
         self.with_tables(|tables| {
-            let wq = Self::get_queue(tables, key);
-            Ok(wq.wake_all())
+            Ok(tables
+                .queues
+                .get(&key)
+                .copied()
+                .map(|wq| wq.wake_all())
+                .unwrap_or(0))
         })
     }
 

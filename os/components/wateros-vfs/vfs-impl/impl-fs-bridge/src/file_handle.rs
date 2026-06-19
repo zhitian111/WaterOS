@@ -1,4 +1,4 @@
-//! ext4 根卷普通文件句柄：小文件整文件缓冲，大文件走页缓存（见 [`super::paged_handle`]）。
+//! ext4 根卷小文件缓冲句柄；普通 `open` 主路径已改由 [`super::paged_handle`] 处理。
 
 extern crate alloc;
 
