@@ -1,8 +1,14 @@
 //! `mmap` / `munmap` / `mprotect`：经 `user_aspace` 句柄拼合 `MmapOps`。
 
+extern crate alloc;
+
+use alloc::boxed::Box;
+
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
+use mm::api::error::{MmError, MmResult};
+use mm::api::mmap::DemandPageLoader;
 
 use crate::mm_util::{
     current_user_aspace_handle, linux_mmap_flags_to_map_flags, linux_mmap_is_anonymous,
@@ -10,7 +16,43 @@ use crate::mm_util::{
 };
 use crate::vfs_util::vfs_error_to_errno;
 use api_v0::unsupported::syscall_unsupported;
-use vfs::api::{VfsError, VfsNodeType};
+use vfs::api::{VfsError, VfsIoHandle, VfsNodeType};
+
+struct VfsMmapPageLoader {
+    handle : Box<dyn VfsIoHandle>,
+    file_size : usize,
+}
+
+impl DemandPageLoader for VfsMmapPageLoader {
+    fn duplicate_box(&self) -> MmResult<Box<dyn DemandPageLoader>> {
+        let handle = self.handle
+                         .duplicate()
+                         .map_err(|_| MmError::AccessViolation)?;
+        Ok(Box::new(Self { handle,
+                           file_size : self.file_size }))
+    }
+
+    fn load_page(&mut self, file_offset : usize, dst : &mut [u8]) -> MmResult<()> {
+        if file_offset >= self.file_size {
+            return Ok(());
+        }
+        let readable = core::cmp::min(dst.len(), self.file_size - file_offset);
+        let mut done = 0usize;
+        while done < readable {
+            let off = file_offset.checked_add(done)
+                                 .ok_or(MmError::InvalidAddress)?;
+            let n = self.handle
+                        .read_at(off as u64, &mut dst[done..readable])
+                        .map_err(|_| MmError::AccessViolation)?;
+            if n == 0 {
+                break;
+            }
+            done = done.checked_add(n)
+                       .ok_or(MmError::InvalidAddress)?;
+        }
+        Ok(())
+    }
+}
 
 pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
     let Some(handle) = current_user_aspace_handle() else {
@@ -85,40 +127,31 @@ pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
             }
         },
         Some(fd) => {
-            let mut file_errno = None;
+            let loader = match mmap_page_loader(fd, file_size) {
+                Ok(loader) => loader,
+                Err(e) => return UserRet::from_error(e),
+            };
             match mm::user_aspace::with_user_aspace_mut(handle, |aspace| {
                       let mut alloc = GlobalPhysFrameAllocator;
-                      let base = MmapOps::mmap_file_with_loader(
-                                                                aspace,
-                                                                &mut alloc,
-                                                                req,
-                                                                |page_index, page| {
-                                                                    if let Err(errno) =
-                                                                  load_mmap_file_page(fd,
-                                                                                      offset,
-                                                                                      len,
-                                                                                      file_size,
-                                                                                      page_index,
-                                                                                      page)
-                                                              {
-                                                                  file_errno = Some(errno);
-                                                                  return Err(
-                                                                      mm::api::error::MmError::AccessViolation,
-                                                                  );
-                                                              }
-                                                                    Ok(())
-                                                                },
-                )?;
+                      let base =
+                          MmapOps::mmap_file_lazy(aspace, &mut alloc, req, file_size, loader)?;
                       Ok(base.0)
                   }) {
                 Ok(base) => UserRet::from_success(base),
                 Err(e) => {
-                    let errno = file_errno.unwrap_or_else(|| mm_err_to_errno(e));
+                    let errno = mm_err_to_errno(e);
                     UserRet::from_error(errno)
                 }
             }
         }
     }
+}
+
+fn mmap_page_loader(fd : usize, file_size : usize) -> Result<Box<dyn DemandPageLoader>, ErrNo> {
+    let handle = vfs::fd::with_current_io(fd, |handle| handle.duplicate())
+        .map_err(vfs_error_to_errno)?;
+    Ok(Box::new(VfsMmapPageLoader { handle,
+                                     file_size }))
 }
 
 fn file_size_for_mmap(fd : usize) -> Result<usize, ErrNo> {
@@ -130,42 +163,6 @@ fn file_size_for_mmap(fd : usize) -> Result<usize, ErrNo> {
                    Ok(meta)
                }).map_err(vfs_error_to_errno)?;
     usize::try_from(meta.size).map_err(|_| ErrNo::EINVAL)
-}
-
-fn load_mmap_file_page(fd : usize,
-                       mmap_offset : usize,
-                       mmap_len : usize,
-                       file_size : usize,
-                       page_index : usize,
-                       page : &mut [u8])
-                       -> Result<(), ErrNo> {
-    use mm::api::addr::PAGE_SIZE;
-
-    let page_offset = page_index.checked_mul(PAGE_SIZE)
-                                .ok_or(ErrNo::EINVAL)?;
-    let file_offset = mmap_offset.checked_add(page_offset)
-                                 .ok_or(ErrNo::EINVAL)?;
-    if file_offset >= file_size || page_offset >= mmap_len {
-        return Ok(());
-    }
-
-    let valid_mmap_bytes = core::cmp::min(PAGE_SIZE, mmap_len - page_offset);
-    let readable = core::cmp::min(valid_mmap_bytes,
-                                  file_size - file_offset);
-    let mut done = 0usize;
-    while done < readable {
-        let off = file_offset.checked_add(done)
-                             .ok_or(ErrNo::EINVAL)?;
-        let n = vfs::fd::with_current_io(fd, |handle| {
-                    handle.read_at(off as u64, &mut page[done..readable])
-                }).map_err(vfs_error_to_errno)?;
-        if n == 0 {
-            break;
-        }
-        done = done.checked_add(n)
-                   .ok_or(ErrNo::EINVAL)?;
-    }
-    Ok(())
 }
 
 pub(crate) fn sys_munmap(args : SyscallArgs) -> UserRet {

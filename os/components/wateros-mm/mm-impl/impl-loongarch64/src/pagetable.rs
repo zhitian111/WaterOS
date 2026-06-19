@@ -12,9 +12,14 @@
 //! 映射时预先置 PTE **D** 位（脏位），避免依赖硬件写时置位触发页故障（早期
 //! bring-up 策略）。
 
+extern crate alloc;
+
+use alloc::{boxed::Box, vec::Vec};
+
 use api_v0::addr::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum, PAGE_SIZE};
 use api_v0::address_space::AddressSpaceOps;
 use api_v0::error::{MmError, MmResult};
+use api_v0::mmap::{DemandPageLoader, PageFaultAccess};
 use api_v0::perm::PagePerm;
 
 use frame_alloctor::{frame_alloc_result, frame_dealloc_result, frame_inc_ref, frame_ref_count};
@@ -218,6 +223,35 @@ pub struct LoongArch64AddressSpace {
     pub(crate) mmap_anon_cursor : VirtAddr,
     /// 文件 `mmap` bump 指针（与匿名区分离，避免交错碎片）。
     pub(crate) mmap_file_cursor : VirtAddr,
+    /// mmap arena 起点，用于 first-fit 复用 `munmap` 后的空洞。
+    pub(crate) mmap_base : VirtAddr,
+    pub(crate) lazy_file_vmas : Vec<LazyFileVma>,
+}
+
+pub(crate) struct LazyFileVma {
+    pub start : VirtAddr,
+    pub end : VirtAddr,
+    pub perm : PagePerm,
+    pub file_offset : usize,
+    pub file_size : usize,
+    pub loader : Box<dyn DemandPageLoader>,
+}
+
+impl LazyFileVma {
+    fn duplicate(&self) -> MmResult<Self> {
+        Ok(Self { start : self.start,
+                  end : self.end,
+                  perm : self.perm,
+                  file_offset : self.file_offset,
+                  file_size : self.file_size,
+                  loader : self.loader.duplicate_box()? })
+    }
+
+    fn contains_page(&self, page : VirtAddr) -> bool { page.0 >= self.start.0 && page.0 < self.end.0 }
+
+    fn overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
+        start.0 < self.end.0 && end.0 > self.start.0
+    }
 }
 
 impl LoongArch64AddressSpace {
@@ -229,7 +263,9 @@ impl LoongArch64AddressSpace {
                   user_brk_current_end : VirtAddr(0),
                   user_brk_max : VirtAddr(0),
                   mmap_anon_cursor : VirtAddr(0),
-                  mmap_file_cursor : VirtAddr(0) })
+                  mmap_file_cursor : VirtAddr(0),
+                  mmap_base : VirtAddr(0),
+                  lazy_file_vmas : Vec::new() })
     }
 
     /// ELF 装载完成后初始化用户堆与匿名映射区游标（须在泄漏页表对象前调用一次）。
@@ -243,6 +279,151 @@ impl LoongArch64AddressSpace {
         self.user_brk_max = brk_max;
         self.mmap_anon_cursor = mmap_anon_cursor;
         self.mmap_file_cursor = mmap_anon_cursor;
+        self.mmap_base = mmap_anon_cursor;
+    }
+
+    pub(crate) fn lazy_vma_overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
+        self.lazy_file_vmas.iter()
+                           .any(|vma| vma.overlaps(start, end))
+    }
+
+    pub(crate) fn find_free_mmap_base_considering_vmas(&self,
+                                                       cursor : VirtAddr,
+                                                       len : usize)
+                                                       -> MmResult<VirtAddr> {
+        const MAX_SEARCH_PAGES : usize = 1 << 20;
+        if len == 0 {
+            return Err(MmError::InvalidAddress);
+        }
+        let n_pages = len.checked_add(PAGE_SIZE - 1)
+                         .ok_or(MmError::InvalidAddress)? /
+                      PAGE_SIZE;
+        let _hint = cursor;
+        let brk_guard = self.user_brk_current_end.ceil_page()
+                                                 .start_addr();
+        let mut base = VirtAddr(core::cmp::max(self.mmap_base.0, brk_guard.0)).ceil_page()
+                                                                              .start_addr();
+        let mut skipped = 0usize;
+        loop {
+            if skipped > MAX_SEARCH_PAGES {
+                return Err(MmError::InvalidAddress);
+            }
+            let end = VirtAddr(base.0
+                                   .checked_add(n_pages.checked_mul(PAGE_SIZE)
+                                                          .ok_or(MmError::InvalidAddress)?)
+                                   .ok_or(MmError::InvalidAddress)?);
+            if !self.lazy_vma_overlaps(base, end) {
+                let mut free = true;
+                for i in 0..n_pages {
+                    let va = VirtAddr(base.0
+                                          .checked_add(i.checked_mul(PAGE_SIZE)
+                                                        .ok_or(MmError::InvalidAddress)?)
+                                          .ok_or(MmError::InvalidAddress)?);
+                    if self.translate_addr(va)?
+                           .is_some()
+                    {
+                        free = false;
+                        break;
+                    }
+                }
+                if free {
+                    return Ok(base);
+                }
+            }
+            skipped += 1;
+            base = VirtAddr(base.0
+                                .checked_add(PAGE_SIZE)
+                                .ok_or(MmError::InvalidAddress)?);
+        }
+    }
+
+    pub(crate) fn register_lazy_file_vma(&mut self,
+                                         start : VirtAddr,
+                                         end : VirtAddr,
+                                         perm : PagePerm,
+                                         file_offset : usize,
+                                         file_size : usize,
+                                         loader : Box<dyn DemandPageLoader>)
+                                         -> MmResult<()> {
+        if start.0 >= end.0 || self.lazy_vma_overlaps(start, end) {
+            return Err(MmError::InvalidAddress);
+        }
+        self.lazy_file_vmas.push(LazyFileVma { start,
+                                               end,
+                                               perm,
+                                               file_offset,
+                                               file_size,
+                                               loader });
+        Ok(())
+    }
+
+    pub(crate) fn remove_lazy_file_vmas(&mut self, start : VirtAddr, end : VirtAddr) -> MmResult<()> {
+        let mut next = Vec::new();
+        for vma in self.lazy_file_vmas.drain(..) {
+            if !vma.overlaps(start, end) {
+                next.push(vma);
+                continue;
+            }
+            if start.0 > vma.start.0 {
+                next.push(LazyFileVma { start : vma.start,
+                                        end : start,
+                                        perm : vma.perm,
+                                        file_offset : vma.file_offset,
+                                        file_size : vma.file_size,
+                                        loader : vma.loader.duplicate_box()? });
+            }
+            if end.0 < vma.end.0 {
+                let delta = end.0.saturating_sub(vma.start.0);
+                next.push(LazyFileVma { start : end,
+                                        end : vma.end,
+                                        perm : vma.perm,
+                                        file_offset : vma.file_offset.saturating_add(delta),
+                                        file_size : vma.file_size,
+                                        loader : vma.loader });
+            }
+        }
+        self.lazy_file_vmas = next;
+        Ok(())
+    }
+
+    pub(crate) fn protect_lazy_file_vmas(&mut self,
+                                         start : VirtAddr,
+                                         end : VirtAddr,
+                                         perm : PagePerm)
+                                         -> MmResult<()> {
+        let mut next = Vec::new();
+        for vma in self.lazy_file_vmas.drain(..) {
+            if !vma.overlaps(start, end) {
+                next.push(vma);
+                continue;
+            }
+            if start.0 > vma.start.0 {
+                next.push(LazyFileVma { start : vma.start,
+                                        end : start,
+                                        perm : vma.perm,
+                                        file_offset : vma.file_offset,
+                                        file_size : vma.file_size,
+                                        loader : vma.loader.duplicate_box()? });
+            }
+            let mid_start = VirtAddr(core::cmp::max(start.0, vma.start.0));
+            let mid_end = VirtAddr(core::cmp::min(end.0, vma.end.0));
+            next.push(LazyFileVma { start : mid_start,
+                                    end : mid_end,
+                                    perm,
+                                    file_offset : vma.file_offset + (mid_start.0 - vma.start.0),
+                                    file_size : vma.file_size,
+                                    loader : vma.loader.duplicate_box()? });
+            if end.0 < vma.end.0 {
+                next.push(LazyFileVma { start : end,
+                                        end : vma.end,
+                                        perm : vma.perm,
+                                        file_offset : vma.file_offset + (end.0 - vma.start.0),
+                                        file_size : vma.file_size,
+                                        loader : vma.loader });
+            }
+        }
+        self.lazy_file_vmas = next;
+        Ok(())
     }
 
     #[inline]
@@ -319,7 +500,11 @@ impl LoongArch64AddressSpace {
                                      user_brk_current_end : self.user_brk_current_end,
                                      user_brk_max : self.user_brk_max,
                                      mmap_anon_cursor : self.mmap_anon_cursor,
-                                     mmap_file_cursor : self.mmap_file_cursor })
+                                     mmap_file_cursor : self.mmap_file_cursor,
+                                     mmap_base : self.mmap_base,
+                                     lazy_file_vmas : self.lazy_file_vmas.iter()
+                                                                         .map(LazyFileVma::duplicate)
+                                                                         .collect::<MmResult<Vec<_>>>()? })
     }
 
     fn handle_cow_page(&mut self, vpn : VirtPageNum) -> MmResult<bool> {
@@ -352,6 +537,54 @@ impl LoongArch64AddressSpace {
 
     pub fn handle_cow_fault(&mut self, fault_addr : VirtAddr) -> MmResult<bool> {
         self.handle_cow_page(fault_addr.floor_page())
+    }
+
+    pub fn handle_lazy_page_fault<A>(&mut self,
+                                     allocator : &mut A,
+                                     fault_addr : VirtAddr,
+                                     access : PageFaultAccess)
+                                     -> MmResult<bool>
+        where A : api_v0::frame_allocator::PhysicalFrameAllocator<FrameId = PhysPageNum>
+    {
+        let page = fault_addr.floor_page()
+                             .start_addr();
+        let Some(index) = self.lazy_file_vmas.iter()
+                                             .position(|vma| vma.contains_page(page))
+        else {
+            return Ok(false);
+        };
+        let perm = self.lazy_file_vmas[index].perm;
+        let allowed = match access {
+            PageFaultAccess::Read => perm.readable(),
+            PageFaultAccess::Write => perm.writable(),
+            PageFaultAccess::Execute => perm.executable(),
+        };
+        if !allowed || !perm.user() {
+            return Ok(false);
+        }
+        if self.translate_addr(page)?
+               .is_some()
+        {
+            return Ok(true);
+        }
+        let ppn = allocator.alloc_frame()?;
+        let pa = ppn.0 * PAGE_SIZE;
+        let dst = unsafe { core::slice::from_raw_parts_mut(pa as *mut u8, PAGE_SIZE) };
+        dst.fill(0);
+        let file_offset = {
+            let vma = &self.lazy_file_vmas[index];
+            vma.file_offset + (page.0 - vma.start.0)
+        };
+        if let Err(e) = self.lazy_file_vmas[index].loader.load_page(file_offset, dst) {
+            let _ = allocator.dealloc_frame(ppn);
+            return Err(e);
+        }
+        if let Err(e) = self.map_page_to_ppn(page.floor_page(), ppn, perm) {
+            let _ = allocator.dealloc_frame(ppn);
+            return Err(e);
+        }
+        platform::arch::paging::flush_address_space_translations();
+        Ok(true)
     }
 
     pub fn ensure_private_for_write(&mut self, vpn : VirtPageNum) -> MmResult<bool> {

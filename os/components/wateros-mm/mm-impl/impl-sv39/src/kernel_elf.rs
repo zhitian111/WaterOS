@@ -75,6 +75,7 @@ const RISCV64_INTERP_BASE : usize = 0x0000_0000_7000_0000;
 pub(crate) const ELF_STACK_TOP : usize = 0x0000_0000_7FFF_A000;
 pub(crate) const ELF_STACK_SIZE : usize = 256 * 1024;
 const PREFERRED_MMAP_BASE : usize = 0x1000_0000;
+const USER_HEAP_MMAP_GAP : usize = 64 * 1024 * 1024;
 
 struct ElfHeaderInfo {
     entry : usize,
@@ -677,7 +678,7 @@ pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
         return Err(LoadElfError::Parse);
     }
     let mmap_base = VirtAddr(cmp::max(heap_start.0
-                                                .saturating_add(PAGE_SIZE),
+                                                .saturating_add(USER_HEAP_MMAP_GAP),
                                       PREFERRED_MMAP_BASE));
     aspace.init_user_layout(heap_start, heap_start, brk_max, mmap_base);
 
@@ -1083,7 +1084,7 @@ pub fn from_elf_bytes(data : &[u8]) -> Result<LoadedElf, LoadElfError> {
     }
     const PREFERRED_MMAP_BASE : usize = 0x1000_0000;
     let mmap_base = VirtAddr(cmp::max(heap_start.0
-                                                .saturating_add(PAGE_SIZE),
+                                                .saturating_add(USER_HEAP_MMAP_GAP),
                                       PREFERRED_MMAP_BASE));
     aspace.init_user_layout(heap_start, heap_start, brk_max, mmap_base);
 

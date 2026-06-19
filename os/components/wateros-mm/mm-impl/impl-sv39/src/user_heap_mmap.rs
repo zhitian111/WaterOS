@@ -11,10 +11,12 @@ use api_v0::brk::{BrkRegion, HeapBrk};
 use api_v0::error::{MmError, MmResult};
 use api_v0::flags::MapFlags;
 use api_v0::frame_allocator::PhysicalFrameAllocator;
-use api_v0::mmap::{MmapKind, MmapOps, MmapRequest};
+use alloc::boxed::Box;
+
+use api_v0::mmap::{DemandPageLoader, MmapKind, MmapOps, MmapRequest, PageFaultAccess};
 use api_v0::perm::PagePerm;
 use impl_common::{
-    find_free_mmap_base, map_range_from_backing, map_range_from_loader, map_zeroed_page_with_alloc,
+    map_range_from_backing, map_range_from_loader, map_zeroed_page_with_alloc,
     map_zeroed_range_with_alloc, mmap_map_end, mremap_range,
 };
 
@@ -52,6 +54,11 @@ impl HeapBrk for Sv39AddressSpace {
                                                      .0;
             while vpn_i < end_vpn_excl {
                 let vpn = VirtPageNum(vpn_i);
+                let page_start = vpn.start_addr();
+                let page_end = VirtPageNum(vpn.0 + 1).start_addr();
+                if self.lazy_vma_overlaps(page_start, page_end) {
+                    return Err(MmError::InvalidAddress);
+                }
                 if self.translate_addr(vpn.start_addr())?
                        .is_none()
                 {
@@ -83,6 +90,32 @@ impl HeapBrk for Sv39AddressSpace {
 }
 
 impl Sv39AddressSpace {
+    fn handle_brk_page_fault<A : PhysicalFrameAllocator<FrameId = PhysPageNum>>(&mut self,
+                                                                                 allocator : &mut A,
+                                                                                 fault_addr : VirtAddr,
+                                                                                 access : PageFaultAccess)
+                                                                                 -> MmResult<bool> {
+        if matches!(access, PageFaultAccess::Execute) {
+            return Ok(false);
+        }
+        if fault_addr.0 < self.user_brk_start.0 || fault_addr.0 >= self.user_brk_current_end.0 {
+            return Ok(false);
+        }
+        let vpn = fault_addr.floor_page();
+        let page_end = VirtPageNum(vpn.0 + 1).start_addr();
+        if self.lazy_vma_overlaps(vpn.start_addr(), page_end) {
+            return Ok(false);
+        }
+        if self.translate_addr(vpn.start_addr())?
+               .is_some()
+        {
+            return Ok(true);
+        }
+        map_zeroed_page_with_alloc(self, allocator, vpn, Self::brk_perm())?;
+        fence_user_ptes();
+        Ok(true)
+    }
+
     fn mmap_anonymous<A : PhysicalFrameAllocator<FrameId = PhysPageNum>>(&mut self,
                                                                          allocator : &mut A,
                                                                          req : MmapRequest)
@@ -102,7 +135,7 @@ impl Sv39AddressSpace {
                 hint
             }
             Some(_) => return Err(MmError::InvalidAddress),
-            None => find_free_mmap_base(self, self.mmap_anon_cursor, req.len)?,
+            None => self.find_free_mmap_base_considering_vmas(self.mmap_anon_cursor, req.len)?,
         };
         let end = mmap_map_end(base, req.len)?;
         let perm = req.prot | PagePerm::U;
@@ -148,7 +181,7 @@ impl Sv39AddressSpace {
                 hint
             }
             Some(_) => return Err(MmError::InvalidAddress),
-            None => find_free_mmap_base(self, self.mmap_file_cursor, req.len)?,
+            None => self.find_free_mmap_base_considering_vmas(self.mmap_file_cursor, req.len)?,
         };
         let end = mmap_map_end(base, req.len)?;
         let perm = req.prot | PagePerm::U;
@@ -199,7 +232,7 @@ impl Sv39AddressSpace {
                 hint
             }
             Some(_) => return Err(MmError::InvalidAddress),
-            None => find_free_mmap_base(self, self.mmap_file_cursor, req.len)?,
+            None => self.find_free_mmap_base_considering_vmas(self.mmap_file_cursor, req.len)?,
         };
         let end = mmap_map_end(base, req.len)?;
         let perm = req.prot | PagePerm::U;
@@ -260,6 +293,74 @@ impl MmapOps for Sv39AddressSpace {
         }
     }
 
+    fn mmap_file_lazy<A>(&mut self,
+                         allocator : &mut A,
+                         req : MmapRequest,
+                         file_size : usize,
+                         loader : Box<dyn DemandPageLoader>)
+                         -> MmResult<VirtAddr>
+        where A : PhysicalFrameAllocator<FrameId = PhysPageNum>
+    {
+        let _ = allocator;
+        if req.len == 0 {
+            return Err(MmError::InvalidAddress);
+        }
+        if req.flags
+              .contains(MapFlags::ANONYMOUS)
+        {
+            return Err(MmError::InvalidAddress);
+        }
+        if !req.flags
+               .contains(MapFlags::SHARED) &&
+           !req.flags
+               .contains(MapFlags::PRIVATE)
+        {
+            return Err(MmError::InvalidAddress);
+        }
+        let base = match req.addr_hint {
+            Some(hint)
+                if req.flags
+                      .contains(MapFlags::FIXED) =>
+            {
+                hint
+            }
+            Some(_) => return Err(MmError::InvalidAddress),
+            None => self.find_free_mmap_base_considering_vmas(self.mmap_file_cursor, req.len)?,
+        };
+        let end = mmap_map_end(base, req.len)?;
+        let perm = req.prot | PagePerm::U;
+        if req.flags
+              .contains(MapFlags::FIXED)
+        {
+            self.unmap_range_with_alloc(allocator, base, end)?;
+            self.remove_lazy_file_vmas(base, end)?;
+        }
+        let file_offset = match req.kind {
+            MmapKind::File { offset, .. } => offset,
+            MmapKind::Anonymous => return Err(MmError::InvalidAddress),
+        };
+        self.register_lazy_file_vma(base, end, perm, file_offset, file_size, loader)?;
+        if req.addr_hint
+              .is_none()
+        {
+            self.mmap_file_cursor = end;
+        }
+        Ok(base)
+    }
+
+    fn handle_page_fault<A>(&mut self,
+                            allocator : &mut A,
+                            fault_addr : VirtAddr,
+                            access : PageFaultAccess)
+                            -> MmResult<bool>
+        where A : PhysicalFrameAllocator<FrameId = PhysPageNum>
+    {
+        if self.handle_brk_page_fault(allocator, fault_addr, access)? {
+            return Ok(true);
+        }
+        self.handle_lazy_page_fault(allocator, fault_addr, access)
+    }
+
     fn munmap<A : PhysicalFrameAllocator<FrameId = PhysPageNum>>(&mut self,
                                                                  allocator : &mut A,
                                                                  addr : VirtAddr,
@@ -272,6 +373,10 @@ impl MmapOps for Sv39AddressSpace {
                                .checked_add(len)
                                .ok_or(MmError::InvalidAddress)?);
         self.unmap_range_with_alloc(allocator, addr, end)?;
+        self.remove_lazy_file_vmas(addr.floor_page()
+                                       .start_addr(),
+                                   end.ceil_page()
+                                      .start_addr())?;
         fence_user_ptes();
         Ok(())
     }
@@ -283,13 +388,23 @@ impl MmapOps for Sv39AddressSpace {
         let end = VirtAddr(addr.0
                                .checked_add(len)
                                .ok_or(MmError::InvalidAddress)?);
+        let perm_u = perm | PagePerm::U;
+        self.protect_lazy_file_vmas(addr.floor_page()
+                                        .start_addr(),
+                                    end.ceil_page()
+                                       .start_addr(),
+                                    perm_u)?;
         let mut vpn = addr.floor_page();
         let vpn_end = end.ceil_page();
-        let perm_u = perm | PagePerm::U;
         while vpn.0 < vpn_end.0 {
             if self.translate_addr(vpn.start_addr())?
                    .is_none()
             {
+                let page_end = VirtPageNum(vpn.0 + 1).start_addr();
+                if self.lazy_vma_overlaps(vpn.start_addr(), page_end) {
+                    vpn = VirtPageNum(vpn.0 + 1);
+                    continue;
+                }
                 return Err(MmError::NotMapped);
             }
             if perm_u.writable() && !self.ensure_private_for_write(vpn)? {

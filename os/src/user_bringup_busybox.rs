@@ -16,11 +16,11 @@ const SCRIPT_PATHS : &[&str] = &[//"/glibc/basic_testcode.sh",      // done
                                  //"/musl/libctest_testcode.sh",    // done
                                  //"/glibc/cyclictest_testcode.sh", // done
                                  //"/musl/cyclictest_testcode.sh",  // done
-                                 //"/glibc/lmbench_testcode.sh",
+                                 "/glibc/lmbench_testcode.sh",
                                  //"/musl/lmbench_testcode.sh",
                                  //"/glibc/unixbench_testcode.sh",
                                  //"/musl/unixbench_testcode.sh",
-                                 "/glibc/libcbench_testcode.sh",
+                                 //"/glibc/libcbench_testcode.sh",
                                  //"/musl/libcbench_testcode.sh",
                                  //"/glibc/iozone_testcode.sh",
                                  //"/musl/iozone_testcode.sh",

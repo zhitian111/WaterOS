@@ -1,5 +1,9 @@
 //! `mmap`/`munmap` 契约：长度与地址按 **字节** 传入，实现应按 [`crate::addr::PAGE_SIZE`] 向上取整到虚拟页边界。
 
+extern crate alloc;
+
+use alloc::boxed::Box;
+
 use crate::addr::{PhysPageNum, VirtAddr};
 use crate::address_space::AddressSpaceOps;
 use crate::error::MmResult;
@@ -31,6 +35,23 @@ pub struct MmapRequest {
     pub kind : MmapKind,
 }
 
+/// Demand paging 的 fault 类型，用于权限检查与按需装页。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PageFaultAccess {
+    Read,
+    Write,
+    Execute,
+}
+
+/// 文件页懒加载器。实现者须自行持有 mmap 后仍可读取文件内容的状态。
+pub trait DemandPageLoader {
+    /// 复制 loader；用于 fork 后父子地址空间都保留同一文件映射语义。
+    fn duplicate_box(&self) -> MmResult<Box<dyn DemandPageLoader>>;
+
+    /// 将文件偏移 `file_offset` 对应的一页加载到已清零的 `dst`。
+    fn load_page(&mut self, file_offset : usize, dst : &mut [u8]) -> MmResult<()>;
+}
+
 /// mmap / munmap 与地址空间组合的契约；实现须与 [`crate::addr::PAGE_SIZE`] 页粒度一致。
 pub trait MmapOps: AddressSpaceOps {
     /// 按请求建立映射；成功返回实际映射起始虚拟地址（可与 `addr_hint` 不同）。
@@ -54,6 +75,23 @@ pub trait MmapOps: AddressSpaceOps {
                                    -> MmResult<VirtAddr>
         where A : PhysicalFrameAllocator<FrameId = PhysPageNum>,
               F : FnMut(usize, &mut [u8]) -> MmResult<()>;
+
+    /// 登记文件懒映射；成功返回实际映射起始虚拟地址。实现不得在该调用中读取整段文件。
+    fn mmap_file_lazy<A>(&mut self,
+                         allocator : &mut A,
+                         req : MmapRequest,
+                         file_size : usize,
+                         loader : Box<dyn DemandPageLoader>)
+                         -> MmResult<VirtAddr>
+        where A : PhysicalFrameAllocator<FrameId = PhysPageNum>;
+
+    /// 处理用户页故障。返回 `Ok(true)` 表示已装入/修复该页，可重试用户访问。
+    fn handle_page_fault<A>(&mut self,
+                            allocator : &mut A,
+                            fault_addr : VirtAddr,
+                            access : PageFaultAccess)
+                            -> MmResult<bool>
+        where A : PhysicalFrameAllocator<FrameId = PhysPageNum>;
 
     /// 解除 `[addr, addr+len)` 语义范围内的映射并回收对应物理帧。
     fn munmap<A : PhysicalFrameAllocator<FrameId = PhysPageNum>>(&mut self,

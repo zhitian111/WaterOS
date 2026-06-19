@@ -14,6 +14,7 @@ use arch_api_v0::trap::{
 };
 use base_config::task::SCHED_TIMER_PERIOD_MS;
 use core::sync::atomic::{AtomicUsize, Ordering};
+use mm::api::mmap::PageFaultAccess;
 use platform::arch::paging;
 use platform::arch::trap::ActiveTrapFrame as TrapContext;
 use runtime::logging::*;
@@ -157,6 +158,22 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                                                    cx.fault_addr())
                 {
                     trace!("[trap] handled user COW fault sepc={:#x} stval={:#x}",
+                           cx.user_pc(),
+                           cx.fault_addr());
+                    finish_trap_return(frame, cx, raw_cause);
+                    return;
+                }
+                let fault_access = match trap_cause {
+                    TrapCause::Exception(Exception::InstructionPageFault) => PageFaultAccess::Execute,
+                    TrapCause::Exception(Exception::LoadPageFault) => PageFaultAccess::Read,
+                    TrapCause::Exception(Exception::StorePageFault) => PageFaultAccess::Write,
+                    _ => unreachable!(),
+                };
+                if mm::kernel_mm::handle_user_page_fault(task::current_task_user_aspace_ptr(),
+                                                         cx.fault_addr(),
+                                                         fault_access)
+                {
+                    trace!("[trap] handled user lazy page fault sepc={:#x} stval={:#x}",
                            cx.user_pc(),
                            cx.fault_addr());
                     finish_trap_return(frame, cx, raw_cause);

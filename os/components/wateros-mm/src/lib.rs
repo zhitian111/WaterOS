@@ -96,6 +96,38 @@ pub mod kernel_mm {
         }
     }
 
+    pub fn handle_user_page_fault(
+        aspace_ptr: usize,
+        fault_addr: usize,
+        access: api_v0::mmap::PageFaultAccess,
+    ) -> bool {
+        #[cfg(feature = "impl-sv39")]
+        {
+            use api_v0::addr::VirtAddr;
+            use api_v0::mmap::MmapOps;
+            let mut alloc = crate::frame_alloctor::GlobalPhysFrameAllocator;
+            return crate::user_aspace::with_user_aspace_mut(aspace_ptr, |aspace| {
+                MmapOps::handle_page_fault(aspace, &mut alloc, VirtAddr(fault_addr), access)
+            })
+            .unwrap_or(false);
+        }
+        #[cfg(all(not(feature = "impl-sv39"), feature = "impl-loongarch64"))]
+        {
+            use api_v0::addr::VirtAddr;
+            use api_v0::mmap::MmapOps;
+            let mut alloc = crate::frame_alloctor::GlobalPhysFrameAllocator;
+            return crate::user_aspace::with_user_aspace_mut(aspace_ptr, |aspace| {
+                MmapOps::handle_page_fault(aspace, &mut alloc, VirtAddr(fault_addr), access)
+            })
+            .unwrap_or(false);
+        }
+        #[cfg(not(any(feature = "impl-sv39", feature = "impl-loongarch64")))]
+        {
+            let _ = (aspace_ptr, fault_addr, access);
+            false
+        }
+    }
+
     #[cfg(feature = "impl-loongarch64")]
     pub use impl_loongarch64::kernel_mm_impl::{
         drop_user_aspace, ensure_user_execute_for_kernel_va, fork_user_aspace, from_elf_bytes,

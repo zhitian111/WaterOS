@@ -4,7 +4,7 @@ use abi::errno::ErrNo;
 use abi::user_ret::UserRet;
 use core::sync::atomic::Ordering;
 
-use crate::mm_util::{current_user_aspace_handle, mm_err_to_errno, USER_BRK_FAKE};
+use crate::mm_util::{current_user_aspace_handle, USER_BRK_FAKE};
 
 fn sys_brk_mm(handle: usize, addr: usize) -> UserRet {
     use mm::api::addr::VirtAddr;
@@ -17,11 +17,13 @@ fn sys_brk_mm(handle: usize, addr: usize) -> UserRet {
                 .current_end
                 .0);
         }
-        let new = HeapBrk::brk(aspace, &mut alloc, VirtAddr(addr))?;
-        Ok(new.0)
+        match HeapBrk::brk(aspace, &mut alloc, VirtAddr(addr)) {
+            Ok(new) => Ok(new.0),
+            Err(_) => Ok(HeapBrk::brk_region(aspace).current_end.0),
+        }
     }) {
         Ok(v) => UserRet::from_success(v),
-        Err(e) => UserRet::from_error(mm_err_to_errno(e)),
+        Err(_) => UserRet::from_error(ErrNo::ENOMEM),
     }
 }
 
@@ -40,7 +42,7 @@ fn sys_brk_fake(addr: usize) -> UserRet {
         .load(Ordering::Relaxed)
         .max(INITIAL);
     if addr < cur {
-        return UserRet::from_error(ErrNo::EINVAL);
+        return UserRet::from_success(cur);
     }
     USER_BRK_FAKE.store(addr, Ordering::Relaxed);
     UserRet::from_success(addr)

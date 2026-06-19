@@ -6,8 +6,10 @@
 use api_v0::addr::{PhysAddr, VirtAddr, PAGE_SIZE};
 use api_v0::address_space::AddressSpaceOps;
 use api_v0::error::{MmError, MmResult};
+use api_v0::mmap::PageFaultAccess;
 use api_v0::perm::PagePerm;
 use api_v0::user_access::UserMemoryOps;
+use frame_alloctor::GlobalPhysFrameAllocator;
 
 use crate::pagetable::Sv39AddressSpace;
 use crate::user_aspace;
@@ -77,7 +79,7 @@ fn user_copy_to(handle: usize, kernel_src: &[u8], user_addr: VirtAddr) -> MmResu
 }
 
 fn copy_from_user_in_aspace(
-    aspace: &Sv39AddressSpace,
+    aspace: &mut Sv39AddressSpace,
     kernel_buf: &mut [u8],
     mut user_addr: VirtAddr,
 ) -> MmResult<usize> {
@@ -85,7 +87,17 @@ fn copy_from_user_in_aspace(
     while done < kernel_buf.len() {
         let pa = match aspace.translate_addr(user_addr)? {
             Some(pa) => pa,
-            None => return Err(MmError::AccessViolation),
+            None => {
+                let mut allocator = GlobalPhysFrameAllocator;
+                if aspace.handle_lazy_page_fault(&mut allocator, user_addr, PageFaultAccess::Read)? {
+                    match aspace.translate_addr(user_addr)? {
+                        Some(pa) => pa,
+                        None => return Err(MmError::AccessViolation),
+                    }
+                } else {
+                    return Err(MmError::AccessViolation);
+                }
+            }
         };
         let perm = aspace
             .leaf_page_perm(user_addr.floor_page())?
@@ -112,9 +124,19 @@ fn copy_to_user_in_aspace(
     let mut done = 0usize;
     while done < kernel_src.len() {
         let vpn = user_addr.floor_page();
-        let mut perm = aspace
-            .leaf_page_perm(user_addr.floor_page())?
-            .ok_or(MmError::AccessViolation)?;
+        let mut perm = match aspace.leaf_page_perm(vpn)? {
+            Some(perm) => perm,
+            None => {
+                let mut allocator = GlobalPhysFrameAllocator;
+                if aspace.handle_lazy_page_fault(&mut allocator, user_addr, PageFaultAccess::Write)? {
+                    aspace
+                        .leaf_page_perm(vpn)?
+                        .ok_or(MmError::AccessViolation)?
+                } else {
+                    return Err(MmError::AccessViolation);
+                }
+            }
+        };
         if !perm.user() {
             return Err(MmError::AccessViolation);
         }
