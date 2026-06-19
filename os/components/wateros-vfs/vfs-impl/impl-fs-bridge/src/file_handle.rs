@@ -274,7 +274,9 @@ impl FsBridge {
         match abs.as_str() {
             "/dev/null" => return Ok(Box::new(impl_fd_session::NullDeviceHandle)),
             "/dev/zero" => return Ok(Box::new(impl_fd_session::ZeroDeviceHandle)),
-            "/dev/urandom" => return Ok(Box::new(impl_fd_session::UrandomDeviceHandle)),
+            "/dev/random" | "/dev/urandom" => {
+                return Ok(Box::new(impl_fd_session::UrandomDeviceHandle));
+            }
             "/dev/cpu_dma_latency" => {
                 return Ok(Box::new(impl_fd_session::CpuDmaLatencyDeviceHandle));
             }

@@ -136,7 +136,7 @@ fn char_dev_metadata(abs: &str) -> VfsMetadata {
 fn is_builtin_dev_path(abs: &str) -> bool {
     matches!(
         abs,
-        "/dev/null" | "/dev/zero" | "/dev/urandom" | "/dev/cpu_dma_latency"
+        "/dev/null" | "/dev/zero" | "/dev/random" | "/dev/urandom" | "/dev/cpu_dma_latency"
     )
 }
 
@@ -497,6 +497,12 @@ impl VfsDevInventory for FsBridge {
         if !nodes.iter().any(|n| n.path == "/dev/urandom") {
             nodes.push(VfsDevNode {
                 path: String::from("/dev/urandom"),
+                node_type: VfsDevNodeType::Character,
+            });
+        }
+        if !nodes.iter().any(|n| n.path == "/dev/random") {
+            nodes.push(VfsDevNode {
+                path: String::from("/dev/random"),
                 node_type: VfsDevNodeType::Character,
             });
         }

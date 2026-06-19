@@ -51,6 +51,7 @@ pub struct PagedFileHandle {
     writable : bool,
     mount_gen : u64,
     on_disk_size : u64,
+    detached : bool,
 }
 
 impl PagedFileHandle {
@@ -90,11 +91,12 @@ impl PagedFileHandle {
                   meta,
                   writable : want_write,
                   mount_gen,
-                  on_disk_size })
+                  on_disk_size,
+                  detached : false })
     }
 
     fn sync_dirty(&mut self) -> VfsResult<()> {
-        if !self.writable {
+        if !self.writable || self.detached {
             return Ok(());
         }
         let mut rw = mount_rw_session()?;
@@ -118,6 +120,14 @@ impl VfsIoHandle for PagedFileHandle {
         let size = self.current_size();
         if self.offset >= size {
             return Ok(0);
+        }
+        if self.detached {
+            let n = core::cmp::min(buf.len() as u64, size - self.offset) as usize;
+            buf[..n].fill(0);
+            self.offset = self.offset
+                              .checked_add(n as u64)
+                              .ok_or(VfsError::Io)?;
+            return Ok(n);
         }
         let mut io = FsPageIo { rw : None };
         let cache = global_cache(self.mount_gen);
@@ -164,6 +174,11 @@ impl VfsIoHandle for PagedFileHandle {
         let size = self.current_size();
         if offset >= size {
             return Ok(0);
+        }
+        if self.detached {
+            let n = core::cmp::min(buf.len() as u64, size - offset) as usize;
+            buf[..n].fill(0);
+            return Ok(n);
         }
         let mut io = FsPageIo { rw : None };
         let cache = global_cache(self.mount_gen);
@@ -250,10 +265,20 @@ impl VfsIoHandle for PagedFileHandle {
             return Err(VfsError::Unsupported);
         }
         if len > 0 {
-            self.sync_dirty()?;
+            match self.sync_dirty() {
+                Ok(()) => {}
+                Err(VfsError::NotFound) => self.detached = true,
+                Err(e) => return Err(e),
+            }
         }
-        let mut rw = mount_rw_session()?;
-        rw.truncate(self.path.as_str(), len)?;
+        if !self.detached {
+            let mut rw = mount_rw_session()?;
+            match rw.truncate(self.path.as_str(), len) {
+                Ok(()) => {}
+                Err(VfsError::NotFound) => self.detached = true,
+                Err(e) => return Err(e),
+            }
+        }
         let cache = global_cache(self.mount_gen);
         cache.truncate(self.path.as_str(), len);
         self.on_disk_size = len;

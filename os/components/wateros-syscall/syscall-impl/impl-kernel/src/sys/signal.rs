@@ -8,57 +8,55 @@ use abi::user_ret::UserRet;
 use ipc::signal::{SignalDelivery, SignalDispatch, SignalError, SignalSet};
 use platform::arch::trap::ActiveTrapFrame;
 use task::{ProcessId, ThreadId};
-use wateros_platform_arch_api_v0::trap::{
-    SignalFrameCodec, SignalMachineContext, TrapFrameRead,
-};
+use wateros_platform_arch_api_v0::trap::{SignalFrameCodec, SignalMachineContext, TrapFrameRead};
 
 use crate::user_copy::{copy_from_user_struct, copy_to_user_struct};
 
-const RT_SIGSET_SIZE_64: usize = 8;
-const NSIG: usize = 64;
-const SIGNAL_FRAME_MAGIC: u64 = 0x5741_5445_5253_4947;
-static LAST_ACCOUNTING_NS: AtomicU64 = AtomicU64::new(0);
+const RT_SIGSET_SIZE_64 : usize = 8;
+const NSIG : usize = 64;
+const SIGNAL_FRAME_MAGIC : u64 = 0x5741_5445_5253_4947;
+static LAST_ACCOUNTING_NS : AtomicU64 = AtomicU64::new(0);
 
 #[cfg(target_arch = "riscv64")]
-const SIGNAL_TRAMPOLINE: usize = 0x0000_0000_7fff_b000;
+const SIGNAL_TRAMPOLINE : usize = 0x0000_0000_7FFF_B000;
 #[cfg(target_arch = "loongarch64")]
-const SIGNAL_TRAMPOLINE: usize = 0x0000_007f_ffff_b000;
+const SIGNAL_TRAMPOLINE : usize = 0x0000_007F_FFFF_B000;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct UserSigInfo {
-    signo: i32,
-    errno: i32,
-    code: i32,
-    payload: [u8; 116],
+    signo : i32,
+    errno : i32,
+    code : i32,
+    payload : [u8; 116],
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 struct UserSignalStack {
-    sp: usize,
-    flags: i32,
-    padding: u32,
-    size: usize,
+    sp : usize,
+    flags : i32,
+    padding : u32,
+    size : usize,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct UserUContext {
-    flags: usize,
-    link: usize,
-    stack: UserSignalStack,
-    sigmask: u64,
-    reserved: [u64; 15],
-    machine: SignalMachineContext,
+    flags : usize,
+    link : usize,
+    stack : UserSignalStack,
+    sigmask : u64,
+    reserved : [u64; 15],
+    machine : SignalMachineContext,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct UserRtSignalFrame {
-    info: UserSigInfo,
-    ucontext: UserUContext,
-    magic: u64,
+    info : UserSigInfo,
+    ucontext : UserUContext,
+    magic : u64,
 }
 
 pub(crate) fn ensure_current_signal_state() -> Result<task::ProcessTaskDescriptor, ErrNo> {
@@ -73,19 +71,24 @@ pub(crate) fn ensure_current_signal_state() -> Result<task::ProcessTaskDescripto
     Ok(snapshot)
 }
 
-pub(crate) fn ensure_process_signal_state(pid: ProcessId) -> Result<(), ErrNo> {
+pub(crate) fn ensure_process_signal_state(pid : ProcessId) -> Result<(), ErrNo> {
     let task_ids = task::task_ids_for_process(pid).ok_or(ErrNo::ESRCH)?;
-    let mut descriptors = task_ids
-        .into_iter()
-        .filter_map(task::process_task_snapshot)
-        .collect::<alloc::vec::Vec<_>>();
+    let mut descriptors = task_ids.into_iter()
+                                  .filter_map(task::process_task_snapshot)
+                                  .collect::<alloc::vec::Vec<_>>();
     descriptors.sort_by_key(|snapshot| snapshot.tid.raw());
-    let leader = descriptors.first().copied().ok_or(ErrNo::ESRCH)?;
+    let leader = descriptors.first()
+                            .copied()
+                            .ok_or(ErrNo::ESRCH)?;
     ipc::signal::with_registry(|registry| {
         if !registry.has_process(pid.raw()) {
-            registry.register_process(pid.raw(), leader.task_id, leader.tid.raw());
+            registry.register_process(pid.raw(),
+                                      leader.task_id,
+                                      leader.tid.raw());
         }
-        for snapshot in descriptors.iter().skip(1) {
+        for snapshot in descriptors.iter()
+                                   .skip(1)
+        {
             if !registry.has_thread(snapshot.task_id) {
                 let _ = registry.register_thread(leader.task_id,
                                                  snapshot.task_id,
@@ -96,7 +99,7 @@ pub(crate) fn ensure_process_signal_state(pid: ProcessId) -> Result<(), ErrNo> {
     Ok(())
 }
 
-pub(crate) fn apply_signal_dispatch(dispatch: SignalDispatch, signal: usize) {
+pub(crate) fn apply_signal_dispatch(dispatch : SignalDispatch, signal : usize) {
     let Some(task_id) = dispatch.target_task_id else {
         return;
     };
@@ -106,7 +109,7 @@ pub(crate) fn apply_signal_dispatch(dispatch: SignalDispatch, signal: usize) {
             let _ = task::interrupt_task(task_id);
         }
         SignalDelivery::Terminate => {
-            let exit_code = ((signal & 0x7f) as isize) << 8;
+            let exit_code = ((signal & 0x7F) as isize) << 8;
             if task::current_task_id() == Some(task_id) {
                 if let Some(snapshot) = task::process_task_snapshot(task_id) {
                     notify_parent_sigchld(snapshot.pid);
@@ -128,12 +131,12 @@ pub(crate) fn apply_signal_dispatch(dispatch: SignalDispatch, signal: usize) {
     }
 }
 
-pub(crate) fn raise_current_thread(signal: usize) -> Result<(), ErrNo> {
+pub(crate) fn raise_current_thread(signal : usize) -> Result<(), ErrNo> {
     let snapshot = ensure_current_signal_state()?;
     send_thread(snapshot.task_id, signal)
 }
 
-pub(crate) fn notify_parent_sigchld(pid: ProcessId) {
+pub(crate) fn notify_parent_sigchld(pid : ProcessId) {
     let Some(process) = task::process_snapshot(pid) else {
         return;
     };
@@ -150,7 +153,7 @@ pub(crate) fn notify_parent_sigchld(pid: ProcessId) {
     }
 }
 
-pub(crate) fn timer_tick(interrupted_user: bool) {
+pub(crate) fn timer_tick(interrupted_user : bool) {
     let now = match platform::wall_clock::monotonic_ns() {
         Ok(now) => now,
         Err(_) => return,
@@ -173,34 +176,36 @@ pub(crate) fn timer_tick(interrupted_user: bool) {
         }
     }
     let realtime = ipc::signal::with_registry(|registry| registry.expire_realtime(now));
-    generated.extend(realtime.into_iter().map(|dispatch| (dispatch, ipc::signal::SIGALRM)));
+    generated.extend(realtime.into_iter()
+                             .map(|dispatch| (dispatch, ipc::signal::SIGALRM)));
     for (dispatch, signal) in generated {
         apply_signal_dispatch(dispatch, signal);
     }
 }
 
-pub(crate) fn on_fork(
-    parent_task_id: usize,
-    child_pid: usize,
-    child_task_id: usize,
-    child_tid: usize,
-) -> Result<(), SignalError> {
+pub(crate) fn on_fork(parent_task_id : usize,
+                      child_pid : usize,
+                      child_task_id : usize,
+                      child_tid : usize)
+                      -> Result<(), SignalError> {
     ipc::signal::with_registry(|registry| {
-        registry.fork_process(parent_task_id, child_pid, child_task_id, child_tid)
+        registry.fork_process(parent_task_id,
+                              child_pid,
+                              child_task_id,
+                              child_tid)
     })
 }
 
-pub(crate) fn on_clone_thread(
-    parent_task_id: usize,
-    child_task_id: usize,
-    child_tid: usize,
-) -> Result<(), SignalError> {
+pub(crate) fn on_clone_thread(parent_task_id : usize,
+                              child_task_id : usize,
+                              child_tid : usize)
+                              -> Result<(), SignalError> {
     ipc::signal::with_registry(|registry| {
         registry.register_thread(parent_task_id, child_task_id, child_tid)
     })
 }
 
-pub(crate) fn on_exec(task_id: usize, removed_threads: &[task::ExitedTask]) {
+pub(crate) fn on_exec(task_id : usize, removed_threads : &[task::ExitedTask]) {
     ipc::signal::with_registry(|registry| {
         for thread in removed_threads {
             registry.drop_thread(thread.id);
@@ -209,7 +214,7 @@ pub(crate) fn on_exec(task_id: usize, removed_threads: &[task::ExitedTask]) {
     });
 }
 
-pub(crate) fn on_thread_exit(task_id: usize, pid: usize, last_thread: bool) {
+pub(crate) fn on_thread_exit(task_id : usize, pid : usize, last_thread : bool) {
     ipc::signal::with_registry(|registry| {
         registry.drop_thread(task_id);
         if last_thread {
@@ -218,18 +223,18 @@ pub(crate) fn on_thread_exit(task_id: usize, pid: usize, last_thread: bool) {
     });
 }
 
-pub(crate) fn deliver_pending_signal(
-    frame: *mut u8,
-    restart: Option<(usize, SyscallArgs)>,
-) -> Result<bool, ErrNo> {
+pub(crate) fn deliver_pending_signal(frame : *mut u8,
+                                     restart : Option<(usize, SyscallArgs)>)
+                                     -> Result<bool, ErrNo> {
     let snapshot = ensure_current_signal_state()?;
-    let pending = ipc::signal::with_registry(|registry| {
-        registry.take_deliverable(snapshot.task_id)
-    });
+    let pending =
+        ipc::signal::with_registry(|registry| registry.take_deliverable(snapshot.task_id));
     let Some(pending) = pending else {
         return Ok(false);
     };
-    if !pending.action.has_user_handler() {
+    if !pending.action
+               .has_user_handler()
+    {
         return Err(ErrNo::EINVAL);
     }
 
@@ -244,39 +249,40 @@ pub(crate) fn deliver_pending_signal(
         }
     }
     let frame_size = core::mem::size_of::<UserRtSignalFrame>();
-    let frame_sp = TrapFrameRead::user_sp(context)
-        .checked_sub(frame_size)
-        .map(|sp| sp & !0xf)
-        .ok_or(ErrNo::EFAULT)?;
-    let user_frame = UserRtSignalFrame {
-        info: UserSigInfo {
-            signo: pending.signal as i32,
-            errno: 0,
-            code: 0,
-            payload: [0; 116],
-        },
-        ucontext: UserUContext {
-            flags: 0,
-            link: 0,
-            stack: UserSignalStack::default(),
-            sigmask: pending.previous_mask.bits(),
-            reserved: [0; 15],
-            machine: original,
-        },
-        magic: SIGNAL_FRAME_MAGIC,
-    };
+    let frame_sp = TrapFrameRead::user_sp(context).checked_sub(frame_size)
+                                                  .map(|sp| sp & !0xF)
+                                                  .ok_or(ErrNo::EFAULT)?;
+    let user_frame =
+        UserRtSignalFrame { info : UserSigInfo { signo : pending.signal as i32,
+                                                 errno : 0,
+                                                 code : 0,
+                                                 payload : [0; 116] },
+                            ucontext : UserUContext { flags : 0,
+                                                      link : 0,
+                                                      stack : UserSignalStack::default(),
+                                                      sigmask : pending.previous_mask
+                                                                       .bits(),
+                                                      reserved : [0; 15],
+                                                      machine : original },
+                            magic : SIGNAL_FRAME_MAGIC };
     copy_to_user_struct(frame_sp, &user_frame)?;
 
     let info_ptr = frame_sp;
     let ucontext_ptr = frame_sp + core::mem::offset_of!(UserRtSignalFrame, ucontext);
-    let restorer = if pending.action.restorer > 1 &&
-                      pending.action.restorer < usize::MAX - 4096
+    let restorer = if pending.action
+                             .restorer >
+                      1 &&
+                      pending.action
+                             .restorer <
+                      usize::MAX - 4096
     {
-        pending.action.restorer
+        pending.action
+               .restorer
     } else {
         SIGNAL_TRAMPOLINE
     };
-    context.prepare_signal_handler(pending.action.handler,
+    context.prepare_signal_handler(pending.action
+                                          .handler,
                                    restorer,
                                    frame_sp,
                                    pending.signal,
@@ -285,25 +291,26 @@ pub(crate) fn deliver_pending_signal(
     Ok(true)
 }
 
-pub(crate) fn restore_signal_frame(frame: *mut u8) -> Result<(), ErrNo> {
+pub(crate) fn restore_signal_frame(frame : *mut u8) -> Result<(), ErrNo> {
     let snapshot = ensure_current_signal_state()?;
     let context = unsafe { &mut *(frame.cast::<ActiveTrapFrame>()) };
-    let user_frame =
-        copy_from_user_struct::<UserRtSignalFrame>(TrapFrameRead::user_sp(context))?;
+    let user_frame = copy_from_user_struct::<UserRtSignalFrame>(TrapFrameRead::user_sp(context))?;
     if user_frame.magic != SIGNAL_FRAME_MAGIC {
         return Err(ErrNo::EFAULT);
     }
-    if !context.restore_signal_context(&user_frame.ucontext.machine) {
+    if !context.restore_signal_context(&user_frame.ucontext
+                                                  .machine)
+    {
         return Err(ErrNo::EFAULT);
     }
     ipc::signal::with_registry(|registry| {
         registry.restore_mask(snapshot.task_id,
-                              SignalSet::from_bits(user_frame.ucontext.sigmask))
-    })
-    .map_err(|_| ErrNo::ESRCH)
+                              SignalSet::from_bits(user_frame.ucontext
+                                                             .sigmask))
+    }).map_err(|_| ErrNo::ESRCH)
 }
 
-fn validate_signal(signal: isize) -> Result<usize, ErrNo> {
+fn validate_signal(signal : isize) -> Result<usize, ErrNo> {
     if signal < 0 || signal as usize >= NSIG {
         Err(ErrNo::EINVAL)
     } else {
@@ -311,7 +318,7 @@ fn validate_signal(signal: isize) -> Result<usize, ErrNo> {
     }
 }
 
-fn send_thread(task_id: usize, signal: usize) -> Result<(), ErrNo> {
+fn send_thread(task_id : usize, signal : usize) -> Result<(), ErrNo> {
     if signal == 0 {
         return Ok(());
     }
@@ -324,7 +331,7 @@ fn send_thread(task_id: usize, signal: usize) -> Result<(), ErrNo> {
     Ok(())
 }
 
-pub(crate) fn sys_rt_sigpending(args: SyscallArgs) -> UserRet {
+pub(crate) fn sys_rt_sigpending(args : SyscallArgs) -> UserRet {
     let set_ptr = args.arg(0);
     let sigset_size = args.arg(1);
     if set_ptr == 0 {
@@ -347,7 +354,7 @@ pub(crate) fn sys_rt_sigpending(args: SyscallArgs) -> UserRet {
     }
 }
 
-pub(crate) fn sys_rt_sigsuspend(args: SyscallArgs) -> UserRet {
+pub(crate) fn sys_rt_sigsuspend(args : SyscallArgs) -> UserRet {
     let mask_ptr = args.arg(0);
     let sigset_size = args.arg(1);
     if mask_ptr == 0 {
@@ -365,21 +372,23 @@ pub(crate) fn sys_rt_sigsuspend(args: SyscallArgs) -> UserRet {
         Err(error) => return UserRet::from_error(error),
     };
     match ipc::signal::with_registry(|registry| {
-        registry.begin_sigsuspend(snapshot.task_id, SignalSet::from_bits(bits))
-    }) {
+              registry.begin_sigsuspend(snapshot.task_id,
+                                        SignalSet::from_bits(bits))
+          }) {
         Ok(()) => {}
         Err(_) => return UserRet::from_error(ErrNo::ESRCH),
     }
     let wait = task::wait_queue::WaitQueue::new();
     let _ = wait.wait_current_while(|| {
-        ipc::signal::with_registry(|registry| {
-            !registry.has_deliverable(snapshot.task_id).unwrap_or(true)
-        })
-    });
+                    ipc::signal::with_registry(|registry| {
+                        !registry.has_deliverable(snapshot.task_id)
+                                 .unwrap_or(true)
+                    })
+                });
     UserRet::from_error(ErrNo::EINTR)
 }
 
-pub(crate) fn sys_tkill(args: SyscallArgs) -> UserRet {
+pub(crate) fn sys_tkill(args : SyscallArgs) -> UserRet {
     let tid = args.arg(0);
     let signal = match validate_signal(args.arg(1) as isize) {
         Ok(signal) => signal,
@@ -402,7 +411,7 @@ pub(crate) fn sys_tkill(args: SyscallArgs) -> UserRet {
     }
 }
 
-pub(crate) fn sys_tgkill(args: SyscallArgs) -> UserRet {
+pub(crate) fn sys_tgkill(args : SyscallArgs) -> UserRet {
     let tgid = args.arg(0);
     let tid = args.arg(1);
     let signal = match validate_signal(args.arg(2) as isize) {

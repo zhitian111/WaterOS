@@ -7,9 +7,9 @@ use ipc::signal::SignalDelivery;
 use task::{ProcessId, TaskId};
 
 /// Linux 标准信号号上界（不含实时信号）。
-const _NSIG: i32 = 64;
+const _NSIG : i32 = 64;
 
-fn resolve_task_id(pid: isize) -> Result<TaskId, ErrNo> {
+fn resolve_task_id(pid : isize) -> Result<TaskId, ErrNo> {
     if pid <= 0 {
         return Err(ErrNo::EINVAL);
     }
@@ -17,7 +17,7 @@ fn resolve_task_id(pid: isize) -> Result<TaskId, ErrNo> {
 }
 
 /// `kill(pid, sig)` — riscv64 系统调用号 129。
-pub(crate) fn sys_kill(args: SyscallArgs) -> UserRet {
+pub(crate) fn sys_kill(args : SyscallArgs) -> UserRet {
     let pid = args.arg(0) as isize;
     let sig = args.arg(1) as i32;
 
@@ -42,16 +42,12 @@ pub(crate) fn sys_kill(args: SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::ESRCH);
     }
     let dispatch = match ipc::signal::with_registry(|registry| {
-        registry.send_process(process.raw(), sig as usize)
-    }) {
+              registry.send_process(process.raw(), sig as usize)
+          }) {
         Ok(dispatch) => dispatch,
         Err(_) => return UserRet::from_error(ErrNo::EINVAL),
     };
 
-    if !matches!(dispatch.delivery, SignalDelivery::Terminate) {
-        super::signal::apply_signal_dispatch(dispatch, sig as usize);
-        return UserRet::from_success(0);
-    }
     super::signal::apply_signal_dispatch(dispatch, sig as usize);
     UserRet::from_success(0)
 }

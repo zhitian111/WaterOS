@@ -661,11 +661,16 @@ fn read_interp_path(path : &str,
 }
 
 fn remap_interp_path(program_path : &str, interp : &str) -> String {
-    if let Some(name) = interp.strip_prefix("/lib64/") {
+    let library = interp.strip_prefix("/lib64/")
+                        .or_else(|| interp.strip_prefix("/lib/"));
+    if let Some(name) = library {
         if program_path.starts_with("/glibc/") {
             return format!("/glibc/lib/{name}");
         }
         if program_path.starts_with("/musl/") {
+            if name.starts_with("ld-linux-") {
+                return String::from("/musl/lib/libc.so");
+            }
             return format!("/musl/lib/{name}");
         }
     }

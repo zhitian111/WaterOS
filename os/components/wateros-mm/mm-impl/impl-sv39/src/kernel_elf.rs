@@ -120,6 +120,9 @@ fn remap_interp_path(program_path : &str, interp : &str) -> String {
             return format!("/glibc/lib/{name}");
         }
         if program_path.starts_with("/musl/") {
+            if name.starts_with("ld-linux-") {
+                return String::from("/musl/lib/libc.so");
+            }
             return format!("/musl/lib/{name}");
         }
     }
