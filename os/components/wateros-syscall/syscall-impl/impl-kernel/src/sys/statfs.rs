@@ -14,6 +14,8 @@ const EXT4_SUPER_MAGIC: isize = 0xEF53;
 const STATFS_BLOCK_SIZE: isize = 4096;
 const STATFS_TOTAL_BLOCKS: isize = 1024 * 1024;
 const STATFS_FREE_BLOCKS: isize = 512 * 1024;
+const STATFS_TOTAL_FILES: isize = 1024 * 1024;
+const STATFS_FREE_FILES: isize = 512 * 1024;
 const STATFS_MAX_NAME_LEN: isize = 255;
 
 #[repr(C)]
@@ -62,8 +64,8 @@ pub(crate) fn sys_statfs(args: SyscallArgs) -> UserRet {
         f_blocks: STATFS_TOTAL_BLOCKS,
         f_bfree: STATFS_FREE_BLOCKS,
         f_bavail: STATFS_FREE_BLOCKS,
-        f_files: 0,
-        f_ffree: 0,
+        f_files: STATFS_TOTAL_FILES,
+        f_ffree: STATFS_FREE_FILES,
         f_fsid: [0; 2],
         f_namelen: STATFS_MAX_NAME_LEN,
         f_frsize: STATFS_BLOCK_SIZE,

@@ -17,6 +17,7 @@ const SOCK_STREAM: usize = 1;
 const SOCK_DGRAM: usize = 2;
 const SOCK_NONBLOCK: usize = 0o4000;
 const SOCK_CLOEXEC: usize = 0o2000000;
+const FD_CLOEXEC: usize = 1;
 
 pub(crate) fn sys_socket(args: SyscallArgs) -> UserRet {
     let domain = args.arg(0);
@@ -27,7 +28,7 @@ pub(crate) fn sys_socket(args: SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EAFNOSUPPORT);
     }
 
-    let _cloexec = typ & SOCK_CLOEXEC != 0;
+    let cloexec = typ & SOCK_CLOEXEC != 0;
     let status_flags = if typ & SOCK_NONBLOCK != 0 {
         SOCK_NONBLOCK
     } else {
@@ -61,6 +62,11 @@ pub(crate) fn sys_socket(args: SyscallArgs) -> UserRet {
         Ok(fd) => fd,
         Err(_) => return UserRet::from_error(ErrNo::ENOMEM),
     };
+    if cloexec {
+        if vfs::fd::set_fd_flags(fd, FD_CLOEXEC).is_err() {
+            return UserRet::from_error(ErrNo::EBADF);
+        }
+    }
     socket_fd::register_with_flags(fd, socket_ref, status_flags);
 
     UserRet::from_success(fd)

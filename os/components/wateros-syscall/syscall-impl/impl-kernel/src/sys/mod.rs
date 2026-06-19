@@ -41,6 +41,8 @@ mod robust;
 mod sched;
 mod signal;
 mod syslog;
+#[path = "../stat_times.rs"]
+mod stat_times;
 mod statfs;
 mod sync;
 mod task;

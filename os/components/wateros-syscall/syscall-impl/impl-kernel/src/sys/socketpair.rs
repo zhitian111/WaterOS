@@ -16,6 +16,7 @@ const SOCK_STREAM: usize = 1;
 const SOCK_DGRAM: usize = 2;
 const SOCK_NONBLOCK: usize = 0o4000;
 const SOCK_CLOEXEC: usize = 0o2000000;
+const FD_CLOEXEC: usize = 1;
 
 pub(crate) fn sys_socketpair(args: SyscallArgs) -> UserRet {
     let domain = args.arg(0);
@@ -33,7 +34,7 @@ pub(crate) fn sys_socketpair(args: SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EPROTONOSUPPORT);
     }
 
-    let _cloexec = typ & SOCK_CLOEXEC != 0;
+    let cloexec = typ & SOCK_CLOEXEC != 0;
     let nonblocking = typ & SOCK_NONBLOCK != 0;
     typ &= !(SOCK_NONBLOCK | SOCK_CLOEXEC);
 
@@ -53,6 +54,10 @@ pub(crate) fn sys_socketpair(args: SyscallArgs) -> UserRet {
     let mut reg = vfs::fd::registry().exclusive_access();
     let fd0 = reg.alloc_fd_for_task(task_id, Box::new(end0));
     let fd1 = reg.alloc_fd_for_task(task_id, Box::new(end1));
+    if cloexec {
+        let _ = reg.set_fd_flags(task_id, fd0, FD_CLOEXEC);
+        let _ = reg.set_fd_flags(task_id, fd1, FD_CLOEXEC);
+    }
     drop(reg);
 
     let fds = [fd0 as i32, fd1 as i32];

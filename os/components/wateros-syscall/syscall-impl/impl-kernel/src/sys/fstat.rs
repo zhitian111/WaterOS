@@ -7,6 +7,7 @@ use vfs::active_impl;
 use vfs::api::{SingleRootReadView, VFS_FIRST_DYNAMIC_FD, VFS_STDERR_FD, VFS_STDIN_FD};
 
 use crate::linux_stat::{fill_linux_stat, fill_linux_statx};
+use crate::sys::stat_times;
 use crate::sys::path_at::resolve_path_at;
 use crate::user_copy::{copy_to_user_struct, copy_user_path_cstr};
 use crate::vfs_util::vfs_error_to_errno;
@@ -25,7 +26,9 @@ pub(crate) fn sys_fstat(args: SyscallArgs) -> UserRet {
 
     match vfs::fd::with_current_io(fd, |handle| {
         let meta = handle.metadata()?;
-        Ok(fill_linux_stat(&meta, meta.size))
+        let mut stat = fill_linux_stat(&meta, meta.size);
+        stat_times::apply_stat(&meta, &mut stat);
+        Ok(stat)
     }) {
         Ok(stat) => match copy_to_user_struct(stat_ptr, &stat) {
             Ok(()) => UserRet::from_success(0),
@@ -56,7 +59,9 @@ pub(crate) fn sys_fstatat(args: SyscallArgs) -> UserRet {
     let stat = if path.is_empty() && (flags & AT_EMPTY_PATH) != 0 && dirfd >= 0 {
         match vfs::fd::with_current_io(dirfd as usize, |handle| {
             let meta = handle.metadata()?;
-            Ok(fill_linux_stat(&meta, meta.size))
+            let mut stat = fill_linux_stat(&meta, meta.size);
+            stat_times::apply_stat(&meta, &mut stat);
+            Ok(stat)
         }) {
             Ok(stat) => stat,
             Err(e) => return UserRet::from_error(vfs_error_to_errno(e)),
@@ -67,7 +72,11 @@ pub(crate) fn sys_fstatat(args: SyscallArgs) -> UserRet {
             Err(e) => return UserRet::from_error(e),
         };
         match active_impl::backend().metadata(resolved.as_str()) {
-            Ok(meta) => fill_linux_stat(&meta, meta.size),
+            Ok(meta) => {
+                let mut stat = fill_linux_stat(&meta, meta.size);
+                stat_times::apply_stat(&meta, &mut stat);
+                stat
+            }
             Err(e) => return UserRet::from_error(vfs_error_to_errno(e)),
         }
     };
@@ -100,7 +109,9 @@ pub(crate) fn sys_statx(args: SyscallArgs) -> UserRet {
     let statx = if path.is_empty() && (flags & AT_EMPTY_PATH) != 0 && dirfd >= 0 {
         match vfs::fd::with_current_io(dirfd as usize, |handle| {
             let meta = handle.metadata()?;
-            Ok(fill_linux_statx(&meta, meta.size, mask))
+            let mut statx = fill_linux_statx(&meta, meta.size, mask);
+            stat_times::apply_statx(&meta, &mut statx);
+            Ok(statx)
         }) {
             Ok(statx) => statx,
             Err(e) => return UserRet::from_error(vfs_error_to_errno(e)),
@@ -111,7 +122,11 @@ pub(crate) fn sys_statx(args: SyscallArgs) -> UserRet {
             Err(e) => return UserRet::from_error(e),
         };
         match active_impl::backend().metadata(resolved.as_str()) {
-            Ok(meta) => fill_linux_statx(&meta, meta.size, mask),
+            Ok(meta) => {
+                let mut statx = fill_linux_statx(&meta, meta.size, mask);
+                stat_times::apply_statx(&meta, &mut statx);
+                statx
+            }
             Err(e) => return UserRet::from_error(vfs_error_to_errno(e)),
         }
     };

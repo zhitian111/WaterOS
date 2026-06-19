@@ -14,6 +14,7 @@ use crate::user_copy::copy_to_user_struct;
 
 const SOCK_NONBLOCK: usize = 0o0004000;
 const SOCK_CLOEXEC: usize = 0o2000000;
+const FD_CLOEXEC: usize = 1;
 const ACCEPT_WAIT_TICKS: usize = 4096;
 
 #[repr(C)]
@@ -101,6 +102,12 @@ fn accept_inner(fd: usize, addr_ptr: usize, addrlen_ptr: usize, flags: usize) ->
             return UserRet::from_error(ErrNo::ENOMEM);
         }
     };
+    if flags & SOCK_CLOEXEC != 0 {
+        if vfs::fd::set_fd_flags(new_fd, FD_CLOEXEC).is_err() {
+            let _ = stack::socket_close(established_handle);
+            return UserRet::from_error(ErrNo::EBADF);
+        }
+    }
     let status_flags = if flags & SOCK_NONBLOCK != 0 {
         SOCK_NONBLOCK
     } else {
