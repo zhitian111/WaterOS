@@ -3,11 +3,11 @@
 use runtime::logging::*;
 
 const SCRIPT_PATHS : &[&str] = &[
-    //"/glibc/basic_testcode.sh",      // done
-    //"/musl/basic_testcode.sh",       // done
-    //"/glibc/busybox_testcode.sh",    // done
-    //"/musl/busybox_testcode.sh",     // done
-    //"/glibc/lua_testcode.sh",        // done
+    "/glibc/basic_testcode.sh",      // done
+    "/musl/basic_testcode.sh",       // done
+    "/glibc/busybox_testcode.sh",    // done
+    "/musl/busybox_testcode.sh",     // done
+    "/glibc/lua_testcode.sh",        // done
     //"/musl/lua_testcode.sh",         // done
     //"/glibc/iperf_testcode.sh",      // done
     //"/musl/iperf_testcode.sh",       // done
