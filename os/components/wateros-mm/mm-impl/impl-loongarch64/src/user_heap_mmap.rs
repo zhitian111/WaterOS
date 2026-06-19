@@ -41,13 +41,11 @@ impl HeapBrk for LoongArch64AddressSpace {
         if new_end.0 < r.start.0 {
             return Err(MmError::InvalidAddress);
         }
-        if new_end.0 < r.current_end.0 {
-            return Err(MmError::InvalidAddress);
-        }
         if new_end.0 > r.max.0 {
             return Err(MmError::InvalidAddress);
         }
         if new_end.0 > r.current_end.0 {
+            // Expand brk: allocate and map new pages
             let end_vpn_excl = VirtAddr(new_end.0).ceil_page()
                                                   .0;
             let mut vpn_i = VirtAddr(r.current_end.0).floor_page()
@@ -58,6 +56,22 @@ impl HeapBrk for LoongArch64AddressSpace {
                        .is_none()
                 {
                     map_zeroed_page_with_alloc(self, allocator, vpn, Self::brk_perm())?;
+                }
+                vpn_i += 1;
+            }
+        } else if new_end.0 < r.current_end.0 {
+            // Shrink brk: unmap pages that fall outside the new end
+            let new_end_vpn_excl = VirtAddr(new_end.0).ceil_page()
+                                                      .0;
+            let cur_end_vpn_excl = VirtAddr(r.current_end.0).ceil_page()
+                                                            .0;
+            let mut vpn_i = new_end_vpn_excl;
+            while vpn_i < cur_end_vpn_excl {
+                let vpn = VirtPageNum(vpn_i);
+                if self.translate_addr(vpn.start_addr())?
+                       .is_some()
+                {
+                    self.unmap_page_with_alloc(allocator, vpn)?;
                 }
                 vpn_i += 1;
             }
@@ -92,7 +106,9 @@ impl LoongArch64AddressSpace {
         };
         let end = mmap_map_end(base, req.len)?;
         let perm = req.prot | PagePerm::U;
-        if req.flags.contains(MapFlags::FIXED) {
+        if req.flags
+              .contains(MapFlags::FIXED)
+        {
             self.unmap_range_with_alloc(allocator, base, end)?;
         }
         map_zeroed_range_with_alloc(self, allocator, base, end, perm)?;
@@ -136,10 +152,17 @@ impl LoongArch64AddressSpace {
         };
         let end = mmap_map_end(base, req.len)?;
         let perm = req.prot | PagePerm::U;
-        if req.flags.contains(MapFlags::FIXED) {
+        if req.flags
+              .contains(MapFlags::FIXED)
+        {
             self.unmap_range_with_alloc(allocator, base, end)?;
         }
-        map_range_from_backing(self, allocator, base, end, perm, file_backing)?;
+        map_range_from_backing(self,
+                               allocator,
+                               base,
+                               end,
+                               perm,
+                               file_backing)?;
         if req.addr_hint
               .is_none()
         {

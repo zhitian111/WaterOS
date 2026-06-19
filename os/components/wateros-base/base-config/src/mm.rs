@@ -5,7 +5,8 @@
 
 #[allow(unused)]
 /// 内核堆大小的以 2 为底的指数位宽。
-pub const KERNEL_HEAP_SIZE_BIT_WIDTH : usize = 26;
+/// 降低此值可释放更多物理内存给用户态（64MB → 8MB 释放 56MB）。
+pub const KERNEL_HEAP_SIZE_BIT_WIDTH : usize = 23;
 #[allow(unused)]
 /// 内核堆字节容量，即 `1 << KERNEL_HEAP_SIZE_BIT_WIDTH`。
 pub const KERNEL_HEAP_SIZE : usize = 1 << KERNEL_HEAP_SIZE_BIT_WIDTH;

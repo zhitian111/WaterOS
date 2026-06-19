@@ -21,24 +21,19 @@ use impl_common::{
 use crate::pagetable::Sv39AddressSpace;
 
 #[inline]
-fn fence_user_ptes() {
-    platform::arch::paging::flush_address_space_translations();
-}
+fn fence_user_ptes() { platform::arch::paging::flush_address_space_translations(); }
 
 impl HeapBrk for Sv39AddressSpace {
     fn brk_region(&self) -> BrkRegion {
-        BrkRegion {
-            start: self.user_brk_start,
-            current_end: self.user_brk_current_end,
-            max: self.user_brk_max,
-        }
+        BrkRegion { start : self.user_brk_start,
+                    current_end : self.user_brk_current_end,
+                    max : self.user_brk_max }
     }
 
-    fn brk<A: PhysicalFrameAllocator<FrameId = PhysPageNum>>(
-        &mut self,
-        allocator: &mut A,
-        new_end: VirtAddr,
-    ) -> MmResult<VirtAddr> {
+    fn brk<A : PhysicalFrameAllocator<FrameId = PhysPageNum>>(&mut self,
+                                                              allocator : &mut A,
+                                                              new_end : VirtAddr)
+                                                              -> MmResult<VirtAddr> {
         if new_end.0 == 0 {
             return Ok(self.user_brk_current_end);
         }
@@ -46,19 +41,37 @@ impl HeapBrk for Sv39AddressSpace {
         if new_end.0 < r.start.0 {
             return Err(MmError::InvalidAddress);
         }
-        if new_end.0 < r.current_end.0 {
-            return Err(MmError::InvalidAddress);
-        }
         if new_end.0 > r.max.0 {
             return Err(MmError::InvalidAddress);
         }
         if new_end.0 > r.current_end.0 {
-            let end_vpn_excl = VirtAddr(new_end.0).ceil_page().0;
-            let mut vpn_i = VirtAddr(r.current_end.0).floor_page().0;
+            // Expand brk: allocate and map new pages
+            let end_vpn_excl = VirtAddr(new_end.0).ceil_page()
+                                                  .0;
+            let mut vpn_i = VirtAddr(r.current_end.0).floor_page()
+                                                     .0;
             while vpn_i < end_vpn_excl {
                 let vpn = VirtPageNum(vpn_i);
-                if self.translate_addr(vpn.start_addr())?.is_none() {
+                if self.translate_addr(vpn.start_addr())?
+                       .is_none()
+                {
                     map_zeroed_page_with_alloc(self, allocator, vpn, Self::brk_perm())?;
+                }
+                vpn_i += 1;
+            }
+        } else if new_end.0 < r.current_end.0 {
+            // Shrink brk: unmap pages that fall outside the new end
+            let new_end_vpn_excl = VirtAddr(new_end.0).ceil_page()
+                                                      .0;
+            let cur_end_vpn_excl = VirtAddr(r.current_end.0).ceil_page()
+                                                            .0;
+            let mut vpn_i = new_end_vpn_excl;
+            while vpn_i < cur_end_vpn_excl {
+                let vpn = VirtPageNum(vpn_i);
+                if self.translate_addr(vpn.start_addr())?
+                       .is_some()
+                {
+                    self.unmap_page_with_alloc(allocator, vpn)?;
                 }
                 vpn_i += 1;
             }
@@ -70,58 +83,89 @@ impl HeapBrk for Sv39AddressSpace {
 }
 
 impl Sv39AddressSpace {
-    fn mmap_anonymous<A: PhysicalFrameAllocator<FrameId = PhysPageNum>>(
-        &mut self,
-        allocator: &mut A,
-        req: MmapRequest,
-    ) -> MmResult<VirtAddr> {
-        if !req.flags.contains(MapFlags::ANONYMOUS) || !req.flags.contains(MapFlags::PRIVATE) {
+    fn mmap_anonymous<A : PhysicalFrameAllocator<FrameId = PhysPageNum>>(&mut self,
+                                                                         allocator : &mut A,
+                                                                         req : MmapRequest)
+                                                                         -> MmResult<VirtAddr> {
+        if !req.flags
+               .contains(MapFlags::ANONYMOUS) ||
+           !req.flags
+               .contains(MapFlags::PRIVATE)
+        {
             return Err(MmError::InvalidAddress);
         }
         let base = match req.addr_hint {
-            Some(hint) if req.flags.contains(MapFlags::FIXED) => hint,
+            Some(hint)
+                if req.flags
+                      .contains(MapFlags::FIXED) =>
+            {
+                hint
+            }
             Some(_) => return Err(MmError::InvalidAddress),
             None => find_free_mmap_base(self, self.mmap_anon_cursor, req.len)?,
         };
         let end = mmap_map_end(base, req.len)?;
         let perm = req.prot | PagePerm::U;
-        if req.flags.contains(MapFlags::FIXED) {
+        if req.flags
+              .contains(MapFlags::FIXED)
+        {
             self.unmap_range_with_alloc(allocator, base, end)?;
         }
         map_zeroed_range_with_alloc(self, allocator, base, end, perm)?;
-        if req.addr_hint.is_none() {
+        if req.addr_hint
+              .is_none()
+        {
             self.mmap_anon_cursor = end;
         }
         Ok(base)
     }
 
-    fn mmap_file<A: PhysicalFrameAllocator<FrameId = PhysPageNum>>(
-        &mut self,
-        allocator: &mut A,
-        req: MmapRequest,
-        file_backing: &[u8],
-    ) -> MmResult<VirtAddr> {
-        if req.flags.contains(MapFlags::ANONYMOUS) {
+    fn mmap_file<A : PhysicalFrameAllocator<FrameId = PhysPageNum>>(&mut self,
+                                                                    allocator : &mut A,
+                                                                    req : MmapRequest,
+                                                                    file_backing : &[u8])
+                                                                    -> MmResult<VirtAddr> {
+        if req.flags
+              .contains(MapFlags::ANONYMOUS)
+        {
             return Err(MmError::InvalidAddress);
         }
-        if !req.flags.contains(MapFlags::SHARED) && !req.flags.contains(MapFlags::PRIVATE) {
+        if !req.flags
+               .contains(MapFlags::SHARED) &&
+           !req.flags
+               .contains(MapFlags::PRIVATE)
+        {
             return Err(MmError::InvalidAddress);
         }
         if file_backing.len() != req.len {
             return Err(MmError::InvalidAddress);
         }
         let base = match req.addr_hint {
-            Some(hint) if req.flags.contains(MapFlags::FIXED) => hint,
+            Some(hint)
+                if req.flags
+                      .contains(MapFlags::FIXED) =>
+            {
+                hint
+            }
             Some(_) => return Err(MmError::InvalidAddress),
             None => find_free_mmap_base(self, self.mmap_file_cursor, req.len)?,
         };
         let end = mmap_map_end(base, req.len)?;
         let perm = req.prot | PagePerm::U;
-        if req.flags.contains(MapFlags::FIXED) {
+        if req.flags
+              .contains(MapFlags::FIXED)
+        {
             self.unmap_range_with_alloc(allocator, base, end)?;
         }
-        map_range_from_backing(self, allocator, base, end, perm, file_backing)?;
-        if req.addr_hint.is_none() {
+        map_range_from_backing(self,
+                               allocator,
+                               base,
+                               end,
+                               perm,
+                               file_backing)?;
+        if req.addr_hint
+              .is_none()
+        {
             self.mmap_file_cursor = end;
         }
         Ok(base)
@@ -129,12 +173,11 @@ impl Sv39AddressSpace {
 }
 
 impl MmapOps for Sv39AddressSpace {
-    fn mmap<A: PhysicalFrameAllocator<FrameId = PhysPageNum>>(
-        &mut self,
-        allocator: &mut A,
-        req: MmapRequest,
-        file_backing: Option<&[u8]>,
-    ) -> MmResult<VirtAddr> {
+    fn mmap<A : PhysicalFrameAllocator<FrameId = PhysPageNum>>(&mut self,
+                                                               allocator : &mut A,
+                                                               req : MmapRequest,
+                                                               file_backing : Option<&[u8]>)
+                                                               -> MmResult<VirtAddr> {
         if req.len == 0 {
             return Err(MmError::InvalidAddress);
         }
@@ -154,35 +197,36 @@ impl MmapOps for Sv39AddressSpace {
         }
     }
 
-    fn munmap<A: PhysicalFrameAllocator<FrameId = PhysPageNum>>(
-        &mut self,
-        allocator: &mut A,
-        addr: VirtAddr,
-        len: usize,
-    ) -> MmResult<()> {
+    fn munmap<A : PhysicalFrameAllocator<FrameId = PhysPageNum>>(&mut self,
+                                                                 allocator : &mut A,
+                                                                 addr : VirtAddr,
+                                                                 len : usize)
+                                                                 -> MmResult<()> {
         if len == 0 {
             return Err(MmError::InvalidAddress);
         }
-        let end = VirtAddr(
-            addr.0
-                .checked_add(len)
-                .ok_or(MmError::InvalidAddress)?,
-        );
+        let end = VirtAddr(addr.0
+                               .checked_add(len)
+                               .ok_or(MmError::InvalidAddress)?);
         self.unmap_range_with_alloc(allocator, addr, end)?;
         fence_user_ptes();
         Ok(())
     }
 
-    fn mprotect(&mut self, addr: VirtAddr, len: usize, perm: PagePerm) -> MmResult<()> {
+    fn mprotect(&mut self, addr : VirtAddr, len : usize, perm : PagePerm) -> MmResult<()> {
         if len == 0 {
             return Ok(());
         }
-        let end = VirtAddr(addr.0.checked_add(len).ok_or(MmError::InvalidAddress)?);
+        let end = VirtAddr(addr.0
+                               .checked_add(len)
+                               .ok_or(MmError::InvalidAddress)?);
         let mut vpn = addr.floor_page();
         let vpn_end = end.ceil_page();
         let perm_u = perm | PagePerm::U;
         while vpn.0 < vpn_end.0 {
-            if self.translate_addr(vpn.start_addr())?.is_none() {
+            if self.translate_addr(vpn.start_addr())?
+                   .is_none()
+            {
                 return Err(MmError::NotMapped);
             }
             if perm_u.writable() && !self.ensure_private_for_write(vpn)? {
@@ -195,24 +239,21 @@ impl MmapOps for Sv39AddressSpace {
         Ok(())
     }
 
-    fn mremap<A: PhysicalFrameAllocator<FrameId = PhysPageNum>>(
-        &mut self,
-        allocator: &mut A,
-        old_addr: VirtAddr,
-        old_size: usize,
-        new_size: usize,
-        flags: usize,
-        new_address: VirtAddr,
-    ) -> MmResult<VirtAddr> {
-        mremap_range(
-            self,
-            allocator,
-            old_addr,
-            old_size,
-            new_size,
-            flags,
-            new_address,
-            self.mmap_anon_cursor,
-        )
+    fn mremap<A : PhysicalFrameAllocator<FrameId = PhysPageNum>>(&mut self,
+                                                                 allocator : &mut A,
+                                                                 old_addr : VirtAddr,
+                                                                 old_size : usize,
+                                                                 new_size : usize,
+                                                                 flags : usize,
+                                                                 new_address : VirtAddr)
+                                                                 -> MmResult<VirtAddr> {
+        mremap_range(self,
+                     allocator,
+                     old_addr,
+                     old_size,
+                     new_size,
+                     flags,
+                     new_address,
+                     self.mmap_anon_cursor)
     }
 }

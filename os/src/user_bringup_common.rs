@@ -116,17 +116,7 @@ pub fn run_one_elf_argv_exit(log_tag : &str, elf_path : &str, argv : &[&str]) ->
 
 fn wait_for_script_exit(log_tag : &str, elf_path : &str, argv : &[&str], tid : task::TaskId) {
     if !is_cyclictest_script(argv) {
-        // 5 minutes timeout: SCHED_TIMER_PERIOD_MS = 10ms, so 300_000ms / 10 = 30_000 ticks.
-        const FIVE_MINUTES_TICKS : task::TaskTick = 30_000;
-        match task::wait_for_task_exit_for_ticks(tid, FIVE_MINUTES_TICKS) {
-            task::TaskWaitResult::Woken => {}
-            task::TaskWaitResult::TimedOut => {
-                warn!("[{log_tag}] process timed out after 5 minutes, path={elf_path}, killing \
-                       task tid={tid}");
-                task::kill_task(tid, -1);
-            }
-            task::TaskWaitResult::Interrupted => {}
-        }
+        task::wait_for_task_exit(tid);
         return;
     }
 
