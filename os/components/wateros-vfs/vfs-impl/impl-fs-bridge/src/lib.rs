@@ -6,10 +6,10 @@ extern crate alloc;
 use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
 
 use api_v0::{
-    RootRwSession, SingleRootReadView, VfsAccessMode, VfsBackend, VfsCapability, VfsDevInventory,
-    VfsDevNode, VfsDevNodeType, VfsDirEntry, VfsError, VfsFsKind, VfsIoHandle, VfsMetadata,
-    VfsMountOps, VfsMountTable, VfsNodeType, VfsOpenFlags, VfsOpenOps, VfsResult,
-    normalize_absolute_path, validate_root_file_name,
+    normalize_absolute_path, validate_root_file_name, RootRwSession, SingleRootReadView,
+    VfsAccessMode, VfsBackend, VfsCapability, VfsDevInventory, VfsDevNode, VfsDevNodeType,
+    VfsDirEntry, VfsError, VfsFsKind, VfsIoHandle, VfsMetadata, VfsMountOps, VfsMountTable,
+    VfsNodeType, VfsOpenFlags, VfsOpenOps, VfsResult,
 };
 
 mod dir_handle;
@@ -20,23 +20,21 @@ mod proc_handle;
 
 pub use dir_handle::DirectoryHandle;
 pub use file_handle::{BufferedFileHandle, RootFileHandle};
-pub use paged_handle::PagedFileHandle;
+use fs::procfs::api::ProcFsView;
 use fs::{
     FsAccessMode, FsCapability, FsDirEntry, FsError, FsKind, FsMetadata, FsNodeType, ReadOnlyFs,
     SharedRwFs,
 };
-use fs::procfs::api::ProcFsView;
 use mount_table::{assert_path_writable, resolve_route, FsRoute, MountIdentity};
+pub use paged_handle::PagedFileHandle;
 
-fn proc_view() -> &'static impl ProcFsView {
-    fs::procfs::active_impl::view()
-}
+fn proc_view() -> &'static impl ProcFsView { fs::procfs::active_impl::view() }
 
 /// 通过 `wateros-fs` 访问根卷与 devfs 的零大小后端。
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FsBridge;
 
-pub(crate) fn map_fs_err(e: FsError) -> VfsError {
+pub(crate) fn map_fs_err(e : FsError) -> VfsError {
     match e {
         FsError::NotMounted => VfsError::NotMounted,
         FsError::NotFound => VfsError::NotFound,
@@ -51,7 +49,7 @@ pub(crate) fn map_fs_err(e: FsError) -> VfsError {
     }
 }
 
-fn map_fs_kind(kind: FsKind) -> VfsFsKind {
+fn map_fs_kind(kind : FsKind) -> VfsFsKind {
     match kind {
         FsKind::Ext2 => VfsFsKind::Ext2,
         FsKind::Ext3 => VfsFsKind::Ext3,
@@ -61,7 +59,7 @@ fn map_fs_kind(kind: FsKind) -> VfsFsKind {
     }
 }
 
-fn map_vfs_kind(kind: VfsFsKind) -> FsKind {
+fn map_vfs_kind(kind : VfsFsKind) -> FsKind {
     match kind {
         VfsFsKind::Ext2 => FsKind::Ext2,
         VfsFsKind::Ext3 => FsKind::Ext3,
@@ -70,31 +68,30 @@ fn map_vfs_kind(kind: VfsFsKind) -> FsKind {
     }
 }
 
-fn map_access(mode: FsAccessMode) -> VfsAccessMode {
+fn map_access(mode : FsAccessMode) -> VfsAccessMode {
     match mode {
         FsAccessMode::ReadOnly => VfsAccessMode::ReadOnly,
         FsAccessMode::ReadWrite => VfsAccessMode::ReadWrite,
     }
 }
 
-fn map_fs_cap(c: FsCapability) -> VfsCapability {
-    VfsCapability::new(map_fs_kind(c.kind), map_access(c.access))
+fn map_fs_cap(c : FsCapability) -> VfsCapability {
+    VfsCapability::new(map_fs_kind(c.kind),
+                       map_access(c.access))
 }
 
-fn map_meta(m: FsMetadata, identity: MountIdentity) -> VfsMetadata {
-    VfsMetadata {
-        node_type: map_fs_node(m.node_type),
-        size: m.size,
-        mode: m.mode,
-        device_major: identity.device_major,
-        device_minor: identity.device_minor,
-        inode: m.inode,
-        mount_id: identity.mount_id,
-        nlink: m.nlink,
-    }
+fn map_meta(m : FsMetadata, identity : MountIdentity) -> VfsMetadata {
+    VfsMetadata { node_type : map_fs_node(m.node_type),
+                  size : m.size,
+                  mode : m.mode,
+                  device_major : identity.device_major,
+                  device_minor : identity.device_minor,
+                  inode : m.inode,
+                  mount_id : identity.mount_id,
+                  nlink : m.nlink }
 }
 
-pub(crate) fn map_fs_node(t: FsNodeType) -> VfsNodeType {
+pub(crate) fn map_fs_node(t : FsNodeType) -> VfsNodeType {
     match t {
         FsNodeType::File => VfsNodeType::File,
         FsNodeType::Directory => VfsNodeType::Directory,
@@ -103,18 +100,16 @@ pub(crate) fn map_fs_node(t: FsNodeType) -> VfsNodeType {
     }
 }
 
-fn map_dir_entry(e: FsDirEntry) -> VfsDirEntry {
-    VfsDirEntry {
-        name: e.name,
-        node_type: map_fs_node(e.node_type),
-    }
+fn map_dir_entry(e : FsDirEntry) -> VfsDirEntry {
+    VfsDirEntry { name : e.name,
+                  node_type : map_fs_node(e.node_type) }
 }
 
 pub(crate) fn root_rw() -> VfsResult<SharedRwFs> {
     fs::rootfs::active_impl::root_rw_fs().ok_or(VfsError::NotMounted)
 }
 
-fn fs_and_rel_rw(path: &str) -> VfsResult<(SharedRwFs, String)> {
+fn fs_and_rel_rw(path : &str) -> VfsResult<(SharedRwFs, String)> {
     match resolve_route(path)? {
         FsRoute::Root { abs, .. } => Ok((root_rw()?, abs)),
         FsRoute::AuxRw { fs, rel, .. } => Ok((fs, rel)),
@@ -122,103 +117,105 @@ fn fs_and_rel_rw(path: &str) -> VfsResult<(SharedRwFs, String)> {
     }
 }
 
-fn char_dev_exists(abs: &str) -> bool {
+fn char_dev_exists(abs : &str) -> bool {
     if is_builtin_dev_path(abs) {
         return true;
     }
     fs::devfs::active_impl::lookup_character_device(abs).is_ok()
 }
 
-fn char_dev_metadata(abs: &str) -> VfsMetadata {
-    impl_fd_session::metadata_for_devfs_path(abs)
-}
+fn char_dev_metadata(abs : &str) -> VfsMetadata { impl_fd_session::metadata_for_devfs_path(abs) }
 
-fn is_builtin_dev_path(abs: &str) -> bool {
-    matches!(
-        abs,
-        "/dev/null" | "/dev/zero" | "/dev/random" | "/dev/urandom" | "/dev/cpu_dma_latency"
-    )
+fn is_builtin_dev_path(abs : &str) -> bool {
+    matches!(abs,
+             "/dev/null" | "/dev/zero" | "/dev/random" | "/dev/urandom" | "/dev/cpu_dma_latency")
 }
 
 impl SingleRootReadView for FsBridge {
-    fn exists(&self, path: &str) -> VfsResult<bool> {
+    fn exists(&self, path : &str) -> VfsResult<bool> {
         let abs = normalize_absolute_path(path)?;
         if char_dev_exists(abs.as_str()) {
             return Ok(true);
         }
         match resolve_route(abs.as_str())? {
-            FsRoute::PseudoProc { rel, .. } => {
-                proc_view().exists(rel.as_str()).map_err(map_fs_err)
-            }
-            FsRoute::Root { abs, .. } => root_rw()?.lock().exists(abs.as_str()).map_err(map_fs_err),
-            FsRoute::AuxRw { fs, rel, .. } => {
-                fs.lock().exists(rel.as_str()).map_err(map_fs_err)
-            }
-            FsRoute::AuxRo { fs, rel, .. } => {
-                fs.lock().exists(rel.as_str()).map_err(map_fs_err)
-            }
+            FsRoute::PseudoProc { rel, .. } => proc_view().exists(rel.as_str())
+                                                          .map_err(map_fs_err),
+            FsRoute::Root { abs, .. } => root_rw()?.lock()
+                                                   .exists(abs.as_str())
+                                                   .map_err(map_fs_err),
+            FsRoute::AuxRw { fs, rel, .. } => fs.lock()
+                                                .exists(rel.as_str())
+                                                .map_err(map_fs_err),
+            FsRoute::AuxRo { fs, rel, .. } => fs.lock()
+                                                .exists(rel.as_str())
+                                                .map_err(map_fs_err),
         }
     }
 
-    fn metadata(&self, path: &str) -> VfsResult<VfsMetadata> {
+    fn metadata(&self, path : &str) -> VfsResult<VfsMetadata> {
         let abs = normalize_absolute_path(path)?;
         if char_dev_exists(abs.as_str()) {
             return Ok(char_dev_metadata(abs.as_str()));
         }
         let (meta, identity) = match resolve_route(abs.as_str())? {
-            FsRoute::PseudoProc { rel, identity } => {
-                (proc_view().metadata(rel.as_str()).map_err(map_fs_err)?, identity)
-            }
-            FsRoute::Root { abs, identity } => (
-                root_rw()?.lock().metadata(abs.as_str()).map_err(map_fs_err)?,
-                identity,
-            ),
-            FsRoute::AuxRw { fs, rel, identity } => (
-                fs.lock().metadata(rel.as_str()).map_err(map_fs_err)?,
-                identity,
-            ),
-            FsRoute::AuxRo { fs, rel, identity } => (
-                fs.lock().metadata(rel.as_str()).map_err(map_fs_err)?,
-                identity,
-            ),
+            FsRoute::PseudoProc { rel, identity } => (proc_view().metadata(rel.as_str())
+                                                                 .map_err(map_fs_err)?,
+                                                      identity),
+            FsRoute::Root { abs, identity } => (root_rw()?.lock()
+                                                          .metadata(abs.as_str())
+                                                          .map_err(map_fs_err)?,
+                                                identity),
+            FsRoute::AuxRw { fs, rel, identity } => (fs.lock()
+                                                       .metadata(rel.as_str())
+                                                       .map_err(map_fs_err)?,
+                                                     identity),
+            FsRoute::AuxRo { fs, rel, identity } => (fs.lock()
+                                                       .metadata(rel.as_str())
+                                                       .map_err(map_fs_err)?,
+                                                     identity),
         };
         Ok(map_meta(meta, identity))
     }
 
-    fn read(&self, path: &str) -> VfsResult<Vec<u8>> {
+    fn read(&self, path : &str) -> VfsResult<Vec<u8>> {
         let abs = normalize_absolute_path(path)?;
         match resolve_route(abs.as_str())? {
-            FsRoute::PseudoProc { rel, .. } => proc_view().read(rel.as_str()).map_err(map_fs_err),
-            FsRoute::Root { abs, .. } => root_rw()?.lock().read(abs.as_str()).map_err(map_fs_err),
-            FsRoute::AuxRw { fs, rel, .. } => fs.lock().read(rel.as_str()).map_err(map_fs_err),
-            FsRoute::AuxRo { fs, rel, .. } => fs.lock().read(rel.as_str()).map_err(map_fs_err),
+            FsRoute::PseudoProc { rel, .. } => proc_view().read(rel.as_str())
+                                                          .map_err(map_fs_err),
+            FsRoute::Root { abs, .. } => root_rw()?.lock()
+                                                   .read(abs.as_str())
+                                                   .map_err(map_fs_err),
+            FsRoute::AuxRw { fs, rel, .. } => fs.lock()
+                                                .read(rel.as_str())
+                                                .map_err(map_fs_err),
+            FsRoute::AuxRo { fs, rel, .. } => fs.lock()
+                                                .read(rel.as_str())
+                                                .map_err(map_fs_err),
         }
     }
 
-    fn read_range(&self, path: &str, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+    fn read_range(&self, path : &str, offset : u64, buf : &mut [u8]) -> VfsResult<usize> {
         FsBridge::read_range(self, path, offset, buf)
     }
 
-    fn read_dir(&self, path: &str) -> VfsResult<Vec<VfsDirEntry>> {
+    fn read_dir(&self, path : &str) -> VfsResult<Vec<VfsDirEntry>> {
         let abs = normalize_absolute_path(path)?;
         let entries = match resolve_route(abs.as_str())? {
-            FsRoute::PseudoProc { rel, .. } => {
-                proc_view().read_dir(rel.as_str()).map_err(map_fs_err)?
-            }
-            FsRoute::Root { abs, .. } => root_rw()?
-                .lock()
-                .read_dir(abs.as_str())
-                .map_err(map_fs_err)?,
-            FsRoute::AuxRw { fs, rel, .. } => fs
-                .lock()
-                .read_dir(rel.as_str())
-                .map_err(map_fs_err)?,
-            FsRoute::AuxRo { fs, rel, .. } => fs
-                .lock()
-                .read_dir(rel.as_str())
-                .map_err(map_fs_err)?,
+            FsRoute::PseudoProc { rel, .. } => proc_view().read_dir(rel.as_str())
+                                                          .map_err(map_fs_err)?,
+            FsRoute::Root { abs, .. } => root_rw()?.lock()
+                                                   .read_dir(abs.as_str())
+                                                   .map_err(map_fs_err)?,
+            FsRoute::AuxRw { fs, rel, .. } => fs.lock()
+                                                .read_dir(rel.as_str())
+                                                .map_err(map_fs_err)?,
+            FsRoute::AuxRo { fs, rel, .. } => fs.lock()
+                                                .read_dir(rel.as_str())
+                                                .map_err(map_fs_err)?,
         };
-        Ok(entries.into_iter().map(map_dir_entry).collect())
+        Ok(entries.into_iter()
+                  .map(map_dir_entry)
+                  .collect())
     }
 
     fn boot_dump_all_paths(&self) {
@@ -228,20 +225,29 @@ impl SingleRootReadView for FsBridge {
 
 impl FsBridge {
     /// 仅在根卷上列目录（挂载点须为空目录检查）。
-    pub(crate) fn read_dir_on_root(path: &str) -> VfsResult<Vec<VfsDirEntry>> {
+    pub(crate) fn read_dir_on_root(path : &str) -> VfsResult<Vec<VfsDirEntry>> {
         let n = normalize_absolute_path(path)?;
         let fs = root_rw()?;
         fs.lock()
-            .read_dir(n.as_str())
-            .map_err(map_fs_err)
-            .map(|v| v.into_iter().map(map_dir_entry).collect())
+          .read_dir(n.as_str())
+          .map_err(map_fs_err)
+          .map(|v| {
+              v.into_iter()
+               .map(map_dir_entry)
+               .collect()
+          })
     }
 
     /// 从根卷只读句柄按偏移读取（页缓存 miss 路径）。
-    pub(crate) fn read_range(&self, path: &str, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+    pub(crate) fn read_range(&self,
+                             path : &str,
+                             offset : u64,
+                             buf : &mut [u8])
+                             -> VfsResult<usize> {
         match resolve_route(path)? {
             FsRoute::PseudoProc { rel, .. } => {
-                let data = proc_view().read(rel.as_str()).map_err(map_fs_err)?;
+                let data = proc_view().read(rel.as_str())
+                                      .map_err(map_fs_err)?;
                 let start = offset as usize;
                 if start >= data.len() {
                     return Ok(0);
@@ -250,24 +256,21 @@ impl FsBridge {
                 buf[..n].copy_from_slice(&data[start..start + n]);
                 Ok(n)
             }
-            FsRoute::Root { abs, .. } => root_rw()?
-                .lock()
-                .read_range(abs.as_str(), offset, buf)
-                .map_err(map_fs_err),
-            FsRoute::AuxRw { fs, rel, .. } => fs
-                .lock()
-                .read_range(rel.as_str(), offset, buf)
-                .map_err(map_fs_err),
-            FsRoute::AuxRo { fs, rel, .. } => fs
-                .lock()
-                .read_range(rel.as_str(), offset, buf)
-                .map_err(map_fs_err),
+            FsRoute::Root { abs, .. } => root_rw()?.lock()
+                                                   .read_range(abs.as_str(), offset, buf)
+                                                   .map_err(map_fs_err),
+            FsRoute::AuxRw { fs, rel, .. } => fs.lock()
+                                                .read_range(rel.as_str(), offset, buf)
+                                                .map_err(map_fs_err),
+            FsRoute::AuxRo { fs, rel, .. } => fs.lock()
+                                                .read_range(rel.as_str(), offset, buf)
+                                                .map_err(map_fs_err),
         }
     }
 }
 
 /// 将 ext4 块设备挂到根卷内 `mount_point`（须为空目录）。
-pub fn mount_ext4_block_at(mount_point: &str, block_dev: &str, readonly: bool) -> VfsResult<()> {
+pub fn mount_ext4_block_at(mount_point : &str, block_dev : &str, readonly : bool) -> VfsResult<()> {
     if readonly {
         let aux = fs::mount_aux_ro_from_block_path(block_dev).map_err(map_fs_err)?;
         mount_table::mount_aux_at_ro(mount_point, aux, block_dev)
@@ -278,9 +281,7 @@ pub fn mount_ext4_block_at(mount_point: &str, block_dev: &str, readonly: bool) -
 }
 
 /// 卸载 `mount_point` 上的辅助卷。
-pub fn unmount_at(mount_point: &str) -> VfsResult<()> {
-    mount_table::unmount_aux_at(mount_point)
-}
+pub fn unmount_at(mount_point : &str) -> VfsResult<()> { mount_table::unmount_aux_at(mount_point) }
 
 /// 在 ext4 根卷上创建 `/proc` 挂载点目录（已存在则忽略）。
 pub fn ensure_proc_mount_point() -> VfsResult<()> {
@@ -293,26 +294,33 @@ pub fn ensure_proc_mount_point() -> VfsResult<()> {
 }
 
 /// 将 procfs 挂到 `mount_point`（须先 [`ensure_proc_mount_point`]）。
-pub fn mount_procfs_at(mount_point: &str) -> VfsResult<()> {
+pub fn mount_procfs_at(mount_point : &str) -> VfsResult<()> {
     mount_table::mount_aux_proc_at(mount_point)
 }
 
 pub use mount_table::{is_proc_mounted_at, list_proc_mount_lines, mount_aux_proc_at};
 
 /// 删除绝对路径（经挂载表路由）。
-pub fn unlink_path(path: &str, remove_dir: bool) -> VfsResult<()> {
+pub fn unlink_path(path : &str, remove_dir : bool) -> VfsResult<()> {
     assert_path_writable(path)?;
     let (fs, rel) = fs_and_rel_rw(path)?;
     let mut sess = MountedRwSession::new(fs);
-    if remove_dir {
+    let result = if remove_dir {
         sess.rmdir(rel.as_str())
     } else {
         sess.unlink(rel.as_str())
+    };
+    // 释放页缓存中的文件条目，防止 files BTreeMap 无限增长内核堆
+    if !remove_dir {
+        let cache =
+            impl_page_cache::global_cache(crate::fs::rootfs::active_impl::mount_generation());
+        cache.purge_closed_file(path);
     }
+    result
 }
 
 /// 创建目录（经挂载表路由）。
-pub fn mkdir_path(path: &str, mode: u32) -> VfsResult<()> {
+pub fn mkdir_path(path : &str, mode : u32) -> VfsResult<()> {
     let normalized = normalize_absolute_path(path)?;
     if normalized.as_str() == "/" {
         return Err(VfsError::Exists);
@@ -324,7 +332,7 @@ pub fn mkdir_path(path: &str, mode: u32) -> VfsResult<()> {
 }
 
 /// 修改路径权限（经挂载表路由）。
-pub fn chmod_path(path: &str, mode: u32) -> VfsResult<()> {
+pub fn chmod_path(path : &str, mode : u32) -> VfsResult<()> {
     let normalized = normalize_absolute_path(path)?;
     if char_dev_exists(normalized.as_str()) {
         return Err(VfsError::Unsupported);
@@ -336,14 +344,15 @@ pub fn chmod_path(path: &str, mode: u32) -> VfsResult<()> {
 }
 
 /// 修改路径 uid/gid（经挂载表路由）。
-pub fn chown_path(path: &str, uid: Option<u32>, gid: Option<u32>) -> VfsResult<()> {
+pub fn chown_path(path : &str, uid : Option<u32>, gid : Option<u32>) -> VfsResult<()> {
     let normalized = normalize_absolute_path(path)?;
     if char_dev_exists(normalized.as_str()) {
         return Err(VfsError::Unsupported);
     }
     if uid.is_none() && gid.is_none() {
         let bridge = FsBridge;
-        return bridge.metadata(normalized.as_str()).map(|_| ());
+        return bridge.metadata(normalized.as_str())
+                     .map(|_| ());
     }
     assert_path_writable(path)?;
     let (fs, rel) = fs_and_rel_rw(path)?;
@@ -351,7 +360,7 @@ pub fn chown_path(path: &str, uid: Option<u32>, gid: Option<u32>) -> VfsResult<(
     sess.chown(rel.as_str(), uid, gid)
 }
 
-pub(crate) fn replace_file_contents(path: &str, data: &[u8]) -> VfsResult<()> {
+pub(crate) fn replace_file_contents(path : &str, data : &[u8]) -> VfsResult<()> {
     assert_path_writable(path)?;
     let (fs, rel) = fs_and_rel_rw(path)?;
     let mut sess = MountedRwSession::new(fs);
@@ -359,7 +368,7 @@ pub(crate) fn replace_file_contents(path: &str, data: &[u8]) -> VfsResult<()> {
 }
 
 /// 重命名绝对路径（经挂载表路由；要求 old/new 落在同一 RW 卷）。
-pub fn rename_path(old_path: &str, new_path: &str) -> VfsResult<()> {
+pub fn rename_path(old_path : &str, new_path : &str) -> VfsResult<()> {
     assert_path_writable(old_path)?;
     assert_path_writable(new_path)?;
     let (fs_old, rel_old) = fs_and_rel_rw(old_path)?;
@@ -373,17 +382,15 @@ pub fn rename_path(old_path: &str, new_path: &str) -> VfsResult<()> {
 
 /// 与只读根句柄分离的可写挂载会话。
 pub struct MountedRwSession {
-    inner: SharedRwFs,
+    inner : SharedRwFs,
 }
 
 impl MountedRwSession {
-    pub fn new(inner: SharedRwFs) -> Self {
-        Self { inner }
-    }
+    pub fn new(inner : SharedRwFs) -> Self { Self { inner } }
 }
 
 impl RootRwSession for MountedRwSession {
-    fn write_regular_file_at_root(&mut self, name: &str, data: &[u8]) -> VfsResult<()> {
+    fn write_regular_file_at_root(&mut self, name : &str, data : &[u8]) -> VfsResult<()> {
         validate_root_file_name(name)?;
         self.inner
             .lock()
@@ -391,7 +398,7 @@ impl RootRwSession for MountedRwSession {
             .map_err(map_fs_err)
     }
 
-    fn write_regular_file(&mut self, path: &str, data: &[u8]) -> VfsResult<()> {
+    fn write_regular_file(&mut self, path : &str, data : &[u8]) -> VfsResult<()> {
         let n = normalize_absolute_path(path)?;
         self.inner
             .lock()
@@ -399,17 +406,23 @@ impl RootRwSession for MountedRwSession {
             .map_err(map_fs_err)
     }
 
-    fn unlink(&mut self, path: &str) -> VfsResult<()> {
+    fn unlink(&mut self, path : &str) -> VfsResult<()> {
         let n = normalize_absolute_path(path)?;
-        self.inner.lock().unlink(n.as_str()).map_err(map_fs_err)
+        self.inner
+            .lock()
+            .unlink(n.as_str())
+            .map_err(map_fs_err)
     }
 
-    fn rmdir(&mut self, path: &str) -> VfsResult<()> {
+    fn rmdir(&mut self, path : &str) -> VfsResult<()> {
         let n = normalize_absolute_path(path)?;
-        self.inner.lock().rmdir(n.as_str()).map_err(map_fs_err)
+        self.inner
+            .lock()
+            .rmdir(n.as_str())
+            .map_err(map_fs_err)
     }
 
-    fn write_range(&mut self, path: &str, offset: u64, data: &[u8]) -> VfsResult<usize> {
+    fn write_range(&mut self, path : &str, offset : u64, data : &[u8]) -> VfsResult<usize> {
         let n = normalize_absolute_path(path)?;
         self.inner
             .lock()
@@ -417,7 +430,7 @@ impl RootRwSession for MountedRwSession {
             .map_err(map_fs_err)
     }
 
-    fn truncate(&mut self, path: &str, len: u64) -> VfsResult<()> {
+    fn truncate(&mut self, path : &str, len : u64) -> VfsResult<()> {
         let n = normalize_absolute_path(path)?;
         self.inner
             .lock()
@@ -425,17 +438,23 @@ impl RootRwSession for MountedRwSession {
             .map_err(map_fs_err)
     }
 
-    fn mkdir(&mut self, path: &str, mode: u32) -> VfsResult<()> {
+    fn mkdir(&mut self, path : &str, mode : u32) -> VfsResult<()> {
         let n = normalize_absolute_path(path)?;
-        self.inner.lock().mkdir(n.as_str(), mode).map_err(map_fs_err)
+        self.inner
+            .lock()
+            .mkdir(n.as_str(), mode)
+            .map_err(map_fs_err)
     }
 
-    fn chmod(&mut self, path: &str, mode: u32) -> VfsResult<()> {
+    fn chmod(&mut self, path : &str, mode : u32) -> VfsResult<()> {
         let n = normalize_absolute_path(path)?;
-        self.inner.lock().chmod(n.as_str(), mode).map_err(map_fs_err)
+        self.inner
+            .lock()
+            .chmod(n.as_str(), mode)
+            .map_err(map_fs_err)
     }
 
-    fn chown(&mut self, path: &str, uid: Option<u32>, gid: Option<u32>) -> VfsResult<()> {
+    fn chown(&mut self, path : &str, uid : Option<u32>, gid : Option<u32>) -> VfsResult<()> {
         let n = normalize_absolute_path(path)?;
         self.inner
             .lock()
@@ -443,7 +462,7 @@ impl RootRwSession for MountedRwSession {
             .map_err(map_fs_err)
     }
 
-    fn rename(&mut self, old_path: &str, new_path: &str) -> VfsResult<()> {
+    fn rename(&mut self, old_path : &str, new_path : &str) -> VfsResult<()> {
         let old = normalize_absolute_path(old_path)?;
         let new = normalize_absolute_path(new_path)?;
         self.inner
@@ -452,7 +471,7 @@ impl RootRwSession for MountedRwSession {
             .map_err(map_fs_err)
     }
 
-    fn hardlink(&mut self, existing_path: &str, new_path: &str) -> VfsResult<()> {
+    fn hardlink(&mut self, existing_path : &str, new_path : &str) -> VfsResult<()> {
         let existing = normalize_absolute_path(existing_path)?;
         let new = normalize_absolute_path(new_path)?;
         self.inner
@@ -464,47 +483,47 @@ impl RootRwSession for MountedRwSession {
 
 impl VfsMountOps for FsBridge {
     fn supported_capabilities(&self) -> Vec<VfsCapability> {
-        fs::supported_fs_summary()
-            .into_iter()
-            .map(map_fs_cap)
-            .collect()
+        fs::supported_fs_summary().into_iter()
+                                  .map(map_fs_cap)
+                                  .collect()
     }
 
-    fn mount_rw_session(&self, _kind: VfsFsKind) -> VfsResult<Box<dyn RootRwSession>> {
+    fn mount_rw_session(&self, _kind : VfsFsKind) -> VfsResult<Box<dyn RootRwSession>> {
         Ok(Box::new(MountedRwSession::new(root_rw()?)))
     }
 }
 
 impl VfsDevInventory for FsBridge {
     fn list_dev_nodes(&self) -> Vec<VfsDevNode> {
-        let mut nodes = fs::devfs::active_impl::list_nodes()
-            .into_iter()
-            .map(|n| VfsDevNode {
+        let mut nodes = fs::devfs::active_impl::list_nodes().into_iter()
+                                                            .map(|n| {
+                                                                VfsDevNode {
                 path: n.path,
                 node_type: match n.node_type {
                     fs::devfs::DevNodeType::Block => VfsDevNodeType::Block,
                     fs::devfs::DevNodeType::Character => VfsDevNodeType::Character,
                     fs::devfs::DevNodeType::Unsupported => VfsDevNodeType::Unsupported,
                 },
-            })
-            .collect::<Vec<VfsDevNode>>();
-        if !nodes.iter().any(|n| n.path == "/dev/zero") {
-            nodes.push(VfsDevNode {
-                path: String::from("/dev/zero"),
-                node_type: VfsDevNodeType::Character,
-            });
+            }
+                                                            })
+                                                            .collect::<Vec<VfsDevNode>>();
+        if !nodes.iter()
+                 .any(|n| n.path == "/dev/zero")
+        {
+            nodes.push(VfsDevNode { path : String::from("/dev/zero"),
+                                    node_type : VfsDevNodeType::Character });
         }
-        if !nodes.iter().any(|n| n.path == "/dev/urandom") {
-            nodes.push(VfsDevNode {
-                path: String::from("/dev/urandom"),
-                node_type: VfsDevNodeType::Character,
-            });
+        if !nodes.iter()
+                 .any(|n| n.path == "/dev/urandom")
+        {
+            nodes.push(VfsDevNode { path : String::from("/dev/urandom"),
+                                    node_type : VfsDevNodeType::Character });
         }
-        if !nodes.iter().any(|n| n.path == "/dev/random") {
-            nodes.push(VfsDevNode {
-                path: String::from("/dev/random"),
-                node_type: VfsDevNodeType::Character,
-            });
+        if !nodes.iter()
+                 .any(|n| n.path == "/dev/random")
+        {
+            nodes.push(VfsDevNode { path : String::from("/dev/random"),
+                                    node_type : VfsDevNodeType::Character });
         }
         nodes
     }
@@ -515,22 +534,22 @@ impl VfsDevInventory for FsBridge {
 }
 
 impl VfsOpenOps for FsBridge {
-    fn open(&self, path: &str, flags: VfsOpenFlags) -> VfsResult<Box<dyn VfsIoHandle>> {
+    fn open(&self, path : &str, flags : VfsOpenFlags) -> VfsResult<Box<dyn VfsIoHandle>> {
         self.open_path(path, flags)
     }
 }
 
 impl VfsMountTable for FsBridge {
-    fn mount_at(&mut self, mount_point: &str, _kind: VfsFsKind) -> VfsResult<()> {
+    fn mount_at(&mut self, mount_point : &str, _kind : VfsFsKind) -> VfsResult<()> {
         let _ = mount_point;
         Err(VfsError::Unsupported)
     }
 
-    fn unmount_at(&mut self, mount_point: &str) -> VfsResult<()> {
+    fn unmount_at(&mut self, mount_point : &str) -> VfsResult<()> {
         mount_table::unmount_aux_at(mount_point)
     }
 
-    fn resolve_mount(&self, path: &str) -> VfsResult<&str> {
+    fn resolve_mount(&self, path : &str) -> VfsResult<&str> {
         let _ = path;
         Err(VfsError::Unsupported)
     }

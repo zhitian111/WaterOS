@@ -141,39 +141,6 @@ impl GlobalFilePageCache {
         e
     }
 
-    fn flush_frame<Io, E>(&self,
-                          io : &mut Io,
-                          slot : usize,
-                          logical_size_hint : Option<u64>,
-                          map_err : fn(Io::Error) -> E)
-                          -> Result<(), E>
-        where Io : PageCacheIo
-    {
-        let mut cache = self.state.lock();
-        let Some((ref key, page_idx)) = cache.frames[slot].key
-                                                          .clone()
-        else {
-            return Ok(());
-        };
-        if !cache.frames[slot].dirty {
-            return Ok(());
-        }
-        let off = page_idx * FILE_PAGE_SIZE as u64;
-        let mut len = FILE_PAGE_SIZE;
-        if let Some(size) = logical_size_hint {
-            if off >= size {
-                cache.frames[slot].dirty = false;
-                return Ok(());
-            }
-            len = len.min(usize::try_from(size - off).unwrap_or(0));
-        }
-        let data = cache.frames[slot].data[..len].to_vec();
-        cache.frames[slot].dirty = false;
-        drop(cache);
-        io.write_range(key.path.as_ref(), off, &data)
-          .map_err(map_err)?;
-        Ok(())
-    }
 
     fn queue_flush_batch(batches : &mut Vec<(u64, Vec<u8>)>,
                          batch_start : &mut Option<u64>,
@@ -279,20 +246,8 @@ impl GlobalFilePageCache {
         }
 
         let page_off = page_idx * FILE_PAGE_SIZE as u64;
-        let mut page_buf = vec![0u8; FILE_PAGE_SIZE];
-        if page_off < file_size {
-            let to_read = FILE_PAGE_SIZE.min(
-                usize::try_from(file_size.saturating_sub(page_off)).unwrap_or(0),
-            );
-            if to_read > 0 {
-                let n = io.read_range(path, page_off, &mut page_buf[..to_read])
-                          .map_err(map_err)?;
-                if n < to_read {
-                    page_buf[n..to_read].fill(0);
-                }
-            }
-        }
 
+        // 第一次快速路径检查：已缓存则直接返回
         let mut cache = self.state.lock();
         if cache.capacity == 0 {
             return Ok(());
@@ -306,46 +261,48 @@ impl GlobalFilePageCache {
 
         let idx = cache.pop_free_or_lru_index();
         if cache.frames[idx].dirty {
-            // 在持锁状态下复制脏数据和 key，清除脏标记
+            // 持锁复制脏数据并清除标记，然后释放锁执行 I/O
             let saved_key = cache.frames[idx].key
                                              .clone();
             let saved_data = cache.frames[idx].data
                                               .clone();
             cache.frames[idx].dirty = false;
             drop(cache);
-            // 释放锁后执行 I/O（不触发竞态：key 仍指向此帧，其他线程不会误取）
             if let Some((ref k, page_idx)) = saved_key {
                 let off = page_idx * FILE_PAGE_SIZE as u64;
-                io.write_range(k.path.as_ref(),
-                               off,
-                               &saved_data[..FILE_PAGE_SIZE])
-                  .map_err(map_err)?;
+                let _ = io.write_range(k.path.as_ref(),
+                                       off,
+                                       &saved_data[..FILE_PAGE_SIZE]);
             }
             cache = self.state.lock();
-            // 释放锁期间其他线程可能通过 truncate 回收此帧
-            // 如果 key 已被清除，说明帧已回收，需重新获取
-            if saved_key.is_some() &&
-               cache.frames[idx].key
-                                .is_none()
-            {
-                // 帧被回收到了 free，借机重新 pop
-                // 直接 fall through，使用干净的帧
-            }
-        }
-        if let Some(old) = cache.frames[idx].key
-                                            .take()
+        } else if let Some(old) = cache.frames[idx].key
+                                                   .take()
         {
+            // 非脏帧：直接移除旧索引，不在 lru 中（刚 pop 出来），无需扫 lru
             cache.index
                  .remove(&old);
-            if let Some(p) = cache.lru
-                                  .iter()
-                                  .position(|&x| x == idx)
-            {
-                cache.lru.remove(p);
-            }
         }
-        cache.frames[idx].data
-                         .copy_from_slice(&page_buf);
+
+        // 直接读取数据到帧的 data buffer 中，避免中间 page_buf 分配和 copy_from_slice
+        let slot_data = &mut cache.frames[idx].data;
+        if page_off < file_size {
+            let to_read = FILE_PAGE_SIZE.min(
+                usize::try_from(file_size.saturating_sub(page_off)).unwrap_or(0),
+            );
+            if to_read > 0 {
+                let n = io.read_range(path,
+                                      page_off,
+                                      &mut slot_data[..to_read])
+                          .map_err(map_err)?;
+                if n < to_read {
+                    slot_data[n..to_read].fill(0);
+                }
+            } else {
+                slot_data.fill(0);
+            }
+        } else {
+            slot_data.fill(0);
+        }
         cache.frames[idx].dirty = false;
         cache.frames[idx].key = Some((key.clone(), page_idx));
         cache.index
