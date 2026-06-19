@@ -9,9 +9,9 @@ pub const FILE_PAGE_SIZE : usize = 4096;
 pub const FILE_LARGE_THRESHOLD : u64 = 64 * 1024;
 
 /// 全局页帧 LRU 槽位数（所有文件共享，非每文件容量）。
-/// 16384 * 4KiB = 64MiB，将 lmbench/unixbench 临时文件完全保持在缓存中，
-/// 大幅减少频繁脏页淘汰带来的 I/O 开销。1GiB 物理内存下设置合理。
-pub const FILE_PAGE_CACHE_CAPACITY : usize = 16384;
+/// 4096 * 4KiB = 16MiB，覆盖多数测试热集。内核堆共 64MiB，
+/// 需为 ELF 加载、VFS 元数据、进程控制块等留出充足内存。
+pub const FILE_PAGE_CACHE_CAPACITY : usize = 4096;
 
 /// Direct 模式下顺序读预取步长（页数）；`0` 表示关闭预取。
 /// 增大此值可减少读时的缺页中断次数，对顺序读性能有明显提升。
