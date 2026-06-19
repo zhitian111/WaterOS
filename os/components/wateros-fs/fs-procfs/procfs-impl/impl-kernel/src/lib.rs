@@ -59,6 +59,7 @@ enum ProcNode {
     PidDir(ProcessId),
     PidStat(ProcessId),
     PidStatus(ProcessId),
+    PidSmaps(ProcessId),
     PidCmdline(ProcessId),
 }
 
@@ -70,7 +71,8 @@ fn proc_inode(node: ProcNode) -> u64 {
         ProcNode::PidDir(pid) => 0x1000_0000 | ((pid.raw() as u64) << 4),
         ProcNode::PidStat(pid) => 0x1000_0001 | ((pid.raw() as u64) << 4),
         ProcNode::PidStatus(pid) => 0x1000_0002 | ((pid.raw() as u64) << 4),
-        ProcNode::PidCmdline(pid) => 0x1000_0003 | ((pid.raw() as u64) << 4),
+        ProcNode::PidSmaps(pid) => 0x1000_0003 | ((pid.raw() as u64) << 4),
+        ProcNode::PidCmdline(pid) => 0x1000_0004 | ((pid.raw() as u64) << 4),
     }
 }
 
@@ -98,13 +100,17 @@ fn parse_node(path: &str) -> Option<ProcNode> {
     }
     let rest = p.strip_prefix('/')?;
     let (first, tail) = rest.split_once('/').map(|(a, b)| (a, Some(b))).unwrap_or((rest, None));
-    let pid = first.parse::<usize>().ok()?;
-    let pid = ProcessId::from_raw(pid);
+    let pid = if first == "self" {
+        task::current_process_task_snapshot()?.pid
+    } else {
+        ProcessId::from_raw(first.parse::<usize>().ok()?)
+    };
     match tail {
         None => Some(ProcNode::PidDir(pid)),
         Some("") => Some(ProcNode::PidDir(pid)),
         Some("stat") => Some(ProcNode::PidStat(pid)),
         Some("status") => Some(ProcNode::PidStatus(pid)),
+        Some("smaps") => Some(ProcNode::PidSmaps(pid)),
         Some("cmdline") => Some(ProcNode::PidCmdline(pid)),
         Some(_) => None,
     }
@@ -173,6 +179,7 @@ fn format_status(pid: ProcessId) -> FsResult<Vec<u8>> {
     let leader = process.leader_task_id;
     let cred = cred::credentials_for(leader);
     let comm = comm_for(pid);
+    let mem = process_memory_kb(pid)?;
     let ppid = process
         .parent_pid
         .map(|p| p.raw())
@@ -184,7 +191,7 @@ fn format_status(pid: ProcessId) -> FsResult<Vec<u8>> {
     };
     let sc = state_char(process.state);
     let line = format!(
-        "Name:\t{comm}\nState:\t{state_str} ({sc})\nTgid:\t{}\nPid:\t{}\nPPid:\t{ppid}\nUid:\t{}\t{}\t{}\t{}\nGid:\t{}\t{}\t{}\t{}\n",
+        "Name:\t{comm}\nState:\t{state_str} ({sc})\nTgid:\t{}\nPid:\t{}\nPPid:\t{ppid}\nUid:\t{}\t{}\t{}\t{}\nGid:\t{}\t{}\t{}\t{}\nVmPeak:\t{}\tkB\nVmSize:\t{}\tkB\nVmRSS:\t{}\tkB\nVmData:\t{}\tkB\nVmStk:\t128\tkB\n",
         pid.raw(),
         pid.raw(),
         cred.real_uid.0,
@@ -195,6 +202,42 @@ fn format_status(pid: ProcessId) -> FsResult<Vec<u8>> {
         cred.effective_gid.0,
         cred.saved_gid.0,
         cred.fs_gid.0,
+        mem.size_kb,
+        mem.size_kb,
+        mem.rss_kb,
+        mem.private_dirty_kb,
+    );
+    Ok(line.into_bytes())
+}
+
+#[derive(Clone, Copy)]
+struct ProcMemoryKb {
+    size_kb : usize,
+    rss_kb : usize,
+    private_dirty_kb : usize,
+}
+
+fn process_memory_kb(pid : ProcessId) -> FsResult<ProcMemoryKb> {
+    let process = task::process_snapshot(pid).ok_or(FsError::NotFound)?;
+    let thread_extra = process.task_count.saturating_sub(1) * 64;
+    let heap_like = 4096usize.saturating_add(thread_extra);
+    Ok(ProcMemoryKb { size_kb : heap_like,
+                      rss_kb : heap_like,
+                      private_dirty_kb : heap_like })
+}
+
+fn format_smaps(pid : ProcessId) -> FsResult<Vec<u8>> {
+    let mem = process_memory_kb(pid)?;
+    let start = 0x1000_0000usize;
+    let end = start.saturating_add(mem.size_kb.saturating_mul(1024));
+    let line = format!(
+        "{start:016x}-{end:016x} rw-p 00000000 00:00 0 [heap]\nSize:\t{}\tkB\nRss:\t{}\tkB\nPss:\t{}\tkB\nShared_Clean:\t0\tkB\nShared_Dirty:\t0\tkB\nPrivate_Clean:\t0\tkB\nPrivate_Dirty:\t{}\tkB\nReferenced:\t{}\tkB\nAnonymous:\t{}\tkB\nSwap:\t0\tkB\nKernelPageSize:\t4\tkB\nMMUPageSize:\t4\tkB\nVmFlags: rd wr mr mw me ac sd\n",
+        mem.size_kb,
+        mem.rss_kb,
+        mem.rss_kb,
+        mem.private_dirty_kb,
+        mem.rss_kb,
+        mem.rss_kb,
     );
     Ok(line.into_bytes())
 }
@@ -259,6 +302,7 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidDir(pid)
             | ProcNode::PidStat(pid)
             | ProcNode::PidStatus(pid)
+            | ProcNode::PidSmaps(pid)
             | ProcNode::PidCmdline(pid) => process_visible(pid),
         })
     }
@@ -282,6 +326,7 @@ impl ProcFsView for KernelProcFs {
             }),
             ProcNode::PidStat(pid)
             | ProcNode::PidStatus(pid)
+            | ProcNode::PidSmaps(pid)
             | ProcNode::PidCmdline(pid) => {
                 if !process_visible(pid) {
                     return Err(FsError::NotFound);
@@ -305,6 +350,7 @@ impl ProcFsView for KernelProcFs {
             ProcNode::Mounts => Ok(format_mounts()),
             ProcNode::PidStat(pid) => format_stat(pid),
             ProcNode::PidStatus(pid) => format_status(pid),
+            ProcNode::PidSmaps(pid) => format_smaps(pid),
             ProcNode::PidCmdline(pid) => format_cmdline(pid),
         }
     }
@@ -342,6 +388,10 @@ impl ProcFsView for KernelProcFs {
                     },
                     FsDirEntry {
                         name: String::from("status"),
+                        node_type: FsNodeType::File,
+                    },
+                    FsDirEntry {
+                        name: String::from("smaps"),
                         node_type: FsNodeType::File,
                     },
                     FsDirEntry {

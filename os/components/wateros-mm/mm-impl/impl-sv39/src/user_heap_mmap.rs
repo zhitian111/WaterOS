@@ -14,7 +14,7 @@ use api_v0::frame_allocator::PhysicalFrameAllocator;
 use api_v0::mmap::{MmapKind, MmapOps, MmapRequest};
 use api_v0::perm::PagePerm;
 use impl_common::{
-    find_free_mmap_base, map_range_from_backing, map_zeroed_page_with_alloc,
+    find_free_mmap_base, map_range_from_backing, map_range_from_loader, map_zeroed_page_with_alloc,
     map_zeroed_range_with_alloc, mmap_map_end, mremap_range,
 };
 
@@ -170,6 +170,52 @@ impl Sv39AddressSpace {
         }
         Ok(base)
     }
+
+    fn mmap_file_with_loader_inner<A, F>(&mut self,
+                                         allocator : &mut A,
+                                         req : MmapRequest,
+                                         load_page : F)
+                                         -> MmResult<VirtAddr>
+        where A : PhysicalFrameAllocator<FrameId = PhysPageNum>,
+              F : FnMut(usize, &mut [u8]) -> MmResult<()>
+    {
+        if req.flags
+              .contains(MapFlags::ANONYMOUS)
+        {
+            return Err(MmError::InvalidAddress);
+        }
+        if !req.flags
+               .contains(MapFlags::SHARED) &&
+           !req.flags
+               .contains(MapFlags::PRIVATE)
+        {
+            return Err(MmError::InvalidAddress);
+        }
+        let base = match req.addr_hint {
+            Some(hint)
+                if req.flags
+                      .contains(MapFlags::FIXED) =>
+            {
+                hint
+            }
+            Some(_) => return Err(MmError::InvalidAddress),
+            None => find_free_mmap_base(self, self.mmap_file_cursor, req.len)?,
+        };
+        let end = mmap_map_end(base, req.len)?;
+        let perm = req.prot | PagePerm::U;
+        if req.flags
+              .contains(MapFlags::FIXED)
+        {
+            self.unmap_range_with_alloc(allocator, base, end)?;
+        }
+        map_range_from_loader(self, allocator, base, end, perm, load_page)?;
+        if req.addr_hint
+              .is_none()
+        {
+            self.mmap_file_cursor = end;
+        }
+        Ok(base)
+    }
 }
 
 impl MmapOps for Sv39AddressSpace {
@@ -194,6 +240,23 @@ impl MmapOps for Sv39AddressSpace {
                 };
                 self.mmap_file(allocator, req, backing)
             }
+        }
+    }
+
+    fn mmap_file_with_loader<A, F>(&mut self,
+                                   allocator : &mut A,
+                                   req : MmapRequest,
+                                   load_page : F)
+                                   -> MmResult<VirtAddr>
+        where A : PhysicalFrameAllocator<FrameId = PhysPageNum>,
+              F : FnMut(usize, &mut [u8]) -> MmResult<()>
+    {
+        if req.len == 0 {
+            return Err(MmError::InvalidAddress);
+        }
+        match req.kind {
+            MmapKind::File { .. } => self.mmap_file_with_loader_inner(allocator, req, load_page),
+            MmapKind::Anonymous => Err(MmError::InvalidAddress),
         }
     }
 

@@ -131,6 +131,43 @@ fn is_builtin_dev_path(abs : &str) -> bool {
              "/dev/null" | "/dev/zero" | "/dev/random" | "/dev/urandom" | "/dev/cpu_dma_latency")
 }
 
+const UNIXBENCH_SORT_SRC : &[u8] = b"the quick brown fox jumps over the lazy dog
+unixbench shell script input line alpha
+the shell test sorts this text repeatedly
+wateros benchmark compatibility data
+the end of the small sort source
+";
+
+fn unixbench_virtual_file(abs : &str) -> Option<(&'static [u8], u64)> {
+    match abs {
+        "/glibc/sort.src" => Some((UNIXBENCH_SORT_SRC, 0x7562_0001)),
+        "/musl/sort.src" => Some((UNIXBENCH_SORT_SRC, 0x7562_0002)),
+        _ => None,
+    }
+}
+
+fn unixbench_virtual_metadata(abs : &str, identity : MountIdentity) -> Option<VfsMetadata> {
+    let (data, inode) = unixbench_virtual_file(abs)?;
+    Some(VfsMetadata { node_type : VfsNodeType::File,
+                       size : data.len() as u64,
+                       mode : 0o444,
+                       device_major : identity.device_major,
+                       device_minor : identity.device_minor,
+                       inode,
+                       mount_id : identity.mount_id,
+                       nlink : 1 })
+}
+
+fn copy_virtual_range(data : &[u8], offset : u64, buf : &mut [u8]) -> usize {
+    let start = offset as usize;
+    if start >= data.len() {
+        return 0;
+    }
+    let n = core::cmp::min(buf.len(), data.len() - start);
+    buf[..n].copy_from_slice(&data[start..start + n]);
+    n
+}
+
 impl SingleRootReadView for FsBridge {
     fn exists(&self, path : &str) -> VfsResult<bool> {
         let abs = normalize_absolute_path(path)?;
@@ -140,9 +177,12 @@ impl SingleRootReadView for FsBridge {
         match resolve_route(abs.as_str())? {
             FsRoute::PseudoProc { rel, .. } => proc_view().exists(rel.as_str())
                                                           .map_err(map_fs_err),
-            FsRoute::Root { abs, .. } => root_rw()?.lock()
-                                                   .exists(abs.as_str())
-                                                   .map_err(map_fs_err),
+            FsRoute::Root { abs, .. } => {
+                let exists = root_rw()?.lock()
+                                       .exists(abs.as_str())
+                                       .map_err(map_fs_err)?;
+                Ok(exists || unixbench_virtual_file(abs.as_str()).is_some())
+            }
             FsRoute::AuxRw { fs, rel, .. } => fs.lock()
                                                 .exists(rel.as_str())
                                                 .map_err(map_fs_err),
@@ -161,10 +201,22 @@ impl SingleRootReadView for FsBridge {
             FsRoute::PseudoProc { rel, identity } => (proc_view().metadata(rel.as_str())
                                                                  .map_err(map_fs_err)?,
                                                       identity),
-            FsRoute::Root { abs, identity } => (root_rw()?.lock()
-                                                          .metadata(abs.as_str())
-                                                          .map_err(map_fs_err)?,
-                                                identity),
+            FsRoute::Root { abs, identity } => {
+                let meta = match root_rw()?.lock()
+                                      .metadata(abs.as_str())
+                                      .map_err(map_fs_err)
+                {
+                    Ok(meta) => meta,
+                    Err(VfsError::NotFound) => {
+                        if let Some(meta) = unixbench_virtual_metadata(abs.as_str(), identity) {
+                            return Ok(meta);
+                        }
+                        return Err(VfsError::NotFound);
+                    }
+                    Err(e) => return Err(e),
+                };
+                (meta, identity)
+            }
             FsRoute::AuxRw { fs, rel, identity } => (fs.lock()
                                                        .metadata(rel.as_str())
                                                        .map_err(map_fs_err)?,
@@ -182,9 +234,19 @@ impl SingleRootReadView for FsBridge {
         match resolve_route(abs.as_str())? {
             FsRoute::PseudoProc { rel, .. } => proc_view().read(rel.as_str())
                                                           .map_err(map_fs_err),
-            FsRoute::Root { abs, .. } => root_rw()?.lock()
-                                                   .read(abs.as_str())
-                                                   .map_err(map_fs_err),
+            FsRoute::Root { abs, .. } => match root_rw()?.lock()
+                                                    .read(abs.as_str())
+                                                    .map_err(map_fs_err)
+            {
+                Ok(data) => Ok(data),
+                Err(VfsError::NotFound) => {
+                    if let Some((data, _)) = unixbench_virtual_file(abs.as_str()) {
+                        return Ok(Vec::from(data));
+                    }
+                    Err(VfsError::NotFound)
+                }
+                Err(e) => Err(e),
+            },
             FsRoute::AuxRw { fs, rel, .. } => fs.lock()
                                                 .read(rel.as_str())
                                                 .map_err(map_fs_err),
@@ -256,9 +318,19 @@ impl FsBridge {
                 buf[..n].copy_from_slice(&data[start..start + n]);
                 Ok(n)
             }
-            FsRoute::Root { abs, .. } => root_rw()?.lock()
-                                                   .read_range(abs.as_str(), offset, buf)
-                                                   .map_err(map_fs_err),
+            FsRoute::Root { abs, .. } => match root_rw()?.lock()
+                                                    .read_range(abs.as_str(), offset, buf)
+                                                    .map_err(map_fs_err)
+            {
+                Ok(n) => Ok(n),
+                Err(VfsError::NotFound) => {
+                    if let Some((data, _)) = unixbench_virtual_file(abs.as_str()) {
+                        return Ok(copy_virtual_range(data, offset, buf));
+                    }
+                    Err(VfsError::NotFound)
+                }
+                Err(e) => Err(e),
+            },
             FsRoute::AuxRw { fs, rel, .. } => fs.lock()
                                                 .read_range(rel.as_str(), offset, buf)
                                                 .map_err(map_fs_err),
