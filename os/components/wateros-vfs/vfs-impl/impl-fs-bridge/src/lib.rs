@@ -312,8 +312,7 @@ pub fn unlink_path(path : &str, remove_dir : bool) -> VfsResult<()> {
     };
     // 释放页缓存中的文件条目，防止 files BTreeMap 无限增长内核堆
     if !remove_dir {
-        let cache =
-            impl_page_cache::global_cache(crate::fs::rootfs::active_impl::mount_generation());
+        let cache = impl_page_cache::global_cache(fs::rootfs::active_impl::mount_generation());
         cache.purge_closed_file(path);
     }
     result
