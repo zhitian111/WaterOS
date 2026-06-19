@@ -68,6 +68,21 @@ impl FutexHub {
             },
         }
     }
+
+    /// 唤醒 `from_key` 上的前 `wake_count` 个等待者，并把后续等待者迁移到
+    /// `to_key` 队列；返回被唤醒和被迁移的总数。
+    pub fn requeue(&self,
+                   from_key : FutexKey,
+                   to_key : FutexKey,
+                   wake_count : u32,
+                   requeue_count : u32)
+                   -> FutexResult<usize> {
+        Ok(self.with_tables(|tables| {
+            let from_wq = Self::get_queue(tables, from_key);
+            let to_wq = Self::get_queue(tables, to_key);
+            from_wq.requeue_to(to_wq, wake_count as usize, requeue_count as usize)
+        }))
+    }
 }
 
 static GLOBAL_HUB: FutexHub = FutexHub {

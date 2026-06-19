@@ -423,6 +423,67 @@ impl WaitQueues {
         woken
     }
 
+    /// 从一个显式等待队列唤醒前 `wake_count` 个任务，并把后续最多
+    /// `requeue_count` 个仍在等待的任务迁移到另一个等待队列。
+    pub fn requeue_wait_queue(&mut self,
+                              registry : &mut TaskRegistry,
+                              from_wait_queue_id : WaitQueueId,
+                              to_wait_queue_id : WaitQueueId,
+                              wake_count : usize,
+                              requeue_count : usize,
+                              ready_queue : &mut impl ReadyTaskSink)
+                              -> usize {
+        let mut changed = 0usize;
+        for _ in 0..wake_count {
+            if self.wake_one_in_wait_queue(registry, from_wait_queue_id, ready_queue)
+                   .is_none()
+            {
+                return changed;
+            }
+            changed = changed.saturating_add(1);
+        }
+
+        let from_handle = TaskWaitHandle::for_wait_queue(from_wait_queue_id);
+        let to_handle = TaskWaitHandle::for_wait_queue(to_wait_queue_id);
+        if from_wait_queue_id == to_wait_queue_id {
+            let remaining = self.wait_queue_mut(from_wait_queue_id)
+                                .iter()
+                                .filter(|task_id| {
+                                    matches!(
+                                        registry.state(**task_id),
+                                        Some(TaskState::Blocking(TaskBlockReason::Wait(handle)))
+                                            if handle == from_handle
+                                    )
+                                })
+                                .count()
+                                .min(requeue_count);
+            return changed.saturating_add(remaining);
+        }
+
+        let mut moved = 0usize;
+        while moved < requeue_count {
+            let Some(task_id) = self.wait_queue_mut(from_wait_queue_id)
+                                    .pop_front()
+            else {
+                break;
+            };
+            match registry.state(task_id) {
+                Some(TaskState::Blocking(TaskBlockReason::Wait(handle)))
+                    if handle == from_handle =>
+                {
+                    registry.mark_blocking(task_id, TaskBlockReason::Wait(to_handle));
+                    self.update_wait_timeout_handle(task_id, from_handle, to_handle);
+                    self.wait_queue_mut(to_wait_queue_id)
+                        .push_back(task_id);
+                    moved = moved.saturating_add(1);
+                    changed = changed.saturating_add(1);
+                }
+                Some(_) | None => {}
+            }
+        }
+        changed
+    }
+
     /// 回收指定已退出任务。
     pub fn reap_exited_task(&mut self,
                             registry : &mut TaskRegistry,
@@ -478,6 +539,17 @@ impl WaitQueues {
 
     fn remove_from_wait_list(&mut self, wait_handle : TaskWaitHandle, task_id : TaskId) -> bool {
         take_task_id_by_id(self.wait_list_mut(wait_handle), task_id)
+    }
+
+    fn update_wait_timeout_handle(&mut self,
+                                  task_id : TaskId,
+                                  from_handle : TaskWaitHandle,
+                                  to_handle : TaskWaitHandle) {
+        for entry in &mut self.wait_timeouts {
+            if entry.task_id == task_id && entry.wait_handle == from_handle {
+                entry.wait_handle = to_handle;
+            }
+        }
     }
 
     fn wake_all_waiters_for_task_exit(&mut self,

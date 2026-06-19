@@ -58,4 +58,14 @@ impl WaitQueue {
     /// 唤醒该等待队列中的全部任务，并返回实际唤醒数量。
     #[inline]
     pub fn wake_all(&self) -> usize { scheduler::wake_all_in_wait_queue(self.id) }
+
+    /// 唤醒本队列中的部分任务，并把其余等待者迁移到另一个等待队列。
+    #[inline]
+    pub fn requeue_to(&self,
+                      target : Self,
+                      wake_count : usize,
+                      requeue_count : usize)
+                      -> usize {
+        scheduler::requeue_wait_queue(self.id, target.id, wake_count, requeue_count)
+    }
 }

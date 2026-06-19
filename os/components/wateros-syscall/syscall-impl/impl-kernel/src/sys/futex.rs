@@ -95,11 +95,10 @@ fn futex_requeue(
     uaddr2: usize,
     futex_op: u32,
 ) -> Result<usize, ErrNo> {
-    let _ = uaddr2;
-    let key = FutexKey::from_syscall(uaddr, futex_op);
-    let total = wake_count.saturating_add(requeue_count);
+    let from_key = FutexKey::from_syscall(uaddr, futex_op);
+    let to_key = FutexKey::from_syscall(uaddr2, futex_op);
     FutexHub::global()
-        .wake(key, total)
+        .requeue(from_key, to_key, wake_count, requeue_count)
         .map_err(futex_error_to_errno)
 }
 

@@ -252,6 +252,19 @@ pub fn wake_all_in_wait_queue(wait_queue_id : WaitQueueId) -> usize {
     active_impl::wake_all_in_wait_queue(wait_queue_id)
 }
 
+/// 从一个显式等待队列唤醒部分任务，并把其余等待者迁移到另一个等待队列。
+#[inline]
+pub fn requeue_wait_queue(from_wait_queue_id : WaitQueueId,
+                          to_wait_queue_id : WaitQueueId,
+                          wake_count : usize,
+                          requeue_count : usize)
+                          -> usize {
+    active_impl::requeue_wait_queue(from_wait_queue_id,
+                                    to_wait_queue_id,
+                                    wake_count,
+                                    requeue_count)
+}
+
 /// 让当前任务以给定退出码结束运行。
 #[inline]
 pub fn exit_current(exit_code : TaskExitCode) -> ! { active_impl::exit_current(exit_code) }

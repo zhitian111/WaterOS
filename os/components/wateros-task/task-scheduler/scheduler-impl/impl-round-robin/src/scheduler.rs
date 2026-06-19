@@ -326,6 +326,21 @@ impl RoundRobinScheduler {
                                     self.other_ready.ready_queue_mut())
     }
 
+    pub(super) fn requeue_wait_queue(&mut self,
+                                     from_wait_queue_id : WaitQueueId,
+                                     to_wait_queue_id : WaitQueueId,
+                                     wake_count : usize,
+                                     requeue_count : usize)
+                                     -> usize {
+        self.wait
+            .requeue_wait_queue(&mut self.registry,
+                                from_wait_queue_id,
+                                to_wait_queue_id,
+                                wake_count,
+                                requeue_count,
+                                self.other_ready.ready_queue_mut())
+    }
+
     pub(super) fn current_task_id(&self) -> Option<TaskId> {
         self.registry
             .current_task_id()

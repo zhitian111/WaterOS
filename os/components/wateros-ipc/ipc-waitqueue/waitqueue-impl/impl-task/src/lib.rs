@@ -88,6 +88,17 @@ impl WaitQueue {
         self.inner
             .wake_all()
     }
+
+    /// 唤醒本队列中的部分任务，并把其余等待者迁移到另一个等待队列。
+    #[inline]
+    pub fn requeue_to(&self,
+                      target : Self,
+                      wake_count : usize,
+                      requeue_count : usize)
+                      -> usize {
+        self.inner
+            .requeue_to(target.inner, wake_count, requeue_count)
+    }
 }
 
 impl Default for WaitQueue {

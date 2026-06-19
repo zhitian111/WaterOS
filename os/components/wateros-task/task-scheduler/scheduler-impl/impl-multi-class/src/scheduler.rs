@@ -554,6 +554,24 @@ impl MultiClassScheduler {
         count
     }
 
+    pub(super) fn requeue_wait_queue(&mut self,
+                                     from_wait_queue_id : WaitQueueId,
+                                     to_wait_queue_id : WaitQueueId,
+                                     wake_count : usize,
+                                     requeue_count : usize)
+                                     -> usize {
+        let mut staging = VecDeque::new();
+        let count = self.wait
+                        .requeue_wait_queue(&mut self.registry,
+                                            from_wait_queue_id,
+                                            to_wait_queue_id,
+                                            wake_count,
+                                            requeue_count,
+                                            &mut staging);
+        self.drain_staging(&mut staging);
+        count
+    }
+
     pub(super) fn current_task_id(&self) -> Option<TaskId> {
         self.registry
             .current_task_id()

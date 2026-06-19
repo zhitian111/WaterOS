@@ -401,6 +401,21 @@ pub fn wake_all_in_wait_queue(wait_queue_id : WaitQueueId) -> usize {
     with_scheduler(|scheduler| scheduler.wake_all_in_wait_queue(wait_queue_id))
 }
 
+/// 从一个显式等待队列唤醒部分任务，并把其余等待者迁移到另一个等待队列。
+pub fn requeue_wait_queue(from_wait_queue_id : WaitQueueId,
+                          to_wait_queue_id : WaitQueueId,
+                          wake_count : usize,
+                          requeue_count : usize)
+                          -> usize {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| {
+        scheduler.requeue_wait_queue(from_wait_queue_id,
+                                     to_wait_queue_id,
+                                     wake_count,
+                                     requeue_count)
+    })
+}
+
 /// 标记当前任务退出并切换到其他任务；不应返回到已退出任务。
 pub fn exit_current(exit_code : TaskExitCode) -> ! {
     let guard = InterruptGuard::new();
