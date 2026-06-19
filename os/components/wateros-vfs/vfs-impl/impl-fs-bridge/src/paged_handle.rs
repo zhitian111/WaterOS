@@ -211,6 +211,18 @@ impl VfsIoHandle for PagedFileHandle {
     }
 
     fn close(&mut self) -> VfsResult<()> {
+        // 将脏页刷回磁盘
+        if self.writable {
+            let mut rw = mount_rw_session()?;
+            let mut io = FsPageIo { rw : Some(&mut rw) };
+            let cache = global_cache(self.mount_gen);
+            let _ = cache.flush(&mut io,
+                                self.path.as_str(),
+                                core::convert::identity);
+        }
+        // 释放 files BTreeMap 条目，防止内核堆内存泄漏
+        let cache = global_cache(self.mount_gen);
+        cache.purge_closed_file(self.path.as_str());
         Ok(())
     }
 
@@ -254,9 +266,7 @@ impl VfsIoHandle for PagedFileHandle {
         Ok(new_off)
     }
 
-    fn flush(&mut self) -> VfsResult<()> {
-        Ok(())
-    }
+    fn flush(&mut self) -> VfsResult<()> { Ok(()) }
 
     fn truncate(&mut self, len : u64) -> VfsResult<()> {
         if !self.writable {

@@ -647,7 +647,8 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
         if syscall_nr == SYS_FACCESSAT2 {
             return sys::sys_faccessat2(args).0;
         }
-        api_v0::unsupported::syscall_unknown(syscall_nr, args);
+        let _ = args;
+        abi::user_ret::UserRet::from_error(abi::errno::ErrNo::ENOSYS).0
     }
 
     // ——— socket / 网络 ———
