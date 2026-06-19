@@ -71,12 +71,17 @@ fn map_vfs_to_root_vol(e : VfsError) -> RootVolumeReadError {
 const EM_RISCV : u16 = 243;
 const PT_INTERP : u32 = 3;
 const RISCV64_INTERP_BASE : usize = 0x0000_0000_7000_0000;
+/// 用户栈固定顶与大小（256 KiB）。
+pub(crate) const ELF_STACK_TOP : usize = 0x0000_0000_7FFF_A000;
+pub(crate) const ELF_STACK_SIZE : usize = 256 * 1024;
+const PREFERRED_MMAP_BASE : usize = 0x1000_0000;
 
 struct ElfHeaderInfo {
     entry : usize,
     phoff : usize,
     phentsize : usize,
     phnum : usize,
+    phdrs : Vec<u8>,
 }
 
 fn parse_elf_header(data : &[u8]) -> Result<ElfHeaderInfo, LoadElfError> {
@@ -110,10 +115,14 @@ fn parse_elf_header(data : &[u8]) -> Result<ElfHeaderInfo, LoadElfError> {
     {
         return Err(LoadElfError::Parse);
     }
+    let mut phdrs = Vec::new();
+    phdrs.resize(phdr_len, 0);
+    phdrs.copy_from_slice(&data[phoff..phoff + phdr_len]);
     Ok(ElfHeaderInfo { entry,
                        phoff,
                        phentsize,
-                       phnum })
+                       phnum,
+                       phdrs })
 }
 
 fn remap_interp_path(program_path : &str, interp : &str) -> String {
@@ -194,7 +203,10 @@ pub fn read_path_bytes(path : &str) -> Result<Vec<u8>, LoadElfError> {
     }
 }
 
-fn read_path_range(path : &str, offset : u64, buf : &mut [u8]) -> Result<usize, LoadElfError> {
+pub(crate) fn read_path_range(path : &str,
+                              offset : u64,
+                              buf : &mut [u8])
+                              -> Result<usize, LoadElfError> {
     #[cfg(feature = "vfs-root-read")]
     {
         let view = vfs::root::read_view();
@@ -523,6 +535,74 @@ fn verify_mapped_entry(aspace : &Sv39AddressSpace,
     Ok(())
 }
 
+/// 从文件路径验证 entry 处指令（4 字节）。
+fn verify_mapped_entry_from_path_at(aspace : &Sv39AddressSpace,
+                                    path : &str,
+                                    entry_pc : usize,
+                                    phdrs : &[u8],
+                                    e_phentsize : usize,
+                                    e_phnum : usize,
+                                    load_bias : usize)
+                                    -> Result<(), LoadElfError> {
+    let fo = entry_file_offset_from_phdrs(phdrs,
+                                          e_phentsize,
+                                          e_phnum,
+                                          entry_pc,
+                                          load_bias).ok_or(LoadElfError::Parse)?;
+    let mut expected = [0u8; 4];
+    read_path_exact(path, fo as u64, &mut expected)?;
+    let pa = aspace.translate_addr(VirtAddr(entry_pc))
+                   .map_err(LoadElfError::Mm)?
+                   .ok_or(LoadElfError::Parse)?
+                   .0;
+    let mapped = unsafe { core::slice::from_raw_parts(pa as *const u8, 4) };
+    if mapped != expected {
+        return Err(LoadElfError::Parse);
+    }
+    Ok(())
+}
+
+fn verify_mapped_entry_from_path(aspace : &Sv39AddressSpace,
+                                 path : &str,
+                                 entry_pc : usize,
+                                 phdrs : &[u8],
+                                 e_phentsize : usize,
+                                 e_phnum : usize)
+                                 -> Result<(), LoadElfError> {
+    verify_mapped_entry_from_path_at(aspace,
+                                     path,
+                                     entry_pc,
+                                     phdrs,
+                                     e_phentsize,
+                                     e_phnum,
+                                     0)
+}
+
+fn entry_file_offset_from_phdrs(phdrs : &[u8],
+                                e_phentsize : usize,
+                                e_phnum : usize,
+                                entry_pc : usize,
+                                load_bias : usize)
+                                -> Option<usize> {
+    for i in 0..e_phnum {
+        let ph = i * e_phentsize;
+        if ph + e_phentsize > phdrs.len() {
+            return None;
+        }
+        if rd_u32(phdrs, ph)? != PT_LOAD {
+            continue;
+        }
+        let p_offset = rd_u64(phdrs, ph + 8)? as usize;
+        let p_vaddr = load_bias.checked_add(rd_u64(phdrs, ph + 16)? as usize)?;
+        let p_memsz = rd_u64(phdrs, ph + 40)? as usize;
+        let p_end = p_vaddr.checked_add(p_memsz)?;
+        if entry_pc >= p_vaddr && entry_pc < p_end {
+            return p_offset.checked_add(entry_pc - p_vaddr);
+        }
+    }
+    None
+}
+
 /// 从文件系统路径装载 ELF64（逐段读取，避免大文件整读撑爆内核堆）。
 /// 静态链接的 busybox 可达 ~1.5MB，整读需要连续大量内核堆内存。
 /// 本路径只读取 header + phdrs（仅几 KB），映射时从文件系统按页读取。
@@ -671,13 +751,13 @@ fn read_elf_header_info(path : &str) -> Result<ElfHeaderInfo, LoadElfError> {
     if &ehdr[0..4] != b"\x7FELF" {
         return Err(LoadElfError::BadMagic);
     }
+    let e_entry = rd_u64(&ehdr, 0x18).ok_or(LoadElfError::TooSmall)? as usize;
     let e_phoff = rd_u64(&ehdr, 0x20).ok_or(LoadElfError::TooSmall)? as usize;
     let e_phentsize = rd_u16(&ehdr, 0x36).ok_or(LoadElfError::TooSmall)? as usize;
     let e_phnum = rd_u16(&ehdr, 0x38).ok_or(LoadElfError::TooSmall)? as usize;
     if e_phentsize < 56 || e_phnum == 0 {
         return Err(LoadElfError::Parse);
     }
-    let e_entry = rd_u64(&ehdr, 0x18).ok_or(LoadElfError::TooSmall)? as usize;
     let phdr_len = e_phentsize.checked_mul(e_phnum)
                               .ok_or(LoadElfError::Parse)?;
     let mut phdrs = Vec::new();
@@ -686,7 +766,8 @@ fn read_elf_header_info(path : &str) -> Result<ElfHeaderInfo, LoadElfError> {
     Ok(ElfHeaderInfo { entry : e_entry,
                        phoff : e_phoff,
                        phentsize : e_phentsize,
-                       phnum : e_phnum })
+                       phnum : e_phnum,
+                       phdrs })
 }
 
 /// 从程序头表中读取 PT_INTERP 路径（以文件路径中的数据段为来源）。
@@ -865,7 +946,7 @@ fn map_load_segments_from_path_at<A : AddressSpaceOps>(aspace : &mut A,
 }
 
 /// 从已读取的字节数组和路径加载 ELF（用于 shebang 解析等场景）。
-pub fn from_elf_bytes_at_path(data : &[u8], path : &str) -> Result<LoadedElf, LoadElfError> {
+pub fn from_elf_bytes_at_path(_data : &[u8], path : &str) -> Result<LoadedElf, LoadElfError> {
     from_elf_path(path)
 }
 
@@ -1009,26 +1090,9 @@ pub fn from_elf_bytes(data : &[u8]) -> Result<LoadedElf, LoadElfError> {
     verify_mapped_entry(&aspace, e_entry, data)?;
 
     let program_entry = e_entry;
-    let mut entry_pc = e_entry;
-    let mut interp_base = 0usize;
-    if let Some(interp_data) = interp_data {
-        let interp = parse_elf_header(interp_data)?;
-        map_load_segments_at(&mut aspace,
-                             interp_data,
-                             &interp,
-                             RISCV64_INTERP_BASE)?;
-        interp_base = RISCV64_INTERP_BASE;
-        entry_pc = interp_base.checked_add(interp.entry)
-                              .ok_or(LoadElfError::Parse)?;
-        verify_mapped_entry_at(&aspace,
-                               entry_pc,
-                               interp_data,
-                               &interp,
-                               interp_base)?;
-        runtime::logging::trace!("[elf-load] interpreter base={:#x} entry={:#x}",
-                                 interp_base,
-                                 entry_pc);
-    }
+    let entry_pc = e_entry;
+    let interp_base = 0usize;
+    // `from_elf_bytes` 仅用于内存中的 ELF（boot info 等），不需要动态链接器
 
     let phdr_va = min_vaddr.saturating_add(e_phoff);
     let leaked = Box::leak(Box::new(aspace));
