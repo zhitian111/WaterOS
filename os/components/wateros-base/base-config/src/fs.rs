@@ -9,8 +9,8 @@ pub const FILE_PAGE_SIZE: usize = 4096;
 pub const FILE_LARGE_THRESHOLD: u64 = 64 * 1024;
 
 /// 全局页帧 LRU 槽位数（所有文件共享，非每文件容量）。
-/// 256 * 4KiB = 1MiB，避免 unixbench/fstime 连续读写时过早脏页淘汰。
-pub const FILE_PAGE_CACHE_CAPACITY: usize = 256;
+/// 2048 * 4KiB = 8MiB，覆盖 lmbench/unixbench 临时文件热集，避免频繁脏页淘汰。
+pub const FILE_PAGE_CACHE_CAPACITY: usize = 2048;
 
 /// Direct 模式下顺序读预取步长（页数）；`0` 表示关闭预取。
 pub const FILE_READ_AHEAD_STRIDE: usize = 1;

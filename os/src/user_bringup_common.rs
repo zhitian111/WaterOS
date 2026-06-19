@@ -177,13 +177,12 @@ fn dump_cyclictest_tasks(log_tag : &str,
 }
 
 fn libc_envp_for_path(path : &str) -> Vec<&'static str> {
-    const PATH : &str = "PATH=/bin:/usr/bin:/sbin:/usr/sbin";
     if path.starts_with("/glibc/") {
         vec!["LD_LIBRARY_PATH=/glibc/lib",
-             PATH]
+             "PATH=/glibc:/bin:/usr/bin:/sbin:/usr/sbin"]
     } else if path.starts_with("/musl/") {
         vec!["LD_LIBRARY_PATH=/musl/lib",
-             PATH]
+             "PATH=/musl:/bin:/usr/bin:/sbin:/usr/sbin"]
     } else {
         Vec::new()
     }

@@ -67,7 +67,6 @@ impl PagedFileHandle {
         let want_write = flags.contains(VfsOpenFlags::WRITE);
         let mount_gen = fs::rootfs::active_impl::mount_generation();
         let cache = global_cache(mount_gen);
-        cache.set_logical_size(path.as_str(), meta.size);
 
         let mut on_disk_size = meta.size;
         if flags.contains(VfsOpenFlags::TRUNC) && want_write {
@@ -212,7 +211,7 @@ impl VfsIoHandle for PagedFileHandle {
     }
 
     fn close(&mut self) -> VfsResult<()> {
-        self.sync_dirty()
+        Ok(())
     }
 
     fn metadata(&self) -> VfsResult<VfsMetadata> {
@@ -256,7 +255,7 @@ impl VfsIoHandle for PagedFileHandle {
     }
 
     fn flush(&mut self) -> VfsResult<()> {
-        self.sync_dirty()
+        Ok(())
     }
 
     fn truncate(&mut self, len : u64) -> VfsResult<()> {

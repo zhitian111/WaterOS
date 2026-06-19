@@ -30,6 +30,10 @@ pub fn ensure_busybox_path_links() {
                 return;
             }
         }
+        ensure_dir(sess.as_mut(), "/usr", 0o755);
+        ensure_dir(sess.as_mut(), "/usr/bin", 0o755);
+        ensure_dir(sess.as_mut(), "/sbin", 0o755);
+        ensure_dir(sess.as_mut(), "/usr/sbin", 0o755);
 
         match sess.mkdir("/dev", 0o755) {
             Ok(()) => info!("[{LOG_TAG}] mkdir /dev ok"),
@@ -76,25 +80,37 @@ pub fn ensure_busybox_path_links() {
             }
         }
 
-        /// busybox 多用途小程序：与 `/glibc/busybox` 硬链接到 `/bin/<name>`，供 PATH 解析。
-        const BUSYBOX_APPLET_LINKS : &[&str] = &["/bin/ls",
-                                                 "/bin/sleep",
-                                                 "/bin/basename",
-                                                 "/bin/cp"];
-
-        for dest in BUSYBOX_APPLET_LINKS {
-            try_hardlink_busybox_applet(sess.as_mut(), dest);
+        /// busybox 多用途小程序：优先给 libc 本地目录建链接，避免 musl/glibc 脚本
+        /// 通过 PATH 误用另一套动态库；同时保留 /bin 兼容路径。
+        const APPLETS : &[&str] = &["ls", "sleep", "basename", "cp"];
+        for applet in APPLETS {
+            try_hardlink(sess.as_mut(), "/glibc/busybox", alloc::format!("/glibc/{applet}").as_str());
+            try_hardlink(sess.as_mut(), "/musl/busybox", alloc::format!("/musl/{applet}").as_str());
+            try_hardlink(sess.as_mut(), "/glibc/busybox", alloc::format!("/bin/{applet}").as_str());
+            try_hardlink(sess.as_mut(), "/glibc/busybox", alloc::format!("/usr/bin/{applet}").as_str());
         }
     }
 }
 
 #[cfg(feature = "vfs-bridge")]
-fn try_hardlink_busybox_applet(sess : &mut (impl vfs::api::RootRwSession + ?Sized), dest : &str) {
+fn ensure_dir(sess : &mut (impl vfs::api::RootRwSession + ?Sized), path : &str, mode : u32) {
     use vfs::api::VfsError;
 
-    match sess.hardlink("/glibc/busybox", dest) {
-        Ok(()) => info!("[{LOG_TAG}] hardlink {dest} -> /glibc/busybox"),
+    match sess.mkdir(path, mode) {
+        Ok(()) => info!("[{LOG_TAG}] mkdir {path} ok"),
+        Err(VfsError::Exists) => trace!("[{LOG_TAG}] {path} already present"),
+        Err(e) => warn!("[{LOG_TAG}] mkdir {path} failed: {e:?}"),
+    }
+}
+
+#[cfg(feature = "vfs-bridge")]
+fn try_hardlink(sess : &mut (impl vfs::api::RootRwSession + ?Sized), src : &str, dest : &str) {
+    use vfs::api::VfsError;
+
+    match sess.hardlink(src, dest) {
+        Ok(()) => info!("[{LOG_TAG}] hardlink {dest} -> {src}"),
         Err(VfsError::Exists) => trace!("[{LOG_TAG}] {dest} already present"),
-        Err(e) => warn!("[{LOG_TAG}] hardlink {dest} failed: {e:?}"),
+        Err(VfsError::NotFound) => trace!("[{LOG_TAG}] hardlink {dest} skipped: {src} missing"),
+        Err(e) => warn!("[{LOG_TAG}] hardlink {dest} -> {src} failed: {e:?}"),
     }
 }
