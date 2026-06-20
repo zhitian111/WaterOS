@@ -171,6 +171,8 @@ impl LoongArch64Pte {
 
 const LOONGARCH64_LEVELS : usize = 3;
 const LOONGARCH64_ENTRIES : usize = 512;
+pub(crate) const USER_VA_LIMIT : usize = 0x0000_0080_0000_0000;
+const KERNEL_IDENTITY_BASE : usize = 0x9000_0000;
 
 /// 将 VPN 拆分为三级索引：`[VPN[0], VPN[1], VPN[2]]`，
 /// 与 Sv39 `vpn_indexes` 语义相同。
@@ -225,6 +227,9 @@ pub struct LoongArch64AddressSpace {
     pub(crate) mmap_file_cursor : VirtAddr,
     /// mmap arena 起点，用于 first-fit 复用 `munmap` 后的空洞。
     pub(crate) mmap_base : VirtAddr,
+    /// 用户栈保留区，可由合法读/写缺页按需补页。
+    pub(crate) user_stack_bottom : VirtAddr,
+    pub(crate) user_stack_top : VirtAddr,
     pub(crate) lazy_file_vmas : Vec<LazyFileVma>,
 }
 
@@ -265,6 +270,8 @@ impl LoongArch64AddressSpace {
                   mmap_anon_cursor : VirtAddr(0),
                   mmap_file_cursor : VirtAddr(0),
                   mmap_base : VirtAddr(0),
+                  user_stack_bottom : VirtAddr(0),
+                  user_stack_top : VirtAddr(0),
                   lazy_file_vmas : Vec::new() })
     }
 
@@ -273,13 +280,43 @@ impl LoongArch64AddressSpace {
                                    brk_start : VirtAddr,
                                    brk_current_end : VirtAddr,
                                    brk_max : VirtAddr,
-                                   mmap_anon_cursor : VirtAddr) {
+                                   mmap_anon_cursor : VirtAddr,
+                                   stack_bottom : VirtAddr,
+                                   stack_top : VirtAddr) {
         self.user_brk_start = brk_start;
         self.user_brk_current_end = brk_current_end;
         self.user_brk_max = brk_max;
         self.mmap_anon_cursor = mmap_anon_cursor;
         self.mmap_file_cursor = mmap_anon_cursor;
         self.mmap_base = mmap_anon_cursor;
+        self.user_stack_bottom = stack_bottom;
+        self.user_stack_top = stack_top;
+    }
+
+    pub(crate) fn range_overlaps_stack(&self, start : VirtAddr, end : VirtAddr) -> bool {
+        self.user_stack_bottom.0 < self.user_stack_top.0 &&
+        start.0 < self.user_stack_top.0 &&
+        end.0 > self.user_stack_bottom.0
+    }
+
+    pub(crate) fn range_overlaps_kernel_reserved(&self, start : VirtAddr, end : VirtAddr) -> bool {
+        let kernel_end = crate::kernel_global::phys_ram_end_exclusive();
+        start.0 < kernel_end && end.0 > KERNEL_IDENTITY_BASE
+    }
+
+    pub(crate) fn validate_user_mapping_range(&self,
+                                              start : VirtAddr,
+                                              end : VirtAddr)
+                                              -> MmResult<()> {
+        if start.0 >= end.0 || end.0 > USER_VA_LIMIT {
+            return Err(MmError::InvalidAddress);
+        }
+        if self.range_overlaps_stack(start, end) ||
+           self.range_overlaps_kernel_reserved(start, end)
+        {
+            return Err(MmError::InvalidAddress);
+        }
+        Ok(())
     }
 
     pub(crate) fn lazy_vma_overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
@@ -312,7 +349,11 @@ impl LoongArch64AddressSpace {
                                    .checked_add(n_pages.checked_mul(PAGE_SIZE)
                                                           .ok_or(MmError::InvalidAddress)?)
                                    .ok_or(MmError::InvalidAddress)?);
-            if !self.lazy_vma_overlaps(base, end) {
+            if end.0 <= USER_VA_LIMIT &&
+               !self.range_overlaps_stack(base, end) &&
+               !self.range_overlaps_kernel_reserved(base, end) &&
+               !self.lazy_vma_overlaps(base, end)
+            {
                 let mut free = true;
                 for i in 0..n_pages {
                     let va = VirtAddr(base.0
@@ -345,7 +386,8 @@ impl LoongArch64AddressSpace {
                                          file_size : usize,
                                          loader : Box<dyn DemandPageLoader>)
                                          -> MmResult<()> {
-        if start.0 >= end.0 || self.lazy_vma_overlaps(start, end) {
+        self.validate_user_mapping_range(start, end)?;
+        if self.lazy_vma_overlaps(start, end) {
             return Err(MmError::InvalidAddress);
         }
         self.lazy_file_vmas.push(LazyFileVma { start,
@@ -499,10 +541,12 @@ impl LoongArch64AddressSpace {
                                      user_brk_start : self.user_brk_start,
                                      user_brk_current_end : self.user_brk_current_end,
                                      user_brk_max : self.user_brk_max,
-                                     mmap_anon_cursor : self.mmap_anon_cursor,
-                                     mmap_file_cursor : self.mmap_file_cursor,
-                                     mmap_base : self.mmap_base,
-                                     lazy_file_vmas : self.lazy_file_vmas.iter()
+                              mmap_anon_cursor : self.mmap_anon_cursor,
+                              mmap_file_cursor : self.mmap_file_cursor,
+                              mmap_base : self.mmap_base,
+                              user_stack_bottom : self.user_stack_bottom,
+                              user_stack_top : self.user_stack_top,
+                              lazy_file_vmas : self.lazy_file_vmas.iter()
                                                                          .map(LazyFileVma::duplicate)
                                                                          .collect::<MmResult<Vec<_>>>()? })
     }

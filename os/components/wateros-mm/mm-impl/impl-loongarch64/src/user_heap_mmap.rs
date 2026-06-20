@@ -17,7 +17,7 @@ use api_v0::mmap::{DemandPageLoader, MmapKind, MmapOps, MmapRequest, PageFaultAc
 use api_v0::perm::PagePerm;
 use impl_common::{
     map_range_from_backing, map_range_from_loader, map_zeroed_page_with_alloc,
-    map_zeroed_range_with_alloc, mmap_map_end, mremap_range,
+    map_zeroed_range_with_alloc, mmap_map_end, mremap_range, MREMAP_FIXED,
 };
 
 use crate::pagetable::LoongArch64AddressSpace;
@@ -56,7 +56,10 @@ impl HeapBrk for LoongArch64AddressSpace {
                 let vpn = VirtPageNum(vpn_i);
                 let page_start = vpn.start_addr();
                 let page_end = VirtPageNum(vpn.0 + 1).start_addr();
-                if self.lazy_vma_overlaps(page_start, page_end) {
+                if self.range_overlaps_stack(page_start, page_end) ||
+                   self.range_overlaps_kernel_reserved(page_start, page_end) ||
+                   self.lazy_vma_overlaps(page_start, page_end)
+                {
                     return Err(MmError::InvalidAddress);
                 }
                 if self.translate_addr(vpn.start_addr())?
@@ -90,6 +93,31 @@ impl HeapBrk for LoongArch64AddressSpace {
 }
 
 impl LoongArch64AddressSpace {
+    fn handle_stack_page_fault<A : PhysicalFrameAllocator<FrameId = PhysPageNum>>(&mut self,
+                                                                                   allocator : &mut A,
+                                                                                   fault_addr : VirtAddr,
+                                                                                   access : PageFaultAccess)
+                                                                                   -> MmResult<bool> {
+        if matches!(access, PageFaultAccess::Execute) {
+            return Ok(false);
+        }
+        if fault_addr.0 < self.user_stack_bottom.0 || fault_addr.0 >= self.user_stack_top.0 {
+            return Ok(false);
+        }
+        let vpn = fault_addr.floor_page();
+        if self.translate_addr(vpn.start_addr())?
+               .is_some()
+        {
+            return Ok(true);
+        }
+        map_zeroed_page_with_alloc(self,
+                                   allocator,
+                                   vpn,
+                                   PagePerm::R | PagePerm::W | PagePerm::U)?;
+        fence_user_ptes();
+        Ok(true)
+    }
+
     fn handle_brk_page_fault<A : PhysicalFrameAllocator<FrameId = PhysPageNum>>(&mut self,
                                                                                  allocator : &mut A,
                                                                                  fault_addr : VirtAddr,
@@ -138,6 +166,7 @@ impl LoongArch64AddressSpace {
             None => self.find_free_mmap_base_considering_vmas(self.mmap_anon_cursor, req.len)?,
         };
         let end = mmap_map_end(base, req.len)?;
+        self.validate_user_mapping_range(base, end)?;
         let perm = req.prot | PagePerm::U;
         if req.flags
               .contains(MapFlags::FIXED)
@@ -184,6 +213,7 @@ impl LoongArch64AddressSpace {
             None => self.find_free_mmap_base_considering_vmas(self.mmap_file_cursor, req.len)?,
         };
         let end = mmap_map_end(base, req.len)?;
+        self.validate_user_mapping_range(base, end)?;
         let perm = req.prot | PagePerm::U;
         if req.flags
               .contains(MapFlags::FIXED)
@@ -235,6 +265,7 @@ impl LoongArch64AddressSpace {
             None => self.find_free_mmap_base_considering_vmas(self.mmap_file_cursor, req.len)?,
         };
         let end = mmap_map_end(base, req.len)?;
+        self.validate_user_mapping_range(base, end)?;
         let perm = req.prot | PagePerm::U;
         if req.flags
               .contains(MapFlags::FIXED)
@@ -328,6 +359,7 @@ impl MmapOps for LoongArch64AddressSpace {
             None => self.find_free_mmap_base_considering_vmas(self.mmap_file_cursor, req.len)?,
         };
         let end = mmap_map_end(base, req.len)?;
+        self.validate_user_mapping_range(base, end)?;
         let perm = req.prot | PagePerm::U;
         if req.flags
               .contains(MapFlags::FIXED)
@@ -355,6 +387,9 @@ impl MmapOps for LoongArch64AddressSpace {
                             -> MmResult<bool>
         where A : PhysicalFrameAllocator<FrameId = PhysPageNum>
     {
+        if self.handle_stack_page_fault(allocator, fault_addr, access)? {
+            return Ok(true);
+        }
         if self.handle_brk_page_fault(allocator, fault_addr, access)? {
             return Ok(true);
         }
@@ -372,6 +407,11 @@ impl MmapOps for LoongArch64AddressSpace {
         let end = VirtAddr(addr.0
                                .checked_add(len)
                                .ok_or(MmError::InvalidAddress)?);
+        if end.0 > crate::pagetable::USER_VA_LIMIT ||
+           self.range_overlaps_kernel_reserved(addr, end)
+        {
+            return Err(MmError::InvalidAddress);
+        }
         self.unmap_range_with_alloc(allocator, addr, end)?;
         self.remove_lazy_file_vmas(addr.floor_page()
                                        .start_addr(),
@@ -391,6 +431,11 @@ impl MmapOps for LoongArch64AddressSpace {
         let end = VirtAddr(addr.0
                                .checked_add(len)
                                .ok_or(MmError::InvalidAddress)?);
+        if end.0 > crate::pagetable::USER_VA_LIMIT ||
+           self.range_overlaps_kernel_reserved(addr, end)
+        {
+            return Err(MmError::InvalidAddress);
+        }
         let perm_u = perm | PagePerm::U;
         self.protect_lazy_file_vmas(addr.floor_page()
                                         .start_addr(),
@@ -425,6 +470,18 @@ impl MmapOps for LoongArch64AddressSpace {
                                                                  flags : usize,
                                                                  new_address : VirtAddr)
                                                                  -> MmResult<VirtAddr> {
+        if flags & MREMAP_FIXED != 0 {
+            let end = mmap_map_end(new_address, new_size)?;
+            self.validate_user_mapping_range(new_address, end)?;
+        } else {
+            let end = mmap_map_end(old_addr, new_size)?;
+            if end.0 > crate::pagetable::USER_VA_LIMIT ||
+               self.range_overlaps_stack(old_addr, end) ||
+               self.range_overlaps_kernel_reserved(old_addr, end)
+            {
+                return Err(MmError::InvalidAddress);
+            }
+        }
         mremap_range(self,
                      allocator,
                      old_addr,

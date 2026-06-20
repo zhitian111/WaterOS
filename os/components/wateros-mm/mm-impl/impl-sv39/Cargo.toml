@@ -22,4 +22,5 @@
 [features]
     api-v0 = [  ]
     default = [ "api-v0" ]
+    impl-riscv64 = [  ]
     vfs-root-read = [ "dep:vfs" ]

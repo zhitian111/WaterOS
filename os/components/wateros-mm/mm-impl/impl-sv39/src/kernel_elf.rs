@@ -1,10 +1,8 @@
 //! 从根文件系统装载 RISC-V ELF64（小端），建立独立用户地址空间并映射 `PT_LOAD`
 //! 与用户栈（分页格式由 mm-impl 完成，当前为 Sv39）。
 //!
-//! 用户地址空间内 **额外** 恒等映射内核 RAM（与 [`crate::kernel_global`] 的
-//! `phys_ram_end_exclusive`
-//! 一致），便于同一套页表里内核辅助访问；用户段不得与用户 VPN 或 `0x8000_0000`
-//! 以上恒等区非法重叠（重叠时返回 `Parse`）。
+//! 用户地址空间只保留 trap 入口切回内核页表所需的最小 trampoline 映射；完整内核
+//! RAM 恒等映射仅存在于内核页表中，避免污染合法用户 VA 空间。
 
 extern crate alloc;
 
@@ -74,8 +72,16 @@ const RISCV64_INTERP_BASE : usize = 0x0000_0000_7000_0000;
 /// 用户栈固定顶与大小（256 KiB）。
 pub(crate) const ELF_STACK_TOP : usize = 0x0000_0000_7FFF_A000;
 pub(crate) const ELF_STACK_SIZE : usize = 256 * 1024;
+const USER_STACK_PREMAP_PAGES : usize = 16;
 const PREFERRED_MMAP_BASE : usize = 0x1000_0000;
 const USER_HEAP_MMAP_GAP : usize = 64 * 1024 * 1024;
+
+unsafe extern "C" {
+    static __alltraps : u8;
+    static __wateros_riscv_restore_user_from_frame : u8;
+    static __wateros_riscv_kernel_satp : usize;
+    static __wateros_riscv_return_frame : u8;
+}
 
 struct ElfHeaderInfo {
     entry : usize,
@@ -273,19 +279,40 @@ fn perm_from_pf(p_flags : u32) -> PagePerm {
     p
 }
 
-/// 将 `[0x8000_0000, phys_ram_end)` 以 `vpn==ppn` 恒等映射进用户页表，权限
-/// `R|W|X`（内核辅助访问与用户段装载共用一套表时的 bring-up 约定）。
-fn map_kernel_ram_identity<A : AddressSpaceOps>(aspace : &mut A) -> Result<(), LoadElfError> {
-    let lo = VirtAddr(0x8000_0000).floor_page();
-    let hi = VirtAddr(crate::kernel_global::phys_ram_end_exclusive()).ceil_page();
-    for vpn_raw in lo.0..hi.0 {
-        let vpn = VirtPageNum(vpn_raw);
-        let ppn = vpn.to_phys_page_identity();
-        aspace.map_page_to_ppn(vpn,
-                               ppn,
-                               PagePerm::R | PagePerm::W | PagePerm::X)
+fn map_kernel_trampoline_page<A : AddressSpaceOps>(aspace : &mut A,
+                                                   va : usize,
+                                                   perm : PagePerm)
+                                                   -> Result<(), LoadElfError> {
+    let vpn = VirtAddr(va).floor_page();
+    let ppn = vpn.to_phys_page_identity();
+    if aspace.translate_addr(vpn.start_addr())
+             .map_err(LoadElfError::Mm)?
+             .is_some()
+    {
+        let old = aspace.leaf_page_perm(vpn)
+                        .map_err(LoadElfError::Mm)?
+                        .ok_or(LoadElfError::Parse)?;
+        if old.user() {
+            return Err(LoadElfError::Parse);
+        }
+        aspace.protect_page(vpn, old | perm)
               .map_err(LoadElfError::Mm)?;
+        return Ok(());
     }
+    aspace.map_page_to_ppn(vpn, ppn, perm)
+          .map_err(LoadElfError::Mm)
+}
+
+/// 用户页表中的唯一内核窗口：trap 入口代码页与内核 `satp` 槽位页。
+fn map_kernel_trampoline_window<A : AddressSpaceOps>(aspace : &mut A) -> Result<(), LoadElfError> {
+    let trap_entry = core::ptr::addr_of!(__alltraps) as usize;
+    let trap_return = core::ptr::addr_of!(__wateros_riscv_restore_user_from_frame) as usize;
+    let satp_slot = core::ptr::addr_of!(__wateros_riscv_kernel_satp) as usize;
+    let return_frame = core::ptr::addr_of!(__wateros_riscv_return_frame) as usize;
+    map_kernel_trampoline_page(aspace, trap_entry, PagePerm::R | PagePerm::X)?;
+    map_kernel_trampoline_page(aspace, trap_return, PagePerm::R | PagePerm::X)?;
+    map_kernel_trampoline_page(aspace, satp_slot, PagePerm::R)?;
+    map_kernel_trampoline_page(aspace, return_frame, PagePerm::R | PagePerm::W)?;
     Ok(())
 }
 
@@ -316,15 +343,15 @@ fn map_segment<A : AddressSpaceOps>(aspace : &mut A,
         {
             // 与上一段 PT_LOAD 共享页（例如 text/data 尾与 .bss 头同
             // VPN）：合并权限，勿再分配帧。
-            if vpn.start_addr().0 >= 0x8000_0000 {
-                runtime::logging::trace!("[elf-load] PT_LOAD refuse overlap with kernel identity \
-                                          VPN={:#x}",
-                                         vpn.0);
-                return Err(LoadElfError::Parse);
-            }
             let old = aspace.leaf_page_perm(vpn)
                             .map_err(LoadElfError::Mm)?
                             .unwrap_or(PagePerm::empty());
+            if !old.user() {
+                runtime::logging::trace!("[elf-load] PT_LOAD refuse overlap with kernel \
+                                          trampoline VPN={:#x}",
+                                         vpn.0);
+                return Err(LoadElfError::Parse);
+            }
             let merged = old | perm;
             aspace.protect_page(vpn, merged)
                   .map_err(LoadElfError::Mm)?;
@@ -462,14 +489,17 @@ fn verify_mapped_entry_at(aspace : &Sv39AddressSpace,
     Ok(())
 }
 
-/// 为用户栈区间 `[stack_top - stack_size, stack_top)` 分配匿名帧并映射为
-/// `R|W|U`。
+/// 为用户栈保留区顶部预映射少量匿名页；其余栈页由 page fault 按需补齐。
 fn map_user_stack<A : AddressSpaceOps>(aspace : &mut A,
                                        stack_top : usize,
                                        stack_size : usize)
                                        -> Result<(), LoadElfError> {
     let bottom = stack_top - stack_size;
-    let mut vpn = VirtAddr(bottom).floor_page();
+    let premap_bytes = cmp::min(stack_size,
+                                USER_STACK_PREMAP_PAGES.saturating_mul(PAGE_SIZE));
+    let premap_bottom = stack_top.saturating_sub(premap_bytes)
+                                  .max(bottom);
+    let mut vpn = VirtAddr(premap_bottom).floor_page();
     let vpn_end = VirtAddr(stack_top).ceil_page();
     while vpn.0 < vpn_end.0 {
         let ppn = frame_alloc_result().map_err(|e| LoadElfError::Mm(MmError::from(e)))?;
@@ -648,7 +678,7 @@ pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
                              e_phnum);
 
     let mut aspace = Sv39AddressSpace::new().map_err(LoadElfError::Mm)?;
-    map_kernel_ram_identity(&mut aspace)?;
+    map_kernel_trampoline_window(&mut aspace)?;
 
     // 从文件系统路径映射 PT_LOAD 段，不整读文件
     let (min_vaddr, max_vaddr) = map_load_segments_from_path_at(&mut aspace,
@@ -680,7 +710,12 @@ pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
     let mmap_base = VirtAddr(cmp::max(heap_start.0
                                                 .saturating_add(USER_HEAP_MMAP_GAP),
                                       PREFERRED_MMAP_BASE));
-    aspace.init_user_layout(heap_start, heap_start, brk_max, mmap_base);
+    aspace.init_user_layout(heap_start,
+                            heap_start,
+                            brk_max,
+                            mmap_base,
+                            VirtAddr(stack_bottom),
+                            VirtAddr(ELF_STACK_TOP + PAGE_SIZE));
 
     // 使用 path-based 验证
     verify_mapped_entry_from_path(&aspace,
@@ -830,12 +865,12 @@ fn map_segment_from_path<A : AddressSpaceOps>(aspace : &mut A,
         if let Some(_pa) = aspace.translate_addr(vpn.start_addr())
                                  .map_err(LoadElfError::Mm)?
         {
-            if vpn.start_addr().0 >= 0x8000_0000 {
-                return Err(LoadElfError::Parse);
-            }
             let old = aspace.leaf_page_perm(vpn)
                             .map_err(LoadElfError::Mm)?
                             .unwrap_or(PagePerm::empty());
+            if !old.user() {
+                return Err(LoadElfError::Parse);
+            }
             let merged = old | perm;
             aspace.protect_page(vpn, merged)
                   .map_err(LoadElfError::Mm)?;
@@ -849,9 +884,9 @@ fn map_segment_from_path<A : AddressSpaceOps>(aspace : &mut A,
         vpn = VirtPageNum(vpn.0 + 1);
     }
 
-    // 第二遍：逐页从文件系统读取
+    // 第二遍：逐页从文件系统读取。按页内连续区间一次读入，避免把大 ELF
+    // 拆成数万次 64B 小 I/O。
     let mut vpn = va_start.floor_page();
-    const BUF_SIZE : usize = 64;
     while vpn.0 < vpn_end.0 {
         let page_va = vpn.start_addr().0;
         let page_end = page_va + PAGE_SIZE;
@@ -872,22 +907,8 @@ fn map_segment_from_path<A : AddressSpaceOps>(aspace : &mut A,
             let dst_off = copy_start - page_va;
             let rel = copy_start - vbase;
             let len = copy_end - copy_start;
-            let mut buf = [0u8; BUF_SIZE];
-            let mut remain = len;
-            let mut written = 0usize;
-            while remain > 0 {
-                let chunk = cmp::min(remain, buf.len());
-                read_path_exact(path,
-                                (fo + rel + written) as u64,
-                                &mut buf[..chunk])?;
-                unsafe {
-                    core::ptr::copy_nonoverlapping(buf.as_ptr(),
-                                                   (pb + dst_off + written) as *mut u8,
-                                                   chunk);
-                }
-                written += chunk;
-                remain -= chunk;
-            }
+            let dst = unsafe { core::slice::from_raw_parts_mut((pb + dst_off) as *mut u8, len) };
+            read_path_exact(path, (fo + rel) as u64, dst)?;
         }
         let zero_start = cmp::max(seg_start, file_end);
         if zero_start < seg_end {
@@ -1003,8 +1024,8 @@ pub fn from_elf_bytes(data : &[u8]) -> Result<LoadedElf, LoadElfError> {
 
     let mut aspace = Sv39AddressSpace::new().map_err(LoadElfError::Mm)?;
     runtime::logging::trace!("[elf-load] new user aspace satp will be assigned after map");
-    map_kernel_ram_identity(&mut aspace)?;
-    runtime::logging::trace!("[elf-load] kernel RAM identity map in user aspace ok");
+    map_kernel_trampoline_window(&mut aspace)?;
+    runtime::logging::trace!("[elf-load] kernel trampoline window in user aspace ok");
 
     let mut min_vaddr = usize::MAX;
     let mut max_vaddr = 0usize;
@@ -1060,8 +1081,6 @@ pub fn from_elf_bytes(data : &[u8]) -> Result<LoadedElf, LoadElfError> {
 
     // 用户栈：固定顶与 256KiB 大小（均为 4K
     // 页的整数倍）；与具体用户镜像链接脚本无关，属 bring-up 约定。
-    const ELF_STACK_TOP : usize = 0x0000_0000_7FFF_A000;
-    const ELF_STACK_SIZE : usize = 256 * 1024;
     runtime::logging::trace!("[elf-load] image range [{:#x},{:#x}) mapping done; map user stack \
                               top={:#x} size={}",
                              min_vaddr,
@@ -1082,11 +1101,15 @@ pub fn from_elf_bytes(data : &[u8]) -> Result<LoadedElf, LoadElfError> {
         runtime::logging::trace!("[elf-load] abort: image/stack gap too small for brk arena");
         return Err(LoadElfError::Parse);
     }
-    const PREFERRED_MMAP_BASE : usize = 0x1000_0000;
     let mmap_base = VirtAddr(cmp::max(heap_start.0
                                                 .saturating_add(USER_HEAP_MMAP_GAP),
                                       PREFERRED_MMAP_BASE));
-    aspace.init_user_layout(heap_start, heap_start, brk_max, mmap_base);
+    aspace.init_user_layout(heap_start,
+                            heap_start,
+                            brk_max,
+                            mmap_base,
+                            VirtAddr(stack_bottom),
+                            VirtAddr(ELF_STACK_TOP + PAGE_SIZE));
 
     verify_mapped_entry(&aspace, e_entry, data)?;
 

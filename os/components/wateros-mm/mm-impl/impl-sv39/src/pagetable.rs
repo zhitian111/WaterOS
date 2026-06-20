@@ -15,6 +15,7 @@
 extern crate alloc;
 
 use alloc::{boxed::Box, vec::Vec};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use api_v0::addr::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum, PAGE_SIZE};
 use api_v0::address_space::AddressSpaceOps;
@@ -68,9 +69,7 @@ impl Sv39PteFlags {
     }
 
     #[inline]
-    fn clear_cow(self) -> Self {
-        Self(self.0 & !(Self::COW.0 | Self::COW_WAS_WRITABLE.0))
-    }
+    fn clear_cow(self) -> Self { Self(self.0 & !(Self::COW.0 | Self::COW_WAS_WRITABLE.0)) }
 
     #[inline]
     fn restore_cow_writable(self) -> Self {
@@ -154,11 +153,50 @@ impl Sv39Pte {
 
 const SV39_LEVELS : usize = 3;
 const SV39_ENTRIES : usize = 512;
+const SV39_SATP_MODE : usize = 8usize << 60;
+const SV39_ASID_SHIFT : usize = 44;
+const SV39_ASID_MASK : usize = 0xFFFF;
+const KERNEL_ASID : usize = 1;
+static NEXT_USER_ASID : AtomicUsize = AtomicUsize::new(2);
+pub(crate) const USER_VA_LIMIT : usize = 0x0000_0040_0000_0000;
+
+unsafe extern "C" {
+    static __alltraps: u8;
+    static __wateros_riscv_restore_user_from_frame: u8;
+    static __wateros_riscv_kernel_satp: usize;
+    static __wateros_riscv_return_frame: u8;
+}
+
+#[inline]
+fn page_range_overlaps_addr(start : VirtAddr, end : VirtAddr, addr : usize) -> bool {
+    let page_start = VirtAddr(addr).floor_page()
+                                   .start_addr()
+                                   .0;
+    let page_end = page_start + PAGE_SIZE;
+    start.0 < page_end && end.0 > page_start
+}
+
+#[inline]
+fn alloc_user_asid() -> usize {
+    let raw = NEXT_USER_ASID.fetch_add(1, Ordering::Relaxed) & SV39_ASID_MASK;
+    if raw < 2 {
+        2
+    } else {
+        raw
+    }
+}
+
+#[inline]
+fn make_satp(root : PhysPageNum, asid : usize) -> usize {
+    SV39_SATP_MODE | ((asid & SV39_ASID_MASK) << SV39_ASID_SHIFT) | (root.0 & ((1usize << 44) - 1))
+}
 
 #[inline]
 fn vpn_indexes(vpn : VirtPageNum) -> [usize; 3] {
     let v = vpn.0;
-    [(v >> 0) & 0x1FF, (v >> 9) & 0x1FF, (v >> 18) & 0x1FF]
+    [(v >> 0) & 0x1FF,
+     (v >> 9) & 0x1FF,
+     (v >> 18) & 0x1FF]
 }
 
 /// # Safety
@@ -172,7 +210,7 @@ unsafe fn table_mut(ppn : PhysPageNum) -> &'static mut [Sv39Pte; SV39_ENTRIES] {
 
 /// 将已分配的用户数据帧清零（匿名 brk/mmap/栈复用帧时避免残留指针）。
 #[inline]
-pub(crate) fn zero_phys_page(ppn: PhysPageNum) {
+pub(crate) fn zero_phys_page(ppn : PhysPageNum) {
     let pa = ppn.0 * PAGE_SIZE;
     unsafe {
         core::ptr::write_bytes(pa as *mut u8, 0, PAGE_SIZE);
@@ -194,6 +232,7 @@ fn alloc_table_frame_zeroed() -> MmResult<PhysPageNum> {
 /// Sv39 根页表与 walk 状态；所有映射均为 **4 KiB 叶子**。
 pub struct Sv39AddressSpace {
     root : PhysPageNum,
+    asid : usize,
     /// 用户堆起点（页对齐，位于 ELF 镜像尾之后）。
     pub(crate) user_brk_start : VirtAddr,
     /// 当前 program break（堆尾上界，可非页对齐）。
@@ -206,6 +245,9 @@ pub struct Sv39AddressSpace {
     pub(crate) mmap_file_cursor : VirtAddr,
     /// mmap arena 起点，用于 first-fit 复用 `munmap` 后的空洞。
     pub(crate) mmap_base : VirtAddr,
+    /// 用户栈保留区，可由合法读/写缺页按需补页。
+    pub(crate) user_stack_bottom : VirtAddr,
+    pub(crate) user_stack_top : VirtAddr,
     pub(crate) lazy_file_vmas : Vec<LazyFileVma>,
 }
 
@@ -225,10 +267,13 @@ impl LazyFileVma {
                   perm : self.perm,
                   file_offset : self.file_offset,
                   file_size : self.file_size,
-                  loader : self.loader.duplicate_box()? })
+                  loader : self.loader
+                               .duplicate_box()? })
     }
 
-    fn contains_page(&self, page : VirtAddr) -> bool { page.0 >= self.start.0 && page.0 < self.end.0 }
+    fn contains_page(&self, page : VirtAddr) -> bool {
+        page.0 >= self.start.0 && page.0 < self.end.0
+    }
 
     fn overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
         start.0 < self.end.0 && end.0 > self.start.0
@@ -240,32 +285,85 @@ impl Sv39AddressSpace {
     pub(crate) fn new() -> MmResult<Self> {
         let root = alloc_table_frame_zeroed()?;
         Ok(Self { root,
+                  asid : alloc_user_asid(),
                   user_brk_start : VirtAddr(0),
                   user_brk_current_end : VirtAddr(0),
                   user_brk_max : VirtAddr(0),
                   mmap_anon_cursor : VirtAddr(0),
                   mmap_file_cursor : VirtAddr(0),
                   mmap_base : VirtAddr(0),
+                  user_stack_bottom : VirtAddr(0),
+                  user_stack_top : VirtAddr(0),
                   lazy_file_vmas : Vec::new() })
     }
+
+    pub(crate) fn kernel_satp_value(&self) -> usize { make_satp(self.root, KERNEL_ASID) }
 
     /// ELF 装载完成后初始化用户堆与匿名映射区游标（须在泄漏页表对象前调用一次）。
     pub(crate) fn init_user_layout(&mut self,
                                    brk_start : VirtAddr,
                                    brk_current_end : VirtAddr,
                                    brk_max : VirtAddr,
-                                   mmap_anon_cursor : VirtAddr) {
+                                   mmap_anon_cursor : VirtAddr,
+                                   stack_bottom : VirtAddr,
+                                   stack_top : VirtAddr) {
         self.user_brk_start = brk_start;
         self.user_brk_current_end = brk_current_end;
         self.user_brk_max = brk_max;
         self.mmap_anon_cursor = mmap_anon_cursor;
         self.mmap_file_cursor = mmap_anon_cursor;
         self.mmap_base = mmap_anon_cursor;
+        self.user_stack_bottom = stack_bottom;
+        self.user_stack_top = stack_top;
+    }
+
+    pub(crate) fn range_overlaps_stack(&self, start : VirtAddr, end : VirtAddr) -> bool {
+        self.user_stack_bottom
+            .0 <
+        self.user_stack_top
+            .0 &&
+        start.0 <
+        self.user_stack_top
+            .0 &&
+        end.0 >
+        self.user_stack_bottom
+            .0
+    }
+
+    pub(crate) fn range_overlaps_kernel_reserved(&self, start : VirtAddr, end : VirtAddr) -> bool {
+        page_range_overlaps_addr(start,
+                                 end,
+                                 core::ptr::addr_of!(__alltraps) as usize) ||
+        page_range_overlaps_addr(start,
+                                 end,
+                                 core::ptr::addr_of!(__wateros_riscv_restore_user_from_frame)
+                                 as usize) ||
+        page_range_overlaps_addr(start,
+                                 end,
+                                 core::ptr::addr_of!(__wateros_riscv_kernel_satp) as usize) ||
+        page_range_overlaps_addr(start,
+                                 end,
+                                 core::ptr::addr_of!(__wateros_riscv_return_frame) as usize)
+    }
+
+    pub(crate) fn validate_user_mapping_range(&self,
+                                              start : VirtAddr,
+                                              end : VirtAddr)
+                                              -> MmResult<()> {
+        if start.0 >= end.0 || end.0 > USER_VA_LIMIT {
+            return Err(MmError::InvalidAddress);
+        }
+        if self.range_overlaps_stack(start, end) || self.range_overlaps_kernel_reserved(start, end)
+        {
+            return Err(MmError::InvalidAddress);
+        }
+        Ok(())
     }
 
     pub(crate) fn lazy_vma_overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
-        self.lazy_file_vmas.iter()
-                           .any(|vma| vma.overlaps(start, end))
+        self.lazy_file_vmas
+            .iter()
+            .any(|vma| vma.overlaps(start, end))
     }
 
     pub(crate) fn find_free_mmap_base_considering_vmas(&self,
@@ -280,8 +378,9 @@ impl Sv39AddressSpace {
                          .ok_or(MmError::InvalidAddress)? /
                       PAGE_SIZE;
         let _hint = cursor;
-        let brk_guard = self.user_brk_current_end.ceil_page()
-                                                 .start_addr();
+        let brk_guard = self.user_brk_current_end
+                            .ceil_page()
+                            .start_addr();
         let mut base = VirtAddr(core::cmp::max(self.mmap_base.0, brk_guard.0)).ceil_page()
                                                                               .start_addr();
         let mut skipped = 0usize;
@@ -291,9 +390,13 @@ impl Sv39AddressSpace {
             }
             let end = VirtAddr(base.0
                                    .checked_add(n_pages.checked_mul(PAGE_SIZE)
-                                                          .ok_or(MmError::InvalidAddress)?)
+                                                       .ok_or(MmError::InvalidAddress)?)
                                    .ok_or(MmError::InvalidAddress)?);
-            if !self.lazy_vma_overlaps(base, end) {
+            if end.0 <= USER_VA_LIMIT &&
+               !self.range_overlaps_stack(base, end) &&
+               !self.range_overlaps_kernel_reserved(base, end) &&
+               !self.lazy_vma_overlaps(base, end)
+            {
                 let mut free = true;
                 for i in 0..n_pages {
                     let va = VirtAddr(base.0
@@ -326,21 +429,28 @@ impl Sv39AddressSpace {
                                          file_size : usize,
                                          loader : Box<dyn DemandPageLoader>)
                                          -> MmResult<()> {
-        if start.0 >= end.0 || self.lazy_vma_overlaps(start, end) {
+        self.validate_user_mapping_range(start, end)?;
+        if self.lazy_vma_overlaps(start, end) {
             return Err(MmError::InvalidAddress);
         }
-        self.lazy_file_vmas.push(LazyFileVma { start,
-                                               end,
-                                               perm,
-                                               file_offset,
-                                               file_size,
-                                               loader });
+        self.lazy_file_vmas
+            .push(LazyFileVma { start,
+                                end,
+                                perm,
+                                file_offset,
+                                file_size,
+                                loader });
         Ok(())
     }
 
-    pub(crate) fn remove_lazy_file_vmas(&mut self, start : VirtAddr, end : VirtAddr) -> MmResult<()> {
+    pub(crate) fn remove_lazy_file_vmas(&mut self,
+                                        start : VirtAddr,
+                                        end : VirtAddr)
+                                        -> MmResult<()> {
         let mut next = Vec::new();
-        for vma in self.lazy_file_vmas.drain(..) {
+        for vma in self.lazy_file_vmas
+                       .drain(..)
+        {
             if !vma.overlaps(start, end) {
                 next.push(vma);
                 continue;
@@ -351,14 +461,17 @@ impl Sv39AddressSpace {
                                         perm : vma.perm,
                                         file_offset : vma.file_offset,
                                         file_size : vma.file_size,
-                                        loader : vma.loader.duplicate_box()? });
+                                        loader : vma.loader
+                                                    .duplicate_box()? });
             }
             if end.0 < vma.end.0 {
-                let delta = end.0.saturating_sub(vma.start.0);
+                let delta = end.0
+                               .saturating_sub(vma.start.0);
                 next.push(LazyFileVma { start : end,
                                         end : vma.end,
                                         perm : vma.perm,
-                                        file_offset : vma.file_offset.saturating_add(delta),
+                                        file_offset : vma.file_offset
+                                                         .saturating_add(delta),
                                         file_size : vma.file_size,
                                         loader : vma.loader });
             }
@@ -373,7 +486,9 @@ impl Sv39AddressSpace {
                                          perm : PagePerm)
                                          -> MmResult<()> {
         let mut next = Vec::new();
-        for vma in self.lazy_file_vmas.drain(..) {
+        for vma in self.lazy_file_vmas
+                       .drain(..)
+        {
             if !vma.overlaps(start, end) {
                 next.push(vma);
                 continue;
@@ -384,7 +499,8 @@ impl Sv39AddressSpace {
                                         perm : vma.perm,
                                         file_offset : vma.file_offset,
                                         file_size : vma.file_size,
-                                        loader : vma.loader.duplicate_box()? });
+                                        loader : vma.loader
+                                                    .duplicate_box()? });
             }
             let mid_start = VirtAddr(core::cmp::max(start.0, vma.start.0));
             let mid_end = VirtAddr(core::cmp::min(end.0, vma.end.0));
@@ -393,7 +509,8 @@ impl Sv39AddressSpace {
                                     perm,
                                     file_offset : vma.file_offset + (mid_start.0 - vma.start.0),
                                     file_size : vma.file_size,
-                                    loader : vma.loader.duplicate_box()? });
+                                    loader : vma.loader
+                                                .duplicate_box()? });
             if end.0 < vma.end.0 {
                 next.push(LazyFileVma { start : end,
                                         end : vma.end,
@@ -475,15 +592,19 @@ impl Sv39AddressSpace {
         log::trace!("[mm-fork] Sv39AddressSpace::fork done child_root={}",
                     child_root.0);
         Ok(Sv39AddressSpace { root : child_root,
+                              asid : alloc_user_asid(),
                               user_brk_start : self.user_brk_start,
                               user_brk_current_end : self.user_brk_current_end,
                               user_brk_max : self.user_brk_max,
                               mmap_anon_cursor : self.mmap_anon_cursor,
                               mmap_file_cursor : self.mmap_file_cursor,
                               mmap_base : self.mmap_base,
-                              lazy_file_vmas : self.lazy_file_vmas.iter()
-                                                                  .map(LazyFileVma::duplicate)
-                                                                  .collect::<MmResult<Vec<_>>>()? })
+                              user_stack_bottom : self.user_stack_bottom,
+                              user_stack_top : self.user_stack_top,
+                              lazy_file_vmas : self.lazy_file_vmas
+                                                   .iter()
+                                                   .map(LazyFileVma::duplicate)
+                                                   .collect::<MmResult<Vec<_>>>()? })
     }
 
     /// 递归释放所有用户页帧及页表帧，不触碰内核恒等映射。
@@ -519,7 +640,9 @@ impl Sv39AddressSpace {
         let src = old_ppn.0 * PAGE_SIZE;
         let dst = new_ppn.0 * PAGE_SIZE;
         unsafe {
-            core::ptr::copy_nonoverlapping(src as *const u8, dst as *mut u8, PAGE_SIZE);
+            core::ptr::copy_nonoverlapping(src as *const u8,
+                                           dst as *mut u8,
+                                           PAGE_SIZE);
         }
         frame_dealloc_result(old_ppn).map_err(MmError::from)?;
         pte.set(new_ppn, new_flags);
@@ -540,8 +663,9 @@ impl Sv39AddressSpace {
     {
         let page = fault_addr.floor_page()
                              .start_addr();
-        let Some(index) = self.lazy_file_vmas.iter()
-                                             .position(|vma| vma.contains_page(page))
+        let Some(index) = self.lazy_file_vmas
+                              .iter()
+                              .position(|vma| vma.contains_page(page))
         else {
             return Ok(false);
         };
@@ -567,7 +691,9 @@ impl Sv39AddressSpace {
             let vma = &self.lazy_file_vmas[index];
             vma.file_offset + (page.0 - vma.start.0)
         };
-        if let Err(e) = self.lazy_file_vmas[index].loader.load_page(file_offset, dst) {
+        if let Err(e) = self.lazy_file_vmas[index].loader
+                                                  .load_page(file_offset, dst)
+        {
             let _ = allocator.dealloc_frame(ppn);
             return Err(e);
         }
@@ -601,7 +727,9 @@ impl Sv39AddressSpace {
         let src = old_ppn.0 * PAGE_SIZE;
         let dst = new_ppn.0 * PAGE_SIZE;
         unsafe {
-            core::ptr::copy_nonoverlapping(src as *const u8, dst as *mut u8, PAGE_SIZE);
+            core::ptr::copy_nonoverlapping(src as *const u8,
+                                           dst as *mut u8,
+                                           PAGE_SIZE);
         }
         frame_dealloc_result(old_ppn).map_err(MmError::from)?;
         pte.set(new_ppn, flags.clear_cow());
@@ -718,7 +846,7 @@ unsafe fn fork_table(parent_ppn : PhysPageNum,
 }
 
 impl AddressSpaceOps for Sv39AddressSpace {
-    fn satp_value(&self) -> usize { (8usize << 60) | (self.root.0 & ((1usize << 44) - 1)) }
+    fn satp_value(&self) -> usize { make_satp(self.root, self.asid) }
 
     fn map_page_to_ppn(&mut self,
                        vpn : VirtPageNum,
@@ -797,7 +925,5 @@ impl AddressSpaceOps for Sv39AddressSpace {
 }
 
 impl Drop for Sv39AddressSpace {
-    fn drop(&mut self) {
-        self.destroy();
-    }
+    fn drop(&mut self) { self.destroy(); }
 }

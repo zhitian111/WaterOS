@@ -113,7 +113,9 @@ pub fn init(start_ppn : usize, end_ppn : usize, ram_end_exclusive : usize) {
                            PagePerm::R | PagePerm::W)
           .expect("kernel_mm: map probe page");
 
-    let satp_target = aspace.satp_value();
+    let satp_target = aspace.kernel_satp_value();
+    #[cfg(feature = "impl-riscv64")]
+    platform::arch::trap::set_kernel_trap_satp(satp_target);
     runtime::logging::trace!("[kernel-mm] identity map RAM [0x80000000,{:#x}) MMIO [{:#x},{:#x}) \
                              satp target={:#x}",
                             ram_end_exclusive,

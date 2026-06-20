@@ -72,6 +72,8 @@ const EM_LOONGARCH : u16 = 258;
 const PT_INTERP : u32 = 3;
 const LOONGARCH64_USER_STACK_TOP : usize = 0x0000_007F_FFFF_A000;
 const LOONGARCH64_INTERP_BASE : usize = 0x0000_0000_7000_0000;
+const USER_STACK_SIZE : usize = 256 * 1024;
+const USER_STACK_PREMAP_PAGES : usize = 16;
 const PREFERRED_MMAP_BASE : usize = 0x1000_0000;
 const USER_HEAP_MMAP_GAP : usize = 64 * 1024 * 1024;
 
@@ -502,7 +504,11 @@ fn map_user_stack<A : AddressSpaceOps>(aspace : &mut A,
                                        stack_size : usize)
                                        -> Result<(), LoadElfError> {
     let bottom = stack_top - stack_size;
-    let mut vpn = VirtAddr(bottom).floor_page();
+    let premap_bytes = cmp::min(stack_size,
+                                USER_STACK_PREMAP_PAGES.saturating_mul(PAGE_SIZE));
+    let premap_bottom = stack_top.saturating_sub(premap_bytes)
+                                 .max(bottom);
+    let mut vpn = VirtAddr(premap_bottom).floor_page();
     let vpn_end = VirtAddr(stack_top).ceil_page();
     while vpn.0 < vpn_end.0 {
         let ppn = frame_alloc_result().map_err(|e| LoadElfError::Mm(MmError::from(e)))?;
@@ -799,7 +805,7 @@ pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
     }
 
     const ELF_STACK_TOP : usize = LOONGARCH64_USER_STACK_TOP;
-    const ELF_STACK_SIZE : usize = 256 * 1024;
+    const ELF_STACK_SIZE : usize = USER_STACK_SIZE;
     runtime::logging::trace!("[elf-load] image range [{:#x},{:#x}) mapping done; map user stack \
                               top={:#x} size={}",
                              min_vaddr,
@@ -821,7 +827,12 @@ pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
         return Err(LoadElfError::Parse);
     }
     let mmap_base = initial_mmap_base(heap_start);
-    aspace.init_user_layout(heap_start, heap_start, brk_max, mmap_base);
+    aspace.init_user_layout(heap_start,
+                            heap_start,
+                            brk_max,
+                            mmap_base,
+                            VirtAddr(stack_bottom),
+                            VirtAddr(ELF_STACK_TOP + PAGE_SIZE));
 
     verify_mapped_entry_from_path(&aspace,
                                   path,
@@ -890,6 +901,11 @@ pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
                    phdr_va,
                    phnum : e_phnum,
                    phentsize : e_phentsize })
+}
+
+/// 从已读取的字节数组和路径加载 ELF（用于 shebang 解析等场景）。
+pub fn from_elf_bytes_at_path(_data : &[u8], path : &str) -> Result<LoadedElf, LoadElfError> {
+    from_elf_path(path)
 }
 
 /// 解析内存中的 ELF64 小端 LoongArch 可执行文件，建立独立三级页表地址空间、映射
@@ -1008,7 +1024,7 @@ pub fn from_elf_bytes(data : &[u8]) -> Result<LoadedElf, LoadElfError> {
 
     // 用户栈：固定顶与 256KiB 大小（均为 4K 页的整数倍）。
     const ELF_STACK_TOP : usize = LOONGARCH64_USER_STACK_TOP;
-    const ELF_STACK_SIZE : usize = 256 * 1024;
+    const ELF_STACK_SIZE : usize = USER_STACK_SIZE;
     runtime::logging::trace!("[elf-load] image range [{:#x},{:#x}) mapping done; map user stack \
                               top={:#x} size={}",
                              min_vaddr,
@@ -1030,7 +1046,12 @@ pub fn from_elf_bytes(data : &[u8]) -> Result<LoadedElf, LoadElfError> {
         return Err(LoadElfError::Parse);
     }
     let mmap_base = initial_mmap_base(heap_start);
-    aspace.init_user_layout(heap_start, heap_start, brk_max, mmap_base);
+    aspace.init_user_layout(heap_start,
+                            heap_start,
+                            brk_max,
+                            mmap_base,
+                            VirtAddr(stack_bottom),
+                            VirtAddr(ELF_STACK_TOP + PAGE_SIZE));
 
     verify_mapped_entry(&aspace, e_entry, data)?;
 

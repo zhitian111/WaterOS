@@ -16,6 +16,10 @@ use api_v0::trap::{
 use core::arch::asm;
 use riscv::register::sstatus;
 
+unsafe extern "C" {
+    static mut __wateros_riscv_kernel_satp : usize;
+}
+
 /// 该结构的字段顺序/大小必须与 `asm/trap.asm` 的偏移严格一致（方案A）。
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -32,6 +36,15 @@ const RISCV_SSTATUS_SPP : usize = 1 << 8;
 const RISCV_SSTATUS_FS_DIRTY : usize = 3 << 13;
 /// 单次定时器中断后重新武装的切片长度（`time` CSR 刻度）；与调度策略相关，非用户 ABI。
 const TIMER_SLICE_TICKS : u64 = 1_250_000;
+
+/// 写入 trap trampoline 在用户页表下可读取的内核 `satp` 槽位。
+///
+/// 用户态 trap 入口会先用这枚 token 切回内核页表，然后再运行 Rust trap handler。
+pub fn set_kernel_trap_satp(token : usize) {
+    unsafe {
+        core::ptr::write_volatile(core::ptr::addr_of_mut!(__wateros_riscv_kernel_satp), token);
+    }
+}
 
 unsafe fn save_fp_state() -> ([u64; 32], u32) {
     let mut regs = [0u64; 32];
