@@ -748,8 +748,9 @@ pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
 
     let mut aspace = LoongArch64AddressSpace::new().map_err(LoadElfError::Mm)?;
     runtime::logging::trace!("[elf-load] new user aspace pgdl will be assigned after map");
-    map_kernel_ram_identity(&mut aspace)?;
-    runtime::logging::trace!("[elf-load] kernel RAM identity map in user aspace ok");
+    // NOTE: 内核恒等映射在 kernel_global 中有独立页表，不重复映射到用户地址空间。
+    // 若映射在此处，destroy_table 无法释放这些页表帧（subtree 无 U 位），
+    // 导致每次 exec 泄漏 ~2MB 页表帧 → OOM。
 
     let mut min_vaddr = usize::MAX;
     let mut max_vaddr = 0usize;
@@ -967,8 +968,9 @@ pub fn from_elf_bytes(data : &[u8]) -> Result<LoadedElf, LoadElfError> {
 
     let mut aspace = LoongArch64AddressSpace::new().map_err(LoadElfError::Mm)?;
     runtime::logging::trace!("[elf-load] new user aspace pgdl will be assigned after map");
-    map_kernel_ram_identity(&mut aspace)?;
-    runtime::logging::trace!("[elf-load] kernel RAM identity map in user aspace ok");
+    // NOTE: 内核恒等映射在 kernel_global 中有独立页表，不重复映射到用户地址空间。
+    // 若映射在此处，destroy_table 无法释放这些页表帧（subtree 无 U 位），
+    // 导致每次 exec 泄漏 ~2MB 页表帧 → OOM。
 
     let mut min_vaddr = usize::MAX;
     let mut max_vaddr = 0usize;
