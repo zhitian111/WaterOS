@@ -216,7 +216,7 @@ clean:
 
 all_start_info:
 	$(call INFO, "开始构建完整项目...")
-all: all_start_info kernel-rv kernel-rv-strip-image
+all: all_start_info kernel-rv kernel-la
 
 fmt:
 	$(call INFO, "开始格式化项目文件...")

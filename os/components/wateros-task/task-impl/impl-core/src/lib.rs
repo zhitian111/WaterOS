@@ -95,6 +95,10 @@ pub fn task_ids_for_process(pid: ProcessId) -> Option<Vec<TaskId>> {
     with_process_registry(|registry| registry.task_ids_for_process(pid))
 }
 
+pub fn take_exited_member_tasks(pid: ProcessId) -> Option<Vec<TaskId>> {
+    with_process_registry(|registry| registry.take_exited_member_tasks(pid))
+}
+
 pub fn task_id_for_thread(tid: ThreadId) -> Option<TaskId> {
     with_process_registry(|registry| registry.task_id_for_thread(tid))
 }

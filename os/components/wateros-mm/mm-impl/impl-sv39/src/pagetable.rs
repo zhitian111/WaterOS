@@ -794,7 +794,7 @@ impl Sv39AddressSpace {
     }
 }
 
-/// 递归销毁页表树：释放 U 标志的叶子页对应的物理帧，递归释放子页表帧。
+/// 递归销毁页表树：释放 U 标志的叶子页对应的物理帧，并释放本地址空间拥有的页表帧。
 ///
 /// # Safety
 /// 调用方确保 `ppn` 指向有效的 4 KiB 页表帧。
@@ -807,42 +807,19 @@ unsafe fn destroy_table(ppn : PhysPageNum, level : usize) {
         }
         let child_ppn = pte.ppn();
 
-        if flags.is_leaf_at_level(level) &&
-           flags.to_page_perm()
-                .user()
-        {
-            let _ = frame_dealloc_result(child_ppn);
-        } else if level > 0 && unsafe { subtree_has_user_mapping(child_ppn, level - 1) } {
+        if flags.is_leaf_at_level(level) {
+            if flags.to_page_perm()
+                    .user()
+            {
+                let _ = frame_dealloc_result(child_ppn);
+            }
+        } else if level > 0 {
             unsafe {
                 destroy_table(child_ppn, level - 1);
             }
         }
     }
     let _ = frame_dealloc_result(ppn);
-}
-
-/// 判断一个页表子树内是否包含用户叶子映射。
-///
-/// 用户地址空间会额外携带高地址的内核 RAM 恒等映射（无 `U`），fork 时这些纯内核
-/// 子树可以直接共享，否则 400 个 hackbench 进程会把同一份内核映射页表复制数百遍。
-unsafe fn subtree_has_user_mapping(ppn : PhysPageNum, level : usize) -> bool {
-    let table = unsafe { table_mut(ppn) };
-    for pte in table.iter() {
-        let flags = pte.flags();
-        if !flags.is_valid() {
-            continue;
-        }
-        if flags.is_leaf_at_level(level) {
-            if flags.to_page_perm()
-                    .user()
-            {
-                return true;
-            }
-        } else if level > 0 && unsafe { subtree_has_user_mapping(pte.ppn(), level - 1) } {
-            return true;
-        }
-    }
-    false
 }
 
 /// 递归复制一级页表：遍历 `parent_ppn` 对应的 Sv39 页表项，将
@@ -893,10 +870,6 @@ unsafe fn fork_table(parent_ppn : PhysPageNum,
             }
         } else if level > 0 {
             let child_prefix = vpn_prefix | (i << (level * VPN_INDEX_BITS));
-            if !unsafe { subtree_has_user_mapping(ppn, level - 1) } {
-                child_table[i].set(ppn, flags);
-                continue;
-            }
             let child_sub = alloc_table_frame_zeroed()?;
             if let Err(err) =
                 unsafe { fork_table(ppn, child_sub, level - 1, child_prefix, shared_anon_vmas) }

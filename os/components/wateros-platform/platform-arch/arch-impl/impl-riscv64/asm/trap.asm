@@ -40,6 +40,12 @@ gdb_point_0:
     sd x3,  3*8(t0)
     sd x4,  4*8(t0)
     sd x6,  6*8(t0)
+    csrr t1, sscratch
+    sd t1, 5*8(t0)
+    # After x5/t0 is saved, clear sscratch before any further memory access.
+    # Otherwise a nested S-mode fault in this save path would re-enter with
+    # sscratch still holding the user t0 value and treat it as a frame pointer.
+    csrw sscratch, x0
     sd x7,  7*8(t0)
     sd x8,  8*8(t0)
     sd x9,  9*8(t0)
@@ -65,8 +71,6 @@ gdb_point_0:
     sd x29, 29*8(t0)
     sd x30, 30*8(t0)
     sd x31, 31*8(t0)
-    csrr t1, sscratch
-    sd t1, 5*8(t0)
 
     csrr t1, sstatus
     sd t1, 32*8(t0)
@@ -85,7 +89,6 @@ gdb_point_0:
     ld t1, 0(t1)
     csrw satp, t1
     sfence.vma x0, x0
-    csrw sscratch, x0
 
     mv t1, t0
     mv t2, sp

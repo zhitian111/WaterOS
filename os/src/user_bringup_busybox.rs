@@ -2,28 +2,28 @@
 
 use runtime::logging::*;
 
-const SCRIPT_PATHS : &[&str] = &["/glibc/basic_testcode.sh",      // done
-                                 "/musl/basic_testcode.sh",       // done
-                                 "/glibc/busybox_testcode.sh",    // done
-                                 "/musl/busybox_testcode.sh",     // done
-                                 "/glibc/lua_testcode.sh",        // done
-                                 "/musl/lua_testcode.sh",         // done
-                                 "/glibc/iperf_testcode.sh",      // done
-                                 "/musl/iperf_testcode.sh",       // done
-                                 "/glibc/netperf_testcode.sh",    // done
-                                 "/musl/netperf_testcode.sh",     // done
-                                 "/glibc/libctest_testcode.sh",   // done
-                                 "/musl/libctest_testcode.sh",    // done
-                                 "/glibc/cyclictest_testcode.sh", // done
-                                 "/musl/cyclictest_testcode.sh",  // done
-                                 "/glibc/lmbench_testcode.sh",
-                                 "/musl/lmbench_testcode.sh",
-                                 "/glibc/unixbench_testcode.sh",
-                                 "/musl/unixbench_testcode.sh",
-                                 "/glibc/libcbench_testcode.sh",
-                                 "/musl/libcbench_testcode.sh",
-                                 "/glibc/iozone_testcode.sh",
-                                 "/musl/iozone_testcode.sh",
+const SCRIPT_PATHS : &[&str] = &[// "/glibc/basic_testcode.sh",      // done
+                                 //  "/musl/basic_testcode.sh",       // done
+                                 //  "/glibc/busybox_testcode.sh",    // done
+                                 //  "/musl/busybox_testcode.sh",     // done
+                                 //  "/glibc/lua_testcode.sh",        // done
+                                 //  "/musl/lua_testcode.sh",         // done
+                                 //  "/glibc/iperf_testcode.sh",      // done
+                                 //  "/musl/iperf_testcode.sh",       // done
+                                 //  "/glibc/netperf_testcode.sh",    // done
+                                 //  "/musl/netperf_testcode.sh",     // done
+                                 // "/glibc/libctest_testcode.sh", // done
+                                 // "/musl/libctest_testcode.sh",  // done
+                                 //  "/glibc/cyclictest_testcode.sh", // done
+                                 //  "/musl/cyclictest_testcode.sh",  // done
+                                 //  "/glibc/lmbench_testcode.sh",    // done
+                                 //  "/musl/lmbench_testcode.sh",     // done
+                                 //  "/glibc/unixbench_testcode.sh",  // done
+                                 //  "/musl/unixbench_testcode.sh",   // done
+                                 // "/glibc/libcbench_testcode.sh", // done
+                                 // "/musl/libcbench_testcode.sh",  // done
+                                 // "/glibc/iozone_testcode.sh",      // done
+                                 // "/musl/iozone_testcode.sh",       // done
                                  // --- P6 LTP ---
                                  "/glibc/ltp_testcode.sh",
                                  "/musl/ltp_testcode.sh"];

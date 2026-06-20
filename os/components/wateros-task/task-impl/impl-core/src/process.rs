@@ -295,6 +295,21 @@ impl ProcessRegistry {
         Some(removed)
     }
 
+    pub fn take_exited_member_tasks(&mut self, pid: ProcessId) -> Option<Vec<TaskId>> {
+        let process = self.process_mut(pid)?;
+        let leader_task_id = process.leader_task_id;
+        let mut removed = Vec::new();
+        process.tasks.retain(|task| {
+            let reap = task.task_id != leader_task_id &&
+                       matches!(task.state, ProcessTaskState::Exited(_));
+            if reap {
+                removed.push(task.task_id);
+            }
+            !reap
+        });
+        Some(removed)
+    }
+
     pub fn set_task_clear_child_tid(
         &mut self,
         task_id: TaskId,

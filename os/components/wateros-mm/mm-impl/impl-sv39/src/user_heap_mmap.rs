@@ -480,6 +480,13 @@ impl MmapOps for Sv39AddressSpace {
                                                                  flags : usize,
                                                                  new_address : VirtAddr)
                                                                  -> MmResult<VirtAddr> {
+        let old_end = mmap_map_end(old_addr, old_size)?;
+        if old_end.0 > crate::pagetable::USER_VA_LIMIT ||
+           self.range_overlaps_stack(old_addr, old_end) ||
+           self.range_overlaps_kernel_reserved(old_addr, old_end)
+        {
+            return Err(MmError::InvalidAddress);
+        }
         if flags & MREMAP_FIXED != 0 {
             let end = mmap_map_end(new_address, new_size)?;
             self.validate_user_mapping_range(new_address, end)?;

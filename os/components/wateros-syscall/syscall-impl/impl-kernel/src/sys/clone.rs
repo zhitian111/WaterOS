@@ -18,6 +18,25 @@ const CLONE3_EXIT_SIGNAL_MASK : usize = 0xFF;
 const CLONE_PIDFD : usize = 0x0000_1000;
 const CLONE_INTO_CGROUP : usize = 0x0000_0002_0000_0000;
 
+struct CloneSetupGuard {
+    state : platform::arch::interrupt::ArchInterruptState,
+}
+
+impl CloneSetupGuard {
+    fn new() -> Result<Self, ErrNo> {
+        let state = platform::arch::interrupt::read_global_interrupt_state()
+            .map_err(|_| ErrNo::EIO)?;
+        platform::arch::interrupt::disable_global_interrupt().map_err(|_| ErrNo::EIO)?;
+        Ok(Self { state })
+    }
+}
+
+impl Drop for CloneSetupGuard {
+    fn drop(&mut self) {
+        let _ = platform::arch::interrupt::restore_global_interrupt_state(self.state);
+    }
+}
+
 /// clone/fork 系统调用入口。
 ///
 /// 参数（Linux riscv64 clone ABI）：
@@ -78,9 +97,6 @@ fn do_clone(args : SyscallArgs) -> UserRet {
     let tls = args.arg(3);
     let child_tid = args.arg(4);
 
-    let is_thread = clone_flags.contains(task::CloneFlags::CLONE_VM) &&
-                    clone_flags.contains(task::CloneFlags::CLONE_THREAD);
-
     if clone_flags.contains(task::CloneFlags::CLONE_THREAD) &&
        !clone_flags.contains(task::CloneFlags::CLONE_VM)
     {
@@ -100,6 +116,9 @@ fn do_clone(args : SyscallArgs) -> UserRet {
     let is_thread = clone_flags.contains(task::CloneFlags::CLONE_VM) &&
                     clone_flags.contains(task::CloneFlags::CLONE_THREAD);
     if is_thread {
+        if let Some(process_task) = task::current_process_task_snapshot() {
+            let _ = task::reap_exited_member_threads(process_task.pid);
+        }
         return do_clone_thread(clone_flags,
                                child_stack,
                                parent_tid,
@@ -113,6 +132,10 @@ fn do_clone(args : SyscallArgs) -> UserRet {
         Err(_) => return UserRet::from_error(ErrNo::ENOMEM),
     };
 
+    let _setup_guard = match CloneSetupGuard::new() {
+        Ok(guard) => guard,
+        Err(error) => return UserRet::from_error(error),
+    };
     let child_id = match task::fork_current(child_stack, new_aspace_ptr, new_satp) {
         Some(id) => id,
         None => return UserRet::from_error(ErrNo::EAGAIN),
@@ -158,6 +181,10 @@ fn do_clone_thread(clone_flags : task::CloneFlags,
         Some(task::TaskClearTid::new(child_tid))
     } else {
         None
+    };
+    let _setup_guard = match CloneSetupGuard::new() {
+        Ok(guard) => guard,
+        Err(error) => return UserRet::from_error(error),
     };
     let child_id = match task::clone_current_thread(child_stack,
                                                     tls,
