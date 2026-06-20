@@ -50,14 +50,19 @@ pub(crate) struct PollDeadline {
     expire_tick: Option<u64>,
 }
 
+/// 将纳秒时长向上取整为调度 tick，与 `clock.rs` 中 `sleep_for_ns` 一致。
+pub(crate) fn ns_duration_to_ticks(total_ns: u128) -> u64 {
+    let tick_ns = (SCHED_TIMER_PERIOD_MS as u128).max(1) * 1_000_000;
+    let ticks = total_ns.saturating_add(tick_ns - 1) / tick_ns;
+    u64::try_from(ticks).unwrap_or(u64::MAX).max(1)
+}
+
 impl PollDeadline {
     fn duration_to_ticks(sec: isize, nsec: isize) -> u64 {
         let total_ns = (sec as u128)
             .saturating_mul(1_000_000_000)
             .saturating_add(nsec as u128);
-        let tick_ns = (SCHED_TIMER_PERIOD_MS as u128).max(1) * 1_000_000;
-        let ticks = total_ns.saturating_add(tick_ns - 1) / tick_ns;
-        u64::try_from(ticks).unwrap_or(u64::MAX).max(1)
+        ns_duration_to_ticks(total_ns)
     }
 
     pub(crate) fn infinite() -> Self {

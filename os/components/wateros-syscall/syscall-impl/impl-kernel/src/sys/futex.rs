@@ -4,8 +4,10 @@ use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use ipc::futex::{FutexKey, FutexHub, KernelFutexOps};
+use platform::wall_clock;
 use task::TaskTick;
 
+use crate::poll_engine::ns_duration_to_ticks;
 use crate::user_copy::{copy_from_user, copy_from_user_struct};
 
 use super::robust::futex_error_to_errno;
@@ -38,19 +40,33 @@ fn read_user_u32(uaddr: usize) -> Result<u32, ErrNo> {
     Ok(val)
 }
 
-fn parse_futex_timeout(timeout_ptr: usize) -> Result<Option<TaskTick>, ErrNo> {
+fn timespec_to_ns(ts: UserTimespec) -> Result<u128, ErrNo> {
+    if ts.sec < 0 || ts.nsec < 0 || ts.nsec >= 1_000_000_000 {
+        return Err(ErrNo::EINVAL);
+    }
+    Ok((ts.sec as u128) * 1_000_000_000 + ts.nsec as u128)
+}
+
+fn parse_futex_timeout(timeout_ptr: usize, futex_op: u32) -> Result<Option<TaskTick>, ErrNo> {
     if timeout_ptr == 0 {
         return Ok(None);
     }
     let ts = copy_from_user_struct::<UserTimespec>(timeout_ptr)?;
-    if ts.sec < 0 || ts.nsec < 0 || ts.nsec >= 1_000_000_000 {
-        return Err(ErrNo::EINVAL);
-    }
     if ts.sec == 0 && ts.nsec == 0 {
         return Ok(Some(0));
     }
-    // 与 `nanosleep` 一致：非零超时暂映射为 1 tick。
-    Ok(Some(1))
+    let ticks = if futex_op & FUTEX_CLOCK_REALTIME != 0 {
+        let target_ns = timespec_to_ns(ts)?;
+        let now_ns = wall_clock::realtime_ns().map_err(|_| ErrNo::EIO)?;
+        if target_ns <= now_ns {
+            0
+        } else {
+            ns_duration_to_ticks(target_ns - now_ns)
+        }
+    } else {
+        ns_duration_to_ticks(timespec_to_ns(ts)?)
+    };
+    Ok(Some(ticks))
 }
 
 fn futex_wait(
@@ -68,7 +84,7 @@ fn futex_wait(
     }
 
     let key = FutexKey::from_syscall(uaddr, futex_op);
-    let timeout = parse_futex_timeout(timeout_ptr)?;
+    let timeout = parse_futex_timeout(timeout_ptr, futex_op)?;
     if timeout == Some(0) {
         return Err(ErrNo::ETIMEDOUT);
     }

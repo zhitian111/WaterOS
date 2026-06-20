@@ -52,8 +52,17 @@ pub(crate) fn sys_socketpair(args: SyscallArgs) -> UserRet {
 
     let (end0, end1) = vfs::stream_pair_handle_pair(nonblocking);
     let mut reg = vfs::fd::registry().exclusive_access();
-    let fd0 = reg.alloc_fd_for_task(task_id, Box::new(end0));
-    let fd1 = reg.alloc_fd_for_task(task_id, Box::new(end1));
+    let fd0 = match reg.alloc_fd_for_task(task_id, Box::new(end0)) {
+        Ok(fd) => fd,
+        Err(err) => return UserRet::from_error(vfs_error_to_errno(err)),
+    };
+    let fd1 = match reg.alloc_fd_for_task(task_id, Box::new(end1)) {
+        Ok(fd) => fd,
+        Err(err) => {
+            let _ = reg.close_fd_for_task(task_id, fd0);
+            return UserRet::from_error(vfs_error_to_errno(err));
+        }
+    };
     if cloexec {
         let _ = reg.set_fd_flags(task_id, fd0, FD_CLOEXEC);
         let _ = reg.set_fd_flags(task_id, fd1, FD_CLOEXEC);

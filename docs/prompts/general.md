@@ -41,6 +41,8 @@ cd os   # 工作目录固定为 os/
 | `make rv_qemu_run` | **编译并**在 QEMU 中运行 riscv64 内核（日常 bring-up / 测例首选） |
 | `make rv_qemu_run_with_log` | 运行并写 QEMU 调试日志 |
 | `make rv_qemu_gdb` / `make rv_gdb` | QEMU + GDB 调试 |
+| `make rv_qemu_trace_pc` | PC 追踪 TUI（实时解析 guest PC、符号、循环检测；需自行安装 `textual`） |
+| `make rv_symbol_at ADDR=0x...` | 查询 riscv64 地址所属内核符号 |
 | `make rv_check` | `cargo check`（riscv64 feature 已配置） |
 | `make rv_elf_info` | 查看 `kernel-rv` 的 readelf 信息 |
 | `make check` | 版本信息 + `rv_check` |
@@ -54,12 +56,16 @@ cd os   # 工作目录固定为 os/
 |------|------|
 | `make kernel-la` | 编译 loongarch64 内核 → `./kernel-la` |
 | `make la_qemu_run` | QEMU 运行 loongarch64（根卷 `./sdcard-la.img`） |
+| `make la_qemu_trace_pc` | LoongArch PC 追踪 TUI（需自行安装 `textual`） |
+| `make la_symbol_at ADDR=0x...` | 查询 loongarch64 地址所属内核符号 |
 | `make la_check` | loongarch64 `cargo check` |
 
 ### 相关路径
 
 - Makefile：`os/Makefile`
 - RISC-V QEMU 脚本：`os/scripts/rv_qemu_run.sh`（virtio-blk + `sdcard-rv.img`；网络参数见脚本内注释）
+- PC 追踪：`os/scripts/rv_qemu_run_trace_pc.sh`、`os/scripts/debug/qemu_pc_monitor.py`（`make rv_qemu_trace_pc`）
+- 符号解析：`os/scripts/resolve_pc_symbol.py`（`make rv_symbol_at ADDR=0x...`）
 - 测例开关：`os/src/user_bringup_busybox.rs`（`SCRIPT_PATHS`，分 P1–P6 阶段注释）
 - 测例日志解析：`os/scripts/parse_qemu_test_log.py`
 

@@ -8,6 +8,7 @@ use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use ipc::signal::{IntervalTimerSpec, SignalAction, SignalError, SignalSet};
+use task::{ResourceLimit, SetResourceLimitError};
 
 use crate::user_copy::{copy_from_user_struct, copy_to_user, copy_to_user_struct};
 
@@ -898,6 +899,30 @@ fn default_rlimit(resource : usize) -> UserRLimit {
     }
 }
 
+fn current_process_rlimit(resource : usize) -> UserRLimit {
+    let default = default_rlimit(resource);
+    let Some(pid) = task::current_process_task_snapshot().map(|snapshot| snapshot.pid) else {
+        return default;
+    };
+    task::process_resource_limit(pid, resource)
+        .map(|limit| UserRLimit { cur : limit.cur,
+                                  max : limit.max })
+        .unwrap_or(default)
+}
+
+fn apply_process_rlimit(resource : usize, limit : UserRLimit) -> Result<(), ErrNo> {
+    let Some(pid) = task::current_process_task_snapshot().map(|snapshot| snapshot.pid) else {
+        return Err(ErrNo::ESRCH);
+    };
+    task::set_process_resource_limit(pid,
+                                     resource,
+                                     ResourceLimit { cur : limit.cur,
+                                                     max : limit.max })
+        .map_err(|err| match err {
+            SetResourceLimitError::InvalidArgument => ErrNo::EINVAL,
+        })
+}
+
 /// `getrlimit(resource, rlim)` — 获取资源限制。
 pub(crate) fn sys_getrlimit(args : SyscallArgs) -> UserRet {
     let resource = args.arg(0);
@@ -905,19 +930,28 @@ pub(crate) fn sys_getrlimit(args : SyscallArgs) -> UserRet {
     if rlim_ptr == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
     }
-    let rlim = default_rlimit(resource);
+    let rlim = current_process_rlimit(resource);
     match copy_to_user_struct(rlim_ptr, &rlim) {
         Ok(()) => UserRet::from_success(0),
         Err(e) => UserRet::from_error(e),
     }
 }
 
-/// `setrlimit(resource, rlim)` — 设置资源限制（stub，允许所有软限制降低）。
+/// `setrlimit(resource, rlim)` — 设置资源限制。
 pub(crate) fn sys_setrlimit(args : SyscallArgs) -> UserRet {
-    let _resource = args.arg(0);
-    let _rlim_ptr = args.arg(1);
-    // 当前不做实际限制，总是返回成功
-    UserRet::from_success(0)
+    let resource = args.arg(0);
+    let rlim_ptr = args.arg(1);
+    if rlim_ptr == 0 {
+        return UserRet::from_error(ErrNo::EFAULT);
+    }
+    let rlim = match copy_from_user_struct::<UserRLimit>(rlim_ptr) {
+        Ok(rlim) => rlim,
+        Err(e) => return UserRet::from_error(e),
+    };
+    match apply_process_rlimit(resource, rlim) {
+        Ok(()) => UserRet::from_success(0),
+        Err(e) => UserRet::from_error(e),
+    }
 }
 
 /// `umask(mask)` — 设置文件创建权限掩码并返回旧值。
@@ -927,7 +961,7 @@ pub(crate) fn sys_umask(args : SyscallArgs) -> UserRet {
     UserRet::from_success(old_mask)
 }
 
-/// `prlimit64(pid, resource, new_limit, old_limit)` — 最小兼容当前进程资源限制查询。
+/// `prlimit64(pid, resource, new_limit, old_limit)` — 查询/设置当前进程资源限制。
 pub(crate) fn sys_prlimit64(args : SyscallArgs) -> UserRet {
     let pid = args.arg(0);
     let resource = args.arg(1);
@@ -937,13 +971,20 @@ pub(crate) fn sys_prlimit64(args : SyscallArgs) -> UserRet {
     if pid != 0 {
         return UserRet::from_error(ErrNo::ESRCH);
     }
-    if new_limit != 0 && copy_from_user_struct::<UserRLimit>(new_limit).is_err() {
-        return UserRet::from_error(ErrNo::EFAULT);
-    }
     if old_limit != 0 {
-        let rlim = default_rlimit(resource);
+        let rlim = current_process_rlimit(resource);
         if let Err(e) = copy_to_user_struct(old_limit, &rlim) {
             return UserRet::from_error(e);
+        }
+    }
+    if new_limit != 0 {
+        let rlim = match copy_from_user_struct::<UserRLimit>(new_limit) {
+            Ok(rlim) => rlim,
+            Err(e) => return UserRet::from_error(e),
+        };
+        match apply_process_rlimit(resource, rlim) {
+            Ok(()) => {}
+            Err(e) => return UserRet::from_error(e),
         }
     }
     UserRet::from_success(0)

@@ -131,6 +131,18 @@ pub fn reap_process_with_tasks(pid: ProcessId) -> Option<(ProcessDescriptor, Vec
     with_process_registry(|registry| registry.reap_process_with_tasks(pid))
 }
 
+pub fn get_process_rlimit(pid: ProcessId, resource: usize) -> Option<api_v0::ResourceLimit> {
+    with_process_registry(|registry| registry.get_process_rlimit(pid, resource))
+}
+
+pub fn set_process_rlimit(
+    pid: ProcessId,
+    resource: usize,
+    limit: api_v0::ResourceLimit,
+) -> Result<(), api_v0::SetResourceLimitError> {
+    with_process_registry(|registry| registry.set_process_rlimit(pid, resource, limit))
+}
+
 pub fn process_model_self_test() {
     let mut registry = ProcessRegistry::new();
     let aspace = Some(AddressSpaceRef::new(

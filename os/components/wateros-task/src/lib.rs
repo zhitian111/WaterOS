@@ -39,10 +39,11 @@ mod scheduler {
 }
 pub use api_v0::{
     AddressSpaceHandle, AddressSpaceRef, CloneFlags, CwdRef, FileTableRef, KernelTaskEntry,
-    ProcessDescriptor, ProcessId, ProcessState, ResourceHandle, SchedError, SchedParam,
-    SchedPolicy, SignalHandlersRef, TaskBlockReason, TaskClearTid, TaskExitCode, TaskGroupId,
-    TaskSnapshot, TaskTick, TaskWaitResult, ProcessTaskDescriptor, ProcessTaskRole,
-    ProcessTaskState, UserImageInfo, UserStack, UserTask, ThreadId, WaitQueueId,
+    ProcessDescriptor, ProcessId, ProcessState, ResourceHandle, ResourceLimit,
+    SchedError, SchedParam, SchedPolicy, SetResourceLimitError, SignalHandlersRef,
+    TaskBlockReason, TaskClearTid, TaskExitCode, TaskGroupId, TaskSnapshot, TaskTick,
+    TaskWaitResult, ProcessTaskDescriptor, ProcessTaskRole, ProcessTaskState, UserImageInfo,
+    UserStack, UserTask, ThreadId, WaitQueueId,
 };
 pub use api_v0::{ExitedTask, TaskId, TaskKind, TaskWaitHandle};
 #[cfg(feature = "impl-core")]
@@ -466,6 +467,36 @@ pub fn current_thread_id() -> Option<ThreadId> {
 pub fn current_process_snapshot() -> Option<ProcessDescriptor> {
     let pid = current_process_task_snapshot()?.pid;
     process_snapshot(pid)
+}
+
+/// 查询进程已设置的资源限制；未设置时返回 `None`（由 syscall 层回退默认值）。
+#[inline]
+pub fn process_resource_limit(pid: ProcessId, resource: usize) -> Option<ResourceLimit> {
+    active_impl::get_process_rlimit(pid, resource)
+}
+
+/// 为进程写入资源限制。
+#[inline]
+pub fn set_process_resource_limit(
+    pid: ProcessId,
+    resource: usize,
+    limit: ResourceLimit,
+) -> Result<(), SetResourceLimitError> {
+    active_impl::set_process_rlimit(pid, resource, limit)
+}
+
+/// 按调度实体查询 `RLIMIT_NOFILE` 软限制；无进程上下文时回退 1024。
+#[inline]
+pub fn nofile_rlimit_for_task(task_id: TaskId) -> u64 {
+    const RLIMIT_NOFILE: usize = 7;
+    const DEFAULT_NOFILE: u64 = 1024;
+    let pid = match process_task_snapshot(task_id) {
+        Some(snapshot) => snapshot.pid,
+        None => return DEFAULT_NOFILE,
+    };
+    process_resource_limit(pid, RLIMIT_NOFILE)
+        .map(|limit| limit.cur)
+        .unwrap_or(DEFAULT_NOFILE)
 }
 
 /// 按进程号查找 leader task。

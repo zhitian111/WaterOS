@@ -52,6 +52,8 @@ impl ErrNo {
     pub const EIO: Self = Self(5);
     /// 文件描述符无效。
     pub const EBADF: Self = Self(9);
+    /// 打开文件数达进程上限。
+    pub const EMFILE: Self = Self(24);
     /// 无子进程。
     pub const ECHILD: Self = Self(10);
     /// 资源暂时不可用，可重试。

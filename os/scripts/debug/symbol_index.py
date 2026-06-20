@@ -1,0 +1,207 @@
+#!/usr/bin/env python3
+"""ELF symbol index and addr2line lookup for WaterOS kernels."""
+from __future__ import annotations
+
+import bisect
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path
+from pc_trace_parser import Arch, normalize_pc
+
+ArchTooling = dict[str, str]
+
+ARCH_TOOLS: dict[Arch, ArchTooling] = {
+    "rv": {
+        "nm": "riscv64-elf-nm",
+        "addr2line": "riscv64-elf-addr2line",
+    },
+    "la": {
+        "nm": "loongarch64-linux-gnu-nm",
+        "addr2line": "loongarch64-linux-gnu-addr2line",
+    },
+}
+
+
+@dataclass(frozen=True)
+class SymbolEntry:
+    start: int
+    size: int
+    name: str
+
+    @property
+    def end(self) -> int:
+        return self.start + self.size if self.size > 0 else self.start + 1
+
+
+@dataclass(frozen=True)
+class SymbolLookup:
+    raw_pc: int
+    lookup_pc: int
+    region_hint: str | None
+    symbol: SymbolEntry | None
+    offset: int
+    nearest: SymbolEntry | None
+    source_file: str | None
+    source_line: str | None
+    addr2line_func: str | None
+
+    def format_short(self, max_name: int = 48) -> str:
+        if self.region_hint and self.symbol is None:
+            return f"{self._pc_str()}  [{self.region_hint}]"
+        if self.symbol is None:
+            near = ""
+            if self.nearest is not None:
+                near = f" (nearest: {self._trim(self.nearest.name, max_name)})"
+            return f"{self._pc_str()}  <unknown>{near}"
+        name = self._trim(self.symbol.name, max_name)
+        off = f"+{self.offset}" if self.offset else ""
+        loc = ""
+        if self.source_file and self.source_file != "??":
+            loc = f"  ({self.source_file}:{self.source_line or '?'})"
+        return f"{self._pc_str()}  {name}{off}{loc}"
+
+    def format_detail(self) -> str:
+        lines = [
+            f"Raw PC:    0x{self.raw_pc:016x}",
+            f"Lookup PC: 0x{self.lookup_pc:016x}",
+        ]
+        if self.region_hint:
+            lines.append(f"Region:    {self.region_hint}")
+        if self.symbol:
+            lines.append(f"Symbol:    {self.symbol.name}")
+            lines.append(
+                f"Range:     [0x{self.symbol.start:016x}, 0x{self.symbol.end:016x}) "
+                f"(size={self.symbol.size})"
+            )
+            lines.append(f"Offset:    +{self.offset}")
+        else:
+            lines.append("Symbol:    <not in any symbol range>")
+            if self.nearest:
+                lines.append(
+                    f"Nearest:   {self.nearest.name} @ 0x{self.nearest.start:016x}"
+                )
+        if self.addr2line_func:
+            lines.append(f"Function:  {self.addr2line_func}")
+        if self.source_file:
+            lines.append(f"Source:    {self.source_file}:{self.source_line or '?'}")
+        return "\n".join(lines)
+
+    def _pc_str(self) -> str:
+        return f"0x{self.raw_pc:016x}"
+
+    @staticmethod
+    def _trim(name: str, max_len: int) -> str:
+        if len(name) <= max_len:
+            return name
+        return name[: max_len - 3] + "..."
+
+
+class SymbolIndex:
+    """Binary-search symbol table built from ELF via nm."""
+
+    def __init__(self, elf_path: Path, arch: Arch) -> None:
+        self.elf_path = elf_path
+        self.arch = arch
+        self._tools = ARCH_TOOLS[arch]
+        self._symbols = self._load_symbols()
+        self._starts = [s.start for s in self._symbols]
+
+    def lookup(self, raw_pc: int) -> SymbolLookup:
+        lookup_pc, region_hint = normalize_pc(self.arch, raw_pc)
+        symbol, offset = self._find_symbol(lookup_pc)
+        nearest = self._find_nearest(lookup_pc)
+        func, src_file, src_line = self._addr2line(lookup_pc)
+        return SymbolLookup(
+            raw_pc=raw_pc,
+            lookup_pc=lookup_pc,
+            region_hint=region_hint if symbol is None else None,
+            symbol=symbol,
+            offset=offset,
+            nearest=nearest,
+            source_file=src_file,
+            source_line=src_line,
+            addr2line_func=func,
+        )
+
+    def _load_symbols(self) -> list[SymbolEntry]:
+        cmd = [
+            self._tools["nm"],
+            "--print-size",
+            "--size-sort",
+            "--radix=x",
+            str(self.elf_path),
+        ]
+        try:
+            out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
+        except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+            raise RuntimeError(f"failed to run nm on {self.elf_path}: {exc}") from exc
+
+        symbols: list[SymbolEntry] = []
+        for line in out.splitlines():
+            parts = line.split(None, 3)
+            if len(parts) < 4:
+                continue
+            addr_s, size_s, sym_type, name = parts
+            if sym_type not in "TtDdBbRr":
+                continue
+            try:
+                start = int(addr_s, 16)
+                size = int(size_s, 16)
+            except ValueError:
+                continue
+            if size == 0:
+                size = 1
+            symbols.append(SymbolEntry(start=start, size=size, name=name))
+
+        symbols.sort(key=lambda s: s.start)
+        merged: list[SymbolEntry] = []
+        for sym in symbols:
+            if merged and sym.start == merged[-1].start:
+                if sym.size > merged[-1].size:
+                    merged[-1] = sym
+            else:
+                merged.append(sym)
+        return merged
+
+    def _find_symbol(self, addr: int) -> tuple[SymbolEntry | None, int]:
+        if not self._symbols:
+            return None, 0
+        idx = bisect.bisect_right(self._starts, addr) - 1
+        if idx < 0:
+            return None, 0
+        sym = self._symbols[idx]
+        if sym.start <= addr < sym.end:
+            return sym, addr - sym.start
+        return None, 0
+
+    def _find_nearest(self, addr: int) -> SymbolEntry | None:
+        if not self._symbols:
+            return None
+        idx = bisect.bisect_right(self._starts, addr) - 1
+        if idx >= 0:
+            return self._symbols[idx]
+        return self._symbols[0]
+
+    def _addr2line(self, addr: int) -> tuple[str | None, str | None, str | None]:
+        cmd = [
+            self._tools["addr2line"],
+            "-f",
+            "-C",
+            "-e",
+            str(self.elf_path),
+            hex(addr),
+        ]
+        try:
+            out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return None, None, None
+        lines = [ln.strip() for ln in out.splitlines()]
+        if len(lines) < 2:
+            return None, None, None
+        func, loc = lines[0], lines[1]
+        if func == "??" and loc == "??:0":
+            return None, None, None
+        if ":" in loc:
+            file_part, line_part = loc.rsplit(":", 1)
+            return func, file_part, line_part
+        return func, loc, None

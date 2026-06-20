@@ -17,8 +17,8 @@ mod wait;
 pub use kernel::{KernelStack, KernelTaskEntry, TaskBootstrap};
 pub use process::{
     AddressSpaceRef, CloneFlags, CwdRef, FileTableRef, ProcessDescriptor, ProcessId, ProcessState,
-    ProcessTaskDescriptor, ProcessTaskRole, ProcessTaskState, ResourceHandle, SignalHandlersRef,
-    TaskClearTid, TaskGroupId, ThreadId,
+    ProcessTaskDescriptor, ProcessTaskRole, ProcessTaskState, ResourceHandle, ResourceLimit,
+    SetResourceLimitError, SignalHandlersRef, TaskClearTid, TaskGroupId, ThreadId,
 };
 pub use sched::{
     SchedError, SchedParam, SchedPolicy, SchedulableCheck, SCHED_CPU_MASK_MIN_BYTES,

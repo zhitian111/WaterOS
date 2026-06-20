@@ -31,8 +31,8 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const SENDFILE: SyscallNumber = SyscallNumber(71);
     const PSELECT6: SyscallNumber = SyscallNumber(72);
     const PPOLL: SyscallNumber = SyscallNumber(73);
-    /// 历史 glibc `select(2)` 路径（非 Linux riscv64 官方 `dup` 号）。
-    const SELECT: SyscallNumber = SyscallNumber(23);
+    /// asm-generic 64 位无独立 `select` nr；riscv64/loong64 用户态经 `pselect6`(72) 实现。
+    const SELECT: SyscallNumber = SyscallNumber(usize::MAX);
     const READLINKAT: SyscallNumber = SyscallNumber(78);
     const FACCESSAT: SyscallNumber = SyscallNumber(48);
     const FCHMODAT: SyscallNumber = SyscallNumber(53);
@@ -47,8 +47,7 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const CLOSE: SyscallNumber = SyscallNumber(57);
     const FSTAT: SyscallNumber = SyscallNumber(80);
     const LSEEK: SyscallNumber = SyscallNumber(62);
-    /// riscv64 上 `dup(2)` 由 libc 经 `fcntl(F_DUPFD)` 完成；23 留给 legacy `select`。
-    const DUP: SyscallNumber = SyscallNumber(usize::MAX);
+    const DUP: SyscallNumber = SyscallNumber(23);
     const DUP3: SyscallNumber = SyscallNumber(24);
     const PIPE2: SyscallNumber = SyscallNumber(59);
     const IOCTL: SyscallNumber = SyscallNumber(29);
@@ -179,7 +178,7 @@ mod tests {
     use super::LinuxGeneric64;
     use api_v0::syscall_number::SyscallNumberTable;
 
-    /// 号表中除 `DUP` 哨兵外，任意两项不得共用同一裸编号。
+    /// 号表中除 `SELECT` 哨兵外，任意两项不得共用同一裸编号。
     #[test]
     fn dispatched_syscall_numbers_are_unique() {
         let nums = [
@@ -194,7 +193,6 @@ mod tests {
             LinuxGeneric64::SENDFILE,
             LinuxGeneric64::PSELECT6,
             LinuxGeneric64::PPOLL,
-            LinuxGeneric64::SELECT,
             LinuxGeneric64::READLINKAT,
             LinuxGeneric64::FACCESSAT,
             LinuxGeneric64::FCHMODAT,
@@ -209,6 +207,7 @@ mod tests {
             LinuxGeneric64::CLOSE,
             LinuxGeneric64::FSTAT,
             LinuxGeneric64::LSEEK,
+            LinuxGeneric64::DUP,
             LinuxGeneric64::DUP3,
             LinuxGeneric64::PIPE2,
             LinuxGeneric64::IOCTL,

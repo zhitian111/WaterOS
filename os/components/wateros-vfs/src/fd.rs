@@ -61,7 +61,7 @@ pub fn with_current_io<R>(
 
 /// 为当前任务分配 fd。
 pub fn alloc_fd(handle: Box<dyn VfsIoHandle>) -> VfsResult<usize> {
-    with_current_task(|reg, task_id| Ok(reg.alloc_fd_for_task(task_id, handle)))
+    with_current_task(|reg, task_id| reg.alloc_fd_for_task(task_id, handle))
 }
 
 /// 关闭当前任务的 fd（调用句柄 `close`）。
@@ -170,14 +170,20 @@ pub fn self_test() {
     assert!(reg.close_fd_for_task(stdio_task, api_v0::VFS_STDIN_FD).is_ok());
     assert!(reg.close_fd_for_task(stdio_task, api_v0::VFS_STDIN_FD).is_err());
     assert!(reg.get_io_for_task(stdio_task, api_v0::VFS_STDIN_FD).is_err());
-    let reused_stdin = reg.alloc_fd_for_task(stdio_task, stdio_replacement_handle());
+    let reused_stdin = reg
+        .alloc_fd_for_task(stdio_task, stdio_replacement_handle())
+        .expect("alloc stdio");
     assert_eq!(reused_stdin, api_v0::VFS_STDIN_FD);
     reg.drop_task_fd_table(stdio_task);
 
     let a: task::TaskId = 10;
     let b: task::TaskId = 11;
-    let fd = reg.alloc_fd_for_task(a, Box::new(impl_fd_session::ConsoleOutHandle));
-    let fd_b = reg.alloc_fd_for_task(b, Box::new(impl_fd_session::ConsoleOutHandle));
+    let fd = reg
+        .alloc_fd_for_task(a, Box::new(impl_fd_session::ConsoleOutHandle))
+        .expect("alloc fd");
+    let fd_b = reg
+        .alloc_fd_for_task(b, Box::new(impl_fd_session::ConsoleOutHandle))
+        .expect("alloc fd");
     assert_eq!(fd, fd_b);
     assert!(reg.get_io_for_task(a, fd).is_ok());
     assert!(reg.get_io_for_task(b, fd_b).is_ok());
@@ -189,7 +195,9 @@ pub fn self_test() {
     assert!(reg.get_io_for_task(a, fd).is_err());
     assert!(reg.get_io_for_task(b, fd_b).is_ok());
 
-    let parent_extra = reg.alloc_fd_for_task(a, Box::new(impl_fd_session::ConsoleOutHandle));
+    let parent_extra = reg
+        .alloc_fd_for_task(a, Box::new(impl_fd_session::ConsoleOutHandle))
+        .expect("alloc fd");
     reg.copy_fd_table_from_parent(b, a);
     assert!(reg.get_io_for_task(b, parent_extra).is_ok());
     assert!(reg.get_io_for_task(a, parent_extra).is_ok());
@@ -202,7 +210,9 @@ pub fn self_test() {
     let _ = reg.close_fd_for_task(b, fd_b);
     let _ = reg.close_fd_for_task(a, parent_extra);
     let _ = reg.close_fd_for_task(b, parent_extra);
-    let fd_reuse = reg.alloc_fd_for_task(a, Box::new(impl_fd_session::ConsoleOutHandle));
+    let fd_reuse = reg
+        .alloc_fd_for_task(a, Box::new(impl_fd_session::ConsoleOutHandle))
+        .expect("alloc fd");
     assert_eq!(fd_reuse, fd);
     reg.drop_task_fd_table(a);
     reg.drop_task_fd_table(b);

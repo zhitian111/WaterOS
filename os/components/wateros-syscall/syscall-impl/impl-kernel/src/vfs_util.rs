@@ -9,6 +9,7 @@ pub(crate) fn vfs_error_to_errno(err : VfsError) -> ErrNo {
         VfsError::WouldBlock => ErrNo::EAGAIN,
         VfsError::Interrupted => ErrNo::EINTR,
         VfsError::BrokenPipe => ErrNo::EPIPE,
+        VfsError::TooManyOpenFiles => ErrNo::EMFILE,
         VfsError::NoTask => ErrNo::ESRCH,
         VfsError::InvalidPath | VfsError::Unsupported => ErrNo::EINVAL,
         VfsError::Exists => ErrNo::EEXIST,

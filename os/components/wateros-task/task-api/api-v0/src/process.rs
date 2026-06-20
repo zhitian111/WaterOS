@@ -209,6 +209,20 @@ pub struct ProcessTaskDescriptor {
     pub clear_child_tid: Option<TaskClearTid>,
 }
 
+/// Linux `struct rlimit` 语义子集（`rlim_cur` / `rlim_max`）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ResourceLimit {
+    pub cur: u64,
+    pub max: u64,
+}
+
+/// `setrlimit` / `prlimit64` 写入失败原因。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SetResourceLimitError {
+    /// `cur > max` 或未知资源号。
+    InvalidArgument,
+}
+
 /// 对外可见的进程语义快照。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProcessDescriptor {

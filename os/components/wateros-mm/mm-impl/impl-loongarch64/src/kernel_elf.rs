@@ -64,6 +64,7 @@ fn map_vfs_to_root_vol(e : VfsError) -> RootVolumeReadError {
         VfsError::Interrupted |
         VfsError::BrokenPipe |
         VfsError::NoTask |
+        VfsError::TooManyOpenFiles |
         VfsError::ReadOnlyFs => RootVolumeReadError::Unsupported,
     }
 }

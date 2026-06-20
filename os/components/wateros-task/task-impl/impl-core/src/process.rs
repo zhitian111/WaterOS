@@ -8,8 +8,9 @@ use alloc::vec::Vec;
 
 use api_v0::{
     AddressSpaceRef, CloneFlags, CwdRef, FileTableRef, ProcessDescriptor, ProcessId,
-    ProcessState, ProcessTaskDescriptor, ProcessTaskRole, ProcessTaskState, SignalHandlersRef,
-    ResourceHandle, TaskClearTid, TaskExitCode, TaskGroupId, TaskId, ThreadId,
+    ProcessState, ProcessTaskDescriptor, ProcessTaskRole, ProcessTaskState, ResourceHandle,
+    ResourceLimit, SetResourceLimitError, SignalHandlersRef, TaskClearTid, TaskExitCode,
+    TaskGroupId, TaskId, ThreadId,
 };
 
 #[derive(Clone, Debug)]
@@ -49,6 +50,7 @@ pub struct ProcessControlBlock {
     file_table: Option<FileTableRef>,
     cwd: Option<CwdRef>,
     signal_handlers: Option<SignalHandlersRef>,
+    rlimits: BTreeMap<usize, ResourceLimit>,
     tasks: Vec<ProcessTask>,
     state: ProcessState,
 }
@@ -147,6 +149,7 @@ impl ProcessRegistry {
             file_table: Some(resource_handle),
             cwd: Some(resource_handle),
             signal_handlers: None,
+            rlimits: BTreeMap::new(),
             tasks: alloc::vec![ProcessTask {
                 task_id,
                 tid,
@@ -166,8 +169,37 @@ impl ProcessRegistry {
         child_task_id: TaskId,
         address_space: Option<AddressSpaceRef>,
     ) -> Option<ProcessId> {
-        self.lookup_process(parent_pid)?;
-        Some(self.create_process_for_task(child_task_id, Some(parent_pid), address_space))
+        let parent_rlimits = self.processes.get(&parent_pid)?.rlimits.clone();
+        let child_pid =
+            self.create_process_for_task(child_task_id, Some(parent_pid), address_space);
+        if let Some(process) = self.process_mut(child_pid) {
+            process.rlimits = parent_rlimits;
+        }
+        Some(child_pid)
+    }
+
+    pub fn get_process_rlimit(
+        &self,
+        pid: ProcessId,
+        resource: usize,
+    ) -> Option<ResourceLimit> {
+        self.processes
+            .get(&pid)
+            .and_then(|process| process.rlimits.get(&resource).copied())
+    }
+
+    pub fn set_process_rlimit(
+        &mut self,
+        pid: ProcessId,
+        resource: usize,
+        limit: ResourceLimit,
+    ) -> Result<(), SetResourceLimitError> {
+        if limit.cur > limit.max {
+            return Err(SetResourceLimitError::InvalidArgument);
+        }
+        let process = self.process_mut(pid).ok_or(SetResourceLimitError::InvalidArgument)?;
+        process.rlimits.insert(resource, limit);
+        Ok(())
     }
 
     pub fn add_task_to_process(

@@ -166,6 +166,22 @@ impl PerTaskFdRegistry {
     fn close_table(&mut self, owner: task::TaskId) {
         let _ = self.take_table_handles(owner);
     }
+
+    fn open_fd_count_for_task(&self, task_id: task::TaskId) -> usize {
+        let owner = self.effective_owner(task_id);
+        self.tables
+            .get(&owner)
+            .map(|table| table.iter().filter(|slot| slot.is_some()).count())
+            .unwrap_or(0)
+    }
+
+    fn check_nofile_before_open(&self, task_id: task::TaskId) -> VfsResult<()> {
+        let limit = task::nofile_rlimit_for_task(task_id);
+        if self.open_fd_count_for_task(task_id) >= limit as usize {
+            return Err(VfsError::TooManyOpenFiles);
+        }
+        Ok(())
+    }
 }
 
 impl VfsFdSession for PerTaskFdRegistry {
@@ -179,6 +195,7 @@ impl VfsFdSession for PerTaskFdRegistry {
 
     fn alloc_fd(&mut self, handle: Box<dyn VfsIoHandle>) -> VfsResult<usize> {
         let task_id = task::current_task_id().ok_or(VfsError::NoTask)?;
+        self.check_nofile_before_open(task_id)?;
         let newfd = {
             let table = self.table_mut(task_id);
             if let Some(fd) = (0..table.len()).find(|&fd| table[fd].is_none())
@@ -208,7 +225,8 @@ impl PerTaskFdRegistry {
         &mut self,
         task_id: task::TaskId,
         handle: Box<dyn VfsIoHandle>,
-    ) -> usize {
+    ) -> VfsResult<usize> {
+        self.check_nofile_before_open(task_id)?;
         let (newfd, len) = {
             let table = self.table_mut(task_id);
             if let Some(fd) = (0..table.len()).find(|&fd| table[fd].is_none())
@@ -222,7 +240,7 @@ impl PerTaskFdRegistry {
             }
         };
         self.ensure_flags_len(task_id, len);
-        newfd
+        Ok(newfd)
     }
 
     /// 按任务与 fd 号取可变句柄。
@@ -302,6 +320,7 @@ impl PerTaskFdRegistry {
             let handle = self.get_io_for_task(task_id, oldfd)?;
             handle.duplicate()?
         };
+        self.check_nofile_before_open(task_id)?;
         self.ensure_task(task_id);
         let newfd = {
             let owner = self.effective_owner(task_id);
@@ -347,6 +366,14 @@ impl PerTaskFdRegistry {
 
         self.ensure_task(task_id);
         let owner = self.effective_owner(task_id);
+        let newfd_was_open = self.tables
+            .get(&owner)
+            .and_then(|table| table.get(newfd))
+            .and_then(|slot| slot.as_ref())
+            .is_some();
+        if !newfd_was_open {
+            self.check_nofile_before_open(task_id)?;
+        }
         if self.tables.get(&owner)
                       .and_then(|table| table.get(newfd))
                       .and_then(|slot| slot.as_ref())

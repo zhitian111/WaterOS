@@ -25,14 +25,17 @@ pub(crate) fn sys_pipe2(args: SyscallArgs) -> UserRet {
     let nonblocking = flags & O_NONBLOCK != 0;
     let (read_end, write_end) = vfs::pipe_handle_pair(nonblocking);
     let mut reg = vfs::fd::registry().exclusive_access();
-    let read_fd = reg.alloc_fd_for_task(
-        task_id,
-        Box::new(read_end),
-    );
-    let write_fd = reg.alloc_fd_for_task(
-        task_id,
-        Box::new(write_end),
-    );
+    let read_fd = match reg.alloc_fd_for_task(task_id, Box::new(read_end)) {
+        Ok(fd) => fd,
+        Err(err) => return UserRet::from_error(vfs_error_to_errno(err)),
+    };
+    let write_fd = match reg.alloc_fd_for_task(task_id, Box::new(write_end)) {
+        Ok(fd) => fd,
+        Err(err) => {
+            let _ = reg.close_fd_for_task(task_id, read_fd);
+            return UserRet::from_error(vfs_error_to_errno(err));
+        }
+    };
     drop(reg);
     let fds = [
         read_fd as i32,
