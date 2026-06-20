@@ -502,6 +502,7 @@ impl MultiClassScheduler {
     }
 
     pub(super) fn kill_task(&mut self, task_id : TaskId, exit_code : TaskExitCode) -> bool {
+        self.detach_from_run_queues(task_id);
         let mut staging = VecDeque::new();
         let killed = self.wait
                          .kill_task(&mut self.registry,

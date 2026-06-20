@@ -23,8 +23,13 @@ impl OtherReadyQueue {
 
 impl ReadyTaskSink for OtherReadyQueue {
     fn enqueue_ready_task(&mut self, task_id : TaskId) {
+        let _ = remove_task_id(&mut self.ready_queue, task_id);
         self.ready_queue
             .push_back(task_id);
+    }
+
+    fn detach_ready_task(&mut self, task_id : TaskId) {
+        let _ = remove_task_id(&mut self.ready_queue, task_id);
     }
 }
 

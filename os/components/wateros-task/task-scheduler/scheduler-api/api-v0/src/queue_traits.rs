@@ -9,11 +9,19 @@ use task_api::{SchedulableCheck, TaskId};
 pub trait ReadyTaskSink {
     /// 将任务放入实现选择的就绪路径。
     fn enqueue_ready_task(&mut self, task_id: TaskId);
+
+    /// 从就绪路径中移除指定任务；不支持反向移除的临时 staging sink 可保持默认空操作。
+    fn detach_ready_task(&mut self, _task_id: TaskId) {}
 }
 
 impl ReadyTaskSink for VecDeque<TaskId> {
     fn enqueue_ready_task(&mut self, task_id: TaskId) {
+        self.retain(|candidate_task_id| *candidate_task_id != task_id);
         self.push_back(task_id);
+    }
+
+    fn detach_ready_task(&mut self, task_id: TaskId) {
+        self.retain(|candidate_task_id| *candidate_task_id != task_id);
     }
 }
 

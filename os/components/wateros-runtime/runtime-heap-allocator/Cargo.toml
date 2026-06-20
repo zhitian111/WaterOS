@@ -6,6 +6,7 @@
 [dependencies]
     linked_list_allocator = { version = "0.10.6" }
     config = { path = "../../wateros-base/base-config/", package = "wateros-base-config" }
+    arch = { path = "../../wateros-platform/platform-arch/", package = "wateros-platform-arch", default-features = false, features = [ "api-v0" ] }
 [features]
     default = [ "impl-linked-list-allocator" ]
     impl-linked-list-allocator = [  ]

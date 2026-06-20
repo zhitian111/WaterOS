@@ -172,6 +172,7 @@ impl WaitQueues {
                 }
                 self.wake_all_waiters_for_task_exit(registry, task_id, ready_queue);
                 self.detach_task_from_run_queues(task_id);
+                ready_queue.detach_ready_task(task_id);
                 registry.mark_exited(task_id, exit_code);
                 self.exited_queue
                     .push_back(task_id);

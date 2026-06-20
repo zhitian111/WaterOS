@@ -283,6 +283,8 @@ impl RoundRobinScheduler {
     }
 
     pub(super) fn kill_task(&mut self, task_id : TaskId, exit_code : TaskExitCode) -> bool {
+        self.other_ready
+            .detach_task(task_id);
         self.wait
             .kill_task(&mut self.registry,
                        task_id,
