@@ -4,6 +4,7 @@ extern crate alloc;
 
 use alloc::boxed::Box;
 use alloc::string::String;
+use alloc::vec::Vec;
 
 use api_v0::{
     RootRwSession, SingleRootReadView, VfsError, VfsIoHandle, VfsMetadata, VfsOpenFlags, VfsResult,
@@ -51,6 +52,7 @@ pub struct PagedFileHandle {
     mount_gen : u64,
     on_disk_size : u64,
     detached : bool,
+    detached_data : Vec<u8>,
 }
 
 impl PagedFileHandle {
@@ -90,7 +92,8 @@ impl PagedFileHandle {
                   writable : want_write,
                   mount_gen,
                   on_disk_size,
-                  detached : false })
+                  detached : false,
+                  detached_data : Vec::new() })
     }
 
     fn sync_dirty(&mut self) -> VfsResult<()> {
@@ -109,13 +112,29 @@ impl PagedFileHandle {
         global_cache(self.mount_gen).logical_size(self.path.as_str(), self.on_disk_size)
     }
 
+    fn read_detached_at(&self, offset : u64, buf : &mut [u8]) -> VfsResult<usize> {
+        let start = usize::try_from(offset).map_err(|_| VfsError::Io)?;
+        if start >= self.detached_data.len() {
+            return Ok(0);
+        }
+        let n = core::cmp::min(buf.len(), self.detached_data.len() - start);
+        buf[..n].copy_from_slice(&self.detached_data[start..start + n]);
+        Ok(n)
+    }
+
     fn account_detached_write(&mut self,
                               offset : u64,
-                              len : usize,
+                              buf : &[u8],
                               advance_offset : bool)
                               -> VfsResult<usize> {
-        let end = offset.checked_add(len as u64)
+        let start = usize::try_from(offset).map_err(|_| VfsError::Io)?;
+        let end = offset.checked_add(buf.len() as u64)
                         .ok_or(VfsError::Io)?;
+        let end_usize = usize::try_from(end).map_err(|_| VfsError::Io)?;
+        if self.detached_data.len() < end_usize {
+            self.detached_data.resize(end_usize, 0);
+        }
+        self.detached_data[start..end_usize].copy_from_slice(buf);
         if advance_offset {
             self.offset = end;
         }
@@ -123,7 +142,7 @@ impl PagedFileHandle {
         let cache = global_cache(self.mount_gen);
         cache.set_logical_size(self.path.as_str(), new_size);
         self.meta.size = new_size;
-        Ok(len)
+        Ok(buf.len())
     }
 }
 
@@ -137,8 +156,7 @@ impl VfsIoHandle for PagedFileHandle {
             return Ok(0);
         }
         if self.detached {
-            let n = core::cmp::min(buf.len() as u64, size - self.offset) as usize;
-            buf[..n].fill(0);
+            let n = self.read_detached_at(self.offset, buf)?;
             self.offset = self.offset
                               .checked_add(n as u64)
                               .ok_or(VfsError::Io)?;
@@ -166,7 +184,7 @@ impl VfsIoHandle for PagedFileHandle {
             return Ok(0);
         }
         if self.detached {
-            return self.account_detached_write(self.offset, buf.len(), true);
+            return self.account_detached_write(self.offset, buf, true);
         }
         let size = self.current_size();
         let mut rw = mount_rw_session()?;
@@ -182,7 +200,7 @@ impl VfsIoHandle for PagedFileHandle {
             Ok(n) => n,
             Err(VfsError::NotFound) => {
                 self.detached = true;
-                return self.account_detached_write(self.offset, buf.len(), true);
+                return self.account_detached_write(self.offset, buf, true);
             }
             Err(e) => return Err(e),
         };
@@ -202,9 +220,7 @@ impl VfsIoHandle for PagedFileHandle {
             return Ok(0);
         }
         if self.detached {
-            let n = core::cmp::min(buf.len() as u64, size - offset) as usize;
-            buf[..n].fill(0);
-            return Ok(n);
+            return self.read_detached_at(offset, buf);
         }
         let mut io = FsPageIo { rw : None };
         let cache = global_cache(self.mount_gen);
@@ -225,7 +241,7 @@ impl VfsIoHandle for PagedFileHandle {
             return Ok(0);
         }
         if self.detached {
-            return self.account_detached_write(offset, buf.len(), false);
+            return self.account_detached_write(offset, buf, false);
         }
         let size = self.current_size();
         let mut rw = mount_rw_session()?;
@@ -241,7 +257,7 @@ impl VfsIoHandle for PagedFileHandle {
             Ok(n) => n,
             Err(VfsError::NotFound) => {
                 self.detached = true;
-                return self.account_detached_write(offset, buf.len(), false);
+                return self.account_detached_write(offset, buf, false);
             }
             Err(e) => return Err(e),
         };
@@ -329,6 +345,10 @@ impl VfsIoHandle for PagedFileHandle {
         self.meta.size = len;
         if self.offset > len {
             self.offset = len;
+        }
+        if self.detached {
+            let new_len = usize::try_from(len).map_err(|_| VfsError::Io)?;
+            self.detached_data.resize(new_len, 0);
         }
         Ok(())
     }

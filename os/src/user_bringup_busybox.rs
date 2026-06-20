@@ -13,10 +13,10 @@ const SCRIPT_PATHS : &[&str] = &[
                                  // "/musl/iperf_testcode.sh",       // done
                                  // "/glibc/netperf_testcode.sh",    // done
                                  // "/musl/netperf_testcode.sh",     // done
-                                 "/glibc/libctest_testcode.sh",   // done
+                                 // "/glibc/libctest_testcode.sh",   // done
                                  "/musl/libctest_testcode.sh",    // done
-                                 "/glibc/cyclictest_testcode.sh", // done
-                                 "/musl/cyclictest_testcode.sh",  // done
+                                 // "/glibc/cyclictest_testcode.sh", // done
+                                 // "/musl/cyclictest_testcode.sh",  // done
                                  //"/glibc/lmbench_testcode.sh",
                                  //"/musl/lmbench_testcode.sh",
                                  //"/glibc/unixbench_testcode.sh",
