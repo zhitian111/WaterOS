@@ -2,18 +2,19 @@
 
 use runtime::logging::*;
 
-const SCRIPT_PATHS : &[&str] = &[//"/glibc/basic_testcode.sh",      // done
-                                 //"/musl/basic_testcode.sh",       // done
-                                 //"/glibc/busybox_testcode.sh",    // done
-                                 //"/musl/busybox_testcode.sh",     // done
-                                 //"/glibc/lua_testcode.sh",        // done
-                                 //"/musl/lua_testcode.sh",         // done
-                                 //"/glibc/iperf_testcode.sh",      // done
-                                 //"/musl/iperf_testcode.sh",       // done
-                                 //"/glibc/netperf_testcode.sh",    // done
-                                 //"/musl/netperf_testcode.sh",     // done
-                                 //"/glibc/libctest_testcode.sh",   // done
-                                 //"/musl/libctest_testcode.sh",    // done
+const SCRIPT_PATHS : &[&str] = &[
+                                 // "/glibc/basic_testcode.sh",      // done
+                                 // "/musl/basic_testcode.sh",       // done
+                                 // "/glibc/busybox_testcode.sh",    // done
+                                 // "/musl/busybox_testcode.sh",     // done
+                                 // "/glibc/lua_testcode.sh",        // done
+                                 // "/musl/lua_testcode.sh",         // done
+                                 // "/glibc/iperf_testcode.sh",      // done
+                                 // "/musl/iperf_testcode.sh",       // done
+                                 // "/glibc/netperf_testcode.sh",    // done
+                                 // "/musl/netperf_testcode.sh",     // done
+                                 "/glibc/libctest_testcode.sh",   // done
+                                 "/musl/libctest_testcode.sh",    // done
                                  "/glibc/cyclictest_testcode.sh", // done
                                  "/musl/cyclictest_testcode.sh",  // done
                                  //"/glibc/lmbench_testcode.sh",

@@ -31,6 +31,7 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const SENDFILE: SyscallNumber = SyscallNumber(71);
     const PSELECT6: SyscallNumber = SyscallNumber(72);
     const PPOLL: SyscallNumber = SyscallNumber(73);
+    /// 历史 glibc `select(2)` 路径（非 Linux riscv64 官方 `dup` 号）。
     const SELECT: SyscallNumber = SyscallNumber(23);
     const READLINKAT: SyscallNumber = SyscallNumber(78);
     const FACCESSAT: SyscallNumber = SyscallNumber(48);
@@ -46,7 +47,8 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const CLOSE: SyscallNumber = SyscallNumber(57);
     const FSTAT: SyscallNumber = SyscallNumber(80);
     const LSEEK: SyscallNumber = SyscallNumber(62);
-    const DUP: SyscallNumber = SyscallNumber(23);
+    /// riscv64 上 `dup(2)` 由 libc 经 `fcntl(F_DUPFD)` 完成；23 留给 legacy `select`。
+    const DUP: SyscallNumber = SyscallNumber(usize::MAX);
     const DUP3: SyscallNumber = SyscallNumber(24);
     const PIPE2: SyscallNumber = SyscallNumber(59);
     const IOCTL: SyscallNumber = SyscallNumber(29);
@@ -168,4 +170,162 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const GETSOCKOPT: SyscallNumber = SyscallNumber(209);
     const SHUTDOWN: SyscallNumber = SyscallNumber(210);
     const POLL: SyscallNumber = SyscallNumber(271);
+}
+
+const _: () = assert!(LinuxGeneric64::SELECT.raw() != LinuxGeneric64::DUP.raw());
+
+#[cfg(test)]
+mod tests {
+    use super::LinuxGeneric64;
+    use api_v0::syscall_number::SyscallNumberTable;
+
+    /// 号表中除 `DUP` 哨兵外，任意两项不得共用同一裸编号。
+    #[test]
+    fn dispatched_syscall_numbers_are_unique() {
+        let nums = [
+            LinuxGeneric64::READ,
+            LinuxGeneric64::READV,
+            LinuxGeneric64::WRITE,
+            LinuxGeneric64::WRITEV,
+            LinuxGeneric64::PREAD64,
+            LinuxGeneric64::PWRITE64,
+            LinuxGeneric64::PREADV,
+            LinuxGeneric64::PWRITEV,
+            LinuxGeneric64::SENDFILE,
+            LinuxGeneric64::PSELECT6,
+            LinuxGeneric64::PPOLL,
+            LinuxGeneric64::SELECT,
+            LinuxGeneric64::READLINKAT,
+            LinuxGeneric64::FACCESSAT,
+            LinuxGeneric64::FCHMODAT,
+            LinuxGeneric64::FCHOWNAT,
+            LinuxGeneric64::STATFS,
+            LinuxGeneric64::SYNC,
+            LinuxGeneric64::FSYNC,
+            LinuxGeneric64::FDATASYNC,
+            LinuxGeneric64::FTRUNCATE,
+            LinuxGeneric64::FALLOCATE,
+            LinuxGeneric64::OPENAT,
+            LinuxGeneric64::CLOSE,
+            LinuxGeneric64::FSTAT,
+            LinuxGeneric64::LSEEK,
+            LinuxGeneric64::DUP3,
+            LinuxGeneric64::PIPE2,
+            LinuxGeneric64::IOCTL,
+            LinuxGeneric64::FCNTL,
+            LinuxGeneric64::GETDENTS64,
+            LinuxGeneric64::MKDIRAT,
+            LinuxGeneric64::UNLINKAT,
+            LinuxGeneric64::RENAMEAT2,
+            LinuxGeneric64::UTIMENSAT,
+            LinuxGeneric64::MOUNT,
+            LinuxGeneric64::UMOUNT2,
+            LinuxGeneric64::EXIT,
+            LinuxGeneric64::EXIT_GROUP,
+            LinuxGeneric64::FORK,
+            LinuxGeneric64::CLONE3,
+            LinuxGeneric64::WAITPID,
+            LinuxGeneric64::KILL,
+            LinuxGeneric64::EXEC,
+            LinuxGeneric64::SCHED_SETPARAM,
+            LinuxGeneric64::SCHED_SETSCHEDULER,
+            LinuxGeneric64::SCHED_GETSCHEDULER,
+            LinuxGeneric64::SCHED_GETPARAM,
+            LinuxGeneric64::SCHED_SETAFFINITY,
+            LinuxGeneric64::SCHED_GETAFFINITY,
+            LinuxGeneric64::YIELD,
+            LinuxGeneric64::GET_TIME,
+            LinuxGeneric64::CLOCK_SETTIME,
+            LinuxGeneric64::CLOCK_GETTIME,
+            LinuxGeneric64::CLOCK_GETRES,
+            LinuxGeneric64::CLOCK_NANOSLEEP,
+            LinuxGeneric64::BRK,
+            LinuxGeneric64::MMAP,
+            LinuxGeneric64::MUNMAP,
+            LinuxGeneric64::MSYNC,
+            LinuxGeneric64::MPROTECT,
+            LinuxGeneric64::MREMAP,
+            LinuxGeneric64::MADVISE,
+            LinuxGeneric64::MLOCK,
+            LinuxGeneric64::MUNLOCK,
+            LinuxGeneric64::MLOCKALL,
+            LinuxGeneric64::MUNLOCKALL,
+            LinuxGeneric64::GET_MEMPOLICY,
+            LinuxGeneric64::SHMGET,
+            LinuxGeneric64::SHMCTL,
+            LinuxGeneric64::SHMAT,
+            LinuxGeneric64::SHMDT,
+            LinuxGeneric64::UNAME,
+            LinuxGeneric64::PRCTL,
+            LinuxGeneric64::GETPID,
+            LinuxGeneric64::GETPPID,
+            LinuxGeneric64::GETCWD,
+            LinuxGeneric64::CHDIR,
+            LinuxGeneric64::GETTID,
+            LinuxGeneric64::TIMES,
+            LinuxGeneric64::SETPGID,
+            LinuxGeneric64::GETUID,
+            LinuxGeneric64::GETEUID,
+            LinuxGeneric64::GETGID,
+            LinuxGeneric64::GETEGID,
+            LinuxGeneric64::SETSID,
+            LinuxGeneric64::GETGROUPS,
+            LinuxGeneric64::SYSINFO,
+            LinuxGeneric64::SETGID,
+            LinuxGeneric64::SETREGID,
+            LinuxGeneric64::SETREUID,
+            LinuxGeneric64::SETUID,
+            LinuxGeneric64::SETRESUID,
+            LinuxGeneric64::SETRESGID,
+            LinuxGeneric64::FUTEX,
+            LinuxGeneric64::RT_SIGACTION,
+            LinuxGeneric64::RT_SIGPROCMASK,
+            LinuxGeneric64::RT_SIGPENDING,
+            LinuxGeneric64::RT_SIGTIMEDWAIT,
+            LinuxGeneric64::RT_SIGSUSPEND,
+            LinuxGeneric64::RT_SIGRETURN,
+            LinuxGeneric64::TKILL,
+            LinuxGeneric64::TGKILL,
+            LinuxGeneric64::SET_TID_ADDRESS,
+            LinuxGeneric64::SET_ROBUST_LIST,
+            LinuxGeneric64::GET_ROBUST_LIST,
+            LinuxGeneric64::GETRANDOM,
+            LinuxGeneric64::GETITIMER,
+            LinuxGeneric64::SETITIMER,
+            LinuxGeneric64::GETRLIMIT,
+            LinuxGeneric64::GETRUSAGE,
+            LinuxGeneric64::SETRLIMIT,
+            LinuxGeneric64::UMASK,
+            LinuxGeneric64::PRLIMIT64,
+            LinuxGeneric64::NANOSLEEP,
+            LinuxGeneric64::SYSLOG,
+            LinuxGeneric64::SOCKET,
+            LinuxGeneric64::SOCKETPAIR,
+            LinuxGeneric64::BIND,
+            LinuxGeneric64::LISTEN,
+            LinuxGeneric64::ACCEPT,
+            LinuxGeneric64::ACCEPT4,
+            LinuxGeneric64::CONNECT,
+            LinuxGeneric64::GETSOCKNAME,
+            LinuxGeneric64::GETPEERNAME,
+            LinuxGeneric64::SENDTO,
+            LinuxGeneric64::RECVFROM,
+            LinuxGeneric64::SENDMSG,
+            LinuxGeneric64::RECVMSG,
+            LinuxGeneric64::SETSOCKOPT,
+            LinuxGeneric64::GETSOCKOPT,
+            LinuxGeneric64::SHUTDOWN,
+            LinuxGeneric64::POLL,
+        ]
+        .map(|n| n.raw());
+
+        for (i, left) in nums.iter().enumerate() {
+            for (j, right) in nums.iter().enumerate().skip(i + 1) {
+                assert_ne!(
+                    left, right,
+                    "syscall number collision: index {i} and {j} both use {left}"
+                );
+            }
+        }
+    }
 }
