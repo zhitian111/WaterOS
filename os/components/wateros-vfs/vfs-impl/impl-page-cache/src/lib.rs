@@ -246,8 +246,21 @@ impl GlobalFilePageCache {
         }
 
         let page_off = page_idx * FILE_PAGE_SIZE as u64;
+        let mut page_buf = vec![0u8; FILE_PAGE_SIZE];
+        if page_off < file_size {
+            let to_read = FILE_PAGE_SIZE.min(
+                usize::try_from(file_size.saturating_sub(page_off)).unwrap_or(0),
+            );
+            if to_read > 0 {
+                let n = io.read_range(path, page_off, &mut page_buf[..to_read])
+                          .map_err(map_err)?;
+                if n < to_read {
+                    page_buf[n..to_read].fill(0);
+                }
+            }
+        }
 
-        // 第一次快速路径检查：已缓存则直接返回
+        // 第二次检查：锁外读盘期间可能已有其他路径装入该页。
         let mut cache = self.state.lock();
         if cache.capacity == 0 {
             return Ok(());
@@ -260,7 +273,8 @@ impl GlobalFilePageCache {
         }
 
         let idx = cache.pop_free_or_lru_index();
-        if cache.frames[idx].dirty {
+        let evicting_dirty = cache.frames[idx].dirty;
+        if evicting_dirty {
             // 持锁复制脏数据并清除标记，然后释放锁执行 I/O
             let saved_key = cache.frames[idx].key
                                              .clone();
@@ -275,34 +289,19 @@ impl GlobalFilePageCache {
                                        &saved_data[..FILE_PAGE_SIZE]);
             }
             cache = self.state.lock();
+            if let Some(old) = saved_key {
+                cache.index
+                     .remove(&old);
+            }
         } else if let Some(old) = cache.frames[idx].key
                                                    .take()
         {
-            // 非脏帧：直接移除旧索引，不在 lru 中（刚 pop 出来），无需扫 lru
             cache.index
                  .remove(&old);
         }
 
-        // 直接读取数据到帧的 data buffer 中，避免中间 page_buf 分配和 copy_from_slice
-        let slot_data = &mut cache.frames[idx].data;
-        if page_off < file_size {
-            let to_read = FILE_PAGE_SIZE.min(
-                usize::try_from(file_size.saturating_sub(page_off)).unwrap_or(0),
-            );
-            if to_read > 0 {
-                let n = io.read_range(path,
-                                      page_off,
-                                      &mut slot_data[..to_read])
-                          .map_err(map_err)?;
-                if n < to_read {
-                    slot_data[n..to_read].fill(0);
-                }
-            } else {
-                slot_data.fill(0);
-            }
-        } else {
-            slot_data.fill(0);
-        }
+        cache.frames[idx].data
+                         .copy_from_slice(&page_buf);
         cache.frames[idx].dirty = false;
         cache.frames[idx].key = Some((key.clone(), page_idx));
         cache.index
@@ -454,6 +453,7 @@ impl GlobalFilePageCache {
         if buf.is_empty() {
             return Ok(0);
         }
+
         let entry = self.get_file_entry(path, file_size);
         let mut guard = entry.write();
         let mut pos = offset;
@@ -462,12 +462,15 @@ impl GlobalFilePageCache {
             let page_idx = pos / FILE_PAGE_SIZE as u64;
             let page_off = (pos % FILE_PAGE_SIZE as u64) as usize;
             let chunk = (FILE_PAGE_SIZE - page_off).min(buf.len() - written);
-            let hint_size = guard.logical_size
-                                 .max(pos + chunk as u64);
-            if page_off == 0 && chunk == FILE_PAGE_SIZE {
+            let page_start = page_idx * FILE_PAGE_SIZE as u64;
+            if page_start >= guard.logical_size || (page_off == 0 && chunk == FILE_PAGE_SIZE) {
                 self.install_zero_page(io, path, page_idx, map_err)?;
             } else {
-                self.install_page(io, path, page_idx, hint_size, map_err)?;
+                self.install_page(io,
+                                  path,
+                                  page_idx,
+                                  guard.logical_size,
+                                  map_err)?;
             }
             {
                 let mut cache = self.state.lock();
@@ -531,6 +534,7 @@ impl GlobalFilePageCache {
                                     .keys()
                                     .copied()
                                     .collect();
+
         let mut run = Vec::new();
         for page_idx in dirty {
             let should_flush = run.last()
@@ -722,6 +726,28 @@ mod tests {
         assert_eq!(io.reads.get(), 0);
 
         cache.flush(&mut io, "/tmp/full-page", |e| e)
+             .unwrap();
+        assert_eq!(io.writes, 1);
+        assert_eq!(io.data, payload);
+    }
+
+    #[test]
+    fn partial_write_to_fresh_page_does_not_read_before_overwrite() {
+        let cache = GlobalFilePageCache::new(7);
+        let mut io = CountingIo::new();
+        let payload = vec![0x42u8; FILE_PAGE_SIZE / 4];
+
+        let n = cache.write(&mut io,
+                            "/tmp/partial-append",
+                            0,
+                            0,
+                            &payload,
+                            |e| e)
+                     .unwrap();
+        assert_eq!(n, payload.len());
+        assert_eq!(io.reads.get(), 0);
+
+        cache.flush(&mut io, "/tmp/partial-append", |e| e)
              .unwrap();
         assert_eq!(io.writes, 1);
         assert_eq!(io.data, payload);

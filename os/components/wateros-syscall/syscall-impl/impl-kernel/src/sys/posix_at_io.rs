@@ -4,23 +4,23 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
+use crate::user_copy::{copy_from_user, copy_from_user_struct, copy_to_user};
+use crate::vfs_util::vfs_io_at_error_to_errno;
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
-use crate::user_copy::{copy_from_user, copy_from_user_struct, copy_to_user};
-use crate::vfs_util::vfs_io_at_error_to_errno;
 
-const MAX_IO: usize = 4 * 1024 * 1024;
-const IO_CHUNK: usize = 64 * 1024;
+const MAX_IO : usize = 4 * 1024 * 1024;
+const IO_CHUNK : usize = 64 * 1024;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct UserIoVec {
-    base: usize,
-    len:  usize,
+    base : usize,
+    len : usize,
 }
 
-fn offset_from_arg(raw: usize) -> Result<u64, ErrNo> {
+fn offset_from_arg(raw : usize) -> Result<u64, ErrNo> {
     let off = raw as i64;
     if off < 0 {
         return Err(ErrNo::EINVAL);
@@ -28,7 +28,7 @@ fn offset_from_arg(raw: usize) -> Result<u64, ErrNo> {
     Ok(off as u64)
 }
 
-fn gather_user_iovecs(iov_ptr: usize, iovcnt: usize) -> Result<Vec<u8>, ErrNo> {
+fn gather_user_iovecs(iov_ptr : usize, iovcnt : usize) -> Result<Vec<u8>, ErrNo> {
     if iovcnt == 0 {
         return Ok(Vec::new());
     }
@@ -49,10 +49,9 @@ fn gather_user_iovecs(iov_ptr: usize, iovcnt: usize) -> Result<Vec<u8>, ErrNo> {
         if iov.base == 0 {
             return Err(ErrNo::EFAULT);
         }
-        let new_len = out
-            .len()
-            .checked_add(iov.len)
-            .ok_or(ErrNo::EINVAL)?;
+        let new_len = out.len()
+                         .checked_add(iov.len)
+                         .ok_or(ErrNo::EINVAL)?;
         if new_len > MAX_IO {
             return Err(ErrNo::EINVAL);
         }
@@ -66,7 +65,7 @@ fn gather_user_iovecs(iov_ptr: usize, iovcnt: usize) -> Result<Vec<u8>, ErrNo> {
     Ok(out)
 }
 
-fn scatter_to_user_iovecs(iov_ptr: usize, iovcnt: usize, data: &[u8]) -> Result<usize, ErrNo> {
+fn scatter_to_user_iovecs(iov_ptr : usize, iovcnt : usize, data : &[u8]) -> Result<usize, ErrNo> {
     if data.is_empty() {
         return Ok(0);
     }
@@ -91,7 +90,8 @@ fn scatter_to_user_iovecs(iov_ptr: usize, iovcnt: usize, data: &[u8]) -> Result<
         if iov.base == 0 {
             return Err(ErrNo::EFAULT);
         }
-        let n = iov.len.min(data.len() - src_off);
+        let n = iov.len
+                   .min(data.len() - src_off);
         copy_to_user(iov.base, &data[src_off..src_off + n])?;
         src_off += n;
         written += n;
@@ -99,7 +99,7 @@ fn scatter_to_user_iovecs(iov_ptr: usize, iovcnt: usize, data: &[u8]) -> Result<
     Ok(written)
 }
 
-fn total_iov_len(iov_ptr: usize, iovcnt: usize) -> Result<usize, ErrNo> {
+fn total_iov_len(iov_ptr : usize, iovcnt : usize) -> Result<usize, ErrNo> {
     if iovcnt == 0 {
         return Ok(0);
     }
@@ -113,9 +113,8 @@ fn total_iov_len(iov_ptr: usize, iovcnt: usize) -> Result<usize, ErrNo> {
     let mut total = 0usize;
     for i in 0..iovcnt {
         let iov = copy_from_user_struct::<UserIoVec>(iov_ptr + i * iov_size)?;
-        total = total
-            .checked_add(iov.len)
-            .ok_or(ErrNo::EINVAL)?;
+        total = total.checked_add(iov.len)
+                     .ok_or(ErrNo::EINVAL)?;
         if total > MAX_IO {
             return Err(ErrNo::EINVAL);
         }
@@ -123,7 +122,7 @@ fn total_iov_len(iov_ptr: usize, iovcnt: usize) -> Result<usize, ErrNo> {
     Ok(total)
 }
 
-pub(crate) fn sys_pread64(args: SyscallArgs) -> UserRet {
+pub(crate) fn sys_pread64(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let ptr = args.arg(1);
     let len = args.arg(2);
@@ -143,7 +142,9 @@ pub(crate) fn sys_pread64(args: SyscallArgs) -> UserRet {
 
     let mut kbuf = Vec::with_capacity(len);
     kbuf.resize(len, 0);
-    let n = match vfs::fd::with_current_io(fd, |handle| handle.read_at(offset, &mut kbuf)) {
+    let n = match vfs::fd::with_current_io(fd, |handle| {
+              handle.read_at(offset, &mut kbuf)
+          }) {
         Ok(n) => n,
         Err(err) => return UserRet::from_error(vfs_io_at_error_to_errno(err)),
     };
@@ -156,7 +157,7 @@ pub(crate) fn sys_pread64(args: SyscallArgs) -> UserRet {
     }
 }
 
-pub(crate) fn sys_pwrite64(args: SyscallArgs) -> UserRet {
+pub(crate) fn sys_pwrite64(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let ptr = args.arg(1);
     let len = args.arg(2);
@@ -180,13 +181,15 @@ pub(crate) fn sys_pwrite64(args: SyscallArgs) -> UserRet {
         Ok(n) if n == len => {}
         _ => return UserRet::from_error(ErrNo::EFAULT),
     }
-    match vfs::fd::with_current_io(fd, |handle| handle.write_at(offset, &kbuf)) {
+    match vfs::fd::with_current_io(fd, |handle| {
+              handle.write_at(offset, &kbuf)
+          }) {
         Ok(n) => UserRet::from_success(n),
         Err(err) => UserRet::from_error(vfs_io_at_error_to_errno(err)),
     }
 }
 
-pub(crate) fn sys_preadv(args: SyscallArgs) -> UserRet {
+pub(crate) fn sys_preadv(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let iov_ptr = args.arg(1);
     let iovcnt = args.arg(2);
@@ -202,6 +205,10 @@ pub(crate) fn sys_preadv(args: SyscallArgs) -> UserRet {
         Err(e) => return UserRet::from_error(e),
     };
 
+    log::info!("[sys_preadv] fd={} want={} offset={}",
+               fd,
+               want,
+               offset);
     let mut file_off = offset;
     let mut gathered = Vec::new();
     let mut remaining = want;
@@ -209,7 +216,9 @@ pub(crate) fn sys_preadv(args: SyscallArgs) -> UserRet {
         let chunk = remaining.min(IO_CHUNK);
         let mut kbuf = Vec::new();
         kbuf.resize(chunk, 0);
-        let n = match vfs::fd::with_current_io(fd, |handle| handle.read_at(file_off, &mut kbuf)) {
+        let n = match vfs::fd::with_current_io(fd, |handle| {
+                  handle.read_at(file_off, &mut kbuf)
+              }) {
             Ok(n) => n,
             Err(err) => return UserRet::from_error(vfs_io_at_error_to_errno(err)),
         };
@@ -228,10 +237,14 @@ pub(crate) fn sys_preadv(args: SyscallArgs) -> UserRet {
         Ok(n) => n,
         Err(e) => return UserRet::from_error(e),
     };
+    log::info!("[sys_preadv] fd={} ret={}/{}",
+               fd,
+               scattered,
+               want);
     UserRet::from_success(scattered)
 }
 
-pub(crate) fn sys_pwritev(args: SyscallArgs) -> UserRet {
+pub(crate) fn sys_pwritev(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let iov_ptr = args.arg(1);
     let iovcnt = args.arg(2);
@@ -247,7 +260,9 @@ pub(crate) fn sys_pwritev(args: SyscallArgs) -> UserRet {
     if data.is_empty() {
         return UserRet::from_success(0);
     }
-    match vfs::fd::with_current_io(fd, |handle| handle.write_at(offset, &data)) {
+    match vfs::fd::with_current_io(fd, |handle| {
+              handle.write_at(offset, &data)
+          }) {
         Ok(n) => UserRet::from_success(n),
         Err(err) => UserRet::from_error(vfs_io_at_error_to_errno(err)),
     }

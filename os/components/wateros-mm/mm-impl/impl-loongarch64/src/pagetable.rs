@@ -171,6 +171,7 @@ impl LoongArch64Pte {
 
 const LOONGARCH64_LEVELS : usize = 3;
 const LOONGARCH64_ENTRIES : usize = 512;
+const VPN_INDEX_BITS : usize = 9;
 pub(crate) const USER_VA_LIMIT : usize = 0x0000_0080_0000_0000;
 const KERNEL_IDENTITY_BASE : usize = 0x9000_0000;
 
@@ -231,6 +232,7 @@ pub struct LoongArch64AddressSpace {
     pub(crate) user_stack_bottom : VirtAddr,
     pub(crate) user_stack_top : VirtAddr,
     pub(crate) lazy_file_vmas : Vec<LazyFileVma>,
+    pub(crate) shared_anon_vmas : Vec<SharedAnonVma>,
 }
 
 pub(crate) struct LazyFileVma {
@@ -259,6 +261,20 @@ impl LazyFileVma {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct SharedAnonVma {
+    pub start : VirtAddr,
+    pub end : VirtAddr,
+}
+
+impl SharedAnonVma {
+    fn contains_page(&self, page : VirtAddr) -> bool { page.0 >= self.start.0 && page.0 < self.end.0 }
+
+    fn overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
+        start.0 < self.end.0 && end.0 > self.start.0
+    }
+}
+
 impl LoongArch64AddressSpace {
     /// 分配并清零根页表帧；依赖帧分配器与 [`table_mut`] 的物理访问假设。
     pub(crate) fn new() -> MmResult<Self> {
@@ -272,7 +288,8 @@ impl LoongArch64AddressSpace {
                   mmap_base : VirtAddr(0),
                   user_stack_bottom : VirtAddr(0),
                   user_stack_top : VirtAddr(0),
-                  lazy_file_vmas : Vec::new() })
+                  lazy_file_vmas : Vec::new(),
+                  shared_anon_vmas : Vec::new() })
     }
 
     /// ELF 装载完成后初始化用户堆与匿名映射区游标（须在泄漏页表对象前调用一次）。
@@ -324,6 +341,34 @@ impl LoongArch64AddressSpace {
                            .any(|vma| vma.overlaps(start, end))
     }
 
+    pub(crate) fn shared_anon_vma_overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
+        self.shared_anon_vmas.iter()
+                             .any(|vma| vma.overlaps(start, end))
+    }
+
+    pub(crate) fn register_shared_anon_vma(&mut self, start : VirtAddr, end : VirtAddr) {
+        self.shared_anon_vmas.push(SharedAnonVma { start, end });
+    }
+
+    pub(crate) fn remove_shared_anon_vmas(&mut self, start : VirtAddr, end : VirtAddr) {
+        let mut next = Vec::new();
+        for vma in self.shared_anon_vmas.drain(..) {
+            if !vma.overlaps(start, end) {
+                next.push(vma);
+                continue;
+            }
+            if start.0 > vma.start.0 {
+                next.push(SharedAnonVma { start : vma.start,
+                                          end : start });
+            }
+            if end.0 < vma.end.0 {
+                next.push(SharedAnonVma { start : end,
+                                          end : vma.end });
+            }
+        }
+        self.shared_anon_vmas = next;
+    }
+
     pub(crate) fn find_free_mmap_base_considering_vmas(&self,
                                                        cursor : VirtAddr,
                                                        len : usize)
@@ -352,7 +397,8 @@ impl LoongArch64AddressSpace {
             if end.0 <= USER_VA_LIMIT &&
                !self.range_overlaps_stack(base, end) &&
                !self.range_overlaps_kernel_reserved(base, end) &&
-               !self.lazy_vma_overlaps(base, end)
+               !self.lazy_vma_overlaps(base, end) &&
+               !self.shared_anon_vma_overlaps(base, end)
             {
                 let mut free = true;
                 for i in 0..n_pages {
@@ -528,7 +574,13 @@ impl LoongArch64AddressSpace {
                     self.root.0);
         let child_root = alloc_table_frame_zeroed()?;
         // SAFETY: 刚分配并清零的帧作为子地址空间根页表。
-        if let Err(err) = unsafe { fork_table(self.root, child_root, LOONGARCH64_LEVELS - 1) } {
+        if let Err(err) = unsafe {
+            fork_table(self.root,
+                       child_root,
+                       LOONGARCH64_LEVELS - 1,
+                       0,
+                       &self.shared_anon_vmas)
+        } {
             unsafe {
                 destroy_table(child_root, LOONGARCH64_LEVELS - 1);
             }
@@ -548,7 +600,8 @@ impl LoongArch64AddressSpace {
                               user_stack_top : self.user_stack_top,
                               lazy_file_vmas : self.lazy_file_vmas.iter()
                                                                          .map(LazyFileVma::duplicate)
-                                                                         .collect::<MmResult<Vec<_>>>()? })
+                                                                         .collect::<MmResult<Vec<_>>>()?,
+                              shared_anon_vmas : self.shared_anon_vmas.clone() })
     }
 
     fn handle_cow_page(&mut self, vpn : VirtPageNum) -> MmResult<bool> {
@@ -737,7 +790,9 @@ unsafe fn subtree_has_user_mapping(ppn : PhysPageNum, level : usize) -> bool {
 /// 为当前层级：2=根（VPN[2]），1=中间（VPN[1]），0=叶子（VPN[0]）。
 unsafe fn fork_table(parent_ppn : PhysPageNum,
                      child_ppn : PhysPageNum,
-                     level : usize)
+                     level : usize,
+                     vpn_prefix : usize,
+                     shared_anon_vmas : &[SharedAnonVma])
                      -> MmResult<()> {
     let parent_table = unsafe { table_mut(parent_ppn) };
     let child_table = unsafe { table_mut(child_ppn) };
@@ -754,7 +809,12 @@ unsafe fn fork_table(parent_ppn : PhysPageNum,
             let perm = flags.to_page_perm();
             if perm.user() {
                 frame_inc_ref(ppn).map_err(MmError::from)?;
-                let child_flags = if flags.writable() {
+                let page = VirtPageNum(vpn_prefix | (i << (level * VPN_INDEX_BITS))).start_addr();
+                let is_shared_anon = shared_anon_vmas.iter()
+                                                     .any(|vma| vma.contains_page(page));
+                let child_flags = if is_shared_anon {
+                    flags
+                } else if flags.writable() {
                     let cow_flags = flags.prepare_cow();
                     parent_table[i].set(ppn, cow_flags);
                     cow_flags
@@ -766,12 +826,15 @@ unsafe fn fork_table(parent_ppn : PhysPageNum,
                 child_table[i].set(ppn, flags);
             }
         } else if level > 0 {
+            let child_prefix = vpn_prefix | (i << (level * VPN_INDEX_BITS));
             if !unsafe { subtree_has_user_mapping(ppn, level - 1) } {
                 child_table[i].set_table(ppn);
                 continue;
             }
             let child_sub = alloc_table_frame_zeroed()?;
-            if let Err(err) = unsafe { fork_table(ppn, child_sub, level - 1) } {
+            if let Err(err) =
+                unsafe { fork_table(ppn, child_sub, level - 1, child_prefix, shared_anon_vmas) }
+            {
                 unsafe {
                     destroy_table(child_sub, level - 1);
                 }
