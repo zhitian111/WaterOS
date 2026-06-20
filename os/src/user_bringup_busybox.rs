@@ -20,10 +20,10 @@ const SCRIPT_PATHS : &[&str] = &[//"/glibc/basic_testcode.sh",      // done
                                  //"/musl/lmbench_testcode.sh",
                                  //"/glibc/unixbench_testcode.sh",
                                  //"/musl/unixbench_testcode.sh",
-                                 //"/glibc/libcbench_testcode.sh",
+                                 "/glibc/libcbench_testcode.sh",
                                  //"/musl/libcbench_testcode.sh",
-                                 "/glibc/iozone_testcode.sh",
-                                 "/musl/iozone_testcode.sh",
+                                 //"/glibc/iozone_testcode.sh",
+                                 //"/musl/iozone_testcode.sh",
                                  // --- P6 LTP ---
                                  //"/glibc/ltp_testcode.sh",
                                  //"/musl/ltp_testcode.sh"
