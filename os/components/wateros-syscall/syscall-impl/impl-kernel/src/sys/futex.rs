@@ -3,7 +3,7 @@
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
-use ipc::futex::{FutexKey, FutexHub, KernelFutexOps};
+use ipc::futex::{FutexHub, FutexKey, KernelFutexOps};
 use platform::wall_clock;
 use task::TaskTick;
 
@@ -14,25 +14,25 @@ use super::robust::futex_error_to_errno;
 
 // ── futex 操作码 ──────────────────────────────────────────────────
 
-const FUTEX_WAIT: u32 = 0;
-const FUTEX_WAKE: u32 = 1;
-const FUTEX_WAIT_BITSET: u32 = 9;
-const FUTEX_WAKE_BITSET: u32 = 10;
-const FUTEX_REQUEUE: u32 = 3;
-const FUTEX_CMP_REQUEUE: u32 = 4;
-const FUTEX_CLOCK_REALTIME: u32 = 256;
+const FUTEX_WAIT : u32 = 0;
+const FUTEX_WAKE : u32 = 1;
+const FUTEX_WAIT_BITSET : u32 = 9;
+const FUTEX_WAKE_BITSET : u32 = 10;
+const FUTEX_REQUEUE : u32 = 3;
+const FUTEX_CMP_REQUEUE : u32 = 4;
+const FUTEX_CLOCK_REALTIME : u32 = 256;
 
-const FUTEX_CMD_MASK: u32 = !(ipc::futex::FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME);
+const FUTEX_CMD_MASK : u32 = !(ipc::futex::FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME);
 
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct UserTimespec {
-    sec: isize,
-    nsec: isize,
+    sec : isize,
+    nsec : isize,
 }
 
-fn read_user_u32(uaddr: usize) -> Result<u32, ErrNo> {
-    let mut val: u32 = 0;
+fn read_user_u32(uaddr : usize) -> Result<u32, ErrNo> {
+    let mut val : u32 = 0;
     let buf = unsafe { core::slice::from_raw_parts_mut((&raw mut val) as *mut u8, 4) };
     if copy_from_user(buf, uaddr)? != 4 {
         return Err(ErrNo::EFAULT);
@@ -40,14 +40,14 @@ fn read_user_u32(uaddr: usize) -> Result<u32, ErrNo> {
     Ok(val)
 }
 
-fn timespec_to_ns(ts: UserTimespec) -> Result<u128, ErrNo> {
+fn timespec_to_ns(ts : UserTimespec) -> Result<u128, ErrNo> {
     if ts.sec < 0 || ts.nsec < 0 || ts.nsec >= 1_000_000_000 {
         return Err(ErrNo::EINVAL);
     }
     Ok((ts.sec as u128) * 1_000_000_000 + ts.nsec as u128)
 }
 
-fn parse_futex_timeout(timeout_ptr: usize, futex_op: u32) -> Result<Option<TaskTick>, ErrNo> {
+fn parse_futex_timeout(timeout_ptr : usize, futex_op : u32) -> Result<Option<TaskTick>, ErrNo> {
     if timeout_ptr == 0 {
         return Ok(None);
     }
@@ -69,13 +69,12 @@ fn parse_futex_timeout(timeout_ptr: usize, futex_op: u32) -> Result<Option<TaskT
     Ok(Some(ticks))
 }
 
-fn futex_wait(
-    uaddr: usize,
-    val: u32,
-    bitset: u32,
-    futex_op: u32,
-    timeout_ptr: usize,
-) -> Result<usize, ErrNo> {
+fn futex_wait(uaddr : usize,
+              val : u32,
+              bitset : u32,
+              futex_op : u32,
+              timeout_ptr : usize)
+              -> Result<usize, ErrNo> {
     let _ = bitset;
 
     let cur = read_user_u32(uaddr)?;
@@ -96,7 +95,7 @@ fn futex_wait(
     Ok(0)
 }
 
-fn futex_wake(uaddr: usize, max_wake: u32, bitset: u32, futex_op: u32) -> Result<usize, ErrNo> {
+fn futex_wake(uaddr : usize, max_wake : u32, bitset : u32, futex_op : u32) -> Result<usize, ErrNo> {
     let _ = bitset;
     let key = FutexKey::from_syscall(uaddr, futex_op);
     FutexHub::global()
@@ -104,13 +103,12 @@ fn futex_wake(uaddr: usize, max_wake: u32, bitset: u32, futex_op: u32) -> Result
         .map_err(futex_error_to_errno)
 }
 
-fn futex_requeue(
-    uaddr: usize,
-    wake_count: u32,
-    requeue_count: u32,
-    uaddr2: usize,
-    futex_op: u32,
-) -> Result<usize, ErrNo> {
+fn futex_requeue(uaddr : usize,
+                 wake_count : u32,
+                 requeue_count : u32,
+                 uaddr2 : usize,
+                 futex_op : u32)
+                 -> Result<usize, ErrNo> {
     let from_key = FutexKey::from_syscall(uaddr, futex_op);
     let to_key = FutexKey::from_syscall(uaddr2, futex_op);
     FutexHub::global()
@@ -118,14 +116,20 @@ fn futex_requeue(
         .map_err(futex_error_to_errno)
 }
 
-pub(crate) fn wake_user_addr(uaddr: usize) -> usize {
-    let key = FutexKey::from_uaddr(uaddr);
-    FutexHub::global()
-        .wake_all(key)
-        .unwrap_or(0)
+pub(crate) fn wake_user_addr(uaddr : usize) -> usize {
+    // clear_child_tid 的 wake 需要同时尝试 private 和 shared 两种 key，
+    // 因为等待者可能用任一种 flag（glibc 可能用 FUTEX_WAIT_BITSET 不带 PRIVATE 标志）
+    let hub = FutexHub::global();
+    let n1 = hub.wake_all(FutexKey { uaddr,
+                                     is_private : true })
+                .unwrap_or(0);
+    let n2 = hub.wake_all(FutexKey { uaddr,
+                                     is_private : false })
+                .unwrap_or(0);
+    n1 + n2
 }
 
-pub(crate) fn sys_futex(args: SyscallArgs) -> UserRet {
+pub(crate) fn sys_futex(args : SyscallArgs) -> UserRet {
     let futex_op = args.arg(1) as u32;
     let uaddr = args.arg(0);
     let val = args.arg(2) as u32;
@@ -140,9 +144,16 @@ pub(crate) fn sys_futex(args: SyscallArgs) -> UserRet {
         FUTEX_WAIT_BITSET => futex_wait(uaddr, val, val3, futex_op, timeout_ptr),
         FUTEX_WAKE => futex_wake(uaddr, val, 0, futex_op),
         FUTEX_WAKE_BITSET => futex_wake(uaddr, val, val3, futex_op),
-        FUTEX_REQUEUE => futex_requeue(uaddr, val, timeout_ptr as u32, uaddr2, futex_op),
+        FUTEX_REQUEUE => futex_requeue(uaddr,
+                                       val,
+                                       timeout_ptr as u32,
+                                       uaddr2,
+                                       futex_op),
         FUTEX_CMP_REQUEUE => match read_user_u32(uaddr) {
-            Ok(cur) if cur == val3 => futex_requeue(uaddr, val, timeout_ptr as u32, uaddr2,
+            Ok(cur) if cur == val3 => futex_requeue(uaddr,
+                                                    val,
+                                                    timeout_ptr as u32,
+                                                    uaddr2,
                                                     futex_op),
             Ok(_) => Err(ErrNo::EAGAIN),
             Err(e) => Err(e),

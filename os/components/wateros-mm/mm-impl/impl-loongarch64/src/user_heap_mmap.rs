@@ -148,11 +148,12 @@ impl LoongArch64AddressSpace {
                                                                          allocator : &mut A,
                                                                          req : MmapRequest)
                                                                          -> MmResult<VirtAddr> {
-        if !req.flags
-               .contains(MapFlags::ANONYMOUS) ||
-           !req.flags
-               .contains(MapFlags::PRIVATE)
-        {
+        if !req.flags.contains(MapFlags::ANONYMOUS) {
+            return Err(MmError::InvalidAddress);
+        }
+        let shared = req.flags.contains(MapFlags::SHARED);
+        let private = req.flags.contains(MapFlags::PRIVATE);
+        if !shared && !private {
             return Err(MmError::InvalidAddress);
         }
         let base = match req.addr_hint {
@@ -172,8 +173,13 @@ impl LoongArch64AddressSpace {
               .contains(MapFlags::FIXED)
         {
             self.unmap_range_with_alloc(allocator, base, end)?;
+            self.remove_lazy_file_vmas(base, end)?;
+            self.remove_shared_anon_vmas(base, end);
         }
         map_zeroed_range_with_alloc(self, allocator, base, end, perm)?;
+        if shared {
+            self.register_shared_anon_vma(base, end);
+        }
         if req.addr_hint
               .is_none()
         {
@@ -417,6 +423,10 @@ impl MmapOps for LoongArch64AddressSpace {
                                        .start_addr(),
                                    end.ceil_page()
                                       .start_addr())?;
+        self.remove_shared_anon_vmas(addr.floor_page()
+                                         .start_addr(),
+                                     end.ceil_page()
+                                        .start_addr());
         fence_user_ptes();
         Ok(())
     }

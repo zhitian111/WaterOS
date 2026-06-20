@@ -103,9 +103,17 @@ impl PagedFileHandle {
         let mut rw = mount_rw_session()?;
         let mut io = FsPageIo { rw : Some(&mut rw) };
         let cache = global_cache(self.mount_gen);
-        cache.flush(&mut io,
-                    self.path.as_str(),
-                    core::convert::identity)
+        match cache.flush(&mut io,
+                          self.path.as_str(),
+                          core::convert::identity)
+        {
+            Ok(()) => Ok(()),
+            Err(VfsError::NotFound) => {
+                self.detached = true;
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
     }
 
     fn current_size(&self) -> u64 {
@@ -266,16 +274,8 @@ impl VfsIoHandle for PagedFileHandle {
     }
 
     fn close(&mut self) -> VfsResult<()> {
-        // 将脏页刷回磁盘（不 purge files 条目，后续 open 可复用）
-        if self.writable {
-            let mut rw = mount_rw_session()?;
-            let mut io = FsPageIo { rw : Some(&mut rw) };
-            let cache = global_cache(self.mount_gen);
-            let _ = cache.flush(&mut io,
-                                self.path.as_str(),
-                                core::convert::identity);
-        }
-        Ok(())
+        // 将脏页刷回磁盘（不 purge files 条目，后续 open 可复用）。
+        self.sync_dirty()
     }
 
     fn metadata(&self) -> VfsResult<VfsMetadata> {
@@ -318,7 +318,7 @@ impl VfsIoHandle for PagedFileHandle {
         Ok(new_off)
     }
 
-    fn flush(&mut self) -> VfsResult<()> { Ok(()) }
+    fn flush(&mut self) -> VfsResult<()> { self.sync_dirty() }
 
     fn truncate(&mut self, len : u64) -> VfsResult<()> {
         if !self.writable {

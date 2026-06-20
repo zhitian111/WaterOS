@@ -128,7 +128,7 @@ fn reserve_attach_va(
     } else {
         return Err(ErrNo::EINVAL);
     };
-    let mut map_flags = MapFlags::ANONYMOUS | MapFlags::PRIVATE;
+    let mut map_flags = MapFlags::ANONYMOUS | MapFlags::SHARED;
     if addr.is_some() {
         map_flags |= MapFlags::FIXED;
     }

@@ -6,35 +6,32 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use crate::mount_table::{resolve_route, FsRoute};
+use crate::{replace_file_contents, FsBridge};
 use api_v0::{
     SingleRootReadView, VfsError, VfsIoHandle, VfsMetadata, VfsNodeType, VfsOpenFlags, VfsResult,
     VfsSeekWhence,
 };
-use crate::mount_table::{resolve_route, FsRoute};
-use crate::{replace_file_contents, FsBridge};
 
 /// 已打开的根卷普通文件（小文件：全文缓冲于内存）。
 #[derive(Clone)]
 pub struct BufferedFileHandle {
-    path: String,
-    data: Vec<u8>,
-    offset: u64,
-    meta: VfsMetadata,
-    writable: bool,
-    dirty: bool,
+    path : String,
+    data : Vec<u8>,
+    offset : u64,
+    meta : VfsMetadata,
+    writable : bool,
+    dirty : bool,
 }
 
 /// 与历史命名兼容的别名。
 pub type RootFileHandle = BufferedFileHandle;
 
 impl BufferedFileHandle {
-    pub(crate) fn open(
-        bridge: &FsBridge,
-        path: String,
-        flags: VfsOpenFlags,
-    ) -> VfsResult<Self> {
-        let want_read = flags.contains(VfsOpenFlags::READ)
-            || (!flags.contains(VfsOpenFlags::WRITE) && !flags.contains(VfsOpenFlags::CREATE));
+    pub(crate) fn open(bridge : &FsBridge, path : String, flags : VfsOpenFlags) -> VfsResult<Self> {
+        let want_read = flags.contains(VfsOpenFlags::READ) ||
+                        (!flags.contains(VfsOpenFlags::WRITE) &&
+                         !flags.contains(VfsOpenFlags::CREATE));
         let want_write = flags.contains(VfsOpenFlags::WRITE);
         if !want_read && !want_write {
             return Err(VfsError::Unsupported);
@@ -77,21 +74,18 @@ impl BufferedFileHandle {
         let mut meta = meta;
         meta.size = data.len() as u64;
 
-        Ok(Self {
-            path,
-            data,
-            offset,
-            meta,
-            writable: want_write,
-            dirty,
-        })
+        Ok(Self { path,
+                  data,
+                  offset,
+                  meta,
+                  writable : want_write,
+                  dirty })
     }
 
-    pub(crate) fn open_boxed(
-        bridge: &FsBridge,
-        path: String,
-        flags: VfsOpenFlags,
-    ) -> VfsResult<Box<dyn VfsIoHandle>> {
+    pub(crate) fn open_boxed(bridge : &FsBridge,
+                             path : String,
+                             flags : VfsOpenFlags)
+                             -> VfsResult<Box<dyn VfsIoHandle>> {
         Ok(Box::new(Self::open(bridge, path, flags)?))
     }
 
@@ -111,7 +105,7 @@ impl BufferedFileHandle {
 }
 
 impl VfsIoHandle for BufferedFileHandle {
-    fn read(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
+    fn read(&mut self, buf : &mut [u8]) -> VfsResult<usize> {
         if buf.is_empty() {
             return Ok(0);
         }
@@ -119,16 +113,16 @@ impl VfsIoHandle for BufferedFileHandle {
         if off >= self.data.len() {
             return Ok(0);
         }
-        let n = buf.len().min(self.data.len() - off);
+        let n = buf.len()
+                   .min(self.data.len() - off);
         buf[..n].copy_from_slice(&self.data[off..off + n]);
-        self.offset = self
-            .offset
-            .checked_add(n as u64)
-            .ok_or(VfsError::Io)?;
+        self.offset = self.offset
+                          .checked_add(n as u64)
+                          .ok_or(VfsError::Io)?;
         Ok(n)
     }
 
-    fn write(&mut self, buf: &[u8]) -> VfsResult<usize> {
+    fn write(&mut self, buf : &[u8]) -> VfsResult<usize> {
         if !self.writable {
             return Err(VfsError::Unsupported);
         }
@@ -136,9 +130,11 @@ impl VfsIoHandle for BufferedFileHandle {
             return Ok(0);
         }
         let off = usize::try_from(self.offset).map_err(|_| VfsError::Io)?;
-        let end = off.checked_add(buf.len()).ok_or(VfsError::Io)?;
+        let end = off.checked_add(buf.len())
+                     .ok_or(VfsError::Io)?;
         if end > self.data.len() {
-            self.data.resize(end, 0);
+            self.data
+                .resize(end, 0);
         }
         self.data[off..end].copy_from_slice(buf);
         self.offset = end as u64;
@@ -147,9 +143,7 @@ impl VfsIoHandle for BufferedFileHandle {
         Ok(buf.len())
     }
 
-    fn close(&mut self) -> VfsResult<()> {
-        self.sync_dirty()
-    }
+    fn close(&mut self) -> VfsResult<()> { self.sync_dirty() }
 
     fn metadata(&self) -> VfsResult<VfsMetadata> {
         let mut m = self.meta.clone();
@@ -157,7 +151,7 @@ impl VfsIoHandle for BufferedFileHandle {
         Ok(m)
     }
 
-    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+    fn read_at(&mut self, offset : u64, buf : &mut [u8]) -> VfsResult<usize> {
         if buf.is_empty() {
             return Ok(0);
         }
@@ -165,12 +159,13 @@ impl VfsIoHandle for BufferedFileHandle {
         if off >= self.data.len() {
             return Ok(0);
         }
-        let n = buf.len().min(self.data.len() - off);
+        let n = buf.len()
+                   .min(self.data.len() - off);
         buf[..n].copy_from_slice(&self.data[off..off + n]);
         Ok(n)
     }
 
-    fn write_at(&mut self, offset: u64, buf: &[u8]) -> VfsResult<usize> {
+    fn write_at(&mut self, offset : u64, buf : &[u8]) -> VfsResult<usize> {
         if !self.writable {
             return Err(VfsError::Unsupported);
         }
@@ -178,9 +173,11 @@ impl VfsIoHandle for BufferedFileHandle {
             return Ok(0);
         }
         let off = usize::try_from(offset).map_err(|_| VfsError::Io)?;
-        let end = off.checked_add(buf.len()).ok_or(VfsError::Io)?;
+        let end = off.checked_add(buf.len())
+                     .ok_or(VfsError::Io)?;
         if end > self.data.len() {
-            self.data.resize(end, 0);
+            self.data
+                .resize(end, 0);
         }
         self.data[off..end].copy_from_slice(buf);
         self.meta.size = self.data.len() as u64;
@@ -188,12 +185,13 @@ impl VfsIoHandle for BufferedFileHandle {
         Ok(buf.len())
     }
 
-    fn truncate(&mut self, len: u64) -> VfsResult<()> {
+    fn truncate(&mut self, len : u64) -> VfsResult<()> {
         if !self.writable {
             return Err(VfsError::Unsupported);
         }
         let len = usize::try_from(len).map_err(|_| VfsError::InvalidPath)?;
-        self.data.resize(len, 0);
+        self.data
+            .resize(len, 0);
         self.meta.size = len as u64;
         if self.offset > self.meta.size {
             self.offset = self.meta.size;
@@ -202,7 +200,7 @@ impl VfsIoHandle for BufferedFileHandle {
         Ok(())
     }
 
-    fn seek(&mut self, offset: i64, whence: VfsSeekWhence) -> VfsResult<u64> {
+    fn seek(&mut self, offset : i64, whence : VfsSeekWhence) -> VfsResult<u64> {
         let new_off = match whence {
             VfsSeekWhence::Set => {
                 if offset < 0 {
@@ -236,17 +234,13 @@ impl VfsIoHandle for BufferedFileHandle {
         Ok(new_off)
     }
 
-    fn flush(&mut self) -> VfsResult<()> {
-        self.sync_dirty()
-    }
+    fn flush(&mut self) -> VfsResult<()> { self.sync_dirty() }
 
-    fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {
-        Ok(Box::new(self.clone()))
-    }
+    fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> { Ok(Box::new(self.clone())) }
 
-    fn poll_revents(&mut self, events: i16) -> VfsResult<i16> {
-        const POLLIN: i16 = 0x001;
-        const POLLOUT: i16 = 0x004;
+    fn poll_revents(&mut self, events : i16) -> VfsResult<i16> {
+        const POLLIN : i16 = 0x001;
+        const POLLOUT : i16 = 0x004;
         let mut revents = 0i16;
         if events & POLLIN != 0 {
             revents |= POLLIN;
@@ -259,11 +253,10 @@ impl VfsIoHandle for BufferedFileHandle {
 }
 
 impl FsBridge {
-    pub(crate) fn open_path(
-        &self,
-        path: &str,
-        flags: VfsOpenFlags,
-    ) -> VfsResult<Box<dyn VfsIoHandle>> {
+    pub(crate) fn open_path(&self,
+                            path : &str,
+                            flags : VfsOpenFlags)
+                            -> VfsResult<Box<dyn VfsIoHandle>> {
         let abs = api_v0::resolve_open_path(path)?;
         match resolve_route(abs.as_str())? {
             FsRoute::PseudoProc { rel, identity } => {
@@ -283,10 +276,8 @@ impl FsBridge {
             _ => {}
         }
         if let Ok(dev) = fs::devfs::active_impl::lookup_character_device(abs.as_str()) {
-            return Ok(Box::new(impl_fd_session::CharDevHandle::from_devfs_path(
-                dev,
-                abs.as_str(),
-            )));
+            return Ok(Box::new(impl_fd_session::CharDevHandle::from_devfs_path(dev,
+                                                                               abs.as_str())));
         }
         if flags.contains(VfsOpenFlags::DIRECTORY) {
             return super::dir_handle::DirectoryHandle::open(self, abs.clone());

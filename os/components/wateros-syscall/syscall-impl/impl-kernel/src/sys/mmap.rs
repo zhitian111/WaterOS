@@ -83,7 +83,7 @@ pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
     };
 
     let (kind, file_fd, file_size) = if linux_mmap_is_anonymous(flags) {
-        if !mf.contains(MapFlags::PRIVATE) {
+        if !mf.contains(MapFlags::PRIVATE) && !mf.contains(MapFlags::SHARED) {
             return UserRet::from_error(ErrNo::EINVAL);
         }
         (MmapKind::Anonymous, None, 0usize)
