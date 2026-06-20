@@ -106,11 +106,13 @@ class SymbolIndex:
         self._symbols = self._load_symbols()
         self._starts = [s.start for s in self._symbols]
 
-    def lookup(self, raw_pc: int) -> SymbolLookup:
+    def lookup(self, raw_pc: int, *, with_source: bool = True) -> SymbolLookup:
         lookup_pc, region_hint = normalize_pc(self.arch, raw_pc)
         symbol, offset = self._find_symbol(lookup_pc)
         nearest = self._find_nearest(lookup_pc)
-        func, src_file, src_line = self._addr2line(lookup_pc)
+        func, src_file, src_line = (None, None, None)
+        if with_source:
+            func, src_file, src_line = self._addr2line(lookup_pc)
         return SymbolLookup(
             raw_pc=raw_pc,
             lookup_pc=lookup_pc,
@@ -122,6 +124,10 @@ class SymbolIndex:
             source_line=src_line,
             addr2line_func=func,
         )
+
+    def lookup_fast(self, raw_pc: int) -> SymbolLookup:
+        """Symbol lookup without addr2line (safe for high-frequency TUI updates)."""
+        return self.lookup(raw_pc, with_source=False)
 
     def _load_symbols(self) -> list[SymbolEntry]:
         cmd = [

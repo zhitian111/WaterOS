@@ -5,10 +5,10 @@ STAGE := prototype
 BRANCH=$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
 BUILD_NUM = $(shell git rev-list --count HEAD 2>/dev/null || echo "0")
 
-.PHONY: clean check all all_start_info kernel configure fmt apply_features flush_img
+.PHONY: clean check all all_start_info kernel configure fmt apply_features flush_img export
 .PHONY: rv_check rv_elf_info rv_obj_dump rv_qemu_run rv_qemu_run_with_log rv_qemu_gdb rv_gdb
-.PHONY: rv_qemu_trace_pc rv_symbol_at
-.PHONY: la_check la_elf_info kernel-la la_qemu_run la_qemu_trace_pc la_symbol_at
+.PHONY: rv_pc_watch rv_symbol_at
+.PHONY: la_check la_elf_info kernel-la la_qemu_run la_symbol_at la_pc_watch
 .PHONY: rv_user_mode_bin
 COLOR_ANSI_RED := \033[31m
 COLOR_ANSI_GREEN := \033[32m
@@ -154,29 +154,19 @@ rv_gdb: kernel-rv
 		-ex 'target remote localhost:1234'
 	$(call INFO, "GDB 客户端及 riscv64 内核调试已结束...")
 
-rv_qemu_trace_pc: kernel-rv
-	$(call INFO, "启动 riscv64 PC 追踪 TUI（需已安装 textual）...")
-	@python3 -c "import textual" 2>/dev/null || \
-	  (echo "请先自行安装 textual，例如:" && \
-	   echo "  pip install -r scripts/requirements-debug.txt" && \
-	   echo "  pacman -S python-textual   # Arch Linux" && exit 1)
-	@python3 ./scripts/debug/qemu_pc_monitor.py --arch rv \
-	  --elf ./kernel-rv -- ./scripts/rv_qemu_run_trace_pc.sh
-	$(call INFO, "riscv64 PC 追踪 TUI 已结束")
+rv_pc_watch: kernel-rv
+	$(call INFO, "riscv64 PC 变动监视（仅 PC 变化时打印）...")
+	@python3 ./scripts/pc_trace_watch.py --arch rv --elf ./kernel-rv
+	$(call INFO, "PC 监视已结束")
 
 rv_symbol_at: kernel-rv
 	@test -n "$(ADDR)" || (echo "用法: make rv_symbol_at ADDR=0x80201234" && exit 1)
 	@python3 ./scripts/resolve_pc_symbol.py --arch rv --elf ./kernel-rv $(ADDR)
 
-la_qemu_trace_pc: kernel-la
-	$(call INFO, "启动 loongarch64 PC 追踪 TUI（需已安装 textual）...")
-	@python3 -c "import textual" 2>/dev/null || \
-	  (echo "请先自行安装 textual，例如:" && \
-	   echo "  pip install -r scripts/requirements-debug.txt" && \
-	   echo "  pacman -S python-textual   # Arch Linux" && exit 1)
-	@python3 ./scripts/debug/qemu_pc_monitor.py --arch la \
-	  --elf ./kernel-la -- ./scripts/la_qemu_run_trace_pc.sh
-	$(call INFO, "loongarch64 PC 追踪 TUI 已结束")
+la_pc_watch: kernel-la
+	$(call INFO, "loongarch64 PC 变动监视（仅 PC 变化时打印）...")
+	@python3 ./scripts/pc_trace_watch.py --arch la --elf ./kernel-la
+	$(call INFO, "PC 监视已结束")
 
 la_symbol_at: kernel-la
 	@test -n "$(ADDR)" || (echo "用法: make la_symbol_at ADDR=0x90001234" && exit 1)
@@ -248,6 +238,11 @@ fmt:
 # 	$(call INFO, "开始回滚 features...")
 # 	@bash ./scripts/apply-config-as-default-features.bash ./ os revert
 # 	$(call INFO, "features 回滚完成！")
+export:
+	$(call INFO, "开始导出 git 追踪文件到 GitLab 仓库...")
+	@bash ./scripts/export-to-gitlab.bash
+	$(call INFO, "导出完成！")
+
 flush_img:
 	$(call INFO, "开始删除旧磁盘镜像...")
 	@rm -f ./sdcard-la.img

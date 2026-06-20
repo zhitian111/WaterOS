@@ -43,6 +43,18 @@ class ParsedLine:
     pc: int | None = None
 
 
+# Fast extract of all guest PCs from a binary chunk (trace fd bulk read).
+TRACE_PC_BYTES_RE = re.compile(
+    rb"Trace\s+\d+:\s+0x[0-9a-fA-F]+\s+\[[^/]+/([0-9a-fA-F]+)/",
+    re.ASCII,
+)
+
+
+def parse_trace_pcs_from_chunk(data: bytes) -> list[int]:
+    """Return guest PCs found in a raw trace stream chunk."""
+    return [int(m, 16) for m in TRACE_PC_BYTES_RE.findall(data)]
+
+
 def parse_qemu_line(line: str) -> ParsedLine:
     """Return ParsedLine; pc set when line carries a guest PC."""
     stripped = line.rstrip("\n\r")

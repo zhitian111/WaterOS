@@ -39,22 +39,18 @@ chmod +x ./scripts/*.sh
     用于更新远程仓库代码
 - ./scripts/feature-args.sh
     读取 os/feature-config.toml，输出 cargo --features 所需的逗号分隔参数字符串。需在 os 目录下使用，例如：`cargo build -p os --features "$(./scripts/feature-args.sh)"`
-- ./scripts/rv_qemu_run_trace_pc.sh
-    与 `rv_qemu_run.sh` 相同，追加 `-d exec,nochain` 将 guest PC 打印到 stderr；由 PC 监控 TUI 解析，通常通过 `make rv_qemu_trace_pc` 启动。
-- ./scripts/la_qemu_run_trace_pc.sh
-    LoongArch 版 PC 追踪 QEMU 启动脚本；通常通过 `make la_qemu_trace_pc` 启动。
-- ./scripts/debug/qemu_pc_monitor.py
-    Textual TUI：实时解析 QEMU trace，显示串口日志、PC+符号、折线图与循环检测。
+- ./scripts/pc_trace_watch.py
+    启动 QEMU，**仅在 guest PC 变化时**向 stdout 打印一行（含符号）。无 TUI、无额外依赖。`make rv_pc_watch` / `make la_pc_watch`。
+- ./scripts/debug/qemu_launcher.py
+    构建 QEMU 命令（trace 走独立 fd，串口 stdout 后台排空）。
 - ./scripts/resolve_pc_symbol.py
     给定地址，解析其所属内核符号区间与源码位置（`--arch rv|la`）。
-- ./scripts/requirements-debug.txt
-    PC 监控 TUI 依赖（`textual`）。**请自行安装**，例如 `pip install -r scripts/requirements-debug.txt` 或 Arch 上 `pacman -S python-textual`。
 
 ### Makefile 调试目标（在 `os/` 目录下）
 
 | 目标 | 用途 |
 |------|------|
-| `make rv_qemu_trace_pc` | 编译并启动 riscv64 PC 追踪 TUI |
-| `make la_qemu_trace_pc` | 编译并启动 loongarch64 PC 追踪 TUI |
+| `make rv_pc_watch` | 编译并监视 riscv64 PC 变动（终端逐行输出） |
+| `make la_pc_watch` | 编译并监视 loongarch64 PC 变动 |
 | `make rv_symbol_at ADDR=0x80201234` | 查询 riscv64 内核地址所属符号 |
 | `make la_symbol_at ADDR=0x90001234` | 查询 loongarch64 内核地址所属符号 |

@@ -1,2 +1,0 @@
-# PC monitor TUI dependency (install manually, e.g. pip or pacman -S python-textual)
-textual>=0.40.0
