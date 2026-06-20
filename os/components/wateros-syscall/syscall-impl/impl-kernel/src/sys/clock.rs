@@ -20,8 +20,6 @@ const CLOCK_MONOTONIC_COARSE: usize = 6;
 const TIMER_ABSTIME: usize = 1;
 
 const SCHED_TICK_NS: u128 = (SCHED_TIMER_PERIOD_MS as u128) * 1_000_000;
-const HIGH_RES_CLOCK_NS: u128 = 1;
-const HIGH_RES_FALLBACK_NS: u128 = 1_000;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -44,13 +42,6 @@ fn monotonic_now_ns() -> Result<u128, ErrNo> {
             let tick = task::current_tick().max(1);
             Ok((tick as u128) * SCHED_TICK_NS)
         }
-    }
-}
-
-fn timespec_resolution_ns() -> u128 {
-    match timer::tick_hz() {
-        Ok(hz) if hz.0 > 0 => 1_000_000_000u128 / (hz.0 as u128),
-        _ => HIGH_RES_FALLBACK_NS,
     }
 }
 
@@ -128,6 +119,22 @@ fn sleep_for_ns(total_ns : u128, rem_ptr : usize) -> UserRet {
     UserRet::from_error(ErrNo::EINTR)
 }
 
+fn sleep_until_ns(clock_id : usize, target_ns : u128) -> UserRet {
+    loop {
+        let now_ns = match clock_id_to_ns(clock_id) {
+            Ok(now) => now,
+            Err(error) => return UserRet::from_error(error),
+        };
+        if target_ns <= now_ns {
+            return UserRet::from_success(0);
+        }
+        let ret = sleep_for_ns(target_ns - now_ns, 0);
+        if ret.0 < 0 {
+            return ret;
+        }
+    }
+}
+
 fn write_zero_timespec(ptr : usize) -> Result<(), ErrNo> {
     if ptr == 0 {
         return Ok(());
@@ -202,11 +209,7 @@ pub(crate) fn sys_clock_getres(args : SyscallArgs) -> UserRet {
     if res_ptr == 0 {
         return UserRet::from_success(0);
     }
-    let res_ns = match clock_id {
-        CLOCK_REALTIME_COARSE | CLOCK_MONOTONIC_COARSE | CLOCK_PROCESS_CPUTIME_ID => SCHED_TICK_NS,
-        CLOCK_REALTIME | CLOCK_MONOTONIC | CLOCK_MONOTONIC_RAW => HIGH_RES_CLOCK_NS,
-        _ => timespec_resolution_ns(),
-    };
+    let res_ns = SCHED_TICK_NS;
     let res = ns_to_timespec(res_ns);
     match copy_to_user_struct(res_ptr, &res) {
         Ok(()) => UserRet::from_success(0),
@@ -232,35 +235,29 @@ pub(crate) fn sys_clock_nanosleep(args : SyscallArgs) -> UserRet {
         Ok(req) => req,
         Err(e) => return UserRet::from_error(e),
     };
-    let rel = if flags & TIMER_ABSTIME != 0 {
+    if flags & TIMER_ABSTIME != 0 {
         let target_ns = match timespec_to_ns(req) {
             Ok(ns) => ns,
             Err(e) => return UserRet::from_error(e),
         };
-        let now_ns = match clock_id_to_ns(clock_id) {
-            Ok(ns) => ns,
-            Err(e) => return UserRet::from_error(e),
-        };
-        if target_ns <= now_ns {
+        let ret = sleep_until_ns(clock_id, target_ns);
+        if ret.0 >= 0 && rem_ptr != 0 {
             if let Err(e) = write_zero_timespec(rem_ptr) {
                 return UserRet::from_error(e);
             }
-            return UserRet::from_success(0);
         }
-        ns_to_timespec(target_ns - now_ns)
-    } else {
-        req
-    };
-    if rel.sec == 0 && rel.nsec == 0 {
+        return ret;
+    }
+    if req.sec == 0 && req.nsec == 0 {
         if let Err(e) = write_zero_timespec(rem_ptr) {
             return UserRet::from_error(e);
         }
         return UserRet::from_success(0);
     }
-    let ret = sleep_for_ns(match timespec_to_ns(rel) {
+    let ret = sleep_for_ns(match timespec_to_ns(req) {
         Ok(ns) => ns,
         Err(e) => return UserRet::from_error(e),
-    }, if flags & TIMER_ABSTIME == 0 { rem_ptr } else { 0 });
+    }, rem_ptr);
     if ret.0 >= 0 && rem_ptr != 0 {
         if let Err(e) = write_zero_timespec(rem_ptr) {
             return UserRet::from_error(e);

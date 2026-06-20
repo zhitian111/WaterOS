@@ -119,6 +119,7 @@ pub(crate) fn apply_signal_dispatch(dispatch : SignalDispatch, signal : usize) {
                 task::exit_group_current(exit_code);
             }
             if let Some(snapshot) = task::process_task_snapshot(task_id) {
+                notify_parent_sigchld(snapshot.pid);
                 if let Some(task_ids) = task::task_ids_for_process(snapshot.pid) {
                     for member in task_ids {
                         super::robust::robust_exit_cleanup(member);
