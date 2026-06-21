@@ -17,7 +17,6 @@ const WNOHANG : usize = 1;
 const WUNTRACED : usize = 2;
 const WCONTINUED : usize = 8;
 const WAITPID_IGNORED_OPTIONS : usize = WUNTRACED | WCONTINUED;
-const WAITPID_RESCAN_SLEEP_TICKS : task::TaskTick = 1;
 const UTS_LEN : usize = 65;
 
 // prctl 操作码
@@ -793,7 +792,7 @@ pub(crate) fn sys_waitpid(args : SyscallArgs) -> UserRet {
             if nohang {
                 return UserRet::from_success(0);
             }
-            if waitpid_sleep_until_rescan() == task::TaskWaitResult::Interrupted {
+            if waitpid_wait_for_child(current_process.pid) == task::TaskWaitResult::Interrupted {
                 return UserRet::from_error(ErrNo::EINTR);
             }
         }
@@ -818,14 +817,23 @@ pub(crate) fn sys_waitpid(args : SyscallArgs) -> UserRet {
         if nohang {
             return UserRet::from_success(0);
         }
-        if waitpid_sleep_until_rescan() == task::TaskWaitResult::Interrupted {
+        if waitpid_wait_for_child(current_process.pid) == task::TaskWaitResult::Interrupted {
             return UserRet::from_error(ErrNo::EINTR);
         }
     }
 }
 
-fn waitpid_sleep_until_rescan() -> task::TaskWaitResult {
-    task::sleep_for_ticks(WAITPID_RESCAN_SLEEP_TICKS)
+/// 利用 ChildExit wait queue 事件驱动等待，替代原有的轮询 sleep。
+/// `wait_on_while` 的 condition 返回 `true` 才阻塞，返回 `false` 不阻塞。
+/// 所以「有子进程且没有子进程退出」→ `true` → 阻塞等待。
+fn waitpid_wait_for_child(parent_pid : task::ProcessId) -> task::TaskWaitResult {
+    let Some(leader) = task::leader_task_for_process(parent_pid) else {
+        return task::TaskWaitResult::Woken;
+    };
+    let handle = task::TaskWaitHandle::for_child_exit(leader);
+    task::wait_on_while(handle, || {
+        task::has_child_process(parent_pid) && task::find_exited_child_process(parent_pid).is_none()
+    })
 }
 
 /// `uname(buf)` — 返回系统信息。
@@ -908,10 +916,9 @@ fn current_process_rlimit(resource : usize) -> UserRLimit {
     let Some(pid) = task::current_process_task_snapshot().map(|snapshot| snapshot.pid) else {
         return default;
     };
-    task::process_resource_limit(pid, resource)
-        .map(|limit| UserRLimit { cur : limit.cur,
-                                  max : limit.max })
-        .unwrap_or(default)
+    task::process_resource_limit(pid, resource).map(|limit| UserRLimit { cur : limit.cur,
+                                                                         max : limit.max })
+                                               .unwrap_or(default)
 }
 
 fn apply_process_rlimit(resource : usize, limit : UserRLimit) -> Result<(), ErrNo> {
