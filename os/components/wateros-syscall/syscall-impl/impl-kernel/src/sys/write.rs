@@ -47,12 +47,20 @@ pub(crate) fn sys_write(args : SyscallArgs) -> UserRet {
         Ok(n) if n == len => {}
         _ => return UserRet::from_error(ErrNo::EFAULT),
     }
-    // iozone 调试：write 入口（每 64 次才打一次，避免刷屏）
-    log::trace!("[sys_write] fd={} len={} ptr={:#x}",
-                fd,
-                len,
-                ptr);
-    match write_fd(fd, &kbuf) {
+    // iozone 调试：每 128 次 write 才打一次 trace，避免刷屏淹没 readv 日志
+    {
+        static WRITE_COUNT : core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+        let cnt = WRITE_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        if cnt % 128 == 0 {
+            log::trace!("[sys_write] cnt={} fd={} len={} ptr={:#x}",
+                        cnt,
+                        fd,
+                        len,
+                        ptr);
+        }
+    }
+    let result = write_fd(fd, &kbuf);
+    let ret = match result {
         Ok(n) => {
             log::trace!("[sys_write] OK fd={} n={}", fd, n);
             UserRet::from_success(n)
@@ -67,7 +75,8 @@ pub(crate) fn sys_write(args : SyscallArgs) -> UserRet {
                         err);
             UserRet::from_error(err)
         }
-    }
+    };
+    ret
 }
 
 pub(crate) fn sys_writev(args : SyscallArgs) -> UserRet {

@@ -65,14 +65,21 @@ pub(crate) fn sys_read(args : SyscallArgs) -> UserRet {
 }
 
 pub(crate) fn sys_readv(args : SyscallArgs) -> UserRet {
+    // iozone 调试：最早期 trace，在参数解包前
     let fd = args.arg(0);
     let iov_ptr = args.arg(1);
     let iovcnt = args.arg(2);
-    // iozone 调试：readv 入口
-    log::trace!("[sys_readv] ENTER fd={} iov_ptr={:#x} iovcnt={}",
+    let arg4 = args.arg(3);
+    let arg5 = args.arg(4);
+    let arg6 = args.arg(5);
+    log::trace!("[sys_readv] RAW fd={} iov_ptr={:#x} iovcnt={:#x}({}) a3={:#x} a4={:#x} a5={:#x}",
                 fd,
                 iov_ptr,
-                iovcnt);
+                iovcnt,
+                iovcnt,
+                arg4,
+                arg5,
+                arg6);
     if iovcnt == 0 {
         return UserRet::from_success(0);
     }
