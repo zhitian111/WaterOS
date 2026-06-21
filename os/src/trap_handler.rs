@@ -18,8 +18,8 @@ use mm::api::mmap::PageFaultAccess;
 use platform::arch::paging;
 use platform::arch::trap::ActiveTrapFrame as TrapContext;
 use runtime::logging::*;
-use syscall::dispatch_syscall_from_trap;
 use syscall::api::SyscallKind;
+use syscall::dispatch_syscall_from_trap;
 
 /// 监督态定时器中断后，用 **与 `kernel_main` 相同的 wall-clock 语义**
 /// 重新武装固件定时器。
@@ -48,12 +48,10 @@ fn log_unhandled_user_fault_probe(cx : &TrapContext, trap_cause : TrapCause, raw
     }
     if let Some(s) = task::current_task_snapshot() {
         info!("[trap][probe] task parent={:?} state={:?} kind={:?}",
-              s.parent_id,
-              s.state,
-              s.kind);
+              s.parent_id, s.state, s.kind);
     }
-    info!("[trap][probe] fault cause={:?} raw={:#x} ecode={:#x} sepc={:#x} stval={:#x} \
-           sp={:#x} tp={:#x} satp={:#x} aspace={:#x}",
+    info!("[trap][probe] fault cause={:?} raw={:#x} ecode={:#x} sepc={:#x} stval={:#x} sp={:#x} \
+           tp={:#x} satp={:#x} aspace={:#x}",
           trap_cause,
           raw_cause,
           (raw_cause >> 16) & 0x3F,
@@ -149,13 +147,14 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                    regs[3],
                    regs[4],
                    regs[5],);
-            if syscall_nr ==
-               <ActiveSyscallNumberTable as SyscallNumberTable>::RT_SIGRETURN.raw()
-            {
+            if syscall_nr == <ActiveSyscallNumberTable as SyscallNumberTable>::RT_SIGRETURN.raw() {
                 if !syscall::restore_signal_frame(authoritative) {
-                    kill_current_user_task("invalid rt_sigreturn frame", trap_cause, cx);
+                    kill_current_user_task("invalid rt_sigreturn frame",
+                                           trap_cause,
+                                           cx);
                 }
-                trace!("[syscall] nr={} restored signal frame", syscall_nr);
+                trace!("[syscall] nr={} restored signal frame",
+                       syscall_nr);
                 return_to_user_signal_delivery(authoritative, trap_cause, cx, None);
                 finish_trap_return(frame, cx, raw_cause);
                 return;
@@ -186,7 +185,8 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             // fault， 形成无限 trap 风暴；在 INFO
             // 日志级别下毫无输出，表现为「sret 后卡死」。
             if cx.returns_to_user() {
-                if matches!(trap_cause, TrapCause::Exception(Exception::StorePageFault)) &&
+                if matches!(trap_cause,
+                            TrapCause::Exception(Exception::StorePageFault)) &&
                    mm::kernel_mm::handle_cow_fault(task::current_task_user_aspace_ptr(),
                                                    cx.fault_addr())
                 {
@@ -197,7 +197,9 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                     return;
                 }
                 let fault_access = match trap_cause {
-                    TrapCause::Exception(Exception::InstructionPageFault) => PageFaultAccess::Execute,
+                    TrapCause::Exception(Exception::InstructionPageFault) => {
+                        PageFaultAccess::Execute
+                    }
                     TrapCause::Exception(Exception::LoadPageFault) => PageFaultAccess::Read,
                     TrapCause::Exception(Exception::StorePageFault) => PageFaultAccess::Write,
                     _ => unreachable!(),
@@ -230,7 +232,13 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                 if !raised {
                     kill_current_user_task("user memory fault", trap_cause, cx);
                 }
-                return_to_user_signal_delivery(authoritative, trap_cause, cx, None);
+                let delivered = return_to_user_signal_delivery(authoritative, trap_cause, cx, None);
+                if !delivered {
+                    error!("[trap] SIGSEGV signal not delivered — killing user task");
+                    kill_current_user_task("user memory fault (no signal delivered)",
+                                           trap_cause,
+                                           cx);
+                }
                 finish_trap_return(frame, cx, raw_cause);
                 return;
             }
@@ -315,35 +323,36 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
     }
 }
 
-fn return_to_user_signal_delivery(
-    frame: *mut u8,
-    trap_cause: TrapCause,
-    cx: &TrapContext,
-    restart: Option<(usize, abi::syscall_args::SyscallArgs)>,
-) {
-    if syscall::deliver_pending_signal(frame, restart) < 0 {
-        kill_current_user_task("signal frame setup failed", trap_cause, cx);
+fn return_to_user_signal_delivery(frame : *mut u8,
+                                  trap_cause : TrapCause,
+                                  cx : &TrapContext,
+                                  restart : Option<(usize, abi::syscall_args::SyscallArgs)>)
+                                  -> bool {
+    let delivered = syscall::deliver_pending_signal(frame, restart);
+    if delivered < 0 {
+        kill_current_user_task("signal frame setup failed",
+                               trap_cause,
+                               cx);
     }
+    delivered > 0
 }
 
-fn restartable_syscall(syscall_nr: usize) -> bool {
-    matches!(
-        SyscallKind::decode::<ActiveSyscallNumberTable>(syscall_nr),
-        SyscallKind::Read
-            | SyscallKind::Readv
-            | SyscallKind::Write
-            | SyscallKind::Writev
-            | SyscallKind::WaitPid
-            | SyscallKind::Accept4
-            | SyscallKind::Connect
-            | SyscallKind::SendTo
-            | SyscallKind::RecvFrom
-            | SyscallKind::SendMsg
-            | SyscallKind::RecvMsg
-    )
+fn restartable_syscall(syscall_nr : usize) -> bool {
+    matches!(SyscallKind::decode::<ActiveSyscallNumberTable>(syscall_nr),
+             SyscallKind::Read |
+             SyscallKind::Readv |
+             SyscallKind::Write |
+             SyscallKind::Writev |
+             SyscallKind::WaitPid |
+             SyscallKind::Accept4 |
+             SyscallKind::Connect |
+             SyscallKind::SendTo |
+             SyscallKind::RecvFrom |
+             SyscallKind::SendMsg |
+             SyscallKind::RecvMsg)
 }
 
-fn finish_trap_return(frame: *mut u8, cx: &TrapContext, raw_cause: usize) {
+fn finish_trap_return(frame : *mut u8, cx : &TrapContext, raw_cause : usize) {
     let return_satp = cx.return_address_space_token();
     let kernel_satp = paging::active_address_space_token();
     trace!("[trap] sret to user pc={:#x} sp={:#x} return_satp={:#x} kernel_satp={:#x} \
