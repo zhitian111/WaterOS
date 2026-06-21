@@ -35,6 +35,36 @@ static TIMER_TICK_COUNT : AtomicUsize = AtomicUsize::new(0);
 /// 当前支持架构的 syscall/trap 指令宽度，用于将用户 PC 前进到下一条指令。
 const SYSCALL_INSN_BYTES : usize = 4;
 
+/// 在投递 SIGSEGV 前打印任务与用户态 fault 上下文。
+fn log_unhandled_user_fault_probe(cx : &TrapContext, trap_cause : TrapCause, raw_cause : usize) {
+    if let Some(s) = task::current_process_task_snapshot() {
+        info!("[trap][probe] proc pid={} tid={} task_id={} role={:?}",
+              s.pid.raw(),
+              s.tid.raw(),
+              s.task_id,
+              s.role);
+    } else {
+        info!("[trap][probe] proc (no current process task)");
+    }
+    if let Some(s) = task::current_task_snapshot() {
+        info!("[trap][probe] task parent={:?} state={:?} kind={:?}",
+              s.parent_id,
+              s.state,
+              s.kind);
+    }
+    info!("[trap][probe] fault cause={:?} raw={:#x} ecode={:#x} sepc={:#x} stval={:#x} \
+           sp={:#x} tp={:#x} satp={:#x} aspace={:#x}",
+          trap_cause,
+          raw_cause,
+          (raw_cause >> 16) & 0x3F,
+          cx.user_pc(),
+          cx.fault_addr(),
+          cx.user_sp(),
+          cx.user_tls(),
+          cx.return_address_space_token(),
+          task::current_task_user_aspace_ptr());
+}
+
 /// 记录用户任务 trap 杀进程上下文并终止当前进程。
 fn kill_current_user_task(context : &str, trap_cause : TrapCause, cx : &TrapContext) -> ! {
     if let Some(snapshot) = task::current_task_snapshot() {
@@ -182,6 +212,7 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                     finish_trap_return(frame, cx, raw_cause);
                     return;
                 }
+                log_unhandled_user_fault_probe(cx, trap_cause, raw_cause);
                 warn!("[trap] user memory fault {:?} raw={:#x} ecode={:#x} sepc={:#x} \
                        stval={:#x} user_sp={:#x} return_satp={:#x} aspace_ptr={:#x} — delivering \
                        SIGSEGV",
@@ -193,7 +224,10 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                       cx.user_sp(),
                       cx.return_address_space_token(),
                       task::current_task_user_aspace_ptr());
-                if !syscall::raise_current_signal(11) {
+                let raised = syscall::raise_current_signal(11);
+                info!("[trap][probe] raise_current_signal(SIGSEGV) -> {}",
+                      raised);
+                if !raised {
                     kill_current_user_task("user memory fault", trap_cause, cx);
                 }
                 return_to_user_signal_delivery(authoritative, trap_cause, cx, None);

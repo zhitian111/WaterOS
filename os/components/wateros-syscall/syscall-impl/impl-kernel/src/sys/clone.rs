@@ -18,6 +18,14 @@ const CLONE3_EXIT_SIGNAL_MASK : usize = 0xFF;
 const CLONE_PIDFD : usize = 0x0000_1000;
 const CLONE_INTO_CGROUP : usize = 0x0000_0002_0000_0000;
 
+struct CloneRequest {
+    clone_flags : task::CloneFlags,
+    child_stack : usize,
+    parent_tid : usize,
+    tls : usize,
+    child_tid : usize,
+}
+
 struct CloneSetupGuard {
     state : platform::arch::interrupt::ArchInterruptState,
 }
@@ -39,12 +47,12 @@ impl Drop for CloneSetupGuard {
 
 /// clone/fork 系统调用入口。
 ///
-/// 参数（Linux riscv64 clone ABI）：
+/// 参数（Linux legacy `clone` raw syscall ABI）：
 /// - `arg0`: flags
 /// - `arg1`: child_stack（0 表示复用父任务栈指针）
 /// - `arg2`: parent_tid
-/// - `arg3`: tls
-/// - `arg4`: child_tid
+/// - RISC-V: `arg3`: tls, `arg4`: child_tid
+/// - LoongArch: `arg3`: child_tid, `arg4`: tls
 pub(crate) fn sys_clone(args : SyscallArgs) -> UserRet { do_clone(args) }
 
 /// clone3 系统调用入口。
@@ -76,26 +84,48 @@ pub(crate) fn sys_clone3(args : SyscallArgs) -> UserRet {
         Some(sp) => sp,
         None => return UserRet::from_error(ErrNo::EINVAL),
     };
-    let legacy_flags = clone_args.flags | clone_args.exit_signal;
-    do_clone(SyscallArgs::from_regs([legacy_flags,
-                                     child_stack,
-                                     clone_args.parent_tid,
-                                     clone_args.tls,
-                                     clone_args.child_tid,
-                                     0]))
+    do_clone_request(CloneRequest {
+        clone_flags : task::CloneFlags::from_bits(clone_args.flags | clone_args.exit_signal),
+        child_stack,
+        parent_tid : clone_args.parent_tid,
+        tls : clone_args.tls,
+        child_tid : clone_args.child_tid,
+    })
 }
 
 #[inline(never)]
 fn do_clone(args : SyscallArgs) -> UserRet {
+    do_clone_request(decode_legacy_clone_args(args))
+}
+
+#[cfg(target_arch = "loongarch64")]
+fn decode_legacy_clone_args(args : SyscallArgs) -> CloneRequest {
+    CloneRequest { clone_flags : task::CloneFlags::from_bits(args.arg(0)),
+                   child_stack : args.arg(1),
+                   parent_tid : args.arg(2),
+                   tls : args.arg(4),
+                   child_tid : args.arg(3) }
+}
+
+#[cfg(not(target_arch = "loongarch64"))]
+fn decode_legacy_clone_args(args : SyscallArgs) -> CloneRequest {
+    CloneRequest { clone_flags : task::CloneFlags::from_bits(args.arg(0)),
+                   child_stack : args.arg(1),
+                   parent_tid : args.arg(2),
+                   tls : args.arg(3),
+                   child_tid : args.arg(4) }
+}
+
+fn do_clone_request(request : CloneRequest) -> UserRet {
     let parent_signal = match super::signal::ensure_current_signal_state() {
         Ok(snapshot) => snapshot,
         Err(error) => return UserRet::from_error(error),
     };
-    let clone_flags = task::CloneFlags::from_bits(args.arg(0));
-    let child_stack = args.arg(1);
-    let parent_tid = args.arg(2);
-    let tls = args.arg(3);
-    let child_tid = args.arg(4);
+    let CloneRequest { clone_flags,
+                       child_stack,
+                       parent_tid,
+                       tls,
+                       child_tid } = request;
 
     if clone_flags.contains(task::CloneFlags::CLONE_THREAD) &&
        !clone_flags.contains(task::CloneFlags::CLONE_VM)
