@@ -12,17 +12,54 @@ mod logger;
 /// **契约**：可重复调用时行为以 `log::set_logger` 为准（第二次通常失败）；成功后会打印一条 Info 表示已初始化。
 pub fn init() {
     use log::LevelFilter;
-    // 与 `Cargo.toml` 中互斥的级别 feature 对应；默认 `impl-trace` 见该文件。
-    #[cfg(feature = "impl-trace")]
-    let _ = logger::init(LevelFilter::Trace);
-    #[cfg(feature = "impl-debug")]
-    let _ = logger::init(LevelFilter::Debug);
-    #[cfg(feature = "impl-info")]
-    let _ = logger::init(LevelFilter::Info);
-    #[cfg(feature = "impl-warn")]
-    let _ = logger::init(LevelFilter::Warn);
-    #[cfg(feature = "impl-error")]
-    let _ = logger::init(LevelFilter::Error);
+    // Cargo feature unification can enable more than one level. Prefer the
+    // quietest selected level so a stray trace feature cannot flood QEMU logs.
+    let level = {
+        #[cfg(feature = "impl-error")]
+        {
+            LevelFilter::Error
+        }
+        #[cfg(all(not(feature = "impl-error"), feature = "impl-warn"))]
+        {
+            LevelFilter::Warn
+        }
+        #[cfg(all(not(feature = "impl-error"), not(feature = "impl-warn"), feature = "impl-info"))]
+        {
+            LevelFilter::Info
+        }
+        #[cfg(all(
+            not(feature = "impl-error"),
+            not(feature = "impl-warn"),
+            not(feature = "impl-info"),
+            feature = "impl-debug"
+        ))]
+        {
+            LevelFilter::Debug
+        }
+        #[cfg(all(
+            not(feature = "impl-error"),
+            not(feature = "impl-warn"),
+            not(feature = "impl-info"),
+            not(feature = "impl-debug"),
+            feature = "impl-trace"
+        ))]
+        {
+            LevelFilter::Trace
+        }
+        #[cfg(all(
+            not(feature = "impl-error"),
+            not(feature = "impl-warn"),
+            not(feature = "impl-info"),
+            not(feature = "impl-debug"),
+            not(feature = "impl-trace")
+        ))]
+        {
+            LevelFilter::Off
+        }
+    };
+    if level != LevelFilter::Off {
+        let _ = logger::init(level);
+    }
 }
 
 pub use log::debug;

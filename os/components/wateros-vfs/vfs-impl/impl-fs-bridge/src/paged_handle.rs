@@ -98,21 +98,44 @@ impl PagedFileHandle {
 
     fn sync_dirty(&mut self) -> VfsResult<()> {
         if !self.writable || self.detached {
+            log::info!("[iozone-probe][vfs-flush] skip path={} writable={} detached={}",
+                       self.path,
+                       self.writable,
+                       self.detached);
             return Ok(());
         }
         let mut rw = mount_rw_session()?;
         let mut io = FsPageIo { rw : Some(&mut rw) };
         let cache = global_cache(self.mount_gen);
+        let dirty_pages = cache.dirty_page_count(self.path.as_str());
+        let size = self.current_size();
+        log::info!("[iozone-probe][vfs-flush] begin path={} size={} offset={} dirty_pages={}",
+                   self.path,
+                   size,
+                   self.offset,
+                   dirty_pages);
         match cache.flush(&mut io,
                           self.path.as_str(),
                           core::convert::identity)
         {
-            Ok(()) => Ok(()),
-            Err(VfsError::NotFound) => {
-                self.detached = true;
+            Ok(()) => {
+                log::info!("[iozone-probe][vfs-flush] end path={} ret=ok dirty_pages_after={}",
+                           self.path,
+                           cache.dirty_page_count(self.path.as_str()));
                 Ok(())
             }
-            Err(e) => Err(e),
+            Err(VfsError::NotFound) => {
+                self.detached = true;
+                log::info!("[iozone-probe][vfs-flush] end path={} ret=not-found detached=true",
+                           self.path);
+                Ok(())
+            }
+            Err(e) => {
+                log::info!("[iozone-probe][vfs-flush] end path={} err={:?}",
+                           self.path,
+                           e);
+                Err(e)
+            }
         }
     }
 

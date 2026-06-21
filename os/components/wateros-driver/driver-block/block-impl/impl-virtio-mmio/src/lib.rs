@@ -22,6 +22,7 @@ use virtio_drivers::transport::mmio::{MmioTransport, VirtIOHeader};
 use virtio_drivers::{BufferDirection, Hal, PhysAddr, PAGE_SIZE};
 
 const _: () = assert!(PAGE_SIZE == mm_api::addr::PAGE_SIZE);
+const IOZONE_PROBE_MIN_WRITE_BYTES: usize = 4096;
 
 /// 将内核帧分配器接到 `virtio-drivers` 的 [`Hal`]：恒等映射下返回的 `PhysAddr` 与可写虚拟指针相同。
 struct VirtioMmioHal;
@@ -136,8 +137,30 @@ impl BlockDevice for VirtioBlkDevice {
 
     /// 将 `buf` 写回磁盘；语义与 [`read_blocks`] 对称。
     fn write_blocks(&mut self, start_block: Lba, buf: &[u8]) -> DriverResult<()> {
-        self.inner
-            .write_blocks(start_block.0 as usize, buf)
-            .map_err(|_| DriverError::IoError)
+        let probe = buf.len() >= IOZONE_PROBE_MIN_WRITE_BYTES;
+        if probe {
+            logging::info!("[iozone-probe][virtio-blk-write] begin lba={} bytes={}",
+                           start_block.0,
+                           buf.len());
+        }
+        let result = self.inner
+                         .write_blocks(start_block.0 as usize, buf)
+                         .map_err(|_| DriverError::IoError);
+        if probe {
+            match &result {
+                Ok(()) => {
+                    logging::info!("[iozone-probe][virtio-blk-write] end lba={} bytes={} ret=ok",
+                                   start_block.0,
+                                   buf.len());
+                }
+                Err(err) => {
+                    logging::info!("[iozone-probe][virtio-blk-write] end lba={} bytes={} err={:?}",
+                                   start_block.0,
+                                   buf.len(),
+                                   err);
+                }
+            }
+        }
+        result
     }
 }

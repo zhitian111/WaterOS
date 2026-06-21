@@ -248,8 +248,18 @@ impl GlobalFilePageCache {
 
         for (start_page, data) in batches {
             let off = start_page * FILE_PAGE_SIZE as u64;
+            log::info!("[iozone-probe][page-cache-run] begin path={} start_page={} offset={} len={}",
+                       key.path.as_ref(),
+                       start_page,
+                       off,
+                       data.len());
             io.write_range(key.path.as_ref(), off, &data)
               .map_err(map_err)?;
+            log::info!("[iozone-probe][page-cache-run] end path={} start_page={} offset={} len={}",
+                       key.path.as_ref(),
+                       start_page,
+                       off,
+                       data.len());
         }
 
         Ok(flushed_pages)
@@ -514,6 +524,18 @@ impl GlobalFilePageCache {
              .logical_size = size;
     }
 
+    pub fn dirty_page_count(&self, path : &str) -> usize {
+        let key = self.file_key(path);
+        let files = self.files.lock();
+        files.get(&key)
+             .map(|entry| {
+                 entry.read()
+                      .dirty_pages
+                      .len()
+             })
+             .unwrap_or(0)
+    }
+
     /// 将脏页写回下层并清除脏标记。
     pub fn flush<Io, E>(&self,
                         io : &mut Io,
@@ -529,6 +551,7 @@ impl GlobalFilePageCache {
                  .cloned()
         };
         let Some(entry) = entry else {
+            log::info!("[iozone-probe][page-cache-flush] path={} no-entry", path);
             return Ok(());
         };
         let mut guard = entry.write();
@@ -536,6 +559,10 @@ impl GlobalFilePageCache {
                                     .keys()
                                     .copied()
                                     .collect();
+        log::info!("[iozone-probe][page-cache-flush] begin path={} logical_size={} dirty_pages={}",
+                   path,
+                   guard.logical_size,
+                   dirty.len());
 
         let mut run = Vec::new();
         for page_idx in dirty {
@@ -567,6 +594,9 @@ impl GlobalFilePageCache {
                      .remove(&flushed_page);
             }
         }
+        log::info!("[iozone-probe][page-cache-flush] end path={} dirty_pages_after={}",
+                   path,
+                   guard.dirty_pages.len());
         Ok(())
     }
 

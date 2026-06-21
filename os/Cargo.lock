@@ -1497,6 +1497,7 @@ dependencies = [
 name = "wateros-vfs-impl-page-cache"
 version = "0.1.0"
 dependencies = [
+ "log",
  "spin 0.10.0",
  "wateros-base-config",
 ]

@@ -20,6 +20,8 @@ use ext4plus::inode::{InodeCreationOptions, InodeFlags, InodeMode};
 use ext4plus::path::Path;
 use ext4plus::{DirEntryName, Ext4, Ext4Read, Ext4Write, FileType, FollowSymlinks};
 
+const IOZONE_PROBE_MIN_WRITE_BYTES: usize = 4096;
+
 // 共享块设备句柄上的按字节读/写：同一 `SharedBlockDevice` 分别作为 reader 与 writer 传入 `load_with_writer`。
 struct BlockDevRw {
     device: SharedBlockDevice,
@@ -70,6 +72,12 @@ fn block_write_bytes(
     if src.is_empty() {
         return Ok(());
     }
+    let probe = src.len() >= IOZONE_PROBE_MIN_WRITE_BYTES;
+    if probe {
+        logging::info!("[iozone-probe][ext4-block-write] begin start_byte={} len={}",
+                       start_byte,
+                       src.len());
+    }
     let mut guard = dev.lock();
     let bdev: &mut dyn driver_block_api_v0::BlockDevice = &mut **guard;
     let bs = bdev.block_size();
@@ -102,6 +110,11 @@ fn block_write_bytes(
         debug_assert_eq!(abs % bs, 0);
         debug_assert!(end > abs);
         write_partial_block(bdev, abs / bs, 0, &src[pos..])?;
+    }
+    if probe {
+        logging::info!("[iozone-probe][ext4-block-write] end start_byte={} len={}",
+                       start_byte,
+                       src.len());
     }
     Ok(())
 }
@@ -229,6 +242,10 @@ impl ReadWriteFs for Ext4FsRw {
         if data.is_empty() {
             return Ok(0);
         }
+        logging::info!("[iozone-probe][ext4-write-range] begin path={} offset={} len={}",
+                       path,
+                       offset,
+                       data.len());
         let fs = self.fs()?;
         let pathv = Path::try_from(path).map_err(|_| FsError::InvalidPath)?;
         let mut inode = fs
@@ -237,7 +254,13 @@ impl ReadWriteFs for Ext4FsRw {
         if inode.file_type() != FileType::Regular {
             return Err(FsError::NotAFile);
         }
-        write_at(fs, &mut inode, data, offset).map_err(map_ext4_plus)
+        let written = write_at(fs, &mut inode, data, offset).map_err(map_ext4_plus)?;
+        logging::info!("[iozone-probe][ext4-write-range] end path={} offset={} len={} written={}",
+                       path,
+                       offset,
+                       data.len(),
+                       written);
+        Ok(written)
     }
 
     fn truncate(&mut self, path: &str, len: u64) -> FsResult<()> {
