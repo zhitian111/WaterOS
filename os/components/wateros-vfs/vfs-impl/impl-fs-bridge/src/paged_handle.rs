@@ -122,10 +122,16 @@ impl PagedFileHandle {
 
     fn read_detached_at(&self, offset : u64, buf : &mut [u8]) -> VfsResult<usize> {
         let start = usize::try_from(offset).map_err(|_| VfsError::Io)?;
-        if start >= self.detached_data.len() {
+        if start >=
+           self.detached_data
+               .len()
+        {
             return Ok(0);
         }
-        let n = core::cmp::min(buf.len(), self.detached_data.len() - start);
+        let n = core::cmp::min(buf.len(),
+                               self.detached_data
+                                   .len() -
+                               start);
         buf[..n].copy_from_slice(&self.detached_data[start..start + n]);
         Ok(n)
     }
@@ -139,8 +145,12 @@ impl PagedFileHandle {
         let end = offset.checked_add(buf.len() as u64)
                         .ok_or(VfsError::Io)?;
         let end_usize = usize::try_from(end).map_err(|_| VfsError::Io)?;
-        if self.detached_data.len() < end_usize {
-            self.detached_data.resize(end_usize, 0);
+        if self.detached_data
+               .len() <
+           end_usize
+        {
+            self.detached_data
+                .resize(end_usize, 0);
         }
         self.detached_data[start..end_usize].copy_from_slice(buf);
         if advance_offset {
@@ -170,6 +180,12 @@ impl VfsIoHandle for PagedFileHandle {
                               .ok_or(VfsError::Io)?;
             return Ok(n);
         }
+        // iozone 调试：页缓存读前
+        log::trace!("[paged_handle] read path={} offset={} len={} size={}",
+                    self.path,
+                    self.offset,
+                    buf.len(),
+                    size);
         let mut io = FsPageIo { rw : None };
         let cache = global_cache(self.mount_gen);
         let n = cache.read(&mut io,
@@ -178,6 +194,12 @@ impl VfsIoHandle for PagedFileHandle {
                            self.offset,
                            buf,
                            core::convert::identity)?;
+        // iozone 调试：页缓存读后
+        log::trace!("[paged_handle] read OK path={} offset={} n={}/{}",
+                    self.path,
+                    self.offset,
+                    n,
+                    buf.len());
         self.offset = self.offset
                           .checked_add(n as u64)
                           .ok_or(VfsError::Io)?;
@@ -348,7 +370,8 @@ impl VfsIoHandle for PagedFileHandle {
         }
         if self.detached {
             let new_len = usize::try_from(len).map_err(|_| VfsError::Io)?;
-            self.detached_data.resize(new_len, 0);
+            self.detached_data
+                .resize(new_len, 0);
         }
         Ok(())
     }

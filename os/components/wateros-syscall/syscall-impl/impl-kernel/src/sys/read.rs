@@ -14,17 +14,17 @@ use crate::socket_fd;
 use crate::user_copy::{copy_from_user_struct, copy_to_user};
 use crate::vfs_util::vfs_error_to_errno;
 
-const SMALL_READ_BUF_SIZE: usize = 256;
-const SOCKET_READ_WAIT_TICKS: usize = 4096;
+const SMALL_READ_BUF_SIZE : usize = 256;
+const SOCKET_READ_WAIT_TICKS : usize = 4096;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct UserIoVec {
-    base: usize,
-    len: usize,
+    base : usize,
+    len : usize,
 }
 
-fn finish_read(_fd: usize, ptr: usize, buf: &[u8], n: usize) -> UserRet {
+fn finish_read(_fd : usize, ptr : usize, buf : &[u8], n : usize) -> UserRet {
     if n == 0 {
         return UserRet::from_success(0);
     }
@@ -68,6 +68,11 @@ pub(crate) fn sys_readv(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let iov_ptr = args.arg(1);
     let iovcnt = args.arg(2);
+    // iozone 调试：readv 入口
+    log::trace!("[sys_readv] ENTER fd={} iov_ptr={:#x} iovcnt={}",
+                fd,
+                iov_ptr,
+                iovcnt);
     if iovcnt == 0 {
         return UserRet::from_success(0);
     }
@@ -75,6 +80,8 @@ pub(crate) fn sys_readv(args : SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EFAULT);
     }
     if iovcnt > 1024 {
+        log::trace!("[sys_readv] EINVAL iovcnt={} > 1024 (BUG: iozone passed garbage iovcnt)",
+                    iovcnt);
         return UserRet::from_error(ErrNo::EINVAL);
     }
 
@@ -94,15 +101,32 @@ pub(crate) fn sys_readv(args : SyscallArgs) -> UserRet {
         if iov.len > 4 * 1024 * 1024 {
             return UserRet::from_error(ErrNo::EINVAL);
         }
-        if total.checked_add(iov.len).is_none() {
+        if total.checked_add(iov.len)
+                .is_none()
+        {
             return UserRet::from_error(ErrNo::EINVAL);
         }
 
+        // iozone 调试：每个 iov 段读取前
+        log::trace!("[sys_readv] iov[{}/{}] base={:#x} len={} total_before={} -> \
+                     read_fd(fd={})...",
+                    i,
+                    iovcnt,
+                    iov.base,
+                    iov.len,
+                    total,
+                    fd);
         let mut kbuf = Vec::with_capacity(iov.len);
         kbuf.resize(iov.len, 0);
         let n = match read_fd(fd, &mut kbuf) {
             Ok(n) => n,
             Err(err) => {
+                log::trace!("[sys_readv] iov[{}/{}] read_fd ERR fd={} err={:?} total={}",
+                            i,
+                            iovcnt,
+                            fd,
+                            err,
+                            total);
                 return if total > 0 {
                     UserRet::from_success(total)
                 } else {
@@ -110,6 +134,13 @@ pub(crate) fn sys_readv(args : SyscallArgs) -> UserRet {
                 };
             }
         };
+        // iozone 调试：read_fd 返回后
+        log::trace!("[sys_readv] iov[{}/{}] read_fd OK fd={} n={} (want {})",
+                    i,
+                    iovcnt,
+                    fd,
+                    n,
+                    iov.len);
         if n == 0 {
             return UserRet::from_success(total);
         }
@@ -119,14 +150,21 @@ pub(crate) fn sys_readv(args : SyscallArgs) -> UserRet {
         }
         total += n;
         if n < iov.len {
+            log::trace!("[sys_readv] iov[{}/{}] short read n={} < len={} total={} EXIT",
+                        i,
+                        iovcnt,
+                        n,
+                        iov.len,
+                        total);
             return UserRet::from_success(total);
         }
     }
 
+    log::trace!("[sys_readv] EXIT total={}", total);
     UserRet::from_success(total)
 }
 
-fn read_fd(fd: usize, buf: &mut [u8]) -> Result<usize, ErrNo> {
+fn read_fd(fd : usize, buf : &mut [u8]) -> Result<usize, ErrNo> {
     if let Some(socket) = socket_fd::lookup(fd) {
         return match stack::socket_kind(socket.handle()) {
             Ok(stack::SocketKind::Tcp) => read_tcp_socket_blocking(fd, buf),
@@ -134,10 +172,26 @@ fn read_fd(fd: usize, buf: &mut [u8]) -> Result<usize, ErrNo> {
             Err(_) => Err(ErrNo::ENOTSOCK),
         };
     }
-    vfs::fd::with_current_io(fd, |handle| handle.read(buf)).map_err(vfs_error_to_errno)
+    // iozone 调试：VFS read 调用前
+    log::trace!("[read_fd] vfs_read fd={} len={}",
+                fd,
+                buf.len());
+    let result =
+        vfs::fd::with_current_io(fd, |handle| handle.read(buf)).map_err(vfs_error_to_errno);
+    // iozone 调试：VFS read 返回后
+    match &result {
+        Ok(n) => log::trace!("[read_fd] vfs_read OK fd={} n={}/{}",
+                             fd,
+                             n,
+                             buf.len()),
+        Err(e) => log::trace!("[read_fd] vfs_read ERR fd={} err={:?}",
+                              fd,
+                              e),
+    }
+    result
 }
 
-fn read_tcp_socket_blocking(fd: usize, buf: &mut [u8]) -> Result<usize, ErrNo> {
+fn read_tcp_socket_blocking(fd : usize, buf : &mut [u8]) -> Result<usize, ErrNo> {
     let nonblocking = socket_fd::is_nonblocking(fd);
     let wait_ticks = socket_recv_wait_ticks(fd, SOCKET_READ_WAIT_TICKS);
     for _ in 0..wait_ticks {
@@ -167,7 +221,7 @@ fn read_tcp_socket_blocking(fd: usize, buf: &mut [u8]) -> Result<usize, ErrNo> {
     Err(ErrNo::EAGAIN)
 }
 
-fn read_udp_socket_blocking(fd: usize, buf: &mut [u8]) -> Result<usize, ErrNo> {
+fn read_udp_socket_blocking(fd : usize, buf : &mut [u8]) -> Result<usize, ErrNo> {
     let nonblocking = socket_fd::is_nonblocking(fd);
     let wait_ticks = socket_recv_wait_ticks(fd, SOCKET_READ_WAIT_TICKS);
     for _ in 0..wait_ticks {
@@ -185,7 +239,7 @@ fn read_udp_socket_blocking(fd: usize, buf: &mut [u8]) -> Result<usize, ErrNo> {
     Err(ErrNo::EAGAIN)
 }
 
-fn socket_recv_wait_ticks(fd: usize, default_ticks: usize) -> usize {
+fn socket_recv_wait_ticks(fd : usize, default_ticks : usize) -> usize {
     let Some(socket) = socket_fd::lookup(fd) else {
         return default_ticks;
     };
@@ -193,7 +247,8 @@ fn socket_recv_wait_ticks(fd: usize, default_ticks: usize) -> usize {
         Ok(Some(ms)) => {
             let tick_ms = (SCHED_TIMER_PERIOD_MS as u64).max(1);
             let ticks = ms.saturating_add(tick_ms - 1) / tick_ms;
-            usize::try_from(ticks).unwrap_or(usize::MAX).max(1)
+            usize::try_from(ticks).unwrap_or(usize::MAX)
+                                  .max(1)
         }
         _ => default_ticks,
     }
@@ -202,7 +257,8 @@ fn socket_recv_wait_ticks(fd: usize, default_ticks: usize) -> usize {
 fn drive_network_stack() {
     match platform::timer::now_duration() {
         Ok(now) => {
-            let millis = now.as_millis().min(i64::MAX as u128) as i64;
+            let millis = now.as_millis()
+                            .min(i64::MAX as u128) as i64;
             stack::poll_at_millis(millis);
         }
         Err(_) => stack::poll(),

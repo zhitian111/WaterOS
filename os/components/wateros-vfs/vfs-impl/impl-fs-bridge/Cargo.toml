@@ -10,6 +10,7 @@
         "mutex",
         "spin_mutex",
     ] }
+    log = { version = "0.4" }
     impl_page_cache = { path = "../impl-page-cache/", package = "wateros-vfs-impl-page-cache", default-features = true, optional = true }
     impl_fd_session = { path = "../impl-fd-session/", package = "wateros-vfs-impl-fd-session", default-features = true, optional = true }
     wateros-base-config = { path = "../../../wateros-base/base-config", package = "wateros-base-config" }
