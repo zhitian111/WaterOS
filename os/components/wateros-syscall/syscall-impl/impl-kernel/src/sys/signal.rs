@@ -224,6 +224,12 @@ pub(crate) fn on_thread_exit(task_id : usize, pid : usize, last_thread : bool) {
     });
 }
 
+pub(crate) fn drop_thread_state(task_id : usize) {
+    ipc::signal::with_registry(|registry| {
+        registry.drop_thread_and_empty_process(task_id);
+    });
+}
+
 pub(crate) fn deliver_pending_signal(frame : *mut u8,
                                      restart : Option<(usize, SyscallArgs)>)
                                      -> Result<bool, ErrNo> {

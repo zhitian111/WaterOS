@@ -99,6 +99,39 @@ impl GlobalCacheState {
         self.frames[idx].dirty = false;
         idx
     }
+
+    fn detach_slot_for_reuse(&mut self,
+                             idx : usize)
+                             -> Option<((FileCacheKey, u64), Vec<u8>)> {
+        let old = self.frames[idx].key.take();
+        if let Some(ref key) = old {
+            self.index.remove(key);
+        }
+        if let Some(p) = self.lru
+                          .iter()
+                          .position(|&x| x == idx)
+        {
+            self.lru.remove(p);
+        }
+        let dirty_data = if self.frames[idx].dirty {
+            old.clone()
+               .map(|key| (key, self.frames[idx].data.clone()))
+        } else {
+            None
+        };
+        self.frames[idx].dirty = false;
+        dirty_data
+    }
+
+    fn return_detached_slot(&mut self, idx : usize) {
+        if self.frames[idx].key.is_none() &&
+           !self.free
+                .iter()
+                .any(|&free_idx| free_idx == idx)
+        {
+            self.free.push(idx);
+        }
+    }
 }
 
 /// 单文件逻辑大小与脏页索引（页号）。
@@ -273,31 +306,21 @@ impl GlobalFilePageCache {
         }
 
         let idx = cache.pop_free_or_lru_index();
-        let evicting_dirty = cache.frames[idx].dirty;
-        if evicting_dirty {
-            // 持锁复制脏数据并清除标记，然后释放锁执行 I/O
-            let saved_key = cache.frames[idx].key
-                                             .clone();
-            let saved_data = cache.frames[idx].data
-                                              .clone();
-            cache.frames[idx].dirty = false;
+        let pending_flush = cache.detach_slot_for_reuse(idx);
+        if let Some(((ref k, page_idx), ref saved_data)) = pending_flush {
             drop(cache);
-            if let Some((ref k, page_idx)) = saved_key {
+            {
                 let off = page_idx * FILE_PAGE_SIZE as u64;
-                let _ = io.write_range(k.path.as_ref(),
-                                       off,
-                                       &saved_data[..FILE_PAGE_SIZE]);
+                if let Err(err) = io.write_range(k.path.as_ref(),
+                                                 off,
+                                                 &saved_data[..FILE_PAGE_SIZE])
+                {
+                    let mut cache = self.state.lock();
+                    cache.return_detached_slot(idx);
+                    return Err(map_err(err));
+                }
             }
             cache = self.state.lock();
-            if let Some(old) = saved_key {
-                cache.index
-                     .remove(&old);
-            }
-        } else if let Some(old) = cache.frames[idx].key
-                                                   .take()
-        {
-            cache.index
-                 .remove(&old);
         }
 
         cache.frames[idx].data
@@ -344,42 +367,21 @@ impl GlobalFilePageCache {
         }
 
         let idx = cache.pop_free_or_lru_index();
-        if cache.frames[idx].dirty {
-            // 在持锁状态下复制脏数据和 key，清除脏标记
-            let saved_key = cache.frames[idx].key
-                                             .clone();
-            let saved_data = cache.frames[idx].data
-                                              .clone();
-            cache.frames[idx].dirty = false;
+        let pending_flush = cache.detach_slot_for_reuse(idx);
+        if let Some(((ref k, page_idx), ref saved_data)) = pending_flush {
             drop(cache);
-            // 释放锁后执行 I/O
-            if let Some((ref k, page_idx)) = saved_key {
+            {
                 let off = page_idx * FILE_PAGE_SIZE as u64;
-                io.write_range(k.path.as_ref(),
-                               off,
-                               &saved_data[..FILE_PAGE_SIZE])
-                  .map_err(map_err)?;
+                if let Err(err) = io.write_range(k.path.as_ref(),
+                                                 off,
+                                                 &saved_data[..FILE_PAGE_SIZE])
+                {
+                    let mut cache = self.state.lock();
+                    cache.return_detached_slot(idx);
+                    return Err(map_err(err));
+                }
             }
             cache = self.state.lock();
-            // 如果 key 已被清除，说明帧被 truncate 回收
-            if saved_key.is_some() &&
-               cache.frames[idx].key
-                                .is_none()
-            {
-                // 帧已回收，直接 fall through
-            }
-        }
-        if let Some(old) = cache.frames[idx].key
-                                            .take()
-        {
-            cache.index
-                 .remove(&old);
-            if let Some(p) = cache.lru
-                                  .iter()
-                                  .position(|&x| x == idx)
-            {
-                cache.lru.remove(p);
-            }
         }
         cache.frames[idx].data
                          .fill(0);

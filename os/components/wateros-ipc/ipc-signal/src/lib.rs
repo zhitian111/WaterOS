@@ -221,6 +221,21 @@ impl SignalRegistry {
             .remove(&task_id);
     }
 
+    pub fn drop_thread_and_empty_process(&mut self, task_id : usize) {
+        let Some(thread) = self.threads
+                               .remove(&task_id)
+        else {
+            return;
+        };
+        if !self.threads
+                .values()
+                .any(|other| other.pid == thread.pid)
+        {
+            self.processes
+                .remove(&thread.pid);
+        }
+    }
+
     pub fn drop_process(&mut self, pid : usize) {
         self.processes
             .remove(&pid);

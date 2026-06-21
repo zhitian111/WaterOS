@@ -745,6 +745,12 @@ fn drop_task_runtime_resources_with_aspace(task_id : task::TaskId, aspace : usiz
     cred::drop_task_cred(task_id);
 }
 
+pub(crate) fn drop_reaped_task_runtime_resources(task_id : task::TaskId, aspace : usize) {
+    super::robust::drop_robust_state(task_id);
+    super::signal::drop_thread_state(task_id);
+    drop_task_runtime_resources_with_aspace(task_id, aspace);
+}
+
 fn finish_wait_process_result(pid : task::ProcessId,
                               exited_tasks : Vec<task::ExitedTask>,
                               exit_code_ptr : usize)

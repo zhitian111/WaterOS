@@ -51,6 +51,12 @@ pub fn raise_current_signal(signal: usize) -> bool {
     active_impl::raise_current_signal(signal)
 }
 
+#[cfg(feature = "impl-kernel")]
+#[inline]
+pub fn drop_reaped_task_runtime_resources(task_id: usize, aspace: usize) {
+    active_impl::drop_reaped_task_runtime_resources(task_id, aspace);
+}
+
 /// Current-task syscall dispatch entry for assembly or C ABI callers.
 #[cfg(feature = "impl-kernel")]
 #[unsafe(no_mangle)]

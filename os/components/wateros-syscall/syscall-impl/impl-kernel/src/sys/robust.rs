@@ -100,6 +100,10 @@ pub(crate) fn robust_exit_cleanup(task_id: TaskId) {
     hub.drop_robust_list(task_id);
 }
 
+pub(crate) fn drop_robust_state(task_id: TaskId) {
+    FutexHub::global().drop_robust_list(task_id);
+}
+
 /// execve 前清理同进程其它线程的 robust 状态。
 pub(crate) fn robust_exit_cleanup_siblings_for_exec() {
     let current_id = match task::current_task_id() {

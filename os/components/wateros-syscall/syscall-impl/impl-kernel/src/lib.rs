@@ -52,6 +52,10 @@ pub fn raise_current_signal(signal: usize) -> bool {
     sys::raise_current_thread(signal).is_ok()
 }
 
+pub fn drop_reaped_task_runtime_resources(task_id: usize, aspace: usize) {
+    sys::drop_reaped_task_runtime_resources(task_id, aspace);
+}
+
 /// Kernel syscall implementation selected by the aggregate crate.
 pub struct KernelSyscallDispatcher;
 

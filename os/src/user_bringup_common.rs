@@ -79,24 +79,14 @@ pub fn run_one_elf_argv_exit(log_tag : &str, elf_path : &str, argv : &[&str]) ->
 
     task::wait_for_task_exit(tid);
     let exit_code = task::reap_exited_task(tid).map(|e| {
-                                                   cred::drop_task_cred(e.id);
-                                                   #[cfg(feature = "vfs-bridge")]
-                                                   {
-                                                       vfs::cwd::drop_task_cwd(e.id);
-                                                       vfs::fd::drop_task_fd_table(e.id);
-                                                   }
+                                                   drop_reaped_task_runtime_resources(&e);
                                                    e.exit_code
                                                })
                                                .unwrap_or(-1);
 
     let (purge, stray_exited) = task::purge_all_user_processes();
     for exited in &stray_exited {
-        cred::drop_task_cred(exited.id);
-        #[cfg(feature = "vfs-bridge")]
-        {
-            vfs::cwd::drop_task_cwd(exited.id);
-            vfs::fd::drop_task_fd_table(exited.id);
-        }
+        drop_reaped_task_runtime_resources(exited);
     }
     if purge.killed_tasks > 0 {
         warn!("[{log_tag}] script cleanup killed {} stray user task(s) after path={elf_path}",
@@ -112,6 +102,14 @@ pub fn run_one_elf_argv_exit(log_tag : &str, elf_path : &str, argv : &[&str]) ->
 
     trace!("[{log_tag}] END path={elf_path} exit_code={exit_code}");
     Some(exit_code)
+}
+
+fn drop_reaped_task_runtime_resources(exited : &task::ExitedTask) {
+    let aspace = exited.trap_frame
+                       .as_ref()
+                       .map(|frame| frame.user_aspace_ptr())
+                       .unwrap_or(0);
+    syscall::drop_reaped_task_runtime_resources(exited.id, aspace);
 }
 
 
