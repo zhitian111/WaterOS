@@ -74,9 +74,7 @@ fn block_write_bytes(
     }
     let probe = src.len() >= IOZONE_PROBE_MIN_WRITE_BYTES;
     if probe {
-        logging::info!("[iozone-probe][ext4-block-write] begin start_byte={} len={}",
-                       start_byte,
-                       src.len());
+        logging::trace!("[ext4-block-write] begin start_byte={} len={}", start_byte, src.len());
     }
     let mut guard = dev.lock();
     let bdev: &mut dyn driver_block_api_v0::BlockDevice = &mut **guard;
@@ -112,9 +110,7 @@ fn block_write_bytes(
         write_partial_block(bdev, abs / bs, 0, &src[pos..])?;
     }
     if probe {
-        logging::info!("[iozone-probe][ext4-block-write] end start_byte={} len={}",
-                       start_byte,
-                       src.len());
+        logging::trace!("[ext4-block-write] end start_byte={} len={}", start_byte, src.len());
     }
     Ok(())
 }
@@ -242,7 +238,7 @@ impl ReadWriteFs for Ext4FsRw {
         if data.is_empty() {
             return Ok(0);
         }
-        logging::info!("[iozone-probe][ext4-write-range] begin path={} offset={} len={}",
+        logging::info!("[sync-probe][ext4-write-range] begin path={} offset={} len={}",
                        path,
                        offset,
                        data.len());
@@ -255,7 +251,7 @@ impl ReadWriteFs for Ext4FsRw {
             return Err(FsError::NotAFile);
         }
         let written = write_at(fs, &mut inode, data, offset).map_err(map_ext4_plus)?;
-        logging::info!("[iozone-probe][ext4-write-range] end path={} offset={} len={} written={}",
+        logging::info!("[sync-probe][ext4-write-range] end path={} offset={} len={} written={}",
                        path,
                        offset,
                        data.len(),

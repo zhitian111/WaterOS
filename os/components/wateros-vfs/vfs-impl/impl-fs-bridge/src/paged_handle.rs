@@ -98,10 +98,10 @@ impl PagedFileHandle {
 
     fn sync_dirty(&mut self) -> VfsResult<()> {
         if !self.writable || self.detached {
-            log::info!("[iozone-probe][vfs-flush] skip path={} writable={} detached={}",
-                       self.path,
-                       self.writable,
-                       self.detached);
+            log::trace!("[vfs-flush] skip path={} writable={} detached={}",
+                        self.path,
+                        self.writable,
+                        self.detached);
             return Ok(());
         }
         let mut rw = mount_rw_session()?;
@@ -109,7 +109,7 @@ impl PagedFileHandle {
         let cache = global_cache(self.mount_gen);
         let dirty_pages = cache.dirty_page_count(self.path.as_str());
         let size = self.current_size();
-        log::info!("[iozone-probe][vfs-flush] begin path={} size={} offset={} dirty_pages={}",
+        log::info!("[sync-probe][vfs-flush] begin path={} size={} offset={} dirty_pages={}",
                    self.path,
                    size,
                    self.offset,
@@ -119,21 +119,19 @@ impl PagedFileHandle {
                           core::convert::identity)
         {
             Ok(()) => {
-                log::info!("[iozone-probe][vfs-flush] end path={} ret=ok dirty_pages_after={}",
+                log::info!("[sync-probe][vfs-flush] end path={} ret=ok dirty_pages_after={}",
                            self.path,
                            cache.dirty_page_count(self.path.as_str()));
                 Ok(())
             }
             Err(VfsError::NotFound) => {
                 self.detached = true;
-                log::info!("[iozone-probe][vfs-flush] end path={} ret=not-found detached=true",
+                log::info!("[sync-probe][vfs-flush] end path={} ret=not-found detached=true",
                            self.path);
                 Ok(())
             }
             Err(e) => {
-                log::info!("[iozone-probe][vfs-flush] end path={} err={:?}",
-                           self.path,
-                           e);
+                log::info!("[sync-probe][vfs-flush] end path={} err={:?}", self.path, e);
                 Err(e)
             }
         }
@@ -363,7 +361,9 @@ impl VfsIoHandle for PagedFileHandle {
         Ok(new_off)
     }
 
-    fn flush(&mut self) -> VfsResult<()> { self.sync_dirty() }
+    fn flush(&mut self) -> VfsResult<()> {
+        self.sync_dirty()
+    }
 
     fn truncate(&mut self, len : u64) -> VfsResult<()> {
         if !self.writable {

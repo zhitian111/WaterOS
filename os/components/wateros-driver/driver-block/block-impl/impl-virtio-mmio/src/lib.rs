@@ -139,9 +139,9 @@ impl BlockDevice for VirtioBlkDevice {
     fn write_blocks(&mut self, start_block: Lba, buf: &[u8]) -> DriverResult<()> {
         let probe = buf.len() >= IOZONE_PROBE_MIN_WRITE_BYTES;
         if probe {
-            logging::info!("[iozone-probe][virtio-blk-write] begin lba={} bytes={}",
-                           start_block.0,
-                           buf.len());
+            logging::trace!("[virtio-blk-write] begin lba={} bytes={}",
+                            start_block.0,
+                            buf.len());
         }
         let result = self.inner
                          .write_blocks(start_block.0 as usize, buf)
@@ -149,15 +149,15 @@ impl BlockDevice for VirtioBlkDevice {
         if probe {
             match &result {
                 Ok(()) => {
-                    logging::info!("[iozone-probe][virtio-blk-write] end lba={} bytes={} ret=ok",
-                                   start_block.0,
-                                   buf.len());
+                    logging::trace!("[virtio-blk-write] end lba={} bytes={} ret=ok",
+                                    start_block.0,
+                                    buf.len());
                 }
                 Err(err) => {
-                    logging::info!("[iozone-probe][virtio-blk-write] end lba={} bytes={} err={:?}",
-                                   start_block.0,
-                                   buf.len(),
-                                   err);
+                    logging::trace!("[virtio-blk-write] end lba={} bytes={} err={:?}",
+                                    start_block.0,
+                                    buf.len(),
+                                    err);
                 }
             }
         }

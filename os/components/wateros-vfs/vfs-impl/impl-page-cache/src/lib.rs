@@ -248,14 +248,14 @@ impl GlobalFilePageCache {
 
         for (start_page, data) in batches {
             let off = start_page * FILE_PAGE_SIZE as u64;
-            log::info!("[iozone-probe][page-cache-run] begin path={} start_page={} offset={} len={}",
+            log::info!("[sync-probe][page-cache-run] begin path={} start_page={} offset={} len={}",
                        key.path.as_ref(),
                        start_page,
                        off,
                        data.len());
             io.write_range(key.path.as_ref(), off, &data)
               .map_err(map_err)?;
-            log::info!("[iozone-probe][page-cache-run] end path={} start_page={} offset={} len={}",
+            log::info!("[sync-probe][page-cache-run] end path={} start_page={} offset={} len={}",
                        key.path.as_ref(),
                        start_page,
                        off,
@@ -551,7 +551,7 @@ impl GlobalFilePageCache {
                  .cloned()
         };
         let Some(entry) = entry else {
-            log::info!("[iozone-probe][page-cache-flush] path={} no-entry", path);
+            log::trace!("[page-cache-flush] path={} no-entry", path);
             return Ok(());
         };
         let mut guard = entry.write();
@@ -559,7 +559,7 @@ impl GlobalFilePageCache {
                                     .keys()
                                     .copied()
                                     .collect();
-        log::info!("[iozone-probe][page-cache-flush] begin path={} logical_size={} dirty_pages={}",
+        log::info!("[sync-probe][page-cache-flush] begin path={} logical_size={} dirty_pages={}",
                    path,
                    guard.logical_size,
                    dirty.len());
@@ -594,7 +594,7 @@ impl GlobalFilePageCache {
                      .remove(&flushed_page);
             }
         }
-        log::info!("[iozone-probe][page-cache-flush] end path={} dirty_pages_after={}",
+        log::info!("[sync-probe][page-cache-flush] end path={} dirty_pages_after={}",
                    path,
                    guard.dirty_pages.len());
         Ok(())
