@@ -53,10 +53,6 @@ fn push_user_word<Ops : UserMemoryOps>(ops : &Ops,
 }
 
 fn build_auxv(elf : &LoadedElf, random_addr : usize) -> Vec<usize> {
-    // RISC-V HWCAP: bit 0='a'(atomics), bit 1='c'(compressed),
-    // bit 2='d'(double), bit 3='f'(single), bit 4='i'(base),
-    // bit 5='m'(multiply), bit 6='v'(vector)
-    const HWCAP_RV64 : usize = 0b0111111; // rv64imafdc (all common extensions)
     alloc::vec![AT_PAGESZ,
                 PAGE_SIZE,
                 AT_PHDR,
@@ -78,13 +74,34 @@ fn build_auxv(elf : &LoadedElf, random_addr : usize) -> Vec<usize> {
                 AT_EGID,
                 0,
                 AT_HWCAP,
-                HWCAP_RV64,
+                elf_hwcap(),
                 AT_SECURE,
                 0,
                 AT_RANDOM,
                 random_addr,
                 AT_NULL,
                 0,]
+}
+
+fn elf_hwcap() -> usize {
+    #[cfg(target_arch = "riscv64")]
+    {
+        // RISC-V HWCAP: bit 0='a', bit 1='c', bit 2='d', bit 3='f',
+        // bit 4='i', bit 5='m'. Do not advertise vector support here.
+        0b0011_1111
+    }
+    #[cfg(target_arch = "loongarch64")]
+    {
+        // LoongArch HWCAP uses different bit assignments from RISC-V. Keep the
+        // advertised set conservative so glibc does not select LSX/LASX paths
+        // before the kernel saves/restores those extension registers.
+        const HWCAP_LOONGARCH_FPU : usize = 1 << 3;
+        HWCAP_LOONGARCH_FPU
+    }
+    #[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
+    {
+        0
+    }
 }
 
 fn usize_pair_to_bytes(pair : [usize; 2]) -> [u8; 16] {

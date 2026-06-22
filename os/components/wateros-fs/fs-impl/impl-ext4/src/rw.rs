@@ -7,6 +7,7 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use api_v0::{FsDirEntry, FsError, FsMetadata, FsNodeType, FsResult, ReadWriteFs};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use driver_block_api_v0::BLOCK_SIZE;
 use ext4plus::file::File;
 use ext4plus::Metadata;
@@ -20,7 +21,39 @@ use ext4plus::inode::{InodeCreationOptions, InodeFlags, InodeMode};
 use ext4plus::path::Path;
 use ext4plus::{DirEntryName, Ext4, Ext4Read, Ext4Write, FileType, FollowSymlinks};
 
-const IOZONE_PROBE_MIN_WRITE_BYTES: usize = 4096;
+static EXT4_IOZONE_TMP_PROBE_ACTIVE: AtomicBool = AtomicBool::new(false);
+static EXT4_IOZONE_TMP_PROBE_SEQ: AtomicUsize = AtomicUsize::new(0);
+
+fn is_iozone_tmp_probe(path: &str, len: usize) -> bool {
+    len >= 256 * 1024 && path.ends_with("/iozone.tmp")
+}
+
+fn begin_iozone_tmp_probe(path: &str, len: usize) -> bool {
+    let active = is_iozone_tmp_probe(path, len);
+    if active {
+        EXT4_IOZONE_TMP_PROBE_SEQ.store(0, Ordering::Relaxed);
+        EXT4_IOZONE_TMP_PROBE_ACTIVE.store(true, Ordering::Release);
+    }
+    active
+}
+
+fn end_iozone_tmp_probe(active: bool) {
+    if active {
+        EXT4_IOZONE_TMP_PROBE_ACTIVE.store(false, Ordering::Release);
+    }
+}
+
+fn next_block_probe_seq() -> Option<usize> {
+    if !EXT4_IOZONE_TMP_PROBE_ACTIVE.load(Ordering::Acquire) {
+        return None;
+    }
+    let seq = EXT4_IOZONE_TMP_PROBE_SEQ.fetch_add(1, Ordering::Relaxed) + 1;
+    if seq <= 4 || seq % 16 == 0 {
+        Some(seq)
+    } else {
+        None
+    }
+}
 
 // 共享块设备句柄上的按字节读/写：同一 `SharedBlockDevice` 分别作为 reader 与 writer 传入 `load_with_writer`。
 struct BlockDevRw {
@@ -33,10 +66,36 @@ impl Ext4Read for BlockDevRw {
         start_byte: u64,
         dst: &mut [u8],
     ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
-        self.device
-            .lock()
-            .read_bytes(start_byte, dst)
-            .map_err(driver_boxed)
+        let probe_seq = next_block_probe_seq();
+        if let Some(seq) = probe_seq {
+            logging::info!("[sync-probe][ext4-block-read] begin seq={} start_byte={} len={}",
+                           seq,
+                           start_byte,
+                           dst.len());
+        }
+        let mut guard = self.device.lock();
+        if let Some(seq) = probe_seq {
+            logging::info!("[sync-probe][ext4-block-read] lock-acquired seq={} start_byte={} len={}",
+                           seq,
+                           start_byte,
+                           dst.len());
+        }
+        let result = guard.read_bytes(start_byte, dst)
+                          .map_err(driver_boxed);
+        if let Some(seq) = probe_seq {
+            match &result {
+                Ok(()) => logging::info!("[sync-probe][ext4-block-read] end seq={} start_byte={} len={} ret=ok",
+                                         seq,
+                                         start_byte,
+                                         dst.len()),
+                Err(err) => logging::info!("[sync-probe][ext4-block-read] end seq={} start_byte={} len={} err={}",
+                                           seq,
+                                           start_byte,
+                                           dst.len(),
+                                           err),
+            }
+        }
+        result
     }
 }
 
@@ -72,11 +131,20 @@ fn block_write_bytes(
     if src.is_empty() {
         return Ok(());
     }
-    let probe = src.len() >= IOZONE_PROBE_MIN_WRITE_BYTES;
-    if probe {
-        logging::trace!("[ext4-block-write] begin start_byte={} len={}", start_byte, src.len());
+    let probe_seq = next_block_probe_seq();
+    if let Some(seq) = probe_seq {
+        logging::info!("[sync-probe][ext4-block-write] begin seq={} start_byte={} len={}",
+                       seq,
+                       start_byte,
+                       src.len());
     }
     let mut guard = dev.lock();
+    if let Some(seq) = probe_seq {
+        logging::info!("[sync-probe][ext4-block-write] lock-acquired seq={} start_byte={} len={}",
+                       seq,
+                       start_byte,
+                       src.len());
+    }
     let bdev: &mut dyn driver_block_api_v0::BlockDevice = &mut **guard;
     let bs = bdev.block_size();
     if bs == 0 {
@@ -109,8 +177,11 @@ fn block_write_bytes(
         debug_assert!(end > abs);
         write_partial_block(bdev, abs / bs, 0, &src[pos..])?;
     }
-    if probe {
-        logging::trace!("[ext4-block-write] end start_byte={} len={}", start_byte, src.len());
+    if let Some(seq) = probe_seq {
+        logging::info!("[sync-probe][ext4-block-write] end seq={} start_byte={} len={}",
+                       seq,
+                       start_byte,
+                       src.len());
     }
     Ok(())
 }
@@ -238,24 +309,64 @@ impl ReadWriteFs for Ext4FsRw {
         if data.is_empty() {
             return Ok(0);
         }
-        logging::info!("[sync-probe][ext4-write-range] begin path={} offset={} len={}",
-                       path,
-                       offset,
-                       data.len());
+        let probe = begin_iozone_tmp_probe(path, data.len());
+        if probe {
+            logging::info!("[sync-probe][ext4-write-range] begin path={} offset={} len={}",
+                           path,
+                           offset,
+                           data.len());
+        }
         let fs = self.fs()?;
-        let pathv = Path::try_from(path).map_err(|_| FsError::InvalidPath)?;
-        let mut inode = fs
-            .path_to_inode(pathv, FollowSymlinks::All)
-            .map_err(map_ext4_plus)?;
+        let pathv = match Path::try_from(path) {
+            Ok(pathv) => pathv,
+            Err(_) => {
+                end_iozone_tmp_probe(probe);
+                return Err(FsError::InvalidPath);
+            }
+        };
+        if probe {
+            logging::info!("[sync-probe][ext4-write-range] path-to-inode begin path={}", path);
+        }
+        let mut inode = match fs.path_to_inode(pathv, FollowSymlinks::All) {
+            Ok(inode) => inode,
+            Err(err) => {
+                end_iozone_tmp_probe(probe);
+                return Err(map_ext4_plus(err));
+            }
+        };
+        if probe {
+            logging::info!("[sync-probe][ext4-write-range] path-to-inode end path={}", path);
+        }
         if inode.file_type() != FileType::Regular {
+            end_iozone_tmp_probe(probe);
             return Err(FsError::NotAFile);
         }
-        let written = write_at(fs, &mut inode, data, offset).map_err(map_ext4_plus)?;
-        logging::info!("[sync-probe][ext4-write-range] end path={} offset={} len={} written={}",
-                       path,
-                       offset,
-                       data.len(),
-                       written);
+        if probe {
+            logging::info!("[sync-probe][ext4-write-range] write-at begin path={} offset={} len={}",
+                           path,
+                           offset,
+                           data.len());
+        }
+        let written = match write_at(fs, &mut inode, data, offset) {
+            Ok(written) => written,
+            Err(err) => {
+                end_iozone_tmp_probe(probe);
+                return Err(map_ext4_plus(err));
+            }
+        };
+        if probe {
+            logging::info!("[sync-probe][ext4-write-range] write-at end path={} offset={} len={} written={}",
+                           path,
+                           offset,
+                           data.len(),
+                           written);
+            logging::info!("[sync-probe][ext4-write-range] end path={} offset={} len={} written={}",
+                           path,
+                           offset,
+                           data.len(),
+                           written);
+        }
+        end_iozone_tmp_probe(probe);
         Ok(written)
     }
 

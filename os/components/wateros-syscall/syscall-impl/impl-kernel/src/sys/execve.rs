@@ -38,7 +38,15 @@ fn do_execve(path_ptr: usize, argv_ptr: usize, envp_ptr: usize) -> Result<(), Er
 
     let argv = read_string_array(argv_ptr)?;
     let envp = read_string_array(envp_ptr)?;
+    let probe = is_iozone_exec_probe(abs_path.as_str());
 
+    if probe {
+        log::info!("[exec-probe][execve] begin abs_path={} argc={} envc={} argv={:?}",
+                   abs_path,
+                   argv.len(),
+                   envp.len(),
+                   argv);
+    }
     super::robust::robust_exit_cleanup_siblings_for_exec();
     let killed_threads = task::terminate_other_threads_for_exec().map_err(|_| ErrNo::EINVAL)?;
     let current_signal_task = super::signal::ensure_current_signal_state()?.task_id;
@@ -48,9 +56,39 @@ fn do_execve(path_ptr: usize, argv_ptr: usize, envp_ptr: usize) -> Result<(), Er
         .map(String::as_str)
         .collect();
     let load_path = compat_exec_load_path(abs_path.as_str());
-    let (new_elf, final_argv) =
-        mm::kernel_mm::load_program_from_path(load_path.as_str(), &argv_refs)
-            .map_err(load_program_to_errno)?;
+    if probe {
+        log::info!("[exec-probe][execve] load begin abs_path={} load_path={}",
+                   abs_path,
+                   load_path);
+    }
+    let (new_elf, final_argv) = match mm::kernel_mm::load_program_from_path(load_path.as_str(),
+                                                                            &argv_refs) {
+        Ok(loaded) => loaded,
+        Err(err) => {
+            let errno = load_program_to_errno(err);
+            if probe {
+                log::info!("[exec-probe][execve] load err abs_path={} load_path={} errno={:?}",
+                           abs_path,
+                           load_path,
+                           errno);
+            }
+            return Err(errno);
+        }
+    };
+    if probe {
+        log::info!("[exec-probe][execve] load ok abs_path={} load_path={} entry={:#x} program_entry={:#x} interp_base={:#x} image=[{:#x},{:#x}) phdr={:#x} phnum={} phent={} satp={:#x}",
+                   abs_path,
+                   load_path,
+                   new_elf.entry_pc,
+                   new_elf.program_entry,
+                   new_elf.interp_base,
+                   new_elf.image_base,
+                   new_elf.image_base.saturating_add(new_elf.image_size),
+                   new_elf.phdr_va,
+                   new_elf.phnum,
+                   new_elf.phentsize,
+                   new_elf.satp);
+    }
     let final_argv_refs: Vec<&str> = final_argv
         .iter()
         .map(String::as_str)
@@ -59,9 +97,29 @@ fn do_execve(path_ptr: usize, argv_ptr: usize, envp_ptr: usize) -> Result<(), Er
         .iter()
         .map(String::as_str)
         .collect();
-    let new_sp = mm::kernel_mm::prepare_elf_user_stack(&new_elf, &final_argv_refs, &envp_refs)
-        .map_err(prepare_stack_to_errno)?;
+    let new_sp = match mm::kernel_mm::prepare_elf_user_stack(&new_elf,
+                                                             &final_argv_refs,
+                                                             &envp_refs) {
+        Ok(new_sp) => new_sp,
+        Err(err) => {
+            let errno = prepare_stack_to_errno(err);
+            if probe {
+                log::info!("[exec-probe][execve] stack err abs_path={} errno={:?}",
+                           abs_path,
+                           errno);
+            }
+            return Err(errno);
+        }
+    };
     let (argc, argv_ptr, envp_ptr) = initial_entry_args(new_sp, final_argv_refs.len());
+    if probe {
+        log::info!("[exec-probe][execve] stack ok abs_path={} sp={:#x} argc={} argv={:#x} envp={:#x}",
+                   abs_path,
+                   new_sp,
+                   argc,
+                   argv_ptr,
+                   envp_ptr);
+    }
 
     for exited in &killed_threads {
         vfs::cwd::drop_task_cwd(exited.id);
@@ -86,6 +144,13 @@ fn do_execve(path_ptr: usize, argv_ptr: usize, envp_ptr: usize) -> Result<(), Er
     vfs::cwd::set_task_argv(current_tid, final_argv.iter().map(String::as_str))
         .map_err(vfs_error_to_errno)?;
 
+    if probe {
+        log::info!("[exec-probe][execve] commit abs_path={} tid={} entry={:#x} sp={:#x}",
+                   abs_path,
+                   current_tid,
+                   new_elf.entry_pc,
+                   new_sp);
+    }
     let image_info = task::UserImageInfo::new(new_elf.image_base, new_elf.image_size);
     let stack_info = task::UserStack::from_range(new_elf.stack_bottom, new_elf.stack_top);
     task::execve_current(
@@ -101,6 +166,10 @@ fn do_execve(path_ptr: usize, argv_ptr: usize, envp_ptr: usize) -> Result<(), Er
     );
 
     Ok(())
+}
+
+fn is_iozone_exec_probe(path: &str) -> bool {
+    path == "./iozone" || path.ends_with("/iozone")
 }
 
 fn compat_exec_load_path(abs_path : &str) -> String {
