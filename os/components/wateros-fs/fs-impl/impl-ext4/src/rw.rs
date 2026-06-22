@@ -20,9 +20,29 @@ use ext4plus::file::{truncate, write_at};
 use ext4plus::inode::{InodeCreationOptions, InodeFlags, InodeMode};
 use ext4plus::path::Path;
 use ext4plus::{DirEntryName, Ext4, Ext4Read, Ext4Write, FileType, FollowSymlinks};
+use spin::Mutex;
 
 static EXT4_IOZONE_TMP_PROBE_ACTIVE: AtomicBool = AtomicBool::new(false);
 static EXT4_IOZONE_TMP_PROBE_SEQ: AtomicUsize = AtomicUsize::new(0);
+static EXT4_SMALL_READ_CACHE: Mutex<SmallReadCache> = Mutex::new(SmallReadCache::new());
+
+struct SmallReadCache {
+    valid: bool,
+    dev_id: usize,
+    block: u64,
+    data: [u8; BLOCK_SIZE],
+}
+
+impl SmallReadCache {
+    const fn new() -> Self {
+        Self {
+            valid: false,
+            dev_id: 0,
+            block: 0,
+            data: [0; BLOCK_SIZE],
+        }
+    }
+}
 
 fn is_iozone_tmp_probe(path: &str, len: usize) -> bool {
     len >= 256 * 1024 && path.ends_with("/iozone.tmp")
@@ -48,10 +68,81 @@ fn next_block_probe_seq() -> Option<usize> {
         return None;
     }
     let seq = EXT4_IOZONE_TMP_PROBE_SEQ.fetch_add(1, Ordering::Relaxed) + 1;
-    if seq <= 4 || seq % 16 == 0 {
+    if seq <= 4 || seq % 4096 == 0 {
         Some(seq)
     } else {
         None
+    }
+}
+
+fn shared_block_dev_id(dev: &SharedBlockDevice) -> usize {
+    alloc::sync::Arc::as_ptr(dev) as *const () as usize
+}
+
+fn read_with_small_cache(dev: &SharedBlockDevice,
+                         start_byte: u64,
+                         dst: &mut [u8])
+                         -> Result<bool, DriverError> {
+    if dst.is_empty() {
+        return Ok(true);
+    }
+    let start = usize::try_from(start_byte).map_err(|_| DriverError::InvalidParam)?;
+    let end = start
+        .checked_add(dst.len())
+        .ok_or(DriverError::InvalidParam)?;
+    if dst.len() > 64 || start / BLOCK_SIZE != (end - 1) / BLOCK_SIZE {
+        let mut guard = dev.lock();
+        guard.read_bytes(start_byte, dst)?;
+        return Ok(false);
+    }
+
+    let block = (start / BLOCK_SIZE) as u64;
+    let offset = start % BLOCK_SIZE;
+    let dev_id = shared_block_dev_id(dev);
+    {
+        let cache = EXT4_SMALL_READ_CACHE.lock();
+        if cache.valid && cache.dev_id == dev_id && cache.block == block {
+            dst.copy_from_slice(&cache.data[offset..offset + dst.len()]);
+            return Ok(true);
+        }
+    }
+
+    let mut block_buf = [0u8; BLOCK_SIZE];
+    {
+        let mut guard = dev.lock();
+        guard.read_blocks(Lba(block), &mut block_buf)?;
+    }
+    let mut cache = EXT4_SMALL_READ_CACHE.lock();
+    cache.valid = true;
+    cache.dev_id = dev_id;
+    cache.block = block;
+    cache.data.copy_from_slice(&block_buf);
+    dst.copy_from_slice(&cache.data[offset..offset + dst.len()]);
+    Ok(false)
+}
+
+fn invalidate_small_read_cache(dev: &SharedBlockDevice, start_byte: u64, len: usize) {
+    if len == 0 {
+        return;
+    }
+    let Ok(start) = usize::try_from(start_byte) else {
+        EXT4_SMALL_READ_CACHE.lock().valid = false;
+        return;
+    };
+    let Some(end) = start.checked_add(len) else {
+        EXT4_SMALL_READ_CACHE.lock().valid = false;
+        return;
+    };
+    let start_block = start / BLOCK_SIZE;
+    let end_block = (end - 1) / BLOCK_SIZE;
+    let dev_id = shared_block_dev_id(dev);
+    let mut cache = EXT4_SMALL_READ_CACHE.lock();
+    if cache.valid
+        && cache.dev_id == dev_id
+        && cache.block >= start_block as u64
+        && cache.block <= end_block as u64
+    {
+        cache.valid = false;
     }
 }
 
@@ -73,29 +164,22 @@ impl Ext4Read for BlockDevRw {
                            start_byte,
                            dst.len());
         }
-        let mut guard = self.device.lock();
-        if let Some(seq) = probe_seq {
-            logging::info!("[sync-probe][ext4-block-read] lock-acquired seq={} start_byte={} len={}",
-                           seq,
-                           start_byte,
-                           dst.len());
-        }
-        let result = guard.read_bytes(start_byte, dst)
-                          .map_err(driver_boxed);
+        let result = read_with_small_cache(&self.device, start_byte, dst);
         if let Some(seq) = probe_seq {
             match &result {
-                Ok(()) => logging::info!("[sync-probe][ext4-block-read] end seq={} start_byte={} len={} ret=ok",
-                                         seq,
-                                         start_byte,
-                                         dst.len()),
-                Err(err) => logging::info!("[sync-probe][ext4-block-read] end seq={} start_byte={} len={} err={}",
+                Ok(cache_hit) => logging::info!("[sync-probe][ext4-block-read] end seq={} start_byte={} len={} ret=ok cache_hit={}",
+                                                seq,
+                                                start_byte,
+                                                dst.len(),
+                                                cache_hit),
+                Err(err) => logging::info!("[sync-probe][ext4-block-read] end seq={} start_byte={} len={} err={:?}",
                                            seq,
                                            start_byte,
                                            dst.len(),
                                            err),
             }
         }
-        result
+        result.map(|_| ()).map_err(driver_boxed)
     }
 }
 
@@ -131,6 +215,7 @@ fn block_write_bytes(
     if src.is_empty() {
         return Ok(());
     }
+    invalidate_small_read_cache(dev, start_byte, src.len());
     let probe_seq = next_block_probe_seq();
     if let Some(seq) = probe_seq {
         logging::info!("[sync-probe][ext4-block-write] begin seq={} start_byte={} len={}",
