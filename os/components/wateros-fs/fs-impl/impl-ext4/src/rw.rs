@@ -333,7 +333,16 @@ impl ReadWriteFs for Ext4FsRw {
         if inode.file_type() != FileType::Regular {
             return Err(FsError::NotAFile);
         }
-        write_at(fs, &mut inode, data, offset).map_err(map_ext4_plus)
+        let mut done = 0usize;
+        while done < data.len() {
+            let n = write_at(fs, &mut inode, &data[done..], offset + done as u64)
+                .map_err(map_ext4_plus)?;
+            if n == 0 {
+                return Err(FsError::Io);
+            }
+            done += n;
+        }
+        Ok(done)
     }
 
     fn truncate(&mut self, path: &str, len: u64) -> FsResult<()> {

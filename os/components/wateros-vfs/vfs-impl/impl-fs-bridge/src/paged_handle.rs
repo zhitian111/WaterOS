@@ -1,4 +1,13 @@
 //! 大文件句柄：经全局页缓存 Direct 读写，不在 `open` 时整文件载入 RAM。
+//!
+//! ## Lock ordering（与 [`impl_page_cache`] 一致）
+//!
+//! 1. `page_cache.files`（极短）
+//! 2. per-file `FileEntryInner` RwLock（`entry.read` / `entry.write`）
+//! 3. `page_cache.state`（极短；持锁期间不得调 ext4）
+//! 4. `SharedRwFs`（仅在 `FsPageIo::read_range` / `write_range` 内短持有）
+//!
+//! 禁止在持有 ext4 锁后再等待页缓存 entry 锁（写/fsync 路径曾因此与读 miss 死锁）。
 
 extern crate alloc;
 
@@ -7,20 +16,18 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use api_v0::{
-    RootRwSession, SingleRootReadView, VfsError, VfsIoHandle, VfsMetadata, VfsOpenFlags, VfsResult,
-    VfsSeekWhence,
+    normalize_absolute_path, SingleRootReadView, VfsError, VfsIoHandle, VfsMetadata, VfsOpenFlags,
+    VfsResult, VfsSeekWhence,
 };
 use impl_page_cache::{global_cache, PageCacheIo};
 use wateros_base_config::fs::{FileIoMode, FILE_IO_MODE};
 
-use crate::{FsBridge, MountedRwSession};
+use crate::{map_fs_err, root_rw, FsBridge};
 
-/// 委托根卷 RO/RW 区间 I/O，供页缓存 flush 与 miss 加载使用。
-pub(crate) struct FsPageIo<'a> {
-    pub rw : Option<&'a mut MountedRwSession>,
-}
+/// 页缓存 miss / flush 时下探根卷的 I/O 委托；ext4 锁在每次 `read_range`/`write_range` 内按需短持。
+pub(crate) struct FsPageIo;
 
-impl PageCacheIo for FsPageIo<'_> {
+impl PageCacheIo for FsPageIo {
     type Error = VfsError;
 
     fn read_range(&self, path : &str, offset : u64, buf : &mut [u8]) -> Result<usize, VfsError> {
@@ -28,18 +35,12 @@ impl PageCacheIo for FsPageIo<'_> {
     }
 
     fn write_range(&mut self, path : &str, offset : u64, data : &[u8]) -> Result<usize, VfsError> {
-        let Some(rw) = self.rw
-                           .as_deref_mut()
-        else {
-            return Err(VfsError::Unsupported);
-        };
-        rw.write_range(path, offset, data)
+        let n = normalize_absolute_path(path)?;
+        root_rw()?
+            .lock()
+            .write_range(n.as_str(), offset, data)
+            .map_err(map_fs_err)
     }
-}
-
-fn mount_rw_session() -> VfsResult<MountedRwSession> {
-    let rw = fs::rootfs::active_impl::root_rw_fs().ok_or(VfsError::NotMounted)?;
-    Ok(MountedRwSession::new(rw))
 }
 
 /// 页缓存-backed 根卷普通文件句柄。
@@ -104,8 +105,7 @@ impl PagedFileHandle {
                         self.detached);
             return Ok(());
         }
-        let mut rw = mount_rw_session()?;
-        let mut io = FsPageIo { rw : Some(&mut rw) };
+        let mut io = FsPageIo;
         let cache = global_cache(self.mount_gen);
         match cache.flush(&mut io,
                           self.path.as_str(),
@@ -184,13 +184,12 @@ impl VfsIoHandle for PagedFileHandle {
                               .ok_or(VfsError::Io)?;
             return Ok(n);
         }
-        // iozone 调试：页缓存读前
         log::trace!("[paged_handle] read path={} offset={} len={} size={}",
                     self.path,
                     self.offset,
                     buf.len(),
                     size);
-        let mut io = FsPageIo { rw : None };
+        let mut io = FsPageIo;
         let cache = global_cache(self.mount_gen);
         let n = cache.read(&mut io,
                            self.path.as_str(),
@@ -198,7 +197,6 @@ impl VfsIoHandle for PagedFileHandle {
                            self.offset,
                            buf,
                            core::convert::identity)?;
-        // iozone 调试：页缓存读后
         log::trace!("[paged_handle] read OK path={} offset={} n={}/{}",
                     self.path,
                     self.offset,
@@ -221,8 +219,7 @@ impl VfsIoHandle for PagedFileHandle {
             return self.account_detached_write(self.offset, buf, true);
         }
         let size = self.current_size();
-        let mut rw = mount_rw_session()?;
-        let mut io = FsPageIo { rw : Some(&mut rw) };
+        let mut io = FsPageIo;
         let cache = global_cache(self.mount_gen);
         let n = match cache.write(&mut io,
                                   self.path.as_str(),
@@ -256,7 +253,7 @@ impl VfsIoHandle for PagedFileHandle {
         if self.detached {
             return self.read_detached_at(offset, buf);
         }
-        let mut io = FsPageIo { rw : None };
+        let mut io = FsPageIo;
         let cache = global_cache(self.mount_gen);
         let n = cache.read(&mut io,
                            self.path.as_str(),
@@ -278,8 +275,7 @@ impl VfsIoHandle for PagedFileHandle {
             return self.account_detached_write(offset, buf, false);
         }
         let size = self.current_size();
-        let mut rw = mount_rw_session()?;
-        let mut io = FsPageIo { rw : Some(&mut rw) };
+        let mut io = FsPageIo;
         let cache = global_cache(self.mount_gen);
         let n = match cache.write(&mut io,
                                   self.path.as_str(),
@@ -300,7 +296,6 @@ impl VfsIoHandle for PagedFileHandle {
     }
 
     fn close(&mut self) -> VfsResult<()> {
-        // 将脏页刷回磁盘（不 purge files 条目，后续 open 可复用）。
         self.sync_dirty()
     }
 
@@ -360,8 +355,8 @@ impl VfsIoHandle for PagedFileHandle {
             }
         }
         if !self.detached {
-            let mut rw = mount_rw_session()?;
-            match rw.truncate(self.path.as_str(), len) {
+            let n = normalize_absolute_path(self.path.as_str())?;
+            match root_rw()?.lock().truncate(n.as_str(), len).map_err(map_fs_err) {
                 Ok(()) => {}
                 Err(VfsError::NotFound) => self.detached = true,
                 Err(e) => return Err(e),

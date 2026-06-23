@@ -1,6 +1,18 @@
 //! 全局共享文件页缓存（Direct 模式）：按 `(mount_gen, path, page_index)` 键 LRU 缓存页帧。
 //!
 //! 每个文件条目使用 [`Arc<RwLock<FileEntryInner>>`]：允许多个读者并发，写/刷盘独占。
+//!
+//! ## Lock ordering
+//!
+//! 与 `wateros-vfs-impl-fs-bridge` 的 `paged_handle` 约定一致，编号越小越先获取，禁止逆序：
+//!
+//! 1. `files`（`Mutex`，极短）
+//! 2. per-file `FileEntryInner` RwLock（`read` / `write`）
+//! 3. `state`（`Mutex`，极短；**持锁期间不得调用下层块设备 I/O**）
+//! 4. 根卷 `SharedRwFs`（仅在 [`PageCacheIo`] 的 `read_range` / `write_range` 内短持有）
+//!
+//! `install_page` / `install_zero_page` 在调 I/O 前会 `drop(state)`；调用方须在持有
+//! entry 锁后再通过 `PageCacheIo` 下探 ext4，不得在持有 ext4 锁后再等 entry 锁。
 
 #![no_std]
 extern crate alloc;
