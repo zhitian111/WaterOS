@@ -102,6 +102,16 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     }
 
     #[inline]
+    fn dispatch_sched_get_priority_max(args: SyscallArgs) -> isize {
+        sys::sys_sched_get_priority_max(args).0
+    }
+
+    #[inline]
+    fn dispatch_sched_get_priority_min(args: SyscallArgs) -> isize {
+        sys::sys_sched_get_priority_min(args).0
+    }
+
+    #[inline]
     fn dispatch_clone(args: SyscallArgs) -> isize {
         sys::sys_clone(args).0
     }

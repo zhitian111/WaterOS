@@ -55,6 +55,8 @@ pub enum SyscallKind {
     SchedGetparam,
     SchedSetaffinity,
     SchedGetaffinity,
+    SchedGetPriorityMax,
+    SchedGetPriorityMin,
     Exit,
     ExitGroup,
     Clone,
@@ -237,6 +239,10 @@ impl SyscallKind {
             Self::SchedSetaffinity
         } else if syscall_nr == T::SCHED_GETAFFINITY.raw() {
             Self::SchedGetaffinity
+        } else if syscall_nr == T::SCHED_GET_PRIORITY_MAX.raw() {
+            Self::SchedGetPriorityMax
+        } else if syscall_nr == T::SCHED_GET_PRIORITY_MIN.raw() {
+            Self::SchedGetPriorityMin
         } else if syscall_nr == T::YIELD.raw() {
             Self::Yield
         } else if syscall_nr == T::EXIT.raw() {
@@ -474,6 +480,8 @@ impl SyscallKind {
             Self::SchedGetparam => "sched_getparam",
             Self::SchedSetaffinity => "sched_setaffinity",
             Self::SchedGetaffinity => "sched_getaffinity",
+            Self::SchedGetPriorityMax => "sched_get_priority_max",
+            Self::SchedGetPriorityMin => "sched_get_priority_min",
             Self::Exit => "exit",
             Self::ExitGroup => "exit_group",
             Self::Clone => "clone",
@@ -685,6 +693,22 @@ pub trait SyscallDispatcher {
         Self::dispatch_unsupported(
             SyscallKind::SchedGetaffinity,
             Self::NumberTable::SCHED_GETAFFINITY.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_sched_get_priority_max(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::SchedGetPriorityMax,
+            Self::NumberTable::SCHED_GET_PRIORITY_MAX.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_sched_get_priority_min(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::SchedGetPriorityMin,
+            Self::NumberTable::SCHED_GET_PRIORITY_MIN.raw(),
             args,
         )
     }
@@ -1703,6 +1727,8 @@ pub trait SyscallDispatcher {
             SyscallKind::SchedGetparam => Self::dispatch_sched_getparam(syscall_args),
             SyscallKind::SchedSetaffinity => Self::dispatch_sched_setaffinity(syscall_args),
             SyscallKind::SchedGetaffinity => Self::dispatch_sched_getaffinity(syscall_args),
+            SyscallKind::SchedGetPriorityMax => Self::dispatch_sched_get_priority_max(syscall_args),
+            SyscallKind::SchedGetPriorityMin => Self::dispatch_sched_get_priority_min(syscall_args),
             SyscallKind::Exit => Self::dispatch_exit(syscall_args),
             SyscallKind::ExitGroup => Self::dispatch_exit_group(syscall_args),
             SyscallKind::Read => Self::dispatch_read(syscall_args),

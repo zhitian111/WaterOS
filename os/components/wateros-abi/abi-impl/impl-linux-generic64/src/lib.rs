@@ -76,6 +76,8 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const SCHED_GETPARAM: SyscallNumber = SyscallNumber(121); // sched_getparam
     const SCHED_SETAFFINITY: SyscallNumber = SyscallNumber(122); // sched_setaffinity
     const SCHED_GETAFFINITY: SyscallNumber = SyscallNumber(123); // sched_getaffinity
+    const SCHED_GET_PRIORITY_MAX: SyscallNumber = SyscallNumber(125); // sched_get_priority_max
+    const SCHED_GET_PRIORITY_MIN: SyscallNumber = SyscallNumber(126); // sched_get_priority_min
     const YIELD: SyscallNumber = SyscallNumber(124); // sched_yield
     const GET_TIME: SyscallNumber = SyscallNumber(169); // gettimeofday
     const CLOCK_SETTIME: SyscallNumber = SyscallNumber(112); // clock_settime

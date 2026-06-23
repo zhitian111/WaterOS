@@ -89,7 +89,8 @@ pub(crate) use robust::{
     sys_set_robust_list,
 };
 pub(crate) use sched::{
-    sys_sched_getaffinity, sys_sched_getparam, sys_sched_getscheduler, sys_sched_setaffinity,
+    sys_sched_getaffinity, sys_sched_getparam, sys_sched_get_priority_max,
+    sys_sched_get_priority_min, sys_sched_getscheduler, sys_sched_setaffinity,
     sys_sched_setparam, sys_sched_setscheduler,
 };
 pub(crate) use signal::{

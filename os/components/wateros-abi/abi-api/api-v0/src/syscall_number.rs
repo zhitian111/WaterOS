@@ -142,6 +142,10 @@ pub trait SyscallNumberTable {
     const SCHED_SETAFFINITY: SyscallNumber;
     /// 查询 CPU 亲和性掩码（`sched_getaffinity(2)`）。
     const SCHED_GETAFFINITY: SyscallNumber;
+    /// 查询调度策略最大优先级（`sched_get_priority_max(2)`）。
+    const SCHED_GET_PRIORITY_MAX: SyscallNumber;
+    /// 查询调度策略最小优先级（`sched_get_priority_min(2)`）。
+    const SCHED_GET_PRIORITY_MIN: SyscallNumber;
     /// 主动让出 CPU（`sched_yield(2)`）。
     const YIELD: SyscallNumber;
     /// 取墙上时钟（`gettimeofday(2)`）。

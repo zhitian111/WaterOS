@@ -421,6 +421,13 @@ pub(crate) fn open_file(bridge : &FsBridge,
 
     let meta = bridge.metadata(path.as_str())?;
     if meta.node_type != api_v0::VfsNodeType::File {
+        if meta.node_type == api_v0::VfsNodeType::Directory &&
+           !want_write &&
+           !flags.contains(VfsOpenFlags::TRUNC) &&
+           !flags.contains(VfsOpenFlags::CREATE)
+        {
+            return super::dir_handle::DirectoryHandle::open(bridge, path);
+        }
         return Err(VfsError::NotAFile);
     }
 

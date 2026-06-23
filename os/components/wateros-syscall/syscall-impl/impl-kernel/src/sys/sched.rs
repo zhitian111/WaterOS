@@ -172,3 +172,29 @@ pub(crate) fn sys_sched_getaffinity(args: SyscallArgs) -> UserRet {
         Err(e) => UserRet::from_error(e),
     }
 }
+
+/// `sched_get_priority_max(policy)`。
+pub(crate) fn sys_sched_get_priority_max(args: SyscallArgs) -> UserRet {
+    let policy = match policy_from_arg(args.arg(0) as isize) {
+        Ok(value) => value,
+        Err(e) => return UserRet::from_error(e),
+    };
+    let max = match policy {
+        SchedPolicy::Other => 0,
+        SchedPolicy::Fifo | SchedPolicy::Rr => 99,
+    };
+    UserRet::from_success(max as isize as usize)
+}
+
+/// `sched_get_priority_min(policy)`。
+pub(crate) fn sys_sched_get_priority_min(args: SyscallArgs) -> UserRet {
+    let policy = match policy_from_arg(args.arg(0) as isize) {
+        Ok(value) => value,
+        Err(e) => return UserRet::from_error(e),
+    };
+    let min = match policy {
+        SchedPolicy::Other => 0,
+        SchedPolicy::Fifo | SchedPolicy::Rr => 1,
+    };
+    UserRet::from_success(min as isize as usize)
+}
