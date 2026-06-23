@@ -189,12 +189,6 @@ pub(crate) fn sys_yield() -> UserRet {
 
 pub(crate) fn sys_exit(exit_code : isize) -> isize {
     if let Some(task_id) = task::current_task_id() {
-        if let Some(exe_path) = current_iozone_exe_path() {
-            log::info!("[exec-probe][exit] syscall=exit exe={} tid={} code={}",
-                       exe_path,
-                       task_id,
-                       exit_code);
-        }
         if let Some(process_task) = task::current_process_task_snapshot() {
             let _ = task::reap_exited_member_threads(process_task.pid);
         }
@@ -225,12 +219,6 @@ pub(crate) fn sys_exit(exit_code : isize) -> isize {
 
 pub(crate) fn sys_exit_group(exit_code : isize) -> isize {
     if let Some(task_id) = task::current_task_id() {
-        if let Some(exe_path) = current_iozone_exe_path() {
-            log::info!("[exec-probe][exit] syscall=exit_group exe={} tid={} code={}",
-                       exe_path,
-                       task_id,
-                       exit_code);
-        }
         if let Some(clear_child_tid) = task::task_clear_child_tid(task_id) {
             let addr = clear_child_tid.user_addr();
             if addr != 0 {
@@ -259,15 +247,6 @@ pub(crate) fn sys_exit_group(exit_code : isize) -> isize {
         drop_task_runtime_resources(task_id);
     }
     task::exit_group_current(exit_code)
-}
-
-fn current_iozone_exe_path() -> Option<String> {
-    let exe_path = vfs::cwd::current_exe_path().ok()?;
-    if exe_path.ends_with("/iozone") {
-        Some(exe_path)
-    } else {
-        None
-    }
 }
 
 pub(crate) fn sys_getpid() -> UserRet {

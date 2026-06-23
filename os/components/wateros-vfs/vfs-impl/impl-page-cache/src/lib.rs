@@ -248,18 +248,8 @@ impl GlobalFilePageCache {
 
         for (start_page, data) in batches {
             let off = start_page * FILE_PAGE_SIZE as u64;
-            log::info!("[sync-probe][page-cache-run] begin path={} start_page={} offset={} len={}",
-                       key.path.as_ref(),
-                       start_page,
-                       off,
-                       data.len());
             io.write_range(key.path.as_ref(), off, &data)
               .map_err(map_err)?;
-            log::info!("[sync-probe][page-cache-run] end path={} start_page={} offset={} len={}",
-                       key.path.as_ref(),
-                       start_page,
-                       off,
-                       data.len());
         }
 
         Ok(flushed_pages)
@@ -559,10 +549,6 @@ impl GlobalFilePageCache {
                                     .keys()
                                     .copied()
                                     .collect();
-        log::info!("[sync-probe][page-cache-flush] begin path={} logical_size={} dirty_pages={}",
-                   path,
-                   guard.logical_size,
-                   dirty.len());
 
         let mut run = Vec::new();
         for page_idx in dirty {
@@ -594,9 +580,6 @@ impl GlobalFilePageCache {
                      .remove(&flushed_page);
             }
         }
-        log::info!("[sync-probe][page-cache-flush] end path={} dirty_pages_after={}",
-                   path,
-                   guard.dirty_pages.len());
         Ok(())
     }
 

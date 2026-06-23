@@ -639,7 +639,7 @@ impl Sv39AddressSpace {
                        &self.shared_anon_vmas)
         } {
             unsafe {
-                destroy_table(child_root, SV39_LEVELS - 1);
+                destroy_table(child_root, SV39_LEVELS - 1, 0, &self.shared_anon_vmas);
             }
             return Err(err);
         }
@@ -671,7 +671,10 @@ impl Sv39AddressSpace {
             return;
         }
         unsafe {
-            destroy_table(self.root, SV39_LEVELS - 1);
+            destroy_table(self.root,
+                          SV39_LEVELS - 1,
+                          0,
+                          &self.shared_anon_vmas);
         }
         self.root = PhysPageNum(0);
     }
@@ -798,9 +801,13 @@ impl Sv39AddressSpace {
 ///
 /// # Safety
 /// 调用方确保 `ppn` 指向有效的 4 KiB 页表帧。
-unsafe fn destroy_table(ppn : PhysPageNum, level : usize) {
+unsafe fn destroy_table(ppn : PhysPageNum,
+                        level : usize,
+                        vpn_prefix : usize,
+                        shared_anon_vmas : &[SharedAnonVma]) {
     let table = unsafe { table_mut(ppn) };
-    for pte in table.iter() {
+    for i in 0..SV39_ENTRIES {
+        let pte = table[i];
         let flags = pte.flags();
         if !flags.is_valid() {
             continue;
@@ -811,11 +818,18 @@ unsafe fn destroy_table(ppn : PhysPageNum, level : usize) {
             if flags.to_page_perm()
                     .user()
             {
-                let _ = frame_dealloc_result(child_ppn);
+                let page = VirtPageNum(vpn_prefix | (i << (level * VPN_INDEX_BITS))).start_addr();
+                let is_shared_anon = shared_anon_vmas
+                    .iter()
+                    .any(|vma| vma.contains_page(page));
+                if !is_shared_anon {
+                    let _ = frame_dealloc_result(child_ppn);
+                }
             }
         } else if level > 0 {
+            let child_prefix = vpn_prefix | (i << (level * VPN_INDEX_BITS));
             unsafe {
-                destroy_table(child_ppn, level - 1);
+                destroy_table(child_ppn, level - 1, child_prefix, shared_anon_vmas);
             }
         }
     }
@@ -850,11 +864,13 @@ unsafe fn fork_table(parent_ppn : PhysPageNum,
         if flags.is_leaf_at_level(level) {
             let perm = flags.to_page_perm();
             if perm.user() {
-                frame_inc_ref(ppn).map_err(MmError::from)?;
                 let page = VirtPageNum(vpn_prefix | (i << (level * VPN_INDEX_BITS))).start_addr();
                 let is_shared_anon = shared_anon_vmas
                     .iter()
                     .any(|vma| vma.contains_page(page));
+                if !is_shared_anon {
+                    frame_inc_ref(ppn).map_err(MmError::from)?;
+                }
                 let child_flags = if is_shared_anon {
                     flags
                 } else if flags.writable() {
@@ -875,7 +891,7 @@ unsafe fn fork_table(parent_ppn : PhysPageNum,
                 unsafe { fork_table(ppn, child_sub, level - 1, child_prefix, shared_anon_vmas) }
             {
                 unsafe {
-                    destroy_table(child_sub, level - 1);
+                    destroy_table(child_sub, level - 1, child_prefix, shared_anon_vmas);
                 }
                 return Err(err);
             }
