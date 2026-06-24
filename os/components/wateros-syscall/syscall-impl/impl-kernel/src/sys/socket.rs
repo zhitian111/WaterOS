@@ -13,6 +13,7 @@ use vfs::api::handle::VfsIoHandle;
 use crate::socket_fd;
 
 const AF_INET: usize = 2;
+const AF_UNIX: usize = 1;
 const SOCK_STREAM: usize = 1;
 const SOCK_DGRAM: usize = 2;
 const SOCK_NONBLOCK: usize = 0o4000;
@@ -23,6 +24,31 @@ pub(crate) fn sys_socket(args: SyscallArgs) -> UserRet {
     let domain = args.arg(0);
     let mut typ = args.arg(1);
     let _protocol = args.arg(2);
+
+    if domain == AF_UNIX {
+        let cloexec = typ & SOCK_CLOEXEC != 0;
+        let status_flags = if typ & SOCK_NONBLOCK != 0 {
+            SOCK_NONBLOCK
+        } else {
+            0
+        };
+        typ &= !(SOCK_NONBLOCK | SOCK_CLOEXEC);
+        let (io_handle, sock) = match crate::unix_sock::alloc_unix_socket(typ, status_flags) {
+            Ok(v) => v,
+            Err(e) => return UserRet::from_error(e),
+        };
+        let fd = match vfs::fd::alloc_fd(io_handle) {
+            Ok(fd) => fd,
+            Err(_) => return UserRet::from_error(ErrNo::ENOMEM),
+        };
+        if cloexec {
+            if vfs::fd::set_fd_flags(fd, FD_CLOEXEC).is_err() {
+                return UserRet::from_error(ErrNo::EBADF);
+            }
+        }
+        crate::unix_sock::register(fd, sock);
+        return UserRet::from_success(fd);
+    }
 
     if domain != AF_INET {
         return UserRet::from_error(ErrNo::EAFNOSUPPORT);

@@ -9,7 +9,14 @@ use crate::socket_fd;
 
 pub(crate) fn sys_listen(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
-    let _backlog = args.arg(1);
+    let backlog = args.arg(1);
+
+    if crate::unix_sock::is_unix_fd(fd) {
+        return match crate::unix_sock::listen(fd, backlog) {
+            Ok(()) => UserRet::from_success(0),
+            Err(e) => UserRet::from_error(e),
+        };
+    }
 
     let socket = match socket_fd::lookup(fd) {
         Some(s) => s,

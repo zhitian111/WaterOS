@@ -50,6 +50,10 @@ fn accept_inner(fd: usize, addr_ptr: usize, addrlen_ptr: usize, flags: usize) ->
         return UserRet::from_error(ErrNo::EBADF);
     }
 
+    if crate::unix_sock::is_unix_fd(fd) {
+        return accept_unix(fd, addr_ptr, addrlen_ptr, flags);
+    }
+
     let socket = match socket_fd::lookup(fd) {
         Some(s) => s,
         None => {
@@ -154,6 +158,24 @@ fn accept_inner(fd: usize, addr_ptr: usize, addrlen_ptr: usize, flags: usize) ->
         }
     }
 
+    UserRet::from_success(new_fd)
+}
+
+fn accept_unix(fd: usize, _addr_ptr: usize, _addrlen_ptr: usize, flags: usize) -> UserRet {
+    let (io_handle, sock) = match crate::unix_sock::accept(fd) {
+        Ok(v) => v,
+        Err(e) => return UserRet::from_error(e),
+    };
+    let new_fd = match vfs::fd::alloc_fd(io_handle) {
+        Ok(fd) => fd,
+        Err(_) => return UserRet::from_error(ErrNo::ENOMEM),
+    };
+    if flags & SOCK_CLOEXEC != 0 {
+        if vfs::fd::set_fd_flags(new_fd, FD_CLOEXEC).is_err() {
+            return UserRet::from_error(ErrNo::EBADF);
+        }
+    }
+    crate::unix_sock::register(new_fd, sock);
     UserRet::from_success(new_fd)
 }
 

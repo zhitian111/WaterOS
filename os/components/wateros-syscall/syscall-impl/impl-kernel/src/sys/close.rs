@@ -9,9 +9,15 @@ use crate::vfs_util::vfs_error_to_errno;
 pub(crate) fn sys_close(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let was_socket = socket_fd::lookup(fd).is_some();
+    let was_unix = crate::unix_sock::is_unix_fd(fd);
     let result = vfs::fd::close_fd(fd);
     if was_socket {
         socket_fd::remove(fd);
+    }
+    if was_unix {
+        if let Ok(task_id) = vfs::fd::current_task_id() {
+            crate::unix_sock::unregister(task_id, fd);
+        }
     }
     match result {
         Ok(()) => UserRet::from_success(0),

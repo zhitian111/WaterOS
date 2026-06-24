@@ -191,6 +191,7 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
 
     vfs::fd::copy_fd_table_from_parent(child_id, parent_id);
     crate::socket_fd::copy_from_parent(child_id, parent_id);
+    crate::unix_sock::copy_fds_from_parent(child_id, parent_id);
 
     cred::fork_cred(parent_id, child_id);
     if let Err(error) = super::shm::fork_task_attachments(parent_id, child_id, new_aspace_ptr) {

@@ -24,7 +24,18 @@ pub(crate) fn sys_connect(args: SyscallArgs) -> UserRet {
     let addr_ptr = args.arg(1);
     let addrlen = args.arg(2);
 
-    if addrlen < 16 || addr_ptr == 0 {
+    if addrlen < 2 || addr_ptr == 0 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+
+    if crate::unix_sock::is_unix_fd(fd) {
+        return match crate::unix_sock::connect(fd, addr_ptr, addrlen) {
+            Ok(()) => UserRet::from_success(0),
+            Err(e) => UserRet::from_error(e),
+        };
+    }
+
+    if addrlen < 16 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
 

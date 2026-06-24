@@ -14,6 +14,7 @@ mod mm_util;
 mod poll_engine;
 mod socket_fd;
 mod sys;
+mod unix_sock;
 mod user_copy;
 mod vfs_util;
 

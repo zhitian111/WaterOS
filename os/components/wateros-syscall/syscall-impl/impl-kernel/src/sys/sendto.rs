@@ -35,6 +35,18 @@ pub(crate) fn sys_sendto(args: SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EINVAL);
     }
 
+    if crate::unix_sock::is_unix_fd(fd) {
+        let mut kbuf = alloc::vec![0u8; len];
+        match copy_from_user(&mut kbuf, buf_ptr) {
+            Ok(n) if n == len => {}
+            _ => return UserRet::from_error(ErrNo::EFAULT),
+        }
+        return match crate::unix_sock::sendto_unix(fd, &kbuf, addr_ptr, addrlen) {
+            Ok(n) => UserRet::from_success(n),
+            Err(e) => UserRet::from_error(e),
+        };
+    }
+
     let socket = match socket_fd::lookup(fd) {
         Some(s) => s,
         None => return UserRet::from_error(ErrNo::ENOTSOCK),

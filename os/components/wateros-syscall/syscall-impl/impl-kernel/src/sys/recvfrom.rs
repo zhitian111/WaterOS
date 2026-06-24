@@ -35,6 +35,19 @@ pub(crate) fn sys_recvfrom(args: SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EFAULT);
     }
 
+    if crate::unix_sock::is_unix_fd(fd) {
+        let mut kbuf = alloc::vec![0u8; len];
+        return match crate::unix_sock::recvfrom_unix(fd, &mut kbuf, addr_ptr, addrlen_ptr) {
+            Ok(n) if n > 0 => match copy_to_user(buf_ptr, &kbuf[..n]) {
+                Ok(written) if written == n => UserRet::from_success(n),
+                _ => UserRet::from_error(ErrNo::EFAULT),
+            },
+            Ok(0) => UserRet::from_success(0),
+            Ok(_) => UserRet::from_error(ErrNo::EFAULT),
+            Err(e) => UserRet::from_error(e),
+        };
+    }
+
     let socket = match socket_fd::lookup(fd) {
         Some(s) => s,
         None => return UserRet::from_error(ErrNo::ENOTSOCK),
