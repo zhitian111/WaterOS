@@ -36,10 +36,21 @@ impl PageCacheIo for FsPageIo {
 
     fn write_range(&mut self, path : &str, offset : u64, data : &[u8]) -> Result<usize, VfsError> {
         let n = normalize_absolute_path(path)?;
-        root_rw()?
-            .lock()
-            .write_range(n.as_str(), offset, data)
-            .map_err(map_fs_err)
+        let rw = root_rw()?;
+        let mut done = 0usize;
+        while done < data.len() {
+            let written = rw.lock()
+                            .write_range(n.as_str(),
+                                         offset + done as u64,
+                                         &data[done..])
+                            .map_err(map_fs_err)?;
+            if written == 0 {
+                return Err(VfsError::Io);
+            }
+            done = done.checked_add(written)
+                       .ok_or(VfsError::Io)?;
+        }
+        Ok(done)
     }
 }
 

@@ -215,7 +215,7 @@ impl GlobalFilePageCache {
         let mut flushed_pages = Vec::new();
 
         {
-            let mut cache = self.state.lock();
+            let cache = self.state.lock();
             for &page_idx in pages {
                 let off = page_idx * FILE_PAGE_SIZE as u64;
                 let slot = cache.index
@@ -230,7 +230,6 @@ impl GlobalFilePageCache {
                     continue;
                 };
                 if off >= logical_size || !cache.frames[slot].dirty {
-                    cache.frames[slot].dirty = false;
                     Self::queue_flush_batch(&mut batches,
                                             &mut batch_start,
                                             &mut batch_data);
@@ -249,7 +248,6 @@ impl GlobalFilePageCache {
 
                 let len = FILE_PAGE_SIZE.min(usize::try_from(logical_size - off).unwrap_or(0));
                 batch_data.extend_from_slice(&cache.frames[slot].data[..len]);
-                cache.frames[slot].dirty = false;
                 batch_last = Some(page_idx);
                 flushed_pages.push(page_idx);
             }
@@ -262,6 +260,13 @@ impl GlobalFilePageCache {
             let off = start_page * FILE_PAGE_SIZE as u64;
             io.write_range(key.path.as_ref(), off, &data)
               .map_err(map_err)?;
+        }
+
+        let mut cache = self.state.lock();
+        for &page_idx in &flushed_pages {
+            if let Some(&slot) = cache.index.get(&(key.clone(), page_idx)) {
+                cache.frames[slot].dirty = false;
+            }
         }
 
         Ok(flushed_pages)
