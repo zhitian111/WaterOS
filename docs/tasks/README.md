@@ -26,6 +26,7 @@
 | `commenting.md` | 编码类 | `general`、`structure`、`coding`、`documentation`、`architecture` | 需要 |
 | `analyze_kernel_log.md` | 分析类 | `general`、`structure`、`architecture` | 需要（按失败子系统选读） |
 | `run_testsuits_qemu.md` | 运行类 | `general`、`structure`、`coding` | 不需要 |
+| `ltp_autonomous_iteration.md` | 自主迭代类 | `general`、`structure`、`coding`、`debug_workflow`；另读 `run_testsuits_qemu.md` | 按需 |
 | `export_public_api.md` | 导出类 | `general`、`structure`、`documentation`、`architecture` | 不需要（本任务生成 `public-api/`） |
 | `export_impl_guide.md` | 导出类 | 同上 | 不需要（本任务生成 `impl-guide/`） |
 | `export_architecture.md` | 导出类 | 同上 | 不需要（本任务生成 `architecture/`） |
@@ -81,3 +82,4 @@ WaterOS 的大部分重复任务都可以按一级组件并行拆分。默认拆
 - `export_release_overview.md`
 - `run_testsuits_qemu.md`
 - `analyze_kernel_log.md`
+- `ltp_autonomous_iteration.md`（**LTP AI 托管多轮迭代**；停止条件为用户主动中断）

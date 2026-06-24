@@ -55,7 +55,6 @@ impl PageCacheIo for FsPageIo {
 }
 
 /// 页缓存-backed 根卷普通文件句柄。
-#[derive(Clone)]
 pub struct PagedFileHandle {
     path : String,
     offset : u64,
@@ -65,6 +64,24 @@ pub struct PagedFileHandle {
     on_disk_size : u64,
     detached : bool,
     detached_data : Vec<u8>,
+    open_ref_held : bool,
+}
+
+impl Clone for PagedFileHandle {
+    fn clone(&self) -> Self {
+        if self.open_ref_held {
+            global_cache(self.mount_gen).acquire_open_ref(self.path.as_str());
+        }
+        Self { path : self.path.clone(),
+               offset : self.offset,
+               meta : self.meta.clone(),
+               writable : self.writable,
+               mount_gen : self.mount_gen,
+               on_disk_size : self.on_disk_size,
+               detached : self.detached,
+               detached_data : self.detached_data.clone(),
+               open_ref_held : self.open_ref_held }
+    }
 }
 
 impl PagedFileHandle {
@@ -98,6 +115,8 @@ impl PagedFileHandle {
         let mut meta = meta;
         meta.size = cache.logical_size(path.as_str(), on_disk_size);
 
+        cache.acquire_open_ref(path.as_str());
+
         Ok(Self { path,
                   offset,
                   meta,
@@ -105,7 +124,15 @@ impl PagedFileHandle {
                   mount_gen,
                   on_disk_size,
                   detached : false,
-                  detached_data : Vec::new() })
+                  detached_data : Vec::new(),
+                  open_ref_held : true })
+    }
+
+    fn release_open_ref_if_held(&mut self) {
+        if self.open_ref_held {
+            global_cache(self.mount_gen).release_open_ref(self.path.as_str());
+            self.open_ref_held = false;
+        }
     }
 
     fn sync_dirty(&mut self) -> VfsResult<()> {
@@ -307,7 +334,9 @@ impl VfsIoHandle for PagedFileHandle {
     }
 
     fn close(&mut self) -> VfsResult<()> {
-        self.sync_dirty()
+        self.sync_dirty()?;
+        self.release_open_ref_if_held();
+        Ok(())
     }
 
     fn metadata(&self) -> VfsResult<VfsMetadata> {

@@ -157,6 +157,8 @@ pub struct GlobalFilePageCache {
     mount_gen : u64,
     state : Mutex<GlobalCacheState>,
     files : Mutex<BTreeMap<FileCacheKey, Arc<RwLock<FileEntryInner>>>>,
+    /// 仍被 [`PagedFileHandle`] 持有的路径数；归零时在 `close` 后回收该路径缓存条目。
+    open_refs : Mutex<BTreeMap<FileCacheKey, usize>>,
 }
 
 impl GlobalFilePageCache {
@@ -164,7 +166,8 @@ impl GlobalFilePageCache {
     pub fn new(mount_gen : u64) -> Self {
         Self { mount_gen,
                state : Mutex::new(GlobalCacheState::new()),
-               files : Mutex::new(BTreeMap::new()) }
+               files : Mutex::new(BTreeMap::new()),
+               open_refs : Mutex::new(BTreeMap::new()) }
     }
 
     pub fn mount_gen(&self) -> u64 { self.mount_gen }
@@ -178,12 +181,75 @@ impl GlobalFilePageCache {
         let key = self.file_key(path);
         let mut files = self.files.lock();
         if let Some(e) = files.get(&key) {
-            return e.clone();
+            let entry = e.clone();
+            if initial_size > entry.read().logical_size {
+                entry.write().logical_size = initial_size;
+            }
+            return entry;
         }
         let e = Arc::new(RwLock::new(FileEntryInner { logical_size : initial_size,
                                                       dirty_pages : BTreeMap::new() }));
         files.insert(key, e.clone());
         e
+    }
+
+    /// 普通文件句柄 `open`/`dup` 时登记；与 VFS `close` 配对。
+    pub fn acquire_open_ref(&self, path : &str) {
+        let key = self.file_key(path);
+        let mut refs = self.open_refs.lock();
+        *refs.entry(key).or_insert(0) += 1;
+    }
+
+    /// 句柄 `close` 后递减；最后一个引用消失时丢弃该路径的页缓存元数据（页帧已在 close 时 flush）。
+    pub fn release_open_ref(&self, path : &str) {
+        let key = self.file_key(path);
+        let should_purge = {
+            let mut refs = self.open_refs.lock();
+            let Some(count) = refs.get_mut(&key) else {
+                return;
+            };
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                refs.remove(&key);
+                true
+            } else {
+                false
+            }
+        };
+        if should_purge {
+            self.purge_closed_file(path);
+        }
+    }
+
+    fn note_page_written_back(&self, path : &str, page_idx : u64) {
+        let key = self.file_key(path);
+        let files = self.files.lock();
+        if let Some(entry) = files.get(&key) {
+            entry.write()
+                 .dirty_pages
+                 .remove(&page_idx);
+        }
+    }
+
+    fn writeback_evicted_page<Io, E>(&self,
+                                       io : &mut Io,
+                                       key : &FileCacheKey,
+                                       page_idx : u64,
+                                       saved_data : &[u8],
+                                       map_err : fn(Io::Error) -> E)
+                                       -> Result<(), E>
+        where Io : PageCacheIo
+    {
+        let off = page_idx * FILE_PAGE_SIZE as u64;
+        let logical_size = self.logical_size_for_key(key, off + FILE_PAGE_SIZE as u64);
+        if off >= logical_size {
+            return Ok(());
+        }
+        let len = FILE_PAGE_SIZE.min(usize::try_from(logical_size - off).unwrap_or(0));
+        io.write_range(key.path.as_ref(), off, &saved_data[..len])
+          .map_err(map_err)?;
+        self.note_page_written_back(key.path.as_ref(), page_idx);
+        Ok(())
     }
 
     fn logical_size_for_key(&self, key : &FileCacheKey, fallback : u64) -> u64 {
@@ -224,47 +290,54 @@ impl GlobalFilePageCache {
                                                 FILE_PAGE_SIZE);
         let mut flushed_pages = Vec::new();
 
-        {
-            let cache = self.state.lock();
-            for &page_idx in pages {
-                let off = page_idx * FILE_PAGE_SIZE as u64;
-                let slot = cache.index
-                                .get(&(key.clone(), page_idx))
-                                .copied();
-                let Some(slot) = slot else {
-                    Self::queue_flush_batch(&mut batches,
-                                            &mut batch_start,
-                                            &mut batch_data);
-                    batch_last = None;
-                    flushed_pages.push(page_idx);
-                    continue;
-                };
-                if off >= logical_size || !cache.frames[slot].dirty {
-                    Self::queue_flush_batch(&mut batches,
-                                            &mut batch_start,
-                                            &mut batch_data);
-                    batch_last = None;
-                    flushed_pages.push(page_idx);
-                    continue;
-                }
-                if batch_last.is_some_and(|last| last + 1 != page_idx) {
-                    Self::queue_flush_batch(&mut batches,
-                                            &mut batch_start,
-                                            &mut batch_data);
-                }
-                if batch_start.is_none() {
-                    batch_start = Some(page_idx);
-                }
-
-                let len = FILE_PAGE_SIZE.min(usize::try_from(logical_size - off).unwrap_or(0));
-                batch_data.extend_from_slice(&cache.frames[slot].data[..len]);
-                batch_last = Some(page_idx);
-                flushed_pages.push(page_idx);
+        for &page_idx in pages {
+            let off = page_idx * FILE_PAGE_SIZE as u64;
+            let mut slot = {
+                let cache = self.state.lock();
+                cache.index
+                     .get(&(key.clone(), page_idx))
+                     .copied()
+            };
+            if slot.is_none() && off < logical_size {
+                self.install_page(io, key.path.as_ref(), page_idx, logical_size, map_err)?;
+                slot = self.state.lock()
+                                 .index
+                                 .get(&(key.clone(), page_idx))
+                                 .copied();
             }
-            Self::queue_flush_batch(&mut batches,
-                                    &mut batch_start,
-                                    &mut batch_data);
+
+            let cache = self.state.lock();
+            let Some(slot) = slot else {
+                if off >= logical_size {
+                    flushed_pages.push(page_idx);
+                }
+                continue;
+            };
+            if off >= logical_size || !cache.frames[slot].dirty {
+                Self::queue_flush_batch(&mut batches,
+                                        &mut batch_start,
+                                        &mut batch_data);
+                batch_last = None;
+                flushed_pages.push(page_idx);
+                continue;
+            }
+            if batch_last.is_some_and(|last| last + 1 != page_idx) {
+                Self::queue_flush_batch(&mut batches,
+                                        &mut batch_start,
+                                        &mut batch_data);
+            }
+            if batch_start.is_none() {
+                batch_start = Some(page_idx);
+            }
+
+            let len = FILE_PAGE_SIZE.min(usize::try_from(logical_size - off).unwrap_or(0));
+            batch_data.extend_from_slice(&cache.frames[slot].data[..len]);
+            batch_last = Some(page_idx);
+            flushed_pages.push(page_idx);
         }
+        Self::queue_flush_batch(&mut batches,
+                                &mut batch_start,
+                                &mut batch_data);
 
         for (start_page, data) in batches {
             let off = start_page * FILE_PAGE_SIZE as u64;
@@ -334,24 +407,16 @@ impl GlobalFilePageCache {
 
         let idx = cache.pop_free_or_lru_index();
         let pending_flush = cache.detach_slot_for_reuse(idx);
-        if let Some(((ref k, page_idx), ref saved_data)) = pending_flush {
+        if let Some(((ref k, evicted_page), ref saved_data)) = pending_flush {
             drop(cache);
+            if let Err(err) = self.writeback_evicted_page(io, k, evicted_page, saved_data, map_err)
             {
-                let off = page_idx * FILE_PAGE_SIZE as u64;
-                let logical_size = self.logical_size_for_key(k, off + FILE_PAGE_SIZE as u64);
-                if off < logical_size {
-                    let len =
-                        FILE_PAGE_SIZE.min(usize::try_from(logical_size - off).unwrap_or(0));
-                    if let Err(err) = io.write_range(k.path.as_ref(), off, &saved_data[..len]) {
-                        let mut cache = self.state.lock();
-                        cache.return_detached_slot(idx);
-                        return Err(map_err(err));
-                    }
-                }
+                let mut cache = self.state.lock();
+                cache.return_detached_slot(idx);
+                return Err(err);
             }
             cache = self.state.lock();
         }
-
         cache.frames[idx].data
                          .copy_from_slice(&page_buf);
         cache.frames[idx].dirty = false;
@@ -397,20 +462,13 @@ impl GlobalFilePageCache {
 
         let idx = cache.pop_free_or_lru_index();
         let pending_flush = cache.detach_slot_for_reuse(idx);
-        if let Some(((ref k, page_idx), ref saved_data)) = pending_flush {
+        if let Some(((ref k, evicted_page), ref saved_data)) = pending_flush {
             drop(cache);
+            if let Err(err) = self.writeback_evicted_page(io, k, evicted_page, saved_data, map_err)
             {
-                let off = page_idx * FILE_PAGE_SIZE as u64;
-                let logical_size = self.logical_size_for_key(k, off + FILE_PAGE_SIZE as u64);
-                if off < logical_size {
-                    let len =
-                        FILE_PAGE_SIZE.min(usize::try_from(logical_size - off).unwrap_or(0));
-                    if let Err(err) = io.write_range(k.path.as_ref(), off, &saved_data[..len]) {
-                        let mut cache = self.state.lock();
-                        cache.return_detached_slot(idx);
-                        return Err(map_err(err));
-                    }
-                }
+                let mut cache = self.state.lock();
+                cache.return_detached_slot(idx);
+                return Err(err);
             }
             cache = self.state.lock();
         }
@@ -635,6 +693,9 @@ impl GlobalFilePageCache {
     /// 应在 VFS `close` 或 `unlink` 之后调用，防止 `files` BTreeMap 无限增长耗尽内核堆。
     pub fn purge_closed_file(&self, path : &str) {
         let key = self.file_key(path);
+        self.open_refs
+            .lock()
+            .remove(&key);
         self.files
             .lock()
             .remove(&key);
@@ -900,5 +961,27 @@ mod tests {
              .unwrap();
 
         assert_eq!(out, io.data);
+    }
+
+    #[test]
+    fn release_open_ref_purges_when_last_handle_closes() {
+        let cache = GlobalFilePageCache::new(7);
+        let mut io = CountingIo::new();
+        let payload = vec![0x33u8; FILE_PAGE_SIZE];
+
+        cache.acquire_open_ref("/tmp/refcount");
+        cache.write(&mut io,
+                    "/tmp/refcount",
+                    0,
+                    0,
+                    &payload,
+                    |e| e)
+             .unwrap();
+        cache.flush(&mut io, "/tmp/refcount", |e| e)
+             .unwrap();
+        assert!(cache.files.lock().contains_key(&cache.file_key("/tmp/refcount")));
+
+        cache.release_open_ref("/tmp/refcount");
+        assert!(!cache.files.lock().contains_key(&cache.file_key("/tmp/refcount")));
     }
 }
