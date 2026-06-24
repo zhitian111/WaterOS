@@ -4,12 +4,16 @@
 //! `faccessat2(439)` 才携带 flags；`AT_SYMLINK_NOFOLLOW` 首期仅校验接受，
 //! VFS 尚无 follow/nofollow 元数据路径，仍走现有 `metadata()`。
 
+extern crate alloc;
+
+use alloc::string::String;
+
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use cred::api::ProcessCredentials;
 use vfs::active_impl;
-use vfs::api::SingleRootReadView;
+use vfs::api::{resolve_against_cwd, SingleRootReadView, VfsError};
 
 use crate::sys::path_at::resolve_path_at;
 use crate::user_copy::copy_user_path_cstr;
@@ -74,8 +78,14 @@ fn do_faccessat(dirfd: isize, path_ptr: usize, mode: u32, flags: u32) -> UserRet
                 Err(e) => return UserRet::from_error(vfs_error_to_errno(e)),
             }
         } else {
+            if path.is_empty() {
+                return UserRet::from_error(ErrNo::ENOENT);
+            }
             let resolved = match resolve_path_at(dirfd, path.as_str()) {
-                Ok(p) => p,
+                Ok(p) => match resolve_final_symlink(p.as_str()) {
+                    Ok(followed) => followed,
+                    Err(e) => return UserRet::from_error(e),
+                },
                 Err(e) => return UserRet::from_error(e),
             };
             if mode & W_OK != 0 {
@@ -85,6 +95,7 @@ fn do_faccessat(dirfd: isize, path_ptr: usize, mode: u32, flags: u32) -> UserRet
             }
             match active_impl::backend().metadata(resolved.as_str()) {
                 Ok(meta) => meta.mode,
+                Err(VfsError::NotAFile) => return UserRet::from_error(ErrNo::ENOTDIR),
                 Err(e) => return UserRet::from_error(vfs_error_to_errno(e)),
             }
         }
@@ -98,6 +109,24 @@ fn do_faccessat(dirfd: isize, path_ptr: usize, mode: u32, flags: u32) -> UserRet
     } else {
         UserRet::from_error(ErrNo::EACCES)
     }
+}
+
+fn resolve_final_symlink(path: &str) -> Result<String, ErrNo> {
+    let mut current = String::from(path);
+    for _ in 0..40 {
+        let target = match vfs::read_symlink_absolute(current.as_str()) {
+            Ok(target) => target,
+            Err(VfsError::NotAFile) => return Ok(current),
+            Err(e) => return Err(vfs_error_to_errno(e)),
+        };
+        let target = core::str::from_utf8(target.as_slice()).map_err(|_| ErrNo::EINVAL)?;
+        let parent = current
+            .rsplit_once('/')
+            .map(|(parent, _)| if parent.is_empty() { "/" } else { parent })
+            .unwrap_or("/");
+        current = resolve_against_cwd(parent, Some(target)).map_err(vfs_error_to_errno)?;
+    }
+    Err(ErrNo::ELOOP)
 }
 
 fn access_mode_allowed(

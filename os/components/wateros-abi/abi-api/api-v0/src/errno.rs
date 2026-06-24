@@ -80,6 +80,8 @@ impl ErrNo {
     pub const EISDIR: Self = Self(21);
     /// 文件名过长。
     pub const ENAMETOOLONG: Self = Self(36);
+    /// 符号链接层数过多。
+    pub const ELOOP: Self = Self(40);
     /// 结果缓冲区过小（如 `getcwd`）。
     pub const ERANGE: Self = Self(34);
     /// 非法 seek。
