@@ -153,6 +153,9 @@ pub fn remap_interpreter_path(script_path: &str, interpreter: &str) -> String {
             return String::from(busybox);
         }
     }
+    if is_shell_like_interpreter(interpreter) {
+        return String::from("/glibc/busybox");
+    }
     String::from(interpreter)
 }
 

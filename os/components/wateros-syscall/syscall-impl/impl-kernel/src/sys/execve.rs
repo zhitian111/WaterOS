@@ -116,6 +116,12 @@ fn do_execve(path_ptr: usize, argv_ptr: usize, envp_ptr: usize) -> Result<(), Er
 }
 
 fn compat_exec_load_path(abs_path : &str) -> String {
+    if matches!(
+        abs_path,
+        "/bin/sh" | "/usr/bin/sh" | "/bin/bash" | "/usr/bin/bash" | "/bin/dash" | "/usr/bin/dash"
+    ) {
+        return String::from("/glibc/busybox");
+    }
     if matches!(abs_path, "/bin/true" | "/usr/bin/true") {
         if vfs::cwd::current_exe_path()
             .map(|p| p.starts_with("/musl/"))
