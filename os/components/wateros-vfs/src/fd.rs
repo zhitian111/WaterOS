@@ -127,6 +127,16 @@ pub fn set_fd_flags(fd : usize, val : usize) -> VfsResult<()> {
     with_current_task(|reg, task_id| reg.set_fd_flags(task_id, fd, val))
 }
 
+/// 当前任务下 `fd` 是否为 `O_PATH` 句柄。
+pub fn is_path_only_fd(fd : usize) -> VfsResult<bool> {
+    with_current_task(|reg, task_id| reg.is_fd_path_only(task_id, fd))
+}
+
+/// 将 `fd` 标记为 `O_PATH` 句柄。
+pub fn set_path_only_fd(fd : usize) -> VfsResult<()> {
+    with_current_task(|reg, task_id| reg.set_fd_path_only(task_id, fd))
+}
+
 /// fork 时初始化子任务 fd 表（仅默认 stdio，spawn 路径）。
 pub fn init_child_fd_table(child_id : task::TaskId) {
     let mut reg = registry().exclusive_access();

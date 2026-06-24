@@ -19,6 +19,8 @@ use crate::handles::{ConsoleInHandle, ConsoleOutHandle};
 
 /// Linux `FD_CLOEXEC`（`fcntl` / `dup3`）。
 pub const FD_CLOEXEC: u8 = 1;
+/// `O_PATH` 句柄：仅用于路径解析，不可用于读写/socket 操作。
+pub const FD_PATH_ONLY: u8 = 2;
 
 /// 全局 per-task fd 注册表。
 pub struct PerTaskFdRegistry {
@@ -414,11 +416,33 @@ impl PerTaskFdRegistry {
         self.set_fd_cloexec(task_id, fd, cloexec)
     }
 
+    pub fn set_fd_path_only(&mut self, task_id: task::TaskId, fd: usize) -> VfsResult<()> {
+        self.get_io_for_task(task_id, fd)?;
+        self.ensure_flags_len(task_id, fd + 1);
+        let owner = self.effective_owner(task_id);
+        self.fd_flags.get_mut(&owner).expect("fd flags owner")[fd] |= FD_PATH_ONLY;
+        Ok(())
+    }
+
+    pub fn is_fd_path_only(&mut self, task_id: task::TaskId, fd: usize) -> VfsResult<bool> {
+        self.get_io_for_task(task_id, fd)?;
+        self.ensure_task(task_id);
+        let owner = self.effective_owner(task_id);
+        let Some(flags) = self.fd_flags.get(&owner) else {
+            return Ok(false);
+        };
+        Ok(fd < flags.len() && flags[fd] & FD_PATH_ONLY != 0)
+    }
+
     fn set_fd_cloexec(&mut self, task_id: task::TaskId, fd: usize, cloexec: bool) -> VfsResult<()> {
         self.ensure_flags_len(task_id, fd + 1);
         let owner = self.effective_owner(task_id);
-        self.fd_flags.get_mut(&owner).expect("fd flags owner")[fd] =
-            if cloexec { FD_CLOEXEC } else { 0 };
+        let slot = self.fd_flags.get_mut(&owner).expect("fd flags owner");
+        if cloexec {
+            slot[fd] |= FD_CLOEXEC;
+        } else {
+            slot[fd] &= !FD_CLOEXEC;
+        }
         Ok(())
     }
 

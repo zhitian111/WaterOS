@@ -56,10 +56,13 @@ enum ProcNode {
     Root,
     Meminfo,
     Mounts,
+    SysKernelPidMax,
+    SysKernelTainted,
     PidDir(ProcessId),
     PidStat(ProcessId),
     PidStatus(ProcessId),
     PidSmaps(ProcessId),
+    PidMaps(ProcessId),
     PidCmdline(ProcessId),
 }
 
@@ -68,10 +71,13 @@ fn proc_inode(node: ProcNode) -> u64 {
         ProcNode::Root => 1,
         ProcNode::Meminfo => 2,
         ProcNode::Mounts => 3,
+        ProcNode::SysKernelPidMax => 4,
+        ProcNode::SysKernelTainted => 5,
         ProcNode::PidDir(pid) => 0x1000_0000 | ((pid.raw() as u64) << 4),
         ProcNode::PidStat(pid) => 0x1000_0001 | ((pid.raw() as u64) << 4),
         ProcNode::PidStatus(pid) => 0x1000_0002 | ((pid.raw() as u64) << 4),
         ProcNode::PidSmaps(pid) => 0x1000_0003 | ((pid.raw() as u64) << 4),
+        ProcNode::PidMaps(pid) => 0x1000_0005 | ((pid.raw() as u64) << 4),
         ProcNode::PidCmdline(pid) => 0x1000_0004 | ((pid.raw() as u64) << 4),
     }
 }
@@ -98,6 +104,12 @@ fn parse_node(path: &str) -> Option<ProcNode> {
     if p == "/mounts" {
         return Some(ProcNode::Mounts);
     }
+    if p == "/sys/kernel/pid_max" {
+        return Some(ProcNode::SysKernelPidMax);
+    }
+    if p == "/sys/kernel/tainted" {
+        return Some(ProcNode::SysKernelTainted);
+    }
     let rest = p.strip_prefix('/')?;
     let (first, tail) = rest.split_once('/').map(|(a, b)| (a, Some(b))).unwrap_or((rest, None));
     let pid = if first == "self" {
@@ -111,6 +123,8 @@ fn parse_node(path: &str) -> Option<ProcNode> {
         Some("stat") => Some(ProcNode::PidStat(pid)),
         Some("status") => Some(ProcNode::PidStatus(pid)),
         Some("smaps") => Some(ProcNode::PidSmaps(pid)),
+        Some("maps") => Some(ProcNode::PidMaps(pid)),
+        Some("mounts") => Some(ProcNode::Mounts),
         Some("cmdline") => Some(ProcNode::PidCmdline(pid)),
         Some(_) => None,
     }
@@ -226,6 +240,17 @@ fn process_memory_kb(pid : ProcessId) -> FsResult<ProcMemoryKb> {
                       private_dirty_kb : heap_like })
 }
 
+fn format_maps(pid : ProcessId) -> FsResult<Vec<u8>> {
+    let mem = process_memory_kb(pid)?;
+    let heap_start = 0x1000_0000usize;
+    let heap_end = heap_start.saturating_add(mem.size_kb.saturating_mul(1024));
+    Ok(format!(
+        "{heap_start:016x}-{heap_end:016x} rw-p 00000000 00:00 0 [heap]\n\
+         3f0000000000-3f0000010000 r-xp 00000000 00:00 0 [vdso]\n"
+    )
+    .into_bytes())
+}
+
 fn format_smaps(pid : ProcessId) -> FsResult<Vec<u8>> {
     let mem = process_memory_kb(pid)?;
     let start = 0x1000_0000usize;
@@ -299,10 +324,12 @@ impl ProcFsView for KernelProcFs {
         };
         Ok(match node {
             ProcNode::Root | ProcNode::Meminfo | ProcNode::Mounts => true,
+            ProcNode::SysKernelPidMax | ProcNode::SysKernelTainted => true,
             ProcNode::PidDir(pid)
             | ProcNode::PidStat(pid)
             | ProcNode::PidStatus(pid)
             | ProcNode::PidSmaps(pid)
+            | ProcNode::PidMaps(pid)
             | ProcNode::PidCmdline(pid) => process_visible(pid),
         })
     }
@@ -317,7 +344,10 @@ impl ProcFsView for KernelProcFs {
                 inode: proc_inode(node),
                 nlink: 1,
             }),
-            ProcNode::Meminfo | ProcNode::Mounts => Ok(FsMetadata {
+            ProcNode::Meminfo
+            | ProcNode::Mounts
+            | ProcNode::SysKernelPidMax
+            | ProcNode::SysKernelTainted => Ok(FsMetadata {
                 node_type: FsNodeType::File,
                 size: self.read(rel_path)?.len() as u64,
                 mode: 0o444,
@@ -327,6 +357,7 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidStat(pid)
             | ProcNode::PidStatus(pid)
             | ProcNode::PidSmaps(pid)
+            | ProcNode::PidMaps(pid)
             | ProcNode::PidCmdline(pid) => {
                 if !process_visible(pid) {
                     return Err(FsError::NotFound);
@@ -348,9 +379,12 @@ impl ProcFsView for KernelProcFs {
             ProcNode::Root | ProcNode::PidDir(_) => Err(FsError::NotAFile),
             ProcNode::Meminfo => Ok(format_meminfo()),
             ProcNode::Mounts => Ok(format_mounts()),
+            ProcNode::SysKernelPidMax => Ok(b"32768\n".to_vec()),
+            ProcNode::SysKernelTainted => Ok(b"0\n".to_vec()),
             ProcNode::PidStat(pid) => format_stat(pid),
             ProcNode::PidStatus(pid) => format_status(pid),
             ProcNode::PidSmaps(pid) => format_smaps(pid),
+            ProcNode::PidMaps(pid) => format_maps(pid),
             ProcNode::PidCmdline(pid) => format_cmdline(pid),
         }
     }
@@ -392,6 +426,14 @@ impl ProcFsView for KernelProcFs {
                     },
                     FsDirEntry {
                         name: String::from("smaps"),
+                        node_type: FsNodeType::File,
+                    },
+                    FsDirEntry {
+                        name: String::from("maps"),
+                        node_type: FsNodeType::File,
+                    },
+                    FsDirEntry {
+                        name: String::from("mounts"),
                         node_type: FsNodeType::File,
                     },
                     FsDirEntry {

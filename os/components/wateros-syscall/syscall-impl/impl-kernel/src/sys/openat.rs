@@ -18,6 +18,7 @@ use crate::vfs_util::{linux_open_flags_to_vfs, vfs_error_to_errno};
 const O_ACCMODE: u32 = 3;
 const O_RDWR: u32 = 2;
 const O_CLOEXEC: u32 = 0o2000000;
+const O_PATH: u32 = 0o10000000;
 const O_TMPFILE: u32 = 0o20200000;
 const FD_CLOEXEC: usize = 1;
 
@@ -55,6 +56,11 @@ pub(crate) fn sys_openat(args : SyscallArgs) -> UserRet {
         Ok(fd) => {
             if flags & O_CLOEXEC != 0 {
                 if let Err(e) = vfs::fd::set_fd_flags(fd, FD_CLOEXEC) {
+                    return UserRet::from_error(vfs_error_to_errno(e));
+                }
+            }
+            if flags & O_PATH != 0 {
+                if let Err(e) = vfs::fd::set_path_only_fd(fd) {
                     return UserRet::from_error(vfs_error_to_errno(e));
                 }
             }

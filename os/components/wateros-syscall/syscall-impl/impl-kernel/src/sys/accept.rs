@@ -46,6 +46,10 @@ fn accept_inner(fd: usize, addr_ptr: usize, addrlen_ptr: usize, flags: usize) ->
         return UserRet::from_error(ErrNo::EINVAL);
     }
 
+    if vfs::fd::is_path_only_fd(fd).unwrap_or(false) {
+        return UserRet::from_error(ErrNo::EBADF);
+    }
+
     let socket = match socket_fd::lookup(fd) {
         Some(s) => s,
         None => {
