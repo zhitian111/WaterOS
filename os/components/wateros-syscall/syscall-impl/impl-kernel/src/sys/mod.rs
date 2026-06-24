@@ -124,8 +124,8 @@ pub(crate) use renameat2::sys_renameat2;
 pub(crate) use sendfile::sys_sendfile;
 pub(crate) use shm::{sys_shmat, sys_shmctl, sys_shmdt, sys_shmget};
 pub(crate) use clock::{
-    sys_clock_getres, sys_clock_gettime, sys_clock_nanosleep, sys_clock_settime, sys_gettimeofday,
-    sys_nanosleep,
+    sys_adjtimex, sys_clock_adjtime, sys_clock_getres, sys_clock_gettime, sys_clock_nanosleep,
+    sys_clock_settime, sys_gettimeofday, sys_nanosleep,
 };
 pub(crate) use statfs::sys_statfs;
 pub(crate) use symlinkat::sys_symlinkat;
