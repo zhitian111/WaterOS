@@ -75,6 +75,7 @@ const SYS_SCHED_GETATTR: usize = 275;
 const SYS_FACCESSAT2: usize = 439;
 const SYS_ADJTIMEX: usize = 171;
 const SYS_CLOCK_ADJTIME: usize = 266;
+const SYS_ACCT: usize = 89;
 
 impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     type NumberTable = ActiveSyscallNumberTable;
@@ -700,6 +701,9 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
         }
         if syscall_nr == SYS_CLOCK_ADJTIME {
             return sys::sys_clock_adjtime(args).0;
+        }
+        if syscall_nr == SYS_ACCT {
+            return sys::sys_acct(args).0;
         }
         let _ = args;
         abi::user_ret::UserRet::from_error(abi::errno::ErrNo::ENOSYS).0

@@ -56,6 +56,7 @@ mod write;
 
 // socket / 网络
 mod accept;
+mod acct;
 mod bind;
 mod connect;
 mod listen;
@@ -145,6 +146,7 @@ pub(crate) use write::{sys_write, sys_writev};
 
 // socket / 网络
 pub(crate) use accept::{sys_accept, sys_accept4};
+pub(crate) use acct::sys_acct;
 pub(crate) use bind::sys_bind;
 pub(crate) use connect::sys_connect;
 pub(crate) use listen::sys_listen;
