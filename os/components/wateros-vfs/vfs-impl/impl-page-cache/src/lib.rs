@@ -186,6 +186,16 @@ impl GlobalFilePageCache {
         e
     }
 
+    fn logical_size_for_key(&self, key : &FileCacheKey, fallback : u64) -> u64 {
+        let files = self.files.lock();
+        files.get(key)
+             .map(|entry| {
+                 entry.read()
+                      .logical_size
+             })
+             .unwrap_or(fallback)
+    }
+
 
     fn queue_flush_batch(batches : &mut Vec<(u64, Vec<u8>)>,
                          batch_start : &mut Option<u64>,
@@ -328,13 +338,15 @@ impl GlobalFilePageCache {
             drop(cache);
             {
                 let off = page_idx * FILE_PAGE_SIZE as u64;
-                if let Err(err) = io.write_range(k.path.as_ref(),
-                                                 off,
-                                                 &saved_data[..FILE_PAGE_SIZE])
-                {
-                    let mut cache = self.state.lock();
-                    cache.return_detached_slot(idx);
-                    return Err(map_err(err));
+                let logical_size = self.logical_size_for_key(k, off + FILE_PAGE_SIZE as u64);
+                if off < logical_size {
+                    let len =
+                        FILE_PAGE_SIZE.min(usize::try_from(logical_size - off).unwrap_or(0));
+                    if let Err(err) = io.write_range(k.path.as_ref(), off, &saved_data[..len]) {
+                        let mut cache = self.state.lock();
+                        cache.return_detached_slot(idx);
+                        return Err(map_err(err));
+                    }
                 }
             }
             cache = self.state.lock();
@@ -389,13 +401,15 @@ impl GlobalFilePageCache {
             drop(cache);
             {
                 let off = page_idx * FILE_PAGE_SIZE as u64;
-                if let Err(err) = io.write_range(k.path.as_ref(),
-                                                 off,
-                                                 &saved_data[..FILE_PAGE_SIZE])
-                {
-                    let mut cache = self.state.lock();
-                    cache.return_detached_slot(idx);
-                    return Err(map_err(err));
+                let logical_size = self.logical_size_for_key(k, off + FILE_PAGE_SIZE as u64);
+                if off < logical_size {
+                    let len =
+                        FILE_PAGE_SIZE.min(usize::try_from(logical_size - off).unwrap_or(0));
+                    if let Err(err) = io.write_range(k.path.as_ref(), off, &saved_data[..len]) {
+                        let mut cache = self.state.lock();
+                        cache.return_detached_slot(idx);
+                        return Err(map_err(err));
+                    }
                 }
             }
             cache = self.state.lock();
@@ -604,8 +618,37 @@ impl GlobalFilePageCache {
     /// 应在 VFS `close` 或 `unlink` 之后调用，防止 `files` BTreeMap 无限增长耗尽内核堆。
     pub fn purge_closed_file(&self, path : &str) {
         let key = self.file_key(path);
-        let mut files = self.files.lock();
-        files.remove(&key);
+        self.files
+            .lock()
+            .remove(&key);
+
+        let mut cache = self.state.lock();
+        let keys_to_remove : Vec<(FileCacheKey, u64)> = cache.index
+                                                             .keys()
+                                                             .filter(|(k, _)| *k == key)
+                                                             .cloned()
+                                                             .collect();
+        for old in keys_to_remove {
+            if let Some(slot) = cache.index
+                                     .remove(&old)
+            {
+                cache.frames[slot].key = None;
+                cache.frames[slot].dirty = false;
+                if let Some(p) = cache.lru
+                                      .iter()
+                                      .position(|&x| x == slot)
+                {
+                    cache.lru.remove(p);
+                }
+                if !cache.free
+                         .iter()
+                         .any(|&free_idx| free_idx == slot)
+                {
+                    cache.free
+                         .push(slot);
+                }
+            }
+        }
     }
 
     /// 更新逻辑长度，并丢弃 EOF 之后的缓存页。
@@ -720,11 +763,17 @@ mod tests {
     impl PageCacheIo for CountingIo {
         type Error = ();
 
-        fn read_range(&self, _path : &str, _offset : u64, buf : &mut [u8]) -> Result<usize, ()> {
+        fn read_range(&self, _path : &str, offset : u64, buf : &mut [u8]) -> Result<usize, ()> {
             self.reads
                 .set(self.reads.get() + 1);
-            buf.fill(0xCC);
-            Ok(buf.len())
+            let start = usize::try_from(offset).map_err(|_| ())?;
+            if start >= self.data.len() {
+                return Ok(0);
+            }
+            let n = buf.len()
+                       .min(self.data.len() - start);
+            buf[..n].copy_from_slice(&self.data[start..start + n]);
+            Ok(n)
         }
 
         fn write_range(&mut self, _path : &str, offset : u64, data : &[u8]) -> Result<usize, ()> {
@@ -804,5 +853,35 @@ mod tests {
              .unwrap();
         assert_eq!(io.writes, 1);
         assert_eq!(io.data, payload);
+    }
+
+    #[test]
+    fn purge_removes_cached_pages_for_recreated_path() {
+        let cache = GlobalFilePageCache::new(7);
+        let mut io = CountingIo::new();
+        let old_payload = vec![0x11u8; FILE_PAGE_SIZE];
+
+        cache.write(&mut io,
+                    "/tmp/recreated",
+                    0,
+                    0,
+                    &old_payload,
+                    |e| e)
+             .unwrap();
+        cache.flush(&mut io, "/tmp/recreated", |e| e)
+             .unwrap();
+        cache.purge_closed_file("/tmp/recreated");
+
+        io.data = vec![0x22u8; FILE_PAGE_SIZE];
+        let mut out = vec![0u8; FILE_PAGE_SIZE];
+        cache.read(&mut io,
+                   "/tmp/recreated",
+                   FILE_PAGE_SIZE as u64,
+                   0,
+                   &mut out,
+                   |e| e)
+             .unwrap();
+
+        assert_eq!(out, io.data);
     }
 }

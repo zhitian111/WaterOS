@@ -50,7 +50,7 @@
         "mm/vfs-root-read",
         "platform/impl-qemu-loongarch64-virt",
         # "runtime/impl-trace",
-        "runtime/impl-info",
+        # "runtime/impl-info",
         "runtime/impl-platform-console",
         "syscall/impl-kernel",
         "klog/default",

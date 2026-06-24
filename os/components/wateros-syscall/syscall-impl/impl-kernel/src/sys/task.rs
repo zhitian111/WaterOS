@@ -1,7 +1,6 @@
 //! 任务相关系统调用：`yield`、`exit`、`waitpid`、`getpid`/`getppid`/`gettid`、
 //! `times`、`uname`、`prctl`、`getrlimit`/`setrlimit`。
 
-use alloc::string::String;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -190,7 +189,7 @@ pub(crate) fn sys_yield() -> UserRet {
 pub(crate) fn sys_exit(exit_code : isize) -> isize {
     if let Some(task_id) = task::current_task_id() {
         if let Some(process_task) = task::current_process_task_snapshot() {
-            let _ = task::reap_exited_member_threads(process_task.pid);
+            reap_exited_member_threads_runtime_resources(process_task.pid);
         }
         if let Some(process_task) = task::process_task_snapshot(task_id) {
             let last_thread = task::process_snapshot(process_task.pid).is_some_and(|process| {
@@ -207,8 +206,14 @@ pub(crate) fn sys_exit(exit_code : isize) -> isize {
         if let Some(clear_child_tid) = task::task_clear_child_tid(task_id) {
             let addr = clear_child_tid.user_addr();
             if addr != 0 {
-                let _ = copy_to_user_struct(addr, &0u32);
+                let clear_result = copy_to_user_struct(addr, &0u32);
                 let _ = super::futex::wake_user_addr(addr);
+                if let Err(err) = clear_result {
+                    log::warn!("[exit] clear_child_tid write failed task_id={} addr={:#x}: {:?}",
+                               task_id,
+                               addr,
+                               err);
+                }
             }
         }
         super::robust::robust_exit_cleanup(task_id);
@@ -222,12 +227,18 @@ pub(crate) fn sys_exit_group(exit_code : isize) -> isize {
         if let Some(clear_child_tid) = task::task_clear_child_tid(task_id) {
             let addr = clear_child_tid.user_addr();
             if addr != 0 {
-                let _ = copy_to_user_struct(addr, &0u32);
+                let clear_result = copy_to_user_struct(addr, &0u32);
                 let _ = super::futex::wake_user_addr(addr);
+                if let Err(err) = clear_result {
+                    log::warn!("[exit] clear_child_tid write failed task_id={} addr={:#x}: {:?}",
+                               task_id,
+                               addr,
+                               err);
+                }
             }
         }
         if let Some(process_task) = task::current_process_task_snapshot() {
-            let _ = task::reap_exited_member_threads(process_task.pid);
+            reap_exited_member_threads_runtime_resources(process_task.pid);
             super::signal::notify_parent_sigchld(process_task.pid);
             if let Some(task_ids) = task::task_ids_for_process(process_task.pid) {
                 let user_aspace = task::current_task_user_aspace_ptr();
@@ -743,6 +754,16 @@ fn drop_task_runtime_resources_with_aspace(task_id : task::TaskId, aspace : usiz
     vfs::fd::drop_task_fd_table(task_id);
     crate::socket_fd::drop_task(task_id);
     cred::drop_task_cred(task_id);
+}
+
+pub(crate) fn reap_exited_member_threads_runtime_resources(pid : task::ProcessId) {
+    let aspace = task::process_snapshot(pid)
+        .and_then(|process| process.address_space)
+        .map(|address_space| address_space.user_aspace_ptr())
+        .unwrap_or(0);
+    for exited in task::reap_exited_member_threads(pid) {
+        drop_reaped_task_runtime_resources(exited.id, aspace);
+    }
 }
 
 pub(crate) fn drop_reaped_task_runtime_resources(task_id : task::TaskId, aspace : usize) {

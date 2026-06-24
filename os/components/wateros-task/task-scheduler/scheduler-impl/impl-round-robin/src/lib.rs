@@ -197,6 +197,12 @@ pub fn allocate_wait_queue() -> WaitQueueId {
     with_scheduler(|scheduler| scheduler.allocate_wait_queue())
 }
 
+/// 当显式等待队列为空时释放其编号。
+pub fn try_release_wait_queue(wait_queue_id : WaitQueueId) -> bool {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.try_release_wait_queue(wait_queue_id))
+}
+
 /// 切入多任务运行：从引导上下文切换到第一个被选中的就绪任务（通常非 idle）。
 pub fn run_first_task() -> ! {
     let (current_task_cx_ptr, next_task_cx_ptr) =

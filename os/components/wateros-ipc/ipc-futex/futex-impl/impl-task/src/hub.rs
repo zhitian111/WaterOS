@@ -39,6 +39,15 @@ impl FutexHub {
             .or_insert_with(WaitQueue::new)
     }
 
+    fn cleanup_empty_queue(tables: &mut FutexTables, key: FutexKey) {
+        let Some(wq) = tables.queues.get(&key).copied() else {
+            return;
+        };
+        if wq.try_release_empty() {
+            tables.queues.remove(&key);
+        }
+    }
+
     /// 在 `key` 对应队列上带条件等待；用户内存复查由 `condition` 闭包完成（S1）。
     pub fn wait_while(
         &self,
@@ -47,7 +56,7 @@ impl FutexHub {
         mut condition: impl FnMut() -> bool,
     ) -> FutexWaitOutcome {
         let wq = self.with_tables(|tables| Self::get_queue(tables, key));
-        match timeout {
+        let outcome = match timeout {
             None => {
                 match wq.wait_current_while(|| condition()) {
                     TaskWaitResult::Interrupted => FutexWaitOutcome::Interrupted,
@@ -66,7 +75,9 @@ impl FutexHub {
                 TaskWaitResult::TimedOut => FutexWaitOutcome::TimedOut,
                 TaskWaitResult::Interrupted => FutexWaitOutcome::Interrupted,
             },
-        }
+        };
+        self.with_tables(|tables| Self::cleanup_empty_queue(tables, key));
+        outcome
     }
 
     /// 唤醒 `from_key` 上的前 `wake_count` 个等待者，并把后续等待者迁移到
@@ -80,7 +91,10 @@ impl FutexHub {
         Ok(self.with_tables(|tables| {
             let from_wq = Self::get_queue(tables, from_key);
             let to_wq = Self::get_queue(tables, to_key);
-            from_wq.requeue_to(to_wq, wake_count as usize, requeue_count as usize)
+            let changed = from_wq.requeue_to(to_wq, wake_count as usize, requeue_count as usize);
+            Self::cleanup_empty_queue(tables, from_key);
+            Self::cleanup_empty_queue(tables, to_key);
+            changed
         }))
     }
 }
@@ -106,18 +120,21 @@ impl KernelFutexOps for FutexHub {
                 }
                 woken += 1;
             }
+            Self::cleanup_empty_queue(tables, key);
             Ok(woken)
         })
     }
 
     fn wake_all(&self, key: FutexKey) -> FutexResult<usize> {
         self.with_tables(|tables| {
-            Ok(tables
+            let woken = tables
                 .queues
                 .get(&key)
                 .copied()
                 .map(|wq| wq.wake_all())
-                .unwrap_or(0))
+                .unwrap_or(0);
+            Self::cleanup_empty_queue(tables, key);
+            Ok(woken)
         })
     }
 

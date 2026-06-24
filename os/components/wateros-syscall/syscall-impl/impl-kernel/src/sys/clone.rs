@@ -147,7 +147,7 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
                     clone_flags.contains(task::CloneFlags::CLONE_THREAD);
     if is_thread {
         if let Some(process_task) = task::current_process_task_snapshot() {
-            let _ = task::reap_exited_member_threads(process_task.pid);
+            super::task::reap_exited_member_threads_runtime_resources(process_task.pid);
         }
         return do_clone_thread(clone_flags,
                                child_stack,

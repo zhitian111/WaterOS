@@ -261,6 +261,11 @@ impl MultiClassScheduler {
             .allocate_wait_queue()
     }
 
+    pub(super) fn try_release_wait_queue(&mut self, wait_queue_id : WaitQueueId) -> bool {
+        self.wait
+            .try_release_wait_queue(wait_queue_id)
+    }
+
     pub(super) fn prepare_first_switch(&mut self) -> SwitchPair {
         self.promote_sleep_and_timeouts();
         let next_task_id = self.pick_next_runnable();

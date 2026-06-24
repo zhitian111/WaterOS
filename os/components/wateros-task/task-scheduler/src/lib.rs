@@ -85,6 +85,12 @@ pub fn spawn_user_task(spec : UserTask) -> TaskId { active_impl::spawn_user_task
 #[inline]
 pub fn allocate_wait_queue() -> WaitQueueId { active_impl::allocate_wait_queue() }
 
+/// 当等待队列为空时释放编号供后续同步对象复用。
+#[inline]
+pub fn try_release_wait_queue(wait_queue_id : WaitQueueId) -> bool {
+    active_impl::try_release_wait_queue(wait_queue_id)
+}
+
 /// 从当前用户任务 fork 一个子任务，并返回子任务 id。
 ///
 /// 子任务获得父 trap 帧副本（a0 置 0）、独立地址空间（`new_aspace_ptr` /

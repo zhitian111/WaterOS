@@ -11,6 +11,8 @@ use task::TaskId;
 
 use crate::user_copy::{copy_from_user, copy_from_user_struct, copy_to_user_struct};
 
+const FUTEX_FLAG_MASK: u32 = !FUTEX_TID_MASK;
+
 pub(crate) fn futex_error_to_errno(error: FutexError) -> ErrNo {
     match error {
         FutexError::Again => ErrNo::EAGAIN,
@@ -82,7 +84,7 @@ pub(crate) fn robust_exit_cleanup(task_id: TaskId) {
         if let Ok(val) = read_user_u32(futex_uaddr) {
             let owner = val & FUTEX_TID_MASK;
             if owner as usize == tid {
-                let new_val = (val & FUTEX_TID_MASK) | FUTEX_OWNER_DIED;
+                let new_val = (val & FUTEX_FLAG_MASK) | FUTEX_OWNER_DIED;
                 let _ = copy_to_user_struct(futex_uaddr, &new_val);
                 let key = FutexKey {
                     uaddr: futex_uaddr,

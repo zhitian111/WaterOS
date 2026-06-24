@@ -16,6 +16,10 @@ impl WaitQueue {
     #[inline]
     pub const fn id(&self) -> WaitQueueId { self.id }
 
+    /// 如果队列当前没有等待者，则释放底层编号供后续等待队列复用。
+    #[inline]
+    pub fn try_release_empty(&self) -> bool { scheduler::try_release_wait_queue(self.id) }
+
     /// 返回该等待队列对应的通用等待句柄。
     #[inline]
     pub const fn wait_handle(&self) -> TaskWaitHandle { TaskWaitHandle::for_wait_queue(self.id) }

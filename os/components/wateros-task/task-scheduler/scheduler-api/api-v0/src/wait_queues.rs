@@ -19,6 +19,7 @@ struct WaitTimeoutEntry {
 /// 阻塞、睡眠、等待与退出队列；就绪任务通过 `ready_queue` 参数回注具体 run-queue。
 pub struct WaitQueues {
     wait_queues : Vec<VecDeque<TaskId>>,
+    free_wait_queues : Vec<WaitQueueId>,
     exit_wait_queues : BTreeMap<TaskId, VecDeque<TaskId>>,
     child_exit_wait_queues : BTreeMap<TaskId, VecDeque<TaskId>>,
     wait_timeouts : VecDeque<WaitTimeoutEntry>,
@@ -32,6 +33,7 @@ impl WaitQueues {
     /// 构造空队列集。
     pub fn new() -> Self {
         Self { wait_queues : Vec::new(),
+               free_wait_queues : Vec::new(),
                exit_wait_queues : BTreeMap::new(),
                child_exit_wait_queues : BTreeMap::new(),
                wait_timeouts : VecDeque::new(),
@@ -44,6 +46,8 @@ impl WaitQueues {
     /// 重置全部队列与逻辑 tick。
     pub fn init(&mut self) {
         self.wait_queues
+            .clear();
+        self.free_wait_queues
             .clear();
         self.exit_wait_queues
             .clear();
@@ -62,11 +66,34 @@ impl WaitQueues {
 
     /// 分配新的显式等待队列 id。
     pub fn allocate_wait_queue(&mut self) -> WaitQueueId {
+        if let Some(wait_queue_id) = self.free_wait_queues.pop() {
+            self.wait_queues[wait_queue_id].clear();
+            return wait_queue_id;
+        }
         let wait_queue_id = self.wait_queues
                                 .len();
         self.wait_queues
             .push(VecDeque::new());
         wait_queue_id
+    }
+
+    /// 释放一个当前没有等待者的显式等待队列；失败说明队列仍在使用或 id 非法。
+    pub fn try_release_wait_queue(&mut self, wait_queue_id : WaitQueueId) -> bool {
+        let Some(queue) = self.wait_queues.get(wait_queue_id) else {
+            return false;
+        };
+        if !queue.is_empty() ||
+           self.free_wait_queues
+               .contains(&wait_queue_id)
+        {
+            return false;
+        }
+        let handle = TaskWaitHandle::for_wait_queue(wait_queue_id);
+        self.wait_timeouts
+            .retain(|entry| entry.wait_handle != handle);
+        self.free_wait_queues
+            .push(wait_queue_id);
+        true
     }
 
     /// 推进全局逻辑 tick。

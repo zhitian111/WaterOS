@@ -72,6 +72,8 @@ pub trait Scheduler {
     fn spawn_user_task(&mut self, user : UserTask) -> TaskId;
     /// 分配一个新的等待队列编号。
     fn allocate_wait_queue(&mut self) -> WaitQueueId;
+    /// 当等待队列为空时释放编号供后续同步对象复用。
+    fn try_release_wait_queue(&mut self, wait_queue_id : WaitQueueId) -> bool;
     /// 启动调度器并切入第一批任务。
     fn run_first_task(&mut self) -> !;
     /// 按给定原因执行一次调度决策。
