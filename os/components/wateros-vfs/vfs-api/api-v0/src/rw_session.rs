@@ -70,4 +70,10 @@ pub trait RootRwSession {
         let _ = (link_path, target);
         Err(VfsError::Unsupported)
     }
+
+    /// 创建特殊文件节点（当前用于 `S_IFSOCK`）。
+    fn mknod(&mut self, path: &str, mode: u32, rdev: u32) -> VfsResult<()> {
+        let _ = (path, mode, rdev);
+        Err(VfsError::Unsupported)
+    }
 }

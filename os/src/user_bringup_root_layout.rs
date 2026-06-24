@@ -35,7 +35,7 @@ pub fn ensure_busybox_path_links() {
         ensure_dir(sess.as_mut(), "/sbin", 0o755);
         ensure_dir(sess.as_mut(), "/usr/sbin", 0o755);
         ensure_dir(sess.as_mut(), "/etc", 0o755);
-        ensure_etc_passwd(sess.as_mut());
+        ensure_etc_passwd();
 
         match sess.mkdir("/dev", 0o755) {
             Ok(()) => info!("[{LOG_TAG}] mkdir /dev ok"),
@@ -103,24 +103,18 @@ pub fn ensure_busybox_path_links() {
 }
 
 #[cfg(feature = "vfs-bridge")]
-fn ensure_etc_passwd(sess : &mut (impl vfs::api::RootRwSession + ?Sized)) {
+fn ensure_etc_passwd() {
     const PASSWD : &str = "root:x:0:0:root:/root:/bin/sh\n\
 nobody:x:65534:65534:nobody:/:/bin/false\n";
     const GROUP : &str = "root:x:0:\n\
+nobody:x:65534:\n\
 nogroup:x:65534:\n";
 
-    write_text_file(sess, "/etc/passwd", PASSWD.as_bytes());
-    write_text_file(sess, "/etc/group", GROUP.as_bytes());
-}
-
-#[cfg(feature = "vfs-bridge")]
-fn write_text_file(sess : &mut (impl vfs::api::RootRwSession + ?Sized), path : &str, data : &[u8]) {
-    use vfs::api::VfsError;
-
-    let _ = sess.unlink(path);
-    match sess.write_regular_file(path, data) {
-        Ok(()) => info!("[{LOG_TAG}] wrote {path} ({} bytes)", data.len()),
-        Err(e) => warn!("[{LOG_TAG}] write {path} failed: {e:?}"),
+    for (path, data) in [("/etc/passwd", PASSWD.as_bytes()), ("/etc/group", GROUP.as_bytes())] {
+        match vfs::overwrite_absolute_file(path, data) {
+            Ok(()) => info!("[{LOG_TAG}] overwrote {path} ({} bytes)", data.len()),
+            Err(e) => warn!("[{LOG_TAG}] overwrite {path} failed: {e:?}"),
+        }
     }
 }
 

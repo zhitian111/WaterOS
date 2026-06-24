@@ -107,6 +107,8 @@ impl SyscallNumberTable for LinuxGeneric64 {
     // 基本信息 / identity & misc info
     const UNAME: SyscallNumber = SyscallNumber(160); // uname
     const PRCTL: SyscallNumber = SyscallNumber(167); // prctl
+    const CAPGET: SyscallNumber = SyscallNumber(90);
+    const CAPSET: SyscallNumber = SyscallNumber(91);
     const GETPID: SyscallNumber = SyscallNumber(172);
     const GETPPID: SyscallNumber = SyscallNumber(173);
     const GETCWD: SyscallNumber = SyscallNumber(17);
@@ -260,6 +262,8 @@ mod tests {
             LinuxGeneric64::SHMDT,
             LinuxGeneric64::UNAME,
             LinuxGeneric64::PRCTL,
+            LinuxGeneric64::CAPGET,
+            LinuxGeneric64::CAPSET,
             LinuxGeneric64::GETPID,
             LinuxGeneric64::GETPPID,
             LinuxGeneric64::GETCWD,

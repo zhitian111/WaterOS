@@ -108,6 +108,8 @@ pub enum SyscallKind {
     Uname,
     Syslog,
     Prctl,
+    CapGet,
+    CapSet,
     GetCwd,
     Chdir,
     Futex,
@@ -348,6 +350,10 @@ impl SyscallKind {
             Self::Syslog
         } else if syscall_nr == T::PRCTL.raw() {
             Self::Prctl
+        } else if syscall_nr == T::CAPGET.raw() {
+            Self::CapGet
+        } else if syscall_nr == T::CAPSET.raw() {
+            Self::CapSet
         } else if syscall_nr == T::GETCWD.raw() {
             Self::GetCwd
         } else if syscall_nr == T::CHDIR.raw() {
@@ -536,6 +542,8 @@ impl SyscallKind {
             Self::Uname => "uname",
             Self::Syslog => "syslog",
             Self::Prctl => "prctl",
+            Self::CapGet => "capget",
+            Self::CapSet => "capset",
             Self::GetCwd => "getcwd",
             Self::Chdir => "chdir",
             Self::Futex => "futex",
@@ -1389,6 +1397,22 @@ pub trait SyscallDispatcher {
         )
     }
 
+    fn dispatch_capget(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::CapGet,
+            Self::NumberTable::CAPGET.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_capset(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::CapSet,
+            Self::NumberTable::CAPSET.raw(),
+            args,
+        )
+    }
+
     fn dispatch_getcwd(args: SyscallArgs) -> isize {
         Self::dispatch_unsupported(
             SyscallKind::GetCwd,
@@ -1827,6 +1851,8 @@ pub trait SyscallDispatcher {
             SyscallKind::Uname => Self::dispatch_uname(syscall_args),
             SyscallKind::Syslog => Self::dispatch_syslog(syscall_args),
             SyscallKind::Prctl => Self::dispatch_prctl(syscall_args),
+            SyscallKind::CapGet => Self::dispatch_capget(syscall_args),
+            SyscallKind::CapSet => Self::dispatch_capset(syscall_args),
             SyscallKind::GetCwd => Self::dispatch_getcwd(syscall_args),
             SyscallKind::Chdir => Self::dispatch_chdir(syscall_args),
             SyscallKind::Futex => Self::dispatch_futex(syscall_args),

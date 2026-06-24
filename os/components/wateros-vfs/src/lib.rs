@@ -63,6 +63,18 @@ pub fn symlink_absolute(target: &str, link_path: &str) -> VfsResult<()> {
     impl_fs_bridge::symlink_path(link_path, target)
 }
 
+/// 覆盖根卷上的绝对路径文件（unlink + 写 + 页缓存驱逐）。
+#[cfg(feature = "bridge-fs-api")]
+pub fn overwrite_absolute_file(path: &str, data: &[u8]) -> VfsResult<()> {
+    impl_fs_bridge::overwrite_file_at(path, data)
+}
+
+/// 在绝对路径创建 `S_IFSOCK` 节点（pathname AF_UNIX bind 用）。
+#[cfg(feature = "bridge-fs-api")]
+pub fn mknod_socket_absolute(path: &str) -> VfsResult<()> {
+    impl_fs_bridge::mknod_socket_at(path)
+}
+
 /// 修改已解析绝对路径的权限（`impl-fd-session` + `bridge-fs-api`）。
 #[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
 pub fn chmod_absolute(path: &str, mode: u32) -> VfsResult<()> {

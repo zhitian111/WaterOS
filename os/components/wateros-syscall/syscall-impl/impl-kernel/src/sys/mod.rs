@@ -3,6 +3,7 @@
 
 mod brk;
 mod bringup_stats;
+mod cap;
 mod chdir;
 mod clock;
 mod clone;
@@ -69,6 +70,7 @@ mod sockname;
 mod sockopt;
 
 pub(crate) use brk::sys_brk;
+pub(crate) use cap::{sys_capget, sys_capset};
 pub(crate) use chdir::sys_chdir;
 pub(crate) use clone::{sys_clone, sys_clone3};
 pub(crate) use close::sys_close;

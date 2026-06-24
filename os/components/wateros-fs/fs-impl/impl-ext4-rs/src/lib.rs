@@ -423,7 +423,10 @@ impl ReadWriteFs for Ext4RsFs {
         if attr.kind == InodeFileType::S_IFDIR {
             return Err(FsError::NotAFile);
         }
-        if attr.kind != InodeFileType::S_IFREG {
+        if attr.kind != InodeFileType::S_IFREG
+            && attr.kind != InodeFileType::S_IFLNK
+            && attr.kind != InodeFileType::S_IFSOCK
+        {
             return Err(FsError::Unsupported);
         }
 
@@ -611,6 +614,21 @@ impl ReadWriteFs for Ext4RsFs {
         if !target.is_empty() {
             write_all(fs, inode, 0, target.as_bytes())?;
         }
+        Ok(())
+    }
+
+    fn mknod(&mut self, path : &str, mode : u32, rdev : u32) -> FsResult<()> {
+        let fs = self.fs_mut()?;
+        let (parent_path, name) = split_parent_and_name(path)?;
+        let parent = lookup_inode(fs, parent_path)?;
+        ensure_dir_inode(fs, parent)?;
+        match fs.fuse_lookup(parent as u64, name) {
+            Ok(_) => return Err(FsError::Exists),
+            Err(err) if map_ext4_rs(err) == FsError::NotFound => {}
+            Err(err) => return Err(map_ext4_rs(err)),
+        }
+        fs.fuse_mknod(parent as u64, name, mode, 0, rdev)
+          .map_err(map_ext4_rs)?;
         Ok(())
     }
 

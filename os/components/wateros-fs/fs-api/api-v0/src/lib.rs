@@ -252,6 +252,12 @@ pub trait ReadWriteFs: Send {
         Err(FsError::Unsupported)
     }
 
+    /// 创建设备/套接字等特殊节点（`mknod(2)` 语义）。
+    fn mknod(&mut self, path: &str, mode: u32, rdev: u32) -> FsResult<()> {
+        let _ = (path, mode, rdev);
+        Err(FsError::Unsupported)
+    }
+
     /// 路径是否存在（RW 实现可覆盖，供单 RW 根卷统一读路径）。
     fn exists(&self, path: &str) -> FsResult<bool> {
         let _ = path;
@@ -381,6 +387,10 @@ impl ReadWriteFs for LocalRwFs {
 
     fn symlink(&mut self, link_path: &str, target: &str) -> FsResult<()> {
         self.deref_mut().symlink(link_path, target)
+    }
+
+    fn mknod(&mut self, path: &str, mode: u32, rdev: u32) -> FsResult<()> {
+        self.deref_mut().mknod(path, mode, rdev)
     }
 
     fn exists(&self, path: &str) -> FsResult<bool> { self.deref().exists(path) }

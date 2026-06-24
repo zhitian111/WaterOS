@@ -200,6 +200,10 @@ pub trait SyscallNumberTable {
     const UNAME: SyscallNumber;
     /// 进程控制杂项（`prctl(2)`）。
     const PRCTL: SyscallNumber;
+    /// 查询进程权能（`capget(2)`）。
+    const CAPGET: SyscallNumber;
+    /// 设置进程权能（`capset(2)`）。
+    const CAPSET: SyscallNumber;
     /// 当前进程 ID（`getpid(2)`）。
     const GETPID: SyscallNumber;
     /// 父进程 ID（`getppid(2)`）。

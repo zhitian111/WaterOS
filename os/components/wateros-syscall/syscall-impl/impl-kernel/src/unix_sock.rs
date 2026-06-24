@@ -176,6 +176,9 @@ pub(crate) fn bind(fd: usize, addr_ptr: usize, addrlen: usize) -> Result<(), Err
     let addr = parse_sockaddr_un(addr_ptr, addrlen)?;
     if !addr.abstract_ns {
         validate_pathname_bind(&addr.key)?;
+        if !addr.key.is_empty() {
+            install_pathname_socket(&addr.key)?;
+        }
     }
     let sock = lookup_current(fd)?;
     let mut inner = sock.inner.lock();
@@ -445,6 +448,17 @@ fn validate_pathname_bind(key: &[u8]) -> Result<(), ErrNo> {
         Ok(_) => Err(ErrNo::ENOTDIR),
         Err(VfsError::NotFound) => Err(ErrNo::ENOENT),
         Err(_) => Err(ErrNo::ENOTDIR),
+    }
+}
+
+fn install_pathname_socket(key: &[u8]) -> Result<(), ErrNo> {
+    let path = core::str::from_utf8(key).map_err(|_| ErrNo::EINVAL)?;
+    match vfs::mknod_socket_absolute(path) {
+        Ok(()) => Ok(()),
+        Err(VfsError::Exists) => Err(ErrNo::EADDRINUSE),
+        Err(VfsError::NotFound) => Err(ErrNo::ENOENT),
+        Err(VfsError::NotAFile) => Err(ErrNo::ENOTDIR),
+        Err(e) => Err(vfs_error_to_errno(e)),
     }
 }
 

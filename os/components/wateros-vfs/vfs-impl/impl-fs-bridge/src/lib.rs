@@ -516,6 +516,27 @@ pub(crate) fn replace_file_contents(path : &str, data : &[u8]) -> VfsResult<()> 
     sess.write_regular_file(rel.as_str(), data)
 }
 
+/// 覆盖绝对路径文件：先 unlink（并驱逐页缓存）再写入，避免 bring-up 改写 `/etc/passwd` 后仍读到旧页。
+pub fn overwrite_file_at(path : &str, data : &[u8]) -> VfsResult<()> {
+    match unlink_path(path, false) {
+        Ok(()) => {}
+        Err(VfsError::NotFound) => {}
+        Err(e) => return Err(e),
+    }
+    replace_file_contents(path, data)?;
+    let cache = impl_page_cache::global_cache(fs::rootfs::active_impl::mount_generation());
+    cache.purge_closed_file(path);
+    Ok(())
+}
+
+/// 在绝对路径创建 AF_UNIX 套接字节点（`S_IFSOCK`）。
+pub fn mknod_socket_at(path : &str) -> VfsResult<()> {
+    mount_table::assert_path_writable(path)?;
+    let (fs, rel) = fs_and_rel_rw(path)?;
+    let mut sess = MountedRwSession::new(fs);
+    sess.mknod(rel.as_str(), 0o140_777, 0)
+}
+
 /// 重命名绝对路径（经挂载表路由；要求 old/new 落在同一 RW 卷）。
 pub fn rename_path(old_path : &str, new_path : &str) -> VfsResult<()> {
     mount_table::assert_path_writable(old_path)?;
@@ -634,6 +655,14 @@ impl RootRwSession for MountedRwSession {
         self.inner
             .lock()
             .symlink(link.as_str(), target)
+            .map_err(map_fs_err)
+    }
+
+    fn mknod(&mut self, path : &str, mode : u32, rdev : u32) -> VfsResult<()> {
+        let n = normalize_absolute_path(path)?;
+        self.inner
+            .lock()
+            .mknod(n.as_str(), mode, rdev)
             .map_err(map_fs_err)
     }
 }

@@ -568,6 +568,16 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     }
 
     #[inline]
+    fn dispatch_capget(args: SyscallArgs) -> isize {
+        sys::sys_capget(args).0
+    }
+
+    #[inline]
+    fn dispatch_capset(args: SyscallArgs) -> isize {
+        sys::sys_capset(args).0
+    }
+
+    #[inline]
     fn dispatch_getrlimit(args: SyscallArgs) -> isize {
         sys::sys_getrlimit(args).0
     }
