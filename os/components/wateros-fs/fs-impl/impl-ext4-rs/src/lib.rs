@@ -184,13 +184,16 @@ fn lookup_inode(fs : &Ext4, path : &str) -> FsResult<u32> {
 }
 
 fn metadata_for_inode(fs : &Ext4, inode : u32) -> FsResult<FsMetadata> {
-    let attr = fs.fuse_getattr(inode as u64)
-                 .map_err(map_ext4_rs)?;
-    Ok(FsMetadata { node_type : map_node_type(attr.kind),
-                    size : attr.size,
-                    mode : attr.kind.bits() | attr.perm.bits(),
-                    inode : attr.ino,
-                    nlink : attr.nlink })
+    let inode_ref = fs.get_inode_ref(inode);
+    Ok(FsMetadata { node_type : map_node_type(inode_ref.inode
+                                                       .file_type()),
+                    size : inode_ref.inode
+                                    .size(),
+                    mode : inode_ref.inode
+                                    .mode(),
+                    inode : inode_ref.inode_num as u64,
+                    nlink : inode_ref.inode
+                                     .links_count() as u32 })
 }
 
 fn walk_ext4_rs_tree(fs : &Ext4RsFs, path : &str) {
@@ -225,6 +228,20 @@ fn create_regular(fs : &mut Ext4, path : &str, mode : u16) -> FsResult<u32> {
     fs.fuse_lookup(parent as u64, name)
       .map(|attr| attr.ino as u32)
       .map_err(map_ext4_rs)
+}
+
+fn create_directory(fs : &mut Ext4, path : &str, mode : u16) -> FsResult<()> {
+    let (parent_path, name) = split_parent_and_name(path)?;
+    let parent = lookup_inode(fs, parent_path)?;
+    ensure_dir_inode(fs, parent)?;
+    match fs.fuse_lookup(parent as u64, name) {
+        Ok(_) => return Err(FsError::Exists),
+        Err(err) if map_ext4_rs(err) == FsError::NotFound => {}
+        Err(err) => return Err(map_ext4_rs(err)),
+    }
+    fs.create(parent, name, mode)
+      .map_err(map_ext4_rs)?;
+    Ok(())
 }
 
 pub struct Ext4RsFs {
@@ -465,32 +482,18 @@ impl ReadWriteFs for Ext4RsFs {
 
     fn mkdir(&mut self, path : &str, mode : u32) -> FsResult<()> {
         let fs = self.fs_mut()?;
-        let (parent_path, name) = split_parent_and_name(path)?;
-        let parent = lookup_inode(fs, parent_path)?;
-        ensure_dir_inode(fs, parent)?;
         let mode = S_IFDIR | (mode as u16 & 0o7777);
-        fs.fuse_mkdir(parent as u64, name, u32::from(mode), 0)
-          .map_err(map_ext4_rs)?;
-        Ok(())
+        create_directory(fs, path, mode)
     }
 
     fn chmod(&mut self, path : &str, mode : u32) -> FsResult<()> {
         let fs = self.fs_mut()?;
         let inode = lookup_inode(fs, path)?;
         let meta = metadata_for_inode(fs, inode)?;
-        fs.fuse_setattr(inode as u64,
-                        Some(u32::from(meta.mode & !0o7777) | (mode & 0o7777)),
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None);
+        let mut inode_ref = fs.get_inode_ref(inode);
+        inode_ref.inode
+                 .set_mode((meta.mode & !0o7777) | (mode as u16 & 0o7777));
+        fs.write_back_inode(&mut inode_ref);
         Ok(())
     }
 
@@ -500,19 +503,16 @@ impl ReadWriteFs for Ext4RsFs {
         }
         let fs = self.fs_mut()?;
         let inode = lookup_inode(fs, path)?;
-        fs.fuse_setattr(inode as u64,
-                        None,
-                        uid,
-                        gid,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None);
+        let mut inode_ref = fs.get_inode_ref(inode);
+        if let Some(uid) = uid {
+            inode_ref.inode
+                     .set_uid(uid as u16);
+        }
+        if let Some(gid) = gid {
+            inode_ref.inode
+                     .set_gid(gid as u16);
+        }
+        fs.write_back_inode(&mut inode_ref);
         Ok(())
     }
 
