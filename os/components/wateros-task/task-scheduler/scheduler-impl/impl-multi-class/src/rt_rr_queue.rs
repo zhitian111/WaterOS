@@ -167,9 +167,14 @@ impl RtRrRunQueue {
 }
 
 fn take_task_id_by_id(queue : &mut VecDeque<TaskId>, task_id : TaskId) -> bool {
-    let old_len = queue.len();
-    queue.retain(|candidate| *candidate != task_id);
-    queue.len() != old_len
+    if let Some(pos) = queue.iter()
+                          .position(|candidate| *candidate == task_id)
+    {
+        queue.remove(pos);
+        true
+    } else {
+        false
+    }
 }
 
 #[cfg(test)]

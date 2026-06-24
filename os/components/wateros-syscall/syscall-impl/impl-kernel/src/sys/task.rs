@@ -219,6 +219,7 @@ pub(crate) fn sys_exit(exit_code : isize) -> isize {
         super::robust::robust_exit_cleanup(task_id);
         drop_task_runtime_resources(task_id);
     }
+    super::bringup_stats::record_sys_exit();
     task::exit_current(exit_code)
 }
 
@@ -761,7 +762,9 @@ pub(crate) fn reap_exited_member_threads_runtime_resources(pid : task::ProcessId
         .and_then(|process| process.address_space)
         .map(|address_space| address_space.user_aspace_ptr())
         .unwrap_or(0);
-    for exited in task::reap_exited_member_threads(pid) {
+    let reaped = task::reap_exited_member_threads(pid);
+    super::bringup_stats::record_reap_member_threads(reaped.len());
+    for exited in reaped {
         drop_reaped_task_runtime_resources(exited.id, aspace);
     }
 }

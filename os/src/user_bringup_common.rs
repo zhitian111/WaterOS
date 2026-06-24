@@ -107,6 +107,8 @@ pub fn run_one_elf_argv_exit(log_tag : &str, elf_path : &str, argv : &[&str]) ->
         warn!("[{log_tag}] reset file page cache failed after path={elf_path}: {e:?}");
     }
 
+    syscall::log_thread_bringup_stats_summary();
+
     trace!("[{log_tag}] END path={elf_path} exit_code={exit_code}");
     Some(exit_code)
 }

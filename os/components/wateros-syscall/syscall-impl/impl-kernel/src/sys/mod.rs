@@ -2,6 +2,7 @@
 //! 按号表路由。
 
 mod brk;
+mod bringup_stats;
 mod chdir;
 mod clock;
 mod clone;
@@ -151,3 +152,5 @@ pub(crate) use socket::sys_socket;
 pub(crate) use socketpair::sys_socketpair;
 pub(crate) use sockname::{sys_getpeername, sys_getsockname};
 pub(crate) use sockopt::{sys_getsockopt, sys_setsockopt};
+
+pub use bringup_stats::{log_thread_bringup_stats_summary, record_user_page_fault_handled};

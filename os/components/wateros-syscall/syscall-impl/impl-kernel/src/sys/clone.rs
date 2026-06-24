@@ -252,6 +252,7 @@ fn do_clone_thread(clone_flags : task::CloneFlags,
     crate::socket_fd::share_from_parent(child_id, parent_id);
     cred::share_cred(parent_id, child_id);
 
+    super::bringup_stats::record_clone_thread();
     UserRet::from_success(child_tid_raw)
 }
 

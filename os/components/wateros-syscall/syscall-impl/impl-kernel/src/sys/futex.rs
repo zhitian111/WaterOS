@@ -117,6 +117,7 @@ fn futex_requeue(uaddr : usize,
 }
 
 pub(crate) fn wake_user_addr(uaddr : usize) -> usize {
+    super::bringup_stats::record_futex_wake_user_addr();
     // clear_child_tid 的 wake 需要同时尝试 private 和 shared 两种 key，
     // 因为等待者可能用任一种 flag（glibc 可能用 FUTEX_WAIT_BITSET 不带 PRIVATE 标志）
     let hub = FutexHub::global();

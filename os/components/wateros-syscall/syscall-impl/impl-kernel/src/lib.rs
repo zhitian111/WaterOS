@@ -56,6 +56,14 @@ pub fn drop_reaped_task_runtime_resources(task_id: usize, aspace: usize) {
     sys::drop_reaped_task_runtime_resources(task_id, aspace);
 }
 
+pub fn record_user_page_fault_handled() {
+    sys::record_user_page_fault_handled();
+}
+
+pub fn log_thread_bringup_stats_summary() {
+    sys::log_thread_bringup_stats_summary();
+}
+
 /// Kernel syscall implementation selected by the aggregate crate.
 pub struct KernelSyscallDispatcher;
 

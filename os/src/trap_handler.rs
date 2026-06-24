@@ -208,6 +208,7 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                                                          cx.fault_addr(),
                                                          fault_access)
                 {
+                    syscall::record_user_page_fault_handled();
                     trace!("[trap] handled user lazy page fault sepc={:#x} stval={:#x}",
                            cx.user_pc(),
                            cx.fault_addr());

@@ -57,6 +57,18 @@ pub fn drop_reaped_task_runtime_resources(task_id: usize, aspace: usize) {
     active_impl::drop_reaped_task_runtime_resources(task_id, aspace);
 }
 
+#[cfg(feature = "impl-kernel")]
+#[inline]
+pub fn record_user_page_fault_handled() {
+    active_impl::record_user_page_fault_handled();
+}
+
+#[cfg(feature = "impl-kernel")]
+#[inline]
+pub fn log_thread_bringup_stats_summary() {
+    active_impl::log_thread_bringup_stats_summary();
+}
+
 /// Current-task syscall dispatch entry for assembly or C ABI callers.
 #[cfg(feature = "impl-kernel")]
 #[unsafe(no_mangle)]
