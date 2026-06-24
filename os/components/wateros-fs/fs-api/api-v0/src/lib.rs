@@ -166,6 +166,12 @@ pub trait ReadOnlyFs {
         Err(FsError::Unsupported)
     }
 
+    /// 读取符号链接目标（不含尾部的 `\0`）。
+    fn read_symlink(&self, path: &str) -> FsResult<Vec<u8>> {
+        let _ = path;
+        Err(FsError::Unsupported)
+    }
+
     /// 启动阶段调试：从根卷 `/` 起递归打印路径（实现方可覆盖；默认无操作）。
     fn boot_dump_all_paths(&self) {}
 }
@@ -240,6 +246,12 @@ pub trait ReadWriteFs: Send {
         Err(FsError::Unsupported)
     }
 
+    /// 在 `link_path` 创建指向 `target` 的符号链接。
+    fn symlink(&mut self, link_path: &str, target: &str) -> FsResult<()> {
+        let _ = (link_path, target);
+        Err(FsError::Unsupported)
+    }
+
     /// 路径是否存在（RW 实现可覆盖，供单 RW 根卷统一读路径）。
     fn exists(&self, path: &str) -> FsResult<bool> {
         let _ = path;
@@ -266,6 +278,12 @@ pub trait ReadWriteFs: Send {
 
     /// 列出目录项。
     fn read_dir(&self, path: &str) -> FsResult<Vec<FsDirEntry>> {
+        let _ = path;
+        Err(FsError::Unsupported)
+    }
+
+    /// 读取符号链接目标。
+    fn read_symlink(&self, path: &str) -> FsResult<Vec<u8>> {
         let _ = path;
         Err(FsError::Unsupported)
     }
@@ -361,6 +379,10 @@ impl ReadWriteFs for LocalRwFs {
         self.deref_mut().hardlink(existing_path, new_path)
     }
 
+    fn symlink(&mut self, link_path: &str, target: &str) -> FsResult<()> {
+        self.deref_mut().symlink(link_path, target)
+    }
+
     fn exists(&self, path: &str) -> FsResult<bool> { self.deref().exists(path) }
 
     fn metadata(&self, path: &str) -> FsResult<FsMetadata> { self.deref().metadata(path) }
@@ -372,6 +394,8 @@ impl ReadWriteFs for LocalRwFs {
     }
 
     fn read_dir(&self, path: &str) -> FsResult<Vec<FsDirEntry>> { self.deref().read_dir(path) }
+
+    fn read_symlink(&self, path: &str) -> FsResult<Vec<u8>> { self.deref().read_symlink(path) }
 }
 
 // 与 LocalFs 相同：单核 bring-up 下由 Mutex 序列化；跨线程 Send 由调用方保证不数据竞争。
@@ -447,6 +471,8 @@ impl ReadOnlyFs for LocalFs {
     }
 
     fn read_dir(&self, path: &str) -> FsResult<Vec<FsDirEntry>> { self.deref().read_dir(path) }
+
+    fn read_symlink(&self, path: &str) -> FsResult<Vec<u8>> { self.deref().read_symlink(path) }
 
     fn boot_dump_all_paths(&self) { self.deref().boot_dump_all_paths(); }
 }

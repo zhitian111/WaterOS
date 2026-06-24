@@ -518,6 +518,11 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     }
 
     #[inline]
+    fn dispatch_symlinkat(args: SyscallArgs) -> isize {
+        sys::sys_symlinkat(args).0
+    }
+
+    #[inline]
     fn dispatch_getdents64(args: SyscallArgs) -> isize {
         sys::sys_getdents64(args).0
     }

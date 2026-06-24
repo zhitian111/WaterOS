@@ -352,6 +352,22 @@ impl ReadOnlyFs for Ext4RsFs {
         Ok(out)
     }
 
+    fn read_symlink(&self, path : &str) -> FsResult<Vec<u8>> {
+        let fs = self.fs()?;
+        let inode = lookup_inode(fs, path)?;
+        let meta = metadata_for_inode(fs, inode)?;
+        if meta.node_type != FsNodeType::Symlink {
+            return Err(FsError::NotAFile);
+        }
+        let inode_ref = fs.get_inode_ref(inode);
+        let file_size = inode_ref.inode.size();
+        let mut read_buf = vec![0u8; file_size as usize];
+        if file_size > 0 {
+            fs.read_at(inode, 0, &mut read_buf).map_err(map_ext4_rs)?;
+        }
+        Ok(read_buf)
+    }
+
     fn boot_dump_all_paths(&self) {
         if self.fs.is_some() {
             walk_ext4_rs_tree(self, "/");
@@ -582,6 +598,22 @@ impl ReadWriteFs for Ext4RsFs {
         Ok(())
     }
 
+    fn symlink(&mut self, link_path : &str, target : &str) -> FsResult<()> {
+        let fs = self.fs_mut()?;
+        let (parent_path, name) = split_parent_and_name(link_path)?;
+        let parent = lookup_inode(fs, parent_path)?;
+        ensure_dir_inode(fs, parent)?;
+        fs.fuse_symlink(parent as u64, name, target)
+          .map_err(map_ext4_rs)?;
+        let attr = fs.fuse_lookup(parent as u64, name)
+                     .map_err(map_ext4_rs)?;
+        let inode = u32::try_from(attr.ino).map_err(|_| FsError::Io)?;
+        if !target.is_empty() {
+            write_all(fs, inode, 0, target.as_bytes())?;
+        }
+        Ok(())
+    }
+
     fn exists(&self, path : &str) -> FsResult<bool> { ReadOnlyFs::exists(self, path) }
 
     fn metadata(&self, path : &str) -> FsResult<FsMetadata> { ReadOnlyFs::metadata(self, path) }
@@ -594,6 +626,10 @@ impl ReadWriteFs for Ext4RsFs {
 
     fn read_dir(&self, path : &str) -> FsResult<Vec<FsDirEntry>> {
         ReadOnlyFs::read_dir(self, path)
+    }
+
+    fn read_symlink(&self, path : &str) -> FsResult<Vec<u8>> {
+        ReadOnlyFs::read_symlink(self, path)
     }
 }
 

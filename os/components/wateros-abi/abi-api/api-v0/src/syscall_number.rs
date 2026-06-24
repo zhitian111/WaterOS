@@ -102,6 +102,8 @@ pub trait SyscallNumberTable {
     const GETDENTS64: SyscallNumber;
     /// 相对目录创建目录（`mkdirat(2)`）。
     const MKDIRAT: SyscallNumber;
+    /// 相对目录创建符号链接（`symlinkat(2)`）。
+    const SYMLINKAT: SyscallNumber;
     /// 相对目录删除目录项（`unlinkat(2)`）。
     const UNLINKAT: SyscallNumber;
     /// 相对目录重命名目录项（`renameat2(2)`）。

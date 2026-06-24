@@ -888,6 +888,15 @@ pub mod stack {
         Ok(optval.iter().any(|&b| b != 0))
     }
 
+    fn sockopt_i32(optval: &[u8]) -> Result<i32, &'static str> {
+        if optval.len() < 4 {
+            return Err("invalid int sockopt");
+        }
+        let mut raw = [0u8; 4];
+        raw.copy_from_slice(&optval[..4]);
+        Ok(i32::from_ne_bytes(raw))
+    }
+
     fn parse_ipv4_mcast_group(optval: &[u8]) -> Result<u32, &'static str> {
         if optval.len() >= 12 {
             let family = u16::from_ne_bytes([optval[4], optval[5]]);
@@ -920,6 +929,8 @@ pub mod stack {
         const IPPROTO_IP: usize = 0;
         const SO_REUSEADDR: usize = 2;
         const SO_REUSEPORT: usize = 15;
+        const SO_SNDBUF: usize = 7;
+        const SO_RCVBUF: usize = 8;
         const SO_RCVTIMEO_OLD: usize = 20;
         const SO_SNDTIMEO_OLD: usize = 21;
         const SO_RCVTIMEO_NEW: usize = 66;
@@ -952,6 +963,11 @@ pub mod stack {
         }
 
         if level == SOL_SOCKET && matches!(optname, SO_REUSEADDR | SO_REUSEPORT) {
+            return Ok(());
+        }
+        // netperf/iperf 会 setsockopt(SO_SNDBUF/SO_RCVBUF)；smoltcp 缓冲固定，接受请求即可。
+        if level == SOL_SOCKET && (optname == SO_SNDBUF || optname == SO_RCVBUF) {
+            let _ = sockopt_i32(optval)?;
             return Ok(());
         }
         if level == SOL_SOCKET && (optname == SO_RCVTIMEO_OLD || optname == SO_RCVTIMEO_NEW) {

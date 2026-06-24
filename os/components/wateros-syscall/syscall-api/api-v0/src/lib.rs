@@ -43,6 +43,7 @@ pub enum SyscallKind {
     Fcntl,
     GetDents64,
     MkdirAt,
+    SymlinkAt,
     UnlinkAt,
     RenameAt2,
     UtimensAt,
@@ -217,6 +218,8 @@ impl SyscallKind {
             Self::GetDents64
         } else if syscall_nr == T::MKDIRAT.raw() {
             Self::MkdirAt
+        } else if syscall_nr == T::SYMLINKAT.raw() {
+            Self::SymlinkAt
         } else if syscall_nr == T::UNLINKAT.raw() {
             Self::UnlinkAt
         } else if syscall_nr == T::RENAMEAT2.raw() {
@@ -468,6 +471,7 @@ impl SyscallKind {
             Self::Fcntl => "fcntl",
             Self::GetDents64 => "getdents64",
             Self::MkdirAt => "mkdirat",
+            Self::SymlinkAt => "symlinkat",
             Self::UnlinkAt => "unlinkat",
             Self::RenameAt2 => "renameat2",
             Self::UtimensAt => "utimensat",
@@ -965,6 +969,14 @@ pub trait SyscallDispatcher {
         Self::dispatch_unsupported(
             SyscallKind::MkdirAt,
             Self::NumberTable::MKDIRAT.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_symlinkat(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::SymlinkAt,
+            Self::NumberTable::SYMLINKAT.raw(),
             args,
         )
     }
@@ -1761,6 +1773,7 @@ pub trait SyscallDispatcher {
             SyscallKind::Fcntl => Self::dispatch_fcntl(syscall_args),
             SyscallKind::GetDents64 => Self::dispatch_getdents64(syscall_args),
             SyscallKind::MkdirAt => Self::dispatch_mkdirat(syscall_args),
+            SyscallKind::SymlinkAt => Self::dispatch_symlinkat(syscall_args),
             SyscallKind::UnlinkAt => Self::dispatch_unlinkat(syscall_args),
             SyscallKind::RenameAt2 => Self::dispatch_renameat2(syscall_args),
             SyscallKind::UtimensAt => Self::dispatch_utimensat(syscall_args),

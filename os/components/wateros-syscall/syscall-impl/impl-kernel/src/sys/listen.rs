@@ -18,9 +18,9 @@ pub(crate) fn sys_listen(args: SyscallArgs) -> UserRet {
         };
     }
 
-    let socket = match socket_fd::lookup(fd) {
-        Some(s) => s,
-        None => return UserRet::from_error(ErrNo::ENOTSOCK),
+    let socket = match socket_fd::lookup_or_errno(fd) {
+        Ok(s) => s,
+        Err(e) => return UserRet::from_error(e),
     };
 
     match stack::socket_listen(socket.handle()) {

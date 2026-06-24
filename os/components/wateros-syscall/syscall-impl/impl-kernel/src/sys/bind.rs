@@ -53,9 +53,9 @@ pub(crate) fn sys_bind(args: SyscallArgs) -> UserRet {
     } else {
         Some(addr.sin_addr)
     };
-    let socket = match socket_fd::lookup(fd) {
-        Some(s) => s,
-        None => return UserRet::from_error(ErrNo::ENOTSOCK),
+    let socket = match socket_fd::lookup_or_errno(fd) {
+        Ok(s) => s,
+        Err(e) => return UserRet::from_error(e),
     };
 
     match stack::socket_bind(socket.handle(), local_ip, port) {

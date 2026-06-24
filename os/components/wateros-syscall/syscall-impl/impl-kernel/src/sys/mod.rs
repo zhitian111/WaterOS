@@ -45,6 +45,7 @@ mod syslog;
 #[path = "../stat_times.rs"]
 mod stat_times;
 mod statfs;
+mod symlinkat;
 mod sync;
 mod task;
 mod umount2;
@@ -125,6 +126,7 @@ pub(crate) use clock::{
     sys_nanosleep,
 };
 pub(crate) use statfs::sys_statfs;
+pub(crate) use symlinkat::sys_symlinkat;
 pub(crate) use sync::{sys_fdatasync, sys_fsync, sys_sync};
 pub(crate) use syslog::sys_syslog;
 pub(crate) use task::{

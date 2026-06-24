@@ -51,9 +51,9 @@ pub(crate) fn sys_connect(args: SyscallArgs) -> UserRet {
     let port = u16::from_be(addr.sin_port);
     let ip = addr.sin_addr;
 
-    let socket = match socket_fd::lookup(fd) {
-        Some(s) => s,
-        None => return UserRet::from_error(ErrNo::ENOTSOCK),
+    let socket = match socket_fd::lookup_or_errno(fd) {
+        Ok(s) => s,
+        Err(e) => return UserRet::from_error(e),
     };
 
     let handle = socket.handle();

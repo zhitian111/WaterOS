@@ -3,8 +3,7 @@
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
-use vfs::active_impl;
-use vfs::api::SingleRootReadView;
+use vfs::api::{SingleRootReadView, VfsNodeType};
 
 use crate::sys::path_at::resolve_path_at;
 use crate::user_copy::{copy_to_user, copy_user_path_cstr};
@@ -41,9 +40,28 @@ pub(crate) fn sys_readlinkat(args: SyscallArgs) -> UserRet {
         Err(e) => return UserRet::from_error(e),
     };
 
-    match active_impl::backend().metadata(resolved.as_str()) {
+    match vfs::active_impl::backend().metadata(resolved.as_str()) {
+        Ok(meta) if meta.node_type == VfsNodeType::Symlink => {
+            read_symlink_target(resolved.as_str(), buf_ptr, bufsiz)
+        }
         Ok(_) => UserRet::from_error(ErrNo::EINVAL),
         Err(e) => UserRet::from_error(vfs_error_to_errno(e)),
+    }
+}
+
+fn read_symlink_target(path: &str, buf_ptr: usize, bufsiz: usize) -> UserRet {
+    let bytes = match vfs::read_symlink_absolute(path) {
+        Ok(data) => data,
+        Err(e) => return UserRet::from_error(vfs_error_to_errno(e)),
+    };
+    let write_len = core::cmp::min(bytes.len(), bufsiz);
+    if write_len == 0 {
+        return UserRet::from_success(0);
+    }
+    match copy_to_user(buf_ptr, &bytes[..write_len]) {
+        Ok(n) if n == write_len => UserRet::from_success(write_len),
+        Ok(_) => UserRet::from_error(ErrNo::EFAULT),
+        Err(e) => UserRet::from_error(e),
     }
 }
 

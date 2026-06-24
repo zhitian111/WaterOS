@@ -21,6 +21,11 @@ enum TmpNode {
         mode: u16,
         inode: u64,
     },
+    Symlink {
+        target: Vec<u8>,
+        mode: u16,
+        inode: u64,
+    },
 }
 
 pub(crate) struct TmpFs {
@@ -110,6 +115,13 @@ impl TmpFs {
                 inode: *inode,
                 nlink: 2,
             },
+            TmpNode::Symlink { target, mode, inode } => FsMetadata {
+                node_type: FsNodeType::Symlink,
+                size: target.len() as u64,
+                mode: *mode,
+                inode: *inode,
+                nlink: 1,
+            },
         }
     }
 
@@ -166,6 +178,20 @@ impl ReadWriteFs for TmpFs {
         }
         children.remove(name);
         Ok(())
+    }
+
+    fn symlink(&mut self, link_path: &str, target: &str) -> FsResult<()> {
+        let parts = Self::split_path(link_path)?;
+        if parts.is_empty() {
+            return Err(FsError::InvalidPath);
+        }
+        let inode = self.alloc_inode();
+        let node = TmpNode::Symlink {
+            target: target.as_bytes().to_vec(),
+            mode: 0o120777,
+            inode,
+        };
+        Self::insert_leaf(&mut self.root, &parts, node)
     }
 
     fn rmdir(&mut self, path: &str) -> FsResult<()> {
@@ -237,6 +263,9 @@ impl ReadWriteFs for TmpFs {
             TmpNode::Dir { mode: m, .. } => {
                 *m = 0o040000 | ((mode as u16) & 0o7777);
             }
+            TmpNode::Symlink { mode: m, .. } => {
+                *m = 0o120000 | ((mode as u16) & 0o7777);
+            }
         }
         Ok(())
     }
@@ -282,6 +311,15 @@ impl ReadWriteFs for TmpFs {
         Ok(data.clone())
     }
 
+    fn read_symlink(&self, path: &str) -> FsResult<Vec<u8>> {
+        let parts = Self::split_path(path)?;
+        let node = Self::dir_ref(&self.root, &parts)?;
+        let TmpNode::Symlink { target, .. } = node else {
+            return Err(FsError::NotAFile);
+        };
+        Ok(target.clone())
+    }
+
     fn read_range(&self, path: &str, offset: u64, buf: &mut [u8]) -> FsResult<usize> {
         if buf.is_empty() {
             return Ok(0);
@@ -315,6 +353,7 @@ impl ReadWriteFs for TmpFs {
             let node_type = match child {
                 TmpNode::File { .. } => FsNodeType::File,
                 TmpNode::Dir { .. } => FsNodeType::Directory,
+                TmpNode::Symlink { .. } => FsNodeType::Symlink,
             };
             out.push(FsDirEntry {
                 name: name.clone(),

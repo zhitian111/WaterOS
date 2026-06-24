@@ -136,6 +136,20 @@ pub(crate) fn lookup(fd: usize) -> Option<SocketRef> {
     SOCKET_FD_REGISTRY.lock().lookup(task_id, fd)
 }
 
+/// 查找 inet socket fd；无效 fd 返回 `EBADF`，有效非 socket 返回 `ENOTSOCK`。
+pub(crate) fn lookup_or_errno(fd: usize) -> Result<SocketRef, abi::errno::ErrNo> {
+    match lookup(fd) {
+        Some(s) => Ok(s),
+        None => {
+            if vfs::fd::with_current_io(fd, |_| Ok(())).is_ok() {
+                Err(abi::errno::ErrNo::ENOTSOCK)
+            } else {
+                Err(abi::errno::ErrNo::EBADF)
+            }
+        }
+    }
+}
+
 pub(crate) fn remove(fd: usize) {
     if let Some(task_id) = task::current_task_id() {
         SOCKET_FD_REGISTRY.lock().remove(task_id, fd);

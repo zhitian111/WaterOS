@@ -54,6 +54,7 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const FCNTL: SyscallNumber = SyscallNumber(25);
     const GETDENTS64: SyscallNumber = SyscallNumber(61);
     const MKDIRAT: SyscallNumber = SyscallNumber(34);
+    const SYMLINKAT: SyscallNumber = SyscallNumber(36);
     const UNLINKAT: SyscallNumber = SyscallNumber(35);
     const RENAMEAT2: SyscallNumber = SyscallNumber(276);
     const UTIMENSAT: SyscallNumber = SyscallNumber(88);
@@ -216,6 +217,7 @@ mod tests {
             LinuxGeneric64::FCNTL,
             LinuxGeneric64::GETDENTS64,
             LinuxGeneric64::MKDIRAT,
+            LinuxGeneric64::SYMLINKAT,
             LinuxGeneric64::UNLINKAT,
             LinuxGeneric64::RENAMEAT2,
             LinuxGeneric64::UTIMENSAT,

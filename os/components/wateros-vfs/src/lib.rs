@@ -44,6 +44,25 @@ pub fn mkdir_at_current(path: &str, mode: u32) -> VfsResult<()> {
     impl_fs_bridge::mkdir_path(abs.as_str(), mode)
 }
 
+/// 相对当前任务 cwd 创建符号链接（`impl-fd-session` + `bridge-fs-api`）。
+#[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
+pub fn symlink_at_current(target: &str, link_path: &str) -> VfsResult<()> {
+    let abs = cwd::resolve_for_current_task(link_path)?;
+    impl_fs_bridge::symlink_path(abs.as_str(), target)
+}
+
+/// 读取已解析绝对路径的符号链接目标（`bridge-fs-api`）。
+#[cfg(feature = "bridge-fs-api")]
+pub fn read_symlink_absolute(path: &str) -> VfsResult<alloc::vec::Vec<u8>> {
+    impl_fs_bridge::read_symlink_path(path)
+}
+
+/// 在已解析绝对路径处创建符号链接（`bridge-fs-api`）。
+#[cfg(feature = "bridge-fs-api")]
+pub fn symlink_absolute(target: &str, link_path: &str) -> VfsResult<()> {
+    impl_fs_bridge::symlink_path(link_path, target)
+}
+
 /// 修改已解析绝对路径的权限（`impl-fd-session` + `bridge-fs-api`）。
 #[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
 pub fn chmod_absolute(path: &str, mode: u32) -> VfsResult<()> {

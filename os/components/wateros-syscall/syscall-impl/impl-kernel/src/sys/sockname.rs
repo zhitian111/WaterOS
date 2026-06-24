@@ -22,9 +22,16 @@ pub(crate) fn sys_getsockname(args: SyscallArgs) -> UserRet {
     let addr_ptr = args.arg(1);
     let addrlen_ptr = args.arg(2);
 
-    let socket = match socket_fd::lookup(fd) {
-        Some(s) => s,
-        None => return UserRet::from_error(ErrNo::ENOTSOCK),
+    if crate::unix_sock::is_unix_fd(fd) {
+        return match crate::unix_sock::getsockname(fd, addr_ptr, addrlen_ptr) {
+            Ok(()) => UserRet::from_success(0),
+            Err(e) => UserRet::from_error(e),
+        };
+    }
+
+    let socket = match socket_fd::lookup_or_errno(fd) {
+        Ok(s) => s,
+        Err(e) => return UserRet::from_error(e),
     };
 
     let port: u16 = match stack::socket_local_port(socket.handle()) {
@@ -63,9 +70,16 @@ pub(crate) fn sys_getpeername(args: SyscallArgs) -> UserRet {
     let addr_ptr = args.arg(1);
     let addrlen_ptr = args.arg(2);
 
-    let socket = match socket_fd::lookup(fd) {
-        Some(s) => s,
-        None => return UserRet::from_error(ErrNo::ENOTSOCK),
+    if crate::unix_sock::is_unix_fd(fd) {
+        return match crate::unix_sock::getpeername(fd, addr_ptr, addrlen_ptr) {
+            Ok(()) => UserRet::from_success(0),
+            Err(e) => UserRet::from_error(e),
+        };
+    }
+
+    let socket = match socket_fd::lookup_or_errno(fd) {
+        Ok(s) => s,
+        Err(e) => return UserRet::from_error(e),
     };
 
     let (ip, port) = match stack::socket_peername(socket.handle()) {

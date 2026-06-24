@@ -451,6 +451,35 @@ pub fn mkdir_path(path : &str, mode : u32) -> VfsResult<()> {
     sess.mkdir(rel.as_str(), mode)
 }
 
+/// 创建符号链接（经挂载表路由）。
+pub fn symlink_path(link_path : &str, target : &str) -> VfsResult<()> {
+    let normalized = normalize_absolute_path(link_path)?;
+    if normalized.as_str() == "/" {
+        return Err(VfsError::InvalidPath);
+    }
+    mount_table::assert_path_writable(link_path)?;
+    let (fs, rel) = fs_and_rel_rw(link_path)?;
+    let mut sess = MountedRwSession::new(fs);
+    sess.symlink(rel.as_str(), target)
+}
+
+/// 读取符号链接目标（经挂载表路由）。
+pub fn read_symlink_path(path : &str) -> VfsResult<Vec<u8>> {
+    let abs = normalize_absolute_path(path)?;
+    match resolve_route(abs.as_str())? {
+        FsRoute::PseudoProc { .. } => Err(VfsError::NotAFile),
+        FsRoute::Root { abs, .. } => root_rw()?.lock()
+                                            .read_symlink(abs.as_str())
+                                            .map_err(map_fs_err),
+        FsRoute::AuxRw { fs, rel, .. } => fs.lock()
+                                            .read_symlink(rel.as_str())
+                                            .map_err(map_fs_err),
+        FsRoute::AuxRo { fs, rel, .. } => fs.lock()
+                                            .read_symlink(rel.as_str())
+                                            .map_err(map_fs_err),
+    }
+}
+
 /// 修改路径权限（经挂载表路由）。
 pub fn chmod_path(path : &str, mode : u32) -> VfsResult<()> {
     let normalized = normalize_absolute_path(path)?;
@@ -597,6 +626,14 @@ impl RootRwSession for MountedRwSession {
         self.inner
             .lock()
             .hardlink(existing.as_str(), new.as_str())
+            .map_err(map_fs_err)
+    }
+
+    fn symlink(&mut self, link_path : &str, target : &str) -> VfsResult<()> {
+        let link = normalize_absolute_path(link_path)?;
+        self.inner
+            .lock()
+            .symlink(link.as_str(), target)
             .map_err(map_fs_err)
     }
 }

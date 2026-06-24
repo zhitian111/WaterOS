@@ -64,4 +64,10 @@ pub trait RootRwSession {
         let _ = (existing_path, new_path);
         Err(VfsError::Unsupported)
     }
+
+    /// 在 `link_path` 创建指向 `target` 的符号链接。
+    fn symlink(&mut self, link_path: &str, target: &str) -> VfsResult<()> {
+        let _ = (link_path, target);
+        Err(VfsError::Unsupported)
+    }
 }

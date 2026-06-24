@@ -40,6 +40,7 @@ struct UnixSockInner {
     sock_type: UnixSockType,
     nonblocking: bool,
     bound_key: Option<Vec<u8>>,
+    peer_key: Option<Vec<u8>>,
     listening: bool,
     endpoint: Option<UnixStreamPairEnd>,
     dgram_peer: Option<Vec<u8>>,
@@ -126,6 +127,7 @@ pub(crate) fn alloc_unix_socket(
             sock_type,
             nonblocking,
             bound_key: None,
+            peer_key: None,
             listening: false,
             endpoint: None,
             dgram_peer: None,
@@ -236,7 +238,38 @@ fn connect_stream(inner: &mut UnixSockInner, key: &[u8]) -> Result<(), ErrNo> {
     let (client_end, server_end) = vfs::stream_pair_handle_pair(inner.nonblocking);
     entry.accept_queue.push_back(server_end);
     inner.endpoint = Some(client_end);
+    inner.peer_key = Some(key.to_vec());
     Ok(())
+}
+
+pub(crate) fn getsockname(
+    fd: usize,
+    addr_ptr: usize,
+    addrlen_ptr: usize,
+) -> Result<(), ErrNo> {
+    let sock = lookup_current(fd)?;
+    let key = sock
+        .inner
+        .lock()
+        .bound_key
+        .clone()
+        .ok_or(ErrNo::EINVAL)?;
+    write_unix_addr_to_user(addr_ptr, addrlen_ptr, &key)
+}
+
+pub(crate) fn getpeername(
+    fd: usize,
+    addr_ptr: usize,
+    addrlen_ptr: usize,
+) -> Result<(), ErrNo> {
+    let sock = lookup_current(fd)?;
+    let inner = sock.inner.lock();
+    let key = inner
+        .peer_key
+        .clone()
+        .or_else(|| inner.dgram_peer.clone())
+        .ok_or(ErrNo::ENOTCONN)?;
+    write_unix_addr_to_user(addr_ptr, addrlen_ptr, &key)
 }
 
 pub(crate) fn accept(fd: usize) -> Result<(Box<dyn VfsIoHandle>, UnixSockRef), ErrNo> {
@@ -260,6 +293,7 @@ pub(crate) fn accept(fd: usize) -> Result<(Box<dyn VfsIoHandle>, UnixSockRef), E
                     sock_type: UnixSockType::Stream,
                     nonblocking: sock.inner.lock().nonblocking,
                     bound_key: None,
+                    peer_key: None,
                     listening: false,
                     endpoint: Some(end),
                     dgram_peer: None,
@@ -388,11 +422,14 @@ fn deliver_dgram(peer: &[u8], buf: &[u8], sender: Option<Vec<u8>>) -> Result<usi
 
 fn lookup_current(fd: usize) -> Result<UnixSockRef, ErrNo> {
     let task_id = vfs::fd::current_task_id().map_err(vfs_error_to_errno)?;
-    FD_TABLE
-        .lock()
-        .get(&(task_id, fd))
-        .cloned()
-        .ok_or(ErrNo::ENOTSOCK)
+    if let Some(sock) = FD_TABLE.lock().get(&(task_id, fd)).cloned() {
+        return Ok(sock);
+    }
+    if vfs::fd::with_current_io(fd, |_| Ok(())).is_ok() {
+        Err(ErrNo::ENOTSOCK)
+    } else {
+        Err(ErrNo::EBADF)
+    }
 }
 
 fn validate_pathname_bind(key: &[u8]) -> Result<(), ErrNo> {
