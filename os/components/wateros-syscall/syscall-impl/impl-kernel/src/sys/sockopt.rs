@@ -37,6 +37,7 @@ pub(crate) fn sys_setsockopt(args: SyscallArgs) -> UserRet {
 
     match stack::socket_setsockopt(socket.handle(), level, optname, &kbuf) {
         Ok(()) => UserRet::from_success(0),
+        Err("addr not available") => UserRet::from_error(ErrNo::EADDRNOTAVAIL),
         Err(_) => UserRet::from_error(ErrNo::EOPNOTSUPP),
     }
 }

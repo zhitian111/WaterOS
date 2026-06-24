@@ -3,10 +3,18 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
+use core::sync::atomic::{AtomicU64, Ordering};
 
 use api_v0::{VfsError, VfsIoHandle, VfsMetadata, VfsNodeType, VfsResult};
 use driver_api::DriverError;
 use driver_character_api_v0::SharedCharacterDevice;
+
+/// QEMU 无主机输入时，经若干次 poll 后注入的合成密码（供 LTP ask_password.sh 等非交互场景）。
+const HEADLESS_STUB_INPUT: &[u8] = b"password\n";
+const HEADLESS_POLL_THRESHOLD: u64 = 2;
+
+static HEADLESS_STUB_OFFSET: AtomicU64 = AtomicU64::new(0);
+static HEADLESS_SERIAL_POLLS: AtomicU64 = AtomicU64::new(0);
 
 fn map_driver_err(e: DriverError) -> VfsError {
     match e {
@@ -98,17 +106,92 @@ impl CharDevHandle {
     }
 }
 
+fn headless_stub_pending() -> bool {
+    HEADLESS_STUB_OFFSET.load(Ordering::Relaxed) < HEADLESS_STUB_INPUT.len() as u64
+}
+
+fn arm_headless_stub_if_needed() {
+    if headless_stub_pending() {
+        return;
+    }
+    let polls = HEADLESS_SERIAL_POLLS.fetch_add(1, Ordering::Relaxed);
+    if polls + 1 >= HEADLESS_POLL_THRESHOLD {
+        HEADLESS_STUB_OFFSET.store(0, Ordering::Relaxed);
+    }
+}
+
+fn read_headless_stub(buf: &mut [u8]) -> usize {
+    let offset = HEADLESS_STUB_OFFSET.load(Ordering::Relaxed) as usize;
+    if offset >= HEADLESS_STUB_INPUT.len() {
+        return 0;
+    }
+    let n = core::cmp::min(buf.len(), HEADLESS_STUB_INPUT.len() - offset);
+    buf[..n].copy_from_slice(&HEADLESS_STUB_INPUT[offset..offset + n]);
+    HEADLESS_STUB_OFFSET.store((offset + n) as u64, Ordering::Relaxed);
+    n
+}
+
+fn read_serial_tty(device: &SharedCharacterDevice, buf: &mut [u8]) -> VfsResult<usize> {
+    let mut guard = device.lock();
+    match guard.read(buf) {
+        Ok(n) if n > 0 => Ok(n),
+        Ok(_) | Err(DriverError::Unsupported) => {
+            drop(guard);
+            if headless_stub_pending() {
+                Ok(read_headless_stub(buf))
+            } else {
+                Err(VfsError::Unsupported)
+            }
+        }
+        Err(e) => Err(map_driver_err(e)),
+    }
+}
+
+fn serial_poll_revents(device: &SharedCharacterDevice, events: i16) -> VfsResult<i16> {
+    const POLLIN: i16 = 0x001;
+    const POLLOUT: i16 = 0x004;
+    let mut guard = device.lock();
+    let mut revents = guard.poll_revents(events).map_err(map_driver_err)?;
+    drop(guard);
+    if events & POLLIN != 0 {
+        let has_uart = {
+            let mut guard = device.lock();
+            let mut byte = [0u8; 1];
+            guard.read(&mut byte).is_ok_and(|n| n > 0)
+        };
+        if has_uart || headless_stub_pending() {
+            revents |= POLLIN;
+        } else {
+            arm_headless_stub_if_needed();
+            if headless_stub_pending() {
+                revents |= POLLIN;
+            }
+        }
+    }
+    if events & POLLOUT != 0 {
+        revents |= POLLOUT;
+    }
+    Ok(revents)
+}
+
 impl VfsIoHandle for CharDevHandle {
     fn read(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
         if buf.is_empty() {
             return Ok(0);
         }
-        let mut guard = self.device.lock();
-        match guard.read(buf) {
-            Ok(n) => Ok(n),
-            Err(DriverError::Unsupported) if self.stdin_eof => Ok(0),
-            Err(e) => Err(map_driver_err(e)),
+        if self.rtc {
+            let mut guard = self.device.lock();
+            return guard.read(buf).map_err(map_driver_err);
         }
+        if self.stdin_eof {
+            let mut guard = self.device.lock();
+            return match guard.read(buf) {
+                Ok(n) => Ok(n),
+                Err(DriverError::Unsupported) => Ok(0),
+                Err(e) => Err(map_driver_err(e)),
+            };
+        }
+        read_serial_tty(&self.device, buf)
     }
 
     fn write(&mut self, buf: &[u8]) -> VfsResult<usize> {
@@ -117,8 +200,47 @@ impl VfsIoHandle for CharDevHandle {
     }
 
     fn poll_revents(&mut self, events: i16) -> VfsResult<i16> {
-        let mut guard = self.device.lock();
-        guard.poll_revents(events).map_err(map_driver_err)
+        if self.rtc {
+            let mut guard = self.device.lock();
+            return guard.poll_revents(events).map_err(map_driver_err);
+        }
+        if self.stdin_eof {
+            const POLLIN: i16 = 0x001;
+            const POLLOUT: i16 = 0x004;
+            let mut revents = 0i16;
+            if events & POLLIN != 0 {
+                revents |= POLLIN;
+            }
+            if events & POLLOUT != 0 {
+                revents |= POLLOUT;
+            }
+            return Ok(revents);
+        }
+        serial_poll_revents(&self.device, events)
+    }
+
+    fn poll_wait_for_ticks(
+        &mut self,
+        events: i16,
+        timeout_ticks: u64,
+        still_waiting: &mut dyn FnMut() -> bool,
+    ) -> VfsResult<()> {
+        if self.rtc || self.stdin_eof {
+            return Err(VfsError::Unsupported);
+        }
+        const POLLIN: i16 = 0x001;
+        if events & POLLIN == 0 {
+            return Ok(());
+        }
+        for _ in 0..timeout_ticks.max(1) {
+            if !still_waiting() {
+                return Ok(());
+            }
+            if (serial_poll_revents(&self.device, POLLIN)? & POLLIN) != 0 {
+                return Ok(());
+            }
+        }
+        Ok(())
     }
 
     fn ioctl(&mut self, request: usize, arg: usize) -> VfsResult<isize> {

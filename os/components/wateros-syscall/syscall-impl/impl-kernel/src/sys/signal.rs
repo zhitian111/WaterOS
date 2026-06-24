@@ -109,7 +109,7 @@ pub(crate) fn apply_signal_dispatch(dispatch : SignalDispatch, signal : usize) {
             let _ = task::interrupt_task(task_id);
         }
         SignalDelivery::Terminate => {
-            let exit_code = ((signal & 0x7F) as isize) << 8;
+            let exit_code = super::task::signal_terminate_exit_code(signal, task_id);
             if task::current_task_id() == Some(task_id) {
                 if let Some(snapshot) = task::process_task_snapshot(task_id) {
                     notify_parent_sigchld(snapshot.pid);

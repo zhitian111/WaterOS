@@ -48,8 +48,19 @@ fn accept_inner(fd: usize, addr_ptr: usize, addrlen_ptr: usize, flags: usize) ->
 
     let socket = match socket_fd::lookup(fd) {
         Some(s) => s,
-        None => return UserRet::from_error(ErrNo::ENOTSOCK),
+        None => {
+            if vfs::fd::with_current_io(fd, |_| Ok(())).is_ok() {
+                return UserRet::from_error(ErrNo::ENOTSOCK);
+            }
+            return UserRet::from_error(ErrNo::EBADF);
+        }
     };
+
+    match stack::socket_kind(socket.handle()) {
+        Ok(stack::SocketKind::Udp) => return UserRet::from_error(ErrNo::EOPNOTSUPP),
+        Ok(stack::SocketKind::Tcp) => {}
+        Err(_) => return UserRet::from_error(ErrNo::ENOTSOCK),
+    }
 
     let nonblocking = (flags & SOCK_NONBLOCK) != 0
         || socket_fd::is_nonblocking(fd);
@@ -77,6 +88,7 @@ fn accept_inner(fd: usize, addr_ptr: usize, addrlen_ptr: usize, flags: usize) ->
                 }
                 continue;
             }
+            Err("not a listening socket") => return UserRet::from_error(ErrNo::EINVAL),
             Err(_) => return UserRet::from_error(ErrNo::ENOTSOCK),
         }
     }

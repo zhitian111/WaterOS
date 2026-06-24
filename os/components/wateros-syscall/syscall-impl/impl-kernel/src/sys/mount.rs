@@ -12,7 +12,8 @@ use crate::user_copy::copy_user_path_cstr;
 use crate::vfs_util::vfs_error_to_errno;
 
 const MS_RDONLY: u64 = 1;
-const MS_REMOUNT: u64 = 0x800;
+/// Linux `mount(2)` remount flag (`include/uapi/linux/mount.h`).
+const MS_REMOUNT: u64 = 32;
 
 pub(crate) fn sys_mount(args: SyscallArgs) -> UserRet {
     let source_ptr = args.arg(0);
@@ -78,14 +79,19 @@ pub(crate) fn sys_mount(args: SyscallArgs) -> UserRet {
                 return UserRet::from_error(ErrNo::EINVAL);
             }
         }
-        if flags & MS_RDONLY != 0 {
-            return UserRet::from_error(ErrNo::EINVAL);
+        let readonly = flags & MS_RDONLY != 0;
+        match vfs::mount_tmpfs_at(mount_point.as_str()) {
+            Ok(()) => {}
+            Err(VfsError::Exists) => return UserRet::from_error(ErrNo::EBUSY),
+            Err(e) => return UserRet::from_error(vfs_error_to_errno(e)),
         }
-        return match vfs::mount_tmpfs_at(mount_point.as_str()) {
-            Ok(()) => UserRet::from_success(0),
-            Err(VfsError::Exists) => UserRet::from_error(ErrNo::EBUSY),
-            Err(e) => UserRet::from_error(vfs_error_to_errno(e)),
-        };
+        if readonly {
+            return match vfs::remount_readonly_at(mount_point.as_str()) {
+                Ok(()) => UserRet::from_success(0),
+                Err(e) => UserRet::from_error(vfs_error_to_errno(e)),
+            };
+        }
+        return UserRet::from_success(0);
     }
 
     if source_ptr == 0 {

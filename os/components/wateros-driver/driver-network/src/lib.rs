@@ -71,7 +71,7 @@ pub mod stack {
     //! 在设备驱动 `init_after_boot` 完成网卡注册后调用 [`init`]，
     //! 之后通过周期性 [`poll`] 驱动协议栈。
 
-    use alloc::collections::{BTreeMap, VecDeque};
+    use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
     use alloc::vec;
     use alloc::vec::Vec;
     use smoltcp::iface::{Config, Interface, SocketHandle, SocketSet};
@@ -115,6 +115,8 @@ pub mod stack {
         /// SO_RCVTIMEO in milliseconds. None keeps the default blocking wait.
         recv_timeout_ms: Option<u64>,
         tcp_nodelay: bool,
+        /// IPv4 组播成员（`MCAST_JOIN_GROUP` / `IP_ADD_MEMBERSHIP`）。
+        mcast_groups: BTreeSet<u32>,
     }
 
     struct LoopbackUdpPacket {
@@ -276,6 +278,7 @@ pub mod stack {
             peer_port: 0,
             recv_timeout_ms: None,
             tcp_nodelay: false,
+            mcast_groups: BTreeSet::new(),
         });
         Ok(h)
     }
@@ -298,6 +301,7 @@ pub mod stack {
             peer_port: 0,
             recv_timeout_ms: None,
             tcp_nodelay: false,
+            mcast_groups: BTreeSet::new(),
         });
         Ok(h)
     }
@@ -884,15 +888,66 @@ pub mod stack {
         Ok(optval.iter().any(|&b| b != 0))
     }
 
+    fn parse_ipv4_mcast_group(optval: &[u8]) -> Result<u32, &'static str> {
+        if optval.len() >= 12 {
+            let family = u16::from_ne_bytes([optval[4], optval[5]]);
+            if family == 2 {
+                return Ok(u32::from_ne_bytes([optval[8], optval[9], optval[10], optval[11]]));
+            }
+        }
+        if optval.len() >= 8 {
+            return Ok(u32::from_ne_bytes([optval[0], optval[1], optval[2], optval[3]]));
+        }
+        Err("invalid multicast request")
+    }
+
+    fn mcast_join(meta: &mut SocketMeta, group: u32) {
+        meta.mcast_groups.insert(group);
+    }
+
+    fn mcast_leave(meta: &mut SocketMeta, group: u32) -> Result<(), &'static str> {
+        if meta.mcast_groups.remove(&group) {
+            Ok(())
+        } else {
+            Err("addr not available")
+        }
+    }
+
     /// 设置 socket 选项（支持常见 iperf 依赖的 SOL_SOCKET timeout/buffer 选项）。
     pub fn socket_setsockopt(handle: SocketHandle, level: usize, optname: usize, optval: &[u8]) -> Result<(), &'static str> {
         const SOL_SOCKET: usize = 1;
+        const SOL_IP: usize = 0;
+        const IPPROTO_IP: usize = 0;
         const SO_RCVTIMEO_OLD: usize = 20;
         const SO_SNDTIMEO_OLD: usize = 21;
         const SO_RCVTIMEO_NEW: usize = 66;
         const SO_SNDTIMEO_NEW: usize = 67;
         const IPPROTO_TCP: usize = 6;
         const TCP_NODELAY: usize = 1;
+        const IP_ADD_MEMBERSHIP: usize = 35;
+        const IP_DROP_MEMBERSHIP: usize = 36;
+        const MCAST_JOIN_GROUP: usize = 42;
+        const MCAST_LEAVE_GROUP: usize = 45;
+
+        if (level == SOL_IP || level == IPPROTO_IP)
+            && matches!(optname, IP_ADD_MEMBERSHIP | MCAST_JOIN_GROUP)
+        {
+            let group = parse_ipv4_mcast_group(optval)?;
+            let mut guard = NETWORK_STACK.lock();
+            let stack = guard.as_mut().ok_or("stack not initialized")?;
+            let meta = stack.metas.get_mut(&handle).ok_or("invalid socket handle")?;
+            mcast_join(meta, group);
+            return Ok(());
+        }
+        if (level == SOL_IP || level == IPPROTO_IP)
+            && matches!(optname, IP_DROP_MEMBERSHIP | MCAST_LEAVE_GROUP)
+        {
+            let group = parse_ipv4_mcast_group(optval)?;
+            let mut guard = NETWORK_STACK.lock();
+            let stack = guard.as_mut().ok_or("stack not initialized")?;
+            let meta = stack.metas.get_mut(&handle).ok_or("invalid socket handle")?;
+            return mcast_leave(meta, group);
+        }
 
         if level == SOL_SOCKET && (optname == SO_RCVTIMEO_OLD || optname == SO_RCVTIMEO_NEW) {
             let timeout_ms = timeval_to_millis(optval)?;
@@ -931,7 +986,7 @@ pub mod stack {
             poll_socket_events();
             return Ok(());
         }
-        Ok(())
+        Err("unsupported sockopt")
     }
 
     /// 查询 SO_RCVTIMEO，供 syscall 阻塞接收路径换算等待 tick。
@@ -1124,6 +1179,7 @@ pub mod stack {
         meta.is_listener = false;
         meta.peer_ip = [127, 0, 0, 1]; // loopback accept
         meta.peer_port = 0;
+        meta.mcast_groups.clear();
         let recv_timeout_ms = meta.recv_timeout_ms;
         let tcp_nodelay = meta.tcp_nodelay;
         // 创建替换监听 socket
@@ -1151,6 +1207,7 @@ pub mod stack {
             peer_port: 0,
             recv_timeout_ms,
             tcp_nodelay,
+            mcast_groups: BTreeSet::new(),
         });
         Ok((handle, new_h, port))
     }

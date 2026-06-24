@@ -724,11 +724,29 @@ fn timer_spec_to_user(spec : IntervalTimerSpec) -> UserITimerVal {
                     value : ns_to_timeval_ceil(spec.value_ns) }
 }
 
+/// 信号终止进程的 wait(2) 编码：负值表示被信号杀死，低 7 位为信号号，bit7 为 core dump。
+pub(crate) fn signal_terminate_exit_code(signal : usize, task_id : usize) -> isize {
+    let mut status = (signal & 0x7f) as isize;
+    if let Some(snapshot) = task::process_task_snapshot(task_id) {
+        if task::process_resource_limit(snapshot.pid, RLIMIT_CORE)
+            .map(|limit| limit.cur > 0)
+            .unwrap_or(false)
+        {
+            status |= 0x80;
+        }
+    }
+    -status
+}
+
 fn write_exit_code(exit_code_ptr : usize, exit_code : isize) -> Result<(), ErrNo> {
     if exit_code_ptr == 0 {
         return Ok(());
     }
-    let wait_status = ((exit_code as i32) & 0xFF) << 8;
+    let wait_status = if exit_code < 0 {
+        (-exit_code) as i32
+    } else {
+        ((exit_code as i32) & 0xFF) << 8
+    };
     copy_to_user_struct(exit_code_ptr, &wait_status)
 }
 
