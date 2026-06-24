@@ -169,6 +169,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ext4_rs"
+version = "1.3.3"
+dependencies = [
+ "bitflags 2.11.1",
+ "log",
+]
+
+[[package]]
 name = "ext4plus"
 version = "0.1.0-rc.2"
 dependencies = [
@@ -816,6 +824,7 @@ dependencies = [
  "wateros-fs-impl-devfs",
  "wateros-fs-impl-dummy",
  "wateros-fs-impl-ext4",
+ "wateros-fs-impl-ext4-rs",
  "wateros-fs-procfs",
  "wateros-fs-rootfs",
  "wateros-runtime-logging",
@@ -897,6 +906,17 @@ dependencies = [
  "wateros-driver-block-api-v0",
  "wateros-fs-api-v0",
  "wateros-runtime-logging",
+]
+
+[[package]]
+name = "wateros-fs-impl-ext4-rs"
+version = "0.1.0"
+dependencies = [
+ "ext4_rs",
+ "log",
+ "spin 0.10.0",
+ "wateros-driver-block-api-v0",
+ "wateros-fs-api-v0",
 ]
 
 [[package]]

@@ -16,6 +16,12 @@ impl log::Log for WaterOSLogger {
     #[inline]
     #[allow(unused)]
     fn enabled(&self, metadata : &Metadata) -> bool {
+        if metadata.target()
+                   .starts_with("ext4_rs") &&
+           metadata.level() >= Level::Info
+        {
+            return false;
+        }
         // `Off` 时无对应 `Level`，此处与 `log` 在已注册 logger 下的状态一致。
         metadata.level() <=
         log::max_level().to_level()

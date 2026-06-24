@@ -49,5 +49,17 @@ pub(crate) fn sys_kill(args : SyscallArgs) -> UserRet {
     };
 
     super::signal::apply_signal_dispatch(dispatch, sig as usize);
+    if dispatch.delivery == SignalDelivery::Pending {
+        if let Some(task_ids) = task::task_ids_for_process(process) {
+            for member in task_ids {
+                let deliverable = ipc::signal::with_registry(|registry| {
+                    registry.has_deliverable(member).unwrap_or(false)
+                });
+                if deliverable {
+                    let _ = task::interrupt_task(member);
+                }
+            }
+        }
+    }
     UserRet::from_success(0)
 }

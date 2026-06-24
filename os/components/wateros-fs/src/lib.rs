@@ -4,6 +4,7 @@
 //!
 //! 语义契约：[`init`] 刷新 devfs 并探测块设备、注入 rootfs 所选 impl，**不**挂载根卷；
 //! bring-up 通过 [`mount_default_root_rw`] 挂载单一 ext4 RW 视图；[`test`] 依赖该挂载状态。
+//! 默认 ext4 RW 实现为 `impl-ext4-rs`，旧 ext4plus 路径保留为 `impl-ext4` feature。
 extern crate alloc;
 
 use alloc::vec::Vec;
@@ -28,6 +29,9 @@ pub mod rootfs {
 #[cfg(feature = "impl-ext4")]
 /// 可选的 ext4 实现 crate（由 `impl-ext4` feature 启用）。
 pub use impl_ext4;
+#[cfg(feature = "impl-ext4-rs")]
+/// 可选的 ext4_rs 实现 crate（由 `impl-ext4-rs` feature 启用）。
+pub use impl_ext4_rs;
 
 pub use api_v0::*;
 
@@ -36,6 +40,8 @@ pub use api_v0::*;
 /// 内核 devfs 是注册项之一（仅供 supported_fs 列示），ext4 是块设备路径上的真实根 FS impl。
 pub fn registered_fs_impls() -> &'static [&'static dyn api_v0::FsImpl] {
     static TABLE: &[&'static dyn api_v0::FsImpl] = &[
+        #[cfg(feature = "impl-ext4-rs")]
+        &impl_ext4_rs::IMPL,
         #[cfg(feature = "impl-ext4")]
         &impl_ext4::IMPL,
         &devfs::active_impl::IMPL,
@@ -139,7 +145,7 @@ pub fn init() {
     logging::info!("[fs] init end");
 }
 
-/// bring-up：在 [`init`] 之后将默认根块设备以 **RW**（`ext4plus`）挂载为全局根卷。
+/// bring-up：在 [`init`] 之后将默认根块设备以 **RW** 挂载为全局根卷。
 pub fn mount_default_root_rw() -> api_v0::FsResult<()> {
     rootfs::active_impl::mount_default_root_rw()
 }
