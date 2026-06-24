@@ -35,7 +35,7 @@ pub fn ensure_busybox_path_links() {
         ensure_dir(sess.as_mut(), "/sbin", 0o755);
         ensure_dir(sess.as_mut(), "/usr/sbin", 0o755);
         ensure_dir(sess.as_mut(), "/etc", 0o755);
-        ensure_etc_passwd();
+        ensure_etc_passwd(sess.as_mut());
 
         match sess.mkdir("/dev", 0o755) {
             Ok(()) => info!("[{LOG_TAG}] mkdir /dev ok"),
@@ -103,19 +103,56 @@ pub fn ensure_busybox_path_links() {
 }
 
 #[cfg(feature = "vfs-bridge")]
-fn ensure_etc_passwd() {
+fn ensure_etc_passwd(sess: &mut (impl vfs::api::RootRwSession + ?Sized)) {
+    use vfs::api::SingleRootReadView;
+
     const PASSWD : &str = "root:x:0:0:root:/root:/bin/sh\n\
-nobody:x:65534:65534:nobody:/:/bin/false\n";
+nobody:x:65534:65534:nobody:/nonexistent:/bin/false\n";
     const GROUP : &str = "root:x:0:\n\
 nobody:x:65534:\n\
 nogroup:x:65534:\n";
+    const NSSWITCH : &str = "passwd: files\n\
+group: files\n\
+shadow: files\n\
+gshadow: files\n\
+hosts: files\n";
 
-    for (path, data) in [("/etc/passwd", PASSWD.as_bytes()), ("/etc/group", GROUP.as_bytes())] {
+    for (path, data, mode) in [
+        ("/etc/passwd", PASSWD.as_bytes(), 0o644),
+        ("/etc/group", GROUP.as_bytes(), 0o644),
+        ("/etc/nsswitch.conf", NSSWITCH.as_bytes(), 0o644),
+    ] {
         match vfs::overwrite_absolute_file(path, data) {
             Ok(()) => info!("[{LOG_TAG}] overwrote {path} ({} bytes)", data.len()),
             Err(e) => warn!("[{LOG_TAG}] overwrite {path} failed: {e:?}"),
         }
+        let _ = sess.chmod(path, mode);
     }
+
+    match vfs::root::read_view().read("/etc/passwd") {
+        Ok(data) if data.windows(6).any(|w| w == b"nobody") => {
+            info!("[{LOG_TAG}] verified /etc/passwd contains nobody ({} bytes)", data.len());
+        }
+        Ok(data) => {
+            warn!(
+                "[{LOG_TAG}] /etc/passwd missing nobody after overwrite ({} bytes)",
+                data.len()
+            );
+        }
+        Err(e) => warn!("[{LOG_TAG}] read back /etc/passwd failed: {e:?}"),
+    }
+}
+
+/// LTP 用例依赖的账户文件；在 `fs::test` / `vfs::test` 之后再次写入，避免自检覆盖。
+#[cfg(feature = "vfs-bridge")]
+pub fn refresh_ltp_accounts() {
+    use vfs::api::VfsFsKind;
+
+    let Ok(mut sess) = vfs::mount::open_rw_session(VfsFsKind::Ext4) else {
+        warn!("[{LOG_TAG}] refresh_ltp_accounts: open_rw_session failed");
+        return;
+    };
+    ensure_etc_passwd(sess.as_mut());
 }
 
 #[cfg(feature = "vfs-bridge")]

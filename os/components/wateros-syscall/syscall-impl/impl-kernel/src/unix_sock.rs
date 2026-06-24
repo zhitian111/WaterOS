@@ -84,9 +84,9 @@ pub(crate) fn unregister(task_id: usize, fd: usize) {
     let key = sock.inner.lock().bound_key.clone();
     drop(sock);
     if let Some(key) = key {
-        let mut bound = BOUND.lock();
-        if bound.get(&key).is_some_and(|entry| !entry.listening && entry.accept_queue.is_empty()) {
-            bound.remove(&key);
+        BOUND.lock().remove(&key);
+        if !key.first().is_some_and(|&b| b == 0) {
+            remove_pathname_socket_file(&key);
         }
     }
 }
@@ -453,6 +453,13 @@ fn validate_pathname_bind(key: &[u8]) -> Result<(), ErrNo> {
 
 fn install_pathname_socket(key: &[u8]) -> Result<(), ErrNo> {
     let path = core::str::from_utf8(key).map_err(|_| ErrNo::EINVAL)?;
+    if BOUND.lock().contains_key(key) {
+        return Err(ErrNo::EADDRINUSE);
+    }
+    let backend = vfs::active_impl::backend();
+    if backend.metadata(path).is_ok() {
+        let _ = vfs::unlink_absolute(path, false);
+    }
     match vfs::mknod_socket_absolute(path) {
         Ok(()) => Ok(()),
         Err(VfsError::Exists) => Err(ErrNo::EADDRINUSE),
@@ -460,6 +467,13 @@ fn install_pathname_socket(key: &[u8]) -> Result<(), ErrNo> {
         Err(VfsError::NotAFile) => Err(ErrNo::ENOTDIR),
         Err(e) => Err(vfs_error_to_errno(e)),
     }
+}
+
+fn remove_pathname_socket_file(key: &[u8]) {
+    let Ok(path) = core::str::from_utf8(key) else {
+        return;
+    };
+    let _ = vfs::unlink_absolute(path, false);
 }
 
 impl VfsIoHandle for UnixSocketHandle {

@@ -40,6 +40,8 @@ pub fn run_stage_busybox() {
 extern "C" fn bringup_kernel_runner(_arg : usize) -> ! {
     use platform::reset::shutdown;
 
+    crate::user_bringup_root_layout::refresh_ltp_accounts();
+
     for script_path in SCRIPT_PATHS {
         info!("[{LOG_TAG}] script_path = {script_path}");
         crate::user_bringup_common::run_one_busybox_script(LOG_TAG, script_path);

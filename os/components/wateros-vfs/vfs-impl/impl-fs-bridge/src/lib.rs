@@ -516,14 +516,20 @@ pub(crate) fn replace_file_contents(path : &str, data : &[u8]) -> VfsResult<()> 
     sess.write_regular_file(rel.as_str(), data)
 }
 
-/// 覆盖绝对路径文件：先 unlink（并驱逐页缓存）再写入，避免 bring-up 改写 `/etc/passwd` 后仍读到旧页。
+/// 覆盖绝对路径文件：优先原地 truncate+写入；失败时再 unlink 重建，并驱逐页缓存。
 pub fn overwrite_file_at(path : &str, data : &[u8]) -> VfsResult<()> {
-    match unlink_path(path, false) {
+    match replace_file_contents(path, data) {
         Ok(()) => {}
-        Err(VfsError::NotFound) => {}
+        Err(VfsError::NotFound) => {
+            match unlink_path(path, false) {
+                Ok(()) => {}
+                Err(VfsError::NotFound) => {}
+                Err(e) => return Err(e),
+            }
+            replace_file_contents(path, data)?;
+        }
         Err(e) => return Err(e),
     }
-    replace_file_contents(path, data)?;
     let cache = impl_page_cache::global_cache(fs::rootfs::active_impl::mount_generation());
     cache.purge_closed_file(path);
     Ok(())
