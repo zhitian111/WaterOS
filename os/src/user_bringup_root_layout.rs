@@ -84,10 +84,18 @@ pub fn ensure_busybox_path_links() {
         /// 通过 PATH 误用另一套动态库；同时保留 /bin 兼容路径。
         const APPLETS : &[&str] = &["ls", "sleep", "basename", "cp"];
         for applet in APPLETS {
-            try_hardlink(sess.as_mut(), "/glibc/busybox", alloc::format!("/glibc/{applet}").as_str());
-            try_hardlink(sess.as_mut(), "/musl/busybox", alloc::format!("/musl/{applet}").as_str());
-            try_hardlink(sess.as_mut(), "/glibc/busybox", alloc::format!("/bin/{applet}").as_str());
-            try_hardlink(sess.as_mut(), "/glibc/busybox", alloc::format!("/usr/bin/{applet}").as_str());
+            try_hardlink(sess.as_mut(),
+                         "/glibc/busybox",
+                         alloc::format!("/glibc/{applet}").as_str());
+            try_hardlink(sess.as_mut(),
+                         "/musl/busybox",
+                         alloc::format!("/musl/{applet}").as_str());
+            try_hardlink(sess.as_mut(),
+                         "/glibc/busybox",
+                         alloc::format!("/bin/{applet}").as_str());
+            try_hardlink(sess.as_mut(),
+                         "/glibc/busybox",
+                         alloc::format!("/usr/bin/{applet}").as_str());
         }
     }
 }

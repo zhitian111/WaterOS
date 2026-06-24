@@ -38,29 +38,29 @@ const SYSCALL_INSN_BYTES : usize = 4;
 /// 在投递 SIGSEGV 前打印任务与用户态 fault 上下文。
 fn log_unhandled_user_fault_probe(cx : &TrapContext, trap_cause : TrapCause, raw_cause : usize) {
     if let Some(s) = task::current_process_task_snapshot() {
-        info!("[trap][probe] proc pid={} tid={} task_id={} role={:?}",
-              s.pid.raw(),
-              s.tid.raw(),
-              s.task_id,
-              s.role);
+        debug!("[trap][probe] proc pid={} tid={} task_id={} role={:?}",
+               s.pid.raw(),
+               s.tid.raw(),
+               s.task_id,
+               s.role);
     } else {
-        info!("[trap][probe] proc (no current process task)");
+        debug!("[trap][probe] proc (no current process task)");
     }
     if let Some(s) = task::current_task_snapshot() {
-        info!("[trap][probe] task parent={:?} state={:?} kind={:?}",
-              s.parent_id, s.state, s.kind);
+        debug!("[trap][probe] task parent={:?} state={:?} kind={:?}",
+               s.parent_id, s.state, s.kind);
     }
-    info!("[trap][probe] fault cause={:?} raw={:#x} ecode={:#x} sepc={:#x} stval={:#x} sp={:#x} \
-           tp={:#x} satp={:#x} aspace={:#x}",
-          trap_cause,
-          raw_cause,
-          (raw_cause >> 16) & 0x3F,
-          cx.user_pc(),
-          cx.fault_addr(),
-          cx.user_sp(),
-          cx.user_tls(),
-          cx.return_address_space_token(),
-          task::current_task_user_aspace_ptr());
+    debug!("[trap][probe] fault cause={:?} raw={:#x} ecode={:#x} sepc={:#x} stval={:#x} sp={:#x} \
+            tp={:#x} satp={:#x} aspace={:#x}",
+           trap_cause,
+           raw_cause,
+           (raw_cause >> 16) & 0x3F,
+           cx.user_pc(),
+           cx.fault_addr(),
+           cx.user_sp(),
+           cx.user_tls(),
+           cx.return_address_space_token(),
+           task::current_task_user_aspace_ptr());
 }
 
 /// 记录用户任务 trap 杀进程上下文并终止当前进程。
@@ -215,20 +215,20 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                     return;
                 }
                 log_unhandled_user_fault_probe(cx, trap_cause, raw_cause);
-                warn!("[trap] user memory fault {:?} raw={:#x} ecode={:#x} sepc={:#x} \
-                       stval={:#x} user_sp={:#x} return_satp={:#x} aspace_ptr={:#x} — delivering \
-                       SIGSEGV",
-                      trap_cause,
-                      raw_cause,
-                      (raw_cause >> 16) & 0x3F,
-                      cx.user_pc(),
-                      cx.fault_addr(),
-                      cx.user_sp(),
-                      cx.return_address_space_token(),
-                      task::current_task_user_aspace_ptr());
+                debug!("[trap] user memory fault {:?} raw={:#x} ecode={:#x} sepc={:#x} \
+                        stval={:#x} user_sp={:#x} return_satp={:#x} aspace_ptr={:#x} — delivering \
+                        SIGSEGV",
+                       trap_cause,
+                       raw_cause,
+                       (raw_cause >> 16) & 0x3F,
+                       cx.user_pc(),
+                       cx.fault_addr(),
+                       cx.user_sp(),
+                       cx.return_address_space_token(),
+                       task::current_task_user_aspace_ptr());
                 let raised = syscall::raise_current_signal(11);
-                info!("[trap][probe] raise_current_signal(SIGSEGV) -> {}",
-                      raised);
+                debug!("[trap][probe] raise_current_signal(SIGSEGV) -> {}",
+                       raised);
                 if !raised {
                     kill_current_user_task("user memory fault", trap_cause, cx);
                 }

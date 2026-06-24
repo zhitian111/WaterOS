@@ -91,6 +91,14 @@ fn map_meta(m : FsMetadata, identity : MountIdentity) -> VfsMetadata {
                   nlink : m.nlink }
 }
 
+fn overlay_cached_size(abs_path : &str, meta : &mut VfsMetadata) {
+    if meta.node_type != VfsNodeType::File {
+        return;
+    }
+    let cache = impl_page_cache::global_cache(fs::rootfs::active_impl::mount_generation());
+    meta.size = cache.logical_size(abs_path, meta.size);
+}
+
 pub(crate) fn map_fs_node(t : FsNodeType) -> VfsNodeType {
     match t {
         FsNodeType::File => VfsNodeType::File,
@@ -197,10 +205,12 @@ impl SingleRootReadView for FsBridge {
         if char_dev_exists(abs.as_str()) {
             return Ok(char_dev_metadata(abs.as_str()));
         }
-        let (meta, identity) = match resolve_route(abs.as_str())? {
-            FsRoute::PseudoProc { rel, identity } => (proc_view().metadata(rel.as_str())
-                                                                 .map_err(map_fs_err)?,
-                                                      identity),
+        let meta = match resolve_route(abs.as_str())? {
+            FsRoute::PseudoProc { rel, identity } => {
+                map_meta(proc_view().metadata(rel.as_str())
+                                    .map_err(map_fs_err)?,
+                         identity)
+            }
             FsRoute::Root { abs, identity } => {
                 let meta = match root_rw()?.lock()
                                       .metadata(abs.as_str())
@@ -215,18 +225,26 @@ impl SingleRootReadView for FsBridge {
                     }
                     Err(e) => return Err(e),
                 };
-                (meta, identity)
+                let mut meta = map_meta(meta, identity);
+                overlay_cached_size(abs.as_str(), &mut meta);
+                meta
             }
-            FsRoute::AuxRw { fs, rel, identity } => (fs.lock()
-                                                       .metadata(rel.as_str())
-                                                       .map_err(map_fs_err)?,
-                                                     identity),
-            FsRoute::AuxRo { fs, rel, identity } => (fs.lock()
-                                                       .metadata(rel.as_str())
-                                                       .map_err(map_fs_err)?,
-                                                     identity),
+            FsRoute::AuxRw { fs, rel, identity } => {
+                let mut meta = map_meta(fs.lock()
+                                          .metadata(rel.as_str())
+                                          .map_err(map_fs_err)?,
+                                        identity);
+                overlay_cached_size(abs.as_str(), &mut meta);
+                meta
+            }
+            FsRoute::AuxRo { fs, rel, identity } => {
+                map_meta(fs.lock()
+                           .metadata(rel.as_str())
+                           .map_err(map_fs_err)?,
+                         identity)
+            }
         };
-        Ok(map_meta(meta, identity))
+        Ok(meta)
     }
 
     fn read(&self, path : &str) -> VfsResult<Vec<u8>> {

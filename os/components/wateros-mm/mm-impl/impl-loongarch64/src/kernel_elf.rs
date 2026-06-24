@@ -77,6 +77,31 @@ const USER_STACK_SIZE : usize = 256 * 1024;
 const USER_STACK_PREMAP_PAGES : usize = 16;
 const PREFERRED_MMAP_BASE : usize = 0x1000_0000;
 const USER_HEAP_MMAP_GAP : usize = 64 * 1024 * 1024;
+const MUSL_LIBC_PATH : &str = "/musl/lib/libc.so";
+const LOONGARCH_INSN_SYSCALL : u32 = 0x002b_0000;
+const LOONGARCH_INSN_RET : u32 = 0x4c00_0020;
+const LOONGARCH_INSN_SLLI_W_A0_A0_0 : u32 = 0x0040_8084;
+const LOONGARCH_MUSL_SCHED_STUB_MARKER : u32 = 0x02bf_6804; // li.w a0, -ENOSYS
+
+struct MuslSchedStubPatch {
+    offset : usize,
+    syscall_nr : u32,
+    name : &'static str,
+}
+
+const MUSL_SCHED_STUB_PATCHES : &[MuslSchedStubPatch] =
+    &[MuslSchedStubPatch { offset : 0x54544,
+                           syscall_nr : 118,
+                           name : "sched_setparam" },
+      MuslSchedStubPatch { offset : 0x54564,
+                           syscall_nr : 119,
+                           name : "sched_setscheduler" },
+      MuslSchedStubPatch { offset : 0x54500,
+                           syscall_nr : 120,
+                           name : "sched_getscheduler" },
+      MuslSchedStubPatch { offset : 0x544e0,
+                           syscall_nr : 121,
+                           name : "sched_getparam" }];
 
 struct ElfHeaderInfo {
     entry : usize,
@@ -498,6 +523,71 @@ fn map_load_segments_from_path_at<A : AddressSpaceOps>(aspace : &mut A,
     }
 }
 
+fn read_mapped_u32<A : AddressSpaceOps>(aspace : &A, va : usize) -> Result<u32, LoadElfError> {
+    let pa = aspace.translate_addr(VirtAddr(va))
+                   .map_err(LoadElfError::Mm)?
+                   .ok_or(LoadElfError::Mm(MmError::NotMapped))?
+                   .0;
+    let bytes = unsafe { core::slice::from_raw_parts(pa as *const u8, 4) };
+    Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+}
+
+fn write_mapped_u32<A : AddressSpaceOps>(aspace : &A,
+                                         va : usize,
+                                         insn : u32)
+                                         -> Result<(), LoadElfError> {
+    let pa = aspace.translate_addr(VirtAddr(va))
+                   .map_err(LoadElfError::Mm)?
+                   .ok_or(LoadElfError::Mm(MmError::NotMapped))?
+                   .0;
+    for (i, byte) in insn.to_le_bytes()
+                         .iter()
+                         .enumerate()
+    {
+        unsafe {
+            ((pa + i) as *mut u8).write_volatile(*byte);
+        }
+    }
+    Ok(())
+}
+
+fn loongarch_li_w_a7_imm(imm : u32) -> u32 { 0x0380_000b | ((imm & 0xfff) << 10) }
+
+fn patch_loongarch_musl_sched_stubs<A : AddressSpaceOps>(aspace : &A,
+                                                         interp_path : &str,
+                                                         interp_base : usize)
+                                                         -> Result<(), LoadElfError> {
+    if interp_path != MUSL_LIBC_PATH {
+        return Ok(());
+    }
+
+    for patch in MUSL_SCHED_STUB_PATCHES {
+        let va = interp_base.checked_add(patch.offset)
+                            .ok_or(LoadElfError::Parse)?;
+        let marker = read_mapped_u32(aspace, va + 4)?;
+        if marker != LOONGARCH_MUSL_SCHED_STUB_MARKER {
+            runtime::logging::warn!("[elf-load] skip musl sched shim {} at {:#x}: marker \
+                                     {:#x} != expected {:#x}",
+                                    patch.name,
+                                    va,
+                                    marker,
+                                    LOONGARCH_MUSL_SCHED_STUB_MARKER);
+            continue;
+        }
+
+        write_mapped_u32(aspace, va, loongarch_li_w_a7_imm(patch.syscall_nr))?;
+        write_mapped_u32(aspace, va + 4, LOONGARCH_INSN_SYSCALL)?;
+        write_mapped_u32(aspace, va + 8, LOONGARCH_INSN_SLLI_W_A0_A0_0)?;
+        write_mapped_u32(aspace, va + 12, LOONGARCH_INSN_RET)?;
+        runtime::logging::debug!("[elf-load] patched loongarch musl {} stub at {:#x} -> syscall \
+                                  {}",
+                                 patch.name,
+                                 va,
+                                 patch.syscall_nr);
+    }
+    Ok(())
+}
+
 /// 为用户栈区间 `[stack_top - stack_size, stack_top)` 分配匿名帧并映射为
 /// `R|W|U`。
 fn map_user_stack<A : AddressSpaceOps>(aspace : &mut A,
@@ -864,6 +954,7 @@ pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
                                          interp.phentsize,
                                          interp.phnum,
                                          interp_base)?;
+        patch_loongarch_musl_sched_stubs(&aspace, interp_path.as_str(), interp_base)?;
         runtime::logging::trace!("[elf-load] interpreter path={} base={:#x} entry={:#x}",
                                  interp_path,
                                  interp_base,
