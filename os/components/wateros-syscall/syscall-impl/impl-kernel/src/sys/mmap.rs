@@ -7,8 +7,10 @@ use alloc::boxed::Box;
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
+use mm::api::addr::PAGE_SIZE;
 use mm::api::error::{MmError, MmResult};
-use mm::api::mmap::DemandPageLoader;
+use mm::api::flags::MapFlags;
+use mm::api::mmap::{DemandPageLoader, MmapKind, MmapOps};
 
 use crate::mm_util::{
     current_user_aspace_handle, linux_mmap_flags_to_map_flags, linux_mmap_is_anonymous,
@@ -58,9 +60,8 @@ pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
     let Some(handle) = current_user_aspace_handle() else {
         syscall_unsupported("mmap: no user_aspace_ptr");
     };
-    use mm::api::addr::{VirtAddr, PAGE_SIZE};
-    use mm::api::flags::MapFlags;
-    use mm::api::mmap::{MmapKind, MmapOps, MmapRequest};
+    use mm::api::addr::VirtAddr;
+    use mm::api::mmap::MmapRequest;
     use mm::frame_alloctor::GlobalPhysFrameAllocator;
 
     let addr = args.arg(0);
@@ -131,10 +132,27 @@ pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
                 Ok(loader) => loader,
                 Err(e) => return UserRet::from_error(e),
             };
+            let eager_shared = mf.contains(MapFlags::SHARED);
+            let file_map_offset = match kind {
+                MmapKind::File { offset, .. } => offset,
+                MmapKind::Anonymous => 0,
+            };
             match mm::user_aspace::with_user_aspace_mut(handle, |aspace| {
                       let mut alloc = GlobalPhysFrameAllocator;
-                      let base =
-                          MmapOps::mmap_file_lazy(aspace, &mut alloc, req, file_size, loader)?;
+                      let base = if eager_shared {
+                          let mut loader = loader;
+                          MmapOps::mmap_file_with_loader(aspace,
+                                                         &mut alloc,
+                                                         req,
+                                                         |page_index, page| {
+                              let file_offset = file_map_offset
+                                  .checked_add(page_index * PAGE_SIZE)
+                                  .ok_or(MmError::InvalidAddress)?;
+                              loader.load_page(file_offset, page)
+                          })?
+                      } else {
+                          MmapOps::mmap_file_lazy(aspace, &mut alloc, req, file_size, loader)?
+                      };
                       Ok(base.0)
                   }) {
                 Ok(base) => UserRet::from_success(base),

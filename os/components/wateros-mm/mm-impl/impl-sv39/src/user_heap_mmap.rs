@@ -277,8 +277,12 @@ impl Sv39AddressSpace {
               .contains(MapFlags::FIXED)
         {
             self.unmap_range_with_alloc(allocator, base, end)?;
+            self.remove_shared_anon_vmas(base, end);
         }
         map_range_from_loader(self, allocator, base, end, perm, load_page)?;
+        if req.flags.contains(MapFlags::SHARED) {
+            self.register_shared_anon_vma(base, end);
+        }
         if req.addr_hint
               .is_none()
         {

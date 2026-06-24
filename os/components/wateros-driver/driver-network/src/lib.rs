@@ -918,6 +918,8 @@ pub mod stack {
         const SOL_SOCKET: usize = 1;
         const SOL_IP: usize = 0;
         const IPPROTO_IP: usize = 0;
+        const SO_REUSEADDR: usize = 2;
+        const SO_REUSEPORT: usize = 15;
         const SO_RCVTIMEO_OLD: usize = 20;
         const SO_SNDTIMEO_OLD: usize = 21;
         const SO_RCVTIMEO_NEW: usize = 66;
@@ -949,6 +951,9 @@ pub mod stack {
             return mcast_leave(meta, group);
         }
 
+        if level == SOL_SOCKET && matches!(optname, SO_REUSEADDR | SO_REUSEPORT) {
+            return Ok(());
+        }
         if level == SOL_SOCKET && (optname == SO_RCVTIMEO_OLD || optname == SO_RCVTIMEO_NEW) {
             let timeout_ms = timeval_to_millis(optval)?;
             let mut guard = NETWORK_STACK.lock();
