@@ -48,6 +48,9 @@ pub(crate) fn sys_bind(args: SyscallArgs) -> UserRet {
     }
 
     let port = u16::from_be(addr.sin_port);
+    if port != 0 && port < 1024 && cred::current_credentials().effective_uid.0 != 0 {
+        return UserRet::from_error(ErrNo::EACCES);
+    }
     let local_ip = if addr.sin_addr == [0; 4] {
         None
     } else {

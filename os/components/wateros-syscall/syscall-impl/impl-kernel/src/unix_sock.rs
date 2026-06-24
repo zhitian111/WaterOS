@@ -85,9 +85,6 @@ pub(crate) fn unregister(task_id: usize, fd: usize) {
     drop(sock);
     if let Some(key) = key {
         BOUND.lock().remove(&key);
-        if !key.first().is_some_and(|&b| b == 0) {
-            remove_pathname_socket_file(&key);
-        }
     }
 }
 
@@ -174,12 +171,6 @@ struct UnixAddr {
 
 pub(crate) fn bind(fd: usize, addr_ptr: usize, addrlen: usize) -> Result<(), ErrNo> {
     let addr = parse_sockaddr_un(addr_ptr, addrlen)?;
-    if !addr.abstract_ns {
-        validate_pathname_bind(&addr.key)?;
-        if !addr.key.is_empty() {
-            install_pathname_socket(&addr.key)?;
-        }
-    }
     let sock = lookup_current(fd)?;
     let mut inner = sock.inner.lock();
     if inner.bound_key.is_some() {
@@ -188,6 +179,12 @@ pub(crate) fn bind(fd: usize, addr_ptr: usize, addrlen: usize) -> Result<(), Err
     let mut bound = BOUND.lock();
     if bound.contains_key(&addr.key) {
         return Err(ErrNo::EADDRINUSE);
+    }
+    if !addr.abstract_ns {
+        validate_pathname_bind(&addr.key)?;
+        if !addr.key.is_empty() {
+            install_pathname_socket(&addr.key)?;
+        }
     }
     bound.insert(
         addr.key.clone(),
@@ -453,12 +450,9 @@ fn validate_pathname_bind(key: &[u8]) -> Result<(), ErrNo> {
 
 fn install_pathname_socket(key: &[u8]) -> Result<(), ErrNo> {
     let path = core::str::from_utf8(key).map_err(|_| ErrNo::EINVAL)?;
-    if BOUND.lock().contains_key(key) {
-        return Err(ErrNo::EADDRINUSE);
-    }
     let backend = vfs::active_impl::backend();
     if backend.metadata(path).is_ok() {
-        let _ = vfs::unlink_absolute(path, false);
+        return Err(ErrNo::EADDRINUSE);
     }
     match vfs::mknod_socket_absolute(path) {
         Ok(()) => Ok(()),
@@ -467,13 +461,6 @@ fn install_pathname_socket(key: &[u8]) -> Result<(), ErrNo> {
         Err(VfsError::NotAFile) => Err(ErrNo::ENOTDIR),
         Err(e) => Err(vfs_error_to_errno(e)),
     }
-}
-
-fn remove_pathname_socket_file(key: &[u8]) {
-    let Ok(path) = core::str::from_utf8(key) else {
-        return;
-    };
-    let _ = vfs::unlink_absolute(path, false);
 }
 
 impl VfsIoHandle for UnixSocketHandle {
