@@ -79,6 +79,24 @@ pub fn mount_ext4_block_at(mount_point: &str, block_dev: &str, readonly: bool) -
     impl_fs_bridge::mount_ext4_block_at(mount_point, block_dev, readonly)
 }
 
+/// 挂载内存 tmpfs 到 `mount_point`。
+#[cfg(feature = "bridge-fs-api")]
+pub fn mount_tmpfs_at(mount_point: &str) -> VfsResult<()> {
+    impl_fs_bridge::mount_tmpfs_at(mount_point)
+}
+
+/// 将 `mount_point` 上已挂载的辅助卷重载为只读。
+#[cfg(feature = "bridge-fs-api")]
+pub fn remount_readonly_at(mount_point: &str) -> VfsResult<()> {
+    impl_fs_bridge::remount_readonly_at(mount_point)
+}
+
+/// 检查路径是否可写（只读挂载返回 [`VfsError::ReadOnlyFs`]）。
+#[cfg(feature = "bridge-fs-api")]
+pub fn assert_path_writable(path: &str) -> VfsResult<()> {
+    impl_fs_bridge::assert_path_writable(path)
+}
+
 /// 在 ext4 根卷创建 `/proc` 目录（若不存在）。
 #[cfg(all(feature = "bridge-fs-api", feature = "impl-fd-session"))]
 pub fn ensure_proc_mount_point() -> VfsResult<()> {
@@ -106,6 +124,12 @@ pub fn is_proc_mounted_at(mount_point: &str) -> bool {
 #[cfg(feature = "bridge-fs-api")]
 pub fn unmount_at(mount_point: &str) -> VfsResult<()> {
     impl_fs_bridge::unmount_at(mount_point)
+}
+
+/// 刷回并回收整个文件页缓存（测例脚本切换等批量回收点调用）。
+#[cfg(feature = "bridge-fs-api")]
+pub fn reset_file_page_cache() -> VfsResult<()> {
+    impl_fs_bridge::reset_file_page_cache()
 }
 
 /// 相对当前任务 cwd 删除路径。

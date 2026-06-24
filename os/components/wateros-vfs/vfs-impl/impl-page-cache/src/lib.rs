@@ -614,6 +614,23 @@ impl GlobalFilePageCache {
         Ok(())
     }
 
+    /// 把当前缓存中所有文件的脏页写回下层。供整缓存回收（如测例脚本切换）前调用，
+    /// 确保 [`reset_global_cache`] 丢弃旧缓存时不会丢失尚未落盘的数据。
+    pub fn flush_all<Io, E>(&self, io : &mut Io, map_err : fn(Io::Error) -> E) -> Result<(), E>
+        where Io : PageCacheIo
+    {
+        let paths : Vec<Arc<str>> = {
+            let files = self.files.lock();
+            files.keys()
+                 .map(|key| key.path.clone())
+                 .collect()
+        };
+        for path in paths {
+            self.flush(io, path.as_ref(), map_err)?;
+        }
+        Ok(())
+    }
+
     /// 删除已关闭文件的缓存条目，释放 `dirty_pages`、`FileEntryInner` 和路径字符串的内存。
     /// 应在 VFS `close` 或 `unlink` 之后调用，防止 `files` BTreeMap 无限增长耗尽内核堆。
     pub fn purge_closed_file(&self, path : &str) {

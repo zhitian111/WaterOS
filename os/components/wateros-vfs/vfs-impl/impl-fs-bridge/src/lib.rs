@@ -17,15 +17,16 @@ mod file_handle;
 mod mount_table;
 mod paged_handle;
 mod proc_handle;
+mod tmpfs;
 
 pub use dir_handle::DirectoryHandle;
 pub use file_handle::{BufferedFileHandle, RootFileHandle};
 use fs::procfs::api::ProcFsView;
 use fs::{
-    FsAccessMode, FsCapability, FsDirEntry, FsError, FsKind, FsMetadata, FsNodeType, ReadOnlyFs,
-    SharedRwFs,
+    FsAccessMode, FsCapability, FsDirEntry, FsError, FsKind, FsMetadata, FsNodeType, LocalRwFs,
+    ReadOnlyFs, SharedRwFs,
 };
-use mount_table::{assert_path_writable, resolve_route, FsRoute, MountIdentity};
+use mount_table::{resolve_route, FsRoute, MountIdentity};
 pub use paged_handle::PagedFileHandle;
 
 fn proc_view() -> &'static impl ProcFsView { fs::procfs::active_impl::view() }
@@ -120,6 +121,10 @@ pub(crate) fn root_rw() -> VfsResult<SharedRwFs> {
 fn fs_and_rel_rw(path : &str) -> VfsResult<(SharedRwFs, String)> {
     match resolve_route(path)? {
         FsRoute::Root { abs, .. } => Ok((root_rw()?, abs)),
+        FsRoute::AuxRw { fs, rel, readonly: true, .. } => {
+            let _ = (fs, rel);
+            Err(VfsError::ReadOnlyFs)
+        }
         FsRoute::AuxRw { fs, rel, .. } => Ok((fs, rel)),
         FsRoute::AuxRo { .. } | FsRoute::PseudoProc { .. } => Err(VfsError::ReadOnlyFs),
     }
@@ -229,7 +234,7 @@ impl SingleRootReadView for FsBridge {
                 overlay_cached_size(abs.as_str(), &mut meta);
                 meta
             }
-            FsRoute::AuxRw { fs, rel, identity } => {
+            FsRoute::AuxRw { fs, rel, identity, .. } => {
                 let mut meta = map_meta(fs.lock()
                                           .metadata(rel.as_str())
                                           .map_err(map_fs_err)?,
@@ -370,6 +375,16 @@ pub fn mount_ext4_block_at(mount_point : &str, block_dev : &str, readonly : bool
     }
 }
 
+/// 挂载内存 tmpfs 到 `mount_point`。
+pub fn mount_tmpfs_at(mount_point : &str) -> VfsResult<()> {
+    mount_table::mount_tmpfs_at(mount_point)
+}
+
+/// 将 `mount_point` 上已挂载的辅助卷重载为只读。
+pub fn remount_readonly_at(mount_point : &str) -> VfsResult<()> {
+    mount_table::remount_aux_readonly(mount_point)
+}
+
 /// 卸载 `mount_point` 上的辅助卷。
 pub fn unmount_at(mount_point : &str) -> VfsResult<()> { mount_table::unmount_aux_at(mount_point) }
 
@@ -388,11 +403,13 @@ pub fn mount_procfs_at(mount_point : &str) -> VfsResult<()> {
     mount_table::mount_aux_proc_at(mount_point)
 }
 
-pub use mount_table::{is_proc_mounted_at, list_proc_mount_lines, mount_aux_proc_at};
+pub use mount_table::{
+    assert_path_writable, is_proc_mounted_at, list_proc_mount_lines, mount_aux_proc_at,
+};
 
 /// 删除绝对路径（经挂载表路由）。
 pub fn unlink_path(path : &str, remove_dir : bool) -> VfsResult<()> {
-    assert_path_writable(path)?;
+    mount_table::assert_path_writable(path)?;
     let (fs, rel) = fs_and_rel_rw(path)?;
     let mut sess = MountedRwSession::new(fs);
     let result = if remove_dir {
@@ -408,13 +425,27 @@ pub fn unlink_path(path : &str, remove_dir : bool) -> VfsResult<()> {
     result
 }
 
+/// 刷回并丢弃整个文件页缓存（用于测例脚本切换等批量回收点）。
+///
+/// 先把所有脏页写回根卷，再重建空缓存：既避免长跑后 `files`/LRU 饱和推高内核堆，
+/// 也消除历史文件页在饱和时被逐页驱逐、对 ext4 发起越过 EOF 写的隐患。
+/// 仅应在已无活跃用户 fd 持有脏页的安全点调用。
+pub fn reset_file_page_cache() -> VfsResult<()> {
+    let mount_gen = fs::rootfs::active_impl::mount_generation();
+    let cache = impl_page_cache::global_cache(mount_gen);
+    let mut io = paged_handle::FsPageIo;
+    cache.flush_all(&mut io, core::convert::identity)?;
+    impl_page_cache::reset_global_cache(mount_gen);
+    Ok(())
+}
+
 /// 创建目录（经挂载表路由）。
 pub fn mkdir_path(path : &str, mode : u32) -> VfsResult<()> {
     let normalized = normalize_absolute_path(path)?;
     if normalized.as_str() == "/" {
         return Err(VfsError::Exists);
     }
-    assert_path_writable(path)?;
+    mount_table::assert_path_writable(path)?;
     let (fs, rel) = fs_and_rel_rw(path)?;
     let mut sess = MountedRwSession::new(fs);
     sess.mkdir(rel.as_str(), mode)
@@ -426,7 +457,7 @@ pub fn chmod_path(path : &str, mode : u32) -> VfsResult<()> {
     if char_dev_exists(normalized.as_str()) {
         return Err(VfsError::Unsupported);
     }
-    assert_path_writable(path)?;
+    mount_table::assert_path_writable(path)?;
     let (fs, rel) = fs_and_rel_rw(path)?;
     let mut sess = MountedRwSession::new(fs);
     sess.chmod(rel.as_str(), mode)
@@ -443,14 +474,14 @@ pub fn chown_path(path : &str, uid : Option<u32>, gid : Option<u32>) -> VfsResul
         return bridge.metadata(normalized.as_str())
                      .map(|_| ());
     }
-    assert_path_writable(path)?;
+    mount_table::assert_path_writable(path)?;
     let (fs, rel) = fs_and_rel_rw(path)?;
     let mut sess = MountedRwSession::new(fs);
     sess.chown(rel.as_str(), uid, gid)
 }
 
 pub(crate) fn replace_file_contents(path : &str, data : &[u8]) -> VfsResult<()> {
-    assert_path_writable(path)?;
+    mount_table::assert_path_writable(path)?;
     let (fs, rel) = fs_and_rel_rw(path)?;
     let mut sess = MountedRwSession::new(fs);
     sess.write_regular_file(rel.as_str(), data)
@@ -458,8 +489,8 @@ pub(crate) fn replace_file_contents(path : &str, data : &[u8]) -> VfsResult<()> 
 
 /// 重命名绝对路径（经挂载表路由；要求 old/new 落在同一 RW 卷）。
 pub fn rename_path(old_path : &str, new_path : &str) -> VfsResult<()> {
-    assert_path_writable(old_path)?;
-    assert_path_writable(new_path)?;
+    mount_table::assert_path_writable(old_path)?;
+    mount_table::assert_path_writable(new_path)?;
     let (fs_old, rel_old) = fs_and_rel_rw(old_path)?;
     let (fs_new, rel_new) = fs_and_rel_rw(new_path)?;
     if !Arc::ptr_eq(&fs_old, &fs_new) {

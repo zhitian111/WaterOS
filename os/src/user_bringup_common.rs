@@ -100,6 +100,13 @@ pub fn run_one_elf_argv_exit(log_tag : &str, elf_path : &str, argv : &[&str]) ->
                purge.reaped_processes);
     }
 
+    // 用户进程全部回收后，刷回并丢弃文件页缓存：避免跨脚本累积导致 files/LRU 饱和，
+    // 进而引发历史页驱逐时对 ext4 的越界写，以及内核堆持续增长最终卡死。
+    #[cfg(feature = "vfs-bridge")]
+    if let Err(e) = vfs::reset_file_page_cache() {
+        warn!("[{log_tag}] reset file page cache failed after path={elf_path}: {e:?}");
+    }
+
     trace!("[{log_tag}] END path={elf_path} exit_code={exit_code}");
     Some(exit_code)
 }

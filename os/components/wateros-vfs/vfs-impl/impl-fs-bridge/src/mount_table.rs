@@ -2,10 +2,12 @@
 
 extern crate alloc;
 
+use alloc::boxed::Box;
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
-use fs::{SharedFs, SharedRwFs};
+use fs::{LocalRwFs, SharedFs, SharedRwFs};
 use fs::procfs::api::ProcMountLine;
 use spin::Mutex;
 
@@ -22,6 +24,8 @@ struct MountEntry {
     mount_point: String,
     fs: AuxMount,
     identity: MountIdentity,
+    readonly: bool,
+    fstype: &'static str,
 }
 
 static AUX_MOUNTS: Mutex<Vec<MountEntry>> = Mutex::new(Vec::new());
@@ -68,7 +72,12 @@ pub(crate) fn root_identity() -> MountIdentity {
 /// 路径路由：根卷相对路径，或辅助卷 + 卷内相对路径，或 procfs 伪挂载。
 pub(crate) enum FsRoute {
     Root { abs: String, identity: MountIdentity },
-    AuxRw { fs: SharedRwFs, rel: String, identity: MountIdentity },
+    AuxRw {
+        fs: SharedRwFs,
+        rel: String,
+        identity: MountIdentity,
+        readonly: bool,
+    },
     AuxRo { fs: SharedFs, rel: String, identity: MountIdentity },
     PseudoProc { rel: String, identity: MountIdentity },
 }
@@ -87,9 +96,9 @@ fn rel_under_mount(full: &str, mount_point: &str) -> String {
     }
 }
 
-fn longest_aux_mount(abs: &str) -> Option<(AuxMount, MountIdentity, String)> {
+fn longest_aux_mount(abs: &str) -> Option<(AuxMount, MountIdentity, String, bool)> {
     let table = AUX_MOUNTS.lock();
-    let mut best: Option<(usize, AuxMount, MountIdentity, String)> = None;
+    let mut best: Option<(usize, AuxMount, MountIdentity, String, bool)> = None;
     for ent in table.iter() {
         let mp = ent.mount_point.as_str();
         let matches = abs == mp || abs.starts_with(mp) && abs.as_bytes().get(mp.len()) == Some(&b'/');
@@ -97,11 +106,17 @@ fn longest_aux_mount(abs: &str) -> Option<(AuxMount, MountIdentity, String)> {
             continue;
         }
         let len = mp.len();
-        if best.as_ref().map(|(l, _, _, _)| len > *l).unwrap_or(true) {
-            best = Some((len, ent.fs.clone_mount(), ent.identity, String::from(mp)));
+        if best.as_ref().map(|(l, _, _, _, _)| len > *l).unwrap_or(true) {
+            best = Some((
+                len,
+                ent.fs.clone_mount(),
+                ent.identity,
+                String::from(mp),
+                ent.readonly,
+            ));
         }
     }
-    best.map(|(_, fs, identity, mp)| (fs, identity, rel_under_mount(abs, mp.as_str())))
+    best.map(|(_, fs, identity, mp, readonly)| (fs, identity, rel_under_mount(abs, mp.as_str()), readonly))
 }
 
 impl AuxMount {
@@ -114,7 +129,13 @@ impl AuxMount {
     }
 }
 
-fn mount_aux_common(mount_point: &str, fs: AuxMount, device_key: &str) -> VfsResult<()> {
+fn mount_aux_common(
+    mount_point: &str,
+    fs: AuxMount,
+    device_key: &str,
+    fstype: &'static str,
+    readonly: bool,
+) -> VfsResult<()> {
     let mp = String::from(normalize_absolute_path(mount_point)?.as_str());
     if mp == "/" {
         return Err(VfsError::InvalidPath);
@@ -130,6 +151,8 @@ fn mount_aux_common(mount_point: &str, fs: AuxMount, device_key: &str) -> VfsRes
         mount_point: mp,
         fs,
         identity: new_mount_identity(device_key),
+        readonly,
+        fstype,
     });
     fs::rootfs::active_impl::bump_mount_generation();
     Ok(())
@@ -137,34 +160,66 @@ fn mount_aux_common(mount_point: &str, fs: AuxMount, device_key: &str) -> VfsRes
 
 pub(crate) fn resolve_route(path: &str) -> VfsResult<FsRoute> {
     let abs = String::from(normalize_absolute_path(path)?.as_str());
-    if let Some((mount, identity, rel)) = longest_aux_mount(abs.as_str()) {
+    if let Some((mount, identity, rel, readonly)) = longest_aux_mount(abs.as_str()) {
         return match mount {
-            AuxMount::Rw(fs) => Ok(FsRoute::AuxRw { fs, rel, identity }),
+            AuxMount::Rw(fs) => Ok(FsRoute::AuxRw {
+                fs,
+                rel,
+                identity,
+                readonly,
+            }),
             AuxMount::Ro(fs) => Ok(FsRoute::AuxRo { fs, rel, identity }),
             AuxMount::PseudoProc => Ok(FsRoute::PseudoProc { rel, identity }),
         };
     }
-    Ok(FsRoute::Root { abs, identity: root_identity() })
+    Ok(FsRoute::Root {
+        abs,
+        identity: root_identity(),
+    })
 }
 
 /// 写路径、带 `O_CREAT`/`O_WRONLY` 的 open 等须先调用；RO / procfs 返回 [`VfsError::ReadOnlyFs`]。
-pub(crate) fn assert_path_writable(path: &str) -> VfsResult<()> {
+pub fn assert_path_writable(path: &str) -> VfsResult<()> {
     match resolve_route(path)? {
-        FsRoute::AuxRo { .. } | FsRoute::PseudoProc { .. } => Err(VfsError::ReadOnlyFs),
+        FsRoute::AuxRw { readonly: true, .. }
+        | FsRoute::AuxRo { .. }
+        | FsRoute::PseudoProc { .. } => Err(VfsError::ReadOnlyFs),
         _ => Ok(()),
     }
 }
 
 pub(crate) fn mount_aux_at_rw(mount_point: &str, fs: SharedRwFs, device_key: &str) -> VfsResult<()> {
-    mount_aux_common(mount_point, AuxMount::Rw(fs), device_key)
+    mount_aux_common(mount_point, AuxMount::Rw(fs), device_key, "ext4", false)
 }
 
 pub(crate) fn mount_aux_at_ro(mount_point: &str, fs: SharedFs, device_key: &str) -> VfsResult<()> {
-    mount_aux_common(mount_point, AuxMount::Ro(fs), device_key)
+    mount_aux_common(mount_point, AuxMount::Ro(fs), device_key, "ext4", true)
+}
+
+/// 挂载内存 tmpfs（读写；可通过 [`remount_aux_readonly`] 切只读）。
+pub(crate) fn mount_tmpfs_at(mount_point: &str) -> VfsResult<()> {
+    let fs: SharedRwFs = Arc::new(Mutex::new(LocalRwFs::new(Box::new(super::tmpfs::TmpFs::new()))));
+    mount_aux_common(mount_point, AuxMount::Rw(fs), "tmpfs", "tmpfs", false)
+}
+
+/// 将已挂载的辅助卷（tmpfs / ext4 bind）重载为只读。
+pub(crate) fn remount_aux_readonly(mount_point: &str) -> VfsResult<()> {
+    let mp = String::from(normalize_absolute_path(mount_point)?.as_str());
+    let mut table = AUX_MOUNTS.lock();
+    let ent = table
+        .iter_mut()
+        .find(|e| e.mount_point == mp)
+        .ok_or(VfsError::NotFound)?;
+    if !matches!(ent.fs, AuxMount::Rw(_)) {
+        return Err(VfsError::InvalidPath);
+    }
+    ent.readonly = true;
+    fs::rootfs::active_impl::bump_mount_generation();
+    Ok(())
 }
 
 pub fn mount_aux_proc_at(mount_point: &str) -> VfsResult<()> {
-    mount_aux_common(mount_point, AuxMount::PseudoProc, "proc")
+    mount_aux_common(mount_point, AuxMount::PseudoProc, "proc", "proc", true)
 }
 
 pub fn is_proc_mounted_at(mount_point: &str) -> bool {
@@ -178,10 +233,7 @@ pub fn is_proc_mounted_at(mount_point: &str) -> bool {
 }
 
 fn fstype_for(entry: &MountEntry) -> &'static str {
-    match entry.fs {
-        AuxMount::PseudoProc => "proc",
-        AuxMount::Rw(_) | AuxMount::Ro(_) => "ext4",
-    }
+    entry.fstype
 }
 
 fn device_for(entry: &MountEntry) -> String {

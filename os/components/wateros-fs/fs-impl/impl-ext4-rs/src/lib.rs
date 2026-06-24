@@ -459,6 +459,14 @@ impl ReadWriteFs for Ext4RsFs {
         if meta.node_type != FsNodeType::File {
             return Err(FsError::NotAFile);
         }
+        // 底层 ext4_rs 的块分配是纯追加式（新块逻辑号恒为 ceil(size/bs)），无法在
+        // offset > 当前文件大小处直接写出空洞。页缓存的逐页驱逐 / 分段 flush 可能
+        // 在低页尚未落盘时先写回高页，从而对 ext4 发起越过 EOF 的写；若不先补洞，
+        // 数据会落到错误的逻辑块，回读命中空洞返回 0。这里显式把 [size, offset)
+        // 补成真实零块，保证写入落到正确逻辑块。
+        if offset > meta.size {
+            zero_extend_file(fs, inode, meta.size, offset)?;
+        }
         write_all(fs, inode, offset, data)?;
         Ok(data.len())
     }

@@ -78,6 +78,11 @@ fn do_faccessat(dirfd: isize, path_ptr: usize, mode: u32, flags: u32) -> UserRet
                 Ok(p) => p,
                 Err(e) => return UserRet::from_error(e),
             };
+            if mode & W_OK != 0 {
+                if let Err(e) = vfs::assert_path_writable(resolved.as_str()) {
+                    return UserRet::from_error(vfs_error_to_errno(e));
+                }
+            }
             match active_impl::backend().metadata(resolved.as_str()) {
                 Ok(meta) => meta.mode,
                 Err(e) => return UserRet::from_error(vfs_error_to_errno(e)),
