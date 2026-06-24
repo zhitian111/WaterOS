@@ -931,11 +931,8 @@ pub(crate) fn sys_prctl(args : SyscallArgs) -> UserRet {
             }
         }
         PR_SET_NO_NEW_PRIVS => UserRet::from_success(0),
-        PR_CAPBSET_READ => {
-            // 所有 capability 均不可用
-            UserRet::from_error(ErrNo::EINVAL)
-        }
-        PR_CAPBSET_DROP => UserRet::from_error(ErrNo::EINVAL),
+        PR_CAPBSET_READ => super::cap::cap_bset_read(args.arg(1)),
+        PR_CAPBSET_DROP => super::cap::cap_bset_drop(args.arg(1)),
         _ => UserRet::from_error(ErrNo::ENOSYS),
     }
 }
