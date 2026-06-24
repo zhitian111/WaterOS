@@ -116,11 +116,28 @@ group: files\n\
 shadow: files\n\
 gshadow: files\n\
 hosts: files\n";
+    const PROTOCOLS : &str = "ip 0 IP\n\
+hopopt 0 HOPOPT\n\
+icmp 1 ICMP\n\
+igmp 2 IGMP\n\
+ggp 3 GGP\n\
+tcp 6 TCP\n\
+udp 17 UDP\n\
+ipv6 41 IPv6\n\
+ipv6-route 43 IPv6-Route\n\
+ipv6-frag 44 IPv6-Frag\n\
+esp 50 ESP\n\
+ah 51 AH\n\
+ipv6-icmp 58 IPv6-ICMP\n\
+ipv6-nonxt 59 IPv6-NoNxt\n\
+ipv6-opts 60 IPv6-Opts\n\
+raw 255 RAW\n";
 
     for (path, data, mode) in [
         ("/etc/passwd", PASSWD.as_bytes(), 0o644),
         ("/etc/group", GROUP.as_bytes(), 0o644),
         ("/etc/nsswitch.conf", NSSWITCH.as_bytes(), 0o644),
+        ("/etc/protocols", PROTOCOLS.as_bytes(), 0o644),
     ] {
         match vfs::overwrite_absolute_file(path, data) {
             Ok(()) => info!("[{LOG_TAG}] overwrote {path} ({} bytes)", data.len()),
