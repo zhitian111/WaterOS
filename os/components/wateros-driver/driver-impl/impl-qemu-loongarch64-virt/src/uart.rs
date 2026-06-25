@@ -123,11 +123,15 @@ pub fn init_early_default_uart() {
 }
 
 /// 取得全局 UART 的可变访问；未初始化时返回 `None`。
+///
+/// 仅短暂持 `UART_GLOBAL` 复制句柄（`Copy`），I/O 在锁外完成，避免阻塞读占全局锁。
 pub fn with_default_uart<F, R>(f: F) -> Option<R>
 where
     F: FnOnce(&mut QemuLoongArch64Uart16550) -> R,
 {
-    let mut guard = UART_GLOBAL.lock();
-    let uart = guard.as_mut()?;
-    Some(f(uart))
+    let mut uart = {
+        let guard = UART_GLOBAL.lock();
+        (*guard.as_ref()?)?
+    };
+    Some(f(&mut uart))
 }

@@ -1,6 +1,6 @@
 # 带锁数据结构支持范围说明
 
-> 汇总时间：2026-06-25（第二轮复核）  
+> 汇总时间：2026-06-25  
 > Baseline：**单核多线程**（UP + 定时器抢占）；多核相关实现单独标注，baseline 下不判错  
 > 问题详情：`docs/audits/lock-issues.md`  
 > 单结构深度分析：`docs/audits/locks/<name>.md`
@@ -37,7 +37,7 @@
 
 | 结构 | 锁类型 | 已覆盖路径 | 未覆盖 / 不可靠路径 | 文档 |
 |------|--------|-----------|-------------------|------|
-| `RoundRobinScheduler` / `MultiClassScheduler` | UniprocessorSafeCell | 常规 API：InterruptGuard + `with_scheduler`；wait/sleep 已 `release_before_switch` | `run_first_task` 无 guard；RefCell 重入窗口；RR 策略变更不迁队列 | `locks/scheduler.md` |
+| `RoundRobinScheduler` / `MultiClassScheduler` | UniprocessorSafeCell | 常规 API：InterruptGuard + `with_scheduler`；`__switch` 前释锁 | wait/sleep 跨 switch 关中断（RC-1）；`run_first_task` 无 guard；RR 策略变更不迁队列 | `locks/scheduler.md` |
 | `TaskRegistry` + `WaitQueues` | （调度器内，无独立锁） | 阻塞/唤醒/超时队列在调度器临界区内 | 与 ProcessRegistry 复合操作非原子 | 同上 |
 | `ProcessRegistry` | UniprocessorSafeCell | 单次 lookup/rlimit/mark/reap | Spawn/Fork/Clone 登记窗口；Kill/Reap 与 Scheduler 非原子；reap 持锁 MM 释放 | `locks/process-registry.md` |
 
@@ -49,24 +49,24 @@
 | `PerTaskCwdRegistry` | UniprocessorSafeCell | getcwd/chdir 短临界区 | chdir FS 校验与写入非原子（语义） | 同上 |
 | `AUX_MOUNTS` / `DEVICE_IDS` | spin::Mutex ×2 | 单次 mount/umount/resolve 短临界区 | 并发 mount 同点 TOCTOU；与 Per-FS 锁间接长自旋 | `locks/mount-rootfs.md` |
 | `ROOT_FS` 等 | spin::Mutex ×4 | bring-up 顺序 mount | 多字段非原子更新；clear 中间态 | 同上 |
-| `GlobalFilePageCache` | Mutex ×3 + RwLock | 饱和驱逐 read/write/flush/close（P0 已修） | mount_gen silent rebuild；purge 无 flush | `locks/page-cache.md` |
+| `GlobalFilePageCache` | Mutex ×3 + RwLock | 未饱和时 read/write 短路径 | **缓存饱和驱逐自死锁**；close/flush；mount_gen rebuild | `locks/page-cache.md` |
 | `SharedFs` / `SharedRwFs` | Arc\<Mutex\> | 根卷顺序读写/metadata | aux RO 双实例；truncate 错路由；flush 长持锁 | `locks/shared-fs-handles.md` |
 
 ### 3.3 wateros-mm + wateros-runtime
 
 | 结构 | 锁类型 | 已覆盖路径 | 未覆盖 / 不可靠路径 | 文档 |
 |------|--------|-----------|-------------------|------|
-| `StackFrameAllocator` | UniprocessorSafeCell | 全部导出 API 经 `FrameAllocatorInterruptGuard` | 运行期重复 init；`frame_allocator_cell()` 可绕过守卫 | `locks/mm-allocators.md` |
+| `StackFrameAllocator` | UniprocessorSafeCell | bring-up 自检顺序调用 | **运行期抢占下 RefCell panic**；运行期重复 init | `locks/mm-allocators.md` |
 | `InterruptSafeLockedHeap` | Mutex + 中断屏蔽 | 常规 alloc/dealloc 闭环 | 嵌套 alloc 自旋；中断状态读失败静默 | 同上 |
 
 ### 3.4 wateros-ipc
 
 | 结构 | 锁类型 | 已覆盖路径 | 未覆盖 / 不可靠路径 | 文档 |
 |------|--------|-----------|-------------------|------|
-| `FutexHub` | spin::Mutex | wait/wake/requeue 释锁闭环；wait 不再继承 RC-1 | wake 持锁跨调度（F-2） | `locks/ipc-futex-signal-shm.md` |
-| `SignalRegistry` | spin::Mutex | rt_sig*、kill、itimer 基本路径 | sigsuspend/timedwait 已随 RC-1 修复；kill vs send 语义差 | 同上 |
-| `ShmRegistry` | spin::Mutex | shmget/shmdt/exit；`begin_attach` 消除 shmat TOCTOU | fork 映射失败未回滚 registry（M-2） | 同上 |
-| `KernelPipe` | spin::Mutex | 多任务共享 pipe 读写；阻塞不持锁 wait | UP 下极短 spin 临界区被抢占（P-4）；poll 1-tick 切片 | `locks/ipc-pipe.md` |
+| `FutexHub` | spin::Mutex | wait/wake/requeue 释锁闭环 | wait 继承 RC-1；wake 持锁跨调度 | `locks/ipc-futex-signal-shm.md` |
+| `SignalRegistry` | spin::Mutex | rt_sig*、kill、itimer 基本路径 | sigsuspend/timedwait RC-1；kill vs send 语义差 | 同上 |
+| `ShmRegistry` | spin::Mutex | shmget/shmdt/exit 清理 | **shmat TOCTOU**；fork 映射失败未回滚 | 同上 |
+| `KernelPipe` | UniprocessorSafeCell | 单任务单 fd 读写 | **多任务共享 pipe RefCell panic**；wake_one 饿死 | `locks/ipc-pipe.md` |
 
 ### 3.5 wateros-fs
 
@@ -74,8 +74,8 @@
 |------|--------|-----------|-------------------|------|
 | `DEVFS` | spin::Mutex | 静态节点 lookup | refresh 长临界区；clear 空窗 | `locks/fs-aux.md` |
 | `DEV_NODES` | spin::Mutex | 注册/列举 | 与 DEVFS 叠加争用 | 同上 |
-| ProcfsLookups ×3 | spin::Mutex | 锁外执行 cwd/VFS 回调 | cwd 回调仍用 RefCell（PROC-02） | `locks/fs-aux.md` |
-| `EXT4_SMALL_READ_CACHE` | spin::Mutex | 单任务顺序小读；读写路径不嵌套双持锁 | 全局争用 + 块设备长 I/O 自旋 | 同上 |
+| ProcfsLookups ×3 | spin::Mutex | 回调注册（init） | **持锁执行 cwd/VFS 回调** | 同上 |
+| `EXT4_SMALL_READ_CACHE` | spin::Mutex | 单任务顺序小读 | 全局争用；与块锁顺序交叉 | 同上 |
 
 ### 3.6 wateros-driver
 
@@ -95,7 +95,7 @@
 | 结构 | 锁类型 | 已覆盖路径 | 未覆盖 / 不可靠路径 | 文档 |
 |------|--------|-----------|-------------------|------|
 | `SOCKET_FD_REGISTRY` | spin::Mutex | inet socket fd 映射 | 与 unix 表独立，无嵌套死锁 | `locks/syscall-globals.md` |
-| `FD_TABLE` / `BOUND` / `UnixSockInner` | spin::Mutex ×3 | bind 锁序已修；退出 `drop_task`；线程 clone 同步 FD_TABLE | dup 未注册侧车；execve 杀线程未清 unix | 同上 |
+| `FD_TABLE` / `BOUND` / `UnixSockInner` | spin::Mutex ×3 | 单进程 AF_UNIX 基本操作 | **bind 嵌套 VFS**；退出未清理；**pthread 不同步 FD_TABLE** | 同上 |
 | `TIMES` | spin::Mutex | utimens 更新/查询 | 短临界区，低风险 | 同上 |
 | `TIMEX_STATE` | spin::Mutex | adjtimex 基本字段 | ADJ_OFFSET 与原子时钟未同步 | 同上 |
 
@@ -104,7 +104,7 @@
 | 结构 | 锁类型 | 已覆盖路径 | 未覆盖 / 不可靠路径 | 文档 |
 |------|--------|-----------|-------------------|------|
 | `PerTaskCredRegistry` | UniprocessorSafeCell | fork/exec 生命周期短操作 | 缺条目 panic；AccessCheck 未生效 | `locks/per-task-registries.md` |
-| `KLOG` | spin::Mutex | `KlogInterruptGuard` 包裹 `with`/`iter_from`；run_first_task 后 syslog | 闭包内递归 `record` 不可重入（KLOG-03） | `locks/klog.md` |
+| `KLOG` | spin::Mutex | bring-up 单线程 record | **run_first_task 后 syslog 可抢占自旋**；IRQ 重入 | `locks/klog.md` |
 
 ---
 
@@ -112,16 +112,16 @@
 
 | 场景 | 总体评估 | 主要风险 |
 |------|----------|----------|
-| bring-up 单线程自检 | ✅ | 引导路径少数无 InterruptGuard；probe 非幂等（latent） |
-| 单进程 busybox 基本 syscall | ⚠️ | 长 FS/网络持锁、klog 争用（已缓解） |
-| 多线程 pthread（共享 fd） | ❌ | fd take_io 竞态（FD-01）；per-task RefCell 无 InterruptGuard |
-| futex/poll 阻塞等待 | ⚠️ | RC-1 已修；F-2 wake 持锁延迟 |
+| bring-up 单线程自检 | ✅ | 引导路径少数无 InterruptGuard |
+| 单进程 busybox 基本 syscall | ⚠️ | 页缓存饱和、长 FS 持锁、klog 争用 |
+| 多线程 pthread（共享 fd） | ❌ | fd take_io 竞态；unix FD_TABLE 不同步；pipe RefCell |
+| futex/poll 阻塞等待 | ❌ | RC-1 中断未释放 |
 | 网络 socket 并发 | ❌ | NETWORK_STACK 全局锁 |
-| ext4 多文件并发 RW | ⚠️ | 页缓存 P0 已修；cache/块设备争用 |
+| ext4 多文件并发 RW | ❌ | 页缓存 P0；cache 锁序；块设备长持锁 |
 | mount/umount 并发 | ⚠️ | TOCTOU；mount_gen 与页缓存 |
-| AF_UNIX pathname | ⚠️ | bind TOCTOU；dup 侧车未同步 |
-| SYSV shm | ⚠️ | shmat 已修；fork 元数据泄漏 |
-| procfs 热读 | ⚠️ | cwd 回调 RefCell |
+| AF_UNIX pathname | ⚠️ | bind 嵌套 VFS；退出泄漏 |
+| SYSV shm | ⚠️ | shmat TOCTOU |
+| procfs 热读 | ⚠️ | 持锁回调 |
 | SMP / 多 hart | 🚫 | 全部 UniprocessorSafeCell / UP 假设 |
 
 ---
@@ -146,8 +146,8 @@ InterruptGuard（关中断）
 
 | 边 | 风险 |
 |----|------|
-| unix `bind`：BOUND+Inner → VFS → SharedFs | **已修复**（VFS 先于 BOUND） |
-| ext4 read/write：cache 与 device 分段持锁 | **无 AB-BA**；争用见 CACHE-01 |
+| unix `bind`：BOUND+Inner → VFS → SharedFs | AB-BA 与 FS |
+| ext4 write：EXT4_CACHE → BlockDevice；read 反向 | AB-BA |
 | procfs：LOOKUP → cwd registry | 重入 procfs 死锁 |
 | fd `check_nofile`：fd → ProcessRegistry | RefCell 嵌套 panic 窗口 |
 | FutexHub wake：FutexHub → Scheduler wait queue | 长持 futex 锁 |
@@ -162,11 +162,11 @@ InterruptGuard（关中断）
 |------|----------|
 | 持锁不睡眠（mutex 语义） | spin 锁 + RefCell：持锁 wait 实际违反（靠关中断部分缓解） |
 | 同线程可重入同一把锁 | ❌ spin Mutex / RwLock 均不可重入 |
-| 阻塞 syscall 不阻止 timer 投递 | ✅ RC-1 已修复 |
-| fork 后子进程资源一致 | ⚠️ fd/cwd/cred 基本覆盖；CLONE_FILES 语义偏差 |
-| 进程退出释放所有内核侧车资源 | ⚠️ unix 主路径已清；execve 杀线程缺口（U-08） |
-| 文件页缓存 close 不卡死 | ✅ PC-01 已修复 |
-| 并发 pipe 读写 | ✅ IPC-01/02 已修复 |
+| 阻塞 syscall 不阻止 timer 投递 | ❌ RC-1 |
+| fork 后子进程资源一致 | ⚠️ fd/cwd/cred 基本覆盖；unix FD_TABLE 线程 clone 未覆盖 |
+| 进程退出释放所有内核侧车资源 | ⚠️ unix BOUND 未清理 |
+| 文件页缓存 close 不卡死 | ❌ PC-01 |
+| 并发 pipe 读写 | ❌ IPC-01 |
 
 ---
 

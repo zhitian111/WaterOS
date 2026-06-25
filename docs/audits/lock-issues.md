@@ -1,9 +1,9 @@
 # 锁机制潜在问题清单
 
-> 汇总时间：2026-06-25（第二轮复核）  
+> 汇总时间：2026-06-25  
 > Baseline：单核多线程（UP + 定时器抢占）  
 > 来源：15 份子结构审计文档（`docs/audits/locks/`）去重合并  
-> 清单索引：`docs/audits/lock-inventory.md`（含资源分配及回收链路 §2）
+> 清单索引：`docs/audits/lock-inventory.md`
 
 ---
 
@@ -15,14 +15,14 @@
 
 | 根因 ID | 描述 | 影响面 |
 |---------|------|--------|
-| **RC-1** | 调度器 wait/sleep 路径 `InterruptGuard` 跨越 `__switch` | scheduler、futex、signal、pipe、poll | **已修复**（`release_before_switch`） |
-| **RC-2** | `UniprocessorSafeCell` 在可抢占上下文无中断保护 → RefCell panic | 帧分配器（已修）、**per-task 三表**、scheduler 引导路径 | **部分修复** |
-| **RC-3** | `spin::Mutex` 长临界区 + 可抢占 → 活锁/永久自旋 | 网络栈、块设备、DEVFS refresh | **开放**（klog 已修） |
+| **RC-1** | 调度器 **wait/sleep 路径** `InterruptGuard` 跨越 `__switch`，唤醒后至 syscall 返回前中断仍关闭 → timer tick / 超时 / itimer 失效 | scheduler、futex、signal、pipe、poll |
+| **RC-2** | **`UniprocessorSafeCell`（RefCell）在可抢占上下文无关中断保护** → `RefCell already borrowed` panic 或逻辑损坏 | 帧分配器、pipe、scheduler 引导路径 |
+| **RC-3** | **`spin::Mutex` 长临界区 + 可抢占** → 持锁任务被切换后其他任务永久自旋 | klog、网络栈、块设备、页缓存、procfs |
 
-**已消除的确定性自死锁**：
+另有两处**确定性自死锁**（与抢占无关，单线程即可触发）：
 
-- **RC-4**：页缓存 per-file `RwLock` 驱逐写回重入 → **已修复**（`b6e6d01` 锁外 `install_page`）
-- **RC-5**：EXT4 小读缓存与块设备 AB-BA → **复核无嵌套双持锁**；剩余为 P1 争用（CACHE-01），非锁序死锁
+- **RC-4**：页缓存 per-file `RwLock` 在驱逐写回路径**重入**（P0，高概率卡死）
+- **RC-5**：EXT4 小读缓存与块设备锁**顺序反转** AB-BA 窗口（P0）
 
 ---
 
@@ -40,25 +40,34 @@
 | 6 | **FS-01** | `SharedRwFs` / mount | aux RO 同块设备双 ext4 实例并发写 | bind mount RO + RW 根卷同设备 | **已收敛**（拒绝挂载 + warn） |
 | 7 | **U-01** | `unix_sock` | `bind` 持锁调用 VFS mknod/metadata | AF_UNIX bind | **已修复**（VFS 先于 BOUND 锁） |
 | 8 | **U-02** | `unix_sock` | 任务退出未调用 `drop_task` → BOUND/FD_TABLE 泄漏 | 进程退出后 pathname 永久占用 | **已修复** |
-| 9 | **ISH-1** | `InterruptSafeLockedHeap` | 堆 Mutex 嵌套 `GlobalAlloc` → 无限自旋 | 分配器回调内再 alloc | **开放**（见 §9） |
+| 9 | **BLK-01** | EXT4 cache + BlockDevice | 写路径 cache→device 与读路径 device→cache 锁序交叉 | 多任务 ext4 并发 RW | **已收敛**（写后持 device 锁 invalidate） |
 | 10 | **KLOG-01** | `KLOG` | 可抢占 + spin 锁 → 其他任务 `syslog` 永久自旋 | run_first_task 后任意 syslog | **已修复** |
-| 11 | **PR-01** | `ProcessRegistry` | Spawn/Fork/Clone 登记窗口：Scheduler 先入队、Registry 后登记 | spawn/fork/clone 与 tick 交错 | **暂缓**（见 §9） |
+| 11 | **PR-01** | `ProcessRegistry` | Spawn/Fork/Clone 登记窗口：Scheduler 先入队、Registry 后登记 | spawn/fork/clone 与 tick 交错 | **已修复** |
 | 12 | **NET-01** | `NETWORK_STACK` | 全局 Mutex 覆盖整轮 smoltcp poll + VirtIO 发送 | 并发 socket syscall | **暂缓**（见 §9） |
 | 13 | **PROC-01** | ProcfsLookups | 持 Mutex 执行 cwd/VFS 回调 → 自旋死锁或永久等待 | `/proc/*/cmdline` 等热路径 | **已修复** |
-| 14 | **FD-01** | `PerTaskFdRegistry` | `with_current_io` 空槽窗口 + `CLONE_FILES` 共享表竞态 | poll/read ∥ dup/close 同 fd | **暂缓**（见 §9） |
+| 14 | **FD-01** | `PerTaskFdRegistry` | `with_current_io` 空槽窗口 + `CLONE_FILES` 共享表竞态 | poll/read ∥ dup/close 同 fd | **已修复** |
 | 15 | **TRUNC-01** | `PagedFileHandle` | `truncate` 硬编码 `root_rw()`，辅助挂载路径错误 | ftruncate on tmpfs/bind mount | **已修复** |
 
 ---
 
 ## 3. 跨结构根因详解
 
-### RC-1：wait 路径中断未释放（卡死）— **已修复**
+### RC-1：wait 路径中断未释放（卡死）
 
-**机制**（历史）：`InterruptGuard` 跨越 `__switch` 导致 timer 无法投递 tick。
+**机制**：`wait_current*` / `sleep_current_for_ticks` 在函数入口创建 `InterruptGuard`，经 `__switch` 挂起后 guard 仍存活至 `take_current_wait_result` 返回。唤醒任务长时间关中断，timer 无法投递 tick。
 
-**修复**：`release_before_switch()` + `finish_wait_after_switch()`（`impl-round-robin` / `impl-multi-class`）。
+**关联问题 ID**：scheduler §4.2；ipc-futex F-1/S-1；ipc-pipe §5.3
 
-**残留 P1**：`suspend_current_and_run_next` / `schedule_tick` 的 guard 仍跨 switch（依赖 idle 开中断）；`finish_wait_after_switch` 前有极短中断开启窗口（SCH-P1-2）。
+**收敛方向**：
+
+- 在 `__switch` 前调用已有 `release_before_switch()`（与 `exit_current` 对齐）
+- 或：wait 入队前释中断、唤醒后在 scheduler 内重新关中断
+
+**warn 模板（临时）**：
+
+```text
+[scheduler] wait path holds InterruptGuard across __switch task_id={} wait_handle={:?}
+```
 
 ---
 
@@ -66,9 +75,9 @@
 
 **机制**：`exclusive_access()` = `RefCell::try_borrow_mut`，失败即 panic。帧分配器、pipe state 等路径**未**配对 `InterruptGuard`，但 `trap_handler` 可在 syscall 中途调用 `schedule_tick`。
 
-**关联问题 ID**：SFA-1（**已修**）；R-PT-11（per-task 三表 **未修**）；SCH-P0-1/P0-2（scheduler 引导/重入）
+**关联问题 ID**：SFA-1；ipc-pipe §5.1；scheduler §4.1/§4.3
 
-**收敛方向**：帧分配器模式推广至 fd/cwd/cred registry；或替换为 `spin::Mutex`。
+**收敛方向**：所有运行期 `exclusive_access` 入口加 `InterruptGuard`，或替换为 `spin::Mutex`。
 
 ---
 
@@ -89,9 +98,9 @@
 | ID | 严重度 | 问题 | 详情文档 |
 |----|--------|------|----------|
 | SCH-01 | P0 | RefCell 重入 panic（未关中断路径） | `locks/scheduler.md` §4.1 |
-| SCH-02 | P0 | wait 路径长时间关中断 | §4.2 — **已修复** |
-| SCH-03 | P0 | `run_first_task` 无 InterruptGuard | §4.3 |
-| PR-01 | P0 | Spawn/Fork/Clone 登记窗口 | `locks/process-registry.md` |
+| SCH-02 | P0 | wait 路径长时间关中断 | §4.2 |
+| SCH-03 | P0 | `run_first_task` 无 InterruptGuard | §4.3 | **已修复** |
+| PR-01 | P0 | Spawn/Fork/Clone 登记窗口 | `locks/process-registry.md` | **已修复** |
 | PR-02 | P0 | `reap_process_with_tasks` 持锁内 MM 释放 | 同上 |
 | PR-04–07 | P1 | Kill/Reap/waitpid 与 Scheduler 非原子 TOCTOU | 同上 |
 | SCH-06 | P2 | RR `apply_sched_policy_change` 不迁移就绪队列 | `locks/scheduler.md` §4.6 |
@@ -104,39 +113,39 @@
 | R-PT-02 | P0 | `close_slot` 持借期间 `handle.close()` | 同上 |
 | R-PT-03 | P1 | fork/sync 持借 duplicate/flush | 同上 |
 | PC-01 | P0 | 页缓存 RwLock 重入自死锁 | `locks/page-cache.md` |
-| PC-02 | P1 | mount_gen 不匹配 silent rebuild 丢脏页 | 同上 |
+| PC-02 | P1 | mount_gen 不匹配 silent rebuild 丢脏页 | 同上 | **已收敛**（bump 前 flush + 禁止代次回退） |
 | TRUNC-01 | P0 | `PagedFileHandle::truncate` 错路由 | `locks/shared-fs-handles.md` |
 | FS-01 | P0 | aux RO 双 ext4 实例 | 同上 |
-| MR-03 | P1 | `mount_aux_common` TOCTOU 重复挂载点 | `locks/mount-rootfs.md` |
+| MR-03 | P1 | `mount_aux_common` TOCTOU 重复挂载点 | `locks/mount-rootfs.md` | **已修复** |
 | MR-04 | P1 | RootFs 多 Mutex 非原子更新 | 同上 |
 
 ### 4.3 wateros-mm + wateros-runtime
 
 | ID | 严重度 | 问题 | 详情文档 |
 |----|--------|------|----------|
-| SFA-1 | P0 | 帧分配 RefCell vs 抢占 | `locks/mm-allocators.md` — **已修复** |
-| SFA-2 | P1 | 持借期间堆分配拉长窗口 | 同上 |
-| ISH-1 | P0 | 堆 Mutex 嵌套 GlobalAlloc 自旋 | 同上 |
+| SFA-1 | P0 | 帧分配 RefCell vs 抢占 | `locks/mm-allocators.md` |
+| SFA-2 | P0 | 持借期间堆分配拉长窗口 | 同上 |
+| ISH-1 | P0 | 堆 Mutex 嵌套 GlobalAlloc 自旋 | 同上 | **已收敛**（重入检测 panic） |
 | ISH-2 | P1 | 中断状态读取失败被 `.ok()` 吞掉 | 同上 |
 
 ### 4.4 wateros-ipc
 
 | ID | 严重度 | 问题 | 详情文档 |
 |----|--------|------|----------|
-| F-1 | P0 | futex wait 继承 RC-1 | `locks/ipc-futex-signal-shm.md` — **已修复** |
-| F-2 | P1 | FutexHub wake 持锁跨调度器 | 同上 |
+| F-1 | P0 | futex wait 继承 RC-1 | `locks/ipc-futex-signal-shm.md` |
+| F-2 | P1 | FutexHub wake 持锁跨调度器 | 同上 | **已修复**（释锁后 wake） |
 | SHM-01 | P0 | shmat TOCTOU UAF | 同上 |
 | M-2 | P1 | fork shm 映射失败未回滚 registry | 同上 |
-| IPC-01 | P0 | pipe RefCell 跨任务 | `locks/ipc-pipe.md` — **已修复**（`spin::Mutex`） |
-| IPC-02 | P0 | pipe `wake_one` 饿死多阻塞者 | 同上 — **已修复**（`wake_all`） |
+| IPC-01 | P0 | pipe RefCell 跨任务 | `locks/ipc-pipe.md` |
+| IPC-02 | P0 | pipe `wake_one` 饿死多阻塞者 | 同上 |
 
 ### 4.5 wateros-fs + wateros-driver
 
 | ID | 严重度 | 问题 | 详情文档 |
 |----|--------|------|----------|
-| PROC-01 | P0 | procfs 持锁调回调 | `locks/fs-aux.md` — **已修复** |
-| DEV-01 | P0 | DEVFS refresh 长临界区 + 交叉锁 | `locks/fs-aux.md` |
-| CACHE-01 | P1 | EXT4 cache 全局争用（非 AB-BA） | `locks/fs-aux.md` / `driver-block-char.md` |
+| PROC-01 | P0 | procfs 持锁调回调 | `locks/fs-aux.md` |
+| DEVFS-01 | P0 | DEVFS refresh 长临界区 | 同上 | **已收敛**（锁外收集设备快照） |
+| BLK-01 | P0 | EXT4 cache 锁序反转 | `locks/driver-block-char.md` | **已收敛** |
 | BLK-02 | P0 | 块设备 Mutex 覆盖整次 VirtIO I/O | 同上 |
 | UART-01 | P1 | 字符设备写路径 UART 自旋持锁 | 同上 |
 | NET-01 | P0 | NETWORK_STACK 全局长持锁 | `locks/driver-network.md` |
@@ -148,10 +157,9 @@
 
 | ID | 严重度 | 问题 | 详情文档 |
 |----|--------|------|----------|
-| U-01 | P0 | unix bind 持锁嵌套 VFS | `locks/syscall-globals.md` — **已修复** |
-| U-02 | P0 | unix 退出未清理 | 同上 — **已修复** |
-| U-03 | P0 | pthread clone 不同步 FD_TABLE | 同上 — **已修复** |
-| U-08 | P1 | execve 杀兄弟线程未清 unix/socket 侧车 | 同上 |
+| U-01 | P0 | unix bind 持锁嵌套 VFS | `locks/syscall-globals.md` |
+| U-02 | P0 | unix 退出未清理 | 同上 |
+| U-03 | P0 | pthread clone 不同步 FD_TABLE | 同上 |
 | U-04 | P1 | dup/fcntl 未同步 unix_sock 注册 | 同上 |
 | C-01 | P2 | adjtimex 持锁调用 `clock_id_to_ns` | 同上 |
 
@@ -159,8 +167,8 @@
 
 | ID | 严重度 | 问题 | 详情文档 |
 |----|--------|------|----------|
-| KLOG-01 | P0 | 可抢占下 spin 锁卡死 | `locks/klog.md` §4.1 — **已修复** |
-| KLOG-02 | P0 | IRQ 上下文调用 klog 互斥 | §4.2 — **已修复** |
+| KLOG-01 | P0 | 可抢占下 spin 锁卡死 | `locks/klog.md` §4.1 |
+| KLOG-02 | P0 | IRQ 上下文调用 klog 互斥 | §4.2 |
 | KLOG-03 | P1 | 闭包内递归日志不可重入 | §4.3 |
 
 ### 4.8 wateros-cred
@@ -220,7 +228,7 @@ macro_rules! lock_warn {
 |----|------|
 | 审计文档 A（本文档） | ✅ 已产出 |
 | 审计文档 B（`lock-coverage.md`） | ✅ 已产出 |
-| 代码修复/收敛（2026-06-25 轮） | ✅ 11 项已修复/收敛，4 项暂缓（§9） |
+| 代码修复/收敛（2026-06-25 轮） | ✅ 22 项已修复/收敛，3 项暂缓（§9） |
 | exports / roadmap 回填 | ✅ 高优先级项已写入 `docs/roadmap/todolist.md` |
 
 ---
@@ -231,22 +239,35 @@ macro_rules! lock_warn {
 
 | ID | 原因 | 建议后续 |
 |----|------|----------|
-| **PR-01** | 需 `Scheduler`+`ProcessRegistry` 单次关中断原子协议；改入队顺序可能影响已依赖「先运行后登记」的 bring-up 路径 | 设计 `with_scheduler_and_process_registry` 后统一改 spawn/fork/clone |
 | **NET-01** | 拆分 `NETWORK_STACK` 锁需重划 smoltcp 与 VirtIO 边界；草率拆锁易引入包丢失或双 poll | 锁外 I/O 或 per-socket 状态机，单独设计评审 |
-| **FD-01** | `with_current_io` take-restore 与 `CLONE_FILES` 语义冲突；修需改 fd 表引用模型或 per-fd 锁 | 共享 fd 表阻塞 I/O 路径 warn+`EOPNOTSUPP` 已足够作短期收敛；完整修需 VFS 设计变更 |
-| **ISH-1** | 堆 `spin::Mutex` 嵌套 `GlobalAlloc`；加检测只能 panic/warn，无法在不改分配器前提下消除 | 重入计数 + `alloc` 钩子审计 |
-| **NET-01/P0-2** | `NETWORK_STACK` 持锁嵌套 VirtIO device 锁；拆分需重划 smoltcp 边界 | 锁外 I/O 或缩短 poll 临界区，单独设计评审 |
-| **DEV-01** | DEVFS `refresh` 持锁跨块/字符设备注册表 | 分段持锁：收集信息 → 释锁 → 重建 |
-| **PLAT-01/02** | RISC-V probe 三锁长临界区；`init_after_boot` 非幂等 | 调度后拒绝 probe；init guard |
-| **F-2** | FutexHub `wake` 持锁调调度器；释锁后 wake 有丢唤醒窗口，需与 futex 语义一并重设计 | 与 futex 语义审计联动 |
-| **PC-02** | `mount_gen` bump 后 `global_cache` silent rebuild 丢脏页；修需全局 flush 协议，与 mount 流程耦合 | mount/umount 时强制 flush 旧代次 |
-| **MR-03** | mount 重复检查与 push 非原子；需全局 mount 串行化或合并临界区 | 单把 `MOUNT_SERIAL` 锁或合并 `mount_aux_common` 临界区 |
-| **ISH-1** | 堆 `spin::Mutex` 嵌套 `GlobalAlloc`；加检测只能 panic/warn，无法在不改分配器前提下消除 | 重入计数 + `alloc` 钩子审计 |
-| **SCH-03** | `run_first_task` 无 InterruptGuard；仅引导路径，运行期不可达 | 引导末尾显式关中断直至首次 switch |
+| **PLAT-01/02** | 平台 probe 三锁 / 重复 init 面大，需 probe 重构与 init 幂等 | 单独平台层评审 |
+| **F-2**（requeue） | `requeue_to` 仍持 futex 全局锁跨调度 | 与 `wake` 同模式释锁后操作 |
 | **U-03** | pthread clone 未同步 `FD_TABLE` | **已修复**（`clone.rs` 增加 `copy_fds_from_parent`） |
 | **IPC-02** | pipe `wake_one` 饿死 | **已修复**（改为 `wake_all`） |
 
-### 本轮代码变更摘要
+### 第三轮（FD-01 完整修）代码变更摘要
+
+| 组件 | 变更 |
+|------|------|
+| `impl-fd-session/registry` | 共享表 `io_inflight` + `io_slot_locks`；`begin/end_shared_io_for_task` |
+| `vfs/fd.rs` | 共享表 I/O 不 take 槽位；`with_fd_registry` 关中断 |
+| `vfs-api` | 新增 `VfsError::Busy` → `EBUSY` |
+| `sys/clone.rs` | `CLONE_FILES`/`CLONE_FS` 控制 share vs copy |
+
+### 本轮（第二轮）代码变更摘要
+
+| 组件 | 变更 |
+|------|------|
+| `scheduler-impl/*` | `create_*` / `enqueue_ready_task` 拆分；`run_first_task` 加 `InterruptGuard` |
+| `wateros-task` | spawn/fork/clone：先登记 ProcessRegistry 再入队 |
+| `mount_table` | `mount_aux_common` 检查+push 同临界区；bump 前 `reset_file_page_cache` |
+| `impl-page-cache` | `global_cache` 禁止代次回退；升级代次 warn |
+| `impl-ext4/rw` | 写路径在持 device 锁期间 invalidate 小读缓存 |
+| `ipc-futex/hub` | `wake`/`wake_all` 释锁后调度 |
+| `devfs-impl-kernel` | `refresh` 锁外收集 block/char 设备 |
+| `runtime-heap-allocator` | 堆分配重入深度检测 panic |
+
+### 第一轮代码变更摘要
 
 | 组件 | 变更 |
 |------|------|

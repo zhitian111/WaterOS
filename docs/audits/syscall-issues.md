@@ -36,10 +36,10 @@
 | **P0-05** | `MmError::Unsupported` | 经 `mm_err_to_errno` → **panic** | 映射为 `-EINVAL`/`-ENOSYS` |
 | **P0-06** | `getgroups` | 负 size、空指针、copy 失败 → **panic** | `-EFAULT`/`-EINVAL` |
 | **P0-07** | `syslog` | `len>0` 且 `buf==NULL` → **panic** | `-EFAULT` |
-| **P0-08** | `futex` `FUTEX_WAIT` | 无超时 + wake **key 不一致**（private/shared、bitset 混用）→ **永久睡眠** | 文档化约定；wake 失败 `warn`；实现 bitset 或拒绝非全 bitset |
+| **P0-08** | `futex` `FUTEX_WAIT` | 无超时 + wake **key 不一致**（private/shared、bitset 混用）→ **永久睡眠** | wake 失败时尝试 alternate private/shared key（**2026-06-25 部分**）；bitset 仍受限 |
 | **P0-09** | `futex` `WAIT_BITSET`/`WAKE_BITSET` | **`bitset` 参数被忽略** | 非 `0xffffffff` 时 `warn` + `-ENOSYS` |
 | **P0-10** | `get_robust_list` | **ABI 2 参数**，Linux 为 3 参数 `(pid, head**, len*)` → libc 调用错乱 | 修正 ABI 或 `warn` + `-ENOSYS` |
-| **P0-11** | `rt_sigsuspend` | 依赖 `interrupt_task` 打断 waitqueue；信号 pending 但未 interrupt 时 **长时间睡眠** | 所有 `send_*` 路径保证 interrupt |
+| **P0-11** | `rt_sigsuspend` | 依赖 `interrupt_task` 打断 waitqueue；信号 pending 但未 interrupt 时 **长时间睡眠** | `send_process` 在 process pending 后选取可投递线程并 interrupt（**2026-06-25 部分**） |
 | **P0-12** | `ppoll`/`pselect6` | **`sigmask` 未应用**（仅校验指针） | ~~实现原子 mask~~ → **2026-06-25 已实现** `begin_poll_sigmask` |
 | **P0-13** | `openat` | **不 follow symlink** → `-EISDIR`，与 Linux 严重不符 | ~~中期实现 follow~~ → **2026-06-25 已实现** `resolve_final_symlink`；`O_NOFOLLOW` → `-ELOOP` |
 | **P0-14** | `fsync`/`fdatasync`/`sync` + 并发 I/O | 页缓存 flush 与 ext4 **锁序**风险 → 用户态永久阻塞 | `O_SYNC`/`O_DSYNC` 于 `openat` 拒绝；flush 失败 `warn`；**锁序仍待审计** |
@@ -58,47 +58,47 @@
 |----|------|
 | IO-P1-01 | 阻塞 socket `read` 4096 tick 后 `EAGAIN`（非 Linux 无限阻塞） | **已收敛**：真阻塞 + `EINTR` |
 | IO-P1-02 | 阻塞 socket `write` 128 tick 后 `EAGAIN` | **已收敛**：真阻塞 + `EINTR` |
-| IO-P1-03 | `fcntl(F_SETFL)` 对 pipe/VFS fd **O_NONBLOCK 静默 no-op** |
-| IO-P1-04 | `fcntl(F_GETFL)` 非 socket 返回固定 `O_RDWR` |
-| IO-P1-05 | `dup3(fd, fd, 0)` 返回 `-EINVAL`（Linux 应成功） |
-| IO-P1-06 | `pipe2` 不支持 `O_CLOEXEC` |
-| IO-P1-07 | TTY 无数据时 `read` → `EINVAL`（应为 `EAGAIN` 或阻塞） |
+| IO-P1-03 | `fcntl(F_SETFL)` 对 pipe/VFS fd **O_NONBLOCK 静默 no-op** | **已收敛**：`VfsIoHandle::set_open_status_flags` + pipe `Cell` |
+| IO-P1-04 | `fcntl(F_GETFL)` 非 socket 返回固定 `O_RDWR` | **已收敛**：反映 `O_NONBLOCK` |
+| IO-P1-05 | `dup3(fd, fd, 0)` 返回 `-EINVAL`（Linux 应成功） | **已收敛** |
+| IO-P1-06 | `pipe2` 不支持 `O_CLOEXEC` | **已收敛** |
+| IO-P1-07 | TTY 无数据时 `read` → `EINVAL`（应为 `EAGAIN` 或阻塞） | **已收敛**：`WouldBlock`→`EAGAIN`；阻塞经 `poll_wait` |
 | IO-P1-08 | `sendfile` 不经 socket 旁路 |
-| IO-P1-09 | `ioctl` 大量 request → `ENOTTY` 无 warn |
+| IO-P1-09 | `ioctl` 大量 request → `ENOTTY` 无 warn | **已收敛**：未知 request `warn` |
 
 ### 3.2 VFS / 路径（详见 `syscall/vfs-path.md`）
 
 | ID | 问题 |
 |----|------|
-| VFS-P1-01 | `openat` 忽略 `O_EXCL`/`O_NOFOLLOW`/`O_NONBLOCK`/`O_SYNC` 等 | `O_NOFOLLOW`/`O_SYNC`/`O_DSYNC` 已处理；`O_EXCL` 等待 |
+| VFS-P1-01 | `openat` 忽略 `O_EXCL`/`O_NOFOLLOW`/`O_NONBLOCK`/`O_SYNC` 等 | `O_EXCL`+`O_CREAT`→`-EEXIST`；`O_NOFOLLOW`/`O_SYNC`/`O_DSYNC` 已处理 |
 | VFS-P1-02 | `st_uid`/`st_gid` 恒 0；时间戳除 `utimensat` 旁路表外为 0 |
 | VFS-P1-03 | `statfs` 硬编码假容量 |
-| VFS-P1-04 | `faccessat`/`faccessat2` 无 owner 匹配；`AT_SYMLINK_NOFOLLOW` 未生效 |
-| VFS-P1-05 | `renameat2` 拒绝所有非零 flags |
-| VFS-P1-06 | `umount2` 忽略 flags，无繁忙检测 |
+| VFS-P1-04 | `faccessat`/`faccessat2` 无 owner 匹配；`AT_SYMLINK_NOFOLLOW` 未生效 | `AT_SYMLINK_NOFOLLOW` **已收敛**；owner 匹配仍缺 |
+| VFS-P1-05 | `renameat2` 拒绝所有非零 flags | **已收敛**：支持 `RENAME_NOREPLACE`；其余 `warn`+`-EINVAL` |
+| VFS-P1-06 | `umount2` 忽略 flags，无繁忙检测 | 非零 flags → `warn`+`-EINVAL`（**2026-06-25**）；繁忙检测仍缺 |
 | VFS-P1-07 | `utimensat` 仅内存旁路，不持久化 |
-| VFS-P1-08 | `getcwd` 内核缓冲 256 字节 |
+| VFS-P1-08 | `getcwd` 内核缓冲 256 字节 | **已收敛**：内核缓冲 4096 字节 |
 | VFS-P1-09 | `fdatasync` 与 `fsync` 同路径 |
-| VFS-P1-10 | `fallocate` `KEEP_SIZE` 扩展时 `-EOPNOTSUPP` |
+| VFS-P1-10 | `fallocate` `KEEP_SIZE` 扩展时 `-EOPNOTSUPP` | **已收敛**：stub 成功（trace） |
 
 ### 3.3 进程 / 执行（详见 `syscall/process-exec.md`）
 
 | ID | 问题 |
 |----|------|
-| PROC-P1-01 | `wait4` 忽略 `rusage`；`pid==0`/`<-1` 直接 `-EINVAL` |
-| PROC-P1-02 | `setsid`/`setpgid` stub 却返回成功 |
-| PROC-P1-03 | `kill` 不支持 `pid<=0` 进程组语义 |
+| PROC-P1-01 | `wait4` 忽略 `rusage`；`pid==0`/`<-1` 直接 `-EINVAL` | `pid==0` 退化为等任意子进程；`pid<-1` `warn`+`-EINVAL`；`rusage` 仍忽略 |
+| PROC-P1-02 | `setsid`/`setpgid` stub 却返回成功 | trace 标注 session/pgid 未持久化（bring-up 兼容） |
+| PROC-P1-03 | `kill` 不支持 `pid<=0` 进程组语义 | **已收敛**：`pid==0` 当前进程；`pid==-1` 广播（除 self/init）；`<-1` `warn` |
 | PROC-P1-04 | `sched_setattr`/`getattr`(274/275) 仅 `dispatch_unknown` 旁路 |
-| PROC-P1-05 | `execve` argv/envp EFAULT **静默截断** |
+| PROC-P1-05 | `execve` argv/envp EFAULT **静默截断** | **已收敛**：用户指针错误→`-EFAULT` |
 | PROC-P1-06 | `compat_exec_load_path` 硬编码 busybox 重定向 |
 
 ### 3.4 内存 / 时间 / 身份（详见 `syscall/mm-time-cred.md`）
 
 | ID | 问题 |
 |----|------|
-| MM-P1-01 | `msync`/`madvise`/`mlock*` 校验后 no-op 成功 |
-| MM-P1-02 | `brk` 扩页失败返回当前 break 作成功值，无 `ENOMEM` |
-| MM-P1-03 | `clock_settime` 无 `CAP_SYS_TIME` |
+| MM-P1-01 | `msync`/`madvise`/`mlock*` 校验后 no-op 成功 | trace 标注 no-op（行为不变） |
+| MM-P1-02 | `brk` 扩页失败返回当前 break 作成功值，无 `ENOMEM` | **已收敛**：失败→`-ENOMEM`/`-EINVAL` |
+| MM-P1-03 | `clock_settime` 无 `CAP_SYS_TIME` | **已收敛**：非 root→`-EPERM` |
 | MM-P1-04 | cred `set*id` 无权限模型 |
 | MM-P1-05 | `shmctl` 仅 `IPC_RMID` |
 | MM-P1-06 | `getrandom` 伪随机 |
@@ -109,8 +109,8 @@
 | ID | 问题 |
 |----|------|
 | SIG-P1-01 | `accept` 阻塞有 tick 上限 → `EAGAIN` | **已收敛**：真阻塞 + `EINTR` |
-| SIG-P1-02 | `recvfrom` TCP 超时返回 `EINTR`（Linux 通常 `EAGAIN`） |
-| SIG-P1-03 | `robust_exit_cleanup` 仅 private key wake |
+| SIG-P1-02 | `recvfrom` TCP 超时返回 `EINTR`（Linux 通常 `EAGAIN`） | **已收敛**：真阻塞 + `EINTR`（与 `read` 对齐） |
+| SIG-P1-03 | `robust_exit_cleanup` 仅 private key wake | **已收敛**：private/shared 双试 wake |
 | SIG-P1-04 | socket `poll` 靠 1-tick sleep 轮询 |
 | SIG-P1-05 | `rt_sigaction` 不读用户 `restorer` |
 
@@ -189,6 +189,8 @@ warn!("[syscall] {name}(nr={nr}) unsupported: {detail} args=[{:#x},{:#x},{:#x},{
 
 - [x] **2026-06-25 首轮收敛**（见 §7.1）
 - [x] **2026-06-25 第二轮收敛**（见 §7.2；LTP fast-exit **未动**）
+- [x] **2026-06-25 第三轮收敛**（见 §7.3；LTP fast-exit **未动**）
+- [x] **2026-06-25 第四轮收敛**（见 §7.4；P1 小改）
 - [ ] VFS 页缓存/ext4 锁序（P0-14 剩余）
 - [ ] 将未收敛 P0 回填 `docs/roadmap/todolist.md`
 - [x] 同步 `docs/exports/features/wateros-syscall.md`
@@ -220,3 +222,35 @@ warn!("[syscall] {name}(nr={nr}) unsupported: {detail} args=[{:#x},{:#x},{:#x},{
 | P0-18 | `accept`（INET/UNIX） | `accept.rs`, `unix_sock.rs`, `socket_block.rs` | 真阻塞 + `EINTR`；去除 tick 上限假 `EAGAIN` |
 | IO-P1-01/02 | `read`/`write` socket | `read.rs`, `write.rs` | 同上 |
 | SIG-P1-01 | `accept` | `accept.rs` | 同上 |
+
+### 7.3 已收敛（2026-06-25 第三轮；LTP 旁路未改）
+
+| 原 ID | syscall | 修改文件 | 行为 |
+|-------|---------|----------|------|
+| P0-08（部分） | `futex` wake | `futex.rs` | primary key 无唤醒时尝试 alternate private/shared |
+| P0-11（部分） | `kill`/process signal | `ipc-signal` | `send_process` pending 后选取可投递线程作 interrupt 目标 |
+| IO-P1-03/04 | `fcntl` | `fcntl.rs`, `handle.rs`, pipe/char handles | `F_GETFL`/`F_SETFL` 支持 `O_NONBLOCK`（pipe/TTY） |
+| IO-P1-05 | `dup3` | `dup.rs` | `dup3(fd,fd,0)` 成功 |
+| IO-P1-06 | `pipe2` | `pipe2.rs` | `O_CLOEXEC` |
+| IO-P1-07 | TTY `read` | `char_dev_handle.rs` | 无数据→`EAGAIN`；阻塞轮询等待 |
+| VFS-P1-01（部分） | `openat` | `openat.rs` | `O_CREAT\|O_EXCL` 已存在→`-EEXIST` |
+| VFS-P1-04（部分） | `faccessat2` | `faccessat.rs` | `AT_SYMLINK_NOFOLLOW` |
+| VFS-P1-06（部分） | `umount2` | `umount2.rs` | 非零 flags→`-EINVAL` |
+| SIG-P1-02 | `recvfrom` | `recvfrom.rs` | 真阻塞 + `EINTR` |
+
+### 7.4 已收敛（2026-06-25 第四轮；P1 小改）
+
+| 原 ID | syscall | 修改文件 | 行为 |
+|-------|---------|----------|------|
+| MM-P1-02 | `brk` | `brk.rs` | 扩页失败→`mm_err_to_errno`（`ENOMEM` 等） |
+| MM-P1-03 | `clock_settime` | `clock.rs` | 非 root→`-EPERM` |
+| MM-P1-01 | `msync`/`madvise`/`mlock` | `mmap.rs` | trace 标注 no-op |
+| PROC-P1-01（部分） | `waitpid` | `task.rs` | `pid==0` 等任意子进程；`pid<-1` 拒绝 |
+| PROC-P1-02 | `setsid`/`setpgid` | `task.rs` | trace 标注未持久化 |
+| PROC-P1-03 | `kill` | `kill.rs` | `pid==0`/`-1` 语义；`<-1` 拒绝 |
+| PROC-P1-05 | `execve` | `execve.rs` | argv/envp 拷贝失败→`-EFAULT` |
+| IO-P1-09 | `ioctl` | `ioctl.rs` | 未知 request `warn` |
+| VFS-P1-05（部分） | `renameat2` | `renameat2.rs` | `RENAME_NOREPLACE`→目标存在 `-EEXIST` |
+| VFS-P1-08 | `getcwd` | `getcwd.rs` | 内核缓冲 4096 |
+| VFS-P1-10 | `fallocate` | `fallocate.rs` | `KEEP_SIZE` 预分配 stub 成功 |
+| SIG-P1-03 | robust futex | `robust.rs` | exit cleanup 双 key wake |

@@ -8,7 +8,7 @@ extern crate alloc;
 pub mod uart;
 
 use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use api_v0::{DeviceInfo, DeviceType, DriverError, DriverResult, IrqLine, MmioRegion};
 use block::{
@@ -39,6 +39,7 @@ static DEVICE_INFOS: Mutex<Vec<DeviceInfo>> = Mutex::new(Vec::new());
 static VIRTIO_BLK_MMIO: Mutex<Vec<MmioRegion>> = Mutex::new(Vec::new());
 // 成功注册为 virtio-net 的 MMIO 窗口列表。
 static VIRTIO_NET_MMIO: Mutex<Vec<MmioRegion>> = Mutex::new(Vec::new());
+static INIT_AFTER_BOOT_DONE: AtomicBool = AtomicBool::new(false);
 
 /// 与上层 `wateros-driver` 聚合入口的引导约定一致：仅保存 `dtb_pa`。
 pub fn init_when_boot(dtb_pa: usize) {
@@ -228,21 +229,23 @@ pub fn scan_device_info() -> DriverResult<usize> {
     Ok(devices.len())
 }
 
-/// 指向全局设备信息表的静态互斥锁；调用方自行加锁与生命周期约束。
-pub fn device_infos() -> &'static Mutex<Vec<DeviceInfo>> {
-    &DEVICE_INFOS
+/// 在关锁临界区内只读访问设备信息快照。
+pub fn with_device_infos<R>(f: impl FnOnce(&[DeviceInfo]) -> R) -> R {
+    let infos = DEVICE_INFOS.lock();
+    f(infos.as_slice())
 }
 
 // 在已扫描的 `DEVICE_INFOS` 上尝试实例化 virtio-blk 与 virtio-net；失败或未声明的路径记入列表供 devfs 标注。
 fn probe_virtio_blk_and_collect_unsupported() -> Vec<String> {
-    let infos = DEVICE_INFOS.lock();
-    let mut blk = VIRTIO_BLK_MMIO.lock();
-    blk.clear();
-    let mut net = VIRTIO_NET_MMIO.lock();
-    net.clear();
-    let mut unsupported = Vec::new();
+    let infos_snapshot: Vec<DeviceInfo> = DEVICE_INFOS.lock().clone();
+    VIRTIO_BLK_MMIO.lock().clear();
+    VIRTIO_NET_MMIO.lock().clear();
 
-    for info in infos.iter() {
+    let mut unsupported = Vec::new();
+    let mut blk_regions = Vec::new();
+    let mut net_regions = Vec::new();
+
+    for info in infos_snapshot.iter() {
         if !is_virtio_mmio_compatible(&info.compatibles) {
             continue;
         }
@@ -276,7 +279,7 @@ fn probe_virtio_blk_and_collect_unsupported() -> Vec<String> {
                         }
                     };
                     let idx = register_block_device(shared);
-                    blk.push(mmio);
+                    blk_regions.push(mmio);
                     log::info!("[driver] registered virtio-blk #{}", idx);
                     log::info!(
                         "[driver] found virtio-blk: node={} base={:#x} size={:#x}",
@@ -299,7 +302,7 @@ fn probe_virtio_blk_and_collect_unsupported() -> Vec<String> {
                 Ok(dev) => {
                     let mac = dev.mac_address();
                     let idx = register_network_device(Arc::new(Mutex::new(Box::new(dev))));
-                    net.push(mmio);
+                    net_regions.push(mmio);
                     log::info!("[driver] registered virtio-net #{}", idx);
                     log::info!(
                         "[driver] found virtio-net: node={} mac={:02x?} base={:#x} size={:#x}",
@@ -322,6 +325,8 @@ fn probe_virtio_blk_and_collect_unsupported() -> Vec<String> {
             unsupported.push(path);
         }
     }
+    *VIRTIO_BLK_MMIO.lock() = blk_regions;
+    *VIRTIO_NET_MMIO.lock() = net_regions;
     unsupported
 }
 
@@ -336,27 +341,37 @@ fn register_uart_character_device(base: usize) -> usize {
 
 /// 绑定 DTB 中的 UART 字符设备；若无匹配则回退到 QEMU virt 默认 UART0。
 fn probe_character_devices() {
-    let infos = DEVICE_INFOS.lock();
-    for info in infos.iter() {
-        if !character_subsystem_claims_device(&info.compatibles, info.device_type) {
-            continue;
-        }
-        let Some(mmio) = info.mmio else {
-            log::warn!(
-                "[driver] dtb uart: node={} has no MMIO region",
-                info.node_name
-            );
-            continue;
-        };
-        let idx = register_uart_character_device(mmio.base);
+    let uart_bases: Vec<usize> = {
+        let infos = DEVICE_INFOS.lock();
+        infos
+            .iter()
+            .filter(|info| {
+                character_subsystem_claims_device(&info.compatibles, info.device_type)
+            })
+            .filter_map(|info| {
+                if let Some(mmio) = info.mmio {
+                    Some((mmio.base, info.node_name.clone()))
+                } else {
+                    log::warn!(
+                        "[driver] dtb uart: node={} has no MMIO region",
+                        info.node_name
+                    );
+                    None
+                }
+            })
+            .map(|(base, _)| base)
+            .collect()
+    };
+
+    for (idx, base) in uart_bases.iter().enumerate() {
+        let chr_idx = register_uart_character_device(*base);
         log::info!(
-            "[driver] registered character #{} (uart node={} base={:#x})",
-            idx,
-            info.node_name,
-            mmio.base
+            "[driver] registered character #{} (uart base={:#x}, dtb #{})",
+            chr_idx,
+            base,
+            idx
         );
     }
-    drop(infos);
 
     if character_device_count() == 0 {
         let idx = register_uart_character_device(QemuVirtUart16550::qemu_virt_default().base);
@@ -428,6 +443,21 @@ pub fn virtio_blk_probe_test() -> DriverResult<()> {
 
 /// DTB 扫描、virtio-blk / virtio-net 注册与 devfs 同步的完整 bring-up 路径；成功返回后设备表可能仍为空。
 pub fn init_after_boot() -> DriverResult<()> {
+    if INIT_AFTER_BOOT_DONE.swap(true, Ordering::AcqRel) {
+        log::warn!(
+            "[lock-audit][platform-probe] duplicate init_after_boot ignored \
+             (platform=riscv64-opensbi)"
+        );
+        return Ok(());
+    }
+    let result = init_after_boot_inner();
+    if result.is_err() {
+        INIT_AFTER_BOOT_DONE.store(false, Ordering::Release);
+    }
+    result
+}
+
+fn init_after_boot_inner() -> DriverResult<()> {
     for e in block::supported_devices() {
         log::info!(
             "[driver] supported-device catalog: subsystem={} name={} compatible={}",
@@ -483,17 +513,16 @@ pub fn init_after_boot() -> DriverResult<()> {
     Ok(())
 }
 
-/// 驱动自检：尝试完整 [`init_after_boot`] 路径并打印设备与 devfs 摘要；失败仅打日志不 panic。
+/// 驱动自检：只读检查已注册设备与 devfs；不重复 probe / 注册。
 pub fn test() {
     log::trace!("[driver-impl-qemu] test begin");
-    match init_after_boot() {
-        Ok(()) => {
-            dump_device_and_devfs_info();
-            let _ = virtio_blk_probe_test();
-        }
-        Err(e) => {
-            log::warn!("[driver-impl-qemu] init_after_boot failed: {:?}", e);
-        }
+    if !INIT_AFTER_BOOT_DONE.load(Ordering::Acquire) {
+        log::warn!(
+            "[driver-impl-qemu] test skipped: init_after_boot not completed"
+        );
+        return;
     }
+    dump_device_and_devfs_info();
+    let _ = virtio_blk_probe_test();
     log::trace!("[driver-impl-qemu] test end");
 }

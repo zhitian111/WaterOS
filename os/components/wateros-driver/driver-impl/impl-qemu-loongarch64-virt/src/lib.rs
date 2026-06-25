@@ -2,7 +2,7 @@
 extern crate alloc;
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use api_v0::{DriverError, DriverResult};
 use block::{
@@ -23,6 +23,7 @@ static DTB_BASE_ADDR: AtomicUsize = AtomicUsize::new(0);
 static VIRTIO_BLK_PCI: Mutex<Vec<VirtioPciProbeInfo>> = Mutex::new(Vec::new());
 /// 成功注册为 virtio-net 的 PCI 设备列表。
 static VIRTIO_NET_PCI: Mutex<Vec<VirtioNetPciProbeInfo>> = Mutex::new(Vec::new());
+static INIT_AFTER_BOOT_DONE: AtomicBool = AtomicBool::new(false);
 
 pub fn init_when_boot(dtb_pa: usize) {
     DTB_BASE_ADDR.store(dtb_pa, Ordering::Release);
@@ -81,6 +82,22 @@ fn read_fdt() -> DriverResult<fdt::Fdt<'static>> {
 
 /// 扫描 PCIe ECAM 总线寻找 virtio-blk 设备并注册。
 pub fn init_after_boot() -> DriverResult<()> {
+    if INIT_AFTER_BOOT_DONE.swap(true, Ordering::AcqRel) {
+        log::warn!(
+            "[lock-audit][platform-probe] duplicate init_after_boot ignored \
+             (platform=loongarch64-virt)"
+        );
+        return Ok(());
+    }
+
+    let result = init_after_boot_inner();
+    if result.is_err() {
+        INIT_AFTER_BOOT_DONE.store(false, Ordering::Release);
+    }
+    result
+}
+
+fn init_after_boot_inner() -> DriverResult<()> {
     for e in block::supported_devices() {
         log::info!(
             "[driver-la] supported-device catalog: subsystem={} name={} compatible={}",
@@ -228,19 +245,13 @@ pub fn virtio_blk_probe_test() -> DriverResult<()> {
     Ok(())
 }
 
-/// 驱动自检：尝试完整 init_after_boot 路径。
+/// 驱动自检：只读块 0 自检；不重复 probe / 注册。
 pub fn test() {
     log::trace!("[driver-la] test begin");
-    match init_after_boot() {
-        Ok(()) => {
-            let _ = virtio_blk_probe_test();
-        }
-        Err(e) => {
-            log::warn!(
-                "[driver-la] init_after_boot failed: {:?}",
-                e
-            );
-        }
+    if !INIT_AFTER_BOOT_DONE.load(Ordering::Acquire) {
+        log::warn!("[driver-la] test skipped: init_after_boot not completed");
+        return;
     }
+    let _ = virtio_blk_probe_test();
     log::trace!("[driver-la] test end");
 }

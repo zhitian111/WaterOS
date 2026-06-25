@@ -10,14 +10,14 @@
 
 | 级别 | ID | 结构 | 问题 | 状态 |
 |------|-----|------|------|------|
-| **P0** | **FD-01** / R-PT-01 | `PerTaskFdRegistry` | `with_current_io` take-restore 使 fd 槽在 I/O 窗口为空；`CLONE_FILES` 共享表（`ref_counts > 1`）下 sibling 线程可 dup/close/alloc 同一槽 → restore 失败、`BadFd`、双 close | **暂缓**（见 `lock-issues.md` §9） |
+| **P0** | **FD-01** / R-PT-01 | `PerTaskFdRegistry` | `with_current_io` take-restore 使 fd 槽在 I/O 窗口为空；`CLONE_FILES` 共享表（`ref_counts > 1`）下 sibling 线程可 dup/close/alloc 同一槽 → restore 失败、`BadFd`、双 close | **已修复** |
 | **P0** | R-PT-02 | `PerTaskFdRegistry` | `close_slot` 持 `RefMut` 调用 `handle.close()`（pipe2/socketpair 回滚、`dup3` 覆盖）→ 嵌套 FS 锁 + 延长 fd 表不可用窗口 | **未修复** |
 | **P0** | R-PT-03 | `PerTaskFdRegistry` | `copy_fd_table_from_parent` / `flush_all` 持借执行 `duplicate()`/`flush()` → fork/sync 长临界区 + FS 锁交叉 | **未修复** |
 | **P0** | R-PT-11 | 三表 | **无 `InterruptGuard`**：`exclusive_access` 可被定时器抢占打断；另一任务再借同一 cell → `RefCell already borrowed` panic（RC-2 延伸） | **未修复** |
 | **P1** | R-PT-04 | `PerTaskFdRegistry` | `check_nofile_before_open` 持 fd 借调用 `nofile_rlimit_for_task` → `ProcessRegistry`（`ProcessRegistryInterruptGuard`）嵌套 | **未修复** |
 | **P1** | R-PT-05 | `PerTaskCredRegistry` | `cred_or_panic` / `current_credentials()` 无侧表条目 → `panic!` | **未修复** |
 | **P1** | R-PT-07 | 三表 | 无文档化全局锁顺序；新 syscall 易引入 A→B / B→A | **未修复** |
-| **P1** | R-PT-12 | clone 路径 | 线程 clone 路径**忽略** `CLONE_FILES`/`CLONE_FS` flag，恒 `share_*`（语义偏差，加剧 FD-01 暴露面） | **未修复** |
+| **P1** | R-PT-12 | clone 路径 | 线程 clone 路径**忽略** `CLONE_FILES`/`CLONE_FS` flag，恒 `share_*`（语义偏差，加剧 FD-01 暴露面） | **已修复** |
 | **P2** | R-PT-06 | `PerTaskFdRegistry` | `registry.close_cloexec_fds_for_task` 持借 close（死代码）；`fd.rs` 已有 take 后释借的安全包装 | **未修复** |
 | **P3** | R-PT-08 | `PerTaskCwdRegistry` | `chdir`/`set_task_cwd` FS 校验与写入非原子（TOCTOU，非锁 bug） | 已知限制 |
 | **P3** | R-PT-09 | `PerTaskCredRegistry` | `AccessCheck` 恒 true（权限未生效，非锁 bug） | 已知限制 |
