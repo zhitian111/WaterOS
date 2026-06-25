@@ -89,6 +89,13 @@ pub fn chown_absolute(path: &str, uid: Option<u32>, gid: Option<u32>) -> VfsResu
     impl_fs_bridge::chown_path(abs.as_str(), uid, gid)
 }
 
+/// 在已解析绝对路径创建目录（`impl-fd-session` + `bridge-fs-api`）。
+#[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
+pub fn mkdir_absolute(path: &str, mode: u32) -> VfsResult<()> {
+    let abs = normalize_absolute_path(path)?;
+    impl_fs_bridge::mkdir_path(abs.as_str(), mode)
+}
+
 /// 删除已解析的绝对路径（`impl-fd-session` + `bridge-fs-api`）。
 #[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
 pub fn unlink_absolute(path: &str, remove_dir: bool) -> VfsResult<()> {
@@ -114,6 +121,18 @@ pub fn mount_ext4_block_at(mount_point: &str, block_dev: &str, readonly: bool) -
 #[cfg(feature = "bridge-fs-api")]
 pub fn mount_tmpfs_at(mount_point: &str) -> VfsResult<()> {
     impl_fs_bridge::mount_tmpfs_at(mount_point)
+}
+
+/// 挂载 cgroup v1/v2 到 `mount_point`。
+#[cfg(feature = "bridge-fs-api")]
+pub fn mount_cgroup_at(mount_point: &str, v2: bool, options: &str) -> VfsResult<()> {
+    impl_fs_bridge::mount_cgroup_at(mount_point, v2, options)
+}
+
+/// 查询路径所在辅助卷的 `statfs` 文件系统 magic。
+#[cfg(feature = "bridge-fs-api")]
+pub fn mount_statfs_magic(path: &str) -> Option<isize> {
+    impl_fs_bridge::mount_statfs_magic(path)
 }
 
 /// 将 `mount_point` 上已挂载的辅助卷重载为只读。

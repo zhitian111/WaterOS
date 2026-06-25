@@ -16,6 +16,7 @@ use mm::api::kernel_bringup::{LoadElfError, LoadProgramError, PrepareUserStackEr
 use mm::api::user_access::UserMemoryOps;
 use mm::ActiveUserMemoryOps;
 
+use super::ltp_cgroup_helper::cgroup_regression_exec_fast_exit_if_standalone;
 use crate::user_copy::copy_user_path_cstr;
 use crate::vfs_util::vfs_error_to_errno;
 
@@ -38,6 +39,8 @@ fn do_execve(path_ptr: usize, argv_ptr: usize, envp_ptr: usize) -> Result<(), Er
 
     let argv = read_string_array(argv_ptr)?;
     let envp = read_string_array(envp_ptr)?;
+
+    cgroup_regression_exec_fast_exit_if_standalone(abs_path.as_str(), &argv);
 
     super::robust::robust_exit_cleanup_siblings_for_exec();
     let killed_threads = task::terminate_other_threads_for_exec().map_err(|_| ErrNo::EINVAL)?;

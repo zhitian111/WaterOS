@@ -22,7 +22,7 @@ use api_v0::{
 use impl_page_cache::{global_cache, PageCacheIo};
 use wateros_base_config::fs::{FileIoMode, FILE_IO_MODE};
 
-use crate::{map_fs_err, root_rw, FsBridge};
+use crate::{map_fs_err, mount_table::{resolve_route, FsRoute}, root_rw, FsBridge};
 
 /// 页缓存 miss / flush 时下探根卷的 I/O 委托；ext4 锁在每次 `read_range`/`write_range` 内按需短持。
 pub(crate) struct FsPageIo;
@@ -35,22 +35,30 @@ impl PageCacheIo for FsPageIo {
     }
 
     fn write_range(&mut self, path : &str, offset : u64, data : &[u8]) -> Result<usize, VfsError> {
-        let n = normalize_absolute_path(path)?;
-        let rw = root_rw()?;
-        let mut done = 0usize;
-        while done < data.len() {
-            let written = rw.lock()
-                            .write_range(n.as_str(),
-                                         offset + done as u64,
-                                         &data[done..])
-                            .map_err(map_fs_err)?;
-            if written == 0 {
-                return Err(VfsError::Io);
+        match resolve_route(path)? {
+            FsRoute::Root { abs, .. } => {
+                let n = normalize_absolute_path(abs.as_str())?;
+                let rw = root_rw()?;
+                let mut done = 0usize;
+                while done < data.len() {
+                    let written = rw.lock()
+                                    .write_range(n.as_str(),
+                                                 offset + done as u64,
+                                                 &data[done..])
+                                    .map_err(map_fs_err)?;
+                    if written == 0 {
+                        return Err(VfsError::Io);
+                    }
+                    done = done.checked_add(written)
+                               .ok_or(VfsError::Io)?;
+                }
+                Ok(done)
             }
-            done = done.checked_add(written)
-                       .ok_or(VfsError::Io)?;
+            FsRoute::AuxRw { fs, rel, .. } => fs.lock()
+                                                .write_range(rel.as_str(), offset, data)
+                                                .map_err(map_fs_err),
+            FsRoute::AuxRo { .. } | FsRoute::PseudoProc { .. } => Err(VfsError::ReadOnlyFs),
         }
-        Ok(done)
     }
 }
 

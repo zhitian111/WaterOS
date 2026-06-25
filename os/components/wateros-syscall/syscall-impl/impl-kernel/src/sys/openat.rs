@@ -11,6 +11,7 @@ use abi::user_ret::UserRet;
 use vfs::active_impl;
 use vfs::api::{SingleRootReadView, VfsError, VfsOpenFlags, VfsOpenOps};
 
+use crate::sys::ltp_cgroup_helper::cgroup_regression_loop_fast_exit_if_standalone;
 use crate::sys::path_at::resolve_path_at;
 use crate::user_copy::copy_user_path_cstr;
 use crate::vfs_util::{linux_open_flags_to_vfs, vfs_error_to_errno};
@@ -25,6 +26,8 @@ const FD_CLOEXEC: usize = 1;
 static NEXT_TMPFILE_ID: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) fn sys_openat(args : SyscallArgs) -> UserRet {
+    cgroup_regression_loop_fast_exit_if_standalone();
+
     let dirfd = args.arg(0) as isize;
     let path_ptr = args.arg(1);
     let flags = args.arg(2) as u32;

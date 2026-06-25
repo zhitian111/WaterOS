@@ -375,9 +375,29 @@ pub fn mount_ext4_block_at(mount_point : &str, block_dev : &str, readonly : bool
     }
 }
 
+/// 挂载点须为已存在目录（支持 tmpfs 等辅助卷下的路径）。
+pub(crate) fn assert_mount_point_directory(path: &str) -> VfsResult<()> {
+    let bridge = FsBridge;
+    let meta = bridge.metadata(path)?;
+    if meta.node_type != VfsNodeType::Directory {
+        return Err(VfsError::NotAFile);
+    }
+    Ok(())
+}
+
 /// 挂载内存 tmpfs 到 `mount_point`。
 pub fn mount_tmpfs_at(mount_point : &str) -> VfsResult<()> {
     mount_table::mount_tmpfs_at(mount_point)
+}
+
+/// 挂载 cgroup v1/v2 到 `mount_point`。
+pub fn mount_cgroup_at(mount_point : &str, v2 : bool, options : &str) -> VfsResult<()> {
+    mount_table::mount_cgroup_at(mount_point, v2, options)
+}
+
+/// 查询路径所在辅助卷的 `statfs` 文件系统 magic。
+pub fn mount_statfs_magic(path : &str) -> Option<isize> {
+    mount_table::mount_statfs_magic(path)
 }
 
 /// 将 `mount_point` 上已挂载的辅助卷重载为只读。

@@ -129,6 +129,28 @@ impl AuxMount {
     }
 }
 
+fn seed_cgroup_layout(tmp: &mut super::tmpfs::TmpFs, v2: bool) -> VfsResult<()> {
+    use fs::ReadWriteFs;
+    let map = |e: fs::FsError| -> VfsError {
+        super::map_fs_err(e)
+    };
+    if v2 {
+        tmp.write_regular_file("/cgroup.procs", b"").map_err(map)?;
+        tmp.write_regular_file("/cgroup.subtree_control", b"").map_err(map)?;
+        tmp.write_regular_file(
+            "/cgroup.controllers",
+            b"memory cpu cpuset io pids freezer\n",
+        )
+        .map_err(map)?;
+        tmp.write_regular_file("/cgroup.type", b"domain\n").map_err(map)?;
+    } else {
+        tmp.write_regular_file("/tasks", b"").map_err(map)?;
+        tmp.write_regular_file("/cgroup.procs", b"").map_err(map)?;
+        tmp.write_regular_file("/notify_on_release", b"0\n").map_err(map)?;
+    }
+    Ok(())
+}
+
 fn mount_aux_common(
     mount_point: &str,
     fs: AuxMount,
@@ -146,7 +168,10 @@ fn mount_aux_common(
             return Err(VfsError::Exists);
         }
     }
-    let _ = super::FsBridge::read_dir_on_root(mp.as_str())?;
+    match super::assert_mount_point_directory(mp.as_str()) {
+        Ok(()) => {}
+        Err(e) => return Err(e),
+    }
     AUX_MOUNTS.lock().push(MountEntry {
         mount_point: mp,
         fs,
@@ -200,6 +225,42 @@ pub(crate) fn mount_aux_at_ro(mount_point: &str, fs: SharedFs, device_key: &str)
 pub(crate) fn mount_tmpfs_at(mount_point: &str) -> VfsResult<()> {
     let fs: SharedRwFs = Arc::new(Mutex::new(LocalRwFs::new(Box::new(super::tmpfs::TmpFs::new()))));
     mount_aux_common(mount_point, AuxMount::Rw(fs), "tmpfs", "tmpfs", false)
+}
+
+/// 挂载 cgroup v1/v2 伪层级（tmpfs 承载标准 cgroup 接口文件）。
+pub(crate) fn mount_cgroup_at(mount_point: &str, v2: bool, _options: &str) -> VfsResult<()> {
+    let mut tmp = super::tmpfs::TmpFs::new();
+    seed_cgroup_layout(&mut tmp, v2)?;
+    let fs: SharedRwFs = Arc::new(Mutex::new(LocalRwFs::new(Box::new(tmp))));
+    let fstype = if v2 { "cgroup2" } else { "cgroup" };
+    mount_aux_common(mount_point, AuxMount::Rw(fs), "cgroup", fstype, false)
+}
+
+/// 路径所在辅助卷的 `statfs` magic；无匹配时返回 `None`。
+pub fn mount_statfs_magic(abs: &str) -> Option<isize> {
+    let Ok(abs) = normalize_absolute_path(abs) else {
+        return None;
+    };
+    let abs = abs.as_str();
+    let table = AUX_MOUNTS.lock();
+    let mut best: Option<(usize, &'static str)> = None;
+    for ent in table.iter() {
+        let mp = ent.mount_point.as_str();
+        let matches = abs == mp || abs.starts_with(mp) && abs.as_bytes().get(mp.len()) == Some(&b'/');
+        if !matches {
+            continue;
+        }
+        if best.as_ref().map(|(len, _)| mp.len() > *len).unwrap_or(true) {
+            best = Some((mp.len(), ent.fstype));
+        }
+    }
+    best.map(|(_, fstype)| match fstype {
+        "tmpfs" => 0x0102_1994, // TMPFS_MAGIC
+        "cgroup" => 0x0027_e0eb,
+        "cgroup2" => 0x6367_7270,
+        "proc" => 0x9fa0,
+        _ => 0xEF53,
+    })
 }
 
 /// 将已挂载的辅助卷（tmpfs / ext4 bind）重载为只读。

@@ -41,7 +41,7 @@ pub use api_v0::{
     AddressSpaceHandle, AddressSpaceRef, CloneFlags, CwdRef, FileTableRef, KernelTaskEntry,
     ProcessDescriptor, ProcessId, ProcessState, ResourceHandle, ResourceLimit,
     SchedError, SchedParam, SchedPolicy, SetResourceLimitError, SignalHandlersRef,
-    TaskBlockReason, TaskClearTid, TaskExitCode, TaskGroupId, TaskSnapshot, TaskTick,
+    TaskBlockReason, TaskClearTid, TaskExitCode, TaskGroupId, TaskSnapshot, TaskState, TaskTick,
     TaskWaitResult, ProcessTaskDescriptor, ProcessTaskRole, ProcessTaskState, UserImageInfo,
     UserStack, UserTask, ThreadId, WaitQueueId,
 };

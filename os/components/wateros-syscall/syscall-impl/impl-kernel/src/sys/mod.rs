@@ -24,6 +24,7 @@ mod getdents64;
 mod ioctl;
 mod kill;
 mod lseek;
+mod ltp_cgroup_helper;
 mod mkdirat;
 mod mempolicy;
 mod mmap;

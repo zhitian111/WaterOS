@@ -39,7 +39,7 @@ impl BufferedFileHandle {
 
         let exists = bridge.exists(path.as_str())?;
         if !exists {
-            if !flags.contains(VfsOpenFlags::CREATE) {
+            if !flags.contains(VfsOpenFlags::CREATE) && !want_write {
                 return Err(VfsError::NotFound);
             }
             if !want_write {
@@ -257,10 +257,14 @@ impl FsBridge {
                             path : &str,
                             flags : VfsOpenFlags)
                             -> VfsResult<Box<dyn VfsIoHandle>> {
-        let abs = api_v0::resolve_open_path(path)?;
+        let abs = if path.starts_with('/') {
+            String::from(api_v0::normalize_absolute_path(path)?.as_str())
+        } else {
+            String::from(api_v0::resolve_open_path(path)?.as_str())
+        };
         match resolve_route(abs.as_str())? {
             FsRoute::PseudoProc { rel, identity } => {
-                return super::proc_handle::open_proc(rel, abs, flags, identity);
+                return super::proc_handle::open_proc(rel, abs.clone(), flags, identity);
             }
             _ => {}
         }
@@ -280,8 +284,16 @@ impl FsBridge {
                                                                                abs.as_str())));
         }
         if flags.contains(VfsOpenFlags::DIRECTORY) {
-            return super::dir_handle::DirectoryHandle::open(self, abs.clone());
+            return super::dir_handle::DirectoryHandle::open(self, abs);
         }
-        super::paged_handle::open_file(self, abs, flags)
+        match resolve_route(abs.as_str())? {
+            FsRoute::AuxRw { readonly: true, .. } if flags.contains(VfsOpenFlags::WRITE) => {
+                Err(VfsError::ReadOnlyFs)
+            }
+            FsRoute::AuxRw { .. } | FsRoute::AuxRo { .. } => {
+                Ok(Box::new(BufferedFileHandle::open(self, abs, flags)?))
+            }
+            _ => super::paged_handle::open_file(self, abs, flags),
+        }
     }
 }

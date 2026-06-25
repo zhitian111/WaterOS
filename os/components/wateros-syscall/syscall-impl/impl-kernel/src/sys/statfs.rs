@@ -58,8 +58,10 @@ pub(crate) fn sys_statfs(args: SyscallArgs) -> UserRet {
         Err(e) => return UserRet::from_error(vfs_error_to_errno(e)),
     }
 
+    let f_type = vfs::mount_statfs_magic(resolved.as_str()).unwrap_or(EXT4_SUPER_MAGIC);
+
     let statfs = LinuxStatFs {
-        f_type: EXT4_SUPER_MAGIC,
+        f_type,
         f_bsize: STATFS_BLOCK_SIZE,
         f_blocks: STATFS_TOTAL_BLOCKS,
         f_bfree: STATFS_FREE_BLOCKS,
