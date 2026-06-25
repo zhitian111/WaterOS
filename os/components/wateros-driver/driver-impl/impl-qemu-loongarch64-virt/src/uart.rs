@@ -131,7 +131,7 @@ where
 {
     let mut uart = {
         let guard = UART_GLOBAL.lock();
-        (*guard.as_ref()?)?
+        *guard.as_ref()?
     };
     Some(f(&mut uart))
 }
