@@ -4,7 +4,8 @@ use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 
 use crate::poll_engine::{
-    PollDeadline, do_poll_with_deadline, do_pselect_with_deadline, validate_sigmask,
+    install_poll_sigmask, PollDeadline, do_poll_with_deadline, do_pselect_with_deadline,
+    validate_sigmask,
 };
 
 pub(crate) fn sys_ppoll(args: SyscallArgs) -> UserRet {
@@ -14,10 +15,10 @@ pub(crate) fn sys_ppoll(args: SyscallArgs) -> UserRet {
     let sigmask_ptr = args.arg(3);
     let sigsetsize = args.arg(4);
 
-    if let Err(e) = validate_sigmask(sigmask_ptr, sigsetsize) {
-        return UserRet::from_error(e);
-    }
-    let _ = sigmask_ptr;
+    let _sigmask_guard = match install_poll_sigmask(sigmask_ptr, sigsetsize) {
+        Ok(guard) => guard,
+        Err(e) => return UserRet::from_error(e),
+    };
 
     let deadline = match PollDeadline::from_timespec_ptr(timeout_ptr) {
         Ok(d) => d,
@@ -34,9 +35,11 @@ pub(crate) fn sys_pselect6(args: SyscallArgs) -> UserRet {
     let timeout_ptr = args.arg(4);
     let sigmask_ptr = args.arg(5);
     const RT_SIGSET_SIZE: usize = 8;
-    if let Err(e) = validate_sigmask(sigmask_ptr, RT_SIGSET_SIZE) {
-        return UserRet::from_error(e);
-    }
+
+    let _sigmask_guard = match install_poll_sigmask(sigmask_ptr, RT_SIGSET_SIZE) {
+        Ok(guard) => guard,
+        Err(e) => return UserRet::from_error(e),
+    };
 
     let deadline = match PollDeadline::from_timespec_ptr(timeout_ptr) {
         Ok(d) => d,

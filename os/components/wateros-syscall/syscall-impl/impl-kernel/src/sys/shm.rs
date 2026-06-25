@@ -42,13 +42,19 @@ pub(crate) fn sys_shmat(args: SyscallArgs) -> UserRet {
     let shmflg = args.arg(2);
     let readonly = shmflg & SHM_RDONLY != 0;
 
-    let segment = match ipc::shm::registry().lock().segment_info(shmid) {
-        Ok(info) => info,
-        Err(error) => return UserRet::from_error(shm_error_to_errno(error)),
+    let segment = {
+        let mut reg = ipc::shm::registry().lock();
+        match reg.begin_attach(shmid) {
+            Ok(info) => info,
+            Err(error) => return UserRet::from_error(shm_error_to_errno(error)),
+        }
     };
     let base = match reserve_attach_va(handle, shmaddr, shmflg, segment.size, readonly) {
         Ok(base) => base,
-        Err(error) => return UserRet::from_error(error),
+        Err(error) => {
+            ipc::shm::registry().lock().cancel_attach_reservation(shmid);
+            return UserRet::from_error(error);
+        }
     };
     let info = ShmAttachInfo {
         shmid,
@@ -59,13 +65,18 @@ pub(crate) fn sys_shmat(args: SyscallArgs) -> UserRet {
     };
     if let Err(error) = replace_range_with_shared(handle, &info, true) {
         let _ = unmap_range_dealloc(handle, base, info.size);
+        ipc::shm::registry().lock().cancel_attach_reservation(shmid);
         return UserRet::from_error(error);
     }
 
-    match ipc::shm::registry().lock().attach(shmid, task_id(), base, readonly) {
+    match ipc::shm::registry()
+        .lock()
+        .finish_attach(shmid, task_id(), base, readonly)
+    {
         Ok(_) => UserRet::from_success(base),
         Err(error) => {
             let _ = unmap_shared_range(handle, &info);
+            ipc::shm::registry().lock().cancel_attach_reservation(shmid);
             UserRet::from_error(shm_error_to_errno(error))
         }
     }

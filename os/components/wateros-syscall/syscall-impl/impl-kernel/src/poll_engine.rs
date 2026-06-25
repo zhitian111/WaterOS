@@ -5,6 +5,7 @@ extern crate alloc;
 use abi::errno::ErrNo;
 use abi::user_ret::UserRet;
 use driver::network::stack;
+use ipc::signal::SignalSet;
 use task::TaskTick;
 use wateros_base_config::task::SCHED_TIMER_PERIOD_MS;
 
@@ -374,6 +375,40 @@ pub(crate) fn validate_sigmask(sigmask_ptr: usize, sigsetsize: usize) -> Result<
         return Err(ErrNo::EINVAL);
     }
     Ok(())
+}
+
+/// `ppoll` / `pselect6` 期间临时替换线程信号掩码；`Drop` 时恢复。
+pub(crate) struct PollSigmaskGuard {
+    task_id: usize,
+    active: bool,
+}
+
+impl Drop for PollSigmaskGuard {
+    fn drop(&mut self) {
+        if self.active {
+            let _ = ipc::signal::with_registry(|registry| registry.end_poll_sigmask(self.task_id));
+        }
+    }
+}
+
+pub(crate) fn install_poll_sigmask(
+    sigmask_ptr: usize,
+    sigsetsize: usize,
+) -> Result<Option<PollSigmaskGuard>, ErrNo> {
+    if sigmask_ptr == 0 {
+        return Ok(None);
+    }
+    validate_sigmask(sigmask_ptr, sigsetsize)?;
+    let bits = copy_from_user_struct::<u64>(sigmask_ptr)?;
+    let task_id = task::current_task_id().ok_or(ErrNo::ESRCH)?;
+    ipc::signal::with_registry(|registry| {
+        registry.begin_poll_sigmask(task_id, SignalSet::from_bits(bits))
+    })
+    .map_err(|_| ErrNo::EINVAL)?;
+    Ok(Some(PollSigmaskGuard {
+        task_id,
+        active: true,
+    }))
 }
 
 pub(crate) fn fd_set_get(set: &FdSet, fd: usize) -> bool {

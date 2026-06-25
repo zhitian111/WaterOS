@@ -13,9 +13,9 @@ use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use cred::api::ProcessCredentials;
 use vfs::active_impl;
-use vfs::api::{resolve_against_cwd, SingleRootReadView, VfsError, VfsNodeType};
+use vfs::api::{SingleRootReadView, VfsError, VfsNodeType};
 
-use crate::sys::path_at::resolve_path_at;
+use crate::sys::path_at::{resolve_final_symlink, resolve_path_at};
 use crate::user_copy::copy_user_path_cstr;
 use crate::vfs_util::vfs_error_to_errno;
 
@@ -114,24 +114,6 @@ fn do_faccessat(dirfd: isize, path_ptr: usize, mode: u32, flags: u32) -> UserRet
     } else {
         UserRet::from_error(ErrNo::EACCES)
     }
-}
-
-fn resolve_final_symlink(path: &str) -> Result<String, ErrNo> {
-    let mut current = String::from(path);
-    for _ in 0..40 {
-        let target = match vfs::read_symlink_absolute(current.as_str()) {
-            Ok(target) => target,
-            Err(VfsError::NotAFile) => return Ok(current),
-            Err(e) => return Err(vfs_error_to_errno(e)),
-        };
-        let target = core::str::from_utf8(target.as_slice()).map_err(|_| ErrNo::EINVAL)?;
-        let parent = current
-            .rsplit_once('/')
-            .map(|(parent, _)| if parent.is_empty() { "/" } else { parent })
-            .unwrap_or("/");
-        current = resolve_against_cwd(parent, Some(target)).map_err(vfs_error_to_errno)?;
-    }
-    Err(ErrNo::ELOOP)
 }
 
 fn access_mode_allowed(

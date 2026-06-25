@@ -12,6 +12,7 @@ use abi::syscall_number::ActiveSyscallNumberTable;
 mod linux_stat;
 mod mm_util;
 mod poll_engine;
+mod socket_block;
 mod socket_fd;
 mod sys;
 mod unix_sock;

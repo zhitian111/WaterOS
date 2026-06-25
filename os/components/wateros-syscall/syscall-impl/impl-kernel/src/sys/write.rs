@@ -11,11 +11,11 @@ use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use driver::network::stack;
 
+use crate::socket_block::socket_blocking_tick;
 use crate::socket_fd;
 use crate::user_copy::{copy_from_user, copy_from_user_struct};
 use crate::vfs_util::vfs_error_to_errno;
 
-const SOCKET_WRITE_WAIT_TICKS : usize = 128;
 const TCP_BULK_WRITE_YIELD_THRESHOLD : usize = 16 * 1024;
 const UDP_SMALL_WRITE_YIELD_THRESHOLD : usize = 64;
 const UDP_BULK_WRITE_YIELD_INTERVAL : usize = 128;
@@ -146,7 +146,8 @@ fn write_fd(fd : usize, buf : &[u8]) -> Result<usize, ErrNo> {
 
 fn write_tcp_socket_blocking(fd : usize, buf : &[u8]) -> Result<usize, ErrNo> {
     let nonblocking = socket_fd::is_nonblocking(fd);
-    for _ in 0..SOCKET_WRITE_WAIT_TICKS {
+    let task_id = task::current_task_id().unwrap_or(0);
+    loop {
         let socket = socket_fd::lookup(fd).ok_or(ErrNo::ENOTSOCK)?;
         let handle = socket.handle();
         drive_network_stack();
@@ -174,17 +175,14 @@ fn write_tcp_socket_blocking(fd : usize, buf : &[u8]) -> Result<usize, ErrNo> {
         if !connected {
             return Err(ErrNo::EPIPE);
         }
-        if nonblocking {
-            return Err(ErrNo::EAGAIN);
-        }
-        task::sleep_for_ticks(1);
+        socket_blocking_tick(nonblocking, task_id)?;
     }
-    Err(ErrNo::EAGAIN)
 }
 
 fn write_udp_socket_blocking(fd : usize, buf : &[u8]) -> Result<usize, ErrNo> {
     let nonblocking = socket_fd::is_nonblocking(fd);
-    for _ in 0..SOCKET_WRITE_WAIT_TICKS {
+    let task_id = task::current_task_id().unwrap_or(0);
+    loop {
         let socket = socket_fd::lookup(fd).ok_or(ErrNo::ENOTSOCK)?;
         drive_network_stack();
         match stack::socket_send(socket.handle(), buf) {
@@ -200,15 +198,9 @@ fn write_udp_socket_blocking(fd : usize, buf : &[u8]) -> Result<usize, ErrNo> {
                 }
                 return Ok(n);
             }
-            Err(_) => {
-                if nonblocking {
-                    return Err(ErrNo::EAGAIN);
-                }
-                task::sleep_for_ticks(1);
-            }
+            Err(_) => socket_blocking_tick(nonblocking, task_id)?,
         }
     }
-    Err(ErrNo::EAGAIN)
 }
 
 fn drive_network_stack() {

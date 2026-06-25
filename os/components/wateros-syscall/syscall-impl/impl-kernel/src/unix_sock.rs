@@ -16,6 +16,7 @@ use vfs::api::handle::VfsIoHandle;
 use vfs::api::{SingleRootReadView, VfsError, VfsMetadata, VfsNodeType, VfsResult};
 use vfs::UnixStreamPairEnd;
 
+use crate::socket_block::socket_blocking_tick;
 use crate::user_copy::{copy_from_user, copy_to_user, copy_to_user_struct};
 use crate::vfs_util::vfs_error_to_errno;
 
@@ -106,7 +107,15 @@ pub(crate) fn copy_fds_from_parent(child: usize, parent: usize) {
 }
 
 pub(crate) fn drop_task(task_id: usize) {
-    FD_TABLE.lock().retain(|(owner, _), _| *owner != task_id);
+    let fds: Vec<usize> = FD_TABLE
+        .lock()
+        .keys()
+        .filter(|(owner, _)| *owner == task_id)
+        .map(|(_, fd)| *fd)
+        .collect();
+    for fd in fds {
+        unregister(task_id, fd);
+    }
 }
 
 pub(crate) fn alloc_unix_socket(
@@ -172,19 +181,22 @@ struct UnixAddr {
 pub(crate) fn bind(fd: usize, addr_ptr: usize, addrlen: usize) -> Result<(), ErrNo> {
     let addr = parse_sockaddr_un(addr_ptr, addrlen)?;
     let sock = lookup_current(fd)?;
-    let mut inner = sock.inner.lock();
-    if inner.bound_key.is_some() {
-        return Err(ErrNo::EINVAL);
-    }
-    let mut bound = BOUND.lock();
-    if bound.contains_key(&addr.key) {
-        return Err(ErrNo::EADDRINUSE);
+    {
+        let inner = sock.inner.lock();
+        if inner.bound_key.is_some() {
+            return Err(ErrNo::EINVAL);
+        }
     }
     if !addr.abstract_ns {
         validate_pathname_bind(&addr.key)?;
         if !addr.key.is_empty() {
             install_pathname_socket(&addr.key)?;
         }
+    }
+    let mut inner = sock.inner.lock();
+    let mut bound = BOUND.lock();
+    if bound.contains_key(&addr.key) {
+        return Err(ErrNo::EADDRINUSE);
     }
     bound.insert(
         addr.key.clone(),
@@ -307,7 +319,8 @@ pub(crate) fn accept(fd: usize) -> Result<(Box<dyn VfsIoHandle>, UnixSockRef), E
         if nonblocking {
             return Err(ErrNo::EAGAIN);
         }
-        task::sleep_for_ticks(1);
+        let task_id = task::current_task_id().unwrap_or(0);
+        socket_blocking_tick(false, task_id)?;
     }
 }
 

@@ -267,6 +267,7 @@ fn do_clone_thread(clone_flags : task::CloneFlags,
     vfs::cwd::share_cwd_from_parent(child_id, parent_id);
     vfs::fd::share_fd_table_from_parent(child_id, parent_id);
     crate::socket_fd::share_from_parent(child_id, parent_id);
+    crate::unix_sock::copy_fds_from_parent(child_id, parent_id);
     cred::share_cred(parent_id, child_id);
 
     super::bringup_stats::record_clone_thread();

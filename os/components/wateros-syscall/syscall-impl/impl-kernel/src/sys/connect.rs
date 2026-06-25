@@ -5,10 +5,9 @@ use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use driver::network::stack;
 
+use crate::socket_block::socket_blocking_tick;
 use crate::socket_fd;
 use crate::user_copy::copy_from_user_struct;
-
-const CONNECT_WAIT_TICKS: usize = 256;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -71,18 +70,18 @@ pub(crate) fn sys_connect(args: SyscallArgs) -> UserRet {
 }
 
 fn wait_connected(handle: smoltcp::iface::SocketHandle) -> UserRet {
-    for _ in 0..CONNECT_WAIT_TICKS {
+    let task_id = task::current_task_id().unwrap_or(0);
+    loop {
         drive_network_stack();
-        // socket_is_connected 使用 is_active() 在 SynSent 即返回 true，
-        // 必须同时检查 may_send 确认握手已完成（Established 状态）。
         if stack::socket_is_connected(handle).unwrap_or(false)
             && stack::socket_may_send(handle).unwrap_or(false)
         {
             return UserRet::from_success(0);
         }
-        task::sleep_for_ticks(1);
+        if let Err(errno) = socket_blocking_tick(false, task_id) {
+            return UserRet::from_error(errno);
+        }
     }
-    UserRet::from_error(ErrNo::ETIMEDOUT)
 }
 
 fn drive_network_stack() {

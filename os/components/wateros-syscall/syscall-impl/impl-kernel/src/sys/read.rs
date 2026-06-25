@@ -8,14 +8,13 @@ use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use driver::network::stack;
-use wateros_base_config::task::SCHED_TIMER_PERIOD_MS;
 
+use crate::socket_block::socket_blocking_tick;
 use crate::socket_fd;
 use crate::user_copy::{copy_from_user_struct, copy_to_user};
 use crate::vfs_util::vfs_error_to_errno;
 
 const SMALL_READ_BUF_SIZE : usize = 256;
-const SOCKET_READ_WAIT_TICKS : usize = 4096;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -200,8 +199,8 @@ fn read_fd(fd : usize, buf : &mut [u8]) -> Result<usize, ErrNo> {
 
 fn read_tcp_socket_blocking(fd : usize, buf : &mut [u8]) -> Result<usize, ErrNo> {
     let nonblocking = socket_fd::is_nonblocking(fd);
-    let wait_ticks = socket_recv_wait_ticks(fd, SOCKET_READ_WAIT_TICKS);
-    for _ in 0..wait_ticks {
+    let task_id = task::current_task_id().unwrap_or(0);
+    loop {
         let socket = socket_fd::lookup(fd).ok_or(ErrNo::ENOTSOCK)?;
         let handle = socket.handle();
         drive_network_stack();
@@ -220,44 +219,21 @@ fn read_tcp_socket_blocking(fd : usize, buf : &mut [u8]) -> Result<usize, ErrNo>
         if matches!(state, Ok(stack::SocketState::Closed)) {
             return Ok(0);
         }
-        if nonblocking {
-            return Err(ErrNo::EAGAIN);
-        }
-        task::sleep_for_ticks(1);
+        socket_blocking_tick(nonblocking, task_id)?;
     }
-    Err(ErrNo::EAGAIN)
 }
 
 fn read_udp_socket_blocking(fd : usize, buf : &mut [u8]) -> Result<usize, ErrNo> {
     let nonblocking = socket_fd::is_nonblocking(fd);
-    let wait_ticks = socket_recv_wait_ticks(fd, SOCKET_READ_WAIT_TICKS);
-    for _ in 0..wait_ticks {
+    let task_id = task::current_task_id().unwrap_or(0);
+    loop {
         let socket = socket_fd::lookup(fd).ok_or(ErrNo::ENOTSOCK)?;
         let handle = socket.handle();
         drive_network_stack();
         if stack::socket_udp_can_recv(handle).unwrap_or(false) {
             return stack::socket_recv(handle, buf).map_err(|_| ErrNo::EIO);
         }
-        if nonblocking {
-            return Err(ErrNo::EAGAIN);
-        }
-        task::sleep_for_ticks(1);
-    }
-    Err(ErrNo::EAGAIN)
-}
-
-fn socket_recv_wait_ticks(fd : usize, default_ticks : usize) -> usize {
-    let Some(socket) = socket_fd::lookup(fd) else {
-        return default_ticks;
-    };
-    match stack::socket_recv_timeout_ms(socket.handle()) {
-        Ok(Some(ms)) => {
-            let tick_ms = (SCHED_TIMER_PERIOD_MS as u64).max(1);
-            let ticks = ms.saturating_add(tick_ms - 1) / tick_ms;
-            usize::try_from(ticks).unwrap_or(usize::MAX)
-                                  .max(1)
-        }
-        _ => default_ticks,
+        socket_blocking_tick(nonblocking, task_id)?;
     }
 }
 
