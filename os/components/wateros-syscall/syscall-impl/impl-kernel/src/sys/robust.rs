@@ -91,6 +91,11 @@ pub(crate) fn robust_exit_cleanup(task_id: TaskId) {
                     is_private: true,
                 };
                 let _ = hub.wake_all(key);
+                let alt = FutexKey {
+                    uaddr: futex_uaddr,
+                    is_private: false,
+                };
+                let _ = hub.wake_all(alt);
             }
         }
         entry = match read_user_list_next(entry) {

@@ -116,6 +116,19 @@ impl TaskTable {
             .and_then(|entry| entry.task.as_deref())
     }
 
+    fn cancel_pending_allocation(&mut self, task_id : TaskId) {
+        let slot = task_slot(task_id);
+        let generation = task_generation(task_id);
+        let Some(entry) = self.slots.get_mut(slot) else {
+            return;
+        };
+        if entry.generation != generation || entry.task.is_some() {
+            return;
+        }
+        entry.generation = entry.generation.saturating_add(1);
+        self.free_slots.push(slot);
+    }
+
     fn remove(&mut self, task_id : TaskId) -> Option<Box<TaskControlBlock>> {
         let slot = task_slot(task_id);
         let generation = task_generation(task_id);
@@ -204,10 +217,16 @@ impl TaskRegistry {
                     parent_id,
                     child_stack,
                     new_satp);
-        let child = parent.fork_from(child_id,
-                                     child_stack,
-                                     new_aspace_ptr,
-                                     new_satp)?;
+        let child = match parent.fork_from(child_id,
+                                           child_stack,
+                                           new_aspace_ptr,
+                                           new_satp) {
+            Some(child) => child,
+            None => {
+                self.task_table.cancel_pending_allocation(child_id);
+                return None;
+            }
+        };
         self.task_table
             .insert(Box::new(child));
         log::trace!("[fork] child={} created parent={}",
@@ -226,7 +245,13 @@ impl TaskRegistry {
         let child_id = self.task_table.allocate_id();
         let parent = self.task_table
                          .task(parent_id);
-        let child = parent.clone_thread_from(child_id, child_stack, tls, set_tls)?;
+        let child = match parent.clone_thread_from(child_id, child_stack, tls, set_tls) {
+            Some(child) => child,
+            None => {
+                self.task_table.cancel_pending_allocation(child_id);
+                return None;
+            }
+        };
         self.task_table
             .insert(Box::new(child));
         log::trace!("[clone-thread] child={} created parent={} child_stack={:#x} set_tls={}",
@@ -477,6 +502,13 @@ impl TaskRegistry {
         let task = self.task_table
                        .remove(task_id)?;
         task.exited_task()
+    }
+
+    /// 丢弃尚未运行或刚创建、尚未进入 Exited 状态的任务（fork/clone 失败回滚）。
+    pub fn discard_task(&mut self, task_id : TaskId) -> bool {
+        self.task_table
+            .remove(task_id)
+            .is_some()
     }
 
     pub fn begin_current_trap_frame_access(&mut self,

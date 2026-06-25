@@ -3,10 +3,14 @@
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
+use vfs::active_impl;
+use vfs::api::{SingleRootReadView, VfsError};
 
 use crate::sys::path_at::resolve_path_at;
 use crate::user_copy::copy_user_path_cstr;
 use crate::vfs_util::vfs_error_to_errno;
+
+const RENAME_NOREPLACE: u32 = 1;
 
 pub(crate) fn sys_renameat2(args: SyscallArgs) -> UserRet {
     let old_dirfd = args.arg(0) as isize;
@@ -15,7 +19,11 @@ pub(crate) fn sys_renameat2(args: SyscallArgs) -> UserRet {
     let new_path_ptr = args.arg(3);
     let flags = args.arg(4) as u32;
 
-    if flags != 0 {
+    if flags & !(RENAME_NOREPLACE) != 0 {
+        log::warn!(
+            "[syscall] renameat2(nr=276) unsupported flags={:#x}",
+            flags,
+        );
         return UserRet::from_error(ErrNo::EINVAL);
     }
 
@@ -37,6 +45,14 @@ pub(crate) fn sys_renameat2(args: SyscallArgs) -> UserRet {
     };
     if old_resolved == new_resolved {
         return UserRet::from_success(0);
+    }
+
+    if flags & RENAME_NOREPLACE != 0 {
+        match active_impl::backend().metadata(new_resolved.as_str()) {
+            Ok(_) => return UserRet::from_error(ErrNo::EEXIST),
+            Err(VfsError::NotFound) => {}
+            Err(e) => return UserRet::from_error(vfs_error_to_errno(e)),
+        }
     }
 
     match vfs::rename_absolute(old_resolved.as_str(), new_resolved.as_str()) {

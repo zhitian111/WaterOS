@@ -4,7 +4,10 @@ extern crate alloc;
 
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
+
+use spin::Mutex;
 
 use api_v0::{VfsError, VfsFdSession, VfsIoHandle, VfsResult, VFS_FIRST_DYNAMIC_FD,
     VFS_STDERR_FD, VFS_STDIN_FD, VFS_STDOUT_FD,
@@ -28,6 +31,10 @@ pub struct PerTaskFdRegistry {
     fd_flags: BTreeMap<task::TaskId, Vec<u8>>,
     owners: BTreeMap<task::TaskId, task::TaskId>,
     ref_counts: BTreeMap<task::TaskId, usize>,
+    /// 共享 fd 表：各槽位上正在进行的 `with_current_io` 会话数。
+    io_inflight: BTreeMap<task::TaskId, Vec<u32>>,
+    /// 共享 fd 表：按槽位串行化并发 I/O。
+    io_slot_locks: BTreeMap<task::TaskId, Vec<Arc<Mutex<()>>>>,
 }
 
 impl PerTaskFdRegistry {
@@ -37,6 +44,8 @@ impl PerTaskFdRegistry {
             fd_flags: BTreeMap::new(),
             owners: BTreeMap::new(),
             ref_counts: BTreeMap::new(),
+            io_inflight: BTreeMap::new(),
+            io_slot_locks: BTreeMap::new(),
         }
     }
 
@@ -62,6 +71,32 @@ impl PerTaskFdRegistry {
             .get(&task_id)
             .copied()
             .unwrap_or(task_id)
+    }
+
+    fn ensure_shared_io_state(&mut self, owner: task::TaskId) {
+        let len = self.tables.get(&owner).map(Vec::len).unwrap_or(0);
+        let inflight = self.io_inflight.entry(owner).or_insert_with(Vec::new);
+        if inflight.len() < len {
+            inflight.resize(len, 0);
+        }
+        let locks = self.io_slot_locks.entry(owner).or_insert_with(Vec::new);
+        while locks.len() < len {
+            locks.push(Arc::new(Mutex::new(())));
+        }
+    }
+
+    fn ensure_fd_not_io_busy(&self, owner: task::TaskId, fd: usize) -> VfsResult<()> {
+        if self
+            .io_inflight
+            .get(&owner)
+            .and_then(|counts| counts.get(fd))
+            .copied()
+            .unwrap_or(0)
+            > 0
+        {
+            return Err(VfsError::Busy);
+        }
+        Ok(())
     }
 
     fn table_mut(&mut self, task_id: task::TaskId) -> &mut Vec<Option<Box<dyn VfsIoHandle>>> {
@@ -105,6 +140,7 @@ impl PerTaskFdRegistry {
     ) -> VfsResult<Box<dyn VfsIoHandle>> {
         self.ensure_task(task_id);
         let owner = self.effective_owner(task_id);
+        self.ensure_fd_not_io_busy(owner, fd)?;
         let handle = self.tables.get_mut(&owner)
             .ok_or(VfsError::BadFd)?
             .get_mut(fd)
@@ -166,7 +202,10 @@ impl PerTaskFdRegistry {
     }
 
     fn close_table(&mut self, owner: task::TaskId) {
-        let _ = self.take_table_handles(owner);
+        let handles = self.take_table_handles(owner);
+        for mut handle in handles {
+            let _ = handle.close();
+        }
     }
 
     fn open_fd_count_for_task(&self, task_id: task::TaskId) -> usize {
@@ -278,6 +317,45 @@ impl PerTaskFdRegistry {
         self.ref_counts.get(&owner).copied().unwrap_or(0) > 1
     }
 
+    /// 共享 fd 表路径：登记 I/O 会话并返回句柄指针与槽位锁（句柄仍留在表中）。
+    pub fn begin_shared_io_for_task(
+        &mut self,
+        task_id: task::TaskId,
+        fd: usize,
+    ) -> VfsResult<(*mut dyn VfsIoHandle, Arc<Mutex<()>>)> {
+        self.ensure_task(task_id);
+        let owner = self.effective_owner(task_id);
+        self.ensure_shared_io_state(owner);
+        if self.tables.get(&owner).and_then(|t| t.get(fd)).and_then(|s| s.as_ref()).is_none() {
+            return Err(VfsError::BadFd);
+        }
+        let inflight = self.io_inflight.get_mut(&owner).expect("shared io inflight");
+        if fd >= inflight.len() {
+            return Err(VfsError::BadFd);
+        }
+        inflight[fd] = inflight[fd].saturating_add(1);
+        let handle_ptr = {
+            let table = self.tables.get_mut(&owner).expect("fd table owner");
+            let handle = table
+                .get_mut(fd)
+                .and_then(|slot| slot.as_mut())
+                .ok_or(VfsError::BadFd)?;
+            &mut **handle as *mut dyn VfsIoHandle
+        };
+        let slot_lock = self.io_slot_locks.get(&owner).expect("shared io locks")[fd].clone();
+        Ok((handle_ptr, slot_lock))
+    }
+
+    /// 结束共享 fd 表上的 I/O 会话。
+    pub fn end_shared_io_for_task(&mut self, task_id: task::TaskId, fd: usize) {
+        let owner = self.effective_owner(task_id);
+        if let Some(inflight) = self.io_inflight.get_mut(&owner) {
+            if fd < inflight.len() && inflight[fd] > 0 {
+                inflight[fd] -= 1;
+            }
+        }
+    }
+
     /// 临时取出指定 fd 的句柄，让调用方可在不持有 fd 注册表借用时执行 I/O。
     pub fn take_io_for_task(
         &mut self,
@@ -387,6 +465,7 @@ impl PerTaskFdRegistry {
                       .and_then(|slot| slot.as_ref())
                       .is_some()
         {
+            self.ensure_fd_not_io_busy(owner, newfd)?;
             self.close_slot(task_id, newfd)?;
         }
         {
@@ -504,6 +583,7 @@ impl PerTaskFdRegistry {
             self.drop_task_fd_table(child);
         }
         let owner = self.effective_owner(parent);
+        self.ensure_shared_io_state(owner);
         self.owners.insert(child, owner);
         let count = self.ref_counts.entry(owner).or_insert(0);
         *count = count.saturating_add(1);

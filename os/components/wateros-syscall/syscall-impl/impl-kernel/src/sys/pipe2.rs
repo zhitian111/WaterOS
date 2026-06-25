@@ -62,6 +62,10 @@ pub(crate) fn sys_pipe2(args: SyscallArgs) -> UserRet {
         )
     }) {
         Ok(n) if n == core::mem::size_of_val(&fds) => UserRet::from_success(0),
-        _ => UserRet::from_error(ErrNo::EFAULT),
+        _ => {
+            let _ = vfs::fd::close_fd(read_fd);
+            let _ = vfs::fd::close_fd(write_fd);
+            UserRet::from_error(ErrNo::EFAULT)
+        }
     }
 }

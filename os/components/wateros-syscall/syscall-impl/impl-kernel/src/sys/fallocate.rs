@@ -38,7 +38,12 @@ pub(crate) fn sys_fallocate(args: SyscallArgs) -> UserRet {
             if meta.size >= end {
                 return Ok(());
             }
-            return Err(VfsError::Unsupported);
+            log::trace!(
+                "[syscall] fallocate(nr=47) KEEP_SIZE prealloc stub (size {} -> {})",
+                meta.size,
+                end,
+            );
+            return Ok(());
         }
 
         let meta = handle.metadata()?;

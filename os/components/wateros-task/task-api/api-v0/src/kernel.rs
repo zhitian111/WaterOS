@@ -36,15 +36,21 @@ pub struct KernelStack {
     top : usize,
 }
 impl KernelStack {
-    pub fn new() -> Self {
-        // 使用 alloc_zeroed 避免 [0; 32KB] 在任务内核栈上产生临时量
+    /// 分配内核栈；堆耗尽时返回 `None`（避免对 null 指针 `Box::from_raw`）。
+    pub fn try_new() -> Option<Self> {
         let layout = Layout::new::<AlignedKernelStack>();
         let ptr = unsafe { alloc::alloc::alloc_zeroed(layout) as *mut AlignedKernelStack };
+        if ptr.is_null() {
+            return None;
+        }
         let storage = unsafe { Box::from_raw(ptr) };
         let stack_bottom = storage.0.as_ptr() as usize;
-        let top = align_down(stack_bottom + KERNEL_TASK_STACK_SIZE,
-                             16);
-        Self { storage, top }
+        let top = align_down(stack_bottom + KERNEL_TASK_STACK_SIZE, 16);
+        Some(Self { storage, top })
+    }
+
+    pub fn new() -> Self {
+        Self::try_new().expect("kernel stack allocation failed")
     }
 
     #[inline]

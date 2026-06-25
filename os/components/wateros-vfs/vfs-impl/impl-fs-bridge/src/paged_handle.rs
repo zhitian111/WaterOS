@@ -342,9 +342,9 @@ impl VfsIoHandle for PagedFileHandle {
     }
 
     fn close(&mut self) -> VfsResult<()> {
-        self.sync_dirty()?;
+        let sync_err = self.sync_dirty();
         self.release_open_ref_if_held();
-        Ok(())
+        sync_err
     }
 
     fn metadata(&self) -> VfsResult<VfsMetadata> {

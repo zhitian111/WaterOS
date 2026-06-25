@@ -6,6 +6,7 @@ use vfs::api::{VfsError, VfsOpenFlags};
 pub(crate) fn vfs_error_to_errno(err : VfsError) -> ErrNo {
     match err {
         VfsError::BadFd => ErrNo::EBADF,
+        VfsError::Busy => ErrNo::EBUSY,
         VfsError::WouldBlock => ErrNo::EAGAIN,
         VfsError::Interrupted => ErrNo::EINTR,
         VfsError::BrokenPipe => ErrNo::EPIPE,

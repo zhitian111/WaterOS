@@ -25,6 +25,8 @@ pub enum VfsError {
     Io,
     /// 文件描述符无效或已关闭。
     BadFd,
+    /// 目标 fd 正被另一路径用于阻塞 I/O，暂不可变更（如 close/dup）。
+    Busy,
     /// 非阻塞 I/O 暂不可用（如 pipe 读/写）。
     WouldBlock,
     /// 阻塞操作被信号中断。

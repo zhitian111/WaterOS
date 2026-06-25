@@ -29,6 +29,9 @@ pub(crate) fn sys_recvfrom(args: SyscallArgs) -> UserRet {
     if len == 0 {
         return UserRet::from_success(0);
     }
+    if len > 65536 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
     if buf_ptr == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
     }

@@ -86,11 +86,13 @@ pub(crate) fn sys_openat(args : SyscallArgs) -> UserRet {
         Ok(fd) => {
             if flags & O_CLOEXEC != 0 {
                 if let Err(e) = vfs::fd::set_fd_flags(fd, FD_CLOEXEC) {
+                    let _ = vfs::fd::close_fd(fd);
                     return UserRet::from_error(vfs_error_to_errno(e));
                 }
             }
             if flags & O_PATH != 0 {
                 if let Err(e) = vfs::fd::set_path_only_fd(fd) {
+                    let _ = vfs::fd::close_fd(fd);
                     return UserRet::from_error(vfs_error_to_errno(e));
                 }
             }
@@ -132,6 +134,7 @@ fn open_tmpfile(dir_path: &str, flags: u32) -> UserRet {
             Ok(fd) => {
                 if flags & O_CLOEXEC != 0 {
                     if let Err(e) = vfs::fd::set_fd_flags(fd, FD_CLOEXEC) {
+                        let _ = vfs::fd::close_fd(fd);
                         return UserRet::from_error(vfs_error_to_errno(e));
                     }
                 }

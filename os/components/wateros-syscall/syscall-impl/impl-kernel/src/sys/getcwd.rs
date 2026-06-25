@@ -18,7 +18,7 @@ pub(crate) fn sys_getcwd(args: SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EINVAL);
     }
 
-    let mut kernel_buf = [0u8; 256];
+    let mut kernel_buf = [0u8; 4096];
     let written = match vfs::cwd::write_cwd_to_buf(&mut kernel_buf) {
         Ok(n) => n,
         Err(VfsError::NoTask) => return UserRet::from_error(ErrNo::ESRCH),

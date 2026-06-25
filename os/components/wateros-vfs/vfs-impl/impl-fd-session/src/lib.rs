@@ -7,6 +7,7 @@ extern crate alloc;
 pub mod char_dev_handle;
 pub mod cwd;
 pub mod handles;
+pub mod interrupt_guard;
 pub mod registry;
 
 pub use char_dev_handle::{CharDevHandle, is_rtc_dev_path, metadata_for_devfs_path};
@@ -18,3 +19,4 @@ pub use handles::{
     pipe_handle_pair, poll_pipe_smoke, stream_pair_handle_pair, stream_pair_smoke,
 };
 pub use registry::PerTaskFdRegistry;
+pub use interrupt_guard::with_interrupt_disabled;

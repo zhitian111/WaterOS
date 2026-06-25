@@ -224,6 +224,7 @@ pub(crate) fn sys_msync(args : SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EINVAL);
     }
 
+    log::trace!("[syscall] msync(nr=26) no-op success (flags={flags:#x})");
     UserRet::from_success(0)
 }
 
@@ -322,7 +323,10 @@ pub(crate) fn sys_madvise(args : SyscallArgs) -> UserRet {
         MADV_FREE | MADV_REMOVE | MADV_DONTFORK | MADV_DOFORK | MADV_MERGEABLE |
         MADV_UNMERGEABLE | MADV_HUGEPAGE | MADV_NOHUGEPAGE | MADV_DONTDUMP | MADV_DODUMP |
         MADV_WIPEONFORK | MADV_KEEPONFORK | MADV_COLD | MADV_PAGEOUT | MADV_POPULATE_READ |
-        MADV_POPULATE_WRITE | MADV_DONTNEED_LOCKED | MADV_COLLAPSE => UserRet::from_success(0),
+        MADV_POPULATE_WRITE | MADV_DONTNEED_LOCKED | MADV_COLLAPSE => {
+            log::trace!("[syscall] madvise(nr=28) no-op advice={advice}");
+            UserRet::from_success(0)
+        }
         _ => UserRet::from_error(ErrNo::EINVAL),
     }
 }
@@ -347,6 +351,7 @@ pub(crate) fn sys_mlock(args : SyscallArgs) -> UserRet {
     if validate_mlock_range(addr, len).is_err() {
         return UserRet::from_error(ErrNo::EINVAL);
     }
+    log::trace!("[syscall] mlock(nr=149) no-op success");
     UserRet::from_success(0)
 }
 

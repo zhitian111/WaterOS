@@ -32,12 +32,16 @@ pub fn current_task_id() -> VfsResult<task::TaskId> {
     task::current_task_id().ok_or(VfsError::NoTask)
 }
 
+/// 在关中断临界区内访问 fd 注册表。
+fn with_fd_registry<R>(f: impl FnOnce(&mut PerTaskFdRegistry) -> VfsResult<R>) -> VfsResult<R> {
+    impl_fd_session::with_interrupt_disabled(|| f(&mut registry().exclusive_access()))
+}
+
 /// 在持有注册表锁的情况下执行 `f`（传入可变注册表与当前任务 id）。
 pub fn with_current_task<R>(f : impl FnOnce(&mut PerTaskFdRegistry, task::TaskId) -> VfsResult<R>)
                             -> VfsResult<R> {
     let task_id = current_task_id()?;
-    let mut reg = registry().exclusive_access();
-    f(&mut reg, task_id)
+    with_fd_registry(|reg| f(reg, task_id))
 }
 
 /// 取当前任务下 fd 对应句柄的可变引用（内部已加锁）。
@@ -45,28 +49,35 @@ pub fn with_current_io<R>(fd : usize,
                           f : impl FnOnce(&mut (dyn VfsIoHandle + '_)) -> VfsResult<R>)
                           -> VfsResult<R> {
     let task_id = current_task_id()?;
-    let mut handle = {
-        let mut reg = registry().exclusive_access();
-        if reg.is_fd_table_shared(task_id) {
-            log::warn!("[vfs-fd] with_current_io on shared fd table task_id={:?} fd={}",
+    let shared =
+        with_fd_registry(|reg| Ok(reg.is_fd_table_shared(task_id)))?;
+
+    if !shared {
+        let mut handle = with_fd_registry(|reg| reg.take_io_for_task(task_id, fd))?;
+        let result = f(handle.as_mut());
+        let restore_result =
+            with_fd_registry(|reg| reg.restore_io_for_task(task_id, fd, handle));
+        if let Err(ref e) = restore_result {
+            log::warn!("[vfs-fd] with_current_io task_id={:?} fd={} restore_failed: {:?}",
                        task_id,
-                       fd);
-            return Err(VfsError::Unsupported);
+                       fd,
+                       e);
         }
-        reg.take_io_for_task(task_id, fd)?
-    };
-    let result = f(handle.as_mut());
-    let restore_result = {
-        let mut reg = registry().exclusive_access();
-        reg.restore_io_for_task(task_id, fd, handle)
-    };
-    if let Err(ref e) = restore_result {
-        log::warn!("[vfs-fd] with_current_io task_id={:?} fd={} restore_failed: {:?}",
-                   task_id,
-                   fd,
-                   e);
+        restore_result?;
+        return result;
     }
-    restore_result?;
+
+    let (handle_ptr, slot_lock) =
+        with_fd_registry(|reg| reg.begin_shared_io_for_task(task_id, fd))?;
+    let _slot_guard = slot_lock.lock();
+    let result = f(unsafe {
+        // SAFETY: inflight 计数与槽位锁保证句柄驻留且互斥访问。
+        &mut *handle_ptr
+    });
+    with_fd_registry(|reg| {
+        reg.end_shared_io_for_task(task_id, fd);
+        Ok(())
+    })?;
     result
 }
 
@@ -78,12 +89,8 @@ pub fn alloc_fd(handle : Box<dyn VfsIoHandle>) -> VfsResult<usize> {
 /// 关闭当前任务的 fd（调用句柄 `close`）。
 pub fn close_fd(fd : usize) -> VfsResult<()> {
     let task_id = current_task_id()?;
-    let mut handle = {
-        let mut reg = registry().exclusive_access();
-        reg.take_fd_for_close(task_id, fd)?
-    };
-    let result = handle.close();
-    result
+    let mut handle = with_fd_registry(|reg| reg.take_fd_for_close(task_id, fd))?;
+    handle.close()
 }
 
 /// 请求全部打开句柄写回脏数据。

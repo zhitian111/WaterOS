@@ -29,6 +29,20 @@ struct LinuxWinSize {
     ws_ypixel: u16,
 }
 
+fn ioctl_enotty(request: u32, fd: Option<usize>, argp: usize) -> UserRet {
+    match fd {
+        Some(fd) => log::warn!(
+            "[syscall] ioctl(nr=29) unsupported request={:#x} fd={fd} argp={argp:#x}",
+            request,
+        ),
+        None => log::warn!(
+            "[syscall] ioctl(nr=29) unsupported request={:#x} argp={argp:#x}",
+            request,
+        ),
+    }
+    UserRet::from_error(ErrNo::ENOTTY)
+}
+
 fn tty_char_ioctl(request: u32, argp: usize) -> UserRet {
     match request {
         // glibc tcgetattr 常以 a2=sp 调用 TCGETS，成功写 termios 会覆盖同帧内的栈金丝雀。
@@ -61,7 +75,7 @@ fn tty_char_ioctl(request: u32, argp: usize) -> UserRet {
         // Daemonization commonly detaches from the controlling TTY with this ioctl.
         // WaterOS does not model controlling terminals yet, so the detach is a no-op.
         TIOCNOTTY => UserRet::from_success(0),
-        _ => UserRet::from_error(ErrNo::ENOTTY),
+        _ => ioctl_enotty(request, None, argp),
     }
 }
 
@@ -84,17 +98,17 @@ pub(crate) fn sys_ioctl(args: SyscallArgs) -> UserRet {
             if matches!(request, RTC_RD_TIME | RTC_SET_TIME) {
                 return sys_rtc_ioctl(request, argp);
             }
-            global_ioctl_fallback(request, argp)
+            global_ioctl_fallback(fd, request, argp)
         }
         Err(e) => UserRet::from_error(vfs_error_to_errno(e)),
     }
 }
 
-fn global_ioctl_fallback(request: u32, argp: usize) -> UserRet {
+fn global_ioctl_fallback(fd: usize, request: u32, argp: usize) -> UserRet {
     match request {
-        TCGETS => UserRet::from_error(ErrNo::ENOTTY),
+        TCGETS => ioctl_enotty(request, Some(fd), argp),
         TIOCGWINSZ => tty_char_ioctl(TIOCGWINSZ, argp),
         TIOCNOTTY => UserRet::from_success(0),
-        _ => UserRet::from_error(ErrNo::ENOTTY),
+        _ => ioctl_enotty(request, Some(fd), argp),
     }
 }

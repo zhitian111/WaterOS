@@ -187,6 +187,12 @@ pub fn create_clone_thread(child_stack : usize, tls : usize, set_tls : bool) -> 
     with_scheduler(|scheduler| scheduler.create_clone_thread(child_stack, tls, set_tls))
 }
 
+/// 丢弃 fork/clone 失败时已登记但未应继续运行的子任务。
+pub fn discard_unstarted_task(task_id : TaskId) {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.discard_unstarted_task(task_id));
+}
+
 /// 从当前用户任务 fork 一个子任务，并返回子任务 id。
 ///
 /// 子任务获得父任务 trap 帧副本（a0 置 0）、独立地址空间（`new_aspace_ptr` /

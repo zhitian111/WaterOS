@@ -1,10 +1,9 @@
 //! `brk(2)`：有效 `user_aspace_ptr` 时走 Sv39 `HeapBrk`，否则单调递增假顶桩。
 
-use abi::errno::ErrNo;
 use abi::user_ret::UserRet;
 use core::sync::atomic::Ordering;
 
-use crate::mm_util::{current_user_aspace_handle, USER_BRK_FAKE};
+use crate::mm_util::{current_user_aspace_handle, mm_err_to_errno, USER_BRK_FAKE};
 
 fn sys_brk_mm(handle: usize, addr: usize) -> UserRet {
     use mm::api::addr::VirtAddr;
@@ -19,11 +18,11 @@ fn sys_brk_mm(handle: usize, addr: usize) -> UserRet {
         }
         match HeapBrk::brk(aspace, &mut alloc, VirtAddr(addr)) {
             Ok(new) => Ok(new.0),
-            Err(_) => Ok(HeapBrk::brk_region(aspace).current_end.0),
+            Err(e) => Err(e),
         }
     }) {
         Ok(v) => UserRet::from_success(v),
-        Err(_) => UserRet::from_error(ErrNo::ENOMEM),
+        Err(e) => UserRet::from_error(mm_err_to_errno(e)),
     }
 }
 

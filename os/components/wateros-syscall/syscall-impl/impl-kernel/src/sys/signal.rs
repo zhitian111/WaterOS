@@ -186,6 +186,15 @@ pub(crate) fn timer_tick(interrupted_user : bool) {
     }
 }
 
+pub(crate) fn abort_fork_signal(child_pid : usize, child_task_id : usize) {
+    let _ = child_task_id;
+    ipc::signal::with_registry(|registry| registry.drop_process(child_pid));
+}
+
+pub(crate) fn abort_clone_thread_signal(child_task_id : usize) {
+    ipc::signal::with_registry(|registry| registry.drop_thread(child_task_id));
+}
+
 pub(crate) fn on_fork(parent_task_id : usize,
                       child_pid : usize,
                       child_task_id : usize,

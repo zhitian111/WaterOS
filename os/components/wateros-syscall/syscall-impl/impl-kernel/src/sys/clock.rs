@@ -372,6 +372,9 @@ pub(crate) fn sys_clock_settime(args : SyscallArgs) -> UserRet {
     let clock_id = args.arg(0);
     let tp_ptr = args.arg(1);
     if clock_id != CLOCK_REALTIME {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    if cred::current_credentials().effective_uid.0 != 0 {
         return UserRet::from_error(ErrNo::EPERM);
     }
     if tp_ptr == 0 {

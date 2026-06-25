@@ -216,7 +216,7 @@ fn read_string_array(array_ptr: usize) -> Result<Vec<String>, ErrNo> {
             )
             .is_err()
         {
-            return Ok(result);
+            return Err(ErrNo::EFAULT);
         }
         let ptr = usize::from_le_bytes(ptr_size);
         if ptr == 0 {
@@ -224,7 +224,7 @@ fn read_string_array(array_ptr: usize) -> Result<Vec<String>, ErrNo> {
         }
         match copy_user_path_cstr(ptr, 256) {
             Ok(s) => result.push(s),
-            Err(_) => break,
+            Err(e) => return Err(e),
         }
     }
     Ok(result)

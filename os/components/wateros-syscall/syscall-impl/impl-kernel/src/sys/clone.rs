@@ -180,15 +180,26 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
 
     let _setup_guard = match CloneSetupGuard::new() {
         Ok(guard) => guard,
-        Err(error) => return UserRet::from_error(error),
+        Err(error) => {
+            mm::kernel_mm::drop_user_aspace(new_aspace_ptr);
+            return UserRet::from_error(error);
+        }
     };
     let child_id = match task::fork_current(child_stack, new_aspace_ptr, new_satp) {
         Some(id) => id,
-        None => return UserRet::from_error(ErrNo::EAGAIN),
+        None => {
+            mm::kernel_mm::drop_user_aspace(new_aspace_ptr);
+            return UserRet::from_error(ErrNo::EAGAIN);
+        }
     };
     let child_snapshot = match task::process_task_snapshot(child_id) {
         Some(snapshot) => snapshot,
-        None => return UserRet::from_error(ErrNo::ESRCH),
+        None => {
+            if let Some(child_pid) = task::abort_fork_child(child_id) {
+                super::signal::abort_fork_signal(child_pid.raw(), child_id);
+            }
+            return UserRet::from_error(ErrNo::ESRCH);
+        }
     };
     let child_pid = child_snapshot.pid
                                   .raw();
@@ -198,6 +209,9 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
                               child_snapshot.tid
                                             .raw()).is_err()
     {
+        if let Some(rolled_pid) = task::abort_fork_child(child_id) {
+            super::signal::abort_fork_signal(rolled_pid.raw(), child_id);
+        }
         return UserRet::from_error(ErrNo::EAGAIN);
     }
 
@@ -243,10 +257,16 @@ fn do_clone_thread(clone_flags : task::CloneFlags,
     };
     let child_tid_raw = match task::process_task_snapshot(child_id) {
         Some(snapshot) => snapshot.tid.raw(),
-        None => return UserRet::from_error(ErrNo::ESRCH),
+        None => {
+            task::abort_clone_thread(child_id);
+            super::signal::abort_clone_thread_signal(child_id);
+            return UserRet::from_error(ErrNo::ESRCH);
+        }
     };
     let parent_id = task::current_task_id().expect("current task must exist after clone");
     if super::signal::on_clone_thread(parent_id, child_id, child_tid_raw).is_err() {
+        task::abort_clone_thread(child_id);
+        super::signal::abort_clone_thread_signal(child_id);
         return UserRet::from_error(ErrNo::EAGAIN);
     }
     let child_tid_value = child_tid_raw as u32;
@@ -255,18 +275,31 @@ fn do_clone_thread(clone_flags : task::CloneFlags,
        parent_tid != 0 &&
        copy_to_user_struct(parent_tid, &child_tid_value).is_err()
     {
+        task::abort_clone_thread(child_id);
+        super::signal::abort_clone_thread_signal(child_id);
         return UserRet::from_error(ErrNo::EFAULT);
     }
     if clone_flags.contains(task::CloneFlags::CLONE_CHILD_SETTID) &&
        child_tid != 0 &&
        copy_to_user_struct(child_tid, &child_tid_value).is_err()
     {
+        task::abort_clone_thread(child_id);
+        super::signal::abort_clone_thread_signal(child_id);
         return UserRet::from_error(ErrNo::EFAULT);
     }
 
-    vfs::cwd::share_cwd_from_parent(child_id, parent_id);
-    vfs::fd::share_fd_table_from_parent(child_id, parent_id);
-    crate::socket_fd::share_from_parent(child_id, parent_id);
+    if clone_flags.contains(task::CloneFlags::CLONE_FS) {
+        vfs::cwd::share_cwd_from_parent(child_id, parent_id);
+    } else {
+        vfs::cwd::copy_cwd_from_parent(child_id, parent_id);
+    }
+    if clone_flags.contains(task::CloneFlags::CLONE_FILES) {
+        vfs::fd::share_fd_table_from_parent(child_id, parent_id);
+        crate::socket_fd::share_from_parent(child_id, parent_id);
+    } else {
+        vfs::fd::copy_fd_table_from_parent(child_id, parent_id);
+        crate::socket_fd::copy_from_parent(child_id, parent_id);
+    }
     crate::unix_sock::copy_fds_from_parent(child_id, parent_id);
     cred::share_cred(parent_id, child_id);
 

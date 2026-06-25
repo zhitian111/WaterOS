@@ -129,6 +129,10 @@ pub fn create_clone_thread(child_stack : usize, tls : usize, set_tls : bool) -> 
     active_impl::create_clone_thread(child_stack, tls, set_tls)
 }
 
+/// 丢弃 fork/clone 失败时已登记但未应继续运行的子任务。
+#[inline]
+pub fn discard_unstarted_task(task_id : TaskId) { active_impl::discard_unstarted_task(task_id) }
+
 /// execve：替换当前任务进程映像。
 #[inline]
 pub fn execve_current(entry_pc : usize,

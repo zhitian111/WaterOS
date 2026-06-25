@@ -324,6 +324,47 @@ impl ProcessRegistry {
         Some(removed)
     }
 
+    /// fork 失败回滚：移除仅含单任务、仍在 Running 的子进程并释放其地址空间。
+    pub fn abort_forked_process(&mut self, child_task_id : TaskId) -> Option<ProcessId> {
+        let pid = self.lookup_task(child_task_id)?.pid;
+        let process = self.processes
+                          .get(&pid)?;
+        if process.tasks.len() != 1 || process.tasks[0].task_id != child_task_id {
+            return None;
+        }
+        if !matches!(process.state, ProcessState::Running) {
+            return None;
+        }
+        let process = self.processes
+                          .remove(&pid)?;
+        if let Some(aspace) = process.address_space {
+            let ptr = aspace.user_aspace_ptr();
+            if ptr != 0 {
+                mm_api::user_aspace_lifecycle::drop_user_aspace_on_task_exit(ptr);
+            }
+        }
+        Some(pid)
+    }
+
+    /// clone 线程创建失败回滚：从进程线程列表移除该任务（不释放共享地址空间）。
+    pub fn abort_cloned_thread(&mut self, child_task_id : TaskId) -> bool {
+        for process in self.processes
+                           .values_mut()
+        {
+            let before = process.tasks
+                                .len();
+            process.tasks
+                   .retain(|task| task.task_id != child_task_id);
+            if process.tasks
+                  .len() <
+               before
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn set_task_clear_child_tid(&mut self,
                                     task_id : TaskId,
                                     clear_child_tid : Option<TaskClearTid>)

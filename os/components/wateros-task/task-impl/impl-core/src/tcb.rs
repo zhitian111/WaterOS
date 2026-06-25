@@ -210,7 +210,7 @@ impl TaskControlBlock {
                                                   .expect("parent user task must have stack"),
                                        new_aspace_ptr);
 
-        let kernel_stack = KernelStack::new();
+        let kernel_stack = KernelStack::try_new()?;
         let task_cx = TaskContext::goto_entry(__arch_user_task_entry as *const () as usize,
                                               kernel_stack.top());
         Some(Self { id : child_id,
@@ -252,7 +252,7 @@ impl TaskControlBlock {
             <TaskTrapFrame as TrapThreadWrite>::set_user_tls(&mut child_trap, tls);
         }
 
-        let kernel_stack = KernelStack::new();
+        let kernel_stack = KernelStack::try_new()?;
         let task_cx = TaskContext::goto_entry(__arch_user_task_entry as *const () as usize,
                                               kernel_stack.top());
         Some(Self { id : child_id,

@@ -531,6 +531,15 @@ impl MultiClassScheduler {
             .reap_exited_task(&mut self.registry, task_id)
     }
 
+    /// 丢弃尚未完成 fork/clone 的子任务（从就绪队列移除并释放 TCB）。
+    pub(super) fn discard_unstarted_task(&mut self, task_id : TaskId) {
+        self.detach_from_run_queues(task_id);
+        self.wait
+            .detach_task_from_run_queues(task_id);
+        let _ = self.registry
+                  .discard_task(task_id);
+    }
+
     pub(super) fn reap_one_exited_task(&mut self) -> Option<ExitedTask> {
         self.wait
             .reap_one_exited_task(&mut self.registry)

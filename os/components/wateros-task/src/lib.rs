@@ -236,6 +236,18 @@ pub fn fork_current(child_stack : usize,
     Some(child_id)
 }
 
+/// fork 失败回滚：撤销子任务 TCB、进程槽位与地址空间；返回被撤销的子进程 PID（供信号表清理）。
+pub fn abort_fork_child(child_id : TaskId) -> Option<ProcessId> {
+    scheduler::discard_unstarted_task(child_id);
+    active_impl::abort_forked_process(child_id)
+}
+
+/// clone 线程失败回滚：撤销子线程 TCB 与进程内线程登记。
+pub fn abort_clone_thread(child_id : TaskId) {
+    scheduler::discard_unstarted_task(child_id);
+    let _ = active_impl::abort_cloned_thread(child_id);
+}
+
 /// 从当前用户任务 clone 一个同进程线程，并登记到当前进程。
 #[inline]
 pub fn clone_current_thread(child_stack : usize,

@@ -282,6 +282,7 @@ pub(crate) fn sys_gettid() -> UserRet {
 }
 
 pub(crate) fn sys_setsid() -> UserRet {
+  log::trace!("[syscall] setsid(nr=112) session semantics not fully modeled");
     task::current_process_task_snapshot().map(|snapshot| UserRet::from_success(snapshot.pid.raw()))
                                          .unwrap_or_else(|| UserRet::from_error(ErrNo::ESRCH))
 }
@@ -306,6 +307,9 @@ pub(crate) fn sys_setpgid(args : SyscallArgs) -> UserRet {
     }
 
     let _new_pgid = if pgid_arg == 0 { target_pid } else { pgid_arg };
+    log::trace!(
+        "[syscall] setpgid(nr=109) pgid not persisted (pid={target_pid} pgid={_new_pgid})",
+    );
     UserRet::from_success(0)
 }
 
@@ -847,7 +851,30 @@ pub(crate) fn sys_waitpid(args : SyscallArgs) -> UserRet {
             }
         }
     }
-    if pid <= 0 {
+    if pid == 0 {
+        // 尚无真实 pgid：退化为等待任意子进程（与 pid==-1 同路径）。
+        loop {
+            if let Some(child) = task::find_exited_child_process(current_process.pid) {
+                let Some(exited) = task::reap_exited_process(child.pid) else {
+                    return UserRet::from_error(ErrNo::ECHILD);
+                };
+                return finish_wait_process_result(child.pid, exited, exit_code_ptr);
+            }
+            if !task::has_child_process(current_process.pid) {
+                return UserRet::from_error(ErrNo::ECHILD);
+            }
+            if nohang {
+                return UserRet::from_success(0);
+            }
+            if waitpid_wait_for_child(current_process.pid) == task::TaskWaitResult::Interrupted {
+                return UserRet::from_error(ErrNo::EINTR);
+            }
+        }
+    }
+    if pid < -1 {
+        log::warn!(
+            "[syscall] waitpid(nr=61) unsupported pid={pid} (process group wait semantics)",
+        );
         return UserRet::from_error(ErrNo::EINVAL);
     }
 

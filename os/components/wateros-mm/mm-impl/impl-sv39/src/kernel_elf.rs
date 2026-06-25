@@ -58,12 +58,14 @@ fn map_vfs_to_root_vol(e : VfsError) -> RootVolumeReadError {
         VfsError::Corrupt => RootVolumeReadError::Corrupt,
         VfsError::Io => RootVolumeReadError::Io,
         VfsError::BadFd |
+        VfsError::Busy |
         VfsError::WouldBlock |
         VfsError::Interrupted |
         VfsError::BrokenPipe |
         VfsError::NoTask |
         VfsError::TooManyOpenFiles |
         VfsError::ReadOnlyFs => RootVolumeReadError::Unsupported,
+        VfsError::Busy => RootVolumeReadError::Io,
     }
 }
 

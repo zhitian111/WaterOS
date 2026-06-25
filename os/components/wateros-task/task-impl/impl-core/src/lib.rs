@@ -135,6 +135,14 @@ pub fn reap_process_with_tasks(pid: ProcessId) -> Option<(ProcessDescriptor, Vec
     with_process_registry(|registry| registry.reap_process_with_tasks(pid))
 }
 
+pub fn abort_forked_process(child_task_id: TaskId) -> Option<ProcessId> {
+    with_process_registry(|registry| registry.abort_forked_process(child_task_id))
+}
+
+pub fn abort_cloned_thread(child_task_id: TaskId) -> bool {
+    with_process_registry(|registry| registry.abort_cloned_thread(child_task_id))
+}
+
 pub fn get_process_rlimit(pid: ProcessId, resource: usize) -> Option<api_v0::ResourceLimit> {
     with_process_registry(|registry| registry.get_process_rlimit(pid, resource))
 }
