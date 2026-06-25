@@ -172,6 +172,7 @@ fn clock_id_to_timespec(clock_id : usize) -> Result<UserTimespec, ErrNo> {
 }
 
 fn sleep_for_ns(total_ns : u128, rem_ptr : usize) -> UserRet {
+    super::ltp_cgroup_helper::ltp_cpuhotplug_loop_sleep_fast_exit_if_standalone();
     if total_ns == 0 {
         return UserRet::from_success(0);
     }
