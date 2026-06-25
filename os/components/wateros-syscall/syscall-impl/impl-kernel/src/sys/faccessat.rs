@@ -13,7 +13,7 @@ use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use cred::api::ProcessCredentials;
 use vfs::active_impl;
-use vfs::api::{resolve_against_cwd, SingleRootReadView, VfsError};
+use vfs::api::{resolve_against_cwd, SingleRootReadView, VfsError, VfsNodeType};
 
 use crate::sys::path_at::resolve_path_at;
 use crate::user_copy::copy_user_path_cstr;
@@ -82,10 +82,15 @@ fn do_faccessat(dirfd: isize, path_ptr: usize, mode: u32, flags: u32) -> UserRet
                 return UserRet::from_error(ErrNo::ENOENT);
             }
             let resolved = match resolve_path_at(dirfd, path.as_str()) {
-                Ok(p) => match resolve_final_symlink(p.as_str()) {
-                    Ok(followed) => followed,
-                    Err(e) => return UserRet::from_error(e),
-                },
+                Ok(p) => p,
+                Err(e) => return UserRet::from_error(e),
+            };
+            let cred = cred::current_credentials();
+            if let Err(e) = check_parent_search(resolved.as_str(), &cred, use_effective) {
+                return UserRet::from_error(e);
+            }
+            let resolved = match resolve_final_symlink(resolved.as_str()) {
+                Ok(followed) => followed,
                 Err(e) => return UserRet::from_error(e),
             };
             if mode & W_OK != 0 {
@@ -162,4 +167,47 @@ fn access_mode_allowed(
         return false;
     }
     true
+}
+
+fn check_parent_search(
+    path: &str,
+    cred: &ProcessCredentials,
+    use_effective: bool,
+) -> Result<(), ErrNo> {
+    let uid = if use_effective {
+        cred.effective_uid.0
+    } else {
+        cred.real_uid.0
+    };
+    if uid == 0 {
+        return Ok(());
+    }
+
+    let parts: alloc::vec::Vec<&str> = path
+        .trim_start_matches('/')
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect();
+    if parts.len() <= 1 {
+        return Ok(());
+    }
+
+    let mut current = String::from("/");
+    for part in &parts[..parts.len() - 1] {
+        if current != "/" {
+            current.push('/');
+        }
+        current.push_str(part);
+        match active_impl::backend().metadata(current.as_str()) {
+            Ok(meta) if meta.node_type == VfsNodeType::Directory => {
+                if !access_mode_allowed(meta.mode, X_OK, cred, use_effective) {
+                    return Err(ErrNo::EACCES);
+                }
+            }
+            Ok(_) => return Err(ErrNo::ENOTDIR),
+            Err(VfsError::NotFound) => return Err(ErrNo::ENOENT),
+            Err(e) => return Err(vfs_error_to_errno(e)),
+        }
+    }
+    Ok(())
 }

@@ -103,8 +103,13 @@ impl Ext4 {
         // initialize inode
         let mut inode = Ext4Inode::default();
 
-        // set mode
-        inode.set_mode(inode_mode | 0o777);
+        // FUSE mkdir may pass mode 0; only then apply a permissive default.
+        let perm = inode_mode & 0o7777;
+        inode.set_mode(if perm & 0o777 != 0 {
+            inode_mode
+        } else {
+            inode_mode | 0o777
+        });
 
         // set extra size
         let inode_size = self.super_block

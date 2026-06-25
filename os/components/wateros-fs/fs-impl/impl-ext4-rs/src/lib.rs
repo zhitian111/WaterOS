@@ -239,8 +239,11 @@ fn create_directory(fs : &mut Ext4, path : &str, mode : u16) -> FsResult<()> {
         Err(err) if map_ext4_rs(err) == FsError::NotFound => {}
         Err(err) => return Err(map_ext4_rs(err)),
     }
-    fs.create(parent, name, mode)
-      .map_err(map_ext4_rs)?;
+    let mut inode_ref = fs.create(parent, name, mode)
+                          .map_err(map_ext4_rs)?;
+    inode_ref.inode
+             .set_mode(mode);
+    fs.write_back_inode(&mut inode_ref);
     Ok(())
 }
 
