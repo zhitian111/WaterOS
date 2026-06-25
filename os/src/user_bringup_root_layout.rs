@@ -84,7 +84,7 @@ pub fn ensure_busybox_path_links() {
 
         /// busybox 多用途小程序：优先给 libc 本地目录建链接，避免 musl/glibc 脚本
         /// 通过 PATH 误用另一套动态库；同时保留 /bin 兼容路径。
-        const APPLETS : &[&str] = &["ls", "sleep", "basename", "cp"];
+        const APPLETS : &[&str] = &["ls", "sleep", "basename", "cp", "mkdir", "rmdir"];
         for applet in APPLETS {
             try_hardlink(sess.as_mut(),
                          "/glibc/busybox",

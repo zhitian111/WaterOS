@@ -326,6 +326,14 @@ impl SignalRegistry {
         Ok(())
     }
 
+    pub fn end_sigsuspend(&mut self, task_id : usize) -> SignalResult<()> {
+        let thread = self.thread_mut(task_id)?;
+        if let Some(restore) = thread.suspend_restore_mask.take() {
+            thread.mask = restore;
+        }
+        Ok(())
+    }
+
     pub fn begin_signal_wait(&mut self, task_id : usize, wait_set : SignalSet) -> SignalResult<()> {
         self.thread_mut(task_id)?
             .waiting_for = Some(wait_set);

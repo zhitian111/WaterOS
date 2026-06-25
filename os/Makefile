@@ -137,6 +137,11 @@ la_qemu_run: kernel-la
 		-netdev user,id=net0 -rtc base=utc
 	$(call INFO, "loongarch64 内核运行结束")
 
+la_qemu_run_snapshot: kernel-la
+	$(call INFO, "开始运行 loongarch64 内核 snapshot 模式，不写回 sdcard-la.img")
+	@bash ./scripts/la_qemu_run_snapshot.sh
+	$(call INFO, "loongarch64 内核运行结束 snapshot")
+
 rv_qemu_run_with_log: kernel-rv
 	$(call INFO, "开始运行 riscv64 内核...")
 	@bash ./scripts/rv_qemu_run_with_log.sh
