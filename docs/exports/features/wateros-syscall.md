@@ -23,25 +23,25 @@
 | 能力 | 状态 | 要点 |
 |------|------|------|
 | `yield` / `exit` / `exit_group` | 已接入 | `task::yield_now` / `exit_current` |
-| `read` / `write` / `close` | 部分 | VFS fd；stdin 仍 `EBADF` |
+| `read` / `write` / `close` | 部分 | VFS fd；stdin 无真实输入时多为 **EOF(0)** |
 | `pread64` / `pwrite64` / `preadv` / `pwritev` | 部分 | `VfsIoHandle::read_at`/`write_at`；pipe/socket → `ESPIPE` |
 | `sendfile` | 部分 | 文件→文件/socket；内核 64KiB 缓冲循环；`offset*` 可选 |
-| `ppoll` (73) | 部分 | 共享 `poll_engine`；pipe waitqueue 阻塞；`sigmask` 首期忽略 |
-| `pselect6` (72) / `select` (23) | 部分 | `fd_set` 扫描；`select` 不写回剩余 `timeval` |
+| `ppoll` (73) | 部分 | 共享 `poll_engine`；pipe waitqueue 阻塞；**`sigmask` 阻塞期间临时应用** |
+| `pselect6` (72) | 部分 | `fd_set` 扫描；**`sigmask` 同 ppoll** |
 | `poll` (271) | 部分 | 同引擎；`timeout` 为毫秒 |
-| `openat` | 部分 | `AT_FDCWD`、目录 fd、`O_DIRECTORY` |
+| `openat` | 部分 | `AT_FDCWD`、目录 fd、`O_DIRECTORY`；**follow 末端 symlink**；`O_NOFOLLOW`/`O_SYNC`/`O_DSYNC` 显式处理 |
 | `faccessat` (48) / `faccessat2` (439) | 部分 | 48 忽略 a3（Linux 三参 ABI）；439 经 `dispatch_unknown`；`AT_EACCESS`/`AT_EMPTY_PATH`；symlink nofollow 待 VFS |
 | `dup` / `dup3` | 已接入 | `vfs::fd::dup_fd` / `dup3_fd` |
 | `pipe2` | 部分 | 创建 pipe fd；fork 后 `copy_fd_table_from_parent` |
 | `fstat` / `lseek` | 部分 | 128B `kstat`；pipe `ESPIPE` |
 | `getdents64` | 部分 | `linux_dirent64`；目录须先 `O_DIRECTORY` open |
 | `mkdirat` / `unlinkat` | 部分 | 仅 `AT_FDCWD`；RO 辅助卷写返回 `EROFS` |
-| `mount` | 部分 | `MS_RDONLY` → `mount_ro` 辅助卷；否则 `mount_rw` |
+| `mount` | 部分 | `MS_RDONLY`/`MS_REMOUNT`；拒绝 `MS_BIND`/`MS_SHARED` 等 |
 | `umount2` | 部分 | `vfs::unmount_at` |
-| `brk` / `mmap` / `munmap` / `mprotect` | 部分 | Sv39 `user_aspace_ptr` |
+| `brk` / `mmap` / `munmap` / `mprotect` | 部分 | 需 `user_aspace_ptr`；无则 `-ENOSYS` |
 | `get_mempolicy` (236) | 部分 | 语义在 `wateros-mm::mempolicy` |
 | `sched_setparam` (118)–`sched_getaffinity` (123) | 部分 | 语义在 `wateros-task::sched`；set RT/affinity → `EPERM` |
-| `clone`（含 `fork`） | 部分 | `fork_user_aspace` + 子进程保留父 `user_sp`；继承 cwd/fd |
+| `clone`（含 `fork`） | 部分 | leader-only fork；fork flags 仅 `CSIGNAL` |
 | `execve` | 部分 | 替换地址空间/入口/栈；非 ELF 文本脚本经 shebang 解析后加载解释器 ELF |
 | `waitpid` | 部分 | 最小父子等待、`WNOHANG` |
 | `getpid` / `getppid` / `gettid` | 部分 | orphan ppid 为 1 |
@@ -52,6 +52,39 @@
 | `uname` | 部分 | 固定 `utsname` 字段 |
 | `syslog` (116) | **已接入** | `sys_syslog` → **`wateros-klog`**；传统 ASCII 读路径；见 [`docs/architecture/wateros-klog.md`](../../architecture/wateros-klog.md) |
 | `socketpair` (199) | 部分 | `AF_UNIX` + `SOCK_STREAM`；VFS 双 pipe 交叉；BusyBox shell IPC |
+
+## 语义审计与已收敛项（2026-06-25）
+
+完整问题清单与覆盖说明见 [`docs/audits/syscall-issues.md`](../../audits/syscall-issues.md)、[`docs/audits/syscall-coverage.md`](../../audits/syscall-coverage.md)。
+
+**本轮已收敛（明确拒绝，不再 panic/静默走错路径）**：
+
+| syscall | 条件 | 行为 |
+|---------|------|------|
+| `mmap`/`munmap`/`mprotect`/`mremap` | 无 `user_aspace_ptr` | `warn` + `-ENOSYS` |
+| `MmError::Unsupported` | mm 层不支持操作 | `-ENOSYS`（非 panic） |
+| `clone`/`fork` | 非 leader 线程 fork | `warn` + `-EPERM` |
+| `clone`/`fork` | fork 路径 flags 超出 `CSIGNAL` 低 8 位 | `warn` + `-EINVAL` |
+| `futex` `WAIT_BITSET`/`WAKE_BITSET` | `bitset != !0` | `warn` + `-ENOSYS` |
+| `get_robust_list` | — | 修正为 Linux 三参数 ABI `(pid, head**, len*)` |
+| `getgroups` | 非法 size/指针/copy 失败 | `-EINVAL`/`-EFAULT` |
+| `syslog` | 空指针读写 | `-EFAULT` |
+| `mount` | `MS_BIND`/`MS_SHARED`/`MS_PRIVATE` 等传播 flag | `warn` + `-EINVAL` |
+| `execve` | 加载失败 | 不再提前杀兄弟线程（加载成功后再清理） |
+
+**第二轮已收敛（2026-06-25；LTP fast-exit 未动）**：
+
+| syscall | 条件 | 行为 |
+|---------|------|------|
+| `ppoll`/`pselect6` | `sigmask != NULL` | 阻塞等待期间临时替换线程 mask，返回前恢复 |
+| `openat` | 目标为 symlink | follow 至最终路径（`resolve_final_symlink`） |
+| `openat` | `O_NOFOLLOW` 且目标为 symlink | `-ELOOP` |
+| `openat` | `O_SYNC`/`O_DSYNC` | `warn` + `-EINVAL` |
+| `fsync`/`fdatasync` | flush 失败 | `warn` + 对应 errno |
+| `read`/`write`/`connect`/`accept`（socket） | 阻塞模式 | 真阻塞；可投递信号 → `EINTR`（去除 tick 上限假 `EAGAIN`/`ETIMEDOUT`） |
+| AF_UNIX `accept` | 阻塞模式 | 同上（`socket_blocking_tick`） |
+
+**文档勘误**：`read`(stdin) 当前多为 **EOF(0)**，非 `EBADF`；用户态 `select` 应走 `pselect6`(72)，nr 23 为 `dup`。
 
 ## 明确未覆盖
 

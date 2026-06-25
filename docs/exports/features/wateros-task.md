@@ -66,3 +66,9 @@
 
 - **无 COW**：`fork_user_aspace` 为可写用户页做逐页复制，大工作集时 fork 开销较高；尚未实现写时复制。
 - **clone 标志位**：`clone(2)` 的 `flags`（线程组、TLS 等）尚未解析。
+
+## 锁机制审计（2026-06-25）
+
+**2026-06-25 修复轮**：调度器 wait 释中断、页缓存驱逐重入、帧分配器/klog 关中断、pipe Mutex、shm attach 占位、unix 清理与 bind 锁序、procfs 锁外回调、paged truncate 路由、aux RO 双实例拒绝。详见 [`docs/audits/lock-issues.md`](../../audits/lock-issues.md) §9。
+
+调度器与 `ProcessRegistry` 使用 `UniprocessorSafeCell` + `InterruptGuard`；Spawn/Fork/Clone 与 Registry 登记非原子（**PR-01 暂缓**）。详见 [`docs/audits/locks/scheduler.md`](../../audits/locks/scheduler.md)、[`process-registry.md`](../../audits/locks/process-registry.md)。

@@ -28,6 +28,10 @@
 - fork 后文件 offset 共享（当前 `duplicate` 为句柄级 `Clone`，pipe 共享 `Arc<Pipe>`）。
 - 完整多文件系统挂载 syscall（ext4 辅助挂载 + proc 已支持；vnode 层仍待扩展）。
 
+## 锁机制审计（2026-06-25）
+
+**2026-06-25 修复轮**：页缓存 flush/read/write 持锁区间缩短（PC-01）；`PagedFileHandle::truncate` 走路由。fd/cwd 仍为 `UniprocessorSafeCell`；`CLONE_FILES`+`with_current_io` 竞态（FD-01）暂缓。详见 [`lock-issues.md`](../../audits/lock-issues.md)。
+
 ## 维护
 
 能力或组合接口变化时同步 [`public-api/wateros-vfs.md`](../public-api/wateros-vfs.md) 与本文件。

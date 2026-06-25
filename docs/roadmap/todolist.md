@@ -45,6 +45,21 @@
 
 见 **`docs/roadmap/riscv64-busybox/README.md`**。**注意**：该目录下的工作包文档描述的「缺口」多数已在代码中实现（如 fd-session dup/fork 继承、信号 dispatch、进程凭证、网络 socket 族等），当前瓶颈在「解锁注释 + 修复暴露的 bug」而非「从零实现」。整体劳动量预计缩减至 8-12 周。
 
+## 锁机制审计（2026-06-25）
+
+**已修复（2026-06-25）**：PC-01、RC-1、RC-2(SFA-1)、IPC-01、SHM-01、KLOG-01、U-01/U-02/U-03、PROC-01、TRUNC-01、FS-01 收敛。
+
+**暂缓**（见 `docs/audits/lock-issues.md` §9）：PR-01、NET-01、FD-01、BLK-01、F-2、PC-02、MR-03、ISH-1。
+
+1. ~~页缓存 `GlobalFilePageCache` entry `RwLock` 驱逐路径重入自死锁（`PC-01`）~~ ✅
+2. ~~调度器 wait/sleep 路径跨 `__switch` 未释放中断（`RC-1`）~~ ✅
+3. ~~`StackFrameAllocator` 帧分配无 `InterruptGuard`（`SFA-1`）~~ ✅
+4. ~~`KernelPipe` 跨任务 `UniprocessorSafeCell`（`IPC-01`）~~ ✅
+5. ~~`ShmRegistry` shmat TOCTOU（`SHM-01`）~~ ✅
+6. ~~unix socket 退出清理 + pthread clone FD_TABLE（`U-02`/`U-03`）~~ ✅
+7. ~~`KLOG` 可抢占下 spin 锁（`KLOG-01`）~~ ✅
+8. EXT4 小读缓存与块设备锁序（`BLK-01`）— 暂缓
+
 ## 后续阶段占位（待拆分）
 
 以下条目用于承接跨组件或尚未立项的大块工作，在具体任务文件中拆分为可评审步骤：
