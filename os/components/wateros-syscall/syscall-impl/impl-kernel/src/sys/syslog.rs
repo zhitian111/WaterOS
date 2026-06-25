@@ -1,5 +1,6 @@
 //! `syslog(2)` → 内核 klog 环。
 
+use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use klog::api::is_write_priority;
@@ -22,7 +23,7 @@ pub(crate) fn sys_syslog(args: SyscallArgs) -> UserRet {
 
     if is_write_priority(action) {
         if len > 0 && buf_ptr == 0 {
-            panic!("[syslog] WRITE with null buf and len={len}");
+            return UserRet::from_error(ErrNo::EFAULT);
         }
         if len > 0 {
             match copy_from_user(&mut kbuf[..klen], buf_ptr) {
@@ -44,7 +45,7 @@ pub(crate) fn sys_syslog(args: SyscallArgs) -> UserRet {
         || action == SYSLOG_ACTION_READ_ALL;
     if needs_copy_out && ret > 0 {
         if buf_ptr == 0 {
-            panic!("[syslog] READ with null buf");
+            return UserRet::from_error(ErrNo::EFAULT);
         }
         match copy_to_user(buf_ptr, &kbuf[..ret as usize]) {
             Ok(_n) => UserRet::from_success(ret.max(0) as usize),

@@ -15,6 +15,13 @@ use crate::vfs_util::vfs_error_to_errno;
 const MS_RDONLY: u64 = 1;
 /// Linux `mount(2)` remount flag (`include/uapi/linux/mount.h`).
 const MS_REMOUNT: u64 = 32;
+const MS_BIND: u64 = 4096;
+const MS_MOVE: u64 = 8192;
+const MS_UNBINDABLE: u64 = 1 << 17;
+const MS_PRIVATE: u64 = 1 << 18;
+const MS_SLAVE: u64 = 1 << 19;
+const MS_SHARED: u64 = 1 << 20;
+const MS_UNSUPPORTED: u64 = MS_BIND | MS_MOVE | MS_UNBINDABLE | MS_PRIVATE | MS_SLAVE | MS_SHARED;
 
 pub(crate) fn sys_mount(args: SyscallArgs) -> UserRet {
     cgroup_regression_loop_fast_exit_if_standalone();
@@ -24,6 +31,20 @@ pub(crate) fn sys_mount(args: SyscallArgs) -> UserRet {
     let fstype_ptr = args.arg(2);
     let flags = args.arg(3) as u64;
     let data_ptr = args.arg(4);
+
+    if flags & MS_UNSUPPORTED != 0 {
+        log::warn!(
+            "[syscall] mount(nr=40) unsupported flags={:#x} args=[{:#x},{:#x},{:#x},{:#x},{:#x},{:#x}]",
+            flags,
+            source_ptr,
+            target_ptr,
+            fstype_ptr,
+            flags,
+            data_ptr,
+            0usize,
+        );
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
 
     if target_ptr == 0 {
         return UserRet::from_error(ErrNo::EFAULT);

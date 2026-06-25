@@ -23,6 +23,7 @@ const FUTEX_CMP_REQUEUE : u32 = 4;
 const FUTEX_CLOCK_REALTIME : u32 = 256;
 
 const FUTEX_CMD_MASK : u32 = !(ipc::futex::FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME);
+const FUTEX_BITSET_MATCH_ALL : u32 = !0;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -67,6 +68,19 @@ fn parse_futex_timeout(timeout_ptr : usize, futex_op : u32) -> Result<Option<Tas
         ns_duration_to_ticks(timespec_to_ns(ts)?)
     };
     Ok(Some(ticks))
+}
+
+fn reject_unsupported_futex_bitset(cmd : u32, bitset : u32) -> Result<(), ErrNo> {
+    if cmd != FUTEX_WAIT_BITSET && cmd != FUTEX_WAKE_BITSET {
+        return Ok(());
+    }
+    if bitset == FUTEX_BITSET_MATCH_ALL {
+        return Ok(());
+    }
+    log::warn!(
+        "[syscall] futex(nr=98) op={cmd} unsupported bitset={bitset:#x} (only !0 implemented)",
+    );
+    Err(ErrNo::ENOSYS)
 }
 
 fn futex_wait(uaddr : usize,
@@ -142,9 +156,15 @@ pub(crate) fn sys_futex(args : SyscallArgs) -> UserRet {
 
     let result = match cmd {
         FUTEX_WAIT => futex_wait(uaddr, val, 0, futex_op, timeout_ptr),
-        FUTEX_WAIT_BITSET => futex_wait(uaddr, val, val3, futex_op, timeout_ptr),
+        FUTEX_WAIT_BITSET => match reject_unsupported_futex_bitset(cmd, val3) {
+            Ok(()) => futex_wait(uaddr, val, val3, futex_op, timeout_ptr),
+            Err(e) => Err(e),
+        },
         FUTEX_WAKE => futex_wake(uaddr, val, 0, futex_op),
-        FUTEX_WAKE_BITSET => futex_wake(uaddr, val, val3, futex_op),
+        FUTEX_WAKE_BITSET => match reject_unsupported_futex_bitset(cmd, val3) {
+            Ok(()) => futex_wake(uaddr, val, val3, futex_op),
+            Err(e) => Err(e),
+        },
         FUTEX_REQUEUE => futex_requeue(uaddr,
                                        val,
                                        timeout_ptr as u32,

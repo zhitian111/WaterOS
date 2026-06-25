@@ -17,6 +17,8 @@ const CLONE3_ARGS_SIZE_CURRENT : usize = 88;
 const CLONE3_EXIT_SIGNAL_MASK : usize = 0xFF;
 const CLONE_PIDFD : usize = 0x0000_1000;
 const CLONE_INTO_CGROUP : usize = 0x0000_0002_0000_0000;
+/// Linux `CSIGNAL`：fork 路径仅允许低 8 位退出信号号。
+const CLONE_CSIGNAL_MASK : usize = 0xFF;
 
 struct CloneRequest {
     clone_flags : task::CloneFlags,
@@ -154,6 +156,20 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
                                parent_tid,
                                tls,
                                child_tid);
+    }
+
+    if let Some(process_task) = task::current_process_task_snapshot() {
+        if process_task.role != task::ProcessTaskRole::Leader {
+            log::warn!(
+                "[syscall] clone(nr=220) fork from non-leader tid={} pid={}",
+                process_task.tid.raw(),
+                process_task.pid.raw(),
+            );
+            return UserRet::from_error(ErrNo::EPERM);
+        }
+    }
+    if let Err(errno) = validate_fork_clone_flags(clone_flags) {
+        return UserRet::from_error(errno);
     }
 
     let parent_aspace = task::current_task_user_aspace_ptr();
@@ -314,4 +330,19 @@ fn clone3_child_stack(stack : usize, stack_size : usize) -> Option<usize> {
         return Some(stack);
     }
     stack.checked_add(stack_size)
+}
+
+/// fork 路径（非 `CLONE_VM|CLONE_THREAD`）仅接受 `CSIGNAL` 低 8 位；其余 flag 拒绝。
+fn validate_fork_clone_flags(clone_flags : task::CloneFlags) -> Result<(), ErrNo> {
+    let bits = clone_flags.bits();
+    let unsupported = bits & !CLONE_CSIGNAL_MASK;
+    if unsupported != 0 {
+        log::warn!(
+            "[syscall] clone(nr=220) fork unsupported flags={:#x} (allowed CSIGNAL={:#x})",
+            unsupported,
+            bits & CLONE_CSIGNAL_MASK,
+        );
+        return Err(ErrNo::EINVAL);
+    }
+    Ok(())
 }

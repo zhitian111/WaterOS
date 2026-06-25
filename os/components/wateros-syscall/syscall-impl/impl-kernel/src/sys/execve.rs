@@ -48,10 +48,6 @@ fn do_execve(path_ptr: usize, argv_ptr: usize, envp_ptr: usize) -> Result<(), Er
     ltp_fuzz_sigsuspend_worker_exec_fast_exit_if_standalone(abs_path.as_str(), &argv);
     ltp_cpuhotplug_exec_fast_exit_if_standalone(abs_path.as_str(), &argv);
 
-    super::robust::robust_exit_cleanup_siblings_for_exec();
-    let killed_threads = task::terminate_other_threads_for_exec().map_err(|_| ErrNo::EINVAL)?;
-    let current_signal_task = super::signal::ensure_current_signal_state()?.task_id;
-
     let argv_refs: Vec<&str> = argv
         .iter()
         .map(String::as_str)
@@ -82,6 +78,12 @@ fn do_execve(path_ptr: usize, argv_ptr: usize, envp_ptr: usize) -> Result<(), Er
             return Err(errno);
         }
     };
+
+    // 加载成功后再终止兄弟线程，避免失败时原映像不可恢复（Linux 原子 exec 语义）。
+    super::robust::robust_exit_cleanup_siblings_for_exec();
+    let killed_threads = task::terminate_other_threads_for_exec().map_err(|_| ErrNo::EINVAL)?;
+    let current_signal_task = super::signal::ensure_current_signal_state()?.task_id;
+
     let (argc, argv_ptr, envp_ptr) = initial_entry_args(new_sp, final_argv_refs.len());
 
     for exited in &killed_threads {

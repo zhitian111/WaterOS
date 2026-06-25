@@ -1,7 +1,6 @@
 //! 系统调用层与 [`wateros-mm`] API 之间的错误与标志转换。
 
 use abi::errno::ErrNo;
-use api_v0::unsupported::syscall_unsupported;
 
 /// 用户态 `brk` 的单调递增假顶：在无 ELF
 /// 用户页表（`user_aspace_ptr==0`）时兜底。
@@ -14,7 +13,7 @@ pub(crate) fn mm_err_to_errno(e: mm::api::error::MmError) -> ErrNo {
         MmError::OutOfMemory | MmError::FrameAlloc(_) => ErrNo::ENOMEM,
         MmError::InvalidAddress | MmError::AlreadyMapped | MmError::NotMapped => ErrNo::EINVAL,
         MmError::AccessViolation => ErrNo::EFAULT,
-        MmError::Unsupported => syscall_unsupported("mm"),
+        MmError::Unsupported => ErrNo::ENOSYS,
     }
 }
 
@@ -69,4 +68,12 @@ pub(crate) fn current_user_aspace_handle() -> Option<usize> {
     } else {
         Some(p)
     }
+}
+
+/// 要求当前任务已建立用户地址空间；无则记录 warn 并返回 `-ENOSYS`。
+pub(crate) fn require_user_aspace(syscall: &str) -> Result<usize, ErrNo> {
+    current_user_aspace_handle().ok_or_else(|| {
+        log::warn!("[syscall] {syscall} no user_aspace_ptr");
+        ErrNo::ENOSYS
+    })
 }

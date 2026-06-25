@@ -6,7 +6,6 @@ use abi::user_ret::UserRet;
 use cred::api::{Gid, Uid, SUPPLEMENTARY_GROUP_COUNT};
 
 use crate::user_copy::copy_to_user;
-use api_v0::unsupported;
 
 pub(crate) fn sys_getuid() -> UserRet {
     let cred = cred::current_credentials();
@@ -33,7 +32,7 @@ pub(crate) fn sys_getgroups(args: SyscallArgs) -> UserRet {
     let list_ptr = args.arg(1);
 
     if size < 0 {
-        unsupported::syscall_unsupported("getgroups: negative size");
+        return UserRet::from_error(ErrNo::EINVAL);
     }
 
     let cred = cred::current_credentials();
@@ -44,7 +43,11 @@ pub(crate) fn sys_getgroups(args: SyscallArgs) -> UserRet {
     }
 
     if list_ptr == 0 {
-        unsupported::syscall_unsupported("getgroups: null list pointer with size > 0");
+        return UserRet::from_error(ErrNo::EFAULT);
+    }
+
+    if (size as usize) < ngroups {
+        return UserRet::from_error(ErrNo::EINVAL);
     }
 
     let mut gid_buf = [0u32; SUPPLEMENTARY_GROUP_COUNT];
@@ -68,7 +71,7 @@ pub(crate) fn sys_getgroups(args: SyscallArgs) -> UserRet {
     )
     .is_err()
     {
-        unsupported::syscall_unsupported("getgroups: copy_to_user failed");
+        return UserRet::from_error(ErrNo::EFAULT);
     }
     UserRet::from_success(ngroups)
 }

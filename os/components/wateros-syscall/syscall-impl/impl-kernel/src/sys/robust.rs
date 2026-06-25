@@ -149,13 +149,26 @@ pub(crate) fn sys_set_robust_list(args: SyscallArgs) -> UserRet {
 }
 
 pub(crate) fn sys_get_robust_list(args: SyscallArgs) -> UserRet {
-    let head_out = args.arg(0);
-    let len_out = args.arg(1);
-    let tid = match task::current_task_id() {
-        Some(tid) => tid,
-        None => return UserRet::from_error(ErrNo::ESRCH),
+    let pid = args.arg(0) as isize;
+    let head_out = args.arg(1);
+    let len_out = args.arg(2);
+
+    let target_tid = match task::resolve_sched_pid(pid) {
+        Ok(tid) => tid,
+        Err(_) => return UserRet::from_error(ErrNo::ESRCH),
     };
-    let (head, len) = match FutexHub::global().get_robust_list(tid) {
+    if let (Some(current), Some(target)) = (
+        task::current_process_task_snapshot(),
+        task::process_task_snapshot(target_tid),
+    ) {
+        if current.pid != target.pid {
+            log::warn!(
+                "[syscall] get_robust_list(nr=100) pid={pid} not in current thread group",
+            );
+            return UserRet::from_error(ErrNo::EPERM);
+        }
+    }
+    let (head, len) = match FutexHub::global().get_robust_list(target_tid) {
         Ok(v) => v,
         Err(e) => return UserRet::from_error(futex_error_to_errno(e)),
     };

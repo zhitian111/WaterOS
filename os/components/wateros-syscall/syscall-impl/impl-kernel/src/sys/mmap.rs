@@ -13,11 +13,10 @@ use mm::api::flags::MapFlags;
 use mm::api::mmap::{DemandPageLoader, MmapKind, MmapOps};
 
 use crate::mm_util::{
-    current_user_aspace_handle, linux_mmap_flags_to_map_flags, linux_mmap_is_anonymous,
-    linux_mmap_prot_to_perm, mm_err_to_errno,
+    linux_mmap_flags_to_map_flags, linux_mmap_is_anonymous, linux_mmap_prot_to_perm,
+    mm_err_to_errno, require_user_aspace,
 };
 use crate::vfs_util::vfs_error_to_errno;
-use api_v0::unsupported::syscall_unsupported;
 use vfs::api::{VfsError, VfsIoHandle, VfsNodeType};
 
 struct VfsMmapPageLoader {
@@ -57,8 +56,9 @@ impl DemandPageLoader for VfsMmapPageLoader {
 }
 
 pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
-    let Some(handle) = current_user_aspace_handle() else {
-        syscall_unsupported("mmap: no user_aspace_ptr");
+    let handle = match require_user_aspace("mmap") {
+        Ok(handle) => handle,
+        Err(e) => return UserRet::from_error(e),
     };
     use mm::api::addr::VirtAddr;
     use mm::api::mmap::MmapRequest;
@@ -184,8 +184,9 @@ fn file_size_for_mmap(fd : usize) -> Result<usize, ErrNo> {
 }
 
 pub(crate) fn sys_munmap(args : SyscallArgs) -> UserRet {
-    let Some(handle) = current_user_aspace_handle() else {
-        syscall_unsupported("mmap: no user_aspace_ptr");
+    let handle = match require_user_aspace("munmap") {
+        Ok(handle) => handle,
+        Err(e) => return UserRet::from_error(e),
     };
     use mm::api::addr::VirtAddr;
     use mm::api::mmap::MmapOps;
@@ -227,8 +228,9 @@ pub(crate) fn sys_msync(args : SyscallArgs) -> UserRet {
 }
 
 pub(crate) fn sys_mprotect(args : SyscallArgs) -> UserRet {
-    let Some(handle) = current_user_aspace_handle() else {
-        syscall_unsupported("mmap: no user_aspace_ptr");
+    let handle = match require_user_aspace("mprotect") {
+        Ok(handle) => handle,
+        Err(e) => return UserRet::from_error(e),
     };
     use mm::api::addr::VirtAddr;
     use mm::api::mmap::MmapOps;
@@ -245,8 +247,9 @@ pub(crate) fn sys_mprotect(args : SyscallArgs) -> UserRet {
 }
 
 pub(crate) fn sys_mremap(args : SyscallArgs) -> UserRet {
-    let Some(handle) = current_user_aspace_handle() else {
-        syscall_unsupported("mremap: no user_aspace_ptr");
+    let handle = match require_user_aspace("mremap") {
+        Ok(handle) => handle,
+        Err(e) => return UserRet::from_error(e),
     };
     use mm::api::addr::VirtAddr;
     use mm::api::mmap::MmapOps;
