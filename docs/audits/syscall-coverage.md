@@ -92,7 +92,7 @@
 | clone3 | 435 | ⚠️ | 共用 clone 路径；pidfd 等 ENOSYS |
 | execve | 221 | ⚠️ | ELF+shebang；无 env PATH；失败不可恢复 |
 | waitpid/wait4 | 260 | ⚠️ | WNOHANG；无 rusage；pid 子集 |
-| kill | 129 | ⚠️ | 无进程组 kill |
+| kill | 129 | 🔶 | pid 0/-1；pid<-1 按 pgid leader 进程树兼容 |
 | sched_yield | 124 | ✅ | — |
 | sched_setparam…getaffinity | 118–123 | ⚠️ | setaffinity EPERM；getaffinity 单核 |
 | sched_get_priority_max/min | 125–126 | ✅ | — |
@@ -138,7 +138,7 @@
 | getrlimit/setrlimit/prlimit64 | 163–164/261 | ⚠️ | 部分资源 |
 | umask/getrusage/getrandom | 166/165/278 | ⚠️ | 伪随机等 |
 | syslog | 116 | ✅ | klog；非法指针 panic |
-| acct | 89 | 🔀🔶 | 旁路；仅路径校验 |
+| acct | 89 | ⚠️ | root/path 校验；写 Linux v0 accounting 记录，未支持 v3/完整资源统计 |
 
 ### 2.7 信号、futex
 

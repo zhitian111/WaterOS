@@ -103,6 +103,10 @@ pub fn task_id_for_thread(tid: ThreadId) -> Option<TaskId> {
     with_process_registry(|registry| registry.task_id_for_thread(tid))
 }
 
+pub fn task_exit_would_finish_process(task_id: TaskId) -> Option<bool> {
+    with_process_registry(|registry| registry.task_exit_would_finish_process(task_id))
+}
+
 pub fn find_exited_child_process(parent_pid: ProcessId) -> Option<ProcessDescriptor> {
     with_process_registry(|registry| registry.find_exited_child_process(parent_pid))
 }
@@ -193,6 +197,8 @@ pub fn process_model_self_test() {
     assert_eq!(member101.tls, 0x3000);
     assert_eq!(member101.clear_child_tid.unwrap().user_addr(), 0x4000);
     assert_eq!(registry.lookup_process(pid).unwrap().task_count, 2);
+    assert_eq!(registry.task_exit_would_finish_process(100), Some(false));
+    assert_eq!(registry.task_exit_would_finish_process(101), Some(false));
 
     let forked = registry
         .create_process_like_fork(pid, 102, aspace)
@@ -206,6 +212,7 @@ pub fn process_model_self_test() {
     assert!(registry.has_child_process(pid));
 
     assert!(registry.mark_task_exited(101, 7));
+    assert_eq!(registry.task_exit_would_finish_process(100), Some(true));
     assert!(matches!(
         registry.lookup_process(pid).unwrap().state,
         ProcessState::Running

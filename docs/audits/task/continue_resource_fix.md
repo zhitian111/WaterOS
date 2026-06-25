@@ -65,5 +65,18 @@
 | 第三波 | T-PF-02/03、T-IPC-02 | 已完成 |
 | 第四波 | T-IPC-01/03、T-SKT-01 | 已完成 |
 | 第五波 | T-PC-01/02/03、T-FS-01/02/03 | 已完成 |
+| 第六波 | LTP `acct02`/shell 环境推进 | 进行中：`acct02` TPASS，已补 `testcases/bin/lib` PATH 与常用 busybox applet；下一轮关注 `add_ipv6addr` 的 `locale` 后续语义与 `ar`/`ip` 工具能力 |
 
 完整条目与验收标准以 [`../resource-fix-queue.md`](../resource-fix-queue.md) 为准。
+
+最近实测日志：
+
+- `os/tem/rv_ltp_20260625_203008.log`（240s timeout，已跑到 `bind05`）
+- `os/tem/rv_ltp_20260625_203550.log`（180s timeout，已跑到 `ar01.sh`）
+
+关键变化：
+
+- `acct02`: `TPASS: acct() wrote correct file contents!`
+- `add_ipv6addr`: 从 `check_envval: not found` 推进到缺少 `awk/cut`，补 applet 后继续推进到缺少 `locale`
+- `ar01.sh`: 从 `grep: not found` 推进到缺少 `ar`
+- `arping01.sh`/`bbr*.sh`: `grep` 缺口已补，后续关注 `arping`/`ip`

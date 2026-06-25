@@ -289,6 +289,22 @@ impl ProcessRegistry {
             })
     }
 
+    pub fn task_exit_would_finish_process(&self, task_id : TaskId) -> Option<bool> {
+        let process = self.processes
+                          .values()
+                          .find(|process| {
+                              process.tasks
+                                     .iter()
+                                     .any(|task| task.task_id == task_id)
+                          })?;
+        Some(process.tasks
+                    .iter()
+                    .all(|task| {
+                        task.task_id == task_id ||
+                        matches!(task.state, ProcessTaskState::Exited(_))
+                    }))
+    }
+
     pub fn retain_only_task_in_process(&mut self,
                                        pid : ProcessId,
                                        keep_task_id : TaskId)

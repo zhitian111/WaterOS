@@ -10,15 +10,29 @@ use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 
-use crate::user_copy::{copy_from_user, copy_to_user_struct};
+use crate::user_copy::{copy_from_user, copy_to_user_struct, copy_to_user_struct_in_aspace};
 
 const CLONE3_ARGS_SIZE_V0 : usize = 64;
 const CLONE3_ARGS_SIZE_CURRENT : usize = 88;
 const CLONE3_EXIT_SIGNAL_MASK : usize = 0xFF;
 const CLONE_PIDFD : usize = 0x0000_1000;
+const CLONE_VM_RAW : usize = 0x0000_0100;
+const CLONE_VFORK : usize = 0x0000_4000;
+const CLONE_PARENT_SETTID_RAW : usize = 0x0010_0000;
+const CLONE_CHILD_CLEARTID_RAW : usize = 0x0020_0000;
+const CLONE_CHILD_SETTID_RAW : usize = 0x0100_0000;
+const CLONE_CLEAR_SIGHAND_RAW : usize = 0x0000_0001_0000_0000;
 const CLONE_INTO_CGROUP : usize = 0x0000_0002_0000_0000;
 /// Linux `CSIGNAL`：fork 路径仅允许低 8 位退出信号号。
 const CLONE_CSIGNAL_MASK : usize = 0xFF;
+const CLONE_FORK_COMPAT_MASK : usize = CLONE_CSIGNAL_MASK |
+                                        CLONE_PARENT_SETTID_RAW |
+                                        CLONE_CHILD_CLEARTID_RAW |
+                                        CLONE_CHILD_SETTID_RAW;
+const CLONE_VFORK_COMPAT_MASK : usize = CLONE_FORK_COMPAT_MASK |
+                                        CLONE_VM_RAW |
+                                        CLONE_VFORK |
+                                        CLONE_CLEAR_SIGHAND_RAW;
 
 struct CloneRequest {
     clone_flags : task::CloneFlags,
@@ -203,11 +217,30 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
     };
     let child_pid = child_snapshot.pid
                                   .raw();
+    let child_tid_raw = child_snapshot.tid
+                                      .raw();
+    let child_tid_value = child_tid_raw as u32;
+    if clone_flags.contains(task::CloneFlags::CLONE_PARENT_SETTID) &&
+       parent_tid != 0 &&
+       copy_to_user_struct(parent_tid, &child_tid_value).is_err()
+    {
+        let _ = task::abort_fork_child(child_id);
+        return UserRet::from_error(ErrNo::EFAULT);
+    }
+    if clone_flags.contains(task::CloneFlags::CLONE_CHILD_SETTID) &&
+       child_tid != 0 &&
+       copy_to_user_struct_in_aspace(new_aspace_ptr, child_tid, &child_tid_value).is_err()
+    {
+        let _ = task::abort_fork_child(child_id);
+        return UserRet::from_error(ErrNo::EFAULT);
+    }
+    if clone_flags.contains(task::CloneFlags::CLONE_CHILD_CLEARTID) {
+        let _ = task::set_task_clear_child_tid(child_id, Some(task::TaskClearTid::new(child_tid)));
+    }
     if super::signal::on_fork(parent_signal.task_id,
                               child_pid,
                               child_id,
-                              child_snapshot.tid
-                                            .raw()).is_err()
+                              child_tid_raw).is_err()
     {
         if let Some(rolled_pid) = task::abort_fork_child(child_id) {
             super::signal::abort_fork_signal(rolled_pid.raw(), child_id);
@@ -366,17 +399,29 @@ fn clone3_child_stack(stack : usize, stack_size : usize) -> Option<usize> {
     stack.checked_add(stack_size)
 }
 
-/// fork 路径（非 `CLONE_VM|CLONE_THREAD`）仅接受 `CSIGNAL` 低 8 位；其余 flag 拒绝。
+/// fork 路径（非 `CLONE_VM|CLONE_THREAD`）接受 `fork` 与 libc/busybox 常见
+/// `vfork` 形态。`vfork` 在 WaterOS 中降级为普通 fork：复制地址空间，不共享 VM。
 fn validate_fork_clone_flags(clone_flags : task::CloneFlags) -> Result<(), ErrNo> {
     let bits = clone_flags.bits();
-    let unsupported = bits & !CLONE_CSIGNAL_MASK;
-    if unsupported != 0 {
-        log::warn!(
-            "[syscall] clone(nr=220) fork unsupported flags={:#x} (allowed CSIGNAL={:#x})",
-            unsupported,
-            bits & CLONE_CSIGNAL_MASK,
-        );
-        return Err(ErrNo::EINVAL);
+    if bits & !CLONE_FORK_COMPAT_MASK == 0 {
+        return Ok(());
     }
-    Ok(())
+
+    if bits & !CLONE_VFORK_COMPAT_MASK == 0 && bits & CLONE_VFORK != 0 {
+        log::trace!(
+            "[syscall] clone(nr=220) emulating vfork flags={:#x} as fork",
+            bits,
+        );
+        return Ok(());
+    }
+
+    let unsupported = bits & !CLONE_FORK_COMPAT_MASK;
+    log::warn!(
+        "[syscall] clone(nr=220) fork unsupported flags={:#x} (allowed CSIGNAL={:#x}, tid compat={:#x}, vfork compat={:#x})",
+        unsupported,
+        bits & CLONE_CSIGNAL_MASK,
+        CLONE_PARENT_SETTID_RAW | CLONE_CHILD_CLEARTID_RAW | CLONE_CHILD_SETTID_RAW,
+        CLONE_VM_RAW | CLONE_VFORK | CLONE_CLEAR_SIGHAND_RAW,
+    );
+    Err(ErrNo::EINVAL)
 }

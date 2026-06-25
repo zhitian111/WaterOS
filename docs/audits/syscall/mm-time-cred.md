@@ -230,9 +230,10 @@
 
 #### `acct` (89)
 
-- **旁路** `dispatch_unknown`；需 root。
-- `path==NULL`：关闭 accounting（成功，无状态）。
-- 非 NULL：路径解析 + 元数据校验（须为可写普通文件）；**不写入 accounting 记录**。
+- 需 root；`path==NULL` 关闭 accounting。
+- 非 NULL：路径解析 + 元数据校验（须为可写普通文件），保存 accounting 输出路径。
+- 进程退出路径写入 Linux `struct acct` v0 兼容记录：`ac_comm`、uid/gid、btime、exit status 等；CPU/IO/内存统计仍为最小值。
+- **缺口**：未支持 `CONFIG_BSD_PROCESS_ACCT_V3` / `struct acct_v3`，也未实现完整资源统计与磁盘空间阈值行为。
 
 ---
 

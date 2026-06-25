@@ -287,12 +287,10 @@ impl FsBridge {
             return super::dir_handle::DirectoryHandle::open(self, abs);
         }
         match resolve_route(abs.as_str())? {
-            FsRoute::AuxRw { readonly: true, .. } if flags.contains(VfsOpenFlags::WRITE) => {
+            FsRoute::AuxRw { readonly : true, .. } if flags.contains(VfsOpenFlags::WRITE) => {
                 Err(VfsError::ReadOnlyFs)
             }
-            FsRoute::AuxRw { .. } | FsRoute::AuxRo { .. } => {
-                Ok(Box::new(BufferedFileHandle::open(self, abs, flags)?))
-            }
+            FsRoute::AuxRo { .. } => Ok(Box::new(BufferedFileHandle::open(self, abs, flags)?)),
             _ => super::paged_handle::open_file(self, abs, flags),
         }
     }

@@ -87,7 +87,7 @@
 |----|------|
 | PROC-P1-01 | `wait4` 忽略 `rusage`；`pid==0`/`<-1` 直接 `-EINVAL` | `pid==0` 退化为等任意子进程；`pid<-1` `warn`+`-EINVAL`；`rusage` 仍忽略 |
 | PROC-P1-02 | `setsid`/`setpgid` stub 却返回成功 | trace 标注 session/pgid 未持久化（bring-up 兼容） |
-| PROC-P1-03 | `kill` 不支持 `pid<=0` 进程组语义 | **已收敛**：`pid==0` 当前进程；`pid==-1` 广播（除 self/init）；`<-1` `warn` |
+| PROC-P1-03 | `kill` 不支持 `pid<=0` 进程组语义 | **已收敛**：`pid==0` 当前进程；`pid==-1` 广播（除 self/init）；`pid<-1` 按 pgid leader pid 的进程树做 bring-up 兼容 |
 | PROC-P1-04 | `sched_setattr`/`getattr`(274/275) 仅 `dispatch_unknown` 旁路 |
 | PROC-P1-05 | `execve` argv/envp EFAULT **静默截断** | **已收敛**：用户指针错误→`-EFAULT` |
 | PROC-P1-06 | `compat_exec_load_path` 硬编码 busybox 重定向 |
@@ -247,10 +247,18 @@ warn!("[syscall] {name}(nr={nr}) unsupported: {detail} args=[{:#x},{:#x},{:#x},{
 | MM-P1-01 | `msync`/`madvise`/`mlock` | `mmap.rs` | trace 标注 no-op |
 | PROC-P1-01（部分） | `waitpid` | `task.rs` | `pid==0` 等任意子进程；`pid<-1` 拒绝 |
 | PROC-P1-02 | `setsid`/`setpgid` | `task.rs` | trace 标注未持久化 |
-| PROC-P1-03 | `kill` | `kill.rs` | `pid==0`/`-1` 语义；`<-1` 拒绝 |
+| PROC-P1-03 | `kill` | `kill.rs` | `pid==0`/`-1` 语义；`pid<-1` 按 pgid leader 进程树兼容 |
 | PROC-P1-05 | `execve` | `execve.rs` | argv/envp 拷贝失败→`-EFAULT` |
 | IO-P1-09 | `ioctl` | `ioctl.rs` | 未知 request `warn` |
 | VFS-P1-05（部分） | `renameat2` | `renameat2.rs` | `RENAME_NOREPLACE`→目标存在 `-EEXIST` |
 | VFS-P1-08 | `getcwd` | `getcwd.rs` | 内核缓冲 4096 |
 | VFS-P1-10 | `fallocate` | `fallocate.rs` | `KEEP_SIZE` 预分配 stub 成功 |
 | SIG-P1-03 | robust futex | `robust.rs` | exit cleanup 双 key wake |
+
+### 7.5 已收敛（2026-06-25 第五轮；LTP glibc shell 启动）
+
+| 原 ID | syscall | 修改文件 | 行为 |
+|-------|---------|----------|------|
+| P0-02（兼容） | `clone`/`fork` | `clone.rs` | fork 路径支持 `CLONE_PARENT_SETTID` / `CLONE_CHILD_SETTID` / `CLONE_CHILD_CLEARTID`；`CLONE_VM\|CLONE_VFORK\|CLONE_CLEAR_SIGHAND\|CSIGNAL` 形态降级为普通 fork（复制地址空间、不共享 VM、不阻塞父进程）；其他非线程 fork flag 仍 `warn`+`-EINVAL` |
+| VFS-P1-01（修正） | `openat` | `openat.rs` | 目标不存在时不再先做 final symlink follow；直接交给 VFS 打开/创建，修复 LTP `/dev/shm/ltp_*` 与 `/dev/zero` 预检查 `ENOENT` |
+| PROC-P1-03（兼容） | `kill` | `kill.rs` | `pid<-1` 不再 `-EINVAL`；按 `abs(pid)` 作为进程组 leader pid，向该进程及子进程树投递，覆盖 LTP 常见 `kill(-child, SIGKILL)` 清理路径 |

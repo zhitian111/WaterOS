@@ -217,8 +217,8 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                 }
                 log_unhandled_user_fault_probe(cx, trap_cause, raw_cause);
                 debug!("[trap] user memory fault {:?} raw={:#x} ecode={:#x} sepc={:#x} \
-                        stval={:#x} user_sp={:#x} return_satp={:#x} aspace_ptr={:#x} — delivering \
-                        SIGSEGV",
+                        stval={:#x} user_sp={:#x} return_satp={:#x} aspace_ptr={:#x} — \
+                        delivering SIGSEGV",
                        trap_cause,
                        raw_cause,
                        (raw_cause >> 16) & 0x3F,

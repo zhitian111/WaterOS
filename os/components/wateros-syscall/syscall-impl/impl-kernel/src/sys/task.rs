@@ -192,10 +192,10 @@ pub(crate) fn sys_exit(exit_code : isize) -> isize {
             reap_exited_member_threads_runtime_resources(process_task.pid);
         }
         if let Some(process_task) = task::process_task_snapshot(task_id) {
-            let last_thread = task::process_snapshot(process_task.pid).is_some_and(|process| {
-                                                                          process.task_count <= 1
-                                                                      });
+            let last_thread = task::task_exit_would_finish_process(task_id)
+                .unwrap_or(process_task.role == task::ProcessTaskRole::Leader);
             if last_thread {
+                super::acct::record_current_process_exit(exit_code);
                 super::signal::notify_parent_sigchld(process_task.pid);
             }
             super::signal::on_thread_exit(task_id,
@@ -240,6 +240,7 @@ pub(crate) fn sys_exit_group(exit_code : isize) -> isize {
         }
         if let Some(process_task) = task::current_process_task_snapshot() {
             reap_exited_member_threads_runtime_resources(process_task.pid);
+            super::acct::record_current_process_exit(exit_code);
             super::signal::notify_parent_sigchld(process_task.pid);
             if let Some(task_ids) = task::task_ids_for_process(process_task.pid) {
                 let user_aspace = task::current_task_user_aspace_ptr();

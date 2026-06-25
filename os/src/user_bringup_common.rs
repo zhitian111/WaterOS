@@ -118,10 +118,12 @@ fn drop_reaped_task_runtime_resources(exited : &task::ExitedTask) {
 fn libc_envp_for_path(path : &str) -> Vec<&'static str> {
     if path.starts_with("/glibc/") {
         vec!["LD_LIBRARY_PATH=/glibc/lib",
-             "PATH=/glibc:/bin:/usr/bin:/sbin:/usr/sbin"]
+             "PATH=/glibc:/glibc/ltp/testcases/bin:/glibc/ltp/testcases/lib:/bin:/usr/bin:/sbin:/\
+              usr/sbin"]
     } else if path.starts_with("/musl/") {
         vec!["LD_LIBRARY_PATH=/musl/lib",
-             "PATH=/musl:/bin:/usr/bin:/sbin:/usr/sbin"]
+             "PATH=/musl:/musl/ltp/testcases/bin:/musl/ltp/testcases/lib:/bin:/usr/bin:/sbin:/usr/\
+              sbin"]
     } else {
         Vec::new()
     }

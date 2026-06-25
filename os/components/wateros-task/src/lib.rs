@@ -468,6 +468,12 @@ pub fn task_id_for_thread(tid : ThreadId) -> Option<TaskId> {
     active_impl::task_id_for_thread(tid)
 }
 
+/// 判断指定 task 退出后，其所属进程是否没有其它仍运行的 task。
+#[inline]
+pub fn task_exit_would_finish_process(task_id : TaskId) -> Option<bool> {
+    active_impl::task_exit_would_finish_process(task_id)
+}
+
 /// 查询进程内任务语义快照。
 #[inline]
 pub fn process_task_snapshot(task_id : TaskId) -> Option<ProcessTaskDescriptor> {

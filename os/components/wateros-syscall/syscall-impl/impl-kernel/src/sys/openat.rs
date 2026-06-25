@@ -158,5 +158,12 @@ fn prepare_open_path(resolved: &str, flags: u32) -> Result<String, ErrNo> {
             Err(e) => return Err(vfs_error_to_errno(e)),
         }
     }
-    resolve_final_symlink(resolved)
+    match active_impl::backend().metadata(resolved) {
+        Ok(meta) if meta.node_type == vfs::api::VfsNodeType::Symlink => {
+            resolve_final_symlink(resolved)
+        }
+        Ok(_) => Ok(String::from(resolved)),
+        Err(VfsError::NotFound) => Ok(String::from(resolved)),
+        Err(e) => Err(vfs_error_to_errno(e)),
+    }
 }

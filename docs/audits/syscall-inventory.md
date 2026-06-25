@@ -186,7 +186,7 @@
 | getrusage | 165 | dispatch_getrusage | sys/task.rs | M | 部分 |
 | getrandom | 278 | dispatch_getrandom | sys/task.rs | M | 部分 |
 | syslog | 116 | dispatch_syslog | sys/syslog.rs | M | 已接入（非法指针可 panic） |
-| acct | 89 | dispatch_unknown | sys/acct.rs | L | 部分（旁路） |
+| acct | 89 | dispatch_unknown/SYS_ACCT | sys/acct.rs | M | 部分（Linux v0 accounting 记录） |
 
 ## 七、信号、futex 与同步
 

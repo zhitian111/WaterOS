@@ -126,6 +126,35 @@ pub(crate) fn copy_to_user_struct<T: Copy>(ptr: usize, value: &T) -> Result<(), 
     })?
 }
 
+pub(crate) fn copy_to_user_struct_in_aspace<T: Copy>(
+    handle: usize,
+    ptr: usize,
+    value: &T,
+) -> Result<(), ErrNo> {
+    if ptr == 0 || handle == 0 {
+        return Err(ErrNo::EFAULT);
+    }
+    let bytes = unsafe {
+        core::slice::from_raw_parts(
+            (value as *const T) as *const u8,
+            core::mem::size_of::<T>(),
+        )
+    };
+    let ops = ActiveUserMemoryOps::new(handle);
+    ops.copy_to_user(VirtAddr(ptr), bytes)
+        .map_err(|e| {
+            trace_user_copy_failure("copy_to_user_in_aspace", ptr, bytes.len(), e);
+            mm_err_to_errno(e)
+        })
+        .and_then(|n| {
+            if n == bytes.len() {
+                Ok(())
+            } else {
+                Err(ErrNo::EFAULT)
+            }
+        })
+}
+
 pub(crate) fn copy_from_user_struct<T: Copy>(ptr: usize) -> Result<T, ErrNo> {
     let mut value = core::mem::MaybeUninit::<T>::uninit();
     let bytes = unsafe {

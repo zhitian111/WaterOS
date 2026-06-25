@@ -74,7 +74,7 @@
         "mm/vfs-root-read",
         "platform/impl-qemu-riscv64-opensbi",
         # "runtime/impl-trace",
-        # "runtime/impl-info",
+        "runtime/impl-info",
         "runtime/impl-platform-console",
         "syscall/impl-kernel",
         "klog/default",

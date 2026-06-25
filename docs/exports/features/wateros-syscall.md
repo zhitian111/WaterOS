@@ -41,7 +41,7 @@
 | `brk` / `mmap` / `munmap` / `mprotect` | 部分 | 需 `user_aspace_ptr`；无则 `-ENOSYS` |
 | `get_mempolicy` (236) | 部分 | 语义在 `wateros-mm::mempolicy` |
 | `sched_setparam` (118)–`sched_getaffinity` (123) | 部分 | 语义在 `wateros-task::sched`；set RT/affinity → `EPERM` |
-| `clone`（含 `fork`） | 部分 | leader-only fork；fork flags 仅 `CSIGNAL` |
+| `clone`（含 `fork`/`vfork` 兼容） | 部分 | leader-only fork；普通 fork 接受 `CSIGNAL` 与 parent/child tid flags；`CLONE_VM\|CLONE_VFORK\|CLONE_CLEAR_SIGHAND\|CSIGNAL` 降级为普通 fork |
 | `execve` | 部分 | 替换地址空间/入口/栈；非 ELF 文本脚本经 shebang 解析后加载解释器 ELF |
 | `waitpid` | 部分 | 最小父子等待、`WNOHANG` |
 | `getpid` / `getppid` / `gettid` | 部分 | orphan ppid 为 1 |
@@ -64,7 +64,9 @@
 | `mmap`/`munmap`/`mprotect`/`mremap` | 无 `user_aspace_ptr` | `warn` + `-ENOSYS` |
 | `MmError::Unsupported` | mm 层不支持操作 | `-ENOSYS`（非 panic） |
 | `clone`/`fork` | 非 leader 线程 fork | `warn` + `-EPERM` |
-| `clone`/`fork` | fork 路径 flags 超出 `CSIGNAL` 低 8 位 | `warn` + `-EINVAL` |
+| `clone`/`fork` | fork 路径 flags 超出 `CSIGNAL` 与 parent/child tid flags（除 `CLONE_VM\|CLONE_VFORK` 兼容形态） | `warn` + `-EINVAL` |
+| `clone`/`fork` | `CLONE_PARENT_SETTID` / `CLONE_CHILD_SETTID` / `CLONE_CHILD_CLEARTID` | 写 parent/child tid；子进程退出清零并 futex wake |
+| `clone`/`vfork` | `CLONE_VM\|CLONE_VFORK\|CLONE_CLEAR_SIGHAND\|CSIGNAL` | 降级为普通 fork（复制地址空间、不共享 VM、不阻塞父进程） |
 | `futex` `WAIT_BITSET`/`WAKE_BITSET` | `bitset != !0` | `warn` + `-ENOSYS` |
 | `get_robust_list` | — | 修正为 Linux 三参数 ABI `(pid, head**, len*)` |
 | `getgroups` | 非法 size/指针/copy 失败 | `-EINVAL`/`-EFAULT` |
@@ -92,6 +94,7 @@
 | `pipe2` | 支持 `O_CLOEXEC` |
 | `fcntl` | pipe/TTY `F_GETFL`/`F_SETFL` 反映并设置 `O_NONBLOCK` |
 | `openat` | `O_CREAT\|O_EXCL` 已存在路径→`-EEXIST` |
+| `openat` | 新文件或特殊 devfs 路径 | 不再因 final symlink follow 预检查返回 `ENOENT` |
 | `faccessat2` | `AT_SYMLINK_NOFOLLOW` 不 follow |
 | `umount2` | 非零 flags→`-EINVAL` |
 | `futex` wake | private/shared key 双试 |
@@ -104,7 +107,7 @@
 |---------|------|
 | `brk` | 扩页失败返回 `ENOMEM`/`EINVAL`（不再伪装成功） |
 | `clock_settime` | 非 root → `EPERM` |
-| `kill` | `pid==0` 当前进程；`pid==-1` 广播（除 self/pid1） |
+| `kill` | `pid==0` 当前进程；`pid==-1` 广播（除 self/pid1）；`pid<-1` 按 pgid leader pid 的进程树做 bring-up 兼容 |
 | `waitpid` | `pid==0` 等待任意子进程 |
 | `execve` | argv/envp 用户指针错误 → `EFAULT` |
 | `ioctl` | 未识别 request 打 `warn` |
@@ -112,6 +115,9 @@
 | `getcwd` | 内核路径缓冲 4096 字节 |
 | `fallocate` | `KEEP_SIZE` 扩展预分配 stub 成功 |
 | robust exit | futex wake 尝试 private + shared key |
+| `acct` | root/path 校验 + Linux v0 accounting 记录写入；`acct02` 通过 |
+| LTP 环境 | PATH 包含 `testcases/bin`/`testcases/lib`，根布局补齐常用 busybox applet |
+| AuxRw 文件 | 普通文件使用 range/paged handle，父进程打开后可观察子进程追加写 |
 
 **文档勘误**：`read`(stdin) 当前多为 **EOF(0)**，非 `EBADF`；用户态 `select` 应走 `pselect6`(72)，nr 23 为 `dup`。
 

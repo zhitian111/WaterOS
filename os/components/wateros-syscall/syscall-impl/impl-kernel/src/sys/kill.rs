@@ -13,6 +13,32 @@ use task::ProcessId;
 /// Linux 标准信号号上界（不含实时信号）。
 const _NSIG: i32 = 64;
 
+fn collect_process_tree(root: ProcessId) -> Vec<ProcessId> {
+    let mut targets = Vec::new();
+    if task::process_snapshot(root).is_none() {
+        return targets;
+    }
+
+    targets.push(root);
+    let mut scan = 0;
+    while scan < targets.len() {
+        let parent = targets[scan];
+        scan += 1;
+        for pid in task::all_process_pids() {
+            if targets.contains(&pid) {
+                continue;
+            }
+            let Some(snapshot) = task::process_snapshot(pid) else {
+                continue;
+            };
+            if snapshot.parent_pid == Some(parent) {
+                targets.push(pid);
+            }
+        }
+    }
+    targets
+}
+
 fn resolve_kill_targets(pid: isize) -> Result<Vec<ProcessId>, ErrNo> {
     match pid {
         p if p > 0 => Ok(alloc::vec![ProcessId::from_raw(p as usize)]),
@@ -28,10 +54,13 @@ fn resolve_kill_targets(pid: isize) -> Result<Vec<ProcessId>, ErrNo> {
                 .collect())
         }
         _ => {
-            log::warn!(
-                "[syscall] kill(nr=129) unsupported pid={pid} (negative process group semantics)",
-            );
-            Err(ErrNo::EINVAL)
+            let pgid = pid.unsigned_abs();
+            let targets = collect_process_tree(ProcessId::from_raw(pgid));
+            if targets.is_empty() {
+                Err(ErrNo::ESRCH)
+            } else {
+                Ok(targets)
+            }
         }
     }
 }

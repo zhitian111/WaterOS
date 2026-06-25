@@ -35,7 +35,9 @@ pub fn ensure_busybox_path_links() {
         ensure_dir(sess.as_mut(), "/sbin", 0o755);
         ensure_dir(sess.as_mut(), "/usr/sbin", 0o755);
         ensure_dir(sess.as_mut(), "/etc", 0o755);
+        ensure_dir(sess.as_mut(), "/boot", 0o755);
         ensure_etc_passwd(sess.as_mut());
+        ensure_kernel_config(sess.as_mut());
 
         match sess.mkdir("/dev", 0o755) {
             Ok(()) => info!("[{LOG_TAG}] mkdir /dev ok"),
@@ -84,7 +86,11 @@ pub fn ensure_busybox_path_links() {
 
         /// busybox 多用途小程序：优先给 libc 本地目录建链接，避免 musl/glibc 脚本
         /// 通过 PATH 误用另一套动态库；同时保留 /bin 兼容路径。
-        const APPLETS : &[&str] = &["ls", "sleep", "basename", "cp", "mkdir", "rmdir", "cat"];
+        const APPLETS : &[&str] = &["ls", "sleep", "basename", "cp", "mkdir", "rmdir", "cat",
+                                    "grep", "awk", "cut", "sed", "tr", "wc", "head", "tail",
+                                    "sort", "uniq", "expr", "dirname", "readlink", "ln", "rm",
+                                    "touch", "chmod", "chown", "ip", "ifconfig", "route",
+                                    "sysctl", "locale", "ar", "arping"];
         for applet in APPLETS {
             try_hardlink(sess.as_mut(),
                          "/glibc/busybox",
@@ -103,61 +109,67 @@ pub fn ensure_busybox_path_links() {
 }
 
 #[cfg(feature = "vfs-bridge")]
-fn ensure_etc_passwd(sess: &mut (impl vfs::api::RootRwSession + ?Sized)) {
+fn ensure_etc_passwd(sess : &mut (impl vfs::api::RootRwSession + ?Sized)) {
     use vfs::api::SingleRootReadView;
 
-    const PASSWD : &str = "root:x:0:0:root:/root:/bin/sh\n\
-nobody:x:65534:65534:nobody:/nonexistent:/bin/false\n";
-    const GROUP : &str = "root:x:0:\n\
-nobody:x:65534:\n\
-nogroup:x:65534:\n";
-    const NSSWITCH : &str = "passwd: files\n\
-group: files\n\
-shadow: files\n\
-gshadow: files\n\
-hosts: files\n";
-    const PROTOCOLS : &str = "ip 0 IP\n\
-hopopt 0 HOPOPT\n\
-icmp 1 ICMP\n\
-igmp 2 IGMP\n\
-ggp 3 GGP\n\
-tcp 6 TCP\n\
-udp 17 UDP\n\
-ipv6 41 IPv6\n\
-ipv6-route 43 IPv6-Route\n\
-ipv6-frag 44 IPv6-Frag\n\
-esp 50 ESP\n\
-ah 51 AH\n\
-ipv6-icmp 58 IPv6-ICMP\n\
-ipv6-nonxt 59 IPv6-NoNxt\n\
-ipv6-opts 60 IPv6-Opts\n\
-raw 255 RAW\n";
+    const PASSWD : &str =
+        "root:x:0:0:root:/root:/bin/sh\nnobody:x:65534:65534:nobody:/nonexistent:/bin/false\n";
+    const GROUP : &str = "root:x:0:\nnobody:x:65534:\nnogroup:x:65534:\n";
+    const NSSWITCH : &str =
+        "passwd: files\ngroup: files\nshadow: files\ngshadow: files\nhosts: files\n";
+    const PROTOCOLS : &str = "ip 0 IP\nhopopt 0 HOPOPT\nicmp 1 ICMP\nigmp 2 IGMP\nggp 3 GGP\ntcp \
+                              6 TCP\nudp 17 UDP\nipv6 41 IPv6\nipv6-route 43 \
+                              IPv6-Route\nipv6-frag 44 IPv6-Frag\nesp 50 ESP\nah 51 AH\nipv6-icmp \
+                              58 IPv6-ICMP\nipv6-nonxt 59 IPv6-NoNxt\nipv6-opts 60 IPv6-Opts\nraw \
+                              255 RAW\n";
 
-    for (path, data, mode) in [
-        ("/etc/passwd", PASSWD.as_bytes(), 0o644),
-        ("/etc/group", GROUP.as_bytes(), 0o644),
-        ("/etc/nsswitch.conf", NSSWITCH.as_bytes(), 0o644),
-        ("/etc/protocols", PROTOCOLS.as_bytes(), 0o644),
-    ] {
+    for (path, data, mode) in [("/etc/passwd", PASSWD.as_bytes(), 0o644),
+                               ("/etc/group", GROUP.as_bytes(), 0o644),
+                               ("/etc/nsswitch.conf", NSSWITCH.as_bytes(), 0o644),
+                               ("/etc/protocols", PROTOCOLS.as_bytes(), 0o644)]
+    {
         match vfs::overwrite_absolute_file(path, data) {
-            Ok(()) => info!("[{LOG_TAG}] overwrote {path} ({} bytes)", data.len()),
+            Ok(()) => info!("[{LOG_TAG}] overwrote {path} ({} bytes)",
+                            data.len()),
             Err(e) => warn!("[{LOG_TAG}] overwrite {path} failed: {e:?}"),
         }
         let _ = sess.chmod(path, mode);
     }
 
     match vfs::root::read_view().read("/etc/passwd") {
-        Ok(data) if data.windows(6).any(|w| w == b"nobody") => {
-            info!("[{LOG_TAG}] verified /etc/passwd contains nobody ({} bytes)", data.len());
+        Ok(data)
+            if data.windows(6)
+                   .any(|w| w == b"nobody") =>
+        {
+            info!("[{LOG_TAG}] verified /etc/passwd contains nobody ({} bytes)",
+                  data.len());
         }
         Ok(data) => {
-            warn!(
-                "[{LOG_TAG}] /etc/passwd missing nobody after overwrite ({} bytes)",
-                data.len()
-            );
+            warn!("[{LOG_TAG}] /etc/passwd missing nobody after overwrite ({} bytes)",
+                  data.len());
         }
         Err(e) => warn!("[{LOG_TAG}] read back /etc/passwd failed: {e:?}"),
     }
+}
+
+#[cfg(feature = "vfs-bridge")]
+fn ensure_kernel_config(sess : &mut (impl vfs::api::RootRwSession + ?Sized)) {
+    const CONFIG : &str = "\
+# WaterOS kernel config exposed for LTP kconfig probes
+CONFIG_BSD_PROCESS_ACCT=y
+# CONFIG_BSD_PROCESS_ACCT_V3 is not set
+# CONFIG_KEYS is not set
+# CONFIG_AF_ALG is not set
+# CONFIG_AIO is not set
+# CONFIG_EXT4_FS_POSIX_ACL is not set
+";
+
+    match vfs::overwrite_absolute_file("/boot/config-5.15.0", CONFIG.as_bytes()) {
+        Ok(()) => info!("[{LOG_TAG}] overwrote /boot/config-5.15.0 ({} bytes)",
+                        CONFIG.len()),
+        Err(e) => warn!("[{LOG_TAG}] overwrite /boot/config-5.15.0 failed: {e:?}"),
+    }
+    let _ = sess.chmod("/boot/config-5.15.0", 0o644);
 }
 
 /// LTP 用例依赖的账户文件；在 `fs::test` / `vfs::test` 之后再次写入，避免自检覆盖。
