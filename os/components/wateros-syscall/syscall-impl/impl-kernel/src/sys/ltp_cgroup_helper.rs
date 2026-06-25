@@ -1,7 +1,8 @@
-//! cgroup fuzz / regression 辅助进程在 LTP `ltp_testcode.sh` 同步 invoke 时的协作退出。
+//! LTP fuzz / regression 辅助进程在 `ltp_testcode.sh` 同步 invoke 时的协作退出。
 //!
-//! 这些程序设计为 fuzz/regression 父进程后台运行并由 SIGUSR1 结束；被 runner
-//! 对 `testcases/bin/*` 逐个 `"$file"` 同步拉起时，无限循环会阻塞整条队列。
+//! `testcases/bin/*` 里混有完整测例与 fuzz worker（`sigsuspend` 等 SIGUSR1、无限
+//! mkdir/rmdir 等）。worker 被 runner 无参 `"$file"` 同步拉起且父 shell `wait()` 时
+//! 会永久阻塞队列；此处仅在「父进程已 wait、且非 fuzz 套件内 fork」时 exit(0)。
 
 use task::{TaskBlockReason, TaskState};
 
@@ -91,10 +92,15 @@ fn current_context_is_cgroup_regression_helper() -> bool {
         .any(|arg| arg.contains("cgroup_regression"))
 }
 
-fn current_exe_is_cgroup_fj_proc() -> bool {
+fn current_exe_is_ltp_fuzz_sigsuspend_worker() -> bool {
     vfs::cwd::current_exe_path()
         .ok()
-        .is_some_and(|path| path.ends_with("cgroup_fj_proc"))
+        .is_some_and(|path| {
+            path.ends_with("cgroup_fj_proc")
+                || path.ends_with("cpuctl_fj_cpu-hog")
+                || path.ends_with("cpuset_cpu_hog")
+                || path.ends_with("cpuset_mem_hog")
+        })
 }
 
 fn cgroup_regression_should_fast_exit() -> bool {
@@ -132,8 +138,8 @@ pub(crate) fn cgroup_regression_loop_fast_exit_if_standalone() {
     }
 }
 
-pub(crate) fn cgroup_fj_proc_fast_exit_if_standalone() {
-    if !current_exe_is_cgroup_fj_proc() {
+pub(crate) fn ltp_fuzz_sigsuspend_worker_fast_exit_if_standalone() {
+    if !current_exe_is_ltp_fuzz_sigsuspend_worker() {
         return;
     }
     if parent_waiting_with_retry() {
