@@ -1046,6 +1046,7 @@ name = "wateros-ipc-pipe-impl-ringbuf"
 version = "0.1.0"
 dependencies = [
  "ipc-waitqueue",
+ "spin",
  "wateros-base",
  "wateros-ipc-pipe-api-v0",
 ]
@@ -1100,6 +1101,7 @@ dependencies = [
  "spin",
  "wateros-base-config",
  "wateros-klog-api-v0",
+ "wateros-platform-arch",
 ]
 
 [[package]]
@@ -1151,6 +1153,7 @@ dependencies = [
  "wateros-base",
  "wateros-mm-api-v0",
  "wateros-mm-frame-alloctor-api-v0",
+ "wateros-platform-arch",
 ]
 
 [[package]]
@@ -1483,10 +1486,12 @@ dependencies = [
 name = "wateros-vfs-impl-fd-session"
 version = "0.1.0"
 dependencies = [
+ "spin",
  "wateros-base",
  "wateros-driver-api-v0",
  "wateros-driver-character-api-v0",
  "wateros-ipc",
+ "wateros-platform-arch",
  "wateros-runtime-console",
  "wateros-task",
  "wateros-vfs-api-v0",
