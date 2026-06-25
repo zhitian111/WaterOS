@@ -14,9 +14,38 @@ use api_v0::{FrameAllocError, FrameAllocResult, FrameMemStats, PhysicalFrameAllo
 use mm_api::addr::{PhysPageNum, PAGE_SIZE};
 use wateros_base::addr::BasePPN;
 use wateros_base::sync::UniprocessorSafeCell;
+use arch::interrupt::{
+    disable_global_interrupt, read_global_interrupt_state, restore_global_interrupt_state,
+    ArchInterruptState,
+};
 
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, Ordering};
+
+struct FrameAllocatorInterruptGuard {
+    state : ArchInterruptState,
+}
+
+impl FrameAllocatorInterruptGuard {
+    fn new() -> Self {
+        let state = read_global_interrupt_state()
+            .expect("read global interrupt state for frame allocator guard");
+        disable_global_interrupt().expect("disable global interrupt for frame allocator guard");
+        Self { state }
+    }
+}
+
+impl Drop for FrameAllocatorInterruptGuard {
+    fn drop(&mut self) {
+        restore_global_interrupt_state(self.state)
+            .expect("restore global interrupt state for frame allocator guard");
+    }
+}
+
+fn with_frame_allocator<R>(f : impl FnOnce(&mut StackFrameAllocator) -> R) -> R {
+    let _guard = FrameAllocatorInterruptGuard::new();
+    f(&mut get_frame_allocator_cell().exclusive_access())
+}
 
 /// 临时的 LIFO 栈式帧分配器：
 /// - `init(start_ppn, end_ppn)` 产生 free-list；
@@ -212,8 +241,8 @@ pub fn init_frame_allocator(start_ppn : BasePPN, end_ppn : BasePPN) {
         }
         FRAME_ALLOCATOR_READY.store(true, Ordering::Release);
     }
-    get_frame_allocator_cell().exclusive_access()
-                              .init(start_ppn, end_ppn);
+    get_frame_allocator_cell();
+    with_frame_allocator(|allocator| allocator.init(start_ppn, end_ppn));
 }
 
 /// 获取全局帧分配器单例容器（供特殊场景直接拿 `exclusive_access()`）。
@@ -223,16 +252,12 @@ pub fn frame_allocator_cell() -> &'static UniprocessorSafeCell<StackFrameAllocat
 
 /// 分配一个物理帧（返回帧标识）。
 pub fn frame_alloc() -> Option<PhysPageNum> {
-    get_frame_allocator_cell().exclusive_access()
-                              .alloc_frame()
-                              .ok()
+    with_frame_allocator(|allocator| allocator.alloc_frame().ok())
 }
 
 /// 回收一个物理帧。
 pub fn frame_dealloc(frame : PhysPageNum) {
-    if let Err(err) = frame_allocator_cell().exclusive_access()
-                                           .dealloc_frame(frame)
-    {
+    if let Err(err) = with_frame_allocator(|allocator| allocator.dealloc_frame(frame)) {
         log::warn!("[frame-allocator] ignored dealloc ppn={:#x}: {:?}",
                    frame.0,
                    err);
@@ -240,23 +265,19 @@ pub fn frame_dealloc(frame : PhysPageNum) {
 }
 
 pub fn frame_alloc_result() -> FrameAllocResult<PhysPageNum> {
-    get_frame_allocator_cell().exclusive_access()
-                              .alloc_frame()
+    with_frame_allocator(|allocator| allocator.alloc_frame())
 }
 
 pub fn frame_dealloc_result(frame : PhysPageNum) -> FrameAllocResult<()> {
-    get_frame_allocator_cell().exclusive_access()
-                              .dealloc_frame(frame)
+    with_frame_allocator(|allocator| allocator.dealloc_frame(frame))
 }
 
 pub fn frame_inc_ref(frame : PhysPageNum) -> FrameAllocResult<usize> {
-    get_frame_allocator_cell().exclusive_access()
-                              .inc_ref(frame)
+    with_frame_allocator(|allocator| allocator.inc_ref(frame))
 }
 
 pub fn frame_ref_count(frame : PhysPageNum) -> FrameAllocResult<usize> {
-    get_frame_allocator_cell().exclusive_access()
-                              .ref_count(frame)
+    with_frame_allocator(|allocator| allocator.ref_count(frame))
 }
 
 /// 全局帧池只读统计；未初始化时返回零值。
@@ -267,7 +288,7 @@ pub fn frame_mem_stats() -> FrameMemStats {
             ..FrameMemStats::default()
         };
     }
-    get_frame_allocator_cell().exclusive_access().mem_stats()
+    with_frame_allocator(|allocator| allocator.mem_stats())
 }
 
 /// 零大小适配器：实现 [`PhysicalFrameAllocator`] 时每次调用短借全局栈式分配器。

@@ -135,6 +135,13 @@ pub fn mount_aux_ro_from_block_path(path: &str) -> fs_api_v0::FsResult<fs_api_v0
                     bump_mount_generation();
                     return Ok(root);
                 }
+                if root_rw_fs().is_some() {
+                    logging::warn!(
+                        "[fs::rootfs] mount aux RO rejected: same block device as active RW root ({})",
+                        path
+                    );
+                    return Err(fs_api_v0::FsError::Unsupported);
+                }
             }
         }
     }

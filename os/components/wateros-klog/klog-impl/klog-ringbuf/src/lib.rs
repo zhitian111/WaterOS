@@ -5,6 +5,10 @@ use api_v0::{
     AppendResult, KlogError, KlogFlags, KlogRecordMeta, KlogRecordView, KlogStats, KlogStore,
 };
 use spin::Mutex;
+use arch::interrupt::{
+    disable_global_interrupt, read_global_interrupt_state, restore_global_interrupt_state,
+    ArchInterruptState,
+};
 use wateros_base_config::klog::{
     KLOG_DESC_SLOTS, KLOG_MAX_RECORD_BYTES, KLOG_TEXT_RING_BYTES,
 };
@@ -246,6 +250,26 @@ pub struct KlogRingbuf;
 
 static KLOG: Mutex<Option<KlogRingbufInner>> = Mutex::new(None);
 
+struct KlogInterruptGuard {
+    state : ArchInterruptState,
+}
+
+impl KlogInterruptGuard {
+    fn new() -> Self {
+        let state = read_global_interrupt_state()
+            .expect("read global interrupt state for klog guard");
+        disable_global_interrupt().expect("disable global interrupt for klog guard");
+        Self { state }
+    }
+}
+
+impl Drop for KlogInterruptGuard {
+    fn drop(&mut self) {
+        restore_global_interrupt_state(self.state)
+            .expect("restore global interrupt state for klog guard");
+    }
+}
+
 fn ensure_inner(guard: &mut Option<KlogRingbufInner>) -> &mut KlogRingbufInner {
     if guard.is_none() {
         *guard = Some(KlogRingbufInner::default());
@@ -263,6 +287,7 @@ impl KlogRingbuf {
 
     /// 在已持有锁的闭包内访问环。
     pub fn with<R>(f: impl FnOnce(&mut KlogRingbufInner) -> R) -> R {
+        let _irq = KlogInterruptGuard::new();
         let mut guard = KLOG.lock();
         f(ensure_inner(&mut guard))
     }
@@ -272,6 +297,7 @@ impl KlogRingbuf {
     where
         F: FnMut(KlogRecordView<'_>),
     {
+        let _irq = KlogInterruptGuard::new();
         let mut guard = KLOG.lock();
         ensure_inner(&mut guard).iter_from(start_seq, &mut f);
     }

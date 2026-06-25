@@ -404,10 +404,24 @@ impl VfsIoHandle for PagedFileHandle {
         }
         if !self.detached {
             let n = normalize_absolute_path(self.path.as_str())?;
-            match root_rw()?.lock().truncate(n.as_str(), len).map_err(map_fs_err) {
-                Ok(()) => {}
-                Err(VfsError::NotFound) => self.detached = true,
-                Err(e) => return Err(e),
+            match resolve_route(self.path.as_str())? {
+                FsRoute::Root { .. } => {
+                    match root_rw()?.lock().truncate(n.as_str(), len).map_err(map_fs_err) {
+                        Ok(()) => {}
+                        Err(VfsError::NotFound) => self.detached = true,
+                        Err(e) => return Err(e),
+                    }
+                }
+                FsRoute::AuxRw { fs, rel, .. } => {
+                    match fs.lock().truncate(rel.as_str(), len).map_err(map_fs_err) {
+                        Ok(()) => {}
+                        Err(VfsError::NotFound) => self.detached = true,
+                        Err(e) => return Err(e),
+                    }
+                }
+                FsRoute::AuxRo { .. } | FsRoute::PseudoProc { .. } => {
+                    return Err(VfsError::ReadOnlyFs);
+                }
             }
         }
         let cache = global_cache(self.mount_gen);

@@ -149,7 +149,32 @@ impl ShmRegistry {
         base: usize,
         readonly: bool,
     ) -> ShmResult<ShmAttachInfo> {
+        let _ = self.begin_attach(shmid)?;
+        self.finish_attach(shmid, task_id, base, readonly)
+    }
+
+    /// 在 MM 映射前递增 `nattch`，防止并发 `IPC_RMID`/`shmdt` 释放物理页。
+    pub fn begin_attach(&mut self, shmid: ShmId) -> ShmResult<ShmSegmentInfo> {
         let segment = self.segments.get_mut(&shmid).ok_or(ShmError::Invalid)?;
+        segment.nattch = segment.nattch.checked_add(1).ok_or(ShmError::Invalid)?;
+        Ok(ShmSegmentInfo {
+            shmid,
+            key: segment.key,
+            size: segment.size,
+            mode: segment.mode,
+            pages: segment.pages.clone(),
+        })
+    }
+
+    /// 在 `begin_attach` 之后登记附件元数据（不再递增 `nattch`）。
+    pub fn finish_attach(
+        &mut self,
+        shmid: ShmId,
+        task_id: TaskId,
+        base: usize,
+        readonly: bool,
+    ) -> ShmResult<ShmAttachInfo> {
+        let segment = self.segments.get(&shmid).ok_or(ShmError::Invalid)?;
         let info = ShmAttachInfo {
             shmid,
             base,
@@ -157,7 +182,6 @@ impl ShmRegistry {
             readonly,
             pages: segment.pages.clone(),
         };
-        segment.nattch = segment.nattch.checked_add(1).ok_or(ShmError::Invalid)?;
         self.attachments
             .entry(task_id)
             .or_insert_with(Vec::new)
@@ -168,6 +192,18 @@ impl ShmRegistry {
                 readonly,
             });
         Ok(info)
+    }
+
+    /// MM 映射失败时回滚 `begin_attach` 的 `nattch` 占位。
+    pub fn cancel_attach_reservation(&mut self, shmid: ShmId) {
+        if let Some(segment) = self.segments.get_mut(&shmid) {
+            if segment.nattch > 0 {
+                segment.nattch -= 1;
+            }
+            if segment.marked_removed && segment.nattch == 0 {
+                self.remove_segment(shmid);
+            }
+        }
     }
 
     pub fn detach(&mut self, task_id: TaskId, base: usize) -> ShmResult<ShmAttachInfo> {

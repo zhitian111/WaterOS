@@ -236,12 +236,12 @@ impl GlobalFilePageCache {
                                        key : &FileCacheKey,
                                        page_idx : u64,
                                        saved_data : &[u8],
+                                       logical_size : u64,
                                        map_err : fn(Io::Error) -> E)
                                        -> Result<(), E>
         where Io : PageCacheIo
     {
         let off = page_idx * FILE_PAGE_SIZE as u64;
-        let logical_size = self.logical_size_for_key(key, off + FILE_PAGE_SIZE as u64);
         if off >= logical_size {
             return Ok(());
         }
@@ -409,7 +409,11 @@ impl GlobalFilePageCache {
         let pending_flush = cache.detach_slot_for_reuse(idx);
         if let Some(((ref k, evicted_page), ref saved_data)) = pending_flush {
             drop(cache);
-            if let Err(err) = self.writeback_evicted_page(io, k, evicted_page, saved_data, map_err)
+            let evicted_logical =
+                self.logical_size_for_key(k, evicted_page.saturating_mul(FILE_PAGE_SIZE as u64) +
+                                              FILE_PAGE_SIZE as u64);
+            if let Err(err) =
+                self.writeback_evicted_page(io, k, evicted_page, saved_data, evicted_logical, map_err)
             {
                 let mut cache = self.state.lock();
                 cache.return_detached_slot(idx);
@@ -464,7 +468,11 @@ impl GlobalFilePageCache {
         let pending_flush = cache.detach_slot_for_reuse(idx);
         if let Some(((ref k, evicted_page), ref saved_data)) = pending_flush {
             drop(cache);
-            if let Err(err) = self.writeback_evicted_page(io, k, evicted_page, saved_data, map_err)
+            let evicted_logical =
+                self.logical_size_for_key(k, evicted_page.saturating_mul(FILE_PAGE_SIZE as u64) +
+                                              FILE_PAGE_SIZE as u64);
+            if let Err(err) =
+                self.writeback_evicted_page(io, k, evicted_page, saved_data, evicted_logical, map_err)
             {
                 let mut cache = self.state.lock();
                 cache.return_detached_slot(idx);
@@ -496,8 +504,7 @@ impl GlobalFilePageCache {
         if buf.is_empty() || offset >= file_size {
             return Ok(0);
         }
-        let entry = self.get_file_entry(path, file_size);
-        let _guard = entry.read();
+        let _entry = self.get_file_entry(path, file_size);
         let max = min(buf.len(),
                       usize::try_from(file_size - offset).unwrap_or(0));
         let mut done = 0usize;
@@ -546,7 +553,6 @@ impl GlobalFilePageCache {
         }
 
         let entry = self.get_file_entry(path, file_size);
-        let mut guard = entry.write();
         let mut pos = offset;
         let mut written = 0usize;
         while written < buf.len() {
@@ -554,13 +560,17 @@ impl GlobalFilePageCache {
             let page_off = (pos % FILE_PAGE_SIZE as u64) as usize;
             let chunk = (FILE_PAGE_SIZE - page_off).min(buf.len() - written);
             let page_start = page_idx * FILE_PAGE_SIZE as u64;
-            if page_start >= guard.logical_size || (page_off == 0 && chunk == FILE_PAGE_SIZE) {
+            let logical_size = {
+                let guard = entry.read();
+                guard.logical_size
+            };
+            if page_start >= logical_size || (page_off == 0 && chunk == FILE_PAGE_SIZE) {
                 self.install_zero_page(io, path, page_idx, map_err)?;
             } else {
                 self.install_page(io,
                                   path,
                                   page_idx,
-                                  guard.logical_size,
+                                  logical_size,
                                   map_err)?;
             }
             {
@@ -574,12 +584,14 @@ impl GlobalFilePageCache {
                 cache.frames[idx].dirty = true;
                 cache.touch_lru(idx);
             }
+            let mut guard = entry.write();
             guard.dirty_pages
                  .insert(page_idx, ());
             let end = pos + chunk as u64;
             if end > guard.logical_size {
                 guard.logical_size = end;
             }
+            drop(guard);
             written += chunk;
             pos += chunk as u64;
         }
@@ -633,11 +645,14 @@ impl GlobalFilePageCache {
             log::trace!("[page-cache-flush] path={} no-entry", path);
             return Ok(());
         };
-        let mut guard = entry.write();
-        let dirty : Vec<u64> = guard.dirty_pages
-                                    .keys()
-                                    .copied()
-                                    .collect();
+        let (dirty, logical_size) = {
+            let guard = entry.write();
+            (guard.dirty_pages
+                  .keys()
+                  .copied()
+                  .collect::<Vec<_>>(),
+             guard.logical_size)
+        };
 
         let mut run = Vec::new();
         for page_idx in dirty {
@@ -648,11 +663,14 @@ impl GlobalFilePageCache {
                 let flushed = self.flush_dirty_run(io,
                                                    &key,
                                                    &run,
-                                                   guard.logical_size,
+                                                   logical_size,
                                                    map_err)?;
-                for flushed_page in flushed {
-                    guard.dirty_pages
-                         .remove(&flushed_page);
+                {
+                    let mut guard = entry.write();
+                    for flushed_page in flushed {
+                        guard.dirty_pages
+                             .remove(&flushed_page);
+                    }
                 }
                 run.clear();
             }
@@ -662,8 +680,9 @@ impl GlobalFilePageCache {
             let flushed = self.flush_dirty_run(io,
                                                &key,
                                                &run,
-                                               guard.logical_size,
+                                               logical_size,
                                                map_err)?;
+            let mut guard = entry.write();
             for flushed_page in flushed {
                 guard.dirty_pages
                      .remove(&flushed_page);

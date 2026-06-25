@@ -35,18 +35,18 @@ pub fn register_mount_list_lookup(f: MountListLookup) {
 }
 
 fn argv_for(leader: TaskId) -> Option<Vec<String>> {
-    ARGV_LOOKUP.lock().and_then(|f| f(leader))
+    let lookup = *ARGV_LOOKUP.lock();
+    lookup.and_then(|f| f(leader))
 }
 
 fn exe_for(leader: TaskId) -> Option<String> {
-    EXE_LOOKUP.lock().and_then(|f| f(leader))
+    let lookup = *EXE_LOOKUP.lock();
+    lookup.and_then(|f| f(leader))
 }
 
 fn mount_lines() -> Vec<ProcMountLine> {
-    MOUNT_LOOKUP
-        .lock()
-        .map(|f| f())
-        .unwrap_or_default()
+    let lookup = *MOUNT_LOOKUP.lock();
+    lookup.map(|f| f()).unwrap_or_default()
 }
 
 const USER_HZ: u64 = 100;

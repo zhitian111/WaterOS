@@ -5,7 +5,7 @@ extern crate alloc;
 use alloc::vec;
 use alloc::vec::Vec;
 use api_v0::{KernelPipe, PipeError, PipeResult};
-use base::sync::UniprocessorSafeCell;
+use spin::Mutex;
 use waitqueue::{TaskWaitResult, WaitQueue};
 
 const POLLIN: i16 = 0x001;
@@ -86,9 +86,9 @@ impl PipeState {
     }
 }
 
-/// 内核内部 pipe 对象；读写端关闭状态与缓冲区受单核 cell 保护。
+/// 内核内部 pipe 对象；读写端关闭状态与缓冲区由 `spin::Mutex` 保护。
 pub struct Pipe {
-    state: UniprocessorSafeCell<PipeState>,
+    state: Mutex<PipeState>,
     read_wait: WaitQueue,
     write_wait: WaitQueue,
 }
@@ -149,17 +149,17 @@ impl Pipe {
 
     /// 读端 fd 引用 +1（`dup` / `fork` 继承 / `Clone`）。
     pub fn acquire_read(&self) {
-        self.state.exclusive_access().read_refs += 1;
+        self.state.lock().read_refs += 1;
     }
 
     /// 写端 fd 引用 +1（`dup` / `fork` 继承 / `Clone`）。
     pub fn acquire_write(&self) {
-        self.state.exclusive_access().write_refs += 1;
+        self.state.lock().write_refs += 1;
     }
 
     /// 读端 fd 引用 -1；归零时关闭读端。
     pub fn release_read(&self) {
-        let mut state = self.state.exclusive_access();
+        let mut state = self.state.lock();
         if state.read_refs > 0 {
             state.read_refs -= 1;
         }
@@ -172,7 +172,7 @@ impl Pipe {
 
     /// 写端 fd 引用 -1；归零时关闭写端。
     pub fn release_write(&self) {
-        let mut state = self.state.exclusive_access();
+        let mut state = self.state.lock();
         if state.write_refs > 0 {
             state.write_refs -= 1;
         }
@@ -185,7 +185,7 @@ impl Pipe {
 
     /// 读端在 `poll(2)` 中的就绪位。
     pub fn poll_revents_read(&self) -> i16 {
-        let state = self.state.exclusive_access();
+        let state = self.state.lock();
         if !state.read_open {
             return POLLHUP;
         }
@@ -201,7 +201,7 @@ impl Pipe {
 
     /// 写端在 `poll(2)` 中的就绪位。
     pub fn poll_revents_write(&self) -> i16 {
-        let state = self.state.exclusive_access();
+        let state = self.state.lock();
         if !state.write_open {
             return POLLHUP | POLLERR;
         }
@@ -238,12 +238,12 @@ impl Pipe {
     }
 
     fn read_poll_blocked(&self) -> bool {
-        let state = self.state.exclusive_access();
+        let state = self.state.lock();
         state.is_empty() && state.write_open
     }
 
     fn write_poll_blocked(&self) -> bool {
-        let state = self.state.exclusive_access();
+        let state = self.state.lock();
         state.is_full() && state.read_open
     }
 }
@@ -258,25 +258,25 @@ impl Default for Pipe {
 impl KernelPipe for Pipe {
     fn with_capacity(capacity: usize) -> PipeResult<Self> {
         Ok(Self {
-            state: unsafe { UniprocessorSafeCell::new(PipeState::with_capacity(capacity)?) },
+            state: Mutex::new(PipeState::with_capacity(capacity)?),
             read_wait: WaitQueue::new(),
             write_wait: WaitQueue::new(),
         })
     }
 
     fn capacity(&self) -> usize {
-        self.state.exclusive_access().capacity()
+        self.state.lock().capacity()
     }
 
     fn len(&self) -> usize {
-        self.state.exclusive_access().len
+        self.state.lock().len
     }
 
     fn try_read(&self, out: &mut [u8]) -> PipeResult<usize> {
         if out.is_empty() {
             return Ok(0);
         }
-        let mut state = self.state.exclusive_access();
+        let mut state = self.state.lock();
         if state.is_empty() {
             return if state.write_open {
                 Err(PipeError::WouldBlock)
@@ -286,7 +286,7 @@ impl KernelPipe for Pipe {
         }
         let read = state.read_into(out);
         drop(state);
-        self.write_wait.wake_one();
+        self.write_wait.wake_all();
         Ok(read)
     }
 
@@ -295,7 +295,7 @@ impl KernelPipe for Pipe {
             match self.try_read(out) {
                 Err(PipeError::WouldBlock) => {
                     let result = self.read_wait.wait_current_while(|| {
-                        let state = self.state.exclusive_access();
+                        let state = self.state.lock();
                         state.is_empty() && state.write_open
                     });
                     if result == TaskWaitResult::Interrupted {
@@ -311,7 +311,7 @@ impl KernelPipe for Pipe {
         if input.is_empty() {
             return Ok(0);
         }
-        let mut state = self.state.exclusive_access();
+        let mut state = self.state.lock();
         if !state.read_open {
             return Err(PipeError::BrokenPipe);
         }
@@ -320,7 +320,7 @@ impl KernelPipe for Pipe {
         }
         let written = state.write_from(input);
         drop(state);
-        self.read_wait.wake_one();
+        self.read_wait.wake_all();
         Ok(written)
     }
 
@@ -332,7 +332,7 @@ impl KernelPipe for Pipe {
                 Ok(n) => written = written.saturating_add(n),
                 Err(PipeError::WouldBlock) => {
                     let result = self.write_wait.wait_current_while(|| {
-                        let state = self.state.exclusive_access();
+                        let state = self.state.lock();
                         state.is_full() && state.read_open
                     });
                     if result == TaskWaitResult::Interrupted {
@@ -351,12 +351,12 @@ impl KernelPipe for Pipe {
     }
 
     fn close_read(&self) {
-        self.state.exclusive_access().read_open = false;
+        self.state.lock().read_open = false;
         self.write_wait.wake_all();
     }
 
     fn close_write(&self) {
-        self.state.exclusive_access().write_open = false;
+        self.state.lock().write_open = false;
         self.read_wait.wake_all();
     }
 

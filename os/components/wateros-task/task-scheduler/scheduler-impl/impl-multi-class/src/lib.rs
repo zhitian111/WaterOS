@@ -95,6 +95,17 @@ impl Drop for InterruptGuard {
     }
 }
 
+/// `__switch` 返回后重新关中断，再取等待结果（避免 wait 路径长期关中断，见锁审计 RC-1）。
+fn finish_wait_after_switch(switch_pair : Option<SwitchPair>) -> TaskWaitResult {
+    if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
+        unsafe {
+            __switch(current_task_cx_ptr, next_task_cx_ptr);
+        }
+    }
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.take_current_wait_result())
+}
+
 /// 返回当前运行任务的用户地址空间 token；`0` 表示回落到内核地址空间。
 pub fn current_task_address_space_raw() -> usize {
     let _guard = InterruptGuard::new();
@@ -249,31 +260,23 @@ pub fn block_current(reason : TaskBlockReason) {
 
 /// 无限期等待指定句柄；被唤醒后从切换点继续运行。
 pub fn wait_current(wait_handle : TaskWaitHandle) -> TaskWaitResult {
-    let _guard = InterruptGuard::new();
+    let guard = InterruptGuard::new();
     let switch_pair = with_scheduler(|scheduler| scheduler.schedule_wait(wait_handle, None));
-    if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
-        unsafe {
-            __switch(current_task_cx_ptr, next_task_cx_ptr);
-        }
-    }
-    with_scheduler(|scheduler| scheduler.take_current_wait_result())
+    guard.release_before_switch();
+    finish_wait_after_switch(switch_pair)
 }
 
 /// 在关中断调度临界区内复查条件；仅当条件仍成立时才把当前任务挂入等待队列。
 pub fn wait_current_while(wait_handle : TaskWaitHandle,
                           condition : impl FnOnce() -> bool)
                           -> TaskWaitResult {
-    let _guard = InterruptGuard::new();
+    let guard = InterruptGuard::new();
     if !condition() {
         return TaskWaitResult::Woken;
     }
     let switch_pair = with_scheduler(|scheduler| scheduler.schedule_wait(wait_handle, None));
-    if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
-        unsafe {
-            __switch(current_task_cx_ptr, next_task_cx_ptr);
-        }
-    }
-    with_scheduler(|scheduler| scheduler.take_current_wait_result())
+    guard.release_before_switch();
+    finish_wait_after_switch(switch_pair)
 }
 
 /// 带超时的等待；`timeout_ticks == 0` 时立即返回 [`TaskWaitResult::TimedOut`]
@@ -285,15 +288,11 @@ pub fn wait_current_timeout(wait_handle : TaskWaitHandle,
         return TaskWaitResult::TimedOut;
     }
 
-    let _guard = InterruptGuard::new();
+    let guard = InterruptGuard::new();
     let switch_pair =
         with_scheduler(|scheduler| scheduler.schedule_wait(wait_handle, Some(timeout_ticks)));
-    if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
-        unsafe {
-            __switch(current_task_cx_ptr, next_task_cx_ptr);
-        }
-    }
-    with_scheduler(|scheduler| scheduler.take_current_wait_result())
+    guard.release_before_switch();
+    finish_wait_after_switch(switch_pair)
 }
 
 /// 带超时的条件等待；条件为假时立即按正常唤醒返回。
@@ -305,18 +304,14 @@ pub fn wait_current_timeout_while(wait_handle : TaskWaitHandle,
         return TaskWaitResult::TimedOut;
     }
 
-    let _guard = InterruptGuard::new();
+    let guard = InterruptGuard::new();
     if !condition() {
         return TaskWaitResult::Woken;
     }
     let switch_pair =
         with_scheduler(|scheduler| scheduler.schedule_wait(wait_handle, Some(timeout_ticks)));
-    if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
-        unsafe {
-            __switch(current_task_cx_ptr, next_task_cx_ptr);
-        }
-    }
-    with_scheduler(|scheduler| scheduler.take_current_wait_result())
+    guard.release_before_switch();
+    finish_wait_after_switch(switch_pair)
 }
 
 /// 在指定等待队列上无限期阻塞（语法糖）。
@@ -345,14 +340,10 @@ pub fn wait_for_task_exit_timeout(task_id : TaskId, timeout_ticks : TaskTick) ->
 
 /// 睡眠至少 `ticks` 个调度 tick（实现中与 yield 类似地将 wake_tick 推后）。
 pub fn sleep_current_for_ticks(ticks : TaskTick) -> TaskWaitResult {
-    let _guard = InterruptGuard::new();
+    let guard = InterruptGuard::new();
     let switch_pair = with_scheduler(|scheduler| scheduler.schedule(ScheduleReason::Sleep(ticks)));
-    if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
-        unsafe {
-            __switch(current_task_cx_ptr, next_task_cx_ptr);
-        }
-    }
-    with_scheduler(|scheduler| scheduler.take_current_wait_result())
+    guard.release_before_switch();
+    finish_wait_after_switch(switch_pair)
 }
 
 /// 若任务处于可唤醒队列则移回就绪队列并返回 `true`。

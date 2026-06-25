@@ -113,6 +113,7 @@ struct ThreadSignalState {
     mask : SignalSet,
     pending : SignalSet,
     suspend_restore_mask : Option<SignalSet>,
+    poll_restore_mask : Option<SignalSet>,
     waiting_for : Option<SignalSet>,
 }
 
@@ -123,6 +124,7 @@ impl ThreadSignalState {
                mask : inherited_mask,
                pending : SignalSet::empty(),
                suspend_restore_mask : None,
+               poll_restore_mask : None,
                waiting_for : None }
     }
 }
@@ -329,6 +331,34 @@ impl SignalRegistry {
     pub fn end_sigsuspend(&mut self, task_id : usize) -> SignalResult<()> {
         let thread = self.thread_mut(task_id)?;
         if let Some(restore) = thread.suspend_restore_mask.take() {
+            thread.mask = restore;
+        }
+        Ok(())
+    }
+
+    /// `ppoll` / `pselect6`：在阻塞等待期间临时替换线程信号掩码。
+    pub fn begin_poll_sigmask(&mut self,
+                              task_id : usize,
+                              mut temporary_mask : SignalSet)
+                              -> SignalResult<()> {
+        temporary_mask.remove(SIGKILL);
+        temporary_mask.remove(SIGSTOP);
+        let thread = self.thread_mut(task_id)?;
+        if thread.suspend_restore_mask
+                 .is_some() ||
+           thread.poll_restore_mask
+                 .is_some()
+        {
+            return Err(SignalError::InvalidHow);
+        }
+        thread.poll_restore_mask = Some(thread.mask);
+        thread.mask = temporary_mask;
+        Ok(())
+    }
+
+    pub fn end_poll_sigmask(&mut self, task_id : usize) -> SignalResult<()> {
+        let thread = self.thread_mut(task_id)?;
+        if let Some(restore) = thread.poll_restore_mask.take() {
             thread.mask = restore;
         }
         Ok(())
