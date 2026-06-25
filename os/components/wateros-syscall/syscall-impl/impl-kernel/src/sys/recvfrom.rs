@@ -4,12 +4,10 @@ use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use driver::network::stack;
-use wateros_base_config::task::SCHED_TIMER_PERIOD_MS;
 
+use crate::socket_block::socket_blocking_tick;
 use crate::socket_fd;
 use crate::user_copy::{copy_to_user, copy_to_user_struct};
-
-const SOCKET_RECV_WAIT_TICKS: usize = 4096;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -54,7 +52,6 @@ pub(crate) fn sys_recvfrom(args: SyscallArgs) -> UserRet {
     };
     let handle = socket.handle();
 
-    // 根据 socket 类型选择 recv 或 recvfrom
     match stack::socket_kind(handle) {
         Ok(driver::network::stack::SocketKind::Tcp) => {
             let mut kbuf = alloc::vec![0u8; len];
@@ -114,32 +111,20 @@ fn recv_tcp_blocking(
     buf: &mut [u8],
 ) -> Result<usize, ErrNo> {
     let nonblocking = socket_fd::is_nonblocking(fd);
-    let wait_ticks = socket_recv_wait_ticks(handle, SOCKET_RECV_WAIT_TICKS);
     let task_id = task::current_task_id().unwrap_or(0);
-    for i in 0..wait_ticks {
+    loop {
         drive_network_stack();
         if stack::socket_can_recv(handle).unwrap_or(false) {
-            let n = stack::socket_recv(handle, buf).map_err(|_| ErrNo::EIO)?;
-            return Ok(n);
+            return stack::socket_recv(handle, buf).map_err(|_| ErrNo::EIO);
         }
-        // 对端已关闭写端（smoltcp CloseWait），且缓冲区无数据 → EOF
         if !stack::socket_may_recv(handle).unwrap_or(true) {
             return Ok(0);
         }
         if matches!(stack::socket_state(handle), Ok(stack::SocketState::Closed)) {
             return Ok(0);
         }
-        if nonblocking {
-            return Err(ErrNo::EAGAIN);
-        }
-        task::sleep_for_ticks(1);
-        if i % 16 == 0
-            && ipc::signal::with_registry(|r| r.has_deliverable(task_id).unwrap_or(false))
-        {
-            return Err(ErrNo::EINTR);
-        }
+        socket_blocking_tick(nonblocking, task_id)?;
     }
-    Err(ErrNo::EINTR)
 }
 
 fn recv_udp_blocking(
@@ -148,35 +133,13 @@ fn recv_udp_blocking(
     buf: &mut [u8],
 ) -> Result<(usize, [u8; 4], u16), ErrNo> {
     let nonblocking = socket_fd::is_nonblocking(fd);
-    let wait_ticks = socket_recv_wait_ticks(handle, SOCKET_RECV_WAIT_TICKS);
     let task_id = task::current_task_id().unwrap_or(0);
-    for i in 0..wait_ticks {
+    loop {
         drive_network_stack();
         if stack::socket_udp_can_recv(handle).unwrap_or(false) {
             return stack::socket_recvfrom(handle, buf).map_err(|_| ErrNo::EIO);
         }
-        if nonblocking {
-            return Err(ErrNo::EAGAIN);
-        }
-        task::sleep_for_ticks(1);
-        // 每 16 tick 检查信号（如 SIGALRM）
-        if i % 16 == 0
-            && ipc::signal::with_registry(|r| r.has_deliverable(task_id).unwrap_or(false))
-        {
-            return Err(ErrNo::EINTR);
-        }
-    }
-    Err(ErrNo::EAGAIN)
-}
-
-fn socket_recv_wait_ticks(handle: smoltcp::iface::SocketHandle, default_ticks: usize) -> usize {
-    match stack::socket_recv_timeout_ms(handle) {
-        Ok(Some(ms)) => {
-            let tick_ms = (SCHED_TIMER_PERIOD_MS as u64).max(1);
-            let ticks = ms.saturating_add(tick_ms - 1) / tick_ms;
-            usize::try_from(ticks).unwrap_or(usize::MAX).max(1)
-        }
-        _ => default_ticks,
+        socket_blocking_tick(nonblocking, task_id)?;
     }
 }
 

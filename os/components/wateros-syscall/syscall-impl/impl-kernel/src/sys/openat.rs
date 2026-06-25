@@ -25,6 +25,8 @@ const O_TMPFILE: u32 = 0o20200000;
 const O_NOFOLLOW: u32 = 0o100_000;
 const O_SYNC: u32 = 0o4010000;
 const O_DSYNC: u32 = 0o10000;
+const O_EXCL: u32 = 0o200;
+const O_CREAT: u32 = 0o100;
 const FD_CLOEXEC: usize = 1;
 
 static NEXT_TMPFILE_ID: AtomicU64 = AtomicU64::new(1);
@@ -63,6 +65,14 @@ pub(crate) fn sys_openat(args : SyscallArgs) -> UserRet {
         Ok(p) => p,
         Err(e) => return UserRet::from_error(e),
     };
+
+    if flags & (O_CREAT | O_EXCL) == (O_CREAT | O_EXCL) {
+        match active_impl::backend().metadata(open_path.as_str()) {
+            Ok(_) => return UserRet::from_error(ErrNo::EEXIST),
+            Err(VfsError::NotFound) => {}
+            Err(e) => return UserRet::from_error(vfs_error_to_errno(e)),
+        }
+    }
 
     let vf = linux_open_flags_to_vfs(flags);
 

@@ -112,9 +112,16 @@ fn futex_wait(uaddr : usize,
 fn futex_wake(uaddr : usize, max_wake : u32, bitset : u32, futex_op : u32) -> Result<usize, ErrNo> {
     let _ = bitset;
     let key = FutexKey::from_syscall(uaddr, futex_op);
-    FutexHub::global()
-        .wake(key, max_wake)
-        .map_err(futex_error_to_errno)
+    let hub = FutexHub::global();
+    let n = hub.wake(key, max_wake).map_err(futex_error_to_errno)?;
+    if n == 0 {
+        let alt = FutexKey {
+            uaddr,
+            is_private: !key.is_private,
+        };
+        return hub.wake(alt, max_wake).map_err(futex_error_to_errno);
+    }
+    Ok(n)
 }
 
 fn futex_requeue(uaddr : usize,

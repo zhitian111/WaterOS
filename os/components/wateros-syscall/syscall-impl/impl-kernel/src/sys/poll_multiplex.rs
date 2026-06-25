@@ -5,7 +5,6 @@ use abi::user_ret::UserRet;
 
 use crate::poll_engine::{
     install_poll_sigmask, PollDeadline, do_poll_with_deadline, do_pselect_with_deadline,
-    validate_sigmask,
 };
 
 pub(crate) fn sys_ppoll(args: SyscallArgs) -> UserRet {

@@ -2,8 +2,6 @@
 
 extern crate alloc;
 
-use alloc::string::String;
-
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;

@@ -11,7 +11,12 @@ use crate::vfs_util::vfs_error_to_errno;
 
 pub(crate) fn sys_umount2(args: SyscallArgs) -> UserRet {
     let target_ptr = args.arg(0);
-    let _flags = args.arg(1) as u32;
+    let flags = args.arg(1) as u32;
+
+    if flags != 0 {
+        log::warn!("[syscall] umount2(nr=166) unsupported flags={:#x}", flags);
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
 
     if target_ptr == 0 {
         return UserRet::from_error(ErrNo::EFAULT);

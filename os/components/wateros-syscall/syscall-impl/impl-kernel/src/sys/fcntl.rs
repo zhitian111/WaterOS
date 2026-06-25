@@ -76,7 +76,9 @@ fn fcntl_getfl(fd: usize) -> Result<usize, ErrNo> {
     if let Some(flags) = socket_fd::status_flags(fd) {
         return Ok(O_ACCMODE_RDWR | (flags & O_NONBLOCK));
     }
-    Ok(O_ACCMODE_RDWR)
+    let file_flags = vfs::fd::with_current_io(fd, |handle| Ok(handle.open_status_flags()))
+        .unwrap_or(0);
+    Ok(O_ACCMODE_RDWR | ((file_flags as usize) & O_NONBLOCK))
 }
 
 fn fcntl_setfl(fd: usize, arg: usize) -> Result<usize, ErrNo> {
@@ -85,5 +87,12 @@ fn fcntl_setfl(fd: usize, arg: usize) -> Result<usize, ErrNo> {
         socket_fd::set_status_flags(fd, flags).ok_or(ErrNo::EBADF)?;
         return Ok(0);
     }
+    let nonblock = (arg & O_NONBLOCK) as u32;
+    vfs::fd::with_current_io(fd, |handle| {
+        let mut flags = handle.open_status_flags();
+        flags = (flags & !(O_NONBLOCK as u32)) | nonblock;
+        handle.set_open_status_flags(flags)
+    })
+    .map_err(vfs_error_to_errno)?;
     Ok(0)
 }

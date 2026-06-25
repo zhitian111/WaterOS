@@ -8,6 +8,8 @@ use abi::user_ret::UserRet;
 use crate::vfs_util::vfs_error_to_errno;
 
 pub(crate) const O_NONBLOCK: usize = 0o0004000;
+const O_CLOEXEC: usize = 0o2000000;
+const FD_CLOEXEC: usize = 1;
 
 pub(crate) fn sys_pipe2(args: SyscallArgs) -> UserRet {
     let pipefd_ptr = args.arg(0);
@@ -15,7 +17,7 @@ pub(crate) fn sys_pipe2(args: SyscallArgs) -> UserRet {
     if pipefd_ptr == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
     }
-    if flags & !O_NONBLOCK != 0 {
+    if flags & !(O_NONBLOCK | O_CLOEXEC) != 0 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
     let task_id = match vfs::fd::current_task_id() {
@@ -37,6 +39,18 @@ pub(crate) fn sys_pipe2(args: SyscallArgs) -> UserRet {
         }
     };
     drop(reg);
+    if flags & O_CLOEXEC != 0 {
+        if let Err(err) = vfs::fd::set_fd_flags(read_fd, FD_CLOEXEC) {
+            let _ = vfs::fd::close_fd(read_fd);
+            let _ = vfs::fd::close_fd(write_fd);
+            return UserRet::from_error(vfs_error_to_errno(err));
+        }
+        if let Err(err) = vfs::fd::set_fd_flags(write_fd, FD_CLOEXEC) {
+            let _ = vfs::fd::close_fd(read_fd);
+            let _ = vfs::fd::close_fd(write_fd);
+            return UserRet::from_error(vfs_error_to_errno(err));
+        }
+    }
     let fds = [
         read_fd as i32,
         write_fd as i32,
