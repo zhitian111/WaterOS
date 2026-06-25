@@ -81,6 +81,14 @@ pub fn spawn_kernel_task(entry : KernelTaskEntry, arg : usize) -> TaskId {
 /// 按给定规格创建一个新的用户任务，并返回其任务号。
 #[inline]
 pub fn spawn_user_task(spec : UserTask) -> TaskId { active_impl::spawn_user_task_spec(spec) }
+
+/// 按给定规格创建用户任务（仅登记 TCB，不入就绪队列）。
+#[inline]
+pub fn create_user_task_spec(spec : UserTask) -> TaskId { active_impl::create_user_task_spec(spec) }
+
+/// 将已创建任务加入就绪队列。
+#[inline]
+pub fn enqueue_ready_task(task_id : TaskId) { active_impl::enqueue_ready_task(task_id) }
 /// 为上层同步对象分配一个等待队列编号。
 #[inline]
 pub fn allocate_wait_queue() -> WaitQueueId { active_impl::allocate_wait_queue() }
@@ -92,10 +100,6 @@ pub fn try_release_wait_queue(wait_queue_id : WaitQueueId) -> bool {
 }
 
 /// 从当前用户任务 fork 一个子任务，并返回子任务 id。
-///
-/// 子任务获得父 trap 帧副本（a0 置 0）、独立地址空间（`new_aspace_ptr` /
-/// `new_satp`）。 `child_stack` 非零时，子任务初始用户栈指针设为该值（用于
-/// clone 新栈场景）。
 #[inline]
 pub fn fork_current(child_stack : usize,
                     new_aspace_ptr : usize,
@@ -104,10 +108,25 @@ pub fn fork_current(child_stack : usize,
     active_impl::fork_current(child_stack, new_aspace_ptr, new_satp)
 }
 
+/// 从当前用户任务 fork 子任务（仅登记 TCB，不入就绪队列）。
+#[inline]
+pub fn create_fork_child(child_stack : usize,
+                         new_aspace_ptr : usize,
+                         new_satp : usize)
+                         -> Option<TaskId> {
+    active_impl::create_fork_child(child_stack, new_aspace_ptr, new_satp)
+}
+
 /// 从当前用户任务 clone 一个同进程线程。
 #[inline]
 pub fn clone_current_thread(child_stack : usize, tls : usize, set_tls : bool) -> Option<TaskId> {
     active_impl::clone_current_thread(child_stack, tls, set_tls)
+}
+
+/// 从当前用户任务 clone 线程（仅登记 TCB，不入就绪队列）。
+#[inline]
+pub fn create_clone_thread(child_stack : usize, tls : usize, set_tls : bool) -> Option<TaskId> {
+    active_impl::create_clone_thread(child_stack, tls, set_tls)
 }
 
 /// execve：替换当前任务进程映像。

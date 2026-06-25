@@ -161,7 +161,6 @@ fn block_write_bytes(
     if src.is_empty() {
         return Ok(());
     }
-    invalidate_small_read_cache(dev, start_byte, src.len());
     let mut guard = dev.lock();
     let bdev: &mut dyn driver_block_api_v0::BlockDevice = &mut **guard;
     let bs = bdev.block_size();
@@ -195,6 +194,7 @@ fn block_write_bytes(
         debug_assert!(end > abs);
         write_partial_block(bdev, abs / bs, 0, &src[pos..])?;
     }
+    invalidate_small_read_cache(dev, start_byte, src.len());
     Ok(())
 }
 

@@ -113,6 +113,17 @@ pub trait VfsIoHandle {
         Err(VfsError::Unsupported)
     }
 
+    /// Linux `fcntl(F_GETFL)` 状态位（不含 `O_ACCMODE`）；默认无 `O_NONBLOCK`。
+    fn open_status_flags(&self) -> u32 {
+        0
+    }
+
+    /// Linux `fcntl(F_SETFL)`；默认忽略（pipe/socket 等由具体实现覆盖）。
+    fn set_open_status_flags(&mut self, flags: u32) -> VfsResult<()> {
+        let _ = flags;
+        Ok(())
+    }
+
     /// 在句柄对应 waitqueue 上阻塞；`still_waiting` 为假时返回（多 fd poll 重扫）。
     fn poll_wait_for_ticks(
         &mut self,

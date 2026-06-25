@@ -247,10 +247,18 @@ impl MultiClassScheduler {
         task_id
     }
 
-    pub(super) fn spawn_user_task_spec(&mut self, spec : UserTask) -> TaskId {
-        let task_id = self.registry
-                          .spawn_user_task_spec(spec);
+    pub(super) fn create_user_task_spec(&mut self, spec : UserTask) -> TaskId {
+        self.registry
+            .spawn_user_task_spec(spec)
+    }
+
+    pub(super) fn enqueue_ready_task(&mut self, task_id : TaskId) {
         self.enqueue_ready_by_policy(task_id);
+    }
+
+    pub(super) fn spawn_user_task_spec(&mut self, spec : UserTask) -> TaskId {
+        let task_id = self.create_user_task_spec(spec);
+        self.enqueue_ready_task(task_id);
         log::debug!("[task-scheduler] spawned user task {}",
                     task_id);
         task_id
@@ -593,14 +601,31 @@ impl MultiClassScheduler {
             .task_snapshot(task_id)
     }
 
+    pub(super) fn create_fork_child(&mut self,
+                                    child_stack : usize,
+                                    new_aspace_ptr : usize,
+                                    new_satp : usize)
+                                    -> Option<TaskId> {
+        self.registry
+            .fork_current(child_stack, new_aspace_ptr, new_satp)
+    }
+
+    pub(super) fn create_clone_thread(&mut self,
+                                      child_stack : usize,
+                                      tls : usize,
+                                      set_tls : bool)
+                                      -> Option<TaskId> {
+        self.registry
+            .clone_current_thread(child_stack, tls, set_tls)
+    }
+
     pub(super) fn fork_current(&mut self,
                                child_stack : usize,
                                new_aspace_ptr : usize,
                                new_satp : usize)
                                -> Option<TaskId> {
-        let child_id = self.registry
-                           .fork_current(child_stack, new_aspace_ptr, new_satp)?;
-        self.enqueue_ready_by_policy(child_id);
+        let child_id = self.create_fork_child(child_stack, new_aspace_ptr, new_satp)?;
+        self.enqueue_ready_task(child_id);
         Some(child_id)
     }
 
@@ -609,9 +634,8 @@ impl MultiClassScheduler {
                                        tls : usize,
                                        set_tls : bool)
                                        -> Option<TaskId> {
-        let child_id = self.registry
-                           .clone_current_thread(child_stack, tls, set_tls)?;
-        self.enqueue_ready_by_policy(child_id);
+        let child_id = self.create_clone_thread(child_stack, tls, set_tls)?;
+        self.enqueue_ready_task(child_id);
         Some(child_id)
     }
 

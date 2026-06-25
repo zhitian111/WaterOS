@@ -151,6 +151,14 @@ fn seed_cgroup_layout(tmp: &mut super::tmpfs::TmpFs, v2: bool) -> VfsResult<()> 
     Ok(())
 }
 
+fn bump_mount_generation_after_cache_flush() {
+    if let Err(e) = super::reset_file_page_cache() {
+        log::warn!("[vfs-bridge] page cache flush before mount_gen bump failed: {:?}",
+                   e);
+    }
+    fs::rootfs::active_impl::bump_mount_generation();
+}
+
 fn mount_aux_common(
     mount_point: &str,
     fs: AuxMount,
@@ -162,24 +170,23 @@ fn mount_aux_common(
     if mp == "/" {
         return Err(VfsError::InvalidPath);
     }
-    {
-        let table = AUX_MOUNTS.lock();
-        if table.iter().any(|e| e.mount_point == mp) {
-            return Err(VfsError::Exists);
-        }
-    }
     match super::assert_mount_point_directory(mp.as_str()) {
         Ok(()) => {}
         Err(e) => return Err(e),
     }
-    AUX_MOUNTS.lock().push(MountEntry {
+    let mut table = AUX_MOUNTS.lock();
+    if table.iter().any(|e| e.mount_point == mp) {
+        return Err(VfsError::Exists);
+    }
+    table.push(MountEntry {
         mount_point: mp,
         fs,
         identity: new_mount_identity(device_key),
         readonly,
         fstype,
     });
-    fs::rootfs::active_impl::bump_mount_generation();
+    drop(table);
+    bump_mount_generation_after_cache_flush();
     Ok(())
 }
 
@@ -275,7 +282,7 @@ pub(crate) fn remount_aux_readonly(mount_point: &str) -> VfsResult<()> {
         return Err(VfsError::InvalidPath);
     }
     ent.readonly = true;
-    fs::rootfs::active_impl::bump_mount_generation();
+    bump_mount_generation_after_cache_flush();
     Ok(())
 }
 
@@ -338,7 +345,7 @@ pub(crate) fn unmount_aux_at(mount_point: &str) -> VfsResult<()> {
         .position(|e| e.mount_point == mp)
         .ok_or(VfsError::NotFound)?;
     table.remove(pos);
-    fs::rootfs::active_impl::bump_mount_generation();
+    bump_mount_generation_after_cache_flush();
     Ok(())
 }
 

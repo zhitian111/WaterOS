@@ -47,6 +47,12 @@ pub fn with_current_io<R>(fd : usize,
     let task_id = current_task_id()?;
     let mut handle = {
         let mut reg = registry().exclusive_access();
+        if reg.is_fd_table_shared(task_id) {
+            log::warn!("[vfs-fd] with_current_io on shared fd table task_id={:?} fd={}",
+                       task_id,
+                       fd);
+            return Err(VfsError::Unsupported);
+        }
         reg.take_io_for_task(task_id, fd)?
     };
     let result = f(handle.as_mut());

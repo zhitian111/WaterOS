@@ -272,6 +272,12 @@ impl PerTaskFdRegistry {
         first_error.map_or(Ok(()), Err)
     }
 
+    /// 当前任务是否与其他任务共享同一 fd 表（如 `CLONE_FILES`）。
+    pub fn is_fd_table_shared(&self, task_id: task::TaskId) -> bool {
+        let owner = self.effective_owner(task_id);
+        self.ref_counts.get(&owner).copied().unwrap_or(0) > 1
+    }
+
     /// 临时取出指定 fd 的句柄，让调用方可在不持有 fd 注册表借用时执行 I/O。
     pub fn take_io_for_task(
         &mut self,

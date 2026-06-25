@@ -3,6 +3,7 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
+use core::cell::Cell;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use api_v0::{VfsError, VfsIoHandle, VfsMetadata, VfsNodeType, VfsResult};
@@ -52,6 +53,7 @@ pub struct CharDevHandle {
     device: SharedCharacterDevice,
     stdin_eof: bool,
     rtc: bool,
+    nonblocking: Cell<bool>,
     mode: u16,
     inode: u64,
 }
@@ -62,6 +64,7 @@ impl CharDevHandle {
             device,
             stdin_eof,
             rtc: false,
+            nonblocking: Cell::new(false),
             mode: if stdin_eof { 0o20600 } else { 0o20660 },
             inode: if stdin_eof { 1 } else { 2 },
         }
@@ -72,6 +75,7 @@ impl CharDevHandle {
             device,
             stdin_eof: false,
             rtc: true,
+            nonblocking: Cell::new(false),
             mode: 0o20644,
             inode: path_inode("/dev/rtc0"),
         }
@@ -83,6 +87,7 @@ impl CharDevHandle {
                 device,
                 stdin_eof: false,
                 rtc: false,
+                nonblocking: Cell::new(false),
                 mode: 0o20666,
                 inode: path_inode(path),
             }
@@ -131,7 +136,7 @@ fn read_headless_stub(buf: &mut [u8]) -> usize {
     n
 }
 
-fn read_serial_tty(device: &SharedCharacterDevice, buf: &mut [u8]) -> VfsResult<usize> {
+fn try_read_serial_tty(device: &SharedCharacterDevice, buf: &mut [u8]) -> VfsResult<usize> {
     let mut guard = device.lock();
     match guard.read(buf) {
         Ok(n) if n > 0 => Ok(n),
@@ -140,7 +145,7 @@ fn read_serial_tty(device: &SharedCharacterDevice, buf: &mut [u8]) -> VfsResult<
             if headless_stub_pending() {
                 Ok(read_headless_stub(buf))
             } else {
-                Err(VfsError::Unsupported)
+                Err(VfsError::WouldBlock)
             }
         }
         Err(e) => Err(map_driver_err(e)),
@@ -191,7 +196,19 @@ impl VfsIoHandle for CharDevHandle {
                 Err(e) => Err(map_driver_err(e)),
             };
         }
-        read_serial_tty(&self.device, buf)
+        loop {
+            match try_read_serial_tty(&self.device, buf) {
+                Ok(n) => return Ok(n),
+                Err(VfsError::WouldBlock) if self.nonblocking.get() => {
+                    return Err(VfsError::WouldBlock);
+                }
+                Err(VfsError::WouldBlock) => {
+                    const POLLIN: i16 = 0x001;
+                    self.poll_wait_for_ticks(POLLIN, 1, &mut || true)?;
+                }
+                Err(e) => return Err(e),
+            }
+        }
     }
 
     fn write(&mut self, buf: &[u8]) -> VfsResult<usize> {
@@ -268,9 +285,23 @@ impl VfsIoHandle for CharDevHandle {
             device: self.device.clone(),
             stdin_eof: self.stdin_eof,
             rtc: self.rtc,
+            nonblocking: Cell::new(self.nonblocking.get()),
             mode: self.mode,
             inode: self.inode,
         }))
+    }
+
+    fn open_status_flags(&self) -> u32 {
+        if self.nonblocking.get() {
+            0o0004000
+        } else {
+            0
+        }
+    }
+
+    fn set_open_status_flags(&mut self, flags: u32) -> VfsResult<()> {
+        self.nonblocking.set(flags & 0o0004000 != 0);
+        Ok(())
     }
 }
 

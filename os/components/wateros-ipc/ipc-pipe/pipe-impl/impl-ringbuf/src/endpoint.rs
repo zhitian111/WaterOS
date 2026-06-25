@@ -3,6 +3,7 @@
 extern crate alloc;
 
 use alloc::sync::Arc;
+use core::cell::Cell;
 use api_v0::{PipeEndpointKind, PipeEndpointOps, PipeError, PipeResult};
 use waitqueue::TaskWaitResult;
 
@@ -12,7 +13,7 @@ use crate::kernel_pipe::Pipe;
 pub struct PipeEndpoint {
     pipe: Arc<Pipe>,
     kind: PipeEndpointKind,
-    nonblocking: bool,
+    nonblocking: Cell<bool>,
 }
 
 impl Clone for PipeEndpoint {
@@ -24,7 +25,7 @@ impl Clone for PipeEndpoint {
         Self {
             pipe: self.pipe.clone(),
             kind: self.kind,
-            nonblocking: self.nonblocking,
+            nonblocking: Cell::new(self.nonblocking.get()),
         }
     }
 }
@@ -43,8 +44,13 @@ impl PipeEndpoint {
 
     /// 是否按非阻塞语义执行。
     #[inline]
-    pub const fn nonblocking(&self) -> bool {
-        self.nonblocking
+    pub fn nonblocking(&self) -> bool {
+        self.nonblocking.get()
+    }
+
+    /// 切换非阻塞模式（`fcntl(F_SETFL)`）。
+    pub fn set_nonblocking(&self, value: bool) {
+        self.nonblocking.set(value);
     }
 
     /// 从读端读取。
@@ -72,12 +78,12 @@ impl PipeEndpointOps for PipeEndpoint {
             Self {
                 pipe: pipe.clone(),
                 kind: PipeEndpointKind::Read,
-                nonblocking,
+                nonblocking: Cell::new(nonblocking),
             },
             Self {
                 pipe,
                 kind: PipeEndpointKind::Write,
-                nonblocking,
+                nonblocking: Cell::new(nonblocking),
             },
         )
     }
@@ -87,14 +93,14 @@ impl PipeEndpointOps for PipeEndpoint {
     }
 
     fn nonblocking(&self) -> bool {
-        self.nonblocking
+        self.nonblocking.get()
     }
 
     fn read(&self, out: &mut [u8]) -> PipeResult<usize> {
         if self.kind != PipeEndpointKind::Read {
             return Err(PipeError::BrokenPipe);
         }
-        if self.nonblocking {
+        if self.nonblocking.get() {
             self.pipe.try_read(out)
         } else {
             self.pipe.read(out)
@@ -105,7 +111,7 @@ impl PipeEndpointOps for PipeEndpoint {
         if self.kind != PipeEndpointKind::Write {
             return Err(PipeError::BrokenPipe);
         }
-        if self.nonblocking {
+        if self.nonblocking.get() {
             self.pipe.try_write(input)
         } else {
             self.pipe.write(input)

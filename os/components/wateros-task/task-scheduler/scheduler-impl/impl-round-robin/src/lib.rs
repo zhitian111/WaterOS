@@ -153,10 +153,37 @@ pub fn spawn_kernel_task(entry : KernelTaskEntry, arg : usize) -> TaskId {
     with_scheduler(|scheduler| scheduler.spawn_kernel_task(entry, arg))
 }
 
+/// 按规格创建用户任务（仅登记 TCB，不入就绪队列）。
+pub fn create_user_task_spec(spec : UserTask) -> TaskId {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.create_user_task_spec(spec))
+}
+
+/// 将已创建任务加入就绪队列尾部。
+pub fn enqueue_ready_task(task_id : TaskId) {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.enqueue_ready_task(task_id))
+}
+
 /// 按规格创建用户任务并入就绪队列尾部。
 pub fn spawn_user_task_spec(spec : UserTask) -> TaskId {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.spawn_user_task_spec(spec))
+}
+
+/// 从当前用户任务 fork 子任务（仅登记 TCB，不入就绪队列）。
+pub fn create_fork_child(child_stack : usize,
+                         new_aspace_ptr : usize,
+                         new_satp : usize)
+                         -> Option<TaskId> {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.create_fork_child(child_stack, new_aspace_ptr, new_satp))
+}
+
+/// 从当前用户任务 clone 线程（仅登记 TCB，不入就绪队列）。
+pub fn create_clone_thread(child_stack : usize, tls : usize, set_tls : bool) -> Option<TaskId> {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.create_clone_thread(child_stack, tls, set_tls))
 }
 
 /// 从当前用户任务 fork 一个子任务，并返回子任务 id。
@@ -216,6 +243,7 @@ pub fn try_release_wait_queue(wait_queue_id : WaitQueueId) -> bool {
 
 /// 切入多任务运行：从引导上下文切换到第一个被选中的就绪任务（通常非 idle）。
 pub fn run_first_task() -> ! {
+    let _guard = InterruptGuard::new();
     let (current_task_cx_ptr, next_task_cx_ptr) =
         with_scheduler(|scheduler| scheduler.prepare_first_switch());
     unsafe {

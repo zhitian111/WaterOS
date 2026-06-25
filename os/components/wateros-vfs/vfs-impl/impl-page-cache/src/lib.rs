@@ -824,12 +824,25 @@ pub fn reset_global_cache(mount_gen : u64) {
 /// 返回全局页缓存句柄；若代次不匹配则重建。
 pub fn global_cache(mount_gen : u64) -> Arc<GlobalFilePageCache> {
     let mut g = GLOBAL_CACHE.lock();
-    let rebuild = g.as_ref()
-                   .map(|c| c.mount_gen() != mount_gen)
-                   .unwrap_or(true);
-    if rebuild {
-        *g = Some(Arc::new(GlobalFilePageCache::new(mount_gen)));
+    if let Some(ref existing) = *g {
+        if existing.mount_gen() != mount_gen {
+            if mount_gen < existing.mount_gen() {
+                log::debug!("[page-cache] ignoring stale mount_gen {} (global {})",
+                            mount_gen,
+                            existing.mount_gen());
+                return existing.clone();
+            }
+            log::warn!("[page-cache] rebuilding cache for mount_gen {} (was {}); dirty pages should have been flushed before bump",
+                       mount_gen,
+                       existing.mount_gen());
+            *g = Some(Arc::new(GlobalFilePageCache::new(mount_gen)));
+            return g.as_ref()
+                    .unwrap()
+                    .clone();
+        }
+        return existing.clone();
     }
+    *g = Some(Arc::new(GlobalFilePageCache::new(mount_gen)));
     g.as_ref()
      .unwrap()
      .clone()

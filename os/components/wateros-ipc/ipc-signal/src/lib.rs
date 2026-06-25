@@ -456,7 +456,14 @@ impl SignalRegistry {
             .ok_or(SignalError::NoSuchProcess)?
             .pending
             .insert(sig);
-        Ok(SignalDispatch::pending(target))
+        let wake_target = self.threads
+                                .iter()
+                                .filter(|(_, thread)| thread.pid == pid)
+                                .find_map(|(task_id, _)| {
+                                    self.has_deliverable(*task_id).ok().filter(|v| *v).map(|_| *task_id)
+                                })
+                                .or(target);
+        Ok(SignalDispatch::pending(wake_target))
     }
 
     /// Compatibility entry: target a task directly.

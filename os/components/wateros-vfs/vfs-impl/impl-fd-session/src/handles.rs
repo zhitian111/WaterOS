@@ -269,6 +269,19 @@ impl VfsIoHandle for PipeReadHandle {
             inode: self.inode,
         }))
     }
+
+    fn open_status_flags(&self) -> u32 {
+        if self.endpoint.nonblocking() {
+            0o0004000
+        } else {
+            0
+        }
+    }
+
+    fn set_open_status_flags(&mut self, flags: u32) -> VfsResult<()> {
+        self.endpoint.set_nonblocking(flags & 0o0004000 != 0);
+        Ok(())
+    }
 }
 
 /// pipe 写端。
@@ -306,6 +319,19 @@ impl VfsIoHandle for PipeWriteHandle {
             endpoint: self.endpoint.clone(),
             inode: self.inode,
         }))
+    }
+
+    fn open_status_flags(&self) -> u32 {
+        if self.endpoint.nonblocking() {
+            0o0004000
+        } else {
+            0
+        }
+    }
+
+    fn set_open_status_flags(&mut self, flags: u32) -> VfsResult<()> {
+        self.endpoint.set_nonblocking(flags & 0o0004000 != 0);
+        Ok(())
     }
 }
 
@@ -393,6 +419,21 @@ impl VfsIoHandle for UnixStreamPairEnd {
             write_end: self.write_end.clone(),
             inode: self.inode,
         }))
+    }
+
+    fn open_status_flags(&self) -> u32 {
+        if self.read_end.nonblocking() {
+            0o0004000
+        } else {
+            0
+        }
+    }
+
+    fn set_open_status_flags(&mut self, flags: u32) -> VfsResult<()> {
+        let nonblocking = flags & 0o0004000 != 0;
+        self.read_end.set_nonblocking(nonblocking);
+        self.write_end.set_nonblocking(nonblocking);
+        Ok(())
     }
 }
 

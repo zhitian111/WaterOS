@@ -81,12 +81,13 @@ pub fn spawn_kernel_task(entry : KernelTaskEntry, arg : usize) -> TaskId {
 /// 按给定规格创建一个新的用户任务，并返回分配到的任务号。
 #[inline]
 pub fn spawn_user_task(user : UserTask) -> TaskId {
-    let task_id = scheduler::spawn_user_task(user);
+    let task_id = scheduler::create_user_task_spec(user);
     let parent_pid = current_process_task_snapshot().map(|task| task.pid);
     let address_space = user_address_space_ref(user);
     active_impl::with_process_registry(|registry| {
         registry.create_process_for_task(task_id, parent_pid, address_space);
     });
+    scheduler::enqueue_ready_task(task_id);
     task_id
 }
 
@@ -225,12 +226,13 @@ pub fn fork_current(child_stack : usize,
                     new_satp : usize)
                     -> Option<TaskId> {
     let parent_pid = current_process_task_snapshot().map(|task| task.pid)?;
-    let child_id = scheduler::fork_current(child_stack, new_aspace_ptr, new_satp)?;
+    let child_id = scheduler::create_fork_child(child_stack, new_aspace_ptr, new_satp)?;
     let address_space =
         Some(AddressSpaceRef::new(AddressSpaceHandle::from_raw(new_satp), new_aspace_ptr));
     active_impl::with_process_registry(|registry| {
         let _ = registry.create_process_like_fork(parent_pid, child_id, address_space);
     });
+    scheduler::enqueue_ready_task(child_id);
     Some(child_id)
 }
 
@@ -242,9 +244,9 @@ pub fn clone_current_thread(child_stack : usize,
                             clear_child_tid : Option<TaskClearTid>)
                             -> Option<TaskId> {
     let process_task = current_process_task_snapshot()?;
-    let child_id = scheduler::clone_current_thread(child_stack,
-                                                   tls,
-                                                   clone_flags.contains(CloneFlags::CLONE_SETTLS))?;
+    let child_id = scheduler::create_clone_thread(child_stack,
+                                                tls,
+                                                clone_flags.contains(CloneFlags::CLONE_SETTLS))?;
     active_impl::with_process_registry(|registry| {
         let _ = registry.add_task_to_process(process_task.pid,
                                              child_id,
@@ -252,6 +254,7 @@ pub fn clone_current_thread(child_stack : usize,
                                              tls,
                                              clear_child_tid);
     });
+    scheduler::enqueue_ready_task(child_id);
     Some(child_id)
 }
 

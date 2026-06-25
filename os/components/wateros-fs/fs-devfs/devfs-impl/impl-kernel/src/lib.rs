@@ -63,30 +63,40 @@ fn push_char_alias(inner: &mut DevFsImpl, path: String, dev: SharedCharacterDevi
 
 impl DevFsManager for KernelDevFsManager {
     fn refresh(&mut self) {
+        let block_snapshot: alloc::vec::Vec<_> = (0..block_device_count())
+            .filter_map(|idx| block_device_at(idx).map(|dev| (idx, dev)))
+            .collect();
+        let char_snapshot: alloc::vec::Vec<_> = (0..character_device_count())
+            .filter_map(|idx| {
+                character_device_at(idx).map(|dev| {
+                    (
+                        idx,
+                        dev,
+                        character_device_kind_at(idx).unwrap_or(CharacterDeviceKind::Serial),
+                    )
+                })
+            })
+            .collect();
+        let dt_paths = DEVFS.lock().dt_unsupported_paths.clone();
+        let block_count = block_snapshot.len();
+        let char_count = char_snapshot.len();
+
         let mut inner = DEVFS.lock();
         inner.nodes.clear();
         inner.block_bindings.clear();
         inner.character_bindings.clear();
 
-        let count = block_device_count();
-        for idx in 0..count {
-            if let Some(dev) = block_device_at(idx) {
-                let vd = linux_vd_disk_path(idx);
-                push_block_alias(&mut inner, format!("/dev/vblk{}", idx), dev.clone());
-                push_block_alias(&mut inner, vd.clone(), dev.clone());
-                if idx == 0 {
-                    push_block_alias(&mut inner, alloc::format!("{vd}1"), dev.clone());
-                    push_block_alias(&mut inner, alloc::format!("{vd}2"), dev.clone());
-                }
+        for (idx, dev) in block_snapshot {
+            let vd = linux_vd_disk_path(idx);
+            push_block_alias(&mut inner, format!("/dev/vblk{}", idx), dev.clone());
+            push_block_alias(&mut inner, vd.clone(), dev.clone());
+            if idx == 0 {
+                push_block_alias(&mut inner, alloc::format!("{vd}1"), dev.clone());
+                push_block_alias(&mut inner, alloc::format!("{vd}2"), dev.clone());
             }
         }
 
-        let char_count = character_device_count();
-        for idx in 0..char_count {
-            let Some(dev) = character_device_at(idx) else {
-                continue;
-            };
-            let kind = character_device_kind_at(idx).unwrap_or(CharacterDeviceKind::Serial);
+        for (idx, dev, kind) in char_snapshot {
             push_char_alias(&mut inner, format!("/dev/ttyS{idx}"), dev.clone());
             if idx == 0 {
                 push_char_alias(&mut inner, String::from("/dev/console"), dev.clone());
@@ -110,7 +120,6 @@ impl DevFsManager for KernelDevFsManager {
             }
         }
 
-        let dt_paths = inner.dt_unsupported_paths.clone();
         for path in dt_paths {
             inner.nodes.push(api_v0::DevNode {
                 path,
@@ -120,7 +129,7 @@ impl DevFsManager for KernelDevFsManager {
         logging::info!(
             "[fs::devfs] refresh done, total_nodes={}, block={}, character={}, unsupported={}",
             inner.nodes.len(),
-            count,
+            block_count,
             char_count,
             inner.dt_unsupported_paths.len()
         );

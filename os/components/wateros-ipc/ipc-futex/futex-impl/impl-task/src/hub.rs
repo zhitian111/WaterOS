@@ -108,34 +108,27 @@ static GLOBAL_HUB: FutexHub = FutexHub {
 
 impl KernelFutexOps for FutexHub {
     fn wake(&self, key: FutexKey, max_wake: u32) -> FutexResult<usize> {
-        self.with_tables(|tables| {
-            let Some(wq) = tables.queues.get(&key).copied() else {
-                return Ok(0);
-            };
-            let limit = if max_wake == 0 { 1 } else { max_wake as usize };
-            let mut woken = 0usize;
-            for _ in 0..limit {
-                if wq.wake_one().is_none() {
-                    break;
-                }
-                woken += 1;
+        let wq = self.with_tables(|tables| tables.queues.get(&key).copied());
+        let Some(wq) = wq else {
+            return Ok(0);
+        };
+        let limit = if max_wake == 0 { 1 } else { max_wake as usize };
+        let mut woken = 0usize;
+        for _ in 0..limit {
+            if wq.wake_one().is_none() {
+                break;
             }
-            Self::cleanup_empty_queue(tables, key);
-            Ok(woken)
-        })
+            woken += 1;
+        }
+        self.with_tables(|tables| Self::cleanup_empty_queue(tables, key));
+        Ok(woken)
     }
 
     fn wake_all(&self, key: FutexKey) -> FutexResult<usize> {
-        self.with_tables(|tables| {
-            let woken = tables
-                .queues
-                .get(&key)
-                .copied()
-                .map(|wq| wq.wake_all())
-                .unwrap_or(0);
-            Self::cleanup_empty_queue(tables, key);
-            Ok(woken)
-        })
+        let wq = self.with_tables(|tables| tables.queues.get(&key).copied());
+        let woken = wq.map(|wq| wq.wake_all()).unwrap_or(0);
+        self.with_tables(|tables| Self::cleanup_empty_queue(tables, key));
+        Ok(woken)
     }
 
     fn set_robust_list(&self, task: TaskId, head: usize, len: usize) -> FutexResult<()> {
