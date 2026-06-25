@@ -501,7 +501,12 @@ impl ReadWriteFs for Ext4RsFs {
             return Err(FsError::NotAFile);
         }
         if len > meta.size {
-            zero_extend_file(fs, inode, meta.size, len)?;
+            // fallocate(2) / truncate(2) 扩文件只需稀疏扩展逻辑长度，与 Linux
+            // 及 ext4plus 一致；勿逐块写零（LTP mount_device 会预分配 300MB）。
+            let mut inode_ref = fs.get_inode_ref(inode);
+            inode_ref.inode
+                     .set_size(len);
+            fs.write_back_inode(&mut inode_ref);
         } else if len < meta.size {
             let mut inode_ref = fs.get_inode_ref(inode);
             fs.truncate_inode(&mut inode_ref, len)
