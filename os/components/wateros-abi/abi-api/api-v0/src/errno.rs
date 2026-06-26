@@ -50,6 +50,8 @@ impl ErrNo {
     pub const EINTR: Self = Self(4);
     /// 输入/输出错误。
     pub const EIO: Self = Self(5);
+    /// 参数列表过长；也用于 clone3 未识别尾部含非零扩展字段。
+    pub const E2BIG: Self = Self(7);
     /// 文件描述符无效。
     pub const EBADF: Self = Self(9);
     /// 打开文件数达进程上限。

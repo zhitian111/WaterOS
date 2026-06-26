@@ -16,8 +16,8 @@ pub struct Uid(pub u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Gid(pub u32);
 
-/// 当前 supplementary 组数量（G1：`getgroups` 返回 `[0]`）。
-pub const SUPPLEMENTARY_GROUP_COUNT: usize = 1;
+/// 当前支持的 supplementary 组上限。
+pub const SUPPLEMENTARY_GROUP_COUNT: usize = 32;
 
 /// 进程凭证快照（八 ID + 固定长度 supplementary 组）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,6 +31,7 @@ pub struct ProcessCredentials {
     pub fs_uid: Uid,
     pub fs_gid: Gid,
     pub supplementary_groups: [Gid; SUPPLEMENTARY_GROUP_COUNT],
+    pub supplementary_group_len: usize,
 }
 
 impl ProcessCredentials {
@@ -45,12 +46,24 @@ impl ProcessCredentials {
         fs_uid: Uid(0),
         fs_gid: Gid(0),
         supplementary_groups: [Gid(0); SUPPLEMENTARY_GROUP_COUNT],
+        supplementary_group_len: 1,
     };
 
-    /// G1：`getgroups(0)` 返回的 supplementary 组数量。
+    /// `getgroups(0)` 返回的 supplementary 组数量。
     #[inline]
     pub const fn supplementary_group_count(&self) -> isize {
-        SUPPLEMENTARY_GROUP_COUNT as isize
+        self.supplementary_group_len as isize
+    }
+
+    /// privileged `setgroups(2)` 语义：替换当前 supplementary 组列表。
+    #[inline]
+    pub fn set_supplementary_groups(&mut self, groups: &[Gid]) {
+        self.supplementary_group_len = groups.len();
+        let mut i = 0;
+        while i < groups.len() {
+            self.supplementary_groups[i] = groups[i];
+            i += 1;
+        }
     }
 
     /// privileged `setuid(2)` 语义：real/effective/saved/fs uid 全部更新。
@@ -186,6 +199,9 @@ pub trait CredentialMutation {
         effective_gid: Option<Gid>,
         saved_gid: Option<Gid>,
     );
+
+    /// 替换 supplementary 组列表。
+    fn set_supplementary_groups(&mut self, tid: TaskId, groups: &[Gid]);
 }
 
 /// 权限与 capability 检查（P1 占位）。

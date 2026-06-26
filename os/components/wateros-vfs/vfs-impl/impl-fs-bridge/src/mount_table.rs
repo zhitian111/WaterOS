@@ -129,28 +129,6 @@ impl AuxMount {
     }
 }
 
-fn seed_cgroup_layout(tmp: &mut super::tmpfs::TmpFs, v2: bool) -> VfsResult<()> {
-    use fs::ReadWriteFs;
-    let map = |e: fs::FsError| -> VfsError {
-        super::map_fs_err(e)
-    };
-    if v2 {
-        tmp.write_regular_file("/cgroup.procs", b"").map_err(map)?;
-        tmp.write_regular_file("/cgroup.subtree_control", b"").map_err(map)?;
-        tmp.write_regular_file(
-            "/cgroup.controllers",
-            b"memory cpu cpuset io pids freezer\n",
-        )
-        .map_err(map)?;
-        tmp.write_regular_file("/cgroup.type", b"domain\n").map_err(map)?;
-    } else {
-        tmp.write_regular_file("/tasks", b"").map_err(map)?;
-        tmp.write_regular_file("/cgroup.procs", b"").map_err(map)?;
-        tmp.write_regular_file("/notify_on_release", b"0\n").map_err(map)?;
-    }
-    Ok(())
-}
-
 fn bump_mount_generation_after_cache_flush() {
     if let Err(e) = super::reset_file_page_cache() {
         log::warn!("[vfs-bridge] page cache flush before mount_gen bump failed: {:?}",
@@ -236,8 +214,7 @@ pub(crate) fn mount_tmpfs_at(mount_point: &str) -> VfsResult<()> {
 
 /// 挂载 cgroup v1/v2 伪层级（tmpfs 承载标准 cgroup 接口文件）。
 pub(crate) fn mount_cgroup_at(mount_point: &str, v2: bool, _options: &str) -> VfsResult<()> {
-    let mut tmp = super::tmpfs::TmpFs::new();
-    seed_cgroup_layout(&mut tmp, v2)?;
+    let tmp = super::tmpfs::TmpFs::new_cgroup(v2).map_err(super::map_fs_err)?;
     let fs: SharedRwFs = Arc::new(Mutex::new(LocalRwFs::new(Box::new(tmp))));
     let fstype = if v2 { "cgroup2" } else { "cgroup" };
     mount_aux_common(mount_point, AuxMount::Rw(fs), "cgroup", fstype, false)

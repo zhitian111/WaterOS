@@ -32,6 +32,7 @@ pub(crate) struct TmpFs {
     root: TmpNode,
     next_inode: u64,
     mounted: bool,
+    cgroup_v2: Option<bool>,
 }
 
 impl TmpFs {
@@ -44,7 +45,15 @@ impl TmpFs {
             },
             next_inode: 2,
             mounted: true,
+            cgroup_v2: None,
         }
+    }
+
+    pub(crate) fn new_cgroup(v2: bool) -> FsResult<Self> {
+        let mut fs = Self::new();
+        fs.cgroup_v2 = Some(v2);
+        fs.seed_cgroup_controls("/")?;
+        Ok(fs)
     }
 
     fn alloc_inode(&mut self) -> u64 {
@@ -138,6 +147,36 @@ impl TmpFs {
         children.insert(String::from(name), node);
         Ok(())
     }
+
+    fn cgroup_control_files(v2: bool) -> &'static [(&'static str, &'static [u8])] {
+        if v2 {
+            &[("cgroup.procs", b""),
+              ("cgroup.subtree_control", b""),
+              ("cgroup.controllers", b"memory cpu cpuset io pids freezer\n"),
+              ("cgroup.type", b"domain\n")]
+        } else {
+            &[("tasks", b""), ("cgroup.procs", b""), ("notify_on_release", b"0\n")]
+        }
+    }
+
+    fn seed_cgroup_controls(&mut self, dir_path: &str) -> FsResult<()> {
+        let Some(v2) = self.cgroup_v2 else {
+            return Ok(());
+        };
+        for (name, data) in Self::cgroup_control_files(v2) {
+            let path = if dir_path == "/" {
+                alloc::format!("/{name}")
+            } else {
+                alloc::format!("{}/{}", dir_path.trim_end_matches('/'), name)
+            };
+            self.write_regular_file(path.as_str(), data)?;
+        }
+        Ok(())
+    }
+
+    fn is_cgroup_control_name(v2: Option<bool>, name: &str) -> bool {
+        v2.is_some_and(|v2| Self::cgroup_control_files(v2).iter().any(|(n, _)| *n == name))
+    }
 }
 
 impl ReadWriteFs for TmpFs {
@@ -196,12 +235,17 @@ impl ReadWriteFs for TmpFs {
 
     fn rmdir(&mut self, path: &str) -> FsResult<()> {
         let parts = Self::split_path(path)?;
+        let cgroup_v2 = self.cgroup_v2;
         let (children, name) = Self::parent_dir_mut(&mut self.root, &parts)?;
         let node = children.get(name).ok_or(FsError::NotFound)?;
         let TmpNode::Dir { children: sub, .. } = node else {
             return Err(FsError::NotAFile);
         };
-        if !sub.is_empty() {
+        if !sub.is_empty()
+            && !sub
+                .keys()
+                .all(|name| Self::is_cgroup_control_name(cgroup_v2, name.as_str()))
+        {
             return Err(FsError::Exists);
         }
         children.remove(name);
@@ -250,7 +294,8 @@ impl ReadWriteFs for TmpFs {
             mode: (mode as u16) | 0o040000,
             inode,
         };
-        Self::insert_leaf(&mut self.root, &parts, node)
+        Self::insert_leaf(&mut self.root, &parts, node)?;
+        self.seed_cgroup_controls(path)
     }
 
     fn chmod(&mut self, path: &str, mode: u32) -> FsResult<()> {

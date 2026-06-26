@@ -113,6 +113,13 @@ pub fn set_resgid(real_gid: Option<Gid>, effective_gid: Option<Gid>, saved_gid: 
 }
 
 #[cfg(feature = "impl-root")]
+/// 设置当前任务 supplementary 组列表。
+pub fn set_supplementary_groups(groups: &[Gid]) {
+    let tid = current_tid_for_mutation("set_supplementary_groups");
+    active_impl::set_supplementary_groups(tid, groups);
+}
+
+#[cfg(feature = "impl-root")]
 fn current_tid_for_mutation(context: &str) -> TaskId {
     task::current_task_id().unwrap_or_else(|| panic!("[cred] {context}: no current task"))
 }

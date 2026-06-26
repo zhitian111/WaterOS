@@ -5,6 +5,7 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
+use alloc::vec::Vec;
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -93,6 +94,18 @@ pub fn close_fd(fd : usize) -> VfsResult<()> {
     handle.close()
 }
 
+/// 关闭当前任务 fd 区间内所有已打开 fd；未打开 fd 按 Linux `close_range` 语义忽略。
+pub fn close_fd_range(first : usize, last : usize) -> VfsResult<Vec<usize>> {
+    let task_id = current_task_id()?;
+    let handles = with_fd_registry(|reg| reg.take_fd_range_for_close(task_id, first, last))?;
+    let mut closed = Vec::new();
+    for (fd, mut handle) in handles {
+        handle.close()?;
+        closed.push(fd);
+    }
+    Ok(closed)
+}
+
 /// 请求全部打开句柄写回脏数据。
 pub fn flush_all_open_files() -> VfsResult<()> {
     registry().exclusive_access()
@@ -138,6 +151,11 @@ pub fn get_fd_flags(fd : usize) -> VfsResult<usize> {
 /// `fcntl(F_SETFD)`。
 pub fn set_fd_flags(fd : usize, val : usize) -> VfsResult<()> {
     with_current_task(|reg, task_id| reg.set_fd_flags(task_id, fd, val))
+}
+
+/// 给当前任务 fd 区间内所有已打开 fd 设置/清除 `FD_CLOEXEC`；未打开 fd 忽略。
+pub fn set_fd_range_cloexec(first : usize, last : usize, cloexec : bool) -> VfsResult<()> {
+    with_current_task(|reg, task_id| reg.set_fd_range_cloexec(task_id, first, last, cloexec))
 }
 
 /// 当前任务下 `fd` 是否为 `O_PATH` 句柄。

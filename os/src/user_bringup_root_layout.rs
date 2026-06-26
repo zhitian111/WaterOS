@@ -86,11 +86,13 @@ pub fn ensure_busybox_path_links() {
 
         /// busybox 多用途小程序：优先给 libc 本地目录建链接，避免 musl/glibc 脚本
         /// 通过 PATH 误用另一套动态库；同时保留 /bin 兼容路径。
-        const APPLETS : &[&str] = &["ls", "sleep", "basename", "cp", "mkdir", "rmdir", "cat",
-                                    "grep", "awk", "cut", "sed", "tr", "wc", "head", "tail",
-                                    "sort", "uniq", "expr", "dirname", "readlink", "ln", "rm",
-                                    "touch", "chmod", "chown", "ip", "ifconfig", "route",
-                                    "sysctl", "locale", "ar", "arping"];
+        const APPLETS : &[&str] =
+            &["ls", "sleep", "basename", "cp", "mkdir", "rmdir", "cat", "grep", "awk", "cut",
+              "sed", "tr", "wc", "head", "tail", "sort", "uniq", "expr", "dirname", "readlink",
+              "ln", "rm", "touch", "chmod", "chown", "mktemp", "printf", "test", "true", "false",
+              "pwd", "env", "which", "id", "whoami", "groups", "date", "uname", "dd", "od",
+              "hexdump", "xargs", "find", "cmp", "diff", "seq", "tee", "ip", "ifconfig", "route",
+              "sysctl", "arping"];
         for applet in APPLETS {
             try_hardlink(sess.as_mut(),
                          "/glibc/busybox",
@@ -105,6 +107,11 @@ pub fn ensure_busybox_path_links() {
                          "/glibc/busybox",
                          alloc::format!("/usr/bin/{applet}").as_str());
         }
+
+        const UNSUPPORTED_APPLETS : &[&str] = &["locale", "ar", "rsh"];
+        for applet in UNSUPPORTED_APPLETS {
+            remove_applet_links(sess.as_mut(), applet);
+        }
     }
 }
 
@@ -112,9 +119,9 @@ pub fn ensure_busybox_path_links() {
 fn ensure_etc_passwd(sess : &mut (impl vfs::api::RootRwSession + ?Sized)) {
     use vfs::api::SingleRootReadView;
 
-    const PASSWD : &str =
-        "root:x:0:0:root:/root:/bin/sh\nnobody:x:65534:65534:nobody:/nonexistent:/bin/false\n";
-    const GROUP : &str = "root:x:0:\nnobody:x:65534:\nnogroup:x:65534:\n";
+    const PASSWD : &str = "root:x:0:0:root:/root:/bin/sh\ndaemon:x:1:1:daemon:/usr/sbin:/bin/\
+                           false\nnobody:x:65534:65534:nobody:/nonexistent:/bin/false\n";
+    const GROUP : &str = "root:x:0:\ndaemon:x:1:\nnobody:x:65534:\nnogroup:x:65534:\n";
     const NSSWITCH : &str =
         "passwd: files\ngroup: files\nshadow: files\ngshadow: files\nhosts: files\n";
     const PROTOCOLS : &str = "ip 0 IP\nhopopt 0 HOPOPT\nicmp 1 ICMP\nigmp 2 IGMP\nggp 3 GGP\ntcp \
@@ -204,5 +211,22 @@ fn try_hardlink(sess : &mut (impl vfs::api::RootRwSession + ?Sized), src : &str,
         Err(VfsError::Exists) => trace!("[{LOG_TAG}] {dest} already present"),
         Err(VfsError::NotFound) => trace!("[{LOG_TAG}] hardlink {dest} skipped: {src} missing"),
         Err(e) => warn!("[{LOG_TAG}] hardlink {dest} -> {src} failed: {e:?}"),
+    }
+}
+
+#[cfg(feature = "vfs-bridge")]
+fn remove_applet_links(sess : &mut (impl vfs::api::RootRwSession + ?Sized), applet : &str) {
+    use vfs::api::VfsError;
+
+    for path in [alloc::format!("/glibc/{applet}"),
+                 alloc::format!("/musl/{applet}"),
+                 alloc::format!("/bin/{applet}"),
+                 alloc::format!("/usr/bin/{applet}")]
+    {
+        match sess.unlink(path.as_str()) {
+            Ok(()) => info!("[{LOG_TAG}] removed unsupported applet link {path}"),
+            Err(VfsError::NotFound) => trace!("[{LOG_TAG}] unsupported applet link {path} absent"),
+            Err(e) => warn!("[{LOG_TAG}] remove unsupported applet link {path} failed: {e:?}"),
+        }
     }
 }

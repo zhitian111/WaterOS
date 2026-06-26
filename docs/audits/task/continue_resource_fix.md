@@ -1,7 +1,7 @@
 # 资源生命周期修复 — 新对话续接提示词
 
 > 用途：复制下方「Agent 提示词」整段到新对话，让下一个 Agent 从当前进度继续推进代码修复。  
-> 最后更新：2026-06-25
+> 最后更新：2026-06-26
 
 ---
 
@@ -65,7 +65,8 @@
 | 第三波 | T-PF-02/03、T-IPC-02 | 已完成 |
 | 第四波 | T-IPC-01/03、T-SKT-01 | 已完成 |
 | 第五波 | T-PC-01/02/03、T-FS-01/02/03 | 已完成 |
-| 第六波 | LTP `acct02`/shell 环境推进 | 进行中：`acct02` TPASS，已补 `testcases/bin/lib` PATH 与常用 busybox applet；下一轮关注 `add_ipv6addr` 的 `locale` 后续语义与 `ar`/`ip` 工具能力 |
+| 第六波 | LTP `acct02`/shell 环境推进 | 已完成：`acct02` TPASS，已补 `testcases/bin/lib` PATH 与常用 busybox applet |
+| 第七波 | LTP glibc A/B 段推进 | 进行中：`ar01.sh` 稳定 TCONF，`asapi_01` 从 TBROK 推进到 raw IPv6 TCONF，`arping`/`bbr` 推进到 veth/modules TCONF |
 
 完整条目与验收标准以 [`../resource-fix-queue.md`](../resource-fix-queue.md) 为准。
 
@@ -73,10 +74,23 @@
 
 - `os/tem/rv_ltp_20260625_203008.log`（240s timeout，已跑到 `bind05`）
 - `os/tem/rv_ltp_20260625_203550.log`（180s timeout，已跑到 `ar01.sh`）
+- `os/tem/rv_ltp_20260626_185832.log`（300s timeout，已跑到 `bind04`）
+- `os/tem/rv_ltp_20260626_200239_close_range.log`（420s timeout，重新从 A 段跑到 `busy_poll01.sh`，未覆盖到 `close_range02`）
+- `os/run.log`（当前工作树配置下已跑到 `cn_pec.sh`；`close_range02` 已 9 TPASS / 0 fail，尾部仍受 `clone303` cgroup 残留输出影响）
 
 关键变化：
 
 - `acct02`: `TPASS: acct() wrote correct file contents!`
 - `add_ipv6addr`: 从 `check_envval: not found` 推进到缺少 `awk/cut`，补 applet 后继续推进到缺少 `locale`
-- `ar01.sh`: 从 `grep: not found` 推进到缺少 `ar`
-- `arping01.sh`/`bbr*.sh`: `grep` 缺口已补，后续关注 `arping`/`ip`
+- `ar01.sh`: 从 `grep: not found` 推进到缺少 `ar`；不要把 busybox 硬链接命名为 `ar`，当前 busybox 不含该 applet，误暴露会进入长耗时命令测试
+- `arping01.sh`/`bbr*.sh`: `id`/`whoami`/`groups` 缺口已补，当前稳定 TCONF 于 veth driver/modules 缺失
+- `asapi_01`: 已补 IPv4 `bind()` 接受 `AF_UNSPEC` 兼容语义，原 `sock_ntop: unknown AF_xxx` TBROK 消失；当前 raw IPv6 socket 返回 `EAFNOSUPPORT` 后 TCONF
+- `ask_password.sh`/`assign_password.sh`: `TCSETS`/`TCSETSW`/`TCSETSF` 兼容 no-op 后 ioctl 0x5402 warning 消失；仍因无真实 MMC 密码环境逻辑失败
+- `locale`/`ar`/`rsh`: 当前 busybox 不支持，启动时会主动清理 `/glibc`、`/musl`、`/bin`、`/usr/bin` 下的残留硬链接，避免把 TCONF 变成 applet TBROK 或长耗时挂起
+- 当前 `os/run.log` 尾部：
+  - `clone303`: cgroup helper 缺少 `cgroup.procs` 后重复 TBROK，最终用户态 `Segmentation fault`；末尾 `cn_pec.sh` 打出的 `clone303.c:45 ... ETIMEDOUT` 属于该残留/延迟输出，不是 `cn_pec.sh` 自身的首要缺口
+  - `close_range02`: 原因是 nr=436 未分发导致 `ENOSYS`，并且测试里的 `clone(CLONE_FILES)` 被 fork 路径拒绝为 `EINVAL`
+  - 已实现 `close_range(first,last,0)` 与 `CLOSE_RANGE_CLOEXEC`，未打开 fd 按 Linux 语义忽略，`first > last`/未知 flag 返回 `EINVAL`；`CLOSE_RANGE_UNSHARE` 暂按未建模语义拒绝
+  - 已补 fork 路径 `CLONE_FILES`/`CLONE_FS` 继承语义：新地址空间进程可共享 fd 表/socket fd 表或 cwd
+  - 已补 cgroup tmpfs 伪层级：cgroup v1/v2 子目录创建时自动生成 `cgroup.procs` 等控制文件，`rmdir` 允许只含控制文件的 cgroup 目录删除
+  - 已补 `clone3(CLONE_INTO_CGROUP)` 兼容 no-op：校验 `cgroup` fd 是目录，剥离该扩展 flag 后走普通 clone；暂不建模真实 cgroup membership

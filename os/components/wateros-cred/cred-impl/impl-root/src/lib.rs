@@ -102,6 +102,11 @@ impl CredentialMutation for PerTaskCredRegistry {
         self.cred_mut_or_panic(tid, "set_resgid")
             .set_resgid(real_gid, effective_gid, saved_gid);
     }
+
+    fn set_supplementary_groups(&mut self, tid: TaskId, groups: &[Gid]) {
+        self.cred_mut_or_panic(tid, "set_supplementary_groups")
+            .set_supplementary_groups(groups);
+    }
 }
 
 impl CredentialBackend for PerTaskCredRegistry {
@@ -217,6 +222,12 @@ pub fn set_resgid(
     registry()
         .exclusive_access()
         .set_resgid(tid, real_gid, effective_gid, saved_gid);
+}
+
+pub fn set_supplementary_groups(tid: TaskId, groups: &[Gid]) {
+    registry()
+        .exclusive_access()
+        .set_supplementary_groups(tid, groups);
 }
 
 pub fn has_cap(cred: &ProcessCredentials, cap: Capability) -> bool {
