@@ -17,6 +17,8 @@ const CLONE3_ARGS_SIZE_CURRENT : usize = 88;
 const CLONE3_EXIT_SIGNAL_MASK : usize = 0xFF;
 const CLONE_PIDFD : usize = 0x0000_1000;
 const CLONE_VM_RAW : usize = 0x0000_0100;
+const CLONE_FS_RAW : usize = 0x0000_0200;
+const CLONE_FILES_RAW : usize = 0x0000_0400;
 const CLONE_VFORK : usize = 0x0000_4000;
 const CLONE_PARENT_SETTID_RAW : usize = 0x0010_0000;
 const CLONE_CHILD_CLEARTID_RAW : usize = 0x0020_0000;
@@ -26,6 +28,8 @@ const CLONE_INTO_CGROUP : usize = 0x0000_0002_0000_0000;
 /// Linux `CSIGNAL`：fork 路径仅允许低 8 位退出信号号。
 const CLONE_CSIGNAL_MASK : usize = 0xFF;
 const CLONE_FORK_COMPAT_MASK : usize = CLONE_CSIGNAL_MASK |
+                                        CLONE_FS_RAW |
+                                        CLONE_FILES_RAW |
                                         CLONE_PARENT_SETTID_RAW |
                                         CLONE_CHILD_CLEARTID_RAW |
                                         CLONE_CHILD_SETTID_RAW;
@@ -248,12 +252,20 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
         return UserRet::from_error(ErrNo::EAGAIN);
     }
 
-    // 子任务继承父任务 cwd
     let parent_id = task::current_task_id().expect("current task must exist after fork");
-    vfs::cwd::copy_cwd_from_parent(child_id, parent_id);
+    if clone_flags.contains(task::CloneFlags::CLONE_FS) {
+        vfs::cwd::share_cwd_from_parent(child_id, parent_id);
+    } else {
+        vfs::cwd::copy_cwd_from_parent(child_id, parent_id);
+    }
 
-    vfs::fd::copy_fd_table_from_parent(child_id, parent_id);
-    crate::socket_fd::copy_from_parent(child_id, parent_id);
+    if clone_flags.contains(task::CloneFlags::CLONE_FILES) {
+        vfs::fd::share_fd_table_from_parent(child_id, parent_id);
+        crate::socket_fd::share_from_parent(child_id, parent_id);
+    } else {
+        vfs::fd::copy_fd_table_from_parent(child_id, parent_id);
+        crate::socket_fd::copy_from_parent(child_id, parent_id);
+    }
     crate::unix_sock::copy_fds_from_parent(child_id, parent_id);
 
     cred::fork_cred(parent_id, child_id);

@@ -10,6 +10,9 @@ use crate::user_copy::copy_to_user_struct;
 use crate::vfs_util::vfs_error_to_errno;
 
 const TCGETS: u32 = 0x5401;
+const TCSETS: u32 = 0x5402;
+const TCSETSW: u32 = 0x5403;
+const TCSETSF: u32 = 0x5404;
 const TIOCGPGRP: u32 = 0x540f;
 const TIOCGWINSZ: u32 = 0x5413;
 const TIOCNOTTY: u32 = 0x5422;
@@ -47,6 +50,13 @@ fn tty_char_ioctl(request: u32, argp: usize) -> UserRet {
     match request {
         // glibc tcgetattr 常以 a2=sp 调用 TCGETS，成功写 termios 会覆盖同帧内的栈金丝雀。
         TCGETS => UserRet::from_error(ErrNo::ENOTTY),
+        // 终端属性状态尚未建模；允许 stty/read -s 等保存/恢复路径继续执行。
+        TCSETS | TCSETSW | TCSETSF => {
+            if argp == 0 {
+                return UserRet::from_error(ErrNo::EFAULT);
+            }
+            UserRet::from_success(0)
+        }
         TIOCGWINSZ => {
             if argp == 0 {
                 return UserRet::from_error(ErrNo::EFAULT);
@@ -107,6 +117,7 @@ pub(crate) fn sys_ioctl(args: SyscallArgs) -> UserRet {
 fn global_ioctl_fallback(fd: usize, request: u32, argp: usize) -> UserRet {
     match request {
         TCGETS => ioctl_enotty(request, Some(fd), argp),
+        TCSETS | TCSETSW | TCSETSF => tty_char_ioctl(request, argp),
         TIOCGWINSZ => tty_char_ioctl(TIOCGWINSZ, argp),
         TIOCNOTTY => UserRet::from_success(0),
         _ => ioctl_enotty(request, Some(fd), argp),

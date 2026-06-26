@@ -8,6 +8,9 @@ use driver::network::stack;
 use crate::socket_fd;
 use crate::user_copy::copy_from_user_struct;
 
+const AF_UNSPEC: u16 = 0;
+const AF_INET: u16 = 2;
+
 #[repr(C)]
 #[derive(Copy, Clone)]
 struct SockAddrIn {
@@ -42,8 +45,7 @@ pub(crate) fn sys_bind(args: SyscallArgs) -> UserRet {
         Err(e) => return UserRet::from_error(e),
     };
 
-    if addr.sin_family != 2 {
-        // AF_INET
+    if addr.sin_family != AF_INET && addr.sin_family != AF_UNSPEC {
         return UserRet::from_error(ErrNo::EAFNOSUPPORT);
     }
 

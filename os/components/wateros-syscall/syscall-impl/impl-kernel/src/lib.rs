@@ -78,6 +78,7 @@ const SYS_FACCESSAT2: usize = 439;
 const SYS_ADJTIMEX: usize = 171;
 const SYS_CLOCK_ADJTIME: usize = 266;
 const SYS_ACCT: usize = 89;
+const SYS_CLOSE_RANGE: usize = 436;
 
 impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     type NumberTable = ActiveSyscallNumberTable;
@@ -706,6 +707,9 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
         }
         if syscall_nr == SYS_ACCT {
             return sys::sys_acct(args).0;
+        }
+        if syscall_nr == SYS_CLOSE_RANGE {
+            return sys::sys_close_range(args).0;
         }
         let _ = args;
         abi::user_ret::UserRet::from_error(abi::errno::ErrNo::ENOSYS).0

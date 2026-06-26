@@ -155,6 +155,47 @@ impl PerTaskFdRegistry {
         Ok(handle)
     }
 
+    pub fn take_fd_range_for_close(
+        &mut self,
+        task_id: task::TaskId,
+        first: usize,
+        last: usize,
+    ) -> VfsResult<Vec<(usize, Box<dyn VfsIoHandle>)>> {
+        self.ensure_task(task_id);
+        let owner = self.effective_owner(task_id);
+        let table_len = self.tables.get(&owner).map(Vec::len).unwrap_or(0);
+        if first >= table_len {
+            return Ok(Vec::new());
+        }
+        let end = last.min(table_len - 1);
+        let mut handles = Vec::new();
+        for fd in first..=end {
+            if self.tables
+                   .get(&owner)
+                   .and_then(|table| table.get(fd))
+                   .and_then(|slot| slot.as_ref())
+                   .is_none()
+            {
+                continue;
+            }
+            self.ensure_fd_not_io_busy(owner, fd)?;
+            let handle = self.tables
+                             .get_mut(&owner)
+                             .expect("fd table owner")
+                             .get_mut(fd)
+                             .expect("fd in range")
+                             .take()
+                             .expect("checked Some");
+            if let Some(flags) = self.fd_flags.get_mut(&owner) {
+                if fd < flags.len() {
+                    flags[fd] = 0;
+                }
+            }
+            handles.push((fd, handle));
+        }
+        Ok(handles)
+    }
+
     pub fn take_cloexec_fds_for_task(
         &mut self,
         task_id: task::TaskId,
@@ -527,6 +568,40 @@ impl PerTaskFdRegistry {
             slot[fd] |= FD_CLOEXEC;
         } else {
             slot[fd] &= !FD_CLOEXEC;
+        }
+        Ok(())
+    }
+
+    pub fn set_fd_range_cloexec(
+        &mut self,
+        task_id: task::TaskId,
+        first: usize,
+        last: usize,
+        cloexec: bool,
+    ) -> VfsResult<()> {
+        self.ensure_task(task_id);
+        let owner = self.effective_owner(task_id);
+        let table_len = self.tables.get(&owner).map(Vec::len).unwrap_or(0);
+        if first >= table_len {
+            return Ok(());
+        }
+        let end = last.min(table_len - 1);
+        self.ensure_flags_len(task_id, end + 1);
+        let flags = self.fd_flags.get_mut(&owner).expect("fd flags owner");
+        for fd in first..=end {
+            if self.tables
+                   .get(&owner)
+                   .and_then(|table| table.get(fd))
+                   .and_then(|slot| slot.as_ref())
+                   .is_none()
+            {
+                continue;
+            }
+            if cloexec {
+                flags[fd] |= FD_CLOEXEC;
+            } else {
+                flags[fd] &= !FD_CLOEXEC;
+            }
         }
         Ok(())
     }
