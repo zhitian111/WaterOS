@@ -5,7 +5,7 @@ use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use cred::api::{Gid, Uid, SUPPLEMENTARY_GROUP_COUNT};
 
-use crate::user_copy::copy_to_user;
+use crate::user_copy::{copy_from_user_struct, copy_to_user};
 
 pub(crate) fn sys_getuid() -> UserRet {
     let cred = cred::current_credentials();
@@ -54,6 +54,7 @@ pub(crate) fn sys_getgroups(args: SyscallArgs) -> UserRet {
     for (i, g) in cred
         .supplementary_groups
         .iter()
+        .take(ngroups)
         .enumerate()
     {
         gid_buf[i] = g.0;
@@ -74,6 +75,33 @@ pub(crate) fn sys_getgroups(args: SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EFAULT);
     }
     UserRet::from_success(ngroups)
+}
+
+pub(crate) fn sys_setgroups(args: SyscallArgs) -> UserRet {
+    let size = args.arg(0) as isize;
+    let list_ptr = args.arg(1);
+
+    if size < 0 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    let ngroups = size as usize;
+    if ngroups > SUPPLEMENTARY_GROUP_COUNT {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    if ngroups > 0 && list_ptr == 0 {
+        return UserRet::from_error(ErrNo::EFAULT);
+    }
+
+    let mut groups = [Gid(0); SUPPLEMENTARY_GROUP_COUNT];
+    for (i, group) in groups.iter_mut().take(ngroups).enumerate() {
+        let gid = match copy_from_user_struct::<u32>(list_ptr + i * core::mem::size_of::<u32>()) {
+            Ok(gid) => gid,
+            Err(_) => return UserRet::from_error(ErrNo::EFAULT),
+        };
+        *group = Gid(gid);
+    }
+    cred::set_supplementary_groups(&groups[..ngroups]);
+    UserRet::from_success(0)
 }
 
 pub(crate) fn sys_setuid(args: SyscallArgs) -> UserRet {

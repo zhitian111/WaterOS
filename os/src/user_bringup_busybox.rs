@@ -21,8 +21,8 @@ const SCRIPT_PATHS : &[&str] = &[// "/glibc/basic_testcode.sh",      // done
                                  //                              "/musl/lmbench_testcode.sh",    // done
                                  //                              "/glibc/unixbench_testcode.sh", // done
                                  //                              "/musl/unixbench_testcode.sh",  // done
-                                 "/glibc/libcbench_testcode.sh", // done
-                                 "/musl/libcbench_testcode.sh",  // done
+                                 //"/glibc/libcbench_testcode.sh", // done
+                                 //"/musl/libcbench_testcode.sh",  // done
                                  "/glibc/ltp_testcode.sh",
                                  "/musl/ltp_testcode.sh"];
 

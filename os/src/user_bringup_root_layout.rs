@@ -119,9 +119,9 @@ pub fn ensure_busybox_path_links() {
 fn ensure_etc_passwd(sess : &mut (impl vfs::api::RootRwSession + ?Sized)) {
     use vfs::api::SingleRootReadView;
 
-    const PASSWD : &str =
-        "root:x:0:0:root:/root:/bin/sh\nnobody:x:65534:65534:nobody:/nonexistent:/bin/false\n";
-    const GROUP : &str = "root:x:0:\nnobody:x:65534:\nnogroup:x:65534:\n";
+    const PASSWD : &str = "root:x:0:0:root:/root:/bin/sh\ndaemon:x:1:1:daemon:/usr/sbin:/bin/\
+                           false\nnobody:x:65534:65534:nobody:/nonexistent:/bin/false\n";
+    const GROUP : &str = "root:x:0:\ndaemon:x:1:\nnobody:x:65534:\nnogroup:x:65534:\n";
     const NSSWITCH : &str =
         "passwd: files\ngroup: files\nshadow: files\ngshadow: files\nhosts: files\n";
     const PROTOCOLS : &str = "ip 0 IP\nhopopt 0 HOPOPT\nicmp 1 ICMP\nigmp 2 IGMP\nggp 3 GGP\ntcp \

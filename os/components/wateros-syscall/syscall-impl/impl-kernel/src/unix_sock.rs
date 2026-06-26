@@ -89,9 +89,14 @@ pub(crate) fn unregister(task_id: usize, fd: usize) {
         return;
     };
     let key = sock.inner.lock().bound_key.clone();
+    let still_referenced = table
+        .values()
+        .any(|other| Arc::ptr_eq(&other.inner, &sock.inner));
     drop(sock);
     if let Some(key) = key {
-        BOUND.lock().remove(&key);
+        if !still_referenced {
+            BOUND.lock().remove(&key);
+        }
     }
 }
 

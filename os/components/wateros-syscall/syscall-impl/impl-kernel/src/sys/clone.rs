@@ -6,11 +6,15 @@
 //! clone（`child_stack ≠ 0`）时子进程使用调用者提供的独立栈。
 //! fork（`child_stack == 0`）时子进程 SP 由 [`task`] 层 `fork_from` 按父栈区间设置。
 
+use alloc::string::String;
+
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
+use vfs::api::VfsNodeType;
 
 use crate::user_copy::{copy_from_user, copy_to_user_struct, copy_to_user_struct_in_aspace};
+use crate::vfs_util::vfs_error_to_errno;
 
 const CLONE3_ARGS_SIZE_V0 : usize = 64;
 const CLONE3_ARGS_SIZE_CURRENT : usize = 88;
@@ -44,6 +48,7 @@ struct CloneRequest {
     parent_tid : usize,
     tls : usize,
     child_tid : usize,
+    cgroup_dir : Option<String>,
 }
 
 struct CloneSetupGuard {
@@ -96,8 +101,20 @@ pub(crate) fn sys_clone3(args : SyscallArgs) -> UserRet {
     if clone_args.set_tid != 0 || clone_args.set_tid_size != 0 {
         return UserRet::from_error(ErrNo::ENOSYS);
     }
-    if clone_args.flags & CLONE_INTO_CGROUP != 0 || clone_args.cgroup != 0 {
-        return UserRet::from_error(ErrNo::ENOSYS);
+    let (clone_flags, cgroup_dir) = if clone_args.flags & CLONE_INTO_CGROUP != 0 {
+        match validate_clone_into_cgroup_fd(clone_args.cgroup) {
+            Ok(dir) => (clone_args.flags & !CLONE_INTO_CGROUP, Some(dir)),
+            Err(error) => return UserRet::from_error(error),
+        }
+    } else {
+        if clone_args.cgroup != 0 {
+            return UserRet::from_error(ErrNo::EINVAL);
+        }
+        (clone_args.flags, None)
+    };
+
+    if clone_flags & CLONE_INTO_CGROUP != 0 {
+        return UserRet::from_error(ErrNo::EINVAL);
     }
 
     let child_stack = match clone3_child_stack(clone_args.stack, clone_args.stack_size) {
@@ -105,12 +122,27 @@ pub(crate) fn sys_clone3(args : SyscallArgs) -> UserRet {
         None => return UserRet::from_error(ErrNo::EINVAL),
     };
     do_clone_request(CloneRequest {
-        clone_flags : task::CloneFlags::from_bits(clone_args.flags | clone_args.exit_signal),
+        clone_flags : task::CloneFlags::from_bits(clone_flags | clone_args.exit_signal),
         child_stack,
         parent_tid : clone_args.parent_tid,
         tls : clone_args.tls,
         child_tid : clone_args.child_tid,
+        cgroup_dir,
     })
+}
+
+fn validate_clone_into_cgroup_fd(fd: usize) -> Result<String, ErrNo> {
+    let meta = vfs::fd::with_current_io(fd, |handle| handle.metadata()).map_err(vfs_error_to_errno)?;
+    if meta.node_type != VfsNodeType::Directory {
+        return Err(ErrNo::ENOTDIR);
+    }
+    vfs::fd::with_current_io(fd, |handle| {
+        handle
+            .directory_path()
+            .map(String::from)
+            .ok_or(vfs::api::VfsError::InvalidPath)
+    })
+    .map_err(vfs_error_to_errno)
 }
 
 #[inline(never)]
@@ -124,7 +156,8 @@ fn decode_legacy_clone_args(args : SyscallArgs) -> CloneRequest {
                    child_stack : args.arg(1),
                    parent_tid : args.arg(2),
                    tls : args.arg(4),
-                   child_tid : args.arg(3) }
+                   child_tid : args.arg(3),
+                   cgroup_dir : None }
 }
 
 #[cfg(not(target_arch = "loongarch64"))]
@@ -133,7 +166,8 @@ fn decode_legacy_clone_args(args : SyscallArgs) -> CloneRequest {
                    child_stack : args.arg(1),
                    parent_tid : args.arg(2),
                    tls : args.arg(3),
-                   child_tid : args.arg(4) }
+                   child_tid : args.arg(4),
+                   cgroup_dir : None }
 }
 
 fn do_clone_request(request : CloneRequest) -> UserRet {
@@ -145,7 +179,8 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
                        child_stack,
                        parent_tid,
                        tls,
-                       child_tid } = request;
+                       child_tid,
+                       cgroup_dir } = request;
 
     if clone_flags.contains(task::CloneFlags::CLONE_THREAD) &&
        !clone_flags.contains(task::CloneFlags::CLONE_VM)
@@ -166,6 +201,9 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
     let is_thread = clone_flags.contains(task::CloneFlags::CLONE_VM) &&
                     clone_flags.contains(task::CloneFlags::CLONE_THREAD);
     if is_thread {
+        if cgroup_dir.is_some() {
+            return UserRet::from_error(ErrNo::EINVAL);
+        }
         if let Some(process_task) = task::current_process_task_snapshot() {
             super::task::reap_exited_member_threads_runtime_resources(process_task.pid);
         }
@@ -274,7 +312,28 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
                    error);
     }
 
+    if let Some(cgroup_dir) = cgroup_dir {
+        if let Err(error) = write_cgroup_procs(cgroup_dir.as_str(), child_pid) {
+            log::warn!(
+                "[syscall] clone3 CLONE_INTO_CGROUP membership update failed dir={} pid={} err={:?}",
+                cgroup_dir,
+                child_pid,
+                error,
+            );
+        }
+    }
+
     UserRet::from_success(child_pid)
+}
+
+fn write_cgroup_procs(cgroup_dir : &str, child_pid : usize) -> Result<(), ErrNo> {
+    let path = if cgroup_dir == "/" {
+        String::from("/cgroup.procs")
+    } else {
+        alloc::format!("{}/cgroup.procs", cgroup_dir.trim_end_matches('/'))
+    };
+    let data = alloc::format!("{child_pid}\n");
+    vfs::overwrite_absolute_file(path.as_str(), data.as_bytes()).map_err(vfs_error_to_errno)
 }
 
 fn do_clone_thread(clone_flags : task::CloneFlags,

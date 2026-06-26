@@ -76,6 +76,7 @@
 - `os/tem/rv_ltp_20260625_203550.log`（180s timeout，已跑到 `ar01.sh`）
 - `os/tem/rv_ltp_20260626_185832.log`（300s timeout，已跑到 `bind04`）
 - `os/tem/rv_ltp_20260626_200239_close_range.log`（420s timeout，重新从 A 段跑到 `busy_poll01.sh`，未覆盖到 `close_range02`）
+- `os/run.log`（当前工作树配置下已跑到 `cn_pec.sh`；`close_range02` 已 9 TPASS / 0 fail，尾部仍受 `clone303` cgroup 残留输出影响）
 
 关键变化：
 
@@ -91,3 +92,5 @@
   - `close_range02`: 原因是 nr=436 未分发导致 `ENOSYS`，并且测试里的 `clone(CLONE_FILES)` 被 fork 路径拒绝为 `EINVAL`
   - 已实现 `close_range(first,last,0)` 与 `CLOSE_RANGE_CLOEXEC`，未打开 fd 按 Linux 语义忽略，`first > last`/未知 flag 返回 `EINVAL`；`CLOSE_RANGE_UNSHARE` 暂按未建模语义拒绝
   - 已补 fork 路径 `CLONE_FILES`/`CLONE_FS` 继承语义：新地址空间进程可共享 fd 表/socket fd 表或 cwd
+  - 已补 cgroup tmpfs 伪层级：cgroup v1/v2 子目录创建时自动生成 `cgroup.procs` 等控制文件，`rmdir` 允许只含控制文件的 cgroup 目录删除
+  - 已补 `clone3(CLONE_INTO_CGROUP)` 兼容 no-op：校验 `cgroup` fd 是目录，剥离该扩展 flag 后走普通 clone；暂不建模真实 cgroup membership
