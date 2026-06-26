@@ -898,10 +898,20 @@ pub mod stack {
     }
 
     fn parse_ipv4_mcast_group(optval: &[u8]) -> Result<u32, &'static str> {
+        if optval.len() >= 16 {
+            let family = u16::from_ne_bytes([optval[8], optval[9]]);
+            if family == 2 {
+                return Ok(u32::from_ne_bytes([
+                    optval[12], optval[13], optval[14], optval[15],
+                ]));
+            }
+        }
         if optval.len() >= 12 {
             let family = u16::from_ne_bytes([optval[4], optval[5]]);
             if family == 2 {
-                return Ok(u32::from_ne_bytes([optval[8], optval[9], optval[10], optval[11]]));
+                return Ok(u32::from_ne_bytes([
+                    optval[8], optval[9], optval[10], optval[11],
+                ]));
             }
         }
         if optval.len() >= 8 {

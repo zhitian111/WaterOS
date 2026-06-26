@@ -149,16 +149,8 @@ fn futex_wait(uaddr : usize,
                 return Err(ErrNo::ETIMEDOUT);
             }
             FutexWaitOutcome::Woken => {
-                let cur = read_user_u32(uaddr)?;
-                if cur != val {
-                    log::trace!(
-                        "[pthread-debug] futex_wait ok uaddr={:#x} val={val} cur={cur}",
-                        uaddr,
-                    );
-                    return Ok(0);
-                }
-                log::trace!("[pthread-debug] futex_wait spurious uaddr={:#x}, retry", uaddr);
-                continue;
+                log::trace!("[pthread-debug] futex_wait ok uaddr={:#x} val={val}", uaddr);
+                return Ok(0);
             }
         }
     }

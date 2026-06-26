@@ -448,6 +448,7 @@ impl Clone3Args {
         if copied != copy_len {
             return Err(ErrNo::EFAULT);
         }
+        validate_clone3_unknown_tail(ptr, size)?;
         Ok(Self { flags : clone3_arg_word(&raw, 0),
                   pidfd : clone3_arg_word(&raw, 8),
                   child_tid : clone3_arg_word(&raw, 16),
@@ -460,6 +461,26 @@ impl Clone3Args {
                   set_tid_size : clone3_arg_word(&raw, 72),
                   cgroup : clone3_arg_word(&raw, 80) })
     }
+}
+
+fn validate_clone3_unknown_tail(ptr : usize, size : usize) -> Result<(), ErrNo> {
+    if size <= CLONE3_ARGS_SIZE_CURRENT {
+        return Ok(());
+    }
+    let mut offset = CLONE3_ARGS_SIZE_CURRENT;
+    let mut buf = [0u8; 64];
+    while offset < size {
+        let len = core::cmp::min(buf.len(), size - offset);
+        let copied = copy_from_user(&mut buf[..len], ptr + offset)?;
+        if copied != len {
+            return Err(ErrNo::EFAULT);
+        }
+        if buf[..len].iter().any(|&byte| byte != 0) {
+            return Err(ErrNo::E2BIG);
+        }
+        offset += len;
+    }
+    Ok(())
 }
 
 fn clone3_arg_word(raw : &[u8; CLONE3_ARGS_SIZE_CURRENT], offset : usize) -> usize {
