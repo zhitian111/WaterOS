@@ -55,7 +55,14 @@ impl FutexHub {
         timeout: Option<TaskTick>,
         mut condition: impl FnMut() -> bool,
     ) -> FutexWaitOutcome {
+        if !condition() {
+            return FutexWaitOutcome::Woken;
+        }
         let wq = self.with_tables(|tables| Self::get_queue(tables, key));
+        if !condition() {
+            self.with_tables(|tables| Self::cleanup_empty_queue(tables, key));
+            return FutexWaitOutcome::Woken;
+        }
         let outcome = match timeout {
             None => {
                 match wq.wait_current_while(|| condition()) {

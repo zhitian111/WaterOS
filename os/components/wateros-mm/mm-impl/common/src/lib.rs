@@ -8,6 +8,7 @@
 
 extern crate alloc;
 
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use api_v0::addr::{PhysPageNum, VirtAddr, VirtPageNum, PAGE_SIZE};
@@ -16,7 +17,21 @@ use api_v0::error::{MmError, MmResult};
 use api_v0::executable;
 use api_v0::frame_allocator::PhysicalFrameAllocator;
 use api_v0::kernel_bringup::LoadElfError;
+use api_v0::mmap::DemandPageLoader;
 use api_v0::perm::PagePerm;
+
+/// 私有匿名映射的惰性缺页 loader：缺页时不做任何加载，
+/// 直接保留 `handle_lazy_page_fault` 预先清零的页（等价于按需零页）。
+///
+/// 复用文件 lazy VMA 机制，避免匿名 mmap 饥渴分配整段物理帧
+/// （例如 glibc pthread 每线程 8 MiB 栈，批量创建会瞬间耗尽帧池 → `ENOMEM`）。
+pub struct ZeroAnonLoader;
+
+impl DemandPageLoader for ZeroAnonLoader {
+    fn duplicate_box(&self) -> MmResult<Box<dyn DemandPageLoader>> { Ok(Box::new(ZeroAnonLoader)) }
+
+    fn load_page(&mut self, _file_offset : usize, _dst : &mut [u8]) -> MmResult<()> { Ok(()) }
+}
 
 /// ELF program header type for loadable segments.
 pub const PT_LOAD : u32 = 1;

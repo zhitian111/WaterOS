@@ -176,9 +176,19 @@ impl Sv39AddressSpace {
             self.remove_lazy_file_vmas(base, end)?;
             self.remove_shared_anon_vmas(base, end);
         }
-        map_zeroed_range_with_alloc(self, allocator, base, end, perm)?;
         if shared {
+            // 共享匿名映射需要稳定的物理帧供 fork 共享，保持饥渴分配。
+            map_zeroed_range_with_alloc(self, allocator, base, end, perm)?;
             self.register_shared_anon_vma(base, end);
+        } else {
+            // 私有匿名映射改为按需零页：仅登记 lazy VMA，缺页时再分配单页，
+            // 避免大段栈/堆映射一次性耗尽物理帧。
+            self.register_lazy_file_vma(base,
+                                        end,
+                                        perm,
+                                        0,
+                                        0,
+                                        Box::new(impl_common::ZeroAnonLoader))?;
         }
         if req.addr_hint
               .is_none()

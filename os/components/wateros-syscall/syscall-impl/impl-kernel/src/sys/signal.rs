@@ -117,6 +117,7 @@ pub(crate) fn apply_signal_dispatch(dispatch : SignalDispatch, signal : usize) {
                     notify_parent_sigchld(snapshot.pid);
                     on_thread_exit(task_id, snapshot.pid.raw(), true);
                 }
+                super::task::wake_clear_child_tid_for_task(task_id);
                 super::robust::robust_exit_cleanup(task_id);
                 task::exit_group_current(exit_code);
             }
@@ -124,6 +125,7 @@ pub(crate) fn apply_signal_dispatch(dispatch : SignalDispatch, signal : usize) {
                 notify_parent_sigchld(snapshot.pid);
                 if let Some(task_ids) = task::task_ids_for_process(snapshot.pid) {
                     for member in task_ids {
+                        super::task::wake_clear_child_tid_for_task(member);
                         super::robust::robust_exit_cleanup(member);
                         let _ = task::kill_task(member, exit_code);
                     }

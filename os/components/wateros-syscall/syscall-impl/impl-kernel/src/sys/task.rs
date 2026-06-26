@@ -186,6 +186,42 @@ pub(crate) fn sys_yield() -> UserRet {
     UserRet::from_success(0)
 }
 
+/// 写 0 到 `clear_child_tid` 并 futex 唤醒 join 等待者；写失败仍唤醒。
+pub(crate) fn wake_clear_child_tid_for_task(task_id : task::TaskId) -> usize {
+    use core::sync::atomic::fence;
+
+    let Some(clear_child_tid) = task::task_clear_child_tid(task_id) else {
+        return 0;
+    };
+    let addr = clear_child_tid.user_addr();
+    if addr == 0 {
+        return 0;
+    }
+    let tid_raw = task::process_task_snapshot(task_id)
+        .map(|s| s.tid.raw())
+        .unwrap_or(0);
+    let clear_result = copy_to_user_struct(addr, &0u32);
+    // 保证用户态先看到 tid 清零，再处理 futex wake（避免 join 竞态丢唤醒）。
+    fence(core::sync::atomic::Ordering::SeqCst);
+    let woken = super::futex::wake_user_addr(addr);
+    log::trace!(
+        "[pthread-debug] clear_child_tid task_id={} tid={} addr={:#x} write_ok={} woken={}",
+        task_id,
+        tid_raw,
+        addr,
+        clear_result.is_ok(),
+        woken,
+    );
+    if let Err(err) = clear_result {
+        log::warn!("[exit] clear_child_tid write failed task_id={} tid={} addr={:#x}: {:?}",
+                   task_id,
+                   tid_raw,
+                   addr,
+                   err);
+    }
+    woken
+}
+
 pub(crate) fn sys_exit(exit_code : isize) -> isize {
     if let Some(task_id) = task::current_task_id() {
         if let Some(process_task) = task::current_process_task_snapshot() {
@@ -203,31 +239,7 @@ pub(crate) fn sys_exit(exit_code : isize) -> isize {
                                                       .raw(),
                                           last_thread);
         }
-        if let Some(clear_child_tid) = task::task_clear_child_tid(task_id) {
-            let addr = clear_child_tid.user_addr();
-            if addr != 0 {
-                let tid_raw = task::process_task_snapshot(task_id)
-                    .map(|s| s.tid.raw())
-                    .unwrap_or(0);
-                let clear_result = copy_to_user_struct(addr, &0u32);
-                let woken = super::futex::wake_user_addr(addr);
-                log::trace!(
-                    "[pthread-debug] exit clear_child_tid task_id={} tid={} addr={:#x} write_ok={} woken={}",
-                    task_id,
-                    tid_raw,
-                    addr,
-                    clear_result.is_ok(),
-                    woken,
-                );
-                if let Err(err) = clear_result {
-                    log::warn!("[exit] clear_child_tid write failed task_id={} tid={} addr={:#x}: {:?}",
-                               task_id,
-                               tid_raw,
-                               addr,
-                               err);
-                }
-            }
-        }
+        wake_clear_child_tid_for_task(task_id);
         super::robust::robust_exit_cleanup(task_id);
         drop_task_runtime_resources(task_id);
     }
@@ -237,31 +249,7 @@ pub(crate) fn sys_exit(exit_code : isize) -> isize {
 
 pub(crate) fn sys_exit_group(exit_code : isize) -> isize {
     if let Some(task_id) = task::current_task_id() {
-        if let Some(clear_child_tid) = task::task_clear_child_tid(task_id) {
-            let addr = clear_child_tid.user_addr();
-            if addr != 0 {
-                let tid_raw = task::process_task_snapshot(task_id)
-                    .map(|s| s.tid.raw())
-                    .unwrap_or(0);
-                let clear_result = copy_to_user_struct(addr, &0u32);
-                let woken = super::futex::wake_user_addr(addr);
-                log::trace!(
-                    "[pthread-debug] exit clear_child_tid task_id={} tid={} addr={:#x} write_ok={} woken={}",
-                    task_id,
-                    tid_raw,
-                    addr,
-                    clear_result.is_ok(),
-                    woken,
-                );
-                if let Err(err) = clear_result {
-                    log::warn!("[exit] clear_child_tid write failed task_id={} tid={} addr={:#x}: {:?}",
-                               task_id,
-                               tid_raw,
-                               addr,
-                               err);
-                }
-            }
-        }
+        wake_clear_child_tid_for_task(task_id);
         if let Some(process_task) = task::current_process_task_snapshot() {
             reap_exited_member_threads_runtime_resources(process_task.pid);
             super::acct::record_current_process_exit(exit_code);
@@ -270,6 +258,7 @@ pub(crate) fn sys_exit_group(exit_code : isize) -> isize {
                 let user_aspace = task::current_task_user_aspace_ptr();
                 for sibling in task_ids {
                     if sibling != task_id {
+                        wake_clear_child_tid_for_task(sibling);
                         super::robust::robust_exit_cleanup(sibling);
                         super::shm::drop_task_attachments(sibling, user_aspace);
                     }
