@@ -11,6 +11,7 @@ use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use driver::network::stack;
 
+use crate::fallible_buf::{try_kbuf, SYSCALL_IO_MAX};
 use crate::socket_block::socket_blocking_tick;
 use crate::socket_fd;
 use crate::user_copy::{copy_from_user, copy_from_user_struct};
@@ -38,11 +39,13 @@ pub(crate) fn sys_write(args : SyscallArgs) -> UserRet {
     if ptr == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
     }
-    if len > 4 * 1024 * 1024 {
+    if len > SYSCALL_IO_MAX {
         return UserRet::from_error(ErrNo::EINVAL);
     }
-    let mut kbuf = Vec::with_capacity(len);
-    kbuf.resize(len, 0);
+    let mut kbuf = match try_kbuf(len, SYSCALL_IO_MAX) {
+        Ok(buf) => buf,
+        Err(err) => return UserRet::from_error(err),
+    };
     match copy_from_user(&mut kbuf, ptr) {
         Ok(n) if n == len => {}
         _ => return UserRet::from_error(ErrNo::EFAULT),
@@ -112,10 +115,13 @@ pub(crate) fn sys_writev(args : SyscallArgs) -> UserRet {
             Some(v) => v,
             None => return UserRet::from_error(ErrNo::EINVAL),
         };
-        if new_len > 4 * 1024 * 1024 {
+        if new_len > SYSCALL_IO_MAX {
             return UserRet::from_error(ErrNo::EINVAL);
         }
         let old_len = out.len();
+        if out.try_reserve_exact(new_len - old_len).is_err() {
+            return UserRet::from_error(ErrNo::ENOMEM);
+        }
         out.resize(new_len, 0);
         match copy_from_user(&mut out[old_len..], iov.base) {
             Ok(n) if n == iov.len => {}

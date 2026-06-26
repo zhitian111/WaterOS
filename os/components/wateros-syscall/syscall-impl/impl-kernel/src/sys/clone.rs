@@ -321,6 +321,14 @@ fn do_clone_thread(clone_flags : task::CloneFlags,
         return UserRet::from_error(ErrNo::EFAULT);
     }
 
+    log::trace!(
+        "[pthread-debug] clone_thread tid={} child_tid_addr={:#x} cleartid={} settid={}",
+        child_tid_raw,
+        child_tid,
+        clone_flags.contains(task::CloneFlags::CLONE_CHILD_CLEARTID),
+        clone_flags.contains(task::CloneFlags::CLONE_CHILD_SETTID),
+    );
+
     if clone_flags.contains(task::CloneFlags::CLONE_FS) {
         vfs::cwd::share_cwd_from_parent(child_id, parent_id);
     } else {

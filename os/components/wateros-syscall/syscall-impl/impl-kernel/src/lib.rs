@@ -9,6 +9,7 @@ extern crate alloc;
 use abi::syscall_args::SyscallArgs;
 use abi::syscall_number::ActiveSyscallNumberTable;
 
+mod fallible_buf;
 mod linux_stat;
 mod mm_util;
 mod poll_engine;

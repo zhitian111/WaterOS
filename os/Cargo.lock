@@ -1329,6 +1329,7 @@ name = "wateros-runtime-heap-allocator"
 version = "0.1.0"
 dependencies = [
  "linked_list_allocator",
+ "log",
  "wateros-base-config",
  "wateros-platform-arch",
 ]

@@ -35,10 +35,12 @@ fn parent_waiting_with_retry() -> bool {
     let wait = task::wait_queue::WaitQueue::new();
     for _ in 0..200 {
         if parent_blocked_in_wait() {
+            let _ = wait.try_release_empty();
             return true;
         }
         let _ = wait.wait_current_for_ticks(1);
     }
+    let _ = wait.try_release_empty();
     parent_blocked_in_wait()
 }
 

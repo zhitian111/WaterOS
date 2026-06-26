@@ -9,7 +9,7 @@ pub const FILE_PAGE_SIZE : usize = 4096;
 pub const FILE_LARGE_THRESHOLD : u64 = 64 * 1024;
 
 /// 全局页帧 LRU 槽位数（所有文件共享，非每文件容量）。
-/// 4096 * 4KiB = 16MiB，覆盖多数测试热集。内核堆共 64MiB，
+/// 4096 * 4KiB = 16MiB，覆盖多数测试热集。内核堆共 128MiB，
 /// 需为 ELF 加载、VFS 元数据、进程控制块等留出充足内存。
 pub const FILE_PAGE_CACHE_CAPACITY : usize = 4096;
 

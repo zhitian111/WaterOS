@@ -26,6 +26,12 @@ const SOCK_DGRAM: usize = 2;
 const SOCK_SEQPACKET: usize = 5;
 const SOCK_NONBLOCK: usize = 0o4000;
 
+/// 单 listen socket 待 accept 连接队列上限。
+const UNIX_ACCEPT_QUEUE_MAX : usize = 128;
+
+/// 单 dgram bind 表项收件队列上限。
+const UNIX_DGRAM_INBOX_MAX : usize = 256;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum UnixSockType {
     Stream,
@@ -248,6 +254,12 @@ fn connect_stream(inner: &mut UnixSockInner, key: &[u8]) -> Result<(), ErrNo> {
         return Err(ErrNo::ECONNREFUSED);
     }
     let (client_end, server_end) = vfs::stream_pair_handle_pair(inner.nonblocking);
+    if entry.accept_queue.len() >= UNIX_ACCEPT_QUEUE_MAX {
+        log::warn!("[unix_sock] accept_queue full key_len={} cap={}",
+                   key.len(),
+                   UNIX_ACCEPT_QUEUE_MAX);
+        return Err(ErrNo::EAGAIN);
+    }
     entry.accept_queue.push_back(server_end);
     inner.endpoint = Some(client_end);
     inner.peer_key = Some(key.to_vec());
@@ -347,6 +359,12 @@ pub(crate) fn sendto_unix(
     if entry.sock_type != UnixSockType::Dgram {
         return Err(ErrNo::ECONNREFUSED);
     }
+    if entry.dgram_inbox.len() >= UNIX_DGRAM_INBOX_MAX {
+        log::warn!("[unix_sock] dgram_inbox full key_len={} cap={}",
+                   key.len(),
+                   UNIX_DGRAM_INBOX_MAX);
+        return Err(ErrNo::EAGAIN);
+    }
     entry.dgram_inbox.push_back((buf.to_vec(), sender_key));
     Ok(buf.len())
 }
@@ -428,6 +446,12 @@ fn deliver_dgram(peer: &[u8], buf: &[u8], sender: Option<Vec<u8>>) -> Result<usi
     let entry = bound.get_mut(peer).ok_or(ErrNo::ECONNREFUSED)?;
     if entry.sock_type != UnixSockType::Dgram {
         return Err(ErrNo::ECONNREFUSED);
+    }
+    if entry.dgram_inbox.len() >= UNIX_DGRAM_INBOX_MAX {
+        log::warn!("[unix_sock] dgram_inbox full peer_len={} cap={}",
+                   peer.len(),
+                   UNIX_DGRAM_INBOX_MAX);
+        return Err(ErrNo::EAGAIN);
     }
     entry.dgram_inbox.push_back((buf.to_vec(), sender));
     Ok(buf.len())

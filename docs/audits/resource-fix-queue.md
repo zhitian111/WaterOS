@@ -70,7 +70,13 @@
 2. **第二波（fd 账本）**：T-FD-01/02/03 + T-PIPE-01 — **T-FD-01/02/03、T-PIPE-01 已完成**；T-SKT-02 待做
 3. **第三波（内存安全）**：T-PF-02/03 + T-IPC-02
 4. **第四波（卡死）**：T-PIPE-01 + T-IPC-01/03 + T-SKT-01
-5. **第五波（FS/缓存）**：T-PC-* + T-FS-*
+5. **第五波（FS/缓存）**：T-PC-* + T-FS-* — **已完成（2026-06-25）**
+6. **第六波（内核堆 OOM）**：T-IPC-01 + T-KH-01（局部）+ KH-P1-2/6 — **已完成（2026-06-26）**
+   - `rt_sigsuspend`/`rt_sigtimedwait`/`ltp_cgroup_helper`：`WaitQueue::try_release_empty`
+   - `fallible_buf` + `getdents64`/`read`/`write`/`sockopt`/`sched` 可失败分配
+   - `paged_handle` detached 16MiB 上限
+   - `heap_mem_stats()` + 90% 高水位 warn
+   - `unix_sock` accept/dgram 队列上限
 
 ---
 

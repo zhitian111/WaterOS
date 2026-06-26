@@ -3,9 +3,9 @@
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
-use alloc::vec;
 use driver::network::stack;
 
+use crate::fallible_buf::{try_kbuf, SYSCALL_SOCK_IO_MAX};
 use crate::socket_fd;
 use crate::user_copy::{copy_from_user, copy_from_user_struct, copy_to_user, copy_to_user_struct};
 
@@ -20,14 +20,17 @@ pub(crate) fn sys_setsockopt(args: SyscallArgs) -> UserRet {
         Some(s) => s,
         None => return UserRet::from_error(ErrNo::ENOTSOCK),
     };
-    if optlen > 4096 {
+    if optlen > SYSCALL_SOCK_IO_MAX {
         return UserRet::from_error(ErrNo::EINVAL);
     }
     if optlen > 0 && optval == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
     }
 
-    let mut kbuf = vec![0u8; optlen];
+    let mut kbuf = match try_kbuf(optlen, SYSCALL_SOCK_IO_MAX) {
+        Ok(buf) => buf,
+        Err(err) => return UserRet::from_error(err),
+    };
     if optlen > 0 {
         match copy_from_user(&mut kbuf, optval) {
             Ok(n) if n == optlen => {}

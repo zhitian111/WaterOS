@@ -404,6 +404,7 @@ pub(crate) fn sys_rt_sigsuspend(args : SyscallArgs) -> UserRet {
                                  .unwrap_or(true)
                     })
                 });
+    let _ = wait.try_release_empty();
     let _ = ipc::signal::with_registry(|registry| registry.end_sigsuspend(snapshot.task_id));
     UserRet::from_error(ErrNo::EINTR)
 }

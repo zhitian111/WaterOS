@@ -115,16 +115,31 @@
 | 分组 | 结论 | 主要风险 |
 |------|------|---------|
 | physical-frames | **部分稳定** | MAP_SHARED UAF、fork 失败泄漏 |
-| kernel-heap | **部分稳定** | OOM panic、无用量观测 |
+| kernel-heap | **部分稳定** | syscall 热路径 OOM 已局部可恢复；引导期仍 panic |
 | task-slots | **部分稳定** | fork/clone 错误路径无回滚 |
 | file-descriptors | **部分稳定** | partial alloc、openat/pipe2 回滚 |
 | page-cache | #17 稳定 / #18 **不可靠** | sync 失败泄漏、rename/remount |
 | block-cache | **稳定** | 无 P0 |
 | pipe-buffers | **部分稳定** | 内部 fd 表重置路径 |
-| ipc-shm-futex-signal | **部分稳定** | WaitQueue 泄漏、shm fork |
-| sockets | **不可靠**（unix）/ **部分稳定**（inet） | BOUND 无引用计数、execve 缺口 |
+| ipc-shm-futex-signal | **部分稳定** | shm fork；futex bitset |
+| sockets | **部分稳定** | unix 队列已加上限；BOUND/execve 已修 |
 | fs-instances | **部分稳定** | busy umount、双 RW 挂载 |
 | driver-slots | **部分稳定**（启动期） | DMA 常驻、无注销 |
+
+---
+
+## 已收敛（2026-06-26 内核堆 OOM 波次）
+
+| ID | 状态 | 说明 |
+|----|------|------|
+| SIG-P0-01 / T-IPC-01 | **已收敛** | `sys/signal.rs`、`sys/task.rs`、`ltp_cgroup_helper.rs` 释放临时 `WaitQueue` |
+| KH-P0-1 / T-KH-01 | **部分收敛** | syscall/VFS 热路径 `try_kbuf`/cap 返回 `ENOMEM`；引导期 `alloc_error_handler` 仍 panic |
+| KH-P0-2 / T-KH-02 | **已收敛** | `KernelStack::try_new` |
+| KH-P0-3 / T-KH-03 | **已收敛** | `recvfrom` 64KiB 上限 |
+| KH-P1-2 | **已收敛** | `unix_sock` accept/dgram 队列上限 |
+| KH-P1-5 | **已收敛** | `base-config/fs.rs` 堆大小注释 128MiB |
+| KH-P1-6 | **已收敛** | `heap_mem_stats()` + 90% warn |
+| PF-P0-01 / KH-P0-4 | **已收敛** | `clone` fork 失败 `drop_user_aspace` |
 
 ---
 

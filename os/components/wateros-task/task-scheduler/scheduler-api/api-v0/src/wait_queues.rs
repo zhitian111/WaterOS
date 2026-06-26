@@ -96,6 +96,9 @@ impl WaitQueues {
         true
     }
 
+    #[cfg(test)]
+    pub fn wait_queue_slot_count(&self) -> usize { self.wait_queues.len() }
+
     /// 推进全局逻辑 tick。
     pub fn on_tick(&mut self) {
         self.current_tick = self.current_tick
@@ -623,4 +626,24 @@ fn take_task_id_by_id(queue : &mut VecDeque<TaskId>, task_id : TaskId) -> bool {
     let old_len = queue.len();
     queue.retain(|candidate_task_id| *candidate_task_id != task_id);
     queue.len() != old_len
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WaitQueues;
+
+    #[test]
+    fn allocate_release_wait_queue_does_not_grow_unbounded() {
+        let mut queues = WaitQueues::new();
+        const ITERATIONS : usize = 10_000;
+        for _ in 0..ITERATIONS {
+            let id = queues.allocate_wait_queue();
+            assert!(queues.try_release_wait_queue(id));
+        }
+        assert!(
+            queues.wait_queue_slot_count() <= 1,
+            "wait_queues should reuse freed ids, got len={}",
+            queues.wait_queue_slot_count()
+        );
+    }
 }

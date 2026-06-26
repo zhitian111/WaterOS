@@ -3,7 +3,7 @@
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
-use ipc::futex::{FutexHub, FutexKey, KernelFutexOps};
+use ipc::futex::{FutexHub, FutexKey, FutexWaitOutcome, KernelFutexOps};
 use platform::wall_clock;
 use task::TaskTick;
 
@@ -83,6 +83,18 @@ fn reject_unsupported_futex_bitset(cmd : u32, bitset : u32) -> Result<(), ErrNo>
     Err(ErrNo::ENOSYS)
 }
 
+fn wake_with_alternate_keys(hub : &FutexHub, key : FutexKey, max_wake : u32) -> Result<usize, ErrNo> {
+    let n = hub.wake(key, max_wake).map_err(futex_error_to_errno)?;
+    if n > 0 {
+        return Ok(n);
+    }
+    let alt = FutexKey {
+        uaddr : key.uaddr,
+        is_private : !key.is_private,
+    };
+    hub.wake(alt, max_wake).map_err(futex_error_to_errno)
+}
+
 fn futex_wait(uaddr : usize,
               val : u32,
               bitset : u32,
@@ -91,37 +103,63 @@ fn futex_wait(uaddr : usize,
               -> Result<usize, ErrNo> {
     let _ = bitset;
 
-    let cur = read_user_u32(uaddr)?;
-    if cur != val {
-        return Err(ErrNo::EAGAIN);
-    }
-
     let key = FutexKey::from_syscall(uaddr, futex_op);
+    let is_private = key.is_private;
     let timeout = parse_futex_timeout(timeout_ptr, futex_op)?;
     if timeout == Some(0) {
+        let cur = read_user_u32(uaddr)?;
+        log::trace!(
+            "[pthread-debug] futex_wait zero-timeout uaddr={:#x} op={:#x} val={val} cur={cur} private={is_private}",
+            uaddr,
+            futex_op,
+        );
+        if cur != val {
+            return Err(ErrNo::EAGAIN);
+        }
         return Err(ErrNo::ETIMEDOUT);
     }
 
     let hub = FutexHub::global();
-    hub.wait_while(key, timeout, || read_user_u32(uaddr).map_or(false, |v| v == val))
-        .into_result()
-        .map_err(futex_error_to_errno)?;
-    Ok(0)
+    loop {
+        let cur = read_user_u32(uaddr)?;
+        if cur != val {
+            log::trace!(
+                "[pthread-debug] futex_wait EAGAIN uaddr={:#x} val={val} cur={cur} private={is_private}",
+                uaddr,
+            );
+            super::bringup_stats::record_futex_wait_eagain();
+            return Err(ErrNo::EAGAIN);
+        }
+
+        log::trace!(
+            "[pthread-debug] futex_wait sleep uaddr={:#x} op={:#x} val={val} cur={cur} private={is_private}",
+            uaddr,
+            futex_op,
+        );
+        super::bringup_stats::record_futex_wait_sleep();
+
+        let outcome = hub.wait_while(key, timeout, || read_user_u32(uaddr).map_or(false, |v| v == val));
+        match outcome {
+            FutexWaitOutcome::Interrupted => {
+                log::trace!("[pthread-debug] futex_wait EINTR uaddr={:#x}", uaddr);
+                return Err(ErrNo::EINTR);
+            }
+            FutexWaitOutcome::TimedOut => {
+                log::trace!("[pthread-debug] futex_wait ETIMEDOUT uaddr={:#x}", uaddr);
+                return Err(ErrNo::ETIMEDOUT);
+            }
+            FutexWaitOutcome::Woken => {
+                log::trace!("[pthread-debug] futex_wait woken uaddr={:#x}, re-checking", uaddr);
+                continue;
+            }
+        }
+    }
 }
 
 fn futex_wake(uaddr : usize, max_wake : u32, bitset : u32, futex_op : u32) -> Result<usize, ErrNo> {
     let _ = bitset;
     let key = FutexKey::from_syscall(uaddr, futex_op);
-    let hub = FutexHub::global();
-    let n = hub.wake(key, max_wake).map_err(futex_error_to_errno)?;
-    if n == 0 {
-        let alt = FutexKey {
-            uaddr,
-            is_private: !key.is_private,
-        };
-        return hub.wake(alt, max_wake).map_err(futex_error_to_errno);
-    }
-    Ok(n)
+    wake_with_alternate_keys(FutexHub::global(), key, max_wake)
 }
 
 fn futex_requeue(uaddr : usize,
@@ -148,7 +186,16 @@ pub(crate) fn wake_user_addr(uaddr : usize) -> usize {
     let n2 = hub.wake_all(FutexKey { uaddr,
                                      is_private : false })
                 .unwrap_or(0);
-    n1 + n2
+    let total = n1 + n2;
+    log::trace!(
+        "[pthread-debug] wake_user_addr uaddr={:#x} private={n1} shared={n2} total={total}",
+        uaddr,
+    );
+    if total == 0 {
+        super::bringup_stats::record_futex_wake_zero_waiters();
+        log::trace!("[pthread-debug] wake_user_addr uaddr={:#x} no waiters", uaddr);
+    }
+    total
 }
 
 pub(crate) fn sys_futex(args : SyscallArgs) -> UserRet {

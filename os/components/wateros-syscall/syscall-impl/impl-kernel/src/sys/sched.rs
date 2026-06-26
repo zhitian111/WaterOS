@@ -2,7 +2,6 @@
 
 extern crate alloc;
 
-use alloc::vec::Vec;
 use core::mem::size_of;
 
 use abi::errno::ErrNo;
@@ -10,6 +9,7 @@ use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use task::{SchedError, SchedParam, SchedPolicy};
 
+use crate::fallible_buf::{try_kbuf, SCHED_CPUSET_MAX};
 use crate::user_copy::{copy_from_user, copy_from_user_struct, copy_to_user, copy_to_user_struct};
 
 #[repr(C)]
@@ -154,12 +154,17 @@ pub(crate) fn sys_sched_setaffinity(args: SyscallArgs) -> UserRet {
     if let Err(e) = task::validate_cpu_affinity_buf_len(cpusetsize) {
         return UserRet::from_error(sched_err_to_errno(e));
     }
+    if cpusetsize > SCHED_CPUSET_MAX {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
     let task_id = match task::resolve_sched_pid(pid) {
         Ok(id) => id,
         Err(e) => return UserRet::from_error(sched_err_to_errno(e)),
     };
-    let mut mask = Vec::with_capacity(cpusetsize);
-    mask.resize(cpusetsize, 0);
+    let mut mask = match try_kbuf(cpusetsize, SCHED_CPUSET_MAX) {
+        Ok(buf) => buf,
+        Err(err) => return UserRet::from_error(err),
+    };
     if let Err(e) = copy_from_user(&mut mask, mask_ptr) {
         return UserRet::from_error(e);
     }
@@ -180,6 +185,9 @@ pub(crate) fn sys_sched_getaffinity(args: SyscallArgs) -> UserRet {
     if let Err(e) = task::validate_cpu_affinity_buf_len(cpusetsize) {
         return UserRet::from_error(sched_err_to_errno(e));
     }
+    if cpusetsize > SCHED_CPUSET_MAX {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
     let task_id = match task::resolve_sched_pid(pid) {
         Ok(id) => id,
         Err(e) => return UserRet::from_error(sched_err_to_errno(e)),
@@ -187,8 +195,10 @@ pub(crate) fn sys_sched_getaffinity(args: SyscallArgs) -> UserRet {
     if task::get_scheduler(task_id).is_err() {
         return UserRet::from_error(ErrNo::ESRCH);
     }
-    let mut buf = Vec::with_capacity(cpusetsize);
-    buf.resize(cpusetsize, 0);
+    let mut buf = match try_kbuf(cpusetsize, SCHED_CPUSET_MAX) {
+        Ok(buf) => buf,
+        Err(err) => return UserRet::from_error(err),
+    };
     task::fill_cpu_affinity_mask(&mut buf);
     match copy_to_user(mask_ptr, &buf) {
         Ok(n) if n == buf.len() => UserRet::from_success(task::cpu_affinity_ret_bytes()),

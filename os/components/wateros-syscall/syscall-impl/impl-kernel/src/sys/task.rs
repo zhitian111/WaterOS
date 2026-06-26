@@ -206,11 +206,23 @@ pub(crate) fn sys_exit(exit_code : isize) -> isize {
         if let Some(clear_child_tid) = task::task_clear_child_tid(task_id) {
             let addr = clear_child_tid.user_addr();
             if addr != 0 {
+                let tid_raw = task::process_task_snapshot(task_id)
+                    .map(|s| s.tid.raw())
+                    .unwrap_or(0);
                 let clear_result = copy_to_user_struct(addr, &0u32);
-                let _ = super::futex::wake_user_addr(addr);
+                let woken = super::futex::wake_user_addr(addr);
+                log::trace!(
+                    "[pthread-debug] exit clear_child_tid task_id={} tid={} addr={:#x} write_ok={} woken={}",
+                    task_id,
+                    tid_raw,
+                    addr,
+                    clear_result.is_ok(),
+                    woken,
+                );
                 if let Err(err) = clear_result {
-                    log::warn!("[exit] clear_child_tid write failed task_id={} addr={:#x}: {:?}",
+                    log::warn!("[exit] clear_child_tid write failed task_id={} tid={} addr={:#x}: {:?}",
                                task_id,
+                               tid_raw,
                                addr,
                                err);
                 }
@@ -228,11 +240,23 @@ pub(crate) fn sys_exit_group(exit_code : isize) -> isize {
         if let Some(clear_child_tid) = task::task_clear_child_tid(task_id) {
             let addr = clear_child_tid.user_addr();
             if addr != 0 {
+                let tid_raw = task::process_task_snapshot(task_id)
+                    .map(|s| s.tid.raw())
+                    .unwrap_or(0);
                 let clear_result = copy_to_user_struct(addr, &0u32);
-                let _ = super::futex::wake_user_addr(addr);
+                let woken = super::futex::wake_user_addr(addr);
+                log::trace!(
+                    "[pthread-debug] exit clear_child_tid task_id={} tid={} addr={:#x} write_ok={} woken={}",
+                    task_id,
+                    tid_raw,
+                    addr,
+                    clear_result.is_ok(),
+                    woken,
+                );
                 if let Err(err) = clear_result {
-                    log::warn!("[exit] clear_child_tid write failed task_id={} addr={:#x}: {:?}",
+                    log::warn!("[exit] clear_child_tid write failed task_id={} tid={} addr={:#x}: {:?}",
                                task_id,
+                               tid_raw,
                                addr,
                                err);
                 }
@@ -486,6 +510,7 @@ pub(crate) fn sys_rt_sigtimedwait(args : SyscallArgs) -> UserRet {
         let now = platform::wall_clock::monotonic_ns().unwrap_or(0);
         Some(now.saturating_add(duration))
     };
+    let wait_queue = task::wait_queue::WaitQueue::new();
     let sig = loop {
         if let Some(sig) =
             ipc::signal::with_registry(|registry| registry.take_pending(task_id, wait_set))
@@ -496,6 +521,7 @@ pub(crate) fn sys_rt_sigtimedwait(args : SyscallArgs) -> UserRet {
             Some(deadline) => {
                 let now = platform::wall_clock::monotonic_ns().unwrap_or(deadline);
                 if now >= deadline {
+                    let _ = wait_queue.try_release_empty();
                     return UserRet::from_error(ErrNo::EAGAIN);
                 }
                 let tick_ns =
@@ -508,7 +534,6 @@ pub(crate) fn sys_rt_sigtimedwait(args : SyscallArgs) -> UserRet {
         };
         let _ =
             ipc::signal::with_registry(|registry| registry.begin_signal_wait(task_id, wait_set));
-        let wait_queue = task::wait_queue::WaitQueue::new();
         let still_waiting = || {
             ipc::signal::with_registry(|registry| {
                 registry.pending(task_id)
@@ -531,9 +556,11 @@ pub(crate) fn sys_rt_sigtimedwait(args : SyscallArgs) -> UserRet {
             {
                 break sig;
             }
+            let _ = wait_queue.try_release_empty();
             return UserRet::from_error(ErrNo::EINTR);
         }
     };
+    let _ = wait_queue.try_release_empty();
     if info != 0 {
         let siginfo = UserSigInfo::for_signal(sig);
         if let Err(e) = copy_to_user_struct(info, &siginfo) {

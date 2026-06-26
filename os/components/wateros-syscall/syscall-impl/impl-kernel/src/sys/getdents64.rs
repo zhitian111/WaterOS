@@ -7,6 +7,7 @@ use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use vfs::api::VfsError;
 
+use crate::fallible_buf::{try_kbuf, GETDENTS64_MAX};
 use crate::user_copy::copy_to_user;
 use crate::vfs_util::vfs_error_to_errno;
 
@@ -21,8 +22,10 @@ pub(crate) fn sys_getdents64(args: SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EINVAL);
     }
     let count = count.min(isize::MAX as usize);
-    let mut kbuf = alloc::vec::Vec::with_capacity(count.min(4096));
-    kbuf.resize(count, 0);
+    let mut kbuf = match try_kbuf(count, GETDENTS64_MAX) {
+        Ok(buf) => buf,
+        Err(err) => return UserRet::from_error(err),
+    };
 
     let written = match vfs::fd::with_current_io(fd, |handle| {
         if handle

@@ -24,6 +24,29 @@ use wateros_base_config::fs::{FileIoMode, FILE_IO_MODE};
 
 use crate::{map_fs_err, mount_table::{resolve_route, FsRoute}, root_rw, FsBridge};
 
+/// detached 模式下单文件内核堆缓冲上限。
+const DETACHED_DATA_MAX : usize = 16 * 1024 * 1024;
+
+fn check_detached_len(len : usize) -> VfsResult<()> {
+    if len > DETACHED_DATA_MAX {
+        log::warn!("[paged_handle] detached buffer cap exceeded len={} max={}",
+                   len,
+                   DETACHED_DATA_MAX);
+        return Err(VfsError::Io);
+    }
+    Ok(())
+}
+
+fn grow_detached_data(buf : &mut Vec<u8>, new_len : usize) -> VfsResult<()> {
+    check_detached_len(new_len)?;
+    if buf.len() < new_len {
+        buf.try_reserve_exact(new_len - buf.len())
+           .map_err(|_| VfsError::Io)?;
+        buf.resize(new_len, 0);
+    }
+    Ok(())
+}
+
 /// 页缓存 miss / flush 时下探根卷的 I/O 委托；ext4 锁在每次 `read_range`/`write_range` 内按需短持。
 pub(crate) struct FsPageIo;
 
@@ -199,8 +222,7 @@ impl PagedFileHandle {
                .len() <
            end_usize
         {
-            self.detached_data
-                .resize(end_usize, 0);
+            grow_detached_data(&mut self.detached_data, end_usize)?;
         }
         self.detached_data[start..end_usize].copy_from_slice(buf);
         if advance_offset {
@@ -433,8 +455,11 @@ impl VfsIoHandle for PagedFileHandle {
         }
         if self.detached {
             let new_len = usize::try_from(len).map_err(|_| VfsError::Io)?;
-            self.detached_data
-                .resize(new_len, 0);
+            if new_len > self.detached_data.len() {
+                grow_detached_data(&mut self.detached_data, new_len)?;
+            } else {
+                self.detached_data.truncate(new_len);
+            }
         }
         Ok(())
     }

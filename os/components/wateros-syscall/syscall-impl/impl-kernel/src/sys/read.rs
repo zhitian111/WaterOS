@@ -2,13 +2,12 @@
 
 extern crate alloc;
 
-use alloc::vec::Vec;
-
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use driver::network::stack;
 
+use crate::fallible_buf::{try_kbuf, SYSCALL_IO_MAX};
 use crate::socket_block::socket_blocking_tick;
 use crate::socket_fd;
 use crate::user_copy::{copy_from_user_struct, copy_to_user};
@@ -43,7 +42,7 @@ pub(crate) fn sys_read(args : SyscallArgs) -> UserRet {
     if ptr == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
     }
-    if len > 4 * 1024 * 1024 {
+    if len > SYSCALL_IO_MAX {
         return UserRet::from_error(ErrNo::EINVAL);
     }
     if len <= SMALL_READ_BUF_SIZE {
@@ -54,8 +53,10 @@ pub(crate) fn sys_read(args : SyscallArgs) -> UserRet {
         };
         return finish_read(fd, ptr, &kbuf[..len], n);
     }
-    let mut kbuf = Vec::with_capacity(len);
-    kbuf.resize(len, 0);
+    let mut kbuf = match try_kbuf(len, SYSCALL_IO_MAX) {
+        Ok(buf) => buf,
+        Err(err) => return UserRet::from_error(err),
+    };
     let n = match read_fd(fd, &mut kbuf) {
         Ok(n) => n,
         Err(err) => return UserRet::from_error(err),
@@ -104,7 +105,7 @@ pub(crate) fn sys_readv(args : SyscallArgs) -> UserRet {
         if iov.base == 0 {
             return UserRet::from_error(ErrNo::EFAULT);
         }
-        if iov.len > 4 * 1024 * 1024 {
+        if iov.len > SYSCALL_IO_MAX {
             return UserRet::from_error(ErrNo::EINVAL);
         }
         if total.checked_add(iov.len)
@@ -122,8 +123,22 @@ pub(crate) fn sys_readv(args : SyscallArgs) -> UserRet {
                     iov.len,
                     total,
                     fd);
-        let mut kbuf = Vec::with_capacity(iov.len);
-        kbuf.resize(iov.len, 0);
+        let mut kbuf = match try_kbuf(iov.len, SYSCALL_IO_MAX) {
+            Ok(buf) => buf,
+            Err(err) => {
+                log::trace!("[sys_readv] iov[{}/{}] alloc ERR fd={} err={:?} total={}",
+                            i,
+                            iovcnt,
+                            fd,
+                            err,
+                            total);
+                return if total > 0 {
+                    UserRet::from_success(total)
+                } else {
+                    UserRet::from_error(err)
+                };
+            }
+        };
         let n = match read_fd(fd, &mut kbuf) {
             Ok(n) => n,
             Err(err) => {
