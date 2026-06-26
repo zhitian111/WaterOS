@@ -386,6 +386,12 @@ pub fn wake_task(task_id : TaskId) -> bool {
     with_scheduler(|scheduler| scheduler.wake_task(task_id))
 }
 
+/// 唤醒在 `parent_task_id` 上等待子进程退出的全部任务。
+pub fn wake_child_exit_waiters(parent_task_id : TaskId) -> usize {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.wake_child_exit_waiters(parent_task_id))
+}
+
 pub fn interrupt_task(task_id : TaskId) -> bool {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.interrupt_task(task_id))

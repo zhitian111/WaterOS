@@ -187,9 +187,12 @@ pub const fn signal_bit(sig: usize) -> Option<u64> {
 }
 
 pub const fn default_ignored(sig: usize) -> bool {
-    sig == SIGCHLD || sig == SIGURG || sig == SIGWINCH
+    // SIGCHLD 默认虽为“忽略”语义，但子进程退出时仍须入队 pending，
+    // 否则 busybox `cmd &; wait`（WNOHANG + sigsuspend）无法被唤醒。
+    sig == SIGURG || sig == SIGWINCH
 }
 
 pub const fn default_terminates(sig: usize) -> bool {
-    valid_signal(sig) && !default_ignored(sig) && sig != SIGSTOP
+    // SIGCHLD 默认既不忽略也不终止父进程，而是入队 pending 供 wait/sigsuspend 观察。
+    valid_signal(sig) && !default_ignored(sig) && sig != SIGSTOP && sig != SIGCHLD
 }

@@ -288,6 +288,13 @@ impl RoundRobinScheduler {
                        self.other_ready.ready_queue_mut())
     }
 
+    pub(super) fn wake_child_exit_waiters(&mut self, parent_task_id : TaskId) -> usize {
+        self.wait
+            .wake_child_exit_waiters(&mut self.registry,
+                                     parent_task_id,
+                                     self.other_ready.ready_queue_mut())
+    }
+
     pub(super) fn interrupt_task(&mut self, task_id : TaskId) -> bool {
         self.wait
             .interrupt_task(&mut self.registry,

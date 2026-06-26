@@ -504,6 +504,16 @@ impl MultiClassScheduler {
         woken
     }
 
+    pub(super) fn wake_child_exit_waiters(&mut self, parent_task_id : TaskId) -> usize {
+        let mut staging = VecDeque::new();
+        let woken = self.wait
+                        .wake_child_exit_waiters(&mut self.registry,
+                                                  parent_task_id,
+                                                  &mut staging);
+        self.drain_staging(&mut staging);
+        woken
+    }
+
     pub(super) fn interrupt_task(&mut self, task_id : TaskId) -> bool {
         let mut staging = VecDeque::new();
         let interrupted = self.wait

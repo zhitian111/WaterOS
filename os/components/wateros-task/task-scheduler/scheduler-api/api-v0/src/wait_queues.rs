@@ -620,6 +620,29 @@ impl WaitQueues {
             .entry(parent_id)
             .or_insert_with(VecDeque::new)
     }
+
+    /// 唤醒在 `parent_task_id` 上等待子进程退出的全部任务（`waitpid` 路径）。
+    pub fn wake_child_exit_waiters(&mut self,
+                                   registry : &mut TaskRegistry,
+                                   parent_task_id : TaskId,
+                                   ready_queue : &mut impl ReadyTaskSink)
+                                   -> usize {
+        let mut woken = 0usize;
+        while let Some(waiter_task_id) = self.child_exit_wait_queue_mut(parent_task_id)
+                                             .pop_front()
+        {
+            if registry.state(waiter_task_id)
+                       .is_none()
+            {
+                continue;
+            }
+            registry.finish_wait(waiter_task_id, TaskWaitResult::Woken);
+            registry.mark_ready(waiter_task_id);
+            ready_queue.enqueue_ready_task(waiter_task_id);
+            woken = woken.saturating_add(1);
+        }
+        woken
+    }
 }
 
 fn take_task_id_by_id(queue : &mut VecDeque<TaskId>, task_id : TaskId) -> bool {

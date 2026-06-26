@@ -266,6 +266,7 @@ impl ProcessRegistry {
             task.state = ProcessTaskState::Exited(exit_code);
         }
         process.state = ProcessState::Exited(exit_code);
+        core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
         true
     }
 

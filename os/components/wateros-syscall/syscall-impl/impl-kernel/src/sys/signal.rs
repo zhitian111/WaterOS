@@ -399,14 +399,20 @@ pub(crate) fn sys_rt_sigsuspend(args : SyscallArgs) -> UserRet {
         Err(_) => return UserRet::from_error(ErrNo::ESRCH),
     }
     ltp_fuzz_sigsuspend_worker_fast_exit_if_standalone();
-    let wait = task::wait_queue::WaitQueue::new();
-    let _ = wait.wait_current_while(|| {
-                    ipc::signal::with_registry(|registry| {
-                        !registry.has_deliverable(snapshot.task_id)
-                                 .unwrap_or(true)
-                    })
-                });
-    let _ = wait.try_release_empty();
+    let parent_pid = snapshot.pid;
+    loop {
+        let signal_ready = ipc::signal::with_registry(|registry| {
+            registry.has_deliverable(snapshot.task_id)
+                    .unwrap_or(false)
+        });
+        if signal_ready ||
+           task::find_exited_child_process(parent_pid).is_some() ||
+           !task::has_child_process(parent_pid)
+        {
+            break;
+        }
+        task::yield_now();
+    }
     let _ = ipc::signal::with_registry(|registry| registry.end_sigsuspend(snapshot.task_id));
     UserRet::from_error(ErrNo::EINTR)
 }

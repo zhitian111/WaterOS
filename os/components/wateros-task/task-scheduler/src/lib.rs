@@ -240,6 +240,11 @@ pub fn sleep_current_for_ticks(ticks : TaskTick) -> TaskWaitResult {
 #[inline]
 pub fn wake_task(task_id : TaskId) -> bool { active_impl::wake_task(task_id) }
 
+/// 唤醒在 `parent_task_id` 上等待子进程退出的全部任务。
+pub fn wake_child_exit_waiters(parent_task_id : TaskId) -> usize {
+    active_impl::wake_child_exit_waiters(parent_task_id)
+}
+
 #[inline]
 pub fn interrupt_task(task_id : TaskId) -> bool { active_impl::interrupt_task(task_id) }
 

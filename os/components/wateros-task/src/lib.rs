@@ -190,6 +190,20 @@ pub fn sleep_for_ticks(ticks : TaskTick) -> TaskWaitResult {
 #[inline]
 pub fn wake_task(task_id : TaskId) -> bool { scheduler::wake_task(task_id) }
 
+/// 唤醒在父任务上等待子进程退出的全部任务（`waitpid` 路径）。
+#[inline]
+pub fn wake_child_exit_waiters(parent_task_id : TaskId) -> usize {
+    scheduler::wake_child_exit_waiters(parent_task_id)
+}
+
+fn wake_parent_on_child_process_exit(parent_pid : ProcessId) {
+    use core::sync::atomic::{fence, Ordering};
+    fence(Ordering::SeqCst);
+    if let Some(leader) = leader_task_for_process(parent_pid) {
+        let _ = scheduler::wake_child_exit_waiters(leader);
+    }
+}
+
 /// 以 `Interrupted` 结果将指定任务从等待与超时队列中同时移除。
 #[inline]
 pub fn interrupt_task(task_id : TaskId) -> bool { scheduler::interrupt_task(task_id) }
@@ -329,9 +343,21 @@ pub fn has_child(parent_id : TaskId) -> bool { scheduler::has_child(parent_id) }
 #[inline]
 pub fn exit_current(exit_code : TaskExitCode) -> ! {
     if let Some(task_id) = current_task_id() {
-        active_impl::with_process_registry(|registry| {
+        let parent_pid = active_impl::with_process_registry(|registry| {
             let _ = registry.mark_task_exited(task_id, exit_code);
+            registry.lookup_task(task_id)
+                    .and_then(|process_task| registry.lookup_process(process_task.pid))
+                    .and_then(|process| {
+                        if matches!(process.state, ProcessState::Exited(_)) {
+                            process.parent_pid
+                        } else {
+                            None
+                        }
+                    })
         });
+        if let Some(parent_pid) = parent_pid {
+            wake_parent_on_child_process_exit(parent_pid);
+        }
     }
     scheduler::exit_current(exit_code)
 }
@@ -340,11 +366,17 @@ pub fn exit_current(exit_code : TaskExitCode) -> ! {
 #[inline]
 pub fn exit_group_current(exit_code : TaskExitCode) -> ! {
     let current_id = current_task_id().expect("exit_group requires a current task");
+    let parent_pid = current_process_task_snapshot().and_then(|process_task| {
+        process_snapshot(process_task.pid).and_then(|process| process.parent_pid)
+    });
     if let Some(process_task) = current_process_task_snapshot() {
         let task_ids = active_impl::task_ids_for_process(process_task.pid).unwrap_or_default();
         active_impl::with_process_registry(|registry| {
             let _ = registry.mark_process_exiting(process_task.pid, exit_code);
         });
+        if let Some(parent_pid) = parent_pid {
+            wake_parent_on_child_process_exit(parent_pid);
+        }
         for task_id in task_ids {
             if task_id != current_id {
                 let _ = scheduler::kill_task(task_id, exit_code);
@@ -540,6 +572,12 @@ pub fn nofile_rlimit_for_task(task_id: TaskId) -> u64 {
 #[inline]
 pub fn leader_task_for_process(pid : ProcessId) -> Option<TaskId> {
     active_impl::leader_task_for_process(pid)
+}
+
+/// 将进程标记为已退出（zombie），供 waitpid 回收。
+#[inline]
+pub fn mark_process_exiting(pid : ProcessId, exit_code : TaskExitCode) -> bool {
+    active_impl::with_process_registry(|registry| registry.mark_process_exiting(pid, exit_code))
 }
 
 /// 查找当前进程下一个已退出子进程。
