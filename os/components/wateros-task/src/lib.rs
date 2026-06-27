@@ -348,25 +348,18 @@ pub fn has_child(parent_id : TaskId) -> bool { scheduler::has_child(parent_id) }
 #[inline]
 pub fn exit_current(exit_code : TaskExitCode) -> ! {
     if let Some(task_id) = current_task_id() {
-        let (parent_pid, finalize_pid) = active_impl::with_process_registry(|registry| {
+        let parent_pid = active_impl::with_process_registry(|registry| {
             let _ = registry.mark_task_exited(task_id, exit_code);
             let process_task = registry.lookup_task(task_id)?;
-            let parent = registry.lookup_process(process_task.pid)
-                                 .and_then(|process| {
-                                     if matches!(process.state, ProcessState::Exited(_)) {
-                                         process.parent_pid
-                                     } else {
-                                         None
-                                     }
-                                 });
-            let finalize = registry.process_wait_status_delivered(process_task.pid)
-                                   .then_some(process_task.pid);
-            Some((parent, finalize))
-        })
-        .unwrap_or((None, None));
-        if let Some(pid) = finalize_pid {
-            let _ = active_impl::finalize_wait_delivered_process(pid);
-        }
+            registry.lookup_process(process_task.pid)
+                    .and_then(|process| {
+                        if matches!(process.state, ProcessState::Exited(_)) {
+                            process.parent_pid
+                        } else {
+                            None
+                        }
+                    })
+        });
         if let Some(parent_pid) = parent_pid {
             wake_parent_on_child_process_exit(parent_pid);
         }

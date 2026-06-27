@@ -902,7 +902,8 @@ pub(crate) fn sys_waitpid(args : SyscallArgs) -> UserRet {
                 }
                 return UserRet::from_success(0);
             }
-            if waitpid_wait_for_child(current_process.pid) == task::TaskWaitResult::Interrupted
+            if waitpid_wait_for_child(current_process.pid, None) ==
+               task::TaskWaitResult::Interrupted
                && super::signal::current_has_actionable_signal()
             {
                 return UserRet::from_error(ErrNo::EINTR);
@@ -926,7 +927,8 @@ pub(crate) fn sys_waitpid(args : SyscallArgs) -> UserRet {
                 }
                 return UserRet::from_success(0);
             }
-            if waitpid_wait_for_child(current_process.pid) == task::TaskWaitResult::Interrupted
+            if waitpid_wait_for_child(current_process.pid, None) ==
+               task::TaskWaitResult::Interrupted
                && super::signal::current_has_actionable_signal()
             {
                 return UserRet::from_error(ErrNo::EINTR);
@@ -965,7 +967,8 @@ pub(crate) fn sys_waitpid(args : SyscallArgs) -> UserRet {
             }
             return UserRet::from_success(0);
         }
-        if waitpid_wait_for_child(current_process.pid) == task::TaskWaitResult::Interrupted
+        if waitpid_wait_for_child(current_process.pid, Some(child_pid)) ==
+           task::TaskWaitResult::Interrupted
            && super::signal::current_has_actionable_signal()
         {
             return UserRet::from_error(ErrNo::EINTR);
@@ -987,20 +990,53 @@ fn waitpid_poll_running_child(parent_pid : task::ProcessId) {
     }
 }
 
-/// 等待任意子进程退出：轮询进程 registry，并在等待间隙 sleep 让出 CPU，
-/// 避免纯 yield 自旋饿死同进程组内正在 nanosleep 的子任务。
-fn waitpid_wait_for_child(parent_pid : task::ProcessId) -> task::TaskWaitResult {
+/// 等待子进程退出：以 process registry 轮询，避免 ChildExit waitqueue 与
+/// `exit_group` 之间的丢唤醒竞态（875dedf 基线行为）。
+///
+/// 纯 `sleep_for_ticks(1)` 会把大量短 wait 固定放大一个 tick（hackbench 400 task
+/// 会极慢）；纯 `yield_now()` 则可能饿死同进程组内 nanosleep 子任务（LTP acct02）。
+/// 因此默认 yield，仅周期性 sleep 一个 tick 让出 CPU。
+fn waitpid_wait_for_child(parent_pid : task::ProcessId,
+                          child_pid : Option<task::ProcessId>)
+                          -> task::TaskWaitResult {
     use core::sync::atomic::{fence, Ordering};
+    let mut spin = 0u32;
     loop {
         fence(Ordering::SeqCst);
-        if task::find_exited_child_process(parent_pid).is_some() {
-            return task::TaskWaitResult::Woken;
-        }
-        if !task::has_child_process(parent_pid) {
-            return task::TaskWaitResult::Woken;
-        }
-        if task::sleep_for_ticks(1) == task::TaskWaitResult::Interrupted {
-            return task::TaskWaitResult::Interrupted;
+        match child_pid {
+            Some(pid) => {
+                if task::find_exited_child_process_by_pid(parent_pid, pid).is_some() ||
+                   task::process_wait_status_delivered(pid) ||
+                   task::process_snapshot(pid).is_none()
+                {
+                    return task::TaskWaitResult::Woken;
+                }
+                // 等待特定子进程（busybox `sleep 1` 等 fork+wait）：必须 sleep 让出 CPU，
+                // 否则 yield 自旋会与 hackbench RR 任务争抢，子进程迟迟进不了 nanosleep。
+                if task::sleep_for_ticks(1) == task::TaskWaitResult::Interrupted &&
+                   super::signal::current_has_actionable_signal()
+                {
+                    return task::TaskWaitResult::Interrupted;
+                }
+            }
+            None => {
+                if task::find_exited_child_process(parent_pid).is_some() {
+                    return task::TaskWaitResult::Woken;
+                }
+                if !task::has_child_process(parent_pid) {
+                    return task::TaskWaitResult::Woken;
+                }
+                if spin % 4096 == 4095 {
+                    if task::sleep_for_ticks(1) == task::TaskWaitResult::Interrupted &&
+                       super::signal::current_has_actionable_signal()
+                    {
+                        return task::TaskWaitResult::Interrupted;
+                    }
+                } else {
+                    task::yield_now();
+                }
+                spin = spin.wrapping_add(1);
+            }
         }
     }
 }
