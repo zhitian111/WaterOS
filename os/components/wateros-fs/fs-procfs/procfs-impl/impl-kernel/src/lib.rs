@@ -53,6 +53,7 @@ fn mount_lines() -> Vec<ProcMountLine> {
 enum ProcNode {
     Root,
     Meminfo,
+    Cpuinfo,
     Cgroups,
     Mounts,
     SysKernelPidMax,
@@ -69,6 +70,7 @@ fn proc_inode(node: ProcNode) -> u64 {
     match node {
         ProcNode::Root => 1,
         ProcNode::Meminfo => 2,
+        ProcNode::Cpuinfo => 7,
         ProcNode::Cgroups => 6,
         ProcNode::Mounts => 3,
         ProcNode::SysKernelPidMax => 4,
@@ -100,6 +102,9 @@ fn parse_node(path: &str) -> Option<ProcNode> {
     }
     if p == "/meminfo" {
         return Some(ProcNode::Meminfo);
+    }
+    if p == "/cpuinfo" {
+        return Some(ProcNode::Cpuinfo);
     }
     if p == "/cgroups" {
         return Some(ProcNode::Cgroups);
@@ -148,6 +153,10 @@ fn comm_for(pid: ProcessId) -> String {
         return basename(exe.as_str());
     }
     String::from("process")
+}
+
+fn format_cpuinfo() -> Vec<u8> {
+    b"processor\t: 0\ncpu family\t: 0\nmodel name\t: WaterOS QEMU virt\n".to_vec()
 }
 
 fn format_cgroups() -> Vec<u8> {
@@ -354,7 +363,7 @@ impl ProcFsView for KernelProcFs {
             return Ok(false);
         };
         Ok(match node {
-            ProcNode::Root | ProcNode::Meminfo | ProcNode::Cgroups | ProcNode::Mounts => true,
+            ProcNode::Root | ProcNode::Meminfo | ProcNode::Cpuinfo | ProcNode::Cgroups | ProcNode::Mounts => true,
             ProcNode::SysKernelPidMax | ProcNode::SysKernelTainted => true,
             ProcNode::PidDir(pid)
             | ProcNode::PidStat(pid)
@@ -376,6 +385,7 @@ impl ProcFsView for KernelProcFs {
                 nlink: 1,
             }),
             ProcNode::Meminfo
+            | ProcNode::Cpuinfo
             | ProcNode::Cgroups
             | ProcNode::Mounts
             | ProcNode::SysKernelPidMax
@@ -410,6 +420,7 @@ impl ProcFsView for KernelProcFs {
         match node {
             ProcNode::Root | ProcNode::PidDir(_) => Err(FsError::NotAFile),
             ProcNode::Meminfo => Ok(format_meminfo()),
+            ProcNode::Cpuinfo => Ok(format_cpuinfo()),
             ProcNode::Cgroups => Ok(format_cgroups()),
             ProcNode::Mounts => Ok(format_mounts()),
             ProcNode::SysKernelPidMax => Ok(b"32768\n".to_vec()),
@@ -429,6 +440,10 @@ impl ProcFsView for KernelProcFs {
                 let mut entries = vec![
                     FsDirEntry {
                         name: String::from("meminfo"),
+                        node_type: FsNodeType::File,
+                    },
+                    FsDirEntry {
+                        name: String::from("cpuinfo"),
                         node_type: FsNodeType::File,
                     },
                     FsDirEntry {

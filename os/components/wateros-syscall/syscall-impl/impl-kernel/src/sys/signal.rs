@@ -5,7 +5,8 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
-use ipc::signal::{SignalDelivery, SignalDispatch, SignalError, SignalSet};
+use ipc::signal::{SignalDelivery, SignalDispatch, SignalError, SignalSet, default_ignored,
+                  default_terminates};
 use platform::arch::trap::ActiveTrapFrame;
 use task::{ProcessId, ThreadId};
 
@@ -252,10 +253,19 @@ pub(crate) fn deliver_pending_signal(frame : *mut u8,
     let Some(pending) = pending else {
         return Ok(false);
     };
-    if !pending.action
-               .has_user_handler()
-    {
-        return Err(ErrNo::EINVAL);
+    if !pending.action.has_user_handler() {
+        if pending.action.is_ignore()
+            || (pending.action.is_default() && default_ignored(pending.signal))
+        {
+            return Ok(false);
+        }
+        if pending.action.is_default() && default_terminates(pending.signal) {
+            apply_signal_dispatch(SignalDispatch::terminate(Some(snapshot.task_id)),
+                                    pending.signal);
+            return Ok(false);
+        }
+        // SIGCHLD 等默认不入用户态帧的信号：已出队，无需投递。
+        return Ok(false);
     }
 
     let context = unsafe { &mut *(frame.cast::<ActiveTrapFrame>()) };
@@ -269,9 +279,20 @@ pub(crate) fn deliver_pending_signal(frame : *mut u8,
         }
     }
     let frame_size = core::mem::size_of::<UserRtSignalFrame>();
-    let frame_sp = TrapFrameRead::user_sp(context).checked_sub(frame_size)
-                                                  .map(|sp| sp & !0xF)
-                                                  .ok_or(ErrNo::EFAULT)?;
+    let frame_sp = match TrapFrameRead::user_sp(context)
+        .checked_sub(frame_size)
+        .map(|sp| sp & !0xF)
+    {
+        Some(sp) => sp,
+        None => {
+            if default_terminates(pending.signal) {
+                apply_signal_dispatch(SignalDispatch::terminate(Some(snapshot.task_id)),
+                                        pending.signal);
+                return Ok(false);
+            }
+            return Err(ErrNo::EFAULT);
+        }
+    };
     let user_frame =
         UserRtSignalFrame { info : UserSigInfo { signo : pending.signal as i32,
                                                  errno : 0,
@@ -285,7 +306,14 @@ pub(crate) fn deliver_pending_signal(frame : *mut u8,
                                                       reserved : [0; 15],
                                                       machine : original },
                             magic : SIGNAL_FRAME_MAGIC };
-    copy_to_user_struct(frame_sp, &user_frame)?;
+    if let Err(e) = copy_to_user_struct(frame_sp, &user_frame) {
+        if default_terminates(pending.signal) {
+            apply_signal_dispatch(SignalDispatch::terminate(Some(snapshot.task_id)),
+                                    pending.signal);
+            return Ok(false);
+        }
+        return Err(e);
+    }
 
     let info_ptr = frame_sp;
     let ucontext_ptr = frame_sp + core::mem::offset_of!(UserRtSignalFrame, ucontext);

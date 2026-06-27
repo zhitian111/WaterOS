@@ -112,6 +112,9 @@ pub(crate) fn record_current_process_exit(exit_code: isize) {
     let cred = cred::credentials_for(leader);
     let record = build_record(process.pid.raw(), leader, exit_code, &cred);
     if let Err(e) = append_record(path.as_str(), &record) {
+        if e == ErrNo::ENOENT || e == ErrNo::ENOTDIR || e == ErrNo::EBADF {
+            *ACCOUNTING_PATH.lock() = None;
+        }
         log::warn!("[syscall] acct append {} failed: {:?}", path, e);
     }
 }
