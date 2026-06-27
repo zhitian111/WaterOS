@@ -117,12 +117,14 @@ fn drop_reaped_task_runtime_resources(exited : &task::ExitedTask) {
 
 fn libc_envp_for_path(path : &str) -> Vec<&'static str> {
     if path.starts_with("/glibc/") {
+        // LTP 脚本用 `. test.sh` 相对 PATH 加载库；须先于 /glibc/test.sh（lua 包装），
+        // 否则 tst_resm 等会落到 PATH 里的 C 二进制并 fork/wait，attach 段与后台 job 组合会卡死。
         vec!["LD_LIBRARY_PATH=/glibc/lib",
-             "PATH=/glibc:/glibc/ltp/testcases/bin:/glibc/ltp/testcases/lib:/bin:/usr/bin:/sbin:/\
+             "PATH=/glibc/ltp/testcases/bin:/glibc/ltp/testcases/lib:/glibc:/bin:/usr/bin:/sbin:/\
               usr/sbin"]
     } else if path.starts_with("/musl/") {
         vec!["LD_LIBRARY_PATH=/musl/lib",
-             "PATH=/musl:/musl/ltp/testcases/bin:/musl/ltp/testcases/lib:/bin:/usr/bin:/sbin:/usr/\
+             "PATH=/musl/ltp/testcases/bin:/musl/ltp/testcases/lib:/musl:/bin:/usr/bin:/sbin:/usr/\
               sbin"]
     } else {
         Vec::new()
