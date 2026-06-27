@@ -33,8 +33,6 @@ pub enum FsError {
     Corrupt,
     /// 通用 I/O 失败（非驱动分类错误）。
     Io,
-    /// 无剩余空间；cgroup cpuset 无可用 cpus/mems 时拒绝 attach 也用此语义。
-    NoSpace,
 }
 
 /// [`FsError`] 上的结果别名。

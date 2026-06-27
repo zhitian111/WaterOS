@@ -23,7 +23,8 @@ const SCRIPT_PATHS : &[&str] = &[// "/glibc/basic_testcode.sh",      // done
                                  //                              "/musl/unixbench_testcode.sh",  // done
                                  //"/glibc/libcbench_testcode.sh", // done
                                  //"/musl/libcbench_testcode.sh",  // done
-                                 "/glibc/ltp/testcases/bin/cpuset_base_ops_testset.sh"];
+                                 "/glibc/ltp_testcode.sh",
+                                 "/musl/ltp_testcode.sh"];
 
 const LOG_TAG : &str = "busybox-bringup";
 

@@ -39,8 +39,6 @@ pub enum VfsError {
     TooManyOpenFiles,
     /// 目标位于只读挂载卷上，拒绝写或创建。
     ReadOnlyFs,
-    /// 设备无剩余空间；cgroup cpuset 无可用 cpus/mems 时拒绝 attach 也用此语义。
-    NoSpace,
 }
 
 /// [`VfsError`] 上的 [`core::result::Result`] 别名。

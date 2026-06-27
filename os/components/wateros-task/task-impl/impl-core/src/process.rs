@@ -51,8 +51,6 @@ pub struct ProcessControlBlock {
     rlimits : BTreeMap<usize, ResourceLimit>,
     tasks : Vec<ProcessTask>,
     state : ProcessState,
-    /// 已把 exit status 交给父进程 `waitpid`，但 leader 可能仍在 `sys_exit` 清理中。
-    wait_status_delivered : bool,
 }
 
 impl ProcessControlBlock {
@@ -158,8 +156,7 @@ impl ProcessRegistry {
                 tls: 0,
                 clear_child_tid: None,
             }],
-                                            state : ProcessState::Running,
-                                            wait_status_delivered : false };
+                                            state : ProcessState::Running };
         self.insert_process(process);
         pid
     }
@@ -269,47 +266,8 @@ impl ProcessRegistry {
             task.state = ProcessTaskState::Exited(exit_code);
         }
         process.state = ProcessState::Exited(exit_code);
-        process.wait_status_delivered = false;
         core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
         true
-    }
-
-    pub fn mark_wait_status_delivered(&mut self, pid : ProcessId) -> bool {
-        let Some(process) = self.process_mut(pid) else {
-            return false;
-        };
-        process.wait_status_delivered = true;
-        true
-    }
-
-    pub fn process_wait_status_delivered(&self, pid : ProcessId) -> bool {
-        self.processes
-            .get(&pid)
-            .is_some_and(|process| process.wait_status_delivered)
-    }
-
-    /// leader 线程结束清理后，回收已 wait 过、仍占槽的 zombie process。
-    pub fn finalize_wait_delivered_process(&mut self, pid : ProcessId) -> bool {
-        let should_reap = self.processes
-                              .get(&pid)
-                              .is_some_and(|process| {
-                                  process.wait_status_delivered &&
-                                  matches!(process.state, ProcessState::Exited(_))
-                              });
-        if !should_reap {
-            return false;
-        }
-        self.reap_process_with_tasks(pid)
-            .is_some()
-    }
-
-    pub fn exit_code_for_process(&self, pid : ProcessId) -> Option<TaskExitCode> {
-        let process = self.processes
-                          .get(&pid)?;
-        match process.state {
-            ProcessState::Exited(exit_code) | ProcessState::Exiting(exit_code) => Some(exit_code),
-            ProcessState::Running => None,
-        }
     }
 
     pub fn task_ids_for_process(&self, pid : ProcessId) -> Option<Vec<TaskId>> {
@@ -488,25 +446,9 @@ impl ProcessRegistry {
             .values()
             .find(|process| {
                 process.parent_pid == Some(parent_pid) &&
-                !process.wait_status_delivered &&
                 matches!(process.state, ProcessState::Exited(_))
             })
             .map(ProcessControlBlock::descriptor)
-    }
-
-    pub fn find_exited_child_process_by_pid(&self,
-                                            parent_pid : ProcessId,
-                                            child_pid : ProcessId)
-                                            -> Option<ProcessDescriptor> {
-        let process = self.processes
-                          .get(&child_pid)?;
-        if process.parent_pid != Some(parent_pid) ||
-           process.wait_status_delivered ||
-           !matches!(process.state, ProcessState::Exited(_))
-        {
-            return None;
-        }
-        Some(process.descriptor())
     }
 
     pub fn has_child_process(&self, parent_pid : ProcessId) -> bool {

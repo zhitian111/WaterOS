@@ -492,34 +492,6 @@ impl SignalRegistry {
                   .is_empty())
     }
 
-    /// 是否存在「需要用户态动作」的待决信号：有用户 handler、不可屏蔽（SIGKILL/SIGSTOP）、
-    /// 或默认动作为终止。仅入队但默认忽略语义的信号（如 SIGCHLD/SIGURG/SIGWINCH）不计入。
-    ///
-    /// 供 `waitpid` 等可重启阻塞判定是否应以 `EINTR` 返回：被 SIGCHLD 这类默认忽略信号
-    /// 唤醒时不应中断 `wait`，否则父进程会在子进程退出时拿到伪 `EINTR`。
-    pub fn has_actionable(&self, task_id : usize) -> SignalResult<bool> {
-        let thread = self.thread(task_id)?;
-        let process = self.processes
-                          .get(&thread.pid)
-                          .ok_or(SignalError::NoSuchProcess)?;
-        let deliverable = thread.pending
-                                .union(process.pending)
-                                .difference(thread.mask);
-        for sig in 1..NSIG {
-            if !deliverable.contains(sig) {
-                continue;
-            }
-            let action = process.action(sig);
-            if action.has_user_handler()
-               || immutable_signal(sig)
-               || (action.is_default() && default_terminates(sig))
-            {
-                return Ok(true);
-            }
-        }
-        Ok(false)
-    }
-
     pub fn take_pending(&mut self, task_id : usize, wait_set : SignalSet) -> Option<usize> {
         let thread = *self.threads
                           .get(&task_id)?;

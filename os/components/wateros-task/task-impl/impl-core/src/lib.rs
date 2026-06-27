@@ -111,31 +111,6 @@ pub fn find_exited_child_process(parent_pid: ProcessId) -> Option<ProcessDescrip
     with_process_registry(|registry| registry.find_exited_child_process(parent_pid))
 }
 
-pub fn find_exited_child_process_by_pid(
-    parent_pid: ProcessId,
-    child_pid: ProcessId,
-) -> Option<ProcessDescriptor> {
-    with_process_registry(|registry| {
-        registry.find_exited_child_process_by_pid(parent_pid, child_pid)
-    })
-}
-
-pub fn mark_wait_status_delivered(pid: ProcessId) -> bool {
-    with_process_registry(|registry| registry.mark_wait_status_delivered(pid))
-}
-
-pub fn process_wait_status_delivered(pid: ProcessId) -> bool {
-    with_process_registry(|registry| registry.process_wait_status_delivered(pid))
-}
-
-pub fn exit_code_for_process(pid: ProcessId) -> Option<isize> {
-    with_process_registry(|registry| registry.exit_code_for_process(pid))
-}
-
-pub fn finalize_wait_delivered_process(pid: ProcessId) -> bool {
-    with_process_registry(|registry| registry.finalize_wait_delivered_process(pid))
-}
-
 pub fn has_child_process(parent_pid: ProcessId) -> bool {
     with_process_registry(|registry| registry.has_child_process(parent_pid))
 }

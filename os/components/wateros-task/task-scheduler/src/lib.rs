@@ -18,8 +18,6 @@
 
 #![no_std]
 
-extern crate alloc;
-
 #[cfg(all(feature = "impl-multi-class", feature = "impl-round-robin"))]
 compile_error!("features `impl-multi-class` and `impl-round-robin` are mutually exclusive");
 
@@ -241,9 +239,6 @@ pub fn sleep_current_for_ticks(ticks : TaskTick) -> TaskWaitResult {
 /// 尝试唤醒指定任务。
 #[inline]
 pub fn wake_task(task_id : TaskId) -> bool { active_impl::wake_task(task_id) }
-
-/// [调试] SCHED_OTHER 就绪队列存活任务 id。
-pub fn debug_other_ready_ids() -> alloc::vec::Vec<TaskId> { active_impl::debug_other_ready_ids() }
 
 /// 唤醒在 `parent_task_id` 上等待子进程退出的全部任务。
 pub fn wake_child_exit_waiters(parent_task_id : TaskId) -> usize {

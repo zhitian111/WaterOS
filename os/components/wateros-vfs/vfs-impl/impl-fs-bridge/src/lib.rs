@@ -47,7 +47,6 @@ pub(crate) fn map_fs_err(e : FsError) -> VfsError {
         FsError::Driver => VfsError::Driver,
         FsError::Corrupt => VfsError::Corrupt,
         FsError::Io => VfsError::Io,
-        FsError::NoSpace => VfsError::NoSpace,
     }
 }
 

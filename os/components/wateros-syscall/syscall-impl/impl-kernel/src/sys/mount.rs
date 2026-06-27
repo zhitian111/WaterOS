@@ -121,8 +121,8 @@ pub(crate) fn sys_mount(args: SyscallArgs) -> UserRet {
 
     if fstype == "cgroup" || fstype == "cgroup2" {
         // LTP: mount("cgroup2", path, "cgroup2", 0, NULL) 或
-        // mount(ctrl, path, "cgroup", 0, ctrl)；source 可为控制器名。
-        let mut options = if data_ptr != 0 {
+        // mount(ctrl, path, "cgroup", 0, ctrl)；source 可为 fstype/控制器名。
+        let options = if data_ptr != 0 {
             match copy_user_path_cstr(data_ptr, 256) {
                 Ok(s) => s,
                 Err(e) => return UserRet::from_error(e),
@@ -130,19 +130,6 @@ pub(crate) fn sys_mount(args: SyscallArgs) -> UserRet {
         } else {
             String::new()
         };
-        if options.is_empty() && source_ptr != 0 {
-            match copy_user_path_cstr(source_ptr, 256) {
-                Ok(source)
-                    if !source.is_empty()
-                        && source != "cgroup"
-                        && source != "cgroup2" =>
-                {
-                    options = source;
-                }
-                Ok(_) => {}
-                Err(e) => return UserRet::from_error(e),
-            }
-        }
         let v2 = fstype == "cgroup2";
         return match vfs::mount_cgroup_at(mount_point.as_str(), v2, options.as_str()) {
             Ok(()) => UserRet::from_success(0),

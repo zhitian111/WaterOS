@@ -213,8 +213,8 @@ pub(crate) fn mount_tmpfs_at(mount_point: &str) -> VfsResult<()> {
 }
 
 /// 挂载 cgroup v1/v2 伪层级（tmpfs 承载标准 cgroup 接口文件）。
-pub(crate) fn mount_cgroup_at(mount_point: &str, v2: bool, options: &str) -> VfsResult<()> {
-    let tmp = super::tmpfs::TmpFs::new_cgroup(v2, options).map_err(super::map_fs_err)?;
+pub(crate) fn mount_cgroup_at(mount_point: &str, v2: bool, _options: &str) -> VfsResult<()> {
+    let tmp = super::tmpfs::TmpFs::new_cgroup(v2).map_err(super::map_fs_err)?;
     let fs: SharedRwFs = Arc::new(Mutex::new(LocalRwFs::new(Box::new(tmp))));
     let fstype = if v2 { "cgroup2" } else { "cgroup" };
     mount_aux_common(mount_point, AuxMount::Rw(fs), "cgroup", fstype, false)

@@ -48,15 +48,6 @@ impl OtherReadyQueue {
             .copied()
             .any(|entry| self.entry_is_live(entry) && check.is_schedulable(entry.task_id))
     }
-
-    pub(super) fn debug_live_ids(&self) -> alloc::vec::Vec<TaskId> {
-        self.ready_queue
-            .iter()
-            .copied()
-            .filter(|entry| self.entry_is_live(*entry))
-            .map(|entry| entry.task_id)
-            .collect()
-    }
 }
 
 impl ReadyTaskSink for OtherReadyQueue {

@@ -224,24 +224,14 @@ pub(crate) fn wake_clear_child_tid_for_task(task_id : task::TaskId) -> usize {
 
 pub(crate) fn sys_exit(exit_code : isize) -> isize {
     if let Some(task_id) = task::current_task_id() {
-        if let Some(process_task) = task::process_task_snapshot(task_id) {
+        if let Some(process_task) = task::current_process_task_snapshot() {
             reap_exited_member_threads_runtime_resources(process_task.pid);
         }
-        let exit_context = task::process_task_snapshot(task_id).map(|process_task| {
+        if let Some(process_task) = task::process_task_snapshot(task_id) {
             let last_thread = task::task_exit_would_finish_process(task_id)
                 .unwrap_or(process_task.role == task::ProcessTaskRole::Leader);
-            (process_task, last_thread)
-        });
-        if let Some((ref process_task, last_thread)) = exit_context {
             if last_thread {
                 super::acct::record_current_process_exit(exit_code);
-                let parent_pid = task::process_snapshot(process_task.pid)
-                    .and_then(|process| process.parent_pid);
-                let _ = task::mark_process_exiting(process_task.pid, exit_code);
-                super::signal::notify_parent_sigchld(process_task.pid);
-                if let Some(parent_pid) = parent_pid {
-                    task::wake_parent_on_child_process_exit(parent_pid);
-                }
             }
             super::signal::on_thread_exit(task_id,
                                           process_task.pid
@@ -251,6 +241,14 @@ pub(crate) fn sys_exit(exit_code : isize) -> isize {
         wake_clear_child_tid_for_task(task_id);
         super::robust::robust_exit_cleanup(task_id);
         drop_task_runtime_resources(task_id);
+        if let Some(process_task) = task::current_process_task_snapshot() {
+            let last_thread = task::task_exit_would_finish_process(task_id)
+                .unwrap_or(process_task.role == task::ProcessTaskRole::Leader);
+            if last_thread {
+                let _ = task::mark_process_exiting(process_task.pid, exit_code);
+                super::signal::notify_parent_sigchld(process_task.pid);
+            }
+        }
     }
     super::bringup_stats::record_sys_exit();
     task::exit_current(exit_code)
@@ -259,16 +257,9 @@ pub(crate) fn sys_exit(exit_code : isize) -> isize {
 pub(crate) fn sys_exit_group(exit_code : isize) -> isize {
     if let Some(task_id) = task::current_task_id() {
         wake_clear_child_tid_for_task(task_id);
-        if let Some(process_task) = task::process_task_snapshot(task_id) {
+        if let Some(process_task) = task::current_process_task_snapshot() {
             reap_exited_member_threads_runtime_resources(process_task.pid);
             super::acct::record_current_process_exit(exit_code);
-            let parent_pid = task::process_snapshot(process_task.pid)
-                .and_then(|process| process.parent_pid);
-            let _ = task::mark_process_exiting(process_task.pid, exit_code);
-            super::signal::notify_parent_sigchld(process_task.pid);
-            if let Some(parent_pid) = parent_pid {
-                task::wake_parent_on_child_process_exit(parent_pid);
-            }
             if let Some(task_ids) = task::task_ids_for_process(process_task.pid) {
                 let user_aspace = task::current_task_user_aspace_ptr();
                 for sibling in task_ids {
@@ -286,6 +277,10 @@ pub(crate) fn sys_exit_group(exit_code : isize) -> isize {
         }
         super::robust::robust_exit_cleanup(task_id);
         drop_task_runtime_resources(task_id);
+        if let Some(process_task) = task::current_process_task_snapshot() {
+            let _ = task::mark_process_exiting(process_task.pid, exit_code);
+            super::signal::notify_parent_sigchld(process_task.pid);
+        }
     }
     task::exit_group_current(exit_code)
 }
@@ -848,28 +843,6 @@ fn finish_wait_process_result(pid : task::ProcessId,
     }
 }
 
-/// 尝试回收或交付已退出子进程 wait status（leader 仍在 `sys_exit` 清理时仅交付 status）。
-fn wait_report_exited_child(parent_pid : task::ProcessId,
-                            child_pid : Option<task::ProcessId>,
-                            exit_code_ptr : usize)
-                            -> Option<UserRet> {
-    let child = match child_pid {
-        Some(pid) => task::find_exited_child_process_by_pid(parent_pid, pid)?,
-        None => task::find_exited_child_process(parent_pid)?,
-    };
-    if let Some(exited) = task::reap_exited_process(child.pid) {
-        return Some(finish_wait_process_result(child.pid, exited, exit_code_ptr));
-    }
-    let exit_code = task::exit_code_for_process(child.pid)?;
-    if !task::mark_wait_status_delivered(child.pid) {
-        return None;
-    }
-    match write_exit_code(exit_code_ptr, exit_code) {
-        Ok(()) => Some(UserRet::from_success(child.pid.raw())),
-        Err(e) => Some(UserRet::from_error(e)),
-    }
-}
-
 /// `waitpid`/`wait4` 早期语义：维护最小父子关系并阻塞等待子任务退出。
 ///
 /// `WUNTRACED`/`WCONTINUED` 目前没有 stop/continue 状态可报告，按 no-op 接受以
@@ -888,9 +861,11 @@ pub(crate) fn sys_waitpid(args : SyscallArgs) -> UserRet {
     };
     if pid == -1 {
         loop {
-            if let Some(result) = wait_report_exited_child(current_process.pid, None, exit_code_ptr)
-            {
-                return result;
+            if let Some(child) = task::find_exited_child_process(current_process.pid) {
+                let Some(exited) = task::reap_exited_process(child.pid) else {
+                    return UserRet::from_error(ErrNo::ECHILD);
+                };
+                return finish_wait_process_result(child.pid, exited, exit_code_ptr);
             }
             if !task::has_child_process(current_process.pid) {
                 return UserRet::from_error(ErrNo::ECHILD);
@@ -902,9 +877,7 @@ pub(crate) fn sys_waitpid(args : SyscallArgs) -> UserRet {
                 }
                 return UserRet::from_success(0);
             }
-            if waitpid_wait_for_child(current_process.pid) == task::TaskWaitResult::Interrupted
-               && super::signal::current_has_actionable_signal()
-            {
+            if waitpid_wait_for_child(current_process.pid) == task::TaskWaitResult::Interrupted {
                 return UserRet::from_error(ErrNo::EINTR);
             }
         }
@@ -912,9 +885,11 @@ pub(crate) fn sys_waitpid(args : SyscallArgs) -> UserRet {
     if pid == 0 {
         // 尚无真实 pgid：退化为等待任意子进程（与 pid==-1 同路径）。
         loop {
-            if let Some(result) = wait_report_exited_child(current_process.pid, None, exit_code_ptr)
-            {
-                return result;
+            if let Some(child) = task::find_exited_child_process(current_process.pid) {
+                let Some(exited) = task::reap_exited_process(child.pid) else {
+                    return UserRet::from_error(ErrNo::ECHILD);
+                };
+                return finish_wait_process_result(child.pid, exited, exit_code_ptr);
             }
             if !task::has_child_process(current_process.pid) {
                 return UserRet::from_error(ErrNo::ECHILD);
@@ -926,9 +901,7 @@ pub(crate) fn sys_waitpid(args : SyscallArgs) -> UserRet {
                 }
                 return UserRet::from_success(0);
             }
-            if waitpid_wait_for_child(current_process.pid) == task::TaskWaitResult::Interrupted
-               && super::signal::current_has_actionable_signal()
-            {
+            if waitpid_wait_for_child(current_process.pid) == task::TaskWaitResult::Interrupted {
                 return UserRet::from_error(ErrNo::EINTR);
             }
         }
@@ -947,27 +920,22 @@ pub(crate) fn sys_waitpid(args : SyscallArgs) -> UserRet {
         None => return UserRet::from_error(ErrNo::ECHILD),
     }
     loop {
-        if let Some(result) =
-            wait_report_exited_child(current_process.pid, Some(child_pid), exit_code_ptr)
-        {
-            return result;
-        }
-        if task::process_wait_status_delivered(child_pid) {
-            return UserRet::from_error(ErrNo::ECHILD);
+        if let Some(exited) = task::reap_exited_process(child_pid) {
+            return finish_wait_process_result(child_pid, exited, exit_code_ptr);
         }
         if task::process_snapshot(child_pid).is_none() {
             return UserRet::from_error(ErrNo::ECHILD);
         }
         if nohang {
             waitpid_poll_running_child(current_process.pid);
-            if task::find_exited_child_process_by_pid(current_process.pid, child_pid).is_some() {
+            if task::process_snapshot(child_pid)
+                   .is_some_and(|snapshot| matches!(snapshot.state, task::ProcessState::Exited(_)))
+            {
                 continue;
             }
             return UserRet::from_success(0);
         }
-        if waitpid_wait_for_child(current_process.pid) == task::TaskWaitResult::Interrupted
-           && super::signal::current_has_actionable_signal()
-        {
+        if waitpid_wait_for_child(current_process.pid) == task::TaskWaitResult::Interrupted {
             return UserRet::from_error(ErrNo::EINTR);
         }
     }

@@ -8,8 +8,6 @@
 #![no_std]
 #![allow(static_mut_refs)]
 
-extern crate alloc;
-
 use arch::interrupt::ArchInterruptState;
 use arch::task::ActiveArchTaskContext as TaskContext;
 use base::sync::UniprocessorSafeCell;
@@ -497,12 +495,6 @@ pub fn task_snapshot(task_id : TaskId) -> Option<TaskSnapshot> {
 pub fn current_tick() -> TaskTick {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.current_tick())
-}
-
-/// [调试] 返回 SCHED_OTHER 就绪队列中存活的任务 id。
-pub fn debug_other_ready_ids() -> alloc::vec::Vec<TaskId> {
-    let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.debug_other_ready_ids())
 }
 
 /// 当前任务内核栈顶，供 trap/用户态恢复路径使用。
