@@ -243,6 +243,7 @@ impl WaitQueues {
                 Some(TaskState::Sleeping { wake_tick }) if wake_tick <= self.current_tick => {
                     self.sleep_queue
                         .pop_front();
+                    registry.finish_wait(task_id, TaskWaitResult::Woken);
                     registry.mark_ready(task_id);
                     ready_queue.enqueue_ready_task(task_id);
                     log::trace!("[task-scheduler] wake sleeping task {} at tick {}",

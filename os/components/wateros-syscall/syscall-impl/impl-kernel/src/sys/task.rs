@@ -955,8 +955,8 @@ fn waitpid_poll_running_child(parent_pid : task::ProcessId) {
     }
 }
 
-/// 等待任意子进程退出：以进程 registry 为准轮询，避免 task 层 `ChildExit`
-/// 等待队列与 `exit_group` 之间的丢唤醒竞态（RV shell `cmd &; wait`）。
+/// 等待任意子进程退出：轮询进程 registry，并在等待间隙 sleep 让出 CPU，
+/// 避免纯 yield 自旋饿死同进程组内正在 nanosleep 的子任务。
 fn waitpid_wait_for_child(parent_pid : task::ProcessId) -> task::TaskWaitResult {
     use core::sync::atomic::{fence, Ordering};
     loop {
@@ -967,7 +967,9 @@ fn waitpid_wait_for_child(parent_pid : task::ProcessId) -> task::TaskWaitResult 
         if !task::has_child_process(parent_pid) {
             return task::TaskWaitResult::Woken;
         }
-        task::yield_now();
+        if task::sleep_for_ticks(1) == task::TaskWaitResult::Interrupted {
+            return task::TaskWaitResult::Interrupted;
+        }
     }
 }
 

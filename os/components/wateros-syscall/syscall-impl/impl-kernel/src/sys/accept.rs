@@ -169,9 +169,8 @@ fn drive_network_stack() {
     match platform::timer::now_duration() {
         Ok(now) => {
             let millis = now.as_millis().min(i64::MAX as u128) as i64;
-            stack::poll_at_millis(millis);
+            stack::poll_burst_at_millis(millis);
         }
-        Err(_) => stack::poll(),
+        Err(_) => stack::poll_burst_at_millis(0),
     }
-    stack::poll_socket_events();
 }

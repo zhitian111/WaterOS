@@ -65,6 +65,11 @@ impl SmoltcpAdapter {
         self.local_ipv4 = ip;
     }
 
+    /// 回环队列中尚未被 `receive()` 取走的以太网帧数量。
+    pub fn pending_loopback_frames(&self) -> usize {
+        self.loopback_queue.len()
+    }
+
     /// 获取 MAC 地址（用于构建 smoltcp 接口配置）。
     pub fn mac_address(&self) -> [u8; 6] {
         self.inner

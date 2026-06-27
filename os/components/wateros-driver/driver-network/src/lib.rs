@@ -244,6 +244,24 @@ pub mod stack {
         }
     }
 
+    /// 连续 poll 直到回环队列清空或达到上限；TCP loopback 握手需多帧往返。
+    pub fn poll_burst_at_millis(millis: i64) {
+        const MAX_ROUNDS: usize = 64;
+        const MIN_ROUNDS: usize = 8;
+        for round in 0..MAX_ROUNDS {
+            poll_at_millis(millis + round as i64);
+            poll_socket_events();
+            let pending = NETWORK_STACK
+                .lock()
+                .as_ref()
+                .map(|stack| stack.adapter.pending_loopback_frames())
+                .unwrap_or(0);
+            if pending == 0 && round + 1 >= MIN_ROUNDS {
+                break;
+            }
+        }
+    }
+
     /// 对 TCP socket 执行操作。返回 `None` 表示协议栈尚未初始化。
     pub fn with_tcp_socket<R>(handle: SocketHandle, f: impl FnOnce(&mut tcp::Socket) -> R) -> Option<R> {
         let mut guard = NETWORK_STACK.lock();
@@ -616,6 +634,10 @@ pub mod stack {
         let meta = stack.metas.get_mut(&handle).ok_or("invalid socket handle")?;
         meta.peer_ip = ip;
         meta.peer_port = port;
+        drop(guard);
+        if matches!(kind, SocketKind::Tcp) {
+            poll_burst_at_millis(0);
+        }
         Ok(())
     }
 

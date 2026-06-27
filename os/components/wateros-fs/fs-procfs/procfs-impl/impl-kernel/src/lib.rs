@@ -16,7 +16,7 @@ use api_v0::{
 };
 use fs_api_v0::{FsAccessMode, FsCapability, FsImpl, FsKind};
 use spin::Mutex;
-use task::{ProcessId, ProcessState};
+use task::{ProcessId, ProcessState, TaskState};
 
 static ARGV_LOOKUP: Mutex<Option<TaskArgvLookup>> = Mutex::new(None);
 static EXE_LOOKUP: Mutex<Option<TaskExeLookup>> = Mutex::new(None);
@@ -48,8 +48,6 @@ fn mount_lines() -> Vec<ProcMountLine> {
     let lookup = *MOUNT_LOOKUP.lock();
     lookup.map(|f| f()).unwrap_or_default()
 }
-
-const USER_HZ: u64 = 100;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ProcNode {
@@ -175,20 +173,25 @@ fn basename(path: &str) -> String {
     path.rsplit('/').next().unwrap_or(path).to_string()
 }
 
-fn state_char(state: ProcessState) -> char {
-    match state {
-        ProcessState::Running => 'R',
-        ProcessState::Exiting(_) => 'D',
-        ProcessState::Exited(_) => 'Z',
+fn state_char(process: ProcessState, leader_state: Option<TaskState>) -> char {
+    match process {
+        ProcessState::Exited(_) | ProcessState::Exiting(_) => 'Z',
+        ProcessState::Running => match leader_state {
+            Some(TaskState::Sleeping { .. }) | Some(TaskState::Blocking(_)) => 'S',
+            Some(TaskState::Exited(_)) => 'Z',
+            Some(TaskState::Ready) | Some(TaskState::Running) | None => 'R',
+        },
     }
 }
 
 fn format_stat(pid: ProcessId) -> FsResult<Vec<u8>> {
     let process = task::process_snapshot(pid).ok_or(FsError::NotFound)?;
     let leader = process.leader_task_id;
-    let utime = task::task_snapshot(leader)
-        .map(|snap| snap.stats.tick_count as u64 * USER_HZ)
-        .unwrap_or(0);
+    // Linux utime/stime are in USER_HZ jiffies; tick_count tracks scheduler ticks (~100/s).
+    let jiffies = task::task_snapshot(leader)
+        .map(|snap| snap.stats.tick_count as u64)
+        .unwrap_or(0)
+        .max(1);
     let comm = comm_for(pid);
     let comm15 = if comm.len() > 15 {
         comm[..15].to_string()
@@ -199,12 +202,15 @@ fn format_stat(pid: ProcessId) -> FsResult<Vec<u8>> {
         .parent_pid
         .map(|p| p.raw())
         .unwrap_or(0);
-    let stime = 0u64;
+    let utime = jiffies;
+    let stime = jiffies;
+    let leader_state = task::task_snapshot(leader).map(|snap| snap.state);
+    let sc = state_char(process.state, leader_state);
     let line = format!(
-        "{} ({}) {} {} 0 0 0 0 0 {} {} 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n",
+        "{} ({}) {} {} 0 0 0 0 0 0 0 0 {} {} 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n",
         pid.raw(),
         comm15,
-        state_char(process.state),
+        sc,
         ppid,
         utime,
         stime,
@@ -222,12 +228,13 @@ fn format_status(pid: ProcessId) -> FsResult<Vec<u8>> {
         .parent_pid
         .map(|p| p.raw())
         .unwrap_or(0);
-    let state_str = match process.state {
-        ProcessState::Running => "R (running)",
-        ProcessState::Exiting(_) => "D (disk sleep)",
-        ProcessState::Exited(_) => "Z (zombie)",
+    let leader_state = task::task_snapshot(leader).map(|snap| snap.state);
+    let sc = state_char(process.state, leader_state);
+    let state_str = match sc {
+        'S' => "S (sleeping)",
+        'Z' => "Z (zombie)",
+        _ => "R (running)",
     };
-    let sc = state_char(process.state);
     let line = format!(
         "Name:\t{comm}\nState:\t{state_str} ({sc})\nTgid:\t{}\nPid:\t{}\nPPid:\t{ppid}\nUid:\t{}\t{}\t{}\t{}\nGid:\t{}\t{}\t{}\t{}\nVmPeak:\t{}\tkB\nVmSize:\t{}\tkB\nVmRSS:\t{}\tkB\nVmData:\t{}\tkB\nVmStk:\t128\tkB\n",
         pid.raw(),
