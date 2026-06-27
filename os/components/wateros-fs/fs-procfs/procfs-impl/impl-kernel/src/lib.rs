@@ -16,7 +16,7 @@ use api_v0::{
 };
 use fs_api_v0::{FsAccessMode, FsCapability, FsImpl, FsKind};
 use spin::Mutex;
-use task::{ProcessId, ProcessState};
+use task::{ProcessId, ProcessState, TaskState};
 
 static ARGV_LOOKUP: Mutex<Option<TaskArgvLookup>> = Mutex::new(None);
 static EXE_LOOKUP: Mutex<Option<TaskExeLookup>> = Mutex::new(None);
@@ -49,12 +49,11 @@ fn mount_lines() -> Vec<ProcMountLine> {
     lookup.map(|f| f()).unwrap_or_default()
 }
 
-const USER_HZ: u64 = 100;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ProcNode {
     Root,
     Meminfo,
+    Cpuinfo,
     Cgroups,
     Mounts,
     SysKernelPidMax,
@@ -71,6 +70,7 @@ fn proc_inode(node: ProcNode) -> u64 {
     match node {
         ProcNode::Root => 1,
         ProcNode::Meminfo => 2,
+        ProcNode::Cpuinfo => 7,
         ProcNode::Cgroups => 6,
         ProcNode::Mounts => 3,
         ProcNode::SysKernelPidMax => 4,
@@ -102,6 +102,9 @@ fn parse_node(path: &str) -> Option<ProcNode> {
     }
     if p == "/meminfo" {
         return Some(ProcNode::Meminfo);
+    }
+    if p == "/cpuinfo" {
+        return Some(ProcNode::Cpuinfo);
     }
     if p == "/cgroups" {
         return Some(ProcNode::Cgroups);
@@ -152,6 +155,10 @@ fn comm_for(pid: ProcessId) -> String {
     String::from("process")
 }
 
+fn format_cpuinfo() -> Vec<u8> {
+    b"processor\t: 0\ncpu family\t: 0\nmodel name\t: WaterOS QEMU virt\n".to_vec()
+}
+
 fn format_cgroups() -> Vec<u8> {
     alloc::format!(
         "#subsys_name\thierarchy\tnum_cgroups\tenabled\n\
@@ -175,20 +182,25 @@ fn basename(path: &str) -> String {
     path.rsplit('/').next().unwrap_or(path).to_string()
 }
 
-fn state_char(state: ProcessState) -> char {
-    match state {
-        ProcessState::Running => 'R',
-        ProcessState::Exiting(_) => 'D',
-        ProcessState::Exited(_) => 'Z',
+fn state_char(process: ProcessState, leader_state: Option<TaskState>) -> char {
+    match process {
+        ProcessState::Exited(_) | ProcessState::Exiting(_) => 'Z',
+        ProcessState::Running => match leader_state {
+            Some(TaskState::Sleeping { .. }) | Some(TaskState::Blocking(_)) => 'S',
+            Some(TaskState::Exited(_)) => 'Z',
+            Some(TaskState::Ready) | Some(TaskState::Running) | None => 'R',
+        },
     }
 }
 
 fn format_stat(pid: ProcessId) -> FsResult<Vec<u8>> {
     let process = task::process_snapshot(pid).ok_or(FsError::NotFound)?;
     let leader = process.leader_task_id;
-    let utime = task::task_snapshot(leader)
-        .map(|snap| snap.stats.tick_count as u64 * USER_HZ)
-        .unwrap_or(0);
+    // Linux utime/stime are in USER_HZ jiffies; tick_count tracks scheduler ticks (~100/s).
+    let jiffies = task::task_snapshot(leader)
+        .map(|snap| snap.stats.tick_count as u64)
+        .unwrap_or(0)
+        .max(1);
     let comm = comm_for(pid);
     let comm15 = if comm.len() > 15 {
         comm[..15].to_string()
@@ -199,12 +211,15 @@ fn format_stat(pid: ProcessId) -> FsResult<Vec<u8>> {
         .parent_pid
         .map(|p| p.raw())
         .unwrap_or(0);
-    let stime = 0u64;
+    let utime = jiffies;
+    let stime = jiffies;
+    let leader_state = task::task_snapshot(leader).map(|snap| snap.state);
+    let sc = state_char(process.state, leader_state);
     let line = format!(
-        "{} ({}) {} {} 0 0 0 0 0 {} {} 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n",
+        "{} ({}) {} {} 0 0 0 0 0 0 0 0 {} {} 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n",
         pid.raw(),
         comm15,
-        state_char(process.state),
+        sc,
         ppid,
         utime,
         stime,
@@ -222,12 +237,13 @@ fn format_status(pid: ProcessId) -> FsResult<Vec<u8>> {
         .parent_pid
         .map(|p| p.raw())
         .unwrap_or(0);
-    let state_str = match process.state {
-        ProcessState::Running => "R (running)",
-        ProcessState::Exiting(_) => "D (disk sleep)",
-        ProcessState::Exited(_) => "Z (zombie)",
+    let leader_state = task::task_snapshot(leader).map(|snap| snap.state);
+    let sc = state_char(process.state, leader_state);
+    let state_str = match sc {
+        'S' => "S (sleeping)",
+        'Z' => "Z (zombie)",
+        _ => "R (running)",
     };
-    let sc = state_char(process.state);
     let line = format!(
         "Name:\t{comm}\nState:\t{state_str} ({sc})\nTgid:\t{}\nPid:\t{}\nPPid:\t{ppid}\nUid:\t{}\t{}\t{}\t{}\nGid:\t{}\t{}\t{}\t{}\nVmPeak:\t{}\tkB\nVmSize:\t{}\tkB\nVmRSS:\t{}\tkB\nVmData:\t{}\tkB\nVmStk:\t128\tkB\n",
         pid.raw(),
@@ -347,7 +363,7 @@ impl ProcFsView for KernelProcFs {
             return Ok(false);
         };
         Ok(match node {
-            ProcNode::Root | ProcNode::Meminfo | ProcNode::Cgroups | ProcNode::Mounts => true,
+            ProcNode::Root | ProcNode::Meminfo | ProcNode::Cpuinfo | ProcNode::Cgroups | ProcNode::Mounts => true,
             ProcNode::SysKernelPidMax | ProcNode::SysKernelTainted => true,
             ProcNode::PidDir(pid)
             | ProcNode::PidStat(pid)
@@ -369,6 +385,7 @@ impl ProcFsView for KernelProcFs {
                 nlink: 1,
             }),
             ProcNode::Meminfo
+            | ProcNode::Cpuinfo
             | ProcNode::Cgroups
             | ProcNode::Mounts
             | ProcNode::SysKernelPidMax
@@ -403,6 +420,7 @@ impl ProcFsView for KernelProcFs {
         match node {
             ProcNode::Root | ProcNode::PidDir(_) => Err(FsError::NotAFile),
             ProcNode::Meminfo => Ok(format_meminfo()),
+            ProcNode::Cpuinfo => Ok(format_cpuinfo()),
             ProcNode::Cgroups => Ok(format_cgroups()),
             ProcNode::Mounts => Ok(format_mounts()),
             ProcNode::SysKernelPidMax => Ok(b"32768\n".to_vec()),
@@ -422,6 +440,10 @@ impl ProcFsView for KernelProcFs {
                 let mut entries = vec![
                     FsDirEntry {
                         name: String::from("meminfo"),
+                        node_type: FsNodeType::File,
+                    },
+                    FsDirEntry {
+                        name: String::from("cpuinfo"),
                         node_type: FsNodeType::File,
                     },
                     FsDirEntry {

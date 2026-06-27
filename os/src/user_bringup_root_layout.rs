@@ -91,8 +91,8 @@ pub fn ensure_busybox_path_links() {
               "sed", "tr", "wc", "head", "tail", "sort", "uniq", "expr", "dirname", "readlink",
               "ln", "rm", "touch", "chmod", "chown", "mktemp", "printf", "test", "true", "false",
               "pwd", "env", "which", "id", "whoami", "groups", "date", "uname", "dd", "od",
-              "hexdump", "xargs", "find", "cmp", "diff", "seq", "tee", "ip", "ifconfig", "route",
-              "sysctl", "arping"];
+              "hexdump", "xargs", "find", "cmp", "diff", "seq", "tee", "tac", "kill", "mount", "umount", "ip",
+              "ifconfig", "route", "sysctl", "arping"];
         for applet in APPLETS {
             try_hardlink(sess.as_mut(),
                          "/glibc/busybox",
@@ -105,7 +105,10 @@ pub fn ensure_busybox_path_links() {
                          alloc::format!("/bin/{applet}").as_str());
             try_hardlink(sess.as_mut(),
                          "/glibc/busybox",
-                         alloc::format!("/usr/bin/{applet}").as_str());
+                         alloc::format!("/sbin/{applet}").as_str());
+            try_hardlink(sess.as_mut(),
+                         "/glibc/busybox",
+                         alloc::format!("/usr/sbin/{applet}").as_str());
         }
 
         const UNSUPPORTED_APPLETS : &[&str] = &["locale", "ar", "rsh"];
@@ -221,7 +224,9 @@ fn remove_applet_links(sess : &mut (impl vfs::api::RootRwSession + ?Sized), appl
     for path in [alloc::format!("/glibc/{applet}"),
                  alloc::format!("/musl/{applet}"),
                  alloc::format!("/bin/{applet}"),
-                 alloc::format!("/usr/bin/{applet}")]
+                 alloc::format!("/usr/bin/{applet}"),
+                 alloc::format!("/sbin/{applet}"),
+                 alloc::format!("/usr/sbin/{applet}")]
     {
         match sess.unlink(path.as_str()) {
             Ok(()) => info!("[{LOG_TAG}] removed unsupported applet link {path}"),

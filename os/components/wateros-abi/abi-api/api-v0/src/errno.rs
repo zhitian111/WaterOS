@@ -72,6 +72,8 @@ impl ErrNo {
     pub const EEXIST: Self = Self(17);
     /// 参数无效。
     pub const EINVAL: Self = Self(22);
+    /// 设备上无剩余空间；cgroup cpuset 无可用 cpus/mems 时 attach 也返回此错误。
+    pub const ENOSPC: Self = Self(28);
     /// 不是终端设备。
     pub const ENOTTY: Self = Self(25);
     /// 功能未实现或系统调用号未知。

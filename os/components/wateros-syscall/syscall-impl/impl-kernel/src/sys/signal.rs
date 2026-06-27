@@ -5,7 +5,8 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
-use ipc::signal::{SignalDelivery, SignalDispatch, SignalError, SignalSet};
+use ipc::signal::{SignalDelivery, SignalDispatch, SignalError, SignalSet, default_ignored,
+                  default_terminates};
 use platform::arch::trap::ActiveTrapFrame;
 use task::{ProcessId, ThreadId};
 
@@ -122,15 +123,19 @@ pub(crate) fn apply_signal_dispatch(dispatch : SignalDispatch, signal : usize) {
                 task::exit_group_current(exit_code);
             }
             if let Some(snapshot) = task::process_task_snapshot(task_id) {
-                notify_parent_sigchld(snapshot.pid);
-                if let Some(task_ids) = task::task_ids_for_process(snapshot.pid) {
+                let pid = snapshot.pid;
+                // 与 sys_exit 对齐：先更新进程 registry，再回收调度器 task；
+                // 避免 kill_task 因 target 正在运行而跳过时父进程 waitpid 永远看不到 Exited。
+                let _ = task::mark_process_exiting(pid, exit_code);
+                notify_parent_sigchld(pid);
+                if let Some(task_ids) = task::task_ids_for_process(pid) {
                     for member in task_ids {
                         super::task::wake_clear_child_tid_for_task(member);
                         super::robust::robust_exit_cleanup(member);
                         let _ = task::kill_task(member, exit_code);
                     }
                 }
-                ipc::signal::with_registry(|registry| registry.drop_process(snapshot.pid.raw()));
+                ipc::signal::with_registry(|registry| registry.drop_process(pid.raw()));
             }
         }
     }
@@ -139,6 +144,18 @@ pub(crate) fn apply_signal_dispatch(dispatch : SignalDispatch, signal : usize) {
 pub(crate) fn raise_current_thread(signal : usize) -> Result<(), ErrNo> {
     let snapshot = ensure_current_signal_state()?;
     send_thread(snapshot.task_id, signal)
+}
+
+/// 当前线程是否存在「需要用户态动作」的待决信号（有 handler / 不可屏蔽 / 默认终止）。
+/// 用于 `waitpid` 等可重启阻塞：仅被 SIGCHLD 等默认忽略信号唤醒时不应返回 `EINTR`。
+pub(crate) fn current_has_actionable_signal() -> bool {
+    let Some(snapshot) = task::current_process_task_snapshot() else {
+        return false;
+    };
+    ipc::signal::with_registry(|registry| {
+        registry.has_actionable(snapshot.task_id)
+                .unwrap_or(false)
+    })
 }
 
 pub(crate) fn notify_parent_sigchld(pid : ProcessId) {
@@ -252,10 +269,19 @@ pub(crate) fn deliver_pending_signal(frame : *mut u8,
     let Some(pending) = pending else {
         return Ok(false);
     };
-    if !pending.action
-               .has_user_handler()
-    {
-        return Err(ErrNo::EINVAL);
+    if !pending.action.has_user_handler() {
+        if pending.action.is_ignore()
+            || (pending.action.is_default() && default_ignored(pending.signal))
+        {
+            return Ok(false);
+        }
+        if pending.action.is_default() && default_terminates(pending.signal) {
+            apply_signal_dispatch(SignalDispatch::terminate(Some(snapshot.task_id)),
+                                    pending.signal);
+            return Ok(false);
+        }
+        // SIGCHLD 等默认不入用户态帧的信号：已出队，无需投递。
+        return Ok(false);
     }
 
     let context = unsafe { &mut *(frame.cast::<ActiveTrapFrame>()) };
@@ -269,9 +295,20 @@ pub(crate) fn deliver_pending_signal(frame : *mut u8,
         }
     }
     let frame_size = core::mem::size_of::<UserRtSignalFrame>();
-    let frame_sp = TrapFrameRead::user_sp(context).checked_sub(frame_size)
-                                                  .map(|sp| sp & !0xF)
-                                                  .ok_or(ErrNo::EFAULT)?;
+    let frame_sp = match TrapFrameRead::user_sp(context)
+        .checked_sub(frame_size)
+        .map(|sp| sp & !0xF)
+    {
+        Some(sp) => sp,
+        None => {
+            if default_terminates(pending.signal) {
+                apply_signal_dispatch(SignalDispatch::terminate(Some(snapshot.task_id)),
+                                        pending.signal);
+                return Ok(false);
+            }
+            return Err(ErrNo::EFAULT);
+        }
+    };
     let user_frame =
         UserRtSignalFrame { info : UserSigInfo { signo : pending.signal as i32,
                                                  errno : 0,
@@ -285,7 +322,14 @@ pub(crate) fn deliver_pending_signal(frame : *mut u8,
                                                       reserved : [0; 15],
                                                       machine : original },
                             magic : SIGNAL_FRAME_MAGIC };
-    copy_to_user_struct(frame_sp, &user_frame)?;
+    if let Err(e) = copy_to_user_struct(frame_sp, &user_frame) {
+        if default_terminates(pending.signal) {
+            apply_signal_dispatch(SignalDispatch::terminate(Some(snapshot.task_id)),
+                                    pending.signal);
+            return Ok(false);
+        }
+        return Err(e);
+    }
 
     let info_ptr = frame_sp;
     let ucontext_ptr = frame_sp + core::mem::offset_of!(UserRtSignalFrame, ucontext);

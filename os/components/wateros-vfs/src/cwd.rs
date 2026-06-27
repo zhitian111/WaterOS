@@ -78,6 +78,8 @@ pub fn set_task_cwd(task_id: task::TaskId, cwd: &str) -> VfsResult<()> {
 }
 
 /// 根据根卷 ELF 路径（如 `/glibc/basic/read`）将任务 cwd 设为所在目录，并记录 exe/argv。
+///
+/// `busybox sh /path/script.sh` 时将 cwd 设为脚本目录，便于脚本内 `. foo.sh` 相对 source。
 pub fn on_user_task_spawned_for_elf(
     task_id: task::TaskId,
     elf_vfs_path: &str,
@@ -86,10 +88,33 @@ pub fn on_user_task_spawned_for_elf(
     init_task_cwd(task_id);
     let _ = set_task_exe_path(task_id, elf_vfs_path);
     let _ = set_task_argv(task_id, argv.iter().copied());
-    if let Some((dir, _)) = elf_vfs_path.rsplit_once('/') {
-        let cwd = if dir.is_empty() { "/" } else { dir };
-        let _ = set_task_cwd(task_id, cwd);
+    let cwd = initial_cwd_for_spawn(elf_vfs_path, argv);
+    let _ = set_task_cwd(task_id, cwd.as_str());
+}
+
+fn initial_cwd_for_spawn(elf_vfs_path: &str, argv: &[&str]) -> String {
+    if argv.len() >= 2 && is_shell_invocation(argv[0]) {
+        if let Some(dir) = parent_dir(argv[1]) {
+            return String::from(dir);
+        }
     }
+    if let Some(arg0) = argv.first() {
+        if arg0.ends_with(".sh") {
+            if let Some(dir) = parent_dir(arg0) {
+                return String::from(dir);
+            }
+        }
+    }
+    String::from(parent_dir(elf_vfs_path).unwrap_or("/"))
+}
+
+fn is_shell_invocation(argv0: &str) -> bool {
+    argv0 == "sh" || argv0.ends_with("/sh") || argv0.ends_with("busybox")
+}
+
+fn parent_dir(path: &str) -> Option<&str> {
+    path.rsplit_once('/')
+        .map(|(dir, _)| if dir.is_empty() { "/" } else { dir })
 }
 
 /// 记录任务当前可执行文件路径，供 `/proc/self/exe` 兼容路径使用。

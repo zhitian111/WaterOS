@@ -22,6 +22,7 @@ use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::cmp::min;
+use core::sync::atomic::{AtomicU64, Ordering};
 use spin::{Mutex, RwLock};
 use wateros_base_config::fs::{FILE_PAGE_CACHE_CAPACITY, FILE_PAGE_SIZE, FILE_READ_AHEAD_STRIDE};
 
@@ -144,6 +145,25 @@ impl GlobalCacheState {
             self.free.push(idx);
         }
     }
+
+    /// 原地清空所有帧元数据并复用已分配的页帧内存（不释放/重分配 16MiB 帧池）。
+    /// 供挂载代次切换时调用，避免每次 mount/umount 都重建整个缓存导致内核堆碎片化。
+    fn clear_in_place(&mut self) {
+        for frame in self.frames
+                         .iter_mut()
+        {
+            frame.key = None;
+            frame.dirty = false;
+        }
+        self.index
+            .clear();
+        self.lru
+            .clear();
+        self.free
+            .clear();
+        self.free
+            .extend((0..self.capacity).rev());
+    }
 }
 
 /// 单文件逻辑大小与脏页索引（页号）。
@@ -154,7 +174,7 @@ struct FileEntryInner {
 
 /// 全局文件页缓存。
 pub struct GlobalFilePageCache {
-    mount_gen : u64,
+    mount_gen : AtomicU64,
     state : Mutex<GlobalCacheState>,
     files : Mutex<BTreeMap<FileCacheKey, Arc<RwLock<FileEntryInner>>>>,
     /// 仍被 [`PagedFileHandle`] 持有的路径数；归零时在 `close` 后回收该路径缓存条目。
@@ -164,16 +184,34 @@ pub struct GlobalFilePageCache {
 impl GlobalFilePageCache {
     /// 构造与当前 `mount_gen` 绑定的缓存表。
     pub fn new(mount_gen : u64) -> Self {
-        Self { mount_gen,
+        Self { mount_gen : AtomicU64::new(mount_gen),
                state : Mutex::new(GlobalCacheState::new()),
                files : Mutex::new(BTreeMap::new()),
                open_refs : Mutex::new(BTreeMap::new()) }
     }
 
-    pub fn mount_gen(&self) -> u64 { self.mount_gen }
+    pub fn mount_gen(&self) -> u64 { self.mount_gen
+                                         .load(Ordering::Acquire) }
+
+    /// 切换到新挂载代次：原地清空缓存元数据并复用已分配的帧池，
+    /// 避免每次 mount/umount 重建 16MiB 缓存造成内核堆碎片化与长跑卡死。
+    /// 仅应在已无活跃用户 fd 持有脏页的安全点调用（脏页须由 `flush_all` 先写回）。
+    pub fn reset_to_gen(&self, new_gen : u64) {
+        self.state
+            .lock()
+            .clear_in_place();
+        self.files
+            .lock()
+            .clear();
+        self.open_refs
+            .lock()
+            .clear();
+        self.mount_gen
+            .store(new_gen, Ordering::Release);
+    }
 
     fn file_key(&self, path : &str) -> FileCacheKey {
-        FileCacheKey { mount_gen : self.mount_gen,
+        FileCacheKey { mount_gen : self.mount_gen(),
                        path : Arc::from(path) }
     }
 
@@ -816,29 +854,30 @@ impl GlobalFilePageCache {
 
 static GLOBAL_CACHE : Mutex<Option<Arc<GlobalFilePageCache>>> = Mutex::new(None);
 
-/// 根卷重挂载后调用：丢弃旧代次缓存并绑定新 `mount_gen`。
+/// 根卷重挂载或辅助卷挂载/卸载后调用：原地清空缓存并绑定新 `mount_gen`，
+/// 复用已分配的帧池（不重新分配 16MiB），避免长跑大量挂载操作后堆碎片化卡死。
 pub fn reset_global_cache(mount_gen : u64) {
-    *GLOBAL_CACHE.lock() = Some(Arc::new(GlobalFilePageCache::new(mount_gen)));
+    let mut g = GLOBAL_CACHE.lock();
+    if let Some(ref existing) = *g {
+        existing.reset_to_gen(mount_gen);
+    } else {
+        *g = Some(Arc::new(GlobalFilePageCache::new(mount_gen)));
+    }
 }
 
-/// 返回全局页缓存句柄；若代次不匹配则重建。
+/// 返回全局页缓存句柄；若代次不匹配则原地切换代次（复用帧池）。
 pub fn global_cache(mount_gen : u64) -> Arc<GlobalFilePageCache> {
     let mut g = GLOBAL_CACHE.lock();
     if let Some(ref existing) = *g {
-        if existing.mount_gen() != mount_gen {
-            if mount_gen < existing.mount_gen() {
+        let current = existing.mount_gen();
+        if current != mount_gen {
+            if mount_gen < current {
                 log::debug!("[page-cache] ignoring stale mount_gen {} (global {})",
                             mount_gen,
-                            existing.mount_gen());
+                            current);
                 return existing.clone();
             }
-            log::warn!("[page-cache] rebuilding cache for mount_gen {} (was {}); dirty pages should have been flushed before bump",
-                       mount_gen,
-                       existing.mount_gen());
-            *g = Some(Arc::new(GlobalFilePageCache::new(mount_gen)));
-            return g.as_ref()
-                    .unwrap()
-                    .clone();
+            existing.reset_to_gen(mount_gen);
         }
         return existing.clone();
     }

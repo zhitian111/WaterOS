@@ -267,11 +267,6 @@ fn argv_references_cpuhotplug_infinite_loop_worker(argv: &[alloc::string::String
         .any(|arg| path_is_cpuhotplug_infinite_loop_worker(arg.as_str()))
 }
 
-fn argv_references_cpuhotplug_numbered_script(argv: &[alloc::string::String]) -> bool {
-    argv.iter()
-        .any(|arg| path_is_cpuhotplug_numbered_script(arg.as_str()))
-}
-
 fn current_context_is_cpuhotplug_infinite_loop_worker() -> bool {
     if vfs::cwd::current_exe_path()
         .ok()
@@ -298,18 +293,18 @@ pub(crate) fn ltp_cpuhotplug_exec_fast_exit_if_standalone(
     abs_path: &str,
     argv: &[alloc::string::String],
 ) {
-    let infinite_worker = path_is_cpuhotplug_infinite_loop_worker(abs_path)
-        || argv_references_cpuhotplug_infinite_loop_worker(argv);
-    if infinite_worker {
+    // 仅对被 exec 的文件路径匹配；argv 中出现 cpuhotplug 路径（如 basename/sh -c）
+    // 不能触发，否则 subshell 会 exit(0) 导致父 shell 读 pipe 永久阻塞。
+    if path_is_cpuhotplug_infinite_loop_worker(abs_path) {
         if cpuhotplug_infinite_loop_worker_should_fast_exit(argv) {
             task::exit_current(0);
         }
         return;
     }
-    let numbered_script = (path_is_cpuhotplug_numbered_script(abs_path)
-        || argv_references_cpuhotplug_numbered_script(argv))
-        && !argv_has_cpuhotplug_cpu_option(argv);
-    if numbered_script && cpuhotplug_numbered_script_should_fast_exit(argv) {
+    if path_is_cpuhotplug_numbered_script(abs_path)
+        && !argv_has_cpuhotplug_cpu_option(argv)
+        && cpuhotplug_numbered_script_should_fast_exit(argv)
+    {
         task::exit_current(0);
     }
 }
