@@ -122,6 +122,11 @@ impl MultiClassScheduler {
         }
     }
 
+    pub(super) fn debug_other_ready_ids(&self) -> alloc::vec::Vec<TaskId> {
+        self.other_ready
+            .debug_live_ids()
+    }
+
     fn clear_rr_if_yielding(&mut self, current_id : TaskId) {
         if let Some(snap) = self.registry
                                 .task_snapshot(current_id)

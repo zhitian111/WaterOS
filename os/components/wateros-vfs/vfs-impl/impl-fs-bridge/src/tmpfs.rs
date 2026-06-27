@@ -33,6 +33,8 @@ pub(crate) struct TmpFs {
     next_inode: u64,
     mounted: bool,
     cgroup_v2: Option<bool>,
+    /// v1 `mount -t cgroup -o cpuset` 的控制器列表（逗号分隔）。
+    cgroup_v1_options: Option<String>,
 }
 
 impl TmpFs {
@@ -46,14 +48,34 @@ impl TmpFs {
             next_inode: 2,
             mounted: true,
             cgroup_v2: None,
+            cgroup_v1_options: None,
         }
     }
 
-    pub(crate) fn new_cgroup(v2: bool) -> FsResult<Self> {
+    pub(crate) fn new_cgroup(v2: bool, options: &str) -> FsResult<Self> {
         let mut fs = Self::new();
         fs.cgroup_v2 = Some(v2);
+        if !v2 && !options.is_empty() {
+            fs.cgroup_v1_options = Some(String::from(options));
+        }
         fs.seed_cgroup_controls("/")?;
         Ok(fs)
+    }
+
+    fn v1_has_controller(&self, name: &str) -> bool {
+        self.cgroup_v1_options.as_ref().is_some_and(|opts| {
+            opts.split(',')
+                .any(|ctrl| ctrl.trim() == name)
+        })
+    }
+
+    fn write_control_file(&mut self, dir_path: &str, name: &str, data: &[u8]) -> FsResult<()> {
+        let path = if dir_path == "/" || dir_path.is_empty() {
+            alloc::format!("/{name}")
+        } else {
+            alloc::format!("{}/{}", dir_path.trim_end_matches('/'), name)
+        };
+        self.write_regular_file(path.as_str(), data)
     }
 
     fn alloc_inode(&mut self) -> u64 {
@@ -148,6 +170,32 @@ impl TmpFs {
         Ok(())
     }
 
+    fn cgroup_v1_base_files() -> &'static [(&'static str, &'static [u8])] {
+        &[("tasks", b""), ("notify_on_release", b"0\n")]
+    }
+
+    fn cgroup_v1_cpuset_root_files() -> &'static [(&'static str, &'static [u8])] {
+        &[
+            ("cgroup.clone_children", b"0\n"),
+            ("cpuset.sched_load_balance", b"1\n"),
+            ("cpuset.cpu_exclusive", b"0\n"),
+            ("cpuset.mem_exclusive", b"0\n"),
+            ("cpuset.mem_hardwall", b"0\n"),
+            ("cpuset.memory_migrate", b"0\n"),
+            ("cpuset.memory_spread_page", b"0\n"),
+            ("cpuset.memory_spread_slab", b"0\n"),
+            ("cpuset.memory_pressure_enabled", b"0\n"),
+        ]
+    }
+
+    fn cgroup_v1_cpuset_child_files() -> &'static [(&'static str, &'static [u8])] {
+        &[
+            ("cgroup.clone_children", b"0\n"),
+            ("cpuset.cpus", b""),
+            ("cpuset.mems", b""),
+        ]
+    }
+
     fn cgroup_control_files(v2: bool) -> &'static [(&'static str, &'static [u8])] {
         if v2 {
             &[("cgroup.procs", b""),
@@ -155,27 +203,72 @@ impl TmpFs {
               ("cgroup.controllers", b"memory cpu cpuset io pids freezer\n"),
               ("cgroup.type", b"domain\n")]
         } else {
-            &[("tasks", b""), ("cgroup.procs", b""), ("notify_on_release", b"0\n")]
+            Self::cgroup_v1_base_files()
         }
+    }
+
+    fn seed_v1_cgroup_controls(&mut self, dir_path: &str) -> FsResult<()> {
+        for (name, data) in Self::cgroup_v1_base_files() {
+            self.write_control_file(dir_path, name, data)?;
+        }
+        if !self.v1_has_controller("cpuset") {
+            return Ok(());
+        }
+        let parts = Self::split_path(if dir_path == "/" { "" } else { dir_path })?;
+        let cpuset_files = if parts.is_empty() {
+            Self::cgroup_v1_cpuset_root_files()
+        } else {
+            Self::cgroup_v1_cpuset_child_files()
+        };
+        for (name, data) in cpuset_files {
+            self.write_control_file(dir_path, name, data)?;
+        }
+        Ok(())
     }
 
     fn seed_cgroup_controls(&mut self, dir_path: &str) -> FsResult<()> {
         let Some(v2) = self.cgroup_v2 else {
             return Ok(());
         };
-        for (name, data) in Self::cgroup_control_files(v2) {
-            let path = if dir_path == "/" {
-                alloc::format!("/{name}")
-            } else {
-                alloc::format!("{}/{}", dir_path.trim_end_matches('/'), name)
-            };
-            self.write_regular_file(path.as_str(), data)?;
+        if v2 {
+            for (name, data) in Self::cgroup_control_files(true) {
+                self.write_control_file(dir_path, name, data)?;
+            }
+        } else {
+            self.seed_v1_cgroup_controls(dir_path)?;
         }
         Ok(())
     }
 
+    fn reject_cpuset_tasks_write_if_needed(&self, _path: &str, _data: &[u8]) -> FsResult<()> {
+        // 放行 cgroup cpuset 的 tasks 写入（不再因 cpus/mems 未配置而拒绝 attach）。
+        //
+        // 语义上，real Linux 在子 cpuset 未配置 cpus/mems 时拒绝 attach（write 返回
+        // ENOSPC）。但本系统的 /bin/sh 是 busybox ash，其内建 echo 在“重定向输出 write
+        // 返回任何错误”时会直接 `exit 2` 终止整个脚本（dash/bash 不会）。LTP 的
+        // cpuset attach 用例里此前会先 `cat /dev/zero > /dev/null &` 起后台进程，再
+        // `echo $pid > tasks`；一旦该 write 失败导致 ash 退出，就到不了后续的
+        // `/bin/kill $pid`，后台 cat 变成永不回收的孤儿，占满单核令 runltp 卡死。
+        //
+        // 因此这里放行写入，避免 LTP 全量卡死；代价是 cpuset attach 的“应失败”用例
+        // 会 TFAIL，这是 busybox ash 作为 /bin/sh 的固有限制，无法在内核侧两全。
+        Ok(())
+    }
+
     fn is_cgroup_control_name(v2: Option<bool>, name: &str) -> bool {
-        v2.is_some_and(|v2| Self::cgroup_control_files(v2).iter().any(|(n, _)| *n == name))
+        match v2 {
+            Some(true) => Self::cgroup_control_files(true)
+                .iter()
+                .any(|(n, _)| *n == name),
+            Some(false) => {
+                Self::cgroup_v1_base_files()
+                    .iter()
+                    .chain(Self::cgroup_v1_cpuset_root_files().iter())
+                    .chain(Self::cgroup_v1_cpuset_child_files().iter())
+                    .any(|(n, _)| *n == name)
+            }
+            None => false,
+        }
     }
 }
 
@@ -194,6 +287,7 @@ impl ReadWriteFs for TmpFs {
     }
 
     fn write_regular_file(&mut self, path: &str, data: &[u8]) -> FsResult<()> {
+        self.reject_cpuset_tasks_write_if_needed(path, data)?;
         let parts = Self::split_path(path)?;
         if parts.is_empty() {
             return Err(FsError::InvalidPath);
@@ -256,6 +350,7 @@ impl ReadWriteFs for TmpFs {
         if data.is_empty() {
             return Ok(0);
         }
+        self.reject_cpuset_tasks_write_if_needed(path, data)?;
         let parts = Self::split_path(path)?;
         let node = Self::dir_mut(&mut self.root, &parts)?;
         let TmpNode::File { data: buf, .. } = node else {
