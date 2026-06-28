@@ -61,8 +61,6 @@ const LTP_STANDALONE_SKIP_BASENAMES: &[&str] = &[
     "waitid07",
     "waitid08",
     // 日志：0 TPASS + 高 TFAIL / ENOSYS，短期不投入（见 ltp_log/TFAIL_ANALYSIS.md）
-    "cgroup_core01",
-    "cgroup_core02",
     "cgroup_fj_function.sh",
     "cp_tests.sh",
     "ftest01",

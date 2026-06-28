@@ -22,8 +22,8 @@ const BRINGUP_COMMANDS : &[BringupCommand] = &[BringupCommand { program : "/musl
 
 #[cfg(all(not(feature = "bringup-ltp-glibc-only"),
           not(feature = "bringup-ltp-musl-only")))]
-// 目标 wall ~30–40 min（timeout 上限 ~55 min）；LTP 放最后保证赛题脚本先跑完。
-// iozone 180 | libcbench 180 | lmbench 300 | unixbench 300 | ltp 480
+// 目标 wall ~35–45 min（timeout 上限 ~60 min）；LTP 放最后保证赛题脚本先跑完。
+// iozone 180 | libcbench 180 | lmbench 360 | unixbench 360 | ltp 480
 const BRINGUP_COMMANDS : &[BringupCommand] = &[BringupCommand { program : "/glibc/busybox",
                        argv : &["sh",
                                 "/glibc/basic_testcode.sh"] }, // done
@@ -85,22 +85,22 @@ const BRINGUP_COMMANDS : &[BringupCommand] = &[BringupCommand { program : "/glib
                                 "/musl/libcbench_testcode.sh"] },
       BringupCommand { program : "/glibc/busybox",
                        argv : &["timeout",
-                                "300",
+                                "360",
                                 "sh",
                                 "/glibc/lmbench_testcode.sh"] },
       BringupCommand { program : "/musl/busybox",
                        argv : &["timeout",
-                                "300",
+                                "360",
                                 "sh",
                                 "/musl/lmbench_testcode.sh"] },
       BringupCommand { program : "/glibc/busybox",
                        argv : &["timeout",
-                                "300",
+                                "360",
                                 "sh",
                                 "/glibc/unixbench_testcode.sh"] },
       BringupCommand { program : "/musl/busybox",
                        argv : &["timeout",
-                                "300",
+                                "360",
                                 "sh",
                                 "/musl/unixbench_testcode.sh"] },
     BringupCommand { program : "/glibc/busybox",
