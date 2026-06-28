@@ -9,6 +9,7 @@ __pycache__/
 *.py[cod]
 *.pyc
 *.log
+*log/
 *log.txt
 cache*
 **/Cargo.lock

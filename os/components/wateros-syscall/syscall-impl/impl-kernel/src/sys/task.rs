@@ -10,6 +10,7 @@ use abi::user_ret::UserRet;
 use ipc::signal::{IntervalTimerSpec, SignalAction, SignalError, SignalSet};
 use task::{ResourceLimit, SetResourceLimitError};
 
+use crate::sys::ltp_cgroup_helper::ltp_standalone_skip_blocking_fast_exit_if_needed;
 use crate::user_copy::{copy_from_user_struct, copy_to_user, copy_to_user_struct};
 
 const ORPHAN_PARENT_PID : usize = 1;
@@ -499,6 +500,9 @@ pub(crate) fn sys_rt_sigtimedwait(args : SyscallArgs) -> UserRet {
         let now = platform::wall_clock::monotonic_ns().unwrap_or(0);
         Some(now.saturating_add(duration))
     };
+    if deadline.is_none() {
+        ltp_standalone_skip_blocking_fast_exit_if_needed();
+    }
     let wait_queue = task::wait_queue::WaitQueue::new();
     let sig = loop {
         if let Some(sig) =

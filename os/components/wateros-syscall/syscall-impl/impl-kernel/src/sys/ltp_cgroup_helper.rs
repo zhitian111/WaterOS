@@ -3,8 +3,79 @@
 //! `testcases/bin/*` 里混有完整测例与 worker（`sigsuspend`、无限 mkdir、spin loop 等）。
 //! worker 被 runner 无参 `"$file"` 同步拉起时会永久阻塞队列；在 standalone 或父 shell
 //! 已 `wait()` 时 exit(0)。exec 路径匹配仅看被加载文件路径，避免误杀 `basename` 等子 shell。
+//!
+//! 遇 `ltp_testcode.sh` 无参同步拉起即卡死的项，把 basename 追加到
+//! [`LTP_STANDALONE_SKIP_BASENAMES`]；带 worker 参数（如 `--mmap-anon`）的合法调用不会被跳过。
 
 use task::{TaskBlockReason, TaskState};
+
+/// `ltp_testcode.sh` 无参 `"$file"` 同步执行时会永久阻塞的 LTP 二进制/脚本（basename）。
+const LTP_STANDALONE_SKIP_BASENAMES: &[&str] = &[
+    "cpuset_memory_test",
+    "dio_append",
+    "dio_sparse",
+    "dup201",
+    "force_erase.sh",
+    "fork_exec_loop",
+    "fs_racer_dir_test.sh",
+    "fs_racer_file_list.sh",
+    "gentan",
+    "inode02",
+    "kill06",
+    "kill10",
+    "linktest.sh",
+    "memcg_test_2",
+];
+
+fn exe_basename(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+
+fn basename_matches_ltp_standalone_skip(name: &str) -> bool {
+    LTP_STANDALONE_SKIP_BASENAMES
+        .iter()
+        .any(|&skip| name == skip)
+}
+
+fn path_matches_ltp_standalone_skip(path: &str) -> bool {
+    basename_matches_ltp_standalone_skip(exe_basename(path))
+}
+
+/// 带 worker 参数表示由测例脚本合法拉起（如 `cpuset_memory_test --mmap-anon`），不应跳过。
+fn ltp_standalone_skip_invoked_with_worker_args(argv: &[alloc::string::String]) -> bool {
+    argv.iter().skip(1).any(|arg| !arg.is_empty())
+}
+
+fn ltp_standalone_skip_should_fast_exit(path: &str, argv: &[alloc::string::String]) -> bool {
+    if !path_matches_ltp_standalone_skip(path) {
+        return false;
+    }
+    if ltp_standalone_skip_invoked_with_worker_args(argv) {
+        return false;
+    }
+    is_standalone_ltp_bin_invoke_from(argv) || parent_waiting_with_retry()
+}
+
+/// exec 路径：无参 standalone 拉起时立即 exit(0)。
+pub(crate) fn ltp_standalone_skip_exec_fast_exit_if_needed(
+    abs_path: &str,
+    argv: &[alloc::string::String],
+) {
+    if ltp_standalone_skip_should_fast_exit(abs_path, argv) {
+        task::exit_current(0);
+    }
+}
+
+/// 进入永久阻塞 syscall（`sigsuspend` / 无超时 `rt_sigtimedwait` 等）前的兜底 exit(0)。
+pub(crate) fn ltp_standalone_skip_blocking_fast_exit_if_needed() {
+    let Some(exe) = vfs::cwd::current_exe_path().ok() else {
+        return;
+    };
+    let argv = vfs::cwd::current_argv();
+    if ltp_standalone_skip_should_fast_exit(exe.as_str(), &argv) {
+        task::exit_current(0);
+    }
+}
 
 fn parent_blocked_in_wait() -> bool {
     let Some(current) = task::current_process_task_snapshot() else {

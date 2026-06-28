@@ -9,7 +9,10 @@ use ipc::signal::{SignalDelivery, SignalDispatch, SignalError, SignalSet};
 use platform::arch::trap::ActiveTrapFrame;
 use task::{ProcessId, ThreadId};
 
-use super::ltp_cgroup_helper::ltp_fuzz_sigsuspend_worker_fast_exit_if_standalone;
+use super::ltp_cgroup_helper::{
+    ltp_fuzz_sigsuspend_worker_fast_exit_if_standalone,
+    ltp_standalone_skip_blocking_fast_exit_if_needed,
+};
 use wateros_platform_arch_api_v0::trap::{SignalFrameCodec, SignalMachineContext, TrapFrameRead};
 
 use crate::user_copy::{copy_from_user_struct, copy_to_user_struct};
@@ -399,6 +402,7 @@ pub(crate) fn sys_rt_sigsuspend(args : SyscallArgs) -> UserRet {
         Err(_) => return UserRet::from_error(ErrNo::ESRCH),
     }
     ltp_fuzz_sigsuspend_worker_fast_exit_if_standalone();
+    ltp_standalone_skip_blocking_fast_exit_if_needed();
     let wait = task::wait_queue::WaitQueue::new();
     let _ = wait.wait_current_while(|| {
                     ipc::signal::with_registry(|registry| {

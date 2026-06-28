@@ -21,10 +21,12 @@ const SCRIPT_PATHS : &[&str] = &[// "/glibc/basic_testcode.sh",      // done
                                  //                              "/musl/lmbench_testcode.sh",    // done
                                  //                              "/glibc/unixbench_testcode.sh", // done
                                  //                              "/musl/unixbench_testcode.sh",  // done
-                                 //"/glibc/libcbench_testcode.sh", // done
-                                 //"/musl/libcbench_testcode.sh",  // done
+                                 //                              "/glibc/libcbench_testcode.sh", // done
+                                 //                              "/musl/libcbench_testcode.sh",  // done
                                  "/glibc/ltp_testcode.sh",
-                                 "/musl/ltp_testcode.sh"];
+                                 // musl 须在 glibc 打出 END 后再跑；同轮 bringup 会在 glibc sh 退出后立即启动 musl。
+                                 // "/musl/ltp_testcode.sh",
+                                ];
 
 const LOG_TAG : &str = "busybox-bringup";
 
