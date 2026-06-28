@@ -55,6 +55,7 @@ mod umount2;
 mod unlinkat;
 mod utimensat;
 mod write;
+mod xattr;
 
 // socket / 网络
 mod accept;
@@ -145,6 +146,10 @@ pub(crate) use task::{
 pub(crate) use umount2::sys_umount2;
 pub(crate) use unlinkat::sys_unlinkat;
 pub(crate) use utimensat::sys_utimensat;
+pub(crate) use xattr::{
+    sys_fgetxattr, sys_flistxattr, sys_fremovexattr, sys_fsetxattr, sys_getxattr, sys_listxattr,
+    sys_lgetxattr, sys_llistxattr, sys_lremovexattr, sys_lsetxattr, sys_removexattr, sys_setxattr,
+};
 pub(crate) use write::{sys_write, sys_writev};
 
 // socket / 网络

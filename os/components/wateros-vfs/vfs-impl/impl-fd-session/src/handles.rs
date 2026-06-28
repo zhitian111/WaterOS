@@ -28,6 +28,8 @@ fn special_dev_meta(mode: u16, inode: u64, device_major: u32, device_minor: u32)
         inode,
         mount_id: 0,
         nlink: 1,
+        uid: 0,
+        gid: 0,
     }
 }
 

@@ -84,9 +84,18 @@ const STATX_NLINK: u32 = 0x0004;
 const STATX_INO: u32 = 0x0100;
 const STATX_SIZE: u32 = 0x0200;
 const STATX_BLOCKS: u32 = 0x0400;
+const STATX_UID: u32 = 0x0008;
+const STATX_GID: u32 = 0x0010;
 const STATX_MNT_ID: u32 = 0x1000;
-const STATX_SUPPORTED: u32 =
-    STATX_TYPE | STATX_MODE | STATX_NLINK | STATX_INO | STATX_SIZE | STATX_BLOCKS | STATX_MNT_ID;
+const STATX_SUPPORTED: u32 = STATX_TYPE
+    | STATX_MODE
+    | STATX_NLINK
+    | STATX_UID
+    | STATX_GID
+    | STATX_INO
+    | STATX_SIZE
+    | STATX_BLOCKS
+    | STATX_MNT_ID;
 
 fn linux_mode(meta: &VfsMetadata) -> u32 {
     let raw = u32::from(meta.mode);
@@ -118,10 +127,8 @@ pub(crate) fn fill_linux_stat(meta: &VfsMetadata, size: u64) -> LinuxStat {
         st_ino: meta.inode,
         st_mode: mode,
         st_nlink: meta.nlink,
-        // TODO(cred-vfs): st_uid/st_gid 当前硬编码 0；后续从 VfsMetadata 读 ext4 inode owner，
-        // 并结合 cred.fs_uid/fs_gid 决定 stat 返回值。
-        st_uid: 0,
-        st_gid: 0,
+        st_uid: meta.uid,
+        st_gid: meta.gid,
         st_rdev: linux_dev(meta.device_major, meta.device_minor),
         __pad1: 0,
         st_size: size as i64,
@@ -144,6 +151,8 @@ pub(crate) fn fill_linux_statx(meta: &VfsMetadata, size: u64, _requested_mask: u
         stx_mask: STATX_SUPPORTED,
         stx_blksize: 4096,
         stx_nlink: meta.nlink,
+        stx_uid: meta.uid,
+        stx_gid: meta.gid,
         stx_mode: mode as u16,
         stx_ino: meta.inode,
         stx_size: size,
@@ -178,11 +187,15 @@ mod tests {
             inode: 42,
             mount_id: 7,
             nlink: 3,
+            uid: 1000,
+            gid: 1001,
         };
         let stat = fill_linux_stat(&meta, meta.size);
         assert_eq!(stat.st_dev, linux_dev(8, 2));
         assert_eq!(stat.st_ino, 42);
         assert_eq!(stat.st_nlink, 3);
+        assert_eq!(stat.st_uid, 1000);
+        assert_eq!(stat.st_gid, 1001);
 
         let statx = fill_linux_statx(&meta, meta.size, u32::MAX);
         assert_eq!(statx.stx_ino, 42);

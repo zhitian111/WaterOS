@@ -155,11 +155,13 @@ impl ProcessCredentials {
     }
 }
 
-/// 占位 capability 枚举；impl-root 当前恒返回 true。
+/// Linux capability 子集；与 `capget(2)` 返回的 effective/permitted 位对齐。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Capability {
-    /// 占位项，后续按 Linux cap 编号扩展。
-    Placeholder,
+    /// `CAP_CHOWN`：任意修改文件 uid/gid。
+    Chown,
+    /// `CAP_SYS_ADMIN`：trusted/security xattr 等管理操作。
+    SysAdmin,
 }
 
 /// per-task 凭证生命周期后端。
@@ -217,5 +219,16 @@ pub trait AccessCheck {
         inode_gid: Gid,
         mode: u32,
         access_mask: u32,
+    ) -> bool;
+
+    /// 是否允许 `chown(2)` / `fchownat(2)` 将 inode 属主/属组改为 `new_uid`/`new_gid`。
+    /// `None` 表示对应字段不修改（Linux `-1`）。
+    fn may_chown(
+        &self,
+        cred: &ProcessCredentials,
+        inode_uid: Uid,
+        inode_gid: Gid,
+        new_uid: Option<u32>,
+        new_gid: Option<u32>,
     ) -> bool;
 }

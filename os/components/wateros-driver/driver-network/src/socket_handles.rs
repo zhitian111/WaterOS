@@ -28,6 +28,8 @@ fn socket_meta(inode: u64) -> VfsMetadata {
         inode,
         mount_id: 0,
         nlink: 1,
+        uid: 0,
+        gid: 0,
     }
 }
 

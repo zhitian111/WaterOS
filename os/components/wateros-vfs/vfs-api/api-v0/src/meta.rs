@@ -26,6 +26,10 @@ pub struct VfsMetadata {
     pub mount_id: u64,
     /// 指向该 inode 的硬链接数量。
     pub nlink: u32,
+    /// 属主 uid（Linux `st_uid`）。
+    pub uid: u32,
+    /// 属组 gid（Linux `st_gid`）。
+    pub gid: u32,
 }
 
 /// 目录枚举单条结果。

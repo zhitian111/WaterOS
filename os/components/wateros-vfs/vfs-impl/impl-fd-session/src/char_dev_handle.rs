@@ -36,6 +36,8 @@ fn char_metadata(mode: u16, inode: u64) -> VfsMetadata {
         inode,
         mount_id: 0,
         nlink: 1,
+        uid: 0,
+        gid: 0,
     }
 }
 

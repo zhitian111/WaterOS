@@ -151,6 +151,10 @@ impl VfsIoHandle for BufferedFileHandle {
         Ok(m)
     }
 
+    fn backing_path(&self) -> Option<&str> {
+        Some(self.path.as_str())
+    }
+
     fn read_at(&mut self, offset : u64, buf : &mut [u8]) -> VfsResult<usize> {
         if buf.is_empty() {
             return Ok(0);

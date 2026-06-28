@@ -398,6 +398,8 @@ impl ProcFsView for KernelProcFs {
                 mode: 0o555,
                 inode: proc_inode(node),
                 nlink: 1,
+                uid: 0,
+                gid: 0,
             }),
             ProcNode::Meminfo
             | ProcNode::Cpuinfo
@@ -410,6 +412,8 @@ impl ProcFsView for KernelProcFs {
                 mode: 0o444,
                 inode: proc_inode(node),
                 nlink: 1,
+                uid: 0,
+                gid: 0,
             }),
             ProcNode::PidStat(pid)
             | ProcNode::PidStatus(pid)
@@ -425,6 +429,8 @@ impl ProcFsView for KernelProcFs {
                     mode: 0o444,
                     inode: proc_inode(node),
                     nlink: 1,
+                    uid: 0,
+                    gid: 0,
                 })
             }
         }

@@ -15,16 +15,25 @@ enum TmpNode {
         data: Vec<u8>,
         mode: u16,
         inode: u64,
+        uid: u32,
+        gid: u32,
+        xattrs: BTreeMap<String, Vec<u8>>,
     },
     Dir {
         children: BTreeMap<String, TmpNode>,
         mode: u16,
         inode: u64,
+        uid: u32,
+        gid: u32,
+        xattrs: BTreeMap<String, Vec<u8>>,
     },
     Symlink {
         target: Vec<u8>,
         mode: u16,
         inode: u64,
+        uid: u32,
+        gid: u32,
+        xattrs: BTreeMap<String, Vec<u8>>,
     },
 }
 
@@ -44,6 +53,9 @@ impl TmpFs {
                 children: BTreeMap::new(),
                 mode: 0o40755,
                 inode: 1,
+                uid: 0,
+                gid: 0,
+                xattrs: BTreeMap::new(),
             },
             next_inode: 2,
             mounted: true,
@@ -132,28 +144,94 @@ impl TmpFs {
 
     fn meta_of(node: &TmpNode) -> FsMetadata {
         match node {
-            TmpNode::File { data, mode, inode } => FsMetadata {
+            TmpNode::File {
+                data,
+                mode,
+                inode,
+                uid,
+                gid,
+                ..
+            } => FsMetadata {
                 node_type: FsNodeType::File,
                 size: data.len() as u64,
                 mode: *mode,
                 inode: *inode,
                 nlink: 1,
+                uid: *uid,
+                gid: *gid,
             },
-            TmpNode::Dir { mode, inode, .. } => FsMetadata {
+            TmpNode::Dir {
+                mode,
+                inode,
+                uid,
+                gid,
+                ..
+            } => FsMetadata {
                 node_type: FsNodeType::Directory,
                 size: 0,
                 mode: *mode,
                 inode: *inode,
                 nlink: 2,
+                uid: *uid,
+                gid: *gid,
             },
-            TmpNode::Symlink { target, mode, inode } => FsMetadata {
+            TmpNode::Symlink {
+                target,
+                mode,
+                inode,
+                uid,
+                gid,
+                ..
+            } => FsMetadata {
                 node_type: FsNodeType::Symlink,
                 size: target.len() as u64,
                 mode: *mode,
                 inode: *inode,
                 nlink: 1,
+                uid: *uid,
+                gid: *gid,
             },
         }
+    }
+
+    fn chown_node(node: &mut TmpNode, uid: Option<u32>, gid: Option<u32>) {
+        match node {
+            TmpNode::File { uid: u, gid: g, .. }
+            | TmpNode::Dir { uid: u, gid: g, .. }
+            | TmpNode::Symlink { uid: u, gid: g, .. } => {
+                if let Some(uid) = uid {
+                    *u = uid;
+                }
+                if let Some(gid) = gid {
+                    *g = gid;
+                }
+            }
+        }
+    }
+
+    fn xattrs_mut(node: &mut TmpNode) -> &mut BTreeMap<String, Vec<u8>> {
+        match node {
+            TmpNode::File { xattrs, .. }
+            | TmpNode::Dir { xattrs, .. }
+            | TmpNode::Symlink { xattrs, .. } => xattrs,
+        }
+    }
+
+    fn xattrs(node: &TmpNode) -> &BTreeMap<String, Vec<u8>> {
+        match node {
+            TmpNode::File { xattrs, .. }
+            | TmpNode::Dir { xattrs, .. }
+            | TmpNode::Symlink { xattrs, .. } => xattrs,
+        }
+    }
+
+    fn copy_xattr_list(names: &[String]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for name in names {
+            out.extend_from_slice(name.as_bytes());
+            out.push(0);
+        }
+        out
     }
 
     fn remove_leaf(root: &mut TmpNode, parts: &[&str]) -> FsResult<TmpNode> {
@@ -297,6 +375,9 @@ impl ReadWriteFs for TmpFs {
             data: data.to_vec(),
             mode: 0o100644,
             inode,
+            uid: 0,
+            gid: 0,
+            xattrs: BTreeMap::new(),
         };
         let _ = Self::remove_leaf(&mut self.root, &parts);
         Self::insert_leaf(&mut self.root, &parts, node)
@@ -323,6 +404,9 @@ impl ReadWriteFs for TmpFs {
             target: target.as_bytes().to_vec(),
             mode: 0o120777,
             inode,
+            uid: 0,
+            gid: 0,
+            xattrs: BTreeMap::new(),
         };
         Self::insert_leaf(&mut self.root, &parts, node)
     }
@@ -388,6 +472,9 @@ impl ReadWriteFs for TmpFs {
             children: BTreeMap::new(),
             mode: (mode as u16) | 0o040000,
             inode,
+            uid: 0,
+            gid: 0,
+            xattrs: BTreeMap::new(),
         };
         Self::insert_leaf(&mut self.root, &parts, node)?;
         self.seed_cgroup_controls(path)
@@ -411,7 +498,69 @@ impl ReadWriteFs for TmpFs {
     }
 
     fn chown(&mut self, path: &str, uid: Option<u32>, gid: Option<u32>) -> FsResult<()> {
-        let _ = (path, uid, gid);
+        if uid.is_none() && gid.is_none() {
+            return self.metadata(path).map(|_| ());
+        }
+        let parts = Self::split_path(path)?;
+        let node = Self::dir_mut(&mut self.root, &parts)?;
+        Self::chown_node(node, uid, gid);
+        Ok(())
+    }
+
+    fn setxattr(&mut self, path: &str, name: &str, value: &[u8]) -> FsResult<()> {
+        if name.is_empty() || name.contains('\0') {
+            return Err(FsError::InvalidPath);
+        }
+        let parts = Self::split_path(path)?;
+        let node = Self::dir_mut(&mut self.root, &parts)?;
+        Self::xattrs_mut(node).insert(String::from(name), value.to_vec());
+        Ok(())
+    }
+
+    fn getxattr(&self, path: &str, name: &str, buf: &mut [u8]) -> FsResult<usize> {
+        if name.is_empty() || name.contains('\0') {
+            return Err(FsError::InvalidPath);
+        }
+        let parts = Self::split_path(path)?;
+        let node = Self::dir_ref(&self.root, &parts)?;
+        let value = Self::xattrs(node)
+            .get(name)
+            .ok_or(FsError::NotFound)?;
+        if buf.is_empty() {
+            return Ok(value.len());
+        }
+        if buf.len() < value.len() {
+            return Err(FsError::Io);
+        }
+        buf[..value.len()].copy_from_slice(value);
+        Ok(value.len())
+    }
+
+    fn listxattr(&self, path: &str, buf: &mut [u8]) -> FsResult<usize> {
+        let parts = Self::split_path(path)?;
+        let node = Self::dir_ref(&self.root, &parts)?;
+        let mut names: alloc::vec::Vec<String> = Self::xattrs(node).keys().cloned().collect();
+        names.sort();
+        let listing = Self::copy_xattr_list(names.as_slice());
+        if buf.is_empty() {
+            return Ok(listing.len());
+        }
+        if buf.len() < listing.len() {
+            return Err(FsError::Io);
+        }
+        buf[..listing.len()].copy_from_slice(listing.as_slice());
+        Ok(listing.len())
+    }
+
+    fn removexattr(&mut self, path: &str, name: &str) -> FsResult<()> {
+        if name.is_empty() || name.contains('\0') {
+            return Err(FsError::InvalidPath);
+        }
+        let parts = Self::split_path(path)?;
+        let node = Self::dir_mut(&mut self.root, &parts)?;
+        if Self::xattrs_mut(node).remove(name).is_none() {
+            return Err(FsError::NotFound);
+        }
         Ok(())
     }
 

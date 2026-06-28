@@ -88,6 +88,8 @@ impl ErrNo {
     pub const ELOOP: Self = Self(40);
     /// 结果缓冲区过小（如 `getcwd`）。
     pub const ERANGE: Self = Self(34);
+    /// 请求的属性不存在（`getxattr`/`removexattr`）。
+    pub const ENODATA: Self = Self(61);
     /// 非法 seek。
     pub const ESPIPE: Self = Self(29);
     /// 只读文件系统。

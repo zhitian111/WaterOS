@@ -583,6 +583,8 @@ impl VfsIoHandle for UnixSocketHandle {
             nlink: 1,
             device_major: 0,
             device_minor: 0,
+            uid: 0,
+            gid: 0,
         })
     }
 

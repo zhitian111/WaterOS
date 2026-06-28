@@ -141,3 +141,15 @@ pub fn may_access_inode(
 ) -> bool {
     active_impl::may_access_inode(cred, inode_uid, inode_gid, mode, access_mask)
 }
+
+#[cfg(feature = "impl-root")]
+/// 查询 `chown(2)` / `fchownat(2)` 权限。
+pub fn may_chown(
+    cred: &ProcessCredentials,
+    inode_uid: Uid,
+    inode_gid: Gid,
+    new_uid: Option<u32>,
+    new_gid: Option<u32>,
+) -> bool {
+    active_impl::may_chown(cred, inode_uid, inode_gid, new_uid, new_gid)
+}

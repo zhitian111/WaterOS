@@ -149,8 +149,12 @@ impl CredentialBackend for PerTaskCredRegistry {
 }
 
 impl AccessCheck for PerTaskCredRegistry {
-    fn has_cap(&self, _cred: &ProcessCredentials, _cap: Capability) -> bool {
-        true
+    fn has_cap(&self, cred: &ProcessCredentials, cap: Capability) -> bool {
+        if cred.effective_uid.0 == 0 {
+            return true;
+        }
+        let _ = cap;
+        false
     }
 
     fn may_access_inode(
@@ -161,6 +165,38 @@ impl AccessCheck for PerTaskCredRegistry {
         _mode: u32,
         _access_mask: u32,
     ) -> bool {
+        true
+    }
+
+    fn may_chown(
+        &self,
+        cred: &ProcessCredentials,
+        inode_uid: Uid,
+        _inode_gid: Gid,
+        new_uid: Option<u32>,
+        new_gid: Option<u32>,
+    ) -> bool {
+        if cred.effective_uid.0 == 0 || self.has_cap(cred, Capability::Chown) {
+            return true;
+        }
+        if cred.fs_uid != inode_uid {
+            return false;
+        }
+        if let Some(uid) = new_uid {
+            if uid != inode_uid.0 {
+                return false;
+            }
+        }
+        if let Some(gid) = new_gid {
+            if gid == cred.effective_gid.0 {
+                return true;
+            }
+            return cred
+                .supplementary_groups
+                .iter()
+                .take(cred.supplementary_group_len)
+                .any(|g| g.0 == gid);
+        }
         true
     }
 }
@@ -244,4 +280,16 @@ pub fn may_access_inode(
     registry()
         .exclusive_access()
         .may_access_inode(cred, inode_uid, inode_gid, mode, access_mask)
+}
+
+pub fn may_chown(
+    cred: &ProcessCredentials,
+    inode_uid: Uid,
+    inode_gid: Gid,
+    new_uid: Option<u32>,
+    new_gid: Option<u32>,
+) -> bool {
+    registry()
+        .exclusive_access()
+        .may_chown(cred, inode_uid, inode_gid, new_uid, new_gid)
 }

@@ -90,7 +90,9 @@ fn map_meta(m : FsMetadata, identity : MountIdentity) -> VfsMetadata {
                   device_minor : identity.device_minor,
                   inode : m.inode,
                   mount_id : identity.mount_id,
-                  nlink : m.nlink }
+                  nlink : m.nlink,
+                  uid : m.uid,
+                  gid : m.gid }
 }
 
 fn overlay_cached_size(abs_path : &str, meta : &mut VfsMetadata) {
@@ -169,7 +171,9 @@ fn unixbench_virtual_metadata(abs : &str, identity : MountIdentity) -> Option<Vf
                        device_minor : identity.device_minor,
                        inode,
                        mount_id : identity.mount_id,
-                       nlink : 1 })
+                       nlink : 1,
+                       uid : 0,
+                       gid : 0 })
 }
 
 fn copy_virtual_range(data : &[u8], offset : u64, buf : &mut [u8]) -> usize {
@@ -530,6 +534,55 @@ pub fn chown_path(path : &str, uid : Option<u32>, gid : Option<u32>) -> VfsResul
     sess.chown(rel.as_str(), uid, gid)
 }
 
+fn xattr_route(path: &str) -> VfsResult<(SharedRwFs, String)> {
+    mount_table::assert_path_writable(path)?;
+    fs_and_rel_rw(path)
+}
+
+/// 设置路径扩展属性。
+pub fn setxattr_path(path: &str, name: &str, value: &[u8]) -> VfsResult<()> {
+    let normalized = normalize_absolute_path(path)?;
+    if char_dev_exists(normalized.as_str()) {
+        return Err(VfsError::Unsupported);
+    }
+    let (fs, rel) = xattr_route(path)?;
+    let mut sess = MountedRwSession::new(fs);
+    sess.setxattr(rel.as_str(), name, value)
+}
+
+/// 读取路径扩展属性。
+pub fn getxattr_path(path: &str, name: &str, buf: &mut [u8]) -> VfsResult<usize> {
+    let normalized = normalize_absolute_path(path)?;
+    if char_dev_exists(normalized.as_str()) {
+        return Err(VfsError::Unsupported);
+    }
+    let (fs, rel) = fs_and_rel_rw(path)?;
+    let sess = MountedRwSession::new(fs);
+    sess.getxattr(rel.as_str(), name, buf)
+}
+
+/// 列出路径扩展属性名。
+pub fn listxattr_path(path: &str, buf: &mut [u8]) -> VfsResult<usize> {
+    let normalized = normalize_absolute_path(path)?;
+    if char_dev_exists(normalized.as_str()) {
+        return Err(VfsError::Unsupported);
+    }
+    let (fs, rel) = fs_and_rel_rw(path)?;
+    let sess = MountedRwSession::new(fs);
+    sess.listxattr(rel.as_str(), buf)
+}
+
+/// 删除路径扩展属性。
+pub fn removexattr_path(path: &str, name: &str) -> VfsResult<()> {
+    let normalized = normalize_absolute_path(path)?;
+    if char_dev_exists(normalized.as_str()) {
+        return Err(VfsError::Unsupported);
+    }
+    let (fs, rel) = xattr_route(path)?;
+    let mut sess = MountedRwSession::new(fs);
+    sess.removexattr(rel.as_str(), name)
+}
+
 pub(crate) fn replace_file_contents(path : &str, data : &[u8]) -> VfsResult<()> {
     mount_table::assert_path_writable(path)?;
     let (fs, rel) = fs_and_rel_rw(path)?;
@@ -656,6 +709,38 @@ impl RootRwSession for MountedRwSession {
         self.inner
             .lock()
             .chown(n.as_str(), uid, gid)
+            .map_err(map_fs_err)
+    }
+
+    fn setxattr(&mut self, path : &str, name : &str, value : &[u8]) -> VfsResult<()> {
+        let n = normalize_absolute_path(path)?;
+        self.inner
+            .lock()
+            .setxattr(n.as_str(), name, value)
+            .map_err(map_fs_err)
+    }
+
+    fn getxattr(&self, path : &str, name : &str, buf : &mut [u8]) -> VfsResult<usize> {
+        let n = normalize_absolute_path(path)?;
+        self.inner
+            .lock()
+            .getxattr(n.as_str(), name, buf)
+            .map_err(map_fs_err)
+    }
+
+    fn listxattr(&self, path : &str, buf : &mut [u8]) -> VfsResult<usize> {
+        let n = normalize_absolute_path(path)?;
+        self.inner
+            .lock()
+            .listxattr(n.as_str(), buf)
+            .map_err(map_fs_err)
+    }
+
+    fn removexattr(&mut self, path : &str, name : &str) -> VfsResult<()> {
+        let n = normalize_absolute_path(path)?;
+        self.inner
+            .lock()
+            .removexattr(n.as_str(), name)
             .map_err(map_fs_err)
     }
 

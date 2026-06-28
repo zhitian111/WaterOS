@@ -259,12 +259,13 @@ fn map_metadata(meta: &Metadata, inode: u64) -> FsMetadata {
         FsNodeType::Special
     };
 
-    // TODO(cred-vfs): ext4 inode 含 uid/gid；后续填充 VfsMetadata owner 字段供 stat/权限检查。
     FsMetadata {
         node_type,
         size: meta.len(),
         mode: meta.mode(),
         inode,
         nlink: u32::from(meta.links_count),
+        uid: meta.uid(),
+        gid: meta.gid(),
     }
 }

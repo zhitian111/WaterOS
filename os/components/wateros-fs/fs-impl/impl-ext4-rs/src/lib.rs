@@ -193,7 +193,9 @@ fn metadata_for_inode(fs : &Ext4, inode : u32) -> FsResult<FsMetadata> {
                                     .mode(),
                     inode : inode_ref.inode_num as u64,
                     nlink : inode_ref.inode
-                                     .links_count() as u32 })
+                                     .links_count() as u32,
+                    uid : inode_ref.inode.uid() as u32,
+                    gid : inode_ref.inode.gid() as u32 })
 }
 
 fn walk_ext4_rs_tree(fs : &Ext4RsFs, path : &str) {

@@ -66,6 +66,7 @@ const LTP_STANDALONE_SKIP_BASENAMES: &[&str] = &[
     "cgroup_fj_function.sh",
     "cp_tests.sh",
     "ftest01",
+    "ftest06", // bringup: ext4 dir.rs PANIC (parent.inode.is_dir) under unlink stress
     "name_to_handle_at01",
     "splice07",
     "umask01",

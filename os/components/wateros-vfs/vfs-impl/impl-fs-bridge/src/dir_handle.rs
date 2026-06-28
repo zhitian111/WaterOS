@@ -106,6 +106,10 @@ impl VfsIoHandle for DirectoryHandle {
         Some(self.path.as_str())
     }
 
+    fn backing_path(&self) -> Option<&str> {
+        Some(self.path.as_str())
+    }
+
     fn read(&mut self, _buf: &mut [u8]) -> VfsResult<usize> {
         Err(VfsError::NotAFile)
     }

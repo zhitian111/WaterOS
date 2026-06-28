@@ -422,6 +422,81 @@ impl ReadWriteFs for Ext4FsRw {
         Ok(())
     }
 
+    fn setxattr(&mut self, path: &str, name: &str, value: &[u8]) -> FsResult<()> {
+        if name.is_empty() || name.contains('\0') {
+            return Err(FsError::InvalidPath);
+        }
+        let fs = self.fs()?;
+        let pathv = Path::try_from(path).map_err(|_| FsError::InvalidPath)?;
+        let mut inode = fs
+            .path_to_inode(pathv, FollowSymlinks::All)
+            .map_err(map_ext4_plus)?;
+        inode
+            .set_xattr(fs, name.as_bytes(), value)
+            .map_err(map_ext4_plus)?;
+        Ok(())
+    }
+
+    fn getxattr(&self, path: &str, name: &str, buf: &mut [u8]) -> FsResult<usize> {
+        if name.is_empty() || name.contains('\0') {
+            return Err(FsError::InvalidPath);
+        }
+        let fs = self.fs()?;
+        let pathv = Path::try_from(path).map_err(|_| FsError::InvalidPath)?;
+        let inode = fs
+            .path_to_inode(pathv, FollowSymlinks::All)
+            .map_err(map_ext4_plus)?;
+        let value = inode
+            .get_xattr(fs, name.as_bytes())
+            .map_err(map_ext4_plus)?
+            .ok_or(FsError::NotFound)?;
+        if buf.is_empty() {
+            return Ok(value.len());
+        }
+        if buf.len() < value.len() {
+            return Err(FsError::Io);
+        }
+        buf[..value.len()].copy_from_slice(value.as_slice());
+        Ok(value.len())
+    }
+
+    fn listxattr(&self, path: &str, buf: &mut [u8]) -> FsResult<usize> {
+        let fs = self.fs()?;
+        let pathv = Path::try_from(path).map_err(|_| FsError::InvalidPath)?;
+        let inode = fs
+            .path_to_inode(pathv, FollowSymlinks::All)
+            .map_err(map_ext4_plus)?;
+        let names = inode.list_xattrs(fs).map_err(map_ext4_plus)?;
+        let mut listing = Vec::new();
+        for name in names {
+            listing.extend_from_slice(name.as_slice());
+            listing.push(0);
+        }
+        if buf.is_empty() {
+            return Ok(listing.len());
+        }
+        if buf.len() < listing.len() {
+            return Err(FsError::Io);
+        }
+        buf[..listing.len()].copy_from_slice(listing.as_slice());
+        Ok(listing.len())
+    }
+
+    fn removexattr(&mut self, path: &str, name: &str) -> FsResult<()> {
+        if name.is_empty() || name.contains('\0') {
+            return Err(FsError::InvalidPath);
+        }
+        let fs = self.fs()?;
+        let pathv = Path::try_from(path).map_err(|_| FsError::InvalidPath)?;
+        let mut inode = fs
+            .path_to_inode(pathv, FollowSymlinks::All)
+            .map_err(map_ext4_plus)?;
+        inode
+            .remove_xattr(fs, name.as_bytes())
+            .map_err(map_ext4_plus)?;
+        Ok(())
+    }
+
     fn unlink(&mut self, path: &str) -> FsResult<()> {
         let (parent, name) = split_parent_and_name(path)?;
         let fs = self.fs()?;
@@ -664,6 +739,8 @@ fn map_rw_metadata(meta: &Metadata, inode: u64) -> FsMetadata {
         mode: meta.mode(),
         inode,
         nlink: u32::from(meta.links_count),
+        uid: meta.uid(),
+        gid: meta.gid(),
     }
 }
 

@@ -375,6 +375,10 @@ impl VfsIoHandle for PagedFileHandle {
         Ok(m)
     }
 
+    fn backing_path(&self) -> Option<&str> {
+        Some(self.path.as_str())
+    }
+
     fn seek(&mut self, offset : i64, whence : VfsSeekWhence) -> VfsResult<u64> {
         let size = self.current_size();
         let new_off = match whence {

@@ -82,6 +82,11 @@ pub trait VfsIoHandle {
         None
     }
 
+    /// 若本句柄对应路径型文件/目录，返回其绝对路径（供 `f*xattr` 等使用）。
+    fn backing_path(&self) -> Option<&str> {
+        None
+    }
+
     /// 将目录项写入 `buf`（`getdents64` 布局）；非目录句柄默认 [`VfsError::Unsupported`]。
     fn fill_getdents64(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
         let _ = buf;

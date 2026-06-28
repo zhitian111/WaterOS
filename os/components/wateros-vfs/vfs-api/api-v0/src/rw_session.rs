@@ -53,6 +53,26 @@ pub trait RootRwSession {
         Err(VfsError::Unsupported)
     }
 
+    fn setxattr(&mut self, path: &str, name: &str, value: &[u8]) -> VfsResult<()> {
+        let _ = (path, name, value);
+        Err(VfsError::Unsupported)
+    }
+
+    fn getxattr(&self, path: &str, name: &str, buf: &mut [u8]) -> VfsResult<usize> {
+        let _ = (path, name, buf);
+        Err(VfsError::Unsupported)
+    }
+
+    fn listxattr(&self, path: &str, buf: &mut [u8]) -> VfsResult<usize> {
+        let _ = (path, buf);
+        Err(VfsError::Unsupported)
+    }
+
+    fn removexattr(&mut self, path: &str, name: &str) -> VfsResult<()> {
+        let _ = (path, name);
+        Err(VfsError::Unsupported)
+    }
+
     /// 将 `old_path` 重命名为 `new_path`（实现可限制为同父目录）。
     fn rename(&mut self, old_path: &str, new_path: &str) -> VfsResult<()> {
         let _ = (old_path, new_path);

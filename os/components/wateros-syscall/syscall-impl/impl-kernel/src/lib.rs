@@ -715,6 +715,21 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
         if syscall_nr == SYS_SETGROUPS {
             return sys::sys_setgroups(args).0;
         }
+        match syscall_nr {
+            5 => return sys::sys_setxattr(args).0,
+            6 => return sys::sys_lsetxattr(args).0,
+            7 => return sys::sys_fsetxattr(args).0,
+            8 => return sys::sys_getxattr(args).0,
+            9 => return sys::sys_lgetxattr(args).0,
+            10 => return sys::sys_fgetxattr(args).0,
+            11 => return sys::sys_listxattr(args).0,
+            12 => return sys::sys_llistxattr(args).0,
+            13 => return sys::sys_flistxattr(args).0,
+            14 => return sys::sys_removexattr(args).0,
+            15 => return sys::sys_lremovexattr(args).0,
+            16 => return sys::sys_fremovexattr(args).0,
+            _ => {}
+        }
         let _ = args;
         abi::user_ret::UserRet::from_error(abi::errno::ErrNo::ENOSYS).0
     }

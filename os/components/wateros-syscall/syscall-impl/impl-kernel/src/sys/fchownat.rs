@@ -3,7 +3,9 @@
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
-use vfs::api::VfsError;
+use cred::api::{Gid, Uid};
+use vfs::active_impl;
+use vfs::api::{SingleRootReadView, VfsError};
 
 use crate::sys::path_at::resolve_path_at;
 use crate::user_copy::copy_user_path_cstr;
@@ -39,6 +41,24 @@ pub(crate) fn sys_fchownat(args: SyscallArgs) -> UserRet {
         Ok(p) => p,
         Err(e) => return UserRet::from_error(e),
     };
+
+    if uid.is_some() || gid.is_some() {
+        let meta = match active_impl::backend().metadata(resolved.as_str()) {
+            Ok(meta) => meta,
+            Err(VfsError::NotAFile) => return UserRet::from_error(ErrNo::ENOTDIR),
+            Err(e) => return UserRet::from_error(vfs_error_to_errno(e)),
+        };
+        let cred = cred::current_credentials();
+        if !cred::may_chown(
+            &cred,
+            Uid(meta.uid),
+            Gid(meta.gid),
+            uid,
+            gid,
+        ) {
+            return UserRet::from_error(ErrNo::EPERM);
+        }
+    }
 
     match vfs::chown_absolute(resolved.as_str(), uid, gid) {
         Ok(()) => UserRet::from_success(0),

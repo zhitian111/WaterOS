@@ -104,6 +104,10 @@ pub struct FsMetadata {
     pub inode: u64,
     /// 指向该 inode 的硬链接数量。
     pub nlink: u32,
+    /// 属主 uid（Linux `st_uid`）。
+    pub uid: u32,
+    /// 属组 gid（Linux `st_gid`）。
+    pub gid: u32,
 }
 
 /// 根卷文件 I/O 模式（与 `wateros-base-config::fs::FileIoMode` 对齐）。
@@ -233,6 +237,30 @@ pub trait ReadWriteFs: Send {
     /// 修改绝对路径 `path` 的 uid/gid；`None` 表示对应字段不修改（Linux `-1`）。
     fn chown(&mut self, path: &str, uid: Option<u32>, gid: Option<u32>) -> FsResult<()> {
         let _ = (path, uid, gid);
+        Err(FsError::Unsupported)
+    }
+
+    /// 设置扩展属性；`name` 为完整属性名（如 `user.foo`）。
+    fn setxattr(&mut self, path: &str, name: &str, value: &[u8]) -> FsResult<()> {
+        let _ = (path, name, value);
+        Err(FsError::Unsupported)
+    }
+
+    /// 读取扩展属性；`buf` 为空时返回所需长度。
+    fn getxattr(&self, path: &str, name: &str, buf: &mut [u8]) -> FsResult<usize> {
+        let _ = (path, name, buf);
+        Err(FsError::Unsupported)
+    }
+
+    /// 列出扩展属性名；`buf` 为空时返回所需长度（含结尾 `\\0`）。
+    fn listxattr(&self, path: &str, buf: &mut [u8]) -> FsResult<usize> {
+        let _ = (path, buf);
+        Err(FsError::Unsupported)
+    }
+
+    /// 删除扩展属性。
+    fn removexattr(&mut self, path: &str, name: &str) -> FsResult<()> {
+        let _ = (path, name);
         Err(FsError::Unsupported)
     }
 
@@ -377,6 +405,22 @@ impl ReadWriteFs for LocalRwFs {
 
     fn chown(&mut self, path: &str, uid: Option<u32>, gid: Option<u32>) -> FsResult<()> {
         self.deref_mut().chown(path, uid, gid)
+    }
+
+    fn setxattr(&mut self, path: &str, name: &str, value: &[u8]) -> FsResult<()> {
+        self.deref_mut().setxattr(path, name, value)
+    }
+
+    fn getxattr(&self, path: &str, name: &str, buf: &mut [u8]) -> FsResult<usize> {
+        self.deref().getxattr(path, name, buf)
+    }
+
+    fn listxattr(&self, path: &str, buf: &mut [u8]) -> FsResult<usize> {
+        self.deref().listxattr(path, buf)
+    }
+
+    fn removexattr(&mut self, path: &str, name: &str) -> FsResult<()> {
+        self.deref_mut().removexattr(path, name)
     }
 
     fn rename(&mut self, old_path: &str, new_path: &str) -> FsResult<()> {
@@ -528,6 +572,8 @@ impl ReadOnlyFs for SampleFs {
                 mode: 0o644,
                 inode: 2,
                 nlink: 1,
+                uid: 0,
+                gid: 0,
             })
         } else {
             Err(FsError::NotFound)

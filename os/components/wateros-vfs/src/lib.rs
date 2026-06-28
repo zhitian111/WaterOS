@@ -89,6 +89,34 @@ pub fn chown_absolute(path: &str, uid: Option<u32>, gid: Option<u32>) -> VfsResu
     impl_fs_bridge::chown_path(abs.as_str(), uid, gid)
 }
 
+/// 设置已解析绝对路径的扩展属性。
+#[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
+pub fn setxattr_absolute(path: &str, name: &str, value: &[u8]) -> VfsResult<()> {
+    let abs = normalize_absolute_path(path)?;
+    impl_fs_bridge::setxattr_path(abs.as_str(), name, value)
+}
+
+/// 读取已解析绝对路径的扩展属性。
+#[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
+pub fn getxattr_absolute(path: &str, name: &str, buf: &mut [u8]) -> VfsResult<usize> {
+    let abs = normalize_absolute_path(path)?;
+    impl_fs_bridge::getxattr_path(abs.as_str(), name, buf)
+}
+
+/// 列出已解析绝对路径的扩展属性名。
+#[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
+pub fn listxattr_absolute(path: &str, buf: &mut [u8]) -> VfsResult<usize> {
+    let abs = normalize_absolute_path(path)?;
+    impl_fs_bridge::listxattr_path(abs.as_str(), buf)
+}
+
+/// 删除已解析绝对路径的扩展属性。
+#[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
+pub fn removexattr_absolute(path: &str, name: &str) -> VfsResult<()> {
+    let abs = normalize_absolute_path(path)?;
+    impl_fs_bridge::removexattr_path(abs.as_str(), name)
+}
+
 /// 在已解析绝对路径创建目录（`impl-fd-session` + `bridge-fs-api`）。
 #[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
 pub fn mkdir_absolute(path: &str, mode: u32) -> VfsResult<()> {
