@@ -797,6 +797,7 @@ fn drop_task_runtime_resources_with_aspace(task_id : task::TaskId, aspace : usiz
     vfs::cwd::drop_task_cwd(task_id);
     vfs::fd::drop_task_fd_table(task_id);
     crate::socket_fd::drop_task(task_id);
+    crate::epoll_fd::drop_task(task_id);
     crate::unix_sock::drop_task(task_id);
     cred::drop_task_cred(task_id);
 }

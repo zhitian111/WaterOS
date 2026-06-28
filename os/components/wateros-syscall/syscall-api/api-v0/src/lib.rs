@@ -166,6 +166,10 @@ pub enum SyscallKind {
     Pselect6,
     Select,
     Poll,
+    EpollCreate1,
+    EpollCtl,
+    EpollWait,
+    EpollPwait,
     Unknown(usize),
 }
 
@@ -480,6 +484,14 @@ impl SyscallKind {
             Self::Select
         } else if syscall_nr == T::POLL.raw() {
             Self::Poll
+        } else if syscall_nr == T::EPOLL_CREATE1.raw() {
+            Self::EpollCreate1
+        } else if syscall_nr == T::EPOLL_CTL.raw() {
+            Self::EpollCtl
+        } else if syscall_nr == T::EPOLL_WAIT.raw() {
+            Self::EpollWait
+        } else if syscall_nr == T::EPOLL_PWAIT.raw() {
+            Self::EpollPwait
         } else {
             Self::Unknown(syscall_nr)
         }
@@ -642,6 +654,10 @@ impl SyscallKind {
             Self::Pselect6 => "pselect6",
             Self::Select => "select",
             Self::Poll => "poll",
+            Self::EpollCreate1 => "epoll_create1",
+            Self::EpollCtl => "epoll_ctl",
+            Self::EpollWait => "epoll_wait",
+            Self::EpollPwait => "epoll_pwait",
             Self::Unknown(_) => "unknown",
         }
     }
@@ -1911,6 +1927,38 @@ pub trait SyscallDispatcher {
         )
     }
 
+    fn dispatch_epoll_create1(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::EpollCreate1,
+            Self::NumberTable::EPOLL_CREATE1.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_epoll_ctl(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::EpollCtl,
+            Self::NumberTable::EPOLL_CTL.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_epoll_wait(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::EpollWait,
+            Self::NumberTable::EPOLL_WAIT.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_epoll_pwait(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::EpollPwait,
+            Self::NumberTable::EPOLL_PWAIT.raw(),
+            args,
+        )
+    }
+
     /// Decoded syscall slot with no kernel `dispatch_*` override yet.
     fn dispatch_unsupported(_kind: SyscallKind, _syscall_nr: usize, _args: SyscallArgs) -> isize {
         syscall_enosys_ret()
@@ -2077,6 +2125,10 @@ pub trait SyscallDispatcher {
             SyscallKind::Pselect6 => Self::dispatch_pselect6(syscall_args),
             SyscallKind::Select => Self::dispatch_select(syscall_args),
             SyscallKind::Poll => Self::dispatch_poll(syscall_args),
+            SyscallKind::EpollCreate1 => Self::dispatch_epoll_create1(syscall_args),
+            SyscallKind::EpollCtl => Self::dispatch_epoll_ctl(syscall_args),
+            SyscallKind::EpollWait => Self::dispatch_epoll_wait(syscall_args),
+            SyscallKind::EpollPwait => Self::dispatch_epoll_pwait(syscall_args),
             SyscallKind::Unknown(nr) => Self::dispatch_unknown(nr, syscall_args),
         }
     }

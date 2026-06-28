@@ -101,7 +101,7 @@ fn basename_matches_ltp_standalone_skip(name: &str) -> bool {
     if name.starts_with("fanotify") {
         return true;
     }
-    if name.starts_with("epoll_") {
+    if name == "epoll_wait05" {
         return true;
     }
     if name.starts_with("inotify") {

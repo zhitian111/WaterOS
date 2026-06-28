@@ -160,7 +160,7 @@ impl ScanCtx {
     }
 }
 
-fn drive_network_stack() {
+pub(crate) fn drive_network_stack() {
     match platform::timer::now_duration() {
         Ok(now) => {
             let millis = now.as_millis().min(i64::MAX as u128) as i64;

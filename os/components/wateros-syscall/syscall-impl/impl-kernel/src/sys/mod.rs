@@ -11,6 +11,7 @@ mod close;
 mod close_range;
 mod cred;
 mod dup;
+mod epoll;
 mod execve;
 mod faccessat;
 mod fchmodat;
@@ -84,6 +85,7 @@ pub(crate) use cred::{
     sys_setgid, sys_setgroups, sys_setregid, sys_setresgid, sys_setresuid, sys_setreuid, sys_setuid,
 };
 pub(crate) use dup::{sys_dup, sys_dup3};
+pub(crate) use epoll::{sys_epoll_create1, sys_epoll_ctl, sys_epoll_pwait, sys_epoll_wait};
 pub(crate) use execve::sys_execve;
 pub(crate) use faccessat::{sys_faccessat, sys_faccessat2};
 pub(crate) use fchmodat::sys_fchmodat;

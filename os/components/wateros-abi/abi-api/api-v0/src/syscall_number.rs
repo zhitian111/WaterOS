@@ -362,4 +362,12 @@ pub trait SyscallNumberTable {
     const SELECT: SyscallNumber;
     /// 历史/扩展 `poll(2)` 号（WaterOS 曾用 271）。
     const POLL: SyscallNumber;
+    /// `epoll_create1(2)`（riscv64/loong64 asm-generic nr 20）。
+    const EPOLL_CREATE1: SyscallNumber;
+    /// `epoll_ctl(2)`。
+    const EPOLL_CTL: SyscallNumber;
+    /// `epoll_wait(2)`。
+    const EPOLL_WAIT: SyscallNumber;
+    /// `epoll_pwait(2)`。
+    const EPOLL_PWAIT: SyscallNumber;
 }

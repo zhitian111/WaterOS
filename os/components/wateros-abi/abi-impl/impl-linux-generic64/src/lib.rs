@@ -188,6 +188,10 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const GETSOCKOPT: SyscallNumber = SyscallNumber(209);
     const SHUTDOWN: SyscallNumber = SyscallNumber(210);
     const POLL: SyscallNumber = SyscallNumber(271);
+    const EPOLL_CREATE1: SyscallNumber = SyscallNumber(20);
+    const EPOLL_CTL: SyscallNumber = SyscallNumber(21);
+    const EPOLL_WAIT: SyscallNumber = SyscallNumber(22);
+    const EPOLL_PWAIT: SyscallNumber = SyscallNumber(281);
 }
 
 const _: () = assert!(LinuxGeneric64::SELECT.raw() != LinuxGeneric64::DUP.raw());
@@ -351,6 +355,10 @@ mod tests {
             LinuxGeneric64::GETSOCKOPT,
             LinuxGeneric64::SHUTDOWN,
             LinuxGeneric64::POLL,
+            LinuxGeneric64::EPOLL_CREATE1,
+            LinuxGeneric64::EPOLL_CTL,
+            LinuxGeneric64::EPOLL_WAIT,
+            LinuxGeneric64::EPOLL_PWAIT,
         ]
         .map(|n| n.raw());
 

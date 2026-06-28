@@ -10,6 +10,7 @@ use abi::syscall_args::SyscallArgs;
 use abi::syscall_number::{ActiveSyscallNumberTable, SyscallNumberTable};
 use api_v0::SyscallDispatcher;
 
+mod epoll_fd;
 mod fallible_buf;
 mod linux_stat;
 mod mm_util;
@@ -912,6 +913,26 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     #[inline]
     fn dispatch_poll(args: SyscallArgs) -> isize {
         sys::sys_poll(args).0
+    }
+
+    #[inline]
+    fn dispatch_epoll_create1(args: SyscallArgs) -> isize {
+        sys::sys_epoll_create1(args).0
+    }
+
+    #[inline]
+    fn dispatch_epoll_ctl(args: SyscallArgs) -> isize {
+        sys::sys_epoll_ctl(args).0
+    }
+
+    #[inline]
+    fn dispatch_epoll_wait(args: SyscallArgs) -> isize {
+        sys::sys_epoll_wait(args).0
+    }
+
+    #[inline]
+    fn dispatch_epoll_pwait(args: SyscallArgs) -> isize {
+        sys::sys_epoll_pwait(args).0
     }
 }
 
