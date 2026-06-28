@@ -80,8 +80,8 @@ pub(crate) use clone::{sys_clone, sys_clone3};
 pub(crate) use close::sys_close;
 pub(crate) use close_range::sys_close_range;
 pub(crate) use cred::{
-    sys_getegid, sys_geteuid, sys_getgid, sys_getgroups, sys_getuid, sys_setgid, sys_setgroups, sys_setregid,
-    sys_setresgid, sys_setresuid, sys_setreuid, sys_setuid,
+    sys_getegid, sys_geteuid, sys_getgid, sys_getgroups, sys_getresgid, sys_getresuid, sys_getuid,
+    sys_setgid, sys_setgroups, sys_setregid, sys_setresgid, sys_setresuid, sys_setreuid, sys_setuid,
 };
 pub(crate) use dup::{sys_dup, sys_dup3};
 pub(crate) use execve::sys_execve;

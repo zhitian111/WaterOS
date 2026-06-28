@@ -82,6 +82,30 @@ pub trait SyscallNumberTable {
     const FALLOCATE: SyscallNumber;
     /// 相对目录打开路径（`openat(2)`）。
     const OPENAT: SyscallNumber;
+    /// 设置路径扩展属性（`setxattr(2)`）。
+    const SETXATTR: SyscallNumber;
+    /// 设置路径扩展属性且不跟随末端符号链接（`lsetxattr(2)`）。
+    const LSETXATTR: SyscallNumber;
+    /// 设置 fd 扩展属性（`fsetxattr(2)`）。
+    const FSETXATTR: SyscallNumber;
+    /// 读取路径扩展属性（`getxattr(2)`）。
+    const GETXATTR: SyscallNumber;
+    /// 读取路径扩展属性且不跟随末端符号链接（`lgetxattr(2)`）。
+    const LGETXATTR: SyscallNumber;
+    /// 读取 fd 扩展属性（`fgetxattr(2)`）。
+    const FGETXATTR: SyscallNumber;
+    /// 列出路径扩展属性名（`listxattr(2)`）。
+    const LISTXATTR: SyscallNumber;
+    /// 列出路径扩展属性名且不跟随末端符号链接（`llistxattr(2)`）。
+    const LLISTXATTR: SyscallNumber;
+    /// 列出 fd 扩展属性名（`flistxattr(2)`）。
+    const FLISTXATTR: SyscallNumber;
+    /// 删除路径扩展属性（`removexattr(2)`）。
+    const REMOVEXATTR: SyscallNumber;
+    /// 删除路径扩展属性且不跟随末端符号链接（`lremovexattr(2)`）。
+    const LREMOVEXATTR: SyscallNumber;
+    /// 删除 fd 扩展属性（`fremovexattr(2)`）。
+    const FREMOVEXATTR: SyscallNumber;
     /// 关闭文件描述符（`close(2)`）。
     const CLOSE: SyscallNumber;
     /// 取打开对象元数据（`fstat`/`newfstatat` 等 libc 路径对应的编号）。
@@ -242,8 +266,12 @@ pub trait SyscallNumberTable {
     const SETUID: SyscallNumber;
     /// 设置 real/effective/saved 用户 ID（`setresuid(2)`）。
     const SETRESUID: SyscallNumber;
+    /// 读取 real/effective/saved 用户 ID（`getresuid(2)`）。
+    const GETRESUID: SyscallNumber;
     /// 设置 real/effective/saved 组 ID（`setresgid(2)`）。
     const SETRESGID: SyscallNumber;
+    /// 读取 real/effective/saved 组 ID（`getresgid(2)`）。
+    const GETRESGID: SyscallNumber;
 
     // 线程/同步/信号（glibc/musl 常见）/ threads, sync, signals
     /// 用户态快速互斥与睡眠原语（`futex(2)`）。

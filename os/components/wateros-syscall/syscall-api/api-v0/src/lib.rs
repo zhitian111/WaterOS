@@ -33,6 +33,18 @@ pub enum SyscallKind {
     Ftruncate,
     Fallocate,
     OpenAt,
+    Setxattr,
+    Lsetxattr,
+    Fsetxattr,
+    Getxattr,
+    Lgetxattr,
+    Fgetxattr,
+    Listxattr,
+    Llistxattr,
+    Flistxattr,
+    Removexattr,
+    Lremovexattr,
+    Fremovexattr,
     Close,
     Fstat,
     Lseek,
@@ -102,7 +114,9 @@ pub enum SyscallKind {
     SetReuid,
     SetRegid,
     SetResuid,
+    GetResuid,
     SetResgid,
+    GetResgid,
     Times,
     SetPgid,
     Uname,
@@ -200,6 +214,30 @@ impl SyscallKind {
             Self::Fallocate
         } else if syscall_nr == T::OPENAT.raw() {
             Self::OpenAt
+        } else if syscall_nr == T::SETXATTR.raw() {
+            Self::Setxattr
+        } else if syscall_nr == T::LSETXATTR.raw() {
+            Self::Lsetxattr
+        } else if syscall_nr == T::FSETXATTR.raw() {
+            Self::Fsetxattr
+        } else if syscall_nr == T::GETXATTR.raw() {
+            Self::Getxattr
+        } else if syscall_nr == T::LGETXATTR.raw() {
+            Self::Lgetxattr
+        } else if syscall_nr == T::FGETXATTR.raw() {
+            Self::Fgetxattr
+        } else if syscall_nr == T::LISTXATTR.raw() {
+            Self::Listxattr
+        } else if syscall_nr == T::LLISTXATTR.raw() {
+            Self::Llistxattr
+        } else if syscall_nr == T::FLISTXATTR.raw() {
+            Self::Flistxattr
+        } else if syscall_nr == T::REMOVEXATTR.raw() {
+            Self::Removexattr
+        } else if syscall_nr == T::LREMOVEXATTR.raw() {
+            Self::Lremovexattr
+        } else if syscall_nr == T::FREMOVEXATTR.raw() {
+            Self::Fremovexattr
         } else if syscall_nr == T::CLOSE.raw() {
             Self::Close
         } else if syscall_nr == T::FSTAT.raw() {
@@ -338,8 +376,12 @@ impl SyscallKind {
             Self::SetRegid
         } else if syscall_nr == T::SETRESUID.raw() {
             Self::SetResuid
+        } else if syscall_nr == T::GETRESUID.raw() {
+            Self::GetResuid
         } else if syscall_nr == T::SETRESGID.raw() {
             Self::SetResgid
+        } else if syscall_nr == T::GETRESGID.raw() {
+            Self::GetResgid
         } else if syscall_nr == T::TIMES.raw() {
             Self::Times
         } else if syscall_nr == T::SETPGID.raw() {
@@ -467,6 +509,18 @@ impl SyscallKind {
             Self::Ftruncate => "ftruncate",
             Self::Fallocate => "fallocate",
             Self::OpenAt => "openat",
+            Self::Setxattr => "setxattr",
+            Self::Lsetxattr => "lsetxattr",
+            Self::Fsetxattr => "fsetxattr",
+            Self::Getxattr => "getxattr",
+            Self::Lgetxattr => "lgetxattr",
+            Self::Fgetxattr => "fgetxattr",
+            Self::Listxattr => "listxattr",
+            Self::Llistxattr => "llistxattr",
+            Self::Flistxattr => "flistxattr",
+            Self::Removexattr => "removexattr",
+            Self::Lremovexattr => "lremovexattr",
+            Self::Fremovexattr => "fremovexattr",
             Self::Close => "close",
             Self::Fstat => "fstat",
             Self::Lseek => "lseek",
@@ -536,7 +590,9 @@ impl SyscallKind {
             Self::SetReuid => "setreuid",
             Self::SetRegid => "setregid",
             Self::SetResuid => "setresuid",
+            Self::GetResuid => "getresuid",
             Self::SetResgid => "setresgid",
+            Self::GetResgid => "getresgid",
             Self::Times => "times",
             Self::SetPgid => "setpgid",
             Self::Uname => "uname",
@@ -897,6 +953,102 @@ pub trait SyscallDispatcher {
         Self::dispatch_unsupported(
             SyscallKind::OpenAt,
             Self::NumberTable::OPENAT.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_setxattr(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Setxattr,
+            Self::NumberTable::SETXATTR.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_lsetxattr(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Lsetxattr,
+            Self::NumberTable::LSETXATTR.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_fsetxattr(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Fsetxattr,
+            Self::NumberTable::FSETXATTR.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_getxattr(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Getxattr,
+            Self::NumberTable::GETXATTR.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_lgetxattr(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Lgetxattr,
+            Self::NumberTable::LGETXATTR.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_fgetxattr(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Fgetxattr,
+            Self::NumberTable::FGETXATTR.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_listxattr(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Listxattr,
+            Self::NumberTable::LISTXATTR.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_llistxattr(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Llistxattr,
+            Self::NumberTable::LLISTXATTR.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_flistxattr(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Flistxattr,
+            Self::NumberTable::FLISTXATTR.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_removexattr(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Removexattr,
+            Self::NumberTable::REMOVEXATTR.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_lremovexattr(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Lremovexattr,
+            Self::NumberTable::LREMOVEXATTR.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_fremovexattr(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Fremovexattr,
+            Self::NumberTable::FREMOVEXATTR.raw(),
             args,
         )
     }
@@ -1329,6 +1481,22 @@ pub trait SyscallDispatcher {
         Self::dispatch_unsupported(
             SyscallKind::SetResgid,
             Self::NumberTable::SETRESGID.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_getresuid(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::GetResuid,
+            Self::NumberTable::GETRESUID.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_getresgid(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::GetResgid,
+            Self::NumberTable::GETRESGID.raw(),
             args,
         )
     }
@@ -1787,6 +1955,18 @@ pub trait SyscallDispatcher {
             SyscallKind::Ftruncate => Self::dispatch_ftruncate(syscall_args),
             SyscallKind::Fallocate => Self::dispatch_fallocate(syscall_args),
             SyscallKind::OpenAt => Self::dispatch_openat(syscall_args),
+            SyscallKind::Setxattr => Self::dispatch_setxattr(syscall_args),
+            SyscallKind::Lsetxattr => Self::dispatch_lsetxattr(syscall_args),
+            SyscallKind::Fsetxattr => Self::dispatch_fsetxattr(syscall_args),
+            SyscallKind::Getxattr => Self::dispatch_getxattr(syscall_args),
+            SyscallKind::Lgetxattr => Self::dispatch_lgetxattr(syscall_args),
+            SyscallKind::Fgetxattr => Self::dispatch_fgetxattr(syscall_args),
+            SyscallKind::Listxattr => Self::dispatch_listxattr(syscall_args),
+            SyscallKind::Llistxattr => Self::dispatch_llistxattr(syscall_args),
+            SyscallKind::Flistxattr => Self::dispatch_flistxattr(syscall_args),
+            SyscallKind::Removexattr => Self::dispatch_removexattr(syscall_args),
+            SyscallKind::Lremovexattr => Self::dispatch_lremovexattr(syscall_args),
+            SyscallKind::Fremovexattr => Self::dispatch_fremovexattr(syscall_args),
             SyscallKind::Close => Self::dispatch_close(syscall_args),
             SyscallKind::Fstat => Self::dispatch_fstat(syscall_args),
             SyscallKind::Lseek => Self::dispatch_lseek(syscall_args),
@@ -1842,7 +2022,9 @@ pub trait SyscallDispatcher {
             SyscallKind::SetReuid => Self::dispatch_setreuid(syscall_args),
             SyscallKind::SetRegid => Self::dispatch_setregid(syscall_args),
             SyscallKind::SetResuid => Self::dispatch_setresuid(syscall_args),
+            SyscallKind::GetResuid => Self::dispatch_getresuid(syscall_args),
             SyscallKind::SetResgid => Self::dispatch_setresgid(syscall_args),
+            SyscallKind::GetResgid => Self::dispatch_getresgid(syscall_args),
             SyscallKind::Times => Self::dispatch_times(syscall_args),
             SyscallKind::SetPgid => Self::dispatch_setpgid(syscall_args),
             SyscallKind::WaitPid => Self::dispatch_waitpid(syscall_args),

@@ -44,6 +44,18 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const FTRUNCATE: SyscallNumber = SyscallNumber(46);
     const FALLOCATE: SyscallNumber = SyscallNumber(47);
     const OPENAT: SyscallNumber = SyscallNumber(56);
+    const SETXATTR: SyscallNumber = SyscallNumber(5);
+    const LSETXATTR: SyscallNumber = SyscallNumber(6);
+    const FSETXATTR: SyscallNumber = SyscallNumber(7);
+    const GETXATTR: SyscallNumber = SyscallNumber(8);
+    const LGETXATTR: SyscallNumber = SyscallNumber(9);
+    const FGETXATTR: SyscallNumber = SyscallNumber(10);
+    const LISTXATTR: SyscallNumber = SyscallNumber(11);
+    const LLISTXATTR: SyscallNumber = SyscallNumber(12);
+    const FLISTXATTR: SyscallNumber = SyscallNumber(13);
+    const REMOVEXATTR: SyscallNumber = SyscallNumber(14);
+    const LREMOVEXATTR: SyscallNumber = SyscallNumber(15);
+    const FREMOVEXATTR: SyscallNumber = SyscallNumber(16);
     const CLOSE: SyscallNumber = SyscallNumber(57);
     const FSTAT: SyscallNumber = SyscallNumber(80);
     const LSEEK: SyscallNumber = SyscallNumber(62);
@@ -128,7 +140,9 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const SETREUID: SyscallNumber = SyscallNumber(145);
     const SETUID: SyscallNumber = SyscallNumber(146);
     const SETRESUID: SyscallNumber = SyscallNumber(147);
+    const GETRESUID: SyscallNumber = SyscallNumber(148);
     const SETRESGID: SyscallNumber = SyscallNumber(149);
+    const GETRESGID: SyscallNumber = SyscallNumber(150);
 
     // 线程/同步/信号 / threads, sync, signals
     const FUTEX: SyscallNumber = SyscallNumber(98);
@@ -209,6 +223,18 @@ mod tests {
             LinuxGeneric64::FTRUNCATE,
             LinuxGeneric64::FALLOCATE,
             LinuxGeneric64::OPENAT,
+            LinuxGeneric64::SETXATTR,
+            LinuxGeneric64::LSETXATTR,
+            LinuxGeneric64::FSETXATTR,
+            LinuxGeneric64::GETXATTR,
+            LinuxGeneric64::LGETXATTR,
+            LinuxGeneric64::FGETXATTR,
+            LinuxGeneric64::LISTXATTR,
+            LinuxGeneric64::LLISTXATTR,
+            LinuxGeneric64::FLISTXATTR,
+            LinuxGeneric64::REMOVEXATTR,
+            LinuxGeneric64::LREMOVEXATTR,
+            LinuxGeneric64::FREMOVEXATTR,
             LinuxGeneric64::CLOSE,
             LinuxGeneric64::FSTAT,
             LinuxGeneric64::LSEEK,
@@ -283,7 +309,9 @@ mod tests {
             LinuxGeneric64::SETREUID,
             LinuxGeneric64::SETUID,
             LinuxGeneric64::SETRESUID,
+            LinuxGeneric64::GETRESUID,
             LinuxGeneric64::SETRESGID,
+            LinuxGeneric64::GETRESGID,
             LinuxGeneric64::FUTEX,
             LinuxGeneric64::RT_SIGACTION,
             LinuxGeneric64::RT_SIGPROCMASK,

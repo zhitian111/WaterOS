@@ -534,13 +534,54 @@ pub fn chown_path(path : &str, uid : Option<u32>, gid : Option<u32>) -> VfsResul
     sess.chown(rel.as_str(), uid, gid)
 }
 
+const CGROUP_SUPER_MAGIC: isize = 0x0027_e0eb;
+const CGROUP2_SUPER_MAGIC: isize = 0x6367_7270;
+
+fn path_on_cgroup_fs(path: &str) -> bool {
+    matches!(
+        mount_table::mount_statfs_magic(path),
+        Some(CGROUP_SUPER_MAGIC) | Some(CGROUP2_SUPER_MAGIC)
+    )
+}
+
+/// cgroupfs 扩展属性命名规则（LTP cgroup_xattr）。
+pub fn validate_xattr_name(path: &str, name: &str) -> VfsResult<()> {
+    if name.is_empty() || name.len() > 255 {
+        return Err(VfsError::InvalidPath);
+    }
+    if !name.contains('.') {
+        return Err(VfsError::InvalidPath);
+    }
+    if path_on_cgroup_fs(path) {
+        if name == "trusted." {
+            return Err(VfsError::InvalidPath);
+        }
+        if name.starts_with("trusted.") && name.len() > "trusted.".len() {
+            return Ok(());
+        }
+        if name.starts_with("security.") {
+            return Err(VfsError::Unsupported);
+        }
+        return Err(VfsError::Unsupported);
+    }
+    Ok(())
+}
+
 fn xattr_route(path: &str) -> VfsResult<(SharedRwFs, String)> {
     mount_table::assert_path_writable(path)?;
     fs_and_rel_rw(path)
 }
 
+fn map_xattr_get_err(err: VfsError) -> VfsError {
+    match err {
+        VfsError::InvalidPath => VfsError::NotFound,
+        other => other,
+    }
+}
+
 /// 设置路径扩展属性。
 pub fn setxattr_path(path: &str, name: &str, value: &[u8]) -> VfsResult<()> {
+    validate_xattr_name(path, name)?;
     let normalized = normalize_absolute_path(path)?;
     if char_dev_exists(normalized.as_str()) {
         return Err(VfsError::Unsupported);
@@ -552,6 +593,7 @@ pub fn setxattr_path(path: &str, name: &str, value: &[u8]) -> VfsResult<()> {
 
 /// 读取路径扩展属性。
 pub fn getxattr_path(path: &str, name: &str, buf: &mut [u8]) -> VfsResult<usize> {
+    validate_xattr_name(path, name)?;
     let normalized = normalize_absolute_path(path)?;
     if char_dev_exists(normalized.as_str()) {
         return Err(VfsError::Unsupported);
@@ -559,6 +601,7 @@ pub fn getxattr_path(path: &str, name: &str, buf: &mut [u8]) -> VfsResult<usize>
     let (fs, rel) = fs_and_rel_rw(path)?;
     let sess = MountedRwSession::new(fs);
     sess.getxattr(rel.as_str(), name, buf)
+        .map_err(map_xattr_get_err)
 }
 
 /// 列出路径扩展属性名。
@@ -574,6 +617,7 @@ pub fn listxattr_path(path: &str, buf: &mut [u8]) -> VfsResult<usize> {
 
 /// 删除路径扩展属性。
 pub fn removexattr_path(path: &str, name: &str) -> VfsResult<()> {
+    validate_xattr_name(path, name)?;
     let normalized = normalize_absolute_path(path)?;
     if char_dev_exists(normalized.as_str()) {
         return Err(VfsError::Unsupported);
@@ -581,6 +625,7 @@ pub fn removexattr_path(path: &str, name: &str) -> VfsResult<()> {
     let (fs, rel) = xattr_route(path)?;
     let mut sess = MountedRwSession::new(fs);
     sess.removexattr(rel.as_str(), name)
+        .map_err(map_xattr_get_err)
 }
 
 pub(crate) fn replace_file_contents(path : &str, data : &[u8]) -> VfsResult<()> {

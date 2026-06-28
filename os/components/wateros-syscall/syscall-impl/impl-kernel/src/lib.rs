@@ -250,6 +250,66 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     }
 
     #[inline]
+    fn dispatch_setxattr(args: SyscallArgs) -> isize {
+        sys::sys_setxattr(args).0
+    }
+
+    #[inline]
+    fn dispatch_lsetxattr(args: SyscallArgs) -> isize {
+        sys::sys_lsetxattr(args).0
+    }
+
+    #[inline]
+    fn dispatch_fsetxattr(args: SyscallArgs) -> isize {
+        sys::sys_fsetxattr(args).0
+    }
+
+    #[inline]
+    fn dispatch_getxattr(args: SyscallArgs) -> isize {
+        sys::sys_getxattr(args).0
+    }
+
+    #[inline]
+    fn dispatch_lgetxattr(args: SyscallArgs) -> isize {
+        sys::sys_lgetxattr(args).0
+    }
+
+    #[inline]
+    fn dispatch_fgetxattr(args: SyscallArgs) -> isize {
+        sys::sys_fgetxattr(args).0
+    }
+
+    #[inline]
+    fn dispatch_listxattr(args: SyscallArgs) -> isize {
+        sys::sys_listxattr(args).0
+    }
+
+    #[inline]
+    fn dispatch_llistxattr(args: SyscallArgs) -> isize {
+        sys::sys_llistxattr(args).0
+    }
+
+    #[inline]
+    fn dispatch_flistxattr(args: SyscallArgs) -> isize {
+        sys::sys_flistxattr(args).0
+    }
+
+    #[inline]
+    fn dispatch_removexattr(args: SyscallArgs) -> isize {
+        sys::sys_removexattr(args).0
+    }
+
+    #[inline]
+    fn dispatch_lremovexattr(args: SyscallArgs) -> isize {
+        sys::sys_lremovexattr(args).0
+    }
+
+    #[inline]
+    fn dispatch_fremovexattr(args: SyscallArgs) -> isize {
+        sys::sys_fremovexattr(args).0
+    }
+
+    #[inline]
     fn dispatch_close(args: SyscallArgs) -> isize {
         sys::sys_close(args).0
     }
@@ -462,6 +522,16 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     #[inline]
     fn dispatch_setresgid(args: SyscallArgs) -> isize {
         sys::sys_setresgid(args).0
+    }
+
+    #[inline]
+    fn dispatch_getresuid(args: SyscallArgs) -> isize {
+        sys::sys_getresuid(args).0
+    }
+
+    #[inline]
+    fn dispatch_getresgid(args: SyscallArgs) -> isize {
+        sys::sys_getresgid(args).0
     }
 
     #[inline]

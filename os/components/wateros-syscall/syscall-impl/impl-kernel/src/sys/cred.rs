@@ -5,7 +5,7 @@ use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use cred::api::{Gid, Uid, SUPPLEMENTARY_GROUP_COUNT};
 
-use crate::user_copy::{copy_from_user_struct, copy_to_user};
+use crate::user_copy::{copy_from_user_struct, copy_to_user, copy_to_user_struct};
 
 pub(crate) fn sys_getuid() -> UserRet {
     let cred = cred::current_credentials();
@@ -179,6 +179,58 @@ pub(crate) fn sys_setresgid(args: SyscallArgs) -> UserRet {
         None => return UserRet::from_error(ErrNo::EINVAL),
     };
     cred::set_resgid(real_gid, effective_gid, saved_gid);
+    UserRet::from_success(0)
+}
+
+pub(crate) fn sys_getresuid(args: SyscallArgs) -> UserRet {
+    let ruid_ptr = args.arg(0);
+    let euid_ptr = args.arg(1);
+    let suid_ptr = args.arg(2);
+    if ruid_ptr == 0 && euid_ptr == 0 && suid_ptr == 0 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    let cred = cred::current_credentials();
+    if ruid_ptr != 0 {
+        if copy_to_user_struct(ruid_ptr, &cred.real_uid.0).is_err() {
+            return UserRet::from_error(ErrNo::EFAULT);
+        }
+    }
+    if euid_ptr != 0 {
+        if copy_to_user_struct(euid_ptr, &cred.effective_uid.0).is_err() {
+            return UserRet::from_error(ErrNo::EFAULT);
+        }
+    }
+    if suid_ptr != 0 {
+        if copy_to_user_struct(suid_ptr, &cred.saved_uid.0).is_err() {
+            return UserRet::from_error(ErrNo::EFAULT);
+        }
+    }
+    UserRet::from_success(0)
+}
+
+pub(crate) fn sys_getresgid(args: SyscallArgs) -> UserRet {
+    let rgid_ptr = args.arg(0);
+    let egid_ptr = args.arg(1);
+    let sgid_ptr = args.arg(2);
+    if rgid_ptr == 0 && egid_ptr == 0 && sgid_ptr == 0 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    let cred = cred::current_credentials();
+    if rgid_ptr != 0 {
+        if copy_to_user_struct(rgid_ptr, &cred.real_gid.0).is_err() {
+            return UserRet::from_error(ErrNo::EFAULT);
+        }
+    }
+    if egid_ptr != 0 {
+        if copy_to_user_struct(egid_ptr, &cred.effective_gid.0).is_err() {
+            return UserRet::from_error(ErrNo::EFAULT);
+        }
+    }
+    if sgid_ptr != 0 {
+        if copy_to_user_struct(sgid_ptr, &cred.saved_gid.0).is_err() {
+            return UserRet::from_error(ErrNo::EFAULT);
+        }
+    }
     UserRet::from_success(0)
 }
 
