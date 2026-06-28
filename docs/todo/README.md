@@ -26,6 +26,9 @@
 | [`perf-fs-vfs.md`](./perf-fs-vfs.md) | 页缓存 / 块缓存 / ext4 / flush / 回收 | F-1~F-21 | O(1) LRU、unlink/sync 丢脏、整文件读堆、dcache、LA 块缓存缺失 |
 | [`perf-ipc-sync.md`](./perf-ipc-sync.md) | futex / pipe / signal / waitqueue / shm / poll·epoll | I-1~I-17 | epoll 事件驱动、futex requeue 释锁、exit 队列回收、惊群、signal 快表 |
 | [`perf-lock-resource.md`](./perf-lock-resource.md) | 进程退出 / fork / fd 表 / 注册表 | L-1~L-20 | reap 锁外 drop、fd 表 O(N²)、注册表反向索引、exit_group 合并 |
+| [`perf-risk-assessment.md`](./perf-risk-assessment.md) | 风险收益评估 + 安全实施 | 全部 | 风险×收益矩阵、项目特有风险、Flag/验证、排期建议 |
+
+每个子系统文档末尾均有「风险与验证速查」表（本文件「风险×收益」矩阵与 `perf-risk-assessment.md` 的内联子集）。
 
 ## 跨子系统优先级矩阵（Top 改进点）
 
@@ -66,6 +69,20 @@ H-5、H-7~H-13、M-7~M-17、M-20、F-5、F-10~F-18、I-5~I-16、L-8~L-15。
 | M-18 | MAP_SHARED 匿名 fork 不 inc_ref / destroy 不回收 | memory |
 | F-2 | unlink 丢脏页 | fs-vfs |
 | I-10 / I-12 | SHM fork 失败不回滚 / futex WAIT 无 alternate key 致永久睡眠 | ipc |
+
+## 风险 × 收益矩阵（能否不引入 bug？）
+
+这批改进点风险跨度很大，**收益最高的几项往往最危险**（静默/非确定性错误）。完整口径、项目特有风险与逐条评估见 [`perf-risk-assessment.md`](./perf-risk-assessment.md)。下表给出二维分布，建议按「左上 → 右上」排期。
+
+| 收益 ＼ 风险 | 低风险（行为保持，可安全做） | 中 / 中高（配断言/Flag/定向测例） | 高（静默错误，须 Flag+灰度+增量） |
+|------|------|------|------|
+| **高** | H-3、F-9、F-4✚、M-8 | F-2★、F-6★、F-7★、F-3、F-5、F-8、L-4✚、L-5✚、L-6✚、L-1、L-2、L-3、L-7、I-1、I-2、I-3✚、I-4、I-17、H-2 | M-1、M-2、M-3、M-5、H-1、H-4 |
+| **中** | H-10、F-14 | M-6、M-7、M-9、M-19、M-20、F-1、F-10~F-13、F-15~F-18、I-5~I-12★、I-14、L-8~L-15、H-5~H-9、H-15 | H-14、M-16 |
+| **低** | M-17、I-13、I-15、F-20、F-21、L-17、H-16 | M-11~M-14、F-19、L-18~L-20、I-16 | — |
+
+> 图例：`★`=本质是修现存 bug（做了净减风险）；`✚`=建议同时加 debug 断言守住数据结构/索引不变量。
+
+**一句话回答**：低风险层（行为保持型）可以在现成 LTP+busybox 回归兜底下基本安全完成；中高层需配断言、Flag 与定向测例才能控住；高风险层（TLB/ASID、底层 trap、页表 COW、lazy FPU）出 bug 往往静默且非确定性，必须 Flag 化、灰度、增量验证，**不可一次性大重构**。
 
 ## 三大需求方向归类（对应用户关注点）
 

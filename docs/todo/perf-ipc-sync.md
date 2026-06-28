@@ -219,6 +219,32 @@ shm attach:    [lock] begin_attach → [unlock] MM map → [lock] finish_attach
 5. pipe wake 策略 + ringbuf bulk 拷贝（I-5, I-13）
 6. poll 1-tick/串行 wait 合并（I-6）
 
+## 风险与验证速查
+
+> 完整口径、项目特有风险（单核 RefCell 伪锁、持锁跨调度）与安全实施流程见 [`perf-risk-assessment.md`](./perf-risk-assessment.md)。I-10/I-12 属「修现存回收/永久睡眠 bug」。
+
+| 编号 | 收益 | 风险 | 风险类型 | Flag | 关键验证 |
+|------|------|------|----------|------|------|
+| I-1 | 高 | 中高 | 新子系统 + fd 生命周期 | 否（新功能） | poll/epoll LTP |
+| I-2 | 高 | 中高 | 并发竞态 + RefCell | 建议 | futex/condvar 压测 |
+| I-3 | 高 | 中 | 反向索引一致 | 否(+断言) | futex + 异常 exit |
+| I-4 | 高 | 中 | TCB 反向指针 | 否 | kill/signal 多线程 |
+| I-5 | 中 | 中 | 避免回归饿死(P-2) | 建议 | pipe 多读者/多写者 |
+| I-6 | 中 | 中 | 超时/借用约束 | 否 | poll/ppoll |
+| I-7 | 中 | 中 | 索引一致 | 否(+断言) | 多线程 signal/kill |
+| I-8 | 中 | 中 | mask 一致 | 建议 | signal LTP |
+| I-9 | 中 | 低中 | 索引清理 | 否 | setitimer 长跑 |
+| I-10 | 中 / 正确性高 | 中 | fork 回收 | 否 | shm fork 失败注入 |
+| I-11 | 中 | 中 | 用户链表不可信 | 否 | robust mutex |
+| I-12 | 中 / 正确性高 | 中 | 永久睡眠修复 | 否 | futex private/shared |
+| I-13 | 低中 | 低 | 行为保持 | 否 | pipe |
+| I-14 | 低中 | 中 | 与 I-8 一致性 | 建议 | sigsuspend |
+| I-15 | 低 | 低 | 行为保持 | 否 | 无 |
+| I-16 | 低 | 中 | 同步原语 | 是 | SMP 前评估 |
+| I-17 | 高（功能） | 中高 | 新子系统 | 否（新功能） | epoll LTP |
+
+低风险可先做：I-13、I-15。修 bug 类优先：I-10、I-12。中高风险须 Flag/断言：I-2、I-3、I-4。
+
 ## 后续维护入口
 
 - 改 futex/signal/shm：同步 `docs/audits/resources/ipc-shm-futex-signal.md`、`docs/audits/locks/ipc-futex-signal-shm.md`。

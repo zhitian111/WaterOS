@@ -263,6 +263,35 @@ fork_user_aspace → task::fork_current → signal::on_fork
 6. L-2 / L-7 exit 资源 batch drop / exit_group 合并
 7. L-8 waitpid 单次 snapshot；L-14 execve 侧车表清理
 
+## 风险与验证速查
+
+> 完整口径与安全实施流程见 [`perf-risk-assessment.md`](./perf-risk-assessment.md)。**本组多数条目改动锁序/中断窗口**：单核 RefCell 伪锁下若把工作错误移出关中断守卫会触发 R-PT-11 类双重借用 panic，改前务必对照 `docs/audits/locks/*`。
+
+| 编号 | 收益 | 风险 | 风险类型 | Flag | 关键验证 |
+|------|------|------|----------|------|------|
+| L-1 | 高 | 中高 | 锁序 + RefCell(R-PT-11) | 建议 | exit/wait 压测 |
+| L-2 | 高 | 中 | 锁序 | 建议 | pthread 压测 |
+| L-3 | 高 | 中高 | RefCell + 页缓存嵌套 | 建议 | fork 压测 |
+| L-4 | 高 | 中 | 索引一致 | 否(+断言) | unix 多进程 |
+| L-5 | 高 | 中 | 登记窗口原子(PR-01) | 否(+断言) | clone/wait |
+| L-6 | 高 | 中 | 位图同步 | 否(+断言) | open/close churn |
+| L-7 | 高 | 中 | 语义保持 | 建议 | exit_group |
+| L-8 | 中 | 中 | TOCTOU | 否 | waitpid 并发 |
+| L-9 | 中 | 中 | zombie 回归 | 建议 | clone/exit |
+| L-10 | 中 | 中 | 竞态 | 否 | dup3/pipe2 错误路径 |
+| L-11 | 中 | 中 | RefCell | 否 | 全局 sync |
+| L-12 | 中 | 中 | 旁路表同步 | 建议 | socket fork |
+| L-13 | 中 | 低中 | setrlimit 失效 | 否 | open + setrlimit |
+| L-14 | 中 | 低 | 纯加清理 | 否 | execve |
+| L-15 | 中 | 中 | 回滚一致 | 建议 | fork 失败注入 |
+| L-16 | 低 | 中 | TLB 一致性（同 M-2） | 是 | 长跑 + 回绕 |
+| L-17 | 低 | 低 | 行为保持 | 否 | 无 |
+| L-18 | 低中 | 中 | RefCell | 否 | 批量 close |
+| L-19 | 低 | 低中 | dup 语义 | 否 | fork |
+| L-20 | 低 | 低中 | 回收语义 | 否 | 长跑 |
+
+低风险可先做：L-14、L-17。高收益中险（配断言）：L-4、L-5、L-6。锁序类（配 Flag/对照审计）：L-1、L-2、L-3、L-7。
+
 ## 后续维护入口
 
 - 改退出/fork/fd：同步 `docs/audits/resource-inventory.md` 生命周期钩子表、`docs/audits/resources/{task-slots,file-descriptors}.md`。

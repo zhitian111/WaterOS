@@ -197,6 +197,31 @@
 | P2 | H-7, H-8, H-9, H-10 | 等待队列索引、RT 队列、IO 分块、热号 fast path |
 | P3 | H-11~H-16 | tick 合并、timer 结构、FPU lazy、队列 compact、日志门控 |
 
+## 风险与验证速查
+
+> 完整口径、项目特有风险（单核 RefCell 伪锁、TLB 静默错误）与安全实施流程见 [`perf-risk-assessment.md`](./perf-risk-assessment.md)。风险：低/中/中高/高（引入新 bug 概率×排查难度）；Flag：是否建议先挂新旧路径开关。
+
+| 编号 | 收益 | 风险 | 风险类型 | Flag | 关键验证（在 rv/la check + 全量 LTP 基础上） |
+|------|------|------|----------|------|------|
+| H-1 | 高 | 高 | 底层 trap / trampoline·sscratch 耦合 | 是 | 启动 + `rv_pc_watch` + GDB 断点 |
+| H-2 | 高 | 中高 | 须与 COW/lazy fault 一致 | 建议 | 路径类 syscall + mm fault |
+| H-3 | 高 | 低 | 行为保持（分发重排） | 否 | 全量 LTP |
+| H-4 | 中高 | 高 | TLB 一致性 | 是 | 与 M-1/M-2 同步增量灰度 |
+| H-5 | 中 | 中 | 嵌套 fault 正确性 | 建议 | 内核态异常/嵌套 fault |
+| H-6 | 中 | 中 | signal mask 一致性 | 建议 | signal LTP（ppoll/sigsuspend） |
+| H-7 | 中 | 中 | TCB 反向指针/迁移一致 | 否(+断言) | futex/poll LTP |
+| H-8 | 中 | 中 | multi-class 状态机 | 否 | sched（仅 multi-class） |
+| H-9 | 中 | 中 | EINTR/原子读语义 | 否 | pipe/socket/read LTP |
+| H-10 | 中 | 低 | 行为保持 | 否 | 全量 LTP |
+| H-11 | 中低 | 低中 | 超时精度 | 否 | nanosleep/timer |
+| H-12 | 低中 | 中 | 超时正确性 | 否 | timer/futex 超时 |
+| H-13 | 低中 | 低中 | 队列不变量 | 否 | 高 churn sched |
+| H-14 | 中低 / FP 高 | 高 | 上下文状态串污染 | 是 | math LTP + 多线程 FP |
+| H-15 | 中 | 中 | COW/lazy 顺序 | 建议 | mm fault |
+| H-16 | 低 | 低 | 编译期开关 | 否 | 编译 |
+
+低风险可先做：H-3、H-10、H-16。高风险须 Flag+灰度：H-1、H-4、H-14。
+
 ## 后续维护入口
 
 - 改动 syscall 分发：同步 `os/components/wateros-syscall/syscall-api/api-v0/src/lib.rs` 与 `docs/exports/features/wateros-syscall.md`。
