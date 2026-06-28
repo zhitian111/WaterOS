@@ -168,6 +168,12 @@ pub fn set_path_only_fd(fd : usize) -> VfsResult<()> {
     with_current_task(|reg, task_id| reg.set_fd_path_only(task_id, fd))
 }
 
+pub use impl_fd_session::file_lock::{
+    flock_op, inherit_process_locks, inode_key_from_metadata, posix_getlk, posix_setlk,
+    release_process_inode_locks, Flock, F_RDLCK, F_UNLCK, F_WRLCK, InodeKey, LOCK_EX, LOCK_NB,
+    LOCK_SH, LOCK_UN,
+};
+
 /// fork 时初始化子任务 fd 表（仅默认 stdio，spawn 路径）。
 pub fn init_child_fd_table(child_id : task::TaskId) {
     let mut reg = registry().exclusive_access();

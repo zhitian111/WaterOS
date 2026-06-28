@@ -6,6 +6,10 @@
 //!
 //! 遇 `ltp_testcode.sh` 无参同步拉起即卡死的项，把 basename 追加到
 //! [`LTP_STANDALONE_SKIP_BASENAMES`]；带 worker 参数（如 `--mmap-anon`）的合法调用不会被跳过。
+//!
+//! **fcntl 跳过策略（bringup 稳定）**：`fcntl01`–`fcntl13`（含 `_64`）照常跑；
+//! `fcntl14`–`fcntl39` 由 [`basename_is_fcntl_posix_lock_cluster`] 整段 skip；
+//! `flock01`–`flock06` 由 `flock` 前缀 skip。详见 `ltp_log/todo/fcntl_file_lock.md`。
 
 use task::{TaskBlockReason, TaskState};
 
@@ -34,8 +38,6 @@ const LTP_STANDALONE_SKIP_BASENAMES: &[&str] = &[
     "fork_procs",
     "ftest02",
     "genload",
-    "fcntl37",
-    "fcntl37_64",
     "memcg_test_3",
     "pause02",
     "pause03",
@@ -114,6 +116,9 @@ fn basename_matches_ltp_standalone_skip(name: &str) -> bool {
         return true;
     }
     if basename_is_fcntl_posix_lock_cluster(name) {
+        return true;
+    }
+    if name.starts_with("flock") {
         return true;
     }
     // ── 前缀：hang / worker（原有）──

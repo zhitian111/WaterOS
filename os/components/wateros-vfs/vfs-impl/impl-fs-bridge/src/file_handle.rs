@@ -270,6 +270,10 @@ impl FsBridge {
             FsRoute::PseudoProc { rel, identity } => {
                 return super::proc_handle::open_proc(rel, abs.clone(), flags, identity);
             }
+            FsRoute::PseudoSecurity { rel, .. } if rel == "/" && flags.contains(VfsOpenFlags::DIRECTORY) => {
+                return super::dir_handle::DirectoryHandle::open(self, abs);
+            }
+            FsRoute::PseudoSecurity { .. } => return Err(VfsError::NotFound),
             _ => {}
         }
         match abs.as_str() {

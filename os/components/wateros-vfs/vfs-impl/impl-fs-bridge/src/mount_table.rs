@@ -1,4 +1,4 @@
-//! 辅助卷挂载表（最长前缀路由）；支持 RW、RO 与 procfs 伪挂载。
+//! 辅助卷挂载表（最长前缀路由）；支持 RW、RO、procfs 伪挂载、bind 与传播类型。
 
 extern crate alloc;
 
@@ -6,32 +6,184 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicU64, Ordering};
-use fs::{LocalRwFs, SharedFs, SharedRwFs};
+use core::mem::MaybeUninit;
+use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use fs::{FsNodeType, LocalRwFs, SharedFs, SharedRwFs};
 use fs::procfs::api::ProcMountLine;
 use spin::Mutex;
 
 use api_v0::{normalize_absolute_path, VfsError, VfsResult};
+use base::sync::UniprocessorSafeCell;
 
-/// 辅助挂载句柄：RW、RO 或 procfs 伪挂载。
+use crate::mount_ns::PerTaskMountNsRegistry;
+
+/// 辅助挂载句柄：RW、RO、procfs/securityfs 伪挂载或 bind 别名。
+#[derive(Clone)]
 pub(crate) enum AuxMount {
     Rw(SharedRwFs),
     Ro(SharedFs),
     PseudoProc,
+    PseudoSecurity,
+    Bind { source: String },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MountPropagation {
+    Private,
+    Shared,
+    Slave,
+    Unbindable,
+}
+
+impl Default for MountPropagation {
+    fn default() -> Self {
+        Self::Private
+    }
+}
+
+#[derive(Clone)]
 struct MountEntry {
     mount_point: String,
     fs: AuxMount,
     identity: MountIdentity,
     readonly: bool,
     fstype: &'static str,
+    propagation: MountPropagation,
 }
 
-static AUX_MOUNTS: Mutex<Vec<MountEntry>> = Mutex::new(Vec::new());
+/// 单个挂载命名空间内的辅助卷表。
+#[derive(Default)]
+pub(crate) struct MountNamespace {
+    entries: Vec<MountEntry>,
+}
+
+impl Clone for MountNamespace {
+    fn clone(&self) -> Self {
+        Self {
+            entries: self.entries.clone(),
+        }
+    }
+}
+
 static DEVICE_IDS: Mutex<Vec<(String, u32)>> = Mutex::new(Vec::new());
 static NEXT_DEVICE_MINOR: AtomicU64 = AtomicU64::new(1);
 static NEXT_MOUNT_ID: AtomicU64 = AtomicU64::new(2);
+
+/// 内核 bring-up / 无当前任务时的挂载表（`procfs` 等在 spawn 用户任务前挂载）。
+static BOOTSTRAP_MOUNT_NS: Mutex<MountNamespace> = Mutex::new(MountNamespace { entries: Vec::new() });
+
+pub(crate) fn bootstrap_mount_namespace_snapshot() -> MountNamespace {
+    BOOTSTRAP_MOUNT_NS.lock().clone()
+}
+
+static mut MOUNT_NS_REGISTRY: MaybeUninit<UniprocessorSafeCell<PerTaskMountNsRegistry>> =
+    MaybeUninit::uninit();
+static MOUNT_NS_REGISTRY_READY: AtomicUsize = AtomicUsize::new(0);
+
+fn registry() -> &'static UniprocessorSafeCell<PerTaskMountNsRegistry> {
+    if MOUNT_NS_REGISTRY_READY.load(Ordering::Acquire) == 0 {
+        unsafe {
+            MOUNT_NS_REGISTRY.write(UniprocessorSafeCell::new(PerTaskMountNsRegistry::new()));
+        }
+        MOUNT_NS_REGISTRY_READY.store(1, Ordering::Release);
+    }
+    unsafe { &*MOUNT_NS_REGISTRY.as_ptr() }
+}
+
+pub fn init_task_mount_ns(task_id: task::TaskId) {
+    registry().exclusive_access().init_task_mount_ns(task_id);
+}
+
+pub fn copy_mount_ns_from_parent(child: task::TaskId, parent: task::TaskId) {
+    registry()
+        .exclusive_access()
+        .copy_mount_ns_from_parent(child, parent);
+}
+
+pub fn share_mount_ns_from_parent(child: task::TaskId, parent: task::TaskId) {
+    registry()
+        .exclusive_access()
+        .share_mount_ns_from_parent(child, parent);
+}
+
+pub fn unshare_mount_ns(task_id: task::TaskId) {
+    registry().exclusive_access().unshare_mount_ns(task_id);
+}
+
+pub fn drop_task_mount_ns(task_id: task::TaskId) {
+    registry().exclusive_access().drop_task(task_id);
+}
+
+fn with_current_namespace<R>(f: impl FnOnce(&mut MountNamespace) -> VfsResult<R>) -> VfsResult<R> {
+    if let Some(task_id) = task::current_task_id() {
+        let mut reg = registry().exclusive_access();
+        f(reg.namespace_for_mut(task_id))
+    } else {
+        let mut ns = BOOTSTRAP_MOUNT_NS.lock();
+        f(&mut ns)
+    }
+}
+
+fn namespace_for_route(task_id: task::TaskId) -> Option<MountNamespace> {
+    registry().exclusive_access().namespace_for(task_id).cloned()
+}
+
+/// 克隆当前应使用的挂载表快照（单次加锁，避免在 `with_current_namespace` 内重入）。
+fn mount_namespace_snapshot() -> MountNamespace {
+    if let Some(task_id) = task::current_task_id() {
+        {
+            let reg = registry().exclusive_access();
+            if let Some(ns) = reg.namespace_for(task_id) {
+                return ns.clone();
+            }
+        }
+        {
+            let mut reg = registry().exclusive_access();
+            reg.init_task_mount_ns(task_id);
+            if let Some(ns) = reg.namespace_for(task_id) {
+                return ns.clone();
+            }
+        }
+    }
+    BOOTSTRAP_MOUNT_NS.lock().clone()
+}
+
+/// 在已持有的 `ns` 上校验挂载点目录，不调用 [`resolve_route`]（避免 mount 表锁重入）。
+fn assert_mount_point_directory_in(ns: &MountNamespace, path: &str) -> VfsResult<()> {
+    match resolve_material_route(ns, path)? {
+        FsRoute::PseudoProc { .. } | FsRoute::PseudoSecurity { .. } => Err(VfsError::NotAFile),
+        FsRoute::Root { abs, .. } => {
+            let meta = super::root_rw()?
+                .lock()
+                .metadata(abs.as_str())
+                .map_err(super::map_fs_err)?;
+            if meta.node_type != FsNodeType::Directory {
+                return Err(VfsError::NotAFile);
+            }
+            Ok(())
+        }
+        FsRoute::AuxRw { fs, rel, .. } => {
+            let meta = fs
+                .lock()
+                .metadata(rel.as_str())
+                .map_err(super::map_fs_err)?;
+            if meta.node_type != FsNodeType::Directory {
+                return Err(VfsError::NotAFile);
+            }
+            Ok(())
+        }
+        FsRoute::AuxRo { fs, rel, .. } => {
+            let meta = fs
+                .lock()
+                .metadata(rel.as_str())
+                .map_err(super::map_fs_err)?;
+            if meta.node_type != FsNodeType::Directory {
+                return Err(VfsError::NotAFile);
+            }
+            Ok(())
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct MountIdentity {
@@ -80,6 +232,7 @@ pub(crate) enum FsRoute {
     },
     AuxRo { fs: SharedFs, rel: String, identity: MountIdentity },
     PseudoProc { rel: String, identity: MountIdentity },
+    PseudoSecurity { rel: String, identity: MountIdentity },
 }
 
 fn rel_under_mount(full: &str, mount_point: &str) -> String {
@@ -96,27 +249,12 @@ fn rel_under_mount(full: &str, mount_point: &str) -> String {
     }
 }
 
-fn longest_aux_mount(abs: &str) -> Option<(AuxMount, MountIdentity, String, bool)> {
-    let table = AUX_MOUNTS.lock();
-    let mut best: Option<(usize, AuxMount, MountIdentity, String, bool)> = None;
-    for ent in table.iter() {
-        let mp = ent.mount_point.as_str();
-        let matches = abs == mp || abs.starts_with(mp) && abs.as_bytes().get(mp.len()) == Some(&b'/');
-        if !matches {
-            continue;
-        }
-        let len = mp.len();
-        if best.as_ref().map(|(l, _, _, _, _)| len > *l).unwrap_or(true) {
-            best = Some((
-                len,
-                ent.fs.clone_mount(),
-                ent.identity,
-                String::from(mp),
-                ent.readonly,
-            ));
-        }
+fn join_mount_path(mount: &str, rel: &str) -> String {
+    if rel == "/" {
+        return String::from(mount);
     }
-    best.map(|(_, fs, identity, mp, readonly)| (fs, identity, rel_under_mount(abs, mp.as_str()), readonly))
+    let mount = mount.trim_end_matches('/');
+    alloc::format!("{mount}{rel}")
 }
 
 impl AuxMount {
@@ -125,19 +263,132 @@ impl AuxMount {
             Self::Rw(fs) => Self::Rw(fs.clone()),
             Self::Ro(fs) => Self::Ro(fs.clone()),
             Self::PseudoProc => Self::PseudoProc,
+            Self::PseudoSecurity => Self::PseudoSecurity,
+            Self::Bind { source } => Self::Bind {
+                source: source.clone(),
+            },
         }
     }
 }
 
+impl MountNamespace {
+    pub fn new() -> Self {
+        Self { entries: Vec::new() }
+    }
+
+    fn longest_match(&self, abs: &str) -> Option<(usize, &MountEntry)> {
+        let mut best: Option<(usize, &MountEntry)> = None;
+        for ent in self.entries.iter() {
+            let mp = ent.mount_point.as_str();
+            let matches =
+                abs == mp || abs.starts_with(mp) && abs.as_bytes().get(mp.len()) == Some(&b'/');
+            if !matches {
+                continue;
+            }
+            let len = mp.len();
+            if best.as_ref().map(|(l, _)| len > *l).unwrap_or(true) {
+                best = Some((len, ent));
+            }
+        }
+        best
+    }
+
+    fn exact_mount(&self, mount_point: &str) -> Option<&MountEntry> {
+        self.entries.iter().find(|e| e.mount_point == mount_point)
+    }
+
+    fn exact_mount_mut(&mut self, mount_point: &str) -> Option<&mut MountEntry> {
+        self.entries
+            .iter_mut()
+            .find(|e| e.mount_point == mount_point)
+    }
+
+    fn is_mount_point(&self, abs: &str) -> bool {
+        self.exact_mount(abs).is_some()
+    }
+
+    fn is_under_mount(&self, abs: &str, mount_point: &str) -> bool {
+        abs == mount_point
+            || abs.starts_with(mount_point)
+                && abs.as_bytes().get(mount_point.len()) == Some(&b'/')
+    }
+
+    fn propagation_at(&self, abs: &str) -> MountPropagation {
+        self.longest_match(abs)
+            .map(|(_, ent)| ent.propagation)
+            .unwrap_or(MountPropagation::Private)
+    }
+
+    fn bind_forbidden(&self, source: &str) -> bool {
+        matches!(
+            self.propagation_at(source),
+            MountPropagation::Unbindable
+        )
+    }
+}
+
+const BIND_CHAIN_LIMIT: usize = 32;
+
+fn resolve_material_route(ns: &MountNamespace, abs: &str) -> VfsResult<FsRoute> {
+    let abs = String::from(normalize_absolute_path(abs)?.as_str());
+    let mut current = abs;
+    for _ in 0..BIND_CHAIN_LIMIT {
+        let Some((_, ent)) = ns.longest_match(current.as_str()) else {
+            return Ok(FsRoute::Root {
+                abs: current,
+                identity: root_identity(),
+            });
+        };
+        let rel = rel_under_mount(current.as_str(), ent.mount_point.as_str());
+        match &ent.fs {
+            AuxMount::Bind { source } => {
+                current = join_mount_path(source.as_str(), rel.as_str());
+                continue;
+            }
+            AuxMount::Rw(fs) => {
+                return Ok(FsRoute::AuxRw {
+                    fs: fs.clone(),
+                    rel,
+                    identity: ent.identity,
+                    readonly: ent.readonly,
+                });
+            }
+            AuxMount::Ro(fs) => {
+                return Ok(FsRoute::AuxRo {
+                    fs: fs.clone(),
+                    rel,
+                    identity: ent.identity,
+                });
+            }
+            AuxMount::PseudoProc => {
+                return Ok(FsRoute::PseudoProc {
+                    rel,
+                    identity: ent.identity,
+                });
+            }
+            AuxMount::PseudoSecurity => {
+                return Ok(FsRoute::PseudoSecurity {
+                    rel,
+                    identity: ent.identity,
+                });
+            }
+        }
+    }
+    Err(VfsError::InvalidPath)
+}
+
 fn bump_mount_generation_after_cache_flush() {
     if let Err(e) = super::reset_file_page_cache() {
-        log::warn!("[vfs-bridge] page cache flush before mount_gen bump failed: {:?}",
-                   e);
+        log::warn!(
+            "[vfs-bridge] page cache flush before mount_gen bump failed: {:?}",
+            e
+        );
     }
     fs::rootfs::active_impl::bump_mount_generation();
 }
 
 fn mount_aux_common(
+    ns: &mut MountNamespace,
     mount_point: &str,
     fs: AuxMount,
     device_key: &str,
@@ -148,44 +399,27 @@ fn mount_aux_common(
     if mp == "/" {
         return Err(VfsError::InvalidPath);
     }
-    match super::assert_mount_point_directory(mp.as_str()) {
+    match assert_mount_point_directory_in(ns, mp.as_str()) {
         Ok(()) => {}
         Err(e) => return Err(e),
     }
-    let mut table = AUX_MOUNTS.lock();
-    if table.iter().any(|e| e.mount_point == mp) {
+    if ns.entries.iter().any(|e| e.mount_point == mp) {
         return Err(VfsError::Exists);
     }
-    table.push(MountEntry {
+    ns.entries.push(MountEntry {
         mount_point: mp,
         fs,
         identity: new_mount_identity(device_key),
         readonly,
         fstype,
+        propagation: MountPropagation::Private,
     });
-    drop(table);
-    bump_mount_generation_after_cache_flush();
     Ok(())
 }
 
 pub(crate) fn resolve_route(path: &str) -> VfsResult<FsRoute> {
-    let abs = String::from(normalize_absolute_path(path)?.as_str());
-    if let Some((mount, identity, rel, readonly)) = longest_aux_mount(abs.as_str()) {
-        return match mount {
-            AuxMount::Rw(fs) => Ok(FsRoute::AuxRw {
-                fs,
-                rel,
-                identity,
-                readonly,
-            }),
-            AuxMount::Ro(fs) => Ok(FsRoute::AuxRo { fs, rel, identity }),
-            AuxMount::PseudoProc => Ok(FsRoute::PseudoProc { rel, identity }),
-        };
-    }
-    Ok(FsRoute::Root {
-        abs,
-        identity: root_identity(),
-    })
+    let ns = mount_namespace_snapshot();
+    resolve_material_route(&ns, path)
 }
 
 /// 写路径、带 `O_CREAT`/`O_WRONLY` 的 open 等须先调用；RO / procfs 返回 [`VfsError::ReadOnlyFs`]。
@@ -193,88 +427,288 @@ pub fn assert_path_writable(path: &str) -> VfsResult<()> {
     match resolve_route(path)? {
         FsRoute::AuxRw { readonly: true, .. }
         | FsRoute::AuxRo { .. }
-        | FsRoute::PseudoProc { .. } => Err(VfsError::ReadOnlyFs),
+        | FsRoute::PseudoProc { .. }
+        | FsRoute::PseudoSecurity { .. } => Err(VfsError::ReadOnlyFs),
         _ => Ok(()),
     }
 }
 
 pub(crate) fn mount_aux_at_rw(mount_point: &str, fs: SharedRwFs, device_key: &str) -> VfsResult<()> {
-    mount_aux_common(mount_point, AuxMount::Rw(fs), device_key, "ext4", false)
+    with_current_namespace(|ns| {
+        mount_aux_common(ns, mount_point, AuxMount::Rw(fs), device_key, "ext4", false)
+    })?;
+    bump_mount_generation_after_cache_flush();
+    Ok(())
 }
 
 pub(crate) fn mount_aux_at_ro(mount_point: &str, fs: SharedFs, device_key: &str) -> VfsResult<()> {
-    mount_aux_common(mount_point, AuxMount::Ro(fs), device_key, "ext4", true)
+    with_current_namespace(|ns| {
+        mount_aux_common(ns, mount_point, AuxMount::Ro(fs), device_key, "ext4", true)
+    })?;
+    bump_mount_generation_after_cache_flush();
+    Ok(())
 }
 
-/// 挂载内存 tmpfs（读写；可通过 [`remount_aux_readonly`] 切只读）。
 pub(crate) fn mount_tmpfs_at(mount_point: &str) -> VfsResult<()> {
-    let fs: SharedRwFs = Arc::new(Mutex::new(LocalRwFs::new(Box::new(super::tmpfs::TmpFs::new()))));
-    mount_aux_common(mount_point, AuxMount::Rw(fs), "tmpfs", "tmpfs", false)
+    let fs: SharedRwFs =
+        Arc::new(Mutex::new(LocalRwFs::new(Box::new(super::tmpfs::TmpFs::new()))));
+    with_current_namespace(|ns| {
+        mount_aux_common(ns, mount_point, AuxMount::Rw(fs), "tmpfs", "tmpfs", false)
+    })?;
+    bump_mount_generation_after_cache_flush();
+    Ok(())
 }
 
-/// 挂载 cgroup v1/v2 伪层级（tmpfs 承载标准 cgroup 接口文件）。
 pub(crate) fn mount_cgroup_at(mount_point: &str, v2: bool, options: &str) -> VfsResult<()> {
     let tmp = super::tmpfs::TmpFs::new_cgroup(v2, options).map_err(super::map_fs_err)?;
     let fs: SharedRwFs = Arc::new(Mutex::new(LocalRwFs::new(Box::new(tmp))));
     let fstype = if v2 { "cgroup2" } else { "cgroup" };
-    mount_aux_common(mount_point, AuxMount::Rw(fs), "cgroup", fstype, false)
+    with_current_namespace(|ns| {
+        mount_aux_common(ns, mount_point, AuxMount::Rw(fs), "cgroup", fstype, false)
+    })?;
+    bump_mount_generation_after_cache_flush();
+    Ok(())
 }
 
-/// 路径所在辅助卷的 `statfs` magic；无匹配时返回 `None`。
+pub(crate) fn mount_securityfs_at(mount_point: &str) -> VfsResult<()> {
+    with_current_namespace(|ns| {
+        mount_aux_common(
+            ns,
+            mount_point,
+            AuxMount::PseudoSecurity,
+            "securityfs",
+            "securityfs",
+            true,
+        )
+    })?;
+    bump_mount_generation_after_cache_flush();
+    Ok(())
+}
+
+pub(crate) fn mount_bind_at(source: &str, target: &str, recursive: bool) -> VfsResult<()> {
+    let source = String::from(normalize_absolute_path(source)?.as_str());
+    let target = String::from(normalize_absolute_path(target)?.as_str());
+    if target == "/" {
+        return Err(VfsError::InvalidPath);
+    }
+    with_current_namespace(|ns| {
+        if ns.bind_forbidden(source.as_str()) {
+            return Err(VfsError::InvalidPath);
+        }
+        assert_mount_point_directory_in(ns, target.as_str())?;
+        if ns.is_mount_point(target.as_str()) {
+            return Err(VfsError::Exists);
+        }
+        if recursive {
+            recursive_bind(ns, source.as_str(), target.as_str())?;
+        } else {
+            ns.entries.push(MountEntry {
+                mount_point: target,
+                fs: AuxMount::Bind { source },
+                identity: new_mount_identity("bind"),
+                readonly: false,
+                fstype: "bind",
+                propagation: MountPropagation::Private,
+            });
+        }
+        Ok(())
+    })?;
+    bump_mount_generation_after_cache_flush();
+    Ok(())
+}
+
+fn recursive_bind(ns: &mut MountNamespace, source_root: &str, target_root: &str) -> VfsResult<()> {
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    pairs.push((String::from(source_root), String::from(target_root)));
+    let mut mounts: Vec<String> = ns
+        .entries
+        .iter()
+        .filter_map(|e| {
+            if ns.is_under_mount(e.mount_point.as_str(), source_root) && e.mount_point != source_root
+            {
+                Some(e.mount_point.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+    mounts.sort_by_key(|p| p.len());
+    for mp in mounts {
+        let rel = rel_under_mount(mp.as_str(), source_root);
+        let dst = join_mount_path(target_root, rel.as_str());
+        pairs.push((mp, dst));
+    }
+    for (src, dst) in pairs {
+        if ns.is_mount_point(dst.as_str()) {
+            continue;
+        }
+        assert_mount_point_directory_in(ns, dst.as_str())?;
+        ns.entries.push(MountEntry {
+            mount_point: dst,
+            fs: AuxMount::Bind {
+                source: src.clone(),
+            },
+            identity: new_mount_identity("bind"),
+            readonly: false,
+            fstype: "bind",
+            propagation: MountPropagation::Private,
+        });
+    }
+    Ok(())
+}
+
+pub(crate) fn set_mount_propagation(
+    mount_point: &str,
+    propagation: MountPropagation,
+    recursive: bool,
+) -> VfsResult<()> {
+    let mp = String::from(normalize_absolute_path(mount_point)?.as_str());
+    with_current_namespace(|ns| {
+        if !ns.is_mount_point(mp.as_str()) {
+            return Err(VfsError::NotFound);
+        }
+        let targets: Vec<String> = if recursive {
+            ns.entries
+                .iter()
+                .filter_map(|e| {
+                    if e.mount_point == mp || ns.is_under_mount(e.mount_point.as_str(), mp.as_str())
+                    {
+                        Some(e.mount_point.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        } else {
+            alloc::vec![mp.clone()]
+        };
+        for target in targets {
+            if let Some(ent) = ns.exact_mount_mut(target.as_str()) {
+                ent.propagation = propagation;
+            }
+        }
+        Ok(())
+    })
+}
+
+pub(crate) fn move_mount_at(source: &str, target: &str) -> VfsResult<()> {
+    let source = String::from(normalize_absolute_path(source)?.as_str());
+    let target = String::from(normalize_absolute_path(target)?.as_str());
+    if source == "/" || target == "/" {
+        return Err(VfsError::InvalidPath);
+    }
+    with_current_namespace(|ns| {
+        if !ns.is_mount_point(source.as_str()) {
+            return Err(VfsError::NotFound);
+        }
+        if ns.is_under_mount(target.as_str(), source.as_str()) {
+            return Err(VfsError::InvalidPath);
+        }
+        if ns.is_mount_point(target.as_str()) {
+            return Err(VfsError::Exists);
+        }
+        assert_mount_point_directory_in(ns, target.as_str())?;
+        let prefix = source.clone();
+        let mut renames: Vec<(String, String)> = Vec::new();
+        for ent in ns.entries.iter() {
+            if ent.mount_point == prefix {
+                renames.push((ent.mount_point.clone(), target.clone()));
+            } else if ent.mount_point.starts_with(&prefix) {
+                let rest = ent.mount_point.strip_prefix(&prefix).unwrap_or("");
+                renames.push((
+                    ent.mount_point.clone(),
+                    join_mount_path(target.as_str(), rest),
+                ));
+            }
+        }
+        for (old, new) in renames {
+            if let Some(ent) = ns.exact_mount_mut(old.as_str()) {
+                ent.mount_point = new;
+            }
+        }
+        Ok(())
+    })?;
+    bump_mount_generation_after_cache_flush();
+    Ok(())
+}
+
 pub fn mount_statfs_magic(abs: &str) -> Option<isize> {
     let Ok(abs) = normalize_absolute_path(abs) else {
         return None;
     };
-    let abs = abs.as_str();
-    let table = AUX_MOUNTS.lock();
-    let mut best: Option<(usize, &'static str)> = None;
-    for ent in table.iter() {
-        let mp = ent.mount_point.as_str();
-        let matches = abs == mp || abs.starts_with(mp) && abs.as_bytes().get(mp.len()) == Some(&b'/');
-        if !matches {
-            continue;
-        }
-        if best.as_ref().map(|(len, _)| mp.len() > *len).unwrap_or(true) {
-            best = Some((mp.len(), ent.fstype));
-        }
-    }
-    best.map(|(_, fstype)| match fstype {
-        "tmpfs" => 0x0102_1994, // TMPFS_MAGIC
+    let task_id = task::current_task_id()?;
+    let reg = registry().exclusive_access();
+    let ns = reg.namespace_for(task_id)?;
+    let (_, ent) = ns.longest_match(abs.as_str())?;
+    Some(match ent.fstype {
+        "tmpfs" => 0x0102_1994,
         "cgroup" => 0x0027_e0eb,
         "cgroup2" => 0x6367_7270,
         "proc" => 0x9fa0,
+        "securityfs" => 0x7363_6673,
+        "bind" => mount_statfs_magic_for_path(ns, abs.as_str()).unwrap_or(0xEF53),
         _ => 0xEF53,
     })
 }
 
-/// 将已挂载的辅助卷（tmpfs / ext4 bind）重载为只读。
+fn mount_statfs_magic_for_path(ns: &MountNamespace, abs: &str) -> Option<isize> {
+    let route = resolve_material_route(ns, abs).ok()?;
+    let path = match route {
+        FsRoute::Root { abs, .. } => abs,
+        FsRoute::AuxRw { .. } | FsRoute::AuxRo { .. } => return Some(0xEF53),
+        FsRoute::PseudoProc { .. } => return Some(0x9fa0),
+        FsRoute::PseudoSecurity { .. } => return Some(0x7363_6673),
+    };
+    mount_statfs_magic(path.as_str())
+}
+
 pub(crate) fn remount_aux_readonly(mount_point: &str) -> VfsResult<()> {
     let mp = String::from(normalize_absolute_path(mount_point)?.as_str());
-    let mut table = AUX_MOUNTS.lock();
-    let ent = table
-        .iter_mut()
-        .find(|e| e.mount_point == mp)
-        .ok_or(VfsError::NotFound)?;
-    if !matches!(ent.fs, AuxMount::Rw(_)) {
-        return Err(VfsError::InvalidPath);
-    }
-    ent.readonly = true;
+    with_current_namespace(|ns| {
+        let ent = ns
+            .exact_mount_mut(mp.as_str())
+            .ok_or(VfsError::NotFound)?;
+        if !matches!(ent.fs, AuxMount::Rw(_)) {
+            return Err(VfsError::InvalidPath);
+        }
+        ent.readonly = true;
+        Ok(())
+    })?;
     bump_mount_generation_after_cache_flush();
     Ok(())
 }
 
 pub fn mount_aux_proc_at(mount_point: &str) -> VfsResult<()> {
-    mount_aux_common(mount_point, AuxMount::PseudoProc, "proc", "proc", true)
+    with_current_namespace(|ns| {
+        mount_aux_common(
+            ns,
+            mount_point,
+            AuxMount::PseudoProc,
+            "proc",
+            "proc",
+            true,
+        )
+    })?;
+    bump_mount_generation_after_cache_flush();
+    Ok(())
 }
 
 pub fn is_proc_mounted_at(mount_point: &str) -> bool {
     let Ok(mp) = normalize_absolute_path(mount_point) else {
         return false;
     };
-    AUX_MOUNTS
-        .lock()
-        .iter()
-        .any(|e| e.mount_point == mp.as_str() && matches!(e.fs, AuxMount::PseudoProc))
+    if let Some(task_id) = task::current_task_id() {
+        let reg = registry().exclusive_access();
+        if let Some(ns) = reg.namespace_for(task_id) {
+            return ns.entries.iter().any(|e| {
+                e.mount_point == mp.as_str() && matches!(e.fs, AuxMount::PseudoProc)
+            });
+        }
+    }
+    let ns = BOOTSTRAP_MOUNT_NS.lock();
+    ns.entries.iter().any(|e| {
+        e.mount_point == mp.as_str() && matches!(e.fs, AuxMount::PseudoProc)
+    })
 }
 
 fn fstype_for(entry: &MountEntry) -> &'static str {
@@ -284,6 +718,8 @@ fn fstype_for(entry: &MountEntry) -> &'static str {
 fn device_for(entry: &MountEntry) -> String {
     match entry.fs {
         AuxMount::PseudoProc => String::from("proc"),
+        AuxMount::PseudoSecurity => String::from("securityfs"),
+        AuxMount::Bind { ref source } => source.clone(),
         AuxMount::Rw(_) | AuxMount::Ro(_) => entry.mount_point.clone(),
     }
 }
@@ -301,7 +737,20 @@ pub fn list_proc_mount_lines() -> Vec<ProcMountLine> {
             fstype: String::from("ext4"),
         });
     }
-    for ent in AUX_MOUNTS.lock().iter() {
+    if let Some(task_id) = task::current_task_id() {
+        let reg = registry().exclusive_access();
+        if let Some(ns) = reg.namespace_for(task_id) {
+            for ent in ns.entries.iter() {
+                out.push(ProcMountLine {
+                    device: device_for(ent),
+                    mount_point: ent.mount_point.clone(),
+                    fstype: String::from(fstype_for(ent)),
+                });
+            }
+            return out;
+        }
+    }
+    for ent in BOOTSTRAP_MOUNT_NS.lock().entries.iter() {
         out.push(ProcMountLine {
             device: device_for(ent),
             mount_point: ent.mount_point.clone(),
@@ -311,17 +760,21 @@ pub fn list_proc_mount_lines() -> Vec<ProcMountLine> {
     out
 }
 
-pub(crate) fn unmount_aux_at(mount_point: &str) -> VfsResult<()> {
+pub(crate) fn unmount_aux_at(mount_point: &str, detach: bool) -> VfsResult<()> {
     let mp = String::from(normalize_absolute_path(mount_point)?.as_str());
     if mp == "/" {
         return Err(VfsError::InvalidPath);
     }
-    let mut table = AUX_MOUNTS.lock();
-    let pos = table
-        .iter()
-        .position(|e| e.mount_point == mp)
-        .ok_or(VfsError::NotFound)?;
-    table.remove(pos);
+    let _ = detach;
+    with_current_namespace(|ns| {
+        let pos = ns
+            .entries
+            .iter()
+            .position(|e| e.mount_point == mp)
+            .ok_or(VfsError::NotFound)?;
+        ns.entries.remove(pos);
+        Ok(())
+    })?;
     bump_mount_generation_after_cache_flush();
     Ok(())
 }
@@ -333,18 +786,39 @@ pub fn mount_table_self_test() -> VfsResult<()> {
     assert_eq!(dev_a.device_minor, dev_b.device_minor);
     assert_ne!(dev_a.mount_id, dev_b.mount_id);
 
-    let n_before = AUX_MOUNTS.lock().len();
+    let task_id = task::TaskId::from(0xfeed_usize);
+    init_task_mount_ns(task_id);
+    let reg = registry().exclusive_access();
+    let n_before = reg.namespace_for(task_id).map(|ns| ns.entries.len()).unwrap_or(0);
+    drop(reg);
+
     let root = super::root_rw()?;
     let mp = "/__bringup_mount_test__";
-    mount_aux_at_rw(mp, root.clone(), "/dev/root-self-test")?;
-    let probe = alloc::format!("{mp}/x");
-    let route = resolve_route(probe.as_str())?;
-    match route {
-        FsRoute::AuxRw { rel, .. } if rel == "/x" => {}
-        _ => return Err(VfsError::Io),
+    {
+        let mut reg = registry().exclusive_access();
+        let ns = reg.namespace_for_mut(task_id);
+        mount_aux_common(
+            ns,
+            mp,
+            AuxMount::Rw(root.clone()),
+            "/dev/root-self-test",
+            "ext4",
+            false,
+        )?;
     }
-    unmount_aux_at(mp)?;
-    if AUX_MOUNTS.lock().len() != n_before {
+    {
+        let probe = alloc::format!("{mp}/x");
+        let reg = registry().exclusive_access();
+        let ns = reg.namespace_for(task_id).ok_or(VfsError::Io)?;
+        let route = resolve_material_route(ns, probe.as_str())?;
+        match route {
+            FsRoute::AuxRw { rel, .. } if rel == "/x" => {}
+            _ => return Err(VfsError::Io),
+        }
+    }
+    unmount_aux_at(mp, false)?;
+    let reg = registry().exclusive_access();
+    if reg.namespace_for(task_id).map(|ns| ns.entries.len()).unwrap_or(0) != n_before {
         return Err(VfsError::Io);
     }
     Ok(())

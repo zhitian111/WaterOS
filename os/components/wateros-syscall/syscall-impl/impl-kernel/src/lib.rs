@@ -295,6 +295,11 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     }
 
     #[inline]
+    fn dispatch_truncate(args: SyscallArgs) -> isize {
+        sys::sys_truncate(args).0
+    }
+
+    #[inline]
     fn dispatch_fallocate(args: SyscallArgs) -> isize {
         sys::sys_fallocate(args).0
     }
@@ -600,6 +605,11 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     }
 
     #[inline]
+    fn dispatch_flock(args: SyscallArgs) -> isize {
+        sys::sys_flock(args).0
+    }
+
+    #[inline]
     fn dispatch_ioctl(args: SyscallArgs) -> isize {
         sys::sys_ioctl(args).0
     }
@@ -682,6 +692,11 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     #[inline]
     fn dispatch_umount2(args: SyscallArgs) -> isize {
         sys::sys_umount2(args).0
+    }
+
+    #[inline]
+    fn dispatch_unshare(args: SyscallArgs) -> isize {
+        sys::sys_unshare(args).0
     }
 
     #[inline]

@@ -53,6 +53,17 @@ impl PipeEndpoint {
         self.nonblocking.set(value);
     }
 
+    /// 返回底层 pipe 缓冲区容量。
+    #[inline]
+    pub fn pipe_capacity(&self) -> usize {
+        self.pipe.capacity()
+    }
+
+    /// 调整底层 pipe 缓冲区容量（`fcntl(F_SETPIPE_SZ)`）。
+    pub fn set_pipe_capacity(&self, capacity: usize) -> PipeResult<usize> {
+        self.pipe.set_capacity(capacity)
+    }
+
     /// 从读端读取。
     pub fn read(&self, out: &mut [u8]) -> PipeResult<usize> {
         PipeEndpointOps::read(self, out)

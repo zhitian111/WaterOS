@@ -123,6 +123,11 @@ pub trait VfsIoHandle {
         0
     }
 
+    /// Linux `fcntl(F_GETFL)` 访问模式（`O_ACCMODE`：0/1/2）；默认只读。
+    fn open_accmode(&self) -> u32 {
+        0
+    }
+
     /// Linux `fcntl(F_SETFL)`；默认忽略（pipe/socket 等由具体实现覆盖）。
     fn set_open_status_flags(&mut self, flags: u32) -> VfsResult<()> {
         let _ = flags;
@@ -137,6 +142,16 @@ pub trait VfsIoHandle {
         still_waiting: &mut dyn FnMut() -> bool,
     ) -> VfsResult<()> {
         let _ = (events, timeout_ticks, still_waiting);
+        Err(VfsError::Unsupported)
+    }
+
+    /// pipe fd：`F_GETPIPE_SZ` 返回容量；非 pipe 返回 `None`。
+    fn pipe_capacity(&self) -> Option<usize> {
+        None
+    }
+
+    /// pipe fd：`F_SETPIPE_SZ` 调整容量；非 pipe 返回 [`VfsError::Unsupported`]。
+    fn pipe_set_capacity(&mut self, _capacity: usize) -> VfsResult<usize> {
         Err(VfsError::Unsupported)
     }
 }

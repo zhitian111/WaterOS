@@ -115,7 +115,15 @@ impl PerTaskFdRegistry {
     }
 
     fn close_slot(&mut self, task_id: task::TaskId, fd: usize) -> VfsResult<()> {
+        let pid = task::process_task_snapshot(task_id).map(|snap| snap.pid);
         let mut handle = self.take_fd_for_close(task_id, fd)?;
+        if let Some(pid) = pid {
+            if let Ok(meta) = handle.metadata() {
+                if let Some(key) = crate::file_lock::inode_key_from_metadata(&meta) {
+                    crate::file_lock::release_process_inode_locks(pid, &key);
+                }
+            }
+        }
         handle.close()?;
         Ok(())
     }
@@ -648,6 +656,13 @@ impl PerTaskFdRegistry {
         self.ensure_flags_len(child, parent_len.max(child_len));
         for fd in 0..parent_len.min(parent_flags.len()) {
             self.fd_flags.get_mut(&child).expect("child fd flags")[fd] = parent_flags[fd];
+        }
+
+        if let (Some(parent_snap), Some(child_snap)) = (
+            task::process_task_snapshot(parent),
+            task::process_task_snapshot(child),
+        ) {
+            crate::file_lock::inherit_process_locks(parent_snap.pid, child_snap.pid);
         }
     }
 

@@ -1,6 +1,7 @@
 //! 将 [`api_v0::VfsBackend`] **桥接**到 `wateros-fs` 聚合 API；不 re-export `wateros-fs` 类型。
 
 #![no_std]
+#![allow(static_mut_refs)]
 extern crate alloc;
 
 use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
@@ -14,6 +15,7 @@ use api_v0::{
 
 mod dir_handle;
 mod file_handle;
+mod mount_ns;
 mod mount_table;
 mod paged_handle;
 mod proc_handle;
@@ -129,7 +131,9 @@ fn fs_and_rel_rw(path : &str) -> VfsResult<(SharedRwFs, String)> {
             Err(VfsError::ReadOnlyFs)
         }
         FsRoute::AuxRw { fs, rel, .. } => Ok((fs, rel)),
-        FsRoute::AuxRo { .. } | FsRoute::PseudoProc { .. } => Err(VfsError::ReadOnlyFs),
+        FsRoute::AuxRo { .. } | FsRoute::PseudoProc { .. } | FsRoute::PseudoSecurity { .. } => {
+            Err(VfsError::ReadOnlyFs)
+        }
     }
 }
 
@@ -186,6 +190,31 @@ fn copy_virtual_range(data : &[u8], offset : u64, buf : &mut [u8]) -> usize {
     n
 }
 
+fn securityfs_exists(rel : &str) -> bool { rel == "/" }
+
+fn securityfs_metadata(rel : &str, identity : MountIdentity) -> VfsResult<VfsMetadata> {
+    if rel != "/" {
+        return Err(VfsError::NotFound);
+    }
+    Ok(VfsMetadata { node_type : VfsNodeType::Directory,
+                     size : 0,
+                     mode : 0o555,
+                     device_major : identity.device_major,
+                     device_minor : identity.device_minor,
+                     inode : 0,
+                     mount_id : identity.mount_id,
+                     nlink : 1,
+                     uid : 0,
+                     gid : 0 })
+}
+
+fn securityfs_read_dir(rel : &str) -> VfsResult<Vec<fs::FsDirEntry>> {
+    if rel == "/" {
+        return Ok(Vec::new());
+    }
+    Err(VfsError::NotFound)
+}
+
 impl SingleRootReadView for FsBridge {
     fn exists(&self, path : &str) -> VfsResult<bool> {
         let abs = normalize_absolute_path(path)?;
@@ -195,6 +224,7 @@ impl SingleRootReadView for FsBridge {
         match resolve_route(abs.as_str())? {
             FsRoute::PseudoProc { rel, .. } => proc_view().exists(rel.as_str())
                                                           .map_err(map_fs_err),
+            FsRoute::PseudoSecurity { rel, .. } => Ok(securityfs_exists(rel.as_str())),
             FsRoute::Root { abs, .. } => {
                 let exists = root_rw()?.lock()
                                        .exists(abs.as_str())
@@ -221,6 +251,7 @@ impl SingleRootReadView for FsBridge {
                                     .map_err(map_fs_err)?,
                          identity)
             }
+            FsRoute::PseudoSecurity { rel, identity } => securityfs_metadata(rel.as_str(), identity)?,
             FsRoute::Root { abs, identity } => {
                 let meta = match root_rw()?.lock()
                                       .metadata(abs.as_str())
@@ -262,6 +293,7 @@ impl SingleRootReadView for FsBridge {
         match resolve_route(abs.as_str())? {
             FsRoute::PseudoProc { rel, .. } => proc_view().read(rel.as_str())
                                                           .map_err(map_fs_err),
+            FsRoute::PseudoSecurity { .. } => Err(VfsError::NotFound),
             FsRoute::Root { abs, .. } => match root_rw()?.lock()
                                                     .read(abs.as_str())
                                                     .map_err(map_fs_err)
@@ -293,6 +325,7 @@ impl SingleRootReadView for FsBridge {
         let entries = match resolve_route(abs.as_str())? {
             FsRoute::PseudoProc { rel, .. } => proc_view().read_dir(rel.as_str())
                                                           .map_err(map_fs_err)?,
+            FsRoute::PseudoSecurity { rel, .. } => securityfs_read_dir(rel.as_str())?,
             FsRoute::Root { abs, .. } => root_rw()?.lock()
                                                    .read_dir(abs.as_str())
                                                    .map_err(map_fs_err)?,
@@ -346,6 +379,7 @@ impl FsBridge {
                 buf[..n].copy_from_slice(&data[start..start + n]);
                 Ok(n)
             }
+            FsRoute::PseudoSecurity { .. } => Err(VfsError::NotFound),
             FsRoute::Root { abs, .. } => match root_rw()?.lock()
                                                     .read_range(abs.as_str(), offset, buf)
                                                     .map_err(map_fs_err)
@@ -411,7 +445,9 @@ pub fn remount_readonly_at(mount_point : &str) -> VfsResult<()> {
 }
 
 /// 卸载 `mount_point` 上的辅助卷。
-pub fn unmount_at(mount_point : &str) -> VfsResult<()> { mount_table::unmount_aux_at(mount_point) }
+pub fn unmount_at(mount_point : &str, detach : bool) -> VfsResult<()> {
+    mount_table::unmount_aux_at(mount_point, detach)
+}
 
 /// 在 ext4 根卷上创建 `/proc` 挂载点目录（已存在则忽略）。
 pub fn ensure_proc_mount_point() -> VfsResult<()> {
@@ -427,6 +463,32 @@ pub fn ensure_proc_mount_point() -> VfsResult<()> {
 pub fn mount_procfs_at(mount_point : &str) -> VfsResult<()> {
     mount_table::mount_aux_proc_at(mount_point)
 }
+
+pub fn mount_securityfs_at(mount_point : &str) -> VfsResult<()> {
+    mount_table::mount_securityfs_at(mount_point)
+}
+
+pub fn mount_bind_at(source : &str, target : &str, recursive : bool) -> VfsResult<()> {
+    mount_table::mount_bind_at(source, target, recursive)
+}
+
+pub fn move_mount_at(source : &str, target : &str) -> VfsResult<()> {
+    mount_table::move_mount_at(source, target)
+}
+
+pub use mount_table::MountPropagation;
+
+pub fn set_mount_propagation(mount_point : &str,
+                             propagation : MountPropagation,
+                             recursive : bool)
+                             -> VfsResult<()> {
+    mount_table::set_mount_propagation(mount_point, propagation, recursive)
+}
+
+pub use mount_table::{
+    copy_mount_ns_from_parent, drop_task_mount_ns, init_task_mount_ns, share_mount_ns_from_parent,
+    unshare_mount_ns,
+};
 
 pub use mount_table::{
     assert_path_writable, is_proc_mounted_at, list_proc_mount_lines, mount_aux_proc_at,
@@ -492,7 +554,7 @@ pub fn symlink_path(link_path : &str, target : &str) -> VfsResult<()> {
 pub fn read_symlink_path(path : &str) -> VfsResult<Vec<u8>> {
     let abs = normalize_absolute_path(path)?;
     match resolve_route(abs.as_str())? {
-        FsRoute::PseudoProc { .. } => Err(VfsError::NotAFile),
+        FsRoute::PseudoProc { .. } | FsRoute::PseudoSecurity { .. } => Err(VfsError::NotAFile),
         FsRoute::Root { abs, .. } => root_rw()?.lock()
                                             .read_symlink(abs.as_str())
                                             .map_err(map_fs_err),
@@ -503,6 +565,26 @@ pub fn read_symlink_path(path : &str) -> VfsResult<Vec<u8>> {
                                             .read_symlink(rel.as_str())
                                             .map_err(map_fs_err),
     }
+}
+
+/// 截断普通文件（经挂载表路由）；同步失效页缓存。
+pub fn truncate_path(path : &str, len : u64) -> VfsResult<()> {
+    let normalized = normalize_absolute_path(path)?;
+    if char_dev_exists(normalized.as_str()) {
+        return Err(VfsError::Unsupported);
+    }
+    let bridge = FsBridge;
+    let meta = bridge.metadata(normalized.as_str())?;
+    if meta.node_type != VfsNodeType::File {
+        return Err(VfsError::NotAFile);
+    }
+    mount_table::assert_path_writable(path)?;
+    let (fs, rel) = fs_and_rel_rw(path)?;
+    let mut sess = MountedRwSession::new(fs);
+    sess.truncate(rel.as_str(), len)?;
+    let mount_gen = fs::rootfs::active_impl::mount_generation();
+    impl_page_cache::global_cache(mount_gen).truncate(normalized.as_str(), len);
+    Ok(())
 }
 
 /// 修改路径权限（经挂载表路由）。
@@ -889,7 +971,7 @@ impl VfsMountTable for FsBridge {
     }
 
     fn unmount_at(&mut self, mount_point : &str) -> VfsResult<()> {
-        mount_table::unmount_aux_at(mount_point)
+        mount_table::unmount_aux_at(mount_point, false)
     }
 
     fn resolve_mount(&self, path : &str) -> VfsResult<&str> {

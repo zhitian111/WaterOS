@@ -18,6 +18,7 @@ mod fchmodat;
 mod fchownat;
 mod fcntl;
 mod fallocate;
+mod flock;
 mod fstat;
 mod ftruncate;
 mod futex;
@@ -52,7 +53,9 @@ mod statfs;
 mod symlinkat;
 mod sync;
 mod task;
+mod truncate;
 mod umount2;
+mod unshare;
 mod unlinkat;
 mod utimensat;
 mod write;
@@ -91,6 +94,7 @@ pub(crate) use faccessat::{sys_faccessat, sys_faccessat2};
 pub(crate) use fchmodat::sys_fchmodat;
 pub(crate) use fchownat::sys_fchownat;
 pub(crate) use fcntl::sys_fcntl;
+pub(crate) use flock::sys_flock;
 pub(crate) use fallocate::sys_fallocate;
 pub(crate) use fstat::{sys_fstat, sys_fstatat, sys_statx};
 pub(crate) use ftruncate::sys_ftruncate;
@@ -137,6 +141,7 @@ pub(crate) use clock::{
 pub(crate) use statfs::sys_statfs;
 pub(crate) use symlinkat::sys_symlinkat;
 pub(crate) use sync::{sys_fdatasync, sys_fsync, sys_sync};
+pub(crate) use truncate::sys_truncate;
 pub(crate) use syslog::sys_syslog;
 pub(crate) use task::{
     drop_reaped_task_runtime_resources, sys_exit, sys_exit_group, sys_getpid, sys_getppid, sys_getrandom,
@@ -146,6 +151,7 @@ pub(crate) use task::{
     sys_waitpid, sys_setsid, sys_yield,
 };
 pub(crate) use umount2::sys_umount2;
+pub(crate) use unshare::sys_unshare;
 pub(crate) use unlinkat::sys_unlinkat;
 pub(crate) use utimensat::sys_utimensat;
 pub(crate) use xattr::{

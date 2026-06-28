@@ -284,6 +284,14 @@ impl VfsIoHandle for PipeReadHandle {
         self.endpoint.set_nonblocking(flags & 0o0004000 != 0);
         Ok(())
     }
+
+    fn pipe_capacity(&self) -> Option<usize> {
+        Some(self.endpoint.pipe_capacity())
+    }
+
+    fn pipe_set_capacity(&mut self, capacity: usize) -> VfsResult<usize> {
+        self.endpoint.set_pipe_capacity(capacity).map_err(map_pipe_err)
+    }
 }
 
 /// pipe 写端。
@@ -334,6 +342,14 @@ impl VfsIoHandle for PipeWriteHandle {
     fn set_open_status_flags(&mut self, flags: u32) -> VfsResult<()> {
         self.endpoint.set_nonblocking(flags & 0o0004000 != 0);
         Ok(())
+    }
+
+    fn pipe_capacity(&self) -> Option<usize> {
+        Some(self.endpoint.pipe_capacity())
+    }
+
+    fn pipe_set_capacity(&mut self, capacity: usize) -> VfsResult<usize> {
+        self.endpoint.set_pipe_capacity(capacity).map_err(map_pipe_err)
     }
 }
 

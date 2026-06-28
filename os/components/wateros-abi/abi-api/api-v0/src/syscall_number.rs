@@ -76,6 +76,8 @@ pub trait SyscallNumberTable {
     const FSYNC: SyscallNumber;
     /// 将 fd 对应文件数据同步到存储（`fdatasync(2)`）。
     const FDATASYNC: SyscallNumber;
+    /// 按路径调整普通文件长度（`truncate(2)`）。
+    const TRUNCATE: SyscallNumber;
     /// 调整 fd 对应文件长度（`ftruncate(2)`）。
     const FTRUNCATE: SyscallNumber;
     /// 预分配 fd 对应文件区间（`fallocate(2)`）。
@@ -122,6 +124,8 @@ pub trait SyscallNumberTable {
     const IOCTL: SyscallNumber;
     /// 文件描述符控制（`fcntl(2)`）。
     const FCNTL: SyscallNumber;
+    /// BSD 整文件锁（`flock(2)`）。
+    const FLOCK: SyscallNumber;
     /// 读取目录项（`getdents64(2)`）。
     const GETDENTS64: SyscallNumber;
     /// 相对目录创建目录（`mkdirat(2)`）。
@@ -154,6 +158,8 @@ pub trait SyscallNumberTable {
     const KILL: SyscallNumber;
     /// 替换当前进程映像（与 `execve` 等价的编号）。
     const EXEC: SyscallNumber;
+    /// 脱离共享命名空间（`unshare(2)`）。
+    const UNSHARE: SyscallNumber;
 
     // 调度/时间 / scheduling & time
     /// 设置调度参数（`sched_setparam(2)`）。

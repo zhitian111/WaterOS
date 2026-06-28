@@ -195,11 +195,13 @@ fn do_exec(cwd : &str, arg : Option<&str>, _rest : &[&str]) -> Result<(), VfsErr
                                                            .with_initial_user_args(argc, argv_ptr, envp_ptr),
                 );
                 vfs::cwd::on_user_task_spawned(tid);
+                vfs::mount_ns::on_user_task_spawned(tid);
                 cred::on_user_task_spawned(tid);
                 task::wait_for_task_exit(tid);
                 let code = task::reap_exited_task(tid).map(|e| {
                                                           cred::drop_task_cred(e.id);
                                                           vfs::cwd::drop_task_cwd(e.id);
+                                                          vfs::mount_ns::drop_task_mount_ns(e.id);
                                                           vfs::fd::drop_task_fd_table(e.id);
                                                           e.exit_code
                                                       })

@@ -22,6 +22,12 @@ pub trait KernelPipe {
     /// 返回缓冲区容量。
     fn capacity(&self) -> usize;
 
+    /// 调整缓冲区容量；仅当管道为空时可改变底层缓冲大小。
+    fn set_capacity(&self, capacity: usize) -> PipeResult<usize> {
+        let _ = capacity;
+        Err(crate::PipeError::InvalidCapacity)
+    }
+
     /// 返回当前已缓冲字节数。
     fn len(&self) -> usize;
 

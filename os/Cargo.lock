@@ -1488,6 +1488,7 @@ dependencies = [
 name = "wateros-vfs-impl-fd-session"
 version = "0.1.0"
 dependencies = [
+ "ipc-waitqueue",
  "spin",
  "wateros-base",
  "wateros-driver-api-v0",
@@ -1505,9 +1506,11 @@ version = "0.1.0"
 dependencies = [
  "log",
  "spin",
+ "wateros-base",
  "wateros-base-config",
  "wateros-driver-block-api-v0",
  "wateros-fs",
+ "wateros-task",
  "wateros-vfs-api-v0",
  "wateros-vfs-impl-fd-session",
  "wateros-vfs-impl-page-cache",

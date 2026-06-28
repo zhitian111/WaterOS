@@ -90,6 +90,17 @@ pub(crate) fn sys_openat(args : SyscallArgs) -> UserRet {
                     return UserRet::from_error(vfs_error_to_errno(e));
                 }
             }
+            const O_NONBLOCK: u32 = 0o4000;
+            if flags & O_NONBLOCK != 0 {
+                if let Err(e) = vfs::fd::with_current_io(fd, |h| {
+                    let mut sf = h.open_status_flags();
+                    sf |= O_NONBLOCK;
+                    h.set_open_status_flags(sf)
+                }) {
+                    let _ = vfs::fd::close_fd(fd);
+                    return UserRet::from_error(vfs_error_to_errno(e));
+                }
+            }
             if flags & O_PATH != 0 {
                 if let Err(e) = vfs::fd::set_path_only_fd(fd) {
                     let _ = vfs::fd::close_fd(fd);

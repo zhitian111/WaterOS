@@ -13,6 +13,7 @@
     arch = { path = "../../../wateros-platform/platform-arch/", package = "wateros-platform-arch", default-features = false, features = [
         "api-v0",
     ] }
+    waitqueue = { path = "../../../wateros-ipc/ipc-waitqueue/", package = "ipc-waitqueue", default-features = false }
     spin = { version = "0.10.0", default-features = false, features = [
         "mutex",
         "spin_mutex",
@@ -22,7 +23,7 @@
 [features]
     api-v0 = [  ]
     default = [ "impl-fd-session" ]
-    impl-fd-session = [ "api-v0", "ipc/pipe", "task/api-v0", "task/impl-core" ]
+    impl-fd-session = [ "api-v0", "ipc/pipe", "task/api-v0", "task/impl-core", "waitqueue/impl-task" ]
 
 [profile.dev]
     panic = "abort"

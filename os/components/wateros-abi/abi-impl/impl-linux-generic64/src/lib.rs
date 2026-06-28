@@ -41,6 +41,7 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const SYNC: SyscallNumber = SyscallNumber(81);
     const FSYNC: SyscallNumber = SyscallNumber(82);
     const FDATASYNC: SyscallNumber = SyscallNumber(83);
+    const TRUNCATE: SyscallNumber = SyscallNumber(45);
     const FTRUNCATE: SyscallNumber = SyscallNumber(46);
     const FALLOCATE: SyscallNumber = SyscallNumber(47);
     const OPENAT: SyscallNumber = SyscallNumber(56);
@@ -64,6 +65,7 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const PIPE2: SyscallNumber = SyscallNumber(59);
     const IOCTL: SyscallNumber = SyscallNumber(29);
     const FCNTL: SyscallNumber = SyscallNumber(25);
+    const FLOCK: SyscallNumber = SyscallNumber(32);
     const GETDENTS64: SyscallNumber = SyscallNumber(61);
     const MKDIRAT: SyscallNumber = SyscallNumber(34);
     const SYMLINKAT: SyscallNumber = SyscallNumber(36);
@@ -81,6 +83,7 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const WAITPID: SyscallNumber = SyscallNumber(260); // wait4
     const KILL: SyscallNumber = SyscallNumber(129);
     const EXEC: SyscallNumber = SyscallNumber(221); // execve
+    const UNSHARE: SyscallNumber = SyscallNumber(272);
 
     // 调度/时间 / scheduling & time
     const SCHED_SETPARAM: SyscallNumber = SyscallNumber(118); // sched_setparam
@@ -224,6 +227,7 @@ mod tests {
             LinuxGeneric64::SYNC,
             LinuxGeneric64::FSYNC,
             LinuxGeneric64::FDATASYNC,
+            LinuxGeneric64::TRUNCATE,
             LinuxGeneric64::FTRUNCATE,
             LinuxGeneric64::FALLOCATE,
             LinuxGeneric64::OPENAT,
@@ -247,6 +251,7 @@ mod tests {
             LinuxGeneric64::PIPE2,
             LinuxGeneric64::IOCTL,
             LinuxGeneric64::FCNTL,
+            LinuxGeneric64::FLOCK,
             LinuxGeneric64::GETDENTS64,
             LinuxGeneric64::MKDIRAT,
             LinuxGeneric64::SYMLINKAT,
@@ -262,6 +267,7 @@ mod tests {
             LinuxGeneric64::WAITPID,
             LinuxGeneric64::KILL,
             LinuxGeneric64::EXEC,
+            LinuxGeneric64::UNSHARE,
             LinuxGeneric64::SCHED_SETPARAM,
             LinuxGeneric64::SCHED_SETSCHEDULER,
             LinuxGeneric64::SCHED_GETSCHEDULER,

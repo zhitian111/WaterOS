@@ -74,6 +74,7 @@ impl CloneFlags {
     pub const CLONE_PARENT_SETTID: Self = Self(0x0010_0000);
     pub const CLONE_CHILD_CLEARTID: Self = Self(0x0020_0000);
     pub const CLONE_CHILD_SETTID: Self = Self(0x0100_0000);
+    pub const CLONE_NEWNS: Self = Self(0x0002_0000);
 
     #[inline]
     pub const fn empty() -> Self {
@@ -158,6 +159,7 @@ impl ResourceHandle {
 
 pub type FileTableRef = ResourceHandle;
 pub type CwdRef = ResourceHandle;
+pub type MountNsRef = ResourceHandle;
 pub type SignalHandlersRef = ResourceHandle;
 
 /// `set_tid_address` / 清理任务退出标记使用的用户地址。
@@ -233,6 +235,7 @@ pub struct ProcessDescriptor {
     pub address_space: Option<AddressSpaceRef>,
     pub file_table: Option<FileTableRef>,
     pub cwd: Option<CwdRef>,
+    pub mount_ns: Option<MountNsRef>,
     pub signal_handlers: Option<SignalHandlersRef>,
     pub task_count: usize,
     pub state: ProcessState,

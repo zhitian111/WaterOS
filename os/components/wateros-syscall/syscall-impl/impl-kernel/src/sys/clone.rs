@@ -27,6 +27,7 @@ const CLONE_VFORK : usize = 0x0000_4000;
 const CLONE_PARENT_SETTID_RAW : usize = 0x0010_0000;
 const CLONE_CHILD_CLEARTID_RAW : usize = 0x0020_0000;
 const CLONE_CHILD_SETTID_RAW : usize = 0x0100_0000;
+const CLONE_NEWNS_RAW : usize = 0x0002_0000;
 const CLONE_CLEAR_SIGHAND_RAW : usize = 0x0000_0001_0000_0000;
 const CLONE_INTO_CGROUP : usize = 0x0000_0002_0000_0000;
 /// Linux `CSIGNAL`：fork 路径仅允许低 8 位退出信号号。
@@ -34,6 +35,7 @@ const CLONE_CSIGNAL_MASK : usize = 0xFF;
 const CLONE_FORK_COMPAT_MASK : usize = CLONE_CSIGNAL_MASK |
                                         CLONE_FS_RAW |
                                         CLONE_FILES_RAW |
+                                        CLONE_NEWNS_RAW |
                                         CLONE_PARENT_SETTID_RAW |
                                         CLONE_CHILD_CLEARTID_RAW |
                                         CLONE_CHILD_SETTID_RAW;
@@ -306,6 +308,11 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
         crate::socket_fd::copy_from_parent(child_id, parent_id);
         crate::epoll_fd::copy_from_parent(child_id, parent_id);
     }
+    if clone_flags.contains(task::CloneFlags::CLONE_NEWNS) {
+        vfs::mount_ns::copy_mount_ns_from_parent(child_id, parent_id);
+    } else {
+        vfs::mount_ns::share_mount_ns_from_parent(child_id, parent_id);
+    }
     crate::unix_sock::copy_fds_from_parent(child_id, parent_id);
 
     cred::fork_cred(parent_id, child_id);
@@ -416,6 +423,7 @@ fn do_clone_thread(clone_flags : task::CloneFlags,
         crate::socket_fd::copy_from_parent(child_id, parent_id);
         crate::epoll_fd::copy_from_parent(child_id, parent_id);
     }
+    vfs::mount_ns::share_mount_ns_from_parent(child_id, parent_id);
     crate::unix_sock::copy_fds_from_parent(child_id, parent_id);
     cred::share_cred(parent_id, child_id);
 

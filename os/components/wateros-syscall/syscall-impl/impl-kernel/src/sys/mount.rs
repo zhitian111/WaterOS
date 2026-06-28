@@ -1,4 +1,4 @@
-//! `mount(2)`：块设备 ext4、tmpfs、procfs 挂载与重载只读。
+//! `mount(2)`：块设备 ext4、tmpfs、procfs 挂载与 bind/传播/move。
 
 use alloc::string::String;
 
@@ -6,6 +6,7 @@ use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use vfs::api::VfsError;
+use vfs::MountPropagation;
 
 use super::ltp_cgroup_helper::cgroup_regression_loop_fast_exit_if_standalone;
 use crate::sys::path_at::resolve_path_at;
@@ -13,15 +14,38 @@ use crate::user_copy::copy_user_path_cstr;
 use crate::vfs_util::vfs_error_to_errno;
 
 const MS_RDONLY: u64 = 1;
-/// Linux `mount(2)` remount flag (`include/uapi/linux/mount.h`).
 const MS_REMOUNT: u64 = 32;
 const MS_BIND: u64 = 4096;
 const MS_MOVE: u64 = 8192;
+const MS_REC: u64 = 0x8000;
 const MS_UNBINDABLE: u64 = 1 << 17;
 const MS_PRIVATE: u64 = 1 << 18;
 const MS_SLAVE: u64 = 1 << 19;
 const MS_SHARED: u64 = 1 << 20;
-const MS_UNSUPPORTED: u64 = MS_BIND | MS_MOVE | MS_UNBINDABLE | MS_PRIVATE | MS_SLAVE | MS_SHARED;
+const MS_PROPAGATION: u64 = MS_UNBINDABLE | MS_PRIVATE | MS_SLAVE | MS_SHARED;
+
+fn propagation_from_flags(flags: u64) -> Result<Option<MountPropagation>, ErrNo> {
+    let bits = flags & MS_PROPAGATION;
+    if bits == 0 {
+        return Ok(None);
+    }
+    let count = [MS_PRIVATE, MS_SHARED, MS_SLAVE, MS_UNBINDABLE]
+        .iter()
+        .filter(|mask| bits & *mask != 0)
+        .count();
+    if count != 1 {
+        return Err(ErrNo::EINVAL);
+    }
+    Ok(Some(if bits & MS_PRIVATE != 0 {
+        MountPropagation::Private
+    } else if bits & MS_SHARED != 0 {
+        MountPropagation::Shared
+    } else if bits & MS_SLAVE != 0 {
+        MountPropagation::Slave
+    } else {
+        MountPropagation::Unbindable
+    }))
+}
 
 pub(crate) fn sys_mount(args: SyscallArgs) -> UserRet {
     cgroup_regression_loop_fast_exit_if_standalone();
@@ -31,20 +55,6 @@ pub(crate) fn sys_mount(args: SyscallArgs) -> UserRet {
     let fstype_ptr = args.arg(2);
     let flags = args.arg(3) as u64;
     let data_ptr = args.arg(4);
-
-    if flags & MS_UNSUPPORTED != 0 {
-        log::warn!(
-            "[syscall] mount(nr=40) unsupported flags={:#x} args=[{:#x},{:#x},{:#x},{:#x},{:#x},{:#x}]",
-            flags,
-            source_ptr,
-            target_ptr,
-            fstype_ptr,
-            flags,
-            data_ptr,
-            0usize,
-        );
-        return UserRet::from_error(ErrNo::EINVAL);
-    }
 
     if target_ptr == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
@@ -68,6 +78,63 @@ pub(crate) fn sys_mount(args: SyscallArgs) -> UserRet {
     } else {
         String::new()
     };
+
+    if flags & MS_MOVE != 0 {
+        if flags & !(MS_MOVE | MS_REC) != 0 {
+            return UserRet::from_error(ErrNo::EINVAL);
+        }
+        if source_ptr == 0 {
+            return UserRet::from_error(ErrNo::EFAULT);
+        }
+        let source = match copy_user_path_cstr(source_ptr, 256) {
+            Ok(s) => s,
+            Err(e) => return UserRet::from_error(e),
+        };
+        let source = match resolve_path_at(crate::sys::path_at::AT_FDCWD, source.as_str()) {
+            Ok(p) => p,
+            Err(e) => return UserRet::from_error(e),
+        };
+        return match vfs::move_mount_at(source.as_str(), mount_point.as_str()) {
+            Ok(()) => UserRet::from_success(0),
+            Err(VfsError::NotFound) => UserRet::from_error(ErrNo::EINVAL),
+            Err(e) => UserRet::from_error(vfs_error_to_errno(e)),
+        };
+    }
+
+    if let Ok(Some(propagation)) = propagation_from_flags(flags) {
+        if flags & MS_BIND != 0 || flags & MS_REMOUNT != 0 || !fstype.is_empty() {
+            return UserRet::from_error(ErrNo::EINVAL);
+        }
+        let recursive = flags & MS_REC != 0;
+        return match vfs::set_mount_propagation(mount_point.as_str(), propagation, recursive) {
+            Ok(()) => UserRet::from_success(0),
+            Err(VfsError::NotFound) => UserRet::from_error(ErrNo::EINVAL),
+            Err(e) => UserRet::from_error(vfs_error_to_errno(e)),
+        };
+    }
+
+    if flags & MS_BIND != 0 {
+        if flags & MS_REMOUNT != 0 || !fstype.is_empty() {
+            return UserRet::from_error(ErrNo::EINVAL);
+        }
+        if source_ptr == 0 {
+            return UserRet::from_error(ErrNo::EFAULT);
+        }
+        let source = match copy_user_path_cstr(source_ptr, 256) {
+            Ok(s) => s,
+            Err(e) => return UserRet::from_error(e),
+        };
+        let source = match resolve_path_at(crate::sys::path_at::AT_FDCWD, source.as_str()) {
+            Ok(p) => p,
+            Err(e) => return UserRet::from_error(e),
+        };
+        let recursive = flags & MS_REC != 0;
+        return match vfs::mount_bind_at(source.as_str(), mount_point.as_str(), recursive) {
+            Ok(()) => UserRet::from_success(0),
+            Err(VfsError::Exists) => UserRet::from_error(ErrNo::EBUSY),
+            Err(e) => UserRet::from_error(vfs_error_to_errno(e)),
+        };
+    }
 
     if flags & MS_REMOUNT != 0 {
         if flags & MS_RDONLY == 0 {
@@ -94,13 +161,21 @@ pub(crate) fn sys_mount(args: SyscallArgs) -> UserRet {
         };
     }
 
+    if fstype == "securityfs" {
+        return match vfs::mount_securityfs_at(mount_point.as_str()) {
+            Ok(()) => UserRet::from_success(0),
+            Err(VfsError::Exists) => UserRet::from_error(ErrNo::EBUSY),
+            Err(e) => UserRet::from_error(vfs_error_to_errno(e)),
+        };
+    }
+
     if fstype == "tmpfs" {
         if source_ptr != 0 {
             let source = match copy_user_path_cstr(source_ptr, 256) {
                 Ok(s) => s,
                 Err(e) => return UserRet::from_error(e),
             };
-            if !source.is_empty() {
+            if !source.is_empty() && source != "none" {
                 return UserRet::from_error(ErrNo::EINVAL);
             }
         }
@@ -120,8 +195,6 @@ pub(crate) fn sys_mount(args: SyscallArgs) -> UserRet {
     }
 
     if fstype == "cgroup" || fstype == "cgroup2" {
-        // LTP: mount("cgroup2", path, "cgroup2", 0, NULL) 或
-        // mount(ctrl, path, "cgroup", 0, ctrl)；source 可为控制器名。
         let mut options = if data_ptr != 0 {
             match copy_user_path_cstr(data_ptr, 256) {
                 Ok(s) => s,

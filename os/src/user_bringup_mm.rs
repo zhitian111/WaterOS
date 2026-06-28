@@ -42,6 +42,7 @@ pub fn run_stage_02() {
                 let tid = task::spawn_user_task_from_loaded_elf(&loaded);
                 #[cfg(feature = "vfs-bridge")]
                 vfs::cwd::on_user_task_spawned_for_elf(tid, path, &[path]);
+                vfs::mount_ns::on_user_task_spawned(tid);
                 info!("[mm-bringup] spawned user task {tid} for {path}");
             }
             Err(e) => {

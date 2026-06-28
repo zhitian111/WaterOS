@@ -7,10 +7,10 @@ use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
 use api_v0::{
-    AddressSpaceRef, CloneFlags, CwdRef, FileTableRef, ProcessDescriptor, ProcessId, ProcessState,
-    ProcessTaskDescriptor, ProcessTaskRole, ProcessTaskState, ResourceHandle, ResourceLimit,
-    SetResourceLimitError, SignalHandlersRef, TaskClearTid, TaskExitCode, TaskGroupId, TaskId,
-    ThreadId,
+    AddressSpaceRef, CloneFlags, CwdRef, FileTableRef, MountNsRef, ProcessDescriptor, ProcessId,
+    ProcessState, ProcessTaskDescriptor, ProcessTaskRole, ProcessTaskState, ResourceHandle,
+    ResourceLimit, SetResourceLimitError, SignalHandlersRef, TaskClearTid, TaskExitCode,
+    TaskGroupId, TaskId, ThreadId,
 };
 
 #[derive(Clone, Debug)]
@@ -47,6 +47,7 @@ pub struct ProcessControlBlock {
     address_space : Option<AddressSpaceRef>,
     file_table : Option<FileTableRef>,
     cwd : Option<CwdRef>,
+    mount_ns : Option<MountNsRef>,
     signal_handlers : Option<SignalHandlersRef>,
     rlimits : BTreeMap<usize, ResourceLimit>,
     tasks : Vec<ProcessTask>,
@@ -62,6 +63,7 @@ impl ProcessControlBlock {
                             address_space : self.address_space,
                             file_table : self.file_table,
                             cwd : self.cwd,
+                            mount_ns : self.mount_ns,
                             signal_handlers : self.signal_handlers,
                             task_count : self.tasks.len(),
                             state : self.state }
@@ -147,6 +149,7 @@ impl ProcessRegistry {
                                             address_space,
                                             file_table : Some(resource_handle),
                                             cwd : Some(resource_handle),
+                                            mount_ns : Some(resource_handle),
                                             signal_handlers : None,
                                             rlimits : BTreeMap::new(),
                                             tasks : alloc::vec![ProcessTask {

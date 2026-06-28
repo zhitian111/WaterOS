@@ -121,6 +121,11 @@ impl Pipe {
         KernelPipe::capacity(self)
     }
 
+    /// 调整缓冲区容量；仅当管道为空时可缩小/扩大底层缓冲。
+    pub fn set_capacity(&self, capacity: usize) -> PipeResult<usize> {
+        KernelPipe::set_capacity(self, capacity)
+    }
+
     /// 返回当前已缓冲字节数。
     #[inline]
     pub fn len(&self) -> usize {
@@ -276,6 +281,19 @@ impl KernelPipe for Pipe {
 
     fn capacity(&self) -> usize {
         self.state.lock().capacity()
+    }
+
+    fn set_capacity(&self, capacity: usize) -> PipeResult<usize> {
+        if capacity == 0 {
+            return Err(PipeError::InvalidCapacity);
+        }
+        let mut state = self.state.lock();
+        if state.len != 0 {
+            return Err(PipeError::InvalidCapacity);
+        }
+        state.buf = vec![0; capacity];
+        state.head = 0;
+        Ok(capacity)
     }
 
     fn len(&self) -> usize {

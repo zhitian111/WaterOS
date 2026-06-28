@@ -795,6 +795,7 @@ fn drop_task_runtime_resources(task_id : task::TaskId) {
 fn drop_task_runtime_resources_with_aspace(task_id : task::TaskId, aspace : usize) {
     super::shm::drop_task_attachments(task_id, aspace);
     vfs::cwd::drop_task_cwd(task_id);
+    vfs::mount_ns::drop_task_mount_ns(task_id);
     vfs::fd::drop_task_fd_table(task_id);
     crate::socket_fd::drop_task(task_id);
     crate::epoll_fd::drop_task(task_id);

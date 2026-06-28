@@ -16,7 +16,8 @@ mod user;
 mod wait;
 pub use kernel::{KernelStack, KernelTaskEntry, TaskBootstrap};
 pub use process::{
-    AddressSpaceRef, CloneFlags, CwdRef, FileTableRef, ProcessDescriptor, ProcessId, ProcessState,
+    AddressSpaceRef, CloneFlags, CwdRef, FileTableRef, MountNsRef, ProcessDescriptor, ProcessId,
+    ProcessState,
     ProcessTaskDescriptor, ProcessTaskRole, ProcessTaskState, ResourceHandle, ResourceLimit,
     SetResourceLimitError, SignalHandlersRef, TaskClearTid, TaskGroupId, ThreadId,
 };

@@ -93,6 +93,8 @@ pub fn run_one_elf_argv_exit(log_tag : &str, elf_path : &str, argv : &[&str]) ->
 
     #[cfg(feature = "vfs-bridge")]
     vfs::cwd::on_user_task_spawned_for_elf(tid, elf_path, &final_argv_refs);
+    #[cfg(feature = "vfs-bridge")]
+    vfs::mount_ns::on_user_task_spawned(tid);
 
     task::wait_for_task_exit(tid);
     let exit_code = task::reap_exited_task(tid).map(|e| {

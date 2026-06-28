@@ -39,6 +39,7 @@ fn spawn_user_elf_task(path : &str, label : &str) {
                 cred::on_user_task_spawned(tid);
                 #[cfg(feature = "vfs-bridge")]
                 vfs::cwd::on_user_task_spawned(tid);
+                vfs::mount_ns::on_user_task_spawned(tid);
                 info!("[task-selftest] spawned {} user task {}",
                       label, tid);
             }

@@ -80,7 +80,9 @@ impl PageCacheIo for FsPageIo {
             FsRoute::AuxRw { fs, rel, .. } => fs.lock()
                                                 .write_range(rel.as_str(), offset, data)
                                                 .map_err(map_fs_err),
-            FsRoute::AuxRo { .. } | FsRoute::PseudoProc { .. } => Err(VfsError::ReadOnlyFs),
+            FsRoute::AuxRo { .. } | FsRoute::PseudoProc { .. } | FsRoute::PseudoSecurity { .. } => {
+                Err(VfsError::ReadOnlyFs)
+            }
         }
     }
 }
@@ -91,6 +93,8 @@ pub struct PagedFileHandle {
     offset : u64,
     meta : VfsMetadata,
     writable : bool,
+    accmode : u32,
+    status_flags : u32,
     mount_gen : u64,
     on_disk_size : u64,
     detached : bool,
@@ -107,6 +111,8 @@ impl Clone for PagedFileHandle {
                offset : self.offset,
                meta : self.meta.clone(),
                writable : self.writable,
+               accmode : self.accmode,
+               status_flags : self.status_flags,
                mount_gen : self.mount_gen,
                on_disk_size : self.on_disk_size,
                detached : self.detached,
@@ -148,10 +154,27 @@ impl PagedFileHandle {
 
         cache.acquire_open_ref(path.as_str());
 
+        const O_WRONLY : u32 = 1;
+        const O_RDWR : u32 = 2;
+        const O_APPEND : u32 = 0o2000;
+        let accmode = if want_write && flags.contains(VfsOpenFlags::READ) {
+            O_RDWR
+        } else if want_write {
+            O_WRONLY
+        } else {
+            0
+        };
+        let mut status_flags = 0u32;
+        if flags.contains(VfsOpenFlags::APPEND) {
+            status_flags |= O_APPEND;
+        }
+
         Ok(Self { path,
                   offset,
                   meta,
                   writable : want_write,
+                  accmode,
+                  status_flags,
                   mount_gen,
                   on_disk_size,
                   detached : false,
@@ -279,6 +302,10 @@ impl VfsIoHandle for PagedFileHandle {
     fn write(&mut self, buf : &[u8]) -> VfsResult<usize> {
         if !self.writable {
             return Err(VfsError::Unsupported);
+        }
+        const O_APPEND : u32 = 0o2000;
+        if self.status_flags & O_APPEND != 0 {
+            self.offset = self.current_size();
         }
         if buf.is_empty() {
             return Ok(0);
@@ -449,7 +476,7 @@ impl VfsIoHandle for PagedFileHandle {
                         Err(e) => return Err(e),
                     }
                 }
-                FsRoute::AuxRo { .. } | FsRoute::PseudoProc { .. } => {
+                FsRoute::AuxRo { .. } | FsRoute::PseudoProc { .. } | FsRoute::PseudoSecurity { .. } => {
                     return Err(VfsError::ReadOnlyFs);
                 }
             }
@@ -469,6 +496,21 @@ impl VfsIoHandle for PagedFileHandle {
                 self.detached_data.truncate(new_len);
             }
         }
+        Ok(())
+    }
+
+    fn open_status_flags(&self) -> u32 {
+        self.status_flags
+    }
+
+    fn open_accmode(&self) -> u32 {
+        self.accmode
+    }
+
+    fn set_open_status_flags(&mut self, flags : u32) -> VfsResult<()> {
+        const O_APPEND : u32 = 0o2000;
+        const O_NONBLOCK : u32 = 0o4000;
+        self.status_flags = flags & (O_APPEND | O_NONBLOCK);
         Ok(())
     }
 

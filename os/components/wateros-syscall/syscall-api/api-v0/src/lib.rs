@@ -30,6 +30,7 @@ pub enum SyscallKind {
     Sync,
     Fsync,
     Fdatasync,
+    Truncate,
     Ftruncate,
     Fallocate,
     OpenAt,
@@ -53,6 +54,7 @@ pub enum SyscallKind {
     Pipe2,
     Ioctl,
     Fcntl,
+    Flock,
     GetDents64,
     MkdirAt,
     SymlinkAt,
@@ -74,6 +76,7 @@ pub enum SyscallKind {
     ExitGroup,
     Clone,
     Clone3,
+    Unshare,
     Execve,
     WaitPid,
     Kill,
@@ -212,6 +215,8 @@ impl SyscallKind {
             Self::Fsync
         } else if syscall_nr == T::FDATASYNC.raw() {
             Self::Fdatasync
+        } else if syscall_nr == T::TRUNCATE.raw() {
+            Self::Truncate
         } else if syscall_nr == T::FTRUNCATE.raw() {
             Self::Ftruncate
         } else if syscall_nr == T::FALLOCATE.raw() {
@@ -258,6 +263,8 @@ impl SyscallKind {
             Self::Ioctl
         } else if syscall_nr == T::FCNTL.raw() {
             Self::Fcntl
+        } else if syscall_nr == T::FLOCK.raw() {
+            Self::Flock
         } else if syscall_nr == T::GETDENTS64.raw() {
             Self::GetDents64
         } else if syscall_nr == T::MKDIRAT.raw() {
@@ -300,6 +307,8 @@ impl SyscallKind {
             Self::Clone
         } else if syscall_nr == T::CLONE3.raw() {
             Self::Clone3
+        } else if syscall_nr == T::UNSHARE.raw() {
+            Self::Unshare
         } else if syscall_nr == T::EXEC.raw() {
             Self::Execve
         } else if syscall_nr == T::WAITPID.raw() {
@@ -518,6 +527,7 @@ impl SyscallKind {
             Self::Sync => "sync",
             Self::Fsync => "fsync",
             Self::Fdatasync => "fdatasync",
+            Self::Truncate => "truncate",
             Self::Ftruncate => "ftruncate",
             Self::Fallocate => "fallocate",
             Self::OpenAt => "openat",
@@ -541,6 +551,7 @@ impl SyscallKind {
             Self::Pipe2 => "pipe2",
             Self::Ioctl => "ioctl",
             Self::Fcntl => "fcntl",
+            Self::Flock => "flock",
             Self::GetDents64 => "getdents64",
             Self::MkdirAt => "mkdirat",
             Self::SymlinkAt => "symlinkat",
@@ -562,6 +573,7 @@ impl SyscallKind {
             Self::ExitGroup => "exit_group",
             Self::Clone => "clone",
             Self::Clone3 => "clone3",
+            Self::Unshare => "unshare",
             Self::Execve => "execve",
             Self::WaitPid => "waitpid",
             Self::Kill => "kill",
@@ -957,6 +969,14 @@ pub trait SyscallDispatcher {
         )
     }
 
+    fn dispatch_truncate(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Truncate,
+            Self::NumberTable::TRUNCATE.raw(),
+            args,
+        )
+    }
+
     fn dispatch_fallocate(args: SyscallArgs) -> isize {
         Self::dispatch_unsupported(
             SyscallKind::Fallocate,
@@ -1133,6 +1153,14 @@ pub trait SyscallDispatcher {
         )
     }
 
+    fn dispatch_flock(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Flock,
+            Self::NumberTable::FLOCK.raw(),
+            args,
+        )
+    }
+
     fn dispatch_getdents64(args: SyscallArgs) -> isize {
         Self::dispatch_unsupported(
             SyscallKind::GetDents64,
@@ -1209,6 +1237,14 @@ pub trait SyscallDispatcher {
         Self::dispatch_unsupported(
             SyscallKind::Clone3,
             Self::NumberTable::CLONE3.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_unshare(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Unshare,
+            Self::NumberTable::UNSHARE.raw(),
             args,
         )
     }
@@ -2000,6 +2036,7 @@ pub trait SyscallDispatcher {
             SyscallKind::Sync => Self::dispatch_sync(syscall_args),
             SyscallKind::Fsync => Self::dispatch_fsync(syscall_args),
             SyscallKind::Fdatasync => Self::dispatch_fdatasync(syscall_args),
+            SyscallKind::Truncate => Self::dispatch_truncate(syscall_args),
             SyscallKind::Ftruncate => Self::dispatch_ftruncate(syscall_args),
             SyscallKind::Fallocate => Self::dispatch_fallocate(syscall_args),
             SyscallKind::OpenAt => Self::dispatch_openat(syscall_args),
@@ -2023,6 +2060,7 @@ pub trait SyscallDispatcher {
             SyscallKind::Pipe2 => Self::dispatch_pipe2(syscall_args),
             SyscallKind::Ioctl => Self::dispatch_ioctl(syscall_args),
             SyscallKind::Fcntl => Self::dispatch_fcntl(syscall_args),
+            SyscallKind::Flock => Self::dispatch_flock(syscall_args),
             SyscallKind::GetDents64 => Self::dispatch_getdents64(syscall_args),
             SyscallKind::MkdirAt => Self::dispatch_mkdirat(syscall_args),
             SyscallKind::SymlinkAt => Self::dispatch_symlinkat(syscall_args),
@@ -2034,6 +2072,7 @@ pub trait SyscallDispatcher {
             SyscallKind::Brk => Self::dispatch_brk(syscall_args),
             SyscallKind::Clone => Self::dispatch_clone(syscall_args),
             SyscallKind::Clone3 => Self::dispatch_clone3(syscall_args),
+            SyscallKind::Unshare => Self::dispatch_unshare(syscall_args),
             SyscallKind::Execve => Self::dispatch_execve(syscall_args),
             SyscallKind::Mmap => Self::dispatch_mmap(syscall_args),
             SyscallKind::Munmap => Self::dispatch_munmap(syscall_args),

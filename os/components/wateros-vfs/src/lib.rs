@@ -37,6 +37,10 @@ pub mod fd;
 #[cfg(feature = "impl-fd-session")]
 pub mod cwd;
 
+/// per-task 挂载命名空间（`impl-fd-session` + `bridge-fs-api`）。
+#[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
+pub mod mount_ns;
+
 /// 相对当前任务 cwd 创建目录（`impl-fd-session` + `bridge-fs-api`）。
 #[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
 pub fn mkdir_at_current(path: &str, mode: u32) -> VfsResult<()> {
@@ -115,6 +119,13 @@ pub fn listxattr_absolute(path: &str, buf: &mut [u8]) -> VfsResult<usize> {
 pub fn removexattr_absolute(path: &str, name: &str) -> VfsResult<()> {
     let abs = normalize_absolute_path(path)?;
     impl_fs_bridge::removexattr_path(abs.as_str(), name)
+}
+
+/// 截断已解析绝对路径的普通文件（`impl-fd-session` + `bridge-fs-api`）。
+#[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
+pub fn truncate_absolute(path: &str, len: u64) -> VfsResult<()> {
+    let abs = normalize_absolute_path(path)?;
+    impl_fs_bridge::truncate_path(abs.as_str(), len)
 }
 
 /// 在已解析绝对路径创建目录（`impl-fd-session` + `bridge-fs-api`）。
@@ -198,10 +209,41 @@ pub fn is_proc_mounted_at(mount_point: &str) -> bool {
     impl_fs_bridge::is_proc_mounted_at(mount_point)
 }
 
-/// 卸载 `mount_point`。
+/// 卸载 `mount_point`；`detach` 为 true 时接受 lazy umount（`MNT_DETACH`）。
 #[cfg(feature = "bridge-fs-api")]
-pub fn unmount_at(mount_point: &str) -> VfsResult<()> {
-    impl_fs_bridge::unmount_at(mount_point)
+pub fn unmount_at(mount_point: &str, detach: bool) -> VfsResult<()> {
+    impl_fs_bridge::unmount_at(mount_point, detach)
+}
+
+/// 挂载 securityfs 伪文件系统。
+#[cfg(feature = "bridge-fs-api")]
+pub fn mount_securityfs_at(mount_point: &str) -> VfsResult<()> {
+    impl_fs_bridge::mount_securityfs_at(mount_point)
+}
+
+/// bind 挂载：`target` 成为 `source` 路径的别名。
+#[cfg(feature = "bridge-fs-api")]
+pub fn mount_bind_at(source: &str, target: &str, recursive: bool) -> VfsResult<()> {
+    impl_fs_bridge::mount_bind_at(source, target, recursive)
+}
+
+/// 移动挂载点。
+#[cfg(feature = "bridge-fs-api")]
+pub fn move_mount_at(source: &str, target: &str) -> VfsResult<()> {
+    impl_fs_bridge::move_mount_at(source, target)
+}
+
+/// 设置挂载点传播类型。
+#[cfg(feature = "bridge-fs-api")]
+pub use impl_fs_bridge::MountPropagation;
+
+#[cfg(feature = "bridge-fs-api")]
+pub fn set_mount_propagation(
+    mount_point: &str,
+    propagation: MountPropagation,
+    recursive: bool,
+) -> VfsResult<()> {
+    impl_fs_bridge::set_mount_propagation(mount_point, propagation, recursive)
 }
 
 /// 刷回并回收整个文件页缓存（测例脚本切换等批量回收点调用）。
