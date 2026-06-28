@@ -18,8 +18,15 @@ use mm::api::mmap::PageFaultAccess;
 use platform::arch::paging;
 use platform::arch::trap::ActiveTrapFrame as TrapContext;
 use runtime::logging::*;
-use syscall::api::SyscallKind;
 use syscall::dispatch_syscall_from_trap;
+
+/// 热路径 syscall/trap 跟踪；release 构建默认关闭。
+macro_rules! hot_syscall_trace {
+    ($($tt:tt)*) => {
+        #[cfg(any(debug_assertions, feature = "syscall-trace"))]
+        { trace!($($tt)*); }
+    };
+}
 
 /// 监督态定时器中断后，用 **与 `kernel_main` 相同的 wall-clock 语义**
 /// 重新武装固件定时器。
@@ -136,7 +143,7 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                                .raw();
             let syscall_args = cx.syscall_args();
             let regs = syscall_args.as_regs();
-            trace!("[syscall] nr={} user_pc={:#x} user_sp={:#x} \
+            hot_syscall_trace!("[syscall] nr={} user_pc={:#x} user_sp={:#x} \
                     args=[{:#x},{:#x},{:#x},{:#x},{:#x},{:#x}]",
                    syscall_nr,
                    cx.user_pc(),
@@ -153,14 +160,14 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                                            trap_cause,
                                            cx);
                 }
-                trace!("[syscall] nr={} restored signal frame",
+                hot_syscall_trace!("[syscall] nr={} restored signal frame",
                        syscall_nr);
                 return_to_user_signal_delivery(authoritative, trap_cause, cx, None);
                 finish_trap_return(frame, cx, raw_cause);
                 return;
             }
             let syscall_ret = dispatch_syscall_from_trap(syscall_nr, syscall_args);
-            trace!("[syscall] nr={} ret={}",
+            hot_syscall_trace!("[syscall] nr={} ret={}",
                    syscall_nr,
                    syscall_ret);
             // execve 成功时已替换整个 trap 帧，跳过 sepc 推进与返回值写入；
@@ -172,7 +179,7 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                 cx.add_user_pc(SYSCALL_INSN_BYTES);
                 cx.set_syscall_ret(UserRet(syscall_ret));
                 if syscall_ret == abi::errno::ErrNo::EINTR.user_ret() &&
-                   restartable_syscall(syscall_nr)
+                   syscall::is_restartable_syscall(syscall_nr)
                 {
                     restart = Some((syscall_nr, syscall_args));
                 }
@@ -287,7 +294,7 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
         // `raw_cause` 来自 TrapContext.scause 快照，即 **本次** 进入内核的原因（如
         // ecall=0x8）， 不是硬件 CSR 的“下一异常预告”；`sret`
         // 前也不会用该槽位预测下一次 trap。
-        trace!("[trap] sret to user pc={:#x} sp={:#x} return_satp={:#x} kernel_satp={:#x} \
+        hot_syscall_trace!("[trap] sret to user pc={:#x} sp={:#x} return_satp={:#x} kernel_satp={:#x} \
                 frame_scause={:#x} (this trap's scause snapshot)",
                cx.user_pc(),
                cx.user_sp(),
@@ -316,7 +323,7 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
     } else {
         true
     };
-    trace!("[trap] restore_current_trap_frame restored={}",
+    hot_syscall_trace!("[trap] restore_current_trap_frame restored={}",
            restored);
     if cx.returns_to_user() && !restored {
         panic!("restore_current_trap_frame failed before sret to user (current task trap_frame \
@@ -338,25 +345,10 @@ fn return_to_user_signal_delivery(frame : *mut u8,
     delivered > 0
 }
 
-fn restartable_syscall(syscall_nr : usize) -> bool {
-    matches!(SyscallKind::decode::<ActiveSyscallNumberTable>(syscall_nr),
-             SyscallKind::Read |
-             SyscallKind::Readv |
-             SyscallKind::Write |
-             SyscallKind::Writev |
-             SyscallKind::WaitPid |
-             SyscallKind::Accept4 |
-             SyscallKind::Connect |
-             SyscallKind::SendTo |
-             SyscallKind::RecvFrom |
-             SyscallKind::SendMsg |
-             SyscallKind::RecvMsg)
-}
-
 fn finish_trap_return(frame : *mut u8, cx : &TrapContext, raw_cause : usize) {
     let return_satp = cx.return_address_space_token();
     let kernel_satp = paging::active_address_space_token();
-    trace!("[trap] sret to user pc={:#x} sp={:#x} return_satp={:#x} kernel_satp={:#x} \
+    hot_syscall_trace!("[trap] sret to user pc={:#x} sp={:#x} return_satp={:#x} kernel_satp={:#x} \
             frame_scause={:#x}",
            cx.user_pc(),
            cx.user_sp(),

@@ -243,7 +243,7 @@ shm attach:    [lock] begin_attach → [unlock] MM map → [lock] finish_attach
 | I-16 | 低 | 中 | 同步原语 | 是 | SMP 前评估 |
 | I-17 | 高（功能） | 中高 | 新子系统 | 否（新功能） | epoll LTP |
 
-低风险可先做：I-13、I-15。修 bug 类优先：I-10、I-12。中高风险须 Flag/断言：I-2、I-3、I-4。
+低风险可先做：**I-13、I-15 已实施**（2026-06-28）。修 bug 类优先：I-10、I-12。中高风险须 Flag/断言：I-2、I-3、I-4。
 
 ## 后续维护入口
 

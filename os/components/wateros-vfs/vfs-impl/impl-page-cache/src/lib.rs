@@ -170,6 +170,8 @@ impl GlobalCacheState {
 struct FileEntryInner {
     logical_size : u64,
     dirty_pages : BTreeMap<u64, ()>,
+    /// 上次 read 结束页号；用于顺序读检测后再预取（F-14）。
+    last_read_end_page : Option<u64>,
 }
 
 /// 全局文件页缓存。
@@ -226,7 +228,8 @@ impl GlobalFilePageCache {
             return entry;
         }
         let e = Arc::new(RwLock::new(FileEntryInner { logical_size : initial_size,
-                                                      dirty_pages : BTreeMap::new() }));
+                                                      dirty_pages : BTreeMap::new(),
+                                                      last_read_end_page : None }));
         files.insert(key, e.clone());
         e
     }
@@ -542,7 +545,12 @@ impl GlobalFilePageCache {
         if buf.is_empty() || offset >= file_size {
             return Ok(0);
         }
-        let _entry = self.get_file_entry(path, file_size);
+        let entry = self.get_file_entry(path, file_size);
+        let start_page = offset / FILE_PAGE_SIZE as u64;
+        let sequential = entry.read()
+                              .last_read_end_page
+                              .map(|last| start_page == last.saturating_add(1))
+                              .unwrap_or(false);
         let max = min(buf.len(),
                       usize::try_from(file_size - offset).unwrap_or(0));
         let mut done = 0usize;
@@ -562,10 +570,14 @@ impl GlobalFilePageCache {
             done += chunk;
             pos += chunk as u64;
         }
-        if FILE_READ_AHEAD_STRIDE > 0 {
-            let start_page = offset / FILE_PAGE_SIZE as u64 + 1;
+        if done > 0 {
+            let end_page = (offset + done as u64 - 1) / FILE_PAGE_SIZE as u64;
+            entry.write().last_read_end_page = Some(end_page);
+        }
+        if sequential && FILE_READ_AHEAD_STRIDE > 0 {
+            let prefetch_start = offset / FILE_PAGE_SIZE as u64 + 1;
             for ahead in 0..FILE_READ_AHEAD_STRIDE {
-                let pi = start_page + ahead as u64;
+                let pi = prefetch_start + ahead as u64;
                 if pi * FILE_PAGE_SIZE as u64 >= file_size {
                     break;
                 }

@@ -25,6 +25,13 @@ pub fn dispatch_syscall_from_trap(syscall_nr : usize, syscall_args : SyscallArgs
     active_impl::dispatch_syscall_from_trap(syscall_nr, syscall_args)
 }
 
+/// EINTR 后可重启的 syscall 号查询（O(1) 跳表路径）。
+#[cfg(feature = "impl-kernel")]
+#[inline]
+pub fn is_restartable_syscall(syscall_nr : usize) -> bool {
+    active_impl::is_restartable_syscall(syscall_nr)
+}
+
 #[cfg(feature = "impl-kernel")]
 #[inline]
 pub fn timer_tick(interrupted_user: bool) {

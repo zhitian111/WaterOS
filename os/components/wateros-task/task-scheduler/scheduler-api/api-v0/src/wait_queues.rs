@@ -1,6 +1,6 @@
 //! 与具体就绪 run-queue 算法无关的等待/阻塞/睡眠/退出队列。
 
-use alloc::collections::{BTreeMap, VecDeque};
+use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::vec::Vec;
 use task_api::{
     ExitedTask, TaskBlockReason, TaskExitCode, TaskId, TaskState, TaskTick, TaskWaitHandle,
@@ -19,7 +19,7 @@ struct WaitTimeoutEntry {
 /// 阻塞、睡眠、等待与退出队列；就绪任务通过 `ready_queue` 参数回注具体 run-queue。
 pub struct WaitQueues {
     wait_queues : Vec<VecDeque<TaskId>>,
-    free_wait_queues : Vec<WaitQueueId>,
+    free_wait_queues : BTreeSet<WaitQueueId>,
     exit_wait_queues : BTreeMap<TaskId, VecDeque<TaskId>>,
     child_exit_wait_queues : BTreeMap<TaskId, VecDeque<TaskId>>,
     wait_timeouts : VecDeque<WaitTimeoutEntry>,
@@ -33,7 +33,7 @@ impl WaitQueues {
     /// 构造空队列集。
     pub fn new() -> Self {
         Self { wait_queues : Vec::new(),
-               free_wait_queues : Vec::new(),
+               free_wait_queues : BTreeSet::new(),
                exit_wait_queues : BTreeMap::new(),
                child_exit_wait_queues : BTreeMap::new(),
                wait_timeouts : VecDeque::new(),
@@ -66,7 +66,7 @@ impl WaitQueues {
 
     /// 分配新的显式等待队列 id。
     pub fn allocate_wait_queue(&mut self) -> WaitQueueId {
-        if let Some(wait_queue_id) = self.free_wait_queues.pop() {
+        if let Some(wait_queue_id) = self.free_wait_queues.pop_first() {
             self.wait_queues[wait_queue_id].clear();
             return wait_queue_id;
         }
@@ -82,17 +82,12 @@ impl WaitQueues {
         let Some(queue) = self.wait_queues.get(wait_queue_id) else {
             return false;
         };
-        if !queue.is_empty() ||
-           self.free_wait_queues
-               .contains(&wait_queue_id)
-        {
+        if !queue.is_empty() || !self.free_wait_queues.insert(wait_queue_id) {
             return false;
         }
         let handle = TaskWaitHandle::for_wait_queue(wait_queue_id);
         self.wait_timeouts
             .retain(|entry| entry.wait_handle != handle);
-        self.free_wait_queues
-            .push(wait_queue_id);
         true
     }
 

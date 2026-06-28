@@ -7,7 +7,8 @@
 extern crate alloc;
 
 use abi::syscall_args::SyscallArgs;
-use abi::syscall_number::ActiveSyscallNumberTable;
+use abi::syscall_number::{ActiveSyscallNumberTable, SyscallNumberTable};
+use api_v0::SyscallDispatcher;
 
 mod fallible_buf;
 mod linux_stat;
@@ -23,10 +24,13 @@ mod vfs_util;
 /// Trap / exception return path syscall dispatch entry.
 #[inline]
 pub fn dispatch_syscall_from_trap(syscall_nr: usize, syscall_args: SyscallArgs) -> isize {
-    <KernelSyscallDispatcher as api_v0::SyscallDispatcher>::dispatch_syscall_from_trap(
-        syscall_nr,
-        syscall_args,
-    )
+    dispatch_syscall_by_nr(syscall_nr, syscall_args)
+}
+
+/// 当前 syscall 号是否在 EINTR 后可由 trap 层自动重启。
+#[inline]
+pub fn is_restartable_syscall(syscall_nr: usize) -> bool {
+    is_restartable_syscall_nr(syscall_nr)
 }
 
 #[inline]
@@ -80,6 +84,56 @@ const SYS_CLOCK_ADJTIME: usize = 266;
 const SYS_ACCT: usize = 89;
 const SYS_CLOSE_RANGE: usize = 436;
 const SYS_SETGROUPS: usize = 159;
+
+fn dispatch_syscall_aliases(syscall_nr: usize, args: SyscallArgs) -> isize {
+    if syscall_nr == SYS_FSTATAT {
+        return sys::sys_fstatat(args).0;
+    }
+    if syscall_nr == SYS_STATX {
+        return sys::sys_statx(args).0;
+    }
+    if syscall_nr == SYS_SCHED_SETATTR {
+        return sys::sys_sched_setattr(args).0;
+    }
+    if syscall_nr == SYS_SCHED_GETATTR {
+        return sys::sys_sched_getattr(args).0;
+    }
+    if syscall_nr == SYS_FACCESSAT2 {
+        return sys::sys_faccessat2(args).0;
+    }
+    if syscall_nr == SYS_ADJTIMEX {
+        return sys::sys_adjtimex(args).0;
+    }
+    if syscall_nr == SYS_CLOCK_ADJTIME {
+        return sys::sys_clock_adjtime(args).0;
+    }
+    if syscall_nr == SYS_ACCT {
+        return sys::sys_acct(args).0;
+    }
+    if syscall_nr == SYS_CLOSE_RANGE {
+        return sys::sys_close_range(args).0;
+    }
+    if syscall_nr == SYS_SETGROUPS {
+        return sys::sys_setgroups(args).0;
+    }
+    match syscall_nr {
+        5 => return sys::sys_setxattr(args).0,
+        6 => return sys::sys_lsetxattr(args).0,
+        7 => return sys::sys_fsetxattr(args).0,
+        8 => return sys::sys_getxattr(args).0,
+        9 => return sys::sys_lgetxattr(args).0,
+        10 => return sys::sys_fgetxattr(args).0,
+        11 => return sys::sys_listxattr(args).0,
+        12 => return sys::sys_llistxattr(args).0,
+        13 => return sys::sys_flistxattr(args).0,
+        14 => return sys::sys_removexattr(args).0,
+        15 => return sys::sys_lremovexattr(args).0,
+        16 => return sys::sys_fremovexattr(args).0,
+        _ => {}
+    }
+    let _ = args;
+    abi::user_ret::UserRet::from_error(abi::errno::ErrNo::ENOSYS).0
+}
 
 impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     type NumberTable = ActiveSyscallNumberTable;
@@ -755,53 +809,7 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
 
     #[inline]
     fn dispatch_unknown(syscall_nr: usize, args: SyscallArgs) -> isize {
-        if syscall_nr == SYS_FSTATAT {
-            return sys::sys_fstatat(args).0;
-        }
-        if syscall_nr == SYS_STATX {
-            return sys::sys_statx(args).0;
-        }
-        if syscall_nr == SYS_SCHED_SETATTR {
-            return sys::sys_sched_setattr(args).0;
-        }
-        if syscall_nr == SYS_SCHED_GETATTR {
-            return sys::sys_sched_getattr(args).0;
-        }
-        if syscall_nr == SYS_FACCESSAT2 {
-            return sys::sys_faccessat2(args).0;
-        }
-        if syscall_nr == SYS_ADJTIMEX {
-            return sys::sys_adjtimex(args).0;
-        }
-        if syscall_nr == SYS_CLOCK_ADJTIME {
-            return sys::sys_clock_adjtime(args).0;
-        }
-        if syscall_nr == SYS_ACCT {
-            return sys::sys_acct(args).0;
-        }
-        if syscall_nr == SYS_CLOSE_RANGE {
-            return sys::sys_close_range(args).0;
-        }
-        if syscall_nr == SYS_SETGROUPS {
-            return sys::sys_setgroups(args).0;
-        }
-        match syscall_nr {
-            5 => return sys::sys_setxattr(args).0,
-            6 => return sys::sys_lsetxattr(args).0,
-            7 => return sys::sys_fsetxattr(args).0,
-            8 => return sys::sys_getxattr(args).0,
-            9 => return sys::sys_lgetxattr(args).0,
-            10 => return sys::sys_fgetxattr(args).0,
-            11 => return sys::sys_listxattr(args).0,
-            12 => return sys::sys_llistxattr(args).0,
-            13 => return sys::sys_flistxattr(args).0,
-            14 => return sys::sys_removexattr(args).0,
-            15 => return sys::sys_lremovexattr(args).0,
-            16 => return sys::sys_fremovexattr(args).0,
-            _ => {}
-        }
-        let _ = args;
-        abi::user_ret::UserRet::from_error(abi::errno::ErrNo::ENOSYS).0
+        dispatch_syscall_aliases(syscall_nr, args)
     }
 
     // ——— socket / 网络 ———
@@ -906,3 +914,5 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
         sys::sys_poll(args).0
     }
 }
+
+include!("syscall_nr_dispatch.rs");

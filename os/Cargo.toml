@@ -64,6 +64,8 @@
     # LTP 并行跑测：busybox bringup 仅跑单个 ltp_testcode.sh
     bringup-ltp-glibc-only = [  ]
     bringup-ltp-musl-only = [  ]
+    # 热路径 syscall/trap 参数跟踪（默认关闭；见 trap_handler hot_syscall_trace!）
+    syscall-trace = [  ]
     qemu-riscv64-opensbi = [
         "abi/impl-linux-generic64",
         "dep:cred",

@@ -91,14 +91,42 @@ impl CachingBlockDevice {
     }
 
     fn alloc_slot(&mut self) -> usize {
-        self.free.pop().unwrap_or_else(|| self.evict_lru_slot())
+        if let Some(idx) = self.free.pop() {
+            return idx;
+        }
+        match self.evict_lru_slot() {
+            Ok(idx) => idx,
+            Err(e) => {
+                log::warn!("[block-cache] alloc_slot evict failed: {e:?}; resetting cache");
+                self.reset_cache_invariant();
+                self.free.pop()
+                    .or_else(|| self.evict_lru_slot().ok())
+                    .expect("block cache capacity > 0 but no slot available")
+            }
+        }
     }
 
-    fn evict_lru_slot(&mut self) -> usize {
-        let idx = self.lru.pop_front().expect("lru non-empty when free empty");
-        let lba = self.slots[idx].lba.take().expect("lru slot occupied");
+    fn evict_lru_slot(&mut self) -> DriverResult<usize> {
+        let Some(idx) = self.lru.pop_front() else {
+            log::warn!("[block-cache] evict_lru_slot: lru empty");
+            return Err(DriverError::IoError);
+        };
+        let Some(lba) = self.slots[idx].lba.take() else {
+            log::warn!("[block-cache] evict_lru_slot: slot {idx} unoccupied");
+            return Err(DriverError::IoError);
+        };
         self.map.remove(&lba);
-        idx
+        Ok(idx)
+    }
+
+    fn reset_cache_invariant(&mut self) {
+        self.map.clear();
+        self.lru.clear();
+        self.free.clear();
+        for (i, slot) in self.slots.iter_mut().enumerate() {
+            slot.lba = None;
+            self.free.push(i);
+        }
     }
 
     /// 写入或更新缓存中的整块；已存在该 LBA 则原地更新并刷新 LRU。

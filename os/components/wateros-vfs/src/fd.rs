@@ -206,7 +206,9 @@ pub fn drop_task_fd_table(task_id : task::TaskId) {
         reg.drain_task_fd_table(task_id)
     };
     for mut handle in handles {
-        let _ = handle.close();
+        if let Err(e) = handle.close() {
+            log::warn!("[vfs-fd] drop_task_fd_table task_id={task_id} close failed: {e:?}");
+        }
     }
 }
 

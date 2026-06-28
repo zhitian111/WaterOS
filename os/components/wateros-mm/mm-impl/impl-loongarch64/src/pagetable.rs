@@ -204,12 +204,7 @@ pub(crate) fn zero_phys_page(ppn : PhysPageNum) {
 #[inline]
 fn alloc_table_frame_zeroed() -> MmResult<PhysPageNum> {
     let ppn = frame_alloc_result().map_err(MmError::from)?;
-    unsafe {
-        let tbl = table_mut(ppn);
-        for e in tbl.iter_mut() {
-            *e = LoongArch64Pte::zero();
-        }
-    }
+    zero_phys_page(ppn);
     Ok(ppn)
 }
 

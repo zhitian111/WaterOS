@@ -63,10 +63,15 @@ impl PipeState {
 
     fn read_into(&mut self, out: &mut [u8]) -> usize {
         let count = out.len().min(self.len);
+        if count == 0 {
+            return 0;
+        }
         let capacity = self.capacity();
-        for (offset, slot) in out.iter_mut().take(count).enumerate() {
-            let idx = (self.head + offset) % capacity;
-            *slot = self.buf[idx];
+        let first_run = (capacity - self.head).min(count);
+        out[..first_run].copy_from_slice(&self.buf[self.head..self.head + first_run]);
+        let remaining = count - first_run;
+        if remaining > 0 {
+            out[first_run..count].copy_from_slice(&self.buf[..remaining]);
         }
         self.head = (self.head + count) % capacity;
         self.len -= count;
@@ -75,11 +80,16 @@ impl PipeState {
 
     fn write_from(&mut self, input: &[u8]) -> usize {
         let count = input.len().min(self.free_len());
+        if count == 0 {
+            return 0;
+        }
         let capacity = self.capacity();
         let tail = (self.head + self.len) % capacity;
-        for (offset, byte) in input.iter().take(count).enumerate() {
-            let idx = (tail + offset) % capacity;
-            self.buf[idx] = *byte;
+        let first_run = (capacity - tail).min(count);
+        self.buf[tail..tail + first_run].copy_from_slice(&input[..first_run]);
+        let remaining = count - first_run;
+        if remaining > 0 {
+            self.buf[..remaining].copy_from_slice(&input[first_run..count]);
         }
         self.len += count;
         count

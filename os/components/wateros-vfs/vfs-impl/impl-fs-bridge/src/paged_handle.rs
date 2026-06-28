@@ -366,6 +366,10 @@ impl VfsIoHandle for PagedFileHandle {
     fn close(&mut self) -> VfsResult<()> {
         let sync_err = self.sync_dirty();
         self.release_open_ref_if_held();
+        if let Err(e) = &sync_err {
+            log::warn!("[paged_handle] close sync_dirty failed path={:?} err={e:?}",
+                       self.path);
+        }
         sync_err
     }
 

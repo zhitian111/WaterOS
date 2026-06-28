@@ -4,7 +4,38 @@
 
 为 `docs/todo` 下全部约 95 条性能改进点提供统一的**风险 × 收益评估**与**安全实施流程**，回答「这些优化能否在不引入新 bug 的前提下完成」。本文件是风险维度的单一事实来源；各子系统文档（`perf-hotpath.md` 等）末尾的「风险与验证速查」表是本文件对应章节的内联子集。
 
-> 本目录只产出分析与方案，不改代码。风险评估基于代码链路分析与项目并发模型，**不替代实测**；实施前仍须按本文件「安全实施流程」逐项验证。
+> 本目录以分析与方案为主；**第 1 层低风险项已在独立 worktree 落地并验收**（见下文「第 1 层实施状态」）。其余条目实施前仍须按「安全实施流程」逐项验证。
+
+## 第 1 层实施状态（2026-06-28）
+
+**状态：已完成**（worktree `perf-low-risk-8d52acf0`，基线 `121045b`；尚未合入主仓库 `main`）。
+
+| 编号 | 状态 | 备注 |
+|------|------|------|
+| M-8 | ✅ 已实施 | 帧分配器去掉 `recycled.contains` O(n) |
+| M-17 | ✅ 已实施 | 表帧清零改用 `zero_phys_page` |
+| H-3 | ✅ 已实施 | `syscall_nr_dispatch.rs` 跳表分发（覆盖原 H-10 fast path 目标） |
+| H-10 | ⏭ 跳过 | 由 H-3 跳表一并覆盖 |
+| H-16 | ✅ 已实施 | `hot_syscall_trace!` + `syscall-trace` feature |
+| I-13 | ✅ 已实施 | pipe bulk `copy_from_slice` |
+| I-15 | ✅ 已实施 | `free_wait_queues` → `BTreeSet` |
+| F-14 | ✅ 已实施 | 顺序读检测后再预取 |
+| F-20 | ✅ 已实施 | close flush 失败 `warn!` |
+| F-21 | ✅ 已实施 | 块缓存 evict recoverable |
+| L-14 | ✅ 已实施 | execve 杀线程补 socket/unix 清理 |
+| L-17 | ✅ 已实施 | cred 缺失 warn 替代 panic |
+
+**验证**：`make rv_check` + `make la_check` 通过；QEMU `user_bringup_busybox` 全量 23 项跑完，无 Kernel panic / RefCell 双重借用。日志：`/tmp/wateros_perf_phases/p1_func.log`。
+
+**时间收益（实测口径，诚实说明）**：
+
+1. **bringup 流水线墙钟**：主要由用户态测例与 LTP 条数决定，内核第 1 层改动**不会**把全量 bringup 从数小时缩到半小时；缩短 wall 时间主要靠 **压缩 `user_bringup_busybox.rs` 的 `timeout` 上限**（iozone/libcbench/lmbench/unixbench 等）。压缩后非 LTP 21 项 monotonic 合计约 **810s（~13.5 min）**；LTP glibc 仍可能远超 `timeout 600`（busybox `timeout` 对 LTP 子进程树截断不完整）。
+2. **内核微基准（Unixbench，RV QEMU 单次 A/B）**：主仓库当前内核（无本批改动）vs worktree 内核，同 `timeout 90` 只跑 unixbench；**单次 run 波动大**（±5% 常见），取 worktree 第二次全量 bringup 中 unixbench 段与 baseline 对比：
+   - glibc **SYSCALL** lps：118 908 → 124 063（**+4.3%**）
+   - glibc **PIPE** lps：172 226 → 199 551（**+15.9%**，与 I-13 pipe 批量拷贝一致）
+   - glibc **CONTEXT** lps：82 215 → 90 896（**+10.6%**）
+   - musl SYSCALL：112 469 → 139 547（**+24%**，同次对比；另一次 run 曾略低于 baseline，说明须多次取样）
+3. **预期但 bringup 未直接体现**：H-3 对 **LTP 等 syscall 洪水**收益最大；H-16 降低 release 热路径日志税；M-8/I-15 在 fork/帧回收压力下更明显。需 dedicated 微基准或 LTP cases/sec 方可精确量化。
 
 ## 评估口径
 
@@ -34,11 +65,11 @@
 
 ## 风险分层总览
 
-### 第 1 层：低风险（行为保持，建议最先做，建立回归基线）
+### 第 1 层：低风险（行为保持，建议最先做，建立回归基线）— **✅ 已全部实施（2026-06-28）**
 
-`M-8`、`M-17`、`H-3`、`H-10`、`H-16`、`I-13`、`I-15`、`F-14`、`F-20`、`F-21`、`L-17`、`L-14`（纯加清理）。
+`M-8`、`M-17`、`H-3`、`H-10`（由 H-3 覆盖）、`H-16`、`I-13`、`I-15`、`F-14`、`F-20`、`F-21`、`L-17`、`L-14`（纯加清理）。
 
-这些**可在不引入新 bug 的前提下完成**，前提是每改一项跑一轮 RV+LA 回归。
+上述条目已在 worktree 完成并通过 RV+LA 编译 + QEMU bringup 回归；详情见上文「第 1 层实施状态」。
 
 ### 第 2 层：中 / 中高风险（接口不变但触碰不变量或锁序，需断言 + 定向测例，部分建议 Flag）
 

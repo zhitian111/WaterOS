@@ -63,7 +63,10 @@ fn trace_user_copy_failure(op: &str, va: usize, len: usize, err: mm::api::error:
     let handle = current_user_aspace_handle().unwrap_or(0);
     let task_satp = task::current_task_user_address_space_token();
     let trap_satp = task::current_task_trap_return_address_space_token();
+    #[cfg(debug_assertions)]
     let probe = mm::user_access::debug_probe_user_virt(handle, VirtAddr(va));
+    #[cfg(not(debug_assertions))]
+    let probe = "disabled";
     trace!("[user-copy] {op} fail va={va:#x} len={len} err={err:?} handle={handle:#x} \
             task_satp={task_satp:#x} trap_satp={trap_satp:#x} probe={probe:?}");
 }

@@ -163,14 +163,11 @@ impl PhysicalFrameAllocator for StackFrameAllocator {
                        self.end_ppn);
             return Err(FrameAllocError::InvalidFrame);
         };
-        if frame.0 < self.next_novel || self.recycled.contains(&frame) || !self.allocated[idx] ||
-           self.ref_counts[idx] == 0
-        {
+        if frame.0 < self.next_novel || !self.allocated[idx] || self.ref_counts[idx] == 0 {
             log::warn!("[frame-allocator] invalid dealloc ppn={:#x} next_novel={:#x} \
-                        recycled={} allocated={} ref_count={}",
+                        allocated={} ref_count={}",
                        frame.0,
                        self.next_novel,
-                       self.recycled.contains(&frame),
                        self.allocated[idx],
                        self.ref_counts[idx]);
             return Err(FrameAllocError::InvalidFrame);
