@@ -113,6 +113,24 @@ pub(crate) fn apply_signal_dispatch(dispatch : SignalDispatch, signal : usize) {
         SignalDelivery::Pending => {
             let _ = task::interrupt_task(task_id);
         }
+        SignalDelivery::Stop => {
+            if let Some(snapshot) = task::process_task_snapshot(task_id) {
+                if task::mark_process_stopped(snapshot.pid, signal as u8) {
+                    task::stop_process_tasks(snapshot.pid);
+                    notify_parent_sigchld(snapshot.pid);
+                    task::wake_parent_child_waiters(snapshot.pid);
+                }
+            }
+        }
+        SignalDelivery::Continue => {
+            if let Some(snapshot) = task::process_task_snapshot(task_id) {
+                if task::mark_process_continued(snapshot.pid) {
+                    task::continue_process_tasks(snapshot.pid);
+                    notify_parent_sigchld(snapshot.pid);
+                    task::wake_parent_child_waiters(snapshot.pid);
+                }
+            }
+        }
         SignalDelivery::Terminate => {
             let exit_code = super::task::signal_terminate_exit_code(signal, task_id);
             if task::current_task_id() == Some(task_id) {

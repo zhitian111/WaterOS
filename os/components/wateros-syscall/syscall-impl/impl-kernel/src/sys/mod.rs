@@ -149,7 +149,7 @@ pub(crate) use task::{
     sys_getrlimit, sys_getrusage, sys_gettid, sys_prctl, sys_prlimit64, sys_sysinfo,
     sys_rt_sigaction, sys_rt_sigprocmask, sys_rt_sigtimedwait, sys_set_tid_address,
     sys_getitimer, sys_setitimer, sys_setrlimit, sys_setpgid, sys_getpgid, sys_times, sys_umask,
-    sys_uname, sys_waitpid, sys_setsid, sys_yield,
+    sys_uname, sys_waitid, sys_waitpid, sys_setsid, sys_yield,
 };
 pub(crate) use priority::{sys_getpriority, sys_setpriority};
 pub(crate) use umount2::sys_umount2;

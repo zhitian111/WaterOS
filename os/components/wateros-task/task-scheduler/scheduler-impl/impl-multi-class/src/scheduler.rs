@@ -514,6 +514,21 @@ impl MultiClassScheduler {
         interrupted
     }
 
+    pub(super) fn block_task_manual(&mut self, task_id : TaskId) {
+        let mut staging = VecDeque::new();
+        self.detach_from_run_queues(task_id);
+        self.wait
+            .block_task_manual(&mut self.registry, task_id, &mut staging);
+        self.drain_staging(&mut staging);
+    }
+
+    pub(super) fn wake_child_exit_waiters(&mut self, parent_id : TaskId) {
+        let mut staging = VecDeque::new();
+        self.wait
+            .wake_child_exit_waiters(&mut self.registry, parent_id, &mut staging);
+        self.drain_staging(&mut staging);
+    }
+
     pub(super) fn kill_task(&mut self, task_id : TaskId, exit_code : TaskExitCode) -> bool {
         self.detach_from_run_queues(task_id);
         let mut staging = VecDeque::new();

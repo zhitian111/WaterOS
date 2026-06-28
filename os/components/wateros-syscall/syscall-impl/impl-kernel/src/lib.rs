@@ -625,6 +625,11 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     }
 
     #[inline]
+    fn dispatch_waitid(args: SyscallArgs) -> isize {
+        sys::sys_waitid(args).0
+    }
+
+    #[inline]
     fn dispatch_kill(args: SyscallArgs) -> isize {
         sys::sys_kill(args).0
     }

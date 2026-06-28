@@ -81,6 +81,7 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const FORK: SyscallNumber = SyscallNumber(220); // 常见用户态 fork -> clone
     const CLONE3: SyscallNumber = SyscallNumber(435);
     const WAITPID: SyscallNumber = SyscallNumber(260); // wait4
+    const WAITID: SyscallNumber = SyscallNumber(247);
     const KILL: SyscallNumber = SyscallNumber(129);
     const EXEC: SyscallNumber = SyscallNumber(221); // execve
     const UNSHARE: SyscallNumber = SyscallNumber(272);
@@ -268,6 +269,7 @@ mod tests {
             LinuxGeneric64::FORK,
             LinuxGeneric64::CLONE3,
             LinuxGeneric64::WAITPID,
+            LinuxGeneric64::WAITID,
             LinuxGeneric64::KILL,
             LinuxGeneric64::EXEC,
             LinuxGeneric64::UNSHARE,

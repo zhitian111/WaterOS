@@ -390,6 +390,16 @@ pub fn interrupt_task(task_id : TaskId) -> bool {
     with_scheduler(|scheduler| scheduler.interrupt_task(task_id))
 }
 
+pub fn block_task_manual(task_id : TaskId) {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.block_task_manual(task_id));
+}
+
+pub fn wake_child_exit_waiters(parent_id : TaskId) {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.wake_child_exit_waiters(parent_id));
+}
+
 /// 终止指定任务（非当前任务）；成功返回 `true`，任务不存在或 idle 返回 `false`。
 pub fn kill_task(task_id : TaskId, exit_code : TaskExitCode) -> bool {
     let _guard = InterruptGuard::new();

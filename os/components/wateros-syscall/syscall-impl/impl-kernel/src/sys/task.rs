@@ -17,15 +17,36 @@ const ORPHAN_PARENT_PID : usize = 1;
 const WNOHANG : usize = 1;
 const WUNTRACED : usize = 2;
 const WCONTINUED : usize = 8;
+const WEXITED : usize = 4;
+const WNOWAIT : usize = 0x0100_0000;
 const WAITPID_IGNORED_OPTIONS : usize = WUNTRACED | WCONTINUED;
+const WAITID_EVENT_OPTIONS : usize = WEXITED | WUNTRACED | WCONTINUED;
+const WAITID_ALLOWED_OPTIONS : usize = WNOHANG | WAITID_EVENT_OPTIONS | WNOWAIT |
+    0x8000_0000 | // WCLONED
+    0x4000_0000 | // WALL
+    0x2000_0000; // WTHREAD
+const CLD_STOPPED : i32 = 5;
+const CLD_CONTINUED : i32 = 6;
+const WAITID_P_ALL : i32 = 0;
+const WAITID_P_PID : i32 = 1;
+const WAITID_P_PGID : i32 = 2;
+const WAITID_P_PIDFD : i32 = 3;
+const SIGCHLD : i32 = 17;
+const CLD_EXITED : i32 = 1;
 const UTS_LEN : usize = 65;
 
 // prctl 操作码
+const PR_SET_DUMPABLE : usize = 4;
+const PR_GET_DUMPABLE : usize = 3;
+const PR_GET_TID_ADDRESS : usize = 18;
+const PR_SET_SECCOMP : usize = 22;
 const PR_SET_NAME : usize = 15;
 const PR_GET_NAME : usize = 16;
 const PR_SET_NO_NEW_PRIVS : usize = 38;
 const PR_CAPBSET_READ : usize = 23;
 const PR_CAPBSET_DROP : usize = 24;
+const PR_GET_CHILD_SUBREAPER : usize = 36;
+const PR_SET_CHILD_SUBREAPER : usize = 37;
 
 // rlimit 资源号
 const RLIMIT_STACK : usize = 3;
@@ -297,12 +318,20 @@ pub(crate) fn sys_gettid() -> UserRet {
 }
 
 pub(crate) fn sys_setsid() -> UserRet {
-  log::trace!("[syscall] setsid(nr=112) session semantics not fully modeled");
-    task::current_process_task_snapshot().map(|snapshot| UserRet::from_success(snapshot.pid.raw()))
-                                         .unwrap_or_else(|| UserRet::from_error(ErrNo::ESRCH))
+    let current = match task::current_process_snapshot() {
+        Some(process) => process,
+        None => return UserRet::from_error(ErrNo::EPERM),
+    };
+    if current.pgid == current.pid {
+        return UserRet::from_error(ErrNo::EPERM);
+    }
+    match task::create_session_for_process(current.pid) {
+        Ok(()) => UserRet::from_success(current.pid.raw()),
+        Err(()) => UserRet::from_error(ErrNo::EPERM),
+    }
 }
 
-/// `setpgid(2)`：最小实现；仅允许进程修改自身 pgid。
+/// `setpgid(2)`：维护 pgid 并在常见自调用/父子场景下返回成功。
 pub(crate) fn sys_setpgid(args : SyscallArgs) -> UserRet {
     let pid_arg = args.arg(0) as i32;
     let pgid_arg = args.arg(1) as i32;
@@ -311,23 +340,42 @@ pub(crate) fn sys_setpgid(args : SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EINVAL);
     }
 
-    let current = match task::current_process_task_snapshot() {
-        Some(snapshot) => snapshot,
+    let current = match task::current_process_snapshot() {
+        Some(process) => process,
         None => return UserRet::from_error(ErrNo::ESRCH),
     };
     let current_pid = i32::try_from(current.pid.raw()).unwrap_or(i32::MAX);
 
     let target_pid = if pid_arg == 0 { current_pid } else { pid_arg };
-    if target_pid != current_pid {
+    let new_pgid_raw = if pgid_arg == 0 {
+        usize::try_from(target_pid).unwrap_or(usize::MAX)
+    } else {
+        usize::try_from(pgid_arg).unwrap_or(usize::MAX)
+    };
+    let target = task::ProcessId::from_raw(usize::try_from(target_pid).unwrap_or(usize::MAX));
+    let new_pgid = task::ProcessId::from_raw(new_pgid_raw);
+
+    let target_snapshot = match task::process_snapshot(target) {
+        Some(snapshot) => snapshot,
+        None => return UserRet::from_error(ErrNo::ESRCH),
+    };
+    if target != current.pid && target_snapshot.parent_pid != Some(current.pid) {
         return UserRet::from_error(ErrNo::ESRCH);
     }
-
-    let new_pgid_raw = if pgid_arg == 0 { target_pid } else { pgid_arg };
-    if new_pgid_raw <= 0 {
-        return UserRet::from_error(ErrNo::EINVAL);
+    if target != current.pid &&
+       target_snapshot.parent_pid == Some(current.pid) &&
+       !matches!(target_snapshot.state,
+                 task::ProcessState::Running | task::ProcessState::Stopped { .. })
+    {
+        return UserRet::from_error(ErrNo::ESRCH);
     }
-    let new_pgid = task::ProcessId::from_raw(new_pgid_raw as usize);
-    if !task::set_process_pgid(current.pid, new_pgid) {
+    if target_snapshot.sid.raw() != 0 &&
+       target_snapshot.sid != target &&
+       new_pgid != target
+    {
+        return UserRet::from_error(ErrNo::EPERM);
+    }
+    if !task::set_process_pgid(target, new_pgid) {
         return UserRet::from_error(ErrNo::ESRCH);
     }
     UserRet::from_success(0)
@@ -849,119 +897,476 @@ pub(crate) fn drop_reaped_task_runtime_resources(task_id : task::TaskId, aspace 
     drop_task_runtime_resources_with_aspace(task_id, aspace);
 }
 
+fn write_zero_rusage(rusage_ptr : usize) -> Result<(), ErrNo> {
+    if rusage_ptr == 0 {
+        return Ok(());
+    }
+    copy_to_user_struct(rusage_ptr, &UserRUsage::default())
+}
+
+fn user_siginfo_exited(pid : task::ProcessId, exit_code : isize) -> UserSigInfo {
+    let status = if exit_code < 0 {
+        (-exit_code) as i32
+    } else {
+        ((exit_code as i32) & 0xFF) << 8
+    };
+    #[repr(C)]
+    struct SigchldFields {
+        pid : i32,
+        uid : u32,
+        status : i32,
+        utime : isize,
+        stime : isize,
+    }
+    let fields = SigchldFields { pid : pid.raw() as i32,
+                                 uid : 0,
+                                 status,
+                                 utime : 0,
+                                 stime : 0 };
+    let mut info = UserSigInfo::for_signal(SIGCHLD as usize);
+    info.code = CLD_EXITED;
+    unsafe {
+        core::ptr::copy_nonoverlapping(&fields as *const SigchldFields as *const u8,
+                                       info.payload.as_mut_ptr(),
+                                       core::mem::size_of::<SigchldFields>());
+    }
+    info
+}
+
+fn user_siginfo_stopped(pid : task::ProcessId, signo : u8) -> UserSigInfo {
+    #[repr(C)]
+    struct SigchldFields {
+        pid : i32,
+        uid : u32,
+        status : i32,
+        utime : isize,
+        stime : isize,
+    }
+    let status = (signo as i32) << 8 | 0x7f;
+    let fields = SigchldFields { pid : pid.raw() as i32,
+                                 uid : 0,
+                                 status,
+                                 utime : 0,
+                                 stime : 0 };
+    let mut info = UserSigInfo::for_signal(SIGCHLD as usize);
+    info.code = CLD_STOPPED;
+    unsafe {
+        core::ptr::copy_nonoverlapping(&fields as *const SigchldFields as *const u8,
+                                       info.payload.as_mut_ptr(),
+                                       core::mem::size_of::<SigchldFields>());
+    }
+    info
+}
+
+fn user_siginfo_continued(pid : task::ProcessId) -> UserSigInfo {
+    #[repr(C)]
+    struct SigchldFields {
+        pid : i32,
+        uid : u32,
+        status : i32,
+        utime : isize,
+        stime : isize,
+    }
+    let fields = SigchldFields { pid : pid.raw() as i32,
+                                 uid : 0,
+                                 status : 0xffff,
+                                 utime : 0,
+                                 stime : 0 };
+    let mut info = UserSigInfo::for_signal(SIGCHLD as usize);
+    info.code = CLD_CONTINUED;
+    unsafe {
+        core::ptr::copy_nonoverlapping(&fields as *const SigchldFields as *const u8,
+                                       info.payload.as_mut_ptr(),
+                                       core::mem::size_of::<SigchldFields>());
+    }
+    info
+}
+
 fn finish_wait_process_result(pid : task::ProcessId,
                               exited_tasks : Vec<task::ExitedTask>,
-                              exit_code_ptr : usize)
+                              exit_code_ptr : usize,
+                              rusage_ptr : usize)
                               -> UserRet {
     let Some(status_task) = exited_tasks.first() else {
         return UserRet::from_error(ErrNo::ECHILD);
     };
     match write_exit_code(exit_code_ptr, status_task.exit_code) {
-        Ok(()) => {
-            for exited in &exited_tasks {
-                drop_exited_task_resources(exited);
-            }
-            UserRet::from_success(pid.raw())
+        Ok(()) => {}
+        Err(e) => return UserRet::from_error(e),
+    }
+    if let Err(e) = write_zero_rusage(rusage_ptr) {
+        return UserRet::from_error(e);
+    }
+    for exited in &exited_tasks {
+        drop_exited_task_resources(exited);
+    }
+    UserRet::from_success(pid.raw())
+}
+
+fn finish_waitid_process_result(pid : task::ProcessId,
+                                exited_tasks : Vec<task::ExitedTask>,
+                                siginfo_ptr : usize,
+                                rusage_ptr : usize)
+                                -> UserRet {
+    let Some(status_task) = exited_tasks.first() else {
+        return UserRet::from_error(ErrNo::ECHILD);
+    };
+    if siginfo_ptr != 0 {
+        let info = user_siginfo_exited(pid, status_task.exit_code);
+        if let Err(e) = copy_to_user_struct(siginfo_ptr, &info) {
+            return UserRet::from_error(e);
         }
-        Err(e) => UserRet::from_error(e),
+    }
+    if let Err(e) = write_zero_rusage(rusage_ptr) {
+        return UserRet::from_error(e);
+    }
+    for exited in &exited_tasks {
+        drop_exited_task_resources(exited);
+    }
+    UserRet::from_success(0)
+}
+
+fn finish_waitid_stopped_result(pid : task::ProcessId,
+                                signo : u8,
+                                siginfo_ptr : usize,
+                                rusage_ptr : usize,
+                                nowait : bool)
+                                -> UserRet {
+    if siginfo_ptr != 0 {
+        let info = user_siginfo_stopped(pid, signo);
+        if let Err(e) = copy_to_user_struct(siginfo_ptr, &info) {
+            return UserRet::from_error(e);
+        }
+    }
+    if let Err(e) = write_zero_rusage(rusage_ptr) {
+        return UserRet::from_error(e);
+    }
+    task::consume_stop_wait(pid, nowait);
+    UserRet::from_success(0)
+}
+
+fn finish_waitid_continued_result(pid : task::ProcessId,
+                                  siginfo_ptr : usize,
+                                  rusage_ptr : usize,
+                                  nowait : bool)
+                                  -> UserRet {
+    if siginfo_ptr != 0 {
+        let info = user_siginfo_continued(pid);
+        if let Err(e) = copy_to_user_struct(siginfo_ptr, &info) {
+            return UserRet::from_error(e);
+        }
+    }
+    if let Err(e) = write_zero_rusage(rusage_ptr) {
+        return UserRet::from_error(e);
+    }
+    task::consume_continued_wait(pid, nowait);
+    UserRet::from_success(0)
+}
+
+#[derive(Clone, Copy)]
+enum WaitTarget {
+    AnyChild,
+    ProcessGroup(task::ProcessId),
+    Specific(task::ProcessId),
+}
+
+fn wait_target_from_pid(pid : isize, caller_pgid : task::ProcessId) -> Result<WaitTarget, ErrNo> {
+    if pid == -1 {
+        return Ok(WaitTarget::AnyChild);
+    }
+    if pid == 0 {
+        return Ok(WaitTarget::ProcessGroup(caller_pgid));
+    }
+    if pid < -1 {
+        let pgid = task::ProcessId::from_raw((-pid) as usize);
+        return Ok(WaitTarget::ProcessGroup(pgid));
+    }
+    Ok(WaitTarget::Specific(task::ProcessId::from_raw(pid as usize)))
+}
+
+fn find_exited_child_for_wait(parent_pid : task::ProcessId,
+                              target : WaitTarget)
+                              -> Option<task::ProcessDescriptor> {
+    match target {
+        WaitTarget::AnyChild => task::find_exited_child_process(parent_pid),
+        WaitTarget::ProcessGroup(pgid) => {
+            task::find_exited_child_process_in_pgid(parent_pid, pgid)
+        }
+        WaitTarget::Specific(child_pid) => {
+            let child = task::process_snapshot(child_pid)?;
+            if child.parent_pid != Some(parent_pid) {
+                return None;
+            }
+            if !matches!(child.state, task::ProcessState::Exited(_)) {
+                return None;
+            }
+            Some(child)
+        }
     }
 }
 
-/// `waitpid`/`wait4` 早期语义：维护最小父子关系并阻塞等待子任务退出。
-///
-/// `WUNTRACED`/`WCONTINUED` 目前没有 stop/continue 状态可报告，按 no-op 接受以
-/// 兼容 busybox shell 的 wait4 调用。
+fn find_stopped_child_for_wait(parent_pid : task::ProcessId,
+                               target : WaitTarget)
+                               -> Option<task::ProcessDescriptor> {
+    match target {
+        WaitTarget::AnyChild => task::find_stopped_child_process(parent_pid),
+        WaitTarget::ProcessGroup(pgid) => {
+            task::find_stopped_child_process_in_pgid(parent_pid, pgid)
+        }
+        WaitTarget::Specific(child_pid) => {
+            task::stopped_child_ready_for_wait(parent_pid, child_pid)
+        }
+    }
+}
+
+fn find_continued_child_for_wait(parent_pid : task::ProcessId,
+                                 target : WaitTarget)
+                                 -> Option<task::ProcessDescriptor> {
+    match target {
+        WaitTarget::AnyChild => task::find_continued_child_process(parent_pid),
+        WaitTarget::ProcessGroup(pgid) => {
+            task::find_continued_child_process_in_pgid(parent_pid, pgid)
+        }
+        WaitTarget::Specific(child_pid) => {
+            task::continued_child_ready_for_wait(parent_pid, child_pid)
+        }
+    }
+}
+
+fn has_pending_wait_event(parent_pid : task::ProcessId,
+                          target : WaitTarget,
+                          want_exited : bool,
+                          want_stopped : bool,
+                          want_continued : bool)
+                          -> bool {
+    if want_exited && find_exited_child_for_wait(parent_pid, target).is_some() {
+        return true;
+    }
+    if want_stopped && find_stopped_child_for_wait(parent_pid, target).is_some() {
+        return true;
+    }
+    if want_continued && find_continued_child_for_wait(parent_pid, target).is_some() {
+        return true;
+    }
+    false
+}
+
+fn has_waitable_child(parent_pid : task::ProcessId, target : WaitTarget) -> bool {
+    match target {
+        WaitTarget::AnyChild => task::has_child_process(parent_pid),
+        WaitTarget::ProcessGroup(pgid) => task::has_child_process_in_pgid(parent_pid, pgid),
+        WaitTarget::Specific(child_pid) => task::process_snapshot(child_pid)
+            .is_some_and(|child| child.parent_pid == Some(parent_pid)),
+    }
+}
+
+fn wait_for_child_exit(parent_pid : task::ProcessId,
+                       target : WaitTarget,
+                       exit_code_ptr : usize,
+                       rusage_ptr : usize,
+                       nohang : bool)
+                       -> UserRet {
+    loop {
+        if let Some(child) = find_exited_child_for_wait(parent_pid, target) {
+            let Some(exited) = task::reap_exited_process(child.pid) else {
+                return UserRet::from_error(ErrNo::ECHILD);
+            };
+            return finish_wait_process_result(child.pid, exited, exit_code_ptr, rusage_ptr);
+        }
+        if !has_waitable_child(parent_pid, target) {
+            return UserRet::from_error(ErrNo::ECHILD);
+        }
+        if nohang {
+            return UserRet::from_success(0);
+        }
+        if waitpid_wait_for_child(parent_pid) == task::TaskWaitResult::Interrupted {
+            return UserRet::from_error(ErrNo::EINTR);
+        }
+    }
+}
+
+fn waitid_for_child(parent_pid : task::ProcessId,
+                    target : WaitTarget,
+                    siginfo_ptr : usize,
+                    rusage_ptr : usize,
+                    nohang : bool,
+                    nowait : bool,
+                    want_exited : bool,
+                    want_stopped : bool,
+                    want_continued : bool)
+                    -> UserRet {
+    loop {
+        if want_exited {
+            if let Some(child) = find_exited_child_for_wait(parent_pid, target) {
+                let Some(exited) = task::reap_exited_process(child.pid) else {
+                    return UserRet::from_error(ErrNo::ECHILD);
+                };
+                return finish_waitid_process_result(child.pid, exited, siginfo_ptr, rusage_ptr);
+            }
+        }
+        if want_stopped {
+            if let Some(child) = find_stopped_child_for_wait(parent_pid, target) {
+                let signo = match child.state {
+                    task::ProcessState::Stopped { signo } => signo,
+                    _ => ipc::signal::SIGSTOP as u8,
+                };
+                return finish_waitid_stopped_result(child.pid,
+                                                    signo,
+                                                    siginfo_ptr,
+                                                    rusage_ptr,
+                                                    nowait);
+            }
+        }
+        if want_continued {
+            if let Some(child) = find_continued_child_for_wait(parent_pid, target) {
+                return finish_waitid_continued_result(child.pid,
+                                                      siginfo_ptr,
+                                                      rusage_ptr,
+                                                      nowait);
+            }
+        }
+        if !has_waitable_child(parent_pid, target) {
+            return UserRet::from_error(ErrNo::ECHILD);
+        }
+        if nohang {
+            return UserRet::from_success(0);
+        }
+        if wait_for_child_event(parent_pid,
+                                target,
+                                want_exited,
+                                want_stopped,
+                                want_continued) == task::TaskWaitResult::Interrupted
+        {
+            return UserRet::from_error(ErrNo::EINTR);
+        }
+    }
+}
+
+fn validate_wait_options(options : usize, allow_exited : bool) -> Result<(), ErrNo> {
+    let allowed = if allow_exited {
+        WAITID_ALLOWED_OPTIONS
+    } else {
+        WNOHANG | WAITPID_IGNORED_OPTIONS
+    };
+    if options & !allowed != 0 {
+        return Err(ErrNo::EINVAL);
+    }
+    if allow_exited && (options & WAITID_EVENT_OPTIONS) == 0 {
+        return Err(ErrNo::EINVAL);
+    }
+    Ok(())
+}
+
+/// `waitpid`/`wait4`：维护父子关系并阻塞等待子任务退出。
 pub(crate) fn sys_waitpid(args : SyscallArgs) -> UserRet {
     let pid = args.arg(0) as isize;
     let exit_code_ptr = args.arg(1);
     let options = args.arg(2);
+    let rusage_ptr = args.arg(3);
     let nohang = (options & WNOHANG) != 0;
-    if options & !(WNOHANG | WAITPID_IGNORED_OPTIONS) != 0 {
+    if validate_wait_options(options, false).is_err() {
         return UserRet::from_error(ErrNo::EINVAL);
     }
     let current_process = match task::current_process_snapshot() {
         Some(process) => process,
         None => return UserRet::from_error(ErrNo::ESRCH),
     };
-    if pid == -1 {
-        loop {
-            if let Some(child) = task::find_exited_child_process(current_process.pid) {
-                let Some(exited) = task::reap_exited_process(child.pid) else {
-                    return UserRet::from_error(ErrNo::ECHILD);
-                };
-                return finish_wait_process_result(child.pid, exited, exit_code_ptr);
-            }
-            if !task::has_child_process(current_process.pid) {
-                return UserRet::from_error(ErrNo::ECHILD);
-            }
-            if nohang {
-                return UserRet::from_success(0);
-            }
-            if waitpid_wait_for_child(current_process.pid) == task::TaskWaitResult::Interrupted {
-                return UserRet::from_error(ErrNo::EINTR);
-            }
+    let target = match wait_target_from_pid(pid, current_process.pgid) {
+        Ok(target) => target,
+        Err(error) => return UserRet::from_error(error),
+    };
+    if let WaitTarget::Specific(child_pid) = target {
+        match task::process_snapshot(child_pid) {
+            Some(snapshot) if snapshot.parent_pid == Some(current_process.pid) => {}
+            Some(_) => return UserRet::from_error(ErrNo::ECHILD),
+            None => return UserRet::from_error(ErrNo::ECHILD),
         }
     }
-    if pid == 0 {
-        // 尚无真实 pgid：退化为等待任意子进程（与 pid==-1 同路径）。
-        loop {
-            if let Some(child) = task::find_exited_child_process(current_process.pid) {
-                let Some(exited) = task::reap_exited_process(child.pid) else {
-                    return UserRet::from_error(ErrNo::ECHILD);
-                };
-                return finish_wait_process_result(child.pid, exited, exit_code_ptr);
-            }
-            if !task::has_child_process(current_process.pid) {
-                return UserRet::from_error(ErrNo::ECHILD);
-            }
-            if nohang {
-                return UserRet::from_success(0);
-            }
-            if waitpid_wait_for_child(current_process.pid) == task::TaskWaitResult::Interrupted {
-                return UserRet::from_error(ErrNo::EINTR);
-            }
-        }
-    }
-    if pid < -1 {
-        log::warn!(
-            "[syscall] waitpid(nr=61) unsupported pid={pid} (process group wait semantics)",
-        );
+    wait_for_child_exit(current_process.pid, target, exit_code_ptr, rusage_ptr, nohang)
+}
+
+/// `waitid(idtype, id, infop, options, rusage)`。
+pub(crate) fn sys_waitid(args : SyscallArgs) -> UserRet {
+    let idtype = args.arg(0) as i32;
+    let id = args.arg(1) as i32;
+    let siginfo_ptr = args.arg(2);
+    let options = args.arg(3);
+    let rusage_ptr = args.arg(4);
+    let nohang = (options & WNOHANG) != 0;
+    if validate_wait_options(options, true).is_err() {
         return UserRet::from_error(ErrNo::EINVAL);
     }
-
-    let child_pid = task::ProcessId::from_raw(pid as usize);
-    match task::process_snapshot(child_pid) {
-        Some(snapshot) if snapshot.parent_pid == Some(current_process.pid) => {}
-        Some(_) => return UserRet::from_error(ErrNo::ECHILD),
-        None => return UserRet::from_error(ErrNo::ECHILD),
+    if siginfo_ptr == 0 {
+        return UserRet::from_error(ErrNo::EFAULT);
     }
-    loop {
-        if let Some(exited) = task::reap_exited_process(child_pid) {
-            return finish_wait_process_result(child_pid, exited, exit_code_ptr);
+    let current_process = match task::current_process_snapshot() {
+        Some(process) => process,
+        None => return UserRet::from_error(ErrNo::ESRCH),
+    };
+    let target = match idtype {
+        WAITID_P_ALL => WaitTarget::AnyChild,
+        WAITID_P_PID => {
+            if id <= 0 {
+                return UserRet::from_error(ErrNo::EINVAL);
+            }
+            WaitTarget::Specific(task::ProcessId::from_raw(id as usize))
         }
-        if task::process_snapshot(child_pid).is_none() {
-            return UserRet::from_error(ErrNo::ECHILD);
+        WAITID_P_PGID => {
+            if id < 0 {
+                return UserRet::from_error(ErrNo::EINVAL);
+            }
+            let pgid = if id == 0 {
+                current_process.pgid
+            } else {
+                task::ProcessId::from_raw(id as usize)
+            };
+            WaitTarget::ProcessGroup(pgid)
         }
-        if nohang {
-            return UserRet::from_success(0);
-        }
-        if waitpid_wait_for_child(current_process.pid) == task::TaskWaitResult::Interrupted {
-            return UserRet::from_error(ErrNo::EINTR);
+        WAITID_P_PIDFD => return UserRet::from_error(ErrNo::EINVAL),
+        _ => return UserRet::from_error(ErrNo::EINVAL),
+    };
+    if let WaitTarget::Specific(child_pid) = target {
+        match task::process_snapshot(child_pid) {
+            Some(snapshot) if snapshot.parent_pid == Some(current_process.pid) => {}
+            Some(_) => return UserRet::from_error(ErrNo::ECHILD),
+            None => return UserRet::from_error(ErrNo::ECHILD),
         }
     }
+    waitid_for_child(current_process.pid,
+                     target,
+                     siginfo_ptr,
+                     rusage_ptr,
+                     nohang,
+                     (options & WNOWAIT) != 0,
+                     (options & WEXITED) != 0,
+                     (options & WUNTRACED) != 0,
+                     (options & WCONTINUED) != 0)
 }
 
 /// 利用 ChildExit wait queue 事件驱动等待，替代原有的轮询 sleep。
-/// `wait_on_while` 的 condition 返回 `true` 才阻塞，返回 `false` 不阻塞。
-/// 所以「有子进程且没有子进程退出」→ `true` → 阻塞等待。
-fn waitpid_wait_for_child(parent_pid : task::ProcessId) -> task::TaskWaitResult {
+fn wait_for_child_event(parent_pid : task::ProcessId,
+                        target : WaitTarget,
+                        want_exited : bool,
+                        want_stopped : bool,
+                        want_continued : bool)
+                        -> task::TaskWaitResult {
     let Some(leader) = task::leader_task_for_process(parent_pid) else {
         return task::TaskWaitResult::Woken;
     };
     let handle = task::TaskWaitHandle::for_child_exit(leader);
     task::wait_on_while(handle, || {
-        task::has_child_process(parent_pid) && task::find_exited_child_process(parent_pid).is_none()
+        has_waitable_child(parent_pid, target) &&
+            !has_pending_wait_event(parent_pid,
+                                    target,
+                                    want_exited,
+                                    want_stopped,
+                                    want_continued)
     })
+}
+
+/// `waitpid`/`wait4` 使用的子进程退出等待。
+fn waitpid_wait_for_child(parent_pid : task::ProcessId) -> task::TaskWaitResult {
+    wait_for_child_event(parent_pid, WaitTarget::AnyChild, true, false, false)
 }
 
 /// `uname(buf)` — 返回系统信息。
@@ -988,17 +1393,15 @@ pub(crate) fn sys_uname(args : SyscallArgs) -> UserRet {
     }
 }
 
-/// `prctl(option, arg2, arg3, arg4, arg5)` —
-/// 进程控制（stub，仅支持常见无操作选项）。
 pub(crate) fn sys_prctl(args : SyscallArgs) -> UserRet {
     let option = args.arg(0);
+    let current_pid = match task::current_process_task_snapshot() {
+        Some(snapshot) => snapshot.pid,
+        None => return UserRet::from_error(ErrNo::ESRCH),
+    };
     match option {
-        PR_SET_NAME => {
-            // 当前不存储线程名，仅无操作返回成功
-            UserRet::from_success(0)
-        }
+        PR_SET_NAME => UserRet::from_success(0),
         PR_GET_NAME => {
-            // 返回空字符串作为线程名
             let name_ptr = args.arg(1);
             if name_ptr == 0 {
                 return UserRet::from_error(ErrNo::EFAULT);
@@ -1009,6 +1412,51 @@ pub(crate) fn sys_prctl(args : SyscallArgs) -> UserRet {
                 Err(e) => UserRet::from_error(e),
             }
         }
+        PR_SET_DUMPABLE => {
+            let dumpable = args.arg(1) != 0;
+            if task::set_process_dumpable(current_pid, dumpable) {
+                UserRet::from_success(0)
+            } else {
+                UserRet::from_error(ErrNo::ESRCH)
+            }
+        }
+        PR_GET_DUMPABLE => {
+            match task::process_dumpable(current_pid) {
+                Some(true) => UserRet::from_success(1),
+                Some(false) => UserRet::from_success(0),
+                None => UserRet::from_error(ErrNo::ESRCH),
+            }
+        }
+        PR_GET_TID_ADDRESS => {
+            let addr_ptr = args.arg(1);
+            if addr_ptr == 0 {
+                return UserRet::from_error(ErrNo::EFAULT);
+            }
+            let tid_addr = task::current_task_id()
+                .and_then(task::task_clear_child_tid)
+                .map(|clear| clear.user_addr())
+                .unwrap_or(0);
+            match copy_to_user_struct(addr_ptr, &tid_addr) {
+                Ok(()) => UserRet::from_success(0),
+                Err(e) => UserRet::from_error(e),
+            }
+        }
+        PR_SET_CHILD_SUBREAPER => {
+            let enabled = args.arg(1) != 0;
+            if task::set_process_child_subreaper(current_pid, enabled) {
+                UserRet::from_success(0)
+            } else {
+                UserRet::from_error(ErrNo::ESRCH)
+            }
+        }
+        PR_GET_CHILD_SUBREAPER => {
+            match task::process_child_subreaper(current_pid) {
+                Some(true) => UserRet::from_success(1),
+                Some(false) => UserRet::from_success(0),
+                None => UserRet::from_error(ErrNo::ESRCH),
+            }
+        }
+        PR_SET_SECCOMP => UserRet::from_error(ErrNo::EINVAL),
         PR_SET_NO_NEW_PRIVS => UserRet::from_success(0),
         PR_CAPBSET_READ => super::cap::cap_bset_read(args.arg(1)),
         PR_CAPBSET_DROP => super::cap::cap_bset_drop(args.arg(1)),

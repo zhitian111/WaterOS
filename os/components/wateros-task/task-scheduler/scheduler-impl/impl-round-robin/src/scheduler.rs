@@ -295,6 +295,22 @@ impl RoundRobinScheduler {
                             self.other_ready.ready_queue_mut())
     }
 
+    pub(super) fn block_task_manual(&mut self, task_id : TaskId) {
+        self.other_ready
+            .detach_task(task_id);
+        self.wait
+            .block_task_manual(&mut self.registry,
+                               task_id,
+                               self.other_ready.ready_queue_mut());
+    }
+
+    pub(super) fn wake_child_exit_waiters(&mut self, parent_id : TaskId) {
+        self.wait
+            .wake_child_exit_waiters(&mut self.registry,
+                                     parent_id,
+                                     self.other_ready.ready_queue_mut());
+    }
+
     pub(super) fn kill_task(&mut self, task_id : TaskId, exit_code : TaskExitCode) -> bool {
         self.other_ready
             .detach_task(task_id);

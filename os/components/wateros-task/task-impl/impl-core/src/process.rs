@@ -56,6 +56,11 @@ pub struct ProcessControlBlock {
     pgid : ProcessId,
     tasks : Vec<ProcessTask>,
     state : ProcessState,
+    sid : ProcessId,
+    dumpable : bool,
+    child_subreaper : bool,
+    stop_wait_pending : bool,
+    continued_wait_pending : bool,
 }
 
 impl ProcessControlBlock {
@@ -70,7 +75,9 @@ impl ProcessControlBlock {
                             mount_ns : self.mount_ns,
                             signal_handlers : self.signal_handlers,
                             task_count : self.tasks.len(),
-                            state : self.state }
+                            state : self.state,
+                            pgid : self.pgid,
+                            sid : self.sid }
     }
 
     fn task_descriptor(&self, task_id : TaskId) -> Option<ProcessTaskDescriptor> {
@@ -165,7 +172,12 @@ impl ProcessRegistry {
                 tls: 0,
                 clear_child_tid: None,
             }],
-                                            state : ProcessState::Running };
+                                            state : ProcessState::Running,
+                                            sid : ProcessId::from_raw(0),
+                                            dumpable : true,
+                                            child_subreaper : false,
+                                            stop_wait_pending : false,
+                                            continued_wait_pending : false };
         self.insert_process(process);
         pid
     }
@@ -179,6 +191,9 @@ impl ProcessRegistry {
         let parent_rlimits = parent.rlimits.clone();
         let parent_nice = parent.nice;
         let parent_pgid = parent.pgid;
+        let parent_sid = parent.sid;
+        let parent_dumpable = parent.dumpable;
+        let parent_subreaper = parent.child_subreaper;
         let child_pid = self.create_process_for_task(child_task_id,
                                                      Some(parent_pid),
                                                      address_space);
@@ -186,6 +201,9 @@ impl ProcessRegistry {
             process.rlimits = parent_rlimits;
             process.nice = parent_nice;
             process.pgid = parent_pgid;
+            process.sid = parent_sid;
+            process.dumpable = parent_dumpable;
+            process.child_subreaper = parent_subreaper;
         }
         Some(child_pid)
     }
@@ -515,10 +533,195 @@ impl ProcessRegistry {
             .map(ProcessControlBlock::descriptor)
     }
 
+    pub fn find_exited_child_process_in_pgid(&self,
+                                             parent_pid : ProcessId,
+                                             pgid : ProcessId)
+                                             -> Option<ProcessDescriptor> {
+        self.processes
+            .values()
+            .find(|process| {
+                process.parent_pid == Some(parent_pid) &&
+                process.pgid == pgid &&
+                matches!(process.state, ProcessState::Exited(_))
+            })
+            .map(ProcessControlBlock::descriptor)
+    }
+
     pub fn has_child_process(&self, parent_pid : ProcessId) -> bool {
         self.processes
             .values()
             .any(|process| process.parent_pid == Some(parent_pid))
+    }
+
+    pub fn has_child_process_in_pgid(&self, parent_pid : ProcessId, pgid : ProcessId) -> bool {
+        self.processes
+            .values()
+            .any(|process| {
+                process.parent_pid == Some(parent_pid) && process.pgid == pgid
+            })
+    }
+
+    pub fn mark_process_stopped(&mut self, pid : ProcessId, signo : u8) -> bool {
+        let process = match self.process_mut(pid) {
+            Some(process) => process,
+            None => return false,
+        };
+        if matches!(process.state, ProcessState::Exited(_) | ProcessState::Exiting(_)) {
+            return false;
+        }
+        if matches!(process.state, ProcessState::Stopped { .. }) {
+            return true;
+        }
+        process.state = ProcessState::Stopped { signo };
+        process.stop_wait_pending = true;
+        process.continued_wait_pending = false;
+        true
+    }
+
+    pub fn mark_process_continued(&mut self, pid : ProcessId) -> bool {
+        let process = match self.process_mut(pid) {
+            Some(process) => process,
+            None => return false,
+        };
+        if !matches!(process.state, ProcessState::Stopped { .. }) {
+            return false;
+        }
+        process.state = ProcessState::Running;
+        process.continued_wait_pending = true;
+        process.stop_wait_pending = false;
+        true
+    }
+
+    pub fn consume_stop_wait(&mut self, pid : ProcessId, nowait : bool) {
+        let Some(process) = self.process_mut(pid) else {
+            return;
+        };
+        if !nowait {
+            process.stop_wait_pending = false;
+        }
+    }
+
+    pub fn consume_continued_wait(&mut self, pid : ProcessId, nowait : bool) {
+        let Some(process) = self.process_mut(pid) else {
+            return;
+        };
+        if !nowait {
+            process.continued_wait_pending = false;
+        }
+    }
+
+    pub fn find_stopped_child_process(&self, parent_pid : ProcessId) -> Option<ProcessDescriptor> {
+        self.processes
+            .values()
+            .find(|process| {
+                process.parent_pid == Some(parent_pid) &&
+                process.stop_wait_pending &&
+                matches!(process.state, ProcessState::Stopped { .. })
+            })
+            .map(ProcessControlBlock::descriptor)
+    }
+
+    pub fn stopped_child_ready_for_wait(&self,
+                                        parent_pid : ProcessId,
+                                        child_pid : ProcessId)
+                                        -> Option<ProcessDescriptor> {
+        let process = self.processes.get(&child_pid)?;
+        if process.parent_pid != Some(parent_pid) || !process.stop_wait_pending {
+            return None;
+        }
+        if !matches!(process.state, ProcessState::Stopped { .. }) {
+            return None;
+        }
+        Some(process.descriptor())
+    }
+
+    pub fn find_stopped_child_process_in_pgid(&self,
+                                              parent_pid : ProcessId,
+                                              pgid : ProcessId)
+                                              -> Option<ProcessDescriptor> {
+        self.processes
+            .values()
+            .find(|process| {
+                process.parent_pid == Some(parent_pid) &&
+                process.pgid == pgid &&
+                process.stop_wait_pending &&
+                matches!(process.state, ProcessState::Stopped { .. })
+            })
+            .map(ProcessControlBlock::descriptor)
+    }
+
+    pub fn find_continued_child_process(&self, parent_pid : ProcessId) -> Option<ProcessDescriptor> {
+        self.processes
+            .values()
+            .find(|process| {
+                process.parent_pid == Some(parent_pid) &&
+                process.continued_wait_pending &&
+                matches!(process.state, ProcessState::Running)
+            })
+            .map(ProcessControlBlock::descriptor)
+    }
+
+    pub fn continued_child_ready_for_wait(&self,
+                                          parent_pid : ProcessId,
+                                          child_pid : ProcessId)
+                                          -> Option<ProcessDescriptor> {
+        let process = self.processes.get(&child_pid)?;
+        if process.parent_pid != Some(parent_pid) || !process.continued_wait_pending {
+            return None;
+        }
+        if !matches!(process.state, ProcessState::Running) {
+            return None;
+        }
+        Some(process.descriptor())
+    }
+
+    pub fn find_continued_child_process_in_pgid(&self,
+                                                parent_pid : ProcessId,
+                                                pgid : ProcessId)
+                                                -> Option<ProcessDescriptor> {
+        self.processes
+            .values()
+            .find(|process| {
+                process.parent_pid == Some(parent_pid) &&
+                process.pgid == pgid &&
+                process.continued_wait_pending &&
+                matches!(process.state, ProcessState::Running)
+            })
+            .map(ProcessControlBlock::descriptor)
+    }
+
+    pub fn create_session_for_process(&mut self, pid : ProcessId) -> Result<(), ()> {
+        let process = self.process_mut(pid).ok_or(())?;
+        if process.pgid == pid {
+            return Err(());
+        }
+        process.sid = pid;
+        process.pgid = pid;
+        Ok(())
+    }
+
+    pub fn process_dumpable(&self, pid : ProcessId) -> Option<bool> {
+        self.processes.get(&pid).map(|process| process.dumpable)
+    }
+
+    pub fn set_process_dumpable(&mut self, pid : ProcessId, dumpable : bool) -> bool {
+        let Some(process) = self.process_mut(pid) else {
+            return false;
+        };
+        process.dumpable = dumpable;
+        true
+    }
+
+    pub fn process_child_subreaper(&self, pid : ProcessId) -> Option<bool> {
+        self.processes.get(&pid).map(|process| process.child_subreaper)
+    }
+
+    pub fn set_process_child_subreaper(&mut self, pid : ProcessId, enabled : bool) -> bool {
+        let Some(process) = self.process_mut(pid) else {
+            return false;
+        };
+        process.child_subreaper = enabled;
+        true
     }
 
     /// 收集指定父进程的所有子进程 PID。

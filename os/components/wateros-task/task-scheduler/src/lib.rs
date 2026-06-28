@@ -243,6 +243,14 @@ pub fn wake_task(task_id : TaskId) -> bool { active_impl::wake_task(task_id) }
 #[inline]
 pub fn interrupt_task(task_id : TaskId) -> bool { active_impl::interrupt_task(task_id) }
 
+#[inline]
+pub fn block_task_manual(task_id : TaskId) { active_impl::block_task_manual(task_id) }
+
+#[inline]
+pub fn wake_child_exit_waiters(parent_id : TaskId) {
+    active_impl::wake_child_exit_waiters(parent_id)
+}
+
 /// 终止指定任务（非当前任务）；当前任务应使用 [`exit_current`].
 #[inline]
 pub fn kill_task(task_id : TaskId, exit_code : TaskExitCode) -> bool {

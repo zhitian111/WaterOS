@@ -200,6 +200,7 @@ fn basename(path: &str) -> String {
 fn state_char(process: ProcessState, leader_state: Option<TaskState>) -> char {
     match process {
         ProcessState::Exited(_) | ProcessState::Exiting(_) => 'Z',
+        ProcessState::Stopped { .. } => 'T',
         ProcessState::Running => match leader_state {
             Some(TaskState::Sleeping { .. }) | Some(TaskState::Blocking(_)) => 'S',
             Some(TaskState::Exited(_)) => 'Z',

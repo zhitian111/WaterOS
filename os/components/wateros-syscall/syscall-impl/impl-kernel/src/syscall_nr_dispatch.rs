@@ -201,6 +201,8 @@ pub fn dispatch_syscall_by_nr(syscall_nr: usize, syscall_args: SyscallArgs) -> i
             KernelSyscallDispatcher::dispatch_getpriority(syscall_args),
         n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::WAITPID.raw() =>
             KernelSyscallDispatcher::dispatch_waitpid(syscall_args),
+        n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::WAITID.raw() =>
+            KernelSyscallDispatcher::dispatch_waitid(syscall_args),
         n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::KILL.raw() =>
             KernelSyscallDispatcher::dispatch_kill(syscall_args),
         n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::NANOSLEEP.raw() =>
@@ -320,6 +322,7 @@ pub fn is_restartable_syscall_nr(syscall_nr: usize) -> bool {
         || syscall_nr == <T as SyscallNumberTable>::WRITE.raw()
         || syscall_nr == <T as SyscallNumberTable>::WRITEV.raw()
         || syscall_nr == <T as SyscallNumberTable>::WAITPID.raw()
+        || syscall_nr == <T as SyscallNumberTable>::WAITID.raw()
         || syscall_nr == <T as SyscallNumberTable>::ACCEPT4.raw()
         || syscall_nr == <T as SyscallNumberTable>::CONNECT.raw()
         || syscall_nr == <T as SyscallNumberTable>::SENDTO.raw()

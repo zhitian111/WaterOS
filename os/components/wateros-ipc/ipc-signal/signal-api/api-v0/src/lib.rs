@@ -22,6 +22,7 @@ pub const SIGTERM: usize = 15;
 pub const SIGPIPE: usize = 13;
 pub const SIGCHLD: usize = 17;
 pub const SIGSTOP: usize = 19;
+pub const SIGCONT: usize = 18;
 pub const SIGURG: usize = 23;
 pub const SIGVTALRM: usize = 26;
 pub const SIGPROF: usize = 27;
@@ -132,6 +133,8 @@ pub enum SignalDelivery {
     Ignored,
     Pending,
     Terminate,
+    Stop,
+    Continue,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -168,6 +171,16 @@ impl SignalDispatch {
         Self { delivery: SignalDelivery::Pending,
                target_task_id }
     }
+
+    pub const fn stop(target_task_id: Option<usize>) -> Self {
+        Self { delivery: SignalDelivery::Stop,
+               target_task_id }
+    }
+
+    pub const fn continued(target_task_id: Option<usize>) -> Self {
+        Self { delivery: SignalDelivery::Continue,
+               target_task_id }
+    }
 }
 
 pub const fn valid_signal(sig: usize) -> bool { sig > 0 && sig < NSIG }
@@ -176,7 +189,7 @@ pub const fn valid_itimer(which: usize) -> bool {
     matches!(which, ITIMER_REAL | ITIMER_VIRTUAL | ITIMER_PROF)
 }
 
-pub const fn immutable_signal(sig: usize) -> bool { sig == SIGKILL || sig == SIGSTOP }
+pub const fn immutable_signal(sig: usize) -> bool { sig == SIGKILL }
 
 pub const fn signal_bit(sig: usize) -> Option<u64> {
     if valid_signal(sig) {

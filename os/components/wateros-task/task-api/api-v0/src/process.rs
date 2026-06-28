@@ -195,6 +195,7 @@ pub enum ProcessTaskState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProcessState {
     Running,
+    Stopped { signo: u8 },
     Exiting(TaskExitCode),
     Exited(TaskExitCode),
 }
@@ -239,4 +240,8 @@ pub struct ProcessDescriptor {
     pub signal_handlers: Option<SignalHandlersRef>,
     pub task_count: usize,
     pub state: ProcessState,
+    /// 进程组 ID（Linux `getpgrp()` 语义）。
+    pub pgid: ProcessId,
+    /// 会话 ID；`0` 表示尚未加入会话。
+    pub sid: ProcessId,
 }

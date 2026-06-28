@@ -154,6 +154,8 @@ pub trait SyscallNumberTable {
     const CLONE3: SyscallNumber;
     /// 等待子进程状态变更（与 `wait4` 等价的编号）。
     const WAITPID: SyscallNumber;
+    /// 按 id 等待子进程状态变更（`waitid(2)`）。
+    const WAITID: SyscallNumber;
     /// 向进程发送信号（`kill(2)`）。
     const KILL: SyscallNumber;
     /// 替换当前进程映像（与 `execve` 等价的编号）。

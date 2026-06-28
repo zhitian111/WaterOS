@@ -79,6 +79,7 @@ pub enum SyscallKind {
     Unshare,
     Execve,
     WaitPid,
+    Waitid,
     Kill,
     Brk,
     Mmap,
@@ -316,6 +317,8 @@ impl SyscallKind {
             Self::Execve
         } else if syscall_nr == T::WAITPID.raw() {
             Self::WaitPid
+        } else if syscall_nr == T::WAITID.raw() {
+            Self::Waitid
         } else if syscall_nr == T::KILL.raw() {
             Self::Kill
         } else if syscall_nr == T::BRK.raw() {
@@ -585,6 +588,7 @@ impl SyscallKind {
             Self::Unshare => "unshare",
             Self::Execve => "execve",
             Self::WaitPid => "waitpid",
+            Self::Waitid => "waitid",
             Self::Kill => "kill",
             Self::Brk => "brk",
             Self::Mmap => "mmap",
@@ -1613,6 +1617,14 @@ pub trait SyscallDispatcher {
         )
     }
 
+    fn dispatch_waitid(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Waitid,
+            Self::NumberTable::WAITID.raw(),
+            args,
+        )
+    }
+
     fn dispatch_kill(args: SyscallArgs) -> isize {
         Self::dispatch_unsupported(
             SyscallKind::Kill,
@@ -2154,6 +2166,7 @@ pub trait SyscallDispatcher {
             SyscallKind::SetPriority => Self::dispatch_setpriority(syscall_args),
             SyscallKind::GetPriority => Self::dispatch_getpriority(syscall_args),
             SyscallKind::WaitPid => Self::dispatch_waitpid(syscall_args),
+            SyscallKind::Waitid => Self::dispatch_waitid(syscall_args),
             SyscallKind::Kill => Self::dispatch_kill(syscall_args),
             SyscallKind::Nanosleep => Self::dispatch_nanosleep(syscall_args),
             SyscallKind::Uname => Self::dispatch_uname(syscall_args),

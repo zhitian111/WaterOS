@@ -111,8 +111,96 @@ pub fn find_exited_child_process(parent_pid: ProcessId) -> Option<ProcessDescrip
     with_process_registry(|registry| registry.find_exited_child_process(parent_pid))
 }
 
+pub fn find_exited_child_process_in_pgid(parent_pid: ProcessId,
+                                         pgid: ProcessId)
+                                         -> Option<ProcessDescriptor> {
+    with_process_registry(|registry| {
+        registry.find_exited_child_process_in_pgid(parent_pid, pgid)
+    })
+}
+
+pub fn find_stopped_child_process(parent_pid: ProcessId) -> Option<ProcessDescriptor> {
+    with_process_registry(|registry| registry.find_stopped_child_process(parent_pid))
+}
+
+pub fn stopped_child_ready_for_wait(parent_pid: ProcessId,
+                                    child_pid: ProcessId)
+                                    -> Option<ProcessDescriptor> {
+    with_process_registry(|registry| {
+        registry.stopped_child_ready_for_wait(parent_pid, child_pid)
+    })
+}
+
+pub fn find_stopped_child_process_in_pgid(parent_pid: ProcessId,
+                                          pgid: ProcessId)
+                                          -> Option<ProcessDescriptor> {
+    with_process_registry(|registry| {
+        registry.find_stopped_child_process_in_pgid(parent_pid, pgid)
+    })
+}
+
+pub fn find_continued_child_process(parent_pid: ProcessId) -> Option<ProcessDescriptor> {
+    with_process_registry(|registry| registry.find_continued_child_process(parent_pid))
+}
+
+pub fn continued_child_ready_for_wait(parent_pid: ProcessId,
+                                        child_pid: ProcessId)
+                                        -> Option<ProcessDescriptor> {
+    with_process_registry(|registry| {
+        registry.continued_child_ready_for_wait(parent_pid, child_pid)
+    })
+}
+
+pub fn find_continued_child_process_in_pgid(parent_pid: ProcessId,
+                                            pgid: ProcessId)
+                                            -> Option<ProcessDescriptor> {
+    with_process_registry(|registry| {
+        registry.find_continued_child_process_in_pgid(parent_pid, pgid)
+    })
+}
+
+pub fn mark_process_stopped(pid: ProcessId, signo: u8) -> bool {
+    with_process_registry(|registry| registry.mark_process_stopped(pid, signo))
+}
+
+pub fn mark_process_continued(pid: ProcessId) -> bool {
+    with_process_registry(|registry| registry.mark_process_continued(pid))
+}
+
+pub fn consume_stop_wait(pid: ProcessId, nowait: bool) {
+    with_process_registry(|registry| registry.consume_stop_wait(pid, nowait))
+}
+
+pub fn consume_continued_wait(pid: ProcessId, nowait: bool) {
+    with_process_registry(|registry| registry.consume_continued_wait(pid, nowait))
+}
+
 pub fn has_child_process(parent_pid: ProcessId) -> bool {
     with_process_registry(|registry| registry.has_child_process(parent_pid))
+}
+
+pub fn has_child_process_in_pgid(parent_pid: ProcessId, pgid: ProcessId) -> bool {
+    with_process_registry(|registry| registry.has_child_process_in_pgid(parent_pid, pgid))
+}
+
+pub fn create_session_for_process(pid: ProcessId) -> Result<(), ()> {
+    with_process_registry(|registry| registry.create_session_for_process(pid))
+}
+
+pub fn process_dumpable(pid: ProcessId) -> Option<bool> {
+    with_process_registry(|registry| registry.process_dumpable(pid))
+}
+
+pub fn set_process_dumpable(pid: ProcessId, dumpable: bool) -> bool {
+    with_process_registry(|registry| registry.set_process_dumpable(pid, dumpable))
+}
+
+pub fn process_child_subreaper(pid: ProcessId) -> Option<bool> {
+    with_process_registry(|registry| registry.process_child_subreaper(pid))
+}
+
+pub fn set_process_child_subreaper(pid: ProcessId, enabled: bool) -> bool {
+    with_process_registry(|registry| registry.set_process_child_subreaper(pid, enabled))
 }
 
 pub fn all_process_pids() -> Vec<ProcessId> {

@@ -403,6 +403,12 @@ impl SignalRegistry {
         if !valid_signal(sig) {
             return Err(SignalError::InvalidSignal);
         }
+        if sig == SIGSTOP {
+            return Ok(SignalDelivery::Stop);
+        }
+        if sig == SIGCONT {
+            return Ok(SignalDelivery::Continue);
+        }
         let action = self.processes
                          .get(&pid)
                          .ok_or(SignalError::NoSuchProcess)?
@@ -422,6 +428,8 @@ impl SignalRegistry {
         match self.classify(pid, sig)? {
             SignalDelivery::Ignored => Ok(SignalDispatch::ignored()),
             SignalDelivery::Terminate => Ok(SignalDispatch::terminate(Some(task_id))),
+            SignalDelivery::Stop => Ok(SignalDispatch::stop(Some(task_id))),
+            SignalDelivery::Continue => Ok(SignalDispatch::continued(Some(task_id))),
             SignalDelivery::Pending => {
                 self.thread_mut(task_id)?
                     .pending
@@ -441,6 +449,8 @@ impl SignalRegistry {
                          .filter(|(_, thread)| {
                              thread.pid == pid &&
                              (delivery == SignalDelivery::Terminate ||
+                              delivery == SignalDelivery::Stop ||
+                              delivery == SignalDelivery::Continue ||
                               !thread.mask
                                      .contains(sig) ||
                               thread.waiting_for
@@ -450,6 +460,12 @@ impl SignalRegistry {
                          .map(|(task_id, _)| *task_id);
         if delivery == SignalDelivery::Terminate {
             return Ok(SignalDispatch::terminate(target));
+        }
+        if delivery == SignalDelivery::Stop {
+            return Ok(SignalDispatch::stop(target));
+        }
+        if delivery == SignalDelivery::Continue {
+            return Ok(SignalDispatch::continued(target));
         }
         self.processes
             .get_mut(&pid)

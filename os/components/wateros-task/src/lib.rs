@@ -588,6 +588,147 @@ pub fn find_exited_child_process(parent_pid : ProcessId) -> Option<ProcessDescri
     active_impl::find_exited_child_process(parent_pid)
 }
 
+/// 查找当前进程在指定进程组内下一个已退出子进程。
+#[inline]
+pub fn find_exited_child_process_in_pgid(parent_pid : ProcessId,
+                                         pgid : ProcessId)
+                                         -> Option<ProcessDescriptor> {
+    active_impl::find_exited_child_process_in_pgid(parent_pid, pgid)
+}
+
+#[inline]
+pub fn find_stopped_child_process(parent_pid : ProcessId) -> Option<ProcessDescriptor> {
+    active_impl::find_stopped_child_process(parent_pid)
+}
+
+#[inline]
+pub fn stopped_child_ready_for_wait(parent_pid : ProcessId,
+                                    child_pid : ProcessId)
+                                    -> Option<ProcessDescriptor> {
+    active_impl::stopped_child_ready_for_wait(parent_pid, child_pid)
+}
+
+#[inline]
+pub fn find_stopped_child_process_in_pgid(parent_pid : ProcessId,
+                                          pgid : ProcessId)
+                                          -> Option<ProcessDescriptor> {
+    active_impl::find_stopped_child_process_in_pgid(parent_pid, pgid)
+}
+
+#[inline]
+pub fn find_continued_child_process(parent_pid : ProcessId) -> Option<ProcessDescriptor> {
+    active_impl::find_continued_child_process(parent_pid)
+}
+
+#[inline]
+pub fn continued_child_ready_for_wait(parent_pid : ProcessId,
+                                      child_pid : ProcessId)
+                                      -> Option<ProcessDescriptor> {
+    active_impl::continued_child_ready_for_wait(parent_pid, child_pid)
+}
+
+#[inline]
+pub fn find_continued_child_process_in_pgid(parent_pid : ProcessId,
+                                            pgid : ProcessId)
+                                            -> Option<ProcessDescriptor> {
+    active_impl::find_continued_child_process_in_pgid(parent_pid, pgid)
+}
+
+#[inline]
+pub fn mark_process_stopped(pid : ProcessId, signo : u8) -> bool {
+    active_impl::mark_process_stopped(pid, signo)
+}
+
+#[inline]
+pub fn mark_process_continued(pid : ProcessId) -> bool {
+    active_impl::mark_process_continued(pid)
+}
+
+#[inline]
+pub fn consume_stop_wait(pid : ProcessId, nowait : bool) {
+    active_impl::consume_stop_wait(pid, nowait)
+}
+
+#[inline]
+pub fn consume_continued_wait(pid : ProcessId, nowait : bool) {
+    active_impl::consume_continued_wait(pid, nowait)
+}
+
+/// 阻塞进程内所有尚未退出的任务（SIGSTOP）。
+#[inline]
+pub fn stop_process_tasks(pid : ProcessId) {
+    let Some(task_ids) = task_ids_for_process(pid) else {
+        return;
+    };
+    for task_id in task_ids {
+        if !scheduler::task_snapshot(task_id)
+            .is_some_and(|snapshot| matches!(snapshot.state, TaskState::Exited(_)))
+        {
+            if current_task_id() == Some(task_id) {
+                block_current(TaskBlockReason::Manual);
+            } else {
+                scheduler::block_task_manual(task_id);
+            }
+        }
+    }
+}
+
+/// 恢复进程内被 SIGSTOP 挂起的任务（SIGCONT）。
+#[inline]
+pub fn continue_process_tasks(pid : ProcessId) {
+    let Some(task_ids) = task_ids_for_process(pid) else {
+        return;
+    };
+    for task_id in task_ids {
+        let _ = scheduler::wake_task(task_id);
+    }
+}
+
+/// 子进程状态变化时唤醒正在 wait 的父进程。
+#[inline]
+pub fn wake_parent_child_waiters(child_pid : ProcessId) {
+    let Some(child) = process_snapshot(child_pid) else {
+        return;
+    };
+    let Some(parent_pid) = child.parent_pid else {
+        return;
+    };
+    if let Some(leader) = leader_task_for_process(parent_pid) {
+        scheduler::wake_child_exit_waiters(leader);
+    }
+}
+
+/// 判断当前进程在指定进程组内是否仍有子进程。
+#[inline]
+pub fn has_child_process_in_pgid(parent_pid : ProcessId, pgid : ProcessId) -> bool {
+    active_impl::has_child_process_in_pgid(parent_pid, pgid)
+}
+
+#[inline]
+pub fn create_session_for_process(pid : ProcessId) -> Result<(), ()> {
+    active_impl::create_session_for_process(pid)
+}
+
+#[inline]
+pub fn process_dumpable(pid : ProcessId) -> Option<bool> {
+    active_impl::process_dumpable(pid)
+}
+
+#[inline]
+pub fn set_process_dumpable(pid : ProcessId, dumpable : bool) -> bool {
+    active_impl::set_process_dumpable(pid, dumpable)
+}
+
+#[inline]
+pub fn process_child_subreaper(pid : ProcessId) -> Option<bool> {
+    active_impl::process_child_subreaper(pid)
+}
+
+#[inline]
+pub fn set_process_child_subreaper(pid : ProcessId, enabled : bool) -> bool {
+    active_impl::set_process_child_subreaper(pid, enabled)
+}
+
 /// 判断当前进程是否仍有子进程。
 #[inline]
 pub fn has_child_process(parent_pid : ProcessId) -> bool {

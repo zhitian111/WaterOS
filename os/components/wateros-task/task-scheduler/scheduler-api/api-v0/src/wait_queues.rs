@@ -595,19 +595,42 @@ impl WaitQueues {
             ready_queue.enqueue_ready_task(waiter_task_id);
         }
         if let Some(parent_id) = registry.parent_id(task_id) {
-            while let Some(waiter_task_id) = self.child_exit_wait_queue_mut(parent_id)
-                                                 .pop_front()
-            {
-                if registry.state(waiter_task_id)
-                           .is_none()
-                {
-                    continue;
-                }
-                registry.finish_wait(waiter_task_id, TaskWaitResult::Woken);
-                registry.mark_ready(waiter_task_id);
-                ready_queue.enqueue_ready_task(waiter_task_id);
-            }
+            self.wake_child_exit_waiters(registry, parent_id, ready_queue);
         }
+    }
+
+    pub fn wake_child_exit_waiters(&mut self,
+                                   registry : &mut TaskRegistry,
+                                   parent_id : TaskId,
+                                   ready_queue : &mut impl ReadyTaskSink) {
+        while let Some(waiter_task_id) = self.child_exit_wait_queue_mut(parent_id)
+                                             .pop_front()
+        {
+            if registry.state(waiter_task_id)
+                       .is_none()
+            {
+                continue;
+            }
+            registry.finish_wait(waiter_task_id, TaskWaitResult::Woken);
+            registry.mark_ready(waiter_task_id);
+            ready_queue.enqueue_ready_task(waiter_task_id);
+        }
+    }
+
+    pub fn block_task_manual(&mut self,
+                             registry : &mut TaskRegistry,
+                             task_id : TaskId,
+                             ready_queue : &mut impl ReadyTaskSink) {
+        if registry.state(task_id)
+                  .is_none()
+        {
+            return;
+        }
+        ready_queue.detach_ready_task(task_id);
+        self.enqueue_task(registry,
+                          task_id,
+                          QueueTarget::Blocked(TaskBlockReason::Manual),
+                          ready_queue);
     }
 
     fn child_exit_wait_queue_mut(&mut self, parent_id : TaskId) -> &mut VecDeque<TaskId> {
