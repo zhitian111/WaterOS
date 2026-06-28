@@ -119,9 +119,8 @@ impl Ext4 {
     ///
     /// Returns:
     /// `Vec<Ext4DirEntry>` - list of directory entries
-    pub fn ext4_dir_get_entries(&self, inode: u32) -> Vec<Ext4DirEntry> {
-        let mut entries = self.dir_get_entries(inode);
-        entries
+    pub fn ext4_dir_get_entries(&self, inode: u32) -> Result<Vec<Ext4DirEntry>> {
+        self.dir_get_entries(inode)
     }
 
     /// Read data from a file starting from a given offset.

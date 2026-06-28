@@ -21,6 +21,10 @@ pub type PlatformTimeResult<T> = Result<T, PlatformTimeError>;
 /// 语义契约：该频率用于把 arch 的单调 tick 换算为 `Duration` 等；来源可以是 DTB、
 /// 固件查询或板级常量。**不应**与“是否能在 arch 层读到 `timebase-frequency` CSR”
 /// 混为一谈——后者属于 `wateros-platform-arch` 的职责与能力集。
+///
+/// 实现体提供的 [`PlatformTime::time_frequency_hz`] 为 **板级默认 / 回退**；
+/// 内核引导期若已从 DTB 探测到频率，应经 `wateros-platform` 聚合层的
+/// `platform::time::set_frequency_hz` 覆盖后再供 [`crate::timer`] 使用。
 pub trait PlatformTime {
     #[inline]
     fn time_frequency_hz() -> PlatformTimeResult<u64> {

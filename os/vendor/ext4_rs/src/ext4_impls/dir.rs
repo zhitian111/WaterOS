@@ -21,7 +21,9 @@ impl Ext4 {
     ) -> Result<usize> {
         // load parent inode
         let parent = self.get_inode_ref(parent_inode);
-        assert!(parent.inode.is_dir());
+        if !parent.inode.is_dir() {
+            return_errno_with_message!(Errno::ENOTDIR, "Not a directory");
+        }
 
         // start from the first logical block
         let mut iblock = 0;
@@ -105,12 +107,14 @@ impl Ext4 {
     ///
     /// Returns:
     /// `Vec<Ext4DirEntry>` - list of directory entries
-    pub fn dir_get_entries(&self, inode: u32) -> Vec<Ext4DirEntry> {
+    pub fn dir_get_entries(&self, inode: u32) -> Result<Vec<Ext4DirEntry>> {
         let mut entries = Vec::new();
 
         // load inode
         let inode_ref = self.get_inode_ref(inode);
-        assert!(inode_ref.inode.is_dir());
+        if !inode_ref.inode.is_dir() {
+            return_errno_with_message!(Errno::ENOTDIR, "Not a directory");
+        }
 
         // calculate total blocks
         let inode_size = inode_ref.inode.size();
@@ -149,7 +153,7 @@ impl Ext4 {
             // go ot next block
             iblock += 1;
         }
-        entries
+        Ok(entries)
     }
 
     pub fn dir_set_csum(&self, dst_blk: &mut Block, ino_gen: u32) {
@@ -384,7 +388,9 @@ impl Ext4 {
     pub fn dir_has_entry(&self, dir_inode: u32) -> bool {
         // load parent inode
         let parent = self.get_inode_ref(dir_inode);
-        assert!(parent.inode.is_dir());
+        if !parent.inode.is_dir() {
+            return false;
+        }
 
         // start from the first logical block
         let mut iblock = 0;

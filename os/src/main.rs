@@ -6,8 +6,9 @@
 //!
 //! 1. 引导汇编（`wateros-platform` 对应 `_start.S`）将控制权交给
 //!    `kernel_main`。
-//! 2. 解析引导参数、初始化驱动桩、控制台与日志、堆分配器，再做 `platform::arch`
-//!    与 MM
+//! 2. 解析引导参数、初始化驱动桩；探测 DTB `timebase-frequency` 并
+//!    `platform::time::set_frequency_hz`；再初始化控制台与日志、堆分配器，再做
+//!    `platform::arch` 与 MM
 //!   （frame 范围、Sv39、内核页表等；含 `mm` 自检日志）。
 //! 3. 初始化任务、注册组合层 trap 路由（`trap_handler::init`），再做 MM
 //!    （frame 范围、Sv39、内核页表等；含 `mm` 自检日志）；随后 `driver::active_impl::init_after_boot`；成功则挂载 `fs`。
@@ -45,6 +46,8 @@ use syscall as _;
 #[cfg(feature = "qemu-loongarch64-virt")]
 use syscall as _;
 
+#[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
+mod boot_timebase;
 #[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
 mod self_tests;
 #[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
@@ -117,6 +120,7 @@ mod qemu_riscv64_opensbi {
         runtime::console::show_logo();
         klog::init();
         runtime::logging::init();
+        crate::boot_timebase::probe_and_init_timebase(boot_arg1);
         info!("log test pass!");
         runtime::heap_allocator::init();
         use alloc::vec;
@@ -248,6 +252,7 @@ mod qemu_loongarch64_virt {
         platform::arch::init();
         info!("[loongarch64] boot smoke ok");
         driver::init_when_boot(envp);
+        crate::boot_timebase::probe_and_init_timebase(envp);
 
         // 必须在 MM 初始化之前注册 trap handler：页表激活后的探针访问可能触发页错误。
         task::init();

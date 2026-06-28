@@ -63,15 +63,14 @@ pub mod boot {
 pub mod time {
     use api_v0::time::{PlatformTime, PlatformTimeError, PlatformTimeResult};
 
-    /// QEMU virt 上常用的 timebase 频率（Hz）；**当前**为常量，后续可替换为 DTB 解析。
+    /// QEMU virt 上常用的 timebase 频率（Hz）；引导期可由 DTB 覆盖，此处为回退常量。
     pub struct QEMURiscv64OpenSBITime;
 
     impl PlatformTime for QEMURiscv64OpenSBITime {
         #[inline]
         fn time_frequency_hz() -> PlatformTimeResult<u64> {
-            // QEMU virt + OpenSBI 常见 timebase 频率（Hz）。
-            // 后续可替换为从 DTB 动态读取。
-            const QEMU_TIMEBASE_HZ : u64 = 1250_0000;
+            // QEMU virt DTB `/cpus/timebase-frequency` 默认 10 MHz；未探测时的回退。
+            const QEMU_TIMEBASE_HZ : u64 = 10_000_000;
             if QEMU_TIMEBASE_HZ == 0 {
                 Err(PlatformTimeError::InvalidFrequency)
             } else {

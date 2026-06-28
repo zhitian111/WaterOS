@@ -341,7 +341,9 @@ impl ReadOnlyFs for Ext4RsFs {
             return Err(FsError::NotAFile);
         }
         let mut out = Vec::new();
-        for entry in fs.ext4_dir_get_entries(inode) {
+        for entry in fs.ext4_dir_get_entries(inode)
+                        .map_err(map_ext4_rs)?
+        {
             if entry.unused() {
                 continue;
             }

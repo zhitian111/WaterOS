@@ -168,7 +168,7 @@ fn main() {
     assert!(r.is_ok(), "dir make error {:?}", r.err());
 
     // dir ls
-    let entries = ext4.dir_get_entries(ROOT_INODE);
+    let entries = ext4.dir_get_entries(ROOT_INODE).unwrap();
     log::info!("dir ls root");
     for entry in entries {
         log::info!("{:?}", entry.get_name());

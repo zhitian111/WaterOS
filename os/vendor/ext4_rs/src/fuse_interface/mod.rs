@@ -432,7 +432,7 @@ impl Ext4 {
     /// value set by the opendir method, or will be undefined if the opendir method
     /// didn't set any value.
     pub fn fuse_readdir(&self, ino : u64, fh : u64, offset : i64) -> Result<Vec<Ext4DirEntry>> {
-        let mut entries = self.dir_get_entries(ino as u32);
+        let mut entries = self.dir_get_entries(ino as u32)?;
         entries = entries[offset as usize..].to_vec();
         Ok(entries)
     }

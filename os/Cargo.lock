@@ -504,6 +504,7 @@ dependencies = [
 name = "wateros"
 version = "0.1.0"
 dependencies = [
+ "fdt",
  "wateros-abi",
  "wateros-base",
  "wateros-base-config",

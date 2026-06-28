@@ -43,14 +43,35 @@ pub mod arch {
 
 /// 平台层时间频率：由 `PlatformTime` 实现（通常来自板级 / DTB / 环境常量），
 /// **不**等同于 arch 的 `time` CSR 读频率（arch 侧可能返回不支持）。
+///
+/// 引导期可通过 [`set_frequency_hz`] 注入 DTB 探测结果；未设置时回退
+/// `PlatformTimeImpl::time_frequency_hz`。
 #[cfg(feature = "api-v0")]
 pub mod time {
+    use core::sync::atomic::{AtomicU64, Ordering};
+
     pub use api_v0::time::{PlatformTime, PlatformTimeError, PlatformTimeResult};
 
     pub use crate::active_impl::time::PlatformTimeImpl;
 
+    static TIMEBASE_HZ_CACHE: AtomicU64 = AtomicU64::new(0);
+
+    /// 由引导代码在首次使用 [`frequency_hz`] 前写入 DTB 等探测到的 tick 频率（Hz）。
+    #[inline]
+    pub fn set_frequency_hz(hz: u64) -> PlatformTimeResult<()> {
+        if hz == 0 {
+            return Err(PlatformTimeError::InvalidFrequency);
+        }
+        TIMEBASE_HZ_CACHE.store(hz, Ordering::Release);
+        Ok(())
+    }
+
     #[inline]
     pub fn frequency_hz() -> PlatformTimeResult<u64> {
+        let cached = TIMEBASE_HZ_CACHE.load(Ordering::Acquire);
+        if cached != 0 {
+            return Ok(cached);
+        }
         PlatformTimeImpl::time_frequency_hz()
     }
 }

@@ -109,7 +109,7 @@ impl Ext4 {
             // log::trace!("find in parent {:x?} r {:?} name {:?}", parent, r, current_path);
             if let Err(e) = r {
                 if e.error() != Errno::ENOENT || !create {
-                    return_errno_with_message!(Errno::ENOENT, "No such file or directory");
+                    return Err(e);
                 }
 
                 let mut inode_mode = 0;
@@ -133,6 +133,10 @@ impl Ext4 {
             if is_goal {
                 break;
             } else {
+                let child_ref = self.get_inode_ref(dir_search_result.dentry.inode);
+                if !child_ref.inode.is_dir() {
+                    return_errno_with_message!(Errno::ENOTDIR, "Not a directory");
+                }
                 // update parent
                 *parent = dir_search_result.dentry.inode;
             }
