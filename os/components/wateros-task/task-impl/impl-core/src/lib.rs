@@ -159,6 +159,38 @@ pub fn set_process_rlimit(
     with_process_registry(|registry| registry.set_process_rlimit(pid, resource, limit))
 }
 
+pub fn get_process_nice(pid: ProcessId) -> Option<i32> {
+    with_process_registry(|registry| registry.get_process_nice(pid))
+}
+
+pub fn set_process_nice(pid: ProcessId, nice: i32) -> bool {
+    with_process_registry(|registry| registry.set_process_nice(pid, nice))
+}
+
+pub fn get_process_pgid(pid: ProcessId) -> Option<ProcessId> {
+    with_process_registry(|registry| registry.get_process_pgid(pid))
+}
+
+pub fn set_process_pgid(pid: ProcessId, pgid: ProcessId) -> bool {
+    with_process_registry(|registry| registry.set_process_pgid(pid, pgid))
+}
+
+pub fn set_nice_for_pgid(pgid: ProcessId, nice: i32) -> bool {
+    with_process_registry(|registry| registry.set_nice_for_pgid(pgid, nice))
+}
+
+pub fn min_nice_in_pgid(pgid: ProcessId) -> Option<i32> {
+    with_process_registry(|registry| registry.min_nice_in_pgid(pgid))
+}
+
+pub fn process_exists(pid: ProcessId) -> bool {
+    with_process_registry(|registry| registry.process_exists(pid))
+}
+
+pub fn pgid_has_members(pgid: ProcessId) -> bool {
+    with_process_registry(|registry| registry.pgid_has_members(pgid))
+}
+
 pub fn process_model_self_test() {
     let mut registry = ProcessRegistry::new();
     let aspace = Some(AddressSpaceRef::new(

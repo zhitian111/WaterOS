@@ -645,6 +645,21 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     }
 
     #[inline]
+    fn dispatch_getpgid(args: SyscallArgs) -> isize {
+        sys::sys_getpgid(args).0
+    }
+
+    #[inline]
+    fn dispatch_setpriority(args: SyscallArgs) -> isize {
+        sys::sys_setpriority(args).0
+    }
+
+    #[inline]
+    fn dispatch_getpriority(args: SyscallArgs) -> isize {
+        sys::sys_getpriority(args).0
+    }
+
+    #[inline]
     fn dispatch_getcwd(args: SyscallArgs) -> isize {
         sys::sys_getcwd(args).0
     }

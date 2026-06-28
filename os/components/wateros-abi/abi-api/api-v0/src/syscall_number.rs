@@ -248,6 +248,12 @@ pub trait SyscallNumberTable {
     const TIMES: SyscallNumber;
     /// 设置进程组 ID（`setpgid(2)`）。
     const SETPGID: SyscallNumber;
+    /// 读取进程组 ID（`getpgid(2)`）。
+    const GETPGID: SyscallNumber;
+    /// 设置调度优先级/nice（`setpriority(2)`）。
+    const SETPRIORITY: SyscallNumber;
+    /// 读取调度优先级/nice（`getpriority(2)`）。
+    const GETPRIORITY: SyscallNumber;
     /// 当前进程真实用户 ID（`getuid(2)`）。
     const GETUID: SyscallNumber;
     /// 当前进程有效用户 ID（`geteuid(2)`）。

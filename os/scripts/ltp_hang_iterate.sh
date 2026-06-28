@@ -142,13 +142,16 @@ read_skip_list() {
     python3 - "$SKIP_RS" <<'PY'
 import re, sys
 text = open(sys.argv[1]).read()
-m = re.search(r'const LTP_STANDALONE_SKIP_BASENAMES:\s*&\[(\s*[^\]]*)\]', text, re.S)
-if not m:
+mark = "const LTP_SUBMIT_SKIP_BASENAMES"
+start = text.find(mark)
+if start < 0:
     sys.exit(1)
-for line in m.group(1).splitlines():
-    line = line.strip().strip(',').strip('"')
-    if line.startswith('"') and line.endswith('"'):
-        print(line[1:-1])
+bracket = text.find("[", start)
+end = text.find("];", bracket)
+if end < 0:
+    sys.exit(1)
+for m in re.finditer(r'"([^"]+)"', text[bracket + 1 : end]):
+    print(m.group(1))
 PY
 }
 
@@ -158,24 +161,23 @@ add_skip_entry() {
         log "skip list already contains: $name"
         return 0
     fi
-    log "adding to LTP_STANDALONE_SKIP_BASENAMES: $name"
+    log "adding to LTP_SUBMIT_SKIP_BASENAMES (sorted): $name"
     python3 - "$SKIP_RS" "$name" <<'PY'
 import re, sys
 path, name = sys.argv[1], sys.argv[2]
 text = open(path).read()
-pat = r'(const LTP_STANDALONE_SKIP_BASENAMES:\s*&\[\s*)([^\]]*)(\s*\];)'
+pat = r"(const LTP_SUBMIT_SKIP_BASENAMES:\s*&\[)(.*?)(\n\];)"
 m = re.search(pat, text, re.S)
 if not m:
-    raise SystemExit('skip array not found')
-body = m.group(2)
-if f'"{name}"' in body:
+    raise SystemExit("LTP_SUBMIT_SKIP_BASENAMES array not found")
+names = re.findall(r'"([^"]+)"', m.group(2))
+if name in names:
     sys.exit(0)
-if body.strip():
-    new_body = body.rstrip() + f'\n    "{name}",\n'
-else:
-    new_body = f'\n    "{name}",\n'
-text = text[:m.start(2)] + new_body + text[m.end(2):]
-open(path, 'w').write(text)
+names.append(name)
+names.sort()
+new_body = "".join(f'\n    "{n}",' for n in names) + "\n"
+text = text[: m.start(2)] + new_body + text[m.end(2) :]
+open(path, "w").write(text)
 PY
 }
 

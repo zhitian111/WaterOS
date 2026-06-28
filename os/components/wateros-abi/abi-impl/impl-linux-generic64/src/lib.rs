@@ -131,6 +131,9 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const GETTID: SyscallNumber = SyscallNumber(178);
     const TIMES: SyscallNumber = SyscallNumber(153);
     const SETPGID: SyscallNumber = SyscallNumber(154);
+    const GETPGID: SyscallNumber = SyscallNumber(155);
+    const SETPRIORITY: SyscallNumber = SyscallNumber(140);
+    const GETPRIORITY: SyscallNumber = SyscallNumber(141);
     const GETUID: SyscallNumber = SyscallNumber(174);
     const GETEUID: SyscallNumber = SyscallNumber(175);
     const GETGID: SyscallNumber = SyscallNumber(176);
@@ -307,6 +310,9 @@ mod tests {
             LinuxGeneric64::GETTID,
             LinuxGeneric64::TIMES,
             LinuxGeneric64::SETPGID,
+            LinuxGeneric64::GETPGID,
+            LinuxGeneric64::SETPRIORITY,
+            LinuxGeneric64::GETPRIORITY,
             LinuxGeneric64::GETUID,
             LinuxGeneric64::GETEUID,
             LinuxGeneric64::GETGID,

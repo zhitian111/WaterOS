@@ -522,6 +522,46 @@ pub fn set_process_resource_limit(
     active_impl::set_process_rlimit(pid, resource, limit)
 }
 
+#[inline]
+pub fn process_nice(pid: ProcessId) -> Option<i32> {
+    active_impl::get_process_nice(pid)
+}
+
+#[inline]
+pub fn set_process_nice(pid: ProcessId, nice: i32) -> bool {
+    active_impl::set_process_nice(pid, nice)
+}
+
+#[inline]
+pub fn process_pgid(pid: ProcessId) -> Option<ProcessId> {
+    active_impl::get_process_pgid(pid)
+}
+
+#[inline]
+pub fn set_process_pgid(pid: ProcessId, pgid: ProcessId) -> bool {
+    active_impl::set_process_pgid(pid, pgid)
+}
+
+#[inline]
+pub fn set_nice_for_pgid(pgid: ProcessId, nice: i32) -> bool {
+    active_impl::set_nice_for_pgid(pgid, nice)
+}
+
+#[inline]
+pub fn min_nice_in_pgid(pgid: ProcessId) -> Option<i32> {
+    active_impl::min_nice_in_pgid(pgid)
+}
+
+#[inline]
+pub fn process_exists(pid: ProcessId) -> bool {
+    active_impl::process_exists(pid)
+}
+
+#[inline]
+pub fn pgid_has_members(pgid: ProcessId) -> bool {
+    active_impl::pgid_has_members(pgid)
+}
+
 /// 按调度实体查询 `RLIMIT_NOFILE` 软限制；无进程上下文时回退 1024。
 #[inline]
 pub fn nofile_rlimit_for_task(task_id: TaskId) -> u64 {

@@ -302,7 +302,7 @@ pub(crate) fn sys_setsid() -> UserRet {
                                          .unwrap_or_else(|| UserRet::from_error(ErrNo::ESRCH))
 }
 
-/// `setpgid(2)`：bring-up 最小实现；尚未维护真实 pgid，仅校验常见自调用语义。
+/// `setpgid(2)`：最小实现；仅允许进程修改自身 pgid。
 pub(crate) fn sys_setpgid(args : SyscallArgs) -> UserRet {
     let pid_arg = args.arg(0) as i32;
     let pgid_arg = args.arg(1) as i32;
@@ -311,21 +311,49 @@ pub(crate) fn sys_setpgid(args : SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EINVAL);
     }
 
-    let current_pid = match task::current_process_task_snapshot() {
-        Some(snapshot) => i32::try_from(snapshot.pid.raw()).unwrap_or(i32::MAX),
+    let current = match task::current_process_task_snapshot() {
+        Some(snapshot) => snapshot,
         None => return UserRet::from_error(ErrNo::ESRCH),
     };
+    let current_pid = i32::try_from(current.pid.raw()).unwrap_or(i32::MAX);
 
     let target_pid = if pid_arg == 0 { current_pid } else { pid_arg };
     if target_pid != current_pid {
         return UserRet::from_error(ErrNo::ESRCH);
     }
 
-    let _new_pgid = if pgid_arg == 0 { target_pid } else { pgid_arg };
-    log::trace!(
-        "[syscall] setpgid(nr=109) pgid not persisted (pid={target_pid} pgid={_new_pgid})",
-    );
+    let new_pgid_raw = if pgid_arg == 0 { target_pid } else { pgid_arg };
+    if new_pgid_raw <= 0 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    let new_pgid = task::ProcessId::from_raw(new_pgid_raw as usize);
+    if !task::set_process_pgid(current.pid, new_pgid) {
+        return UserRet::from_error(ErrNo::ESRCH);
+    }
     UserRet::from_success(0)
+}
+
+/// `getpgid(2)`：返回进程所属进程组 id。
+pub(crate) fn sys_getpgid(args : SyscallArgs) -> UserRet {
+    let pid_arg = args.arg(0) as i32;
+    if pid_arg < 0 {
+        return UserRet::from_error(ErrNo::ESRCH);
+    }
+    let target_pid = if pid_arg == 0 {
+        match task::current_process_task_snapshot() {
+            Some(snapshot) => snapshot.pid,
+            None => return UserRet::from_error(ErrNo::ESRCH),
+        }
+    } else {
+        task::ProcessId::from_raw(pid_arg as usize)
+    };
+    if !task::process_exists(target_pid) {
+        return UserRet::from_error(ErrNo::ESRCH);
+    }
+    match task::process_pgid(target_pid) {
+        Some(pgid) => UserRet::from_success(pgid.raw()),
+        None => UserRet::from_error(ErrNo::ESRCH),
+    }
 }
 
 pub(crate) fn sys_set_tid_address(args : SyscallArgs) -> UserRet {

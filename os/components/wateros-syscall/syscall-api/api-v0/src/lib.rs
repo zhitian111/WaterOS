@@ -122,6 +122,9 @@ pub enum SyscallKind {
     GetResgid,
     Times,
     SetPgid,
+    GetPgid,
+    SetPriority,
+    GetPriority,
     Uname,
     Syslog,
     Prctl,
@@ -399,6 +402,12 @@ impl SyscallKind {
             Self::Times
         } else if syscall_nr == T::SETPGID.raw() {
             Self::SetPgid
+        } else if syscall_nr == T::GETPGID.raw() {
+            Self::GetPgid
+        } else if syscall_nr == T::SETPRIORITY.raw() {
+            Self::SetPriority
+        } else if syscall_nr == T::GETPRIORITY.raw() {
+            Self::GetPriority
         } else if syscall_nr == T::UNAME.raw() {
             Self::Uname
         } else if syscall_nr == T::SYSLOG.raw() {
@@ -619,6 +628,9 @@ impl SyscallKind {
             Self::GetResgid => "getresgid",
             Self::Times => "times",
             Self::SetPgid => "setpgid",
+            Self::GetPgid => "getpgid",
+            Self::SetPriority => "setpriority",
+            Self::GetPriority => "getpriority",
             Self::Uname => "uname",
             Self::Syslog => "syslog",
             Self::Prctl => "prctl",
@@ -1569,6 +1581,30 @@ pub trait SyscallDispatcher {
         )
     }
 
+    fn dispatch_getpgid(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::GetPgid,
+            Self::NumberTable::GETPGID.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_setpriority(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::SetPriority,
+            Self::NumberTable::SETPRIORITY.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_getpriority(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::GetPriority,
+            Self::NumberTable::GETPRIORITY.raw(),
+            args,
+        )
+    }
+
     fn dispatch_waitpid(args: SyscallArgs) -> isize {
         Self::dispatch_unsupported(
             SyscallKind::WaitPid,
@@ -2114,6 +2150,9 @@ pub trait SyscallDispatcher {
             SyscallKind::GetResgid => Self::dispatch_getresgid(syscall_args),
             SyscallKind::Times => Self::dispatch_times(syscall_args),
             SyscallKind::SetPgid => Self::dispatch_setpgid(syscall_args),
+            SyscallKind::GetPgid => Self::dispatch_getpgid(syscall_args),
+            SyscallKind::SetPriority => Self::dispatch_setpriority(syscall_args),
+            SyscallKind::GetPriority => Self::dispatch_getpriority(syscall_args),
             SyscallKind::WaitPid => Self::dispatch_waitpid(syscall_args),
             SyscallKind::Kill => Self::dispatch_kill(syscall_args),
             SyscallKind::Nanosleep => Self::dispatch_nanosleep(syscall_args),

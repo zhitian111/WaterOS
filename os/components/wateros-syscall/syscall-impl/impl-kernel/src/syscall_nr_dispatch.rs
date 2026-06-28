@@ -61,6 +61,8 @@ pub fn dispatch_syscall_by_nr(syscall_nr: usize, syscall_args: SyscallArgs) -> i
             KernelSyscallDispatcher::dispatch_fsync(syscall_args),
         n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::FDATASYNC.raw() =>
             KernelSyscallDispatcher::dispatch_fdatasync(syscall_args),
+        n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::TRUNCATE.raw() =>
+            KernelSyscallDispatcher::dispatch_truncate(syscall_args),
         n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::FTRUNCATE.raw() =>
             KernelSyscallDispatcher::dispatch_ftruncate(syscall_args),
         n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::FALLOCATE.raw() =>
@@ -83,6 +85,8 @@ pub fn dispatch_syscall_by_nr(syscall_nr: usize, syscall_args: SyscallArgs) -> i
             KernelSyscallDispatcher::dispatch_ioctl(syscall_args),
         n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::FCNTL.raw() =>
             KernelSyscallDispatcher::dispatch_fcntl(syscall_args),
+        n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::FLOCK.raw() =>
+            KernelSyscallDispatcher::dispatch_flock(syscall_args),
         n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::GETDENTS64.raw() =>
             KernelSyscallDispatcher::dispatch_getdents64(syscall_args),
         n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::MKDIRAT.raw() =>
@@ -105,6 +109,8 @@ pub fn dispatch_syscall_by_nr(syscall_nr: usize, syscall_args: SyscallArgs) -> i
             KernelSyscallDispatcher::dispatch_clone(syscall_args),
         n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::CLONE3.raw() =>
             KernelSyscallDispatcher::dispatch_clone3(syscall_args),
+        n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::UNSHARE.raw() =>
+            KernelSyscallDispatcher::dispatch_unshare(syscall_args),
         n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::EXEC.raw() =>
             KernelSyscallDispatcher::dispatch_execve(syscall_args),
         n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::MMAP.raw() =>
@@ -187,6 +193,12 @@ pub fn dispatch_syscall_by_nr(syscall_nr: usize, syscall_args: SyscallArgs) -> i
             KernelSyscallDispatcher::dispatch_times(syscall_args),
         n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::SETPGID.raw() =>
             KernelSyscallDispatcher::dispatch_setpgid(syscall_args),
+        n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::GETPGID.raw() =>
+            KernelSyscallDispatcher::dispatch_getpgid(syscall_args),
+        n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::SETPRIORITY.raw() =>
+            KernelSyscallDispatcher::dispatch_setpriority(syscall_args),
+        n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::GETPRIORITY.raw() =>
+            KernelSyscallDispatcher::dispatch_getpriority(syscall_args),
         n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::WAITPID.raw() =>
             KernelSyscallDispatcher::dispatch_waitpid(syscall_args),
         n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::KILL.raw() =>
@@ -285,6 +297,16 @@ pub fn dispatch_syscall_by_nr(syscall_nr: usize, syscall_args: SyscallArgs) -> i
             KernelSyscallDispatcher::dispatch_pselect6(syscall_args),
         n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::POLL.raw() =>
             KernelSyscallDispatcher::dispatch_poll(syscall_args),
+        n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::SELECT.raw() =>
+            KernelSyscallDispatcher::dispatch_select(syscall_args),
+        n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::EPOLL_CREATE1.raw() =>
+            KernelSyscallDispatcher::dispatch_epoll_create1(syscall_args),
+        n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::EPOLL_CTL.raw() =>
+            KernelSyscallDispatcher::dispatch_epoll_ctl(syscall_args),
+        n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::EPOLL_WAIT.raw() =>
+            KernelSyscallDispatcher::dispatch_epoll_wait(syscall_args),
+        n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::EPOLL_PWAIT.raw() =>
+            KernelSyscallDispatcher::dispatch_epoll_pwait(syscall_args),
         _ => dispatch_syscall_aliases(syscall_nr, syscall_args),
     }
 }

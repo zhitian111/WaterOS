@@ -27,6 +27,7 @@
 | `analyze_kernel_log.md` | 分析类 | `general`、`structure`、`architecture` | 需要（按失败子系统选读） |
 | `run_testsuits_qemu.md` | 运行类 | `general`、`structure`、`coding` | 不需要 |
 | `ltp_autonomous_iteration.md` | 自主迭代类 | `general`、`structure`、`coding`、`debug_workflow`；另读 `run_testsuits_qemu.md` | 按需 |
+| `ltp_fast_exit_skip_list.md` | 分析类 | `general`、`debug_workflow`；另读 `ltp_cgroup_helper.rs` | 不需要 |
 | `audit_syscall_semantics.md` | 审计类 | `general`、`structure`、`architecture`、`coding` | 需要（`wateros-syscall` 及关联子系统） |
 | `audit_lock_mechanisms.md` | 审计类 | `general`、`structure`、`architecture`、`coding` | 需要（按带锁结构所在组件选读） |
 | `audit_resource_lifecycle.md` | 审计类 | `general`、`structure`、`architecture`、`coding` | 需要（`wateros-mm`、`wateros-task`、`wateros-vfs` 等按资源选读） |
@@ -86,6 +87,7 @@ WaterOS 的大部分重复任务都可以按一级组件并行拆分。默认拆
 - `run_testsuits_qemu.md`
 - `analyze_kernel_log.md`
 - `ltp_autonomous_iteration.md`（**LTP AI 托管多轮迭代**；停止条件为用户主动中断）
+- `ltp_fast_exit_skip_list.md`（**从 LTP 日志提取「未见 TPASS」fast exit 跳过名单**；主 agent 按 ~4000 行分片派 subagent 汇总）
 - `audit_syscall_semantics.md`（**系统调用语义审计与收敛**；主 agent 拆 syscall subagent 并汇总）
 - `audit_lock_mechanisms.md`（**锁机制审计与收敛**；主 agent 拆数据结构 subagent 并汇总）
 - `audit_resource_lifecycle.md`（**资源分配与生命周期审计**；主 agent 拆资源类型 subagent 并汇总，含修复任务队列）

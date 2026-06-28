@@ -38,6 +38,7 @@ mod pipe2;
 mod poll;
 mod poll_multiplex;
 mod posix_at_io;
+mod priority;
 mod read;
 mod readlinkat;
 mod renameat2;
@@ -147,9 +148,10 @@ pub(crate) use task::{
     drop_reaped_task_runtime_resources, sys_exit, sys_exit_group, sys_getpid, sys_getppid, sys_getrandom,
     sys_getrlimit, sys_getrusage, sys_gettid, sys_prctl, sys_prlimit64, sys_sysinfo,
     sys_rt_sigaction, sys_rt_sigprocmask, sys_rt_sigtimedwait, sys_set_tid_address,
-    sys_getitimer, sys_setitimer, sys_setrlimit, sys_setpgid, sys_times, sys_umask, sys_uname,
-    sys_waitpid, sys_setsid, sys_yield,
+    sys_getitimer, sys_setitimer, sys_setrlimit, sys_setpgid, sys_getpgid, sys_times, sys_umask,
+    sys_uname, sys_waitpid, sys_setsid, sys_yield,
 };
+pub(crate) use priority::{sys_getpriority, sys_setpriority};
 pub(crate) use umount2::sys_umount2;
 pub(crate) use unshare::sys_unshare;
 pub(crate) use unlinkat::sys_unlinkat;
