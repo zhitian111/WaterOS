@@ -10,4 +10,7 @@
 [features]
     default = [  ]
     impl-dummy = [ "console/impl-dummy", "platform/impl-dummy" ]
-    impl-platform-console = [ "console/impl-platform-console", "platform/api-v0" ]
+    impl-platform-console = [
+        "console/impl-platform-console",
+        "platform/api-v0",
+    ]

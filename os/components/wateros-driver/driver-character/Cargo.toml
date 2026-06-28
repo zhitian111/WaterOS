@@ -11,8 +11,12 @@
     impl-null-stub = { path = "./character-impl/impl-null-stub/", package = "wateros-driver-character-impl-null-stub", default-features = true, optional = true }
 
 [features]
-    api-v0 = [ "impl-dummy/api-v0", "impl-rtc-stub?/api-v0", "impl-null-stub?/api-v0" ]
-    default = [ "api-v0", "impl-rtc-stub", "impl-null-stub" ]
+    api-v0 = [
+        "impl-dummy/api-v0",
+        "impl-null-stub?/api-v0",
+        "impl-rtc-stub?/api-v0",
+    ]
+    default = [ "api-v0", "impl-null-stub", "impl-rtc-stub" ]
     impl-dummy = [  ]
-    impl-rtc-stub = [ "dep:impl-rtc-stub" ]
     impl-null-stub = [ "dep:impl-null-stub" ]
+    impl-rtc-stub = [ "dep:impl-rtc-stub" ]

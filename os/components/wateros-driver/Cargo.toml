@@ -10,8 +10,8 @@
         "./driver-character/",
         "./driver-character/character-api/api-v0/",
         "./driver-character/character-impl/impl-dummy/",
-        "./driver-character/character-impl/impl-rtc-stub/",
         "./driver-character/character-impl/impl-null-stub/",
+        "./driver-character/character-impl/impl-rtc-stub/",
         "./driver-impl/impl-dummy/",
         "./driver-impl/impl-qemu-loongarch64-virt/",
         "./driver-impl/impl-qemu-riscv64-opensbi/",
@@ -19,8 +19,8 @@
         "./driver-network/network-api/api-v0/",
         "./driver-network/network-impl/impl-dummy/",
         "./driver-network/network-impl/impl-smoltcp/",
-        "./driver-network/network-impl/impl-virtio-pci/",
         "./driver-network/network-impl/impl-virtio-mmio/",
+        "./driver-network/network-impl/impl-virtio-pci/",
     ]
 [package]
     name = "wateros-driver"
@@ -34,8 +34,8 @@
     impl-qemu-loongarch64-virt = { path = "./driver-impl/impl-qemu-loongarch64-virt/", package = "wateros-driver-impl-qemu-loongarch64-virt", default-features = true }
     block = { path = "./driver-block/", package = "wateros-driver-block", default-features = true }
     character = { path = "./driver-character/", package = "wateros-driver-character", default-features = true, features = [
-        "impl-rtc-stub",
         "impl-null-stub",
+        "impl-rtc-stub",
     ] }
     network = { path = "./driver-network/", package = "wateros-driver-network", default-features = true }
     wateros-base-config = { path = "../wateros-base/base-config", package = "wateros-base-config" }

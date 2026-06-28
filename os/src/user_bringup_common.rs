@@ -14,6 +14,23 @@ pub const LIBC_PREFIXES : &[&str] = &["/glibc",
 //"/musl"
 ];
 
+/// bring-up 阶段一次用户态启动：`program` 为待装载 ELF，`argv` 为完整参数（busybox 时
+/// `argv[0]` 须为 applet 名，如 `"sh"` / `"timeout"`，而非 busybox 路径）。
+pub struct BringupCommand {
+    pub program : &'static str,
+    pub argv : &'static [&'static str],
+}
+
+/// 按 [`BringupCommand`] 串行执行：装载 `program` → spawn → wait → reap。
+pub fn run_one_bringup_command(log_tag : &str, cmd : &BringupCommand) {
+    if cmd.argv.is_empty() {
+        warn!("[{log_tag}] skip cmd program={}: empty argv",
+              cmd.program);
+        return;
+    }
+    run_one_elf_argv(log_tag, cmd.program, cmd.argv);
+}
+
 /// 基于已装载 ELF 创建用户任务，并在用户栈上写入 `argv` / `envp`（与 `execve`
 /// 布局一致）。
 pub fn spawn_user_task_from_loaded_elf_with_argv(loaded : &LoadedElf,
@@ -138,7 +155,7 @@ pub fn run_one_basic_elf(log_tag : &str, prefix : &str, name : &str) {
     run_one_elf_argv(log_tag, elf_path.as_str(), &argv);
 }
 
-/// 串行执行 shell 脚本：直接装载同 libc 下的 busybox，argv 为 `sh <脚本>`。
+/// 串行执行 shell 脚本：等价于 `busybox sh <脚本>`（见 [`BringupCommand`] 自行写 timeout 等）。
 pub fn run_one_busybox_script(log_tag : &str, script_path : &str) {
     let busybox_path = match mm::api::executable::busybox_path_for_script(script_path) {
         Some(path) => path,
@@ -154,9 +171,8 @@ pub fn run_one_busybox_script(log_tag : &str, script_path : &str) {
         return;
     }
 
-    let argv : Vec<&str> = vec!["sh",
-                                script_path];
-    run_one_elf_argv(log_tag, busybox_path, &argv);
+    run_one_elf_argv(log_tag, busybox_path, &["sh",
+                                              script_path]);
 }
 
 fn load_program_without_timer_preemption(path : &str,

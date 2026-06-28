@@ -6,7 +6,7 @@ BRANCH=$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
 BUILD_NUM = $(shell git rev-list --count HEAD 2>/dev/null || echo "0")
 
 .PHONY: clean check all all_start_info kernel configure fmt apply_features flush_img export
-.PHONY: rv_check rv_elf_info rv_obj_dump rv_qemu_run rv_qemu_run_with_log rv_qemu_gdb rv_gdb
+.PHONY: rv_check rv_elf_info rv_obj_dump rv_qemu_run rv_qemu_run_snapshot rv_qemu_run_with_log rv_qemu_gdb rv_gdb
 .PHONY: rv_pc_watch rv_symbol_at
 .PHONY: la_check la_elf_info kernel-la la_qemu_run la_symbol_at la_pc_watch
 .PHONY: rv_user_mode_bin
@@ -127,6 +127,33 @@ rv_qemu_run: kernel-rv
 	$(call INFO, "开始运行 riscv64 内核...")
 	@bash ./scripts/rv_qemu_run.sh
 	$(call INFO, "riscv64 内核运行结束")
+
+rv_qemu_run_snapshot: kernel-rv
+	$(call INFO, "开始运行 riscv64 内核 snapshot 模式，不写回 sdcard-rv.img")
+	@bash ./scripts/rv_qemu_run_snapshot.sh
+	$(call INFO, "riscv64 内核运行结束 snapshot")
+
+kernel-rv-ltp-glibc:
+	$(call INFO, "构建 riscv64 内核 LTP glibc only")
+	@cargo build $(kernel_rv_flag),bringup-ltp-glibc-only
+	@cp $(kernel_rv_build_artifact_path)/wateros ./kernel-rv-ltp-glibc
+
+kernel-rv-ltp-musl:
+	$(call INFO, "构建 riscv64 内核 LTP musl only")
+	@cargo build $(kernel_rv_flag),bringup-ltp-musl-only
+	@cp $(kernel_rv_build_artifact_path)/wateros ./kernel-rv-ltp-musl
+
+kernel-la-ltp-glibc:
+	$(call INFO, "构建 loongarch64 内核 LTP glibc only")
+	@cargo build $(kernel_la_flag),bringup-ltp-glibc-only
+	@cp $(kernel_la_build_artifact_path)/wateros ./kernel-la-ltp-glibc
+
+kernel-la-ltp-musl:
+	$(call INFO, "构建 loongarch64 内核 LTP musl only")
+	@cargo build $(kernel_la_flag),bringup-ltp-musl-only
+	@cp $(kernel_la_build_artifact_path)/wateros ./kernel-la-ltp-musl
+
+.PHONY: kernel-rv-ltp-glibc kernel-rv-ltp-musl kernel-la-ltp-glibc kernel-la-ltp-musl rv_qemu_run_snapshot
 
 la_qemu_run: kernel-la
 	$(call INFO, "开始运行 loongarch64 内核...")

@@ -26,8 +26,8 @@
 # 空闲块够但无连续段时 find_first / find_first_n 返回 None 后
 # 不推进 bg_id 导致的死循环；见 os/vendor/ext4plus/src/lib.rs）。
 [patch.crates-io]
-    ext4plus = { path = "vendor/ext4plus" }
     ext4_rs = { path = "vendor/ext4_rs" }
+    ext4plus = { path = "vendor/ext4plus" }
 
 [profile.dev]
     panic = "abort"
@@ -39,11 +39,11 @@
     default = [ "qemu-riscv64-opensbi" ]
     impl-sv39 = [ "mm/impl-sv39" ]
     qemu-loongarch64-virt = [
+        "abi/impl-linux-generic64",
         "dep:cred",
         "dep:driver",
         "dep:fs",
         "dep:ipc",
-        "abi/impl-linux-generic64",
         "driver/impl-qemu-loongarch64-virt",
         "ipc/all",
         "mm/impl-loongarch64",
@@ -51,22 +51,25 @@
         "platform/impl-qemu-loongarch64-virt",
         # "runtime/impl-trace",
         # "runtime/impl-info",
-        "runtime/impl-warn",
-        "runtime/impl-platform-console",
-        "syscall/impl-kernel",
-        "klog/default",
         "dep:klog",
+        "klog/default",
+        "runtime/impl-platform-console",
+        "runtime/impl-warn",
+        "syscall/impl-kernel",
         "vfs-bridge",
     ]
     vfs-bridge = [ "dep:vfs" ]
     # 启用阻塞式伪 shell：`pseudo_shell::run_pseudo_shell`；需自行在合适上下文调用。
     pseudo-shell = [ "dep:pseudo_shell" ]
+    # LTP 并行跑测：busybox bringup 仅跑单个 ltp_testcode.sh
+    bringup-ltp-glibc-only = [  ]
+    bringup-ltp-musl-only = [  ]
     qemu-riscv64-opensbi = [
+        "abi/impl-linux-generic64",
+        "dep:cred",
         "dep:driver",
         "dep:fs",
         "dep:ipc",
-        "abi/impl-linux-generic64",
-        "dep:cred",
         "driver/impl-qemu-riscv64-opensbi",
         "ipc/all",
         "vfs-bridge",
@@ -76,9 +79,9 @@
         "platform/impl-qemu-riscv64-opensbi",
         # "runtime/impl-trace",
         # "runtime/impl-info",
-        "runtime/impl-warn",
-        "runtime/impl-platform-console",
-        "syscall/impl-kernel",
-        "klog/default",
         "dep:klog",
+        "klog/default",
+        "runtime/impl-platform-console",
+        "runtime/impl-warn",
+        "syscall/impl-kernel",
     ]

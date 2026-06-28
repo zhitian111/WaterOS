@@ -7,16 +7,16 @@
         "./fs-devfs/devfs-impl/impl-kernel/",
         "./fs-impl/impl-devfs/",
         "./fs-impl/impl-dummy/",
-        "./fs-impl/impl-ext4/",
         "./fs-impl/impl-ext4-rs/",
-        "./fs-rootfs/",
-        "./fs-rootfs/rootfs-api/api-v0/",
-        "./fs-rootfs/rootfs-impl/impl-dummy/",
-        "./fs-rootfs/rootfs-impl/impl-kernel/",
+        "./fs-impl/impl-ext4/",
         "./fs-procfs/",
         "./fs-procfs/procfs-api/api-v0/",
         "./fs-procfs/procfs-impl/impl-dummy/",
         "./fs-procfs/procfs-impl/impl-kernel/",
+        "./fs-rootfs/",
+        "./fs-rootfs/rootfs-api/api-v0/",
+        "./fs-rootfs/rootfs-impl/impl-dummy/",
+        "./fs-rootfs/rootfs-impl/impl-kernel/",
     ]
 [package]
     name = "wateros-fs"
@@ -38,10 +38,10 @@
 [features]
     api-v0 = [
         "devfs/api-v0",
-        "procfs/api-v0",
         "impl-dummy/api-v0",
-        "impl-ext4?/api-v0",
         "impl-ext4-rs?/api-v0",
+        "impl-ext4?/api-v0",
+        "procfs/api-v0",
         "rootfs/api-v0",
     ]
     default = [ "api-v0", "impl-devfs", "impl-ext4-rs" ]

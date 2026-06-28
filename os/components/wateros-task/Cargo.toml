@@ -4,8 +4,8 @@
         "./task-impl/impl-core/",
         "./task-scheduler/",
         "./task-scheduler/scheduler-api/api-v0/",
-        "./task-scheduler/scheduler-impl/impl-round-robin/",
         "./task-scheduler/scheduler-impl/impl-multi-class/",
+        "./task-scheduler/scheduler-impl/impl-round-robin/",
     ]
 [package]
     name = "wateros-task"

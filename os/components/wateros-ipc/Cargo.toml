@@ -6,10 +6,10 @@
         "./ipc-futex/futex-impl/impl-dummy/",
         "./ipc-futex/futex-impl/impl-task/",
         "./ipc-impl/impl-dummy/",
+        "./ipc-shm/",
         "./ipc-signal/",
         "./ipc-signal/signal-api/api-v0/",
         "./ipc-signal/signal-impl/impl-dummy/",
-        "./ipc-shm/",
         "./ipc-waitqueue/",
         "./ipc-waitqueue/waitqueue-api/api-v0/",
         "./ipc-waitqueue/waitqueue-impl/impl-task/",
@@ -29,6 +29,7 @@
     waitqueue = { path = "./ipc-waitqueue/", package = "ipc-waitqueue", default-features = true }
 
 [features]
+    all = [ "api-v0", "futex", "impl-dummy", "pipe", "shm", "signal" ]
     api-v0 = [ "impl-dummy/api-v0" ]
     default = [ "api-v0", "impl-dummy" ]
     futex = [ "dep:futex", "futex/api-v0", "futex/impl-task" ]
@@ -36,7 +37,6 @@
     pipe = [ "dep:pipe", "pipe/api-v0", "pipe/impl-ringbuf" ]
     shm = [ "dep:shm" ]
     signal = [ "dep:signal", "signal/api-v0" ]
-    all=[ "api-v0", "impl-dummy", "futex", "pipe", "shm", "signal" ]
 [profile.dev]
     panic = "abort"
 

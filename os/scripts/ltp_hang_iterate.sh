@@ -269,7 +269,7 @@ run_qemu_with_monitor() {
 
 one_round() {
     local round="$1"
-    local logfile="$LTP_LOG_DIR/rv_local_ltp_$(date +%s)_r${round}.log"
+    local logfile="$LTP_LOG_DIR/rv_local_ltp_$(date +%y%m%d%H%M%S)_r${round}.log"
     if run_qemu_with_monitor "$logfile"; then
         log "LTP complete. log=$logfile"
         return 0

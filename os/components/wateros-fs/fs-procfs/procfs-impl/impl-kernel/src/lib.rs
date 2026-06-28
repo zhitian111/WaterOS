@@ -84,14 +84,47 @@ fn proc_inode(node: ProcNode) -> u64 {
     }
 }
 
+/// 与 VFS `normalize_absolute_path` 一致：折叠 `//`、`.`，解析 `..`。
 fn normalize_rel(path: &str) -> String {
-    if path.is_empty() {
+    use alloc::borrow::Cow;
+
+    let abs: Cow<'_, str> = if path.is_empty() {
+        Cow::Borrowed("/")
+    } else if path.starts_with('/') {
+        Cow::Borrowed(path)
+    } else {
+        Cow::Owned(format!("/{path}"))
+    };
+    let mut parts: Vec<&str> = Vec::new();
+    for part in abs.split('/') {
+        if part.is_empty() || part == "." {
+            continue;
+        }
+        if part == ".." {
+            let _ = parts.pop();
+            continue;
+        }
+        parts.push(part);
+    }
+    if parts.is_empty() {
         return String::from("/");
     }
-    if path.starts_with('/') {
-        String::from(path)
+    let mut out = String::with_capacity(abs.len());
+    out.push('/');
+    for (i, p) in parts.iter().enumerate() {
+        if i > 0 {
+            out.push('/');
+        }
+        out.push_str(p);
+    }
+    out
+}
+
+fn parse_pid(name: &str) -> Option<ProcessId> {
+    if name == "self" {
+        Some(task::current_process_task_snapshot()?.pid)
     } else {
-        format!("/{path}")
+        Some(ProcessId::from_raw(name.parse::<usize>().ok()?))
     }
 }
 
@@ -100,41 +133,23 @@ fn parse_node(path: &str) -> Option<ProcNode> {
     if p == "/" {
         return Some(ProcNode::Root);
     }
-    if p == "/meminfo" {
-        return Some(ProcNode::Meminfo);
-    }
-    if p == "/cpuinfo" {
-        return Some(ProcNode::Cpuinfo);
-    }
-    if p == "/cgroups" {
-        return Some(ProcNode::Cgroups);
-    }
-    if p == "/mounts" {
-        return Some(ProcNode::Mounts);
-    }
-    if p == "/sys/kernel/pid_max" {
-        return Some(ProcNode::SysKernelPidMax);
-    }
-    if p == "/sys/kernel/tainted" {
-        return Some(ProcNode::SysKernelTainted);
-    }
     let rest = p.strip_prefix('/')?;
-    let (first, tail) = rest.split_once('/').map(|(a, b)| (a, Some(b))).unwrap_or((rest, None));
-    let pid = if first == "self" {
-        task::current_process_task_snapshot()?.pid
-    } else {
-        ProcessId::from_raw(first.parse::<usize>().ok()?)
-    };
-    match tail {
-        None => Some(ProcNode::PidDir(pid)),
-        Some("") => Some(ProcNode::PidDir(pid)),
-        Some("stat") => Some(ProcNode::PidStat(pid)),
-        Some("status") => Some(ProcNode::PidStatus(pid)),
-        Some("smaps") => Some(ProcNode::PidSmaps(pid)),
-        Some("maps") => Some(ProcNode::PidMaps(pid)),
-        Some("mounts") => Some(ProcNode::Mounts),
-        Some("cmdline") => Some(ProcNode::PidCmdline(pid)),
-        Some(_) => None,
+    let comps: Vec<&str> = rest.split('/').collect();
+    match comps.as_slice() {
+        ["meminfo"] => Some(ProcNode::Meminfo),
+        ["cpuinfo"] => Some(ProcNode::Cpuinfo),
+        ["cgroups"] => Some(ProcNode::Cgroups),
+        ["mounts"] => Some(ProcNode::Mounts),
+        ["sys", "kernel", "pid_max"] => Some(ProcNode::SysKernelPidMax),
+        ["sys", "kernel", "tainted"] => Some(ProcNode::SysKernelTainted),
+        [pid_name] => Some(ProcNode::PidDir(parse_pid(pid_name)?)),
+        [pid_name, "stat"] => Some(ProcNode::PidStat(parse_pid(pid_name)?)),
+        [pid_name, "status"] => Some(ProcNode::PidStatus(parse_pid(pid_name)?)),
+        [pid_name, "smaps"] => Some(ProcNode::PidSmaps(parse_pid(pid_name)?)),
+        [pid_name, "maps"] => Some(ProcNode::PidMaps(parse_pid(pid_name)?)),
+        [pid_name, "mounts"] => Some(ProcNode::Mounts),
+        [pid_name, "cmdline"] => Some(ProcNode::PidCmdline(parse_pid(pid_name)?)),
+        _ => None,
     }
 }
 

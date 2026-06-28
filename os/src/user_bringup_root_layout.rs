@@ -91,8 +91,8 @@ pub fn ensure_busybox_path_links() {
               "sed", "tr", "wc", "head", "tail", "sort", "uniq", "expr", "dirname", "readlink",
               "ln", "rm", "touch", "chmod", "chown", "mktemp", "printf", "test", "true", "false",
               "pwd", "env", "which", "id", "whoami", "groups", "date", "uname", "dd", "od",
-              "hexdump", "xargs", "find", "cmp", "diff", "seq", "tee", "tac", "kill", "mount", "umount", "ip",
-              "ifconfig", "route", "sysctl", "arping"];
+              "hexdump", "xargs", "find", "cmp", "diff", "seq", "tee", "tac", "kill", "mount",
+              "umount", "ip", "ifconfig", "route", "sysctl", "arping"];
         for applet in APPLETS {
             try_hardlink(sess.as_mut(),
                          "/glibc/busybox",

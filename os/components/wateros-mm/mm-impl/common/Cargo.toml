@@ -8,7 +8,7 @@
     runtime = { package = "wateros-runtime", path = "../../../wateros-runtime", default-features = true }
 
 [features]
-    default = []
+    default = [  ]
 
 [profile.dev]
     panic = "abort"

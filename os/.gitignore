@@ -21,3 +21,7 @@ config.conf
 *backup*
 *.img
 ./.DS_Store
+kernel-la-ltp-musl
+kernel-rv-ltp-musl
+kernel-la-ltp-glibc
+kernel-rv-ltp-glibc

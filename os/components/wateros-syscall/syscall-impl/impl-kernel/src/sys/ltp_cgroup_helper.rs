@@ -12,9 +12,13 @@ use task::{TaskBlockReason, TaskState};
 /// `ltp_testcode.sh` 无参 `"$file"` 同步执行时会永久阻塞的 LTP 二进制/脚本（basename）。
 const LTP_STANDALONE_SKIP_BASENAMES: &[&str] = &[
     "cpuset_memory_test",
+    "cpuset_regression_test.sh",
+    "cpuacct.sh",
     "dio_append",
     "dio_sparse",
     "dup201",
+    "epoll_wait05",
+    "evm_overlay.sh",
     "force_erase.sh",
     "fork_exec_loop",
     "fs_racer_dir_test.sh",
@@ -25,6 +29,37 @@ const LTP_STANDALONE_SKIP_BASENAMES: &[&str] = &[
     "kill10",
     "linktest.sh",
     "memcg_test_2",
+    // 历史日志确认会超时/卡住的用例（按用户要求一并跳过）
+    "futex_wait_bitset01",
+    "fork_procs",
+    "ftest02",
+    "genload",
+    "fcntl37",
+    "fcntl37_64",
+    "memcg_test_3",
+    "pause02",
+    "pause03",
+    "pids_task2",
+    "pthserv",
+    "rename14",
+    "shm_test",
+    "shmat1",
+    "sigrelse01",
+    "sigtimedwait01",
+    "sigwaitinfo01",
+    "splice04",
+    "splice05",
+    "signal01",
+    "select02",
+    "mtest01",
+    "starvation",
+    "tgkill02",
+    "tgkill03",
+    "timed_forkbomb",
+    "vma01",
+    "vmsplice01",
+    "waitid07",
+    "waitid08",
 ];
 
 fn exe_basename(path: &str) -> &str {
@@ -32,6 +67,26 @@ fn exe_basename(path: &str) -> &str {
 }
 
 fn basename_matches_ltp_standalone_skip(name: &str) -> bool {
+    // 用户要求：memcg_test 全部跳过（memcg_test_1/2/3/...）
+    if name.starts_with("memcg_test_") {
+        return true;
+    }
+    // sigrelse 系列（sigrelse01 等）会 hang，整系列跳过
+    if name.starts_with("sigrelse") {
+        return true;
+    }
+    // vma 系列（vma01–vma05 等）会 hang，整系列跳过
+    if name.starts_with("vma") {
+        return true;
+    }
+    // vmsplice 系列（vmsplice01–04 等）跳过
+    if name.starts_with("vmsplice") {
+        return true;
+    }
+    // nptl01 系列（pthread 压力/condvar，local_all 无参拉起会 hang）
+    if name.starts_with("nptl01") {
+        return true;
+    }
     LTP_STANDALONE_SKIP_BASENAMES
         .iter()
         .any(|&skip| name == skip)

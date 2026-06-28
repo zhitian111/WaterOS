@@ -1,8 +1,5 @@
 [workspace]
-    members = [
-        "./klog-api/api-v0/",
-        "./klog-impl/klog-ringbuf/",
-    ]
+    members = [ "./klog-api/api-v0/", "./klog-impl/klog-ringbuf/" ]
 
 [package]
     name = "wateros-klog"
@@ -16,9 +13,9 @@
     task = { path = "../wateros-task/", package = "wateros-task", default-features = false }
 
 [features]
-    api-v0 = []
+    api-v0 = [  ]
     default = [ "api-v0", "impl-ringbuf", "platform-timer", "task-api" ]
-    impl-ringbuf = []
+    impl-ringbuf = [  ]
     platform-timer = [ "platform/api-v0" ]
     task-api = [ "task/api-v0", "task/impl-core" ]
 

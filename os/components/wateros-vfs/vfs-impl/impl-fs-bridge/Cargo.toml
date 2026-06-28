@@ -19,5 +19,5 @@
 [features]
     # 本 crate 被选中构建时默认带 `fs`，便于工作区 `cargo check`；聚合层仍通过 optional dep 控制是否拉取本 crate。
     api-v0 = [  ]
-    bridge-fs-api = [ "dep:fs", "dep:impl_page_cache", "dep:impl_fd_session" ]
+    bridge-fs-api = [ "dep:fs", "dep:impl_fd_session", "dep:impl_page_cache" ]
     default = [ "api-v0", "bridge-fs-api" ]

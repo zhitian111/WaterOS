@@ -30,12 +30,12 @@
         "panic/impl-dummy",
     ]
     impl-error = [ "logging/impl-error" ]
+    impl-info = [ "logging/impl-info" ]
     impl-platform-console = [
         "console/impl-platform-console",
         "logging/impl-platform-console",
         "panic/impl-platform-console",
     ]
-    impl-info = [ "logging/impl-info" ]
     impl-trace = [ "logging/impl-trace" ]
     impl-warn = [ "logging/impl-warn" ]
     # QEMU virt UART0 MMIO + SerialPort，供伪 shell（依赖 wateros-driver）。

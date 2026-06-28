@@ -1,0 +1,86 @@
+# WaterOS 内核性能优化分析（待办）
+
+## 用途
+
+本目录汇总对 WaterOS 内核**性能优化点**的系统化分析，覆盖热调用路径、资源回收与 flush、锁竞争三大方向，并为每一条改进点提供：精确源码 `文件:行号`、当前算法与复杂度、问题成因、改进方案、预期收益、双架构差异与风险。**本目录只产出分析与方案文档，不修改内核代码**；后续实施请按各文档的「落地优先级建议」另起任务。
+
+## 事实来源
+
+- **代码静态链路分析**（riscv64 + loongarch64 双架构），由多个子任务并行完成：
+  - 热路径 [hotpath-subagent](48f8b89e-5c0e-4728-9bd7-2c4b04f26840)
+  - 内存 [memory-subagent](09ce5359-c553-46ad-8db4-30888ce225e1)
+  - FS/VFS [fs-vfs-subagent](fcb92735-08b2-4ca4-9db7-9f165361f9f5)
+  - IPC [ipc-subagent](0977065a-2981-472f-97fd-053c931ade50)
+  - 锁与回收 [lock-resource-subagent](2dacab6d-5c9f-4263-99c2-dd4839a74bd6)
+- **日志佐证（用于确认高频路径，非性能 profiling）**：`os/ltp_log/rv_ltp_glibc_local_all.log`、`rv_ltp_musl_local_all.log`、`la_ltp_glibc_local_all.log`（含 `la_ltp_glibc_rerun*`、`la_ltp_musl_rerun*` 续轮）、`os/la_local_run_all.log`、`os/rv_local_run_all.log`。这些是 LTP/busybox 功能 trace 日志，关键证据：`[syscall]`/`[trap]`/`[exit]` 标签密集、`mount`/`ioctl`/`clone` unsupported 警告 1500+ 条、121 次 `[exit] clear_child_tid write failed`、`[paged_handle] detached buffer cap exceeded`，说明 syscall 分发、trap 返回、进程退出、整文件读堆等路径被高频触发。
+- **复用已有审计**：`docs/audits/lock-inventory.md`、`docs/audits/resource-inventory.md` 及其子文档（`docs/audits/locks/*`、`docs/audits/resources/*`）。
+
+> 重要说明：日志不含真实计时数据，所有「热点 / 复杂度」结论均来自代码链路分析，日志仅用于佐证路径被高频触发。文中关键行号已抽查核实（如页缓存 LRU 线性扫描、帧分配器 `recycled.contains` 冗余 O(n)）。实施前仍应按 `docs/prompts/general.md` 再次 `grep`/读文件确认。
+
+## 覆盖范围与文档索引
+
+| 文档 | 子系统 | 条目数 | 核心主题 |
+|------|--------|--------|----------|
+| [`perf-hotpath.md`](./perf-hotpath.md) | syscall 分发 / trap / 上下文切换 / 调度 | H-1~H-16 | trap 往返税、用户拷贝 walk、dispatch 跳表、TLB/ASID、等待队列索引 |
+| [`perf-memory.md`](./perf-memory.md) | 帧分配 / 页表 / 内核堆 / mmap / COW / TLB | M-1~M-20 | 全局 TLB flush、fork 页表复制、destroy/munmap 帧回收、brk 懒加载 |
+| [`perf-fs-vfs.md`](./perf-fs-vfs.md) | 页缓存 / 块缓存 / ext4 / flush / 回收 | F-1~F-21 | O(1) LRU、unlink/sync 丢脏、整文件读堆、dcache、LA 块缓存缺失 |
+| [`perf-ipc-sync.md`](./perf-ipc-sync.md) | futex / pipe / signal / waitqueue / shm / poll·epoll | I-1~I-17 | epoll 事件驱动、futex requeue 释锁、exit 队列回收、惊群、signal 快表 |
+| [`perf-lock-resource.md`](./perf-lock-resource.md) | 进程退出 / fork / fd 表 / 注册表 | L-1~L-20 | reap 锁外 drop、fd 表 O(N²)、注册表反向索引、exit_group 合并 |
+
+## 跨子系统优先级矩阵（Top 改进点）
+
+### P0 — 高收益且影响面广（建议优先）
+
+| 编号 | 标题 | 文档 | 类型 |
+|------|------|------|------|
+| M-1 / H-1 / H-4 | 全局 TLB flush + RV trap 往返多重拷贝（ASID 未利用） | memory / hotpath | 热路径 |
+| H-2 | 用户内存拷贝每页重复软件 walk、路径串逐字节 | hotpath | 热路径 |
+| H-3 | syscall 分发双重 decode（无跳表） | hotpath | 热路径 |
+| M-3 / M-4 / M-5 | fork 页表全复制、destroy 逐表 512 扫描、munmap 不回收中间帧 | memory | 回收 |
+| F-2 / F-7 / F-6 | unlink/sync 丢脏、mount alias bump 不 flush | fs-vfs | flush 正确性 |
+| F-4 / F-8 | 页缓存 LRU O(n) 线性扫描 + miss 堆分配/clone | fs-vfs | 热路径 |
+| I-1 / I-17 | poll/select O(nfds) + epoll 缺失 | ipc | 事件驱动 |
+| I-2 / I-3 | futex requeue 持锁唤醒 + exit 不回收空队列 | ipc | 锁/回收 |
+| L-1 | 进程 reap 持 Registry 锁内销毁地址空间 | lock-resource | 锁/回收 |
+
+### P1 — 高收益但范围较局部
+
+| 编号 | 标题 | 文档 |
+|------|------|------|
+| F-1 / F-15 | AuxRo/ext4 整文件读入堆，未用 read_range | fs-vfs |
+| F-3 | ext4 每次 I/O 全路径 path_to_inode，无 dcache | fs-vfs |
+| F-9 | LoongArch 未启用块缓存 | fs-vfs |
+| M-6 / M-19 | brk/栈/共享 anon eager 清零，brk 未 lazy | memory |
+| L-3 / L-4 / L-5 / L-6 | fork fd duplicate、unix_sock 全表扫描、Registry 线性查找、alloc_fd O(N²) | lock-resource |
+| L-2 / L-7 | 线程 exit 多锁串行、exit_group 重复清理 | lock-resource |
+| H-6 / I-8 | 每次 syscall 返回查 pending signal（TCB 快表） | hotpath / ipc |
+
+### P2 — 中收益 / 特定场景 / quick win
+
+H-5、H-7~H-13、M-7~M-17、M-20、F-5、F-10~F-18、I-5~I-16、L-8~L-15。
+
+### 正确性优先（性能收益低但属 P0 数据/资源正确性）
+
+| 编号 | 标题 | 文档 |
+|------|------|------|
+| M-18 | MAP_SHARED 匿名 fork 不 inc_ref / destroy 不回收 | memory |
+| F-2 | unlink 丢脏页 | fs-vfs |
+| I-10 / I-12 | SHM fork 失败不回滚 / futex WAIT 无 alternate key 致永久睡眠 | ipc |
+
+## 三大需求方向归类（对应用户关注点）
+
+- **Hot 调用路径**：H-1~H-5、H-15（trap/dispatch/拷贝/fault）；M-1、M-9、M-10；F-3、F-4、F-8；I-1、I-6、I-8；L-5、L-6。
+- **资源回收**：M-2~M-5、M-12、M-18；F-2、F-10、F-19；I-3、I-9、I-11；L-1~L-7、L-14~L-20。
+- **Flush / 写回**：F-2、F-5、F-6、F-7、F-13；L-11；H-1、M-1（TLB flush）。
+
+## 双架构差异要点
+
+- **RISC-V**：trampoline 双拷贝 + 多次 `sfence.vma` 全局 flush 是相对 LA 最突出的额外 trap 税（H-1、M-1）；已分配 ASID 但未用于 selective flush（M-2）；有 64 槽块缓存（F-13）。
+- **LoongArch64**：trap 入口更轻（直接在内核栈建帧），但无 ASID、始终全局 `invtlb`，多地址空间场景 TLB 压力更大（M-1）；**未启用块缓存**（F-9），ext4 I/O 性能落后 RV。
+- syscall 分发、用户拷贝软件 walk、wait queue 扫描、页缓存/帧分配器算法在两架构**同源**。
+
+## 后续维护入口
+
+- 实施任一改进点前，先读 `docs/prompts/general.md`「构建与运行」，编码后用 `cd os && make rv_check` / `make la_check` 验证，运行行为用 `make rv_qemu_run` / `make la_qemu_run`。
+- 改动涉及的同步文档见各子文档末尾「后续维护入口」与 `docs/prompts/structure.md`「重要同步文件」。
+- 本目录文档随实施进度更新条目状态；与功能修复任务（`os/ltp_log/todo/*`）正交，但 epoll（I-1/I-17）、vfs_io flush（F-7）等存在交集，实施时合并跟踪。
