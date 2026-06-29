@@ -10,7 +10,7 @@
 //! `docs/tasks/ltp_fast_exit_skip_list.md`。
 
 use task::{TaskBlockReason, TaskState};
-/// 源：Read 判读 + rv_local_run_all 手工增补；共 2495 条。
+/// 源：Read 判读 + rv_local_run_all 手工增补；共 2496 条。
 const LTP_SUBMIT_SKIP_BASENAMES: &[&str] = &[
     "acct02_helper",
     "acl1",
@@ -132,6 +132,7 @@ const LTP_SUBMIT_SKIP_BASENAMES: &[&str] = &[
     "copy_file_range03",
     "cp_tests.sh",
     "cpio_tests.sh",
+    "cpuacct.sh",
     "cpuacct_task",
     "cpuctl_def_task01",
     "cpuctl_def_task02",
