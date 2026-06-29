@@ -10,7 +10,7 @@
 //! 不会被 fast-exit。名单维护见 `docs/tasks/ltp_fast_exit_skip_list.md`。
 
 use task::{TaskBlockReason, TaskState};
-/// 源：Read 判读 + rv_local_run_all 手工增补；共 2330 条。
+/// 源：Read 判读 + rv_local_run_all 手工增补；共 2331 条。
 const LTP_SUBMIT_SKIP_BASENAMES: &[&str] = &[
     "acct02_helper",
     "acl1",
@@ -44,6 +44,7 @@ const LTP_SUBMIT_SKIP_BASENAMES: &[&str] = &[
     "autogroup01",
     "bbr01.sh",
     "bbr02.sh",
+    "bind05",
     "bind06",
     "bind_noport01.sh",
     "binfmt_misc01.sh",

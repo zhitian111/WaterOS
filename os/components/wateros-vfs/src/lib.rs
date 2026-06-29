@@ -292,8 +292,8 @@ pub fn unlink_at_current(path: &str, remove_dir: bool) -> VfsResult<()> {
 
 #[cfg(feature = "impl-fd-session")]
 pub use impl_fd_session::{
-    pipe_handle_pair, stream_pair_handle_pair, PipeReadHandle, PipeWriteHandle,
-    UnixStreamPairEnd,
+    pipe_handle_pair, pipe_handle_pair_with_flags, stream_pair_handle_pair, PipeReadHandle,
+    PipeWriteHandle, UnixStreamPairEnd,
 };
 
 #[cfg(feature = "bridge-fs-api")]

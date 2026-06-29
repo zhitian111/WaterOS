@@ -26,7 +26,7 @@ pub(crate) fn sys_umount2(args: SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EFAULT);
     }
 
-    let target = match copy_user_path_cstr(target_ptr, 256) {
+    let target = match copy_user_path_cstr(target_ptr, crate::user_copy::USER_PATH_MAX) {
         Ok(s) => s,
         Err(e) => return UserRet::from_error(e),
     };

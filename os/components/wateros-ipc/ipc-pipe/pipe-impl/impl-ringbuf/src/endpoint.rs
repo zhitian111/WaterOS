@@ -16,6 +16,7 @@ pub struct PipeEndpoint {
     pipe: Arc<Pipe>,
     kind: PipeEndpointKind,
     nonblocking: Cell<bool>,
+    direct: Cell<bool>,
 }
 
 impl Clone for PipeEndpoint {
@@ -29,6 +30,7 @@ impl Clone for PipeEndpoint {
             pipe: self.pipe.clone(),
             kind: self.kind,
             nonblocking: Cell::new(self.nonblocking.get()),
+            direct: Cell::new(self.direct.get()),
         }
     }
 }
@@ -38,6 +40,15 @@ impl PipeEndpoint {
 // 本方法代码由AI完成
     pub fn pair(nonblocking: bool) -> (Self, Self) {
         PipeEndpointOps::pair(nonblocking)
+    }
+
+    /// 创建一对读/写端点，并保留 pipe 状态标志。
+// 本方法代码由AI完成
+    pub fn pair_with_flags(nonblocking: bool, direct: bool) -> (Self, Self) {
+        let (read, write) = <Self as PipeEndpointOps>::pair(nonblocking);
+        read.set_direct(direct);
+        write.set_direct(direct);
+        (read, write)
     }
 
     /// 端点方向。
@@ -58,10 +69,28 @@ impl PipeEndpoint {
         self.nonblocking.set(value);
     }
 
+    /// 是否按 Linux `O_DIRECT` pipe packet-mode 标记打开。
+    #[inline]
+    pub fn direct(&self) -> bool {
+        self.direct.get()
+    }
+
+    /// 切换 `O_DIRECT` pipe 状态位（`pipe2` / `fcntl(F_SETFL)`）。
+// 本方法代码由AI完成
+    pub fn set_direct(&self, value: bool) {
+        self.direct.set(value);
+    }
+
     /// 返回底层 pipe 缓冲区容量。
     #[inline]
     pub fn pipe_capacity(&self) -> usize {
         self.pipe.capacity()
+    }
+
+    /// 返回底层 pipe 当前已缓冲字节数。
+    #[inline]
+    pub fn pipe_len(&self) -> usize {
+        self.pipe.len()
     }
 
     /// 调整底层 pipe 缓冲区容量（`fcntl(F_SETPIPE_SZ)`）。
@@ -101,11 +130,13 @@ impl PipeEndpointOps for PipeEndpoint {
                 pipe: pipe.clone(),
                 kind: PipeEndpointKind::Read,
                 nonblocking: Cell::new(nonblocking),
+                direct: Cell::new(false),
             },
             Self {
                 pipe,
                 kind: PipeEndpointKind::Write,
                 nonblocking: Cell::new(nonblocking),
+                direct: Cell::new(false),
             },
         )
     }

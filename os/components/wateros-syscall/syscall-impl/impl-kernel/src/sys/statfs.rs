@@ -7,7 +7,7 @@ use abi::user_ret::UserRet;
 use vfs::active_impl;
 use vfs::api::SingleRootReadView;
 
-use crate::sys::path_at::{resolve_path_at, AT_FDCWD};
+use crate::sys::path_at::{resolve_final_symlink, resolve_path_at, AT_FDCWD};
 use crate::user_copy::{copy_to_user_struct, copy_user_path_cstr};
 use crate::vfs_util::vfs_error_to_errno;
 
@@ -48,11 +48,15 @@ pub(crate) fn sys_statfs(args: SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EFAULT);
     }
 
-    let path = match copy_user_path_cstr(path_ptr, 256) {
+    let path = match copy_user_path_cstr(path_ptr, crate::user_copy::USER_PATH_MAX) {
         Ok(path) => path,
         Err(e) => return UserRet::from_error(e),
     };
     let resolved = match resolve_path_at(AT_FDCWD, path.as_str()) {
+        Ok(path) => path,
+        Err(e) => return UserRet::from_error(e),
+    };
+    let resolved = match resolve_final_symlink(resolved.as_str()) {
         Ok(path) => path,
         Err(e) => return UserRet::from_error(e),
     };

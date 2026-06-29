@@ -154,6 +154,11 @@ pub trait VfsIoHandle {
         None
     }
 
+    /// pipe fd：返回当前已缓冲字节数；非 pipe 返回 `None`。
+    fn pipe_buffer_len(&self) -> Option<usize> {
+        None
+    }
+
     /// pipe fd：`F_SETPIPE_SZ` 调整容量；非 pipe 返回 [`VfsError::Unsupported`]。
     fn pipe_set_capacity(&mut self, _capacity: usize) -> VfsResult<usize> {
         Err(VfsError::Unsupported)

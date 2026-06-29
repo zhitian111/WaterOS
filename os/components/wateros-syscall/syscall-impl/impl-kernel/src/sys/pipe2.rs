@@ -1,4 +1,4 @@
-//! `pipe2(2)`：创建 pipe fd 对；支持 `O_NONBLOCK`。
+//! `pipe2(2)`：创建 pipe fd 对；支持 `O_NONBLOCK` / `O_DIRECT` 状态位。
 
 //! 本模块代码由AI完成
 use alloc::boxed::Box;
@@ -9,6 +9,7 @@ use abi::user_ret::UserRet;
 use crate::vfs_util::vfs_error_to_errno;
 
 pub(crate) const O_NONBLOCK: usize = 0o0004000;
+const O_DIRECT: usize = 0o00040000;
 const O_CLOEXEC: usize = 0o2000000;
 const FD_CLOEXEC: usize = 1;
 
@@ -19,7 +20,7 @@ pub(crate) fn sys_pipe2(args: SyscallArgs) -> UserRet {
     if pipefd_ptr == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
     }
-    if flags & !(O_NONBLOCK | O_CLOEXEC) != 0 {
+    if flags & !(O_NONBLOCK | O_DIRECT | O_CLOEXEC) != 0 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
     let task_id = match vfs::fd::current_task_id() {
@@ -27,7 +28,8 @@ pub(crate) fn sys_pipe2(args: SyscallArgs) -> UserRet {
         Err(err) => return UserRet::from_error(vfs_error_to_errno(err)),
     };
     let nonblocking = flags & O_NONBLOCK != 0;
-    let (read_end, write_end) = vfs::pipe_handle_pair(nonblocking);
+    let direct = flags & O_DIRECT != 0;
+    let (read_end, write_end) = vfs::pipe_handle_pair_with_flags(nonblocking, direct);
     let mut reg = vfs::fd::registry().exclusive_access();
     let read_fd = match reg.alloc_fd_for_task(task_id, Box::new(read_end)) {
         Ok(fd) => fd,

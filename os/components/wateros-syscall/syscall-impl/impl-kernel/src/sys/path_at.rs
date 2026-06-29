@@ -17,6 +17,12 @@ pub(crate) const AT_FDCWD: isize = -100;
 pub(crate) const AT_REMOVEDIR: u32 = 0x200;
 
 pub(crate) fn resolve_path_at(dirfd: isize, path: &str) -> Result<String, ErrNo> {
+    if path.is_empty() {
+        return Err(ErrNo::ENOENT);
+    }
+    if path.starts_with('/') {
+        return resolve_open_path(path).map_err(super::super::vfs_util::vfs_error_to_errno);
+    }
     if dirfd == AT_FDCWD {
         return resolve_open_path(path).map_err(super::super::vfs_util::vfs_error_to_errno);
     }

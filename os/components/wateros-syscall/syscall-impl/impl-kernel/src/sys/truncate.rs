@@ -19,7 +19,7 @@ pub(crate) fn sys_truncate(args: SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EFAULT);
     }
 
-    let path = match copy_user_path_cstr(path_ptr, 256) {
+    let path = match copy_user_path_cstr(path_ptr, crate::user_copy::USER_PATH_MAX) {
         Ok(p) => p,
         Err(e) => return UserRet::from_error(e),
     };

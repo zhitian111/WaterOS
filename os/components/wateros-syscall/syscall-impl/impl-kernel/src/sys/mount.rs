@@ -62,7 +62,7 @@ pub(crate) fn sys_mount(args: SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EFAULT);
     }
 
-    let target = match copy_user_path_cstr(target_ptr, 256) {
+    let target = match copy_user_path_cstr(target_ptr, crate::user_copy::USER_PATH_MAX) {
         Ok(s) => s,
         Err(e) => return UserRet::from_error(e),
     };
@@ -88,7 +88,7 @@ pub(crate) fn sys_mount(args: SyscallArgs) -> UserRet {
         if source_ptr == 0 {
             return UserRet::from_error(ErrNo::EFAULT);
         }
-        let source = match copy_user_path_cstr(source_ptr, 256) {
+        let source = match copy_user_path_cstr(source_ptr, crate::user_copy::USER_PATH_MAX) {
             Ok(s) => s,
             Err(e) => return UserRet::from_error(e),
         };
@@ -122,7 +122,7 @@ pub(crate) fn sys_mount(args: SyscallArgs) -> UserRet {
         if source_ptr == 0 {
             return UserRet::from_error(ErrNo::EFAULT);
         }
-        let source = match copy_user_path_cstr(source_ptr, 256) {
+        let source = match copy_user_path_cstr(source_ptr, crate::user_copy::USER_PATH_MAX) {
             Ok(s) => s,
             Err(e) => return UserRet::from_error(e),
         };
@@ -173,7 +173,7 @@ pub(crate) fn sys_mount(args: SyscallArgs) -> UserRet {
 
     if fstype == "tmpfs" {
         if source_ptr != 0 {
-            let source = match copy_user_path_cstr(source_ptr, 256) {
+            let source = match copy_user_path_cstr(source_ptr, crate::user_copy::USER_PATH_MAX) {
                 Ok(s) => s,
                 Err(e) => return UserRet::from_error(e),
             };
@@ -198,7 +198,7 @@ pub(crate) fn sys_mount(args: SyscallArgs) -> UserRet {
 
     if fstype == "cgroup" || fstype == "cgroup2" {
         let mut options = if data_ptr != 0 {
-            match copy_user_path_cstr(data_ptr, 256) {
+            match copy_user_path_cstr(data_ptr, crate::user_copy::USER_PATH_MAX) {
                 Ok(s) => s,
                 Err(e) => return UserRet::from_error(e),
             }
@@ -206,7 +206,7 @@ pub(crate) fn sys_mount(args: SyscallArgs) -> UserRet {
             String::new()
         };
         if options.is_empty() && source_ptr != 0 {
-            match copy_user_path_cstr(source_ptr, 256) {
+            match copy_user_path_cstr(source_ptr, crate::user_copy::USER_PATH_MAX) {
                 Ok(source)
                     if !source.is_empty()
                         && source != "cgroup"
@@ -230,7 +230,7 @@ pub(crate) fn sys_mount(args: SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EFAULT);
     }
 
-    let source = match copy_user_path_cstr(source_ptr, 256) {
+    let source = match copy_user_path_cstr(source_ptr, crate::user_copy::USER_PATH_MAX) {
         Ok(s) => s,
         Err(e) => return UserRet::from_error(e),
     };

@@ -14,6 +14,8 @@ use mm::ActiveUserMemoryOps;
 
 use crate::mm_util::{current_user_aspace_handle, mm_err_to_errno};
 
+pub(crate) const USER_PATH_MAX: usize = 4096;
+
 // 本方法代码由AI完成
 pub(crate) fn user_aspace_required() -> Result<ActiveUserMemoryOps, ErrNo> {
     let handle = current_user_aspace_handle().ok_or(ErrNo::EFAULT)?;

@@ -54,6 +54,41 @@ fn resolve_pgid_target(who: i32) -> Result<ProcessId, ErrNo> {
     Ok(pgid)
 }
 
+fn resolve_user_target(who: i32) -> Result<u32, ErrNo> {
+    if who < 0 {
+        return Err(ErrNo::ESRCH);
+    }
+    if who == 0 {
+        return Ok(current_credentials().real_uid.0);
+    }
+    Ok(who as u32)
+}
+
+fn process_real_uid(pid: ProcessId) -> Option<u32> {
+    let leader = task::leader_task_for_process(pid)?;
+    Some(cred::credentials_for(leader).real_uid.0)
+}
+
+fn set_nice_for_uid(uid: u32, nice: i32) -> bool {
+    let mut found = false;
+    for pid in task::all_process_pids() {
+        if process_real_uid(pid) == Some(uid) {
+            if task::set_process_nice(pid, nice) {
+                found = true;
+            }
+        }
+    }
+    found
+}
+
+fn min_nice_for_uid(uid: u32) -> Option<i32> {
+    task::all_process_pids()
+        .into_iter()
+        .filter(|pid| process_real_uid(*pid) == Some(uid))
+        .filter_map(task::process_nice)
+        .min()
+}
+
 fn check_setpermission(which: i32, who: i32, prio: i32) -> Result<(), ErrNo> {
     if caller_is_privileged() {
         return Ok(());
@@ -79,7 +114,16 @@ fn check_setpermission(which: i32, who: i32, prio: i32) -> Result<(), ErrNo> {
                 return Err(ErrNo::EACCES);
             }
         }
-        PRIO_USER => return Err(ErrNo::EINVAL),
+        PRIO_USER => {
+            let uid = resolve_user_target(who)?;
+            let cred = current_credentials();
+            if uid != cred.real_uid.0 && uid != cred.effective_uid.0 {
+                return Err(ErrNo::EPERM);
+            }
+            if prio < 0 {
+                return Err(ErrNo::EACCES);
+            }
+        }
         _ => return Err(ErrNo::EINVAL),
     }
     Ok(())
@@ -94,10 +138,6 @@ pub(crate) fn sys_setpriority(args: SyscallArgs) -> UserRet {
     if !matches!(which, PRIO_PROCESS | PRIO_PGRP | PRIO_USER) {
         return UserRet::from_error(ErrNo::EINVAL);
     }
-    if which == PRIO_USER {
-        return UserRet::from_error(ErrNo::EINVAL);
-    }
-
     if let Err(errno) = check_setpermission(which, who, prio) {
         return UserRet::from_error(errno);
     }
@@ -121,6 +161,15 @@ pub(crate) fn sys_setpriority(args: SyscallArgs) -> UserRet {
                 return UserRet::from_error(ErrNo::ESRCH);
             }
         }
+        PRIO_USER => {
+            let uid = match resolve_user_target(who) {
+                Ok(uid) => uid,
+                Err(errno) => return UserRet::from_error(errno),
+            };
+            if !set_nice_for_uid(uid, prio) {
+                return UserRet::from_error(ErrNo::ESRCH);
+            }
+        }
         _ => return UserRet::from_error(ErrNo::EINVAL),
     }
     UserRet::from_success(0)
@@ -134,10 +183,6 @@ pub(crate) fn sys_getpriority(args: SyscallArgs) -> UserRet {
     if !matches!(which, PRIO_PROCESS | PRIO_PGRP | PRIO_USER) {
         return UserRet::from_error(ErrNo::EINVAL);
     }
-    if which == PRIO_USER {
-        return UserRet::from_error(ErrNo::EINVAL);
-    }
-
     let nice = match which {
         PRIO_PROCESS => {
             let pid = match resolve_process_target(who) {
@@ -159,7 +204,17 @@ pub(crate) fn sys_getpriority(args: SyscallArgs) -> UserRet {
                 None => return UserRet::from_error(ErrNo::ESRCH),
             }
         }
+        PRIO_USER => {
+            let uid = match resolve_user_target(who) {
+                Ok(uid) => uid,
+                Err(errno) => return UserRet::from_error(errno),
+            };
+            match min_nice_for_uid(uid) {
+                Some(nice) => nice,
+                None => return UserRet::from_error(ErrNo::ESRCH),
+            }
+        }
         _ => return UserRet::from_error(ErrNo::EINVAL),
     };
-    UserRet::from_success(nice as usize)
+    UserRet::from_success((20 - nice) as usize)
 }

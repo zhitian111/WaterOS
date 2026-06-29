@@ -70,7 +70,7 @@ fn do_faccessat(dirfd: isize, path_ptr: usize, mode: u32, flags: u32) -> UserRet
             Err(e) => return UserRet::from_error(vfs_error_to_errno(e)),
         }
     } else {
-        let path = match copy_user_path_cstr(path_ptr, 256) {
+        let path = match copy_user_path_cstr(path_ptr, crate::user_copy::USER_PATH_MAX) {
             Ok(p) => p,
             Err(e) => return UserRet::from_error(e),
         };
