@@ -1,6 +1,0 @@
-setpriority01
-setpriority02
-setpgrp02
-getpriority01
-getpriority02
-getpgid02

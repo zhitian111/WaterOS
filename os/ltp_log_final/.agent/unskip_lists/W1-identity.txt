@@ -1,6 +1,0 @@
-getresuid01
-getresuid02
-getresuid03
-getresgid01
-getresgid02
-getresgid03
