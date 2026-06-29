@@ -681,6 +681,7 @@ dependencies = [
  "log",
  "wateros-driver-api-v0",
  "wateros-driver-block-api-v0",
+ "wateros-driver-block-impl-block-cache",
  "wateros-driver-block-impl-dummy",
  "wateros-driver-block-impl-virtio-mmio",
  "wateros-driver-block-impl-virtio-pci",
@@ -693,6 +694,16 @@ dependencies = [
  "spin",
  "wateros-driver-api-v0",
  "wateros-runtime-logging",
+]
+
+[[package]]
+name = "wateros-driver-block-impl-block-cache"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "spin",
+ "wateros-base-config",
+ "wateros-driver-block-api-v0",
 ]
 
 [[package]]

@@ -66,7 +66,15 @@ score = 0.0                                            # 测试失败 / 超时 /
 
 这是性能侧**收益最高、风险最低**的一组改动。
 
-#### 2.1 块缓存在两个架构的实际构建里都没开（已核实）
+#### 2.1 块缓存（wave1 已默认启用，2026-06-29）
+
+- **状态**：RV/LA 评测构建均已接通 `driver/impl-block-cache`；`impl-qemu-loongarch64-virt` probe 与 RV 对齐 `BlockCacheManager::wrap`；`BLOCK_CACHE_CAPACITY_BLOCKS=1024`（512KiB）；`write_blocks` 写穿后 write-allocate 入缓存。
+- **历史缺口（已关闭）**：
+  - RV：`os/Cargo.toml` 的 `qemu-riscv64-opensbi` 曾未含 `driver/impl-block-cache`。
+  - LA：`driver/Cargo.toml` 的 `impl-block-cache` 曾只接 RV；LA probe 无 wrap。
+- **验证**：`make rv_check && make la_check`；`impl-block-cache` 单元测试；QEMU `user_bringup_busybox` 分阶段回归（p1/p2/p3）。
+
+#### 2.1 历史记录：块缓存在两个架构的实际构建里都没开（wave1 前）
 
 - RV：`os/Cargo.toml` 的 `qemu-riscv64-opensbi` feature（行 71-92）**未包含** `driver/impl-block-cache`，故 `impl-qemu-riscv64-opensbi/src/lib.rs:268-275` 的 `#[cfg(feature="block-cache")]` 分支不生效，走裸 VirtIO。
 - LA：`driver/Cargo.toml` 的 `impl-block-cache`（行 54-57）**只接 RV**（`impl-qemu-riscv64-opensbi/block-cache`），LA 的 `impl-qemu-loongarch64-virt/src/lib.rs` 内**完全没有** `BlockCacheManager::wrap` 调用（grep 无匹配）。

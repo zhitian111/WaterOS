@@ -54,6 +54,7 @@
     impl-block-cache = [
         "block/impl-block-cache",
         "impl-qemu-riscv64-opensbi/block-cache",
+        "impl-qemu-loongarch64-virt/block-cache",
     ]
     impl-dummy = [  ]
     impl-qemu-loongarch64-virt = [

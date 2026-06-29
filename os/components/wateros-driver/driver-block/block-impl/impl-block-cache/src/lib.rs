@@ -219,9 +219,7 @@ impl BlockDevice for CachingBlockDevice {
         let nblocks = buf.len() / bs;
         for i in 0..nblocks {
             let lba = Lba(start_block.0 + i as u64);
-            if self.map.contains_key(&lba) {
-                self.cache_put(lba, &buf[i * bs..(i + 1) * bs]);
-            }
+            self.cache_put(lba, &buf[i * bs..(i + 1) * bs]);
         }
         Ok(())
     }
@@ -333,6 +331,26 @@ mod tests {
         // 命中缓存，不应再触发底层读
         let before = *reads.lock().unwrap();
         cache.read_blocks(Lba(0), &mut r2).unwrap();
+        assert_eq!(*reads.lock().unwrap(), before);
+    }
+
+    #[test]
+    fn write_allocate_then_read_hits_cache() {
+        let reads = Arc::new(Mutex::new(0));
+        let writes = Arc::new(Mutex::new(0));
+        let inner = Box::new(CountingMem::new(8, reads.clone(), writes.clone()));
+        let mut cache = CachingBlockDevice::new(
+            inner,
+            BlockCacheConfig { capacity_blocks: 8 },
+        );
+        let bs = cache.block_size();
+        let w = vec![0xcd_u8; bs];
+        cache.write_blocks(Lba(5), &w).unwrap();
+        assert_eq!(*writes.lock().unwrap(), 1);
+        let before = *reads.lock().unwrap();
+        let mut r = vec![0u8; bs];
+        cache.read_blocks(Lba(5), &mut r).unwrap();
+        assert_eq!(r, w);
         assert_eq!(*reads.lock().unwrap(), before);
     }
 

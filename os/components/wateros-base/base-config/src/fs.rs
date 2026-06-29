@@ -31,4 +31,5 @@ pub enum FileIoMode {
 pub const FILE_IO_MODE : FileIoMode = FileIoMode::Direct;
 
 /// `CachingBlockDevice` 可缓存的逻辑块数量；`0` 表示注册时不包装缓存。
-pub const BLOCK_CACHE_CAPACITY_BLOCKS : usize = 64;
+/// 1024 × 512B = 512KiB；QEMU 1G RAM / 内核堆 128MiB 下可承受单 virtio-blk 槽预分配。
+pub const BLOCK_CACHE_CAPACITY_BLOCKS : usize = 1024;

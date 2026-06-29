@@ -9,6 +9,8 @@ use block::{
     block_device_count, first_block_device, register_block_device, BlockDevice, Lba,
     VirtioPciProbeInfo, BLOCK_SIZE,
 };
+#[cfg(feature = "block-cache")]
+use block::BlockCacheManager;
 use character::{character_device_count, register_builtin_character_devices};
 use fs::devfs::active_impl as devfs_impl;
 use network::{network_device_count, register_network_device, NetworkDevice, VirtioNetPciProbeInfo};
@@ -129,8 +131,18 @@ fn init_after_boot_inner() -> DriverResult<()> {
     match pci::probe_virtio_blk_pci(config_base) {
         Ok(Some((dev, info))) => {
             let shared = {
-                let dev: Box<dyn BlockDevice> = Box::new(dev);
-                Arc::new(Mutex::new(dev))
+                #[cfg(feature = "block-cache")]
+                {
+                    BlockCacheManager::wrap(
+                        Box::new(dev),
+                        BlockCacheManager::default_config(),
+                    )
+                }
+                #[cfg(not(feature = "block-cache"))]
+                {
+                    let dev: Box<dyn BlockDevice> = Box::new(dev);
+                    Arc::new(Mutex::new(dev))
+                }
             };
             let idx = register_block_device(shared);
             VIRTIO_BLK_PCI.lock().push(info);

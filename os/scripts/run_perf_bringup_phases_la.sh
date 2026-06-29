@@ -3,8 +3,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 OS_DIR="$PWD"
 BRINGUP="$OS_DIR/src/user_bringup_busybox.rs"
-BACKUP="$BRINGUP.bak.phases"
-LOG_DIR="/tmp/wateros_perf_phases"
+BACKUP="$BRINGUP.bak.phases.la"
+LOG_DIR="/tmp/wateros_perf_phases_la"
 mkdir -p "$LOG_DIR"
 
 cp "$BRINGUP" "$BACKUP"
@@ -30,11 +30,10 @@ run_phase() {
     local name="$1"
     local log="$LOG_DIR/${name}.log"
     echo "=== PHASE $name $(date -Is) ===" | tee -a "$LOG_DIR/summary.log"
-    # 仅等待本 overlay 上的 QEMU 自然退出，避免 pkill 误杀其它并行任务。
-    while pgrep -f "sdcard-rv\\.perf-${name}\\.overlay" >/dev/null 2>&1; do sleep 2; done
-    make kernel-rv >>"$log" 2>&1
-    WOS_SDCARD_BACKING=./sdcard-rv-local.img WOS_SNAPSHOT_ID="perf-${name}" \
-        make rv_qemu_run_snapshot >>"$log" 2>&1 || true
+    while pgrep -f "sdcard-la\\.perf-${name}\\.overlay" >/dev/null 2>&1; do sleep 2; done
+    make kernel-la >>"$log" 2>&1
+    WOS_SDCARD_BACKING=./sdcard-la-local.img WOS_SNAPSHOT_ID="perf-${name}" \
+        make la_qemu_run_snapshot >>"$log" 2>&1 || true
     if grep -q 'all commands finished' "$log"; then
         echo "PHASE $name: OK" | tee -a "$LOG_DIR/summary.log"
     else
