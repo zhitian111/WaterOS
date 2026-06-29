@@ -32,7 +32,6 @@ use fs::{
 use mount_table::{resolve_route, FsRoute, MountIdentity};
 pub use paged_handle::PagedFileHandle;
 
-#[inline]
 fn proc_view() -> &'static impl ProcFsView { fs::procfs::active_impl::view() }
 
 /// 通过 `wateros-fs` 访问根卷与 devfs 的零大小后端。
@@ -40,7 +39,6 @@ fn proc_view() -> &'static impl ProcFsView { fs::procfs::active_impl::view() }
 // 本结构代码由AI完成
 pub struct FsBridge;
 
-#[inline]
 // 本方法代码由AI完成
 pub(crate) fn map_fs_err(e : FsError) -> VfsError {
     match e {
@@ -58,7 +56,6 @@ pub(crate) fn map_fs_err(e : FsError) -> VfsError {
     }
 }
 
-#[inline]
 // 本方法代码由AI完成
 fn map_fs_kind(kind : FsKind) -> VfsFsKind {
     match kind {
@@ -70,7 +67,6 @@ fn map_fs_kind(kind : FsKind) -> VfsFsKind {
     }
 }
 
-#[inline]
 // 本方法代码由AI完成
 fn map_vfs_kind(kind : VfsFsKind) -> FsKind {
     match kind {
@@ -81,7 +77,6 @@ fn map_vfs_kind(kind : VfsFsKind) -> FsKind {
     }
 }
 
-#[inline]
 // 本方法代码由AI完成
 fn map_access(mode : FsAccessMode) -> VfsAccessMode {
     match mode {
@@ -119,7 +114,6 @@ fn overlay_cached_size(abs_path : &str, meta : &mut VfsMetadata) {
     meta.size = cache.logical_size(abs_path, meta.size);
 }
 
-#[inline]
 // 本方法代码由AI完成
 pub(crate) fn map_fs_node(t : FsNodeType) -> VfsNodeType {
     match t {
@@ -136,7 +130,6 @@ fn map_dir_entry(e : FsDirEntry) -> VfsDirEntry {
                   node_type : map_fs_node(e.node_type) }
 }
 
-#[inline]
 pub(crate) fn root_rw() -> VfsResult<SharedRwFs> {
     fs::rootfs::active_impl::root_rw_fs().ok_or(VfsError::NotMounted)
 }

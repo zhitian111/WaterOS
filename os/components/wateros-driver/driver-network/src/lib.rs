@@ -43,13 +43,11 @@ pub const NETWORK_SUPPORTED_DEVICES: &[SupportedDeviceEntry] = &[SupportedDevice
 }];
 
 /// 返回本子系统声明支持的设备条目（非排他；可与其它子系统条目并存）。
-#[inline]
 pub fn supported_devices() -> &'static [SupportedDeviceEntry] {
     NETWORK_SUPPORTED_DEVICES
 }
 
 /// 网络子系统是否声明可处理该 DTB 设备（仅基于 `compatible` 列表与探测到的 [`DeviceType`]，不含具体初始化成败）。
-#[inline]
 pub fn network_subsystem_claims_device(compatibles: &[String], probed: DeviceType) -> bool {
     if probed != DeviceType::Network {
         return false;
@@ -262,7 +260,6 @@ pub mod stack {
     /// 驱动协议栈处理一个轮询周期：收包 → 分发给 socket → 发送积压包。
     ///
     /// 需要在定时任务中周期性调用。
-    #[inline]
     pub fn poll() {
         poll_at_millis(0);
     }

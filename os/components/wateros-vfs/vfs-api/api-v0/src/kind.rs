@@ -33,7 +33,6 @@ pub struct VfsCapability {
 
 impl VfsCapability {
     /// 构造一条 `(kind, access)` 能力声明。
-    #[inline]
     pub const fn new(kind: VfsFsKind, access: VfsAccessMode) -> Self {
         Self { kind, access }
     }

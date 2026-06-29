@@ -17,10 +17,8 @@ pub(crate) struct InterruptSafeLockedHeap {
 }
 
 impl InterruptSafeLockedHeap {
-    #[inline]
     pub(crate) const fn empty() -> Self { Self { inner: LockedHeap::empty() } }
 
-    #[inline]
     pub(crate) fn mem_stats(&self) -> HeapMemStats {
         let heap = self.inner.lock();
         HeapMemStats { used: heap.used(),
@@ -74,5 +72,4 @@ pub(crate) fn init_heap() {
     }
 }
 
-#[inline]
 pub(crate) fn stats() -> HeapMemStats { HEAP_ALLOCATOR.mem_stats() }

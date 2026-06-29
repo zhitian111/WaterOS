@@ -15,7 +15,7 @@ use arch::interrupt::ArchInterruptState;
 use arch::task::ActiveArchTaskContext as TaskContext;
 use base::sync::UniprocessorSafeCell;
 use core::mem::MaybeUninit;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use task_api::{
     ExitedTask, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskId, TaskSnapshot, TaskTick,
     TaskWaitHandle, TaskWaitResult, UserTask, WaitQueueId,
@@ -47,10 +47,30 @@ pub type SwitchPair = api_v0::SwitchPair;
 static mut SCHEDULER : MaybeUninit<UniprocessorSafeCell<MultiClassScheduler>> =
     MaybeUninit::uninit();
 static SCHEDULER_READY : AtomicBool = AtomicBool::new(false);
+static SCHEDULER_CELL_PROBE_COUNT : AtomicUsize = AtomicUsize::new(0);
+
+#[inline]
+fn scheduler_ready_addr() -> usize { core::ptr::addr_of!(SCHEDULER_READY) as usize }
+
+/// 引导期诊断：打印 `SCHEDULER_READY` 当前值与静态地址，便于对比 init 与后续调用是否同一实例。
+fn log_scheduler_ready(tag : &str) {
+    log::warn!("[boot-init] {} SCHEDULER_READY={} ready_addr={:#x}",
+               tag,
+               SCHEDULER_READY.load(Ordering::Acquire),
+               scheduler_ready_addr());
+}
 
 // 仅在 `SCHEDULER_READY` 为真后解引用；否则 panic，避免未初始化访问。
 fn scheduler_cell() -> &'static UniprocessorSafeCell<MultiClassScheduler> {
+    let probe_n = SCHEDULER_CELL_PROBE_COUNT.fetch_add(1, Ordering::Relaxed);
     let ready = SCHEDULER_READY.load(Ordering::Acquire);
+    if probe_n == 0 || !ready {
+        log_scheduler_ready(if probe_n == 0 {
+            "scheduler_cell first entry"
+        } else {
+            "scheduler_cell entry (not ready)"
+        });
+    }
     if !ready {
         log::error!("[boot-init] scheduler_cell: SCHEDULER_READY=false (init_scheduler not \
                        complete?)");
@@ -143,28 +163,34 @@ pub fn apply_sched_policy_change(task_id : TaskId,
     with_scheduler(|scheduler| scheduler.apply_sched_policy_change(task_id, policy, param))
 }
 
+/// 首次初始化路径：在 `SCHEDULER_READY` 置真前直接写入 cell，避免 chicken-and-egg。
+unsafe fn init_scheduler_storage_and_inner() {
+    SCHEDULER.write(UniprocessorSafeCell::new(MultiClassScheduler::new()));
+    (*SCHEDULER.as_mut_ptr()).exclusive_access().init();
+}
+
 /// 幂等初始化全局调度器与内部 `MultiClassScheduler` 状态。
 pub fn init_scheduler() {
-    log::warn!("[boot-init] init_scheduler enter ready={}",
-               SCHEDULER_READY.load(Ordering::Acquire));
+    log_scheduler_ready("init_scheduler enter");
     if !SCHEDULER_READY.load(Ordering::Acquire) {
-        log::warn!("[boot-init] init_scheduler: SCHEDULER.write (READY still false)");
+        log::warn!("[boot-init] init_scheduler: SCHEDULER.write + inner init (READY still false)");
         unsafe {
-            SCHEDULER.write(UniprocessorSafeCell::new(MultiClassScheduler::new()));
+            init_scheduler_storage_and_inner();
         }
         SCHEDULER_READY.store(true, Ordering::Release);
-        log::warn!("[boot-init] init_scheduler: SCHEDULER_READY=true");
+        log_scheduler_ready("init_scheduler after store(true)");
     } else {
-        log::warn!("[boot-init] init_scheduler: already ready, skip static write");
+        log::warn!("[boot-init] init_scheduler: already ready, re-run inner init");
+        let _guard = InterruptGuard::new();
+        with_scheduler(|scheduler| scheduler.init());
     }
-    log::warn!("[boot-init] init_scheduler -> MultiClassScheduler::init");
-    with_scheduler(|scheduler| scheduler.init());
-    log::warn!("[boot-init] init_scheduler done");
+    log_scheduler_ready("init_scheduler done");
     log::info!("[task-scheduler] initialized");
 }
 
 /// 创建内核任务并入就绪队列尾部。
 pub fn spawn_kernel_task(entry : KernelTaskEntry, arg : usize) -> TaskId {
+    log_scheduler_ready("spawn_kernel_task enter");
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.spawn_kernel_task(entry, arg))
 }

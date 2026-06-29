@@ -8,7 +8,6 @@ use crate::error::{VfsError, VfsResult};
 use crate::path::normalize_absolute_path;
 
 /// 将 `path` 相对 `cwd` 解析为规范化绝对路径。
-#[inline]
 pub fn resolve_against_cwd(cwd: &str, path: Option<&str>) -> VfsResult<String> {
     let Some(p) = path else {
         return Err(VfsError::InvalidPath);
@@ -29,7 +28,6 @@ type OpenPathResolverFn = fn(&str) -> VfsResult<String>;
 static mut OPEN_PATH_RESOLVER: Option<OpenPathResolverFn> = None;
 
 /// 注册 `open` 路径解析钩子（单核启动期调用一次即可）。
-#[inline]
 pub fn register_open_path_resolver(resolver: OpenPathResolverFn) {
     unsafe {
         OPEN_PATH_RESOLVER = Some(resolver);
@@ -37,7 +35,6 @@ pub fn register_open_path_resolver(resolver: OpenPathResolverFn) {
 }
 
 /// 解析 `open`/`openat` 传入的路径：已注册则走 per-task cwd，否则相对 `/`。
-#[inline]
 pub fn resolve_open_path(path: &str) -> VfsResult<String> {
     unsafe {
         if let Some(resolver) = OPEN_PATH_RESOLVER {

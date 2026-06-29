@@ -206,6 +206,7 @@ mod qemu_riscv64_opensbi {
             info!("[self-test] driver init done");
             match driver::network::stack::init([10, 0, 2, 15], [10, 0, 2, 2]) {
                 Ok(()) => {
+                    warn!("[boot-init] kernel_main -> spawn network_poller_task (post stack init)");
                     task::spawn_kernel_task(network_poller_task, 0);
                     // 同步烟测：在调度器启动前验证核心 API
                     crate::self_tests::network::run_sync_smoke();
@@ -338,6 +339,7 @@ mod qemu_loongarch64_virt {
             info!("[loongarch64][self-test] driver init done");
             match driver::network::stack::init([10, 0, 2, 15], [10, 0, 2, 2]) {
                 Ok(()) => {
+                    warn!("[boot-init] kernel_main -> spawn network_poller_task (post stack init)");
                     task::spawn_kernel_task(network_poller_task, 0);
                     crate::self_tests::network::run_sync_smoke();
                 }

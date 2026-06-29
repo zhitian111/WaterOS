@@ -58,9 +58,11 @@ pub fn handle_alloc_error(layout : core::alloc::Layout) -> ! {
            layout);
 }
 
-// 链接脚本或 LDFLAGS 可将 `kernel_heap` 映射到 BSS/专用段；此处提供默认可链接符号。
+// 128 MiB 堆池单独段 `.kernel.heap`，由链接脚本放在 BSS 末尾，避免堆越界覆盖
+// SCHEDULER 等小型内核全局变量（见 platform link.ld）。
 #[allow(unused)]
 #[link_name = "kernel_heap"]
+#[unsafe(link_section = ".kernel.heap")]
 pub(crate) static mut HEAP_SPACE : [u8; KERNEL_HEAP_SIZE] = [0; KERNEL_HEAP_SIZE];
 
 /// 使用静态 `HEAP_SPACE` 初始化堆分配器区域。

@@ -42,6 +42,12 @@ SECTIONS
     *(COMMON)
   }
   . = ALIGN(4K);
+  .kernel.heap : {
+    kernel_heap_start = .;
+    *(.kernel.heap)
+    kernel_heap_end = .;
+  }
+  . = ALIGN(4K);
   bss_end = .;
 
   . = ALIGN(4K);

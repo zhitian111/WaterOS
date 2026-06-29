@@ -69,7 +69,6 @@ fn read_cpus_timebase_hz(fdt : &Fdt<'_>) -> Option<u64> {
     None
 }
 
-#[inline]
 fn read_timebase_property(node : fdt::node::FdtNode<'_, '_>) -> Option<u64> {
     let raw = node.property("timebase-frequency")?
                   .value;
@@ -77,7 +76,6 @@ fn read_timebase_property(node : fdt::node::FdtNode<'_, '_>) -> Option<u64> {
 }
 
 /// 解析 FDT 大端 32/64 位 cell；其它长度视为无效。
-#[inline]
 fn read_be_cell(raw : &[u8]) -> Option<u64> {
     match raw.len() {
         4 => {

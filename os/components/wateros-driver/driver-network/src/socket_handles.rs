@@ -50,9 +50,7 @@ impl SocketRef {
         }
     }
 
-    #[inline]
     /// 读取当前 smoltcp 句柄（短暂持锁）。
-    #[inline]
     pub fn handle(&self) -> SocketHandle {
         *self.inner.lock()
     }

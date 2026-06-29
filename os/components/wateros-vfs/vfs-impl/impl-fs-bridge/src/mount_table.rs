@@ -108,12 +108,10 @@ fn registry() -> &'static UniprocessorSafeCell<PerTaskMountNsRegistry> {
     unsafe { &*MOUNT_NS_REGISTRY.as_ptr() }
 }
 
-#[inline]
 pub fn init_task_mount_ns(task_id: task::TaskId) {
     registry().exclusive_access().init_task_mount_ns(task_id);
 }
 
-#[inline]
 // 本方法代码由AI完成
 pub fn copy_mount_ns_from_parent(child: task::TaskId, parent: task::TaskId) {
     registry()
@@ -121,7 +119,6 @@ pub fn copy_mount_ns_from_parent(child: task::TaskId, parent: task::TaskId) {
         .copy_mount_ns_from_parent(child, parent);
 }
 
-#[inline]
 // 本方法代码由AI完成
 pub fn share_mount_ns_from_parent(child: task::TaskId, parent: task::TaskId) {
     registry()
@@ -129,12 +126,10 @@ pub fn share_mount_ns_from_parent(child: task::TaskId, parent: task::TaskId) {
         .share_mount_ns_from_parent(child, parent);
 }
 
-#[inline]
 pub fn unshare_mount_ns(task_id: task::TaskId) {
     registry().exclusive_access().unshare_mount_ns(task_id);
 }
 
-#[inline]
 pub fn drop_task_mount_ns(task_id: task::TaskId) {
     registry().exclusive_access().drop_task(task_id);
 }

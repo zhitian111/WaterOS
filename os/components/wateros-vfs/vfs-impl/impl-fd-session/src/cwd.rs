@@ -21,7 +21,6 @@ pub struct PerTaskCwdRegistry {
 }
 
 impl PerTaskCwdRegistry {
-    #[inline]
     pub const fn new() -> Self {
         Self {
             cwd_tables: BTreeMap::new(),
@@ -39,7 +38,6 @@ impl PerTaskCwdRegistry {
         self.effective_owner(task_id)
     }
 
-    #[inline]
 // 本方法代码由AI完成
     fn effective_owner(&self, task_id: task::TaskId) -> task::TaskId {
         self.owners
@@ -68,7 +66,6 @@ impl PerTaskCwdRegistry {
     }
 
     /// 读取任务 cwd 字符串；未初始化时回退 `/`。
-    #[inline]
 // 本方法代码由AI完成
     pub fn get_cwd(&self, task_id: task::TaskId) -> &str {
         let owner = self.effective_owner(task_id);

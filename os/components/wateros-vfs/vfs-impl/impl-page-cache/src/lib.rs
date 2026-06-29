@@ -208,7 +208,6 @@ impl GlobalFilePageCache {
                open_refs : Mutex::new(BTreeMap::new()) }
     }
 
-    #[inline]
     pub fn mount_gen(&self) -> u64 { self.mount_gen
                                          .load(Ordering::Acquire) }
 
@@ -230,7 +229,6 @@ impl GlobalFilePageCache {
             .store(new_gen, Ordering::Release);
     }
 
-    #[inline]
 // 本方法代码由AI完成
     fn file_key(&self, path : &str) -> FileCacheKey {
         FileCacheKey { mount_gen : self.mount_gen(),
@@ -680,7 +678,6 @@ impl GlobalFilePageCache {
         Ok(written)
     }
 
-    #[inline]
 // 本方法代码由AI完成
     pub fn logical_size(&self, path : &str, fallback : u64) -> u64 {
         let key = self.file_key(path);
@@ -693,7 +690,6 @@ impl GlobalFilePageCache {
              .unwrap_or(fallback)
     }
 
-    #[inline]
 // 本方法代码由AI完成
     pub fn set_logical_size(&self, path : &str, size : u64) {
         let entry = self.get_file_entry(path, size);
@@ -701,7 +697,6 @@ impl GlobalFilePageCache {
              .logical_size = size;
     }
 
-    #[inline]
 // 本方法代码由AI完成
     pub fn dirty_page_count(&self, path : &str) -> usize {
         let key = self.file_key(path);

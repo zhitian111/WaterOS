@@ -15,7 +15,6 @@ pub enum SchedPolicy {
 impl SchedPolicy {
     /// 由 Linux 原始 policy 值解析；未知值返回 `None`。
     #[must_use]
-    #[inline]
     pub const fn from_linux_raw(raw: i32) -> Option<Self> {
         match raw {
             0 => Some(Self::Other),
@@ -27,7 +26,6 @@ impl SchedPolicy {
 
     /// 当前 bring-up 下内核实际提供的有效策略。
     #[must_use]
-    #[inline]
     pub const fn effective_for_bringup() -> Self {
         Self::Other
     }

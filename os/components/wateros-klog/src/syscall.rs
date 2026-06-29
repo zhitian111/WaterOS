@@ -104,7 +104,6 @@ fn write_priority(priority: i32, msg: &[u8], _msg_len: usize) -> isize {
     msg.len() as isize
 }
 
-#[inline]
 // 本方法代码由AI完成
 fn copy_out(buf: &mut [u8], len: usize, src: &[u8]) -> isize {
     let n = src.len().min(len);

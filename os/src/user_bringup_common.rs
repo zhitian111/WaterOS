@@ -47,7 +47,6 @@ pub fn spawn_user_task_from_loaded_elf_with_argv(loaded : &LoadedElf,
 
 /// 根据 `prepare_elf_user_stack` 返回的栈顶，推算 argc/argv/envp 指针（与
 /// `execve` 用户栈布局一致）。
-#[inline]
 fn initial_entry_args(sp : usize, argc : usize) -> (usize, usize, usize) {
     let word = core::mem::size_of::<usize>();
     let argv = sp + word;
@@ -129,7 +128,6 @@ pub fn run_one_elf_argv_exit(log_tag : &str, elf_path : &str, argv : &[&str]) ->
 }
 
 /// 回收已退出任务的用户地址空间与 syscall 侧挂接资源。
-#[inline]
 fn drop_reaped_task_runtime_resources(exited : &task::ExitedTask) {
     let aspace = exited.trap_frame
                        .as_ref()
@@ -140,7 +138,6 @@ fn drop_reaped_task_runtime_resources(exited : &task::ExitedTask) {
 
 
 /// 按 ELF 路径前缀选择 glibc/musl 的 `LD_LIBRARY_PATH` 与 `PATH`。
-#[inline]
 fn libc_envp_for_path(path : &str) -> Vec<&'static str> {
     if path.starts_with("/glibc/") {
         // LTP 脚本用 `. test.sh` 相对 PATH 加载库；须先于 /glibc/test.sh（lua 包装），

@@ -72,7 +72,6 @@ pub struct ElfSegmentLoadParams {
 }
 
 impl ElfSegmentLoadParams {
-    #[inline]
     pub fn page_va_from_file_offset(&self, file_offset : usize) -> usize {
         self.vma_start + file_offset.saturating_sub(self.vma_file_origin)
     }

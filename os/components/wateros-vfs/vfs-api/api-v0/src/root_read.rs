@@ -18,7 +18,6 @@ pub trait SingleRootReadView {
     /// 读取普通文件全文；目录或特殊节点由后端返回相应错误。
     fn read(&self, path: &str) -> VfsResult<Vec<u8>>;
 
-    #[inline]
     fn read_range(&self, path: &str, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
         if buf.is_empty() {
             return Ok(0);
@@ -33,7 +32,6 @@ pub trait SingleRootReadView {
         Ok(n)
     }
 
-    #[inline]
     fn read_prefix(&self, path: &str, len: usize) -> VfsResult<Vec<u8>> {
         let mut data = Vec::new();
         data.resize(len, 0);
@@ -42,7 +40,6 @@ pub trait SingleRootReadView {
         Ok(data)
     }
 
-    #[inline]
     fn read_to_string(&self, path: &str) -> VfsResult<String> {
         let data = self.read(path)?;
         String::from_utf8(data).map_err(|_| VfsError::NotUtf8)

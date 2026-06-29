@@ -258,10 +258,8 @@ pub struct Ext4FsRw {
 
 impl Ext4FsRw {
     /// 构造未挂载 RW 句柄；成功 [`ReadWriteFs::mount_rw`] 前其他方法返回 [`FsError::NotMounted`]。
-    #[inline]
     pub const fn new() -> Self { Self { fs: None } }
 
-    #[inline]
     fn fs(&self) -> FsResult<&Ext4> { self.fs.as_ref().ok_or(FsError::NotMounted) }
 }
 
@@ -275,7 +273,6 @@ impl ReadWriteFs for Ext4FsRw {
         Ok(())
     }
 
-    #[inline]
     fn is_mounted(&self) -> bool { self.fs.is_some() }
 
 // 本方法代码由AI完成

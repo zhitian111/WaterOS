@@ -154,7 +154,6 @@ pub struct SignalRegistry {
 
 impl SignalRegistry {
     /// 创建空注册表。
-    #[inline]
     pub const fn new() -> Self {
         Self { processes : BTreeMap::new(),
                threads : BTreeMap::new(),
@@ -737,7 +736,6 @@ impl SignalRegistry {
 static SIGNAL_REGISTRY : Mutex<SignalRegistry> = Mutex::new(SignalRegistry::new());
 
 /// 在全局信号注册表锁下执行闭包（syscall/trap 统一入口）。
-#[inline]
 pub fn with_registry<R>(f : impl FnOnce(&mut SignalRegistry) -> R) -> R {
     let mut registry = SIGNAL_REGISTRY.lock();
     f(&mut registry)

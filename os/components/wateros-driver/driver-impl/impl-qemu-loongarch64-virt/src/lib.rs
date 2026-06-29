@@ -32,7 +32,6 @@ static VIRTIO_NET_PCI: Mutex<Vec<VirtioNetPciProbeInfo>> = Mutex::new(Vec::new()
 static INIT_AFTER_BOOT_DONE: AtomicBool = AtomicBool::new(false);
 
 /// 与上层 `wateros-driver` 聚合入口的引导约定一致：保存 DTB 并初始化早期 UART。
-#[inline]
 pub fn init_when_boot(dtb_pa: usize) {
     DTB_BASE_ADDR.store(dtb_pa, Ordering::Release);
     uart::init_early_default_uart();
@@ -42,7 +41,6 @@ pub fn init_when_boot(dtb_pa: usize) {
 /// 包含内核所在的 `0x8000_0000..0xb000_0000` 高段；内核从
 /// `0x9000_0000` 启动，因此 frame allocator 的高段 fallback 必须停在
 /// `0xb000_0000`，不能把中间 MMIO/空洞当作 RAM。
-#[inline]
 pub fn physical_ram_end_exclusive() -> usize {
     let _fallback = wateros_base_config::mm::QEMU_VIRT_PHYS_RAM_END;
     let dtb = DTB_BASE_ADDR.load(Ordering::Acquire);

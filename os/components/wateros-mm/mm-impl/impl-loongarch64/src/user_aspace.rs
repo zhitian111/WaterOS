@@ -20,7 +20,6 @@ unsafe fn aspace_mut(handle : usize) -> Option<&'static mut LoongArch64AddressSp
 
 /// 在有效用户地址空间上执行 `f`；`handle == 0` 返回
 /// [`MmError::InvalidAddress`]。
-#[inline]
 pub fn with_user_aspace_mut<R>(handle : usize,
                                f : impl FnOnce(&mut LoongArch64AddressSpace) -> MmResult<R>)
                                -> MmResult<R> {

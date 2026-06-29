@@ -113,7 +113,6 @@ const BRINGUP_COMMANDS : &[BringupCommand] = &[
 const LOG_TAG : &str = "busybox-bringup";
 
 /// 单调时钟纳秒（用于 bring-up 耗时统计；失败时返回 0）。
-#[inline]
 fn monotonic_ns() -> u128 {
     platform::timer::now_duration().map(|duration| duration.as_nanos())
                                    .unwrap_or(0)

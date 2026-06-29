@@ -76,13 +76,11 @@ pub fn refresh() -> usize {
 }
 
 /// 返回当前缓存的节点列表副本。
-#[inline]
 pub fn list_nodes() -> Vec<DevNode> {
     DEV_NODES.lock().clone()
 }
 
 /// 将设备路径解析为索引并向驱动查询共享块设备句柄。
-#[inline]
 // 本方法代码由AI完成
 pub fn lookup_block_device(path: &str) -> FsResult<SharedBlockDevice> {
     let idx = parse_block_index(path).ok_or(FsError::NotFound)?;
@@ -90,7 +88,6 @@ pub fn lookup_block_device(path: &str) -> FsResult<SharedBlockDevice> {
 }
 
 /// 存在至少一块设备时返回 `/dev/vda`，否则 `None`。
-#[inline]
 // 本方法代码由AI完成
 pub fn default_root_block_path() -> Option<String> {
     if block_device_count() == 0 {

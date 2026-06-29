@@ -20,7 +20,6 @@ pub struct TaskBootstrap {
 
 impl TaskBootstrap {
     /// 构造启动载荷：`entry` 为实际内核任务体，`arg` 透传给该入口。
-    #[inline]
     pub const fn new(entry : KernelTaskEntry, arg : usize) -> Self { Self { entry, arg } }
 
     /// 跳转到内核任务入口；仅在首次被调度到该任务时由 arch 跳板调用一次。
@@ -51,7 +50,6 @@ impl KernelStack {
     }
 
     /// 分配内核栈；失败时 panic（bring-up 路径）。
-    #[inline]
     pub fn new() -> Self {
         Self::try_new().expect("kernel stack allocation failed")
     }

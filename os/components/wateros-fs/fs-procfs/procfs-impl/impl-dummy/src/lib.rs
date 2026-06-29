@@ -10,7 +10,6 @@ use api_v0::{FsError, FsMetadata, FsNodeType, FsResult, ProcFsView};
 pub struct DummyProcFs;
 
 /// 返回全局唯一的 dummy 视图句柄。
-#[inline]
 pub fn view() -> &'static DummyProcFs {
     &DummyProcFs
 }

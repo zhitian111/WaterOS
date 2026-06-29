@@ -44,9 +44,15 @@ SECTIONS{
   .bss : {
     /* 栈段 */
     *(.bss.stack)
-    /* 堆段 */
     bss_start = .;
     *(.bss .bss.*)
+  }
+  . = ALIGN(4K);
+  /* 128 MiB 堆池置于 BSS 末尾：越界时先进入帧池区，而非覆盖调度器等全局状态 */
+  .kernel.heap : {
+    kernel_heap_start = .;
+    *(.kernel.heap)
+    kernel_heap_end = .;
   }
   . = ALIGN(4K);
   bss_end = .;

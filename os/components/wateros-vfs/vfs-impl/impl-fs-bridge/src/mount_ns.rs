@@ -31,7 +31,6 @@ impl PerTaskMountNsRegistry {
         self.effective_owner(task_id)
     }
 
-    #[inline]
     fn effective_owner(&self, task_id: task::TaskId) -> task::TaskId {
         self.owners.get(&task_id).copied().unwrap_or(task_id)
     }

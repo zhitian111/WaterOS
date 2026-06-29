@@ -26,13 +26,11 @@ impl VfsOpenFlags {
     pub const DIRECTORY: u32 = 32;
 
     /// 只读打开标志组合。
-    #[inline]
     pub const fn read() -> Self {
         Self(Self::READ)
     }
 
     /// 是否包含指定标志位。
-    #[inline]
     pub fn contains(&self, flag: u32) -> bool {
         self.0 & flag != 0
     }
