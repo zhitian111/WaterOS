@@ -414,15 +414,20 @@ impl TaskRegistry {
     }
 
     pub fn account_tick_for_current(&mut self) {
-        if let Some(current_task_id) = self.current_task_id {
-            if !self.task_table
-                    .task(current_task_id)
-                    .is_idle()
-            {
-                self.task_table
-                    .task_mut(current_task_id)
-                    .account_tick();
-            }
+        let Some(current_task_id) = self.current_task_id else {
+            return;
+        };
+        let Some(task) = self.task_table.task_mut_opt(current_task_id) else {
+            log::error!(
+                "[task-registry] current task {} missing from table during tick; clearing stale \
+                 current",
+                current_task_id
+            );
+            self.current_task_id = None;
+            return;
+        };
+        if !task.is_idle() {
+            task.account_tick();
         }
     }
 
@@ -515,6 +520,13 @@ impl TaskRegistry {
     }
 
     pub fn reap_task(&mut self, task_id : TaskId) -> Option<ExitedTask> {
+        if self.current_task_id == Some(task_id) {
+            log::error!(
+                "[task-registry] refusing to reap current running task {}",
+                task_id
+            );
+            return None;
+        }
         let task = self.task_table
                        .remove(task_id)?;
         task.exited_task()

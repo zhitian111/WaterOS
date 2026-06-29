@@ -144,16 +144,16 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             let syscall_args = cx.syscall_args();
             let regs = syscall_args.as_regs();
             hot_syscall_trace!("[syscall] nr={} user_pc={:#x} user_sp={:#x} \
-                    args=[{:#x},{:#x},{:#x},{:#x},{:#x},{:#x}]",
-                   syscall_nr,
-                   cx.user_pc(),
-                   cx.user_sp(),
-                   regs[0],
-                   regs[1],
-                   regs[2],
-                   regs[3],
-                   regs[4],
-                   regs[5],);
+                                args=[{:#x},{:#x},{:#x},{:#x},{:#x},{:#x}]",
+                               syscall_nr,
+                               cx.user_pc(),
+                               cx.user_sp(),
+                               regs[0],
+                               regs[1],
+                               regs[2],
+                               regs[3],
+                               regs[4],
+                               regs[5],);
             if syscall_nr == <ActiveSyscallNumberTable as SyscallNumberTable>::RT_SIGRETURN.raw() {
                 if !syscall::restore_signal_frame(authoritative) {
                     kill_current_user_task("invalid rt_sigreturn frame",
@@ -161,15 +161,15 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                                            cx);
                 }
                 hot_syscall_trace!("[syscall] nr={} restored signal frame",
-                       syscall_nr);
+                                   syscall_nr);
                 return_to_user_signal_delivery(authoritative, trap_cause, cx, None);
                 finish_trap_return(frame, cx, raw_cause);
                 return;
             }
             let syscall_ret = dispatch_syscall_from_trap(syscall_nr, syscall_args);
             hot_syscall_trace!("[syscall] nr={} ret={}",
-                   syscall_nr,
-                   syscall_ret);
+                               syscall_nr,
+                               syscall_ret);
             // execve 成功时已替换整个 trap 帧，跳过 sepc 推进与返回值写入；
             // 失败时必须像普通 syscall 一样把 -errno 返回给原用户态，否则会反复执行同一条 ecall。
             let exec_succeeded = syscall_nr ==
@@ -294,13 +294,13 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
         // `raw_cause` 来自 TrapContext.scause 快照，即 **本次** 进入内核的原因（如
         // ecall=0x8）， 不是硬件 CSR 的“下一异常预告”；`sret`
         // 前也不会用该槽位预测下一次 trap。
-        hot_syscall_trace!("[trap] sret to user pc={:#x} sp={:#x} return_satp={:#x} kernel_satp={:#x} \
-                frame_scause={:#x} (this trap's scause snapshot)",
-               cx.user_pc(),
-               cx.user_sp(),
-               return_satp,
-               kernel_satp,
-               raw_cause,);
+        hot_syscall_trace!("[trap] sret to user pc={:#x} sp={:#x} return_satp={:#x} \
+                            kernel_satp={:#x} frame_scause={:#x} (this trap's scause snapshot)",
+                           cx.user_pc(),
+                           cx.user_sp(),
+                           return_satp,
+                           kernel_satp,
+                           raw_cause,);
     }
 
     // --- 返回路径（与 `trap.asm` 成对）：本函数返回后 **没有** 更多 Rust
@@ -324,7 +324,7 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
         true
     };
     hot_syscall_trace!("[trap] restore_current_trap_frame restored={}",
-           restored);
+                       restored);
     if cx.returns_to_user() && !restored {
         panic!("restore_current_trap_frame failed before sret to user (current task trap_frame \
                 missing?)");
@@ -351,13 +351,13 @@ fn return_to_user_signal_delivery(frame : *mut u8,
 fn finish_trap_return(frame : *mut u8, cx : &TrapContext, raw_cause : usize) {
     let return_satp = cx.return_address_space_token();
     let kernel_satp = paging::active_address_space_token();
-    hot_syscall_trace!("[trap] sret to user pc={:#x} sp={:#x} return_satp={:#x} kernel_satp={:#x} \
-            frame_scause={:#x}",
-           cx.user_pc(),
-           cx.user_sp(),
-           return_satp,
-           kernel_satp,
-           raw_cause);
+    hot_syscall_trace!("[trap] sret to user pc={:#x} sp={:#x} return_satp={:#x} \
+                        kernel_satp={:#x} frame_scause={:#x}",
+                       cx.user_pc(),
+                       cx.user_sp(),
+                       return_satp,
+                       kernel_satp,
+                       raw_cause);
     let restored = unsafe { task::restore_current_trap_frame(frame) };
     if !restored {
         panic!("restore_current_trap_frame failed before signal return");

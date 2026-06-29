@@ -23,7 +23,13 @@
 [features]
     api-v0 = [  ]
     default = [ "impl-fd-session" ]
-    impl-fd-session = [ "api-v0", "ipc/pipe", "task/api-v0", "task/impl-core", "waitqueue/impl-task" ]
+    impl-fd-session = [
+        "api-v0",
+        "ipc/pipe",
+        "task/api-v0",
+        "task/impl-core",
+        "waitqueue/impl-task",
+    ]
 
 [profile.dev]
     panic = "abort"

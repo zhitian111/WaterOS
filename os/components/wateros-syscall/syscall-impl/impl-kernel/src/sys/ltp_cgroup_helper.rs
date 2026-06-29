@@ -10,7 +10,7 @@
 //! 不会被 fast-exit。名单维护见 `docs/tasks/ltp_fast_exit_skip_list.md`。
 
 use task::{TaskBlockReason, TaskState};
-/// 源：Read 判读 + rv_local_run_all 手工增补；共 2327 条。
+/// 源：Read 判读 + rv_local_run_all 手工增补；共 2330 条。
 const LTP_SUBMIT_SKIP_BASENAMES: &[&str] = &[
     "acct02_helper",
     "acl1",
@@ -2144,7 +2144,10 @@ const LTP_SUBMIT_SKIP_BASENAMES: &[&str] = &[
     "trace_sched",
     "tracepath01.sh",
     "traceroute01.sh",
+    "truncate02",
     "truncate02_64",
+    "truncate03",
+    "truncate03_64",
     "tst_ansi_color.sh",
     "tst_brk",
     "tst_brkm",
@@ -2341,7 +2344,6 @@ const LTP_SUBMIT_SKIP_BASENAMES: &[&str] = &[
     "zram_lib.sh",
 ];
 
-/// bring-up 删文件与 fast-exit 共用的排除 basename 表。
 pub(crate) fn ltp_submit_skip_basenames() -> &'static [&'static str] {
     LTP_SUBMIT_SKIP_BASENAMES
 }

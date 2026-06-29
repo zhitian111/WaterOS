@@ -454,14 +454,9 @@ pub fn task_ids_for_process(pid : ProcessId) -> Option<Vec<TaskId>> {
 /// 整个进程结束才释放，否则 create/join 压测会持续堆积内核栈与进程表项。
 #[inline]
 pub fn reap_exited_member_threads(pid : ProcessId) -> Vec<ExitedTask> {
-    let task_ids = active_impl::take_exited_member_tasks(pid).unwrap_or_default();
-    let mut reaped = Vec::new();
-    for task_id in task_ids {
-        if let Some(exited) = scheduler::reap_exited_task(task_id) {
-            reaped.push(exited);
-        }
-    }
-    reaped
+    scheduler::reap_exited_tasks_atomic(|| {
+        active_impl::take_exited_member_tasks(pid).unwrap_or_default()
+    })
 }
 
 /// 按用户态线程号反查内部调度实体。

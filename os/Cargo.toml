@@ -43,12 +43,12 @@
         "abi/impl-linux-generic64",
         "dep:cred",
         "dep:driver",
+        "dep:fdt",
         "dep:fs",
         "dep:ipc",
-        "driver/impl-qemu-loongarch64-virt",
         "driver/impl-block-cache",
+        "driver/impl-qemu-loongarch64-virt",
         "ipc/all",
-        "dep:fdt",
         "mm/impl-loongarch64",
         "mm/vfs-root-read",
         "platform/impl-qemu-loongarch64-virt",
@@ -70,16 +70,15 @@
     bringup-ltp-glibc-only = [  ]
     bringup-ltp-musl-only = [  ]
     # 热路径 syscall/trap 参数跟踪（默认关闭；见 trap_handler hot_syscall_trace!）
-    syscall-trace = [  ]
     qemu-riscv64-opensbi = [
         "abi/impl-linux-generic64",
         "dep:cred",
         "dep:driver",
+        "dep:fdt",
         "dep:fs",
         "dep:ipc",
-        "driver/impl-qemu-riscv64-opensbi",
         "driver/impl-block-cache",
-        "dep:fdt",
+        "driver/impl-qemu-riscv64-opensbi",
         "ipc/all",
         "vfs-bridge",
         # 根 crate 的 `impl-sv39`：其它 crate（如 `task`）里 `#[cfg(feature = "impl-sv39")]` 依赖此 flag。
@@ -95,3 +94,4 @@
         "runtime/impl-platform-console",
         "syscall/impl-kernel",
     ]
+    syscall-trace = [  ]

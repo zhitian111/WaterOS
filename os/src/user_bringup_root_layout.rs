@@ -204,7 +204,9 @@ pub fn prune_ltp_excluded_testcases() {
     let mut absent = 0u32;
     let mut failed = 0u32;
 
-    for prefix in ["/glibc/ltp/testcases/bin", "/musl/ltp/testcases/bin"] {
+    for prefix in ["/glibc/ltp/testcases/bin",
+                   "/musl/ltp/testcases/bin"]
+    {
         for basename in basenames {
             let path = alloc::format!("{prefix}/{basename}");
             match sess.unlink(path.as_str()) {

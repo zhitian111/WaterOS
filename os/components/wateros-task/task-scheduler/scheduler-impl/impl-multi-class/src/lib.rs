@@ -8,6 +8,9 @@
 #![no_std]
 #![allow(static_mut_refs)]
 
+extern crate alloc;
+
+use alloc::vec::Vec;
 use arch::interrupt::ArchInterruptState;
 use arch::task::ActiveArchTaskContext as TaskContext;
 use base::sync::UniprocessorSafeCell;
@@ -291,13 +294,30 @@ pub fn suspend_current_and_run_next() {
 /// 时钟 tick：推进调度器逻辑时间，并在需要时切换到下一任务。
 #[inline]
 pub fn schedule_tick() {
-    let _guard = InterruptGuard::new();
+    let guard = InterruptGuard::new();
     let switch_pair = with_scheduler(|scheduler| scheduler.schedule(ScheduleReason::Tick));
     if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
+        guard.release_before_switch();
         unsafe {
             __switch(current_task_cx_ptr, next_task_cx_ptr);
         }
     }
+}
+
+/// 在单次关中断临界区内批量回收已退出任务（避免 take 与 reap 之间插入调度）。
+#[inline]
+pub fn reap_exited_tasks_atomic(take_task_ids : impl FnOnce() -> Vec<TaskId>) -> Vec<ExitedTask> {
+    let _guard = InterruptGuard::new();
+    let task_ids = take_task_ids();
+    with_scheduler(|scheduler| {
+        let mut reaped = Vec::new();
+        for task_id in task_ids {
+            if let Some(exited) = scheduler.reap_exited_task(task_id) {
+                reaped.push(exited);
+            }
+        }
+        reaped
+    })
 }
 
 /// 以给定原因阻塞当前任务并切换出去。

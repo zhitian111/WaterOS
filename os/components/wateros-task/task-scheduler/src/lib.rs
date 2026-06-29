@@ -18,6 +18,10 @@
 
 #![no_std]
 
+extern crate alloc;
+
+use alloc::vec::Vec;
+
 #[cfg(all(feature = "impl-multi-class", feature = "impl-round-robin"))]
 compile_error!("features `impl-multi-class` and `impl-round-robin` are mutually exclusive");
 
@@ -263,6 +267,12 @@ pub fn kill_task(task_id : TaskId, exit_code : TaskExitCode) -> bool {
 #[inline]
 pub fn reap_exited_task(task_id : TaskId) -> Option<ExitedTask> {
     active_impl::reap_exited_task(task_id)
+}
+
+/// 在单次关中断临界区内批量回收已退出任务。
+#[inline]
+pub fn reap_exited_tasks_atomic(take_task_ids : impl FnOnce() -> Vec<TaskId>) -> Vec<ExitedTask> {
+    active_impl::reap_exited_tasks_atomic(take_task_ids)
 }
 
 /// 回收一个任意已退出任务的退出信息。

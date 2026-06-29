@@ -31,70 +31,68 @@ const BRINGUP_COMMANDS : &[BringupCommand] = &[BringupCommand { program : "/musl
 // 默认赛题脚本队列：目标 wall ~35–45 min（timeout 上限 ~60 min）；LTP 放最后。
 // iozone 180 | libcbench 180 | lmbench 360 | unixbench 360 | ltp 480
 const BRINGUP_COMMANDS : &[BringupCommand] = &[
-    // BringupCommand { program : "/glibc/busybox",
-    //                    argv : &["sh",
-    //                             "/glibc/basic_testcode.sh"] }, // done
-    //   BringupCommand { program : "/musl/busybox",
-    //                    argv : &["sh",
-    //                             "/musl/basic_testcode.sh"] }, // done
-    //   BringupCommand { program : "/glibc/busybox",
-    //                    argv : &["sh",
-    //                             "/glibc/busybox_testcode.sh"] }, // done
-    //   BringupCommand { program : "/musl/busybox",
-    //                    argv : &["sh",
-    //                             "/musl/busybox_testcode.sh"] }, // done
-    //   BringupCommand { program : "/glibc/busybox",
-    //                    argv : &["sh",
-    //                             "/glibc/lua_testcode.sh"] }, // done
-    //   BringupCommand { program : "/musl/busybox",
-    //                    argv : &["sh",
-    //                             "/musl/lua_testcode.sh"] }, // done
-    //   BringupCommand { program : "/glibc/busybox",
-    //                    argv : &["sh",
-    //                             "/glibc/iperf_testcode.sh"] }, // done
-    //   BringupCommand { program : "/musl/busybox",
-    //                    argv : &["sh",
-    //                             "/musl/iperf_testcode.sh"] }, // done
-    //   BringupCommand { program : "/glibc/busybox",
-    //                    argv : &["sh",
-    //                             "/glibc/netperf_testcode.sh"] }, // done
-    //   BringupCommand { program : "/musl/busybox",
-    //                    argv : &["sh",
-    //                             "/musl/netperf_testcode.sh"] }, // done
-    //   BringupCommand { program : "/musl/busybox",
-    //                    argv : &["sh",
-    //                             "/musl/libctest_testcode.sh"] }, // done
-    //   BringupCommand { program : "/glibc/busybox",
-    //                    argv : &["sh",
-    //                             "/glibc/cyclictest_testcode.sh"] }, // done
-    //   BringupCommand { program : "/musl/busybox",
-    //                    argv : &["sh",
-    //                             "/musl/cyclictest_testcode.sh"] }, // done
+    BringupCommand { program : "/glibc/busybox",
+                       argv : &["sh",
+                                "/glibc/basic_testcode.sh"] }, // done
+      BringupCommand { program : "/musl/busybox",
+                       argv : &["sh",
+                                "/musl/basic_testcode.sh"] }, // done
+      BringupCommand { program : "/glibc/busybox",
+                       argv : &["sh",
+                                "/glibc/busybox_testcode.sh"] }, // done
+      BringupCommand { program : "/musl/busybox",
+                       argv : &["sh",
+                                "/musl/busybox_testcode.sh"] }, // done
+      BringupCommand { program : "/glibc/busybox",
+                       argv : &["sh",
+                                "/glibc/lua_testcode.sh"] }, // done
+      BringupCommand { program : "/musl/busybox",
+                       argv : &["sh",
+                                "/musl/lua_testcode.sh"] }, // done
+      BringupCommand { program : "/glibc/busybox",
+                       argv : &["sh",
+                                "/glibc/iperf_testcode.sh"] }, // done
+      BringupCommand { program : "/musl/busybox",
+                       argv : &["sh",
+                                "/musl/iperf_testcode.sh"] }, // done
+      BringupCommand { program : "/glibc/busybox",
+                       argv : &["sh",
+                                "/glibc/netperf_testcode.sh"] }, // done
+      BringupCommand { program : "/musl/busybox",
+                       argv : &["sh",
+                                "/musl/netperf_testcode.sh"] }, // done
+      BringupCommand { program : "/musl/busybox",
+                       argv : &["sh",
+                                "/musl/libctest_testcode.sh"] }, // done
+      BringupCommand { program : "/glibc/busybox",
+                       argv : &["sh",
+                                "/glibc/cyclictest_testcode.sh"] }, // done
+      BringupCommand { program : "/musl/busybox",
+                       argv : &["sh",
+                                "/musl/cyclictest_testcode.sh"] }, // done
     BringupCommand { program : "/musl/busybox",
         argv : &["sh",
             "/musl/libcbench_testcode.sh"] },
       BringupCommand { program : "/glibc/busybox",
                        argv : &["sh",
                                 "/glibc/iozone_testcode.sh"] },
-    BringupCommand { program : "/musl/busybox",
-        argv : &["sh",
-            "/musl/lmbench_testcode.sh"] },
       BringupCommand { program : "/musl/busybox",
                        argv : &["sh",
                                 "/musl/iozone_testcode.sh"] },
+    BringupCommand { program : "/musl/busybox",
+        argv : &["sh",
+            "/musl/lmbench_testcode.sh"] },
       BringupCommand { program : "/glibc/busybox",
                        argv : &["sh",
                                 "/glibc/lmbench_testcode.sh"] },
-      BringupCommand { program : "/glibc/busybox",
-                       argv : &["timeout",
-                                "2700",
-                                "sh",
-                                "/glibc/ltp_testcode.sh"] },
       BringupCommand { program : "/musl/busybox",
-                       argv : &["timeout",
-                                "2700",
+                       argv : &[
                                 "sh",
                                 "/musl/ltp_testcode.sh"] },
+      BringupCommand { program : "/glibc/busybox",
+                       argv : &[
+                                "sh",
+                                "/glibc/ltp_testcode.sh"] },
       BringupCommand { program : "/glibc/busybox",
                        argv : &[
             "sh",
