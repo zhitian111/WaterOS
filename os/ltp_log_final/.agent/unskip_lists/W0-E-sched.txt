@@ -1,0 +1,16 @@
+sched_get_priority_max01
+sched_get_priority_max02
+sched_get_priority_min01
+sched_get_priority_min02
+sched_getaffinity01
+sched_getparam01
+sched_getparam03
+sched_getscheduler01
+sched_getscheduler02
+sched_setaffinity01
+sched_setparam01
+sched_setparam02
+sched_setparam03
+sched_setparam04
+sched_setscheduler01
+sched_setscheduler03

@@ -31,6 +31,7 @@
 | `audit_syscall_semantics.md` | 审计类 | `general`、`structure`、`architecture`、`coding` | 需要（`wateros-syscall` 及关联子系统） |
 | `audit_lock_mechanisms.md` | 审计类 | `general`、`structure`、`architecture`、`coding` | 需要（按带锁结构所在组件选读） |
 | `audit_resource_lifecycle.md` | 审计类 | `general`、`structure`、`architecture`、`coding` | 需要（`wateros-mm`、`wateros-task`、`wateros-vfs` 等按资源选读） |
+| `perf/*.md` | 性能实施类 | `general`、`structure`、`coding`、`architecture` | 按需（见 `perf/README.md` 与各任务文件） |
 | `export_public_api.md` | 导出类 | `general`、`structure`、`documentation`、`architecture` | 不需要（本任务生成 `public-api/`） |
 | `export_impl_guide.md` | 导出类 | 同上 | 不需要（本任务生成 `impl-guide/`） |
 | `export_architecture.md` | 导出类 | 同上 | 不需要（本任务生成 `architecture/`） |
@@ -91,3 +92,4 @@ WaterOS 的大部分重复任务都可以按一级组件并行拆分。默认拆
 - `audit_syscall_semantics.md`（**系统调用语义审计与收敛**；主 agent 拆 syscall subagent 并汇总）
 - `audit_lock_mechanisms.md`（**锁机制审计与收敛**；主 agent 拆数据结构 subagent 并汇总）
 - `audit_resource_lifecycle.md`（**资源分配与生命周期审计**；主 agent 拆资源类型 subagent 并汇总，含修复任务队列）
+- `perf/README.md`（**性能优化 Agent 任务索引**；按 wave0~3 下发块缓存、fork/exit、FS、网络、trap 等实施任务）

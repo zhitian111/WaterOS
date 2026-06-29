@@ -123,8 +123,6 @@ mod qemu_riscv64_opensbi {
         crate::boot_timebase::probe_and_init_timebase(boot_arg1);
         info!("log test pass!");
         runtime::heap_allocator::init();
-        #[cfg(feature = "heap-stress-boot")]
-        runtime::heap_allocator::heap_fragmentation_stress_report(20_000);
         use alloc::vec;
         let vec_test = vec![0; 10];
         debug!("vec_test = {:?}", vec_test);

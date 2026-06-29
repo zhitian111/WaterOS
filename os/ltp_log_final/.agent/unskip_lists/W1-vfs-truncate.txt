@@ -1,0 +1,4 @@
+truncate02
+ftruncate01
+fdatasync01
+fsync01

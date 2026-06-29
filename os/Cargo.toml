@@ -55,7 +55,6 @@
         # "runtime/impl-trace",
         # "runtime/impl-info",
         "runtime/impl-warn",
-        "runtime/heap-tlsf",
         "dep:klog",
         "klog/default",
         "runtime/impl-platform-console",
@@ -70,10 +69,6 @@
     bringup-ltp-musl-only = [  ]
     # 热路径 syscall/trap 参数跟踪（默认关闭；见 trap_handler hot_syscall_trace!）
     syscall-trace = [  ]
-    # 引导期堆碎片化压测（跑完挂起，不进入 bringup）
-    heap-stress-boot = [  ]
-    # 回退 linked_list_allocator（与 runtime/heap-tlsf 互斥，勿同时启用）
-    heap-linked-list = [ "runtime/heap-linked-list" ]
     qemu-riscv64-opensbi = [
         "abi/impl-linux-generic64",
         "dep:cred",
@@ -92,7 +87,6 @@
         # "runtime/impl-trace",
         # "runtime/impl-info",
         "runtime/impl-warn",
-        "runtime/heap-tlsf",
         "dep:klog",
         "klog/default",
         "runtime/impl-platform-console",
