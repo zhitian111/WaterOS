@@ -13,11 +13,29 @@
 %   - api-v0 契约细节 → 子目录 api/api-v0.tex
 %   - 各 impl 算法/平台细节 → 子目录 impl/*.tex
 
-\section{wateros-klog}
+\section{内核日志组件}
 
-\code{wateros-klog}维护内核可查询消息环，与\code{wateros-runtime}控制台日志低耦合。内核与其它组件经\code{record}/\code{klog\_*!}宏写入；用户态经\syscall{syslog(2)}读取传统ASCII行格式（\code{<N>}前缀加换行）。容量常量来自\code{wateros-base-config::klog}。
+\code{wateros-klog}维护内核可查询的消息环，与运行时控制台日志低耦合。内核及其它组件经\code{record}与\code{klog\_*!}宏写入带时间戳与调用方 ID 的记录；用户态经\syscall{syslog(2)}按传统 ASCII 行格式读取（优先级前缀加换行）。环容量等常量来自基础配置 crate，实现层采用覆盖式环形缓冲，满时丢弃最旧记录而非阻塞写者。
 
-根\code{Cargo.toml}默认\code{api-v0 + impl-ringbuf + platform-timer + task-api}。\code{platform-timer}提供\code{ts\_nsec\_now}；\code{task-api}提供\code{caller\_id\_now}。bring-up阶段不检查\code{CAP\_SYSLOG}；任意进程可READ/WRITE/CLEAR。
+根\code{Cargo.toml}默认启用契约、环形缓冲实现、平台单调时钟与任务 API。平台定时器提供纳秒时间戳；任务 API 在无调度上下文时以零作为调用方 ID。bring-up 阶段不检查\code{CAP\_SYSLOG}，任意进程可读写与清空环；主线初始化完成后写入固定问候语，便于\code{dmesg}类工具验证链路。与 syscall 层的对接集中在\code{syscall}子模块，内核其它路径只需调用\code{record}或宏即可。
 
-\input{chapters/chap03/components/wateros-klog/klog-api/klog-api}
-\input{chapters/chap03/components/wateros-klog/klog-impl/klog-impl}
+\begin{rustcode}
+// klog/lib.rs: 自动填充时间戳与 caller_id，委托环实现追加
+pub fn record(level: u8, facility: u8, text: &[u8]) -> AppendResult {
+    let mut meta = KlogRecordMeta::new(
+        ts_nsec_now(), 0, facility, level, KlogFlags::empty(), caller_id_now(),
+    );
+    record_with_meta(&mut meta, text)
+}
+\end{rustcode}
+
+\begin{rustcode}
+// 宏路径：栈上格式化缓冲（上限 512 字节）→ record
+macro_rules! klog_info {
+    ($($arg:tt)*) => {{
+        let mut s = $crate::KlogFmtBuffer::new();
+        let _ = write!(s, $($arg)*);
+        let _ = $crate::record($crate::api::LOG_INFO, $crate::api::LOG_KERN, s.as_bytes());
+    }};
+}
+\end{rustcode}

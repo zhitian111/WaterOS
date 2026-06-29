@@ -13,11 +13,24 @@
 %   - api-v0 契约细节 → 子目录 api/api-v0.tex
 %   - 各 impl 算法/平台细节 → 子目录 impl/*.tex
 
-\section{wateros-syscall}
+\section{系统调用组件}
 
-\code{wateros-syscall}是用户态与内核子系统之间的最后一层门面：平台\code{trap}路径收集系统调用号与六个寄存器参数后，经本组件分发到各\code{sys\_*}实现，并把内部错误映射为Linux风格的\code{-errno}返回值。聚合\code{src/lib.rs}在\code{impl-kernel}启用时导出\code{dispatch\_syscall\_from\_trap}、信号/定时器协作钩子以及C ABI入口\code{\_\_wateros\_syscall\_dispatch\_current}；\code{api-v0}则提供与具体号表解耦的\code{SyscallKind}与\code{SyscallDispatcher}契约。
+系统调用组件是用户态进入内核后的总接线板：陷阱路径把调用号和六个寄存器参数交进来，这里按 Linux 通用 64 位编号分派到文件、内存、任务、IPC 等子系统，并把内部错误收成负的\code{errno}返回值。同一层还导出定时器 tick、信号投递等与陷阱协作的钩子。
 
-根\code{Cargo.toml}默认启用\code{impl-kernel}（隐含\code{api-v0}与\code{abi/api-v0}）。主线平台feature（\code{qemu-riscv64-opensbi}、\code{qemu-loongarch64-virt}）经根内核传递\code{abi/impl-linux-generic64}，使活跃号表为\code{LinuxGeneric64}。本组件依赖\code{wateros-abi}读取参数包与号表，并向下调用\code{wateros-vfs}、\code{wateros-mm}、\code{wateros-task}、\code{wateros-ipc}、\code{wateros-cred}、\code{wateros-klog}等稳定内核接口；\code{task}不反向依赖本组件。
+契约层描述「有哪些语义槽位、默认未实现时返回什么」；实现层持有按号分发表和各具体处理函数。号表里的常量只表示 ABI 对齐，是否与内核实现一一对应要分别核对。任务子系统不反向依赖本组件，保持依赖单向。
 
-\input{chapters/chap03/components/wateros-syscall/syscall-api/syscall-api}
-\input{chapters/chap03/components/wateros-syscall/syscall-impl/syscall-impl}
+\begin{rustcode}
+// trap 入口：SyscallArgs → 号表分发
+pub fn dispatch_syscall_from_trap(syscall_nr: usize, syscall_args: SyscallArgs) -> isize {
+    active_impl::dispatch_syscall_from_trap(syscall_nr, syscall_args)
+}
+
+// C ABI：汇编陷阱返回路径可直接调用
+#[unsafe(no_mangle)]
+pub extern "C" fn __wateros_syscall_dispatch_current(
+    syscall_nr: usize, arg0: usize, /* arg1..arg5 */
+) -> isize {
+    let args = SyscallArgs::from_regs([arg0, arg1, arg2, arg3, arg4, arg5]);
+    dispatch_syscall_from_trap(syscall_nr, args)
+}
+\end{rustcode}

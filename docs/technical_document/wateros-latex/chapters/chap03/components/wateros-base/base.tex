@@ -13,10 +13,22 @@
 %   - api-v0 契约细节 → 子目录 api/api-v0.tex
 %   - 各 impl 算法/平台细节 → 子目录 impl/*.tex
 
-\section{wateros-base}
+\section{基础类型组件}
 
-\code{wateros-base}提供引导阶段与内核各处共享的薄基础类型：物理/虚拟地址包装、DTB物理地址别名、hart ID、单核\code{UniprocessorSafeCell}同步容器。\code{\#![no\_std]}，无外部依赖，无Cargo feature。数值配置统一放在独立子crate\code{wateros-base-config}（路径\code{base-config/}），避免「双真相」。
+\code{wateros-base}提供全内核共用的地址与标识薄类型，以及单核环境下的简单同步容器。它不决定堆有多大、定时器多长，只保证各处对物理地址、虚拟地址和hart编号的说法一致。配置数值单独放在同目录下的\code{base-config}子crate里，避免同一常量在两套源码里各写一遍。
 
-根内核以\code{base}别名依赖本crate，以\code{base\_config}别名依赖配置crate。\code{wateros-abi-api-v0}等直接依赖\code{MAX\_SYSCALL\_ARGS}等常量。
+根内核和其它组件通常同时依赖类型层与配置层：前者管「怎么表示一个地址」，后者管「页多大、syscall最多几个参数、klog环多长」这类 bring-up 常数。真机或自定义内存布局应以设备树探测结果为准，配置里的 QEMU 区间只是回退默认值。
 
-\input{chapters/chap03/components/wateros-base/base-config/base-config}
+\begin{rustcode}
+// base/lib.rs：无 feature，四模块
+pub mod addr;  // 物理/虚拟地址与页号包装
+pub mod boot;  // 设备树物理基址别名
+pub mod cpu;   // hart 标识
+pub mod sync;  // 单核 RefCell 包装（多核须换锁）
+
+// base-config：按子系统分文件
+// syscall: MAX_SYSCALL_ARGS = 6
+// mm: KERNEL_HEAP_SIZE、QEMU virt RAM/MMIO 回退区间
+// task: 定时器周期、时间片上限
+// fs/ipc/klog: 管道容量、页缓存规模、日志环大小
+\end{rustcode}

@@ -13,11 +13,21 @@
 %   - api-v0 契约细节 → 子目录 api/api-v0.tex
 %   - 各 impl 算法/平台细节 → 子目录 impl/*.tex
 
-\section{wateros-vfs}
+\section{虚拟文件系统组件}
 
-\code{wateros-vfs}在syscall与\code{wateros-fs}之间叠加路径解析、挂载命名空间、页缓存与per-task fd语义。契约集中于\code{vfs-api/api-v0}；默认feature为\code{api-v0} + \code{bridge-fs-api} + \code{impl-fd-session}，\code{active\_impl::backend()}选中\code{impl-fs-bridge}的\code{FsBridge}。无\code{bridge-fs-api}时回退\code{impl-dummy}占位后端。
+虚拟文件系统叠在文件系统组件与系统调用之间，把「路径上的操作」和「每个进程手里的 fd」分开处理。它负责路径规范化、挂载表路由、普通文件的页缓存，以及每任务的工作目录和 fd 表；管道端点和部分字符设备也在这里落成可 read/write 的句柄。块格式与 ext4 细节不在这个组件里，由桥接层转调文件系统组件。
 
-聚合层导出\code{vfs::root}（单根只读）、\code{vfs::mount}（RW会话）、\code{vfs::fd}/\code{vfs::cwd}（\code{per-task}状态）及大量以\code{\_absolute}结尾的路径级元数据操作函数；不re-export\code{wateros-fs}类型，跨层映射集中在\code{bridge}。
+对用户程序来说，打开、读写、目录遍历和管道最终都落到本组件的门面；对下则把 ext4 根卷、设备目录和 proc 视图拼成统一后端。占位 feature 只保证链接通过，没有真实 I/O；主线启用桥接与 fd 会话实现后，才接上根卷读写和 per-task 状态。
 
-\input{chapters/chap03/components/wateros-vfs/vfs-api/vfs-api}
-\input{chapters/chap03/components/wateros-vfs/vfs-impl/vfs-impl}
+\begin{rustcode}
+// vfs 聚合：契约 + 可选 FsBridge 后端 + fd 会话
+pub mod active_impl {
+    pub fn backend() -> &'static impl VfsBackend {
+        // bridge-fs-api → FsBridge；否则 DummyBackend
+    }
+}
+// vfs::root：单根只读探测
+// vfs::mount：按种类打开 RW 会话
+// impl-fd-session：stdin/stdout/stderr、动态 fd、pipe、cwd
+// 桥接层：mount 表、页缓存句柄、tmpfs 伪卷、proc 回调注册
+\end{rustcode}

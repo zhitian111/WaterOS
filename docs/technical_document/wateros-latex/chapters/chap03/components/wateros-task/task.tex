@@ -13,24 +13,42 @@
 %   - api-v0 契约细节 → 子目录 api/api-v0.tex
 %   - 各 impl 算法/平台细节 → 子目录 impl/*.tex
 
-\section{wateros-task}
+\section{任务管理组件}
 
-任务子系统一级组件，组合语义类型（\code{task-api}）、单任务资源布局（\code{impl-core}）与调度算法（\code{task-scheduler}），对上暴露\code{spawn\_*}、\code{yield\_now}、\code{fork\_current}、\code{wait\_on}、进程 registry 查询等稳定 API。根内核经\code{task = \{ package = "wateros-task", ... \}}依赖。
+任务组件\code{wateros-task}组合任务语义类型、按feature选定的控制块布局与调度算法，向上提供内核与用户任务创建、主动让出、fork与exec、等待与进程回收等稳定API。调度器决定何时运行谁，实现core决定单个任务长什么样；更换调度策略只改调度crate，更换控制块字段只改实现core。
 
-职责边界：\code{task-api}定义\code{TaskId}、\code{TaskState}、\code{UserTask}等跨层类型；\code{impl-core}实现\code{TaskControlBlock}、内核/用户栈、trap 帧装配与\code{ProcessRegistry}；\code{task-scheduler}维护就绪/阻塞/睡眠队列，在适当时机调用 arch \code{\_\_switch}完成 CPU 让渡。更换调度算法改\code{scheduler-impl}；更换 TCB 字段改\code{impl-core}。
+内核在陷阱初始化与内存就绪后调用本组件初始化进程registry与调度器，随后进入首次任务切换。时钟tick驱动时间片轮转，阻塞与睡眠委托等待队列。fork与exec与内存组件协作获取新地址空间；陷阱返回路径在用户任务与架构陷阱处理之间同步陷阱帧。系统调用层映射Linux错误码并调用本组件聚合API，用户态返回值由ABI组件写入陷阱帧。
 
-默认 feature 为\code{api-v0} + \code{impl-core} + \code{impl-multi-class}。\code{impl-round-robin}与\code{impl-multi-class}互斥，\code{compile\_error!}强制二选一。私有模块\code{runtime}提供 trap/C ABI 入口（\code{\_\_wateros\_task\_runtime\_entry}等），经\code{wateros-platform-arch}与 trap handler 衔接。
-
-与相邻组件：\code{wateros-mm}提供 ELF 装载与 fork 地址空间；\code{wateros-abi}写用户返回值到 trap 帧；syscall 层映射 Linux errno 并调用本组件聚合 API。
+默认feature启用API契约、实现core与多类调度骨架；纯轮转实现与多类实现互斥，编译期强制二选一。bring-up期有效调度策略仍为OTHER类路径，FIFO与RR队列已有骨架但未完整抢占语义；当前为单核假设，无per-CPU就绪队列。
 
 \begin{rustcode}
+// task/lib.rs: 初始化顺序与薄封装
 pub fn init() {
     active_impl::init_process_registry();
     active_impl::process_model_self_test();
     scheduler::init();
 }
+
+pub fn spawn_user_task_from_loaded_elf(loaded: &LoadedElf) -> TaskId {
+    // MM 装载 ELF 后转换 UserTask 规格并入队
+    spawn_user_task(user_task_from_loaded_elf(loaded))
+}
 \end{rustcode}
 
-\input{chapters/chap03/components/wateros-task/task-api/task-api}
-\input{chapters/chap03/components/wateros-task/task-impl/task-impl}
-\input{chapters/chap03/components/wateros-task/task-scheduler/scheduler}
+\begin{rustcode}
+// task/lib.rs: fork 与内存组件协作
+pub fn fork_current(
+    child_stack: usize,
+    new_aspace_ptr: usize,
+    new_satp: usize,
+) -> Option<TaskId> {
+    // new_aspace_ptr / new_satp 由 mm::kernel_mm::fork_user_aspace 提供
+    let parent_pid = current_process_task_snapshot().map(|task| task.pid)?;
+    let child_id = scheduler::create_fork_child(child_stack, new_aspace_ptr, new_satp)?;
+    active_impl::with_process_registry(|registry| {
+        let _ = registry.create_process_like_fork(parent_pid, child_id, address_space);
+    });
+    scheduler::enqueue_ready_task(child_id);
+    Some(child_id)
+}
+\end{rustcode}

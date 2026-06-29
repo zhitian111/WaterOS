@@ -51,7 +51,6 @@ pub(crate) use impl_core as active_impl;
 use mm_api::kernel_bringup::LoadedElf;
 
 /// 初始化任务系统和底层调度器状态。
-#[inline]
 pub fn init() {
     active_impl::init_process_registry();
     active_impl::process_model_self_test();
@@ -60,26 +59,22 @@ pub fn init() {
 
 /// Trap handler 进入时，把栈上 trap frame
 /// 交给当前任务保存区，并返回后续应修改的权威 frame。
-#[inline]
 pub unsafe fn begin_current_trap_frame_access(frame : *mut u8) -> *mut u8 {
     unsafe { crate::runtime::begin_current_trap_frame_access(frame) }
 }
 
 /// Trap handler 返回前，把当前任务保存区的 trap frame 写回栈上
 /// frame，并准备返回地址空间 token。
-#[inline]
 pub unsafe fn restore_current_trap_frame(frame : *mut u8) -> bool {
     unsafe { crate::runtime::restore_current_trap_frame(frame) }
 }
 
 /// 创建一个新的内核任务，并返回分配到的任务号。
-#[inline]
 pub fn spawn_kernel_task(entry : KernelTaskEntry, arg : usize) -> TaskId {
     scheduler::spawn_kernel_task(entry, arg)
 }
 
 /// 按给定规格创建一个新的用户任务，并返回分配到的任务号。
-#[inline]
 pub fn spawn_user_task(user : UserTask) -> TaskId {
     let task_id = scheduler::create_user_task_spec(user);
     let parent_pid = current_process_task_snapshot().map(|task| task.pid);
@@ -92,11 +87,9 @@ pub fn spawn_user_task(user : UserTask) -> TaskId {
 }
 
 /// 兼容旧调用点的用户任务创建别名。
-#[inline]
 pub fn spawn_user_task_spec(user : UserTask) -> TaskId { spawn_user_task(user) }
 
 /// 将 MM ELF loader 产出的地址空间、映像与外部用户栈元数据转换为用户任务规格。
-#[inline]
 pub fn user_task_from_loaded_elf(loaded : &LoadedElf) -> UserTask {
     UserTask::new(loaded.entry_pc,
                   AddressSpaceHandle::from_raw(loaded.satp),
@@ -106,17 +99,14 @@ pub fn user_task_from_loaded_elf(loaded : &LoadedElf) -> UserTask {
 }
 
 /// 基于 MM 已装载的 ELF 创建一个用户任务，并返回分配到的任务号。
-#[inline]
 pub fn spawn_user_task_from_loaded_elf(loaded : &LoadedElf) -> TaskId {
     spawn_user_task(user_task_from_loaded_elf(loaded))
 }
 
 /// 启动调度器并切入第一批可运行任务。
-#[inline]
 pub fn run_first_task() -> ! { scheduler::run_first_task() }
 
 /// 让当前任务主动让出 CPU。
-#[inline]
 pub fn yield_now() { scheduler::suspend_current_and_run_next(); }
 
 pub use sched::{
@@ -125,21 +115,17 @@ pub use sched::{
 };
 
 /// 通知任务系统发生了一次时钟 tick。
-#[inline]
 pub fn schedule_tick() { scheduler::schedule_tick(); }
 
 /// 以指定阻塞原因挂起当前任务。
-#[inline]
 pub fn block_current(reason : TaskBlockReason) { scheduler::block_current(reason); }
 
 /// 让当前任务等待指定的阻塞对象。
-#[inline]
 pub fn wait_on(wait_handle : TaskWaitHandle) -> TaskWaitResult {
     scheduler::wait_current(wait_handle)
 }
 
 /// 在调度临界区内复查条件；条件仍成立才等待指定的阻塞对象。
-#[inline]
 pub fn wait_on_while(wait_handle : TaskWaitHandle,
                      condition : impl FnOnce() -> bool)
                      -> TaskWaitResult {
@@ -147,13 +133,11 @@ pub fn wait_on_while(wait_handle : TaskWaitHandle,
 }
 
 /// 让当前任务等待指定的阻塞对象，并带一个超时。
-#[inline]
 pub fn wait_on_for_ticks(wait_handle : TaskWaitHandle, timeout_ticks : TaskTick) -> TaskWaitResult {
     scheduler::wait_current_timeout(wait_handle, timeout_ticks)
 }
 
 /// 在调度临界区内复查条件；条件仍成立才带超时等待指定阻塞对象。
-#[inline]
 pub fn wait_on_while_for_ticks(wait_handle : TaskWaitHandle,
                                timeout_ticks : TaskTick,
                                condition : impl FnOnce() -> bool)
@@ -162,40 +146,33 @@ pub fn wait_on_while_for_ticks(wait_handle : TaskWaitHandle,
 }
 
 /// 返回“等待指定任务退出”的通用等待句柄。
-#[inline]
 pub const fn task_exit_wait_handle(task_id : TaskId) -> TaskWaitHandle {
     TaskWaitHandle::for_task_exit(task_id)
 }
 
 /// 让当前任务等待指定任务退出。
-#[inline]
 pub fn wait_for_task_exit(task_id : TaskId) -> TaskWaitResult {
     wait_on(task_exit_wait_handle(task_id))
 }
 
 /// 让当前任务等待指定任务退出，并带一个超时。
-#[inline]
 pub fn wait_for_task_exit_for_ticks(task_id : TaskId, timeout_ticks : TaskTick) -> TaskWaitResult {
     wait_on_for_ticks(task_exit_wait_handle(task_id),
                       timeout_ticks)
 }
 
 /// 让当前任务睡眠指定数量的 tick。
-#[inline]
 pub fn sleep_for_ticks(ticks : TaskTick) -> TaskWaitResult {
     scheduler::sleep_current_for_ticks(ticks)
 }
 
 /// 尝试唤醒指定任务。
-#[inline]
 pub fn wake_task(task_id : TaskId) -> bool { scheduler::wake_task(task_id) }
 
 /// 以 `Interrupted` 结果将指定任务从等待与超时队列中同时移除。
-#[inline]
 pub fn interrupt_task(task_id : TaskId) -> bool { scheduler::interrupt_task(task_id) }
 
 /// 回收指定已退出任务的信息。
-#[inline]
 pub fn reap_exited_task(task_id : TaskId) -> Option<ExitedTask> {
     let leader_pid = active_impl::lookup_task(task_id).and_then(|process_task| {
         let process = active_impl::lookup_process(process_task.pid)?;
@@ -220,7 +197,6 @@ pub fn reap_exited_task(task_id : TaskId) -> Option<ExitedTask> {
 /// `child_stack` 非零时，子任务初始用户栈指针设为该值（用于 clone 新栈场景）。
 /// `new_aspace_ptr` / `new_satp` 由 `mm::kernel_mm::fork_user_aspace()` 提供。
 /// 无当前任务或当前不是用户任务时返回 `None`。
-#[inline]
 pub fn fork_current(child_stack : usize,
                     new_aspace_ptr : usize,
                     new_satp : usize)
@@ -237,21 +213,18 @@ pub fn fork_current(child_stack : usize,
 }
 
 /// fork 失败回滚：撤销子任务 TCB、进程槽位与地址空间；返回被撤销的子进程 PID（供信号表清理）。
-#[inline]
 pub fn abort_fork_child(child_id : TaskId) -> Option<ProcessId> {
     scheduler::discard_unstarted_task(child_id);
     active_impl::abort_forked_process(child_id)
 }
 
 /// clone 线程失败回滚：撤销子线程 TCB 与进程内线程登记。
-#[inline]
 pub fn abort_clone_thread(child_id : TaskId) {
     scheduler::discard_unstarted_task(child_id);
     let _ = active_impl::abort_cloned_thread(child_id);
 }
 
 /// 从当前用户任务 clone 一个同进程线程，并登记到当前进程。
-#[inline]
 pub fn clone_current_thread(child_stack : usize,
                             tls : usize,
                             clone_flags : CloneFlags,
@@ -273,7 +246,6 @@ pub fn clone_current_thread(child_stack : usize,
 }
 
 /// execve：替换当前任务的进程映像。
-#[inline]
 pub fn execve_current(entry_pc : usize,
                       sp : usize,
                       argc : usize,
@@ -304,7 +276,6 @@ pub fn execve_current(entry_pc : usize,
 }
 
 /// 回收一个任意已退出任务的信息。
-#[inline]
 pub fn reap_one_exited_task() -> Option<ExitedTask> {
     let exited = scheduler::reap_one_exited_task()?;
     if let Some(process_task) = active_impl::lookup_task(exited.id) {
@@ -318,17 +289,14 @@ pub fn reap_one_exited_task() -> Option<ExitedTask> {
 }
 
 /// 回收指定父任务下任意一个已退出子任务的信息。
-#[inline]
 pub fn reap_one_exited_child(parent_id : TaskId) -> Option<ExitedTask> {
     scheduler::reap_one_exited_child(parent_id)
 }
 
 /// 判断指定任务是否仍有子任务。
-#[inline]
 pub fn has_child(parent_id : TaskId) -> bool { scheduler::has_child(parent_id) }
 
 /// 让当前任务以给定退出码结束运行。
-#[inline]
 pub fn exit_current(exit_code : TaskExitCode) -> ! {
     if let Some(task_id) = current_task_id() {
         active_impl::with_process_registry(|registry| {
@@ -339,7 +307,6 @@ pub fn exit_current(exit_code : TaskExitCode) -> ! {
 }
 
 /// 以 exit_group 语义终止当前进程内所有线程。
-#[inline]
 pub fn exit_group_current(exit_code : TaskExitCode) -> ! {
     let current_id = current_task_id().expect("exit_group requires a current task");
     if let Some(process_task) = current_process_task_snapshot() {
@@ -357,7 +324,6 @@ pub fn exit_group_current(exit_code : TaskExitCode) -> ! {
 }
 
 /// 终止指定任务（非当前任务）。
-#[inline]
 pub fn kill_task(task_id : TaskId, exit_code : TaskExitCode) -> bool {
     let killed = scheduler::kill_task(task_id, exit_code);
     if killed {
@@ -369,7 +335,6 @@ pub fn kill_task(task_id : TaskId, exit_code : TaskExitCode) -> bool {
 }
 
 /// execve 前清理同进程其它线程；当前保守实现要求多线程 exec 由 leader 发起。
-#[inline]
 pub fn terminate_other_threads_for_exec() -> Result<Vec<ExitedTask>, ()> {
     let current_id = current_task_id().ok_or(())?;
     let process_task = current_process_task_snapshot().ok_or(())?;
@@ -400,50 +365,39 @@ pub fn terminate_other_threads_for_exec() -> Result<Vec<ExitedTask>, ()> {
 }
 
 /// 返回当前正在运行任务的任务号。
-#[inline]
 pub fn current_task_id() -> Option<TaskId> { scheduler::current_task_id() }
 
 /// 返回当前正在运行任务的稳定快照。
-#[inline]
 pub fn current_task_snapshot() -> Option<TaskSnapshot> { scheduler::current_task_snapshot() }
 
 /// 返回指定任务的稳定快照；任务不存在或已被回收时返回 `None`。
-#[inline]
 pub fn task_snapshot(task_id : TaskId) -> Option<TaskSnapshot> { scheduler::task_snapshot(task_id) }
 
 /// 返回当前调度器逻辑 tick。
-#[inline]
 pub fn current_tick() -> TaskTick { scheduler::current_tick() }
-#[inline]
 pub fn current_task_user_aspace_ptr() -> usize { scheduler::current_task_user_aspace_ptr() }
-#[inline]
 pub fn current_task_user_address_space_token() -> usize {
     scheduler::current_task_user_address_space_token()
 }
-#[inline]
 pub fn current_task_trap_return_address_space_token() -> usize {
     scheduler::current_task_trap_return_address_space_token()
 }
 
-#[inline]
 fn user_address_space_ref(user : UserTask) -> Option<AddressSpaceRef> {
     Some(AddressSpaceRef::new(user.address_space()?, user.user_aspace_ptr()?))
 }
 
 /// 查询进程语义快照；第一阶段仅供内部 bring-up / 后续 syscall 迁移使用。
-#[inline]
 pub fn process_snapshot(pid : ProcessId) -> Option<ProcessDescriptor> {
     active_impl::lookup_process(pid)
 }
 
 /// 返回 registry 中全部进程 PID（含未 reap 的 zombie）。
-#[inline]
 pub fn all_process_pids() -> Vec<ProcessId> {
     active_impl::all_process_pids()
 }
 
 /// 返回进程内全部调度实体 `TaskId`（供 syscall robust 清理等路径使用）。
-#[inline]
 pub fn task_ids_for_process(pid : ProcessId) -> Option<Vec<TaskId>> {
     active_impl::task_ids_for_process(pid)
 }
@@ -452,7 +406,6 @@ pub fn task_ids_for_process(pid : ProcessId) -> Option<Vec<TaskId>> {
 ///
 /// pthread join 的用户态同步依赖 clear-child-tid/futex；线程 task 本身退出后无需等到
 /// 整个进程结束才释放，否则 create/join 压测会持续堆积内核栈与进程表项。
-#[inline]
 pub fn reap_exited_member_threads(pid : ProcessId) -> Vec<ExitedTask> {
     scheduler::reap_exited_tasks_atomic(|| {
         active_impl::take_exited_member_tasks(pid).unwrap_or_default()
@@ -460,57 +413,48 @@ pub fn reap_exited_member_threads(pid : ProcessId) -> Vec<ExitedTask> {
 }
 
 /// 按用户态线程号反查内部调度实体。
-#[inline]
 pub fn task_id_for_thread(tid : ThreadId) -> Option<TaskId> {
     active_impl::task_id_for_thread(tid)
 }
 
 /// 判断指定 task 退出后，其所属进程是否没有其它仍运行的 task。
-#[inline]
 pub fn task_exit_would_finish_process(task_id : TaskId) -> Option<bool> {
     active_impl::task_exit_would_finish_process(task_id)
 }
 
 /// 查询进程内任务语义快照。
-#[inline]
 pub fn process_task_snapshot(task_id : TaskId) -> Option<ProcessTaskDescriptor> {
     active_impl::lookup_task(task_id)
 }
 
 /// 按调度实体 `TaskId` 反查其进程归属快照。
-#[inline]
 pub fn process_task_snapshot_by_task(task_id : TaskId) -> Option<ProcessTaskDescriptor> {
     active_impl::lookup_task(task_id)
 }
 
 /// 当前运行任务对应的进程归属快照；未接入真实 spawn 前可能为 `None`。
-#[inline]
 pub fn current_process_task_snapshot() -> Option<ProcessTaskDescriptor> {
     let task_id = current_task_id()?;
     process_task_snapshot_by_task(task_id)
 }
 
 /// 当前运行任务的用户态线程 ID。
-#[inline]
 pub fn current_thread_id() -> Option<ThreadId> {
     current_process_task_snapshot().map(|snapshot| snapshot.tid)
 }
 
 /// 当前运行任务所属进程快照。
-#[inline]
 pub fn current_process_snapshot() -> Option<ProcessDescriptor> {
     let pid = current_process_task_snapshot()?.pid;
     process_snapshot(pid)
 }
 
 /// 查询进程已设置的资源限制；未设置时返回 `None`（由 syscall 层回退默认值）。
-#[inline]
 pub fn process_resource_limit(pid: ProcessId, resource: usize) -> Option<ResourceLimit> {
     active_impl::get_process_rlimit(pid, resource)
 }
 
 /// 为进程写入资源限制。
-#[inline]
 pub fn set_process_resource_limit(
     pid: ProcessId,
     resource: usize,
@@ -520,61 +464,52 @@ pub fn set_process_resource_limit(
 }
 
 /// 查询进程 nice 值。
-#[inline]
 pub fn process_nice(pid: ProcessId) -> Option<i32> {
     active_impl::get_process_nice(pid)
 }
 
 /// 写入进程 nice 值。
 /// 设置进程 nice 值。
-#[inline]
 pub fn set_process_nice(pid: ProcessId, nice: i32) -> bool {
     active_impl::set_process_nice(pid, nice)
 }
 
 /// 查询进程组 ID。
 /// 查询进程组 id。
-#[inline]
 pub fn process_pgid(pid: ProcessId) -> Option<ProcessId> {
     active_impl::get_process_pgid(pid)
 }
 
 /// 设置进程组 ID。
 /// 设置进程组 id。
-#[inline]
 pub fn set_process_pgid(pid: ProcessId, pgid: ProcessId) -> bool {
     active_impl::set_process_pgid(pid, pgid)
 }
 
 /// 将 nice 写入进程组内全部成员。
 /// 将 nice 写入同一 pgid 下全部进程。
-#[inline]
 pub fn set_nice_for_pgid(pgid: ProcessId, nice: i32) -> bool {
     active_impl::set_nice_for_pgid(pgid, nice)
 }
 
 /// 进程组内最小 nice 值。
 /// 进程组内最小 nice。
-#[inline]
 pub fn min_nice_in_pgid(pgid: ProcessId) -> Option<i32> {
     active_impl::min_nice_in_pgid(pgid)
 }
 
 /// 进程槽位是否仍存在。
 /// 进程是否仍占 registry 槽位。
-#[inline]
 pub fn process_exists(pid: ProcessId) -> bool {
     active_impl::process_exists(pid)
 }
 
 /// 进程组是否仍有成员。
-#[inline]
 pub fn pgid_has_members(pgid: ProcessId) -> bool {
     active_impl::pgid_has_members(pgid)
 }
 
 /// 按调度实体查询 `RLIMIT_NOFILE` 软限制；无进程上下文时回退 1024。
-#[inline]
 pub fn nofile_rlimit_for_task(task_id: TaskId) -> u64 {
     const RLIMIT_NOFILE: usize = 7;
     const DEFAULT_NOFILE: u64 = 1024;
@@ -588,19 +523,16 @@ pub fn nofile_rlimit_for_task(task_id: TaskId) -> u64 {
 }
 
 /// 按进程号查找 leader task。
-#[inline]
 pub fn leader_task_for_process(pid : ProcessId) -> Option<TaskId> {
     active_impl::leader_task_for_process(pid)
 }
 
 /// 查找当前进程下一个已退出子进程。
-#[inline]
 pub fn find_exited_child_process(parent_pid : ProcessId) -> Option<ProcessDescriptor> {
     active_impl::find_exited_child_process(parent_pid)
 }
 
 /// 查找当前进程在指定进程组内下一个已退出子进程。
-#[inline]
 pub fn find_exited_child_process_in_pgid(parent_pid : ProcessId,
                                          pgid : ProcessId)
                                          -> Option<ProcessDescriptor> {
@@ -609,14 +541,12 @@ pub fn find_exited_child_process_in_pgid(parent_pid : ProcessId,
 
 /// 查找已停止子进程（任意一个）。
 /// 查找父进程下一个 stopped 子进程。
-#[inline]
 pub fn find_stopped_child_process(parent_pid : ProcessId) -> Option<ProcessDescriptor> {
     active_impl::find_stopped_child_process(parent_pid)
 }
 
 /// 指定子进程是否处于 stopped 且可被 wait 消费。
 /// 指定 stopped 子进程是否可被 wait。
-#[inline]
 pub fn stopped_child_ready_for_wait(parent_pid : ProcessId,
                                     child_pid : ProcessId)
                                     -> Option<ProcessDescriptor> {
@@ -625,7 +555,6 @@ pub fn stopped_child_ready_for_wait(parent_pid : ProcessId,
 
 /// 在进程组内查找已停止子进程。
 /// 在 pgid 内查找 stopped 子进程。
-#[inline]
 pub fn find_stopped_child_process_in_pgid(parent_pid : ProcessId,
                                           pgid : ProcessId)
                                           -> Option<ProcessDescriptor> {
@@ -634,14 +563,12 @@ pub fn find_stopped_child_process_in_pgid(parent_pid : ProcessId,
 
 /// 查找已收到 SIGCONT 的子进程。
 /// 查找父进程下一个 continued 子进程。
-#[inline]
 pub fn find_continued_child_process(parent_pid : ProcessId) -> Option<ProcessDescriptor> {
     active_impl::find_continued_child_process(parent_pid)
 }
 
 /// 指定子进程的 continued 事件是否可被 wait 消费。
 /// 指定 continued 子进程是否可被 wait。
-#[inline]
 pub fn continued_child_ready_for_wait(parent_pid : ProcessId,
                                       child_pid : ProcessId)
                                       -> Option<ProcessDescriptor> {
@@ -650,7 +577,6 @@ pub fn continued_child_ready_for_wait(parent_pid : ProcessId,
 
 /// 在进程组内查找 continued 子进程。
 /// 在 pgid 内查找 continued 子进程。
-#[inline]
 pub fn find_continued_child_process_in_pgid(parent_pid : ProcessId,
                                             pgid : ProcessId)
                                             -> Option<ProcessDescriptor> {
@@ -659,34 +585,29 @@ pub fn find_continued_child_process_in_pgid(parent_pid : ProcessId,
 
 /// 将进程标为 stopped（SIGSTOP 路径）。
 /// 将进程标为 SIGSTOP 停止态。
-#[inline]
 pub fn mark_process_stopped(pid : ProcessId, signo : u8) -> bool {
     active_impl::mark_process_stopped(pid, signo)
 }
 
 /// 将进程标为 continued（SIGCONT 路径）。
 /// 将进程从 stopped 恢复为 running。
-#[inline]
 pub fn mark_process_continued(pid : ProcessId) -> bool {
     active_impl::mark_process_continued(pid)
 }
 
 /// 消费 stopped wait 事件。
 /// 消费 stop 事件的 wait 可见性。
-#[inline]
 pub fn consume_stop_wait(pid : ProcessId, nowait : bool) {
     active_impl::consume_stop_wait(pid, nowait)
 }
 
 /// 消费 continued wait 事件。
 /// 消费 continued 事件的 wait 可见性。
-#[inline]
 pub fn consume_continued_wait(pid : ProcessId, nowait : bool) {
     active_impl::consume_continued_wait(pid, nowait)
 }
 
 /// 阻塞进程内所有尚未退出的任务（SIGSTOP）。
-#[inline]
 pub fn stop_process_tasks(pid : ProcessId) {
     let Some(task_ids) = task_ids_for_process(pid) else {
         return;
@@ -705,7 +626,6 @@ pub fn stop_process_tasks(pid : ProcessId) {
 }
 
 /// 恢复进程内被 SIGSTOP 挂起的任务（SIGCONT）。
-#[inline]
 pub fn continue_process_tasks(pid : ProcessId) {
     let Some(task_ids) = task_ids_for_process(pid) else {
         return;
@@ -716,7 +636,6 @@ pub fn continue_process_tasks(pid : ProcessId) {
 }
 
 /// 子进程状态变化时唤醒正在 wait 的父进程。
-#[inline]
 pub fn wake_parent_child_waiters(child_pid : ProcessId) {
     let Some(child) = process_snapshot(child_pid) else {
         return;
@@ -730,44 +649,37 @@ pub fn wake_parent_child_waiters(child_pid : ProcessId) {
 }
 
 /// 判断当前进程在指定进程组内是否仍有子进程。
-#[inline]
 pub fn has_child_process_in_pgid(parent_pid : ProcessId, pgid : ProcessId) -> bool {
     active_impl::has_child_process_in_pgid(parent_pid, pgid)
 }
 
 /// 为进程创建新会话（setsid 语义）。
 /// 为进程创建新会话。
-#[inline]
 pub fn create_session_for_process(pid : ProcessId) -> Result<(), ()> {
     active_impl::create_session_for_process(pid)
 }
 
 /// 查询进程 dumpable 标志。
-#[inline]
 pub fn process_dumpable(pid : ProcessId) -> Option<bool> {
     active_impl::process_dumpable(pid)
 }
 
 /// 设置进程 dumpable 标志。
-#[inline]
 pub fn set_process_dumpable(pid : ProcessId, dumpable : bool) -> bool {
     active_impl::set_process_dumpable(pid, dumpable)
 }
 
 /// 查询 child subreaper 标志。
-#[inline]
 pub fn process_child_subreaper(pid : ProcessId) -> Option<bool> {
     active_impl::process_child_subreaper(pid)
 }
 
 /// 设置 child subreaper 标志。
-#[inline]
 pub fn set_process_child_subreaper(pid : ProcessId, enabled : bool) -> bool {
     active_impl::set_process_child_subreaper(pid, enabled)
 }
 
 /// 判断当前进程是否仍有子进程。
-#[inline]
 pub fn has_child_process(parent_pid : ProcessId) -> bool {
     active_impl::has_child_process(parent_pid)
 }
@@ -785,7 +697,6 @@ pub struct ProcessPurgeStats {
 ///
 /// 每个 bring-up 脚本结束后调用，避免 fork 子进程泄漏页帧或破坏后续 spawn。
 /// 返回 `(统计, 本次 reap 到的已退出任务)`，便于上层释放 cred / fd 等资源。
-#[inline]
 pub fn purge_all_user_processes() -> (ProcessPurgeStats, Vec<ExitedTask>) {
     let mut stats = ProcessPurgeStats::default();
     let mut reaped_tasks = Vec::new();
@@ -830,13 +741,11 @@ pub fn purge_all_user_processes() -> (ProcessPurgeStats, Vec<ExitedTask>) {
 }
 
 /// 列出 registry 中所有已退出、尚未 reap 的进程 id。
-#[inline]
 pub fn collect_exited_process_pids() -> Vec<ProcessId> {
     active_impl::collect_exited_process_pids()
 }
 
 /// 回收 registry 中所有已退出进程（含 basic 测试遗留、父进程已 reap 的僵尸子进程）。
-#[inline]
 pub fn reap_all_exited_processes() -> usize {
     let mut total = 0usize;
     loop {
@@ -859,7 +768,6 @@ pub fn reap_all_exited_processes() -> usize {
 }
 
 /// 回收已退出进程的所有线程 task 与 process registry 记录。
-#[inline]
 pub fn reap_exited_process(pid : ProcessId) -> Option<Vec<ExitedTask>> {
     let (_process, task_ids) = active_impl::reap_process_with_tasks(pid)?;
     let mut exited = Vec::new();
@@ -872,19 +780,16 @@ pub fn reap_exited_process(pid : ProcessId) -> Option<Vec<ExitedTask>> {
 }
 
 /// 更新当前/指定任务的 clear-child-tid 地址。
-#[inline]
 pub fn set_task_clear_child_tid(task_id : TaskId, clear_child_tid : Option<TaskClearTid>) -> bool {
     active_impl::set_task_clear_child_tid(task_id, clear_child_tid)
 }
 
 /// 读取任务的 clear-child-tid 地址。
-#[inline]
 pub fn task_clear_child_tid(task_id : TaskId) -> Option<TaskClearTid> {
     active_impl::task_clear_child_tid(task_id)
 }
 
 /// 进程 registry 自检。
-#[inline]
 pub fn process_model_self_test() {
     active_impl::process_model_self_test();
 }

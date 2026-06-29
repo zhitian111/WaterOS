@@ -1,6 +1,6 @@
 #![no_std]
-//! 内核全局堆：默认 [`rlsf::Tlsf`]（O(1) alloc/dealloc）；可通过 feature 回退
-//! [`linked_list_allocator::LockedHeap`]（非侵入式空闲链表）。
+//! 内核全局堆：默认 [`linked_list_allocator::LockedHeap`]（非侵入式空闲链表）；
+//! 可通过 feature `impl-tlsf` 切换为 [`rlsf::Tlsf`]（O(1) alloc/dealloc）。
 //!
 //! 堆大小与对齐来自 `wateros-base-config` 的 MM 配置；[`init`] 必须在任何分配前调用一次。
 
@@ -13,7 +13,7 @@ use config::mm::KERNEL_HEAP_SIZE;
 compile_error!("enable only one of `impl-tlsf` or `impl-linked-list-allocator`");
 
 #[cfg(not(any(feature = "impl-tlsf", feature = "impl-linked-list-allocator")))]
-compile_error!("enable `impl-tlsf` (default) or `impl-linked-list-allocator`");
+compile_error!("enable `impl-linked-list-allocator` (default) or `impl-tlsf`");
 
 #[cfg(feature = "impl-linked-list-allocator")]
 mod backend_linked_list;
@@ -41,7 +41,6 @@ pub struct HeapMemStats {
 pub(crate) use backend::HEAP_ALLOCATOR;
 
 /// 返回当前内核堆用量（`used`/`free`/`capacity`）。
-#[inline]
 pub fn heap_mem_stats() -> HeapMemStats {
     interrupt_guard::with_allocator_interrupt_guard(|| backend::stats())
 }

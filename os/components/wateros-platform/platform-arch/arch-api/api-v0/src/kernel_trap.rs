@@ -18,12 +18,10 @@ pub type KernelTrapHandlerFn = extern "C" fn(*mut u8);
 static HANDLER: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
 
 /// 注册组合层 trap 路由；仅保留最后一次注册。
-#[inline]
 pub fn register_kernel_trap_handler(handler: KernelTrapHandlerFn) {
     HANDLER.store(handler as *mut (), Ordering::Release);
 }
 
-#[inline]
 fn handler_fn() -> KernelTrapHandlerFn {
     let p = HANDLER.load(Ordering::Acquire);
     if p.is_null() {
@@ -33,7 +31,6 @@ fn handler_fn() -> KernelTrapHandlerFn {
 }
 
 /// `arch-impl` 的 `trap_entry_rust` 应调用此函数（Rust 路径），与 [`wateros_kernel_trap_enter`] 等价。
-#[inline]
 pub fn invoke_kernel_trap_handler(frame: *mut u8) {
     handler_fn()(frame);
 }

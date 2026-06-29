@@ -38,7 +38,6 @@ pub mod boot {
 pub mod arch {
     pub use arch::*;
 
-    #[inline]
     pub fn init() {
         arch_boot();
     }

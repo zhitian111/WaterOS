@@ -13,12 +13,50 @@
 %   - api-v0 契约细节 → 子目录 api/api-v0.tex
 %   - 各 impl 算法/平台细节 → 子目录 impl/*.tex
 
-\section{wateros-platform}
+\section{平台组件}
 
-\code{wateros-platform}把ISA相关原语与板级/QEMU环境能力收束为内核可直接调用的门面。聚合crate按feature同时选定\code{platform-arch}下的\code{impl-riscv64}或\code{impl-loongarch64}，以及\code{platform-impl}下的OpenSBI或LoongArch\code{virt} profile；在二者之上组合\code{timer}（arch tick + 平台Hz + deadline编程）、\code{time}（引导期频率缓存）、\code{wall\_clock}（单调纳秒与\code{CLOCK\_REALTIME}偏移）等语义，并向\code{wateros-runtime}、\code{wateros-mm}、\code{wateros-task}等上层提供trap帧、分页CSR、中断开关与早期控制台。
+平台层\code{wateros-platform}把指令集相关的陷阱、分页控制寄存器与时间计数，与板级或QEMU环境下的串口、定时器、复位等能力，组合成内核可直接调用的统一入口。架构侧只处理CPU可见的硬件原语；板级实现负责引导参数、早期控制台、deadline定时器编程与关机重启。聚合crate在两层之上再提供定时器换算、引导期时间频率、墙上时钟等组合语义。
 
-根crate不实现具体硬件访问：trap向量与帧布局在\code{arch-impl}，串口/SBI timer/复位在\code{platform-impl}，契约分别在\code{platform-api/api-v0}与\code{arch-api/api-v0}。组合层须在首次用户态trap前调用\code{platform::arch::init()}安装向量，并在\code{task::init}附近注册\code{kernel\_trap} handler；若已从DTB探测timebase，须在首次\code{timer}使用前调用\code{platform::time::set\_frequency\_hz}。
+内核引导路径首先依赖本组件安装陷阱向量，并在进入用户态前完成架构初始化。运行时控制台输出、内存管理页表切换、任务上下文切换与陷阱帧保存，都从这里取得与ISA和板级相关的原语；具体硬件差异被限制在各自的实现crate内，上层模块看到的接口保持一致。根内核通过平台feature选定整条实现链；占位feature仅保证编译，不能用于真实启动。
 
-\input{chapters/chap03/components/wateros-platform/platform-api/platform-api}
-\input{chapters/chap03/components/wateros-platform/platform-arch/arch}
-\input{chapters/chap03/components/wateros-platform/platform-impl/platform-impl}
+QEMU主线在RISC-V上走OpenSBI串口与SBI定时器，在LoongArch上走MMIO UART与Constant Timer。若引导已从设备树探测到timebase，须在首次使用定时器前注入频率；组合层还须在任务初始化附近注册内核陷阱分发入口，把定时器tick、系统调用与缺页等业务接到上层。
+
+\begin{rustcode}
+// platform/lib.rs: active_impl 由 impl-qemu-riscv64-opensbi 等 feature 选定
+#[cfg(feature = "impl-qemu-riscv64-opensbi")]
+pub use impl_qemu_riscv64_opensbi as active_impl;
+
+pub mod arch {
+    pub use arch::*;
+    #[inline]
+    pub fn init() {
+        arch_boot(); // 首次用户态 trap 前须安装向量
+    }
+}
+
+pub mod timer {
+    pub fn now_tick() -> PlatformTimerResult<ArchTimeTick> {
+        arch::time::read_time_tick().map_err(PlatformTimerError::Arch)
+    }
+    pub fn set_timer_after(d: Duration) -> PlatformTimerResult<()> {
+        // arch tick + time::frequency_hz 换算，再经 active_impl 编程 deadline
+        let now = now_tick()?.0;
+        let hz = tick_hz()?.0;
+        // ...
+        set_timer_deadline_tick(ArchTimeTick(deadline))
+    }
+}
+\end{rustcode}
+
+\begin{rustcode}
+// platform-arch/lib.rs: RISC-V 与 LoongArch64 互斥
+#[cfg(all(feature = "impl-riscv64", feature = "impl-loongarch64"))]
+compile_error!("select only one platform-arch implementation");
+
+pub fn arch_boot() {
+    #[cfg(feature = "impl-riscv64")]
+    impl_riscv64::init_trap();
+    #[cfg(feature = "impl-loongarch64")]
+    impl_loongarch64::init_trap();
+}
+\end{rustcode}

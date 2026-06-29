@@ -1,5 +1,6 @@
 % 第1章「项目概述」。
 %
+% 章首：项目定位、双架构、组件化动机（协作/教学/feature切换）。
 % §1.1设计目标：可验证的工程目标（无文档工程条目）。
 % §1.2当前实现摘要：longtable对照docs/exports/snapshot/current.md。
 % §1.3当前局限：单核、语义子集、桩实现、LTP覆盖等。
@@ -12,7 +13,11 @@
 
 两条平台路径的入口参数、trap frame、页表格式、定时器与VirtIO总线不同，差异收束在\code{wateros-platform}、\code{wateros-driver}和\code{wateros-mm}各自的\code{impl-*} crate中。进入task、FS/VFS、IPC、cred、klog和syscall之后，上层逻辑共用同一套接口，用户程序在两条路径上看到的fd、进程、地址空间与系统调用编号保持一致。
 
-代码按组件组织：根crate\code{wateros}聚合一级组件，各组件内部用\code{api-v0}定义契约、\code{impl-*}承载实现，再由聚合\code{lib.rs}按feature选出当前active impl。平台替换与能力扩展因此可以局限在单个组件边界内完成。
+立项时除了竞赛验收，我们也希望内核能支撑多人并行开发和教学演示。单体仓库里改一处驱动往往要牵一串头文件和全局状态；我们更想要的是：组员互不了解对方模块细节，仍能在抽象层上对接。熟悉某一域的人把\code{api-v0}里的trait和类型定下来，再用本层原语往上拼接口；只打算贡献某一个\code{impl-*}的人可以在crate内部实现细节，不必追问这些原语最后被谁、以何种方式调用。组装操作系统时因此主要面对稳定模块名和契约，而不是同时盯着所有底层实现。
+
+Rust和这种拆法比较合拍。\code{api-v0}用trait列出必须实现的行为，\code{pub}边界控制后来接手的人能看到的面；所有权和借用检查把不少内存与并发问题拦在编译期，代码评审时可以把精力放在逻辑是否正确、feature组合是否合理。每个\code{impl-*}在\code{Cargo.toml}里注册成feature之后，根crate切换feature即可换实现：驱动允许多个\code{impl-*}通过feature并存；堆分配器、平台arch实现、调度器策略这类只能二选一或N选一的，则在聚合\code{lib.rs}里用\code{compile\_error!}在配置冲突时直接报错，例如\code{runtime-heap-allocator}要求\code{impl-tlsf}与\code{impl-linked-list-allocator}不能同时启用。
+
+竞赛阶段先把QEMU bring-up跑通；更长远的打算是同一套边界还能留给实验性文件系统、网络栈或教学用小内核。扩展留在feature和impl层，换板子或换算法时不必每次从\code{kernel\_main}重新捋全局状态。根crate\code{wateros}按feature聚合一级组件，各组件再由\code{lib.rs}选出当前active impl后对外只暴露\code{mm::}、\code{vfs::}、\code{ipc::}等稳定导出名。
 
 
 \section{设计目标}

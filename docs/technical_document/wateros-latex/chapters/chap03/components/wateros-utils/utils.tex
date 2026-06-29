@@ -13,8 +13,14 @@
 %   - api-v0 契约细节 → 子目录 api/api-v0.tex
 %   - 各 impl 算法/平台细节 → 子目录 impl/*.tex
 
-\section{wateros-utils}
+\section{工具组件}
 
-\code{wateros-utils}预留与平台弱耦合的通用小工具聚合位置。\code{\#![no\_std]}，无\code{[dependencies]}，无api/impl子crate分层。当前对外仅导出占位函数\code{add(u64, u64) -> u64}，供crate内单测烟测；根\code{wateros}以\code{utils}别名默认依赖，但主线内核代码几乎未调用其公共API。
+\code{wateros-utils}预留给与平台弱耦合的通用小工具。\code{\#![no\_std]}，无\code{[dependencies]}，也没有\code{api/}/\code{impl/}子crate分层。当前对外仅导出占位函数，供crate内单测烟测；根\code{wateros}以\code{utils}别名默认依赖，但主线内核代码尚未消费其公共API。
 
-\code{src/asm/riscv/print\_rigister.S}为早期UART寄存器打印辅助，未通过\code{global\_asm!}或build脚本编入\code{lib.rs}，不参与构建。后续可在此集中纯函数或数据结构，保持不反向依赖\code{wateros-base}等平台类型以维持依赖DAG清晰。
+\code{src/asm/riscv/print\_rigister.S}保留早期UART寄存器打印辅助，未编入现行构建。后续可在此集中纯函数或数据结构，并保持不反向依赖\code{wateros-base}等平台类型，以维持依赖DAG清晰。
+
+\begin{rustcode}
+// utils/lib.rs: 早期占位，不代表最终公共 API
+#[inline]
+pub fn add(left: u64, right: u64) -> u64 { left + right }
+\end{rustcode}

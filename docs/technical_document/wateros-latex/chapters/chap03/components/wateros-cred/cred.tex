@@ -13,11 +13,23 @@
 %   - api-v0 契约细节 → 子目录 api/api-v0.tex
 %   - 各 impl 算法/平台细节 → 子目录 impl/*.tex
 
-\section{wateros-cred}
+\section{凭证组件}
 
-\code{wateros-cred}维护per-task进程凭证（UID/GID/CAP）侧表与生命周期hook，对齐Linux\code{struct cred}子集。用户任务默认以\code{ProcessCredentials::ROOT}启动；\code{fork}复制凭证，线程\code{clone}共享owner引用计数，\code{execve}后更新（首版\code{on\_exec}为no-op）。\code{wateros-task}不依赖本组件；syscall路径与bring-up call site显式调用聚合门面函数。
+\code{wateros-cred}维护按任务索引的进程凭证侧表与生命周期钩子，对齐 Linux 凭证结构的常用子集。用户任务默认以 root 身份启动；\code{fork}复制凭证，线程\code{clone}共享所有者引用计数，\code{execve}后预留更新入口（首版为 no-op）。任务子系统不依赖本组件；系统调用路径与 bring-up 调用点显式调用聚合门面，避免在任务控制块内硬编码身份模型。
 
-根\code{Cargo.toml}默认\code{api-v0 + impl-root}。\code{impl-root}启用时导出类型与\code{on\_user\_task\_spawned}、\code{set*id}、\code{has\_cap}等运行时API；仅\code{api-v0}时仅有契约类型，无侧表。syscall层\code{sys/cred.rs}读写聚合门面；\code{may\_access\_inode}尚未接入\code{open}路径。
+根\code{Cargo.toml}默认同时启用契约与 root 实现。启用 root 实现时导出类型及 spawn、fork、共享、reap 等运行时 API，以及身份读写与能力查询；仅启用契约时无侧表，仅供类型共享。系统调用层的凭证读写经聚合门面转发；inode 访问权限检查尚未接入打开路径，bring-up 阶段能力查询恒为允许。侧表与任务 ID 解耦存储，便于日后在不改动任务 crate 的前提下替换凭证策略或接入更完整的 setuid 语义。
 
-\input{chapters/chap03/components/wateros-cred/cred-api/cred-api}
-\input{chapters/chap03/components/wateros-cred/cred-impl/cred-impl}
+\begin{rustcode}
+// cred/lib.rs: 生命周期 hook — spawn → fork/share → exec → reap
+pub fn on_user_task_spawned(tid: TaskId) { active_impl::on_user_task_spawned(tid); }
+pub fn fork_cred(parent: TaskId, child: TaskId) { active_impl::fork_cred(parent, child); }
+pub fn share_cred(parent: TaskId, child: TaskId) { active_impl::share_cred(parent, child); }
+pub fn on_exec(tid: TaskId) { active_impl::on_exec(tid); }
+\end{rustcode}
+
+\begin{rustcode}
+// bring-up：impl-root 阶段 has_cap / may_access_inode 恒 true
+pub fn has_cap(cred: &ProcessCredentials, cap: Capability) -> bool {
+    active_impl::has_cap(cred, cap)
+}
+\end{rustcode}

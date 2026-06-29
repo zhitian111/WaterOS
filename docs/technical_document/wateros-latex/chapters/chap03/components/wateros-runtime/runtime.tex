@@ -13,14 +13,44 @@
 %   - api-v0 契约细节 → 子目录 api/api-v0.tex
 %   - 各 impl 算法/平台细节 → 子目录 impl/*.tex
 
-\section{wateros-runtime}
+\section{运行时组件}
 
-\code{wateros-runtime}聚合内核早期运行时能力：\code{panic}、\code{console}、\code{logging}、\code{heap\_allocator}，以及在\code{serial-uart-virt} feature下再导出\code{serial}。根crate只做模块再导出，初始化顺序由\code{wateros}组合层保证：任何堆分配前\code{heap\_allocator::init()}，使用\code{log!}前\code{logging::init()}，\code{klog::init()}与之独立。
+运行时层\code{wateros-runtime}聚合panic处理、控制台输出、开发日志与内核堆分配等早期运行能力。根crate只做子模块再导出，不在此定义新的初始化语义；各子能力的行为由对应子crate的feature决定，根内核按引导顺序分别挂接panic入口、初始化分配器、注册日志器并打开控制台。
 
-QEMU主线默认\code{impl-platform-console}，把\code{print!}/\code{println!}接到\code{platform::console}；\code{impl-dummy}下任何实际写控制台会\code{unimplemented!()}。开发日志经\code{WaterOSLogger}着色上屏，不写入\code{wateros-klog}环；需要「上屏+进环」时调用方须分别使用\code{log::*!}与\code{klog\_*!}。日志级别由\code{impl-trace}…\code{impl-error} feature择一（多开时取最安静档）。
+QEMU主线默认走平台控制台路径，把打印宏接到平台早期串口；占位feature下任何实际写控制台会触发未实现panic。开发日志经着色输出上屏展示，不写入内核日志环；需要同时上屏与持久化时，调用方须分别走日志宏与klog路径。日志级别由trace到error的一组feature择一，多开时取最安静档。
 
-\input{chapters/chap03/components/wateros-runtime/runtime-console/console}
-\input{chapters/chap03/components/wateros-runtime/runtime-heap-allocator/heap-allocator}
-\input{chapters/chap03/components/wateros-runtime/runtime-logging/logging}
-\input{chapters/chap03/components/wateros-runtime/runtime-panic/panic}
-\input{chapters/chap03/components/wateros-runtime/runtime-serial/serial}
+可选串口feature再导出QEMU\code{virt} UART驱动，供伪shell等路径使用，与控制台路径分工明确、互不替代。panic路径在着色打印后请求平台关机；控制台契约当前仅覆盖写侧，无输入API。内核堆默认使用链表分配器，也可选用TLSF后端；分配路径带中断屏蔽与递归检测，接近高水位时会发出警告。
+
+\begin{rustcode}
+// runtime/lib.rs: 子能力以 runtime::console 等形式再导出
+pub mod panic {
+    pub use panic::panic_handler; // 供根 crate 挂接 #[panic_handler]
+}
+pub mod console {
+    pub use console::*;
+}
+pub mod logging {
+    pub use logging::*;
+}
+pub mod heap_allocator {
+    pub use heap_allocator::*;
+}
+#[cfg(feature = "serial-uart-virt")]
+pub mod serial {
+    pub use ::runtime_serial::*;
+}
+\end{rustcode}
+
+\begin{rustcode}
+// runtime-panic: 着色打印后请求平台关机
+pub fn panic_handler(_panic_info: &core::panic::PanicInfo) -> ! {
+    use console::{println, AnsiColor};
+    if let Some(location) = _panic_info.location() {
+        println!("... Panicked at {}:{}.  {}",
+                 location.file(), location.line(), _panic_info.message());
+    }
+    use platform::reset::{shutdown, PlatformResetReason};
+    while let Err(_e) = shutdown(PlatformResetReason::SystemFailure) {}
+    loop {}
+}
+\end{rustcode}

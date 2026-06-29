@@ -13,11 +13,24 @@
 %   - api-v0 契约细节 → 子目录 api/api-v0.tex
 %   - 各 impl 算法/平台细节 → 子目录 impl/*.tex
 
-\section{wateros-abi}
+\section{ABI组件}
 
-\code{wateros-abi}定义用户态与内核共享的系统调用ABI：Linux风格错误码、六个寄存器参数包、调用号抽象与\code{-errno}返回值编码。聚合\code{src/lib.rs}按feature挂载\code{api-v0}契约与具体号表实现；\code{default} feature为空，调用方须显式启用\code{api-v0}及\code{impl-linux-generic64}（或占位\code{impl-dummy}）。
+\code{wateros-abi}定义用户态与内核共享的系统调用 ABI：Linux 风格错误码、六个寄存器参数包、调用号抽象与负\code{errno}返回值编码。聚合\code{src/lib.rs}按 feature 挂载版本化契约与具体号表实现；默认 feature 为空，调用方须显式启用契约层及目标平台号表，或仅链接占位桩做编译烟测。
 
-主线平台feature经根内核传递\code{abi/impl-linux-generic64}，同时启用\code{api-v0}与\code{LinuxGeneric64}号表，并导出\code{ActiveSyscallNumberTable}别名。\code{wateros-syscall}、\code{wateros-platform} trap路径通过本组件读取\code{SyscallArgs}与符号化调用号；号表存在某常量不等于内核已实现对应\code{sys\_*}。
+主线平台 feature 经根内核传递 Linux 通用 64 位实现，同时启用契约与活跃号表类型别名。系统调用分发与平台陷阱路径通过本组件读取参数包与符号化调用号；号表中的常量只表示 ABI 约定，是否与内核处理函数一一对应由 syscall 实现层决定。契约按关注点拆为返回值编码、错误码枚举、调用号 trait 与 C 布局参数包等子模块，便于用户态桩代码与内核分发层共用同一套类型而不互相拖拽实现细节。
 
-\input{chapters/chap03/components/wateros-abi/abi-api/abi-api}
-\input{chapters/chap03/components/wateros-abi/abi-impl/abi-impl}
+\begin{rustcode}
+// abi/lib.rs: 号表 trait + 主线平台活跃别名（需 impl-linux-generic64）
+pub mod syscall_number {
+    pub use api_v0::syscall_number::{SyscallNumber, SyscallNumberTable};
+    #[cfg(feature = "impl-linux-generic64")]
+    pub use impl_linux_generic64::LinuxGeneric64 as ActiveSyscallNumberTable;
+}
+\end{rustcode}
+
+\begin{rustcode}
+// 陷阱帧六个通用寄存器 → 固定布局参数包
+pub mod syscall_args { pub use api_v0::syscall_args::*; }
+pub mod errno { pub use api_v0::errno::*; }
+pub mod user_ret { pub use api_v0::user_ret::*; }
+\end{rustcode}

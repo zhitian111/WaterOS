@@ -69,14 +69,12 @@ mod user_bringup_root_layout;
 
 /// 将内核 panic 委托给 `wateros-runtime` 的统一 panic 处理（日志/停机策略由
 /// runtime 决定）。
-#[inline]
 #[panic_handler]
 pub fn panic_handler(_panic_info : &core::panic::PanicInfo) -> ! {
     runtime::panic::panic_handler(_panic_info)
 }
 
 /// 堆分配失败时委托给 runtime 的全局分配错误处理；语义为不可恢复错误路径。
-#[inline]
 #[alloc_error_handler]
 pub fn alloc_error_handler(layout : core::alloc::Layout) -> ! {
     runtime::heap_allocator::handle_alloc_error(layout)

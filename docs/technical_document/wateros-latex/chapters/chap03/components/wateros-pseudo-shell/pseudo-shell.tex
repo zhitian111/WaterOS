@@ -13,4 +13,6 @@
 %   - api-v0 契约细节 → 子目录 api/api-v0.tex
 %   - 各 impl 算法/平台细节 → 子目录 impl/*.tex
 
-\section{wateros-pseudo-shell}
+\section{伪Shell组件}
+
+\code{wateros-pseudo-shell}提供经MMIO UART读行的阻塞式伪shell，用于bring-up阶段验证VFS与用户ELF装载。本节未纳入正文，仅占位；实现细节见\code{os/components/wateros-pseudo-shell/src/lib.rs}。

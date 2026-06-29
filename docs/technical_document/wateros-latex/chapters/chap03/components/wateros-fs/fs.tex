@@ -13,14 +13,23 @@
 %   - api-v0 契约细节 → 子目录 api/api-v0.tex
 %   - 各 impl 算法/平台细节 → 子目录 impl/*.tex
 
-\section{wateros-fs}
+\section{文件系统组件}
 
-\code{wateros-fs}是块文件系统与伪文件系统的聚合层：对外经\code{fs::api}暴露\code{FsImpl}注册表与卷读写契约，经\code{fs::devfs}、\code{fs::procfs}、\code{fs::rootfs}分别提供设备节点、\code{/proc}视图与根卷句柄。启动期\code{fs::init()}刷新devfs、在默认根块设备上\code{probe}并注入活动\code{FsImpl}，但不挂载根卷；bring-up再调用\code{mount\_default\_root\_rw()}完成单一RW ext4根卷挂载。
+文件系统组件负责块设备上的根卷读写，以及内核自带的设备目录和进程信息伪文件。启动时先根据驱动枚举刷新设备节点、在默认块设备上探测文件系统类型并登记实现，但此时还不挂载根卷；用户态 bring-up 再单独完成一次读写根卷挂载。辅助卷可以额外打开，不会替换全局根句柄。
 
-默认feature为\code{api-v0} + \code{impl-devfs} + \code{impl-ext4-rs}；可选\code{impl-ext4}切换至ext4plus旧路径。syscall与VFS不直接依赖\code{fs-impl-*}，而是经\code{wateros-vfs}的\code{impl-fs-bridge}消费本组件聚合API。
+设备目录把平台注册的块设备和字符设备映射成路径，供根卷探测和后续打开；进程信息目录按任务输出 status、maps 等测例常用字段，并允许上层注册命令行与可执行文件路径等回调。块格式实现默认走 vendored 的 ext4 库，也保留一套可选的旧路径，两套写实现不应同时启用。系统调用一般不直接碰这里的实现 crate，而是经虚拟文件系统桥接消费稳定 API。
 
-\input{chapters/chap03/components/wateros-fs/fs-api/fs-api}
-\input{chapters/chap03/components/wateros-fs/fs-devfs/devfs}
-\input{chapters/chap03/components/wateros-fs/fs-procfs/procfs}
-\input{chapters/chap03/components/wateros-fs/fs-rootfs/rootfs}
-\input{chapters/chap03/components/wateros-fs/fs-impl/fs-impl}
+\begin{rustcode}
+// fs/lib.rs：init 只探测并 set_active，不 mount
+pub fn init() {
+    devfs::active_impl::refresh();
+    let dev_path = devfs::active_impl::default_root_block_path()?;
+    let device = devfs::active_impl::lookup_block_device(dev_path)?;
+    for imp in registered_fs_impls() {
+        // 按静态表顺序 probe，优先 RW 再 RO
+        if let Ok(Some(kind)) = imp.probe(&device) { /* set_active_fs_impl */ break; }
+    }
+}
+// bring-up 另调 rootfs::mount_default_root_rw()
+// FsImpl：name / probe / mount_ro / mount_rw
+\end{rustcode}

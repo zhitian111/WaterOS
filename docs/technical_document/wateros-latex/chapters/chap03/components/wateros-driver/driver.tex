@@ -13,27 +13,21 @@
 %   - api-v0 契约细节 → 子目录 api/api-v0.tex
 %   - 各 impl 算法/平台细节 → 子目录 impl/*.tex
 
-\section{wateros-driver}
+\section{设备驱动组件}
 
-\code{wateros-driver}是内核中块设备、字符设备、网络设备与板级探测的统一聚合入口。根crate\code{wateros}通过\code{driver}依赖导出\code{api}、\code{block}、\code{character}、\code{network}四个子系统门面，并由feature三选一挂载\code{active\_impl}平台实现（\code{impl-qemu-riscv64-opensbi}、\code{impl-qemu-loongarch64-virt}或\code{impl-dummy}）。
+驱动组件把板级探测、块设备、字符设备和网络设备收成内核能统一注册的入口。引导早期只记下设备树物理地址；内存子系统就绪后再扫描总线、握手 VirtIO 块卡与网卡，并把串口、RTC 等字符设备登记进全局表。探测失败只打日志，不阻断内核继续启动。
 
-引导期契约分两步：\code{init\_when\_boot(dtb\_pa)}保存DTB物理基址；MM与帧分配器就绪后由\code{init\_after\_boot}扫描并注册设备，失败仅\code{log::warn}。RISC-V主线经DTB扫描VirtIO-MMIO块/网卡与NS16550 UART；LoongArch主线经PCIe ECAM枚举VirtIO-PCI设备。块设备可选\code{impl-block-cache}写穿LRU包装；网络侧在网卡注册后由\code{network::stack::init}拉起smoltcp，周期性\code{poll\_at\_millis}驱动协议栈。设备注册完成后经\code{wateros-fs}的\code{devfs::refresh}暴露\code{/dev/vblk*}等节点。
+RISC-V 主线从设备树找 MMIO VirtIO 与 NS16550；LoongArch 主线走 PCIe 配置空间枚举 VirtIO-PCI，早期 UART 用固定 MMIO 窗口。块设备可选一层写穿缓存；网卡注册后由内置协议栈周期性轮询，再与用户态 socket 路径衔接。设备就绪后文件系统组件刷新设备目录，根卷探测才能看到块设备节点。当前 bring-up 仍以「第一块盘、第一张网卡」为主，多实例表已具备但未全面用到。
 
-\begin{longtable}{>{\raggedright\arraybackslash}p{3.6cm}>{\raggedright\arraybackslash}p{9.8cm}}
-  \caption{\code{wateros-driver}根feature矩阵}\label{tab:driver-features}\\
-  \toprule[1.5pt]
-  Feature & 效果 \\
-  \midrule[1pt]
-  \code{api-v0}（\code{default}） & 启用各子系统API v0与平台impl的\code{api-v0}传递 \\
-  \code{impl-qemu-riscv64-opensbi} & \code{block/impl-virtio-mmio}+\code{network/impl-virtio-mmio} \\
-  \code{impl-qemu-loongarch64-virt} & \code{block/impl-virtio-pci}+\code{network/impl-virtio-pci} \\
-  \code{impl-block-cache} & 注册virtio-blk时用\code{CachingBlockDevice}包装 \\
-  \code{impl-dummy} & 平台占位，无DTB/PCI探测 \\
-  \bottomrule[1.5pt]
-\end{longtable}
-
-\input{chapters/chap03/components/wateros-driver/driver-api/driver-api}
-\input{chapters/chap03/components/wateros-driver/driver-block/block}
-\input{chapters/chap03/components/wateros-driver/driver-character/character}
-\input{chapters/chap03/components/wateros-driver/driver-network/network}
-\input{chapters/chap03/components/wateros-driver/driver-impl/driver-impl}
+\begin{rustcode}
+// driver 聚合：两步引导 + 平台 feature 选路
+pub fn init_when_boot(dtb_pa: usize) { active_impl::init_when_boot(dtb_pa); }
+pub fn init_after_boot() {
+    // RISC-V：DTB → virtio-mmio blk/net + UART
+    // LoongArch：PCIe ECAM → virtio-pci blk/net + 板级 UART
+    // 末尾 devfs::refresh()，失败仅 warn
+}
+// block：BlockDevice、register_block_device、可选 CachingBlockDevice
+// network::stack：init / poll / TCP-UDP socket 句柄
+// character：null、RTC 等内置桩
+\end{rustcode}

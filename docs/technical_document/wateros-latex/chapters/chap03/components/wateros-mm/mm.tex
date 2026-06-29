@@ -13,20 +13,45 @@
 %   - api-v0 契约细节 → 子目录 api/api-v0.tex
 %   - 各 impl 算法/平台细节 → 子目录 impl/*.tex
 
-\section{wateros-mm}
+\section{内存管理组件}
 
-\wateros 的内存管理一级组件，对上通过聚合 crate \code{wateros-mm} 暴露\code{mm::api}（契约）、\code{mm::frame\_alloctor}（物理帧）、\code{mm::kernel\_mm}（bring-up 与用户地址空间操作）等门面；对下按 Cargo feature 在\code{impl-sv39}、\code{impl-loongarch64}、\code{impl-dummy} 三套页表实现间互斥选择。页大小固定为 4\,KiB，与 RISC-V Sv39 常用叶子页一致。
+内存管理组件\code{wateros-mm}负责虚拟地址语义、页表实现、物理帧分配与用户态装载，对上暴露契约API、帧分配器和内核bring-up入口，不把页表内部类型泄漏给依赖方。页大小固定为4\,KiB，与RISC-V Sv39常用叶子页一致；大页不在本阶段表达。
 
-根内核通过\code{mm = \{ package = "wateros-mm", ... \}}依赖本组件。\code{wateros-task}在 fork/exec 路径持有\code{LoadedElf::user\_aspace\_ptr}与地址空间 token；\code{wateros-syscall}经\code{mm::api}的\code{MmapOps}、\code{HeapBrk}、\code{UserMemoryOps}处理用户内存系统调用；trap 路径调用\code{mm::kernel\_mm::handle\_user\_page\_fault}与\code{handle\_cow\_fault}。聚合层刻意不导出\code{pagetable::*}等页表内部类型，依赖方应只使用\code{mm::api}与\code{mm::kernel\_mm}。
+根内核在内存子系统初始化阶段建立内核页表与可用物理帧池；任务在fork与exec路径持有用户地址空间句柄；系统调用层经契约处理内存映射、堆扩展与用户缓冲区访问；陷阱路径缺页时回调本组件的缺页与写时复制处理。默认feature仅链接占位页表，可编译但不装载ELF、不fork；真实bring-up须启用Sv39或LoongArch64实现，二者通过条件编译互斥。
 
-默认 feature \code{api-v0}仅链接\code{impl-dummy}页表桩，可编译但不装载 ELF、不 fork。真实 bring-up 须在根\code{wateros}上启用\code{mm/impl-sv39}（RISC-V）或\code{mm/impl-loongarch64}（LoongArch64），二者通过\code{active\_mm\_impl}条件编译保证符号互斥。物理帧分配默认走\code{frame-alloctor}的\code{impl-stack}。
+物理帧默认走栈式LIFO分配器，带引用计数以支撑fork写时复制；统计信息可供proc类查询。NUMA策略当前为单节点桩，满足bring-up系统调用返回值即可；帧分配器为单核实现，无buddy或slab分层。
 
 \begin{rustcode}
+// mm/lib.rs: api-v0 契约 + frame_alloctor + 互斥 impl 选择
 pub use api_v0 as api;
 pub use frame_alloctor;
-// impl-sv39 与 impl-loongarch64 互斥，经 active_mm_impl 转发 user_aspace / kernel_mm
+
+#[cfg(feature = "impl-sv39")]
+use impl_sv39 as active_mm_impl;
+#[cfg(feature = "impl-loongarch64")]
+use impl_loongarch64 as active_mm_impl;
+
+pub use active_mm_impl::user_aspace; // LoadedElf::user_aspace_ptr 解析入口
 \end{rustcode}
 
-\input{chapters/chap03/components/wateros-mm/mm-api/mm-api}
-\input{chapters/chap03/components/wateros-mm/mm-frame-alloctor/frame-alloctor}
-\input{chapters/chap03/components/wateros-mm/mm-impl/mm-impl}
+\begin{rustcode}
+// mm/lib.rs: trap 缺页与 COW 由 kernel_mm 门面转发
+pub fn handle_user_page_fault(
+    aspace_ptr: usize,
+    fault_addr: usize,
+    access: api_v0::mmap::PageFaultAccess,
+) -> bool {
+    // 惰性 mmap / 栈扩展 / brk 等按需映射
+    let mut alloc = crate::frame_alloctor::GlobalPhysFrameAllocator;
+    crate::user_aspace::with_user_aspace_mut(aspace_ptr, |aspace| {
+        MmapOps::handle_page_fault(aspace, &mut alloc, VirtAddr(fault_addr), access)
+    })
+    .unwrap_or(false)
+}
+
+pub fn handle_cow_fault(aspace_ptr: usize, fault_addr: usize) -> bool {
+    // fork 后首次写触发写时复制
+    impl_sv39::kernel_mm_impl::handle_cow_fault(aspace_ptr, fault_addr)
+        .unwrap_or(false)
+}
+\end{rustcode}
