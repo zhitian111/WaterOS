@@ -6,6 +6,7 @@
 extern crate alloc;
 
 use alloc::collections::VecDeque;
+use alloc::vec;
 use alloc::vec::Vec;
 use api_v0::{SharedNetworkDevice, DEFAULT_MTU};
 use smoltcp::phy::{self, Device, DeviceCapabilities, Medium};
@@ -19,10 +20,13 @@ const ETHERTYPE_IPV4: u16 = 0x0800;
 const ETHERTYPE_ARP: u16 = 0x0806;
 
 /// 将 [`SharedNetworkDevice`] 包装为 smoltcp 可用的网卡抽象。
+///
+/// RX/TX 缓冲区用堆上 `Vec` 持有：`kernel_main` 运行在仅 64KiB 的 boot 栈上，
+/// 若在此用 `[u8; 64KiB]` 栈数组会在 `network::stack::init` 栈溢出并踩坏相邻 BSS。
 pub struct SmoltcpAdapter {
     inner: Option<SharedNetworkDevice>,
-    rx_buf: [u8; RX_BUF],
-    tx_buf: [u8; TX_BUF],
+    rx_buf: Vec<u8>,
+    tx_buf: Vec<u8>,
     rx_len: usize,
     local_ipv4: [u8; 4],
     loopback_queue: VecDeque<Vec<u8>>,
@@ -54,8 +58,8 @@ impl SmoltcpAdapter {
     fn with_inner(inner: Option<SharedNetworkDevice>) -> Self {
         Self {
             inner,
-            rx_buf: [0u8; RX_BUF],
-            tx_buf: [0u8; TX_BUF],
+            rx_buf: vec![0u8; RX_BUF],
+            tx_buf: vec![0u8; TX_BUF],
             rx_len: 0,
             local_ipv4: [0; 4],
             loopback_queue: VecDeque::new(),
@@ -136,7 +140,7 @@ impl Device for SmoltcpAdapter {
         Some((
             SmoltcpRxToken(&rx_buf[..*rx_len]),
             SmoltcpTxToken {
-                buf: tx_buf,
+                buf: tx_buf.as_mut_slice(),
                 dev: inner.as_ref(),
                 local_ipv4: *local_ipv4,
                 loopback_queue,
@@ -153,7 +157,7 @@ impl Device for SmoltcpAdapter {
             ..
         } = self;
         Some(SmoltcpTxToken {
-            buf: tx_buf,
+            buf: tx_buf.as_mut_slice(),
             dev: inner.as_ref(),
             local_ipv4: *local_ipv4,
             loopback_queue,
