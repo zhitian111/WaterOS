@@ -48,6 +48,18 @@ impl OtherReadyQueue {
             .copied()
             .any(|entry| self.entry_is_live(entry) && check.is_schedulable(entry.task_id))
     }
+
+    /// 任务已从 registry 永久移除后回收 `versions` 条目。
+    pub(super) fn forget_task(&mut self, task_id : TaskId) {
+        self.versions
+            .remove(&task_id);
+    }
+
+    #[cfg(test)]
+    fn versions_len(&self) -> usize { self.versions.len() }
+
+    #[cfg(test)]
+    fn versions_contains(&self, task_id : TaskId) -> bool { self.versions.contains_key(&task_id) }
 }
 
 impl ReadyTaskSink for OtherReadyQueue {
@@ -139,5 +151,34 @@ mod tests {
         q.detach_ready_task(1);
         assert_eq!(q.pick_next_runnable_task_id(&check), Some(2));
         assert_eq!(q.pick_next_runnable_task_id(&check), None);
+    }
+
+    #[test]
+    fn forget_task_removes_versions_entry() {
+        let mut q = OtherReadyQueue::new();
+        let check = MockCheck::new(&[1]);
+        q.enqueue_ready_task(1);
+        assert!(q.versions_contains(1));
+        q.forget_task(1);
+        assert!(!q.versions_contains(1));
+        assert_eq!(q.pick_next_runnable_task_id(&check), None);
+    }
+
+    #[test]
+    fn detach_does_not_remove_versions_entry() {
+        let mut q = OtherReadyQueue::new();
+        q.enqueue_ready_task(1);
+        q.detach_ready_task(1);
+        assert!(q.versions_contains(1));
+    }
+
+    #[test]
+    fn versions_bounded_after_forget_cycle() {
+        let mut q = OtherReadyQueue::new();
+        for task_id in 1..=64u64 {
+            q.enqueue_ready_task(task_id);
+            q.forget_task(task_id);
+        }
+        assert_eq!(q.versions_len(), 0);
     }
 }

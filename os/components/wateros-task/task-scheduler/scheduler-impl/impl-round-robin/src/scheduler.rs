@@ -322,8 +322,11 @@ impl RoundRobinScheduler {
     }
 
     pub(super) fn reap_exited_task(&mut self, task_id : TaskId) -> Option<ExitedTask> {
-        self.wait
-            .reap_exited_task(&mut self.registry, task_id)
+        let exited = self.wait
+                         .reap_exited_task(&mut self.registry, task_id)?;
+        self.other_ready
+            .forget_task(task_id);
+        Some(exited)
     }
 
     /// 丢弃尚未完成 fork/clone 的子任务（从就绪队列移除并释放 TCB）。
@@ -332,20 +335,26 @@ impl RoundRobinScheduler {
             .detach_task(task_id);
         self.wait
             .detach_task_from_run_queues(task_id);
-        let _ = self.registry
-                  .discard_task(task_id);
+        if self.registry
+              .discard_task(task_id)
+        {
+            self.other_ready
+                .forget_task(task_id);
+        }
     }
 
     pub(super) fn reap_one_exited_task(&mut self) -> Option<ExitedTask> {
-        self.wait
-            .reap_one_exited_task(&mut self.registry)
+        let exited = self.wait
+                         .reap_one_exited_task(&mut self.registry)?;
+        self.other_ready
+            .forget_task(exited.id);
+        Some(exited)
     }
 
     pub(super) fn reap_one_exited_child(&mut self, parent_id : TaskId) -> Option<ExitedTask> {
         let task_id = self.registry
                           .find_exited_child(parent_id)?;
-        self.wait
-            .reap_exited_task(&mut self.registry, task_id)
+        self.reap_exited_task(task_id)
     }
 
     pub(super) fn has_child(&self, parent_id : TaskId) -> bool {
