@@ -21,7 +21,6 @@ use crate::scheduler::TaskTrapFrame;
 // ============================================================================
 
 /// 解析 trap 帧归属任务，返回应被 Rust 侧修改的权威 `TrapContext` 指针。
-#[inline]
 pub(crate) unsafe fn begin_current_trap_frame_access(trap_frame_ptr : *mut u8) -> *mut u8 {
     let trap_frame = unsafe { *(trap_frame_ptr as *const TaskTrapFrame) };
     scheduler::begin_current_trap_frame_access(trap_frame).map(|p| p.cast::<u8>())
@@ -29,7 +28,6 @@ pub(crate) unsafe fn begin_current_trap_frame_access(trap_frame_ptr : *mut u8) -
 }
 
 /// 将当前任务保存区内的权威 trap 帧写回栈上 trap 帧，并写入返回地址空间 token。
-#[inline]
 pub(crate) unsafe fn restore_current_trap_frame(trap_frame_ptr : *mut u8) -> bool {
     let trap_frame = unsafe { &mut *(trap_frame_ptr as *mut TaskTrapFrame) };
     scheduler::restore_current_trap_frame(trap_frame)

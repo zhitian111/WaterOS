@@ -69,14 +69,12 @@ mod user_bringup_root_layout;
 
 /// 将内核 panic 委托给 `wateros-runtime` 的统一 panic 处理（日志/停机策略由
 /// runtime 决定）。
-#[inline]
 #[panic_handler]
 pub fn panic_handler(_panic_info : &core::panic::PanicInfo) -> ! {
     runtime::panic::panic_handler(_panic_info)
 }
 
 /// 堆分配失败时委托给 runtime 的全局分配错误处理；语义为不可恢复错误路径。
-#[inline]
 #[alloc_error_handler]
 pub fn alloc_error_handler(layout : core::alloc::Layout) -> ! {
     runtime::heap_allocator::handle_alloc_error(layout)
@@ -109,13 +107,37 @@ mod qemu_riscv64_opensbi {
         }
     }
 
-    /// 引导加载器 / OpenSBI 传入的引导参数；与 [`crate`] 顶层文档中的 bring-up
-    /// 步骤一致。
+    /// 非 BSP hart：关中断后永久 WFI（当前为 UP bring-up；SMP 就绪前不得进入完整 `kernel_main`）。
+    fn park_secondary_hart() -> ! {
+        platform::interrupt::disable_global_interrupt()
+            .expect("disable global interrupt for secondary hart");
+        platform::interrupt::disable_timer_interrupt()
+            .expect("disable timer interrupt for secondary hart");
+        loop {
+            platform::interrupt::wait_for_interrupt();
+        }
+    }
+
+    /// 屏蔽固件可能遗留的全局/定时器中断，直至 `kernel_main` 末尾 `enable_*` 对称打开。
+    fn mask_boot_interrupts() {
+        platform::interrupt::disable_global_interrupt()
+            .expect("disable global interrupt for boot");
+        platform::interrupt::disable_timer_interrupt()
+            .expect("disable timer interrupt for boot");
+    }
+
+    /// 引导加载器 / OpenSBI 传入的引导参数（`a0` = hart id，`a1` = DTB）；与 [`crate`] 顶层文档中的 bring-up 步骤一致。
     ///
     /// **契约**：在此返回前完成本路径上的初始化与自检日志；正常路径以
     /// [`task::run_first_task`] 转入调度且不返回。
     #[unsafe(no_mangle)]
     pub fn kernel_main(boot_arg0 : usize, boot_arg1 : usize) -> ! {
+        // OpenSBI：`a0` = hart id，`a1` = DTB 物理地址。
+        if boot_arg0 != 0 {
+            park_secondary_hart();
+        }
+        mask_boot_interrupts();
+
         use platform::boot::{BootArgs, BootContext};
         let _boot_context = BootContext::from(BootArgs::new(boot_arg0, boot_arg1));
         driver::init_when_boot(boot_arg1);

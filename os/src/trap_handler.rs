@@ -347,7 +347,6 @@ fn return_to_user_signal_delivery(frame : *mut u8,
 }
 
 /// 信号/页错等提前返回路径：打 trace 后把 TCB trap 帧拷回内核栈供 `sret`。
-#[inline]
 fn finish_trap_return(frame : *mut u8, cx : &TrapContext, raw_cause : usize) {
     let return_satp = cx.return_address_space_token();
     let kernel_satp = paging::active_address_space_token();
@@ -366,5 +365,4 @@ fn finish_trap_return(frame : *mut u8, cx : &TrapContext, raw_cause : usize) {
 
 /// 向 `arch_api_v0` 注册本模块的 C ABI trap 回调；须在 `task::init()`
 /// 之后调用。
-#[inline]
 pub fn init() { register_kernel_trap_handler(wateros_kernel_trap_handler); }
