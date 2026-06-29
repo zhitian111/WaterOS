@@ -336,6 +336,53 @@ impl LoongArch64AddressSpace {
                            .any(|vma| vma.overlaps(start, end))
     }
 
+    pub(crate) fn lazy_vma_contains(&self, page : VirtAddr) -> bool {
+        self.lazy_file_vmas.iter()
+                           .any(|vma| vma.contains_page(page))
+    }
+
+    pub(crate) fn merge_lazy_file_vma_perm(&mut self,
+                                           start : VirtAddr,
+                                           end : VirtAddr,
+                                           perm : PagePerm)
+                                           -> MmResult<()> {
+        let mut next = Vec::new();
+        for vma in self.lazy_file_vmas.drain(..) {
+            if !vma.overlaps(start, end) {
+                next.push(vma);
+                continue;
+            }
+            if start.0 > vma.start.0 {
+                next.push(LazyFileVma { start : vma.start,
+                                        end : start,
+                                        perm : vma.perm,
+                                        file_offset : vma.file_offset,
+                                        file_size : vma.file_size,
+                                        loader : vma.loader
+                                                    .duplicate_box()? });
+            }
+            let mid_start = VirtAddr(core::cmp::max(start.0, vma.start.0));
+            let mid_end = VirtAddr(core::cmp::min(end.0, vma.end.0));
+            next.push(LazyFileVma { start : mid_start,
+                                    end : mid_end,
+                                    perm : vma.perm | perm,
+                                    file_offset : vma.file_offset + (mid_start.0 - vma.start.0),
+                                    file_size : vma.file_size,
+                                    loader : vma.loader
+                                                .duplicate_box()? });
+            if end.0 < vma.end.0 {
+                next.push(LazyFileVma { start : end,
+                                        end : vma.end,
+                                        perm : vma.perm,
+                                        file_offset : vma.file_offset + (end.0 - vma.start.0),
+                                        file_size : vma.file_size,
+                                        loader : vma.loader });
+            }
+        }
+        self.lazy_file_vmas = next;
+        Ok(())
+    }
+
     pub(crate) fn shared_anon_vma_overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
         self.shared_anon_vmas.iter()
                              .any(|vma| vma.overlaps(start, end))

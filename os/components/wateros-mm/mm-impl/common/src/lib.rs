@@ -12,6 +12,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use api_v0::addr::{PhysPageNum, VirtAddr, VirtPageNum, PAGE_SIZE};
+use core::cmp;
 use api_v0::address_space::AddressSpaceOps;
 use api_v0::error::{MmError, MmResult};
 use api_v0::executable;
@@ -31,6 +32,65 @@ impl DemandPageLoader for ZeroAnonLoader {
     fn duplicate_box(&self) -> MmResult<Box<dyn DemandPageLoader>> { Ok(Box::new(ZeroAnonLoader)) }
 
     fn load_page(&mut self, _file_offset : usize, _dst : &mut [u8]) -> MmResult<()> { Ok(()) }
+}
+
+/// PT_LOAD 惰性缺页：按页从 ELF 文件区间填充 `dst`（段前/BSS 由调用方预先清零）。
+pub fn fill_elf_load_page<F>(vbase : usize,
+                             p_offset : usize,
+                             filesz : usize,
+                             page_va : usize,
+                             dst : &mut [u8],
+                             mut read_file : F)
+                             -> MmResult<()>
+    where F : FnMut(usize, &mut [u8]) -> MmResult<()>
+{
+    let page_end = page_va.checked_add(dst.len())
+                          .ok_or(MmError::InvalidAddress)?;
+    let file_end_va = vbase.checked_add(filesz)
+                           .ok_or(MmError::InvalidAddress)?;
+    let seg_start = cmp::max(page_va, vbase);
+    let seg_end = cmp::min(page_end, file_end_va);
+    if seg_start >= seg_end {
+        return Ok(());
+    }
+    let dst_off = seg_start - page_va;
+    let rel = seg_start.checked_sub(vbase)
+                       .ok_or(MmError::InvalidAddress)?;
+    let len = seg_end - seg_start;
+    let file_pos = p_offset.checked_add(rel)
+                           .ok_or(MmError::InvalidAddress)?;
+    read_file(file_pos, &mut dst[dst_off..dst_off + len])
+}
+
+/// execve lazy map 登记 VMA 时的段参数（供各 arch `kernel_elf` 构造 loader）。
+#[derive(Clone, Debug)]
+pub struct ElfSegmentLoadParams {
+    pub vbase : usize,
+    pub p_offset : usize,
+    pub filesz : usize,
+    pub vma_start : usize,
+    pub vma_file_origin : usize,
+}
+
+impl ElfSegmentLoadParams {
+    pub fn page_va_from_file_offset(&self, file_offset : usize) -> usize {
+        self.vma_start + file_offset.saturating_sub(self.vma_file_origin)
+    }
+
+    pub fn fill_page<F>(&self,
+                        file_offset : usize,
+                        dst : &mut [u8],
+                        read_file : F)
+                        -> MmResult<()>
+        where F : FnMut(usize, &mut [u8]) -> MmResult<()>
+    {
+        fill_elf_load_page(self.vbase,
+                           self.p_offset,
+                           self.filesz,
+                           self.page_va_from_file_offset(file_offset),
+                           dst,
+                           read_file)
+    }
 }
 
 /// ELF program header type for loadable segments.

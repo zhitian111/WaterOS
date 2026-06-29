@@ -14,13 +14,15 @@ use core::cmp;
 
 use api_v0::addr::{VirtAddr, VirtPageNum, PAGE_SIZE};
 use api_v0::address_space::AddressSpaceOps;
-use api_v0::error::MmError;
+use api_v0::error::{MmError, MmResult};
 use api_v0::kernel_bringup::{LoadElfError, LoadedElf, RootVolumeReadError};
+use api_v0::mmap::{DemandPageLoader, PageFaultAccess};
 use api_v0::perm::PagePerm;
 use frame_alloctor::frame_alloc_result;
 #[cfg(not(feature = "vfs-root-read"))]
 use fs::api::{FsError, SharedFs};
-use impl_common::{entry_file_offset, finalize_elf_read, rd_u16, rd_u32, rd_u64, PT_LOAD};
+use impl_common::{entry_file_offset, finalize_elf_read, rd_u16, rd_u32, rd_u64, ElfSegmentLoadParams,
+                  PT_LOAD};
 
 use crate::pagetable::Sv39AddressSpace;
 
@@ -571,7 +573,7 @@ fn verify_mapped_entry(aspace : &Sv39AddressSpace,
 }
 
 /// 从文件路径验证 entry 处指令（4 字节）。
-fn verify_mapped_entry_from_path_at(aspace : &Sv39AddressSpace,
+fn verify_mapped_entry_from_path_at(aspace : &mut Sv39AddressSpace,
                                     path : &str,
                                     entry_pc : usize,
                                     phdrs : &[u8],
@@ -579,6 +581,8 @@ fn verify_mapped_entry_from_path_at(aspace : &Sv39AddressSpace,
                                     e_phnum : usize,
                                     load_bias : usize)
                                     -> Result<(), LoadElfError> {
+    #[cfg(feature = "elf-lazy-map")]
+    prefault_elf_entry_page(aspace, entry_pc)?;
     let fo = entry_file_offset_from_phdrs(phdrs,
                                           e_phentsize,
                                           e_phnum,
@@ -597,7 +601,7 @@ fn verify_mapped_entry_from_path_at(aspace : &Sv39AddressSpace,
     Ok(())
 }
 
-fn verify_mapped_entry_from_path(aspace : &Sv39AddressSpace,
+fn verify_mapped_entry_from_path(aspace : &mut Sv39AddressSpace,
                                  path : &str,
                                  entry_pc : usize,
                                  phdrs : &[u8],
@@ -611,6 +615,27 @@ fn verify_mapped_entry_from_path(aspace : &Sv39AddressSpace,
                                      e_phentsize,
                                      e_phnum,
                                      0)
+}
+
+#[cfg(feature = "elf-lazy-map")]
+fn prefault_elf_entry_page(aspace : &mut Sv39AddressSpace, entry_pc : usize) -> Result<(), LoadElfError> {
+    use frame_alloctor::GlobalPhysFrameAllocator;
+
+    let page = VirtAddr(entry_pc).floor_page()
+                                 .start_addr();
+    if aspace.translate_addr(page)
+              .map_err(LoadElfError::Mm)?
+              .is_some()
+    {
+        return Ok(());
+    }
+    let mut allocator = GlobalPhysFrameAllocator;
+    if !aspace.handle_lazy_page_fault(&mut allocator, page, PageFaultAccess::Execute)
+              .map_err(LoadElfError::Mm)?
+    {
+        return Err(LoadElfError::Parse);
+    }
+    Ok(())
 }
 
 fn entry_file_offset_from_phdrs(phdrs : &[u8],
@@ -722,7 +747,7 @@ pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
                             VirtAddr(ELF_STACK_TOP + PAGE_SIZE));
 
     // 使用 path-based 验证
-    verify_mapped_entry_from_path(&aspace,
+    verify_mapped_entry_from_path(&mut aspace,
                                   path,
                                   e_entry,
                                   &phdrs,
@@ -747,7 +772,7 @@ pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
         interp_base = RISCV64_INTERP_BASE;
         entry_pc = RISCV64_INTERP_BASE.checked_add(interp_ehdr.entry)
                                       .ok_or(LoadElfError::Parse)?;
-        verify_mapped_entry_from_path_at(&aspace,
+        verify_mapped_entry_from_path_at(&mut aspace,
                                          interp_path.as_str(),
                                          entry_pc,
                                          &interp_ehdr.phdrs,
@@ -841,8 +866,150 @@ fn read_interp_path_from_phdrs(path : &str,
     Ok(None)
 }
 
+struct ElfPathSegmentLoader {
+    path : String,
+    params : ElfSegmentLoadParams,
+}
+
+impl ElfPathSegmentLoader {
+    fn new(path : &str, vbase : usize, p_offset : usize, filesz : usize, vma_start : usize) -> Self {
+        let vma_file_origin = p_offset.saturating_sub(vbase.saturating_sub(vma_start));
+        Self { path : String::from(path),
+               params : ElfSegmentLoadParams { vbase,
+                                               p_offset,
+                                               filesz,
+                                               vma_start,
+                                               vma_file_origin } }
+    }
+}
+
+impl DemandPageLoader for ElfPathSegmentLoader {
+    fn duplicate_box(&self) -> MmResult<Box<dyn DemandPageLoader>> {
+        Ok(Box::new(Self { path : self.path.clone(),
+                           params : self.params.clone() }))
+    }
+
+    fn load_page(&mut self, file_offset : usize, dst : &mut [u8]) -> MmResult<()> {
+        self.params
+            .fill_page(file_offset, dst, |pos, buf| {
+                read_path_exact(&self.path, pos as u64, buf).map_err(|_| MmError::AccessViolation)
+            })
+    }
+}
+
+fn register_lazy_segment_run(aspace : &mut Sv39AddressSpace,
+                             path : &str,
+                             run_start : VirtAddr,
+                             run_end : VirtAddr,
+                             vbase : usize,
+                             p_offset : usize,
+                             filesz : usize,
+                             perm : PagePerm)
+                             -> Result<(), LoadElfError> {
+    let vma_file_origin = p_offset.checked_sub(vbase.saturating_sub(run_start.0))
+                                  .ok_or(LoadElfError::Parse)?;
+    let vma_file_size = filesz.checked_add(vbase.saturating_sub(run_start.0))
+                              .ok_or(LoadElfError::Parse)?;
+    let loader = Box::new(ElfPathSegmentLoader::new(path,
+                                                    vbase,
+                                                    p_offset,
+                                                    filesz,
+                                                    run_start.0));
+    aspace.register_lazy_file_vma(run_start,
+                                  run_end,
+                                  perm,
+                                  vma_file_origin,
+                                  vma_file_size,
+                                  loader)
+          .map_err(LoadElfError::Mm)
+}
+
+#[cfg(feature = "elf-lazy-map")]
+fn map_segment_from_path_lazy(aspace : &mut Sv39AddressSpace,
+                              path : &str,
+                              p_vaddr : u64,
+                              p_offset : u64,
+                              p_filesz : u64,
+                              p_memsz : u64,
+                              perm : PagePerm)
+                              -> Result<(), LoadElfError> {
+    let vbase = p_vaddr as usize;
+    let memsz = p_memsz as usize;
+    let filesz = p_filesz as usize;
+    if memsz == 0 {
+        return Ok(());
+    }
+    if filesz > memsz {
+        return Err(LoadElfError::Parse);
+    }
+    let fo = p_offset as usize;
+    let va_start = VirtAddr(vbase);
+    let va_end = VirtAddr(vbase.checked_add(memsz)
+                               .ok_or(LoadElfError::Parse)?);
+    let mut vpn = va_start.floor_page();
+    let vpn_end = va_end.ceil_page();
+    let mut lazy_run_start : Option<VirtAddr> = None;
+
+    while vpn.0 < vpn_end.0 {
+        let page_va = vpn.start_addr();
+        let page_end = VirtAddr(page_va.0 + PAGE_SIZE);
+
+        if let Some(run_start) = lazy_run_start {
+            if aspace.translate_addr(page_va)
+                      .map_err(LoadElfError::Mm)?
+                      .is_some() ||
+               aspace.lazy_vma_contains(page_va)
+            {
+                register_lazy_segment_run(aspace,
+                                          path,
+                                          run_start,
+                                          page_va,
+                                          vbase,
+                                          fo,
+                                          filesz,
+                                          perm)?;
+                lazy_run_start = None;
+            }
+        }
+
+        if let Some(_pa) = aspace.translate_addr(page_va)
+                                 .map_err(LoadElfError::Mm)?
+        {
+            let old = aspace.leaf_page_perm(vpn)
+                            .map_err(LoadElfError::Mm)?
+                            .unwrap_or(PagePerm::empty());
+            if !old.user() {
+                return Err(LoadElfError::Parse);
+            }
+            let merged = old | perm;
+            aspace.protect_page(vpn, merged)
+                  .map_err(LoadElfError::Mm)?;
+        } else if aspace.lazy_vma_contains(page_va) {
+            aspace.merge_lazy_file_vma_perm(page_va, page_end, perm)
+                  .map_err(LoadElfError::Mm)?;
+        } else if lazy_run_start.is_none() {
+            lazy_run_start = Some(page_va);
+        }
+
+        vpn = VirtPageNum(vpn.0 + 1);
+    }
+
+    if let Some(run_start) = lazy_run_start {
+        register_lazy_segment_run(aspace,
+                                  path,
+                                  run_start,
+                                  vpn_end.start_addr(),
+                                  vbase,
+                                  fo,
+                                  filesz,
+                                  perm)?;
+    }
+    Ok(())
+}
+
 /// 从文件系统路径映射 PT_LOAD 段（单段），避免整文件读取。
-fn map_segment_from_path<A : AddressSpaceOps>(aspace : &mut A,
+#[cfg(not(feature = "elf-lazy-map"))]
+fn map_segment_from_path_eager<A : AddressSpaceOps>(aspace : &mut A,
                                               path : &str,
                                               p_vaddr : u64,
                                               p_offset : u64,
@@ -927,8 +1094,38 @@ fn map_segment_from_path<A : AddressSpaceOps>(aspace : &mut A,
     Ok(())
 }
 
+fn map_segment_from_path(aspace : &mut Sv39AddressSpace,
+                         path : &str,
+                         p_vaddr : u64,
+                         p_offset : u64,
+                         p_filesz : u64,
+                         p_memsz : u64,
+                         perm : PagePerm)
+                         -> Result<(), LoadElfError> {
+    #[cfg(feature = "elf-lazy-map")]
+    {
+        return map_segment_from_path_lazy(aspace,
+                                          path,
+                                          p_vaddr,
+                                          p_offset,
+                                          p_filesz,
+                                          p_memsz,
+                                          perm);
+    }
+    #[cfg(not(feature = "elf-lazy-map"))]
+    {
+        map_segment_from_path_eager(aspace,
+                                    path,
+                                    p_vaddr,
+                                    p_offset,
+                                    p_filesz,
+                                    p_memsz,
+                                    perm)
+    }
+}
+
 /// 从文件系统路径映射所有 PT_LOAD 段。
-fn map_load_segments_from_path_at<A : AddressSpaceOps>(aspace : &mut A,
+fn map_load_segments_from_path_at(aspace : &mut Sv39AddressSpace,
                                                        path : &str,
                                                        phdrs : &[u8],
                                                        e_phentsize : usize,
