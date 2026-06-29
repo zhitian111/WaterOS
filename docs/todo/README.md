@@ -6,6 +6,8 @@
 
 **实施进度**：[`perf-risk-assessment.md`](./perf-risk-assessment.md) 第 1 层低风险共 11 项（H-3 覆盖 H-10）已于 2026-06-28 在 worktree `perf-low-risk-8d52acf0` 完成代码落地与 QEMU 回归；**尚未合入主仓库**。第 2 层及以下仍为待办分析与方案。
 
+> **最新（v2，数据驱动）**：[`perf-baseline-gap-report.md`](./perf-baseline-gap-report.md) 基于评测平台 `score.txt` 实测结果，分析「为什么大量样例只到 baseline（score=1.0）而拿不到额外分」。**先看这份**——它给出了评分规则（`score = max(1.0, 比值)`，接近 baseline 不得分）、按可恢复分值排序的得分缺口地图（含 **LA-musl LTP 整套 0 分 ≈ 568 分** 的最大缺口、**块缓存在两架构均未启用**、**context switch 计 0** 等关键事实）与翻线优先级。本目录其余文档（按子系统枚举热点）作为其交叉索引。
+
 ## 事实来源
 
 - **代码静态链路分析**（riscv64 + loongarch64 双架构），由多个子任务并行完成：
