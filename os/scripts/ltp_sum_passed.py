@@ -72,7 +72,7 @@ def main() -> int:
         print(f"passed 合计:      {stats['passed_sum']}")
         print(f"单块 passed 最大: {stats['passed_max']}")
         print(f"RUN LTP CASE:     {stats['run_cases']} (唯一 {stats['unique_run_cases']})")
-        print(f"TPASS: 行数:      {stats['tpass_lines']}  （计分常用此指标）")
+        print(f"TPASS: 行数:      {stats['tpass_lines']}  （仅供参考；官方计分见 passed 合计）")
         print()
         for k in grand:
             if k == "unique_run_cases":
@@ -84,7 +84,7 @@ def main() -> int:
         print(f"Summary 块数:     {grand['summary_blocks']}")
         print(f"passed 合计:      {grand['passed_sum']}")
         print(f"RUN LTP CASE:     {grand['run_cases']}")
-        print(f"TPASS: 行数:      {grand['tpass_lines']}")
+        print(f"TPASS: 行数:      {grand['tpass_lines']}  （仅供参考）")
 
     return 0
 
