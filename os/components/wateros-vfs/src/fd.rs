@@ -91,11 +91,29 @@ pub fn alloc_fd(handle : Box<dyn VfsIoHandle>) -> VfsResult<usize> {
     with_current_task(|reg, task_id| reg.alloc_fd_for_task(task_id, handle))
 }
 
+// 本方法代码由AI完成
+fn release_locks_for_current_process(handle : &(dyn VfsIoHandle + '_)) {
+    let Some(pid) = task::current_process_task_snapshot().map(|snap| snap.pid) else {
+        return;
+    };
+    let Ok(meta) = handle.metadata() else {
+        return;
+    };
+    let Some(key) = inode_key_from_metadata(&meta) else {
+        return;
+    };
+    release_process_inode_locks(pid, &key);
+    if let Some(owner) = handle.flock_owner_id() {
+        release_flock_owner(&key, owner);
+    }
+}
+
 /// 关闭当前任务的 fd（调用句柄 `close`）。
 #[inline]
 pub fn close_fd(fd : usize) -> VfsResult<()> {
     let task_id = current_task_id()?;
     let mut handle = with_fd_registry(|reg| reg.take_fd_for_close(task_id, fd))?;
+    release_locks_for_current_process(handle.as_ref());
     handle.close()
 }
 
@@ -105,6 +123,7 @@ pub fn close_fd_range(first : usize, last : usize) -> VfsResult<Vec<usize>> {
     let handles = with_fd_registry(|reg| reg.take_fd_range_for_close(task_id, first, last))?;
     let mut closed = Vec::new();
     for (fd, mut handle) in handles {
+        release_locks_for_current_process(handle.as_ref());
         handle.close()?;
         closed.push(fd);
     }
@@ -181,7 +200,7 @@ pub fn set_path_only_fd(fd : usize) -> VfsResult<()> {
 }
 
 pub use impl_fd_session::file_lock::{
-    flock_op, inherit_process_locks, inode_key_from_metadata, posix_getlk, posix_setlk,
+    flock_op, inode_key_from_metadata, posix_getlk, posix_setlk, release_flock_owner,
     release_process_inode_locks, Flock, F_RDLCK, F_UNLCK, F_WRLCK, InodeKey, LOCK_EX, LOCK_NB,
     LOCK_SH, LOCK_UN,
 };

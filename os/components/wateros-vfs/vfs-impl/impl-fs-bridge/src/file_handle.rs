@@ -6,6 +6,7 @@ extern crate alloc;
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::mount_table::{resolve_route, FsRoute};
 use crate::{replace_file_contents, FsBridge};
@@ -13,6 +14,11 @@ use api_v0::{
     SingleRootReadView, VfsError, VfsIoHandle, VfsMetadata, VfsNodeType, VfsOpenFlags, VfsResult,
     VfsSeekWhence,
 };
+
+const S_IFMT: u16 = 0o170000;
+const S_IFCHR: u16 = 0o020000;
+
+static NEXT_FLOCK_OWNER_ID : AtomicU64 = AtomicU64::new(1);
 
 /// 已打开的根卷普通文件（小文件：全文缓冲于内存）。
 #[derive(Clone)]
@@ -24,6 +30,7 @@ pub struct BufferedFileHandle {
     meta : VfsMetadata,
     writable : bool,
     dirty : bool,
+    flock_owner_id : u64,
 }
 
 /// 与历史命名兼容的别名。
@@ -82,7 +89,8 @@ impl BufferedFileHandle {
                   offset,
                   meta,
                   writable : want_write,
-                  dirty })
+                  dirty,
+                  flock_owner_id : NEXT_FLOCK_OWNER_ID.fetch_add(1, Ordering::Relaxed) })
     }
 
 // 本方法代码由AI完成
@@ -155,7 +163,10 @@ impl VfsIoHandle for BufferedFileHandle {
 
 // 本方法代码由AI完成
     fn metadata(&self) -> VfsResult<VfsMetadata> {
-        let mut m = self.meta.clone();
+        let mut m = match FsBridge.metadata(self.path.as_str()) {
+            Ok(meta) => meta,
+            Err(_) => self.meta.clone(),
+        };
         m.size = self.data.len() as u64;
         Ok(m)
     }
@@ -163,6 +174,20 @@ impl VfsIoHandle for BufferedFileHandle {
 // 本方法代码由AI完成
     fn backing_path(&self) -> Option<&str> {
         Some(self.path.as_str())
+    }
+
+// 本方法代码由AI完成
+    fn flock_owner_id(&self) -> Option<u64> {
+        Some(self.flock_owner_id)
+    }
+
+// 本方法代码由AI完成
+    fn open_accmode(&self) -> u32 {
+        if self.writable {
+            2
+        } else {
+            0
+        }
     }
 
 // 本方法代码由AI完成
@@ -310,6 +335,14 @@ impl FsBridge {
         if let Ok(dev) = fs::devfs::active_impl::lookup_character_device(abs.as_str()) {
             return Ok(Box::new(impl_fd_session::CharDevHandle::from_devfs_path(dev,
                                                                                abs.as_str())));
+        }
+        if let Ok(meta) = self.metadata(abs.as_str()) {
+            if meta.node_type == VfsNodeType::Special && meta.mode & S_IFMT == S_IFCHR {
+                return Ok(Box::new(impl_fd_session::NullDeviceHandle));
+            }
+            if meta.node_type == VfsNodeType::Directory && !flags.contains(VfsOpenFlags::WRITE) {
+                return super::dir_handle::DirectoryHandle::open(self, abs);
+            }
         }
         if flags.contains(VfsOpenFlags::DIRECTORY) {
             return super::dir_handle::DirectoryHandle::open(self, abs);

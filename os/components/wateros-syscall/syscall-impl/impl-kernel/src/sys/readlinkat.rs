@@ -35,6 +35,10 @@ pub(crate) fn sys_readlinkat(args: SyscallArgs) -> UserRet {
         Err(e) => return UserRet::from_error(e),
     };
 
+    if path.is_empty() {
+        return readlinkat_empty_path(dirfd, buf_ptr, bufsiz);
+    }
+
     if path == PROC_SELF_EXE || path == PROC_THREAD_SELF_EXE {
         return read_current_exe(buf_ptr, bufsiz);
     }
@@ -104,6 +108,29 @@ fn resolve_readlink_prefix_symlinks(path: &str) -> Result<String, ErrNo> {
         return Ok(current);
     }
     Err(ErrNo::ELOOP)
+}
+
+fn readlinkat_empty_path(dirfd: isize, buf_ptr: usize, bufsiz: usize) -> UserRet {
+    if dirfd < 0 {
+        return UserRet::from_error(ErrNo::EBADF);
+    }
+
+    let path = match vfs::fd::with_current_io(dirfd as usize, |handle| {
+        let meta = handle.metadata()?;
+        if meta.node_type != VfsNodeType::Symlink {
+            return Err(VfsError::Unsupported);
+        }
+        handle
+            .backing_path()
+            .map(String::from)
+            .ok_or(VfsError::Unsupported)
+    }) {
+        Ok(path) => path,
+        Err(VfsError::Unsupported) => return UserRet::from_error(ErrNo::EINVAL),
+        Err(e) => return UserRet::from_error(vfs_error_to_errno(e)),
+    };
+
+    read_symlink_target(path.as_str(), buf_ptr, bufsiz)
 }
 
 fn append_component(path: &mut String, component: &str) {

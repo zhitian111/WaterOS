@@ -60,6 +60,8 @@ impl ErrNo {
     pub const EBUSY: Self = Self(16);
     /// 文件已存在。
     pub const EEXIST: Self = Self(17);
+    /// 跨设备链接。
+    pub const EXDEV: Self = Self(18);
     /// 参数无效。
     pub const EINVAL: Self = Self(22);
     /// 设备上无剩余空间；cgroup cpuset 无可用 cpus/mems 时 attach 也返回此错误。
@@ -86,6 +88,8 @@ impl ErrNo {
     pub const EROFS: Self = Self(30);
     /// 管道破裂。
     pub const EPIPE: Self = Self(32);
+    /// 文件过大。
+    pub const EFBIG: Self = Self(27);
     /// 操作不被支持（socket 等场景）。
     pub const EOPNOTSUPP: Self = Self(95);
     /// 协议不支持。

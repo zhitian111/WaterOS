@@ -150,6 +150,9 @@ fn write_fd(fd : usize, buf : &[u8]) -> Result<usize, ErrNo> {
             Err(_) => Err(ErrNo::ENOTSOCK),
         };
     }
+    if vfs::fd::is_path_only_fd(fd).map_err(vfs_error_to_errno)? {
+        return Err(ErrNo::EBADF);
+    }
     vfs::fd::with_current_io(fd, |handle| handle.write(buf)).map_err(vfs_error_to_errno)
 }
 

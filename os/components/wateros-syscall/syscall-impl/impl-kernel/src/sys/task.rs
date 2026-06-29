@@ -1616,6 +1616,10 @@ pub(crate) fn sys_umask(args : SyscallArgs) -> UserRet {
     UserRet::from_success(old_mask)
 }
 
+pub(crate) fn current_umask() -> u32 {
+    (CURRENT_UMASK.load(Ordering::SeqCst) as u32) & 0o777
+}
+
 /// `prlimit64(pid, resource, new_limit, old_limit)` — 查询/设置当前进程资源限制。
 pub(crate) fn sys_prlimit64(args : SyscallArgs) -> UserRet {
     let pid = args.arg(0);

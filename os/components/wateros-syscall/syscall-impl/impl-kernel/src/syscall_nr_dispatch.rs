@@ -51,8 +51,12 @@ pub fn dispatch_syscall_by_nr(syscall_nr: usize, syscall_args: SyscallArgs) -> i
             KernelSyscallDispatcher::dispatch_readlinkat(syscall_args),
         n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::FACCESSAT.raw() =>
             KernelSyscallDispatcher::dispatch_faccessat(syscall_args),
+        n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::FCHMOD.raw() =>
+            KernelSyscallDispatcher::dispatch_fchmod(syscall_args),
         n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::FCHMODAT.raw() =>
             KernelSyscallDispatcher::dispatch_fchmodat(syscall_args),
+        n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::FCHOWN.raw() =>
+            KernelSyscallDispatcher::dispatch_fchown(syscall_args),
         n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::FCHOWNAT.raw() =>
             KernelSyscallDispatcher::dispatch_fchownat(syscall_args),
         n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::STATFS.raw() =>
@@ -97,6 +101,8 @@ pub fn dispatch_syscall_by_nr(syscall_nr: usize, syscall_args: SyscallArgs) -> i
             KernelSyscallDispatcher::dispatch_symlinkat(syscall_args),
         n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::UNLINKAT.raw() =>
             KernelSyscallDispatcher::dispatch_unlinkat(syscall_args),
+        n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::RENAMEAT.raw() =>
+            KernelSyscallDispatcher::dispatch_renameat(syscall_args),
         n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::RENAMEAT2.raw() =>
             KernelSyscallDispatcher::dispatch_renameat2(syscall_args),
         n if n == <ActiveSyscallNumberTable as SyscallNumberTable>::UTIMENSAT.raw() =>

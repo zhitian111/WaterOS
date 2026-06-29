@@ -240,6 +240,31 @@ impl TmpFs {
     }
 
 // 本方法代码由AI完成
+    fn node_inode(node: &TmpNode) -> u64 {
+        match node {
+            TmpNode::File { inode, .. }
+            | TmpNode::Dir { inode, .. }
+            | TmpNode::Symlink { inode, .. } => *inode,
+        }
+    }
+
+// 本方法代码由AI完成
+    fn check_rename_replacement(old_node: &TmpNode, new_node: &TmpNode) -> FsResult<()> {
+        match (old_node, new_node) {
+            (TmpNode::Dir { .. }, TmpNode::Dir { children, .. }) => {
+                if children.is_empty() {
+                    Ok(())
+                } else {
+                    Err(FsError::Exists)
+                }
+            }
+            (TmpNode::Dir { .. }, _) => Err(FsError::Unsupported),
+            (_, TmpNode::Dir { .. }) => Err(FsError::NotAFile),
+            _ => Ok(()),
+        }
+    }
+
+// 本方法代码由AI完成
     fn copy_xattr_list(names: &[String]) -> Vec<u8> {
         let mut out = Vec::new();
         for name in names {
@@ -609,12 +634,27 @@ impl ReadWriteFs for TmpFs {
     fn rename(&mut self, old_path: &str, new_path: &str) -> FsResult<()> {
         let old_parts = Self::split_path(old_path)?;
         let new_parts = Self::split_path(new_path)?;
-        let node = Self::remove_leaf(&mut self.root, &old_parts)?;
-        if Self::dir_ref(&self.root, &new_parts).is_ok() {
-            let _ = Self::insert_leaf(&mut self.root, &old_parts, node);
-            return Err(FsError::Exists);
+        if new_parts.len() > old_parts.len() && new_parts.starts_with(old_parts.as_slice()) {
+            return Err(FsError::InvalidPath);
         }
-        Self::insert_leaf(&mut self.root, &new_parts, node)
+        let old_node = Self::dir_ref(&self.root, &old_parts)?;
+        if let Ok(existing) = Self::dir_ref(&self.root, &new_parts) {
+            if Self::node_inode(old_node) == Self::node_inode(existing) {
+                return Ok(());
+            }
+            Self::check_rename_replacement(old_node, existing)?;
+        }
+        let node = Self::remove_leaf(&mut self.root, &old_parts)?;
+        let (children, name) = match Self::parent_dir_mut(&mut self.root, &new_parts) {
+            Ok(parent) => parent,
+            Err(err) => {
+                let _ = Self::insert_leaf(&mut self.root, &old_parts, node);
+                return Err(err);
+            }
+        };
+        children.remove(name);
+        children.insert(String::from(name), node);
+        Ok(())
     }
 
 // 本方法代码由AI完成

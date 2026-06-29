@@ -62,8 +62,8 @@ struct PosixLock {
 
 // 本结构代码由AI完成
 struct FlockState {
-    shared_holders: Vec<ProcessId>,
-    exclusive: Option<ProcessId>,
+    shared_holders: Vec<u64>,
+    exclusive: Option<u64>,
 }
 
 impl FlockState {
@@ -76,11 +76,11 @@ impl FlockState {
     }
 
 // 本方法代码由AI完成
-    fn clear_pid(&mut self, pid: ProcessId) {
-        if self.exclusive == Some(pid) {
+    fn clear_owner(&mut self, owner: u64) {
+        if self.exclusive == Some(owner) {
             self.exclusive = None;
         }
-        self.shared_holders.retain(|p| *p != pid);
+        self.shared_holders.retain(|p| *p != owner);
     }
 }
 
@@ -378,7 +378,7 @@ pub fn posix_getlk(
             .flock
             .exclusive
             .or_else(|| data.flock.shared_holders.first().copied())
-            .map(|p| p.0 as i32)
+            .map(|p| p as i32)
             .unwrap_or(0);
         return Ok(());
     }
@@ -456,7 +456,7 @@ pub fn posix_setlk(
 
 /// `flock(2)`。
 // 本方法代码由AI完成
-pub fn flock_op(key: &InodeKey, pid: ProcessId, operation: usize) -> VfsResult<()> {
+pub fn flock_op(key: &InodeKey, pid: ProcessId, owner: u64, operation: usize) -> VfsResult<()> {
     let nonblocking = (operation & LOCK_NB) != 0;
     let op = operation & !LOCK_NB;
 
@@ -471,35 +471,35 @@ pub fn flock_op(key: &InodeKey, pid: ProcessId, operation: usize) -> VfsResult<(
             let mut data = locks.data.lock();
             match op {
                 LOCK_UN => {
-                    data.flock.clear_pid(pid);
+                    data.flock.clear_owner(owner);
                     false
                 }
                 LOCK_SH => {
-                    if data.flock.exclusive.is_some() && data.flock.exclusive != Some(pid) {
+                    if data.flock.exclusive.is_some() && data.flock.exclusive != Some(owner) {
                         true
                     } else if posix_blocks_flock(&data.posix, pid, LOCK_SH) {
                         true
                     } else {
-                        if !data.flock.shared_holders.iter().any(|p| *p == pid) {
-                            data.flock.shared_holders.push(pid);
+                        if !data.flock.shared_holders.iter().any(|p| *p == owner) {
+                            data.flock.shared_holders.push(owner);
                         }
                         data.flock.exclusive = None;
                         false
                     }
                 }
                 LOCK_EX => {
-                    if data.flock.exclusive.is_some() && data.flock.exclusive != Some(pid) {
+                    if data.flock.exclusive.is_some() && data.flock.exclusive != Some(owner) {
                         true
                     } else if !data.flock.shared_holders.is_empty()
                         && !(data.flock.shared_holders.len() == 1
-                            && data.flock.shared_holders[0] == pid)
+                            && data.flock.shared_holders[0] == owner)
                     {
                         true
                     } else if posix_blocks_flock(&data.posix, pid, LOCK_EX) {
                         true
                     } else {
                         data.flock.shared_holders.clear();
-                        data.flock.exclusive = Some(pid);
+                        data.flock.exclusive = Some(owner);
                         false
                     }
                 }
@@ -520,14 +520,14 @@ pub fn flock_op(key: &InodeKey, pid: ProcessId, operation: usize) -> VfsResult<(
             let data = locks.data.lock();
             match op {
                 LOCK_SH => {
-                    data.flock.exclusive.is_some() && data.flock.exclusive != Some(pid)
+                    data.flock.exclusive.is_some() && data.flock.exclusive != Some(owner)
                         || posix_blocks_flock(&data.posix, pid, LOCK_SH)
                 }
                 LOCK_EX => {
-                    (data.flock.exclusive.is_some() && data.flock.exclusive != Some(pid))
+                    (data.flock.exclusive.is_some() && data.flock.exclusive != Some(owner))
                         || (!data.flock.shared_holders.is_empty()
                             && !(data.flock.shared_holders.len() == 1
-                                && data.flock.shared_holders[0] == pid))
+                                && data.flock.shared_holders[0] == owner))
                         || posix_blocks_flock(&data.posix, pid, LOCK_EX)
                 }
                 _ => false,
@@ -548,31 +548,21 @@ pub fn release_process_inode_locks(pid: ProcessId, key: &InodeKey) {
     {
         let mut data = locks.data.lock();
         data.posix.retain(|lock| lock.pid != pid);
-        data.flock.clear_pid(pid);
     }
     locks.wait.wake_all();
     drop_inode_if_empty(key, &locks);
 }
 
-/// `fork` 后子进程继承父进程持有的全部记录锁与 flock 状态。
+/// 关闭一个打开文件描述时释放其 `flock(2)` 锁。
 // 本方法代码由AI完成
-pub fn inherit_process_locks(parent_pid: ProcessId, child_pid: ProcessId) {
-    let table = LOCK_TABLE.lock();
-    for locks in table.values() {
+pub fn release_flock_owner(key: &InodeKey, owner: u64) {
+    let Some(locks) = LOCK_TABLE.lock().get(key).cloned() else {
+        return;
+    };
+    {
         let mut data = locks.data.lock();
-        let parent_posix: Vec<PosixLock> = data
-            .posix
-            .iter()
-            .filter(|lock| lock.pid == parent_pid)
-            .copied()
-            .collect();
-        for lock in parent_posix {
-            data.posix.push(PosixLock {
-                pid: child_pid,
-                typ: lock.typ,
-                start: lock.start,
-                len: lock.len,
-            });
-        }
+        data.flock.clear_owner(owner);
     }
+    locks.wait.wake_all();
+    drop_inode_if_empty(key, &locks);
 }

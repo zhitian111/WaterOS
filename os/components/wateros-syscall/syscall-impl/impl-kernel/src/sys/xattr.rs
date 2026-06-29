@@ -72,6 +72,9 @@ fn resolve_xattr_path(path_ptr: usize, follow_last: bool) -> Result<alloc::strin
 }
 
 fn path_from_fd(fd: usize) -> Result<alloc::string::String, ErrNo> {
+    if vfs::fd::is_path_only_fd(fd).map_err(vfs_error_to_errno)? {
+        return Err(ErrNo::EBADF);
+    }
     vfs::fd::with_current_io(fd, |handle| {
         handle
             .backing_path()

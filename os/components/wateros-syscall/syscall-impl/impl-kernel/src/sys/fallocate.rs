@@ -15,12 +15,15 @@ const FALLOC_FL_PUNCH_HOLE: u32 = 0x02;
 pub(crate) fn sys_fallocate(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let mode = args.arg(1) as u32;
-    let offset = args.arg(2) as u64;
-    let len = args.arg(3) as u64;
+    let raw_offset = args.arg(2);
+    let raw_len = args.arg(3);
 
-    if len == 0 {
-        return UserRet::from_success(0);
+    if (raw_offset as isize) < 0 || (raw_len as isize) < 0 || raw_len == 0 {
+        return UserRet::from_error(ErrNo::EINVAL);
     }
+
+    let offset = raw_offset as u64;
+    let len = raw_len as u64;
 
     if mode & !(FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE) != 0 {
         return UserRet::from_error(ErrNo::EOPNOTSUPP);
@@ -30,11 +33,18 @@ pub(crate) fn sys_fallocate(args: SyscallArgs) -> UserRet {
     }
 
     let end = match offset.checked_add(len) {
-        Some(end) => end,
+        Some(end) if end <= i64::MAX as u64 => end,
+        Some(_) => return UserRet::from_error(ErrNo::EFBIG),
         None => return UserRet::from_error(ErrNo::EINVAL),
     };
 
     let result = vfs::fd::with_current_io(fd, |handle| -> Result<(), VfsError> {
+        const O_ACCMODE: u32 = 3;
+        const O_RDONLY: u32 = 0;
+        if handle.open_accmode() & O_ACCMODE == O_RDONLY {
+            return Err(VfsError::BadFd);
+        }
+
         if mode & FALLOC_FL_KEEP_SIZE != 0 {
             let meta = handle.metadata()?;
             if meta.size >= end {

@@ -21,7 +21,9 @@ pub enum SyscallKind {
     Sendfile,
     ReadLinkAt,
     FaccessAt,
+    Fchmod,
     Fchmodat,
+    Fchown,
     Fchownat,
     StatFs,
     Sync,
@@ -56,6 +58,7 @@ pub enum SyscallKind {
     MkdirAt,
     SymlinkAt,
     UnlinkAt,
+    RenameAt,
     RenameAt2,
     UtimensAt,
     Mount,
@@ -204,8 +207,12 @@ impl SyscallKind {
             Self::ReadLinkAt
         } else if syscall_nr == T::FACCESSAT.raw() {
             Self::FaccessAt
+        } else if syscall_nr == T::FCHMOD.raw() {
+            Self::Fchmod
         } else if syscall_nr == T::FCHMODAT.raw() {
             Self::Fchmodat
+        } else if syscall_nr == T::FCHOWN.raw() {
+            Self::Fchown
         } else if syscall_nr == T::FCHOWNAT.raw() {
             Self::Fchownat
         } else if syscall_nr == T::STATFS.raw() {
@@ -274,6 +281,8 @@ impl SyscallKind {
             Self::SymlinkAt
         } else if syscall_nr == T::UNLINKAT.raw() {
             Self::UnlinkAt
+        } else if syscall_nr == T::RENAMEAT.raw() {
+            Self::RenameAt
         } else if syscall_nr == T::RENAMEAT2.raw() {
             Self::RenameAt2
         } else if syscall_nr == T::UTIMENSAT.raw() {
@@ -530,7 +539,9 @@ impl SyscallKind {
             Self::Sendfile => "sendfile",
             Self::ReadLinkAt => "readlinkat",
             Self::FaccessAt => "faccessat",
+            Self::Fchmod => "fchmod",
             Self::Fchmodat => "fchmodat",
+            Self::Fchown => "fchown",
             Self::Fchownat => "fchownat",
             Self::StatFs => "statfs",
             Self::Sync => "sync",
@@ -565,6 +576,7 @@ impl SyscallKind {
             Self::MkdirAt => "mkdirat",
             Self::SymlinkAt => "symlinkat",
             Self::UnlinkAt => "unlinkat",
+            Self::RenameAt => "renameat",
             Self::RenameAt2 => "renameat2",
             Self::UtimensAt => "utimensat",
             Self::Mount => "mount",
@@ -926,6 +938,14 @@ pub trait SyscallDispatcher {
         )
     }
 
+    fn dispatch_fchmod(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Fchmod,
+            Self::NumberTable::FCHMOD.raw(),
+            args,
+        )
+    }
+
     fn dispatch_fchmodat(args: SyscallArgs) -> isize {
         Self::dispatch_unsupported(
             SyscallKind::Fchmodat,
@@ -938,6 +958,14 @@ pub trait SyscallDispatcher {
         Self::dispatch_unsupported(
             SyscallKind::Fchownat,
             Self::NumberTable::FCHOWNAT.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_fchown(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::Fchown,
+            Self::NumberTable::FCHOWN.raw(),
             args,
         )
     }
@@ -1210,6 +1238,14 @@ pub trait SyscallDispatcher {
         Self::dispatch_unsupported(
             SyscallKind::RenameAt2,
             Self::NumberTable::RENAMEAT2.raw(),
+            args,
+        )
+    }
+
+    fn dispatch_renameat(args: SyscallArgs) -> isize {
+        Self::dispatch_unsupported(
+            SyscallKind::RenameAt,
+            Self::NumberTable::RENAMEAT.raw(),
             args,
         )
     }
@@ -2075,7 +2111,9 @@ pub trait SyscallDispatcher {
             SyscallKind::Sendfile => Self::dispatch_sendfile(syscall_args),
             SyscallKind::ReadLinkAt => Self::dispatch_readlinkat(syscall_args),
             SyscallKind::FaccessAt => Self::dispatch_faccessat(syscall_args),
+            SyscallKind::Fchmod => Self::dispatch_fchmod(syscall_args),
             SyscallKind::Fchmodat => Self::dispatch_fchmodat(syscall_args),
+            SyscallKind::Fchown => Self::dispatch_fchown(syscall_args),
             SyscallKind::Fchownat => Self::dispatch_fchownat(syscall_args),
             SyscallKind::StatFs => Self::dispatch_statfs(syscall_args),
             SyscallKind::Sync => Self::dispatch_sync(syscall_args),
@@ -2110,6 +2148,7 @@ pub trait SyscallDispatcher {
             SyscallKind::MkdirAt => Self::dispatch_mkdirat(syscall_args),
             SyscallKind::SymlinkAt => Self::dispatch_symlinkat(syscall_args),
             SyscallKind::UnlinkAt => Self::dispatch_unlinkat(syscall_args),
+            SyscallKind::RenameAt => Self::dispatch_renameat(syscall_args),
             SyscallKind::RenameAt2 => Self::dispatch_renameat2(syscall_args),
             SyscallKind::UtimensAt => Self::dispatch_utimensat(syscall_args),
             SyscallKind::Mount => Self::dispatch_mount(syscall_args),

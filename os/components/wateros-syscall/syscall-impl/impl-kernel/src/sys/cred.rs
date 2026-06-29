@@ -117,6 +117,14 @@ pub(crate) fn sys_setuid(args: SyscallArgs) -> UserRet {
         Some(uid) => Uid(uid),
         None => return UserRet::from_error(ErrNo::EINVAL),
     };
+    let current = cred::current_credentials();
+    if current.effective_uid.0 != 0
+        && uid != current.real_uid
+        && uid != current.effective_uid
+        && uid != current.saved_uid
+    {
+        return UserRet::from_error(ErrNo::EPERM);
+    }
     cred::set_uid(uid);
     UserRet::from_success(0)
 }
@@ -127,6 +135,14 @@ pub(crate) fn sys_setgid(args: SyscallArgs) -> UserRet {
         Some(gid) => Gid(gid),
         None => return UserRet::from_error(ErrNo::EINVAL),
     };
+    let current = cred::current_credentials();
+    if current.effective_uid.0 != 0
+        && gid != current.real_gid
+        && gid != current.effective_gid
+        && gid != current.saved_gid
+    {
+        return UserRet::from_error(ErrNo::EPERM);
+    }
     cred::set_gid(gid);
     UserRet::from_success(0)
 }

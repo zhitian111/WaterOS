@@ -88,6 +88,9 @@ const SYS_CLOCK_ADJTIME: usize = 266;
 const SYS_ACCT: usize = 89;
 const SYS_CLOSE_RANGE: usize = 436;
 const SYS_SETGROUPS: usize = 159;
+const SYS_FSTATFS: usize = 44;
+const SYS_LINKAT: usize = 37;
+const SYS_MKNODAT: usize = 33;
 
 // 本方法代码由AI完成
 fn dispatch_syscall_aliases(syscall_nr: usize, args: SyscallArgs) -> isize {
@@ -120,6 +123,15 @@ fn dispatch_syscall_aliases(syscall_nr: usize, args: SyscallArgs) -> isize {
     }
     if syscall_nr == SYS_SETGROUPS {
         return sys::sys_setgroups(args).0;
+    }
+    if syscall_nr == SYS_FSTATFS {
+        return sys::sys_fstatfs(args).0;
+    }
+    if syscall_nr == SYS_LINKAT {
+        return sys::sys_linkat(args).0;
+    }
+    if syscall_nr == SYS_MKNODAT {
+        return sys::sys_mknodat(args).0;
     }
     match syscall_nr {
         5 => return sys::sys_setxattr(args).0,
@@ -265,8 +277,18 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     }
 
     #[inline]
+    fn dispatch_fchmod(args: SyscallArgs) -> isize {
+        sys::sys_fchmod(args).0
+    }
+
+    #[inline]
     fn dispatch_fchmodat(args: SyscallArgs) -> isize {
         sys::sys_fchmodat(args).0
+    }
+
+    #[inline]
+    fn dispatch_fchown(args: SyscallArgs) -> isize {
+        sys::sys_fchown(args).0
     }
 
     #[inline]
@@ -702,6 +724,11 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     #[inline]
     fn dispatch_renameat2(args: SyscallArgs) -> isize {
         sys::sys_renameat2(args).0
+    }
+
+    #[inline]
+    fn dispatch_renameat(args: SyscallArgs) -> isize {
+        sys::sys_renameat(args).0
     }
 
     #[inline]

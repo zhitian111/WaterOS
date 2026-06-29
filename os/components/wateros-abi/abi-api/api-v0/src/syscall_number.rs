@@ -51,8 +51,12 @@ pub trait SyscallNumberTable {
     const READLINKAT: SyscallNumber;
     /// 检查相对目录路径可访问性（`faccessat(2)`）。
     const FACCESSAT: SyscallNumber;
+    /// 修改 fd 对应文件权限（`fchmod(2)`）。
+    const FCHMOD: SyscallNumber;
     /// 相对目录修改路径权限（`fchmodat(2)`）。
     const FCHMODAT: SyscallNumber;
+    /// 修改 fd 对应文件属主/属组（`fchown(2)`）。
+    const FCHOWN: SyscallNumber;
     /// 相对目录修改路径属主/属组（`fchownat(2)`）。
     const FCHOWNAT: SyscallNumber;
     /// 查询路径所在文件系统统计信息（`statfs(2)`）。
@@ -121,6 +125,8 @@ pub trait SyscallNumberTable {
     const SYMLINKAT: SyscallNumber;
     /// 相对目录删除目录项（`unlinkat(2)`）。
     const UNLINKAT: SyscallNumber;
+    /// 相对目录重命名目录项（`renameat(2)`）。
+    const RENAMEAT: SyscallNumber;
     /// 相对目录重命名目录项（`renameat2(2)`）。
     const RENAMEAT2: SyscallNumber;
     /// 相对目录更新时间戳（`utimensat(2)`）。
