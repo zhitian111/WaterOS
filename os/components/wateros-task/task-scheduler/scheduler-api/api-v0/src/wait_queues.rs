@@ -103,6 +103,24 @@ impl WaitQueues {
     /// 当前逻辑 tick。
     pub fn current_tick(&self) -> TaskTick { self.current_tick }
 
+    /// 是否存在已到期的 sleep 或 wait timeout（O(1) 队首探测，不移动元素）。
+    pub fn has_due_timers(&self, registry : &TaskRegistry) -> bool {
+        if self.wait_timeouts
+              .front()
+              .is_some_and(|entry| entry.wake_tick <= self.current_tick)
+        {
+            return true;
+        }
+        self.sleep_queue
+            .front()
+            .is_some_and(|&task_id| {
+                matches!(
+                    registry.state(task_id),
+                    Some(TaskState::Sleeping { wake_tick }) if wake_tick <= self.current_tick
+                )
+            })
+    }
+
     /// 将任务从一切可运行/等待队列中移除（不含 `exited_queue` 与 `ready_queue`）。
     pub fn detach_task_from_run_queues(&mut self, task_id : TaskId) {
         let _ = take_task_id_by_id(&mut self.blocked_queue, task_id);

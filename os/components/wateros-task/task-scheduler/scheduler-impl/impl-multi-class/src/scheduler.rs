@@ -355,15 +355,20 @@ impl MultiClassScheduler {
                                 })
                            .unwrap_or(false);
 
-                self.promote_sleep_and_timeouts();
-
                 let ready_preempts = current.is_some_and(|(current_id, snap)| {
                                                 self.ready_task_should_preempt(current_id, snap)
                                             });
-                if !quantum_expired && !ready_preempts {
+                if quantum_expired || ready_preempts {
+                    self.promote_sleep_and_timeouts();
+                    self.current_task_ticks = 0;
+                } else if self.wait
+                              .has_due_timers(&self.registry)
+                {
+                    self.promote_sleep_and_timeouts();
+                    return None;
+                } else {
                     return None;
                 }
-                self.current_task_ticks = 0;
             }
             ScheduleReason::Sleep(ticks) if ticks == 0 => {
                 return self.schedule(ScheduleReason::Yield);

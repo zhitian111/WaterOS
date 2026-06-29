@@ -146,11 +146,15 @@ impl RoundRobinScheduler {
                 self.current_task_ticks = self.current_task_ticks
                                               .saturating_add(1);
                 if self.current_task_ticks < MAX_TICKS_PER_TASK {
-                    let ready = self.other_ready.ready_queue_mut();
-                    self.wait
-                        .promote_sleeping_tasks(&mut self.registry, ready);
-                    self.wait
-                        .promote_wait_timeouts(&mut self.registry, ready);
+                    if self.wait
+                           .has_due_timers(&self.registry)
+                    {
+                        let ready = self.other_ready.ready_queue_mut();
+                        self.wait
+                            .promote_sleeping_tasks(&mut self.registry, ready);
+                        self.wait
+                            .promote_wait_timeouts(&mut self.registry, ready);
+                    }
                     return None;
                 }
                 self.current_task_ticks = 0;

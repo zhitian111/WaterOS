@@ -4,6 +4,7 @@ extern crate alloc;
 
 use alloc::collections::{BTreeMap, VecDeque};
 use api_v0::{ReadyQueue, ReadyTaskSink};
+use config::task::READY_QUEUE_STALE_COMPACT_THRESHOLD;
 use task_api::{SchedulableCheck, TaskId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,6 +27,8 @@ impl OtherReadyQueue {
 
     pub(super) fn ready_queue_len(&self) -> usize { self.ready_queue.len() }
 
+    pub(super) fn ready_queue_mut(&mut self) -> &mut Self { self }
+
     fn entry_is_live(&self, entry : QueueEntry) -> bool {
         self.versions
             .get(&entry.task_id)
@@ -39,6 +42,23 @@ impl OtherReadyQueue {
                         .or_insert(0);
         *entry = entry.saturating_add(1);
         *entry
+    }
+
+    fn compact_stale_entries(&mut self) {
+        let versions = &self.versions;
+        self.ready_queue
+            .retain(|entry| {
+                versions
+                    .get(&entry.task_id)
+                    .copied()
+                    .is_some_and(|ver| ver == entry.version)
+            });
+    }
+
+    fn stale_compact_threshold(&self) -> usize {
+        READY_QUEUE_STALE_COMPACT_THRESHOLD.max(self.ready_queue
+                                                    .len()
+                                                    / 4)
     }
 
     /// 任务已从 registry 永久移除后回收 `versions` 条目。
@@ -80,12 +100,19 @@ impl ReadyQueue for OtherReadyQueue {
     }
 
     fn pick_next_runnable_task_id(&mut self, check : &impl SchedulableCheck) -> Option<TaskId> {
+        let mut consecutive_stale = 0usize;
         while let Some(entry) = self.ready_queue
                                       .pop_front()
         {
             if !self.entry_is_live(entry) {
+                consecutive_stale = consecutive_stale.saturating_add(1);
+                if consecutive_stale >= self.stale_compact_threshold() {
+                    self.compact_stale_entries();
+                    consecutive_stale = 0;
+                }
                 continue;
             }
+            consecutive_stale = 0;
             if check.is_schedulable(entry.task_id) {
                 return Some(entry.task_id);
             }
@@ -120,6 +147,20 @@ mod tests {
             self.live
                 .contains(&task_id)
         }
+    }
+
+    #[test]
+    fn compact_drops_stale_entries_after_threshold() {
+        let mut q = OtherReadyQueue::new();
+        let check = MockCheck::new(&[1]);
+        for _ in 0..READY_QUEUE_STALE_COMPACT_THRESHOLD + 4 {
+            q.enqueue_ready_task(1);
+            q.detach_ready_task(1);
+        }
+        q.enqueue_ready_task(1);
+        assert!(q.ready_queue_len() > READY_QUEUE_STALE_COMPACT_THRESHOLD);
+        assert_eq!(q.pick_next_runnable_task_id(&check), Some(1));
+        assert!(q.ready_queue_len() <= 2);
     }
 
     #[test]
