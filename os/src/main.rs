@@ -210,9 +210,19 @@ mod qemu_riscv64_opensbi {
                   err);
         } else {
             info!("[self-test] driver init done");
+            warn!("[boot-init] kernel_main -> network::stack::init");
             match driver::network::stack::init([10, 0, 2, 15], [10, 0, 2, 2]) {
                 Ok(()) => {
                     warn!("[boot-init] kernel_main -> spawn network_poller_task (post stack init)");
+                    unsafe {
+                        unsafe extern "C" {
+                            fn wateros_mcs_boot_log_scheduler_ready(tag_ptr : *const u8,
+                                                                    tag_len : usize);
+                        }
+                        const PRE_SPAWN : &[u8] = b"main.pre_spawn";
+                        wateros_mcs_boot_log_scheduler_ready(PRE_SPAWN.as_ptr(),
+                                                             PRE_SPAWN.len());
+                    }
                     task::spawn_kernel_task(network_poller_task, 0);
                     // 同步烟测：在调度器启动前验证核心 API
                     crate::self_tests::network::run_sync_smoke();
