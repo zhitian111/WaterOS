@@ -1,5 +1,6 @@
 //! `openat(2)`：经 VFS 打开 ext4 根卷文件并分配 fd。
 
+//! 本模块代码由AI完成
 extern crate alloc;
 
 use alloc::format;
@@ -31,6 +32,7 @@ const FD_CLOEXEC: usize = 1;
 
 static NEXT_TMPFILE_ID: AtomicU64 = AtomicU64::new(1);
 
+// 本方法代码由AI完成
 pub(crate) fn sys_openat(args : SyscallArgs) -> UserRet {
     cgroup_regression_loop_fast_exit_if_standalone();
 

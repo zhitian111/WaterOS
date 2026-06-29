@@ -1,5 +1,6 @@
 #![no_std]
 //! 内核 syscall 实现：各 `sys_*` 具体语义，并实现 `wateros-syscall-api-v0` 的分发 trait。
+//! 本模块代码由AI完成
 
 extern crate alloc;
 
@@ -74,6 +75,7 @@ pub fn log_thread_bringup_stats_summary() {
 }
 
 /// 聚合 crate feature 选中的内核 syscall 分发器。
+// 本结构代码由AI完成
 pub struct KernelSyscallDispatcher;
 
 const SYS_STATX: usize = 291;
@@ -87,6 +89,7 @@ const SYS_ACCT: usize = 89;
 const SYS_CLOSE_RANGE: usize = 436;
 const SYS_SETGROUPS: usize = 159;
 
+// 本方法代码由AI完成
 fn dispatch_syscall_aliases(syscall_nr: usize, args: SyscallArgs) -> isize {
     if syscall_nr == SYS_FSTATAT {
         return sys::sys_fstatat(args).0;
@@ -137,6 +140,7 @@ fn dispatch_syscall_aliases(syscall_nr: usize, args: SyscallArgs) -> isize {
     abi::user_ret::UserRet::from_error(abi::errno::ErrNo::ENOSYS).0
 }
 
+// 本方法代码由AI完成
 impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
     type NumberTable = ActiveSyscallNumberTable;
 
@@ -973,3 +977,9 @@ impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
 }
 
 include!("syscall_nr_dispatch.rs");
+
+/// bring-up 从根卷删除 LTP 排除用例时读取的 basename 表（与 fast-exit 同表）。
+#[inline]
+pub fn ltp_submit_skip_basenames() -> &'static [&'static str] {
+    sys::ltp_submit_skip_basenames()
+}

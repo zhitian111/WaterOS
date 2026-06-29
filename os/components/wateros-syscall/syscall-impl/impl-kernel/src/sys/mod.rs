@@ -177,4 +177,10 @@ pub(crate) use socketpair::sys_socketpair;
 pub(crate) use sockname::{sys_getpeername, sys_getsockname};
 pub(crate) use sockopt::{sys_getsockopt, sys_setsockopt};
 
+/// bring-up 从根卷删除 LTP 排除用例时读取的 basename 表（与 fast-exit 同表）。
+#[inline]
+pub fn ltp_submit_skip_basenames() -> &'static [&'static str] {
+    ltp_cgroup_helper::ltp_submit_skip_basenames()
+}
+
 pub use bringup_stats::{log_thread_bringup_stats_summary, record_user_page_fault_handled};

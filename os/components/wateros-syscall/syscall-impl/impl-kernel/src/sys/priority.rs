@@ -1,5 +1,6 @@
 //! `setpriority(2)` / `getpriority(2)`：仅维护 per-process nice 变量，不参与调度。
 
+//! 本模块代码由AI完成
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
@@ -84,6 +85,7 @@ fn check_setpermission(which: i32, who: i32, prio: i32) -> Result<(), ErrNo> {
     Ok(())
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_setpriority(args: SyscallArgs) -> UserRet {
     let which = args.arg(0) as i32;
     let who = args.arg(1) as i32;
@@ -124,6 +126,7 @@ pub(crate) fn sys_setpriority(args: SyscallArgs) -> UserRet {
     UserRet::from_success(0)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_getpriority(args: SyscallArgs) -> UserRet {
     let which = args.arg(0) as i32;
     let who = args.arg(1) as i32;

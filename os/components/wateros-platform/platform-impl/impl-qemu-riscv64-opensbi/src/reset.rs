@@ -1,3 +1,4 @@
+//! 本模块代码由AI完成
 //! OpenSBI system reset 后端。
 
 use api_v0::reset::{
@@ -6,6 +7,7 @@ use api_v0::reset::{
 use sbi::{system_reset, ResetReason, ResetType};
 
 /// 映射到 SBI 的复位类型枚举。
+// 本结构代码由AI完成
 pub enum OpenSBIResetType {
     /// 关机。
     Shutdown,
@@ -16,6 +18,7 @@ pub enum OpenSBIResetType {
 }
 
 /// 映射到 SBI 的复位原因枚举。
+// 本结构代码由AI完成
 pub enum OpenSBIResetReason {
     /// 无特定原因。
     NoReason,

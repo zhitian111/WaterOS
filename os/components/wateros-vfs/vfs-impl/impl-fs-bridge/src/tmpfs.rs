@@ -1,4 +1,5 @@
 //! 内存 tmpfs：供 LTP `needs_rofs` 等测例挂载可重载为只读的临时卷。
+//! 本模块代码由AI完成
 
 extern crate alloc;
 
@@ -47,6 +48,7 @@ pub(crate) struct TmpFs {
 }
 
 impl TmpFs {
+// 本方法代码由AI完成
     pub(crate) fn new() -> Self {
         Self {
             root: TmpNode::Dir {
@@ -64,6 +66,7 @@ impl TmpFs {
         }
     }
 
+// 本方法代码由AI完成
     pub(crate) fn new_cgroup(v2: bool, options: &str) -> FsResult<Self> {
         let mut fs = Self::new();
         fs.cgroup_v2 = Some(v2);
@@ -74,6 +77,7 @@ impl TmpFs {
         Ok(fs)
     }
 
+// 本方法代码由AI完成
     fn v1_has_controller(&self, name: &str) -> bool {
         self.cgroup_v1_options.as_ref().is_some_and(|opts| {
             opts.split(',')
@@ -81,6 +85,7 @@ impl TmpFs {
         })
     }
 
+// 本方法代码由AI完成
     fn write_control_file(&mut self, dir_path: &str, name: &str, data: &[u8]) -> FsResult<()> {
         let path = if dir_path == "/" || dir_path.is_empty() {
             alloc::format!("/{name}")
@@ -90,12 +95,14 @@ impl TmpFs {
         self.write_regular_file(path.as_str(), data)
     }
 
+// 本方法代码由AI完成
     fn alloc_inode(&mut self) -> u64 {
         let n = self.next_inode;
         self.next_inode += 1;
         n
     }
 
+// 本方法代码由AI完成
     fn split_path(path: &str) -> FsResult<Vec<&str>> {
         let p = path.trim();
         let p = p.strip_prefix('/').unwrap_or(p);
@@ -105,6 +112,7 @@ impl TmpFs {
         Ok(p.split('/').filter(|s| !s.is_empty() && *s != ".").collect())
     }
 
+// 本方法代码由AI完成
     fn dir_mut<'a>(root: &'a mut TmpNode, parts: &[&str]) -> FsResult<&'a mut TmpNode> {
         let mut node = root;
         for &part in parts {
@@ -116,6 +124,7 @@ impl TmpFs {
         Ok(node)
     }
 
+// 本方法代码由AI完成
     fn dir_ref<'a>(root: &'a TmpNode, parts: &[&str]) -> FsResult<&'a TmpNode> {
         let mut node = root;
         for &part in parts {
@@ -127,6 +136,7 @@ impl TmpFs {
         Ok(node)
     }
 
+// 本方法代码由AI完成
     fn parent_dir_mut<'a>(
         root: &'a mut TmpNode,
         parts: &[&'a str],
@@ -142,6 +152,7 @@ impl TmpFs {
         Ok((children, name))
     }
 
+// 本方法代码由AI完成
     fn meta_of(node: &TmpNode) -> FsMetadata {
         match node {
             TmpNode::File {
@@ -194,6 +205,7 @@ impl TmpFs {
         }
     }
 
+// 本方法代码由AI完成
     fn chown_node(node: &mut TmpNode, uid: Option<u32>, gid: Option<u32>) {
         match node {
             TmpNode::File { uid: u, gid: g, .. }
@@ -209,6 +221,7 @@ impl TmpFs {
         }
     }
 
+// 本方法代码由AI完成
     fn xattrs_mut(node: &mut TmpNode) -> &mut BTreeMap<String, Vec<u8>> {
         match node {
             TmpNode::File { xattrs, .. }
@@ -217,6 +230,7 @@ impl TmpFs {
         }
     }
 
+// 本方法代码由AI完成
     fn xattrs(node: &TmpNode) -> &BTreeMap<String, Vec<u8>> {
         match node {
             TmpNode::File { xattrs, .. }
@@ -225,6 +239,7 @@ impl TmpFs {
         }
     }
 
+// 本方法代码由AI完成
     fn copy_xattr_list(names: &[String]) -> Vec<u8> {
         let mut out = Vec::new();
         for name in names {
@@ -234,11 +249,13 @@ impl TmpFs {
         out
     }
 
+// 本方法代码由AI完成
     fn remove_leaf(root: &mut TmpNode, parts: &[&str]) -> FsResult<TmpNode> {
         let (children, name) = Self::parent_dir_mut(root, parts)?;
         children.remove(name).ok_or(FsError::NotFound)
     }
 
+// 本方法代码由AI完成
     fn insert_leaf(root: &mut TmpNode, parts: &[&str], node: TmpNode) -> FsResult<()> {
         let (children, name) = Self::parent_dir_mut(root, parts)?;
         if children.contains_key(name) {
@@ -248,10 +265,12 @@ impl TmpFs {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn cgroup_v1_base_files() -> &'static [(&'static str, &'static [u8])] {
         &[("tasks", b""), ("notify_on_release", b"0\n")]
     }
 
+// 本方法代码由AI完成
     fn cgroup_v1_cpuset_root_files() -> &'static [(&'static str, &'static [u8])] {
         &[
             ("cgroup.clone_children", b"0\n"),
@@ -266,6 +285,7 @@ impl TmpFs {
         ]
     }
 
+// 本方法代码由AI完成
     fn cgroup_v1_cpuset_child_files() -> &'static [(&'static str, &'static [u8])] {
         &[
             ("cgroup.clone_children", b"0\n"),
@@ -274,6 +294,7 @@ impl TmpFs {
         ]
     }
 
+// 本方法代码由AI完成
     fn cgroup_control_files(v2: bool) -> &'static [(&'static str, &'static [u8])] {
         if v2 {
             &[("cgroup.procs", b""),
@@ -285,6 +306,7 @@ impl TmpFs {
         }
     }
 
+// 本方法代码由AI完成
     fn seed_v1_cgroup_controls(&mut self, dir_path: &str) -> FsResult<()> {
         for (name, data) in Self::cgroup_v1_base_files() {
             self.write_control_file(dir_path, name, data)?;
@@ -304,6 +326,7 @@ impl TmpFs {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn seed_cgroup_controls(&mut self, dir_path: &str) -> FsResult<()> {
         let Some(v2) = self.cgroup_v2 else {
             return Ok(());
@@ -318,6 +341,7 @@ impl TmpFs {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn reject_cpuset_tasks_write_if_needed(&self, _path: &str, _data: &[u8]) -> FsResult<()> {
         // 放行 cgroup cpuset 的 tasks 写入（不再因 cpus/mems 未配置而拒绝 attach）。
         //
@@ -333,6 +357,7 @@ impl TmpFs {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn is_cgroup_control_name(v2: Option<bool>, name: &str) -> bool {
         match v2 {
             Some(true) => Self::cgroup_control_files(true)
@@ -351,19 +376,23 @@ impl TmpFs {
 }
 
 impl ReadWriteFs for TmpFs {
+// 本方法代码由AI完成
     fn mount_rw(&mut self, _device: SharedBlockDevice) -> FsResult<()> {
         self.mounted = true;
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn is_mounted(&self) -> bool {
         self.mounted
     }
 
+// 本方法代码由AI完成
     fn write_regular_file_at_root(&mut self, name: &str, data: &[u8]) -> FsResult<()> {
         self.write_regular_file(alloc::format!("/{name}").as_str(), data)
     }
 
+// 本方法代码由AI完成
     fn write_regular_file(&mut self, path: &str, data: &[u8]) -> FsResult<()> {
         self.reject_cpuset_tasks_write_if_needed(path, data)?;
         let parts = Self::split_path(path)?;
@@ -383,6 +412,7 @@ impl ReadWriteFs for TmpFs {
         Self::insert_leaf(&mut self.root, &parts, node)
     }
 
+// 本方法代码由AI完成
     fn unlink(&mut self, path: &str) -> FsResult<()> {
         let parts = Self::split_path(path)?;
         let (children, name) = Self::parent_dir_mut(&mut self.root, &parts)?;
@@ -394,6 +424,7 @@ impl ReadWriteFs for TmpFs {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn symlink(&mut self, link_path: &str, target: &str) -> FsResult<()> {
         let parts = Self::split_path(link_path)?;
         if parts.is_empty() {
@@ -411,6 +442,7 @@ impl ReadWriteFs for TmpFs {
         Self::insert_leaf(&mut self.root, &parts, node)
     }
 
+// 本方法代码由AI完成
     fn rmdir(&mut self, path: &str) -> FsResult<()> {
         let parts = Self::split_path(path)?;
         let cgroup_v2 = self.cgroup_v2;
@@ -430,6 +462,7 @@ impl ReadWriteFs for TmpFs {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn write_range(&mut self, path: &str, offset: u64, data: &[u8]) -> FsResult<usize> {
         if data.is_empty() {
             return Ok(0);
@@ -451,6 +484,7 @@ impl ReadWriteFs for TmpFs {
         Ok(data.len())
     }
 
+// 本方法代码由AI完成
     fn truncate(&mut self, path: &str, len: u64) -> FsResult<()> {
         let parts = Self::split_path(path)?;
         let node = Self::dir_mut(&mut self.root, &parts)?;
@@ -462,6 +496,7 @@ impl ReadWriteFs for TmpFs {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn mkdir(&mut self, path: &str, mode: u32) -> FsResult<()> {
         let parts = Self::split_path(path)?;
         if parts.is_empty() {
@@ -480,6 +515,7 @@ impl ReadWriteFs for TmpFs {
         self.seed_cgroup_controls(path)
     }
 
+// 本方法代码由AI完成
     fn chmod(&mut self, path: &str, mode: u32) -> FsResult<()> {
         let parts = Self::split_path(path)?;
         let node = Self::dir_mut(&mut self.root, &parts)?;
@@ -497,6 +533,7 @@ impl ReadWriteFs for TmpFs {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn chown(&mut self, path: &str, uid: Option<u32>, gid: Option<u32>) -> FsResult<()> {
         if uid.is_none() && gid.is_none() {
             return self.metadata(path).map(|_| ());
@@ -507,6 +544,7 @@ impl ReadWriteFs for TmpFs {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn setxattr(&mut self, path: &str, name: &str, value: &[u8]) -> FsResult<()> {
         if name.is_empty() || name.contains('\0') {
             return Err(FsError::InvalidPath);
@@ -517,6 +555,7 @@ impl ReadWriteFs for TmpFs {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn getxattr(&self, path: &str, name: &str, buf: &mut [u8]) -> FsResult<usize> {
         if name.is_empty() || name.contains('\0') {
             return Err(FsError::InvalidPath);
@@ -536,6 +575,7 @@ impl ReadWriteFs for TmpFs {
         Ok(value.len())
     }
 
+// 本方法代码由AI完成
     fn listxattr(&self, path: &str, buf: &mut [u8]) -> FsResult<usize> {
         let parts = Self::split_path(path)?;
         let node = Self::dir_ref(&self.root, &parts)?;
@@ -552,6 +592,7 @@ impl ReadWriteFs for TmpFs {
         Ok(listing.len())
     }
 
+// 本方法代码由AI完成
     fn removexattr(&mut self, path: &str, name: &str) -> FsResult<()> {
         if name.is_empty() || name.contains('\0') {
             return Err(FsError::InvalidPath);
@@ -564,6 +605,7 @@ impl ReadWriteFs for TmpFs {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn rename(&mut self, old_path: &str, new_path: &str) -> FsResult<()> {
         let old_parts = Self::split_path(old_path)?;
         let new_parts = Self::split_path(new_path)?;
@@ -575,6 +617,7 @@ impl ReadWriteFs for TmpFs {
         Self::insert_leaf(&mut self.root, &new_parts, node)
     }
 
+// 本方法代码由AI完成
     fn exists(&self, path: &str) -> FsResult<bool> {
         let parts = Self::split_path(path)?;
         if parts.is_empty() {
@@ -583,6 +626,7 @@ impl ReadWriteFs for TmpFs {
         Ok(Self::dir_ref(&self.root, &parts).is_ok())
     }
 
+// 本方法代码由AI完成
     fn metadata(&self, path: &str) -> FsResult<FsMetadata> {
         let parts = Self::split_path(path)?;
         if parts.is_empty() {
@@ -591,6 +635,7 @@ impl ReadWriteFs for TmpFs {
         Ok(Self::meta_of(Self::dir_ref(&self.root, &parts)?))
     }
 
+// 本方法代码由AI完成
     fn read(&self, path: &str) -> FsResult<Vec<u8>> {
         let parts = Self::split_path(path)?;
         let node = Self::dir_ref(&self.root, &parts)?;
@@ -600,6 +645,7 @@ impl ReadWriteFs for TmpFs {
         Ok(data.clone())
     }
 
+// 本方法代码由AI完成
     fn read_symlink(&self, path: &str) -> FsResult<Vec<u8>> {
         let parts = Self::split_path(path)?;
         let node = Self::dir_ref(&self.root, &parts)?;
@@ -609,6 +655,7 @@ impl ReadWriteFs for TmpFs {
         Ok(target.clone())
     }
 
+// 本方法代码由AI完成
     fn read_range(&self, path: &str, offset: u64, buf: &mut [u8]) -> FsResult<usize> {
         if buf.is_empty() {
             return Ok(0);
@@ -627,6 +674,7 @@ impl ReadWriteFs for TmpFs {
         Ok(n)
     }
 
+// 本方法代码由AI完成
     fn read_dir(&self, path: &str) -> FsResult<Vec<FsDirEntry>> {
         let parts = Self::split_path(path)?;
         let node = if parts.is_empty() {

@@ -1,5 +1,6 @@
 //! `ioctl(2)`：优先按 fd 句柄分发；RTC 与 TTY 兼容 fallback。
 
+//! 本模块代码由AI完成
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
@@ -88,6 +89,7 @@ fn tty_char_ioctl(request: u32, argp: usize) -> UserRet {
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_ioctl(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let request = ioctl_req(args.arg(1));

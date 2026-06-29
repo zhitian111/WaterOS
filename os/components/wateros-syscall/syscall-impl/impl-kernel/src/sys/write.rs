@@ -1,5 +1,6 @@
 //! `write(2)`：fd 1/2 走控制台；pipe 写端走 IPC。
 
+//! 本模块代码由AI完成
 extern crate alloc;
 
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -29,6 +30,7 @@ struct UserIoVec {
     len : usize,
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_write(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let ptr = args.arg(1);
@@ -82,6 +84,7 @@ pub(crate) fn sys_write(args : SyscallArgs) -> UserRet {
     ret
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_writev(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let iov_ptr = args.arg(1);

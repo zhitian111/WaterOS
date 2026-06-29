@@ -1,4 +1,5 @@
 //! 用户态可见的 syslog 线格式（traditional）。
+//! 本模块代码由AI完成
 
 use api_v0::KlogRecordMeta;
 
@@ -6,6 +7,7 @@ use api_v0::KlogRecordMeta;
 ///
 /// 返回写入 `out` 的字节数；缓冲不足时截断并仍尽量以 `\n` 结尾。
 #[must_use]
+// 本方法代码由AI完成
 pub fn format_traditional(meta: &KlogRecordMeta, text: &[u8], out: &mut [u8]) -> usize {
     let level_ch = [meta.traditional_level_char()];
     let prefix = [b'<', level_ch[0], b'>'];

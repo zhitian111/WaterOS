@@ -1,5 +1,6 @@
 //! Syscall 内核缓冲的可失败分配，避免 OOM 时触发全局 `alloc_error_handler`。
 
+//! 本模块代码由AI完成
 extern crate alloc;
 
 use alloc::vec::Vec;
@@ -7,9 +8,11 @@ use alloc::vec::Vec;
 use abi::errno::ErrNo;
 
 /// 与 `read`/`write`/`pread` 族 syscall 对齐的上限。
+// 本变量代码由AI完成
 pub const SYSCALL_IO_MAX : usize = 4 * 1024 * 1024;
 
 /// 与 `sendto`/`recvfrom`/`sendmsg` 对齐的上限。
+// 本变量代码由AI完成
 pub const SYSCALL_SOCK_IO_MAX : usize = 64 * 1024;
 
 /// `sched_getaffinity` / `sched_setaffinity` 用户缓冲上界。
@@ -19,6 +22,7 @@ pub const SCHED_CPUSET_MAX : usize = 4096;
 pub const GETDENTS64_MAX : usize = 256 * 1024;
 
 /// 分配长度为 `len` 的零初始化缓冲；`len > max` 返回 `EINVAL`，堆不足返回 `ENOMEM`。
+// 本方法代码由AI完成
 pub fn try_kbuf(len : usize, max : usize) -> Result<Vec<u8>, ErrNo> {
     if len > max {
         return Err(ErrNo::EINVAL);

@@ -1,5 +1,6 @@
 #![no_std]
 //! desc 槽 + 每槽变长正文（上限 `KLOG_MAX_RECORD_BYTES`）的环形 klog 实现。
+//! 本模块代码由AI完成
 
 use api_v0::{
     AppendResult, KlogError, KlogFlags, KlogRecordMeta, KlogRecordView, KlogStats, KlogStore,
@@ -13,6 +14,7 @@ use wateros_base_config::klog::{
     KLOG_DESC_SLOTS, KLOG_MAX_RECORD_BYTES, KLOG_TEXT_RING_BYTES,
 };
 
+// 本结构代码由AI完成
 struct Slot {
     /// 槽是否持有有效记录（被覆盖后置 false）。
     valid: bool,
@@ -22,6 +24,7 @@ struct Slot {
 }
 
 /// 环内部状态（`KlogRingbuf::with` 闭包参数）。
+// 本结构代码由AI完成
 pub struct KlogRingbufInner {
     slots: [Slot; KLOG_DESC_SLOTS],
     head: usize,
@@ -111,6 +114,7 @@ impl KlogRingbufInner {
     }
 
     /// 从 `start_seq` 起按序号升序访问仍存活的记录。
+    // 本方法代码由AI完成
     pub fn iter_from<F>(&self, start_seq: u64, f: &mut F)
     where
         F: FnMut(KlogRecordView<'_>),
@@ -138,6 +142,7 @@ impl KlogRingbufInner {
 }
 
 impl KlogStore for KlogRingbufInner {
+    // 本方法代码由AI完成
     #[inline]
     fn append(&mut self, meta: &mut KlogRecordMeta, text: &[u8]) -> AppendResult {
         let mut flags = KlogFlags(meta.flags);
@@ -215,6 +220,7 @@ impl KlogStore for KlogRingbufInner {
         KLOG_TEXT_RING_BYTES
     }
 
+    // 本方法代码由AI完成
     fn peek_next_unread(&self) -> Result<KlogRecordView<'_>, KlogError> {
         let mut min_unread: Option<u64> = None;
         self.for_each_valid_seq(|seq| {
@@ -252,10 +258,13 @@ impl KlogStore for KlogRingbufInner {
 }
 
 /// 全局内核消息环。
+// 本结构代码由AI完成
 pub struct KlogRingbuf;
 
+// 本变量代码由AI完成
 static KLOG: Mutex<Option<KlogRingbufInner>> = Mutex::new(None);
 
+// 本结构代码由AI完成
 struct KlogInterruptGuard {
     state : ArchInterruptState,
 }
@@ -276,6 +285,7 @@ impl Drop for KlogInterruptGuard {
     }
 }
 
+// 本方法代码由AI完成
 fn ensure_inner(guard: &mut Option<KlogRingbufInner>) -> &mut KlogRingbufInner {
     if guard.is_none() {
         *guard = Some(KlogRingbufInner::default());
@@ -285,6 +295,7 @@ fn ensure_inner(guard: &mut Option<KlogRingbufInner>) -> &mut KlogRingbufInner {
 
 impl KlogRingbuf {
     /// 初始化全局环（可重复调用，会清空内容）。
+    // 本方法代码由AI完成
     #[inline]
     pub fn init() {
         let mut guard = KLOG.lock();
@@ -293,6 +304,7 @@ impl KlogRingbuf {
     }
 
     /// 在已持有锁的闭包内访问环。
+    // 本方法代码由AI完成
     #[inline]
     pub fn with<R>(f: impl FnOnce(&mut KlogRingbufInner) -> R) -> R {
         let _irq = KlogInterruptGuard::new();
@@ -301,6 +313,7 @@ impl KlogRingbuf {
     }
 
     /// 从 `start_seq` 起迭代记录。
+    // 本方法代码由AI完成
     pub fn iter_from<F>(start_seq: u64, mut f: F)
     where
         F: FnMut(KlogRecordView<'_>),

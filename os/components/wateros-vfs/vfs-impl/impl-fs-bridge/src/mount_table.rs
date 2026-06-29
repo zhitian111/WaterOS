@@ -1,4 +1,5 @@
 //! 辅助卷挂载表（最长前缀路由）；支持 RW、RO、procfs 伪挂载、bind 与传播类型。
+//! 本模块代码由AI完成
 
 extern crate alloc;
 
@@ -28,6 +29,7 @@ pub(crate) enum AuxMount {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+// 本结构代码由AI完成
 pub enum MountPropagation {
     /// 挂载事件不向其它挂载点传播（默认）。
     Private,
@@ -40,12 +42,14 @@ pub enum MountPropagation {
 }
 
 impl Default for MountPropagation {
+// 本方法代码由AI完成
     fn default() -> Self {
         Self::Private
     }
 }
 
 #[derive(Clone)]
+// 本结构代码由AI完成
 struct MountEntry {
     mount_point: String,
     fs: AuxMount,
@@ -63,6 +67,7 @@ pub(crate) struct MountNamespace {
 }
 
 impl Clone for MountNamespace {
+// 本方法代码由AI完成
     fn clone(&self) -> Self {
         Self {
             entries: self.entries.clone(),
@@ -70,21 +75,29 @@ impl Clone for MountNamespace {
     }
 }
 
+// 本变量代码由AI完成
 static DEVICE_IDS: Mutex<Vec<(String, u32)>> = Mutex::new(Vec::new());
+// 本变量代码由AI完成
 static NEXT_DEVICE_MINOR: AtomicU64 = AtomicU64::new(1);
+// 本变量代码由AI完成
 static NEXT_MOUNT_ID: AtomicU64 = AtomicU64::new(2);
 
 /// 内核 bring-up / 无当前任务时的挂载表（`procfs` 等在 spawn 用户任务前挂载）。
+// 本变量代码由AI完成
 static BOOTSTRAP_MOUNT_NS: Mutex<MountNamespace> = Mutex::new(MountNamespace { entries: Vec::new() });
 
+// 本方法代码由AI完成
 pub(crate) fn bootstrap_mount_namespace_snapshot() -> MountNamespace {
     BOOTSTRAP_MOUNT_NS.lock().clone()
 }
 
+// 本变量代码由AI完成
 static mut MOUNT_NS_REGISTRY: MaybeUninit<UniprocessorSafeCell<PerTaskMountNsRegistry>> =
     MaybeUninit::uninit();
+// 本变量代码由AI完成
 static MOUNT_NS_REGISTRY_READY: AtomicUsize = AtomicUsize::new(0);
 
+// 本方法代码由AI完成
 fn registry() -> &'static UniprocessorSafeCell<PerTaskMountNsRegistry> {
     if MOUNT_NS_REGISTRY_READY.load(Ordering::Acquire) == 0 {
         unsafe {
@@ -101,6 +114,7 @@ pub fn init_task_mount_ns(task_id: task::TaskId) {
 }
 
 #[inline]
+// 本方法代码由AI完成
 pub fn copy_mount_ns_from_parent(child: task::TaskId, parent: task::TaskId) {
     registry()
         .exclusive_access()
@@ -108,6 +122,7 @@ pub fn copy_mount_ns_from_parent(child: task::TaskId, parent: task::TaskId) {
 }
 
 #[inline]
+// 本方法代码由AI完成
 pub fn share_mount_ns_from_parent(child: task::TaskId, parent: task::TaskId) {
     registry()
         .exclusive_access()
@@ -124,6 +139,7 @@ pub fn drop_task_mount_ns(task_id: task::TaskId) {
     registry().exclusive_access().drop_task(task_id);
 }
 
+// 本方法代码由AI完成
 fn with_current_namespace<R>(f: impl FnOnce(&mut MountNamespace) -> VfsResult<R>) -> VfsResult<R> {
     if let Some(task_id) = task::current_task_id() {
         let mut reg = registry().exclusive_access();
@@ -134,11 +150,13 @@ fn with_current_namespace<R>(f: impl FnOnce(&mut MountNamespace) -> VfsResult<R>
     }
 }
 
+// 本方法代码由AI完成
 fn namespace_for_route(task_id: task::TaskId) -> Option<MountNamespace> {
     registry().exclusive_access().namespace_for(task_id).cloned()
 }
 
 /// 克隆当前应使用的挂载表快照（单次加锁，避免在 `with_current_namespace` 内重入）。
+// 本方法代码由AI完成
 fn mount_namespace_snapshot() -> MountNamespace {
     if let Some(task_id) = task::current_task_id() {
         {
@@ -159,6 +177,7 @@ fn mount_namespace_snapshot() -> MountNamespace {
 }
 
 /// 在已持有的 `ns` 上校验挂载点目录，不调用 [`resolve_route`]（避免 mount 表锁重入）。
+// 本方法代码由AI完成
 fn assert_mount_point_directory_in(ns: &MountNamespace, path: &str) -> VfsResult<()> {
     match resolve_material_route(ns, path)? {
         FsRoute::PseudoProc { .. } | FsRoute::PseudoSecurity { .. } => Err(VfsError::NotAFile),
@@ -202,6 +221,7 @@ pub(crate) struct MountIdentity {
     pub mount_id: u64,
 }
 
+// 本方法代码由AI完成
 fn device_minor_for(key: &str) -> u32 {
     let mut devices = DEVICE_IDS.lock();
     if let Some((_, minor)) = devices.iter().find(|(known, _)| known == key) {
@@ -213,6 +233,7 @@ fn device_minor_for(key: &str) -> u32 {
     minor
 }
 
+// 本方法代码由AI完成
 fn new_mount_identity(device_key: &str) -> MountIdentity {
     MountIdentity {
         device_major: 0,
@@ -221,6 +242,7 @@ fn new_mount_identity(device_key: &str) -> MountIdentity {
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn root_identity() -> MountIdentity {
     let device = fs::rootfs::active_impl::current_root_device_path()
         .unwrap_or_else(|| String::from("/dev/root"));
@@ -245,6 +267,7 @@ pub(crate) enum FsRoute {
     PseudoSecurity { rel: String, identity: MountIdentity },
 }
 
+// 本方法代码由AI完成
 fn rel_under_mount(full: &str, mount_point: &str) -> String {
     if full == mount_point {
         return String::from("/");
@@ -259,6 +282,7 @@ fn rel_under_mount(full: &str, mount_point: &str) -> String {
     }
 }
 
+// 本方法代码由AI完成
 fn join_mount_path(mount: &str, rel: &str) -> String {
     if rel == "/" {
         return String::from(mount);
@@ -268,6 +292,7 @@ fn join_mount_path(mount: &str, rel: &str) -> String {
 }
 
 impl AuxMount {
+// 本方法代码由AI完成
     fn clone_mount(&self) -> Self {
         match self {
             Self::Rw(fs) => Self::Rw(fs.clone()),
@@ -282,10 +307,12 @@ impl AuxMount {
 }
 
 impl MountNamespace {
+// 本方法代码由AI完成
     pub fn new() -> Self {
         Self { entries: Vec::new() }
     }
 
+// 本方法代码由AI完成
     fn longest_match(&self, abs: &str) -> Option<(usize, &MountEntry)> {
         let mut best: Option<(usize, &MountEntry)> = None;
         for ent in self.entries.iter() {
@@ -303,32 +330,38 @@ impl MountNamespace {
         best
     }
 
+// 本方法代码由AI完成
     fn exact_mount(&self, mount_point: &str) -> Option<&MountEntry> {
         self.entries.iter().find(|e| e.mount_point == mount_point)
     }
 
+// 本方法代码由AI完成
     fn exact_mount_mut(&mut self, mount_point: &str) -> Option<&mut MountEntry> {
         self.entries
             .iter_mut()
             .find(|e| e.mount_point == mount_point)
     }
 
+// 本方法代码由AI完成
     fn is_mount_point(&self, abs: &str) -> bool {
         self.exact_mount(abs).is_some()
     }
 
+// 本方法代码由AI完成
     fn is_under_mount(&self, abs: &str, mount_point: &str) -> bool {
         abs == mount_point
             || abs.starts_with(mount_point)
                 && abs.as_bytes().get(mount_point.len()) == Some(&b'/')
     }
 
+// 本方法代码由AI完成
     fn propagation_at(&self, abs: &str) -> MountPropagation {
         self.longest_match(abs)
             .map(|(_, ent)| ent.propagation)
             .unwrap_or(MountPropagation::Private)
     }
 
+// 本方法代码由AI完成
     fn bind_forbidden(&self, source: &str) -> bool {
         matches!(
             self.propagation_at(source),
@@ -337,8 +370,10 @@ impl MountNamespace {
     }
 }
 
+// 本变量代码由AI完成
 const BIND_CHAIN_LIMIT: usize = 32;
 
+// 本方法代码由AI完成
 fn resolve_material_route(ns: &MountNamespace, abs: &str) -> VfsResult<FsRoute> {
     let abs = String::from(normalize_absolute_path(abs)?.as_str());
     let mut current = abs;
@@ -387,6 +422,7 @@ fn resolve_material_route(ns: &MountNamespace, abs: &str) -> VfsResult<FsRoute> 
     Err(VfsError::InvalidPath)
 }
 
+// 本方法代码由AI完成
 fn bump_mount_generation_after_cache_flush() {
     if let Err(e) = super::reset_file_page_cache() {
         log::warn!(
@@ -397,6 +433,7 @@ fn bump_mount_generation_after_cache_flush() {
     fs::rootfs::active_impl::bump_mount_generation();
 }
 
+// 本方法代码由AI完成
 fn mount_aux_common(
     ns: &mut MountNamespace,
     mount_point: &str,
@@ -427,12 +464,14 @@ fn mount_aux_common(
     Ok(())
 }
 
+// 本方法代码由AI完成
 pub(crate) fn resolve_route(path: &str) -> VfsResult<FsRoute> {
     let ns = mount_namespace_snapshot();
     resolve_material_route(&ns, path)
 }
 
 /// 写路径、带 `O_CREAT`/`O_WRONLY` 的 open 等须先调用；RO / procfs 返回 [`VfsError::ReadOnlyFs`]。
+// 本方法代码由AI完成
 pub fn assert_path_writable(path: &str) -> VfsResult<()> {
     match resolve_route(path)? {
         FsRoute::AuxRw { readonly: true, .. }
@@ -443,6 +482,7 @@ pub fn assert_path_writable(path: &str) -> VfsResult<()> {
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn mount_aux_at_rw(mount_point: &str, fs: SharedRwFs, device_key: &str) -> VfsResult<()> {
     with_current_namespace(|ns| {
         mount_aux_common(ns, mount_point, AuxMount::Rw(fs), device_key, "ext4", false)
@@ -451,6 +491,7 @@ pub(crate) fn mount_aux_at_rw(mount_point: &str, fs: SharedRwFs, device_key: &st
     Ok(())
 }
 
+// 本方法代码由AI完成
 pub(crate) fn mount_aux_at_ro(mount_point: &str, fs: SharedFs, device_key: &str) -> VfsResult<()> {
     with_current_namespace(|ns| {
         mount_aux_common(ns, mount_point, AuxMount::Ro(fs), device_key, "ext4", true)
@@ -459,6 +500,7 @@ pub(crate) fn mount_aux_at_ro(mount_point: &str, fs: SharedFs, device_key: &str)
     Ok(())
 }
 
+// 本方法代码由AI完成
 pub(crate) fn mount_tmpfs_at(mount_point: &str) -> VfsResult<()> {
     let fs: SharedRwFs =
         Arc::new(Mutex::new(LocalRwFs::new(Box::new(super::tmpfs::TmpFs::new()))));
@@ -469,6 +511,7 @@ pub(crate) fn mount_tmpfs_at(mount_point: &str) -> VfsResult<()> {
     Ok(())
 }
 
+// 本方法代码由AI完成
 pub(crate) fn mount_cgroup_at(mount_point: &str, v2: bool, options: &str) -> VfsResult<()> {
     let tmp = super::tmpfs::TmpFs::new_cgroup(v2, options).map_err(super::map_fs_err)?;
     let fs: SharedRwFs = Arc::new(Mutex::new(LocalRwFs::new(Box::new(tmp))));
@@ -480,6 +523,7 @@ pub(crate) fn mount_cgroup_at(mount_point: &str, v2: bool, options: &str) -> Vfs
     Ok(())
 }
 
+// 本方法代码由AI完成
 pub(crate) fn mount_securityfs_at(mount_point: &str) -> VfsResult<()> {
     with_current_namespace(|ns| {
         mount_aux_common(
@@ -495,6 +539,7 @@ pub(crate) fn mount_securityfs_at(mount_point: &str) -> VfsResult<()> {
     Ok(())
 }
 
+// 本方法代码由AI完成
 pub(crate) fn mount_bind_at(source: &str, target: &str, recursive: bool) -> VfsResult<()> {
     let source = String::from(normalize_absolute_path(source)?.as_str());
     let target = String::from(normalize_absolute_path(target)?.as_str());
@@ -527,6 +572,7 @@ pub(crate) fn mount_bind_at(source: &str, target: &str, recursive: bool) -> VfsR
     Ok(())
 }
 
+// 本方法代码由AI完成
 fn recursive_bind(ns: &mut MountNamespace, source_root: &str, target_root: &str) -> VfsResult<()> {
     let mut pairs: Vec<(String, String)> = Vec::new();
     pairs.push((String::from(source_root), String::from(target_root)));
@@ -567,6 +613,7 @@ fn recursive_bind(ns: &mut MountNamespace, source_root: &str, target_root: &str)
     Ok(())
 }
 
+// 本方法代码由AI完成
 pub(crate) fn set_mount_propagation(
     mount_point: &str,
     propagation: MountPropagation,
@@ -601,6 +648,7 @@ pub(crate) fn set_mount_propagation(
     })
 }
 
+// 本方法代码由AI完成
 pub(crate) fn move_mount_at(source: &str, target: &str) -> VfsResult<()> {
     let source = String::from(normalize_absolute_path(source)?.as_str());
     let target = String::from(normalize_absolute_path(target)?.as_str());
@@ -642,6 +690,7 @@ pub(crate) fn move_mount_at(source: &str, target: &str) -> VfsResult<()> {
     Ok(())
 }
 
+// 本方法代码由AI完成
 pub fn mount_statfs_magic(abs: &str) -> Option<isize> {
     let Ok(abs) = normalize_absolute_path(abs) else {
         return None;
@@ -661,6 +710,7 @@ pub fn mount_statfs_magic(abs: &str) -> Option<isize> {
     })
 }
 
+// 本方法代码由AI完成
 fn mount_statfs_magic_for_path(ns: &MountNamespace, abs: &str) -> Option<isize> {
     let route = resolve_material_route(ns, abs).ok()?;
     let path = match route {
@@ -672,6 +722,7 @@ fn mount_statfs_magic_for_path(ns: &MountNamespace, abs: &str) -> Option<isize> 
     mount_statfs_magic(path.as_str())
 }
 
+// 本方法代码由AI完成
 pub(crate) fn remount_aux_readonly(mount_point: &str) -> VfsResult<()> {
     let mp = String::from(normalize_absolute_path(mount_point)?.as_str());
     with_current_namespace(|ns| {
@@ -688,6 +739,7 @@ pub(crate) fn remount_aux_readonly(mount_point: &str) -> VfsResult<()> {
     Ok(())
 }
 
+// 本方法代码由AI完成
 pub fn mount_aux_proc_at(mount_point: &str) -> VfsResult<()> {
     with_current_namespace(|ns| {
         mount_aux_common(
@@ -703,6 +755,7 @@ pub fn mount_aux_proc_at(mount_point: &str) -> VfsResult<()> {
     Ok(())
 }
 
+// 本方法代码由AI完成
 pub fn is_proc_mounted_at(mount_point: &str) -> bool {
     let Ok(mp) = normalize_absolute_path(mount_point) else {
         return false;
@@ -721,10 +774,12 @@ pub fn is_proc_mounted_at(mount_point: &str) -> bool {
     })
 }
 
+// 本方法代码由AI完成
 fn fstype_for(entry: &MountEntry) -> &'static str {
     entry.fstype
 }
 
+// 本方法代码由AI完成
 fn device_for(entry: &MountEntry) -> String {
     match entry.fs {
         AuxMount::PseudoProc => String::from("proc"),
@@ -734,10 +789,12 @@ fn device_for(entry: &MountEntry) -> String {
     }
 }
 
+// 本方法代码由AI完成
 fn root_mount_device() -> String {
     fs::devfs::active_impl::default_root_block_path().unwrap_or_else(|| String::from("/dev/root"))
 }
 
+// 本方法代码由AI完成
 pub fn list_proc_mount_lines() -> Vec<ProcMountLine> {
     let mut out = Vec::new();
     if fs::rootfs::active_impl::root_rw_fs().is_some() {
@@ -770,6 +827,7 @@ pub fn list_proc_mount_lines() -> Vec<ProcMountLine> {
     out
 }
 
+// 本方法代码由AI完成
 pub(crate) fn unmount_aux_at(mount_point: &str, detach: bool) -> VfsResult<()> {
     let mp = String::from(normalize_absolute_path(mount_point)?.as_str());
     if mp == "/" {
@@ -789,6 +847,7 @@ pub(crate) fn unmount_aux_at(mount_point: &str, detach: bool) -> VfsResult<()> {
     Ok(())
 }
 
+// 本方法代码由AI完成
 pub fn mount_table_self_test() -> VfsResult<()> {
     let dev_a = new_mount_identity("/dev/__identity_test__");
     let dev_b = new_mount_identity("/dev/__identity_test__");

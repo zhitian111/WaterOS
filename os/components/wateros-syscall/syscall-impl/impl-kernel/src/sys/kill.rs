@@ -1,5 +1,6 @@
 //! `kill(2)` — 向任务发送信号；首期实现终止类信号的强制退出语义。
 
+//! 本模块代码由AI完成
 extern crate alloc;
 
 use alloc::vec::Vec;
@@ -91,6 +92,7 @@ fn send_signal_to_process(process: ProcessId, sig: usize) -> Result<(), ErrNo> {
 }
 
 /// `kill(pid, sig)` — riscv64 系统调用号 129。
+// 本方法代码由AI完成
 pub(crate) fn sys_kill(args: SyscallArgs) -> UserRet {
     let pid = args.arg(0) as isize;
     let sig = args.arg(1) as i32;

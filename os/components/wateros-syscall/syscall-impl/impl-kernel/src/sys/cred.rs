@@ -1,4 +1,5 @@
 //! 进程凭证相关系统调用：`getuid`/`geteuid`/`getgid`/`getegid`/`getgroups` 与 set*id。
+//! 本模块代码由AI完成
 
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
@@ -7,26 +8,31 @@ use cred::api::{Gid, Uid, SUPPLEMENTARY_GROUP_COUNT};
 
 use crate::user_copy::{copy_from_user_struct, copy_to_user, copy_to_user_struct};
 
+// 本方法代码由AI完成
 pub(crate) fn sys_getuid() -> UserRet {
     let cred = cred::current_credentials();
     UserRet::from_success(cred.real_uid.0 as usize)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_geteuid() -> UserRet {
     let cred = cred::current_credentials();
     UserRet::from_success(cred.effective_uid.0 as usize)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_getgid() -> UserRet {
     let cred = cred::current_credentials();
     UserRet::from_success(cred.real_gid.0 as usize)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_getegid() -> UserRet {
     let cred = cred::current_credentials();
     UserRet::from_success(cred.effective_gid.0 as usize)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_getgroups(args: SyscallArgs) -> UserRet {
     let size = args.arg(0) as isize;
     let list_ptr = args.arg(1);
@@ -77,6 +83,7 @@ pub(crate) fn sys_getgroups(args: SyscallArgs) -> UserRet {
     UserRet::from_success(ngroups)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_setgroups(args: SyscallArgs) -> UserRet {
     let size = args.arg(0) as isize;
     let list_ptr = args.arg(1);
@@ -104,6 +111,7 @@ pub(crate) fn sys_setgroups(args: SyscallArgs) -> UserRet {
     UserRet::from_success(0)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_setuid(args: SyscallArgs) -> UserRet {
     let uid = match parse_required_u32_id(args.arg(0)) {
         Some(uid) => Uid(uid),
@@ -113,6 +121,7 @@ pub(crate) fn sys_setuid(args: SyscallArgs) -> UserRet {
     UserRet::from_success(0)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_setgid(args: SyscallArgs) -> UserRet {
     let gid = match parse_required_u32_id(args.arg(0)) {
         Some(gid) => Gid(gid),
@@ -122,6 +131,7 @@ pub(crate) fn sys_setgid(args: SyscallArgs) -> UserRet {
     UserRet::from_success(0)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_setreuid(args: SyscallArgs) -> UserRet {
     let real_uid = match parse_optional_u32_id(args.arg(0)) {
         Some(uid) => uid.map(Uid),
@@ -135,6 +145,7 @@ pub(crate) fn sys_setreuid(args: SyscallArgs) -> UserRet {
     UserRet::from_success(0)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_setregid(args: SyscallArgs) -> UserRet {
     let real_gid = match parse_optional_u32_id(args.arg(0)) {
         Some(gid) => gid.map(Gid),
@@ -148,6 +159,7 @@ pub(crate) fn sys_setregid(args: SyscallArgs) -> UserRet {
     UserRet::from_success(0)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_setresuid(args: SyscallArgs) -> UserRet {
     let real_uid = match parse_optional_u32_id(args.arg(0)) {
         Some(uid) => uid.map(Uid),
@@ -165,6 +177,7 @@ pub(crate) fn sys_setresuid(args: SyscallArgs) -> UserRet {
     UserRet::from_success(0)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_setresgid(args: SyscallArgs) -> UserRet {
     let real_gid = match parse_optional_u32_id(args.arg(0)) {
         Some(gid) => gid.map(Gid),
@@ -182,6 +195,7 @@ pub(crate) fn sys_setresgid(args: SyscallArgs) -> UserRet {
     UserRet::from_success(0)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_getresuid(args: SyscallArgs) -> UserRet {
     let ruid_ptr = args.arg(0);
     let euid_ptr = args.arg(1);
@@ -208,6 +222,7 @@ pub(crate) fn sys_getresuid(args: SyscallArgs) -> UserRet {
     UserRet::from_success(0)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_getresgid(args: SyscallArgs) -> UserRet {
     let rgid_ptr = args.arg(0);
     let egid_ptr = args.arg(1);

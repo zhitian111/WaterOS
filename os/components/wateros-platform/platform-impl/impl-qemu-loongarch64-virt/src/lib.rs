@@ -15,6 +15,7 @@ pub mod boot {
     use api_v0::boot::{PlatformBootArgs, PlatformBootContext};
 
     /// 固件传入的原始 `a0`/`a1`/`a2`（具体含义随 QEMU/固件版本以调用约定为准）。
+    // 本结构代码由AI完成
     #[derive(Debug, Clone, Copy)]
     pub struct QEMULoongArch64VirtBootArgs {
         arg0: usize,
@@ -47,6 +48,7 @@ pub mod boot {
     }
 
     /// 与 [`QEMULoongArch64VirtBootArgs`] 一一对应的类型化视图（当前为透传三槽）。
+    // 本结构代码由AI完成
     #[derive(Debug, Clone, Copy)]
     pub struct QEMULoongArch64VirtBootContext {
         /// 固件 `a0`。
@@ -78,6 +80,7 @@ pub mod time {
     use api_v0::time::{PlatformTime, PlatformTimeError, PlatformTimeResult};
 
     /// QEMU virt 上 StableCounter 常用频率（Hz）；与 arch `rdtime.d` 刻度一致。
+    // 本结构代码由AI完成
     pub struct QEMULoongArch64VirtTime;
 
     impl PlatformTime for QEMULoongArch64VirtTime {

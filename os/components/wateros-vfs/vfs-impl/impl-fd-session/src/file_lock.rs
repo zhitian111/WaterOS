@@ -1,4 +1,5 @@
 //! Per-inode POSIX 记录锁与 `flock(2)` 整文件锁状态。
+//! 本模块代码由AI完成
 
 extern crate alloc;
 
@@ -22,6 +23,7 @@ pub const F_UNLCK: i16 = 2;
 /// Linux `struct flock`（64 位 ABI）。
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
+// 本结构代码由AI完成
 pub struct Flock {
     pub l_type: i16,
     pub l_whence: i16,
@@ -37,6 +39,7 @@ pub const LOCK_NB: usize = 4;
 
 /// 文件系统内 inode 键（`mount_id` + `inode`）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+// 本结构代码由AI完成
 pub struct InodeKey {
     pub mount_id: u64,
     pub inode: u64,
@@ -49,6 +52,7 @@ enum LockType {
 }
 
 #[derive(Clone, Copy, Debug)]
+// 本结构代码由AI完成
 struct PosixLock {
     pid: ProcessId,
     typ: LockType,
@@ -56,12 +60,14 @@ struct PosixLock {
     len: u64,
 }
 
+// 本结构代码由AI完成
 struct FlockState {
     shared_holders: Vec<ProcessId>,
     exclusive: Option<ProcessId>,
 }
 
 impl FlockState {
+// 本方法代码由AI完成
     fn new() -> Self {
         Self {
             shared_holders: Vec::new(),
@@ -69,6 +75,7 @@ impl FlockState {
         }
     }
 
+// 本方法代码由AI完成
     fn clear_pid(&mut self, pid: ProcessId) {
         if self.exclusive == Some(pid) {
             self.exclusive = None;
@@ -77,17 +84,20 @@ impl FlockState {
     }
 }
 
+// 本结构代码由AI完成
 struct InodeLockData {
     posix: Vec<PosixLock>,
     flock: FlockState,
 }
 
+// 本结构代码由AI完成
 struct InodeLocks {
     data: Mutex<InodeLockData>,
     wait: WaitQueue,
 }
 
 impl InodeLocks {
+// 本方法代码由AI完成
     fn new() -> Arc<Self> {
         Arc::new(Self {
             data: Mutex::new(InodeLockData {
@@ -99,8 +109,10 @@ impl InodeLocks {
     }
 }
 
+// 本变量代码由AI完成
 static LOCK_TABLE: Mutex<BTreeMap<InodeKey, Arc<InodeLocks>>> = Mutex::new(BTreeMap::new());
 
+// 本方法代码由AI完成
 fn get_inode_locks(key: &InodeKey) -> Arc<InodeLocks> {
     let mut table = LOCK_TABLE.lock();
     table
@@ -109,6 +121,7 @@ fn get_inode_locks(key: &InodeKey) -> Arc<InodeLocks> {
         .clone()
 }
 
+// 本方法代码由AI完成
 fn drop_inode_if_empty(key: &InodeKey, locks: &Arc<InodeLocks>) {
     let data = locks.data.lock();
     if data.posix.is_empty()
@@ -122,6 +135,7 @@ fn drop_inode_if_empty(key: &InodeKey, locks: &Arc<InodeLocks>) {
 
 /// 从句柄元数据构造 inode 键；仅普通文件可上锁。
 #[inline]
+// 本方法代码由AI完成
 pub fn inode_key_from_metadata(meta: &VfsMetadata) -> Option<InodeKey> {
     if meta.node_type != VfsNodeType::File {
         return None;
@@ -132,6 +146,7 @@ pub fn inode_key_from_metadata(meta: &VfsMetadata) -> Option<InodeKey> {
     })
 }
 
+// 本方法代码由AI完成
 fn lock_end(start: u64, len: u64) -> u64 {
     if len == 0 {
         u64::MAX
@@ -140,12 +155,14 @@ fn lock_end(start: u64, len: u64) -> u64 {
     }
 }
 
+// 本方法代码由AI完成
 fn ranges_overlap(a_start: u64, a_len: u64, b_start: u64, b_len: u64) -> bool {
     let a_end = lock_end(a_start, a_len);
     let b_end = lock_end(b_start, b_len);
     a_start <= b_end && b_start <= a_end
 }
 
+// 本方法代码由AI完成
 fn flock_type_from_i16(raw: i16) -> VfsResult<LockType> {
     match raw {
         F_RDLCK => Ok(LockType::Read),
@@ -154,6 +171,7 @@ fn flock_type_from_i16(raw: i16) -> VfsResult<LockType> {
     }
 }
 
+// 本方法代码由AI完成
 fn intersection_range(
     probe_start: u64,
     probe_len: u64,
@@ -173,6 +191,7 @@ fn intersection_range(
     Some((start, end.saturating_sub(start).saturating_add(1)))
 }
 
+// 本方法代码由AI完成
 fn getlk_conflicts_with_probe(probe_typ: LockType, held: LockType) -> bool {
     match probe_typ {
         LockType::Read => held == LockType::Write,
@@ -181,6 +200,7 @@ fn getlk_conflicts_with_probe(probe_typ: LockType, held: LockType) -> bool {
 }
 
 /// 在 `locks` 中找与 probe 冲突、且起始字节最靠前的锁，并返回与 probe 的交集区间。
+// 本方法代码由AI完成
 fn find_getlk_conflict(
     locks: &[PosixLock],
     pid: ProcessId,
@@ -205,6 +225,7 @@ fn find_getlk_conflict(
     best
 }
 
+// 本方法代码由AI完成
 fn posix_conflict(
     locks: &[PosixLock],
     pid: ProcessId,
@@ -227,6 +248,7 @@ fn posix_conflict(
     None
 }
 
+// 本方法代码由AI完成
 fn flock_blocks_posix(flock: &FlockState, typ: LockType) -> bool {
     match typ {
         LockType::Read => flock.exclusive.is_some(),
@@ -234,6 +256,7 @@ fn flock_blocks_posix(flock: &FlockState, typ: LockType) -> bool {
     }
 }
 
+// 本方法代码由AI完成
 fn posix_blocks_flock(locks: &[PosixLock], pid: ProcessId, op: usize) -> bool {
     if (op & LOCK_EX) != 0 {
         return locks.iter().any(|l| l.pid != pid);
@@ -246,6 +269,7 @@ fn posix_blocks_flock(locks: &[PosixLock], pid: ProcessId, op: usize) -> bool {
     false
 }
 
+// 本方法代码由AI完成
 fn split_lock_around_region(lock: PosixLock, cut_start: u64, cut_len: u64) -> Vec<PosixLock> {
     let cut_end = lock_end(cut_start, cut_len);
     let lock_end_pos = lock_end(lock.start, lock.len);
@@ -282,6 +306,7 @@ fn split_lock_around_region(lock: PosixLock, cut_start: u64, cut_len: u64) -> Ve
     out
 }
 
+// 本方法代码由AI完成
 fn remove_posix_for_pid_region(
     locks: &mut Vec<PosixLock>,
     pid: ProcessId,
@@ -299,10 +324,12 @@ fn remove_posix_for_pid_region(
     *locks = kept;
 }
 
+// 本方法代码由AI完成
 fn apply_posix_unlock(locks: &mut Vec<PosixLock>, pid: ProcessId, start: u64, len: u64) {
     remove_posix_for_pid_region(locks, pid, start, len);
 }
 
+// 本方法代码由AI完成
 fn apply_posix_lock(
     locks: &mut Vec<PosixLock>,
     pid: ProcessId,
@@ -319,12 +346,14 @@ fn apply_posix_lock(
     });
 }
 
+// 本方法代码由AI完成
 fn posix_would_block(data: &InodeLockData, pid: ProcessId, typ: LockType, start: u64, len: u64) -> bool {
     flock_blocks_posix(&data.flock, typ)
         || posix_conflict(&data.posix, pid, typ, start, len).is_some()
 }
 
 /// `fcntl(F_GETLK)`：无冲突时写回 `F_UNLCK`；有冲突时写回阻塞方信息。
+// 本方法代码由AI完成
 pub fn posix_getlk(
     key: &InodeKey,
     pid: ProcessId,
@@ -373,6 +402,7 @@ pub fn posix_getlk(
 }
 
 /// `fcntl(F_SETLK)` / `F_SETLKW`。
+// 本方法代码由AI完成
 pub fn posix_setlk(
     key: &InodeKey,
     pid: ProcessId,
@@ -425,6 +455,7 @@ pub fn posix_setlk(
 }
 
 /// `flock(2)`。
+// 本方法代码由AI完成
 pub fn flock_op(key: &InodeKey, pid: ProcessId, operation: usize) -> VfsResult<()> {
     let nonblocking = (operation & LOCK_NB) != 0;
     let op = operation & !LOCK_NB;
@@ -509,6 +540,7 @@ pub fn flock_op(key: &InodeKey, pid: ProcessId, operation: usize) -> VfsResult<(
 }
 
 /// 关闭进程在 inode 上的全部锁（POSIX + flock）。
+// 本方法代码由AI完成
 pub fn release_process_inode_locks(pid: ProcessId, key: &InodeKey) {
     let Some(locks) = LOCK_TABLE.lock().get(key).cloned() else {
         return;
@@ -523,6 +555,7 @@ pub fn release_process_inode_locks(pid: ProcessId, key: &InodeKey) {
 }
 
 /// `fork` 后子进程继承父进程持有的全部记录锁与 flock 状态。
+// 本方法代码由AI完成
 pub fn inherit_process_locks(parent_pid: ProcessId, child_pid: ProcessId) {
     let table = LOCK_TABLE.lock();
     for locks in table.values() {

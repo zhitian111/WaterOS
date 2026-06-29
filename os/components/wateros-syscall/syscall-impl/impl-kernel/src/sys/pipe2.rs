@@ -1,5 +1,6 @@
 //! `pipe2(2)`：创建 pipe fd 对；支持 `O_NONBLOCK`。
 
+//! 本模块代码由AI完成
 use alloc::boxed::Box;
 
 use abi::errno::ErrNo;
@@ -11,6 +12,7 @@ pub(crate) const O_NONBLOCK: usize = 0o0004000;
 const O_CLOEXEC: usize = 0o2000000;
 const FD_CLOEXEC: usize = 1;
 
+// 本方法代码由AI完成
 pub(crate) fn sys_pipe2(args: SyscallArgs) -> UserRet {
     let pipefd_ptr = args.arg(0);
     let flags = args.arg(1);

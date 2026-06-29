@@ -1,5 +1,6 @@
 //! 共享 `poll` / `ppoll` / `pselect6` / `select` 就绪扫描与阻塞等待。
 
+//! 本模块代码由AI完成
 extern crate alloc;
 
 use abi::errno::ErrNo;
@@ -12,19 +13,26 @@ use wateros_base_config::task::SCHED_TIMER_PERIOD_MS;
 use crate::socket_fd;
 use crate::user_copy::{copy_from_user_struct, copy_to_user_struct};
 
+// 本变量代码由AI完成
 pub(crate) const POLLIN: i16 = 0x001;
+// 本变量代码由AI完成
 pub(crate) const POLLOUT: i16 = 0x004;
 pub(crate) const POLLPRI: i16 = 0x002;
+// 本变量代码由AI完成
 pub(crate) const POLLERR: i16 = 0x008;
+// 本变量代码由AI完成
 pub(crate) const POLLHUP: i16 = 0x010;
+// 本变量代码由AI完成
 pub(crate) const POLLNVAL: i16 = 0x020;
 
+// 本变量代码由AI完成
 pub(crate) const FD_SETSIZE: usize = 1024;
 const FD_SET_WORDS: usize = FD_SETSIZE / 64;
 const SOCKET_READY_YIELD_SPINS: usize = 4;
 
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
+// 本结构代码由AI完成
 pub(crate) struct PollFd {
     pub fd: i32,
     pub events: i16,
@@ -33,6 +41,7 @@ pub(crate) struct PollFd {
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
+// 本结构代码由AI完成
 pub(crate) struct UserTimespec {
     pub sec: isize,
     pub nsec: isize,
@@ -220,6 +229,7 @@ pub(crate) fn poll_socket_revents(fd: usize, events: i16) -> i16 {
     revents
 }
 
+// 本方法代码由AI完成
 pub(crate) fn poll_revents_fd(fd: usize, events: i16) -> i16 {
     if socket_fd::lookup(fd).is_some() {
         return poll_socket_revents(fd, events);
@@ -345,6 +355,7 @@ pub(crate) fn poll_block_until_ready(
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn do_poll_with_deadline(
     fds_ptr: usize,
     nfds: usize,
@@ -652,6 +663,7 @@ pub(crate) fn poll_block_fd_sets(
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn do_pselect_with_deadline(
     nfds: usize,
     readfds_ptr: usize,

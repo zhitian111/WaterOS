@@ -1,3 +1,4 @@
+//! 本模块代码由AI完成
 //! 用户堆 `brk` 与匿名/文件 `mmap`/`munmap`/`mprotect` 的 Sv39 实现。
 //!
 //! # 缺页与 trap

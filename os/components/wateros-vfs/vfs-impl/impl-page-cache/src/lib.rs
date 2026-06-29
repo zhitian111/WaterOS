@@ -13,6 +13,7 @@
 //!
 //! `install_page` / `install_zero_page` 在调 I/O 前会 `drop(state)`；调用方须在持有
 //! entry 锁后再通过 `PageCacheIo` 下探 ext4，不得在持有 ext4 锁后再等 entry 锁。
+//! 本模块代码由AI完成
 
 #![no_std]
 extern crate alloc;
@@ -26,12 +27,15 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use spin::{Mutex, RwLock};
 use wateros_base_config::fs::{FILE_PAGE_CACHE_CAPACITY, FILE_PAGE_SIZE, FILE_READ_AHEAD_STRIDE};
 
+// 本变量代码由AI完成
 const FLUSH_RUN_MAX_PAGES : usize = 64;
 
 /// 区间读写下层（通常由 `FsBridge` 委托 `ReadOnlyFs` / `ReadWriteFs`）。
 pub trait PageCacheIo {
     type Error;
+// 本方法代码由AI完成
     fn read_range(&self, path : &str, offset : u64, buf : &mut [u8]) -> Result<usize, Self::Error>;
+// 本方法代码由AI完成
     fn write_range(&mut self,
                    path : &str,
                    offset : u64,
@@ -41,17 +45,20 @@ pub trait PageCacheIo {
 
 /// 页缓存键：根卷挂载代次 + 绝对路径。
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+// 本结构代码由AI完成
 pub struct FileCacheKey {
     pub mount_gen : u64,
     pub path : Arc<str>,
 }
 
+// 本结构代码由AI完成
 struct PageFrame {
     key : Option<(FileCacheKey, u64)>,
     data : Vec<u8>,
     dirty : bool,
 }
 
+// 本结构代码由AI完成
 struct GlobalCacheState {
     capacity : usize,
     frames : Vec<PageFrame>,
@@ -61,6 +68,7 @@ struct GlobalCacheState {
 }
 
 impl GlobalCacheState {
+// 本方法代码由AI完成
     fn new() -> Self {
         let cap = FILE_PAGE_CACHE_CAPACITY;
         let mut frames = Vec::new();
@@ -81,6 +89,7 @@ impl GlobalCacheState {
                free }
     }
 
+// 本方法代码由AI完成
     fn touch_lru(&mut self, idx : usize) {
         if let Some(p) = self.lru
                              .iter()
@@ -92,6 +101,7 @@ impl GlobalCacheState {
             .push_back(idx);
     }
 
+// 本方法代码由AI完成
     fn pop_free_or_lru_index(&mut self) -> usize {
         if let Some(idx) = self.free.pop() {
             return idx;
@@ -113,6 +123,7 @@ impl GlobalCacheState {
         idx
     }
 
+// 本方法代码由AI完成
     fn detach_slot_for_reuse(&mut self,
                              idx : usize)
                              -> Option<((FileCacheKey, u64), Vec<u8>)> {
@@ -136,6 +147,7 @@ impl GlobalCacheState {
         dirty_data
     }
 
+// 本方法代码由AI完成
     fn return_detached_slot(&mut self, idx : usize) {
         if self.frames[idx].key.is_none() &&
            !self.free
@@ -148,6 +160,7 @@ impl GlobalCacheState {
 
     /// 原地清空所有帧元数据并复用已分配的页帧内存（不释放/重分配 16MiB 帧池）。
     /// 供挂载代次切换时调用，避免每次 mount/umount 都重建整个缓存导致内核堆碎片化。
+// 本方法代码由AI完成
     fn clear_in_place(&mut self) {
         for frame in self.frames
                          .iter_mut()
@@ -167,6 +180,7 @@ impl GlobalCacheState {
 }
 
 /// 单文件逻辑大小与脏页索引（页号）。
+// 本结构代码由AI完成
 struct FileEntryInner {
     logical_size : u64,
     dirty_pages : BTreeMap<u64, ()>,
@@ -175,6 +189,7 @@ struct FileEntryInner {
 }
 
 /// 全局文件页缓存。
+// 本结构代码由AI完成
 pub struct GlobalFilePageCache {
     mount_gen : AtomicU64,
     state : Mutex<GlobalCacheState>,
@@ -185,6 +200,7 @@ pub struct GlobalFilePageCache {
 
 impl GlobalFilePageCache {
     /// 构造与当前 `mount_gen` 绑定的缓存表。
+// 本方法代码由AI完成
     pub fn new(mount_gen : u64) -> Self {
         Self { mount_gen : AtomicU64::new(mount_gen),
                state : Mutex::new(GlobalCacheState::new()),
@@ -199,6 +215,7 @@ impl GlobalFilePageCache {
     /// 切换到新挂载代次：原地清空缓存元数据并复用已分配的帧池，
     /// 避免每次 mount/umount 重建 16MiB 缓存造成内核堆碎片化与长跑卡死。
     /// 仅应在已无活跃用户 fd 持有脏页的安全点调用（脏页须由 `flush_all` 先写回）。
+// 本方法代码由AI完成
     pub fn reset_to_gen(&self, new_gen : u64) {
         self.state
             .lock()
@@ -214,11 +231,13 @@ impl GlobalFilePageCache {
     }
 
     #[inline]
+// 本方法代码由AI完成
     fn file_key(&self, path : &str) -> FileCacheKey {
         FileCacheKey { mount_gen : self.mount_gen(),
                        path : Arc::from(path) }
     }
 
+// 本方法代码由AI完成
     fn get_file_entry(&self, path : &str, initial_size : u64) -> Arc<RwLock<FileEntryInner>> {
         let key = self.file_key(path);
         let mut files = self.files.lock();
@@ -237,6 +256,7 @@ impl GlobalFilePageCache {
     }
 
     /// 普通文件句柄 `open`/`dup` 时登记；与 VFS `close` 配对。
+// 本方法代码由AI完成
     pub fn acquire_open_ref(&self, path : &str) {
         let key = self.file_key(path);
         let mut refs = self.open_refs.lock();
@@ -244,6 +264,7 @@ impl GlobalFilePageCache {
     }
 
     /// 句柄 `close` 后递减；最后一个引用消失时丢弃该路径的页缓存元数据（页帧已在 close 时 flush）。
+// 本方法代码由AI完成
     pub fn release_open_ref(&self, path : &str) {
         let key = self.file_key(path);
         let should_purge = {
@@ -264,6 +285,7 @@ impl GlobalFilePageCache {
         }
     }
 
+// 本方法代码由AI完成
     fn note_page_written_back(&self, path : &str, page_idx : u64) {
         let key = self.file_key(path);
         let files = self.files.lock();
@@ -274,6 +296,7 @@ impl GlobalFilePageCache {
         }
     }
 
+// 本方法代码由AI完成
     fn writeback_evicted_page<Io, E>(&self,
                                        io : &mut Io,
                                        key : &FileCacheKey,
@@ -295,6 +318,7 @@ impl GlobalFilePageCache {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn logical_size_for_key(&self, key : &FileCacheKey, fallback : u64) -> u64 {
         let files = self.files.lock();
         files.get(key)
@@ -306,6 +330,7 @@ impl GlobalFilePageCache {
     }
 
 
+// 本方法代码由AI完成
     fn queue_flush_batch(batches : &mut Vec<(u64, Vec<u8>)>,
                          batch_start : &mut Option<u64>,
                          batch_data : &mut Vec<u8>) {
@@ -316,6 +341,7 @@ impl GlobalFilePageCache {
         }
     }
 
+// 本方法代码由AI完成
     fn flush_dirty_run<Io, E>(&self,
                               io : &mut Io,
                               key : &FileCacheKey,
@@ -398,6 +424,7 @@ impl GlobalFilePageCache {
         Ok(flushed_pages)
     }
 
+// 本方法代码由AI完成
     fn install_page<Io, E>(&self,
                            io : &mut Io,
                            path : &str,
@@ -474,6 +501,7 @@ impl GlobalFilePageCache {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn install_zero_page<Io, E>(&self,
                                 io : &mut Io,
                                 path : &str,
@@ -534,6 +562,7 @@ impl GlobalFilePageCache {
     }
 
     /// Direct 模式：从 `offset` 读入 `buf`。
+// 本方法代码由AI完成
     pub fn read<Io, E>(&self,
                        io : &mut Io,
                        path : &str,
@@ -590,6 +619,7 @@ impl GlobalFilePageCache {
     }
 
     /// Direct 模式：从 `offset` 写入 `buf`。
+// 本方法代码由AI完成
     pub fn write<Io, E>(&self,
                         io : &mut Io,
                         path : &str,
@@ -651,6 +681,7 @@ impl GlobalFilePageCache {
     }
 
     #[inline]
+// 本方法代码由AI完成
     pub fn logical_size(&self, path : &str, fallback : u64) -> u64 {
         let key = self.file_key(path);
         let files = self.files.lock();
@@ -663,6 +694,7 @@ impl GlobalFilePageCache {
     }
 
     #[inline]
+// 本方法代码由AI完成
     pub fn set_logical_size(&self, path : &str, size : u64) {
         let entry = self.get_file_entry(path, size);
         entry.write()
@@ -670,6 +702,7 @@ impl GlobalFilePageCache {
     }
 
     #[inline]
+// 本方法代码由AI完成
     pub fn dirty_page_count(&self, path : &str) -> usize {
         let key = self.file_key(path);
         let files = self.files.lock();
@@ -683,6 +716,7 @@ impl GlobalFilePageCache {
     }
 
     /// 将脏页写回下层并清除脏标记。
+// 本方法代码由AI完成
     pub fn flush<Io, E>(&self,
                         io : &mut Io,
                         path : &str,
@@ -748,6 +782,7 @@ impl GlobalFilePageCache {
 
     /// 把当前缓存中所有文件的脏页写回下层。供整缓存回收（如测例脚本切换）前调用，
     /// 确保 [`reset_global_cache`] 丢弃旧缓存时不会丢失尚未落盘的数据。
+// 本方法代码由AI完成
     pub fn flush_all<Io, E>(&self, io : &mut Io, map_err : fn(Io::Error) -> E) -> Result<(), E>
         where Io : PageCacheIo
     {
@@ -765,6 +800,7 @@ impl GlobalFilePageCache {
 
     /// 删除已关闭文件的缓存条目，释放 `dirty_pages`、`FileEntryInner` 和路径字符串的内存。
     /// 应在 VFS `close` 或 `unlink` 之后调用，防止 `files` BTreeMap 无限增长耗尽内核堆。
+// 本方法代码由AI完成
     pub fn purge_closed_file(&self, path : &str) {
         let key = self.file_key(path);
         self.open_refs
@@ -804,6 +840,7 @@ impl GlobalFilePageCache {
     }
 
     /// 更新逻辑长度，并丢弃 EOF 之后的缓存页。
+// 本方法代码由AI完成
     pub fn truncate(&self, path : &str, len : u64) {
         let key = self.file_key(path);
         let entry = self.get_file_entry(path, len);
@@ -869,10 +906,12 @@ impl GlobalFilePageCache {
     }
 }
 
+// 本变量代码由AI完成
 static GLOBAL_CACHE : Mutex<Option<Arc<GlobalFilePageCache>>> = Mutex::new(None);
 
 /// 根卷重挂载或辅助卷挂载/卸载后调用：原地清空缓存并绑定新 `mount_gen`，
 /// 复用已分配的帧池（不重新分配 16MiB），避免长跑大量挂载操作后堆碎片化卡死。
+// 本方法代码由AI完成
 pub fn reset_global_cache(mount_gen : u64) {
     let mut g = GLOBAL_CACHE.lock();
     if let Some(ref existing) = *g {
@@ -883,6 +922,7 @@ pub fn reset_global_cache(mount_gen : u64) {
 }
 
 /// 返回全局页缓存句柄；若代次不匹配则原地切换代次（复用帧池）。
+// 本方法代码由AI完成
 pub fn global_cache(mount_gen : u64) -> Arc<GlobalFilePageCache> {
     let mut g = GLOBAL_CACHE.lock();
     if let Some(ref existing) = *g {

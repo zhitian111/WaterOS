@@ -1,5 +1,6 @@
 //! `syslog(2)` → 内核 klog 环。
 
+//! 本模块代码由AI完成
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
@@ -13,6 +14,7 @@ const SYSLOG_ACTION_READ_ALL: i32 = 3;
 const SYSLOG_ACTION_READ_CLEAR: i32 = 4;
 
 /// `syslog(type, buf, len)`（RISC-V：`a0`/`a1`/`a2`）。
+// 本方法代码由AI完成
 pub(crate) fn sys_syslog(args: SyscallArgs) -> UserRet {
     let action = args.arg(0) as i32;
     let buf_ptr = args.arg(1);

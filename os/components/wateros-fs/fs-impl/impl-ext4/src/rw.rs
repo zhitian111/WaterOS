@@ -1,6 +1,7 @@
 //! 读写路径（基于 `ext4plus`，beta；写路径无完整 journal，仅用于 bring-up 与小文件测试）。
 //!
 //! I/O 边界：块读写适配器将驱动错误装箱为 `ext4plus` 期望的 `Error` trait object；按块读改写见本模块中的 `block_write_bytes`。
+//! 本模块代码由AI完成
 
 use alloc::boxed::Box;
 use alloc::string::String;
@@ -21,8 +22,10 @@ use ext4plus::path::Path;
 use ext4plus::{DirEntryName, Ext4, Ext4Read, Ext4Write, FileType, FollowSymlinks};
 use spin::Mutex;
 
+// 本变量代码由AI完成
 static EXT4_SMALL_READ_CACHE: Mutex<SmallReadCache> = Mutex::new(SmallReadCache::new());
 
+// 本结构代码由AI完成
 struct SmallReadCache {
     valid: bool,
     dev_id: usize,
@@ -41,10 +44,12 @@ impl SmallReadCache {
     }
 }
 
+// 本方法代码由AI完成
 fn shared_block_dev_id(dev: &SharedBlockDevice) -> usize {
     alloc::sync::Arc::as_ptr(dev) as *const () as usize
 }
 
+// 本方法代码由AI完成
 fn read_with_small_cache(dev: &SharedBlockDevice,
                          start_byte: u64,
                          dst: &mut [u8])
@@ -87,6 +92,7 @@ fn read_with_small_cache(dev: &SharedBlockDevice,
     Ok(false)
 }
 
+// 本方法代码由AI完成
 fn invalidate_small_read_cache(dev: &SharedBlockDevice, start_byte: u64, len: usize) {
     if len == 0 {
         return;
@@ -113,11 +119,13 @@ fn invalidate_small_read_cache(dev: &SharedBlockDevice, start_byte: u64, len: us
 }
 
 // 共享块设备句柄上的按字节读/写：同一 `SharedBlockDevice` 分别作为 reader 与 writer 传入 `load_with_writer`。
+// 本结构代码由AI完成
 struct BlockDevRw {
     device: SharedBlockDevice,
 }
 
 impl Ext4Read for BlockDevRw {
+// 本方法代码由AI完成
     fn read(
         &self,
         start_byte: u64,
@@ -130,6 +138,7 @@ impl Ext4Read for BlockDevRw {
 }
 
 impl Ext4Write for BlockDevRw {
+// 本方法代码由AI完成
     fn write(
         &self,
         start_byte: u64,
@@ -139,12 +148,15 @@ impl Ext4Write for BlockDevRw {
     }
 }
 
+// 本方法代码由AI完成
 fn driver_boxed(e: DriverError) -> Box<dyn Error + Send + Sync + 'static> { Box::new(DriverErr(e)) }
 
 #[derive(Debug)]
+// 本结构代码由AI完成
 struct DriverErr(DriverError);
 
 impl core::fmt::Display for DriverErr {
+// 本方法代码由AI完成
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{:?}", self.0)
     }
@@ -153,6 +165,7 @@ impl core::fmt::Display for DriverErr {
 impl Error for DriverErr {}
 
 // 按字节写入块设备：完整覆盖块直接写，非块对齐头尾才读-改-写。
+// 本方法代码由AI完成
 fn block_write_bytes(
     dev: &SharedBlockDevice,
     start_byte: u64,
@@ -198,6 +211,7 @@ fn block_write_bytes(
     Ok(())
 }
 
+// 本方法代码由AI完成
 fn write_partial_block(
     bdev: &mut dyn driver_block_api_v0::BlockDevice,
     block: usize,
@@ -216,6 +230,7 @@ fn write_partial_block(
 }
 
 /// 将 `ext4plus` 错误映射为公共 [`FsError`]。
+// 本方法代码由AI完成
 pub(crate) fn map_ext4_plus(err: Ext4Error) -> FsError {
     match err {
         Ext4Error::NotFound => FsError::NotFound,
@@ -236,6 +251,7 @@ pub(crate) fn map_ext4_plus(err: Ext4Error) -> FsError {
 }
 
 /// 读写 ext4 句柄。挂载成功后内部持有 `ext4plus::Ext4` 与可选 writer。
+// 本结构代码由AI完成
 pub struct Ext4FsRw {
     fs: Option<Ext4>,
 }
@@ -250,6 +266,7 @@ impl Ext4FsRw {
 }
 
 impl ReadWriteFs for Ext4FsRw {
+// 本方法代码由AI完成
     fn mount_rw(&mut self, device: SharedBlockDevice) -> FsResult<()> {
         let reader = Box::new(BlockDevRw { device: device.clone() });
         let writer = Box::new(BlockDevRw { device });
@@ -261,6 +278,7 @@ impl ReadWriteFs for Ext4FsRw {
     #[inline]
     fn is_mounted(&self) -> bool { self.fs.is_some() }
 
+// 本方法代码由AI完成
     fn write_regular_file_at_root(&mut self, name: &str, data: &[u8]) -> FsResult<()> {
         if name.is_empty() || name.contains('/') {
             return Err(FsError::InvalidPath);
@@ -270,6 +288,7 @@ impl ReadWriteFs for Ext4FsRw {
         self.write_regular_file(path.as_str(), data)
     }
 
+// 本方法代码由AI完成
     fn write_regular_file(&mut self, path: &str, data: &[u8]) -> FsResult<()> {
         let (parent, name) = split_parent_and_name(path)?;
         let fs = self.fs()?;
@@ -320,6 +339,7 @@ impl ReadWriteFs for Ext4FsRw {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn write_range(&mut self, path: &str, offset: u64, data: &[u8]) -> FsResult<usize> {
         if data.is_empty() {
             return Ok(0);
@@ -348,6 +368,7 @@ impl ReadWriteFs for Ext4FsRw {
         Ok(done)
     }
 
+// 本方法代码由AI完成
     fn truncate(&mut self, path: &str, len: u64) -> FsResult<()> {
         let fs = self.fs()?;
         let pathv = Path::try_from(path).map_err(|_| FsError::InvalidPath)?;
@@ -360,6 +381,7 @@ impl ReadWriteFs for Ext4FsRw {
         truncate(fs, &mut inode, len).map_err(map_ext4_plus)
     }
 
+// 本方法代码由AI完成
     fn mkdir(&mut self, path: &str, mode: u32) -> FsResult<()> {
         let (parent, name) = split_parent_and_name(path)?;
         let fs = self.fs()?;
@@ -393,6 +415,7 @@ impl ReadWriteFs for Ext4FsRw {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn chmod(&mut self, path: &str, mode: u32) -> FsResult<()> {
         let fs = self.fs()?;
         let pathv = Path::try_from(path).map_err(|_| FsError::InvalidPath)?;
@@ -406,6 +429,7 @@ impl ReadWriteFs for Ext4FsRw {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn chown(&mut self, path: &str, uid: Option<u32>, gid: Option<u32>) -> FsResult<()> {
         if uid.is_none() && gid.is_none() {
             return self.metadata(path).map(|_| ());
@@ -425,6 +449,7 @@ impl ReadWriteFs for Ext4FsRw {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn setxattr(&mut self, path: &str, name: &str, value: &[u8]) -> FsResult<()> {
         if name.is_empty() || name.contains('\0') {
             return Err(FsError::InvalidPath);
@@ -440,6 +465,7 @@ impl ReadWriteFs for Ext4FsRw {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn getxattr(&self, path: &str, name: &str, buf: &mut [u8]) -> FsResult<usize> {
         if name.is_empty() || name.contains('\0') {
             return Err(FsError::InvalidPath);
@@ -463,6 +489,7 @@ impl ReadWriteFs for Ext4FsRw {
         Ok(value.len())
     }
 
+// 本方法代码由AI完成
     fn listxattr(&self, path: &str, buf: &mut [u8]) -> FsResult<usize> {
         let fs = self.fs()?;
         let pathv = Path::try_from(path).map_err(|_| FsError::InvalidPath)?;
@@ -485,6 +512,7 @@ impl ReadWriteFs for Ext4FsRw {
         Ok(listing.len())
     }
 
+// 本方法代码由AI完成
     fn removexattr(&mut self, path: &str, name: &str) -> FsResult<()> {
         if name.is_empty() || name.contains('\0') {
             return Err(FsError::InvalidPath);
@@ -500,6 +528,7 @@ impl ReadWriteFs for Ext4FsRw {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn unlink(&mut self, path: &str) -> FsResult<()> {
         let (parent, name) = split_parent_and_name(path)?;
         let fs = self.fs()?;
@@ -523,6 +552,7 @@ impl ReadWriteFs for Ext4FsRw {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn rename(&mut self, old_path: &str, new_path: &str) -> FsResult<()> {
         let (old_parent, old_name) = split_parent_and_name(old_path)?;
         let (new_parent, new_name) = split_parent_and_name(new_path)?;
@@ -551,6 +581,7 @@ impl ReadWriteFs for Ext4FsRw {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn hardlink(&mut self, existing_path: &str, new_path: &str) -> FsResult<()> {
         let fs = self.fs()?;
         let existing_pathv = Path::try_from(existing_path).map_err(|_| FsError::InvalidPath)?;
@@ -583,6 +614,7 @@ impl ReadWriteFs for Ext4FsRw {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn rmdir(&mut self, path: &str) -> FsResult<()> {
         let (parent, name) = split_parent_and_name(path)?;
         let fs = self.fs()?;
@@ -612,12 +644,14 @@ impl ReadWriteFs for Ext4FsRw {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn exists(&self, path: &str) -> FsResult<bool> {
         let fs = self.fs()?;
         let pathv = Path::try_from(path).map_err(|_| FsError::InvalidPath)?;
         fs.exists(pathv).map_err(map_ext4_plus)
     }
 
+// 本方法代码由AI完成
     fn metadata(&self, path: &str) -> FsResult<FsMetadata> {
         let fs = self.fs()?;
         let pathv = Path::try_from(path).map_err(|_| FsError::InvalidPath)?;
@@ -628,6 +662,7 @@ impl ReadWriteFs for Ext4FsRw {
         Ok(map_rw_metadata(&meta, u64::from(inode.index.get())))
     }
 
+// 本方法代码由AI完成
     fn read(&self, path: &str) -> FsResult<Vec<u8>> {
         let fs = self.fs()?;
         let pathv = Path::try_from(path).map_err(|_| FsError::InvalidPath)?;
@@ -659,6 +694,7 @@ impl ReadWriteFs for Ext4FsRw {
         Ok(out)
     }
 
+// 本方法代码由AI完成
     fn read_range(&self, path: &str, offset: u64, buf: &mut [u8]) -> FsResult<usize> {
         if buf.is_empty() {
             return Ok(0);
@@ -695,6 +731,7 @@ impl ReadWriteFs for Ext4FsRw {
         Ok(filled)
     }
 
+// 本方法代码由AI完成
     fn read_dir(&self, path: &str) -> FsResult<Vec<FsDirEntry>> {
         let fs = self.fs()?;
         let pathv = Path::try_from(path).map_err(|_| FsError::InvalidPath)?;
@@ -726,6 +763,7 @@ impl ReadWriteFs for Ext4FsRw {
     }
 }
 
+// 本方法代码由AI完成
 fn map_rw_metadata(meta: &Metadata, inode: u64) -> FsMetadata {
     let node_type = if meta.is_dir() {
         FsNodeType::Directory
@@ -748,11 +786,13 @@ fn map_rw_metadata(meta: &Metadata, inode: u64) -> FsMetadata {
 }
 
 /// 将 Linux `mkdir(2)` 的 `mode`（权限位，可含 `S_IFDIR`）映射为 ext4 `InodeMode`。
+// 本方法代码由AI完成
 fn linux_mkdir_mode_to_inode_mode(mode: u32) -> InodeMode {
     InodeMode::S_IFDIR | linux_mode_perm_to_inode_mode(mode)
 }
 
 /// 保留 ext4 inode 的文件类型位。
+// 本方法代码由AI完成
 fn inode_type_bits(mode: InodeMode) -> InodeMode {
     mode & (InodeMode::S_IFIFO
         | InodeMode::S_IFCHR
@@ -764,6 +804,7 @@ fn inode_type_bits(mode: InodeMode) -> InodeMode {
 }
 
 /// 将 Linux `chmod(2)` / `fchmodat(2)` 的权限位（`mode & 0o7777`）映射为 ext4 `InodeMode`。
+// 本方法代码由AI完成
 fn linux_mode_perm_to_inode_mode(mode: u32) -> InodeMode {
     let perm = mode & 0o7777;
     let mut m = InodeMode::empty();
@@ -807,6 +848,7 @@ fn linux_mode_perm_to_inode_mode(mode: u32) -> InodeMode {
 }
 
 /// 将绝对路径拆成 `(父目录路径, 最终分量名)`；`path` 须为指向文件的绝对路径。
+// 本方法代码由AI完成
 fn split_parent_and_name(path: &str) -> FsResult<(&str, &str)> {
     let p = path.trim_end_matches('/');
     if p.is_empty() || p == "/" {

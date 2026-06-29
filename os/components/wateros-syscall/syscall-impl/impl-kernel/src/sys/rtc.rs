@@ -1,5 +1,6 @@
 //! `/dev/misc/rtc` 等软件 RTC 的 `ioctl(2)` 处理。
 
+//! 本模块代码由AI完成
 use abi::errno::ErrNo;
 use abi::user_ret::UserRet;
 use platform::wall_clock::{ns_to_rtc_time, realtime_ns, rtc_time_to_ns, set_realtime_ns};
@@ -55,6 +56,7 @@ impl From<UserRtcTime> for platform::wall_clock::RtcTimeFields {
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_rtc_ioctl(request: u32, argp: usize) -> UserRet {
     match request {
         RTC_RD_TIME => {

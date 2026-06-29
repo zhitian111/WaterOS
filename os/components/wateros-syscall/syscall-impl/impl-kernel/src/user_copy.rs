@@ -1,5 +1,6 @@
 //! 用户虚拟地址与内核缓冲区之间的安全拷贝。
 
+//! 本模块代码由AI完成
 extern crate alloc;
 
 use alloc::string::String;
@@ -13,11 +14,13 @@ use mm::ActiveUserMemoryOps;
 
 use crate::mm_util::{current_user_aspace_handle, mm_err_to_errno};
 
+// 本方法代码由AI完成
 pub(crate) fn user_aspace_required() -> Result<ActiveUserMemoryOps, ErrNo> {
     let handle = current_user_aspace_handle().ok_or(ErrNo::EFAULT)?;
     Ok(ActiveUserMemoryOps::new(handle))
 }
 
+// 本方法代码由AI完成
 pub(crate) fn copy_from_user(buf: &mut [u8], ptr: usize) -> Result<usize, ErrNo> {
     if buf.is_empty() {
         return Ok(0);
@@ -33,6 +36,7 @@ pub(crate) fn copy_from_user(buf: &mut [u8], ptr: usize) -> Result<usize, ErrNo>
         })
 }
 
+// 本方法代码由AI完成
 pub(crate) fn copy_to_user(ptr: usize, buf: &[u8]) -> Result<usize, ErrNo> {
     if buf.is_empty() {
         return Ok(0);
@@ -85,6 +89,7 @@ fn trace_user_copy_failure(op: &str, va: usize, len: usize, err: mm::api::error:
 fn trace_user_copy_failure(_op: &str, _va: usize, _len: usize, _err: mm::api::error::MmError) {}
 
 /// 读取以 NUL 结尾的用户路径（上限 `max` 字节，含终止符空间）。
+// 本方法代码由AI完成
 pub(crate) fn copy_user_path_cstr(ptr: usize, max: usize) -> Result<String, ErrNo> {
     if ptr == 0 {
         return Err(ErrNo::EFAULT);
@@ -113,6 +118,7 @@ pub(crate) fn copy_user_path_cstr(ptr: usize, max: usize) -> Result<String, ErrN
     String::from_utf8(raw).map_err(|_| ErrNo::EINVAL)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn copy_to_user_struct<T: Copy>(ptr: usize, value: &T) -> Result<(), ErrNo> {
     let bytes = unsafe {
         core::slice::from_raw_parts(
@@ -129,6 +135,7 @@ pub(crate) fn copy_to_user_struct<T: Copy>(ptr: usize, value: &T) -> Result<(), 
     })?
 }
 
+// 本方法代码由AI完成
 pub(crate) fn copy_to_user_struct_in_aspace<T: Copy>(
     handle: usize,
     ptr: usize,
@@ -158,6 +165,7 @@ pub(crate) fn copy_to_user_struct_in_aspace<T: Copy>(
         })
 }
 
+// 本方法代码由AI完成
 pub(crate) fn copy_from_user_struct<T: Copy>(ptr: usize) -> Result<T, ErrNo> {
     let mut value = core::mem::MaybeUninit::<T>::uninit();
     let bytes = unsafe {

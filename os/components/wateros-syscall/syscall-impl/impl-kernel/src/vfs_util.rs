@@ -1,8 +1,10 @@
 //! [`VfsError`] 到 ABI [`ErrNo`] 的映射。
+//! 本模块代码由AI完成
 
 use abi::errno::ErrNo;
 use vfs::api::{VfsError, VfsOpenFlags};
 
+// 本方法代码由AI完成
 pub(crate) fn vfs_error_to_errno(err : VfsError) -> ErrNo {
     match err {
         VfsError::BadFd => ErrNo::EBADF,
@@ -27,6 +29,7 @@ pub(crate) fn vfs_error_to_errno(err : VfsError) -> ErrNo {
 }
 
 /// `pread`/`pwrite`/`sendfile` 路径：不可 seek 的句柄（pipe/socket 等）→ `ESPIPE`。
+// 本方法代码由AI完成
 pub(crate) fn vfs_io_at_error_to_errno(err : VfsError) -> ErrNo {
     match err {
         VfsError::Unsupported => ErrNo::ESPIPE,
@@ -35,6 +38,7 @@ pub(crate) fn vfs_io_at_error_to_errno(err : VfsError) -> ErrNo {
 }
 
 /// Linux `openat(2)` flags → [`VfsOpenFlags`]。
+// 本方法代码由AI完成
 pub(crate) fn linux_open_flags_to_vfs(flags : u32) -> VfsOpenFlags {
     const O_ACCMODE : u32 = 3;
     const O_WRONLY : u32 = 1;

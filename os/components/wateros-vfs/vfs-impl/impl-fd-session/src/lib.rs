@@ -1,4 +1,5 @@
 //! per-task fd 表与控制台/pipe [`VfsIoHandle`] 实现。
+//! 本模块代码由AI完成
 
 #![no_std]
 

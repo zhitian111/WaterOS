@@ -2,6 +2,7 @@
 //!
 //! 因 [`VfsIoHandle`] 不支持向下转型，每个 socket fd 的共享 socket 状态在此独立维护。
 
+//! 本模块代码由AI完成
 use alloc::collections::BTreeMap;
 use driver_network::SocketRef;
 use spin::Mutex;

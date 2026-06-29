@@ -1,5 +1,6 @@
 //! `fcntl(2)` — 文件描述符控制。
 
+//! 本模块代码由AI完成
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
@@ -32,6 +33,7 @@ const F_SETFL_MASK: u32 = (O_APPEND | O_NONBLOCK) as u32;
 const PAGE_SIZE: usize = 4096;
 const MAX_PIPE_SIZE: usize = 1 << 20;
 
+// 本方法代码由AI完成
 pub(crate) fn sys_fcntl(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let cmd = args.arg(1);

@@ -186,6 +186,49 @@ CONFIG_BSD_PROCESS_ACCT=y
     let _ = sess.chmod("/boot/config-5.15.0", 0o644);
 }
 
+/// Bring-up：从 `/{glibc,musl}/ltp/testcases/bin/` 删除排除名单中的顶层用例文件。
+///
+/// `ltp_testcode.sh` 用 `for file in "$target_dir"/*` 顺序跑测；删文件比 exec 后 fast-exit
+/// 更省时（不 fork/exec/wait）。fast-exit 仍作兜底。
+#[cfg(feature = "vfs-bridge")]
+pub fn prune_ltp_excluded_testcases() {
+    use vfs::api::{VfsError, VfsFsKind};
+
+    let Ok(mut sess) = vfs::mount::open_rw_session(VfsFsKind::Ext4) else {
+        warn!("[{LOG_TAG}] prune_ltp_excluded_testcases: open_rw_session failed");
+        return;
+    };
+
+    let basenames = syscall::ltp_submit_skip_basenames();
+    let mut removed = 0u32;
+    let mut absent = 0u32;
+    let mut failed = 0u32;
+
+    for prefix in ["/glibc/ltp/testcases/bin", "/musl/ltp/testcases/bin"] {
+        for basename in basenames {
+            let path = alloc::format!("{prefix}/{basename}");
+            match sess.unlink(path.as_str()) {
+                Ok(()) => removed += 1,
+                Err(VfsError::NotFound) => absent += 1,
+                Err(e) => {
+                    failed += 1;
+                    if failed <= 8 {
+                        warn!("[{LOG_TAG}] prune LTP {path}: {e:?}");
+                    }
+                }
+            }
+        }
+    }
+    info!("[{LOG_TAG}] prune_ltp_excluded: {} basenames × 2 libc, removed={removed} \
+           absent={absent} failed={failed}",
+          basenames.len());
+}
+
+#[cfg(not(feature = "vfs-bridge"))]
+pub fn prune_ltp_excluded_testcases() {
+    warn!("[{LOG_TAG}] vfs-bridge off: skip LTP testcase prune");
+}
+
 /// LTP 用例依赖的账户文件；在 `fs::test` / `vfs::test` 之后再次写入，避免自检覆盖。
 #[cfg(feature = "vfs-bridge")]
 pub fn refresh_ltp_accounts() {

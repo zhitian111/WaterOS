@@ -1,4 +1,5 @@
 #![no_std]
+//! 本模块代码由AI完成
 
 //! 用户态/测试向的简化 devfs 视图：枚举块设备为 Linux 风格 `/dev/vda*` 与兼容 `/dev/vblk{n}`。
 //!
@@ -12,6 +13,7 @@ use spin::Mutex;
 
 /// 简化 devfs 中的节点类型（仅块与占位未使用）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// 本结构代码由AI完成
 pub enum DevNodeType {
     /// 块设备索引节点。
     Block,
@@ -21,6 +23,7 @@ pub enum DevNodeType {
 
 /// 带块设备索引的节点描述，便于测试断言。
 #[derive(Debug, Clone, PartialEq, Eq)]
+// 本结构代码由AI完成
 pub struct DevNode {
     /// 逻辑路径。
     pub path: String,
@@ -31,14 +34,17 @@ pub struct DevNode {
 }
 
 // 与内核 devfs 不同：仅缓存枚举快照，无动态 register 表；单 Mutex 保护 bring-up 阶段并发。
+// 本变量代码由AI完成
 static DEV_NODES: Mutex<Vec<DevNode>> = Mutex::new(Vec::new());
 
 // Linux 风格磁盘名：索引 0 → `/dev/vda`。
+// 本方法代码由AI完成
 fn linux_vd_disk_path(index: usize) -> String {
     let letter = (b'a' + (index as u8).min(25)) as char;
     format!("/dev/vd{}", letter)
 }
 
+// 本方法代码由AI完成
 fn push_node(nodes: &mut Vec<DevNode>, path: String, index: usize) {
     if nodes.iter().any(|n| n.path == path) {
         return;
@@ -51,6 +57,7 @@ fn push_node(nodes: &mut Vec<DevNode>, path: String, index: usize) {
 }
 
 /// 根据 `block_device_count()` 重建节点表并返回节点数量。
+// 本方法代码由AI完成
 pub fn refresh() -> usize {
     let count = block_device_count();
     let mut nodes = DEV_NODES.lock();
@@ -76,6 +83,7 @@ pub fn list_nodes() -> Vec<DevNode> {
 
 /// 将设备路径解析为索引并向驱动查询共享块设备句柄。
 #[inline]
+// 本方法代码由AI完成
 pub fn lookup_block_device(path: &str) -> FsResult<SharedBlockDevice> {
     let idx = parse_block_index(path).ok_or(FsError::NotFound)?;
     block_device_at(idx).ok_or(FsError::NotFound)
@@ -83,6 +91,7 @@ pub fn lookup_block_device(path: &str) -> FsResult<SharedBlockDevice> {
 
 /// 存在至少一块设备时返回 `/dev/vda`，否则 `None`。
 #[inline]
+// 本方法代码由AI完成
 pub fn default_root_block_path() -> Option<String> {
     if block_device_count() == 0 {
         None
@@ -92,6 +101,7 @@ pub fn default_root_block_path() -> Option<String> {
 }
 
 // 路径格式与 impl-kernel 命名保持一致，便于测试共享镜像。
+// 本方法代码由AI完成
 fn parse_block_index(path: &str) -> Option<usize> {
     if let Some(suffix) = path.strip_prefix("/dev/vblk") {
         return suffix.parse::<usize>().ok();

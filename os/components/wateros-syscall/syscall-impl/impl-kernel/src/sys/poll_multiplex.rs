@@ -1,5 +1,6 @@
 //! `ppoll`(73) / `pselect6`(72) / `select`(23)。
 
+//! 本模块代码由AI完成
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 
@@ -7,6 +8,7 @@ use crate::poll_engine::{
     install_poll_sigmask, PollDeadline, do_poll_with_deadline, do_pselect_with_deadline,
 };
 
+// 本方法代码由AI完成
 pub(crate) fn sys_ppoll(args: SyscallArgs) -> UserRet {
     let fds_ptr = args.arg(0);
     let nfds = args.arg(1);
@@ -26,6 +28,7 @@ pub(crate) fn sys_ppoll(args: SyscallArgs) -> UserRet {
     do_poll_with_deadline(fds_ptr, nfds, deadline)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_pselect6(args: SyscallArgs) -> UserRet {
     let nfds = args.arg(0);
     let readfds = args.arg(1);
@@ -47,6 +50,7 @@ pub(crate) fn sys_pselect6(args: SyscallArgs) -> UserRet {
     do_pselect_with_deadline(nfds, readfds, writefds, exceptfds, deadline)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_select(args: SyscallArgs) -> UserRet {
     let nfds = args.arg(0);
     let readfds = args.arg(1);

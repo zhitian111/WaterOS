@@ -1,4 +1,5 @@
 //! 已打开目录句柄：供 `openat(dirfd, …)` 与 `getdents64` 使用。
+//! 本模块代码由AI完成
 
 extern crate alloc;
 
@@ -14,6 +15,7 @@ use crate::FsBridge;
 
 /// 根卷上已打开的目录（缓存 `read_dir` 结果供 `getdents64` 续读）。
 #[derive(Clone)]
+// 本结构代码由AI完成
 pub struct DirectoryHandle {
     path: String,
     meta: VfsMetadata,
@@ -22,6 +24,7 @@ pub struct DirectoryHandle {
 }
 
 impl DirectoryHandle {
+// 本方法代码由AI完成
     pub(crate) fn open(bridge: &FsBridge, path: String) -> VfsResult<Box<dyn VfsIoHandle>> {
         if !bridge.exists(path.as_str())? {
             return Err(VfsError::NotFound);
@@ -38,6 +41,7 @@ impl DirectoryHandle {
         }))
     }
 
+// 本方法代码由AI完成
     fn load_dirents(&mut self, bridge: &FsBridge) -> VfsResult<()> {
         if self.dirents.is_some() {
             return Ok(());
@@ -48,18 +52,24 @@ impl DirectoryHandle {
     }
 }
 
+// 本变量代码由AI完成
 const DT_REG: u8 = 8;
+// 本变量代码由AI完成
 const DT_DIR: u8 = 4;
+// 本变量代码由AI完成
 const DT_LNK: u8 = 10;
+// 本变量代码由AI完成
 const HEADER_SIZE: usize = 19;
 
 #[inline]
+// 本方法代码由AI完成
 fn dirent64_reclen(name_len: usize) -> usize {
     let with_name = HEADER_SIZE + name_len + 1;
     (with_name + 7) & !7
 }
 
 #[inline]
+// 本方法代码由AI完成
 pub(crate) fn node_type_to_dt(t: VfsNodeType) -> u8 {
     match t {
         VfsNodeType::File => DT_REG,
@@ -69,6 +79,7 @@ pub(crate) fn node_type_to_dt(t: VfsNodeType) -> u8 {
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn dirent64_encode_slice(
     buf: &mut [u8],
     ino: u64,
@@ -79,6 +90,7 @@ pub(crate) fn dirent64_encode_slice(
     encode_one(buf, ino, next_off, name, d_type)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn encode_one(buf: &mut [u8], ino: u64, next_off: i64, name: &str, d_type: u8) -> Option<usize> {
     let reclen = dirent64_reclen(name.len());
     if buf.len() < reclen {
@@ -100,30 +112,37 @@ pub(crate) fn encode_one(buf: &mut [u8], ino: u64, next_off: i64, name: &str, d_
 }
 
 impl VfsIoHandle for DirectoryHandle {
+// 本方法代码由AI完成
     fn metadata(&self) -> VfsResult<VfsMetadata> {
         Ok(self.meta.clone())
     }
 
+// 本方法代码由AI完成
     fn directory_path(&self) -> Option<&str> {
         Some(self.path.as_str())
     }
 
+// 本方法代码由AI完成
     fn backing_path(&self) -> Option<&str> {
         Some(self.path.as_str())
     }
 
+// 本方法代码由AI完成
     fn read(&mut self, _buf: &mut [u8]) -> VfsResult<usize> {
         Err(VfsError::NotAFile)
     }
 
+// 本方法代码由AI完成
     fn write(&mut self, _buf: &[u8]) -> VfsResult<usize> {
         Err(VfsError::NotAFile)
     }
 
+// 本方法代码由AI完成
     fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {
         Ok(Box::new(self.clone()))
     }
 
+// 本方法代码由AI完成
     fn fill_getdents64(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
         let bridge = FsBridge;
         self.load_dirents(&bridge)?;

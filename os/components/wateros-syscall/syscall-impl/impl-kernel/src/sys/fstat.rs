@@ -1,5 +1,6 @@
 //! `fstat(2)`：将已打开文件的元数据写入用户 `stat` 缓冲。
 
+//! 本模块代码由AI完成
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
@@ -14,6 +15,7 @@ use crate::vfs_util::vfs_error_to_errno;
 
 const AT_EMPTY_PATH: u32 = 0x1000;
 
+// 本方法代码由AI完成
 pub(crate) fn sys_fstat(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let stat_ptr = args.arg(1);
@@ -38,6 +40,7 @@ pub(crate) fn sys_fstat(args: SyscallArgs) -> UserRet {
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_fstatat(args: SyscallArgs) -> UserRet {
     let dirfd = args.arg(0) as isize;
     let path_ptr = args.arg(1);
@@ -87,6 +90,7 @@ pub(crate) fn sys_fstatat(args: SyscallArgs) -> UserRet {
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_statx(args: SyscallArgs) -> UserRet {
     let dirfd = args.arg(0) as isize;
     let path_ptr = args.arg(1);

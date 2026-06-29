@@ -1,5 +1,6 @@
 //! `epoll_create1` / `epoll_ctl` / `epoll_wait` / `epoll_pwait`。
 
+//! 本模块代码由AI完成
 extern crate alloc;
 
 use abi::errno::ErrNo;
@@ -20,6 +21,7 @@ use crate::vfs_util::vfs_error_to_errno;
 
 const FD_CLOEXEC: usize = 1;
 
+// 本方法代码由AI完成
 pub(crate) fn sys_epoll_create1(args: SyscallArgs) -> UserRet {
     let flags = args.arg(0);
     if flags & !EPOLL_CLOEXEC != 0 {
@@ -51,6 +53,7 @@ fn create_epoll_fd(flags: usize) -> UserRet {
     UserRet::from_success(fd)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_epoll_ctl(args: SyscallArgs) -> UserRet {
     let epfd = args.arg(0);
     let op = args.arg(1);
@@ -127,6 +130,7 @@ pub(crate) fn sys_epoll_ctl(args: SyscallArgs) -> UserRet {
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_epoll_wait(args: SyscallArgs) -> UserRet {
     let epfd = args.arg(0);
     let events_ptr = args.arg(1);
@@ -135,6 +139,7 @@ pub(crate) fn sys_epoll_wait(args: SyscallArgs) -> UserRet {
     do_epoll_wait(epfd, events_ptr, maxevents, timeout_ms)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_epoll_pwait(args: SyscallArgs) -> UserRet {
     let epfd = args.arg(0);
     let events_ptr = args.arg(1);

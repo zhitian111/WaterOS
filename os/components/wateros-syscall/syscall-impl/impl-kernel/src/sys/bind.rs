@@ -1,5 +1,6 @@
 //! `bind(2)`：将 socket 绑定到本地地址。
 
+//! 本模块代码由AI完成
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
@@ -13,6 +14,7 @@ const AF_INET: u16 = 2;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
+// 本结构代码由AI完成
 struct SockAddrIn {
     sin_family: u16,
     sin_port: u16, // network byte order
@@ -20,6 +22,7 @@ struct SockAddrIn {
     sin_zero: [u8; 8],
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_bind(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let addr_ptr = args.arg(1);

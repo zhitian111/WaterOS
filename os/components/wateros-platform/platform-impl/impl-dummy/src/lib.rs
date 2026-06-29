@@ -1,5 +1,6 @@
 #![no_std]
 
+//! 本模块代码由AI完成
 //! **占位**平台实现：启动参数与时间频率 trait 的桩，用于未绑定真实环境的构建。
 //!
 //! 与 `impl-qemu-riscv64-opensbi` 由 `wateros-platform` feature 切换；方法体多为

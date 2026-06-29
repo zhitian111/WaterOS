@@ -1,4 +1,5 @@
 //! `ftruncate(2)`：调整已打开普通文件长度。
+//! 本模块代码由AI完成
 
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
@@ -6,6 +7,7 @@ use abi::user_ret::UserRet;
 
 use crate::vfs_util::vfs_error_to_errno;
 
+// 本方法代码由AI完成
 pub(crate) fn sys_ftruncate(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let len = args.arg(1);

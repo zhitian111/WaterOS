@@ -1,5 +1,6 @@
 //! `read(2)`：支持 pipe 读端；stdin 暂未接真实输入。
 
+//! 本模块代码由AI完成
 extern crate alloc;
 
 use abi::errno::ErrNo;
@@ -32,6 +33,7 @@ fn finish_read(_fd : usize, ptr : usize, buf : &[u8], n : usize) -> UserRet {
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_read(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let ptr = args.arg(1);
@@ -64,6 +66,7 @@ pub(crate) fn sys_read(args : SyscallArgs) -> UserRet {
     finish_read(fd, ptr, &kbuf, n)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_readv(args : SyscallArgs) -> UserRet {
     // iozone 调试：最早期 trace，在参数解包前
     let fd = args.arg(0);

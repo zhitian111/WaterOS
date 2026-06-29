@@ -1,8 +1,10 @@
 //! 内核消息环存储 trait。
+//! 本模块代码由AI完成
 
 use crate::{AppendResult, KlogError, KlogRecordMeta};
 
 /// 提交后的一条记录（正文切片指向环内存储）。
+// 本结构代码由AI完成
 pub struct KlogRecordView<'a> {
     /// 记录头。
     pub meta: KlogRecordMeta,
@@ -11,6 +13,7 @@ pub struct KlogRecordView<'a> {
 }
 
 /// 全局 klog 环契约（由 `klog-ringbuf` 实现）。
+// 本结构代码由AI完成
 pub trait KlogStore {
     /// 追加一条记录；`meta` 中 `seq` 由实现写入。
     fn append(&mut self, meta: &mut KlogRecordMeta, text: &[u8]) -> AppendResult;
@@ -35,6 +38,7 @@ pub trait KlogStore {
 }
 
 /// 环统计。
+// 本结构代码由AI完成
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct KlogStats {
     /// 成功提交条数。

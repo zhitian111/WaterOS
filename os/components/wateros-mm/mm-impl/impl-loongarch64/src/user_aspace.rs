@@ -1,3 +1,4 @@
+//! 本模块代码由AI完成
 //! 将 [`api_v0::kernel_bringup::LoadedElf::user_aspace_ptr`] 解析为
 //! [`LoongArch64AddressSpace`]， 供上层在闭包内调用 [`api_v0::brk::HeapBrk`] /
 //! [`api_v0::mmap::MmapOps`] 等机制原语。

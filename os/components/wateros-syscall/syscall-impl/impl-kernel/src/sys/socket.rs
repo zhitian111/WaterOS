@@ -1,5 +1,6 @@
 //! `socket(2)`：创建 socket 并分配 fd。
 
+//! 本模块代码由AI完成
 extern crate alloc;
 
 use abi::errno::ErrNo;
@@ -20,6 +21,7 @@ const SOCK_NONBLOCK: usize = 0o4000;
 const SOCK_CLOEXEC: usize = 0o2000000;
 const FD_CLOEXEC: usize = 1;
 
+// 本方法代码由AI完成
 pub(crate) fn sys_socket(args: SyscallArgs) -> UserRet {
     let domain = args.arg(0);
     let mut typ = args.arg(1);

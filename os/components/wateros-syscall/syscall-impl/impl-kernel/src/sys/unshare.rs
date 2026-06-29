@@ -1,4 +1,5 @@
 //! `unshare(2)`：创建新挂载命名空间（`CLONE_NEWNS`）。
+//! 本模块代码由AI完成
 
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
@@ -6,6 +7,7 @@ use abi::user_ret::UserRet;
 
 const CLONE_NEWNS: usize = 0x0002_0000;
 
+// 本方法代码由AI完成
 pub(crate) fn sys_unshare(args: SyscallArgs) -> UserRet {
     let flags = args.arg(0);
     if flags == 0 {

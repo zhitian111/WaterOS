@@ -1,4 +1,5 @@
 #![no_std]
+//! 本模块代码由AI完成
 
 //! 基于 `ext4_rs` crate 的 ext4 实现。
 //!
@@ -22,19 +23,26 @@ use ext4_rs::{BlockDevice as Ext4RsBlockDevice, Errno, Ext4, Ext4Error, InodeFil
 use spin::Mutex;
 
 /// ext2/3/4 共用的 superblock magic（Linux 布局 `s_magic = 0xEF53`）。
+// 本变量代码由AI完成
 const EXT4_SUPER_MAGIC : u16 = 0xEF53;
 /// 主 superblock 起始字节偏移（卷头 1024 字节之后）。
+// 本变量代码由AI完成
 const SUPERBLOCK_OFFSET : u64 = 1024;
 /// `s_magic` 在 1024 字节 superblock 内的偏移。
+// 本变量代码由AI完成
 const MAGIC_OFFSET_IN_SB : usize = 0x38;
 /// ext4 根目录 inode 号（固定为 2）。
+// 本变量代码由AI完成
 const ROOT_INODE : u32 = 2;
 /// 普通文件 mode 前缀（`S_IFREG`）。
+// 本变量代码由AI完成
 const S_IFREG : u16 = 0o100000;
 /// 目录 mode 前缀（`S_IFDIR`）。
+// 本变量代码由AI完成
 const S_IFDIR : u16 = 0o040000;
 
 // 读取 superblock magic，判定是否为 ext2/3/4 卷。
+// 本方法代码由AI完成
 fn probe_ext4_magic(device : &SharedBlockDevice) -> FsResult<bool> {
     let mut buf = [0u8; 2];
     device.lock()
@@ -45,11 +53,13 @@ fn probe_ext4_magic(device : &SharedBlockDevice) -> FsResult<bool> {
 }
 
 // 将 [`SharedBlockDevice`] 适配为 ext4_rs 的 [`Ext4RsBlockDevice`]。
+// 本结构代码由AI完成
 struct BlockDevAdapter {
     device : SharedBlockDevice,
 }
 
 impl Ext4RsBlockDevice for BlockDevAdapter {
+// 本方法代码由AI完成
     fn read_offset(&self, offset : usize) -> Vec<u8> {
         let mut out = vec![0u8; ext4_rs::BLOCK_SIZE];
         let _ = self.device
@@ -58,12 +68,14 @@ impl Ext4RsBlockDevice for BlockDevAdapter {
         out
     }
 
+// 本方法代码由AI完成
     fn write_offset(&self, offset : usize, data : &[u8]) {
         let _ = block_write_bytes(&self.device, offset as u64, data);
     }
 }
 
 // 按字节写入块设备：头尾非块对齐时读-改-写，中间整块直接写。
+// 本方法代码由AI完成
 fn block_write_bytes(dev : &SharedBlockDevice,
                      start_byte : u64,
                      src : &[u8])
@@ -103,6 +115,7 @@ fn block_write_bytes(dev : &SharedBlockDevice,
 }
 
 // 单块内部分写入：先读整块再 patch 子区间。
+// 本方法代码由AI完成
 fn write_partial_block(bdev : &mut dyn driver_block_api_v0::BlockDevice,
                        block : usize,
                        offset : usize,
@@ -119,6 +132,7 @@ fn write_partial_block(bdev : &mut dyn driver_block_api_v0::BlockDevice,
 }
 
 // 将 ext4_rs  errno 映射为公共 [`FsError`]。
+// 本方法代码由AI完成
 fn map_ext4_rs(err : Ext4Error) -> FsError {
     match err.error() {
         Errno::ENOENT => FsError::NotFound,
@@ -132,6 +146,7 @@ fn map_ext4_rs(err : Ext4Error) -> FsError {
 }
 
 // ext4_rs inode 类型 → API 层 [`FsNodeType`]。
+// 本方法代码由AI完成
 fn map_node_type(kind : InodeFileType) -> FsNodeType {
     if kind == InodeFileType::S_IFDIR {
         FsNodeType::Directory
@@ -145,6 +160,7 @@ fn map_node_type(kind : InodeFileType) -> FsNodeType {
 }
 
 // 拆分绝对路径为 (父目录, 末级名字)；根或空名返回 [`FsError::InvalidPath`]。
+// 本方法代码由AI完成
 fn split_parent_and_name(path : &str) -> FsResult<(&str, &str)> {
     let p = path.trim_end_matches('/');
     if p.is_empty() || p == "/" {
@@ -160,6 +176,7 @@ fn split_parent_and_name(path : &str) -> FsResult<(&str, &str)> {
 }
 
 // 确认 inode 为目录，否则返回 [`FsError::NotAFile`]。
+// 本方法代码由AI完成
 fn ensure_dir_inode(fs : &Ext4, inode : u32) -> FsResult<()> {
     let meta = metadata_for_inode(fs, inode)?;
     if meta.node_type == FsNodeType::Directory {
@@ -170,6 +187,7 @@ fn ensure_dir_inode(fs : &Ext4, inode : u32) -> FsResult<()> {
 }
 
 // 按路径逐级 fuse_lookup，返回末级 inode 号。
+// 本方法代码由AI完成
 fn lookup_inode(fs : &Ext4, path : &str) -> FsResult<u32> {
     let p = path.trim_end_matches('/');
     if p.is_empty() || p == "/" {
@@ -198,6 +216,7 @@ fn lookup_inode(fs : &Ext4, path : &str) -> FsResult<u32> {
 }
 
 // 由 inode 号构造 [`FsMetadata`] 快照。
+// 本方法代码由AI完成
 fn metadata_for_inode(fs : &Ext4, inode : u32) -> FsResult<FsMetadata> {
     let inode_ref = fs.get_inode_ref(inode);
     Ok(FsMetadata { node_type : map_node_type(inode_ref.inode
@@ -214,6 +233,7 @@ fn metadata_for_inode(fs : &Ext4, inode : u32) -> FsResult<FsMetadata> {
 }
 
 // 启动期 DFS 打印 ext4 目录树（trace 级别）。
+// 本方法代码由AI完成
 fn walk_ext4_rs_tree(fs : &Ext4RsFs, path : &str) {
     let Ok(entries) = ReadOnlyFs::read_dir(fs, path) else {
         return;
@@ -234,6 +254,7 @@ fn walk_ext4_rs_tree(fs : &Ext4RsFs, path : &str) {
 }
 
 // 在父目录下创建普通文件 inode 并返回其编号。
+// 本方法代码由AI完成
 fn create_regular(fs : &mut Ext4, path : &str, mode : u16) -> FsResult<u32> {
     let (parent_path, name) = split_parent_and_name(path)?;
     let parent = lookup_inode(fs, parent_path)?;
@@ -250,6 +271,7 @@ fn create_regular(fs : &mut Ext4, path : &str, mode : u16) -> FsResult<u32> {
 }
 
 // 创建目录 inode；已存在同名项返回 [`FsError::Exists`]。
+// 本方法代码由AI完成
 fn create_directory(fs : &mut Ext4, path : &str, mode : u16) -> FsResult<()> {
     let (parent_path, name) = split_parent_and_name(path)?;
     let parent = lookup_inode(fs, parent_path)?;
@@ -268,6 +290,7 @@ fn create_directory(fs : &mut Ext4, path : &str, mode : u16) -> FsResult<()> {
 }
 
 /// ext4_rs 卷句柄；挂载成功后内部持有 [`Ext4`] 实例。
+// 本结构代码由AI完成
 pub struct Ext4RsFs {
     fs : Option<Ext4>,
 }
@@ -278,6 +301,7 @@ impl Ext4RsFs {
     pub const fn new() -> Self { Self { fs : None } }
 
     #[inline]
+// 本方法代码由AI完成
     fn fs(&self) -> FsResult<&Ext4> {
         self.fs
             .as_ref()
@@ -285,6 +309,7 @@ impl Ext4RsFs {
     }
 
     #[inline]
+// 本方法代码由AI完成
     fn fs_mut(&mut self) -> FsResult<&mut Ext4> {
         self.fs
             .as_mut()
@@ -293,6 +318,7 @@ impl Ext4RsFs {
 }
 
 impl ReadOnlyFs for Ext4RsFs {
+// 本方法代码由AI完成
     fn mount(&mut self, device : SharedBlockDevice) -> FsResult<()> {
         let dev : Arc<dyn Ext4RsBlockDevice> = Arc::new(BlockDevAdapter { device });
         self.fs = Some(Ext4::open(dev));
@@ -302,6 +328,7 @@ impl ReadOnlyFs for Ext4RsFs {
     #[inline]
     fn is_mounted(&self) -> bool { self.fs.is_some() }
 
+// 本方法代码由AI完成
     fn exists(&self, path : &str) -> FsResult<bool> {
         match lookup_inode(self.fs()?, path) {
             Ok(_) => Ok(true),
@@ -310,11 +337,13 @@ impl ReadOnlyFs for Ext4RsFs {
         }
     }
 
+// 本方法代码由AI完成
     fn metadata(&self, path : &str) -> FsResult<FsMetadata> {
         let inode = lookup_inode(self.fs()?, path)?;
         metadata_for_inode(self.fs()?, inode)
     }
 
+// 本方法代码由AI完成
     fn read(&self, path : &str) -> FsResult<Vec<u8>> {
         let meta = ReadOnlyFs::metadata(self, path)?;
         if meta.node_type != FsNodeType::File {
@@ -328,6 +357,7 @@ impl ReadOnlyFs for Ext4RsFs {
         Ok(out)
     }
 
+// 本方法代码由AI完成
     fn read_range(&self, path : &str, offset : u64, buf : &mut [u8]) -> FsResult<usize> {
         if buf.is_empty() {
             return Ok(0);
@@ -349,6 +379,7 @@ impl ReadOnlyFs for Ext4RsFs {
           .map_err(map_ext4_rs)
     }
 
+// 本方法代码由AI完成
     fn read_prefix(&self, path : &str, len : usize) -> FsResult<Vec<u8>> {
         let mut buf = vec![0u8; len];
         let n = ReadOnlyFs::read_range(self, path, 0, &mut buf)?;
@@ -356,6 +387,7 @@ impl ReadOnlyFs for Ext4RsFs {
         Ok(buf)
     }
 
+// 本方法代码由AI完成
     fn read_dir(&self, path : &str) -> FsResult<Vec<FsDirEntry>> {
         let fs = self.fs()?;
         let inode = lookup_inode(fs, path)?;
@@ -383,6 +415,7 @@ impl ReadOnlyFs for Ext4RsFs {
         Ok(out)
     }
 
+// 本方法代码由AI完成
     fn read_symlink(&self, path : &str) -> FsResult<Vec<u8>> {
         let fs = self.fs()?;
         let inode = lookup_inode(fs, path)?;
@@ -399,6 +432,7 @@ impl ReadOnlyFs for Ext4RsFs {
         Ok(read_buf)
     }
 
+// 本方法代码由AI完成
     fn boot_dump_all_paths(&self) {
         if self.fs.is_some() {
             walk_ext4_rs_tree(self, "/");
@@ -413,6 +447,7 @@ impl ReadWriteFs for Ext4RsFs {
     #[inline]
     fn is_mounted(&self) -> bool { self.fs.is_some() }
 
+// 本方法代码由AI完成
     fn write_regular_file_at_root(&mut self, name : &str, data : &[u8]) -> FsResult<()> {
         if name.is_empty() || name.contains('/') {
             return Err(FsError::InvalidPath);
@@ -422,6 +457,7 @@ impl ReadWriteFs for Ext4RsFs {
         self.write_regular_file(path.as_str(), data)
     }
 
+// 本方法代码由AI完成
     fn write_regular_file(&mut self, path : &str, data : &[u8]) -> FsResult<()> {
         let fs = self.fs_mut()?;
         let inode = match lookup_inode(fs, path) {
@@ -446,6 +482,7 @@ impl ReadWriteFs for Ext4RsFs {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn unlink(&mut self, path : &str) -> FsResult<()> {
         let fs = self.fs_mut()?;
         let (parent_path, name) = split_parent_and_name(path)?;
@@ -489,6 +526,7 @@ impl ReadWriteFs for Ext4RsFs {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn rmdir(&mut self, path : &str) -> FsResult<()> {
         if !ReadOnlyFs::read_dir(self, path)?.is_empty() {
             return Err(FsError::Exists);
@@ -501,6 +539,7 @@ impl ReadWriteFs for Ext4RsFs {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn write_range(&mut self, path : &str, offset : u64, data : &[u8]) -> FsResult<usize> {
         if data.is_empty() {
             return Ok(0);
@@ -523,6 +562,7 @@ impl ReadWriteFs for Ext4RsFs {
         Ok(data.len())
     }
 
+// 本方法代码由AI完成
     fn truncate(&mut self, path : &str, len : u64) -> FsResult<()> {
         let fs = self.fs_mut()?;
         let inode = lookup_inode(fs, path)?;
@@ -545,12 +585,14 @@ impl ReadWriteFs for Ext4RsFs {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn mkdir(&mut self, path : &str, mode : u32) -> FsResult<()> {
         let fs = self.fs_mut()?;
         let mode = S_IFDIR | (mode as u16 & 0o7777);
         create_directory(fs, path, mode)
     }
 
+// 本方法代码由AI完成
     fn chmod(&mut self, path : &str, mode : u32) -> FsResult<()> {
         let fs = self.fs_mut()?;
         let inode = lookup_inode(fs, path)?;
@@ -562,6 +604,7 @@ impl ReadWriteFs for Ext4RsFs {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn chown(&mut self, path : &str, uid : Option<u32>, gid : Option<u32>) -> FsResult<()> {
         if uid.is_none() && gid.is_none() {
             return ReadOnlyFs::metadata(self, path).map(|_| ());
@@ -581,6 +624,7 @@ impl ReadWriteFs for Ext4RsFs {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn hardlink(&mut self, existing_path : &str, new_path : &str) -> FsResult<()> {
         let fs = self.fs_mut()?;
         let existing = lookup_inode(fs, existing_path)?;
@@ -610,6 +654,7 @@ impl ReadWriteFs for Ext4RsFs {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn rename(&mut self, old_path : &str, new_path : &str) -> FsResult<()> {
         let (old_parent_path, old_name) = split_parent_and_name(old_path)?;
         let (new_parent_path, new_name) = split_parent_and_name(new_path)?;
@@ -647,6 +692,7 @@ impl ReadWriteFs for Ext4RsFs {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn symlink(&mut self, link_path : &str, target : &str) -> FsResult<()> {
         let fs = self.fs_mut()?;
         let (parent_path, name) = split_parent_and_name(link_path)?;
@@ -663,6 +709,7 @@ impl ReadWriteFs for Ext4RsFs {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn mknod(&mut self, path : &str, mode : u32, rdev : u32) -> FsResult<()> {
         let fs = self.fs_mut()?;
         let (parent_path, name) = split_parent_and_name(path)?;
@@ -704,6 +751,7 @@ impl ReadWriteFs for Ext4RsFs {
 }
 
 // 从 offset 起分片写入，直至 data 全部落盘。
+// 本方法代码由AI完成
 fn write_all(fs : &Ext4, inode : u32, offset : u64, data : &[u8]) -> FsResult<()> {
     let mut done = 0usize;
     while done < data.len() {
@@ -721,6 +769,7 @@ fn write_all(fs : &Ext4, inode : u32, offset : u64, data : &[u8]) -> FsResult<()
 }
 
 // 将 [old_size, new_size) 区间用零块填满，供跨 EOF 写前补洞。
+// 本方法代码由AI完成
 fn zero_extend_file(fs : &Ext4, inode : u32, old_size : u64, new_size : u64) -> FsResult<()> {
     let zeroes = [0u8; ext4_rs::BLOCK_SIZE];
     let mut offset = old_size;
@@ -735,11 +784,14 @@ fn zero_extend_file(fs : &Ext4, inode : u32, old_size : u64, new_size : u64) -> 
 }
 
 /// ext4_rs 的 [`FsImpl`] 注册类型。
+// 本结构代码由AI完成
 pub struct Ext4RsImpl;
 
 /// 全局 ext4-rs impl 实例。
+// 本变量代码由AI完成
 pub static IMPL : Ext4RsImpl = Ext4RsImpl;
 
+// 本变量代码由AI完成
 const SUPPORTED : &[FsCapability] = &[FsCapability::new(FsKind::Ext4, FsAccessMode::ReadOnly),
                                       FsCapability::new(FsKind::Ext4, FsAccessMode::ReadWrite)];
 
@@ -750,6 +802,7 @@ impl FsImpl for Ext4RsImpl {
     #[inline]
     fn supported(&self) -> &'static [FsCapability] { SUPPORTED }
 
+// 本方法代码由AI完成
     fn probe(&self, device : &SharedBlockDevice) -> FsResult<Option<FsKind>> {
         if probe_ext4_magic(device)? {
             Ok(Some(FsKind::Ext4))
@@ -758,6 +811,7 @@ impl FsImpl for Ext4RsImpl {
         }
     }
 
+// 本方法代码由AI完成
     fn mount_ro(&self, device : SharedBlockDevice) -> FsResult<SharedFs> {
         log::info!("[fs::ext4-rs] mount_ro begin");
         let mut fs = Ext4RsFs::new();
@@ -765,6 +819,7 @@ impl FsImpl for Ext4RsImpl {
         Ok(Arc::new(Mutex::new(LocalFs::new(Box::new(fs)))))
     }
 
+// 本方法代码由AI完成
     fn mount_rw(&self, device : SharedBlockDevice) -> FsResult<SharedRwFs> {
         log::info!("[fs::ext4-rs] mount_rw begin");
         let mut fs = Ext4RsFs::new();

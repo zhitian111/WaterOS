@@ -8,6 +8,7 @@
 //! 4. `SharedRwFs`（仅在 `FsPageIo::read_range` / `write_range` 内短持有）
 //!
 //! 禁止在持有 ext4 锁后再等待页缓存 entry 锁（写/fsync 路径曾因此与读 miss 死锁）。
+//! 本模块代码由AI完成
 
 extern crate alloc;
 
@@ -25,8 +26,10 @@ use wateros_base_config::fs::{FileIoMode, FILE_IO_MODE};
 use crate::{map_fs_err, mount_table::{resolve_route, FsRoute}, root_rw, FsBridge};
 
 /// detached 模式下单文件内核堆缓冲上限。
+// 本变量代码由AI完成
 const DETACHED_DATA_MAX : usize = 16 * 1024 * 1024;
 
+// 本方法代码由AI完成
 fn check_detached_len(len : usize) -> VfsResult<()> {
     if len > DETACHED_DATA_MAX {
         log::warn!("[paged_handle] detached buffer cap exceeded len={} max={}",
@@ -37,6 +40,7 @@ fn check_detached_len(len : usize) -> VfsResult<()> {
     Ok(())
 }
 
+// 本方法代码由AI完成
 fn grow_detached_data(buf : &mut Vec<u8>, new_len : usize) -> VfsResult<()> {
     check_detached_len(new_len)?;
     if buf.len() < new_len {
@@ -53,10 +57,12 @@ pub(crate) struct FsPageIo;
 impl PageCacheIo for FsPageIo {
     type Error = VfsError;
 
+// 本方法代码由AI完成
     fn read_range(&self, path : &str, offset : u64, buf : &mut [u8]) -> Result<usize, VfsError> {
         FsBridge.read_range(path, offset, buf)
     }
 
+// 本方法代码由AI完成
     fn write_range(&mut self, path : &str, offset : u64, data : &[u8]) -> Result<usize, VfsError> {
         match resolve_route(path)? {
             FsRoute::Root { abs, .. } => {
@@ -88,6 +94,7 @@ impl PageCacheIo for FsPageIo {
 }
 
 /// 页缓存-backed 根卷普通文件句柄。
+// 本结构代码由AI完成
 pub struct PagedFileHandle {
     path : String,
     offset : u64,
@@ -103,6 +110,7 @@ pub struct PagedFileHandle {
 }
 
 impl Clone for PagedFileHandle {
+// 本方法代码由AI完成
     fn clone(&self) -> Self {
         if self.open_ref_held {
             global_cache(self.mount_gen).acquire_open_ref(self.path.as_str());
@@ -122,6 +130,7 @@ impl Clone for PagedFileHandle {
 }
 
 impl PagedFileHandle {
+// 本方法代码由AI完成
     pub(crate) fn open(bridge : &FsBridge,
                        path : String,
                        flags : VfsOpenFlags,
@@ -154,8 +163,11 @@ impl PagedFileHandle {
 
         cache.acquire_open_ref(path.as_str());
 
+// 本变量代码由AI完成
         const O_WRONLY : u32 = 1;
+// 本变量代码由AI完成
         const O_RDWR : u32 = 2;
+// 本变量代码由AI完成
         const O_APPEND : u32 = 0o2000;
         let accmode = if want_write && flags.contains(VfsOpenFlags::READ) {
             O_RDWR
@@ -182,6 +194,7 @@ impl PagedFileHandle {
                   open_ref_held : true })
     }
 
+// 本方法代码由AI完成
     fn release_open_ref_if_held(&mut self) {
         if self.open_ref_held {
             global_cache(self.mount_gen).release_open_ref(self.path.as_str());
@@ -189,6 +202,7 @@ impl PagedFileHandle {
         }
     }
 
+// 本方法代码由AI完成
     fn sync_dirty(&mut self) -> VfsResult<()> {
         if !self.writable || self.detached {
             log::trace!("[vfs-flush] skip path={} writable={} detached={}",
@@ -212,10 +226,12 @@ impl PagedFileHandle {
         }
     }
 
+// 本方法代码由AI完成
     fn current_size(&self) -> u64 {
         global_cache(self.mount_gen).logical_size(self.path.as_str(), self.on_disk_size)
     }
 
+// 本方法代码由AI完成
     fn read_detached_at(&self, offset : u64, buf : &mut [u8]) -> VfsResult<usize> {
         let start = usize::try_from(offset).map_err(|_| VfsError::Io)?;
         if start >=
@@ -232,6 +248,7 @@ impl PagedFileHandle {
         Ok(n)
     }
 
+// 本方法代码由AI完成
     fn account_detached_write(&mut self,
                               offset : u64,
                               buf : &[u8],
@@ -260,6 +277,7 @@ impl PagedFileHandle {
 }
 
 impl VfsIoHandle for PagedFileHandle {
+// 本方法代码由AI完成
     fn read(&mut self, buf : &mut [u8]) -> VfsResult<usize> {
         if buf.is_empty() {
             return Ok(0);
@@ -299,10 +317,12 @@ impl VfsIoHandle for PagedFileHandle {
         Ok(n)
     }
 
+// 本方法代码由AI完成
     fn write(&mut self, buf : &[u8]) -> VfsResult<usize> {
         if !self.writable {
             return Err(VfsError::Unsupported);
         }
+// 本变量代码由AI完成
         const O_APPEND : u32 = 0o2000;
         if self.status_flags & O_APPEND != 0 {
             self.offset = self.current_size();
@@ -337,6 +357,7 @@ impl VfsIoHandle for PagedFileHandle {
         Ok(n)
     }
 
+// 本方法代码由AI完成
     fn read_at(&mut self, offset : u64, buf : &mut [u8]) -> VfsResult<usize> {
         if buf.is_empty() {
             return Ok(0);
@@ -359,6 +380,7 @@ impl VfsIoHandle for PagedFileHandle {
         Ok(n)
     }
 
+// 本方法代码由AI完成
     fn write_at(&mut self, offset : u64, buf : &[u8]) -> VfsResult<usize> {
         if !self.writable {
             return Err(VfsError::Unsupported);
@@ -390,6 +412,7 @@ impl VfsIoHandle for PagedFileHandle {
         Ok(n)
     }
 
+// 本方法代码由AI完成
     fn close(&mut self) -> VfsResult<()> {
         let sync_err = self.sync_dirty();
         self.release_open_ref_if_held();
@@ -400,16 +423,19 @@ impl VfsIoHandle for PagedFileHandle {
         sync_err
     }
 
+// 本方法代码由AI完成
     fn metadata(&self) -> VfsResult<VfsMetadata> {
         let mut m = self.meta.clone();
         m.size = self.current_size();
         Ok(m)
     }
 
+// 本方法代码由AI完成
     fn backing_path(&self) -> Option<&str> {
         Some(self.path.as_str())
     }
 
+// 本方法代码由AI完成
     fn seek(&mut self, offset : i64, whence : VfsSeekWhence) -> VfsResult<u64> {
         let size = self.current_size();
         let new_off = match whence {
@@ -444,10 +470,12 @@ impl VfsIoHandle for PagedFileHandle {
         Ok(new_off)
     }
 
+// 本方法代码由AI完成
     fn flush(&mut self) -> VfsResult<()> {
         self.sync_dirty()
     }
 
+// 本方法代码由AI完成
     fn truncate(&mut self, len : u64) -> VfsResult<()> {
         if !self.writable {
             return Err(VfsError::Unsupported);
@@ -499,25 +527,34 @@ impl VfsIoHandle for PagedFileHandle {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn open_status_flags(&self) -> u32 {
         self.status_flags
     }
 
+// 本方法代码由AI完成
     fn open_accmode(&self) -> u32 {
         self.accmode
     }
 
+// 本方法代码由AI完成
     fn set_open_status_flags(&mut self, flags : u32) -> VfsResult<()> {
+// 本变量代码由AI完成
         const O_APPEND : u32 = 0o2000;
+// 本变量代码由AI完成
         const O_NONBLOCK : u32 = 0o4000;
         self.status_flags = flags & (O_APPEND | O_NONBLOCK);
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> { Ok(Box::new(self.clone())) }
 
+// 本方法代码由AI完成
     fn poll_revents(&mut self, events : i16) -> VfsResult<i16> {
+// 本变量代码由AI完成
         const POLLIN : i16 = 0x001;
+// 本变量代码由AI完成
         const POLLOUT : i16 = 0x004;
         let mut revents = 0i16;
         if events & POLLIN != 0 {
@@ -532,6 +569,7 @@ impl VfsIoHandle for PagedFileHandle {
 
 /// 打开根卷普通文件。所有普通文件都走页缓存/range I/O，避免 benchmark
 /// 逐步扩展文件时反复整文件读写。
+// 本方法代码由AI完成
 pub(crate) fn open_file(bridge : &FsBridge,
                         path : String,
                         flags : VfsOpenFlags)

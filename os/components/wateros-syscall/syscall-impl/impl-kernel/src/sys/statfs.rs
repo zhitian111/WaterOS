@@ -1,4 +1,5 @@
 //! `statfs(2)`：bring-up 最小兼容实现。
+//! 本模块代码由AI完成
 
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
@@ -10,6 +11,7 @@ use crate::sys::path_at::{resolve_path_at, AT_FDCWD};
 use crate::user_copy::{copy_to_user_struct, copy_user_path_cstr};
 use crate::vfs_util::vfs_error_to_errno;
 
+// 本变量代码由AI完成
 const EXT4_SUPER_MAGIC: isize = 0xEF53;
 const STATFS_BLOCK_SIZE: isize = 4096;
 const STATFS_TOTAL_BLOCKS: isize = 1024 * 1024;
@@ -18,6 +20,7 @@ const STATFS_TOTAL_FILES: isize = 1024 * 1024;
 const STATFS_FREE_FILES: isize = 512 * 1024;
 const STATFS_MAX_NAME_LEN: isize = 255;
 
+// 本结构代码由AI完成
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct LinuxStatFs {
@@ -37,6 +40,7 @@ struct LinuxStatFs {
 
 const _: () = assert!(core::mem::size_of::<LinuxStatFs>() == 120);
 
+// 本方法代码由AI完成
 pub(crate) fn sys_statfs(args: SyscallArgs) -> UserRet {
     let path_ptr = args.arg(0);
     let buf_ptr = args.arg(1);

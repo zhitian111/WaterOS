@@ -1,5 +1,6 @@
 //! `set_robust_list` / `get_robust_list` 与线程退出时的 robust futex 深清理。
 
+//! 本模块代码由AI完成
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
@@ -13,6 +14,7 @@ use crate::user_copy::{copy_from_user, copy_from_user_struct, copy_to_user_struc
 
 const FUTEX_FLAG_MASK: u32 = !FUTEX_TID_MASK;
 
+// 本方法代码由AI完成
 pub(crate) fn futex_error_to_errno(error: FutexError) -> ErrNo {
     match error {
         FutexError::Again => ErrNo::EAGAIN,
@@ -132,6 +134,7 @@ pub(crate) fn robust_exit_cleanup_siblings_for_exec() {
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_set_robust_list(args: SyscallArgs) -> UserRet {
     let head = args.arg(0);
     let len = args.arg(1);
@@ -153,6 +156,7 @@ pub(crate) fn sys_set_robust_list(args: SyscallArgs) -> UserRet {
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_get_robust_list(args: SyscallArgs) -> UserRet {
     let pid = args.arg(0) as isize;
     let head_out = args.arg(1);

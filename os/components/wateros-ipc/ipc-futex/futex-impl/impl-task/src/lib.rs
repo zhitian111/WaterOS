@@ -1,5 +1,6 @@
 #![no_std]
 //! Futex task 实现：全局 `FutexHub` + `ipc-waitqueue` 阻塞/唤醒 + robust 侧表。
+//! 本模块代码由AI完成
 
 extern crate alloc;
 
@@ -9,6 +10,7 @@ mod robust;
 pub use hub::FutexHub;
 
 /// impl 层自检：robust 登记与 wake 空队列。
+// 本方法代码由AI完成
 pub fn test() {
     use api_v0::KernelFutexOps;
 

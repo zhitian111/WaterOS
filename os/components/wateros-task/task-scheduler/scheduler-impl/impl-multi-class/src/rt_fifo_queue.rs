@@ -1,3 +1,4 @@
+//! 本模块代码由AI完成
 //! `SCHED_FIFO` 就绪队列：99 个优先级桶，每桶 FIFO，无时间片。
 
 extern crate alloc;
@@ -18,6 +19,7 @@ fn bucket_index(priority : i32) -> Option<usize> {
 }
 
 /// `SCHED_FIFO` 就绪队列。
+// 本结构代码由AI完成
 pub struct RtFifoRunQueue {
     buckets : [VecDeque<TaskId>; RT_BUCKET_COUNT],
 }

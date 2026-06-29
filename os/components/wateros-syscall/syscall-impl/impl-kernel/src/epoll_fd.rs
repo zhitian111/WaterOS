@@ -1,5 +1,6 @@
 //! epoll fd → [`EpollInstance`] 映射表（[`VfsIoHandle`] 无法向下转型）。
 
+//! 本模块代码由AI完成
 extern crate alloc;
 
 use alloc::collections::BTreeMap;
@@ -15,6 +16,7 @@ static NEXT_EPOLL_INODE: AtomicU64 = AtomicU64::new(1);
 
 /// 单个 interest 条目。
 #[derive(Debug, Clone)]
+// 本结构代码由AI完成
 pub(crate) struct EpollInterest {
     pub events: u32,
     pub data: u64,
@@ -22,6 +24,7 @@ pub(crate) struct EpollInterest {
 
 /// epoll 实例状态。
 #[derive(Debug, Clone)]
+// 本结构代码由AI完成
 pub(crate) struct EpollInstance {
     pub interests: BTreeMap<usize, EpollInterest>,
     inode: u64,
@@ -243,6 +246,7 @@ pub(crate) struct EpollEvent {
     pub data: u64,
 }
 
+// 本方法代码由AI完成
 pub(crate) fn epoll_to_poll_events(events: u32) -> i16 {
     let mut poll = 0i16;
     if events & EPOLLIN != 0 {
@@ -263,6 +267,7 @@ pub(crate) fn epoll_to_poll_events(events: u32) -> i16 {
     poll
 }
 
+// 本方法代码由AI完成
 pub(crate) fn poll_to_epoll_events(revents: i16) -> u32 {
     let mut events = 0u32;
     if revents & POLLIN != 0 {

@@ -1,5 +1,6 @@
 //! VFS 元数据尚无 atime/mtime 字段前，syscall 层临时覆盖时间戳。
 
+//! 本模块代码由AI完成
 extern crate alloc;
 
 use alloc::collections::BTreeMap;
@@ -10,6 +11,7 @@ use vfs::api::VfsMetadata;
 use crate::linux_stat::{LinuxStat, LinuxStatx};
 
 #[derive(Clone, Copy)]
+// 本结构代码由AI完成
 pub(crate) struct StatTime {
     pub sec: i64,
     pub nsec: i64,

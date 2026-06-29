@@ -9,6 +9,7 @@ use api_v0::syscall_number::{SyscallNumber, SyscallNumberTable};
 /// Linux asm-generic 64 位调用号表（早期维护 busybox / 简单进程子集）。
 ///
 /// RISC-V 64 与 LoongArch64 当前都通过 `wateros-abi` 的架构 feature 选择这张表。
+// 本结构代码由AI完成
 pub struct LinuxGeneric64;
 
 impl SyscallNumberTable for LinuxGeneric64 {
@@ -202,8 +203,10 @@ mod tests {
     use api_v0::syscall_number::SyscallNumberTable;
 
     /// 号表中除 `SELECT` 哨兵外，任意两项不得共用同一裸编号。
+    // 本方法代码由AI完成
     #[test]
     fn dispatched_syscall_numbers_are_unique() {
+        // 本变量代码由AI完成
         let nums = [
             LinuxGeneric64::READ,
             LinuxGeneric64::READV,

@@ -1,5 +1,6 @@
 //! `mkdirat(2)`：相对 `AT_FDCWD` 或目录 fd 创建目录。
 
+//! 本模块代码由AI完成
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use vfs::api::VfsError;
@@ -9,6 +10,7 @@ use crate::sys::path_at::resolve_path_at;
 use crate::user_copy::copy_user_path_cstr;
 use crate::vfs_util::vfs_error_to_errno;
 
+// 本方法代码由AI完成
 pub(crate) fn sys_mkdirat(args: SyscallArgs) -> UserRet {
     cgroup_regression_loop_fast_exit_if_standalone();
 

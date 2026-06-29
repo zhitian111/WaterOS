@@ -1,4 +1,5 @@
 //! Linux `syslog(2)` / `klogctl` action 常量（与 man page 对齐）。
+//! 本模块代码由AI完成
 
 /// `SYSLOG_ACTION_CLOSE`
 pub const SYSLOG_ACTION_CLOSE: i32 = 0;
@@ -24,6 +25,7 @@ pub const SYSLOG_ACTION_SIZE_UNREAD: i32 = 9;
 pub const SYSLOG_ACTION_SIZE_BUFFER: i32 = 10;
 
 /// 将原始 `type` 解码为已知 action；未知返回 `None`。
+// 本方法代码由AI完成
 #[inline]
 pub fn decode_action(raw: i32) -> Option<i32> {
     match raw {
@@ -43,6 +45,7 @@ pub fn decode_action(raw: i32) -> Option<i32> {
 }
 
 /// `type` 为 WRITE 优先级（非 0..=10 action）时返回 true。
+// 本方法代码由AI完成
 #[inline]
 pub fn is_write_priority(raw: i32) -> bool {
     decode_action(raw).is_none() && raw != 0

@@ -1,4 +1,5 @@
 //! `shutdown(2)` — 极简存根。
+//! 本模块代码由AI完成
 
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
@@ -7,6 +8,7 @@ use driver::network::stack;
 
 use crate::socket_fd;
 
+// 本方法代码由AI完成
 pub(crate) fn sys_shutdown(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let how = args.arg(1);

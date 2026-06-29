@@ -1,4 +1,5 @@
 //! `setsockopt(2)` / `getsockopt(2)` — 极简存根。
+//! 本模块代码由AI完成
 
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
@@ -9,6 +10,7 @@ use crate::fallible_buf::{try_kbuf, SYSCALL_SOCK_IO_MAX};
 use crate::socket_fd;
 use crate::user_copy::{copy_from_user, copy_from_user_struct, copy_to_user, copy_to_user_struct};
 
+// 本方法代码由AI完成
 pub(crate) fn sys_setsockopt(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let level = args.arg(1);
@@ -45,6 +47,7 @@ pub(crate) fn sys_setsockopt(args: SyscallArgs) -> UserRet {
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_getsockopt(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let level = args.arg(1);

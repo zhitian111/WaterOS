@@ -1,4 +1,5 @@
 //! ext4 根卷小文件缓冲句柄；普通 `open` 主路径已改由 [`super::paged_handle`] 处理。
+//! 本模块代码由AI完成
 
 extern crate alloc;
 
@@ -15,6 +16,7 @@ use api_v0::{
 
 /// 已打开的根卷普通文件（小文件：全文缓冲于内存）。
 #[derive(Clone)]
+// 本结构代码由AI完成
 pub struct BufferedFileHandle {
     path : String,
     data : Vec<u8>,
@@ -28,6 +30,7 @@ pub struct BufferedFileHandle {
 pub type RootFileHandle = BufferedFileHandle;
 
 impl BufferedFileHandle {
+// 本方法代码由AI完成
     pub(crate) fn open(bridge : &FsBridge, path : String, flags : VfsOpenFlags) -> VfsResult<Self> {
         let want_read = flags.contains(VfsOpenFlags::READ) ||
                         (!flags.contains(VfsOpenFlags::WRITE) &&
@@ -82,6 +85,7 @@ impl BufferedFileHandle {
                   dirty })
     }
 
+// 本方法代码由AI完成
     pub(crate) fn open_boxed(bridge : &FsBridge,
                              path : String,
                              flags : VfsOpenFlags)
@@ -89,6 +93,7 @@ impl BufferedFileHandle {
         Ok(Box::new(Self::open(bridge, path, flags)?))
     }
 
+// 本方法代码由AI完成
     fn sync_dirty(&mut self) -> VfsResult<()> {
         if !self.dirty {
             return Ok(());
@@ -105,6 +110,7 @@ impl BufferedFileHandle {
 }
 
 impl VfsIoHandle for BufferedFileHandle {
+// 本方法代码由AI完成
     fn read(&mut self, buf : &mut [u8]) -> VfsResult<usize> {
         if buf.is_empty() {
             return Ok(0);
@@ -122,6 +128,7 @@ impl VfsIoHandle for BufferedFileHandle {
         Ok(n)
     }
 
+// 本方法代码由AI完成
     fn write(&mut self, buf : &[u8]) -> VfsResult<usize> {
         if !self.writable {
             return Err(VfsError::Unsupported);
@@ -143,18 +150,22 @@ impl VfsIoHandle for BufferedFileHandle {
         Ok(buf.len())
     }
 
+// 本方法代码由AI完成
     fn close(&mut self) -> VfsResult<()> { self.sync_dirty() }
 
+// 本方法代码由AI完成
     fn metadata(&self) -> VfsResult<VfsMetadata> {
         let mut m = self.meta.clone();
         m.size = self.data.len() as u64;
         Ok(m)
     }
 
+// 本方法代码由AI完成
     fn backing_path(&self) -> Option<&str> {
         Some(self.path.as_str())
     }
 
+// 本方法代码由AI完成
     fn read_at(&mut self, offset : u64, buf : &mut [u8]) -> VfsResult<usize> {
         if buf.is_empty() {
             return Ok(0);
@@ -169,6 +180,7 @@ impl VfsIoHandle for BufferedFileHandle {
         Ok(n)
     }
 
+// 本方法代码由AI完成
     fn write_at(&mut self, offset : u64, buf : &[u8]) -> VfsResult<usize> {
         if !self.writable {
             return Err(VfsError::Unsupported);
@@ -189,6 +201,7 @@ impl VfsIoHandle for BufferedFileHandle {
         Ok(buf.len())
     }
 
+// 本方法代码由AI完成
     fn truncate(&mut self, len : u64) -> VfsResult<()> {
         if !self.writable {
             return Err(VfsError::Unsupported);
@@ -204,6 +217,7 @@ impl VfsIoHandle for BufferedFileHandle {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn seek(&mut self, offset : i64, whence : VfsSeekWhence) -> VfsResult<u64> {
         let new_off = match whence {
             VfsSeekWhence::Set => {
@@ -238,12 +252,17 @@ impl VfsIoHandle for BufferedFileHandle {
         Ok(new_off)
     }
 
+// 本方法代码由AI完成
     fn flush(&mut self) -> VfsResult<()> { self.sync_dirty() }
 
+// 本方法代码由AI完成
     fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> { Ok(Box::new(self.clone())) }
 
+// 本方法代码由AI完成
     fn poll_revents(&mut self, events : i16) -> VfsResult<i16> {
+// 本变量代码由AI完成
         const POLLIN : i16 = 0x001;
+// 本变量代码由AI完成
         const POLLOUT : i16 = 0x004;
         let mut revents = 0i16;
         if events & POLLIN != 0 {
@@ -257,6 +276,7 @@ impl VfsIoHandle for BufferedFileHandle {
 }
 
 impl FsBridge {
+// 本方法代码由AI完成
     pub(crate) fn open_path(&self,
                             path : &str,
                             flags : VfsOpenFlags)

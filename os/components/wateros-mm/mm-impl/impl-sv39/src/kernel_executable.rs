@@ -1,3 +1,4 @@
+//! 本模块代码由AI完成
 //! 从根卷路径装载可执行文件：ELF 直载或 shebang 脚本解析后加载解释器。
 
 extern crate alloc;

@@ -1,3 +1,4 @@
+//! 本模块代码由AI完成
 //! OpenSBI timer 后端：将绝对 tick deadline 交给 SBI `set_timer`。
 
 use api_v0::timer::{

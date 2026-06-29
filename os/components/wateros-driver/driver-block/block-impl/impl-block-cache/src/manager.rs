@@ -1,3 +1,4 @@
+//! 本模块代码由AI完成
 //! 块缓存注册辅助：从 [`wateros_base_config`] 读取默认容量并包装 [`CachingBlockDevice`]。
 
 extern crate alloc;
@@ -11,6 +12,7 @@ use wateros_base_config::fs::BLOCK_CACHE_CAPACITY_BLOCKS;
 use crate::{BlockCacheConfig, CachingBlockDevice};
 
 /// 块设备写穿缓存的管理入口（v1：包装与默认配置；不向下转型已注册句柄）。
+// 本结构代码由AI完成
 pub struct BlockCacheManager;
 
 impl BlockCacheManager {

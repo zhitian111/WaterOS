@@ -1,5 +1,6 @@
 //! SysV 共享内存 syscall 子集（`shmget` / `shmctl` / `shmat` / `shmdt`）。
 
+//! 本模块代码由AI完成
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
@@ -10,6 +11,7 @@ use crate::mm_util::{current_user_aspace_handle, mm_err_to_errno};
 const IPC_RMID: usize = 0;
 const SHM_RND: usize = 0o20000;
 
+// 本方法代码由AI完成
 pub(crate) fn sys_shmget(args: SyscallArgs) -> UserRet {
     let key = args.arg(0);
     let size = args.arg(1);
@@ -20,6 +22,7 @@ pub(crate) fn sys_shmget(args: SyscallArgs) -> UserRet {
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_shmctl(args: SyscallArgs) -> UserRet {
     let shmid = args.arg(0);
     let cmd = args.arg(1);
@@ -33,6 +36,7 @@ pub(crate) fn sys_shmctl(args: SyscallArgs) -> UserRet {
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_shmat(args: SyscallArgs) -> UserRet {
     let Some(handle) = current_user_aspace_handle() else {
         return UserRet::from_error(ErrNo::EFAULT);
@@ -82,6 +86,7 @@ pub(crate) fn sys_shmat(args: SyscallArgs) -> UserRet {
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_shmdt(args: SyscallArgs) -> UserRet {
     let Some(handle) = current_user_aspace_handle() else {
         return UserRet::from_error(ErrNo::EFAULT);
@@ -217,6 +222,7 @@ fn unmap_range_dealloc(handle: usize, base: usize, len: usize) -> Result<(), Err
     .map_err(mm_err_to_errno)
 }
 
+// 本方法代码由AI完成
 fn shm_error_to_errno(error: ShmError) -> ErrNo {
     match error {
         ShmError::Invalid => ErrNo::EINVAL,

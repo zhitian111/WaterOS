@@ -1,4 +1,5 @@
 //! `fallocate(2)`：预分配已打开普通文件的区间（首期映射为按需 `truncate` 扩展）。
+//! 本模块代码由AI完成
 
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
@@ -10,6 +11,7 @@ use crate::vfs_util::vfs_io_at_error_to_errno;
 const FALLOC_FL_KEEP_SIZE: u32 = 0x01;
 const FALLOC_FL_PUNCH_HOLE: u32 = 0x02;
 
+// 本方法代码由AI完成
 pub(crate) fn sys_fallocate(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let mode = args.arg(1) as u32;

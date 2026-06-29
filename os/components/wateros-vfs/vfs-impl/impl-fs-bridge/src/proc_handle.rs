@@ -1,4 +1,5 @@
 //! procfs 伪挂载打开句柄。
+//! 本模块代码由AI完成
 
 extern crate alloc;
 
@@ -14,12 +15,14 @@ use crate::dir_handle::{encode_one, node_type_to_dt};
 use crate::mount_table::MountIdentity;
 use crate::{map_fs_err, map_fs_node, map_meta};
 
+// 本方法代码由AI完成
 fn proc_view() -> &'static impl ProcFsView {
     fs::procfs::active_impl::view()
 }
 
 /// procfs 目录句柄。
 #[derive(Clone)]
+// 本结构代码由AI完成
 pub struct ProcDirectoryHandle {
     /// 挂载内相对路径（不含 `/proc` 前缀）。
     rel: String,
@@ -32,6 +35,7 @@ pub struct ProcDirectoryHandle {
 
 /// procfs 普通文件句柄（内容按需生成并缓存）。
 #[derive(Clone)]
+// 本结构代码由AI完成
 pub struct ProcFileHandle {
     rel: String,
     meta: VfsMetadata,
@@ -39,6 +43,7 @@ pub struct ProcFileHandle {
     offset: u64,
 }
 
+// 本方法代码由AI完成
 pub fn open_proc(
     rel: String,
     abs: String,
@@ -79,6 +84,7 @@ pub fn open_proc(
 }
 
 impl ProcDirectoryHandle {
+// 本方法代码由AI完成
     fn load_dirents(&mut self) -> VfsResult<()> {
         if self.dirents.is_some() {
             return Ok(());
@@ -101,26 +107,32 @@ impl ProcDirectoryHandle {
 }
 
 impl VfsIoHandle for ProcDirectoryHandle {
+// 本方法代码由AI完成
     fn metadata(&self) -> VfsResult<VfsMetadata> {
         Ok(self.meta.clone())
     }
 
+// 本方法代码由AI完成
     fn directory_path(&self) -> Option<&str> {
         Some(self.abs.as_str())
     }
 
+// 本方法代码由AI完成
     fn read(&mut self, _buf: &mut [u8]) -> VfsResult<usize> {
         Err(VfsError::NotAFile)
     }
 
+// 本方法代码由AI完成
     fn write(&mut self, _buf: &[u8]) -> VfsResult<usize> {
         Err(VfsError::ReadOnlyFs)
     }
 
+// 本方法代码由AI完成
     fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {
         Ok(Box::new(self.clone()))
     }
 
+// 本方法代码由AI完成
     fn fill_getdents64(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
         self.load_dirents()?;
         let entries = self.dirents.as_ref().expect("load_dirents");
@@ -143,10 +155,12 @@ impl VfsIoHandle for ProcDirectoryHandle {
 }
 
 impl VfsIoHandle for ProcFileHandle {
+// 本方法代码由AI完成
     fn metadata(&self) -> VfsResult<VfsMetadata> {
         Ok(self.meta.clone())
     }
 
+// 本方法代码由AI完成
     fn read(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
         let start = self.offset as usize;
         if start >= self.data.len() {
@@ -158,6 +172,7 @@ impl VfsIoHandle for ProcFileHandle {
         Ok(n)
     }
 
+// 本方法代码由AI完成
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
         let start = offset as usize;
         if start >= self.data.len() {
@@ -168,10 +183,12 @@ impl VfsIoHandle for ProcFileHandle {
         Ok(n)
     }
 
+// 本方法代码由AI完成
     fn write(&mut self, _buf: &[u8]) -> VfsResult<usize> {
         Err(VfsError::ReadOnlyFs)
     }
 
+// 本方法代码由AI完成
     fn seek(&mut self, offset: i64, whence: VfsSeekWhence) -> VfsResult<u64> {
         let new_off = match whence {
             VfsSeekWhence::Set => offset.max(0) as u64,
@@ -185,6 +202,7 @@ impl VfsIoHandle for ProcFileHandle {
         Ok(self.offset)
     }
 
+// 本方法代码由AI完成
     fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {
         Ok(Box::new(self.clone()))
     }

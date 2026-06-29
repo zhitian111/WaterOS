@@ -1,5 +1,6 @@
 //! `mount(2)`：块设备 ext4、tmpfs、procfs 挂载与 bind/传播/move。
 
+//! 本模块代码由AI完成
 use alloc::string::String;
 
 use abi::errno::ErrNo;
@@ -47,6 +48,7 @@ fn propagation_from_flags(flags: u64) -> Result<Option<MountPropagation>, ErrNo>
     }))
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_mount(args: SyscallArgs) -> UserRet {
     cgroup_regression_loop_fast_exit_if_standalone();
 

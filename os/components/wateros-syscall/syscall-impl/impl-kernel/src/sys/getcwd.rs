@@ -1,4 +1,5 @@
 //! `getcwd(2)`：将当前工作目录写入用户缓冲区。
+//! 本模块代码由AI完成
 
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
@@ -7,6 +8,7 @@ use vfs::api::VfsError;
 
 use crate::user_copy::copy_to_user;
 
+// 本方法代码由AI完成
 pub(crate) fn sys_getcwd(args: SyscallArgs) -> UserRet {
     let buf_ptr = args.arg(0);
     let size = args.arg(1);

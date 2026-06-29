@@ -1,5 +1,6 @@
 //! `pread64` / `pwrite64` / `preadv` / `pwritev`：按绝对文件偏移读写，不改变 fd 当前偏移。
 
+//! 本模块代码由AI完成
 extern crate alloc;
 
 use alloc::vec::Vec;
@@ -122,6 +123,7 @@ fn total_iov_len(iov_ptr : usize, iovcnt : usize) -> Result<usize, ErrNo> {
     Ok(total)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_pread64(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let ptr = args.arg(1);
@@ -157,6 +159,7 @@ pub(crate) fn sys_pread64(args : SyscallArgs) -> UserRet {
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_pwrite64(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let ptr = args.arg(1);
@@ -189,6 +192,7 @@ pub(crate) fn sys_pwrite64(args : SyscallArgs) -> UserRet {
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_preadv(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let iov_ptr = args.arg(1);
@@ -244,6 +248,7 @@ pub(crate) fn sys_preadv(args : SyscallArgs) -> UserRet {
     UserRet::from_success(scattered)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_pwritev(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let iov_ptr = args.arg(1);

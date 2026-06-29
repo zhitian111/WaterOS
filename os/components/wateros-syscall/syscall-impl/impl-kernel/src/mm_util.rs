@@ -1,4 +1,5 @@
 //! 系统调用层与 [`wateros-mm`] API 之间的错误与标志转换。
+//! 本模块代码由AI完成
 
 use abi::errno::ErrNo;
 
@@ -7,6 +8,7 @@ use abi::errno::ErrNo;
 pub(crate) static USER_BRK_FAKE: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(0);
 
+// 本方法代码由AI完成
 pub(crate) fn mm_err_to_errno(e: mm::api::error::MmError) -> ErrNo {
     use mm::api::error::MmError;
     match e {
@@ -17,6 +19,7 @@ pub(crate) fn mm_err_to_errno(e: mm::api::error::MmError) -> ErrNo {
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn linux_mmap_prot_to_perm(prot: i32) -> mm::api::perm::PagePerm {
     use mm::api::perm::PagePerm;
     let mut p = PagePerm::U;
@@ -32,6 +35,7 @@ pub(crate) fn linux_mmap_prot_to_perm(prot: i32) -> mm::api::perm::PagePerm {
     p
 }
 
+// 本方法代码由AI完成
 pub(crate) fn linux_mmap_flags_to_map_flags(flags: u32) -> mm::api::flags::MapFlags {
     use mm::api::flags::MapFlags;
     const MAP_SHARED: u32 = 0x01;

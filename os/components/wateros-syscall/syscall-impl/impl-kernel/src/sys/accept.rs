@@ -1,5 +1,6 @@
 //! `accept4(2)`：接受 TCP 连接并返回新 fd。
 
+//! 本模块代码由AI完成
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
@@ -18,6 +19,7 @@ const FD_CLOEXEC: usize = 1;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
+// 本结构代码由AI完成
 struct SockAddrIn {
     sin_family: u16,
     sin_port: u16,
@@ -25,6 +27,7 @@ struct SockAddrIn {
     sin_zero: [u8; 8],
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_accept4(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let addr_ptr = args.arg(1);
@@ -33,6 +36,7 @@ pub(crate) fn sys_accept4(args: SyscallArgs) -> UserRet {
     accept_inner(fd, addr_ptr, addrlen_ptr, flags)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_accept(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let addr_ptr = args.arg(1);

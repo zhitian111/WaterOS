@@ -1,4 +1,5 @@
 //! per-task 挂载命名空间注册表（共享/复制语义对齐 cwd 表）。
+//! 本模块代码由AI完成
 
 extern crate alloc;
 
@@ -7,6 +8,7 @@ use alloc::collections::BTreeMap;
 use super::mount_table::MountNamespace;
 
 /// 全局 per-task mount namespace 表。
+// 本结构代码由AI完成
 pub struct PerTaskMountNsRegistry {
     namespaces: BTreeMap<task::TaskId, MountNamespace>,
     owners: BTreeMap<task::TaskId, task::TaskId>,
@@ -22,6 +24,7 @@ impl PerTaskMountNsRegistry {
         }
     }
 
+// 本方法代码由AI完成
     fn ensure_owner(&mut self, task_id: task::TaskId) -> task::TaskId {
         self.owners.entry(task_id).or_insert(task_id);
         self.ref_counts.entry(task_id).or_insert(1);
@@ -33,6 +36,7 @@ impl PerTaskMountNsRegistry {
         self.owners.get(&task_id).copied().unwrap_or(task_id)
     }
 
+// 本方法代码由AI完成
     fn release_owner(&mut self, task_id: task::TaskId) -> Option<task::TaskId> {
         let owner = self.owners.remove(&task_id)?;
         if let Some(count) = self.ref_counts.get_mut(&owner) {
@@ -45,6 +49,7 @@ impl PerTaskMountNsRegistry {
     }
 
     /// 初始化任务挂载命名空间（继承 bootstrap 快照）。
+// 本方法代码由AI完成
     pub fn init_task_mount_ns(&mut self, task_id: task::TaskId) {
         let owner = self.ensure_owner(task_id);
         self.namespaces.entry(owner).or_insert_with(|| {
@@ -53,12 +58,14 @@ impl PerTaskMountNsRegistry {
     }
 
     /// 只读访问任务挂载命名空间；未初始化时 `None`。
+// 本方法代码由AI完成
     pub fn namespace_for(&self, task_id: task::TaskId) -> Option<&MountNamespace> {
         let owner = self.effective_owner(task_id);
         self.namespaces.get(&owner)
     }
 
     /// 可变访问；惰性初始化后保证存在。
+// 本方法代码由AI完成
     pub fn namespace_for_mut(&mut self, task_id: task::TaskId) -> &mut MountNamespace {
         self.init_task_mount_ns(task_id);
         let owner = self.effective_owner(task_id);
@@ -67,6 +74,7 @@ impl PerTaskMountNsRegistry {
             .expect("mount namespace must exist after init")
     }
 
+// 本方法代码由AI完成
     pub fn drop_task(&mut self, task_id: task::TaskId) {
         let Some(owner) = self.release_owner(task_id) else {
             return;
@@ -80,6 +88,7 @@ impl PerTaskMountNsRegistry {
     }
 
     /// fork 时深拷贝父任务挂载表。
+// 本方法代码由AI完成
     pub fn copy_mount_ns_from_parent(&mut self, child: task::TaskId, parent: task::TaskId) {
         let parent_ns = self
             .namespace_for(parent)
@@ -92,6 +101,7 @@ impl PerTaskMountNsRegistry {
         self.namespaces.insert(child_owner, parent_ns);
     }
 
+// 本方法代码由AI完成
     pub fn share_mount_ns_from_parent(&mut self, child: task::TaskId, parent: task::TaskId) {
         self.init_task_mount_ns(parent);
         if self.owners.contains_key(&child) {
@@ -104,6 +114,7 @@ impl PerTaskMountNsRegistry {
     }
 
     /// `unshare(CLONE_NEWNS)`：若与父/兄弟共享命名空间则复制一份。
+// 本方法代码由AI完成
     pub fn unshare_mount_ns(&mut self, task_id: task::TaskId) {
         let owner = self.effective_owner(task_id);
         let shared = self

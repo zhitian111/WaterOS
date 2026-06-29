@@ -3,6 +3,7 @@
 //! Linux `faccessat(48)` 为三参数 syscall，内核固定 `flags=0`、忽略用户态 a3。
 //! `faccessat2(439)` 才携带 flags；`AT_SYMLINK_NOFOLLOW` 已生效（不 follow 末端 symlink）。
 
+//! 本模块代码由AI完成
 extern crate alloc;
 
 use alloc::string::String;
@@ -30,6 +31,7 @@ const AT_EMPTY_PATH: u32 = 0x1000;
 const FACCESSAT2_VALID_FLAGS: u32 = AT_SYMLINK_NOFOLLOW | AT_EACCESS | AT_EMPTY_PATH;
 
 /// Linux `faccessat(48)`：不读取第 4 个参数（flags 恒为 0）。
+// 本方法代码由AI完成
 pub(crate) fn sys_faccessat(args: SyscallArgs) -> UserRet {
     do_faccessat(
         args.arg(0) as isize,
@@ -40,6 +42,7 @@ pub(crate) fn sys_faccessat(args: SyscallArgs) -> UserRet {
 }
 
 /// Linux `faccessat2(439)`：完整 flags 参数。
+// 本方法代码由AI完成
 pub(crate) fn sys_faccessat2(args: SyscallArgs) -> UserRet {
     let flags = args.arg(3) as u32;
     if flags & !FACCESSAT2_VALID_FLAGS != 0 {

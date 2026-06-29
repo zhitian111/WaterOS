@@ -1,4 +1,5 @@
 //! 字符设备 [`VfsIoHandle`]：包装 [`SharedCharacterDevice`]。
+//! 本模块代码由AI完成
 
 extern crate alloc;
 
@@ -11,12 +12,17 @@ use driver_api::DriverError;
 use driver_character_api_v0::SharedCharacterDevice;
 
 /// QEMU 无主机输入时，经若干次 poll 后注入的合成密码（供 LTP ask_password.sh 等非交互场景）。
+// 本变量代码由AI完成
 const HEADLESS_STUB_INPUT: &[u8] = b"password\n";
+// 本变量代码由AI完成
 const HEADLESS_POLL_THRESHOLD: u64 = 2;
 
+// 本变量代码由AI完成
 static HEADLESS_STUB_OFFSET: AtomicU64 = AtomicU64::new(0);
+// 本变量代码由AI完成
 static HEADLESS_SERIAL_POLLS: AtomicU64 = AtomicU64::new(0);
 
+// 本方法代码由AI完成
 fn map_driver_err(e: DriverError) -> VfsError {
     match e {
         DriverError::Unsupported => VfsError::Unsupported,
@@ -26,6 +32,7 @@ fn map_driver_err(e: DriverError) -> VfsError {
     }
 }
 
+// 本方法代码由AI完成
 fn char_metadata(mode: u16, inode: u64) -> VfsMetadata {
     VfsMetadata {
         node_type: VfsNodeType::Special,
@@ -41,6 +48,7 @@ fn char_metadata(mode: u16, inode: u64) -> VfsMetadata {
     }
 }
 
+// 本方法代码由AI完成
 fn path_inode(path: &str) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325u64;
     for byte in path.as_bytes() {
@@ -51,6 +59,7 @@ fn path_inode(path: &str) -> u64 {
 }
 
 /// 已打开的字符设备句柄。
+// 本结构代码由AI完成
 pub struct CharDevHandle {
     device: SharedCharacterDevice,
     stdin_eof: bool,
@@ -61,6 +70,7 @@ pub struct CharDevHandle {
 }
 
 impl CharDevHandle {
+// 本方法代码由AI完成
     pub fn new(device: SharedCharacterDevice, stdin_eof: bool) -> Self {
         Self {
             device,
@@ -72,6 +82,7 @@ impl CharDevHandle {
         }
     }
 
+// 本方法代码由AI完成
     pub fn new_rtc(device: SharedCharacterDevice) -> Self {
         Self {
             device,
@@ -83,6 +94,7 @@ impl CharDevHandle {
         }
     }
 
+// 本方法代码由AI完成
     pub fn from_devfs_path(device: SharedCharacterDevice, path: &str) -> Self {
         if path == "/dev/null" {
             Self {
@@ -104,19 +116,23 @@ impl CharDevHandle {
         }
     }
 
+// 本方法代码由AI完成
     pub fn new_stdin(device: SharedCharacterDevice) -> Self {
         Self::new(device, true)
     }
 
+// 本方法代码由AI完成
     pub fn new_stdout(device: SharedCharacterDevice) -> Self {
         Self::new(device, false)
     }
 }
 
+// 本方法代码由AI完成
 fn headless_stub_pending() -> bool {
     HEADLESS_STUB_OFFSET.load(Ordering::Relaxed) < HEADLESS_STUB_INPUT.len() as u64
 }
 
+// 本方法代码由AI完成
 fn arm_headless_stub_if_needed() {
     if headless_stub_pending() {
         return;
@@ -127,6 +143,7 @@ fn arm_headless_stub_if_needed() {
     }
 }
 
+// 本方法代码由AI完成
 fn read_headless_stub(buf: &mut [u8]) -> usize {
     let offset = HEADLESS_STUB_OFFSET.load(Ordering::Relaxed) as usize;
     if offset >= HEADLESS_STUB_INPUT.len() {
@@ -138,6 +155,7 @@ fn read_headless_stub(buf: &mut [u8]) -> usize {
     n
 }
 
+// 本方法代码由AI完成
 fn try_read_serial_tty(device: &SharedCharacterDevice, buf: &mut [u8]) -> VfsResult<usize> {
     let mut guard = device.lock();
     match guard.read(buf) {
@@ -154,8 +172,11 @@ fn try_read_serial_tty(device: &SharedCharacterDevice, buf: &mut [u8]) -> VfsRes
     }
 }
 
+// 本方法代码由AI完成
 fn serial_poll_revents(device: &SharedCharacterDevice, events: i16) -> VfsResult<i16> {
+// 本变量代码由AI完成
     const POLLIN: i16 = 0x001;
+// 本变量代码由AI完成
     const POLLOUT: i16 = 0x004;
     let mut guard = device.lock();
     let mut revents = guard.poll_revents(events).map_err(map_driver_err)?;
@@ -182,6 +203,7 @@ fn serial_poll_revents(device: &SharedCharacterDevice, events: i16) -> VfsResult
 }
 
 impl VfsIoHandle for CharDevHandle {
+// 本方法代码由AI完成
     fn read(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
         if buf.is_empty() {
             return Ok(0);
@@ -205,6 +227,7 @@ impl VfsIoHandle for CharDevHandle {
                     return Err(VfsError::WouldBlock);
                 }
                 Err(VfsError::WouldBlock) => {
+// 本变量代码由AI完成
                     const POLLIN: i16 = 0x001;
                     self.poll_wait_for_ticks(POLLIN, 1, &mut || true)?;
                 }
@@ -213,18 +236,22 @@ impl VfsIoHandle for CharDevHandle {
         }
     }
 
+// 本方法代码由AI完成
     fn write(&mut self, buf: &[u8]) -> VfsResult<usize> {
         let mut guard = self.device.lock();
         guard.write(buf).map_err(map_driver_err)
     }
 
+// 本方法代码由AI完成
     fn poll_revents(&mut self, events: i16) -> VfsResult<i16> {
         if self.rtc {
             let mut guard = self.device.lock();
             return guard.poll_revents(events).map_err(map_driver_err);
         }
         if self.stdin_eof {
+// 本变量代码由AI完成
             const POLLIN: i16 = 0x001;
+// 本变量代码由AI完成
             const POLLOUT: i16 = 0x004;
             let mut revents = 0i16;
             if events & POLLIN != 0 {
@@ -238,6 +265,7 @@ impl VfsIoHandle for CharDevHandle {
         serial_poll_revents(&self.device, events)
     }
 
+// 本方法代码由AI完成
     fn poll_wait_for_ticks(
         &mut self,
         events: i16,
@@ -247,6 +275,7 @@ impl VfsIoHandle for CharDevHandle {
         if self.rtc || self.stdin_eof {
             return Err(VfsError::Unsupported);
         }
+// 本变量代码由AI完成
         const POLLIN: i16 = 0x001;
         if events & POLLIN == 0 {
             return Ok(());
@@ -262,6 +291,7 @@ impl VfsIoHandle for CharDevHandle {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn ioctl(&mut self, request: usize, arg: usize) -> VfsResult<isize> {
         if !self.rtc {
             return Err(VfsError::Unsupported);
@@ -280,10 +310,12 @@ impl VfsIoHandle for CharDevHandle {
         !self.rtc
     }
 
+// 本方法代码由AI完成
     fn metadata(&self) -> VfsResult<VfsMetadata> {
         Ok(char_metadata(self.mode, self.inode))
     }
 
+// 本方法代码由AI完成
     fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {
         Ok(Box::new(Self {
             device: self.device.clone(),
@@ -295,6 +327,7 @@ impl VfsIoHandle for CharDevHandle {
         }))
     }
 
+// 本方法代码由AI完成
     fn open_status_flags(&self) -> u32 {
         if self.nonblocking.get() {
             0o0004000
@@ -303,6 +336,7 @@ impl VfsIoHandle for CharDevHandle {
         }
     }
 
+// 本方法代码由AI完成
     fn set_open_status_flags(&mut self, flags: u32) -> VfsResult<()> {
         self.nonblocking.set(flags & 0o0004000 != 0);
         Ok(())
@@ -315,6 +349,7 @@ pub fn is_rtc_dev_path(path: &str) -> bool {
     matches!(path, "/dev/misc/rtc" | "/dev/rtc0" | "/dev/rtc")
 }
 
+// 本方法代码由AI完成
 fn mode_for_devfs_path(path: &str) -> u16 {
     if path == "/dev/null" {
         0o20666
@@ -330,6 +365,7 @@ fn mode_for_devfs_path(path: &str) -> u16 {
 }
 
 /// 未打开 fd 时按 devfs 路径返回字符设备元数据（`fstatat` / `faccessat`）。
+// 本方法代码由AI完成
 pub fn metadata_for_devfs_path(path: &str) -> VfsMetadata {
     char_metadata(mode_for_devfs_path(path), path_inode(path))
 }

@@ -33,6 +33,7 @@ pub fn run() {
     info!("[bringup][stage-00-bus] END");
 
     crate::user_bringup_root_layout::ensure_busybox_path_links();
+    crate::user_bringup_root_layout::prune_ltp_excluded_testcases();
 
     // crate::user_bringup_mm::run_stage_02();
     // crate::user_bringup_posix_fs::run_stage_posix_fs_meta();

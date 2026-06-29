@@ -1,4 +1,5 @@
 //! `sched_*` 系统调用：参数解析与用户拷贝；语义委托 [`task`] 调度原语。
+//! 本模块代码由AI完成
 
 extern crate alloc;
 
@@ -12,12 +13,14 @@ use task::{SchedError, SchedParam, SchedPolicy};
 use crate::fallible_buf::{try_kbuf, SCHED_CPUSET_MAX};
 use crate::user_copy::{copy_from_user, copy_from_user_struct, copy_to_user, copy_to_user_struct};
 
+// 本结构代码由AI完成
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 struct UserSchedParam {
     sched_priority: i32,
 }
 
+// 本结构代码由AI完成
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 struct UserSchedAttr {
@@ -54,6 +57,7 @@ fn read_user_sched_attr_size(attr_ptr: usize) -> Result<usize, ErrNo> {
 }
 
 /// `sched_setparam(pid, param)`。
+// 本方法代码由AI完成
 pub(crate) fn sys_sched_setparam(args: SyscallArgs) -> UserRet {
     let pid = args.arg(0) as isize;
     let param_ptr = args.arg(1);
@@ -78,6 +82,7 @@ pub(crate) fn sys_sched_setparam(args: SyscallArgs) -> UserRet {
 }
 
 /// `sched_setscheduler(pid, policy, param)`。
+// 本方法代码由AI完成
 pub(crate) fn sys_sched_setscheduler(args: SyscallArgs) -> UserRet {
     let pid = args.arg(0) as isize;
     let policy_raw = args.arg(1) as isize;
@@ -107,6 +112,7 @@ pub(crate) fn sys_sched_setscheduler(args: SyscallArgs) -> UserRet {
 }
 
 /// `sched_getscheduler(pid)`。
+// 本方法代码由AI完成
 pub(crate) fn sys_sched_getscheduler(args: SyscallArgs) -> UserRet {
     let pid = args.arg(0) as isize;
     let task_id = match task::resolve_sched_pid(pid) {
@@ -120,6 +126,7 @@ pub(crate) fn sys_sched_getscheduler(args: SyscallArgs) -> UserRet {
 }
 
 /// `sched_getparam(pid, param)`。
+// 本方法代码由AI完成
 pub(crate) fn sys_sched_getparam(args: SyscallArgs) -> UserRet {
     let pid = args.arg(0) as isize;
     let param_ptr = args.arg(1);
@@ -144,6 +151,7 @@ pub(crate) fn sys_sched_getparam(args: SyscallArgs) -> UserRet {
 }
 
 /// `sched_setaffinity(pid, cpusetsize, mask)`。
+// 本方法代码由AI完成
 pub(crate) fn sys_sched_setaffinity(args: SyscallArgs) -> UserRet {
     let pid = args.arg(0) as isize;
     let cpusetsize = args.arg(1);
@@ -175,6 +183,7 @@ pub(crate) fn sys_sched_setaffinity(args: SyscallArgs) -> UserRet {
 }
 
 /// `sched_getaffinity(pid, cpusetsize, mask)`。
+// 本方法代码由AI完成
 pub(crate) fn sys_sched_getaffinity(args: SyscallArgs) -> UserRet {
     let pid = args.arg(0) as isize;
     let cpusetsize = args.arg(1);
@@ -208,6 +217,7 @@ pub(crate) fn sys_sched_getaffinity(args: SyscallArgs) -> UserRet {
 }
 
 /// `sched_setattr(pid, attr, flags)`.
+// 本方法代码由AI完成
 pub(crate) fn sys_sched_setattr(args: SyscallArgs) -> UserRet {
     let pid = args.arg(0) as isize;
     let attr_ptr = args.arg(1);
@@ -257,6 +267,7 @@ pub(crate) fn sys_sched_setattr(args: SyscallArgs) -> UserRet {
 }
 
 /// `sched_getattr(pid, attr, size, flags)`.
+// 本方法代码由AI完成
 pub(crate) fn sys_sched_getattr(args: SyscallArgs) -> UserRet {
     let pid = args.arg(0) as isize;
     let attr_ptr = args.arg(1);
@@ -303,6 +314,7 @@ pub(crate) fn sys_sched_getattr(args: SyscallArgs) -> UserRet {
 }
 
 /// `sched_get_priority_max(policy)`。
+// 本方法代码由AI完成
 pub(crate) fn sys_sched_get_priority_max(args: SyscallArgs) -> UserRet {
     let policy = match policy_from_arg(args.arg(0) as isize) {
         Ok(value) => value,
@@ -316,6 +328,7 @@ pub(crate) fn sys_sched_get_priority_max(args: SyscallArgs) -> UserRet {
 }
 
 /// `sched_get_priority_min(policy)`。
+// 本方法代码由AI完成
 pub(crate) fn sys_sched_get_priority_min(args: SyscallArgs) -> UserRet {
     let policy = match policy_from_arg(args.arg(0) as isize) {
         Ok(value) => value,

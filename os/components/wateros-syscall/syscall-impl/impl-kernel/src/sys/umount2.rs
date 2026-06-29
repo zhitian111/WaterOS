@@ -1,4 +1,5 @@
 //! `umount2(2)`：卸载辅助卷挂载点；支持 `MNT_DETACH`。
+//! 本模块代码由AI完成
 
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
@@ -11,6 +12,7 @@ use crate::vfs_util::vfs_error_to_errno;
 
 const MNT_DETACH: u32 = 2;
 
+// 本方法代码由AI完成
 pub(crate) fn sys_umount2(args: SyscallArgs) -> UserRet {
     let target_ptr = args.arg(0);
     let flags = args.arg(1) as u32;

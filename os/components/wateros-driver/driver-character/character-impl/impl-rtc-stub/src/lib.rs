@@ -1,3 +1,4 @@
+//! 本模块代码由AI完成
 //! 软件 RTC 字符设备 stub：`hwclock` 等通过 `/dev/misc/rtc` + `ioctl` 访问；时间语义由 syscall 层处理。
 
 #![no_std]
@@ -28,6 +29,7 @@ pub struct RtcTime {
 }
 
 /// 标记型 RTC 字符设备；实际 `RTC_*` ioctl 在 syscall 层对 rtc fd 分发。
+// 本结构代码由AI完成
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RtcCharacterDevice;
 

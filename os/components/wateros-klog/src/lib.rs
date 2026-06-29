@@ -1,5 +1,6 @@
 #![no_std]
 //! 内核消息环聚合层：全局环、`klog_*!` 宏与 `sys_syslog` 内核语义。
+//! 本模块代码由AI完成
 
 pub use api_v0 as api;
 pub use impl_ringbuf::KlogRingbuf;
@@ -13,6 +14,7 @@ use api_v0::{
 use impl_ringbuf::KlogRingbuf as Ring;
 
 /// 初始化全局 klog 环（清空内容；不写入消息）。
+// 本方法代码由AI完成
 #[inline]
 pub fn init() {
     Ring::init();
@@ -25,6 +27,7 @@ pub fn post_init_hello() {
 }
 
 /// 追加一条记录（自动填时间戳与 `caller_id`）。
+// 本方法代码由AI完成
 #[inline]
 pub fn record(level: u8, facility: u8, text: &[u8]) -> AppendResult {
     let mut meta = KlogRecordMeta::new(
@@ -128,6 +131,7 @@ macro_rules! klog_error {
 }
 
 /// 栈上格式化缓冲（供宏使用，上限 512 字节）。
+// 本结构代码由AI完成
 pub struct KlogFmtBuffer {
     buf: [u8; 512],
     len: usize,
@@ -135,6 +139,7 @@ pub struct KlogFmtBuffer {
 
 impl KlogFmtBuffer {
     /// 空缓冲。
+    // 本方法代码由AI完成
     #[inline]
     pub const fn new() -> Self {
         Self { buf: [0; 512], len: 0 }
@@ -148,6 +153,7 @@ impl KlogFmtBuffer {
 }
 
 impl core::fmt::Write for KlogFmtBuffer {
+    // 本方法代码由AI完成
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
         let bytes = s.as_bytes();
         let room = self.buf.len().saturating_sub(self.len);

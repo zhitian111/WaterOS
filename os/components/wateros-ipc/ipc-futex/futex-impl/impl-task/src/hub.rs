@@ -1,4 +1,5 @@
 //! 基于 `ipc-waitqueue` 的全局 futex 枢纽。
+//! 本模块代码由AI完成
 
 extern crate alloc;
 
@@ -11,12 +12,14 @@ use task_api::{TaskId, TaskTick, TaskWaitResult};
 
 use crate::robust::RobustState;
 
+// 本结构代码由AI完成
 struct FutexTables {
     queues: BTreeMap<FutexKey, WaitQueue>,
     robust: BTreeMap<TaskId, RobustState>,
 }
 
 /// 全局 futex 表：等待队列 + per-task robust 状态。
+// 本结构代码由AI完成
 pub struct FutexHub {
     inner: Mutex<FutexTables>,
 }
@@ -28,11 +31,13 @@ impl FutexHub {
         &GLOBAL_HUB
     }
 
+// 本方法代码由AI完成
     fn with_tables<R>(&self, f: impl FnOnce(&mut FutexTables) -> R) -> R {
         let mut guard = self.inner.lock();
         f(&mut guard)
     }
 
+// 本方法代码由AI完成
     fn get_queue(tables: &mut FutexTables, key: FutexKey) -> WaitQueue {
         *tables
             .queues
@@ -40,6 +45,7 @@ impl FutexHub {
             .or_insert_with(WaitQueue::new)
     }
 
+// 本方法代码由AI完成
     fn cleanup_empty_queue(tables: &mut FutexTables, key: FutexKey) {
         let Some(wq) = tables.queues.get(&key).copied() else {
             return;
@@ -50,6 +56,7 @@ impl FutexHub {
     }
 
     /// 在 `key` 对应队列上带条件等待；用户内存复查由 `condition` 闭包完成（S1）。
+// 本方法代码由AI完成
     pub fn wait_while(
         &self,
         key: FutexKey,
@@ -90,6 +97,7 @@ impl FutexHub {
 
     /// 唤醒 `from_key` 上的前 `wake_count` 个等待者，并把后续等待者迁移到
     /// `to_key` 队列；返回被唤醒和被迁移的总数。
+// 本方法代码由AI完成
     pub fn requeue(&self,
                    from_key : FutexKey,
                    to_key : FutexKey,
@@ -107,6 +115,7 @@ impl FutexHub {
     }
 }
 
+// 本变量代码由AI完成
 static GLOBAL_HUB: FutexHub = FutexHub {
     inner: Mutex::new(FutexTables {
         queues: BTreeMap::new(),
@@ -115,6 +124,7 @@ static GLOBAL_HUB: FutexHub = FutexHub {
 };
 
 impl KernelFutexOps for FutexHub {
+// 本方法代码由AI完成
     fn wake(&self, key: FutexKey, max_wake: u32) -> FutexResult<usize> {
         let wq = self.with_tables(|tables| tables.queues.get(&key).copied());
         let Some(wq) = wq else {
@@ -132,6 +142,7 @@ impl KernelFutexOps for FutexHub {
         Ok(woken)
     }
 
+// 本方法代码由AI完成
     fn wake_all(&self, key: FutexKey) -> FutexResult<usize> {
         let wq = self.with_tables(|tables| tables.queues.get(&key).copied());
         let woken = wq.map(|wq| wq.wake_all()).unwrap_or(0);
@@ -139,6 +150,7 @@ impl KernelFutexOps for FutexHub {
         Ok(woken)
     }
 
+// 本方法代码由AI完成
     fn set_robust_list(&self, task: TaskId, head: usize, len: usize) -> FutexResult<()> {
         if len != ROBUST_LIST_HEAD_SIZE {
             return Err(FutexError::Invalid);
@@ -152,6 +164,7 @@ impl KernelFutexOps for FutexHub {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn get_robust_list(&self, task: TaskId) -> FutexResult<(usize, usize)> {
         Ok(self.with_tables(|tables| {
             tables
@@ -162,6 +175,7 @@ impl KernelFutexOps for FutexHub {
         }))
     }
 
+// 本方法代码由AI完成
     fn drop_robust_list(&self, task: TaskId) {
         self.with_tables(|tables| {
             tables.robust.remove(&task);

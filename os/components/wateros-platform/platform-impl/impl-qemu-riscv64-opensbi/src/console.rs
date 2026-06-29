@@ -1,3 +1,4 @@
+//! 本模块代码由AI完成
 //! OpenSBI 控制台后端。
 
 use api_v0::console::{PlatformConsoleError, PlatformConsoleResult};

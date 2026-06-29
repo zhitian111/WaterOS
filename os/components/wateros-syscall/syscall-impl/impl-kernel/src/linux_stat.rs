@@ -1,11 +1,13 @@
 //! Linux riscv64 `struct stat` 布局（与 musl/glibc 用户态一致）。
 
+//! 本模块代码由AI完成
 use vfs::api::VfsMetadata;
 use vfs::api::VfsNodeType;
 
 /// riscv64 LP64 `struct stat`（128 字节）。
 #[repr(C)]
 #[derive(Clone, Copy)]
+// 本结构代码由AI完成
 pub struct LinuxStat {
     pub st_dev: u64,
     pub st_ino: u64,
@@ -43,6 +45,7 @@ pub struct LinuxStatxTimestamp {
 /// Linux asm-generic `struct statx`（256 字节）。
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
+// 本结构代码由AI完成
 pub struct LinuxStatx {
     pub stx_mask: u32,
     pub stx_blksize: u32,
@@ -120,6 +123,7 @@ fn linux_dev(major: u32, minor: u32) -> u64 {
         | ((major & !0xfff) << 32)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn fill_linux_stat(meta: &VfsMetadata, size: u64) -> LinuxStat {
     let mode = linux_mode(meta);
     LinuxStat {
@@ -145,6 +149,7 @@ pub(crate) fn fill_linux_stat(meta: &VfsMetadata, size: u64) -> LinuxStat {
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn fill_linux_statx(meta: &VfsMetadata, size: u64, _requested_mask: u32) -> LinuxStatx {
     let mode = linux_mode(meta);
     LinuxStatx {

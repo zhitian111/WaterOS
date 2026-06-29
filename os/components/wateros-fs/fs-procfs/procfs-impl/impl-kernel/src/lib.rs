@@ -1,4 +1,5 @@
 #![no_std]
+//! 本模块代码由AI完成
 
 //! 内核 procfs：从 task/cred/mm 与 VFS 回调生成 `/proc` 内容。
 
@@ -18,38 +19,47 @@ use fs_api_v0::{FsAccessMode, FsCapability, FsImpl, FsKind};
 use spin::Mutex;
 use task::{ProcessId, ProcessState, TaskState};
 
+// 本变量代码由AI完成
 static ARGV_LOOKUP: Mutex<Option<TaskArgvLookup>> = Mutex::new(None);
+// 本变量代码由AI完成
 static EXE_LOOKUP: Mutex<Option<TaskExeLookup>> = Mutex::new(None);
+// 本变量代码由AI完成
 static MOUNT_LOOKUP: Mutex<Option<MountListLookup>> = Mutex::new(None);
 
 /// 注册按 leader task id 查询 argv 的回调（VFS 层在 init 时注入）。
+// 本方法代码由AI完成
 pub fn register_task_argv_lookup(f: TaskArgvLookup) {
     *ARGV_LOOKUP.lock() = Some(f);
 }
 
 /// 注册按 leader task id 查询 exe 路径的回调。
+// 本方法代码由AI完成
 pub fn register_task_exe_lookup(f: TaskExeLookup) {
     *EXE_LOOKUP.lock() = Some(f);
 }
 
 /// 注册挂载表枚举回调（供 `/proc/mounts`）。
+// 本方法代码由AI完成
 pub fn register_mount_list_lookup(f: MountListLookup) {
     *MOUNT_LOOKUP.lock() = Some(f);
 }
 
 // 经静态回调查 argv；未注册时返回 None。
+// 本方法代码由AI完成
 fn argv_for(leader: TaskId) -> Option<Vec<String>> {
     let lookup = *ARGV_LOOKUP.lock();
     lookup.and_then(|f| f(leader))
 }
 
 // 经静态回调查 exe 路径。
+// 本方法代码由AI完成
 fn exe_for(leader: TaskId) -> Option<String> {
     let lookup = *EXE_LOOKUP.lock();
     lookup.and_then(|f| f(leader))
 }
 
 // 经静态回调枚举挂载行；未注册时返回空表。
+// 本方法代码由AI完成
 fn mount_lines() -> Vec<ProcMountLine> {
     let lookup = *MOUNT_LOOKUP.lock();
     lookup.map(|f| f()).unwrap_or_default()
@@ -74,6 +84,7 @@ enum ProcNode {
 }
 
 // 为 proc 节点分配稳定 inode 号（pid 子树按 pid 编码）。
+// 本方法代码由AI完成
 fn proc_inode(node: ProcNode) -> u64 {
     match node {
         ProcNode::Root => 1,
@@ -93,6 +104,7 @@ fn proc_inode(node: ProcNode) -> u64 {
 }
 
 /// 与 VFS `normalize_absolute_path` 一致：折叠 `//`、`.`，解析 `..`。
+// 本方法代码由AI完成
 fn normalize_rel(path: &str) -> String {
     use alloc::borrow::Cow;
 
@@ -129,6 +141,7 @@ fn normalize_rel(path: &str) -> String {
 }
 
 // 解析 pid 目录名：`self` 映射当前进程，否则按十进制 pid。
+// 本方法代码由AI完成
 fn parse_pid(name: &str) -> Option<ProcessId> {
     if name == "self" {
         Some(task::current_process_task_snapshot()?.pid)
@@ -138,6 +151,7 @@ fn parse_pid(name: &str) -> Option<ProcessId> {
 }
 
 // 将相对 `/proc` 的路径映射为内部节点；未知路径返回 None。
+// 本方法代码由AI完成
 fn parse_node(path: &str) -> Option<ProcNode> {
     let p = normalize_rel(path);
     if p == "/" {
@@ -164,11 +178,13 @@ fn parse_node(path: &str) -> Option<ProcNode> {
 }
 
 // 进程仍存在于 task 子系统时才对外可见。
+// 本方法代码由AI完成
 fn process_visible(pid: ProcessId) -> bool {
     task::process_snapshot(pid).is_some()
 }
 
 // 进程 comm：优先 argv[0] 基名，其次 exe 基名，最后回退 `"process"`。
+// 本方法代码由AI完成
 fn comm_for(pid: ProcessId) -> String {
     let leader = task::leader_task_for_process(pid).unwrap_or(0);
     if let Some(argv) = argv_for(leader) {
@@ -182,10 +198,12 @@ fn comm_for(pid: ProcessId) -> String {
     String::from("process")
 }
 
+// 本方法代码由AI完成
 fn format_cpuinfo() -> Vec<u8> {
     b"processor\t: 0\ncpu family\t: 0\nmodel name\t: WaterOS QEMU virt\n".to_vec()
 }
 
+// 本方法代码由AI完成
 fn format_cgroups() -> Vec<u8> {
     alloc::format!(
         "#subsys_name\thierarchy\tnum_cgroups\tenabled\n\
@@ -206,11 +224,13 @@ hugetlb\t12\t1\t1\n"
 }
 
 // 取路径最后一段作为 comm 展示名。
+// 本方法代码由AI完成
 fn basename(path: &str) -> String {
     path.rsplit('/').next().unwrap_or(path).to_string()
 }
 
 // Linux `/proc/pid/stat` 单字符状态码（简化版）。
+// 本方法代码由AI完成
 fn state_char(process: ProcessState, leader_state: Option<TaskState>) -> char {
     match process {
         ProcessState::Exited(_) | ProcessState::Exiting(_) => 'Z',
@@ -223,6 +243,7 @@ fn state_char(process: ProcessState, leader_state: Option<TaskState>) -> char {
     }
 }
 
+// 本方法代码由AI完成
 fn format_stat(pid: ProcessId) -> FsResult<Vec<u8>> {
     let process = task::process_snapshot(pid).ok_or(FsError::NotFound)?;
     let leader = process.leader_task_id;
@@ -257,6 +278,7 @@ fn format_stat(pid: ProcessId) -> FsResult<Vec<u8>> {
     Ok(line.into_bytes())
 }
 
+// 本方法代码由AI完成
 fn format_status(pid: ProcessId) -> FsResult<Vec<u8>> {
     let process = task::process_snapshot(pid).ok_or(FsError::NotFound)?;
     let leader = process.leader_task_id;
@@ -296,12 +318,14 @@ fn format_status(pid: ProcessId) -> FsResult<Vec<u8>> {
 
 // status/smaps 用的内存估算（非精确 RSS，仅供 LTP 读通）。
 #[derive(Clone, Copy)]
+// 本结构代码由AI完成
 struct ProcMemoryKb {
     size_kb : usize,
     rss_kb : usize,
     private_dirty_kb : usize,
 }
 
+// 本方法代码由AI完成
 fn process_memory_kb(pid : ProcessId) -> FsResult<ProcMemoryKb> {
     let process = task::process_snapshot(pid).ok_or(FsError::NotFound)?;
     let thread_extra = process.task_count.saturating_sub(1) * 64;
@@ -311,6 +335,7 @@ fn process_memory_kb(pid : ProcessId) -> FsResult<ProcMemoryKb> {
                       private_dirty_kb : heap_like })
 }
 
+// 本方法代码由AI完成
 fn format_maps(pid : ProcessId) -> FsResult<Vec<u8>> {
     let mem = process_memory_kb(pid)?;
     let heap_start = 0x1000_0000usize;
@@ -322,6 +347,7 @@ fn format_maps(pid : ProcessId) -> FsResult<Vec<u8>> {
     .into_bytes())
 }
 
+// 本方法代码由AI完成
 fn format_smaps(pid : ProcessId) -> FsResult<Vec<u8>> {
     let mem = process_memory_kb(pid)?;
     let start = 0x1000_0000usize;
@@ -338,6 +364,7 @@ fn format_smaps(pid : ProcessId) -> FsResult<Vec<u8>> {
     Ok(line.into_bytes())
 }
 
+// 本方法代码由AI完成
 fn format_cmdline(pid: ProcessId) -> FsResult<Vec<u8>> {
     let process = task::process_snapshot(pid).ok_or(FsError::NotFound)?;
     let leader = process.leader_task_id;
@@ -359,6 +386,7 @@ fn format_cmdline(pid: ProcessId) -> FsResult<Vec<u8>> {
     Ok(out)
 }
 
+// 本方法代码由AI完成
 fn format_meminfo() -> Vec<u8> {
     let stats = mm_frame_alloctor::frame_mem_stats();
     format!(
@@ -370,6 +398,7 @@ fn format_meminfo() -> Vec<u8> {
     .into_bytes()
 }
 
+// 本方法代码由AI完成
 fn format_mounts() -> Vec<u8> {
     let mut out = Vec::new();
     for line in mount_lines() {
@@ -383,6 +412,7 @@ fn format_mounts() -> Vec<u8> {
 }
 
 /// 内核 procfs 只读视图（零大小；无实例状态）。
+// 本结构代码由AI完成
 pub struct KernelProcFs;
 
 /// 返回全局 procfs 视图句柄。
@@ -392,6 +422,7 @@ pub fn view() -> &'static KernelProcFs {
 }
 
 impl ProcFsView for KernelProcFs {
+// 本方法代码由AI完成
     fn exists(&self, rel_path: &str) -> FsResult<bool> {
         let Some(node) = parse_node(rel_path) else {
             return Ok(false);
@@ -408,6 +439,7 @@ impl ProcFsView for KernelProcFs {
         })
     }
 
+// 本方法代码由AI完成
     fn metadata(&self, rel_path: &str) -> FsResult<FsMetadata> {
         let node = parse_node(rel_path).ok_or(FsError::NotFound)?;
         match node {
@@ -455,6 +487,7 @@ impl ProcFsView for KernelProcFs {
         }
     }
 
+// 本方法代码由AI完成
     fn read(&self, rel_path: &str) -> FsResult<Vec<u8>> {
         let node = parse_node(rel_path).ok_or(FsError::NotFound)?;
         match node {
@@ -473,6 +506,7 @@ impl ProcFsView for KernelProcFs {
         }
     }
 
+// 本方法代码由AI完成
     fn read_dir(&self, rel_path: &str) -> FsResult<Vec<FsDirEntry>> {
         let node = parse_node(rel_path).ok_or(FsError::NotFound)?;
         match node {
@@ -540,11 +574,14 @@ impl ProcFsView for KernelProcFs {
 }
 
 /// procfs 的 [`FsImpl`] 注册项；仅列能力，不参与块卷挂载。
+// 本结构代码由AI完成
 pub struct KernelProcFsImpl;
 
 /// 全局 procfs impl 实例。
+// 本变量代码由AI完成
 pub static IMPL: KernelProcFsImpl = KernelProcFsImpl;
 
+// 本变量代码由AI完成
 const SUPPORTED: &[FsCapability] =
     &[FsCapability::new(FsKind::Other("procfs"), FsAccessMode::ReadOnly)];
 
@@ -559,6 +596,7 @@ impl FsImpl for KernelProcFsImpl {
         SUPPORTED
     }
 
+// 本方法代码由AI完成
     fn mount_ro(
         &self,
         _device: driver_block_api_v0::SharedBlockDevice,
@@ -568,6 +606,7 @@ impl FsImpl for KernelProcFsImpl {
 }
 
 /// 最小自检：枚举根目录并打日志。
+// 本方法代码由AI完成
 pub fn test() {
     let v = view();
     let _ = v.read_dir("/");

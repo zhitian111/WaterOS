@@ -1,4 +1,5 @@
 //! 扩展属性 syscall：`setxattr`/`getxattr`/`listxattr`/`removexattr` 及 l*/f* 变体。
+//! 本模块代码由AI完成
 
 extern crate alloc;
 
@@ -84,10 +85,12 @@ fn path_from_fd(fd: usize) -> Result<alloc::string::String, ErrNo> {
     })
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_setxattr(args: SyscallArgs) -> UserRet {
     path_setxattr(args, true)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_lsetxattr(args: SyscallArgs) -> UserRet {
     path_setxattr(args, false)
 }
@@ -118,6 +121,7 @@ fn path_setxattr(args: SyscallArgs, follow_last: bool) -> UserRet {
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_fsetxattr(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let name_ptr = args.arg(1);
@@ -144,10 +148,12 @@ pub(crate) fn sys_fsetxattr(args: SyscallArgs) -> UserRet {
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_getxattr(args: SyscallArgs) -> UserRet {
     path_getxattr(args, true)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_lgetxattr(args: SyscallArgs) -> UserRet {
     path_getxattr(args, false)
 }
@@ -194,6 +200,7 @@ fn path_getxattr(args: SyscallArgs, follow_last: bool) -> UserRet {
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_fgetxattr(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let name_ptr = args.arg(1);
@@ -236,10 +243,12 @@ pub(crate) fn sys_fgetxattr(args: SyscallArgs) -> UserRet {
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_listxattr(args: SyscallArgs) -> UserRet {
     path_listxattr(args, true)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_llistxattr(args: SyscallArgs) -> UserRet {
     path_listxattr(args, false)
 }
@@ -281,6 +290,7 @@ fn path_listxattr(args: SyscallArgs, follow_last: bool) -> UserRet {
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_flistxattr(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let list_ptr = args.arg(1);
@@ -318,10 +328,12 @@ pub(crate) fn sys_flistxattr(args: SyscallArgs) -> UserRet {
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_removexattr(args: SyscallArgs) -> UserRet {
     path_removexattr(args, true)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_lremovexattr(args: SyscallArgs) -> UserRet {
     path_removexattr(args, false)
 }
@@ -345,6 +357,7 @@ fn path_removexattr(args: SyscallArgs, follow_last: bool) -> UserRet {
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_fremovexattr(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let name_ptr = args.arg(1);

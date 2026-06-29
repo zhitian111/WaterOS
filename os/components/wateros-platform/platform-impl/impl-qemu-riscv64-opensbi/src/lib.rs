@@ -16,6 +16,7 @@ pub mod timer;
 pub mod boot {
     use api_v0::boot::{PlatformBootArgs, PlatformBootContext};
     /// OpenSBI 传入的原始参数槽位（`a0`/`a1` 等由 [`PlatformBootArgs`] 方法暴露）。
+    // 本结构代码由AI完成
     #[derive(Debug, Clone, Copy)]
     #[allow(unused)]
     pub struct QEMURiscv64OpenSBIBootArgs {
@@ -39,6 +40,7 @@ pub mod boot {
         }
     }
     /// 类型化引导上下文：hart id 与 DTB 物理地址。
+    // 本结构代码由AI完成
     #[derive(Debug, Clone, Copy)]
     #[allow(unused)]
     pub struct QEMURiscv64OpenSBIBootContext {
@@ -70,6 +72,7 @@ pub mod time {
     use api_v0::time::{PlatformTime, PlatformTimeError, PlatformTimeResult};
 
     /// QEMU virt 上常用的 timebase 频率（Hz）；引导期可由 DTB 覆盖，此处为回退常量。
+    // 本结构代码由AI完成
     pub struct QEMURiscv64OpenSBITime;
 
     impl PlatformTime for QEMURiscv64OpenSBITime {

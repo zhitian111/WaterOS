@@ -1,5 +1,6 @@
 //! `recvfrom(2)`：接收 TCP/UDP 数据。
 
+//! 本模块代码由AI完成
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
@@ -11,6 +12,7 @@ use crate::user_copy::{copy_to_user, copy_to_user_struct};
 
 #[repr(C)]
 #[derive(Copy, Clone)]
+// 本结构代码由AI完成
 struct SockAddrIn {
     sin_family: u16,
     sin_port: u16,
@@ -18,6 +20,7 @@ struct SockAddrIn {
     sin_zero: [u8; 8],
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_recvfrom(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let buf_ptr = args.arg(1);

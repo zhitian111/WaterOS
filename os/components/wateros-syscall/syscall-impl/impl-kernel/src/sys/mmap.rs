@@ -1,5 +1,6 @@
 //! `mmap` / `munmap` / `mprotect`：经 `user_aspace` 句柄拼合 `MmapOps`。
 
+//! 本模块代码由AI完成
 extern crate alloc;
 
 use alloc::boxed::Box;
@@ -55,6 +56,7 @@ impl DemandPageLoader for VfsMmapPageLoader {
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
     let handle = match require_user_aspace("mmap") {
         Ok(handle) => handle,
@@ -183,6 +185,7 @@ fn file_size_for_mmap(fd : usize) -> Result<usize, ErrNo> {
     usize::try_from(meta.size).map_err(|_| ErrNo::EINVAL)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_munmap(args : SyscallArgs) -> UserRet {
     let handle = match require_user_aspace("munmap") {
         Ok(handle) => handle,
@@ -202,6 +205,7 @@ pub(crate) fn sys_munmap(args : SyscallArgs) -> UserRet {
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_msync(args : SyscallArgs) -> UserRet {
     use mm::api::addr::PAGE_SIZE;
 
@@ -228,6 +232,7 @@ pub(crate) fn sys_msync(args : SyscallArgs) -> UserRet {
     UserRet::from_success(0)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_mprotect(args : SyscallArgs) -> UserRet {
     let handle = match require_user_aspace("mprotect") {
         Ok(handle) => handle,
@@ -247,6 +252,7 @@ pub(crate) fn sys_mprotect(args : SyscallArgs) -> UserRet {
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_mremap(args : SyscallArgs) -> UserRet {
     let handle = match require_user_aspace("mremap") {
         Ok(handle) => handle,
@@ -278,6 +284,7 @@ pub(crate) fn sys_mremap(args : SyscallArgs) -> UserRet {
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_madvise(args : SyscallArgs) -> UserRet {
     use mm::api::addr::PAGE_SIZE;
 
@@ -355,6 +362,7 @@ fn validate_mlock_range(addr : usize, len : usize) -> Result<(), ErrNo> {
     Ok(())
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_mlock(args : SyscallArgs) -> UserRet {
     let addr = args.arg(0);
     let len = args.arg(1);
@@ -365,6 +373,7 @@ pub(crate) fn sys_mlock(args : SyscallArgs) -> UserRet {
     UserRet::from_success(0)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_munlock(args : SyscallArgs) -> UserRet {
     let addr = args.arg(0);
     let len = args.arg(1);
@@ -374,6 +383,7 @@ pub(crate) fn sys_munlock(args : SyscallArgs) -> UserRet {
     UserRet::from_success(0)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_mlockall(args : SyscallArgs) -> UserRet {
     const MCL_CURRENT : usize = 0x1;
     const MCL_FUTURE : usize = 0x2;
@@ -387,4 +397,5 @@ pub(crate) fn sys_mlockall(args : SyscallArgs) -> UserRet {
     UserRet::from_success(0)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_munlockall(_args : SyscallArgs) -> UserRet { UserRet::from_success(0) }

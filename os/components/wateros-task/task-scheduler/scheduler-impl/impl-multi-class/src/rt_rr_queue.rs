@@ -1,3 +1,4 @@
+//! 本模块代码由AI完成
 //! `SCHED_RR` 就绪队列：优先级桶 + 同优先级时间片轮转。
 
 extern crate alloc;
@@ -21,6 +22,7 @@ fn bucket_index(priority : i32) -> Option<usize> {
 fn priority_from_index(index : usize) -> i32 { (index as i32) + RT_PRIORITY_MIN }
 
 /// RR tick 处理结果。
+// 本结构代码由AI完成
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RrTickAction {
     /// 继续运行当前 RR 任务。
@@ -30,6 +32,7 @@ pub enum RrTickAction {
 }
 
 /// `SCHED_RR` 就绪队列。
+// 本结构代码由AI完成
 pub struct RtRrRunQueue {
     buckets : [VecDeque<TaskId>; RT_BUCKET_COUNT],
     current : Option<(TaskId, i32)>,

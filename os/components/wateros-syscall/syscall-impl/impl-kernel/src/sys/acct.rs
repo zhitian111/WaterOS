@@ -1,5 +1,6 @@
 //! `acct(2)`：进程 accounting 兼容入口。
 
+//! 本模块代码由AI完成
 extern crate alloc;
 
 use alloc::string::String;
@@ -50,6 +51,7 @@ struct LinuxAcct {
 
 const _: () = assert!(core::mem::size_of::<LinuxAcct>() == 64);
 
+// 本方法代码由AI完成
 pub(crate) fn sys_acct(args: SyscallArgs) -> UserRet {
     match do_acct(args.arg(0)) {
         Ok(()) => UserRet::from_success(0),

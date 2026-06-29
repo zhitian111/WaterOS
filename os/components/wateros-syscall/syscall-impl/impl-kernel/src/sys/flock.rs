@@ -1,4 +1,5 @@
 //! `flock(2)` — BSD 风格整文件 advisory 锁。
+//! 本模块代码由AI完成
 
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
@@ -7,6 +8,7 @@ use abi::user_ret::UserRet;
 use crate::vfs_util::vfs_error_to_errno;
 use vfs::fd;
 
+// 本方法代码由AI完成
 pub(crate) fn sys_flock(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let operation = args.arg(1);

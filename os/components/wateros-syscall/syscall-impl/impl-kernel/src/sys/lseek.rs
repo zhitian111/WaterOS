@@ -1,4 +1,5 @@
 //! `lseek(2)`：调整已打开文件的读写偏移。
+//! 本模块代码由AI完成
 
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
@@ -11,6 +12,7 @@ const SEEK_SET : usize = 0;
 const SEEK_CUR : usize = 1;
 const SEEK_END : usize = 2;
 
+// 本方法代码由AI完成
 pub(crate) fn sys_lseek(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let offset = args.arg(1) as i64;

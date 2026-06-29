@@ -1,4 +1,5 @@
 //! `get_mempolicy(2)` — 用户拷贝与参数解析；语义委托 [`mm::mempolicy`]。
+//! 本模块代码由AI完成
 
 extern crate alloc;
 
@@ -19,6 +20,7 @@ fn mempolicy_err_to_errno(err: MempolicyError) -> ErrNo {
 }
 
 /// `get_mempolicy(mode, nodemask, maxnode, addr, flags)`。
+// 本方法代码由AI完成
 pub(crate) fn sys_get_mempolicy(args: SyscallArgs) -> UserRet {
     let mode_ptr = args.arg(0);
     let nodemask_ptr = args.arg(1);

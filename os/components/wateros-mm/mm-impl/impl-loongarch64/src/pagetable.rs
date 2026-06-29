@@ -230,6 +230,7 @@ pub struct LoongArch64AddressSpace {
     pub(crate) shared_anon_vmas : Vec<SharedAnonVma>,
 }
 
+// 本结构代码由AI完成
 pub(crate) struct LazyFileVma {
     pub start : VirtAddr,
     pub end : VirtAddr,
@@ -258,6 +259,7 @@ impl LazyFileVma {
     }
 }
 
+// 本结构代码由AI完成
 #[derive(Clone, Copy)]
 pub(crate) struct SharedAnonVma {
     pub start : VirtAddr,
@@ -618,6 +620,7 @@ impl LoongArch64AddressSpace {
     /// - 用户页（PTE 中 `PLV == 3`）：共享原物理帧，写页清 `W` 并标记 COW。
     /// - 内核恒等映射页（PLV != 3）：共享原始 PPN，不复制数据帧。
     /// - 含用户映射的中间页表帧：为子地址空间复制页表结构。
+    // 本方法代码由AI完成
     pub fn fork_cow(&mut self) -> MmResult<LoongArch64AddressSpace> {
         log::trace!("[mm-fork] LoongArch64AddressSpace::fork begin root_ppn={}",
                     self.root.0);
@@ -653,6 +656,7 @@ impl LoongArch64AddressSpace {
                               shared_anon_vmas : self.shared_anon_vmas.clone() })
     }
 
+    // 本方法代码由AI完成
     fn handle_cow_page(&mut self, vpn : VirtPageNum) -> MmResult<bool> {
         let Some((pte, level)) = self.walk_find(vpn)? else {
             return Ok(false);
@@ -682,10 +686,12 @@ impl LoongArch64AddressSpace {
         Ok(true)
     }
 
+    // 本方法代码由AI完成
     pub fn handle_cow_fault(&mut self, fault_addr : VirtAddr) -> MmResult<bool> {
         self.handle_cow_page(fault_addr.floor_page())
     }
 
+    // 本方法代码由AI完成
     pub fn handle_lazy_page_fault<A>(&mut self,
                                      allocator : &mut A,
                                      fault_addr : VirtAddr,
@@ -734,6 +740,7 @@ impl LoongArch64AddressSpace {
         Ok(true)
     }
 
+    // 本方法代码由AI完成
     pub fn ensure_private_for_write(&mut self, vpn : VirtPageNum) -> MmResult<bool> {
         if self.handle_cow_page(vpn)? {
             return Ok(true);

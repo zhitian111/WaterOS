@@ -1,3 +1,4 @@
+//! 本模块代码由AI完成
 //! `/dev/null` 虚拟字符设备：读 EOF，写丢弃。
 
 #![no_std]
@@ -13,6 +14,7 @@ use driver_api::DriverResult;
 use spin::Mutex;
 
 /// POSIX `/dev/null` 语义。
+// 本结构代码由AI完成
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NullCharacterDevice;
 

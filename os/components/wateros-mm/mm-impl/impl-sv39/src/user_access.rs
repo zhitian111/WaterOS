@@ -1,3 +1,4 @@
+//! 本模块代码由AI完成
 //! Sv39 用户缓冲区 [`api_v0::user_access::UserMemoryOps`]。
 //!
 //! - **读/写**（`copy_from_user` / `copy_to_user`）：软件 walk 用户页表 + 内核恒等访问 PA，

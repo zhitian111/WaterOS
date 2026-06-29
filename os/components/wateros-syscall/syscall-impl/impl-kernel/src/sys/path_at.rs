@@ -1,4 +1,5 @@
 //! `*at` 类 syscall 共用的 `dirfd` + 相对路径解析。
+//! 本模块代码由AI完成
 
 extern crate alloc;
 

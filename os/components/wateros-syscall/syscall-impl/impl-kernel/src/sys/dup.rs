@@ -1,5 +1,6 @@
 //! `dup`/`dup3` 系统调用实现。
 
+//! 本模块代码由AI完成
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
@@ -13,6 +14,7 @@ const O_CLOEXEC: usize = 0o2000000;
 const FD_CLOEXEC: usize = 1;
 
 /// `dup(oldfd)` — 复制 fd 到最低可用编号。
+// 本方法代码由AI完成
 pub(crate) fn sys_dup(args: SyscallArgs) -> UserRet {
     let oldfd = args.arg(0);
     let socket = socket_fd::lookup(oldfd);
@@ -33,6 +35,7 @@ pub(crate) fn sys_dup(args: SyscallArgs) -> UserRet {
 }
 
 /// `dup3(oldfd, newfd, flags)` — 复制 fd 到指定编号。
+// 本方法代码由AI完成
 pub(crate) fn sys_dup3(args: SyscallArgs) -> UserRet {
     let oldfd = args.arg(0);
     let newfd = args.arg(1);

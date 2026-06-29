@@ -92,6 +92,7 @@ pub mod kernel_mm_impl {
     ///
     /// 返回 `(子地址空间裸指针, 子 PGDL 值)`；`parent_aspace_ptr == 0`
     /// 时返回 [`api_v0::error::MmError::InvalidAddress`]。
+    // 本方法代码由AI完成
     pub fn fork_user_aspace(parent_aspace_ptr : usize) -> api_v0::error::MmResult<(usize, usize)> {
         use crate::pagetable::LoongArch64AddressSpace;
         use alloc::boxed::Box;
@@ -110,6 +111,7 @@ pub mod kernel_mm_impl {
         Ok((child_ptr, pgdl))
     }
 
+    // 本方法代码由AI完成
     pub fn handle_cow_fault(parent_aspace_ptr : usize,
                             fault_addr : usize)
                             -> api_v0::error::MmResult<bool> {
@@ -127,6 +129,7 @@ pub mod kernel_mm_impl {
     /// 销毁用户地址空间：递归释放所有用户页帧和页表帧。
     ///
     /// `aspace_ptr` 来自 `LoadedElf::user_aspace_ptr`，调用后指针失效。
+    // 本方法代码由AI完成
     pub fn drop_user_aspace(aspace_ptr : usize) {
         use crate::pagetable::LoongArch64AddressSpace;
         use alloc::boxed::Box;

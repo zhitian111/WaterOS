@@ -1,5 +1,6 @@
 //! `sendfile(2)`：在已打开 fd 间拷贝数据（内核缓冲，最小语义）。
 
+//! 本模块代码由AI完成
 extern crate alloc;
 
 use alloc::vec::Vec;
@@ -13,6 +14,7 @@ use crate::vfs_util::{vfs_error_to_errno, vfs_io_at_error_to_errno};
 
 const IO_CHUNK: usize = 64 * 1024;
 
+// 本方法代码由AI完成
 pub(crate) fn sys_sendfile(args: SyscallArgs) -> UserRet {
     let out_fd = args.arg(0);
     let in_fd = args.arg(1);

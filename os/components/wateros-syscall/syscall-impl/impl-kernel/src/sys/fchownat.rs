@@ -1,4 +1,5 @@
 //! `fchownat(2)`：相对目录修改路径 uid/gid（首期支持 `resolve_path_at` 路径解析）。
+//! 本模块代码由AI完成
 
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
@@ -18,6 +19,7 @@ const FCHOWNAT_VALID_FLAGS: u32 = AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH;
 /// Linux `fchownat` / `lchown` 用 `(uid_t)-1` / `(gid_t)-1` 表示不修改对应字段。
 const CHOWN_OMIT_ID: u32 = u32::MAX;
 
+// 本方法代码由AI完成
 pub(crate) fn sys_fchownat(args: SyscallArgs) -> UserRet {
     let dirfd = args.arg(0) as isize;
     let path_ptr = args.arg(1);

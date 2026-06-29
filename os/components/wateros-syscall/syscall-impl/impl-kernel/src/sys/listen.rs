@@ -1,5 +1,6 @@
 //! `listen(2)`：标记 TCP socket 为监听状态。
 
+//! 本模块代码由AI完成
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
@@ -7,6 +8,7 @@ use driver::network::stack;
 
 use crate::socket_fd;
 
+// 本方法代码由AI完成
 pub(crate) fn sys_listen(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let backlog = args.arg(1);

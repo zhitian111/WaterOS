@@ -1,4 +1,5 @@
 //! 单条内核消息的记录头（固定布局，供内核观测；不 `copy_to_user` 裸导出）。
+//! 本模块代码由AI完成
 
 use crate::KlogFlags;
 
@@ -25,6 +26,7 @@ pub const LOG_INFO: u8 = 6;
 pub const LOG_DEBUG: u8 = 7;
 
 /// 一条 klog 记录的固定元数据（正文另存）。
+// 本结构代码由AI完成
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KlogRecordMeta {
@@ -46,6 +48,7 @@ pub struct KlogRecordMeta {
 
 impl KlogRecordMeta {
     /// 构造未提交记录头（`seq` 由环实现填入）。
+    // 本方法代码由AI完成
     #[inline]
     pub const fn new(
         ts_nsec: u64,

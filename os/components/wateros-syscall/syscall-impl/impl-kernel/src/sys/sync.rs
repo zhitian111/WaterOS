@@ -1,4 +1,5 @@
 //! `sync(2)` / `fsync(2)` / `fdatasync(2)`：将脏数据刷回后端。
+//! 本模块代码由AI完成
 
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
@@ -6,6 +7,7 @@ use abi::user_ret::UserRet;
 
 use crate::vfs_util::vfs_error_to_errno;
 
+// 本方法代码由AI完成
 fn sync_fd(op : &str, fd : usize) -> UserRet {
     use vfs::api::VfsNodeType;
 
@@ -27,10 +29,13 @@ fn sync_fd(op : &str, fd : usize) -> UserRet {
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_fsync(args : SyscallArgs) -> UserRet { sync_fd("fsync", args.arg(0)) }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_fdatasync(args : SyscallArgs) -> UserRet { sync_fd("fdatasync", args.arg(0)) }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_sync(_args : SyscallArgs) -> UserRet {
     // Linux sync(2) 发起系统级写回并始终返回 0；单个写回错误由后续文件操作报告。
     let _ = vfs::fd::flush_all_open_files();

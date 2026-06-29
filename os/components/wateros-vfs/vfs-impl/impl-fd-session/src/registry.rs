@@ -1,4 +1,5 @@
 //! 以 [`task::TaskId`] 为 key 的 per-task fd 表。
+//! 本模块代码由AI完成
 
 extern crate alloc;
 
@@ -26,6 +27,7 @@ pub const FD_CLOEXEC: u8 = 1;
 pub const FD_PATH_ONLY: u8 = 2;
 
 /// 全局 per-task fd 注册表。
+// 本结构代码由AI完成
 pub struct PerTaskFdRegistry {
     tables: BTreeMap<task::TaskId, Vec<Option<Box<dyn VfsIoHandle>>>>,
     fd_flags: BTreeMap<task::TaskId, Vec<u8>>,
@@ -50,6 +52,7 @@ impl PerTaskFdRegistry {
         }
     }
 
+// 本方法代码由AI完成
     fn ensure_task(&mut self, task_id: task::TaskId) {
         self.owners.entry(task_id).or_insert(task_id);
         self.ref_counts.entry(task_id).or_insert(1);
@@ -68,6 +71,7 @@ impl PerTaskFdRegistry {
     }
 
     #[inline]
+// 本方法代码由AI完成
     fn effective_owner(&self, task_id: task::TaskId) -> task::TaskId {
         self.owners
             .get(&task_id)
@@ -75,6 +79,7 @@ impl PerTaskFdRegistry {
             .unwrap_or(task_id)
     }
 
+// 本方法代码由AI完成
     fn ensure_shared_io_state(&mut self, owner: task::TaskId) {
         let len = self.tables.get(&owner).map(Vec::len).unwrap_or(0);
         let inflight = self.io_inflight.entry(owner).or_insert_with(Vec::new);
@@ -87,6 +92,7 @@ impl PerTaskFdRegistry {
         }
     }
 
+// 本方法代码由AI完成
     fn ensure_fd_not_io_busy(&self, owner: task::TaskId, fd: usize) -> VfsResult<()> {
         if self
             .io_inflight
@@ -101,12 +107,14 @@ impl PerTaskFdRegistry {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn table_mut(&mut self, task_id: task::TaskId) -> &mut Vec<Option<Box<dyn VfsIoHandle>>> {
         self.ensure_task(task_id);
         let owner = self.effective_owner(task_id);
         self.tables.get_mut(&owner).expect("fd table owner")
     }
 
+// 本方法代码由AI完成
     fn ensure_flags_len(&mut self, task_id: task::TaskId, len: usize) {
         self.ensure_task(task_id);
         let owner = self.effective_owner(task_id);
@@ -116,6 +124,7 @@ impl PerTaskFdRegistry {
         }
     }
 
+// 本方法代码由AI完成
     fn close_slot(&mut self, task_id: task::TaskId, fd: usize) -> VfsResult<()> {
         let pid = task::process_task_snapshot(task_id).map(|snap| snap.pid);
         let mut handle = self.take_fd_for_close(task_id, fd)?;
@@ -130,6 +139,7 @@ impl PerTaskFdRegistry {
         Ok(())
     }
 
+// 本方法代码由AI完成
     fn take_table_handles(&mut self, owner: task::TaskId) -> Vec<Box<dyn VfsIoHandle>> {
         let mut handles = Vec::new();
         if let Some(mut table) = self.tables.remove(&owner) {
@@ -143,6 +153,7 @@ impl PerTaskFdRegistry {
         handles
     }
 
+// 本方法代码由AI完成
     pub fn take_fd_for_close(
         &mut self,
         task_id: task::TaskId,
@@ -165,6 +176,7 @@ impl PerTaskFdRegistry {
         Ok(handle)
     }
 
+// 本方法代码由AI完成
     pub fn take_fd_range_for_close(
         &mut self,
         task_id: task::TaskId,
@@ -206,6 +218,7 @@ impl PerTaskFdRegistry {
         Ok(handles)
     }
 
+// 本方法代码由AI完成
     pub fn take_cloexec_fds_for_task(
         &mut self,
         task_id: task::TaskId,
@@ -226,6 +239,7 @@ impl PerTaskFdRegistry {
         handles
     }
 
+// 本方法代码由AI完成
     pub fn drain_task_fd_table(&mut self, task_id: task::TaskId) -> Vec<Box<dyn VfsIoHandle>> {
         let Some(owner) = self.release_owner(task_id) else {
             return Vec::new();
@@ -241,6 +255,7 @@ impl PerTaskFdRegistry {
         handles
     }
 
+// 本方法代码由AI完成
     fn release_owner(&mut self, task_id: task::TaskId) -> Option<task::TaskId> {
         let owner = self.owners.remove(&task_id)?;
         if let Some(count) = self.ref_counts.get_mut(&owner) {
@@ -252,6 +267,7 @@ impl PerTaskFdRegistry {
         Some(owner)
     }
 
+// 本方法代码由AI完成
     fn close_table(&mut self, owner: task::TaskId) {
         let handles = self.take_table_handles(owner);
         for mut handle in handles {
@@ -259,6 +275,7 @@ impl PerTaskFdRegistry {
         }
     }
 
+// 本方法代码由AI完成
     fn open_fd_count_for_task(&self, task_id: task::TaskId) -> usize {
         let owner = self.effective_owner(task_id);
         self.tables
@@ -267,6 +284,7 @@ impl PerTaskFdRegistry {
             .unwrap_or(0)
     }
 
+// 本方法代码由AI完成
     fn check_nofile_before_open(&self, task_id: task::TaskId) -> VfsResult<()> {
         let limit = task::nofile_rlimit_for_task(task_id);
         if self.open_fd_count_for_task(task_id) >= limit as usize {
@@ -277,6 +295,7 @@ impl PerTaskFdRegistry {
 }
 
 impl VfsFdSession for PerTaskFdRegistry {
+// 本方法代码由AI完成
     fn get_io(&mut self, fd: usize) -> VfsResult<&mut (dyn VfsIoHandle + '_)> {
         let task_id = task::current_task_id().ok_or(VfsError::NoTask)?;
         match self.table_mut(task_id).get_mut(fd) {
@@ -285,6 +304,7 @@ impl VfsFdSession for PerTaskFdRegistry {
         }
     }
 
+// 本方法代码由AI完成
     fn alloc_fd(&mut self, handle: Box<dyn VfsIoHandle>) -> VfsResult<usize> {
         let task_id = task::current_task_id().ok_or(VfsError::NoTask)?;
         self.check_nofile_before_open(task_id)?;
@@ -305,6 +325,7 @@ impl VfsFdSession for PerTaskFdRegistry {
         Ok(newfd)
     }
 
+// 本方法代码由AI完成
     fn close_fd(&mut self, fd: usize) -> VfsResult<()> {
         let task_id = task::current_task_id().ok_or(VfsError::NoTask)?;
         self.close_fd_for_task(task_id, fd)
@@ -313,6 +334,7 @@ impl VfsFdSession for PerTaskFdRegistry {
 
 impl PerTaskFdRegistry {
     /// 为指定任务分配 fd（`pipe2` 等可在已知 `task_id` 下使用）。
+// 本方法代码由AI完成
     pub fn alloc_fd_for_task(
         &mut self,
         task_id: task::TaskId,
@@ -336,6 +358,7 @@ impl PerTaskFdRegistry {
     }
 
     /// 按任务与 fd 号取可变句柄。
+// 本方法代码由AI完成
     pub fn get_io_for_task(
         &mut self,
         task_id: task::TaskId,
@@ -350,6 +373,7 @@ impl PerTaskFdRegistry {
     }
 
     /// 刷新全部实际 fd 表中的打开句柄；发生错误后仍继续其余写回。
+// 本方法代码由AI完成
     pub fn flush_all(&mut self) -> VfsResult<()> {
         let mut first_error = None;
         for table in self.tables.values_mut() {
@@ -363,12 +387,14 @@ impl PerTaskFdRegistry {
     }
 
     /// 当前任务是否与其他任务共享同一 fd 表（如 `CLONE_FILES`）。
+// 本方法代码由AI完成
     pub fn is_fd_table_shared(&self, task_id: task::TaskId) -> bool {
         let owner = self.effective_owner(task_id);
         self.ref_counts.get(&owner).copied().unwrap_or(0) > 1
     }
 
     /// 共享 fd 表路径：登记 I/O 会话并返回句柄指针与槽位锁（句柄仍留在表中）。
+// 本方法代码由AI完成
     pub fn begin_shared_io_for_task(
         &mut self,
         task_id: task::TaskId,
@@ -398,6 +424,7 @@ impl PerTaskFdRegistry {
     }
 
     /// 结束共享 fd 表上的 I/O 会话。
+// 本方法代码由AI完成
     pub fn end_shared_io_for_task(&mut self, task_id: task::TaskId, fd: usize) {
         let owner = self.effective_owner(task_id);
         if let Some(inflight) = self.io_inflight.get_mut(&owner) {
@@ -408,6 +435,7 @@ impl PerTaskFdRegistry {
     }
 
     /// 临时取出指定 fd 的句柄，让调用方可在不持有 fd 注册表借用时执行 I/O。
+// 本方法代码由AI完成
     pub fn take_io_for_task(
         &mut self,
         task_id: task::TaskId,
@@ -422,6 +450,7 @@ impl PerTaskFdRegistry {
     }
 
     /// 将 [`take_io_for_task`] 取出的句柄放回原 fd 槽位。
+// 本方法代码由AI完成
     pub fn restore_io_for_task(
         &mut self,
         task_id: task::TaskId,
@@ -442,11 +471,13 @@ impl PerTaskFdRegistry {
     }
 
     /// 按任务关闭 fd；关闭时调用句柄的 `close`。
+// 本方法代码由AI完成
     pub fn close_fd_for_task(&mut self, task_id: task::TaskId, fd: usize) -> VfsResult<()> {
         self.close_slot(task_id, fd)
     }
 
     /// `dup(oldfd)`：复制到 ≥ `minfd` 的最低可用 fd。
+// 本方法代码由AI完成
     pub fn dup_fd_for_task(
         &mut self,
         task_id: task::TaskId,
@@ -481,6 +512,7 @@ impl PerTaskFdRegistry {
     }
 
     /// `dup3(oldfd, newfd, cloexec)`。
+// 本方法代码由AI完成
     pub fn dup3_fd_for_task(
         &mut self,
         task_id: task::TaskId,
@@ -534,6 +566,7 @@ impl PerTaskFdRegistry {
     }
 
     /// `fcntl(F_GETFD)`。
+// 本方法代码由AI完成
     pub fn get_fd_flags(&mut self, task_id: task::TaskId, fd: usize) -> VfsResult<usize> {
         self.get_io_for_task(task_id, fd)?;
         self.ensure_task(task_id);
@@ -546,6 +579,7 @@ impl PerTaskFdRegistry {
     }
 
     /// `fcntl(F_SETFD)`：当前仅支持 `FD_CLOEXEC` 位。
+// 本方法代码由AI完成
     pub fn set_fd_flags(&mut self, task_id: task::TaskId, fd: usize, val: usize) -> VfsResult<()> {
         self.get_io_for_task(task_id, fd)?;
         let cloexec = (val & usize::from(FD_CLOEXEC)) != 0;
@@ -553,6 +587,7 @@ impl PerTaskFdRegistry {
     }
 
     /// 将 `fd` 标记为 `O_PATH` 句柄（仅路径解析，禁止读写）。
+// 本方法代码由AI完成
     pub fn set_fd_path_only(&mut self, task_id: task::TaskId, fd: usize) -> VfsResult<()> {
         self.get_io_for_task(task_id, fd)?;
         self.ensure_flags_len(task_id, fd + 1);
@@ -562,6 +597,7 @@ impl PerTaskFdRegistry {
     }
 
     /// 查询 `fd` 是否为 `O_PATH` 句柄。
+// 本方法代码由AI完成
     pub fn is_fd_path_only(&mut self, task_id: task::TaskId, fd: usize) -> VfsResult<bool> {
         self.get_io_for_task(task_id, fd)?;
         self.ensure_task(task_id);
@@ -572,6 +608,7 @@ impl PerTaskFdRegistry {
         Ok(fd < flags.len() && flags[fd] & FD_PATH_ONLY != 0)
     }
 
+// 本方法代码由AI完成
     fn set_fd_cloexec(&mut self, task_id: task::TaskId, fd: usize, cloexec: bool) -> VfsResult<()> {
         self.ensure_flags_len(task_id, fd + 1);
         let owner = self.effective_owner(task_id);
@@ -584,6 +621,7 @@ impl PerTaskFdRegistry {
         Ok(())
     }
 
+// 本方法代码由AI完成
     pub fn set_fd_range_cloexec(
         &mut self,
         task_id: task::TaskId,
@@ -619,11 +657,13 @@ impl PerTaskFdRegistry {
     }
 
     /// fork 时初始化子任务 fd 表：仅默认 stdin/stdout/stderr（spawn 路径）。
+// 本方法代码由AI完成
     pub fn init_child_fd_table(&mut self, child: task::TaskId) {
         let _ = self.table_mut(child);
     }
 
     /// fork 时复制父任务 fd 表（含 pipe/文件等动态 fd）。
+// 本方法代码由AI完成
     pub fn copy_fd_table_from_parent(&mut self, child: task::TaskId, parent: task::TaskId) {
         self.ensure_task(parent);
         if self.owners.contains_key(&child) {
@@ -671,6 +711,7 @@ impl PerTaskFdRegistry {
     }
 
     /// thread clone 时共享父任务 fd 表。
+// 本方法代码由AI完成
     pub fn share_fd_table_from_parent(&mut self, child: task::TaskId, parent: task::TaskId) {
         self.ensure_task(parent);
         if self.owners.contains_key(&child) {
@@ -684,6 +725,7 @@ impl PerTaskFdRegistry {
     }
 
     /// `execve` 前关闭带 `FD_CLOEXEC` 的 fd。
+// 本方法代码由AI完成
     pub fn close_cloexec_fds_for_task(&mut self, task_id: task::TaskId) {
         self.ensure_task(task_id);
         let owner = self.effective_owner(task_id);
@@ -698,6 +740,7 @@ impl PerTaskFdRegistry {
     }
 
     /// 任务退出后关闭全部 fd 并清空槽位。
+// 本方法代码由AI完成
     pub fn drop_task_fd_table(&mut self, task_id: task::TaskId) {
         let Some(owner) = self.release_owner(task_id) else {
             return;
@@ -712,6 +755,7 @@ impl PerTaskFdRegistry {
     }
 }
 
+// 本方法代码由AI完成
 fn default_stdin_handle() -> Box<dyn VfsIoHandle> {
     if let Some(dev) = default_serial_device() {
         Box::new(CharDevHandle::new_stdin(dev))
@@ -720,6 +764,7 @@ fn default_stdin_handle() -> Box<dyn VfsIoHandle> {
     }
 }
 
+// 本方法代码由AI完成
 fn default_stdout_handle() -> Box<dyn VfsIoHandle> {
     if let Some(dev) = default_serial_device() {
         Box::new(CharDevHandle::new_stdout(dev))
@@ -728,6 +773,7 @@ fn default_stdout_handle() -> Box<dyn VfsIoHandle> {
     }
 }
 
+// 本方法代码由AI完成
 fn default_serial_device() -> Option<SharedCharacterDevice> {
     (0..character_device_count())
         .find(|&idx| character_device_kind_at(idx) == Some(CharacterDeviceKind::Serial))

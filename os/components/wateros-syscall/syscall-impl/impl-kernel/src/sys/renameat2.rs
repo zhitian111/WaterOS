@@ -1,4 +1,5 @@
 //! `renameat2(2)`：bring-up 同父目录 rename（文件与目录）；非 journal 原子语义。
+//! 本模块代码由AI完成
 
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
@@ -12,6 +13,7 @@ use crate::vfs_util::vfs_error_to_errno;
 
 const RENAME_NOREPLACE: u32 = 1;
 
+// 本方法代码由AI完成
 pub(crate) fn sys_renameat2(args: SyscallArgs) -> UserRet {
     let old_dirfd = args.arg(0) as isize;
     let old_path_ptr = args.arg(1);

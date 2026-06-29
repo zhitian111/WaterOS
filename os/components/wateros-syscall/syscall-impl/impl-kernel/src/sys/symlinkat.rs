@@ -1,4 +1,5 @@
 //! `symlinkat(2)`：相对目录 fd 创建符号链接。
+//! 本模块代码由AI完成
 
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
@@ -11,6 +12,7 @@ use crate::vfs_util::vfs_error_to_errno;
 
 const PATH_MAX: usize = 4096;
 
+// 本方法代码由AI完成
 pub(crate) fn sys_symlinkat(args: SyscallArgs) -> UserRet {
     let target_ptr = args.arg(0);
     let dirfd = args.arg(1) as isize;

@@ -1,4 +1,5 @@
 //! `utimensat(2)`：bring-up 最小兼容实现，暂不持久化 atime/mtime。
+//! 本模块代码由AI完成
 
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
@@ -18,6 +19,7 @@ const UTIME_OMIT: isize = 1_073_741_822;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+// 本结构代码由AI完成
 struct UserTimespec {
     sec: isize,
     nsec: isize,
@@ -30,6 +32,7 @@ enum TimeUpdate {
     Omit,
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_utimensat(args: SyscallArgs) -> UserRet {
     let dirfd = args.arg(0) as isize;
     let path_ptr = args.arg(1);

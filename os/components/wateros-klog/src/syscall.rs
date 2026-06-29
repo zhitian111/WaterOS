@@ -1,4 +1,5 @@
 //! `sys_syslog` 语义（内核缓冲侧）；用户指针由 `wateros-syscall` 负责拷贝。
+//! 本模块代码由AI完成
 
 use api_v0::{
     is_write_priority, KlogError, KlogFlags, KlogRecordMeta, KlogStore, SYSLOG_ACTION_CLEAR,
@@ -11,9 +12,11 @@ use impl_ringbuf::KlogRingbuf;
 use crate::export::format_traditional;
 use crate::{caller_id_now, record_with_meta, ts_nsec_now};
 
+// 本变量代码由AI完成
 const KERNEL_LINE_MAX: usize = 2048;
 
 /// 处理 `sys_syslog` action；`user_buf` 为 syscall 层提供的内核侧缓冲。
+// 本方法代码由AI完成
 pub fn dispatch_kernel(action: i32, user_buf: &mut [u8], user_len: usize) -> isize {
     if is_write_priority(action) {
         return write_priority(action, user_buf, user_len);
@@ -36,6 +39,7 @@ pub fn dispatch_kernel(action: i32, user_buf: &mut [u8], user_len: usize) -> isi
 }
 
 // READ / READ_CLEAR：取下一条未读，格式化为 traditional 行后拷贝到用户缓冲。
+// 本方法代码由AI完成
 fn read_one(buf: &mut [u8], len: usize, advance: bool) -> isize {
     let mut line = [0u8; KERNEL_LINE_MAX];
     KlogRingbuf::with(|ring| match ring.peek_next_unread() {
@@ -51,6 +55,7 @@ fn read_one(buf: &mut [u8], len: usize, advance: bool) -> isize {
     })
 }
 
+// 本方法代码由AI完成
 fn read_all(buf: &mut [u8], len: usize) -> isize {
     let mut total = 0isize;
     let mut offset = 0usize;
@@ -82,6 +87,7 @@ fn read_all(buf: &mut [u8], len: usize) -> isize {
 }
 
 // WRITE：priority 高 3 位 level、低 3 位 facility（Linux 约定）。
+// 本方法代码由AI完成
 fn write_priority(priority: i32, msg: &[u8], _msg_len: usize) -> isize {
     let level = ((priority >> 3) & 7) as u8;
     let facility = (priority & 7) as u8;
@@ -99,6 +105,7 @@ fn write_priority(priority: i32, msg: &[u8], _msg_len: usize) -> isize {
 }
 
 #[inline]
+// 本方法代码由AI完成
 fn copy_out(buf: &mut [u8], len: usize, src: &[u8]) -> isize {
     let n = src.len().min(len);
     buf[..n].copy_from_slice(&src[..n]);

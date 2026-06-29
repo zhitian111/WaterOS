@@ -1,4 +1,5 @@
 //! 以 [`task::TaskId`] 为 key 的 per-task 工作目录字符串。
+//! 本模块代码由AI完成
 
 extern crate alloc;
 
@@ -10,6 +11,7 @@ use alloc::vec::Vec;
 pub const PATH_MAX: usize = 256;
 
 /// 全局 per-task cwd 表。
+// 本结构代码由AI完成
 pub struct PerTaskCwdRegistry {
     cwd_tables: BTreeMap<task::TaskId, String>,
     exe_paths: BTreeMap<task::TaskId, String>,
@@ -30,6 +32,7 @@ impl PerTaskCwdRegistry {
         }
     }
 
+// 本方法代码由AI完成
     fn ensure_owner(&mut self, task_id: task::TaskId) -> task::TaskId {
         self.owners.entry(task_id).or_insert(task_id);
         self.ref_counts.entry(task_id).or_insert(1);
@@ -37,6 +40,7 @@ impl PerTaskCwdRegistry {
     }
 
     #[inline]
+// 本方法代码由AI完成
     fn effective_owner(&self, task_id: task::TaskId) -> task::TaskId {
         self.owners
             .get(&task_id)
@@ -44,6 +48,7 @@ impl PerTaskCwdRegistry {
             .unwrap_or(task_id)
     }
 
+// 本方法代码由AI完成
     fn release_owner(&mut self, task_id: task::TaskId) -> Option<task::TaskId> {
         let owner = self.owners.remove(&task_id)?;
         if let Some(count) = self.ref_counts.get_mut(&owner) {
@@ -56,6 +61,7 @@ impl PerTaskCwdRegistry {
     }
 
     /// 初始化任务 cwd 为 `/`（spawn / fork 路径）。
+// 本方法代码由AI完成
     pub fn init_task_cwd(&mut self, task_id: task::TaskId) {
         let owner = self.ensure_owner(task_id);
         self.cwd_tables.insert(owner, String::from("/"));
@@ -63,6 +69,7 @@ impl PerTaskCwdRegistry {
 
     /// 读取任务 cwd 字符串；未初始化时回退 `/`。
     #[inline]
+// 本方法代码由AI完成
     pub fn get_cwd(&self, task_id: task::TaskId) -> &str {
         let owner = self.effective_owner(task_id);
         self.cwd_tables
@@ -72,11 +79,13 @@ impl PerTaskCwdRegistry {
     }
 
     /// 惰性初始化 cwd 槽位（首次访问前调用）。
+// 本方法代码由AI完成
     pub fn ensure_task_cwd(&mut self, task_id: task::TaskId) {
         let owner = self.ensure_owner(task_id);
         self.cwd_tables.entry(owner).or_insert_with(|| String::from("/"));
     }
 
+// 本方法代码由AI完成
     pub fn get_cwd_mut(&mut self, task_id: task::TaskId) -> &mut String {
         self.ensure_task_cwd(task_id);
         let owner = self.effective_owner(task_id);
@@ -84,6 +93,7 @@ impl PerTaskCwdRegistry {
     }
 
     /// 任务退出或 unshare 后释放 cwd / exe / argv 槽位。
+// 本方法代码由AI完成
     pub fn drop_task(&mut self, task_id: task::TaskId) {
         let Some(owner) = self.release_owner(task_id) else {
             return;
@@ -100,6 +110,7 @@ impl PerTaskCwdRegistry {
         }
     }
 
+// 本方法代码由AI完成
     pub fn copy_cwd_from_parent(&mut self, child: task::TaskId, parent: task::TaskId) {
         let parent_cwd = self.get_cwd(parent).to_string();
         let parent_exe = self.get_exe_path(parent).map(ToString::to_string);
@@ -121,6 +132,7 @@ impl PerTaskCwdRegistry {
         }
     }
 
+// 本方法代码由AI完成
     pub fn share_cwd_from_parent(&mut self, child: task::TaskId, parent: task::TaskId) {
         self.ensure_task_cwd(parent);
         if self.owners.contains_key(&child) {
@@ -132,11 +144,13 @@ impl PerTaskCwdRegistry {
         *count = count.saturating_add(1);
     }
 
+// 本方法代码由AI完成
     pub fn set_exe_path(&mut self, task_id: task::TaskId, exe_path: &str) {
         let owner = self.ensure_owner(task_id);
         self.exe_paths.insert(owner, String::from(exe_path));
     }
 
+// 本方法代码由AI完成
     pub fn get_exe_path(&self, task_id: task::TaskId) -> Option<&str> {
         let owner = self.effective_owner(task_id);
         self.exe_paths
@@ -144,11 +158,13 @@ impl PerTaskCwdRegistry {
             .map(String::as_str)
     }
 
+// 本方法代码由AI完成
     pub fn set_argv(&mut self, task_id: task::TaskId, argv: Vec<String>) {
         let owner = self.ensure_owner(task_id);
         self.argv_vectors.insert(owner, argv);
     }
 
+// 本方法代码由AI完成
     pub fn get_argv(&self, task_id: task::TaskId) -> Option<&[String]> {
         let owner = self.effective_owner(task_id);
         self.argv_vectors

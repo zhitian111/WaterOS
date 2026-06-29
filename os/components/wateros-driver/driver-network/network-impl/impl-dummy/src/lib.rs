@@ -1,3 +1,4 @@
+//! 本模块代码由AI完成
 //! 网络设备占位实现：无硬件交互，用作缺省回退与编译占位。
 //!
 //! **当前行为**：无真实帧收发；**后续替换点**：virtio-net 等实现 crate。
@@ -11,6 +12,7 @@ use spin::Mutex;
 use api_v0::{DriverError, DriverResult, NetworkDevice, SharedNetworkDevice};
 
 /// 无操作网络设备：链路恒定 Down，收发均拒绝。
+// 本结构代码由AI完成
 pub struct DummyNetworkDevice {
     mac: [u8; 6],
 }

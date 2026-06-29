@@ -4,10 +4,10 @@
 //! worker 被 runner 无参 `"$file"` 同步拉起时会永久阻塞队列；在 standalone 或父 shell
 //! 已 `wait()` 时 exit(0)。exec 路径匹配仅看被加载文件路径，避免误杀 `basename` 等子 shell。
 //!
-//! **fast exit 跳过名单**：仅 [`LTP_SUBMIT_SKIP_BASENAMES`]（日志汇总「未见 TPASS」的 basename，
-//! 严格字典序）。带 worker 参数（如 `--mmap-anon`）的合法调用不会被跳过。
-//! 查询对 [`LTP_SUBMIT_SKIP_BASENAMES`] 二分查找（表须严格字典序）。名单维护见
-//! `docs/tasks/ltp_fast_exit_skip_list.md`。
+//! **排除名单** [`LTP_SUBMIT_SKIP_BASENAMES`]：日志汇总「未见 TPASS」的 basename，严格字典序。
+//! bring-up 在 RW 根卷挂载后从 `/{glibc,musl}/ltp/testcases/bin/` 删除表中文件，使 runner
+//! 不再遍历；exec 路径仍保留 fast-exit 兜底。带 worker 参数（如 `--mmap-anon`）的合法调用
+//! 不会被 fast-exit。名单维护见 `docs/tasks/ltp_fast_exit_skip_list.md`。
 
 use task::{TaskBlockReason, TaskState};
 /// 源：Read 判读 + rv_local_run_all 手工增补；共 2327 条。
@@ -2340,6 +2340,11 @@ const LTP_SUBMIT_SKIP_BASENAMES: &[&str] = &[
     "zram03",
     "zram_lib.sh",
 ];
+
+/// bring-up 删文件与 fast-exit 共用的排除 basename 表。
+pub(crate) fn ltp_submit_skip_basenames() -> &'static [&'static str] {
+    LTP_SUBMIT_SKIP_BASENAMES
+}
 
 fn path_is_ltp_testcases_bin(path: &str) -> bool {
     path.contains("/ltp/testcases/bin/")

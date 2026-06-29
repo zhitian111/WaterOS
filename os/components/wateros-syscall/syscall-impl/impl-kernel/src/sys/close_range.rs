@@ -1,4 +1,5 @@
 //! `close_range(2)`：批量关闭 fd 或批量设置 `FD_CLOEXEC`。
+//! 本模块代码由AI完成
 
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
@@ -10,6 +11,7 @@ use crate::vfs_util::vfs_error_to_errno;
 const CLOSE_RANGE_UNSHARE: usize = 1 << 1;
 const CLOSE_RANGE_CLOEXEC: usize = 1 << 2;
 
+// 本方法代码由AI完成
 pub(crate) fn sys_close_range(args: SyscallArgs) -> UserRet {
     let first = args.arg(0);
     let last = args.arg(1);

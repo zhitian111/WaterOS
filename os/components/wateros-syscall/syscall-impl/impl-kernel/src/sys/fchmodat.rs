@@ -1,4 +1,5 @@
 //! `fchmodat(2)`：相对目录修改路径权限（首期支持 `resolve_path_at` 路径解析）。
+//! 本模块代码由AI完成
 
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
@@ -9,6 +10,7 @@ use crate::sys::path_at::resolve_path_at;
 use crate::user_copy::copy_user_path_cstr;
 use crate::vfs_util::vfs_error_to_errno;
 
+// 本方法代码由AI完成
 pub(crate) fn sys_fchmodat(args: SyscallArgs) -> UserRet {
     let dirfd = args.arg(0) as isize;
     let path_ptr = args.arg(1);

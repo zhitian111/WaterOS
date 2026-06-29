@@ -1,5 +1,6 @@
 //! `futex(2)` — 用户态快速互斥锁原语；等待/唤醒委托 [`ipc::futex::FutexHub`]。
 
+//! 本模块代码由AI完成
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
@@ -198,6 +199,7 @@ pub(crate) fn wake_user_addr(uaddr : usize) -> usize {
     total
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_futex(args : SyscallArgs) -> UserRet {
     let futex_op = args.arg(1) as u32;
     let uaddr = args.arg(0);

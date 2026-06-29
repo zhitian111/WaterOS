@@ -1,7 +1,9 @@
 // Syscall 号单次 match 分发（H-3）：替代 `SyscallKind::decode` + 巨型 match。
+// 本模块代码由AI完成
 
 /// 按裸 syscall 号分发；未命中时走旁路号与 ENOSYS。
 #[inline]
+// 本方法代码由AI完成
 pub fn dispatch_syscall_by_nr(syscall_nr: usize, syscall_args: SyscallArgs) -> isize {
     use api_v0::SyscallDispatcher;
     match syscall_nr {
@@ -315,6 +317,7 @@ pub fn dispatch_syscall_by_nr(syscall_nr: usize, syscall_args: SyscallArgs) -> i
 
 /// EINTR 后可重启 syscall。
 #[inline]
+// 本方法代码由AI完成
 pub fn is_restartable_syscall_nr(syscall_nr: usize) -> bool {
     use ActiveSyscallNumberTable as T;
     syscall_nr == <T as SyscallNumberTable>::READ.raw()

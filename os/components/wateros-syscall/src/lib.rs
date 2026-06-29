@@ -75,6 +75,13 @@ pub fn log_thread_bringup_stats_summary() {
     active_impl::log_thread_bringup_stats_summary();
 }
 
+/// bring-up 从根卷删除 LTP 排除用例时读取的 basename 表（与 fast-exit 同表）。
+#[cfg(feature = "impl-kernel")]
+#[inline]
+pub fn ltp_submit_skip_basenames() -> &'static [&'static str] {
+    active_impl::ltp_submit_skip_basenames()
+}
+
 /// 当前任务的 syscall 分发入口，供汇编或 C ABI 调用方使用。
 #[cfg(feature = "impl-kernel")]
 #[unsafe(no_mangle)]

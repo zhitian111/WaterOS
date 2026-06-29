@@ -1,5 +1,6 @@
 //! `getdents64(2)`：目录 fd 枚举；`linux_dirent64` 布局由 VFS `DirectoryHandle` 编码。
 
+//! 本模块代码由AI完成
 extern crate alloc;
 
 use abi::errno::ErrNo;
@@ -11,6 +12,7 @@ use crate::fallible_buf::{try_kbuf, GETDENTS64_MAX};
 use crate::user_copy::copy_to_user;
 use crate::vfs_util::vfs_error_to_errno;
 
+// 本方法代码由AI完成
 pub(crate) fn sys_getdents64(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let dirp = args.arg(1);

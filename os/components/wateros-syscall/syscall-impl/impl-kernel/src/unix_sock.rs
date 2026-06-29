@@ -1,5 +1,6 @@
 //! AF_UNIX 域套接字：pathname / abstract bind、stream listen/accept/connect、dgram 投递。
 
+//! 本模块代码由AI完成
 extern crate alloc;
 
 use alloc::boxed::Box;
@@ -33,6 +34,7 @@ const UNIX_ACCEPT_QUEUE_MAX : usize = 128;
 const UNIX_DGRAM_INBOX_MAX : usize = 256;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+// 本结构代码由AI完成
 pub(crate) enum UnixSockType {
     Stream,
     Dgram,
@@ -129,6 +131,7 @@ pub(crate) fn drop_task(task_id: usize) {
     }
 }
 
+// 本方法代码由AI完成
 pub(crate) fn alloc_unix_socket(
     typ: usize,
     status_flags: usize,
@@ -189,6 +192,7 @@ struct UnixAddr {
     abstract_ns: bool,
 }
 
+// 本方法代码由AI完成
 pub(crate) fn bind(fd: usize, addr_ptr: usize, addrlen: usize) -> Result<(), ErrNo> {
     let addr = parse_sockaddr_un(addr_ptr, addrlen)?;
     let sock = lookup_current(fd)?;
@@ -222,6 +226,7 @@ pub(crate) fn bind(fd: usize, addr_ptr: usize, addrlen: usize) -> Result<(), Err
     Ok(())
 }
 
+// 本方法代码由AI完成
 pub(crate) fn listen(fd: usize, _backlog: usize) -> Result<(), ErrNo> {
     let sock = lookup_current(fd)?;
     let mut inner = sock.inner.lock();
@@ -236,6 +241,7 @@ pub(crate) fn listen(fd: usize, _backlog: usize) -> Result<(), ErrNo> {
     Ok(())
 }
 
+// 本方法代码由AI完成
 pub(crate) fn connect(fd: usize, addr_ptr: usize, addrlen: usize) -> Result<(), ErrNo> {
     let addr = parse_sockaddr_un(addr_ptr, addrlen)?;
     let sock = lookup_current(fd)?;

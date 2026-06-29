@@ -1,5 +1,6 @@
 //! `getsockname(2)` / `getpeername(2)` — 获取 socket 地址。
 
+//! 本模块代码由AI完成
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
@@ -10,6 +11,7 @@ use crate::user_copy::copy_to_user_struct;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
+// 本结构代码由AI完成
 struct SockAddrIn {
     sin_family: u16,
     sin_port: u16,
@@ -17,6 +19,7 @@ struct SockAddrIn {
     sin_zero: [u8; 8],
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_getsockname(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let addr_ptr = args.arg(1);
@@ -65,6 +68,7 @@ pub(crate) fn sys_getsockname(args: SyscallArgs) -> UserRet {
     UserRet::from_success(0)
 }
 
+// 本方法代码由AI完成
 pub(crate) fn sys_getpeername(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let addr_ptr = args.arg(1);
