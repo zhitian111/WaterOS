@@ -117,6 +117,10 @@ pub mod stack {
         tcp_nodelay: bool,
         /// IPv4 组播成员（`MCAST_JOIN_GROUP` / `IP_ADD_MEMBERSHIP`）。
         mcast_groups: BTreeSet<u32>,
+        /// `setsockopt(SO_SNDBUF)` 记录值，供 `getsockopt` / iperf 查询。
+        snd_buf_size: i32,
+        /// `setsockopt(SO_RCVBUF)` 记录值，供 `getsockopt` / iperf 查询。
+        rcv_buf_size: i32,
     }
 
     struct LoopbackUdpPacket {
@@ -140,8 +144,37 @@ pub mod stack {
 
     static NETWORK_STACK: Mutex<Option<NetworkStack>> = Mutex::new(None);
     const TCP_BUFFER_SIZE: usize = 256 * 1024;
+    const UDP_PACKET_DATA_SIZE: usize = 64 * 1024;
     const TCP_MSS: u32 = 1460;
     const UDP_LOOPBACK_QUEUE_LIMIT: usize = 1024;
+
+    fn default_snd_buf_size(kind: SocketKind) -> i32 {
+        match kind {
+            SocketKind::Tcp => TCP_BUFFER_SIZE as i32,
+            SocketKind::Udp => UDP_PACKET_DATA_SIZE as i32,
+        }
+    }
+
+    fn default_rcv_buf_size(kind: SocketKind) -> i32 {
+        default_snd_buf_size(kind)
+    }
+
+    fn new_socket_meta(kind: SocketKind) -> SocketMeta {
+        SocketMeta {
+            kind,
+            state: SocketState::Created,
+            local_ip: None,
+            local_port: 0,
+            is_listener: false,
+            peer_ip: [0; 4],
+            peer_port: 0,
+            recv_timeout_ms: None,
+            tcp_nodelay: false,
+            mcast_groups: BTreeSet::new(),
+            snd_buf_size: default_snd_buf_size(kind),
+            rcv_buf_size: default_rcv_buf_size(kind),
+        }
+    }
 
     /// 创建 smoltcp 协议栈并配置 IP；无真实网卡时仍启用 loopback-only 模式。
     pub fn init(ip: [u8; 4], gateway: [u8; 4]) -> Result<(), &'static str> {
@@ -268,18 +301,7 @@ pub mod stack {
         let tx = tcp::SocketBuffer::new(vec![0; TCP_BUFFER_SIZE]);
         let socket = tcp::Socket::new(rx, tx);
         let h = stack.sockets.add(socket);
-        stack.metas.insert(h, SocketMeta {
-            kind: SocketKind::Tcp,
-            state: SocketState::Created,
-            local_ip: None,
-            local_port: 0,
-            is_listener: false,
-            peer_ip: [0; 4],
-            peer_port: 0,
-            recv_timeout_ms: None,
-            tcp_nodelay: false,
-            mcast_groups: BTreeSet::new(),
-        });
+        stack.metas.insert(h, new_socket_meta(SocketKind::Tcp));
         Ok(h)
     }
 
@@ -287,22 +309,17 @@ pub mod stack {
     pub fn create_udp_socket() -> Result<SocketHandle, &'static str> {
         let mut guard = NETWORK_STACK.lock();
         let stack = guard.as_mut().ok_or("stack not initialized")?;
-        let rx = udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY; 4], vec![0; 2048]);
-        let tx = udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY; 4], vec![0; 2048]);
+        let rx = udp::PacketBuffer::new(
+            vec![udp::PacketMetadata::EMPTY; 4],
+            vec![0; UDP_PACKET_DATA_SIZE],
+        );
+        let tx = udp::PacketBuffer::new(
+            vec![udp::PacketMetadata::EMPTY; 4],
+            vec![0; UDP_PACKET_DATA_SIZE],
+        );
         let socket = udp::Socket::new(rx, tx);
         let h = stack.sockets.add(socket);
-        stack.metas.insert(h, SocketMeta {
-            kind: SocketKind::Udp,
-            state: SocketState::Created,
-            local_ip: None,
-            local_port: 0,
-            is_listener: false,
-            peer_ip: [0; 4],
-            peer_port: 0,
-            recv_timeout_ms: None,
-            tcp_nodelay: false,
-            mcast_groups: BTreeSet::new(),
-        });
+        stack.metas.insert(h, new_socket_meta(SocketKind::Udp));
         Ok(h)
     }
 
@@ -675,28 +692,22 @@ pub mod stack {
 
     /// 从 socket 发送数据（TCP 和已 connect 的 UDP）。
     pub fn socket_send(handle: SocketHandle, data: &[u8]) -> Result<usize, &'static str> {
-        let guard = NETWORK_STACK.lock();
-        let stack = guard.as_ref().ok_or("stack not initialized")?;
+        let mut guard = NETWORK_STACK.lock();
+        let stack = guard.as_mut().ok_or("stack not initialized")?;
         let meta = stack.metas.get(&handle).ok_or("invalid socket handle")?;
         match meta.kind {
-            SocketKind::Tcp => {
-                drop(guard);
-                let sent = with_tcp_socket(handle, |s| s.send_slice(data))
-                    .ok_or("stack not initialized")
-                    .and_then(|r| r.map_err(|_| "send failed"));
-                if sent.is_ok() {
-                    poll();
-                    poll_socket_events();
-                }
-                sent
-            }
+            SocketKind::Tcp => stack
+                .sockets
+                .get_mut::<tcp::Socket>(handle)
+                .send_slice(data)
+                .map_err(|_| "send failed"),
             SocketKind::Udp => {
                 let ip = meta.peer_ip;
                 let port = meta.peer_port;
-                drop(guard);
                 if ip == [0; 4] && port == 0 {
                     return Err("udp not connected");
                 }
+                drop(guard);
                 socket_sendto(handle, data, ip, port)
             }
         }
@@ -704,21 +715,15 @@ pub mod stack {
 
     /// 从 socket 接收数据（TCP 和已 connect 的 UDP）。
     pub fn socket_recv(handle: SocketHandle, buf: &mut [u8]) -> Result<usize, &'static str> {
-        let guard = NETWORK_STACK.lock();
-        let stack = guard.as_ref().ok_or("stack not initialized")?;
+        let mut guard = NETWORK_STACK.lock();
+        let stack = guard.as_mut().ok_or("stack not initialized")?;
         let meta = stack.metas.get(&handle).ok_or("invalid socket handle")?;
         match meta.kind {
-            SocketKind::Tcp => {
-                drop(guard);
-                let received = with_tcp_socket(handle, |s| s.recv_slice(buf))
-                    .ok_or("stack not initialized")
-                    .and_then(|r| r.map_err(|_| "recv failed"));
-                if received.is_ok() {
-                    poll();
-                    poll_socket_events();
-                }
-                received
-            }
+            SocketKind::Tcp => stack
+                .sockets
+                .get_mut::<tcp::Socket>(handle)
+                .recv_slice(buf)
+                .map_err(|_| "recv failed"),
             SocketKind::Udp => {
                 drop(guard);
                 socket_recvfrom(handle, buf).map(|(n, _, _)| n)
@@ -745,10 +750,6 @@ pub mod stack {
         })
         .ok_or("stack not initialized")
         .and_then(|r| r.map_err(|_| "udp sendto failed"));
-        if sent.is_ok() {
-            poll();
-            poll_socket_events();
-        }
         sent
     }
 
@@ -975,9 +976,21 @@ pub mod stack {
         if level == SOL_SOCKET && matches!(optname, SO_REUSEADDR | SO_REUSEPORT) {
             return Ok(());
         }
-        // netperf/iperf 会 setsockopt(SO_SNDBUF/SO_RCVBUF)；smoltcp 缓冲固定，接受请求即可。
-        if level == SOL_SOCKET && (optname == SO_SNDBUF || optname == SO_RCVBUF) {
-            let _ = sockopt_i32(optval)?;
+        // netperf/iperf 会 setsockopt(SO_SNDBUF/SO_RCVBUF)；记录请求值供 getsockopt 回报。
+        if level == SOL_SOCKET && optname == SO_SNDBUF {
+            let value = sockopt_i32(optval)?;
+            let mut guard = NETWORK_STACK.lock();
+            let stack = guard.as_mut().ok_or("stack not initialized")?;
+            let meta = stack.metas.get_mut(&handle).ok_or("invalid socket handle")?;
+            meta.snd_buf_size = value.max(0);
+            return Ok(());
+        }
+        if level == SOL_SOCKET && optname == SO_RCVBUF {
+            let value = sockopt_i32(optval)?;
+            let mut guard = NETWORK_STACK.lock();
+            let stack = guard.as_mut().ok_or("stack not initialized")?;
+            let meta = stack.metas.get_mut(&handle).ok_or("invalid socket handle")?;
+            meta.rcv_buf_size = value.max(0);
             return Ok(());
         }
         if level == SOL_SOCKET && (optname == SO_RCVTIMEO_OLD || optname == SO_RCVTIMEO_NEW) {
@@ -1043,6 +1056,15 @@ pub mod stack {
         let connected = socket_is_connected(handle).unwrap_or(false);
         out[0] = if connected { TCP_ESTABLISHED } else { TCP_CLOSE };
 
+        let rcv_space = {
+            let guard = NETWORK_STACK.lock();
+            guard
+                .as_ref()
+                .and_then(|stack| stack.metas.get(&handle))
+                .map(|meta| meta.rcv_buf_size.max(0) as u32)
+                .unwrap_or(TCP_BUFFER_SIZE as u32)
+        };
+
         let send_capacity = socket_send_capacity(handle).unwrap_or(0) as u32;
         let cwnd_segments = (send_capacity / TCP_MSS).clamp(2, 64);
 
@@ -1058,9 +1080,9 @@ pub mod stack {
         write_u32(&mut out, 80, cwnd_segments); // tcpi_snd_cwnd, packets
         write_u32(&mut out, 84, TCP_MSS); // tcpi_advmss
         write_u32(&mut out, 88, 3); // tcpi_reordering
-        write_u32(&mut out, 96, TCP_BUFFER_SIZE as u32); // tcpi_rcv_space
+        write_u32(&mut out, 96, rcv_space); // tcpi_rcv_space
         write_u32(&mut out, 100, 0); // tcpi_total_retrans
-        write_u32(&mut out, 228, TCP_BUFFER_SIZE as u32); // tcpi_snd_wnd on newer Linux
+        write_u32(&mut out, 228, rcv_space); // tcpi_snd_wnd on newer Linux
         out
     }
 
@@ -1082,8 +1104,23 @@ pub mod stack {
         if level == SOL_SOCKET && optname == SO_ERROR {
             return Ok(0i32.to_ne_bytes().to_vec());
         }
-        if level == SOL_SOCKET && (optname == SO_SNDBUF || optname == SO_RCVBUF) {
-            return Ok((TCP_BUFFER_SIZE as i32).to_ne_bytes().to_vec());
+        if level == SOL_SOCKET && optname == SO_SNDBUF {
+            let value = {
+                let guard = NETWORK_STACK.lock();
+                let stack = guard.as_ref().ok_or("stack not initialized")?;
+                let meta = stack.metas.get(&handle).ok_or("invalid socket handle")?;
+                meta.snd_buf_size
+            };
+            return Ok(value.to_ne_bytes().to_vec());
+        }
+        if level == SOL_SOCKET && optname == SO_RCVBUF {
+            let value = {
+                let guard = NETWORK_STACK.lock();
+                let stack = guard.as_ref().ok_or("stack not initialized")?;
+                let meta = stack.metas.get(&handle).ok_or("invalid socket handle")?;
+                meta.rcv_buf_size
+            };
+            return Ok(value.to_ne_bytes().to_vec());
         }
         if level == SOL_SOCKET && (optname == SO_RCVTIMEO_OLD || optname == SO_RCVTIMEO_NEW) {
             let timeout = {
@@ -1135,10 +1172,8 @@ pub mod stack {
         };
         drop(guard);
         if should_poll {
-            for _ in 0..4 {
-                poll();
-                poll_socket_events();
-            }
+            poll();
+            poll_socket_events();
             let mut guard = NETWORK_STACK.lock();
             if let Some(stack) = guard.as_mut() {
                 stack.metas.remove(&handle);
@@ -1159,10 +1194,8 @@ pub mod stack {
                 stack.sockets.get_mut::<tcp::Socket>(handle).close();
                 meta.state = SocketState::Closed;
                 drop(guard);
-                for _ in 0..4 {
-                    poll();
-                    poll_socket_events();
-                }
+                poll();
+                poll_socket_events();
                 Ok(())
             }
             SocketKind::Udp => Err("shutdown unsupported for udp"),
@@ -1228,18 +1261,14 @@ pub mod stack {
             .listen(listen_endpoint(local_ip, port))
             .map_err(|_| "failed to create replacement listener")?;
         let new_h = stack.sockets.add(new_listener);
-        stack.metas.insert(new_h, SocketMeta {
-            kind: SocketKind::Tcp,
-            state: SocketState::Listening { port },
-            local_ip,
-            local_port: port,
-            is_listener: true,
-            peer_ip: [0; 4],
-            peer_port: 0,
-            recv_timeout_ms,
-            tcp_nodelay,
-            mcast_groups: BTreeSet::new(),
-        });
+        let mut replacement_meta = new_socket_meta(SocketKind::Tcp);
+        replacement_meta.state = SocketState::Listening { port };
+        replacement_meta.local_ip = local_ip;
+        replacement_meta.local_port = port;
+        replacement_meta.is_listener = true;
+        replacement_meta.recv_timeout_ms = recv_timeout_ms;
+        replacement_meta.tcp_nodelay = tcp_nodelay;
+        stack.metas.insert(new_h, replacement_meta);
         Ok((handle, new_h, port))
     }
 

@@ -11,9 +11,10 @@ use api_v0::{SharedNetworkDevice, DEFAULT_MTU};
 use smoltcp::phy::{self, Device, DeviceCapabilities, Medium};
 use smoltcp::time::Instant;
 
-const RX_BUF: usize = 2048;
-const TX_BUF: usize = 2048;
+const RX_BUF: usize = 64 * 1024;
+const TX_BUF: usize = 64 * 1024;
 const MAX_LOOPBACK_FRAMES: usize = 4096;
+const MAX_RX_DRAIN: usize = 32;
 const ETHERTYPE_IPV4: u16 = 0x0800;
 const ETHERTYPE_ARP: u16 = 0x0806;
 
@@ -25,6 +26,7 @@ pub struct SmoltcpAdapter {
     rx_len: usize,
     local_ipv4: [u8; 4],
     loopback_queue: VecDeque<Vec<u8>>,
+    rx_staging: VecDeque<Vec<u8>>,
 }
 
 /// smoltcp 要求的接收 token：指向已填充好数据的缓冲区切片。
@@ -57,6 +59,7 @@ impl SmoltcpAdapter {
             rx_len: 0,
             local_ipv4: [0; 4],
             loopback_queue: VecDeque::new(),
+            rx_staging: VecDeque::new(),
         }
     }
 
@@ -72,6 +75,35 @@ impl SmoltcpAdapter {
             .map(|dev| dev.lock().mac_address())
             .unwrap_or([0x02, 0x00, 0x00, 0x00, 0x00, 0x01])
     }
+
+    fn drain_rx_staging(&mut self) {
+        while self.rx_staging.len() < MAX_RX_DRAIN {
+            if let Some(frame) = self.loopback_queue.pop_front() {
+                self.rx_staging.push_back(frame);
+                continue;
+            }
+            break;
+        }
+
+        if self.rx_staging.len() >= MAX_RX_DRAIN {
+            return;
+        }
+
+        let Some(dev_handle) = self.inner.as_ref() else {
+            return;
+        };
+
+        let mut dev = dev_handle.lock();
+        while self.rx_staging.len() < MAX_RX_DRAIN {
+            match dev.receive(&mut self.rx_buf) {
+                Ok(n) if n > 0 => {
+                    self.rx_staging
+                        .push_back(self.rx_buf[..n].to_vec());
+                }
+                _ => break,
+            }
+        }
+    }
 }
 
 impl Device for SmoltcpAdapter {
@@ -82,6 +114,12 @@ impl Device for SmoltcpAdapter {
         &mut self,
         _timestamp: Instant,
     ) -> Option<(Self::RxToken<'_>, Self::TxToken<'_>)> {
+        if self.rx_staging.is_empty() {
+            self.drain_rx_staging();
+        }
+
+        let frame = self.rx_staging.pop_front()?;
+
         let Self {
             inner,
             rx_buf,
@@ -89,44 +127,21 @@ impl Device for SmoltcpAdapter {
             rx_len,
             local_ipv4,
             loopback_queue,
+            ..
         } = self;
 
-        if let Some(frame) = loopback_queue.pop_front() {
-            let n = frame.len().min(RX_BUF);
-            rx_buf[..n].copy_from_slice(&frame[..n]);
-            *rx_len = n;
-            return Some((
-                SmoltcpRxToken(&rx_buf[..*rx_len]),
-                SmoltcpTxToken {
-                    buf: tx_buf,
-                    dev: inner.as_ref(),
-                    local_ipv4: *local_ipv4,
-                    loopback_queue,
-                },
-            ));
-        }
-
-        if let Some(dev_handle) = inner.as_ref() {
-            let mut dev = dev_handle.lock();
-            match dev.receive(rx_buf) {
-                Ok(n) if n > 0 => {
-                    *rx_len = n;
-                    drop(dev);
-                    Some((
-                        SmoltcpRxToken(&rx_buf[..*rx_len]),
-                        SmoltcpTxToken {
-                            buf: tx_buf,
-                            dev: Some(dev_handle),
-                            local_ipv4: *local_ipv4,
-                            loopback_queue,
-                        },
-                    ))
-                }
-                _ => None,
-            }
-        } else {
-            None
-        }
+        let n = frame.len().min(RX_BUF);
+        rx_buf[..n].copy_from_slice(&frame[..n]);
+        *rx_len = n;
+        Some((
+            SmoltcpRxToken(&rx_buf[..*rx_len]),
+            SmoltcpTxToken {
+                buf: tx_buf,
+                dev: inner.as_ref(),
+                local_ipv4: *local_ipv4,
+                loopback_queue,
+            },
+        ))
     }
 
     fn transmit(&mut self, _timestamp: Instant) -> Option<Self::TxToken<'_>> {

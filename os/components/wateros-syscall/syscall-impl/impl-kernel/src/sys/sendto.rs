@@ -5,10 +5,10 @@ use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use driver::network::stack;
 
+use crate::fallible_buf::{try_kbuf, SYSCALL_IO_MAX};
 use crate::socket_fd;
 use crate::user_copy::{copy_from_user, copy_from_user_struct};
 
-const SOCKET_SEND_WAIT_TICKS: usize = 256;
 const TCP_BULK_SEND_YIELD_THRESHOLD: usize = 64 * 1024;
 
 #[repr(C)]
@@ -31,12 +31,15 @@ pub(crate) fn sys_sendto(args: SyscallArgs) -> UserRet {
     if len == 0 {
         return UserRet::from_success(0);
     }
-    if buf_ptr == 0 || len > 65536 {
+    if buf_ptr == 0 || len > SYSCALL_IO_MAX {
         return UserRet::from_error(ErrNo::EINVAL);
     }
 
     if crate::unix_sock::is_unix_fd(fd) {
-        let mut kbuf = alloc::vec![0u8; len];
+        let mut kbuf = match try_kbuf(len, SYSCALL_IO_MAX) {
+            Ok(buf) => buf,
+            Err(err) => return UserRet::from_error(err),
+        };
         match copy_from_user(&mut kbuf, buf_ptr) {
             Ok(n) if n == len => {}
             _ => return UserRet::from_error(ErrNo::EFAULT),
@@ -53,12 +56,6 @@ pub(crate) fn sys_sendto(args: SyscallArgs) -> UserRet {
     };
     let handle = socket.handle();
 
-    let mut kbuf = alloc::vec![0u8; len];
-    match copy_from_user(&mut kbuf, buf_ptr) {
-        Ok(n) if n == len => {}
-        _ => return UserRet::from_error(ErrNo::EFAULT),
-    }
-
     // 解析目标地址
     let (ip, port) = if addr_ptr != 0 && addrlen >= 16 {
         match copy_from_user_struct::<SockAddrIn>(addr_ptr) {
@@ -70,7 +67,7 @@ pub(crate) fn sys_sendto(args: SyscallArgs) -> UserRet {
         }
     } else {
         // 没有目标地址 → 作为 TCP send（或已 connect 的 UDP）
-        return match send_connected_socket(fd, handle, &kbuf) {
+        return match send_connected_socket(fd, handle, buf_ptr, len) {
             Ok(n) => UserRet::from_success(n),
             Err(err) => {
                 log::warn!("[syscall] sendto connected failed: {:?}", err);
@@ -78,6 +75,15 @@ pub(crate) fn sys_sendto(args: SyscallArgs) -> UserRet {
             }
         };
     };
+
+    let mut kbuf = match try_kbuf(len, SYSCALL_IO_MAX) {
+        Ok(buf) => buf,
+        Err(err) => return UserRet::from_error(err),
+    };
+    match copy_from_user(&mut kbuf, buf_ptr) {
+        Ok(n) if n == len => {}
+        _ => return UserRet::from_error(ErrNo::EFAULT),
+    }
 
     match stack::socket_sendto(handle, &kbuf, ip, port) {
         Ok(n) => UserRet::from_success(n),
@@ -91,28 +97,43 @@ pub(crate) fn sys_sendto(args: SyscallArgs) -> UserRet {
 fn send_connected_socket(
     fd: usize,
     handle: smoltcp::iface::SocketHandle,
-    buf: &[u8],
+    buf_ptr: usize,
+    len: usize,
 ) -> Result<usize, ErrNo> {
     match stack::socket_kind(handle).map_err(|_| ErrNo::ENOTSOCK)? {
-        stack::SocketKind::Tcp => send_tcp_blocking(fd, handle, buf),
-        stack::SocketKind::Udp => stack::socket_send(handle, buf).map_err(|_| ErrNo::EIO),
+        stack::SocketKind::Tcp => send_tcp_blocking(fd, handle, buf_ptr, len),
+        stack::SocketKind::Udp => {
+            let mut kbuf = try_kbuf(len, SYSCALL_IO_MAX)?;
+            match copy_from_user(&mut kbuf, buf_ptr) {
+                Ok(n) if n == len => {}
+                _ => return Err(ErrNo::EFAULT),
+            }
+            stack::socket_send(handle, &kbuf).map_err(|_| ErrNo::EIO)
+        }
     }
 }
 
 fn send_tcp_blocking(
     fd: usize,
     handle: smoltcp::iface::SocketHandle,
-    buf: &[u8],
+    buf_ptr: usize,
+    len: usize,
 ) -> Result<usize, ErrNo> {
     let nonblocking = socket_fd::is_nonblocking(fd);
-    for _ in 0..SOCKET_SEND_WAIT_TICKS {
+    let task_id = task::current_task_id().unwrap_or(0);
+    loop {
         drive_network_stack();
         let may_send = stack::socket_may_send(handle).unwrap_or(false);
         let send_capacity = stack::socket_send_capacity(handle).unwrap_or(0);
         let connected = stack::socket_is_connected(handle).unwrap_or(false);
         if may_send && send_capacity > 0 {
-            let send_len = buf.len().min(send_capacity);
-            match stack::socket_send(handle, &buf[..send_len]) {
+            let send_len = len.min(send_capacity);
+            let mut kbuf = try_kbuf(send_len, SYSCALL_IO_MAX)?;
+            match copy_from_user(&mut kbuf, buf_ptr) {
+                Ok(n) if n == send_len => {}
+                _ => return Err(ErrNo::EFAULT),
+            }
+            match stack::socket_send(handle, &kbuf) {
                 Ok(n) if n > 0 => {
                     if n >= TCP_BULK_SEND_YIELD_THRESHOLD {
                         drive_network_stack();
@@ -126,23 +147,16 @@ fn send_tcp_blocking(
             }
         }
         if !connected {
-            // netperf RR can race with the peer closing exactly as the server sends
-            // the final response. Treat a fully drained smoltcp socket with still-
-            // connected kernel metadata as consumed instead of surfacing EPIPE.
             if !may_send
                 && !stack::socket_may_recv(handle).unwrap_or(false)
                 && matches!(stack::socket_state(handle), Ok(stack::SocketState::Connected))
             {
-                return Ok(buf.len());
+                return Ok(len);
             }
             return Err(ErrNo::EPIPE);
         }
-        if nonblocking {
-            return Err(ErrNo::EAGAIN);
-        }
-        task::sleep_for_ticks(1);
+        crate::socket_block::socket_blocking_tick(nonblocking, task_id)?;
     }
-    Err(ErrNo::EAGAIN)
 }
 
 fn drive_network_stack() {
