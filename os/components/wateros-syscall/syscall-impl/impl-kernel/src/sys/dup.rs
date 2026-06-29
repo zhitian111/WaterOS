@@ -11,7 +11,6 @@ use crate::vfs_util::vfs_error_to_errno;
 
 /// Linux `O_CLOEXEC`（`dup3` flags）。
 const O_CLOEXEC: usize = 0o2000000;
-const FD_CLOEXEC: usize = 1;
 
 /// `dup(oldfd)` — 复制 fd 到最低可用编号。
 // 本方法代码由AI完成
@@ -44,15 +43,7 @@ pub(crate) fn sys_dup3(args: SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EINVAL);
     }
     if oldfd == newfd {
-        if vfs::fd::with_current_io(oldfd, |_| Ok(())).is_err() {
-            return UserRet::from_error(ErrNo::EBADF);
-        }
-        if (flags & O_CLOEXEC) != 0 {
-            if let Err(e) = vfs::fd::set_fd_flags(newfd, FD_CLOEXEC) {
-                return UserRet::from_error(vfs_error_to_errno(e));
-            }
-        }
-        return UserRet::from_success(newfd);
+        return UserRet::from_error(ErrNo::EINVAL);
     }
     let cloexec = (flags & O_CLOEXEC) != 0;
     let socket = socket_fd::lookup(oldfd);

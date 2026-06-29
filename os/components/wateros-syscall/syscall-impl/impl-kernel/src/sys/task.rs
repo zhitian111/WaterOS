@@ -1,6 +1,7 @@
 //! 任务相关系统调用：`yield`、`exit`、`waitpid`、`getpid`/`getppid`/`gettid`、
 //! `times`、`uname`、`prctl`、`getrlimit`/`setrlimit`。
 
+use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -8,6 +9,7 @@ use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use ipc::signal::{IntervalTimerSpec, SignalAction, SignalError, SignalSet};
+use spin::Mutex;
 use task::{ResourceLimit, SetResourceLimitError};
 
 use crate::sys::ltp_cgroup_helper::ltp_standalone_skip_blocking_fast_exit_if_needed;
@@ -63,6 +65,13 @@ const GRND_RANDOM : usize = 0x0002;
 const GRND_INSECURE : usize = 0x0004;
 const GETRANDOM_ALLOWED_FLAGS : usize = GRND_NONBLOCK | GRND_RANDOM | GRND_INSECURE;
 static CURRENT_UMASK : AtomicUsize = AtomicUsize::new(0o022);
+static CHILD_CPU: Mutex<BTreeMap<usize, ChildCpuTicks>> = Mutex::new(BTreeMap::new());
+
+#[derive(Clone, Copy, Default)]
+struct ChildCpuTicks {
+    utime: isize,
+    stime: isize,
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -688,12 +697,16 @@ pub(crate) fn sys_times(args : SyscallArgs) -> UserRet {
             Some(snapshot) => snapshot,
             None => return UserRet::from_error(ErrNo::ESRCH),
         };
+        let child_cpu = task::current_process_task_snapshot()
+            .map(|process| child_cpu_ticks(process.pid))
+            .unwrap_or_default();
+        let ticks = snapshot.stats.tick_count as isize;
         let tms = UserTms { utime : snapshot.stats
                                             .tick_count
                                     as isize,
-                            stime : 0,
-                            cutime : 0,
-                            cstime : 0 };
+                            stime : ticks,
+                            cutime : child_cpu.utime,
+                            cstime : child_cpu.stime };
         if let Err(e) = copy_to_user_struct(tms_ptr, &tms) {
             return UserRet::from_error(e);
         }
@@ -716,15 +729,27 @@ pub(crate) fn sys_getrusage(args : SyscallArgs) -> UserRet {
             };
             let ticks = snapshot.stats
                                 .tick_count as isize;
-            usage.utime.sec = ticks / 100;
-            usage.utime.usec = (ticks % 100) * 10_000;
+            usage.utime = ticks_to_timeval(ticks);
         }
-        RUSAGE_CHILDREN => {}
+        RUSAGE_CHILDREN => {
+            if let Some(process) = task::current_process_task_snapshot() {
+                let child_cpu = child_cpu_ticks(process.pid);
+                usage.utime = ticks_to_timeval(child_cpu.utime);
+                usage.stime = ticks_to_timeval(child_cpu.stime);
+            }
+        }
         _ => return UserRet::from_error(ErrNo::EINVAL),
     }
     match copy_to_user_struct(usage_ptr, &usage) {
         Ok(()) => UserRet::from_success(0),
         Err(e) => UserRet::from_error(e),
+    }
+}
+
+fn ticks_to_timeval(ticks: isize) -> UserTimeVal {
+    UserTimeVal {
+        sec: ticks / 100,
+        usec: (ticks % 100) * 10_000,
     }
 }
 
@@ -904,6 +929,38 @@ fn write_zero_rusage(rusage_ptr : usize) -> Result<(), ErrNo> {
     copy_to_user_struct(rusage_ptr, &UserRUsage::default())
 }
 
+fn write_child_rusage(rusage_ptr: usize, child_cpu: ChildCpuTicks) -> Result<(), ErrNo> {
+    if rusage_ptr == 0 {
+        return Ok(());
+    }
+    let mut usage = UserRUsage::default();
+    usage.utime = ticks_to_timeval(child_cpu.utime);
+    usage.stime = ticks_to_timeval(child_cpu.stime);
+    copy_to_user_struct(rusage_ptr, &usage)
+}
+
+fn child_cpu_from_exited(exited_tasks: &[task::ExitedTask]) -> ChildCpuTicks {
+    let ticks = exited_tasks
+        .iter()
+        .map(|exited| exited.stats.tick_count as isize)
+        .sum();
+    ChildCpuTicks {
+        utime: ticks,
+        stime: ticks,
+    }
+}
+
+fn account_child_cpu(parent_pid: task::ProcessId, child_cpu: ChildCpuTicks) {
+    let mut table = CHILD_CPU.lock();
+    let entry = table.entry(parent_pid.raw()).or_default();
+    entry.utime = entry.utime.saturating_add(child_cpu.utime);
+    entry.stime = entry.stime.saturating_add(child_cpu.stime);
+}
+
+fn child_cpu_ticks(pid: task::ProcessId) -> ChildCpuTicks {
+    CHILD_CPU.lock().get(&pid.raw()).copied().unwrap_or_default()
+}
+
 fn user_siginfo_exited(pid : task::ProcessId, exit_code : isize) -> UserSigInfo {
     let status = if exit_code < 0 {
         (-exit_code) as i32
@@ -982,7 +1039,8 @@ fn user_siginfo_continued(pid : task::ProcessId) -> UserSigInfo {
     info
 }
 
-fn finish_wait_process_result(pid : task::ProcessId,
+fn finish_wait_process_result(parent_pid: task::ProcessId,
+                              pid : task::ProcessId,
                               exited_tasks : Vec<task::ExitedTask>,
                               exit_code_ptr : usize,
                               rusage_ptr : usize)
@@ -994,16 +1052,19 @@ fn finish_wait_process_result(pid : task::ProcessId,
         Ok(()) => {}
         Err(e) => return UserRet::from_error(e),
     }
-    if let Err(e) = write_zero_rusage(rusage_ptr) {
+    let child_cpu = child_cpu_from_exited(&exited_tasks);
+    if let Err(e) = write_child_rusage(rusage_ptr, child_cpu) {
         return UserRet::from_error(e);
     }
+    account_child_cpu(parent_pid, child_cpu);
     for exited in &exited_tasks {
         drop_exited_task_resources(exited);
     }
     UserRet::from_success(pid.raw())
 }
 
-fn finish_waitid_process_result(pid : task::ProcessId,
+fn finish_waitid_process_result(parent_pid: task::ProcessId,
+                                pid : task::ProcessId,
                                 exited_tasks : Vec<task::ExitedTask>,
                                 siginfo_ptr : usize,
                                 rusage_ptr : usize)
@@ -1017,9 +1078,11 @@ fn finish_waitid_process_result(pid : task::ProcessId,
             return UserRet::from_error(e);
         }
     }
-    if let Err(e) = write_zero_rusage(rusage_ptr) {
+    let child_cpu = child_cpu_from_exited(&exited_tasks);
+    if let Err(e) = write_child_rusage(rusage_ptr, child_cpu) {
         return UserRet::from_error(e);
     }
+    account_child_cpu(parent_pid, child_cpu);
     for exited in &exited_tasks {
         drop_exited_task_resources(exited);
     }
@@ -1171,7 +1234,11 @@ fn wait_for_child_exit(parent_pid : task::ProcessId,
             let Some(exited) = task::reap_exited_process(child.pid) else {
                 return UserRet::from_error(ErrNo::ECHILD);
             };
-            return finish_wait_process_result(child.pid, exited, exit_code_ptr, rusage_ptr);
+            return finish_wait_process_result(parent_pid,
+                                              child.pid,
+                                              exited,
+                                              exit_code_ptr,
+                                              rusage_ptr);
         }
         if !has_waitable_child(parent_pid, target) {
             return UserRet::from_error(ErrNo::ECHILD);
@@ -1201,7 +1268,11 @@ fn waitid_for_child(parent_pid : task::ProcessId,
                 let Some(exited) = task::reap_exited_process(child.pid) else {
                     return UserRet::from_error(ErrNo::ECHILD);
                 };
-                return finish_waitid_process_result(child.pid, exited, siginfo_ptr, rusage_ptr);
+                return finish_waitid_process_result(parent_pid,
+                                                    child.pid,
+                                                    exited,
+                                                    siginfo_ptr,
+                                                    rusage_ptr);
             }
         }
         if want_stopped {

@@ -53,7 +53,7 @@ pub(crate) fn sys_fstatat(args: SyscallArgs) -> UserRet {
     let path = if path_ptr == 0 && (flags & AT_EMPTY_PATH) != 0 {
         alloc::string::String::new()
     } else {
-        match copy_user_path_cstr(path_ptr, 256) {
+        match copy_user_path_cstr(path_ptr, crate::user_copy::USER_PATH_MAX) {
             Ok(p) => p,
             Err(e) => return UserRet::from_error(e),
         }
@@ -104,7 +104,7 @@ pub(crate) fn sys_statx(args: SyscallArgs) -> UserRet {
     let path = if path_ptr == 0 && (flags & AT_EMPTY_PATH) != 0 {
         alloc::string::String::new()
     } else {
-        match copy_user_path_cstr(path_ptr, 256) {
+        match copy_user_path_cstr(path_ptr, crate::user_copy::USER_PATH_MAX) {
             Ok(p) => p,
             Err(e) => return UserRet::from_error(e),
         }

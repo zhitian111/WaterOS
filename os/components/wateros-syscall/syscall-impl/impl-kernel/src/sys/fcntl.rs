@@ -28,7 +28,8 @@ const O_ACCMODE: usize = 3;
 const O_RDWR: usize = 2;
 const O_APPEND: usize = 0o0002000;
 const O_NONBLOCK: usize = 0o0004000;
-const F_SETFL_MASK: u32 = (O_APPEND | O_NONBLOCK) as u32;
+const O_DIRECT: usize = 0o00040000;
+const F_SETFL_MASK: u32 = (O_APPEND | O_NONBLOCK | O_DIRECT) as u32;
 
 const PAGE_SIZE: usize = 4096;
 const MAX_PIPE_SIZE: usize = 1 << 20;

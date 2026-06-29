@@ -16,6 +16,7 @@ const TCSETSW: u32 = 0x5403;
 const TCSETSF: u32 = 0x5404;
 const TIOCGPGRP: u32 = 0x540f;
 const TIOCGWINSZ: u32 = 0x5413;
+const FIONREAD: u32 = 0x541b;
 const TIOCNOTTY: u32 = 0x5422;
 const RTC_RD_TIME: u32 = 0x8024_7009;
 const RTC_SET_TIME: u32 = 0x4024_700a;
@@ -103,6 +104,10 @@ pub(crate) fn sys_ioctl(args: SyscallArgs) -> UserRet {
         return tty_char_ioctl(request, argp);
     }
 
+    if request == FIONREAD {
+        return pipe_fionread(fd, argp);
+    }
+
     match vfs::fd::with_current_io(fd, |handle| handle.ioctl(request as usize, argp)) {
         Ok(v) => UserRet::from_success(v as usize),
         Err(VfsError::Unsupported) => {
@@ -111,6 +116,23 @@ pub(crate) fn sys_ioctl(args: SyscallArgs) -> UserRet {
             }
             global_ioctl_fallback(fd, request, argp)
         }
+        Err(e) => UserRet::from_error(vfs_error_to_errno(e)),
+    }
+}
+
+fn pipe_fionread(fd: usize, argp: usize) -> UserRet {
+    if argp == 0 {
+        return UserRet::from_error(ErrNo::EFAULT);
+    }
+    match vfs::fd::with_current_io(fd, |handle| Ok(handle.pipe_buffer_len())) {
+        Ok(Some(len)) => {
+            let available = len.min(i32::MAX as usize) as i32;
+            match copy_to_user_struct(argp, &available) {
+                Ok(()) => UserRet::from_success(0),
+                Err(e) => UserRet::from_error(e),
+            }
+        }
+        Ok(None) => ioctl_enotty(FIONREAD, Some(fd), argp),
         Err(e) => UserRet::from_error(vfs_error_to_errno(e)),
     }
 }

@@ -37,6 +37,12 @@ struct UserSchedAttr {
 }
 
 const USER_SCHED_ATTR_PRIORITY_END: usize = 24;
+const SCHED_OTHER_RAW: isize = 0;
+const SCHED_FIFO_RAW: isize = 1;
+const SCHED_RR_RAW: isize = 2;
+const SCHED_BATCH_RAW: isize = 3;
+const SCHED_IDLE_RAW: isize = 5;
+const SCHED_DEADLINE_RAW: isize = 6;
 
 fn sched_err_to_errno(err: SchedError) -> ErrNo {
     match err {
@@ -48,6 +54,13 @@ fn sched_err_to_errno(err: SchedError) -> ErrNo {
 
 fn policy_from_arg(raw: isize) -> Result<SchedPolicy, ErrNo> {
     SchedPolicy::from_linux_raw(raw as i32).ok_or(ErrNo::EINVAL)
+}
+
+fn policy_from_setscheduler_arg(raw: isize) -> Result<SchedPolicy, ErrNo> {
+    match raw {
+        SCHED_BATCH_RAW | SCHED_IDLE_RAW => Ok(SchedPolicy::Other),
+        _ => policy_from_arg(raw),
+    }
 }
 
 fn read_user_sched_attr_size(attr_ptr: usize) -> Result<usize, ErrNo> {
@@ -62,7 +75,7 @@ pub(crate) fn sys_sched_setparam(args: SyscallArgs) -> UserRet {
     let pid = args.arg(0) as isize;
     let param_ptr = args.arg(1);
     if param_ptr == 0 {
-        return UserRet::from_error(ErrNo::EFAULT);
+        return UserRet::from_error(ErrNo::EINVAL);
     }
     let user_param = match copy_from_user_struct::<UserSchedParam>(param_ptr) {
         Ok(value) => value,
@@ -90,7 +103,7 @@ pub(crate) fn sys_sched_setscheduler(args: SyscallArgs) -> UserRet {
     if param_ptr == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
     }
-    let policy = match policy_from_arg(policy_raw) {
+    let policy = match policy_from_setscheduler_arg(policy_raw) {
         Ok(value) => value,
         Err(e) => return UserRet::from_error(e),
     };
@@ -131,7 +144,7 @@ pub(crate) fn sys_sched_getparam(args: SyscallArgs) -> UserRet {
     let pid = args.arg(0) as isize;
     let param_ptr = args.arg(1);
     if param_ptr == 0 {
-        return UserRet::from_error(ErrNo::EFAULT);
+        return UserRet::from_error(ErrNo::EINVAL);
     }
     let task_id = match task::resolve_sched_pid(pid) {
         Ok(id) => id,
@@ -169,6 +182,9 @@ pub(crate) fn sys_sched_setaffinity(args: SyscallArgs) -> UserRet {
         Ok(id) => id,
         Err(e) => return UserRet::from_error(sched_err_to_errno(e)),
     };
+    if !can_change_affinity(task_id) {
+        return UserRet::from_error(ErrNo::EPERM);
+    }
     let mut mask = match try_kbuf(cpusetsize, SCHED_CPUSET_MAX) {
         Ok(buf) => buf,
         Err(err) => return UserRet::from_error(err),
@@ -180,6 +196,18 @@ pub(crate) fn sys_sched_setaffinity(args: SyscallArgs) -> UserRet {
         Ok(()) => UserRet::from_success(0),
         Err(e) => UserRet::from_error(sched_err_to_errno(e)),
     }
+}
+
+fn can_change_affinity(target: task::TaskId) -> bool {
+    let caller = cred::current_credentials();
+    if caller.effective_uid.0 == 0 {
+        return true;
+    }
+    let target = cred::credentials_for(target);
+    caller.real_uid.0 == target.real_uid.0
+        || caller.real_uid.0 == target.effective_uid.0
+        || caller.effective_uid.0 == target.real_uid.0
+        || caller.effective_uid.0 == target.effective_uid.0
 }
 
 /// `sched_getaffinity(pid, cpusetsize, mask)`。
@@ -249,7 +277,7 @@ pub(crate) fn sys_sched_setattr(args: SyscallArgs) -> UserRet {
         return UserRet::from_error(e);
     }
 
-    let policy = match policy_from_arg(attr.sched_policy as isize) {
+    let policy = match policy_from_setscheduler_arg(attr.sched_policy as isize) {
         Ok(value) => value,
         Err(e) => return UserRet::from_error(e),
     };
@@ -316,13 +344,10 @@ pub(crate) fn sys_sched_getattr(args: SyscallArgs) -> UserRet {
 /// `sched_get_priority_max(policy)`。
 // 本方法代码由AI完成
 pub(crate) fn sys_sched_get_priority_max(args: SyscallArgs) -> UserRet {
-    let policy = match policy_from_arg(args.arg(0) as isize) {
-        Ok(value) => value,
-        Err(e) => return UserRet::from_error(e),
-    };
-    let max = match policy {
-        SchedPolicy::Other => 0,
-        SchedPolicy::Fifo | SchedPolicy::Rr => 99,
+    let max = match args.arg(0) as isize {
+        SCHED_OTHER_RAW | SCHED_BATCH_RAW | SCHED_IDLE_RAW | SCHED_DEADLINE_RAW => 0,
+        SCHED_FIFO_RAW | SCHED_RR_RAW => 99,
+        _ => return UserRet::from_error(ErrNo::EINVAL),
     };
     UserRet::from_success(max as isize as usize)
 }
@@ -330,13 +355,10 @@ pub(crate) fn sys_sched_get_priority_max(args: SyscallArgs) -> UserRet {
 /// `sched_get_priority_min(policy)`。
 // 本方法代码由AI完成
 pub(crate) fn sys_sched_get_priority_min(args: SyscallArgs) -> UserRet {
-    let policy = match policy_from_arg(args.arg(0) as isize) {
-        Ok(value) => value,
-        Err(e) => return UserRet::from_error(e),
-    };
-    let min = match policy {
-        SchedPolicy::Other => 0,
-        SchedPolicy::Fifo | SchedPolicy::Rr => 1,
+    let min = match args.arg(0) as isize {
+        SCHED_OTHER_RAW | SCHED_BATCH_RAW | SCHED_IDLE_RAW | SCHED_DEADLINE_RAW => 0,
+        SCHED_FIFO_RAW | SCHED_RR_RAW => 1,
+        _ => return UserRet::from_error(ErrNo::EINVAL),
     };
     UserRet::from_success(min as isize as usize)
 }

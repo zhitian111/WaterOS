@@ -9,7 +9,7 @@ use vfs::active_impl;
 use vfs::api::SingleRootReadView;
 
 use crate::sys::stat_times::{self, StatTime};
-use crate::sys::path_at::resolve_path_at;
+use crate::sys::path_at::{resolve_final_symlink, resolve_path_at};
 use crate::user_copy::{copy_from_user_struct, copy_user_path_cstr};
 use crate::vfs_util::vfs_error_to_errno;
 
@@ -52,6 +52,9 @@ pub(crate) fn sys_utimensat(args: SyscallArgs) -> UserRet {
     }
 
     if path_ptr == 0 {
+        if flags != 0 {
+            return UserRet::from_error(ErrNo::EINVAL);
+        }
         if dirfd < 0 {
             return UserRet::from_error(ErrNo::EBADF);
         }
@@ -64,13 +67,21 @@ pub(crate) fn sys_utimensat(args: SyscallArgs) -> UserRet {
         };
     }
 
-    let path = match copy_user_path_cstr(path_ptr, 256) {
+    let path = match copy_user_path_cstr(path_ptr, crate::user_copy::USER_PATH_MAX) {
         Ok(path) => path,
         Err(e) => return UserRet::from_error(e),
     };
     let resolved = match resolve_path_at(dirfd, path.as_str()) {
         Ok(path) => path,
         Err(e) => return UserRet::from_error(e),
+    };
+    let resolved = if flags & AT_SYMLINK_NOFOLLOW != 0 {
+        resolved
+    } else {
+        match resolve_final_symlink(resolved.as_str()) {
+            Ok(path) => path,
+            Err(e) => return UserRet::from_error(e),
+        }
     };
 
     match active_impl::backend().metadata(resolved.as_str()) {

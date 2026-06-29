@@ -97,8 +97,15 @@ pub(crate) fn sys_clone3(args : SyscallArgs) -> UserRet {
     if clone_args.exit_signal & !CLONE3_EXIT_SIGNAL_MASK != 0 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
-    if clone_args.flags & CLONE_PIDFD != 0 || clone_args.pidfd != 0 {
+    if clone_args.flags & CLONE_PIDFD != 0 {
+        let probe = 0i32;
+        if copy_to_user_struct(clone_args.pidfd, &probe).is_err() {
+            return UserRet::from_error(ErrNo::EFAULT);
+        }
         return UserRet::from_error(ErrNo::ENOSYS);
+    }
+    if clone_args.pidfd != 0 {
+        return UserRet::from_error(ErrNo::EINVAL);
     }
     if clone_args.set_tid != 0 || clone_args.set_tid_size != 0 {
         return UserRet::from_error(ErrNo::ENOSYS);
@@ -196,6 +203,11 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
     }
     if clone_flags.contains(task::CloneFlags::CLONE_THREAD) &&
        !clone_flags.contains(task::CloneFlags::CLONE_SIGHAND)
+    {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    if clone_flags.contains(task::CloneFlags::CLONE_FS) &&
+       clone_flags.contains(task::CloneFlags::CLONE_NEWNS)
     {
         return UserRet::from_error(ErrNo::EINVAL);
     }
@@ -502,13 +514,11 @@ fn clone3_arg_word(raw : &[u8; CLONE3_ARGS_SIZE_CURRENT], offset : usize) -> usi
 }
 
 fn clone3_child_stack(stack : usize, stack_size : usize) -> Option<usize> {
-    if stack == 0 {
-        return Some(0);
+    match (stack, stack_size) {
+        (0, 0) => Some(0),
+        (0, _) | (_, 0) => None,
+        _ => stack.checked_add(stack_size),
     }
-    if stack_size == 0 {
-        return Some(stack);
-    }
-    stack.checked_add(stack_size)
 }
 
 /// fork 路径（非 `CLONE_VM|CLONE_THREAD`）接受 `fork` 与 libc/busybox 常见

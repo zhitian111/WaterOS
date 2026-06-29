@@ -62,7 +62,7 @@ fn copy_xattr_value(ptr: usize, size: usize) -> Result<Vec<u8>, ErrNo> {
 }
 
 fn resolve_xattr_path(path_ptr: usize, follow_last: bool) -> Result<alloc::string::String, ErrNo> {
-    let path = copy_user_path_cstr(path_ptr, 256)?;
+    let path = copy_user_path_cstr(path_ptr, crate::user_copy::USER_PATH_MAX)?;
     let resolved = resolve_path_at(-100, path.as_str())?;
     if follow_last {
         resolve_final_symlink(resolved.as_str())

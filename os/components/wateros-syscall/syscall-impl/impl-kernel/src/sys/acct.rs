@@ -68,7 +68,7 @@ fn do_acct(path_ptr: usize) -> Result<(), ErrNo> {
         return Ok(());
     }
 
-    let path = copy_user_path_cstr(path_ptr, 256)?;
+    let path = copy_user_path_cstr(path_ptr, crate::user_copy::USER_PATH_MAX)?;
     if path == "/dev/null" {
         return Err(ErrNo::EACCES);
     }

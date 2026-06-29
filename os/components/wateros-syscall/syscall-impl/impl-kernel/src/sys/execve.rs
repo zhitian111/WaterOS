@@ -39,7 +39,7 @@ pub(crate) fn sys_execve(args: SyscallArgs) -> UserRet {
 }
 
 fn do_execve(path_ptr: usize, argv_ptr: usize, envp_ptr: usize) -> Result<(), ErrNo> {
-    let path = copy_user_path_cstr(path_ptr, 256)?;
+    let path = copy_user_path_cstr(path_ptr, crate::user_copy::USER_PATH_MAX)?;
     let abs_path = vfs::cwd::resolve_for_current_task(&path).unwrap_or(path);
 
     let argv = read_string_array(argv_ptr)?;
@@ -227,7 +227,7 @@ fn read_string_array(array_ptr: usize) -> Result<Vec<String>, ErrNo> {
         if ptr == 0 {
             break;
         }
-        match copy_user_path_cstr(ptr, 256) {
+        match copy_user_path_cstr(ptr, crate::user_copy::USER_PATH_MAX) {
             Ok(s) => result.push(s),
             Err(e) => return Err(e),
         }

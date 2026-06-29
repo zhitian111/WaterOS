@@ -17,6 +17,8 @@ static NEXT_PIPE_INODE: AtomicU64 = AtomicU64::new(1);
 static NEXT_STREAM_PAIR_INODE: AtomicU64 = AtomicU64::new(1);
 // 本变量代码由AI完成
 static URANDOM_STATE: AtomicU64 = AtomicU64::new(0x6a09_e667_f3bc_c909);
+const O_NONBLOCK: u32 = 0o0004000;
+const O_DIRECT: u32 = 0o00040000;
 
 // 本方法代码由AI完成
 fn special_meta(mode: u16, inode: u64) -> VfsMetadata {
@@ -283,7 +285,15 @@ pub struct PipeWriteHandle {
 
 // 本方法代码由AI完成
 pub fn pipe_handle_pair(nonblocking: bool) -> (PipeReadHandle, PipeWriteHandle) {
-    let (read, write) = PipeEndpoint::pair(nonblocking);
+    pipe_handle_pair_with_flags(nonblocking, false)
+}
+
+// 本方法代码由AI完成
+pub fn pipe_handle_pair_with_flags(
+    nonblocking: bool,
+    direct: bool,
+) -> (PipeReadHandle, PipeWriteHandle) {
+    let (read, write) = PipeEndpoint::pair_with_flags(nonblocking, direct);
     let inode = NEXT_PIPE_INODE.fetch_add(1, Ordering::Relaxed);
     (
         PipeReadHandle { endpoint: read, inode },
@@ -335,22 +345,31 @@ impl VfsIoHandle for PipeReadHandle {
 
 // 本方法代码由AI完成
     fn open_status_flags(&self) -> u32 {
+        let mut flags = 0;
         if self.endpoint.nonblocking() {
-            0o0004000
-        } else {
-            0
+            flags |= O_NONBLOCK;
         }
+        if self.endpoint.direct() {
+            flags |= O_DIRECT;
+        }
+        flags
     }
 
 // 本方法代码由AI完成
     fn set_open_status_flags(&mut self, flags: u32) -> VfsResult<()> {
-        self.endpoint.set_nonblocking(flags & 0o0004000 != 0);
+        self.endpoint.set_nonblocking(flags & O_NONBLOCK != 0);
+        self.endpoint.set_direct(flags & O_DIRECT != 0);
         Ok(())
     }
 
 // 本方法代码由AI完成
     fn pipe_capacity(&self) -> Option<usize> {
         Some(self.endpoint.pipe_capacity())
+    }
+
+// 本方法代码由AI完成
+    fn pipe_buffer_len(&self) -> Option<usize> {
+        Some(self.endpoint.pipe_len())
     }
 
 // 本方法代码由AI完成
@@ -404,22 +423,31 @@ impl VfsIoHandle for PipeWriteHandle {
 
 // 本方法代码由AI完成
     fn open_status_flags(&self) -> u32 {
+        let mut flags = 0;
         if self.endpoint.nonblocking() {
-            0o0004000
-        } else {
-            0
+            flags |= O_NONBLOCK;
         }
+        if self.endpoint.direct() {
+            flags |= O_DIRECT;
+        }
+        flags
     }
 
 // 本方法代码由AI完成
     fn set_open_status_flags(&mut self, flags: u32) -> VfsResult<()> {
-        self.endpoint.set_nonblocking(flags & 0o0004000 != 0);
+        self.endpoint.set_nonblocking(flags & O_NONBLOCK != 0);
+        self.endpoint.set_direct(flags & O_DIRECT != 0);
         Ok(())
     }
 
 // 本方法代码由AI完成
     fn pipe_capacity(&self) -> Option<usize> {
         Some(self.endpoint.pipe_capacity())
+    }
+
+// 本方法代码由AI完成
+    fn pipe_buffer_len(&self) -> Option<usize> {
+        Some(self.endpoint.pipe_len())
     }
 
 // 本方法代码由AI完成
@@ -530,7 +558,7 @@ impl VfsIoHandle for UnixStreamPairEnd {
 // 本方法代码由AI完成
     fn open_status_flags(&self) -> u32 {
         if self.read_end.nonblocking() {
-            0o0004000
+            O_NONBLOCK
         } else {
             0
         }
@@ -538,7 +566,7 @@ impl VfsIoHandle for UnixStreamPairEnd {
 
 // 本方法代码由AI完成
     fn set_open_status_flags(&mut self, flags: u32) -> VfsResult<()> {
-        let nonblocking = flags & 0o0004000 != 0;
+        let nonblocking = flags & O_NONBLOCK != 0;
         self.read_end.set_nonblocking(nonblocking);
         self.write_end.set_nonblocking(nonblocking);
         Ok(())

@@ -15,8 +15,13 @@ pub(crate) fn sys_fchmodat(args: SyscallArgs) -> UserRet {
     let dirfd = args.arg(0) as isize;
     let path_ptr = args.arg(1);
     let mode = (args.arg(2) as u32) & 0o7777;
+    let flags = args.arg(3) as u32;
 
-    let path = match copy_user_path_cstr(path_ptr, 256) {
+    if flags != 0 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+
+    let path = match copy_user_path_cstr(path_ptr, crate::user_copy::USER_PATH_MAX) {
         Ok(p) => p,
         Err(e) => return UserRet::from_error(e),
     };
