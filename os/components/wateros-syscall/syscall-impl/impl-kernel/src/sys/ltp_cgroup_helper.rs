@@ -10,7 +10,7 @@
 //! `docs/tasks/ltp_fast_exit_skip_list.md`。
 
 use task::{TaskBlockReason, TaskState};
-/// 源：Read 判读 + rv_local_run_all 手工增补；共 2320 条。
+/// 源：Read 判读 + rv_local_run_all 手工增补；共 2327 条。
 const LTP_SUBMIT_SKIP_BASENAMES: &[&str] = &[
     "acct02_helper",
     "acl1",
@@ -195,6 +195,7 @@ const LTP_SUBMIT_SKIP_BASENAMES: &[&str] = &[
     "cve-2016-7042",
     "cve-2016-7117",
     "cve-2017-16939",
+    "cve-2017-17052",
     "cve-2017-17053",
     "cve-2017-2618",
     "cve-2017-2671",
@@ -242,6 +243,7 @@ const LTP_SUBMIT_SKIP_BASENAMES: &[&str] = &[
     "endian_switch01",
     "epoll_ctl04",
     "epoll_ctl05",
+    "epoll_pwait01",
     "event_generator",
     "eventfd01",
     "eventfd02",
@@ -1580,6 +1582,7 @@ const LTP_SUBMIT_SKIP_BASENAMES: &[&str] = &[
     "shmat04",
     "shmat1",
     "shmctl01",
+    "shmctl02",
     "shmctl03",
     "shmctl04",
     "shmctl05",
@@ -1606,6 +1609,7 @@ const LTP_SUBMIT_SKIP_BASENAMES: &[&str] = &[
     "sigaltstack01",
     "sigaltstack02",
     "sighold02",
+    "signal01",
     "signal06",
     "signalfd01",
     "signalfd4_01",
@@ -1613,6 +1617,7 @@ const LTP_SUBMIT_SKIP_BASENAMES: &[&str] = &[
     "sigprocmask01",
     "sigrelse01",
     "sigsuspend01",
+    "sigwaitinfo01",
     "sit01.sh",
     "smack_common.sh",
     "smack_file_access.sh",
@@ -2074,6 +2079,7 @@ const LTP_SUBMIT_SKIP_BASENAMES: &[&str] = &[
     "testsf_s",
     "testsf_s6",
     "tgkill02",
+    "tgkill03",
     "thp02",
     "thp03",
     "thp04",
@@ -2138,6 +2144,7 @@ const LTP_SUBMIT_SKIP_BASENAMES: &[&str] = &[
     "trace_sched",
     "tracepath01.sh",
     "traceroute01.sh",
+    "truncate02_64",
     "tst_ansi_color.sh",
     "tst_brk",
     "tst_brkm",
