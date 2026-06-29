@@ -166,12 +166,14 @@ mod qemu_riscv64_opensbi {
         warn!("[boot-init] kernel_main task+trap init done");
 
         // ===== 内核态自检：MM / FrameAllocator / Sv39 =====
+        warn!("[boot-init] kernel_main -> mm self-test begin");
         unsafe extern "C" {
             fn kernel_end();
         }
         // 与 DTB `/memory` 或 `wateros-base-config::QEMU_VIRT_PHYS_RAM_END` 对齐（如
         // QEMU `-m 1G` → 0xC000_0000）
         let memory_end = driver::physical_ram_end_exclusive();
+        warn!("[boot-init] kernel_main memory_end={:#x}", memory_end);
         const PAGE_SIZE : usize = 4096;
         #[inline]
         const fn align_up(v : usize, align : usize) -> usize { (v + align - 1) & !(align - 1) }
@@ -192,9 +194,13 @@ mod qemu_riscv64_opensbi {
         let end_ppn = alloc_end / PAGE_SIZE;
         info!("[self-test] frame range ppn=[{:#x},{:#x})",
               start_ppn, end_ppn);
+        warn!("[boot-init] kernel_main -> mm::test_with_range ppn=[{:#x},{:#x})",
+              start_ppn, end_ppn);
         mm::test_with_range(base::addr::BasePPN { val : start_ppn },
                             base::addr::BasePPN { val : end_ppn });
+        warn!("[boot-init] kernel_main -> mm::kernel_mm::init");
         mm::kernel_mm::init(start_ppn, end_ppn, memory_end);
+        warn!("[boot-init] kernel_main mm self-test done");
         info!("[self-test] mm self-test done");
 
         // 设备驱动扫描与根文件系统挂载自检。

@@ -15,7 +15,7 @@ use arch::interrupt::ArchInterruptState;
 use arch::task::ActiveArchTaskContext as TaskContext;
 use base::sync::UniprocessorSafeCell;
 use core::mem::MaybeUninit;
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering, compiler_fence};
 use task_api::{
     ExitedTask, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskId, TaskSnapshot, TaskTick,
     TaskWaitHandle, TaskWaitResult, UserTask, WaitQueueId,
@@ -52,28 +52,47 @@ static SCHEDULER_CELL_PROBE_COUNT : AtomicUsize = AtomicUsize::new(0);
 #[inline]
 fn scheduler_ready_addr() -> usize { core::ptr::addr_of!(SCHEDULER_READY) as usize }
 
+#[inline(never)]
+fn scheduler_ready_raw_byte() -> u8 {
+    unsafe { core::ptr::read_volatile(scheduler_ready_addr() as *const u8) }
+}
+
 /// 引导期诊断：打印 `SCHEDULER_READY` 当前值与静态地址，便于对比 init 与后续调用是否同一实例。
+#[inline(never)]
 fn log_scheduler_ready(tag : &str) {
-    log::warn!("[boot-init] {} SCHEDULER_READY={} ready_addr={:#x}",
+    log::warn!("[boot-init] {} SCHEDULER_READY={} raw_byte={:#x} ready_addr={:#x}",
                tag,
                SCHEDULER_READY.load(Ordering::Acquire),
+               scheduler_ready_raw_byte(),
                scheduler_ready_addr());
 }
 
 // 仅在 `SCHEDULER_READY` 为真后解引用；否则 panic，避免未初始化访问。
+#[inline(never)]
+#[track_caller]
 fn scheduler_cell() -> &'static UniprocessorSafeCell<MultiClassScheduler> {
+    let caller = core::panic::Location::caller();
     let probe_n = SCHEDULER_CELL_PROBE_COUNT.fetch_add(1, Ordering::Relaxed);
     let ready = SCHEDULER_READY.load(Ordering::Acquire);
+    let raw_byte = scheduler_ready_raw_byte();
     if probe_n == 0 || !ready {
-        log_scheduler_ready(if probe_n == 0 {
-            "scheduler_cell first entry"
-        } else {
-            "scheduler_cell entry (not ready)"
-        });
+        log::warn!("[boot-init] scheduler_cell probe_n={} caller={}:{} SCHEDULER_READY={} \
+                    raw_byte={:#x} ready_addr={:#x}",
+                   probe_n,
+                   caller.file(),
+                   caller.line(),
+                   ready,
+                   raw_byte,
+                   scheduler_ready_addr());
     }
     if !ready {
-        log::error!("[boot-init] scheduler_cell: SCHEDULER_READY=false (init_scheduler not \
-                       complete?)");
+        log::error!("[boot-init] scheduler_cell NOT READY caller={}:{} atomic={} raw_byte={:#x} \
+                       ready_addr={:#x}",
+                    caller.file(),
+                    caller.line(),
+                    ready,
+                    raw_byte,
+                    scheduler_ready_addr());
     }
     assert!(ready, "scheduler not initialized: call init_scheduler() first");
     unsafe { &*SCHEDULER.as_ptr() }
@@ -81,6 +100,7 @@ fn scheduler_cell() -> &'static UniprocessorSafeCell<MultiClassScheduler> {
 
 // 在单调度器 cell 上取得独占引用并执行闭包；调用方已通过 `InterruptGuard`
 // 关中断时保证不与其他 CPU 交错（当前为 UP 假设）。
+#[inline(never)]
 fn with_scheduler<R>(f : impl FnOnce(&mut MultiClassScheduler) -> R) -> R {
     let mut scheduler = scheduler_cell().exclusive_access();
     f(&mut scheduler)
@@ -170,6 +190,7 @@ unsafe fn init_scheduler_storage_and_inner() {
 }
 
 /// 幂等初始化全局调度器与内部 `MultiClassScheduler` 状态。
+#[inline(never)]
 pub fn init_scheduler() {
     log_scheduler_ready("init_scheduler enter");
     if !SCHEDULER_READY.load(Ordering::Acquire) {
@@ -178,6 +199,7 @@ pub fn init_scheduler() {
             init_scheduler_storage_and_inner();
         }
         SCHEDULER_READY.store(true, Ordering::Release);
+        compiler_fence(Ordering::SeqCst);
         log_scheduler_ready("init_scheduler after store(true)");
     } else {
         log::warn!("[boot-init] init_scheduler: already ready, re-run inner init");
@@ -189,6 +211,7 @@ pub fn init_scheduler() {
 }
 
 /// 创建内核任务并入就绪队列尾部。
+#[inline(never)]
 pub fn spawn_kernel_task(entry : KernelTaskEntry, arg : usize) -> TaskId {
     log_scheduler_ready("spawn_kernel_task enter");
     let _guard = InterruptGuard::new();
@@ -312,6 +335,7 @@ pub fn suspend_current_and_run_next() {
 }
 
 /// 时钟 tick：推进调度器逻辑时间，并在需要时切换到下一任务。
+#[inline(never)]
 pub fn schedule_tick() {
     let guard = InterruptGuard::new();
     let switch_pair = with_scheduler(|scheduler| scheduler.schedule(ScheduleReason::Tick));
