@@ -523,3 +523,32 @@ impl MmapOps for Sv39AddressSpace {
                      self.mmap_anon_cursor)
     }
 }
+
+impl Sv39AddressSpace {
+    /// `MADV_DONTNEED` / `MADV_FREE`：丢弃已映射用户页，保留 lazy VMA 以便再次 fault。
+    pub fn madvise_discard_mapped_pages<A : PhysicalFrameAllocator<FrameId = PhysPageNum>>(
+        &mut self,
+        allocator : &mut A,
+        addr : VirtAddr,
+        len : usize,
+    ) -> MmResult<()> {
+        if len == 0 {
+            return Ok(());
+        }
+        let end = VirtAddr(addr.0
+                               .checked_add(len)
+                               .ok_or(MmError::InvalidAddress)?);
+        let mut vpn = addr.floor_page();
+        let vpn_end = end.ceil_page();
+        while vpn.0 < vpn_end.0 {
+            if self.translate_addr(vpn.start_addr())?
+                   .is_some()
+            {
+                self.unmap_page_with_alloc(allocator, vpn)?;
+            }
+            vpn = VirtPageNum(vpn.0 + 1);
+        }
+        fence_user_ptes();
+        Ok(())
+    }
+}

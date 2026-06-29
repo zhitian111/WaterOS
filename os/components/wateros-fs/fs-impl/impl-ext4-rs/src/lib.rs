@@ -604,11 +604,19 @@ impl ReadWriteFs for Ext4RsFs {
 
         let child = u32::try_from(old_attr.ino).map_err(|_| FsError::Io)?;
         let mut parent_ref = fs.get_inode_ref(parent);
-        let child_ref = fs.get_inode_ref(child);
-        fs.dir_add_entry(&mut parent_ref, &child_ref, new_name)
-          .map_err(map_ext4_rs)?;
-        fs.dir_remove_entry(&mut parent_ref, old_name)
-          .map_err(map_ext4_rs)?;
+        let mut child_ref = fs.get_inode_ref(child);
+        if child_ref.inode.is_dir() {
+            fs.dir_add_entry(&mut parent_ref, &child_ref, new_name)
+              .map_err(map_ext4_rs)?;
+            fs.dir_remove_entry(&mut parent_ref, old_name)
+              .map_err(map_ext4_rs)?;
+        } else {
+            fs.link(&mut parent_ref, &mut child_ref, new_name)
+              .map_err(map_ext4_rs)?;
+            fs.dir_remove_entry(&mut parent_ref, old_name)
+              .map_err(map_ext4_rs)?;
+            fs.write_back_inode(&mut child_ref);
+        }
         fs.write_back_inode(&mut parent_ref);
         Ok(())
     }

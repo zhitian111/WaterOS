@@ -319,8 +319,18 @@ pub(crate) fn sys_madvise(args : SyscallArgs) -> UserRet {
     }
 
     match advice {
-        MADV_NORMAL | MADV_RANDOM | MADV_SEQUENTIAL | MADV_WILLNEED | MADV_DONTNEED |
-        MADV_FREE | MADV_REMOVE | MADV_DONTFORK | MADV_DOFORK | MADV_MERGEABLE |
+        MADV_DONTNEED | MADV_FREE => {
+            let handle = match require_user_aspace("madvise") {
+                Ok(h) => h,
+                Err(e) => return UserRet::from_error(e),
+            };
+            match mm::kernel_mm::madvise_discard_pages(handle, addr, len) {
+                Ok(()) => UserRet::from_success(0),
+                Err(e) => UserRet::from_error(mm_err_to_errno(e)),
+            }
+        }
+        MADV_NORMAL | MADV_RANDOM | MADV_SEQUENTIAL | MADV_WILLNEED |
+        MADV_REMOVE | MADV_DONTFORK | MADV_DOFORK | MADV_MERGEABLE |
         MADV_UNMERGEABLE | MADV_HUGEPAGE | MADV_NOHUGEPAGE | MADV_DONTDUMP | MADV_DODUMP |
         MADV_WIPEONFORK | MADV_KEEPONFORK | MADV_COLD | MADV_PAGEOUT | MADV_POPULATE_READ |
         MADV_POPULATE_WRITE | MADV_DONTNEED_LOCKED | MADV_COLLAPSE => {

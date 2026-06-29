@@ -73,9 +73,9 @@ fn map_vfs_to_root_vol(e : VfsError) -> RootVolumeReadError {
 const EM_RISCV : u16 = 243;
 const PT_INTERP : u32 = 3;
 const RISCV64_INTERP_BASE : usize = 0x0000_0000_7000_0000;
-/// 用户栈固定顶与大小（256 KiB）。
+/// 用户栈固定顶与大小（2 MiB；libc-bench regex 回溯需更大栈）。
 pub(crate) const ELF_STACK_TOP : usize = 0x0000_0000_7FFF_A000;
-pub(crate) const ELF_STACK_SIZE : usize = 256 * 1024;
+pub(crate) const ELF_STACK_SIZE : usize = 2 * 1024 * 1024;
 const USER_STACK_PREMAP_PAGES : usize = 16;
 const PREFERRED_MMAP_BASE : usize = 0x1000_0000;
 const USER_HEAP_MMAP_GAP : usize = 64 * 1024 * 1024;

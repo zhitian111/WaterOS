@@ -128,6 +128,33 @@ pub mod kernel_mm {
         }
     }
 
+    pub fn madvise_discard_pages(aspace_ptr: usize,
+                                 addr: usize,
+                                 len: usize)
+                                 -> api_v0::error::MmResult<()> {
+        #[cfg(feature = "impl-sv39")]
+        {
+            use api_v0::addr::VirtAddr;
+            let mut alloc = crate::frame_alloctor::GlobalPhysFrameAllocator;
+            return crate::user_aspace::with_user_aspace_mut(aspace_ptr, |aspace| {
+                aspace.madvise_discard_mapped_pages(&mut alloc, VirtAddr(addr), len)
+            });
+        }
+        #[cfg(all(not(feature = "impl-sv39"), feature = "impl-loongarch64"))]
+        {
+            use api_v0::addr::VirtAddr;
+            let mut alloc = crate::frame_alloctor::GlobalPhysFrameAllocator;
+            return crate::user_aspace::with_user_aspace_mut(aspace_ptr, |aspace| {
+                aspace.madvise_discard_mapped_pages(&mut alloc, VirtAddr(addr), len)
+            });
+        }
+        #[cfg(not(any(feature = "impl-sv39", feature = "impl-loongarch64")))]
+        {
+            let _ = (aspace_ptr, addr, len);
+            Ok(())
+        }
+    }
+
     #[cfg(feature = "impl-loongarch64")]
     pub use impl_loongarch64::kernel_mm_impl::{
         drop_user_aspace, ensure_user_execute_for_kernel_va, fork_user_aspace, from_elf_bytes,

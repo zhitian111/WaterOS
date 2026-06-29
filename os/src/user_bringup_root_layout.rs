@@ -86,6 +86,7 @@ pub fn ensure_busybox_path_links() {
 
         /// busybox 多用途小程序：优先给 libc 本地目录建链接，避免 musl/glibc 脚本
         /// 通过 PATH 误用另一套动态库；同时保留 /bin 兼容路径。
+        /// `test` 不链到 `/glibc`/`/musl` 根：赛题 busybox 用例会 `mv test_dir test` 建目录。
         const APPLETS : &[&str] =
             &["ls", "sleep", "basename", "cp", "mkdir", "rmdir", "cat", "grep", "awk", "cut",
               "sed", "tr", "wc", "head", "tail", "sort", "uniq", "expr", "dirname", "readlink",
@@ -93,13 +94,16 @@ pub fn ensure_busybox_path_links() {
               "pwd", "env", "which", "id", "whoami", "groups", "date", "uname", "dd", "od",
               "hexdump", "xargs", "find", "cmp", "diff", "seq", "tee", "tac", "kill", "mount",
               "umount", "ip", "ifconfig", "route", "sysctl", "arping"];
+        const SKIP_LIBC_ROOT_APPLETS : &[&str] = &["test"];
         for applet in APPLETS {
-            try_hardlink(sess.as_mut(),
-                         "/glibc/busybox",
-                         alloc::format!("/glibc/{applet}").as_str());
-            try_hardlink(sess.as_mut(),
-                         "/musl/busybox",
-                         alloc::format!("/musl/{applet}").as_str());
+            if !SKIP_LIBC_ROOT_APPLETS.contains(&applet) {
+                try_hardlink(sess.as_mut(),
+                             "/glibc/busybox",
+                             alloc::format!("/glibc/{applet}").as_str());
+                try_hardlink(sess.as_mut(),
+                             "/musl/busybox",
+                             alloc::format!("/musl/{applet}").as_str());
+            }
             try_hardlink(sess.as_mut(),
                          "/glibc/busybox",
                          alloc::format!("/bin/{applet}").as_str());
