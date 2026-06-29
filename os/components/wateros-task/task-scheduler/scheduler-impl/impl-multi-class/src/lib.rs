@@ -50,8 +50,12 @@ static SCHEDULER_READY : AtomicBool = AtomicBool::new(false);
 
 // 仅在 `SCHEDULER_READY` 为真后解引用；否则 panic，避免未初始化访问。
 fn scheduler_cell() -> &'static UniprocessorSafeCell<MultiClassScheduler> {
-    assert!(SCHEDULER_READY.load(Ordering::Acquire),
-            "scheduler not initialized: call init_scheduler() first");
+    let ready = SCHEDULER_READY.load(Ordering::Acquire);
+    if !ready {
+        log::error!("[boot-init] scheduler_cell: SCHEDULER_READY=false (init_scheduler not \
+                       complete?)");
+    }
+    assert!(ready, "scheduler not initialized: call init_scheduler() first");
     unsafe { &*SCHEDULER.as_ptr() }
 }
 
@@ -141,13 +145,21 @@ pub fn apply_sched_policy_change(task_id : TaskId,
 
 /// 幂等初始化全局调度器与内部 `MultiClassScheduler` 状态。
 pub fn init_scheduler() {
+    log::warn!("[boot-init] init_scheduler enter ready={}",
+               SCHEDULER_READY.load(Ordering::Acquire));
     if !SCHEDULER_READY.load(Ordering::Acquire) {
+        log::warn!("[boot-init] init_scheduler: SCHEDULER.write (READY still false)");
         unsafe {
             SCHEDULER.write(UniprocessorSafeCell::new(MultiClassScheduler::new()));
         }
         SCHEDULER_READY.store(true, Ordering::Release);
+        log::warn!("[boot-init] init_scheduler: SCHEDULER_READY=true");
+    } else {
+        log::warn!("[boot-init] init_scheduler: already ready, skip static write");
     }
+    log::warn!("[boot-init] init_scheduler -> MultiClassScheduler::init");
     with_scheduler(|scheduler| scheduler.init());
+    log::warn!("[boot-init] init_scheduler done");
     log::info!("[task-scheduler] initialized");
 }
 

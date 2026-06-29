@@ -133,9 +133,6 @@ mod qemu_riscv64_opensbi {
     #[unsafe(no_mangle)]
     pub fn kernel_main(boot_arg0 : usize, boot_arg1 : usize) -> ! {
         // OpenSBI：`a0` = hart id，`a1` = DTB 物理地址。
-        if boot_arg0 != 0 {
-            park_secondary_hart();
-        }
         mask_boot_interrupts();
 
         use platform::boot::{BootArgs, BootContext};
@@ -144,6 +141,14 @@ mod qemu_riscv64_opensbi {
         runtime::console::show_logo();
         klog::init();
         runtime::logging::init();
+        if boot_arg0 != 0 {
+            warn!("[boot-init] kernel_main secondary hart={} -> park (WFI)",
+                  boot_arg0);
+            park_secondary_hart();
+        }
+        warn!("[boot-init] kernel_main BSP hart={} dtb={:#x}",
+              boot_arg0, boot_arg1);
+        warn!("[boot-init] kernel_main boot interrupts masked");
         crate::boot_timebase::probe_and_init_timebase(boot_arg1);
         info!("log test pass!");
         runtime::heap_allocator::init();
@@ -151,11 +156,14 @@ mod qemu_riscv64_opensbi {
         let vec_test = vec![0; 10];
         debug!("vec_test = {:?}", vec_test);
 
+        warn!("[boot-init] kernel_main -> platform::arch::init (stvec)");
         platform::arch::init();
-
+        warn!("[boot-init] kernel_main -> task::init");
         // 须在 MM 安装 satp 之前注册 trap 路由：satp 切换后定时器/页故障会立即进 trap。
         task::init();
+        warn!("[boot-init] kernel_main -> trap_handler::init");
         crate::trap_handler::init();
+        warn!("[boot-init] kernel_main task+trap init done");
 
         // ===== 内核态自检：MM / FrameAllocator / Sv39 =====
         unsafe extern "C" {
@@ -225,9 +233,11 @@ mod qemu_riscv64_opensbi {
             // crate::self_tests::task::spawn_all();  // 禁用
         }
 
+        warn!("[boot-init] kernel_main -> enable timer/global interrupt");
         platform::interrupt::enable_timer_interrupt().unwrap();
         platform::timer::set_timer_after_ms(100).unwrap();
         platform::interrupt::enable_global_interrupt().unwrap();
+        warn!("[boot-init] kernel_main interrupts enabled");
         klog::post_init_hello();
         info!("[task-selftest] starting first task");
         task::run_first_task()

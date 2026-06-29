@@ -52,9 +52,14 @@ use mm_api::kernel_bringup::LoadedElf;
 
 /// 初始化任务系统和底层调度器状态。
 pub fn init() {
+    log::warn!("[boot-init] task::init enter");
+    log::warn!("[boot-init] task::init -> scheduler::init");
     scheduler::init();
+    log::warn!("[boot-init] task::init -> init_process_registry");
     active_impl::init_process_registry();
+    log::warn!("[boot-init] task::init -> process_model_self_test");
     active_impl::process_model_self_test();
+    log::warn!("[boot-init] task::init done");
 }
 
 /// Trap handler 进入时，把栈上 trap frame
