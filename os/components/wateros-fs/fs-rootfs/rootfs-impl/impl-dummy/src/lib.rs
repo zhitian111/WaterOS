@@ -26,6 +26,7 @@ impl api_v0::RootFsManager for DummyRootFsManager {
 }
 
 /// 恒为 `None`，与 [`DummyRootFsManager`] 语义一致。
+#[inline]
 pub fn current_root_device_path() -> Option<alloc::string::String> {
     None
 }

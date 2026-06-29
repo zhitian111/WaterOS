@@ -41,6 +41,7 @@ use api_v0::SupportedDeviceEntry;
 
 /// 合并各子系统 [`supported_devices()`]
 /// 的静态条目，便于诊断「内核声明了哪些可绑定设备」。
+#[inline]
 pub fn supported_device_entries() -> Vec<&'static SupportedDeviceEntry> {
     block::supported_devices().iter()
                               .chain(character::supported_devices())
@@ -50,6 +51,7 @@ pub fn supported_device_entries() -> Vec<&'static SupportedDeviceEntry> {
 
 /// 引导早期调用：保存 DTB 物理地址等平台状态；具体解析在 [`init_after_boot`]
 /// 或各实现内完成。
+#[inline]
 pub fn init_when_boot(dtb_pa : usize) {
     #[cfg(feature = "impl-qemu-riscv64-opensbi")]
     impl_qemu_riscv64_opensbi::init_when_boot(dtb_pa);

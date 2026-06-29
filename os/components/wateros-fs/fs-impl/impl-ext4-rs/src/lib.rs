@@ -1,10 +1,9 @@
 #![no_std]
 
-//! ext4 implementation backed by the `ext4_rs` crate.
+//! 基于 `ext4_rs` crate 的 ext4 实现。
 //!
-//! This crate intentionally mirrors the public [`api_v0::FsImpl`] surface used by
-//! the existing ext4plus implementation, so the aggregate `wateros-fs` crate can
-//! switch implementations through features.
+//! 对外 [`api_v0::FsImpl`] 面与旧 `impl-ext4`（ext4plus）对齐，供 `wateros-fs` 通过 feature 切换。
+//! RW 路径依赖 ext4_rs 块分配语义，跨 EOF 写前须显式补洞（见 [`ReadWriteFs::write_range`] 内注释）。
 
 extern crate alloc;
 
@@ -22,13 +21,20 @@ use driver_block_api_v0::{DriverError, Lba, SharedBlockDevice};
 use ext4_rs::{BlockDevice as Ext4RsBlockDevice, Errno, Ext4, Ext4Error, InodeFileType};
 use spin::Mutex;
 
+/// ext2/3/4 共用的 superblock magic（Linux 布局 `s_magic = 0xEF53`）。
 const EXT4_SUPER_MAGIC : u16 = 0xEF53;
+/// 主 superblock 起始字节偏移（卷头 1024 字节之后）。
 const SUPERBLOCK_OFFSET : u64 = 1024;
+/// `s_magic` 在 1024 字节 superblock 内的偏移。
 const MAGIC_OFFSET_IN_SB : usize = 0x38;
+/// ext4 根目录 inode 号（固定为 2）。
 const ROOT_INODE : u32 = 2;
+/// 普通文件 mode 前缀（`S_IFREG`）。
 const S_IFREG : u16 = 0o100000;
+/// 目录 mode 前缀（`S_IFDIR`）。
 const S_IFDIR : u16 = 0o040000;
 
+// 读取 superblock magic，判定是否为 ext2/3/4 卷。
 fn probe_ext4_magic(device : &SharedBlockDevice) -> FsResult<bool> {
     let mut buf = [0u8; 2];
     device.lock()
@@ -38,6 +44,7 @@ fn probe_ext4_magic(device : &SharedBlockDevice) -> FsResult<bool> {
     Ok(u16::from_le_bytes(buf) == EXT4_SUPER_MAGIC)
 }
 
+// 将 [`SharedBlockDevice`] 适配为 ext4_rs 的 [`Ext4RsBlockDevice`]。
 struct BlockDevAdapter {
     device : SharedBlockDevice,
 }
@@ -56,6 +63,7 @@ impl Ext4RsBlockDevice for BlockDevAdapter {
     }
 }
 
+// 按字节写入块设备：头尾非块对齐时读-改-写，中间整块直接写。
 fn block_write_bytes(dev : &SharedBlockDevice,
                      start_byte : u64,
                      src : &[u8])
@@ -94,6 +102,7 @@ fn block_write_bytes(dev : &SharedBlockDevice,
     Ok(())
 }
 
+// 单块内部分写入：先读整块再 patch 子区间。
 fn write_partial_block(bdev : &mut dyn driver_block_api_v0::BlockDevice,
                        block : usize,
                        offset : usize,
@@ -109,6 +118,7 @@ fn write_partial_block(bdev : &mut dyn driver_block_api_v0::BlockDevice,
     bdev.write_blocks(Lba(block as u64), &block_buf)
 }
 
+// 将 ext4_rs  errno 映射为公共 [`FsError`]。
 fn map_ext4_rs(err : Ext4Error) -> FsError {
     match err.error() {
         Errno::ENOENT => FsError::NotFound,
@@ -121,6 +131,7 @@ fn map_ext4_rs(err : Ext4Error) -> FsError {
     }
 }
 
+// ext4_rs inode 类型 → API 层 [`FsNodeType`]。
 fn map_node_type(kind : InodeFileType) -> FsNodeType {
     if kind == InodeFileType::S_IFDIR {
         FsNodeType::Directory
@@ -133,6 +144,7 @@ fn map_node_type(kind : InodeFileType) -> FsNodeType {
     }
 }
 
+// 拆分绝对路径为 (父目录, 末级名字)；根或空名返回 [`FsError::InvalidPath`]。
 fn split_parent_and_name(path : &str) -> FsResult<(&str, &str)> {
     let p = path.trim_end_matches('/');
     if p.is_empty() || p == "/" {
@@ -147,6 +159,7 @@ fn split_parent_and_name(path : &str) -> FsResult<(&str, &str)> {
     Ok((parent, name))
 }
 
+// 确认 inode 为目录，否则返回 [`FsError::NotAFile`]。
 fn ensure_dir_inode(fs : &Ext4, inode : u32) -> FsResult<()> {
     let meta = metadata_for_inode(fs, inode)?;
     if meta.node_type == FsNodeType::Directory {
@@ -156,6 +169,7 @@ fn ensure_dir_inode(fs : &Ext4, inode : u32) -> FsResult<()> {
     }
 }
 
+// 按路径逐级 fuse_lookup，返回末级 inode 号。
 fn lookup_inode(fs : &Ext4, path : &str) -> FsResult<u32> {
     let p = path.trim_end_matches('/');
     if p.is_empty() || p == "/" {
@@ -183,6 +197,7 @@ fn lookup_inode(fs : &Ext4, path : &str) -> FsResult<u32> {
     Ok(inode)
 }
 
+// 由 inode 号构造 [`FsMetadata`] 快照。
 fn metadata_for_inode(fs : &Ext4, inode : u32) -> FsResult<FsMetadata> {
     let inode_ref = fs.get_inode_ref(inode);
     Ok(FsMetadata { node_type : map_node_type(inode_ref.inode
@@ -198,6 +213,7 @@ fn metadata_for_inode(fs : &Ext4, inode : u32) -> FsResult<FsMetadata> {
                     gid : inode_ref.inode.gid() as u32 })
 }
 
+// 启动期 DFS 打印 ext4 目录树（trace 级别）。
 fn walk_ext4_rs_tree(fs : &Ext4RsFs, path : &str) {
     let Ok(entries) = ReadOnlyFs::read_dir(fs, path) else {
         return;
@@ -217,6 +233,7 @@ fn walk_ext4_rs_tree(fs : &Ext4RsFs, path : &str) {
     }
 }
 
+// 在父目录下创建普通文件 inode 并返回其编号。
 fn create_regular(fs : &mut Ext4, path : &str, mode : u16) -> FsResult<u32> {
     let (parent_path, name) = split_parent_and_name(path)?;
     let parent = lookup_inode(fs, parent_path)?;
@@ -232,6 +249,7 @@ fn create_regular(fs : &mut Ext4, path : &str, mode : u16) -> FsResult<u32> {
       .map_err(map_ext4_rs)
 }
 
+// 创建目录 inode；已存在同名项返回 [`FsError::Exists`]。
 fn create_directory(fs : &mut Ext4, path : &str, mode : u16) -> FsResult<()> {
     let (parent_path, name) = split_parent_and_name(path)?;
     let parent = lookup_inode(fs, parent_path)?;
@@ -249,19 +267,24 @@ fn create_directory(fs : &mut Ext4, path : &str, mode : u16) -> FsResult<()> {
     Ok(())
 }
 
+/// ext4_rs 卷句柄；挂载成功后内部持有 [`Ext4`] 实例。
 pub struct Ext4RsFs {
     fs : Option<Ext4>,
 }
 
 impl Ext4RsFs {
+    /// 构造未挂载句柄。
+    #[inline]
     pub const fn new() -> Self { Self { fs : None } }
 
+    #[inline]
     fn fs(&self) -> FsResult<&Ext4> {
         self.fs
             .as_ref()
             .ok_or(FsError::NotMounted)
     }
 
+    #[inline]
     fn fs_mut(&mut self) -> FsResult<&mut Ext4> {
         self.fs
             .as_mut()
@@ -276,6 +299,7 @@ impl ReadOnlyFs for Ext4RsFs {
         Ok(())
     }
 
+    #[inline]
     fn is_mounted(&self) -> bool { self.fs.is_some() }
 
     fn exists(&self, path : &str) -> FsResult<bool> {
@@ -383,8 +407,10 @@ impl ReadOnlyFs for Ext4RsFs {
 }
 
 impl ReadWriteFs for Ext4RsFs {
+    #[inline]
     fn mount_rw(&mut self, device : SharedBlockDevice) -> FsResult<()> { self.mount(device) }
 
+    #[inline]
     fn is_mounted(&self) -> bool { self.fs.is_some() }
 
     fn write_regular_file_at_root(&mut self, name : &str, data : &[u8]) -> FsResult<()> {
@@ -652,25 +678,32 @@ impl ReadWriteFs for Ext4RsFs {
         Ok(())
     }
 
+    #[inline]
     fn exists(&self, path : &str) -> FsResult<bool> { ReadOnlyFs::exists(self, path) }
 
+    #[inline]
     fn metadata(&self, path : &str) -> FsResult<FsMetadata> { ReadOnlyFs::metadata(self, path) }
 
+    #[inline]
     fn read(&self, path : &str) -> FsResult<Vec<u8>> { ReadOnlyFs::read(self, path) }
 
+    #[inline]
     fn read_range(&self, path : &str, offset : u64, buf : &mut [u8]) -> FsResult<usize> {
         ReadOnlyFs::read_range(self, path, offset, buf)
     }
 
+    #[inline]
     fn read_dir(&self, path : &str) -> FsResult<Vec<FsDirEntry>> {
         ReadOnlyFs::read_dir(self, path)
     }
 
+    #[inline]
     fn read_symlink(&self, path : &str) -> FsResult<Vec<u8>> {
         ReadOnlyFs::read_symlink(self, path)
     }
 }
 
+// 从 offset 起分片写入，直至 data 全部落盘。
 fn write_all(fs : &Ext4, inode : u32, offset : u64, data : &[u8]) -> FsResult<()> {
     let mut done = 0usize;
     while done < data.len() {
@@ -687,6 +720,7 @@ fn write_all(fs : &Ext4, inode : u32, offset : u64, data : &[u8]) -> FsResult<()
     Ok(())
 }
 
+// 将 [old_size, new_size) 区间用零块填满，供跨 EOF 写前补洞。
 fn zero_extend_file(fs : &Ext4, inode : u32, old_size : u64, new_size : u64) -> FsResult<()> {
     let zeroes = [0u8; ext4_rs::BLOCK_SIZE];
     let mut offset = old_size;
@@ -700,16 +734,20 @@ fn zero_extend_file(fs : &Ext4, inode : u32, old_size : u64, new_size : u64) -> 
     Ok(())
 }
 
+/// ext4_rs 的 [`FsImpl`] 注册类型。
 pub struct Ext4RsImpl;
 
+/// 全局 ext4-rs impl 实例。
 pub static IMPL : Ext4RsImpl = Ext4RsImpl;
 
 const SUPPORTED : &[FsCapability] = &[FsCapability::new(FsKind::Ext4, FsAccessMode::ReadOnly),
                                       FsCapability::new(FsKind::Ext4, FsAccessMode::ReadWrite)];
 
 impl FsImpl for Ext4RsImpl {
+    #[inline]
     fn name(&self) -> &'static str { "ext4-rs" }
 
+    #[inline]
     fn supported(&self) -> &'static [FsCapability] { SUPPORTED }
 
     fn probe(&self, device : &SharedBlockDevice) -> FsResult<Option<FsKind>> {

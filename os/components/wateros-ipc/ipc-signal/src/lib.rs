@@ -1,5 +1,7 @@
 #![no_std]
-//! Process-shared signal dispositions/pending state and thread-local masks.
+//! 进程级信号 disposition/pending/itimer 与线程级 mask/pending 的全局注册表。
+//!
+//! syscall 与陷阱路径通过 [`with_registry`] 访问 [`SignalRegistry`]；本 crate 不保存用户态栈帧，仅维护可交付状态。
 
 extern crate alloc;
 
@@ -13,6 +15,7 @@ pub mod api {
 
 pub use api_v0::*;
 
+/// 单进程 interval timer 内部状态。
 #[derive(Clone, Copy, Debug, Default)]
 struct IntervalTimerState {
     interval_ns : u128,
@@ -54,7 +57,9 @@ impl IntervalTimerState {
     }
 }
 
+/// 进程级信号状态：disposition、进程 pending、三类 itimer 与 CPU 时钟累计。
 #[derive(Clone, Debug)]
+/// 单进程信号状态：disposition 表、进程级 pending 与三类 itimer。
 struct ProcessSignalState {
     actions : [SignalAction; NSIG],
     pending : SignalSet,
@@ -106,7 +111,9 @@ impl ProcessSignalState {
     }
 }
 
+/// 线程级信号状态：掩码、线程 pending、sigsuspend/poll 临时掩码与 `sigwait` 等待集。
 #[derive(Clone, Copy, Debug)]
+/// 单线程信号状态：掩码、线程 pending 与 sigsuspend/poll 临时掩码栈。
 struct ThreadSignalState {
     pid : usize,
     tid : usize,
@@ -129,13 +136,16 @@ impl ThreadSignalState {
     }
 }
 
+/// `ITIMER_REAL` 截止时间表项（按单调时钟纳秒索引）。
 #[derive(Clone, Copy, Debug)]
+/// `ITIMER_REAL` 到期索引项；`generation` 用于丢弃陈旧 deadline。
 struct RealDeadlineEntry {
     pid : usize,
     generation : u64,
 }
 
 #[derive(Default)]
+/// 全局信号注册表：按 pid 存进程状态，按 task id 存线程状态。
 pub struct SignalRegistry {
     processes : BTreeMap<usize, ProcessSignalState>,
     threads : BTreeMap<usize, ThreadSignalState>,
@@ -143,6 +153,8 @@ pub struct SignalRegistry {
 }
 
 impl SignalRegistry {
+    /// 创建空注册表。
+    #[inline]
     pub const fn new() -> Self {
         Self { processes : BTreeMap::new(),
                threads : BTreeMap::new(),
@@ -190,6 +202,7 @@ impl SignalRegistry {
         Ok(())
     }
 
+    /// 在同进程内注册新线程（`clone` CLONE_THREAD 路径）。
     pub fn register_thread(&mut self,
                            parent_task_id : usize,
                            task_id : usize,
@@ -204,6 +217,7 @@ impl SignalRegistry {
         Ok(())
     }
 
+    /// `execve`：重置已安装用户处理函数为默认，保留 ignore/pending/timer。
     pub fn exec_process(&mut self, task_id : usize) -> SignalResult<()> {
         let pid = self.thread(task_id)?
                       .pid;
@@ -218,11 +232,13 @@ impl SignalRegistry {
         Ok(())
     }
 
+    /// 移除线程表项（不级联删除空进程）。
     pub fn drop_thread(&mut self, task_id : usize) {
         self.threads
             .remove(&task_id);
     }
 
+    /// 移除线程；若进程已无其它线程则删除进程状态。
     pub fn drop_thread_and_empty_process(&mut self, task_id : usize) {
         let Some(thread) = self.threads
                                .remove(&task_id)
@@ -238,6 +254,7 @@ impl SignalRegistry {
         }
     }
 
+    /// 强制删除进程及其全部线程状态。
     pub fn drop_process(&mut self, pid : usize) {
         self.processes
             .remove(&pid);
@@ -257,6 +274,7 @@ impl SignalRegistry {
             .ok_or(SignalError::NoSuchTask)
     }
 
+    /// 查询进程级 disposition（`rt_sigaction` GET）。
     pub fn get_action(&self, task_id : usize, sig : usize) -> SignalResult<SignalAction> {
         if !valid_signal(sig) {
             return Err(SignalError::InvalidSignal);
@@ -269,6 +287,7 @@ impl SignalRegistry {
                .action(sig))
     }
 
+    /// 设置进程级 disposition（`rt_sigaction` SET）；ignore 时清除相关 pending。
     pub fn set_action(&mut self,
                       task_id : usize,
                       sig : usize,
@@ -298,11 +317,13 @@ impl SignalRegistry {
         Ok(old)
     }
 
+    /// 返回线程当前阻塞掩码。
     pub fn current_mask(&self, task_id : usize) -> SignalResult<SignalSet> {
         Ok(self.thread(task_id)?
                .mask)
     }
 
+    /// 直接替换线程阻塞掩码（`SIG_SETMASK` 语义）。
     pub fn replace_mask(&mut self, task_id : usize, mut mask : SignalSet) -> SignalResult<()> {
         mask.remove(SIGKILL);
         mask.remove(SIGSTOP);
@@ -311,6 +332,7 @@ impl SignalRegistry {
         Ok(())
     }
 
+    /// `sigsuspend` 进入：保存原掩码并安装临时掩码。
     pub fn begin_sigsuspend(&mut self,
                             task_id : usize,
                             mut temporary_mask : SignalSet)
@@ -328,6 +350,7 @@ impl SignalRegistry {
         Ok(())
     }
 
+    /// `sigsuspend` 退出：恢复原掩码。
     pub fn end_sigsuspend(&mut self, task_id : usize) -> SignalResult<()> {
         let thread = self.thread_mut(task_id)?;
         if let Some(restore) = thread.suspend_restore_mask.take() {
@@ -364,18 +387,21 @@ impl SignalRegistry {
         Ok(())
     }
 
+    /// `sigwait` 进入：登记等待信号集。
     pub fn begin_signal_wait(&mut self, task_id : usize, wait_set : SignalSet) -> SignalResult<()> {
         self.thread_mut(task_id)?
             .waiting_for = Some(wait_set);
         Ok(())
     }
 
+    /// `sigwait` 退出：清除等待集。
     pub fn end_signal_wait(&mut self, task_id : usize) -> SignalResult<()> {
         self.thread_mut(task_id)?
             .waiting_for = None;
         Ok(())
     }
 
+    /// 按 `how` 更新线程阻塞掩码（`rt_sigprocmask`）。
     pub fn update_mask(&mut self,
                        task_id : usize,
                        how : usize,
@@ -422,6 +448,7 @@ impl SignalRegistry {
         }
     }
 
+    /// 向指定线程投递信号（`tkill` / `pthread_kill` 路径）。
     pub fn send_thread(&mut self, task_id : usize, sig : usize) -> SignalResult<SignalDispatch> {
         let pid = self.thread(task_id)?
                       .pid;
@@ -439,6 +466,7 @@ impl SignalRegistry {
         }
     }
 
+    /// 向进程投递信号（`kill` 路径）；选择最低未屏蔽 tid 或唤醒 `sigwait` 线程。
     pub fn send_process(&mut self, pid : usize, sig : usize) -> SignalResult<SignalDispatch> {
         let delivery = self.classify(pid, sig)?;
         if delivery == SignalDelivery::Ignored {
@@ -482,12 +510,13 @@ impl SignalRegistry {
         Ok(SignalDispatch::pending(wake_target))
     }
 
-    /// Compatibility entry: target a task directly.
+    /// 兼容入口：直接向任务投递并仅返回分类结果。
     pub fn send(&mut self, task_id : usize, sig : usize) -> SignalResult<SignalDelivery> {
         Ok(self.send_thread(task_id, sig)?
                .delivery)
     }
 
+    /// 返回线程 pending 与进程 pending 的并集。
     pub fn pending(&self, task_id : usize) -> SignalResult<SignalSet> {
         let thread = self.thread(task_id)?;
         let process = self.processes
@@ -497,6 +526,7 @@ impl SignalRegistry {
                  .union(process.pending))
     }
 
+    /// 是否存在未被掩码阻塞的可交付信号。
     pub fn has_deliverable(&self, task_id : usize) -> SignalResult<bool> {
         let thread = self.thread(task_id)?;
         let process = self.processes
@@ -508,6 +538,7 @@ impl SignalRegistry {
                   .is_empty())
     }
 
+    /// 从 pending 中取出 `wait_set` 内第一个信号（`sigwait`）。
     pub fn take_pending(&mut self, task_id : usize, wait_set : SignalSet) -> Option<usize> {
         let thread = *self.threads
                           .get(&task_id)?;
@@ -530,6 +561,7 @@ impl SignalRegistry {
         Some(sig)
     }
 
+    /// 取出下一个可交付信号并应用 `SA_NODEFER` / `SA_RESETHAND` 语义。
     pub fn take_deliverable(&mut self, task_id : usize) -> Option<PendingSignal> {
         let thread = *self.threads
                           .get(&task_id)?;
@@ -578,10 +610,12 @@ impl SignalRegistry {
                              previous_mask })
     }
 
+    /// 信号帧返回后恢复线程掩码。
     pub fn restore_mask(&mut self, task_id : usize, mask : SignalSet) -> SignalResult<()> {
         self.replace_mask(task_id, mask)
     }
 
+    /// 设置进程 interval timer（`setitimer`）。
     pub fn set_timer(&mut self,
                      pid : usize,
                      which : usize,
@@ -608,6 +642,7 @@ impl SignalRegistry {
         Ok(old)
     }
 
+    /// 查询进程 interval timer 剩余时间（`getitimer`）。
     pub fn get_timer(&self,
                      pid : usize,
                      which : usize,
@@ -621,6 +656,7 @@ impl SignalRegistry {
                   .remaining(now))
     }
 
+    /// 累计 CPU 时间并触发 virtual/prof timer 到期。
     pub fn account_cpu(&mut self,
                        pid : usize,
                        user_delta_ns : u128,
@@ -647,6 +683,7 @@ impl SignalRegistry {
         Ok(dispatches)
     }
 
+    /// 扫描已到期 realtime timer 并投递 `SIGALRM`。
     pub fn expire_realtime(&mut self, monotonic_ns : u128) -> Vec<SignalDispatch> {
         let deadlines : Vec<u128> = self.real_deadlines
                                         .range(..=monotonic_ns)
@@ -699,6 +736,8 @@ impl SignalRegistry {
 
 static SIGNAL_REGISTRY : Mutex<SignalRegistry> = Mutex::new(SignalRegistry::new());
 
+/// 在全局信号注册表锁下执行闭包（syscall/trap 统一入口）。
+#[inline]
 pub fn with_registry<R>(f : impl FnOnce(&mut SignalRegistry) -> R) -> R {
     let mut registry = SIGNAL_REGISTRY.lock();
     f(&mut registry)

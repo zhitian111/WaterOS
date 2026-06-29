@@ -1,8 +1,7 @@
 #![no_std]
-//! WaterOS syscall aggregate crate.
+//! WaterOS 系统调用聚合 crate。
 //!
-//! `api` exposes the v0 trap-facing contract, while `active_impl` points at the
-//! kernel dispatcher selected by feature flags.
+//! `api` 导出 trap 侧 v0 契约；`active_impl` 由 feature 选择具体内核分发实现。
 
 #[cfg(feature = "api-v0")]
 pub mod api {
@@ -18,7 +17,7 @@ pub use api_v0::SyscallDispatcher;
 #[cfg(feature = "impl-kernel")]
 use abi::syscall_args::SyscallArgs;
 
-/// Trap / exception return path syscall dispatch entry.
+/// trap / 异常返回路径上的 syscall 分发入口。
 #[cfg(feature = "impl-kernel")]
 #[inline]
 pub fn dispatch_syscall_from_trap(syscall_nr : usize, syscall_args : SyscallArgs) -> isize {
@@ -76,7 +75,7 @@ pub fn log_thread_bringup_stats_summary() {
     active_impl::log_thread_bringup_stats_summary();
 }
 
-/// Current-task syscall dispatch entry for assembly or C ABI callers.
+/// 当前任务的 syscall 分发入口，供汇编或 C ABI 调用方使用。
 #[cfg(feature = "impl-kernel")]
 #[unsafe(no_mangle)]
 pub extern "C" fn __wateros_syscall_dispatch_current(syscall_nr : usize,

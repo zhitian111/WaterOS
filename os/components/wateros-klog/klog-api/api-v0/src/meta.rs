@@ -74,6 +74,7 @@ impl KlogRecordMeta {
 
     /// 传统 syslog 读路径前缀用的单字符 level（`"0"`..`"7"`）。
     #[must_use]
+    #[inline]
     pub const fn traditional_level_char(self) -> u8 {
         b'0' + (self.level & 7)
     }

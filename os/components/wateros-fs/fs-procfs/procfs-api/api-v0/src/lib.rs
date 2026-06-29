@@ -31,10 +31,14 @@ pub type TaskExeLookup = fn(TaskId) -> Option<String>;
 /// 枚举当前挂载表（供 `/proc/mounts`）。
 pub type MountListLookup = fn() -> Vec<ProcMountLine>;
 
-/// procfs 只读路径操作。
+/// procfs 只读路径操作；`rel_path` 为相对 `/proc` 的路径（可带或不带前导 `/`）。
 pub trait ProcFsView {
+    /// 路径是否对应已知 proc 节点（含目录与文件）。
     fn exists(&self, rel_path: &str) -> FsResult<bool>;
+    /// 查询节点元数据；不存在返回 [`FsError::NotFound`]。
     fn metadata(&self, rel_path: &str) -> FsResult<FsMetadata>;
+    /// 读取普通文件内容；目录路径返回 [`FsError::NotAFile`]。
     fn read(&self, rel_path: &str) -> FsResult<Vec<u8>>;
+    /// 列出目录项；非目录返回 [`FsError::NotAFile`]。
     fn read_dir(&self, rel_path: &str) -> FsResult<Vec<FsDirEntry>>;
 }

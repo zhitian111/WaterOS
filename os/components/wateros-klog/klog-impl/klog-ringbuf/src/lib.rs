@@ -14,8 +14,10 @@ use wateros_base_config::klog::{
 };
 
 struct Slot {
+    /// 槽是否持有有效记录（被覆盖后置 false）。
     valid: bool,
     meta: KlogRecordMeta,
+    /// 单条正文上限 `KLOG_MAX_RECORD_BYTES`。
     bytes: [u8; KLOG_MAX_RECORD_BYTES],
 }
 
@@ -136,6 +138,7 @@ impl KlogRingbufInner {
 }
 
 impl KlogStore for KlogRingbufInner {
+    #[inline]
     fn append(&mut self, meta: &mut KlogRecordMeta, text: &[u8]) -> AppendResult {
         let mut flags = KlogFlags(meta.flags);
         let copy_len = text.len().min(KLOG_MAX_RECORD_BYTES);
@@ -178,6 +181,7 @@ impl KlogStore for KlogRingbufInner {
         AppendResult { seq, truncated }
     }
 
+    #[inline]
     fn stats(&self) -> KlogStats {
         let newest = if self.records_committed == 0 {
             0
@@ -193,6 +197,7 @@ impl KlogStore for KlogRingbufInner {
         }
     }
 
+    #[inline]
     fn unread_bytes(&self) -> usize {
         let mut sum = 0usize;
         self.for_each_valid_seq(|seq| {
@@ -205,6 +210,7 @@ impl KlogStore for KlogRingbufInner {
         sum
     }
 
+    #[inline]
     fn buffer_bytes(&self) -> usize {
         KLOG_TEXT_RING_BYTES
     }
@@ -279,6 +285,7 @@ fn ensure_inner(guard: &mut Option<KlogRingbufInner>) -> &mut KlogRingbufInner {
 
 impl KlogRingbuf {
     /// 初始化全局环（可重复调用，会清空内容）。
+    #[inline]
     pub fn init() {
         let mut guard = KLOG.lock();
         let inner = ensure_inner(&mut guard);
@@ -286,6 +293,7 @@ impl KlogRingbuf {
     }
 
     /// 在已持有锁的闭包内访问环。
+    #[inline]
     pub fn with<R>(f: impl FnOnce(&mut KlogRingbufInner) -> R) -> R {
         let _irq = KlogInterruptGuard::new();
         let mut guard = KLOG.lock();

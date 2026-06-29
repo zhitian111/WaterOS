@@ -13,6 +13,7 @@ pub use error::{PipeError, PipeResult, DEFAULT_PIPE_CAPACITY};
 pub use kernel_pipe::KernelPipe;
 
 /// API 层自检：校验默认容量与错误枚举可比较。
+#[inline]
 pub fn test() {
     assert_ne!(DEFAULT_PIPE_CAPACITY, 0);
     assert_eq!(PipeError::WouldBlock, PipeError::WouldBlock);

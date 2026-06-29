@@ -1,11 +1,7 @@
-//! VirtIO block over PCI transport.
+//! VirtIO 块设备（PCI 传输）实现，供 QEMU LoongArch64 `virtio-blk-pci` 等路径使用。
 //!
-//! QEMU LoongArch64 `virt` exposes `virtio-blk-pci`, whose BARs contain the
-//! VirtIO PCI capability regions rather than the legacy VirtIO-MMIO register
-//! file. This implementation uses `virtio-drivers`' PCI transport and keeps the
-//! DMA contract identical to the MMIO block implementation: frame allocator
-//! pages are identity-addressed while LoongArch bring-up stays in direct address
-//! mode.
+//! PCI BAR 承载 VirtIO capability 区域，而非 MMIO 寄存器文件；DMA 契约与
+//! [`impl-virtio-mmio`] 一致：帧分配器页在恒等映射下 `paddr == vaddr`。
 
 #![no_std]
 extern crate alloc;
@@ -27,17 +23,22 @@ use virtio_drivers::{BufferDirection, Hal, PhysAddr, PAGE_SIZE};
 
 const _: () = assert!(PAGE_SIZE == mm_api::addr::PAGE_SIZE);
 
-/// Human-readable PCI location returned with a successful probe.
+/// PCI 探测成功时返回的可读位置信息（bus/device/function 与 ID）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VirtioPciProbeInfo {
+    /// PCI bus 号。
     pub bus: u8,
+    /// PCI device 号。
     pub device: u8,
+    /// PCI function 号。
     pub function: u8,
+    /// 配置空间 vendor id。
     pub vendor_id: u16,
+    /// 配置空间 device id。
     pub device_id: u16,
 }
 
-/// Simple monotonic allocator for PCI memory BARs.
+/// PCI MMIO BAR 单调递增分配器（裸机 bring-up 无固件分配 BAR 时使用）。
 #[derive(Debug, Clone, Copy)]
 pub struct VirtioPciBarAllocator {
     next: u64,
@@ -45,6 +46,8 @@ pub struct VirtioPciBarAllocator {
 }
 
 impl VirtioPciBarAllocator {
+    /// 在 `[start, end)` 区间内分配 BAR 物理地址。
+    #[inline]
     pub const fn new(start: u64, end: u64) -> Self {
         Self { next: start, end }
     }

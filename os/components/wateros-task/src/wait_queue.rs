@@ -1,5 +1,5 @@
-/// 内核同步对象侧分配的等待队列句柄：封装 `WaitQueueId` 并提供 `wait`/`wake`
-/// 便捷方法。
+//! 内核同步原语用的等待队列句柄：封装 `WaitQueueId`，提供 `wait`/`wake` 便捷方法。
+
 use crate::{scheduler, TaskId, TaskTick, TaskWaitHandle, TaskWaitResult, WaitQueueId};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WaitQueue {

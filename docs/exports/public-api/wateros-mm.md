@@ -1,42 +1,110 @@
-# wateros-mm 公共 API 快照
+# wateros-mm 公共 API
 
 ## 用途
 
-列出 **`wateros-mm`** 聚合层对 **`api`**（契约）、**`frame_alloctor`**（物理帧）、**`mm_impl`**（Sv39/dummy）与 **`kernel_mm`**（内核全局页表与用户装载）的再导出，并标明根 crate **`wateros`** 通过 feature 叠加后的 **主线差异**（如 **`from_elf_bytes`** 是否可见）。
+描述根内核与其它一级组件通过 `wateros-mm` 聚合 crate **实际使用**的导出符号（非裸 `api-v0` 全量目录）。
 
-## 事实来源
+事实来源：`os/components/wateros-mm/src/lib.rs`；根 `os/Cargo.toml` 中 `mm = { package = "wateros-mm", ... }`。
 
-- [`os/components/wateros-mm/Cargo.toml`](../../os/components/wateros-mm/Cargo.toml)
-- [`os/components/wateros-mm/src/lib.rs`](../../os/components/wateros-mm/src/lib.rs)
-- [`os/Cargo.toml`](../../os/Cargo.toml)（`impl-sv39`、`qemu-riscv64-opensbi` 向子 crate 传递）
-- [`os/components/wateros-mm/mm-api/api-v0/src/lib.rs`](../../os/components/wateros-mm/mm-api/api-v0/src/lib.rs)
+## 顶层 re-export
 
-## 组件默认 feature
+```text
+mm::api              // wateros-mm-api-v0 别名
+mm::frame_alloctor   // 物理帧分配聚合
+mm::mempolicy        // NUMA 策略辅助（单节点）
+mm::user_aspace      // 用户地址空间句柄解析（impl 条件导出）
+mm::user_access      // 用户内存访问类型
+mm::ActiveUserMemoryOps  // 当前 arch 的 UserMemoryOps 实现别名
+mm::kernel_mm        // 内核与用户装载、页故障、fork 等
+mm::test_with_range  // 组件自测
+```
 
-| 项 | 说明 |
-|----|------|
-| **`wateros-mm` `default`** | `api-v0` + **`impl-sv39`**；**`frame_alloctor`** 子依赖默认还带 **`impl-stack`**（栈式帧分配器）。 |
-| **`qemu-riscv64-opensbi`** | 空 feature 名，用于与 **`impl-sv39`** 组合 **`kernel_mm`** 中 **Sv39 真实 bring-up** 分支（见下）。 |
+## `mm::api`（契约层，稳定语义）
 
-根 **`wateros`** 默认 feature 含 **`impl-sv39`** 与 **`qemu-riscv64-opensbi`**，故主线构建下 **`kernel_mm`** 走 **Sv39 + QEMU OpenSBI** 分支。
+主要被 syscall、task、trap 直接引用的子模块：
 
-## 聚合层导出
+| 路径 | 典型消费者 |
+|------|------------|
+| `api::addr::{VirtAddr, PhysPageNum, PAGE_SIZE, ...}` | 全内核 |
+| `api::perm::PagePerm` | syscall mmap/mprotect |
+| `api::flags::MapFlags` | syscall mmap |
+| `api::error::{MmError, MmResult}` | syscall 错误映射 |
+| `api::mmap::{MmapOps, PageFaultAccess, MmapRequest, ...}` | syscall、trap |
+| `api::brk::HeapBrk` | syscall brk |
+| `api::kernel_bringup::{LoadedElf, LoadElfError, ...}` | bring-up、exec |
+| `api::executable` | shebang / busybox |
+| `api::kernel_satp::{get, set}` | task runtime、trap |
+| `api::user_aspace_lifecycle` | task exit |
+| `api::mempolicy` | syscall get_mempolicy |
 
-| 项 | 说明 |
-|----|------|
-| **`pub use api_v0 as api`** | 整包 **`wateros-mm-api-v0`**：`addr`、`error`、`perm`、`flags`、`frame_allocator`、`address_space`、`user_access`、`brk`、`mmap`、`kernel_bringup` 等子模块及根级再导出（含 **`PhysicalFrameAllocator`**、**`test`**）。 |
-| **`pub use frame_alloctor`** | 帧分配错误/结果类型、默认 **`impl-stack`** 下的 **`StackFrameAllocator`**、**`init_frame_allocator`**、**`frame_alloc`** / **`frame_dealloc`**、**`frame_mem_stats()`**（`FrameMemStats`）等。 |
-| **`mm_impl`** | **`#[cfg(feature = "impl-sv39")]`** → **`impl_sv39`**；**`#[cfg(feature = "impl-dummy")]`** → **`impl_dummy`**（二者勿同时用于别名）。 |
-| **`kernel_mm`** | 再导出 **`DEFAULT_USER_ELF_PATH`**、**`LoadElfError`**、**`LoadedElf`**。 |
-| **`kernel_mm`（Sv39 + `qemu-riscv64-opensbi`）** | **`impl_sv39::kernel_mm_impl`**：**`init`**、**`kernel_satp`**、**`from_elf_path`**、**`from_elf_bytes`**、**`ensure_user_execute_for_kernel_va`**、**`map_anon_range_user`**、**`map_identity_range_user`**。 |
-| **`kernel_mm`（非上述组合）** | **`impl_dummy::kernel_mm_impl`**：同上集合但 **无 `from_elf_bytes`**。 |
-| **`user_aspace`（`impl-sv39`）** | **`with_user_aspace_mut(handle, f)`**：将 **`LoadedElf::user_aspace_ptr`** 解析为可调用 **`HeapBrk`/`MmapOps`** 的地址空间；**不**封装 Linux syscall 语义（由 **`wateros-syscall`** 拼合）。 |
-| **`test_with_range`** | 根级自检：传入 **`BasePPN`** 闭开区间，串联 **`api::test`**、**`frame_alloctor::test_with_range`** 与（若启用 Sv39）**`impl_sv39::test_with_range`**。 |
+## `mm::frame_alloctor`
 
-## 缺口说明
+| 符号 | 说明 |
+|------|------|
+| `PhysicalFrameAllocator` | trait（来自 api-v0） |
+| `GlobalPhysFrameAllocator` | 零大小适配器，委托全局栈分配器 |
+| `init_frame_allocator` | bring-up 初始化帧池 |
+| `frame_alloc_result` / `frame_dealloc_result` | 分配/回收 |
+| `frame_inc_ref` / `frame_ref_count` | COW 引用计数 |
+| `frame_mem_stats` | 内存池统计 |
 
-- **`kernel_mm`** 行为依赖根 feature 组合；单独编译 **`wateros-mm`** 而不开 **`qemu-riscv64-opensbi`** 时与 QEMU 主线文档叙述不一致，需在集成侧对齐。
+## `mm::kernel_mm`
 
-## 维护要求
+### 类型与常量
 
-聚合导出、**`kernel_mm`** 条件分支或默认 feature 链变化时，同步更新本文件、**`docs/exports/features/wateros-mm.md`** 与 **`docs/architecture/snapshot.md`** 中 MM 相关句段。
+- `LoadElfError`, `LoadProgramError`, `LoadedElf`, `PrepareUserStackError`
+- `RootVolumeReadError`, `ExecResolveError`
+- `DEFAULT_USER_ELF_PATH`
+
+### 函数（按 feature）
+
+**`impl-sv39` 或 `impl-loongarch64` 启用时：**
+
+| 函数 | 说明 |
+|------|------|
+| `init(start_ppn, end_ppn, ram_end_exclusive)` | 内核页表与帧池 |
+| `kernel_satp()` | 当前内核地址空间 token |
+| `from_elf_path` / `from_elf_bytes` | 装载用户 ELF |
+| `load_program_from_path` | ELF + shebang 统一入口 |
+| `prepare_elf_user_stack` | 写用户栈，返回 sp |
+| `fork_user_aspace` | fork，返回 `(aspace_ptr, token)` |
+| `drop_user_aspace` | 释放用户地址空间 |
+| `handle_cow_fault` | 写时复制 |
+| `handle_user_page_fault` | 惰性/栈/brk 缺页 |
+| `madvise_discard_pages` | 丢弃已映射页 |
+| `map_identity_range_user` / `map_anon_range_user` | 测试/特殊映射 |
+| `ensure_user_execute_for_kernel_va` | 内核 VA 补 X 权限 |
+
+**仅 `impl-dummy`（无平台 impl）时：**
+
+- `init` / `map_*` 为空操作；`from_elf_path` 返回 `BadClass`；`fork_user_aspace` 返回 `Unsupported`。
+
+## `mm::user_aspace`
+
+- `with_user_aspace_mut(handle, f)`：在 `LoadedElf::user_aspace_ptr` 上执行闭包（实现 `HeapBrk` / `MmapOps`）。
+
+## `mm::user_access`
+
+| 类型 | arch |
+|------|------|
+| `Sv39UserMemoryOps` | RISC-V |
+| `LoongArch64UserMemoryOps` | LoongArch64 |
+| `debug_probe_user_virt`, `UserVirtProbe` | 仅 Sv39（诊断） |
+
+## `mm::mempolicy`
+
+| 函数 | 说明 |
+|------|------|
+| `is_user_addr_mapped` | `MPOL_F_ADDR` 路径校验 |
+| `get_mempolicy_single_node` | 单节点 get 逻辑 |
+| `fill_get_mempolicy_nodemask` | 写 nodemask |
+
+## 未通过聚合层导出的内容
+
+以下 **故意不** 从 `wateros-mm` 根模块暴露：
+
+- `pagetable::*`、PTE 编码、walk 实现细节
+- `impl-common` 内部辅助
+- 各 `impl-*` crate 根模块（仅经 `kernel_mm` 子集转发）
+
+依赖方应使用 `mm::api` 契约与 `mm::kernel_mm` 聚合 API，而非直接依赖 `wateros-mm-impl-sv39` 等。

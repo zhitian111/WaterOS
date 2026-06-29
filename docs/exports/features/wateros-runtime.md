@@ -1,35 +1,54 @@
-# wateros-runtime 功能快照
+# wateros-runtime — 已实现功能快照
 
 ## 用途
 
-记录 **`wateros-runtime`** 聚合层对 **控制台**、**日志**、**panic**、**全局堆分配器** 的再导出，以及各子 crate 的默认 feature 行为（以各子 **`Cargo.toml`** 为准）。
+记录 `wateros-runtime` 一级组件当前已落地能力、feature 组合与已知缺口。事实来源：`os/components/wateros-runtime/**` 源码与 `Cargo.toml`。
 
-## 事实来源
+## 子 crate 与职责
 
-- `os/components/wateros-runtime/Cargo.toml`（聚合包无 **`[features]`**）
-- `os/components/wateros-runtime/src/lib.rs`
-- `runtime-console/`、`runtime-logging/`、`runtime-panic/`、`runtime-heap-allocator/`
-- `os/feature-tree.txt`（若与实机 **`Cargo.toml`** 不一致，以子 crate 为准并考虑同步修正树）
+| 子 crate | 职责 | 状态 |
+|----------|------|------|
+| `wateros-runtime`（聚合） | 以 `runtime::panic` / `console` / `logging` / `heap_allocator` / `serial` 再导出子能力 | 已实现 |
+| `wateros-runtime-panic` | `#[panic_handler]`：着色打印后平台关机 | 已实现 |
+| `wateros-runtime-console` + `console-api/api-v0` | `Console` trait、`print!`/`println!`、ANSI 着色 | 已实现 |
+| `console-impl/impl-dummy` | 占位：写入即 `unimplemented!` | 已实现（测试/占位） |
+| `console-impl/impl-platform-console` | 经 `platform::console` 输出 | 已实现（QEMU 主线） |
+| `wateros-runtime-logging` | `log` crate 桥接，按 feature 设级别并着色输出 | 已实现 |
+| `wateros-runtime-heap-allocator` | 全局 `GlobalAlloc`：链表或 TLSF 后端 | 已实现 |
+| `wateros-runtime-serial` | QEMU virt UART 再导出（`serial-uart-virt`） | 已实现 |
 
-## 聚合导出
+## Feature 矩阵（聚合层）
 
-- **`panic_handler`**：来自 **`runtime-panic`**（打印到控制台后调用固件 **`shutdown`** 循环）。
-- **`console::*`**：**`wateros-runtime-console`**（**`print!` / `println!`**、**`ConsoleHandle`**、**`show_logo`** 等）。
-- **`logging::*`**：**`wateros-runtime-logging`**（初始化 logger 并重导出 **`log`** 各等级宏）。
-- **`heap_allocator::*`**：**`wateros-runtime-heap-allocator`**（**`#[global_allocator]`**、**`init()`** 使用 **`KERNEL_HEAP_SIZE`** 等）。
+| Feature | 效果 |
+|---------|------|
+| `impl-platform-console` | 控制台 + panic + logging 走平台输出（QEMU 默认） |
+| `impl-dummy` | 控制台占位；误输出会 panic |
+| `impl-trace` … `impl-error` | 设置 `log` 最大级别（多开时取最安静档） |
+| `serial-uart-virt` | 启用 `runtime::serial` 子模块 |
 
-## 子 crate 默认行为（摘要）
+## 已实现能力
 
-- **`runtime-console`**：**`default`** = **`api-v0`** + **`impl-firmware-opensbi`**；未启用 OpenSBI 控制台路径时 **`write_raw_bytes`** 可为空操作（**`cfg`** 控制）。
-- **`runtime-logging`**：按单一 level feature 注册 **`WaterOSLogger`**；默认以实际 **`Cargo.toml`** 为准（**`feature-tree.txt`** 中若描述为 **`impl-debug`** 与 **`impl-trace`** 双开，可能与当前 **`default`** 不一致，属文档/树漂移需单独对齐）。
-- **`runtime-panic`**：无 feature；依赖平台固件 **`reset`**。
-- **`runtime-heap-allocator`**：**`default`** = **`impl-buddy-allocator`**；伙伴分配器 + 分配错误 **`panic!`**。
+- **Panic 路径**：文件/行号 + 消息，红色横幅，调用 `platform::reset::shutdown`。
+- **控制台**：泛型 `print`/`prints`、宏 `print!`/`println!`、`write_raw_bytes`（syscall 等原始字节路径）、`show_logo`。
+- **开发日志**：`runtime::logging::init` 注册 `WaterOSLogger`；过滤 `ext4_rs` Info 以上噪声。
+- **内核堆**：`init`、`heap_mem_stats`、`handle_alloc_error`；中断屏蔽 + 递归分配检测；90% 高水位 warn。
+- **堆后端**：默认 `linked_list_allocator`；可选 `impl-tlsf`（互斥 feature）。
+- **压测**：`heap_fragmentation_stress_report`（开发/诊断用，结束后 `loop {}`）。
+- **串口**：再导出 `wateros-driver` UART API（仅 `serial-uart-virt`）。
 
-## 明确未覆盖
+## 与 klog 的分工
 
-- 聚合包自身无 feature 切换；跨目标控制台后端扩展需新增子 impl。
-- **`feature-tree.txt`** 与 **`runtime-logging`** 的 **`default`** 若不一致，应在维护周期内统一。
+`runtime-logging` **不**写入 `wateros-klog` 环；需要「上屏 + 进环」时由调用方分别调用 `log::*!` 与 `klog_*!`。
 
-## 维护要求
+## 缺口与后续
 
-子 crate 默认 feature、panic 策略或堆初始化常量变化时，同步更新本文件与 **`docs/architecture/snapshot.md`**。
+- 控制台 **无输入侧** API（`api-v0` 仅写）。
+- `impl-dummy` 不适合生产内核，仅编译占位。
+- `CONSOLE_*` syslog action 在 klog 侧为 no-op，未与 runtime 控制台联动。
+- 堆 `used` 在 TLSF 后端为估算值，非精确记账。
+
+## 修订
+
+| 日期 | 说明 |
+|------|------|
+| 2026-06-29 | 初版导出（注释/inline 任务同步） |

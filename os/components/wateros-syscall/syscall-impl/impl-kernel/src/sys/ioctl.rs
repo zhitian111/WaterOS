@@ -82,8 +82,7 @@ fn tty_char_ioctl(request: u32, argp: usize) -> UserRet {
                 Err(e) => UserRet::from_error(e),
             }
         }
-        // Daemonization commonly detaches from the controlling TTY with this ioctl.
-        // WaterOS does not model controlling terminals yet, so the detach is a no-op.
+        // 守护进程化常用此 ioctl 脱离控制终端；WaterOS 尚未建模控制终端，按 no-op 处理。
         TIOCNOTTY => UserRet::from_success(0),
         _ => ioctl_enotty(request, None, argp),
     }

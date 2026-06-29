@@ -298,9 +298,8 @@ fn poll_wait_pipe_fds(
         if socket_fd::lookup(fd).is_some() {
             continue;
         }
-        // `with_current_io` temporarily removes this fd's handle from the fd table.
-        // Do not rescan all pollfds from inside the wait condition, or a poll on
-        // the same fd observes `POLLNVAL` and busy-loops without yielding.
+        // `with_current_io` 会临时把句柄从 fd 表移出；在等待条件里重扫同一 fd
+        // 会得到 `POLLNVAL` 并忙等，不能 yield。
         let mut wait_on_this_fd = || !deadline.expired();
         match vfs::fd::with_current_io(fd, |handle| {
             handle.poll_wait_for_ticks(pfd.events, wait_ticks, &mut wait_on_this_fd)
@@ -582,8 +581,7 @@ fn poll_wait_monitored_fds(
         if socket_fd::lookup(fd).is_some() {
             continue;
         }
-        // See `poll_wait_pipe_fds`: while the handle is borrowed out of the fd
-        // table, recursive scans of the same fd would falsely report `POLLNVAL`.
+        // 同 `poll_wait_pipe_fds`：句柄借出 fd 表期间重扫同一 fd 会误报 `POLLNVAL`。
         let mut wait_on_this_fd = || !deadline.expired();
         match vfs::fd::with_current_io(fd, |handle| {
             handle.poll_wait_for_ticks(events, wait_ticks, &mut wait_on_this_fd)

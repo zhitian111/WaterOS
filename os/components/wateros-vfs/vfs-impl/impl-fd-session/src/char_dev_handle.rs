@@ -270,10 +270,12 @@ impl VfsIoHandle for CharDevHandle {
         guard.ioctl(request, arg).map_err(map_driver_err)
     }
 
+    #[inline]
     fn is_rtc_device(&self) -> bool {
         self.rtc
     }
 
+    #[inline]
     fn is_tty_char_device(&self) -> bool {
         !self.rtc
     }
@@ -308,6 +310,7 @@ impl VfsIoHandle for CharDevHandle {
 }
 
 /// 若 `path` 为 RTC 别名则返回 true。
+#[inline]
 pub fn is_rtc_dev_path(path: &str) -> bool {
     matches!(path, "/dev/misc/rtc" | "/dev/rtc0" | "/dev/rtc")
 }

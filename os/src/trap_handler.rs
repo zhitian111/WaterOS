@@ -331,6 +331,7 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
     }
 }
 
+/// 向待返回用户态的任务投递挂起信号；`restart` 供 EINTR 后重入 syscall 使用。
 fn return_to_user_signal_delivery(frame : *mut u8,
                                   trap_cause : TrapCause,
                                   cx : &TrapContext,
@@ -345,6 +346,8 @@ fn return_to_user_signal_delivery(frame : *mut u8,
     delivered > 0
 }
 
+/// 信号/页错等提前返回路径：打 trace 后把 TCB trap 帧拷回内核栈供 `sret`。
+#[inline]
 fn finish_trap_return(frame : *mut u8, cx : &TrapContext, raw_cause : usize) {
     let return_satp = cx.return_address_space_token();
     let kernel_satp = paging::active_address_space_token();

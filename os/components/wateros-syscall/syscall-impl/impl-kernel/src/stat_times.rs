@@ -1,4 +1,4 @@
-//! Syscall-layer atime/mtime overrides until VFS metadata grows timestamp fields.
+//! VFS 元数据尚无 atime/mtime 字段前，syscall 层临时覆盖时间戳。
 
 extern crate alloc;
 

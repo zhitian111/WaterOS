@@ -1,15 +1,10 @@
 //! Linux 风格错误码及其与系统调用返回值的对应关系。
 //!
-//! 数值与 Linux errno 一致；与 [`crate::user_ret::UserRet`] 组合时，错误路径使用负值表示。
-//!
-//! English: mirrors Linux errno integers; failures surface to userspace as negative
-//! values paired with [`crate::user_ret::UserRet`].
+//! 数值与 Linux errno 一致；错误路径经 [`crate::user_ret::UserRet`] 以负值返回用户态。
 
-/// 内核错误码（Linux errno 数值的用户态可用形式）
+/// 内核错误码（Linux errno 数值的用户态可用形式）。
 ///
 /// 约定：系统调用返回错误时，用户态看到的是 `-errno`（通常通过 `isize` 表示）。
-///
-/// English: positive errno values as carried in-kernel; userspace observes `-errno`.
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ErrNo(
@@ -19,16 +14,12 @@ pub struct ErrNo(
 
 impl ErrNo {
     /// 取原始正数 errno（与 libc 中 `errno` 的数值一致）。
-    ///
-    /// English: returns the positive errno magnitude as stored in-kernel.
     #[inline]
     pub const fn raw(self) -> isize {
         self.0
     }
 
     /// 转为用户态可见的负返回值（`-errno`）。
-    ///
-    /// English: maps to the negative value observed from userspace syscalls.
     #[inline]
     pub const fn user_ret(self) -> isize {
         -self.0
@@ -36,7 +27,6 @@ impl ErrNo {
 }
 
 // Linux errno 常量：与 asm-generic errno 数值一致（riscv64 等架构通用）。
-// Linux errno constants: same numeric values as asm-generic (shared across arch ABIs).
 impl ErrNo {
     /// 操作不允许。
     pub const EPERM: Self = Self(1);
@@ -131,6 +121,4 @@ impl ErrNo {
 /// 内核侧常用的 `Result` 别名：成功载荷为 `T`，失败为 [`ErrNo`]。
 ///
 /// 经转换后才对应用户态可见的负返回值。
-///
-/// English: kernel `Result` before mapping failures to negative `isize` returns.
 pub type KernelResult<T> = core::result::Result<T, ErrNo>;

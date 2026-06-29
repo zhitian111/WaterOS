@@ -12,8 +12,7 @@ mod logger;
 /// **契约**：可重复调用时行为以 `log::set_logger` 为准（第二次通常失败）；成功后会打印一条 Info 表示已初始化。
 pub fn init() {
     use log::LevelFilter;
-    // Cargo feature unification can enable more than one level. Prefer the
-    // quietest selected level so a stray trace feature cannot flood QEMU logs.
+    // Cargo feature 合并可能同时打开多个级别；取最安静一档，避免误开 trace 淹没 QEMU 日志。
     let level = {
         #[cfg(feature = "impl-error")]
         {

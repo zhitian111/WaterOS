@@ -54,8 +54,10 @@ const SUPPORTED : &[FsCapability] = &[FsCapability::new(FsKind::Ext4, FsAccessMo
                                       FsCapability::new(FsKind::Ext4, FsAccessMode::ReadWrite)];
 
 impl FsImpl for Ext4FsImpl {
+    #[inline]
     fn name(&self) -> &'static str { "ext4" }
 
+    #[inline]
     fn supported(&self) -> &'static [FsCapability] { SUPPORTED }
 
     fn probe(&self, device : &SharedBlockDevice) -> FsResult<Option<FsKind>> {

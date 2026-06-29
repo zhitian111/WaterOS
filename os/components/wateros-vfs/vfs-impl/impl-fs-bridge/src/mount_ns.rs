@@ -28,6 +28,7 @@ impl PerTaskMountNsRegistry {
         self.effective_owner(task_id)
     }
 
+    #[inline]
     fn effective_owner(&self, task_id: task::TaskId) -> task::TaskId {
         self.owners.get(&task_id).copied().unwrap_or(task_id)
     }
@@ -43,6 +44,7 @@ impl PerTaskMountNsRegistry {
         Some(owner)
     }
 
+    /// 初始化任务挂载命名空间（继承 bootstrap 快照）。
     pub fn init_task_mount_ns(&mut self, task_id: task::TaskId) {
         let owner = self.ensure_owner(task_id);
         self.namespaces.entry(owner).or_insert_with(|| {
@@ -50,11 +52,13 @@ impl PerTaskMountNsRegistry {
         });
     }
 
+    /// 只读访问任务挂载命名空间；未初始化时 `None`。
     pub fn namespace_for(&self, task_id: task::TaskId) -> Option<&MountNamespace> {
         let owner = self.effective_owner(task_id);
         self.namespaces.get(&owner)
     }
 
+    /// 可变访问；惰性初始化后保证存在。
     pub fn namespace_for_mut(&mut self, task_id: task::TaskId) -> &mut MountNamespace {
         self.init_task_mount_ns(task_id);
         let owner = self.effective_owner(task_id);
@@ -75,6 +79,7 @@ impl PerTaskMountNsRegistry {
         }
     }
 
+    /// fork 时深拷贝父任务挂载表。
     pub fn copy_mount_ns_from_parent(&mut self, child: task::TaskId, parent: task::TaskId) {
         let parent_ns = self
             .namespace_for(parent)

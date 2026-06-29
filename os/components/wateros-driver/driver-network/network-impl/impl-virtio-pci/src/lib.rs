@@ -23,15 +23,22 @@ const _: () = assert!(PAGE_SIZE == mm_api::addr::PAGE_SIZE);
 /// 接收缓冲区大小（含 virtio net header）；须不小于以太网 MTU + virtio header。
 const RX_BUF_LEN: usize = 2048;
 
+/// PCI 探测成功时返回的 virtio-net 位置信息。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VirtioNetPciProbeInfo {
+    /// PCI bus 号。
     pub bus: u8,
+    /// PCI device 号。
     pub device: u8,
+    /// PCI function 号。
     pub function: u8,
+    /// 配置空间 vendor id。
     pub vendor_id: u16,
+    /// 配置空间 device id。
     pub device_id: u16,
 }
 
+/// PCI MMIO BAR 单调递增分配器（网卡 BAR 与块设备分区不同起始地址）。
 #[derive(Debug, Clone, Copy)]
 pub struct VirtioNetPciBarAllocator {
     next: u64,

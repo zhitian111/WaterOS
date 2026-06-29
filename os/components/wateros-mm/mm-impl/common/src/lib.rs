@@ -1,8 +1,7 @@
-//! Shared helpers for concrete MM implementations.
+//! 各 arch `mm-impl` 共享的实现辅助逻辑（ELF 装载、mmap/mremap、按需零页等）。
 //!
-//! This crate intentionally contains implementation helpers rather than public
-//! MM contracts. It stays below `wateros-mm-api-v0`: helpers here may depend on
-//! current loader policy, while `mm-api` remains the stable semantic boundary.
+//! 本 crate **不**对外暴露稳定契约，位于 `wateros-mm-api-v0` 之下：可依赖当前
+//! loader 策略与 bring-up 假设；语义边界仍以 `mm-api` 为准。
 
 #![no_std]
 
@@ -73,6 +72,7 @@ pub struct ElfSegmentLoadParams {
 }
 
 impl ElfSegmentLoadParams {
+    #[inline]
     pub fn page_va_from_file_offset(&self, file_offset : usize) -> usize {
         self.vma_start + file_offset.saturating_sub(self.vma_file_origin)
     }
@@ -93,7 +93,7 @@ impl ElfSegmentLoadParams {
     }
 }
 
-/// ELF program header type for loadable segments.
+/// `PT_LOAD` 程序头类型（可装载段）。
 pub const PT_LOAD : u32 = 1;
 
 /// Little-endian `u16` read; returns `None` on out-of-bounds input.
@@ -563,6 +563,7 @@ pub fn mremap_range<S, A>(aspace : &mut S,
     }
 
     if flags & MREMAP_FIXED != 0 {
+        // 固定地址搬迁：先清空目标区间，再拷贝旧内容
         if new_address.0 % PAGE_SIZE != 0 {
             return Err(MmError::InvalidAddress);
         }
@@ -588,6 +589,7 @@ pub fn mremap_range<S, A>(aspace : &mut S,
     }
 
     if new_end.0 <= old_end.0 {
+        // 缩小或等长：截断尾部映射即可
         if new_end.0 < old_end.0 {
             aspace.unmap_range_with_alloc(allocator, new_end, old_end)?;
         }
@@ -600,6 +602,7 @@ pub fn mremap_range<S, A>(aspace : &mut S,
         if aspace.translate_addr(vpn.start_addr())?
                  .is_some()
         {
+            // 原位增长会与已有映射冲突，需 MAYMOVE 整体搬迁
             if flags & MREMAP_MAYMOVE == 0 {
                 return Err(MmError::InvalidAddress);
             }

@@ -123,7 +123,7 @@ struct UserITimerVal {
     value : UserTimeVal,
 }
 
-/// Linux 64-bit `struct rusage`.
+/// Linux LP64 `struct rusage` 布局。
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 struct UserRUsage {
@@ -165,7 +165,7 @@ struct UserRLimit {
     max : u64,
 }
 
-/// Linux 64-bit `struct sysinfo`.
+/// Linux LP64 `struct sysinfo` 布局。
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct UserSysInfo {

@@ -5,6 +5,7 @@
 use driver::network::stack;
 use runtime::logging::*;
 
+#[inline]
 fn drive_stack(now : &mut i64, rounds : i64) {
     for _ in 0..rounds {
         *now += 1;
@@ -35,6 +36,7 @@ fn wait_accept(now : &mut i64,
     None
 }
 
+#[inline]
 fn wait_may_send(now : &mut i64, socket : stack::StackSocketHandle) -> bool {
     for _ in 0..64 {
         drive_stack(now, 1);

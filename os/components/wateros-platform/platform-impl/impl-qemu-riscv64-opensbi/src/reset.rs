@@ -7,14 +7,19 @@ use sbi::{system_reset, ResetReason, ResetType};
 
 /// 映射到 SBI 的复位类型枚举。
 pub enum OpenSBIResetType {
+    /// 关机。
     Shutdown,
+    /// 冷重启。
     ColdReboot,
+    /// 热重启。
     WarmReboot,
 }
 
 /// 映射到 SBI 的复位原因枚举。
 pub enum OpenSBIResetReason {
+    /// 无特定原因。
     NoReason,
+    /// 系统故障。
     SystemFailure,
 }
 

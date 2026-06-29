@@ -1,6 +1,7 @@
 //! 访问 fd/cwd 注册表前关中断，避免 UP 抢占导致 `RefCell` 重入 panic。
 
-/// 在关中断临界区内执行 `f`。
+/// 在关中断临界区内执行 `f`（fd/cwd 注册表互斥用）。
+#[inline]
 pub fn with_interrupt_disabled<R>(f: impl FnOnce() -> R) -> R {
     let state = arch::interrupt::read_global_interrupt_state().ok();
     let _ = arch::interrupt::disable_global_interrupt();

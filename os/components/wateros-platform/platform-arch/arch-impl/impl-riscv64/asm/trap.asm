@@ -24,16 +24,14 @@
 # - 返回用户态时，sscratch 重新指向 trampoline frame，用户 sp 从 TrapContext 恢复。
 
 __alltraps:
-    # User mode enters with sscratch = __wateros_riscv_return_frame.
-    # Kernel mode keeps sscratch = 0.  The initial csrrw preserves user x5/t0
-    # in sscratch and gives us a scratch frame pointer without clobbering any
-    # other user GPR before the snapshot.
+    # 用户态进入时 sscratch = __wateros_riscv_return_frame。
+    # 内核态保持 sscratch = 0。首次 csrrw 把用户 x5/t0 存入 sscratch，同时拿到
+    # 跳板帧指针，快照前不必先破坏其它用户 GPR。
     csrrw t0, sscratch, t0
     beqz t0, .Ltrap_from_kernel
 gdb_point_0:
-    # Save the full user GPR set into the trampoline frame while still running
-    # on the user page table.  The frame is supervisor-only but writable by S
-    # mode, and is the only data page needed before switching to kernel satp.
+    # 仍在用户页表下，把完整用户 GPR 集写入跳板帧。帧页仅监管态可访问但 S 态可写，
+    # 切回内核 satp 前只需这一页可写数据。
     sd x0,  0*8(t0)
     sd x1,  1*8(t0)
     sd sp,  2*8(t0)
@@ -42,9 +40,8 @@ gdb_point_0:
     sd x6,  6*8(t0)
     csrr t1, sscratch
     sd t1, 5*8(t0)
-    # After x5/t0 is saved, clear sscratch before any further memory access.
-    # Otherwise a nested S-mode fault in this save path would re-enter with
-    # sscratch still holding the user t0 value and treat it as a frame pointer.
+    # x5/t0 已保存后，清零 sscratch 再继续访存；否则本路径若嵌套 S 态 fault，
+    # 会带着用户 t0 重入并误当作帧指针。
     csrw sscratch, x0
     sd x7,  7*8(t0)
     sd x8,  8*8(t0)
@@ -268,10 +265,9 @@ gdb_point_1:
     mv sp, t0
     sret
 
-# a0 = TrapContext*, a1 = kernel stack top to leave in sscratch after sret.
-# This trampoline is mapped in user address spaces. It copies the frame to a
-# trampoline data page before switching satp; after the switch it only fetches
-# from trampoline text/data and no longer touches kernel stack memory.
+# a0 = TrapContext*，a1 = sret 后写入 sscratch 的内核栈顶。
+# 该跳板映射在用户地址空间内：切 satp 前把帧复制到跳板数据页；切换后只从跳板
+# 代码/数据取指，不再访问内核栈内存。
 __wateros_riscv_restore_user_from_frame:
     la t0, __wateros_riscv_return_frame
     mv t1, a0

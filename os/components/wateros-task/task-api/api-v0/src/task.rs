@@ -13,7 +13,6 @@ pub type TaskTick = u64;
 pub type TaskExitCode = isize;
 /// 等待队列在调度器中的唯一标识。
 pub type WaitQueueId = usize;
-/// 内核任务入口函数签名。
 
 /// 预留给 idle 任务的固定任务号。
 pub const IDLE_TASK_ID : TaskId = 0;

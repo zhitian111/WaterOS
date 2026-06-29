@@ -1,54 +1,59 @@
-# wateros-klog 功能快照
+# wateros-klog — 已实现功能快照
 
 ## 用途
 
-记录 **`wateros-klog`** 一级组件的能力边界、与 **`wateros-runtime-logging`** / **`syslog(2)`** 的分工，以及实现状态。完整设计见 **[`docs/architecture/wateros-klog.md`](../../architecture/wateros-klog.md)**。
+记录内核消息环（klog）当前能力、syscall 覆盖与缺口。设计基线见 [`docs/architecture/wateros-klog.md`](../../architecture/wateros-klog.md)。
 
-## 事实来源
+## 子 crate
 
-- 设计基线：[`docs/architecture/wateros-klog.md`](../../architecture/wateros-klog.md)
-- 计划路径：`os/components/wateros-klog/`（**尚未创建**）
-- 关联：`wateros-abi`（`SYSLOG = 116`）、`wateros-syscall`（`sys_syslog`）、`wateros-base-config`（环容量常量）
+| 子 crate | 职责 | 状态 |
+|----------|------|------|
+| `wateros-klog-api-v0` | `KlogRecordMeta`、`KlogStore` trait、syslog action 常量 | 已实现 |
+| `wateros-klog-impl-ringbuf` | desc 槽 + 每槽变长正文环、全局 `Mutex` + 中断屏蔽 | 已实现 |
+| `wateros-klog`（聚合） | `init`、`record`、`klog_*!` 宏、`export`、`syscall` | 已实现 |
 
-## 实现状态
+## 存储模型
 
-| 项 | 状态 |
-|----|------|
-| 组件目录与 Cargo workspace 成员 | **已实现**（`os/components/wateros-klog/`） |
-| `klog-api` / `klog-ringbuf` | **已实现** |
-| `sys_syslog` 接线 | **已实现**（`__NR_syslog` = 116） |
-| 根 `wateros` | `klog::init()` 早于 `runtime::logging::init()` |
-| 设计文档 | [docs/architecture/wateros-klog.md](../../architecture/wateros-klog.md) |
+- **desc 槽**：`KLOG_DESC_SLOTS`（`base-config`），满时覆盖最旧，`records_dropped` 递增。
+- **正文**：每槽最多 `KLOG_MAX_RECORD_BYTES`；`SIZE_BUFFER` 返回 `KLOG_TEXT_RING_BYTES`。
+- **读游标**：`CLEAR` / `READ_CLEAR` 仅推进游标，物理记录保留供 `iter_from`。
 
-## 设计目标（已评审）
+## 已实现能力
 
-- 内核**可查询**消息环：固定 `KlogRecordMeta` + 变长正文，desc + text ring 存储。
-- **不**依赖 `log!` crate；自有 `klog_*!` / `klog::record`。
-- 用户态经 **`__NR_syslog` (116)** 以**传统 ASCII 线**读取；WRITE 与内核写入**同一环**。
-- bring-up **权限全开**；测试期未支持路径 **panic** 以驱动补全。
+- **内核写入**：`record` / `record_with_meta`；`klog_trace!` … `klog_error!`（512 字节栈缓冲）。
+- **观测**：`stats`、`iter_from`；`post_init_hello` 写入 boot 问候行。
+- **时间/任务**：`ts_nsec_now`（`platform::timer`）、`caller_id_now`（`task::current_task_id`）。
+- **用户态导出**：`format_traditional` → `"<N>...\n"` 线格式。
+- **sys_syslog**（`dispatch_kernel`）：
+  - `CLOSE`/`OPEN`：no-op
+  - `SIZE_UNREAD` / `SIZE_BUFFER`
+  - `READ` / `READ_CLEAR` / `READ_ALL`
+  - `CLEAR`：mark 全部已读
+  - `CONSOLE_OFF`/`ON`/`LEVEL`：no-op（未联动 runtime 控制台）
+  - WRITE（priority 编码）：写入同一环，`USER` 标志
+  - 未知 action：**panic**
 
-## 计划子 crate
+## Feature（聚合层）
 
-| 子 crate | 职责 |
-|----------|------|
-| `klog-api/api-v0` | `KlogRecordMeta`、`KlogFlags`、`KlogStore` trait、`SyslogAction`、错误类型 |
-| `klog-impl/klog-ringbuf` | 全局环、spin 锁、`append` / `iter` / read cursor |
-| `wateros-klog` 聚合 `src/lib.rs` | `init`、宏、`export`、`syscall::dispatch` 再导出 |
+| Feature | 说明 |
+|---------|------|
+| `default` | `api-v0` + `impl-ringbuf` + `platform-timer` + `task-api` |
+| `platform-timer` | 时间戳来源 |
+| `task-api` | `caller_id` 来源 |
 
-## 配置（计划，`wateros-base-config`）
+## 权限与安全
 
-- `KLOG_DESC_SLOTS`（默认 256）
-- `KLOG_TEXT_RING_BYTES`（默认 32 KiB）
-- `KLOG_MAX_RECORD_BYTES`（默认 1024）
+bring-up 阶段：**不检查** uid / `CAP_SYSLOG`；任意进程可 READ/WRITE/CLEAR。
 
-## 明确未覆盖（首期设计外）
+## 缺口与后续
 
-- `/dev/kmsg` 行协议导出。
-- Linux `printk_ringbuffer` 字典环、`dev_printk_info`。
-- `CAP_SYSLOG` / uid 校验。
-- 与 `runtime-console` 的 `CONSOLE_ON/OFF/LEVEL` 硬联动（列入 P3）。
-- SMP 无锁 prb 对标实现。
+- `CONSOLE_*` action 未实现真实控制台策略。
+- 无 `/dev/kmsg` 设备节点（仅 syscall 读路径）。
+- 环满覆盖后 `iter` 与 `READ` 对 gap 的处理以实现 rustdoc 为准。
+- 测试期未知 action panic；稳定后可改为 errno + `klog-strict-panic` feature。
 
-## 维护要求
+## 修订
 
-代码落地或 syscall 行为变化时，同步更新本文件、[`docs/architecture/wateros-klog.md`](../../architecture/wateros-klog.md) 与 [`docs/exports/public-api/wateros-klog.md`](../public-api/wateros-klog.md)。
+| 日期 | 说明 |
+|------|------|
+| 2026-06-29 | 初版导出（注释/inline 任务同步） |

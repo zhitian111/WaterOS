@@ -19,12 +19,17 @@ use spin::Mutex;
 
 #[derive(Default)]
 struct DevFsImpl {
+    // 当前 refresh 后的节点快照（块/字符/占位）。
     nodes: Vec<DevNode>,
+    // 路径 → 块设备句柄；refresh 会清空后按驱动枚举重建。
     block_bindings: Vec<(String, SharedBlockDevice)>,
+    // 路径 → 字符设备句柄。
     character_bindings: Vec<(String, SharedCharacterDevice)>,
+    // DTB 解析出的、尚无驱动实现的占位路径；在 refresh 末尾合并进 nodes。
     dt_unsupported_paths: Vec<String>,
 }
 
+/// 零大小 [`DevFsManager`] 句柄；实际状态在静态 `DEVFS` 中。
 pub struct KernelDevFsManager;
 
 static DEVFS: Mutex<DevFsImpl> = Mutex::new(DevFsImpl {
@@ -34,11 +39,13 @@ static DEVFS: Mutex<DevFsImpl> = Mutex::new(DevFsImpl {
     dt_unsupported_paths: Vec::new(),
 });
 
+// Linux 风格磁盘名：索引 0 → `/dev/vda`，超过 26 个盘符时截断到 `z`。
 fn linux_vd_disk_path(idx: usize) -> String {
     let letter = (b'a' + (idx as u8).min(25)) as char;
     format!("/dev/vd{}", letter)
 }
 
+// 同一路径不重复登记；新路径追加到 nodes 与 block_bindings。
 fn push_block_alias(inner: &mut DevFsImpl, path: String, dev: SharedBlockDevice) {
     if inner.block_bindings.iter().any(|(p, _)| p == &path) {
         return;
@@ -50,6 +57,7 @@ fn push_block_alias(inner: &mut DevFsImpl, path: String, dev: SharedBlockDevice)
     inner.block_bindings.push((path, dev));
 }
 
+// 字符设备别名登记；逻辑同 push_block_alias。
 fn push_char_alias(inner: &mut DevFsImpl, path: String, dev: SharedCharacterDevice) {
     if inner.character_bindings.iter().any(|(p, _)| p == &path) {
         return;
@@ -222,49 +230,63 @@ impl DevFsManager for KernelDevFsManager {
     }
 }
 
+/// 重建 devfs 节点表并返回当前节点数量。
 pub fn refresh() -> usize {
     let mut m = KernelDevFsManager;
     m.refresh();
     m.list_nodes().len()
 }
 
+/// 登记 DTB 占位路径（下次 [`refresh`] 时合并进节点表）。
 pub fn set_dt_unsupported_paths(paths: Vec<String>) {
     let mut m = KernelDevFsManager;
     m.set_dt_unsupported_paths(paths);
 }
 
+/// 返回当前节点列表快照。
+#[inline]
 pub fn list_nodes() -> Vec<DevNode> {
     let m = KernelDevFsManager;
     m.list_nodes()
 }
 
+/// 按路径查找块设备句柄。
+#[inline]
 pub fn lookup_block_device(path: &str) -> fs_api_v0::FsResult<SharedBlockDevice> {
     let m = KernelDevFsManager;
     m.lookup_block_device(path)
 }
 
+/// 按路径查找字符设备句柄。
+#[inline]
 pub fn lookup_character_device(path: &str) -> fs_api_v0::FsResult<SharedCharacterDevice> {
     let m = KernelDevFsManager;
     m.lookup_character_device(path)
 }
 
+/// 默认根块设备路径：优先 `/dev/vda`，否则取首个块节点。
+#[inline]
 pub fn default_root_block_path() -> Option<String> {
     let m = KernelDevFsManager;
     m.default_root_block_path()
 }
 
+/// devfs 的 [`FsImpl`] 注册项；仅列能力，不参与块卷挂载。
 pub struct KernelDevFsImpl;
 
+/// 全局 devfs impl 实例，供聚合层 `registered_fs_impls()` 引用。
 pub static IMPL: KernelDevFsImpl = KernelDevFsImpl;
 
 const SUPPORTED: &[FsCapability] =
     &[FsCapability::new(FsKind::DevFs, FsAccessMode::ReadOnly)];
 
 impl FsImpl for KernelDevFsImpl {
+    #[inline]
     fn name(&self) -> &'static str {
         "devfs"
     }
 
+    #[inline]
     fn supported(&self) -> &'static [FsCapability] {
         SUPPORTED
     }

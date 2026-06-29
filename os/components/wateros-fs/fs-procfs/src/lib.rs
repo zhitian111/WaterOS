@@ -1,7 +1,10 @@
 #![no_std]
 
 //! procfs 聚合 crate：按特性选择 `impl-kernel` 或 `impl-dummy` 为 [`active_impl`]。
+//!
+//! **特性**：同时启用 `impl-kernel` 与 `impl-dummy` 时优先 `impl-kernel`；默认 `impl-kernel`。
 
+/// 重导出 procfs API v0。
 pub mod api {
     pub use ::api_v0::*;
 }

@@ -33,6 +33,7 @@ pub struct DevNode {
 // 与内核 devfs 不同：仅缓存枚举快照，无动态 register 表；单 Mutex 保护 bring-up 阶段并发。
 static DEV_NODES: Mutex<Vec<DevNode>> = Mutex::new(Vec::new());
 
+// Linux 风格磁盘名：索引 0 → `/dev/vda`。
 fn linux_vd_disk_path(index: usize) -> String {
     let letter = (b'a' + (index as u8).min(25)) as char;
     format!("/dev/vd{}", letter)
@@ -68,17 +69,20 @@ pub fn refresh() -> usize {
 }
 
 /// 返回当前缓存的节点列表副本。
+#[inline]
 pub fn list_nodes() -> Vec<DevNode> {
     DEV_NODES.lock().clone()
 }
 
 /// 将设备路径解析为索引并向驱动查询共享块设备句柄。
+#[inline]
 pub fn lookup_block_device(path: &str) -> FsResult<SharedBlockDevice> {
     let idx = parse_block_index(path).ok_or(FsError::NotFound)?;
     block_device_at(idx).ok_or(FsError::NotFound)
 }
 
 /// 存在至少一块设备时返回 `/dev/vda`，否则 `None`。
+#[inline]
 pub fn default_root_block_path() -> Option<String> {
     if block_device_count() == 0 {
         None

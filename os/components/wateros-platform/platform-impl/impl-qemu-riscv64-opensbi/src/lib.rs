@@ -8,7 +8,9 @@
 //! OpenSBI console、timer 与 reset 后端。
 
 pub mod console;
+/// OpenSBI system reset 后端。
 pub mod reset;
+/// OpenSBI timer 后端（经 SBI 设置下次中断时刻）。
 pub mod timer;
 
 pub mod boot {
@@ -17,7 +19,9 @@ pub mod boot {
     #[derive(Debug, Clone, Copy)]
     #[allow(unused)]
     pub struct QEMURiscv64OpenSBIBootArgs {
+        /// 固件 `a0`（通常为 hart id）。
         _arg0 : usize,
+        /// 固件 `a1`（通常为 DTB 物理地址）。
         _arg1 : usize,
     }
     impl PlatformBootArgs for QEMURiscv64OpenSBIBootArgs {
@@ -38,7 +42,9 @@ pub mod boot {
     #[derive(Debug, Clone, Copy)]
     #[allow(unused)]
     pub struct QEMURiscv64OpenSBIBootContext {
+        /// 启动 hart id。
         _hart_id : base::cpu::CPUHartID,
+        /// 设备树 blob 物理地址。
         _dtb_pa : base::boot::DTBPA,
     }
     impl From<QEMURiscv64OpenSBIBootArgs> for QEMURiscv64OpenSBIBootContext {

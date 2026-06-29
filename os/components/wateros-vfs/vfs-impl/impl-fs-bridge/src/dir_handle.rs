@@ -53,11 +53,13 @@ const DT_DIR: u8 = 4;
 const DT_LNK: u8 = 10;
 const HEADER_SIZE: usize = 19;
 
+#[inline]
 fn dirent64_reclen(name_len: usize) -> usize {
     let with_name = HEADER_SIZE + name_len + 1;
     (with_name + 7) & !7
 }
 
+#[inline]
 pub(crate) fn node_type_to_dt(t: VfsNodeType) -> u8 {
     match t {
         VfsNodeType::File => DT_REG,

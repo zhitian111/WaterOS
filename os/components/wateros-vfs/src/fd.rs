@@ -18,6 +18,7 @@ static mut FD_REGISTRY : MaybeUninit<UniprocessorSafeCell<PerTaskFdRegistry>> =
 static FD_REGISTRY_READY : AtomicUsize = AtomicUsize::new(0);
 
 /// 全局 per-task fd 注册表（单核 `UniprocessorSafeCell`）。
+#[inline]
 pub fn registry() -> &'static UniprocessorSafeCell<PerTaskFdRegistry> {
     if FD_REGISTRY_READY.load(Ordering::Acquire) == 0 {
         unsafe {
@@ -29,6 +30,7 @@ pub fn registry() -> &'static UniprocessorSafeCell<PerTaskFdRegistry> {
 }
 
 /// 当前任务 id；无运行任务时 [`VfsError::NoTask`]。
+#[inline]
 pub fn current_task_id() -> VfsResult<task::TaskId> {
     task::current_task_id().ok_or(VfsError::NoTask)
 }
@@ -39,6 +41,7 @@ fn with_fd_registry<R>(f: impl FnOnce(&mut PerTaskFdRegistry) -> VfsResult<R>) -
 }
 
 /// 在持有注册表锁的情况下执行 `f`（传入可变注册表与当前任务 id）。
+#[inline]
 pub fn with_current_task<R>(f : impl FnOnce(&mut PerTaskFdRegistry, task::TaskId) -> VfsResult<R>)
                             -> VfsResult<R> {
     let task_id = current_task_id()?;
@@ -83,11 +86,13 @@ pub fn with_current_io<R>(fd : usize,
 }
 
 /// 为当前任务分配 fd。
+#[inline]
 pub fn alloc_fd(handle : Box<dyn VfsIoHandle>) -> VfsResult<usize> {
     with_current_task(|reg, task_id| reg.alloc_fd_for_task(task_id, handle))
 }
 
 /// 关闭当前任务的 fd（调用句柄 `close`）。
+#[inline]
 pub fn close_fd(fd : usize) -> VfsResult<()> {
     let task_id = current_task_id()?;
     let mut handle = with_fd_registry(|reg| reg.take_fd_for_close(task_id, fd))?;
@@ -134,36 +139,43 @@ pub fn current_fd_is_rtc(fd : usize) -> VfsResult<bool> {
 }
 
 /// `dup(oldfd)`：复制到 ≥ `minfd` 的最低可用 fd。
+#[inline]
 pub fn dup_fd(oldfd : usize, minfd : usize) -> VfsResult<usize> {
     with_current_task(|reg, task_id| reg.dup_fd_for_task(task_id, oldfd, minfd))
 }
 
 /// `dup3(oldfd, newfd, cloexec)`。
+#[inline]
 pub fn dup3_fd(oldfd : usize, newfd : usize, cloexec : bool) -> VfsResult<usize> {
     with_current_task(|reg, task_id| reg.dup3_fd_for_task(task_id, oldfd, newfd, cloexec))
 }
 
 /// `fcntl(F_GETFD)`。
+#[inline]
 pub fn get_fd_flags(fd : usize) -> VfsResult<usize> {
     with_current_task(|reg, task_id| reg.get_fd_flags(task_id, fd))
 }
 
 /// `fcntl(F_SETFD)`。
+#[inline]
 pub fn set_fd_flags(fd : usize, val : usize) -> VfsResult<()> {
     with_current_task(|reg, task_id| reg.set_fd_flags(task_id, fd, val))
 }
 
 /// 给当前任务 fd 区间内所有已打开 fd 设置/清除 `FD_CLOEXEC`；未打开 fd 忽略。
+#[inline]
 pub fn set_fd_range_cloexec(first : usize, last : usize, cloexec : bool) -> VfsResult<()> {
     with_current_task(|reg, task_id| reg.set_fd_range_cloexec(task_id, first, last, cloexec))
 }
 
 /// 当前任务下 `fd` 是否为 `O_PATH` 句柄。
+#[inline]
 pub fn is_path_only_fd(fd : usize) -> VfsResult<bool> {
     with_current_task(|reg, task_id| reg.is_fd_path_only(task_id, fd))
 }
 
 /// 将 `fd` 标记为 `O_PATH` 句柄。
+#[inline]
 pub fn set_path_only_fd(fd : usize) -> VfsResult<()> {
     with_current_task(|reg, task_id| reg.set_fd_path_only(task_id, fd))
 }
@@ -175,18 +187,21 @@ pub use impl_fd_session::file_lock::{
 };
 
 /// fork 时初始化子任务 fd 表（仅默认 stdio，spawn 路径）。
+#[inline]
 pub fn init_child_fd_table(child_id : task::TaskId) {
     let mut reg = registry().exclusive_access();
     reg.init_child_fd_table(child_id);
 }
 
 /// fork 时复制父任务 fd 表。
+#[inline]
 pub fn copy_fd_table_from_parent(child_id : task::TaskId, parent_id : task::TaskId) {
     let mut reg = registry().exclusive_access();
     reg.copy_fd_table_from_parent(child_id, parent_id);
 }
 
 /// thread clone 时共享父任务 fd 表。
+#[inline]
 pub fn share_fd_table_from_parent(child_id : task::TaskId, parent_id : task::TaskId) {
     let mut reg = registry().exclusive_access();
     reg.share_fd_table_from_parent(child_id, parent_id);
@@ -206,6 +221,7 @@ pub fn close_cloexec_fds_for_current_task() -> VfsResult<()> {
 }
 
 /// 任务退出后释放 fd 表。
+#[inline]
 pub fn drop_task_fd_table(task_id : task::TaskId) {
     let handles = {
         let mut reg = registry().exclusive_access();

@@ -1,79 +1,99 @@
-# wateros-vfs 公共 API 快照
+# wateros-vfs — 聚合层公共 API
 
 ## 用途
 
-描述一级组件 **`wateros-vfs`**：`vfs-api-v0` 基本能力契约、聚合层组合接口，以及 feature `bridge-fs-api` / `fd-session` 下的实现。
+描述根内核与 syscall 通过 `vfs` 依赖**实际使用**的导出符号（非 `api-v0` 全量 trait 目录）。
 
-## 事实来源
+事实来源：`os/components/wateros-vfs/src/lib.rs`；根 `os/Cargo.toml` 中 `vfs = { package = "wateros-vfs", ... }`，经 `vfs-bridge` feature 启用。
 
-- [`os/components/wateros-vfs/Cargo.toml`](../../os/components/wateros-vfs/Cargo.toml)
-- [`os/components/wateros-vfs/src/lib.rs`](../../os/components/wateros-vfs/src/lib.rs)
-- [`os/components/wateros-vfs/vfs-api/api-v0/`](../../os/components/wateros-vfs/vfs-api/api-v0/)
+## 顶层 re-export
 
----
+```text
+vfs::api              // wateros-vfs-api-v0 别名
+vfs::active_impl      // 当前 VfsBackend（FsBridge 或 DummyBackend）
+vfs::root             // 单根只读视图
+vfs::mount            // RW 挂载会话
+vfs::self_test        // 组合自检
+vfs::fd               // [impl-fd-session] per-task fd
+vfs::cwd              // [impl-fd-session] per-task cwd
+vfs::mount_ns         // [impl-fd-session + bridge] 挂载命名空间转发
+```
 
-## 一、`vfs-api-v0` 基本能力（契约层）
+契约类型（自 `api` 再导出）：`VfsError`、`VfsResult`、`VfsBackend`、`VfsIoHandle`、`VfsOpenFlags`、`VfsMetadata`、`NormalizedPath`、`resolve_open_path` 等。
 
-本 crate **不** 依赖 `wateros-fs`。按能力域拆分模块：
+## `vfs::root`
 
-| 模块 | 能力 |
+| 符号 | 说明 |
 |------|------|
-| `error` | `VfsError`、`VfsResult`（含 `BadFd`、`WouldBlock`、`BrokenPipe`、`NoTask`） |
-| `path` | `normalize_absolute_path`、`NormalizedPath`、`validate_root_file_name` |
-| `meta` | `VfsNodeType`、`VfsMetadata`、`VfsDirEntry` |
-| `kind` | `VfsFsKind`、`VfsAccessMode`、`VfsCapability` |
-| `root_read` | `trait SingleRootReadView` |
-| `rw_session` | `trait RootRwSession` |
-| `mount` | `trait VfsMountOps` |
-| `dev` | `trait VfsDevInventory`、`VfsDevNode` |
-| `resolve` | `resolve_against_cwd` |
-| `handle` | `trait VfsIoHandle`、`trait VfsFileHandle`、`trait VfsOpenOps`、`VfsOpenFlags` |
-| `fd` | `trait VfsFdSession`、`VfsFd`、`VFS_STDIN_FD` 等常量 |
-| `namespace` | `trait VfsMountTable`（占位） |
-| `backend` | `trait VfsBackend`（路径/挂载/设备/打开；**不含** per-task fd 表） |
+| `read_view()` | `&'static impl SingleRootReadView` |
 
-`impl-*` **只实现**这些 trait，不得 `pub use wateros-fs::*`。
+## `vfs::mount`
 
----
+| 符号 | 说明 |
+|------|------|
+| `open_rw_session(kind)` | 按 `VfsFsKind` 打开 `Box<dyn RootRwSession>` |
+| `supported_capabilities()` | 当前后端声明的能力列表 |
 
-## 二、聚合层组合接口（`wateros-vfs` 根 crate）
+## 路径与挂载（`bridge-fs-api`）
 
-| 模块 / 项 | 说明 |
-|-----------|------|
-| **`pub use api_v0 as api`** | 重导出契约层 |
-| **`active_impl::backend()`** | 当前 feature 选中的 `VfsBackend`（`bridge-fs-api` → `FsBridge`，否则 `DummyBackend`） |
-| **`root::read_view()`** | `&'static impl SingleRootReadView` |
-| **`mount::open_rw_session(kind)`** | `Box<dyn RootRwSession>` |
-| **`mount::supported_capabilities()`** | 已注册后端能力列表 |
-| **`fd`**（`fd-session`） | `registry()`、`with_current_io`、`alloc_fd`、`close_fd`、`self_test` |
-| **`cwd`**（`fd-session`） | `init_task_cwd`、`set_task_argv`、`lookup_argv_for_task`、`lookup_exe_for_task`、`chdir_current`、`write_cwd_to_buf`、`drop_task_cwd`、`copy_cwd_from_parent`、`self_test` |
-| **`mkdir_at_current`**（`fd-session` + `bridge-fs-api`） | 相对当前任务 cwd 解析路径后经 RW 会话 `mkdir` |
-| **`ensure_proc_mount_point` / `mount_procfs_at` / `is_proc_mounted_at`**（`bridge-fs-api` + `fd-session`） | procfs 伪挂载；`mount_procfs_at` 注册 procfs 回调并调用 `impl_fs_bridge::mount_aux_proc_at` |
-| **`mount_ext4_block_at` / `unmount_at`**（`bridge-fs-api`） | 辅助 ext4 块设备挂载 |
-| **`resolve_open_path`**（api-v0） | `open` 前路径解析；注册后含 per-task cwd |
-| **`self_test::rw_write_root_verify_via_ro`** | RW 写后 RO 读回校验 |
-| **`self_test::run()`** | 组合自检（`vfs::test()` 内调用） |
-| **`test()`** | `api::test` + dummy + bridge + `fd::self_test` + `self_test::run` |
-| **`dummy`**（`#[doc(hidden)]`） | 占位 impl，供 workspace 独立编译 |
+| 函数 | 说明 |
+|------|------|
+| `mkdir_absolute` / `mkdir_at_current` | 创建目录 |
+| `unlink_absolute` / `unlink_at_current` | 删文件或空目录 |
+| `rename_absolute` | 重命名 |
+| `chmod_absolute` / `chown_absolute` | 权限与属主 |
+| `setxattr_absolute` / `getxattr_absolute` / `listxattr_absolute` / `removexattr_absolute` | xattr |
+| `truncate_absolute` | 截断普通文件 |
+| `symlink_absolute` / `read_symlink_absolute` | 符号链接 |
+| `mknod_socket_absolute` | AF_UNIX bind 用 socket 节点 |
+| `overwrite_absolute_file` | unlink + 写 + 页缓存驱逐 |
+| `mount_ext4_block_at` / `mount_tmpfs_at` / `mount_cgroup_at` | 辅助卷挂载 |
+| `mount_procfs_at` / `ensure_proc_mount_point` / `is_proc_mounted_at` | procfs |
+| `mount_securityfs_at` / `mount_bind_at` / `move_mount_at` | 伪 FS 与 bind |
+| `set_mount_propagation` | 传播类型（`MountPropagation`） |
+| `remount_readonly_at` / `unmount_at` | remount / umount |
+| `assert_path_writable` / `mount_statfs_magic` | 写权限与 magic |
+| `reset_file_page_cache` | 批量刷回与回收页缓存 |
 
-**已移除：** `VfsFdTable` 作为 `VfsBackend` 子 trait；per-task fd 由 **`fd`** 模块、per-task cwd 由 **`cwd`** 模块与 **`impl-fd-session`** 承载。
+## `vfs::fd`（`impl-fd-session`）
 
----
+| 符号 | 说明 |
+|------|------|
+| `PerTaskFdRegistry` | 每任务 fd 表 |
+| `pipe_handle_pair` / `stream_pair_handle_pair` | pipe 与 socket pair |
+| `PipeReadHandle` / `PipeWriteHandle` / `UnixStreamPairEnd` | 句柄类型 |
+| `Flock` / `InodeKey` / `LOCK_*` | 建议性文件锁 |
 
-## Feature
+## `vfs::cwd`（`impl-fd-session`）
 
-| Feature | 说明 |
-|---------|------|
-| **`default`** | `api-v0` + `bridge-fs-api` |
-| **`api-v0`** | 向下传递子 crate `api-v0` |
-| **`bridge-fs-api`** | 启用 `impl_fs_bridge`（依赖 `wateros-fs`） |
-| **`fd-session`** | 启用 `impl-fd-session`、聚合层 `fd` 模块 |
-| **`impl-riscv64` / `impl-loongarch64`** | 为 fd-session 传递平台 console / ipc / task feature |
+| 符号 | 说明 |
+|------|------|
+| `PerTaskCwdRegistry` | 每任务 cwd |
+| `resolve_for_current_task` | 相对路径 → 绝对路径 |
+| `lookup_argv_for_task` / `lookup_exe_for_task` | procfs 回调数据源 |
 
-根 **`wateros`** 在 `qemu-riscv64-opensbi` 下启用 `vfs-bridge`、`vfs/fd-session`、`vfs/impl-riscv64`，并传递 `mm/vfs-root-read` 使 ELF 装载经 `vfs::root::read_view()`。
+## `vfs::api` 主要 trait（syscall 直接引用）
 
----
+| 路径 | 典型消费者 |
+|------|------------|
+| `api::handle::{VfsIoHandle, VfsOpenOps, VfsOpenFlags}` | read/write/open/lseek |
+| `api::fd::VfsFdSession` | fd 表操作 |
+| `api::resolve::{resolve_open_path, resolve_against_cwd}` | openat 路径 |
+| `api::path::{normalize_absolute_path, validate_root_file_name}` | 路径校验 |
+| `api::namespace::VfsMountTable` | mount 表查询 |
+| `api::error::{VfsError, VfsResult}` | errno 映射 |
 
-## 维护要求
+## 自检
 
-契约或组合接口变化时，同步本文件、[`features/wateros-vfs.md`](./features/wateros-vfs.md) 与 [`docs/architecture/snapshot.md`](../architecture/snapshot.md)。
+| 符号 | 说明 |
+|------|------|
+| `vfs::test()` | 串联 api-v0、dummy、bridge、fd、cwd、self_test |
+| `vfs::self_test::run` | bring-up 烟囱（warn 不 panic） |
+
+## 未通过聚合层导出的内容
+
+- `impl-fs-bridge` / `impl-page-cache` 内部路由与缓存结构
+- `impl-fd-session` 各 `*Handle` 实现细节（经 `fd` 模块有限导出）
+- `wateros-fs` 类型（bridge 刻意不 re-export）
+
+依赖方应使用 `vfs::api` 契约与聚合函数，而非直接依赖 `wateros-vfs-impl-fs-bridge`。

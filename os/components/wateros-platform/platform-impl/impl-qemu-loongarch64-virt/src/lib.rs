@@ -6,7 +6,9 @@
 //! 与 `arch-impl-loongarch64` 组合使用；不包含 trap 帧或页表格式实现。
 
 pub mod console;
+/// ACPI GED 复位与关机后端。
 pub mod reset;
+/// Constant Timer deadline 编程后端。
 pub mod timer;
 
 pub mod boot {
@@ -47,8 +49,11 @@ pub mod boot {
     /// 与 [`QEMULoongArch64VirtBootArgs`] 一一对应的类型化视图（当前为透传三槽）。
     #[derive(Debug, Clone, Copy)]
     pub struct QEMULoongArch64VirtBootContext {
+        /// 固件 `a0`。
         pub arg0: usize,
+        /// 固件 `a1`。
         pub arg1: usize,
+        /// 固件 `a2`。
         pub arg2: usize,
     }
 

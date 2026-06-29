@@ -268,10 +268,12 @@ impl LazyFileVma {
                                .duplicate_box()? })
     }
 
+    #[inline]
     fn contains_page(&self, page : VirtAddr) -> bool {
         page.0 >= self.start.0 && page.0 < self.end.0
     }
 
+    #[inline]
     fn overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
         start.0 < self.end.0 && end.0 > self.start.0
     }
@@ -284,10 +286,12 @@ pub(crate) struct SharedAnonVma {
 }
 
 impl SharedAnonVma {
+    #[inline]
     fn contains_page(&self, page : VirtAddr) -> bool {
         page.0 >= self.start.0 && page.0 < self.end.0
     }
 
+    #[inline]
     fn overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
         start.0 < self.end.0 && end.0 > self.start.0
     }
@@ -311,6 +315,7 @@ impl Sv39AddressSpace {
                   shared_anon_vmas : Vec::new() })
     }
 
+    #[inline]
     pub(crate) fn kernel_satp_value(&self) -> usize { make_satp(self.root, KERNEL_ASID) }
 
     /// ELF 装载完成后初始化用户堆与匿名映射区游标（须在泄漏页表对象前调用一次）。
@@ -618,11 +623,13 @@ impl Sv39AddressSpace {
         Ok(())
     }
 
+    /// 沿 VPN 三级索引向下 walk，必要时分配中间页表；返回目标叶子 PTE 槽位。
     #[inline]
     fn walk_create(&mut self, vpn : VirtPageNum) -> MmResult<(&'static mut Sv39Pte, usize)> {
         let idx = vpn_indexes(vpn);
         let mut ppn = self.root;
 
+        // 自根向叶：level 2 → 1 → 0；level=0 为待写入的 4 KiB 叶子槽
         for level in (0..SV39_LEVELS).rev() {
             let table = unsafe { table_mut(ppn) };
             let pte = &mut table[idx[level]];
@@ -633,18 +640,22 @@ impl Sv39AddressSpace {
             }
 
             if !flags.is_valid() {
+                // 中间节点空缺：分配清零子表，PTE 仅置 V（非 R/W/X 叶子）
                 let child = alloc_table_frame_zeroed()?;
                 pte.set(child, Sv39PteFlags::V);
             } else if flags.is_leaf() {
+                // 中途命中叶子：VPN 与已有映射粒度冲突，无法继续向下
                 return Err(MmError::AlreadyMapped);
             }
 
+            // 进入下一级页表
             ppn = pte.ppn();
         }
 
         Err(MmError::InvalidAddress)
     }
 
+    /// 只读 walk：找到叶子或中途停止；无效路径返回 `Ok(None)`。
     #[inline]
     fn walk_find(&self, vpn : VirtPageNum) -> MmResult<Option<(&'static mut Sv39Pte, usize)>> {
         let idx = vpn_indexes(vpn);
@@ -656,9 +667,11 @@ impl Sv39AddressSpace {
             let flags = pte.flags();
 
             if !flags.is_valid() {
+                // 该级未映射，整段 VPN 视为未翻译
                 return Ok(None);
             }
             if level == 0 || flags.is_leaf() {
+                // 到达叶子层，或中途大页/叶 PTE
                 return Ok(Some((pte, level)));
             }
             ppn = pte.ppn();
@@ -724,6 +737,7 @@ impl Sv39AddressSpace {
         self.root = PhysPageNum(0);
     }
 
+    /// 对单页执行写时复制：仅处理已标记 COW 且曾为可写的用户叶映射。
     fn handle_cow_page(&mut self, vpn : VirtPageNum) -> MmResult<bool> {
         let Some((pte, level)) = self.walk_find(vpn)? else {
             return Ok(false);
@@ -734,12 +748,14 @@ impl Sv39AddressSpace {
         }
         let old_ppn = pte.ppn();
         let new_flags = flags.restore_cow_writable();
+        // 独占帧：原地恢复 W，无需复制
         if frame_ref_count(old_ppn).map_err(MmError::from)? <= 1 {
             pte.set(old_ppn, new_flags);
             platform::arch::paging::flush_address_space_translations();
             return Ok(true);
         }
 
+        // 共享帧：分配新页、复制 4 KiB、递减旧帧引用
         let new_ppn = frame_alloc_result().map_err(MmError::from)?;
         let src = old_ppn.0 * PAGE_SIZE;
         let dst = new_ppn.0 * PAGE_SIZE;
@@ -860,6 +876,7 @@ unsafe fn destroy_table(ppn : PhysPageNum,
         let child_ppn = pte.ppn();
 
         if flags.is_leaf_at_level(level) {
+            // 用户叶：回收物理帧；共享匿名 VMA 内页由其它地址空间仍引用
             if flags.to_page_perm()
                     .user()
             {
@@ -871,13 +888,16 @@ unsafe fn destroy_table(ppn : PhysPageNum,
                     let _ = frame_dealloc_result(child_ppn);
                 }
             }
+            // 内核恒等叶（无 U）：不释放，仅断开本地址空间 PTE
         } else if level > 0 {
+            // 中间页表：递归销毁子树
             let child_prefix = vpn_prefix | (i << (level * VPN_INDEX_BITS));
             unsafe {
                 destroy_table(child_ppn, level - 1, child_prefix, shared_anon_vmas);
             }
         }
     }
+    // 释放当前层页表帧本身
     let _ = frame_dealloc_result(ppn);
 }
 
@@ -916,6 +936,7 @@ unsafe fn fork_table(parent_ppn : PhysPageNum,
                 if !is_shared_anon {
                     frame_inc_ref(ppn).map_err(MmError::from)?;
                 }
+                // 可写私有页：父子共享物理帧，父 PTE 清 W 并打 COW 标记
                 let child_flags = if is_shared_anon {
                     flags
                 } else if flags.writable() {
@@ -927,9 +948,11 @@ unsafe fn fork_table(parent_ppn : PhysPageNum,
                 };
                 child_table[i].set(ppn, child_flags);
             } else {
+                // 内核叶：子表与父表共享同一 PPN
                 child_table[i].set(ppn, flags);
             }
         } else if level > 0 {
+            // 中间节点：为子地址空间复制一整棵子页表
             let child_prefix = vpn_prefix | (i << (level * VPN_INDEX_BITS));
             let child_sub = alloc_table_frame_zeroed()?;
             if let Err(err) =

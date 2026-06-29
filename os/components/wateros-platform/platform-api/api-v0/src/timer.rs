@@ -17,7 +17,10 @@ pub enum PlatformDeadlineTimerError {
 
 /// 绝对 tick deadline；tick 源需与 `platform::timer::now_tick()` 同源。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct PlatformTimerDeadline(pub u64);
+pub struct PlatformTimerDeadline(
+    /// 绝对 tick deadline，与 `platform::timer::now_tick()` 同源。
+    pub u64,
+);
 
 /// [`PlatformDeadlineTimerError`] 上的 `Result` 别名。
 pub type PlatformDeadlineTimerResult<T> = Result<T, PlatformDeadlineTimerError>;

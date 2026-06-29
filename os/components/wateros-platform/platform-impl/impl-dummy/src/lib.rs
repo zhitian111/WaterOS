@@ -5,6 +5,7 @@
 //! 与 `impl-qemu-riscv64-opensbi` 由 `wateros-platform` feature 切换；方法体多为
 //! `unimplemented!()`，不得当作可启动内核的配置。
 
+/// 占位控制台：所有写操作返回 [`PlatformConsoleError::Unsupported`]。
 pub mod console {
     use api_v0::console::{PlatformConsoleError, PlatformConsoleResult};
 
@@ -22,6 +23,7 @@ pub mod console {
     }
 }
 
+/// 占位 deadline timer：始终返回 [`PlatformDeadlineTimerError::Unsupported`]。
 pub mod timer {
     use api_v0::timer::{
         PlatformDeadlineTimerError, PlatformDeadlineTimerResult, PlatformTimerDeadline,
@@ -33,6 +35,7 @@ pub mod timer {
     }
 }
 
+/// 占位复位：始终返回 [`PlatformResetError::Unsupported`]。
 pub mod reset {
     use api_v0::reset::{
         PlatformResetError, PlatformResetReason, PlatformResetResult, PlatformResetType,
@@ -58,6 +61,7 @@ pub mod reset {
     }
 }
 
+/// 占位引导参数与上下文。
 pub mod boot {
     use api_v0::boot::*;
 
@@ -86,6 +90,7 @@ pub mod boot {
     pub use PlatformDummyBootContext as BootContext;
 }
 
+/// 占位时间频率源。
 pub mod time {
     use api_v0::time::{PlatformTime, PlatformTimeError, PlatformTimeResult};
 

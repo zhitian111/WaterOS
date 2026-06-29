@@ -1,29 +1,24 @@
-# wateros-utils 功能快照
+# wateros-utils — 已实现功能
+
+事实来源：`os/components/wateros-utils/Cargo.toml`、`src/lib.rs`。
 
 ## 用途
 
-记录 **`wateros-utils`** 当前作为占位/示例工具 crate 的状态，避免被误认为已提供通用跨组件工具库。
+预留通用小工具与可复用例程的聚合位置，与平台类型保持弱耦合。
 
-## 事实来源
+## 当前能力
 
-- `os/components/wateros-utils/Cargo.toml`
-- `os/components/wateros-utils/src/lib.rs`
-- `os/components/wateros-utils/src/asm/`（若存在且未接入构建）
+| 项 | 状态 | 说明 |
+|----|------|------|
+| `add(u64, u64)` | 占位 | 仅供 crate 内 `cargo test` 烟测 |
+| `src/asm/riscv/print_rigister.S` | 未接入 | 早期 UART 二进制打印辅助，未编入 `lib.rs` |
 
-## 当前已具备能力
+## 主线依赖
 
-- 聚合 **`src/lib.rs`** 仅导出示例函数 **`add(u64, u64) -> u64`** 与单元测试。
-- 仓库内可能存在 **RISC-V 汇编**示例文件（如 **`print_rigister.S`**），**未**经 **`global_asm!`**、**`build.rs`** 或 **`lib.rs`** 接入当前 crate 构建产物。
+根 `wateros` 以 `utils` 别名默认依赖本 crate（`default-features = true`），但当前内核代码几乎未调用其公共 API。
 
-## 架构模式
+## 缺口
 
-- **无** **`[features]`**、**无** **`api-v0`**、**无** **`impl-*`** 分层。
-
-## 明确未覆盖
-
-- 与内核 bring-up、驱动或调试输出集成的真实工具 API。
-- 汇编例程的 FFI 与安全封装。
-
-## 维护要求
-
-若引入真实工具 API 或接入汇编，同步更新本文件与根 **`os/Cargo.toml`** 依赖说明（当前根 crate 仍依赖 **`wateros-utils`** 作为轻量占位）。
+- 无实际工具函数或数据结构对外导出
+- 汇编调试例程未纳入构建
+- 无 feature 分层，无 impl 子 crate

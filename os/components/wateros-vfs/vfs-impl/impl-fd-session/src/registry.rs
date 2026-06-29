@@ -38,6 +38,7 @@ pub struct PerTaskFdRegistry {
 }
 
 impl PerTaskFdRegistry {
+    #[inline]
     pub const fn new() -> Self {
         Self {
             tables: BTreeMap::new(),
@@ -66,6 +67,7 @@ impl PerTaskFdRegistry {
         }
     }
 
+    #[inline]
     fn effective_owner(&self, task_id: task::TaskId) -> task::TaskId {
         self.owners
             .get(&task_id)
@@ -550,6 +552,7 @@ impl PerTaskFdRegistry {
         self.set_fd_cloexec(task_id, fd, cloexec)
     }
 
+    /// 将 `fd` 标记为 `O_PATH` 句柄（仅路径解析，禁止读写）。
     pub fn set_fd_path_only(&mut self, task_id: task::TaskId, fd: usize) -> VfsResult<()> {
         self.get_io_for_task(task_id, fd)?;
         self.ensure_flags_len(task_id, fd + 1);
@@ -558,6 +561,7 @@ impl PerTaskFdRegistry {
         Ok(())
     }
 
+    /// 查询 `fd` 是否为 `O_PATH` 句柄。
     pub fn is_fd_path_only(&mut self, task_id: task::TaskId, fd: usize) -> VfsResult<bool> {
         self.get_io_for_task(task_id, fd)?;
         self.ensure_task(task_id);

@@ -38,6 +38,7 @@ pub use api_v0::*;
 /// 聚合层维护的 FS impl 注册表。每个 impl 暴露一个 `'static FsImpl`，按特性宏静态拼接。
 ///
 /// 内核 devfs 是注册项之一（仅供 supported_fs 列示），ext4 是块设备路径上的真实根 FS impl。
+#[inline]
 pub fn registered_fs_impls() -> &'static [&'static dyn api_v0::FsImpl] {
     static TABLE: &[&'static dyn api_v0::FsImpl] = &[
         #[cfg(feature = "impl-ext4-rs")]
@@ -51,6 +52,7 @@ pub fn registered_fs_impls() -> &'static [&'static dyn api_v0::FsImpl] {
 }
 
 /// 扁平化所有已注册 impl 的 [`FsCapability`]，便于 supported_fs 一行打印。
+#[inline]
 pub fn supported_fs_summary() -> Vec<api_v0::FsCapability> {
     let mut out = Vec::new();
     for imp in registered_fs_impls() {
@@ -62,6 +64,7 @@ pub fn supported_fs_summary() -> Vec<api_v0::FsCapability> {
 }
 
 /// 在注册表中选择一条匹配 `(kind, mode)` 的 impl；无匹配返回 None。
+#[inline]
 pub fn pick_fs_impl(
     kind: api_v0::FsKind,
     mode: api_v0::FsAccessMode,
@@ -151,6 +154,7 @@ pub fn mount_default_root_rw() -> api_v0::FsResult<()> {
 }
 
 /// 当前根读写句柄；未挂载时为 `None`。
+#[inline]
 pub fn root_rw_fs() -> Option<api_v0::SharedRwFs> {
     rootfs::active_impl::root_rw_fs()
 }

@@ -5,6 +5,7 @@
 //! `_start.S`，入口符号 与 `link.ld` 中的 `ENTRY(...)` 必须一致；改脚本或汇编后
 //! Cargo 会重链。
 
+/// 按启用的 board feature 向 Cargo 声明重链条件并传入链接脚本。
 fn main() {
     #[cfg(feature = "qemu-riscv64-opensbi")]
     println!("cargo::rerun-if-changed=./components/wateros-platform/platform-impl/\

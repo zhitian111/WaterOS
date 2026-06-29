@@ -64,11 +64,13 @@ impl SmoltcpAdapter {
     }
 
     /// 设置本机 IPv4 地址，用于识别应回灌给协议栈的本地帧。
+    #[inline]
     pub fn set_local_ipv4(&mut self, ip: [u8; 4]) {
         self.local_ipv4 = ip;
     }
 
     /// 获取 MAC 地址（用于构建 smoltcp 接口配置）。
+    #[inline]
     pub fn mac_address(&self) -> [u8; 6] {
         self.inner
             .as_ref()

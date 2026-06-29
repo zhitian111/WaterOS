@@ -41,9 +41,9 @@ const CSR_EUEN : usize = 0x2;
 const LOONGARCH_PAGE_SIZE_BITS : usize = 12;
 const LOONGARCH_PWCL_4K_3LEVEL : usize =
     12 | (9 << 5) | (21 << 10) | (9 << 15) | (30 << 20) | (9 << 25);
-/// PLV0-only direct-map window for VA[47:0] -> PA[47:0], MAT=coherent cached.
-/// Keeping PLV3 disabled here forces user code through PGDL/TLB while making
-/// trap/refill entry and kernel stacks independent of the current user PGDL.
+/// PLV0 专用直接映射窗口：VA[47:0] → PA[47:0]，MAT 为一致可缓存。
+/// 此处不开放 PLV3，迫使用户代码走 PGDL/TLB，同时 trap/重填入口与内核栈不依赖
+/// 当前用户 PGDL。
 const LOONGARCH_DMW0_PLV0_CACHED : usize = 0x11;
 /// `PRMD.PPLV`：返回后特权级域（与 `returns_to_user` 判定一致）。
 const LOONGARCH_PRMD_PPLV_MASK : usize = 0x3;
@@ -257,9 +257,8 @@ impl TrapFrameWrite for TrapContext {
     fn set_user_sp(&mut self, sp : usize) { self.set_user_sp_raw(sp); }
 
     fn set_user_entry_args(&mut self, _argc : usize, _argv : usize, _envp : usize) {
-        // Linux/LoongArch libc start code reads argc/argv/envp from the user
-        // stack. a0 carries rtld_fini for the dynamic loader handoff; for direct
-        // kernel exec, static binaries need it to be null.
+        // Linux/LoongArch libc 从用户栈读 argc/argv/envp；a0 供动态链接器 rtld_fini，
+        // 内核直接 exec 的静态程序须置 0。
         self.x[4] = 0;
     }
 
@@ -280,7 +279,7 @@ impl TrapSyscallWrite for TrapContext {
 
 impl TrapThreadWrite for TrapContext {
     fn set_user_tls(&mut self, tls : usize) {
-        // LoongArch64 psABI: tp is $r2.
+        // LoongArch64 psABI：线程指针为 $r2。
         self.x[2] = tls;
     }
 }

@@ -1,37 +1,56 @@
-# wateros-vfs 功能快照
+# wateros-vfs — 已实现功能快照
 
-## 当前状态
+## 用途
 
-- **`vfs-api-v0`**：VFS 模块基本能力（路径、单根只读、RW 会话、挂载、dev 视图、`VfsIoHandle` / `VfsFdSession`、多挂载占位 trait）；**不**依赖 `wateros-fs`。
-- **`vfs-impl-dummy`**：实现 `VfsBackend` 路径/挂载相关 trait 的占位后端。
-- **`vfs-impl-fs-bridge`**（`bridge-fs-api`）：经 `wateros-fs` 实现当前可落地的 trait 子集；含 **procfs 伪挂载**（`AuxMount::PseudoProc`、`ProcDirectoryHandle` / `ProcFileHandle`）；`open` 按 `wateros-base-config::fs::FILE_LARGE_THRESHOLD` 分流 **`BufferedFileHandle`** / **`PagedFileHandle`**。
-- **`vfs-impl-page-cache`**：全局共享页缓存（Direct、`FILE_PAGE_SIZE` 行、LRU 容量与可选预取步长）；键 `(mount_generation, path)`。
-- **`vfs-impl-fd-session`**（`fd-session`）：per-task fd 表、**per-task cwd**（`PerTaskCwdRegistry`）、控制台与 pipe 的 `VfsIoHandle` 实现。
-- **按偏移 I/O**：`VfsIoHandle::read_at`/`write_at` 在 `BufferedFileHandle`/`PagedFileHandle` 实现（不改变顺序 `read` 使用的 `offset`）；供 `pread`/`pwrite`/`sendfile` syscall 使用。
-- **`poll` 就绪**：`VfsIoHandle::poll_revents` / `poll_wait_for_ticks`；pipe 经 `ipc-pipe` waitqueue；常规文件恒就绪。
-- **聚合层**：`active_impl` + `root` / `mount` / `self_test` / `fd` / **`cwd`** 组合对外接口。
+记录 `wateros-vfs` 一级组件当前已落地能力、feature 组合与已知缺口。事实来源：`os/components/wateros-vfs/**` 源码与 `Cargo.toml`；根 `wateros` 通过 `vfs-bridge` feature 启用聚合 crate。
 
-## 根 crate 接线
+## 子 crate 与职责
 
-- **`wateros`** 在 **`qemu-riscv64-opensbi`** 下启用 **`vfs-bridge`**、**`vfs/fd-session`**、**`vfs/impl-riscv64`**，在 `fs::init` / `fs::test` 之后调用 **`vfs::test()`**（含 `fd::self_test` 与 RW 读回烟囱）；bring-up 总线在根 RW 挂载后 **`ensure_proc_mount_point` + `mount_procfs_at("/proc")`**。
-- **`wateros-mm`** 在相同 feature 下启用 **`vfs-root-read`**，`from_elf_path` 经 **`vfs::root::read_view()`** 读 ELF。
-- **`wateros-syscall`** 经 **`fd-session`** feature 依赖 **`vfs::fd`** 与 **`vfs::cwd`** 完成 `read` / `write` / `close` / `dup` / `dup3` / `pipe2` / `getcwd` / `chdir` / `mkdirat`；`fork` 经 **`copy_fd_table_from_parent`** 继承 fd；`execve` 经 **`close_cloexec_fds_for_current_task`** 关闭 CLOEXEC fd。
+| 子 crate | 职责 | 状态 |
+|----------|------|------|
+| `wateros-vfs`（聚合） | `api` 契约 re-export、`active_impl` 选后端、`root`/`mount`/`fd`/`cwd` 对外面 | 已实现 |
+| `wateros-vfs-api-v0` | `VfsBackend`、路径解析、fd 会话、挂载表 trait | 已实现 |
+| `vfs-impl/impl-dummy` | 占位 `VfsBackend`（无真实 I/O） | 已实现（测试/无 bridge） |
+| `vfs-impl/impl-fs-bridge` | 桥接 `wateros-fs` 根卷、devfs、procfs、辅助挂载 | 已实现（默认） |
+| `vfs-impl/impl-fd-session` | per-task fd 表、cwd、pipe、字符设备句柄 | 已实现（默认） |
+| `vfs-impl/impl-page-cache` | 文件页缓存（写回、逻辑 size 覆盖） | 已实现 |
 
-## 工作区说明
+## Feature 矩阵（聚合层）
 
-- **`[workspace].members`** 含 `api-v0`、`impl-dummy`、`impl-fd-session`、`impl-page-cache`；`impl-fs-bridge` 由 `wateros` 在 RISC-V 目标下路径依赖编译。
+| Feature | 效果 |
+|---------|------|
+| `api-v0` | 链接 API 契约与 dummy 桩 |
+| `bridge-fs-api` | 启用 `impl-fs-bridge` + 依赖 `wateros-fs` |
+| `impl-fd-session` | per-task fd/cwd，依赖 `wateros-task` |
+| `impl-dummy` | 仅占位后端（与 `bridge-fs-api` 互斥使用场景） |
+| `default` | `api-v0` + `bridge-fs-api` + `impl-fd-session` |
 
-## 后续关注点
+## 已实现能力
 
-- 文件 **Async I/O**（`FILE_IO_MODE::Async`）与跨 fd 细粒度页锁。
-- 文件 **Async I/O** 细项与 `fcntl` 非阻塞 / `F_DUPFD_CLOEXEC` 扩展。
-- fork 后文件 offset 共享（当前 `duplicate` 为句柄级 `Clone`，pipe 共享 `Arc<Pipe>`）。
-- 完整多文件系统挂载 syscall（ext4 辅助挂载 + proc 已支持；vnode 层仍待扩展）。
+- **路径**：绝对路径规范化、`resolve_open_path`、cwd 相对解析、根文件名校验。
+- **单根只读**：`vfs::root::read_view()` → `exists` / `metadata` / `read`。
+- **RW 会话**：`mount::open_rw_session` 按 `VfsFsKind` 打开根卷写会话。
+- **open/read/write/seek**：`VfsOpenOps` + `VfsIoHandle`（经 bridge 到 ext4 与页缓存）。
+- **挂载命名空间**：ext4 块设备、tmpfs、cgroup、procfs、securityfs、bind/move、传播类型、lazy umount。
+- **路径级元数据操作**：`chmod`/`chown`/`xattr`/`truncate`/`mkdir`/`unlink`/`rename`/`symlink`/`mknod` socket。
+- **fd 会话**：stdin/stdout/stderr、动态 fd 分配、pipe/stream pair、文件锁（`flock`）、控制台与 `/dev/*` 字符设备。
+- **per-task cwd**：spawn 继承、chdir、`lookup_argv`/`lookup_exe` 供 procfs。
+- **自检**：`vfs::test()` 串联 api、dummy、bridge、fd、cwd 与 `self_test::run()`。
 
-## 锁机制审计（2026-06-25）
+## 与 wateros-fs 的分工
 
-**2026-06-25 修复轮**：页缓存 flush/read/write 持锁区间缩短（PC-01）；`PagedFileHandle::truncate` 走路由。fd/cwd 仍为 `UniprocessorSafeCell`；`CLONE_FILES`+`with_current_io` 竞态（FD-01）暂缓。详见 [`lock-issues.md`](../../audits/lock-issues.md)。
+`wateros-vfs` **不**直接实现块文件系统；`bridge-fs-api` 下由 `impl-fs-bridge` 调用 `wateros-fs` 的 `rootfs`/`devfs`/`procfs` 与 ext4 impl。VFS 层负责路径路由、挂载表、页缓存叠加与 syscall 侧 fd 语义。
 
-## 维护
+## 缺口与后续
 
-能力或组合接口变化时同步 [`public-api/wateros-vfs.md`](../public-api/wateros-vfs.md) 与本文件。
+- `impl-dummy` 无真实挂载与 open，仅编译占位。
+- 页缓存与 ext4 写路径的并发策略仍偏单核 bring-up 假设。
+- `VfsFdSession::alloc_fd` 默认 trait 方法返回 `Unsupported`，真实分配在 `impl-fd-session`。
+- 异步 I/O（`FsAsyncIo` 对应面）未在 VFS 暴露。
+- securityfs/cgroup 为伪 FS 子集，语义以满足 LTP 子集为主。
+
+## 修订
+
+| 日期 | 说明 |
+|------|------|
+| 2026-06-29 | 初版导出（注释/inline 任务同步） |

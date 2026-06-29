@@ -1,15 +1,12 @@
 #![no_std]
-//! Syscall v0 dispatch contract.
-//!
-//! This API crate keeps the trap-facing dispatcher shape stable while concrete
-//! kernel handlers live in `syscall-impl/*`.
+//! Syscall v0 分发契约：固定 trap 侧分发器形状，具体 `sys_*` 实现在 `syscall-impl/*`。
 
 #[cfg(feature = "api-v0")]
 use abi::{
     errno::ErrNo, syscall_args::SyscallArgs, syscall_number::SyscallNumberTable, user_ret::UserRet,
 };
 
-/// Decoded syscall identity independent of the concrete ABI number table.
+/// 与具体 ABI 号表解耦的 syscall 语义槽位。
 #[cfg(feature = "api-v0")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SyscallKind {
@@ -182,7 +179,7 @@ pub enum SyscallKind {
 
 #[cfg(feature = "api-v0")]
 impl SyscallKind {
-    /// Decode a raw syscall number using the selected ABI number table.
+    /// 用指定 ABI 号表把裸 syscall 号解码为 [`SyscallKind`]。
     #[inline]
     pub fn decode<T: SyscallNumberTable>(syscall_nr: usize) -> Self {
         if syscall_nr == T::READ.raw() {
@@ -518,7 +515,7 @@ impl SyscallKind {
         }
     }
 
-    /// Stable syscall slot name for logs and bring-up diagnostics.
+    /// 稳定的 syscall 槽位名，供日志与 bring-up 诊断使用。
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
@@ -691,7 +688,7 @@ impl SyscallKind {
     }
 }
 
-/// Bring-up helpers for decoded-but-unimplemented syscall slots and unknown numbers.
+/// bring-up 辅助：已解码但未实现、或号表未收录的 syscall 统一 panic 出口。
 #[cfg(feature = "api-v0")]
 pub mod unsupported {
     extern crate alloc;
@@ -700,7 +697,7 @@ pub mod unsupported {
 
     use super::SyscallKind;
 
-    /// Label for a decoded syscall slot (same as [`SyscallKind::label`]).
+    /// 已解码槽位名（同 [`SyscallKind::label`]）。
     #[inline]
     #[must_use]
     pub const fn slot_label(kind: SyscallKind) -> &'static str {
@@ -740,17 +737,17 @@ pub mod unsupported {
     }
 }
 
-/// Standard return value for decoded but not-yet-implemented syscall slots.
+/// 已解码但尚未实现的 syscall 槽位标准返回值（`-ENOSYS`）。
 #[cfg(feature = "api-v0")]
 #[inline]
 pub fn syscall_enosys_ret() -> isize {
     UserRet::from_error(ErrNo::ENOSYS).0
 }
 
-/// Kernel-side syscall dispatcher selected by the aggregate crate.
+/// 聚合 crate 选中的内核侧 syscall 分发器 trait。
 #[cfg(feature = "api-v0")]
 pub trait SyscallDispatcher {
-    /// ABI number table used to decode raw syscall IDs.
+    /// 用于解码裸 syscall 号的 ABI 号表类型。
     type NumberTable: SyscallNumberTable;
 
     fn dispatch_yield(args: SyscallArgs) -> isize {
@@ -2043,17 +2040,17 @@ pub trait SyscallDispatcher {
         )
     }
 
-    /// Decoded syscall slot with no kernel `dispatch_*` override yet.
+    /// 已解码但 impl 尚未覆盖的槽位（默认 `-ENOSYS`）。
     fn dispatch_unsupported(_kind: SyscallKind, _syscall_nr: usize, _args: SyscallArgs) -> isize {
         syscall_enosys_ret()
     }
 
-    /// Raw syscall number not present in the active ABI number table decode map.
+    /// 活跃号表 decode 映射中不存在的裸 syscall 号（默认 `-ENOSYS`）。
     fn dispatch_unknown(_syscall_nr: usize, _args: SyscallArgs) -> isize {
         syscall_enosys_ret()
     }
 
-    /// Dispatch one syscall packet from a trap frame.
+    /// 从 trap 帧分发一次 syscall 请求。
     fn dispatch_syscall_from_trap(syscall_nr: usize, syscall_args: SyscallArgs) -> isize {
         match SyscallKind::decode::<Self::NumberTable>(syscall_nr) {
             SyscallKind::Yield => Self::dispatch_yield(syscall_args),

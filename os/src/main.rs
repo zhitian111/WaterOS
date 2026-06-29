@@ -10,8 +10,8 @@
 //!    `platform::time::set_frequency_hz`；再初始化控制台与日志、堆分配器，再做
 //!    `platform::arch` 与 MM
 //!   （frame 范围、Sv39、内核页表等；含 `mm` 自检日志）。
-//! 3. 初始化任务、注册组合层 trap 路由（`trap_handler::init`），再做 MM
-//!    （frame 范围、Sv39、内核页表等；含 `mm` 自检日志）；随后 `driver::active_impl::init_after_boot`；成功则挂载 `fs`。
+//! 3. 初始化任务与组合层 trap 路由（`task::init`、`trap_handler::init`）；随后
+//!    `driver::active_impl::init_after_boot`；成功则挂载 `fs`。
 //! 4. 在驱动与 `fs::init`（探测 + 注入 impl，不挂载）成功后，先跑
 //!    [`user_bringup_bus::run`]：在总线内 **RW 挂载 ext4 根卷**，再按总线内
 //!    登记顺序执行 **`stage-basic`**（直接装载 **`/{glibc,musl}/basic/*` ELF**）、
@@ -69,12 +69,14 @@ mod user_bringup_root_layout;
 
 /// 将内核 panic 委托给 `wateros-runtime` 的统一 panic 处理（日志/停机策略由
 /// runtime 决定）。
+#[inline]
 #[panic_handler]
 pub fn panic_handler(_panic_info : &core::panic::PanicInfo) -> ! {
     runtime::panic::panic_handler(_panic_info)
 }
 
 /// 堆分配失败时委托给 runtime 的全局分配错误处理；语义为不可恢复错误路径。
+#[inline]
 #[alloc_error_handler]
 pub fn alloc_error_handler(layout : core::alloc::Layout) -> ! {
     runtime::heap_allocator::handle_alloc_error(layout)

@@ -13,16 +13,19 @@ use api_v0::{
 use impl_ringbuf::KlogRingbuf as Ring;
 
 /// 初始化全局 klog 环（清空内容；不写入消息）。
+#[inline]
 pub fn init() {
     Ring::init();
 }
 
 /// 内核主线初始化完成后调用，写入固定问候语供 `syslog(2)` / `dmesg` 读取。
+#[inline]
 pub fn post_init_hello() {
     let _ = record(LOG_INFO, LOG_KERN, b"hello wateros\n");
 }
 
 /// 追加一条记录（自动填时间戳与 `caller_id`）。
+#[inline]
 pub fn record(level: u8, facility: u8, text: &[u8]) -> AppendResult {
     let mut meta = KlogRecordMeta::new(
         ts_nsec_now(),
@@ -36,16 +39,19 @@ pub fn record(level: u8, facility: u8, text: &[u8]) -> AppendResult {
 }
 
 /// 使用已填字段的 meta 追加（`text_len` 由环覆盖）。
+#[inline]
 pub fn record_with_meta(meta: &mut KlogRecordMeta, text: &[u8]) -> AppendResult {
     Ring::with(|ring| ring.append(meta, text))
 }
 
 /// 统计快照。
+#[inline]
 pub fn stats() -> KlogStats {
     Ring::with(|ring| ring.stats())
 }
 
 /// 从 `start_seq` 起迭代记录。
+#[inline]
 pub fn iter_from<F>(start_seq: u64, f: F)
 where
     F: FnMut(api_v0::KlogRecordView<'_>),
@@ -54,6 +60,7 @@ where
 }
 
 /// 单调时钟纳秒；失败时为 0。
+#[inline]
 pub fn ts_nsec_now() -> u64 {
     platform::timer::now_duration()
         .map(|d| {
@@ -65,6 +72,7 @@ pub fn ts_nsec_now() -> u64 {
 }
 
 /// 当前任务 ID；无调度上下文时为 0。
+#[inline]
 pub fn caller_id_now() -> u32 {
     task::current_task_id().map(|id| id as u32).unwrap_or(0)
 }
@@ -127,11 +135,13 @@ pub struct KlogFmtBuffer {
 
 impl KlogFmtBuffer {
     /// 空缓冲。
+    #[inline]
     pub const fn new() -> Self {
         Self { buf: [0; 512], len: 0 }
     }
 
     /// 已写入切片。
+    #[inline]
     pub fn as_bytes(&self) -> &[u8] {
         &self.buf[..self.len]
     }

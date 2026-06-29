@@ -18,7 +18,7 @@ pub trait PlatformBootArgs: Debug + Clone + Copy {
     /// 第三参（板级扩展）；未使用则 `None`。
     #[inline]
     fn arg2(&self) -> Option<usize> { None }
-    // etc.
+    // 更多槽位由板级实现按需覆盖。
 }
 
-// 入口汇编 `_start` 需与具体实现约定一致，由链接脚本与启动代码提供，不在本 trait 中表达。
+// 入口汇编 `_start` 与具体实现约定一致，由链接脚本与启动代码提供，不在本 trait 中表达。

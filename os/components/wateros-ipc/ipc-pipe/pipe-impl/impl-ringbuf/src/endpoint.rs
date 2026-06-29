@@ -81,6 +81,7 @@ impl PipeEndpoint {
 }
 
 impl PipeEndpointOps for PipeEndpoint {
+    #[inline]
     fn pair(nonblocking: bool) -> (Self, Self) {
         let pipe = Arc::new(Pipe::new());
         pipe.acquire_read();
@@ -99,10 +100,12 @@ impl PipeEndpointOps for PipeEndpoint {
         )
     }
 
+    #[inline]
     fn kind(&self) -> PipeEndpointKind {
         self.kind
     }
 
+    #[inline]
     fn nonblocking(&self) -> bool {
         self.nonblocking.get()
     }
@@ -136,6 +139,7 @@ impl PipeEndpointOps for PipeEndpoint {
         }
     }
 
+    #[inline]
     fn poll_revents(&self, events: i16) -> PipeResult<i16> {
         const POLLIN: i16 = 0x001;
         const POLLOUT: i16 = 0x004;

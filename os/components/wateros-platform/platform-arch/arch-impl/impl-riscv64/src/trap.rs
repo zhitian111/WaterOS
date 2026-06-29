@@ -183,8 +183,8 @@ impl TrapContext {
         self.sstatus &= !RISCV_SSTATUS_SPP;
         self.sstatus &= !(1 << 1);
         self.sstatus |= 1 << 5;
-        // Userspace is built for riscv64gc/lp64d and may execute F/D instructions
-        // during libc startup. Keep FS enabled until full FPU context switching lands.
+        // 用户态按 riscv64gc/lp64d 构建，libc 启动期可能执行 F/D 指令；完整 FPU
+        // 上下文切换落地前，先保持 FS 位使能。
         self.sstatus |= RISCV_SSTATUS_FS_DIRTY;
     }
 
@@ -264,8 +264,7 @@ impl TrapFrameWrite for TrapContext {
     fn set_user_sp(&mut self, sp : usize) { self.set_user_sp_raw(sp); }
 
     fn set_user_entry_args(&mut self, _argc : usize, _argv : usize, _envp : usize) {
-        // Linux/RISC-V libc start code reads argc/argv/envp from the user stack.
-        // a0 is reserved for rtld_fini; for static binaries it must remain 0.
+        // Linux/RISC-V libc 从用户栈读 argc/argv/envp；a0 预留给 rtld_fini，静态链接须为 0。
         self.x[10] = 0;
     }
 
@@ -286,7 +285,7 @@ impl TrapSyscallWrite for TrapContext {
 
 impl TrapThreadWrite for TrapContext {
     fn set_user_tls(&mut self, tls : usize) {
-        // RISC-V psABI: tp is x4.
+        // RISC-V psABI：线程指针为 x4（`tp`）。
         self.x[4] = tls;
     }
 }

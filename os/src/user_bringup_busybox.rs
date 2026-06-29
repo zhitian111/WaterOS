@@ -5,6 +5,7 @@ use runtime::logging::*;
 use crate::user_bringup_common::BringupCommand;
 
 #[cfg(feature = "bringup-ltp-glibc-only")]
+/// 仅跑 glibc LTP 长测（feature `bringup-ltp-glibc-only`）。
 const BRINGUP_COMMANDS : &[BringupCommand] =
     &[BringupCommand { program : "/glibc/busybox",
                        argv : &["timeout",
@@ -17,6 +18,7 @@ const BRINGUP_COMMANDS : &[BringupCommand] =
                                  echo '#### OS COMP TEST GROUP END lmbench-glibc ####'"] }];
 
 #[cfg(feature = "bringup-ltp-musl-only")]
+/// 仅跑 musl LTP 长测（feature `bringup-ltp-musl-only`）。
 const BRINGUP_COMMANDS : &[BringupCommand] = &[BringupCommand { program : "/musl/busybox",
                                                                 argv : &["timeout",
                                                                          "7200",
@@ -26,7 +28,7 @@ const BRINGUP_COMMANDS : &[BringupCommand] = &[BringupCommand { program : "/musl
 
 #[cfg(all(not(feature = "bringup-ltp-glibc-only"),
           not(feature = "bringup-ltp-musl-only")))]
-// 目标 wall ~35–45 min（timeout 上限 ~60 min）；LTP 放最后保证赛题脚本先跑完。
+// 默认赛题脚本队列：目标 wall ~35–45 min（timeout 上限 ~60 min）；LTP 放最后。
 // iozone 180 | libcbench 180 | lmbench 360 | unixbench 360 | ltp 480
 const BRINGUP_COMMANDS : &[BringupCommand] = &[
     // BringupCommand { program : "/glibc/busybox",
@@ -112,6 +114,8 @@ const BRINGUP_COMMANDS : &[BringupCommand] = &[
 
 const LOG_TAG : &str = "busybox-bringup";
 
+/// 单调时钟纳秒（用于 bring-up 耗时统计；失败时返回 0）。
+#[inline]
 fn monotonic_ns() -> u128 {
     platform::timer::now_duration().map(|duration| duration.as_nanos())
                                    .unwrap_or(0)

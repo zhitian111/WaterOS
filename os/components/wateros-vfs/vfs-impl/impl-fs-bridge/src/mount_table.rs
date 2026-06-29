@@ -29,9 +29,13 @@ pub(crate) enum AuxMount {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MountPropagation {
+    /// 挂载事件不向其它挂载点传播（默认）。
     Private,
+    /// 挂载/卸载事件向共享组内其它挂载点传播。
     Shared,
+    /// 接收 master 传播，但不向 peer 回传。
     Slave,
+    /// 不参与 bind 与传播。
     Unbindable,
 }
 
@@ -48,6 +52,7 @@ struct MountEntry {
     identity: MountIdentity,
     readonly: bool,
     fstype: &'static str,
+    /// Linux `MS_*` 传播类型；bind 挂载时继承或显式设置。
     propagation: MountPropagation,
 }
 
@@ -90,26 +95,31 @@ fn registry() -> &'static UniprocessorSafeCell<PerTaskMountNsRegistry> {
     unsafe { &*MOUNT_NS_REGISTRY.as_ptr() }
 }
 
+#[inline]
 pub fn init_task_mount_ns(task_id: task::TaskId) {
     registry().exclusive_access().init_task_mount_ns(task_id);
 }
 
+#[inline]
 pub fn copy_mount_ns_from_parent(child: task::TaskId, parent: task::TaskId) {
     registry()
         .exclusive_access()
         .copy_mount_ns_from_parent(child, parent);
 }
 
+#[inline]
 pub fn share_mount_ns_from_parent(child: task::TaskId, parent: task::TaskId) {
     registry()
         .exclusive_access()
         .share_mount_ns_from_parent(child, parent);
 }
 
+#[inline]
 pub fn unshare_mount_ns(task_id: task::TaskId) {
     registry().exclusive_access().unshare_mount_ns(task_id);
 }
 
+#[inline]
 pub fn drop_task_mount_ns(task_id: task::TaskId) {
     registry().exclusive_access().drop_task(task_id);
 }

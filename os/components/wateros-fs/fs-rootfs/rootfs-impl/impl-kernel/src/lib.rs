@@ -30,6 +30,7 @@ impl api_v0::RootFsManager for KernelRootFsManager {
     }
 
     // 克隆 Arc：调用方获得独立句柄，与槽位内实例共享底层卷状态。
+    #[inline]
     fn root_fs(&self) -> Option<fs_api_v0::SharedFs> { ROOT_FS.lock().as_ref().cloned() }
 
     fn clear_root_fs(&mut self) {
@@ -51,6 +52,7 @@ impl api_v0::RootFsManager for KernelRootFsManager {
         Ok(())
     }
 
+    #[inline]
     fn current_root_device_path(&self) -> Option<String> { ROOT_DEV_PATH.lock().as_ref().cloned() }
 }
 
@@ -60,6 +62,7 @@ pub fn set_active_fs_impl(imp: &'static dyn FsImpl) {
 }
 
 /// 返回当前注入的活动 [`FsImpl`]；未注入时为 `None`。
+#[inline]
 pub fn active_fs_impl() -> Option<&'static dyn FsImpl> { *ACTIVE_FS_IMPL.lock() }
 
 /// 查询 `devfs` 活动实现的默认根块路径并调用 [`RootFsManager::mount_root_from_block_path`]（只读）。
@@ -95,28 +98,33 @@ pub fn mount_root_rw_from_block_path(path: &str) -> fs_api_v0::FsResult<()> {
 }
 
 /// 当前根只读文件系统句柄；未挂载返回 `None`。
+#[inline]
 pub fn root_fs() -> Option<fs_api_v0::SharedFs> {
     let mgr = KernelRootFsManager;
     mgr.root_fs()
 }
 
 /// 当前根读写文件系统句柄；未挂载返回 `None`。
+#[inline]
 pub fn root_rw_fs() -> Option<fs_api_v0::SharedRwFs> {
     ROOT_RW_FS.lock().as_ref().cloned()
 }
 
 /// 最近一次成功挂载根卷所使用的块设备路径。
+#[inline]
 pub fn current_root_device_path() -> Option<String> {
     let mgr = KernelRootFsManager;
     mgr.current_root_device_path()
 }
 
-/// 根卷挂载代次：每次成功 `mount_root_from_block_path` 后递增，供 VFS 页缓存失效。
+/// 根卷挂载代次：每次成功挂载后递增，供 VFS 页缓存失效。
+#[inline]
 pub fn mount_generation() -> u64 {
     MOUNT_GENERATION.load(Ordering::Acquire)
 }
 
 /// 辅助卷挂载或卸载后递增代次（供 VFS 页缓存失效）。
+#[inline]
 pub fn bump_mount_generation() {
     MOUNT_GENERATION.fetch_add(1, Ordering::Release);
 }

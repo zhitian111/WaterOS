@@ -1,68 +1,92 @@
-# wateros-fs 公共 API 快照
+# wateros-fs — 聚合层公共 API
 
 ## 用途
 
-列出根 crate **`wateros-fs`** 对外可见的主要入口与类型，便于与 **`os`** 依赖侧对齐。契约细节以各 **`api-v0`** crate 源码为准；完整上下文见 **`docs/guides/filesystem-current.md`**。
+描述根内核与 `wateros-vfs` bridge **实际使用**的 `wateros-fs` 导出符号。
 
-## 事实来源
+事实来源：`os/components/wateros-fs/src/lib.rs`；根 `os/Cargo.toml` 中 `fs = { package = "wateros-fs", ... }`。
 
-- `os/components/wateros-fs/src/lib.rs`
-- `os/components/wateros-fs/fs-api/api-v0/src/lib.rs`
-- `os/components/wateros-fs/fs-devfs/devfs-api/api-v0/src/lib.rs`
-- `os/components/wateros-fs/fs-devfs/devfs-impl/impl-kernel/src/lib.rs`
-- `os/components/wateros-fs/fs-rootfs/rootfs-api/api-v0/src/lib.rs`
-- `os/components/wateros-fs/fs-rootfs/rootfs-impl/impl-kernel/src/lib.rs`
-- `os/components/wateros-fs/fs-impl/impl-ext4/src/{lib.rs,ro.rs,rw.rs,selftest.rs}`
+## 顶层模块
 
-## 聚合层（`wateros-fs` 根 crate）
+```text
+fs::api              // wateros-fs-api-v0 别名
+fs::devfs            // 设备 FS 子系统
+fs::procfs           // proc 伪 FS 子系统
+fs::rootfs           // 根卷与辅助挂载
+fs::init             // 子系统初始化（探测，不挂载）
+fs::mount_default_root_rw
+fs::root_rw_fs
+fs::registered_fs_impls / pick_fs_impl / supported_fs_summary
+```
 
-| 项 | 说明 |
-|----|------|
-| **`init()`** | 打印 supported_fs；刷新 devfs；从 `registered_fs_impls()` 中 probe 选定 RO impl 注入 rootfs 后 `mount_default_root`；启动树与 devfs 路径日志 |
-| **`test()`** | 调用 `api_v0::test()`；若已挂载则 `impl_ext4::ro_self_test`；再用 `pick_fs_impl(Ext4, ReadWrite)` 跑 `impl_ext4::rw_smoke_self_test` 并经只读句柄 `read("/hello")` 校验 |
-| **`registered_fs_impls()`** | `&'static [&'static dyn FsImpl]`：cfg 静态拼接 `impl_ext4::IMPL`、`devfs::active_impl::IMPL` 与 **`procfs::active_impl::IMPL`** |
-| **`supported_fs_summary()`** | `Vec<FsCapability>`：所有已注册 impl 的 `supported()` 扁平化 |
-| **`pick_fs_impl(kind, mode)`** | `Option<&'static dyn FsImpl>`：注册表中首个 `supports(kind, mode)` 命中项 |
-| **`pub mod api`** | 重导出 **`wateros-fs-api-v0`** |
-| **`pub mod devfs` / `pub mod rootfs` / `pub mod procfs`** | 重导出子聚合 crate 的公开项 |
-| **`pub use api_v0::*`** | `FsError`、`FsKind`、`FsAccessMode`、`FsCapability`、`FsImpl`、`ReadOnlyFs`、`ReadWriteFs`、`SharedFs`、`SharedRwFs` 等 |
-| **`impl_ext4`** | 当 `feature = "impl-ext4"` 启用时再导出，便于上层直接调用其自检入口 |
+可选直接依赖 impl crate（feature 条件）：
 
-## `wateros-fs-api-v0`
+- `fs::impl_ext4_rs`（`impl-ext4-rs`）
+- `fs::impl_ext4`（`impl-ext4`）
 
-- **类型**：`FsError`、`FsResult`、`FsNodeType`、`FsMetadata`、`FsKind`、`FsAccessMode`、`FsCapability`。
-- **`ReadOnlyFs`**：`mount` / `is_mounted` / `exists` / `metadata` / `read` / `read_prefix` / `read_to_string` / `boot_dump_all_paths`；并为 `LocalFs` 自身实现转发。
-- **`ReadWriteFs`**：`mount_rw` / `is_mounted` / `write_regular_file_at_root`。
-- **`FsImpl`**：`name() / supported() / supports(kind, mode) / probe(device) -> FsResult<Option<FsKind>> / mount_ro(device) -> FsResult<SharedFs> / mount_rw(device) -> FsResult<SharedRwFs>`。
-- **句柄**：`LocalFs`、`LocalRwFs`；`SharedFs = Arc<Mutex<LocalFs>>`、`SharedRwFs = Arc<Mutex<LocalRwFs>>`。
+## 生命周期
 
-## `wateros-fs-devfs`
+| 函数 | 说明 |
+|------|------|
+| `init()` | 打印能力、刷新 devfs、probe 根块设备并 `set_active_fs_impl` |
+| `mount_default_root_rw()` | bring-up 挂载默认根块设备为 RW |
+| `root_rw_fs()` | 当前根 `SharedRwFs`，未挂载为 `None` |
+| `mount_aux_ro_from_block_path` | 独立 RO 卷 |
+| `mount_aux_rw_from_block_path` | 独立 RW 卷 |
+| `test()` | API + procfs + 可选 ext4 自检 |
 
-- **`DevNodeType`**（`Block` / `Character` / `Unsupported`）、`DevNode`。
-- **`DevFsManager`**：`refresh` / `set_dt_unsupported_paths` / `list_nodes` / `register_block_device` / `lookup_block_device` / `default_root_block_path`。
-- **`active_impl`**：默认 **`impl-kernel`**（模块级 `refresh` / `list_nodes` / `lookup_block_device` / `default_root_block_path` / `set_dt_unsupported_paths`）。
-- **`KernelDevFsImpl: FsImpl`**：`name = "devfs"`、`supported = &[(DevFs, ReadOnly)]`，作为 `pub static IMPL` 暴露，仅供注册表列示。
+## `fs::api` 核心类型
 
-## `wateros-fs-procfs`
+| 类型 / trait | 说明 |
+|--------------|------|
+| `FsError` / `FsResult` | 统一错误 |
+| `FsKind` / `FsAccessMode` / `FsCapability` | 能力与探测 |
+| `FsMetadata` / `FsDirEntry` / `FsNodeType` | 元数据 |
+| `ReadOnlyFs` | RO 根卷：mount、read、read_dir、read_symlink |
+| `ReadWriteFs` | RW 根卷：写、mkdir、unlink、xattr、rename、symlink、mknod |
+| `FsImpl` | 注册表项：name、supported、probe、mount_ro/rw 工厂 |
+| `SharedFs` / `SharedRwFs` | 线程共享句柄 |
+| `LocalFs` / `LocalRwFs` | 句柄上的便捷方法（Deref 到内部 trait 对象） |
 
-- **`ProcFsView`**：`exists` / `metadata` / `read` / `read_dir`（路径相对 procfs 挂载根）。
-- **`active_impl::view()`**：默认 **`impl-kernel`** 的 **`KernelProcFs`**。
-- **回调注册**（避免 fs↔vfs 环依赖）：`register_task_argv_lookup`、`register_task_exe_lookup`、`register_mount_list_lookup`。
-- **`KernelProcFsImpl: FsImpl`**：`name = "procfs"`、`supported = &[(Other("procfs"), ReadOnly)]`。
-- 架构说明：[`docs/architecture/wateros-procfs.md`](../../architecture/wateros-procfs.md)。
+## `fs::devfs::active_impl`
 
-## `wateros-fs-rootfs`
+| 符号 | 说明 |
+|------|------|
+| `refresh()` | 从驱动刷新设备节点 |
+| `lookup_block_device(path)` | 路径 → `SharedBlockDevice` |
+| `default_root_block_path()` | 默认根块设备路径（如 `/dev/vda`） |
+| `list_dev_nodes()` | 枚举 dev 节点 |
 
-- **`RootFsManager`**：`set_root_fs` / `root_fs` / `clear_root_fs` / `mount_root_from_block_path` / `current_root_device_path`。
-- **`active_impl`**：默认 **`impl-kernel`**：模块级 **`mount_default_root`** / **`root_fs`** / **`current_root_device_path`** / **`set_active_fs_impl(&'static dyn FsImpl)`** / **`active_fs_impl()`**。
+## `fs::procfs::active_impl`
 
-## `wateros-fs-impl-ext4`
+| 符号 | 说明 |
+|------|------|
+| `view()` | `&'static impl ProcFsView` |
+| `register_task_argv_lookup` / `register_task_exe_lookup` | proc 内容回调 |
+| `register_mount_list_lookup` | `/proc/mounts` 行来源 |
+| `IMPL` | `FsImpl` 静态实例 |
 
-- **`Ext4Fs`**：`ReadOnlyFs` 实现（基于 `ext4-view`）。
-- **`Ext4FsRw`**：`ReadWriteFs` 实现（基于 `ext4plus`）。
-- **`Ext4FsImpl` / `pub static IMPL`**：`FsImpl` 入口；`probe` 通过 superblock magic `0xEF53` 判断 ext2/3/4。
-- **`ro_self_test(SharedFs)` / `rw_smoke_self_test(SharedRwFs, name, data)`**：供聚合层串接的自检入口。
+## `fs::rootfs::active_impl`
 
-## 维护要求
+| 符号 | 说明 |
+|------|------|
+| `set_active_fs_impl` | 注入 probe 选中的 `FsImpl` |
+| `mount_default_root_rw` | 挂载根卷 |
+| `root_rw_fs` / `mount_generation` | 句柄与代次（页缓存失效用） |
+| `mount_aux_*_from_block_path` | 辅助卷 |
 
-聚合导出或 `api-v0` 契约变更时，更新本文件与 **`docs/guides/filesystem-current.md`**。
+## 注册表
+
+| 函数 | 说明 |
+|------|------|
+| `registered_fs_impls()` | 静态 `FsImpl` 表（ext4-rs、ext4、devfs、procfs） |
+| `pick_fs_impl(kind, mode)` | 按能力与模式选取 |
+| `supported_fs_summary()` | 扁平化能力列表 |
+
+## 未通过聚合层导出的内容
+
+- `impl-ext4` / `impl-ext4-rs` 内部 ext4_rs / ext4plus 细节
+- devfs/procfs impl-kernel 的格式化函数实现
+- 块设备驱动 API（经 `driver_block_api_v0` 间接使用）
+
+VFS bridge 与 bring-up 应使用 `fs::rootfs`、`fs::devfs`、`fs::procfs` 与 `fs::api` trait，避免 syscall 层直接依赖 `wateros-fs-impl-ext4-rs`。

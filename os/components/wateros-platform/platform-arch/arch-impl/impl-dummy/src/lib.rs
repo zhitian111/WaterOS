@@ -6,6 +6,7 @@
 //! 与 `arch-api` 对齐的 no-op 类型集。
 
 /// 占位算术（仅用于保留测试/链接样例，与平台无关）。
+#[inline]
 pub fn add(left : u64, right : u64) -> u64 { left + right }
 #[cfg(test)]
 mod tests {

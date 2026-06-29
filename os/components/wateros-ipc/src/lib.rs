@@ -32,13 +32,13 @@ pub mod futex {
 }
 
 #[cfg(feature = "shm")]
-/// SysV shared memory registry and physical page lifecycle.
+/// SysV 共享内存段注册表与物理页生命周期。
 pub mod shm {
     pub use ::shm::*;
 }
 
 #[cfg(feature = "signal")]
-/// Signal action, mask and pending-set state.
+/// 进程级 disposition/pending/itimer 与线程级 mask/pending 的信号状态。
 pub mod signal {
     pub use ::signal::*;
 }

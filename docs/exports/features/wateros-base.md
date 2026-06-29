@@ -1,33 +1,36 @@
-# wateros-base 功能快照
+# wateros-base — 已实现功能
+
+事实来源：`os/components/wateros-base/Cargo.toml`、`base-config/Cargo.toml`、`os/Cargo.toml`。
 
 ## 用途
 
-记录 **`wateros-base`** 作为内核侧最小公共类型与单核同步原语载体的范围，以及独立子包 **`wateros-base-config`** 在常量配置上的角色（syscall 参数上限、MM/QEMU 布局等）。
+提供引导阶段与内核各处共享的薄基础类型与配置常量，避免魔法数在多个 crate 重复定义。
 
-## 事实来源
+## 聚合 crate（wateros-base）
 
-- `os/components/wateros-base/Cargo.toml`（根包无 **`[features]`**，当前 **`[dependencies]`** 可为空）
-- `os/components/wateros-base/src/lib.rs`
-- `os/components/wateros-base/base-config/`
+| 模块 | 状态 | 说明 |
+|------|------|------|
+| `addr` | 已实现 | `BasePhysAddr`、`BaseVirtAddr`、`BasePPN`、`BaseVPN` 及 `Into<*mut T>` |
+| `boot` | 已实现 | `DTBPA` 类型别名 |
+| `cpu` | 已实现 | `CPUHartID` 类型别名 |
+| `sync` | 已实现 | 单核 `UniprocessorSafeCell<T>`（`RefCell` 包装） |
 
-## 聚合导出
+无 Cargo feature；`#![no_std]`，无外部依赖。
 
-- 模块：**`addr`**、**`boot`**、**`config`**、**`cpu`**、**`sync`** 等（以 **`src/lib.rs`** 为准）。
-- 根包**不**再导出 **`wateros-base-config`** 为 Rust 模块名；其它 crate 通过 path 依赖 **`base-config`** 读取常量。
+## 子 crate（wateros-base-config）
 
-## base-config 子包
+| 模块 | 状态 | 说明 |
+|------|------|------|
+| `syscall` | 已实现 | `MAX_SYSCALL_ARGS = 6` |
+| `mm` | 已实现 | 内核堆 128MiB、QEMU virt RAM/MMIO 区间常量 |
+| `ipc` | 已实现 | `DEFAULT_PIPE_CAPACITY = 4096` |
+| `fs` | 已实现 | 页缓存、大文件阈值、块缓存容量、`FileIoMode`（仅 `Direct` 启用） |
+| `task` | 已实现 | 定时器周期、时间片、ready 队列 compact 阈值 |
+| `klog` | 已实现 | 消息环槽位与单条记录上限 |
 
-- 提供 **`syscall`**（如 **`MAX_SYSCALL_ARGS`**）、**`mm`**（堆大小位宽、QEMU virt RAM/MMIO 常量等）等 **`no_std`** 配置面，被 **`wateros-abi`**、**`wateros-mm`** 等引用。
+## 缺口
 
-## 架构模式
-
-- **无**典型 **`api-v0` / `impl-*`** 拆分；能力为直接实现的模块代码。
-
-## 明确未覆盖 / 技术债
-
-- **`boot`** 等模块可能仍为最小占位（如仅 DTB 物理基址常量）。
-- **`config.rs`** 与 **`base-config/mm.rs`** 间若存在同名常量，应避免语义分叉并在演进中收敛。
-
-## 维护要求
-
-地址类型、同步原语或 **`base-config`** 常量变化时，同步更新本文件及依赖方的功能快照（**`wateros-abi`**、**`wateros-mm`** 等）。
+- `UniprocessorSafeCell` 仅适用于单核假设，无多 hart 锁原语
+- 地址 newtype 不附带对齐或地址空间标识校验
+- `FileIoMode::Async` 在配置层存在但 v1 未实现
+- QEMU virt 内存常量作 bring-up 回退，真机须以 DTB 为准

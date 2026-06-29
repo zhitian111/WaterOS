@@ -15,6 +15,7 @@ pub struct BlockCacheManager;
 
 impl BlockCacheManager {
     /// 默认 [`BlockCacheConfig`]，容量来自 `base-config`。
+    #[inline]
     pub fn default_config() -> BlockCacheConfig {
         BlockCacheConfig {
             capacity_blocks: BLOCK_CACHE_CAPACITY_BLOCKS,
@@ -28,11 +29,13 @@ impl BlockCacheManager {
     }
 
     /// 写穿策略下无独立脏数据；保留接口供将来 write-back 或测试。
+    #[inline]
     pub fn flush_all() -> api_v0::DriverResult<()> {
         Ok(())
     }
 
     /// 已注册块设备数量（与全局表一致，含非缓存设备）。
+    #[inline]
     pub fn registered_count() -> usize {
         api_v0::block_device_count()
     }

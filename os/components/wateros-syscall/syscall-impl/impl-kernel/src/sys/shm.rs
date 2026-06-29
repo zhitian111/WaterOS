@@ -1,4 +1,4 @@
-//! SysV shared memory syscall subset.
+//! SysV 共享内存 syscall 子集（`shmget` / `shmctl` / `shmat` / `shmdt`）。
 
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;

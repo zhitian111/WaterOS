@@ -47,7 +47,7 @@ impl HeapBrk for LoongArch64AddressSpace {
             return Err(MmError::InvalidAddress);
         }
         if new_end.0 > r.current_end.0 {
-            // Expand brk: allocate and map new pages
+            // 堆向上增长：为新增虚拟页分配并映射零页
             let end_vpn_excl = VirtAddr(new_end.0).ceil_page()
                                                   .0;
             let mut vpn_i = VirtAddr(r.current_end.0).floor_page()
@@ -70,7 +70,7 @@ impl HeapBrk for LoongArch64AddressSpace {
                 vpn_i += 1;
             }
         } else if new_end.0 < r.current_end.0 {
-            // Shrink brk: unmap pages that fall outside the new end
+            // 堆收缩：解除新边界之外的已映射页
             let new_end_vpn_excl = VirtAddr(new_end.0).ceil_page()
                                                       .0;
             let cur_end_vpn_excl = VirtAddr(r.current_end.0).ceil_page()

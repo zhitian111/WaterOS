@@ -1,43 +1,42 @@
-# wateros-abi 功能快照
+# wateros-abi — 已实现功能
+
+事实来源：`os/components/wateros-abi/Cargo.toml`、`os/Cargo.toml`（`abi/impl-linux-generic64`）。
 
 ## 用途
 
-记录 **`wateros-abi`** 中与用户态 / Linux riscv64 约定相关的 **no_std** 契约：errno、返回值包装、系统调用参数包、**`SyscallNumber`** 与号表 trait，以及可选 **`impl-*`** 提供的具体编号表。
+定义用户态与内核共享的 syscall ABI：错误码、参数包布局、调用号抽象与返回值编码。
 
-## 事实来源
+## Feature 与能力
 
-- `os/components/wateros-abi/Cargo.toml`
-- `os/components/wateros-abi/src/lib.rs`
-- `os/components/wateros-abi/abi-api/api-v0/`
-- `os/components/wateros-abi/abi-impl/impl-linux-generic64/`、`abi-impl/impl-dummy/`
+| Feature | 状态 | 说明 |
+|---------|------|------|
+| `default` | 空 | 聚合 `lib.rs` 不导出任何公共模块 |
+| `api-v0` | 已实现 | 启用 `wateros-abi-api-v0` 的类型重导出 |
+| `impl-dummy` | 占位 | 工作区依赖占位，仅含 `add` 烟测 |
+| `impl-linux-generic64` | 已实现 | Linux asm-generic 64 位调用号表；主线 `qemu-riscv64-opensbi` / `qemu-loongarch64-virt` 均启用 |
 
-## Feature 与聚合导出
+## 子 crate 能力
 
-- **`default`**：`api-v0`、`impl-linux-riscv64`。
-- **`api-v0`**：联动子 crate **`impl-dummy/api-v0`**（工作区成员约束）。
-- **`impl-linux-generic64`**：启用 Linux asm-generic 64-bit 编号表实现（**`LinuxGeneric64`**）。
-- **`impl-linux-riscv64`** / **`impl-linux-loongarch64`**：架构侧别名，等价于启用 **`impl-linux-generic64`**。
-- **`impl-dummy`**：占位 impl crate，与号表无实质衔接。
-- 聚合层在 **`api-v0`** 下导出 **`user_ret`**、**`errno`**、**`syscall_args`**、**`syscall_number`**；启用 **`impl-linux-generic64`** 时 **`ActiveSyscallNumberTable`** 指向 **`impl_linux_generic64::LinuxGeneric64`**。
+### wateros-abi-api-v0
 
-## api-v0 契约要点
+- `ErrNo`：Linux errno 常量子集与 `KernelResult<T>` 别名
+- `UserRet` / `SyscallResult`：成功非负、失败 `-errno` 编码
+- `SyscallNumber` / `SyscallNumberTable`：调用号 newtype 与符号名 trait（早期 busybox 子集）
+- `SyscallArgs` / `SyscallPacket`：`repr(C)` 参数包，槽位数来自 `MAX_SYSCALL_ARGS`
 
-- **`errno`**：**`ErrNo`**、**`KernelResult`**、常用 Linux errno 常量。
-- **`user_ret`**：**`UserRet`**、**`SyscallResult`**、与内核结果转换辅助。
-- **`syscall_args`**：**`SyscallArgs`**、**`SyscallPacket`**（参数个数上界来自 **`wateros-base-config`** 的 **`MAX_SYSCALL_ARGS`**）。
-- **`syscall_number`**：**`SyscallNumber`** newtype、**`SyscallNumberTable`** trait（按能力域分组的关联常量）。
+### wateros-abi-impl-linux-generic64
 
-## impl 层
+- `LinuxGeneric64`：`SyscallNumberTable` 具体实现，覆盖文件 I/O、进程、调度、内存、信号、socket 等常用号
+- `SELECT` 使用 `usize::MAX` 哨兵（asm-generic 无独立 `select` nr）
+- 编译期与单测校验号表唯一性
 
-- **`impl-linux-generic64`**：**真实**实现 **`SyscallNumberTable`**（与 Linux 64 位用户态约定对齐的子集）；RISC-V 与 LoongArch 早期路径复用同一张表。注释中说明当前子集面向 busybox / 简单进程，后续可按 strace 等补全。
-- **`impl-dummy`**：**桩**，仅示例 **`add`** 与测试，**不**实现 **`SyscallNumberTable`**。
+### wateros-abi-impl-dummy
 
-## 明确未覆盖
+- 仅占位，不参与运行时 ABI
 
-- 与 Linux generic 64 位表有显著差异的专用架构 **`impl-*`**（若未来从别名中拆出）。
-- 将 **`impl-dummy`** 提升为可切换的完整号表后端（当前与 ABI 主路径无关）。
-- **`SYSLOG` / `__NR_syslog` (116)**：已在 **`impl-linux-generic64`** 与 **`SyscallKind::Syslog`** 中登记。
+## 缺口
 
-## 维护要求
-
-号表子集范围、默认 feature 或聚合导出变化时，同步更新本文件与依赖 **`wateros-abi`** 的组件文档（如 **`wateros-syscall`**）。
+- `default` feature 下对外无 API，调用方须显式启用 `api-v0` 及具体 impl
+- `SyscallNumberTable` 未覆盖全部 Linux 调用；表中有号不代表内核已实现
+- RISC-V 64 与 LoongArch64 共用一张表，架构分叉后需拆专用 impl
+- 无独立 per-arch 调用号 impl（如 riscv64 专用表）

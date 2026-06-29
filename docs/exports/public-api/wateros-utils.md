@@ -1,24 +1,25 @@
-# wateros-utils 公共 API 快照
+# wateros-utils — 公共 API
 
-## 用途
+事实来源：`wateros-utils/src/lib.rs`。
 
-记录 **`wateros-utils`** 当前对根 crate **`wateros`** 暴露的 **真实符号**。本 crate **无** `[features]`、**无** api/impl 拆分，体量保持为早期占位。
+## 当前导出
 
-## 事实来源
+```rust
+pub fn add(left: u64, right: u64) -> u64
+```
 
-- [`os/components/wateros-utils/Cargo.toml`](../../os/components/wateros-utils/Cargo.toml)
-- [`os/components/wateros-utils/src/lib.rs`](../../os/components/wateros-utils/src/lib.rs)
+占位函数，带 `#[inline]`，仅供 crate 内单测。
 
-## 聚合层导出
+## 未导出
 
-| 项 | 说明 |
-|----|------|
-| **`add(left, right) -> u64`** | 根级 **`pub fn`**；源码中标注为模板占位、仅供 crate 内单测，**不代表**最终内核公共 API 承诺。 |
+- `src/asm/riscv/print_rigister.S`：`print_register` 符号，未通过 `global_asm!` 或 build 脚本编入 crate
 
-## 缺口说明
+## 依赖关系
 
-- 后续若引入真实工具函数或数据结构，应同步收敛命名、补充 **`//!` 模块语义**，并更新本快照。
+- `#![no_std]`
+- 无 `[dependencies]`
+- 根 `wateros` 默认依赖，但主线代码尚未消费其 API
 
-## 维护要求
+## 后续预期
 
-根 **`lib.rs`** 出现新的 **`pub`** 项或 crate 职责变化时，更新本文件。
+聚合层注释说明：此处将收纳与平台弱耦合的纯工具；当前阶段无稳定对外契约。

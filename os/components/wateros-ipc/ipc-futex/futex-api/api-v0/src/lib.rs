@@ -18,6 +18,7 @@ pub use robust::{
 };
 
 /// API 层自检：校验 robust 头大小与错误枚举可比较。
+#[inline]
 pub fn test() {
     assert_eq!(ROBUST_LIST_HEAD_SIZE, 24);
     assert_eq!(FutexError::Again, FutexError::Again);

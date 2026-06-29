@@ -5,6 +5,7 @@
 //! 绑定在平台与后续 MM 子系统中完成。
 
 
+/// 用户态程序入口 PC。
 pub type UserTaskEntryPc = usize;
 /// 预留给后续地址空间实现使用的稳定句柄占位。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -142,6 +143,7 @@ pub struct UserStack {
 
 impl UserStack {
     /// 基于外部已映射的虚拟地址区间构造用户栈。
+    #[inline]
     pub const fn from_range(bottom : usize, top : usize) -> Self {
         Self { bottom,
                top,

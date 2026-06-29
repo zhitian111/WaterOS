@@ -1,25 +1,18 @@
 #![no_std]
 //! Linux `asm-generic` 风格 64 位系统调用号具体表（`SyscallNumberTable` 实现）。
 //!
-//! 数值来自 Linux 用户态可见的通用 64 位 ABI；WaterOS 早期用同一张表覆盖
-//! RISC-V 64 与 LoongArch64，若未来架构分叉再拆专用 impl。
-//!
-//! English: concrete syscall number constants for the Linux generic 64-bit ABI;
-//! shared across targets until per-arch tables diverge.
+//! 数值来自 Linux 用户态可见的通用 64 位 ABI。WaterOS 早期用同一张表覆盖
+//! RISC-V 64 与 LoongArch64；若未来架构分叉再拆专用 impl。
 
 use api_v0::syscall_number::{SyscallNumber, SyscallNumberTable};
 
-/// Linux asm-generic 64-bit syscall 号表（早期阶段维护 busybox /
-/// 简单进程子集）。
+/// Linux asm-generic 64 位调用号表（早期维护 busybox / 简单进程子集）。
 ///
-/// RISC-V 64 与 LoongArch64 当前都通过 `wateros-abi` 的架构 feature
-/// 选择这张表； 后续若架构产生差异，再拆分专用 impl。
-///
-/// English: zero-sized type whose associated constants are the numeric syscall IDs.
+/// RISC-V 64 与 LoongArch64 当前都通过 `wateros-abi` 的架构 feature 选择这张表。
 pub struct LinuxGeneric64;
 
 impl SyscallNumberTable for LinuxGeneric64 {
-    // I/O / 文件与描述符
+    // 文件与描述符
     const READ: SyscallNumber = SyscallNumber(63);
     const READV: SyscallNumber = SyscallNumber(65);
     const WRITE: SyscallNumber = SyscallNumber(64);
@@ -75,10 +68,10 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const MOUNT: SyscallNumber = SyscallNumber(40);
     const UMOUNT2: SyscallNumber = SyscallNumber(39);
 
-    // 进程/执行 / process & execution
+    // 进程与执行
     const EXIT: SyscallNumber = SyscallNumber(93);
     const EXIT_GROUP: SyscallNumber = SyscallNumber(94);
-    const FORK: SyscallNumber = SyscallNumber(220); // 常见用户态 fork -> clone
+    const FORK: SyscallNumber = SyscallNumber(220); // 用户态 fork 常映射到 clone
     const CLONE3: SyscallNumber = SyscallNumber(435);
     const WAITPID: SyscallNumber = SyscallNumber(260); // wait4
     const WAITID: SyscallNumber = SyscallNumber(247);
@@ -86,43 +79,43 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const EXEC: SyscallNumber = SyscallNumber(221); // execve
     const UNSHARE: SyscallNumber = SyscallNumber(272);
 
-    // 调度/时间 / scheduling & time
-    const SCHED_SETPARAM: SyscallNumber = SyscallNumber(118); // sched_setparam
-    const SCHED_SETSCHEDULER: SyscallNumber = SyscallNumber(119); // sched_setscheduler
-    const SCHED_GETSCHEDULER: SyscallNumber = SyscallNumber(120); // sched_getscheduler
-    const SCHED_GETPARAM: SyscallNumber = SyscallNumber(121); // sched_getparam
-    const SCHED_SETAFFINITY: SyscallNumber = SyscallNumber(122); // sched_setaffinity
-    const SCHED_GETAFFINITY: SyscallNumber = SyscallNumber(123); // sched_getaffinity
-    const SCHED_GET_PRIORITY_MAX: SyscallNumber = SyscallNumber(125); // sched_get_priority_max
-    const SCHED_GET_PRIORITY_MIN: SyscallNumber = SyscallNumber(126); // sched_get_priority_min
-    const YIELD: SyscallNumber = SyscallNumber(124); // sched_yield
-    const GET_TIME: SyscallNumber = SyscallNumber(169); // gettimeofday
-    const CLOCK_SETTIME: SyscallNumber = SyscallNumber(112); // clock_settime
-    const CLOCK_GETTIME: SyscallNumber = SyscallNumber(113); // clock_gettime
-    const CLOCK_GETRES: SyscallNumber = SyscallNumber(114); // clock_getres
-    const CLOCK_NANOSLEEP: SyscallNumber = SyscallNumber(115); // clock_nanosleep
+    // 调度与时间
+    const SCHED_SETPARAM: SyscallNumber = SyscallNumber(118);
+    const SCHED_SETSCHEDULER: SyscallNumber = SyscallNumber(119);
+    const SCHED_GETSCHEDULER: SyscallNumber = SyscallNumber(120);
+    const SCHED_GETPARAM: SyscallNumber = SyscallNumber(121);
+    const SCHED_SETAFFINITY: SyscallNumber = SyscallNumber(122);
+    const SCHED_GETAFFINITY: SyscallNumber = SyscallNumber(123);
+    const SCHED_GET_PRIORITY_MAX: SyscallNumber = SyscallNumber(125);
+    const SCHED_GET_PRIORITY_MIN: SyscallNumber = SyscallNumber(126);
+    const YIELD: SyscallNumber = SyscallNumber(124);
+    const GET_TIME: SyscallNumber = SyscallNumber(169);
+    const CLOCK_SETTIME: SyscallNumber = SyscallNumber(112);
+    const CLOCK_GETTIME: SyscallNumber = SyscallNumber(113);
+    const CLOCK_GETRES: SyscallNumber = SyscallNumber(114);
+    const CLOCK_NANOSLEEP: SyscallNumber = SyscallNumber(115);
 
-    // 内存管理 / memory management
-    const BRK: SyscallNumber = SyscallNumber(214); // brk
-    const MMAP: SyscallNumber = SyscallNumber(222); // mmap
-    const MUNMAP: SyscallNumber = SyscallNumber(215); // munmap
-    const MSYNC: SyscallNumber = SyscallNumber(227); // msync
-    const MPROTECT: SyscallNumber = SyscallNumber(226); // mprotect
-    const MREMAP: SyscallNumber = SyscallNumber(216); // mremap
-    const MADVISE: SyscallNumber = SyscallNumber(233); // madvise
-    const MLOCK: SyscallNumber = SyscallNumber(228); // mlock
-    const MUNLOCK: SyscallNumber = SyscallNumber(229); // munlock
-    const MLOCKALL: SyscallNumber = SyscallNumber(230); // mlockall
-    const MUNLOCKALL: SyscallNumber = SyscallNumber(231); // munlockall
-    const GET_MEMPOLICY: SyscallNumber = SyscallNumber(236); // get_mempolicy
+    // 内存管理
+    const BRK: SyscallNumber = SyscallNumber(214);
+    const MMAP: SyscallNumber = SyscallNumber(222);
+    const MUNMAP: SyscallNumber = SyscallNumber(215);
+    const MSYNC: SyscallNumber = SyscallNumber(227);
+    const MPROTECT: SyscallNumber = SyscallNumber(226);
+    const MREMAP: SyscallNumber = SyscallNumber(216);
+    const MADVISE: SyscallNumber = SyscallNumber(233);
+    const MLOCK: SyscallNumber = SyscallNumber(228);
+    const MUNLOCK: SyscallNumber = SyscallNumber(229);
+    const MLOCKALL: SyscallNumber = SyscallNumber(230);
+    const MUNLOCKALL: SyscallNumber = SyscallNumber(231);
+    const GET_MEMPOLICY: SyscallNumber = SyscallNumber(236);
     const SHMGET: SyscallNumber = SyscallNumber(194);
     const SHMCTL: SyscallNumber = SyscallNumber(195);
     const SHMAT: SyscallNumber = SyscallNumber(196);
     const SHMDT: SyscallNumber = SyscallNumber(197);
 
-    // 基本信息 / identity & misc info
-    const UNAME: SyscallNumber = SyscallNumber(160); // uname
-    const PRCTL: SyscallNumber = SyscallNumber(167); // prctl
+    // 进程标识与杂项信息
+    const UNAME: SyscallNumber = SyscallNumber(160);
+    const PRCTL: SyscallNumber = SyscallNumber(167);
     const CAPGET: SyscallNumber = SyscallNumber(90);
     const CAPSET: SyscallNumber = SyscallNumber(91);
     const GETPID: SyscallNumber = SyscallNumber(172);
@@ -151,7 +144,7 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const SETRESGID: SyscallNumber = SyscallNumber(149);
     const GETRESGID: SyscallNumber = SyscallNumber(150);
 
-    // 线程/同步/信号 / threads, sync, signals
+    // 线程、同步与信号
     const FUTEX: SyscallNumber = SyscallNumber(98);
     const RT_SIGACTION: SyscallNumber = SyscallNumber(134);
     const RT_SIGPROCMASK: SyscallNumber = SyscallNumber(135);
@@ -165,7 +158,7 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const SET_ROBUST_LIST: SyscallNumber = SyscallNumber(99);
     const GET_ROBUST_LIST: SyscallNumber = SyscallNumber(100);
 
-    // 其它常用 / other common syscalls
+    // 其它常用调用
     const GETRANDOM: SyscallNumber = SyscallNumber(278);
     const GETITIMER: SyscallNumber = SyscallNumber(102);
     const SETITIMER: SyscallNumber = SyscallNumber(103);
@@ -177,7 +170,7 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const NANOSLEEP: SyscallNumber = SyscallNumber(101);
     const SYSLOG: SyscallNumber = SyscallNumber(116);
 
-    // Socket / 网络
+    // Socket 与网络
     const SOCKET: SyscallNumber = SyscallNumber(198);
     const SOCKETPAIR: SyscallNumber = SyscallNumber(199);
     const BIND: SyscallNumber = SyscallNumber(200);

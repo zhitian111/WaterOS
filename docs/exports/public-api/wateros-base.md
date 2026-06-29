@@ -1,27 +1,46 @@
-# wateros-base 公共 API 快照
+# wateros-base — 公共 API
 
-## 用途
+事实来源：`wateros-base/src/lib.rs`、`wateros-base-config/src/lib.rs`。
 
-描述 **`wateros-base`** 作为 **无 feature 开关** 的基础 crate，向 mm、platform、task 等提供的 **薄类型与单核同步原语**。与板级常量相关的数值见 **`wateros-base-config`**（本 crate 的 **`config`** 模块仅聚合少量与堆等相关的共享常量）。
+## wateros-base（聚合）
 
-## 事实来源
+### addr
 
-- [`os/components/wateros-base/Cargo.toml`](../../os/components/wateros-base/Cargo.toml)
-- [`os/components/wateros-base/src/lib.rs`](../../os/components/wateros-base/src/lib.rs)
-- 各子模块 `src/*.rs`
+| 类型 | 字段 | 方法 |
+|------|------|------|
+| `BasePhysAddr` | `val: usize` | `Into<*mut T>` |
+| `BaseVirtAddr` | `val: usize` | `Into<*mut T>` |
+| `BasePPN` | `val: usize` | — |
+| `BaseVPN` | `val: usize` | — |
 
-## 聚合层导出
+### boot
 
-| 模块 | 主要公开项 |
-|------|------------|
-| **`addr`** | **`BasePhysAddr`**、**`BaseVirtAddr`**、**`BasePPN`**、**`BaseVPN`**（各含 **`pub val: usize`**）；**`Into<*mut T>`** 实现（物理/虚拟地址）。 |
-| **`boot`** | 类型别名 **`DTBPA`**。 |
-| **`config`** | 常量 **`KERNEL_HEAP_SIZE_BIT_WIDTH`**（与 **`wateros-base-config`** 语义应对齐）。 |
-| **`cpu`** | 类型别名 **`CPUHartID`**。 |
-| **`sync`** | **`pub mod uniprocessor`**；**`UniprocessorSafeCell`**（**`unsafe fn new`**、**`exclusive_access`**）。 |
+- `DTBPA` = `BasePhysAddr`
 
-根 **无** `pub use` 扁平化整个子树；调用方按模块路径引用。
+### cpu
 
-## 维护要求
+- `CPUHartID` = `usize`
 
-新增/移动基础类型或改变 **`config`** 与 **`wateros-base-config`** 关系时，同步更新本文件及引用方（如 mm、platform）文档。
+### sync
+
+- `UniprocessorSafeCell<T>`
+  - `unsafe fn new(value: T) -> Self`
+  - `fn exclusive_access(&self) -> RefMut<'_, T>`
+
+## wateros-base-config（独立 crate，路径 `base-config/`）
+
+根 `wateros` 以 `base_config` 别名依赖；`wateros-abi-api-v0` 等也直接依赖。
+
+| 模块 | 公共常量 / 类型 |
+|------|-----------------|
+| `syscall` | `MAX_SYSCALL_ARGS` |
+| `mm` | `KERNEL_HEAP_SIZE_BIT_WIDTH`、`KERNEL_HEAP_SIZE`、`QEMU_VIRT_PHYS_RAM_*`、`QEMU_VIRT_MMIO_PHYS_*` |
+| `ipc` | `DEFAULT_PIPE_CAPACITY` |
+| `fs` | `FILE_PAGE_SIZE`、`FILE_LARGE_THRESHOLD`、`FILE_PAGE_CACHE_CAPACITY`、`FILE_READ_AHEAD_STRIDE`、`FileIoMode`、`FILE_IO_MODE`、`BLOCK_CACHE_CAPACITY_BLOCKS` |
+| `task` | `SCHED_TIMER_PERIOD_MS`、`MAX_TICKS_PER_TASK`、`READY_QUEUE_STALE_COMPACT_THRESHOLD`、`MAX_RT_TICKS_PER_TASK` |
+| `klog` | `KLOG_DESC_SLOTS`、`KLOG_TEXT_RING_BYTES`、`KLOG_MAX_RECORD_BYTES` |
+
+## 设计边界
+
+- `wateros-base` 只放类型，不放配置数值
+- 配置数值统一在 `wateros-base-config`，避免双真相

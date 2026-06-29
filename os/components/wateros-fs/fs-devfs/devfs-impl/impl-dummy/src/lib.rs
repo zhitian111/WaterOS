@@ -6,6 +6,7 @@ extern crate alloc;
 use alloc::{string::String, vec::Vec};
 use api_v0::{DevFsManager, DevNode};
 
+/// 无设备枚举、无块/字符绑定的 [`DevFsManager`] 占位实现。
 pub struct DummyDevFsManager;
 
 impl DevFsManager for DummyDevFsManager {
@@ -52,6 +53,7 @@ impl DevFsManager for DummyDevFsManager {
     }
 }
 
+/// 占位入口：丢弃 DTB 路径列表（dummy 不维护节点表）。
 pub fn set_dt_unsupported_paths(paths: Vec<String>) {
     let mut m = DummyDevFsManager;
     m.set_dt_unsupported_paths(paths);

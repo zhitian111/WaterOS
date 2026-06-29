@@ -12,25 +12,39 @@ use abi::syscall_args::{SyscallArgs, SyscallPacket};
 use abi::syscall_number::SyscallNumber;
 use abi::user_ret::UserRet;
 #[allow(unused)]
+/// 同步异常语义（跨架构统一枚举；原始 CSR 解码由各 `arch-impl` 完成）。
 #[derive(Clone, Copy, Debug)]
 pub enum Exception {
+    /// 用户态环境调用（系统调用入口）。
     UserEnvCall,
+    /// 取指页故障。
     InstructionPageFault,
+    /// 加载页故障。
     LoadPageFault,
+    /// 存储页故障。
     StorePageFault,
+    /// 非法指令。
     IllegalInstruction,
+    /// 断点。
     Breakpoint,
+    /// 当前 arch-api 未建模的异常码。
     Unsupported(usize),
 }
 #[allow(unused)]
+/// 中断语义（跨架构统一枚举）。
 #[derive(Clone, Copy, Debug)]
 pub enum Interrupt {
+    /// 监管态定时器中断。
     SupervisiorTimer,
+    /// 监管态外部中断。
     SupervisiorExternel,
+    /// 监管态软件中断。
     SupervisiorSoft,
+    /// 当前 arch-api 未建模的中断码。
     Unsupported(usize),
 }
 #[allow(unused)]
+/// trap 原因：异常或中断之一。
 #[derive(Clone, Copy, Debug)]
 pub enum TrapCause {
     Exception(Exception),
@@ -71,14 +85,19 @@ impl TrapCause {
 
 #[allow(unused)]
 pub trait TrapFrameRead {
+    /// 架构相关的 trap 原因原始编码（如 RISC-V `scause`）。
     fn raw_cause(&self) -> usize;
 
-    /// 将 `raw_cause()` 的 **架构相关** 原始编码解码为跨架构语义 `TrapCause`。
+    /// 将 [`raw_cause`](Self::raw_cause) 解码为跨架构语义 [`TrapCause`]。
     fn trap_cause(&self) -> TrapCause;
 
+    /// 故障地址（页故障等；无则实现可返回 0）。
     fn fault_addr(&self) -> usize;
+    /// 用户态程序计数器。
     fn user_pc(&self) -> usize;
+    /// 用户态栈指针。
     fn user_sp(&self) -> usize;
+    /// 本次 trap 返回路径是否回到用户态。
     fn returns_to_user(&self) -> bool;
 
     /// 线程局部存储指针（LoongArch `$r2` / RISC-V `tp`）。
@@ -100,11 +119,17 @@ pub trait TrapFrameRead {
 
 #[allow(unused)]
 pub trait TrapFrameWrite {
+    /// 设置用户态 PC。
     fn set_user_pc(&mut self, pc: usize);
+    /// 将用户态 PC 前移 `bytes` 字节（跳过已模拟的指令）。
     fn add_user_pc(&mut self, bytes: usize);
+    /// 设置用户态栈指针。
     fn set_user_sp(&mut self, sp: usize);
+    /// 设置用户程序入口栈布局（`argc`/`argv`/`envp`）；默认无操作。
     fn set_user_entry_args(&mut self, _argc: usize, _argv: usize, _envp: usize) {}
+    /// 标记 trap 返回路径回到用户态。
     fn set_return_to_user(&mut self);
+    /// 标记 trap 返回路径留在内核态。
     fn set_return_to_kernel(&mut self);
 
     #[inline]
@@ -132,7 +157,9 @@ pub trait TrapAddressSpaceWrite {
 
 #[allow(unused)]
 pub trait TrapSyscallRead {
+    /// 系统调用参数寄存器组。
     fn syscall_args(&self) -> SyscallArgs;
+    /// 系统调用号。
     fn syscall_nr(&self) -> SyscallNumber;
 
     #[inline]
@@ -144,6 +171,7 @@ pub trait TrapSyscallRead {
 
 #[allow(unused)]
 pub trait TrapSyscallWrite {
+    /// 写入系统调用返回值到 trap 帧。
     fn set_syscall_ret(&mut self, ret: UserRet);
 }
 
@@ -152,18 +180,25 @@ pub trait TrapSyscallWrite {
 /// 目前仅暴露用户态 TLS 寄存器写入，用于 `clone(CLONE_SETTLS)` 初始化新线程。
 #[allow(unused)]
 pub trait TrapThreadWrite {
+    /// 设置用户态 TLS 寄存器（`clone(CLONE_SETTLS)` 等）。
     fn set_user_tls(&mut self, tls: usize);
 }
 
-/// Architecture-neutral subset saved in a userspace signal frame.
+/// 用户态信号帧中保存的、与架构无关的最小机器上下文子集。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C)]
 pub struct SignalMachineContext {
+    /// 通用寄存器组（布局由具体 ISA 的 [`SignalFrameCodec`] 解释）。
     pub gprs: [usize; 32],
+    /// 程序计数器。
     pub pc: usize,
+    /// 特权/状态字（如 `sstatus`、LoongArch `prmd` 的用户态子集）。
     pub status: usize,
+    /// 浮点寄存器快照。
     pub fpregs: [u64; 32],
+    /// 浮点控制状态。
     pub fcsr: u32,
+    /// 对齐填充，保留。
     pub reserved: u32,
 }
 
@@ -180,13 +215,15 @@ impl Default for SignalMachineContext {
     }
 }
 
-/// Signal frame register codec implemented by every supported userspace ISA.
+/// 各支持的用户态 ISA 对信号帧寄存器的编解码接口。
 pub trait SignalFrameCodec {
+    /// 从当前 trap 帧捕获可写入用户信号帧的上下文。
     fn capture_signal_context(&self) -> SignalMachineContext;
 
-    /// Restores only state legal at user privilege. Returns false for a malformed context.
+    /// 仅恢复用户态合法的状态；上下文畸形时返回 `false`。
     fn restore_signal_context(&mut self, context: &SignalMachineContext) -> bool;
 
+    /// 在用户栈上布置信号处理函数入口帧（handler、restorer、siginfo 等）。
     fn prepare_signal_handler(
         &mut self,
         handler: usize,
@@ -197,8 +234,7 @@ pub trait SignalFrameCodec {
         ucontext: usize,
     );
 
-    /// Rewrite a saved userspace context so `rt_sigreturn` re-enters the
-    /// interrupted syscall with its original number and arguments.
+    /// 改写已保存的用户上下文，使 `rt_sigreturn` 后以原参数重入被中断的系统调用。
     fn prepare_syscall_restart(
         context: &mut SignalMachineContext,
         syscall_nr: usize,

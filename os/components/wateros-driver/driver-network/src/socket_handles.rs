@@ -18,6 +18,7 @@ const POLLIN: i16 = 0x001;
 const POLLOUT: i16 = 0x004;
 const POLLHUP: i16 = 0x010;
 
+/// 为 socket fd 分配伪 inode 的 VFS 元数据（特殊字符设备形态）。
 fn socket_meta(inode: u64) -> VfsMetadata {
     VfsMetadata {
         node_type: VfsNodeType::Special,
@@ -41,6 +42,7 @@ pub struct SocketRef {
 }
 
 impl SocketRef {
+    /// 包装 smoltcp 句柄并分配唯一伪 inode。
     pub fn new(handle: SocketHandle) -> Self {
         Self {
             inner: Arc::new(Mutex::new(handle)),
@@ -48,14 +50,19 @@ impl SocketRef {
         }
     }
 
+    #[inline]
+    /// 读取当前 smoltcp 句柄（短暂持锁）。
+    #[inline]
     pub fn handle(&self) -> SocketHandle {
         *self.inner.lock()
     }
 
+    /// 替换底层句柄（accept 后监听 socket 置换场景）。
     pub fn replace_handle(&self, handle: SocketHandle) {
         *self.inner.lock() = handle;
     }
 
+    /// 最后一个 fd 关闭时是否应调用协议栈 `socket_close`。
     fn should_close_underlying(&self) -> bool {
         Arc::strong_count(&self.inner) <= 2
     }
@@ -193,6 +200,7 @@ impl VfsIoHandle for UdpSocketHandle {
     }
 }
 
+/// 将协议栈 `&'static str` 错误映射为 VFS 错误码。
 fn map_stack_err(err: &'static str) -> VfsError {
     match err {
         "no connected tcp socket" | "invalid socket handle" | "not a tcp socket" => VfsError::BadFd,

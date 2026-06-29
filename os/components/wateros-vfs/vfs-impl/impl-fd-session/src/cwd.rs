@@ -19,6 +19,7 @@ pub struct PerTaskCwdRegistry {
 }
 
 impl PerTaskCwdRegistry {
+    #[inline]
     pub const fn new() -> Self {
         Self {
             cwd_tables: BTreeMap::new(),
@@ -35,6 +36,7 @@ impl PerTaskCwdRegistry {
         self.effective_owner(task_id)
     }
 
+    #[inline]
     fn effective_owner(&self, task_id: task::TaskId) -> task::TaskId {
         self.owners
             .get(&task_id)
@@ -53,11 +55,14 @@ impl PerTaskCwdRegistry {
         Some(owner)
     }
 
+    /// 初始化任务 cwd 为 `/`（spawn / fork 路径）。
     pub fn init_task_cwd(&mut self, task_id: task::TaskId) {
         let owner = self.ensure_owner(task_id);
         self.cwd_tables.insert(owner, String::from("/"));
     }
 
+    /// 读取任务 cwd 字符串；未初始化时回退 `/`。
+    #[inline]
     pub fn get_cwd(&self, task_id: task::TaskId) -> &str {
         let owner = self.effective_owner(task_id);
         self.cwd_tables
@@ -66,6 +71,7 @@ impl PerTaskCwdRegistry {
             .unwrap_or("/")
     }
 
+    /// 惰性初始化 cwd 槽位（首次访问前调用）。
     pub fn ensure_task_cwd(&mut self, task_id: task::TaskId) {
         let owner = self.ensure_owner(task_id);
         self.cwd_tables.entry(owner).or_insert_with(|| String::from("/"));
@@ -77,6 +83,7 @@ impl PerTaskCwdRegistry {
         self.cwd_tables.get_mut(&owner).expect("init_task_cwd")
     }
 
+    /// 任务退出或 unshare 后释放 cwd / exe / argv 槽位。
     pub fn drop_task(&mut self, task_id: task::TaskId) {
         let Some(owner) = self.release_owner(task_id) else {
             return;

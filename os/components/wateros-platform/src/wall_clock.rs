@@ -5,12 +5,14 @@ use core::sync::atomic::{AtomicI64, Ordering};
 static REALTIME_OFFSET_NS: AtomicI64 = AtomicI64::new(0);
 
 /// 当前单调时钟纳秒（与 [`crate::timer::now_duration`] 同源）。
+#[inline]
 pub fn monotonic_ns() -> Result<u128, ()> {
     let duration = crate::timer::now_duration().map_err(|_| ())?;
     Ok(duration.as_nanos())
 }
 
 /// 当前 `CLOCK_REALTIME` 纳秒。
+#[inline]
 pub fn realtime_ns() -> Result<u128, ()> {
     let mono = monotonic_ns()?;
     let offset = REALTIME_OFFSET_NS.load(Ordering::Relaxed) as i128;
@@ -18,6 +20,7 @@ pub fn realtime_ns() -> Result<u128, ()> {
 }
 
 /// 将 `CLOCK_REALTIME` 设为 `target_ns`（相对单调时钟偏移）。
+#[inline]
 pub fn set_realtime_ns(target_ns: u128) -> Result<(), ()> {
     let mono = monotonic_ns()?;
     let offset = (target_ns as i128) - (mono as i128);
@@ -29,17 +32,28 @@ pub fn set_realtime_ns(target_ns: u128) -> Result<(), ()> {
 /// 将 UTC 纳秒转为 Linux `struct rtc_time` 字段（`tm_year` 为自 1900 起算）。
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RtcTimeFields {
+    /// 秒（0–59）。
     pub tm_sec: i32,
+    /// 分（0–59）。
     pub tm_min: i32,
+    /// 时（0–23）。
     pub tm_hour: i32,
+    /// 日（1–31）。
     pub tm_mday: i32,
+    /// 月（0–11）。
     pub tm_mon: i32,
+    /// 年（自 1900 起算，如 2026 年为 126）。
     pub tm_year: i32,
+    /// 星期（0=周日）。
     pub tm_wday: i32,
+    /// 年内第几天（本实现未填，恒为 0）。
     pub tm_yday: i32,
+    /// 夏令时标志（本实现未用，恒为 0）。
     pub tm_isdst: i32,
 }
 
+/// 将 UTC 纳秒时间戳拆成 Linux `struct rtc_time` 字段。
+#[inline]
 pub fn ns_to_rtc_time(ns: u128) -> RtcTimeFields {
     let total_sec = (ns / 1_000_000_000) as i64;
     let sec_of_day = total_sec.rem_euclid(86_400);
@@ -72,7 +86,7 @@ pub fn ns_to_rtc_time(ns: u128) -> RtcTimeFields {
         m += 1;
     }
 
-    let tm_wday = ((days + 4) % 7) as i32; // 1970-01-01 was Thursday (4)
+    let tm_wday = ((days + 4) % 7) as i32; // 1970-01-01 是周四，wday=4
 
     RtcTimeFields {
         tm_sec,
@@ -87,6 +101,8 @@ pub fn ns_to_rtc_time(ns: u128) -> RtcTimeFields {
     }
 }
 
+/// 将 Linux `struct rtc_time` 字段合成 UTC 纳秒时间戳。
+#[inline]
 pub fn rtc_time_to_ns(fields: &RtcTimeFields) -> Result<u128, ()> {
     if fields.tm_sec < 0
         || fields.tm_min < 0
@@ -99,7 +115,7 @@ pub fn rtc_time_to_ns(fields: &RtcTimeFields) -> Result<u128, ()> {
         return Err(());
     }
     let y = fields.tm_year as i64 + 1900;
-    let mut days = days_since_epoch(y, fields.tm_mon as usize, fields.tm_mday as i32);
+    let days = days_since_epoch(y, fields.tm_mon as usize, fields.tm_mday as i32);
     let sec = fields.tm_hour as u128 * 3600
         + fields.tm_min as u128 * 60
         + fields.tm_sec as u128;

@@ -35,6 +35,7 @@ pub fn dispatch_kernel(action: i32, user_buf: &mut [u8], user_len: usize) -> isi
     }
 }
 
+// READ / READ_CLEAR：取下一条未读，格式化为 traditional 行后拷贝到用户缓冲。
 fn read_one(buf: &mut [u8], len: usize, advance: bool) -> isize {
     let mut line = [0u8; KERNEL_LINE_MAX];
     KlogRingbuf::with(|ring| match ring.peek_next_unread() {
@@ -80,6 +81,7 @@ fn read_all(buf: &mut [u8], len: usize) -> isize {
     total
 }
 
+// WRITE：priority 高 3 位 level、低 3 位 facility（Linux 约定）。
 fn write_priority(priority: i32, msg: &[u8], _msg_len: usize) -> isize {
     let level = ((priority >> 3) & 7) as u8;
     let facility = (priority & 7) as u8;
@@ -96,6 +98,7 @@ fn write_priority(priority: i32, msg: &[u8], _msg_len: usize) -> isize {
     msg.len() as isize
 }
 
+#[inline]
 fn copy_out(buf: &mut [u8], len: usize, src: &[u8]) -> isize {
     let n = src.len().min(len);
     buf[..n].copy_from_slice(&src[..n]);

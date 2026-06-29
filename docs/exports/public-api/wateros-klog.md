@@ -1,59 +1,73 @@
-# wateros-klog 公共 API 快照
+# wateros-klog — 聚合层公共 API
 
 ## 用途
 
-描述 **`wateros-klog`** 聚合 crate 对内核其它模块暴露的稳定入口。组件已实现于 `os/components/wateros-klog/`；下列接口以 [`docs/architecture/wateros-klog.md`](../../architecture/wateros-klog.md) 与源码 rustdoc 为准。
+内核与其它组件（`wateros-syscall` 等）通过 `klog` crate 使用的真实导出接口。
 
-## 事实来源
+## 再导出
 
-- [`docs/architecture/wateros-klog.md`](../../architecture/wateros-klog.md)
-- 计划：`os/components/wateros-klog/src/lib.rs`
-
-## 计划聚合层导出
-
-| 符号 | 说明 |
+| 路径 | 来源 |
 |------|------|
-| **`init()`** | 初始化全局 `KlogRingbuf`（清空）；须在 `runtime::logging::init()` **之前**调用。 |
-| **`post_init_hello()`** | 内核主线初始化完成后写入 `hello wateros\n`（`main` 在 `run_first_task` 前调用）。 |
-| **`record(level, facility, text)`** | 底层写入一条记录；返回 `AppendResult`（成功序号或错误）。 |
-| **`klog_trace!` / `klog_debug!` / `klog_info!` / `klog_warn!` / `klog_error!`** | 宏层：`format_args!` → `record`；**不**转发 `log!`。 |
-| **`stats()`** | 返回 `KlogStats` 快照。 |
-| **`iter_from(seq)`** | 内核侧从序号起迭代记录（可见性 / 自检）。 |
-| **`global()`** | 访问全局 `KlogStore`（具体类型以实现为准）。 |
+| `klog::api` | `wateros-klog-api-v0` 全部公共项 |
+| `klog::KlogRingbuf` | `wateros-klog-impl-ringbuf` |
 
-## 计划子模块（聚合 `pub mod`）
+## 聚合层函数
 
-| 模块 | 说明 |
+| 函数 | 说明 |
 |------|------|
-| **`export`** | `format_traditional(meta, text) -> [u8]` 等；供 syscall 与 future `/dev/kmsg` 复用。 |
-| **`syscall`** | `dispatch(action, buf, len) -> isize`；仅 `wateros-syscall` 应直接依赖。 |
+| `init()` | 清空全局环 |
+| `post_init_hello()` | 写入固定 boot 问候记录 |
+| `record(level, facility, text)` | 追加记录（自动时间戳与 caller_id） |
+| `record_with_meta(meta, text)` | 使用调用方已填 meta |
+| `stats()` | `KlogStats` 快照 |
+| `iter_from(start_seq, f)` | 按序号升序回调 `KlogRecordView` |
+| `ts_nsec_now()` | 单调时钟纳秒 |
+| `caller_id_now()` | 当前任务 ID 或 0 |
 
-## `klog-api` 契约类型（计划）
+## 宏（`#[macro_export]`）
 
-| 类型 / trait | 说明 |
-|--------------|------|
-| **`KlogRecordMeta`** | `repr(C)` 记录头；内核可读，不导出给用户态裸结构。 |
-| **`KlogFlags`** | `CONT` / `TRUNC` / `USER` 等。 |
-| **`KlogLevel` / `KlogFacility`** | 与 syslog 优先级对齐。 |
-| **`KlogStats`** | 提交/丢弃计数与序号范围。 |
-| **`KlogStore`** | 环抽象：`append`、`iter_from`、`unread_bytes`、`buffer_bytes`、读游标推进。 |
-| **`SyslogAction`** | 与 Linux `SYSLOG_ACTION_*` 常量对齐。 |
-| **`AppendResult` / `KlogError`** | 写入与查询错误。 |
+`klog_trace!` / `klog_debug!` / `klog_info!` / `klog_warn!` / `klog_error!` — `format_args!` → `record`（facility 固定 `LOG_KERN`）。
 
-## Feature 与依赖（计划）
+## 类型
 
-| 项 | 说明 |
-|----|------|
-| 根 `wateros` | 新增 `klog` path 依赖；`qemu-riscv64-opensbi` 等主线 feature 启用。 |
-| `wateros-syscall` | `impl-kernel` 依赖 `wateros-klog`。 |
-| `wateros-runtime` | **无**对 klog 的依赖。 |
+| 类型 | 说明 |
+|------|------|
+| `KlogFmtBuffer` | 宏用 512 字节栈缓冲；`new` / `as_bytes` |
 
-## 缺口说明
+## 子模块
 
-- 存储为 desc 槽 + 每槽上限 `KLOG_MAX_RECORD_BYTES` 正文（非独立 byte-ring 碎片管理）。
-- `CONSOLE_ON/OFF/LEVEL` 首期 no-op；未接 `runtime-console`。
-- 测试期未知 syslog action **panic**。
+### `klog::export`
 
-## 维护要求
+| 函数 | 说明 |
+|------|------|
+| `format_traditional(meta, text, out) -> usize` | 传统 `"<N>...\n"` 格式化 |
 
-新增 `pub` 项或变更 `init` 顺序时，同步更新本文件与 [`docs/architecture/wateros-klog.md`](../../architecture/wateros-klog.md)。
+### `klog::syscall`
+
+| 函数 | 说明 |
+|------|------|
+| `dispatch_kernel(action, user_buf, user_len) -> isize` | `sys_syslog` 内核语义；缓冲由 syscall 层提供 |
+
+## `klog::api`（api-v0 摘要）
+
+| 类别 | 主要符号 |
+|------|----------|
+| 元数据 | `KlogRecordMeta`, `KlogFlags`, `KlogStats`, `KlogRecordView` |
+| 常量 | `LOG_KERN`, `LOG_USER`, `LOG_EMERG`…`LOG_DEBUG` |
+| syslog action | `SYSLOG_ACTION_*`, `decode_action`, `is_write_priority` |
+| trait | `KlogStore` |
+| 错误 | `KlogError`, `AppendResult` |
+
+## `KlogRingbuf`（impl）
+
+| 方法 | 说明 |
+|------|------|
+| `init()` | 全局环初始化 |
+| `with(f)` | 持锁访问 `KlogRingbufInner` |
+| `iter_from(start_seq, f)` | 持锁迭代 |
+
+## 修订
+
+| 日期 | 说明 |
+|------|------|
+| 2026-06-29 | 初版导出 |

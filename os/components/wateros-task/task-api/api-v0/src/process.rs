@@ -180,23 +180,34 @@ impl TaskClearTid {
     }
 }
 
+/// 进程内任务角色：leader 对应 `fork`/`exec` 主线程，member 为 `clone` 出的同进程线程。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProcessTaskRole {
+    /// 进程主线程（首个 task）。
     Leader,
+    /// 同进程内的额外线程。
     Member,
 }
 
+/// 进程 registry 视角下的任务运行状态（与调度器 `TaskState` 互补）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProcessTaskState {
+    /// 仍可被调度或阻塞中。
     Runnable,
+    /// 已退出，等待 reap。
     Exited(TaskExitCode),
 }
 
+/// 进程在 registry 中的生命周期状态。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProcessState {
+    /// 至少有一个线程仍可运行。
     Running,
+    /// 收到 SIGSTOP 后暂停。
     Stopped { signo: u8 },
+    /// 正在 exit_group，尚未完全转为 Exited。
     Exiting(TaskExitCode),
+    /// 全部线程已退出，等待父进程 reap。
     Exited(TaskExitCode),
 }
 

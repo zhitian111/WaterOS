@@ -105,27 +105,32 @@ fn finish_wait_after_switch(switch_pair : Option<SwitchPair>) -> TaskWaitResult 
 }
 
 /// 返回当前运行任务的用户地址空间 token；`0` 表示回落到内核地址空间。
+#[inline]
 pub fn current_task_address_space_raw() -> usize {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.current_task_address_space_raw())
 }
 
+#[inline]
 pub fn current_task_user_aspace_ptr() -> usize {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.current_task_user_aspace_ptr())
 }
 
+#[inline]
 pub fn current_task_user_address_space_token() -> usize {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.current_task_user_address_space_token())
 }
 
+#[inline]
 pub fn current_task_trap_return_address_space_token() -> usize {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.current_task_trap_return_address_space_token())
 }
 
 /// 应用调度策略变更（Wave 1：仅更新 TCB，不迁移 run-queue）。
+#[inline]
 pub fn apply_sched_policy_change(task_id : TaskId,
                                  policy : SchedPolicy,
                                  param : SchedParam)
@@ -148,30 +153,35 @@ pub fn init_scheduler() {
 }
 
 /// 创建内核任务并入就绪队列尾部。
+#[inline]
 pub fn spawn_kernel_task(entry : KernelTaskEntry, arg : usize) -> TaskId {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.spawn_kernel_task(entry, arg))
 }
 
 /// 按规格创建用户任务（仅登记 TCB，不入就绪队列）。
+#[inline]
 pub fn create_user_task_spec(spec : UserTask) -> TaskId {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.create_user_task_spec(spec))
 }
 
 /// 将已创建任务加入就绪队列尾部。
+#[inline]
 pub fn enqueue_ready_task(task_id : TaskId) {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.enqueue_ready_task(task_id))
 }
 
 /// 按规格创建用户任务并入就绪队列尾部。
+#[inline]
 pub fn spawn_user_task_spec(spec : UserTask) -> TaskId {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.spawn_user_task_spec(spec))
 }
 
 /// 从当前用户任务 fork 子任务（仅登记 TCB，不入就绪队列）。
+#[inline]
 pub fn create_fork_child(child_stack : usize,
                          new_aspace_ptr : usize,
                          new_satp : usize)
@@ -181,12 +191,14 @@ pub fn create_fork_child(child_stack : usize,
 }
 
 /// 从当前用户任务 clone 线程（仅登记 TCB，不入就绪队列）。
+#[inline]
 pub fn create_clone_thread(child_stack : usize, tls : usize, set_tls : bool) -> Option<TaskId> {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.create_clone_thread(child_stack, tls, set_tls))
 }
 
 /// 丢弃 fork/clone 失败时已登记但未应继续运行的子任务。
+#[inline]
 pub fn discard_unstarted_task(task_id : TaskId) {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.discard_unstarted_task(task_id));
@@ -197,6 +209,7 @@ pub fn discard_unstarted_task(task_id : TaskId) {
 /// 子任务获得父任务 trap 帧副本（a0 置 0）、独立地址空间（`new_aspace_ptr` /
 /// `new_satp`）。 `child_stack` 非零时，子任务初始用户栈指针设为该值（用于
 /// clone 新栈场景）。 无当前任务或非用户任务时返回 `None`。
+#[inline]
 pub fn fork_current(child_stack : usize,
                     new_aspace_ptr : usize,
                     new_satp : usize)
@@ -206,12 +219,14 @@ pub fn fork_current(child_stack : usize,
 }
 
 /// 从当前用户任务 clone 一个同进程线程；线程共享用户地址空间但有独立执行现场。
+#[inline]
 pub fn clone_current_thread(child_stack : usize, tls : usize, set_tls : bool) -> Option<TaskId> {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.clone_current_thread(child_stack, tls, set_tls))
 }
 
 /// execve：替换当前任务的进程映像（地址空间、入口、栈）。
+#[inline]
 pub fn execve_current(entry_pc : usize,
                       sp : usize,
                       argc : usize,
@@ -236,12 +251,14 @@ pub fn execve_current(entry_pc : usize,
 }
 
 /// 分配新的显式等待队列编号。
+#[inline]
 pub fn allocate_wait_queue() -> WaitQueueId {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.allocate_wait_queue())
 }
 
 /// 当显式等待队列为空时释放其编号。
+#[inline]
 pub fn try_release_wait_queue(wait_queue_id : WaitQueueId) -> bool {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.try_release_wait_queue(wait_queue_id))
@@ -259,6 +276,7 @@ pub fn run_first_task() -> ! {
 }
 
 /// 当前任务重新入就绪队列尾部并切换到下一个任务（若无其他就绪任务则可能不切）。
+#[inline]
 pub fn suspend_current_and_run_next() {
     let _guard = InterruptGuard::new();
     let switch_pair = with_scheduler(|scheduler| scheduler.schedule(ScheduleReason::Yield));
@@ -270,6 +288,7 @@ pub fn suspend_current_and_run_next() {
 }
 
 /// 时钟 tick：推进调度器逻辑时间，并在需要时切换到下一任务。
+#[inline]
 pub fn schedule_tick() {
     let _guard = InterruptGuard::new();
     let switch_pair = with_scheduler(|scheduler| scheduler.schedule(ScheduleReason::Tick));
@@ -281,6 +300,7 @@ pub fn schedule_tick() {
 }
 
 /// 以给定原因阻塞当前任务并切换出去。
+#[inline]
 pub fn block_current(reason : TaskBlockReason) {
     let _guard = InterruptGuard::new();
     let switch_pair = with_scheduler(|scheduler| scheduler.schedule(ScheduleReason::Block(reason)));
@@ -292,6 +312,7 @@ pub fn block_current(reason : TaskBlockReason) {
 }
 
 /// 无限期等待指定句柄；被唤醒后从切换点继续运行。
+#[inline]
 pub fn wait_current(wait_handle : TaskWaitHandle) -> TaskWaitResult {
     let guard = InterruptGuard::new();
     let switch_pair = with_scheduler(|scheduler| scheduler.schedule_wait(wait_handle, None));
@@ -300,6 +321,7 @@ pub fn wait_current(wait_handle : TaskWaitHandle) -> TaskWaitResult {
 }
 
 /// 在关中断调度临界区内复查条件；仅当条件仍成立时才把当前任务挂入等待队列。
+#[inline]
 pub fn wait_current_while(wait_handle : TaskWaitHandle,
                           condition : impl FnOnce() -> bool)
                           -> TaskWaitResult {
@@ -314,6 +336,7 @@ pub fn wait_current_while(wait_handle : TaskWaitHandle,
 
 /// 带超时的等待；`timeout_ticks == 0` 时立即返回 [`TaskWaitResult::TimedOut`]
 /// 且不切换。
+#[inline]
 pub fn wait_current_timeout(wait_handle : TaskWaitHandle,
                             timeout_ticks : TaskTick)
                             -> TaskWaitResult {
@@ -329,6 +352,7 @@ pub fn wait_current_timeout(wait_handle : TaskWaitHandle,
 }
 
 /// 带超时的条件等待；条件为假时立即按正常唤醒返回。
+#[inline]
 pub fn wait_current_timeout_while(wait_handle : TaskWaitHandle,
                                   timeout_ticks : TaskTick,
                                   condition : impl FnOnce() -> bool)
@@ -348,11 +372,13 @@ pub fn wait_current_timeout_while(wait_handle : TaskWaitHandle,
 }
 
 /// 在指定等待队列上无限期阻塞（语法糖）。
+#[inline]
 pub fn wait_current_on(wait_queue_id : WaitQueueId) -> TaskWaitResult {
     wait_current(TaskWaitHandle::for_wait_queue(wait_queue_id))
 }
 
 /// 在指定等待队列上带超时等待（语法糖）。
+#[inline]
 pub fn wait_current_on_timeout(wait_queue_id : WaitQueueId,
                                timeout_ticks : TaskTick)
                                -> TaskWaitResult {
@@ -361,17 +387,20 @@ pub fn wait_current_on_timeout(wait_queue_id : WaitQueueId,
 }
 
 /// 等待目标任务退出（语法糖）。
+#[inline]
 pub fn wait_for_task_exit(task_id : TaskId) -> TaskWaitResult {
     wait_current(TaskWaitHandle::for_task_exit(task_id))
 }
 
 /// 等待目标任务退出，带超时（语法糖）。
+#[inline]
 pub fn wait_for_task_exit_timeout(task_id : TaskId, timeout_ticks : TaskTick) -> TaskWaitResult {
     wait_current_timeout(TaskWaitHandle::for_task_exit(task_id),
                          timeout_ticks)
 }
 
 /// 睡眠至少 `ticks` 个调度 tick（实现中与 yield 类似地将 wake_tick 推后）。
+#[inline]
 pub fn sleep_current_for_ticks(ticks : TaskTick) -> TaskWaitResult {
     let guard = InterruptGuard::new();
     let switch_pair = with_scheduler(|scheduler| scheduler.schedule(ScheduleReason::Sleep(ticks)));
@@ -380,69 +409,81 @@ pub fn sleep_current_for_ticks(ticks : TaskTick) -> TaskWaitResult {
 }
 
 /// 若任务处于可唤醒队列则移回就绪队列并返回 `true`。
+#[inline]
 pub fn wake_task(task_id : TaskId) -> bool {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.wake_task(task_id))
 }
 
+#[inline]
 pub fn interrupt_task(task_id : TaskId) -> bool {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.interrupt_task(task_id))
 }
 
+#[inline]
 pub fn block_task_manual(task_id : TaskId) {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.block_task_manual(task_id));
 }
 
+#[inline]
 pub fn wake_child_exit_waiters(parent_id : TaskId) {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.wake_child_exit_waiters(parent_id));
 }
 
 /// 终止指定任务（非当前任务）；成功返回 `true`，任务不存在或 idle 返回 `false`。
+#[inline]
 pub fn kill_task(task_id : TaskId, exit_code : TaskExitCode) -> bool {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.kill_task(task_id, exit_code))
 }
 
 /// 从已退出队列中按任务号回收退出信息。
+#[inline]
 pub fn reap_exited_task(task_id : TaskId) -> Option<ExitedTask> {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.reap_exited_task(task_id))
 }
 
 /// 按 FIFO 从已退出队列回收一个任务的退出信息。
+#[inline]
 pub fn reap_one_exited_task() -> Option<ExitedTask> {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.reap_one_exited_task())
 }
 
 /// 按 FIFO 近似顺序回收当前父任务下任意已退出子任务。
+#[inline]
 pub fn reap_one_exited_child(parent_id : TaskId) -> Option<ExitedTask> {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.reap_one_exited_child(parent_id))
 }
 
 /// 判断指定任务是否仍有子任务。
+#[inline]
 pub fn has_child(parent_id : TaskId) -> bool {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.has_child(parent_id))
 }
 
 /// 从显式等待队列头部唤醒一个任务。
+#[inline]
 pub fn wake_one_in_wait_queue(wait_queue_id : WaitQueueId) -> Option<TaskId> {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.wake_one_in_wait_queue(wait_queue_id))
 }
 
 /// 清空指定显式等待队列并将其中任务全部置为就绪。
+#[inline]
 pub fn wake_all_in_wait_queue(wait_queue_id : WaitQueueId) -> usize {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.wake_all_in_wait_queue(wait_queue_id))
 }
 
 /// 从一个显式等待队列唤醒部分任务，并把其余等待者迁移到另一个等待队列。
+#[inline]
 pub fn requeue_wait_queue(from_wait_queue_id : WaitQueueId,
                           to_wait_queue_id : WaitQueueId,
                           wake_count : usize,
@@ -477,30 +518,35 @@ pub fn exit_current(exit_code : TaskExitCode) -> ! {
 }
 
 /// 当前运行任务号；引导阶段尚未切换时为 `None`。
+#[inline]
 pub fn current_task_id() -> Option<TaskId> {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.current_task_id())
 }
 
 /// 当前运行任务的稳定快照（语义层，不含内核栈指针等实现细节）。
+#[inline]
 pub fn current_task_snapshot() -> Option<TaskSnapshot> {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.current_task_snapshot())
 }
 
 /// 指定任务的稳定快照；任务不存在或已被回收时返回 `None`。
+#[inline]
 pub fn task_snapshot(task_id : TaskId) -> Option<TaskSnapshot> {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.task_snapshot(task_id))
 }
 
 /// 当前调度器逻辑 tick。
+#[inline]
 pub fn current_tick() -> TaskTick {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.current_tick())
 }
 
 /// 当前任务内核栈顶，供 trap/用户态恢复路径使用。
+#[inline]
 pub fn current_task_kernel_stack_top() -> Option<usize> {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.current_task_kernel_stack_top())
@@ -508,12 +554,14 @@ pub fn current_task_kernel_stack_top() -> Option<usize> {
 
 /// 开始由 Rust 修改当前任务的权威 trap 上下文，返回可写指针（若尚无当前任务则为
 /// `None`）。
+#[inline]
 pub fn begin_current_trap_frame_access(trap_frame : TaskTrapFrame) -> Option<*mut TaskTrapFrame> {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.begin_current_trap_frame_access(trap_frame))
 }
 
 /// 将 TCB 中保存的 trap 现场恢复到调用方缓冲区。
+#[inline]
 pub fn restore_current_trap_frame(trap_frame : &mut TaskTrapFrame) -> bool {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.restore_current_trap_frame(trap_frame))

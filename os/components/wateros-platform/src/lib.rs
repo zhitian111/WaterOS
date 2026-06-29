@@ -15,10 +15,13 @@
 //! 默认 feature 与成员 crate 对应关系以根目录 `Cargo.toml` 为准；文档描述的是各层
 //! **语义契约**与替换点，而非单一硬件路径的实现细节。
 
+/// 当前 feature 选中的板级实现 crate（`impl-dummy` / QEMU profile 之一）。
 #[cfg(feature = "impl-dummy")]
 pub use impl_dummy as active_impl;
+/// 当前 feature 选中的板级实现 crate（LoongArch QEMU virt）。
 #[cfg(feature = "impl-qemu-loongarch64-virt")]
 pub use impl_qemu_loongarch64_virt as active_impl;
+/// 当前 feature 选中的板级实现 crate（RISC-V QEMU + OpenSBI）。
 #[cfg(feature = "impl-qemu-riscv64-opensbi")]
 pub use impl_qemu_riscv64_opensbi as active_impl;
 

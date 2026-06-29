@@ -1,35 +1,56 @@
-# wateros-fs 功能快照
+# wateros-fs — 已实现功能快照
 
 ## 用途
 
-记录 **`wateros-fs`** 一级组件在默认 feature 下的能力边界，便于与路线图和实现对照。详细叙述见 **`docs/guides/filesystem-current.md`**。
+记录 `wateros-fs` 一级组件当前已落地能力、feature 组合与已知缺口。事实来源：`os/components/wateros-fs/**` 源码与 `Cargo.toml`；根 `wateros` 直接依赖 `fs` crate。
 
-## 事实来源
+## 子 crate 与职责
 
-- `os/components/wateros-fs/Cargo.toml`
-- `os/components/wateros-fs/src/lib.rs`
-- `fs-api`、`fs-devfs`、`fs-rootfs`、`fs-impl/impl-ext4`（`ro` / `rw` / `selftest` 模块）子 crate 源码
+| 子 crate | 职责 | 状态 |
+|----------|------|------|
+| `wateros-fs`（聚合） | impl 注册表、`init`/`mount_default_root_rw`、devfs/procfs/rootfs 再导出 | 已实现 |
+| `wateros-fs-api-v0` | `FsImpl`、`ReadOnlyFs`/`ReadWriteFs`、`SharedFs`/`SharedRwFs` | 已实现 |
+| `fs-devfs` + api/impl | 块设备枚举、`/dev` 节点、默认根块路径 | 已实现 |
+| `fs-procfs` + api/impl | `/proc` 伪文件（status、maps、mounts 等） | 已实现 |
+| `fs-rootfs` + api/impl | 根卷句柄、辅助 RO/RW 挂载、挂载代次 | 已实现 |
+| `fs-impl/impl-ext4-rs` | 基于 `ext4_rs` 的 ext4 RO/RW（**默认**） | 已实现 |
+| `fs-impl/impl-ext4` | 基于 ext4plus 的旧路径（`impl-ext4` feature） | 已实现 |
+| `fs-impl/impl-devfs` | devfs 的 `FsImpl` 注册面 | 已实现 |
+| `fs-impl/impl-dummy` | API 层占位 | 已实现 |
 
-## 当前已具备能力
+## Feature 矩阵（聚合层）
 
-- **能力描述与注册表**：`fs-api` 提供 **`FsKind` / `FsAccessMode` / `FsCapability` / `FsImpl`**；聚合层 `wateros-fs` 通过 **`registered_fs_impls()`**、**`supported_fs_summary()`**、**`pick_fs_impl(kind, mode)`** 暴露当前内核支持的 FS 列表，启动期打印 **`[fs] supported: ...`**。
-- **devfs（kernel）**：按块设备枚举生成 **`/dev/vblkN`** 路径，**`lookup_block_device`**、**`default_root_block_path`**、**`list_nodes`**；通过 **`KernelDevFsImpl: FsImpl`** 在注册表中登记 **`(DevFs, ReadOnly)`**。
-- **procfs（kernel）**：**`wateros-fs/fs-procfs`** 提供 **`ProcFsView`**；**`KernelProcFsImpl: FsImpl`** 登记 **`(Other("procfs"), ReadOnly)`**；生成 `/proc/<pid>/{stat,status,cmdline}`、`/proc/meminfo`、`/proc/mounts`（经 VFS 挂载表回调）。架构见 [`docs/architecture/wateros-procfs.md`](../../architecture/wateros-procfs.md)。
-- **procfs（kernel）**：**`wateros-fs/fs-procfs`** 提供 **`ProcFsView`**；**`KernelProcFsImpl: FsImpl`** 登记 **`(Other("procfs"), ReadOnly)`**；生成 `/proc/<pid>/{stat,status,cmdline}`、`/proc/meminfo`、`/proc/mounts`（经 VFS 挂载表回调）。
-- **procfs（kernel）**：**`wateros-fs/fs-procfs`** 提供 **`ProcFsView`**；**`KernelProcFsImpl: FsImpl`** 登记 **`(Other("procfs"), ReadOnly)`**；生成 `/proc/<pid>/{stat,status,cmdline}`、`/proc/meminfo`、`/proc/mounts`（经 VFS 挂载表回调）。架构见 [`docs/architecture/wateros-procfs.md`](../../architecture/wateros-procfs.md)。
-- **根卷（kernel rootfs）**：`fs::init` 仅 **probe + 注入 `FsImpl`**；bring-up 总线调用 **`mount_default_root_rw`**，从默认块设备 **只挂载 ext4 RW**（`ext4plus`），全局保存 **`SharedRwFs`**；VFS 读路径与 `mkdir`/`write` 共用该句柄。
-- **ext4 单一 impl**：**RO** 由 `ext4-view`（`mount_ro`，非 bring-up 主路径）、**RW** 由 `ext4plus`（beta）承载；RW 句柄同时实现读路径（`exists` / `metadata` / `read` / `read_range` / `read_dir`）。
-- **FS 契约（fs-api）**：**`ReadOnlyFs`**、**`ReadWriteFs`**（含 RW 读路径默认 `Unsupported`、ext4 覆盖）；**`FsAsyncIo`** 占位；句柄 **`SharedFs`** / **`SharedRwFs`**。
-- **rootfs**：**`mount_generation()`** 供 VFS 页缓存失效；每次成功根挂载递增。
-- **启动调试**：挂载成功后打印 **`/`**、devfs 节点，并对 ext4 根做 **`[fs::boot-tree]`** 路径 DFS；自检包括读固定文本/ELF 头与在根写入 `/hello` 后用只读句柄读回校验。
+| Feature | 效果 |
+|---------|------|
+| `api-v0` | 链接各子 crate API |
+| `impl-devfs` | devfs 实现注册 |
+| `impl-ext4-rs` | 默认 ext4 RW（`ext4_rs`） |
+| `impl-ext4` | 可选 ext4plus 实现 |
+| `default` | `api-v0` + `impl-devfs` + `impl-ext4-rs` |
 
-## 明确未覆盖
+## 已实现能力
 
-- 写回稳定性（`ext4plus` beta，无完整 journal）。
-- 完整 Linux `/proc` 语义（`/proc/self`、完整 stat 字段、线程 tid 目录等）；见 [`docs/architecture/wateros-procfs.md`](../../architecture/wateros-procfs.md)。
-- devfs 侧字符设备节点填充（API 已预留类型）。
-- `FsKind` 不区分 ext2/3/4，按 ext4 统一归并。
+- **启动序列**：`fs::init()` 刷新 devfs、探测根块设备、注入 `FsImpl`（**不**挂载）；`mount_default_root_rw()` 在 bring-up 挂载单一 RW 根卷。
+- **ext4**：probe magic、RO/RW 挂载、整文件/区间读写、目录、symlink、hardlink、chmod/chown/xattr、truncate、rename、mknod 子集。
+- **辅助卷**：`mount_aux_ro_from_block_path` / `mount_aux_rw_from_block_path` 独立句柄，不替换根卷。
+- **devfs**：平台块设备刷新、lookup、`default_root_block_path`。
+- **procfs**：按 tid 生成 status/maps/mounts 等；可注册 argv/exe/mount 列表回调。
+- **共享句柄**：`Arc<Mutex<...>>` 型 `SharedFs` / `SharedRwFs`，`LocalFs`/`LocalRwFs` 薄包装。
 
-## 维护要求
+## 与 wateros-vfs 的分工
 
-行为或默认 feature 变化时，同步更新本文件与 **`docs/guides/filesystem-current.md`**、**`docs/exports/public-api/wateros-fs.md`**。
+`wateros-fs` 提供块 FS 与伪 FS **实现**；`wateros-vfs` 经 `impl-fs-bridge` 消费本组件 API，叠加挂载表、页缓存与 fd 语义。syscall 侧通常只依赖 `vfs`，不直接依赖 `fs-impl-*`。
+
+## 缺口与后续
+
+- `FsAsyncIo` 未实现，均为 `Unsupported`。
+- `impl-ext4` 与 `impl-ext4-rs` 二选一由 feature 控制，勿同时依赖两套写路径。
+- procfs 字段为 LTP/bring-up 子集，非完整 Linux `/proc`。
+- NUMA、quota、journal 异常恢复等生产级语义未覆盖。
+- `impl-dummy` rootfs/devfs 无真实设备。
+
+## 修订
+
+| 日期 | 说明 |
+|------|------|
+| 2026-06-29 | 初版导出（注释/inline 任务同步） |

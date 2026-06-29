@@ -1,50 +1,46 @@
-# wateros-cred 功能快照
+# wateros-cred — 已实现功能快照
 
 ## 用途
 
-记录 **`wateros-cred`** 一级组件当前提供的进程凭证能力，便于与 syscall、task 生命周期、VFS 权限占位对照。
+记录 `wateros-cred` 一级组件当前已落地能力。事实来源：`os/components/wateros-cred/**` 与 `docs/guides/cred-module-design.md`。
 
-## 事实来源
+## 子 crate 与职责
 
-- `docs/guides/cred-module-design.md`
-- `os/components/wateros-cred/Cargo.toml`
-- `os/components/wateros-cred/src/lib.rs`
-- `os/components/wateros-cred/cred-api/api-v0/src/lib.rs`
-- `os/components/wateros-cred/cred-impl/impl-root/src/lib.rs`
+| 子 crate | 职责 | 状态 |
+|----------|------|------|
+| `wateros-cred`（聚合） | 生命周期 hook、`set*id` 门面、权限查询再导出 | 已实现 |
+| `cred-api/api-v0` | `ProcessCredentials`、`CredentialBackend`/`AccessCheck` trait | 已实现 |
+| `cred-impl/impl-root` | per-task 侧表（B2）、root 初始 + privileged set*id | 已实现 |
 
-## 聚合层与 feature
+## Feature 矩阵
 
-- 根 crate **`wateros`** 在 `qemu-riscv64-opensbi` 与 `qemu-loongarch64-virt` feature 中启用 `cred/api-v0`、`cred/impl-root` 与 `dep:cred`。
-- **`api-v0`** 导出 `Uid`、`Gid`、`ProcessCredentials`、`Capability`、`CredentialBackend`、`AccessCheck` 等契约。
-- **`impl-root`** 是 bring-up 阶段的默认实现：用户任务凭证初始化为 root，set*id 按 privileged 语义更新当前凭证。
+| Feature | 效果 |
+|---------|------|
+| `default` | `api-v0` + `impl-root` |
+| `api-v0` | 仅契约类型（无运行时侧表） |
+| `impl-root` | 启用侧表与 `task` 依赖（`current_credentials` 等） |
 
-## 当前已具备能力
+## 已实现能力
 
-| 能力 | 状态 | 要点 |
-|------|------|------|
-| per-task 凭证侧表 | 已接入 | `TaskId -> ProcessCredentials`；无条目读取会 panic 且消息含 `tid` |
-| 用户任务 spawn | 已接入 | `on_user_task_spawned(tid)` 写入 `ProcessCredentials::ROOT` |
-| fork 凭证继承 | 已接入 | `fork_cred(parent, child)` 复制父凭证 |
-| thread clone 凭证共享 | 已接入 | `share_cred(parent, child)` 通过 owner/refcount 共享凭证槽 |
-| execve 钩子 | 占位 | `on_exec(tid)` no-op，保留 `TODO(cred-exec-setuid)` |
-| reap 清理 | 已接入 | `drop_task_cred(tid)` 删除侧表条目；不存在时 no-op |
-| 当前任务凭证 | 已接入 | `current_credentials()` 读取当前 task id 后查询 impl |
-| set*id 更新 | 已接入 | impl-root 按 privileged 语义更新 real/effective/saved/fs id；re/res 的 `-1` 表示保持不变 |
-| capability / inode 权限 | 占位 | `has_cap` / `may_access_inode` 在 impl-root 恒返回 true |
+- **存储**：`TaskId → ProcessCredentials`；线程 clone 共享 owner 引用计数。
+- **生命周期**：`on_user_task_spawned`（ROOT）、`fork_cred`、`share_cred`、`on_exec`（no-op）、`drop_task_cred`。
+- **ID 更新**：`setuid`/`setgid`/`setreuid`/`setregid`/`setresuid`/`setresgid`/`setgroups`（privileged 语义）。
+- **查询**：`credentials_for` / `current_credentials`；syscall 层 `getuid` 族/`getgroups`/`getresuid` 等。
+- **权限**：`has_cap`（root 或占位）、`may_access_inode`（恒 true）、`may_chown`（非 root 有限制）。
 
-## Syscall 对接
+## 与 syscall / bring-up 接线
 
-- `getuid` / `geteuid` / `getgid` / `getegid` 读取当前 `ProcessCredentials` 并返回对应 ID。
-- `getgroups` 当前返回固定 supplementary group `[0]`，`getgroups(0, NULL)` 返回数量 `1`。
-- `setuid` / `setgid` / `setreuid` / `setregid` / `setresuid` / `setresgid` 更新当前任务凭证，成功返回 `0`；非法超宽 uid/gid 返回 `EINVAL`。
+- syscall `sys/cred.rs` 读写聚合门面。
+- `fork`/`clone`/`execve`/`waitpid` reap 在 syscall 或 call site 调 hook（`task` 不依赖 cred）。
 
-## 明确未覆盖
+## 缺口与后续
 
-- 非 root 权限拒绝、capability 位图和 namespace 下的完整 set*id 安全语义。
-- capabilities 位图、namespace、`prctl(PR_CAPBSET_*)` 迁移。
-- VFS 路径权限检查与 ext4 inode owner 对接。
-- execve 的 S_ISUID / S_ISGID 规则。
+- `on_exec` 未解析 S_ISUID/S_ISGID（`TODO(cred-exec-setuid)`）。
+- VFS `fstat` 仍常返回硬编码 uid/gid=0；`may_access_inode` 未用于 open。
+- 无真实 capability 位图与 namespace。
 
-## 维护要求
+## 修订
 
-修改 `ProcessCredentials` 字段、生命周期 hook、syscall identity 行为或 VFS 权限策略时，同步更新本文件与 `docs/guides/cred-module-design.md`。
+| 日期 | 说明 |
+|------|------|
+| 2026-06-29 | 初版导出 |

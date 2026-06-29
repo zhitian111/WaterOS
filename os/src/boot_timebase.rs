@@ -37,11 +37,13 @@ pub fn probe_and_init_timebase(dtb_pa: usize) -> u64 {
     hz
 }
 
+/// DTB 无效或 `set_frequency_hz` 拒绝时，回退到平台默认频率并打标。
 fn warn_invalid_and_fallback() -> (u64, TimebaseSource) {
     let hz = platform::time::frequency_hz().unwrap_or(0);
     (hz, TimebaseSource::PlatformFallback)
 }
 
+/// 从常驻物理地址解析 FDT，仅读 `/cpus` 树下的 `timebase-frequency`。
 fn probe_timebase_hz(dtb_pa: usize) -> Option<u64> {
     if dtb_pa == 0 {
         return None;
@@ -67,11 +69,14 @@ fn read_cpus_timebase_hz(fdt: &Fdt<'_>) -> Option<u64> {
     None
 }
 
+#[inline]
 fn read_timebase_property(node: fdt::node::FdtNode<'_, '_>) -> Option<u64> {
     let raw = node.property("timebase-frequency")?.value;
     read_be_cell(raw)
 }
 
+/// 解析 FDT 大端 32/64 位 cell；其它长度视为无效。
+#[inline]
 fn read_be_cell(raw: &[u8]) -> Option<u64> {
     match raw.len() {
         4 => {

@@ -1,32 +1,108 @@
-# wateros-platform 公共 API 快照
+# wateros-platform — 聚合层公共 API
 
-## 当前定位
+## 用途
 
-聚合 **`arch`**（ISA 原语）、**`firmware`**（SBI/控制台/定时器等）与 **`platform-impl`**（QEMU+OpenSBI 或 dummy），在上层组合 **`boot`**、**`time`**、**`timer`**、**`reset`**、**`console`**、**`interrupt`**。默认 **`impl-qemu-riscv64-opensbi`** + **`opensbi`**；**`platform-arch`** 默认 **`impl-riscv64`**，**`platform-firmware`** 默认 **`impl-opensbi`**。
+列出根 crate `wateros` 通过 `platform` 依赖最终使用的对外接口。impl 细节见各子 crate rustdoc 与 `docs/exports/features/wateros-platform.md`。
 
-其中 **`platform-arch`** 还承担任务切换上下文、trap 抽象与用户态返回等机制类型（**`ArchTaskContext`**、**`ActiveTrapFrame`** 等）；与 **task** 公共 API 的边界：task 侧只暴露架构无关快照，寄存器级细节留在 arch / scheduler / impl-core。以下表格仅列 **本聚合 `lib.rs` 直接挂出** 的模块与根级函数，深层 **`pub`** 以各子 crate 为准。
-其中 `platform-arch` 现在还承担了架构级任务切换上下文抽象 `ArchTaskContext` 及当前架构具体实现的组织工作，用于表达“当前 CPU 架构下任务切换最小需要保存的寄存器集合”。Stage3A 之后，arch 侧的 `goto_task_entry(...)` 语义已进一步收敛为“向任务 runtime 传递 opaque bootstrap 指针”，而不再把 task 启动协议对象暴露到公共 API。`TaskContext` 也继续只作为 `task-impl` / `task-scheduler` 的机制层细节被消费。当前 trap 抽象还额外提供了 `TrapContextRead`、`TrapContextWrite`、`ArchTrapFrame` 与 `ActiveTrapFrame`，用来把 `user_sp`、`returns_to_user`、`set_user_sp`、`set_return_to_user`、`prepare_user_return` 这类语义集中在架构层；task 机制层可直接保存当前激活架构的 trap frame，而 task 公共 API 只导出架构无关的 trap 语义快照。**Trap cause**：**`TrapCause`** 为跨架构语义枚举；**裸 CSR 数值 → `TrapCause`** 由各 **`arch-impl` 解码**（RISC-V 在 **`impl-riscv64`** 提供 **`Scause`** 与 **`From<Scause> for TrapCause`**；LoongArch 在 **`impl-loongarch64`** 自行解码 **`estat`** 等）。**`TrapFrameRead::trap_cause`** 在每个 trap 帧上 **显式实现**，`arch-api` **不**提供从任意 `usize` 到 **`TrapCause`** 的默认转换。
+## 模块树（`wateros-platform/src/lib.rs`）
 
-RISC-V arch 实现现已补出最小的 user-task 入口 trampoline 与 `__wateros_arch_restore_user_task(...)` 恢复桩，可从任务对象保存的 trap frame 直接走一次 `sret` 首次进入用户态。`platform-arch` 还新增了 `impl-loongarch64`：当前提供 LoongArch64 StableCounter 读取、全局/时钟中断开关、任务上下文、trap frame 语义读写和切换/异常返回汇编骨架；它用于验证 API-first 的 LoongArch 接入路径，不包含完整 QEMU LoongArch 平台启动链。
+```text
+platform::
+  active_impl          # feature 选中的 platform-impl crate
+  arch::*              # 再导出 wateros-platform-arch
+  boot::*              # [api-v0] PlatformBoot* + BootArgs/BootContext
+  time::*              # [api-v0] frequency_hz / set_frequency_hz
+  timer::*             # now_tick / set_timer_after* / PlatformTimerError
+  reset::*             # reboot / shutdown / reset
+  console::*           # console_write_* / console_flush
+  wall_clock::*        # monotonic_ns / realtime_ns / RtcTimeFields
+  interrupt::*         # arch 中断控制再导出
+```
 
-## 事实来源
+## `platform::arch`
 
-- [`os/components/wateros-platform/Cargo.toml`](../../os/components/wateros-platform/Cargo.toml)
-- [`os/components/wateros-platform/src/lib.rs`](../../os/components/wateros-platform/src/lib.rs)
-- **`platform-arch`** / **`platform-firmware`** / **`platform-api-v0`** 根 **`lib.rs`**
-
-## 聚合层导出（概要）
+再导出 `wateros-platform-arch` 全部公开模块，并附加：
 
 | 项 | 说明 |
 |----|------|
-| **`boot`**（**`api-v0`**） | **`PlatformBootArgs`**、**`PlatformBootContext`**；**`BootArgs`** / **`BootContext`** 由 **`impl-dummy`** 或 **`impl-qemu-riscv64-opensbi`** 具体类型别名。 |
-| **`pub mod arch`** | **`pub use ::arch::*`**；**`init()`** → **`arch_boot()`**。 |
-| **`time`**（**`api-v0`**） | **`PlatformTime`**、**`PlatformTimeError`**、**`PlatformTimeResult`**；**`PlatformTimeImpl`** 来自 dummy 或 QEMU OpenSBI；**`frequency_hz()`**。 |
-| **`timer`** | 组合 arch tick 与 firmware deadline：**`PlatformTimerError`**、**`PlatformTimerResult`**；**`now_tick`**、**`tick_hz`**、**`set_timer_deadline_tick`**、**`now_duration`**、**`set_timer_after`**（及 **`_ms`** / **`_s`**）。 |
-| **`reset`** | **`pub use firmware::reset::*`**（**`reset`** / **`reboot`** / **`shutdown`** 等，以 firmware 导出为准）。 |
-| **`console`** | **`pub use firmware::console::*`**（早期控制台字节/缓冲写出等）。 |
-| **`interrupt`** | **`pub use arch::interrupt::*`**。 |
+| `arch::init()` | 调用 `arch_boot()` 安装 trap 向量 |
 
-## 维护要求
+子模块：`time`、`task`、`trap`、`interrupt`、`paging`（见下节 arch 聚合 API）。
 
-聚合模块表、默认 impl 链或 arch/firmware 边界变化时，同步更新本文件与 **`docs/architecture/snapshot.md`** 中平台相关段落。
+## `platform::time`（`api-v0`）
+
+| 项 | 说明 |
+|----|------|
+| `set_frequency_hz(hz)` | 引导期写入 tick 频率（Hz） |
+| `frequency_hz()` | 读缓存或回退 `PlatformTimeImpl` |
+| `PlatformTime` / `PlatformTimeError` | 契约类型 |
+
+## `platform::timer`
+
+| 项 | 说明 |
+|----|------|
+| `now_tick()` | 读 arch 单调 tick |
+| `tick_hz()` | 读平台频率包装为 `ArchTimeFrequency` |
+| `set_timer_deadline_tick` | 编程绝对 tick deadline |
+| `now_duration()` | tick + Hz → `Duration` |
+| `set_timer_after` / `_ms` / `_s` | 相对时刻编程 |
+| `PlatformTimerError` | `Arch` / `Platform` / `DeadlineTimer` / `NoFrequency` / `Overflow` |
+
+## `platform::reset`
+
+| 项 | 说明 |
+|----|------|
+| `reboot` / `shutdown` / `reset` | 委托 `active_impl::reset` |
+| `PlatformResetType` / `Reason` / `Error` | 契约枚举 |
+
+## `platform::console`
+
+| 项 | 说明 |
+|----|------|
+| `console_write_a_byte` / `console_write_a_buffer` | 早期输出 |
+| `console_flush` | 刷缓冲（若后端支持） |
+| `PlatformConsoleError` | 错误类型 |
+
+## `platform::wall_clock`
+
+| 项 | 说明 |
+|----|------|
+| `monotonic_ns()` | 单调纳秒 |
+| `realtime_ns()` | `CLOCK_REALTIME` 纳秒 |
+| `set_realtime_ns(target)` | 设置实时钟偏移 |
+| `RtcTimeFields` | Linux `rtc_time` 字段 |
+| `ns_to_rtc_time` / `rtc_time_to_ns` | 互转 |
+
+## `wateros-platform-arch` 公开面
+
+| 模块 | 主要符号 |
+|------|----------|
+| `arch_boot()` | 极早 trap 向量安装 |
+| `time` | `read_time_tick`、`read_time_frequency` |
+| `task` | `ArchTaskContext`、`ActiveArchTaskContext` |
+| `trap` | trap 帧 trait、`ActiveTrapFrame`、`prepare_user_trap_frame_access`、`timer_slice_ticks`；riscv64 另有 `set_kernel_trap_satp` |
+| `interrupt` | `enable_*` / `disable_*` / `wait_for_interrupt` |
+| `paging` | `active_address_space_token`、`activate_address_space_token_and_flush`、`flush_address_space_translations`、`init_paging_disable_mmu`、`enable_paging` |
+
+## `wateros-platform-arch-api-v0` 契约摘要
+
+| 模块 | 职责 |
+|------|------|
+| `trap` | `TrapFrameRead/Write`、`TrapSyscall*`、`SignalFrameCodec`、`ArchTrapFrame` |
+| `time` | `ArchTime`、`ArchTimeTick`、`ArchTimeFrequency` |
+| `task` | `ArchTaskContext` trait |
+| `interrupt` | `ArchTimerInterruptControl` |
+| `kernel_trap` | `register_kernel_trap_handler`、`invoke_kernel_trap_handler`、`wateros_kernel_trap_enter` |
+
+## 初始化契约（根 crate 责任）
+
+1. 选定 feature 配对 arch + platform impl（如 `impl-qemu-loongarch64-virt`）。
+2. `platform::arch::init()` — 任何用户态 trap 前。
+3. `arch_api::kernel_trap::register_kernel_trap_handler` — 首次 trap 前（通常紧接 `task::init`）。
+4. `platform::time::set_frequency_hz` — 若已从 DTB 探测到频率，在首次 `timer` 使用前写入。
+
+## 修订
+
+| 日期 | 说明 |
+|------|------|
+| 2026-06-29 | 初版导出 |

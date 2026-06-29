@@ -35,6 +35,7 @@ pub struct VfsMetadata {
 /// 目录枚举单条结果。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VfsDirEntry {
+    /// 目录项 basename（不含 `/`）。
     pub name: String,
     pub node_type: VfsNodeType,
 }

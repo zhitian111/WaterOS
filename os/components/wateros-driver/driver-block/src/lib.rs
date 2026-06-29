@@ -42,11 +42,13 @@ pub const BLOCK_SUPPORTED_DEVICES: &[SupportedDeviceEntry] = &[
 ];
 
 /// 返回本子系统声明支持的设备条目（非排他；可与其它子系统条目并存）。
+#[inline]
 pub fn supported_devices() -> &'static [SupportedDeviceEntry] {
     BLOCK_SUPPORTED_DEVICES
 }
 
 /// 块子系统是否声明可处理该 DTB 设备（仅基于 `compatible` 列表与探测到的 [`DeviceType`]，不含具体初始化成败）。
+#[inline]
 pub fn block_subsystem_claims_device(compatibles: &[String], probed: DeviceType) -> bool {
     if probed != DeviceType::Block {
         return false;

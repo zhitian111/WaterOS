@@ -1,3 +1,7 @@
+//! 基于 `linked_list_allocator::LockedHeap` 的内核全局堆后端。
+//!
+//! **不变量**：所有 `GlobalAlloc` 路径经 [`crate::interrupt_guard`] 关中断并检测递归分配。
+
 use core::alloc::{GlobalAlloc, Layout};
 use core::ptr::addr_of_mut;
 
@@ -13,8 +17,10 @@ pub(crate) struct InterruptSafeLockedHeap {
 }
 
 impl InterruptSafeLockedHeap {
+    #[inline]
     pub(crate) const fn empty() -> Self { Self { inner: LockedHeap::empty() } }
 
+    #[inline]
     pub(crate) fn mem_stats(&self) -> HeapMemStats {
         let heap = self.inner.lock();
         HeapMemStats { used: heap.used(),
@@ -68,4 +74,5 @@ pub(crate) fn init_heap() {
     }
 }
 
+#[inline]
 pub(crate) fn stats() -> HeapMemStats { HEAP_ALLOCATOR.mem_stats() }

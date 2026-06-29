@@ -1,3 +1,7 @@
+//! 基于 `rlsf::Tlsf` 的 O(1) 内核堆后端；`used` 为原子估算值。
+//!
+//! **不变量**：分配路径与 [`crate::interrupt_guard`] 一致；`pool_len` 在 `init` 后不变。
+
 use core::alloc::{GlobalAlloc, Layout};
 use core::ptr::{self, addr_of_mut, NonNull};
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -20,12 +24,14 @@ pub(crate) struct InterruptSafeTlsfHeap {
 }
 
 impl InterruptSafeTlsfHeap {
+    #[inline]
     pub(crate) const fn new() -> Self {
         Self { inner: Mutex::new(KernelTlsf::new()),
                pool_len: AtomicUsize::new(0),
                used_estimate: AtomicUsize::new(0) }
     }
 
+    #[inline]
     pub(crate) fn mem_stats(&self) -> HeapMemStats {
         let used = self.used_estimate.load(Ordering::Relaxed);
         let pool_len = self.pool_len.load(Ordering::Acquire);
@@ -135,4 +141,5 @@ pub(crate) fn init_heap() {
     }
 }
 
+#[inline]
 pub(crate) fn stats() -> HeapMemStats { HEAP_ALLOCATOR.mem_stats() }

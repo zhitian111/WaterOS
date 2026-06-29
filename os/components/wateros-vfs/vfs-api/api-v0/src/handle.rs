@@ -25,10 +25,14 @@ impl VfsOpenFlags {
     /// 仅打开目录（`O_DIRECTORY`）。
     pub const DIRECTORY: u32 = 32;
 
+    /// 只读打开标志组合。
+    #[inline]
     pub const fn read() -> Self {
         Self(Self::READ)
     }
 
+    /// 是否包含指定标志位。
+    #[inline]
     pub fn contains(&self, flag: u32) -> bool {
         self.0 & flag != 0
     }
@@ -168,15 +172,20 @@ pub trait VfsFileHandle: VfsIoHandle {
     }
 }
 
+/// `lseek` / `seek` 基准：绝对偏移、相对当前、相对 EOF。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VfsSeekWhence {
+    /// `SEEK_SET`：相对文件开头。
     Set,
+    /// `SEEK_CUR`：相对当前偏移。
     Cur,
+    /// `SEEK_END`：相对文件末尾。
     End,
 }
 
 /// 路径级打开为句柄。
 pub trait VfsOpenOps {
+    /// 按绝对路径与标志打开；返回的对象经 fd 会话分配编号后供 syscall 使用。
     fn open(&self, path: &str, flags: VfsOpenFlags) -> VfsResult<Box<dyn VfsIoHandle>> {
         let _ = (path, flags);
         Err(VfsError::Unsupported)

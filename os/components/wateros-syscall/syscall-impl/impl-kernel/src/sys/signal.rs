@@ -1,4 +1,4 @@
-//! Process/thread signal routing and Linux signal syscall helpers.
+//! 进程/线程信号路由与 Linux 信号类 syscall 辅助逻辑。
 
 use core::sync::atomic::{AtomicU64, Ordering};
 

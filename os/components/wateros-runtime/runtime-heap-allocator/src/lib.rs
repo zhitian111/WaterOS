@@ -30,14 +30,18 @@ pub use stress::heap_fragmentation_stress_report;
 /// 内核堆用量快照。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HeapMemStats {
+    /// 已分配字节（实现定义：链表后端为精确值，TLSF 为估算）。
     pub used : usize,
+    /// 剩余可用字节。
     pub free : usize,
+    /// 堆池总容量（`KERNEL_HEAP_SIZE`）。
     pub capacity : usize,
 }
 
 pub(crate) use backend::HEAP_ALLOCATOR;
 
 /// 返回当前内核堆用量（`used`/`free`/`capacity`）。
+#[inline]
 pub fn heap_mem_stats() -> HeapMemStats {
     interrupt_guard::with_allocator_interrupt_guard(|| backend::stats())
 }

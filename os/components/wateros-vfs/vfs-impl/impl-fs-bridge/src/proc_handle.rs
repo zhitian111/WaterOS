@@ -21,7 +21,9 @@ fn proc_view() -> &'static impl ProcFsView {
 /// procfs 目录句柄。
 #[derive(Clone)]
 pub struct ProcDirectoryHandle {
+    /// 挂载内相对路径（不含 `/proc` 前缀）。
     rel: String,
+    /// 用户可见绝对路径。
     abs: String,
     meta: VfsMetadata,
     dirents: Option<Vec<VfsDirEntry>>,

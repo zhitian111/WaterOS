@@ -22,33 +22,40 @@ static ARGV_LOOKUP: Mutex<Option<TaskArgvLookup>> = Mutex::new(None);
 static EXE_LOOKUP: Mutex<Option<TaskExeLookup>> = Mutex::new(None);
 static MOUNT_LOOKUP: Mutex<Option<MountListLookup>> = Mutex::new(None);
 
+/// 注册按 leader task id 查询 argv 的回调（VFS 层在 init 时注入）。
 pub fn register_task_argv_lookup(f: TaskArgvLookup) {
     *ARGV_LOOKUP.lock() = Some(f);
 }
 
+/// 注册按 leader task id 查询 exe 路径的回调。
 pub fn register_task_exe_lookup(f: TaskExeLookup) {
     *EXE_LOOKUP.lock() = Some(f);
 }
 
+/// 注册挂载表枚举回调（供 `/proc/mounts`）。
 pub fn register_mount_list_lookup(f: MountListLookup) {
     *MOUNT_LOOKUP.lock() = Some(f);
 }
 
+// 经静态回调查 argv；未注册时返回 None。
 fn argv_for(leader: TaskId) -> Option<Vec<String>> {
     let lookup = *ARGV_LOOKUP.lock();
     lookup.and_then(|f| f(leader))
 }
 
+// 经静态回调查 exe 路径。
 fn exe_for(leader: TaskId) -> Option<String> {
     let lookup = *EXE_LOOKUP.lock();
     lookup.and_then(|f| f(leader))
 }
 
+// 经静态回调枚举挂载行；未注册时返回空表。
 fn mount_lines() -> Vec<ProcMountLine> {
     let lookup = *MOUNT_LOOKUP.lock();
     lookup.map(|f| f()).unwrap_or_default()
 }
 
+// 内部路径解析结果；覆盖全局文件与 per-pid 子树。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ProcNode {
     Root,
@@ -66,6 +73,7 @@ enum ProcNode {
     PidCmdline(ProcessId),
 }
 
+// 为 proc 节点分配稳定 inode 号（pid 子树按 pid 编码）。
 fn proc_inode(node: ProcNode) -> u64 {
     match node {
         ProcNode::Root => 1,
@@ -120,6 +128,7 @@ fn normalize_rel(path: &str) -> String {
     out
 }
 
+// 解析 pid 目录名：`self` 映射当前进程，否则按十进制 pid。
 fn parse_pid(name: &str) -> Option<ProcessId> {
     if name == "self" {
         Some(task::current_process_task_snapshot()?.pid)
@@ -128,6 +137,7 @@ fn parse_pid(name: &str) -> Option<ProcessId> {
     }
 }
 
+// 将相对 `/proc` 的路径映射为内部节点；未知路径返回 None。
 fn parse_node(path: &str) -> Option<ProcNode> {
     let p = normalize_rel(path);
     if p == "/" {
@@ -153,10 +163,12 @@ fn parse_node(path: &str) -> Option<ProcNode> {
     }
 }
 
+// 进程仍存在于 task 子系统时才对外可见。
 fn process_visible(pid: ProcessId) -> bool {
     task::process_snapshot(pid).is_some()
 }
 
+// 进程 comm：优先 argv[0] 基名，其次 exe 基名，最后回退 `"process"`。
 fn comm_for(pid: ProcessId) -> String {
     let leader = task::leader_task_for_process(pid).unwrap_or(0);
     if let Some(argv) = argv_for(leader) {
@@ -193,10 +205,12 @@ hugetlb\t12\t1\t1\n"
     .into_bytes()
 }
 
+// 取路径最后一段作为 comm 展示名。
 fn basename(path: &str) -> String {
     path.rsplit('/').next().unwrap_or(path).to_string()
 }
 
+// Linux `/proc/pid/stat` 单字符状态码（简化版）。
 fn state_char(process: ProcessState, leader_state: Option<TaskState>) -> char {
     match process {
         ProcessState::Exited(_) | ProcessState::Exiting(_) => 'Z',
@@ -280,6 +294,7 @@ fn format_status(pid: ProcessId) -> FsResult<Vec<u8>> {
     Ok(line.into_bytes())
 }
 
+// status/smaps 用的内存估算（非精确 RSS，仅供 LTP 读通）。
 #[derive(Clone, Copy)]
 struct ProcMemoryKb {
     size_kb : usize,
@@ -367,8 +382,11 @@ fn format_mounts() -> Vec<u8> {
     out
 }
 
+/// 内核 procfs 只读视图（零大小；无实例状态）。
 pub struct KernelProcFs;
 
+/// 返回全局 procfs 视图句柄。
+#[inline]
 pub fn view() -> &'static KernelProcFs {
     &KernelProcFs
 }
@@ -521,18 +539,22 @@ impl ProcFsView for KernelProcFs {
     }
 }
 
+/// procfs 的 [`FsImpl`] 注册项；仅列能力，不参与块卷挂载。
 pub struct KernelProcFsImpl;
 
+/// 全局 procfs impl 实例。
 pub static IMPL: KernelProcFsImpl = KernelProcFsImpl;
 
 const SUPPORTED: &[FsCapability] =
     &[FsCapability::new(FsKind::Other("procfs"), FsAccessMode::ReadOnly)];
 
 impl FsImpl for KernelProcFsImpl {
+    #[inline]
     fn name(&self) -> &'static str {
         "procfs"
     }
 
+    #[inline]
     fn supported(&self) -> &'static [FsCapability] {
         SUPPORTED
     }
@@ -545,6 +567,7 @@ impl FsImpl for KernelProcFsImpl {
     }
 }
 
+/// 最小自检：枚举根目录并打日志。
 pub fn test() {
     let v = view();
     let _ = v.read_dir("/");

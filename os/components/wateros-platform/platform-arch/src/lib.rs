@@ -141,9 +141,8 @@ pub mod interrupt {
 
 /// 地址空间激活与必要的地址翻译缓存刷新原语；页表内容在 MM 组件。
 ///
-/// 本模块是 **paging control primitives**：只负责读写 ISA CSR、开关 MMU、刷新
-/// TLB/地址翻译缓存。具体页表格式、PTE 编码、地址空间构造仍由
-/// `wateros-mm/mm-impl/*/pagetable.rs` 负责。
+/// 分页控制原语：只负责读写 ISA CSR、开关 MMU、刷新 TLB/地址翻译缓存。具体页表
+/// 格式、PTE 编码、地址空间构造仍由 `wateros-mm/mm-impl/*/pagetable.rs` 负责。
 ///
 /// RISC-V 的 token 是 `satp` 编码值；其它架构可使用自己的根页表/ASID 编码。
 ///
@@ -155,9 +154,11 @@ pub mod paging {
     #[cfg(feature = "impl-riscv64")]
     pub use impl_riscv64::paging::Riscv64Paging as ArchPagingImpl;
 
+    /// 读取当前激活的地址空间 token。
     #[inline]
     pub fn active_address_space_token() -> usize { ArchPagingImpl::active_address_space_token() }
 
+    /// 切换地址空间 token 并刷新本地翻译缓存。
     #[inline]
     pub fn activate_address_space_token_and_flush(token : usize) {
         ArchPagingImpl::activate_address_space_token_and_flush(token)

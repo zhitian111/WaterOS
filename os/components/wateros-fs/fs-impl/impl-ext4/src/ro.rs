@@ -51,8 +51,10 @@ pub struct Ext4Fs {
 
 impl Ext4Fs {
     /// 构造未挂载句柄；成功 [`ReadOnlyFs::mount`] 前其他方法返回 [`FsError::NotMounted`]。
+    #[inline]
     pub const fn new() -> Self { Self { fs: None } }
 
+    #[inline]
     fn fs(&self) -> FsResult<&Ext4> { self.fs.as_ref().ok_or(FsError::NotMounted) }
 }
 
@@ -63,6 +65,7 @@ impl ReadOnlyFs for Ext4Fs {
         Ok(())
     }
 
+    #[inline]
     fn is_mounted(&self) -> bool { self.fs.is_some() }
 
     fn exists(&self, path: &str) -> FsResult<bool> {

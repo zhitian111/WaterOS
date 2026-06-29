@@ -2,8 +2,8 @@
     .globl __alltraps
     .align 2
 
-# Minimal LoongArch64 trap frame snapshot.
-# Layout matches rust::TrapContext:
+# LoongArch64 最小 trap 帧快照。
+# 布局与 rust::TrapContext 一致：
 # - x[0..31] : 32 * 8
 # - prmd     : 32 * 8
 # - era      : 33 * 8
@@ -11,9 +11,9 @@
 # - badv     : 35 * 8
 # - return_address_space_token : 36 * 8
 #
-# CSR SAVE0 stores the current task's kernel stack top while running in user mode.
-# User -> kernel traps swap $r3 with SAVE0 before building TrapContext, mirroring the
-# RISC-V sscratch convention used by the sibling implementation.
+# CSR SAVE0 在用户态运行时保存当前任务的内核栈顶。
+# 用户态进入内核 trap 时，在构建 TrapContext 前用 SAVE0 与 $r3 交换，与 RISC-V
+# 实现中的 sscratch 约定对应。
     .equ TRAP_CONTEXT_SIZE, 296
     .equ CSR_PRMD, 0x1
     .equ CSR_ERA, 0x6
@@ -66,7 +66,7 @@
     .endm
 
 __alltraps:
-    # Stash temporaries before using them to decide whether we must switch stacks.
+    # 先用临时寄存器保存现场，再判断是否需切换栈。
     csrwr $r12, CSR_SAVE1
     csrwr $r13, CSR_SAVE2
     csrwr $r14, CSR_SAVE3
@@ -83,9 +83,8 @@ __alltraps:
     b .Lsave_context
 
 .Ltrap_from_user:
-    # SAVE0 holds the current task's kernel stack top while PLV3 is running.
-    # Preserve the user stack in r15 for x[3], then build TrapContext on the
-    # kernel stack.
+    # PLV3 运行时 SAVE0 保存当前任务内核栈顶；用户栈暂存于 r15（对应 x[3]），
+    # 再在内核栈上构建 TrapContext。
     move $r15, $r3
     csrrd $r3, CSR_SAVE0
     addi.d $r3, $r3, -TRAP_CONTEXT_SIZE
@@ -138,8 +137,7 @@ __alltraps:
     st.d $r12, $r3, 272
     csrrd $r12, CSR_BADV
     st.d $r12, $r3, 280
-    # Preserve the address-space token active at trap entry. User traps carry
-    # the user PGDL here; kernel traps carry the kernel PGDL.
+    # 保存 trap 入口时激活的地址空间 token：用户 trap 为用户 PGDL，内核 trap 为内核 PGDL。
     csrrd $r12, CSR_PGDL
     st.d $r12, $r3, 288
 
@@ -159,7 +157,7 @@ __alltraps:
     ertn
 
 .Lreturn_to_user:
-    # TrapContext.return_address_space_token is the PGDL base address to use in user mode.
+    # TrapContext.return_address_space_token 为用户态下使用的 PGDL 基址。
     ld.d $r12, $r3, 36*8
     csrwr $r12, CSR_PGDL
     invtlb 0, $r0, $r0

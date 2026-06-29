@@ -6,6 +6,7 @@ use alloc::boxed::Box;
 use core::alloc::Layout;
 const KERNEL_TASK_STACK_SIZE : usize = 32 * 1024;
 
+/// 内核任务入口：`extern "C" fn(usize) -> !`。
 pub type KernelTaskEntry = extern "C" fn(usize) -> !;
 
 /// 由 arch 任务入口跳板交给任务运行时的不透明启动数据；公共任务 API
@@ -36,7 +37,7 @@ pub struct KernelStack {
     top : usize,
 }
 impl KernelStack {
-    /// 分配内核栈；堆耗尽时返回 `None`（避免对 null 指针 `Box::from_raw`）。
+    /// 分配内核栈；堆耗尽时返回 `None`。
     pub fn try_new() -> Option<Self> {
         let layout = Layout::new::<AlignedKernelStack>();
         let ptr = unsafe { alloc::alloc::alloc_zeroed(layout) as *mut AlignedKernelStack };
@@ -49,6 +50,8 @@ impl KernelStack {
         Some(Self { storage, top })
     }
 
+    /// 分配内核栈；失败时 panic（bring-up 路径）。
+    #[inline]
     pub fn new() -> Self {
         Self::try_new().expect("kernel stack allocation failed")
     }

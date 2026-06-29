@@ -1,8 +1,5 @@
 #![no_std]
-//! Kernel syscall implementation.
-//!
-//! This crate owns the concrete `sys_*` behavior and implements the dispatcher
-//! trait declared by `wateros-syscall-api-v0`.
+//! 内核 syscall 实现：各 `sys_*` 具体语义，并实现 `wateros-syscall-api-v0` 的分发 trait。
 
 extern crate alloc;
 
@@ -22,7 +19,7 @@ mod unix_sock;
 mod user_copy;
 mod vfs_util;
 
-/// Trap / exception return path syscall dispatch entry.
+/// trap / 异常返回路径上的 syscall 分发入口。
 #[inline]
 pub fn dispatch_syscall_from_trap(syscall_nr: usize, syscall_args: SyscallArgs) -> isize {
     dispatch_syscall_by_nr(syscall_nr, syscall_args)
@@ -56,23 +53,27 @@ pub fn restore_signal_frame(frame: *mut u8) -> bool {
     sys::restore_signal_frame(frame).is_ok()
 }
 
+#[inline]
 pub fn raise_current_signal(signal: usize) -> bool {
     sys::raise_current_thread(signal).is_ok()
 }
 
+#[inline]
 pub fn drop_reaped_task_runtime_resources(task_id: usize, aspace: usize) {
     sys::drop_reaped_task_runtime_resources(task_id, aspace);
 }
 
+#[inline]
 pub fn record_user_page_fault_handled() {
     sys::record_user_page_fault_handled();
 }
 
+#[inline]
 pub fn log_thread_bringup_stats_summary() {
     sys::log_thread_bringup_stats_summary();
 }
 
-/// Kernel syscall implementation selected by the aggregate crate.
+/// 聚合 crate feature 选中的内核 syscall 分发器。
 pub struct KernelSyscallDispatcher;
 
 const SYS_STATX: usize = 291;

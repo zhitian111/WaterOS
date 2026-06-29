@@ -43,6 +43,7 @@ pub mod mount_ns;
 
 /// 相对当前任务 cwd 创建目录（`impl-fd-session` + `bridge-fs-api`）。
 #[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
+#[inline]
 pub fn mkdir_at_current(path: &str, mode: u32) -> VfsResult<()> {
     let abs = cwd::resolve_for_current_task(path)?;
     impl_fs_bridge::mkdir_path(abs.as_str(), mode)
@@ -50,6 +51,7 @@ pub fn mkdir_at_current(path: &str, mode: u32) -> VfsResult<()> {
 
 /// 相对当前任务 cwd 创建符号链接（`impl-fd-session` + `bridge-fs-api`）。
 #[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
+#[inline]
 pub fn symlink_at_current(target: &str, link_path: &str) -> VfsResult<()> {
     let abs = cwd::resolve_for_current_task(link_path)?;
     impl_fs_bridge::symlink_path(abs.as_str(), target)
@@ -57,30 +59,35 @@ pub fn symlink_at_current(target: &str, link_path: &str) -> VfsResult<()> {
 
 /// 读取已解析绝对路径的符号链接目标（`bridge-fs-api`）。
 #[cfg(feature = "bridge-fs-api")]
+#[inline]
 pub fn read_symlink_absolute(path: &str) -> VfsResult<alloc::vec::Vec<u8>> {
     impl_fs_bridge::read_symlink_path(path)
 }
 
 /// 在已解析绝对路径处创建符号链接（`bridge-fs-api`）。
 #[cfg(feature = "bridge-fs-api")]
+#[inline]
 pub fn symlink_absolute(target: &str, link_path: &str) -> VfsResult<()> {
     impl_fs_bridge::symlink_path(link_path, target)
 }
 
 /// 覆盖根卷上的绝对路径文件（unlink + 写 + 页缓存驱逐）。
 #[cfg(feature = "bridge-fs-api")]
+#[inline]
 pub fn overwrite_absolute_file(path: &str, data: &[u8]) -> VfsResult<()> {
     impl_fs_bridge::overwrite_file_at(path, data)
 }
 
 /// 在绝对路径创建 `S_IFSOCK` 节点（pathname AF_UNIX bind 用）。
 #[cfg(feature = "bridge-fs-api")]
+#[inline]
 pub fn mknod_socket_absolute(path: &str) -> VfsResult<()> {
     impl_fs_bridge::mknod_socket_at(path)
 }
 
 /// 修改已解析绝对路径的权限（`impl-fd-session` + `bridge-fs-api`）。
 #[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
+#[inline]
 pub fn chmod_absolute(path: &str, mode: u32) -> VfsResult<()> {
     let abs = normalize_absolute_path(path)?;
     impl_fs_bridge::chmod_path(abs.as_str(), mode)
@@ -88,6 +95,7 @@ pub fn chmod_absolute(path: &str, mode: u32) -> VfsResult<()> {
 
 /// 修改已解析绝对路径的 uid/gid（`impl-fd-session` + `bridge-fs-api`）。
 #[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
+#[inline]
 pub fn chown_absolute(path: &str, uid: Option<u32>, gid: Option<u32>) -> VfsResult<()> {
     let abs = normalize_absolute_path(path)?;
     impl_fs_bridge::chown_path(abs.as_str(), uid, gid)
@@ -95,6 +103,7 @@ pub fn chown_absolute(path: &str, uid: Option<u32>, gid: Option<u32>) -> VfsResu
 
 /// 设置已解析绝对路径的扩展属性。
 #[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
+#[inline]
 pub fn setxattr_absolute(path: &str, name: &str, value: &[u8]) -> VfsResult<()> {
     let abs = normalize_absolute_path(path)?;
     impl_fs_bridge::setxattr_path(abs.as_str(), name, value)
@@ -102,6 +111,7 @@ pub fn setxattr_absolute(path: &str, name: &str, value: &[u8]) -> VfsResult<()> 
 
 /// 读取已解析绝对路径的扩展属性。
 #[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
+#[inline]
 pub fn getxattr_absolute(path: &str, name: &str, buf: &mut [u8]) -> VfsResult<usize> {
     let abs = normalize_absolute_path(path)?;
     impl_fs_bridge::getxattr_path(abs.as_str(), name, buf)
@@ -109,6 +119,7 @@ pub fn getxattr_absolute(path: &str, name: &str, buf: &mut [u8]) -> VfsResult<us
 
 /// 列出已解析绝对路径的扩展属性名。
 #[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
+#[inline]
 pub fn listxattr_absolute(path: &str, buf: &mut [u8]) -> VfsResult<usize> {
     let abs = normalize_absolute_path(path)?;
     impl_fs_bridge::listxattr_path(abs.as_str(), buf)
@@ -116,6 +127,7 @@ pub fn listxattr_absolute(path: &str, buf: &mut [u8]) -> VfsResult<usize> {
 
 /// 删除已解析绝对路径的扩展属性。
 #[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
+#[inline]
 pub fn removexattr_absolute(path: &str, name: &str) -> VfsResult<()> {
     let abs = normalize_absolute_path(path)?;
     impl_fs_bridge::removexattr_path(abs.as_str(), name)
@@ -123,6 +135,7 @@ pub fn removexattr_absolute(path: &str, name: &str) -> VfsResult<()> {
 
 /// 截断已解析绝对路径的普通文件（`impl-fd-session` + `bridge-fs-api`）。
 #[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
+#[inline]
 pub fn truncate_absolute(path: &str, len: u64) -> VfsResult<()> {
     let abs = normalize_absolute_path(path)?;
     impl_fs_bridge::truncate_path(abs.as_str(), len)
@@ -130,6 +143,7 @@ pub fn truncate_absolute(path: &str, len: u64) -> VfsResult<()> {
 
 /// 在已解析绝对路径创建目录（`impl-fd-session` + `bridge-fs-api`）。
 #[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
+#[inline]
 pub fn mkdir_absolute(path: &str, mode: u32) -> VfsResult<()> {
     let abs = normalize_absolute_path(path)?;
     impl_fs_bridge::mkdir_path(abs.as_str(), mode)
@@ -137,6 +151,7 @@ pub fn mkdir_absolute(path: &str, mode: u32) -> VfsResult<()> {
 
 /// 删除已解析的绝对路径（`impl-fd-session` + `bridge-fs-api`）。
 #[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
+#[inline]
 pub fn unlink_absolute(path: &str, remove_dir: bool) -> VfsResult<()> {
     let abs = normalize_absolute_path(path)?;
     impl_fs_bridge::unlink_path(abs.as_str(), remove_dir)
@@ -144,6 +159,7 @@ pub fn unlink_absolute(path: &str, remove_dir: bool) -> VfsResult<()> {
 
 /// 重命名已解析的绝对路径（`impl-fd-session` + `bridge-fs-api`）。
 #[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
+#[inline]
 pub fn rename_absolute(old_path: &str, new_path: &str) -> VfsResult<()> {
     let old = normalize_absolute_path(old_path)?;
     let new = normalize_absolute_path(new_path)?;
@@ -152,42 +168,49 @@ pub fn rename_absolute(old_path: &str, new_path: &str) -> VfsResult<()> {
 
 /// 将 ext4 块设备挂到绝对路径 `mount_point`。
 #[cfg(feature = "bridge-fs-api")]
+#[inline]
 pub fn mount_ext4_block_at(mount_point: &str, block_dev: &str, readonly: bool) -> VfsResult<()> {
     impl_fs_bridge::mount_ext4_block_at(mount_point, block_dev, readonly)
 }
 
 /// 挂载内存 tmpfs 到 `mount_point`。
 #[cfg(feature = "bridge-fs-api")]
+#[inline]
 pub fn mount_tmpfs_at(mount_point: &str) -> VfsResult<()> {
     impl_fs_bridge::mount_tmpfs_at(mount_point)
 }
 
 /// 挂载 cgroup v1/v2 到 `mount_point`。
 #[cfg(feature = "bridge-fs-api")]
+#[inline]
 pub fn mount_cgroup_at(mount_point: &str, v2: bool, options: &str) -> VfsResult<()> {
     impl_fs_bridge::mount_cgroup_at(mount_point, v2, options)
 }
 
 /// 查询路径所在辅助卷的 `statfs` 文件系统 magic。
 #[cfg(feature = "bridge-fs-api")]
+#[inline]
 pub fn mount_statfs_magic(path: &str) -> Option<isize> {
     impl_fs_bridge::mount_statfs_magic(path)
 }
 
 /// 将 `mount_point` 上已挂载的辅助卷重载为只读。
 #[cfg(feature = "bridge-fs-api")]
+#[inline]
 pub fn remount_readonly_at(mount_point: &str) -> VfsResult<()> {
     impl_fs_bridge::remount_readonly_at(mount_point)
 }
 
 /// 检查路径是否可写（只读挂载返回 [`VfsError::ReadOnlyFs`]）。
 #[cfg(feature = "bridge-fs-api")]
+#[inline]
 pub fn assert_path_writable(path: &str) -> VfsResult<()> {
     impl_fs_bridge::assert_path_writable(path)
 }
 
 /// 在 ext4 根卷创建 `/proc` 目录（若不存在）。
 #[cfg(all(feature = "bridge-fs-api", feature = "impl-fd-session"))]
+#[inline]
 pub fn ensure_proc_mount_point() -> VfsResult<()> {
     impl_fs_bridge::ensure_proc_mount_point()
 }
@@ -205,30 +228,35 @@ pub fn mount_procfs_at(mount_point: &str) -> VfsResult<()> {
 
 /// procfs 是否已挂在 `mount_point`。
 #[cfg(feature = "bridge-fs-api")]
+#[inline]
 pub fn is_proc_mounted_at(mount_point: &str) -> bool {
     impl_fs_bridge::is_proc_mounted_at(mount_point)
 }
 
 /// 卸载 `mount_point`；`detach` 为 true 时接受 lazy umount（`MNT_DETACH`）。
 #[cfg(feature = "bridge-fs-api")]
+#[inline]
 pub fn unmount_at(mount_point: &str, detach: bool) -> VfsResult<()> {
     impl_fs_bridge::unmount_at(mount_point, detach)
 }
 
 /// 挂载 securityfs 伪文件系统。
 #[cfg(feature = "bridge-fs-api")]
+#[inline]
 pub fn mount_securityfs_at(mount_point: &str) -> VfsResult<()> {
     impl_fs_bridge::mount_securityfs_at(mount_point)
 }
 
 /// bind 挂载：`target` 成为 `source` 路径的别名。
 #[cfg(feature = "bridge-fs-api")]
+#[inline]
 pub fn mount_bind_at(source: &str, target: &str, recursive: bool) -> VfsResult<()> {
     impl_fs_bridge::mount_bind_at(source, target, recursive)
 }
 
 /// 移动挂载点。
 #[cfg(feature = "bridge-fs-api")]
+#[inline]
 pub fn move_mount_at(source: &str, target: &str) -> VfsResult<()> {
     impl_fs_bridge::move_mount_at(source, target)
 }
@@ -238,6 +266,7 @@ pub fn move_mount_at(source: &str, target: &str) -> VfsResult<()> {
 pub use impl_fs_bridge::MountPropagation;
 
 #[cfg(feature = "bridge-fs-api")]
+#[inline]
 pub fn set_mount_propagation(
     mount_point: &str,
     propagation: MountPropagation,
@@ -248,12 +277,14 @@ pub fn set_mount_propagation(
 
 /// 刷回并回收整个文件页缓存（测例脚本切换等批量回收点调用）。
 #[cfg(feature = "bridge-fs-api")]
+#[inline]
 pub fn reset_file_page_cache() -> VfsResult<()> {
     impl_fs_bridge::reset_file_page_cache()
 }
 
 /// 相对当前任务 cwd 删除路径。
 #[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
+#[inline]
 pub fn unlink_at_current(path: &str, remove_dir: bool) -> VfsResult<()> {
     let abs = cwd::resolve_for_current_task(path)?;
     unlink_absolute(abs.as_str(), remove_dir)
@@ -273,12 +304,14 @@ pub mod active_impl {
     use super::api::VfsBackend;
 
     #[cfg(feature = "bridge-fs-api")]
+    #[inline]
     pub fn backend() -> &'static impl VfsBackend {
         static B: impl_fs_bridge::FsBridge = impl_fs_bridge::FsBridge;
         &B
     }
 
     #[cfg(not(feature = "bridge-fs-api"))]
+    #[inline]
     pub fn backend() -> &'static impl VfsBackend {
         static B: crate::impl_dummy::DummyBackend = crate::impl_dummy::DummyBackend;
         &B
@@ -290,6 +323,7 @@ pub mod root {
     use super::active_impl;
     use super::api::SingleRootReadView;
 
+    #[inline]
     pub fn read_view() -> &'static impl SingleRootReadView {
         active_impl::backend()
     }
@@ -302,10 +336,12 @@ pub mod mount {
     use super::active_impl;
     use super::api::{RootRwSession, VfsFsKind, VfsMountOps, VfsResult};
 
+    #[inline]
     pub fn open_rw_session(kind: VfsFsKind) -> VfsResult<Box<dyn RootRwSession>> {
         active_impl::backend().mount_rw_session(kind)
     }
 
+    #[inline]
     pub fn supported_capabilities() -> alloc::vec::Vec<super::api::VfsCapability> {
         active_impl::backend().supported_capabilities()
     }

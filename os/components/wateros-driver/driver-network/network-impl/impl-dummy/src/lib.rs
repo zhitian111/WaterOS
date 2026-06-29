@@ -17,6 +17,7 @@ pub struct DummyNetworkDevice {
 
 impl DummyNetworkDevice {
     /// 构造一个指定 MAC 的占位设备。
+    #[inline]
     pub fn new(mac: [u8; 6]) -> Self {
         Self { mac }
     }
@@ -28,10 +29,12 @@ impl DummyNetworkDevice {
 }
 
 impl NetworkDevice for DummyNetworkDevice {
+    #[inline]
     fn mac_address(&self) -> [u8; 6] {
         self.mac
     }
 
+    #[inline]
     fn is_link_up(&self) -> bool {
         false
     }

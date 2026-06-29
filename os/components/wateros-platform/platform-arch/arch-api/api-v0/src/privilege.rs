@@ -10,7 +10,9 @@ pub enum PrivLevel {
 
 /// 只读查询当前帧或上下文是否处于内核/用户语义。
 pub trait PrivLevelRead {
+    /// 当前为内核/监管态语义。
     fn is_kernel(&self) -> bool;
+    /// 当前为用户态语义。
     fn is_user(&self) -> bool;
 }
 
@@ -18,6 +20,8 @@ pub trait PrivLevelRead {
 pub trait PrivLevelWrite {
     /// 仅设置特权相关 CSR 位；与 `sret` 等配合才能完成实际特权级切换。
     fn set_privilege(level : PrivLevel);
+    /// 将特权相关 CSR 位设为用户态语义。
+    #[inline]
     fn set_to_user() { Self::set_privilege(PrivLevel::User); }
 }
 

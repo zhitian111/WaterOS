@@ -12,6 +12,7 @@ const ACPI_GED_SLP_TYP_S5: u8 = 0x05;
 const ACPI_GED_SLP_EN: u8 = 0x20;
 const ACPI_GED_SLP_TYP_SHIFT: u8 = 2;
 
+/// 经 ACPI GED 寄存器请求关机或重启。
 #[inline]
 pub fn reset(reset_type: PlatformResetType,
              _reset_reason: PlatformResetReason)
@@ -33,11 +34,13 @@ pub fn reset(reset_type: PlatformResetType,
     Err(PlatformResetError::Failed)
 }
 
+/// 冷重启快捷入口。
 #[inline]
 pub fn reboot(reset_reason: PlatformResetReason) -> PlatformResetResult<()> {
     reset(PlatformResetType::ColdReboot, reset_reason)
 }
 
+/// 关机快捷入口。
 #[inline]
 pub fn shutdown(reset_reason: PlatformResetReason) -> PlatformResetResult<()> {
     reset(PlatformResetType::Shutdown, reset_reason)

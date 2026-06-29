@@ -161,10 +161,12 @@ impl CachingBlockDevice {
 }
 
 impl BlockDevice for CachingBlockDevice {
+    #[inline]
     fn block_size(&self) -> usize {
         self.block_size
     }
 
+    #[inline]
     fn total_blocks(&self) -> Option<u64> {
         self.inner.total_blocks()
     }

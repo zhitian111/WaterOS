@@ -237,12 +237,14 @@ pub fn fork_current(child_stack : usize,
 }
 
 /// fork 失败回滚：撤销子任务 TCB、进程槽位与地址空间；返回被撤销的子进程 PID（供信号表清理）。
+#[inline]
 pub fn abort_fork_child(child_id : TaskId) -> Option<ProcessId> {
     scheduler::discard_unstarted_task(child_id);
     active_impl::abort_forked_process(child_id)
 }
 
 /// clone 线程失败回滚：撤销子线程 TCB 与进程内线程登记。
+#[inline]
 pub fn abort_clone_thread(child_id : TaskId) {
     scheduler::discard_unstarted_task(child_id);
     let _ = active_impl::abort_cloned_thread(child_id);
@@ -522,41 +524,55 @@ pub fn set_process_resource_limit(
     active_impl::set_process_rlimit(pid, resource, limit)
 }
 
+/// 查询进程 nice 值。
 #[inline]
 pub fn process_nice(pid: ProcessId) -> Option<i32> {
     active_impl::get_process_nice(pid)
 }
 
+/// 写入进程 nice 值。
+/// 设置进程 nice 值。
 #[inline]
 pub fn set_process_nice(pid: ProcessId, nice: i32) -> bool {
     active_impl::set_process_nice(pid, nice)
 }
 
+/// 查询进程组 ID。
+/// 查询进程组 id。
 #[inline]
 pub fn process_pgid(pid: ProcessId) -> Option<ProcessId> {
     active_impl::get_process_pgid(pid)
 }
 
+/// 设置进程组 ID。
+/// 设置进程组 id。
 #[inline]
 pub fn set_process_pgid(pid: ProcessId, pgid: ProcessId) -> bool {
     active_impl::set_process_pgid(pid, pgid)
 }
 
+/// 将 nice 写入进程组内全部成员。
+/// 将 nice 写入同一 pgid 下全部进程。
 #[inline]
 pub fn set_nice_for_pgid(pgid: ProcessId, nice: i32) -> bool {
     active_impl::set_nice_for_pgid(pgid, nice)
 }
 
+/// 进程组内最小 nice 值。
+/// 进程组内最小 nice。
 #[inline]
 pub fn min_nice_in_pgid(pgid: ProcessId) -> Option<i32> {
     active_impl::min_nice_in_pgid(pgid)
 }
 
+/// 进程槽位是否仍存在。
+/// 进程是否仍占 registry 槽位。
 #[inline]
 pub fn process_exists(pid: ProcessId) -> bool {
     active_impl::process_exists(pid)
 }
 
+/// 进程组是否仍有成员。
 #[inline]
 pub fn pgid_has_members(pgid: ProcessId) -> bool {
     active_impl::pgid_has_members(pgid)
@@ -596,11 +612,15 @@ pub fn find_exited_child_process_in_pgid(parent_pid : ProcessId,
     active_impl::find_exited_child_process_in_pgid(parent_pid, pgid)
 }
 
+/// 查找已停止子进程（任意一个）。
+/// 查找父进程下一个 stopped 子进程。
 #[inline]
 pub fn find_stopped_child_process(parent_pid : ProcessId) -> Option<ProcessDescriptor> {
     active_impl::find_stopped_child_process(parent_pid)
 }
 
+/// 指定子进程是否处于 stopped 且可被 wait 消费。
+/// 指定 stopped 子进程是否可被 wait。
 #[inline]
 pub fn stopped_child_ready_for_wait(parent_pid : ProcessId,
                                     child_pid : ProcessId)
@@ -608,6 +628,8 @@ pub fn stopped_child_ready_for_wait(parent_pid : ProcessId,
     active_impl::stopped_child_ready_for_wait(parent_pid, child_pid)
 }
 
+/// 在进程组内查找已停止子进程。
+/// 在 pgid 内查找 stopped 子进程。
 #[inline]
 pub fn find_stopped_child_process_in_pgid(parent_pid : ProcessId,
                                           pgid : ProcessId)
@@ -615,11 +637,15 @@ pub fn find_stopped_child_process_in_pgid(parent_pid : ProcessId,
     active_impl::find_stopped_child_process_in_pgid(parent_pid, pgid)
 }
 
+/// 查找已收到 SIGCONT 的子进程。
+/// 查找父进程下一个 continued 子进程。
 #[inline]
 pub fn find_continued_child_process(parent_pid : ProcessId) -> Option<ProcessDescriptor> {
     active_impl::find_continued_child_process(parent_pid)
 }
 
+/// 指定子进程的 continued 事件是否可被 wait 消费。
+/// 指定 continued 子进程是否可被 wait。
 #[inline]
 pub fn continued_child_ready_for_wait(parent_pid : ProcessId,
                                       child_pid : ProcessId)
@@ -627,6 +653,8 @@ pub fn continued_child_ready_for_wait(parent_pid : ProcessId,
     active_impl::continued_child_ready_for_wait(parent_pid, child_pid)
 }
 
+/// 在进程组内查找 continued 子进程。
+/// 在 pgid 内查找 continued 子进程。
 #[inline]
 pub fn find_continued_child_process_in_pgid(parent_pid : ProcessId,
                                             pgid : ProcessId)
@@ -634,21 +662,29 @@ pub fn find_continued_child_process_in_pgid(parent_pid : ProcessId,
     active_impl::find_continued_child_process_in_pgid(parent_pid, pgid)
 }
 
+/// 将进程标为 stopped（SIGSTOP 路径）。
+/// 将进程标为 SIGSTOP 停止态。
 #[inline]
 pub fn mark_process_stopped(pid : ProcessId, signo : u8) -> bool {
     active_impl::mark_process_stopped(pid, signo)
 }
 
+/// 将进程标为 continued（SIGCONT 路径）。
+/// 将进程从 stopped 恢复为 running。
 #[inline]
 pub fn mark_process_continued(pid : ProcessId) -> bool {
     active_impl::mark_process_continued(pid)
 }
 
+/// 消费 stopped wait 事件。
+/// 消费 stop 事件的 wait 可见性。
 #[inline]
 pub fn consume_stop_wait(pid : ProcessId, nowait : bool) {
     active_impl::consume_stop_wait(pid, nowait)
 }
 
+/// 消费 continued wait 事件。
+/// 消费 continued 事件的 wait 可见性。
 #[inline]
 pub fn consume_continued_wait(pid : ProcessId, nowait : bool) {
     active_impl::consume_continued_wait(pid, nowait)
@@ -704,26 +740,32 @@ pub fn has_child_process_in_pgid(parent_pid : ProcessId, pgid : ProcessId) -> bo
     active_impl::has_child_process_in_pgid(parent_pid, pgid)
 }
 
+/// 为进程创建新会话（setsid 语义）。
+/// 为进程创建新会话。
 #[inline]
 pub fn create_session_for_process(pid : ProcessId) -> Result<(), ()> {
     active_impl::create_session_for_process(pid)
 }
 
+/// 查询进程 dumpable 标志。
 #[inline]
 pub fn process_dumpable(pid : ProcessId) -> Option<bool> {
     active_impl::process_dumpable(pid)
 }
 
+/// 设置进程 dumpable 标志。
 #[inline]
 pub fn set_process_dumpable(pid : ProcessId, dumpable : bool) -> bool {
     active_impl::set_process_dumpable(pid, dumpable)
 }
 
+/// 查询 child subreaper 标志。
 #[inline]
 pub fn process_child_subreaper(pid : ProcessId) -> Option<bool> {
     active_impl::process_child_subreaper(pid)
 }
 
+/// 设置 child subreaper 标志。
 #[inline]
 pub fn set_process_child_subreaper(pid : ProcessId, enabled : bool) -> bool {
     active_impl::set_process_child_subreaper(pid, enabled)
@@ -840,6 +882,7 @@ pub fn set_task_clear_child_tid(task_id : TaskId, clear_child_tid : Option<TaskC
     active_impl::set_task_clear_child_tid(task_id, clear_child_tid)
 }
 
+/// 读取任务的 clear-child-tid 地址。
 #[inline]
 pub fn task_clear_child_tid(task_id : TaskId) -> Option<TaskClearTid> {
     active_impl::task_clear_child_tid(task_id)

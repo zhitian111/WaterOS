@@ -249,8 +249,10 @@ impl LazyFileVma {
                   loader : self.loader.duplicate_box()? })
     }
 
+    #[inline]
     fn contains_page(&self, page : VirtAddr) -> bool { page.0 >= self.start.0 && page.0 < self.end.0 }
 
+    #[inline]
     fn overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
         start.0 < self.end.0 && end.0 > self.start.0
     }
@@ -263,8 +265,10 @@ pub(crate) struct SharedAnonVma {
 }
 
 impl SharedAnonVma {
+    #[inline]
     fn contains_page(&self, page : VirtAddr) -> bool { page.0 >= self.start.0 && page.0 < self.end.0 }
 
+    #[inline]
     fn overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
         start.0 < self.end.0 && end.0 > self.start.0
     }
@@ -556,6 +560,7 @@ impl LoongArch64AddressSpace {
         Ok(())
     }
 
+    /// 沿 VPN 三级索引向下 walk，必要时分配中间页表；返回目标叶子 PTE 槽位。
     #[inline]
     fn walk_create(&mut self, vpn : VirtPageNum) -> MmResult<(&'static mut LoongArch64Pte, usize)> {
         let idx = vpn_indexes(vpn);
@@ -571,6 +576,7 @@ impl LoongArch64AddressSpace {
             }
 
             if pte.0 == 0 {
+                // 目录项为空：分配子表，仅写入 PPN（非叶格式，不设 V/P）
                 let child = alloc_table_frame_zeroed()?;
                 pte.set_table(child);
             } else if flags.is_leaf() {
@@ -583,6 +589,7 @@ impl LoongArch64AddressSpace {
         Err(MmError::InvalidAddress)
     }
 
+    /// 只读 walk：找到叶子或中途停止。
     #[inline]
     fn walk_find(&self,
                  vpn : VirtPageNum)
@@ -662,6 +669,7 @@ impl LoongArch64AddressSpace {
             return Ok(true);
         }
 
+        // 引用计数 > 1：复制整页并切换 PTE 指向新帧
         let new_ppn = frame_alloc_result().map_err(MmError::from)?;
         let src = old_ppn.0 * PAGE_SIZE;
         let dst = new_ppn.0 * PAGE_SIZE;

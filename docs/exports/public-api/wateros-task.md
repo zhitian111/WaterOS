@@ -1,47 +1,110 @@
-# wateros-task 公共 API 快照
+# wateros-task — 聚合层公共 API
 
-## 当前定位
+## 用途
 
-当前已具备 `task-api`、`task-impl`、`task-scheduler` 的拆分结构，且 Stage3A 已完成第一轮边界收紧：根 crate 更偏 facade，任务启动与 trap hook 已迁入内部 runtime，`task-impl/impl-core` 继续承载真实任务对象，而 `task-scheduler/scheduler-impl/impl-round-robin` 则承载当前主线调度策略。
+列出根 crate `wateros` 通过 `task` 依赖最终使用的对外接口。契约类型来自 `wateros-task-api-v0`；调度与 TCB 细节见子 crate rustdoc。
 
-## 聚合层导出（`wateros-task` 根 `lib.rs`）
+事实来源：`os/components/wateros-task/src/lib.rs`；根 `os/Cargo.toml` 中 `task = { package = "wateros-task", ... }`。
+
+## 模块树
+
+```text
+task::
+  # 再导出 api_v0 类型（TaskId, UserTask, ProcessDescriptor, ...）
+  sched::*              # Linux sched_* 原语
+  wait_queue::WaitQueue # 同步对象侧等待队列封装
+  runtime（私有）        # trap/C ABI 入口，经 unsafe 薄封装对外
+```
+
+## 初始化
 
 | 项 | 说明 |
 |----|------|
-| **`pub mod api`** | **`pub use api_v0::*`**（含 **`TaskRuntimeStats`** 等；部分类型同时在根 **`pub use api_v0::{...}`** 显式列出）。 |
-| **`pub mod scheduler`** | **`pub use scheduler::*`**（调度器门面、**`ScheduleReason`**、**`Scheduler`** trait、**`TaskTrapFrame`**、**`active_impl`** 等，见 **`wateros-task-scheduler`**）。 |
-| **`active_impl`** | 仅 **`#[cfg(feature = "impl-core")]`**：**`impl_core`**（**`TaskBootstrap`**、**`TaskControlBlock`** 等）。 |
-| **`WaitQueue`** | 根上定义的 **`struct WaitQueue`** 及 **`new` / `id` / `wait_handle` / `wait_current` / `wait_current_for_ticks` / `wait_current_while` / `wait_current_while_for_ticks` / `wake_one` / `wake_all`**，内部委托 **`scheduler`**。 |
-| **根 `pub use api_v0::{...}`** | **`AddressSpaceHandle`**、**`ExitedTask`**、**`KernelTaskEntry`**、**`TaskBlockReason`**、**`TaskExitCode`**、**`TaskId`**、**`TaskKind`**、**`TaskSnapshot`**、**`TaskState`**、**`TaskTick`**、**`TaskTrapSnapshot`**、**`TaskWaitHandle`**、**`TaskWaitResult`**、**`TaskWaitTarget`**、**`UserImageInfo`**、**`UserTaskEntryPc`**、**`UserTaskResources`**、**`UserTaskSpec`**、**`WaitQueueId`**、**`IDLE_TASK_ID`**；另从 **`wateros-mm-api-v0`** 再导出 **`LoadedElf`**。 |
-| **根级函数** | **`init`**、**`init_kernel_trap_satp`**、**`spawn_kernel_task`**、**`spawn_user_task_spec`**、**`spawn_user_task`**、**`user_task_spec_from_loaded_elf`**、**`spawn_user_task_from_loaded_elf`**、**`run_first_task`**、**`yield_now`**、**`schedule_tick`**、**`block_current`**、**`wait_on`**、**`wait_on_while`**、**`wait_on_for_ticks`**、**`wait_on_while_for_ticks`**、**`task_exit_wait_handle`**、**`wait_for_task_exit`**、**`wait_for_task_exit_for_ticks`**、**`sleep_for_ticks`**、**`wake_task`**、**`reap_exited_task`**、**`reap_one_exited_task`**、**`reap_one_exited_child`**、**`has_child`**、**`exit_current`**、**`current_task_id`**、**`current_task_snapshot`**、**`task_snapshot`**。 |
+| `init()` | 进程 registry 自检 + 调度器 `init`；任何 spawn 前调用 |
+| `run_first_task()` | `-> !` 切入第一批就绪任务 |
 
-更多调度器独有入口（如 **`current_task_address_space_raw`**、trap frame 存取）仅暴露在 **`scheduler`** 模块路径下，根层不重复包装。
+## 任务创建与运行
 
-聚合层当前对外暴露的核心能力包括：
+| 项 | 说明 |
+|----|------|
+| `spawn_kernel_task(entry, arg)` | 创建内核任务并入队 |
+| `spawn_user_task` / `spawn_user_task_spec` | 按 `UserTask` 规格创建用户任务 |
+| `user_task_from_loaded_elf` / `spawn_user_task_from_loaded_elf` | 从 `mm::LoadedElf` 构造 |
+| `yield_now` | 主动让出 CPU |
+| `schedule_tick` | 时钟 tick 调度入口 |
+| `current_task_id` / `current_task_snapshot` / `task_snapshot` | 任务查询 |
+| `current_tick` | 调度器逻辑 tick |
 
-- 任务创建：`spawn_kernel_task`
-- 用户任务骨架创建：`spawn_user_task`
-- 已装载 ELF 用户任务创建：`user_task_spec_from_loaded_elf`、`spawn_user_task_from_loaded_elf`
-- 启动首个任务：`run_first_task`
-- 主动让出：`yield_now`
-- 时钟驱动调度：`schedule_tick`
-- 阻塞与睡眠：`block_current`、`sleep_for_ticks`
-- 通用等待：`wait_on`、`wait_on_while`、`wait_on_for_ticks`、`wait_on_while_for_ticks`、`task_exit_wait_handle`
-- wait queue：`WaitQueue::new`、`wait_current`、`wait_current_for_ticks`、`wait_current_while`、`wait_current_while_for_ticks`、`wake_one`、`wake_all`
-- 任务退出等待：`wait_for_task_exit`、`wait_for_task_exit_for_ticks`
-- 唤醒与退出：`wake_task`、`exit_current`
-- 退出回收：`reap_exited_task`、`reap_one_exited_task`、`reap_one_exited_child`
-- 父子关系查询：`has_child`
-- 当前与指定任务查询：`current_task_id`、`current_task_snapshot`、`task_snapshot`
+## 阻塞、等待与唤醒
 
-`task-api` 当前已补齐 `TaskKind`、`TaskState`、`TaskBlockReason`、`TaskExitCode`、`TaskTick`、`TaskTrapSnapshot`、`TaskSnapshot` 等基础语义，并进一步收紧为稳定任务视图层：`TaskSnapshot` 现在是显式快照结构，只暴露 `id`、`parent_id`、`kind`、`state`、`stats` 和最近一次 trap 语义快照，不再暴露内核栈顶、启动入口、bootstrap 协议细节或完整架构 trap frame 布局。任务启动协议对象已经从公共 API 中移出，转而留在 `task-impl` 与 `wateros-task` runtime 的内部机制路径中。寄存器级切换上下文和完整 trap frame 仍只保留在 `task-impl`、`task-scheduler` 与 runtime 机制层，并由 `platform-arch` 提供当前架构实现；`task-scheduler` 内部则进一步收敛为“任务注册表 + round-robin 队列”结构，并补出 `TaskWaitHandle` / `TaskWaitTarget` 这一层，把 waitqueue、任务退出等待、任意子任务退出等待和 timeout 统一到了同一条等待路径上，退出任务也会以 zombie 形式保留直到被显式回收。条件等待接口在调度器关中断临界区内复查闭包，供 pipe 等 IPC 对象避免检查状态与入队等待之间的丢唤醒窗口。当前 spawn 会记录最小 `parent_id`，供 syscall `waitpid` 阻塞等待和回收子任务。调度原因 `ScheduleReason` 已从 task 公共契约移动到 scheduler API，trap frame record/restore hook 也不再属于 `Scheduler` 公共 trait。当前用户态主线通过 `spawn_user_task_from_loaded_elf` 承接 MM loader 返回的真实 ELF 地址空间、入口、image 与外部栈元数据，RISC-V 自检以根卷默认 ELF 作为用户态回归来源。
+| 项 | 说明 |
+|----|------|
+| `block_current(reason)` | 按 `TaskBlockReason` 阻塞 |
+| `wait_on` / `wait_on_while` / `wait_on_for_ticks` / `wait_on_while_for_ticks` | 通用等待 |
+| `task_exit_wait_handle` / `wait_for_task_exit*` | 等待任务退出 |
+| `sleep_for_ticks` | 定时睡眠 |
+| `wake_task` / `interrupt_task` | 唤醒 / 信号中断等待 |
+| `WaitQueue` | `new` / `wait_current*` / `wake_one` / `wake_all` / `requeue_to` |
 
-## 事实来源
+## fork / clone / exec / 退出
 
-- 组件根 `Cargo.toml`
-- 组件聚合 `src/lib.rs`
-- 对应 `api-v0` 与 `impl-*` 目录
+| 项 | 说明 |
+|----|------|
+| `fork_current` / `abort_fork_child` | fork 子进程 |
+| `clone_current_thread` / `abort_clone_thread` | 同进程线程 |
+| `execve_current` / `terminate_other_threads_for_exec` | execve |
+| `exit_current` / `exit_group_current` / `kill_task` | 退出与杀任务 |
+| `reap_exited_task` / `reap_one_exited_task` / `reap_one_exited_child` | 回收退出信息 |
+| `reap_exited_process` / `reap_all_exited_processes` / `purge_all_user_processes` | 进程级回收 |
 
-## 维护要求
+## Trap 与地址空间（trap handler 用）
 
-当聚合层导出项、默认 feature 或组件边界发生变化时，应同步更新本文件。
+| 项 | 说明 |
+|----|------|
+| `begin_current_trap_frame_access(frame)` | `unsafe` 进入 trap 时交换权威帧 |
+| `restore_current_trap_frame(frame)` | `unsafe` 返回前写回帧 |
+| `current_task_user_aspace_ptr` | 当前用户页表对象指针 |
+| `current_task_user_address_space_token` | satp/PGDL token |
+| `current_task_trap_return_address_space_token` | trap 返回用 token |
+
+## 进程 registry（syscall / signal 用）
+
+| 项 | 说明 |
+|----|------|
+| `process_snapshot` / `current_process_snapshot` | 进程语义快照 |
+| `process_task_snapshot` / `current_process_task_snapshot` / `current_thread_id` | 线程归属 |
+| `all_process_pids` / `task_ids_for_process` / `leader_task_for_process` | 枚举与反查 |
+| `process_resource_limit` / `set_process_resource_limit` | rlimit |
+| `process_nice` / `set_process_nice` / `process_pgid` / `set_process_pgid` | nice 与进程组 |
+| `find_exited_child_process*` / `find_stopped_child_process*` / `find_continued_child_process*` | wait 路径 |
+| `stop_process_tasks` / `continue_process_tasks` | SIGSTOP/SIGCONT |
+| `mark_process_stopped` / `mark_process_continued` / `consume_*_wait` | stopped/continued 状态机 |
+| `set_task_clear_child_tid` / `task_clear_child_tid` | futex/clear_tid |
+| `has_child` / `has_child_process` / `has_child_process_in_pgid` | 子进程存在性 |
+| `create_session_for_process` | setsid |
+| `process_dumpable` / `process_child_subreaper` 及 setter | prctl 子集 |
+| `process_model_self_test` | bring-up 自检 |
+
+## `task::sched`（Linux `sched_*`）
+
+| 项 | 说明 |
+|----|------|
+| `resolve_sched_pid` | pid/tid → 内部 `TaskId` |
+| `get_scheduler` / `set_scheduler` / `get_param` / `set_param` | 策略与参数 |
+| `fill_cpu_affinity_mask` / `cpu_affinity_ret_bytes` / `validate_cpu_affinity_buf_len` / `set_affinity` | CPU 亲和性（单核） |
+
+## 主要再导出类型（`api_v0`）
+
+`TaskId`, `TaskState`, `TaskSnapshot`, `UserTask`, `ExitedTask`, `TaskWaitHandle`, `TaskWaitResult`, `ProcessId`, `ThreadId`, `ProcessDescriptor`, `CloneFlags`, `SchedPolicy`, `SchedParam`, `SchedError`, …
+
+## 初始化契约（根 crate 责任）
+
+1. `task::init()` — 在 `spawn_*` 与 `run_first_task` 之前
+2. MM 初始化与用户 ELF 装载 — 见 `wateros-mm` 文档
+3. `trap_handler::init` 注册 arch trap 后，经 `task` runtime 符号进入用户态
+
+## 修订
+
+| 日期 | 说明 |
+|------|------|
+| 2026-06-29 | 初版导出 |

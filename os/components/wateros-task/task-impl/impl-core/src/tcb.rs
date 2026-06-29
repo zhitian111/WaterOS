@@ -305,8 +305,7 @@ impl TaskControlBlock {
                                                                  envp);
         <TaskTrapFrame as TrapContextWrite>::set_return_address_space_token(&mut new_trap, satp);
 
-        // `execve_current` runs on the task's current kernel stack. Replacing it
-        // here would free the live stack and let later allocations zero it.
+        // execve 仍在当前任务的内核栈上执行；此处若替换 kernel_stack 会释放正在使用的栈。
         user_inner.trap_frame = new_trap;
         user_inner.user = new_spec;
     }

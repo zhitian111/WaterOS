@@ -219,9 +219,11 @@ impl VfsIoHandle for UrandomDeviceHandle {
 /// pipe 读端。
 pub struct PipeReadHandle {
     endpoint: PipeEndpoint,
+    /// 合成 inode 号，供 `flock` / `stat` 区分 pipe 实例。
     inode: u64,
 }
 
+/// pipe 写端。
 pub struct PipeWriteHandle {
     endpoint: PipeEndpoint,
     inode: u64,

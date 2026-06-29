@@ -192,6 +192,7 @@ impl GlobalFilePageCache {
                open_refs : Mutex::new(BTreeMap::new()) }
     }
 
+    #[inline]
     pub fn mount_gen(&self) -> u64 { self.mount_gen
                                          .load(Ordering::Acquire) }
 
@@ -212,6 +213,7 @@ impl GlobalFilePageCache {
             .store(new_gen, Ordering::Release);
     }
 
+    #[inline]
     fn file_key(&self, path : &str) -> FileCacheKey {
         FileCacheKey { mount_gen : self.mount_gen(),
                        path : Arc::from(path) }
@@ -648,6 +650,7 @@ impl GlobalFilePageCache {
         Ok(written)
     }
 
+    #[inline]
     pub fn logical_size(&self, path : &str, fallback : u64) -> u64 {
         let key = self.file_key(path);
         let files = self.files.lock();
@@ -659,12 +662,14 @@ impl GlobalFilePageCache {
              .unwrap_or(fallback)
     }
 
+    #[inline]
     pub fn set_logical_size(&self, path : &str, size : u64) {
         let entry = self.get_file_entry(path, size);
         entry.write()
              .logical_size = size;
     }
 
+    #[inline]
     pub fn dirty_page_count(&self, path : &str) -> usize {
         let key = self.file_key(path);
         let files = self.files.lock();
