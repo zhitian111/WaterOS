@@ -18,7 +18,7 @@
     panic = { path = "./runtime-panic/", package = "wateros-runtime-panic", default-features = false }
     console = { path = "./runtime-console/", package = "wateros-runtime-console", default-features = false }
     logging = { path = "./runtime-logging/", package = "wateros-runtime-logging", default-features = false }
-    heap-allocator = { path = "./runtime-heap-allocator/", package = "wateros-runtime-heap-allocator", default-features = true }
+    heap-allocator = { path = "./runtime-heap-allocator/", package = "wateros-runtime-heap-allocator", default-features = false }
     runtime-serial = { path = "./runtime-serial/", package = "wateros-runtime-serial", default-features = true, optional = true }
 
 [features]
@@ -38,5 +38,8 @@
     ]
     impl-trace = [ "logging/impl-trace" ]
     impl-warn = [ "logging/impl-warn" ]
+    # 内核堆分配器后端（互斥；默认 TLSF）
+    heap-tlsf = [ "heap-allocator/impl-tlsf" ]
+    heap-linked-list = [ "heap-allocator/impl-linked-list-allocator" ]
     # QEMU virt UART0 MMIO + SerialPort，供伪 shell（依赖 wateros-driver）。
     serial-uart-virt = [ "dep:runtime-serial" ]
