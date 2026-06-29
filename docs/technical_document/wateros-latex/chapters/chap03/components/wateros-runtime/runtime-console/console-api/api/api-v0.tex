@@ -1,0 +1,19 @@
+% 【本文件写什么】api-v0 契约层（叶子，只写语义不写实现）
+%   - crate 路径：os/components/wateros-runtime/runtime-console/console-api/api-v0/src/
+%   - 列出并说明：pub trait、核心类型、错误枚举、常量
+%   - 每个公开 API 的前置条件、后置条件、线程/中断上下文限制
+%   - 与 Linux/用户态约定的对齐点与 deliberate 差异
+%   - v0 版本当前行为与后续可替换 extension 点
+% 【事实来源】
+%   - 上述 crate 下全部 .rs 源文件
+%   - docs/exports/public-api/ 中对应符号表（以源码为准）
+% 【不写什么】
+%   - impl 内部数据结构、汇编、具体算法步骤
+
+\subsubsection{Console trait（api-v0）}
+
+\code{Console}为标记trait，约束实现须同时满足\code{core::fmt::Write}与\code{Default}。\code{write\_str}语义与\code{fmt::Write}一致；是否缓冲、如何换行由具体后端决定。v0未定义读侧能力，控制台输入不在本契约范围。后续版本若需\code{read}或行缓冲，应扩展新trait而非破坏现有\code{Console}默认方法。
+
+\begin{rustcode}
+pub trait Console: fmt::Write + Default {}
+\end{rustcode}

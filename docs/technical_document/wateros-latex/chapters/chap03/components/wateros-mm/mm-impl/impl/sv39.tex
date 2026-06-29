@@ -1,0 +1,37 @@
+% 【本文件写什么】impl 实现层：sv39
+%   - 定位：RISC-V Sv39 页表实现。
+%   - crate 路径：os/components/wateros-mm/mm-impl/impl-sv39/src/
+%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+%   - 算法或硬件交互流程（可用伪代码/流程图）
+%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
+%   - 与其它 impl 变体的差异、切换 feature 时的影响
+%   - 性能/内存假设与已知限制
+% 【事实来源】
+%   - 上述 crate 源码与 Cargo.toml
+%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+
+\subsubsection{impl-sv39}
+
+\code{Sv39AddressSpace}实现三级 4\,KiB Sv39 页表。\code{Sv39PteFlags}除标准 V/R/W/X/U/A/D 外扩展\code{COW}与\code{COW\_WAS\_WRITABLE}软件位，用于 fork 写时复制。\code{satp\_value}返回 MODE=8 的 Sv39 编码。
+
+物理访问假设：\code{table\_mut}将 PPN 转为指针读写页表，要求内核恒等映射 RAM/MMIO，使 PPN 可直接解引用。映射时预先置 A/D 位，避免依赖 S 态访问触发页故障置位。
+
+内核 bring-up：\code{kernel\_global::init}建立内核恒等 RAM/MMIO 映射并缓存\code{kernel\_satp}。\code{kernel\_elf}实现\code{from\_elf\_path}/\code{from\_elf\_bytes}装载\code{PT\_LOAD}、惰性文件段、用户栈与 brk 区。\code{user\_heap\_mmap}、\code{user\_access}分别承载堆增长与用户缓冲区软件 walk。
+
+fork 与 COW：COW fork在\code{fork\_user\_aspace}中完成，调用\code{Sv39AddressSpace::fork\_cow}复制带 U 权限的叶子页并标记 COW PTE；返回泄漏的子地址空间裸指针与\code{satp}。写故障经\code{handle\_cow\_fault}：引用计数为 1 时原地恢复写权限；否则分配新帧、复制 4\,KiB、递减旧帧引用并刷新 TLB。
+
+\begin{rustcode}
+pub fn fork_user_aspace(parent_aspace_ptr: usize) -> MmResult<(usize, usize)> {
+    let parent = unsafe { &mut *(parent_aspace_ptr as *mut Sv39AddressSpace) };
+    let child = parent.fork_cow()?;
+    let satp = child.satp_value();
+    let child_ptr = Box::into_raw(Box::new(child)) as usize;
+    Ok((child_ptr, satp))
+}
+\end{rustcode}
+
+缺页路径：\code{handle\_lazy\_page\_fault}遍历\code{lazy\_file\_vmas}，按需分配帧、清零、调用\code{DemandPageLoader::load\_page}后映射；匿名栈/brk 扩展由\code{MmapOps::handle\_page\_fault}与\code{HeapBrk}协作。聚合层\code{mm::kernel\_mm::handle\_user\_page\_fault}委托\code{with\_user\_aspace\_mut}调用上述 trait 方法。
+
+用户访问：\code{Sv39UserMemoryOps}在软件 walk 用户 VA 时先尝试 COW 修复，再按权限拷贝字节。\code{debug\_probe\_user\_virt}仅 Sv39 提供诊断探针。
+
+Feature \code{impl-riscv64}链接 arch 分页刷新；\code{vfs-root-read}启用根卷 ELF 读取路径。

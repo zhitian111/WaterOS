@@ -1,0 +1,226 @@
+% !Mode:: "TeX:UTF-8"
+% !TEX program = xelatex
+
+% =============================================
+% 字体定义与大小设置
+% =============================================
+\newcommand{\song}{\songti}     % 宋体
+\newcommand{\fs}{\fangsong}     % 仿宋体
+\newcommand{\kai}{\kaishu}      % 楷体
+\newcommand{\hei}{\heiti}       % 黑体
+\newcommand{\li}{\lishu}        % 隶书
+
+% --- 全局英文字体（Windows 优先，Linux 回退 Nimbus / gsfonts）---
+\IfFontExistsTF{Times New Roman}
+  {\setmainfont{Times New Roman}}
+  {\setmainfont{Nimbus Roman}}
+\IfFontExistsTF{Arial}
+  {\setsansfont{Arial}}
+  {\setsansfont{Nimbus Sans}}
+\IfFontExistsTF{Courier New}
+  {\setmonofont{Courier New}}
+  {\setmonofont{Nimbus Mono PS}}
+
+\newcommand{\xiaochu}{\fontsize{36pt}{30pt}\selectfont}     % 小初
+\newcommand{\yihao}{\fontsize{28pt}{26pt}\selectfont}       % 一号
+\newcommand{\xiaoyi}{\fontsize{24pt}{24pt}\selectfont}      % 小一
+\newcommand{\erhao}{\fontsize{21pt}{1.25\baselineskip}\selectfont} % 二号
+\newcommand{\xiaoer}{\fontsize{18pt}{18pt}\selectfont}      % 小二
+\newcommand{\sanhao}{\fontsize{15.75pt}{15.75pt}\selectfont} % 三号
+\newcommand{\xiaosan}{\fontsize{15pt}{15pt}\selectfont}     % 小三
+\newcommand{\sihao}{\fontsize{14pt}{14pt}\selectfont}       % 四号
+\newcommand{\xiaosi}{\fontsize{12pt}{12pt}\selectfont}      % 小四
+\newcommand{\wuhao}{\fontsize{10.5pt}{10.5pt}\selectfont}   % 五号
+\newcommand{\xiaowu}{\fontsize{9pt}{9pt}\selectfont}        % 小五
+
+% =============================================
+% 全局段落与列表设置
+% =============================================
+\setitemize{leftmargin=3em,itemsep=0em,partopsep=0em,parsep=0em,topsep=-0em}
+\setenumerate{leftmargin=3em,itemsep=0em,partopsep=0em,parsep=0em,topsep=0em}
+\setlength{\parindent}{2em}
+
+\makeatletter
+\renewcommand\normalsize{
+  \@setfontsize\normalsize{12pt}{12pt} % 小四对应 12 pt
+  \setlength\abovedisplayskip{4pt}
+  \setlength\abovedisplayshortskip{4pt}
+  \setlength\belowdisplayskip{\abovedisplayskip}
+  \setlength\belowdisplayshortskip{\abovedisplayshortskip}
+  \let\@listi\@listI
+  \setlength{\baselineskip}{20pt}
+}
+\def\defaultfont{\renewcommand{\baselinestretch}{1.5}\normalsize\selectfont}
+\renewcommand{\CJKglue}{\hspace -0.1 pt plus 0.08\baselineskip}
+\makeatother
+
+% =============================================
+% 章节标题格式 (统一使用 ctexset)
+% =============================================
+\setcounter{secnumdepth}{4}
+
+\ctexset{
+    chapter = {
+        name = {第,章},
+        format = \linespread{1.0}\zihao{-3}\heiti\centering, % 恢复为主文件要求的字号
+        number = \arabic{chapter},
+        aftername = \quad,
+        beforeskip = {7pt},
+        afterskip = {18pt},
+        pagestyle = plain,
+    },
+    section={
+        format = \zihao{-3}\heiti\raggedright,
+        name = {},
+        number = \arabic{chapter}.\arabic{section},
+        beforeskip = 1.0ex plus 0.2ex minus .2ex,
+        afterskip = 1.0ex plus 0.2ex minus .2ex,
+        aftername = \quad
+    },
+    subsection={
+        format = \zihao{-4}\heiti\raggedright,
+        name = {},
+        number = \arabic{chapter}.\arabic{section}.\arabic{subsection},
+        beforeskip = 1.0ex plus 0.2ex minus .2ex,
+        afterskip = 1.0ex plus 0.2ex minus .2ex,
+        aftername = \quad
+    },
+    %subsubsection={
+    %    format = \zihao{-4}\fangsong\centering,
+    %    number = \ttfamily\arabic{subsubsection},
+    %    name = {,.},
+    %    beforeskip = 1.0ex plus 0.2ex minus .2ex,
+    %    afterskip = 1.0ex plus 0.2ex minus .2ex,
+    %    aftername = \hspace{0pt}
+    %}
+}
+
+% =============================================
+% 图表与公式编号规范
+% =============================================
+\renewcommand{\tablename}{表}                                     
+\renewcommand{\figurename}{图}                                    
+\renewcommand{\thefigure}{\arabic{chapter}-\arabic{figure}}       
+\renewcommand{\thetable}{\arabic{chapter}-\arabic{table}}         
+\renewcommand{\theequation}{\arabic{chapter}-\arabic{equation}}   
+\makeatletter
+\renewcommand{\tagform@}[1]{\maketag@@@{式(#1\@@italiccorr)}}
+\makeatother
+\renewcommand{\eqref}[1]{\textup{式(\ref{#1})}}
+\newcommand{\ud}{\mathrm{d}}
+
+% 浮动体标题样式
+\makeatletter
+\long\def\@makecaption#1#2{
+   \vskip\abovecaptionskip
+   \sbox\@tempboxa{\centering\wuhao\song{#1\quad #2} }
+   \ifdim \wd\@tempboxa >\hsize
+     \centering\wuhao\song{#1\quad #2} \par
+   \else
+     \global \@minipagefalse
+     \hb@xt@\hsize{\hfil\box\@tempboxa\hfil}
+   \fi
+   \vskip\belowcaptionskip}
+\makeatother
+
+% =============================================
+% 自定义命令与环境
+% =============================================
+% 表格单元格内换行
+\newcommand{\tabincell}[2]{\begin{tabular}{@{}#1@{}}#2\end{tabular}}
+% 表格列格式扩展
+\newcommand{\PreserveBackslash}[1]{\let\temp=\\#1\let\\=\temp}
+\newcolumntype{C}[1]{>{\PreserveBackslash\centering}p{#1}}
+\newcolumntype{R}[1]{>{\PreserveBackslash\raggedleft}p{#1}}
+\newcolumntype{L}[1]{>{\PreserveBackslash\raggedright}p{#1}}
+
+% 避免 hyperref 和部分包冲突导致目录链接失效
+\def\temp{\relax}
+\let\temp\addcontentsline
+\gdef\addcontentsline{\phantomsection\temp}
+
+% 代码高亮由 setup/minted-setup.tex（minted + Pygments）统一配置
+
+% 定理环境
+\theoremstyle{plain}
+\theorembodyfont{\song\rmfamily}
+\theoremheaderfont{\hei\rmfamily}
+\newtheorem{theorem}{定理~}[chapter]
+\newtheorem{lemma}{引理~}[chapter]
+\newtheorem{definition}{定义~}[chapter]
+\newtheorem{example}{例~}[chapter]
+\newenvironment{proof}{\noindent{\hei 证明：}}{\hfill $ \square $ \vskip 4mm}
+\theoremsymbol{$\square$}
+
+% =============================================
+% 参考文献排版设置
+% =============================================
+\renewcommand{\bibname}{参考文献}
+
+% 1. 强制 natbib 全局使用带方括号的上标格式（如：^[1]）
+\setcitestyle{super,square}
+
+% 2. 贴心预留：如果你在正文中需要说“请参见文献[1]”（不作为上标）
+% 以后遇到这种情况，请使用 \inlinecite{...} 命令
+\newcommand{\inlinecite}[1]{[\citenum{#1}]}
+
+\addtolength{\bibsep}{-0.5em} 
+\setlength{\bibhang}{2em}     
+
+% =============================================
+% 目录样式控制 (titletoc)
+% =============================================
+\renewcommand{\contentsname}{\xiaoer 目\qquad 录}
+\setcounter{tocdepth}{1} 
+
+\titlecontents{chapter}[0em]{\vspace{2pt}\sihao\song\bfseries}
+             {\thecontentslabel\quad}{\mbox{}} 
+             {\hspace{.5em}\titlerule*[5pt]{$\cdot$}\sihao\contentspage}
+
+%\titlecontents{chapter}[0em]{\vspace{2pt}\sihao\song\bfseries}
+%             {\thecontentslabel \quad}{}
+%             {\hspace{.5em}\titlerule*[5pt]{$\cdot$}\sihao\contentspage}
+
+\titlecontents{section}[2em]{\vspace{2pt}\xiaosi\song}
+             {\thecontentslabel\quad}{}
+             {\hspace{.5em}\titlerule*[3pt]{$\cdot$}\xiaosi\contentspage}
+             
+\titlecontents{subsection}[4em]{\vspace{2pt}\xiaosi\song}
+             {\thecontentslabel 、}{}
+             {\hspace{.5em}\titlerule*[3pt]{$\cdot$}\xiaosi\contentspage}
+
+% =============================================
+% 页眉页脚与封面定义
+% =============================================
+\usepackage{fancyhdr}
+\makeatletter
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[C]{\song\wuhao \@cheading} 
+\fancyfoot[C]{\song\xiaowu ~\thepage~}
+
+\def\ctitle#1{\def\@ctitle{#1}}\def\@ctitle{}
+\def\cntitle#1{\def\@cntitle{#1}}\def\@cntitle{}
+\def\cctitle#1{\def\@cctitle{#1}}\def\@cctitle{}
+\def\etitle#1{\def\@etitle{#1}}\def\@etitle{}
+\def\cauthor#1{\def\@cauthor{#1}}\def\@cauthor{}
+\def\csupervisor#1{\def\@csupervisor{#1}}\def\@csupervisor{}
+\def\caffil#1{\def\@caffil{#1}}\def\@caffil{}
+\def\csubject#1{\def\@csubject{#1}}\def\@csubject{}
+\def\csubjectcode#1{\def\@csubjectcode{#1}}\def\@csubjectcode{}
+\def\cresearch#1{\def\@cresearch{#1}}\def\@cresearch{}
+\def\cgrade#1{\def\@cgrade{#1}}\def\@cgrade{}
+\def\cnumber#1{\def\@cnumber{#1}}\def\@cnumber{}
+\def\cheading#1{\def\@cheading{#1}}\def\@cheading{}
+\long\def\cabstract#1{\long\def\@cabstract{#1}}\long\def\@cabstract{}
+\long\def\eabstract#1{\long\def\@eabstract{#1}}\long\def\@eabstract{}
+\def\ckeywords#1{\def\@ckeywords{#1}}\def\@ckeywords{}
+\def\ekeywords#1{\def\@ekeywords{#1}}\def\@ekeywords{}
+
+
+\makeatother
+
+% 强制取消 \emph 命令产生的下划线，将其恢复为标准的斜体
+% 彻底重置 \emph 命令，使其在任何情况下都保持正文默认字体（即：不倾斜、不加下划线）
+\let\oldemph\emph
+\renewcommand{\emph}[1]{#1}

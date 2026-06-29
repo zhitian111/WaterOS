@@ -1,0 +1,17 @@
+% 【本文件写什么】子模块 fs-devfs（\subsection 级聚合）
+%   - 职责摘要：设备节点伪文件系统。
+%   - 子域聚合 lib.rs：os/components/wateros-fs/fs-devfs/src/lib.rs
+%   - 如何重导出 api-v0、feature 下挂载哪些 impl
+%   - 被谁依赖（syscall、vfs、main 启动链等）
+%   - 短综述 + 下方 \input 展开 api 与 impl 叶子
+% 【事实来源】
+%   - os/components/wateros-fs/fs-devfs/
+%   - docs/exports/ 中与 wateros-fs 相关的 public-api / features 章节
+
+\subsection{fs-devfs}
+
+\code{fs-devfs}维护内核视角的设备节点表：将\code{wateros-driver}枚举的块/字符设备映射为\code{/dev/*}路径，供\code{fs::init()}解析默认根块设备、供VFS\code{open}字符设备节点。聚合\code{lib.rs}按feature选择\code{active\_impl}（默认\code{impl-kernel}），对外再导出\code{refresh}、\code{lookup\_block\_device}、\code{default\_root\_block\_path}、\code{list\_dev\_nodes}等便捷函数。
+
+\input{chapters/chap03/components/wateros-fs/fs-devfs/devfs-api/api/api-v0}
+\input{chapters/chap03/components/wateros-fs/fs-devfs/devfs-impl/impl/dummy}
+\input{chapters/chap03/components/wateros-fs/fs-devfs/devfs-impl/impl/kernel}

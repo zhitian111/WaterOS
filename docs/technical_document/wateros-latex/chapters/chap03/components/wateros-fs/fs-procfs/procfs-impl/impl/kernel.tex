@@ -1,0 +1,32 @@
+% 【本文件写什么】impl 实现层：kernel
+%   - 定位：内核内建伪 FS / rootfs 逻辑（devfs、procfs、rootfs）。
+%   - crate 路径：os/components/wateros-fs/fs-procfs/procfs-impl/impl-kernel/src/
+%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+%   - 算法或硬件交互流程（可用伪代码/流程图）
+%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
+%   - 与其它 impl 变体的差异、切换 feature 时的影响
+%   - 性能/内存假设与已知限制
+% 【事实来源】
+%   - 上述 crate 源码与 Cargo.toml
+%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+
+\subsubsection{impl-kernel}
+
+\paragraph{节点模型。}
+内部\code{ProcNode}枚举覆盖全局文件（\code{meminfo}、\code{cpuinfo}、\code{cgroups}、\code{mounts}、\code{sys/kernel/pid\_max}、\code{sys/kernel/tainted}）与per-pid子树（\code{\{pid\}/stat}、\code{status}、\code{smaps}、\code{maps}、\code{cmdline}）。\code{normalize\_rel}折叠\code{//}、\code{.}、\code{..}，与VFS路径规范化一致。\code{self}目录名映射当前进程pid。
+
+\paragraph{内容生成。}
+\begin{itemize}
+  \item \code{/proc/\{pid\}/status}、\code{stat}：从\code{task}快照读取状态、ppid、调度信息等；
+  \item \code{cmdline}：经注册的\code{argv}回调格式化（\code{\\0}分隔）；
+  \item \code{maps}、\code{smaps}：从\code{mm}查询映射区间；
+  \item \code{mounts}：经\code{MountListLookup}回调逐行输出；
+  \item \code{meminfo}、\code{cpuinfo}：静态或简化模板，满足测例读取。
+\end{itemize}
+各节点分配稳定\code{inode}号（pid子树按pid编码）。
+
+\paragraph{\code{FsImpl}与VFS挂接。}
+导出\code{IMPL}，\code{name()}为\code{"procfs"}，声明\code{Other("procfs")} RO能力。\code{vfs::mount\_procfs\_at}在挂载前注册\code{argv}/\code{exe}/\code{mount}回调，再经\code{impl-fs-bridge}将\code{/proc}路由到\code{proc\_view()}。
+
+\paragraph{限制。}
+字段集合非完整Linux\code{/proc}；未注册回调时\code{cmdline}/\code{mounts}等内容为空或缺省。生成路径在持锁上下文执行，假设单核bring-up无长时间阻塞。

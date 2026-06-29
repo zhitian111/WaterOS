@@ -1,0 +1,49 @@
+% 【本文件写什么】子模块 ipc-shm（\subsection 级聚合）
+%   - 职责摘要：SysV 共享内存段注册表（单 crate，无 api/impl 树）。
+%   - 子域聚合 lib.rs：os/components/wateros-ipc/ipc-shm/src/lib.rs
+%   - 如何重导出 api-v0、feature 下挂载哪些 impl
+%   - 被谁依赖（syscall、vfs、main 启动链等）
+%   - 短综述 + 下方 \input 展开 api 与 impl 叶子
+% 【事实来源】
+%   - os/components/wateros-ipc/ipc-shm/
+%   - docs/exports/ 中与 wateros-ipc 相关的 public-api / features 章节
+
+\subsection{ipc-shm}
+
+\code{ipc-shm}为单 crate 实现（\code{ipc-shm/src/lib.rs}），无独立\code{api-v0}/\code{impl-*}目录树。父聚合在\code{feature shm}下导出\code{ipc::shm::registry()}及\code{ShmRegistry}类型。本 crate 管理 SysV 段标识、物理帧分配/回收与 per-task 附加表；syscall 负责\syscall{shmget}/\syscall{shmat}/\syscall{shmdt}/\syscall{shmctl}的 Linux ABI 解码，MM 在\code{finish\_attach}之后将返回的 PPN 映射到用户 VA。
+
+\paragraph{段创建 shmget 子集。}
+\code{create\_or\_get(key, size, flags)}支持\code{IPC\_PRIVATE}与命名键、\code{IPC\_CREAT}/\code{IPC\_EXCL}；单段最大\code{MAX\_SHM\_SEGMENT\_SIZE}为 4 MiB；大小页对齐后由\code{frame\_allocator}分配并零页初始化。
+
+\begin{rustcode}
+pub fn create_or_get(&mut self, key: usize, size: usize, flags: usize)
+    -> ShmResult<ShmId> {
+    if size == 0 || size > MAX_SHM_SEGMENT_SIZE {
+        return Err(ShmError::Invalid);
+    }
+    if key != IPC_PRIVATE {
+        if let Some(shmid) = self.key_index.get(&key).copied() {
+            if flags & IPC_CREAT != 0 && flags & IPC_EXCL != 0 {
+                return Err(ShmError::Exists);
+            }
+            return Ok(shmid);
+        }
+        if flags & IPC_CREAT == 0 {
+            return Err(ShmError::NoEntry);
+        }
+    }
+    let shmid = self.alloc_id()?;
+    let pages = alloc_segment_pages(size)?;
+    // segments.insert、key_index 更新 ...
+    Ok(shmid)
+}
+\end{rustcode}
+
+\paragraph{两阶段 shmat。}
+\code{begin\_attach}先递增\code{nattch}，防止并发\code{IPC\_RMID}/\code{shmdt}在 MM 映射前释放物理页；映射成功后\code{finish\_attach}登记\code{ShmAttachment}；映射失败时\code{cancel\_attach\_reservation}回滚\code{nattch}。
+
+\paragraph{生命周期。}
+\code{detach}按用户\code{base}解除附加并递减\code{nattch}；\code{mark\_removed}对应\code{IPC\_RMID}，\code{nattch}归零时回收物理页。\code{fork\_task}复制父进程附加并递增引用；\code{drop\_task}在进程退出时批量解除。
+
+\paragraph{缺口。}
+无完整\code{shmctl(IPC\_STAT)}字段；无 System V msg/sem；策略常量\code{MAX\_SHM\_SEGMENT\_SIZE}尚未迁至\code{base-config}。

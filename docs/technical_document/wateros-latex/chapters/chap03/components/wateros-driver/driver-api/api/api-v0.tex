@@ -1,0 +1,48 @@
+% 【本文件写什么】api-v0 契约层（叶子，只写语义不写实现）
+%   - crate 路径：os/components/wateros-driver/driver-api/api-v0/src/
+%   - 列出并说明：pub trait、核心类型、错误枚举、常量
+%   - 每个公开 API 的前置条件、后置条件、线程/中断上下文限制
+%   - 与 Linux/用户态约定的对齐点与 deliberate 差异
+%   - v0 版本当前行为与后续可替换 extension 点
+% 【事实来源】
+%   - 上述 crate 下全部 .rs 源文件
+%   - docs/exports/public-api/ 中对应符号表（以源码为准）
+% 【不写什么】
+%   - impl 内部数据结构、汇编、具体算法步骤
+
+\subsubsection{api-v0}
+
+\paragraph{设备类型与MMIO摘要。}\code{DeviceType}区分\code{Block}、\code{Character}、\code{Network}与\code{Unknown}；VirtIO-MMIO魔数\code{0x74726976}配合\code{device\_id}（2=块，1=网）在平台impl中填充。\code{MmioRegion}承载DTB\code{reg}首段\code{\{base, size\}}；\code{size==0}的条目由调用方丢弃。\code{IrqLine}解析\code{interrupts}首字与可选\code{interrupt-parent}；复杂PLIC复用形态当前返回\code{None}而非误解析。
+
+\paragraph{绑定声明与扫描结果。}\code{SupportedDeviceEntry}由子系统在静态表中声明\code{subsystem}、\code{name}与单条\code{compatible}字符串；多个子系统可对同一\code{compatible}非排他匹配。\code{DeviceInfo}汇总节点名、\code{compatible}列表、探测类型、MMIO窗口与IRQ；供平台impl绑定决策与诊断日志使用。
+
+\paragraph{错误分类。}\code{DriverError}统一为\code{InvalidDtb}、\code{InvalidParam}、\code{NotFound}、\code{Unsupported}、\code{IoError}；各子系统\code{DriverResult<T>}与此对齐，不区分errno细节。调用方应将\code{Unsupported}视为feature未启用或硬件拒绝，将\code{NotFound}视为尚未保存DTB基址等资源缺失。
+
+核心类型摘录：
+
+\begin{rustcode}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceType {
+    Block,
+    Character,
+    Network,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MmioRegion {
+    pub base: usize,
+    pub size: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DriverError {
+    InvalidDtb,
+    InvalidParam,
+    NotFound,
+    Unsupported,
+    IoError,
+}
+\end{rustcode}
+
+\paragraph{上下文限制。}类型与\code{test()}均可在关中断或持锁路径调用；\code{DeviceInfo}内含\code{alloc::String}与\code{Vec}，构造方须已链接全局分配器。v0刻意不暴露PLT/GPIO等扩展中断形态；后续可在不破坏\code{DeviceInfo}字段的前提下增加可选解析辅助函数。

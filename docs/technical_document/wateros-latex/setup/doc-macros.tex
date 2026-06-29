@@ -1,0 +1,56 @@
+% WaterOS 技术文档：颜色、字体、宏与代码高亮（与 test.tex 一致）
+
+\usepackage{colortbl}
+
+\definecolor{docSoft}{HTML}{F2F2F2}
+\definecolor{docCodeBg}{HTML}{F7F7F7}
+
+\hypersetup{
+  pdfauthor={WaterOS Team},
+  pdftitle={WaterOS 操作系统内核技术方案},
+  pdfborder={0 0 0},
+  hidelinks
+}
+
+\IfFileExists{/mnt/c/Windows/Fonts/msyhbd.ttc}
+  {\setCJKmainfont[
+      BoldFont=msyhbd.ttc,
+      BoldFeatures={Path=/mnt/c/Windows/Fonts/}
+    ]{SimSun}}
+  {\setCJKmainfont{Noto Serif CJK SC}}
+\IfFileExists{/mnt/c/Windows/Fonts/msyh.ttc}
+  {\setCJKsansfont[
+      Path=/mnt/c/Windows/Fonts/,
+      BoldFont=msyhbd.ttc
+    ]{msyh.ttc}}
+  {\setCJKsansfont{Noto Sans CJK SC}}
+\IfFontExistsTF{NSimSun}
+  {\setCJKmonofont{NSimSun}}
+  {\setCJKmonofont{Noto Sans Mono CJK SC}}
+
+\setlength{\emergencystretch}{3em}
+
+\cheading{操作系统内核设计文档 - WaterOS}
+\newcommand{\docTitle}{WaterOS 内核技术文档}
+
+\IfFileExists{/mnt/c/Windows/Fonts/consola.ttf}{%
+  \setmonofont[
+    Path=/mnt/c/Windows/Fonts/,
+    BoldFont=consolab.ttf,
+    ItalicFont=consolai.ttf,
+    BoldItalicFont=consolaz.ttf
+  ]{consola.ttf}
+}{%
+  \IfFontExistsTF{DejaVu Sans Mono}
+    {\setmonofont{DejaVu Sans Mono}}
+    {\setmonofont{Nimbus Mono PS}}
+}
+
+\input{setup/minted-setup}
+
+\newcommand{\wateros}{WaterOS}
+\newcommand{\code}[1]{\textnormal{\rmfamily #1}}
+\newcommand{\syscall}[1]{\textnormal{\rmfamily #1}}
+\newcommand{\todo}[1]{#1}
+\newcommand{\labelcell}[1]{#1}
+\newcommand{\wosstrong}[1]{{\songti\bfseries #1}}

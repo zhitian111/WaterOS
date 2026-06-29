@@ -1,0 +1,24 @@
+% 【本文件写什么】一级组件 wateros-platform（§ 级聚合）
+%   - 组件职责与在内核中的位置：架构抽象、固件/板级与 trap/定时器平台能力。
+%   - 聚合 crate os/components/wateros-platform/src/lib.rs 的 pub mod 树与对外导出面
+%   - 子模块划分、与相邻组件的依赖边界（谁依赖谁、走哪条门面）
+%   - 根 feature / 本组件 Cargo.toml feature 如何选用各 impl
+%   - 1～2 段综述后，由下方 \input 展开子模块；不在此逐条列举 api trait
+% 【事实来源】
+%   - os/components/wateros-platform/src/lib.rs、Cargo.toml
+%   - docs/exports/public-api/wateros-platform.md
+%   - docs/exports/features/wateros-platform.md
+%   - os/feature-tree.txt 中 wateros-platform 相关段
+% 【不写什么】
+%   - api-v0 契约细节 → 子目录 api/api-v0.tex
+%   - 各 impl 算法/平台细节 → 子目录 impl/*.tex
+
+\section{wateros-platform}
+
+\code{wateros-platform}把ISA相关原语与板级/QEMU环境能力收束为内核可直接调用的门面。聚合crate按feature同时选定\code{platform-arch}下的\code{impl-riscv64}或\code{impl-loongarch64}，以及\code{platform-impl}下的OpenSBI或LoongArch\code{virt} profile；在二者之上组合\code{timer}（arch tick + 平台Hz + deadline编程）、\code{time}（引导期频率缓存）、\code{wall\_clock}（单调纳秒与\code{CLOCK\_REALTIME}偏移）等语义，并向\code{wateros-runtime}、\code{wateros-mm}、\code{wateros-task}等上层提供trap帧、分页CSR、中断开关与早期控制台。
+
+根crate不实现具体硬件访问：trap向量与帧布局在\code{arch-impl}，串口/SBI timer/复位在\code{platform-impl}，契约分别在\code{platform-api/api-v0}与\code{arch-api/api-v0}。组合层须在首次用户态trap前调用\code{platform::arch::init()}安装向量，并在\code{task::init}附近注册\code{kernel\_trap} handler；若已从DTB探测timebase，须在首次\code{timer}使用前调用\code{platform::time::set\_frequency\_hz}。
+
+\input{chapters/chap03/components/wateros-platform/platform-api/platform-api}
+\input{chapters/chap03/components/wateros-platform/platform-arch/arch}
+\input{chapters/chap03/components/wateros-platform/platform-impl/platform-impl}

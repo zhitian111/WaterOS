@@ -1,0 +1,31 @@
+% 【本文件写什么】api-v0 契约层（叶子，只写语义不写实现）
+%   - crate 路径：os/components/wateros-vfs/vfs-api/api-v0/src/
+%   - 列出并说明：pub trait、核心类型、错误枚举、常量
+%   - 每个公开 API 的前置条件、后置条件、线程/中断上下文限制
+%   - 与 Linux/用户态约定的对齐点与 deliberate 差异
+%   - v0 版本当前行为与后续可替换 extension 点
+% 【事实来源】
+%   - 上述 crate 下全部 .rs 源文件
+%   - docs/exports/public-api/ 中对应符号表（以源码为准）
+% 【不写什么】
+%   - impl 内部数据结构、汇编、具体算法步骤
+
+\subsubsection{api-v0}
+
+\paragraph{模块划分。}
+\code{error}（\code{VfsError}/\code{VfsResult}）、\code{kind}（\code{VfsFsKind}、\code{VfsCapability}）、\code{meta}（\code{VfsMetadata}、\code{VfsDirEntry}）、\code{path}（\code{normalize\_absolute\_path}、\code{validate\_root\_file\_name}）、\code{resolve}（\code{resolve\_open\_path}、\code{resolve\_against\_cwd}）、\code{handle}（\code{VfsOpenOps}、\code{VfsIoHandle}、\code{VfsOpenFlags}）、\code{fd}（\code{VfsFdSession}）、\code{mount}（\code{VfsMountOps}、\code{RootRwSession}）、\code{namespace}（\code{VfsMountTable}）、\code{dev}（\code{VfsDevInventory}）、\code{root\_read}（\code{SingleRootReadView}）、\code{backend}（\code{VfsBackend}组合trait）。
+
+\paragraph{\code{VfsBackend}。}
+后端须同时实现\code{SingleRootReadView}、\code{VfsMountOps}、\code{VfsDevInventory}、\code{VfsOpenOps}、\code{VfsMountTable}。本crate不依赖\code{wateros-fs}；跨FS桥接仅在\code{impl-fs-bridge}。
+
+\paragraph{路径契约。}
+\code{normalize\_absolute\_path}折叠\code{//}、\code{.}、\code{..}，结果以\code{/}开头。\code{resolve\_open\_path}可经\code{register\_open\_path\_resolver}挂接per-task cwd解析（由\code{impl-fd-session}在启动期注册）。\code{VfsOpenFlags}为语义层标志位（\code{READ}、\code{WRITE}、\code{CREATE}、\code{TRUNC}、\code{APPEND}、\code{DIRECTORY}），与Linux \code{O\_*}逐步对齐。
+
+\paragraph{\code{VfsIoHandle}与\code{VfsFdSession}。}
+\code{VfsIoHandle}描述已打开对象的\code{read}/\code{write}/\code{seek}/\code{read\_at}/\code{write\_at}/\code{metadata}/\code{close}；默认未覆盖方法返回\code{Unsupported}。\code{VfsFdSession}管理per-task fd表：\code{get\_io}、\code{alloc\_fd}、\code{close\_fd}；trait默认\code{alloc\_fd}为\code{Unsupported}，真实分配在\code{impl-fd-session}。
+
+\paragraph{错误映射。}
+\code{VfsError}与\code{FsError}一一对应（bridge内\code{map\_fs\_err}），syscall层再映射为\code{-errno}。刻意差异：\code{VfsMetadata}含\code{mount\_id}、\code{device\_major/minor}以支持\code{stat}与挂载表查询。
+
+\paragraph{上下文限制。}
+\code{no\_std}契约；\code{resolve}模块含\code{static mut}解析钩子，假定启动期单次注册。fd/cwd会话状态与\code{task::TaskId}生命周期绑定，由impl保证fork/clone继承语义。

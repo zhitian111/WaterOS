@@ -1,0 +1,37 @@
+% 【本文件写什么】api-v0 契约层（叶子，只写语义不写实现）
+%   - crate 路径：os/components/wateros-syscall/syscall-api/api-v0/src/
+%   - 列出并说明：pub trait、核心类型、错误枚举、常量
+%   - 每个公开 API 的前置条件、后置条件、线程/中断上下文限制
+%   - 与 Linux/用户态约定的对齐点与 deliberate 差异
+%   - v0 版本当前行为与后续可替换 extension 点
+% 【事实来源】
+%   - 上述 crate 下全部 .rs 源文件
+%   - docs/exports/public-api/ 中对应符号表（以源码为准）
+% 【不写什么】
+%   - impl 内部数据结构、汇编、具体算法步骤
+
+\paragraph{核心类型}
+
+\code{SyscallKind}是与具体ABI号表解耦的语义槽位枚举，覆盖文件I/O、路径/VFS、内存、进程/线程、凭证、信号、多路复用、网络、时间等域。\code{decode::<T: SyscallNumberTable>(syscall\_nr)}将裸号映射为槽位；未收录号返回\code{SyscallKind::Unknown}。\code{label()}为每个槽位提供静态调试名。
+
+\paragraph{SyscallDispatcher trait}
+
+分发器关联类型\code{NumberTable: SyscallNumberTable}，用于trait默认实现中查询符号化调用号。每个语义槽位对应一个\code{dispatch\_*}方法；默认实现调用\code{dispatch\_unsupported}并返回\code{syscall\_enosys\_ret()}（即\code{-ENOSYS}）。\code{dispatch\_unknown}处理\code{Unknown}槽位，默认同样返回\code{-ENOSYS}。
+
+trait还提供\code{dispatch\_syscall\_from\_trap(syscall\_nr, syscall\_args)}：先\code{decode}再按槽位\code{match}。该路径适合契约测试与无\code{impl-kernel}的桩实现；主线内核实现改用号表单次\code{match}，但各\code{dispatch\_*}方法签名与语义仍以此trait为准。
+
+\paragraph{bring-up辅助}
+
+\code{unsupported}模块提供三类终止路径（均\code{panic}，不返回用户态）：
+\begin{itemize}
+  \item \code{syscall\_unsupported(detail)}：通用不支持报告；
+  \item \code{syscall\_unsupported\_decoded(kind, nr, args)}：已解码槽位未实现；
+  \item \code{syscall\_unknown(nr, args)}：号表未收录的裸号。
+\end{itemize}
+\code{impl-kernel}对未覆盖槽位在bring-up阶段可选择走上述\code{panic}路径（通过覆盖\code{dispatch\_unsupported}），与仅返回\code{-ENOSYS}的dummy策略区分。
+
+\code{syscall\_enosys\_ret()}是已解码但未实现槽位的标准用户态返回值（\code{UserRet::from\_error(ErrNo::ENOSYS)}）。
+
+\paragraph{上下文与版本}
+
+本crate为\code{\#![no\_std]}，启用\code{api-v0} feature时依赖\code{wateros-abi-api-v0}的\code{ErrNo}、\code{SyscallArgs}、\code{SyscallNumberTable}、\code{UserRet}。trait方法假定在可阻塞的任务上下文调用；是否可从中断上下文进入由\code{impl-kernel}各\code{sys\_*}自行保证。v0契约固定trap侧六个参数槽位形状；后续若扩展参数个数须同步修改\code{wateros-base-config}的\code{MAX\_SYSCALL\_ARGS}与ABI参数包。

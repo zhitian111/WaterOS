@@ -1,0 +1,29 @@
+% 【本文件写什么】子模块 mm-impl（\subsection 级聚合）
+%   - 职责摘要：页表实现：Sv39、LoongArch、dummy 与 common 共享代码。
+%   - 子域聚合 lib.rs：os/components/wateros-mm/mm-impl/src/lib.rs
+%   - 如何重导出 api-v0、feature 下挂载哪些 impl
+%   - 被谁依赖（syscall、vfs、main 启动链等）
+%   - 短综述 + 下方 \input 展开 api 与 impl 叶子
+% 【事实来源】
+%   - os/components/wateros-mm/mm-impl/
+%   - docs/exports/ 中与 wateros-mm 相关的 public-api / features 章节
+
+\subsubsection{impl-common}
+
+\code{wateros-mm-impl-common}位于\code{mm-api}之下，不对外暴露稳定契约。各 arch \code{mm-impl}共享 ELF 装载辅助、mmap/mremap 公共路径、按需零页 loader 等逻辑。
+
+\code{ZeroAnonLoader}实现\code{DemandPageLoader}：匿名惰性 mmap 缺页时保留预先清零页，避免 glibc pthread 栈等大区间饥渴分配耗尽帧池。\code{fill\_elf\_load\_page}按\code{PT\_LOAD}段边界从文件偏移填充单页。\code{ElfSegmentLoadParams}封装 execve lazy map 的段参数。\code{executable}侧三次读稳定、shebang 解析等亦集中于此 crate。
+
+语义边界仍以\code{mm-api} trait 为准；更换 loader 策略或 bring-up 假设时只改\code{impl-common}与各 arch \code{kernel\_elf}，不修改 syscall 契约。
+
+\begin{rustcode}
+pub struct ZeroAnonLoader;
+impl DemandPageLoader for ZeroAnonLoader {
+    fn duplicate_box(&self) -> MmResult<Box<dyn DemandPageLoader>> {
+        Ok(Box::new(ZeroAnonLoader))
+    }
+    fn load_page(&mut self, _file_offset: usize, _dst: &mut [u8]) -> MmResult<()> {
+        Ok(())
+    }
+}
+\end{rustcode}

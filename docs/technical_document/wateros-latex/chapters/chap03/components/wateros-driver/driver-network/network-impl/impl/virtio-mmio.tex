@@ -1,0 +1,33 @@
+% 【本文件写什么】impl 实现层：virtio-mmio
+%   - 定位：VirtIO MMIO 网卡（RISC-V）。
+%   - crate 路径：os/components/wateros-driver/driver-network/network-impl/impl-virtio-mmio/src/
+%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+%   - 算法或硬件交互流程（可用伪代码/流程图）
+%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
+%   - 与其它 impl 变体的差异、切换 feature 时的影响
+%   - 性能/内存假设与已知限制
+% 【事实来源】
+%   - 上述 crate 源码与 Cargo.toml
+%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+
+\subsubsection{impl-virtio-mmio（network）}
+
+\paragraph{启用与探测。}由\code{impl-qemu-riscv64-opensbi}打开。平台在\code{virtio,mmio}节点且\code{device\_id==1}时调用\code{VirtioNetDevice::from\_mmio}，成功后\code{register\_network\_device}并记录MAC。
+
+\paragraph{实现要点。}\code{VirtIONet}包装于\code{VirtioNetDevice}；\code{VirtioMmioHal}与块设备共用帧分配器DMA策略（恒等映射、连续PPN校验）。接收缓冲\code{RX\_BUF\_LEN==2048}，满足virtio net header与以太网MTU下限。\code{send}将完整以太网帧提交传输队列；\code{receive}从设备拉取帧写入调用方缓冲，无数据返回0。
+
+\begin{rustcode}
+pub struct VirtioNetDevice {
+    inner: VirtIONet<VirtioMmioHal, MmioTransport<'static>>,
+}
+
+impl NetworkDevice for VirtioNetDevice {
+    fn mac_address(&self) -> [u8; 6] {
+        self.inner.mac_address()
+    }
+    fn send(&mut self, buf: &[u8]) -> DriverResult<()> { /* ... */ }
+    fn receive(&mut self, buf: &mut [u8]) -> DriverResult<usize> { /* ... */ }
+}
+\end{rustcode}
+
+\paragraph{限制。}与块MMIO路径相同：未使用\code{DeviceInfo.irq}，收包依赖smoltcp轮询\code{receive}。多网卡时仅首张被\code{stack::init}选用，其余仅存在于全局表与devfs诊断信息中。

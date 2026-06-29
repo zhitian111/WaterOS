@@ -1,0 +1,33 @@
+% 【本文件写什么】impl 实现层：loongarch64
+%   - 定位：LoongArch trap 入口、上下文保存/恢复、定时器与 SMP（含 trap.S）。
+%   - crate 路径：os/components/wateros-platform/platform-arch/arch-impl/impl-loongarch64/src/
+%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+%   - 算法或硬件交互流程（可用伪代码/流程图）
+%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
+%   - 与其它 impl 变体的差异、切换 feature 时的影响
+%   - 性能/内存假设与已知限制
+% 【事实来源】
+%   - 上述 crate 源码与 Cargo.toml
+%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+
+\subsubsection{impl-loongarch64}
+
+\code{wateros-platform-arch-impl-loongarch64}以\code{trap.S}/\code{switch.S}与Rust侧\code{TrapContext}成对维护异常入口。帧字段包含\code{x[32]}、\code{prmd}、\code{era}、\code{estat}、\code{badv}与\code{return\_address\_space\_token}，顺序须与汇编偏移严格一致。\code{init\_trap}向\code{EENTRY}等CSR写入\code{\_\_alltraps}地址，并配置\code{DMW0}直接映射窗口与分页相关CSR初值，使trap/重填入口在内核栈上不依赖当前用户\code{PGDL}。
+
+用户态系统调用按LoongArch Linux约定：参数\code{\$r4}--\code{\$r9}、号在\code{\$r11}、返回值写\code{\$r4}。\code{decode\_loongarch64\_trap\_cause}把\code{estat}映射到\code{TrapCause}；定时器挂起位\code{ESTAT.IS.TI}对应\code{SupervisiorTimer}。\code{timer\_slice\_ticks}为\code{10\_000\_000}（StableCounter刻度）。
+
+分页\code{LoongArch64Paging}操作\code{PGDL}、\code{CRMD.PG}与TLB刷新；建内核页表前\code{init\_paging\_disable\_mmu}关闭MMU，完成后\code{enable\_paging}置\code{CRMD.PG=1}。\code{prepare\_user\_trap\_frame\_access}当前为空操作：LoongArch无RISC-V\code{SUM}类用户页访问准备，内核拷贝用户缓冲仍依赖\code{user\_access}路径。
+
+bring-up阶段通过\code{EUEN.FPE}全局打开浮点；多任务并发时尚未在切换路径完整保存FPU上下文。
+
+\begin{rustcode}
+#[repr(C)]
+pub struct TrapContext {
+    x: [usize; 32],
+    prmd: usize,
+    era: usize,
+    estat: usize,
+    badv: usize,
+    return_address_space_token: usize,
+}
+\end{rustcode}

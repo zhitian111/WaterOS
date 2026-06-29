@@ -1,0 +1,30 @@
+% 【本文件写什么】impl 实现层：dummy
+%   - 定位：占位/链接桩实现，保证默认 feature 可编译。
+%   - crate 路径：os/components/wateros-mm/mm-impl/impl-dummy/src/
+%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+%   - 算法或硬件交互流程（可用伪代码/流程图）
+%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
+%   - 与其它 impl 变体的差异、切换 feature 时的影响
+%   - 性能/内存假设与已知限制
+% 【事实来源】
+%   - 上述 crate 源码与 Cargo.toml
+%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+
+\subsubsection{impl-dummy（页表）}
+
+\code{wateros-mm-impl-dummy}在默认\code{api-v0} feature 下链接，保证未启用平台页表时仍可编译\code{wateros-mm}聚合层。\code{kernel\_mm\_impl}提供空操作或固定错误：
+
+\begin{itemize}
+  \item \code{init}、\code{map\_identity\_range\_user}、\code{map\_anon\_range\_user}为空操作；
+  \item \code{kernel\_satp}恒返回 0；
+  \item \code{from\_elf\_path}、\code{load\_program\_from\_path}返回\code{LoadElfError::BadClass}；
+  \item \code{fork\_user\_aspace}返回\code{MmError::Unsupported}。
+\end{itemize}
+
+启用\code{impl-sv39}或\code{impl-loongarch64}后，聚合\code{lib.rs}以\code{cfg}排除 dummy 的\code{kernel\_mm}符号，由真实实现替换。dummy 不建立页表、不装载 ELF，不可用于用户态 bring-up。
+
+\begin{rustcode}
+pub fn fork_user_aspace(_parent_aspace_ptr: usize) -> MmResult<(usize, usize)> {
+    Err(MmError::Unsupported)
+}
+\end{rustcode}

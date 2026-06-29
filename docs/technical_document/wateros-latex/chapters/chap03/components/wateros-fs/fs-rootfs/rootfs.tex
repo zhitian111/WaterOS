@@ -1,0 +1,17 @@
+% 【本文件写什么】子模块 fs-rootfs（\subsection 级聚合）
+%   - 职责摘要：根卷挂载与当前根句柄。
+%   - 子域聚合 lib.rs：os/components/wateros-fs/fs-rootfs/src/lib.rs
+%   - 如何重导出 api-v0、feature 下挂载哪些 impl
+%   - 被谁依赖（syscall、vfs、main 启动链等）
+%   - 短综述 + 下方 \input 展开 api 与 impl 叶子
+% 【事实来源】
+%   - os/components/wateros-fs/fs-rootfs/
+%   - docs/exports/ 中与 wateros-fs 相关的 public-api / features 章节
+
+\subsection{fs-rootfs}
+
+\code{fs-rootfs}保存probe选定的活动\code{FsImpl}与当前根卷\code{SharedRwFs}句柄，并提供辅助RO/RW挂载入口。\code{mount\_generation}将根卷与辅助卷变更通知给VFS页缓存。聚合层\code{fs::init()}只调用\code{set\_active\_fs\_impl}；\code{mount\_default\_root\_rw}由bring-up总线在块设备与驱动就绪后调用。
+
+\input{chapters/chap03/components/wateros-fs/fs-rootfs/rootfs-api/api/api-v0}
+\input{chapters/chap03/components/wateros-fs/fs-rootfs/rootfs-impl/impl/dummy}
+\input{chapters/chap03/components/wateros-fs/fs-rootfs/rootfs-impl/impl/kernel}

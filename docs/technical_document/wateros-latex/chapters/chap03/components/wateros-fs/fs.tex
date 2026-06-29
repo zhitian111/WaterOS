@@ -1,0 +1,26 @@
+% 【本文件写什么】一级组件 wateros-fs（§ 级聚合）
+%   - 组件职责与在内核中的位置：文件系统聚合：devfs/procfs/rootfs 与块设备 ext4 根卷。
+%   - 聚合 crate os/components/wateros-fs/src/lib.rs 的 pub mod 树与对外导出面
+%   - 子模块划分、与相邻组件的依赖边界（谁依赖谁、走哪条门面）
+%   - 根 feature / 本组件 Cargo.toml feature 如何选用各 impl
+%   - 1～2 段综述后，由下方 \input 展开子模块；不在此逐条列举 api trait
+% 【事实来源】
+%   - os/components/wateros-fs/src/lib.rs、Cargo.toml
+%   - docs/exports/public-api/wateros-fs.md
+%   - docs/exports/features/wateros-fs.md
+%   - os/feature-tree.txt 中 wateros-fs 相关段
+% 【不写什么】
+%   - api-v0 契约细节 → 子目录 api/api-v0.tex
+%   - 各 impl 算法/平台细节 → 子目录 impl/*.tex
+
+\section{wateros-fs}
+
+\code{wateros-fs}是块文件系统与伪文件系统的聚合层：对外经\code{fs::api}暴露\code{FsImpl}注册表与卷读写契约，经\code{fs::devfs}、\code{fs::procfs}、\code{fs::rootfs}分别提供设备节点、\code{/proc}视图与根卷句柄。启动期\code{fs::init()}刷新devfs、在默认根块设备上\code{probe}并注入活动\code{FsImpl}，但不挂载根卷；bring-up再调用\code{mount\_default\_root\_rw()}完成单一RW ext4根卷挂载。
+
+默认feature为\code{api-v0} + \code{impl-devfs} + \code{impl-ext4-rs}；可选\code{impl-ext4}切换至ext4plus旧路径。syscall与VFS不直接依赖\code{fs-impl-*}，而是经\code{wateros-vfs}的\code{impl-fs-bridge}消费本组件聚合API。
+
+\input{chapters/chap03/components/wateros-fs/fs-api/fs-api}
+\input{chapters/chap03/components/wateros-fs/fs-devfs/devfs}
+\input{chapters/chap03/components/wateros-fs/fs-procfs/procfs}
+\input{chapters/chap03/components/wateros-fs/fs-rootfs/rootfs}
+\input{chapters/chap03/components/wateros-fs/fs-impl/fs-impl}

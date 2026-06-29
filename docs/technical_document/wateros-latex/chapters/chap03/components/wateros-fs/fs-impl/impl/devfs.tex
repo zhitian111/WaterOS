@@ -1,0 +1,25 @@
+% 【本文件写什么】impl 实现层：devfs
+%   - 定位：devfs 作为 fs-impl 注册项的说明。
+%   - crate 路径：os/components/wateros-fs/fs-impl/impl-devfs/src/
+%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+%   - 算法或硬件交互流程（可用伪代码/流程图）
+%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
+%   - 与其它 impl 变体的差异、切换 feature 时的影响
+%   - 性能/内存假设与已知限制
+% 【事实来源】
+%   - 上述 crate 源码与 Cargo.toml
+%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+
+\subsubsection{impl-devfs}
+
+\paragraph{定位。}
+\code{wateros-fs-impl-devfs}提供测试向的简化块设备枚举：\code{refresh}按\code{block\_device\_count()}生成\code{/dev/vblk\{n\}}与\code{/dev/vda*}路径表，\code{lookup\_block\_device}经\code{parse\_block\_index}解析索引后调用\code{block\_device\_at}。与\code{fs-devfs/devfs-impl/impl-kernel}相比：无字符设备、无DTB占位、无动态\code{register\_*}表。
+
+\paragraph{与注册表的关系。}
+聚合\code{registered\_fs\_impls()}中的devfs项来自\code{devfs::active\_impl::IMPL}（\code{impl-kernel}），不是本crate。\code{wateros-fs}的\code{impl-devfs} feature目前仅将本crate列入工作区依赖图，\code{src/lib.rs}未直接\code{use}其符号。
+
+\paragraph{用途。}
+供独立单测或工具crate复用与内核一致的\code{/dev/vda}命名规则；运行时bring-up路径应使用\code{fs-devfs}的\code{active\_impl}。
+
+\paragraph{限制。}
+仅覆盖块设备路径解析；不参与\code{FsImpl::probe}或根卷挂载。

@@ -1,0 +1,22 @@
+% 【本文件写什么】一级组件 wateros-base（§ 级聚合）
+%   - 组件职责与在内核中的位置：内核基础类型、地址表示与全局配置常量。
+%   - 聚合 crate os/components/wateros-base/src/lib.rs 的 pub mod 树与对外导出面
+%   - 子模块划分、与相邻组件的依赖边界（谁依赖谁、走哪条门面）
+%   - 根 feature / 本组件 Cargo.toml feature 如何选用各 impl
+%   - 1～2 段综述后，由下方 \input 展开子模块；不在此逐条列举 api trait
+% 【事实来源】
+%   - os/components/wateros-base/src/lib.rs、Cargo.toml
+%   - docs/exports/public-api/wateros-base.md
+%   - docs/exports/features/wateros-base.md
+%   - os/feature-tree.txt 中 wateros-base 相关段
+% 【不写什么】
+%   - api-v0 契约细节 → 子目录 api/api-v0.tex
+%   - 各 impl 算法/平台细节 → 子目录 impl/*.tex
+
+\section{wateros-base}
+
+\code{wateros-base}提供引导阶段与内核各处共享的薄基础类型：物理/虚拟地址包装、DTB物理地址别名、hart ID、单核\code{UniprocessorSafeCell}同步容器。\code{\#![no\_std]}，无外部依赖，无Cargo feature。数值配置统一放在独立子crate\code{wateros-base-config}（路径\code{base-config/}），避免「双真相」。
+
+根内核以\code{base}别名依赖本crate，以\code{base\_config}别名依赖配置crate。\code{wateros-abi-api-v0}等直接依赖\code{MAX\_SYSCALL\_ARGS}等常量。
+
+\input{chapters/chap03/components/wateros-base/base-config/base-config}

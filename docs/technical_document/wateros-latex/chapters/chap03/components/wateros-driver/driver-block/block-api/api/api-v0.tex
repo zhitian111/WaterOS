@@ -1,0 +1,34 @@
+% 【本文件写什么】api-v0 契约层（叶子，只写语义不写实现）
+%   - crate 路径：os/components/wateros-driver/driver-block/block-api/api-v0/src/
+%   - 列出并说明：pub trait、核心类型、错误枚举、常量
+%   - 每个公开 API 的前置条件、后置条件、线程/中断上下文限制
+%   - 与 Linux/用户态约定的对齐点与 deliberate 差异
+%   - v0 版本当前行为与后续可替换 extension 点
+% 【事实来源】
+%   - 上述 crate 下全部 .rs 源文件
+%   - docs/exports/public-api/ 中对应符号表（以源码为准）
+% 【不写什么】
+%   - impl 内部数据结构、汇编、具体算法步骤
+
+\subsubsection{block-api-v0}
+
+\paragraph{块寻址与全局表。}逻辑块大小\code{BLOCK\_SIZE}固定为512字节，与virtio-blk常见配置一致。\code{Lba}为从0起算的\code{u64}逻辑块地址。\code{SharedBlockDevice}类型为\code{Arc<Mutex<Box<dyn BlockDevice>>>}，注册顺序稳定：\code{register\_block\_device}返回的下标即全局\code{Vec}中的位置。
+
+\paragraph{BlockDevice契约。}实现方必须提供\code{read\_blocks}与\code{write\_blocks}；\code{buf}长度须为块大小整数倍。\code{write\_blocks}不支持时返回\code{DriverError::Unsupported}。trait默认实现\code{read\_bytes}与\code{read\_prefix}：通过临时整段块缓冲完成任意字节对齐读取，偏移须可落入\code{usize}（bring-up路径通常满足）。
+
+\paragraph{访问约定。}\code{first\_block\_device}、\code{block\_device\_at}返回克隆的\code{Arc}句柄；调用方持\code{Mutex}锁期间不得嵌套获取同设备锁以免死锁。\code{test()}使用内存样例设备校验\code{read\_prefix}，不触达真实硬件。
+
+\begin{rustcode}
+pub const BLOCK_SIZE: usize = 512;
+
+pub trait BlockDevice: Send {
+    fn block_size(&self) -> usize { BLOCK_SIZE }
+    fn total_blocks(&self) -> Option<u64> { None }
+    fn read_blocks(&mut self, start_block: Lba, buf: &mut [u8]) -> DriverResult<()>;
+    fn write_blocks(&mut self, start_block: Lba, buf: &[u8]) -> DriverResult<()>;
+    fn read_bytes(&mut self, offset: u64, dst: &mut [u8]) -> DriverResult<()> { /* ... */ }
+    fn read_prefix(&mut self, offset: u64, len: usize) -> DriverResult<Vec<u8>> { /* ... */ }
+}
+\end{rustcode}
+
+与Linux块层差异：v0不暴露\code{ioctl}、分区表或多队列；\code{total\_blocks}默认\code{None}，文件系统探测容量时依赖具体设备覆盖或外部配置。

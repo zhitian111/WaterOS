@@ -1,0 +1,17 @@
+% 【本文件写什么】独立子 crate（无 api/impl 目录树）：platform-impl
+%   - 职责：板级/QEMU 平台 impl 选路。
+%   - 源码：os/components/wateros-platform/platform-impl/src/
+%   - 对外暴露的函数/类型、在聚合 lib.rs 中的重导出方式
+%   - 实现要点、feature（若有）、与其它子 crate 的边界
+% 【事实来源】
+%   - os/components/wateros-platform/platform-impl/、父组件 src/lib.rs
+
+\subsection{platform-impl}
+
+\code{platform-impl} crate按feature提供具体板级profile：引导参数类型化、\code{PlatformTimeImpl}频率回退、早期控制台、deadline定时器编程与系统复位。聚合层通过\code{active\_impl}别名选中\code{impl-qemu-riscv64-opensbi}、\code{impl-qemu-loongarch64-virt}或\code{impl-dummy}；必须与\code{platform-arch}侧ISA impl配对（RISC-V profile配\code{impl-riscv64}，LoongArch profile配\code{impl-loongarch64}）。
+
+各profile把\code{api-v0} trait落实为OpenSBI调用、MMIO UART轮询、Constant Timer CSR写或ACPI GED寄存器写；不包含trap帧或页表格式实现。
+
+\input{chapters/chap03/components/wateros-platform/platform-impl/impl/dummy}
+\input{chapters/chap03/components/wateros-platform/platform-impl/impl/qemu-loongarch64-virt}
+\input{chapters/chap03/components/wateros-platform/platform-impl/impl/qemu-riscv64-opensbi}

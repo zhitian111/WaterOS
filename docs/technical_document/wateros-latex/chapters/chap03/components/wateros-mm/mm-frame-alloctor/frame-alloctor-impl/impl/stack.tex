@@ -1,0 +1,30 @@
+% 【本文件写什么】impl 实现层：stack
+%   - 定位：物理帧栈式分配器（默认）。
+%   - crate 路径：os/components/wateros-mm/mm-frame-alloctor/frame-alloctor-impl/impl-stack/src/
+%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+%   - 算法或硬件交互流程（可用伪代码/流程图）
+%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
+%   - 与其它 impl 变体的差异、切换 feature 时的影响
+%   - 性能/内存假设与已知限制
+% 【事实来源】
+%   - 上述 crate 源码与 Cargo.toml
+%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+
+\subsubsection{impl-stack（默认）}
+
+\code{StackFrameAllocator}实现 LIFO 栈式分配：\code{init(start\_ppn, end\_ppn)}在半开 PPN 区间上建立池；\code{alloc\_frame}从\code{recycled}栈顶弹出，或从\code{next\_novel}惰性下推连续高段；\code{dealloc\_frame}压回回收栈。为降低 bring-up 时内核堆压力，\code{init}不把整段 PPN 预先推入\code{Vec}。
+
+全局实例置于\code{UniprocessorSafeCell}，每次访问关全局中断（\code{FrameAllocatorInterruptGuard}）。并行维护\code{allocated}位图与\code{ref\_counts}向量，供 COW 路径\code{frame\_inc\_ref}/\code{frame\_ref\_count}查询；引用归零时才真正回收帧。
+
+\begin{rustcode}
+pub struct StackFrameAllocator {
+    recycled: Vec<PhysPageNum>,
+    allocated: Vec<bool>,
+    ref_counts: Vec<usize>,
+    start_ppn: usize,
+    end_ppn: usize,
+    next_novel: usize,
+}
+\end{rustcode}
+
+\code{GlobalPhysFrameAllocator}为零大小类型，\code{PhysicalFrameAllocator}实现委托上述全局池。\code{frame\_mem\_stats}汇总\code{total\_frames = end - start}与\code{free\_frames = recycled.len() + novel\_free}。已知限制：未校验重复释放；单核栈式实现，无 buddy/slab 分层。

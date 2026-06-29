@@ -1,0 +1,43 @@
+% 【本文件写什么】api-v0 契约层（叶子，只写语义不写实现）
+%   - crate 路径：os/components/wateros-task/task-api/api-v0/src/
+%   - 列出并说明：pub trait、核心类型、错误枚举、常量
+%   - 每个公开 API 的前置条件、后置条件、线程/中断上下文限制
+%   - 与 Linux/用户态约定的对齐点与 deliberate 差异
+%   - v0 版本当前行为与后续可替换 extension 点
+% 【事实来源】
+%   - 上述 crate 下全部 .rs 源文件
+%   - docs/exports/public-api/ 中对应符号表（以源码为准）
+% 【不写什么】
+%   - impl 内部数据结构、汇编、具体算法步骤
+
+\subsubsection{任务身份与状态机}
+
+\code{TaskId}、\code{TaskTick}、\code{TaskExitCode}为类型别名；\code{IDLE\_TASK\_ID = 0}预留给 idle 任务。\code{TaskKind}区分\code{Kernel}与\code{User}，影响 TCB 是否持有用户栈与地址空间句柄。
+
+\code{TaskState}覆盖\code{Ready}、\code{Running}、\code{Blocking(TaskBlockReason)}、\code{Sleeping\{ wake\_tick \}}、\code{Exited}。\code{TaskBlockReason}含\code{Yield}、\code{Sleep}、\code{Wait(TaskWaitHandle)}、\code{UserSyscall}、\code{Manual}。调度器据此分入不同等待结构。
+
+\subsubsection{用户任务与进程语义}
+
+\code{UserTask}描述用户任务规格：入口 PC、\code{AddressSpaceHandle}、\code{UserImageInfo}、\code{UserStack}、可选\code{user\_aspace\_ptr}与初始 argc/argv/envp。\code{KernelTaskEntry}为内核任务函数指针类型。
+
+\code{ProcessDescriptor}快照进程 PID、leader\code{TaskId}、父 PID、地址空间引用、\code{task\_count}、\code{ProcessState}、pgid/sid 等。\code{ProcessTaskDescriptor}描述线程归属：\code{ThreadId}、\code{ProcessTaskRole::Leader | Member}、TLS、\code{clear\_child\_tid}。\code{CloneFlags}对齐 Linux clone 标志子集。\code{ResourceHandle}占位\code{file\_table}/\code{cwd}/\code{signal\_handlers}，由 syscall 层外挂真实资源。
+
+\subsubsection{等待与调度契约}
+
+\code{TaskWaitHandle}编码\code{TaskWaitTarget}：显式\code{WaitQueue}、\code{TaskExit}、\code{ChildExit}。超时不在句柄内表达，由调度器 tick 与\code{TaskWaitResult::TimedOut}配合。
+
+\code{SchedPolicy}枚举\code{Other}、\code{Fifo}、\code{Rr}；\code{SchedParam}携带优先级。\code{SchedError}供\code{sched\_*}syscall 映射。\code{SchedulableCheck} trait 供策略变更前校验任务是否可调度。
+
+\begin{rustcode}
+pub enum TaskState {
+    Ready,
+    Running,
+    Blocking(TaskBlockReason),
+    Sleeping { wake_tick: TaskTick },
+    Exited(TaskExitCode),
+}
+\end{rustcode}
+
+\subsubsection{上下文限制}
+
+本 crate 仅定义类型与轻量构造，不规定关中断范围或是否可在 trap 上下文调用。聚合层\code{begin\_current\_trap\_frame\_access}/\code{restore\_current\_trap\_frame}为\code{unsafe}，须在 arch trap handler 与当前 TCB 约定下使用。

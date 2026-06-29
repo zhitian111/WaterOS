@@ -1,0 +1,36 @@
+% 【本文件写什么】一级组件 wateros-task（§ 级聚合）
+%   - 组件职责与在内核中的位置：任务对象、调度器与内核线程生命周期。
+%   - 聚合 crate os/components/wateros-task/src/lib.rs 的 pub mod 树与对外导出面
+%   - 子模块划分、与相邻组件的依赖边界（谁依赖谁、走哪条门面）
+%   - 根 feature / 本组件 Cargo.toml feature 如何选用各 impl
+%   - 1～2 段综述后，由下方 \input 展开子模块；不在此逐条列举 api trait
+% 【事实来源】
+%   - os/components/wateros-task/src/lib.rs、Cargo.toml
+%   - docs/exports/public-api/wateros-task.md
+%   - docs/exports/features/wateros-task.md
+%   - os/feature-tree.txt 中 wateros-task 相关段
+% 【不写什么】
+%   - api-v0 契约细节 → 子目录 api/api-v0.tex
+%   - 各 impl 算法/平台细节 → 子目录 impl/*.tex
+
+\section{wateros-task}
+
+任务子系统一级组件，组合语义类型（\code{task-api}）、单任务资源布局（\code{impl-core}）与调度算法（\code{task-scheduler}），对上暴露\code{spawn\_*}、\code{yield\_now}、\code{fork\_current}、\code{wait\_on}、进程 registry 查询等稳定 API。根内核经\code{task = \{ package = "wateros-task", ... \}}依赖。
+
+职责边界：\code{task-api}定义\code{TaskId}、\code{TaskState}、\code{UserTask}等跨层类型；\code{impl-core}实现\code{TaskControlBlock}、内核/用户栈、trap 帧装配与\code{ProcessRegistry}；\code{task-scheduler}维护就绪/阻塞/睡眠队列，在适当时机调用 arch \code{\_\_switch}完成 CPU 让渡。更换调度算法改\code{scheduler-impl}；更换 TCB 字段改\code{impl-core}。
+
+默认 feature 为\code{api-v0} + \code{impl-core} + \code{impl-multi-class}。\code{impl-round-robin}与\code{impl-multi-class}互斥，\code{compile\_error!}强制二选一。私有模块\code{runtime}提供 trap/C ABI 入口（\code{\_\_wateros\_task\_runtime\_entry}等），经\code{wateros-platform-arch}与 trap handler 衔接。
+
+与相邻组件：\code{wateros-mm}提供 ELF 装载与 fork 地址空间；\code{wateros-abi}写用户返回值到 trap 帧；syscall 层映射 Linux errno 并调用本组件聚合 API。
+
+\begin{rustcode}
+pub fn init() {
+    active_impl::init_process_registry();
+    active_impl::process_model_self_test();
+    scheduler::init();
+}
+\end{rustcode}
+
+\input{chapters/chap03/components/wateros-task/task-api/task-api}
+\input{chapters/chap03/components/wateros-task/task-impl/task-impl}
+\input{chapters/chap03/components/wateros-task/task-scheduler/scheduler}

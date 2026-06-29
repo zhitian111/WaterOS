@@ -1,0 +1,21 @@
+% 【本文件写什么】impl 实现层：virtio-pci
+%   - 定位：VirtIO PCI 网卡（LoongArch）。
+%   - crate 路径：os/components/wateros-driver/driver-network/network-impl/impl-virtio-pci/src/
+%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+%   - 算法或硬件交互流程（可用伪代码/流程图）
+%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
+%   - 与其它 impl 变体的差异、切换 feature 时的影响
+%   - 性能/内存假设与已知限制
+% 【事实来源】
+%   - 上述 crate 源码与 Cargo.toml
+%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+
+\subsubsection{impl-virtio-pci（network）}
+
+\paragraph{启用与探测。}由\code{impl-qemu-loongarch64-virt}打开。平台\code{pci::probe\_virtio\_net\_pci}在ECAM bus0枚举\code{virtio\_device\_type==Network}的首个功能，使用\code{VirtioNetPciBarAllocator}（与块侧BAR分配器同构）编程BAR后构造\code{VirtioPciNetDevice}。
+
+\paragraph{实现要点。}传输层为\code{PciTransport}；\code{VirtioPciHal} DMA与\code{impl-virtio-pci}块设备一致。\code{VirtioNetPciProbeInfo}记录BDF与vendor/device id供平台日志与自检。帧收发语义与MMIO网卡相同，均操作完整以太网L2帧。
+
+\paragraph{与块PCI共享设施。}块与网卡impl均依赖\code{virtio-drivers} PCI总线枚举与BAR分配模式；LoongArch平台\code{driver-impl}的\code{pci}模块集中解析DTB PCI基址或回退硬编码ECAM窗口，再分别调用块/网卡\code{probe\_first\_from\_ecam}。
+
+\paragraph{限制。}当前仅绑定bus0首个virtio-net；链路状态恒\code{up}，未实现线缆检测或multiqueue。中断未挂接，与RISC-V MMIO网卡相同依赖协议栈轮询。

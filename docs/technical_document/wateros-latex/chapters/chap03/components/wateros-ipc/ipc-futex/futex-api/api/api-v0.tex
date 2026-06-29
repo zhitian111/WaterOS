@@ -1,0 +1,35 @@
+% 【本文件写什么】api-v0 契约层（叶子，只写语义不写实现）
+%   - crate 路径：os/components/wateros-ipc/ipc-futex/futex-api/api-v0/src/
+%   - 列出并说明：pub trait、核心类型、错误枚举、常量
+%   - 每个公开 API 的前置条件、后置条件、线程/中断上下文限制
+%   - 与 Linux/用户态约定的对齐点与 deliberate 差异
+%   - v0 版本当前行为与后续可替换 extension 点
+% 【事实来源】
+%   - 上述 crate 下全部 .rs 源文件
+%   - docs/exports/public-api/ 中对应符号表（以源码为准）
+% 【不写什么】
+%   - impl 内部数据结构、汇编、具体算法步骤
+
+\subsubsection{futex-api-v0}
+
+\paragraph{队列键 FutexKey。}
+由用户地址\code{uaddr}与\code{FUTEX\_PRIVATE\_FLAG}派生的\code{is\_private}组成；\code{from\_syscall}从操作码解析 private 位。当前 bring-up 主要使用进程私有键；共享键（文件/inode）尚未实现。
+
+\begin{rustcode}
+pub struct FutexKey {
+    pub uaddr: usize,
+    pub is_private: bool,
+}
+\end{rustcode}
+
+\paragraph{错误与等待结果。}
+\code{FutexError}对齐 Linux errno 视图：\code{Again}、\code{Fault}、\code{Invalid}、\code{Nosys}、\code{TimedOut}、\code{Interrupted}，由 syscall 层最终映射。\code{FutexWaitOutcome}描述\code{wait\_while}返回值：\code{Woken}、\code{TimedOut}、\code{Interrupted}。
+
+\paragraph{trait KernelFutexOps。}
+\code{wake}/\code{wake\_all}唤醒指定键队列；\code{max\_wake == 0}时唤醒 1 个。\code{set\_robust\_list}/\code{get\_robust\_list}/\code{drop\_robust\_list}管理 per-task robust 链表头登记，\code{len}须等于\code{ROBUST\_LIST\_HEAD\_SIZE}（24 字节）。
+
+\paragraph{robust 布局常量。}
+\code{RobustListHead}为\code{repr(C)}，含\code{list}、\code{futex\_offset}、\code{list\_op\_pending}；\code{ROBUST\_LIST\_LIMIT}限制退出遍历步数；\code{FUTEX\_OWNER\_DIED}与\code{FUTEX\_TID\_MASK}供 syscall 写回用户字。owner-died 写用户内存仍由 syscall 串行完成。
+
+\paragraph{扩展点。}
+条件等待\code{wait\_while}与\code{requeue}为\code{FutexHub}固有方法，不在 trait 中，以便 syscall 传入用户内存复查闭包而不污染 api-v0 边界。

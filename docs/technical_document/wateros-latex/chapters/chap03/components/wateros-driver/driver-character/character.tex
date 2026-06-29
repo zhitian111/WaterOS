@@ -1,0 +1,20 @@
+% 【本文件写什么】子模块 driver-character（\subsection 级聚合）
+%   - 职责摘要：字符设备：UART、RTC 等 stub/真实后端。
+%   - 子域聚合 lib.rs：os/components/wateros-driver/driver-character/src/lib.rs
+%   - 如何重导出 api-v0、feature 下挂载哪些 impl
+%   - 被谁依赖（syscall、vfs、main 启动链等）
+%   - 短综述 + 下方 \input 展开 api 与 impl 叶子
+% 【事实来源】
+%   - os/components/wateros-driver/driver-character/
+%   - docs/exports/ 中与 wateros-driver 相关的 public-api / features 章节
+
+\subsection{driver-character}
+
+\code{driver-character}维护字符设备全局注册表与DTB绑定声明（\code{ns16550a}、\code{ns8250}）。\code{is\_uart\_compatible}额外识别\code{snps,dw-apb-uart}供探测使用。\code{SerialPortCharacterDevice}将\code{SerialPort} MMIO辅助trait包装为\code{CharacterDevice}：写路径阻塞至THRE，读路径非阻塞（无数据返回\code{Unsupported}）。
+
+聚合\code{Cargo.toml}默认启用\code{impl-null-stub}与\code{impl-rtc-stub}；\code{register\_builtin\_character\_devices}在平台UART注册后追加RTC与\code{/dev/null}语义设备。RISC-V平台在DTB无UART节点时回退\code{0x1000\_0000} QEMU virt UART0；LoongArch使用固定\code{0x1FE0\_01E0} NS16550（见平台\code{uart}子模块）。devfs按\code{CharacterDeviceKind}区分串口、RTC与null节点；\code{hwclock}相关\code{RTC\_*} ioctl在syscall层对rtc fd分发，而非驱动内实现。
+
+\input{chapters/chap03/components/wateros-driver/driver-character/character-api/api/api-v0}
+\input{chapters/chap03/components/wateros-driver/driver-character/character-impl/impl/dummy}
+\input{chapters/chap03/components/wateros-driver/driver-character/character-impl/impl/null-stub}
+\input{chapters/chap03/components/wateros-driver/driver-character/character-impl/impl/rtc-stub}

@@ -1,0 +1,79 @@
+% 第5章「总结与后续工作」。
+%
+% §5.1工作总结与项目特色。
+% §5.2后续完善方向。
+% §5.3非本队来源说明。
+% §5.4AI工具使用说明：清单条目与代码快照（见chap05-ai-inventory.tex，由gen-ai-usage-tex.py生成）。
+%
+% 事实来源：docs/roadmap/todolist.md、docs/exports/ai-usage-inventory.tsv
+
+\chapter{总结与后续工作}
+
+\section{工作总结与项目特色}
+
+\wateros{}已经形成从平台启动、trap、分页、任务调度到用户ELF执行的内核主路径，并在这条路径上接入文件系统、VFS、fd、procfs、pipe、futex、socket、凭证、klog和Linux generic 64-bit syscall兼容层。RISC-V64与LoongArch64分别处理启动参数、trap frame、页表token、TLB刷新和VirtIO总线差异，上层MM、task、FS/VFS、IPC和syscall逻辑保持复用。
+
+项目实现上的主要特点如下：
+
+\begin{itemize}
+  \item \wosstrong{组件化组织。}平台、驱动、MM、FS、VFS、task、syscall等核心模块采用API、实现和聚合导出的结构，根crate负责组合，具体能力留在组件内部。
+  \item \wosstrong{双架构边界清晰。}架构差异集中在平台、页表、trap和设备总线层，用户态可见的fd、cwd、VFS、进程和syscall语义保持一致。
+  \item \wosstrong{用户态路径连续。}用户ELF装载、地址空间切换、系统调用分发、fd表、procfs、tmpfs、futex、socket和文件系统读写已经连接到同一条运行路径。
+  \item \wosstrong{诊断入口完整。}启动阶段保留MM、驱动、FS、VFS、网络和用户ELF的分层日志，配合QEMU日志、PC监视和符号解析工具定位panic、死循环、unknown syscall和用户程序退出问题。
+\end{itemize}
+
+\section{后续完善方向}
+
+后续完善沿已跑通的用户态主路径展开，重点收紧Linux语义、长时间运行稳定性和双架构一致性。主要工作包括：
+
+\begin{enumerate}
+  \item \wosstrong{补齐双架构同构验证。}RISC-V64和LoongArch64已经共用上层task、MM、FS/VFS、IPC和syscall逻辑，后续重点检查动态链接、\syscall{clone}参数、TLS、页表/TLB刷新和VirtIO-MMIO/VirtIO-PCI差异，保证相同用户程序在两条路径上得到一致的返回值和错误码。
+  \item \wosstrong{细化进程、线程和信号语义。}在已有fork、exec、wait、futex和调度接口基础上，继续补齐线程组、\syscall{clone3}、实时信号、job control、robust futex和更多调度策略相关语义，减少复杂用户程序对Linux行为差异的感知。
+  \item \wosstrong{增强文件系统写路径。}围绕ext4\_rs、tmpfs、VFS mount table和page cache，继续完善\syscall{fsync}、rename/unlink、busy umount、多挂载实例和脏页写回，避免文件大小、目录项和页缓存状态在异常路径下不一致。
+  \item \wosstrong{收紧资源回收和失败回滚。}fd、socket、shm、task、page cache和内核堆分配都已经进入用户态主路径，后续重点处理OOM、dup/close并发、socket关闭、共享内存attach失败和任务退出时的回收顺序。
+  \item \wosstrong{完善网络和设备路径。}在virtio-net、smoltcp、AF\_UNIX和socket fd registry的基础上，继续处理TCP/UDP长连接、loopback、后台server、多进程socket生命周期，以及不同QEMU网络参数下的设备初始化差异。
+  \item \wosstrong{改进运行记录和定位工具。}保留QEMU串口日志、PC监视、符号解析和日志解析工具，进一步统一RISC-V64/LoongArch64的运行记录格式，使panic、死循环、unknown syscall、用户程序断言失败和资源泄漏都能更快定位到对应模块。
+\end{enumerate}
+
+\section{非本队来源说明}
+
+\wateros{}内核主体、组件划分、平台适配、驱动接入层、VFS桥接、fd会话、procfs/devfs封装、socket fd侧表、Linux generic 64-bit syscall分发与feature组织均由本队实现。\code{os/components/}下各一级crate的\code{api-v0}、\code{impl-*}边界和根\code{wateros}聚合逻辑属于自研代码；第三方依赖仅作为底层库或协议栈引入，不替代上述接口设计。
+
+直接引入的非本队Rust依赖通过Cargo声明；其中\code{ext4\_rs}与\code{ext4plus}以\code{os/vendor/}本地副本vendoring，并在根\code{os/Cargo.toml}的\code{[patch.crates-io]}中固定路径，便于记录修改与来源边界。其余依赖由\code{cargo}从crates.io解析，版本以\code{os/Cargo.lock}为准。
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{2.8cm}>{\raggedright\arraybackslash}p{4.2cm}>{\raggedright\arraybackslash}p{3.4cm}>{\raggedright\arraybackslash}p{3.8cm}}
+  \caption{主要第三方依赖与用途}\label{tab:third-party}\\
+  \toprule[1.5pt]
+  依赖 & 在本项目中的用途 & 引入方式 & 许可证（仓库内可见） \\
+  \midrule[1pt]
+  \code{ext4\_rs} & ext4只读/读写根卷解析与块级访问（\code{impl-ext4-rs}） & \code{os/vendor/ext4\_rs} + patch & MIT \\
+  \code{ext4plus} & ext4备用实现路径（\code{impl-ext4}） & \code{os/vendor/ext4plus} + patch & MIT / Apache-2.0 \\
+  \code{smoltcp} 0.12.0 & 内核侧TCP/UDP协议栈，配合virtio-net与用户socket syscall & crates.io & 见上游crate \\
+  \code{virtio-drivers} 0.12.0 & VirtIO-MMIO / VirtIO-PCI块设备与网卡驱动封装 & crates.io & 见上游crate \\
+  \code{fdt} 0.1.5 & RISC-V / LoongArch QEMU路径解析设备树 & crates.io & 见上游crate \\
+  \code{sbi-rt} 0.0.3 & RISC-V OpenSBI运行时调用（控制台、关机等） & crates.io & 见上游crate \\
+  \code{riscv} 0.16.0 & RISC-V CSR与架构相关辅助 & crates.io & 见上游crate \\
+  \code{rlsf} / \code{linked\_list\_allocator} & 内核堆分配器后端（runtime-heap-allocator） & crates.io & 见上游crate \\
+  \code{log}、\code{spin}等 & 日志门面、自旋锁等基础运行时支撑 & crates.io & 见上游crate \\
+  \bottomrule[1.5pt]
+\end{longtable}
+
+赛题用户态测例（basic、busybox、lua、LTP等）与根文件系统镜像由赛题方或本队按赛题说明准备，不属于内核crate依赖；QEMU、OpenSBI固件与交叉工具链为运行/构建环境，同样不计入内核源码树。若赛题对第三方披露格式有额外字段要求，可在定稿前按组委会模板补一行对照说明。
+
+\section{AI工具使用说明}
+
+本队在开发过程中使用AI辅助编程工具生成或改写部分内核代码。凡经AI参与完成的代码块，均在源码中以\code{// 由AI完成}、\code{// 本模块代码由AI完成}等注释标注；队伍在合并前对生成结果做编译、运行测例和语义核对，标注仅用于追溯来源，不表示未经审查即可交付。
+
+机器可读清单为\code{docs/exports/ai-usage-inventory.tsv}（共1270条，格式：序号、以\code{os/}开头的路径、行范围）。下列条目由该清单导出：每条给出序号、路径、行范围，以及对应源码约5行快照（上下文不足处用\code{...}省略）。
+
+\input{chapters/chap05-ai-inventory}
+
+清单或源码标注更新后，在\code{wateros-latex/}目录执行：
+
+\begin{bashcode}
+python3 scripts/gen-ai-usage-tex.py
+\end{bashcode}
+
+文档与内核协作约定见\code{docs/technical\_document/prompts/README.md}与\code{docs/prompts/general.md}。使用Agent或AI辅助修改内核后，应同步检查\code{os/Cargo.toml}与\code{os/feature-tree.txt}、相关组件\code{Cargo.toml}与聚合\code{lib.rs}、\code{docs/exports/}快照、\code{docs/roadmap/todolist.md}，以及本LaTeX文档中与改动相关章节。
+
+\textbf{待队伍补登记：}具体使用的AI产品名称、账号范围与使用阶段（设计/编码/文档）未写入版本库；若赛题或课程要求披露工具清单，请在定稿前将经确认的名称填入本节首段。

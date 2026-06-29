@@ -1,0 +1,21 @@
+% 【本文件写什么】子模块 task-scheduler（\subsection 级聚合）
+%   - 职责摘要：调度器 api 与 impl（multi-class / round-robin）。
+%   - 子域聚合 lib.rs：os/components/wateros-task/task-scheduler/src/lib.rs
+%   - 如何重导出 api-v0、feature 下挂载哪些 impl
+%   - 被谁依赖（syscall、vfs、main 启动链等）
+%   - 短综述 + 下方 \input 展开 api 与 impl 叶子
+% 【事实来源】
+%   - os/components/wateros-task/task-scheduler/
+%   - docs/exports/ 中与 wateros-task 相关的 public-api / features 章节
+
+\subsection{task-scheduler}
+
+调度器子系统，经\code{active\_impl} feature 绑定具体算法，对外统一\code{scheduler::*}门面。\code{wateros-task}聚合层将\code{spawn}、\code{yield}、\code{wait}、\code{schedule\_tick}、trap 帧委托等薄封装转发至此。
+
+与 impl-core 的边界：本 crate 维护当前任务、就绪/阻塞结构、等待队列与唤醒路径，调用 arch \code{\_\_switch}完成切换；TCB 内存布局与 trap 帧读写由\code{impl-core}提供，调度器只通过\code{TaskRegistry}操作任务对象。
+
+\code{impl-multi-class}与\code{impl-round-robin}互斥；未启用任一实现时\code{compile\_error!}。默认使用\code{impl-multi-class}。
+
+\input{chapters/chap03/components/wateros-task/task-scheduler/scheduler-api/api/api-v0}
+\input{chapters/chap03/components/wateros-task/task-scheduler/scheduler-impl/impl/multi-class}
+\input{chapters/chap03/components/wateros-task/task-scheduler/scheduler-impl/impl/round-robin}

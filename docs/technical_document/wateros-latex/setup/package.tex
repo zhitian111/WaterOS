@@ -1,0 +1,78 @@
+% !Mode:: "TeX:UTF-8"
+% !TEX program = xelatex
+% 天津科技大学本科生毕业设计（论文）模板宏包依赖
+% 修改整理：刘建征 (2024.4.20)
+
+% =============================================
+% 基础版面与语言环境
+% =============================================
+\usepackage[a4paper,text={165.0true mm,242true mm},top=25.0true mm,left=25.0true mm,head=7.5true mm,headsep=7.5true mm,foot=17true mm]{geometry}
+\usepackage{setspace}       % 行距控制
+\usepackage{indentfirst}    % 首行缩进宏包
+
+% =============================================
+% 数学、物理符号与字体
+% =============================================
+\usepackage{amsmath}        % AMSLaTeX宏包，用来排出更加漂亮的公式
+\usepackage{amssymb}        % 数学符号生成命令
+\usepackage{bm}             % 处理数学公式中的黑斜体的宏包
+\usepackage[amsmath,thmmarks,hyperref]{ntheorem} % 定理类环境宏包
+\usepackage[squaren]{SIunits} % 支持国际标准单位
+\usepackage{fontspec}       % 字体配置宏包
+
+% =============================================
+% 图表控制
+% =============================================
+\usepackage{graphicx}       % 支持插图处理
+\usepackage[below]{placeins}% 浮动图形控制
+\usepackage{subcaption}     % 现代子图宏包（替代老旧的subfigure和ccaption）
+\usepackage{booktabs}       % 三线表宏包
+\usepackage{multirow}       % 允许表格合并多个单元格
+\usepackage{longtable}      % 支持跨页的长表格
+\usepackage{tabularx}       % 自动设置表格的列宽
+\usepackage{array}          % 扩展的表格列格式
+
+% =============================================
+% 代码与算法环境
+% =============================================
+\usepackage{minted}         % Pygments 语法高亮（编译需 -shell-escape）
+\usepackage[boxed,ruled,lined]{algorithm2e} % 算法排版
+\usepackage{algorithmic}
+
+% =============================================
+% 参考文献与交叉引用
+% =============================================
+\usepackage[sort&compress,numbers]{natbib}  % 参考文献格式
+\usepackage{xurl}           % 允许长URL自动换行
+
+% =============================================
+% 杂项与工具
+% =============================================
+\usepackage{xcolor}         % 颜色支持
+\usepackage{pagecolor}      % 背景颜色控制
+\usepackage{tikz}           % 强大的绘图工具
+\usepackage{enumitem}       % 改变列表项的格式
+\usepackage{calc}           % 支持长度的计算
+\usepackage{ulem}           % 下划线支持
+\usepackage{adjustbox}      % 盒子与图像缩放调整
+
+% =============================================
+% 目录控制
+% =============================================
+\usepackage{titletoc}       % 控制目录的宏包
+
+% =============================================
+% 超链接设置 (建议放在最后加载)
+% =============================================
+\usepackage[unicode,
+            pdfstartview=FitH,
+            bookmarksnumbered=true,
+            bookmarksopen=true,
+            colorlinks=false,
+            pdfborder={0 0 1},
+            citecolor=blue,
+            linkcolor=red,
+            anchorcolor=green,
+            urlcolor=blue,
+            breaklinks=true
+            ]{hyperref}

@@ -1,0 +1,45 @@
+% 【本文件写什么】一级组件 wateros-ipc（§ 级聚合）
+%   - 组件职责与在内核中的位置：进程间通信：等待队列、管道、futex、共享内存、信号等。
+%   - 聚合 crate os/components/wateros-ipc/src/lib.rs 的 pub mod 树与对外导出面
+%   - 子模块划分、与相邻组件的依赖边界（谁依赖谁、走哪条门面）
+%   - 根 feature / 本组件 Cargo.toml feature 如何选用各 impl
+%   - 1～2 段综述后，由下方 \input 展开子模块；不在此逐条列举 api trait
+% 【事实来源】
+%   - os/components/wateros-ipc/src/lib.rs、Cargo.toml
+%   - docs/exports/public-api/wateros-ipc.md
+%   - docs/exports/features/wateros-ipc.md
+%   - os/feature-tree.txt 中 wateros-ipc 相关段
+% 【不写什么】
+%   - api-v0 契约细节 → 子目录 api/api-v0.tex
+%   - 各 impl 算法/平台细节 → 子目录 impl/*.tex
+
+\section{wateros-ipc}
+
+\wateros{}的进程间通信能力由一级组件\code{wateros-ipc}聚合。根内核在\code{impl-riscv64}与\code{impl-loongarch64}下启用\code{ipc/all}，对外暴露\code{ipc::waitqueue}、\code{ipc::pipe}、\code{ipc::futex}、\code{ipc::shm}与\code{ipc::signal}等命名空间；系统调用层负责 Linux ABI 解码与 errno 映射，VFS 负责\code{PipeEndpoint}放入 fd 表，MM 负责\code{shmat}返回 PPN 后的用户映射，task/trap 负责信号帧交付与\code{TaskWaitResult::Interrupted}。
+
+聚合\code{src/lib.rs}按 feature 选路：\code{default}含\code{api-v0}、\code{impl-dummy}与\code{waitqueue}；\code{all}在此基础上打开\code{pipe}、\code{futex}（\code{impl-task}）、\code{shm}与\code{signal}。顶层\code{ipc::api}与\code{ipc::active\_impl}仍为占位自检，真实契约在各子 crate 的\code{api-v0}中演进；\code{ipc-event}尚未挂入 workspace 聚合。
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{3.0cm}>{\raggedright\arraybackslash}p{10.5cm}}
+  \caption{wateros-ipc 子模块与 feature 选路}\label{tab:ipc-features}\\
+  \toprule[1.5pt]
+  子模块 & 聚合导出面与 impl \\
+  \midrule[1pt]
+  \code{ipc-api} & \code{ipc::api}，占位\code{add}自检 \\
+  \code{ipc-impl} & \code{ipc::active\_impl}，\code{impl-dummy}占位 \\
+  \code{ipc-waitqueue} & 始终导出\code{WaitQueue}，\code{impl-task}委托\code{wateros\_task} \\
+  \code{ipc-pipe} & \code{feature pipe}，\code{impl-ringbuf} \\
+  \code{ipc-futex} & \code{feature futex}，\code{impl-task}（\code{impl-dummy}为链接桩） \\
+  \code{ipc-shm} & \code{feature shm}，单 crate 注册表 \\
+  \code{ipc-signal} & \code{feature signal}，\code{SignalRegistry}在聚合层实现 \\
+  \code{ipc-event} & 未挂聚合，占位 crate \\
+  \bottomrule[1.5pt]
+\end{longtable}
+
+\input{chapters/chap03/components/wateros-ipc/ipc-api/ipc-api}
+\input{chapters/chap03/components/wateros-ipc/ipc-waitqueue/waitqueue}
+\input{chapters/chap03/components/wateros-ipc/ipc-pipe/pipe}
+\input{chapters/chap03/components/wateros-ipc/ipc-futex/futex}
+\input{chapters/chap03/components/wateros-ipc/ipc-shm/shm}
+\input{chapters/chap03/components/wateros-ipc/ipc-signal/signal}
+\input{chapters/chap03/components/wateros-ipc/ipc-event/event}
+\input{chapters/chap03/components/wateros-ipc/ipc-impl/ipc-impl}

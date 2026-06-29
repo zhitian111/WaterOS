@@ -16,6 +16,6 @@
     ] }
     log = { version = "0.4" }
 [features]
-    default = [ "impl-linked-list-allocator" ]
+    default = [ "impl-tlsf" ]
     impl-tlsf = [  ]
     impl-linked-list-allocator = [ "dep:linked_list_allocator" ]

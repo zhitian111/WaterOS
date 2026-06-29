@@ -1,0 +1,22 @@
+% 【本文件写什么】子模块 runtime-serial（\subsection 级聚合）
+%   - 职责摘要：串口再导出（委托 driver UART）。
+%   - 子域聚合 lib.rs：os/components/wateros-runtime/runtime-serial/src/lib.rs
+%   - 如何重导出 api-v0、feature 下挂载哪些 impl
+%   - 被谁依赖（syscall、vfs、main 启动链等）
+%   - 短综述 + 下方 \input 展开 api 与 impl 叶子
+% 【事实来源】
+%   - os/components/wateros-runtime/runtime-serial/
+%   - docs/exports/ 中与 wateros-runtime 相关的 public-api / features 章节
+
+\subsection{runtime-serial}
+
+\code{wateros-runtime-serial}在\code{serial-uart-virt} feature下再导出\code{wateros-driver}的QEMU\code{virt} UART符号与\code{character\_api\_v0}类型，包括\code{QemuVirtUart16550}、\code{QEMU\_VIRT\_UART0\_BASE}、\code{init\_default\_virt\_uart}与\code{read\_byte\_blocking}等。本crate不实现新硬件驱动，仅为运行时或伪shell路径提供统一门面；完整字符设备对象仍由\code{wateros-driver} LoongArch/RISC-V实现注册到设备表。
+
+与\code{runtime-console}的\code{platform::console}早期输出路径分离：\code{serial}面向已初始化的UART设备会话，\code{console}面向固件/MMIO早期写。
+
+\begin{rustcode}
+pub use driver::uart::{
+    init_default_virt_uart, read_byte_blocking, with_default_uart,
+    QemuVirtUart16550, QEMU_VIRT_UART0_BASE,
+};
+\end{rustcode}

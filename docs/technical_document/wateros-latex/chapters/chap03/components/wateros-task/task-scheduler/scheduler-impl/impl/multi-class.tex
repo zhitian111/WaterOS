@@ -1,0 +1,36 @@
+% 【本文件写什么】impl 实现层：multi-class
+%   - 定位：多级就绪队列调度策略。
+%   - crate 路径：os/components/wateros-task/task-scheduler/scheduler-impl/impl-multi-class/src/
+%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+%   - 算法或硬件交互流程（可用伪代码/流程图）
+%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
+%   - 与其它 impl 变体的差异、切换 feature 时的影响
+%   - 性能/内存假设与已知限制
+% 【事实来源】
+%   - 上述 crate 源码与 Cargo.toml
+%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+
+\subsubsection{impl-multi-class（默认）}
+
+\code{MultiClassScheduler}组合\code{TaskRegistry}、\code{WaitQueues}、\code{OtherReadyQueue}（\code{SCHED\_OTHER}）、\code{RtFifoRunQueue}（\code{SCHED\_FIFO}）、\code{RtRrRunQueue}（\code{SCHED\_RR}）。
+
+入队策略：\code{enqueue\_ready\_by\_policy}按任务快照的\code{sched\_policy}分派到对应队列；阻塞/睡眠唤醒后经\code{drain\_staging}重新入队。
+
+抢占逻辑：\code{ready\_task\_should\_preempt}比较当前任务与就绪 RT 队列最高优先级；\code{SCHED\_OTHER}任务可被任意就绪 RT 任务抢占。tick 路径累计\code{current\_task\_ticks}，达到\code{config::task::MAX\_TICKS\_PER\_TASK}时对 RR 队列触发时间片轮转。
+
+idle 任务：\code{IDLE\_TASK\_ID}在无其它就绪任务时运行，arch 入口执行\code{wfi}。
+
+策略变更：\code{apply\_sched\_policy\_change}更新 TCB 字段并从各 run-queue\code{detach}后按新策略\code{enqueue}，可能返回\code{Reschedule}触发立即切换。
+
+\begin{rustcode}
+fn enqueue_ready_by_policy(&mut self, task_id: TaskId) {
+    let snap = self.registry.task_snapshot(task_id).unwrap();
+    match snap.sched_policy {
+        SchedPolicy::Other => self.other_ready.enqueue_ready_task(task_id),
+        SchedPolicy::Fifo => self.fifo_ready.enqueue(task_id, snap.sched_priority),
+        SchedPolicy::Rr => self.rr_ready.on_task_unblocked(task_id, snap.sched_priority),
+    }
+}
+\end{rustcode}
+
+已知限制：bring-up 有效策略仍以\code{SCHED\_OTHER}为主；FIFO/RR 队列骨架存在但完整 RT 抢占语义未完全验证。单核全局队列，无 SMP per-CPU run-queue。

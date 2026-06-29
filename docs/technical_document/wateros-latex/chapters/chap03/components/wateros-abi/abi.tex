@@ -1,0 +1,23 @@
+% 【本文件写什么】一级组件 wateros-abi（§ 级聚合）
+%   - 组件职责与在内核中的位置：用户态与内核 ABI 约定：系统调用号、寄存器/栈约定、错误码映射。
+%   - 聚合 crate os/components/wateros-abi/src/lib.rs 的 pub mod 树与对外导出面
+%   - 子模块划分、与相邻组件的依赖边界（谁依赖谁、走哪条门面）
+%   - 根 feature / 本组件 Cargo.toml feature 如何选用各 impl
+%   - 1～2 段综述后，由下方 \input 展开子模块；不在此逐条列举 api trait
+% 【事实来源】
+%   - os/components/wateros-abi/src/lib.rs、Cargo.toml
+%   - docs/exports/public-api/wateros-abi.md
+%   - docs/exports/features/wateros-abi.md
+%   - os/feature-tree.txt 中 wateros-abi 相关段
+% 【不写什么】
+%   - api-v0 契约细节 → 子目录 api/api-v0.tex
+%   - 各 impl 算法/平台细节 → 子目录 impl/*.tex
+
+\section{wateros-abi}
+
+\code{wateros-abi}定义用户态与内核共享的系统调用ABI：Linux风格错误码、六个寄存器参数包、调用号抽象与\code{-errno}返回值编码。聚合\code{src/lib.rs}按feature挂载\code{api-v0}契约与具体号表实现；\code{default} feature为空，调用方须显式启用\code{api-v0}及\code{impl-linux-generic64}（或占位\code{impl-dummy}）。
+
+主线平台feature经根内核传递\code{abi/impl-linux-generic64}，同时启用\code{api-v0}与\code{LinuxGeneric64}号表，并导出\code{ActiveSyscallNumberTable}别名。\code{wateros-syscall}、\code{wateros-platform} trap路径通过本组件读取\code{SyscallArgs}与符号化调用号；号表存在某常量不等于内核已实现对应\code{sys\_*}。
+
+\input{chapters/chap03/components/wateros-abi/abi-api/abi-api}
+\input{chapters/chap03/components/wateros-abi/abi-impl/abi-impl}

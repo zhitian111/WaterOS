@@ -1,0 +1,35 @@
+% 文档入口：组织封面、目录与五章 \input。
+% 一般无需写正文；调整章节顺序或增删 \input 时改此文件。
+% 版式与宏：setup/package.tex、setup/format.tex、setup/doc-macros.tex。
+
+\def\usewhat{xelatex}
+\documentclass[12pt,openany,oneside,AutoFakeBold=true]{ctexbook}
+
+\input{setup/package}
+\input{setup/format}
+\input{setup/doc-macros}
+\graphicspath{{figures/}}
+
+\begin{document}
+
+\frontmatter
+\input{frontmatter/cover-page}
+
+\clearpage
+\pdfbookmark[0]{目~~录}{mulu}
+\tableofcontents
+
+\mainmatter
+\ctexset{chapter/pagestyle=fancy}
+\defaultfont
+\sloppy\raggedbottom
+
+% 正文（内容来自 test.tex，按章拆分；第 3 章组件树见 chapters/chap03/components/）
+% 使用 \input 而非 \include，以便 latexmk -outdir=build 时 aux 不写入源码树
+\input{chapters/chap01}
+\input{chapters/chap02/written-architecture}
+\input{chapters/chap03/implementation}
+\input{chapters/chap04}
+\input{chapters/chap05}
+
+\end{document}

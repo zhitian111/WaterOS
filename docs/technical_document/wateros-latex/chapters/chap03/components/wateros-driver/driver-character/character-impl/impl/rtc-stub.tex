@@ -1,0 +1,38 @@
+% 【本文件写什么】impl 实现层：rtc-stub
+%   - 定位：软件 RTC 字符设备 stub。
+%   - crate 路径：os/components/wateros-driver/driver-character/character-impl/impl-rtc-stub/src/
+%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+%   - 算法或硬件交互流程（可用伪代码/流程图）
+%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
+%   - 与其它 impl 变体的差异、切换 feature 时的影响
+%   - 性能/内存假设与已知限制
+% 【事实来源】
+%   - 上述 crate 源码与 Cargo.toml
+%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+
+\subsubsection{impl-rtc-stub}
+
+\code{RtcCharacterDevice}为标记型RTC设备：\code{read}恒返回0（EOF），\code{write}返回\code{Unsupported}，\code{device\_kind}为\code{Rtc}。\code{RtcTime}以\code{\#[repr(C)]}对齐Linux\code{struct rtc\_time}，供syscall层在用户缓冲区与内核之间搬运字段；实际\code{RTC\_RD\_TIME}/\code{RTC\_SET\_TIME}等\code{ioctl}在syscall对rtc文件描述符分发，不在本crate实现硬件访问。
+
+\code{register\_rtc\_stub}构造\code{Arc<Mutex<Box<dyn CharacterDevice>>>}并追加到全局表；由\code{register\_builtin\_character\_devices}在平台\code{init\_after\_boot}末尾调用。devfs将此类设备映射为\code{/dev/misc/rtc}或等价路径，满足\code{hwclock}打开节点需求。
+
+\begin{rustcode}
+#[repr(C)]
+pub struct RtcTime {
+    pub tm_sec: i32,
+    pub tm_min: i32,
+    pub tm_hour: i32,
+    pub tm_mday: i32,
+    pub tm_mon: i32,
+    pub tm_year: i32,
+    pub tm_wday: i32,
+    pub tm_yday: i32,
+    pub tm_isdst: i32,
+}
+
+impl CharacterDevice for RtcCharacterDevice {
+    fn device_kind(&self) -> CharacterDeviceKind {
+        CharacterDeviceKind::Rtc
+    }
+}
+\end{rustcode}

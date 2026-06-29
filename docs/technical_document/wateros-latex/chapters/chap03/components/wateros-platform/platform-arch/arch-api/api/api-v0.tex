@@ -1,0 +1,39 @@
+% 【本文件写什么】api-v0 契约层（叶子，只写语义不写实现）
+%   - crate 路径：os/components/wateros-platform/platform-arch/arch-api/api-v0/src/
+%   - 列出并说明：pub trait、核心类型、错误枚举、常量
+%   - 每个公开 API 的前置条件、后置条件、线程/中断上下文限制
+%   - 与 Linux/用户态约定的对齐点与 deliberate 差异
+%   - v0 版本当前行为与后续可替换 extension 点
+% 【事实来源】
+%   - 上述 crate 下全部 .rs 源文件
+%   - docs/exports/public-api/ 中对应符号表（以源码为准）
+% 【不写什么】
+%   - impl 内部数据结构、汇编、具体算法步骤
+
+\subsubsection{trap帧与系统调用视图}
+
+\code{TrapCause}、\code{Exception}与\code{Interrupt}为跨架构语义枚举；原始CSR如何映射到\code{TrapCause}由各\code{arch-impl}负责，\code{TrapFrameRead::trap\_cause}必须在具体帧类型上显式实现。\code{TrapFrameRead}提供\code{raw\_cause}、\code{fault\_addr}、\code{user\_pc}/\code{user\_sp}、\code{returns\_to\_user}、\code{return\_address\_space\_token}等只读视图；\code{TrapFrameWrite}与\code{TrapAddressSpaceWrite}负责写回用户PC/SP、返回特权级标记与地址空间token。\code{TrapSyscallRead}/\code{TrapSyscallWrite}桥接\code{SyscallArgs}、\code{SyscallNumber}与\code{UserRet}；\code{TrapThreadWrite}仅暴露\code{set\_user\_tls}供\code{clone(CLONE\_SETTLS)}使用。
+
+\code{ArchTrapFrame}为标记trait，要求\code{TrapContextRead}+\code{TrapContextWrite}+\code{Clone}+\code{Copy}等约束，供\code{wateros-task}保存任务trap帧而不依赖具体布局。\code{SignalFrameCodec}在trap帧与用户信号帧之间编解码\code{SignalMachineContext}，并支持\code{prepare\_signal\_handler}与\code{prepare\_syscall\_restart}。
+
+\subsubsection{时间与任务上下文}
+
+\code{ArchTime}只读单调\code{read\_time\_tick}；\code{read\_time\_frequency}默认\code{Unsupported}，不含\code{set\_timer}。\code{ArchTaskContext}定义\code{zero\_init}、\code{goto\_entry}与\code{goto\_task\_entry}，由impl决定如何把\code{bootstrap\_ptr}编码进保存上下文。
+
+\subsubsection{中断与内核trap路由}
+
+\code{ArchTimerInterruptControl}覆盖定时器中断位、全局中断开关、\code{read\_global\_interrupt\_state}/\code{restore\_global\_interrupt\_state}与\code{wait\_for\_interrupt}；不负责编程下一次deadline。
+
+\code{kernel\_trap}打破\code{arch-impl}与\code{task}/\code{syscall}的Cargo环：组合层在首次trap前调用\code{register\_kernel\_trap\_handler}，arch入口经\code{invoke\_kernel\_trap\_handler(*mut u8)}或稳定C符号\code{wateros\_kernel\_trap\_enter}分发。未注册时panic。
+
+\begin{rustcode}
+pub type KernelTrapHandlerFn = extern "C" fn(*mut u8);
+
+pub fn register_kernel_trap_handler(handler: KernelTrapHandlerFn) {
+    HANDLER.store(handler as *mut (), Ordering::Release);
+}
+
+pub fn invoke_kernel_trap_handler(frame: *mut u8) {
+    handler_fn()(frame);
+}
+\end{rustcode}

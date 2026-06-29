@@ -1,0 +1,34 @@
+% 【本文件写什么】impl 实现层：kernel
+%   - 定位：内核内建伪 FS / rootfs 逻辑（devfs、procfs、rootfs）。
+%   - crate 路径：os/components/wateros-fs/fs-devfs/devfs-impl/impl-kernel/src/
+%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+%   - 算法或硬件交互流程（可用伪代码/流程图）
+%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
+%   - 与其它 impl 变体的差异、切换 feature 时的影响
+%   - 性能/内存假设与已知限制
+% 【事实来源】
+%   - 上述 crate 源码与 Cargo.toml
+%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+
+\subsubsection{impl-kernel}
+
+\paragraph{状态结构。}
+全局\code{DEVFS: Mutex<DevFsImpl>}保存节点快照\code{nodes}、\code{block\_bindings}、\code{character\_bindings}与DTB占位路径\code{dt\_unsupported\_paths}。\code{KernelDevFsManager}为零大小类型，经\code{active\_impl}模块转发静态状态。
+
+\paragraph{\code{refresh}流程。}
+\begin{enumerate}
+  \item 快照\code{block\_device\_count()}与\code{character\_device\_count()}驱动表；
+  \item 清空并重建绑定：块设备索引\code{idx}生成\code{/dev/vblk\{idx\}}与Linux风格\code{/dev/vd\{a+z\}}；\code{idx==0}时额外登记\code{/dev/vda1}、\code{/dev/vda2}；
+  \item 字符设备：\code{/dev/ttyS\{idx\}}；\code{idx==0}时映射\code{/dev/console}、\code{/dev/tty}；RTC类设备映射\code{/dev/rtc*}；Null类映射\code{/dev/null}；
+  \item 补充常见占位节点（\code{/dev/zero}、\code{/dev/urandom}、\code{/dev/cpu\_dma\_latency}等）；
+  \item 合并DTB\code{Unsupported}路径并写启动日志。
+\end{enumerate}
+
+\paragraph{查找与默认根路径。}
+\code{lookup\_block\_device}在\code{block\_bindings}中精确匹配路径。\code{default\_root\_block\_path}在存在至少一块设备时返回\code{/dev/vda}（索引0的Linux风格名）。
+
+\paragraph{\code{FsImpl}注册项。}
+导出\code{IMPL}静态实例，\code{name()}为\code{"devfs"}，\code{supported()}声明\code{DevFs} RO能力；\code{mount\_ro}返回基于节点列表的只读伪卷视图，供\code{supported\_fs}列示，不参与块设备probe链。
+
+\paragraph{限制。}
+并发由\code{spin::Mutex}序列化；\code{refresh}会清空动态\code{register\_*}结果后按驱动表重建。字符设备若驱动未注册，对应节点可能仅为展示条目而无真实\code{lookup}句柄。

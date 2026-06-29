@@ -1,0 +1,26 @@
+% 【本文件写什么】impl 实现层：dummy
+%   - 定位：futex 链接桩，wake 返回 Nosys。
+%   - crate 路径：os/components/wateros-ipc/ipc-futex/futex-impl/impl-dummy/src/
+%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+%   - 算法或硬件交互流程（可用伪代码/流程图）
+%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
+%   - 与其它 impl 变体的差异、切换 feature 时的影响
+%   - 性能/内存假设与已知限制
+% 【事实来源】
+%   - 上述 crate 源码与 Cargo.toml
+%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+
+\subsubsection{impl-dummy}
+
+\code{impl-dummy}提供与\code{impl-task}相同表面签名的\code{FutexHub}，用于未启用\code{impl-task}时的链接与 trait 边界验证。\code{wake}/\code{wake\_all}直接返回\code{FutexError::Nosys}，不阻塞、不唤醒；\code{set\_robust\_list}仅校验\code{len == ROBUST\_LIST\_HEAD\_SIZE}后成功返回；\code{get\_robust\_list}恒为\code{(0, 0)}。
+
+\begin{rustcode}
+impl KernelFutexOps for FutexHub {
+    fn wake(&self, _key: FutexKey, _max_wake: u32) -> FutexResult<usize> {
+        Err(FutexError::Nosys)
+    }
+    // wake_all 同理；set/get/drop_robust_list 为内存桩
+}
+\end{rustcode}
+
+根\code{wateros-ipc}的\code{feature futex}同时打开\code{impl-task}，生产路径不使用 dummy；dummy 保留在 workspace 供 feature 组合测试与最小链接验证。

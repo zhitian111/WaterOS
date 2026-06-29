@@ -1,0 +1,37 @@
+% 【本文件写什么】api-v0 契约层（叶子，只写语义不写实现）
+%   - crate 路径：os/components/wateros-fs/fs-api/api-v0/src/
+%   - 列出并说明：pub trait、核心类型、错误枚举、常量
+%   - 每个公开 API 的前置条件、后置条件、线程/中断上下文限制
+%   - 与 Linux/用户态约定的对齐点与 deliberate 差异
+%   - v0 版本当前行为与后续可替换 extension 点
+% 【事实来源】
+%   - 上述 crate 下全部 .rs 源文件
+%   - docs/exports/public-api/ 中对应符号表（以源码为准）
+% 【不写什么】
+%   - impl 内部数据结构、汇编、具体算法步骤
+
+\subsubsection{api-v0}
+
+\paragraph{错误与能力枚举。}
+\code{FsError}统一描述卷操作失败语义，含\code{NotMounted}、\code{NotFound}、\code{NotAFile}、\code{InvalidPath}、\code{Exists}、\code{Unsupported}、\code{Driver}、\code{Corrupt}、\code{Io}、\code{NoSpace}等变体。\code{FsKind}标识文件系统种类（\code{Ext4}、\code{DevFs}、\code{Other}等）；\code{FsAccessMode}区分RO/RW；\code{FsCapability}为\code{(kind, access)}静态能力声明。\code{FsMetadata}、\code{FsDirEntry}、\code{FsNodeType}对齐Linux\code{stat}/\code{dirent}子集。
+
+\paragraph{卷读写trait。}
+\code{ReadOnlyFs}约定绝对路径上的\code{mount}、\code{exists}、\code{metadata}、\code{read}、\code{read\_range}、\code{read\_dir}、\code{read\_symlink}；默认\code{read\_range}返回\code{Unsupported}，实现方应覆盖以避免大文件整读。\code{ReadWriteFs: Send}在RO能力之上扩展\code{mount\_rw}、\code{write\_range}、\code{mkdir}、\code{unlink}、\code{rmdir}、\code{chmod}、\code{chown}、\code{xattr}族、\code{rename}、\code{hardlink}、\code{symlink}、\code{mknod}、\code{truncate}；未支持项保留trait默认\code{Unsupported}。\code{FsAsyncIo}为v1占位，当前均不应成功。
+
+\paragraph{共享句柄与注册面。}
+\code{LocalFs}/\code{LocalRwFs}将\code{dyn} trait对象装箱；\code{SharedFs}/\code{SharedRwFs}为\code{Arc<Mutex<...>>}，供多任务共享同一卷状态。调用方须在平台调度策略下遵守\code{Mutex}边界（当前bring-up为单核假设）。
+
+\paragraph{\code{FsImpl}探测与挂载契约。}
+每个块FS或伪FS实现导出\code{'static FsImpl}实例，实现：
+\begin{itemize}
+  \item \code{name()}：日志与\code{supported\_fs}展示名；
+  \item \code{supported()}：静态\code{FsCapability}表；
+  \item \code{supports(kind, mode)}：是否处理指定组合；
+  \item \code{probe(device)}：读设备前部字节判定\code{FsKind}；无法识别返回\code{Ok(None)}；devfs/procfs默认不probe块设备；
+  \item \code{mount\_ro(device)}：返回\code{SharedFs}；
+  \item \code{mount\_rw(device)}：RW实现覆盖，否则\code{Unsupported}。
+\end{itemize}
+聚合层\code{registered\_fs\_impls()}按表顺序遍历probe；更具体的impl应排在前面（默认\code{impl-ext4-rs}优先于\code{impl-ext4}）。
+
+\paragraph{上下文限制。}
+本crate为\code{no\_std}，不规定中断上下文可否调用；实现方使用\code{spin::Mutex}，持锁期间不得阻塞睡眠。路径契约要求绝对路径并以\code{/}开头，具体规范化由VFS层或各impl补充。

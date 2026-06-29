@@ -1,0 +1,31 @@
+% 【本文件写什么】impl 实现层：ext4-rs
+%   - 定位：默认 ext4 根卷 RW 实现（impl-ext4-rs）。
+%   - crate 路径：os/components/wateros-fs/fs-impl/impl-ext4-rs/src/
+%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+%   - 算法或硬件交互流程（可用伪代码/流程图）
+%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
+%   - 与其它 impl 变体的差异、切换 feature 时的影响
+%   - 性能/内存假设与已知限制
+% 【事实来源】
+%   - 上述 crate 源码与 Cargo.toml
+%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+
+\subsubsection{impl-ext4-rs}
+
+\paragraph{依赖与定位。}
+默认根卷实现，基于\code{ext4\_rs} crate。对外\code{FsImpl}面与\code{impl-ext4}（ext4plus）对齐，由聚合层feature二选一，不应同时启用两套写路径。
+
+\paragraph{探测。}
+\code{probe\_ext4\_magic}在偏移\code{1024+0x38}读取superblock \code{s\_magic}，判定是否为\code{0xEF53}（ext2/3/4共用）。\code{probe}成功返回\code{Some(FsKind::Ext4)}。
+
+\paragraph{块设备适配。}
+\code{BlockDevAdapter}实现\code{ext4\_rs::BlockDevice}，将\code{SharedBlockDevice}的按字节读写映射为驱动\code{read\_bytes}/\code{write\_blocks}。\code{block\_write\_bytes}处理非块对齐头尾：部分块读-改-写，中间整块直写。
+
+\paragraph{卷trait实现。}
+RO/RW状态保存在\code{Arc<Mutex<Ext4>>}包装的\code{LocalFs}/\code{LocalRwFs}中。\code{ReadWriteFs::write\_range}在跨EOF写前须补洞（零填充），依赖\code{ext4\_rs}块分配语义。\code{map\_ext4\_rs}将\code{ENOENT}、\code{EEXIST}等映射为\code{FsError}对应变体。
+
+\paragraph{已实现能力。}
+整文件/区间读写、目录枚举、symlink、hardlink、\code{chmod}/\code{chown}、xattr、\code{truncate}、\code{rename}、\code{mknod}子集；\code{FsAsyncIo}未实现。
+
+\paragraph{限制。}
+journal崩溃恢复与生产级一致性未按完整Linux ext4评估；并发策略偏单核bring-up（\code{Mutex}序列化卷访问）。

@@ -1,0 +1,17 @@
+% 【本文件写什么】impl 实现层：dummy
+%   - 定位：占位/链接桩实现，保证默认 feature 可编译。
+%   - crate 路径：os/components/wateros-fs/fs-impl/impl-dummy/src/
+%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+%   - 算法或硬件交互流程（可用伪代码/流程图）
+%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
+%   - 与其它 impl 变体的差异、切换 feature 时的影响
+%   - 性能/内存假设与已知限制
+% 【事实来源】
+%   - 上述 crate 源码与 Cargo.toml
+%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+
+\subsubsection{impl-dummy}
+
+工作区占位crate：仅含模板级\code{add}函数与单元测试，不实现\code{FsImpl}，不进入\code{registered\_fs\_impls()}运行时路径。保留原因为\code{wateros-fs/Cargo.toml}的\code{api-v0} feature依赖链需要工作区成员占位。
+
+内核bring-up不得依赖本crate的任何符号语义。

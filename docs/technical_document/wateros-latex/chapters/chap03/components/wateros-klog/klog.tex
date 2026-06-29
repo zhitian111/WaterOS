@@ -1,0 +1,23 @@
+% 【本文件写什么】一级组件 wateros-klog（§ 级聚合）
+%   - 组件职责与在内核中的位置：内核持久化日志环与 syslog(2) 对接。
+%   - 聚合 crate os/components/wateros-klog/src/lib.rs 的 pub mod 树与对外导出面
+%   - 子模块划分、与相邻组件的依赖边界（谁依赖谁、走哪条门面）
+%   - 根 feature / 本组件 Cargo.toml feature 如何选用各 impl
+%   - 1～2 段综述后，由下方 \input 展开子模块；不在此逐条列举 api trait
+% 【事实来源】
+%   - os/components/wateros-klog/src/lib.rs、Cargo.toml
+%   - docs/exports/public-api/wateros-klog.md
+%   - docs/exports/features/wateros-klog.md
+%   - os/feature-tree.txt 中 wateros-klog 相关段
+% 【不写什么】
+%   - api-v0 契约细节 → 子目录 api/api-v0.tex
+%   - 各 impl 算法/平台细节 → 子目录 impl/*.tex
+
+\section{wateros-klog}
+
+\code{wateros-klog}维护内核可查询消息环，与\code{wateros-runtime}控制台日志低耦合。内核与其它组件经\code{record}/\code{klog\_*!}宏写入；用户态经\syscall{syslog(2)}读取传统ASCII行格式（\code{<N>}前缀加换行）。容量常量来自\code{wateros-base-config::klog}。
+
+根\code{Cargo.toml}默认\code{api-v0 + impl-ringbuf + platform-timer + task-api}。\code{platform-timer}提供\code{ts\_nsec\_now}；\code{task-api}提供\code{caller\_id\_now}。bring-up阶段不检查\code{CAP\_SYSLOG}；任意进程可READ/WRITE/CLEAR。
+
+\input{chapters/chap03/components/wateros-klog/klog-api/klog-api}
+\input{chapters/chap03/components/wateros-klog/klog-impl/klog-impl}

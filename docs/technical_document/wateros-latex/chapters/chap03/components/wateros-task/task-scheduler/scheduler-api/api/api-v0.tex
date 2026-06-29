@@ -1,0 +1,40 @@
+% 【本文件写什么】api-v0 契约层（叶子，只写语义不写实现）
+%   - crate 路径：os/components/wateros-task/task-scheduler/scheduler-api/api-v0/src/
+%   - 列出并说明：pub trait、核心类型、错误枚举、常量
+%   - 每个公开 API 的前置条件、后置条件、线程/中断上下文限制
+%   - 与 Linux/用户态约定的对齐点与 deliberate 差异
+%   - v0 版本当前行为与后续可替换 extension 点
+% 【事实来源】
+%   - 上述 crate 下全部 .rs 源文件
+%   - docs/exports/public-api/ 中对应符号表（以源码为准）
+% 【不写什么】
+%   - impl 内部数据结构、汇编、具体算法步骤
+
+\subsubsection{调度 trait 与触发原因}
+
+\code{ScheduleReason}枚举一次调度决策的触发来源：\code{StartFirst}、\code{Yield}、\code{Tick}、\code{Block(TaskBlockReason)}、\code{Sleep(TaskTick)}、\code{Exit(TaskExitCode)}。实现据此更新当前任务状态并选择下一就绪任务。
+
+\code{SwitchScheduler} trait：\code{prepare\_first\_switch}返回首次切换指针对\code{SwitchPair}；\code{schedule}、\code{schedule\_wait}在普通/等待路径产出\code{Option<SwitchPair>}供 arch \code{\_\_switch}消费。
+
+\code{Scheduler} trait 定义对外最小能力集：\code{init}、\code{spawn\_kernel\_task}、\code{spawn\_user\_task}、等待队列分配/释放、\code{run\_first\_task}、\code{schedule}、\code{block\_current}、\code{wait\_current}及其\code{\_while}/\code{\_timeout}变体、\code{wake\_task}、\code{reap\_exited\_task}等。默认方法实现\code{wait\_current\_while}等条件等待组合。
+
+\subsubsection{就绪队列与注册表抽象}
+
+\code{ReadyQueue}、\code{ReadyTaskSink} trait 抽象就绪队列入队/出队，供 multi-class 与 round-robin 共享骨架。\code{TaskRegistry}封装 TCB 槽位、快照查询、fork/clone/exec 创建路径。\code{WaitQueues}管理显式等待队列、睡眠队列与超时提升。
+
+\code{QueueTarget}、\code{SchedPolicyChangeAction}描述策略变更后是否需立即重调度。\code{SchedulableCheck}由\code{task-api}再导出，供\code{set\_scheduler}校验。
+
+\begin{rustcode}
+pub trait SwitchScheduler {
+    fn prepare_first_switch(&mut self) -> SwitchPair;
+    fn schedule(&mut self, reason: ScheduleReason) -> Option<SwitchPair>;
+    fn schedule_wait(
+        &mut self, wait_handle: TaskWaitHandle,
+        timeout_ticks: Option<TaskTick>,
+    ) -> Option<SwitchPair>;
+}
+\end{rustcode}
+
+\subsubsection{上下文限制}
+
+调度操作须在关中断或调度器自管临界区内调用；\code{wait\_current\_while}要求\code{condition}闭包在持有调度锁时执行，避免丢失唤醒。\code{run\_first\_task}返回\code{!}，永不返回至调用方。

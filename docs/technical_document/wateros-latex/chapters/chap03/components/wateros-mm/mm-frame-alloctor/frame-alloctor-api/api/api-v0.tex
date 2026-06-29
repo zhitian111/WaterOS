@@ -1,0 +1,27 @@
+% 【本文件写什么】api-v0 契约层（叶子，只写语义不写实现）
+%   - crate 路径：os/components/wateros-mm/mm-frame-alloctor/frame-alloctor-api/api-v0/src/
+%   - 列出并说明：pub trait、核心类型、错误枚举、常量
+%   - 每个公开 API 的前置条件、后置条件、线程/中断上下文限制
+%   - 与 Linux/用户态约定的对齐点与 deliberate 差异
+%   - v0 版本当前行为与后续可替换 extension 点
+% 【事实来源】
+%   - 上述 crate 下全部 .rs 源文件
+%   - docs/exports/public-api/ 中对应符号表（以源码为准）
+% 【不写什么】
+%   - impl 内部数据结构、汇编、具体算法步骤
+
+\subsubsection{帧分配契约}
+
+\code{PhysicalFrameAllocator} trait 定义帧分配的最小能力：关联类型\code{FrameId}（实现侧与\code{PhysPageNum}对齐）、\code{alloc\_frame}、\code{dealloc\_frame}。分配粒度为一帧等于一页物理存储（4\,KiB）。
+
+\code{FrameAllocError}枚举：\code{OutOfMemory}（池耗尽）、\code{InvalidFrame}（释放非法或未分配帧）、\code{Unsupported}。\code{mm-api}的\code{MmError::FrameAlloc}经\code{From}映射上述错误。
+
+\code{FrameMemStats}提供\code{total\_frames}、\code{free\_frames}、\code{page\_bytes}只读统计，附带\code{total\_bytes}/\code{free\_bytes}/\code{used\_bytes}便利方法。实现须在关中断或等价临界区内保证单核一致性；本契约不规定 SMP 扩展。
+
+\begin{rustcode}
+pub trait PhysicalFrameAllocator {
+    type FrameId: Copy + Eq;
+    fn alloc_frame(&mut self) -> FrameAllocResult<Self::FrameId>;
+    fn dealloc_frame(&mut self, frame: Self::FrameId) -> FrameAllocResult<()>;
+}
+\end{rustcode}

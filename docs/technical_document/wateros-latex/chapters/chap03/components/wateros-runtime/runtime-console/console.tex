@@ -1,0 +1,17 @@
+% 【本文件写什么】子模块 runtime-console（\subsection 级聚合）
+%   - 职责摘要：控制台输出后端与 firmware 对接。
+%   - 子域聚合 lib.rs：os/components/wateros-runtime/runtime-console/src/lib.rs
+%   - 如何重导出 api-v0、feature 下挂载哪些 impl
+%   - 被谁依赖（syscall、vfs、main 启动链等）
+%   - 短综述 + 下方 \input 展开 api 与 impl 叶子
+% 【事实来源】
+%   - os/components/wateros-runtime/runtime-console/
+%   - docs/exports/ 中与 wateros-runtime 相关的 public-api / features 章节
+
+\subsection{runtime-console}
+
+\code{wateros-runtime-console}在\code{Console} trait之上提供\code{print}/\code{prints}、\code{write\_raw\_bytes}、\code{AnsiColor}着色与\code{show\_logo}横幅；\code{print!}/\code{println!}宏绑定当前feature选中的\code{ConsoleHandle}。\code{write\_raw\_bytes}面向非UTF-8或\syscall{write}等原始字节路径：无平台控制台时静默丢弃，避免无串口构建引入链接依赖。
+
+\input{chapters/chap03/components/wateros-runtime/runtime-console/console-api/api/api-v0}
+\input{chapters/chap03/components/wateros-runtime/runtime-console/console-impl/impl/dummy}
+\input{chapters/chap03/components/wateros-runtime/runtime-console/console-impl/impl/platform-console}

@@ -1,0 +1,34 @@
+% 【本文件写什么】api-v0 契约层（叶子，只写语义不写实现）
+%   - crate 路径：os/components/wateros-ipc/ipc-pipe/pipe-api/api-v0/src/
+%   - 列出并说明：pub trait、核心类型、错误枚举、常量
+%   - 每个公开 API 的前置条件、后置条件、线程/中断上下文限制
+%   - 与 Linux/用户态约定的对齐点与 deliberate 差异
+%   - v0 版本当前行为与后续可替换 extension 点
+% 【事实来源】
+%   - 上述 crate 下全部 .rs 源文件
+%   - docs/exports/public-api/ 中对应符号表（以源码为准）
+% 【不写什么】
+%   - impl 内部数据结构、汇编、具体算法步骤
+
+\subsubsection{pipe-api-v0}
+
+\paragraph{错误与常量。}
+\code{PipeError}覆盖非阻塞\code{WouldBlock}、信号\code{Interrupted}、对端关闭\code{BrokenPipe}与非法容量\code{InvalidCapacity}。\code{DEFAULT\_PIPE\_CAPACITY}重导出\code{wateros\_base\_config::ipc}配置值。
+
+\begin{rustcode}
+pub enum PipeError {
+    WouldBlock,
+    Interrupted,
+    BrokenPipe,
+    InvalidCapacity,
+}
+\end{rustcode}
+
+\paragraph{trait KernelPipe。}
+描述内核内部 ring-buffer pipe：创建、容量查询、阻塞/非阻塞读写、双端关闭，以及可选的\code{set\_capacity}（空管 resize）与\code{poll\_revents\_*}默认桩（impl 可覆盖）。
+
+\paragraph{trait PipeEndpointOps。}
+描述可放入 fd 表的端点：\code{pair(nonblocking)}返回读写对；\code{read}/\code{write}按端点方向执行；\code{poll\_revents}与\code{poll\_wait\_for\_ticks}对接多 fd \syscall{poll}/\syscall{ppoll}；\code{read\_checked}/\code{write\_checked}在方向错误时返回\code{BrokenPipe}。
+
+\paragraph{与 Linux 对齐。}
+EOF 表现为读端在写端全关且缓冲为空时\code{read}返回\code{Ok(0)}；非阻塞空读/满写返回\code{WouldBlock}；阻塞路径在信号打断时映射\code{Interrupted}。未实现\code{splice}/\code{tee}；全局 pipe 数量无硬上限。

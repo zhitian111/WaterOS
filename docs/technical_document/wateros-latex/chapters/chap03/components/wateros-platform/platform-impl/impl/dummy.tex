@@ -1,0 +1,15 @@
+% 【本文件写什么】impl 实现层：dummy
+%   - 定位：占位/链接桩实现，保证默认 feature 可编译。
+%   - crate 路径：os/components/wateros-platform/platform-impl/impl-dummy/src/
+%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+%   - 算法或硬件交互流程（可用伪代码/流程图）
+%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
+%   - 与其它 impl 变体的差异、切换 feature 时的影响
+%   - 性能/内存假设与已知限制
+% 【事实来源】
+%   - 上述 crate 源码与 Cargo.toml
+%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+
+\subsubsection{impl-dummy}
+
+\code{impl-dummy}为全桩板级：控制台、定时器与复位调用一律返回\code{Unsupported}；\code{boot}路径上访问\code{arg0}等触发\code{unimplemented!()}。\code{PlatformTimeImpl}频率查询亦返回\code{Unsupported}。仅用于未绑定真实环境的编译占位，不得作为可启动内核配置。

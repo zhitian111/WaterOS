@@ -1,0 +1,17 @@
+% 【本文件写什么】子模块 fs-procfs（\subsection 级聚合）
+%   - 职责摘要：进程信息伪文件系统。
+%   - 子域聚合 lib.rs：os/components/wateros-fs/fs-procfs/src/lib.rs
+%   - 如何重导出 api-v0、feature 下挂载哪些 impl
+%   - 被谁依赖（syscall、vfs、main 启动链等）
+%   - 短综述 + 下方 \input 展开 api 与 impl 叶子
+% 【事实来源】
+%   - os/components/wateros-fs/fs-procfs/
+%   - docs/exports/ 中与 wateros-fs 相关的 public-api / features 章节
+
+\subsection{fs-procfs}
+
+\code{fs-procfs}提供\code{/proc}伪文件系统的内容生成：按tid输出\code{status}、\code{maps}、\code{cmdline}等，并支持全局\code{meminfo}、\code{mounts}等节点。内容依赖\code{wateros-task}、\code{wateros-mm}快照及VFS注册的\code{argv}/\code{exe}/\code{mount}回调，api层本身不拉取这些依赖。
+
+\input{chapters/chap03/components/wateros-fs/fs-procfs/procfs-api/api/api-v0}
+\input{chapters/chap03/components/wateros-fs/fs-procfs/procfs-impl/impl/dummy}
+\input{chapters/chap03/components/wateros-fs/fs-procfs/procfs-impl/impl/kernel}

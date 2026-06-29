@@ -1,0 +1,20 @@
+% 【本文件写什么】独立子 crate（无 api/impl 目录树）：mm-impl
+%   - 职责：页表实现：Sv39、LoongArch、dummy 与 common 共享代码。
+%   - 源码：os/components/wateros-mm/mm-impl/src/
+%   - 对外暴露的函数/类型、在聚合 lib.rs 中的重导出方式
+%   - 实现要点、feature（若有）、与其它子 crate 的边界
+% 【事实来源】
+%   - os/components/wateros-mm/mm-impl/、父组件 src/lib.rs
+
+\subsection{mm-impl}
+
+页表与内核 bring-up 的平台实现层，包含三套互斥变体：\code{impl-sv39}（RISC-V Sv39）、\code{impl-loongarch64}（LoongArch64 三级 4\,KiB 页表）、\code{impl-dummy}（链接桩）。共享辅助逻辑位于\code{impl-common}，不对外导出稳定 API。
+
+各\code{impl-*} crate 实现\code{mm-api}的\code{AddressSpaceOps}、\code{MmapOps}、\code{HeapBrk}等 trait，并通过\code{kernel\_mm\_impl}模块向聚合层提供\code{init}、\code{from\_elf\_path}、\code{fork\_user\_aspace}、\code{handle\_cow\_fault}等函数。\code{user\_aspace::with\_user\_aspace\_mut}把\code{LoadedElf::user\_aspace\_ptr}解析为可变地址空间对象，供 syscall 在闭包内调用\code{HeapBrk}/\code{MmapOps}。
+
+\code{wateros-mm}聚合层经\code{active\_mm\_impl}条件编译，保证同一构建中仅一套页表符号可见；\code{pagetable}模块与 PTE 编码不经聚合层导出。
+
+\input{chapters/chap03/components/wateros-mm/mm-impl/common/common}
+\input{chapters/chap03/components/wateros-mm/mm-impl/impl/dummy}
+\input{chapters/chap03/components/wateros-mm/mm-impl/impl/sv39}
+\input{chapters/chap03/components/wateros-mm/mm-impl/impl/loongarch64}

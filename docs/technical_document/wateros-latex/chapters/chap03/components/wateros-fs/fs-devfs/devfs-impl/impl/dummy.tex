@@ -1,0 +1,17 @@
+% 【本文件写什么】impl 实现层：dummy
+%   - 定位：占位/链接桩实现，保证默认 feature 可编译。
+%   - crate 路径：os/components/wateros-fs/fs-devfs/devfs-impl/impl-dummy/src/
+%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+%   - 算法或硬件交互流程（可用伪代码/流程图）
+%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
+%   - 与其它 impl 变体的差异、切换 feature 时的影响
+%   - 性能/内存假设与已知限制
+% 【事实来源】
+%   - 上述 crate 源码与 Cargo.toml
+%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+
+\subsubsection{impl-dummy}
+
+\code{DummyDevFsManager}实现\code{DevFsManager}全部方法但无真实设备：\code{refresh}为空操作，\code{list\_nodes}返回空表，\code{lookup\_*}与\code{register\_*}返回\code{NotFound}/\code{Unsupported}，\code{default\_root\_block\_path}恒为\code{None}。
+
+用于无驱动或最小链接配置；\code{fs-devfs}在同时启用\code{impl-kernel}与\code{impl-dummy}时优先选择\code{impl-kernel}。启用dummy后\code{fs::init()}无法获得根块设备，probe链在devfs阶段即终止。

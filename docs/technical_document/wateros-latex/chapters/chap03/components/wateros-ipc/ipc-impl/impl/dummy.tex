@@ -1,0 +1,24 @@
+% 【本文件写什么】impl 实现层：dummy
+%   - 定位：占位/链接桩实现，保证默认 feature 可编译。
+%   - crate 路径：os/components/wateros-ipc/ipc-impl/impl-dummy/src/
+%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+%   - 算法或硬件交互流程（可用伪代码/流程图）
+%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
+%   - 与其它 impl 变体的差异、切换 feature 时的影响
+%   - 性能/内存假设与已知限制
+% 【事实来源】
+%   - 上述 crate 源码与 Cargo.toml
+%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+
+\subsubsection{impl-dummy}
+
+\code{wateros-ipc-impl-dummy}在\code{feature impl-dummy}下被父聚合选为\code{active\_impl}。实现与\code{wateros-ipc-api-v0}对称：导出\code{add}占位函数，不模拟 syscall、不管理资源生命周期。
+
+\begin{rustcode}
+/// 占位算术：满足链接与单测；不模拟任何 syscall 或资源生命周期。
+#[inline]
+pub fn add(left : u64, right : u64) -> u64 { left + right }
+\end{rustcode}
+
+\paragraph{feature 链。}
+根\code{wateros-ipc}的\code{default}与\code{api-v0}均传递\code{impl-dummy} feature；替换为真实顶层 impl 时需保持\code{pub use ... as active\_impl}路径稳定，避免组合层大面积改动。当前无其它 impl 变体。

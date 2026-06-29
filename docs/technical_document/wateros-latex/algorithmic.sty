@@ -1,0 +1,8 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{algorithmic}[2026/06/23 local compatibility shim]
+\newenvironment{algorithmic}[1][]{\begin{list}{}{\leftmargin=2em}}{\end{list}}
+\newcommand{\STATE}{\item}
+\newcommand{\IF}[1]{\item \textbf{if} #1}
+\newcommand{\ENDIF}{\item \textbf{end if}}
+\newcommand{\FOR}[1]{\item \textbf{for} #1}
+\newcommand{\ENDFOR}{\item \textbf{end for}}

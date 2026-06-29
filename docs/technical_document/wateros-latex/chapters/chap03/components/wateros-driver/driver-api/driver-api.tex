@@ -1,0 +1,15 @@
+% 【本文件写什么】独立子 crate（无 api/impl 目录树）：driver-api
+%   - 职责：驱动聚合层 api-v0。
+%   - 源码：os/components/wateros-driver/driver-api/src/
+%   - 对外暴露的函数/类型、在聚合 lib.rs 中的重导出方式
+%   - 实现要点、feature（若有）、与其它子 crate 的边界
+% 【事实来源】
+%   - os/components/wateros-driver/driver-api/、父组件 src/lib.rs
+
+\subsection{driver-api}
+
+\code{driver-api}对应crate\code{wateros-driver-api-v0}，提供跨块/字符/网络子系统共享的DTB扫描数据模型与\code{DriverError}。聚合层以\code{pub mod api \{ pub use ::api\_v0::*; \}}再导出，平台impl与各子系统在探测阶段构造\code{DeviceInfo}并与各子系统\code{supported\_devices()}声明做\code{compatible}精确匹配。
+
+本子crate不含具体I/O trait；块读写见\code{driver-block}，字符流见\code{driver-character}，以太网帧见\code{driver-network}。\code{test()}仅构造样例\code{DeviceInfo}做字段一致性烟测，不访问DTB或硬件。
+
+\input{chapters/chap03/components/wateros-driver/driver-api/api/api-v0}

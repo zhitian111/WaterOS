@@ -1,0 +1,38 @@
+% 【本文件写什么】impl 实现层：qemu-riscv64-opensbi
+%   - 定位：QEMU RISC-V + OpenSBI 板级组合。
+%   - crate 路径：os/components/wateros-driver/driver-impl/impl-qemu-riscv64-opensbi/src/
+%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+%   - 算法或硬件交互流程（可用伪代码/流程图）
+%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
+%   - 与其它 impl 变体的差异、切换 feature 时的影响
+%   - 性能/内存假设与已知限制
+% 【事实来源】
+%   - 上述 crate 源码与 Cargo.toml
+%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+
+\subsubsection{impl-qemu-riscv64-opensbi}
+
+\paragraph{引导状态。}\code{init\_when\_boot}将DTB物理地址存入\code{DTB\_BASE\_ADDR}。\code{physical\_ram\_end\_exclusive}遍历DTB\code{memory@*}节点\code{reg}，取\code{base>=0x8000\_0000}的最大末端；失败回退\code{wateros-base-config::QEMU\_VIRT\_PHYS\_RAM\_END}。
+
+\paragraph{DTB扫描。}\code{scan\_device\_info}清空并重建\code{DEVICE\_INFOS}：解析\code{compatible}列表、首段MMIO、IRQ与virtio魔数/\code{device\_id}探测类型。对\code{virtio,mmio}节点打诊断日志（魔数、\code{device\_id}、区域大小）。
+
+\paragraph{设备注册流程。}\code{init\_after\_boot\_inner}顺序为：打印各子系统\code{supported\_devices}目录、\code{scan\_device\_info}、\code{probe\_character\_devices}、\code{probe\_virtio\_blk\_and\_collect\_unsupported}。字符路径：DTB NS16550节点注册\code{SerialPortCharacterDevice}；若无节点则回退\code{QemuVirtUart16550::qemu\_virt\_default()}（\code{0x1000\_0000}）；最后\code{register\_builtin\_character\_devices}。块/网路径：对认领的virtio-mmio节点调用\code{VirtioBlkDevice::from\_mmio}/\code{VirtioNetDevice::from\_mmio}，可选\code{BlockCacheManager::wrap}后\code{register\_*}。
+
+\paragraph{devfs与自检。}\code{sync\_devfs}将未绑定virtio节点路径交给\code{devfs::set\_dt\_unsupported\_paths}并\code{refresh}。\code{virtio\_blk\_probe\_test}对首块读LBA0验证IO。\code{test()}在\code{init\_after\_boot}完成后转储\code{DeviceInfo}与devfs节点列表。重复\code{init\_after\_boot}由\code{INIT\_AFTER\_BOOT\_DONE}原子标志忽略。
+
+\begin{rustcode}
+fn probe_virtio_device_type(mmio: MmioRegion) -> DeviceType {
+    let magic = mmio_read32(mmio.base, 0);
+    let device_id = mmio_read32(mmio.base, 2);
+    if magic != 0x74726976 {
+        return DeviceType::Unknown;
+    }
+    match device_id {
+        2 => DeviceType::Block,
+        1 => DeviceType::Network,
+        _ => DeviceType::Unknown,
+    }
+}
+\end{rustcode}
+
+\paragraph{限制。}\code{DeviceInfo.irq}已解析但未挂接PLIC处理；多盘/多网卡仅全部注册，根FS与\code{stack::init}仍偏向首设备。块设备写路径依赖virtio-blk实现，缓存为写穿。

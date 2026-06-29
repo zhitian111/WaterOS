@@ -1,0 +1,26 @@
+% 【本文件写什么】一级组件 wateros-runtime（§ 级聚合）
+%   - 组件职责与在内核中的位置：控制台、分级日志、panic、堆分配器与串口再导出。
+%   - 聚合 crate os/components/wateros-runtime/src/lib.rs 的 pub mod 树与对外导出面
+%   - 子模块划分、与相邻组件的依赖边界（谁依赖谁、走哪条门面）
+%   - 根 feature / 本组件 Cargo.toml feature 如何选用各 impl
+%   - 1～2 段综述后，由下方 \input 展开子模块；不在此逐条列举 api trait
+% 【事实来源】
+%   - os/components/wateros-runtime/src/lib.rs、Cargo.toml
+%   - docs/exports/public-api/wateros-runtime.md
+%   - docs/exports/features/wateros-runtime.md
+%   - os/feature-tree.txt 中 wateros-runtime 相关段
+% 【不写什么】
+%   - api-v0 契约细节 → 子目录 api/api-v0.tex
+%   - 各 impl 算法/平台细节 → 子目录 impl/*.tex
+
+\section{wateros-runtime}
+
+\code{wateros-runtime}聚合内核早期运行时能力：\code{panic}、\code{console}、\code{logging}、\code{heap\_allocator}，以及在\code{serial-uart-virt} feature下再导出\code{serial}。根crate只做模块再导出，初始化顺序由\code{wateros}组合层保证：任何堆分配前\code{heap\_allocator::init()}，使用\code{log!}前\code{logging::init()}，\code{klog::init()}与之独立。
+
+QEMU主线默认\code{impl-platform-console}，把\code{print!}/\code{println!}接到\code{platform::console}；\code{impl-dummy}下任何实际写控制台会\code{unimplemented!()}。开发日志经\code{WaterOSLogger}着色上屏，不写入\code{wateros-klog}环；需要「上屏+进环」时调用方须分别使用\code{log::*!}与\code{klog\_*!}。日志级别由\code{impl-trace}…\code{impl-error} feature择一（多开时取最安静档）。
+
+\input{chapters/chap03/components/wateros-runtime/runtime-console/console}
+\input{chapters/chap03/components/wateros-runtime/runtime-heap-allocator/heap-allocator}
+\input{chapters/chap03/components/wateros-runtime/runtime-logging/logging}
+\input{chapters/chap03/components/wateros-runtime/runtime-panic/panic}
+\input{chapters/chap03/components/wateros-runtime/runtime-serial/serial}

@@ -1,0 +1,37 @@
+% 【本文件写什么】impl 实现层：smoltcp
+%   - 定位：smoltcp 协议栈适配与 socket API。
+%   - crate 路径：os/components/wateros-driver/driver-network/network-impl/impl-smoltcp/src/
+%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+%   - 算法或硬件交互流程（可用伪代码/流程图）
+%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
+%   - 与其它 impl 变体的差异、切换 feature 时的影响
+%   - 性能/内存假设与已知限制
+% 【事实来源】
+%   - 上述 crate 源码与 Cargo.toml
+%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+
+\subsubsection{impl-smoltcp}
+
+\paragraph{设备适配层。}\code{SmoltcpAdapter}持有可选\code{SharedNetworkDevice}、64KiB RX/TX缓冲、\code{loopback\_queue}与\code{rx\_staging}。\code{new}绑定真实网卡；\code{loopback\_only}在\code{inner==None}时用固定MAC\code{02:00:00:00:00:01}。\code{receive} token从staging或底层\code{receive}拉取帧；\code{transmit} token在发送前识别目的IPv4为本机或\code{127.0.0.0/8}时入队软件回环，避免经QEMU user netdev往返。
+
+\paragraph{stack模块。}\code{init(ip, gateway)}用首张网卡或回环模式构造\code{Interface}，配置\code{/24}本机地址、\code{127.0.0.0/8}与默认路由。\code{poll\_at\_millis}以调用方单调毫秒驱动\code{iface.poll}。\code{SocketMeta}在内核侧跟踪\code{SocketState}（\code{Created}/\code{Bound}/\code{Listening}/\code{Connecting}/\code{Connected}/\code{Closed}）、ephemeral端口、\code{TCP\_NODELAY}、\code{SO\_RCVTIMEO}记录值与组播成员集合。
+
+\paragraph{socket工厂与操作。}\code{create\_tcp\_socket}/\code{create\_udp\_socket}向\code{SocketSet}添加smoltcp socket并插入元数据。\code{socket\_bind}对TCP预分配ephemeral端口（满足netperf在\code{listen}前\code{getsockname}）；UDP调用smoltcp\code{bind}。\code{socket\_connect}、\code{socket\_listen}/\code{accept}、\code{send}/\code{recv}、\code{sendto}/\code{recvfrom}覆盖INET测程主路径。\code{poll\_socket\_events}将\code{Connecting}同步为\code{Connected}。
+
+\paragraph{setsockopt子集。}支持\code{SO\_REUSEADDR}/\code{SO\_REUSEPORT}空操作、\code{SO\_SNDBUF}/\code{SO\_RCVBUF}记录、\code{SO\_RCVTIMEO}/\code{SO\_SNDTIMEO}解析、\code{TCP\_NODELAY}、\code{IP\_ADD\_MEMBERSHIP}/\code{MCAST\_JOIN\_GROUP}等iperf依赖选项。\code{getsockopt}可返回\code{SO\_ERROR}、缓冲区大小、\code{TCP\_INFO}（按Linux uapi偏移填充供iperf3查询）。
+
+\begin{rustcode}
+pub fn init(ip: [u8; 4], gateway: [u8; 4]) -> Result<(), &'static str> {
+    let mut adapter = match first_network_device() {
+        Some(device) => SmoltcpAdapter::new(device),
+        None => {
+            log::warn!("[network-stack] no network device registered; using loopback-only mode");
+            SmoltcpAdapter::loopback_only()
+        }
+    };
+    // ... Interface::new, routes, NETWORK_STACK = Some(...)
+    Ok(())
+}
+\end{rustcode}
+
+\paragraph{VFS桥。}\code{socket\_handles}（同feature）将\code{SocketHandle}包装为\code{TcpStreamHandle}/\code{UdpSocketHandle}等，供\code{wateros-syscall} socket系统调用读写。限制：无完整\code{select}/\code{epoll}与网卡多队列；中断未驱动收包，依赖poller轮询。

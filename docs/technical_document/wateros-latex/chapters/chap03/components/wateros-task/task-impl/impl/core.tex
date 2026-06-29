@@ -1,0 +1,37 @@
+% 【本文件写什么】impl 实现层：core
+%   - 定位：任务对象、启动与 runtime 机制核心。
+%   - crate 路径：os/components/wateros-task/task-impl/impl-core/src/
+%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+%   - 算法或硬件交互流程（可用伪代码/流程图）
+%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
+%   - 与其它 impl 变体的差异、切换 feature 时的影响
+%   - 性能/内存假设与已知限制
+% 【事实来源】
+%   - 上述 crate 源码与 Cargo.toml
+%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+
+\subsubsection{impl-core}
+
+TaskControlBlock：字段含\code{id}、\code{parent\_id}、\code{state}、\code{sched\_policy}、\code{sched\_priority}、\code{stats}、\code{wait\_result}、arch \code{TaskContext}、\code{TaskInner}。\code{TaskInner}按\code{Idle | Kernel | User}分支持有资源：内核路径为\code{KernelStack} + \code{TaskBootstrap}；用户路径额外含\code{TaskTrapFrame}与\code{UserTask}镜像。
+
+任务创建：\code{new\_kernel\_task}用\code{TaskContext::goto\_task\_entry}指向\code{\_\_arch\_task\_entry}。\code{new\_user\_task}构造\code{UserResources}：\code{trap\_frame.prepare\_user\_return(entry\_pc, user\_sp)}，写入地址空间 token 与可选 argc/argv/envp。
+
+fork/clone/exec：调度器复制父 trap 帧创建子 TCB；fork 子进程\code{a0}由\code{wateros-abi}在返回用户态前置 0。execve 替换当前 TCB 用户映像字段；\code{ProcessRegistry::update\_process\_address\_space}同步进程级地址空间引用。
+
+ProcessRegistry：\code{ProcessControlBlock}维护\code{pid}、\code{leader\_task\_id}、\code{parent\_pid}、\code{AddressSpaceRef}、\code{rlimits}、\code{nice}、\code{pgid}、\code{tasks}向量、\code{ProcessState}。leader 的\code{tid}与\code{pid}同号；clone 线程分配独立\code{ThreadId}。\code{create\_process\_like\_fork}、\code{add\_task\_to\_process}、\code{abort\_forked\_process}支撑 fork/clone 失败回滚。
+
+\begin{rustcode}
+pub struct TaskControlBlock {
+    id: TaskId,
+    parent_id: Option<TaskId>,
+    state: TaskState,
+    sched_policy: SchedPolicy,
+    sched_priority: i32,
+    task_cx: TaskContext,
+    inner: TaskInner,
+}
+\end{rustcode}
+
+trap 现场：\code{begin\_current\_trap\_frame\_access}/\code{restore\_current\_trap\_frame}在 TCB 与栈上 trap 帧间交换权威副本；\code{TaskTrapSnapshot}供调试与 syscall 查询。
+
+全局\code{UniprocessorSafeCell}保护 registry；单核关中断临界区，无 per-CPU 数据结构。

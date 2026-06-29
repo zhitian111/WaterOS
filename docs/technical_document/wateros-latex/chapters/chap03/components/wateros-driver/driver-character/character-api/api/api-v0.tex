@@ -1,0 +1,33 @@
+% 【本文件写什么】api-v0 契约层（叶子，只写语义不写实现）
+%   - crate 路径：os/components/wateros-driver/driver-character/character-api/api-v0/src/
+%   - 列出并说明：pub trait、核心类型、错误枚举、常量
+%   - 每个公开 API 的前置条件、后置条件、线程/中断上下文限制
+%   - 与 Linux/用户态约定的对齐点与 deliberate 差异
+%   - v0 版本当前行为与后续可替换 extension 点
+% 【事实来源】
+%   - 上述 crate 下全部 .rs 源文件
+%   - docs/exports/public-api/ 中对应符号表（以源码为准）
+% 【不写什么】
+%   - impl 内部数据结构、汇编、具体算法步骤
+
+\subsubsection{character-api-v0}
+
+\paragraph{SerialPort与CharacterDevice。}\code{SerialPort}定义\code{write\_byte}/\code{write\_all}、\code{read\_byte\_blocking}与\code{try\_read\_byte}；发送侧自旋等待THRE，接收侧由实现决定阻塞语义。\code{CharacterDevice}要求\code{read}/\code{write}返回实际字节数；\code{read}返回0表示EOF（由实现定义）。默认\code{poll\_revents}对\code{POLLIN}/\code{POLLOUT}乐观置位；\code{SerialPortCharacterDevice}覆盖为基于\code{try\_read\_byte}的真实就绪检测。默认\code{ioctl}返回\code{Unsupported}。
+
+\paragraph{设备类别与注册表。}\code{CharacterDeviceKind}区分\code{Serial}、\code{Rtc}、\code{Null}，供devfs路径别名与syscall分发。\code{register\_character\_device}、\code{character\_device\_count}、\code{first\_character\_device}、\code{with\_character\_device}与块/网卡子系统注册表模式一致。\code{SerialError::TransmitterStuck}表示发送寄存器长时间不可写。
+
+\begin{rustcode}
+pub trait CharacterDevice: Send {
+    fn read(&mut self, buf: &mut [u8]) -> DriverResult<usize>;
+    fn write(&mut self, buf: &[u8]) -> DriverResult<usize>;
+    fn poll_revents(&mut self, events: i16) -> DriverResult<i16> { /* ... */ }
+    fn ioctl(&mut self, _request: usize, _arg: usize) -> DriverResult<isize> {
+        Err(DriverError::Unsupported)
+    }
+    fn device_kind(&self) -> CharacterDeviceKind {
+        CharacterDeviceKind::Serial
+    }
+}
+\end{rustcode}
+
+\paragraph{差异与限制。}v0未实现TTY行规程、\code{termios}或中断驱动接收；控制台输出依赖MMIO轮询。RTC时间读写不在trait层完成，\code{RtcCharacterDevice}仅为标记型占位，与glibc\code{hwclock}布局的\code{RtcTime}结构体定义在\code{impl-rtc-stub} crate。

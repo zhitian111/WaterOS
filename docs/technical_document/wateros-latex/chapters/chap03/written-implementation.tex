@@ -1,0 +1,602 @@
+% 第 3 章「关键模块实现」（当前 main.tex 使用的整章正文）。
+%
+% 按用户态运行路径写：平台/运行时、trap、MM、task、driver、FS/VFS、
+% syscall、IPC/cred/klog；含代码摘录与数据流说明。
+%
+% 长期目标：将各节迁入 chapters/chap03/components/ 下对应组件 .tex，
+% 完成后 main.tex 改为 \include{chapters/chap03/implementation}。
+
+\chapter{关键模块实现}
+
+本章从用户程序实际运行路径展开，依次描述平台入口、trap 与系统调用入口、地址空间、任务调度、设备驱动、文件系统、系统调用和 IPC 等关键模块。各小节围绕接口边界、数据流和关键状态转换展开，并选取能够代表实现方式的代码片段。
+
+
+\section{平台与运行时}
+
+平台层的任务是把引导参数、固件调用、特权寄存器、trap frame、定时器和关机方式收束到统一接口里。RISC-V64 和 LoongArch64 在这里差别最大，因此平台相关实现集中放在 \code{wateros-platform} 下的 \code{platform-api}、\code{platform-arch}、\code{platform-firmware} 和 \code{platform-impl} 中。
+
+RISC-V64 路径的 boot context 会把 OpenSBI 的 \code{a0/a1} 解释为 hart id 和 DTB 物理地址：
+
+\begin{rustcode}
+impl From<QEMURiscv64OpenSBIBootArgs> for QEMURiscv64OpenSBIBootContext {
+    fn from(value: QEMURiscv64OpenSBIBootArgs) -> Self {
+        let hart_id = value.arg0().expect("OpenSBIBoot args error in arg0");
+        let dtb_pa = value.arg1().expect("OpenSBIBoot args error in arg1");
+        let dtb_pa = base::addr::BasePhysAddr { val: dtb_pa };
+        Self { _hart_id: hart_id, _dtb_pa: dtb_pa }
+    }
+}
+\end{rustcode}
+
+LoongArch64 路径则先保留固件传入的三个槽位，当前主线在 \code{kernel\_main} 中使用 \code{envp} 继续传递平台信息：
+
+\begin{rustcode}
+impl From<QEMULoongArch64VirtBootArgs> for QEMULoongArch64VirtBootContext {
+    fn from(value: QEMULoongArch64VirtBootArgs) -> Self {
+        Self {
+            arg0: value.arg0,
+            arg1: value.arg1,
+            arg2: value.arg2,
+        }
+    }
+}
+\end{rustcode}
+
+运行时组件 \code{wateros-runtime} 提供 \code{print!} / \code{println!}、日志、panic handler 和全局堆分配器。这些能力必须在复杂子系统之前初始化，因为 MM、驱动、FS 和用户 ELF 装载都依赖日志来定位裸机环境下的问题。\code{wateros-klog} 则额外维护一份内核消息环，使用户态后续可以通过 \syscall{syslog(2)} 读取内核日志。
+
+两条平台路径的关键差异不会继续向上扩散：RISC-V64 通过 OpenSBI 接入 console、timer、reset，页表切换使用 \code{satp} 与 \code{sfence.vma}；LoongArch64 使用 QEMU virt profile、StableCounter 和 LoongArch CSR，页表切换使用 \code{CSR.PGDL} 与 \code{invtlb}。进入 task、VFS 和 syscall 后，上层只看统一的时间、中断、地址空间 token 和 trap 上下文接口。
+
+\section{异常、中断与系统调用入口}
+
+WaterOS 的异常与中断路径由架构层 trap 汇编保存现场，再进入组合层 \code{os/src/trap\_handler.rs}。组合层根据 \code{TrapCause} 分流：用户态 \code{ecall} 进入 syscall 分发；用户态页错误先尝试 COW 或 lazy page fault 处理，失败后转为信号或结束任务；timer interrupt 重装下一次定时器并触发调度 tick；内核态不可恢复异常进入 fatal trap，避免继续返回损坏现场。
+
+下面摘录展示了 trap handler 中最核心的三类路径：系统调用、缺页异常和时钟中断。
+
+\begin{rustcode}
+match trap_cause {
+    TrapCause::Exception(Exception::UserEnvCall) => {
+        let syscall_nr = cx.syscall_nr().raw();
+        let syscall_args = cx.syscall_args();
+        let syscall_ret = dispatch_syscall_from_trap(syscall_nr, syscall_args);
+
+        let exec_succeeded = syscall_nr ==
+            <ActiveSyscallNumberTable as SyscallNumberTable>::EXEC.raw()
+            && syscall_ret >= 0;
+        if !exec_succeeded {
+            cx.add_user_pc(SYSCALL_INSN_BYTES);
+            cx.set_syscall_ret(UserRet(syscall_ret));
+        }
+    }
+    TrapCause::Exception(Exception::LoadPageFault)
+    | TrapCause::Exception(Exception::StorePageFault) => {
+        if mm::kernel_mm::handle_user_page_fault(
+            task::current_task_user_aspace_ptr(),
+            cx.fault_addr(), fault_access) {
+            finish_trap_return(frame, cx, raw_cause);
+            return;
+        }
+        let _ = syscall::raise_current_signal(11);
+    }
+    TrapCause::Interrupt(Interrupt::SupervisiorTimer) => {
+        platform::timer::set_timer_after_ms(TIMER_REARM_MS).unwrap();
+        syscall::timer_tick(cx.returns_to_user());
+        task::schedule_tick();
+    }
+    _ => { /* signal or fatal kernel trap */ }
+}
+\end{rustcode}
+
+这里有两个关键实现细节。第一，普通 syscall 返回前必须推进用户 PC，否则会重复执行同一条 \code{ecall}；\syscall{execve} 成功时已经替换 trap frame，因此不能再按普通 syscall 写回返回值。第二，用户态页错误先交给 MM 的 COW/lazy fault 路径，无法修复时再投递 \code{SIGSEGV} 或结束当前任务。这样的处理方式把异常处理、系统调用处理、虚拟内存和信号路径连接在一起。
+
+
+\section{内存管理}
+
+\code{wateros-mm} 的设计重点是把“页表格式”与“上层内存语义”分开。RISC-V64 的页表实现位于 \code{mm-impl/impl-sv39}，LoongArch64 的页表实现位于 \code{mm-impl/impl-loongarch64}；两者都向上提供地址空间创建、map / unmap / protect / translate、ELF 装载、用户指针拷贝、COW fork 和 mmap fault 处理等能力。
+
+分页控制原语放在平台架构层。RISC-V64 切换地址空间时写 \code{satp} 并执行 \code{sfence.vma}：
+
+\begin{rustcode}
+pub fn activate_address_space_token_and_flush(token: usize) {
+    unsafe {
+        asm!("csrw satp, {0}", in(reg) token);
+        asm!("sfence.vma x0, x0");
+    }
+}
+\end{rustcode}
+
+LoongArch64 切换地址空间时写 \code{CSR.PGDL} 并用 \code{invtlb} 刷新 TLB，同时在启动早期提供关闭/开启分页的控制：
+
+\begin{rustcode}
+pub fn activate_address_space_token_and_flush(token: usize) {
+    Self::write_pgdl(token);
+    Self::invtlb_all();
+}
+
+pub fn init_paging_disable_mmu() {
+    let desired = (crmd | CRMD_DA) & !CRMD_PG;
+    if crmd != desired {
+        asm!("csrwr {0}, {1}", inout(reg) crmd => _, const CSR_CRMD);
+        Self::invtlb_all();
+    }
+}
+\end{rustcode}
+
+上层 MM 不直接关心 token 的具体格式。内核页表初始化后保存当前平台的内核地址空间 token；从用户态 trap 回内核时恢复内核页表，返回用户态前再切换到当前任务的用户地址空间。用户页表权限同时区分 R/W/X/U，系统调用层访问用户缓冲区时通过 user copy 接口做地址检查，避免内核直接信任用户传入的指针。
+
+fork 采用 COW 方式复制地址空间。两套页表实现都提供 \code{fork\_cow()}，共享用户页时清除写权限并标记 COW；写缺页发生后，若物理页仍被多方引用，则分配新页并复制内容，否则只恢复写权限：
+
+\begin{rustcode}
+pub fn fork_user_aspace(parent_aspace_ptr: usize) -> MmResult<(usize, usize)> {
+    let parent = unsafe { &mut *(parent_aspace_ptr as *mut Sv39AddressSpace) };
+    let child = parent.fork_cow()?;
+    let satp = child.satp_value();
+    let child_ptr = Box::into_raw(Box::new(child)) as usize;
+    Ok((child_ptr, satp))
+}
+
+fn handle_cow_page(&mut self, vpn: VirtPageNum) -> MmResult<bool> {
+    let Some((pte, level)) = self.walk_find(vpn)? else {
+        return Ok(false);
+    };
+    let flags = pte.flags();
+    if !flags.is_leaf_at_level(level) || !flags.cow() || !flags.cow_was_writable() {
+        return Ok(false);
+    }
+    let old_ppn = pte.ppn();
+    let new_flags = flags.restore_cow_writable();
+    if frame_ref_count(old_ppn).map_err(MmError::from)? <= 1 {
+        pte.set(old_ppn, new_flags);
+        platform::arch::paging::flush_address_space_translations();
+        return Ok(true);
+    }
+
+    let new_ppn = frame_alloc_result().map_err(MmError::from)?;
+    let src = old_ppn.0 * PAGE_SIZE;
+    let dst = new_ppn.0 * PAGE_SIZE;
+    unsafe {
+        core::ptr::copy_nonoverlapping(src as *const u8, dst as *mut u8, PAGE_SIZE);
+    }
+    frame_dealloc_result(old_ppn).map_err(MmError::from)?;
+    pte.set(new_ppn, new_flags);
+    platform::arch::paging::flush_address_space_translations();
+    Ok(true)
+}
+\end{rustcode}
+
+\syscall{brk}、\syscall{mmap}、\syscall{munmap} 和 \syscall{mprotect} 位于两套实现的 \code{user\_heap\_mmap.rs} 中。\syscall{brk} 根据新旧堆尾实际增删页表映射，并维护用户堆区边界；文件映射采用 lazy fault 思路，\syscall{mmap} 先登记虚拟区间、权限和文件偏移，真正访问时再由 page fault 路径按页补入内容；\syscall{mprotect} 修改权限后刷新用户地址空间翻译缓存。对非法地址、越界用户缓冲区和不可满足的映射请求，MM 与 syscall 层会返回 \code{EFAULT}、\code{EINVAL} 或 \code{ENOMEM} 等 Linux 风格错误码。
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{4.5cm}>{\raggedright\arraybackslash}p{8.8cm}}
+  \caption{内存管理相关子模块}\label{tab:mm-submodules}\\
+  \toprule[1.5pt]
+  文件 / 子模块 & 作用 \\
+  \midrule[1pt]
+  \code{kernel\_global.rs} & 建立和维护内核全局页表，向 trap 和 task 路径提供当前平台的内核地址空间 token。 \\
+  \code{pagetable.rs} & 封装页表 walk、map、unmap、protect、translate、COW fork 与 page fault 修复等底层页表操作。 \\
+  \code{kernel\_elf.rs} & 从根卷或字节流装载 ELF，映射 \code{PT\_LOAD} 段、用户栈和 signal trampoline。 \\
+  \code{user\_aspace.rs} & 管理用户地址空间句柄、用户栈、地址空间生命周期和 fork 后的用户态运行状态。 \\
+  \code{user\_heap\_mmap.rs} & 支持 \syscall{brk}、\syscall{mmap}、\syscall{munmap}、\syscall{mprotect} 以及文件映射装载路径。 \\
+  \code{user\_access.rs} & 提供 syscall 路径访问用户缓冲区所需的地址检查、按需补页和拷贝能力。 \\
+  \bottomrule[1.5pt]
+\end{longtable}
+
+
+\section{任务管理与调度}
+
+\code{wateros-task} 负责维护任务对象、进程关系、运行状态和调度队列。任务状态包括 \code{Ready}、\code{Running}、\code{Blocking}、\code{Sleeping} 与 \code{Exited}。调度器根据 yield、timer tick、阻塞、睡眠与退出等原因选择后续任务，并为后续扩展多级调度策略保留入口。
+
+用户任务通过 \code{LoadedElf} 创建，任务对象保存入口 PC、用户栈范围、地址空间句柄与 trap frame 快照。退出任务不会立即丢弃，而是进入 zombie 状态，等待父任务或显式 wait 路径回收。\syscall{fork}/legacy \syscall{clone} 的进程路径会调用 \code{mm::kernel\_mm::fork\_user\_aspace} 创建 COW 地址空间，继承 cwd、fd、socket fd、凭证和共享内存附件，并把子进程 trap frame 的返回值设置为 0。
+
+legacy \syscall{clone} 的 ABI 参数在 RISC-V64 与 LoongArch64 上有差别，代码中单独处理了 \code{tls} 与 \code{child\_tid} 的位置：
+
+\begin{rustcode}
+#[cfg(target_arch = "loongarch64")]
+fn decode_legacy_clone_args(args: SyscallArgs) -> CloneRequest {
+    CloneRequest {
+        clone_flags: task::CloneFlags::from_bits(args.arg(0)),
+        child_stack: args.arg(1),
+        parent_tid: args.arg(2),
+        tls: args.arg(4),
+        child_tid: args.arg(3),
+    }
+}
+
+#[cfg(not(target_arch = "loongarch64"))]
+fn decode_legacy_clone_args(args: SyscallArgs) -> CloneRequest {
+    CloneRequest {
+        clone_flags: task::CloneFlags::from_bits(args.arg(0)),
+        child_stack: args.arg(1),
+        parent_tid: args.arg(2),
+        tls: args.arg(3),
+        child_tid: args.arg(4),
+    }
+}
+\end{rustcode}
+
+当 \code{CLONE\_VM + CLONE\_THREAD} 同时出现时，代码进入线程 clone 路径；否则按进程 fork 处理。\code{clone3} 已能读取 \code{struct clone\_args} 并复用现有 clone 入口，但 \code{pidfd}、\code{set\_tid}、\code{cgroup} 等高级字段目前返回 \code{ENOSYS}，这比静默忽略更容易暴露兼容性边界。
+
+调度切换的入口位于 \code{task-scheduler/scheduler-impl/impl-multi-class/src/lib.rs}。调度器先根据原因选择任务，再调用底层 \code{\_\_switch} 完成上下文切换：
+
+\begin{rustcode}
+pub fn run_first_task() -> ! {
+    let (current_task_cx_ptr, next_task_cx_ptr) =
+        with_scheduler(|scheduler| scheduler.prepare_first_switch());
+    unsafe {
+        __switch(current_task_cx_ptr, next_task_cx_ptr);
+    }
+    panic!("run_first_task must not return");
+}
+
+pub fn schedule_tick() {
+    let _guard = InterruptGuard::new();
+    let switch_pair = with_scheduler(|scheduler| {
+        scheduler.schedule(ScheduleReason::Tick)
+    });
+    if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
+        unsafe {
+            __switch(current_task_cx_ptr, next_task_cx_ptr);
+        }
+    }
+}
+\end{rustcode}
+
+这里的 \code{InterruptGuard} 用于在修改调度状态时保护临界区，\code{ScheduleReason} 则把 yield、timer tick、阻塞、睡眠等触发原因显式传入调度策略，便于后续替换或扩展调度器。
+
+\syscall{execve} 会读取用户传入的路径、argv 和 envp，装载新 ELF，构造新用户栈，关闭 \code{CLOEXEC} fd，并用新的入口 PC、SP、地址空间 token 和用户地址空间替换当前任务映像。\syscall{waitpid} 通过 child-exit wait queue 在没有子进程退出时阻塞，收到退出事件后回收 zombie 进程并把退出状态写回用户空间。没有子进程返回 \code{ECHILD}，\code{WNOHANG} 场景返回 0，被信号打断时返回 \code{EINTR}，这些路径都经 \code{UserRet} 编码为用户态可见的 Linux syscall 返回值。
+
+\section{设备驱动}
+
+驱动层采用“设备抽象 API + 子系统 + 平台 impl”的结构。RISC-V64 QEMU + OpenSBI 路径下，\code{impl-qemu-riscv64-opensbi} 读取 DTB 地址，使用 FDT 解析 \code{compatible} 和 \code{reg}，对 \code{virtio,mmio} 节点读取 magic 与 \code{device\_id}。LoongArch64 QEMU virt 路径下，\code{impl-qemu-loongarch64-virt} 选择 VirtIO-PCI 后端，块设备和网络设备仍通过统一的 driver-block / driver-network trait 暴露。
+
+当 \code{device\_id == 2} 时，驱动识别为 virtio-blk 并初始化 \code{VirtioBlkDevice}。若启用块缓存 feature，则使用 \code{CachingBlockDevice} 进行写穿 LRU 包装，再注册到 \code{driver-block} 全局表。驱动初始化结束后通过 \code{wateros-fs} 聚合层刷新 devfs，从而生成 \code{/dev/vblk0} 等设备节点。
+
+中断线信息在驱动初始化阶段被记录，块设备路径以轮询和同步调用方式完成当前阶段的读写验证；网络相关目录和 socket syscall 子集已经存在，完整网络评测路径后续继续完善。
+
+驱动目录中，\code{driver-api/api-v0} 定义 \code{DeviceInfo}、\code{DeviceType}、\code{MmioRegion}、\code{DriverError} 等公共类型；\code{driver-block} 提供 \code{BlockDevice} trait 与全局块设备表，并按平台组合选择 VirtIO-MMIO 或 VirtIO-PCI 实现；\code{driver-impl/impl-qemu-riscv64-opensbi} 与 \code{driver-impl/impl-qemu-loongarch64-virt} 分别负责对应 QEMU 平台设备初始化。驱动层只负责注册设备，根文件系统挂载由 \code{wateros-fs} 继续完成。
+
+
+下面两段摘录展示了双架构驱动后端的差异。RISC-V64 路径从 DTB 节点读取 VirtIO-MMIO 寄存器，通过 magic 和 device id 判断设备类型：
+
+\begin{rustcode}
+fn probe_virtio_device_type(mmio: MmioRegion) -> DeviceType {
+    let magic = mmio_read32(mmio.base, 0);
+    let device_id = mmio_read32(mmio.base, 2);
+    if magic != 0x74726976 {
+        return DeviceType::Unknown;
+    }
+    match device_id {
+        2 => DeviceType::Block,
+        1 => DeviceType::Network,
+        _ => DeviceType::Unknown,
+    }
+}
+\end{rustcode}
+
+LoongArch64 路径则枚举 PCIe ECAM，找到 virtio-blk 后注册到同一个块设备表。后续 devfs、FS 和 VFS 不需要区分设备来自 MMIO 还是 PCI：
+
+\begin{rustcode}
+let config_base = pci::find_config_base(DTB_BASE_ADDR.load(Ordering::Acquire));
+match pci::probe_virtio_blk_pci(config_base) {
+    Ok(Some((dev, info))) => {
+        let dev: Box<dyn BlockDevice> = Box::new(dev);
+        let shared = Arc::new(Mutex::new(dev));
+        let idx = register_block_device(shared);
+        VIRTIO_BLK_PCI.lock().push(info);
+        log::info!("registered virtio-blk #{} via PCI", idx);
+    }
+    Ok(None) => log::warn!("no virtio-blk device found"),
+    Err(err) => log::warn!("failed to init virtio-blk: {:?}", err),
+}
+\end{rustcode}
+
+这两段代码对应第 2 章中的双架构表述：底层设备发现方式不同，但都落到 \code{register\_block\_device} 和 \code{BlockDevice} trait，因而根文件系统挂载和用户态文件访问可以复用同一条上层路径。
+
+\section{文件系统与 VFS}
+
+\code{wateros-fs} 提供文件系统能力注册表和根卷挂载逻辑。当前默认根卷为 ext4，默认 feature 选择 \code{impl-ext4-rs}，旧 \code{impl-ext4} 路径保留为可选实现。启动时，文件系统层从 devfs 选择默认块设备，依次调用已注册 \code{FsImpl} 的 \code{probe} 与挂载接口，成功后保存全局根卷句柄。
+
+VFS 层负责把根卷能力暴露给 syscall 和用户程序：
+
+\begin{itemize}
+  \item \code{impl-fs-bridge} 将 \code{wateros-fs} 的根卷读写接口桥接为路径视图。
+  \item \code{fd-session} 维护 per-task fd 表、cwd、CLOEXEC、dup/dup3 与 fork 继承。
+  \item console、pipe、regular file 均通过 \code{VfsIoHandle} 统一读写。
+  \item 常规文件通过 \code{PagedFileHandle} 进入页缓存路径，缓存键使用挂载代次与路径，避免根卷重新挂载后的旧缓存污染。
+  \item procfs 提供 \code{/proc/<pid>/stat}、\code{status}、\code{cmdline}、\code{/proc/meminfo}、\code{/proc/mounts} 等只读视图。
+\end{itemize}
+
+目录枚举已经从普通 ext4 目录扩展到 procfs 伪目录。\syscall{getdents64} 先检查用户缓冲区和长度，再通过当前 fd 对应的 \code{VfsIoHandle} 生成 Linux \code{linux\_dirent64} 布局；如果 fd 不是目录，则返回 \code{ENOTDIR}，如果写回用户空间失败，则返回 \code{EFAULT}。
+
+\begin{rustcode}
+pub(crate) fn sys_getdents64(args: SyscallArgs) -> UserRet {
+    let fd = args.arg(0);
+    let dirp = args.arg(1);
+    let count = args.arg(2);
+    if dirp == 0 { return UserRet::from_error(ErrNo::EFAULT); }
+    if count == 0 { return UserRet::from_error(ErrNo::EINVAL); }
+
+    let mut kbuf = alloc::vec::Vec::with_capacity(count.min(4096));
+    kbuf.resize(count, 0);
+    let written = match vfs::fd::with_current_io(fd, |handle| {
+        if handle.directory_path().is_none() {
+            return Err(VfsError::NotAFile);
+        }
+        handle.fill_getdents64(&mut kbuf)
+    }) {
+        Ok(n) => n,
+        Err(VfsError::NotAFile) => return UserRet::from_error(ErrNo::ENOTDIR),
+        Err(VfsError::Unsupported) => return UserRet::from_error(ErrNo::ENOTDIR),
+        Err(e) => return UserRet::from_error(vfs_error_to_errno(e)),
+    };
+    match copy_to_user(dirp, &kbuf[..written]) {
+        Ok(n) if n == written => UserRet::from_success(written),
+        _ => UserRet::from_error(ErrNo::EFAULT),
+    }
+}
+\end{rustcode}
+
+ext4 写路径当前用于支撑根卷读写、常规文件访问和用户态程序运行。它已经能覆盖 bring-up、目录创建、inode 扩展、权限落盘和小文件读写；journal、崩溃恢复、多挂载 inode/dentry 树、异步 IO 与更完整的字符设备 devfs 仍需要继续完善。
+
+文件系统和 VFS 在代码中保持两层职责：\code{wateros-fs} 更接近具体文件系统和块设备挂载，\code{wateros-vfs} 更接近 Linux 用户态看到的路径、fd 和文件对象。具体来说，\code{fs-api/api-v0} 定义 \code{ReadOnlyFs}、\code{ReadWriteFs} 和 \code{FsImpl}；\code{fs-devfs} 维护 \code{/dev/vblkN}；\code{fs-rootfs} 保存当前根卷；\code{fs-impl/impl-ext4-rs} 承载默认 ext4 读写。VFS 侧则通过 \code{vfs-impl/impl-fs-bridge}、\code{impl-fd-session}、\code{impl-page-cache} 将这些能力组织成 syscall 可用的 fd 操作。
+
+从启动到用户态文件访问，当前数据流如下：
+
+\begin{enumerate}
+  \item \code{driver::active\_impl::init\_after\_boot()} 扫描 DTB，初始化 virtio-blk，并注册 \code{BlockDevice}。
+  \item \code{fs-devfs} 根据块设备表刷新 \code{/dev/vblk0} 等节点。
+  \item \code{fs::init()} 通过 \code{registered\_fs\_impls()} 遍历可用文件系统实现，对默认块设备执行 \code{probe}。
+  \item ext4 probe 命中后，\code{fs-rootfs} 保存根卷句柄，bring-up 总线再调用 \code{mount\_default\_root\_rw()} 获取 RW 根卷。
+  \item \code{wateros-vfs} 的 fs bridge 将根卷读写能力转为路径视图，\code{fd-session} 为每个任务维护 fd 表。
+  \item \syscall{openat/read/write/close/getdents64} 等 syscall 最终经 \code{vfs::fd} 调用对应文件、目录、pipe 或 console handle。
+\end{enumerate}
+
+该路径使驱动层、文件系统层、VFS 层与系统调用层保持单向依赖：驱动只注册块设备，FS 负责识别和挂载文件系统，VFS 负责路径与 fd 语义，syscall 只做用户态 ABI 到内核接口的转换。
+
+\syscall{openat} 的实现可以体现 syscall、路径解析、VFS backend 和 fd 表之间的协作。下面摘录自 \code{wateros-syscall/syscall-impl/impl-kernel/src/sys/openat.rs}：
+
+\begin{rustcode}
+pub(crate) fn sys_openat(args: SyscallArgs) -> UserRet {
+    let dirfd = args.arg(0) as isize;
+    let path_ptr = args.arg(1);
+    let flags = args.arg(2) as u32;
+
+    let path = match copy_user_path_cstr(path_ptr, 256) {
+        Ok(p) => p,
+        Err(e) => return UserRet::from_error(e),
+    };
+    let resolved = match resolve_path_at(dirfd, path.as_str()) {
+        Ok(p) => p,
+        Err(e) => return UserRet::from_error(e),
+    };
+
+    let vf = linux_open_flags_to_vfs(flags);
+    let backend = active_impl::backend();
+    let handle = match backend.open(resolved.as_str(), vf) {
+        Ok(h) => h,
+        Err(e) => return UserRet::from_error(vfs_error_to_errno(e)),
+    };
+
+    match vfs::fd::alloc_fd(handle) {
+        Ok(fd) => UserRet::from_success(fd),
+        Err(e) => UserRet::from_error(vfs_error_to_errno(e)),
+    }
+}
+\end{rustcode}
+
+fd 表本身位于 \code{wateros-vfs/src/fd.rs}，采用 per-task 注册表保存打开句柄。读写路径会临时取出句柄、执行操作，再放回注册表，从而避免在具体文件对象操作过程中长期持有全局表锁：
+
+\begin{rustcode}
+pub fn with_current_io<R>(
+    fd: usize,
+    f: impl FnOnce(&mut (dyn VfsIoHandle + '_)) -> VfsResult<R>,
+) -> VfsResult<R> {
+    let task_id = current_task_id()?;
+    let mut handle = {
+        let mut reg = registry().exclusive_access();
+        reg.take_io_for_task(task_id, fd)?
+    };
+    let result = f(handle.as_mut());
+    let restore_result = {
+        let mut reg = registry().exclusive_access();
+        reg.restore_io_for_task(task_id, fd, handle)
+    };
+    restore_result?;
+    result
+}
+\end{rustcode}
+
+这两段代码说明了文件访问的分层路径：syscall 层先完成用户路径拷贝和相对路径解析，再经 VFS backend 与 per-task fd 表取得文件对象，最终由对应 handle 执行读写，符合通用文件描述符语义。
+
+常规文件句柄统一走 \code{PagedFileHandle}，避免 \code{open} 时把整个文件读入内存，也避免小块写反复重写整文件。页缓存用 \code{mount\_gen + path} 区分不同根卷生命周期，单文件记录逻辑大小和脏页集合；写回时先在缓存锁内整理连续脏页批次，再在锁外调用底层 \code{write\_range}，降低读 miss、flush 和 ext4 后端之间互相等待的概率。这样 \syscall{read}、\syscall{write}、\syscall{fsync} 和 \syscall{sync} 可以共享同一套文件对象语义：fd 表只负责找到当前任务的句柄，页缓存负责普通文件的读写局部性和脏页写回，ext4 后端只在 page cache miss 或 flush 时被短路径调用。
+
+pipe 被建模为 VFS fd handle，因此用户程序看到的仍然是普通文件描述符。\syscall{pipe2} 会创建读端和写端，在同一个 per-task fd 表中分配两个 fd，并把 fd 数组写回用户指针；如果第二个 fd 分配失败，会回滚关闭第一个 fd，避免资源泄漏。
+
+\begin{rustcode}
+pub(crate) fn sys_pipe2(args: SyscallArgs) -> UserRet {
+    let pipefd_ptr = args.arg(0);
+    let flags = args.arg(1);
+    if pipefd_ptr == 0 { return UserRet::from_error(ErrNo::EFAULT); }
+    if flags & !O_NONBLOCK != 0 { return UserRet::from_error(ErrNo::EINVAL); }
+
+    let (read_end, write_end) = vfs::pipe_handle_pair(flags & O_NONBLOCK != 0);
+    let mut reg = vfs::fd::registry().exclusive_access();
+    let read_fd = match reg.alloc_fd_for_task(task_id, Box::new(read_end)) {
+        Ok(fd) => fd,
+        Err(err) => return UserRet::from_error(vfs_error_to_errno(err)),
+    };
+    let write_fd = match reg.alloc_fd_for_task(task_id, Box::new(write_end)) {
+        Ok(fd) => fd,
+        Err(err) => {
+            let _ = reg.close_fd_for_task(task_id, read_fd);
+            return UserRet::from_error(vfs_error_to_errno(err));
+        }
+    };
+    copy_to_user(pipefd_ptr, &[read_fd as i32, write_fd as i32])
+}
+\end{rustcode}
+
+procfs 则走另一条文件抽象路径：\code{/proc/<pid>/stat}、\code{status}、\code{cmdline}、\code{/proc/meminfo} 与 \code{/proc/mounts} 由内核状态动态生成，只读暴露给用户态。这样文件、目录、设备、pipe 与 proc 伪文件最终都落到 VFS 的统一 fd 操作上。
+
+\section{系统调用与 ABI}
+
+\code{wateros-abi} 采用 Linux generic 64-bit 系统调用编号子集。系统调用入口由平台 trap 路径收集参数后交给 \code{wateros-syscall} 分发。分发层按能力域组织实现，并把内部错误映射为 Linux errno。
+
+已接入的代表性 syscall 包括：
+
+\begin{itemize}
+  \item 文件与目录：\syscall{openat}、\syscall{read}、\syscall{write}、\syscall{close}、\syscall{lseek}、\syscall{fstat}、\syscall{getdents64}、\syscall{mkdirat}、\syscall{unlinkat}、\syscall{mount}、\syscall{umount2}。
+  \item 进程：\syscall{clone}、\syscall{execve}、\syscall{waitpid}、\syscall{exit}、\syscall{exit\_group}、\syscall{getpid}、\syscall{getppid}、\syscall{gettid}。
+  \item 内存：\syscall{brk}、\syscall{mmap}、\syscall{munmap}、\syscall{mprotect}。
+  \item 时间：\syscall{gettimeofday}、\syscall{clock\_gettime}、\syscall{clock\_nanosleep}、\syscall{nanosleep}、\syscall{times}。
+  \item 调度：\syscall{sched\_setparam}、\syscall{sched\_setscheduler}、\syscall{sched\_getscheduler}、\syscall{sched\_getparam}、\syscall{sched\_setaffinity}、\syscall{sched\_getaffinity}、\syscall{sched\_get\_priority\_max}、\syscall{sched\_get\_priority\_min}。
+  \item IPC：\syscall{pipe2}、\syscall{ppoll}、\syscall{pselect6}、\syscall{futex} 子集、\syscall{shmget}、\syscall{shmctl}、\syscall{shmat}、\syscall{shmdt}。
+  \item 凭证：\syscall{getuid}、\syscall{geteuid}、\syscall{getgid}、\syscall{getegid}、\syscall{setuid}、\syscall{setgid}、\syscall{setresuid}、\syscall{setresgid}。
+  \item 日志：\syscall{syslog(2)} 通过 \code{wateros-klog} 读取内核消息环。
+\end{itemize}
+
+系统调用实现位于如下目录：
+
+\begin{rustcode}
+os/components/wateros-syscall/syscall-impl/impl-kernel/src/
+\end{rustcode}
+
+该目录按功能域拆分为文件系统、内存、进程、时间、网络、信号、凭证等实现文件，并在统一 dispatch 层根据 \code{wateros-abi} 提供的 syscall number 表进行分发。用户指针读写通过 syscall 层的 user copy 辅助函数集中处理，VFS、task、mm、ipc、cred 等组件只暴露内核侧稳定接口。
+
+实际分发入口由 \code{dispatch\_syscall\_from\_trap} 提供。平台 trap 路径只需要把系统调用号与参数包传入该函数，具体 syscall 行为由 \code{KernelSyscallDispatcher} 选择。下面摘录自 \code{wateros-syscall/syscall-impl/impl-kernel/src/lib.rs}：
+
+\begin{rustcode}
+pub fn dispatch_syscall_from_trap(
+    syscall_nr: usize,
+    syscall_args: SyscallArgs,
+) -> isize {
+    <KernelSyscallDispatcher as api_v0::SyscallDispatcher>
+        ::dispatch_syscall_from_trap(syscall_nr, syscall_args)
+}
+
+impl api_v0::SyscallDispatcher for KernelSyscallDispatcher {
+    type NumberTable = ActiveSyscallNumberTable;
+
+    fn dispatch_clone(args: SyscallArgs) -> isize {
+        sys::sys_clone(args).0
+    }
+    fn dispatch_openat(args: SyscallArgs) -> isize {
+        sys::sys_openat(args).0
+    }
+    fn dispatch_read(args: SyscallArgs) -> isize {
+        sys::sys_read(args).0
+    }
+    fn dispatch_write(args: SyscallArgs) -> isize {
+        sys::sys_write(args).0
+    }
+}
+\end{rustcode}
+
+这种写法将“系统调用号表”和“具体行为”分离：\code{wateros-abi} 维护 Linux generic 64-bit 编号，\code{wateros-syscall} 维护行为实现。新增 syscall 时通常需要同时补充 ABI 号表、dispatcher 分支、\code{sys/*.rs} 实现以及必要的文档快照。
+
+
+系统调用返回值统一使用 \code{UserRet} 表示：成功路径保留非负返回值，失败路径编码为 \code{-errno}。因此 VFS、MM、task、IPC 等模块可以先返回各自错误类型，再由 syscall 层映射为 \code{EFAULT}、\code{EINVAL}、\code{ENOENT}、\code{ECHILD}、\code{ENOSYS} 等 Linux 可见错误码。
+
+调度相关 syscall 当前选择“接口兼容优先、策略逐步增强”的做法。\syscall{sched\_getaffinity} 会按用户提供的 mask 长度做 user copy，\syscall{sched\_get\_priority\_max/min} 则按 Linux 语义返回普通调度类和实时调度类的优先级边界：\code{SCHED\_OTHER} 为 0，\code{SCHED\_FIFO} / \code{SCHED\_RR} 分别落在 1 到 99。
+
+\begin{rustcode}
+impl UserRet {
+    pub const fn from_success(v: usize) -> UserRet {
+        Self(v as isize)
+    }
+    pub const fn from_error(errno: ErrNo) -> UserRet {
+        Self(errno.user_ret())
+    }
+}
+\end{rustcode}
+
+参数传递方面，trap frame 提供最多 6 个寄存器参数；syscall 层通过 \code{SyscallArgs} 读取原始参数，再针对路径字符串、结构体、fd 数组等用户指针调用 \code{copy\_from\_user} / \code{copy\_to\_user}。这使 ABI 兼容性不只停留在 syscall 号表，还覆盖参数布局、返回值和错误边界。
+
+\section{IPC、凭证与内核日志}
+
+IPC 以 pipe、waitqueue 和 futex 为核心。pipe 使用内核 ring buffer 与 waitqueue 支持阻塞读写、EOF、BrokenPipe 与非阻塞 WouldBlock；futex 支持 WAIT/WAKE、WAIT\_BITSET、WAKE\_BITSET、REQUEUE、CMP\_REQUEUE 与 per-task robust 状态。同步路径会在进入等待前重新读取用户地址，值不匹配时返回 \code{EAGAIN}，超时返回 \code{ETIMEDOUT}，未知操作返回 \code{ENOSYS}，从而减少丢失唤醒和错误阻塞。
+
+
+futex 的等待路径会先重新读取用户地址，只有当前值仍等于期望值时才进入等待队列。这个检查是避免竞态的关键：如果用户态锁值已经变化，内核立即返回 \code{EAGAIN}，由用户态重新判断。
+
+\begin{rustcode}
+fn futex_wait(
+    uaddr: usize,
+    val: u32,
+    futex_op: u32,
+    timeout_ptr: usize,
+) -> Result<usize, ErrNo> {
+    let cur = read_user_u32(uaddr)?;
+    if cur != val {
+        return Err(ErrNo::EAGAIN);
+    }
+    let key = FutexKey::from_syscall(uaddr, futex_op);
+    let timeout = parse_futex_timeout(timeout_ptr, futex_op)?;
+    if timeout == Some(0) {
+        return Err(ErrNo::ETIMEDOUT);
+    }
+    FutexHub::global()
+        .wait_while(key, timeout, || read_user_u32(uaddr).map_or(false, |v| v == val))
+        .into_result()
+        .map_err(futex_error_to_errno)?;
+    Ok(0)
+}
+\end{rustcode}
+
+SysV shared memory 单独放在 \code{ipc-shm} 注册表中维护，syscall 层只负责 Linux ABI 解析和把共享物理页映射进当前用户地址空间。\syscall{shmget} 创建或查找段，\syscall{shmat} 预留用户虚拟地址并把匿名页替换成共享页，\syscall{shmdt} 解除当前任务的映射，\syscall{shmctl(IPC\_RMID)} 则标记删除，等最后一个 attach 释放后回收物理页。
+
+\begin{rustcode}
+pub(crate) fn sys_shmat(args: SyscallArgs) -> UserRet {
+    let Some(handle) = current_user_aspace_handle() else {
+        return UserRet::from_error(ErrNo::EFAULT);
+    };
+    let shmid = args.arg(0);
+    let shmaddr = args.arg(1);
+    let shmflg = args.arg(2);
+    let readonly = shmflg & SHM_RDONLY != 0;
+
+    let segment = match ipc::shm::registry().lock().segment_info(shmid) {
+        Ok(info) => info,
+        Err(error) => return UserRet::from_error(shm_error_to_errno(error)),
+    };
+    let base = match reserve_attach_va(handle, shmaddr, shmflg, segment.size, readonly) {
+        Ok(base) => base,
+        Err(error) => return UserRet::from_error(error),
+    };
+    let info = ShmAttachInfo { shmid, base, size: segment.size,
+                               readonly, pages: segment.pages };
+    if let Err(error) = replace_range_with_shared(handle, &info, true) {
+        let _ = unmap_range_dealloc(handle, base, info.size);
+        return UserRet::from_error(error);
+    }
+    match ipc::shm::registry().lock().attach(shmid, task_id(), base, readonly) {
+        Ok(_) => UserRet::from_success(base),
+        Err(error) => UserRet::from_error(shm_error_to_errno(error)),
+    }
+}
+\end{rustcode}
+
+共享内存还和进程生命周期绑定：fork 时子进程继承父进程已经 attach 的共享段并增加 attach 计数，exec/exit 路径会调用清理函数解除映射。实现上由 IPC 注册表保存段身份和物理页生命周期，MM 负责按共享页重新建立用户页表映射，避免把 SysV shm 的生命周期混入普通 COW VMA。
+
+\code{wateros-cred} 提供 per-task 凭证侧表，用户任务默认以 root 凭证启动。fork 时复制凭证，thread clone 可共享凭证槽，退出时清理。\code{impl-root} 采用当前阶段的 privileged 语义，set*id 按权限路径接入，capability 与 inode 细粒度权限检查保留为后续安全模型扩展点。
+
+
+凭证侧表以 \code{TaskId} 为 key 维护进程凭证。fork 创建进程时复制父凭证，thread clone 可以共享 owner 槽位，任务退出时通过引用计数清理：
+
+\begin{rustcode}
+fn fork_cred(&mut self, parent: TaskId, child: TaskId) {
+    let parent_cred = self.cred_or_panic(parent, "fork_cred parent");
+    if self.owners.contains_key(&child) {
+        self.drop_task_cred(child);
+    }
+    let owner = self.ensure_owner(child);
+    self.creds.insert(owner, parent_cred);
+}
+
+fn drop_task_cred(&mut self, tid: TaskId) {
+    let Some(owner) = self.release_owner(tid) else { return; };
+    if self.ref_counts.get(&owner).copied().unwrap_or(0) == 0 {
+        self.creds.remove(&owner);
+    }
+}
+\end{rustcode}
+
+\code{wateros-klog} 负责内核可查询消息环，与运行时日志保持低耦合。它使用元数据槽与变长 text ring 保存记录，并通过 \code{syslog(2)} 以传统 ASCII 行导出。syscall 后端按 action 分发，读取路径从 ring buffer 取出下一条未读记录，格式化后拷贝到用户缓冲区，便于用户态测试程序读取内核日志。

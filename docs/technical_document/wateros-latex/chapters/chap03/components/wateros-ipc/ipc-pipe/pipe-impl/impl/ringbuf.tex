@@ -1,0 +1,39 @@
+% 【本文件写什么】impl 实现层：ringbuf
+%   - 定位：固定容量 ring buffer + task waitqueue。
+%   - crate 路径：os/components/wateros-ipc/ipc-pipe/pipe-impl/impl-ringbuf/src/
+%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+%   - 算法或硬件交互流程（可用伪代码/流程图）
+%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
+%   - 与其它 impl 变体的差异、切换 feature 时的影响
+%   - 性能/内存假设与已知限制
+% 【事实来源】
+%   - 上述 crate 源码与 Cargo.toml
+%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+
+\subsubsection{impl-ringbuf}
+
+\paragraph{数据结构。}
+\code{PipeState}在\code{spin::Mutex}保护下维护环形缓冲\code{buf}、\code{head}、\code{len}、读写端开关\code{read\_open}/\code{write\_open}，以及读/写 fd 引用计数\code{read\_refs}/\code{write\_refs}。引用归零时关闭对应方向并唤醒对端等待队列。
+
+\begin{rustcode}
+struct PipeState {
+    buf: Vec<u8>,
+    head: usize,
+    len: usize,
+    read_open: bool,
+    write_open: bool,
+    read_refs: usize,
+    write_refs: usize,
+}
+\end{rustcode}
+
+\code{Pipe}持有\code{state}与独立的\code{read\_wait}/\code{write\_wait}两个\code{WaitQueue}。阻塞读在空且写端仍开时于\code{read\_wait}条件等待；阻塞写在满且读端仍开时于\code{write\_wait}等待；\code{TaskWaitResult::Interrupted}映射为\code{PipeError::Interrupted}。
+
+\paragraph{fd 端点。}
+\code{PipeEndpoint}以\code{Arc<Pipe>}共享内核对象；\code{Clone}时调用\code{acquire\_read}/\code{acquire\_write}，\code{close}调用\code{release\_*}，从而实现 dup/fork 后部分 close 仍可读写的 shell 管道语义（\code{test()}中有回归用例）。
+
+\paragraph{poll 与 resize。}
+\code{poll\_revents\_read}/\code{poll\_revents\_write}按\code{POLLIN}/\code{POLLOUT}/\code{POLLHUP}/\code{POLLERR}位返回就绪状态；\code{poll\_wait\_*\_for\_ticks}在\code{still\_waiting}闭包为真时阻塞，供多 fd poll 重扫。\code{set\_capacity}仅在\code{len == 0}时替换底层\code{Vec}，对应\code{F\_SETPIPE\_SZ}子集。
+
+\paragraph{限制。}
+单 pipe 固定上限由创建时容量决定；无 splice/tee；全局 pipe 实例数无内核硬限制。

@@ -1,0 +1,21 @@
+% Pygments / minted 代码高亮（需 xelatex -shell-escape）
+
+\usemintedstyle{emacs}
+
+\setminted{
+  fontsize=\wuhao,
+  breaklines=true,
+  breakanywhere=true,
+  frame=single,
+  framesep=1.2mm,
+  rulecolor=\color{black!25},
+  bgcolor=docCodeBg,
+  tabsize=4,
+  autogobble=true,
+  linenos=false,
+}
+
+\newminted{rust}{}
+\newminted{bash}{}
+\newminted{toml}{}
+\newminted{text}{style=default}

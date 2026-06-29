@@ -1,0 +1,33 @@
+% 【本文件写什么】impl 实现层：block-cache
+%   - 定位：写穿 LRU 块缓存装饰器。
+%   - crate 路径：os/components/wateros-driver/driver-block/block-impl/impl-block-cache/src/
+%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+%   - 算法或硬件交互流程（可用伪代码/流程图）
+%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
+%   - 与其它 impl 变体的差异、切换 feature 时的影响
+%   - 性能/内存假设与已知限制
+% 【事实来源】
+%   - 上述 crate 源码与 Cargo.toml
+%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+
+\subsubsection{impl-block-cache}
+
+\paragraph{启用链。}根\code{wateros}默认\code{qemu-riscv64-opensbi}同时打开\code{driver/impl-block-cache}，向RISC-V与LoongArch平台impl传递\code{block-cache} feature。注册virtio-blk时平台调用\code{BlockCacheManager::wrap}而非直接\code{Arc::new(Mutex::new(dev))}。
+
+\paragraph{写穿LRU策略。}\code{CachingBlockDevice}包装任意\code{Box<dyn BlockDevice + Send>}，对上仍实现\code{BlockDevice}。\code{capacity\_blocks}来自\code{wateros-base-config::BLOCK\_CACHE\_CAPACITY\_BLOCKS}；为0时退化为透传。\code{read\_blocks}：命中\code{BTreeMap<Lba, slot\_idx>}则避免访问\code{inner}；连续未命中区间合并为单次\code{inner.read\_blocks}后逐块\code{cache\_put}。\code{write\_blocks}：先写穿\code{inner}，再更新或插入缓存行。
+
+\paragraph{淘汰与恢复。}槽位由\code{free}栈与\code{lru}双端队列管理；\code{evict\_lru\_slot}弹出最久未用槽并清除\code{map}条目。若淘汰遇到不变式破坏，\code{reset\_cache\_invariant}清空\code{map}/\code{lru}并重建\code{free}。\code{flush}在写穿语义下为no-op，保留供将来write-back或测试钩子。
+
+\begin{rustcode}
+pub struct CachingBlockDevice {
+    inner: Box<dyn BlockDevice + Send>,
+    block_size: usize,
+    capacity: usize,
+    map: BTreeMap<Lba, usize>,
+    slots: Vec<Slot>,
+    free: Vec<usize>,
+    lru: VecDeque<usize>,
+}
+\end{rustcode}
+
+\code{BlockCacheManager::default\_config}读取\code{base-config}容量；\code{wrap}返回可直接\code{register\_block\_device}的\code{SharedBlockDevice}。\code{flush\_all}当前恒\code{Ok(())}。单元测试覆盖「同块重复读仅一次底层读」「连续未命中合并读」「写后读命中缓存」等路径。

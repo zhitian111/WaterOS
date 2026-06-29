@@ -1,0 +1,250 @@
+% 第 2 章「总体架构设计」（当前 main.tex 使用的整章正文）。
+%
+% 应包含：组件化分层、os/ 代码结构、组件职责表、API/impl 解耦、
+%       启动主线、Feature 组合、双架构对比、kernel_main 代码流程。
+%
+% 后续若拆到 chap02/design-philosophy.tex 等子文件，
+% 可将本节内容迁移后改 main.tex 为 \input 聚合。
+% 事实来源：docs/prompts/architecture.md、os/Cargo.toml、os/src/main.rs
+
+\chapter{总体架构设计}
+
+
+\section{组件化分层}
+
+WaterOS 的整体结构按依赖方向分为三层：底层负责平台和硬件接入，中层管理内核核心资源，上层提供用户态可见的 ABI 与系统调用语义。RISC-V64 和 LoongArch64 的差异主要留在平台、架构、驱动和页表实现中，文件系统、任务管理、IPC 和 syscall 等上层模块复用同一套接口。
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{3.0cm}>{\raggedright\arraybackslash}p{4.7cm}>{\raggedright\arraybackslash}p{5.8cm}}
+  \caption{WaterOS 组件化分层}\label{tab:component-layers}\\
+  \toprule[1.5pt]
+  层次 & 主要组件 & 设计含义 \\
+  \midrule[1pt]
+  平台与运行时层 & platform、runtime、driver & 处理启动入口、trap 汇编、定时器、中断、固件调用、控制台、日志、堆和设备发现，把 QEMU 与 ISA 差异转换成内核内部接口。 \\
+  内核资源层 & mm、task、fs、vfs、ipc & 管理地址空间、物理页、任务生命周期、调度、根文件系统、路径视图、fd 表、pipe、waitqueue、futex 和 signal 等核心资源。 \\
+  用户接口层 & abi、syscall、cred、klog & 向用户程序提供 Linux generic 64-bit syscall 编号、参数传递、错误码、凭证、权限扩展点和内核日志读取路径。 \\
+  \bottomrule[1.5pt]
+\end{longtable}
+
+根 crate \code{wateros} 按 feature 聚合组件，组件内部采用 \code{api-v0}、\code{impl-*} 和聚合导出的组织方式。API crate 定义稳定契约，impl crate 处理具体实现，组件根 crate 根据 feature 选择当前 active impl。源码入口和组件职责分别从目录结构与模块边界两个角度描述同一套组织方式。
+
+\section{代码结构}
+
+WaterOS 的内核源码主体位于 \code{os/}，根目录下的 \code{Makefile} 封装常用构建入口。内核功能以组件化 crate 组织，并由 \code{os/Cargo.toml} 中的根 crate 统一聚合；平台配置、功能开关、脚本和组件实现均收敛在 \code{os/} 目录内。
+
+\begin{textcode}
+wateros
+|-- Makefile                    # 顶层构建入口
+`-- os                          # 内核源码与构建主体
+|   |-- Cargo.toml              # 根 crate、feature 与 workspace 配置
+|   |-- Makefile                # 内核构建与运行入口
+|   |-- build.rs                # 构建脚本
+|   |-- feature-tree.txt        # 当前 feature 组合导出
+|   |-- src
+|   |   |-- main.rs             # kernel_main 与平台启动主线
+|   |   |-- trap_handler.rs     # trap/syscall 入口桥接
+|   |   |-- user_bringup_*.rs   # 用户程序与测试脚本 bring-up
+|   |   `-- self_tests/         # 内核自检入口
+|   |-- components              # WaterOS 组件化内核模块
+|   |   |-- wateros-platform    # 平台、架构、固件抽象
+|   |   |-- wateros-runtime     # 控制台、日志、panic、堆
+|   |   |-- wateros-mm          # 页表、帧分配、ELF 装载
+|   |   |-- wateros-task        # 任务、调度、等待与生命周期
+|   |   |-- wateros-driver      # DTB、VirtIO、块/字符/网络设备
+|   |   |-- wateros-fs          # devfs、rootfs、ext4、procfs
+|   |   |-- wateros-vfs         # 路径视图、fd 表、cwd、页缓存
+|   |   |-- wateros-syscall     # 系统调用分发与实现
+|   |   |-- wateros-abi         # errno、返回值、syscall 编号
+|   |   |-- wateros-ipc         # pipe、waitqueue、futex、signal
+|   |   |-- wateros-cred        # uid/gid 与凭证生命周期
+|   |   `-- wateros-klog        # 内核日志环与 syslog(2)
+|   |-- scripts                 # QEMU、GDB、构建和日志脚本
+|   `-- vendor                  # 离线依赖源码
+\end{textcode}
+
+其中 \code{os/src/main.rs} 是启动主线的入口，负责初始化顺序和组件编排。绝大部分内核能力通过 \code{os/components/} 下的独立组件提供，根 crate 的职责集中在 feature 组合、启动流程和对外聚合上。
+
+\section{组件目录与职责映射}
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{4.0cm}>{\raggedright\arraybackslash}p{9.5cm}}
+  \caption{组件目录与职责映射}\label{tab:component-dirs}\\
+  \toprule[1.5pt]
+  目录 & 职责说明 \\
+  \midrule[1pt]
+  \code{wateros-platform} & 抽象启动参数、trap、中断、时间、固件调用和平台关机路径；RISC-V64 对接 QEMU virt + OpenSBI，LoongArch64 对接 QEMU virt 与 StableCounter/CSR 平台能力。 \\
+  \code{wateros-runtime} & 提供控制台输出、日志初始化、panic handler 和全局堆分配器，是内核早期可诊断性的基础。 \\
+  \code{wateros-mm} & 管理物理帧、页表、内核地址空间、用户地址空间、ELF 装载以及 \syscall{brk}/\syscall{mmap} 等内存 syscall 后端。 \\
+  \code{wateros-task} & 维护任务对象、调度队列、阻塞/睡眠/退出状态、父子关系、用户任务 trap frame 与调度入口。 \\
+\code{wateros-driver} & 按平台扫描或枚举设备，RISC-V64 路径识别 VirtIO-MMIO，LoongArch64 路径接入 VirtIO-PCI，并统一注册块设备；网络设备和字符设备相关抽象在组件中提供扩展入口。 \\
+  \code{wateros-fs} & 提供 \code{FsImpl} 注册表、devfs、procfs、rootfs 管理和 ext4 读写实现。 \\
+  \code{wateros-vfs} & 在文件系统之上实现统一路径视图、per-task fd 表、cwd、pipe/file/console handle 和页缓存。 \\
+  \code{wateros-syscall} & 将平台 trap 传入的 syscall number 和参数分发到进程、文件、内存、时间、网络等具体实现。 \\
+  \code{wateros-abi} & 维护 Linux generic 64-bit syscall 编号、errno、用户返回值和参数包等 ABI 契约。 \\
+\code{wateros-ipc} & 聚合 waitqueue、pipe、futex、SysV shm、signal 等 IPC 相关能力，服务进程等待、管道通信、共享内存和同步阻塞场景。 \\
+\code{wateros-cred} & 维护进程凭证侧表，提供 uid/gid 获取和设置，并为 VFS 权限检查保留统一扩展点。 \\
+  \bottomrule[1.5pt]
+\end{longtable}
+
+\section{API 与实现解耦}
+
+大多数组件采用如下约定：
+
+\begin{enumerate}
+  \item \code{api-v0} 定义稳定契约，例如 trait、错误类型、句柄类型和公共数据结构。
+  \item \code{impl-*} 提供具体实现，例如 \code{impl-sv39}、\code{impl-qemu-riscv64-opensbi}、\code{impl-ext4-rs}。
+  \item 组件根 \code{src/lib.rs} 根据 feature 选择 active impl，并向上导出统一入口。
+\end{enumerate}
+
+这种设计减少了上层代码对具体平台的依赖。系统调用层通过 \code{wateros-vfs} 与 \code{wateros-fs} 的公开接口完成路径、fd 和文件内容访问；任务系统不反向依赖 \code{wateros-cred}，凭证继承和清理由系统调用或 bring-up call site 驱动。
+
+\section{启动主线}
+
+两条 QEMU 平台路径的内核启动顺序保持一致：
+
+\begin{enumerate}
+  \item 平台入口进入 \code{kernel\_main}，构造 \code{BootContext} 并记录 DTB 物理地址。
+  \item 初始化控制台、日志、klog、堆分配器与架构 trap / interrupt。
+  \item 初始化内存管理，建立内核全局页表，完成分页探针与 MM 自检。
+  \item 驱动层按平台发现设备：RISC-V64 路径扫描 DTB 中的 VirtIO-MMIO，LoongArch64 路径接入 VirtIO-PCI，随后都注册到统一块设备表并刷新 devfs。
+  \item 文件系统层 probe 根块设备，挂载 ext4 根卷，执行 RO/RW 自检。
+  \item VFS 建立根路径视图、fd session、cwd 与 procfs 挂载。
+  \item 初始化任务调度器，加载用户 ELF，创建用户任务与演示内核任务。
+  \item 启用中断与定时器，进入首个任务并由 trap/syscall 路径驱动后续执行。
+\end{enumerate}
+
+\section{Feature 组合与平台构建}
+
+WaterOS 使用 Cargo feature 管理平台差异。根 \code{os/Cargo.toml} 同时定义 \code{qemu-riscv64-opensbi} 与 \code{qemu-loongarch64-virt} 两组平台组合。两条路径共享 ABI、task、syscall、FS/VFS、IPC、cred、klog 等上层组件，但选择不同的平台、驱动和 MM 实现：RISC-V64 组合启用 \code{impl-sv39}、VirtIO-MMIO 与 OpenSBI 平台后端；LoongArch64 组合启用 \code{impl-loongarch64}、VirtIO-PCI 与 QEMU virt 平台后端。
+
+\begin{tomlcode}
+[features]
+default = ["qemu-riscv64-opensbi"]
+impl-sv39 = ["mm/impl-sv39"]
+
+qemu-riscv64-opensbi = [
+  "driver/impl-qemu-riscv64-opensbi",
+  "platform/impl-qemu-riscv64-opensbi",
+  "abi/impl-linux-generic64",
+  "ipc/all",
+  "vfs-bridge",
+  "impl-sv39",
+  "mm/vfs-root-read",
+  "syscall/impl-kernel",
+  "runtime/impl-info",
+  "runtime/impl-platform-console",
+  "klog/default",
+]
+
+qemu-loongarch64-virt = [
+  "driver/impl-qemu-loongarch64-virt",
+  "platform/impl-qemu-loongarch64-virt",
+  "abi/impl-linux-generic64",
+  "ipc/all",
+  "vfs-bridge",
+  "mm/impl-loongarch64",
+  "mm/vfs-root-read",
+  "syscall/impl-kernel",
+  "runtime/impl-info",
+  "runtime/impl-platform-console",
+  "klog/default",
+]
+\end{tomlcode}
+
+这种 feature 组织方式使平台 bring-up 不需要复制上层逻辑：RISC-V64 与 LoongArch64 的差异集中在 \code{platform-arch/arch-impl-*}、\code{platform-impl/impl-*}、\code{driver-impl/impl-*} 与 \code{mm-impl/impl-*}，而系统调用、VFS、文件系统注册表、任务生命周期等模块保持复用。
+
+
+\section{QEMU 双架构适配与一致性}
+
+WaterOS 的平台设计把 RISC-V64 和 LoongArch64 的 ISA 与板级差异收束在平台、架构、驱动和 MM 实现层中。启动、trap、页表切换和设备发现按架构分别实现；任务、文件系统、VFS、IPC 和 syscall 进入统一上层接口，用户态程序看到的行为保持一致。
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{3.0cm}>{\raggedright\arraybackslash}p{5.0cm}>{\raggedright\arraybackslash}p{5.0cm}}
+  \caption{QEMU 双架构适配对比}\label{tab:qemu-arch-compare}\\
+  \toprule[1.5pt]
+  适配点 & RISC-V64 QEMU + OpenSBI & LoongArch64 QEMU virt \\
+  \midrule[1pt]
+  启动参数 & OpenSBI 传入 \code{a0/a1}，平台上下文解释为 hart id 与 DTB 物理地址。 & QEMU/固件传入 \code{arg0/arg1/arg2} 三个槽位，平台上下文先做类型化透传。 \\
+  固件与控制台 & 通过 OpenSBI console、timer、reset 后端接入早期输出、时钟和关机。 & 通过 QEMU virt 平台后端、StableCounter 和 LoongArch CSR 接入同类平台能力。 \\
+  trap 与上下文 & \code{arch-impl/impl-riscv64} 提供 trap frame、\code{trap.asm} 和 \code{switch.S}。 & \code{arch-impl/impl-loongarch64} 提供 trap frame、\code{trap.S} 和 \code{switch.S}。 \\
+  页表与 TLB & MM 侧使用 Sv39；架构层通过 satp token 与 TLB flush 原语切换地址空间。 & MM 侧使用 LoongArch64 页表实现；架构层通过 CSR.PGDL 写根页表，通过 \code{invtlb} 刷新 TLB。 \\
+  设备总线 & 平台驱动扫描 DTB 中的 VirtIO-MMIO 节点，块设备和网络设备选择 MMIO 后端。 & 平台驱动选择 VirtIO-PCI 后端，设备最终仍注册为统一 block/network 抽象。 \\
+  上层一致性 & \multicolumn{2}{p{10.0cm}}{两条路径共享 Linux generic 64-bit ABI、syscall dispatcher、task 生命周期、VFS fd 表、FS 注册表、IPC、cred 与 klog。平台差异进入上层前被转换为统一接口，因此 \syscall{openat}、\syscall{read}、\syscall{write}、\syscall{clone}、\syscall{execve}、\syscall{waitpid} 等路径不需要按 ISA 重写。} \\
+  \bottomrule[1.5pt]
+\end{longtable}
+
+不同指令集架构下的平台适配和行为一致性主要体现在这一层：底层按 QEMU 机器模型和 ISA 分别处理启动参数、特权寄存器、定时器、trap frame、TLB 和 VirtIO 总线，上层通过相同的组件接口复用。该结构将硬件相关问题限制在少数实现 crate 中，系统调用层无需按 ISA 分别维护两套逻辑。
+
+
+\section{内核入口代码流程}
+
+根 crate 的入口位于 \code{os/src/main.rs}。RISC-V64 和 LoongArch64 最后都会进入名为 \code{kernel\_main} 的 Rust 函数，但两条路径的入口参数不同。RISC-V64 路径接收 OpenSBI 传入的 \code{boot\_arg0/boot\_arg1}，其中 \code{boot\_arg1} 会作为 DTB 物理地址继续交给驱动层；LoongArch64 路径接收 \code{argc/argv/envp}，当前使用 \code{envp} 保存固件传来的平台信息。
+
+RISC-V64 主线的核心流程如下：
+
+\begin{rustcode}
+#[cfg(feature = "qemu-riscv64-opensbi")]
+pub fn kernel_main(boot_arg0: usize, boot_arg1: usize) -> ! {
+    let _boot_context = BootContext::from(BootArgs::new(boot_arg0, boot_arg1));
+    driver::init_when_boot(boot_arg1);
+    runtime::console::show_logo();
+    klog::init();
+    runtime::logging::init();
+    runtime::heap_allocator::init();
+
+    platform::arch::init();
+    task::init();
+    crate::trap_handler::init();
+
+    mm::test_with_range(BasePPN { val: start_ppn }, BasePPN { val: end_ppn });
+    mm::kernel_mm::init(start_ppn, end_ppn, memory_end);
+
+    let driver_boot = driver::active_impl::init_after_boot();
+    if driver_boot.is_ok() {
+        fs::init();
+        crate::user_bringup_bus::run();
+        fs::test();
+        vfs::test();
+    }
+
+    platform::interrupt::enable_timer_interrupt().unwrap();
+    platform::timer::set_timer_after_ms(100).unwrap();
+    platform::interrupt::enable_global_interrupt().unwrap();
+    task::run_first_task()
+}
+\end{rustcode}
+
+LoongArch64 主线的初始化顺序基本一致，但在内存初始化前会先处理固件分页状态，并对可用物理页范围做上限收束：
+
+\begin{rustcode}
+#[cfg(feature = "qemu-loongarch64-virt")]
+pub fn kernel_main(_argc: usize, _argv: usize, envp: usize) -> ! {
+    runtime::console::show_logo();
+    klog::init();
+    runtime::logging::init();
+    runtime::heap_allocator::init();
+    platform::arch::init();
+    driver::init_when_boot(envp);
+
+    task::init();
+    crate::trap_handler::init();
+    platform::arch::paging::init_paging_disable_mmu();
+
+    let memory_end = driver::physical_ram_end_exclusive();
+    let usable_end_ppn = end_ppn.min(0x1_0000_0000usize / PAGE_SIZE);
+    mm::test_with_range(BasePPN { val: start_ppn }, BasePPN { val: usable_end_ppn });
+    mm::kernel_mm::init(start_ppn, usable_end_ppn, memory_end);
+
+    let driver_boot = driver::active_impl::init_after_boot();
+    if driver_boot.is_ok() {
+        fs::init();
+        crate::user_bringup_bus::run();
+        fs::test();
+        vfs::test();
+    }
+
+    platform::interrupt::enable_timer_interrupt().unwrap();
+    platform::timer::set_timer_after_ms(100).unwrap();
+    platform::interrupt::enable_global_interrupt().unwrap();
+    task::run_first_task()
+}
+\end{rustcode}
+
+两条路径共同体现了当前内核的启动原则：先保证 console、日志、堆和 trap 可用，再初始化 MM 与任务系统；驱动、FS、VFS 和用户态 bring-up 放在地址空间建立之后；最后才打开定时器和全局中断，把控制权交给调度器。

@@ -1,0 +1,20 @@
+% 【本文件写什么】子模块 platform-arch（\subsection 级聚合）
+%   - 职责摘要：架构相关：trap、上下文切换、定时器、SMP。
+%   - 子域聚合 lib.rs：os/components/wateros-platform/platform-arch/src/lib.rs
+%   - 如何重导出 api-v0、feature 下挂载哪些 impl
+%   - 被谁依赖（syscall、vfs、main 启动链等）
+%   - 短综述 + 下方 \input 展开 api 与 impl 叶子
+% 【事实来源】
+%   - os/components/wateros-platform/platform-arch/
+%   - docs/exports/ 中与 wateros-platform 相关的 public-api / features 章节
+
+\subsection{platform-arch}
+
+\code{wateros-platform-arch}聚合\code{arch-api-v0}与按feature二选一挂载的\code{arch-impl-riscv64}/\code{arch-impl-loongarch64}。对外导出\code{time}、\code{task}、\code{trap}、\code{interrupt}与\code{paging}模块；\code{arch\_boot()}在启用对应impl时安装trap向量。\code{impl-riscv64}与\code{impl-loongarch64}不可同时启用，由\code{compile\_error!}守卫。
+
+本crate只操作CPU可见的CSR与汇编约定，不经SBI写串口或编程固件定时器；trap业务路由经\code{kernel\_trap}注册到组合层，arch侧\code{trap\_entry\_rust}仅保存帧并调用\code{invoke\_kernel\_trap\_handler}。\code{paging}只负责地址空间token激活与TLB刷新，页表内容与PTE编码在\code{wateros-mm}。
+
+\input{chapters/chap03/components/wateros-platform/platform-arch/arch-api/api/api-v0}
+\input{chapters/chap03/components/wateros-platform/platform-arch/arch-impl/impl/dummy}
+\input{chapters/chap03/components/wateros-platform/platform-arch/arch-impl/impl/loongarch64}
+\input{chapters/chap03/components/wateros-platform/platform-arch/arch-impl/impl/riscv64}

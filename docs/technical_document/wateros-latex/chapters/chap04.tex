@@ -1,0 +1,372 @@
+% 第4章「测试、复现与问题处理」。
+%
+% §4.1 构建与启动：os/Makefile 目标、双架构构建与QEMU运行。
+% §4.2 功能验证：bring-up总线、P1–P6脚本、日志判读。
+% §4.3 双架构一致性验证。
+% §4.4 遇到的问题和解决方法（按主题分\subsection，附代码快照）。
+%
+% 事实来源：os/Makefile、docs/tasks/run_testsuits_qemu.md、os/src/user_bringup_*.rs
+
+\chapter{测试、复现与问题处理}
+
+\section{构建与启动方式}
+
+\wateros{}的内核构建与QEMU运行入口在\code{os/Makefile}。日常操作固定为进入\code{os/}目录后执行\code{make}目标；Makefile已封装target triple、feature组合、产物拷贝与底层脚本调用。
+
+\begin{bashcode}
+cd os
+
+# 双架构内核产物（make all = kernel-rv + kernel-la）
+make all
+make kernel-rv        # 产物 ./kernel-rv
+make kernel-la        # 产物 ./kernel-la
+
+# QEMU 运行（目标会先触发编译）
+make rv_qemu_run      # RISC-V，块设备 sdcard-rv.img
+make la_qemu_run      # LoongArch，块设备 sdcard-la.img
+
+# 日志与 snapshot（snapshot 不写回磁盘镜像）
+make rv_qemu_run_with_log     # QEMU -d int,cpu,in_asm → os/qemu.log
+make rv_qemu_run_snapshot
+make la_qemu_run_snapshot
+
+# 静态检查（feature 已与 Makefile 对齐）
+make rv_check
+make la_check
+make check            # version + rv_check
+
+# 从赛题目录刷新 ext4 根卷镜像
+make flush_img
+
+# PC 跳变监视与符号解析（需 ADDR=）
+make rv_pc_watch
+make la_pc_watch
+make rv_symbol_at ADDR=0x80201234
+make la_symbol_at ADDR=0x90001234
+\end{bashcode}
+
+RISC-V64路径使用target\code{riscv64gc-unknown-none-elf}，启用feature\code{qemu-riscv64-opensbi}；LoongArch64路径使用\code{loongarch64-unknown-none}，以\code{--no-default-features}配合\code{qemu-loongarch64-virt}。块设备镜像为\code{os/sdcard-rv.img}与\code{os/sdcard-la.img}，由\code{os/scripts/rv\_qemu\_run.sh}或\code{la\_qemu\_run}内联QEMU参数挂载；RISC-V脚本默认打开\code{virtio-net}与\code{-netdev user}，LoongArch在Makefile中同样接入\code{virtio-net-pci}。
+
+\section{功能验证}
+
+内核启动后先跑分层自检，再进入用户态bring-up总线。\code{os/src/user\_bringup\_bus.rs}在\code{fs::init}之后挂载RW ext4根卷、确保\code{/proc}并挂procfs，随后登记\code{stage-busybox}。赛题脚本队列在\code{user\_bringup\_busybox.rs}的\code{BRINGUP\_COMMANDS}中维护：通过注释或取消注释\code{BringupCommand}行选择阶段，也可用feature\code{bringup-ltp-glibc-only}/\code{bringup-ltp-musl-only}单独长跑LTP。
+
+按\code{docs/tasks/run\_testsuits\_qemu.md}，回归应分阶段串行，每次QEMU启动只启用一个阶段块，避免未实现syscall直接panic导致后续脚本不执行：
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{1.6cm}>{\raggedright\arraybackslash}p{4.8cm}>{\raggedright\arraybackslash}p{4.2cm}>{\raggedright\arraybackslash}p{3.8cm}}
+  \caption{赛题测例阶段（P1–P6）}\label{tab:test-phases}\\
+  \toprule[1.5pt]
+  阶段 & 脚本（glibc/musl各一份） & 主要覆盖 & 环境注意 \\
+  \midrule[1pt]
+  P1 & \code{basic\_testcode.sh} & 文件IO、进程、内存syscall & 单盘时\code{mount}预期\code{-22} \\
+  P2 & \code{busybox\_testcode.sh}、\code{lua\_testcode.sh} & shell管道、TTY\code{ioctl}、\code{readv} & busybox须逐条\code{testcase … success} \\
+  P3 & lmbench/unixbench/libcbench/iozone & \code{getrusage}、信号、多进程 & unixbench在代码中已注释弃用 \\
+  P4 & \code{iperf\_testcode.sh}、\code{netperf\_testcode.sh} & TCP/UDP与后台服务 & 需\code{virtio-net} \\
+  P5 & \code{libctest\_testcode.sh}、\code{cyclictest\_testcode.sh} & 动态链接、TLS、定时器 & 建议两组分开启用 \\
+  P6 & \code{ltp\_testcode.sh} & 最广syscall与VFS边界 & 体量大，单独长跑 \\
+  \bottomrule[1.5pt]
+\end{longtable}
+
+阶段批跑可调用\code{os/scripts/run\_phase\_tests.sh}（会临时改写\code{BRINGUP\_COMMANDS}并在结束后恢复）。单次手动回归示例：
+
+\begin{bashcode}
+cd os
+
+# 在 user_bringup_busybox.rs 中只取消注释目标阶段的 BringupCommand
+make rv_qemu_run 2>&1 | tee /tmp/wateros_P1.log
+
+# 按脚本块汇总 basic/busybox/libctest/ltp 等结果
+python3 scripts/parse_qemu_test_log.py /tmp/wateros_P1.log
+
+# PANIC 时提取 syscall 号
+grep -nE 'unsupported: unknown nr=|Panicked at' /tmp/wateros_P1.log
+\end{bashcode}
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{3.0cm}>{\raggedright\arraybackslash}p{5.2cm}>{\raggedright\arraybackslash}p{5.0cm}}
+  \caption{功能验证入口与日志特征}\label{tab:validation-entry}\\
+  \toprule[1.5pt]
+  验证入口 & 覆盖内容 & 日志特征 \\
+  \midrule[1pt]
+  启动期自检 & MM帧分配与页表探针、驱动扫描、FS探测、网络栈smoke。 & \code{[self-test] mm self-test done}、\code{driver init done}、\code{[fs::ext4][test] verify OK} \\
+  bring-up总线 & RW根卷、\code{/proc}、根布局硬链接修复。 & \code{[bringup][stage-00-bus]}、\code{[root-layout]} \\
+  脚本runner & ELF装载、spawn、wait、脚本间\code{purge\_all\_user\_processes}。 & \code{[busybox-bringup] program=}、\code{elapsed=}、\code{END path=… exit\_code=} \\
+  测例输出 & 各\code{*\_testcode.sh}内\code{COMP TEST GROUP}与组内断言。 & \code{\#\#\#\# OS COMP TEST GROUP START}、\code{testcase busybox}、\code{Pass!}、\code{FAIL LTP CASE} \\
+  失败分类 & panic、页故障、负errno。 & \code{unsupported: unknown nr=}、\code{LoadPageFault}、\code{[syscall] nr=… ret=-} \\
+  \bottomrule[1.5pt]
+\end{longtable}
+
+判读时不应只看\code{COMP TEST GROUP END}：busybox必须统计约55条\code{testcase busybox … success}；basic看每个\code{Testing}后是否有\code{END test\_}；LTP看\code{FAIL LTP CASE … : 0}。解析脚本\code{parse\_qemu\_test\_log.py}按脚本块切分日志并汇总各组通过/失败计数，PANIC时需额外\code{grep} syscall号对照\code{wateros-syscall}分发实现。
+
+\section{双架构一致性验证}
+
+RISC-V64与LoongArch64分别编译、分别启动，进入MM、task、FS/VFS、IPC、cred、klog与syscall后共用上层逻辑。验证重点是平台差异是否停在启动参数、trap frame、页表/TLB与VirtIO总线层，用户态syscall返回值与errno保持一致。
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{3.0cm}>{\raggedright\arraybackslash}p{5.0cm}>{\raggedright\arraybackslash}p{5.2cm}}
+  \caption{双架构验证要点}\label{tab:dual-arch-validation}\\
+  \toprule[1.5pt]
+  验证点 & RISC-V64路径 & LoongArch64路径 \\
+  \midrule[1pt]
+  构建产物 & \code{make kernel-rv}→\code{kernel-rv}（\code{riscv64gc-unknown-none-elf}）。 & \code{make kernel-la}→\code{kernel-la}（\code{loongarch64-unknown-none}）。 \\
+  启动入口 & OpenSBI传入hart id与DTB；DTB扫描VirtIO-MMIO。 & 固件传入\code{argc/argv/envp}；PCI枚举VirtIO-PCI。 \\
+  内存路径 & Sv39、\code{satp}、\code{sfence.vma}。 & 独立三级页表、\code{CSR.PGDL}、\code{invtlb}。 \\
+  自检日志前缀 & \code{[self-test]} & \code{[loongarch64][self-test]}、\code{[driver-la]} \\
+  用户态一致性 & \multicolumn{2}{p{10.2cm}}{共用Linux generic 64-bit syscall编号、fd表、cwd、VFS路径、ELF装载、fork/exec/wait、pipe、futex、procfs与klog；相同脚本在两条路径上对比退出码与组内输出。} \\
+  \bottomrule[1.5pt]
+\end{longtable}
+
+\section{遇到的问题和解决方法}
+
+测例覆盖面扩大后，失败往往落在syscall语义、挂载路径、资源回收或双架构底层差异上。下面按主题说明典型现象、处理思路，并给出当前代码中的关键片段（路径均相对于\code{os/}）。
+
+\subsection{系统调用语义和错误码}
+
+\textbf{现象。}libc与LTP会校验\syscall{stat}/\syscall{fstat}/\syscall{statx}字段、\syscall{mount}标志以及别名syscall（如\code{faccessat2}）。占位返回值或静默忽略unsupported flags会在更深路径上变成错误语义；号表未收录的syscall在bring-up期会走\code{unsupported: unknown nr=}直接panic。
+
+\textbf{处理。}已接入对象路径的调用从VFS元数据填Linux结构体；\syscall{mount}按文件系统类型分支；别名表未命中时返回\code{-ENOSYS}而非成功占位。
+
+\syscall{fstat}从已打开fd取metadata示例如下：
+
+\begin{rustcode}
+// fstat(2)：将已打开文件的元数据写入用户 stat 缓冲
+pub(crate) fn sys_fstat(args: SyscallArgs) -> UserRet {
+    let fd = args.arg(0);
+    let stat_ptr = args.arg(1);
+    if stat_ptr == 0 {
+        return UserRet::from_error(ErrNo::EFAULT);
+    }
+    // 标准输入/输出/错误与动态 fd 分界
+    if fd < VFS_FIRST_DYNAMIC_FD && (fd > VFS_STDERR_FD || fd < VFS_STDIN_FD) {
+        return UserRet::from_error(ErrNo::EBADF);
+    }
+    match vfs::fd::with_current_io(fd, |handle| {
+        let meta = handle.metadata()?;
+        let mut stat = fill_linux_stat(&meta, meta.size);
+        stat_times::apply_stat(&meta, &mut stat);
+        Ok(stat)
+    }) {
+        Ok(stat) => match copy_to_user_struct(stat_ptr, &stat) {
+            Ok(()) => UserRet::from_success(0),
+            Err(e) => UserRet::from_error(e),
+        },
+        Err(e) => UserRet::from_error(vfs_error_to_errno(e)),
+    }
+}
+\end{rustcode}
+
+\syscall{mount}对\code{proc}/\code{tmpfs}的分发：
+
+\begin{rustcode}
+// mount(2)：按 fstype 与 flags 分发到 VFS 挂载表
+if fstype == "proc" {
+    if vfs::is_proc_mounted_at(mount_point.as_str()) {
+        return UserRet::from_error(ErrNo::EBUSY);
+    }
+    if let Err(e) = vfs::ensure_proc_mount_point() {
+        return UserRet::from_error(vfs_error_to_errno(e));
+    }
+    return match vfs::mount_procfs_at(mount_point.as_str()) {
+        Ok(()) => UserRet::from_success(0),
+        Err(VfsError::Exists) => UserRet::from_error(ErrNo::EBUSY),
+        Err(e) => UserRet::from_error(vfs_error_to_errno(e)),
+    };
+}
+if fstype == "tmpfs" {
+    // source 仅允许空或 "none"
+    if source_ptr != 0 { /* copy_user_path_cstr; EINVAL if invalid */ }
+    let readonly = flags & MS_RDONLY != 0;
+    match vfs::mount_tmpfs_at(mount_point.as_str()) {
+        Ok(()) => {}
+        Err(VfsError::Exists) => return UserRet::from_error(ErrNo::EBUSY),
+        Err(e) => return UserRet::from_error(vfs_error_to_errno(e)),
+    }
+    if readonly {
+        return match vfs::remount_readonly_at(mount_point.as_str()) {
+            Ok(()) => UserRet::from_success(0),
+            Err(e) => UserRet::from_error(vfs_error_to_errno(e)),
+        };
+    }
+    return UserRet::from_success(0);
+}
+\end{rustcode}
+
+别名syscall未实现时统一\code{ENOSYS}（\code{syscall-impl/impl-kernel/src/lib.rs}）：
+
+\begin{rustcode}
+// 别名号表：已实现的走具体 sys_*，其余返回 -ENOSYS（不 panic）
+fn dispatch_syscall_aliases(syscall_nr: usize, args: SyscallArgs) -> isize {
+    if syscall_nr == SYS_FSTATAT {
+        return sys::sys_fstatat(args).0;
+    }
+    if syscall_nr == SYS_STATX {
+        return sys::sys_statx(args).0;
+    }
+    if syscall_nr == SYS_FACCESSAT2 {
+        return sys::sys_faccessat2(args).0;
+    }
+    // setxattr/getxattr 等扩展属性槽位 …
+    match syscall_nr { /* 5..=16 */ _ => {} }
+    let _ = args;
+    abi::user_ret::UserRet::from_error(abi::errno::ErrNo::ENOSYS).0
+}
+\end{rustcode}
+
+\subsection{文件系统和VFS路径}
+
+\textbf{现象。}basic与busybox同时触及ext4根卷、procfs、tmpfs与\code{/dev}节点；若所有路径都落到同一读写句柄，\code{df}/\code{ps}会出现\code{/proc/mounts}缺失或权限errno混乱。
+
+\textbf{处理。}bring-up总线先\code{mount\_default\_root\_rw}，再挂\code{/proc}；\syscall{mount}把tmpfs、procfs、cgroup/securityfs与bind/remount标志交给VFS挂载表，错误映射为\code{EINVAL}/\code{EBUSY}等Linux errno。根卷布局脚本（\code{user\_bringup\_root\_layout}）在总线之后补齐\code{/bin}、\code{/etc/passwd}与busybox硬链接，减少\code{which}、LTP对路径的依赖。
+
+bring-up总线入口（\code{src/user\_bringup\_bus.rs}）：
+
+\begin{rustcode}
+//! 用户态 bring-up 须在 fs::init 之后、fs::test 之前，
+//! 且依赖已挂载的单一 RW 根卷视图。
+pub fn run() {
+    info!("[bringup][stage-00-bus] BEGIN");
+    match fs::mount_default_root_rw() {
+        Ok(()) => info!("[bringup][stage-00-bus] ext4 root mounted (RW)"),
+        Err(err) => {
+            // 根卷失败则跳过后续用户 ELF 阶段
+            warn!("[bringup][stage-00-bus] mount root RW failed: {err:?} \
+                   — skip user ELF stages");
+            info!("[bringup][stage-00-bus] END");
+            return;
+        }
+    }
+    match vfs::ensure_proc_mount_point() {
+        Ok(()) => {}
+        Err(err) => warn!("[bringup][stage-00-bus] ensure /proc dir failed: {err:?}"),
+    }
+    match vfs::mount_procfs_at("/proc") {
+        Ok(()) => info!("[bringup][stage-00-bus] procfs mounted at /proc"),
+        Err(vfs::api::VfsError::Exists) => {
+            info!("[bringup][stage-00-bus] procfs already at /proc")
+        }
+        Err(err) => warn!("[bringup][stage-00-bus] mount procfs failed: {err:?}"),
+    }
+    info!("[bringup][stage-00-bus] END");
+    crate::user_bringup_root_layout::ensure_busybox_path_links();
+    // crate::user_bringup_basic::run_stage_basic();  // 按阶段注释开关
+    crate::user_bringup_busybox::run_stage_busybox();
+}
+\end{rustcode}
+
+\subsection{并发、锁和资源回收}
+
+\textbf{现象。}P3/P5/P6长时间跑多进程脚本时，容易出现zombie残留、脚本间fd/socket泄漏，或调度器在关中断区内停留过久导致timer抢占异常。
+
+\textbf{处理。}调度器用\code{InterruptGuard}在触碰就绪队列时关中断并在\code{\_\_switch}前恢复；每个脚本结束后\code{purge\_all\_user\_processes}并调用\code{drop\_reaped\_task\_runtime\_resources}回收地址空间与syscall侧表。
+
+调度器中断守卫（\code{wateros-task/.../impl-round-robin/src/lib.rs}）：
+
+\begin{rustcode}
+// RAII：构造时关全局中断，drop 时恢复；包裹所有可能触碰就绪队列与 TCB
+// 的调度路径。
+struct InterruptGuard {
+    state: ArchInterruptState,
+}
+
+impl InterruptGuard {
+    fn new() -> Self {
+        let state = arch::interrupt::read_global_interrupt_state()
+            .expect("read global interrupt state for scheduler guard");
+        arch::interrupt::disable_global_interrupt()
+            .expect("disable global interrupt for scheduler guard");
+        Self { state }
+    }
+
+    /// 在即将 __switch 且不会再回到本栈帧时调用：立刻恢复关中断前状态，
+    /// 并用 forget 避免 Drop 二次恢复。
+    fn release_before_switch(self) { /* restore + mem::forget(self) */ }
+}
+
+impl Drop for InterruptGuard {
+    fn drop(&mut self) {
+        arch::interrupt::restore_global_interrupt_state(self.state)
+            .expect("restore global interrupt state for scheduler guard");
+    }
+}
+\end{rustcode}
+
+脚本结束清理（\code{src/user\_bringup\_common.rs}）：
+
+\begin{rustcode}
+// 串行执行单个 ELF/脚本：装载 → spawn → wait → reap
+task::wait_for_task_exit(tid);
+let exit_code = task::reap_exited_task(tid).map(|e| {
+    drop_reaped_task_runtime_resources(&e);  // 地址空间 + syscall 侧表
+    e.exit_code
+}).unwrap_or(-1);
+
+// 脚本间清理残留用户进程，避免影响下一组测例
+let (purge, stray_exited) = task::purge_all_user_processes();
+for exited in &stray_exited {
+    drop_reaped_task_runtime_resources(exited);
+}
+if purge.killed_tasks > 0 {
+    warn!("[{log_tag}] script cleanup killed {} stray user task(s) \
+           after path={elf_path}", purge.killed_tasks);
+}
+trace!("[{log_tag}] END path={elf_path} exit_code={exit_code}");
+\end{rustcode}
+
+\subsection{网络与双架构差异}
+
+\textbf{现象。}P4网络测例与smoke测试需要区分VFS fd与socket fd；任务退出后若socket侧表未释放，后续\code{bind}/\code{connect}可能拿到陈旧状态。双架构差异集中在trap参数布局、页表切换与VirtIO-MMIO/PCI，不应渗透到上层VFS语义。
+
+\textbf{处理。}\code{socket\_fd.rs}为每个任务维护独立的\code{SocketRef}映射与引用计数，\code{release\_task}在owner引用归零时整表删除；网络设备在RISC-V经DTB、LoongArch经PCI注册到同一\code{BlockDevice}/网络抽象后，上层socket syscall共用实现。
+
+socket fd注册表核心（\code{syscall-impl/impl-kernel/src/socket\_fd.rs}）：
+
+\begin{rustcode}
+//! Socket fd → network SocketRef 映射表。
+//! 因 VfsIoHandle 不支持向下转型，每个 socket fd 的共享状态在此独立维护。
+struct SocketFdRegistry {
+    maps: BTreeMap<TaskId, BTreeMap<usize, SocketRef>>,
+    status_flags: BTreeMap<TaskId, BTreeMap<usize, usize>>,
+    owners: BTreeMap<TaskId, TaskId>,      // CLONE_FILES 等共享 fd 表
+    ref_counts: BTreeMap<TaskId, usize>,
+}
+
+fn release_task(&mut self, task_id: TaskId) {
+    let owner = self.effective_owner(task_id);
+    self.owners.remove(&task_id);
+    let Some(count) = self.ref_counts.get_mut(&owner) else {
+        self.maps.remove(&task_id);
+        return;
+    };
+    *count = count.saturating_sub(1);
+    if *count == 0 {
+        // 引用归零：删除该 owner 下全部 socket fd 状态
+        self.ref_counts.remove(&owner);
+        self.maps.remove(&owner);
+        self.status_flags.remove(&owner);
+    }
+}
+\end{rustcode}
+
+\subsection{定位和复现方法}
+
+\textbf{现象。}QEMU无输出、PC卡死、\code{unknown nr=}、用户任务不退出或脚本\code{exit\_code}非零。
+
+\textbf{处理。}按层读串口日志：平台与\code{[self-test]}→驱动\code{[driver*]}→FS\code{[fs*]}→\code{[bringup]}→\code{[busybox-bringup]}→测例\code{COMP TEST GROUP}。需要指令级定位时用\code{make rv\_pc\_watch}/\code{la\_pc\_watch}只看PC跳变，用\code{rv\_symbol\_at ADDR=…}把地址解析到内核符号；长跑日志用\code{rv\_qemu\_run\_with\_log}生成\code{qemu.log}配合\code{grep}，测例摘要仍用\code{parse\_qemu\_test\_log.py}。
+
+典型检索命令：
+
+\begin{bashcode}
+LOG=/tmp/wateros_P1.log   # 或 os/log、la_local_run_*.log
+
+# 内核 panic 与未知 syscall
+grep -nE 'unsupported: unknown nr=|Panicked at' "$LOG"
+
+# 用户态测例失败
+grep -nE 'testcase busybox .+ fail|Assert Fatal' "$LOG"
+
+# syscall 返回负 errno（ret=-N）
+grep -nE '\[syscall\] nr=[0-9]+ ret=-[0-9]+' "$LOG"
+
+# 将 PC 解析到内核符号（在 os/ 目录下执行）
+make la_symbol_at ADDR=0x90001234
+\end{bashcode}
+
+建议保存完整日志到\code{/tmp/wateros\_P*.log}或\code{os/log}（勿提交git），记录当次\code{BRINGUP\_COMMANDS}注释状态，便于与双架构对比结论一并归档。

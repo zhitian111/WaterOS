@@ -1,0 +1,17 @@
+% 【本文件写什么】impl 实现层：dummy
+%   - 定位：占位/链接桩实现，保证默认 feature 可编译。
+%   - crate 路径：os/components/wateros-fs/fs-procfs/procfs-impl/impl-dummy/src/
+%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+%   - 算法或硬件交互流程（可用伪代码/流程图）
+%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
+%   - 与其它 impl 变体的差异、切换 feature 时的影响
+%   - 性能/内存假设与已知限制
+% 【事实来源】
+%   - 上述 crate 源码与 Cargo.toml
+%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+
+\subsubsection{impl-dummy}
+
+\code{DummyProcFs}实现\code{ProcFsView}：\code{exists}恒\code{false}，\code{metadata}/\code{read}返回\code{NotFound}，\code{read\_dir}返回空表。回调注册函数\code{register\_*}为空操作。\code{view()}返回全局唯一静态实例。
+
+用于无task/VFS回调的最小链接；不可满足依赖\code{/proc}内容的测例。与\code{impl-kernel}互斥由\code{fs-procfs} feature选择。

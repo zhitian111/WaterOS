@@ -1,0 +1,27 @@
+% 【本文件写什么】api-v0 契约层（叶子，只写语义不写实现）
+%   - crate 路径：os/components/wateros-platform/platform-api/api-v0/src/
+%   - 列出并说明：pub trait、核心类型、错误枚举、常量
+%   - 每个公开 API 的前置条件、后置条件、线程/中断上下文限制
+%   - 与 Linux/用户态约定的对齐点与 deliberate 差异
+%   - v0 版本当前行为与后续可替换 extension 点
+% 【事实来源】
+%   - 上述 crate 下全部 .rs 源文件
+%   - docs/exports/public-api/ 中对应符号表（以源码为准）
+% 【不写什么】
+%   - impl 内部数据结构、汇编、具体算法步骤
+
+\subsubsection{引导参数}
+
+\code{PlatformBootArgs}描述固件传入内核的最小参数面：\code{arg0}/\code{arg1}/\code{arg2}默认返回\code{None}，具体板级覆盖需要暴露的槽位。RISC-V OpenSBI路径上\code{arg0}为hart id、\code{arg1}为DTB物理地址；LoongArch\code{virt}路径暴露三槽\code{argc/argv/envp}风格参数，语义由\code{platform-impl}文档化。\code{PlatformBootContext<BootArgs>}为标记trait，要求\code{From<BootArgs>}，供启动代码把原始寄存器约定类型化为\code{BootContext}；入口汇编\code{\_start}与链接脚本不在本契约中表达。
+
+\subsubsection{平台时间与deadline定时器}
+
+\code{PlatformTime}仅承诺\code{time\_frequency\_hz()}：返回调度与tick换算采用的Hz。默认实现返回\code{PlatformTimeError::Unsupported}；引导期若已从DTB写入频率，应经聚合层\code{set\_frequency\_hz}缓存后再供\code{timer}使用，避免与arch层\code{read\_time\_frequency}（常不支持）混淆。
+
+\code{PlatformTimerDeadline(u64)}承载绝对tick deadline，刻度须与\code{platform::timer::now\_tick()}同源。\code{PlatformDeadlineTimer::platform\_set\_timer}把该deadline交给板级后端；错误枚举\code{PlatformDeadlineTimerError}区分\code{Unsupported}、\code{Unavailable}、\code{Failure}与\code{InvalidDeadline}。聚合层\code{PlatformTimerError}在此基础上叠加\code{Arch}、\code{Platform}、\code{NoFrequency}与\code{Overflow}，用于定位CSR读数、频率配置或后端调用失败。
+
+\subsubsection{控制台与复位}
+
+\code{PlatformConsole}提供\code{platform\_console\_write\_a\_byte}、按字节写缓冲的默认实现，以及可选\code{platform\_console\_flush}。\code{is\_available}为false时写缓冲返回\code{Unavailable}。v0未定义输入侧能力。
+
+\code{PlatformReset}映射\code{PlatformResetType}（\code{Shutdown}/\code{ColdReboot}/\code{WarmReboot}）与\code{PlatformResetReason}；\code{platform\_shutdown}/\code{platform\_reboot}在\code{is\_available}为false时直接返回\code{Unavailable}，否则委托\code{platform\_reset}。默认\code{platform\_reset}返回\code{Unsupported}，由\code{platform-impl}覆盖。

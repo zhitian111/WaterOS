@@ -1,0 +1,27 @@
+% 【本文件写什么】api-v0 契约层（叶子，只写语义不写实现）
+%   - crate 路径：os/components/wateros-ipc/ipc-api/api-v0/src/
+%   - 列出并说明：pub trait、核心类型、错误枚举、常量
+%   - 每个公开 API 的前置条件、后置条件、线程/中断上下文限制
+%   - 与 Linux/用户态约定的对齐点与 deliberate 差异
+%   - v0 版本当前行为与后续可替换 extension 点
+% 【事实来源】
+%   - 上述 crate 下全部 .rs 源文件
+%   - docs/exports/public-api/ 中对应符号表（以源码为准）
+% 【不写什么】
+%   - impl 内部数据结构、汇编、具体算法步骤
+
+\subsubsection{wateros-ipc-api-v0}
+
+本 crate 为 IPC 顶层协议门面的占位版本。设计意图是在此固化将来跨 syscall、VFS 与 task 共享的稳定类型，再向\code{wateros-ipc}聚合层传播；当前实现尚未定义 trait、错误枚举或资源句柄。
+
+\paragraph{公开 API。}
+唯一导出函数\code{add(left, right) -> u64}用于依赖图链接与 CI 单测，语义为普通整数加法，不得被调用方当作 IPC 操作。
+
+\begin{rustcode}
+/// 占位算术函数，仅用于依赖图与单元测试；不是正式 IPC 语义的一部分。
+#[inline]
+pub fn add(left : u64, right : u64) -> u64 { left + right }
+\end{rustcode}
+
+\paragraph{上下文与演进。}
+可在任务上下文调用；不涉及中断或用户内存访问。后续 v0 演进应在此引入正式 trait 与\code{repr(C)}类型，并保留\code{add}或替换为\code{test()}类自检入口，以免破坏默认\code{feature api-v0}的链接链。

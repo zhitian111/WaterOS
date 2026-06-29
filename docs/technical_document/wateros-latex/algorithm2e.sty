@@ -1,0 +1,8 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{algorithm2e}[2026/06/23 local compatibility shim]
+\DeclareOption*{}
+\ProcessOptions\relax
+\newenvironment{algorithm}[1][]{\par\smallskip\noindent\begin{minipage}{\linewidth}}{\end{minipage}\par\smallskip}
+\newcommand{\KwIn}[1]{\textbf{输入：}#1\par}
+\newcommand{\KwOut}[1]{\textbf{输出：}#1\par}
+\newcommand{\SetKwInOut}[2]{}

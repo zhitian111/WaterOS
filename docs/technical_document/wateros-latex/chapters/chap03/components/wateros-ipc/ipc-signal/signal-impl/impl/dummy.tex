@@ -1,0 +1,23 @@
+% 【本文件写什么】impl 实现层：dummy
+%   - 定位：信号 impl 占位，未挂聚合 feature 链。
+%   - crate 路径：os/components/wateros-ipc/ipc-signal/signal-impl/impl-dummy/src/
+%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+%   - 算法或硬件交互流程（可用伪代码/流程图）
+%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
+%   - 与其它 impl 变体的差异、切换 feature 时的影响
+%   - 性能/内存假设与已知限制
+% 【事实来源】
+%   - 上述 crate 源码与 Cargo.toml
+%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+
+\subsubsection{impl-dummy}
+
+\code{wateros-ipc-signal-impl-dummy}为链接桩 crate，仅导出\code{add}占位函数，不实现\code{SignalRegistry}、不投递信号、不操纵线程掩码。
+
+\begin{rustcode}
+/// 占位算术：无信号投递语义。
+#[inline]
+pub fn add(left : u64, right : u64) -> u64 { left + right }
+\end{rustcode}
+
+根\code{wateros-ipc}的\code{feature signal}依赖\code{ipc-signal}聚合 crate 及其\code{signal-api/api-v0}，未将\code{impl-dummy}选为\code{active\_impl}；生产路径使用聚合\code{lib.rs}内的\code{SignalRegistry}。dummy 保留在 workspace 供未来拆分 impl 变体或最小 feature 组合编译。

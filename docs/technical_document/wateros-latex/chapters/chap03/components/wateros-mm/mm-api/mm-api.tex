@@ -1,0 +1,15 @@
+% 【本文件写什么】独立子 crate（无 api/impl 目录树）：mm-api
+%   - 职责：内存管理 api-v0：映射、页表操作 trait。
+%   - 源码：os/components/wateros-mm/mm-api/src/
+%   - 对外暴露的函数/类型、在聚合 lib.rs 中的重导出方式
+%   - 实现要点、feature（若有）、与其它子 crate 的边界
+% 【事实来源】
+%   - os/components/wateros-mm/mm-api/、父组件 src/lib.rs
+
+\subsection{mm-api}
+
+子 crate \code{wateros-mm-api-v0}（目录\code{mm-api/api-v0/}）定义虚拟内存的稳定语义契约：地址与页号类型、页权限、\code{AddressSpaceOps}、\code{MmapOps}、\code{HeapBrk}、\code{UserMemoryOps}、ELF 装载结果类型等。本 crate 不实现页表 walk，也不分配真实物理帧；\code{mm-impl}与\code{frame-alloctor}须满足此处 trait 语义。
+
+聚合层以\code{pub use api\_v0 as api}再导出，syscall、task、trap 等模块统一引用\code{mm::api::*}。契约层固定 4\,KiB 页粒度（\code{PAGE\_SIZE = 4096}），\code{satp\_value}字段名保留历史含义，LoongArch64 实现中实际承载 PGDL 物理基址。
+
+\input{chapters/chap03/components/wateros-mm/mm-api/api/api-v0}
