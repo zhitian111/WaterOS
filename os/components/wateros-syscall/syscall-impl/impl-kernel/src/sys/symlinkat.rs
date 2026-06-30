@@ -4,7 +4,9 @@
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
-use vfs::api::VfsError;
+use cred::api::{Gid, ProcessCredentials};
+use vfs::active_impl;
+use vfs::api::{SingleRootReadView, VfsError, VfsNodeType};
 
 use crate::sys::path_at::resolve_path_at;
 use crate::user_copy::copy_user_path_cstr;
@@ -31,6 +33,10 @@ pub(crate) fn sys_symlinkat(args: SyscallArgs) -> UserRet {
         Ok(path) => path,
         Err(e) => return UserRet::from_error(e),
     };
+    let cred = cred::current_credentials();
+    if let Err(e) = check_parent_create(resolved.as_str(), &cred) {
+        return UserRet::from_error(e);
+    }
 
     match vfs::symlink_absolute(target.as_str(), resolved.as_str()) {
         Ok(()) => UserRet::from_success(0),
@@ -40,4 +46,42 @@ pub(crate) fn sys_symlinkat(args: SyscallArgs) -> UserRet {
         Err(VfsError::ReadOnlyFs) => UserRet::from_error(ErrNo::EROFS),
         Err(e) => UserRet::from_error(vfs_error_to_errno(e)),
     }
+}
+
+fn check_parent_create(path: &str, cred: &ProcessCredentials) -> Result<(), ErrNo> {
+    let parent = path
+        .rsplit_once('/')
+        .map(|(parent, _)| if parent.is_empty() { "/" } else { parent })
+        .unwrap_or("/");
+    let meta = active_impl::backend()
+        .metadata(parent)
+        .map_err(vfs_error_to_errno)?;
+    if meta.node_type != VfsNodeType::Directory {
+        return Err(ErrNo::ENOTDIR);
+    }
+    if cred.effective_uid.0 == 0 {
+        return Ok(());
+    }
+    let mode = u32::from(meta.mode);
+    let allowed = if cred.effective_uid.0 == meta.uid {
+        mode & 0o300 == 0o300
+    } else if cred_has_group(cred, Gid(meta.gid)) {
+        mode & 0o030 == 0o030
+    } else {
+        mode & 0o003 == 0o003
+    };
+    if allowed {
+        Ok(())
+    } else {
+        Err(ErrNo::EACCES)
+    }
+}
+
+fn cred_has_group(cred: &ProcessCredentials, gid: Gid) -> bool {
+    cred.effective_gid == gid
+        || cred
+            .supplementary_groups
+            .iter()
+            .take(cred.supplementary_group_len)
+            .any(|group| *group == gid)
 }

@@ -29,7 +29,9 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const SELECT: SyscallNumber = SyscallNumber(usize::MAX);
     const READLINKAT: SyscallNumber = SyscallNumber(78);
     const FACCESSAT: SyscallNumber = SyscallNumber(48);
+    const FCHMOD: SyscallNumber = SyscallNumber(52);
     const FCHMODAT: SyscallNumber = SyscallNumber(53);
+    const FCHOWN: SyscallNumber = SyscallNumber(55);
     const FCHOWNAT: SyscallNumber = SyscallNumber(54);
     const STATFS: SyscallNumber = SyscallNumber(43);
     const SYNC: SyscallNumber = SyscallNumber(81);
@@ -64,6 +66,7 @@ impl SyscallNumberTable for LinuxGeneric64 {
     const MKDIRAT: SyscallNumber = SyscallNumber(34);
     const SYMLINKAT: SyscallNumber = SyscallNumber(36);
     const UNLINKAT: SyscallNumber = SyscallNumber(35);
+    const RENAMEAT: SyscallNumber = SyscallNumber(38);
     const RENAMEAT2: SyscallNumber = SyscallNumber(276);
     const UTIMENSAT: SyscallNumber = SyscallNumber(88);
     const MOUNT: SyscallNumber = SyscallNumber(40);
@@ -221,7 +224,9 @@ mod tests {
             LinuxGeneric64::PPOLL,
             LinuxGeneric64::READLINKAT,
             LinuxGeneric64::FACCESSAT,
+            LinuxGeneric64::FCHMOD,
             LinuxGeneric64::FCHMODAT,
+            LinuxGeneric64::FCHOWN,
             LinuxGeneric64::FCHOWNAT,
             LinuxGeneric64::STATFS,
             LinuxGeneric64::SYNC,
@@ -256,6 +261,7 @@ mod tests {
             LinuxGeneric64::MKDIRAT,
             LinuxGeneric64::SYMLINKAT,
             LinuxGeneric64::UNLINKAT,
+            LinuxGeneric64::RENAMEAT,
             LinuxGeneric64::RENAMEAT2,
             LinuxGeneric64::UTIMENSAT,
             LinuxGeneric64::MOUNT,

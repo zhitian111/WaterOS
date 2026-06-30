@@ -559,6 +559,27 @@ impl ReadWriteFs for Ext4FsRw {
         if old_parent != new_parent {
             return Err(FsError::Unsupported);
         }
+        let old_meta = self.metadata(old_path)?;
+        let new_meta = match self.metadata(new_path) {
+            Ok(meta) => Some(meta),
+            Err(FsError::NotFound) => None,
+            Err(err) => return Err(err),
+        };
+        if let Some(meta) = new_meta {
+            if meta.inode == old_meta.inode {
+                return Ok(());
+            }
+            match (old_meta.node_type, meta.node_type) {
+                (FsNodeType::Directory, FsNodeType::Directory) => {
+                    if !self.read_dir(new_path)?.is_empty() {
+                        return Err(FsError::Exists);
+                    }
+                }
+                (FsNodeType::Directory, _) => return Err(FsError::Unsupported),
+                (_, FsNodeType::Directory) => return Err(FsError::NotAFile),
+                _ => {}
+            }
+        }
         let fs = self.fs()?;
         let parent_path = Path::try_from(old_parent).map_err(|_| FsError::InvalidPath)?;
         let parent_inode = fs
@@ -571,8 +592,11 @@ impl ReadWriteFs for Ext4FsRw {
         let old_name = DirEntryName::try_from(old_name).map_err(|_| FsError::InvalidPath)?;
         let new_name = DirEntryName::try_from(new_name).map_err(|_| FsError::InvalidPath)?;
         let mut inode = parent_dir.get_entry(old_name).map_err(map_ext4_plus)?;
-        if parent_dir.get_entry(new_name).is_ok() {
-            return Err(FsError::Exists);
+        if let Ok(existing) = parent_dir.get_entry(new_name) {
+            if existing.index == inode.index {
+                return Ok(());
+            }
+            parent_dir.unlink(new_name, existing).map_err(map_ext4_plus)?;
         }
         parent_dir
             .link(new_name, &mut inode)

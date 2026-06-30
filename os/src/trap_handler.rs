@@ -20,7 +20,7 @@ use platform::arch::trap::ActiveTrapFrame as TrapContext;
 use runtime::logging::*;
 use syscall::dispatch_syscall_from_trap;
 
-/// 热路径 syscall/trap 跟踪；release 构建默认关闭。
+// 热路径 syscall/trap 跟踪；release 构建默认关闭。
 macro_rules! hot_syscall_trace {
     ($($tt:tt)*) => {
         #[cfg(any(debug_assertions, feature = "syscall-trace"))]

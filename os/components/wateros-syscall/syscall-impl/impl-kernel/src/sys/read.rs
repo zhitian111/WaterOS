@@ -196,6 +196,9 @@ fn read_fd(fd : usize, buf : &mut [u8]) -> Result<usize, ErrNo> {
             Err(_) => Err(ErrNo::ENOTSOCK),
         };
     }
+    if vfs::fd::is_path_only_fd(fd).map_err(vfs_error_to_errno)? {
+        return Err(ErrNo::EBADF);
+    }
     // iozone 调试：VFS read 调用前
     log::trace!("[read_fd] vfs_read fd={} len={}",
                 fd,

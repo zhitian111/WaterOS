@@ -91,6 +91,11 @@ pub trait VfsIoHandle {
         None
     }
 
+    /// `flock(2)` 的打开文件描述 owner；`dup`/`fork` 复制时应保持不变。
+    fn flock_owner_id(&self) -> Option<u64> {
+        None
+    }
+
     /// 将目录项写入 `buf`（`getdents64` 布局）；非目录句柄默认 [`VfsError::Unsupported`]。
     fn fill_getdents64(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
         let _ = buf;

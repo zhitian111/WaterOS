@@ -15,6 +15,7 @@ extern crate alloc;
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicU64, Ordering};
 
 use api_v0::{
     normalize_absolute_path, SingleRootReadView, VfsError, VfsIoHandle, VfsMetadata, VfsOpenFlags,
@@ -28,6 +29,7 @@ use crate::{map_fs_err, mount_table::{resolve_route, FsRoute}, root_rw, FsBridge
 /// detached 模式下单文件内核堆缓冲上限。
 // 本变量代码由AI完成
 const DETACHED_DATA_MAX : usize = 16 * 1024 * 1024;
+static NEXT_FLOCK_OWNER_ID : AtomicU64 = AtomicU64::new(1);
 
 // 本方法代码由AI完成
 fn check_detached_len(len : usize) -> VfsResult<()> {
@@ -107,6 +109,7 @@ pub struct PagedFileHandle {
     detached : bool,
     detached_data : Vec<u8>,
     open_ref_held : bool,
+    flock_owner_id : u64,
 }
 
 impl Clone for PagedFileHandle {
@@ -125,7 +128,8 @@ impl Clone for PagedFileHandle {
                on_disk_size : self.on_disk_size,
                detached : self.detached,
                detached_data : self.detached_data.clone(),
-               open_ref_held : self.open_ref_held }
+               open_ref_held : self.open_ref_held,
+               flock_owner_id : self.flock_owner_id }
     }
 }
 
@@ -191,7 +195,8 @@ impl PagedFileHandle {
                   on_disk_size,
                   detached : false,
                   detached_data : Vec::new(),
-                  open_ref_held : true })
+                  open_ref_held : true,
+                  flock_owner_id : NEXT_FLOCK_OWNER_ID.fetch_add(1, Ordering::Relaxed) })
     }
 
 // 本方法代码由AI完成
@@ -425,7 +430,10 @@ impl VfsIoHandle for PagedFileHandle {
 
 // 本方法代码由AI完成
     fn metadata(&self) -> VfsResult<VfsMetadata> {
-        let mut m = self.meta.clone();
+        let mut m = match FsBridge.metadata(self.path.as_str()) {
+            Ok(meta) => meta,
+            Err(_) => self.meta.clone(),
+        };
         m.size = self.current_size();
         Ok(m)
     }
@@ -433,6 +441,11 @@ impl VfsIoHandle for PagedFileHandle {
 // 本方法代码由AI完成
     fn backing_path(&self) -> Option<&str> {
         Some(self.path.as_str())
+    }
+
+// 本方法代码由AI完成
+    fn flock_owner_id(&self) -> Option<u64> {
+        Some(self.flock_owner_id)
     }
 
 // 本方法代码由AI完成

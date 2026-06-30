@@ -9,11 +9,25 @@ use vfs::api::{SingleRootReadView, VFS_FIRST_DYNAMIC_FD, VFS_STDERR_FD, VFS_STDI
 
 use crate::linux_stat::{fill_linux_stat, fill_linux_statx};
 use crate::sys::stat_times;
-use crate::sys::path_at::resolve_path_at;
+use crate::sys::path_at::{resolve_final_symlink, resolve_path_at};
 use crate::user_copy::{copy_to_user_struct, copy_user_path_cstr};
 use crate::vfs_util::vfs_error_to_errno;
 
 const AT_EMPTY_PATH: u32 = 0x1000;
+const AT_SYMLINK_NOFOLLOW: u32 = 0x100;
+const AT_NO_AUTOMOUNT: u32 = 0x800;
+const AT_STATX_FORCE_SYNC: u32 = 0x2000;
+const AT_STATX_DONT_SYNC: u32 = 0x4000;
+const AT_STATX_SYNC_TYPE: u32 = AT_STATX_FORCE_SYNC | AT_STATX_DONT_SYNC;
+const STATX_RESERVED: u32 = 0x8000_0000;
+const NAME_MAX: usize = 255;
+
+fn reject_long_path_component(path: &str) -> Result<(), ErrNo> {
+    if path.split('/').any(|component| component.len() > NAME_MAX) {
+        return Err(ErrNo::ENAMETOOLONG);
+    }
+    Ok(())
+}
 
 // 本方法代码由AI完成
 pub(crate) fn sys_fstat(args: SyscallArgs) -> UserRet {
@@ -100,6 +114,12 @@ pub(crate) fn sys_statx(args: SyscallArgs) -> UserRet {
     if statx_ptr == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
     }
+    if flags & !(AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT | AT_STATX_SYNC_TYPE) != 0
+        || flags & AT_STATX_SYNC_TYPE == AT_STATX_SYNC_TYPE
+        || mask & STATX_RESERVED != 0
+    {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
 
     let path = if path_ptr == 0 && (flags & AT_EMPTY_PATH) != 0 {
         alloc::string::String::new()
@@ -109,6 +129,9 @@ pub(crate) fn sys_statx(args: SyscallArgs) -> UserRet {
             Err(e) => return UserRet::from_error(e),
         }
     };
+    if let Err(e) = reject_long_path_component(path.as_str()) {
+        return UserRet::from_error(e);
+    }
 
     let statx = if path.is_empty() && (flags & AT_EMPTY_PATH) != 0 && dirfd >= 0 {
         match vfs::fd::with_current_io(dirfd as usize, |handle| {
@@ -124,6 +147,14 @@ pub(crate) fn sys_statx(args: SyscallArgs) -> UserRet {
         let resolved = match resolve_path_at(dirfd, path.as_str()) {
             Ok(path) => path,
             Err(e) => return UserRet::from_error(e),
+        };
+        let resolved = if flags & AT_SYMLINK_NOFOLLOW != 0 {
+            resolved
+        } else {
+            match resolve_final_symlink(resolved.as_str()) {
+                Ok(path) => path,
+                Err(e) => return UserRet::from_error(e),
+            }
         };
         match active_impl::backend().metadata(resolved.as_str()) {
             Ok(meta) => {

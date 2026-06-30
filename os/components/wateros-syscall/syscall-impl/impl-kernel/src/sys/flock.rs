@@ -24,14 +24,16 @@ fn flock_impl(fd: usize, operation: usize) -> Result<(), ErrNo> {
         .map(|snap| snap.pid)
         .ok_or(ErrNo::ESRCH)?;
 
-    let key = vfs::fd::with_current_io(fd, |handle| {
+    let (key, owner) = vfs::fd::with_current_io(fd, |handle| {
         let meta = handle.metadata()?;
-        fd::inode_key_from_metadata(&meta).ok_or(vfs::api::VfsError::Unsupported)
+        let key = fd::inode_key_from_metadata(&meta).ok_or(vfs::api::VfsError::Unsupported)?;
+        let owner = handle.flock_owner_id().ok_or(vfs::api::VfsError::Unsupported)?;
+        Ok((key, owner))
     })
     .map_err(|err| match err {
         vfs::api::VfsError::Unsupported => ErrNo::EINVAL,
         other => vfs_error_to_errno(other),
     })?;
 
-    fd::flock_op(&key, pid, operation).map_err(vfs_error_to_errno)
+    fd::flock_op(&key, pid, owner, operation).map_err(vfs_error_to_errno)
 }

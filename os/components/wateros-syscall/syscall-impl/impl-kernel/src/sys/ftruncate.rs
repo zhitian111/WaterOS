@@ -12,7 +12,18 @@ pub(crate) fn sys_ftruncate(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let len = args.arg(1);
 
-    match vfs::fd::with_current_io(fd, |handle| handle.truncate(len as u64)) {
+    if (len as isize) < 0 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+
+    match vfs::fd::with_current_io(fd, |handle| {
+        const O_ACCMODE: u32 = 3;
+        const O_RDONLY: u32 = 0;
+        if handle.open_accmode() & O_ACCMODE == O_RDONLY {
+            return Err(vfs::api::VfsError::Unsupported);
+        }
+        handle.truncate(len as u64)
+    }) {
         Ok(()) => UserRet::from_success(0),
         Err(vfs::api::VfsError::Unsupported) => UserRet::from_error(ErrNo::EINVAL),
         Err(e) => UserRet::from_error(vfs_error_to_errno(e)),

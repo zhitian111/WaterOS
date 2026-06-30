@@ -132,6 +132,9 @@ impl PerTaskFdRegistry {
             if let Ok(meta) = handle.metadata() {
                 if let Some(key) = crate::file_lock::inode_key_from_metadata(&meta) {
                     crate::file_lock::release_process_inode_locks(pid, &key);
+                    if let Some(owner) = handle.flock_owner_id() {
+                        crate::file_lock::release_flock_owner(&key, owner);
+                    }
                 }
             }
         }
@@ -533,6 +536,10 @@ impl PerTaskFdRegistry {
             handle.duplicate()?
         };
 
+        if newfd >= task::nofile_rlimit_for_task(task_id) as usize {
+            return Err(VfsError::BadFd);
+        }
+
         self.ensure_task(task_id);
         let owner = self.effective_owner(task_id);
         let newfd_was_open = self.tables
@@ -702,12 +709,6 @@ impl PerTaskFdRegistry {
             self.fd_flags.get_mut(&child).expect("child fd flags")[fd] = parent_flags[fd];
         }
 
-        if let (Some(parent_snap), Some(child_snap)) = (
-            task::process_task_snapshot(parent),
-            task::process_task_snapshot(child),
-        ) {
-            crate::file_lock::inherit_process_locks(parent_snap.pid, child_snap.pid);
-        }
     }
 
     /// thread clone 时共享父任务 fd 表。

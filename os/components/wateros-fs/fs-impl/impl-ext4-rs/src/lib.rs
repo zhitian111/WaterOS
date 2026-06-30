@@ -662,13 +662,46 @@ impl ReadWriteFs for Ext4RsFs {
             return Err(FsError::Unsupported);
         }
 
+        let old_meta = ReadOnlyFs::metadata(self, old_path)?;
+        let new_meta = match ReadOnlyFs::metadata(self, new_path) {
+            Ok(meta) => Some(meta),
+            Err(FsError::NotFound) => None,
+            Err(err) => return Err(err),
+        };
+        if let Some(meta) = new_meta {
+            if meta.inode == old_meta.inode {
+                return Ok(());
+            }
+            match (old_meta.node_type, meta.node_type) {
+                (FsNodeType::Directory, FsNodeType::Directory) => {
+                    if !ReadOnlyFs::read_dir(self, new_path)?.is_empty() {
+                        return Err(FsError::Exists);
+                    }
+                }
+                (FsNodeType::Directory, _) => return Err(FsError::Unsupported),
+                (_, FsNodeType::Directory) => return Err(FsError::NotAFile),
+                _ => {}
+            }
+        }
+
         let fs = self.fs_mut()?;
         let parent = lookup_inode(fs, old_parent_path)?;
         ensure_dir_inode(fs, parent)?;
         let old_attr = fs.fuse_lookup(parent as u64, old_name)
                          .map_err(map_ext4_rs)?;
         match fs.fuse_lookup(parent as u64, new_name) {
-            Ok(_) => return Err(FsError::Exists),
+            Ok(attr) => {
+                if attr.ino == old_attr.ino {
+                    return Ok(());
+                }
+                if attr.kind == InodeFileType::S_IFDIR {
+                    fs.fuse_rmdir(parent as u64, new_name)
+                      .map_err(map_ext4_rs)?;
+                } else {
+                    fs.fuse_unlink(parent as u64, new_name)
+                      .map_err(map_ext4_rs)?;
+                }
+            }
             Err(err) if map_ext4_rs(err) == FsError::NotFound => {}
             Err(err) => return Err(map_ext4_rs(err)),
         }

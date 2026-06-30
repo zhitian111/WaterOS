@@ -604,6 +604,24 @@ pub fn symlink_path(link_path : &str, target : &str) -> VfsResult<()> {
     sess.symlink(rel.as_str(), target)
 }
 
+/// 创建硬链接（经挂载表路由）。
+// 本方法代码由AI完成
+pub fn hardlink_path(existing_path : &str, new_path : &str) -> VfsResult<()> {
+    let existing = normalize_absolute_path(existing_path)?;
+    let new = normalize_absolute_path(new_path)?;
+    if new.as_str() == "/" {
+        return Err(VfsError::InvalidPath);
+    }
+    mount_table::assert_path_writable(new.as_str())?;
+    let (existing_fs, existing_rel) = fs_and_rel_rw(existing.as_str())?;
+    let (new_fs, new_rel) = fs_and_rel_rw(new.as_str())?;
+    if !core::ptr::addr_eq(alloc::sync::Arc::as_ptr(&existing_fs), alloc::sync::Arc::as_ptr(&new_fs)) {
+        return Err(VfsError::Unsupported);
+    }
+    let mut sess = MountedRwSession::new(existing_fs);
+    sess.hardlink(existing_rel.as_str(), new_rel.as_str())
+}
+
 /// 读取符号链接目标（经挂载表路由）。
 // 本方法代码由AI完成
 pub fn read_symlink_path(path : &str) -> VfsResult<Vec<u8>> {
@@ -813,6 +831,15 @@ pub fn mknod_socket_at(path : &str) -> VfsResult<()> {
     let (fs, rel) = fs_and_rel_rw(path)?;
     let mut sess = MountedRwSession::new(fs);
     sess.mknod(rel.as_str(), 0o140_777, 0)
+}
+
+/// 在绝对路径创建普通/特殊节点（`mknodat(2)`）。
+// 本方法代码由AI完成
+pub fn mknod_path(path : &str, mode : u32, rdev : u32) -> VfsResult<()> {
+    mount_table::assert_path_writable(path)?;
+    let (fs, rel) = fs_and_rel_rw(path)?;
+    let mut sess = MountedRwSession::new(fs);
+    sess.mknod(rel.as_str(), mode, rdev)
 }
 
 /// 重命名绝对路径（经挂载表路由；要求 old/new 落在同一 RW 卷）。

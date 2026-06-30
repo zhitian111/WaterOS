@@ -4,8 +4,9 @@
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
+use cred::api::ProcessCredentials;
 use vfs::active_impl;
-use vfs::api::SingleRootReadView;
+use vfs::api::{SingleRootReadView, VfsError, VfsNodeType};
 
 use crate::sys::path_at::{resolve_final_symlink, resolve_path_at, AT_FDCWD};
 use crate::user_copy::{copy_to_user_struct, copy_user_path_cstr};
@@ -40,6 +41,27 @@ struct LinuxStatFs {
 
 const _: () = assert!(core::mem::size_of::<LinuxStatFs>() == 120);
 
+fn make_statfs_for_path(path: Option<&str>) -> LinuxStatFs {
+    let f_type = path
+        .and_then(vfs::mount_statfs_magic)
+        .unwrap_or(EXT4_SUPER_MAGIC);
+
+    LinuxStatFs {
+        f_type,
+        f_bsize: STATFS_BLOCK_SIZE,
+        f_blocks: STATFS_TOTAL_BLOCKS,
+        f_bfree: STATFS_FREE_BLOCKS,
+        f_bavail: STATFS_FREE_BLOCKS,
+        f_files: STATFS_TOTAL_FILES,
+        f_ffree: STATFS_FREE_FILES,
+        f_fsid: [0; 2],
+        f_namelen: STATFS_MAX_NAME_LEN,
+        f_frsize: STATFS_BLOCK_SIZE,
+        f_flags: 0,
+        f_spare: [0; 4],
+    }
+}
+
 // 本方法代码由AI完成
 pub(crate) fn sys_statfs(args: SyscallArgs) -> UserRet {
     let path_ptr = args.arg(0);
@@ -60,28 +82,73 @@ pub(crate) fn sys_statfs(args: SyscallArgs) -> UserRet {
         Ok(path) => path,
         Err(e) => return UserRet::from_error(e),
     };
+    let cred = cred::current_credentials();
+    if let Err(e) = check_parent_search(resolved.as_str(), &cred) {
+        return UserRet::from_error(e);
+    }
 
     match active_impl::backend().metadata(resolved.as_str()) {
         Ok(_) => {}
         Err(e) => return UserRet::from_error(vfs_error_to_errno(e)),
     }
 
-    let f_type = vfs::mount_statfs_magic(resolved.as_str()).unwrap_or(EXT4_SUPER_MAGIC);
+    let statfs = make_statfs_for_path(Some(resolved.as_str()));
 
-    let statfs = LinuxStatFs {
-        f_type,
-        f_bsize: STATFS_BLOCK_SIZE,
-        f_blocks: STATFS_TOTAL_BLOCKS,
-        f_bfree: STATFS_FREE_BLOCKS,
-        f_bavail: STATFS_FREE_BLOCKS,
-        f_files: STATFS_TOTAL_FILES,
-        f_ffree: STATFS_FREE_FILES,
-        f_fsid: [0; 2],
-        f_namelen: STATFS_MAX_NAME_LEN,
-        f_frsize: STATFS_BLOCK_SIZE,
-        f_flags: 0,
-        f_spare: [0; 4],
+    match copy_to_user_struct(buf_ptr, &statfs) {
+        Ok(()) => UserRet::from_success(0),
+        Err(e) => UserRet::from_error(e),
+    }
+}
+
+fn check_parent_search(path: &str, cred: &ProcessCredentials) -> Result<(), ErrNo> {
+    if cred.effective_uid.0 == 0 {
+        return Ok(());
+    }
+
+    let parts: alloc::vec::Vec<&str> = path
+        .trim_start_matches('/')
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect();
+    if parts.len() <= 1 {
+        return Ok(());
+    }
+
+    let mut current = alloc::string::String::from("/");
+    for part in &parts[..parts.len() - 1] {
+        if current != "/" {
+            current.push('/');
+        }
+        current.push_str(part);
+        match active_impl::backend().metadata(current.as_str()) {
+            Ok(meta) if meta.node_type == VfsNodeType::Directory => {
+                if meta.mode & 0o111 == 0 {
+                    return Err(ErrNo::EACCES);
+                }
+            }
+            Ok(_) => return Err(ErrNo::ENOTDIR),
+            Err(VfsError::NotFound) => return Err(ErrNo::ENOENT),
+            Err(e) => return Err(vfs_error_to_errno(e)),
+        }
+    }
+    Ok(())
+}
+
+// 本方法代码由AI完成
+pub(crate) fn sys_fstatfs(args: SyscallArgs) -> UserRet {
+    let fd = args.arg(0);
+    let buf_ptr = args.arg(1);
+    if buf_ptr == 0 {
+        return UserRet::from_error(ErrNo::EFAULT);
+    }
+
+    let backing_path = match vfs::fd::with_current_io(fd, |handle| {
+        Ok(handle.backing_path().map(alloc::string::String::from))
+    }) {
+        Ok(path) => path,
+        Err(e) => return UserRet::from_error(vfs_error_to_errno(e)),
     };
+    let statfs = make_statfs_for_path(backing_path.as_deref());
 
     match copy_to_user_struct(buf_ptr, &statfs) {
         Ok(()) => UserRet::from_success(0),

@@ -1,12 +1,17 @@
 //! `utimensat(2)`：bring-up 最小兼容实现，暂不持久化 atime/mtime。
 //! 本模块代码由AI完成
 
+extern crate alloc;
+
+use alloc::string::ToString;
+
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
+use cred::api::{Gid, ProcessCredentials};
 use platform::wall_clock::realtime_ns;
 use vfs::active_impl;
-use vfs::api::SingleRootReadView;
+use vfs::api::{SingleRootReadView, VfsMetadata};
 
 use crate::sys::stat_times::{self, StatTime};
 use crate::sys::path_at::{resolve_final_symlink, resolve_path_at};
@@ -58,8 +63,12 @@ pub(crate) fn sys_utimensat(args: SyscallArgs) -> UserRet {
         if dirfd < 0 {
             return UserRet::from_error(ErrNo::EBADF);
         }
-        return match vfs::fd::with_current_io(dirfd as usize, |handle| handle.metadata()) {
-            Ok(meta) => match apply_times(&meta, updates) {
+        return match vfs::fd::with_current_io(dirfd as usize, |handle| {
+            let path = handle.backing_path().map(|path| path.to_string());
+            let meta = handle.metadata()?;
+            Ok((path, meta))
+        }) {
+            Ok((path, meta)) => match apply_times(path.as_deref(), &meta, updates) {
                 Ok(()) => UserRet::from_success(0),
                 Err(e) => UserRet::from_error(e),
             },
@@ -85,7 +94,7 @@ pub(crate) fn sys_utimensat(args: SyscallArgs) -> UserRet {
     };
 
     match active_impl::backend().metadata(resolved.as_str()) {
-        Ok(meta) => match apply_times(&meta, updates) {
+        Ok(meta) => match apply_times(Some(resolved.as_str()), &meta, updates) {
             Ok(()) => UserRet::from_success(0),
             Err(e) => UserRet::from_error(e),
         },
@@ -126,7 +135,11 @@ fn both_omitted(updates: &[TimeUpdate; 2]) -> bool {
     matches!(updates[0], TimeUpdate::Omit) && matches!(updates[1], TimeUpdate::Omit)
 }
 
-fn apply_times(meta: &vfs::api::VfsMetadata, updates: [TimeUpdate; 2]) -> Result<(), ErrNo> {
+fn apply_times(path: Option<&str>, meta: &VfsMetadata, updates: [TimeUpdate; 2]) -> Result<(), ErrNo> {
+    if let Some(path) = path {
+        check_writable_mount(path, meta)?;
+    }
+    check_time_update_permission(meta, &updates)?;
     let now = if matches!(updates[0], TimeUpdate::Now) || matches!(updates[1], TimeUpdate::Now) {
         Some(now_time()?)
     } else {
@@ -136,6 +149,55 @@ fn apply_times(meta: &vfs::api::VfsMetadata, updates: [TimeUpdate; 2]) -> Result
     let mtime = resolve_update(updates[1], now);
     stat_times::set(meta, atime, mtime);
     Ok(())
+}
+
+fn check_writable_mount(path: &str, meta: &VfsMetadata) -> Result<(), ErrNo> {
+    match vfs::chmod_absolute(path, (meta.mode as u32) & 0o7777) {
+        Ok(()) => Ok(()),
+        Err(vfs::api::VfsError::ReadOnlyFs) => Err(ErrNo::EROFS),
+        Err(_) => Ok(()),
+    }
+}
+
+fn check_time_update_permission(meta: &VfsMetadata, updates: &[TimeUpdate; 2]) -> Result<(), ErrNo> {
+    let cred = cred::current_credentials();
+    if cred.effective_uid.0 == 0 || cred.effective_uid.0 == meta.uid {
+        return Ok(());
+    }
+    if updates_are_now(updates) && can_write_file(&cred, meta) {
+        return Ok(());
+    }
+    if updates_are_now(updates) {
+        Err(ErrNo::EACCES)
+    } else {
+        Err(ErrNo::EPERM)
+    }
+}
+
+fn updates_are_now(updates: &[TimeUpdate; 2]) -> bool {
+    matches!(updates[0], TimeUpdate::Now) && matches!(updates[1], TimeUpdate::Now)
+}
+
+fn can_write_file(cred: &ProcessCredentials, meta: &VfsMetadata) -> bool {
+    if cred.effective_uid.0 == 0 {
+        return true;
+    }
+    if cred.effective_uid.0 == meta.uid {
+        return meta.mode & 0o200 != 0;
+    }
+    if cred_has_group(cred, Gid(meta.gid)) {
+        return meta.mode & 0o020 != 0;
+    }
+    meta.mode & 0o002 != 0
+}
+
+fn cred_has_group(cred: &ProcessCredentials, gid: Gid) -> bool {
+    cred.effective_gid == gid
+        || cred
+            .supplementary_groups
+            .iter()
+            .take(cred.supplementary_group_len)
+            .any(|group| *group == gid)
 }
 
 fn resolve_update(update: TimeUpdate, now: Option<StatTime>) -> Option<StatTime> {
