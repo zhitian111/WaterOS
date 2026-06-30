@@ -1,28 +1,28 @@
-% 【本文件写什么】api-v0 契约层（叶子，只写语义不写实现）
-%   - crate 路径：os/components/wateros-fs/fs-devfs/devfs-api/api-v0/src/
-%   - 列出并说明：pub trait、核心类型、错误枚举、常量
-%   - 每个公开 API 的前置条件、后置条件、线程/中断上下文限制
-%   - 与 Linux/用户态约定的对齐点与 deliberate 差异
-%   - v0 版本当前行为与后续可替换 extension 点
+% 【本文件写什么】api-v0 契约层，叶子，只写语义不写实现
+% - crate 路径：os/components/wateros-fs/fs-devfs/devfs-api/api-v0/src/
+% - 列出并说明：pub trait、核心类型、错误枚举、常量
+% - 每个公开 API 的前置条件、后置条件、线程/中断上下文限制
+% - 与 Linux/用户态约定的对齐点与 deliberate 差异
+% - v0 版本当前行为与后续可替换 extension 点
 % 【事实来源】
-%   - 上述 crate 下全部 .rs 源文件
-%   - docs/exports/public-api/ 中对应符号表（以源码为准）
+% - 上述 crate 下全部 .rs 源文件
+% - docs/exports/public-api/ 中对应符号表，以源码为准
 % 【不写什么】
-%   - impl 内部数据结构、汇编、具体算法步骤
+% - impl 内部数据结构、汇编、具体算法步骤
 
 \subsubsection{api-v0}
 
 \paragraph{类型。}
-\code{DevNodeType}区分\code{Block}、\code{Character}、\code{Unsupported}。\code{DevNode}含逻辑路径（如\code{/dev/vda}）与类型，供启动日志与块设备路径解析。错误复用\code{fs\_api\_v0::FsError}/\code{FsResult}，与根卷挂载错误映射一致。
+\code{DevNodeType}区分\code{Block}、\code{Character}、\code{Unsupported}。\code{DevNode}含逻辑路径，例如 \code{/dev/vda}，与类型，供启动日志与块设备路径解析。错误复用\code{fs\_api\_v0::FsError}/\code{FsResult}，与根卷挂载错误映射一致。
 
 \paragraph{\code{DevFsManager}契约。}
 \begin{itemize}
-  \item \code{refresh()}：按当前平台驱动枚举重建节点表与块/字符绑定；调用后\code{list\_nodes()}反映最新快照；
-  \item \code{set\_dt\_unsupported\_paths(paths)}：登记DTB解析出但尚无驱动实现的占位路径，类型为\code{Unsupported}；
-  \item \code{list\_nodes()}：返回节点列表，顺序由实现决定；
-  \item \code{register\_block\_device}/\code{lookup\_block\_device}：路径与\code{SharedBlockDevice}双向绑定；
-  \item \code{register\_character\_device}/\code{lookup\_character\_device}：字符设备绑定；
-  \item \code{default\_root\_block\_path()}：默认用于根卷probe的块设备路径；无设备时\code{None}。
+ \item \code{refresh()}：按当前平台驱动枚举重建节点表与块/字符绑定；调用后\code{list\_nodes()}反映最新快照；
+ \item \code{set\_dt\_unsupported\_paths(paths)}：登记DTB解析出但尚无驱动实现的占位路径，类型为\code{Unsupported}；
+ \item \code{list\_nodes()}：返回节点列表，顺序由实现决定；
+ \item \code{register\_block\_device}/\code{lookup\_block\_device}：路径与\code{SharedBlockDevice}双向绑定；
+ \item \code{register\_character\_device}/\code{lookup\_character\_device}：字符设备绑定；
+ \item \code{default\_root\_block\_path()}：默认用于根卷probe的块设备路径；无设备时\code{None}。
 \end{itemize}
 
 \paragraph{与\code{FsImpl}的关系。}

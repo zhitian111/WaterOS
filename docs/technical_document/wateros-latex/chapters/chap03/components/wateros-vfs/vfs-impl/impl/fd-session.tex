@@ -1,14 +1,14 @@
 % 【本文件写什么】impl 实现层：fd-session
-%   - 定位：进程 fd 表、cwd 与 session 生命周期。
-%   - crate 路径：os/components/wateros-vfs/vfs-impl/impl-fd-session/src/
-%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
-%   - 算法或硬件交互流程（可用伪代码/流程图）
-%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
-%   - 与其它 impl 变体的差异、切换 feature 时的影响
-%   - 性能/内存假设与已知限制
+% - 定位：进程 fd 表、cwd 与 session 生命周期。
+% - crate 路径：os/components/wateros-vfs/vfs-impl/impl-fd-session/src/
+% - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+% - 算法或硬件交互流程，可用伪代码/流程图
+% - 本 impl 启用的 Cargo [features] 与 arch feature，impl-riscv64 等
+% - 与其它 impl 变体的差异、切换 feature 时的影响
+% - 性能/内存假设与已知限制
 % 【事实来源】
-%   - 上述 crate 源码与 Cargo.toml
-%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+% - 上述 crate 源码与 Cargo.toml
+% - os/feature-tree.txt 中指向本 impl 的 feature 链
 
 \subsubsection{impl-fd-session}
 
@@ -16,24 +16,24 @@
 \code{impl-fd-session} feature启用\code{wateros-task}、\code{wateros-base}与本crate。聚合层导出\code{vfs::fd}、\code{vfs::cwd}；与\code{bridge-fs-api}组合时还提供\code{vfs::mount\_ns}及以\code{\_at\_current}结尾的路径操作。
 
 \paragraph{\code{PerTaskFdRegistry}。}
-以\code{task::TaskId}为键维护\code{BTreeMap} fd表：槽位\code{0/1/2}预置stdin/stdout/stderr（控制台句柄），\code{VFS\_FIRST\_DYNAMIC\_FD}（3）起动态分配。支持fork/clone共享fd表（\code{owners}/\code{ref\_counts}引用计数）、\code{FD\_CLOEXEC}与\code{FD\_PATH\_ONLY}（\code{O\_PATH}）标志。
+以\code{task::TaskId}为键维护\code{BTreeMap} fd表：槽位\code{0/1/2}预置stdin/stdout/stderr，控制台句柄，\code{VFS\_FIRST\_DYNAMIC\_FD}，3起动态分配。支持fork/clone共享fd表，经 \code{owners}/\code{ref\_counts} 引用计数；\code{FD\_CLOEXEC} 与 \code{FD\_PATH\_ONLY}，即 \code{O\_PATH}，标志。
 
-并发I/O：每槽位\code{io\_slot\_locks}串行化\code{with\_current\_io}会话，\code{io\_inflight}计数防止关闭忙碌fd。实现\code{VfsFdSession::alloc\_fd}/\code{close\_fd}（覆盖trait默认）。
+并发I/O：每槽位\code{io\_slot\_locks}串行化\code{with\_current\_io}会话，\code{io\_inflight}计数防止关闭忙碌fd。实现\code{VfsFdSession::alloc\_fd}/\code{close\_fd}，覆盖trait默认。
 
 \paragraph{句柄类型。}
 \begin{itemize}
-  \item 文件：经\code{FsBridge::open}得到的\code{PagedFileHandle}、\code{DirectoryHandle}等；
-  \item 字符设备：\code{CharDevHandle}及\code{/dev/null}、\code{/dev/zero}、\code{/dev/urandom}等桩；
-  \item pipe：\code{PipeReadHandle}/\code{PipeWriteHandle}，\code{pipe\_handle\_pair}工厂；
-  \item UNIX stream pair：\code{UnixStreamPairEnd}，\code{stream\_pair\_handle\_pair}；
-  \item 控制台：\code{ConsoleInHandle}/\code{ConsoleOutHandle}。
+ \item 文件：经\code{FsBridge::open}得到的\code{PagedFileHandle}、\code{DirectoryHandle}等；
+ \item 字符设备：\code{CharDevHandle}及\code{/dev/null}、\code{/dev/zero}、\code{/dev/urandom}等桩；
+ \item pipe：\code{PipeReadHandle}/\code{PipeWriteHandle}，\code{pipe\_handle\_pair}工厂；
+ \item UNIX stream pair：\code{UnixStreamPairEnd}，\code{stream\_pair\_handle\_pair}；
+ \item 控制台：\code{ConsoleInHandle}/\code{ConsoleOutHandle}。
 \end{itemize}
 
 \paragraph{\code{PerTaskCwdRegistry}。}
-维护per-task cwd字符串（\code{PATH\_MAX=256}）、\code{exe}路径与\code{argv}向量；\code{resolve\_for\_current\_task}供\code{openat}相对路径解析。\code{lookup\_argv\_for\_task}/\code{lookup\_exe\_for\_task}作为procfs回调数据源，在\code{mount\_procfs\_at}前由聚合层挂接。
+维护per-task cwd字符串，\code{PATH\_MAX=256}，\code{exe}路径与\code{argv}向量；\code{resolve\_for\_current\_task}供\code{openat}相对路径解析。\code{lookup\_argv\_for\_task}/\code{lookup\_exe\_for\_task}作为procfs回调数据源，在\code{mount\_procfs\_at}前由聚合层挂接。
 
 \paragraph{文件锁。}
-\code{Flock}/\code{InodeKey}实现建议性\code{flock}（\code{LOCK\_SH}/\code{LOCK\_EX}/\code{LOCK\_NB}/\code{LOCK\_UN}），按inode键全局串行化冲突检测。
+\code{Flock}/\code{InodeKey}实现建议性\code{flock}，含 \code{LOCK\_SH}/\code{LOCK\_EX}/\code{LOCK\_NB}/\code{LOCK\_UN}，按inode键全局串行化冲突检测。
 
 \paragraph{限制。}
 \code{with\_interrupt\_disabled}用于部分fd表临界区；假设单核bring-up。\code{VfsFdSession} trait默认\code{alloc\_fd}仍为\code{Unsupported}，须通过本impl的全局注册表实例使用。

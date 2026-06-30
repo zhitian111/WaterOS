@@ -1,27 +1,27 @@
-% 【本文件写什么】api-v0 契约层（叶子，只写语义不写实现）
-%   - crate 路径：os/components/wateros-fs/fs-rootfs/rootfs-api/api-v0/src/
-%   - 列出并说明：pub trait、核心类型、错误枚举、常量
-%   - 每个公开 API 的前置条件、后置条件、线程/中断上下文限制
-%   - 与 Linux/用户态约定的对齐点与 deliberate 差异
-%   - v0 版本当前行为与后续可替换 extension 点
+% 【本文件写什么】api-v0 契约层，叶子，只写语义不写实现
+% - crate 路径：os/components/wateros-fs/fs-rootfs/rootfs-api/api-v0/src/
+% - 列出并说明：pub trait、核心类型、错误枚举、常量
+% - 每个公开 API 的前置条件、后置条件、线程/中断上下文限制
+% - 与 Linux/用户态约定的对齐点与 deliberate 差异
+% - v0 版本当前行为与后续可替换 extension 点
 % 【事实来源】
-%   - 上述 crate 下全部 .rs 源文件
-%   - docs/exports/public-api/ 中对应符号表（以源码为准）
+% - 上述 crate 下全部 .rs 源文件
+% - docs/exports/public-api/ 中对应符号表，以源码为准
 % 【不写什么】
-%   - impl 内部数据结构、汇编、具体算法步骤
+% - impl 内部数据结构、汇编、具体算法步骤
 
 \subsubsection{api-v0}
 
 \paragraph{\code{RootFsManager}契约。}
 管理当前根卷\code{SharedFs}句柄与根块设备路径：
 \begin{itemize}
-  \item \code{set\_root\_fs}/\code{root\_fs}/\code{clear\_root\_fs}：设置、查询、清除根RO句柄；
-  \item \code{mount\_root\_from\_block\_path(path)}：经devfs解析块设备，用已注入的\code{FsImpl}执行RO挂载并记录路径；
-  \item \code{current\_root\_device\_path()}：最近一次成功挂载使用的块设备路径。
+ \item \code{set\_root\_fs}/\code{root\_fs}/\code{clear\_root\_fs}：设置、查询、清除根RO句柄；
+ \item \code{mount\_root\_from\_block\_path(path)}：经devfs解析块设备，用已注入的\code{FsImpl}执行RO挂载并记录路径；
+ \item \code{current\_root\_device\_path()}：最近一次成功挂载使用的块设备路径。
 \end{itemize}
 
 \paragraph{调用序与前置条件。}
-典型序列为聚合层\code{fs::init()}内\code{set\_active\_fs\_impl}（probe结果）$\rightarrow$ bring-up \code{mount\_default\_root\_rw()}。未注入\code{FsImpl}时挂载返回\code{Unsupported}。RW句柄与\code{mount\_generation}由impl-kernel扩展管理，不在本trait方法表中，但由同一\code{active\_impl}模块导出。
+典型序列为聚合层\code{fs::init()}内\code{set\_active\_fs\_impl}，probe 结果经 bring-up 至 \code{mount\_default\_root\_rw()}。未注入\code{FsImpl}时挂载返回\code{Unsupported}。RW句柄与\code{mount\_generation}由impl-kernel扩展管理，不在本trait方法表中，但由同一\code{active\_impl}模块导出。
 
 \paragraph{与辅助卷的区别。}
-\code{mount\_aux\_*\_from\_block\_path}（impl层）返回独立句柄，不替换全局根槽位；供用户态\code{mount(2)}挂载辅助卷使用。
+\code{mount\_aux\_*\_from\_block\_path}，impl层返回独立句柄，不替换全局根槽位；供用户态\code{mount(2)}挂载辅助卷使用。

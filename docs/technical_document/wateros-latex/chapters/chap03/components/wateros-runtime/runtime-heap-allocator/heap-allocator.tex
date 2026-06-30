@@ -1,16 +1,16 @@
-% 【本文件写什么】子模块 runtime-heap-allocator（\subsection 级聚合）
-%   - 职责摘要：内核堆：buddy（默认）/ TLSF。
-%   - 子域聚合 lib.rs：os/components/wateros-runtime/runtime-heap-allocator/src/lib.rs
-%   - 如何重导出 api-v0、feature 下挂载哪些 impl
-%   - 被谁依赖（syscall、vfs、main 启动链等）
-%   - 短综述 + 下方 \input 展开 api 与 impl 叶子
+% 【本文件写什么】子模块 runtime-heap-allocator，\subsection 级聚合
+% - 职责摘要：内核堆：buddy，默认/ TLSF。
+% - 子域聚合 lib.rs：os/components/wateros-runtime/runtime-heap-allocator/src/lib.rs
+% - 如何重导出 api-v0、feature 下挂载哪些 impl
+% - 被谁依赖，syscall、vfs、main 启动链等
+% - 短综述 + 下方 \input 展开 api 与 impl 叶子
 % 【事实来源】
-%   - os/components/wateros-runtime/runtime-heap-allocator/
-%   - docs/exports/ 中与 wateros-runtime 相关的 public-api / features 章节
+% - os/components/wateros-runtime/runtime-heap-allocator/
+% - docs/exports/ 中与 wateros-runtime 相关的 public-api / features 章节
 
 \subsection{runtime-heap-allocator}
 
-\code{wateros-runtime-heap-allocator}实现内核全局\code{GlobalAlloc}：默认\code{impl-linked-list-allocator}（\code{linked\_list\_allocator::LockedHeap}），可选\code{impl-tlsf}（\code{rlsf::Tlsf}），二者互斥由\code{compile\_error!}守卫。堆池大小\code{KERNEL\_HEAP\_SIZE}来自\code{wateros-base-config}；静态\code{HEAP\_SPACE}数组可由链接脚本映射到\code{kernel\_heap}符号。
+\code{wateros-runtime-heap-allocator}实现内核全局\code{GlobalAlloc}：默认 \code{impl-linked-list-allocator}，即 \code{linked\_list\_allocator::LockedHeap}，可选 \code{impl-tlsf}，即 \code{rlsf::Tlsf}，二者互斥由\code{compile\_error!}守卫。堆池大小\code{KERNEL\_HEAP\_SIZE}来自\code{wateros-base-config}；静态\code{HEAP\_SPACE}数组可由链接脚本映射到\code{kernel\_heap}符号。
 
 \code{init()}在单核引导路径、堆尚未使用时初始化后端区域。\code{heap\_mem\_stats}返回\code{used}/\code{free}/\code{capacity}：链表后端为精确记账，TLSF后端\code{used}为估算值。\code{handle\_alloc\_error}由根\code{\#[alloc\_error\_handler]}委托，先\code{warn}打印布局与用量再\code{panic}。所有分配路径经\code{interrupt\_guard}关中断并检测递归分配；用量超过容量90\%时\code{maybe\_warn\_high\_water}发出警告。
 

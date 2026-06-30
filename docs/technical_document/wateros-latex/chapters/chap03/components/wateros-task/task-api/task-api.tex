@@ -1,16 +1,16 @@
-% 【本文件写什么】独立子 crate（无 api/impl 目录树）：task-api
-%   - 职责：任务 api-v0：TaskId、KernelTask、上下文。
-%   - 源码：os/components/wateros-task/task-api/src/
-%   - 对外暴露的函数/类型、在聚合 lib.rs 中的重导出方式
-%   - 实现要点、feature（若有）、与其它子 crate 的边界
+% 【本文件写什么】独立子 crate，无 api/impl 目录树：task-api
+% - 职责：任务 api-v0：TaskId、KernelTask、上下文。
+% - 源码：os/components/wateros-task/task-api/src/
+% - 对外暴露的函数/类型、在聚合 lib.rs 中的重导出方式
+% - 实现要点、feature，若有、与其它子 crate 的边界
 % 【事实来源】
-%   - os/components/wateros-task/task-api/、父组件 src/lib.rs
+% - os/components/wateros-task/task-api/、父组件 src/lib.rs
 
 \subsection{task-api}
 
 子 crate \code{wateros-task-api-v0}提供任务与进程语义的稳定类型层，不依赖具体调度算法或 TCB 内存布局。聚合层大量\code{pub use api\_v0::\{...\}}再导出，供 syscall、IPC、trap 直接引用。
 
-模块划分：\code{task}（\code{TaskId}、\code{TaskState}、\code{TaskBlockReason}、\code{ExitedTask}）、\code{user}（\code{UserTask}、\code{AddressSpaceHandle}）、\code{process}（\code{ProcessDescriptor}、\code{CloneFlags}、\code{ResourceLimit}）、\code{wait}（\code{TaskWaitHandle}、\code{TaskWaitResult}）、\code{sched}（\code{SchedPolicy}、\code{SchedParam}）、\code{snapshot}（\code{TaskSnapshot}、\code{TaskTrapSnapshot}）、\code{kernel}（\code{KernelStack}、\code{TaskBootstrap}）。
+模块划分：\code{task} 含 \code{TaskId}、\code{TaskState}、\code{TaskBlockReason}、\code{ExitedTask}；\code{user} 含 \code{UserTask}、\code{AddressSpaceHandle}；\code{process} 含 \code{ProcessDescriptor}、\code{CloneFlags}、\code{ResourceLimit}；\code{wait} 含 \code{TaskWaitHandle}、\code{TaskWaitResult}；\code{sched} 含 \code{SchedPolicy}、\code{SchedParam}；\code{snapshot} 含 \code{TaskSnapshot}、\code{TaskTrapSnapshot}；\code{kernel} 含 \code{KernelStack}、\code{TaskBootstrap}。
 
 \code{impl-core}与\code{scheduler-impl}须与本 crate 状态枚举保持解读一致；新增字段或阻塞原因时先在此明确契约再同步实现侧。
 

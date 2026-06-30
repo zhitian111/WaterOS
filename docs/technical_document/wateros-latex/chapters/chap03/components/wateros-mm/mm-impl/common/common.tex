@@ -1,12 +1,12 @@
-% 【本文件写什么】子模块 mm-impl（\subsection 级聚合）
-%   - 职责摘要：页表实现：Sv39、LoongArch、dummy 与 common 共享代码。
-%   - 子域聚合 lib.rs：os/components/wateros-mm/mm-impl/src/lib.rs
-%   - 如何重导出 api-v0、feature 下挂载哪些 impl
-%   - 被谁依赖（syscall、vfs、main 启动链等）
-%   - 短综述 + 下方 \input 展开 api 与 impl 叶子
+% 【本文件写什么】子模块 mm-impl，\subsection 级聚合
+% - 职责摘要：页表实现：Sv39、LoongArch、dummy 与 common 共享代码。
+% - 子域聚合 lib.rs：os/components/wateros-mm/mm-impl/src/lib.rs
+% - 如何重导出 api-v0、feature 下挂载哪些 impl
+% - 被谁依赖，syscall、vfs、main 启动链等
+% - 短综述 + 下方 \input 展开 api 与 impl 叶子
 % 【事实来源】
-%   - os/components/wateros-mm/mm-impl/
-%   - docs/exports/ 中与 wateros-mm 相关的 public-api / features 章节
+% - os/components/wateros-mm/mm-impl/
+% - docs/exports/ 中与 wateros-mm 相关的 public-api / features 章节
 
 \subsubsection{impl-common}
 

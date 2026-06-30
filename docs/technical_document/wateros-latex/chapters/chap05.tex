@@ -1,9 +1,9 @@
-% 第5章「总结与后续工作」。
+% 第5章：总结与后续工作。
 %
 % §5.1工作总结与项目特色。
 % §5.2后续完善方向。
 % §5.3非本队来源说明。
-% §5.4AI工具使用说明：清单条目与代码快照（见chap05-ai-inventory.tex，由gen-ai-usage-tex.py生成）。
+% §5.4AI工具使用说明：清单条目与代码快照，见 chap05-ai-inventory.tex，由 gen-ai-usage-tex.py 生成。
 %
 % 事实来源：docs/roadmap/todolist.md、docs/exports/ai-usage-inventory.tsv
 
@@ -44,36 +44,30 @@
 \begin{longtable}{>{\raggedright\arraybackslash}p{2.8cm}>{\raggedright\arraybackslash}p{4.2cm}>{\raggedright\arraybackslash}p{3.4cm}>{\raggedright\arraybackslash}p{3.8cm}}
   \caption{主要第三方依赖与用途}\label{tab:third-party}\\
   \toprule[1.5pt]
-  依赖 & 在本项目中的用途 & 引入方式 & 许可证（仓库内可见） \\
+  依赖 & 在本项目中的用途 & 引入方式 & 许可证，仓库内可见 \\
   \midrule[1pt]
-  \code{ext4\_rs} & ext4只读/读写根卷解析与块级访问（\code{impl-ext4-rs}） & \code{os/vendor/ext4\_rs} + patch & MIT \\
-  \code{ext4plus} & ext4备用实现路径（\code{impl-ext4}） & \code{os/vendor/ext4plus} + patch & MIT / Apache-2.0 \\
+ \code{ext4\_rs} & ext4只读/读写根卷解析与块级访问，对应 \code{impl-ext4-rs} & \code{os/vendor/ext4\_rs} + patch & MIT \\
+ \code{ext4plus} & ext4备用实现路径，对应 \code{impl-ext4} & \code{os/vendor/ext4plus} + patch & MIT / Apache-2.0 \\
   \code{smoltcp} 0.12.0 & 内核侧TCP/UDP协议栈，配合virtio-net与用户socket syscall & crates.io & 见上游crate \\
   \code{virtio-drivers} 0.12.0 & VirtIO-MMIO / VirtIO-PCI块设备与网卡驱动封装 & crates.io & 见上游crate \\
   \code{fdt} 0.1.5 & RISC-V / LoongArch QEMU路径解析设备树 & crates.io & 见上游crate \\
-  \code{sbi-rt} 0.0.3 & RISC-V OpenSBI运行时调用（控制台、关机等） & crates.io & 见上游crate \\
+  \code{sbi-rt} 0.0.3 & RISC-V OpenSBI运行时调用，含控制台与关机等 & crates.io & 见上游crate \\
   \code{riscv} 0.16.0 & RISC-V CSR与架构相关辅助 & crates.io & 见上游crate \\
   \code{rlsf} / \code{linked\_list\_allocator} & 内核堆分配器后端（runtime-heap-allocator） & crates.io & 见上游crate \\
   \code{log}、\code{spin}等 & 日志门面、自旋锁等基础运行时支撑 & crates.io & 见上游crate \\
   \bottomrule[1.5pt]
 \end{longtable}
 
-赛题用户态测例（basic、busybox、lua、LTP等）与根文件系统镜像由赛题方或本队按赛题说明准备，不属于内核crate依赖；QEMU、OpenSBI固件与交叉工具链为运行/构建环境，同样不计入内核源码树。若赛题对第三方披露格式有额外字段要求，可在定稿前按组委会模板补一行对照说明。
-
 \section{AI工具使用说明}
 
-本队在开发过程中使用AI辅助编程工具生成或改写部分内核代码。凡经AI参与完成的代码块，均在源码中以\code{// 由AI完成}、\code{// 本模块代码由AI完成}等注释标注；队伍在合并前对生成结果做编译、运行测例和语义核对，标注仅用于追溯来源，不表示未经审查即可交付。
+本队在开发过程中使用AI辅助编程工具生成或改写部分内核代码。凡经AI参与完成的代码块，均在源码中以\code{// 由AI完成}、\code{// 本模块代码由AI完成}等注释标注；队伍在合并前对生成结果做编译、运行测例和语义核对，标注仅用于追溯来源，不表示未经审查即可交付。且为了项目符合我们最初设计的预期，在内核代码中，我们仅将AI生成代码用于了Impl中，具体的struct，trait定义，即Api系列文件夹下的代码以及通过原语组合出的模块的功能，这些设计和实现均由团队成员亲自完成。
+另需说明，在使用AI辅助debug的时候，我们使用AI批量插入了log信息，以方便我们进行调试。但目前依旧存在清理不完全的问题，其中有一部分log代码仍是AI生成的，但因为不影响核心功能，故此处不再做列举。
 
-机器可读清单见\code{docs/exports/ai-usage-inventory.tsv}。下列为具体罗列。
+其次AI也同样适用于辅助我们完成本文档的编写，包括但不先于：（1）检索每个文件中的AI生成标记并汇总路径和行范围，并随机提取代码片段作为代表。（2）辅助完成文档内错误用语的勘误，文档正文在写完之后由AI进行了格式化和润色。（3）辅助完成文档内的一些重复性工作的自动化，如在构建文档项目时，通过AI完成目录结构初始化。且除此以外为了保证讲解视频效果我们使用了部分AI配音或语音校准。
+
+具体投入应用的由AI生成的代码片段均标记在\code{docs/exports/ai-usage-inventory.tsv}。根据按行统计，此处做的为未忽略空行的统计，AI生成的代码约占本项目总代码的\wosstrong{18.7\%}，总行数来自\code{os/scripts/stat\_contribute.bash}的统计。另外，本统计仅统计由Claude Code、Codex、Cursor这类工具直接修改文件生成的代码，未统计编辑器内的辅助补全和代码提示。
+以下为具体罗列，第三列的行范围表示该范围内存在AI生成的代码片段，并非该范围内全部都是AI生成的代码。
 
 \input{chapters/chap05-ai-inventory}
 
-清单或源码标注更新后，在\code{wateros-latex/}目录执行：
-
-\begin{bashcode}
-python3 scripts/gen-ai-usage-tex.py
-\end{bashcode}
-
-文档与内核协作约定见\code{docs/technical\_document/prompts/README.md}与\code{docs/prompts/general.md}。使用Agent或AI辅助修改内核后，应同步检查\code{os/Cargo.toml}与\code{os/feature-tree.txt}、相关组件\code{Cargo.toml}与聚合\code{lib.rs}、\code{docs/exports/}快照、\code{docs/roadmap/todolist.md}，以及本LaTeX文档中与改动相关章节。
-
-\textbf{待队伍补登记：}具体使用的AI产品名称、账号范围与使用阶段（设计/编码/文档）未写入版本库；若赛题或课程要求披露工具清单，请在定稿前将经确认的名称填入本节首段。
+除上述标注块外，还有两类未逐条列入下表的AI辅助：一是模块层级的\code{//!}文档。队员对\code{cargo doc}/rustdoc编写规范不够熟悉，因此在保留原意的前提下，用AI将原先偏口语的模块说明整理为符合惯例的crate/module文档格式。二是\code{os/scripts/}目录下的部分QEMU运行、日志解析、符号定位等辅助脚本，由AI参与编写或改写；具体文件以该目录内源码与版本记录为准。

@@ -1,37 +1,59 @@
 # WaterOS feature tree (按 package 分组)
 # root: /home/zhitian/project/WaterOS_refactor/os
 
+ext4_rs  (vendor/ext4_rs/Cargo.toml)
+  (no [features])
+
+ext4plus  (vendor/ext4plus/Cargo.toml)
+  - default [default]
+    - multi-threaded
+  - multi-threaded [default]
+  - std
+  - sync
+    - dep:spin
+    - maybe-async/is_sync
+
 ipc-event  (components/wateros-ipc/ipc-event/Cargo.toml)
   (no [features])
 
 ipc-futex  (components/wateros-ipc/ipc-futex/Cargo.toml)
-  (no [features])
+  - default [default]
+    - api-v0
+    - impl-task
+  - api-v0 [default]
+    - impl-dummy?/api-v0
+    - impl-task?/api-v0
+  - impl-dummy
+    - dep:impl-dummy
+    - impl-dummy/impl-dummy
+      > wateros-ipc-futex-impl-dummy
+        - default [default]
+        - api-v0
+        - impl-dummy [default]
+  - impl-task [default]
+    - dep:impl-task
+    - impl-task/impl-task
+      > wateros-ipc-futex-impl-task
+        - default [default]
+        - api-v0
+        - impl-task [default]
 
 ipc-pipe  (components/wateros-ipc/ipc-pipe/Cargo.toml)
   - default [default]
-    - api-v0
-  - api-v0 [default]
+    - impl-ringbuf
+  - api-v0
     - impl-ringbuf/api-v0
       > wateros-ipc-pipe-impl-ringbuf
         - default [default]
-        - api-v0 [default]
-        - impl-loongarch64
-        - impl-riscv64
-  - impl-loongarch64
-    - impl-ringbuf/impl-loongarch64
+        - api-v0
+        - impl-ringbuf [default]
+  - impl-ringbuf [default]
+    - api-v0
+    - impl-ringbuf/impl-ringbuf
       > wateros-ipc-pipe-impl-ringbuf
         - default [default]
-        - api-v0 [default]
-        - impl-loongarch64
-        - impl-riscv64
-  - impl-ringbuf
-  - impl-riscv64
-    - impl-ringbuf/impl-riscv64
-      > wateros-ipc-pipe-impl-ringbuf
-        - default [default]
-        - api-v0 [default]
-        - impl-loongarch64
-        - impl-riscv64
+        - api-v0
+        - impl-ringbuf [default]
 
 ipc-shm  (components/wateros-ipc/ipc-shm/Cargo.toml)
   (no [features])
@@ -39,64 +61,26 @@ ipc-shm  (components/wateros-ipc/ipc-shm/Cargo.toml)
 ipc-signal  (components/wateros-ipc/ipc-signal/Cargo.toml)
   - default [default]
     - api-v0
-    - impl-dummy
   - api-v0 [default]
-    - impl-dummy/api-v0
-      > wateros-ipc-signal-impl-dummy
-        - default [default]
-        - api-v0 [default]
-  - impl-dummy [default]
+    - impl-dummy?/api-v0
+  - impl-dummy
+    - dep:impl-dummy
 
 ipc-waitqueue  (components/wateros-ipc/ipc-waitqueue/Cargo.toml)
   - default [default]
+    - impl-task
   - api-v0
     - dep:api-v0
     - impl-task?/api-v0
-  - impl-loongarch64
-    - api-v0
-    - impl-task
-    - impl-task/impl-loongarch64
-      > wateros-ipc-waitqueue-impl-task
-        - default [default]
-        - api-v0
-        - impl-loongarch64
-        - impl-riscv64
-  - impl-riscv64
-    - api-v0
-    - impl-task
-    - impl-task/impl-riscv64
-      > wateros-ipc-waitqueue-impl-task
-        - default [default]
-        - api-v0
-        - impl-loongarch64
-        - impl-riscv64
-  - impl-task
+  - impl-task [default]
     - api-v0
     - dep:impl-task
 
 wateros  (Cargo.toml)
   - default [default]
     - qemu-riscv64-opensbi
-  - fd-session
-    - vfs/fd-session
-      > wateros-vfs
-        - default [default]
-        - api-v0 [default]
-        - bridge-fs-api [default]
-        - fd-session
-        - impl-dummy
-        - impl-loongarch64
-        - impl-riscv64
-  - impl-loongarch64
-    - mm/impl-loongarch64
-      > wateros-mm
-        - default [default]
-        - api-v0 [default]
-        - impl-dummy
-        - impl-loongarch64
-        - impl-sv39
-        - qemu-riscv64-opensbi
-        - vfs-root-read
+  - bringup-ltp-glibc-only
+  - bringup-ltp-musl-only
   - impl-sv39
     - mm/impl-sv39
       > wateros-mm
@@ -110,41 +94,25 @@ wateros  (Cargo.toml)
   - pseudo-shell
     - dep:pseudo_shell
   - qemu-loongarch64-virt
-    - dep:driver
-    - dep:fs
-    - dep:ipc
-    - dep:mm
-    - dep:vfs
-    - dep:cred
-    - vfs-bridge
-    - abi/impl-linux-loongarch64
+    - abi/impl-linux-generic64
       > wateros-abi
         - default [default]
-        - api-v0 [default]
+        - api-v0
         - impl-dummy
         - impl-linux-generic64
-        - impl-linux-loongarch64
-        - impl-linux-riscv64
-    - cred/api-v0
-      > wateros-cred
+    - dep:cred
+    - dep:driver
+    - dep:fdt
+    - dep:fs
+    - dep:ipc
+    - driver/impl-block-cache
+      > wateros-driver
         - default [default]
         - api-v0 [default]
-        - impl-root [default]
-    - cred/impl-root
-      > wateros-cred
-        - default [default]
-        - api-v0 [default]
-        - impl-root [default]
-    - fd-session
-    - vfs/impl-loongarch64
-      > wateros-vfs
-        - default [default]
-        - api-v0 [default]
-        - bridge-fs-api [default]
-        - fd-session
+        - impl-block-cache
         - impl-dummy
-        - impl-loongarch64
-        - impl-riscv64
+        - impl-qemu-loongarch64-virt
+        - impl-qemu-riscv64-opensbi
     - driver/impl-qemu-loongarch64-virt
       > wateros-driver
         - default [default]
@@ -153,81 +121,16 @@ wateros  (Cargo.toml)
         - impl-dummy
         - impl-qemu-loongarch64-virt
         - impl-qemu-riscv64-opensbi
-    - fs/api-v0
-      > wateros-fs
+    - ipc/all
+      > wateros-ipc
         - default [default]
+        - all
         - api-v0 [default]
-        - impl-devfs [default]
-        - impl-dummy
-        - impl-ext4 [default]
-    - fs/impl-devfs
-      > wateros-fs
-        - default [default]
-        - api-v0 [default]
-        - impl-devfs [default]
-        - impl-dummy
-        - impl-ext4 [default]
-    - fs/impl-ext4
-      > wateros-fs
-        - default [default]
-        - api-v0 [default]
-        - impl-devfs [default]
-        - impl-dummy
-        - impl-ext4 [default]
-    - platform/impl-qemu-loongarch64-virt
-      > wateros-platform
-        - default [default]
-        - api-v0 [default]
-        - impl-dummy
-        - impl-qemu-loongarch64-virt
-        - impl-qemu-riscv64-opensbi
-    - runtime/impl-firmware-console
-      > wateros-runtime
-        - default [default]
-        - impl-debug
-        - impl-dummy
-        - impl-error
-        - impl-firmware-console
-        - impl-firmware-opensbi
-        - impl-info
-        - impl-trace
-        - impl-warn
-        - serial-uart-virt
-    - syscall/impl-loongarch64
-      > wateros-syscall
-        - default [default]
-        - api-v0
-        - impl-kernel
-        - impl-loongarch64
-        - impl-riscv64
-    - task/api-v0
-      > wateros-task
-        - default [default]
-        - api-v0 [default]
-        - impl-core [default]
-        - impl-round-robin
-    - task/impl-core
-      > wateros-task
-        - default [default]
-        - api-v0 [default]
-        - impl-core [default]
-        - impl-round-robin
-    - task/impl-round-robin
-      > wateros-task
-        - default [default]
-        - api-v0 [default]
-        - impl-core [default]
-        - impl-round-robin
-    - impl-loongarch64
-    - mm/api-v0
-      > wateros-mm
-        - default [default]
-        - api-v0 [default]
-        - impl-dummy
-        - impl-loongarch64
-        - impl-sv39
-        - qemu-riscv64-opensbi
-        - vfs-root-read
+        - futex
+        - impl-dummy [default]
+        - pipe
+        - shm
+        - signal
     - mm/impl-loongarch64
       > wateros-mm
         - default [default]
@@ -246,49 +149,69 @@ wateros  (Cargo.toml)
         - impl-sv39
         - qemu-riscv64-opensbi
         - vfs-root-read
-    - ipc/impl-loongarch64
-      > wateros-ipc
-        - default [default]
-        - api-v0 [default]
-        - impl-dummy [default]
-        - impl-loongarch64
-        - impl-riscv64
-        - pipe
-    - ipc/pipe
-      > wateros-ipc
-        - default [default]
-        - api-v0 [default]
-        - impl-dummy [default]
-        - impl-loongarch64
-        - impl-riscv64
-        - pipe
-  - qemu-riscv64-opensbi [default]
-    - dep:driver
-    - dep:fs
-    - dep:ipc
-    - dep:mm
-    - dep:vfs
-    - dep:cred
-    - vfs-bridge
-    - fd-session
-    - cred/api-v0
-      > wateros-cred
-        - default [default]
-        - api-v0 [default]
-        - impl-root [default]
-    - cred/impl-root
-      > wateros-cred
-        - default [default]
-        - api-v0 [default]
-        - impl-root [default]
-    - abi/api-v0
-      > wateros-abi
+    - platform/impl-qemu-loongarch64-virt
+      > wateros-platform
         - default [default]
         - api-v0 [default]
         - impl-dummy
+        - impl-qemu-loongarch64-virt
+        - impl-qemu-riscv64-opensbi
+    - runtime/impl-warn
+      > wateros-runtime
+        - default [default]
+        - impl-debug
+        - impl-dummy
+        - impl-error
+        - impl-info
+        - impl-platform-console
+        - impl-trace
+        - impl-warn
+        - serial-uart-virt
+    - dep:klog
+    - klog/default
+      > wateros-klog
+        - default [default]
+        - api-v0 [default]
+        - impl-ringbuf [default]
+        - platform-timer [default]
+        - task-api [default]
+    - runtime/impl-platform-console
+      > wateros-runtime
+        - default [default]
+        - impl-debug
+        - impl-dummy
+        - impl-error
+        - impl-info
+        - impl-platform-console
+        - impl-trace
+        - impl-warn
+        - serial-uart-virt
+    - syscall/impl-kernel
+      > wateros-syscall
+        - default [default]
+        - api-v0
+        - impl-kernel [default]
+    - vfs-bridge
+  - qemu-riscv64-opensbi [default]
+    - abi/impl-linux-generic64
+      > wateros-abi
+        - default [default]
+        - api-v0
+        - impl-dummy
         - impl-linux-generic64
-        - impl-linux-loongarch64
-        - impl-linux-riscv64
+    - dep:cred
+    - dep:driver
+    - dep:fdt
+    - dep:fs
+    - dep:ipc
+    - driver/impl-block-cache
+      > wateros-driver
+        - default [default]
+        - api-v0 [default]
+        - impl-block-cache
+        - impl-dummy
+        - impl-qemu-loongarch64-virt
+        - impl-qemu-riscv64-opensbi
     - driver/impl-qemu-riscv64-opensbi
       > wateros-driver
         - default [default]
@@ -297,78 +220,18 @@ wateros  (Cargo.toml)
         - impl-dummy
         - impl-qemu-loongarch64-virt
         - impl-qemu-riscv64-opensbi
-    - fs/api-v0
-      > wateros-fs
-        - default [default]
-        - api-v0 [default]
-        - impl-devfs [default]
-        - impl-dummy
-        - impl-ext4 [default]
-    - fs/impl-devfs
-      > wateros-fs
-        - default [default]
-        - api-v0 [default]
-        - impl-devfs [default]
-        - impl-dummy
-        - impl-ext4 [default]
-    - fs/impl-ext4
-      > wateros-fs
-        - default [default]
-        - api-v0 [default]
-        - impl-devfs [default]
-        - impl-dummy
-        - impl-ext4 [default]
-    - ipc/api-v0
+    - ipc/all
       > wateros-ipc
         - default [default]
+        - all
         - api-v0 [default]
+        - futex
         - impl-dummy [default]
-        - impl-loongarch64
-        - impl-riscv64
         - pipe
-    - ipc/impl-dummy
-      > wateros-ipc
-        - default [default]
-        - api-v0 [default]
-        - impl-dummy [default]
-        - impl-loongarch64
-        - impl-riscv64
-        - pipe
-    - ipc/impl-riscv64
-      > wateros-ipc
-        - default [default]
-        - api-v0 [default]
-        - impl-dummy [default]
-        - impl-loongarch64
-        - impl-riscv64
-        - pipe
-    - ipc/pipe
-      > wateros-ipc
-        - default [default]
-        - api-v0 [default]
-        - impl-dummy [default]
-        - impl-loongarch64
-        - impl-riscv64
-        - pipe
+        - shm
+        - signal
+    - vfs-bridge
     - impl-sv39
-    - mm/api-v0
-      > wateros-mm
-        - default [default]
-        - api-v0 [default]
-        - impl-dummy
-        - impl-loongarch64
-        - impl-sv39
-        - qemu-riscv64-opensbi
-        - vfs-root-read
-    - mm/impl-sv39
-      > wateros-mm
-        - default [default]
-        - api-v0 [default]
-        - impl-dummy
-        - impl-loongarch64
-        - impl-sv39
-        - qemu-riscv64-opensbi
-        - vfs-root-read
     - mm/vfs-root-read
       > wateros-mm
         - default [default]
@@ -385,88 +248,48 @@ wateros  (Cargo.toml)
         - impl-dummy
         - impl-qemu-loongarch64-virt
         - impl-qemu-riscv64-opensbi
-    - runtime/impl-firmware-opensbi
+    - runtime/impl-info
       > wateros-runtime
         - default [default]
         - impl-debug
         - impl-dummy
         - impl-error
-        - impl-firmware-console
-        - impl-firmware-opensbi
         - impl-info
+        - impl-platform-console
         - impl-trace
         - impl-warn
         - serial-uart-virt
-    - runtime/impl-trace
+    - dep:klog
+    - klog/default
+      > wateros-klog
+        - default [default]
+        - api-v0 [default]
+        - impl-ringbuf [default]
+        - platform-timer [default]
+        - task-api [default]
+    - runtime/impl-platform-console
       > wateros-runtime
         - default [default]
         - impl-debug
         - impl-dummy
         - impl-error
-        - impl-firmware-console
-        - impl-firmware-opensbi
         - impl-info
+        - impl-platform-console
         - impl-trace
         - impl-warn
         - serial-uart-virt
-    - syscall/impl-riscv64
+    - syscall/impl-kernel
       > wateros-syscall
         - default [default]
         - api-v0
-        - impl-kernel
-        - impl-loongarch64
-        - impl-riscv64
-    - fd-session
-    - vfs/impl-riscv64
-      > wateros-vfs
-        - default [default]
-        - api-v0 [default]
-        - bridge-fs-api [default]
-        - fd-session
-        - impl-dummy
-        - impl-loongarch64
-        - impl-riscv64
-    - task/api-v0
-      > wateros-task
-        - default [default]
-        - api-v0 [default]
-        - impl-core [default]
-        - impl-round-robin
-    - task/impl-core
-      > wateros-task
-        - default [default]
-        - api-v0 [default]
-        - impl-core [default]
-        - impl-round-robin
-    - task/impl-round-robin
-      > wateros-task
-        - default [default]
-        - api-v0 [default]
-        - impl-core [default]
-        - impl-round-robin
-    - abi/impl-linux-riscv64
-      > wateros-abi
-        - default [default]
-        - api-v0 [default]
-        - impl-dummy
-        - impl-linux-generic64
-        - impl-linux-loongarch64
-        - impl-linux-riscv64
+        - impl-kernel [default]
+  - syscall-trace
   - vfs-bridge
-    - vfs/bridge-fs-api
-      > wateros-vfs
-        - default [default]
-        - api-v0 [default]
-        - bridge-fs-api [default]
-        - fd-session
-        - impl-dummy
-        - impl-loongarch64
-        - impl-riscv64
+    - dep:vfs
 
 wateros-abi  (components/wateros-abi/Cargo.toml)
   - default [default]
-    - api-v0
-  - api-v0 [default]
+  - api-v0
     - impl-dummy/api-v0
       > wateros-abi-impl-dummy
         - default [default]
@@ -474,11 +297,8 @@ wateros-abi  (components/wateros-abi/Cargo.toml)
     - impl-linux-generic64?/api-v0
   - impl-dummy
   - impl-linux-generic64
+    - api-v0
     - dep:impl-linux-generic64
-  - impl-linux-loongarch64
-    - impl-linux-generic64
-  - impl-linux-riscv64
-    - impl-linux-generic64
 
 wateros-abi-api-v0  (components/wateros-abi/abi-api/api-v0/Cargo.toml)
   (no [features])
@@ -511,6 +331,7 @@ wateros-cred  (components/wateros-cred/Cargo.toml)
         - default [default]
         - api-v0 [default]
         - impl-core [default]
+        - impl-multi-class [default]
         - impl-round-robin
 
 wateros-cred-api-v0  (components/wateros-cred/cred-api/api-v0/Cargo.toml)
@@ -539,18 +360,20 @@ wateros-driver  (components/wateros-driver/Cargo.toml)
       > wateros-driver-character
         - default [default]
         - api-v0 [default]
-        - impl-dummy [default]
+        - impl-dummy
+        - impl-null-stub [default]
+        - impl-rtc-stub [default]
     - impl-dummy/api-v0
       > wateros-driver-impl-dummy
         - default [default]
         - api-v0 [default]
-    - impl-qemu-riscv64-opensbi/api-v0
-      > wateros-driver-impl-qemu-riscv64-opensbi
+    - impl-qemu-loongarch64-virt/api-v0
+      > wateros-driver-impl-qemu-loongarch64-virt
         - default [default]
         - api-v0 [default]
         - block-cache
-    - impl-qemu-loongarch64-virt/api-v0
-      > wateros-driver-impl-qemu-loongarch64-virt
+    - impl-qemu-riscv64-opensbi/api-v0
+      > wateros-driver-impl-qemu-riscv64-opensbi
         - default [default]
         - api-v0 [default]
         - block-cache
@@ -561,6 +384,7 @@ wateros-driver  (components/wateros-driver/Cargo.toml)
         - impl-dummy [default]
         - impl-smoltcp [default]
         - impl-virtio-mmio [default]
+        - impl-virtio-pci
   - impl-block-cache
     - block/impl-block-cache
       > wateros-driver-block
@@ -570,6 +394,11 @@ wateros-driver  (components/wateros-driver/Cargo.toml)
         - impl-dummy
         - impl-virtio-mmio [default]
         - impl-virtio-pci
+    - impl-qemu-loongarch64-virt/block-cache
+      > wateros-driver-impl-qemu-loongarch64-virt
+        - default [default]
+        - api-v0 [default]
+        - block-cache
     - impl-qemu-riscv64-opensbi/block-cache
       > wateros-driver-impl-qemu-riscv64-opensbi
         - default [default]
@@ -583,6 +412,14 @@ wateros-driver  (components/wateros-driver/Cargo.toml)
         - api-v0 [default]
         - impl-block-cache
         - impl-dummy
+        - impl-virtio-mmio [default]
+        - impl-virtio-pci
+    - network/impl-virtio-pci
+      > wateros-driver-network
+        - default [default]
+        - api-v0 [default]
+        - impl-dummy [default]
+        - impl-smoltcp [default]
         - impl-virtio-mmio [default]
         - impl-virtio-pci
   - impl-qemu-riscv64-opensbi
@@ -601,6 +438,7 @@ wateros-driver  (components/wateros-driver/Cargo.toml)
         - impl-dummy [default]
         - impl-smoltcp [default]
         - impl-virtio-mmio [default]
+        - impl-virtio-pci
 
 wateros-driver-api-v0  (components/wateros-driver/driver-api/api-v0/Cargo.toml)
   (no [features])
@@ -651,18 +489,35 @@ wateros-driver-block-impl-virtio-pci  (components/wateros-driver/driver-block/bl
 wateros-driver-character  (components/wateros-driver/driver-character/Cargo.toml)
   - default [default]
     - api-v0
-    - impl-dummy
+    - impl-null-stub
+    - impl-rtc-stub
   - api-v0 [default]
     - impl-dummy/api-v0
       > wateros-driver-character-impl-dummy
         - default [default]
         - api-v0 [default]
-  - impl-dummy [default]
+    - impl-null-stub?/api-v0
+    - impl-rtc-stub?/api-v0
+  - impl-dummy
+  - impl-null-stub [default]
+    - dep:impl-null-stub
+  - impl-rtc-stub [default]
+    - dep:impl-rtc-stub
 
 wateros-driver-character-api-v0  (components/wateros-driver/driver-character/character-api/api-v0/Cargo.toml)
   (no [features])
 
 wateros-driver-character-impl-dummy  (components/wateros-driver/driver-character/character-impl/impl-dummy/Cargo.toml)
+  - default [default]
+    - api-v0
+  - api-v0 [default]
+
+wateros-driver-character-impl-null-stub  (components/wateros-driver/driver-character/character-impl/impl-null-stub/Cargo.toml)
+  - default [default]
+    - api-v0
+  - api-v0 [default]
+
+wateros-driver-character-impl-rtc-stub  (components/wateros-driver/driver-character/character-impl/impl-rtc-stub/Cargo.toml)
   - default [default]
     - api-v0
   - api-v0 [default]
@@ -718,6 +573,8 @@ wateros-driver-network  (components/wateros-driver/driver-network/Cargo.toml)
     - dep:vfs-api
   - impl-virtio-mmio [default]
     - dep:impl-virtio-mmio
+  - impl-virtio-pci
+    - dep:impl-virtio-pci
 
 wateros-driver-network-api-v0  (components/wateros-driver/driver-network/network-api/api-v0/Cargo.toml)
   (no [features])
@@ -737,11 +594,16 @@ wateros-driver-network-impl-virtio-mmio  (components/wateros-driver/driver-netwo
     - api-v0
   - api-v0 [default]
 
+wateros-driver-network-impl-virtio-pci  (components/wateros-driver/driver-network/network-impl/impl-virtio-pci/Cargo.toml)
+  - default [default]
+    - api-v0
+  - api-v0 [default]
+
 wateros-fs  (components/wateros-fs/Cargo.toml)
   - default [default]
     - api-v0
     - impl-devfs
-    - impl-ext4
+    - impl-ext4-rs
   - api-v0 [default]
     - devfs/api-v0
       > wateros-fs-devfs
@@ -753,7 +615,14 @@ wateros-fs  (components/wateros-fs/Cargo.toml)
       > wateros-fs-impl-dummy
         - default [default]
         - api-v0 [default]
+    - impl-ext4-rs?/api-v0
     - impl-ext4?/api-v0
+    - procfs/api-v0
+      > wateros-fs-procfs
+        - default [default]
+        - api-v0 [default]
+        - impl-dummy
+        - impl-kernel [default]
     - rootfs/api-v0
       > wateros-fs-rootfs
         - default [default]
@@ -762,8 +631,10 @@ wateros-fs  (components/wateros-fs/Cargo.toml)
         - impl-kernel [default]
   - impl-devfs [default]
   - impl-dummy
-  - impl-ext4 [default]
+  - impl-ext4
     - dep:impl-ext4
+  - impl-ext4-rs [default]
+    - dep:impl-ext4-rs
 
 wateros-fs-api-v0  (components/wateros-fs/fs-api/api-v0/Cargo.toml)
   (no [features])
@@ -812,6 +683,40 @@ wateros-fs-impl-ext4  (components/wateros-fs/fs-impl/impl-ext4/Cargo.toml)
     - api-v0
   - api-v0 [default]
 
+wateros-fs-impl-ext4-rs  (components/wateros-fs/fs-impl/impl-ext4-rs/Cargo.toml)
+  - default [default]
+    - api-v0
+  - api-v0 [default]
+
+wateros-fs-procfs  (components/wateros-fs/fs-procfs/Cargo.toml)
+  - default [default]
+    - api-v0
+    - impl-kernel
+  - api-v0 [default]
+    - impl-dummy/api-v0
+      > wateros-fs-procfs-impl-dummy
+        - default [default]
+        - api-v0 [default]
+    - impl-kernel/api-v0
+      > wateros-fs-procfs-impl-kernel
+        - default [default]
+        - api-v0 [default]
+  - impl-dummy
+  - impl-kernel [default]
+
+wateros-fs-procfs-api-v0  (components/wateros-fs/fs-procfs/procfs-api/api-v0/Cargo.toml)
+  - default [default]
+
+wateros-fs-procfs-impl-dummy  (components/wateros-fs/fs-procfs/procfs-impl/impl-dummy/Cargo.toml)
+  - default [default]
+    - api-v0
+  - api-v0 [default]
+
+wateros-fs-procfs-impl-kernel  (components/wateros-fs/fs-procfs/procfs-impl/impl-kernel/Cargo.toml)
+  - default [default]
+    - api-v0
+  - api-v0 [default]
+
 wateros-fs-rootfs  (components/wateros-fs/fs-rootfs/Cargo.toml)
   - default [default]
     - api-v0
@@ -845,78 +750,118 @@ wateros-ipc  (components/wateros-ipc/Cargo.toml)
   - default [default]
     - api-v0
     - impl-dummy
+  - all
+    - api-v0
+    - futex
+    - impl-dummy
+    - pipe
+    - shm
+    - signal
   - api-v0 [default]
     - impl-dummy/api-v0
       > wateros-ipc-impl-dummy
         - default [default]
+        - api-v0
+        - impl-dummy [default]
+  - futex
+    - dep:futex
+    - futex/api-v0
+      > ipc-futex
+        - default [default]
         - api-v0 [default]
+        - impl-dummy
+        - impl-task [default]
+    - futex/impl-task
+      > ipc-futex
+        - default [default]
+        - api-v0 [default]
+        - impl-dummy
+        - impl-task [default]
   - impl-dummy [default]
-  - impl-loongarch64
-    - waitqueue/impl-loongarch64
-      > ipc-waitqueue
+    - impl-dummy/impl-dummy
+      > wateros-ipc-impl-dummy
         - default [default]
         - api-v0
-        - impl-loongarch64
-        - impl-riscv64
-        - impl-task
-    - pipe?/impl-loongarch64
-  - impl-riscv64
-    - waitqueue/impl-riscv64
-      > ipc-waitqueue
-        - default [default]
-        - api-v0
-        - impl-loongarch64
-        - impl-riscv64
-        - impl-task
-    - pipe?/impl-riscv64
+        - impl-dummy [default]
   - pipe
     - dep:pipe
     - pipe/api-v0
       > ipc-pipe
         - default [default]
-        - api-v0 [default]
-        - impl-loongarch64
-        - impl-ringbuf
-        - impl-riscv64
+        - api-v0
+        - impl-ringbuf [default]
     - pipe/impl-ringbuf
       > ipc-pipe
         - default [default]
+        - api-v0
+        - impl-ringbuf [default]
+  - shm
+    - dep:shm
+  - signal
+    - dep:signal
+    - signal/api-v0
+      > ipc-signal
+        - default [default]
         - api-v0 [default]
-        - impl-loongarch64
-        - impl-ringbuf
-        - impl-riscv64
+        - impl-dummy
 
 wateros-ipc-api-v0  (components/wateros-ipc/ipc-api/api-v0/Cargo.toml)
   (no [features])
 
-wateros-ipc-impl-dummy  (components/wateros-ipc/ipc-impl/impl-dummy/Cargo.toml)
+wateros-ipc-futex-api-v0  (components/wateros-ipc/ipc-futex/futex-api/api-v0/Cargo.toml)
   - default [default]
     - api-v0
   - api-v0 [default]
+
+wateros-ipc-futex-impl-dummy  (components/wateros-ipc/ipc-futex/futex-impl/impl-dummy/Cargo.toml)
+  - default [default]
+    - impl-dummy
+  - api-v0
+  - impl-dummy [default]
+    - api-v0
+
+wateros-ipc-futex-impl-task  (components/wateros-ipc/ipc-futex/futex-impl/impl-task/Cargo.toml)
+  - default [default]
+    - impl-task
+  - api-v0
+    - api-v0/api-v0
+      > wateros-ipc-futex-api-v0
+        - default [default]
+        - api-v0 [default]
+    - ipc-waitqueue/impl-task
+      > ipc-waitqueue
+        - default [default]
+        - api-v0
+        - impl-task [default]
+  - impl-task [default]
+    - api-v0
+    - ipc-waitqueue/impl-task
+      > ipc-waitqueue
+        - default [default]
+        - api-v0
+        - impl-task [default]
+
+wateros-ipc-impl-dummy  (components/wateros-ipc/ipc-impl/impl-dummy/Cargo.toml)
+  - default [default]
+    - impl-dummy
+  - api-v0
+  - impl-dummy [default]
+    - api-v0
 
 wateros-ipc-pipe-api-v0  (components/wateros-ipc/ipc-pipe/pipe-api/api-v0/Cargo.toml)
   (no [features])
 
 wateros-ipc-pipe-impl-ringbuf  (components/wateros-ipc/ipc-pipe/pipe-impl/impl-ringbuf/Cargo.toml)
   - default [default]
+    - impl-ringbuf
+  - api-v0
+  - impl-ringbuf [default]
     - api-v0
-  - api-v0 [default]
-  - impl-loongarch64
-    - waitqueue/impl-loongarch64
+    - waitqueue/impl-task
       > ipc-waitqueue
         - default [default]
         - api-v0
-        - impl-loongarch64
-        - impl-riscv64
-        - impl-task
-  - impl-riscv64
-    - waitqueue/impl-riscv64
-      > ipc-waitqueue
-        - default [default]
-        - api-v0
-        - impl-loongarch64
-        - impl-riscv64
-        - impl-task
+        - impl-task [default]
 
 wateros-ipc-signal-api-v0  (components/wateros-ipc/ipc-signal/signal-api/api-v0/Cargo.toml)
   (no [features])
@@ -933,6 +878,7 @@ wateros-ipc-waitqueue-api-v0  (components/wateros-ipc/ipc-waitqueue/waitqueue-ap
 
 wateros-ipc-waitqueue-impl-task  (components/wateros-ipc/ipc-waitqueue/waitqueue-impl/impl-task/Cargo.toml)
   - default [default]
+    - impl-task
   - api-v0
     - api-v0/api-v0
       > wateros-ipc-waitqueue-api-v0
@@ -943,23 +889,55 @@ wateros-ipc-waitqueue-impl-task  (components/wateros-ipc/ipc-waitqueue/waitqueue
         - default [default]
         - api-v0 [default]
         - impl-core [default]
+        - impl-multi-class [default]
         - impl-round-robin
-  - impl-loongarch64
+  - impl-task [default]
     - api-v0
     - wateros-task/impl-core
       > wateros-task
         - default [default]
         - api-v0 [default]
         - impl-core [default]
+        - impl-multi-class [default]
         - impl-round-robin
-  - impl-riscv64
+
+wateros-klog  (components/wateros-klog/Cargo.toml)
+  - default [default]
     - api-v0
-    - wateros-task/impl-core
+    - impl-ringbuf
+    - platform-timer
+    - task-api
+  - api-v0 [default]
+  - impl-ringbuf [default]
+  - platform-timer [default]
+    - platform/api-v0
+      > wateros-platform
+        - default [default]
+        - api-v0 [default]
+        - impl-dummy
+        - impl-qemu-loongarch64-virt
+        - impl-qemu-riscv64-opensbi
+  - task-api [default]
+    - task/api-v0
       > wateros-task
         - default [default]
         - api-v0 [default]
         - impl-core [default]
+        - impl-multi-class [default]
         - impl-round-robin
+    - task/impl-core
+      > wateros-task
+        - default [default]
+        - api-v0 [default]
+        - impl-core [default]
+        - impl-multi-class [default]
+        - impl-round-robin
+
+wateros-klog-api-v0  (components/wateros-klog/klog-api/api-v0/Cargo.toml)
+  (no [features])
+
+wateros-klog-impl-ringbuf  (components/wateros-klog/klog-impl/klog-ringbuf/Cargo.toml)
+  (no [features])
 
 wateros-mm  (components/wateros-mm/Cargo.toml)
   - default [default]
@@ -971,28 +949,43 @@ wateros-mm  (components/wateros-mm/Cargo.toml)
         - api-v0 [default]
   - impl-dummy
   - impl-loongarch64
+    - api-v0
     - impl-loongarch64/api-v0
       > wateros-mm-impl-loongarch64
         - default [default]
         - api-v0 [default]
+        - elf-lazy-map
         - vfs-root-read
   - impl-sv39
+    - api-v0
     - impl-sv39/api-v0
       > wateros-mm-impl-sv39
         - default [default]
         - api-v0 [default]
+        - elf-lazy-map [default]
+        - impl-riscv64
         - vfs-root-read
-  - qemu-riscv64-opensbi
-  - vfs-root-read
-    - impl-sv39/vfs-root-read
+    - impl-sv39/impl-riscv64
       > wateros-mm-impl-sv39
         - default [default]
         - api-v0 [default]
+        - elf-lazy-map [default]
+        - impl-riscv64
         - vfs-root-read
+  - qemu-riscv64-opensbi
+  - vfs-root-read
     - impl-loongarch64/vfs-root-read
       > wateros-mm-impl-loongarch64
         - default [default]
         - api-v0 [default]
+        - elf-lazy-map
+        - vfs-root-read
+    - impl-sv39/vfs-root-read
+      > wateros-mm-impl-sv39
+        - default [default]
+        - api-v0 [default]
+        - elf-lazy-map [default]
+        - impl-riscv64
         - vfs-root-read
 
 wateros-mm-api-v0  (components/wateros-mm/mm-api/api-v0/Cargo.toml)
@@ -1023,6 +1016,9 @@ wateros-mm-frame-alloctor-impl-stack  (components/wateros-mm/mm-frame-alloctor/f
     - api-v0
   - api-v0 [default]
 
+wateros-mm-impl-common  (components/wateros-mm/mm-impl/common/Cargo.toml)
+  - default [default]
+
 wateros-mm-impl-dummy  (components/wateros-mm/mm-impl/impl-dummy/Cargo.toml)
   - default [default]
     - api-v0
@@ -1032,13 +1028,17 @@ wateros-mm-impl-loongarch64  (components/wateros-mm/mm-impl/impl-loongarch64/Car
   - default [default]
     - api-v0
   - api-v0 [default]
+  - elf-lazy-map
   - vfs-root-read
     - dep:vfs
 
 wateros-mm-impl-sv39  (components/wateros-mm/mm-impl/impl-sv39/Cargo.toml)
   - default [default]
     - api-v0
+    - elf-lazy-map
   - api-v0 [default]
+  - elf-lazy-map [default]
+  - impl-riscv64
   - vfs-root-read
     - dep:vfs
 
@@ -1053,13 +1053,6 @@ wateros-platform  (components/wateros-platform/Cargo.toml)
         - impl-dummy
         - impl-loongarch64
         - impl-riscv64
-    - firmware/api-v0
-      > wateros-platform-firmware
-        - default [default]
-        - api-v0 [default]
-        - impl-dummy
-        - impl-qemu-loongarch64-uart16550
-        - impl-riscv64-opensbi
     - impl-dummy?/api-v0
     - impl-qemu-loongarch64-virt?/api-v0
     - impl-qemu-riscv64-opensbi?/api-v0
@@ -1075,24 +1068,6 @@ wateros-platform  (components/wateros-platform/Cargo.toml)
         - impl-loongarch64
         - impl-riscv64
     - dep:impl-qemu-loongarch64-virt
-    - firmware/impl-qemu-loongarch64-uart16550
-      > wateros-platform-firmware
-        - default [default]
-        - api-v0 [default]
-        - impl-dummy
-        - impl-qemu-loongarch64-uart16550
-        - impl-riscv64-opensbi
-    - logging/impl-firmware-console
-      > wateros-runtime-logging
-        - default [default]
-        - impl-debug
-        - impl-dummy
-        - impl-error
-        - impl-firmware-console
-        - impl-firmware-opensbi
-        - impl-info
-        - impl-trace
-        - impl-warn
   - impl-qemu-riscv64-opensbi
     - api-v0
     - arch/impl-riscv64
@@ -1103,24 +1078,6 @@ wateros-platform  (components/wateros-platform/Cargo.toml)
         - impl-loongarch64
         - impl-riscv64
     - dep:impl-qemu-riscv64-opensbi
-    - firmware/impl-riscv64-opensbi
-      > wateros-platform-firmware
-        - default [default]
-        - api-v0 [default]
-        - impl-dummy
-        - impl-qemu-loongarch64-uart16550
-        - impl-riscv64-opensbi
-    - logging/impl-firmware-opensbi
-      > wateros-runtime-logging
-        - default [default]
-        - impl-debug
-        - impl-dummy
-        - impl-error
-        - impl-firmware-console
-        - impl-firmware-opensbi
-        - impl-info
-        - impl-trace
-        - impl-warn
 
 wateros-platform-api-v0  (components/wateros-platform/platform-api/api-v0/Cargo.toml)
   (no [features])
@@ -1157,36 +1114,6 @@ wateros-platform-arch-impl-riscv64  (components/wateros-platform/platform-arch/a
     - api-v0
   - api-v0 [default]
 
-wateros-platform-firmware  (components/wateros-platform/platform-firmware/Cargo.toml)
-  - default [default]
-    - api-v0
-  - api-v0 [default]
-    - impl-dummy?/api-v0
-    - impl-qemu-loongarch64-uart16550?/api-v0
-    - impl-riscv64-opensbi?/api-v0
-  - impl-dummy
-    - dep:impl-dummy
-  - impl-qemu-loongarch64-uart16550
-    - dep:impl-qemu-loongarch64-uart16550
-  - impl-riscv64-opensbi
-    - dep:impl-riscv64-opensbi
-
-wateros-platform-firmware-api-v0  (components/wateros-platform/platform-firmware/firmware-api/api-v0/Cargo.toml)
-  (no [features])
-
-wateros-platform-firmware-impl-dummy  (components/wateros-platform/platform-firmware/firmware-impl/impl-dummy/Cargo.toml)
-  - default [default]
-  - api-v0
-
-wateros-platform-firmware-impl-qemu-loongarch64-uart16550  (components/wateros-platform/platform-firmware/firmware-impl/impl-qemu-loongarch64-uart16550/Cargo.toml)
-  - default [default]
-    - api-v0
-  - api-v0 [default]
-
-wateros-platform-firmware-impl-riscv64-opensbi  (components/wateros-platform/platform-firmware/firmware-impl/impl-riscv64-opensbi/Cargo.toml)
-  - default [default]
-  - api-v0
-
 wateros-platform-impl-dummy  (components/wateros-platform/platform-impl/impl-dummy/Cargo.toml)
   - default [default]
     - api-v0
@@ -1219,9 +1146,8 @@ wateros-runtime  (components/wateros-runtime/Cargo.toml)
         - impl-debug
         - impl-dummy
         - impl-error
-        - impl-firmware-console
-        - impl-firmware-opensbi
         - impl-info
+        - impl-platform-console
         - impl-trace
         - impl-warn
   - impl-dummy
@@ -1230,25 +1156,22 @@ wateros-runtime  (components/wateros-runtime/Cargo.toml)
         - default [default]
         - api-v0 [default]
         - impl-dummy
-        - impl-firmware-console
-        - impl-firmware-opensbi [default]
+        - impl-platform-console [default]
     - logging/impl-dummy
       > wateros-runtime-logging
         - default [default]
         - impl-debug
         - impl-dummy
         - impl-error
-        - impl-firmware-console
-        - impl-firmware-opensbi
         - impl-info
+        - impl-platform-console
         - impl-trace
         - impl-warn
     - panic/impl-dummy
       > wateros-runtime-panic
         - default [default]
         - impl-dummy
-        - impl-firmware-console
-        - impl-firmware-opensbi
+        - impl-platform-console
   - impl-error
     - logging/impl-error
       > wateros-runtime-logging
@@ -1256,61 +1179,10 @@ wateros-runtime  (components/wateros-runtime/Cargo.toml)
         - impl-debug
         - impl-dummy
         - impl-error
-        - impl-firmware-console
-        - impl-firmware-opensbi
         - impl-info
+        - impl-platform-console
         - impl-trace
         - impl-warn
-  - impl-firmware-console
-    - console/impl-firmware-console
-      > wateros-runtime-console
-        - default [default]
-        - api-v0 [default]
-        - impl-dummy
-        - impl-firmware-console
-        - impl-firmware-opensbi [default]
-    - logging/impl-firmware-console
-      > wateros-runtime-logging
-        - default [default]
-        - impl-debug
-        - impl-dummy
-        - impl-error
-        - impl-firmware-console
-        - impl-firmware-opensbi
-        - impl-info
-        - impl-trace
-        - impl-warn
-    - panic/impl-firmware-console
-      > wateros-runtime-panic
-        - default [default]
-        - impl-dummy
-        - impl-firmware-console
-        - impl-firmware-opensbi
-  - impl-firmware-opensbi
-    - console/impl-firmware-opensbi
-      > wateros-runtime-console
-        - default [default]
-        - api-v0 [default]
-        - impl-dummy
-        - impl-firmware-console
-        - impl-firmware-opensbi [default]
-    - logging/impl-firmware-opensbi
-      > wateros-runtime-logging
-        - default [default]
-        - impl-debug
-        - impl-dummy
-        - impl-error
-        - impl-firmware-console
-        - impl-firmware-opensbi
-        - impl-info
-        - impl-trace
-        - impl-warn
-    - panic/impl-firmware-opensbi
-      > wateros-runtime-panic
-        - default [default]
-        - impl-dummy
-        - impl-firmware-console
-        - impl-firmware-opensbi
   - impl-info
     - logging/impl-info
       > wateros-runtime-logging
@@ -1318,11 +1190,32 @@ wateros-runtime  (components/wateros-runtime/Cargo.toml)
         - impl-debug
         - impl-dummy
         - impl-error
-        - impl-firmware-console
-        - impl-firmware-opensbi
         - impl-info
+        - impl-platform-console
         - impl-trace
         - impl-warn
+  - impl-platform-console
+    - console/impl-platform-console
+      > wateros-runtime-console
+        - default [default]
+        - api-v0 [default]
+        - impl-dummy
+        - impl-platform-console [default]
+    - logging/impl-platform-console
+      > wateros-runtime-logging
+        - default [default]
+        - impl-debug
+        - impl-dummy
+        - impl-error
+        - impl-info
+        - impl-platform-console
+        - impl-trace
+        - impl-warn
+    - panic/impl-platform-console
+      > wateros-runtime-panic
+        - default [default]
+        - impl-dummy
+        - impl-platform-console
   - impl-trace
     - logging/impl-trace
       > wateros-runtime-logging
@@ -1330,9 +1223,8 @@ wateros-runtime  (components/wateros-runtime/Cargo.toml)
         - impl-debug
         - impl-dummy
         - impl-error
-        - impl-firmware-console
-        - impl-firmware-opensbi
         - impl-info
+        - impl-platform-console
         - impl-trace
         - impl-warn
   - impl-warn
@@ -1342,9 +1234,8 @@ wateros-runtime  (components/wateros-runtime/Cargo.toml)
         - impl-debug
         - impl-dummy
         - impl-error
-        - impl-firmware-console
-        - impl-firmware-opensbi
         - impl-info
+        - impl-platform-console
         - impl-trace
         - impl-warn
   - serial-uart-virt
@@ -1353,20 +1244,18 @@ wateros-runtime  (components/wateros-runtime/Cargo.toml)
 wateros-runtime-console  (components/wateros-runtime/runtime-console/Cargo.toml)
   - default [default]
     - api-v0
-    - impl-firmware-opensbi
+    - impl-platform-console
   - api-v0 [default]
     - impl-dummy?/api-v0
-    - impl-firmware-opensbi?/api-v0
+    - impl-platform-console?/api-v0
   - impl-dummy
     - dep:impl-dummy
-  - impl-firmware-console
-    - dep:impl-firmware-opensbi
-    - impl-firmware-opensbi/api-v0
-      > wateros-runtime-console-impl-firmware-opensbi
+  - impl-platform-console [default]
+    - dep:impl-platform-console
+    - impl-platform-console/api-v0
+      > wateros-runtime-console-impl-platform-console
         - default [default]
         - api-v0
-  - impl-firmware-opensbi [default]
-    - impl-firmware-console
 
 wateros-runtime-console-api-v0  (components/wateros-runtime/runtime-console/console-api/api-v0/Cargo.toml)
   (no [features])
@@ -1375,14 +1264,16 @@ wateros-runtime-console-impl-dummy  (components/wateros-runtime/runtime-console/
   - default [default]
   - api-v0
 
-wateros-runtime-console-impl-firmware-opensbi  (components/wateros-runtime/runtime-console/console-impl/impl-firmware-opensbi/Cargo.toml)
+wateros-runtime-console-impl-platform-console  (components/wateros-runtime/runtime-console/console-impl/impl-platform-console/Cargo.toml)
   - default [default]
   - api-v0
 
 wateros-runtime-heap-allocator  (components/wateros-runtime/runtime-heap-allocator/Cargo.toml)
   - default [default]
-    - impl-buddy-allocator
-  - impl-buddy-allocator [default]
+    - impl-linked-list-allocator
+  - impl-linked-list-allocator [default]
+    - dep:linked_list_allocator
+  - impl-tlsf
 
 wateros-runtime-logging  (components/wateros-runtime/runtime-logging/Cargo.toml)
   - default [default]
@@ -1393,26 +1284,16 @@ wateros-runtime-logging  (components/wateros-runtime/runtime-logging/Cargo.toml)
         - default [default]
         - api-v0 [default]
         - impl-dummy
-        - impl-firmware-console
-        - impl-firmware-opensbi [default]
+        - impl-platform-console [default]
   - impl-error
-  - impl-firmware-console
-    - console/impl-firmware-console
-      > wateros-runtime-console
-        - default [default]
-        - api-v0 [default]
-        - impl-dummy
-        - impl-firmware-console
-        - impl-firmware-opensbi [default]
-  - impl-firmware-opensbi
-    - console/impl-firmware-opensbi
-      > wateros-runtime-console
-        - default [default]
-        - api-v0 [default]
-        - impl-dummy
-        - impl-firmware-console
-        - impl-firmware-opensbi [default]
   - impl-info
+  - impl-platform-console
+    - console/impl-platform-console
+      > wateros-runtime-console
+        - default [default]
+        - api-v0 [default]
+        - impl-dummy
+        - impl-platform-console [default]
   - impl-trace
   - impl-warn
 
@@ -1424,98 +1305,55 @@ wateros-runtime-panic  (components/wateros-runtime/runtime-panic/Cargo.toml)
         - default [default]
         - api-v0 [default]
         - impl-dummy
-        - impl-firmware-console
-        - impl-firmware-opensbi [default]
-    - firmware/impl-dummy
-      > wateros-platform-firmware
+        - impl-platform-console [default]
+    - platform/impl-dummy
+      > wateros-platform
         - default [default]
         - api-v0 [default]
         - impl-dummy
-        - impl-qemu-loongarch64-uart16550
-        - impl-riscv64-opensbi
-  - impl-firmware-console
-    - console/impl-firmware-console
+        - impl-qemu-loongarch64-virt
+        - impl-qemu-riscv64-opensbi
+  - impl-platform-console
+    - console/impl-platform-console
       > wateros-runtime-console
         - default [default]
         - api-v0 [default]
         - impl-dummy
-        - impl-firmware-console
-        - impl-firmware-opensbi [default]
-    - firmware/impl-qemu-loongarch64-uart16550
-      > wateros-platform-firmware
+        - impl-platform-console [default]
+    - platform/api-v0
+      > wateros-platform
         - default [default]
         - api-v0 [default]
         - impl-dummy
-        - impl-qemu-loongarch64-uart16550
-        - impl-riscv64-opensbi
-  - impl-firmware-opensbi
-    - console/impl-firmware-opensbi
-      > wateros-runtime-console
-        - default [default]
-        - api-v0 [default]
-        - impl-dummy
-        - impl-firmware-console
-        - impl-firmware-opensbi [default]
-    - firmware/impl-riscv64-opensbi
-      > wateros-platform-firmware
-        - default [default]
-        - api-v0 [default]
-        - impl-dummy
-        - impl-qemu-loongarch64-uart16550
-        - impl-riscv64-opensbi
+        - impl-qemu-loongarch64-virt
+        - impl-qemu-riscv64-opensbi
 
 wateros-runtime-serial  (components/wateros-runtime/runtime-serial/Cargo.toml)
   (no [features])
 
 wateros-syscall  (components/wateros-syscall/Cargo.toml)
   - default [default]
+    - impl-kernel
   - api-v0
-    - dep:abi
     - abi/api-v0
       > wateros-abi
         - default [default]
-        - api-v0 [default]
+        - api-v0
         - impl-dummy
         - impl-linux-generic64
-        - impl-linux-loongarch64
-        - impl-linux-riscv64
+    - dep:abi
     - dep:api-v0
     - impl-kernel?/api-v0
-  - impl-kernel
+  - impl-kernel [default]
     - api-v0
     - dep:impl-kernel
-    - impl-kernel/fd-session
+    - impl-kernel/impl-kernel
       > wateros-syscall-impl-kernel
         - default [default]
-        - api-v0 [default]
+        - api-v0
         - cred-session
         - fd-session
-        - impl-loongarch64
-        - impl-riscv64
-        - socket-net
-  - impl-loongarch64
-    - api-v0
-    - impl-kernel
-    - impl-kernel/impl-loongarch64
-      > wateros-syscall-impl-kernel
-        - default [default]
-        - api-v0 [default]
-        - cred-session
-        - fd-session
-        - impl-loongarch64
-        - impl-riscv64
-        - socket-net
-  - impl-riscv64
-    - api-v0
-    - impl-kernel
-    - impl-kernel/impl-riscv64
-      > wateros-syscall-impl-kernel
-        - default [default]
-        - api-v0 [default]
-        - cred-session
-        - fd-session
-        - impl-loongarch64
-        - impl-riscv64
+        - impl-kernel [default]
         - socket-net
 
 wateros-syscall-api-v0  (components/wateros-syscall/syscall-api/api-v0/Cargo.toml)
@@ -1525,31 +1363,26 @@ wateros-syscall-api-v0  (components/wateros-syscall/syscall-api/api-v0/Cargo.tom
     - abi/api-v0
       > wateros-abi
         - default [default]
-        - api-v0 [default]
+        - api-v0
         - impl-dummy
         - impl-linux-generic64
-        - impl-linux-loongarch64
-        - impl-linux-riscv64
 
 wateros-syscall-impl-kernel  (components/wateros-syscall/syscall-impl/impl-kernel/Cargo.toml)
   - default [default]
-    - api-v0
-  - api-v0 [default]
+    - impl-kernel
+  - api-v0
+    - abi/api-v0
+      > wateros-abi
+        - default [default]
+        - api-v0
+        - impl-dummy
+        - impl-linux-generic64
     - api-v0/api-v0
       > wateros-syscall-api-v0
         - default [default]
         - api-v0 [default]
-    - abi/api-v0
-      > wateros-abi
-        - default [default]
-        - api-v0 [default]
-        - impl-dummy
-        - impl-linux-generic64
-        - impl-linux-loongarch64
-        - impl-linux-riscv64
     - fd-session
   - cred-session
-    - dep:cred
     - cred/api-v0
       > wateros-cred
         - default [default]
@@ -1560,19 +1393,52 @@ wateros-syscall-impl-kernel  (components/wateros-syscall/syscall-impl/impl-kerne
         - default [default]
         - api-v0 [default]
         - impl-root [default]
+    - dep:cred
   - fd-session
     - cred-session
     - dep:ipc
     - dep:mm
     - dep:vfs
+    - ipc/futex
+      > wateros-ipc
+        - default [default]
+        - all
+        - api-v0 [default]
+        - futex
+        - impl-dummy [default]
+        - pipe
+        - shm
+        - signal
     - ipc/pipe
       > wateros-ipc
         - default [default]
+        - all
         - api-v0 [default]
+        - futex
         - impl-dummy [default]
-        - impl-loongarch64
-        - impl-riscv64
         - pipe
+        - shm
+        - signal
+    - ipc/shm
+      > wateros-ipc
+        - default [default]
+        - all
+        - api-v0 [default]
+        - futex
+        - impl-dummy [default]
+        - pipe
+        - shm
+        - signal
+    - ipc/signal
+      > wateros-ipc
+        - default [default]
+        - all
+        - api-v0 [default]
+        - futex
+        - impl-dummy [default]
+        - pipe
+        - shm
+        - signal
     - mm/api-v0
       > wateros-mm
         - default [default]
@@ -1587,87 +1453,50 @@ wateros-syscall-impl-kernel  (components/wateros-syscall/syscall-impl/impl-kerne
         - default [default]
         - api-v0 [default]
         - bridge-fs-api [default]
-        - fd-session
         - impl-dummy
-        - impl-loongarch64
-        - impl-riscv64
-    - vfs/fd-session
+        - impl-fd-session [default]
+    - vfs/impl-fd-session
       > wateros-vfs
         - default [default]
         - api-v0 [default]
         - bridge-fs-api [default]
-        - fd-session
         - impl-dummy
-        - impl-loongarch64
-        - impl-riscv64
-  - impl-loongarch64
+        - impl-fd-session [default]
+  - impl-kernel [default]
     - api-v0
-    - abi/api-v0
-      > wateros-abi
+    - fd-session
+    - klog/default
+      > wateros-klog
+        - default [default]
+        - api-v0 [default]
+        - impl-ringbuf [default]
+        - platform-timer [default]
+        - task-api [default]
+    - platform/api-v0
+      > wateros-platform
         - default [default]
         - api-v0 [default]
         - impl-dummy
-        - impl-linux-generic64
-        - impl-linux-loongarch64
-        - impl-linux-riscv64
-    - ipc/impl-loongarch64
-      > wateros-ipc
-        - default [default]
-        - api-v0 [default]
-        - impl-dummy [default]
-        - impl-loongarch64
-        - impl-riscv64
-        - pipe
+        - impl-qemu-loongarch64-virt
+        - impl-qemu-riscv64-opensbi
     - socket-net
     - task/api-v0
       > wateros-task
         - default [default]
         - api-v0 [default]
         - impl-core [default]
+        - impl-multi-class [default]
         - impl-round-robin
     - task/impl-core
       > wateros-task
         - default [default]
         - api-v0 [default]
         - impl-core [default]
+        - impl-multi-class [default]
         - impl-round-robin
-    - fd-session
-  - impl-riscv64
-    - api-v0
-    - abi/api-v0
-      > wateros-abi
-        - default [default]
-        - api-v0 [default]
-        - impl-dummy
-        - impl-linux-generic64
-        - impl-linux-loongarch64
-        - impl-linux-riscv64
-    - ipc/impl-riscv64
-      > wateros-ipc
-        - default [default]
-        - api-v0 [default]
-        - impl-dummy [default]
-        - impl-loongarch64
-        - impl-riscv64
-        - pipe
-    - socket-net
-    - task/api-v0
-      > wateros-task
-        - default [default]
-        - api-v0 [default]
-        - impl-core [default]
-        - impl-round-robin
-    - task/impl-core
-      > wateros-task
-        - default [default]
-        - api-v0 [default]
-        - impl-core [default]
-        - impl-round-robin
-    - fd-session
   - socket-net
     - dep:driver
     - dep:driver-network
-    - dep:log
     - dep:smoltcp
     - driver-network/impl-smoltcp
       > wateros-driver-network
@@ -1676,6 +1505,7 @@ wateros-syscall-impl-kernel  (components/wateros-syscall/syscall-impl/impl-kerne
         - impl-dummy [default]
         - impl-smoltcp [default]
         - impl-virtio-mmio [default]
+        - impl-virtio-pci
     - driver-network/impl-virtio-mmio
       > wateros-driver-network
         - default [default]
@@ -1683,11 +1513,13 @@ wateros-syscall-impl-kernel  (components/wateros-syscall/syscall-impl/impl-kerne
         - impl-dummy [default]
         - impl-smoltcp [default]
         - impl-virtio-mmio [default]
+        - impl-virtio-pci
 
 wateros-task  (components/wateros-task/Cargo.toml)
   - default [default]
     - api-v0
     - impl-core
+    - impl-multi-class
   - api-v0 [default]
     - impl-core/api-v0
       > wateros-task-impl-core
@@ -1697,14 +1529,23 @@ wateros-task  (components/wateros-task/Cargo.toml)
       > wateros-task-scheduler
         - default [default]
         - api-v0 [default]
-        - impl-round-robin [default]
+        - impl-multi-class [default]
+        - impl-round-robin
   - impl-core [default]
+  - impl-multi-class [default]
+    - scheduler/impl-multi-class
+      > wateros-task-scheduler
+        - default [default]
+        - api-v0 [default]
+        - impl-multi-class [default]
+        - impl-round-robin
   - impl-round-robin
     - scheduler/impl-round-robin
       > wateros-task-scheduler
         - default [default]
         - api-v0 [default]
-        - impl-round-robin [default]
+        - impl-multi-class [default]
+        - impl-round-robin
 
 wateros-task-api-v0  (components/wateros-task/task-api/api-v0/Cargo.toml)
   (no [features])
@@ -1716,13 +1557,15 @@ wateros-task-impl-core  (components/wateros-task/task-impl/impl-core/Cargo.toml)
 wateros-task-scheduler  (components/wateros-task/task-scheduler/Cargo.toml)
   - default [default]
     - api-v0
-    - impl-round-robin
+    - impl-multi-class
   - api-v0 [default]
-    - impl-round-robin/api-v0
-      > wateros-task-scheduler-impl-round-robin
+  - impl-multi-class [default]
+    - dep:impl-multi-class
+    - impl-multi-class/api-v0
+      > wateros-task-scheduler-impl-multi-class
         - default [default]
         - api-v0 [default]
-  - impl-round-robin [default]
+  - impl-round-robin
     - dep:impl-round-robin
     - impl-round-robin/api-v0
       > wateros-task-scheduler-impl-round-robin
@@ -1731,6 +1574,11 @@ wateros-task-scheduler  (components/wateros-task/task-scheduler/Cargo.toml)
 
 wateros-task-scheduler-api-v0  (components/wateros-task/task-scheduler/scheduler-api/api-v0/Cargo.toml)
   (no [features])
+
+wateros-task-scheduler-impl-multi-class  (components/wateros-task/task-scheduler/scheduler-impl/impl-multi-class/Cargo.toml)
+  - default [default]
+    - api-v0
+  - api-v0 [default]
 
 wateros-task-scheduler-impl-round-robin  (components/wateros-task/task-scheduler/scheduler-impl/impl-round-robin/Cargo.toml)
   - default [default]
@@ -1744,6 +1592,7 @@ wateros-vfs  (components/wateros-vfs/Cargo.toml)
   - default [default]
     - api-v0
     - bridge-fs-api
+    - impl-fd-session
   - api-v0 [default]
     - impl-dummy/api-v0
       > wateros-vfs-impl-dummy
@@ -1751,54 +1600,37 @@ wateros-vfs  (components/wateros-vfs/Cargo.toml)
         - api-v0 [default]
     - impl_fs_bridge?/api-v0
   - bridge-fs-api [default]
+    - dep:fs
     - dep:impl_fs_bridge
     - impl_fs_bridge/bridge-fs-api
       > wateros-vfs-impl-fs-bridge
         - default [default]
         - api-v0 [default]
         - bridge-fs-api [default]
-  - fd-session
+  - impl-dummy
+  - impl-fd-session [default]
     - dep:base
     - dep:impl_fd_session
     - dep:task
-    - impl_fd_session/fd-session
+    - impl_fd_session/impl-fd-session
       > wateros-vfs-impl-fd-session
         - default [default]
-        - api-v0 [default]
-        - fd-session
-        - impl-loongarch64
-        - impl-riscv64
+        - api-v0
+        - impl-fd-session [default]
     - task/api-v0
       > wateros-task
         - default [default]
         - api-v0 [default]
         - impl-core [default]
+        - impl-multi-class [default]
         - impl-round-robin
     - task/impl-core
       > wateros-task
         - default [default]
         - api-v0 [default]
         - impl-core [default]
+        - impl-multi-class [default]
         - impl-round-robin
-  - impl-dummy
-  - impl-loongarch64
-    - fd-session
-    - impl_fd_session/impl-loongarch64
-      > wateros-vfs-impl-fd-session
-        - default [default]
-        - api-v0 [default]
-        - fd-session
-        - impl-loongarch64
-        - impl-riscv64
-  - impl-riscv64
-    - fd-session
-    - impl_fd_session/impl-riscv64
-      > wateros-vfs-impl-fd-session
-        - default [default]
-        - api-v0 [default]
-        - fd-session
-        - impl-loongarch64
-        - impl-riscv64
 
 wateros-vfs-api-v0  (components/wateros-vfs/vfs-api/api-v0/Cargo.toml)
   (no [features])
@@ -1810,27 +1642,39 @@ wateros-vfs-impl-dummy  (components/wateros-vfs/vfs-impl/impl-dummy/Cargo.toml)
 
 wateros-vfs-impl-fd-session  (components/wateros-vfs/vfs-impl/impl-fd-session/Cargo.toml)
   - default [default]
+    - impl-fd-session
+  - api-v0
+  - impl-fd-session [default]
     - api-v0
-  - api-v0 [default]
-  - fd-session
     - ipc/pipe
       > wateros-ipc
         - default [default]
+        - all
         - api-v0 [default]
+        - futex
         - impl-dummy [default]
-        - impl-loongarch64
-        - impl-riscv64
         - pipe
+        - shm
+        - signal
     - task/api-v0
       > wateros-task
         - default [default]
         - api-v0 [default]
         - impl-core [default]
+        - impl-multi-class [default]
         - impl-round-robin
-  - impl-loongarch64
-    - fd-session
-  - impl-riscv64
-    - fd-session
+    - task/impl-core
+      > wateros-task
+        - default [default]
+        - api-v0 [default]
+        - impl-core [default]
+        - impl-multi-class [default]
+        - impl-round-robin
+    - waitqueue/impl-task
+      > ipc-waitqueue
+        - default [default]
+        - api-v0
+        - impl-task [default]
 
 wateros-vfs-impl-fs-bridge  (components/wateros-vfs/vfs-impl/impl-fs-bridge/Cargo.toml)
   - default [default]
@@ -1839,7 +1683,22 @@ wateros-vfs-impl-fs-bridge  (components/wateros-vfs/vfs-impl/impl-fs-bridge/Carg
   - api-v0 [default]
   - bridge-fs-api [default]
     - dep:fs
+    - dep:impl_fd_session
     - dep:impl_page_cache
+    - task/api-v0
+      > wateros-task
+        - default [default]
+        - api-v0 [default]
+        - impl-core [default]
+        - impl-multi-class [default]
+        - impl-round-robin
+    - task/impl-core
+      > wateros-task
+        - default [default]
+        - api-v0 [default]
+        - impl-core [default]
+        - impl-multi-class [default]
+        - impl-round-robin
 
 wateros-vfs-impl-page-cache  (components/wateros-vfs/vfs-impl/impl-page-cache/Cargo.toml)
   - default [default]

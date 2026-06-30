@@ -1,16 +1,16 @@
-% 【本文件写什么】子模块 ipc-pipe（\subsection 级聚合）
-%   - 职责摘要：内核 ring-buffer 管道与 fd 端点。
-%   - 子域聚合 lib.rs：os/components/wateros-ipc/ipc-pipe/src/lib.rs
-%   - 如何重导出 api-v0、feature 下挂载哪些 impl
-%   - 被谁依赖（syscall、vfs、main 启动链等）
-%   - 短综述 + 下方 \input 展开 api 与 impl 叶子
+% 【本文件写什么】子模块 ipc-pipe，\subsection 级聚合
+% - 职责摘要：内核 ring-buffer 管道与 fd 端点。
+% - 子域聚合 lib.rs：os/components/wateros-ipc/ipc-pipe/src/lib.rs
+% - 如何重导出 api-v0、feature 下挂载哪些 impl
+% - 被谁依赖，syscall、vfs、main 启动链等
+% - 短综述 + 下方 \input 展开 api 与 impl 叶子
 % 【事实来源】
-%   - os/components/wateros-ipc/ipc-pipe/
-%   - docs/exports/ 中与 wateros-ipc 相关的 public-api / features 章节
+% - os/components/wateros-ipc/ipc-pipe/
+% - docs/exports/ 中与 wateros-ipc 相关的 public-api / features 章节
 
 \subsection{ipc-pipe}
 
-\code{ipc-pipe}在\code{feature pipe}下由父聚合导出\code{ipc::pipe::\{Pipe, PipeEndpoint, ...\}}。聚合\code{lib.rs}重导出\code{api-v0}契约类型，并在\code{impl-ringbuf}下将\code{impl\_ringbuf}选为\code{active\_impl}。syscall 经\syscall{pipe}/\syscall{pipe2}创建端点对；VFS fd 表持有\code{PipeEndpoint}，\code{dup}/\code{fork}通过引用计数实现 shell 管道式部分 close 语义。默认容量来自\code{wateros-base-config::ipc::DEFAULT\_PIPE\_CAPACITY}（4096 字节）。
+\code{ipc-pipe}在\code{feature pipe}下由父聚合导出\code{ipc::pipe::\{Pipe, PipeEndpoint, ...\}}。聚合\code{lib.rs}重导出\code{api-v0}契约类型，并在\code{impl-ringbuf}下将\code{impl\_ringbuf}选为\code{active\_impl}。syscall 经\syscall{pipe}/\syscall{pipe2}创建端点对；VFS fd 表持有\code{PipeEndpoint}，\code{dup}/\code{fork}通过引用计数实现 shell 管道式部分 close 语义。默认容量来自\code{wateros-base-config::ipc::DEFAULT\_PIPE\_CAPACITY}，4096 字节。
 
 \input{chapters/chap03/components/wateros-ipc/ipc-pipe/pipe-api/api/api-v0}
 \input{chapters/chap03/components/wateros-ipc/ipc-pipe/pipe-impl/impl/ringbuf}

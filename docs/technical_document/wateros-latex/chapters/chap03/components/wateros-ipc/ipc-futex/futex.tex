@@ -1,12 +1,12 @@
-% 【本文件写什么】子模块 ipc-futex（\subsection 级聚合）
-%   - 职责摘要：Futex 等待/唤醒与 robust 侧表。
-%   - 子域聚合 lib.rs：os/components/wateros-ipc/ipc-futex/src/lib.rs
-%   - 如何重导出 api-v0、feature 下挂载哪些 impl
-%   - 被谁依赖（syscall、vfs、main 启动链等）
-%   - 短综述 + 下方 \input 展开 api 与 impl 叶子
+% 【本文件写什么】子模块 ipc-futex，\subsection 级聚合
+% - 职责摘要：Futex 等待/唤醒与 robust 侧表。
+% - 子域聚合 lib.rs：os/components/wateros-ipc/ipc-futex/src/lib.rs
+% - 如何重导出 api-v0、feature 下挂载哪些 impl
+% - 被谁依赖，syscall、vfs、main 启动链等
+% - 短综述 + 下方 \input 展开 api 与 impl 叶子
 % 【事实来源】
-%   - os/components/wateros-ipc/ipc-futex/
-%   - docs/exports/ 中与 wateros-ipc 相关的 public-api / features 章节
+% - os/components/wateros-ipc/ipc-futex/
+% - docs/exports/ 中与 wateros-ipc 相关的 public-api / features 章节
 
 \subsection{ipc-futex}
 

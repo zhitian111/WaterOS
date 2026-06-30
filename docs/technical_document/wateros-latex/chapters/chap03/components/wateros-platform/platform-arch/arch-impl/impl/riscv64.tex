@@ -1,14 +1,14 @@
 % 【本文件写什么】impl 实现层：riscv64
-%   - 定位：RISC-V trap、上下文切换、定时器与 SMP。
-%   - crate 路径：os/components/wateros-platform/platform-arch/arch-impl/impl-riscv64/src/
-%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
-%   - 算法或硬件交互流程（可用伪代码/流程图）
-%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
-%   - 与其它 impl 变体的差异、切换 feature 时的影响
-%   - 性能/内存假设与已知限制
+% - 定位：RISC-V trap、上下文切换、定时器与 SMP。
+% - crate 路径：os/components/wateros-platform/platform-arch/arch-impl/impl-riscv64/src/
+% - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+% - 算法或硬件交互流程，可用伪代码/流程图
+% - 本 impl 启用的 Cargo [features] 与 arch feature，impl-riscv64 等
+% - 与其它 impl 变体的差异、切换 feature 时的影响
+% - 性能/内存假设与已知限制
 % 【事实来源】
-%   - 上述 crate 源码与 Cargo.toml
-%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+% - 上述 crate 源码与 Cargo.toml
+% - os/feature-tree.txt 中指向本 impl 的 feature 链
 
 \subsubsection{impl-riscv64}
 
@@ -16,7 +16,7 @@
 
 \code{Scause}经\code{From<Scause> for TrapCause}解码：最高位区分中断/异常，低位映射到\code{UserEnvCall}、页故障等语义。\code{set\_kernel\_trap\_satp}把内核\code{satp}写入trampoline可读槽位，使用户态trap先切回内核页表再进入Rust handler。\code{prepare\_user\_trap\_frame\_access}在返回用户态前设置\code{sstatus.SUM}，支撑内核访问用户页。\code{timer\_slice\_ticks}常量\code{1\_250\_000}供调度侧重装定时器切片，与Linux ABI无关。
 
-分页原语\code{Riscv64Paging}读写\code{satp}并在切换后执行\code{sfence.vma}；\code{init\_paging\_disable\_mmu}与\code{enable\_paging}在RISC-V S态为no-op（MMU由OpenSBI在M态管理）。任务切换\code{switch.S}的\code{\_\_switch}保存/恢复\code{Riscv64ArchTaskContext}。
+分页原语\code{Riscv64Paging}读写\code{satp}并在切换后执行\code{sfence.vma}；\code{init\_paging\_disable\_mmu}与\code{enable\_paging}在RISC-V S态为no-op，MMU由OpenSBI在M态管理。任务切换\code{switch.S}的\code{\_\_switch}保存/恢复\code{Riscv64ArchTaskContext}。
 
 已知限制：FPU上下文在任务切换路径未完整保存，返回用户态时\code{sstatus.FS}保持脏位；信号帧路径有\code{save\_fp\_state}/\code{restore\_fp\_state}汇编辅助。
 

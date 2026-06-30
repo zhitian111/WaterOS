@@ -1,24 +1,24 @@
 % 【本文件写什么】impl 实现层：linux-generic64
-%   - 定位：Linux 兼容 generic64 ABI 实现（主线）。
-%   - crate 路径：os/components/wateros-abi/abi-impl/impl-linux-generic64/src/
-%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
-%   - 算法或硬件交互流程（可用伪代码/流程图）
-%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
-%   - 与其它 impl 变体的差异、切换 feature 时的影响
-%   - 性能/内存假设与已知限制
+% - 定位：Linux 兼容 generic64 ABI 实现，主线。
+% - crate 路径：os/components/wateros-abi/abi-impl/impl-linux-generic64/src/
+% - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+% - 算法或硬件交互流程，可用伪代码/流程图
+% - 本 impl 启用的 Cargo [features] 与 arch feature，impl-riscv64 等
+% - 与其它 impl 变体的差异、切换 feature 时的影响
+% - 性能/内存假设与已知限制
 % 【事实来源】
-%   - 上述 crate 源码与 Cargo.toml
-%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+% - 上述 crate 源码与 Cargo.toml
+% - os/feature-tree.txt 中指向本 impl 的 feature 链
 
 \paragraph{LinuxGeneric64 号表}
 
 零大小类型\code{LinuxGeneric64}实现\code{SyscallNumberTable}全部关联常量，数值来自Linux用户态可见的\code{asm-generic} 64位ABI。当前RISC-V64与LoongArch64共用此表，经根内核平台feature选择；若未来架构分叉须拆专用\code{impl-*}。
 
-代表性映射（节选）：\code{READ=63}、\code{WRITE=64}、\code{OPENAT=56}、\code{CLOSE=57}、\code{CLONE}经\code{FORK=220}映射、\code{EXEC=221}（\code{execve}）、\code{EXIT=93}、\code{MMAP}族、\code{FUTEX}、\code{SOCKET}族、\code{EPOLL\_*}、\code{SYSLOG}等。xattr调用号5--16在表中单独列出，与\code{wateros-syscall}旁路分发一致。
+代表性映射，节选：\code{READ=63}、\code{WRITE=64}、\code{OPENAT=56}、\code{CLOSE=57}、\code{CLONE}经\code{FORK=220}映射、\code{EXEC=221}，即 \code{execve}、\code{EXIT=93}、\code{MMAP}族、\code{FUTEX}、\code{SOCKET}族、\code{EPOLL\_*}、\code{SYSLOG}等。xattr调用号5--16在表中单独列出，与\code{wateros-syscall}旁路分发一致。
 
 \paragraph{特殊常量}
 
-\code{SELECT}使用\code{usize::MAX}哨兵：\code{asm-generic} 64位无独立\code{select} nr，RISC-V64/LoongArch64用户态经\code{pselect6}(72)实现\code{select}语义。\code{WAITPID=260}对应\code{wait4}；\code{FSTAT=80}覆盖\code{fstat}/\code{newfstatat} libc路径。
+\code{SELECT}使用\code{usize::MAX}哨兵：\code{asm-generic} 64位无独立\code{select} nr，RISC-V64/LoongArch64用户态经\code{pselect6}，72实现\code{select}语义。\code{WAITPID=260}对应\code{wait4}；\code{FSTAT=80}覆盖\code{fstat}/\code{newfstatat} libc路径。
 
 \paragraph{编译期校验}
 
@@ -26,8 +26,8 @@ crate内单测收集全部关联常量的\code{raw()}值，断言两两不等，
 
 \paragraph{与 syscall 边界}
 
-\code{SyscallNumberTable}存在某号仅表示ABI编号可对齐；\code{wateros-syscall/impl-kernel}的\code{sys\_*}是否实现须单独核对。旁路号（\code{statx}、\code{fstatat}、\code{faccessat2}等）在syscall层有额外\code{dispatch\_syscall\_aliases}分支，不在主号\code{match}重复。
+\code{SyscallNumberTable}存在某号仅表示ABI编号可对齐；\code{wateros-syscall/impl-kernel}的\code{sys\_*}是否实现须单独核对。旁路号，含 \code{statx}、\code{fstatat}、\code{faccessat2} 等，在syscall层有额外\code{dispatch\_syscall\_aliases}分支，不在主号\code{match}重复。
 
 \paragraph{切换与限制}
 
-切换至其他号表impl须同时调整根内核feature链与所有使用\code{ActiveSyscallNumberTable}的\code{match}。当前无per-arch专用表（如riscv64-only）；双架构共用是bring-up阶段的刻意简化。
+切换至其他号表impl须同时调整根内核feature链与所有使用\code{ActiveSyscallNumberTable}的\code{match}。当前无per-arch专用表，如riscv64-only；双架构共用是bring-up阶段的刻意简化。

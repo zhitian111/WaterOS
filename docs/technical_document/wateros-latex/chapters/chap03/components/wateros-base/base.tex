@@ -1,23 +1,23 @@
-% 【本文件写什么】一级组件 wateros-base（§ 级聚合）
-%   - 组件职责与在内核中的位置：内核基础类型、地址表示与全局配置常量。
-%   - 聚合 crate os/components/wateros-base/src/lib.rs 的 pub mod 树与对外导出面
-%   - 子模块划分、与相邻组件的依赖边界（谁依赖谁、走哪条门面）
-%   - 根 feature / 本组件 Cargo.toml feature 如何选用各 impl
-%   - 1～2 段综述后，由下方 \input 展开子模块；不在此逐条列举 api trait
+% 【本文件写什么】一级组件 wateros-base，§ 级聚合
+% - 组件职责与在内核中的位置：内核基础类型、地址表示与全局配置常量。
+% - 聚合 crate os/components/wateros-base/src/lib.rs 的 pub mod 树与对外导出面
+% - 子模块划分、与相邻组件的依赖边界，谁依赖谁、走哪条门面
+% - 根 feature / 本组件 Cargo.toml feature 如何选用各 impl
+% - 1～2 段综述后，由下方 \input 展开子模块；不在此逐条列举 api trait
 % 【事实来源】
-%   - os/components/wateros-base/src/lib.rs、Cargo.toml
-%   - docs/exports/public-api/wateros-base.md
-%   - docs/exports/features/wateros-base.md
-%   - os/feature-tree.txt 中 wateros-base 相关段
+% - os/components/wateros-base/src/lib.rs、Cargo.toml
+% - docs/exports/public-api/wateros-base.md
+% - docs/exports/features/wateros-base.md
+% - os/feature-tree.txt 中 wateros-base 相关段
 % 【不写什么】
-%   - api-v0 契约细节 → 子目录 api/api-v0.tex
-%   - 各 impl 算法/平台细节 → 子目录 impl/*.tex
+% - api-v0 契约细节 至 子目录 api/api-v0.tex
+% - 各 impl 算法/平台细节 至 子目录 impl/*.tex
 
 \section{基础类型组件}
 
 \code{wateros-base}提供全内核共用的地址与标识薄类型，以及单核环境下的简单同步容器。它不决定堆有多大、定时器多长，只保证各处对物理地址、虚拟地址和hart编号的说法一致。配置数值单独放在同目录下的\code{base-config}子crate里，避免同一常量在两套源码里各写一遍。
 
-根内核和其它组件通常同时依赖类型层与配置层：前者管「怎么表示一个地址」，后者管「页多大、syscall最多几个参数、klog环多长」这类 bring-up 常数。真机或自定义内存布局应以设备树探测结果为准，配置里的 QEMU 区间只是回退默认值。
+根内核和其它组件通常同时依赖类型层与配置层：前者管怎么表示一个地址，后者管页多大、syscall最多几个参数、klog环多长这类 bring-up 常数。真机或自定义内存布局应以设备树探测结果为准，配置里的 QEMU 区间只是回退默认值。
 
 \begin{rustcode}
 // base/lib.rs：无 feature，四模块

@@ -1,17 +1,17 @@
 % 【本文件写什么】impl 实现层：dummy
-%   - 定位：块子系统占位 crate。
-%   - crate 路径：os/components/wateros-driver/driver-block/block-impl/impl-dummy/src/
-%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
-%   - 算法或硬件交互流程（可用伪代码/流程图）
-%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
-%   - 与其它 impl 变体的差异、切换 feature 时的影响
-%   - 性能/内存假设与已知限制
+% - 定位：块子系统占位 crate。
+% - crate 路径：os/components/wateros-driver/driver-block/block-impl/impl-dummy/src/
+% - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+% - 算法或硬件交互流程，可用伪代码/流程图
+% - 本 impl 启用的 Cargo [features] 与 arch feature，impl-riscv64 等
+% - 与其它 impl 变体的差异、切换 feature 时的影响
+% - 性能/内存假设与已知限制
 % 【事实来源】
-%   - 上述 crate 源码与 Cargo.toml
-%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+% - 上述 crate 源码与 Cargo.toml
+% - os/feature-tree.txt 中指向本 impl 的 feature 链
 
-\subsubsection{impl-dummy（block）}
+\subsubsection{impl-dummy，block}
 
-\code{block-impl-dummy}仅保留crate边界与依赖解析，不含\code{BlockDevice}实现或设备注册逻辑。导出占位函数\code{add}供workspace单测通过；若需表达「无块设备」语义，应在此集中提供显式空操作表而非散落调用方。
+\code{block-impl-dummy}仅保留crate边界与依赖解析，不含\code{BlockDevice}实现或设备注册逻辑。导出占位函数\code{add}供workspace单测通过；若需表达无块设备语义，应在此集中提供显式空操作表而非散落调用方。
 
 切换至\code{impl-dummy}平台路径时，块子系统全局表保持为空；\code{wateros-fs}根卷探测将落入\code{NotMounted}除非另有内存盘实现。与\code{impl-virtio-*}路径互斥，由根feature在编译期选定。

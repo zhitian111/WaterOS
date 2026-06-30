@@ -1,35 +1,35 @@
-% 【本文件写什么】api-v0 契约层（叶子，只写语义不写实现）
-%   - crate 路径：os/components/wateros-fs/fs-procfs/procfs-api/api-v0/src/
-%   - 列出并说明：pub trait、核心类型、错误枚举、常量
-%   - 每个公开 API 的前置条件、后置条件、线程/中断上下文限制
-%   - 与 Linux/用户态约定的对齐点与 deliberate 差异
-%   - v0 版本当前行为与后续可替换 extension 点
+% 【本文件写什么】api-v0 契约层，叶子，只写语义不写实现
+% - crate 路径：os/components/wateros-fs/fs-procfs/procfs-api/api-v0/src/
+% - 列出并说明：pub trait、核心类型、错误枚举、常量
+% - 每个公开 API 的前置条件、后置条件、线程/中断上下文限制
+% - 与 Linux/用户态约定的对齐点与 deliberate 差异
+% - v0 版本当前行为与后续可替换 extension 点
 % 【事实来源】
-%   - 上述 crate 下全部 .rs 源文件
-%   - docs/exports/public-api/ 中对应符号表（以源码为准）
+% - 上述 crate 下全部 .rs 源文件
+% - docs/exports/public-api/ 中对应符号表，以源码为准
 % 【不写什么】
-%   - impl 内部数据结构、汇编、具体算法步骤
+% - impl 内部数据结构、汇编、具体算法步骤
 
 \subsubsection{api-v0}
 
 \paragraph{类型与回调。}
-\code{TaskId}与\code{task::TaskId}数值一致，api层不依赖\code{wateros-task}。\code{ProcMountLine}描述\code{/proc/mounts}单行（\code{device}、\code{mount\_point}、\code{fstype}）。三类函数指针回调：
+\code{TaskId}与\code{task::TaskId}数值一致，api层不依赖\code{wateros-task}。\code{ProcMountLine}描述\code{/proc/mounts}单行，含 \code{device}、\code{mount\_point}、\code{fstype}。三类函数指针回调：
 \begin{itemize}
-  \item \code{TaskArgvLookup}：按leader task id查询\code{argv}；
-  \item \code{TaskExeLookup}：查询\code{exe}路径；
-  \item \code{MountListLookup}：枚举当前挂载表行。
+ \item \code{TaskArgvLookup}：按leader task id查询\code{argv}；
+ \item \code{TaskExeLookup}：查询\code{exe}路径；
+ \item \code{MountListLookup}：枚举当前挂载表行。
 \end{itemize}
 由VFS层在\code{mount\_procfs\_at}前注册，impl-kernel通过静态\code{Mutex<Option<...>>}保存。
 
 \paragraph{\code{ProcFsView}契约。}
-\code{rel\_path}为相对\code{/proc}的路径（可带或不带前导\code{/}）。方法语义：
+\code{rel\_path}为相对\code{/proc}的路径，可带或不带前导 \code{/}。方法语义：
 \begin{itemize}
-  \item \code{exists}：已知proc节点（含目录与文件）返回\code{true}；
-  \item \code{metadata}：返回\code{FsMetadata}快照；不存在为\code{NotFound}；
-  \item \code{read}：读普通文件；目录路径返回\code{NotAFile}；
-  \item \code{read\_dir}：列目录；非目录返回\code{NotAFile}。
+ \item \code{exists}：已知proc节点，含目录与文件返回\code{true}；
+ \item \code{metadata}：返回\code{FsMetadata}快照；不存在为\code{NotFound}；
+ \item \code{read}：读普通文件；目录路径返回\code{NotAFile}；
+ \item \code{read\_dir}：列目录；非目录返回\code{NotAFile}。
 \end{itemize}
 错误类型复用\code{FsError}。字段内容与完整Linux\code{/proc}有意保持LTP/bring-up子集。
 
 \paragraph{扩展点。}
-v0通过回调注入task与挂载信息，避免procfs api直接依赖VFS或task crate；后续可增补节点类型而不改\code{ProcFsView}方法表（由impl内路径解析扩展）。
+v0通过回调注入task与挂载信息，避免procfs api直接依赖VFS或task crate；后续可增补节点类型而不改\code{ProcFsView}方法表，由impl内路径解析扩展。

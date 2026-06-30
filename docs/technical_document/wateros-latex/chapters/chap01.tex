@@ -1,7 +1,7 @@
-% 第1章「项目概述」。
+% 第1章：项目概述。
 %
-% 章首：项目定位、双架构、组件化动机（协作/教学/feature切换）。
-% §1.1设计目标：可验证的工程目标（无文档工程条目）。
+% 章首：项目定位、双架构、组件化动机，含协作、教学与 feature 切换。
+% §1.1设计目标：可验证的工程目标，不含文档工程条目。
 % §1.2当前实现摘要：longtable对照docs/exports/snapshot/current.md。
 % §1.3当前局限：单核、语义子集、桩实现、LTP覆盖等。
 %
@@ -9,7 +9,7 @@
 
 \chapter{项目概述}
 
-\wateros{}是用Rust编写的\code{no\_std}操作系统内核，面向操作系统竞赛在QEMU上完成bring-up与测例验收。内核已在RISC-V64（OpenSBI）与LoongArch64（\code{virt}）两条主线上跑通启动、trap分发、分页、任务调度与用户ELF执行；文件系统、VFS、系统调用和IPC也接在同一套用户态路径上。
+\wateros{}是用Rust编写的\code{no\_std}操作系统内核，面向操作系统竞赛在QEMU上完成bring-up与测例验收。内核已在RISC-V64 OpenSBI 与 LoongArch64 \code{virt} 平台两条主线上跑通启动、trap分发、分页、任务调度与用户ELF执行；文件系统、VFS、系统调用和IPC也接在同一套用户态路径上。
 
 两条平台路径的入口参数、trap frame、页表格式、定时器与VirtIO总线不同，差异收束在\code{wateros-platform}、\code{wateros-driver}和\code{wateros-mm}各自的\code{impl-*} crate中。进入task、FS/VFS、IPC、cred、klog和syscall之后，上层逻辑共用同一套接口，用户程序在两条路径上看到的fd、进程、地址空间与系统调用编号保持一致。
 
@@ -40,24 +40,24 @@ Rust和这种拆法比较合拍。\code{api-v0}用trait列出必须实现的行�
   启动与平台 &
   默认feature为\code{qemu-riscv64-opensbi}，第二主线为\code{qemu-loongarch64-virt}。
   RISC-V入口从OpenSBI接收hart id与DTB物理地址；LoongArch入口接收\code{argc/argv/envp}，建内核页表前关闭固件遗留的分页。
-  \code{kernel\_main}顺序为runtime/platform初始化、MM与task/trap、驱动\code{init\_after\_boot}、\code{fs::init}（探测不挂载）、用户bring-up总线、定时器、\code{task::run\_first\_task}。 \\
+  \code{kernel\_main}顺序为runtime/platform初始化、MM与task/trap、驱动\code{init\_after\_boot}、\code{fs::init} 探测块设备但不挂载、用户bring-up总线、定时器、\code{task::run\_first\_task}。 \\
   内存管理 &
-  RISC-V侧为Sv39，LoongArch侧为独立三级4KiB页表；物理帧分配默认\code{impl-stack}（栈式LIFO）。
+  RISC-V侧为Sv39，LoongArch侧为独立三级4KiB页表；物理帧分配默认 \code{impl-stack}，采用栈式 LIFO 策略。
   已接通内核页表、用户地址空间、ELF装载、COW fork、惰性mmap、用户缺页、\code{user\_access}拷贝，以及\syscall{brk}、\syscall{mmap}、\syscall{munmap}、\syscall{mprotect}等内存类系统调用。 \\
   任务与调度 &
   \code{impl-core}提供内核/用户任务、fork/clone/exec、wait族与zombie回收；bring-up以\code{SCHED\_OTHER}与timer tick调度为主。
-  多类调度队列（FIFO/RR）已有骨架，当前有效策略仍为CFS类路径；单核假设，阻塞与睡眠委托waitqueue。 \\
+  多类调度队列已含 FIFO/RR 骨架，当前有效策略仍为CFS类路径；单核假设，阻塞与睡眠委托waitqueue。 \\
   驱动 &
   RISC-V经DTB扫描VirtIO-MMIO块设备与网卡；LoongArch经PCI枚举VirtIO-PCI设备。
   块设备注册到统一\code{BlockDevice}表并配合\code{impl-block-cache}；网络栈为smoltcp，字符设备含UART与若干桩节点；非QEMU板级仅有\code{impl-dummy}占位。 \\
   文件系统与VFS &
-  默认\code{impl-ext4-rs}提供ext4读写根卷（\code{mount\_default\_root\_rw}）；devfs、procfs与根卷句柄由\code{impl-kernel}实现。
+  默认\code{impl-ext4-rs}提供ext4读写根卷，挂载入口为 \code{mount\_default\_root\_rw}；devfs、procfs与根卷句柄由\code{impl-kernel}实现。
   VFS经\code{impl-fs-bridge}消费FS API，叠加挂载表、页缓存与\code{impl-fd-session}的per-task fd表、cwd、dup/fork继承与CLOEXEC；\code{FsAsyncIo}尚未实现。 \\
   系统调用 &
   \code{syscall/impl-kernel}覆盖文件IO、进程、内存、时间、目录、凭证、pipe、poll/epoll、futex、SysV shm、INET/UNIX socket子集与\syscall{syslog}；号表来自\code{abi/impl-linux-generic64}，错误统一为\code{-errno}。
   未实现槽位在bring-up期可能panic；\syscall{ioctl}仅覆盖TTY等子集。 \\
   IPC与信号 &
-  根feature启用\code{ipc/all}：waitqueue、ringbuf pipe、futex（\code{impl-task}）、SysV shm子集与signal状态机已进入主路径。
+  根feature启用\code{ipc/all}：waitqueue、ringbuf pipe、futex 由 \code{impl-task} 实现，SysV shm子集与signal状态机已进入主路径。
   聚合层\code{wateros-ipc-api-v0}仍为占位自检；\code{ipc-event}未挂接。信号覆盖disposition、pending、mask、signal frame与syscall restart的基础路径。 \\
   验证与复现 &
   \code{user\_bringup\_bus}挂载RW ext4根卷与procfs后，默认串行执行\code{stage-busybox}脚本队列。
@@ -75,7 +75,7 @@ Rust和这种拆法比较合拍。\code{api-v0}用trait列出必须实现的行�
   \item \wosstrong{单核与中断。}当前为单hart bring-up，无SMP调度，也无完整IRQ驱动链；抢占依赖定时器tick与显式yield/block。
   \item \wosstrong{Linux语义子集。}调度RT策略、NUMA、完整\code{/proc}字段、SUID exec、journal恢复等均未按生产内核实现；procfs与securityfs以满足LTP子集为主。
   \item \wosstrong{凭证与安全。}\code{wateros-cred}的cap与inode权限多为桩；VFS open未与凭证深度联动；\code{klog}的\syscall{syslog}读写未做权限校验，且无\code{/dev/kmsg}节点。
-  \item \wosstrong{桩与占位crate。}\code{wateros-utils}仅占位烟测；\code{wateros-ipc-api-v0}与部分\code{impl-dummy}仅保证编译通过；非QEMU平台无法真实启动。
+  \item \wosstrong{stub与占位crate。}\code{wateros-ipc-api-v0}与部分\code{impl-dummy}仅保证编译通过；非QEMU平台无法真实启动。
   \item \wosstrong{LTP覆盖。}\code{ltp\_testcode.sh}已接入bring-up队列，但内核syscall/VFS/信号语义未覆盖LTP全集，部分用例预期失败或需从队列中排除。
   \item \wosstrong{用户态工具链。}仓库内\code{user/}子模块仅构建RISC-V用户态烟测ELF；LoongArch测程依赖根卷内预置的glibc/musl二进制与脚本。
 \end{itemize}

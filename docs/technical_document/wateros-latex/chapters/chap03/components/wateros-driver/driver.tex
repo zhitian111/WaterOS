@@ -1,23 +1,23 @@
-% 【本文件写什么】一级组件 wateros-driver（§ 级聚合）
-%   - 组件职责与在内核中的位置：块设备、字符设备、网络设备与板级驱动聚合入口。
-%   - 聚合 crate os/components/wateros-driver/src/lib.rs 的 pub mod 树与对外导出面
-%   - 子模块划分、与相邻组件的依赖边界（谁依赖谁、走哪条门面）
-%   - 根 feature / 本组件 Cargo.toml feature 如何选用各 impl
-%   - 1～2 段综述后，由下方 \input 展开子模块；不在此逐条列举 api trait
+% 【本文件写什么】一级组件 wateros-driver，§ 级聚合
+% - 组件职责与在内核中的位置：块设备、字符设备、网络设备与板级驱动聚合入口。
+% - 聚合 crate os/components/wateros-driver/src/lib.rs 的 pub mod 树与对外导出面
+% - 子模块划分、与相邻组件的依赖边界，谁依赖谁、走哪条门面
+% - 根 feature / 本组件 Cargo.toml feature 如何选用各 impl
+% - 1～2 段综述后，由下方 \input 展开子模块；不在此逐条列举 api trait
 % 【事实来源】
-%   - os/components/wateros-driver/src/lib.rs、Cargo.toml
-%   - docs/exports/public-api/wateros-driver.md
-%   - docs/exports/features/wateros-driver.md
-%   - os/feature-tree.txt 中 wateros-driver 相关段
+% - os/components/wateros-driver/src/lib.rs、Cargo.toml
+% - docs/exports/public-api/wateros-driver.md
+% - docs/exports/features/wateros-driver.md
+% - os/feature-tree.txt 中 wateros-driver 相关段
 % 【不写什么】
-%   - api-v0 契约细节 → 子目录 api/api-v0.tex
-%   - 各 impl 算法/平台细节 → 子目录 impl/*.tex
+% - api-v0 契约细节 至 子目录 api/api-v0.tex
+% - 各 impl 算法/平台细节 至 子目录 impl/*.tex
 
 \section{设备驱动组件}
 
 驱动组件把板级探测、块设备、字符设备和网络设备收成内核能统一注册的入口。引导早期只记下设备树物理地址；内存子系统就绪后再扫描总线、握手 VirtIO 块卡与网卡，并把串口、RTC 等字符设备登记进全局表。探测失败只打日志，不阻断内核继续启动。
 
-RISC-V 主线从设备树找 MMIO VirtIO 与 NS16550；LoongArch 主线走 PCIe 配置空间枚举 VirtIO-PCI，早期 UART 用固定 MMIO 窗口。块设备可选一层写穿缓存；网卡注册后由内置协议栈周期性轮询，再与用户态 socket 路径衔接。设备就绪后文件系统组件刷新设备目录，根卷探测才能看到块设备节点。当前 bring-up 仍以「第一块盘、第一张网卡」为主，多实例表已具备但未全面用到。
+RISC-V 主线从设备树找 MMIO VirtIO 与 NS16550；LoongArch 主线走 PCIe 配置空间枚举 VirtIO-PCI，早期 UART 用固定 MMIO 窗口。块设备可选一层写穿缓存；网卡注册后由内置协议栈周期性轮询，再与用户态 socket 路径衔接。设备就绪后文件系统组件刷新设备目录，根卷探测才能看到块设备节点。当前 bring-up 仍以第一块盘、第一张网卡为主，多实例表已具备但未全面用到。
 
 \begin{rustcode}
 // driver 聚合：两步引导 + 平台 feature 选路

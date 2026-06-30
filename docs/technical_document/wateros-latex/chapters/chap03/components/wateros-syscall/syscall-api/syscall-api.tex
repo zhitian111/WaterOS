@@ -1,14 +1,14 @@
-% 【本文件写什么】独立子 crate（无 api/impl 目录树）：syscall-api
-%   - 职责：系统调用 api-v0：分发接口与错误类型。
-%   - 源码：os/components/wateros-syscall/syscall-api/src/
-%   - 对外暴露的函数/类型、在聚合 lib.rs 中的重导出方式
-%   - 实现要点、feature（若有）、与其它子 crate 的边界
+% 【本文件写什么】独立子 crate，无 api/impl 目录树：syscall-api
+% - 职责：系统调用 api-v0：分发接口与错误类型。
+% - 源码：os/components/wateros-syscall/syscall-api/src/
+% - 对外暴露的函数/类型、在聚合 lib.rs 中的重导出方式
+% - 实现要点、feature，若有、与其它子 crate 的边界
 % 【事实来源】
-%   - os/components/wateros-syscall/syscall-api/、父组件 src/lib.rs
+% - os/components/wateros-syscall/syscall-api/、父组件 src/lib.rs
 
 \subsection{syscall-api}
 
-子crate\code{syscall-api/api-v0}（包名\code{wateros-syscall-api-v0}）定义trap侧系统调用分发的固定形状：语义槽位枚举、分发器trait、未实现槽位辅助函数。聚合层在\code{api-v0} feature下以\code{syscall::api}再导出全部公共项，并单独再导出\code{SyscallDispatcher}供\code{impl-kernel}实现。
+子crate\code{syscall-api/api-v0}，即包名 \code{wateros-syscall-api-v0}，定义trap侧系统调用分发的固定形状：语义槽位枚举、分发器trait、未实现槽位辅助函数。聚合层在\code{api-v0} feature下以\code{syscall::api}再导出全部公共项，并单独再导出\code{SyscallDispatcher}供\code{impl-kernel}实现。
 
 本层不包含任何\code{sys\_*}具体语义；实现方通过为\code{SyscallDispatcher}提供\code{dispatch\_*}方法覆盖默认的\code{-ENOSYS}路径。trait默认的\code{dispatch\_syscall\_from\_trap}按\code{SyscallKind::decode}巨型\code{match}分发；主线\code{impl-kernel}在运行时改用\code{dispatch\_syscall\_by\_nr}单次号\code{match}以缩短热路径。
 

@@ -1,20 +1,20 @@
 % 【本文件写什么】impl 实现层：qemu-loongarch64-virt
-%   - 定位：QEMU LoongArch virt 机器组合。
-%   - crate 路径：os/components/wateros-platform/platform-impl/impl-qemu-loongarch64-virt/src/
-%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
-%   - 算法或硬件交互流程（可用伪代码/流程图）
-%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
-%   - 与其它 impl 变体的差异、切换 feature 时的影响
-%   - 性能/内存假设与已知限制
+% - 定位：QEMU LoongArch virt 机器组合。
+% - crate 路径：os/components/wateros-platform/platform-impl/impl-qemu-loongarch64-virt/src/
+% - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+% - 算法或硬件交互流程，可用伪代码/流程图
+% - 本 impl 启用的 Cargo [features] 与 arch feature，impl-riscv64 等
+% - 与其它 impl 变体的差异、切换 feature 时的影响
+% - 性能/内存假设与已知限制
 % 【事实来源】
-%   - 上述 crate 源码与 Cargo.toml
-%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+% - 上述 crate 源码与 Cargo.toml
+% - os/feature-tree.txt 中指向本 impl 的 feature 链
 
 \subsubsection{impl-qemu-loongarch64-virt}
 
-\code{impl-qemu-loongarch64-virt}描述QEMU LoongArch\code{virt}机器：\code{BootArgs}暴露\code{arg0}/\code{arg1}/\code{arg2}三槽（与固件\code{argc/argv/envp}约定对应），\code{BootContext}当前为透传视图。频率回退\code{100\_000\_000} Hz，对应QEMU Constant Timer的\code{10} ns周期。
+\code{impl-qemu-loongarch64-virt}描述QEMU LoongArch\code{virt}机器：\code{BootArgs}暴露\code{arg0}/\code{arg1}/\code{arg2}三槽，与固件 \code{argc/argv/envp} 约定对应，\code{BootContext}当前为透传视图。频率回退\code{100\_000\_000} Hz，对应QEMU Constant Timer的\code{10} ns周期。
 
-早期控制台为16550 MMIO UART（基址\code{0x1FE0\_01E0}）：写\code{THR}前轮询\code{LSR.THRE}，输出换行时先写回车再写换行。定时器\code{set\_timer}读\code{rdtime.d}得当前tick，计算与deadline的\code{delta}后写\code{CSR\_TCFG}（\code{(delta << 2) | ENABLE}）并清\code{CSR\_TICLR}。关机/重启经ACPI GED寄存器\code{0x100e\_001c}写\code{SLEEP\_CTL}或\code{RESET}；写后通常返回\code{PlatformResetError::Failed}并在调用方循环等待QEMU退出。
+早期控制台为16550 MMIO UART，基址 \code{0x1FE0\_01E0}：写\code{THR}前轮询\code{LSR.THRE}，输出换行时先写回车再写换行。定时器\code{set\_timer}读\code{rdtime.d}得当前tick，计算与deadline的\code{delta}后写\code{CSR\_TCFG}，即 \code{(delta << 2) | ENABLE}，并清\code{CSR\_TICLR}。关机/重启经ACPI GED寄存器\code{0x100e\_001c}写\code{SLEEP\_CTL}或\code{RESET}；写后通常返回\code{PlatformResetError::Failed}并在调用方循环等待QEMU退出。
 
 \begin{rustcode}
 pub fn set_timer(time: PlatformTimerDeadline) -> PlatformDeadlineTimerResult<()> {

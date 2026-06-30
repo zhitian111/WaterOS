@@ -1,22 +1,22 @@
 % 【本文件写什么】impl 实现层：loongarch64
-%   - 定位：LoongArch 页表 / 架构相关 impl。
-%   - crate 路径：os/components/wateros-mm/mm-impl/impl-loongarch64/src/
-%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
-%   - 算法或硬件交互流程（可用伪代码/流程图）
-%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
-%   - 与其它 impl 变体的差异、切换 feature 时的影响
-%   - 性能/内存假设与已知限制
+% - 定位：LoongArch 页表 / 架构相关 impl。
+% - crate 路径：os/components/wateros-mm/mm-impl/impl-loongarch64/src/
+% - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+% - 算法或硬件交互流程，可用伪代码/流程图
+% - 本 impl 启用的 Cargo [features] 与 arch feature，impl-riscv64 等
+% - 与其它 impl 变体的差异、切换 feature 时的影响
+% - 性能/内存假设与已知限制
 % 【事实来源】
-%   - 上述 crate 源码与 Cargo.toml
-%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+% - 上述 crate 源码与 Cargo.toml
+% - os/feature-tree.txt 中指向本 impl 的 feature 链
 
 \subsubsection{impl-loongarch64}
 
-LoongArch64 页表实现与 Sv39 在语义层对齐（三级 4\,KiB 叶子页、内核恒等映射、ELF\code{PT\_LOAD}、惰性 mmap、brk/munmap/mprotect、mremap 子集、fork COW、软件 walk 用户拷贝），硬件编码不同。
+LoongArch64 页表实现与 Sv39 在语义层对齐，包括三级 4\,KiB 叶子页、内核恒等映射、ELF\code{PT\_LOAD}、惰性 mmap、brk/munmap/mprotect、mremap 子集、fork COW、软件 walk 用户拷贝，硬件编码不同。
 
 地址空间 token：\code{AddressSpaceOps::satp\_value}返回\code{root\_ppn * PAGE\_SIZE}，供 CSR.PGDL 直接写入；\code{LoadedElf::satp}字段名保留历史命名，实际内容为 PGDL 值。
 
-内核 bring-up：\code{kernel\_global::init}在 S 态安装 PGDL 后映射 QEMU virt RAM 与 MMIO（含 VirtIO PCI BAR 窗口）。PGDL 切换后用帧池内真实 RAM 帧做访存探针，避免低地址 VA 受 PGDL/PGDH 选择规则影响。
+内核 bring-up：\code{kernel\_global::init}在 S 态安装 PGDL 后映射 QEMU virt RAM 与 MMIO，含 VirtIO PCI BAR 窗口。PGDL 切换后用帧池内真实 RAM 帧做访存探针，避免低地址 VA 受 PGDL/PGDH 选择规则影响。
 
 fork 与 COW：\code{fork\_user\_aspace}与\code{handle\_cow\_fault}接口与 Sv39 相同，内部\code{LoongArch64AddressSpace}实现\code{fork\_cow}与\code{handle\_cow\_page}，同样依赖\code{frame\_inc\_ref}/\code{frame\_dealloc\_result}管理共享帧。
 

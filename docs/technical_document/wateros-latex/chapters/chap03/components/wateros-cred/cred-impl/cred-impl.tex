@@ -1,13 +1,13 @@
-% 【本文件写什么】独立子 crate（无 api/impl 目录树）：cred-impl
-%   - 源码：os/components/wateros-cred/cred-impl/src/
-%   - 对外暴露的函数/类型、在聚合 lib.rs 中的重导出方式
-%   - 实现要点、feature（若有）、与其它子 crate 的边界
+% 【本文件写什么】独立子 crate，无 api/impl 目录树：cred-impl
+% - 源码：os/components/wateros-cred/cred-impl/src/
+% - 对外暴露的函数/类型、在聚合 lib.rs 中的重导出方式
+% - 实现要点、feature，若有、与其它子 crate 的边界
 % 【事实来源】
-%   - os/components/wateros-cred/cred-impl/、父组件 src/lib.rs
+% - os/components/wateros-cred/cred-impl/、父组件 src/lib.rs
 
 \subsection{cred-impl}
 
-\code{cred-impl/impl-root}（包名\code{wateros-cred-impl-root}）是默认运行时后端：\code{TaskId -> ProcessCredentials}侧表、线程clone共享owner引用计数、privileged \code{set*id}语义。聚合\code{active\_impl}别名指向本crate；\code{impl-root} feature依赖\code{wateros-task/api-v0}以解析\code{current\_task\_id}。
+\code{cred-impl/impl-root}，即包名 \code{wateros-cred-impl-root}，是默认运行时后端：\code{TaskId -> ProcessCredentials}侧表、线程clone共享owner引用计数、privileged \code{set*id}语义。聚合\code{active\_impl}别名指向本crate；\code{impl-root} feature依赖\code{wateros-task/api-v0}以解析\code{current\_task\_id}。
 
 内部\code{PerTaskCredRegistry}与\code{registry()}静态单例不对外导出；syscall与bring-up仅经聚合门面访问。
 

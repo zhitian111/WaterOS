@@ -1,19 +1,19 @@
-% 【本文件写什么】api-v0 契约层（叶子，只写语义不写实现）
-%   - crate 路径：os/components/wateros-ipc/ipc-signal/signal-api/api-v0/src/
-%   - 列出并说明：pub trait、核心类型、错误枚举、常量
-%   - 每个公开 API 的前置条件、后置条件、线程/中断上下文限制
-%   - 与 Linux/用户态约定的对齐点与 deliberate 差异
-%   - v0 版本当前行为与后续可替换 extension 点
+% 【本文件写什么】api-v0 契约层，叶子，只写语义不写实现
+% - crate 路径：os/components/wateros-ipc/ipc-signal/signal-api/api-v0/src/
+% - 列出并说明：pub trait、核心类型、错误枚举、常量
+% - 每个公开 API 的前置条件、后置条件、线程/中断上下文限制
+% - 与 Linux/用户态约定的对齐点与 deliberate 差异
+% - v0 版本当前行为与后续可替换 extension 点
 % 【事实来源】
-%   - 上述 crate 下全部 .rs 源文件
-%   - docs/exports/public-api/ 中对应符号表（以源码为准）
+% - 上述 crate 下全部 .rs 源文件
+% - docs/exports/public-api/ 中对应符号表，以源码为准
 % 【不写什么】
-%   - impl 内部数据结构、汇编、具体算法步骤
+% - impl 内部数据结构、汇编、具体算法步骤
 
 \subsubsection{signal-api-v0}
 
 \paragraph{信号编号与 SA 标志。}
-导出\code{NSIG}（64）、常用\code{SIG*}常量、\code{SIG\_DFL}/\code{SIG\_IGN}、\code{sigprocmask}的\code{SIG\_BLOCK}/\code{SIG\_UNBLOCK}/\code{SIG\_SETMASK}，以及\code{SA\_NODEFER}、\code{SA\_RESETHAND}、\code{SA\_RESTART}等\code{rt\_sigaction}标志。\code{ITIMER\_REAL}/\code{ITIMER\_VIRTUAL}/\code{ITIMER\_PROF}对应三类 interval timer。
+导出\code{NSIG}，64、常用\code{SIG*}常量、\code{SIG\_DFL}/\code{SIG\_IGN}、\code{sigprocmask}的\code{SIG\_BLOCK}/\code{SIG\_UNBLOCK}/\code{SIG\_SETMASK}，以及\code{SA\_NODEFER}、\code{SA\_RESETHAND}、\code{SA\_RESTART}等\code{rt\_sigaction}标志。\code{ITIMER\_REAL}/\code{ITIMER\_VIRTUAL}/\code{ITIMER\_PROF}对应三类 interval timer。
 
 \paragraph{核心类型。}
 \code{SignalSet}为 64 位掩码，提供\code{contains}/\code{insert}/\code{union}/\code{first\_signal}等操作。\code{SignalAction}为\code{repr(C)}，字段\code{handler}、\code{flags}、\code{restorer}、\code{mask}与 Linux\code{struct sigaction}布局对齐。\code{PendingSignal}描述 trap 交付帧：信号号、disposition 快照与进入 handler 前应恢复的\code{previous\_mask}。

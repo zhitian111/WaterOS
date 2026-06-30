@@ -1,14 +1,14 @@
-% 【本文件写什么】api-v0 契约层（叶子，只写语义不写实现）
-%   - crate 路径：os/components/wateros-abi/abi-api/api-v0/src/
-%   - 列出并说明：pub trait、核心类型、错误枚举、常量
-%   - 每个公开 API 的前置条件、后置条件、线程/中断上下文限制
-%   - 与 Linux/用户态约定的对齐点与 deliberate 差异
-%   - v0 版本当前行为与后续可替换 extension 点
+% 【本文件写什么】api-v0 契约层，叶子，只写语义不写实现
+% - crate 路径：os/components/wateros-abi/abi-api/api-v0/src/
+% - 列出并说明：pub trait、核心类型、错误枚举、常量
+% - 每个公开 API 的前置条件、后置条件、线程/中断上下文限制
+% - 与 Linux/用户态约定的对齐点与 deliberate 差异
+% - v0 版本当前行为与后续可替换 extension 点
 % 【事实来源】
-%   - 上述 crate 下全部 .rs 源文件
-%   - docs/exports/public-api/ 中对应符号表（以源码为准）
+% - 上述 crate 下全部 .rs 源文件
+% - docs/exports/public-api/ 中对应符号表，以源码为准
 % 【不写什么】
-%   - impl 内部数据结构、汇编、具体算法步骤
+% - impl 内部数据结构、汇编、具体算法步骤
 
 \paragraph{ErrNo}
 
@@ -20,12 +20,12 @@
 
 \paragraph{SyscallNumber 与 SyscallNumberTable}
 
-\code{SyscallNumber(usize)}是调用号newtype，\code{new}/\code{raw}不校验内核是否实现。\code{SyscallNumberTable} trait以关联常量形式声明符号化调用号，按类别分组：文件与描述符、路径与xattr、进程与执行、内存、时间、凭证、信号、socket、多路复用等。trait只表达「编号映射」，不表示handler已实现；早期维护busybox/simple进程所需子集，随strace缺口逐步补齐。
+\code{SyscallNumber(usize)}是调用号newtype，\code{new}/\code{raw}不校验内核是否实现。\code{SyscallNumberTable} trait以关联常量形式声明符号化调用号，按类别分组：文件与描述符、路径与xattr、进程与执行、内存、时间、凭证、信号、socket、多路复用等。trait只表达编号映射，不表示handler已实现；早期维护busybox/simple进程所需子集，随strace缺口逐步补齐。
 
 \paragraph{SyscallArgs 与 SyscallPacket}
 
-\code{SyscallArgs}为\code{repr(C)}的\code{[usize; MAX\_SYSCALL\_ARGS]}包装（当前\code{MAX\_SYSCALL\_ARGS = 6}），顺序与ABI参数寄存器一致。\code{from\_regs}、\code{arg(idx)}、\code{as\_regs}提供构造与读写字段。\code{SyscallPacket}组合\code{SyscallNumber}与\code{SyscallArgs}，\code{new}不校验语义一致性。索引越界或未定义槽位语义属于调用方错误，由具体handler决定返回\code{EINVAL}或\code{EFAULT}。
+\code{SyscallArgs}为\code{repr(C)}的\code{[usize; MAX\_SYSCALL\_ARGS]}包装，当前 \code{MAX\_SYSCALL\_ARGS = 6}，顺序与ABI参数寄存器一致。\code{from\_regs}、\code{arg(idx)}、\code{as\_regs}提供构造与读写字段。\code{SyscallPacket}组合\code{SyscallNumber}与\code{SyscallArgs}，\code{new}不校验语义一致性。索引越界或未定义槽位语义属于调用方错误，由具体handler决定返回\code{EINVAL}或\code{EFAULT}。
 
 \paragraph{与 Linux 对齐点}
 
-错误码数值、成功非负/失败\code{-errno}约定、六个参数寄存器上限与Linux generic 64位用户态ABI对齐。deliberate差异：\code{SyscallNumberTable}未覆盖全部Linux调用；\code{SELECT}在generic64表上无独立nr（见\code{impl-linux-generic64}）。启用\code{impl-linux-generic64}时聚合层额外导出\code{ActiveSyscallNumberTable}类型别名。
+错误码数值、成功非负/失败\code{-errno}约定、六个参数寄存器上限与Linux generic 64位用户态ABI对齐。deliberate差异：\code{SyscallNumberTable}未覆盖全部Linux调用；\code{SELECT}在generic64表上无独立nr，见 \code{impl-linux-generic64}。启用\code{impl-linux-generic64}时聚合层额外导出\code{ActiveSyscallNumberTable}类型别名。

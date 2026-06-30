@@ -1,14 +1,14 @@
 % 【本文件写什么】impl 实现层：page-cache
-%   - 定位：VFS 页缓存层。
-%   - crate 路径：os/components/wateros-vfs/vfs-impl/impl-page-cache/src/
-%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
-%   - 算法或硬件交互流程（可用伪代码/流程图）
-%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
-%   - 与其它 impl 变体的差异、切换 feature 时的影响
-%   - 性能/内存假设与已知限制
+% - 定位：VFS 页缓存层。
+% - crate 路径：os/components/wateros-vfs/vfs-impl/impl-page-cache/src/
+% - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+% - 算法或硬件交互流程，可用伪代码/流程图
+% - 本 impl 启用的 Cargo [features] 与 arch feature，impl-riscv64 等
+% - 与其它 impl 变体的差异、切换 feature 时的影响
+% - 性能/内存假设与已知限制
 % 【事实来源】
-%   - 上述 crate 源码与 Cargo.toml
-%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+% - 上述 crate 源码与 Cargo.toml
+% - os/feature-tree.txt 中指向本 impl 的 feature 链
 
 \subsubsection{impl-page-cache}
 
@@ -16,26 +16,26 @@
 \code{impl-page-cache}为\code{impl-fs-bridge}专用依赖，不向聚合层单独导出。在\code{Direct} I/O模式下为根卷与辅助RW卷普通文件提供按页LRU缓存，避免\code{open}时整文件载入RAM。
 
 \paragraph{键与容量。}
-\code{FileCacheKey}含\code{mount\_gen}（来自\code{fs::rootfs::mount\_generation()}）与绝对路径\code{Arc<str>}。页索引为\code{offset / FILE\_PAGE\_SIZE}。容量\code{FILE\_PAGE\_CACHE\_CAPACITY}、页大小\code{FILE\_PAGE\_SIZE}、预读步长\code{FILE\_READ\_AHEAD\_STRIDE}由\code{wateros-base-config::fs}配置。
+\code{FileCacheKey}含\code{mount\_gen}，来自 \code{fs::rootfs::mount\_generation()}，与绝对路径\code{Arc<str>}。页索引为\code{offset / FILE\_PAGE\_SIZE}。容量\code{FILE\_PAGE\_CACHE\_CAPACITY}、页大小\code{FILE\_PAGE\_SIZE}、预读步长\code{FILE\_READ\_AHEAD\_STRIDE}由\code{wateros-base-config::fs}配置。
 
 \paragraph{数据结构。}
-全局\code{GlobalCacheState}：固定\code{PageFrame}数组、\code{BTreeMap}索引、LRU队列与空闲列表。每文件\code{FileEntryInner}（\code{Arc<RwLock<...>>}）跟踪逻辑文件长度\code{logical\_size}（可大于底层ext4 size，覆盖未刷回写）、脏页集合与detached小文件缓冲。
+全局\code{GlobalCacheState}：固定\code{PageFrame}数组、\code{BTreeMap}索引、LRU队列与空闲列表。每文件 \code{FileEntryInner}，即 \code{Arc<RwLock<...>>}，跟踪逻辑文件长度\code{logical\_size}，可大于底层ext4 size，覆盖未刷回写、脏页集合与detached小文件缓冲。
 
-\paragraph{锁顺序（与\code{paged\_handle}约定）。}
+\paragraph{锁顺序，与 \code{paged\_handle} 约定。}
 编号越小越先获取，禁止逆序：
 \begin{enumerate}
-  \item 全局\code{files} \code{Mutex}（极短）；
-  \item per-file \code{FileEntryInner} \code{RwLock}；
-  \item 全局\code{state} \code{Mutex}（极短；持锁期间不得调用块设备I/O）；
-  \item 根卷\code{SharedRwFs}（仅在\code{PageCacheIo::read\_range}/\code{write\_range}内短持）。
+ \item 全局\code{files} \code{Mutex}，极短；
+ \item per-file \code{FileEntryInner} \code{RwLock}；
+ \item 全局\code{state} \code{Mutex}，极短；持锁期间不得调用块设备I/O；
+ \item 根卷\code{SharedRwFs}，仅在 \code{PageCacheIo::read\_range}/\code{write\_range} 内短持。
 \end{enumerate}
 \code{install\_page}在调I/O前\code{drop(state)}，避免持缓存元数据锁等待ext4。
 
 \paragraph{读写与刷回。}
-\code{read\_range}/\code{write\_range}按页命中或分配帧；miss经\code{PageCacheIo}下探\code{FsBridge}。\code{logical\_size}在写超EOF时扩展，\code{metadata}查询经\code{overlay\_cached\_size}反映缓存视图。\code{flush\_file}按\code{FLUSH\_RUN\_MAX\_PAGES}批量写回脏页；\code{reset\_file\_page\_cache}（聚合\code{vfs::reset\_file\_page\_cache}）全量刷回并清空索引。
+\code{read\_range}/\code{write\_range}按页命中或分配帧；miss经\code{PageCacheIo}下探\code{FsBridge}。\code{logical\_size}在写超EOF时扩展，\code{metadata}查询经\code{overlay\_cached\_size}反映缓存视图。\code{flush\_file}按\code{FLUSH\_RUN\_MAX\_PAGES}批量写回脏页；\code{reset\_file\_page\_cache}，即聚合 \code{vfs::reset\_file\_page\_cache}，全量刷回并清空索引。
 
 \paragraph{失效。}
-\code{mount\_gen}变更后旧键自然miss；\code{unlink}/\code{overwrite}路径显式驱逐相关条目。\code{detached}模式下单文件堆缓冲上限\code{DETACHED\_DATA\_MAX}（16MiB）。
+\code{mount\_gen}变更后旧键自然miss；\code{unlink}/\code{overwrite}路径显式驱逐相关条目。\code{detached}模式下单文件堆缓冲上限\code{DETACHED\_DATA\_MAX}，16MiB。
 
 \paragraph{限制。}
 并发策略偏单核bring-up；多读者依赖\code{RwLock}，写/刷盘独占。未实现异步I/O或write-back延迟刷盘策略以外的生产级回收。

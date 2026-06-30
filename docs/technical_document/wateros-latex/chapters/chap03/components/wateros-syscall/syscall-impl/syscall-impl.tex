@@ -1,15 +1,15 @@
-% 【本文件写什么】独立子 crate（无 api/impl 目录树）：syscall-impl
-%   - 职责：内核侧 syscall 实现（impl-kernel）。
-%   - 源码：os/components/wateros-syscall/syscall-impl/src/
-%   - 对外暴露的函数/类型、在聚合 lib.rs 中的重导出方式
-%   - 实现要点、feature（若有）、与其它子 crate 的边界
+% 【本文件写什么】独立子 crate，无 api/impl 目录树：syscall-impl
+% - 职责：内核侧 syscall 实现，impl-kernel。
+% - 源码：os/components/wateros-syscall/syscall-impl/src/
+% - 对外暴露的函数/类型、在聚合 lib.rs 中的重导出方式
+% - 实现要点、feature，若有、与其它子 crate 的边界
 % 【事实来源】
-%   - os/components/wateros-syscall/syscall-impl/、父组件 src/lib.rs
+% - os/components/wateros-syscall/syscall-impl/、父组件 src/lib.rs
 
 \subsection{syscall-impl}
 
-子crate\code{syscall-impl/impl-kernel}（包名\code{wateros-syscall-impl-kernel}）承载全部\code{sys\_*}实现，并实现\code{SyscallDispatcher}的\code{KernelSyscallDispatcher}。聚合\code{src/lib.rs}在\code{impl-kernel} feature下以\code{active\_impl}别名导出该crate，trap路径、定时器tick、信号投递、任务reap清理等均经此门面转发。
+子crate\code{syscall-impl/impl-kernel}，即包名 \code{wateros-syscall-impl-kernel}，承载全部\code{sys\_*}实现，并实现\code{SyscallDispatcher}的\code{KernelSyscallDispatcher}。聚合\code{src/lib.rs}在\code{impl-kernel} feature下以\code{active\_impl}别名导出该crate，trap路径、定时器tick、信号投递、任务reap清理等均经此门面转发。
 
-\code{impl-kernel}依赖\code{abi}（活跃号表）、\code{api-v0}（trait形状）、以及\code{vfs}、\code{mm}、\code{task}、\code{ipc}、\code{cred}、\code{klog}、\code{driver}等组件的内核侧API。内部\code{sys::*}模块为\code{pub(crate)}，不跨crate暴露；用户指针读写集中在\code{user\_copy}、\code{fallible\_buf}等辅助模块。
+\code{impl-kernel}依赖\code{abi}，活跃号表、\code{api-v0}，trait形状、以及\code{vfs}、\code{mm}、\code{task}、\code{ipc}、\code{cred}、\code{klog}、\code{driver}等组件的内核侧API。内部\code{sys::*}模块为\code{pub(crate)}，不跨crate暴露；用户指针读写集中在\code{user\_copy}、\code{fallible\_buf}等辅助模块。
 
 \input{chapters/chap03/components/wateros-syscall/syscall-impl/impl/kernel}

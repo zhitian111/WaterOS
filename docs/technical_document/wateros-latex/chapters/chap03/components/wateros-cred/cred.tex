@@ -1,21 +1,21 @@
-% 【本文件写什么】一级组件 wateros-cred（§ 级聚合）
-%   - 组件职责与在内核中的位置：进程凭证（UID/GID/CAP）会话模型与生命周期 hook。
-%   - 聚合 crate os/components/wateros-cred/src/lib.rs 的 pub mod 树与对外导出面
-%   - 子模块划分、与相邻组件的依赖边界（谁依赖谁、走哪条门面）
-%   - 根 feature / 本组件 Cargo.toml feature 如何选用各 impl
-%   - 1～2 段综述后，由下方 \input 展开子模块；不在此逐条列举 api trait
+% 【本文件写什么】一级组件 wateros-cred，§ 级聚合
+% - 组件职责与在内核中的位置：进程凭证，UID/GID/CAP会话模型与生命周期 hook。
+% - 聚合 crate os/components/wateros-cred/src/lib.rs 的 pub mod 树与对外导出面
+% - 子模块划分、与相邻组件的依赖边界，谁依赖谁、走哪条门面
+% - 根 feature / 本组件 Cargo.toml feature 如何选用各 impl
+% - 1～2 段综述后，由下方 \input 展开子模块；不在此逐条列举 api trait
 % 【事实来源】
-%   - os/components/wateros-cred/src/lib.rs、Cargo.toml
-%   - docs/exports/public-api/wateros-cred.md
-%   - docs/exports/features/wateros-cred.md
-%   - os/feature-tree.txt 中 wateros-cred 相关段
+% - os/components/wateros-cred/src/lib.rs、Cargo.toml
+% - docs/exports/public-api/wateros-cred.md
+% - docs/exports/features/wateros-cred.md
+% - os/feature-tree.txt 中 wateros-cred 相关段
 % 【不写什么】
-%   - api-v0 契约细节 → 子目录 api/api-v0.tex
-%   - 各 impl 算法/平台细节 → 子目录 impl/*.tex
+% - api-v0 契约细节 至 子目录 api/api-v0.tex
+% - 各 impl 算法/平台细节 至 子目录 impl/*.tex
 
 \section{凭证组件}
 
-\code{wateros-cred}维护按任务索引的进程凭证侧表与生命周期钩子，对齐 Linux 凭证结构的常用子集。用户任务默认以 root 身份启动；\code{fork}复制凭证，线程\code{clone}共享所有者引用计数，\code{execve}后预留更新入口（首版为 no-op）。任务子系统不依赖本组件；系统调用路径与 bring-up 调用点显式调用聚合门面，避免在任务控制块内硬编码身份模型。
+\code{wateros-cred}维护按任务索引的进程凭证侧表与生命周期钩子，对齐 Linux 凭证结构的常用子集。用户任务默认以 root 身份启动；\code{fork}复制凭证，线程\code{clone}共享所有者引用计数，\code{execve}后预留更新入口，首版为 no-op。任务子系统不依赖本组件；系统调用路径与 bring-up 调用点显式调用聚合门面，避免在任务控制块内硬编码身份模型。
 
 根\code{Cargo.toml}默认同时启用契约与 root 实现。启用 root 实现时导出类型及 spawn、fork、共享、reap 等运行时 API，以及身份读写与能力查询；仅启用契约时无侧表，仅供类型共享。系统调用层的凭证读写经聚合门面转发；inode 访问权限检查尚未接入打开路径，bring-up 阶段能力查询恒为允许。侧表与任务 ID 解耦存储，便于日后在不改动任务 crate 的前提下替换凭证策略或接入更完整的 setuid 语义。
 

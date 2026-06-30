@@ -1,17 +1,17 @@
-% 【本文件写什么】一级组件 wateros-abi（§ 级聚合）
-%   - 组件职责与在内核中的位置：用户态与内核 ABI 约定：系统调用号、寄存器/栈约定、错误码映射。
-%   - 聚合 crate os/components/wateros-abi/src/lib.rs 的 pub mod 树与对外导出面
-%   - 子模块划分、与相邻组件的依赖边界（谁依赖谁、走哪条门面）
-%   - 根 feature / 本组件 Cargo.toml feature 如何选用各 impl
-%   - 1～2 段综述后，由下方 \input 展开子模块；不在此逐条列举 api trait
+% 【本文件写什么】一级组件 wateros-abi，§ 级聚合
+% - 组件职责与在内核中的位置：用户态与内核 ABI 约定：系统调用号、寄存器/栈约定、错误码映射。
+% - 聚合 crate os/components/wateros-abi/src/lib.rs 的 pub mod 树与对外导出面
+% - 子模块划分、与相邻组件的依赖边界，谁依赖谁、走哪条门面
+% - 根 feature / 本组件 Cargo.toml feature 如何选用各 impl
+% - 1～2 段综述后，由下方 \input 展开子模块；不在此逐条列举 api trait
 % 【事实来源】
-%   - os/components/wateros-abi/src/lib.rs、Cargo.toml
-%   - docs/exports/public-api/wateros-abi.md
-%   - docs/exports/features/wateros-abi.md
-%   - os/feature-tree.txt 中 wateros-abi 相关段
+% - os/components/wateros-abi/src/lib.rs、Cargo.toml
+% - docs/exports/public-api/wateros-abi.md
+% - docs/exports/features/wateros-abi.md
+% - os/feature-tree.txt 中 wateros-abi 相关段
 % 【不写什么】
-%   - api-v0 契约细节 → 子目录 api/api-v0.tex
-%   - 各 impl 算法/平台细节 → 子目录 impl/*.tex
+% - api-v0 契约细节 至 子目录 api/api-v0.tex
+% - 各 impl 算法/平台细节 至 子目录 impl/*.tex
 
 \section{ABI组件}
 

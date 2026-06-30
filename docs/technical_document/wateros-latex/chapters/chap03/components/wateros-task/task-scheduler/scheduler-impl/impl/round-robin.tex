@@ -1,22 +1,22 @@
 % 【本文件写什么】impl 实现层：round-robin
-%   - 定位：时间片轮转调度策略。
-%   - crate 路径：os/components/wateros-task/task-scheduler/scheduler-impl/impl-round-robin/src/
-%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
-%   - 算法或硬件交互流程（可用伪代码/流程图）
-%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
-%   - 与其它 impl 变体的差异、切换 feature 时的影响
-%   - 性能/内存假设与已知限制
+% - 定位：时间片轮转调度策略。
+% - crate 路径：os/components/wateros-task/task-scheduler/scheduler-impl/impl-round-robin/src/
+% - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+% - 算法或硬件交互流程，可用伪代码/流程图
+% - 本 impl 启用的 Cargo [features] 与 arch feature，impl-riscv64 等
+% - 与其它 impl 变体的差异、切换 feature 时的影响
+% - 性能/内存假设与已知限制
 % 【事实来源】
-%   - 上述 crate 源码与 Cargo.toml
-%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+% - 上述 crate 源码与 Cargo.toml
+% - os/feature-tree.txt 中指向本 impl 的 feature 链
 
 \subsubsection{impl-round-robin}
 
-\code{RoundRobinScheduler}仅维护单一\code{OtherReadyQueue}，所有可运行任务（含内核与用户）在同一轮转队列中调度。结构与 multi-class 共享\code{TaskRegistry}、\code{WaitQueues}、tick 计数与 arch 切换路径，但不拆分 FIFO/RR 就绪队列。
+\code{RoundRobinScheduler}仅维护单一\code{OtherReadyQueue}，所有可运行任务，含内核与用户在同一轮转队列中调度。结构与 multi-class 共享\code{TaskRegistry}、\code{WaitQueues}、tick 计数与 arch 切换路径，但不拆分 FIFO/RR 就绪队列。
 
 时间片：\code{schedule\_tick}推进全局 tick 并为当前非 idle 任务累加\code{current\_task\_ticks}；达到\code{MAX\_TICKS\_PER\_TASK}时触发\code{ScheduleReason::Tick}重选下一就绪任务。
 
-策略变更差异：\code{apply\_sched\_policy\_change}只更新 TCB 中\code{sched\_policy}/\code{sched\_priority}，返回\code{SchedPolicyChangeAction::NoReschedule}，不迁移 run-queue（与 multi-class 行为不同）。启用本 feature 时\code{SCHED\_FIFO}/\code{SCHED\_RR}syscall 可写 TCB 但不改变实际队列结构。
+策略变更差异：\code{apply\_sched\_policy\_change}只更新 TCB 中\code{sched\_policy}/\code{sched\_priority}，返回\code{SchedPolicyChangeAction::NoReschedule}，不迁移 run-queue，与 multi-class 行为不同。启用本 feature 时\code{SCHED\_FIFO}/\code{SCHED\_RR}syscall 可写 TCB 但不改变实际队列结构。
 
 适用场景：简化调度路径的 bring-up 或对比测试；与\code{impl-multi-class}通过 Cargo feature 互斥切换。
 

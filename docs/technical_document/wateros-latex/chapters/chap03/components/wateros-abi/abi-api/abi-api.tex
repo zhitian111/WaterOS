@@ -1,14 +1,14 @@
-% 【本文件写什么】独立子 crate（无 api/impl 目录树）：abi-api
-%   - 职责：ABI 顶层 api-v0 契约 crate。
-%   - 源码：os/components/wateros-abi/abi-api/src/
-%   - 对外暴露的函数/类型、在聚合 lib.rs 中的重导出方式
-%   - 实现要点、feature（若有）、与其它子 crate 的边界
+% 【本文件写什么】独立子 crate，无 api/impl 目录树：abi-api
+% - 职责：ABI 顶层 api-v0 契约 crate。
+% - 源码：os/components/wateros-abi/abi-api/src/
+% - 对外暴露的函数/类型、在聚合 lib.rs 中的重导出方式
+% - 实现要点、feature，若有、与其它子 crate 的边界
 % 【事实来源】
-%   - os/components/wateros-abi/abi-api/、父组件 src/lib.rs
+% - os/components/wateros-abi/abi-api/、父组件 src/lib.rs
 
 \subsection{abi-api}
 
-子crate\code{abi-api/api-v0}（包名\code{wateros-abi-api-v0}）提供四组模块：\code{errno}、\code{user\_ret}、\code{syscall\_number}、\code{syscall\_args}。聚合层在\code{api-v0} feature下按同名子模块再导出，便于\code{use abi::errno::ErrNo}等统一引用。
+子crate\code{abi-api/api-v0}，即包名 \code{wateros-abi-api-v0}，提供四组模块：\code{errno}、\code{user\_ret}、\code{syscall\_number}、\code{syscall\_args}。聚合层在\code{api-v0} feature下按同名子模块再导出，便于\code{use abi::errno::ErrNo}等统一引用。
 
 本crate为纯契约，\code{\#![no\_std]}，依赖\code{wateros-base-config}的\code{MAX\_SYSCALL\_ARGS}决定参数包槽位数。不包含任何平台号表具体数值；号表由\code{abi-impl}提供。
 

@@ -2,16 +2,16 @@
 % 勿手改；更新清单后重新运行本脚本。
 % 已排除 wateros-syscall 及 syscall*.rs 等条目；同文件行范围已合并。
 
-\subsection*{\code{wateros-abi}（2条）}
+\subsection*{\code{wateros-abi}，2条}
 
 \begin{longtable}{>{\raggedright\arraybackslash}p{1.2cm}>{\raggedright\arraybackslash}p{9.8cm}>{\raggedright\arraybackslash}p{2.2cm}}
-  \caption{wateros-abi AI标注条目（同文件已合并）}\\
-  \toprule[1pt]
-  序号 & 路径 & 行范围 \\
-  \midrule[0.6pt]
-  1 & \code{os/components/wateros-abi/abi-impl/impl-dummy/src/lib.rs} & 1-22 \\
-  2 & \code{os/components/wateros-abi/abi-impl/impl-linux-generic64/src/lib.rs} & 13-383 \\
-  \bottomrule[1pt]
+ \caption{wateros-abi AI标注条目，同文件已合并}\\
+ \toprule[1pt]
+ 序号 & 路径 & 行范围 \\
+ \midrule[0.6pt]
+ 1 & \code{os/components/wateros-abi/abi-impl/impl-dummy/src/lib.rs} & 1-22 \\
+ 2 & \code{os/components/wateros-abi/abi-impl/impl-linux-generic64/src/lib.rs} & 13-383 \\
+ \bottomrule[1pt]
 \end{longtable}
 
 \noindent 路径：\code{os/components/wateros-abi/abi-impl/impl-linux-generic64/src/lib.rs}\\
@@ -27,21 +27,21 @@ impl SyscallNumberTable for LinuxGeneric64 {
 ...
 \end{rustcode}
 
-\subsection*{\code{wateros-driver}（7条）}
+\subsection*{\code{wateros-driver}，7条}
 
 \begin{longtable}{>{\raggedright\arraybackslash}p{1.2cm}>{\raggedright\arraybackslash}p{9.8cm}>{\raggedright\arraybackslash}p{2.2cm}}
-  \caption{wateros-driver AI标注条目（同文件已合并）}\\
-  \toprule[1pt]
-  序号 & 路径 & 行范围 \\
-  \midrule[0.6pt]
-  1 & \code{os/components/wateros-driver/driver-block/block-impl/impl-block-cache/src/manager.rs} & 1-44 \\
-  2 & \code{os/components/wateros-driver/driver-block/block-impl/impl-dummy/src/lib.rs} & 1-21 \\
-  3 & \code{os/components/wateros-driver/driver-character/character-impl/impl-dummy/src/lib.rs} & 1-18 \\
-  4 & \code{os/components/wateros-driver/driver-character/character-impl/impl-null-stub/src/lib.rs} & 1-40 \\
-  5 & \code{os/components/wateros-driver/driver-character/character-impl/impl-rtc-stub/src/lib.rs} & 1-56 \\
-  6 & \code{os/components/wateros-driver/driver-impl/impl-dummy/src/lib.rs} & 1-18 \\
-  7 & \code{os/components/wateros-driver/driver-network/network-impl/impl-dummy/src/lib.rs} & 1-51 \\
-  \bottomrule[1pt]
+ \caption{wateros-driver AI标注条目，同文件已合并}\\
+ \toprule[1pt]
+ 序号 & 路径 & 行范围 \\
+ \midrule[0.6pt]
+ 1 & \code{os/components/wateros-driver/driver-block/block-impl/impl-block-cache/src/manager.rs} & 1-44 \\
+ 2 & \code{os/components/wateros-driver/driver-block/block-impl/impl-dummy/src/lib.rs} & 1-21 \\
+ 3 & \code{os/components/wateros-driver/driver-character/character-impl/impl-dummy/src/lib.rs} & 1-18 \\
+ 4 & \code{os/components/wateros-driver/driver-character/character-impl/impl-null-stub/src/lib.rs} & 1-40 \\
+ 5 & \code{os/components/wateros-driver/driver-character/character-impl/impl-rtc-stub/src/lib.rs} & 1-56 \\
+ 6 & \code{os/components/wateros-driver/driver-impl/impl-dummy/src/lib.rs} & 1-18 \\
+ 7 & \code{os/components/wateros-driver/driver-network/network-impl/impl-dummy/src/lib.rs} & 1-51 \\
+ \bottomrule[1pt]
 \end{longtable}
 
 \noindent 路径：\code{os/components/wateros-driver/driver-character/character-impl/impl-rtc-stub/src/lib.rs}\\
@@ -56,24 +56,24 @@ impl SyscallNumberTable for LinuxGeneric64 {
 ...
 \end{rustcode}
 
-\subsection*{\code{wateros-fs}（10条）}
+\subsection*{\code{wateros-fs}，10条}
 
 \begin{longtable}{>{\raggedright\arraybackslash}p{1.2cm}>{\raggedright\arraybackslash}p{9.8cm}>{\raggedright\arraybackslash}p{2.2cm}}
-  \caption{wateros-fs AI标注条目（同文件已合并）}\\
-  \toprule[1pt]
-  序号 & 路径 & 行范围 \\
-  \midrule[0.6pt]
-  1 & \code{os/components/wateros-fs/fs-devfs/devfs-impl/impl-kernel/src/lib.rs} & 1-322 \\
-  2 & \code{os/components/wateros-fs/fs-impl/impl-devfs/src/lib.rs} & 1-123 \\
-  3 & \code{os/components/wateros-fs/fs-impl/impl-ext4-rs/src/lib.rs} & 1-829 \\
-  4 & \code{os/components/wateros-fs/fs-impl/impl-ext4/src/boot\_inspect.rs} & 1-77 \\
-  5 & \code{os/components/wateros-fs/fs-impl/impl-ext4/src/lib.rs} & 1-97 \\
-  6 & \code{os/components/wateros-fs/fs-impl/impl-ext4/src/ro.rs} & 1-291 \\
-  7 & \code{os/components/wateros-fs/fs-impl/impl-ext4/src/rw.rs} & 1-971 \\
-  8 & \code{os/components/wateros-fs/fs-impl/impl-ext4/src/selftest.rs} & 1-132 \\
-  9 & \code{os/components/wateros-fs/fs-procfs/procfs-impl/impl-kernel/src/lib.rs} & 1-614 \\
-  10 & \code{os/components/wateros-fs/fs-rootfs/rootfs-impl/impl-kernel/src/lib.rs} & 1-208 \\
-  \bottomrule[1pt]
+ \caption{wateros-fs AI标注条目，同文件已合并}\\
+ \toprule[1pt]
+ 序号 & 路径 & 行范围 \\
+ \midrule[0.6pt]
+ 1 & \code{os/components/wateros-fs/fs-devfs/devfs-impl/impl-kernel/src/lib.rs} & 1-322 \\
+ 2 & \code{os/components/wateros-fs/fs-impl/impl-devfs/src/lib.rs} & 1-123 \\
+ 3 & \code{os/components/wateros-fs/fs-impl/impl-ext4-rs/src/lib.rs} & 1-829 \\
+ 4 & \code{os/components/wateros-fs/fs-impl/impl-ext4/src/boot\_inspect.rs} & 1-77 \\
+ 5 & \code{os/components/wateros-fs/fs-impl/impl-ext4/src/lib.rs} & 1-97 \\
+ 6 & \code{os/components/wateros-fs/fs-impl/impl-ext4/src/ro.rs} & 1-291 \\
+ 7 & \code{os/components/wateros-fs/fs-impl/impl-ext4/src/rw.rs} & 1-971 \\
+ 8 & \code{os/components/wateros-fs/fs-impl/impl-ext4/src/selftest.rs} & 1-132 \\
+ 9 & \code{os/components/wateros-fs/fs-procfs/procfs-impl/impl-kernel/src/lib.rs} & 1-614 \\
+ 10 & \code{os/components/wateros-fs/fs-rootfs/rootfs-impl/impl-kernel/src/lib.rs} & 1-208 \\
+ \bottomrule[1pt]
 \end{longtable}
 
 \noindent 路径：\code{os/components/wateros-fs/fs-impl/impl-ext4/src/rw.rs}\\
@@ -88,20 +88,20 @@ impl SyscallNumberTable for LinuxGeneric64 {
 ...
 \end{rustcode}
 
-\subsection*{\code{wateros-ipc}（6条）}
+\subsection*{\code{wateros-ipc}，6条}
 
 \begin{longtable}{>{\raggedright\arraybackslash}p{1.2cm}>{\raggedright\arraybackslash}p{9.8cm}>{\raggedright\arraybackslash}p{2.2cm}}
-  \caption{wateros-ipc AI标注条目（同文件已合并）}\\
-  \toprule[1pt]
-  序号 & 路径 & 行范围 \\
-  \midrule[0.6pt]
-  1 & \code{os/components/wateros-ipc/ipc-futex/futex-impl/impl-task/src/hub.rs} & 1-184 \\
-  2 & \code{os/components/wateros-ipc/ipc-futex/futex-impl/impl-task/src/lib.rs} & 1-42 \\
-  3 & \code{os/components/wateros-ipc/ipc-pipe/pipe-impl/impl-ringbuf/src/endpoint.rs} & 1-208 \\
-  4 & \code{os/components/wateros-ipc/ipc-pipe/pipe-impl/impl-ringbuf/src/kernel\_pipe.rs} & 1-438 \\
-  5 & \code{os/components/wateros-ipc/ipc-pipe/pipe-impl/impl-ringbuf/src/lib.rs} & 1-75 \\
-  6 & \code{os/components/wateros-ipc/ipc-waitqueue/waitqueue-impl/impl-task/src/lib.rs} & 1-187 \\
-  \bottomrule[1pt]
+ \caption{wateros-ipc AI标注条目，同文件已合并}\\
+ \toprule[1pt]
+ 序号 & 路径 & 行范围 \\
+ \midrule[0.6pt]
+ 1 & \code{os/components/wateros-ipc/ipc-futex/futex-impl/impl-task/src/hub.rs} & 1-184 \\
+ 2 & \code{os/components/wateros-ipc/ipc-futex/futex-impl/impl-task/src/lib.rs} & 1-42 \\
+ 3 & \code{os/components/wateros-ipc/ipc-pipe/pipe-impl/impl-ringbuf/src/endpoint.rs} & 1-208 \\
+ 4 & \code{os/components/wateros-ipc/ipc-pipe/pipe-impl/impl-ringbuf/src/kernel\_pipe.rs} & 1-438 \\
+ 5 & \code{os/components/wateros-ipc/ipc-pipe/pipe-impl/impl-ringbuf/src/lib.rs} & 1-75 \\
+ 6 & \code{os/components/wateros-ipc/ipc-waitqueue/waitqueue-impl/impl-task/src/lib.rs} & 1-187 \\
+ \bottomrule[1pt]
 \end{longtable}
 
 \noindent 路径：\code{os/components/wateros-ipc/ipc-pipe/pipe-impl/impl-ringbuf/src/kernel\_pipe.rs}\\
@@ -116,23 +116,23 @@ extern crate alloc;
 ...
 \end{rustcode}
 
-\subsection*{\code{wateros-klog}（9条）}
+\subsection*{\code{wateros-klog}，9条}
 
 \begin{longtable}{>{\raggedright\arraybackslash}p{1.2cm}>{\raggedright\arraybackslash}p{9.8cm}>{\raggedright\arraybackslash}p{2.2cm}}
-  \caption{wateros-klog AI标注条目（同文件已合并）}\\
-  \toprule[1pt]
-  序号 & 路径 & 行范围 \\
-  \midrule[0.6pt]
-  1 & \code{os/components/wateros-klog/klog-api/api-v0/src/action.rs} & 1-52 \\
-  2 & \code{os/components/wateros-klog/klog-api/api-v0/src/error.rs} & 1-22 \\
-  3 & \code{os/components/wateros-klog/klog-api/api-v0/src/flags.rs} & 1-34 \\
-  4 & \code{os/components/wateros-klog/klog-api/api-v0/src/lib.rs} & 1-17 \\
-  5 & \code{os/components/wateros-klog/klog-api/api-v0/src/meta.rs} & 1-84 \\
-  6 & \code{os/components/wateros-klog/klog-api/api-v0/src/store.rs} & 1-54 \\
-  7 & \code{os/components/wateros-klog/klog-impl/klog-ringbuf/src/lib.rs} & 1-347 \\
-  8 & \code{os/components/wateros-klog/src/export.rs} & 1-34 \\
-  9 & \code{os/components/wateros-klog/src/lib.rs} & 1-165 \\
-  \bottomrule[1pt]
+ \caption{wateros-klog AI标注条目，同文件已合并}\\
+ \toprule[1pt]
+ 序号 & 路径 & 行范围 \\
+ \midrule[0.6pt]
+ 1 & \code{os/components/wateros-klog/klog-api/api-v0/src/action.rs} & 1-52 \\
+ 2 & \code{os/components/wateros-klog/klog-api/api-v0/src/error.rs} & 1-22 \\
+ 3 & \code{os/components/wateros-klog/klog-api/api-v0/src/flags.rs} & 1-34 \\
+ 4 & \code{os/components/wateros-klog/klog-api/api-v0/src/lib.rs} & 1-17 \\
+ 5 & \code{os/components/wateros-klog/klog-api/api-v0/src/meta.rs} & 1-84 \\
+ 6 & \code{os/components/wateros-klog/klog-api/api-v0/src/store.rs} & 1-54 \\
+ 7 & \code{os/components/wateros-klog/klog-impl/klog-ringbuf/src/lib.rs} & 1-347 \\
+ 8 & \code{os/components/wateros-klog/src/export.rs} & 1-34 \\
+ 9 & \code{os/components/wateros-klog/src/lib.rs} & 1-165 \\
+ \bottomrule[1pt]
 \end{longtable}
 
 \noindent 路径：\code{os/components/wateros-klog/klog-impl/klog-ringbuf/src/lib.rs}\\
@@ -147,27 +147,27 @@ use api_v0::{
 ...
 \end{rustcode}
 
-\subsection*{\code{wateros-mm}（13条）}
+\subsection*{\code{wateros-mm}，13条}
 
 \begin{longtable}{>{\raggedright\arraybackslash}p{1.2cm}>{\raggedright\arraybackslash}p{9.8cm}>{\raggedright\arraybackslash}p{2.2cm}}
-  \caption{wateros-mm AI标注条目（同文件已合并）}\\
-  \toprule[1pt]
-  序号 & 路径 & 行范围 \\
-  \midrule[0.6pt]
-  1 & \code{os/components/wateros-mm/mm-impl/impl-dummy/src/lib.rs} & 1-54 \\
-  2 & \code{os/components/wateros-mm/mm-impl/impl-loongarch64/src/kernel\_executable.rs} & 1-65 \\
-  3 & \code{os/components/wateros-mm/mm-impl/impl-loongarch64/src/lib.rs} & 96-143 \\
-  4 & \code{os/components/wateros-mm/mm-impl/impl-loongarch64/src/pagetable.rs} & 234-773 \\
-  5 & \code{os/components/wateros-mm/mm-impl/impl-loongarch64/src/user\_access.rs} & 1-129 \\
-  6 & \code{os/components/wateros-mm/mm-impl/impl-loongarch64/src/user\_aspace.rs} & 1-29 \\
-  7 & \code{os/components/wateros-mm/mm-impl/impl-loongarch64/src/user\_heap\_mmap.rs} & 1-554 \\
-  8 & \code{os/components/wateros-mm/mm-impl/impl-sv39/src/kernel\_executable.rs} & 1-73 \\
-  9 & \code{os/components/wateros-mm/mm-impl/impl-sv39/src/lib.rs} & 98-144 \\
-  10 & \code{os/components/wateros-mm/mm-impl/impl-sv39/src/pagetable.rs} & 252-865 \\
-  11 & \code{os/components/wateros-mm/mm-impl/impl-sv39/src/user\_access.rs} & 1-170 \\
-  12 & \code{os/components/wateros-mm/mm-impl/impl-sv39/src/user\_aspace.rs} & 1-27 \\
-  13 & \code{os/components/wateros-mm/mm-impl/impl-sv39/src/user\_heap\_mmap.rs} & 1-555 \\
-  \bottomrule[1pt]
+ \caption{wateros-mm AI标注条目，同文件已合并}\\
+ \toprule[1pt]
+ 序号 & 路径 & 行范围 \\
+ \midrule[0.6pt]
+ 1 & \code{os/components/wateros-mm/mm-impl/impl-dummy/src/lib.rs} & 1-54 \\
+ 2 & \code{os/components/wateros-mm/mm-impl/impl-loongarch64/src/kernel\_executable.rs} & 1-65 \\
+ 3 & \code{os/components/wateros-mm/mm-impl/impl-loongarch64/src/lib.rs} & 96-143 \\
+ 4 & \code{os/components/wateros-mm/mm-impl/impl-loongarch64/src/pagetable.rs} & 234-773 \\
+ 5 & \code{os/components/wateros-mm/mm-impl/impl-loongarch64/src/user\_access.rs} & 1-129 \\
+ 6 & \code{os/components/wateros-mm/mm-impl/impl-loongarch64/src/user\_aspace.rs} & 1-29 \\
+ 7 & \code{os/components/wateros-mm/mm-impl/impl-loongarch64/src/user\_heap\_mmap.rs} & 1-554 \\
+ 8 & \code{os/components/wateros-mm/mm-impl/impl-sv39/src/kernel\_executable.rs} & 1-73 \\
+ 9 & \code{os/components/wateros-mm/mm-impl/impl-sv39/src/lib.rs} & 98-144 \\
+ 10 & \code{os/components/wateros-mm/mm-impl/impl-sv39/src/pagetable.rs} & 252-865 \\
+ 11 & \code{os/components/wateros-mm/mm-impl/impl-sv39/src/user\_access.rs} & 1-170 \\
+ 12 & \code{os/components/wateros-mm/mm-impl/impl-sv39/src/user\_aspace.rs} & 1-27 \\
+ 13 & \code{os/components/wateros-mm/mm-impl/impl-sv39/src/user\_heap\_mmap.rs} & 1-555 \\
+ \bottomrule[1pt]
 \end{longtable}
 
 \noindent 路径：\code{os/components/wateros-mm/mm-impl/impl-sv39/src/pagetable.rs}\\
@@ -183,21 +183,21 @@ pub(crate) struct LazyFileVma {
 ...
 \end{rustcode}
 
-\subsection*{\code{wateros-platform}（7条）}
+\subsection*{\code{wateros-platform}，7条}
 
 \begin{longtable}{>{\raggedright\arraybackslash}p{1.2cm}>{\raggedright\arraybackslash}p{9.8cm}>{\raggedright\arraybackslash}p{2.2cm}}
-  \caption{wateros-platform AI标注条目（同文件已合并）}\\
-  \toprule[1pt]
-  序号 & 路径 & 行范围 \\
-  \midrule[0.6pt]
-  1 & \code{os/components/wateros-platform/platform-arch/arch-impl/impl-dummy/src/lib.rs} & 1-20 \\
-  2 & \code{os/components/wateros-platform/platform-impl/impl-dummy/src/lib.rs} & 1-109 \\
-  3 & \code{os/components/wateros-platform/platform-impl/impl-qemu-loongarch64-virt/src/lib.rs} & 20-84 \\
-  4 & \code{os/components/wateros-platform/platform-impl/impl-qemu-riscv64-opensbi/src/console.rs} & 1-31 \\
-  5 & \code{os/components/wateros-platform/platform-impl/impl-qemu-riscv64-opensbi/src/lib.rs} & 22-76 \\
-  6 & \code{os/components/wateros-platform/platform-impl/impl-qemu-riscv64-opensbi/src/reset.rs} & 1-90 \\
-  7 & \code{os/components/wateros-platform/platform-impl/impl-qemu-riscv64-opensbi/src/timer.rs} & 1-17 \\
-  \bottomrule[1pt]
+ \caption{wateros-platform AI标注条目，同文件已合并}\\
+ \toprule[1pt]
+ 序号 & 路径 & 行范围 \\
+ \midrule[0.6pt]
+ 1 & \code{os/components/wateros-platform/platform-arch/arch-impl/impl-dummy/src/lib.rs} & 1-20 \\
+ 2 & \code{os/components/wateros-platform/platform-impl/impl-dummy/src/lib.rs} & 1-109 \\
+ 3 & \code{os/components/wateros-platform/platform-impl/impl-qemu-loongarch64-virt/src/lib.rs} & 20-84 \\
+ 4 & \code{os/components/wateros-platform/platform-impl/impl-qemu-riscv64-opensbi/src/console.rs} & 1-31 \\
+ 5 & \code{os/components/wateros-platform/platform-impl/impl-qemu-riscv64-opensbi/src/lib.rs} & 22-76 \\
+ 6 & \code{os/components/wateros-platform/platform-impl/impl-qemu-riscv64-opensbi/src/reset.rs} & 1-90 \\
+ 7 & \code{os/components/wateros-platform/platform-impl/impl-qemu-riscv64-opensbi/src/timer.rs} & 1-17 \\
+ \bottomrule[1pt]
 \end{longtable}
 
 \noindent 路径：\code{os/components/wateros-platform/platform-impl/impl-dummy/src/lib.rs}\\
@@ -212,16 +212,16 @@ pub(crate) struct LazyFileVma {
 ...
 \end{rustcode}
 
-\subsection*{\code{wateros-task}（2条）}
+\subsection*{\code{wateros-task}，2条}
 
 \begin{longtable}{>{\raggedright\arraybackslash}p{1.2cm}>{\raggedright\arraybackslash}p{9.8cm}>{\raggedright\arraybackslash}p{2.2cm}}
-  \caption{wateros-task AI标注条目（同文件已合并）}\\
-  \toprule[1pt]
-  序号 & 路径 & 行范围 \\
-  \midrule[0.6pt]
-  1 & \code{os/components/wateros-task/task-scheduler/scheduler-impl/impl-multi-class/src/rt\_fifo\_queue.rs} & 1-154 \\
-  2 & \code{os/components/wateros-task/task-scheduler/scheduler-impl/impl-multi-class/src/rt\_rr\_queue.rs} & 1-243 \\
-  \bottomrule[1pt]
+ \caption{wateros-task AI标注条目，同文件已合并}\\
+ \toprule[1pt]
+ 序号 & 路径 & 行范围 \\
+ \midrule[0.6pt]
+ 1 & \code{os/components/wateros-task/task-scheduler/scheduler-impl/impl-multi-class/src/rt\_fifo\_queue.rs} & 1-154 \\
+ 2 & \code{os/components/wateros-task/task-scheduler/scheduler-impl/impl-multi-class/src/rt\_rr\_queue.rs} & 1-243 \\
+ \bottomrule[1pt]
 \end{longtable}
 
 \noindent 路径：\code{os/components/wateros-task/task-scheduler/scheduler-impl/impl-multi-class/src/rt\_rr\_queue.rs}\\
@@ -236,15 +236,15 @@ extern crate alloc;
 ...
 \end{rustcode}
 
-\subsection*{\code{wateros-utils}（1条）}
+\subsection*{\code{wateros-utils}，1条}
 
 \begin{longtable}{>{\raggedright\arraybackslash}p{1.2cm}>{\raggedright\arraybackslash}p{9.8cm}>{\raggedright\arraybackslash}p{2.2cm}}
-  \caption{wateros-utils AI标注条目（同文件已合并）}\\
-  \toprule[1pt]
-  序号 & 路径 & 行范围 \\
-  \midrule[0.6pt]
-  1 & \code{os/components/wateros-utils/src/lib.rs} & 1-22 \\
-  \bottomrule[1pt]
+ \caption{wateros-utils AI标注条目，同文件已合并}\\
+ \toprule[1pt]
+ 序号 & 路径 & 行范围 \\
+ \midrule[0.6pt]
+ 1 & \code{os/components/wateros-utils/src/lib.rs} & 1-22 \\
+ \bottomrule[1pt]
 \end{longtable}
 
 \noindent 路径：\code{os/components/wateros-utils/src/lib.rs}\\
@@ -259,29 +259,29 @@ extern crate alloc;
 ...
 \end{rustcode}
 
-\subsection*{\code{wateros-vfs}（15条）}
+\subsection*{\code{wateros-vfs}，15条}
 
 \begin{longtable}{>{\raggedright\arraybackslash}p{1.2cm}>{\raggedright\arraybackslash}p{9.8cm}>{\raggedright\arraybackslash}p{2.2cm}}
-  \caption{wateros-vfs AI标注条目（同文件已合并）}\\
-  \toprule[1pt]
-  序号 & 路径 & 行范围 \\
-  \midrule[0.6pt]
-  1 & \code{os/components/wateros-vfs/vfs-impl/impl-fd-session/src/char\_dev\_handle.rs} & 1-371 \\
-  2 & \code{os/components/wateros-vfs/vfs-impl/impl-fd-session/src/cwd.rs} & 1-174 \\
-  3 & \code{os/components/wateros-vfs/vfs-impl/impl-fd-session/src/file\_lock.rs} & 1-578 \\
-  4 & \code{os/components/wateros-vfs/vfs-impl/impl-fd-session/src/handles.rs} & 1-596 \\
-  5 & \code{os/components/wateros-vfs/vfs-impl/impl-fd-session/src/lib.rs} & 1-25 \\
-  6 & \code{os/components/wateros-vfs/vfs-impl/impl-fd-session/src/registry.rs} & 1-781 \\
-  7 & \code{os/components/wateros-vfs/vfs-impl/impl-fs-bridge/src/dir\_handle.rs} & 1-166 \\
-  8 & \code{os/components/wateros-vfs/vfs-impl/impl-fs-bridge/src/file\_handle.rs} & 1-325 \\
-  9 & \code{os/components/wateros-vfs/vfs-impl/impl-fs-bridge/src/lib.rs} & 1-1089 \\
-  10 & \code{os/components/wateros-vfs/vfs-impl/impl-fs-bridge/src/mount\_ns.rs} & 1-141 \\
-  11 & \code{os/components/wateros-vfs/vfs-impl/impl-fs-bridge/src/mount\_table.rs} & 1-894 \\
-  12 & \code{os/components/wateros-vfs/vfs-impl/impl-fs-bridge/src/paged\_handle.rs} & 1-611 \\
-  13 & \code{os/components/wateros-vfs/vfs-impl/impl-fs-bridge/src/proc\_handle.rs} & 1-209 \\
-  14 & \code{os/components/wateros-vfs/vfs-impl/impl-fs-bridge/src/tmpfs.rs} & 1-702 \\
-  15 & \code{os/components/wateros-vfs/vfs-impl/impl-page-cache/src/lib.rs} & 1-1115 \\
-  \bottomrule[1pt]
+ \caption{wateros-vfs AI标注条目，同文件已合并}\\
+ \toprule[1pt]
+ 序号 & 路径 & 行范围 \\
+ \midrule[0.6pt]
+ 1 & \code{os/components/wateros-vfs/vfs-impl/impl-fd-session/src/char\_dev\_handle.rs} & 1-371 \\
+ 2 & \code{os/components/wateros-vfs/vfs-impl/impl-fd-session/src/cwd.rs} & 1-174 \\
+ 3 & \code{os/components/wateros-vfs/vfs-impl/impl-fd-session/src/file\_lock.rs} & 1-578 \\
+ 4 & \code{os/components/wateros-vfs/vfs-impl/impl-fd-session/src/handles.rs} & 1-596 \\
+ 5 & \code{os/components/wateros-vfs/vfs-impl/impl-fd-session/src/lib.rs} & 1-25 \\
+ 6 & \code{os/components/wateros-vfs/vfs-impl/impl-fd-session/src/registry.rs} & 1-781 \\
+ 7 & \code{os/components/wateros-vfs/vfs-impl/impl-fs-bridge/src/dir\_handle.rs} & 1-166 \\
+ 8 & \code{os/components/wateros-vfs/vfs-impl/impl-fs-bridge/src/file\_handle.rs} & 1-325 \\
+ 9 & \code{os/components/wateros-vfs/vfs-impl/impl-fs-bridge/src/lib.rs} & 1-1089 \\
+ 10 & \code{os/components/wateros-vfs/vfs-impl/impl-fs-bridge/src/mount\_ns.rs} & 1-141 \\
+ 11 & \code{os/components/wateros-vfs/vfs-impl/impl-fs-bridge/src/mount\_table.rs} & 1-894 \\
+ 12 & \code{os/components/wateros-vfs/vfs-impl/impl-fs-bridge/src/paged\_handle.rs} & 1-611 \\
+ 13 & \code{os/components/wateros-vfs/vfs-impl/impl-fs-bridge/src/proc\_handle.rs} & 1-209 \\
+ 14 & \code{os/components/wateros-vfs/vfs-impl/impl-fs-bridge/src/tmpfs.rs} & 1-702 \\
+ 15 & \code{os/components/wateros-vfs/vfs-impl/impl-page-cache/src/lib.rs} & 1-1115 \\
+ \bottomrule[1pt]
 \end{longtable}
 
 \noindent 路径：\code{os/components/wateros-vfs/vfs-impl/impl-page-cache/src/lib.rs}\\

@@ -1,41 +1,41 @@
-% 【本文件写什么】api-v0 契约层（叶子，只写语义不写实现）
-%   - crate 路径：os/components/wateros-klog/klog-api/api-v0/src/
+% 【本文件写什么】api-v0 契约层，叶子，只写语义不写实现
+% - crate 路径：os/components/wateros-klog/klog-api/api-v0/src/
 % 【事实来源】
-%   - 上述 crate 下全部 .rs 源文件
-%   - docs/exports/public-api/ 中对应符号表（以源码为准）
+% - 上述 crate 下全部 .rs 源文件
+% - docs/exports/public-api/ 中对应符号表，以源码为准
 % 【不写什么】
-%   - impl 内部数据结构、汇编、具体算法步骤
+% - impl 内部数据结构、汇编、具体算法步骤
 
 \paragraph{KlogRecordMeta}
 
-\code{repr(C)}固定布局记录头：\code{seq}（提交后单调序号）、\code{ts\_nsec}、\code{text\_len}、\code{facility}、\code{flags}、\code{level}、\code{caller\_id}。正文另存环内，不裸\code{copy\_to\_user}导出元数据结构。\code{new}构造未提交记录（\code{seq}由环实现填入）；\code{traditional\_level\_char}供读路径格式化为\code{'0'..'7'}。
+\code{repr(C)}固定布局记录头：\code{seq}，提交后单调序号、\code{ts\_nsec}、\code{text\_len}、\code{facility}、\code{flags}、\code{level}、\code{caller\_id}。正文另存环内，不裸\code{copy\_to\_user}导出元数据结构。\code{new}构造未提交记录，\code{seq} 由环实现填入；\code{traditional\_level\_char}供读路径格式化为\code{'0'..'7'}。
 
 facility/level常量对齐syslog：\code{LOG\_KERN}、\code{LOG\_USER}；\code{LOG\_EMERG}至\code{LOG\_DEBUG}。
 
 \paragraph{KlogFlags}
 
-位域：\code{CONT}（续行）、\code{TRUNC}（截断）、\code{USER}（用户态WRITE）。\code{empty}/\code{with}/\code{contains}操作\code{u8}编码。
+位域：\code{CONT}，续行、\code{TRUNC}，截断、\code{USER}，用户态WRITE。\code{empty}/\code{with}/\code{contains}操作\code{u8}编码。
 
 \paragraph{KlogStore trait}
 
 环存储契约，由\code{impl-ringbuf}实现：
 \begin{itemize}
-  \item \code{append(meta, text) -> AppendResult}：写入记录，实现分配\code{seq}；
-  \item \code{stats() -> KlogStats}：提交/丢弃计数与序号边界；
-  \item \code{unread\_bytes()}：读游标后未读正文字节总和（\code{SIZE\_UNREAD}近似）；
-  \item \code{buffer\_bytes()}：text环容量（\code{SIZE\_BUFFER}）；
-  \item \code{peek\_next\_unread()}：取下一条未读；无未读返回\code{KlogError::NoUnread}；
-  \item \code{advance\_read\_cursor(after\_seq)}：消费后推进游标；
-  \item \code{clear\_read\_cursor()}：\code{CLEAR}，mark全部已读，物理记录保留。
+ \item \code{append(meta, text) -> AppendResult}：写入记录，实现分配\code{seq}；
+ \item \code{stats() -> KlogStats}：提交/丢弃计数与序号边界；
+ \item \code{unread\_bytes()}：读游标后未读正文字节总和，\code{SIZE\_UNREAD} 近似；
+ \item \code{buffer\_bytes()}：text环容量，即 \code{SIZE\_BUFFER}；
+ \item \code{peek\_next\_unread()}：取下一条未读；无未读返回\code{KlogError::NoUnread}；
+ \item \code{advance\_read\_cursor(after\_seq)}：消费后推进游标；
+ \item \code{clear\_read\_cursor()}：\code{CLEAR}，mark全部已读，物理记录保留。
 \end{itemize}
 
 \paragraph{syslog action}
 
-常量\code{SYSLOG\_ACTION\_CLOSE}至\code{SYSLOG\_ACTION\_SIZE\_BUFFER}（0--10）与Linux \code{klogctl}对齐。\code{decode\_action}识别已知action；\code{is\_write\_priority}判断WRITE路径（非0--10的\code{type}，priority编码level/facility）。
+常量\code{SYSLOG\_ACTION\_CLOSE}至\code{SYSLOG\_ACTION\_SIZE\_BUFFER}，0--10与Linux \code{klogctl}对齐。\code{decode\_action}识别已知action；\code{is\_write\_priority}判断WRITE路径，非 0--10 的 \code{type}，priority 编码 level/facility。
 
 \paragraph{错误与结果}
 
-\code{KlogError::NoUnread}（READ返回0）、\code{BufferTooSmall}。\code{AppendResult \{ seq, truncated \}}。\code{KlogRecordView}为提交后只读视图（\code{meta} + 正文切片）。
+\code{KlogError::NoUnread}，READ返回0、\code{BufferTooSmall}。\code{AppendResult \{ seq, truncated \}}。\code{KlogRecordView}为提交后只读视图，含 \code{meta} 与正文切片。
 
 \paragraph{上下文}
 

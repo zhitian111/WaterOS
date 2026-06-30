@@ -1,7 +1,7 @@
-% 第2章「总体架构设计」（当前main.tex使用的整章正文）。
+% 第2章总体架构设计，当前main.tex使用的整章正文。
 %
 % 应包含：组件化分层、os/代码结构、组件职责表、API/impl解耦、
-%       启动主线、Feature组合、双架构对比、kernel_main代码流程。
+% 启动主线、Feature组合、双架构对比、kernel_main代码流程。
 %
 % 后续若拆到chap02/design-philosophy.tex等子文件，
 % 可将本节内容迁移后改main.tex为\input聚合。
@@ -15,17 +15,17 @@
 \wateros{}按依赖方向分成三层：底层接平台和硬件，中层管内核资源，上层给用户态可见的ABI与系统调用语义。RISC-V64与LoongArch64的差异留在platform、driver和mm各自的\code{impl-*}里；task、fs、vfs、ipc和syscall等上层模块共用同一套聚合接口。
 
 \begin{longtable}{>{\raggedright\arraybackslash}p{3.0cm}>{\raggedright\arraybackslash}p{4.7cm}>{\raggedright\arraybackslash}p{5.8cm}}
-  \caption{WaterOS组件化分层}\label{tab:component-layers}\\
-  \toprule[1.5pt]
-  层次 & 主要组件 & 设计含义 \\
-  \midrule[1pt]
-  平台与运行时层 & platform、runtime、driver & 启动入口、trap汇编、定时器、中断、固件调用、控制台、开发日志、堆和设备发现；把QEMU与ISA差异收成内核内部接口。 \\
-  内核资源层 & mm、task、fs、vfs、ipc & 地址空间、物理页、任务生命周期、调度、根文件系统、路径视图、fd表、pipe、waitqueue、futex和signal等核心资源。 \\
-  用户接口层 & abi、syscall、cred、klog & Linux generic 64-bit系统调用编号、参数传递、错误码、凭证扩展点，以及\syscall{syslog}可读的内核日志环。 \\
-  \bottomrule[1.5pt]
+ \caption{WaterOS组件化分层}\label{tab:component-layers}\\
+ \toprule[1.5pt]
+ 层次 & 主要组件 & 设计含义 \\
+ \midrule[1pt]
+ 平台与运行时层 & platform、runtime、driver & 启动入口、trap汇编、定时器、中断、固件调用、控制台、开发日志、堆和设备发现；把QEMU与ISA差异收成内核内部接口。 \\
+ 内核资源层 & mm、task、fs、vfs、ipc & 地址空间、物理页、任务生命周期、调度、根文件系统、路径视图、fd表、pipe、waitqueue、futex和signal等核心资源。 \\
+ 用户接口层 & abi、syscall、cred、klog & Linux generic 64-bit系统调用编号、参数传递、错误码、凭证扩展点，以及\syscall{syslog}可读的内核日志环。 \\
+ \bottomrule[1.5pt]
 \end{longtable}
 
-根crate\code{wateros}按feature聚合一级组件；各组件内部再拆\code{api-v0}、\code{impl-*}和聚合\code{lib.rs}。契约写在API crate，实现落在impl crate，聚合层按feature选出当前active impl后对外只暴露稳定模块名（如\code{mm::}、\code{vfs::}、\code{ipc::}）。目录树与下表从源码布局与模块边界两个角度描述同一套组织方式。
+根crate\code{wateros}按feature聚合一级组件；各组件内部再拆\code{api-v0}、\code{impl-*}和聚合\code{lib.rs}。契约写在API crate，实现落在impl crate，聚合层按feature选出当前active impl后对外只暴露稳定模块名，例如 \code{mm::}、\code{vfs::}、\code{ipc::}。目录树与下表从源码布局与模块边界两个角度描述同一套组织方式。
 
 
 \section{代码结构}
@@ -39,7 +39,8 @@ wateros
 |   |-- Cargo.toml              # 根crate、feature与workspace配置
 |   |-- Makefile                # 内核构建与运行入口
 |   |-- build.rs                # 构建脚本
-|   |-- feature-tree.txt        # 当前feature组合导出
+|   |-- config.conf             # 当前启用的feature选择（可编辑）
+|   |-- feature-tree.txt        # workspace全量feature树（只读参考）
 |   |-- src
 |   |   |-- main.rs             # kernel_main与平台启动主线
 |   |   |-- trap_handler.rs     # trap/syscall入口桥接
@@ -69,23 +70,23 @@ wateros
 \section{组件目录与职责映射}
 
 \begin{longtable}{>{\raggedright\arraybackslash}p{4.0cm}>{\raggedright\arraybackslash}p{9.5cm}}
-  \caption{组件目录与职责映射}\label{tab:component-dirs}\\
-  \toprule[1.5pt]
-  目录 & 职责说明 \\
-  \midrule[1pt]
-  \code{wateros-platform} & 启动参数、trap、中断、时间、固件调用和关机路径；RISC-V64对接QEMU\code{virt}+OpenSBI，LoongArch64对接QEMU\code{virt}与StableCounter/CSR平台能力。 \\
-  \code{wateros-runtime} & 控制台、开发日志级别、panic handler和全局堆分配器；QEMU主线经\code{impl-platform-console}输出。 \\
-  \code{wateros-mm} & 物理帧、页表、内核/用户地址空间、ELF装载，以及\syscall{brk}/\syscall{mmap}等内存类系统调用后端。 \\
-  \code{wateros-task} & 任务对象、调度队列、阻塞/睡眠/退出、父子关系、用户trap frame与\code{run\_first\_task}入口。 \\
-  \code{wateros-driver} & 按平台发现设备：RISC-V64扫描DTB中的VirtIO-MMIO，LoongArch64枚举VirtIO-PCI；块设备、网卡和字符设备统一注册到组件内抽象表。 \\
-  \code{wateros-fs} & \code{FsImpl}注册表、devfs、procfs、rootfs管理和ext4读写实现。 \\
-  \code{wateros-vfs} & 路径视图、per-task fd表、cwd、pipe/file/console句柄和页缓存；经\code{impl-fs-bridge}消费\code{wateros-fs} API。 \\
-  \code{wateros-syscall} & 将trap传入的syscall号和参数分发到进程、文件、内存、时间、网络等具体实现。 \\
-  \code{wateros-abi} & Linux generic 64-bit系统调用编号、errno、用户返回值和参数包等ABI契约。 \\
-  \code{wateros-ipc} & waitqueue、pipe、futex、SysV shm、signal等IPC能力，服务等待、管道、共享内存和同步阻塞。 \\
-  \code{wateros-cred} & 进程凭证侧表，uid/gid读写，以及VFS权限检查的扩展点。 \\
-  \code{wateros-klog} & 内核日志环形缓冲；\syscall{syslog}与\code{runtime-logging}分路，供启动期与运行期诊断读取。 \\
-  \bottomrule[1.5pt]
+ \caption{组件目录与职责映射}\label{tab:component-dirs}\\
+ \toprule[1.5pt]
+ 目录 & 职责说明 \\
+ \midrule[1pt]
+ \code{wateros-platform} & 启动参数、trap、中断、时间、固件调用和关机路径；RISC-V64对接QEMU\code{virt}+OpenSBI，LoongArch64对接QEMU\code{virt}与StableCounter/CSR平台能力。 \\
+ \code{wateros-runtime} & 控制台、开发日志级别、panic handler和全局堆分配器；QEMU主线经\code{impl-platform-console}输出。 \\
+ \code{wateros-mm} & 物理帧、页表、内核/用户地址空间、ELF装载，以及\syscall{brk}/\syscall{mmap}等内存类系统调用后端。 \\
+ \code{wateros-task} & 任务对象、调度队列、阻塞/睡眠/退出、父子关系、用户trap frame与\code{run\_first\_task}入口。 \\
+ \code{wateros-driver} & 按平台发现设备：RISC-V64扫描DTB中的VirtIO-MMIO，LoongArch64枚举VirtIO-PCI；块设备、网卡和字符设备统一注册到组件内抽象表。 \\
+ \code{wateros-fs} & \code{FsImpl}注册表、devfs、procfs、rootfs管理和ext4读写实现。 \\
+ \code{wateros-vfs} & 路径视图、per-task fd表、cwd、pipe/file/console句柄和页缓存；经\code{impl-fs-bridge}消费\code{wateros-fs} API。 \\
+ \code{wateros-syscall} & 将trap传入的syscall号和参数分发到进程、文件、内存、时间、网络等具体实现。 \\
+ \code{wateros-abi} & Linux generic 64-bit系统调用编号、errno、用户返回值和参数包等ABI契约。 \\
+ \code{wateros-ipc} & waitqueue、pipe、futex、SysV shm、signal等IPC能力，服务等待、管道、共享内存和同步阻塞。 \\
+ \code{wateros-cred} & 进程凭证侧表，uid/gid读写，以及VFS权限检查的扩展点。 \\
+ \code{wateros-klog} & 内核日志环形缓冲；\syscall{syslog}与\code{runtime-logging}分路，供启动期与运行期诊断读取。 \\
+ \bottomrule[1.5pt]
 \end{longtable}
 
 
@@ -94,9 +95,9 @@ wateros
 大多数一级组件遵循三步组织：
 
 \begin{enumerate}
-  \item \code{api-v0}定义稳定契约：trait、错误类型、句柄和公共数据结构。
-  \item \code{impl-*}承载具体实现，例如\code{impl-sv39}、\code{impl-qemu-riscv64-opensbi}、\code{impl-ext4-rs}。
-  \item 组件根\code{src/lib.rs}按feature绑定active impl，向上再导出统一模块名。
+ \item \code{api-v0}定义稳定契约：trait、错误类型、句柄和公共数据结构。
+ \item \code{impl-*}承载具体实现，例如\code{impl-sv39}、\code{impl-qemu-riscv64-opensbi}、\code{impl-ext4-rs}。
+ \item 组件根\code{src/lib.rs}按feature绑定active impl，向上再导出统一模块名。
 \end{enumerate}
 
 上层代码只依赖聚合门面，不直接引用具体impl crate。系统调用经\code{wateros-vfs}与\code{wateros-fs}公开接口访问路径和fd；\code{wateros-task}不反向依赖\code{wateros-cred}，凭证继承与清理由syscall或bring-up调用点触发。
@@ -107,13 +108,13 @@ wateros
 两条QEMU路径的组件编排顺序一致，差异只在引导参数解析、LoongArch建页表前关MMU，以及驱动发现总线类型：
 
 \begin{enumerate}
-  \item 平台汇编把控制权交给\code{kernel\_main}：RISC-V64接收OpenSBI的hart id与DTB物理地址，LoongArch64接收\code{argc/argv/envp}，其中\code{envp}常作固件信息指针。
-  \item 初始化runtime（console、logging、klog、heap）与\code{platform::arch}；RISC-V64在此后、LoongArch64在此前分别调用\code{driver::init\_when\_boot}传入DTB/envp指针。
-  \item 在MM激活分页之前注册\code{task::init}与\code{trap\_handler::init}，保证页故障和定时器trap有路由。
-  \item LoongArch64额外调用\code{platform::arch::paging::init\_paging\_disable\_mmu}，确认后续页表构建与PCI ECAM/MMIO使用直接寻址。
-  \item \code{mm::kernel\_mm::init}建立内核地址空间；驱动成功则进入\code{driver::active\_impl::init\_after\_boot}。
-  \item \code{fs::init}探测块设备并注入实现；\code{user\_bringup\_bus::run}在总线内RW挂载ext4根卷并串行执行bring-up阶段。
-  \item 打开定时器与全局中断，\code{task::run\_first\_task}把CPU交给就绪任务，后续执行由trap/syscall路径驱动。
+ \item 平台汇编把控制权交给\code{kernel\_main}：RISC-V64接收OpenSBI的hart id与DTB物理地址，LoongArch64接收\code{argc/argv/envp}，其中\code{envp}常作固件信息指针。
+ \item 初始化runtime，console、logging、klog、heap与\code{platform::arch}；RISC-V64在此后、LoongArch64在此前分别调用\code{driver::init\_when\_boot}传入DTB/envp指针。
+ \item 在MM激活分页之前注册\code{task::init}与\code{trap\_handler::init}，保证页故障和定时器trap有路由。
+ \item LoongArch64额外调用\code{platform::arch::paging::init\_paging\_disable\_mmu}，确认后续页表构建与PCI ECAM/MMIO使用直接寻址。
+ \item \code{mm::kernel\_mm::init}建立内核地址空间；驱动成功则进入\code{driver::active\_impl::init\_after\_boot}。
+ \item \code{fs::init}探测块设备并注入实现；\code{user\_bringup\_bus::run}在总线内RW挂载ext4根卷并串行执行bring-up阶段。
+ \item 打开定时器与全局中断，\code{task::run\_first\_task}把CPU交给就绪任务，后续执行由trap/syscall路径驱动。
 \end{enumerate}
 
 具体分页格式、DTB保留策略、网络栈烟测和\code{self\_tests}调用见第1章实现摘要与第3章模块实现；本章只固定组件之间的先后关系。
@@ -121,7 +122,7 @@ wateros
 
 \section{Feature组合与平台构建}
 
-\wateros{}用Cargo feature管理平台差异。根\code{os/Cargo.toml}定义\code{qemu-riscv64-opensbi}（默认）与\code{qemu-loongarch64-virt}两组互斥组合；二者都拉起完整I/O栈（driver、fs、ipc、cred、vfs-bridge、klog、\code{syscall/impl-kernel}），只在platform、mm页表实现和VirtIO总线上分叉。
+\wateros{}用Cargo feature管理平台差异。根\code{os/Cargo.toml}定义\code{qemu-riscv64-opensbi}，默认与\code{qemu-loongarch64-virt}两组互斥组合；二者都拉起完整I/O栈，含 driver、fs、ipc、cred、vfs-bridge、klog 与 \code{syscall/impl-kernel}，只在platform、mm页表实现和VirtIO总线上分叉。
 
 \begin{tomlcode}
 [features]
@@ -161,7 +162,14 @@ qemu-loongarch64-virt = [
 ]
 \end{tomlcode}
 
-除根feature列表外，差异还通过子crate feature继续下传。\code{os/feature-tree.txt}（\code{make -C os feature-tree}可再生成）记录完整展开链。下面各举一条从根到叶子impl的传递示例：
+除根\code{Cargo.toml}里的平台组合外，组件级\code{api-*}与\code{impl-*}选择还依赖各crate的\code{default} feature。\code{make configure}会同时生成两份快照，职责不同：
+
+\begin{itemize}
+ \item \code{feature-tree.txt}：workspace\emph{全量}feature树。按package列出所有已定义的feature及其向下传递链，用于查``有哪些可选组合、feature如何传递''，不代表当前编译实际选中哪条路径。
+ \item \code{config.conf}：\emph{当前正在使用}的feature选择。未注释行对应当前各\code{Cargo.toml}里\code{default}已启用的项；编辑后经\code{make apply\_features}写回manifest，才是改组件实现的入口。
+\end{itemize}
+
+Makefile目标见下文\ref{sec:feature-config-make}。下面各举一条从根到叶子impl的传递示例，摘自全量树中的RV/LA主线：
 
 RISC-V64块设备链：
 
@@ -186,22 +194,176 @@ qemu-loongarch64-virt
 对应平台链为\code{platform/impl-qemu-loongarch64-virt}拉入\code{arch/impl-loongarch64}与\code{firmware/impl-qemu-loongarch64-uart16550}；页表链为\code{mm/impl-loongarch64}。两条路径的syscall、vfs、task和fs注册表feature相同，替换点集中在platform-arch、driver-impl和mm-impl。
 
 
+\subsection{全量feature树，feature-tree.txt}\label{sec:feature-tree-full}
+
+\code{feature-tree.txt}是只读参考：扫描workspace内全部\code{Cargo.toml}，按package分组列出\emph{每一个}已声明的feature，以及启用该feature时会继续拉起的子crate与子feature（子行以\code{>}指向目标package）。它覆盖所有可选路径与传递链，包括当前\code{config.conf}里未启用的分支。仓库内全文件约1700行；下列摘自\code{os/feature-tree.txt}的代表性片段（约50行），用\code{...}表示上下尚有大量package未展开：
+
+\begin{textcode}
+# WaterOS feature tree (按 package 分组)
+# root: .../os
+
+...                                    # ext4_rs、ipc-event、ipc-futex 等
+
+ipc-pipe  (components/wateros-ipc/ipc-pipe/Cargo.toml)
+  - impl-ringbuf [default]
+    - impl-ringbuf/impl-ringbuf
+      > wateros-ipc-pipe-impl-ringbuf
+        - api-v0
+        - impl-ringbuf [default]
+
+wateros  (Cargo.toml)
+  - default [default]
+    - qemu-riscv64-opensbi
+  - impl-sv39
+    - mm/impl-sv39
+      > wateros-mm
+        - impl-sv39
+        - impl-loongarch64
+  - qemu-loongarch64-virt
+    - mm/impl-loongarch64
+      > wateros-mm ...
+    - driver/impl-qemu-loongarch64-virt
+      > wateros-driver ...
+    - platform/impl-qemu-loongarch64-virt
+      > wateros-platform ...
+    - syscall/impl-kernel
+      > wateros-syscall ...
+  - qemu-riscv64-opensbi [default]
+    - driver/impl-qemu-riscv64-opensbi
+      > wateros-driver ...
+    - platform/impl-qemu-riscv64-opensbi
+      > wateros-platform ...
+    - ipc/all
+      > wateros-ipc ...
+    - impl-sv39
+    - syscall/impl-kernel
+      > wateros-syscall ...
+
+wateros-driver  (components/wateros-driver/Cargo.toml)
+  - impl-qemu-riscv64-opensbi
+    - block/impl-virtio-mmio
+      > wateros-driver-block-impl-virtio-mmio
+    - network/impl-virtio-mmio
+      > wateros-driver-network ...
+  - impl-qemu-loongarch64-virt
+    - block/impl-virtio-pci
+      > wateros-driver-block-impl-virtio-pci
+
+wateros-platform  (components/wateros-platform/Cargo.toml)
+  - impl-qemu-riscv64-opensbi
+    - arch/impl-riscv64
+      > wateros-platform-arch-impl-riscv64
+  - impl-qemu-loongarch64-virt
+    - arch/impl-loongarch64
+      > wateros-platform-arch-impl-loongarch64
+
+...                                    # wateros-syscall、wateros-vfs 等
+\end{textcode}
+
+
+\subsection{当前启用的feature，config.conf}\label{sec:feature-config-conf}
+
+\code{config.conf}记录并编辑\emph{当前实际使用}的feature：\code{make configure}读取各crate现有\code{default}，把已启用项写成未注释行、未启用项写成\code{\#}注释行。改配置、\code{make apply\_features}、再编译，才是切换组件\code{impl-*}的常规流程；全量树里能看到但未在\code{config.conf}中启用的feature，不会进入当前构建。
+
+\begin{itemize}
+ \item 未注释行表示启用；行首\code{\#}表示禁用。
+ \item crate名以冒号结尾，例如 \code{wateros-driver:}；其下缩进两格的是该crate可选feature。
+ \item 只导出非\code{api-v0}/\code{impl-*}命名的workspace crate；\code{*-api-v0}与\code{*-impl-*}叶子crate不出现在树中。
+ \item 根\code{wateros:}下列出全部根feature，含 \code{qemu-riscv64-opensbi} 等平台组合；组件crate下列\code{api-v0}、\code{impl-*}等可替换项。驱动子系统允许同时启用多个\code{impl-*}，例如块设备MMIO与PCI桩并存于配置树，实际生效仍受平台feature约束。
+\end{itemize}
+
+文件头与根crate片段示例如下，完整文件见 \code{os/config.conf}：
+
+\begin{textcode}
+# WaterOS config.conf (只导出非 api/impl crate)
+# 规则：未注释行 = 启用；以 # 开头 = 禁用。
+# 结构：crate 行以 ':' 结尾；其下缩进两格的是 feature。
+
+wateros:
+  # qemu-loongarch64-virt
+  qemu-riscv64-opensbi
+  wateros-driver:
+    api-v0
+    wateros-driver-block:
+      api-v0
+      impl-virtio-mmio
+      # impl-virtio-pci
+  wateros-task:
+    api-v0
+    impl-core
+    impl-multi-class
+    # impl-round-robin
+\end{textcode}
+
+典型工作流：需要\emph{查看}可选组合时读\code{feature-tree.txt}；需要\emph{修改}当前实现时编辑\code{config.conf}。改配置前先\code{make configure}与manifest对齐；注释/取消注释目标feature后\code{make apply\_features}写回\code{default}，各 \code{Cargo.toml} 同目录会备份 \code{Cargo.toml.wosbak}，撤销用\code{make revert\_features}。
+
+案例：把\code{wateros-task}下\code{impl-round-robin}取消注释、并注释掉\code{impl-multi-class}，执行\code{make apply\_features}后重新\code{make rv\_check}，task调度器default会指向round-robin实现。切换QEMU平台时，在\code{wateros:}下注释当前\code{qemu-riscv64-opensbi}、启用\code{qemu-loongarch64-virt}，apply后再\code{make la\_check}验证LoongArch组合能否通过静态检查。日常 \code{make kernel-la} 仍显式传入 \code{qemu-loongarch64-virt}，与根 \code{default} 是否一致无关。
+
+
+\subsection{Makefile与feature相关命令}\label{sec:feature-config-make}
+
+\code{os/Makefile}把平台feature写死在编译变量里，同时提供配置文件的生成、应用与回滚目标。相关用法如下：
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{3.6cm}>{\raggedright\arraybackslash}p{10.0cm}}
+ \caption{Makefile中与feature相关的目标}\label{tab:make-feature-targets}\\
+ \toprule[1.5pt]
+ 目标 & 作用 \\
+ \midrule[1pt]
+ \code{configure} & 扫描全部\code{Cargo.toml}：生成全量\code{feature-tree.txt}，并按当前\code{default}导出\code{config.conf}。 \\
+ \code{apply\_features} & 读取\code{config.conf}中启用的行，写回各crate的\code{default} feature，并备份 \code{.wosbak}；此后构建按新选择编译组件。 \\
+ \code{apply\_features\_la} & 同\code{apply\_features}，但读取\code{config-loongarch64.conf}，需自行维护该文件。 \\
+ \code{revert\_features} & 从各目录的\code{Cargo.toml.wosbak}恢复\code{Cargo.toml}。 \\
+ \code{kernel-rv} / \code{kernel-la} & 编译时分别传入\code{--features qemu-riscv64-opensbi}或\code{--no-default-features --features qemu-loongarch64-virt}。 \\
+ \code{rv\_check} / \code{la\_check} & \code{cargo check}，feature与上两行编译变量一致。 \\
+ \code{kernel-rv-ltp-glibc}等 & 在RV/LA编译flag上追加\code{bringup-ltp-glibc-only}或\code{bringup-ltp-musl-only}根feature。 \\
+ \bottomrule[1.5pt]
+\end{longtable}
+
+命令行案例：
+
+\begin{bashcode}
+cd os
+
+# 1. 扫描 Cargo.toml：导出全量 feature 树 + 当前启用的 config.conf
+make configure
+
+# 2. 查传递关系 → 看 feature-tree.txt
+#    改当前 impl 选择 → 编辑 config.conf，再 apply
+make apply_features
+
+# 3. 按 Makefile 绑定的平台 feature 编译 / 检查
+make rv_check          # RISC-V，--features qemu-riscv64-opensbi
+make kernel-rv
+make la_check          # LoongArch，--no-default-features + qemu-loongarch64-virt
+make kernel-la
+
+# 4. 仅 LTP 长跑：追加 bringup-ltp-* 根 feature
+make kernel-rv-ltp-glibc
+make rv_qemu_run       # 仍使用 kernel-rv 产物
+
+# 5. 放弃 apply 改动，恢复 Cargo.toml
+make revert_features
+\end{bashcode}
+
+说明：\code{configure}不修改源码，只刷新全量树并同步\code{config.conf}与manifest的一致性。\code{apply\_features}只消费\code{config.conf}，不改\code{feature-tree.txt}。\code{kernel-rv}/\code{kernel-la}的平台feature仍由Makefile显式传入；\code{config.conf}管的是组件级\code{default}，调度器、块设备后端、日志级别等。二者叠加后才是某次\code{cargo build}实际链入的impl。
+
+
 \section{QEMU双架构适配与一致性}
 
 ISA与板级差异收在platform、driver和mm实现层；进入task、fs、vfs、ipc和syscall之后，用户程序看到的fd、进程和系统调用编号保持一致。
 
 \begin{longtable}{>{\raggedright\arraybackslash}p{3.0cm}>{\raggedright\arraybackslash}p{5.0cm}>{\raggedright\arraybackslash}p{5.0cm}}
-  \caption{QEMU双架构适配对比}\label{tab:qemu-arch-compare}\\
-  \toprule[1.5pt]
-  适配点 & RISC-V64 QEMU + OpenSBI & LoongArch64 QEMU virt \\
-  \midrule[1pt]
-  启动参数 & OpenSBI传入\code{a0/a1}，分别解释为hart id与DTB物理地址。 & 固件传入\code{argc/argv/envp}；\code{envp}常携带FDT或平台信息指针。 \\
-  固件与控制台 & OpenSBI console、timer、reset后端；runtime经\code{impl-firmware-opensbi}接早期输出。 & QEMU\code{virt}平台后端、StableCounter和LoongArch CSR；runtime经\code{impl-firmware-console}接UART。 \\
-  trap与上下文 & \code{arch-impl/impl-riscv64}提供trap frame、\code{trap.asm}和\code{switch.S}。 & \code{arch-impl/impl-loongarch64}提供trap frame、\code{trap.S}和\code{switch.S}。 \\
-  页表与TLB & MM侧Sv39；架构层用satp token切换地址空间并刷新TLB。 & MM侧LoongArch64三级4KiB页表；写CSR.PGDL设根，\code{invtlb}刷新TLB。 \\
-  设备总线 & 扫描DTB中VirtIO-MMIO节点；块设备与网卡走MMIO后端。 & PCI枚举VirtIO设备；块设备与网卡走VirtIO-PCI后端。 \\
-  上层一致性 & \multicolumn{2}{p{10.0cm}}{共享\code{abi/impl-linux-generic64}、\code{syscall/impl-kernel}、task生命周期、VFS fd表、FS注册表、\code{ipc/all}、cred与klog。平台差异在进入这些模块前被转换为统一接口，\syscall{openat}、\syscall{read}、\syscall{clone}、\syscall{execve}等路径不按ISA各写一套。} \\
-  \bottomrule[1.5pt]
+ \caption{QEMU双架构适配对比}\label{tab:qemu-arch-compare}\\
+ \toprule[1.5pt]
+ 适配点 & RISC-V64 QEMU + OpenSBI & LoongArch64 QEMU virt \\
+ \midrule[1pt]
+ 启动参数 & OpenSBI传入\code{a0/a1}，分别解释为hart id与DTB物理地址。 & 固件传入\code{argc/argv/envp}；\code{envp}常携带FDT或平台信息指针。 \\
+ 固件与控制台 & OpenSBI console、timer、reset后端；runtime经\code{impl-firmware-opensbi}接早期输出。 & QEMU\code{virt}平台后端、StableCounter和LoongArch CSR；runtime经\code{impl-firmware-console}接UART。 \\
+ trap与上下文 & \code{arch-impl/impl-riscv64}提供trap frame、\code{trap.asm}和\code{switch.S}。 & \code{arch-impl/impl-loongarch64}提供trap frame、\code{trap.S}和\code{switch.S}。 \\
+ 页表与TLB & MM侧Sv39；架构层用satp token切换地址空间并刷新TLB。 & MM侧LoongArch64三级4KiB页表；写CSR.PGDL设根，\code{invtlb}刷新TLB。 \\
+ 设备总线 & 扫描DTB中VirtIO-MMIO节点；块设备与网卡走MMIO后端。 & PCI枚举VirtIO设备；块设备与网卡走VirtIO-PCI后端。 \\
+ 上层一致性 & \multicolumn{2}{p{10.0cm}}{共享\code{abi/impl-linux-generic64}、\code{syscall/impl-kernel}、task生命周期、VFS fd表、FS注册表、\code{ipc/all}、cred与klog。平台差异在进入这些模块前被转换为统一接口，\syscall{openat}、\syscall{read}、\syscall{clone}、\syscall{execve}等路径不按ISA各写一套。} \\
+ \bottomrule[1.5pt]
 \end{longtable}
 
 

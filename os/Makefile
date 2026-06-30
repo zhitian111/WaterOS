@@ -31,12 +31,6 @@ common_dependencies = $(shell find . -name "*.rs") \
 
 kernel_rv_dependencies = $(common_dependencies)
 
-# (方案B) 直接使用根 crate feature，不再依赖 config-to-features-make.bash
-# features_flags = $(shell bash ./scripts/config-to-features-make.bash || echo "unknown")
-# la_features_flags = $(shell bash ./scripts/config-to-features-make.bash ./config-loongarch64.conf || echo "unknown")
-# common_flags = --features $(features_flags)
-# la_common_flags = --features $(la_features_flags)
-
 kernel_rv_flag := --release --target riscv64gc-unknown-none-elf \
                   --features qemu-riscv64-opensbi
 
@@ -76,13 +70,12 @@ stat: version
 	@bash ./scripts/stat_contribute.bash
 	$(call INFO, "项目贡献度统计完成！")
 
-# (方案B) 不再需要 config 文件，直接用根 crate feature
-# configure: ./config.conf ./feature-tree.txt
-#
-# ./config.conf ./feature-tree.txt:
-# 	$(call INFO, "正在生成配置文件...")
-# 	@bash ./scripts/configure.bash 2> /dev/null
-# 	$(call INFO, "配置文件生成完毕！")
+configure: ./config.conf ./feature-tree.txt
+
+./config.conf ./feature-tree.txt:
+	$(call INFO, "正在生成配置文件...")
+	@bash ./scripts/configure.bash 2> /dev/null
+	$(call INFO, "配置文件生成完毕！")
 
 kernel:
 
@@ -255,21 +248,21 @@ fmt:
 	@taplo fmt **/Cargo.toml
 	@rustfmt **/*.rs
 	$(call INFO, "项目文件格式化完成！")
-# (方案B) apply_features 不再被任何构建目标依赖，仅保留供手动/rust-analyzer 使用
-# apply_features: ./config.conf
-# 	$(call INFO, "开始写入 features riscv64 ...")
-# 	@bash ./scripts/apply-config-as-default-features.bash
-# 	$(call INFO, "riscv64 features 写入完成！")
-#
-# apply_features_la: ./config-loongarch64.conf
-# 	$(call INFO, "开始写入 features loongarch64 ...")
-# 	@bash ./scripts/apply-config-as-default-features.bash ./ apply config-loongarch64.conf
-# 	$(call INFO, "loongarch64 features 写入完成！")
-#
-# revert_features:
-# 	$(call INFO, "开始回滚 features...")
-# 	@bash ./scripts/apply-config-as-default-features.bash ./ os revert
-# 	$(call INFO, "features 回滚完成！")
+
+apply_features: ./config.conf
+	$(call INFO, "开始写入 features riscv64 ...")
+	@bash ./scripts/apply-config-as-default-features.bash
+	$(call INFO, "riscv64 features 写入完成！")
+
+apply_features_la: ./config-loongarch64.conf
+	$(call INFO, "开始写入 features loongarch64 ...")
+	@bash ./scripts/apply-config-as-default-features.bash ./ apply config-loongarch64.conf
+	$(call INFO, "loongarch64 features 写入完成！")
+
+revert_features:
+	$(call INFO, "开始回滚 features...")
+	@bash ./scripts/apply-config-as-default-features.bash ./ os revert
+	$(call INFO, "features 回滚完成！")
 export:
 	$(call INFO, "开始导出 git 追踪文件到 GitLab 仓库...")
 	@bash ./scripts/export-to-gitlab.bash

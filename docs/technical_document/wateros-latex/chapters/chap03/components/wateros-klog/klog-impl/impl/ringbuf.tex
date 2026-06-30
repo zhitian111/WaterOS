@@ -1,12 +1,12 @@
 % 【本文件写什么】impl 实现层：ringbuf
-%   - crate 路径：os/components/wateros-klog/klog-impl/impl-ringbuf/src/
+% - crate 路径：os/components/wateros-klog/klog-impl/impl-ringbuf/src/
 % 【事实来源】
-%   - 上述 crate 源码与 Cargo.toml
-%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+% - 上述 crate 源码与 Cargo.toml
+% - os/feature-tree.txt 中指向本 impl 的 feature 链
 
 \paragraph{存储模型}
 
-\code{KlogRingbufInner}维护\code{KLOG\_DESC\_SLOTS}（256）个描述符槽，每槽含\code{KlogRecordMeta}与至多\code{KLOG\_MAX\_RECORD\_BYTES}（1024）字节正文缓冲。槽满时覆盖最旧槽，\code{records\_dropped}递增；若被覆盖序号等于\code{read\_cursor\_seq}，游标前推。\code{KLOG\_TEXT\_RING\_BYTES}（32KiB）供\code{SIZE\_BUFFER}语义；当前实现按槽内缓冲聚合，常量保留供后续纯byte-ring扩展。
+\code{KlogRingbufInner}维护\code{KLOG\_DESC\_SLOTS}，256个描述符槽，每槽含\code{KlogRecordMeta}与至多\code{KLOG\_MAX\_RECORD\_BYTES}，1024字节正文缓冲。槽满时覆盖最旧槽，\code{records\_dropped}递增；若被覆盖序号等于\code{read\_cursor\_seq}，游标前推。\code{KLOG\_TEXT\_RING\_BYTES}，32KiB供\code{SIZE\_BUFFER}语义；当前实现按槽内缓冲聚合，常量保留供后续纯byte-ring扩展。
 
 \paragraph{追加与迭代}
 
@@ -14,7 +14,7 @@
 
 \paragraph{读游标语义}
 
-\code{read\_cursor\_seq}指向下一条\code{READ}将返回的序号。\code{peek\_next\_unread}取\code{>= read\_cursor}的最小有效\code{seq}。\code{advance\_read\_cursor}设为\code{after\_seq + 1}，并钳制到\code{oldest\_seq}。\code{clear\_read\_cursor}将游标设为\code{newest + 1}（mark全部已读，物理记录保留供\code{iter\_from}）。
+\code{read\_cursor\_seq}指向下一条\code{READ}将返回的序号。\code{peek\_next\_unread}取\code{>= read\_cursor}的最小有效\code{seq}。\code{advance\_read\_cursor}设为\code{after\_seq + 1}，并钳制到\code{oldest\_seq}。\code{clear\_read\_cursor}将游标设为\code{newest + 1}，mark全部已读，物理记录保留供 \code{iter\_from}。
 
 \paragraph{全局锁与中断}
 
@@ -22,7 +22,7 @@
 
 \paragraph{syscall 对接}
 
-聚合\code{klog::syscall::dispatch\_kernel}按action分发：\code{CLOSE}/\code{OPEN}、\code{CONSOLE\_*}为no-op；\code{SIZE\_UNREAD}/\code{SIZE\_BUFFER}查询环；\code{READ}/\code{READ\_CLEAR}/\code{READ\_ALL}经\code{format\_traditional}格式化后由syscall层\code{copy\_to\_user}；WRITE（\code{is\_write\_priority}）写入同一环并置\code{USER}标志。未知action当前\code{panic}。
+聚合\code{klog::syscall::dispatch\_kernel}按action分发：\code{CLOSE}/\code{OPEN}、\code{CONSOLE\_*}为no-op；\code{SIZE\_UNREAD}/\code{SIZE\_BUFFER}查询环；\code{READ}/\code{READ\_CLEAR}/\code{READ\_ALL}经\code{format\_traditional}格式化后由syscall层\code{copy\_to\_user}；WRITE，即 \code{is\_write\_priority}，写入同一环并置\code{USER}标志。未知action当前\code{panic}。
 
 \paragraph{限制}
 

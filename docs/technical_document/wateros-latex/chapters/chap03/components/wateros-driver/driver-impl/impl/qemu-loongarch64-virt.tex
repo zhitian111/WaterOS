@@ -1,22 +1,22 @@
 % 【本文件写什么】impl 实现层：qemu-loongarch64-virt
-%   - 定位：QEMU LoongArch64 virt 板级组合。
-%   - crate 路径：os/components/wateros-driver/driver-impl/impl-qemu-loongarch64-virt/src/
-%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
-%   - 算法或硬件交互流程（可用伪代码/流程图）
-%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
-%   - 与其它 impl 变体的差异、切换 feature 时的影响
-%   - 性能/内存假设与已知限制
+% - 定位：QEMU LoongArch64 virt 板级组合。
+% - crate 路径：os/components/wateros-driver/driver-impl/impl-qemu-loongarch64-virt/src/
+% - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+% - 算法或硬件交互流程，可用伪代码/流程图
+% - 本 impl 启用的 Cargo [features] 与 arch feature，impl-riscv64 等
+% - 与其它 impl 变体的差异、切换 feature 时的影响
+% - 性能/内存假设与已知限制
 % 【事实来源】
-%   - 上述 crate 源码与 Cargo.toml
-%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+% - 上述 crate 源码与 Cargo.toml
+% - os/feature-tree.txt 中指向本 impl 的 feature 链
 
 \subsubsection{impl-qemu-loongarch64-virt}
 
 \paragraph{与RISC-V路径差异。}块/网卡不走DTB virtio-mmio扫描，而在\code{init\_after\_boot\_inner}中经PCIe ECAM枚举\code{virtio-blk}/\code{virtio-net}。\code{pci::find\_config\_base}从DTB PCI节点或回退常量解析配置空间基址；\code{probe\_virtio\_blk\_pci}/\code{probe\_virtio\_net\_pci}分别调用块/网\code{impl-virtio-pci}的\code{probe\_first\_from\_ecam}。
 
-\paragraph{引导与RAM。}\code{init\_when\_boot}保存DTB并\code{uart::init\_early\_default\_uart}初始化\code{0x1FE0\_01E0} NS16550。\code{physical\_ram\_end\_exclusive}优先DTB\code{memory@*}，失败回退\code{0xb000\_0000}以匹配QEMU\code{virt -m 1G}高段布局（内核自\code{0x9000\_0000}启动，避免把MMIO空洞当作RAM）。
+\paragraph{引导与RAM。}\code{init\_when\_boot}保存DTB并\code{uart::init\_early\_default\_uart}初始化\code{0x1FE0\_01E0} NS16550。\code{physical\_ram\_end\_exclusive}优先DTB\code{memory@*}，失败回退\code{0xb000\_0000}以匹配QEMU\code{virt -m 1G}高段布局；内核自 \code{0x9000\_0000} 启动，避免把MMIO空洞当作RAM。
 
-\paragraph{注册与devfs。}块设备成功时可选\code{BlockCacheManager::wrap}并\code{register\_block\_device}，记录\code{VirtioPciProbeInfo}到\code{VIRTIO\_BLK\_PCI}。网卡\code{register\_network\_device}并记录MAC与BDF。字符路径调用\code{uart::register\_default\_uart}（全局\code{QemuLoongArch64Uart16550}）与\code{register\_builtin\_character\_devices}。末尾\code{devfs\_impl::refresh}暴露\code{/dev/vblk*}等节点。
+\paragraph{注册与devfs。}块设备成功时可选\code{BlockCacheManager::wrap}并\code{register\_block\_device}，记录\code{VirtioPciProbeInfo}到\code{VIRTIO\_BLK\_PCI}。网卡\code{register\_network\_device}并记录MAC与BDF。字符路径调用\code{uart::register\_default\_uart}，全局 \code{QemuLoongArch64Uart16550}，与 \code{register\_builtin\_character\_devices}。末尾\code{devfs\_impl::refresh}暴露\code{/dev/vblk*}等节点。
 
 \begin{rustcode}
 pub fn init_when_boot(dtb_pa: usize) {
@@ -32,4 +32,4 @@ pub fn physical_ram_end_exclusive() -> usize {
 
 \paragraph{导出接口。}除与RISC-V相同的\code{init\_after\_boot}/\code{physical\_ram\_end\_exclusive}/\code{test}外，\code{uart::with\_default\_uart}供\code{klog}与早期打印在已初始化UART上执行闭包。重复\code{init\_after\_boot}同样幂等忽略。
 
-\paragraph{限制。}仅扫描PCI bus0首个块/网设备；DTB扫描不用于virtio绑定（\code{scan\_device\_info}非本路径主流程）。中断未启用，IO与收包依赖轮询。多实例devfs与syscall策略仍以首设备为主。
+\paragraph{限制。}仅扫描PCI bus0首个块/网设备；DTB扫描不用于virtio绑定，\code{scan\_device\_info} 非本路径主流程。中断未启用，IO与收包依赖轮询。多实例devfs与syscall策略仍以首设备为主。

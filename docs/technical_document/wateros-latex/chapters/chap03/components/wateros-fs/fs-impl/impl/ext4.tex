@@ -1,33 +1,33 @@
 % 【本文件写什么】impl 实现层：ext4
-%   - 定位：旧 ext4plus 实现路径（feature impl-ext4）。
-%   - crate 路径：os/components/wateros-fs/fs-impl/impl-ext4/src/
-%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
-%   - 算法或硬件交互流程（可用伪代码/流程图）
-%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
-%   - 与其它 impl 变体的差异、切换 feature 时的影响
-%   - 性能/内存假设与已知限制
+% - 定位：旧 ext4plus 实现路径，feature impl-ext4。
+% - crate 路径：os/components/wateros-fs/fs-impl/impl-ext4/src/
+% - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+% - 算法或硬件交互流程，可用伪代码/流程图
+% - 本 impl 启用的 Cargo [features] 与 arch feature，impl-riscv64 等
+% - 与其它 impl 变体的差异、切换 feature 时的影响
+% - 性能/内存假设与已知限制
 % 【事实来源】
-%   - 上述 crate 源码与 Cargo.toml
-%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+% - 上述 crate 源码与 Cargo.toml
+% - os/feature-tree.txt 中指向本 impl 的 feature 链
 
 \subsubsection{impl-ext4}
 
 \paragraph{定位。}
-可选实现路径，RO/RW均基于\code{ext4plus}库（\code{ro.rs}、\code{rw.rs}）。在\code{registered\_fs\_impls()}中位于\code{impl-ext4-rs}之后；若两套feature同时启用，probe时\code{ext4-rs}优先匹配。
+可选实现路径，RO/RW均基于\code{ext4plus}库，即 \code{ro.rs}、\code{rw.rs}。在\code{registered\_fs\_impls()}中位于\code{impl-ext4-rs}之后；若两套feature同时启用，probe时\code{ext4-rs}优先匹配。
 
 \paragraph{探测与注册。}
-\code{probe\_ext4\_magic}逻辑与\code{impl-ext4-rs}相同（superblock \code{0xEF53}）。\code{Ext4FsImpl}导出\code{IMPL}，\code{name()}为\code{"ext4"}，声明\code{Ext4} RO与RW能力。
+\code{probe\_ext4\_magic}逻辑与\code{impl-ext4-rs}相同，superblock 魔数 \code{0xEF53}。\code{Ext4FsImpl}导出\code{IMPL}，\code{name()}为\code{"ext4"}，声明\code{Ext4} RO与RW能力。
 
 \paragraph{模块划分。}
 \begin{itemize}
-  \item \code{ro.rs}：\code{Ext4Fs}实现\code{ReadOnlyFs}；
-  \item \code{rw.rs}：\code{Ext4FsRw}实现\code{ReadWriteFs}；
-  \item \code{boot\_inspect.rs}：启动期路径枚举调试；
-  \item \code{selftest.rs}：\code{rw\_self\_test}、\code{rw\_mkdir\_verify}等自检，由聚合\code{fs::test()}在\code{impl-ext4} feature下调用。
+ \item \code{ro.rs}：\code{Ext4Fs}实现\code{ReadOnlyFs}；
+ \item \code{rw.rs}：\code{Ext4FsRw}实现\code{ReadWriteFs}；
+ \item \code{boot\_inspect.rs}：启动期路径枚举调试；
+ \item \code{selftest.rs}：\code{rw\_self\_test}、\code{rw\_mkdir\_verify}等自检，由聚合\code{fs::test()}在\code{impl-ext4} feature下调用。
 \end{itemize}
 
 \paragraph{与\code{impl-ext4-rs}的差异。}
-底层库不同（ext4plus vs ext4\_rs），错误映射与写路径细节各异；默认feature已切换至\code{impl-ext4-rs}，本路径保留用于对比或回退。
+底层库不同，ext4plus vs ext4\_rs，错误映射与写路径细节各异；默认feature已切换至\code{impl-ext4-rs}，本路径保留用于对比或回退。
 
 \paragraph{限制。}
 RW依赖ext4plus beta能力；journal与崩溃一致性需另行评估。勿与\code{impl-ext4-rs}同时作为默认写后端。

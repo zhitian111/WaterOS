@@ -1,13 +1,13 @@
-% 第4章「测试、复现与问题处理」。
+% 第4章：测试、复现与问题处理。
 %
 % §4.1 构建与启动：os/Makefile 目标、双架构构建与QEMU运行。
 % §4.2 功能验证：bring-up总线、P1–P6脚本、日志判读。
 % §4.3 双架构一致性验证。
-% §4.4 遇到的问题和解决方法（按主题分\subsection，附代码快照）。
+% §4.4 遇到的问题和解决方法：按主题分 \subsection，附代码快照。
 %
 % 事实来源：os/Makefile、docs/tasks/run_testsuits_qemu.md、os/src/user_bringup_*.rs
 
-\chapter{测试、复现与问题处理}
+\chapter{测试与问题处理}
 
 \section{构建与启动方式}
 
@@ -54,9 +54,9 @@ RISC-V64路径使用target\code{riscv64gc-unknown-none-elf}，启用feature\code
 按\code{docs/tasks/run\_testsuits\_qemu.md}，回归应分阶段串行，每次QEMU启动只启用一个阶段块，避免未实现syscall直接panic导致后续脚本不执行：
 
 \begin{longtable}{>{\raggedright\arraybackslash}p{1.6cm}>{\raggedright\arraybackslash}p{4.8cm}>{\raggedright\arraybackslash}p{4.2cm}>{\raggedright\arraybackslash}p{3.8cm}}
-  \caption{赛题测例阶段（P1–P6）}\label{tab:test-phases}\\
+  \caption{赛题测例阶段 P1 至 P6}\label{tab:test-phases}\\
   \toprule[1.5pt]
-  阶段 & 脚本（glibc/musl各一份） & 主要覆盖 & 环境注意 \\
+  阶段 & 脚本，glibc 与 musl 各一份 & 主要覆盖 & 环境注意 \\
   \midrule[1pt]
   P1 & \code{basic\_testcode.sh} & 文件IO、进程、内存syscall & 单盘时\code{mount}预期\code{-22} \\
   P2 & \code{busybox\_testcode.sh}、\code{lua\_testcode.sh} & shell管道、TTY\code{ioctl}、\code{readv} & busybox须逐条\code{testcase … success} \\
@@ -67,7 +67,7 @@ RISC-V64路径使用target\code{riscv64gc-unknown-none-elf}，启用feature\code
   \bottomrule[1.5pt]
 \end{longtable}
 
-阶段批跑可调用\code{os/scripts/run\_phase\_tests.sh}（会临时改写\code{BRINGUP\_COMMANDS}并在结束后恢复）。单次手动回归示例：
+阶段批跑可调用\code{os/scripts/run\_phase\_tests.sh}，执行时会临时改写 \code{BRINGUP\_COMMANDS} 并在结束后恢复。单次手动回归示例：
 
 \begin{bashcode}
 cd os
@@ -106,7 +106,7 @@ RISC-V64与LoongArch64分别编译、分别启动，进入MM、task、FS/VFS、I
   \toprule[1.5pt]
   验证点 & RISC-V64路径 & LoongArch64路径 \\
   \midrule[1pt]
-  构建产物 & \code{make kernel-rv}→\code{kernel-rv}（\code{riscv64gc-unknown-none-elf}）。 & \code{make kernel-la}→\code{kernel-la}（\code{loongarch64-unknown-none}）。 \\
+  构建产物 & \code{make kernel-rv} 生成 \code{kernel-rv}，目标 triple 为 \code{riscv64gc-unknown-none-elf}。 & \code{make kernel-la} 生成 \code{kernel-la}，目标 triple 为 \code{loongarch64-unknown-none}。 \\
   启动入口 & OpenSBI传入hart id与DTB；DTB扫描VirtIO-MMIO。 & 固件传入\code{argc/argv/envp}；PCI枚举VirtIO-PCI。 \\
   内存路径 & Sv39、\code{satp}、\code{sfence.vma}。 & 独立三级页表、\code{CSR.PGDL}、\code{invtlb}。 \\
   自检日志前缀 & \code{[self-test]} & \code{[loongarch64][self-test]}、\code{[driver-la]} \\
@@ -116,11 +116,11 @@ RISC-V64与LoongArch64分别编译、分别启动，进入MM、task、FS/VFS、I
 
 \section{遇到的问题和解决方法}
 
-测例覆盖面扩大后，失败往往落在syscall语义、挂载路径、资源回收或双架构底层差异上。下面按主题说明典型现象、处理思路，并给出当前代码中的关键片段（路径均相对于\code{os/}）。
+测例覆盖面扩大后，失败往往落在syscall语义、挂载路径、资源回收或双架构底层差异上。下面按主题说明典型现象、处理思路，并给出当前代码中的关键片段。下列路径均相对于 \code{os/}。
 
 \subsection{系统调用语义和错误码}
 
-\textbf{现象。}libc与LTP会校验\syscall{stat}/\syscall{fstat}/\syscall{statx}字段、\syscall{mount}标志以及别名syscall（如\code{faccessat2}）。占位返回值或静默忽略unsupported flags会在更深路径上变成错误语义；号表未收录的syscall在bring-up期会走\code{unsupported: unknown nr=}直接panic。
+\textbf{现象。}libc与LTP会校验\syscall{stat}/\syscall{fstat}/\syscall{statx}字段、\syscall{mount}标志以及别名syscall，例如 \code{faccessat2}。占位返回值或静默忽略unsupported flags会在更深路径上变成错误语义；号表未收录的syscall在bring-up期会走\code{unsupported: unknown nr=}直接panic。
 
 \textbf{处理。}已接入对象路径的调用从VFS元数据填Linux结构体；\syscall{mount}按文件系统类型分支；别名表未命中时返回\code{-ENOSYS}而非成功占位。
 
@@ -189,7 +189,7 @@ if fstype == "tmpfs" {
 }
 \end{rustcode}
 
-别名syscall未实现时统一\code{ENOSYS}（\code{syscall-impl/impl-kernel/src/lib.rs}）：
+别名syscall未实现时统一返回 \code{ENOSYS}，见 \code{syscall-impl/impl-kernel/src/lib.rs}：
 
 \begin{rustcode}
 // 别名号表：已实现的走具体 sys_*，其余返回 -ENOSYS（不 panic）
@@ -214,9 +214,9 @@ fn dispatch_syscall_aliases(syscall_nr: usize, args: SyscallArgs) -> isize {
 
 \textbf{现象。}basic与busybox同时触及ext4根卷、procfs、tmpfs与\code{/dev}节点；若所有路径都落到同一读写句柄，\code{df}/\code{ps}会出现\code{/proc/mounts}缺失或权限errno混乱。
 
-\textbf{处理。}bring-up总线先\code{mount\_default\_root\_rw}，再挂\code{/proc}；\syscall{mount}把tmpfs、procfs、cgroup/securityfs与bind/remount标志交给VFS挂载表，错误映射为\code{EINVAL}/\code{EBUSY}等Linux errno。根卷布局脚本（\code{user\_bringup\_root\_layout}）在总线之后补齐\code{/bin}、\code{/etc/passwd}与busybox硬链接，减少\code{which}、LTP对路径的依赖。
+\textbf{处理。}bring-up总线先\code{mount\_default\_root\_rw}，再挂\code{/proc}；\syscall{mount}把tmpfs、procfs、cgroup/securityfs与bind/remount标志交给VFS挂载表，错误映射为\code{EINVAL}/\code{EBUSY}等Linux errno。根卷布局脚本 \code{user\_bringup\_root\_layout} 在总线之后补齐\code{/bin}、\code{/etc/passwd}与busybox硬链接，减少\code{which}、LTP对路径的依赖。
 
-bring-up总线入口（\code{src/user\_bringup\_bus.rs}）：
+bring-up总线入口，见 \code{src/user\_bringup\_bus.rs}：
 
 \begin{rustcode}
 //! 用户态 bring-up 须在 fs::init 之后、fs::test 之前，
@@ -257,7 +257,7 @@ pub fn run() {
 
 \textbf{处理。}调度器用\code{InterruptGuard}在触碰就绪队列时关中断并在\code{\_\_switch}前恢复；每个脚本结束后\code{purge\_all\_user\_processes}并调用\code{drop\_reaped\_task\_runtime\_resources}回收地址空间与syscall侧表。
 
-调度器中断守卫（\code{wateros-task/.../impl-round-robin/src/lib.rs}）：
+调度器中断守卫，见 \code{wateros-task/.../impl-round-robin/src/lib.rs}：
 
 \begin{rustcode}
 // RAII：构造时关全局中断，drop 时恢复；包裹所有可能触碰就绪队列与 TCB
@@ -288,7 +288,7 @@ impl Drop for InterruptGuard {
 }
 \end{rustcode}
 
-脚本结束清理（\code{src/user\_bringup\_common.rs}）：
+脚本结束清理，见 \code{src/user\_bringup\_common.rs}：
 
 \begin{rustcode}
 // 串行执行单个 ELF/脚本：装载 → spawn → wait → reap
@@ -316,7 +316,7 @@ trace!("[{log_tag}] END path={elf_path} exit_code={exit_code}");
 
 \textbf{处理。}\code{socket\_fd.rs}为每个任务维护独立的\code{SocketRef}映射与引用计数，\code{release\_task}在owner引用归零时整表删除；网络设备在RISC-V经DTB、LoongArch经PCI注册到同一\code{BlockDevice}/网络抽象后，上层socket syscall共用实现。
 
-socket fd注册表核心（\code{syscall-impl/impl-kernel/src/socket\_fd.rs}）：
+socket fd注册表核心，见 \code{syscall-impl/impl-kernel/src/socket\_fd.rs}：
 
 \begin{rustcode}
 //! Socket fd → network SocketRef 映射表。
@@ -344,29 +344,3 @@ fn release_task(&mut self, task_id: TaskId) {
     }
 }
 \end{rustcode}
-
-\subsection{定位和复现方法}
-
-\textbf{现象。}QEMU无输出、PC卡死、\code{unknown nr=}、用户任务不退出或脚本\code{exit\_code}非零。
-
-\textbf{处理。}按层读串口日志：平台与\code{[self-test]}→驱动\code{[driver*]}→FS\code{[fs*]}→\code{[bringup]}→\code{[busybox-bringup]}→测例\code{COMP TEST GROUP}。需要指令级定位时用\code{make rv\_pc\_watch}/\code{la\_pc\_watch}只看PC跳变，用\code{rv\_symbol\_at ADDR=…}把地址解析到内核符号；长跑日志用\code{rv\_qemu\_run\_with\_log}生成\code{qemu.log}配合\code{grep}，测例摘要仍用\code{parse\_qemu\_test\_log.py}。
-
-典型检索命令：
-
-\begin{bashcode}
-LOG=/tmp/wateros_P1.log   # 或 os/log、la_local_run_*.log
-
-# 内核 panic 与未知 syscall
-grep -nE 'unsupported: unknown nr=|Panicked at' "$LOG"
-
-# 用户态测例失败
-grep -nE 'testcase busybox .+ fail|Assert Fatal' "$LOG"
-
-# syscall 返回负 errno（ret=-N）
-grep -nE '\[syscall\] nr=[0-9]+ ret=-[0-9]+' "$LOG"
-
-# 将 PC 解析到内核符号（在 os/ 目录下执行）
-make la_symbol_at ADDR=0x90001234
-\end{bashcode}
-
-建议保存完整日志到\code{/tmp/wateros\_P*.log}或\code{os/log}（勿提交git），记录当次\code{BRINGUP\_COMMANDS}注释状态，便于与双架构对比结论一并归档。

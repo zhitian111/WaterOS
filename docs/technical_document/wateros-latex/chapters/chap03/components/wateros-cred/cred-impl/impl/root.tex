@@ -1,25 +1,25 @@
 % 【本文件写什么】impl 实现层：root
-%   - crate 路径：os/components/wateros-cred/cred-impl/impl-root/src/
+% - crate 路径：os/components/wateros-cred/cred-impl/impl-root/src/
 % 【事实来源】
-%   - 上述 crate 源码与 Cargo.toml
-%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+% - 上述 crate 源码与 Cargo.toml
+% - os/feature-tree.txt 中指向本 impl 的 feature 链
 
 \paragraph{PerTaskCredRegistry}
 
 核心结构维护三张\code{BTreeMap}：
 \begin{itemize}
-  \item \code{creds: TaskId -> ProcessCredentials}：owner任务上的凭证快照；
-  \item \code{owners: TaskId -> TaskId}：线程任务到owner的映射；
-  \item \code{ref\_counts: TaskId -> usize}：owner共享引用计数。
+ \item \code{creds: TaskId -> ProcessCredentials}：owner任务上的凭证快照；
+ \item \code{owners: TaskId -> TaskId}：线程任务到owner的映射；
+ \item \code{ref\_counts: TaskId -> usize}：owner共享引用计数。
 \end{itemize}
 
-\code{on\_user\_task\_spawned}为新用户任务插入\code{ProcessCredentials::ROOT}。\code{fork\_cred}复制父快照到子任务独立owner。\code{share\_cred}（线程clone）令子任务指向父owner并递增引用计数；释放时\code{drop\_task\_cred}递减计数，归零后删除\code{creds}条目。\code{on\_exec}当前为空实现，保留\code{TODO(cred-exec-setuid)}。
+\code{on\_user\_task\_spawned}为新用户任务插入\code{ProcessCredentials::ROOT}。\code{fork\_cred}复制父快照到子任务独立owner。\code{share\_cred}，线程clone令子任务指向父owner并递增引用计数；释放时\code{drop\_task\_cred}递减计数，归零后删除\code{creds}条目。\code{on\_exec}当前为空实现，保留\code{TODO(cred-exec-setuid)}。
 
-读取路径\code{cred\_or\_panic}经\code{effective\_owner}解析共享线程；无条目\code{panic}（bring-up root模型）。变更路径\code{cred\_mut\_or\_panic}同理。
+读取路径\code{cred\_or\_panic}经\code{effective\_owner}解析共享线程；无条目\code{panic}，bring-up root模型。变更路径\code{cred\_mut\_or\_panic}同理。
 
 \paragraph{AccessCheck 实现}
 
-\code{has\_cap}：effective uid为0则true，否则false（忽略具体cap类型）。\code{may\_access\_inode}恒true。\code{may\_chown}：root或\code{CAP\_CHOWN}放行；非root须\code{fs\_uid == inode\_uid}，且新uid须等于inode uid或新gid在effective/supplementary组中。
+\code{has\_cap}：effective uid为0则true，否则false，忽略具体cap类型。\code{may\_access\_inode}恒true。\code{may\_chown}：root或\code{CAP\_CHOWN}放行；非root须\code{fs\_uid == inode\_uid}，且新uid须等于inode uid或新gid在effective/supplementary组中。
 
 \paragraph{全局注册表}
 
@@ -27,7 +27,7 @@
 
 \paragraph{聚合门面映射}
 
-\code{impl-root}导出\code{on\_user\_task\_spawned}、\code{fork\_cred}、\code{share\_cred}、\code{on\_exec}、\code{drop\_task\_cred}、\code{current\_credentials\_for}、\code{set\_resuid}等，由聚合\code{wateros-cred/src/lib.rs}再包装为\code{current\_credentials()}、\code{set\_uid}等用户友好API。\code{credentials\_for}无条目时\code{panic}，与bring-up「必有凭证」假设一致。
+\code{impl-root}导出\code{on\_user\_task\_spawned}、\code{fork\_cred}、\code{share\_cred}、\code{on\_exec}、\code{drop\_task\_cred}、\code{current\_credentials\_for}、\code{set\_resuid}等，由聚合\code{wateros-cred/src/lib.rs}再包装为\code{current\_credentials()}、\code{set\_uid}等用户友好API。\code{credentials\_for}无条目时\code{panic}，与bring-up必有凭证假设一致。
 
 \paragraph{已知缺口}
 

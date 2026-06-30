@@ -1,14 +1,14 @@
 % 【本文件写什么】impl 实现层：block-cache
-%   - 定位：写穿 LRU 块缓存装饰器。
-%   - crate 路径：os/components/wateros-driver/driver-block/block-impl/impl-block-cache/src/
-%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
-%   - 算法或硬件交互流程（可用伪代码/流程图）
-%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
-%   - 与其它 impl 变体的差异、切换 feature 时的影响
-%   - 性能/内存假设与已知限制
+% - 定位：写穿 LRU 块缓存装饰器。
+% - crate 路径：os/components/wateros-driver/driver-block/block-impl/impl-block-cache/src/
+% - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+% - 算法或硬件交互流程，可用伪代码/流程图
+% - 本 impl 启用的 Cargo [features] 与 arch feature，impl-riscv64 等
+% - 与其它 impl 变体的差异、切换 feature 时的影响
+% - 性能/内存假设与已知限制
 % 【事实来源】
-%   - 上述 crate 源码与 Cargo.toml
-%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+% - 上述 crate 源码与 Cargo.toml
+% - os/feature-tree.txt 中指向本 impl 的 feature 链
 
 \subsubsection{impl-block-cache}
 
@@ -30,4 +30,4 @@ pub struct CachingBlockDevice {
 }
 \end{rustcode}
 
-\code{BlockCacheManager::default\_config}读取\code{base-config}容量；\code{wrap}返回可直接\code{register\_block\_device}的\code{SharedBlockDevice}。\code{flush\_all}当前恒\code{Ok(())}。单元测试覆盖「同块重复读仅一次底层读」「连续未命中合并读」「写后读命中缓存」等路径。
+\code{BlockCacheManager::default\_config}读取\code{base-config}容量；\code{wrap}返回可直接\code{register\_block\_device}的\code{SharedBlockDevice}。\code{flush\_all}当前恒\code{Ok(())}。单元测试覆盖同块重复读仅一次底层读连续未命中合并读写后读命中缓存等路径。

@@ -1,18 +1,18 @@
-% 【本文件写什么】api-v0 契约层（叶子，只写语义不写实现）
-%   - crate 路径：os/components/wateros-driver/driver-network/network-api/api-v0/src/
-%   - 列出并说明：pub trait、核心类型、错误枚举、常量
-%   - 每个公开 API 的前置条件、后置条件、线程/中断上下文限制
-%   - 与 Linux/用户态约定的对齐点与 deliberate 差异
-%   - v0 版本当前行为与后续可替换 extension 点
+% 【本文件写什么】api-v0 契约层，叶子，只写语义不写实现
+% - crate 路径：os/components/wateros-driver/driver-network/network-api/api-v0/src/
+% - 列出并说明：pub trait、核心类型、错误枚举、常量
+% - 每个公开 API 的前置条件、后置条件、线程/中断上下文限制
+% - 与 Linux/用户态约定的对齐点与 deliberate 差异
+% - v0 版本当前行为与后续可替换 extension 点
 % 【事实来源】
-%   - 上述 crate 下全部 .rs 源文件
-%   - docs/exports/public-api/ 中对应符号表（以源码为准）
+% - 上述 crate 下全部 .rs 源文件
+% - docs/exports/public-api/ 中对应符号表，以源码为准
 % 【不写什么】
-%   - impl 内部数据结构、汇编、具体算法步骤
+% - impl 内部数据结构、汇编、具体算法步骤
 
 \subsubsection{network-api-v0}
 
-\paragraph{NetworkDevice契约。}设备须实现\code{mac\_address}、\code{send}与\code{receive}；\code{send}/\code{receive}操作完整以太网L2帧（含目的/源MAC与EtherType）。\code{mtu}默认\code{DEFAULT\_MTU==1500}；\code{is\_link\_up}默认\code{true}，占位设备可覆盖为\code{false}。\code{receive}在\code{buf}不足以容纳帧时返回\code{InvalidParam}；无数据时允许返回0字节。
+\paragraph{NetworkDevice契约。}设备须实现\code{mac\_address}、\code{send}与\code{receive}；\code{send}/\code{receive}操作完整以太网L2帧，含目的/源MAC与EtherType。\code{mtu}默认\code{DEFAULT\_MTU==1500}；\code{is\_link\_up}默认\code{true}，占位设备可覆盖为\code{false}。\code{receive}在\code{buf}不足以容纳帧时返回\code{InvalidParam}；无数据时允许返回0字节。
 
 \paragraph{全局注册表。}与块子系统相同，\code{register\_network\_device}返回稳定下标；\code{first\_network\_device}供smoltcp\code{init}选取首卡。多网卡场景表可存多实例，但协议栈v0仅绑定首张注册网卡。
 
@@ -28,4 +28,4 @@ pub trait NetworkDevice: Send {
 }
 \end{rustcode}
 
-\paragraph{与协议栈边界。}本crate不定义IP/socket语义；\code{impl-smoltcp}通过\code{SmoltcpAdapter}实现\code{smoltcp::phy::Device}，在token生命周期内完成帧搬运。错误仍用\code{DriverError}，socket层使用\code{\&'static str}短消息（见\code{stack}模块）。
+\paragraph{与协议栈边界。}本crate不定义IP/socket语义；\code{impl-smoltcp}通过\code{SmoltcpAdapter}实现\code{smoltcp::phy::Device}，在token生命周期内完成帧搬运。错误仍用\code{DriverError}，socket层使用\code{\&'static str}短消息，见 \code{stack} 模块。

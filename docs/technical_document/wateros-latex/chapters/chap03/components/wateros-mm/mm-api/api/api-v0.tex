@@ -1,14 +1,14 @@
-% 【本文件写什么】api-v0 契约层（叶子，只写语义不写实现）
-%   - crate 路径：os/components/wateros-mm/mm-api/api-v0/src/
-%   - 列出并说明：pub trait、核心类型、错误枚举、常量
-%   - 每个公开 API 的前置条件、后置条件、线程/中断上下文限制
-%   - 与 Linux/用户态约定的对齐点与 deliberate 差异
-%   - v0 版本当前行为与后续可替换 extension 点
+% 【本文件写什么】api-v0 契约层，叶子，只写语义不写实现
+% - crate 路径：os/components/wateros-mm/mm-api/api-v0/src/
+% - 列出并说明：pub trait、核心类型、错误枚举、常量
+% - 每个公开 API 的前置条件、后置条件、线程/中断上下文限制
+% - 与 Linux/用户态约定的对齐点与 deliberate 差异
+% - v0 版本当前行为与后续可替换 extension 点
 % 【事实来源】
-%   - 上述 crate 下全部 .rs 源文件
-%   - docs/exports/public-api/ 中对应符号表（以源码为准）
+% - 上述 crate 下全部 .rs 源文件
+% - docs/exports/public-api/ 中对应符号表，以源码为准
 % 【不写什么】
-%   - impl 内部数据结构、汇编、具体算法步骤
+% - impl 内部数据结构、汇编、具体算法步骤
 
 \subsubsection{地址、权限与错误}
 
@@ -18,7 +18,7 @@
 
 \code{AddressSpaceOps}是页表操作的语义核心：\code{map\_page\_to\_ppn}、\code{unmap\_page\_to\_ppn}、\code{protect\_page}、\code{translate\_addr}、\code{satp\_value}。默认方法\code{map\_page\_with\_alloc}委托\code{PhysicalFrameAllocator}分配帧后映射。\code{fork}默认返回\code{Unsupported}，真实 fork 由\code{mm-impl}覆盖。
 
-\code{MmapOps}在\code{AddressSpaceOps}之上扩展\code{mmap}、\code{munmap}、\code{mprotect}、\code{mremap}（Linux 语义子集）、\code{handle\_page\_fault}（惰性文件/匿名缺页）。\code{MmapRequest}携带\code{addr\_hint}、\code{len}、\code{prot}、\code{flags}、\code{MmapKind::Anonymous | File}。\code{DemandPageLoader} trait 供文件懒映射与 fork 后 loader 复制。
+\code{MmapOps}在\code{AddressSpaceOps}之上扩展\code{mmap}、\code{munmap}、\code{mprotect}、\code{mremap}，Linux 语义子集、\code{handle\_page\_fault}，惰性文件/匿名缺页。\code{MmapRequest}携带\code{addr\_hint}、\code{len}、\code{prot}、\code{flags}、\code{MmapKind::Anonymous | File}。\code{DemandPageLoader} trait 供文件懒映射与 fork 后 loader 复制。
 
 \begin{rustcode}
 pub trait MmapOps: AddressSpaceOps {
@@ -38,6 +38,6 @@ pub trait MmapOps: AddressSpaceOps {
 
 \code{brk::HeapBrk}描述堆区间\code{BrkRegion}与\code{brk(new\_end)}语义：跨越新页时须分配并映射整页，默认权限 R/W/U。\code{user\_access::UserMemoryOps}定义 syscall 路径对用户缓冲区的读写字节序列与\code{probe}诊断接口，须在当前任务已安装的用户地址空间上下文中调用。
 
-\code{kernel\_bringup}定义\code{LoadedElf}（入口 PC、映像区间、栈界、\code{user\_aspace\_ptr}、\code{satp} token）、\code{LoadElfError}、\code{LoadProgramError}（含 shebang 解析）。\code{elf\_user\_stack}按 RISC-V 用户栈布局写入 argc/argv/envp/auxv。\code{kernel\_satp}缓存内核地址空间 token。\code{user\_aspace\_lifecycle}注册任务 exit 时释放用户地址空间的钩子。\code{mempolicy}为单节点 NUMA 桩，满足\code{get\_mempolicy}返回值约定。
+\code{kernel\_bringup}定义\code{LoadedElf}，含入口 PC、映像区间、栈界、\code{user\_aspace\_ptr}、\code{satp} token，以及 \code{LoadElfError}、\code{LoadProgramError}，含 shebang 解析。\code{elf\_user\_stack}按 RISC-V 用户栈布局写入 argc/argv/envp/auxv。\code{kernel\_satp}缓存内核地址空间 token。\code{user\_aspace\_lifecycle}注册任务 exit 时释放用户地址空间的钩子。\code{mempolicy}为单节点 NUMA 桩，满足\code{get\_mempolicy}返回值约定。
 
 \code{PhysicalFrameAllocator} trait 定义于本 crate 的\code{frame\_allocator}模块，帧标识类型与\code{PhysPageNum}对齐；具体分配器在\code{frame-alloctor}子系统中实现。

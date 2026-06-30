@@ -1,14 +1,14 @@
-% 【本文件写什么】api-v0 契约层（叶子，只写语义不写实现）
-%   - crate 路径：os/components/wateros-cred/cred-api/api-v0/src/
-%   - 列出并说明：pub trait、核心类型、错误枚举、常量
-%   - 每个公开 API 的前置条件、后置条件、线程/中断上下文限制
-%   - 与 Linux/用户态约定的对齐点与 deliberate 差异
-%   - v0 版本当前行为与后续可替换 extension 点
+% 【本文件写什么】api-v0 契约层，叶子，只写语义不写实现
+% - crate 路径：os/components/wateros-cred/cred-api/api-v0/src/
+% - 列出并说明：pub trait、核心类型、错误枚举、常量
+% - 每个公开 API 的前置条件、后置条件、线程/中断上下文限制
+% - 与 Linux/用户态约定的对齐点与 deliberate 差异
+% - v0 版本当前行为与后续可替换 extension 点
 % 【事实来源】
-%   - 上述 crate 下全部 .rs 源文件
-%   - docs/exports/public-api/ 中对应符号表（以源码为准）
+% - 上述 crate 下全部 .rs 源文件
+% - docs/exports/public-api/ 中对应符号表，以源码为准
 % 【不写什么】
-%   - impl 内部数据结构、汇编、具体算法步骤
+% - impl 内部数据结构、汇编、具体算法步骤
 
 \paragraph{基础类型}
 
@@ -16,15 +16,15 @@
 
 \paragraph{ProcessCredentials}
 
-快照包含八ID（real/effective/saved/fs的uid与gid）及最多32个supplementary组。\code{ROOT}常量：全部ID为0，\code{supplementary\_group\_len = 1}且组为\code{[0]}。
+快照包含八ID，real/effective/saved/fs的uid与gid及最多32个supplementary组。\code{ROOT}常量：全部ID为0，\code{supplementary\_group\_len = 1}且组为\code{[0]}。
 
-实例方法实现privileged语义的ID更新（与Linux\code{set*id}对齐）：
+实例方法实现privileged语义的ID更新，与Linux \code{set*id} 对齐：
 \begin{itemize}
-  \item \code{set\_uid}/\code{set\_gid}：四处ID一并更新；
-  \item \code{set\_reuid}/\code{set\_regid}：\code{None}表示Linux \code{-1}保持不变，并同步saved/fs；
-  \item \code{set\_resuid}/\code{set\_resgid}：含saved三元组；
-  \item \code{set\_supplementary\_groups}：替换组列表；
-  \item \code{supplementary\_group\_count()}：供\syscall{getgroups(0)}返回计数。
+ \item \code{set\_uid}/\code{set\_gid}：四处ID一并更新；
+ \item \code{set\_reuid}/\code{set\_regid}：\code{None}表示Linux \code{-1}保持不变，并同步saved/fs；
+ \item \code{set\_resuid}/\code{set\_resgid}：含saved三元组；
+ \item \code{set\_supplementary\_groups}：替换组列表；
+ \item \code{supplementary\_group\_count()}：供\syscall{getgroups(0)}返回计数。
 \end{itemize}
 
 \paragraph{Capability}
@@ -33,7 +33,7 @@
 
 \paragraph{CredentialBackend}
 
-\code{current(tid)}读取指定任务快照（无条目时由impl决定，\code{impl-root}为\code{panic}）。生命周期：\code{on\_user\_task\_spawned}、\code{fork\_cred}、\code{on\_exec}、\code{drop\_task\_cred}。须在任务上下文或明确的spawn/reap路径调用；不可从中断上下文无保护地变更侧表。
+\code{current(tid)}读取指定任务快照；无条目时由impl决定，\code{impl-root} 为 \code{panic}。生命周期：\code{on\_user\_task\_spawned}、\code{fork\_cred}、\code{on\_exec}、\code{drop\_task\_cred}。须在任务上下文或明确的spawn/reap路径调用；不可从中断上下文无保护地变更侧表。
 
 \paragraph{CredentialMutation}
 
@@ -45,4 +45,4 @@ per-task的\code{set\_resuid}、\code{set\_resgid}、\code{set\_supplementary\_g
 
 \paragraph{版本与差异}
 
-v0对齐Linux cred子集，不含namespace、securebits、完整cap位图。\code{on\_exec}契约保留S\_ISUID/S\_ISGID解析扩展点（\code{TODO(cred-exec-setuid)}），当前impl为no-op。
+v0对齐Linux cred子集，不含namespace、securebits、完整cap位图。\code{on\_exec}契约保留S\_ISUID/S\_ISGID解析扩展点，即 \code{TODO(cred-exec-setuid)}，当前impl为no-op。

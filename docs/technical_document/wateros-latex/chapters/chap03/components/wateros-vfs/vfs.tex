@@ -1,21 +1,21 @@
-% 【本文件写什么】一级组件 wateros-vfs（§ 级聚合）
-%   - 组件职责与在内核中的位置：虚拟文件系统：fd 表、页缓存、与 fs 桥接。
-%   - 聚合 crate os/components/wateros-vfs/src/lib.rs 的 pub mod 树与对外导出面
-%   - 子模块划分、与相邻组件的依赖边界（谁依赖谁、走哪条门面）
-%   - 根 feature / 本组件 Cargo.toml feature 如何选用各 impl
-%   - 1～2 段综述后，由下方 \input 展开子模块；不在此逐条列举 api trait
+% 【本文件写什么】一级组件 wateros-vfs，§ 级聚合
+% - 组件职责与在内核中的位置：虚拟文件系统：fd 表、页缓存、与 fs 桥接。
+% - 聚合 crate os/components/wateros-vfs/src/lib.rs 的 pub mod 树与对外导出面
+% - 子模块划分、与相邻组件的依赖边界，谁依赖谁、走哪条门面
+% - 根 feature / 本组件 Cargo.toml feature 如何选用各 impl
+% - 1～2 段综述后，由下方 \input 展开子模块；不在此逐条列举 api trait
 % 【事实来源】
-%   - os/components/wateros-vfs/src/lib.rs、Cargo.toml
-%   - docs/exports/public-api/wateros-vfs.md
-%   - docs/exports/features/wateros-vfs.md
-%   - os/feature-tree.txt 中 wateros-vfs 相关段
+% - os/components/wateros-vfs/src/lib.rs、Cargo.toml
+% - docs/exports/public-api/wateros-vfs.md
+% - docs/exports/features/wateros-vfs.md
+% - os/feature-tree.txt 中 wateros-vfs 相关段
 % 【不写什么】
-%   - api-v0 契约细节 → 子目录 api/api-v0.tex
-%   - 各 impl 算法/平台细节 → 子目录 impl/*.tex
+% - api-v0 契约细节 至 子目录 api/api-v0.tex
+% - 各 impl 算法/平台细节 至 子目录 impl/*.tex
 
 \section{虚拟文件系统组件}
 
-虚拟文件系统叠在文件系统组件与系统调用之间，把「路径上的操作」和「每个进程手里的 fd」分开处理。它负责路径规范化、挂载表路由、普通文件的页缓存，以及每任务的工作目录和 fd 表；管道端点和部分字符设备也在这里落成可 read/write 的句柄。块格式与 ext4 细节不在这个组件里，由桥接层转调文件系统组件。
+虚拟文件系统叠在文件系统组件与系统调用之间，把路径上的操作和每个进程手里的 fd分开处理。它负责路径规范化、挂载表路由、普通文件的页缓存，以及每任务的工作目录和 fd 表；管道端点和部分字符设备也在这里落成可 read/write 的句柄。块格式与 ext4 细节不在这个组件里，由桥接层转调文件系统组件。
 
 对用户程序来说，打开、读写、目录遍历和管道最终都落到本组件的门面；对下则把 ext4 根卷、设备目录和 proc 视图拼成统一后端。占位 feature 只保证链接通过，没有真实 I/O；主线启用桥接与 fd 会话实现后，才接上根卷读写和 per-task 状态。
 

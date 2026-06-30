@@ -1,16 +1,16 @@
-% 【本文件写什么】子模块 runtime-panic（\subsection 级聚合）
-%   - 职责摘要：panic 处理与回溯输出路径。
-%   - 子域聚合 lib.rs：os/components/wateros-runtime/runtime-panic/src/lib.rs
-%   - 如何重导出 api-v0、feature 下挂载哪些 impl
-%   - 被谁依赖（syscall、vfs、main 启动链等）
-%   - 短综述 + 下方 \input 展开 api 与 impl 叶子
+% 【本文件写什么】子模块 runtime-panic，\subsection 级聚合
+% - 职责摘要：panic 处理与回溯输出路径。
+% - 子域聚合 lib.rs：os/components/wateros-runtime/runtime-panic/src/lib.rs
+% - 如何重导出 api-v0、feature 下挂载哪些 impl
+% - 被谁依赖，syscall、vfs、main 启动链等
+% - 短综述 + 下方 \input 展开 api 与 impl 叶子
 % 【事实来源】
-%   - os/components/wateros-runtime/runtime-panic/
-%   - docs/exports/ 中与 wateros-runtime 相关的 public-api / features 章节
+% - os/components/wateros-runtime/runtime-panic/
+% - docs/exports/ 中与 wateros-runtime 相关的 public-api / features 章节
 
 \subsection{runtime-panic}
 
-\code{wateros-runtime-panic}提供根crate挂接的\code{panic\_handler}：优先打印源码位置（\code{file:line}）与panic消息，以\code{AnsiColor}着色横幅；随后循环调用\code{platform::reset::shutdown(PlatformResetReason::SystemFailure)}直至成功，最后在\code{loop \{\}}挂起以满足\code{!}返回类型。控制台未就绪时仍尽力格式化输出，但可能无显示。
+\code{wateros-runtime-panic}提供根crate挂接的\code{panic\_handler}：优先打印源码位置，即 \code{file:line}，与panic消息，以\code{AnsiColor}着色横幅；随后循环调用\code{platform::reset::shutdown(PlatformResetReason::SystemFailure)}直至成功，最后在\code{loop \{\}}挂起以满足\code{!}返回类型。控制台未就绪时仍尽力格式化输出，但可能无显示。
 
 依赖\code{impl-platform-console} feature链入\code{runtime-console}与\code{platform::reset}；\code{impl-dummy}控制台路径下panic打印本身可能触发\code{unimplemented!()}，因此生产构建须与平台控制台配对启用。
 

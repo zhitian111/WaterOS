@@ -1,18 +1,18 @@
-% 【本文件写什么】子模块 driver-block（\subsection 级聚合）
-%   - 职责摘要：块设备子系统：VirtIO、块缓存与设备枚举。
-%   - 子域聚合 lib.rs：os/components/wateros-driver/driver-block/src/lib.rs
-%   - 如何重导出 api-v0、feature 下挂载哪些 impl
-%   - 被谁依赖（syscall、vfs、main 启动链等）
-%   - 短综述 + 下方 \input 展开 api 与 impl 叶子
+% 【本文件写什么】子模块 driver-block，\subsection 级聚合
+% - 职责摘要：块设备子系统：VirtIO、块缓存与设备枚举。
+% - 子域聚合 lib.rs：os/components/wateros-driver/driver-block/src/lib.rs
+% - 如何重导出 api-v0、feature 下挂载哪些 impl
+% - 被谁依赖，syscall、vfs、main 启动链等
+% - 短综述 + 下方 \input 展开 api 与 impl 叶子
 % 【事实来源】
-%   - os/components/wateros-driver/driver-block/
-%   - docs/exports/ 中与 wateros-driver 相关的 public-api / features 章节
+% - os/components/wateros-driver/driver-block/
+% - docs/exports/ 中与 wateros-driver 相关的 public-api / features 章节
 
 \subsection{driver-block}
 
-\code{driver-block}再导出\code{wateros-driver-block-api-v0}全部符号，并维护\code{BLOCK\_SUPPORTED\_DEVICES}静态绑定表（\code{virtio,mmio}、\code{pci1af4,1001}、\code{pci1af4,1042}）。\code{block\_subsystem\_claims\_device}在DTB扫描阶段按\code{compatible}列表与已探测\code{DeviceType::Block}判断是否由块子系统认领，不含具体初始化成败。
+\code{driver-block}再导出\code{wateros-driver-block-api-v0}全部符号，并维护\code{BLOCK\_SUPPORTED\_DEVICES}静态绑定表，含 \code{virtio,mmio}、\code{pci1af4,1001}、\code{pci1af4,1042}。\code{block\_subsystem\_claims\_device}在DTB扫描阶段按\code{compatible}列表与已探测\code{DeviceType::Block}判断是否由块子系统认领，不含具体初始化成败。
 
-feature链：\code{impl-virtio-mmio}导出\code{VirtioBlkDevice}；\code{impl-virtio-pci}导出\code{VirtioPciBlkDevice}与BAR分配器；\code{impl-block-cache}导出\code{CachingBlockDevice}与\code{BlockCacheManager}。平台\code{init\_after\_boot}在握手成功后调用\code{register\_block\_device}；\code{wateros-fs}经\code{first\_block\_device}绑定根卷，devfs以注册下标生成\code{/dev/vblk*}路径。当前syscall与VFS策略仍以「首块设备」为主，全局表虽支持多实例。
+feature链：\code{impl-virtio-mmio}导出\code{VirtioBlkDevice}；\code{impl-virtio-pci}导出\code{VirtioPciBlkDevice}与BAR分配器；\code{impl-block-cache}导出\code{CachingBlockDevice}与\code{BlockCacheManager}。平台\code{init\_after\_boot}在握手成功后调用\code{register\_block\_device}；\code{wateros-fs}经\code{first\_block\_device}绑定根卷，devfs以注册下标生成\code{/dev/vblk*}路径。当前syscall与VFS策略仍以首块设备为主，全局表虽支持多实例。
 
 \input{chapters/chap03/components/wateros-driver/driver-block/block-api/api/api-v0}
 \input{chapters/chap03/components/wateros-driver/driver-block/block-impl/impl/block-cache}

@@ -48,6 +48,7 @@ LaTeX 写作约定（与 `test.tex` / `setup/doc-macros.tex` 一致）：
 - 表格用 `longtable` + `booktabs`（`\toprule` 等）
 - **保留**文件顶部 `%` 写作说明注释；大改后运行 `annotate-tex-files.py` 仅更新说明、不覆盖正文
 - 不写毕设/论文套话；语气为技术方案说明
+- **正文文风**：除代码块外，不用括号作插入说明，改用完整句子直述；不用箭头、日式引号等非正式符号，可用“至”“经”“对应”等文字表述因果或顺序
 - 事实以源码与 `docs/exports/` 为准；与 `docs/technical_document/test.tex` 冲突时以**当前仓库源码**为准并更新 LaTeX
 
 母本文稿：`docs/technical_document/test.tex`（可用 `wateros-latex/scripts/extract-chapters-from-test.py` 重新拆章，拆后须再核对与源码一致性）。

@@ -1,8 +1,8 @@
-% 【本文件写什么】独立子 crate（无 api/impl 目录树）：base-config
-%   - 职责：base 配置子 crate，无 api/impl 分叉。
-%   - 源码：os/components/wateros-base/base-config/src/
+% 【本文件写什么】独立子 crate，无 api/impl 目录树：base-config
+% - 职责：base 配置子 crate，无 api/impl 分叉。
+% - 源码：os/components/wateros-base/base-config/src/
 % 【事实来源】
-%   - os/components/wateros-base/base-config/、父组件 src/lib.rs
+% - os/components/wateros-base/base-config/、父组件 src/lib.rs
 
 \subsection{base-config}
 
@@ -10,10 +10,10 @@
 
 聚合\code{src/lib.rs}导出四模块：
 \begin{itemize}
-  \item \code{addr}：\code{BasePhysAddr}、\code{BaseVirtAddr}、\code{BasePPN}、\code{BaseVPN}（\code{repr(C)}，\code{val: usize}）。\code{BasePhysAddr}/\code{BaseVirtAddr}实现\code{Into<*mut T>}薄转换，不校验对齐或映射有效性；
-  \item \code{boot}：\code{DTBPA = BasePhysAddr}，设备树物理基址类型别名；
-  \item \code{cpu}：\code{CPUHartID = usize}；
-  \item \code{sync}：\code{UniprocessorSafeCell<T>}，单核\code{RefCell}包装，\code{unsafe fn new}与\code{exclusive\_access() -> RefMut}。多hart或抢占并发须用平台锁，勿误用此容器。
+ \item \code{addr}：\code{BasePhysAddr}、\code{BaseVirtAddr}、\code{BasePPN}、\code{BaseVPN}，均为 \code{repr(C)}，字段 \code{val: usize}。\code{BasePhysAddr}/\code{BaseVirtAddr}实现\code{Into<*mut T>}薄转换，不校验对齐或映射有效性；
+ \item \code{boot}：\code{DTBPA = BasePhysAddr}，设备树物理基址类型别名；
+ \item \code{cpu}：\code{CPUHartID = usize}；
+ \item \code{sync}：\code{UniprocessorSafeCell<T>}，单核\code{RefCell}包装，\code{unsafe fn new}与\code{exclusive\_access() -> RefMut}。多hart或抢占并发须用平台锁，勿误用此容器。
 \end{itemize}
 
 \paragraph{wateros-base-config 常量层}
@@ -22,11 +22,11 @@
 
 \code{syscall}：\code{MAX\_SYSCALL\_ARGS = 6}，与陷阱帧及\code{SyscallArgs}数组长度一致。
 
-\code{mm}：内核堆\code{KERNEL\_HEAP\_SIZE = 1 << 27}（128MiB）；QEMU \code{virt}物理RAM区间\code{0x8000\_0000}--\code{0xC000\_0000}；MMIO半开区间\code{0x1000\_0000}--\code{0x1200\_0000}。真机或自定义\code{-m}应以DTB为准，此处为bring-up回退。
+\code{mm}：内核堆\code{KERNEL\_HEAP\_SIZE = 1 << 27}，128MiB；QEMU \code{virt}物理RAM区间\code{0x8000\_0000}--\code{0xC000\_0000}；MMIO半开区间\code{0x1000\_0000}--\code{0x1200\_0000}。真机或自定义\code{-m}应以DTB为准，此处为bring-up回退。
 
 \code{ipc}：\code{DEFAULT\_PIPE\_CAPACITY = 4096}。
 
-\code{fs}：页缓存\code{FILE\_PAGE\_SIZE = 4096}、大文件阈值64KiB、全局页缓存4096槽、读预取步长8页、\code{FileIoMode::Direct}（\code{Async}在配置层存在但v1未实现）、块设备LBA缓存1024块。
+\code{fs}：页缓存\code{FILE\_PAGE\_SIZE = 4096}、大文件阈值64KiB、全局页缓存4096槽、读预取步长8页、\code{FileIoMode::Direct}，\code{Async} 在配置层存在但 v1 未实现，块设备LBA缓存1024块。
 
 \code{task}：定时器周期10ms、普通任务最大50 tick、RR任务最大10 tick、ready队列stale compact阈值8。
 

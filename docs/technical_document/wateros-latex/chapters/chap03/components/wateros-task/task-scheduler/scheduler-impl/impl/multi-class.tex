@@ -1,18 +1,18 @@
 % 【本文件写什么】impl 实现层：multi-class
-%   - 定位：多级就绪队列调度策略。
-%   - crate 路径：os/components/wateros-task/task-scheduler/scheduler-impl/impl-multi-class/src/
-%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
-%   - 算法或硬件交互流程（可用伪代码/流程图）
-%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
-%   - 与其它 impl 变体的差异、切换 feature 时的影响
-%   - 性能/内存假设与已知限制
+% - 定位：多级就绪队列调度策略。
+% - crate 路径：os/components/wateros-task/task-scheduler/scheduler-impl/impl-multi-class/src/
+% - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+% - 算法或硬件交互流程，可用伪代码/流程图
+% - 本 impl 启用的 Cargo [features] 与 arch feature，impl-riscv64 等
+% - 与其它 impl 变体的差异、切换 feature 时的影响
+% - 性能/内存假设与已知限制
 % 【事实来源】
-%   - 上述 crate 源码与 Cargo.toml
-%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+% - 上述 crate 源码与 Cargo.toml
+% - os/feature-tree.txt 中指向本 impl 的 feature 链
 
-\subsubsection{impl-multi-class（默认）}
+\subsubsection{impl-multi-class，默认}
 
-\code{MultiClassScheduler}组合\code{TaskRegistry}、\code{WaitQueues}、\code{OtherReadyQueue}（\code{SCHED\_OTHER}）、\code{RtFifoRunQueue}（\code{SCHED\_FIFO}）、\code{RtRrRunQueue}（\code{SCHED\_RR}）。
+\code{MultiClassScheduler}组合\code{TaskRegistry}、\code{WaitQueues}、\code{OtherReadyQueue}，对应 \code{SCHED\_OTHER}、\code{RtFifoRunQueue}，对应 \code{SCHED\_FIFO}、\code{RtRrRunQueue}，对应 \code{SCHED\_RR}。
 
 入队策略：\code{enqueue\_ready\_by\_policy}按任务快照的\code{sched\_policy}分派到对应队列；阻塞/睡眠唤醒后经\code{drain\_staging}重新入队。
 

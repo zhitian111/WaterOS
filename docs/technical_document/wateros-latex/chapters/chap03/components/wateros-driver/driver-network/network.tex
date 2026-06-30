@@ -1,16 +1,16 @@
-% 【本文件写什么】子模块 driver-network（\subsection 级聚合）
-%   - 职责摘要：网络设备与 smoltcp 协议栈对接。
-%   - 子域聚合 lib.rs：os/components/wateros-driver/driver-network/src/lib.rs
-%   - 如何重导出 api-v0、feature 下挂载哪些 impl
-%   - 被谁依赖（syscall、vfs、main 启动链等）
-%   - 短综述 + 下方 \input 展开 api 与 impl 叶子
+% 【本文件写什么】子模块 driver-network，\subsection 级聚合
+% - 职责摘要：网络设备与 smoltcp 协议栈对接。
+% - 子域聚合 lib.rs：os/components/wateros-driver/driver-network/src/lib.rs
+% - 如何重导出 api-v0、feature 下挂载哪些 impl
+% - 被谁依赖，syscall、vfs、main 启动链等
+% - 短综述 + 下方 \input 展开 api 与 impl 叶子
 % 【事实来源】
-%   - os/components/wateros-driver/driver-network/
-%   - docs/exports/ 中与 wateros-driver 相关的 public-api / features 章节
+% - os/components/wateros-driver/driver-network/
+% - docs/exports/ 中与 wateros-driver 相关的 public-api / features 章节
 
 \subsection{driver-network}
 
-\code{driver-network}再导出\code{wateros-driver-network-api-v0}，并维护\code{NETWORK\_SUPPORTED\_DEVICES}（\code{virtio,mmio}、\code{pci1af4,1000}、\code{pci1af4,1041}）。feature\code{impl-virtio-mmio}/\code{impl-virtio-pci}提供网卡驱动；\code{impl-smoltcp}提供\code{SmoltcpAdapter}、内联\code{stack}模块与\code{socket\_handles} VFS桥。
+\code{driver-network}再导出\code{wateros-driver-network-api-v0}，并维护\code{NETWORK\_SUPPORTED\_DEVICES}，含 \code{virtio,mmio}、\code{pci1af4,1000}、\code{pci1af4,1041}。feature\code{impl-virtio-mmio}/\code{impl-virtio-pci}提供网卡驱动；\code{impl-smoltcp}提供\code{SmoltcpAdapter}、内联\code{stack}模块与\code{socket\_handles} VFS桥。
 
 初始化顺序：平台\code{init\_after\_boot}注册\code{NetworkDevice}后，任务或syscall层调用\code{network::stack::init(ip, gateway)}创建全局\code{NetworkStack}；网络poller任务周期性\code{poll\_at\_millis}。无网卡时\code{init}降级为\code{SmoltcpAdapter::loopback\_only}，仍配置\code{127.0.0.0/8}与本地子网路由，支撑iperf/netperf对\code{127.0.0.1}的测程。\code{socket\_handles}在\code{impl-smoltcp} feature下实现\code{VfsIoHandle}，将TCP/UDP fd与smoltcp\code{SocketHandle}关联。
 

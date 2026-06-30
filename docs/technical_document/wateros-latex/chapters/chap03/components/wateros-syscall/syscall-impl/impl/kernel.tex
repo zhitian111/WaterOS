@@ -1,47 +1,47 @@
 % 【本文件写什么】impl 实现层：kernel
-%   - 定位：内核内建伪 FS / rootfs 逻辑（devfs、procfs、rootfs）。
-%   - crate 路径：os/components/wateros-syscall/syscall-impl/impl-kernel/src/
-%   - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
-%   - 算法或硬件交互流程（可用伪代码/流程图）
-%   - 本 impl 启用的 Cargo [features] 与 arch feature（impl-riscv64 等）
-%   - 与其它 impl 变体的差异、切换 feature 时的影响
-%   - 性能/内存假设与已知限制
+% - 定位：内核内建伪 FS / rootfs 逻辑，devfs、procfs、rootfs。
+% - crate 路径：os/components/wateros-syscall/syscall-impl/impl-kernel/src/
+% - 如何实现对应 api-v0 trait：关键类型、状态机、数据结构
+% - 算法或硬件交互流程，可用伪代码/流程图
+% - 本 impl 启用的 Cargo [features] 与 arch feature，impl-riscv64 等
+% - 与其它 impl 变体的差异、切换 feature 时的影响
+% - 性能/内存假设与已知限制
 % 【事实来源】
-%   - 上述 crate 源码与 Cargo.toml
-%   - os/feature-tree.txt 中指向本 impl 的 feature 链
+% - 上述 crate 源码与 Cargo.toml
+% - os/feature-tree.txt 中指向本 impl 的 feature 链
 
 \paragraph{分发架构}
 
-\code{KernelSyscallDispatcher}实现\code{SyscallDispatcher}，关联\code{ActiveSyscallNumberTable}（主线为\code{LinuxGeneric64}）。热路径\code{dispatch\_syscall\_by\_nr}（\code{syscall\_nr\_dispatch.rs}）对号表收录的裸号做单次\code{match}，直接调用对应\code{dispatch\_*}；未命中时先走\code{dispatch\_syscall\_aliases}处理旁路号，再返回\code{-ENOSYS}。
+\code{KernelSyscallDispatcher}实现\code{SyscallDispatcher}，关联\code{ActiveSyscallNumberTable}，主线为 \code{LinuxGeneric64}。热路径\code{dispatch\_syscall\_by\_nr}，见 \code{syscall\_nr\_dispatch.rs}，对号表收录的裸号做单次\code{match}，直接调用对应\code{dispatch\_*}；未命中时先走\code{dispatch\_syscall\_aliases}处理旁路号，再返回\code{-ENOSYS}。
 
-旁路号包括\code{statx}(291)、\code{fstatat}(79)、\code{faccessat2}(439)、\code{close\_range}(436)、\code{setgroups}(159)、\code{sched\_setattr/getattr}、\code{adjtimex}/\code{clock\_adjtime}、\code{acct}，以及xattr裸号5--16（\code{setxattr}至\code{fremovexattr}）。这些号在\code{LinuxGeneric64}表中有定义但分发路径单独处理，避免与主\code{match}重复。
+旁路号包括\code{statx}，291、\code{fstatat}，79、\code{faccessat2}，439、\code{close\_range}，436、\code{setgroups}，159、\code{sched\_setattr/getattr}、\code{adjtimex}/\code{clock\_adjtime}、\code{acct}，以及xattr裸号5--16，\code{setxattr} 至 \code{fremovexattr}。这些号在\code{LinuxGeneric64}表中有定义但分发路径单独处理，避免与主\code{match}重复。
 
-各\code{dispatch\_*}内联转发到\code{sys::sys\_*}，返回值取\code{UserRet}编码后的\code{.0}。未在\code{impl-kernel}覆盖的槽位覆盖\code{dispatch\_unsupported}为\code{panic}（bring-up策略），与trait默认的\code{-ENOSYS}不同。
+各\code{dispatch\_*}内联转发到\code{sys::sys\_*}，返回值取\code{UserRet}编码后的\code{.0}。未在\code{impl-kernel}覆盖的槽位覆盖\code{dispatch\_unsupported}为\code{panic}，bring-up策略，与trait默认的\code{-ENOSYS}不同。
 
 \paragraph{sys 模块划分}
 
 \code{sys/mod.rs}按域组织实现文件，代表性覆盖包括：
 \begin{itemize}
-  \item 文件与目录：\code{read}、\code{write}、\code{openat}、\code{close}、\code{lseek}、\code{fcntl}、\code{getdents64}、\code{mount}、\code{umount2}、openat/linkat等at族syscall、xattr、\code{stat}/\code{fstat}/\code{statx}、截断与\code{fallocate}；
-  \item 内存：\code{brk}、\code{mmap}族、\code{mprotect}、\code{mremap}、\code{madvise}、\code{mlock*}、\code{get\_mempolicy}、SysV\code{shm}子集；
-  \item 进程/线程：\code{clone}/\code{clone3}、\code{execve}、\code{exit}/\code{exit\_group}、\code{waitpid}/\code{waitid}、\code{getpid}族、\code{sched\_*}、\code{unshare}（\code{CLONE\_NEWNS}）、robust futex列表；
-  \item 凭证：\code{cred.rs}经\code{wateros-cred}门面处理\code{getuid}族与\code{set*id}；\code{cap.rs}提供\code{capget}/\code{capset}最小桩；
-  \item 信号/同步：\code{futex}、\code{rt\_sig*}、\code{kill}/\code{tkill}/\code{tgkill}、\code{nanosleep}/\code{clock\_nanosleep}；
-  \item 多路复用：\code{poll}/\code{ppoll}/\code{select}/\code{pselect6}、\code{epoll\_*}（\code{poll\_engine}、\code{epoll\_fd}协作）；
-  \item 网络：INET socket全族与\code{AF\_UNIX}（\code{socket\_fd}、\code{socket\_block}、\code{unix\_sock}）；
-  \item 杂项：\code{syslog}转发\code{klog}、\code{sysinfo}、\code{uname}、\code{prctl}子集、\code{getrandom}、LTP fast-exit协作（\code{ltp\_cgroup\_helper}、\code{bringup\_stats}）。
+ \item 文件与目录：\code{read}、\code{write}、\code{openat}、\code{close}、\code{lseek}、\code{fcntl}、\code{getdents64}、\code{mount}、\code{umount2}、openat/linkat等at族syscall、xattr、\code{stat}/\code{fstat}/\code{statx}、截断与\code{fallocate}；
+ \item 内存：\code{brk}、\code{mmap}族、\code{mprotect}、\code{mremap}、\code{madvise}、\code{mlock*}、\code{get\_mempolicy}、SysV\code{shm}子集；
+ \item 进程/线程：\code{clone}/\code{clone3}、\code{execve}、\code{exit}/\code{exit\_group}、\code{waitpid}/\code{waitid}、\code{getpid}族、\code{sched\_*}、\code{unshare}，含 \code{CLONE\_NEWNS}，robust futex列表；
+ \item 凭证：\code{cred.rs}经\code{wateros-cred}门面处理\code{getuid}族与\code{set*id}；\code{cap.rs}提供\code{capget}/\code{capset}最小桩；
+ \item 信号/同步：\code{futex}、\code{rt\_sig*}、\code{kill}/\code{tkill}/\code{tgkill}、\code{nanosleep}/\code{clock\_nanosleep}；
+ \item 多路复用：\code{poll}/\code{ppoll}/\code{select}/\code{pselect6}、\code{epoll\_*}，\code{poll\_engine} 与 \code{epoll\_fd} 协作；
+ \item 网络：INET socket全族与\code{AF\_UNIX}，含 \code{socket\_fd}、\code{socket\_block}、\code{unix\_sock}；
+ \item 杂项：\code{syslog}转发\code{klog}、\code{sysinfo}、\code{uname}、\code{prctl}子集、\code{getrandom}、LTP fast-exit协作，含 \code{ltp\_cgroup\_helper}、\code{bringup\_stats}。
 \end{itemize}
 
 \paragraph{trap协作}
 
 除syscall分发外，本crate导出：
 \begin{itemize}
-  \item \code{timer\_tick(interrupted\_user)}：时钟tick，协作信号与调度；
-  \item \code{deliver\_pending\_signal}、\code{restore\_signal\_frame}：信号帧投递与恢复；
-  \item \code{raise\_current\_signal}：向当前任务发信号；
-  \item \code{is\_restartable\_syscall\_nr}：EINTR后可自动重启的号查询（O(1)跳表）；
-  \item \code{drop\_reaped\_task\_runtime\_resources}：\code{waitpid} reap后清理syscall侧资源（fd、epoll、socket等）；
-  \item \code{record\_user\_page\_fault\_handled}、\code{log\_thread\_bringup\_stats\_summary}：bring-up统计。
+ \item \code{timer\_tick(interrupted\_user)}：时钟tick，协作信号与调度；
+ \item \code{deliver\_pending\_signal}、\code{restore\_signal\_frame}：信号帧投递与恢复；
+ \item \code{raise\_current\_signal}：向当前任务发信号；
+ \item \code{is\_restartable\_syscall\_nr}：EINTR后可自动重启的号查询，O，1跳表；
+ \item \code{drop\_reaped\_task\_runtime\_resources}：\code{waitpid} reap后清理syscall侧资源，fd、epoll、socket等；
+ \item \code{record\_user\_page\_fault\_handled}、\code{log\_thread\_bringup\_stats\_summary}：bring-up统计。
 \end{itemize}
 
 \paragraph{用户内存与VFS辅助}

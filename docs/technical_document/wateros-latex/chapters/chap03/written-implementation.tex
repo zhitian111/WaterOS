@@ -1,4 +1,4 @@
-% 第 3 章「关键模块实现」（当前 main.tex 使用的整章正文）。
+% 第 3 章关键模块实现，当前 main.tex 使用的整章正文。
 %
 % 按用户态运行路径写：平台/运行时、trap、MM、task、driver、FS/VFS、
 % syscall、IPC/cred/klog；含代码摘录与数据流说明。
@@ -166,17 +166,17 @@ fn handle_cow_page(&mut self, vpn: VirtPageNum) -> MmResult<bool> {
 \syscall{brk}、\syscall{mmap}、\syscall{munmap} 和 \syscall{mprotect} 位于两套实现的 \code{user\_heap\_mmap.rs} 中。\syscall{brk} 根据新旧堆尾实际增删页表映射，并维护用户堆区边界；文件映射采用 lazy fault 思路，\syscall{mmap} 先登记虚拟区间、权限和文件偏移，真正访问时再由 page fault 路径按页补入内容；\syscall{mprotect} 修改权限后刷新用户地址空间翻译缓存。对非法地址、越界用户缓冲区和不可满足的映射请求，MM 与 syscall 层会返回 \code{EFAULT}、\code{EINVAL} 或 \code{ENOMEM} 等 Linux 风格错误码。
 
 \begin{longtable}{>{\raggedright\arraybackslash}p{4.5cm}>{\raggedright\arraybackslash}p{8.8cm}}
-  \caption{内存管理相关子模块}\label{tab:mm-submodules}\\
-  \toprule[1.5pt]
-  文件 / 子模块 & 作用 \\
-  \midrule[1pt]
-  \code{kernel\_global.rs} & 建立和维护内核全局页表，向 trap 和 task 路径提供当前平台的内核地址空间 token。 \\
-  \code{pagetable.rs} & 封装页表 walk、map、unmap、protect、translate、COW fork 与 page fault 修复等底层页表操作。 \\
-  \code{kernel\_elf.rs} & 从根卷或字节流装载 ELF，映射 \code{PT\_LOAD} 段、用户栈和 signal trampoline。 \\
-  \code{user\_aspace.rs} & 管理用户地址空间句柄、用户栈、地址空间生命周期和 fork 后的用户态运行状态。 \\
-  \code{user\_heap\_mmap.rs} & 支持 \syscall{brk}、\syscall{mmap}、\syscall{munmap}、\syscall{mprotect} 以及文件映射装载路径。 \\
-  \code{user\_access.rs} & 提供 syscall 路径访问用户缓冲区所需的地址检查、按需补页和拷贝能力。 \\
-  \bottomrule[1.5pt]
+ \caption{内存管理相关子模块}\label{tab:mm-submodules}\\
+ \toprule[1.5pt]
+ 文件 / 子模块 & 作用 \\
+ \midrule[1pt]
+ \code{kernel\_global.rs} & 建立和维护内核全局页表，向 trap 和 task 路径提供当前平台的内核地址空间 token。 \\
+ \code{pagetable.rs} & 封装页表 walk、map、unmap、protect、translate、COW fork 与 page fault 修复等底层页表操作。 \\
+ \code{kernel\_elf.rs} & 从根卷或字节流装载 ELF，映射 \code{PT\_LOAD} 段、用户栈和 signal trampoline。 \\
+ \code{user\_aspace.rs} & 管理用户地址空间句柄、用户栈、地址空间生命周期和 fork 后的用户态运行状态。 \\
+ \code{user\_heap\_mmap.rs} & 支持 \syscall{brk}、\syscall{mmap}、\syscall{munmap}、\syscall{mprotect} 以及文件映射装载路径。 \\
+ \code{user\_access.rs} & 提供 syscall 路径访问用户缓冲区所需的地址检查、按需补页和拷贝能力。 \\
+ \bottomrule[1.5pt]
 \end{longtable}
 
 
@@ -297,11 +297,11 @@ match pci::probe_virtio_blk_pci(config_base) {
 VFS 层负责把根卷能力暴露给 syscall 和用户程序：
 
 \begin{itemize}
-  \item \code{impl-fs-bridge} 将 \code{wateros-fs} 的根卷读写接口桥接为路径视图。
-  \item \code{fd-session} 维护 per-task fd 表、cwd、CLOEXEC、dup/dup3 与 fork 继承。
-  \item console、pipe、regular file 均通过 \code{VfsIoHandle} 统一读写。
-  \item 常规文件通过 \code{PagedFileHandle} 进入页缓存路径，缓存键使用挂载代次与路径，避免根卷重新挂载后的旧缓存污染。
-  \item procfs 提供 \code{/proc/<pid>/stat}、\code{status}、\code{cmdline}、\code{/proc/meminfo}、\code{/proc/mounts} 等只读视图。
+ \item \code{impl-fs-bridge} 将 \code{wateros-fs} 的根卷读写接口桥接为路径视图。
+ \item \code{fd-session} 维护 per-task fd 表、cwd、CLOEXEC、dup/dup3 与 fork 继承。
+ \item console、pipe、regular file 均通过 \code{VfsIoHandle} 统一读写。
+ \item 常规文件通过 \code{PagedFileHandle} 进入页缓存路径，缓存键使用挂载代次与路径，避免根卷重新挂载后的旧缓存污染。
+ \item procfs 提供 \code{/proc/<pid>/stat}、\code{status}、\code{cmdline}、\code{/proc/meminfo}、\code{/proc/mounts} 等只读视图。
 \end{itemize}
 
 目录枚举已经从普通 ext4 目录扩展到 procfs 伪目录。\syscall{getdents64} 先检查用户缓冲区和长度，再通过当前 fd 对应的 \code{VfsIoHandle} 生成 Linux \code{linux\_dirent64} 布局；如果 fd 不是目录，则返回 \code{ENOTDIR}，如果写回用户空间失败，则返回 \code{EFAULT}。
@@ -341,12 +341,12 @@ ext4 写路径当前用于支撑根卷读写、常规文件访问和用户态程
 从启动到用户态文件访问，当前数据流如下：
 
 \begin{enumerate}
-  \item \code{driver::active\_impl::init\_after\_boot()} 扫描 DTB，初始化 virtio-blk，并注册 \code{BlockDevice}。
-  \item \code{fs-devfs} 根据块设备表刷新 \code{/dev/vblk0} 等节点。
-  \item \code{fs::init()} 通过 \code{registered\_fs\_impls()} 遍历可用文件系统实现，对默认块设备执行 \code{probe}。
-  \item ext4 probe 命中后，\code{fs-rootfs} 保存根卷句柄，bring-up 总线再调用 \code{mount\_default\_root\_rw()} 获取 RW 根卷。
-  \item \code{wateros-vfs} 的 fs bridge 将根卷读写能力转为路径视图，\code{fd-session} 为每个任务维护 fd 表。
-  \item \syscall{openat/read/write/close/getdents64} 等 syscall 最终经 \code{vfs::fd} 调用对应文件、目录、pipe 或 console handle。
+ \item \code{driver::active\_impl::init\_after\_boot()} 扫描 DTB，初始化 virtio-blk，并注册 \code{BlockDevice}。
+ \item \code{fs-devfs} 根据块设备表刷新 \code{/dev/vblk0} 等节点。
+ \item \code{fs::init()} 通过 \code{registered\_fs\_impls()} 遍历可用文件系统实现，对默认块设备执行 \code{probe}。
+ \item ext4 probe 命中后，\code{fs-rootfs} 保存根卷句柄，bring-up 总线再调用 \code{mount\_default\_root\_rw()} 获取 RW 根卷。
+ \item \code{wateros-vfs} 的 fs bridge 将根卷读写能力转为路径视图，\code{fd-session} 为每个任务维护 fd 表。
+ \item \syscall{openat/read/write/close/getdents64} 等 syscall 最终经 \code{vfs::fd} 调用对应文件、目录、pipe 或 console handle。
 \end{enumerate}
 
 该路径使驱动层、文件系统层、VFS 层与系统调用层保持单向依赖：驱动只注册块设备，FS 负责识别和挂载文件系统，VFS 负责路径与 fd 语义，syscall 只做用户态 ABI 到内核接口的转换。
@@ -443,14 +443,14 @@ procfs 则走另一条文件抽象路径：\code{/proc/<pid>/stat}、\code{statu
 已接入的代表性 syscall 包括：
 
 \begin{itemize}
-  \item 文件与目录：\syscall{openat}、\syscall{read}、\syscall{write}、\syscall{close}、\syscall{lseek}、\syscall{fstat}、\syscall{getdents64}、\syscall{mkdirat}、\syscall{unlinkat}、\syscall{mount}、\syscall{umount2}。
-  \item 进程：\syscall{clone}、\syscall{execve}、\syscall{waitpid}、\syscall{exit}、\syscall{exit\_group}、\syscall{getpid}、\syscall{getppid}、\syscall{gettid}。
-  \item 内存：\syscall{brk}、\syscall{mmap}、\syscall{munmap}、\syscall{mprotect}。
-  \item 时间：\syscall{gettimeofday}、\syscall{clock\_gettime}、\syscall{clock\_nanosleep}、\syscall{nanosleep}、\syscall{times}。
-  \item 调度：\syscall{sched\_setparam}、\syscall{sched\_setscheduler}、\syscall{sched\_getscheduler}、\syscall{sched\_getparam}、\syscall{sched\_setaffinity}、\syscall{sched\_getaffinity}、\syscall{sched\_get\_priority\_max}、\syscall{sched\_get\_priority\_min}。
-  \item IPC：\syscall{pipe2}、\syscall{ppoll}、\syscall{pselect6}、\syscall{futex} 子集、\syscall{shmget}、\syscall{shmctl}、\syscall{shmat}、\syscall{shmdt}。
-  \item 凭证：\syscall{getuid}、\syscall{geteuid}、\syscall{getgid}、\syscall{getegid}、\syscall{setuid}、\syscall{setgid}、\syscall{setresuid}、\syscall{setresgid}。
-  \item 日志：\syscall{syslog(2)} 通过 \code{wateros-klog} 读取内核消息环。
+ \item 文件与目录：\syscall{openat}、\syscall{read}、\syscall{write}、\syscall{close}、\syscall{lseek}、\syscall{fstat}、\syscall{getdents64}、\syscall{mkdirat}、\syscall{unlinkat}、\syscall{mount}、\syscall{umount2}。
+ \item 进程：\syscall{clone}、\syscall{execve}、\syscall{waitpid}、\syscall{exit}、\syscall{exit\_group}、\syscall{getpid}、\syscall{getppid}、\syscall{gettid}。
+ \item 内存：\syscall{brk}、\syscall{mmap}、\syscall{munmap}、\syscall{mprotect}。
+ \item 时间：\syscall{gettimeofday}、\syscall{clock\_gettime}、\syscall{clock\_nanosleep}、\syscall{nanosleep}、\syscall{times}。
+ \item 调度：\syscall{sched\_setparam}、\syscall{sched\_setscheduler}、\syscall{sched\_getscheduler}、\syscall{sched\_getparam}、\syscall{sched\_setaffinity}、\syscall{sched\_getaffinity}、\syscall{sched\_get\_priority\_max}、\syscall{sched\_get\_priority\_min}。
+ \item IPC：\syscall{pipe2}、\syscall{ppoll}、\syscall{pselect6}、\syscall{futex} 子集、\syscall{shmget}、\syscall{shmctl}、\syscall{shmat}、\syscall{shmdt}。
+ \item 凭证：\syscall{getuid}、\syscall{geteuid}、\syscall{getgid}、\syscall{getegid}、\syscall{setuid}、\syscall{setgid}、\syscall{setresuid}、\syscall{setresgid}。
+ \item 日志：\syscall{syslog(2)} 通过 \code{wateros-klog} 读取内核消息环。
 \end{itemize}
 
 系统调用实现位于如下目录：

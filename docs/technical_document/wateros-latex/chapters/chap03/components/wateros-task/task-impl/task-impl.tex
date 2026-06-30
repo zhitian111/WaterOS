@@ -1,14 +1,14 @@
-% 【本文件写什么】独立子 crate（无 api/impl 目录树）：task-impl
-%   - 职责：任务核心实现（impl-core）：TCB、registry。
-%   - 源码：os/components/wateros-task/task-impl/src/
-%   - 对外暴露的函数/类型、在聚合 lib.rs 中的重导出方式
-%   - 实现要点、feature（若有）、与其它子 crate 的边界
+% 【本文件写什么】独立子 crate，无 api/impl 目录树：task-impl
+% - 职责：任务核心实现，impl-core：TCB、registry。
+% - 源码：os/components/wateros-task/task-impl/src/
+% - 对外暴露的函数/类型、在聚合 lib.rs 中的重导出方式
+% - 实现要点、feature，若有、与其它子 crate 的边界
 % 【事实来源】
-%   - os/components/wateros-task/task-impl/、父组件 src/lib.rs
+% - os/components/wateros-task/task-impl/、父组件 src/lib.rs
 
 \subsection{task-impl}
 
-\code{wateros-task-impl-core}（feature \code{impl-core}）实现单任务内存表示与进程 registry。聚合层以\code{pub(crate) use impl\_core as active\_impl}绑定，对外再导出\code{TaskBootstrap}等 arch 入口所需类型。
+\code{wateros-task-impl-core}，feature \code{impl-core}，实现单任务内存表示与进程 registry。聚合层以\code{pub(crate) use impl\_core as active\_impl}绑定，对外再导出\code{TaskBootstrap}等 arch 入口所需类型。
 
 调度器通过\code{TaskRegistry}持有\code{TaskControlBlock}指针，不定义 TCB 字段布局；registry 与\code{ProcessRegistry}分离，后者维护 PID/TID、进程组、rlimit、stopped/continued 状态机，不参与就绪队列决策。
 

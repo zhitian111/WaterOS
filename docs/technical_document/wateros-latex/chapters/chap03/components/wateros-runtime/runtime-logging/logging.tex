@@ -1,18 +1,18 @@
-% 【本文件写什么】子模块 runtime-logging（\subsection 级聚合）
-%   - 职责摘要：log! 宏分级过滤（与 klog 独立）。
-%   - 子域聚合 lib.rs：os/components/wateros-runtime/runtime-logging/src/lib.rs
-%   - 如何重导出 api-v0、feature 下挂载哪些 impl
-%   - 被谁依赖（syscall、vfs、main 启动链等）
-%   - 短综述 + 下方 \input 展开 api 与 impl 叶子
+% 【本文件写什么】子模块 runtime-logging，\subsection 级聚合
+% - 职责摘要：log! 宏分级过滤，与 klog 独立。
+% - 子域聚合 lib.rs：os/components/wateros-runtime/runtime-logging/src/lib.rs
+% - 如何重导出 api-v0、feature 下挂载哪些 impl
+% - 被谁依赖，syscall、vfs、main 启动链等
+% - 短综述 + 下方 \input 展开 api 与 impl 叶子
 % 【事实来源】
-%   - os/components/wateros-runtime/runtime-logging/
-%   - docs/exports/ 中与 wateros-runtime 相关的 public-api / features 章节
+% - os/components/wateros-runtime/runtime-logging/
+% - docs/exports/ 中与 wateros-runtime 相关的 public-api / features 章节
 
 \subsection{runtime-logging}
 
-\code{wateros-runtime-logging}把\code{log} crate接到\code{runtime-console}：\code{init()}按feature设置\code{LevelFilter}并注册静态\code{WaterOSLogger}；成功后会打印一条Info级「Logger initialized」确认。\code{trace!}/\code{debug!}/\code{info!}/\code{warn!}/\code{error!}重导出\code{log}宏，语义与上游一致。
+\code{wateros-runtime-logging}把\code{log} crate接到\code{runtime-console}：\code{init()}按feature设置\code{LevelFilter}并注册静态\code{WaterOSLogger}；成功后会打印一条Info级Logger initialized确认。\code{trace!}/\code{debug!}/\code{info!}/\code{warn!}/\code{error!}重导出\code{log}宏，语义与上游一致。
 
-\code{WaterOSLogger::enabled}对\code{ext4\_rs}目标且级别\code{>= Info}的记录直接过滤，降低文件系统库噪声。\code{log}输出格式为\code{[WaterOS]}前缀加级别着色正文；\code{flush}为空实现（控制台逐条写出，无独立刷盘通道）。本模块不写入\code{wateros-klog}环，与\code{klog}分工见组件级说明。
+\code{WaterOSLogger::enabled}对\code{ext4\_rs}目标且级别\code{>= Info}的记录直接过滤，降低文件系统库噪声。\code{log}输出格式为\code{[WaterOS]}前缀加级别着色正文；\code{flush}为空实现，控制台逐条写出，无独立刷盘通道。本模块不写入\code{wateros-klog}环，与\code{klog}分工见组件级说明。
 
 多级别feature同时启用时，\code{init}内\code{cfg}块按\code{impl-error}最优先、\code{impl-trace}最后的顺序择档；均未启用时\code{LevelFilter::Off}跳过注册。
 
