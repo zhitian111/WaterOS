@@ -70,21 +70,6 @@ const BRINGUP_COMMANDS : &[BringupCommand] = &[
       BringupCommand { program : "/musl/busybox",
                        argv : &["sh",
                                 "/musl/cyclictest_testcode.sh"] }, // done
-    BringupCommand { program : "/musl/busybox",
-        argv : &["sh",
-            "/musl/libcbench_testcode.sh"] },
-      BringupCommand { program : "/glibc/busybox",
-                       argv : &["sh",
-                                "/glibc/iozone_testcode.sh"] },
-      BringupCommand { program : "/musl/busybox",
-                       argv : &["sh",
-                                "/musl/iozone_testcode.sh"] },
-    BringupCommand { program : "/musl/busybox",
-        argv : &["sh",
-            "/musl/lmbench_testcode.sh"] },
-      BringupCommand { program : "/glibc/busybox",
-                       argv : &["sh",
-                                "/glibc/lmbench_testcode.sh"] },
       BringupCommand { program : "/musl/busybox",
                        argv : &[
                                 "sh",
@@ -97,6 +82,21 @@ const BRINGUP_COMMANDS : &[BringupCommand] = &[
                        argv : &[
             "sh",
                                 "/glibc/libcbench_testcode.sh"] },
+    BringupCommand { program : "/musl/busybox",
+        argv : &["sh",
+            "/musl/libcbench_testcode.sh"] },
+      BringupCommand { program : "/glibc/busybox",
+                       argv : &["sh",
+                                "/glibc/lmbench_testcode.sh"] },
+    BringupCommand { program : "/musl/busybox",
+        argv : &["sh",
+            "/musl/lmbench_testcode.sh"] },
+      BringupCommand { program : "/glibc/busybox",
+                       argv : &["sh",
+                                "/glibc/iozone_testcode.sh"] },
+      BringupCommand { program : "/musl/busybox",
+                       argv : &["sh",
+                                "/musl/iozone_testcode.sh"] },
       // unixbench 不是比赛测试的内容，已经弃用
       // BringupCommand { program : "/glibc/busybox",
       //                  argv : &["timeout",
@@ -122,18 +122,18 @@ fn log_elapsed(log_tag : &str, cmd : &BringupCommand, start_ns : u128, end_ns : 
     let elapsed_ns = end_ns.saturating_sub(start_ns);
     let sec = elapsed_ns / 1_000_000_000;
     let ms = (elapsed_ns % 1_000_000_000) / 1_000_000;
-    warn!("[{log_tag}] program={} argv={:?} end_mono_ns={end_ns} elapsed={sec}s {ms}ms \
-           ({elapsed_ns}ns)",
-          cmd.program, cmd.argv);
+    error!("[{log_tag}] program={} argv={:?} end_mono_ns={end_ns} elapsed={sec}s {ms}ms \
+            ({elapsed_ns}ns)",
+           cmd.program, cmd.argv);
 }
 
 /// 执行 `stage-busybox`：登记内核串行 runner（不阻塞；用户态在 `run_first_task` 后运行）。
 pub fn run_stage_busybox() {
-    warn!("[bringup][stage-busybox] BEGIN");
+    error!("[bringup][stage-busybox] BEGIN");
     task::spawn_kernel_task(bringup_kernel_runner, 0);
-    warn!("[{LOG_TAG}] kernel runner enqueued ({} command(s))",
-          BRINGUP_COMMANDS.len());
-    warn!("[bringup][stage-busybox] END");
+    error!("[{LOG_TAG}] kernel runner enqueued ({} command(s))",
+           BRINGUP_COMMANDS.len());
+    error!("[bringup][stage-busybox] END");
 }
 
 extern "C" fn bringup_kernel_runner(_arg : usize) -> ! {
@@ -143,12 +143,12 @@ extern "C" fn bringup_kernel_runner(_arg : usize) -> ! {
 
     for cmd in BRINGUP_COMMANDS {
         let start_ns = monotonic_ns();
-        warn!("[{LOG_TAG}] program={} argv={:?} start_mono_ns={start_ns}",
-              cmd.program, cmd.argv);
+        error!("[{LOG_TAG}] program={} argv={:?} start_mono_ns={start_ns}",
+               cmd.program, cmd.argv);
         crate::user_bringup_common::run_one_bringup_command(LOG_TAG, cmd);
         log_elapsed(LOG_TAG, cmd, start_ns, monotonic_ns());
     }
-    warn!("[{LOG_TAG}] all commands finished");
+    error!("[{LOG_TAG}] all commands finished");
     let _ = shutdown(platform::reset::PlatformResetReason::NoReason);
     task::exit_current(0);
 }

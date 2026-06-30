@@ -7,7 +7,7 @@
 %
 % 事实来源：os/Makefile、docs/tasks/run_testsuits_qemu.md、os/src/user_bringup_*.rs
 
-\chapter{测试、复现与问题处理}
+\chapter{测试与问题处理}
 
 \section{构建与启动方式}
 
@@ -344,29 +344,3 @@ fn release_task(&mut self, task_id: TaskId) {
     }
 }
 \end{rustcode}
-
-\subsection{定位和复现方法}
-
-\textbf{现象。}QEMU无输出、PC卡死、\code{unknown nr=}、用户任务不退出或脚本\code{exit\_code}非零。
-
-\textbf{处理。}按层读串口日志：平台与\code{[self-test]}→驱动\code{[driver*]}→FS\code{[fs*]}→\code{[bringup]}→\code{[busybox-bringup]}→测例\code{COMP TEST GROUP}。需要指令级定位时用\code{make rv\_pc\_watch}/\code{la\_pc\_watch}只看PC跳变，用\code{rv\_symbol\_at ADDR=…}把地址解析到内核符号；长跑日志用\code{rv\_qemu\_run\_with\_log}生成\code{qemu.log}配合\code{grep}，测例摘要仍用\code{parse\_qemu\_test\_log.py}。
-
-典型检索命令：
-
-\begin{bashcode}
-LOG=/tmp/wateros_P1.log   # 或 os/log、la_local_run_*.log
-
-# 内核 panic 与未知 syscall
-grep -nE 'unsupported: unknown nr=|Panicked at' "$LOG"
-
-# 用户态测例失败
-grep -nE 'testcase busybox .+ fail|Assert Fatal' "$LOG"
-
-# syscall 返回负 errno（ret=-N）
-grep -nE '\[syscall\] nr=[0-9]+ ret=-[0-9]+' "$LOG"
-
-# 将 PC 解析到内核符号（在 os/ 目录下执行）
-make la_symbol_at ADDR=0x90001234
-\end{bashcode}
-
-建议保存完整日志到\code{/tmp/wateros\_P*.log}或\code{os/log}（勿提交git），记录当次\code{BRINGUP\_COMMANDS}注释状态，便于与双架构对比结论一并归档。
