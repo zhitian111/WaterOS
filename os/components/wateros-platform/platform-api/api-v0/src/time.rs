@@ -27,7 +27,7 @@ pub type PlatformTimeResult<T> = Result<T, PlatformTimeError>;
 /// `platform::time::set_frequency_hz` 覆盖后再供 [`crate::timer`] 使用。
 pub trait PlatformTime {
     #[inline]
-    fn time_frequency_hz() -> PlatformTimeResult<u64> {
+    fn get_time_frequency_hz() -> PlatformTimeResult<u64> {
         Err(PlatformTimeError::Unsupported)
     }
 }

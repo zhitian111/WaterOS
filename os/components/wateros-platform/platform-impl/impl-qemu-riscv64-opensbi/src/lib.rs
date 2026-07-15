@@ -77,7 +77,7 @@ pub mod time {
 
     impl PlatformTime for QEMURiscv64OpenSBITime {
         #[inline]
-        fn time_frequency_hz() -> PlatformTimeResult<u64> {
+        fn get_time_frequency_hz() -> PlatformTimeResult<u64> {
             // QEMU virt DTB `/cpus/timebase-frequency` 默认 10 MHz；未探测时的回退。
             const QEMU_TIMEBASE_HZ : u64 = 10_000_000;
             if QEMU_TIMEBASE_HZ == 0 {
