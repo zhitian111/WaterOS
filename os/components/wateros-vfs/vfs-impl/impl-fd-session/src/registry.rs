@@ -40,7 +40,6 @@ pub struct PerTaskFdRegistry {
 }
 
 impl PerTaskFdRegistry {
-    #[inline]
     pub const fn new() -> Self {
         Self {
             tables: BTreeMap::new(),
@@ -70,7 +69,6 @@ impl PerTaskFdRegistry {
         }
     }
 
-    #[inline]
 // 本方法代码由AI完成
     fn effective_owner(&self, task_id: task::TaskId) -> task::TaskId {
         self.owners

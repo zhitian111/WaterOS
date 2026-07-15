@@ -52,13 +52,11 @@ impl PipeEndpoint {
     }
 
     /// 端点方向。
-    #[inline]
     pub const fn kind(&self) -> PipeEndpointKind {
         self.kind
     }
 
     /// 是否按非阻塞语义执行。
-    #[inline]
     pub fn nonblocking(&self) -> bool {
         self.nonblocking.get()
     }
@@ -119,7 +117,6 @@ impl PipeEndpoint {
 }
 
 impl PipeEndpointOps for PipeEndpoint {
-    #[inline]
 // 本方法代码由AI完成
     fn pair(nonblocking: bool) -> (Self, Self) {
         let pipe = Arc::new(Pipe::new());
@@ -141,12 +138,10 @@ impl PipeEndpointOps for PipeEndpoint {
         )
     }
 
-    #[inline]
     fn kind(&self) -> PipeEndpointKind {
         self.kind
     }
 
-    #[inline]
     fn nonblocking(&self) -> bool {
         self.nonblocking.get()
     }
@@ -183,7 +178,6 @@ impl PipeEndpointOps for PipeEndpoint {
         }
     }
 
-    #[inline]
 // 本方法代码由AI完成
     fn poll_revents(&self, events: i16) -> PipeResult<i16> {
 // 本变量代码由AI完成

@@ -58,14 +58,27 @@ pub fn handle_alloc_error(layout : core::alloc::Layout) -> ! {
            layout);
 }
 
-// 链接脚本或 LDFLAGS 可将 `kernel_heap` 映射到 BSS/专用段；此处提供默认可链接符号。
+// 128 MiB 堆池单独段 `.kernel.heap`，由链接脚本放在 BSS 末尾，避免堆越界覆盖
+// SCHEDULER 等小型内核全局变量（见 platform link.ld）。
 #[allow(unused)]
 #[link_name = "kernel_heap"]
+#[unsafe(link_section = ".kernel.heap")]
 pub(crate) static mut HEAP_SPACE : [u8; KERNEL_HEAP_SIZE] = [0; KERNEL_HEAP_SIZE];
+
+unsafe extern "C" {
+    static kernel_heap_start : u8;
+    static kernel_heap_end : u8;
+}
 
 /// 使用静态 `HEAP_SPACE` 初始化堆分配器区域。
 ///
 /// **契约**：仅在单核引导路径、且堆尚未使用时调用；`unsafe` 块要求调用方保证无并发重入。
 pub fn init() {
+    let heap_lo = unsafe { core::ptr::addr_of!(kernel_heap_start) as usize };
+    let heap_hi = unsafe { core::ptr::addr_of!(kernel_heap_end) as usize };
+    log::warn!("[boot-init] kernel_heap pool [{:#x},{:#x}) cap={:#x}",
+               heap_lo,
+               heap_hi,
+               heap_hi.saturating_sub(heap_lo));
     backend::init_heap();
 }

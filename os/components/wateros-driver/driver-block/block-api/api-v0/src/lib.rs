@@ -19,13 +19,11 @@ pub struct Lba(pub u64);
 
 impl From<usize> for Lba {
     /// 将 `usize` 截断/拓宽为 `u64` LBA（与平台指针宽度一致的内核路径常用）。
-    #[inline]
     fn from(value: usize) -> Self { Self(value as u64) }
 }
 
 impl From<u64> for Lba {
     /// 直接包装为 LBA，无额外校验（非法 LBA 由具体设备在读时拒绝）。
-    #[inline]
     fn from(value: u64) -> Self { Self(value) }
 }
 
@@ -38,11 +36,9 @@ static BLOCK_DEVICES: Mutex<Vec<SharedBlockDevice>> = Mutex::new(Vec::new());
 /// 块设备语义契约：按块读写为必须实现；按字节读提供默认实现（内部临时缓冲整段块）。
 pub trait BlockDevice: Send {
     /// 设备逻辑块大小；默认 [`BLOCK_SIZE`]。
-    #[inline]
     fn block_size(&self) -> usize { BLOCK_SIZE }
 
     /// 设备总块数；未知时返回 `None`（默认）。
-    #[inline]
     fn total_blocks(&self) -> Option<u64> { None }
 
     /// 从 `start_block` 起读取连续块到 `buf`；`buf` 长度须为块大小的整数倍。
@@ -97,7 +93,6 @@ pub trait BlockDevice: Send {
 }
 
 /// 将设备追加到全局表末尾，返回其索引（从 0 起）。
-#[inline]
 pub fn register_block_device(device: SharedBlockDevice) -> usize {
     let mut devices = BLOCK_DEVICES.lock();
     devices.push(device);
@@ -105,19 +100,16 @@ pub fn register_block_device(device: SharedBlockDevice) -> usize {
 }
 
 /// 当前已注册块设备数量。
-#[inline]
 pub fn block_device_count() -> usize {
     BLOCK_DEVICES.lock().len()
 }
 
 /// 取表中第一个设备，常用于根文件系统绑定单盘场景。
-#[inline]
 pub fn first_block_device() -> Option<SharedBlockDevice> {
     BLOCK_DEVICES.lock().first().cloned()
 }
 
 /// 按下标取设备；越界返回 `None`。
-#[inline]
 pub fn block_device_at(index: usize) -> Option<SharedBlockDevice> {
     BLOCK_DEVICES.lock().get(index).cloned()
 }

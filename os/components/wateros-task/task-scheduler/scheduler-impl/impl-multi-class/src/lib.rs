@@ -15,7 +15,9 @@ use arch::interrupt::ArchInterruptState;
 use arch::task::ActiveArchTaskContext as TaskContext;
 use base::sync::UniprocessorSafeCell;
 use core::mem::MaybeUninit;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::hint::black_box;
+use core::panic::Location;
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering, compiler_fence};
 use task_api::{
     ExitedTask, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskId, TaskSnapshot, TaskTick,
     TaskWaitHandle, TaskWaitResult, UserTask, WaitQueueId,
@@ -44,19 +46,114 @@ pub type SwitchPair = api_v0::SwitchPair;
 
 // 单处理器 bring-up：全局唯一调度器实例，由 `init_scheduler`
 // 一次性写入；`SCHEDULER_READY` 保证可见性。
+// 链入 `.bss.scheduler`（在 `.kernel.heap` 之前），避免 128MiB 堆池与调度器静态重叠。
+#[unsafe(link_section = ".bss.scheduler")]
 static mut SCHEDULER : MaybeUninit<UniprocessorSafeCell<MultiClassScheduler>> =
     MaybeUninit::uninit();
+#[unsafe(link_section = ".bss.scheduler")]
 static SCHEDULER_READY : AtomicBool = AtomicBool::new(false);
+static SCHEDULER_CELL_PROBE_COUNT : AtomicUsize = AtomicUsize::new(0);
+
+unsafe extern "C" {
+    static kernel_heap_start : u8;
+    static kernel_heap_end : u8;
+}
+
+/// 若 `addr` 落在链接脚本划定的堆池 `[kernel_heap_start, kernel_heap_end)` 内则 panic。
+fn assert_addr_outside_kernel_heap(label : &str, addr : usize) {
+    let heap_lo = core::ptr::addr_of!(kernel_heap_start) as usize;
+    let heap_hi = core::ptr::addr_of!(kernel_heap_end) as usize;
+    if addr >= heap_lo && addr < heap_hi {
+        log::error!("[boot-init] {} addr={:#x} overlaps kernel heap [{:#x},{:#x})",
+                    label,
+                    addr,
+                    heap_lo,
+                    heap_hi);
+        panic!("kernel static overlaps 128MiB heap pool — check link.ld .bss.scheduler / .kernel.heap");
+    }
+}
+
+#[inline]
+fn scheduler_ready_addr() -> usize { core::ptr::addr_of!(SCHEDULER_READY) as usize }
+
+#[inline(never)]
+fn scheduler_ready_raw_byte() -> u8 {
+    unsafe { core::ptr::read_volatile(scheduler_ready_addr() as *const u8) }
+}
+
+/// 引导期诊断：打印 `SCHEDULER_READY` 当前值与静态地址，便于对比 init 与后续调用是否同一实例。
+#[inline(never)]
+fn log_scheduler_ready(tag : &str) {
+    let ready = black_box(SCHEDULER_READY.load(Ordering::Acquire));
+    let raw_byte = scheduler_ready_raw_byte();
+    let addr = scheduler_ready_addr();
+    log::warn!("[boot-init] {} SCHEDULER_READY={} raw_byte={:#x} ready_addr={:#x}",
+               tag,
+               ready,
+               raw_byte,
+               addr);
+}
+
+/// 供 `kernel_main` / 外部 crate 在 `spawn_*` 前探测；`#[no_mangle]` 避免 release/LTO 内联掉对静态变量的 load。
+#[inline(never)]
+#[unsafe(no_mangle)]
+pub extern "C" fn wateros_mcs_boot_log_scheduler_ready(tag_ptr : *const u8, tag_len : usize) {
+    let tag = if tag_ptr.is_null() || tag_len == 0 {
+        "probe"
+    } else {
+        unsafe { core::str::from_utf8_unchecked(core::slice::from_raw_parts(tag_ptr, tag_len)) }
+    };
+    log_scheduler_ready(tag);
+}
+
+#[inline(never)]
+#[cold]
+fn scheduler_not_ready_fatal(caller : &'static Location, ready : bool, raw_byte : u8) -> ! {
+    log::error!("[boot-init] scheduler_cell NOT READY caller={}:{} atomic={} raw_byte={:#x} \
+                   ready_addr={:#x}",
+                caller.file(),
+                caller.line(),
+                ready,
+                raw_byte,
+                scheduler_ready_addr());
+    panic!("scheduler not initialized: call init_scheduler() first");
+}
 
 // 仅在 `SCHEDULER_READY` 为真后解引用；否则 panic，避免未初始化访问。
-fn scheduler_cell() -> &'static UniprocessorSafeCell<MultiClassScheduler> {
-    assert!(SCHEDULER_READY.load(Ordering::Acquire),
-            "scheduler not initialized: call init_scheduler() first");
+#[inline(never)]
+fn scheduler_cell_inner(caller : &'static Location) -> &'static UniprocessorSafeCell<MultiClassScheduler> {
+    let probe_n = SCHEDULER_CELL_PROBE_COUNT.fetch_add(1, Ordering::Relaxed);
+    let ready = black_box(SCHEDULER_READY.load(Ordering::Acquire));
+    let raw_byte = scheduler_ready_raw_byte();
+    log::warn!("[boot-init] scheduler_cell probe_n={} caller={}:{} SCHEDULER_READY={} raw_byte={:#x} \
+                ready_addr={:#x}",
+               probe_n,
+               caller.file(),
+               caller.line(),
+               ready,
+               raw_byte,
+               scheduler_ready_addr());
+    if !black_box(ready) {
+        scheduler_not_ready_fatal(caller, ready, raw_byte);
+    }
     unsafe { &*SCHEDULER.as_ptr() }
+}
+
+/// 取得调度器 cell；独立符号，供 GDB/外部探测。
+#[inline(never)]
+#[unsafe(no_mangle)]
+pub extern "C" fn wateros_mcs_scheduler_cell() -> *const UniprocessorSafeCell<MultiClassScheduler> {
+    scheduler_cell_inner(Location::caller())
+}
+
+#[track_caller]
+fn scheduler_cell() -> &'static UniprocessorSafeCell<MultiClassScheduler> {
+    scheduler_cell_inner(Location::caller())
 }
 
 // 在单调度器 cell 上取得独占引用并执行闭包；调用方已通过 `InterruptGuard`
 // 关中断时保证不与其他 CPU 交错（当前为 UP 假设）。
+#[inline(never)]
 fn with_scheduler<R>(f : impl FnOnce(&mut MultiClassScheduler) -> R) -> R {
     let mut scheduler = scheduler_cell().exclusive_access();
     f(&mut scheduler)
@@ -139,20 +236,41 @@ pub fn apply_sched_policy_change(task_id : TaskId,
     with_scheduler(|scheduler| scheduler.apply_sched_policy_change(task_id, policy, param))
 }
 
+/// 首次初始化路径：在 `SCHEDULER_READY` 置真前直接写入 cell，避免 chicken-and-egg。
+unsafe fn init_scheduler_storage_and_inner() {
+    SCHEDULER.write(UniprocessorSafeCell::new(MultiClassScheduler::new()));
+    (*SCHEDULER.as_mut_ptr()).exclusive_access().init();
+}
+
 /// 幂等初始化全局调度器与内部 `MultiClassScheduler` 状态。
+#[inline(never)]
 pub fn init_scheduler() {
+    log_scheduler_ready("init_scheduler enter");
     if !SCHEDULER_READY.load(Ordering::Acquire) {
+        log::warn!("[boot-init] init_scheduler: SCHEDULER.write + inner init (READY still false)");
         unsafe {
-            SCHEDULER.write(UniprocessorSafeCell::new(MultiClassScheduler::new()));
+            init_scheduler_storage_and_inner();
         }
         SCHEDULER_READY.store(true, Ordering::Release);
+        compiler_fence(Ordering::SeqCst);
+        log_scheduler_ready("init_scheduler after store(true)");
+    } else {
+        log::warn!("[boot-init] init_scheduler: already ready, re-run inner init");
+        let _guard = InterruptGuard::new();
+        with_scheduler(|scheduler| scheduler.init());
     }
-    with_scheduler(|scheduler| scheduler.init());
+    log_scheduler_ready("init_scheduler done");
+    assert_addr_outside_kernel_heap("SCHEDULER_READY", scheduler_ready_addr());
+    assert_addr_outside_kernel_heap("SCHEDULER", unsafe { SCHEDULER.as_ptr() as usize });
     log::info!("[task-scheduler] initialized");
 }
 
 /// 创建内核任务并入就绪队列尾部。
+#[inline(never)]
 pub fn spawn_kernel_task(entry : KernelTaskEntry, arg : usize) -> TaskId {
+    const TAG : &[u8] = b"spawn_kernel_task enter";
+    wateros_mcs_boot_log_scheduler_ready(TAG.as_ptr(), TAG.len());
+    assert_addr_outside_kernel_heap("SCHEDULER_READY", scheduler_ready_addr());
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.spawn_kernel_task(entry, arg))
 }
@@ -274,6 +392,7 @@ pub fn suspend_current_and_run_next() {
 }
 
 /// 时钟 tick：推进调度器逻辑时间，并在需要时切换到下一任务。
+#[inline(never)]
 pub fn schedule_tick() {
     let guard = InterruptGuard::new();
     let switch_pair = with_scheduler(|scheduler| scheduler.schedule(ScheduleReason::Tick));

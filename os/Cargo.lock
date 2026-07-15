@@ -1482,6 +1482,7 @@ dependencies = [
 name = "wateros-task"
 version = "0.1.0"
 dependencies = [
+ "log",
  "wateros-mm-api-v0",
  "wateros-platform-arch",
  "wateros-task-api-v0",
@@ -1508,6 +1509,7 @@ dependencies = [
 name = "wateros-task-scheduler"
 version = "0.1.0"
 dependencies = [
+ "log",
  "wateros-platform-arch",
  "wateros-task-api-v0",
  "wateros-task-scheduler-api-v0",

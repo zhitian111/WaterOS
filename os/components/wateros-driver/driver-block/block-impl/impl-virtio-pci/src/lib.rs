@@ -47,7 +47,6 @@ pub struct VirtioPciBarAllocator {
 
 impl VirtioPciBarAllocator {
     /// 在 `[start, end)` 区间内分配 BAR 物理地址。
-    #[inline]
     pub const fn new(start: u64, end: u64) -> Self {
         Self { next: start, end }
     }
@@ -68,7 +67,6 @@ impl VirtioPciBarAllocator {
 }
 
 impl VirtioPciProbeInfo {
-    #[inline]
     fn new(df: DeviceFunction, vendor_id: u16, device_id: u16) -> Self {
         Self {
             bus: df.bus,

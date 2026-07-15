@@ -42,6 +42,18 @@ SECTIONS
     *(COMMON)
   }
   . = ALIGN(4K);
+  .bss.scheduler : {
+    kernel_scheduler_bss_start = .;
+    *(.bss.scheduler)
+    kernel_scheduler_bss_end = .;
+  }
+  . = ALIGN(4K);
+  .kernel.heap : {
+    kernel_heap_start = .;
+    *(.kernel.heap)
+    kernel_heap_end = .;
+  }
+  . = ALIGN(4K);
   bss_end = .;
 
   . = ALIGN(4K);

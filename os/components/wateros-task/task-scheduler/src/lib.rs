@@ -49,7 +49,11 @@ pub use task_api::{
 };
 
 /// 初始化当前启用的调度器实现。
-pub fn init() { active_impl::init_scheduler(); }
+pub fn init() {
+    log::warn!("[boot-init] task_scheduler::init -> active_impl::init_scheduler");
+    active_impl::init_scheduler();
+    log::warn!("[boot-init] task_scheduler::init done");
+}
 
 /// 应用调度策略变更；由 [`wateros-task::sched`] 在 syscall 路径调用。
 pub fn apply_sched_policy_change(task_id : TaskId,

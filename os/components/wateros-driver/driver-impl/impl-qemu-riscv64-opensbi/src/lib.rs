@@ -42,13 +42,11 @@ static VIRTIO_NET_MMIO: Mutex<Vec<MmioRegion>> = Mutex::new(Vec::new());
 static INIT_AFTER_BOOT_DONE: AtomicBool = AtomicBool::new(false);
 
 /// 与上层 `wateros-driver` 聚合入口的引导约定一致：仅保存 `dtb_pa`。
-#[inline]
 pub fn init_when_boot(dtb_pa: usize) {
     DTB_BASE_ADDR.store(dtb_pa, Ordering::Release);
 }
 
 /// 物理 RAM 上界（不包含）：优先解析 DTB `memory@*` 的 `reg`；失败时用 `wateros-base-config` 回退值。
-#[inline]
 pub fn physical_ram_end_exclusive() -> usize {
     use wateros_base_config::mm::QEMU_VIRT_PHYS_RAM_END as FALLBACK;
     let Ok(fdt) = read_fdt() else {

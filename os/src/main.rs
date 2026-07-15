@@ -107,19 +107,48 @@ mod qemu_riscv64_opensbi {
         }
     }
 
-    /// 引导加载器 / OpenSBI 传入的引导参数；与 [`crate`] 顶层文档中的 bring-up
-    /// 步骤一致。
+    /// 非 BSP hart：关中断后永久 WFI（当前为 UP bring-up；SMP 就绪前不得进入完整 `kernel_main`）。
+    fn park_secondary_hart() -> ! {
+        platform::interrupt::disable_global_interrupt()
+            .expect("disable global interrupt for secondary hart");
+        platform::interrupt::disable_timer_interrupt()
+            .expect("disable timer interrupt for secondary hart");
+        loop {
+            platform::interrupt::wait_for_interrupt();
+        }
+    }
+
+    /// 屏蔽固件可能遗留的全局/定时器中断，直至 `kernel_main` 末尾 `enable_*` 对称打开。
+    fn mask_boot_interrupts() {
+        platform::interrupt::disable_global_interrupt()
+            .expect("disable global interrupt for boot");
+        platform::interrupt::disable_timer_interrupt()
+            .expect("disable timer interrupt for boot");
+    }
+
+    /// 引导加载器 / OpenSBI 传入的引导参数（`a0` = hart id，`a1` = DTB）；与 [`crate`] 顶层文档中的 bring-up 步骤一致。
     ///
     /// **契约**：在此返回前完成本路径上的初始化与自检日志；正常路径以
     /// [`task::run_first_task`] 转入调度且不返回。
     #[unsafe(no_mangle)]
     pub fn kernel_main(boot_arg0 : usize, boot_arg1 : usize) -> ! {
+        // OpenSBI：`a0` = hart id，`a1` = DTB 物理地址。
+        mask_boot_interrupts();
+
         use platform::boot::{BootArgs, BootContext};
         let _boot_context = BootContext::from(BootArgs::new(boot_arg0, boot_arg1));
         driver::init_when_boot(boot_arg1);
         runtime::console::show_logo();
         klog::init();
         runtime::logging::init();
+        if boot_arg0 != 0 {
+            warn!("[boot-init] kernel_main secondary hart={} -> park (WFI)",
+                  boot_arg0);
+            park_secondary_hart();
+        }
+        warn!("[boot-init] kernel_main BSP hart={} dtb={:#x}",
+              boot_arg0, boot_arg1);
+        warn!("[boot-init] kernel_main boot interrupts masked");
         crate::boot_timebase::probe_and_init_timebase(boot_arg1);
         info!("log test pass!");
         runtime::heap_allocator::init();
@@ -127,19 +156,24 @@ mod qemu_riscv64_opensbi {
         let vec_test = vec![0; 10];
         debug!("vec_test = {:?}", vec_test);
 
+        warn!("[boot-init] kernel_main -> platform::arch::init (stvec)");
         platform::arch::init();
-
+        warn!("[boot-init] kernel_main -> task::init");
         // 须在 MM 安装 satp 之前注册 trap 路由：satp 切换后定时器/页故障会立即进 trap。
         task::init();
+        warn!("[boot-init] kernel_main -> trap_handler::init");
         crate::trap_handler::init();
+        warn!("[boot-init] kernel_main task+trap init done");
 
         // ===== 内核态自检：MM / FrameAllocator / Sv39 =====
+        warn!("[boot-init] kernel_main -> mm self-test begin");
         unsafe extern "C" {
             fn kernel_end();
         }
         // 与 DTB `/memory` 或 `wateros-base-config::QEMU_VIRT_PHYS_RAM_END` 对齐（如
         // QEMU `-m 1G` → 0xC000_0000）
         let memory_end = driver::physical_ram_end_exclusive();
+        warn!("[boot-init] kernel_main memory_end={:#x}", memory_end);
         const PAGE_SIZE : usize = 4096;
         #[inline]
         const fn align_up(v : usize, align : usize) -> usize { (v + align - 1) & !(align - 1) }
@@ -160,9 +194,13 @@ mod qemu_riscv64_opensbi {
         let end_ppn = alloc_end / PAGE_SIZE;
         info!("[self-test] frame range ppn=[{:#x},{:#x})",
               start_ppn, end_ppn);
+        warn!("[boot-init] kernel_main -> mm::test_with_range ppn=[{:#x},{:#x})",
+              start_ppn, end_ppn);
         mm::test_with_range(base::addr::BasePPN { val : start_ppn },
                             base::addr::BasePPN { val : end_ppn });
+        warn!("[boot-init] kernel_main -> mm::kernel_mm::init");
         mm::kernel_mm::init(start_ppn, end_ppn, memory_end);
+        warn!("[boot-init] kernel_main mm self-test done");
         info!("[self-test] mm self-test done");
 
         // 设备驱动扫描与根文件系统挂载自检。
@@ -172,8 +210,19 @@ mod qemu_riscv64_opensbi {
                   err);
         } else {
             info!("[self-test] driver init done");
+            warn!("[boot-init] kernel_main -> network::stack::init");
             match driver::network::stack::init([10, 0, 2, 15], [10, 0, 2, 2]) {
                 Ok(()) => {
+                    warn!("[boot-init] kernel_main -> spawn network_poller_task (post stack init)");
+                    unsafe {
+                        unsafe extern "C" {
+                            fn wateros_mcs_boot_log_scheduler_ready(tag_ptr : *const u8,
+                                                                    tag_len : usize);
+                        }
+                        const PRE_SPAWN : &[u8] = b"main.pre_spawn";
+                        wateros_mcs_boot_log_scheduler_ready(PRE_SPAWN.as_ptr(),
+                                                             PRE_SPAWN.len());
+                    }
                     task::spawn_kernel_task(network_poller_task, 0);
                     // 同步烟测：在调度器启动前验证核心 API
                     crate::self_tests::network::run_sync_smoke();
@@ -201,9 +250,11 @@ mod qemu_riscv64_opensbi {
             // crate::self_tests::task::spawn_all();  // 禁用
         }
 
+        warn!("[boot-init] kernel_main -> enable timer/global interrupt");
         platform::interrupt::enable_timer_interrupt().unwrap();
         platform::timer::set_timer_after_ms(100).unwrap();
         platform::interrupt::enable_global_interrupt().unwrap();
+        warn!("[boot-init] kernel_main interrupts enabled");
         klog::post_init_hello();
         info!("[task-selftest] starting first task");
         task::run_first_task()
@@ -304,6 +355,7 @@ mod qemu_loongarch64_virt {
             info!("[loongarch64][self-test] driver init done");
             match driver::network::stack::init([10, 0, 2, 15], [10, 0, 2, 2]) {
                 Ok(()) => {
+                    warn!("[boot-init] kernel_main -> spawn network_poller_task (post stack init)");
                     task::spawn_kernel_task(network_poller_task, 0);
                     crate::self_tests::network::run_sync_smoke();
                 }

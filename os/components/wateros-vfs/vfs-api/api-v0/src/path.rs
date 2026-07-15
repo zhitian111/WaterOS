@@ -12,7 +12,6 @@ pub struct NormalizedPath {
 
 impl NormalizedPath {
     /// 以 `str` 形式借用规范化结果，可直接传给后端 FS（已保证以 `/` 开头等不变量）。
-    #[inline]
     pub fn as_str(&self) -> &str { self.inner.as_str() }
 }
 
@@ -21,7 +20,6 @@ impl NormalizedPath {
 /// - 必须以 `/` 开头，否则 [`VfsError::InvalidPath`]。
 /// - 空路径（`""`）非法。
 /// - `..` 在根之上折叠为根（与常见 Unix 行为一致）。
-#[inline]
 pub fn normalize_absolute_path(path: &str) -> VfsResult<NormalizedPath> {
     if path.is_empty() {
         return Err(VfsError::InvalidPath);
@@ -55,7 +53,6 @@ pub fn normalize_absolute_path(path: &str) -> VfsResult<NormalizedPath> {
 }
 
 /// 根目录下文件名不得包含 `/` 或为空。
-#[inline]
 pub fn validate_root_file_name(name: &str) -> VfsResult<()> {
     if name.is_empty() || name.contains('/') {
         return Err(VfsError::InvalidPath);

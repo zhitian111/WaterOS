@@ -7,7 +7,6 @@
 
 /// 模板级占位函数，仅供本 crate 内建单测；不代表最终公共 API。
 // 本方法代码由AI完成
-#[inline]
 pub fn add(left : u64, right : u64) -> u64 { left + right }
 
 #[cfg(test)]

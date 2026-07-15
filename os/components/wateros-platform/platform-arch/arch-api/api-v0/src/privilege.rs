@@ -21,7 +21,6 @@ pub trait PrivLevelWrite {
     /// 仅设置特权相关 CSR 位；与 `sret` 等配合才能完成实际特权级切换。
     fn set_privilege(level : PrivLevel);
     /// 将特权相关 CSR 位设为用户态语义。
-    #[inline]
     fn set_to_user() { Self::set_privilege(PrivLevel::User); }
 }
 

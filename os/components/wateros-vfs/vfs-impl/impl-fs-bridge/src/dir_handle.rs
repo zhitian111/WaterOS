@@ -61,14 +61,12 @@ const DT_LNK: u8 = 10;
 // 本变量代码由AI完成
 const HEADER_SIZE: usize = 19;
 
-#[inline]
 // 本方法代码由AI完成
 fn dirent64_reclen(name_len: usize) -> usize {
     let with_name = HEADER_SIZE + name_len + 1;
     (with_name + 7) & !7
 }
 
-#[inline]
 // 本方法代码由AI完成
 pub(crate) fn node_type_to_dt(t: VfsNodeType) -> u8 {
     match t {

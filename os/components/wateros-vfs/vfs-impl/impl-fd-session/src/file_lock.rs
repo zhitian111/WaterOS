@@ -134,7 +134,6 @@ fn drop_inode_if_empty(key: &InodeKey, locks: &Arc<InodeLocks>) {
 }
 
 /// 从句柄元数据构造 inode 键；仅普通文件可上锁。
-#[inline]
 // 本方法代码由AI完成
 pub fn inode_key_from_metadata(meta: &VfsMetadata) -> Option<InodeKey> {
     if meta.node_type != VfsNodeType::File {

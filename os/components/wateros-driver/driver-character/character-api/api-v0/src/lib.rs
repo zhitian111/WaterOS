@@ -26,7 +26,6 @@ pub trait SerialPort: Send {
     fn write_byte(&mut self, byte: u8) -> SerialResult<()>;
 
     /// 顺序写入缓冲区。
-    #[inline]
     fn write_all(&mut self, bytes: &[u8]) -> SerialResult<()> {
         for &b in bytes {
             self.write_byte(b)?;
@@ -63,7 +62,6 @@ pub trait CharacterDevice: Send {
     fn write(&mut self, buf: &[u8]) -> DriverResult<usize>;
 
     /// `poll` 语义：根据请求的 `events` 掩码返回就绪的 `revents`。
-    #[inline]
     fn poll_revents(&mut self, events: i16) -> DriverResult<i16> {
         const POLLIN: i16 = 0x001;
         const POLLOUT: i16 = 0x004;
@@ -77,13 +75,11 @@ pub trait CharacterDevice: Send {
         Ok(revents)
     }
 
-    #[inline]
     fn ioctl(&mut self, _request: usize, _arg: usize) -> DriverResult<isize> {
         Err(DriverError::Unsupported)
     }
 
     /// devfs 与 VFS 用于区分 UART 与 RTC 等设备。
-    #[inline]
     fn device_kind(&self) -> CharacterDeviceKind {
         CharacterDeviceKind::Serial
     }
@@ -95,7 +91,6 @@ pub struct SerialPortCharacterDevice<P: SerialPort> {
 }
 
 impl<P: SerialPort> SerialPortCharacterDevice<P> {
-    #[inline]
     pub fn new(port: P) -> Self {
         Self { port }
     }
@@ -136,7 +131,6 @@ impl<P: SerialPort> CharacterDevice for SerialPortCharacterDevice<P> {
 }
 
 /// 将设备追加到全局表末尾，返回其索引（从 0 起）。
-#[inline]
 pub fn register_character_device(device: SharedCharacterDevice) -> usize {
     let mut devices = CHARACTER_DEVICES.lock();
     devices.push(device);
@@ -144,19 +138,16 @@ pub fn register_character_device(device: SharedCharacterDevice) -> usize {
 }
 
 /// 当前已注册字符设备数量。
-#[inline]
 pub fn character_device_count() -> usize {
     CHARACTER_DEVICES.lock().len()
 }
 
 /// 按下标取设备；越界返回 `None`。
-#[inline]
 pub fn character_device_at(index: usize) -> Option<SharedCharacterDevice> {
     CHARACTER_DEVICES.lock().get(index).cloned()
 }
 
 /// 取首个字符设备。
-#[inline]
 pub fn first_character_device() -> Option<SharedCharacterDevice> {
     CHARACTER_DEVICES.lock().first().cloned()
 }
@@ -172,7 +163,6 @@ where
 }
 
 /// 查询指定下标设备的类别。
-#[inline]
 pub fn character_device_kind_at(index: usize) -> Option<CharacterDeviceKind> {
     with_character_device(index, |dev| dev.device_kind())
 }

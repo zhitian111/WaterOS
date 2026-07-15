@@ -74,19 +74,15 @@ pub struct SignalSet(u64);
 
 impl SignalSet {
     /// 空掩码。
-    #[inline]
     pub const fn empty() -> Self { Self(0) }
 
     /// 从原始位图构造。
-    #[inline]
     pub const fn from_bits(bits: u64) -> Self { Self(bits) }
 
     /// 返回原始位图。
-    #[inline]
     pub const fn bits(self) -> u64 { self.0 }
 
     /// 掩码是否包含信号 `sig`。
-    #[inline]
     pub const fn contains(self, sig: usize) -> bool {
         match signal_bit(sig) {
             Some(bit) => self.0 & bit != 0,
@@ -109,19 +105,15 @@ impl SignalSet {
     }
 
     /// 并集。
-    #[inline]
     pub fn union(self, other: Self) -> Self { Self(self.0 | other.0) }
 
     /// 差集（`self` 中有而 `other` 中没有的位）。
-    #[inline]
     pub fn difference(self, other: Self) -> Self { Self(self.0 & !other.0) }
 
     /// 交集。
-    #[inline]
     pub fn intersection(self, other: Self) -> Self { Self(self.0 & other.0) }
 
     /// 是否为空掩码。
-    #[inline]
     pub const fn is_empty(self) -> bool { self.0 == 0 }
 
     /// 返回最低位已置位信号号（1-based）。
@@ -149,7 +141,6 @@ pub struct SignalAction {
 
 impl SignalAction {
     /// 默认 disposition（内核默认语义）。
-    #[inline]
     pub const fn default_action() -> Self {
         Self { handler: SIG_DFL,
                flags: 0,
@@ -158,7 +149,6 @@ impl SignalAction {
     }
 
     /// 忽略 disposition。
-    #[inline]
     pub const fn ignore() -> Self {
         Self { handler: SIG_IGN,
                flags: 0,
@@ -167,15 +157,12 @@ impl SignalAction {
     }
 
     /// 是否为默认处理。
-    #[inline]
     pub const fn is_default(self) -> bool { self.handler == SIG_DFL }
 
     /// 是否忽略。
-    #[inline]
     pub const fn is_ignore(self) -> bool { self.handler == SIG_IGN }
 
     /// 是否安装了用户态处理函数。
-    #[inline]
     pub const fn has_user_handler(self) -> bool { self.handler > SIG_IGN }
 }
 
@@ -224,31 +211,26 @@ pub struct SignalDispatch {
 }
 
 impl SignalDispatch {
-    #[inline]
     pub const fn ignored() -> Self {
         Self { delivery: SignalDelivery::Ignored,
                target_task_id: None }
     }
 
-    #[inline]
     pub const fn terminate(target_task_id: Option<usize>) -> Self {
         Self { delivery: SignalDelivery::Terminate,
                target_task_id }
     }
 
-    #[inline]
     pub const fn pending(target_task_id: Option<usize>) -> Self {
         Self { delivery: SignalDelivery::Pending,
                target_task_id }
     }
 
-    #[inline]
     pub const fn stop(target_task_id: Option<usize>) -> Self {
         Self { delivery: SignalDelivery::Stop,
                target_task_id }
     }
 
-    #[inline]
     pub const fn continued(target_task_id: Option<usize>) -> Self {
         Self { delivery: SignalDelivery::Continue,
                target_task_id }
@@ -256,21 +238,17 @@ impl SignalDispatch {
 }
 
 /// 信号编号是否在 `(0, NSIG)` 范围内。
-#[inline]
 pub const fn valid_signal(sig: usize) -> bool { sig > 0 && sig < NSIG }
 
 /// `itimer` 种类是否合法。
-#[inline]
 pub const fn valid_itimer(which: usize) -> bool {
     matches!(which, ITIMER_REAL | ITIMER_VIRTUAL | ITIMER_PROF)
 }
 
 /// 信号是否不可被阻塞或更改 disposition（`SIGKILL`）。
-#[inline]
 pub const fn immutable_signal(sig: usize) -> bool { sig == SIGKILL }
 
 /// 将信号号转为掩码位；非法编号返回 `None`。
-#[inline]
 pub const fn signal_bit(sig: usize) -> Option<u64> {
     if valid_signal(sig) {
         Some(1u64 << (sig - 1))
@@ -280,13 +258,11 @@ pub const fn signal_bit(sig: usize) -> Option<u64> {
 }
 
 /// 默认 disposition 下应忽略的信号。
-#[inline]
 pub const fn default_ignored(sig: usize) -> bool {
     sig == SIGCHLD || sig == SIGURG || sig == SIGWINCH
 }
 
 /// 默认 disposition 下应终止进程的信号。
-#[inline]
 pub const fn default_terminates(sig: usize) -> bool {
     valid_signal(sig) && !default_ignored(sig) && sig != SIGSTOP
 }

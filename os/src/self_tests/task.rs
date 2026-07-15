@@ -52,7 +52,6 @@ fn spawn_user_elf_task(path : &str, label : &str) {
 }
 
 /// 从内核任务参数还原 `Pipe` 引用（bring-up 自检专用，生命周期由创建方保证）。
-#[inline]
 fn pipe_from_arg(pipe_ptr : usize) -> &'static ipc::pipe::Pipe {
     unsafe { &*(pipe_ptr as *const ipc::pipe::Pipe) }
 }

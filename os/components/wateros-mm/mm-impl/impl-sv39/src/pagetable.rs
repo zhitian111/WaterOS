@@ -269,12 +269,10 @@ impl LazyFileVma {
                                .duplicate_box()? })
     }
 
-    #[inline]
     fn contains_page(&self, page : VirtAddr) -> bool {
         page.0 >= self.start.0 && page.0 < self.end.0
     }
 
-    #[inline]
     fn overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
         start.0 < self.end.0 && end.0 > self.start.0
     }
@@ -288,12 +286,10 @@ pub(crate) struct SharedAnonVma {
 }
 
 impl SharedAnonVma {
-    #[inline]
     fn contains_page(&self, page : VirtAddr) -> bool {
         page.0 >= self.start.0 && page.0 < self.end.0
     }
 
-    #[inline]
     fn overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
         start.0 < self.end.0 && end.0 > self.start.0
     }
@@ -317,7 +313,6 @@ impl Sv39AddressSpace {
                   shared_anon_vmas : Vec::new() })
     }
 
-    #[inline]
     pub(crate) fn kernel_satp_value(&self) -> usize { make_satp(self.root, KERNEL_ASID) }
 
     /// ELF 装载完成后初始化用户堆与匿名映射区游标（须在泄漏页表对象前调用一次）。

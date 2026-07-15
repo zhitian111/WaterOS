@@ -25,13 +25,11 @@ pub trait NetworkDevice: Send {
     fn mac_address(&self) -> [u8; 6];
 
     /// 最大传输单元（字节）；默认 [`DEFAULT_MTU`]。
-    #[inline]
     fn mtu(&self) -> usize {
         DEFAULT_MTU
     }
 
     /// 链路是否就绪；默认 `true`，具体设备可按硬件状态覆盖。
-    #[inline]
     fn is_link_up(&self) -> bool {
         true
     }
@@ -45,7 +43,6 @@ pub trait NetworkDevice: Send {
 }
 
 /// 将设备追加到全局表末尾，返回其索引（从 0 起）。
-#[inline]
 pub fn register_network_device(device: SharedNetworkDevice) -> usize {
     let mut devices = NETWORK_DEVICES.lock();
     devices.push(device);
@@ -53,19 +50,16 @@ pub fn register_network_device(device: SharedNetworkDevice) -> usize {
 }
 
 /// 当前已注册网络设备数量。
-#[inline]
 pub fn network_device_count() -> usize {
     NETWORK_DEVICES.lock().len()
 }
 
 /// 取表中第一个设备。
-#[inline]
 pub fn first_network_device() -> Option<SharedNetworkDevice> {
     NETWORK_DEVICES.lock().first().cloned()
 }
 
 /// 按下标取设备；越界返回 `None`。
-#[inline]
 pub fn network_device_at(index: usize) -> Option<SharedNetworkDevice> {
     NETWORK_DEVICES.lock().get(index).cloned()
 }

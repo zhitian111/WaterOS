@@ -70,7 +70,6 @@ impl TaskTrapSnapshot {
     pub const fn returns_to_kernel(&self) -> bool { !self.returns_to_user }
 
     /// 返回 trap 关联的用户页表对象指针。
-    #[inline]
     pub const fn user_aspace_ptr(&self) -> usize { self.user_aspace_ptr }
 }
 

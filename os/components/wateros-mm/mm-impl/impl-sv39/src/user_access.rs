@@ -21,7 +21,6 @@ pub struct Sv39UserMemoryOps {
 }
 
 impl Sv39UserMemoryOps {
-    #[inline]
     pub const fn new(handle: usize) -> Self {
         Self { handle }
     }

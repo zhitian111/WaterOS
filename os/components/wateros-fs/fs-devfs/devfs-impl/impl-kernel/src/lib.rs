@@ -261,7 +261,6 @@ pub fn set_dt_unsupported_paths(paths: Vec<String>) {
 }
 
 /// 返回当前节点列表快照。
-#[inline]
 // 本方法代码由AI完成
 pub fn list_nodes() -> Vec<DevNode> {
     let m = KernelDevFsManager;
@@ -269,7 +268,6 @@ pub fn list_nodes() -> Vec<DevNode> {
 }
 
 /// 按路径查找块设备句柄。
-#[inline]
 // 本方法代码由AI完成
 pub fn lookup_block_device(path: &str) -> fs_api_v0::FsResult<SharedBlockDevice> {
     let m = KernelDevFsManager;
@@ -277,7 +275,6 @@ pub fn lookup_block_device(path: &str) -> fs_api_v0::FsResult<SharedBlockDevice>
 }
 
 /// 按路径查找字符设备句柄。
-#[inline]
 // 本方法代码由AI完成
 pub fn lookup_character_device(path: &str) -> fs_api_v0::FsResult<SharedCharacterDevice> {
     let m = KernelDevFsManager;
@@ -285,7 +282,6 @@ pub fn lookup_character_device(path: &str) -> fs_api_v0::FsResult<SharedCharacte
 }
 
 /// 默认根块设备路径：优先 `/dev/vda`，否则取首个块节点。
-#[inline]
 // 本方法代码由AI完成
 pub fn default_root_block_path() -> Option<String> {
     let m = KernelDevFsManager;
@@ -305,12 +301,10 @@ const SUPPORTED: &[FsCapability] =
     &[FsCapability::new(FsKind::DevFs, FsAccessMode::ReadOnly)];
 
 impl FsImpl for KernelDevFsImpl {
-    #[inline]
     fn name(&self) -> &'static str {
         "devfs"
     }
 
-    #[inline]
     fn supported(&self) -> &'static [FsCapability] {
         SUPPORTED
     }

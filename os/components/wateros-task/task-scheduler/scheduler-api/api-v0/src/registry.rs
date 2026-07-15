@@ -327,7 +327,6 @@ impl TaskRegistry {
     }
 
     /// 将任务标为 Ready。
-    #[inline]
     pub fn mark_ready(&mut self, task_id : TaskId) {
         if let Some(task) = self.task_table.task_mut_opt(task_id) {
             task.mark_ready();
@@ -335,7 +334,6 @@ impl TaskRegistry {
     }
 
     /// 将任务标为 Blocking 并记录原因。
-    #[inline]
     pub fn mark_blocking(&mut self, task_id : TaskId, reason : TaskBlockReason) {
         if let Some(task) = self.task_table.task_mut_opt(task_id) {
             task.mark_blocking(reason);
@@ -343,7 +341,6 @@ impl TaskRegistry {
     }
 
     /// 将任务标为 Sleeping 并设置唤醒 tick。
-    #[inline]
     pub fn mark_sleeping(&mut self, task_id : TaskId, wake_tick : TaskTick) {
         if let Some(task) = self.task_table.task_mut_opt(task_id) {
             task.mark_sleeping(wake_tick);
@@ -351,7 +348,6 @@ impl TaskRegistry {
     }
 
     /// 将任务标为 Exited。
-    #[inline]
     pub fn mark_exited(&mut self, task_id : TaskId, exit_code : TaskExitCode) {
         if let Some(task) = self.task_table.task_mut_opt(task_id) {
             task.mark_exited(exit_code);
@@ -431,10 +427,8 @@ impl TaskRegistry {
         }
     }
 
-    #[inline]
     pub fn current_task_id(&self) -> Option<TaskId> { self.current_task_id }
 
-    #[inline]
     pub fn current_task_snapshot(&self) -> Option<TaskSnapshot> {
         self.current_task_id
             .map(|task_id| {
@@ -444,14 +438,12 @@ impl TaskRegistry {
             })
     }
 
-    #[inline]
     pub fn task_snapshot(&self, task_id : TaskId) -> Option<TaskSnapshot> {
         self.task_table
             .task_opt(task_id)
             .map(TaskControlBlock::snapshot)
     }
 
-    #[inline]
     pub fn current_task_kernel_stack_top(&self) -> Option<usize> {
         self.current_task_id
             .map(|task_id| {
@@ -461,7 +453,6 @@ impl TaskRegistry {
             })
     }
 
-    #[inline]
     pub fn current_task_address_space_raw(&self) -> usize {
         self.current_task_id
             .map(|task_id| {
@@ -472,7 +463,6 @@ impl TaskRegistry {
             .unwrap_or(0)
     }
 
-    #[inline]
     pub fn current_task_user_aspace_ptr(&self) -> usize {
         self.current_task_id
             .map(|task_id| {
@@ -483,12 +473,10 @@ impl TaskRegistry {
             .unwrap_or(0)
     }
 
-    #[inline]
     pub fn current_task_user_address_space_token(&self) -> usize {
         self.current_task_address_space_raw()
     }
 
-    #[inline]
     pub fn current_task_trap_return_address_space_token(&self) -> usize {
         self.current_task_id
             .map(|task_id| {

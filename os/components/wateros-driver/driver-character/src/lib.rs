@@ -39,13 +39,11 @@ pub const CHARACTER_SUPPORTED_DEVICES: &[SupportedDeviceEntry] = &[
 ];
 
 /// 返回本子系统声明支持的设备条目。
-#[inline]
 pub fn supported_devices() -> &'static [SupportedDeviceEntry] {
     CHARACTER_SUPPORTED_DEVICES
 }
 
 /// 字符子系统是否声明可处理该 DTB 设备。
-#[inline]
 pub fn character_subsystem_claims_device(compatibles: &[String], probed: DeviceType) -> bool {
     if probed != DeviceType::Character {
         return false;
@@ -59,7 +57,6 @@ pub fn character_subsystem_claims_device(compatibles: &[String], probed: DeviceT
 }
 
 /// 是否识别为 NS16550 类 UART 节点（用于 DTB 探测）。
-#[inline]
 pub fn is_uart_compatible(compatibles: &[String]) -> bool {
     compatibles.iter().any(|c| {
         matches!(

@@ -75,7 +75,6 @@ pub struct FsCapability {
 
 impl FsCapability {
     /// 构造一条 `(kind, access)` 能力声明，供 impl 的 `supported()` 静态表使用。
-    #[inline]
     pub const fn new(kind: FsKind, access: FsAccessMode) -> Self { Self { kind, access } }
 }
 
@@ -356,130 +355,102 @@ pub struct LocalRwFs(Box<dyn ReadWriteFs>);
 
 impl LocalRwFs {
     /// 由具体 RW 实现构造本地包装。
-    #[inline]
     pub fn new(inner: Box<dyn ReadWriteFs>) -> Self { Self(inner) }
 }
 
 impl Deref for LocalRwFs {
     type Target = dyn ReadWriteFs;
 
-    #[inline]
     fn deref(&self) -> &Self::Target { &*self.0 }
 }
 
 impl DerefMut for LocalRwFs {
-    #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target { &mut *self.0 }
 }
 
 impl ReadWriteFs for LocalRwFs {
-    #[inline]
     fn mount_rw(&mut self, device: SharedBlockDevice) -> FsResult<()> {
         self.deref_mut().mount_rw(device)
     }
 
-    #[inline]
     fn is_mounted(&self) -> bool { self.deref().is_mounted() }
 
-    #[inline]
     fn write_regular_file_at_root(&mut self, name: &str, data: &[u8]) -> FsResult<()> {
         self.deref_mut().write_regular_file_at_root(name, data)
     }
 
-    #[inline]
     fn write_regular_file(&mut self, path: &str, data: &[u8]) -> FsResult<()> {
         self.deref_mut().write_regular_file(path, data)
     }
 
-    #[inline]
     fn unlink(&mut self, path: &str) -> FsResult<()> { self.deref_mut().unlink(path) }
 
-    #[inline]
     fn rmdir(&mut self, path: &str) -> FsResult<()> { self.deref_mut().rmdir(path) }
 
-    #[inline]
     fn write_range(&mut self, path: &str, offset: u64, data: &[u8]) -> FsResult<usize> {
         self.deref_mut().write_range(path, offset, data)
     }
 
-    #[inline]
     fn truncate(&mut self, path: &str, len: u64) -> FsResult<()> {
         self.deref_mut().truncate(path, len)
     }
 
-    #[inline]
     fn mkdir(&mut self, path: &str, mode: u32) -> FsResult<()> {
         self.deref_mut().mkdir(path, mode)
     }
 
-    #[inline]
     fn chmod(&mut self, path: &str, mode: u32) -> FsResult<()> {
         self.deref_mut().chmod(path, mode)
     }
 
-    #[inline]
     fn chown(&mut self, path: &str, uid: Option<u32>, gid: Option<u32>) -> FsResult<()> {
         self.deref_mut().chown(path, uid, gid)
     }
 
-    #[inline]
     fn setxattr(&mut self, path: &str, name: &str, value: &[u8]) -> FsResult<()> {
         self.deref_mut().setxattr(path, name, value)
     }
 
-    #[inline]
     fn getxattr(&self, path: &str, name: &str, buf: &mut [u8]) -> FsResult<usize> {
         self.deref().getxattr(path, name, buf)
     }
 
-    #[inline]
     fn listxattr(&self, path: &str, buf: &mut [u8]) -> FsResult<usize> {
         self.deref().listxattr(path, buf)
     }
 
-    #[inline]
     fn removexattr(&mut self, path: &str, name: &str) -> FsResult<()> {
         self.deref_mut().removexattr(path, name)
     }
 
-    #[inline]
     fn rename(&mut self, old_path: &str, new_path: &str) -> FsResult<()> {
         self.deref_mut().rename(old_path, new_path)
     }
 
-    #[inline]
     fn hardlink(&mut self, existing_path: &str, new_path: &str) -> FsResult<()> {
         self.deref_mut().hardlink(existing_path, new_path)
     }
 
-    #[inline]
     fn symlink(&mut self, link_path: &str, target: &str) -> FsResult<()> {
         self.deref_mut().symlink(link_path, target)
     }
 
-    #[inline]
     fn mknod(&mut self, path: &str, mode: u32, rdev: u32) -> FsResult<()> {
         self.deref_mut().mknod(path, mode, rdev)
     }
 
-    #[inline]
     fn exists(&self, path: &str) -> FsResult<bool> { self.deref().exists(path) }
 
-    #[inline]
     fn metadata(&self, path: &str) -> FsResult<FsMetadata> { self.deref().metadata(path) }
 
-    #[inline]
     fn read(&self, path: &str) -> FsResult<Vec<u8>> { self.deref().read(path) }
 
-    #[inline]
     fn read_range(&self, path: &str, offset: u64, buf: &mut [u8]) -> FsResult<usize> {
         self.deref().read_range(path, offset, buf)
     }
 
-    #[inline]
     fn read_dir(&self, path: &str) -> FsResult<Vec<FsDirEntry>> { self.deref().read_dir(path) }
 
-    #[inline]
     fn read_symlink(&self, path: &str) -> FsResult<Vec<u8>> { self.deref().read_symlink(path) }
 }
 
@@ -503,7 +474,6 @@ pub trait FsImpl: Sync {
     fn supported(&self) -> &'static [FsCapability];
 
     /// 是否支持指定的 kind 与访问模式（对 `supported()` 的便捷查询）。
-    #[inline]
     fn supports(&self, kind: FsKind, mode: FsAccessMode) -> bool {
         self.supported().iter().any(|c| c.kind == kind && c.access == mode)
     }
@@ -526,52 +496,40 @@ pub struct LocalFs(Box<dyn ReadOnlyFs>);
 
 impl LocalFs {
     /// 由具体 RO 实现构造本地包装。
-    #[inline]
     pub fn new(inner: Box<dyn ReadOnlyFs>) -> Self { Self(inner) }
 }
 
 impl Deref for LocalFs {
     type Target = dyn ReadOnlyFs;
 
-    #[inline]
     fn deref(&self) -> &Self::Target { &*self.0 }
 }
 
 impl DerefMut for LocalFs {
-    #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target { &mut *self.0 }
 }
 
 impl ReadOnlyFs for LocalFs {
-    #[inline]
     fn mount(&mut self, device: SharedBlockDevice) -> FsResult<()> {
         self.deref_mut().mount(device)
     }
 
-    #[inline]
     fn is_mounted(&self) -> bool { self.deref().is_mounted() }
 
-    #[inline]
     fn exists(&self, path: &str) -> FsResult<bool> { self.deref().exists(path) }
 
-    #[inline]
     fn metadata(&self, path: &str) -> FsResult<FsMetadata> { self.deref().metadata(path) }
 
-    #[inline]
     fn read(&self, path: &str) -> FsResult<Vec<u8>> { self.deref().read(path) }
 
-    #[inline]
     fn read_range(&self, path: &str, offset: u64, buf: &mut [u8]) -> FsResult<usize> {
         self.deref().read_range(path, offset, buf)
     }
 
-    #[inline]
     fn read_dir(&self, path: &str) -> FsResult<Vec<FsDirEntry>> { self.deref().read_dir(path) }
 
-    #[inline]
     fn read_symlink(&self, path: &str) -> FsResult<Vec<u8>> { self.deref().read_symlink(path) }
 
-    #[inline]
     fn boot_dump_all_paths(&self) { self.deref().boot_dump_all_paths(); }
 }
 

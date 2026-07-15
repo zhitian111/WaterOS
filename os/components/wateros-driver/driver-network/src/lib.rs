@@ -43,13 +43,11 @@ pub const NETWORK_SUPPORTED_DEVICES: &[SupportedDeviceEntry] = &[SupportedDevice
 }];
 
 /// 返回本子系统声明支持的设备条目（非排他；可与其它子系统条目并存）。
-#[inline]
 pub fn supported_devices() -> &'static [SupportedDeviceEntry] {
     NETWORK_SUPPORTED_DEVICES
 }
 
 /// 网络子系统是否声明可处理该 DTB 设备（仅基于 `compatible` 列表与探测到的 [`DeviceType`]，不含具体初始化成败）。
-#[inline]
 pub fn network_subsystem_claims_device(compatibles: &[String], probed: DeviceType) -> bool {
     if probed != DeviceType::Network {
         return false;
@@ -181,18 +179,25 @@ pub mod stack {
 
     /// 创建 smoltcp 协议栈并配置 IP；无真实网卡时仍启用 loopback-only 模式。
     pub fn init(ip: [u8; 4], gateway: [u8; 4]) -> Result<(), &'static str> {
+        log::warn!("[boot-init] network::stack::init enter");
         let mut adapter = match first_network_device() {
-            Some(device) => SmoltcpAdapter::new(device),
+            Some(device) => {
+                log::warn!("[boot-init] network::stack::init SmoltcpAdapter::new (virtio)");
+                SmoltcpAdapter::new(device)
+            }
             None => {
                 log::warn!("[network-stack] no network device registered; using loopback-only mode");
                 SmoltcpAdapter::loopback_only()
             }
         };
+        log::warn!("[boot-init] network::stack::init adapter ready, query MAC");
         let mac = adapter.mac_address();
         adapter.set_local_ipv4(ip);
 
+        log::warn!("[boot-init] network::stack::init Interface::new");
         let config = Config::new(HardwareAddress::Ethernet(EthernetAddress(mac)));
         let mut iface = Interface::new(config, &mut adapter, Instant::ZERO);
+        log::warn!("[boot-init] network::stack::init Interface::new done, configure addrs/routes");
 
         iface.update_ip_addrs(|addrs| {
             addrs
@@ -240,6 +245,7 @@ pub mod stack {
             });
         });
 
+        log::warn!("[boot-init] network::stack::init store NETWORK_STACK");
         *NETWORK_STACK.lock() = Some(NetworkStack {
             adapter,
             iface,
@@ -250,6 +256,7 @@ pub mod stack {
             local_ip: ip,
             ephemeral_port: 49152,
         });
+        log::warn!("[boot-init] network::stack::init store done");
 
         log::info!(
             "[network-stack] initialized ip={}.{}.{}.{}/24 gateway={}.{}.{}.{}",
@@ -262,7 +269,6 @@ pub mod stack {
     /// 驱动协议栈处理一个轮询周期：收包 → 分发给 socket → 发送积压包。
     ///
     /// 需要在定时任务中周期性调用。
-    #[inline]
     pub fn poll() {
         poll_at_millis(0);
     }

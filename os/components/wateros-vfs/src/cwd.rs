@@ -32,7 +32,6 @@ fn ensure_open_path_resolver_registered() {
 }
 
 /// 全局 per-task cwd 注册表。
-#[inline]
 pub fn registry() -> &'static UniprocessorSafeCell<PerTaskCwdRegistry> {
     if CWD_REGISTRY_READY.load(Ordering::Acquire) == 0 {
         unsafe {
@@ -45,14 +44,12 @@ pub fn registry() -> &'static UniprocessorSafeCell<PerTaskCwdRegistry> {
 }
 
 /// 新用户/内核任务分配 id 后初始化 cwd 为 `/`。
-#[inline]
 pub fn init_task_cwd(task_id: task::TaskId) {
     let mut reg = registry().exclusive_access();
     reg.init_task_cwd(task_id);
 }
 
 /// `spawn_user_task_*` 返回后调用，显式建立 cwd（与惰性 `ensure_task_cwd` 等价）。
-#[inline]
 pub fn on_user_task_spawned(task_id: task::TaskId) {
     init_task_cwd(task_id);
 }
@@ -172,7 +169,6 @@ pub fn current_argv() -> Vec<String> {
 }
 
 /// 读取指定任务 argv（procfs 回调用）。
-#[inline]
 pub fn lookup_argv_for_task(task_id: task::TaskId) -> Option<Vec<String>> {
     let mut reg = registry().exclusive_access();
     reg.ensure_task_cwd(task_id);
@@ -180,7 +176,6 @@ pub fn lookup_argv_for_task(task_id: task::TaskId) -> Option<Vec<String>> {
 }
 
 /// 读取指定任务 exe 路径（procfs 回调用）。
-#[inline]
 pub fn lookup_exe_for_task(task_id: task::TaskId) -> Option<String> {
     let mut reg = registry().exclusive_access();
     reg.ensure_task_cwd(task_id);
@@ -198,21 +193,18 @@ pub fn current_exe_path() -> VfsResult<String> {
 }
 
 /// 任务回收后丢弃 cwd 槽位。
-#[inline]
 pub fn drop_task_cwd(task_id: task::TaskId) {
     let mut reg = registry().exclusive_access();
     reg.drop_task(task_id);
 }
 
 /// 供未来 `fork`/`clone` 复制父任务 cwd。
-#[inline]
 pub fn copy_cwd_from_parent(child: task::TaskId, parent: task::TaskId) {
     let mut reg = registry().exclusive_access();
     reg.copy_cwd_from_parent(child, parent);
 }
 
 /// thread clone 时共享父任务 cwd。
-#[inline]
 pub fn share_cwd_from_parent(child: task::TaskId, parent: task::TaskId) {
     let mut reg = registry().exclusive_access();
     reg.share_cwd_from_parent(child, parent);

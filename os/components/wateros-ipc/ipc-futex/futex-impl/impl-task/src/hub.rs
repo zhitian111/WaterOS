@@ -26,7 +26,6 @@ pub struct FutexHub {
 
 impl FutexHub {
     /// 返回全局 futex 枢纽单例。
-    #[inline]
     pub fn global() -> &'static Self {
         &GLOBAL_HUB
     }

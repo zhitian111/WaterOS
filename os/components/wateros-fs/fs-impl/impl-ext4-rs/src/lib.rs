@@ -297,10 +297,8 @@ pub struct Ext4RsFs {
 
 impl Ext4RsFs {
     /// 构造未挂载句柄。
-    #[inline]
     pub const fn new() -> Self { Self { fs : None } }
 
-    #[inline]
 // 本方法代码由AI完成
     fn fs(&self) -> FsResult<&Ext4> {
         self.fs
@@ -308,7 +306,6 @@ impl Ext4RsFs {
             .ok_or(FsError::NotMounted)
     }
 
-    #[inline]
 // 本方法代码由AI完成
     fn fs_mut(&mut self) -> FsResult<&mut Ext4> {
         self.fs
@@ -325,7 +322,6 @@ impl ReadOnlyFs for Ext4RsFs {
         Ok(())
     }
 
-    #[inline]
     fn is_mounted(&self) -> bool { self.fs.is_some() }
 
 // 本方法代码由AI完成
@@ -441,10 +437,8 @@ impl ReadOnlyFs for Ext4RsFs {
 }
 
 impl ReadWriteFs for Ext4RsFs {
-    #[inline]
     fn mount_rw(&mut self, device : SharedBlockDevice) -> FsResult<()> { self.mount(device) }
 
-    #[inline]
     fn is_mounted(&self) -> bool { self.fs.is_some() }
 
 // 本方法代码由AI完成
@@ -758,26 +752,20 @@ impl ReadWriteFs for Ext4RsFs {
         Ok(())
     }
 
-    #[inline]
     fn exists(&self, path : &str) -> FsResult<bool> { ReadOnlyFs::exists(self, path) }
 
-    #[inline]
     fn metadata(&self, path : &str) -> FsResult<FsMetadata> { ReadOnlyFs::metadata(self, path) }
 
-    #[inline]
     fn read(&self, path : &str) -> FsResult<Vec<u8>> { ReadOnlyFs::read(self, path) }
 
-    #[inline]
     fn read_range(&self, path : &str, offset : u64, buf : &mut [u8]) -> FsResult<usize> {
         ReadOnlyFs::read_range(self, path, offset, buf)
     }
 
-    #[inline]
     fn read_dir(&self, path : &str) -> FsResult<Vec<FsDirEntry>> {
         ReadOnlyFs::read_dir(self, path)
     }
 
-    #[inline]
     fn read_symlink(&self, path : &str) -> FsResult<Vec<u8>> {
         ReadOnlyFs::read_symlink(self, path)
     }
@@ -829,10 +817,8 @@ const SUPPORTED : &[FsCapability] = &[FsCapability::new(FsKind::Ext4, FsAccessMo
                                       FsCapability::new(FsKind::Ext4, FsAccessMode::ReadWrite)];
 
 impl FsImpl for Ext4RsImpl {
-    #[inline]
     fn name(&self) -> &'static str { "ext4-rs" }
 
-    #[inline]
     fn supported(&self) -> &'static [FsCapability] { SUPPORTED }
 
 // 本方法代码由AI完成

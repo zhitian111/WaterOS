@@ -5,14 +5,12 @@ use core::sync::atomic::{AtomicI64, Ordering};
 static REALTIME_OFFSET_NS: AtomicI64 = AtomicI64::new(0);
 
 /// 当前单调时钟纳秒（与 [`crate::timer::now_duration`] 同源）。
-#[inline]
 pub fn monotonic_ns() -> Result<u128, ()> {
     let duration = crate::timer::now_duration().map_err(|_| ())?;
     Ok(duration.as_nanos())
 }
 
 /// 当前 `CLOCK_REALTIME` 纳秒。
-#[inline]
 pub fn realtime_ns() -> Result<u128, ()> {
     let mono = monotonic_ns()?;
     let offset = REALTIME_OFFSET_NS.load(Ordering::Relaxed) as i128;
@@ -20,7 +18,6 @@ pub fn realtime_ns() -> Result<u128, ()> {
 }
 
 /// 将 `CLOCK_REALTIME` 设为 `target_ns`（相对单调时钟偏移）。
-#[inline]
 pub fn set_realtime_ns(target_ns: u128) -> Result<(), ()> {
     let mono = monotonic_ns()?;
     let offset = (target_ns as i128) - (mono as i128);
@@ -53,7 +50,6 @@ pub struct RtcTimeFields {
 }
 
 /// 将 UTC 纳秒时间戳拆成 Linux `struct rtc_time` 字段。
-#[inline]
 pub fn ns_to_rtc_time(ns: u128) -> RtcTimeFields {
     let total_sec = (ns / 1_000_000_000) as i64;
     let sec_of_day = total_sec.rem_euclid(86_400);
@@ -102,7 +98,6 @@ pub fn ns_to_rtc_time(ns: u128) -> RtcTimeFields {
 }
 
 /// 将 Linux `struct rtc_time` 字段合成 UTC 纳秒时间戳。
-#[inline]
 pub fn rtc_time_to_ns(fields: &RtcTimeFields) -> Result<u128, ()> {
     if fields.tm_sec < 0
         || fields.tm_min < 0

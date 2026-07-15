@@ -416,7 +416,6 @@ fn format_mounts() -> Vec<u8> {
 pub struct KernelProcFs;
 
 /// 返回全局 procfs 视图句柄。
-#[inline]
 pub fn view() -> &'static KernelProcFs {
     &KernelProcFs
 }
@@ -586,12 +585,10 @@ const SUPPORTED: &[FsCapability] =
     &[FsCapability::new(FsKind::Other("procfs"), FsAccessMode::ReadOnly)];
 
 impl FsImpl for KernelProcFsImpl {
-    #[inline]
     fn name(&self) -> &'static str {
         "procfs"
     }
 
-    #[inline]
     fn supported(&self) -> &'static [FsCapability] {
         SUPPORTED
     }

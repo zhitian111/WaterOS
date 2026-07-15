@@ -108,14 +108,12 @@ pub struct ShmRegistry {
 static SHM_REGISTRY: Mutex<ShmRegistry> = Mutex::new(ShmRegistry::new());
 
 /// 返回全局共享内存注册表单例。
-#[inline]
 pub fn registry() -> &'static Mutex<ShmRegistry> {
     &SHM_REGISTRY
 }
 
 impl ShmRegistry {
     /// 创建空注册表。
-    #[inline]
     pub const fn new() -> Self {
         Self {
             next_id: 1,
@@ -356,7 +354,6 @@ impl ShmRegistry {
     }
 }
 
-#[inline]
 fn round_up_pages(size: usize) -> ShmResult<usize> {
     size.checked_add(PAGE_SIZE - 1)
         .map(|v| v / PAGE_SIZE * PAGE_SIZE)

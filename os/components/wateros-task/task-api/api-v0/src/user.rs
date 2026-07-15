@@ -143,7 +143,6 @@ pub struct UserStack {
 
 impl UserStack {
     /// 基于外部已映射的虚拟地址区间构造用户栈。
-    #[inline]
     pub const fn from_range(bottom : usize, top : usize) -> Self {
         Self { bottom,
                top,
