@@ -583,7 +583,6 @@ dependencies = [
  "wateros-mm",
  "wateros-platform",
  "wateros-platform-arch-api-v0",
- "wateros-pseudo-shell",
  "wateros-runtime",
  "wateros-syscall",
  "wateros-task",
@@ -1364,17 +1363,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wateros-pseudo-shell"
-version = "0.1.0"
-dependencies = [
- "wateros-cred",
- "wateros-mm",
- "wateros-runtime-serial",
- "wateros-task",
- "wateros-vfs",
-]
-
-[[package]]
 name = "wateros-runtime"
 version = "0.1.0"
 dependencies = [
@@ -1430,14 +1418,6 @@ version = "0.1.0"
 dependencies = [
  "wateros-platform",
  "wateros-runtime-console",
-]
-
-[[package]]
-name = "wateros-runtime-serial"
-version = "0.1.0"
-dependencies = [
- "wateros-driver",
- "wateros-driver-character-api-v0",
 ]
 
 [[package]]
