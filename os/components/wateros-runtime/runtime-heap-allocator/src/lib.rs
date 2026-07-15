@@ -72,10 +72,10 @@ unsafe extern "C" {
 
 /// 使用静态 `HEAP_SPACE` 初始化堆分配器区域。
 ///
-/// **契约**：仅在单核引导路径、且堆尚未使用时调用；`unsafe` 块要求调用方保证无并发重入。
+/// **契约**：仅在单核引导路径、且堆尚未使用时调用；调用方保证无并发重入。
 pub fn init() {
-    let heap_lo = unsafe { core::ptr::addr_of!(kernel_heap_start) as usize };
-    let heap_hi = unsafe { core::ptr::addr_of!(kernel_heap_end) as usize };
+    let heap_lo = core::ptr::addr_of!(kernel_heap_start) as usize;
+    let heap_hi = core::ptr::addr_of!(kernel_heap_end) as usize;
     log::warn!("[boot-init] kernel_heap pool [{:#x},{:#x}) cap={:#x}",
                heap_lo,
                heap_hi,

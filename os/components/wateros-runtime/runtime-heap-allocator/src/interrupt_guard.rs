@@ -13,6 +13,8 @@ const HEAP_HIGH_WATER_NUMERATOR : usize = 9;
 const HEAP_HIGH_WATER_DENOMINATOR : usize = 10;
 
 /// 关全局中断后执行 `f`；检测递归分配并 panic。
+///
+/// 读取中断状态失败时 panic，避免“已 disable 但无法 restore、中断永久关闭”。
 pub(crate) fn with_allocator_interrupt_guard<R>(f : impl FnOnce() -> R) -> R {
     let depth = HEAP_GUARD_DEPTH.fetch_add(1, Ordering::Acquire);
     if depth > 0 {
@@ -20,12 +22,11 @@ pub(crate) fn with_allocator_interrupt_guard<R>(f : impl FnOnce() -> R) -> R {
         panic!("recursive heap allocation detected (depth={})",
                depth + 1);
     }
-    let state = arch::interrupt::read_global_interrupt_state().ok();
+    let state = arch::interrupt::read_global_interrupt_state()
+                    .expect("heap guard: read interrupt state");
     let _ = arch::interrupt::disable_global_interrupt();
     let ret = f();
-    if let Some(state) = state {
-        let _ = arch::interrupt::restore_global_interrupt_state(state);
-    }
+    let _ = arch::interrupt::restore_global_interrupt_state(state);
     HEAP_GUARD_DEPTH.fetch_sub(1, Ordering::Release);
     ret
 }
