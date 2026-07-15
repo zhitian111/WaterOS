@@ -39,6 +39,24 @@ impl InterruptSafeTlsfHeap {
                        capacity: KERNEL_HEAP_SIZE }
     }
 
+    /// 饱和加法，避免诊断用估算值 wrapping 成天文数字。
+    fn estimate_add(&self, n : usize) {
+        let _ =
+            self.used_estimate
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |u| {
+                    Some(u.saturating_add(n))
+                });
+    }
+
+    /// 饱和减法，避免不成对 free / size 不一致时 underflow wrapping。
+    fn estimate_sub(&self, n : usize) {
+        let _ =
+            self.used_estimate
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |u| {
+                    Some(u.saturating_sub(n))
+                });
+    }
+
     pub(crate) unsafe fn init(&self) {
         with_allocator_interrupt_guard(|| unsafe {
             let block = NonNull::new_unchecked(addr_of_mut!(HEAP_SPACE) as *mut u8);
@@ -66,8 +84,7 @@ unsafe impl GlobalAlloc for InterruptSafeTlsfHeap {
             let mut tlsf = self.inner.lock();
             match tlsf.allocate(layout) {
                 Some(ptr) => {
-                    self.used_estimate
-                        .fetch_add(layout.size(), Ordering::Relaxed);
+                    self.estimate_add(layout.size());
                     ptr.as_ptr()
                 }
                 None => ptr::null_mut(),
@@ -80,8 +97,7 @@ unsafe impl GlobalAlloc for InterruptSafeTlsfHeap {
             return;
         }
         with_allocator_interrupt_guard(|| unsafe {
-            self.used_estimate
-                .fetch_sub(layout.size(), Ordering::Relaxed);
+            self.estimate_sub(layout.size());
             let nn = NonNull::new_unchecked(ptr);
             self.inner
                 .lock()
@@ -97,31 +113,29 @@ unsafe impl GlobalAlloc for InterruptSafeTlsfHeap {
         with_allocator_interrupt_guard(|| unsafe {
             let mut tlsf = self.inner.lock();
             if ptr.is_null() {
-                let new_layout = Layout::from_size_align(new_size, layout.align())
-                                     .unwrap_or(layout);
+                let Ok(new_layout) = Layout::from_size_align(new_size, layout.align()) else {
+                    return ptr::null_mut();
+                };
                 return match tlsf.allocate(new_layout) {
                     Some(p) => {
-                        self.used_estimate
-                            .fetch_add(new_layout.size(), Ordering::Relaxed);
+                        self.estimate_add(new_layout.size());
                         p.as_ptr()
                     }
                     None => ptr::null_mut(),
                 };
             }
             if new_size == 0 {
-                self.used_estimate
-                    .fetch_sub(layout.size(), Ordering::Relaxed);
+                self.estimate_sub(layout.size());
                 tlsf.deallocate(NonNull::new_unchecked(ptr), layout.align());
                 return ptr::null_mut();
             }
-            let new_layout = Layout::from_size_align(new_size, layout.align())
-                                 .unwrap_or(layout);
+            let Ok(new_layout) = Layout::from_size_align(new_size, layout.align()) else {
+                return ptr::null_mut();
+            };
             match tlsf.reallocate(NonNull::new_unchecked(ptr), new_layout) {
                 Some(p) => {
-                    self.used_estimate
-                        .fetch_sub(layout.size(), Ordering::Relaxed);
-                    self.used_estimate
-                        .fetch_add(new_layout.size(), Ordering::Relaxed);
+                    self.estimate_sub(layout.size());
+                    self.estimate_add(new_layout.size());
                     p.as_ptr()
                 }
                 None => ptr::null_mut(),
