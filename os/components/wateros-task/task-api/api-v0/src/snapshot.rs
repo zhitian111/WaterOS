@@ -1,16 +1,7 @@
-//! 对外可见的 trap 与任务快照类型：**语义视图**，不镜像平台 `TrapContext`
-//! 的完整寄存器列表。
-//!
-//! 调度器与调试接口通过 [`TaskSnapshot`] / [`TaskTrapSnapshot`]
-//! 观察任务，而具体保存顺序由 `arch::trap` 实现保证。
-
+//! 对外可见的 trap 与任务快照类型
 use crate::{SchedPolicy, TaskId, TaskKind, TaskRuntimeStats, TaskState};
 
-/// 对外暴露的 trap 现场语义快照。
-///
-/// 完整 trap frame 的寄存器布局属于 `wateros-platform-arch` 的具体架构实现。
-/// task API 只暴露上层通常需要观察的稳定语义，避免公共快照绑定到某个
-/// 架构的寄存器数量、状态寄存器位布局或汇编保存顺序。
+/// 对外暴露的 trap 语义快照。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TaskTrapSnapshot {
     /// 原始 trap cause 编码，具体解释由当前架构约定。

@@ -38,7 +38,7 @@ pub use impl_multi_class as active_impl;
 #[cfg(feature = "impl-round-robin")]
 pub use impl_round_robin as active_impl;
 
-pub use api_v0::{ScheduleReason, SchedPolicyChangeAction, Scheduler, SwitchScheduler};
+pub use api_v0::{SchedPolicyChangeAction, ScheduleReason, Scheduler, SwitchScheduler};
 /// 当前架构下活动 trap 帧的具体类型别名；与 `wateros-task` 聚合层及
 /// `impl-round-robin` 一致。
 pub type TaskTrapFrame = arch::trap::ActiveTrapFrame;
@@ -59,8 +59,7 @@ pub fn init() {
 pub fn apply_sched_policy_change(task_id : TaskId,
                                  policy : task_api::SchedPolicy,
                                  param : task_api::SchedParam)
-                                 -> Result<SchedPolicyChangeAction, task_api::SchedError>
-{
+                                 -> Result<SchedPolicyChangeAction, task_api::SchedError> {
     active_impl::apply_sched_policy_change(task_id, policy, param)
 }
 

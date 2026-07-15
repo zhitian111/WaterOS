@@ -1,6 +1,4 @@
-//! 可等待对象与等待结果：**调度器阻塞/唤醒路径**与 `task_api` 其余模块之间的稳定句柄层。
-//!
-//! `TaskWaitHandle` 仅编码目标（等待队列或某任务退出），不包含超时；超时由调度器侧 tick 与 `TaskWaitResult` 配合表达。
+//! 可等待对象与等待结果
 
 use crate::task::{TaskId, WaitQueueId};
 
@@ -30,37 +28,29 @@ pub enum TaskWaitTarget {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TaskWaitHandle {
     /// 该句柄所指的等待目标（队列或任务退出）。
-    target: TaskWaitTarget,
+    target : TaskWaitTarget,
 }
 
 impl TaskWaitHandle {
     /// 为指定 wait queue 构造等待句柄。
     #[inline]
-    pub const fn for_wait_queue(wait_queue_id: WaitQueueId) -> Self {
-        Self {
-            target: TaskWaitTarget::WaitQueue(wait_queue_id),
-        }
+    pub const fn for_wait_queue(wait_queue_id : WaitQueueId) -> Self {
+        Self { target : TaskWaitTarget::WaitQueue(wait_queue_id) }
     }
 
     /// 为指定任务退出事件构造等待句柄。
     #[inline]
-    pub const fn for_task_exit(task_id: TaskId) -> Self {
-        Self {
-            target: TaskWaitTarget::TaskExit(task_id),
-        }
+    pub const fn for_task_exit(task_id : TaskId) -> Self {
+        Self { target : TaskWaitTarget::TaskExit(task_id) }
     }
 
     /// 为指定父任务的任意子任务退出事件构造等待句柄。
     #[inline]
-    pub const fn for_child_exit(parent_task_id: TaskId) -> Self {
-        Self {
-            target: TaskWaitTarget::ChildExit(parent_task_id),
-        }
+    pub const fn for_child_exit(parent_task_id : TaskId) -> Self {
+        Self { target : TaskWaitTarget::ChildExit(parent_task_id) }
     }
 
     /// 返回该等待句柄指向的目标对象。
     #[inline]
-    pub const fn target(&self) -> TaskWaitTarget {
-        self.target
-    }
+    pub const fn target(&self) -> TaskWaitTarget { self.target }
 }

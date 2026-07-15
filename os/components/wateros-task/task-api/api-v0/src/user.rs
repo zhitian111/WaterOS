@@ -1,9 +1,4 @@
-//! 用户任务规格与资源快照：地址空间句柄占位、映像区间与外部用户栈选项，供
-//! `impl-core` 装配 TCB。
-//!
-//! `AddressSpaceHandle` 仅为稳定 ABI 形状；具体 MMU 地址空间 token
-//! 绑定在平台与后续 MM 子系统中完成。
-
+//! 用户任务
 
 /// 用户态程序入口 PC。
 pub type UserTaskEntryPc = usize;
@@ -14,11 +9,8 @@ pub struct AddressSpaceHandle {
 }
 
 impl AddressSpaceHandle {
-    /// 基于一个实现自定义的原始值构造地址空间句柄。
     #[inline]
     pub const fn from_raw(raw : usize) -> Self { Self { raw } }
-
-    /// 读取该句柄对应的原始值。
     #[inline]
     pub const fn raw(self) -> usize { self.raw }
 }
@@ -47,17 +39,16 @@ impl UserImageInfo {
     pub const fn image_size(&self) -> usize { self.image_size }
 }
 
-/// 创建用户任务时需要提供的最小启动规格。
+/// 创建用户任务时需要提供的启动规格。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UserTask {
     entry_pc : UserTaskEntryPc,
     address_space : Option<AddressSpaceHandle>,
     image : Option<UserImageInfo>,
     stack : Option<UserStack>,
-    /// Sv39 用户页表对象指针（`impl-sv39` 下为 `&mut Sv39AddressSpace`
-    /// 泄漏地址）；无则为 `None`。
+    ///用户页表对象指针
     user_aspace_ptr : Option<usize>,
-    /// 首次 `sret` 进入用户态时的栈指针；`None` 时使用栈顶减 16 字节空栈。
+    /// 首次 `sret` 进入用户态时的栈指针
     initial_user_sp : Option<usize>,
     /// 首次进入用户态时传给 C runtime 的入口参数；具体架构决定是否写寄存器。
     initial_user_args : Option<(usize, usize, usize)>,

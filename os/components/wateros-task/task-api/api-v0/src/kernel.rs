@@ -1,16 +1,11 @@
-//! 内核任务首次运行时的 **不透明启动载荷**：由 arch
-//! 任务入口跳板传入，再调用实际 `KernelTaskEntry`。
-//!
-//! 留在实现层，避免在公共 `task_api` 中暴露具体启动协议。
+//内核任务
 use alloc::boxed::Box;
+use config::task::KERNEL_TASK_STACK_SIZE;
 use core::alloc::Layout;
-const KERNEL_TASK_STACK_SIZE : usize = 32 * 1024;
 
 /// 内核任务入口：`extern "C" fn(usize) -> !`。
 pub type KernelTaskEntry = extern "C" fn(usize) -> !;
 
-/// 由 arch 任务入口跳板交给任务运行时的不透明启动数据；公共任务 API
-/// 无需暴露启动协议细节。
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct TaskBootstrap {
@@ -45,14 +40,13 @@ impl KernelStack {
         }
         let storage = unsafe { Box::from_raw(ptr) };
         let stack_bottom = storage.0.as_ptr() as usize;
-        let top = align_down(stack_bottom + KERNEL_TASK_STACK_SIZE, 16);
+        let top = align_down(stack_bottom + KERNEL_TASK_STACK_SIZE,
+                             16);
         Some(Self { storage, top })
     }
 
     /// 分配内核栈；失败时 panic（bring-up 路径）。
-    pub fn new() -> Self {
-        Self::try_new().expect("kernel stack allocation failed")
-    }
+    pub fn new() -> Self { Self::try_new().expect("[wateros-task]kernel stack allocation failed") }
 
     #[inline]
     /// 返回当前内核栈的栈顶地址。

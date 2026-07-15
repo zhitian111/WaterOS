@@ -1,8 +1,5 @@
-//! 任务身份、状态机与运行统计：**调度与实现层共享的语义类型**，不绑定具体 TCB
-//! 内存布局。
-//!
-//! 与 `snapshot`、`user`、`wait` 等模块共同构成
-//! `task_api`；变更状态或阻塞原因枚举时需同步调度器与 `impl-core` 的解读路径。
+//! task相关
+
 
 use crate::TaskTrapSnapshot;
 /// 任务在系统内的唯一标识。
@@ -22,8 +19,7 @@ pub const IDLE_TASK_ID : TaskId = 0;
 pub enum TaskKind {
     /// 只在内核态运行的任务。
     Kernel,
-    /// 拥有用户栈与用户返回现场的用户态任务（与
-    /// `TaskControlBlock::new_user_task` 路径对应）。
+    /// 拥有用户栈与用户返回现场的用户态任务
     User,
 }
 

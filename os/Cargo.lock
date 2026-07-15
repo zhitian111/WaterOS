@@ -1493,6 +1493,9 @@ dependencies = [
 [[package]]
 name = "wateros-task-api-v0"
 version = "0.1.0"
+dependencies = [
+ "wateros-base-config",
+]
 
 [[package]]
 name = "wateros-task-impl-core"
