@@ -32,6 +32,9 @@ pub use impl_ext4;
 #[cfg(feature = "impl-ext4-rs")]
 /// 可选的 ext4_rs 实现 crate（由 `impl-ext4-rs` feature 启用）。
 pub use impl_ext4_rs;
+#[cfg(feature = "impl-ramfs")]
+/// 堆内存 ramfs 实现 crate；tmpfs 策略层复用此实现。
+pub use impl_ramfs;
 
 pub use api_v0::*;
 
@@ -44,6 +47,8 @@ pub fn registered_fs_impls() -> &'static [&'static dyn api_v0::FsImpl] {
         &impl_ext4_rs::IMPL,
         #[cfg(feature = "impl-ext4")]
         &impl_ext4::IMPL,
+        #[cfg(feature = "impl-ramfs")]
+        &impl_ramfs::IMPL,
         &devfs::active_impl::IMPL,
         &procfs::active_impl::IMPL,
     ];
@@ -155,6 +160,12 @@ pub fn root_rw_fs() -> Option<api_v0::SharedRwFs> {
     rootfs::active_impl::root_rw_fs()
 }
 
+/// 创建一个 heap-backed ramfs RW 句柄，供 VFS tmpfs 策略层挂载。
+#[cfg(feature = "impl-ramfs")]
+pub fn new_ramfs_rw(limit_bytes: Option<usize>, root_mode: u16) -> api_v0::SharedRwFs {
+    impl_ramfs::new_shared_rw(limit_bytes, root_mode)
+}
+
 /// 从块设备挂载独立 RO 卷（用户态 `mount` + `MS_RDONLY`）；不替换根卷句柄。
 pub fn mount_aux_ro_from_block_path(path: &str) -> api_v0::FsResult<api_v0::SharedFs> {
     rootfs::active_impl::mount_aux_ro_from_block_path(path)
@@ -169,6 +180,8 @@ pub fn mount_aux_rw_from_block_path(path: &str) -> api_v0::FsResult<api_v0::Shar
 pub fn test() {
     logging::trace!("[fs] test begin");
     api_v0::test();
+    #[cfg(feature = "impl-ramfs")]
+    impl_ramfs::test();
     procfs::active_impl::test();
 
     #[cfg(feature = "impl-ext4")]

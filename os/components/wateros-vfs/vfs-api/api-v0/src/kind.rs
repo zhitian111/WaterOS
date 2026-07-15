@@ -9,6 +9,8 @@ pub enum VfsFsKind {
     Ext3,
     /// ext4（当前根卷默认）。
     Ext4,
+    /// heap-backed ramfs；tmpfs 策略层可基于它创建挂载。
+    RamFs,
     /// 其他具名子系统。
     Other(&'static str),
 }

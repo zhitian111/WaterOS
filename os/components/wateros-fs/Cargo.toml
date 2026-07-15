@@ -9,6 +9,7 @@
         "./fs-impl/impl-dummy/",
         "./fs-impl/impl-ext4-rs/",
         "./fs-impl/impl-ext4/",
+        "./fs-impl/impl-ramfs/",
         "./fs-procfs/",
         "./fs-procfs/procfs-api/api-v0/",
         "./fs-procfs/procfs-impl/impl-dummy/",
@@ -32,6 +33,7 @@
     impl-devfs = { path = "./fs-impl/impl-devfs/", package = "wateros-fs-impl-devfs", default-features = true }
     impl-ext4 = { path = "./fs-impl/impl-ext4/", package = "wateros-fs-impl-ext4", default-features = true, optional = true }
     impl-ext4-rs = { path = "./fs-impl/impl-ext4-rs/", package = "wateros-fs-impl-ext4-rs", default-features = true, optional = true }
+    impl-ramfs = { path = "./fs-impl/impl-ramfs/", package = "wateros-fs-impl-ramfs", default-features = true, optional = true }
     logging = { path = "../wateros-runtime/runtime-logging", package = "wateros-runtime-logging", default-features = true }
     spin = "0.10.0"
 
@@ -41,14 +43,16 @@
         "impl-dummy/api-v0",
         "impl-ext4-rs?/api-v0",
         "impl-ext4?/api-v0",
+        "impl-ramfs?/api-v0",
         "procfs/api-v0",
         "rootfs/api-v0",
     ]
-    default = [ "api-v0", "impl-devfs", "impl-ext4-rs" ]
+    default = [ "api-v0", "impl-devfs", "impl-ext4-rs", "impl-ramfs" ]
     impl-devfs = [  ]
     impl-dummy = [  ]
     impl-ext4 = [ "dep:impl-ext4" ]
     impl-ext4-rs = [ "dep:impl-ext4-rs" ]
+    impl-ramfs = [ "dep:impl-ramfs" ]
 
 [profile.dev]
     panic = "abort"

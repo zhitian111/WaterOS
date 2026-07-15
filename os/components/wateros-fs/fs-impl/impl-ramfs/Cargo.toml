@@ -1,0 +1,16 @@
+[package]
+    name = "wateros-fs-impl-ramfs"
+    version = "0.1.0"
+    edition = "2024"
+
+[dependencies]
+    api-v0 = { path = "../../fs-api/api-v0/", package = "wateros-fs-api-v0", default-features = true }
+    driver-block-api-v0 = { path = "../../../wateros-driver/driver-block/block-api/api-v0", package = "wateros-driver-block-api-v0", default-features = true }
+    spin = { version = "0.10.0", default-features = false, features = [
+        "mutex",
+        "spin_mutex",
+    ] }
+
+[features]
+    api-v0 = [  ]
+    default = [ "api-v0" ]

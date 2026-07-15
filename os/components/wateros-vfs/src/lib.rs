@@ -179,6 +179,12 @@ pub fn mount_tmpfs_at(mount_point: &str) -> VfsResult<()> {
     impl_fs_bridge::mount_tmpfs_at(mount_point)
 }
 
+/// 挂载带容量上限的内存 tmpfs 到 `mount_point`。
+#[cfg(feature = "bridge-fs-api")]
+pub fn mount_tmpfs_at_with_limit(mount_point: &str, limit_bytes: Option<usize>) -> VfsResult<()> {
+    impl_fs_bridge::mount_tmpfs_at_with_limit(mount_point, limit_bytes)
+}
+
 /// 挂载 cgroup v1/v2 到 `mount_point`。
 #[cfg(feature = "bridge-fs-api")]
 pub fn mount_cgroup_at(mount_point: &str, v2: bool, options: &str) -> VfsResult<()> {

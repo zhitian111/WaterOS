@@ -898,6 +898,7 @@ dependencies = [
  "wateros-fs-impl-dummy",
  "wateros-fs-impl-ext4",
  "wateros-fs-impl-ext4-rs",
+ "wateros-fs-impl-ramfs",
  "wateros-fs-procfs",
  "wateros-fs-rootfs",
  "wateros-runtime-logging",
@@ -987,6 +988,15 @@ version = "0.1.0"
 dependencies = [
  "ext4_rs",
  "log",
+ "spin",
+ "wateros-driver-block-api-v0",
+ "wateros-fs-api-v0",
+]
+
+[[package]]
+name = "wateros-fs-impl-ramfs"
+version = "0.1.0"
+dependencies = [
  "spin",
  "wateros-driver-block-api-v0",
  "wateros-fs-api-v0",

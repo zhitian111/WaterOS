@@ -26,8 +26,8 @@ pub use dir_handle::DirectoryHandle;
 pub use file_handle::{BufferedFileHandle, RootFileHandle};
 use fs::procfs::api::ProcFsView;
 use fs::{
-    FsAccessMode, FsCapability, FsDirEntry, FsError, FsKind, FsMetadata, FsNodeType, LocalRwFs,
-    ReadOnlyFs, SharedRwFs,
+    FsAccessMode, FsCapability, FsDirEntry, FsError, FsKind, FsMetadata, FsNodeType, ReadOnlyFs,
+    SharedRwFs,
 };
 use mount_table::{resolve_route, FsRoute, MountIdentity};
 pub use paged_handle::PagedFileHandle;
@@ -63,6 +63,7 @@ fn map_fs_kind(kind : FsKind) -> VfsFsKind {
         FsKind::Ext3 => VfsFsKind::Ext3,
         FsKind::Ext4 => VfsFsKind::Ext4,
         FsKind::DevFs => VfsFsKind::Other("devfs"),
+        FsKind::RamFs => VfsFsKind::RamFs,
         FsKind::Other(s) => VfsFsKind::Other(s),
     }
 }
@@ -73,6 +74,7 @@ fn map_vfs_kind(kind : VfsFsKind) -> FsKind {
         VfsFsKind::Ext2 => FsKind::Ext2,
         VfsFsKind::Ext3 => FsKind::Ext3,
         VfsFsKind::Ext4 => FsKind::Ext4,
+        VfsFsKind::RamFs => FsKind::RamFs,
         VfsFsKind::Other(s) => FsKind::Other(s),
     }
 }
@@ -460,6 +462,11 @@ pub(crate) fn assert_mount_point_directory(path: &str) -> VfsResult<()> {
 // 本方法代码由AI完成
 pub fn mount_tmpfs_at(mount_point : &str) -> VfsResult<()> {
     mount_table::mount_tmpfs_at(mount_point)
+}
+
+/// 挂载带容量上限的 tmpfs 到 `mount_point`。
+pub fn mount_tmpfs_at_with_limit(mount_point : &str, limit_bytes : Option<usize>) -> VfsResult<()> {
+    mount_table::mount_tmpfs_at_with_limit(mount_point, limit_bytes)
 }
 
 /// 挂载 cgroup v1/v2 到 `mount_point`。

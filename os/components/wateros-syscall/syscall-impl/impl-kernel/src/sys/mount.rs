@@ -48,6 +48,42 @@ fn propagation_from_flags(flags: u64) -> Result<Option<MountPropagation>, ErrNo>
     }))
 }
 
+fn parse_tmpfs_size_value(value: &str) -> Result<usize, ErrNo> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(ErrNo::EINVAL);
+    }
+    let (digits, unit) = match value.as_bytes().last().copied() {
+        Some(b'k' | b'K') => (&value[..value.len() - 1], 1024usize),
+        Some(b'm' | b'M') => (&value[..value.len() - 1], 1024usize * 1024),
+        Some(b'g' | b'G') => (&value[..value.len() - 1], 1024usize * 1024 * 1024),
+        Some(_) => (value, 1usize),
+        None => return Err(ErrNo::EINVAL),
+    };
+    if digits.is_empty() || !digits.as_bytes().iter().all(u8::is_ascii_digit) {
+        return Err(ErrNo::EINVAL);
+    }
+    digits
+        .parse::<usize>()
+        .ok()
+        .and_then(|n| n.checked_mul(unit))
+        .ok_or(ErrNo::EINVAL)
+}
+
+fn parse_tmpfs_size_option(options: &str) -> Result<Option<usize>, ErrNo> {
+    let mut size = None;
+    for opt in options.split(',') {
+        let opt = opt.trim();
+        if opt.is_empty() {
+            continue;
+        }
+        if let Some(value) = opt.strip_prefix("size=") {
+            size = Some(parse_tmpfs_size_value(value)?);
+        }
+    }
+    Ok(size)
+}
+
 // 本方法代码由AI完成
 pub(crate) fn sys_mount(args: SyscallArgs) -> UserRet {
     cgroup_regression_loop_fast_exit_if_standalone();
@@ -181,8 +217,20 @@ pub(crate) fn sys_mount(args: SyscallArgs) -> UserRet {
                 return UserRet::from_error(ErrNo::EINVAL);
             }
         }
+        let tmpfs_limit = if data_ptr != 0 {
+            let options = match copy_user_path_cstr(data_ptr, crate::user_copy::USER_PATH_MAX) {
+                Ok(s) => s,
+                Err(e) => return UserRet::from_error(e),
+            };
+            match parse_tmpfs_size_option(options.as_str()) {
+                Ok(limit) => limit,
+                Err(e) => return UserRet::from_error(e),
+            }
+        } else {
+            None
+        };
         let readonly = flags & MS_RDONLY != 0;
-        match vfs::mount_tmpfs_at(mount_point.as_str()) {
+        match vfs::mount_tmpfs_at_with_limit(mount_point.as_str(), tmpfs_limit) {
             Ok(()) => {}
             Err(VfsError::Exists) => return UserRet::from_error(ErrNo::EBUSY),
             Err(e) => return UserRet::from_error(vfs_error_to_errno(e)),

@@ -497,8 +497,15 @@ pub(crate) fn mount_aux_at_ro(mount_point: &str, fs: SharedFs, device_key: &str)
 
 // 本方法代码由AI完成
 pub(crate) fn mount_tmpfs_at(mount_point: &str) -> VfsResult<()> {
-    let fs: SharedRwFs =
-        Arc::new(Mutex::new(LocalRwFs::new(Box::new(super::tmpfs::TmpFs::new()))));
+    mount_tmpfs_at_with_limit(mount_point, None)
+}
+
+// 本方法代码由AI完成
+pub(crate) fn mount_tmpfs_at_with_limit(
+    mount_point: &str,
+    limit_bytes: Option<usize>,
+) -> VfsResult<()> {
+    let fs: SharedRwFs = fs::new_ramfs_rw(limit_bytes, 0o1777);
     with_current_namespace(|ns| {
         mount_aux_common(ns, mount_point, AuxMount::Rw(fs), "tmpfs", "tmpfs", false)
     })?;
