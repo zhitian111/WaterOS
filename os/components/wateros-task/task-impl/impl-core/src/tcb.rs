@@ -11,10 +11,7 @@ use api_v0::{
     TaskTick, TaskTrapSnapshot, TaskWaitResult, UserImageInfo, UserStack, UserTask,
 };
 use arch::task::{ActiveArchTaskContext as TaskContext, ArchTaskContext};
-use arch::trap::{
-    ActiveTrapFrame as TaskTrapFrame, TrapContextRead, TrapContextWrite, TrapFrameRead,
-    TrapSyscallWrite, TrapThreadWrite,
-};
+use arch::trap::{ActiveTrapFrame as TaskTrapFrame, TrapFrameRead, TrapFrameWrite};
 
 unsafe extern "C" {
     fn __arch_task_entry();
@@ -46,18 +43,21 @@ struct UserResources {
 impl UserResources {
     fn new(kernel_stack : KernelStack, user : UserTask) -> Self {
         let token = user.address_space()
-                        .expect("user task requires an address space (use with_address_space)")
+                        .expect("[wateros-task]user task requires an address space ")
                         .raw();
         let entry_pc = user.entry_pc();
         let stack = user.stack()
-                        .expect("UserTask must have a stack (use with_stack)");
+                        .expect("[wateros-task]UserTask must have a user stack");
         let user_sp = user.initial_user_sp()
-                        .unwrap_or_else(|| initial_user_sp(stack.top(), stack.bottom()));
+                          .unwrap_or_else(|| initial_user_sp(stack.top(), stack.bottom()));
         let mut trap_frame = TaskTrapFrame::default();
+        //构造返回用户态时的trap
         trap_frame.prepare_user_return(entry_pc, user_sp);
+        // 设置首次进入用户态时的 argc/argv/envp
         if let Some((argc, argv, envp)) = user.initial_user_args() {
             trap_frame.set_user_entry_args(argc, argv, envp);
         }
+        // 设置 trap frame 的返回地址空间 token
         trap_frame.set_return_address_space_token(token);
         Self { kernel_stack,
                trap_frame,
@@ -77,12 +77,12 @@ fn initial_user_sp(top_exclusive : usize, bottom : usize) -> usize {
 }
 
 fn trap_snapshot(trap_frame : TaskTrapFrame, user_aspace_ptr : usize) -> TaskTrapSnapshot {
-    TaskTrapSnapshot::new(<TaskTrapFrame as TrapContextRead>::raw_cause(&trap_frame),
-                          <TaskTrapFrame as TrapContextRead>::user_pc(&trap_frame),
-                          <TaskTrapFrame as TrapContextRead>::user_sp(&trap_frame),
+    TaskTrapSnapshot::new(trap_frame.raw_cause(),
+                          trap_frame.user_pc(),
+                          trap_frame.user_sp(),
                           user_aspace_ptr,
-                          <TaskTrapFrame as TrapContextRead>::fault_addr(&trap_frame),
-                          <TaskTrapFrame as TrapContextRead>::returns_to_user(&trap_frame))
+                          trap_frame.fault_addr(),
+                          trap_frame.returns_to_user())
 }
 
 // ── 任务控制块 ───────────────────────────────────────────────────
@@ -162,21 +162,14 @@ impl TaskControlBlock {
                inner : TaskInner::User(user) }
     }
 
-    /// 从父任务 fork 一个子用户任务。
-    ///
-    /// - `child_stack` 非零时（clone）：子任务初始用户 SP 设为该值。
-    /// - `child_stack == 0`（fork）：子任务保留父进程 fork 瞬间 trap 帧中的用户 SP
-    ///   （`fork_user_aspace` 已复制栈页，与 Linux fork 语义一致）。
-    /// - `new_aspace_ptr` / `new_satp`：由 `mm::kernel_mm::fork_user_aspace()`
-    ///   返回的独立地址空间。
-    ///
-    /// 子 trap 帧中 a0=0（fork 对子进程返回 0），地址空间 token 指向新页表。
+    /// 从父任务 fork 一个子用户任务。独立地址空间、独立 trap frame、独立内核栈，但共享父任务的用户映像。
     pub fn fork_from(&self,
                      child_id : TaskId,
                      child_stack : usize,
                      new_aspace_ptr : usize,
                      new_satp : usize)
                      -> Option<Self> {
+        // 只复制用户任务
         let parent_user = match &self.inner {
             TaskInner::User(u) => u,
             _ => return None,
@@ -184,24 +177,19 @@ impl TaskControlBlock {
 
         // 复制父 trap 帧
         let mut child_trap = parent_user.trap_frame;
-
-        // 子进程从 fork/clone 返回 0（a0 = 0）
-        <TaskTrapFrame as TrapSyscallWrite>::set_syscall_ret(&mut child_trap,
-                                                             UserRet::from_success(0));
-
-        // 子进程 sepc 前进到下一条指令（跳过已完成的 ecall）
-        <TaskTrapFrame as TrapContextWrite>::add_user_pc(&mut child_trap, 4);
-
-        let parent_spec = &parent_user.user;
+        // fork的子进程返回0
+        child_trap.set_syscall_ret(UserRet::from_success(0));
+        // 执行下一条指令
+        child_trap.add_user_pc(4);
+        // 指定子任务的用户栈指针
+        //可选是否使用新栈
+        child_trap.set_return_address_space_token(new_satp);
         if child_stack != 0 {
-            <TaskTrapFrame as TrapContextWrite>::set_user_sp(&mut child_trap, child_stack);
+            child_trap.set_user_sp(child_stack);
         }
+        let parent_spec = &parent_user.user;
 
-        // 安装新的独立地址空间
-        <TaskTrapFrame as TrapContextWrite>::set_return_address_space_token(&mut child_trap,
-                                                                            new_satp);
-
-        // 构造子 UserTask 规格（元数据继承父，aspace 用新的）
+        // 构造 UserTask
         let child_spec = UserTask::new(parent_spec.entry_pc(),
                                        AddressSpaceHandle::from_raw(new_satp),
                                        parent_spec.image()
@@ -226,10 +214,7 @@ impl TaskControlBlock {
                                                             user : child_spec }) })
     }
 
-    /// 从当前用户任务 clone 一个同进程线程。
-    ///
-    /// 子线程共享父线程的用户地址空间规格，但拥有独立 trap frame、内核栈与
-    /// `TaskContext`。`set_tls` 为真时按当前架构 ABI 写入用户 TLS 寄存器。
+    /// 从当前用户任务 clone 一个同进程线程。共享地址空间
     pub fn clone_thread_from(&self,
                              child_id : TaskId,
                              child_stack : usize,
@@ -242,16 +227,14 @@ impl TaskControlBlock {
         };
 
         let mut child_trap = parent_user.trap_frame;
-        <TaskTrapFrame as TrapSyscallWrite>::set_syscall_ret(&mut child_trap,
-                                                             UserRet::from_success(0));
-        <TaskTrapFrame as TrapContextWrite>::add_user_pc(&mut child_trap, 4);
+        child_trap.set_syscall_ret(UserRet::from_success(0));
+        child_trap.add_user_pc(4);
         if child_stack != 0 {
-            <TaskTrapFrame as TrapContextWrite>::set_user_sp(&mut child_trap, child_stack);
+            child_trap.set_user_sp(child_stack);
         }
         if set_tls {
-            <TaskTrapFrame as TrapThreadWrite>::set_user_tls(&mut child_trap, tls);
+            child_trap.set_user_tls(tls);
         }
-
         let kernel_stack = KernelStack::try_new()?;
         let task_cx = TaskContext::goto_entry(__arch_user_task_entry as *const () as usize,
                                               kernel_stack.top());
@@ -292,20 +275,14 @@ impl TaskControlBlock {
                                      AddressSpaceHandle::from_raw(satp),
                                      image_info,
                                      stack_info,
-                                     user_aspace_ptr)
-            .with_initial_user_sp(sp)
-            .with_initial_user_args(argc, argv, envp);
+                                     user_aspace_ptr).with_initial_user_sp(sp)
+                                                     .with_initial_user_args(argc, argv, envp);
 
         // 新 trap 帧：入口 + 用户栈 + satp（trap_handler 对 execve 跳过 add_user_pc）
         let mut new_trap = TaskTrapFrame::default();
-        <TaskTrapFrame as TrapContextWrite>::prepare_user_return(&mut new_trap, entry_pc, sp);
-        <TaskTrapFrame as TrapContextWrite>::set_user_entry_args(&mut new_trap,
-                                                                 argc,
-                                                                 argv,
-                                                                 envp);
-        <TaskTrapFrame as TrapContextWrite>::set_return_address_space_token(&mut new_trap, satp);
-
-        // execve 仍在当前任务的内核栈上执行；此处若替换 kernel_stack 会释放正在使用的栈。
+        new_trap.prepare_user_return(entry_pc, sp);
+        new_trap.set_user_entry_args(argc, argv, envp);
+        new_trap.set_return_address_space_token(satp);
         user_inner.trap_frame = new_trap;
         user_inner.user = new_spec;
     }
@@ -414,9 +391,7 @@ impl TaskControlBlock {
     #[inline]
     pub fn trap_return_address_space_token(&self) -> usize {
         match &self.inner {
-            TaskInner::User(u) => {
-                TrapFrameRead::return_address_space_token(&u.trap_frame)
-            }
+            TaskInner::User(u) => TrapFrameRead::return_address_space_token(&u.trap_frame),
             _ => 0,
         }
     }
@@ -510,7 +485,8 @@ impl TaskControlBlock {
         if let TaskInner::User(u) = &mut self.inner {
             // 用户页表由进程 registry 在 reap_process 时统一释放；线程 exit
             // 时仅丢弃 TCB 内句柄，避免 CLONE_VM 共享 aspace 被提前 destroy。
-            u.user = u.user.without_user_aspace();
+            u.user = u.user
+                      .without_user_aspace();
         }
         self.state = TaskState::Exited(exit_code);
     }

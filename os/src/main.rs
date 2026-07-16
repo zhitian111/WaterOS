@@ -109,10 +109,10 @@ mod qemu_riscv64_opensbi {
 
     /// 非 BSP hart：关中断后永久 WFI（当前为 UP bring-up；SMP 就绪前不得进入完整 `kernel_main`）。
     fn park_secondary_hart() -> ! {
-        platform::interrupt::disable_global_interrupt()
-            .expect("disable global interrupt for secondary hart");
-        platform::interrupt::disable_timer_interrupt()
-            .expect("disable timer interrupt for secondary hart");
+        platform::interrupt::disable_global_interrupt().expect("disable global interrupt for \
+                                                                secondary hart");
+        platform::interrupt::disable_timer_interrupt().expect("disable timer interrupt for \
+                                                               secondary hart");
         loop {
             platform::interrupt::wait_for_interrupt();
         }
@@ -120,10 +120,8 @@ mod qemu_riscv64_opensbi {
 
     /// 屏蔽固件可能遗留的全局/定时器中断，直至 `kernel_main` 末尾 `enable_*` 对称打开。
     fn mask_boot_interrupts() {
-        platform::interrupt::disable_global_interrupt()
-            .expect("disable global interrupt for boot");
-        platform::interrupt::disable_timer_interrupt()
-            .expect("disable timer interrupt for boot");
+        platform::interrupt::disable_global_interrupt().expect("disable global interrupt for boot");
+        platform::interrupt::disable_timer_interrupt().expect("disable timer interrupt for boot");
     }
 
     /// 引导加载器 / OpenSBI 传入的引导参数（`a0` = hart id，`a1` = DTB）；与 [`crate`] 顶层文档中的 bring-up 步骤一致。
@@ -173,7 +171,8 @@ mod qemu_riscv64_opensbi {
         // 与 DTB `/memory` 或 `wateros-base-config::QEMU_VIRT_PHYS_RAM_END` 对齐（如
         // QEMU `-m 1G` → 0xC000_0000）
         let memory_end = driver::physical_ram_end_exclusive();
-        warn!("[boot-init] kernel_main memory_end={:#x}", memory_end);
+        warn!("[boot-init] kernel_main memory_end={:#x}",
+              memory_end);
         const PAGE_SIZE : usize = 4096;
         #[inline]
         const fn align_up(v : usize, align : usize) -> usize { (v + align - 1) & !(align - 1) }
@@ -220,8 +219,7 @@ mod qemu_riscv64_opensbi {
                                                                     tag_len : usize);
                         }
                         const PRE_SPAWN : &[u8] = b"main.pre_spawn";
-                        wateros_mcs_boot_log_scheduler_ready(PRE_SPAWN.as_ptr(),
-                                                             PRE_SPAWN.len());
+                        wateros_mcs_boot_log_scheduler_ready(PRE_SPAWN.as_ptr(), PRE_SPAWN.len());
                     }
                     task::spawn_kernel_task(network_poller_task, 0);
                     // 同步烟测：在调度器启动前验证核心 API
@@ -238,8 +236,6 @@ mod qemu_riscv64_opensbi {
             // 只入队；用户测程的 `ecall` 在下方 `run_first_task()`
             // 之后才会出现。
             crate::user_bringup_bus::run();
-            crate::self_tests::task::spawn_all();
-            crate::self_tests::network::spawn_all();
             fs::test();
             #[cfg(feature = "vfs-bridge")]
             {

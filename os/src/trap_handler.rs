@@ -8,10 +8,7 @@
 use abi::syscall_number::{ActiveSyscallNumberTable, SyscallNumberTable};
 use abi::user_ret::UserRet;
 use arch_api_v0::kernel_trap::register_kernel_trap_handler;
-use arch_api_v0::trap::{
-    Exception, Interrupt, TrapCause, TrapFrameRead, TrapFrameWrite, TrapSyscallRead,
-    TrapSyscallWrite,
-};
+use arch_api_v0::trap::{Exception, Interrupt, TrapCause, TrapFrameRead, TrapFrameWrite};
 use base_config::task::SCHED_TIMER_PERIOD_MS;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use mm::api::mmap::PageFaultAccess;
@@ -122,7 +119,7 @@ fn fatal_kernel_trap(context : &str,
 extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
     let boot_trap_n = BOOT_TRAP_LOG_COUNT.fetch_add(1, Ordering::Relaxed);
     if boot_trap_n < 8 {
-        let stack_cx = unsafe { &* (frame as *const TrapContext) };
+        let stack_cx = unsafe { &*(frame as *const TrapContext) };
         warn!("[boot-init] trap #{} cause={:?} raw={:#x} to_user={}",
               boot_trap_n,
               stack_cx.trap_cause(),

@@ -10,14 +10,14 @@ use abi::syscall_number::SyscallNumber;
 use abi::user_ret::UserRet;
 use api_v0::kernel_trap;
 use api_v0::trap::{
-    Exception, Interrupt, TrapAddressSpaceWrite, TrapCause, TrapFrameRead, TrapFrameWrite,
-    SignalFrameCodec, SignalMachineContext, TrapSyscallRead, TrapSyscallWrite, TrapThreadWrite,
+    Exception, Interrupt, SignalFrameCodec, SignalMachineContext, TrapCause, TrapFrameRead,
+    TrapFrameWrite,
 };
 use core::arch::asm;
 use riscv::register::sstatus;
 
 unsafe extern "C" {
-    static mut __wateros_riscv_kernel_satp : usize;
+    static mut __wateros_riscv_kernel_satp: usize;
 }
 
 /// 该结构的字段顺序/大小必须与 `asm/trap.asm` 的偏移严格一致（方案A）。
@@ -29,6 +29,7 @@ pub struct TrapContext {
     pub(crate) sepc : usize,
     pub(crate) scause : usize,
     pub(crate) stval : usize,
+    /// satp
     pub(crate) return_address_space_token : usize,
 }
 
@@ -42,13 +43,14 @@ const TIMER_SLICE_TICKS : u64 = 1_250_000;
 /// 用户态 trap 入口会先用这枚 token 切回内核页表，然后再运行 Rust trap handler。
 pub fn set_kernel_trap_satp(token : usize) {
     unsafe {
-        core::ptr::write_volatile(core::ptr::addr_of_mut!(__wateros_riscv_kernel_satp), token);
+        core::ptr::write_volatile(core::ptr::addr_of_mut!(__wateros_riscv_kernel_satp),
+                                  token);
     }
 }
 
 unsafe fn save_fp_state() -> ([u64; 32], u32) {
     let mut regs = [0u64; 32];
-    let mut fcsr: usize;
+    let mut fcsr : usize;
     let base = regs.as_mut_ptr();
     unsafe {
         asm!(
@@ -77,7 +79,7 @@ unsafe fn save_fp_state() -> ([u64; 32], u32) {
     (regs, fcsr as u32)
 }
 
-unsafe fn restore_fp_state(regs: &[u64; 32], fcsr: u32) {
+unsafe fn restore_fp_state(regs : &[u64; 32], fcsr : u32) {
     let base = regs.as_ptr();
     unsafe {
         asm!(
@@ -105,8 +107,6 @@ unsafe fn restore_fp_state(regs: &[u64; 32], fcsr: u32) {
     }
 }
 
-/// RISC-V 监管态 **`scause` CSR** 原始值；仅在本 crate 内表达「数值来自 `scause`」，
-/// 以便实现 **`From<Scause> for TrapCause`**（解码逻辑架构敏感，不属于 `arch-api`）。
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Scause(pub usize);
@@ -138,59 +138,6 @@ impl From<Scause> for TrapCause {
     }
 }
 
-impl TrapContext {
-    #[inline]
-    pub const fn raw_cause(&self) -> usize { self.scause }
-
-    #[inline]
-    pub const fn user_pc(&self) -> usize { self.sepc }
-
-    #[inline]
-    pub const fn user_sp(&self) -> usize { self.x[2] }
-
-    #[inline]
-    pub const fn fault_addr(&self) -> usize { self.stval }
-
-    #[inline]
-    pub const fn returns_to_user(&self) -> bool { (self.sstatus & RISCV_SSTATUS_SPP) == 0 }
-
-    #[inline]
-    pub const fn returns_to_kernel(&self) -> bool { !self.returns_to_user() }
-
-    #[inline]
-    // `a7` = x17：RISC-V syscall 调用号约定，与 `SyscallNumber` 对应。
-    fn syscall_nr_raw(&self) -> usize { self.x[17] }
-
-    #[inline]
-    // `a0`–`a5` = x10–x15：与 `SyscallArgs::from_regs` 顺序一致。
-    fn syscall_args_raw(&self) -> SyscallArgs {
-        SyscallArgs::from_regs([self.x[10], self.x[11], self.x[12], self.x[13], self.x[14],
-                                self.x[15]])
-    }
-
-    #[inline]
-    fn user_sp_raw(&self) -> usize { self.x[2] }
-
-    #[inline]
-    fn set_user_sp_raw(&mut self, sp : usize) { self.x[2] = sp; }
-
-    #[inline]
-    fn returns_to_user_raw(&self) -> bool { (self.sstatus & RISCV_SSTATUS_SPP) == 0 }
-
-    #[inline]
-    // 清 `SPP`（返回到 U 态）、清 `SIE` 避免 `sret` 瞬间嵌套、置 `SPIE` 以便在用户态恢复中断。
-    fn set_return_to_user_raw(&mut self) {
-        self.sstatus &= !RISCV_SSTATUS_SPP;
-        self.sstatus &= !(1 << 1);
-        self.sstatus |= 1 << 5;
-        // 用户态按 riscv64gc/lp64d 构建，libc 启动期可能执行 F/D 指令；完整 FPU
-        // 上下文切换落地前，先保持 FS 位使能。
-        self.sstatus |= RISCV_SSTATUS_FS_DIRTY;
-    }
-
-    #[inline]
-    fn set_return_to_kernel_raw(&mut self) { self.sstatus |= RISCV_SSTATUS_SPP; }
-}
 
 unsafe extern "C" {
     fn __alltraps();
@@ -224,34 +171,29 @@ pub extern "C" fn trap_entry_rust(cx_ptr : *mut TrapContext) {
 }
 
 impl TrapFrameRead for TrapContext {
-    fn raw_cause(&self) -> usize {
-        self.scause
-    }
+    fn raw_cause(&self) -> usize { self.scause }
 
-    fn trap_cause(&self) -> TrapCause {
-        TrapCause::from(Scause(self.scause))
-    }
+    fn trap_cause(&self) -> TrapCause { TrapCause::from(Scause(self.scause)) }
 
-    fn fault_addr(&self) -> usize {
-        self.stval
-    }
+    fn fault_addr(&self) -> usize { self.stval }
 
     fn user_pc(&self) -> usize { self.sepc }
 
-    fn user_sp(&self) -> usize { self.user_sp_raw() }
+    fn user_sp(&self) -> usize { self.x[2] }
 
     fn user_tls(&self) -> usize { self.x[4] }
 
-    fn returns_to_user(&self) -> bool { self.returns_to_user_raw() }
+    fn returns_to_user(&self) -> bool { (self.sstatus & RISCV_SSTATUS_SPP) == 0 }
 
     fn return_address_space_token(&self) -> usize { self.return_address_space_token }
+    fn syscall_args(&self) -> SyscallArgs {
+        SyscallArgs::from_regs([self.x[10], self.x[11], self.x[12], self.x[13], self.x[14],
+                                self.x[15]])
+    }
+
+    fn syscall_nr(&self) -> SyscallNumber { SyscallNumber(self.x[17]) }
 }
 
-impl TrapSyscallRead for TrapContext {
-    fn syscall_args(&self) -> SyscallArgs { self.syscall_args_raw() }
-
-    fn syscall_nr(&self) -> SyscallNumber { SyscallNumber(self.syscall_nr_raw()) }
-}
 
 impl TrapFrameWrite for TrapContext {
     fn set_user_pc(&mut self, pc : usize) { self.sepc = pc; }
@@ -261,49 +203,46 @@ impl TrapFrameWrite for TrapContext {
                         .wrapping_add(bytes);
     }
 
-    fn set_user_sp(&mut self, sp : usize) { self.set_user_sp_raw(sp); }
+    fn set_user_sp(&mut self, sp : usize) { self.x[2] = sp; }
 
     fn set_user_entry_args(&mut self, _argc : usize, _argv : usize, _envp : usize) {
         // Linux/RISC-V libc 从用户栈读 argc/argv/envp；a0 预留给 rtld_fini，静态链接须为 0。
         self.x[10] = 0;
     }
 
-    fn set_return_to_user(&mut self) { self.set_return_to_user_raw(); }
+    fn set_return_to_user(&mut self) {
+        self.sstatus &= !RISCV_SSTATUS_SPP;
+        self.sstatus &= !(1 << 1);
+        self.sstatus |= 1 << 5;
+        // 用户态按 riscv64gc/lp64d 构建，libc 启动期可能执行 F/D 指令；完整 FPU
+        // 上下文切换落地前，先保持 FS 位使能。
+        self.sstatus |= RISCV_SSTATUS_FS_DIRTY;
+    }
 
-    fn set_return_to_kernel(&mut self) { self.set_return_to_kernel_raw(); }
-}
-
-impl TrapAddressSpaceWrite for TrapContext {
+    fn set_return_to_kernel(&mut self) { self.sstatus |= RISCV_SSTATUS_SPP; }
     fn set_return_address_space_token(&mut self, token : usize) {
         self.return_address_space_token = token;
     }
-}
-
-impl TrapSyscallWrite for TrapContext {
     fn set_syscall_ret(&mut self, ret : UserRet) { self.x[10] = ret.0 as usize; }
-}
-
-impl TrapThreadWrite for TrapContext {
     fn set_user_tls(&mut self, tls : usize) {
         // RISC-V psABI：线程指针为 x4（`tp`）。
         self.x[4] = tls;
     }
 }
 
+
 impl SignalFrameCodec for TrapContext {
     fn capture_signal_context(&self) -> SignalMachineContext {
         let (fpregs, fcsr) = unsafe { save_fp_state() };
-        SignalMachineContext {
-            gprs: self.x,
-            pc: self.sepc,
-            status: self.sstatus,
-            fpregs,
-            fcsr,
-            reserved: 0,
-        }
+        SignalMachineContext { gprs : self.x,
+                               pc : self.sepc,
+                               status : self.sstatus,
+                               fpregs,
+                               fcsr,
+                               reserved : 0 }
     }
 
-    fn restore_signal_context(&mut self, context: &SignalMachineContext) -> bool {
+    fn restore_signal_context(&mut self, context : &SignalMachineContext) -> bool {
         if context.pc == 0 || context.pc & 1 != 0 {
             return false;
         }
@@ -313,35 +252,32 @@ impl SignalFrameCodec for TrapContext {
         unsafe {
             restore_fp_state(&context.fpregs, context.fcsr);
         }
-        self.set_return_to_user_raw();
+        self.set_return_to_user();
         true
     }
 
-    fn prepare_signal_handler(
-        &mut self,
-        handler: usize,
-        restorer: usize,
-        frame_sp: usize,
-        signal: usize,
-        siginfo: usize,
-        ucontext: usize,
-    ) {
+    fn prepare_signal_handler(&mut self,
+                              handler : usize,
+                              restorer : usize,
+                              frame_sp : usize,
+                              signal : usize,
+                              siginfo : usize,
+                              ucontext : usize) {
         self.x[1] = restorer;
         self.x[2] = frame_sp;
         self.x[10] = signal;
         self.x[11] = siginfo;
         self.x[12] = ucontext;
         self.sepc = handler;
-        self.set_return_to_user_raw();
+        self.set_return_to_user();
     }
 
-    fn prepare_syscall_restart(
-        context: &mut SignalMachineContext,
-        syscall_nr: usize,
-        args: [usize; 6],
-        instruction_bytes: usize,
-    ) {
-        context.pc = context.pc.wrapping_sub(instruction_bytes);
+    fn prepare_syscall_restart(context : &mut SignalMachineContext,
+                               syscall_nr : usize,
+                               args : [usize; 6],
+                               instruction_bytes : usize) {
+        context.pc = context.pc
+                            .wrapping_sub(instruction_bytes);
         context.gprs[10..16].copy_from_slice(&args);
         context.gprs[17] = syscall_nr;
     }

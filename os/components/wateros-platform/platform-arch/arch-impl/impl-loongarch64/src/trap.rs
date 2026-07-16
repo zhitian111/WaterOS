@@ -10,8 +10,8 @@ use abi::syscall_number::SyscallNumber;
 use abi::user_ret::UserRet;
 use api_v0::kernel_trap;
 use api_v0::trap::{
-    Exception, Interrupt, TrapAddressSpaceWrite, TrapCause, TrapFrameRead, TrapFrameWrite,
-    SignalFrameCodec, SignalMachineContext, TrapSyscallRead, TrapSyscallWrite, TrapThreadWrite,
+    Exception, Interrupt, SignalFrameCodec, SignalMachineContext, TrapAddressSpaceWrite, TrapCause,
+    TrapFrameRead, TrapFrameWrite, TrapSyscallRead, TrapSyscallWrite, TrapThreadWrite,
 };
 use core::arch::asm;
 
@@ -64,7 +64,7 @@ const LOONGARCH_EUEN_FPE : usize = 1 << 0;
 
 unsafe fn save_fp_state() -> ([u64; 32], u32) {
     let mut regs = [0u64; 32];
-    let mut fcsr: usize;
+    let mut fcsr : usize;
     let base = regs.as_mut_ptr();
     unsafe {
         asm!(
@@ -93,7 +93,7 @@ unsafe fn save_fp_state() -> ([u64; 32], u32) {
     (regs, fcsr as u32)
 }
 
-unsafe fn restore_fp_state(regs: &[u64; 32], fcsr: u32) {
+unsafe fn restore_fp_state(regs : &[u64; 32], fcsr : u32) {
     let base = regs.as_ptr();
     unsafe {
         asm!(
@@ -141,40 +141,6 @@ fn decode_loongarch64_trap_cause(estat : usize) -> TrapCause {
     }
 }
 
-impl TrapContext {
-    #[inline]
-    fn syscall_nr_raw(&self) -> usize {
-        // LoongArch64 Linux ABI: a7($r11) 保存 syscall id。
-        self.x[11]
-    }
-
-    #[inline]
-    fn syscall_args_raw(&self) -> SyscallArgs {
-        // LoongArch64 Linux ABI: a0..a5 依次是 $r4..$r9。
-        SyscallArgs::from_regs([self.x[4], self.x[5], self.x[6], self.x[7], self.x[8], self.x[9]])
-    }
-
-    #[inline]
-    fn user_sp_raw(&self) -> usize { self.x[3] }
-
-    #[inline]
-    fn set_user_sp_raw(&mut self, sp : usize) { self.x[3] = sp; }
-
-    #[inline]
-    fn returns_to_user_raw(&self) -> bool {
-        (self.prmd & LOONGARCH_PRMD_PPLV_MASK) == LOONGARCH_USER_PLV
-    }
-
-    #[inline]
-    fn set_return_to_user_raw(&mut self) {
-        self.prmd = (self.prmd & !(LOONGARCH_PRMD_PPLV_MASK | LOONGARCH_PRMD_PIE)) |
-                    LOONGARCH_USER_PLV |
-                    LOONGARCH_PRMD_PIE;
-    }
-
-    #[inline]
-    fn set_return_to_kernel_raw(&mut self) { self.prmd &= !LOONGARCH_PRMD_PPLV_MASK; }
-}
 
 unsafe extern "C" {
     fn __alltraps();
@@ -231,20 +197,21 @@ impl TrapFrameRead for TrapContext {
 
     fn user_pc(&self) -> usize { self.era }
 
-    fn user_sp(&self) -> usize { self.user_sp_raw() }
+    fn user_sp(&self) -> usize { self.x[3] }
 
     fn user_tls(&self) -> usize { self.x[2] }
 
-    fn returns_to_user(&self) -> bool { self.returns_to_user_raw() }
+    fn returns_to_user(&self) -> bool {
+        (self.prmd & LOONGARCH_PRMD_PPLV_MASK) == LOONGARCH_USER_PLV
+    }
 
     fn return_address_space_token(&self) -> usize { self.return_address_space_token }
+    fn syscall_args(&self) -> SyscallArgs {
+        SyscallArgs::from_regs([self.x[4], self.x[5], self.x[6], self.x[7], self.x[8], self.x[9]])
+    }
+    fn syscall_nr(&self) -> SyscallNumber { SyscallNumber(self.x[11]) }
 }
 
-impl TrapSyscallRead for TrapContext {
-    fn syscall_args(&self) -> SyscallArgs { self.syscall_args_raw() }
-
-    fn syscall_nr(&self) -> SyscallNumber { SyscallNumber(self.syscall_nr_raw()) }
-}
 
 impl TrapFrameWrite for TrapContext {
     fn set_user_pc(&mut self, pc : usize) { self.era = pc; }
@@ -254,7 +221,7 @@ impl TrapFrameWrite for TrapContext {
                        .wrapping_add(bytes);
     }
 
-    fn set_user_sp(&mut self, sp : usize) { self.set_user_sp_raw(sp); }
+    fn set_user_sp(&mut self, sp : usize) { self.x[3] = sp; }
 
     fn set_user_entry_args(&mut self, _argc : usize, _argv : usize, _envp : usize) {
         // Linux/LoongArch libc 从用户栈读 argc/argv/envp；a0 供动态链接器 rtld_fini，
@@ -262,42 +229,36 @@ impl TrapFrameWrite for TrapContext {
         self.x[4] = 0;
     }
 
-    fn set_return_to_user(&mut self) { self.set_return_to_user_raw(); }
+    fn set_return_to_user(&mut self) {
+        self.prmd = (self.prmd & !(LOONGARCH_PRMD_PPLV_MASK | LOONGARCH_PRMD_PIE)) |
+                    LOONGARCH_USER_PLV |
+                    LOONGARCH_PRMD_PIE;
+    }
 
-    fn set_return_to_kernel(&mut self) { self.set_return_to_kernel_raw(); }
-}
-
-impl TrapAddressSpaceWrite for TrapContext {
+    fn set_return_to_kernel(&mut self) { self.prmd &= !LOONGARCH_PRMD_PPLV_MASK; }
     fn set_return_address_space_token(&mut self, token : usize) {
         self.return_address_space_token = token;
     }
-}
-
-impl TrapSyscallWrite for TrapContext {
     fn set_syscall_ret(&mut self, ret : UserRet) { self.x[4] = ret.0 as usize; }
-}
-
-impl TrapThreadWrite for TrapContext {
     fn set_user_tls(&mut self, tls : usize) {
         // LoongArch64 psABI：线程指针为 $r2。
         self.x[2] = tls;
     }
 }
 
+
 impl SignalFrameCodec for TrapContext {
     fn capture_signal_context(&self) -> SignalMachineContext {
         let (fpregs, fcsr) = unsafe { save_fp_state() };
-        SignalMachineContext {
-            gprs: self.x,
-            pc: self.era,
-            status: self.prmd,
-            fpregs,
-            fcsr,
-            reserved: 0,
-        }
+        SignalMachineContext { gprs : self.x,
+                               pc : self.era,
+                               status : self.prmd,
+                               fpregs,
+                               fcsr,
+                               reserved : 0 }
     }
 
-    fn restore_signal_context(&mut self, context: &SignalMachineContext) -> bool {
+    fn restore_signal_context(&mut self, context : &SignalMachineContext) -> bool {
         if context.pc == 0 || context.pc & 3 != 0 {
             return false;
         }
@@ -307,35 +268,32 @@ impl SignalFrameCodec for TrapContext {
         unsafe {
             restore_fp_state(&context.fpregs, context.fcsr);
         }
-        self.set_return_to_user_raw();
+        self.set_return_to_user();
         true
     }
 
-    fn prepare_signal_handler(
-        &mut self,
-        handler: usize,
-        restorer: usize,
-        frame_sp: usize,
-        signal: usize,
-        siginfo: usize,
-        ucontext: usize,
-    ) {
+    fn prepare_signal_handler(&mut self,
+                              handler : usize,
+                              restorer : usize,
+                              frame_sp : usize,
+                              signal : usize,
+                              siginfo : usize,
+                              ucontext : usize) {
         self.x[1] = restorer;
         self.x[3] = frame_sp;
         self.x[4] = signal;
         self.x[5] = siginfo;
         self.x[6] = ucontext;
         self.era = handler;
-        self.set_return_to_user_raw();
+        self.set_return_to_user();
     }
 
-    fn prepare_syscall_restart(
-        context: &mut SignalMachineContext,
-        syscall_nr: usize,
-        args: [usize; 6],
-        instruction_bytes: usize,
-    ) {
-        context.pc = context.pc.wrapping_sub(instruction_bytes);
+    fn prepare_syscall_restart(context : &mut SignalMachineContext,
+                               syscall_nr : usize,
+                               args : [usize; 6],
+                               instruction_bytes : usize) {
+        context.pc = context.pc
+                            .wrapping_sub(instruction_bytes);
         context.gprs[4..10].copy_from_slice(&args);
         context.gprs[11] = syscall_nr;
     }
