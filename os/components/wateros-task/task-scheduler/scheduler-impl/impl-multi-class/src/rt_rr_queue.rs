@@ -54,31 +54,6 @@ impl RtRrRunQueue {
         }
     }
 
-    /// 选取下一个可运行 RR 任务；若当前任务仍有时间片则继续运行。
-    pub fn pick_next(&mut self, check : &impl SchedulableCheck) -> Option<TaskId> {
-        if let Some((task_id, _priority)) = self.current {
-            if check.is_schedulable(task_id) && self.remaining_ticks > 0 {
-                return Some(task_id);
-            }
-            self.current = None;
-            self.remaining_ticks = 0;
-        }
-        for (index, bucket) in self.buckets
-                                   .iter_mut()
-                                   .enumerate()
-                                   .rev()
-        {
-            while let Some(task_id) = bucket.pop_front() {
-                if check.is_schedulable(task_id) {
-                    let priority = priority_from_index(index);
-                    self.current = Some((task_id, priority));
-                    self.remaining_ticks = MAX_RT_TICKS_PER_TASK;
-                    return Some(task_id);
-                }
-            }
-        }
-        None
-    }
 
     /// 时钟 tick：处理当前 RR 任务时间片。
     pub fn on_tick_current(&mut self, current : TaskId, priority : i32) -> RrTickAction {
@@ -171,7 +146,7 @@ impl RtRrRunQueue {
 
 fn take_task_id_by_id(queue : &mut VecDeque<TaskId>, task_id : TaskId) -> bool {
     if let Some(pos) = queue.iter()
-                          .position(|candidate| *candidate == task_id)
+                            .position(|candidate| *candidate == task_id)
     {
         queue.remove(pos);
         true

@@ -22,12 +22,6 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-#[cfg(all(feature = "impl-multi-class", feature = "impl-round-robin"))]
-compile_error!("features `impl-multi-class` and `impl-round-robin` are mutually exclusive");
-
-#[cfg(not(any(feature = "impl-multi-class", feature = "impl-round-robin")))]
-compile_error!("one scheduler implementation feature must be enabled");
-
 pub mod api {
     pub use api_v0::*;
 }
@@ -35,17 +29,15 @@ pub mod api {
 #[cfg(feature = "impl-multi-class")]
 pub use impl_multi_class as active_impl;
 
-#[cfg(feature = "impl-round-robin")]
-pub use impl_round_robin as active_impl;
 
-pub use api_v0::{SchedPolicyChangeAction, ScheduleReason, Scheduler, SwitchScheduler};
+pub use api_v0::{SchedPolicyChangeAction, ScheduleReason};
 /// 当前架构下活动 trap 帧的具体类型别名；与 `wateros-task` 聚合层及
 /// `impl-round-robin` 一致。
 pub type TaskTrapFrame = arch::trap::ActiveTrapFrame;
 pub use task_api::{
-    AddressSpaceHandle, ExitedTask, KernelTaskEntry, TaskExitCode, TaskId,
-    TaskKind, TaskSnapshot, TaskState, TaskTick, TaskWaitResult, TaskWaitTarget,
-    UserImageInfo, UserTask, UserTaskEntryPc, WaitQueueId, IDLE_TASK_ID,
+    AddressSpaceHandle, ExitedTask, KernelTaskEntry, TaskExitCode, TaskId, TaskKind, TaskSnapshot,
+    TaskState, TaskTick, TaskWaitResult, TaskWaitTarget, UserImageInfo, UserTask, UserTaskEntryPc,
+    WaitQueueId, IDLE_TASK_ID,
 };
 
 /// 初始化当前启用的调度器实现。
@@ -159,9 +151,7 @@ pub fn schedule_tick() { active_impl::schedule_tick(); }
 pub fn block_current(reason : TaskWaitTarget) { active_impl::block_current(reason); }
 
 /// 让当前任务等待指定的阻塞对象。
-pub fn wait_current(target : TaskWaitTarget) -> TaskWaitResult {
-    active_impl::wait_current(target)
-}
+pub fn wait_current(target : TaskWaitTarget) -> TaskWaitResult { active_impl::wait_current(target) }
 
 /// 在调度临界区内复查条件；条件为真才阻塞当前任务。
 pub fn wait_current_while(target : TaskWaitTarget,
@@ -171,9 +161,7 @@ pub fn wait_current_while(target : TaskWaitTarget,
 }
 
 /// 让当前任务等待指定的阻塞对象，并带一个超时。
-pub fn wait_current_timeout(target : TaskWaitTarget,
-                            timeout_ticks : TaskTick)
-                            -> TaskWaitResult {
+pub fn wait_current_timeout(target : TaskWaitTarget, timeout_ticks : TaskTick) -> TaskWaitResult {
     active_impl::wait_current_timeout(target, timeout_ticks)
 }
 
