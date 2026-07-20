@@ -10,8 +10,8 @@ use abi::syscall_number::SyscallNumber;
 use abi::user_ret::UserRet;
 use api_v0::kernel_trap;
 use api_v0::trap::{
-    Exception, Interrupt, SignalFrameCodec, SignalMachineContext, TrapAddressSpaceWrite, TrapCause,
-    TrapFrameRead, TrapFrameWrite, TrapSyscallRead, TrapSyscallWrite, TrapThreadWrite,
+    Exception, Interrupt, SignalFrameCodec, SignalMachineContext, TrapCause, TrapFrameRead,
+    TrapFrameWrite,
 };
 use core::arch::asm;
 

@@ -4,7 +4,7 @@
 extern crate alloc;
 
 use alloc::collections::VecDeque;
-use task_api::{SchedulableCheck, TaskId};
+use task_api::TaskId;
 
 const RT_PRIORITY_MIN : i32 = 1;
 const RT_PRIORITY_MAX : i32 = 99;
@@ -45,31 +45,19 @@ impl RtFifoRunQueue {
 
 
     /// 返回当前最高的可运行优先级，不改变队列内容。
-    pub fn highest_runnable_priority(&self, check : &impl SchedulableCheck) -> Option<i32> {
+    pub fn highest_runnable_priority(&self) -> Option<i32> {
         self.buckets
             .iter()
             .enumerate()
             .rev()
-            .find(|(_, bucket)| {
-                bucket.iter()
-                      .copied()
-                      .any(|task_id| check.is_schedulable(task_id))
-            })
+            .find(|(_, bucket)| !bucket.is_empty())
             .map(|(index, _)| (index as i32) + RT_PRIORITY_MIN)
     }
 
     /// 从指定优先级桶弹出首个可调度任务（供 multi-class 按优先级扫描）。
-    pub fn pop_front_at_priority(&mut self,
-                                 priority : i32,
-                                 check : &impl SchedulableCheck)
-                                 -> Option<TaskId> {
+    pub fn pop_front_at_priority(&mut self, priority : i32) -> Option<TaskId> {
         let index = bucket_index(priority)?;
-        while let Some(task_id) = self.buckets[index].pop_front() {
-            if check.is_schedulable(task_id) {
-                return Some(task_id);
-            }
-        }
-        None
+        self.buckets[index].pop_front()
     }
 }
 

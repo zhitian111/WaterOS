@@ -15,7 +15,6 @@ use task_api::{TaskExitCode, TaskTick, TaskWaitTarget};
 
 
 pub use registry::TaskRegistry;
-pub use task_api::SchedulableCheck;
 pub use wait_queues::WaitQueues;
 
 /// 首次上下文切换所需的指针对（bootstrap/current → next）。

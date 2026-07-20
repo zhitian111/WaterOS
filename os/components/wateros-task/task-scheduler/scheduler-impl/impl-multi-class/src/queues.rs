@@ -5,7 +5,7 @@ extern crate alloc;
 use alloc::collections::{BTreeMap, VecDeque};
 
 use config::task::{MAX_TICKS_PER_TASK, READY_QUEUE_STALE_COMPACT_THRESHOLD};
-use task_api::{SchedulableCheck, TaskId};
+use task_api::TaskId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct QueueEntry {
@@ -66,11 +66,11 @@ impl OtherReadyQueue {
                                                 4)
     }
 
-    pub(super) fn has_runnable(&self, check : &impl SchedulableCheck) -> bool {
+    pub(super) fn has_runnable(&self) -> bool {
         self.ready_queue
             .iter()
             .copied()
-            .any(|entry| self.entry_is_live(entry) && check.is_schedulable(entry.task_id))
+            .any(|entry| self.entry_is_live(entry))
     }
 
     /// 任务已从 registry 永久移除后回收 `versions` 条目。
@@ -95,7 +95,7 @@ impl OtherReadyQueue {
 
     pub fn detach_task(&mut self, task_id : TaskId) { let _ = self.bump_version(task_id); }
 
-    pub fn pick_next_runnable_task_id(&mut self, check : &impl SchedulableCheck) -> Option<TaskId> {
+    pub fn pick_next_runnable_task_id(&mut self) -> Option<TaskId> {
         let mut consecutive_stale = 0usize;
         while let Some(entry) = self.ready_queue
                                     .pop_front()
@@ -109,11 +109,7 @@ impl OtherReadyQueue {
                 continue;
             }
             consecutive_stale = 0;
-            if check.is_schedulable(entry.task_id) {
-                return Some(entry.task_id);
-            }
-            log::trace!("[task-scheduler] skip unrunnable task {} in other ready_queue",
-                        entry.task_id);
+            return Some(entry.task_id);
         }
         None
     }

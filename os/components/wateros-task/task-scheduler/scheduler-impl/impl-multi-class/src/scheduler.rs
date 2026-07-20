@@ -329,14 +329,14 @@ impl MultiClassScheduler {
         // 2) FIFO → 3) RR，按优先级 99→1 穿插扫描
         for priority in (1..=99).rev() {
             if let Some(task_id) = self.fifo_ready
-                                       .pop_front_at_priority(priority, &self.registry)
+                                       .pop_front_at_priority(priority)
             {
                 self.rr_ready
                     .clear_running();
                 return task_id;
             }
             if let Some(task_id) = self.rr_ready
-                                       .pick_at_priority(priority, &self.registry)
+                                       .pick_at_priority(priority)
             {
                 return task_id;
             }
@@ -345,7 +345,7 @@ impl MultiClassScheduler {
         self.rr_ready
             .clear_running();
         self.other_ready
-            .pick_next_runnable_task_id(&self.registry)
+            .pick_next_runnable_task_id()
             .unwrap_or(IDLE_TASK_ID)
     }
 
@@ -455,9 +455,9 @@ impl MultiClassScheduler {
     /// 就绪队列中最高实时任务优先级（不含 IDLE）。
     fn highest_ready_rt_priority(&self) -> Option<i32> {
         match (self.fifo_ready
-                   .highest_runnable_priority(&self.registry),
+                   .highest_runnable_priority(),
                self.rr_ready
-                   .highest_ready_priority(&self.registry))
+                   .highest_ready_priority())
         {
             (Some(fifo), Some(rr)) => Some(fifo.max(rr)),
             (fifo, rr) => fifo.or(rr),
@@ -471,7 +471,7 @@ impl MultiClassScheduler {
             return self.highest_ready_rt_priority()
                        .is_some() ||
                    self.other_ready
-                       .has_runnable(&self.registry);
+                       .has_runnable()
         }
         match current.sched_policy {
             SchedPolicy::Other => self.highest_ready_rt_priority()
