@@ -379,7 +379,7 @@ impl ProcessRegistry {
                         task.task_id == task_id || matches!(task.state, ProcessTaskState::Exited(_))
                     }))
     }
-
+    // 移除进程中除了指定 task_id 外的所有任务，并将该 task_id 设为 leader。
     pub fn retain_only_task_in_process(&mut self,
                                        pid : ProcessId,
                                        keep_task_id : TaskId)
@@ -398,7 +398,7 @@ impl ProcessRegistry {
         process.state = ProcessState::Running;
         Some(removed)
     }
-
+    // 移除进程中所有已退出的 member 任务，并返回被移除的 task_id 列表。
     pub fn take_exited_member_tasks(&mut self, pid : ProcessId) -> Option<Vec<TaskId>> {
         let process = self.process_mut(pid)?;
         let leader_task_id = process.leader_task_id;
@@ -452,7 +452,7 @@ impl ProcessRegistry {
         }
         false
     }
-
+    // 设置指定 task 的 clear_child_tid 字段，返回是否成功
     pub fn set_task_clear_child_tid(&mut self,
                                     task_id : TaskId,
                                     clear_child_tid : Option<TaskClearTid>)
@@ -471,7 +471,7 @@ impl ProcessRegistry {
         }
         false
     }
-
+    // 获取指定 task 的 clear_child_tid 字段，返回 Option<TaskClearTid>
     pub fn task_clear_child_tid(&self, task_id : TaskId) -> Option<TaskClearTid> {
         self.processes
             .values()
@@ -482,7 +482,7 @@ impl ProcessRegistry {
                        .and_then(|task| task.clear_child_tid)
             })
     }
-
+    // 获取指定进程的地址空间，返回 Option<AddressSpaceRef>
     pub fn update_process_address_space(&mut self,
                                         pid : ProcessId,
                                         address_space : Option<AddressSpaceRef>)

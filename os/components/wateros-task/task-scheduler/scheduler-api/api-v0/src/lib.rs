@@ -25,10 +25,8 @@ pub use task_api::SchedulableCheck;
 pub use wait_queues::WaitQueues;
 
 /// 首次上下文切换所需的指针对（bootstrap/current → next）。
-pub type SwitchPair = (
-    *mut arch::task::ActiveArchTaskContext,
-    *const arch::task::ActiveArchTaskContext,
-);
+pub type SwitchPair =
+    (*mut arch::task::ActiveArchTaskContext, *const arch::task::ActiveArchTaskContext);
 
 /// 一次调度决策的触发来源；由 `RoundRobinScheduler::schedule`
 /// 等解释为就绪/阻塞/睡眠队列目标。
@@ -38,8 +36,7 @@ pub enum ScheduleReason {
     StartFirst,
     /// 当前任务主动让出 CPU。
     Yield,
-    /// 由时钟 tick 触发一次调度检查（推进全局 tick 并为当前非 idle 任务累计
-    /// tick）。
+    /// 由时钟 tick 触发一次调度检查
     Tick,
     /// 由于阻塞而切换出去。
     Block(TaskBlockReason),
@@ -83,9 +80,12 @@ pub trait Scheduler {
     /// 让当前任务等待指定的阻塞对象。
     fn wait_current(&mut self, wait_handle : TaskWaitHandle) -> TaskWaitResult;
     /// 在实现持有调度临界区时复查条件；条件为真才等待指定阻塞对象。
-    fn wait_current_while<F>(&mut self, wait_handle : TaskWaitHandle, condition : F)
+    fn wait_current_while<F>(&mut self,
+                             wait_handle : TaskWaitHandle,
+                             condition : F)
                              -> TaskWaitResult
-        where F : FnOnce() -> bool {
+        where F : FnOnce() -> bool
+    {
         if condition() {
             self.wait_current(wait_handle)
         } else {

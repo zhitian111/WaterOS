@@ -80,7 +80,9 @@ impl BitOrAssign for CloneFlags {
 /// 用户地址空间共享资源引用。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AddressSpaceRef {
+    // satp 值（硬件视角的页表标识）
     token : AddressSpaceHandle,
+    // 内核态指向页表对象的指针（软件视角）
     user_aspace_ptr : usize,
 }
 
