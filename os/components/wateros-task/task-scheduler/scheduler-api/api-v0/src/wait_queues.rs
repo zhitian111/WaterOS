@@ -2,17 +2,18 @@
 
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::vec::Vec;
+use arch::task;
 use task_api::{
-    ExitedTask, TaskBlockReason, TaskExitCode, TaskId, TaskState, TaskTick, TaskWaitHandle,
-    TaskWaitResult, TaskWaitTarget, WaitQueueId,
+    ExitedTask, TaskExitCode, TaskId, TaskState, TaskTick, TaskWaitResult, TaskWaitTarget,
+    WaitQueueId,
 };
 
 use crate::{QueueTarget, ReadyTaskSink, TaskRegistry};
 
 #[derive(Clone, Copy)]
-struct WaitTimeoutEntry {
+struct TimeoutTask {
     task_id : TaskId,
-    wait_handle : TaskWaitHandle,
+    wait_target : TaskWaitTarget,
     wake_tick : TaskTick,
 }
 
@@ -27,7 +28,7 @@ pub struct WaitQueues {
     child_exit_wait_queues : BTreeMap<TaskId, VecDeque<TaskId>>, // 等父任务子任务退出
 
     // ▲ 超时管理
-    wait_timeouts : VecDeque<WaitTimeoutEntry>, // 带超时的等待项（按 wake_tick 排序）
+    wait_timeouts : VecDeque<TimeoutTask>, // 带超时的等待项（按 wake_tick 排序）
 
     // ▲ 通用阻塞 / 睡眠 / 退出
     blocked_queue : VecDeque<TaskId>, // 通用阻塞队列
@@ -99,17 +100,11 @@ impl WaitQueues {
         {
             return false;
         }
-        let handle = TaskWaitHandle::for_wait_queue(wait_queue_id);
+        let target = TaskWaitTarget::WaitQueue(wait_queue_id);
         // 移除所有等待该队列的超时项。retain:只保留闭包返回 true 的元素，删除返回 false 的。
         self.wait_timeouts
-            .retain(|entry| entry.wait_handle != handle);
+            .retain(|record| record.wait_target != target);
         true
-    }
-
-    #[cfg(test)]
-    pub fn wait_queue_slot_count(&self) -> usize {
-        self.wait_queues
-            .len()
     }
 
     /// 推进全局逻辑 tick。
@@ -139,29 +134,32 @@ impl WaitQueues {
             })
     }
 
-    /// 将任务从一切可运行/等待队列中移除（不含 `exited_queue` 与 `ready_queue`）。
+    /// 将任务从所有等待队列中移除
     pub fn detach_task_from_run_queues(&mut self, task_id : TaskId) {
-        let _ = take_task_id_by_id(&mut self.blocked_queue, task_id);
-        let _ = take_task_id_by_id(&mut self.sleep_queue, task_id);
+        self.blocked_queue
+            .retain(|&id| id != task_id);
+        self.sleep_queue
+            .retain(|&id| id != task_id);
         for wait_queue in &mut self.wait_queues {
-            let _ = take_task_id_by_id(wait_queue, task_id);
+            wait_queue.retain(|&id| id != task_id);
         }
         for wait_queue in self.exit_wait_queues
                               .values_mut()
         {
-            let _ = take_task_id_by_id(wait_queue, task_id);
+            wait_queue.retain(|&id| id != task_id);
         }
         for wait_queue in self.child_exit_wait_queues
                               .values_mut()
         {
-            let _ = take_task_id_by_id(wait_queue, task_id);
+            wait_queue.retain(|&id| id != task_id);
         }
+        self.wait_timeouts
+            .retain(|entry| entry.task_id != task_id);
+        // 删除等待task_id 的task
         self.exit_wait_queues
             .remove(&task_id);
         self.child_exit_wait_queues
             .remove(&task_id);
-        self.wait_timeouts
-            .retain(|entry| entry.task_id != task_id);
     }
 
     /// 按目标将任务挂入对应队列；`Ready` 时写入 `ready_queue`。
@@ -189,12 +187,20 @@ impl WaitQueues {
                 }
                 registry.mark_blocking(task_id, reason);
                 match reason {
-                    TaskBlockReason::Wait(wait_handle) => {
-                        self.wait_list_mut(wait_handle)
+                    TaskWaitTarget::WaitQueue(wait_queue_id) => {
+                        self.wait_queue_mut(wait_queue_id)
                             .push_back(task_id);
                     }
-                    _ => self.blocked_queue
-                             .push_back(task_id),
+                    TaskWaitTarget::TaskExit(task_id_exit) => {
+                        self.exit_wait_queue_mut(task_id_exit)
+                            .push_back(task_id);
+                    }
+                    TaskWaitTarget::ChildExit(parent_id) => {
+                        self.child_exit_wait_queue_mut(parent_id)
+                            .push_back(task_id);
+                    }
+                    TaskWaitTarget::Manual => self.blocked_queue
+                                                  .push_back(task_id),
                 }
             }
             QueueTarget::Sleeping(wake_tick) => {
@@ -234,15 +240,26 @@ impl WaitQueues {
             }
         }
     }
-
+    pub fn enqueue_blocked_task(&mut self, task_id : TaskId, target : TaskWaitTarget) {
+        match target {
+            TaskWaitTarget::WaitQueue(wait_queue_id) => self.wait_queue_mut(wait_queue_id)
+                                                            .push_back(task_id),
+            TaskWaitTarget::ChildExit(parent_id) => self.child_exit_wait_queue_mut(parent_id)
+                                                        .push_back(task_id),
+            TaskWaitTarget::TaskExit(id) => self.exit_wait_queue_mut(id)
+                                                .push_back(task_id),
+            TaskWaitTarget::Manual => self.blocked_queue
+                                          .push_back(task_id),
+        }
+    }
     /// 记录带超时的等待项。
     pub fn enqueue_wait_timeout(&mut self,
                                 task_id : TaskId,
-                                wait_handle : TaskWaitHandle,
+                                target : TaskWaitTarget,
                                 wake_tick : TaskTick) {
-        let entry = WaitTimeoutEntry { task_id,
-                                       wait_handle,
-                                       wake_tick };
+        let entry = TimeoutTask { task_id,
+                                  wait_target : target,
+                                  wake_tick };
         //TODO: 这里可以优化为二分查找插入，避免 O(n) 的线性扫描。
         let insert_at = self.wait_timeouts
                             .iter()
@@ -298,19 +315,23 @@ impl WaitQueues {
                             .pop_front()
                             .expect("front entry checked above");
             let still_waiting = matches!(
-                registry.state(entry.task_id),
-                Some(TaskState::Blocking(TaskBlockReason::Wait(wait_handle)))
-                    if wait_handle == entry.wait_handle
+                (registry.state(entry.task_id), entry.wait_target),
+                (Some(TaskState::Blocking(target)), saved_target) if target == saved_target
             );
             if !still_waiting {
                 continue;
             }
-            if self.remove_from_wait_list(entry.wait_handle, entry.task_id) {
+            if self.remove_from_wait_list(entry.wait_target, entry.task_id) {
                 registry.finish_wait(entry.task_id, TaskWaitResult::TimedOut);
                 registry.mark_ready(entry.task_id);
                 ready_queue.enqueue_ready_task(entry.task_id);
             }
         }
+    }
+    pub fn wait_timesouts_front(&self) -> Option<TimeoutTask> {
+        self.wait_timeouts
+            .front()
+            .copied()
     }
 
     /// 尝试唤醒指定任务。
@@ -513,16 +534,15 @@ impl WaitQueues {
             changed = changed.saturating_add(1);
         }
 
-        let from_handle = TaskWaitHandle::for_wait_queue(from_wait_queue_id);
-        let to_handle = TaskWaitHandle::for_wait_queue(to_wait_queue_id);
         if from_wait_queue_id == to_wait_queue_id {
             let remaining = self.wait_queue_mut(from_wait_queue_id)
                                 .iter()
                                 .filter(|task_id| {
                                     matches!(
                                         registry.state(**task_id),
-                                        Some(TaskState::Blocking(TaskBlockReason::Wait(handle)))
-                                            if handle == from_handle
+                                        Some(TaskState::Blocking(
+                                            TaskWaitTarget::WaitQueue(id)
+                                        )) if id == from_wait_queue_id
                                     )
                                 })
                                 .count()
@@ -538,12 +558,14 @@ impl WaitQueues {
                 break;
             };
             match registry.state(task_id) {
-                Some(TaskState::Blocking(TaskBlockReason::Wait(handle)))
-                    if handle == from_handle =>
+                Some(TaskState::Blocking(TaskWaitTarget::WaitQueue(id)))
+                    if id == from_wait_queue_id =>
                 {
                     registry.mark_blocking(task_id,
-                                           TaskBlockReason::Wait(to_handle));
-                    self.update_wait_timeout_handle(task_id, from_handle, to_handle);
+                                           TaskWaitTarget::WaitQueue(to_wait_queue_id));
+                    self.update_wait_timeout_target(task_id,
+                                                    from_wait_queue_id,
+                                                    to_wait_queue_id);
                     self.wait_queue_mut(to_wait_queue_id)
                         .push_back(task_id);
                     moved = moved.saturating_add(1);
@@ -600,25 +622,28 @@ impl WaitQueues {
             .or_insert_with(VecDeque::new)
     }
 
-    fn wait_list_mut(&mut self, wait_handle : TaskWaitHandle) -> &mut VecDeque<TaskId> {
-        match wait_handle.target() {
+    fn wait_list_mut(&mut self, target : TaskWaitTarget) -> &mut VecDeque<TaskId> {
+        match target {
             TaskWaitTarget::WaitQueue(wait_queue_id) => self.wait_queue_mut(wait_queue_id),
             TaskWaitTarget::TaskExit(task_id) => self.exit_wait_queue_mut(task_id),
             TaskWaitTarget::ChildExit(parent_id) => self.child_exit_wait_queue_mut(parent_id),
+            TaskWaitTarget::Manual => &mut self.blocked_queue,
         }
     }
 
-    fn remove_from_wait_list(&mut self, wait_handle : TaskWaitHandle, task_id : TaskId) -> bool {
-        take_task_id_by_id(self.wait_list_mut(wait_handle), task_id)
+    fn remove_from_wait_list(&mut self, target : TaskWaitTarget, task_id : TaskId) -> bool {
+        take_task_id_by_id(self.wait_list_mut(target), task_id)
     }
 
-    fn update_wait_timeout_handle(&mut self,
+    fn update_wait_timeout_target(&mut self,
                                   task_id : TaskId,
-                                  from_handle : TaskWaitHandle,
-                                  to_handle : TaskWaitHandle) {
+                                  from_queue_id : WaitQueueId,
+                                  to_queue_id : WaitQueueId) {
         for entry in &mut self.wait_timeouts {
-            if entry.task_id == task_id && entry.wait_handle == from_handle {
-                entry.wait_handle = to_handle;
+            if entry.task_id == task_id &&
+               entry.wait_target == TaskWaitTarget::WaitQueue(from_queue_id)
+            {
+                entry.wait_target = TaskWaitTarget::WaitQueue(to_queue_id);
             }
         }
     }
@@ -674,7 +699,7 @@ impl WaitQueues {
         ready_queue.detach_ready_task(task_id);
         self.enqueue_task(registry,
                           task_id,
-                          QueueTarget::Blocked(TaskBlockReason::Manual),
+                          QueueTarget::Blocked(TaskWaitTarget::Manual),
                           ready_queue);
     }
 

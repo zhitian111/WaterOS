@@ -41,9 +41,8 @@ pub use schedule::{
     block_current, current_task_id, current_task_snapshot,
     current_task_trap_return_address_space_token, current_task_user_address_space_token,
     current_task_user_aspace_ptr, current_tick, interrupt_task, reap_exited_task, schedule_tick,
-    sleep_for_ticks, task_exit_wait_handle, task_snapshot, wait_for_task_exit,
-    wait_for_task_exit_for_ticks, wait_on, wait_on_for_ticks, wait_on_while,
-    wait_on_while_for_ticks, wake_task, yield_now,
+    sleep_for_ticks, task_snapshot, wait_for_task_exit, wait_for_task_exit_for_ticks, wait_on,
+    wait_on_for_ticks, wait_on_while, wait_on_while_for_ticks, wake_task, yield_now,
 };
 pub use spawn::{
     spawn_kernel_task, spawn_user_task, spawn_user_task_from_loaded_elf, user_task_from_loaded_elf,
@@ -55,11 +54,11 @@ mod scheduler {
 pub use api_v0::{
     AddressSpaceHandle, AddressSpaceRef, CloneFlags, KernelTaskEntry, ProcessDescriptor, ProcessId,
     ProcessState, ProcessTaskDescriptor, ProcessTaskRole, ProcessTaskState, ResourceLimit,
-    SchedError, SchedParam, SchedPolicy, SetResourceLimitError, TaskBlockReason, TaskClearTid,
-    TaskExitCode, TaskSnapshot, TaskState, TaskTick, TaskWaitResult, ThreadId, UserImageInfo,
+    SchedError, SchedParam, SchedPolicy, SetResourceLimitError, TaskClearTid, TaskExitCode,
+    TaskSnapshot, TaskState, TaskTick, TaskWaitResult, TaskWaitTarget, ThreadId, UserImageInfo,
     UserStack, UserTask, WaitQueueId,
 };
-pub use api_v0::{ExitedTask, TaskId, TaskKind, TaskWaitHandle};
+pub use api_v0::{ExitedTask, TaskId, TaskKind};
 #[cfg(feature = "impl-core")]
 pub(crate) use impl_core as active_impl;
 

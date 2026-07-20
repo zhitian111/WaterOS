@@ -13,8 +13,8 @@ use api_v0::{
 use arch::task::ActiveArchTaskContext as TaskContext;
 use config::task::MAX_TICKS_PER_TASK;
 use task_api::{
-    ExitedTask, KernelTaskEntry, SchedError, SchedParam, SchedPolicy, TaskBlockReason,
-    TaskExitCode, TaskId, TaskSnapshot, TaskState, TaskTick, TaskWaitHandle, TaskWaitResult,
+    ExitedTask, KernelTaskEntry, SchedError, SchedParam, SchedPolicy,
+    TaskExitCode, TaskId, TaskSnapshot, TaskState, TaskTick, TaskWaitResult, TaskWaitTarget,
     UserTask, WaitQueueId, IDLE_TASK_ID,
 };
 
@@ -445,14 +445,14 @@ impl MultiClassScheduler {
     }
 
     pub(super) fn schedule_wait(&mut self,
-                                wait_handle : TaskWaitHandle,
+                                target : TaskWaitTarget,
                                 timeout_ticks : Option<TaskTick>)
                                 -> Option<SwitchPair> {
         self.current_task_ticks = 0;
         self.promote_sleep_and_timeouts();
 
         if self.registry
-               .wait_target_ready(wait_handle)
+               .wait_target_ready(target)
         {
             if let Some(current_task_id) = self.registry
                                                .current_task_id()
@@ -473,7 +473,7 @@ impl MultiClassScheduler {
         self.wait
             .enqueue_task(&mut self.registry,
                           current_task_id,
-                          QueueTarget::Blocked(TaskBlockReason::Wait(wait_handle)),
+                          QueueTarget::Blocked(target),
                           &mut staging);
         self.drain_staging(&mut staging);
 
@@ -482,7 +482,7 @@ impl MultiClassScheduler {
                                 .current_tick()
                                 .saturating_add(timeout_ticks.max(1));
             self.wait
-                .enqueue_wait_timeout(current_task_id, wait_handle, wake_tick);
+                .enqueue_wait_timeout(current_task_id, target, wake_tick);
         }
 
         let next_task_id = self.pick_next_runnable();
@@ -757,9 +757,9 @@ impl SwitchScheduler for MultiClassScheduler {
     }
 
     fn schedule_wait(&mut self,
-                     wait_handle : TaskWaitHandle,
+                     target : TaskWaitTarget,
                      timeout_ticks : Option<TaskTick>)
                      -> Option<SwitchPair> {
-        MultiClassScheduler::schedule_wait(self, wait_handle, timeout_ticks)
+        MultiClassScheduler::schedule_wait(self, target, timeout_ticks)
     }
 }

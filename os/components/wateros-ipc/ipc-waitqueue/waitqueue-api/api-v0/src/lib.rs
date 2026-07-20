@@ -7,8 +7,8 @@
 pub use task_api::TaskId;
 /// 调度 tick 类型（重导出自 `wateros-task-api-v0`）。
 pub use task_api::TaskTick;
-/// 通用等待句柄（重导出自 `wateros-task-api-v0`）。
-pub use task_api::TaskWaitHandle;
+/// 等待目标类型（重导出自 `wateros-task-api-v0`）。
+pub use task_api::TaskWaitTarget;
 /// 带超时的等待结果（重导出自 `wateros-task-api-v0`）。
 pub use task_api::TaskWaitResult;
 /// 等待队列编号类型（重导出自 `wateros-task-api-v0`）。
@@ -22,8 +22,8 @@ pub trait IpcWaitQueueOps: Sized {
     /// 返回队列在任务系统中的编号。
     fn id(&self) -> WaitQueueId;
 
-    /// 返回可用于跨子系统引用的等待句柄。
-    fn wait_handle(&self) -> TaskWaitHandle;
+    /// 返回可用于跨子系统引用的等待目标。
+    fn wait_target(&self) -> TaskWaitTarget;
 
     /// 让当前任务无限期阻塞，直至被唤醒。
     fn wait_current(&self) -> TaskWaitResult;

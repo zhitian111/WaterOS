@@ -19,8 +19,8 @@ use core::mem::MaybeUninit;
 use core::panic::Location;
 use core::sync::atomic::{compiler_fence, AtomicBool, AtomicUsize, Ordering};
 use task_api::{
-    ExitedTask, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskId, TaskSnapshot, TaskTick,
-    TaskWaitHandle, TaskWaitResult, UserTask, WaitQueueId,
+    ExitedTask, KernelTaskEntry, TaskExitCode, TaskId, TaskSnapshot, TaskTick,
+    TaskWaitResult, TaskWaitTarget, UserTask, WaitQueueId,
 };
 
 
@@ -430,7 +430,7 @@ pub fn reap_exited_tasks_atomic(take_task_ids : impl FnOnce() -> Vec<TaskId>) ->
 }
 
 /// 以给定原因阻塞当前任务并切换出去。
-pub fn block_current(reason : TaskBlockReason) {
+pub fn block_current(reason : TaskWaitTarget) {
     let _guard = InterruptGuard::new();
     let switch_pair = with_scheduler(|scheduler| scheduler.schedule(ScheduleReason::Block(reason)));
     if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
@@ -440,30 +440,30 @@ pub fn block_current(reason : TaskBlockReason) {
     }
 }
 
-/// 无限期等待指定句柄；被唤醒后从切换点继续运行。
-pub fn wait_current(wait_handle : TaskWaitHandle) -> TaskWaitResult {
+/// 等待指定等待目标；被唤醒后从切换点继续运行。
+pub fn wait_current(target : TaskWaitTarget) -> TaskWaitResult {
     let guard = InterruptGuard::new();
-    let switch_pair = with_scheduler(|scheduler| scheduler.schedule_wait(wait_handle, None));
+    let switch_pair = with_scheduler(|scheduler| scheduler.schedule_wait(target, None));
     guard.release_before_switch();
     finish_wait_after_switch(switch_pair)
 }
 
-/// 在关中断调度临界区内复查条件；仅当条件仍成立时才把当前任务挂入等待队列。
-pub fn wait_current_while(wait_handle : TaskWaitHandle,
+/// 在关中断调度临界区内复查条件；仅当条件仍成立时才把当前任务挂入等待。
+pub fn wait_current_while(target : TaskWaitTarget,
                           condition : impl FnOnce() -> bool)
                           -> TaskWaitResult {
     let guard = InterruptGuard::new();
     if !condition() {
         return TaskWaitResult::Woken;
     }
-    let switch_pair = with_scheduler(|scheduler| scheduler.schedule_wait(wait_handle, None));
+    let switch_pair = with_scheduler(|scheduler| scheduler.schedule_wait(target, None));
     guard.release_before_switch();
     finish_wait_after_switch(switch_pair)
 }
 
 /// 带超时的等待；`timeout_ticks == 0` 时立即返回 [`TaskWaitResult::TimedOut`]
 /// 且不切换。
-pub fn wait_current_timeout(wait_handle : TaskWaitHandle,
+pub fn wait_current_timeout(target : TaskWaitTarget,
                             timeout_ticks : TaskTick)
                             -> TaskWaitResult {
     if timeout_ticks == 0 {
@@ -472,13 +472,13 @@ pub fn wait_current_timeout(wait_handle : TaskWaitHandle,
 
     let guard = InterruptGuard::new();
     let switch_pair =
-        with_scheduler(|scheduler| scheduler.schedule_wait(wait_handle, Some(timeout_ticks)));
+        with_scheduler(|scheduler| scheduler.schedule_wait(target, Some(timeout_ticks)));
     guard.release_before_switch();
     finish_wait_after_switch(switch_pair)
 }
 
 /// 带超时的条件等待；条件为假时立即按正常唤醒返回。
-pub fn wait_current_timeout_while(wait_handle : TaskWaitHandle,
+pub fn wait_current_timeout_while(target : TaskWaitTarget,
                                   timeout_ticks : TaskTick,
                                   condition : impl FnOnce() -> bool)
                                   -> TaskWaitResult {
@@ -491,32 +491,32 @@ pub fn wait_current_timeout_while(wait_handle : TaskWaitHandle,
         return TaskWaitResult::Woken;
     }
     let switch_pair =
-        with_scheduler(|scheduler| scheduler.schedule_wait(wait_handle, Some(timeout_ticks)));
+        with_scheduler(|scheduler| scheduler.schedule_wait(target, Some(timeout_ticks)));
     guard.release_before_switch();
     finish_wait_after_switch(switch_pair)
 }
 
 /// 在指定等待队列上无限期阻塞（语法糖）。
 pub fn wait_current_on(wait_queue_id : WaitQueueId) -> TaskWaitResult {
-    wait_current(TaskWaitHandle::for_wait_queue(wait_queue_id))
+    wait_current(TaskWaitTarget::WaitQueue(wait_queue_id))
 }
 
 /// 在指定等待队列上带超时等待（语法糖）。
 pub fn wait_current_on_timeout(wait_queue_id : WaitQueueId,
                                timeout_ticks : TaskTick)
                                -> TaskWaitResult {
-    wait_current_timeout(TaskWaitHandle::for_wait_queue(wait_queue_id),
+    wait_current_timeout(TaskWaitTarget::WaitQueue(wait_queue_id),
                          timeout_ticks)
 }
 
 /// 等待目标任务退出（语法糖）。
 pub fn wait_for_task_exit(task_id : TaskId) -> TaskWaitResult {
-    wait_current(TaskWaitHandle::for_task_exit(task_id))
+    wait_current(TaskWaitTarget::TaskExit(task_id))
 }
 
 /// 等待目标任务退出，带超时（语法糖）。
 pub fn wait_for_task_exit_timeout(task_id : TaskId, timeout_ticks : TaskTick) -> TaskWaitResult {
-    wait_current_timeout(TaskWaitHandle::for_task_exit(task_id),
+    wait_current_timeout(TaskWaitTarget::TaskExit(task_id),
                          timeout_ticks)
 }
 

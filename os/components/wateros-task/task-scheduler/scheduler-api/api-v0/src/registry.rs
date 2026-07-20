@@ -6,8 +6,8 @@ use alloc::vec::Vec;
 use arch::task::{ActiveArchTaskContext as TaskContext, ArchTaskContext};
 use arch::trap::ActiveTrapFrame as TaskTrapFrame;
 use task_api::{
-    ExitedTask, KernelTaskEntry, SchedPolicy, TaskBlockReason, TaskExitCode, TaskId, TaskSnapshot,
-    TaskState, TaskTick, TaskWaitHandle, TaskWaitResult, TaskWaitTarget, UserTask, IDLE_TASK_ID,
+    ExitedTask, KernelTaskEntry, SchedPolicy, TaskExitCode, TaskId, TaskSnapshot, TaskState,
+    TaskTick, TaskWaitResult, TaskWaitTarget, UserTask, IDLE_TASK_ID,
 };
 use task_impl::TaskControlBlock;
 
@@ -371,7 +371,7 @@ impl TaskRegistry {
     }
 
     /// 将任务标为 Blocking 并记录原因。
-    pub fn mark_blocking(&mut self, task_id : TaskId, reason : TaskBlockReason) {
+    pub fn mark_blocking(&mut self, task_id : TaskId, reason : TaskWaitTarget) {
         if let Some(task) = self.task_table
                                 .task_mut_opt(task_id)
         {
@@ -415,8 +415,8 @@ impl TaskRegistry {
             .map(TaskControlBlock::state)
     }
 
-    pub fn wait_target_ready(&self, wait_handle : TaskWaitHandle) -> bool {
-        match wait_handle.target() {
+    pub fn wait_target_ready(&self, target : TaskWaitTarget) -> bool {
+        match target {
             TaskWaitTarget::WaitQueue(_) => false,
             TaskWaitTarget::TaskExit(task_id) => {
                 self.state(task_id)
@@ -428,6 +428,7 @@ impl TaskRegistry {
                     .is_some() ||
                 !self.has_child(parent_id)
             }
+            TaskWaitTarget::Manual => false,
         }
     }
 

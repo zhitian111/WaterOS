@@ -6,7 +6,7 @@
 use abi::user_ret::UserRet;
 use alloc::boxed::Box;
 use api_v0::{
-    AddressSpaceHandle, ExitedTask, KernelStack, KernelTaskEntry, SchedPolicy, TaskBlockReason,
+    AddressSpaceHandle, ExitedTask, KernelStack, KernelTaskEntry, SchedPolicy, TaskWaitTarget,
     TaskBootstrap, TaskExitCode, TaskId, TaskKind, TaskRuntimeStats, TaskSnapshot, TaskState,
     TaskTick, TaskTrapSnapshot, TaskWaitResult, UserImageInfo, UserStack, UserTask,
 };
@@ -471,7 +471,7 @@ impl TaskControlBlock {
     }
 
     #[inline]
-    pub fn mark_blocking(&mut self, reason : TaskBlockReason) {
+    pub fn mark_blocking(&mut self, reason : TaskWaitTarget) {
         self.state = TaskState::Blocking(reason);
     }
 

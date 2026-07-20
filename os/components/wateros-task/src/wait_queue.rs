@@ -1,9 +1,9 @@
 //! 内核同步原语用的等待队列句柄：封装 `WaitQueueId`，提供 `wait`/`wake` 便捷方法。
 
-use crate::{scheduler, TaskId, TaskTick, TaskWaitHandle, TaskWaitResult, WaitQueueId};
+use crate::{scheduler, TaskId, TaskTick, TaskWaitResult, TaskWaitTarget, WaitQueueId};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WaitQueue {
-    /// 调度器内部分配的队列编号，与 [`TaskWaitHandle::for_wait_queue`] 一致。
+    /// 调度器内部分配的队列编号。
     id : WaitQueueId,
 }
 
@@ -20,20 +20,20 @@ impl WaitQueue {
     #[inline]
     pub fn try_release_empty(&self) -> bool { scheduler::try_release_wait_queue(self.id) }
 
-    /// 返回该等待队列对应的通用等待句柄。
+    /// 返回该等待队列对应的等待目标。
     #[inline]
-    pub const fn wait_handle(&self) -> TaskWaitHandle { TaskWaitHandle::for_wait_queue(self.id) }
+    pub const fn wait_target(&self) -> TaskWaitTarget { TaskWaitTarget::WaitQueue(self.id) }
 
     /// 让当前任务在该等待队列上休眠，直到被显式唤醒。
     #[inline]
     pub fn wait_current(&self) -> TaskWaitResult {
-        scheduler::wait_current(self.wait_handle())
+        scheduler::wait_current(self.wait_target())
     }
 
     /// 让当前任务在该等待队列上等待，超时后返回等待结果。
     #[inline]
     pub fn wait_current_for_ticks(&self, timeout_ticks : TaskTick) -> TaskWaitResult {
-        scheduler::wait_current_timeout(self.wait_handle(), timeout_ticks)
+        scheduler::wait_current_timeout(self.wait_target(), timeout_ticks)
     }
 
     /// 在调度临界区内复查条件；条件仍成立才让当前任务在该队列上休眠。
@@ -41,7 +41,7 @@ impl WaitQueue {
     pub fn wait_current_while(&self,
                               condition : impl FnOnce() -> bool)
                               -> TaskWaitResult {
-        scheduler::wait_current_while(self.wait_handle(), condition)
+        scheduler::wait_current_while(self.wait_target(), condition)
     }
 
     /// 在调度临界区内复查条件；条件仍成立才让当前任务在该队列上带超时等待。
@@ -50,7 +50,7 @@ impl WaitQueue {
                                         timeout_ticks : TaskTick,
                                         condition : impl FnOnce() -> bool)
                                         -> TaskWaitResult {
-        scheduler::wait_current_timeout_while(self.wait_handle(),
+        scheduler::wait_current_timeout_while(self.wait_target(),
                                               timeout_ticks,
                                               condition)
     }

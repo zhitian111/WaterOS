@@ -14,8 +14,8 @@ mod sched_policy;
 mod wait_queues;
 
 use task_api::{
-    ExitedTask, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskId, TaskSnapshot, TaskTick,
-    TaskWaitHandle, TaskWaitResult, UserTask, WaitQueueId,
+    ExitedTask, KernelTaskEntry, TaskExitCode, TaskId, TaskSnapshot, TaskTick, TaskWaitResult,
+    TaskWaitTarget, UserTask, WaitQueueId,
 };
 
 pub use queue_traits::{ReadyQueue, ReadyTaskSink};
@@ -39,7 +39,7 @@ pub enum ScheduleReason {
     /// 由时钟 tick 触发一次调度检查
     Tick,
     /// 由于阻塞而切换出去。
-    Block(TaskBlockReason),
+    Block(TaskWaitTarget),
     /// 由于定时睡眠而切换出去；`ticks == 0` 时在实现中等价于 yield。
     Sleep(TaskTick),
     /// 当前任务退出。
@@ -54,7 +54,7 @@ pub trait SwitchScheduler {
     fn schedule(&mut self, reason : ScheduleReason) -> Option<SwitchPair>;
     /// 执行一次等待路径调度。
     fn schedule_wait(&mut self,
-                     wait_handle : TaskWaitHandle,
+                     target : TaskWaitTarget,
                      timeout_ticks : Option<TaskTick>)
                      -> Option<SwitchPair>;
 }
@@ -76,63 +76,59 @@ pub trait Scheduler {
     /// 按给定原因执行一次调度决策。
     fn schedule(&mut self, reason : ScheduleReason);
     /// 将当前任务标记为阻塞，并切换到其他任务。
-    fn block_current(&mut self, reason : TaskBlockReason);
+    fn block_current(&mut self, reason : TaskWaitTarget);
     /// 让当前任务等待指定的阻塞对象。
-    fn wait_current(&mut self, wait_handle : TaskWaitHandle) -> TaskWaitResult;
+    fn wait_current(&mut self, target : TaskWaitTarget) -> TaskWaitResult;
     /// 在实现持有调度临界区时复查条件；条件为真才等待指定阻塞对象。
-    fn wait_current_while<F>(&mut self,
-                             wait_handle : TaskWaitHandle,
-                             condition : F)
-                             -> TaskWaitResult
-        where F : FnOnce() -> bool
-    {
+    fn wait_current_while<F>(&mut self, target : TaskWaitTarget, condition : F) -> TaskWaitResult
+        where F : FnOnce() -> bool {
         if condition() {
-            self.wait_current(wait_handle)
+            self.wait_current(target)
         } else {
             TaskWaitResult::Woken
         }
     }
     /// 让当前任务等待指定的阻塞对象，并带一个超时。
     fn wait_current_timeout(&mut self,
-                            wait_handle : TaskWaitHandle,
+                            target : TaskWaitTarget,
                             timeout_ticks : TaskTick)
                             -> TaskWaitResult;
     /// 在实现持有调度临界区时复查条件；条件为真才带超时等待指定阻塞对象。
     fn wait_current_timeout_while<F>(&mut self,
-                                     wait_handle : TaskWaitHandle,
+                                     target : TaskWaitTarget,
                                      timeout_ticks : TaskTick,
                                      condition : F)
                                      -> TaskWaitResult
         where F : FnOnce() -> bool
     {
         if condition() {
-            self.wait_current_timeout(wait_handle, timeout_ticks)
+            self.wait_current_timeout(target, timeout_ticks)
         } else {
             TaskWaitResult::Woken
         }
     }
     /// 让当前任务在指定等待队列上休眠。
     fn wait_current_on(&mut self, wait_queue_id : WaitQueueId) -> TaskWaitResult {
-        self.wait_current(TaskWaitHandle::for_wait_queue(wait_queue_id))
+        self.wait_current(TaskWaitTarget::WaitQueue(wait_queue_id))
     }
     /// 让当前任务在指定等待队列上等待，并带一个超时。
     fn wait_current_on_timeout(&mut self,
                                wait_queue_id : WaitQueueId,
                                timeout_ticks : TaskTick)
                                -> TaskWaitResult {
-        self.wait_current_timeout(TaskWaitHandle::for_wait_queue(wait_queue_id),
+        self.wait_current_timeout(TaskWaitTarget::WaitQueue(wait_queue_id),
                                   timeout_ticks)
     }
     /// 让当前任务等待指定任务退出。
     fn wait_for_task_exit(&mut self, task_id : TaskId) -> TaskWaitResult {
-        self.wait_current(TaskWaitHandle::for_task_exit(task_id))
+        self.wait_current(TaskWaitTarget::TaskExit(task_id))
     }
     /// 让当前任务等待指定任务退出，并带一个超时。
     fn wait_for_task_exit_timeout(&mut self,
                                   task_id : TaskId,
                                   timeout_ticks : TaskTick)
                                   -> TaskWaitResult {
-        self.wait_current_timeout(TaskWaitHandle::for_task_exit(task_id),
+        self.wait_current_timeout(TaskWaitTarget::TaskExit(task_id),
                                   timeout_ticks)
     }
     /// 让当前任务睡眠指定 tick 数。

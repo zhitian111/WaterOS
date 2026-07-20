@@ -12,7 +12,7 @@ pub mod api {
 pub use impl_task as active_impl;
 
 #[cfg(feature = "api-v0")]
-pub use api_v0::{IpcWaitQueueOps, TaskId, TaskTick, TaskWaitHandle, TaskWaitResult, WaitQueueId};
+pub use api_v0::{IpcWaitQueueOps, TaskId, TaskTick, TaskWaitResult, WaitQueueId};
 
 #[cfg(feature = "impl-task")]
 pub use active_impl::WaitQueue;
