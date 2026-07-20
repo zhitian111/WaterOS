@@ -1,1 +1,0 @@
-qemu-system-riscv:[0m[36m[WaterOS][0m[31m    [PANIC] Panicked at components/wateros-task/task-scheduler/scheduler-impl/impl-multi-class/src/lib.rs:53.  scheduler not initialized: call init_scheduler() first[0m
