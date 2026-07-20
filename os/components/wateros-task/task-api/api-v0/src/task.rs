@@ -1,8 +1,5 @@
-//! 任务身份、状态机与运行统计：**调度与实现层共享的语义类型**，不绑定具体 TCB
-//! 内存布局。
-//!
-//! 与 `snapshot`、`user`、`wait` 等模块共同构成
-//! `task_api`；变更状态或阻塞原因枚举时需同步调度器与 `impl-core` 的解读路径。
+//! task相关
+
 
 use crate::TaskTrapSnapshot;
 /// 任务在系统内的唯一标识。
@@ -22,24 +19,8 @@ pub const IDLE_TASK_ID : TaskId = 0;
 pub enum TaskKind {
     /// 只在内核态运行的任务。
     Kernel,
-    /// 拥有用户栈与用户返回现场的用户态任务（与
-    /// `TaskControlBlock::new_user_task` 路径对应）。
+    /// 拥有用户栈与用户返回现场的用户态任务
     User,
-}
-
-/// 任务进入 `TaskState::Blocking` 时的原因；调度器据此分入不同等待结构。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TaskBlockReason {
-    /// 主动让出 CPU。
-    Yield,
-    /// 因定时睡眠而阻塞。
-    Sleep,
-    /// 因等待某个可阻塞对象而休眠。
-    Wait(crate::TaskWaitHandle),
-    /// 因系统调用路径暂时挂起。
-    UserSyscall,
-    /// 由内核显式置为阻塞。
-    Manual,
 }
 
 /// 调度器驱动的任务生命周期状态；与就绪队列/阻塞队列表示需保持一致。
@@ -49,8 +30,8 @@ pub enum TaskState {
     Ready,
     /// 当前正在 CPU 上运行。
     Running,
-    /// 由于某种阻塞原因暂时不可运行。
-    Blocking(TaskBlockReason),
+    /// 由于某种阻塞原因暂时不可运行（等待目标见 [`TaskWaitTarget`]）。
+    Blocking(crate::TaskWaitTarget),
     /// 睡眠到指定 tick 后再尝试唤醒。
     Sleeping { wake_tick : TaskTick },
     /// 已退出，不会再被调度。

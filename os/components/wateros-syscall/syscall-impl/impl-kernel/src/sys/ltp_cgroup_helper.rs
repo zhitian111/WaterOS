@@ -9,7 +9,7 @@
 //! 不再遍历；exec 路径仍保留 fast-exit 兜底。带 worker 参数（如 `--mmap-anon`）的合法调用
 //! 不会被 fast-exit。名单维护见 `docs/tasks/ltp_fast_exit_skip_list.md`。
 
-use task::{TaskBlockReason, TaskState};
+use task::{TaskState, TaskWaitTarget};
 /// 源：Read 判读 + rv_local_run_all 手工增补；共 2331 条。
 const LTP_SUBMIT_SKIP_BASENAMES: &[&str] = &[
     "acct02_helper",
@@ -2456,7 +2456,7 @@ fn parent_blocked_in_wait() -> bool {
     };
     matches!(
         snap.state,
-        TaskState::Blocking(TaskBlockReason::Wait(_))
+        TaskState::Blocking(TaskWaitTarget::WaitQueue(_))
     )
 }
 

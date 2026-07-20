@@ -16,10 +16,9 @@ mod user;
 mod wait;
 pub use kernel::{KernelStack, KernelTaskEntry, TaskBootstrap};
 pub use process::{
-    AddressSpaceRef, CloneFlags, CwdRef, FileTableRef, MountNsRef, ProcessDescriptor, ProcessId,
-    ProcessState,
-    ProcessTaskDescriptor, ProcessTaskRole, ProcessTaskState, ResourceHandle, ResourceLimit,
-    SetResourceLimitError, SignalHandlersRef, TaskClearTid, TaskGroupId, ThreadId,
+    AddressSpaceRef, CloneFlags, ProcessDescriptor, ProcessId, ProcessState, ProcessTaskDescriptor,
+    ProcessTaskRole, ProcessTaskState, ResourceLimit, SetResourceLimitError, TaskClearTid,
+    ThreadId,
 };
 pub use sched::{
     SchedError, SchedParam, SchedPolicy, SchedulableCheck, SCHED_CPU_MASK_MIN_BYTES,
@@ -27,8 +26,8 @@ pub use sched::{
 };
 pub use snapshot::{TaskSnapshot, TaskTrapSnapshot};
 pub use task::{
-    ExitedTask, TaskBlockReason, TaskExitCode, TaskId, TaskKind, TaskRuntimeStats, TaskState,
-    TaskTick, WaitQueueId, IDLE_TASK_ID,
+    ExitedTask, TaskExitCode, TaskId, TaskKind, TaskRuntimeStats, TaskState, TaskTick, WaitQueueId,
+    IDLE_TASK_ID,
 };
 pub use user::{AddressSpaceHandle, UserImageInfo, UserStack, UserTask, UserTaskEntryPc};
-pub use wait::{TaskWaitHandle, TaskWaitResult, TaskWaitTarget};
+pub use wait::{TaskWaitResult, TaskWaitTarget};

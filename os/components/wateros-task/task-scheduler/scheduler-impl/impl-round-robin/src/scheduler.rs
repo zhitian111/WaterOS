@@ -6,8 +6,8 @@ use api_v0::{
 };
 use arch::task::ActiveArchTaskContext as TaskContext;
 use task_api::{
-    ExitedTask, KernelTaskEntry, SchedError, SchedParam, SchedPolicy, TaskBlockReason, TaskExitCode,
-    TaskId, TaskSnapshot, TaskTick, TaskWaitHandle, TaskWaitResult, UserTask, WaitQueueId,
+    ExitedTask, KernelTaskEntry, SchedError, SchedParam, SchedPolicy, TaskExitCode,
+    TaskId, TaskSnapshot, TaskTick, TaskWaitResult, TaskWaitTarget, UserTask, WaitQueueId,
     IDLE_TASK_ID,
 };
 
@@ -229,7 +229,7 @@ impl RoundRobinScheduler {
     }
 
     pub(super) fn schedule_wait(&mut self,
-                                wait_handle : TaskWaitHandle,
+                                target : TaskWaitTarget,
                                 timeout_ticks : Option<TaskTick>)
                                 -> Option<SwitchPair>
     {
@@ -244,7 +244,7 @@ impl RoundRobinScheduler {
         }
 
         if self.registry
-               .wait_target_ready(wait_handle)
+               .wait_target_ready(target)
         {
             if let Some(current_task_id) = self.registry
                                                .current_task_id()
@@ -266,7 +266,7 @@ impl RoundRobinScheduler {
             self.wait
                 .enqueue_task(&mut self.registry,
                               current_task_id,
-                              QueueTarget::Blocked(TaskBlockReason::Wait(wait_handle)),
+                              QueueTarget::Blocked(target),
                               ready);
         }
         if let Some(timeout_ticks) = timeout_ticks {
@@ -274,7 +274,7 @@ impl RoundRobinScheduler {
                                 .current_tick()
                                 .saturating_add(timeout_ticks.max(1));
             self.wait
-                .enqueue_wait_timeout(current_task_id, wait_handle, wake_tick);
+                .enqueue_wait_timeout(current_task_id, target, wake_tick);
         }
 
         let next_task_id = self.other_ready
@@ -528,9 +528,9 @@ impl SwitchScheduler for RoundRobinScheduler {
     }
 
     fn schedule_wait(&mut self,
-                     wait_handle : TaskWaitHandle,
+                     target : TaskWaitTarget,
                      timeout_ticks : Option<TaskTick>)
                      -> Option<SwitchPair> {
-        RoundRobinScheduler::schedule_wait(self, wait_handle, timeout_ticks)
+        RoundRobinScheduler::schedule_wait(self, target, timeout_ticks)
     }
 }

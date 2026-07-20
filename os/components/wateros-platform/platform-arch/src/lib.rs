@@ -66,11 +66,7 @@ pub mod task {
 #[cfg(feature = "api-v0")]
 pub mod trap {
     #[allow(deprecated)]
-    pub use api_v0::trap::{
-        ArchTrapFrame, Exception, Interrupt, TrapAddressSpaceWrite, TrapCOntextWrite, TrapCause,
-        TrapContextFrameView, TrapContextRead, TrapContextWrite, TrapFrame, TrapFrameRead,
-        TrapFrameWrite, TrapSyscallRead, TrapSyscallWrite, TrapThreadWrite,
-    };
+    pub use api_v0::trap::{Exception, Interrupt, TrapCause, TrapFrameRead, TrapFrameWrite};
 
     #[cfg(feature = "impl-loongarch64")]
     pub use impl_loongarch64::trap::TrapContext as ActiveTrapFrame;

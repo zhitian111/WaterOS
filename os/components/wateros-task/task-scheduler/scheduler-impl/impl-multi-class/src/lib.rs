@@ -14,13 +14,13 @@ use alloc::vec::Vec;
 use arch::interrupt::ArchInterruptState;
 use arch::task::ActiveArchTaskContext as TaskContext;
 use base::sync::UniprocessorSafeCell;
-use core::mem::MaybeUninit;
 use core::hint::black_box;
+use core::mem::MaybeUninit;
 use core::panic::Location;
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering, compiler_fence};
+use core::sync::atomic::{compiler_fence, AtomicBool, AtomicUsize, Ordering};
 use task_api::{
-    ExitedTask, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskId, TaskSnapshot, TaskTick,
-    TaskWaitHandle, TaskWaitResult, UserTask, WaitQueueId,
+    ExitedTask, KernelTaskEntry, TaskExitCode, TaskId, TaskSnapshot, TaskTick,
+    TaskWaitResult, TaskWaitTarget, UserTask, WaitQueueId,
 };
 
 
@@ -55,8 +55,8 @@ static SCHEDULER_READY : AtomicBool = AtomicBool::new(false);
 static SCHEDULER_CELL_PROBE_COUNT : AtomicUsize = AtomicUsize::new(0);
 
 unsafe extern "C" {
-    static kernel_heap_start : u8;
-    static kernel_heap_end : u8;
+    static kernel_heap_start: u8;
+    static kernel_heap_end: u8;
 }
 
 /// 若 `addr` 落在链接脚本划定的堆池 `[kernel_heap_start, kernel_heap_end)` 内则 panic。
@@ -69,7 +69,8 @@ fn assert_addr_outside_kernel_heap(label : &str, addr : usize) {
                     addr,
                     heap_lo,
                     heap_hi);
-        panic!("kernel static overlaps 128MiB heap pool — check link.ld .bss.scheduler / .kernel.heap");
+        panic!("kernel static overlaps 128MiB heap pool — check link.ld .bss.scheduler / \
+                .kernel.heap");
     }
 }
 
@@ -110,7 +111,7 @@ pub extern "C" fn wateros_mcs_boot_log_scheduler_ready(tag_ptr : *const u8, tag_
 #[cold]
 fn scheduler_not_ready_fatal(caller : &'static Location, ready : bool, raw_byte : u8) -> ! {
     log::error!("[boot-init] scheduler_cell NOT READY caller={}:{} atomic={} raw_byte={:#x} \
-                   ready_addr={:#x}",
+                 ready_addr={:#x}",
                 caller.file(),
                 caller.line(),
                 ready,
@@ -121,12 +122,13 @@ fn scheduler_not_ready_fatal(caller : &'static Location, ready : bool, raw_byte 
 
 // 仅在 `SCHEDULER_READY` 为真后解引用；否则 panic，避免未初始化访问。
 #[inline(never)]
-fn scheduler_cell_inner(caller : &'static Location) -> &'static UniprocessorSafeCell<MultiClassScheduler> {
+fn scheduler_cell_inner(caller : &'static Location)
+                        -> &'static UniprocessorSafeCell<MultiClassScheduler> {
     let probe_n = SCHEDULER_CELL_PROBE_COUNT.fetch_add(1, Ordering::Relaxed);
     let ready = black_box(SCHEDULER_READY.load(Ordering::Acquire));
     let raw_byte = scheduler_ready_raw_byte();
-    log::warn!("[boot-init] scheduler_cell probe_n={} caller={}:{} SCHEDULER_READY={} raw_byte={:#x} \
-                ready_addr={:#x}",
+    log::warn!("[boot-init] scheduler_cell probe_n={} caller={}:{} SCHEDULER_READY={} \
+                raw_byte={:#x} ready_addr={:#x}",
                probe_n,
                caller.file(),
                caller.line(),
@@ -142,7 +144,10 @@ fn scheduler_cell_inner(caller : &'static Location) -> &'static UniprocessorSafe
 /// 取得调度器 cell；独立符号，供 GDB/外部探测。
 #[inline(never)]
 #[unsafe(no_mangle)]
-pub extern "C" fn wateros_mcs_scheduler_cell() -> *const UniprocessorSafeCell<MultiClassScheduler> {
+pub extern "C" fn wateros_mcs_scheduler_cell(
+    )
+    -> *const UniprocessorSafeCell<MultiClassScheduler>
+{
     scheduler_cell_inner(Location::caller())
 }
 
@@ -239,7 +244,8 @@ pub fn apply_sched_policy_change(task_id : TaskId,
 /// 首次初始化路径：在 `SCHEDULER_READY` 置真前直接写入 cell，避免 chicken-and-egg。
 unsafe fn init_scheduler_storage_and_inner() {
     SCHEDULER.write(UniprocessorSafeCell::new(MultiClassScheduler::new()));
-    (*SCHEDULER.as_mut_ptr()).exclusive_access().init();
+    (*SCHEDULER.as_mut_ptr()).exclusive_access()
+                             .init();
 }
 
 /// 幂等初始化全局调度器与内部 `MultiClassScheduler` 状态。
@@ -260,8 +266,11 @@ pub fn init_scheduler() {
         with_scheduler(|scheduler| scheduler.init());
     }
     log_scheduler_ready("init_scheduler done");
-    assert_addr_outside_kernel_heap("SCHEDULER_READY", scheduler_ready_addr());
-    assert_addr_outside_kernel_heap("SCHEDULER", unsafe { SCHEDULER.as_ptr() as usize });
+    assert_addr_outside_kernel_heap("SCHEDULER_READY",
+                                    scheduler_ready_addr());
+    assert_addr_outside_kernel_heap("SCHEDULER", unsafe {
+        SCHEDULER.as_ptr() as usize
+    });
     log::info!("[task-scheduler] initialized");
 }
 
@@ -270,7 +279,8 @@ pub fn init_scheduler() {
 pub fn spawn_kernel_task(entry : KernelTaskEntry, arg : usize) -> TaskId {
     const TAG : &[u8] = b"spawn_kernel_task enter";
     wateros_mcs_boot_log_scheduler_ready(TAG.as_ptr(), TAG.len());
-    assert_addr_outside_kernel_heap("SCHEDULER_READY", scheduler_ready_addr());
+    assert_addr_outside_kernel_heap("SCHEDULER_READY",
+                                    scheduler_ready_addr());
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.spawn_kernel_task(entry, arg))
 }
@@ -420,7 +430,7 @@ pub fn reap_exited_tasks_atomic(take_task_ids : impl FnOnce() -> Vec<TaskId>) ->
 }
 
 /// 以给定原因阻塞当前任务并切换出去。
-pub fn block_current(reason : TaskBlockReason) {
+pub fn block_current(reason : TaskWaitTarget) {
     let _guard = InterruptGuard::new();
     let switch_pair = with_scheduler(|scheduler| scheduler.schedule(ScheduleReason::Block(reason)));
     if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
@@ -430,30 +440,30 @@ pub fn block_current(reason : TaskBlockReason) {
     }
 }
 
-/// 无限期等待指定句柄；被唤醒后从切换点继续运行。
-pub fn wait_current(wait_handle : TaskWaitHandle) -> TaskWaitResult {
+/// 等待指定等待目标；被唤醒后从切换点继续运行。
+pub fn wait_current(target : TaskWaitTarget) -> TaskWaitResult {
     let guard = InterruptGuard::new();
-    let switch_pair = with_scheduler(|scheduler| scheduler.schedule_wait(wait_handle, None));
+    let switch_pair = with_scheduler(|scheduler| scheduler.schedule_wait(target, None));
     guard.release_before_switch();
     finish_wait_after_switch(switch_pair)
 }
 
-/// 在关中断调度临界区内复查条件；仅当条件仍成立时才把当前任务挂入等待队列。
-pub fn wait_current_while(wait_handle : TaskWaitHandle,
+/// 在关中断调度临界区内复查条件；仅当条件仍成立时才把当前任务挂入等待。
+pub fn wait_current_while(target : TaskWaitTarget,
                           condition : impl FnOnce() -> bool)
                           -> TaskWaitResult {
     let guard = InterruptGuard::new();
     if !condition() {
         return TaskWaitResult::Woken;
     }
-    let switch_pair = with_scheduler(|scheduler| scheduler.schedule_wait(wait_handle, None));
+    let switch_pair = with_scheduler(|scheduler| scheduler.schedule_wait(target, None));
     guard.release_before_switch();
     finish_wait_after_switch(switch_pair)
 }
 
 /// 带超时的等待；`timeout_ticks == 0` 时立即返回 [`TaskWaitResult::TimedOut`]
 /// 且不切换。
-pub fn wait_current_timeout(wait_handle : TaskWaitHandle,
+pub fn wait_current_timeout(target : TaskWaitTarget,
                             timeout_ticks : TaskTick)
                             -> TaskWaitResult {
     if timeout_ticks == 0 {
@@ -462,13 +472,13 @@ pub fn wait_current_timeout(wait_handle : TaskWaitHandle,
 
     let guard = InterruptGuard::new();
     let switch_pair =
-        with_scheduler(|scheduler| scheduler.schedule_wait(wait_handle, Some(timeout_ticks)));
+        with_scheduler(|scheduler| scheduler.schedule_wait(target, Some(timeout_ticks)));
     guard.release_before_switch();
     finish_wait_after_switch(switch_pair)
 }
 
 /// 带超时的条件等待；条件为假时立即按正常唤醒返回。
-pub fn wait_current_timeout_while(wait_handle : TaskWaitHandle,
+pub fn wait_current_timeout_while(target : TaskWaitTarget,
                                   timeout_ticks : TaskTick,
                                   condition : impl FnOnce() -> bool)
                                   -> TaskWaitResult {
@@ -481,32 +491,32 @@ pub fn wait_current_timeout_while(wait_handle : TaskWaitHandle,
         return TaskWaitResult::Woken;
     }
     let switch_pair =
-        with_scheduler(|scheduler| scheduler.schedule_wait(wait_handle, Some(timeout_ticks)));
+        with_scheduler(|scheduler| scheduler.schedule_wait(target, Some(timeout_ticks)));
     guard.release_before_switch();
     finish_wait_after_switch(switch_pair)
 }
 
 /// 在指定等待队列上无限期阻塞（语法糖）。
 pub fn wait_current_on(wait_queue_id : WaitQueueId) -> TaskWaitResult {
-    wait_current(TaskWaitHandle::for_wait_queue(wait_queue_id))
+    wait_current(TaskWaitTarget::WaitQueue(wait_queue_id))
 }
 
 /// 在指定等待队列上带超时等待（语法糖）。
 pub fn wait_current_on_timeout(wait_queue_id : WaitQueueId,
                                timeout_ticks : TaskTick)
                                -> TaskWaitResult {
-    wait_current_timeout(TaskWaitHandle::for_wait_queue(wait_queue_id),
+    wait_current_timeout(TaskWaitTarget::WaitQueue(wait_queue_id),
                          timeout_ticks)
 }
 
 /// 等待目标任务退出（语法糖）。
 pub fn wait_for_task_exit(task_id : TaskId) -> TaskWaitResult {
-    wait_current(TaskWaitHandle::for_task_exit(task_id))
+    wait_current(TaskWaitTarget::TaskExit(task_id))
 }
 
 /// 等待目标任务退出，带超时（语法糖）。
 pub fn wait_for_task_exit_timeout(task_id : TaskId, timeout_ticks : TaskTick) -> TaskWaitResult {
-    wait_current_timeout(TaskWaitHandle::for_task_exit(task_id),
+    wait_current_timeout(TaskWaitTarget::TaskExit(task_id),
                          timeout_ticks)
 }
 

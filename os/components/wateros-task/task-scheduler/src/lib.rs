@@ -38,13 +38,13 @@ pub use impl_multi_class as active_impl;
 #[cfg(feature = "impl-round-robin")]
 pub use impl_round_robin as active_impl;
 
-pub use api_v0::{ScheduleReason, SchedPolicyChangeAction, Scheduler, SwitchScheduler};
+pub use api_v0::{SchedPolicyChangeAction, ScheduleReason, Scheduler, SwitchScheduler};
 /// 当前架构下活动 trap 帧的具体类型别名；与 `wateros-task` 聚合层及
 /// `impl-round-robin` 一致。
 pub type TaskTrapFrame = arch::trap::ActiveTrapFrame;
 pub use task_api::{
-    AddressSpaceHandle, ExitedTask, KernelTaskEntry, TaskBlockReason, TaskExitCode, TaskId,
-    TaskKind, TaskSnapshot, TaskState, TaskTick, TaskWaitHandle, TaskWaitResult, TaskWaitTarget,
+    AddressSpaceHandle, ExitedTask, KernelTaskEntry, TaskExitCode, TaskId,
+    TaskKind, TaskSnapshot, TaskState, TaskTick, TaskWaitResult, TaskWaitTarget,
     UserImageInfo, UserTask, UserTaskEntryPc, WaitQueueId, IDLE_TASK_ID,
 };
 
@@ -59,8 +59,7 @@ pub fn init() {
 pub fn apply_sched_policy_change(task_id : TaskId,
                                  policy : task_api::SchedPolicy,
                                  param : task_api::SchedParam)
-                                 -> Result<SchedPolicyChangeAction, task_api::SchedError>
-{
+                                 -> Result<SchedPolicyChangeAction, task_api::SchedError> {
     active_impl::apply_sched_policy_change(task_id, policy, param)
 }
 
@@ -157,56 +156,56 @@ pub fn suspend_current_and_run_next() { active_impl::suspend_current_and_run_nex
 pub fn schedule_tick() { active_impl::schedule_tick(); }
 
 /// 按给定原因阻塞当前任务。
-pub fn block_current(reason : TaskBlockReason) { active_impl::block_current(reason); }
+pub fn block_current(reason : TaskWaitTarget) { active_impl::block_current(reason); }
 
 /// 让当前任务等待指定的阻塞对象。
-pub fn wait_current(wait_handle : TaskWaitHandle) -> TaskWaitResult {
-    active_impl::wait_current(wait_handle)
+pub fn wait_current(target : TaskWaitTarget) -> TaskWaitResult {
+    active_impl::wait_current(target)
 }
 
 /// 在调度临界区内复查条件；条件为真才阻塞当前任务。
-pub fn wait_current_while(wait_handle : TaskWaitHandle,
+pub fn wait_current_while(target : TaskWaitTarget,
                           condition : impl FnOnce() -> bool)
                           -> TaskWaitResult {
-    active_impl::wait_current_while(wait_handle, condition)
+    active_impl::wait_current_while(target, condition)
 }
 
 /// 让当前任务等待指定的阻塞对象，并带一个超时。
-pub fn wait_current_timeout(wait_handle : TaskWaitHandle,
+pub fn wait_current_timeout(target : TaskWaitTarget,
                             timeout_ticks : TaskTick)
                             -> TaskWaitResult {
-    active_impl::wait_current_timeout(wait_handle, timeout_ticks)
+    active_impl::wait_current_timeout(target, timeout_ticks)
 }
 
 /// 在调度临界区内复查条件；条件为真才执行带超时等待。
-pub fn wait_current_timeout_while(wait_handle : TaskWaitHandle,
+pub fn wait_current_timeout_while(target : TaskWaitTarget,
                                   timeout_ticks : TaskTick,
                                   condition : impl FnOnce() -> bool)
                                   -> TaskWaitResult {
-    active_impl::wait_current_timeout_while(wait_handle, timeout_ticks, condition)
+    active_impl::wait_current_timeout_while(target, timeout_ticks, condition)
 }
 
 /// 让当前任务在指定等待队列上休眠，直到被唤醒。
 pub fn wait_current_on(wait_queue_id : WaitQueueId) -> TaskWaitResult {
-    wait_current(TaskWaitHandle::for_wait_queue(wait_queue_id))
+    wait_current(TaskWaitTarget::WaitQueue(wait_queue_id))
 }
 
 /// 让当前任务在指定等待队列上等待，并附带超时时间。
 pub fn wait_current_on_timeout(wait_queue_id : WaitQueueId,
                                timeout_ticks : TaskTick)
                                -> TaskWaitResult {
-    wait_current_timeout(TaskWaitHandle::for_wait_queue(wait_queue_id),
+    wait_current_timeout(TaskWaitTarget::WaitQueue(wait_queue_id),
                          timeout_ticks)
 }
 
 /// 让当前任务等待指定任务退出。
 pub fn wait_for_task_exit(task_id : TaskId) -> TaskWaitResult {
-    wait_current(TaskWaitHandle::for_task_exit(task_id))
+    wait_current(TaskWaitTarget::TaskExit(task_id))
 }
 
 /// 让当前任务等待指定任务退出，并附带超时时间。
 pub fn wait_for_task_exit_timeout(task_id : TaskId, timeout_ticks : TaskTick) -> TaskWaitResult {
-    wait_current_timeout(TaskWaitHandle::for_task_exit(task_id),
+    wait_current_timeout(TaskWaitTarget::TaskExit(task_id),
                          timeout_ticks)
 }
 

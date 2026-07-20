@@ -3,6 +3,7 @@
 use runtime::logging::*;
 
 /// 在根卷上执行 mkdir → read_dir → rename → rmdir 烟囱。
+#[allow(unused)]
 pub fn run_stage_posix_fs_meta() {
     info!("[bringup][posix-fs-meta] BEGIN");
     #[cfg(not(feature = "vfs-bridge"))]
@@ -29,7 +30,7 @@ pub fn run_stage_posix_fs_meta() {
     }
     info!("[bringup][posix-fs-meta] END");
 }
-
+#[allow(unused)]
 #[cfg(feature = "vfs-bridge")]
 fn run_smoke(dir : &str,
              dir_renamed : &str,

@@ -22,3 +22,5 @@ pub const READY_QUEUE_STALE_COMPACT_THRESHOLD : usize = 8;
 ///
 /// 实际时间片 = `MAX_RT_TICKS_PER_TASK` × 定时器间隔（当前为 10ms/tick）。
 pub const MAX_RT_TICKS_PER_TASK : u64 = 10;
+/// 内核任务栈大小（字节）。
+pub const KERNEL_TASK_STACK_SIZE : usize = 32 * 1024;

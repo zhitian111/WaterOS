@@ -11,8 +11,8 @@
 pub use api_v0::TaskId;
 /// 调度 tick 类型（重导出自 `api-v0`）。
 pub use api_v0::TaskTick;
-/// 通用等待句柄（重导出自 `api-v0`）。
-pub use api_v0::TaskWaitHandle;
+/// 等待目标类型（重导出自 `api-v0`）。
+pub use api_v0::TaskWaitTarget;
 /// 带超时的等待结果（重导出自 `api-v0`）。
 pub use api_v0::TaskWaitResult;
 /// 等待队列编号类型（重导出自 `api-v0`）。
@@ -45,11 +45,11 @@ impl WaitQueue {
             .try_release_empty()
     }
 
-    /// 返回该 IPC 等待队列对应的通用等待句柄。
+    /// 返回该 IPC 等待队列对应的等待目标。
     #[inline]
-    pub const fn wait_handle(&self) -> TaskWaitHandle {
+    pub const fn wait_target(&self) -> TaskWaitTarget {
         self.inner
-            .wait_handle()
+            .wait_target()
     }
 
     /// 让当前任务在该 IPC 等待队列上休眠。
@@ -132,9 +132,9 @@ impl api_v0::IpcWaitQueueOps for WaitQueue {
 
     #[inline]
 // 本方法代码由AI完成
-    fn wait_handle(&self) -> TaskWaitHandle {
+    fn wait_target(&self) -> TaskWaitTarget {
         self.inner
-            .wait_handle()
+            .wait_target()
     }
 
     #[inline]

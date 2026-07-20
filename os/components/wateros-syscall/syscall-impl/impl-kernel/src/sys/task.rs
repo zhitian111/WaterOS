@@ -1424,8 +1424,8 @@ fn wait_for_child_event(parent_pid : task::ProcessId,
     let Some(leader) = task::leader_task_for_process(parent_pid) else {
         return task::TaskWaitResult::Woken;
     };
-    let handle = task::TaskWaitHandle::for_child_exit(leader);
-    task::wait_on_while(handle, || {
+    let wait_target = task::TaskWaitTarget::ChildExit(leader);
+    task::wait_on_while(wait_target, || {
         has_waitable_child(parent_pid, target) &&
             !has_pending_wait_event(parent_pid,
                                     target,
