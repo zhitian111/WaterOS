@@ -5,10 +5,10 @@ extern crate alloc;
 use crate::queues::OtherReadyQueue;
 use crate::rt_fifo_queue::RtFifoRunQueue;
 use crate::rt_rr_queue::{RrTickAction, RtRrRunQueue};
-use api_v0::{QueueTarget, SchedPolicyChangeAction, TaskRegistry, WaitQueues};
+use api_v0::{QueueTarget, SchedPolicyChangeAction, SmpScheduler, TaskRegistry, WaitQueues};
 use arch::task::ActiveArchTaskContext as TaskContext;
 use task_api::{
-    ExitedTask, KernelTaskEntry, SchedError, SchedParam, SchedPolicy, TaskExitCode, TaskId,
+    CpuId, ExitedTask, KernelTaskEntry, SchedError, SchedParam, SchedPolicy, TaskExitCode, TaskId,
     TaskSnapshot, TaskState, TaskTick, TaskWaitResult, TaskWaitTarget, UserTask, WaitQueueId,
     IDLE_TASK_ID,
 };
@@ -16,13 +16,14 @@ use task_api::{
 use crate::{SwitchPair, TaskTrapFrame};
 
 use api_v0::ScheduleReason;
-
+const MAX_CPUS : usize = 8;
 pub(super) struct MultiClassScheduler {
     registry : TaskRegistry,
     wait : WaitQueues,
     other_ready : OtherReadyQueue,
     fifo_ready : RtFifoRunQueue,
     rr_ready : RtRrRunQueue,
+    cpu_states : [SmpScheduler; MAX_CPUS],
 }
 
 impl MultiClassScheduler {
@@ -34,7 +35,8 @@ impl MultiClassScheduler {
                wait : WaitQueues::new(),
                other_ready : OtherReadyQueue::new(),
                fifo_ready : RtFifoRunQueue::new(),
-               rr_ready : RtRrRunQueue::new() }
+               rr_ready : RtRrRunQueue::new(),
+               cpu_states : core::array::from_fn(|i| SmpScheduler::new(CpuId::from_raw(i))) }
     }
 
     pub(super) fn init(&mut self) {
@@ -51,15 +53,18 @@ impl MultiClassScheduler {
     // ================================================================
 
     /// 首次任务切换（冷启动入口）。
-    pub(super) fn prepare_first_switch(&mut self) -> SwitchPair {
+    pub(super) fn prepare_first_switch(&mut self, cpu_id : CpuId) -> SwitchPair {
         self.promote_sleep_and_timeouts();
         let next_task_id = self.pick_next_runnable();
         self.registry
-            .first_switch_to(next_task_id)
+            .first_switch_to(next_task_id, cpu_id)
     }
 
     /// 普通调度入口：根据 `reason` 决定是否切换当前任务。
-    pub(super) fn schedule(&mut self, reason : ScheduleReason) -> Option<SwitchPair> {
+    pub(super) fn schedule(&mut self,
+                           reason : ScheduleReason,
+                           cpu_id : CpuId)
+                           -> Option<SwitchPair> {
         // ===== Phase 1: 根据 reason 做前置处理 =====
         match reason {
             // --- Tick 路径：检查时间片与抢占条件 ---
@@ -113,7 +118,7 @@ impl MultiClassScheduler {
                 }
             }
             ScheduleReason::Sleep(ticks) if ticks == 0 => {
-                return self.schedule(ScheduleReason::Yield);
+                return self.schedule(ScheduleReason::Yield, cpu_id);
             }
             _ => {
                 self.other_ready
@@ -146,7 +151,7 @@ impl MultiClassScheduler {
             let next_task_id = self.pick_next_runnable();
             if next_task_id == current_task_id {
                 let _ = self.registry
-                            .mark_running_and_set_current(next_task_id);
+                            .mark_running_and_set_current(next_task_id, cpu_id);
                 return None;
             }
             if let Some(snap) = self.registry
@@ -158,7 +163,7 @@ impl MultiClassScheduler {
                 }
             }
             let next_ptr = self.registry
-                               .mark_running_and_set_current(next_task_id);
+                               .mark_running_and_set_current(next_task_id, cpu_id);
             return Some((current_ptr, next_ptr));
         }
 
@@ -198,7 +203,10 @@ impl MultiClassScheduler {
         self.enqueue_task(queue_target, current_task_id);
 
         // ===== Phase 8: 从就绪队列选出下一个任务，决定是否需要 __switch =====
-        self.finish_schedule_switch(current_task_id, current_ptr, is_exit)
+        self.finish_schedule_switch(current_task_id,
+                                    current_ptr,
+                                    is_exit,
+                                    cpu_id)
     }
 
     /// 等待调度入口：当前任务因等待某个 `target` 而阻塞。
@@ -207,7 +215,8 @@ impl MultiClassScheduler {
     /// 否则将当前任务放入等待队列 + 可选的超时队列，然后切换到下一个就绪任务。
     pub(super) fn schedule_wait(&mut self,
                                 target : TaskWaitTarget,
-                                timeout_ticks : Option<TaskTick>)
+                                timeout_ticks : Option<TaskTick>,
+                                cpu_id : CpuId)
                                 -> Option<SwitchPair> {
         // ===== Phase 1: 前置处理 =====
         self.other_ready
@@ -258,7 +267,7 @@ impl MultiClassScheduler {
             }
         }
         let next_ptr = self.registry
-                           .mark_running_and_set_current(next_task_id);
+                           .mark_running_and_set_current(next_task_id, cpu_id);
         Some((current_ptr, next_ptr))
     }
 
@@ -266,7 +275,8 @@ impl MultiClassScheduler {
     fn finish_schedule_switch(&mut self,
                               current_task_id : TaskId,
                               current_ptr : *mut TaskContext,
-                              is_exit : bool)
+                              is_exit : bool,
+                              cpu_id : CpuId)
                               -> Option<SwitchPair> {
         let next_task_id = self.pick_next_runnable();
         // 选出来的还是自己，就绪队列里只剩它自己
@@ -277,10 +287,10 @@ impl MultiClassScheduler {
                         .is_idle(current_task_id)
                 {
                     let next_ptr = self.registry
-                                       .mark_running_and_set_current(IDLE_TASK_ID);
+                                       .mark_running_and_set_current(IDLE_TASK_ID, cpu_id);
                     return Some((current_ptr, next_ptr));
                 }
-                panic!("exit_current: no runnable task after exit");
+                panic!("exit_current called on idle task — this should never happen");
             }
             // 选出了自己且非退出 → 重新标记为 Running，不切换
             if let Some(snap) = self.registry
@@ -292,7 +302,7 @@ impl MultiClassScheduler {
                 }
             }
             let _ = self.registry
-                        .mark_running_and_set_current(next_task_id);
+                        .mark_running_and_set_current(next_task_id, cpu_id);
             return None;
         }
         // 选出不同任务 → 返回切换对，调用方执行 __switch
@@ -305,7 +315,7 @@ impl MultiClassScheduler {
             }
         }
         let next_ptr = self.registry
-                           .mark_running_and_set_current(next_task_id);
+                           .mark_running_and_set_current(next_task_id, cpu_id);
         Some((current_ptr, next_ptr))
     }
 
@@ -471,7 +481,7 @@ impl MultiClassScheduler {
             return self.highest_ready_rt_priority()
                        .is_some() ||
                    self.other_ready
-                       .has_runnable()
+                       .has_runnable();
         }
         match current.sched_policy {
             SchedPolicy::Other => self.highest_ready_rt_priority()

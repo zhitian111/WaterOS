@@ -1,7 +1,7 @@
 //! task相关
 
 
-use crate::TaskTrapSnapshot;
+use crate::{CpuId, TaskTrapSnapshot};
 /// 任务在系统内的唯一标识。
 pub type TaskId = usize;
 /// 调度器使用的逻辑时钟单位。
@@ -29,7 +29,7 @@ pub enum TaskState {
     /// 已就绪，等待被调度运行。
     Ready,
     /// 当前正在 CPU 上运行。
-    Running,
+    Running { cpu_id : CpuId },
     /// 由于某种阻塞原因暂时不可运行（等待目标见 [`TaskWaitTarget`]）。
     Blocking(crate::TaskWaitTarget),
     /// 睡眠到指定 tick 后再尝试唤醒。

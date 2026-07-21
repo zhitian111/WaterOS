@@ -5,7 +5,7 @@ use api_v0::{
     SCHED_CPU_MASK_RET_BYTES,
 };
 
-use crate::scheduler::{self, SchedPolicyChangeAction};
+use crate::scheduler::{self};
 
 fn existing_task_id(task_id : TaskId) -> Option<TaskId> {
     scheduler::task_snapshot(task_id).map(|_| task_id)
@@ -79,13 +79,7 @@ pub fn set_scheduler(task_id : TaskId,
                      -> Result<(), SchedError> {
     ensure_task_exists(task_id)?;
     validate_policy_param(policy, param)?;
-    match scheduler::apply_sched_policy_change(task_id, policy, param)? {
-        SchedPolicyChangeAction::NoReschedule => Ok(()),
-        SchedPolicyChangeAction::RescheduleNow => {
-            scheduler::suspend_current_and_run_next();
-            Ok(())
-        }
-    }
+    scheduler::apply_sched_policy_change(task_id, policy, param)
 }
 
 /// 设置调度参数（保持当前 policy 不变）。
@@ -94,13 +88,7 @@ pub fn set_param(task_id : TaskId, param : SchedParam) -> Result<(), SchedError>
     let policy = get_scheduler(task_id)?;
     validate_policy_param(policy, param)?;
     let full_param = SchedParam { priority : param.priority };
-    match scheduler::apply_sched_policy_change(task_id, policy, full_param)? {
-        SchedPolicyChangeAction::NoReschedule => Ok(()),
-        SchedPolicyChangeAction::RescheduleNow => {
-            scheduler::suspend_current_and_run_next();
-            Ok(())
-        }
-    }
+    scheduler::apply_sched_policy_change(task_id, policy, full_param)
 }
 
 /// 设置 CPU 亲和性；单核 bring-up 仅支持 CPU0，mask 包含 CPU0 即成功。

@@ -369,6 +369,3 @@ pub fn set_task_clear_child_tid(task_id : TaskId, clear_child_tid : Option<TaskC
 pub fn task_clear_child_tid(task_id : TaskId) -> Option<TaskClearTid> {
     active_impl::task_clear_child_tid(task_id)
 }
-
-/// 进程 registry 自检。
-pub fn process_model_self_test() { active_impl::process_model_self_test(); }

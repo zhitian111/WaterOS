@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 use arch::task::{ActiveArchTaskContext as TaskContext, ArchTaskContext};
 use arch::trap::ActiveTrapFrame as TaskTrapFrame;
 use task_api::{
-    ExitedTask, KernelTaskEntry, SchedPolicy, TaskExitCode, TaskId, TaskSnapshot, TaskState,
+    CpuId, ExitedTask, KernelTaskEntry, SchedPolicy, TaskExitCode, TaskId, TaskSnapshot, TaskState,
     TaskTick, TaskWaitResult, TaskWaitTarget, UserTask, IDLE_TASK_ID,
 };
 use task_impl::TaskControlBlock;
@@ -318,9 +318,9 @@ impl TaskRegistry {
     }
 
     /// 首次切入调度：从 bootstrap 上下文切换到 `next_task_id`。
-    pub fn first_switch_to(&mut self, next_task_id : TaskId) -> SwitchPair {
+    pub fn first_switch_to(&mut self, next_task_id : TaskId, cpu_id : CpuId) -> SwitchPair {
         let current_task_cx_ptr = &mut self.bootstrap_task_cx as *mut TaskContext;
-        let next_task_cx_ptr = self.mark_running_and_set_current(next_task_id);
+        let next_task_cx_ptr = self.mark_running_and_set_current(next_task_id, cpu_id);
         (current_task_cx_ptr, next_task_cx_ptr)
     }
 
@@ -335,10 +335,13 @@ impl TaskRegistry {
     }
 
     /// 将 `task_id` 标为 Running 并设为当前任务，返回其只读上下文指针。
-    pub fn mark_running_and_set_current(&mut self, task_id : TaskId) -> *const TaskContext {
+    pub fn mark_running_and_set_current(&mut self,
+                                        task_id : TaskId,
+                                        cpu_id : CpuId)
+                                        -> *const TaskContext {
         self.task_table
             .task_mut(task_id)
-            .mark_running();
+            .mark_running(cpu_id);
         self.current_task_id = Some(task_id);
         self.task_table
             .task(task_id)

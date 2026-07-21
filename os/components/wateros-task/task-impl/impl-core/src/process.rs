@@ -17,7 +17,9 @@ struct ProcessTask {
     task_id : TaskId,
     tid : ThreadId,
     state : ProcessTaskState,
+    //线程本地存储（Thread-Local Storage）基址。
     tls : usize,
+    //TaskClearTid 是一个用户态地址（指针），内核在该线程最后一次退出时需要往该地址写 0 并唤醒 futex 等待者。
     clear_child_tid : Option<TaskClearTid>,
 }
 
@@ -50,10 +52,15 @@ pub struct ProcessControlBlock {
     pgid : ProcessId,
     tasks : Vec<ProcessTask>,
     state : ProcessState,
+    //会话 ID（Session ID）。由 setsid() 系统调用设置，表示进程所属的会话（session）。会话是一组进程组的集合，通常与终端登录相关。
     sid : ProcessId,
+    //是否允许 core dump。Linux 中控制进程在崩溃时能否产生 core dump 文件
     dumpable : bool,
+    //子进程代管标记。Linux PR_SET_CHILD_SUBREAPER 机制
     child_subreaper : bool,
+    //SIGSTOP/SIGTSTP/SIGTTIN/SIGTTOU 等待通知标记。
     stop_wait_pending : bool,
+    //SIGCONT 等待通知标记。
     continued_wait_pending : bool,
 }
 
@@ -79,6 +86,7 @@ impl ProcessControlBlock {
 
 /// 单核 bring-up 用进程注册表。
 pub struct ProcessRegistry {
+    //进程号有序，范围查询潜力，确定性迭代，稳定的 hash 性能
     processes : BTreeMap<ProcessId, ProcessControlBlock>,
     next_pid : usize,
     next_tid : usize,
@@ -137,6 +145,7 @@ impl ProcessRegistry {
                 "task {} is already registered in a process",
                 task_id);
         let pid = self.alloc_pid();
+        //保证 next_tid 始终大于或等于已分配的 PID 值，避免 TID 与已分配的 PID 冲突。
         if self.next_tid <= pid.raw() {
             self.next_tid = pid.raw()
                                .saturating_add(1);
