@@ -123,7 +123,7 @@ pub fn init(dtb_pa : usize, ram_end_exclusive : usize) {
           .expect("kernel_mm: map probe page");
 
     let satp_target = aspace.kernel_satp_value();
-    #[cfg(feature = "impl-riscv64")]
+    #[cfg(all(feature = "impl-riscv64", target_arch = "riscv64"))]
     platform::arch::trap::set_kernel_trap_satp(satp_target);
     runtime::logging::trace!("[kernel-mm] identity map RAM [0x80000000,{:#x}) MMIO [{:#x},{:#x}) \
                               satp target={:#x}",

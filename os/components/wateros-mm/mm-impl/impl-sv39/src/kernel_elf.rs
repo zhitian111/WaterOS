@@ -69,6 +69,7 @@ fn map_vfs_to_root_vol(e : VfsError) -> RootVolumeReadError {
         VfsError::TooManyOpenFiles |
         VfsError::NoSpace |
         VfsError::ReadOnlyFs => RootVolumeReadError::Unsupported,
+        VfsError::Busy => RootVolumeReadError::Io,
     }
 }
 
@@ -91,14 +92,12 @@ unsafe extern "C" {
 
 struct ElfHeaderInfo {
     entry : usize,
-    #[allow(dead_code)]
     phoff : usize,
     phentsize : usize,
     phnum : usize,
     phdrs : Vec<u8>,
 }
 
-#[allow(dead_code)]
 fn parse_elf_header(data : &[u8]) -> Result<ElfHeaderInfo, LoadElfError> {
     if data.len() < 64 {
         return Err(LoadElfError::TooSmall);
@@ -155,7 +154,6 @@ fn remap_interp_path(program_path : &str, interp : &str) -> String {
     String::from(interp)
 }
 
-#[allow(dead_code)]
 fn read_interp_path(data : &[u8],
                     program_path : &str,
                     header : &ElfHeaderInfo)
@@ -424,7 +422,6 @@ fn map_segment<A : AddressSpaceOps>(aspace : &mut A,
     Ok(())
 }
 
-#[allow(dead_code)]
 fn map_load_segments_at<A : AddressSpaceOps>(aspace : &mut A,
                                              data : &[u8],
                                              header : &ElfHeaderInfo,
@@ -463,7 +460,6 @@ fn map_load_segments_at<A : AddressSpaceOps>(aspace : &mut A,
     }
 }
 
-#[allow(dead_code)]
 fn entry_file_offset_at(data : &[u8],
                         header : &ElfHeaderInfo,
                         entry_pc : usize,
@@ -485,7 +481,6 @@ fn entry_file_offset_at(data : &[u8],
     None
 }
 
-#[allow(dead_code)]
 fn verify_mapped_entry_at(aspace : &Sv39AddressSpace,
                           entry_pc : usize,
                           data : &[u8],

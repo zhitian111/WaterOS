@@ -13,7 +13,8 @@ _start:
     slli.d $t1, $t0, 14        # $t1 = cpuid * 16384
     la.local $t2, cpu_stacks
     add.d $t2, $t2, $t1         # $t2 = 本 CPU 栈区基址
-    addi.d $sp, $t2, STACK_PER_CPU  # sp = 栈基址 + 16KB → 栈顶
+    li.d  $t0, STACK_PER_CPU
+    add.d $sp, $t2, $t0         # sp = 栈基址 + 16KB → 栈顶
     # $r4/$r5/$r6 已经是 kernel_main(argc, argv, envp)
     bl kernel_main
 
