@@ -92,7 +92,6 @@ fn do_execve(path_ptr: usize, argv_ptr: usize, envp_ptr: usize) -> Result<(), Er
         vfs::cwd::drop_task_cwd(exited.id);
         vfs::mount_ns::drop_task_mount_ns(exited.id);
         vfs::fd::drop_task_fd_table(exited.id);
-        crate::socket_fd::drop_task(exited.id);
         crate::unix_sock::drop_task(exited.id);
         cred::drop_task_cred(exited.id);
     }

@@ -101,6 +101,19 @@ pub mod stack {
         Udp,
     }
 
+    /// 一次协议栈加锁内取得的 socket 就绪状态，避免多核下分次查询观察到不同瞬间。
+    #[derive(Clone, Copy, Debug)]
+    pub struct SocketPollSnapshot {
+        pub kind: SocketKind,
+        pub state: SocketState,
+        pub can_recv: bool,
+        pub may_recv: bool,
+        pub may_send: bool,
+        pub send_capacity: usize,
+        pub is_connected: bool,
+        pub has_pending_accept: bool,
+    }
+
     struct SocketMeta {
         kind: SocketKind,
         state: SocketState,
@@ -248,7 +261,11 @@ pub mod stack {
         });
 
         log::warn!("[boot-init] network::stack::init store NETWORK_STACK");
-        *NETWORK_STACK.lock() = Some(NetworkStack {
+        let mut stack_slot = NETWORK_STACK.lock();
+        if stack_slot.is_some() {
+            return Err("network stack already initialized");
+        }
+        *stack_slot = Some(NetworkStack {
             adapter,
             iface,
             sockets: SocketSet::new(vec![]),
@@ -259,6 +276,7 @@ pub mod stack {
             local_ip: ip,
             ephemeral_port: 49152,
         });
+        drop(stack_slot);
         log::warn!("[boot-init] network::stack::init store done");
 
         log::info!(
@@ -606,6 +624,59 @@ pub mod stack {
         let guard = NETWORK_STACK.lock();
         let stack = guard.as_ref().ok_or("stack not initialized")?;
         stack.metas.get(&handle).map(|m| m.state).ok_or("invalid socket handle")
+    }
+
+    /// 在同一次协议栈临界区内取得 poll/read/write 所需的完整状态。
+    pub fn socket_poll_snapshot(handle: SocketHandle) -> Result<SocketPollSnapshot, &'static str> {
+        let mut guard = NETWORK_STACK.lock();
+        let stack = guard.as_mut().ok_or("stack not initialized")?;
+        let meta = stack.metas.get(&handle).ok_or("invalid socket handle")?;
+        let kind = meta.kind;
+        let state = meta.state;
+        let is_listener = meta.is_listener;
+
+        match kind {
+            SocketKind::Tcp => {
+                let socket = stack.sockets.get_mut::<tcp::Socket>(handle);
+                Ok(SocketPollSnapshot {
+                    kind,
+                    state,
+                    can_recv: socket.can_recv(),
+                    may_recv: socket.may_recv(),
+                    may_send: socket.may_send(),
+                    send_capacity: socket.send_capacity(),
+                    is_connected: socket.is_active(),
+                    has_pending_accept: is_listener && socket.is_active() && !socket.is_listening(),
+                })
+            }
+            SocketKind::Udp => {
+                let loopback_ready = stack
+                    .udp_loopback
+                    .get(&handle)
+                    .is_some_and(|queue| !queue.is_empty());
+                let pending_ready = udp_local_port(meta).is_some_and(|port| {
+                    stack
+                        .udp_loopback_pending
+                        .get(&port)
+                        .is_some_and(|queue| {
+                            queue
+                                .iter()
+                                .any(|packet| udp_pending_matches(meta, packet, stack.local_ip))
+                        })
+                });
+                let socket_ready = stack.sockets.get_mut::<udp::Socket>(handle).can_recv();
+                Ok(SocketPollSnapshot {
+                    kind,
+                    state,
+                    can_recv: loopback_ready || pending_ready || socket_ready,
+                    may_recv: true,
+                    may_send: true,
+                    send_capacity: usize::MAX,
+                    is_connected: matches!(state, SocketState::Connected),
+                    has_pending_accept: false,
+                })
+            }
+        }
     }
 
     /// 发起 TCP/UDP connect。TCP 非阻塞返回后需 poll 驱动握手完成；UDP 只记录默认 peer。
@@ -1230,17 +1301,17 @@ pub mod stack {
 
     /// 检查 TCP 监听 socket 是否有入连接已完成握手。
     pub fn socket_has_pending_accept(handle: SocketHandle) -> Result<bool, &'static str> {
-        let guard = NETWORK_STACK.lock();
-        let stack = guard.as_ref().ok_or("stack not initialized")?;
+        let mut guard = NETWORK_STACK.lock();
+        let stack = guard.as_mut().ok_or("stack not initialized")?;
         let meta = stack.metas.get(&handle).ok_or("invalid socket handle")?;
         if !meta.is_listener {
             return Err("not a listening socket");
         }
-        drop(guard);
         // 只有当底层 smoltcp socket 不再处于 Listen 状态时（即已完成握手），
         // 才表示有真正的入连接。is_active() 对 Listen 状态也返回 true，
         // 所以必须同时检查 !is_listening()。
-        with_tcp_socket(handle, |s| s.is_active() && !s.is_listening()).ok_or("stack not initialized")
+        let socket = stack.sockets.get_mut::<tcp::Socket>(handle);
+        Ok(socket.is_active() && !socket.is_listening())
     }
 
     /// 接受 TCP 连接：原监听 socket 变为已连接 socket，并创建新的监听 socket 替换原 fd。
@@ -1256,10 +1327,11 @@ pub mod stack {
             SocketState::Listening { port } => port,
             _ => return Err("not listening"),
         };
-        // 验证连接已建立
+        // `is_active()` 对 Listen 状态也为 true；必须同时排除仍在监听的 socket，
+        // 否则两个线程并发 accept 时，后到者会把刚替换的新 listener 当成连接。
         {
             let tcp = stack.sockets.get_mut::<tcp::Socket>(handle);
-            if !tcp.is_active() {
+            if !tcp.is_active() || tcp.is_listening() {
                 return Err("no pending connection");
             }
         }

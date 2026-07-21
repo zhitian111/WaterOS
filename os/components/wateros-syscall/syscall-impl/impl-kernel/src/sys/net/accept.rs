@@ -77,11 +77,11 @@ fn accept_inner(fd: usize, addr_ptr: usize, addrlen_ptr: usize, flags: usize) ->
         || socket_fd::is_nonblocking(fd);
     let task_id = task::current_task_id().unwrap_or(0);
 
-    loop {
+    let (established_handle, _accepted_port) = loop {
         drive_network_stack();
-        match stack::socket_has_pending_accept(socket.handle()) {
-            Ok(true) => break,
-            Ok(false) => {
+        match socket.accept() {
+            Ok(accepted) => break accepted,
+            Err("no pending connection") => {
                 if nonblocking {
                     return UserRet::from_error(ErrNo::EAGAIN);
                 }
@@ -92,14 +92,13 @@ fn accept_inner(fd: usize, addr_ptr: usize, addrlen_ptr: usize, flags: usize) ->
             Err("not a listening socket") => return UserRet::from_error(ErrNo::EINVAL),
             Err(_) => return UserRet::from_error(ErrNo::ENOTSOCK),
         }
-    }
-
-    let (established_handle, replacement_listener, _accepted_port) = match stack::socket_accept(socket.handle()) {
-        Ok(v) => v,
-        Err(_) => return UserRet::from_error(ErrNo::ECONNRESET),
     };
-    socket.replace_handle(replacement_listener);
-    let established_socket = SocketRef::new(established_handle);
+    let status_flags = if flags & SOCK_NONBLOCK != 0 {
+        SOCK_NONBLOCK
+    } else {
+        0
+    };
+    let established_socket = SocketRef::new_with_status_flags(established_handle, status_flags);
 
     // 为新连接分配 fd
     let io_handle: Box<dyn VfsIoHandle> = Box::new(TcpStreamHandle {
@@ -107,24 +106,14 @@ fn accept_inner(fd: usize, addr_ptr: usize, addrlen_ptr: usize, flags: usize) ->
     });
     let new_fd = match vfs::fd::alloc_fd(io_handle) {
         Ok(fd) => fd,
-        Err(_) => {
-            let _ = stack::socket_close(established_handle);
-            return UserRet::from_error(ErrNo::ENOMEM);
-        }
+        Err(_) => return UserRet::from_error(ErrNo::ENOMEM),
     };
     if flags & SOCK_CLOEXEC != 0 {
         if vfs::fd::set_fd_flags(new_fd, FD_CLOEXEC).is_err() {
-            let _ = stack::socket_close(established_handle);
+            let _ = vfs::fd::close_fd(new_fd);
             return UserRet::from_error(ErrNo::EBADF);
         }
     }
-    let status_flags = if flags & SOCK_NONBLOCK != 0 {
-        SOCK_NONBLOCK
-    } else {
-        0
-    };
-    socket_fd::register_with_flags(new_fd, established_socket, status_flags);
-
     // 写回客户端地址（如果有 addr 缓冲区）
     if addr_ptr != 0 && addrlen_ptr != 0 {
         let addr = SockAddrIn {

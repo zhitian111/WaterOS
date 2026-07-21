@@ -313,11 +313,9 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
 
     if clone_flags.contains(task::CloneFlags::CLONE_FILES) {
         vfs::fd::share_fd_table_from_parent(child_id, parent_id);
-        crate::socket_fd::share_from_parent(child_id, parent_id);
         crate::epoll_fd::share_from_parent(child_id, parent_id);
     } else {
         vfs::fd::copy_fd_table_from_parent(child_id, parent_id);
-        crate::socket_fd::copy_from_parent(child_id, parent_id);
         crate::epoll_fd::copy_from_parent(child_id, parent_id);
     }
     if clone_flags.contains(task::CloneFlags::CLONE_NEWNS) {
@@ -428,11 +426,9 @@ fn do_clone_thread(clone_flags : task::CloneFlags,
     }
     if clone_flags.contains(task::CloneFlags::CLONE_FILES) {
         vfs::fd::share_fd_table_from_parent(child_id, parent_id);
-        crate::socket_fd::share_from_parent(child_id, parent_id);
         crate::epoll_fd::share_from_parent(child_id, parent_id);
     } else {
         vfs::fd::copy_fd_table_from_parent(child_id, parent_id);
-        crate::socket_fd::copy_from_parent(child_id, parent_id);
         crate::epoll_fd::copy_from_parent(child_id, parent_id);
     }
     vfs::mount_ns::share_mount_ns_from_parent(child_id, parent_id);

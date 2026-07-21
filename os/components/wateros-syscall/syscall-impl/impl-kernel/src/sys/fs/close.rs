@@ -5,7 +5,6 @@ use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 
 use crate::epoll_fd;
-use crate::socket_fd;
 use crate::vfs_util::vfs_error_to_errno;
 
 const CLOSE_RANGE_UNSHARE: usize = 1 << 1;
@@ -14,13 +13,9 @@ const CLOSE_RANGE_CLOEXEC: usize = 1 << 2;
 // 本方法代码由AI完成
 pub(crate) fn sys_close(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
-    let was_socket = socket_fd::lookup(fd).is_some();
     let was_unix = crate::unix_sock::is_unix_fd(fd);
     let was_epoll = epoll_fd::is_epoll_fd(fd);
     let result = vfs::fd::close_fd(fd);
-    if was_socket {
-        socket_fd::remove(fd);
-    }
     if was_unix {
         if let Ok(task_id) = vfs::fd::current_task_id() {
             crate::unix_sock::unregister(task_id, fd);
@@ -65,7 +60,6 @@ pub(crate) fn sys_close_range(args: SyscallArgs) -> UserRet {
     match vfs::fd::close_fd_range(first, last) {
         Ok(closed_fds) => {
             for fd in closed_fds {
-                socket_fd::remove(fd);
                 if let Ok(task_id) = vfs::fd::current_task_id() {
                     crate::unix_sock::unregister(task_id, fd);
                 }
