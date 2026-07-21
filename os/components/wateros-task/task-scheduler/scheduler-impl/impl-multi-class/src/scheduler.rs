@@ -151,8 +151,16 @@ impl MultiClassScheduler {
         }
 
         // ===== Phase 3: 从 cpu_states 取出当前任务 =====
-        let current_task_id = self.cpu_states[cpu_id.raw()].current_task_id
-                                                           .expect("current task must exist");
+        let current_task_id =
+            self.cpu_states[cpu_id.raw()].current_task_id
+                                         .unwrap_or_else(|| {
+                                             panic!("current task must exist: cpu_id={} \
+                                                     reason={:?} online={} idle={:?}",
+                                                    cpu_id.raw(),
+                                                    reason,
+                                                    self.cpu_states[cpu_id.raw()].online,
+                                                    self.cpu_states[cpu_id.raw()].idle_task_id)
+                                         });
         let current_ptr = self.registry
                               .take_task_cx(current_task_id);
         // Sleep 路径额外清除旧的 wait_result

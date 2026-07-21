@@ -11,9 +11,10 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
+use arch::cpu;
 use arch::interrupt::ArchInterruptState;
 use arch::task::ActiveArchTaskContext as TaskContext;
-use base::sync::UniprocessorSafeCell;
+use base::sync::MultiprocessorSafeCell;
 use core::hint::black_box;
 use core::mem::MaybeUninit;
 use core::panic::Location;
@@ -49,7 +50,7 @@ pub type SwitchPair = api_v0::SwitchPair;
 // 链入 `.bss.scheduler`（在 `.kernel.heap` 之前），避免 128MiB 堆池与调度器静态重叠。
 
 #[unsafe(link_section = ".bss.scheduler")]
-static mut SCHEDULER : MaybeUninit<UniprocessorSafeCell<MultiClassScheduler>> =
+static mut SCHEDULER : MaybeUninit<MultiprocessorSafeCell<MultiClassScheduler>> =
     MaybeUninit::uninit();
 #[unsafe(link_section = ".bss.scheduler")]
 static SCHEDULER_READY : AtomicBool = AtomicBool::new(false);
@@ -59,7 +60,6 @@ unsafe extern "C" {
     static kernel_heap_start: u8;
     static kernel_heap_end: u8;
 }
-#[unsafe(link_section = ".bss.scheduler")]
 /// 若 `addr` 落在链接脚本划定的堆池 `[kernel_heap_start, kernel_heap_end)` 内则 panic。
 fn assert_addr_outside_kernel_heap(label : &str, addr : usize) {
     let heap_lo = core::ptr::addr_of!(kernel_heap_start) as usize;
@@ -114,18 +114,10 @@ fn scheduler_not_ready_fatal(caller : &'static Location, ready : bool, raw_byte 
 // 仅在 `SCHEDULER_READY` 为真后解引用；否则 panic，避免未初始化访问。
 #[inline(never)]
 fn scheduler_cell_inner(caller : &'static Location)
-                        -> &'static UniprocessorSafeCell<MultiClassScheduler> {
+                        -> &'static MultiprocessorSafeCell<MultiClassScheduler> {
     let probe_n = SCHEDULER_CELL_PROBE_COUNT.fetch_add(1, Ordering::Relaxed);
     let ready = black_box(SCHEDULER_READY.load(Ordering::Acquire));
     let raw_byte = scheduler_ready_raw_byte();
-    log::warn!("[boot-init] scheduler_cell probe_n={} caller={}:{} SCHEDULER_READY={} \
-                raw_byte={:#x} ready_addr={:#x}",
-               probe_n,
-               caller.file(),
-               caller.line(),
-               ready,
-               raw_byte,
-               scheduler_ready_addr());
     if !black_box(ready) {
         scheduler_not_ready_fatal(caller, ready, raw_byte);
     }
@@ -137,13 +129,13 @@ fn scheduler_cell_inner(caller : &'static Location)
 #[unsafe(no_mangle)]
 pub extern "C" fn wateros_mcs_scheduler_cell(
     )
-    -> *const UniprocessorSafeCell<MultiClassScheduler>
+    -> *const MultiprocessorSafeCell<MultiClassScheduler>
 {
     scheduler_cell_inner(Location::caller())
 }
 
 #[track_caller]
-fn scheduler_cell() -> &'static UniprocessorSafeCell<MultiClassScheduler> {
+fn scheduler_cell() -> &'static MultiprocessorSafeCell<MultiClassScheduler> {
     scheduler_cell_inner(Location::caller())
 }
 
@@ -201,7 +193,7 @@ fn finish_wait_after_switch(switch_pair : Option<SwitchPair>) -> TaskWaitResult 
         }
     }
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.take_current_wait_result(CpuId::BOOT))
+    with_scheduler(|scheduler| scheduler.take_current_wait_result(cpu::current_cpu_id()))
 }
 
 /// 供 `kernel_main` / 外部 crate 在 `spawn_*` 前探测；`#[no_mangle]` 避免 release/LTO 内联掉对静态变量的 load。
@@ -222,7 +214,7 @@ pub extern "C" fn wateros_mcs_boot_log_scheduler_ready(tag_ptr : *const u8, tag_
 
 /// 首次初始化路径：在 `SCHEDULER_READY` 置真前直接写入 cell，避免 chicken-and-egg。
 unsafe fn init_scheduler_storage_and_inner() {
-    SCHEDULER.write(UniprocessorSafeCell::new(MultiClassScheduler::new()));
+    SCHEDULER.write(MultiprocessorSafeCell::new(MultiClassScheduler::new()));
     (*SCHEDULER.as_mut_ptr()).exclusive_access()
                              .init();
 }
@@ -254,14 +246,17 @@ pub fn init() {
 }
 
 /// 切入多任务运行：从引导上下文切换到第一个被选中的就绪任务（通常非 idle）。
-pub fn run_first_task() -> ! {
+pub fn run_first_task() -> ! { run_first_task_on_current_cpu(cpu::current_cpu_id()) }
+
+/// 指定 CPU 首次切入调度。BSP 和 AP 各调用一次，不返回。
+pub fn run_first_task_on_current_cpu(cpu_id : CpuId) -> ! {
     let _guard = InterruptGuard::new();
     let (current_task_cx_ptr, next_task_cx_ptr) =
-        with_scheduler(|scheduler| scheduler.prepare_first_switch(CpuId::BOOT));
+        with_scheduler(|scheduler| scheduler.prepare_first_switch(cpu_id));
     unsafe {
         __switch(current_task_cx_ptr, next_task_cx_ptr);
     }
-    panic!("run_first_task must not return");
+    panic!("run_first_task_on_current_cpu must not return");
 }
 
 // =============================================================================
@@ -276,19 +271,19 @@ pub fn spawn_kernel_task(entry : KernelTaskEntry, arg : usize) -> TaskId {
     assert_addr_outside_kernel_heap("SCHEDULER_READY",
                                     scheduler_ready_addr());
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.spawn_kernel_task(entry, arg, CpuId::BOOT))
+    with_scheduler(|scheduler| scheduler.spawn_kernel_task(entry, arg, cpu::current_cpu_id()))
 }
 
 /// 按规格创建用户任务（仅登记 TCB，不入就绪队列）。
 pub fn create_user_task_spec(spec : UserTask) -> TaskId {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.create_user_task_spec(spec, CpuId::BOOT))
+    with_scheduler(|scheduler| scheduler.create_user_task_spec(spec, cpu::current_cpu_id()))
 }
 
 /// 按规格创建用户任务并入就绪队列尾部。
 pub fn spawn_user_task_spec(spec : UserTask) -> TaskId {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.spawn_user_task_spec(spec, CpuId::BOOT))
+    with_scheduler(|scheduler| scheduler.spawn_user_task_spec(spec, cpu::current_cpu_id()))
 }
 
 /// 将已创建任务加入就绪队列尾部。
@@ -307,7 +302,7 @@ pub fn create_fork_child(child_stack : usize,
         scheduler.create_fork_child(child_stack,
                                     new_aspace_ptr,
                                     new_satp,
-                                    CpuId::BOOT)
+                                    cpu::current_cpu_id())
     })
 }
 
@@ -315,7 +310,10 @@ pub fn create_fork_child(child_stack : usize,
 pub fn create_clone_thread(child_stack : usize, tls : usize, set_tls : bool) -> Option<TaskId> {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| {
-        scheduler.create_clone_thread(child_stack, tls, set_tls, CpuId::BOOT)
+        scheduler.create_clone_thread(child_stack,
+                                      tls,
+                                      set_tls,
+                                      cpu::current_cpu_id())
     })
 }
 
@@ -339,7 +337,7 @@ pub fn fork_current(child_stack : usize,
         scheduler.fork_current(child_stack,
                                new_aspace_ptr,
                                new_satp,
-                               CpuId::BOOT)
+                               cpu::current_cpu_id())
     })
 }
 
@@ -347,7 +345,10 @@ pub fn fork_current(child_stack : usize,
 pub fn clone_current_thread(child_stack : usize, tls : usize, set_tls : bool) -> Option<TaskId> {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| {
-        scheduler.clone_current_thread(child_stack, tls, set_tls, CpuId::BOOT)
+        scheduler.clone_current_thread(child_stack,
+                                       tls,
+                                       set_tls,
+                                       cpu::current_cpu_id())
     })
 }
 
@@ -372,7 +373,7 @@ pub fn execve_current(entry_pc : usize,
                                  user_aspace_ptr,
                                  image_info,
                                  stack_info,
-                                 CpuId::BOOT)
+                                 cpu::current_cpu_id())
     });
 }
 
@@ -383,8 +384,10 @@ pub fn execve_current(entry_pc : usize,
 /// 当前任务重新入就绪队列尾部并切换到下一个任务（若无其他就绪任务则可能不切）。
 pub fn suspend_current_and_run_next() {
     let _guard = InterruptGuard::new();
-    let switch_pair =
-        with_scheduler(|scheduler| scheduler.schedule(ScheduleReason::Yield, CpuId::BOOT));
+    let switch_pair = with_scheduler(|scheduler| {
+        scheduler.schedule(ScheduleReason::Yield,
+                           cpu::current_cpu_id())
+    });
     if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
         unsafe {
             __switch(current_task_cx_ptr, next_task_cx_ptr);
@@ -396,8 +399,10 @@ pub fn suspend_current_and_run_next() {
 #[inline(never)]
 pub fn schedule_tick() {
     let guard = InterruptGuard::new();
-    let switch_pair =
-        with_scheduler(|scheduler| scheduler.schedule(ScheduleReason::Tick, CpuId::BOOT));
+    let switch_pair = with_scheduler(|scheduler| {
+        scheduler.schedule(ScheduleReason::Tick,
+                           cpu::current_cpu_id())
+    });
     if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
         guard.release_before_switch();
         unsafe {
@@ -411,7 +416,7 @@ pub fn block_current(reason : TaskWaitTarget) {
     let _guard = InterruptGuard::new();
     let switch_pair = with_scheduler(|scheduler| {
         scheduler.schedule(ScheduleReason::Block(reason),
-                           CpuId::BOOT)
+                           cpu::current_cpu_id())
     });
     if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
         unsafe {
@@ -425,7 +430,7 @@ pub fn sleep_current_for_ticks(ticks : TaskTick) -> TaskWaitResult {
     let guard = InterruptGuard::new();
     let switch_pair = with_scheduler(|scheduler| {
         scheduler.schedule(ScheduleReason::Sleep(ticks),
-                           CpuId::BOOT)
+                           cpu::current_cpu_id())
     });
     guard.release_before_switch();
     finish_wait_after_switch(switch_pair)
@@ -436,7 +441,7 @@ pub fn exit_current(exit_code : TaskExitCode) -> ! {
     let guard = InterruptGuard::new();
     let switch_pair = with_scheduler(|scheduler| {
         scheduler.schedule(ScheduleReason::Exit(exit_code),
-                           CpuId::BOOT)
+                           cpu::current_cpu_id())
     });
     if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
         guard.release_before_switch();
@@ -460,7 +465,7 @@ pub fn exit_current(exit_code : TaskExitCode) -> ! {
 pub fn wait_current(target : TaskWaitTarget) -> TaskWaitResult {
     let guard = InterruptGuard::new();
     let switch_pair =
-        with_scheduler(|scheduler| scheduler.schedule_wait(target, None, CpuId::BOOT));
+        with_scheduler(|scheduler| scheduler.schedule_wait(target, None, cpu::current_cpu_id()));
     guard.release_before_switch();
     finish_wait_after_switch(switch_pair)
 }
@@ -474,7 +479,7 @@ pub fn wait_current_while(target : TaskWaitTarget,
         return TaskWaitResult::Woken;
     }
     let switch_pair =
-        with_scheduler(|scheduler| scheduler.schedule_wait(target, None, CpuId::BOOT));
+        with_scheduler(|scheduler| scheduler.schedule_wait(target, None, cpu::current_cpu_id()));
     guard.release_before_switch();
     finish_wait_after_switch(switch_pair)
 }
@@ -488,7 +493,9 @@ pub fn wait_current_timeout(target : TaskWaitTarget, timeout_ticks : TaskTick) -
 
     let guard = InterruptGuard::new();
     let switch_pair = with_scheduler(|scheduler| {
-        scheduler.schedule_wait(target, Some(timeout_ticks), CpuId::BOOT)
+        scheduler.schedule_wait(target,
+                                Some(timeout_ticks),
+                                cpu::current_cpu_id())
     });
     guard.release_before_switch();
     finish_wait_after_switch(switch_pair)
@@ -508,7 +515,9 @@ pub fn wait_current_timeout_while(target : TaskWaitTarget,
         return TaskWaitResult::Woken;
     }
     let switch_pair = with_scheduler(|scheduler| {
-        scheduler.schedule_wait(target, Some(timeout_ticks), CpuId::BOOT)
+        scheduler.schedule_wait(target,
+                                Some(timeout_ticks),
+                                cpu::current_cpu_id())
     });
     guard.release_before_switch();
     finish_wait_after_switch(switch_pair)
@@ -652,13 +661,13 @@ pub fn kill_task(task_id : TaskId, exit_code : TaskExitCode) -> bool {
 /// 当前运行任务号；引导阶段尚未切换时为 `None`。
 pub fn current_task_id() -> Option<TaskId> {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.current_task_id(CpuId::BOOT))
+    with_scheduler(|scheduler| scheduler.current_task_id(cpu::current_cpu_id()))
 }
 
 /// 当前运行任务的稳定快照（语义层，不含内核栈指针等实现细节）。
 pub fn current_task_snapshot() -> Option<TaskSnapshot> {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.current_task_snapshot(CpuId::BOOT))
+    with_scheduler(|scheduler| scheduler.current_task_snapshot(cpu::current_cpu_id()))
 }
 
 /// 指定任务的稳定快照；任务不存在或已被回收时返回 `None`。
@@ -676,28 +685,32 @@ pub fn current_tick() -> TaskTick {
 /// 当前任务内核栈顶，供 trap/用户态恢复路径使用。
 pub fn current_task_kernel_stack_top() -> Option<usize> {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.current_task_kernel_stack_top(CpuId::BOOT))
+    with_scheduler(|scheduler| scheduler.current_task_kernel_stack_top(cpu::current_cpu_id()))
 }
 
 /// 返回当前运行任务的用户地址空间 token；`0` 表示回落到内核地址空间。
 pub fn current_task_address_space_raw() -> usize {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.current_task_address_space_raw(CpuId::BOOT))
+    with_scheduler(|scheduler| scheduler.current_task_address_space_raw(cpu::current_cpu_id()))
 }
 
 pub fn current_task_user_aspace_ptr() -> usize {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.current_task_user_aspace_ptr(CpuId::BOOT))
+    with_scheduler(|scheduler| scheduler.current_task_user_aspace_ptr(cpu::current_cpu_id()))
 }
 
 pub fn current_task_user_address_space_token() -> usize {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.current_task_user_address_space_token(CpuId::BOOT))
+    with_scheduler(|scheduler| {
+        scheduler.current_task_user_address_space_token(cpu::current_cpu_id())
+    })
 }
 
 pub fn current_task_trap_return_address_space_token() -> usize {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.current_task_trap_return_address_space_token(CpuId::BOOT))
+    with_scheduler(|scheduler| {
+        scheduler.current_task_trap_return_address_space_token(cpu::current_cpu_id())
+    })
 }
 
 /// 判断指定任务是否仍有子任务。
@@ -714,13 +727,17 @@ pub fn has_child(parent_id : TaskId) -> bool {
 /// `None`）。
 pub fn begin_current_trap_frame_access(trap_frame : TaskTrapFrame) -> Option<*mut TaskTrapFrame> {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.begin_current_trap_frame_access(trap_frame, CpuId::BOOT))
+    with_scheduler(|scheduler| {
+        scheduler.begin_current_trap_frame_access(trap_frame, cpu::current_cpu_id())
+    })
 }
 
 /// 将 TCB 中保存的 trap 现场恢复到调用方缓冲区。
 pub fn restore_current_trap_frame(trap_frame : &mut TaskTrapFrame) -> bool {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.restore_current_trap_frame(trap_frame, CpuId::BOOT))
+    with_scheduler(|scheduler| {
+        scheduler.restore_current_trap_frame(trap_frame, cpu::current_cpu_id())
+    })
 }
 
 /// 返回指定 CPU 的调度状态快照。

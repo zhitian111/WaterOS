@@ -1340,6 +1340,7 @@ name = "wateros-platform-arch-impl-loongarch64"
 version = "0.1.0"
 dependencies = [
  "wateros-abi",
+ "wateros-base",
  "wateros-platform-arch-api-v0",
 ]
 
@@ -1349,6 +1350,7 @@ version = "0.1.0"
 dependencies = [
  "riscv",
  "wateros-abi",
+ "wateros-base",
  "wateros-platform-arch-api-v0",
 ]
 

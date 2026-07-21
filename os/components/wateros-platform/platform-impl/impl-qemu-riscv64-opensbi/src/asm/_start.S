@@ -1,17 +1,22 @@
-# 内核入口：`sp` 对齐到 `boot_stack_top` 后 `call kernel_main`（Rust 侧为 `#[no_mangle]`）。
+# 内核入口：所有 hart 从此进入，根据 hart_id 选择 per-CPU 栈后 call kernel_main。
   .section .text.entry
   .global _start
-  # 链接脚本/内核虚址布局常量（供将来 PC 相关代码引用；当前启动未使用）。
   .equ KERNEL_OFFSET, 0xffffffc000000000
+  .equ STACK_PER_CPU, 4096 * 16
 _start:
-  # OpenSBI 进入 S 态后：使用独立 boot 栈，避免破坏固件栈。
-  la sp, boot_stack_top
+  # a0 = hart_id (OpenSBI 传入)
+  mv   tp, a0                 # 保存 hart_id 到 tp（供 current_cpu_id 读取）
+  slli t0, a0, 14            # t0 = hart_id * 16384 (2^14)
+  la   t1, cpu_stacks
+  add  t1, t1, t0             # t1 = cpu_stacks + offset = 本 CPU 栈区基址
+  add  sp, t1, x0             # sp = 栈区基址
+  li   t0, STACK_PER_CPU
+  add  sp, sp, t0             # sp += 16384 → 栈顶
   call kernel_main
 
   .section .bss.stack
-  .global boot_stack_lower_bound
-boot_stack_lower_bound:
-  .space 4096 * 16
-  .global boot_stack_top
-boot_stack_top:
+  .global cpu_stacks
+  .balign 4096
+cpu_stacks:
+  .space 4096 * 16 * 8      # 8 CPUs × 16KB = 128KB
 

@@ -91,6 +91,14 @@ mod qemu_riscv64_opensbi {
     global_asm!(include_str!("../components/wateros-platform/platform-impl/\
                               impl-qemu-riscv64-opensbi/src/asm/_start.S"));
 
+    use core::sync::atomic::{AtomicBool, Ordering};
+
+    /// 首个到达 `kernel_main` 的 hart 用 swap(true) 抢占 BSP 身份。
+    static BSP_CLAIMED : AtomicBool = AtomicBool::new(false);
+
+    /// BSP 完成初始化后置 true，AP 自旋等待此标志。
+    static AP_BOOT_READY : AtomicBool = AtomicBool::new(false);
+
     /// 网络协议栈轮询任务：周期性驱动 smoltcp 收发包，永久运行。
     extern "C" fn network_poller_task(_arg : usize) -> ! {
         loop {
@@ -107,7 +115,20 @@ mod qemu_riscv64_opensbi {
         }
     }
 
-    /// 非 BSP hart：关中断后永久 WFI（当前为 UP bring-up；SMP 就绪前不得进入完整 `kernel_main`）。
+    /// AP 入口：BSP 初始化完成后被调用；局部初始化后加入调度。
+    fn ap_main(cpu_id : task::CpuId) -> ! {
+        warn!("[boot-init] AP cpu={} entering scheduler",
+              cpu_id.raw());
+        // AP 共享 BSP 的内核页表、堆等全局状态，只需初始化本地 trap 向量
+        platform::arch::init();
+        // 开启 AP 定时器中断，使得 idle 任务能被 tick 唤醒、从而从全局就绪队列取任务
+        platform::interrupt::enable_timer_interrupt().expect("AP enable timer interrupt");
+        platform::timer::set_timer_after_ms(100).expect("AP set initial timer");
+        task::set_cpu_online(cpu_id);
+        task::run_first_task_on_current_cpu(cpu_id)
+    }
+
+    /// 非 BSP hart：关中断后永久 WFI（保留旧入口作为 fallback）。
     fn park_secondary_hart() -> ! {
         platform::interrupt::disable_global_interrupt().expect("disable global interrupt for \
                                                                 secondary hart");
@@ -116,6 +137,16 @@ mod qemu_riscv64_opensbi {
         loop {
             platform::interrupt::wait_for_interrupt();
         }
+    }
+
+    /// AP 在 BSP 完成初始化前自旋等待；避免在调度器就绪前误入 `ap_main`。
+    /// 注意：进入此函数时日志系统可能尚未初始化，不可调用 `info!`/`warn!`。
+    fn wait_ap_boot_ready(cpu_id : task::CpuId) -> ! {
+        while !AP_BOOT_READY.load(Ordering::Acquire) {
+            core::hint::spin_loop();
+        }
+        // 至此 BSP 已完成所有初始化（含日志系统），可以安全使用日志
+        ap_main(cpu_id)
     }
 
     /// 屏蔽固件可能遗留的全局/定时器中断，直至 `kernel_main` 末尾 `enable_*` 对称打开。
@@ -130,8 +161,17 @@ mod qemu_riscv64_opensbi {
     /// [`task::run_first_task`] 转入调度且不返回。
     #[unsafe(no_mangle)]
     pub fn kernel_main(boot_arg0 : usize, boot_arg1 : usize) -> ! {
-        // OpenSBI：`a0` = hart id，`a1` = DTB 物理地址。
         mask_boot_interrupts();
+
+        // 用原子 swap 决定 BSP 身份：首个到达的 hart 成为 BSP，
+        // 其余为 AP（因为 QEMU OpenSBI 可能以任意 hart 为 boot hart）。
+        if BSP_CLAIMED.swap(true, Ordering::AcqRel) {
+            // 注意：此时日志系统可能未初始化，不能使用 info!/warn!。
+            // `wait_ap_boot_ready` 等待 `AP_BOOT_READY` 标志，BSP 初始化完
+            // 成后会设置该标志。
+            let cpu_id = task::CpuId::from_raw(boot_arg0);
+            wait_ap_boot_ready(cpu_id);
+        }
 
         use platform::boot::{BootArgs, BootContext};
         let _boot_context = BootContext::from(BootArgs::new(boot_arg0, boot_arg1));
@@ -139,11 +179,6 @@ mod qemu_riscv64_opensbi {
         runtime::console::show_logo();
         klog::init();
         runtime::logging::init();
-        if boot_arg0 != 0 {
-            warn!("[boot-init] kernel_main secondary hart={} -> park (WFI)",
-                  boot_arg0);
-            park_secondary_hart();
-        }
         warn!("[boot-init] kernel_main BSP hart={} dtb={:#x}",
               boot_arg0, boot_arg1);
         warn!("[boot-init] kernel_main boot interrupts masked");
@@ -162,6 +197,8 @@ mod qemu_riscv64_opensbi {
         warn!("[boot-init] kernel_main -> trap_handler::init");
         crate::trap_handler::init();
         warn!("[boot-init] kernel_main task+trap init done");
+        // 通知等待的 AP：调度器与 trap 已就绪
+        AP_BOOT_READY.store(true, Ordering::Release);
 
         // ===== 内核态自检：MM / FrameAllocator / Sv39 =====
         warn!("[boot-init] kernel_main -> mm self-test begin");

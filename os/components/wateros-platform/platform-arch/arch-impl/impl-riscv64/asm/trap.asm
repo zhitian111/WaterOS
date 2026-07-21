@@ -87,6 +87,10 @@ gdb_point_0:
     csrw satp, t1
     sfence.vma x0, x0
 
+    # 恢复内核 tp（hart_id）——用户态 trap 后 tp 被用户 TLS 指针覆盖
+    la t1, __wateros_riscv_return_frame
+    ld tp, 38*8(t1)
+
     mv t1, t0
     mv t2, sp
     li t3, 37
@@ -282,6 +286,7 @@ __wateros_riscv_restore_user_from_frame:
 
     la t0, __wateros_riscv_return_frame
     sd a1, 37*8(t0)
+    sd tp, 38*8(t0)            # 保存内核 tp（hart_id），下次用户 trap 时恢复
 
     ld t1, 32*8(t0)
     csrw sstatus, t1
@@ -334,4 +339,4 @@ gdb_point_3:
 __wateros_riscv_kernel_satp:
     .quad 0
 __wateros_riscv_return_frame:
-    .zero 304
+    .zero 320      # 40 槽：0-36 用户 GPR/CSR，37=kernel_stack_top，38=kernel_tp

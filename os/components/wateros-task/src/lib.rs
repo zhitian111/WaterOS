@@ -78,3 +78,6 @@ pub fn init() {
 }
 /// 启动调度器并切入第一批可运行任务。
 pub fn run_first_task() -> ! { scheduler::run_first_task() }
+pub fn run_first_task_on_current_cpu(cpu_id : CpuId) -> ! {
+    scheduler::run_first_task_on_current_cpu(cpu_id)
+}
