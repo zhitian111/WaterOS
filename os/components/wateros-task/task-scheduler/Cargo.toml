@@ -15,7 +15,6 @@
     api-v0 = [  ]
     default = [ "api-v0", "impl-multi-class" ]
     impl-multi-class = [ "dep:impl-multi-class", "impl-multi-class/api-v0" ]
-    impl-round-robin = [ "dep:impl-round-robin", "impl-round-robin/api-v0" ]
 
 [profile.dev]
     panic = "abort"

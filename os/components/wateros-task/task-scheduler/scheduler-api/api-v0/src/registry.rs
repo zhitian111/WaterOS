@@ -11,7 +11,7 @@ use task_api::{
 };
 use task_impl::TaskControlBlock;
 
-use crate::{SchedulableCheck, SwitchPair};
+use crate::SwitchPair;
 
 unsafe extern "C" {
     /// 聚合 crate 提供的 idle 循环体；idle TCB 的入口地址取自此符号。
@@ -600,10 +600,7 @@ impl TaskRegistry {
             })
             .unwrap_or(false)
     }
-}
-
-impl SchedulableCheck for TaskRegistry {
-    fn is_schedulable(&self, task_id : TaskId) -> bool {
+    pub fn is_schedulable(&self, task_id : TaskId) -> bool {
         if task_id == IDLE_TASK_ID {
             return self.task_table
                        .task_opt(task_id)

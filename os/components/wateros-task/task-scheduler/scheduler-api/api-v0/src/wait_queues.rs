@@ -2,13 +2,9 @@
 
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::vec::Vec;
-use arch::task;
-use task_api::{
-    ExitedTask, TaskExitCode, TaskId, TaskState, TaskTick, TaskWaitResult, TaskWaitTarget,
-    WaitQueueId,
-};
+use task_api::{ExitedTask, TaskId, TaskTick, TaskWaitTarget, WaitQueueId};
 
-use crate::{QueueTarget, ReadyTaskSink, TaskRegistry};
+use crate::TaskRegistry;
 
 #[derive(Clone, Copy)]
 struct TimeoutTask {
@@ -31,10 +27,10 @@ pub struct WaitQueues {
     wait_timeouts : VecDeque<TimeoutTask>, // 带超时的等待项（按 wake_tick 排序）
 
     // ▲ 通用阻塞 / 睡眠 / 退出
-    blocked_queue : VecDeque<TaskId>, // 通用阻塞队列
-    sleep_queue : VecDeque<TaskId>,   // 睡眠队列（按 wake_tick 升序排列）
-    exited_queue : VecDeque<TaskId>,  // 已退出、待回收的 FIFO
-    current_tick : TaskTick,          // 调度器逻辑 tick
+    blocked_queue : VecDeque<TaskId>,           // 通用阻塞队列
+    sleep_queue : VecDeque<(TaskId, TaskTick)>, // 睡眠队列（按 wake_tick 升序排列）
+    exited_queue : VecDeque<TaskId>,            // 已退出、待回收的 FIFO
+    current_tick : TaskTick,                    // 调度器逻辑 tick
 }
 
 impl WaitQueues {
@@ -117,7 +113,7 @@ impl WaitQueues {
     pub fn current_tick(&self) -> TaskTick { self.current_tick }
 
     /// 是否存在已到期的 sleep 或 wait timeout。队列是排序的，如果队首都没到期，后面的到期时间更晚，更不可能到期。
-    pub fn has_due_timers(&self, registry : &TaskRegistry) -> bool {
+    pub fn has_due_timers(&self) -> bool {
         if self.wait_timeouts
                .front()
                .is_some_and(|entry| entry.wake_tick <= self.current_tick)
@@ -126,12 +122,7 @@ impl WaitQueues {
         }
         self.sleep_queue
             .front()
-            .is_some_and(|&task_id| {
-                matches!(
-                    registry.state(task_id),
-                    Some(TaskState::Sleeping { wake_tick }) if wake_tick <= self.current_tick
-                )
-            })
+            .is_some_and(|&(_, wake_tick)| wake_tick <= self.current_tick)
     }
 
     /// 将任务从所有等待队列中移除
@@ -139,7 +130,7 @@ impl WaitQueues {
         self.blocked_queue
             .retain(|&id| id != task_id);
         self.sleep_queue
-            .retain(|&id| id != task_id);
+            .retain(|(id, _)| *id != task_id);
         for wait_queue in &mut self.wait_queues {
             wait_queue.retain(|&id| id != task_id);
         }
@@ -162,85 +153,8 @@ impl WaitQueues {
             .remove(&task_id);
     }
 
-    /// 按目标将任务挂入对应队列；`Ready` 时写入 `ready_queue`。
-    /// TODO: 职责划分不清，需要进一步拆分，`WaitQueues` 不应直接操作 `TaskRegistry`和 `ReadyTaskSink`，应由上层调度器逻辑处理。
-    pub fn enqueue_task(&mut self,
-                        registry : &mut TaskRegistry,
-                        task_id : TaskId,
-                        target : QueueTarget,
-                        ready_queue : &mut impl ReadyTaskSink) {
-        match target {
-            QueueTarget::Ready => {
-                if registry.state(task_id)
-                           .is_none()
-                {
-                    return;
-                }
-                registry.mark_ready(task_id);
-                ready_queue.enqueue_ready_task(task_id);
-            }
-            QueueTarget::Blocked(reason) => {
-                if registry.state(task_id)
-                           .is_none()
-                {
-                    return;
-                }
-                registry.mark_blocking(task_id, reason);
-                match reason {
-                    TaskWaitTarget::WaitQueue(wait_queue_id) => {
-                        self.wait_queue_mut(wait_queue_id)
-                            .push_back(task_id);
-                    }
-                    TaskWaitTarget::TaskExit(task_id_exit) => {
-                        self.exit_wait_queue_mut(task_id_exit)
-                            .push_back(task_id);
-                    }
-                    TaskWaitTarget::ChildExit(parent_id) => {
-                        self.child_exit_wait_queue_mut(parent_id)
-                            .push_back(task_id);
-                    }
-                    TaskWaitTarget::Manual => self.blocked_queue
-                                                  .push_back(task_id),
-                }
-            }
-            QueueTarget::Sleeping(wake_tick) => {
-                if registry.state(task_id)
-                           .is_none()
-                {
-                    return;
-                }
-                registry.mark_sleeping(task_id, wake_tick);
-                let insert_at = self.sleep_queue
-                                    .iter()
-                                    .position(|queued_id| {
-                                        matches!(
-                                            registry.state(*queued_id),
-                                            Some(TaskState::Sleeping {
-                                                wake_tick: queued_tick
-                                            }) if queued_tick > wake_tick
-                                        )
-                                    })
-                                    .unwrap_or(self.sleep_queue
-                                                   .len());
-                self.sleep_queue
-                    .insert(insert_at, task_id);
-            }
-            QueueTarget::Exited(exit_code) => {
-                if registry.state(task_id)
-                           .is_none()
-                {
-                    return;
-                }
-                self.wake_all_waiters_for_task_exit(registry, task_id, ready_queue);
-                self.detach_task_from_run_queues(task_id);
-                ready_queue.detach_ready_task(task_id);
-                registry.mark_exited(task_id, exit_code);
-                self.exited_queue
-                    .push_back(task_id);
-            }
-        }
-    }
-    pub fn enqueue_blocked_task(&mut self, task_id : TaskId, target : TaskWaitTarget) {
+    /// 将任务入队到等待队列。
+    pub fn enqueue_wait_task(&mut self, task_id : TaskId, target : TaskWaitTarget) {
         match target {
             TaskWaitTarget::WaitQueue(wait_queue_id) => self.wait_queue_mut(wait_queue_id)
                                                             .push_back(task_id),
@@ -252,6 +166,22 @@ impl WaitQueues {
                                           .push_back(task_id),
         }
     }
+    pub fn enqueue_sleep_task(&mut self, task_id : TaskId, wake_tick : u64) {
+        let insert_at = self.sleep_queue
+                            .iter()
+                            .position(|(_, queued_tick)| *queued_tick > wake_tick)
+                            .unwrap_or(self.sleep_queue
+                                           .len());
+        self.sleep_queue
+            .insert(insert_at, (task_id, wake_tick));
+    }
+    /// 将退出任务入队：从其他队列中清理掉该任务的残留，再推入退出队列。
+    pub fn enqueue_exited_task(&mut self, task_id : TaskId) {
+        self.detach_task_from_run_queues(task_id);
+        self.exited_queue
+            .push_back(task_id);
+    }
+
     /// 记录带超时的等待项。
     pub fn enqueue_wait_timeout(&mut self,
                                 task_id : TaskId,
@@ -270,43 +200,27 @@ impl WaitQueues {
             .insert(insert_at, entry);
     }
 
-    /// 将到期的睡眠任务移入 `ready_queue`。
-    //TODO: 这里不处理ready_queue，应该由上层调度器逻辑处理。可以改成只返回到期的任务列表。
-    pub fn promote_sleeping_tasks(&mut self,
-                                  registry : &mut TaskRegistry,
-                                  ready_queue : &mut impl ReadyTaskSink) {
-        while let Some(task_id) = self.sleep_queue
-                                      .front()
-                                      .copied()
+    /// 将到期的睡眠任务弹出，返回其 ID 列表（调度器负责标记就绪并入队）。
+    pub fn promote_sleeping_tasks(&mut self) -> VecDeque<TaskId> {
+        let mut woken = VecDeque::new();
+        while let Some(&(task_id, wake_tick)) = self.sleep_queue
+                                                    .front()
         {
-            match registry.state(task_id) {
-                None => {
-                    self.sleep_queue
-                        .pop_front();
-                }
-                Some(TaskState::Sleeping { wake_tick }) if wake_tick <= self.current_tick => {
-                    self.sleep_queue
-                        .pop_front();
-                    registry.mark_ready(task_id);
-                    ready_queue.enqueue_ready_task(task_id);
-                    log::trace!("[task-scheduler] wake sleeping task {} at tick {}",
-                                task_id,
-                                self.current_tick);
-                }
-                Some(TaskState::Sleeping { .. }) => break,
-                Some(_) => {
-                    self.sleep_queue
-                        .pop_front();
-                }
+            if wake_tick <= self.current_tick {
+                self.sleep_queue
+                    .pop_front();
+                woken.push_back(task_id);
+            } else {
+                break;
             }
         }
+        woken
     }
 
-    /// 将到期的等待超时任务移入 `ready_queue`。
-    //TODO: 这里不处理ready_queue，应该由上层调度器逻辑处理。可以改成只返回到期的任务列表。
-    pub fn promote_wait_timeouts(&mut self,
-                                 registry : &mut TaskRegistry,
-                                 ready_queue : &mut impl ReadyTaskSink) {
+    /// 将到期的等待超时任务弹出，返回其 (task_id, wait_target) 列表。
+    /// 调度器负责检查状态、标记超时结果并重新入就绪队列。
+    pub fn promote_wait_timeouts(&mut self) -> VecDeque<(TaskId, TaskWaitTarget)> {
+        let mut timed_out = VecDeque::new();
         while self.wait_timeouts
                   .front()
                   .is_some_and(|entry| entry.wake_tick <= self.current_tick)
@@ -314,92 +228,42 @@ impl WaitQueues {
             let entry = self.wait_timeouts
                             .pop_front()
                             .expect("front entry checked above");
-            let still_waiting = matches!(
-                (registry.state(entry.task_id), entry.wait_target),
-                (Some(TaskState::Blocking(target)), saved_target) if target == saved_target
-            );
-            if !still_waiting {
-                continue;
-            }
-            if self.remove_from_wait_list(entry.wait_target, entry.task_id) {
-                registry.finish_wait(entry.task_id, TaskWaitResult::TimedOut);
-                registry.mark_ready(entry.task_id);
-                ready_queue.enqueue_ready_task(entry.task_id);
-            }
+            timed_out.push_back((entry.task_id, entry.wait_target));
         }
-    }
-    pub fn wait_timesouts_front(&self) -> Option<TimeoutTask> {
-        self.wait_timeouts
-            .front()
-            .copied()
+        timed_out
     }
 
-    /// 尝试唤醒指定任务。
-    //TODO: 这里不处理ready_queue，应该由上层调度器逻辑处理。可以改成只返回是否唤醒成功。
-    pub fn wake_task(&mut self,
-                     registry : &mut TaskRegistry,
-                     task_id : TaskId,
-                     ready_queue : &mut impl ReadyTaskSink)
-                     -> bool {
-        self.finish_blocked_task(registry,
-                                 task_id,
-                                 ready_queue,
-                                 TaskWaitResult::Woken)
+    /// 从任意等待/睡眠队列移除指定任务，返回是否找到。
+    /// （调度器负责 registry.finish_wait + mark_ready + 就绪入队）
+    pub fn wake_task(&mut self, task_id : TaskId) -> bool {
+        self.remove_task_from_any_queue(task_id)
     }
 
-    /// 从任意等待/睡眠队列移除任务，并记录信号中断结果。
-    //TODO: 这里不处理ready_queue，应该由上层调度器逻辑处理。可以改成只返回是否唤醒成功。
-    pub fn interrupt_task(&mut self,
-                          registry : &mut TaskRegistry,
-                          task_id : TaskId,
-                          ready_queue : &mut impl ReadyTaskSink)
-                          -> bool {
-        self.finish_blocked_task(registry,
-                                 task_id,
-                                 ready_queue,
-                                 TaskWaitResult::Interrupted)
+    /// 从任意等待/睡眠队列移除指定任务，返回是否找到。
+    pub fn interrupt_task(&mut self, task_id : TaskId) -> bool {
+        self.remove_task_from_any_queue(task_id)
     }
 
-    fn finish_blocked_task(&mut self,
-                           registry : &mut TaskRegistry,
-                           task_id : TaskId,
-                           ready_queue : &mut impl ReadyTaskSink,
-                           result : TaskWaitResult)
-                           -> bool {
+    /// 扫描所有阻塞/睡眠/等待队列，移除指定任务并清理超时记录。
+    fn remove_task_from_any_queue(&mut self, task_id : TaskId) -> bool {
         self.wait_timeouts
             .retain(|entry| entry.task_id != task_id);
         if take_task_id_by_id(&mut self.blocked_queue, task_id) {
-            if registry.state(task_id)
-                       .is_none()
-            {
-                return false;
-            }
-            registry.finish_wait(task_id, result);
-            registry.mark_ready(task_id);
-            ready_queue.enqueue_ready_task(task_id);
             return true;
         }
-        if take_task_id_by_id(&mut self.sleep_queue, task_id) {
-            if registry.state(task_id)
-                       .is_none()
-            {
-                return false;
-            }
-            registry.finish_wait(task_id, result);
-            registry.mark_ready(task_id);
-            ready_queue.enqueue_ready_task(task_id);
+        if self.sleep_queue
+               .iter()
+               .position(|(id, _)| *id == task_id)
+               .is_some_and(|pos| {
+                   self.sleep_queue
+                       .remove(pos);
+                   true
+               })
+        {
             return true;
         }
         for wait_queue in &mut self.wait_queues {
             if take_task_id_by_id(wait_queue, task_id) {
-                if registry.state(task_id)
-                           .is_none()
-                {
-                    return false;
-                }
-                registry.finish_wait(task_id, result);
-                registry.mark_ready(task_id);
-                ready_queue.enqueue_ready_task(task_id);
                 return true;
             }
         }
@@ -407,14 +271,6 @@ impl WaitQueues {
                               .values_mut()
         {
             if take_task_id_by_id(wait_queue, task_id) {
-                if registry.state(task_id)
-                           .is_none()
-                {
-                    return false;
-                }
-                registry.finish_wait(task_id, result);
-                registry.mark_ready(task_id);
-                ready_queue.enqueue_ready_task(task_id);
                 return true;
             }
         }
@@ -422,159 +278,114 @@ impl WaitQueues {
                               .values_mut()
         {
             if take_task_id_by_id(wait_queue, task_id) {
-                if registry.state(task_id)
-                           .is_none()
-                {
-                    return false;
-                }
-                registry.finish_wait(task_id, result);
-                registry.mark_ready(task_id);
-                ready_queue.enqueue_ready_task(task_id);
                 return true;
             }
         }
         false
     }
 
-    /// 将非当前任务标记为已退出。
-    pub fn kill_task(&mut self,
-                     registry : &mut TaskRegistry,
-                     task_id : TaskId,
-                     exit_code : TaskExitCode,
-                     ready_queue : &mut impl ReadyTaskSink)
-                     -> bool {
-        use task_api::IDLE_TASK_ID;
-        if task_id == IDLE_TASK_ID || registry.is_idle(task_id) {
-            return false;
-        }
-        if registry.state(task_id)
-                   .is_none()
-        {
-            return false;
-        }
-        if matches!(registry.state(task_id),
-                    Some(TaskState::Exited(_)))
-        {
-            return true;
-        }
-        if registry.current_task_id() == Some(task_id) {
-            return false;
-        }
-        self.enqueue_task(registry,
-                          task_id,
-                          QueueTarget::Exited(exit_code),
-                          ready_queue);
-        true
+    /// 将非当前任务推入退出队列（调度器负责前置检查）。
+    pub fn kill_task(&mut self, task_id : TaskId) {
+        self.detach_task_from_run_queues(task_id);
+        self.exited_queue
+            .push_back(task_id);
     }
 
-    /// 从显式等待队列唤醒一个任务。
-    pub fn wake_one_in_wait_queue(&mut self,
-                                  registry : &mut TaskRegistry,
-                                  wait_queue_id : WaitQueueId,
-                                  ready_queue : &mut impl ReadyTaskSink)
-                                  -> Option<TaskId> {
+    /// 从显式等待队列弹出一个任务（调度器负责状态更新和就绪入队）。
+    pub fn wake_one_in_wait_queue(&mut self, wait_queue_id : WaitQueueId) -> Option<TaskId> {
+        self.wait_queue_mut(wait_queue_id)
+            .pop_front()
+    }
+
+    /// 清空显式等待队列，返回所有任务 ID（调度器负责状态更新和就绪入队）。
+    pub fn wake_all_in_wait_queue(&mut self, wait_queue_id : WaitQueueId) -> VecDeque<TaskId> {
+        let mut woken = VecDeque::new();
         while let Some(task_id) = self.wait_queue_mut(wait_queue_id)
                                       .pop_front()
         {
-            if registry.state(task_id)
-                       .is_none()
-            {
-                continue;
-            }
-            registry.finish_wait(task_id, TaskWaitResult::Woken);
-            registry.mark_ready(task_id);
-            ready_queue.enqueue_ready_task(task_id);
-            return Some(task_id);
-        }
-        None
-    }
-
-    /// 清空显式等待队列并唤醒全部任务。
-    pub fn wake_all_in_wait_queue(&mut self,
-                                  registry : &mut TaskRegistry,
-                                  wait_queue_id : WaitQueueId,
-                                  ready_queue : &mut impl ReadyTaskSink)
-                                  -> usize {
-        let mut woken = 0usize;
-        while let Some(task_id) = self.wait_queue_mut(wait_queue_id)
-                                      .pop_front()
-        {
-            if registry.state(task_id)
-                       .is_none()
-            {
-                continue;
-            }
-            registry.finish_wait(task_id, TaskWaitResult::Woken);
-            registry.mark_ready(task_id);
-            ready_queue.enqueue_ready_task(task_id);
-            woken = woken.saturating_add(1);
+            woken.push_back(task_id);
         }
         woken
     }
 
-    /// 从一个显式等待队列唤醒前 `wake_count` 个任务，并把后续最多
-    /// `requeue_count` 个仍在等待的任务迁移到另一个等待队列。
+    /// 从一个显式等待队列中唤醒前 `wake_count` 个任务（弹出返回），
+    /// 并把后续最多 `requeue_count` 个任务迁移到另一个等待队列。
+    /// 返回 (woken_ids, moved_task_and_from_queue_ids, changed_count)。
+    /// 调度器负责 registry 状态更新和就绪入队。
     pub fn requeue_wait_queue(&mut self,
-                              registry : &mut TaskRegistry,
                               from_wait_queue_id : WaitQueueId,
                               to_wait_queue_id : WaitQueueId,
                               wake_count : usize,
-                              requeue_count : usize,
-                              ready_queue : &mut impl ReadyTaskSink)
-                              -> usize {
+                              requeue_count : usize)
+                              -> (VecDeque<TaskId>, VecDeque<(TaskId, WaitQueueId)>, usize) {
         let mut changed = 0usize;
-        for _ in 0..wake_count {
-            if self.wake_one_in_wait_queue(registry,
-                                           from_wait_queue_id,
-                                           ready_queue)
-                   .is_none()
-            {
-                return changed;
-            }
-            changed = changed.saturating_add(1);
-        }
 
+        // Phase 1: 弹出前 wake_count 个任务（已唤醒）
+        let woken = self.wake_n_from_wait_queue(from_wait_queue_id,
+                                                wake_count,
+                                                &mut changed);
+
+        // Phase 2: 同队列 → 直接返回，迁移数为剩余任务数（上限 requeue_count）
         if from_wait_queue_id == to_wait_queue_id {
             let remaining = self.wait_queue_mut(from_wait_queue_id)
-                                .iter()
-                                .filter(|task_id| {
-                                    matches!(
-                                        registry.state(**task_id),
-                                        Some(TaskState::Blocking(
-                                            TaskWaitTarget::WaitQueue(id)
-                                        )) if id == from_wait_queue_id
-                                    )
-                                })
-                                .count()
+                                .len()
                                 .min(requeue_count);
-            return changed.saturating_add(remaining);
+            changed = changed.saturating_add(remaining);
+            return (woken, VecDeque::new(), changed);
         }
 
-        let mut moved = 0usize;
-        while moved < requeue_count {
+        // Phase 3: 不同队列 → 最多迁移 requeue_count 个任务
+        let moved = self.move_tasks_between_queues(from_wait_queue_id,
+                                                   to_wait_queue_id,
+                                                   requeue_count,
+                                                   &mut changed);
+        (woken, moved, changed)
+    }
+
+    /// 从显式等待队列弹出最多 `count` 个任务。
+    fn wake_n_from_wait_queue(&mut self,
+                              wait_queue_id : WaitQueueId,
+                              count : usize,
+                              changed : &mut usize)
+                              -> VecDeque<TaskId> {
+        let mut woken = VecDeque::new();
+        for _ in 0..count {
+            match self.wait_queue_mut(wait_queue_id)
+                      .pop_front()
+            {
+                Some(task_id) => {
+                    woken.push_back(task_id);
+                    *changed = changed.saturating_add(1);
+                }
+                None => break,
+            }
+        }
+        woken
+    }
+
+    /// 将任务从 `from` 队列迁移到 `to` 队列（同时更新超时目标）。
+    fn move_tasks_between_queues(&mut self,
+                                 from_wait_queue_id : WaitQueueId,
+                                 to_wait_queue_id : WaitQueueId,
+                                 count : usize,
+                                 changed : &mut usize)
+                                 -> VecDeque<(TaskId, WaitQueueId)> {
+        let mut moved = VecDeque::new();
+        for _ in 0..count {
             let Some(task_id) = self.wait_queue_mut(from_wait_queue_id)
                                     .pop_front()
             else {
                 break;
             };
-            match registry.state(task_id) {
-                Some(TaskState::Blocking(TaskWaitTarget::WaitQueue(id)))
-                    if id == from_wait_queue_id =>
-                {
-                    registry.mark_blocking(task_id,
-                                           TaskWaitTarget::WaitQueue(to_wait_queue_id));
-                    self.update_wait_timeout_target(task_id,
-                                                    from_wait_queue_id,
-                                                    to_wait_queue_id);
-                    self.wait_queue_mut(to_wait_queue_id)
-                        .push_back(task_id);
-                    moved = moved.saturating_add(1);
-                    changed = changed.saturating_add(1);
-                }
-                Some(_) | None => {}
-            }
+            self.update_wait_timeout_target(task_id,
+                                            from_wait_queue_id,
+                                            to_wait_queue_id);
+            self.wait_queue_mut(to_wait_queue_id)
+                .push_back(task_id);
+            moved.push_back((task_id, from_wait_queue_id));
+            *changed = changed.saturating_add(1);
         }
-        changed
+        moved
     }
 
     /// 回收指定已退出任务。
@@ -622,18 +433,6 @@ impl WaitQueues {
             .or_insert_with(VecDeque::new)
     }
 
-    fn wait_list_mut(&mut self, target : TaskWaitTarget) -> &mut VecDeque<TaskId> {
-        match target {
-            TaskWaitTarget::WaitQueue(wait_queue_id) => self.wait_queue_mut(wait_queue_id),
-            TaskWaitTarget::TaskExit(task_id) => self.exit_wait_queue_mut(task_id),
-            TaskWaitTarget::ChildExit(parent_id) => self.child_exit_wait_queue_mut(parent_id),
-            TaskWaitTarget::Manual => &mut self.blocked_queue,
-        }
-    }
-
-    fn remove_from_wait_list(&mut self, target : TaskWaitTarget, task_id : TaskId) -> bool {
-        take_task_id_by_id(self.wait_list_mut(target), task_id)
-    }
 
     fn update_wait_timeout_target(&mut self,
                                   task_id : TaskId,
@@ -648,59 +447,32 @@ impl WaitQueues {
         }
     }
 
-    fn wake_all_waiters_for_task_exit(&mut self,
-                                      registry : &mut TaskRegistry,
-                                      task_id : TaskId,
-                                      ready_queue : &mut impl ReadyTaskSink) {
-        while let Some(waiter_task_id) = self.exit_wait_queue_mut(task_id)
-                                             .pop_front()
+    /// 从退出等待队列中取出所有等 `task_id` 退出的 waiter，返回其 ID 列表。
+    pub fn wake_all_waiters_for_task_exit(&mut self, task_id : TaskId) -> VecDeque<TaskId> {
+        let mut woken = VecDeque::new();
+        while let Some(waiter) = self.exit_wait_queue_mut(task_id)
+                                     .pop_front()
         {
-            if registry.state(waiter_task_id)
-                       .is_none()
-            {
-                continue;
-            }
-            registry.finish_wait(waiter_task_id, TaskWaitResult::Woken);
-            registry.mark_ready(waiter_task_id);
-            ready_queue.enqueue_ready_task(waiter_task_id);
+            woken.push_back(waiter);
         }
-        if let Some(parent_id) = registry.parent_id(task_id) {
-            self.wake_child_exit_waiters(registry, parent_id, ready_queue);
-        }
+        woken
     }
 
-    pub fn wake_child_exit_waiters(&mut self,
-                                   registry : &mut TaskRegistry,
-                                   parent_id : TaskId,
-                                   ready_queue : &mut impl ReadyTaskSink) {
-        while let Some(waiter_task_id) = self.child_exit_wait_queue_mut(parent_id)
-                                             .pop_front()
+    /// 从子退出等待队列中取出属于 `parent_id` 的所有 waiter，返回其 ID 列表。
+    pub fn wake_child_exit_waiters(&mut self, parent_id : TaskId) -> VecDeque<TaskId> {
+        let mut woken = VecDeque::new();
+        while let Some(waiter) = self.child_exit_wait_queue_mut(parent_id)
+                                     .pop_front()
         {
-            if registry.state(waiter_task_id)
-                       .is_none()
-            {
-                continue;
-            }
-            registry.finish_wait(waiter_task_id, TaskWaitResult::Woken);
-            registry.mark_ready(waiter_task_id);
-            ready_queue.enqueue_ready_task(waiter_task_id);
+            woken.push_back(waiter);
         }
+        woken
     }
 
-    pub fn block_task_manual(&mut self,
-                             registry : &mut TaskRegistry,
-                             task_id : TaskId,
-                             ready_queue : &mut impl ReadyTaskSink) {
-        if registry.state(task_id)
-                   .is_none()
-        {
-            return;
-        }
-        ready_queue.detach_ready_task(task_id);
-        self.enqueue_task(registry,
-                          task_id,
-                          QueueTarget::Blocked(TaskWaitTarget::Manual),
-                          ready_queue);
+    /// 将任务推入通用阻塞队列（调度器负责 registry 更新和 ready queue 摘除）。
+    pub fn block_task_manual(&mut self, task_id : TaskId) {
+        self.blocked_queue
+            .push_back(task_id);
     }
 
     fn child_exit_wait_queue_mut(&mut self, parent_id : TaskId) -> &mut VecDeque<TaskId> {

@@ -5,7 +5,7 @@ extern crate alloc;
 
 use alloc::collections::VecDeque;
 use config::task::MAX_RT_TICKS_PER_TASK;
-use task_api::{SchedulableCheck, TaskId};
+use task_api::TaskId;
 
 const RT_PRIORITY_MIN : i32 = 1;
 const RT_PRIORITY_MAX : i32 = 99;
@@ -54,31 +54,6 @@ impl RtRrRunQueue {
         }
     }
 
-    /// 选取下一个可运行 RR 任务；若当前任务仍有时间片则继续运行。
-    pub fn pick_next(&mut self, check : &impl SchedulableCheck) -> Option<TaskId> {
-        if let Some((task_id, _priority)) = self.current {
-            if check.is_schedulable(task_id) && self.remaining_ticks > 0 {
-                return Some(task_id);
-            }
-            self.current = None;
-            self.remaining_ticks = 0;
-        }
-        for (index, bucket) in self.buckets
-                                   .iter_mut()
-                                   .enumerate()
-                                   .rev()
-        {
-            while let Some(task_id) = bucket.pop_front() {
-                if check.is_schedulable(task_id) {
-                    let priority = priority_from_index(index);
-                    self.current = Some((task_id, priority));
-                    self.remaining_ticks = MAX_RT_TICKS_PER_TASK;
-                    return Some(task_id);
-                }
-            }
-        }
-        None
-    }
 
     /// 时钟 tick：处理当前 RR 任务时间片。
     pub fn on_tick_current(&mut self, current : TaskId, priority : i32) -> RrTickAction {
@@ -117,15 +92,13 @@ impl RtRrRunQueue {
     }
 
     /// 返回就绪桶中最高的可运行优先级，不包含当前运行任务。
-    pub fn highest_ready_priority(&self, check : &impl SchedulableCheck) -> Option<i32> {
+    pub fn highest_ready_priority(&self) -> Option<i32> {
         self.buckets
             .iter()
             .enumerate()
             .rev()
             .find(|(_, bucket)| {
-                bucket.iter()
-                      .copied()
-                      .any(|task_id| check.is_schedulable(task_id))
+                !bucket.is_empty()
             })
             .map(|(index, _)| priority_from_index(index))
     }
@@ -136,22 +109,17 @@ impl RtRrRunQueue {
     }
 
     /// 在指定优先级选取 RR 任务（含当前运行且时间片未尽的情况）。
-    pub fn pick_at_priority(&mut self,
-                            priority : i32,
-                            check : &impl SchedulableCheck)
-                            -> Option<TaskId> {
+    pub fn pick_at_priority(&mut self, priority : i32) -> Option<TaskId> {
         if let Some((current, prio)) = self.current {
-            if prio == priority && check.is_schedulable(current) && self.remaining_ticks > 0 {
+            if prio == priority && self.remaining_ticks > 0 {
                 return Some(current);
             }
         }
         let index = bucket_index(priority)?;
         while let Some(task_id) = self.buckets[index].pop_front() {
-            if check.is_schedulable(task_id) {
-                self.current = Some((task_id, priority));
-                self.remaining_ticks = MAX_RT_TICKS_PER_TASK;
-                return Some(task_id);
-            }
+            self.current = Some((task_id, priority));
+            self.remaining_ticks = MAX_RT_TICKS_PER_TASK;
+            return Some(task_id);
         }
         None
     }
@@ -167,11 +135,26 @@ impl RtRrRunQueue {
         self.current = None;
         self.remaining_ticks = 0;
     }
+
+    /// 按优先级从高到低选取下一个任务。
+    pub fn pick_next(&mut self) -> Option<TaskId> {
+        if let Some((current, prio)) = self.current {
+            if self.remaining_ticks > 0 {
+                return Some(current);
+            }
+        }
+        for priority in (RT_PRIORITY_MIN..=RT_PRIORITY_MAX).rev() {
+            if let Some(task_id) = self.pick_at_priority(priority) {
+                return Some(task_id);
+            }
+        }
+        None
+    }
 }
 
 fn take_task_id_by_id(queue : &mut VecDeque<TaskId>, task_id : TaskId) -> bool {
     if let Some(pos) = queue.iter()
-                          .position(|candidate| *candidate == task_id)
+                            .position(|candidate| *candidate == task_id)
     {
         queue.remove(pos);
         true
@@ -185,34 +168,13 @@ mod tests {
     extern crate std;
 
     use super::*;
-    use std::collections::HashSet;
-
-    struct MockCheck {
-        live : HashSet<TaskId>,
-    }
-
-    impl MockCheck {
-        fn new(ids : &[TaskId]) -> Self {
-            Self { live : ids.iter()
-                             .copied()
-                             .collect() }
-        }
-    }
-
-    impl SchedulableCheck for MockCheck {
-        fn is_schedulable(&self, task_id : TaskId) -> bool {
-            self.live
-                .contains(&task_id)
-        }
-    }
 
     #[test]
     fn higher_priority_picked_first() {
         let mut q = RtRrRunQueue::new();
         q.enqueue(10, 1);
         q.enqueue(20, 99);
-        let check = MockCheck::new(&[10, 20]);
-        assert_eq!(q.pick_next(&check), Some(20));
+        assert_eq!(q.pick_next(), Some(20));
     }
 
     #[test]
@@ -220,24 +182,22 @@ mod tests {
         let mut q = RtRrRunQueue::new();
         q.enqueue(1, 50);
         q.enqueue(2, 50);
-        let check = MockCheck::new(&[1, 2]);
-        assert_eq!(q.pick_next(&check), Some(1));
+        assert_eq!(q.pick_next(), Some(1));
         for _ in 0..MAX_RT_TICKS_PER_TASK - 1 {
             assert_eq!(q.on_tick_current(1, 50),
                        RrTickAction::ContinueRunning);
         }
         assert_eq!(q.on_tick_current(1, 50),
                    RrTickAction::YieldToSamePriority);
-        assert_eq!(q.pick_next(&check), Some(2));
+        assert_eq!(q.pick_next(), Some(2));
     }
 
     #[test]
-    fn highest_ready_priority_ignores_unrunnable_entries() {
+    fn highest_priority_returned() {
         let mut q = RtRrRunQueue::new();
         q.enqueue(1, 90);
         q.enqueue(2, 40);
-        let check = MockCheck::new(&[2]);
-        assert_eq!(q.highest_ready_priority(&check),
-                   Some(40));
+        assert_eq!(q.highest_ready_priority(),
+                   Some(90));
     }
 }

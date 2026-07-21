@@ -18,33 +18,27 @@ pub mod boot {
     // 本结构代码由AI完成
     #[derive(Debug, Clone, Copy)]
     pub struct QEMULoongArch64VirtBootArgs {
-        arg0: usize,
-        arg1: usize,
-        arg2: usize,
+        arg0 : usize,
+        arg1 : usize,
+        arg2 : usize,
     }
 
     impl QEMULoongArch64VirtBootArgs {
         #[inline]
-        pub const fn new(arg0: usize, arg1: usize, arg2: usize) -> Self {
+        pub const fn new(arg0 : usize, arg1 : usize, arg2 : usize) -> Self {
             Self { arg0, arg1, arg2 }
         }
     }
 
     impl PlatformBootArgs for QEMULoongArch64VirtBootArgs {
         #[inline]
-        fn arg0(&self) -> Option<usize> {
-            Some(self.arg0)
-        }
+        fn arg0(&self) -> Option<usize> { Some(self.arg0) }
 
         #[inline]
-        fn arg1(&self) -> Option<usize> {
-            Some(self.arg1)
-        }
+        fn arg1(&self) -> Option<usize> { Some(self.arg1) }
 
         #[inline]
-        fn arg2(&self) -> Option<usize> {
-            Some(self.arg2)
-        }
+        fn arg2(&self) -> Option<usize> { Some(self.arg2) }
     }
 
     /// 与 [`QEMULoongArch64VirtBootArgs`] 一一对应的类型化视图（当前为透传三槽）。
@@ -52,21 +46,19 @@ pub mod boot {
     #[derive(Debug, Clone, Copy)]
     pub struct QEMULoongArch64VirtBootContext {
         /// 固件 `a0`。
-        pub arg0: usize,
+        pub arg0 : usize,
         /// 固件 `a1`。
-        pub arg1: usize,
+        pub arg1 : usize,
         /// 固件 `a2`。
-        pub arg2: usize,
+        pub arg2 : usize,
     }
 
     impl From<QEMULoongArch64VirtBootArgs> for QEMULoongArch64VirtBootContext {
         #[inline]
-        fn from(value: QEMULoongArch64VirtBootArgs) -> Self {
-            Self {
-                arg0: value.arg0,
-                arg1: value.arg1,
-                arg2: value.arg2,
-            }
+        fn from(value : QEMULoongArch64VirtBootArgs) -> Self {
+            Self { arg0 : value.arg0,
+                   arg1 : value.arg1,
+                   arg2 : value.arg2 }
         }
     }
 
@@ -85,10 +77,10 @@ pub mod time {
 
     impl PlatformTime for QEMULoongArch64VirtTime {
         #[inline]
-        fn time_frequency_hz() -> PlatformTimeResult<u64> {
+        fn get_time_frequency_hz() -> PlatformTimeResult<u64> {
             // QEMU Constant Timer：`TIMER_PERIOD = 10` ns → 100 MHz（见 QEMU `cpucfg.c`）。
             // DTB virt 通常无 CPU timebase 属性；引导期探测未命中时回退此值。
-            const QEMU_LOONGARCH64_TIMEBASE_HZ: u64 = 100_000_000;
+            const QEMU_LOONGARCH64_TIMEBASE_HZ : u64 = 100_000_000;
             if QEMU_LOONGARCH64_TIMEBASE_HZ == 0 {
                 Err(PlatformTimeError::InvalidFrequency)
             } else {

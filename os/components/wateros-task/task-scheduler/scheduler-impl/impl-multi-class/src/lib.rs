@@ -19,8 +19,8 @@ use core::mem::MaybeUninit;
 use core::panic::Location;
 use core::sync::atomic::{compiler_fence, AtomicBool, AtomicUsize, Ordering};
 use task_api::{
-    ExitedTask, KernelTaskEntry, TaskExitCode, TaskId, TaskSnapshot, TaskTick,
-    TaskWaitResult, TaskWaitTarget, UserTask, WaitQueueId,
+    ExitedTask, KernelTaskEntry, TaskExitCode, TaskId, TaskSnapshot, TaskTick, TaskWaitResult,
+    TaskWaitTarget, UserTask, WaitQueueId,
 };
 
 
@@ -28,7 +28,7 @@ mod queues;
 mod rt_fifo_queue;
 mod rt_rr_queue;
 mod scheduler;
-use api_v0::{SchedPolicyChangeAction, ScheduleReason};
+pub use api_v0::{SchedPolicyChangeAction, ScheduleReason};
 use scheduler::MultiClassScheduler;
 use task_api::{SchedError, SchedParam, SchedPolicy};
 
@@ -250,7 +250,7 @@ unsafe fn init_scheduler_storage_and_inner() {
 
 /// 幂等初始化全局调度器与内部 `MultiClassScheduler` 状态。
 #[inline(never)]
-pub fn init_scheduler() {
+pub fn init() {
     log_scheduler_ready("init_scheduler enter");
     if !SCHEDULER_READY.load(Ordering::Acquire) {
         log::warn!("[boot-init] init_scheduler: SCHEDULER.write + inner init (READY still false)");
@@ -463,9 +463,7 @@ pub fn wait_current_while(target : TaskWaitTarget,
 
 /// 带超时的等待；`timeout_ticks == 0` 时立即返回 [`TaskWaitResult::TimedOut`]
 /// 且不切换。
-pub fn wait_current_timeout(target : TaskWaitTarget,
-                            timeout_ticks : TaskTick)
-                            -> TaskWaitResult {
+pub fn wait_current_timeout(target : TaskWaitTarget, timeout_ticks : TaskTick) -> TaskWaitResult {
     if timeout_ticks == 0 {
         return TaskWaitResult::TimedOut;
     }
