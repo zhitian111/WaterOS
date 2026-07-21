@@ -16,10 +16,7 @@ use alloc::vec::Vec;
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use api_v0::{
-    AddressSpaceRef, CloneFlags, ProcessDescriptor, ProcessId, ProcessState, ProcessTaskDescriptor,
-    ProcessTaskRole, TaskClearTid, TaskId, ThreadId,
-};
+use api_v0::{ProcessDescriptor, ProcessId, ProcessTaskDescriptor, TaskClearTid, TaskId, ThreadId};
 use arch::interrupt::ArchInterruptState;
 use base::sync::UniprocessorSafeCell;
 

@@ -10,11 +10,11 @@ extern crate alloc;
 mod kernel;
 mod process;
 mod sched;
-mod smp;
 mod snapshot;
 mod task;
 mod user;
 mod wait;
+pub use base::cpu::{CpuId, CpuMask};
 pub use kernel::{KernelStack, KernelTaskEntry, TaskBootstrap};
 pub use process::{
     AddressSpaceRef, CloneFlags, ProcessDescriptor, ProcessId, ProcessState, ProcessTaskDescriptor,
@@ -31,11 +31,3 @@ pub use task::{
 };
 pub use user::{AddressSpaceHandle, UserImageInfo, UserStack, UserTask, UserTaskEntryPc};
 pub use wait::{TaskWaitResult, TaskWaitTarget};
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CpuId(usize);
-impl CpuId {
-    pub const BOOT : Self = Self(0);
-    pub const fn from_raw(raw : usize) -> Self { Self(raw) }
-    pub const fn raw(self) -> usize { self.0 }
-}
-pub type CpuMask = [u8; SCHED_CPU_MASK_RET_BYTES];

@@ -1,5 +1,5 @@
 use arch::task::{ActiveArchTaskContext, ArchTaskContext};
-use task_api::{CpuId, TaskExitCode, TaskId, TaskTick, TaskWaitTarget};
+use task_api::{AddressSpaceHandle, CpuId, TaskExitCode, TaskId, TaskTick, TaskWaitTarget};
 
 pub type SwitchPair =
     (*mut arch::task::ActiveArchTaskContext, *const arch::task::ActiveArchTaskContext);
@@ -43,19 +43,33 @@ pub enum SchedPolicyChangeAction {
     RescheduleNow,
 }
 
-pub struct SmpScheduler {
+pub struct CPUScheduler {
     pub cpu_id : CpuId,
     pub boot_task_cx : ActiveArchTaskContext,
     pub current_task_id : Option<TaskId>,
     pub idle_task_id : Option<TaskId>,
     pub current_task_ticks : u64,
+    pub online : bool,
 }
-impl SmpScheduler {
+impl CPUScheduler {
     pub fn new(cpu_id : CpuId) -> Self {
         Self { cpu_id,
                boot_task_cx : ActiveArchTaskContext::zero_init(),
                current_task_id : None,
                idle_task_id : None,
-               current_task_ticks : 0 }
+               current_task_ticks : 0,
+               online : false }
     }
+    pub fn current_task_id(&self) -> Option<TaskId> { self.current_task_id }
+    pub fn boot_task_cx(&mut self) -> *mut ActiveArchTaskContext {
+        &mut self.boot_task_cx as *mut ActiveArchTaskContext
+    }
+}
+pub struct CpuSnapshot {
+    pub cpu_id : CpuId,
+    pub online : bool,
+    pub current_task_id : Option<TaskId>,
+    pub idle_task_id : Option<TaskId>,
+    pub current_address_space : Option<AddressSpaceHandle>,
+    pub current_task_ticks : u64,
 }

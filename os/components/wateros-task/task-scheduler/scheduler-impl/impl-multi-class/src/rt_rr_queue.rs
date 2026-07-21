@@ -97,9 +97,7 @@ impl RtRrRunQueue {
             .iter()
             .enumerate()
             .rev()
-            .find(|(_, bucket)| {
-                !bucket.is_empty()
-            })
+            .find(|(_, bucket)| !bucket.is_empty())
             .map(|(index, _)| priority_from_index(index))
     }
 
@@ -134,21 +132,6 @@ impl RtRrRunQueue {
     pub fn clear_running(&mut self) {
         self.current = None;
         self.remaining_ticks = 0;
-    }
-
-    /// 按优先级从高到低选取下一个任务。
-    pub fn pick_next(&mut self) -> Option<TaskId> {
-        if let Some((current, prio)) = self.current {
-            if self.remaining_ticks > 0 {
-                return Some(current);
-            }
-        }
-        for priority in (RT_PRIORITY_MIN..=RT_PRIORITY_MAX).rev() {
-            if let Some(task_id) = self.pick_at_priority(priority) {
-                return Some(task_id);
-            }
-        }
-        None
     }
 }
 
@@ -197,7 +180,6 @@ mod tests {
         let mut q = RtRrRunQueue::new();
         q.enqueue(1, 90);
         q.enqueue(2, 40);
-        assert_eq!(q.highest_ready_priority(),
-                   Some(90));
+        assert_eq!(q.highest_ready_priority(), Some(90));
     }
 }

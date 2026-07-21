@@ -11,7 +11,6 @@ extern crate alloc;
 mod registry;
 mod scheduler;
 mod wait_queues;
-use task_api::{TaskExitCode, TaskTick, TaskWaitTarget};
 
 
 pub use registry::TaskRegistry;

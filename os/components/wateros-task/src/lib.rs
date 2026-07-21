@@ -2,6 +2,7 @@
 
 extern crate alloc;
 
+mod cpu;
 mod lifecycle;
 mod process;
 mod runtime;
@@ -51,13 +52,14 @@ mod scheduler {
     pub use scheduler::*;
 }
 pub use api_v0::{
-    AddressSpaceHandle, AddressSpaceRef, CloneFlags, KernelTaskEntry, ProcessDescriptor, ProcessId,
-    ProcessState, ProcessTaskDescriptor, ProcessTaskRole, ProcessTaskState, ResourceLimit,
-    SchedError, SchedParam, SchedPolicy, SetResourceLimitError, TaskClearTid, TaskExitCode,
-    TaskSnapshot, TaskState, TaskTick, TaskWaitResult, TaskWaitTarget, ThreadId, UserImageInfo,
-    UserStack, UserTask, WaitQueueId,
+    AddressSpaceHandle, AddressSpaceRef, CloneFlags, CpuId, KernelTaskEntry, ProcessDescriptor,
+    ProcessId, ProcessState, ProcessTaskDescriptor, ProcessTaskRole, ProcessTaskState,
+    ResourceLimit, SchedError, SchedParam, SchedPolicy, SetResourceLimitError, TaskClearTid,
+    TaskExitCode, TaskSnapshot, TaskState, TaskTick, TaskWaitResult, TaskWaitTarget, ThreadId,
+    UserImageInfo, UserStack, UserTask, WaitQueueId,
 };
 pub use api_v0::{ExitedTask, TaskId, TaskKind};
+pub use cpu::{cpu_snapshot, running_cpu, set_cpu_online};
 #[cfg(feature = "impl-core")]
 pub(crate) use impl_core as active_impl;
 

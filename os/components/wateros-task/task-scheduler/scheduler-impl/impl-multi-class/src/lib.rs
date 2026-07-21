@@ -11,7 +11,6 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use api_v0::SmpScheduler;
 use arch::interrupt::ArchInterruptState;
 use arch::task::ActiveArchTaskContext as TaskContext;
 use base::sync::UniprocessorSafeCell;
@@ -28,7 +27,7 @@ mod queues;
 mod rt_fifo_queue;
 mod rt_rr_queue;
 mod scheduler;
-pub use api_v0::{SchedPolicyChangeAction, ScheduleReason};
+pub use api_v0::{CpuSnapshot, SchedPolicyChangeAction, ScheduleReason};
 use scheduler::MultiClassScheduler;
 use task_api::{SchedError, SchedParam, SchedPolicy};
 
@@ -202,7 +201,7 @@ fn finish_wait_after_switch(switch_pair : Option<SwitchPair>) -> TaskWaitResult 
         }
     }
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.take_current_wait_result())
+    with_scheduler(|scheduler| scheduler.take_current_wait_result(CpuId::BOOT))
 }
 
 /// 供 `kernel_main` / 外部 crate 在 `spawn_*` 前探测；`#[no_mangle]` 避免 release/LTO 内联掉对静态变量的 load。
@@ -277,19 +276,19 @@ pub fn spawn_kernel_task(entry : KernelTaskEntry, arg : usize) -> TaskId {
     assert_addr_outside_kernel_heap("SCHEDULER_READY",
                                     scheduler_ready_addr());
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.spawn_kernel_task(entry, arg))
+    with_scheduler(|scheduler| scheduler.spawn_kernel_task(entry, arg, CpuId::BOOT))
 }
 
 /// 按规格创建用户任务（仅登记 TCB，不入就绪队列）。
 pub fn create_user_task_spec(spec : UserTask) -> TaskId {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.create_user_task_spec(spec))
+    with_scheduler(|scheduler| scheduler.create_user_task_spec(spec, CpuId::BOOT))
 }
 
 /// 按规格创建用户任务并入就绪队列尾部。
 pub fn spawn_user_task_spec(spec : UserTask) -> TaskId {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.spawn_user_task_spec(spec))
+    with_scheduler(|scheduler| scheduler.spawn_user_task_spec(spec, CpuId::BOOT))
 }
 
 /// 将已创建任务加入就绪队列尾部。
@@ -304,13 +303,20 @@ pub fn create_fork_child(child_stack : usize,
                          new_satp : usize)
                          -> Option<TaskId> {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.create_fork_child(child_stack, new_aspace_ptr, new_satp))
+    with_scheduler(|scheduler| {
+        scheduler.create_fork_child(child_stack,
+                                    new_aspace_ptr,
+                                    new_satp,
+                                    CpuId::BOOT)
+    })
 }
 
 /// 从当前用户任务 clone 线程（仅登记 TCB，不入就绪队列）。
 pub fn create_clone_thread(child_stack : usize, tls : usize, set_tls : bool) -> Option<TaskId> {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.create_clone_thread(child_stack, tls, set_tls))
+    with_scheduler(|scheduler| {
+        scheduler.create_clone_thread(child_stack, tls, set_tls, CpuId::BOOT)
+    })
 }
 
 /// 丢弃 fork/clone 失败时已登记但未应继续运行的子任务。
@@ -329,13 +335,20 @@ pub fn fork_current(child_stack : usize,
                     new_satp : usize)
                     -> Option<TaskId> {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.fork_current(child_stack, new_aspace_ptr, new_satp))
+    with_scheduler(|scheduler| {
+        scheduler.fork_current(child_stack,
+                               new_aspace_ptr,
+                               new_satp,
+                               CpuId::BOOT)
+    })
 }
 
 /// 从当前用户任务 clone 一个同进程线程；线程共享用户地址空间但有独立执行现场。
 pub fn clone_current_thread(child_stack : usize, tls : usize, set_tls : bool) -> Option<TaskId> {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.clone_current_thread(child_stack, tls, set_tls))
+    with_scheduler(|scheduler| {
+        scheduler.clone_current_thread(child_stack, tls, set_tls, CpuId::BOOT)
+    })
 }
 
 /// execve：替换当前任务的进程映像（地址空间、入口、栈）。
@@ -358,7 +371,8 @@ pub fn execve_current(entry_pc : usize,
                                  satp,
                                  user_aspace_ptr,
                                  image_info,
-                                 stack_info)
+                                 stack_info,
+                                 CpuId::BOOT)
     });
 }
 
@@ -638,19 +652,19 @@ pub fn kill_task(task_id : TaskId, exit_code : TaskExitCode) -> bool {
 /// 当前运行任务号；引导阶段尚未切换时为 `None`。
 pub fn current_task_id() -> Option<TaskId> {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.current_task_id())
+    with_scheduler(|scheduler| scheduler.current_task_id(CpuId::BOOT))
 }
 
 /// 当前运行任务的稳定快照（语义层，不含内核栈指针等实现细节）。
 pub fn current_task_snapshot() -> Option<TaskSnapshot> {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.current_task_snapshot())
+    with_scheduler(|scheduler| scheduler.current_task_snapshot(CpuId::BOOT))
 }
 
 /// 指定任务的稳定快照；任务不存在或已被回收时返回 `None`。
 pub fn task_snapshot(task_id : TaskId) -> Option<TaskSnapshot> {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.task_snapshot(task_id))
+    with_scheduler(|scheduler| Some(scheduler.task_snapshot(task_id)))
 }
 
 /// 当前调度器逻辑 tick。
@@ -662,28 +676,28 @@ pub fn current_tick() -> TaskTick {
 /// 当前任务内核栈顶，供 trap/用户态恢复路径使用。
 pub fn current_task_kernel_stack_top() -> Option<usize> {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.current_task_kernel_stack_top())
+    with_scheduler(|scheduler| scheduler.current_task_kernel_stack_top(CpuId::BOOT))
 }
 
 /// 返回当前运行任务的用户地址空间 token；`0` 表示回落到内核地址空间。
 pub fn current_task_address_space_raw() -> usize {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.current_task_address_space_raw())
+    with_scheduler(|scheduler| scheduler.current_task_address_space_raw(CpuId::BOOT))
 }
 
 pub fn current_task_user_aspace_ptr() -> usize {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.current_task_user_aspace_ptr())
+    with_scheduler(|scheduler| scheduler.current_task_user_aspace_ptr(CpuId::BOOT))
 }
 
 pub fn current_task_user_address_space_token() -> usize {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.current_task_user_address_space_token())
+    with_scheduler(|scheduler| scheduler.current_task_user_address_space_token(CpuId::BOOT))
 }
 
 pub fn current_task_trap_return_address_space_token() -> usize {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.current_task_trap_return_address_space_token())
+    with_scheduler(|scheduler| scheduler.current_task_trap_return_address_space_token(CpuId::BOOT))
 }
 
 /// 判断指定任务是否仍有子任务。
@@ -700,13 +714,31 @@ pub fn has_child(parent_id : TaskId) -> bool {
 /// `None`）。
 pub fn begin_current_trap_frame_access(trap_frame : TaskTrapFrame) -> Option<*mut TaskTrapFrame> {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.begin_current_trap_frame_access(trap_frame))
+    with_scheduler(|scheduler| scheduler.begin_current_trap_frame_access(trap_frame, CpuId::BOOT))
 }
 
 /// 将 TCB 中保存的 trap 现场恢复到调用方缓冲区。
 pub fn restore_current_trap_frame(trap_frame : &mut TaskTrapFrame) -> bool {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.restore_current_trap_frame(trap_frame))
+    with_scheduler(|scheduler| scheduler.restore_current_trap_frame(trap_frame, CpuId::BOOT))
+}
+
+/// 返回指定 CPU 的调度状态快照。
+pub fn cpu_snapshot(cpu_id : CpuId) -> Option<CpuSnapshot> {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.cpu_snapshot(cpu_id))
+}
+
+/// 查询指定任务当前在哪个 CPU 上运行。
+pub fn running_cpu(task_id : TaskId) -> Option<CpuId> {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.running_cpu(task_id))
+}
+
+/// 将指定 CPU 标记为 online。AP 完成初始化后调用。
+pub fn set_cpu_online(cpu_id : CpuId) {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.set_cpu_online(cpu_id));
 }
 
 // =============================================================================
