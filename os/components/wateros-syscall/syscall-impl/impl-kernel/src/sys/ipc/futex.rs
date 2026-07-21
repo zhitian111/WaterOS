@@ -11,7 +11,7 @@ use task::TaskTick;
 use crate::poll_engine::ns_duration_to_ticks;
 use crate::user_copy::{copy_from_user, copy_from_user_struct};
 
-use super::super::task::robust::futex_error_to_errno;
+use crate::sys::ipc::robust::futex_error_to_errno;
 
 // ── futex 操作码 ──────────────────────────────────────────────────
 
@@ -128,7 +128,7 @@ fn futex_wait(uaddr : usize,
                 "[pthread-debug] futex_wait EAGAIN uaddr={:#x} val={val} cur={cur} private={is_private}",
                 uaddr,
             );
-            super::super::task::bringup_stats::record_futex_wait_eagain();
+            super::super::misc::bringup_stats::record_futex_wait_eagain();
             return Err(ErrNo::EAGAIN);
         }
 
@@ -137,7 +137,7 @@ fn futex_wait(uaddr : usize,
             uaddr,
             futex_op,
         );
-        super::super::task::bringup_stats::record_futex_wait_sleep();
+        super::super::misc::bringup_stats::record_futex_wait_sleep();
 
         let outcome = hub.wait_while(key, timeout, || read_user_u32(uaddr).map_or(false, |v| v == val));
         match outcome {
@@ -177,7 +177,7 @@ fn futex_requeue(uaddr : usize,
 }
 
 pub(crate) fn wake_user_addr(uaddr : usize) -> usize {
-    super::super::task::bringup_stats::record_futex_wake_user_addr();
+    super::super::misc::bringup_stats::record_futex_wake_user_addr();
     // clear_child_tid 的 wake 需要同时尝试 private 和 shared 两种 key，
     // 因为等待者可能用任一种 flag（glibc 可能用 FUTEX_WAIT_BITSET 不带 PRIVATE 标志）
     let hub = FutexHub::global();
@@ -193,7 +193,7 @@ pub(crate) fn wake_user_addr(uaddr : usize) -> usize {
         uaddr,
     );
     if total == 0 {
-        super::super::task::bringup_stats::record_futex_wake_zero_waiters();
+        super::super::misc::bringup_stats::record_futex_wake_zero_waiters();
         log::trace!("[pthread-debug] wake_user_addr uaddr={:#x} no waiters", uaddr);
     }
     total

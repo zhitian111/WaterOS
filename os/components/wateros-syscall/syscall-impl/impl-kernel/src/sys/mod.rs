@@ -8,6 +8,7 @@ mod mem;
 mod net;
 mod poll;
 mod time;
+pub(crate) mod cred;
 
 // ── 子模块组 ────────────────────────────────────────────────────
 mod misc;
@@ -26,3 +27,4 @@ pub(crate) use time::*;
 
 // ── 独立模块重新导出 ────────────────────────────────────────────
 pub(crate) use task::*;
+pub(crate) use cred::*;

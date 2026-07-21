@@ -69,14 +69,14 @@ fn cap_data_words(version: u32) -> usize {
     }
 }
 
-pub(super) fn cap_bset_read(cap: usize) -> UserRet {
+pub(crate) fn cap_bset_read(cap: usize) -> UserRet {
     if cap >= 64 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
     UserRet::from_success(1)
 }
 
-pub(super) fn cap_bset_drop(cap: usize) -> UserRet {
+pub(crate) fn cap_bset_drop(cap: usize) -> UserRet {
     if cap >= 64 {
         return UserRet::from_error(ErrNo::EINVAL);
     }

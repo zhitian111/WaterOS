@@ -180,7 +180,7 @@ fn decode_legacy_clone_args(args : SyscallArgs) -> CloneRequest {
 }
 
 fn do_clone_request(request : CloneRequest) -> UserRet {
-    let parent_signal = match super::signal::ensure_current_signal_state() {
+    let parent_signal = match crate::sys::ipc::signal::ensure_current_signal_state() {
         Ok(snapshot) => snapshot,
         Err(error) => return UserRet::from_error(error),
     };
@@ -219,7 +219,7 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
             return UserRet::from_error(ErrNo::EINVAL);
         }
         if let Some(process_task) = task::current_process_task_snapshot() {
-            super::task::reap_exited_member_threads_runtime_resources(process_task.pid);
+            crate::sys::task::wait::reap_exited_member_threads_runtime_resources(process_task.pid);
         }
         return do_clone_thread(clone_flags,
                                child_stack,
@@ -266,7 +266,7 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
         Some(snapshot) => snapshot,
         None => {
             if let Some(child_pid) = task::abort_fork_child(child_id) {
-                super::signal::abort_fork_signal(child_pid.raw(), child_id);
+                crate::sys::ipc::signal::abort_fork_signal(child_pid.raw(), child_id);
             }
             return UserRet::from_error(ErrNo::ESRCH);
         }
@@ -293,13 +293,13 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
     if clone_flags.contains(task::CloneFlags::CLONE_CHILD_CLEARTID) {
         let _ = task::set_task_clear_child_tid(child_id, Some(task::TaskClearTid::new(child_tid)));
     }
-    if super::signal::on_fork(parent_signal.task_id,
+    if crate::sys::ipc::signal::on_fork(parent_signal.task_id,
                               child_pid,
                               child_id,
                               child_tid_raw).is_err()
     {
         if let Some(rolled_pid) = task::abort_fork_child(child_id) {
-            super::signal::abort_fork_signal(rolled_pid.raw(), child_id);
+            crate::sys::ipc::signal::abort_fork_signal(rolled_pid.raw(), child_id);
         }
         return UserRet::from_error(ErrNo::EAGAIN);
     }
@@ -384,14 +384,14 @@ fn do_clone_thread(clone_flags : task::CloneFlags,
         Some(snapshot) => snapshot.tid.raw(),
         None => {
             task::abort_clone_thread(child_id);
-            super::signal::abort_clone_thread_signal(child_id);
+            crate::sys::ipc::signal::abort_clone_thread_signal(child_id);
             return UserRet::from_error(ErrNo::ESRCH);
         }
     };
     let parent_id = task::current_task_id().expect("current task must exist after clone");
-    if super::signal::on_clone_thread(parent_id, child_id, child_tid_raw).is_err() {
+    if crate::sys::ipc::signal::on_clone_thread(parent_id, child_id, child_tid_raw).is_err() {
         task::abort_clone_thread(child_id);
-        super::signal::abort_clone_thread_signal(child_id);
+        crate::sys::ipc::signal::abort_clone_thread_signal(child_id);
         return UserRet::from_error(ErrNo::EAGAIN);
     }
     let child_tid_value = child_tid_raw as u32;
@@ -401,7 +401,7 @@ fn do_clone_thread(clone_flags : task::CloneFlags,
        copy_to_user_struct(parent_tid, &child_tid_value).is_err()
     {
         task::abort_clone_thread(child_id);
-        super::signal::abort_clone_thread_signal(child_id);
+        crate::sys::ipc::signal::abort_clone_thread_signal(child_id);
         return UserRet::from_error(ErrNo::EFAULT);
     }
     if clone_flags.contains(task::CloneFlags::CLONE_CHILD_SETTID) &&
@@ -409,7 +409,7 @@ fn do_clone_thread(clone_flags : task::CloneFlags,
        copy_to_user_struct(child_tid, &child_tid_value).is_err()
     {
         task::abort_clone_thread(child_id);
-        super::signal::abort_clone_thread_signal(child_id);
+        crate::sys::ipc::signal::abort_clone_thread_signal(child_id);
         return UserRet::from_error(ErrNo::EFAULT);
     }
 
@@ -439,7 +439,7 @@ fn do_clone_thread(clone_flags : task::CloneFlags,
     crate::unix_sock::copy_fds_from_parent(child_id, parent_id);
     cred::share_cred(parent_id, child_id);
 
-    super::bringup_stats::record_clone_thread();
+    crate::sys::misc::bringup_stats::record_clone_thread();
     UserRet::from_success(child_tid_raw)
 }
 

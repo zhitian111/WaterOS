@@ -82,9 +82,9 @@ fn do_execve(path_ptr: usize, argv_ptr: usize, envp_ptr: usize) -> Result<(), Er
     };
 
     // 加载成功后再终止兄弟线程，避免失败时原映像不可恢复（Linux 原子 exec 语义）。
-    super::robust::robust_exit_cleanup_siblings_for_exec();
+    crate::sys::ipc::robust::robust_exit_cleanup_siblings_for_exec();
     let killed_threads = task::terminate_other_threads_for_exec().map_err(|_| ErrNo::EINVAL)?;
-    let current_signal_task = super::signal::ensure_current_signal_state()?.task_id;
+    let current_signal_task = crate::sys::ipc::signal::ensure_current_signal_state()?.task_id;
 
     let (argc, argv_ptr, envp_ptr) = initial_entry_args(new_sp, final_argv_refs.len());
 
@@ -96,7 +96,7 @@ fn do_execve(path_ptr: usize, argv_ptr: usize, envp_ptr: usize) -> Result<(), Er
         crate::unix_sock::drop_task(exited.id);
         cred::drop_task_cred(exited.id);
     }
-    super::signal::on_exec(current_signal_task, &killed_threads);
+    crate::sys::ipc::signal::on_exec(current_signal_task, &killed_threads);
 
     let old_aspace = task::current_task_user_aspace_ptr();
     let current_tid = task::current_task_id().expect("execve requires a current task");
