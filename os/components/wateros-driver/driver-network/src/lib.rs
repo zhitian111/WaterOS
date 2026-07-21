@@ -137,6 +137,8 @@ pub mod stack {
         iface: Interface,
         sockets: SocketSet<'static>,
         metas: BTreeMap<SocketHandle, SocketMeta>,
+        /// fd 已关闭、但仍需完成 TCP FIN 状态机的底层 socket。
+        tcp_close_pending: BTreeSet<SocketHandle>,
         udp_loopback: BTreeMap<SocketHandle, VecDeque<LoopbackUdpPacket>>,
         udp_loopback_pending: BTreeMap<u16, VecDeque<LoopbackUdpPacket>>,
         local_ip: [u8; 4],
@@ -251,6 +253,7 @@ pub mod stack {
             iface,
             sockets: SocketSet::new(vec![]),
             metas: BTreeMap::new(),
+            tcp_close_pending: BTreeSet::new(),
             udp_loopback: BTreeMap::new(),
             udp_loopback_pending: BTreeMap::new(),
             local_ip: ip,
@@ -1162,18 +1165,37 @@ pub mod stack {
         Ok(Vec::new())
     }
 
-    /// 关闭 socket，从 SocketSet 中移除。
+    /// 关闭 socket。
+    ///
+    /// UDP 和未建立连接的 TCP 可以立即移除。已建立的 TCP 需要保留在
+    /// `SocketSet` 中继续完成 FIN/ACK 状态机，待 smoltcp 进入 `Closed`
+    /// 后再由 [`poll_socket_events`] 回收。
     pub fn socket_close(handle: SocketHandle) -> Result<(), &'static str> {
         let mut guard = NETWORK_STACK.lock();
         let stack = guard.as_mut().ok_or("stack not initialized")?;
-        let meta = stack.metas.get_mut(&handle).ok_or("invalid socket handle")?;
-        let should_poll = match (meta.kind, meta.state) {
-            (SocketKind::Tcp, SocketState::Connected | SocketState::Connecting) => {
-                stack.sockets.get_mut::<tcp::Socket>(handle).close();
-                meta.state = SocketState::Closed;
-                true
+        let kind = stack
+            .metas
+            .get(&handle)
+            .map(|meta| meta.kind)
+            .ok_or("invalid socket handle")?;
+
+        let should_poll = match kind {
+            SocketKind::Tcp => {
+                let socket = stack.sockets.get_mut::<tcp::Socket>(handle);
+                socket.close();
+                let closed = socket.state() == tcp::State::Closed;
+
+                // fd 已经关闭，上层元数据应立即失效；只有底层 TCP 状态机可能继续存在。
+                stack.metas.remove(&handle);
+                stack.udp_loopback.remove(&handle);
+                if closed {
+                    stack.sockets.remove(handle);
+                } else {
+                    stack.tcp_close_pending.insert(handle);
+                }
+                !closed
             }
-            (SocketKind::Tcp, _) | (SocketKind::Udp, _) => {
+            SocketKind::Udp => {
                 stack.metas.remove(&handle);
                 stack.udp_loopback.remove(&handle);
                 stack.sockets.remove(handle);
@@ -1184,12 +1206,6 @@ pub mod stack {
         if should_poll {
             poll();
             poll_socket_events();
-            let mut guard = NETWORK_STACK.lock();
-            if let Some(stack) = guard.as_mut() {
-                stack.metas.remove(&handle);
-                stack.udp_loopback.remove(&handle);
-                stack.sockets.remove(handle);
-            }
         }
         Ok(())
     }
@@ -1308,7 +1324,7 @@ pub mod stack {
         }
     }
 
-    /// poll 后调用：更新所有 socket 的状态（Connecting → Connected）。
+    /// poll 后调用：更新 socket 状态，并回收已完成 TCP 关闭状态机的底层 socket。
     pub fn poll_socket_events() {
         let mut guard = NETWORK_STACK.lock();
         let stack = match guard.as_mut() {
@@ -1328,6 +1344,17 @@ pub mod stack {
             if let Some(meta) = stack.metas.get_mut(&h) {
                 meta.state = s;
             }
+        }
+
+        let closed: Vec<SocketHandle> = stack
+            .tcp_close_pending
+            .iter()
+            .copied()
+            .filter(|&h| stack.sockets.get_mut::<tcp::Socket>(h).state() == tcp::State::Closed)
+            .collect();
+        for h in closed {
+            stack.tcp_close_pending.remove(&h);
+            stack.sockets.remove(h);
         }
     }
 
