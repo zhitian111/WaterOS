@@ -5,7 +5,6 @@
 //!
 //! **须在** `task::init()` **之后**调用 [`init`]。
 
-use abi::syscall_number::{ActiveSyscallNumberTable, SyscallNumberTable};
 use abi::user_ret::UserRet;
 use arch_api_v0::kernel_trap::register_kernel_trap_handler;
 use arch_api_v0::trap::{Exception, Interrupt, TrapCause, TrapFrameRead, TrapFrameWrite};
@@ -16,6 +15,7 @@ use platform::arch::paging;
 use platform::arch::trap::ActiveTrapFrame as TrapContext;
 use runtime::logging::*;
 use syscall::dispatch_syscall_from_trap;
+use syscall::{EXEC, RT_SIGRETURN};
 
 /// 热路径 syscall/trap 跟踪；release 构建默认关闭。
 macro_rules! hot_syscall_trace {
@@ -163,7 +163,7 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                                regs[3],
                                regs[4],
                                regs[5],);
-            if syscall_nr == <ActiveSyscallNumberTable as SyscallNumberTable>::RT_SIGRETURN.raw() {
+            if syscall_nr == RT_SIGRETURN {
                 if !syscall::restore_signal_frame(authoritative) {
                     kill_current_user_task("invalid rt_sigreturn frame",
                                            trap_cause,
@@ -181,9 +181,7 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                                syscall_ret);
             // execve 成功时已替换整个 trap 帧，跳过 sepc 推进与返回值写入；
             // 失败时必须像普通 syscall 一样把 -errno 返回给原用户态，否则会反复执行同一条 ecall。
-            let exec_succeeded = syscall_nr ==
-                                 <ActiveSyscallNumberTable as SyscallNumberTable>::EXEC.raw() &&
-                                 syscall_ret >= 0;
+            let exec_succeeded = syscall_nr == EXEC && syscall_ret >= 0;
             if !exec_succeeded {
                 cx.add_user_pc(SYSCALL_INSN_BYTES);
                 cx.set_syscall_ret(UserRet(syscall_ret));

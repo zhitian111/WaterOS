@@ -1,0 +1,71 @@
+//! 文件系统操作相关的 syscall 实现。
+
+pub(crate) mod chdir;
+pub(crate) mod close;
+pub(crate) mod close_range;
+pub(crate) mod dup;
+pub(crate) mod faccessat;
+pub(crate) mod fallocate;
+pub(crate) mod fchmodat;
+pub(crate) mod fchownat;
+pub(crate) mod fcntl;
+pub(crate) mod flock;
+pub(crate) mod fstat;
+pub(crate) mod ftruncate;
+pub(crate) mod getcwd;
+pub(crate) mod getdents64;
+pub(crate) mod linkat;
+pub(crate) mod lseek;
+pub(crate) mod mkdirat;
+pub(crate) mod mknodat;
+pub(crate) mod openat;
+pub(crate) mod path_at;
+pub(crate) mod pipe2;
+pub(crate) mod posix_at_io;
+pub(crate) mod read;
+pub(crate) mod readlinkat;
+pub(crate) mod renameat2;
+pub(crate) mod sendfile;
+pub(crate) mod statfs;
+pub(crate) mod symlinkat;
+pub(crate) mod truncate;
+pub(crate) mod unlinkat;
+pub(crate) mod utimensat;
+pub(crate) mod write;
+pub(crate) mod xattr;
+
+pub(crate) use chdir::sys_chdir;
+pub(crate) use close::sys_close;
+pub(crate) use close_range::sys_close_range;
+pub(crate) use dup::{sys_dup, sys_dup3};
+pub(crate) use faccessat::{sys_faccessat, sys_faccessat2};
+pub(crate) use fallocate::sys_fallocate;
+pub(crate) use fchmodat::{sys_fchmod, sys_fchmodat};
+pub(crate) use fchownat::{sys_fchown, sys_fchownat};
+pub(crate) use fcntl::sys_fcntl;
+pub(crate) use flock::sys_flock;
+pub(crate) use fstat::{sys_fstat, sys_fstatat, sys_statx};
+pub(crate) use ftruncate::sys_ftruncate;
+pub(crate) use getcwd::sys_getcwd;
+pub(crate) use getdents64::sys_getdents64;
+pub(crate) use linkat::sys_linkat;
+pub(crate) use lseek::sys_lseek;
+pub(crate) use mkdirat::sys_mkdirat;
+pub(crate) use mknodat::sys_mknodat;
+pub(crate) use openat::sys_openat;
+pub(crate) use pipe2::sys_pipe2;
+pub(crate) use posix_at_io::{sys_pread64, sys_preadv, sys_pwrite64, sys_pwritev};
+pub(crate) use read::{sys_read, sys_readv};
+pub(crate) use readlinkat::sys_readlinkat;
+pub(crate) use renameat2::{sys_renameat, sys_renameat2};
+pub(crate) use sendfile::sys_sendfile;
+pub(crate) use statfs::{sys_fstatfs, sys_statfs};
+pub(crate) use symlinkat::sys_symlinkat;
+pub(crate) use truncate::sys_truncate;
+pub(crate) use unlinkat::sys_unlinkat;
+pub(crate) use utimensat::sys_utimensat;
+pub(crate) use write::{sys_write, sys_writev};
+pub(crate) use xattr::{
+    sys_fgetxattr, sys_flistxattr, sys_fremovexattr, sys_fsetxattr, sys_getxattr, sys_lgetxattr,
+    sys_listxattr, sys_llistxattr, sys_lremovexattr, sys_lsetxattr, sys_removexattr, sys_setxattr,
+};
