@@ -1,5 +1,10 @@
 //! 调度与任务子系统相关配置常量。
 
+/// 当前内核静态支持的最大逻辑 CPU 数。
+///
+/// 这是静态容量上限，不表示 configured 或 online CPU 数量。
+pub const MAX_CPUS : usize = 8;
+
 /// 监督态定时器重武装间隔（毫秒），与 [`trap_handler`] 及 clock syscall 的 sleep 换算一致。
 ///
 /// [`trap_handler`]: 组合层内核 trap 路由（`os/src/trap_handler.rs`）。

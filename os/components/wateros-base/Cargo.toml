@@ -6,3 +6,4 @@
     edition = "2024"
 
 [dependencies]
+spin = { version = "0.10.0", default-features = false, features = ["mutex", "spin_mutex"] }
