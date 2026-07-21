@@ -18,7 +18,7 @@ use base::sync::MultiprocessorSafeCell;
 use core::hint::black_box;
 use core::mem::MaybeUninit;
 use core::panic::Location;
-use core::sync::atomic::{compiler_fence, AtomicBool, AtomicUsize, Ordering};
+use core::sync::atomic::{compiler_fence, AtomicBool, Ordering};
 use task_api::{
     CpuId, ExitedTask, KernelTaskEntry, TaskExitCode, TaskId, TaskSnapshot, TaskTick,
     TaskWaitResult, TaskWaitTarget, UserTask, WaitQueueId,
@@ -54,7 +54,6 @@ static mut SCHEDULER : MaybeUninit<MultiprocessorSafeCell<MultiClassScheduler>> 
     MaybeUninit::uninit();
 #[unsafe(link_section = ".bss.scheduler")]
 static SCHEDULER_READY : AtomicBool = AtomicBool::new(false);
-static SCHEDULER_CELL_PROBE_COUNT : AtomicUsize = AtomicUsize::new(0);
 
 unsafe extern "C" {
     static kernel_heap_start: u8;
@@ -115,7 +114,6 @@ fn scheduler_not_ready_fatal(caller : &'static Location, ready : bool, raw_byte 
 #[inline(never)]
 fn scheduler_cell_inner(caller : &'static Location)
                         -> &'static MultiprocessorSafeCell<MultiClassScheduler> {
-    let probe_n = SCHEDULER_CELL_PROBE_COUNT.fetch_add(1, Ordering::Relaxed);
     let ready = black_box(SCHEDULER_READY.load(Ordering::Acquire));
     let raw_byte = scheduler_ready_raw_byte();
     if !black_box(ready) {
@@ -127,6 +125,7 @@ fn scheduler_cell_inner(caller : &'static Location)
 /// 取得调度器 cell；独立符号，供 GDB/外部探测。
 #[inline(never)]
 #[unsafe(no_mangle)]
+#[allow(private_interfaces)]
 pub extern "C" fn wateros_mcs_scheduler_cell(
     )
     -> *const MultiprocessorSafeCell<MultiClassScheduler>
@@ -214,9 +213,12 @@ pub extern "C" fn wateros_mcs_boot_log_scheduler_ready(tag_ptr : *const u8, tag_
 
 /// 首次初始化路径：在 `SCHEDULER_READY` 置真前直接写入 cell，避免 chicken-and-egg。
 unsafe fn init_scheduler_storage_and_inner() {
-    SCHEDULER.write(MultiprocessorSafeCell::new(MultiClassScheduler::new()));
-    (*SCHEDULER.as_mut_ptr()).exclusive_access()
-                             .init();
+    // 2024 edition: unsafe fn body 不是隐式 unsafe 块
+    unsafe {
+        SCHEDULER.write(MultiprocessorSafeCell::new(MultiClassScheduler::new()));
+        (*SCHEDULER.as_mut_ptr()).exclusive_access()
+                                 .init();
+    }
 }
 
 /// 幂等初始化全局调度器与内部 `MultiClassScheduler` 状态。

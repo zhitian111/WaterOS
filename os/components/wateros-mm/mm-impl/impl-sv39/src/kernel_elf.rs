@@ -21,8 +21,9 @@ use api_v0::perm::PagePerm;
 use frame_alloctor::frame_alloc_result;
 #[cfg(not(feature = "vfs-root-read"))]
 use fs::api::{FsError, SharedFs};
-use impl_common::{entry_file_offset, finalize_elf_read, rd_u16, rd_u32, rd_u64, ElfSegmentLoadParams,
-                  PT_LOAD};
+use impl_common::{
+    entry_file_offset, finalize_elf_read, rd_u16, rd_u32, rd_u64, ElfSegmentLoadParams, PT_LOAD,
+};
 
 use crate::pagetable::Sv39AddressSpace;
 
@@ -68,7 +69,6 @@ fn map_vfs_to_root_vol(e : VfsError) -> RootVolumeReadError {
         VfsError::TooManyOpenFiles |
         VfsError::NoSpace |
         VfsError::ReadOnlyFs => RootVolumeReadError::Unsupported,
-        VfsError::Busy => RootVolumeReadError::Io,
     }
 }
 
@@ -83,20 +83,22 @@ const PREFERRED_MMAP_BASE : usize = 0x1000_0000;
 const USER_HEAP_MMAP_GAP : usize = 64 * 1024 * 1024;
 
 unsafe extern "C" {
-    static __alltraps : u8;
-    static __wateros_riscv_restore_user_from_frame : u8;
-    static __wateros_riscv_kernel_satp : usize;
-    static __wateros_riscv_return_frame : u8;
+    static __alltraps: u8;
+    static __wateros_riscv_restore_user_from_frame: u8;
+    static __wateros_riscv_kernel_satp: usize;
+    static __wateros_riscv_return_frame: u8;
 }
 
 struct ElfHeaderInfo {
     entry : usize,
+    #[allow(dead_code)]
     phoff : usize,
     phentsize : usize,
     phnum : usize,
     phdrs : Vec<u8>,
 }
 
+#[allow(dead_code)]
 fn parse_elf_header(data : &[u8]) -> Result<ElfHeaderInfo, LoadElfError> {
     if data.len() < 64 {
         return Err(LoadElfError::TooSmall);
@@ -153,6 +155,7 @@ fn remap_interp_path(program_path : &str, interp : &str) -> String {
     String::from(interp)
 }
 
+#[allow(dead_code)]
 fn read_interp_path(data : &[u8],
                     program_path : &str,
                     header : &ElfHeaderInfo)
@@ -315,10 +318,16 @@ fn map_kernel_trampoline_window<A : AddressSpaceOps>(aspace : &mut A) -> Result<
     let trap_return = core::ptr::addr_of!(__wateros_riscv_restore_user_from_frame) as usize;
     let satp_slot = core::ptr::addr_of!(__wateros_riscv_kernel_satp) as usize;
     let return_frame = core::ptr::addr_of!(__wateros_riscv_return_frame) as usize;
-    map_kernel_trampoline_page(aspace, trap_entry, PagePerm::R | PagePerm::X)?;
-    map_kernel_trampoline_page(aspace, trap_return, PagePerm::R | PagePerm::X)?;
+    map_kernel_trampoline_page(aspace,
+                               trap_entry,
+                               PagePerm::R | PagePerm::X)?;
+    map_kernel_trampoline_page(aspace,
+                               trap_return,
+                               PagePerm::R | PagePerm::X)?;
     map_kernel_trampoline_page(aspace, satp_slot, PagePerm::R)?;
-    map_kernel_trampoline_page(aspace, return_frame, PagePerm::R | PagePerm::W)?;
+    map_kernel_trampoline_page(aspace,
+                               return_frame,
+                               PagePerm::R | PagePerm::W)?;
     Ok(())
 }
 
@@ -415,6 +424,7 @@ fn map_segment<A : AddressSpaceOps>(aspace : &mut A,
     Ok(())
 }
 
+#[allow(dead_code)]
 fn map_load_segments_at<A : AddressSpaceOps>(aspace : &mut A,
                                              data : &[u8],
                                              header : &ElfHeaderInfo,
@@ -453,6 +463,7 @@ fn map_load_segments_at<A : AddressSpaceOps>(aspace : &mut A,
     }
 }
 
+#[allow(dead_code)]
 fn entry_file_offset_at(data : &[u8],
                         header : &ElfHeaderInfo,
                         entry_pc : usize,
@@ -474,6 +485,7 @@ fn entry_file_offset_at(data : &[u8],
     None
 }
 
+#[allow(dead_code)]
 fn verify_mapped_entry_at(aspace : &Sv39AddressSpace,
                           entry_pc : usize,
                           data : &[u8],
@@ -504,7 +516,7 @@ fn map_user_stack<A : AddressSpaceOps>(aspace : &mut A,
     let premap_bytes = cmp::min(stack_size,
                                 USER_STACK_PREMAP_PAGES.saturating_mul(PAGE_SIZE));
     let premap_bottom = stack_top.saturating_sub(premap_bytes)
-                                  .max(bottom);
+                                 .max(bottom);
     let mut vpn = VirtAddr(premap_bottom).floor_page();
     let vpn_end = VirtAddr(stack_top).ceil_page();
     while vpn.0 < vpn_end.0 {
@@ -618,19 +630,23 @@ fn verify_mapped_entry_from_path(aspace : &mut Sv39AddressSpace,
 }
 
 #[cfg(feature = "elf-lazy-map")]
-fn prefault_elf_entry_page(aspace : &mut Sv39AddressSpace, entry_pc : usize) -> Result<(), LoadElfError> {
+fn prefault_elf_entry_page(aspace : &mut Sv39AddressSpace,
+                           entry_pc : usize)
+                           -> Result<(), LoadElfError> {
     use frame_alloctor::GlobalPhysFrameAllocator;
 
     let page = VirtAddr(entry_pc).floor_page()
                                  .start_addr();
     if aspace.translate_addr(page)
-              .map_err(LoadElfError::Mm)?
-              .is_some()
+             .map_err(LoadElfError::Mm)?
+             .is_some()
     {
         return Ok(());
     }
     let mut allocator = GlobalPhysFrameAllocator;
-    if !aspace.handle_lazy_page_fault(&mut allocator, page, PageFaultAccess::Execute)
+    if !aspace.handle_lazy_page_fault(&mut allocator,
+                                      page,
+                                      PageFaultAccess::Execute)
               .map_err(LoadElfError::Mm)?
     {
         return Err(LoadElfError::Parse);
@@ -872,7 +888,12 @@ struct ElfPathSegmentLoader {
 }
 
 impl ElfPathSegmentLoader {
-    fn new(path : &str, vbase : usize, p_offset : usize, filesz : usize, vma_start : usize) -> Self {
+    fn new(path : &str,
+           vbase : usize,
+           p_offset : usize,
+           filesz : usize,
+           vma_start : usize)
+           -> Self {
         let vma_file_origin = p_offset.saturating_sub(vbase.saturating_sub(vma_start));
         Self { path : String::from(path),
                params : ElfSegmentLoadParams { vbase,
@@ -885,8 +906,10 @@ impl ElfPathSegmentLoader {
 
 impl DemandPageLoader for ElfPathSegmentLoader {
     fn duplicate_box(&self) -> MmResult<Box<dyn DemandPageLoader>> {
-        Ok(Box::new(Self { path : self.path.clone(),
-                           params : self.params.clone() }))
+        Ok(Box::new(Self { path : self.path
+                                      .clone(),
+                           params:
+                               self.params.clone() }))
     }
 
     fn load_page(&mut self, file_offset : usize, dst : &mut [u8]) -> MmResult<()> {
@@ -956,17 +979,11 @@ fn map_segment_from_path_lazy(aspace : &mut Sv39AddressSpace,
 
         if let Some(run_start) = lazy_run_start {
             if aspace.translate_addr(page_va)
-                      .map_err(LoadElfError::Mm)?
-                      .is_some() ||
+                     .map_err(LoadElfError::Mm)?
+                     .is_some() ||
                aspace.lazy_vma_contains(page_va)
             {
-                register_lazy_segment_run(aspace,
-                                          path,
-                                          run_start,
-                                          page_va,
-                                          vbase,
-                                          fo,
-                                          filesz,
+                register_lazy_segment_run(aspace, path, run_start, page_va, vbase, fo, filesz,
                                           perm)?;
                 lazy_run_start = None;
             }
@@ -1010,13 +1027,13 @@ fn map_segment_from_path_lazy(aspace : &mut Sv39AddressSpace,
 /// 从文件系统路径映射 PT_LOAD 段（单段），避免整文件读取。
 #[cfg(not(feature = "elf-lazy-map"))]
 fn map_segment_from_path_eager<A : AddressSpaceOps>(aspace : &mut A,
-                                              path : &str,
-                                              p_vaddr : u64,
-                                              p_offset : u64,
-                                              p_filesz : u64,
-                                              p_memsz : u64,
-                                              perm : PagePerm)
-                                              -> Result<(), LoadElfError> {
+                                                    path : &str,
+                                                    p_vaddr : u64,
+                                                    p_offset : u64,
+                                                    p_filesz : u64,
+                                                    p_memsz : u64,
+                                                    perm : PagePerm)
+                                                    -> Result<(), LoadElfError> {
     let vbase = p_vaddr as usize;
     let memsz = p_memsz as usize;
     let filesz = p_filesz as usize;
@@ -1104,34 +1121,23 @@ fn map_segment_from_path(aspace : &mut Sv39AddressSpace,
                          -> Result<(), LoadElfError> {
     #[cfg(feature = "elf-lazy-map")]
     {
-        return map_segment_from_path_lazy(aspace,
-                                          path,
-                                          p_vaddr,
-                                          p_offset,
-                                          p_filesz,
-                                          p_memsz,
+        return map_segment_from_path_lazy(aspace, path, p_vaddr, p_offset, p_filesz, p_memsz,
                                           perm);
     }
     #[cfg(not(feature = "elf-lazy-map"))]
     {
-        map_segment_from_path_eager(aspace,
-                                    path,
-                                    p_vaddr,
-                                    p_offset,
-                                    p_filesz,
-                                    p_memsz,
-                                    perm)
+        map_segment_from_path_eager(aspace, path, p_vaddr, p_offset, p_filesz, p_memsz, perm)
     }
 }
 
 /// 从文件系统路径映射所有 PT_LOAD 段。
 fn map_load_segments_from_path_at(aspace : &mut Sv39AddressSpace,
-                                                       path : &str,
-                                                       phdrs : &[u8],
-                                                       e_phentsize : usize,
-                                                       e_phnum : usize,
-                                                       load_bias : usize)
-                                                       -> Result<(usize, usize), LoadElfError> {
+                                  path : &str,
+                                  phdrs : &[u8],
+                                  e_phentsize : usize,
+                                  e_phnum : usize,
+                                  load_bias : usize)
+                                  -> Result<(usize, usize), LoadElfError> {
     let mut min_vaddr = usize::MAX;
     let mut max_vaddr = 0usize;
     for i in 0..e_phnum {
@@ -1168,10 +1174,6 @@ fn map_load_segments_from_path_at(aspace : &mut Sv39AddressSpace,
     }
 }
 
-/// 从已读取的字节数组和路径加载 ELF（用于 shebang 解析等场景）。
-pub fn from_elf_bytes_at_path(_data : &[u8], path : &str) -> Result<LoadedElf, LoadElfError> {
-    from_elf_path(path)
-}
 
 /// 保留整读接口供 `from_elf_bytes` 使用（boot info、静态编译 init 等）。
 pub fn from_elf_bytes(data : &[u8]) -> Result<LoadedElf, LoadElfError> {

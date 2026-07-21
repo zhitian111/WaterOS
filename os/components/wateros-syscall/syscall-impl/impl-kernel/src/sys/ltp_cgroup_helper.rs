@@ -2540,12 +2540,7 @@ fn is_standalone_ltp_bin_invoke() -> bool {
     !argv.iter().any(|arg| arg.starts_with('/') && !arg.ends_with(".sh"))
 }
 
-fn path_or_argv_is_cgroup_regression_helper(path: &str, argv: &[alloc::string::String]) -> bool {
-    if path.contains("cgroup_regression") {
-        return true;
-    }
-    argv.iter().any(|arg| arg.contains("cgroup_regression"))
-}
+
 
 fn current_context_is_cgroup_regression_helper() -> bool {
     if vfs::cwd::current_exe_path()

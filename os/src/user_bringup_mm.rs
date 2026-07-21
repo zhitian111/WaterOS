@@ -4,7 +4,6 @@
 //! `brk` / `mmap` / `munmap` 与 [`crate::user_bringup_basic`] 的 syscall 子集分离，
 //! 避免重复装载。须在 `fs::init` 之后调用。
 
-use runtime::logging::*;
 
 /// 默认尝试的 MM 子集路径（可按镜像增量增删）。
 #[allow(unused)]

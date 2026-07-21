@@ -10,7 +10,7 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use api_v0::{DriverError, DriverResult};
 use block::{
-    block_device_count, first_block_device, register_block_device, BlockDevice, Lba,
+    block_device_count, first_block_device, register_block_device, Lba,
     VirtioPciProbeInfo, BLOCK_SIZE,
 };
 #[cfg(feature = "block-cache")]

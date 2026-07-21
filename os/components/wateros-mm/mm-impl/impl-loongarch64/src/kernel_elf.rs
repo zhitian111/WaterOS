@@ -18,7 +18,7 @@ use api_v0::addr::{VirtAddr, VirtPageNum, PAGE_SIZE};
 use api_v0::address_space::AddressSpaceOps;
 use api_v0::error::{MmError, MmResult};
 use api_v0::kernel_bringup::{LoadElfError, LoadedElf, RootVolumeReadError};
-use api_v0::mmap::{DemandPageLoader, PageFaultAccess};
+use api_v0::mmap::DemandPageLoader;
 use api_v0::perm::PagePerm;
 use frame_alloctor::frame_alloc_result;
 #[cfg(not(feature = "vfs-root-read"))]
@@ -70,7 +70,6 @@ fn map_vfs_to_root_vol(e : VfsError) -> RootVolumeReadError {
         VfsError::TooManyOpenFiles |
         VfsError::NoSpace |
         VfsError::ReadOnlyFs => RootVolumeReadError::Unsupported,
-        VfsError::Busy => RootVolumeReadError::Io,
     }
 }
 
@@ -285,6 +284,7 @@ fn perm_from_pf(p_flags : u32) -> PagePerm {
     p
 }
 
+#[allow(dead_code)]
 /// 将 `[0x9000_0000, phys_ram_end)` 以 `vpn==ppn` 恒等映射进用户页表，权限
 /// `R|W|X`（内核辅助访问与用户段装载共用一套表时的 bring-up 约定）。
 fn map_kernel_ram_identity<A : AddressSpaceOps>(aspace : &mut A) -> Result<(), LoadElfError> {
@@ -386,12 +386,14 @@ fn map_segment<A : AddressSpaceOps>(aspace : &mut A,
     Ok(())
 }
 
+#[allow(dead_code)]
 struct ElfPathSegmentLoader {
     path : String,
     params : ElfSegmentLoadParams,
 }
 
 impl ElfPathSegmentLoader {
+    #[allow(dead_code)]
     fn new(path : &str, vbase : usize, p_offset : usize, filesz : usize, vma_start : usize) -> Self {
         let vma_file_origin = p_offset.saturating_sub(vbase.saturating_sub(vma_start));
         Self { path : String::from(path),
@@ -417,6 +419,7 @@ impl DemandPageLoader for ElfPathSegmentLoader {
     }
 }
 
+#[allow(dead_code)]
 fn register_lazy_segment_run(aspace : &mut LoongArch64AddressSpace,
                              path : &str,
                              run_start : VirtAddr,
@@ -1202,6 +1205,7 @@ pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
 }
 
 /// 从已读取的字节数组和路径加载 ELF（用于 shebang 解析等场景）。
+#[allow(dead_code)]
 pub fn from_elf_bytes_at_path(_data : &[u8], path : &str) -> Result<LoadedElf, LoadElfError> {
     from_elf_path(path)
 }

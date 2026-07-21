@@ -132,6 +132,7 @@ pub(crate) fn drop_task(task_id: usize) {
 }
 
 // 本方法代码由AI完成
+#[allow(private_interfaces)]
 pub(crate) fn alloc_unix_socket(
     typ: usize,
     status_flags: usize,
@@ -159,6 +160,7 @@ pub(crate) fn alloc_unix_socket(
     Ok((handle, sock))
 }
 
+#[allow(private_interfaces)]
 pub(crate) fn parse_sockaddr_un(addr_ptr: usize, addrlen: usize) -> Result<UnixAddr, ErrNo> {
     if addrlen < 2 || addr_ptr == 0 {
         return Err(ErrNo::EINVAL);

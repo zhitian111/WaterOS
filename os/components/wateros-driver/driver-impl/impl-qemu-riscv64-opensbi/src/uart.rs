@@ -4,7 +4,6 @@
 
 use core::ptr::{read_volatile, write_volatile};
 
-use character::with_character_device;
 use wateros_driver_character_api_v0::{CharacterDevice, SerialError, SerialPort, SerialResult};
 
 use wateros_base_config::mm::QEMU_VIRT_MMIO_PHYS_START;

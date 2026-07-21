@@ -25,6 +25,7 @@ use api_v0::address_space::AddressSpaceOps;
 use api_v0::error::MmError;
 use api_v0::perm::PagePerm;
 use frame_alloctor::frame_alloc_result;
+use wateros_base::addr::BasePPN;
 
 use crate::pagetable::LoongArch64AddressSpace;
 
@@ -48,7 +49,7 @@ pub(crate) fn phys_ram_end_exclusive() -> usize {
         v
     } else {
         // 回退值：仓库 QEMU LoongArch64 `virt -m 1G` 高 RAM 段上界。
-        0xb000_0000
+        0xB000_0000
     }
 }
 
@@ -72,10 +73,21 @@ pub fn kernel_satp() -> usize { api_v0::kernel_satp::get() }
 ///
 /// `ram_end_exclusive` 为物理 RAM 上界（不包含），应与 DTB `/memory` 或
 /// bring-up 约定一致。
-pub fn init(_start_ppn : usize, _end_ppn : usize, ram_end_exclusive : usize) {
+pub fn init(_dtb_pa : usize, ram_end_exclusive : usize) {
     assert!(ram_end_exclusive > LOONGARCH64_RAM_BASE,
             "kernel_mm: ram_end_exclusive must be above RAM base");
     PHYS_RAM_END_EXCL.store(ram_end_exclusive, Ordering::Release);
+
+    // 初始化帧分配器
+    let kernel_end_addr : usize;
+    unsafe {
+        core::arch::asm!("la {}, kernel_end", out(reg) kernel_end_addr);
+    }
+    let start_ppn = (kernel_end_addr + PAGE_SIZE - 1) / PAGE_SIZE;
+    let end_ppn = ram_end_exclusive / PAGE_SIZE;
+    let usable_end_ppn = end_ppn.min(0x1_0000_0000usize / PAGE_SIZE);
+    frame_alloctor::init_frame_allocator(BasePPN { val : start_ppn },
+                                         BasePPN { val : usable_end_ppn });
 
     let mut aspace =
         LoongArch64AddressSpace::new().expect("kernel_mm: LoongArch64AddressSpace::new failed");

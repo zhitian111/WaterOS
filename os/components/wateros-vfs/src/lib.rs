@@ -388,7 +388,6 @@ pub mod self_test {
     /// `read_at` / `write_at` 不改变顺序读偏移。
     #[cfg(feature = "bridge-fs-api")]
     pub fn read_at_write_at_smoke() -> VfsResult<()> {
-        use super::api::VfsIoHandle;
 
         const NAME: &str = "vfs_at_io_smoke";
         let mut path = String::from("/");

@@ -133,6 +133,7 @@ impl Sv39PteFlags {
 struct Sv39Pte(usize);
 
 impl Sv39Pte {
+    #[allow(dead_code)]
     #[inline]
     const fn zero() -> Self { Self(0) }
 

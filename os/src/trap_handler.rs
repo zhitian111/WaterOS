@@ -149,6 +149,8 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             let syscall_nr = cx.syscall_nr()
                                .raw();
             let syscall_args = cx.syscall_args();
+            #[cfg_attr(not(any(debug_assertions, feature = "syscall-trace")),
+                       allow(unused_variables))]
             let regs = syscall_args.as_regs();
             hot_syscall_trace!("[syscall] nr={} user_pc={:#x} user_sp={:#x} \
                                 args=[{:#x},{:#x},{:#x},{:#x},{:#x},{:#x}]",
@@ -301,8 +303,6 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
 
     if cx.returns_to_user() {
         return_to_user_signal_delivery(authoritative, trap_cause, cx, restart);
-        let return_satp = cx.return_address_space_token();
-        let kernel_satp = paging::active_address_space_token();
         // `raw_cause` 来自 TrapContext.scause 快照，即 **本次** 进入内核的原因（如
         // ecall=0x8）， 不是硬件 CSR 的“下一异常预告”；`sret`
         // 前也不会用该槽位预测下一次 trap。
@@ -359,9 +359,7 @@ fn return_to_user_signal_delivery(frame : *mut u8,
 }
 
 /// 信号/页错等提前返回路径：打 trace 后把 TCB trap 帧拷回内核栈供 `sret`。
-fn finish_trap_return(frame : *mut u8, cx : &TrapContext, raw_cause : usize) {
-    let return_satp = cx.return_address_space_token();
-    let kernel_satp = paging::active_address_space_token();
+fn finish_trap_return(frame : *mut u8, _cx : &TrapContext, _raw_cause : usize) {
     hot_syscall_trace!("[trap] sret to user pc={:#x} sp={:#x} return_satp={:#x} \
                         kernel_satp={:#x} frame_scause={:#x}",
                        cx.user_pc(),

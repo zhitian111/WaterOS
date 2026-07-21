@@ -108,7 +108,6 @@ impl OtherReadyQueue {
                 }
                 continue;
             }
-            consecutive_stale = 0;
             return Some(entry.task_id);
         }
         None

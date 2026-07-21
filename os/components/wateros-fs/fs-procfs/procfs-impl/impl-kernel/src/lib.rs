@@ -170,7 +170,7 @@ fn parse_node(path : &str) -> Option<ProcNode> {
         [pid_name, "status"] => Some(ProcNode::PidStatus(parse_pid(pid_name)?)),
         [pid_name, "smaps"] => Some(ProcNode::PidSmaps(parse_pid(pid_name)?)),
         [pid_name, "maps"] => Some(ProcNode::PidMaps(parse_pid(pid_name)?)),
-        [pid_name, "mounts"] => Some(ProcNode::Mounts),
+        [_pid_name, "mounts"] => Some(ProcNode::Mounts),
         [pid_name, "cmdline"] => Some(ProcNode::PidCmdline(parse_pid(pid_name)?)),
         _ => None,
     }
