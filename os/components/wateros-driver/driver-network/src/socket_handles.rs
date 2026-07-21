@@ -4,7 +4,7 @@
 
 use alloc::boxed::Box;
 use alloc::sync::Arc;
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use smoltcp::iface::SocketHandle;
 use spin::Mutex;
 use vfs_api::error::{VfsError, VfsResult};
@@ -34,35 +34,64 @@ fn socket_meta(inode: u64) -> VfsMetadata {
     }
 }
 
-/// socket fd 共享状态：fd handle 与 syscall 映射表共同持有它。
+/// 同一打开 socket 的共享状态；`dup`/`fork` 产生的 fd 与在途 syscall 共同持有。
+struct SocketShared {
+    handle: Mutex<SocketHandle>,
+    status_flags: AtomicUsize,
+}
+
+impl Drop for SocketShared {
+    fn drop(&mut self) {
+        // 所有 fd 和正在执行的 syscall 都已释放引用，此处恰好关闭一次底层 socket。
+        let handle = *self.handle.get_mut();
+        if let Err(err) = stack::socket_close(handle) {
+            log::warn!("[socket-ref] final close failed handle={:?} err={}", handle, err);
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct SocketRef {
-    inner: Arc<Mutex<SocketHandle>>,
+    inner: Arc<SocketShared>,
     inode: u64,
 }
 
 impl SocketRef {
     /// 包装 smoltcp 句柄并分配唯一伪 inode。
     pub fn new(handle: SocketHandle) -> Self {
+        Self::new_with_status_flags(handle, 0)
+    }
+
+    /// 包装 smoltcp 句柄，并设置共享的打开状态标志（如 `O_NONBLOCK`）。
+    pub fn new_with_status_flags(handle: SocketHandle, status_flags: usize) -> Self {
         Self {
-            inner: Arc::new(Mutex::new(handle)),
+            inner: Arc::new(SocketShared {
+                handle: Mutex::new(handle),
+                status_flags: AtomicUsize::new(status_flags),
+            }),
             inode: NEXT_SOCKET_INODE.fetch_add(1, Ordering::Relaxed),
         }
     }
 
     /// 读取当前 smoltcp 句柄（短暂持锁）。
     pub fn handle(&self) -> SocketHandle {
-        *self.inner.lock()
+        *self.inner.handle.lock()
     }
 
-    /// 替换底层句柄（accept 后监听 socket 置换场景）。
-    pub fn replace_handle(&self, handle: SocketHandle) {
-        *self.inner.lock() = handle;
+    /// 原子完成 accept 与监听句柄置换，串行化同一监听 fd 上的并发 accept。
+    pub fn accept(&self) -> Result<(SocketHandle, u16), &'static str> {
+        let mut listener = self.inner.handle.lock();
+        let (established, replacement, port) = stack::socket_accept(*listener)?;
+        *listener = replacement;
+        Ok((established, port))
     }
 
-    /// 最后一个 fd 关闭时是否应调用协议栈 `socket_close`。
-    fn should_close_underlying(&self) -> bool {
-        Arc::strong_count(&self.inner) <= 2
+    pub fn status_flags(&self) -> usize {
+        self.inner.status_flags.load(Ordering::Acquire)
+    }
+
+    pub fn set_status_flags(&self, flags: usize) {
+        self.inner.status_flags.store(flags, Ordering::Release);
     }
 
     fn inode(&self) -> u64 {
@@ -86,32 +115,28 @@ impl VfsIoHandle for TcpStreamHandle {
 
     fn poll_revents(&mut self, events: i16) -> VfsResult<i16> {
         let handle = self.socket.handle();
+        let snapshot = stack::socket_poll_snapshot(handle).map_err(map_stack_err)?;
         let mut revents = 0;
         if events & POLLIN != 0 {
-            let can_recv = stack::socket_can_recv(handle).unwrap_or(false);
-            let may_recv = stack::socket_may_recv(handle).unwrap_or(false);
-            if can_recv || !may_recv {
+            if snapshot.can_recv || !snapshot.may_recv {
                 revents |= POLLIN;
             }
         }
         if events & POLLOUT != 0
-            && stack::socket_may_send(handle).unwrap_or(false)
-            && stack::socket_send_capacity(handle).unwrap_or(0) > 0
+            && snapshot.may_send
+            && snapshot.send_capacity > 0
         {
             revents |= POLLOUT;
         }
-        if matches!(stack::socket_state(handle), Ok(stack::SocketState::Closed)) {
+        if snapshot.state == stack::SocketState::Closed {
             revents |= POLLHUP;
         }
         Ok(revents)
     }
 
     fn close(&mut self) -> VfsResult<()> {
-        if self.socket.should_close_underlying() {
-            stack::socket_close(self.socket.handle()).map_err(map_stack_err)
-        } else {
-            Ok(())
-        }
+        // 底层 socket 由 SocketShared::drop 在最后一个 fd/在途操作释放时关闭。
+        Ok(())
     }
 
     fn metadata(&self) -> VfsResult<VfsMetadata> {
@@ -132,11 +157,7 @@ pub struct TcpListenerHandle {
 
 impl VfsIoHandle for TcpListenerHandle {
     fn close(&mut self) -> VfsResult<()> {
-        if self.socket.should_close_underlying() {
-            stack::socket_close(self.socket.handle()).map_err(map_stack_err)
-        } else {
-            Ok(())
-        }
+        Ok(())
     }
 
     fn metadata(&self) -> VfsResult<VfsMetadata> {
@@ -169,8 +190,9 @@ impl VfsIoHandle for UdpSocketHandle {
 
     fn poll_revents(&mut self, events: i16) -> VfsResult<i16> {
         let handle = self.socket.handle();
+        let snapshot = stack::socket_poll_snapshot(handle).map_err(map_stack_err)?;
         let mut revents = 0;
-        if events & POLLIN != 0 && stack::socket_udp_can_recv(handle).unwrap_or(false) {
+        if events & POLLIN != 0 && snapshot.can_recv {
             revents |= POLLIN;
         }
         if events & POLLOUT != 0 {
@@ -180,11 +202,7 @@ impl VfsIoHandle for UdpSocketHandle {
     }
 
     fn close(&mut self) -> VfsResult<()> {
-        if self.socket.should_close_underlying() {
-            stack::socket_close(self.socket.handle()).map_err(map_stack_err)
-        } else {
-            Ok(())
-        }
+        Ok(())
     }
 
     fn metadata(&self) -> VfsResult<VfsMetadata> {

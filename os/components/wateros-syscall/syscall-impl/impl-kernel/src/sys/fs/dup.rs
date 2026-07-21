@@ -6,7 +6,6 @@ use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 
 use crate::epoll_fd;
-use crate::socket_fd;
 use crate::vfs_util::vfs_error_to_errno;
 
 /// Linux `O_CLOEXEC`（`dup3` flags）。
@@ -16,14 +15,9 @@ const O_CLOEXEC: usize = 0o2000000;
 // 本方法代码由AI完成
 pub(crate) fn sys_dup(args: SyscallArgs) -> UserRet {
     let oldfd = args.arg(0);
-    let socket = socket_fd::lookup(oldfd);
     let epoll = epoll_fd::lookup(oldfd);
-    let status_flags = socket_fd::status_flags(oldfd).unwrap_or(0);
     match vfs::fd::dup_fd(oldfd, 0) {
         Ok(newfd) => {
-            if let Some(socket) = socket {
-                socket_fd::register_with_flags(newfd, socket, status_flags);
-            }
             if let Some(instance) = epoll {
                 epoll_fd::register(newfd, instance);
             }
@@ -46,21 +40,12 @@ pub(crate) fn sys_dup3(args: SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EINVAL);
     }
     let cloexec = (flags & O_CLOEXEC) != 0;
-    let socket = socket_fd::lookup(oldfd);
     let epoll = epoll_fd::lookup(oldfd);
-    let status_flags = socket_fd::status_flags(oldfd).unwrap_or(0);
-    let overwritten_socket = socket_fd::lookup(newfd).is_some();
     let overwritten_epoll = epoll_fd::is_epoll_fd(newfd);
     match vfs::fd::dup3_fd(oldfd, newfd, cloexec) {
         Ok(fd) => {
-            if overwritten_socket {
-                socket_fd::remove(newfd);
-            }
             if overwritten_epoll {
                 epoll_fd::remove(newfd);
-            }
-            if let Some(socket) = socket {
-                socket_fd::register_with_flags(fd, socket, status_flags);
             }
             if let Some(instance) = epoll {
                 epoll_fd::register(fd, instance);

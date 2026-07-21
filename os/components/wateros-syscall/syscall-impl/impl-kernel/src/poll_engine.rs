@@ -175,45 +175,41 @@ pub(crate) fn poll_socket_revents(fd : usize, events : i16) -> i16 {
     };
     let handle = socket.handle();
     let mut revents = 0i16;
-    let kind = stack::socket_kind(handle);
-    let state = stack::socket_state(handle);
+    let Ok(snapshot) = stack::socket_poll_snapshot(handle) else {
+        return POLLNVAL;
+    };
 
-    match kind {
-        Ok(stack::SocketKind::Tcp) => match state {
-            Ok(stack::SocketState::Listening { .. }) => {
-                let pending = stack::socket_has_pending_accept(handle).unwrap_or(false);
-                if events & POLLIN != 0 && pending {
+    match snapshot.kind {
+        stack::SocketKind::Tcp => match snapshot.state {
+            stack::SocketState::Listening { .. } => {
+                if events & POLLIN != 0 && snapshot.has_pending_accept {
                     revents |= POLLIN;
                 }
             }
-            Ok(stack::SocketState::Connecting) | Ok(stack::SocketState::Connected) => {
-                let can_recv = stack::socket_can_recv(handle).unwrap_or(false);
-                let peer_read_closed = matches!(state, Ok(stack::SocketState::Connected)) &&
-                                       !stack::socket_may_recv(handle).unwrap_or(true);
-                if events & POLLIN != 0 && (can_recv || peer_read_closed) {
+            stack::SocketState::Connecting | stack::SocketState::Connected => {
+                let peer_read_closed = snapshot.state == stack::SocketState::Connected &&
+                                       !snapshot.may_recv;
+                if events & POLLIN != 0 && (snapshot.can_recv || peer_read_closed) {
                     revents |= POLLIN;
                 }
-                let can_send = stack::socket_may_send(handle).unwrap_or(false) &&
-                               stack::socket_send_capacity(handle).unwrap_or(0) > 0;
-                if events & POLLOUT != 0 && can_send {
+                if events & POLLOUT != 0 && snapshot.may_send && snapshot.send_capacity > 0 {
                     revents |= POLLOUT;
                 }
-                if stack::socket_is_connected(handle).unwrap_or(true) == false {
+                if !snapshot.is_connected {
                     revents |= POLLHUP;
                 }
             }
-            Ok(stack::SocketState::Closed) => revents |= POLLHUP,
+            stack::SocketState::Closed => revents |= POLLHUP,
             _ => {}
         },
-        Ok(stack::SocketKind::Udp) => {
+        stack::SocketKind::Udp => {
             if events & POLLOUT != 0 {
                 revents |= POLLOUT;
             }
-            if events & POLLIN != 0 && stack::socket_udp_can_recv(handle).unwrap_or(false) {
+            if events & POLLIN != 0 && snapshot.can_recv {
                 revents |= POLLIN;
             }
         }
-        _ => {}
     }
     revents
 }
