@@ -6,6 +6,8 @@ extern crate alloc;
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use core::mem::MaybeUninit;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use api_v0::{VfsError, VfsIoHandle, VfsResult};
 use base::sync::MultiprocessorSafeCell;
 use core::mem::MaybeUninit;
