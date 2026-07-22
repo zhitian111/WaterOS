@@ -159,10 +159,7 @@ impl TaskControlBlock {
     }
 
     /// 创建一个用户任务。
-    pub fn new_user_task(id : TaskId,
-                         parent_id : Option<TaskId>,
-                         user : UserTask)
-                         -> Self {
+    pub fn new_user_task(id : TaskId, parent_id : Option<TaskId>, user : UserTask) -> Self {
         let kernel_stack = KernelStack::new();
         let task_cx = TaskContext::goto_entry(__arch_user_task_entry as *const () as usize,
                                               kernel_stack.top());
@@ -503,8 +500,14 @@ impl TaskControlBlock {
     pub fn mark_running(&mut self, cpu_id : CpuId) {
         self.state = TaskState::Running;
         self.ready_cpu_id = None;
-        self.running_cpu_id = Some(cpu_id);
-        self.last_cpu_id = Some(cpu_id);
+        // Idle task 不属于普通任务的运行归属模型：它不会进入 ready queue，
+        // 也不应以 `running_cpu_id` 参与跨 CPU 任务唯一性判断。
+        if self.is_idle() {
+            self.running_cpu_id = None;
+        } else {
+            self.running_cpu_id = Some(cpu_id);
+            self.last_cpu_id = Some(cpu_id);
+        }
         self.stats
             .schedule_count = self.stats
                                   .schedule_count

@@ -32,19 +32,21 @@ impl OtherQueue {
                current_ticks : 0,
                versions : BTreeMap::new() }
     }
+    /// 记录当前任务消耗的 tick 数；返回是否已达到最大值。
     pub fn tick_current(&mut self) -> bool {
         self.current_ticks = self.current_ticks
                                  .saturating_add(1);
         self.current_ticks >= MAX_TICKS_PER_TASK
     }
     pub fn reset_ticks(&mut self) { self.current_ticks = 0; }
+    /// 检查就绪队列条目是否仍然有效。
     fn entry_is_live(&self, entry : QueueEntry) -> bool {
         self.versions
             .get(&entry.task_id)
             .copied()
             .is_some_and(|ver| ver == entry.version)
     }
-
+    /// 为指定任务号生成新的版本号并返回。
     fn bump_version(&mut self, task_id : TaskId) -> u64 {
         let entry = self.versions
                         .entry(task_id)
@@ -52,7 +54,7 @@ impl OtherQueue {
         *entry = entry.saturating_add(1);
         *entry
     }
-
+    /// 清理就绪队列中过期的条目。
     fn compact_stale_entries(&mut self) {
         let versions = &self.versions;
         self.ready_queue
@@ -62,13 +64,13 @@ impl OtherQueue {
                         .is_some_and(|ver| ver == entry.version)
             });
     }
-
+    /// 计算就绪队列中连续 stale 条目达到多少时触发清理。
     fn stale_compact_threshold(&self) -> usize {
         READY_QUEUE_STALE_COMPACT_THRESHOLD.max(self.ready_queue
                                                     .len() /
                                                 4)
     }
-
+    /// 检查就绪队列中是否有可运行的任务。
     pub fn has_runnable(&self) -> bool {
         self.ready_queue
             .iter()
@@ -81,13 +83,13 @@ impl OtherQueue {
         self.versions
             .remove(&task_id);
     }
-
+    /// 将任务入就绪队列尾部；若已存在则生成新版本号并使旧条目失效。
     pub fn enqueue_ready_task(&mut self, task_id : TaskId) {
         let version = self.bump_version(task_id);
         self.ready_queue
             .push_back(QueueEntry { task_id, version });
     }
-
+    /// 清空就绪队列与版本号表。
     pub fn init(&mut self) {
         self.ready_queue
             .clear();
@@ -95,9 +97,9 @@ impl OtherQueue {
             .clear();
         self.current_ticks = 0;
     }
-
+    /// 任务被调度运行后从就绪队列中移除；若已存在多个条目则只使其余条目失效。
     pub fn detach_task(&mut self, task_id : TaskId) { let _ = self.bump_version(task_id); }
-
+    /// 从就绪队列中选取下一个可运行任务号；若无则返回 `None`。
     pub fn pick_next_runnable_task_id(&mut self) -> Option<TaskId> {
         let mut consecutive_stale = 0usize;
         while let Some(entry) = self.ready_queue
@@ -115,6 +117,13 @@ impl OtherQueue {
         }
         None
     }
+    pub fn runnable_count(&self) -> usize {
+        self.ready_queue
+            .iter()
+            .copied()
+            .filter(|entry| self.entry_is_live(*entry))
+            .count()
+    }
 }
 
 
@@ -125,7 +134,16 @@ fn bucket_index(priority : i32) -> Option<usize> {
         None
     }
 }
-
+fn take_task_id_by_id(queue : &mut VecDeque<TaskId>, task_id : TaskId) -> bool {
+    if let Some(pos) = queue.iter()
+                            .position(|candidate| *candidate == task_id)
+    {
+        queue.remove(pos);
+        true
+    } else {
+        false
+    }
+}
 /// `SCHED_FIFO` 就绪队列。
 // 本结构代码由AI完成
 pub struct FifoQueue {
@@ -167,18 +185,14 @@ impl FifoQueue {
         let index = bucket_index(priority)?;
         self.buckets[index].pop_front()
     }
-}
-
-fn take_task_id_by_id(queue : &mut VecDeque<TaskId>, task_id : TaskId) -> bool {
-    if let Some(pos) = queue.iter()
-                            .position(|candidate| *candidate == task_id)
-    {
-        queue.remove(pos);
-        true
-    } else {
-        false
+    pub fn runnable_count(&self) -> usize {
+        self.buckets
+            .iter()
+            .map(|bucket| bucket.len())
+            .sum()
     }
 }
+
 
 use config::task::MAX_RT_TICKS_PER_TASK;
 
@@ -219,7 +233,7 @@ impl RrQueue {
     }
 
 
-    /// 时钟 tick：处理当前 RR 任务时间片。
+    /// 处理当前 RR 任务的 tick 消耗；返回是否应让出 CPU。
     pub fn on_tick_current(&mut self, current : TaskId, priority : i32) -> RrTickAction {
         if self.current != Some((current, priority)) {
             self.current = Some((current, priority));
@@ -296,5 +310,11 @@ impl RrQueue {
     pub fn clear_running(&mut self) {
         self.current = None;
         self.remaining_ticks = 0;
+    }
+    pub fn runnable_count(&self) -> usize {
+        self.buckets
+            .iter()
+            .map(|bucket| bucket.len())
+            .sum()
     }
 }
