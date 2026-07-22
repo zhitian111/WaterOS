@@ -71,6 +71,7 @@ impl MultiClassScheduler {
 
     /// 标记任务为 Running 并更新当前 CPU 的 current_task_id。
     fn set_current_task(&mut self, task_id : TaskId, cpu_id : CpuId) {
+        let previous_task_id = self.cpu_states[cpu_id.raw()].current_task_id;
         if !self.global
                 .registry
                 .is_idle(task_id)
@@ -89,6 +90,11 @@ impl MultiClassScheduler {
                              "selected task is not owned by this CPU runqueue");
         }
         self.cpu_states[cpu_id.raw()].current_task_id = Some(task_id);
+        if previous_task_id != Some(task_id) {
+            self.cpu_states[cpu_id.raw()].context_switches = self.cpu_states[cpu_id.raw()]
+                                                                   .context_switches
+                                                                   .saturating_add(1);
+        }
         self.global
             .registry
             .mark_running(task_id, cpu_id);
@@ -142,6 +148,9 @@ impl MultiClassScheduler {
             // --- Tick 路径：检查时间片与抢占条件 ---
             ScheduleReason::Tick => {
                 // 1a. 推进全局 tick 和当前任务的 tick 计数
+                self.cpu_states[cpu_id.raw()].timer_ticks = self.cpu_states[cpu_id.raw()]
+                                                              .timer_ticks
+                                                              .saturating_add(1);
                 self.global
                     .wait_queues
                     .on_tick();

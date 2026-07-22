@@ -61,7 +61,9 @@ pub use api_v0::{
     UserImageInfo, UserStack, UserTask, WaitQueueId,
 };
 pub use api_v0::{ExitedTask, TaskId, TaskKind};
-pub use cpu::{cpu_snapshot, online_cpu_mask, print_cpu_states, running_cpu, set_cpu_online};
+pub use scheduler::CpuSnapshot;
+pub use cpu::{cpu_snapshot, cpu_states, online_cpu_mask, print_cpu_states, running_cpu,
+              set_cpu_online};
 #[cfg(feature = "impl-core")]
 pub(crate) use impl_core as active_impl;
 
