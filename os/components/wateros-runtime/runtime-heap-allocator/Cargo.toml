@@ -11,6 +11,7 @@
         "spin_mutex",
     ] }
     config = { path = "../../wateros-base/base-config/", package = "wateros-base-config" }
+    base = { path = "../../wateros-base/", package = "wateros-base" }
     arch = { path = "../../wateros-platform/platform-arch/", package = "wateros-platform-arch", default-features = false, features = [
         "api-v0",
     ] }
