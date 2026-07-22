@@ -7,7 +7,7 @@ use abi::user_ret::UserRet;
 use vfs::api::VfsError;
 
 use crate::sys::time::rtc::sys_rtc_ioctl;
-use crate::user_copy::copy_to_user_struct;
+use crate::user_copy::{copy_from_user_struct, copy_to_user_struct};
 use crate::vfs_util::vfs_error_to_errno;
 
 const TCGETS: u32 = 0x5401;
@@ -17,6 +17,7 @@ const TCSETSF: u32 = 0x5404;
 const TIOCGPGRP: u32 = 0x540f;
 const TIOCGWINSZ: u32 = 0x5413;
 const FIONREAD: u32 = 0x541b;
+const FIONBIO: u32 = 0x5421;
 const TIOCNOTTY: u32 = 0x5422;
 const RTC_RD_TIME: u32 = 0x8024_7009;
 const RTC_SET_TIME: u32 = 0x4024_700a;
@@ -107,6 +108,9 @@ pub(crate) fn sys_ioctl(args: SyscallArgs) -> UserRet {
     if request == FIONREAD {
         return pipe_fionread(fd, argp);
     }
+    if request == FIONBIO {
+        return fd_fionbio(fd, argp);
+    }
 
     match vfs::fd::with_current_io(fd, |handle| handle.ioctl(request as usize, argp)) {
         Ok(v) => UserRet::from_success(v as usize),
@@ -117,6 +121,42 @@ pub(crate) fn sys_ioctl(args: SyscallArgs) -> UserRet {
             global_ioctl_fallback(fd, request, argp)
         }
         Err(e) => UserRet::from_error(vfs_error_to_errno(e)),
+    }
+}
+
+fn fd_fionbio(fd : usize, argp : usize) -> UserRet {
+    const O_NONBLOCK : usize = 0o4000;
+    if argp == 0 {
+        return UserRet::from_error(ErrNo::EFAULT);
+    }
+    let enabled = match copy_from_user_struct::<i32>(argp) {
+        Ok(value) => value != 0,
+        Err(error) => return UserRet::from_error(error),
+    };
+
+    if let Some(mut flags) = crate::socket_fd::status_flags(fd) {
+        if enabled {
+            flags |= O_NONBLOCK;
+        } else {
+            flags &= !O_NONBLOCK;
+        }
+        return match crate::socket_fd::set_status_flags(fd, flags) {
+            Some(()) => UserRet::from_success(0),
+            None => UserRet::from_error(ErrNo::EBADF),
+        };
+    }
+
+    match vfs::fd::with_current_io(fd, |handle| {
+        let mut flags = handle.open_status_flags();
+        if enabled {
+            flags |= O_NONBLOCK as u32;
+        } else {
+            flags &= !(O_NONBLOCK as u32);
+        }
+        handle.set_open_status_flags(flags)
+    }) {
+        Ok(()) => UserRet::from_success(0),
+        Err(error) => UserRet::from_error(vfs_error_to_errno(error)),
     }
 }
 

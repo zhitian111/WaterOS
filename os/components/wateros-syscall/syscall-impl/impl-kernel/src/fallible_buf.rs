@@ -11,7 +11,7 @@ use abi::errno::ErrNo;
 // 本变量代码由AI完成
 pub const SYSCALL_IO_MAX : usize = 4 * 1024 * 1024;
 
-/// 与 `sendto`/`recvfrom`/`sendmsg` 对齐的上限。
+/// socket option 值的防御性上限。
 // 本变量代码由AI完成
 pub const SYSCALL_SOCK_IO_MAX : usize = 64 * 1024;
 

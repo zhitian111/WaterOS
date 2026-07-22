@@ -6,6 +6,7 @@ use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use driver::network::stack;
 
+use crate::fallible_buf::{try_kbuf, SYSCALL_IO_MAX};
 use crate::socket_block::socket_blocking_tick;
 use crate::socket_fd;
 use crate::user_copy::{copy_to_user, copy_to_user_struct};
@@ -32,15 +33,16 @@ pub(crate) fn sys_recvfrom(args: SyscallArgs) -> UserRet {
     if len == 0 {
         return UserRet::from_success(0);
     }
-    if len > 65536 {
-        return UserRet::from_error(ErrNo::EINVAL);
-    }
     if buf_ptr == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
     }
 
+    let mut kbuf = match try_kbuf(len, SYSCALL_IO_MAX) {
+        Ok(buf) => buf,
+        Err(err) => return UserRet::from_error(err),
+    };
+
     if crate::unix_sock::is_unix_fd(fd) {
-        let mut kbuf = alloc::vec![0u8; len];
         return match crate::unix_sock::recvfrom_unix(fd, &mut kbuf, addr_ptr, addrlen_ptr) {
             Ok(n) if n > 0 => match copy_to_user(buf_ptr, &kbuf[..n]) {
                 Ok(written) if written == n => UserRet::from_success(n),
@@ -60,7 +62,6 @@ pub(crate) fn sys_recvfrom(args: SyscallArgs) -> UserRet {
 
     match stack::socket_kind(handle) {
         Ok(driver::network::stack::SocketKind::Tcp) => {
-            let mut kbuf = alloc::vec![0u8; len];
             match recv_tcp_blocking(fd, handle, &mut kbuf) {
                 Ok(n) if n > 0 => {
                     match copy_to_user(buf_ptr, &kbuf[..n]) {
@@ -73,7 +74,6 @@ pub(crate) fn sys_recvfrom(args: SyscallArgs) -> UserRet {
             }
         }
         Ok(driver::network::stack::SocketKind::Udp) => {
-            let mut kbuf = alloc::vec![0u8; len];
             match recv_udp_blocking(fd, handle, &mut kbuf) {
                 Ok((n, ip, port)) if n > 0 => {
                     if copy_to_user(buf_ptr, &kbuf[..n]).is_err() {

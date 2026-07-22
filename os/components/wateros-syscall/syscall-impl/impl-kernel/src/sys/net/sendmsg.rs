@@ -7,6 +7,7 @@ use abi::user_ret::UserRet;
 use driver::network::stack;
 use wateros_base_config::task::SCHED_TIMER_PERIOD_MS;
 
+use crate::fallible_buf::{try_kbuf, SYSCALL_IO_MAX};
 use crate::socket_fd;
 use crate::user_copy::{copy_from_user, copy_from_user_struct, copy_to_user};
 
@@ -77,8 +78,11 @@ pub(crate) fn sys_sendmsg(args: SyscallArgs) -> UserRet {
             Ok(v) => v,
             Err(_) => return UserRet::from_error(ErrNo::EFAULT),
         };
-        total_len = total_len.saturating_add(iov.iov_len);
-        if total_len > 65536 {
+        total_len = match total_len.checked_add(iov.iov_len) {
+            Some(total) => total,
+            None => return UserRet::from_error(ErrNo::EINVAL),
+        };
+        if total_len > SYSCALL_IO_MAX {
             return UserRet::from_error(ErrNo::EMSGSIZE);
         }
         iovs.push(iov);
@@ -89,7 +93,10 @@ pub(crate) fn sys_sendmsg(args: SyscallArgs) -> UserRet {
     }
 
     // 将 iovec 数据拼接到单个缓冲区
-    let mut kbuf = alloc::vec![0u8; total_len];
+    let mut kbuf = match try_kbuf(total_len, SYSCALL_IO_MAX) {
+        Ok(buf) => buf,
+        Err(err) => return UserRet::from_error(err),
+    };
     let mut offset = 0;
     for iov in &iovs {
         if iov.iov_len > 0 {
@@ -160,7 +167,10 @@ pub(crate) fn sys_recvmsg(args: SyscallArgs) -> UserRet {
             Ok(v) => v,
             Err(_) => return UserRet::from_error(ErrNo::EFAULT),
         };
-        total_len = total_len.saturating_add(iov.iov_len);
+        total_len = match total_len.checked_add(iov.iov_len) {
+            Some(total) if total <= SYSCALL_IO_MAX => total,
+            _ => return UserRet::from_error(ErrNo::EINVAL),
+        };
         iovs.push(iov);
     }
 
@@ -174,7 +184,10 @@ pub(crate) fn sys_recvmsg(args: SyscallArgs) -> UserRet {
     };
     let handle = socket.handle();
 
-    let mut kbuf = alloc::vec![0u8; total_len];
+    let mut kbuf = match try_kbuf(total_len, SYSCALL_IO_MAX) {
+        Ok(buf) => buf,
+        Err(err) => return UserRet::from_error(err),
+    };
 
     // 根据 socket 类型接收，写回发送方地址
     let (n, from_ip, from_port) = match stack::socket_kind(handle) {
