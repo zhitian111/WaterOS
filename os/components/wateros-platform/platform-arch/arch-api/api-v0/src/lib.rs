@@ -5,6 +5,9 @@
 //! 本 crate **不**依赖任何固件、SBI 或板级 profile；与 `wateros-platform-api-v0` 正交，
 //! 由上层 `wateros-platform` 或 `arch-impl` 在必要时组合调用。
 
+/// 当前 CPU 标识与本核早期初始化契约。
+pub mod cpu;
+
 /// 特权级抽象（与 `sstatus` 等配合的语义，不包含固件调用）。
 pub mod privilege;
 /// 通用寄存器组与控制寄存器的最小读写视图（与具体 trap 帧布局解耦的辅助 trait）。

@@ -83,6 +83,7 @@ mod qemu_riscv64_opensbi {
     fn ap_main(cpu_id : task::CpuId) -> ! {
         warn!("[boot-init] AP cpu={} entering scheduler",
               cpu_id.raw());
+        platform::arch::cpu::init_current_cpu(cpu_id).expect("AP init current CPU");
         platform::arch::init();
         // 开 AP 定时器中断，使 idle 能被 tick 唤醒从而从全局就绪队列取任务
         platform::interrupt::enable_timer_interrupt().expect("AP enable timer interrupt");
@@ -120,6 +121,8 @@ mod qemu_riscv64_opensbi {
         runtime::logging::init();
         crate::boot_timebase::probe_and_init_timebase(boot_arg1);
         runtime::heap_allocator::init();
+        platform::arch::cpu::init_current_cpu(task::CpuId::from_raw(boot_arg0))
+            .expect("BSP init current CPU");
         platform::arch::init();
         task::init();
         crate::trap_handler::init();
@@ -153,6 +156,7 @@ mod qemu_loongarch64_virt {
     fn ap_main(cpu_id : task::CpuId) -> ! {
         warn!("[boot-init] AP cpu={} entering scheduler",
               cpu_id.raw());
+        platform::arch::cpu::init_current_cpu(cpu_id).expect("AP init current CPU");
         platform::arch::init();
         platform::interrupt::enable_timer_interrupt().expect("AP enable timer interrupt");
         platform::timer::set_timer_after_ms(100).expect("AP set initial timer");
@@ -184,6 +188,8 @@ mod qemu_loongarch64_virt {
         klog::init();
         runtime::logging::init();
         runtime::heap_allocator::init();
+        platform::arch::cpu::init_current_cpu(platform::arch::cpu::current_cpu_id())
+            .expect("BSP init current CPU");
         platform::arch::init();
         driver::init_when_boot(envp);
         crate::boot_timebase::probe_and_init_timebase(envp);

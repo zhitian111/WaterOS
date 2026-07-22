@@ -87,9 +87,9 @@ gdb_point_0:
     csrw satp, t1
     sfence.vma x0, x0
 
-    # 恢复内核 tp（hart_id）——用户态 trap 后 tp 被用户 TLS 指针覆盖
-    la t1, __wateros_riscv_return_frame
-    ld tp, 38*8(t1)
+    # t0 是 sscratch 给出的本 CPU return frame。用户 tp 是 TLS，必须在进入
+    # 任何 Rust 代码前从 supervisor-only 槽恢复可信 CPU id。
+    ld tp, 38*8(t0)
 
     mv t1, t0
     mv t2, sp
@@ -273,7 +273,14 @@ gdb_point_1:
 # 该跳板映射在用户地址空间内：切 satp 前把帧复制到跳板数据页；切换后只从跳板
 # 代码/数据取指，不再访问内核栈内存。
 __wateros_riscv_restore_user_from_frame:
-    la t0, __wateros_riscv_return_frame
+    # 内核 tp 是可信 CPU id；选择本 CPU 独占的 320 字节 return frame。
+    # 320 = 256 + 64，避免 trampoline 依赖乘法扩展。
+    slli t4, tp, 8
+    slli t3, tp, 6
+    add t4, t4, t3
+    la t5, __wateros_riscv_return_frames
+    add t5, t5, t4
+    mv t0, t5
     mv t1, a0
     li t2, 37
 .Lcopy_return_frame:
@@ -284,7 +291,7 @@ __wateros_riscv_restore_user_from_frame:
     addi t2, t2, -1
     bnez t2, .Lcopy_return_frame
 
-    la t0, __wateros_riscv_return_frame
+    mv t0, t5
     sd a1, 37*8(t0)
     sd tp, 38*8(t0)            # 保存内核 tp（hart_id），下次用户 trap 时恢复
 
@@ -334,9 +341,13 @@ gdb_point_3:
     sret
 
     .section .data.trampoline
-    .globl __wateros_riscv_kernel_satp, __wateros_riscv_return_frame
-    .align 3
+    .globl __wateros_riscv_kernel_satp, __wateros_riscv_return_frame, __wateros_riscv_return_frames
+    .balign 4096
 __wateros_riscv_kernel_satp:
     .quad 0
+    .balign 4096
+__wateros_riscv_return_frames:
 __wateros_riscv_return_frame:
-    .zero 320      # 40 槽：0-36 用户 GPR/CSR，37=kernel_stack_top，38=kernel_tp
+    # 每 CPU 40 槽：0-36 用户 GPR/CSR，37=kernel_stack_top，38=kernel_cpu_id。
+    # 8 * 320 = 2560 字节，完整位于同一个 trampoline 数据页。
+    .zero 320 * 8

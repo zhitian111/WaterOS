@@ -90,10 +90,11 @@ pub mod trap {
 /// 当前 CPU id。
 #[cfg(feature = "api-v0")]
 pub mod cpu {
+    pub use api_v0::cpu::{ArchCpu, ArchCpuInitError, ArchCpuInitResult};
     #[cfg(feature = "impl-loongarch64")]
-    pub use impl_loongarch64::cpu::current_cpu_id;
+    pub use impl_loongarch64::cpu::{current_cpu_id, init_current_cpu};
     #[cfg(feature = "impl-riscv64")]
-    pub use impl_riscv64::cpu::current_cpu_id;
+    pub use impl_riscv64::cpu::{current_cpu_id, init_current_cpu};
 }
 
 /// 监管态中断屏蔽与使能（如 `sie` / `sstatus.SIE`），**不**包含对 CLINT/ACLINT

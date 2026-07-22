@@ -1,5 +1,7 @@
 //! 无平台策略的逻辑 CPU 标识和 CPU 集合类型。
 
+use core::cell::UnsafeCell;
+
 /// 逻辑 CPU 标识。
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -54,9 +56,43 @@ impl CpuMask {
 /// 旧接口兼容别名。新代码应使用 [`CpuId`]。
 pub type CPUHartID = usize;
 
+/// 固定容量、无需堆分配的 CPU-local 存储。
+///
+/// 本类型只负责按 [`CpuId`] 做边界检查。跨 CPU 共享槽位时，`T` 自身仍须提供
+/// 所需同步；典型用法是存放原子变量或每个 CPU 只修改自己槽位的状态。
+pub struct CpuLocal<T, const N : usize> {
+    slots : [UnsafeCell<T>; N],
+}
+
+unsafe impl<T : Sync, const N : usize> Sync for CpuLocal<T, N> {}
+
+impl<T, const N : usize> CpuLocal<T, N> {
+    pub fn new(values : [T; N]) -> Self {
+        Self { slots: values.map(UnsafeCell::new) }
+    }
+
+    /// 用已经包装好的槽构造静态 CPU-local 存储。
+    pub const fn from_cells(slots : [UnsafeCell<T>; N]) -> Self { Self { slots } }
+
+    pub const fn capacity(&self) -> usize { N }
+
+    pub fn get(&self, cpu : CpuId) -> Option<&T> {
+        self.slots.get(cpu.index()).map(|slot| unsafe { &*slot.get() })
+    }
+
+    /// 获取当前 CPU 独占拥有的槽位。
+    ///
+    /// # Safety
+    /// 调用方必须保证该槽位没有任何并发读写，通常要求 `cpu` 就是当前 CPU，且
+    /// 其它 CPU 永远不修改这个槽位。
+    pub unsafe fn get_local_mut(&self, cpu : CpuId) -> Option<&mut T> {
+        self.slots.get(cpu.index()).map(|slot| unsafe { &mut *slot.get() })
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{CpuId, CpuMask};
+    use super::{CpuId, CpuLocal, CpuMask};
 
     #[test]
     fn cpu_mask_tracks_membership() {
@@ -73,5 +109,13 @@ mod tests {
     #[test]
     fn out_of_range_cpu_is_not_contained() {
         assert!(!CpuMask::from_bits(u64::MAX).contains(CpuId::from_raw(64)));
+    }
+
+    #[test]
+    fn cpu_local_checks_capacity() {
+        let local = CpuLocal::new([10, 20]);
+        assert_eq!(local.get(CpuId::BOOT), Some(&10));
+        assert_eq!(local.get(CpuId::from_raw(1)), Some(&20));
+        assert!(local.get(CpuId::from_raw(2)).is_none());
     }
 }
