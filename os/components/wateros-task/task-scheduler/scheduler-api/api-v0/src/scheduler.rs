@@ -15,6 +15,8 @@ pub enum ScheduleReason {
     StartFirst,
     /// 当前任务主动让出 CPU。
     Yield,
+    /// IPI 或本地入队请求的重调度检查；不应无条件让出当前任务。
+    Reschedule,
     /// 由时钟 tick 触发一次调度检查
     Tick,
     /// 由于阻塞而切换出去。
@@ -53,6 +55,8 @@ pub struct CPUScheduler {
     pub idle_task_id : Option<TaskId>,
     pub current_task_ticks : u64,
     pub online : bool,
+    /// 有新任务进入本 CPU 队列，需在安全点重新判断是否抢占。
+    pub need_resched : bool,
     pub other_queue : OtherQueue,
     pub rr_queue : RrQueue,
     pub fifo_queue : FifoQueue,
@@ -65,6 +69,7 @@ impl CPUScheduler {
                idle_task_id : None,
                current_task_ticks : 0,
                online : false,
+               need_resched : false,
                other_queue : OtherQueue::new(),
                rr_queue : RrQueue::new(),
                fifo_queue : FifoQueue::new() }

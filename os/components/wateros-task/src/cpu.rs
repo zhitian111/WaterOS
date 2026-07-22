@@ -10,3 +10,4 @@ pub fn running_cpu(task_id : TaskId) -> Option<CpuId> { scheduler::running_cpu(t
 pub fn set_cpu_online(cpu_id : CpuId) { scheduler::set_cpu_online(cpu_id) }
 /// Snapshot of CPUs that have completed task-scheduler bring-up.
 pub fn online_cpu_mask() -> CpuMask { scheduler::online_cpu_mask() }
+pub fn print_cpu_states() { scheduler::print_cpu_states(); }

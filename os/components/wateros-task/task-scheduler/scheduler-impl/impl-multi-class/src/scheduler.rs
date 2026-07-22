@@ -7,6 +7,7 @@ use api_v0::{
     SchedPolicyChangeAction,
 };
 use arch::task::ActiveArchTaskContext as TaskContext;
+use base::cpu::CpuMask;
 use config::task::MAX_CPUS;
 use task_api::{
     AddressSpaceHandle, CpuId, ExitedTask, KernelTaskEntry, SchedError, SchedParam, SchedPolicy,
@@ -22,6 +23,8 @@ pub(super) struct MultiClassScheduler {
     pub cpu_states : [CPUScheduler; MAX_CPUS],
     /// 环形选核的起点。负载相同时，从这里开始的第一个 online CPU 获胜。
     pub next_placement_cpu : usize,
+    /// 入队时在 scheduler 锁内累计，锁外再实际发送定向 IPI。
+    pending_reschedule_cpus : CpuMask,
 }
 
 include!("scheduler/cpu.rs");
@@ -37,12 +40,14 @@ impl MultiClassScheduler {
     pub(super) fn new() -> Self {
         Self { global : GlobalScheduler::new(),
                cpu_states : core::array::from_fn(|i| CPUScheduler::new(CpuId::from_raw(i))),
-               next_placement_cpu : 0 }
+               next_placement_cpu : 0,
+               pending_reschedule_cpus : CpuMask::EMPTY }
     }
 
     pub(super) fn init(&mut self) {
         self.global.init();
         self.next_placement_cpu = 0;
+        self.pending_reschedule_cpus = CpuMask::EMPTY;
         // 为每个 configured CPU 创建 idle 任务
         for cpu_id in 0..self.cpu_states
                              .len()
@@ -52,6 +57,7 @@ impl MultiClassScheduler {
                                    .init();
             self.cpu_states[cpu_id].fifo_queue = FifoQueue::new();
             self.cpu_states[cpu_id].rr_queue = RrQueue::new();
+            self.cpu_states[cpu_id].need_resched = false;
             let idle_id = self.global
                               .registry
                               .spawn_idle_task();
@@ -120,6 +126,19 @@ impl MultiClassScheduler {
                            -> Option<SwitchPair> {
         // ===== Phase 1: 根据 reason 做前置处理 =====
         match reason {
+            ScheduleReason::Reschedule => {
+                let Some(current_id) = self.cpu_states[cpu_id.raw()].current_task_id else {
+                    return None;
+                };
+                let current = self.global
+                                  .registry
+                                  .task_snapshot(current_id);
+                if !self.ready_task_should_preempt(current_id, current, cpu_id) {
+                    return None;
+                }
+                self.cpu_states[cpu_id.raw()].other_queue
+                                             .reset_ticks();
+            }
             // --- Tick 路径：检查时间片与抢占条件 ---
             ScheduleReason::Tick => {
                 // 1a. 推进全局 tick 和当前任务的 tick 计数
@@ -189,7 +208,9 @@ impl MultiClassScheduler {
         }
 
         // ===== Phase 2: 前置 promote（非 Tick 路径在此处理） =====
-        if !matches!(reason, ScheduleReason::Tick) {
+        if !matches!(reason,
+                     ScheduleReason::Tick | ScheduleReason::Reschedule)
+        {
             self.promote_sleep_and_timeouts();
         }
 
@@ -243,7 +264,9 @@ impl MultiClassScheduler {
         let is_exit = matches!(reason, ScheduleReason::Exit(_));
         let queue_target = match reason {
             ScheduleReason::StartFirst => QueueTarget::Ready,
-            ScheduleReason::Yield | ScheduleReason::Tick => QueueTarget::Ready,
+            ScheduleReason::Yield | ScheduleReason::Tick | ScheduleReason::Reschedule => {
+                QueueTarget::Ready
+            }
             ScheduleReason::Block(block_reason) => QueueTarget::Blocked(block_reason),
             ScheduleReason::Sleep(ticks) => {
                 let wake_tick = self.global
@@ -504,6 +527,7 @@ impl MultiClassScheduler {
     pub(super) fn enqueue_ready_task(&mut self, task_id : TaskId) {
         let picked_cpu = self.pick_cpu_for_new_task();
         self.enqueue_ready_by_cpu(task_id, picked_cpu);
+        self.request_reschedule(picked_cpu);
     }
 
 
@@ -521,7 +545,27 @@ impl MultiClassScheduler {
                          .filter(|cpu_id| self.cpu_states[cpu_id.raw()].online)
                          .unwrap_or_else(|| self.pick_cpu_for_new_task());
         self.enqueue_ready_by_cpu(task_id, target);
+        self.request_reschedule(target);
         target
+    }
+
+    fn request_reschedule(&mut self, cpu_id : CpuId) {
+        self.cpu_states[cpu_id.raw()].need_resched = true;
+        self.pending_reschedule_cpus
+            .insert(cpu_id);
+    }
+
+    pub(super) fn take_pending_reschedule_cpus(&mut self) -> CpuMask {
+        let pending = self.pending_reschedule_cpus;
+        self.pending_reschedule_cpus = CpuMask::EMPTY;
+        pending
+    }
+
+    /// 消费当前 CPU 的重调度请求；SSIP 没有请求位时不应触发调度。
+    pub(super) fn take_need_resched(&mut self, cpu_id : CpuId) -> bool {
+        let need_resched = self.cpu_states[cpu_id.raw()].need_resched;
+        self.cpu_states[cpu_id.raw()].need_resched = false;
+        need_resched
     }
     fn enqueue_ready_by_cpu(&mut self, task_id : TaskId, cpu_id : CpuId) {
         debug_assert!(!self.global
