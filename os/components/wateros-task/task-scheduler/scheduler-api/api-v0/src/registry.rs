@@ -210,7 +210,10 @@ impl TaskRegistry {
     }
 
     /// 按规格创建用户任务并返回其 id。
-    pub fn spawn_user_task_spec(&mut self, spec : UserTask, parent_id : Option<TaskId>) -> TaskId {
+    pub fn spawn_user_task_spec(&mut self,
+                                spec : UserTask,
+                                parent_id : Option<TaskId>)
+                                -> TaskId {
         let task_id = self.task_table
                           .allocate_id();
         log::trace!("[task-spawn] user spec id={} entry_pc={:#x} address_space_raw={:#x} \
@@ -350,11 +353,11 @@ impl TaskRegistry {
     }
 
     /// 将任务标为 Ready。
-    pub fn mark_ready(&mut self, task_id : TaskId) {
+    pub fn mark_ready(&mut self, task_id : TaskId, cpu_id : CpuId) {
         if let Some(task) = self.task_table
                                 .task_mut_opt(task_id)
         {
-            task.mark_ready();
+            task.mark_ready(cpu_id);
         }
     }
 
@@ -401,6 +404,24 @@ impl TaskRegistry {
         self.task_table
             .task_opt(task_id)
             .map(TaskControlBlock::state)
+    }
+
+    pub fn ready_cpu_id(&self, task_id : TaskId) -> Option<CpuId> {
+        self.task_table
+            .task_opt(task_id)
+            .and_then(TaskControlBlock::ready_cpu_id)
+    }
+
+    pub fn last_cpu_id(&self, task_id : TaskId) -> Option<CpuId> {
+        self.task_table
+            .task_opt(task_id)
+            .and_then(TaskControlBlock::last_cpu_id)
+    }
+
+    pub fn running_cpu_id(&self, task_id : TaskId) -> Option<CpuId> {
+        self.task_table
+            .task_opt(task_id)
+            .and_then(TaskControlBlock::running_cpu_id)
     }
 
     pub fn wait_target_ready(&self, target : TaskWaitTarget) -> bool {
