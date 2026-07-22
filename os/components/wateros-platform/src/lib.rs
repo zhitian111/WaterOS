@@ -209,10 +209,41 @@ pub mod reset {
 
 /// 早期控制台输出：由当前 board feature 选择 OpenSBI、UART 或其它平台后端。
 pub mod console {
-    pub use crate::active_impl::console::{
-        console_flush, console_write_a_buffer, console_write_a_byte,
-    };
     pub use api_v0::console::{PlatformConsoleError, PlatformConsoleResult};
+    use base::sync::MultiprocessorSafeCell;
+
+    /// 运行期可选的控制台接收端。OS 在完整 UART 字符设备注册后安装它；
+    /// 在此之前必须保持 `None`，以便 early console 仍能用于引导日志。
+    pub type RuntimeConsoleWriter = fn(&[u8]) -> PlatformConsoleResult<()>;
+    static RUNTIME_CONSOLE_WRITER : MultiprocessorSafeCell<Option<RuntimeConsoleWriter>> =
+        MultiprocessorSafeCell::new(None);
+
+    /// 安装运行期控制台写入端。后续内核日志与用户态 stdout 可汇聚到同一 UART
+    /// 设备锁，而不让 platform 层反向依赖 driver 层。
+    pub fn register_runtime_writer(writer : RuntimeConsoleWriter) {
+        *RUNTIME_CONSOLE_WRITER.lock() = Some(writer);
+    }
+
+    #[inline]
+    fn runtime_writer() -> Option<RuntimeConsoleWriter> { *RUNTIME_CONSOLE_WRITER.lock() }
+
+    #[inline]
+    pub fn console_write_a_byte(byte : u8) -> PlatformConsoleResult<()> {
+        console_write_a_buffer(core::slice::from_ref(&byte))
+    }
+
+    #[inline]
+    pub fn console_write_a_buffer(bytes : &[u8]) -> PlatformConsoleResult<()> {
+        if let Some(writer) = runtime_writer() {
+            return writer(bytes);
+        }
+        crate::active_impl::console::console_write_a_buffer(bytes)
+    }
+
+    #[inline]
+    pub fn console_flush() -> PlatformConsoleResult<()> {
+        crate::active_impl::console::console_flush()
+    }
 }
 
 /// 墙上时钟（`CLOCK_REALTIME` 偏移 + 单调时钟）。

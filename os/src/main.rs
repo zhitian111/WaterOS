@@ -15,6 +15,7 @@ use runtime::logging::warn;
 use syscall as _;
 
 mod boot_timebase;
+mod dashboard;
 mod trap_handler;
 mod user_bringup_bus;
 mod user_bringup_busybox;
@@ -69,6 +70,21 @@ fn bringup_driver_and_user() {
             vfs::test();
         }
     }
+}
+
+/// 完整 UART 字符设备注册后，内核 console 不再经 early console 直接写硬件，
+/// 而是与用户 stdout 共用 device #0 的锁，保证一整段输出不会相互穿插。
+fn write_registered_uart_console(bytes : &[u8]) -> platform::console::PlatformConsoleResult<()> {
+    driver::character::with_character_device(0, |device| {
+                          device.write(bytes)
+                                .map(|_| ())
+                                .map_err(|_| platform::console::PlatformConsoleError::WriteFailure)
+                      })
+        .unwrap_or(Err(platform::console::PlatformConsoleError::Unavailable))
+}
+
+fn register_runtime_console_writer() {
+    platform::console::register_runtime_writer(write_registered_uart_console);
 }
 
 #[cfg(feature = "qemu-riscv64-opensbi")]
@@ -138,7 +154,6 @@ mod qemu_riscv64_opensbi {
         platform::timer::set_timer_after_ms(100).expect("AP set initial timer");
         task::set_cpu_online(cpu_id);
         platform::interrupt::enable_global_interrupt().expect("AP enable global interrupt");
-        task::print_cpu_states();
         task::run_first_task_on_current_cpu(cpu_id)
     }
 
@@ -181,6 +196,7 @@ mod qemu_riscv64_opensbi {
         runtime::heap_allocator::init();
         platform::arch::init();
         task::init();
+        crate::dashboard::init();
         task::set_cpu_online(cpu_id);
         crate::trap_handler::init();
         // MM 初始化
@@ -192,6 +208,8 @@ mod qemu_riscv64_opensbi {
         wait_for_secondary_online(requested_aps);
 
         bringup_driver_and_user();
+        crate::register_runtime_console_writer();
+        crate::dashboard::start();
         platform::interrupt::enable_timer_interrupt().unwrap();
         platform::arch::interrupt::enable_soft_interrupt();
         platform::timer::set_timer_after_ms(100).unwrap();
@@ -251,6 +269,7 @@ mod qemu_loongarch64_virt {
         driver::init_when_boot(envp);
         crate::boot_timebase::probe_and_init_timebase(envp);
         task::init();
+        crate::dashboard::init();
         crate::trap_handler::init();
         platform::arch::paging::init_paging_disable_mmu();
 
@@ -260,6 +279,8 @@ mod qemu_loongarch64_virt {
         AP_BOOT_READY.store(true, Ordering::Release);
 
         bringup_driver_and_user();
+        crate::register_runtime_console_writer();
+        crate::dashboard::start();
         platform::interrupt::enable_timer_interrupt().unwrap();
         platform::timer::set_timer_after_ms(100).unwrap();
         platform::interrupt::enable_global_interrupt().unwrap();

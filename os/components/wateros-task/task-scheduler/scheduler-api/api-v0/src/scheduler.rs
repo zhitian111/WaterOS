@@ -57,6 +57,10 @@ pub struct CPUScheduler {
     pub online : bool,
     /// 有新任务进入本 CPU 队列，需在安全点重新判断是否抢占。
     pub need_resched : bool,
+    /// 本 CPU 实际切入另一任务（包括首次切入 idle）的次数。
+    pub context_switches : u64,
+    /// 本 CPU 已处理的 scheduler timer tick 次数。
+    pub timer_ticks : u64,
     pub other_queue : OtherQueue,
     pub rr_queue : RrQueue,
     pub fifo_queue : FifoQueue,
@@ -70,6 +74,8 @@ impl CPUScheduler {
                current_task_ticks : 0,
                online : false,
                need_resched : false,
+               context_switches : 0,
+               timer_ticks : 0,
                other_queue : OtherQueue::new(),
                rr_queue : RrQueue::new(),
                fifo_queue : FifoQueue::new() }
@@ -101,5 +107,14 @@ pub struct CpuSnapshot {
     pub current_task_id : Option<TaskId>,
     pub idle_task_id : Option<TaskId>,
     pub current_address_space : Option<AddressSpaceHandle>,
+    pub current_is_idle : bool,
+    pub current_is_user : bool,
+    /// 三类队列中等待运行的任务数，不含当前正在运行的任务。
+    pub runnable_other : usize,
+    pub runnable_fifo : usize,
+    pub runnable_rr : usize,
+    pub need_resched : bool,
+    pub context_switches : u64,
+    pub timer_ticks : u64,
     pub current_task_ticks : u64,
 }
