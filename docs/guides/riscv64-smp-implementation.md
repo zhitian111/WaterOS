@@ -1,16 +1,18 @@
 # RISC-V QEMU SMP 多核运行实现说明
 
-本文档描述 WaterOS 首版多核运行方案。目标是在 `qemu-riscv64-opensbi` 下支持 QEMU `-smp 4`，让 BSP 完成全局初始化后启动 AP hart，并让多个 hart 共同参与任务调度。
+本文档描述 WaterOS 首版多核运行方案。目标是在 `qemu-riscv64-opensbi` 下支持最多 8 个 QEMU hart，让 BSP 完成全局初始化后经 SBI HSM 启动 AP hart，并让多个 hart 共同参与任务调度。
 
 ## 当前状态
 
-WaterOS 当前主线是单核模型：
+已落地的基础能力：
 
-- RISC-V `_start.S` 使用单个 boot stack，所有 hart 都会进入同一 `kernel_main`。
-- `task-scheduler/impl-round-robin` 使用全局唯一 `RoundRobinScheduler`，并只维护一个 current task。
-- `impl-core` 的 process registry、scheduler、frame allocator、部分 VFS registry 仍使用 `UniprocessorSafeCell`。
-- timer trap 调用 `task::schedule_tick()`，默认只面向当前唯一 CPU。
-- `sscratch` 等 trap 状态本身是 per-hart 的，但 Rust 侧还没有 hart-local runtime 状态。
+- `CpuId` 在 RISC-V QEMU 首期等同 hart id，所有入口都在堆分配前校验其小于 `MAX_CPUS = 8` 并初始化 CPU-local/trampoline return frame。
+- trampoline 有独立的 8 份 return frame；调度器维护每 CPU 的 online/current/idle/runqueue 状态。
+- BSP 使用 OpenSBI 指定的 boot hart，完成全局初始化后调用 SBI HSM `hart_start`；AP 激活内核页表、安装 trap vector、打开 SSIE/STIE/timer 后发布 online。
+- SBI IPI 与 software-interrupt trap 已接通；IPI 只请求本 CPU 重调度，绝不推进全局 timeout/tick。
+- process registry、frame allocator、cred、FD/CWD、mount namespace 和静态回调槽已迁移到多核安全容器。
+
+仍未完成的部分不能视为多核用户态验收通过：远端 runqueue 投递与定向 IPI、`ready_cpu/last_cpu` 状态、BSP-only timeout timekeeper，以及地址空间 active-CPU mask 和带 ack 的 TLB shootdown 尚待实现。因此当前 AP bring-up 仅用于内核级验证，不应作为并发 `mmap`/`fork`/用户态工作负载的最终 SMP 支持。
 
 首版 SMP 不追求高扩展性，只要求正确地启动多个 hart，并避免同一个 task 被多个 hart 同时运行。
 
@@ -19,11 +21,22 @@ WaterOS 当前主线是单核模型：
 首版只支持 RISC-V QEMU/OpenSBI：
 
 - 不同步实现 LoongArch SMP。
-- hart 上限固定为 `SMP_MAX_HARTS = 4`，暂不解析 DTB CPU 节点。
+- hart 上限固定为 `MAX_CPUS = 8`，暂不解析 DTB CPU 节点。
 - 调度器采用全局 ready queue + 全局自旋锁。
 - AP hart 参与普通任务调度，不只是启动后空转。
-- 不实现 CPU affinity、work stealing、跨核 IPI 抢占。
-- TLB shootdown 暂不完整实现；首版只要求现有用户态 bring-up 可运行，后续再补远程 `sfence.vma`。
+- 不实现 CPU affinity、work stealing、热插拔或运行中迁移。
+- TLB shootdown 暂不完整实现；在其完成前不把用户地址空间并发修改作为 SMP 支持范围。
+
+## 运行前提
+
+多核运行必须提供包含 SBI HSM 扩展的 OpenSBI 固件；QEMU 的 `-bios default` 不是多核验收环境。脚本会在 `SMP_CORES > 1` 且未设置固件时失败，并始终使用 QEMU `-snapshot`，避免写入 `sdcard-rv.img`：
+
+```bash
+cd os
+SMP_CORES=4 WATEROS_OPENSBI_FW=/path/to/opensbi-hsm-fw.bin ./scripts/rv_qemu_run.sh
+```
+
+可使用 `SMP_CORES=1` 做单核回归。LoongArch 当前只保证 IPI/SMP 接口可编译，未启动 AP。
 
 ## 启动流程
 

@@ -74,22 +74,65 @@ fn bringup_driver_and_user() {
 #[cfg(feature = "qemu-riscv64-opensbi")]
 mod qemu_riscv64_opensbi {
     use crate::bringup_driver_and_user;
-    use core::sync::atomic::{AtomicBool, Ordering};
+    use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use runtime::logging::*;
-    /// 首个到达 `wateros_kernel_main` 的 hart 用 swap(true) 抢占 BSP 身份。
-    static BSP_CLAIMED : AtomicBool = AtomicBool::new(false);
+    /// Firmware-selected boot hart. `usize::MAX` means no hart entered yet.
+    static BSP_HART : AtomicUsize = AtomicUsize::new(usize::MAX);
     /// BSP 完成初始化后置 true，AP 自旋等待此标志。
     static AP_BOOT_READY : AtomicBool = AtomicBool::new(false);
+
+    unsafe extern "C" {
+        fn __wateros_arch_boot();
+    }
+
+    fn start_secondary_harts(boot_cpu : task::CpuId, dtb_pa : usize) -> base::cpu::CpuMask {
+        let entry = __wateros_arch_boot as *const () as usize;
+        let mut requested = base::cpu::CpuMask::EMPTY;
+        for raw in 0..base_config::task::MAX_CPUS {
+            let cpu = task::CpuId::from_raw(raw);
+            if cpu == boot_cpu { continue; }
+            match platform::smp::start_cpu(cpu, entry, dtb_pa) {
+                Ok(()) | Err(platform::smp::PlatformSmpError::AlreadyAvailable) => {
+                    requested.insert(cpu);
+                    info!("[smp] requested start for cpu={}", raw);
+                }
+                // A smaller QEMU `-smp` simply has no hart at this index.
+                Err(platform::smp::PlatformSmpError::InvalidCpu) => break,
+                Err(error) => panic!("[smp] cannot start cpu={}: {:?}; use an OpenSBI firmware with HSM", raw, error),
+            }
+        }
+        requested
+    }
+
+    /// Do not enter userspace with a partially initialized SMP configuration.
+    /// A finite spin wait is deliberate: the timer and scheduler are not yet
+    /// running on the BSP, so a timeout cannot rely on kernel timekeeping.
+    fn wait_for_secondary_online(requested : base::cpu::CpuMask) {
+        const ONLINE_WAIT_SPINS : usize = 100_000_000;
+        for _ in 0..ONLINE_WAIT_SPINS {
+            let online = task::online_cpu_mask();
+            if online.bits() & requested.bits() == requested.bits() {
+                return;
+            }
+            core::hint::spin_loop();
+        }
+        let online = task::online_cpu_mask();
+        panic!("[smp] AP online timeout: requested={:#x}, online={:#x}",
+               requested.bits(), online.bits());
+    }
     /// AP 入口：BSP 初始化完成后被调用；局部初始化后加入调度。
     fn ap_main(cpu_id : task::CpuId) -> ! {
         warn!("[boot-init] AP cpu={} entering scheduler",
               cpu_id.raw());
         platform::arch::cpu::init_current_cpu(cpu_id).expect("AP init current CPU");
         platform::arch::init();
+        platform::arch::paging::activate_address_space_token_and_flush(mm::kernel_mm::kernel_satp());
         // 开 AP 定时器中断，使 idle 能被 tick 唤醒从而从全局就绪队列取任务
         platform::interrupt::enable_timer_interrupt().expect("AP enable timer interrupt");
+        platform::arch::interrupt::enable_soft_interrupt();
         platform::timer::set_timer_after_ms(100).expect("AP set initial timer");
         task::set_cpu_online(cpu_id);
+        platform::interrupt::enable_global_interrupt().expect("AP enable global interrupt");
         task::run_first_task_on_current_cpu(cpu_id)
     }
 
@@ -105,14 +148,17 @@ mod qemu_riscv64_opensbi {
     fn mask_boot_interrupts() {
         platform::interrupt::disable_global_interrupt().expect("disable global interrupt");
         platform::interrupt::disable_timer_interrupt().expect("disable timer interrupt");
+        platform::arch::interrupt::disable_soft_interrupt();
     }
 
     #[unsafe(no_mangle)]
     pub fn wateros_kernel_main(cpu_raw : usize, dtb_pa : usize, _platform_arg1 : usize) -> ! {
+        let cpu_id = task::CpuId::from_raw(cpu_raw);
+        platform::arch::cpu::init_current_cpu(cpu_id).expect("init current CPU");
         mask_boot_interrupts();
-        // 原子 swap 决定 BSP：首个到达的 hart 成为 BSP，其余为 AP
-        if BSP_CLAIMED.swap(true, Ordering::AcqRel) {
-            let cpu_id = task::CpuId::from_raw(cpu_raw);
+        // OpenSBI supplies the boot hart.  Secondary harts can arrive either
+        // directly from firmware or through the SBI HSM entry below.
+        if BSP_HART.compare_exchange(usize::MAX, cpu_raw, Ordering::AcqRel, Ordering::Acquire).is_err() {
             wait_ap_boot_ready(cpu_id);
         }
         // BSP 初始化：驱动 → 日志 → timebase → 堆 → arch → 任务 → trap
@@ -122,18 +168,21 @@ mod qemu_riscv64_opensbi {
         runtime::logging::init();
         crate::boot_timebase::probe_and_init_timebase(dtb_pa);
         runtime::heap_allocator::init();
-        platform::arch::cpu::init_current_cpu(task::CpuId::from_raw(cpu_raw))
-            .expect("BSP init current CPU");
         platform::arch::init();
         task::init();
+        task::set_cpu_online(cpu_id);
         crate::trap_handler::init();
         // MM 初始化
         let memory_end = driver::physical_ram_end_exclusive();
         mm::kernel_mm::init(dtb_pa, memory_end);
         AP_BOOT_READY.store(true, Ordering::Release);
 
+        let requested_aps = start_secondary_harts(cpu_id, dtb_pa);
+        wait_for_secondary_online(requested_aps);
+
         bringup_driver_and_user();
         platform::interrupt::enable_timer_interrupt().unwrap();
+        platform::arch::interrupt::enable_soft_interrupt();
         platform::timer::set_timer_after_ms(100).unwrap();
         platform::interrupt::enable_global_interrupt().unwrap();
         task::run_first_task()
@@ -170,6 +219,7 @@ mod qemu_loongarch64_virt {
     fn mask_boot_interrupts() {
         platform::interrupt::disable_global_interrupt().expect("disable global interrupt");
         platform::interrupt::disable_timer_interrupt().expect("disable timer interrupt");
+        platform::arch::interrupt::disable_soft_interrupt();
     }
 
     #[unsafe(no_mangle)]

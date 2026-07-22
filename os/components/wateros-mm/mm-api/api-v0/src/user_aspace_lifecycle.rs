@@ -3,13 +3,11 @@
 /// 释放 `user_aspace_ptr` 指向的用户页表与映射帧。
 pub type DropUserAspaceFn = fn(usize);
 
-static mut DROP_USER_ASPACE: Option<DropUserAspaceFn> = None;
+static DROP_USER_ASPACE: spin::Mutex<Option<DropUserAspaceFn>> = spin::Mutex::new(None);
 
 /// 由 `mm::kernel_mm::init` 注册；未注册时 [`drop_user_aspace_on_task_exit`] 为 no-op。
 pub fn register_drop_user_aspace_hook(f: DropUserAspaceFn) {
-    unsafe {
-        DROP_USER_ASPACE = Some(f);
-    }
+    *DROP_USER_ASPACE.lock() = Some(f);
 }
 
 /// 任务 `exit` 路径调用：立即释放地址空间（子进程、busybox、被 kill 的任务均走此路径）。
@@ -17,9 +15,8 @@ pub fn drop_user_aspace_on_task_exit(aspace_ptr: usize) {
     if aspace_ptr == 0 {
         return;
     }
-    unsafe {
-        if let Some(f) = DROP_USER_ASPACE {
-            f(aspace_ptr);
-        }
+    let hook = *DROP_USER_ASPACE.lock();
+    if let Some(f) = hook {
+        f(aspace_ptr);
     }
 }

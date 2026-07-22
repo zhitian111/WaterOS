@@ -1,13 +1,27 @@
 #!/bin/bash
 os_file="./kernel-rv"
 fs="./sdcard-rv.img"
+SMP_CORES="${SMP_CORES:-1}"
+if [[ ! "$SMP_CORES" =~ ^[1-8]$ ]]; then
+    echo "SMP_CORES must be an integer in 1..8 (WaterOS RISC-V SMP capacity)" >&2
+    exit 2
+fi
+if [[ "$SMP_CORES" -gt 1 && -z "${WATEROS_OPENSBI_FW:-}" ]]; then
+    echo "SMP_CORES=$SMP_CORES requires WATEROS_OPENSBI_FW to point to an OpenSBI firmware with SBI HSM" >&2
+    exit 2
+fi
+BIOS_ARGS=(-bios default)
+if [[ -n "${WATEROS_OPENSBI_FW:-}" ]]; then
+    BIOS_ARGS=(-bios "$WATEROS_OPENSBI_FW")
+fi
 
 qemu-system-riscv64 -machine virt \
                     -kernel $os_file \
                     -m 1G \
                     -nographic \
-                    -smp 8 \
-                    -bios default \
+                    -smp "$SMP_CORES" \
+                    -snapshot \
+                    "${BIOS_ARGS[@]}" \
                     -drive file=$fs,if=none,format=raw,id=x0 \
                     -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 \
                     -no-reboot \

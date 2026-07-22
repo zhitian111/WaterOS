@@ -14,7 +14,7 @@ use fs::{FsNodeType, LocalRwFs, SharedFs, SharedRwFs};
 use spin::Mutex;
 
 use api_v0::{normalize_absolute_path, VfsError, VfsResult};
-use base::sync::UniprocessorSafeCell;
+use base::sync::MultiprocessorSafeCell;
 
 use crate::mount_ns::PerTaskMountNsRegistry;
 
@@ -88,16 +88,16 @@ pub(crate) fn bootstrap_mount_namespace_snapshot() -> MountNamespace {
 }
 
 // 本变量代码由AI完成
-static mut MOUNT_NS_REGISTRY : MaybeUninit<UniprocessorSafeCell<PerTaskMountNsRegistry>> =
+static mut MOUNT_NS_REGISTRY : MaybeUninit<MultiprocessorSafeCell<PerTaskMountNsRegistry>> =
     MaybeUninit::uninit();
 // 本变量代码由AI完成
 static MOUNT_NS_REGISTRY_READY : AtomicUsize = AtomicUsize::new(0);
 
 // 本方法代码由AI完成
-fn registry() -> &'static UniprocessorSafeCell<PerTaskMountNsRegistry> {
+fn registry() -> &'static MultiprocessorSafeCell<PerTaskMountNsRegistry> {
     if MOUNT_NS_REGISTRY_READY.load(Ordering::Acquire) == 0 {
         unsafe {
-            MOUNT_NS_REGISTRY.write(UniprocessorSafeCell::new(PerTaskMountNsRegistry::new()));
+            MOUNT_NS_REGISTRY.write(MultiprocessorSafeCell::new(PerTaskMountNsRegistry::new()));
         }
         MOUNT_NS_REGISTRY_READY.store(1, Ordering::Release);
     }
