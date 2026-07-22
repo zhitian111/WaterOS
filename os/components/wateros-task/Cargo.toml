@@ -19,6 +19,7 @@
     impl-core = { path = "./task-impl/impl-core/", package = "wateros-task-impl-core", default-features = false }
     mm-api = { path = "../wateros-mm/mm-api/api-v0/", package = "wateros-mm-api-v0", default-features = true }
     scheduler = { path = "./task-scheduler/", package = "wateros-task-scheduler", default-features = false }
+    base = {path="../wateros-base", package="wateros-base", default-features = false}
 [features]
     api-v0 = [ "impl-core/api-v0", "scheduler/api-v0" ]
     default = [ "api-v0", "impl-core", "impl-multi-class" ]

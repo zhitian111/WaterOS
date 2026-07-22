@@ -9,6 +9,7 @@
     base = { path = "../../../../wateros-base/", package = "wateros-base", default-features = true }
     config = { path = "../../../../wateros-base/base-config/", package = "wateros-base-config" }
     riscv = { version = "0.16.0" }
+    sbi = { version = "0.0.3", package = "sbi-rt" }
 
 [features]
     api-v0 = [  ]

@@ -262,6 +262,12 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                               raw_cause,
                               cx);
         }
+        TrapCause::Interrupt(Interrupt::SupervisiorSoft) => {
+            // 来自其他 CPU 的 IPI：清除 SSIP 位，避免 sret 后立即再次 trap。
+            platform::arch::interrupt::clear_soft_interrupt();
+            // 触发本 CPU 重新调度——可能其他 CPU 刚唤醒了一个本 CPU 就绪队列上的高优任务。
+            task::schedule_tick();
+        }
         TrapCause::Interrupt(Interrupt::SupervisiorTimer) => {
             if let Err(err) = platform::timer::set_timer_after_ms(TIMER_REARM_MS) {
                 panic!("failed to re-arm timer in trap: {:?}",
