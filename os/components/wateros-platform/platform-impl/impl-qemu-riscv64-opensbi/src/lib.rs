@@ -17,6 +17,55 @@ pub mod console;
 pub mod reset;
 /// OpenSBI timer 后端（经 SBI 设置下次中断时刻）。
 pub mod timer;
+/// SBI HSM based secondary-hart control for QEMU RISC-V.
+pub mod smp {
+    use api_v0::smp::{HartStatus, PlatformSmp, PlatformSmpError, PlatformSmpResult};
+    use base::cpu::{CpuId, CpuMask};
+    use config::task::MAX_CPUS;
+
+    pub struct QemuRiscv64OpenSbiSmp;
+
+    fn result(ret: sbi::SbiRet) -> PlatformSmpResult<usize> {
+        if ret.error == 0 {
+            Ok(ret.value)
+        } else {
+            match ret.error as isize {
+                // SBI_ERR_NOT_SUPPORTED: HSM is absent from this firmware.
+                -2 => Err(PlatformSmpError::Unsupported),
+                // SBI_ERR_INVALID_PARAM: QEMU has no such hart in this machine.
+                -3 => Err(PlatformSmpError::InvalidCpu),
+                // SBI_ERR_ALREADY_AVAILABLE: firmware had already started it.
+                -6 => Err(PlatformSmpError::AlreadyAvailable),
+                _ => Err(PlatformSmpError::Firmware(ret.error)),
+            }
+        }
+    }
+
+    impl PlatformSmp for QemuRiscv64OpenSbiSmp {
+        fn start_cpu(cpu: CpuId, start_addr: usize, opaque: usize) -> PlatformSmpResult<()> {
+            if !cpu.fits_capacity(MAX_CPUS) { return Err(PlatformSmpError::InvalidCpu); }
+            result(sbi::hart_start(cpu.raw(), start_addr, opaque)).map(|_| ())
+        }
+
+        fn cpu_status(cpu: CpuId) -> PlatformSmpResult<HartStatus> {
+            if !cpu.fits_capacity(MAX_CPUS) { return Err(PlatformSmpError::InvalidCpu); }
+            let value = result(sbi::hart_get_status(cpu.raw()))?;
+            Ok(match value {
+                0 => HartStatus::Started,
+                1 => HartStatus::Stopped,
+                2 => HartStatus::StartPending,
+                3 => HartStatus::StopPending,
+                other => HartStatus::Unknown(other),
+            })
+        }
+
+        fn configured_cpu_mask() -> CpuMask {
+            CpuMask::from_bits((1u64 << MAX_CPUS) - 1)
+        }
+    }
+
+    pub use QemuRiscv64OpenSbiSmp as SmpImpl;
+}
 
 pub mod boot {
     use api_v0::boot::{PlatformBootArgs, PlatformBootContext};

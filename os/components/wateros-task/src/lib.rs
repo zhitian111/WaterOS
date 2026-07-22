@@ -41,7 +41,7 @@ pub use sched::{
 pub use schedule::{
     block_current, current_task_id, current_task_snapshot,
     current_task_trap_return_address_space_token, current_task_user_address_space_token,
-    current_task_user_aspace_ptr, current_tick, interrupt_task, reap_exited_task, schedule_tick,
+    current_task_user_aspace_ptr, current_tick, interrupt_task, reap_exited_task, schedule_reschedule, schedule_tick,
     sleep_for_ticks, task_snapshot, wait_for_task_exit, wait_for_task_exit_for_ticks, wait_on,
     wait_on_for_ticks, wait_on_while, wait_on_while_for_ticks, wake_task, yield_now,
 };
@@ -60,7 +60,7 @@ pub use api_v0::{
     UserImageInfo, UserStack, UserTask, WaitQueueId,
 };
 pub use api_v0::{ExitedTask, TaskId, TaskKind};
-pub use cpu::{cpu_snapshot, running_cpu, set_cpu_online};
+pub use cpu::{cpu_snapshot, online_cpu_mask, running_cpu, set_cpu_online};
 #[cfg(feature = "impl-core")]
 pub(crate) use impl_core as active_impl;
 

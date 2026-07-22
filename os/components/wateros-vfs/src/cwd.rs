@@ -14,12 +14,12 @@ use api_v0::{
     normalize_absolute_path, register_open_path_resolver, resolve_against_cwd,
     SingleRootReadView, VfsError, VfsNodeType, VfsResult,
 };
-use base::sync::UniprocessorSafeCell;
+use base::sync::MultiprocessorSafeCell;
 use impl_fd_session::{PerTaskCwdRegistry, PATH_MAX};
 
 use crate::root;
 
-static mut CWD_REGISTRY: MaybeUninit<UniprocessorSafeCell<PerTaskCwdRegistry>> = MaybeUninit::uninit();
+static mut CWD_REGISTRY: MaybeUninit<MultiprocessorSafeCell<PerTaskCwdRegistry>> = MaybeUninit::uninit();
 static CWD_REGISTRY_READY: AtomicUsize = AtomicUsize::new(0);
 static OPEN_RESOLVER_REGISTERED: AtomicUsize = AtomicUsize::new(0);
 
@@ -32,10 +32,10 @@ fn ensure_open_path_resolver_registered() {
 }
 
 /// 全局 per-task cwd 注册表。
-pub fn registry() -> &'static UniprocessorSafeCell<PerTaskCwdRegistry> {
+pub fn registry() -> &'static MultiprocessorSafeCell<PerTaskCwdRegistry> {
     if CWD_REGISTRY_READY.load(Ordering::Acquire) == 0 {
         unsafe {
-            CWD_REGISTRY.write(UniprocessorSafeCell::new(PerTaskCwdRegistry::new()));
+            CWD_REGISTRY.write(MultiprocessorSafeCell::new(PerTaskCwdRegistry::new()));
         }
         CWD_REGISTRY_READY.store(1, Ordering::Release);
         ensure_open_path_resolver_registered();

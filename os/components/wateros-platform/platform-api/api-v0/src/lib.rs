@@ -12,3 +12,5 @@ pub mod console;
 pub mod reset;
 pub mod time;
 pub mod timer;
+/// CPU bring-up and online-state contract for SMP-capable platforms.
+pub mod smp;

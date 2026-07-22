@@ -4,3 +4,4 @@
     edition = "2024"
 
 [dependencies]
+base = { path = "../../../wateros-base/", package = "wateros-base", default-features = true }
