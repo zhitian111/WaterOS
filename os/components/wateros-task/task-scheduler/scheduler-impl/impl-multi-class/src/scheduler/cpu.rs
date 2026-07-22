@@ -51,6 +51,18 @@ impl MultiClassScheduler {
                                                     .current_tick() })
     }
 
+    /// 返回全部已配置 CPU 的稳定快照，包含尚未 online 的 CPU。
+    pub(super) fn cpu_states(&self) -> alloc::vec::Vec<(CpuId, CpuSnapshot)> {
+        let mut states = alloc::vec::Vec::with_capacity(self.cpu_states
+                                                            .len());
+        for cpu in &self.cpu_states {
+            let snapshot = self.cpu_snapshot(cpu.cpu_id)
+                               .expect("configured CPU must have a snapshot");
+            states.push((cpu.cpu_id, snapshot));
+        }
+        states
+    }
+
     pub fn running_cpu(&self, task_id : TaskId) -> Option<CpuId> {
         self.global
             .registry

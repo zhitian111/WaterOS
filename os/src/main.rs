@@ -90,7 +90,9 @@ mod qemu_riscv64_opensbi {
         let mut requested = base::cpu::CpuMask::EMPTY;
         for raw in 0..base_config::task::MAX_CPUS {
             let cpu = task::CpuId::from_raw(raw);
-            if cpu == boot_cpu { continue; }
+            if cpu == boot_cpu {
+                continue;
+            }
             match platform::smp::start_cpu(cpu, entry, dtb_pa) {
                 Ok(()) | Err(platform::smp::PlatformSmpError::AlreadyAvailable) => {
                     requested.insert(cpu);
@@ -98,7 +100,9 @@ mod qemu_riscv64_opensbi {
                 }
                 // A smaller QEMU `-smp` simply has no hart at this index.
                 Err(platform::smp::PlatformSmpError::InvalidCpu) => break,
-                Err(error) => panic!("[smp] cannot start cpu={}: {:?}; use an OpenSBI firmware with HSM", raw, error),
+                Err(error) => panic!("[smp] cannot start cpu={}: {:?}; use an OpenSBI firmware \
+                                      with HSM",
+                                     raw, error),
             }
         }
         requested
@@ -118,7 +122,8 @@ mod qemu_riscv64_opensbi {
         }
         let online = task::online_cpu_mask();
         panic!("[smp] AP online timeout: requested={:#x}, online={:#x}",
-               requested.bits(), online.bits());
+               requested.bits(),
+               online.bits());
     }
     /// AP 入口：BSP 初始化完成后被调用；局部初始化后加入调度。
     fn ap_main(cpu_id : task::CpuId) -> ! {
@@ -133,6 +138,7 @@ mod qemu_riscv64_opensbi {
         platform::timer::set_timer_after_ms(100).expect("AP set initial timer");
         task::set_cpu_online(cpu_id);
         platform::interrupt::enable_global_interrupt().expect("AP enable global interrupt");
+        task::print_cpu_states();
         task::run_first_task_on_current_cpu(cpu_id)
     }
 
@@ -158,7 +164,12 @@ mod qemu_riscv64_opensbi {
         mask_boot_interrupts();
         // OpenSBI supplies the boot hart.  Secondary harts can arrive either
         // directly from firmware or through the SBI HSM entry below.
-        if BSP_HART.compare_exchange(usize::MAX, cpu_raw, Ordering::AcqRel, Ordering::Acquire).is_err() {
+        if BSP_HART.compare_exchange(usize::MAX,
+                                     cpu_raw,
+                                     Ordering::AcqRel,
+                                     Ordering::Acquire)
+                   .is_err()
+        {
             wait_ap_boot_ready(cpu_id);
         }
         // BSP 初始化：驱动 → 日志 → timebase → 堆 → arch → 任务 → trap

@@ -1,10 +1,3 @@
-//! 多类调度（OTHER+FIFO+RR） **具体实现**：就绪队列、等待队列注册表与一次调度决策，最终通过 arch
-//! `__switch` 切换任务上下文。
-//!
-//! 任务体与 trap 现场由 `wateros-task-impl-core` 的 TCB 承载；本 crate 内
-//! `scheduler` 子模块中的轮转状态 **引用并更新** 这些 TCB，但 **不** 替代
-//! `impl-core` 对栈与 trap 缓冲区的所有权与初始化逻辑。
-
 #![no_std]
 #![allow(static_mut_refs)]
 
@@ -131,18 +124,39 @@ fn with_scheduler<R>(f : impl FnOnce(&mut MultiClassScheduler) -> R) -> R {
 
 // ── 跨核 IPI 通知 ────────────────────────────────────────────────
 //
-/// 向所有其他 online CPU 发送重调度 IPI。
-///
-/// 这是远端入队尚未完成前的简单过渡策略：会产生冗余 IPI，但不会遗漏
-/// 已 online CPU。后续引入 `ready_cpu` 后应改为只通知实际目标 CPU。
-fn ipi_notify_others(current_cpu_id : CpuId) {
-    let mut mask = with_scheduler(|scheduler| scheduler.online_cpu_mask());
-    mask.remove(current_cpu_id);
-    if mask.is_empty() {
+/// 锁内完成入队后，向实际目标 CPU 发送重调度 IPI。
+fn dispatch_reschedules(targets : CpuMask, current_cpu_id : CpuId, local : bool) {
+    let mut remote = targets;
+    let local_requested = remote.contains(current_cpu_id);
+    remote.remove(current_cpu_id);
+    if !remote.is_empty() {
+        if let Err(error) = arch::ipi::send_ipi(remote) {
+            log::warn!("[ipi] directed reschedule notification failed: {:?}",
+                       error);
+        }
+    }
+    if local && local_requested {
+        schedule_reschedule();
+    }
+}
+
+fn with_scheduler_and_reschedules<R>(f : impl FnOnce(&mut MultiClassScheduler) -> R)
+                                     -> (R, CpuMask) {
+    with_scheduler(|scheduler| {
+        let result = f(scheduler);
+        let targets = scheduler.take_pending_reschedule_cpus();
+        (result, targets)
+    })
+}
+
+fn dispatch_remote_reschedules(targets : CpuMask, current_cpu_id : CpuId) {
+    let mut remote = targets;
+    remote.remove(current_cpu_id);
+    if remote.is_empty() {
         return;
     }
-    if let Err(error) = arch::ipi::send_ipi(mask) {
-        log::warn!("[ipi] reschedule notification failed: {:?}",
+    if let Err(error) = arch::ipi::send_ipi(remote) {
+        log::warn!("[ipi] directed reschedule notification failed: {:?}",
                    error);
     }
 }
@@ -269,12 +283,12 @@ pub fn run_first_task_on_current_cpu(cpu_id : CpuId) -> ! {
 /// 创建内核任务并入就绪队列尾部。
 #[inline(never)]
 pub fn spawn_kernel_task(entry : KernelTaskEntry, arg : usize) -> TaskId {
-    let _guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
-    let task_id = with_scheduler(|scheduler| scheduler.spawn_kernel_task(entry, arg, cpu_id));
-    // 新任务可能被选到远端 CPU；首期仍采用广播 IPI，确保远端 idle CPU
-    // 能立即重新检查自己的 runqueue。
-    ipi_notify_others(cpu_id);
+    let (task_id, targets) = {
+        let _guard = InterruptGuard::new();
+        with_scheduler_and_reschedules(|scheduler| scheduler.spawn_kernel_task(entry, arg, cpu_id))
+    };
+    dispatch_reschedules(targets, cpu_id, true);
     task_id
 }
 
@@ -286,19 +300,23 @@ pub fn create_user_task_spec(spec : UserTask) -> TaskId {
 
 /// 按规格创建用户任务并入就绪队列尾部。
 pub fn spawn_user_task_spec(spec : UserTask) -> TaskId {
-    let _guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
-    let task_id = with_scheduler(|scheduler| scheduler.spawn_user_task_spec(spec, cpu_id));
-    ipi_notify_others(cpu_id);
+    let (task_id, targets) = {
+        let _guard = InterruptGuard::new();
+        with_scheduler_and_reschedules(|scheduler| scheduler.spawn_user_task_spec(spec, cpu_id))
+    };
+    dispatch_reschedules(targets, cpu_id, true);
     task_id
 }
 
 /// 将已创建任务加入就绪队列尾部。
 pub fn enqueue_ready_task(task_id : TaskId) {
-    let _guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
-    with_scheduler(|scheduler| scheduler.enqueue_ready_task(task_id));
-    ipi_notify_others(cpu_id);
+    let (_, targets) = {
+        let _guard = InterruptGuard::new();
+        with_scheduler_and_reschedules(|scheduler| scheduler.enqueue_ready_task(task_id))
+    };
+    dispatch_reschedules(targets, cpu_id, true);
 }
 
 /// 从当前用户任务 fork 子任务（仅登记 TCB，不入就绪队列）。
@@ -341,30 +359,30 @@ pub fn fork_current(child_stack : usize,
                     new_aspace_ptr : usize,
                     new_satp : usize)
                     -> Option<TaskId> {
-    let _guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
-    let child_id = with_scheduler(|scheduler| {
-        scheduler.fork_current(child_stack,
-                               new_aspace_ptr,
-                               new_satp,
-                               cpu_id)
-    });
-    if child_id.is_some() {
-        ipi_notify_others(cpu_id);
-    }
+    let (child_id, targets) = {
+        let _guard = InterruptGuard::new();
+        with_scheduler_and_reschedules(|scheduler| {
+            scheduler.fork_current(child_stack,
+                                   new_aspace_ptr,
+                                   new_satp,
+                                   cpu_id)
+        })
+    };
+    dispatch_reschedules(targets, cpu_id, true);
     child_id
 }
 
 /// 从当前用户任务 clone 一个同进程线程；线程共享用户地址空间但有独立执行现场。
 pub fn clone_current_thread(child_stack : usize, tls : usize, set_tls : bool) -> Option<TaskId> {
-    let _guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
-    let child_id = with_scheduler(|scheduler| {
-        scheduler.clone_current_thread(child_stack, tls, set_tls, cpu_id)
-    });
-    if child_id.is_some() {
-        ipi_notify_others(cpu_id);
-    }
+    let (child_id, targets) = {
+        let _guard = InterruptGuard::new();
+        with_scheduler_and_reschedules(|scheduler| {
+            scheduler.clone_current_thread(child_stack, tls, set_tls, cpu_id)
+        })
+    };
+    dispatch_reschedules(targets, cpu_id, true);
     child_id
 }
 
@@ -400,10 +418,11 @@ pub fn execve_current(entry_pc : usize,
 /// 当前任务重新入就绪队列尾部并切换到下一个任务（若无其他就绪任务则可能不切）。
 pub fn suspend_current_and_run_next() {
     let _guard = InterruptGuard::new();
-    let switch_pair = with_scheduler(|scheduler| {
-        scheduler.schedule(ScheduleReason::Yield,
-                           cpu::current_cpu_id())
+    let cpu_id = cpu::current_cpu_id();
+    let (switch_pair, targets) = with_scheduler_and_reschedules(|scheduler| {
+        scheduler.schedule(ScheduleReason::Yield, cpu_id)
     });
+    dispatch_remote_reschedules(targets, cpu_id);
     if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
         _guard.release_before_switch();
         unsafe {
@@ -416,10 +435,11 @@ pub fn suspend_current_and_run_next() {
 #[inline(never)]
 pub fn schedule_tick() {
     let guard = InterruptGuard::new();
-    let switch_pair = with_scheduler(|scheduler| {
-        scheduler.schedule(ScheduleReason::Tick,
-                           cpu::current_cpu_id())
+    let cpu_id = cpu::current_cpu_id();
+    let (switch_pair, targets) = with_scheduler_and_reschedules(|scheduler| {
+        scheduler.schedule(ScheduleReason::Tick, cpu_id)
     });
+    dispatch_remote_reschedules(targets, cpu_id);
     if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
         guard.release_before_switch();
         unsafe {
@@ -432,10 +452,15 @@ pub fn schedule_tick() {
 /// time nor charges the interrupted task a timeslice.
 pub fn schedule_reschedule() {
     let guard = InterruptGuard::new();
-    let switch_pair = with_scheduler(|scheduler| {
-        scheduler.schedule(ScheduleReason::Yield,
-                           cpu::current_cpu_id())
+    let cpu_id = cpu::current_cpu_id();
+    let (switch_pair, targets) = with_scheduler_and_reschedules(|scheduler| {
+        if scheduler.take_need_resched(cpu_id) {
+            scheduler.schedule(ScheduleReason::Reschedule, cpu_id)
+        } else {
+            None
+        }
     });
+    dispatch_remote_reschedules(targets, cpu_id);
     if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
         guard.release_before_switch();
         unsafe {
@@ -447,10 +472,11 @@ pub fn schedule_reschedule() {
 /// 以给定原因阻塞当前任务并切换出去。
 pub fn block_current(reason : TaskWaitTarget) {
     let guard = InterruptGuard::new();
-    let switch_pair = with_scheduler(|scheduler| {
-        scheduler.schedule(ScheduleReason::Block(reason),
-                           cpu::current_cpu_id())
+    let cpu_id = cpu::current_cpu_id();
+    let (switch_pair, targets) = with_scheduler_and_reschedules(|scheduler| {
+        scheduler.schedule(ScheduleReason::Block(reason), cpu_id)
     });
+    dispatch_remote_reschedules(targets, cpu_id);
     if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
         guard.release_before_switch();
         unsafe {
@@ -462,10 +488,11 @@ pub fn block_current(reason : TaskWaitTarget) {
 /// 睡眠至少 `ticks` 个调度 tick（实现中与 yield 类似地将 wake_tick 推后）。
 pub fn sleep_current_for_ticks(ticks : TaskTick) -> TaskWaitResult {
     let guard = InterruptGuard::new();
-    let switch_pair = with_scheduler(|scheduler| {
-        scheduler.schedule(ScheduleReason::Sleep(ticks),
-                           cpu::current_cpu_id())
+    let cpu_id = cpu::current_cpu_id();
+    let (switch_pair, targets) = with_scheduler_and_reschedules(|scheduler| {
+        scheduler.schedule(ScheduleReason::Sleep(ticks), cpu_id)
     });
+    dispatch_remote_reschedules(targets, cpu_id);
     guard.release_before_switch();
     finish_wait_after_switch(switch_pair)
 }
@@ -473,10 +500,11 @@ pub fn sleep_current_for_ticks(ticks : TaskTick) -> TaskWaitResult {
 /// 标记当前任务退出并切换到其他任务；不应返回到已退出任务。
 pub fn exit_current(exit_code : TaskExitCode) -> ! {
     let guard = InterruptGuard::new();
-    let switch_pair = with_scheduler(|scheduler| {
-        scheduler.schedule(ScheduleReason::Exit(exit_code),
-                           cpu::current_cpu_id())
+    let cpu_id = cpu::current_cpu_id();
+    let (switch_pair, targets) = with_scheduler_and_reschedules(|scheduler| {
+        scheduler.schedule(ScheduleReason::Exit(exit_code), cpu_id)
     });
+    dispatch_remote_reschedules(targets, cpu_id);
     if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
         guard.release_before_switch();
         unsafe {
@@ -498,8 +526,10 @@ pub fn exit_current(exit_code : TaskExitCode) -> ! {
 /// 等待指定等待目标；被唤醒后从切换点继续运行。
 pub fn wait_current(target : TaskWaitTarget) -> TaskWaitResult {
     let guard = InterruptGuard::new();
-    let switch_pair =
-        with_scheduler(|scheduler| scheduler.schedule_wait(target, None, cpu::current_cpu_id()));
+    let cpu_id = cpu::current_cpu_id();
+    let (switch_pair, targets) =
+        with_scheduler_and_reschedules(|scheduler| scheduler.schedule_wait(target, None, cpu_id));
+    dispatch_remote_reschedules(targets, cpu_id);
     guard.release_before_switch();
     finish_wait_after_switch(switch_pair)
 }
@@ -512,8 +542,10 @@ pub fn wait_current_while(target : TaskWaitTarget,
     if !condition() {
         return TaskWaitResult::Woken;
     }
-    let switch_pair =
-        with_scheduler(|scheduler| scheduler.schedule_wait(target, None, cpu::current_cpu_id()));
+    let cpu_id = cpu::current_cpu_id();
+    let (switch_pair, targets) =
+        with_scheduler_and_reschedules(|scheduler| scheduler.schedule_wait(target, None, cpu_id));
+    dispatch_remote_reschedules(targets, cpu_id);
     guard.release_before_switch();
     finish_wait_after_switch(switch_pair)
 }
@@ -526,11 +558,11 @@ pub fn wait_current_timeout(target : TaskWaitTarget, timeout_ticks : TaskTick) -
     }
 
     let guard = InterruptGuard::new();
-    let switch_pair = with_scheduler(|scheduler| {
-        scheduler.schedule_wait(target,
-                                Some(timeout_ticks),
-                                cpu::current_cpu_id())
+    let cpu_id = cpu::current_cpu_id();
+    let (switch_pair, targets) = with_scheduler_and_reschedules(|scheduler| {
+        scheduler.schedule_wait(target, Some(timeout_ticks), cpu_id)
     });
+    dispatch_remote_reschedules(targets, cpu_id);
     guard.release_before_switch();
     finish_wait_after_switch(switch_pair)
 }
@@ -548,11 +580,11 @@ pub fn wait_current_timeout_while(target : TaskWaitTarget,
     if !condition() {
         return TaskWaitResult::Woken;
     }
-    let switch_pair = with_scheduler(|scheduler| {
-        scheduler.schedule_wait(target,
-                                Some(timeout_ticks),
-                                cpu::current_cpu_id())
+    let cpu_id = cpu::current_cpu_id();
+    let (switch_pair, targets) = with_scheduler_and_reschedules(|scheduler| {
+        scheduler.schedule_wait(target, Some(timeout_ticks), cpu_id)
     });
+    dispatch_remote_reschedules(targets, cpu_id);
     guard.release_before_switch();
     finish_wait_after_switch(switch_pair)
 }
@@ -583,22 +615,22 @@ pub fn wait_for_task_exit_timeout(task_id : TaskId, timeout_ticks : TaskTick) ->
 
 /// 若任务处于可唤醒队列则移回就绪队列并返回 `true`。
 pub fn wake_task(task_id : TaskId) -> bool {
-    let _guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
-    let woken = with_scheduler(|scheduler| scheduler.wake_task(task_id));
-    if woken {
-        ipi_notify_others(cpu_id);
-    }
+    let (woken, targets) = {
+        let _guard = InterruptGuard::new();
+        with_scheduler_and_reschedules(|scheduler| scheduler.wake_task(task_id))
+    };
+    dispatch_reschedules(targets, cpu_id, true);
     woken
 }
 
 pub fn interrupt_task(task_id : TaskId) -> bool {
-    let _guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
-    let interrupted = with_scheduler(|scheduler| scheduler.interrupt_task(task_id));
-    if interrupted {
-        ipi_notify_others(cpu_id);
-    }
+    let (interrupted, targets) = {
+        let _guard = InterruptGuard::new();
+        with_scheduler_and_reschedules(|scheduler| scheduler.interrupt_task(task_id))
+    };
+    dispatch_reschedules(targets, cpu_id, true);
     interrupted
 }
 
@@ -608,10 +640,12 @@ pub fn block_task_manual(task_id : TaskId) {
 }
 
 pub fn wake_child_exit_waiters(parent_id : TaskId) {
-    let _guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
-    with_scheduler(|scheduler| scheduler.wake_child_exit_waiters(parent_id));
-    ipi_notify_others(cpu_id);
+    let (_, targets) = {
+        let _guard = InterruptGuard::new();
+        with_scheduler_and_reschedules(|scheduler| scheduler.wake_child_exit_waiters(parent_id))
+    };
+    dispatch_reschedules(targets, cpu_id, true);
 }
 
 // =============================================================================
@@ -632,23 +666,23 @@ pub fn try_release_wait_queue(wait_queue_id : WaitQueueId) -> bool {
 
 /// 从显式等待队列头部唤醒一个任务。
 pub fn wake_one_in_wait_queue(wait_queue_id : WaitQueueId) -> Option<TaskId> {
-    let _guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
-    let woken = with_scheduler(|scheduler| scheduler.wake_one_in_wait_queue(wait_queue_id));
-    if woken.is_some() {
-        ipi_notify_others(cpu_id);
-    }
+    let (woken, targets) = {
+        let _guard = InterruptGuard::new();
+        with_scheduler_and_reschedules(|scheduler| scheduler.wake_one_in_wait_queue(wait_queue_id))
+    };
+    dispatch_reschedules(targets, cpu_id, true);
     woken
 }
 
 /// 清空指定显式等待队列并将其中任务全部置为就绪。
 pub fn wake_all_in_wait_queue(wait_queue_id : WaitQueueId) -> usize {
-    let _guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
-    let count = with_scheduler(|scheduler| scheduler.wake_all_in_wait_queue(wait_queue_id));
-    if count > 0 {
-        ipi_notify_others(cpu_id);
-    }
+    let (count, targets) = {
+        let _guard = InterruptGuard::new();
+        with_scheduler_and_reschedules(|scheduler| scheduler.wake_all_in_wait_queue(wait_queue_id))
+    };
+    dispatch_reschedules(targets, cpu_id, true);
     count
 }
 
@@ -658,17 +692,17 @@ pub fn requeue_wait_queue(from_wait_queue_id : WaitQueueId,
                           wake_count : usize,
                           requeue_count : usize)
                           -> usize {
-    let _guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
-    let changed = with_scheduler(|scheduler| {
-        scheduler.requeue_wait_queue(from_wait_queue_id,
-                                     to_wait_queue_id,
-                                     wake_count,
-                                     requeue_count)
-    });
-    if changed > 0 {
-        ipi_notify_others(cpu_id);
-    }
+    let (changed, targets) = {
+        let _guard = InterruptGuard::new();
+        with_scheduler_and_reschedules(|scheduler| {
+            scheduler.requeue_wait_queue(from_wait_queue_id,
+                                         to_wait_queue_id,
+                                         wake_count,
+                                         requeue_count)
+        })
+    };
+    dispatch_reschedules(targets, cpu_id, true);
     changed
 }
 
@@ -805,6 +839,26 @@ pub fn restore_current_trap_frame(trap_frame : &mut TaskTrapFrame) -> bool {
 pub fn cpu_snapshot(cpu_id : CpuId) -> Option<CpuSnapshot> {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.cpu_snapshot(cpu_id))
+}
+
+/// 查询全部已配置 CPU 的状态快照，包含尚未 online 的 CPU。
+pub fn cpu_states() -> Vec<(CpuId, CpuSnapshot)> {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.cpu_states())
+}
+
+/// 将各 CPU 的 online 与当前任务状态写入内核日志。
+pub fn print_cpu_states() {
+    for (cpu_id, state) in cpu_states() {
+        log::info!("[cpu] id={} online={} current={:?} idle={:?} user_aspace={} tick={}",
+                   cpu_id.raw(),
+                   state.online,
+                   state.current_task_id,
+                   state.idle_task_id,
+                   state.current_address_space
+                        .is_some(),
+                   state.current_task_ticks);
+    }
 }
 
 /// 查询指定任务当前在哪个 CPU 上运行。
