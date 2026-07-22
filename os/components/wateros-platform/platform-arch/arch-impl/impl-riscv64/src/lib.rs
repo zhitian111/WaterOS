@@ -16,6 +16,8 @@ global_asm!(include_str!("../asm/switch.S"));
 pub mod cpu;
 /// `sie` / `sstatus` 级中断开关。
 pub mod interrupt;
+/// 核间中断（IPI）：通过 SBI `send_ipi` 发送 Supervisor Soft Interrupt。
+pub mod ipi;
 /// `satp` 读写与 `sfence.vma`。
 pub mod paging;
 /// 任务上下文与进入桩函数符号。

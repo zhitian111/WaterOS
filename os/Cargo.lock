@@ -1351,6 +1351,7 @@ name = "wateros-platform-arch-impl-riscv64"
 version = "0.1.0"
 dependencies = [
  "riscv",
+ "sbi-rt",
  "wateros-abi",
  "wateros-base",
  "wateros-base-config",
@@ -1482,6 +1483,7 @@ name = "wateros-task"
 version = "0.1.0"
 dependencies = [
  "log",
+ "wateros-base",
  "wateros-mm-api-v0",
  "wateros-platform-arch",
  "wateros-task-api-v0",

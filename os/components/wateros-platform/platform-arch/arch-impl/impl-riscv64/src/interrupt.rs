@@ -66,3 +66,14 @@ impl ArchTimerInterruptControl for Riscv64ArchInterrupt {
         }
     }
 }
+
+/// 清除监督态软中断（SSIP），即写 `sip.SSIP = 0`。
+///
+/// 在收到来自其他 hart 的 IPI（Supervisor Soft Interrupt）后调用，避免 trap 返回后立即再次触发。
+#[inline]
+pub fn clear_soft_interrupt() {
+    // SSIP 位于 sip 寄存器的 bit 1；csrc 将目标位清零。
+    unsafe {
+        asm!("csrc sip, {}", in(reg) 1usize << 1);
+    }
+}

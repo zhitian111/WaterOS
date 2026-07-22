@@ -9,11 +9,11 @@
 #![allow(static_mut_refs)]
 
 extern crate alloc;
-
 use alloc::vec::Vec;
 use arch::cpu;
 use arch::interrupt::ArchInterruptState;
 use arch::task::ActiveArchTaskContext as TaskContext;
+use base::cpu::CpuMask;
 use base::sync::MultiprocessorSafeCell;
 use core::mem::MaybeUninit;
 use core::panic::Location;
@@ -122,11 +122,29 @@ fn scheduler_cell() -> &'static MultiprocessorSafeCell<MultiClassScheduler> {
 }
 
 // 在单调度器 cell 上取得独占引用并执行闭包；调用方已通过 `InterruptGuard`
-// 关中断时保证不与其他 CPU 交错（当前为 UP 假设）。
+// 关当前 CPU 中断 + `spin::Mutex` 全局锁保证临界区安全。
 #[inline(never)]
 fn with_scheduler<R>(f : impl FnOnce(&mut MultiClassScheduler) -> R) -> R {
     let mut scheduler = scheduler_cell().exclusive_access();
     f(&mut scheduler)
+}
+
+// ── 跨核 IPI 通知 ────────────────────────────────────────────────
+//
+// 调度器直接调用 `arch::ipi::send_ipi` 发送核间中断，无需回调注册。
+// `arch::ipi` 由 platform-arch 提供，根据 ISA 选择具体实现
+//（RISC-V: SBI send_ipi；LoongArch: IOCSR/IPI 寄存器）。
+
+/// 向所有其他在线 CPU 发送 reschedule IPI（当前 CPU 除外）。
+fn ipi_notify_others(current_cpu_id : CpuId) {
+    // 构造 CpuMask：低 8 位全 1，再移除当前 CPU。
+    // 上限 8 与 scheduler.rs 的 MAX_CPUS 一致；实际发送由 arch IPI 过滤无效 hart。
+    let mut mask = CpuMask::from_bits((1u64 << 8) - 1);
+    mask.remove(current_cpu_id);
+    if mask.is_empty() {
+        return;
+    }
+    let _ = arch::ipi::send_ipi(mask);
 }
 
 // ── 中断守卫 ──────────────────────────────────────────────────────
@@ -532,12 +550,22 @@ pub fn wait_for_task_exit_timeout(task_id : TaskId, timeout_ticks : TaskTick) ->
 /// 若任务处于可唤醒队列则移回就绪队列并返回 `true`。
 pub fn wake_task(task_id : TaskId) -> bool {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.wake_task(task_id, cpu::current_cpu_id()))
+    let cpu_id = cpu::current_cpu_id();
+    let woken = with_scheduler(|scheduler| scheduler.wake_task(task_id, cpu_id));
+    if woken {
+        ipi_notify_others(cpu_id);
+    }
+    woken
 }
 
 pub fn interrupt_task(task_id : TaskId) -> bool {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.interrupt_task(task_id, cpu::current_cpu_id()))
+    let cpu_id = cpu::current_cpu_id();
+    let interrupted = with_scheduler(|scheduler| scheduler.interrupt_task(task_id, cpu_id));
+    if interrupted {
+        ipi_notify_others(cpu_id);
+    }
+    interrupted
 }
 
 pub fn block_task_manual(task_id : TaskId) {
@@ -547,7 +575,10 @@ pub fn block_task_manual(task_id : TaskId) {
 
 pub fn wake_child_exit_waiters(parent_id : TaskId) {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.wake_child_exit_waiters(parent_id, cpu::current_cpu_id()));
+    let cpu_id = cpu::current_cpu_id();
+    with_scheduler(|scheduler| scheduler.wake_child_exit_waiters(parent_id, cpu_id));
+    // 保守通知：无法精确知道是否唤醒了任务，简单通知所有其他 CPU。
+    ipi_notify_others(cpu_id);
 }
 
 // =============================================================================
@@ -569,17 +600,23 @@ pub fn try_release_wait_queue(wait_queue_id : WaitQueueId) -> bool {
 /// 从显式等待队列头部唤醒一个任务。
 pub fn wake_one_in_wait_queue(wait_queue_id : WaitQueueId) -> Option<TaskId> {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| {
-        scheduler.wake_one_in_wait_queue(wait_queue_id, cpu::current_cpu_id())
-    })
+    let cpu_id = cpu::current_cpu_id();
+    let woken = with_scheduler(|scheduler| scheduler.wake_one_in_wait_queue(wait_queue_id, cpu_id));
+    if woken.is_some() {
+        ipi_notify_others(cpu_id);
+    }
+    woken
 }
 
 /// 清空指定显式等待队列并将其中任务全部置为就绪。
 pub fn wake_all_in_wait_queue(wait_queue_id : WaitQueueId) -> usize {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| {
-        scheduler.wake_all_in_wait_queue(wait_queue_id, cpu::current_cpu_id())
-    })
+    let cpu_id = cpu::current_cpu_id();
+    let count = with_scheduler(|scheduler| scheduler.wake_all_in_wait_queue(wait_queue_id, cpu_id));
+    if count > 0 {
+        ipi_notify_others(cpu_id);
+    }
+    count
 }
 
 /// 从一个显式等待队列唤醒部分任务，并把其余等待者迁移到另一个等待队列。
@@ -589,13 +626,18 @@ pub fn requeue_wait_queue(from_wait_queue_id : WaitQueueId,
                           requeue_count : usize)
                           -> usize {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| {
+    let cpu_id = cpu::current_cpu_id();
+    let changed = with_scheduler(|scheduler| {
         scheduler.requeue_wait_queue(from_wait_queue_id,
                                      to_wait_queue_id,
                                      wake_count,
                                      requeue_count,
-                                     cpu::current_cpu_id())
-    })
+                                     cpu_id)
+    });
+    if changed > 0 {
+        ipi_notify_others(cpu_id);
+    }
+    changed
 }
 
 // =============================================================================

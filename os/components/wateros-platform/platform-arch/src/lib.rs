@@ -97,6 +97,16 @@ pub mod cpu {
     pub use impl_riscv64::cpu::{current_cpu_id, init_current_cpu};
 }
 
+/// 核间中断（IPI）：发送 Supervisor Soft Interrupt 至目标 CPU。
+///
+/// RISC-V 下通过 SBI `send_ipi` 实现；LoongArch 使用 IOCSR/IPI 寄存器。
+#[cfg(feature = "api-v0")]
+pub mod ipi {
+    /// 向 `cpu_mask` 指定的所有 CPU 发送核间中断。
+    #[cfg(feature = "impl-riscv64")]
+    pub use impl_riscv64::ipi::send_ipi;
+}
+
 /// 监管态中断屏蔽与使能（如 `sie` / `sstatus.SIE`），**不**包含对 CLINT/ACLINT
 /// 或 SBI `set_timer` 的编程。
 #[cfg(feature = "api-v0")]
@@ -143,6 +153,11 @@ pub mod interrupt {
 
     #[inline]
     pub fn wait_for_interrupt() { ArchInterruptImpl::wait_for_interrupt(); }
+
+    /// 清除监督态软中断（SSIP）。仅 RISC-V 架构需要，在收到 IPI 后调用。
+    #[cfg(feature = "impl-riscv64")]
+    #[inline]
+    pub fn clear_soft_interrupt() { impl_riscv64::interrupt::clear_soft_interrupt(); }
 }
 
 /// 地址空间激活与必要的地址翻译缓存刷新原语；页表内容在 MM 组件。
