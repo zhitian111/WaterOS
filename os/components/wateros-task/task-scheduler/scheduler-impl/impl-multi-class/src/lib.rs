@@ -142,7 +142,8 @@ fn ipi_notify_others(current_cpu_id : CpuId) {
         return;
     }
     if let Err(error) = arch::ipi::send_ipi(mask) {
-        log::warn!("[ipi] reschedule notification failed: {:?}", error);
+        log::warn!("[ipi] reschedule notification failed: {:?}",
+                   error);
     }
 }
 
@@ -269,7 +270,12 @@ pub fn run_first_task_on_current_cpu(cpu_id : CpuId) -> ! {
 #[inline(never)]
 pub fn spawn_kernel_task(entry : KernelTaskEntry, arg : usize) -> TaskId {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.spawn_kernel_task(entry, arg, cpu::current_cpu_id()))
+    let cpu_id = cpu::current_cpu_id();
+    let task_id = with_scheduler(|scheduler| scheduler.spawn_kernel_task(entry, arg, cpu_id));
+    // 新任务可能被选到远端 CPU；首期仍采用广播 IPI，确保远端 idle CPU
+    // 能立即重新检查自己的 runqueue。
+    ipi_notify_others(cpu_id);
+    task_id
 }
 
 /// 按规格创建用户任务（仅登记 TCB，不入就绪队列）。
@@ -281,13 +287,18 @@ pub fn create_user_task_spec(spec : UserTask) -> TaskId {
 /// 按规格创建用户任务并入就绪队列尾部。
 pub fn spawn_user_task_spec(spec : UserTask) -> TaskId {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.spawn_user_task_spec(spec, cpu::current_cpu_id()))
+    let cpu_id = cpu::current_cpu_id();
+    let task_id = with_scheduler(|scheduler| scheduler.spawn_user_task_spec(spec, cpu_id));
+    ipi_notify_others(cpu_id);
+    task_id
 }
 
 /// 将已创建任务加入就绪队列尾部。
 pub fn enqueue_ready_task(task_id : TaskId) {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.enqueue_ready_task(task_id, cpu::current_cpu_id()))
+    let cpu_id = cpu::current_cpu_id();
+    with_scheduler(|scheduler| scheduler.enqueue_ready_task(task_id));
+    ipi_notify_others(cpu_id);
 }
 
 /// 从当前用户任务 fork 子任务（仅登记 TCB，不入就绪队列）。
@@ -331,23 +342,30 @@ pub fn fork_current(child_stack : usize,
                     new_satp : usize)
                     -> Option<TaskId> {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| {
+    let cpu_id = cpu::current_cpu_id();
+    let child_id = with_scheduler(|scheduler| {
         scheduler.fork_current(child_stack,
                                new_aspace_ptr,
                                new_satp,
-                               cpu::current_cpu_id())
-    })
+                               cpu_id)
+    });
+    if child_id.is_some() {
+        ipi_notify_others(cpu_id);
+    }
+    child_id
 }
 
 /// 从当前用户任务 clone 一个同进程线程；线程共享用户地址空间但有独立执行现场。
 pub fn clone_current_thread(child_stack : usize, tls : usize, set_tls : bool) -> Option<TaskId> {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| {
-        scheduler.clone_current_thread(child_stack,
-                                       tls,
-                                       set_tls,
-                                       cpu::current_cpu_id())
-    })
+    let cpu_id = cpu::current_cpu_id();
+    let child_id = with_scheduler(|scheduler| {
+        scheduler.clone_current_thread(child_stack, tls, set_tls, cpu_id)
+    });
+    if child_id.is_some() {
+        ipi_notify_others(cpu_id);
+    }
+    child_id
 }
 
 /// execve：替换当前任务的进程映像（地址空间、入口、栈）。
@@ -415,11 +433,14 @@ pub fn schedule_tick() {
 pub fn schedule_reschedule() {
     let guard = InterruptGuard::new();
     let switch_pair = with_scheduler(|scheduler| {
-        scheduler.schedule(ScheduleReason::Yield, cpu::current_cpu_id())
+        scheduler.schedule(ScheduleReason::Yield,
+                           cpu::current_cpu_id())
     });
     if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
         guard.release_before_switch();
-        unsafe { __switch(current_task_cx_ptr, next_task_cx_ptr); }
+        unsafe {
+            __switch(current_task_cx_ptr, next_task_cx_ptr);
+        }
     }
 }
 
@@ -564,7 +585,7 @@ pub fn wait_for_task_exit_timeout(task_id : TaskId, timeout_ticks : TaskTick) ->
 pub fn wake_task(task_id : TaskId) -> bool {
     let _guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
-    let woken = with_scheduler(|scheduler| scheduler.wake_task(task_id, cpu_id));
+    let woken = with_scheduler(|scheduler| scheduler.wake_task(task_id));
     if woken {
         ipi_notify_others(cpu_id);
     }
@@ -574,7 +595,7 @@ pub fn wake_task(task_id : TaskId) -> bool {
 pub fn interrupt_task(task_id : TaskId) -> bool {
     let _guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
-    let interrupted = with_scheduler(|scheduler| scheduler.interrupt_task(task_id, cpu_id));
+    let interrupted = with_scheduler(|scheduler| scheduler.interrupt_task(task_id));
     if interrupted {
         ipi_notify_others(cpu_id);
     }
@@ -589,7 +610,7 @@ pub fn block_task_manual(task_id : TaskId) {
 pub fn wake_child_exit_waiters(parent_id : TaskId) {
     let _guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
-    with_scheduler(|scheduler| scheduler.wake_child_exit_waiters(parent_id, cpu_id));
+    with_scheduler(|scheduler| scheduler.wake_child_exit_waiters(parent_id));
     ipi_notify_others(cpu_id);
 }
 
@@ -613,7 +634,7 @@ pub fn try_release_wait_queue(wait_queue_id : WaitQueueId) -> bool {
 pub fn wake_one_in_wait_queue(wait_queue_id : WaitQueueId) -> Option<TaskId> {
     let _guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
-    let woken = with_scheduler(|scheduler| scheduler.wake_one_in_wait_queue(wait_queue_id, cpu_id));
+    let woken = with_scheduler(|scheduler| scheduler.wake_one_in_wait_queue(wait_queue_id));
     if woken.is_some() {
         ipi_notify_others(cpu_id);
     }
@@ -624,7 +645,7 @@ pub fn wake_one_in_wait_queue(wait_queue_id : WaitQueueId) -> Option<TaskId> {
 pub fn wake_all_in_wait_queue(wait_queue_id : WaitQueueId) -> usize {
     let _guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
-    let count = with_scheduler(|scheduler| scheduler.wake_all_in_wait_queue(wait_queue_id, cpu_id));
+    let count = with_scheduler(|scheduler| scheduler.wake_all_in_wait_queue(wait_queue_id));
     if count > 0 {
         ipi_notify_others(cpu_id);
     }
@@ -643,8 +664,7 @@ pub fn requeue_wait_queue(from_wait_queue_id : WaitQueueId,
         scheduler.requeue_wait_queue(from_wait_queue_id,
                                      to_wait_queue_id,
                                      wake_count,
-                                     requeue_count,
-                                     cpu_id)
+                                     requeue_count)
     });
     if changed > 0 {
         ipi_notify_others(cpu_id);
