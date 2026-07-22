@@ -10,18 +10,18 @@ use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use api_v0::{VfsError, VfsIoHandle, VfsResult};
-use base::sync::UniprocessorSafeCell;
+use base::sync::MultiprocessorSafeCell;
 use impl_fd_session::PerTaskFdRegistry;
 
-static mut FD_REGISTRY : MaybeUninit<UniprocessorSafeCell<PerTaskFdRegistry>> =
+static mut FD_REGISTRY : MaybeUninit<MultiprocessorSafeCell<PerTaskFdRegistry>> =
     MaybeUninit::uninit();
 static FD_REGISTRY_READY : AtomicUsize = AtomicUsize::new(0);
 
-/// 全局 per-task fd 注册表（单核 `UniprocessorSafeCell`）。
-pub fn registry() -> &'static UniprocessorSafeCell<PerTaskFdRegistry> {
+/// 全局 per-task fd 注册表（自旋锁保护）。
+pub fn registry() -> &'static MultiprocessorSafeCell<PerTaskFdRegistry> {
     if FD_REGISTRY_READY.load(Ordering::Acquire) == 0 {
         unsafe {
-            FD_REGISTRY.write(UniprocessorSafeCell::new(PerTaskFdRegistry::new()));
+            FD_REGISTRY.write(MultiprocessorSafeCell::new(PerTaskFdRegistry::new()));
         }
         FD_REGISTRY_READY.store(1, Ordering::Release);
     }

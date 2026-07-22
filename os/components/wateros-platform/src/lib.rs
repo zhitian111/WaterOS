@@ -41,6 +41,27 @@ pub mod arch {
     pub fn init() { arch_boot(); }
 }
 
+/// Platform SMP lifecycle.  Only the RISC-V OpenSBI profile currently starts
+/// secondaries; other profiles deliberately report `Unsupported`.
+#[cfg(feature = "api-v0")]
+pub mod smp {
+    pub use api_v0::smp::{HartStatus, PlatformSmp, PlatformSmpError, PlatformSmpResult};
+    use base::cpu::{CpuId, CpuMask};
+
+    #[inline]
+    pub fn start_cpu(cpu: CpuId, start_addr: usize, opaque: usize) -> PlatformSmpResult<()> {
+        crate::active_impl::smp::SmpImpl::start_cpu(cpu, start_addr, opaque)
+    }
+    #[inline]
+    pub fn cpu_status(cpu: CpuId) -> PlatformSmpResult<HartStatus> {
+        crate::active_impl::smp::SmpImpl::cpu_status(cpu)
+    }
+    #[inline]
+    pub fn configured_cpu_mask() -> CpuMask {
+        crate::active_impl::smp::SmpImpl::configured_cpu_mask()
+    }
+}
+
 /// 平台层时间频率：由 `PlatformTime` 实现（通常来自板级 / DTB / 环境常量），
 /// **不**等同于 arch 的 `time` CSR 读频率（arch 侧可能返回不支持）。
 ///

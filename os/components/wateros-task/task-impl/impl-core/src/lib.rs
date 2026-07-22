@@ -18,7 +18,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use api_v0::{ProcessDescriptor, ProcessId, ProcessTaskDescriptor, TaskClearTid, TaskId, ThreadId};
 use arch::interrupt::ArchInterruptState;
-use base::sync::UniprocessorSafeCell;
+use base::sync::MultiprocessorSafeCell;
 
 mod process;
 mod tcb;
@@ -27,11 +27,11 @@ pub use api_v0::TaskBootstrap;
 pub use process::{ProcessControlBlock, ProcessRegistry};
 pub use tcb::TaskControlBlock;
 
-static mut PROCESS_REGISTRY : MaybeUninit<UniprocessorSafeCell<ProcessRegistry>> =
+static mut PROCESS_REGISTRY : MaybeUninit<MultiprocessorSafeCell<ProcessRegistry>> =
     MaybeUninit::uninit();
 static PROCESS_REGISTRY_READY : AtomicBool = AtomicBool::new(false);
 
-fn registry_cell() -> &'static UniprocessorSafeCell<ProcessRegistry> {
+fn registry_cell() -> &'static MultiprocessorSafeCell<ProcessRegistry> {
     assert!(PROCESS_REGISTRY_READY.load(Ordering::Acquire),
             "process registry not initialized");
     unsafe { &*PROCESS_REGISTRY.as_ptr() }
@@ -42,7 +42,7 @@ fn registry_cell() -> &'static UniprocessorSafeCell<ProcessRegistry> {
 pub fn init_process_registry() {
     if !PROCESS_REGISTRY_READY.load(Ordering::Acquire) {
         unsafe {
-            PROCESS_REGISTRY.write(UniprocessorSafeCell::new(ProcessRegistry::new()));
+            PROCESS_REGISTRY.write(MultiprocessorSafeCell::new(ProcessRegistry::new()));
         }
         PROCESS_REGISTRY_READY.store(true, Ordering::Release);
     }

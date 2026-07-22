@@ -1,4 +1,4 @@
-//! 全局栈式物理帧分配器（单核 `UniprocessorSafeCell`）：`FrameId` 为
+//! 全局栈式物理帧分配器（自旋锁保护）：`FrameId` 为
 //! **PPN**，与 4 KiB 物理页一一对应。
 //!
 //! 调用方须保证 `init_frame_allocator` 传入的 PPN 区间落在
@@ -13,7 +13,7 @@ use alloc::vec::Vec;
 use api_v0::{FrameAllocError, FrameAllocResult, FrameMemStats, PhysicalFrameAllocator};
 use mm_api::addr::{PhysPageNum, PAGE_SIZE};
 use wateros_base::addr::BasePPN;
-use wateros_base::sync::UniprocessorSafeCell;
+use wateros_base::sync::MultiprocessorSafeCell;
 use arch::interrupt::{
     disable_global_interrupt, read_global_interrupt_state, restore_global_interrupt_state,
     ArchInterruptState,
@@ -218,13 +218,13 @@ impl StackFrameAllocator {
 
 // ===== 全局单例（安全单核）=====
 
-static mut FRAME_ALLOCATOR : MaybeUninit<UniprocessorSafeCell<StackFrameAllocator>> =
+static mut FRAME_ALLOCATOR : MaybeUninit<MultiprocessorSafeCell<StackFrameAllocator>> =
     MaybeUninit::uninit();
 static FRAME_ALLOCATOR_READY : AtomicBool = AtomicBool::new(false);
 
 // `FRAME_ALLOCATOR` 仅在首次 `init_frame_allocator` 中 `write`
 // 一次，之后只读；与 `READY` 发布顺序配对。
-fn get_frame_allocator_cell() -> &'static UniprocessorSafeCell<StackFrameAllocator> {
+fn get_frame_allocator_cell() -> &'static MultiprocessorSafeCell<StackFrameAllocator> {
     assert!(FRAME_ALLOCATOR_READY.load(Ordering::Acquire),
             "frame allocator not initialized: call init_frame_allocator() first");
     unsafe { &*FRAME_ALLOCATOR.as_ptr() }
@@ -234,7 +234,7 @@ fn get_frame_allocator_cell() -> &'static UniprocessorSafeCell<StackFrameAllocat
 pub fn init_frame_allocator(start_ppn : BasePPN, end_ppn : BasePPN) {
     if !FRAME_ALLOCATOR_READY.load(Ordering::Acquire) {
         unsafe {
-            FRAME_ALLOCATOR.write(UniprocessorSafeCell::new(StackFrameAllocator::new()));
+            FRAME_ALLOCATOR.write(MultiprocessorSafeCell::new(StackFrameAllocator::new()));
         }
         FRAME_ALLOCATOR_READY.store(true, Ordering::Release);
     }
@@ -243,7 +243,7 @@ pub fn init_frame_allocator(start_ppn : BasePPN, end_ppn : BasePPN) {
 }
 
 /// 获取全局帧分配器单例容器（供特殊场景直接拿 `exclusive_access()`）。
-pub fn frame_allocator_cell() -> &'static UniprocessorSafeCell<StackFrameAllocator> {
+pub fn frame_allocator_cell() -> &'static MultiprocessorSafeCell<StackFrameAllocator> {
     get_frame_allocator_cell()
 }
 
@@ -291,7 +291,7 @@ pub fn frame_mem_stats() -> FrameMemStats {
 /// 零大小适配器：实现 [`PhysicalFrameAllocator`] 时每次调用短借全局栈式分配器。
 ///
 /// 供 `HeapBrk` / `MmapOps` 等路径使用。**不得**在已持有
-/// [`frame_allocator_cell`] 的 [`UniprocessorSafeCell::exclusive_access`]
+/// [`frame_allocator_cell`] 的 [`MultiprocessorSafeCell::exclusive_access`]
 /// 期间再跑会嵌套调用 [`frame_alloc_result`] 的页表 walk，否则重入同一
 /// `RefCell` 会 panic。
 pub struct GlobalPhysFrameAllocator;

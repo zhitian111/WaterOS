@@ -131,20 +131,19 @@ fn with_scheduler<R>(f : impl FnOnce(&mut MultiClassScheduler) -> R) -> R {
 
 // ── 跨核 IPI 通知 ────────────────────────────────────────────────
 //
-// 调度器直接调用 `arch::ipi::send_ipi` 发送核间中断，无需回调注册。
-// `arch::ipi` 由 platform-arch 提供，根据 ISA 选择具体实现
-//（RISC-V: SBI send_ipi；LoongArch: IOCSR/IPI 寄存器）。
-
-/// 向所有其他在线 CPU 发送 reschedule IPI（当前 CPU 除外）。
+/// 向所有其他 online CPU 发送重调度 IPI。
+///
+/// 这是远端入队尚未完成前的简单过渡策略：会产生冗余 IPI，但不会遗漏
+/// 已 online CPU。后续引入 `ready_cpu` 后应改为只通知实际目标 CPU。
 fn ipi_notify_others(current_cpu_id : CpuId) {
-    // 构造 CpuMask：低 8 位全 1，再移除当前 CPU。
-    // 上限 8 与 scheduler.rs 的 MAX_CPUS 一致；实际发送由 arch IPI 过滤无效 hart。
-    let mut mask = CpuMask::from_bits((1u64 << 8) - 1);
+    let mut mask = with_scheduler(|scheduler| scheduler.online_cpu_mask());
     mask.remove(current_cpu_id);
     if mask.is_empty() {
         return;
     }
-    let _ = arch::ipi::send_ipi(mask);
+    if let Err(error) = arch::ipi::send_ipi(mask) {
+        log::warn!("[ipi] reschedule notification failed: {:?}", error);
+    }
 }
 
 // ── 中断守卫 ──────────────────────────────────────────────────────
@@ -411,14 +410,28 @@ pub fn schedule_tick() {
     }
 }
 
+/// Handle a reschedule IPI.  Unlike a timer tick this neither advances global
+/// time nor charges the interrupted task a timeslice.
+pub fn schedule_reschedule() {
+    let guard = InterruptGuard::new();
+    let switch_pair = with_scheduler(|scheduler| {
+        scheduler.schedule(ScheduleReason::Yield, cpu::current_cpu_id())
+    });
+    if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
+        guard.release_before_switch();
+        unsafe { __switch(current_task_cx_ptr, next_task_cx_ptr); }
+    }
+}
+
 /// 以给定原因阻塞当前任务并切换出去。
 pub fn block_current(reason : TaskWaitTarget) {
-    let _guard = InterruptGuard::new();
+    let guard = InterruptGuard::new();
     let switch_pair = with_scheduler(|scheduler| {
         scheduler.schedule(ScheduleReason::Block(reason),
                            cpu::current_cpu_id())
     });
     if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
+        guard.release_before_switch();
         unsafe {
             __switch(current_task_cx_ptr, next_task_cx_ptr);
         }
@@ -577,7 +590,6 @@ pub fn wake_child_exit_waiters(parent_id : TaskId) {
     let _guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
     with_scheduler(|scheduler| scheduler.wake_child_exit_waiters(parent_id, cpu_id));
-    // 保守通知：无法精确知道是否唤醒了任务，简单通知所有其他 CPU。
     ipi_notify_others(cpu_id);
 }
 
@@ -785,6 +797,12 @@ pub fn running_cpu(task_id : TaskId) -> Option<CpuId> {
 pub fn set_cpu_online(cpu_id : CpuId) {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.set_cpu_online(cpu_id));
+}
+
+/// Snapshot of CPUs that completed scheduler bring-up.
+pub fn online_cpu_mask() -> CpuMask {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.online_cpu_mask())
 }
 
 // =============================================================================

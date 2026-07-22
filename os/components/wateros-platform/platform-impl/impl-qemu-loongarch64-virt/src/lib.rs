@@ -15,6 +15,17 @@ pub mod console;
 pub mod reset;
 /// Constant Timer deadline 编程后端。
 pub mod timer;
+pub mod smp {
+    use api_v0::smp::{HartStatus, PlatformSmp, PlatformSmpError, PlatformSmpResult};
+    use base::cpu::{CpuId, CpuMask};
+    pub struct QemuLoongArchSmp;
+    impl PlatformSmp for QemuLoongArchSmp {
+        fn start_cpu(_: CpuId, _: usize, _: usize) -> PlatformSmpResult<()> { Err(PlatformSmpError::Unsupported) }
+        fn cpu_status(_: CpuId) -> PlatformSmpResult<HartStatus> { Err(PlatformSmpError::Unsupported) }
+        fn configured_cpu_mask() -> CpuMask { CpuMask::EMPTY }
+    }
+    pub use QemuLoongArchSmp as SmpImpl;
+}
 
 pub mod boot {
     use api_v0::boot::{PlatformBootArgs, PlatformBootContext};

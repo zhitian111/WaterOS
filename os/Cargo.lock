@@ -1215,6 +1215,7 @@ name = "wateros-mm-api-v0"
 version = "0.1.0"
 dependencies = [
  "log",
+ "spin",
  "wateros-mm-frame-alloctor-api-v0",
 ]
 
@@ -1300,6 +1301,7 @@ name = "wateros-platform"
 version = "0.1.0"
 dependencies = [
  "log",
+ "wateros-base",
  "wateros-platform-api-v0",
  "wateros-platform-arch",
  "wateros-platform-impl-dummy",
@@ -1310,11 +1312,15 @@ dependencies = [
 [[package]]
 name = "wateros-platform-api-v0"
 version = "0.1.0"
+dependencies = [
+ "wateros-base",
+]
 
 [[package]]
 name = "wateros-platform-arch"
 version = "0.1.0"
 dependencies = [
+ "wateros-base",
  "wateros-platform-arch-api-v0",
  "wateros-platform-arch-impl-dummy",
  "wateros-platform-arch-impl-loongarch64",
@@ -1362,6 +1368,7 @@ dependencies = [
 name = "wateros-platform-impl-dummy"
 version = "0.1.0"
 dependencies = [
+ "wateros-base",
  "wateros-platform-api-v0",
 ]
 
@@ -1369,6 +1376,7 @@ dependencies = [
 name = "wateros-platform-impl-qemu-loongarch64-virt"
 version = "0.1.0"
 dependencies = [
+ "wateros-base",
  "wateros-platform-api-v0",
 ]
 
@@ -1378,6 +1386,7 @@ version = "0.1.0"
 dependencies = [
  "sbi-rt",
  "wateros-base",
+ "wateros-base-config",
  "wateros-platform-api-v0",
 ]
 
@@ -1565,6 +1574,9 @@ dependencies = [
 [[package]]
 name = "wateros-vfs-api-v0"
 version = "0.1.0"
+dependencies = [
+ "spin",
+]
 
 [[package]]
 name = "wateros-vfs-impl-dummy"

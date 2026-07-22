@@ -15,6 +15,9 @@ pub fn schedule_tick() {
     scheduler::schedule_tick();
 }
 
+/// Respond to a remote reschedule request without changing scheduler time.
+pub fn schedule_reschedule() { scheduler::schedule_reschedule(); }
+
 /// 以指定阻塞原因挂起当前任务。
 pub fn block_current(reason: TaskWaitTarget) {
     scheduler::block_current(reason);
