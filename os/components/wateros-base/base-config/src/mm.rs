@@ -24,6 +24,11 @@ pub const QEMU_VIRT_PHYS_RAM_END : usize = 0xC000_0000;
 /// QEMU `virt` 物理 RAM 字节容量。
 pub const QEMU_VIRT_PHYS_RAM_SIZE : usize = QEMU_VIRT_PHYS_RAM_END - QEMU_VIRT_PHYS_RAM_BASE;
 
+/// QEMU RISC-V `virt` 上 Goldfish RTC 的物理 MMIO 页（半开区间）。
+/// RTC 位于常规 UART/VirtIO MMIO 窗口之外，因此需要单独恒等映射。
+pub const QEMU_VIRT_RTC_PHYS_START : usize = 0x0010_1000;
+pub const QEMU_VIRT_RTC_PHYS_END : usize = 0x0010_2000;
+
 /// QEMU `virt` 低地址 MMIO 恒等映射区间（半开）：UART、`virtio,mmio` 等外设所在物理地址。
 /// 与 OpenSBI/QEMU 设备树常见布局一致；**不是** DRAM，扩大 RAM 映射无法替代。
 pub const QEMU_VIRT_MMIO_PHYS_START : usize = 0x1000_0000;

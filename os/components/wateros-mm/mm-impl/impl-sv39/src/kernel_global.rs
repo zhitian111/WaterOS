@@ -113,6 +113,13 @@ pub fn init(dtb_pa : usize, ram_end_exclusive : usize) {
                  PagePerm::R | PagePerm::W,
                  "MMIO");
 
+    // Goldfish RTC 位于 0x0010_1000，不在 UART/VirtIO 的常规 MMIO 窗口内。
+    map_identity(&mut aspace,
+                 wateros_base_config::mm::QEMU_VIRT_RTC_PHYS_START,
+                 wateros_base_config::mm::QEMU_VIRT_RTC_PHYS_END,
+                 PagePerm::R | PagePerm::W,
+                 "RTC MMIO");
+
     // 选一枚位于帧池内的物理页做 satp 切换后的翻译与内存一致性探针（与 RAM
     // 恒等区无重叠的任意 VA）。
     assert!(start_ppn + 16 < end_ppn,

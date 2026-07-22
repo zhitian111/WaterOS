@@ -149,6 +149,31 @@ fn mmio_read32(base: usize, word_offset: usize) -> u32 {
     unsafe { core::ptr::read_volatile(ptr) }
 }
 
+/// 读取 QEMU virt 的 Goldfish RTC 当前 UTC 纳秒值。
+///
+/// 读取低 32 位会把同一时刻的高 32 位锁存到相邻寄存器，因此顺序必须是 low、high。
+/// 该值用于在用户程序启动前初始化 `CLOCK_REALTIME`，否则系统时间停留在 1970 年，
+/// TLS 会把所有现代证书判为“尚未生效”。
+pub fn goldfish_rtc_realtime_ns() -> DriverResult<u64> {
+    let infos = DEVICE_INFOS.lock();
+    let rtc = infos.iter()
+                   .find(|info| {
+                       info.compatibles
+                           .iter()
+                           .any(|compatible| compatible == "google,goldfish-rtc")
+                   })
+                   .and_then(|info| info.mmio)
+                   .filter(|region| region.size >= 8)
+                   .ok_or(DriverError::NotFound)?;
+    let low = u64::from(mmio_read32(rtc.base, 0));
+    let high = u64::from(mmio_read32(rtc.base, 1));
+    let ns = (high << 32) | low;
+    if ns == 0 {
+        return Err(DriverError::IoError);
+    }
+    Ok(ns)
+}
+
 // 魔数 0x74726976 即小端 "virt"；device id 遵循 VirtIO 规范（2=block，1=network）。
 fn probe_virtio_device_type(mmio: MmioRegion) -> DeviceType {
     let magic = mmio_read32(mmio.base, 0);
