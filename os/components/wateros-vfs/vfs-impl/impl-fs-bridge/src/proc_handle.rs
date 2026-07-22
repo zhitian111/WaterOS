@@ -37,6 +37,7 @@ pub struct ProcDirectoryHandle {
 #[derive(Clone)]
 // 本结构代码由AI完成
 pub struct ProcFileHandle {
+    #[allow(dead_code)]
     rel: String,
     meta: VfsMetadata,
     data: Vec<u8>,

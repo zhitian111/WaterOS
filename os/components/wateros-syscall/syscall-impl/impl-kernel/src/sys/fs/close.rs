@@ -1,0 +1,77 @@
+//! 文件描述符关闭操作：`close(2)`、`close_range(2)`。
+
+use abi::errno::ErrNo;
+use abi::syscall_args::SyscallArgs;
+use abi::user_ret::UserRet;
+
+use crate::epoll_fd;
+use crate::socket_fd;
+use crate::vfs_util::vfs_error_to_errno;
+
+const CLOSE_RANGE_UNSHARE: usize = 1 << 1;
+const CLOSE_RANGE_CLOEXEC: usize = 1 << 2;
+
+// 本方法代码由AI完成
+pub(crate) fn sys_close(args: SyscallArgs) -> UserRet {
+    let fd = args.arg(0);
+    let was_socket = socket_fd::lookup(fd).is_some();
+    let was_unix = crate::unix_sock::is_unix_fd(fd);
+    let was_epoll = epoll_fd::is_epoll_fd(fd);
+    let result = vfs::fd::close_fd(fd);
+    if was_socket {
+        socket_fd::remove(fd);
+    }
+    if was_unix {
+        if let Ok(task_id) = vfs::fd::current_task_id() {
+            crate::unix_sock::unregister(task_id, fd);
+        }
+    }
+    if was_epoll {
+        epoll_fd::remove(fd);
+    }
+    match result {
+        Ok(()) => UserRet::from_success(0),
+        Err(err) => UserRet::from_error(vfs_error_to_errno(err)),
+    }
+}
+
+// 本方法代码由AI完成
+pub(crate) fn sys_close_range(args: SyscallArgs) -> UserRet {
+    let first = args.arg(0);
+    let last = args.arg(1);
+    let flags = args.arg(2);
+
+    if first > last {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    if flags & !(CLOSE_RANGE_UNSHARE | CLOSE_RANGE_CLOEXEC) != 0 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    if flags & CLOSE_RANGE_UNSHARE != 0 {
+        log::warn!(
+            "[syscall] close_range(nr=436) CLOSE_RANGE_UNSHARE unsupported flags={:#x}",
+            flags,
+        );
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+
+    if flags & CLOSE_RANGE_CLOEXEC != 0 {
+        return match vfs::fd::set_fd_range_cloexec(first, last, true) {
+            Ok(()) => UserRet::from_success(0),
+            Err(e) => UserRet::from_error(vfs_error_to_errno(e)),
+        };
+    }
+
+    match vfs::fd::close_fd_range(first, last) {
+        Ok(closed_fds) => {
+            for fd in closed_fds {
+                socket_fd::remove(fd);
+                if let Ok(task_id) = vfs::fd::current_task_id() {
+                    crate::unix_sock::unregister(task_id, fd);
+                }
+            }
+            UserRet::from_success(0)
+        }
+        Err(e) => UserRet::from_error(vfs_error_to_errno(e)),
+    }
+}

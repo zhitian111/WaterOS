@@ -15,8 +15,8 @@ use api_v0::{
     VfsSeekWhence,
 };
 
-const S_IFMT: u16 = 0o170000;
-const S_IFCHR: u16 = 0o020000;
+const S_IFMT : u16 = 0o170000;
+const S_IFCHR : u16 = 0o020000;
 
 static NEXT_FLOCK_OWNER_ID : AtomicU64 = AtomicU64::new(1);
 
@@ -37,7 +37,7 @@ pub struct BufferedFileHandle {
 pub type RootFileHandle = BufferedFileHandle;
 
 impl BufferedFileHandle {
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     pub(crate) fn open(bridge : &FsBridge, path : String, flags : VfsOpenFlags) -> VfsResult<Self> {
         let want_read = flags.contains(VfsOpenFlags::READ) ||
                         (!flags.contains(VfsOpenFlags::WRITE) &&
@@ -93,7 +93,8 @@ impl BufferedFileHandle {
                   flock_owner_id : NEXT_FLOCK_OWNER_ID.fetch_add(1, Ordering::Relaxed) })
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
+    #[allow(dead_code)]
     pub(crate) fn open_boxed(bridge : &FsBridge,
                              path : String,
                              flags : VfsOpenFlags)
@@ -101,7 +102,7 @@ impl BufferedFileHandle {
         Ok(Box::new(Self::open(bridge, path, flags)?))
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn sync_dirty(&mut self) -> VfsResult<()> {
         if !self.dirty {
             return Ok(());
@@ -118,7 +119,7 @@ impl BufferedFileHandle {
 }
 
 impl VfsIoHandle for BufferedFileHandle {
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn read(&mut self, buf : &mut [u8]) -> VfsResult<usize> {
         if buf.is_empty() {
             return Ok(0);
@@ -136,7 +137,7 @@ impl VfsIoHandle for BufferedFileHandle {
         Ok(n)
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn write(&mut self, buf : &[u8]) -> VfsResult<usize> {
         if !self.writable {
             return Err(VfsError::Unsupported);
@@ -158,10 +159,10 @@ impl VfsIoHandle for BufferedFileHandle {
         Ok(buf.len())
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn close(&mut self) -> VfsResult<()> { self.sync_dirty() }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn metadata(&self) -> VfsResult<VfsMetadata> {
         let mut m = match FsBridge.metadata(self.path.as_str()) {
             Ok(meta) => meta,
@@ -171,17 +172,13 @@ impl VfsIoHandle for BufferedFileHandle {
         Ok(m)
     }
 
-// 本方法代码由AI完成
-    fn backing_path(&self) -> Option<&str> {
-        Some(self.path.as_str())
-    }
+    // 本方法代码由AI完成
+    fn backing_path(&self) -> Option<&str> { Some(self.path.as_str()) }
 
-// 本方法代码由AI完成
-    fn flock_owner_id(&self) -> Option<u64> {
-        Some(self.flock_owner_id)
-    }
+    // 本方法代码由AI完成
+    fn flock_owner_id(&self) -> Option<u64> { Some(self.flock_owner_id) }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn open_accmode(&self) -> u32 {
         if self.writable {
             2
@@ -190,7 +187,7 @@ impl VfsIoHandle for BufferedFileHandle {
         }
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn read_at(&mut self, offset : u64, buf : &mut [u8]) -> VfsResult<usize> {
         if buf.is_empty() {
             return Ok(0);
@@ -205,7 +202,7 @@ impl VfsIoHandle for BufferedFileHandle {
         Ok(n)
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn write_at(&mut self, offset : u64, buf : &[u8]) -> VfsResult<usize> {
         if !self.writable {
             return Err(VfsError::Unsupported);
@@ -226,7 +223,7 @@ impl VfsIoHandle for BufferedFileHandle {
         Ok(buf.len())
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn truncate(&mut self, len : u64) -> VfsResult<()> {
         if !self.writable {
             return Err(VfsError::Unsupported);
@@ -242,7 +239,7 @@ impl VfsIoHandle for BufferedFileHandle {
         Ok(())
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn seek(&mut self, offset : i64, whence : VfsSeekWhence) -> VfsResult<u64> {
         let new_off = match whence {
             VfsSeekWhence::Set => {
@@ -277,17 +274,17 @@ impl VfsIoHandle for BufferedFileHandle {
         Ok(new_off)
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn flush(&mut self) -> VfsResult<()> { self.sync_dirty() }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> { Ok(Box::new(self.clone())) }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn poll_revents(&mut self, events : i16) -> VfsResult<i16> {
-// 本变量代码由AI完成
+        // 本变量代码由AI完成
         const POLLIN : i16 = 0x001;
-// 本变量代码由AI完成
+        // 本变量代码由AI完成
         const POLLOUT : i16 = 0x004;
         let mut revents = 0i16;
         if events & POLLIN != 0 {
@@ -301,7 +298,7 @@ impl VfsIoHandle for BufferedFileHandle {
 }
 
 impl FsBridge {
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     pub(crate) fn open_path(&self,
                             path : &str,
                             flags : VfsOpenFlags)
@@ -315,7 +312,9 @@ impl FsBridge {
             FsRoute::PseudoProc { rel, identity } => {
                 return super::proc_handle::open_proc(rel, abs.clone(), flags, identity);
             }
-            FsRoute::PseudoSecurity { rel, .. } if rel == "/" && flags.contains(VfsOpenFlags::DIRECTORY) => {
+            FsRoute::PseudoSecurity { rel, .. }
+                if rel == "/" && flags.contains(VfsOpenFlags::DIRECTORY) =>
+            {
                 return super::dir_handle::DirectoryHandle::open(self, abs);
             }
             FsRoute::PseudoSecurity { .. } => return Err(VfsError::NotFound),
@@ -348,7 +347,7 @@ impl FsBridge {
             return super::dir_handle::DirectoryHandle::open(self, abs);
         }
         match resolve_route(abs.as_str())? {
-            FsRoute::AuxRw { readonly : true, .. } if flags.contains(VfsOpenFlags::WRITE) => {
+            FsRoute::AuxRw { readonly: true, .. } if flags.contains(VfsOpenFlags::WRITE) => {
                 Err(VfsError::ReadOnlyFs)
             }
             FsRoute::AuxRo { .. } => Ok(Box::new(BufferedFileHandle::open(self, abs, flags)?)),

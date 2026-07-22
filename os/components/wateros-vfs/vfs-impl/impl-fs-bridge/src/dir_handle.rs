@@ -17,15 +17,15 @@ use crate::FsBridge;
 #[derive(Clone)]
 // 本结构代码由AI完成
 pub struct DirectoryHandle {
-    path: String,
-    meta: VfsMetadata,
-    dirents: Option<Vec<VfsDirEntry>>,
-    next_index: usize,
+    path : String,
+    meta : VfsMetadata,
+    dirents : Option<Vec<VfsDirEntry>>,
+    next_index : usize,
 }
 
 impl DirectoryHandle {
-// 本方法代码由AI完成
-    pub(crate) fn open(bridge: &FsBridge, path: String) -> VfsResult<Box<dyn VfsIoHandle>> {
+    // 本方法代码由AI完成
+    pub(crate) fn open(bridge : &FsBridge, path : String) -> VfsResult<Box<dyn VfsIoHandle>> {
         if !bridge.exists(path.as_str())? {
             return Err(VfsError::NotFound);
         }
@@ -33,17 +33,17 @@ impl DirectoryHandle {
         if meta.node_type != VfsNodeType::Directory {
             return Err(VfsError::NotAFile);
         }
-        Ok(Box::new(Self {
-            path,
-            meta,
-            dirents: None,
-            next_index: 0,
-        }))
+        Ok(Box::new(Self { path,
+                           meta,
+                           dirents : None,
+                           next_index : 0 }))
     }
 
-// 本方法代码由AI完成
-    fn load_dirents(&mut self, bridge: &FsBridge) -> VfsResult<()> {
-        if self.dirents.is_some() {
+    // 本方法代码由AI完成
+    fn load_dirents(&mut self, bridge : &FsBridge) -> VfsResult<()> {
+        if self.dirents
+               .is_some()
+        {
             return Ok(());
         }
         self.dirents = Some(bridge.read_dir(self.path.as_str())?);
@@ -53,22 +53,22 @@ impl DirectoryHandle {
 }
 
 // 本变量代码由AI完成
-const DT_REG: u8 = 8;
+const DT_REG : u8 = 8;
 // 本变量代码由AI完成
-const DT_DIR: u8 = 4;
+const DT_DIR : u8 = 4;
 // 本变量代码由AI完成
-const DT_LNK: u8 = 10;
+const DT_LNK : u8 = 10;
 // 本变量代码由AI完成
-const HEADER_SIZE: usize = 19;
+const HEADER_SIZE : usize = 19;
 
 // 本方法代码由AI完成
-fn dirent64_reclen(name_len: usize) -> usize {
+fn dirent64_reclen(name_len : usize) -> usize {
     let with_name = HEADER_SIZE + name_len + 1;
     (with_name + 7) & !7
 }
 
 // 本方法代码由AI完成
-pub(crate) fn node_type_to_dt(t: VfsNodeType) -> u8 {
+pub(crate) fn node_type_to_dt(t : VfsNodeType) -> u8 {
     match t {
         VfsNodeType::File => DT_REG,
         VfsNodeType::Directory => DT_DIR,
@@ -77,19 +77,14 @@ pub(crate) fn node_type_to_dt(t: VfsNodeType) -> u8 {
     }
 }
 
-// 本方法代码由AI完成
-pub(crate) fn dirent64_encode_slice(
-    buf: &mut [u8],
-    ino: u64,
-    next_off: i64,
-    name: &str,
-    d_type: u8,
-) -> Option<usize> {
-    encode_one(buf, ino, next_off, name, d_type)
-}
 
 // 本方法代码由AI完成
-pub(crate) fn encode_one(buf: &mut [u8], ino: u64, next_off: i64, name: &str, d_type: u8) -> Option<usize> {
+pub(crate) fn encode_one(buf : &mut [u8],
+                         ino : u64,
+                         next_off : i64,
+                         name : &str,
+                         d_type : u8)
+                         -> Option<usize> {
     let reclen = dirent64_reclen(name.len());
     if buf.len() < reclen {
         return None;
@@ -110,41 +105,31 @@ pub(crate) fn encode_one(buf: &mut [u8], ino: u64, next_off: i64, name: &str, d_
 }
 
 impl VfsIoHandle for DirectoryHandle {
-// 本方法代码由AI完成
-    fn metadata(&self) -> VfsResult<VfsMetadata> {
-        Ok(self.meta.clone())
-    }
+    // 本方法代码由AI完成
+    fn metadata(&self) -> VfsResult<VfsMetadata> { Ok(self.meta.clone()) }
 
-// 本方法代码由AI完成
-    fn directory_path(&self) -> Option<&str> {
-        Some(self.path.as_str())
-    }
+    // 本方法代码由AI完成
+    fn directory_path(&self) -> Option<&str> { Some(self.path.as_str()) }
 
-// 本方法代码由AI完成
-    fn backing_path(&self) -> Option<&str> {
-        Some(self.path.as_str())
-    }
+    // 本方法代码由AI完成
+    fn backing_path(&self) -> Option<&str> { Some(self.path.as_str()) }
 
-// 本方法代码由AI完成
-    fn read(&mut self, _buf: &mut [u8]) -> VfsResult<usize> {
-        Err(VfsError::NotAFile)
-    }
+    // 本方法代码由AI完成
+    fn read(&mut self, _buf : &mut [u8]) -> VfsResult<usize> { Err(VfsError::NotAFile) }
 
-// 本方法代码由AI完成
-    fn write(&mut self, _buf: &[u8]) -> VfsResult<usize> {
-        Err(VfsError::NotAFile)
-    }
+    // 本方法代码由AI完成
+    fn write(&mut self, _buf : &[u8]) -> VfsResult<usize> { Err(VfsError::NotAFile) }
 
-// 本方法代码由AI完成
-    fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {
-        Ok(Box::new(self.clone()))
-    }
+    // 本方法代码由AI完成
+    fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> { Ok(Box::new(self.clone())) }
 
-// 本方法代码由AI完成
-    fn fill_getdents64(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
+    // 本方法代码由AI完成
+    fn fill_getdents64(&mut self, buf : &mut [u8]) -> VfsResult<usize> {
         let bridge = FsBridge;
         self.load_dirents(&bridge)?;
-        let entries = self.dirents.as_ref().expect("load_dirents");
+        let entries = self.dirents
+                          .as_ref()
+                          .expect("load_dirents");
         let mut out = 0usize;
         let mut off = 0usize;
         while self.next_index < entries.len() {
@@ -152,7 +137,12 @@ impl VfsIoHandle for DirectoryHandle {
             let next_off = (self.next_index + 1) as i64;
             let d_type = node_type_to_dt(ent.node_type);
             let slice = &mut buf[off..];
-            let Some(reclen) = encode_one(slice, 1, next_off, ent.name.as_str(), d_type) else {
+            let Some(reclen) = encode_one(slice,
+                                          1,
+                                          next_off,
+                                          ent.name.as_str(),
+                                          d_type)
+            else {
                 break;
             };
             off += reclen;

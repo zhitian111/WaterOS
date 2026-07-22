@@ -6,9 +6,9 @@
 use abi::user_ret::UserRet;
 use alloc::boxed::Box;
 use api_v0::{
-    AddressSpaceHandle, ExitedTask, KernelStack, KernelTaskEntry, SchedPolicy, TaskWaitTarget,
+    AddressSpaceHandle, CpuId, ExitedTask, KernelStack, KernelTaskEntry, SchedPolicy,
     TaskBootstrap, TaskExitCode, TaskId, TaskKind, TaskRuntimeStats, TaskSnapshot, TaskState,
-    TaskTick, TaskTrapSnapshot, TaskWaitResult, UserImageInfo, UserStack, UserTask,
+    TaskTick, TaskTrapSnapshot, TaskWaitResult, TaskWaitTarget, UserImageInfo, UserStack, UserTask,
 };
 use arch::task::{ActiveArchTaskContext as TaskContext, ArchTaskContext};
 use arch::trap::{ActiveTrapFrame as TaskTrapFrame, TrapFrameRead, TrapFrameWrite};
@@ -462,8 +462,8 @@ impl TaskControlBlock {
     pub fn mark_ready(&mut self) { self.state = TaskState::Ready; }
 
     #[inline]
-    pub fn mark_running(&mut self) {
-        self.state = TaskState::Running;
+    pub fn mark_running(&mut self, cpu_id : CpuId) {
+        self.state = TaskState::Running { cpu_id };
         self.stats
             .schedule_count = self.stats
                                   .schedule_count

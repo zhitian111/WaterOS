@@ -1,0 +1,139 @@
+//! 进程生命周期类系统调用：`yield`、`exit`、`exit_group`、`prctl`。
+
+use abi::errno::ErrNo;
+use abi::syscall_args::SyscallArgs;
+use abi::user_ret::UserRet;
+
+use crate::user_copy::copy_to_user_struct;
+
+// prctl 操作码
+const PR_SET_DUMPABLE: usize = 4;
+const PR_GET_DUMPABLE: usize = 3;
+const PR_GET_TID_ADDRESS: usize = 18;
+const PR_SET_SECCOMP: usize = 22;
+const PR_SET_NAME: usize = 15;
+const PR_GET_NAME: usize = 16;
+const PR_SET_NO_NEW_PRIVS: usize = 38;
+const PR_CAPBSET_READ: usize = 23;
+const PR_CAPBSET_DROP: usize = 24;
+const PR_GET_CHILD_SUBREAPER: usize = 36;
+const PR_SET_CHILD_SUBREAPER: usize = 37;
+
+pub(crate) fn sys_yield() -> UserRet {
+    task::yield_now();
+    UserRet::from_success(0)
+}
+
+pub(crate) fn sys_exit(exit_code: isize) -> isize {
+    if let Some(task_id) = task::current_task_id() {
+        if let Some(process_task) = task::current_process_task_snapshot() {
+            super::wait::reap_exited_member_threads_runtime_resources(process_task.pid);
+        }
+        if let Some(process_task) = task::process_task_snapshot(task_id) {
+            let last_thread = task::task_exit_would_finish_process(task_id)
+                .unwrap_or(process_task.role == task::ProcessTaskRole::Leader);
+            if last_thread {
+                super::super::acct::record_current_process_exit(exit_code);
+                crate::sys::ipc::signal::notify_parent_sigchld(process_task.pid);
+            }
+            crate::sys::ipc::signal::on_thread_exit(task_id, process_task.pid.raw(), last_thread);
+        }
+        super::wait::wake_clear_child_tid_for_task(task_id);
+        crate::sys::ipc::robust::robust_exit_cleanup(task_id);
+        super::wait::drop_task_runtime_resources(task_id);
+    }
+    crate::sys::misc::bringup_stats::record_sys_exit();
+    task::exit_current(exit_code)
+}
+
+pub(crate) fn sys_exit_group(exit_code: isize) -> isize {
+    if let Some(task_id) = task::current_task_id() {
+        super::wait::wake_clear_child_tid_for_task(task_id);
+        if let Some(process_task) = task::current_process_task_snapshot() {
+            super::wait::reap_exited_member_threads_runtime_resources(process_task.pid);
+            super::super::acct::record_current_process_exit(exit_code);
+            crate::sys::ipc::signal::notify_parent_sigchld(process_task.pid);
+            if let Some(task_ids) = task::task_ids_for_process(process_task.pid) {
+                let user_aspace = task::current_task_user_aspace_ptr();
+                for sibling in task_ids {
+                    if sibling != task_id {
+                        super::wait::wake_clear_child_tid_for_task(sibling);
+                        crate::sys::ipc::robust::robust_exit_cleanup(sibling);
+                        super::super::shm::drop_task_attachments(sibling, user_aspace);
+                    }
+                }
+            }
+            crate::sys::ipc::signal::on_thread_exit(task_id, process_task.pid.raw(), true);
+        }
+        crate::sys::ipc::robust::robust_exit_cleanup(task_id);
+        super::wait::drop_task_runtime_resources(task_id);
+    }
+    task::exit_group_current(exit_code)
+}
+
+pub(crate) fn sys_prctl(args: SyscallArgs) -> UserRet {
+    let option = args.arg(0);
+    let current_pid = match task::current_process_task_snapshot() {
+        Some(snapshot) => snapshot.pid,
+        None => return UserRet::from_error(ErrNo::ESRCH),
+    };
+    match option {
+        PR_SET_NAME => UserRet::from_success(0),
+        PR_GET_NAME => {
+            let name_ptr = args.arg(1);
+            if name_ptr == 0 {
+                return UserRet::from_error(ErrNo::EFAULT);
+            }
+            let name = [0u8; 16];
+            match copy_to_user_struct(name_ptr, &name) {
+                Ok(()) => UserRet::from_success(0),
+                Err(e) => UserRet::from_error(e),
+            }
+        }
+        PR_SET_DUMPABLE => {
+            let dumpable = args.arg(1) != 0;
+            if task::set_process_dumpable(current_pid, dumpable) {
+                UserRet::from_success(0)
+            } else {
+                UserRet::from_error(ErrNo::ESRCH)
+            }
+        }
+        PR_GET_DUMPABLE => match task::process_dumpable(current_pid) {
+            Some(true) => UserRet::from_success(1),
+            Some(false) => UserRet::from_success(0),
+            None => UserRet::from_error(ErrNo::ESRCH),
+        },
+        PR_GET_TID_ADDRESS => {
+            let addr_ptr = args.arg(1);
+            if addr_ptr == 0 {
+                return UserRet::from_error(ErrNo::EFAULT);
+            }
+            let tid_addr = task::current_task_id()
+                .and_then(task::task_clear_child_tid)
+                .map(|clear| clear.user_addr())
+                .unwrap_or(0);
+            match copy_to_user_struct(addr_ptr, &tid_addr) {
+                Ok(()) => UserRet::from_success(0),
+                Err(e) => UserRet::from_error(e),
+            }
+        }
+        PR_SET_CHILD_SUBREAPER => {
+            let enabled = args.arg(1) != 0;
+            if task::set_process_child_subreaper(current_pid, enabled) {
+                UserRet::from_success(0)
+            } else {
+                UserRet::from_error(ErrNo::ESRCH)
+            }
+        }
+        PR_GET_CHILD_SUBREAPER => match task::process_child_subreaper(current_pid) {
+            Some(true) => UserRet::from_success(1),
+            Some(false) => UserRet::from_success(0),
+            None => UserRet::from_error(ErrNo::ESRCH),
+        },
+        PR_SET_SECCOMP => UserRet::from_error(ErrNo::EINVAL),
+        PR_SET_NO_NEW_PRIVS => UserRet::from_success(0),
+        PR_CAPBSET_READ => super::super::cred::cap::cap_bset_read(args.arg(1)),
+        PR_CAPBSET_DROP => super::super::cred::cap::cap_bset_drop(args.arg(1)),
+        _ => UserRet::from_error(ErrNo::ENOSYS),
+    }
+}

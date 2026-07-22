@@ -68,6 +68,7 @@ fn map_fs_kind(kind : FsKind) -> VfsFsKind {
     }
 }
 
+#[allow(dead_code)]
 // 本方法代码由AI完成
 fn map_vfs_kind(kind : VfsFsKind) -> FsKind {
     match kind {
@@ -140,7 +141,10 @@ pub(crate) fn root_rw() -> VfsResult<SharedRwFs> {
 fn fs_and_rel_rw(path : &str) -> VfsResult<(SharedRwFs, String)> {
     match resolve_route(path)? {
         FsRoute::Root { abs, .. } => Ok((root_rw()?, abs)),
-        FsRoute::AuxRw { fs, rel, readonly: true, .. } => {
+        FsRoute::AuxRw { fs,
+                         rel,
+                         readonly: true,
+                         .. } => {
             let _ = (fs, rel);
             Err(VfsError::ReadOnlyFs)
         }
@@ -240,7 +244,7 @@ fn securityfs_read_dir(rel : &str) -> VfsResult<Vec<fs::FsDirEntry>> {
 }
 
 impl SingleRootReadView for FsBridge {
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn exists(&self, path : &str) -> VfsResult<bool> {
         let abs = normalize_absolute_path(path)?;
         if char_dev_exists(abs.as_str()) {
@@ -265,23 +269,23 @@ impl SingleRootReadView for FsBridge {
         }
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn metadata(&self, path : &str) -> VfsResult<VfsMetadata> {
         let abs = normalize_absolute_path(path)?;
         if char_dev_exists(abs.as_str()) {
             return Ok(char_dev_metadata(abs.as_str()));
         }
         let meta = match resolve_route(abs.as_str())? {
-            FsRoute::PseudoProc { rel, identity } => {
-                map_meta(proc_view().metadata(rel.as_str())
-                                    .map_err(map_fs_err)?,
-                         identity)
+            FsRoute::PseudoProc { rel, identity } => map_meta(proc_view().metadata(rel.as_str())
+                                                                         .map_err(map_fs_err)?,
+                                                              identity),
+            FsRoute::PseudoSecurity { rel, identity } => {
+                securityfs_metadata(rel.as_str(), identity)?
             }
-            FsRoute::PseudoSecurity { rel, identity } => securityfs_metadata(rel.as_str(), identity)?,
             FsRoute::Root { abs, identity } => {
                 let meta = match root_rw()?.lock()
-                                      .metadata(abs.as_str())
-                                      .map_err(map_fs_err)
+                                           .metadata(abs.as_str())
+                                           .map_err(map_fs_err)
                 {
                     Ok(meta) => meta,
                     Err(VfsError::NotFound) => {
@@ -304,17 +308,15 @@ impl SingleRootReadView for FsBridge {
                 overlay_cached_size(abs.as_str(), &mut meta);
                 meta
             }
-            FsRoute::AuxRo { fs, rel, identity } => {
-                map_meta(fs.lock()
-                           .metadata(rel.as_str())
-                           .map_err(map_fs_err)?,
-                         identity)
-            }
+            FsRoute::AuxRo { fs, rel, identity } => map_meta(fs.lock()
+                                                               .metadata(rel.as_str())
+                                                               .map_err(map_fs_err)?,
+                                                             identity),
         };
         Ok(meta)
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn read(&self, path : &str) -> VfsResult<Vec<u8>> {
         let abs = normalize_absolute_path(path)?;
         match resolve_route(abs.as_str())? {
@@ -322,8 +324,8 @@ impl SingleRootReadView for FsBridge {
                                                           .map_err(map_fs_err),
             FsRoute::PseudoSecurity { .. } => Err(VfsError::NotFound),
             FsRoute::Root { abs, .. } => match root_rw()?.lock()
-                                                    .read(abs.as_str())
-                                                    .map_err(map_fs_err)
+                                                         .read(abs.as_str())
+                                                         .map_err(map_fs_err)
             {
                 Ok(data) => Ok(data),
                 Err(VfsError::NotFound) => {
@@ -343,12 +345,12 @@ impl SingleRootReadView for FsBridge {
         }
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn read_range(&self, path : &str, offset : u64, buf : &mut [u8]) -> VfsResult<usize> {
         FsBridge::read_range(self, path, offset, buf)
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn read_dir(&self, path : &str) -> VfsResult<Vec<VfsDirEntry>> {
         let abs = normalize_absolute_path(path)?;
         let entries = match resolve_route(abs.as_str())? {
@@ -370,7 +372,7 @@ impl SingleRootReadView for FsBridge {
                   .collect())
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn boot_dump_all_paths(&self) {
         // bring-up 单 RW 根卷：启动树打印仍可由 fs 层自检触发。
     }
@@ -378,7 +380,8 @@ impl SingleRootReadView for FsBridge {
 
 impl FsBridge {
     /// 仅在根卷上列目录（挂载点须为空目录检查）。
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
+    #[allow(dead_code)]
     pub(crate) fn read_dir_on_root(path : &str) -> VfsResult<Vec<VfsDirEntry>> {
         let n = normalize_absolute_path(path)?;
         let fs = root_rw()?;
@@ -393,7 +396,7 @@ impl FsBridge {
     }
 
     /// 从根卷只读句柄按偏移读取（页缓存 miss 路径）。
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     pub(crate) fn read_range(&self,
                              path : &str,
                              offset : u64,
@@ -413,8 +416,8 @@ impl FsBridge {
             }
             FsRoute::PseudoSecurity { .. } => Err(VfsError::NotFound),
             FsRoute::Root { abs, .. } => match root_rw()?.lock()
-                                                    .read_range(abs.as_str(), offset, buf)
-                                                    .map_err(map_fs_err)
+                                                         .read_range(abs.as_str(), offset, buf)
+                                                         .map_err(map_fs_err)
             {
                 Ok(n) => Ok(n),
                 Err(VfsError::NotFound) => {
@@ -449,7 +452,8 @@ pub fn mount_ext4_block_at(mount_point : &str, block_dev : &str, readonly : bool
 
 /// 挂载点须为已存在目录（支持 tmpfs 等辅助卷下的路径）。
 // 本方法代码由AI完成
-pub(crate) fn assert_mount_point_directory(path: &str) -> VfsResult<()> {
+#[allow(dead_code)]
+pub(crate) fn assert_mount_point_directory(path : &str) -> VfsResult<()> {
     let bridge = FsBridge;
     let meta = bridge.metadata(path)?;
     if meta.node_type != VfsNodeType::Directory {
@@ -477,9 +481,7 @@ pub fn mount_cgroup_at(mount_point : &str, v2 : bool, options : &str) -> VfsResu
 
 /// 查询路径所在辅助卷的 `statfs` 文件系统 magic。
 // 本方法代码由AI完成
-pub fn mount_statfs_magic(path : &str) -> Option<isize> {
-    mount_table::mount_statfs_magic(path)
-}
+pub fn mount_statfs_magic(path : &str) -> Option<isize> { mount_table::mount_statfs_magic(path) }
 
 /// 将 `mount_point` 上已挂载的辅助卷重载为只读。
 // 本方法代码由AI完成
@@ -615,7 +617,9 @@ pub fn hardlink_path(existing_path : &str, new_path : &str) -> VfsResult<()> {
     mount_table::assert_path_writable(new.as_str())?;
     let (existing_fs, existing_rel) = fs_and_rel_rw(existing.as_str())?;
     let (new_fs, new_rel) = fs_and_rel_rw(new.as_str())?;
-    if !core::ptr::addr_eq(alloc::sync::Arc::as_ptr(&existing_fs), alloc::sync::Arc::as_ptr(&new_fs)) {
+    if !core::ptr::addr_eq(alloc::sync::Arc::as_ptr(&existing_fs),
+                           alloc::sync::Arc::as_ptr(&new_fs))
+    {
         return Err(VfsError::Unsupported);
     }
     let mut sess = MountedRwSession::new(existing_fs);
@@ -629,8 +633,8 @@ pub fn read_symlink_path(path : &str) -> VfsResult<Vec<u8>> {
     match resolve_route(abs.as_str())? {
         FsRoute::PseudoProc { .. } | FsRoute::PseudoSecurity { .. } => Err(VfsError::NotAFile),
         FsRoute::Root { abs, .. } => root_rw()?.lock()
-                                            .read_symlink(abs.as_str())
-                                            .map_err(map_fs_err),
+                                               .read_symlink(abs.as_str())
+                                               .map_err(map_fs_err),
         FsRoute::AuxRw { fs, rel, .. } => fs.lock()
                                             .read_symlink(rel.as_str())
                                             .map_err(map_fs_err),
@@ -693,21 +697,19 @@ pub fn chown_path(path : &str, uid : Option<u32>, gid : Option<u32>) -> VfsResul
 }
 
 // 本变量代码由AI完成
-const CGROUP_SUPER_MAGIC: isize = 0x0027_e0eb;
+const CGROUP_SUPER_MAGIC : isize = 0x0027_E0EB;
 // 本变量代码由AI完成
-const CGROUP2_SUPER_MAGIC: isize = 0x6367_7270;
+const CGROUP2_SUPER_MAGIC : isize = 0x6367_7270;
 
 // 本方法代码由AI完成
-fn path_on_cgroup_fs(path: &str) -> bool {
-    matches!(
-        mount_table::mount_statfs_magic(path),
-        Some(CGROUP_SUPER_MAGIC) | Some(CGROUP2_SUPER_MAGIC)
-    )
+fn path_on_cgroup_fs(path : &str) -> bool {
+    matches!(mount_table::mount_statfs_magic(path),
+             Some(CGROUP_SUPER_MAGIC) | Some(CGROUP2_SUPER_MAGIC))
 }
 
 /// cgroupfs 扩展属性命名规则（LTP cgroup_xattr）。
 // 本方法代码由AI完成
-pub fn validate_xattr_name(path: &str, name: &str) -> VfsResult<()> {
+pub fn validate_xattr_name(path : &str, name : &str) -> VfsResult<()> {
     if name.is_empty() || name.len() > 255 {
         return Err(VfsError::InvalidPath);
     }
@@ -730,13 +732,13 @@ pub fn validate_xattr_name(path: &str, name: &str) -> VfsResult<()> {
 }
 
 // 本方法代码由AI完成
-fn xattr_route(path: &str) -> VfsResult<(SharedRwFs, String)> {
+fn xattr_route(path : &str) -> VfsResult<(SharedRwFs, String)> {
     mount_table::assert_path_writable(path)?;
     fs_and_rel_rw(path)
 }
 
 // 本方法代码由AI完成
-fn map_xattr_get_err(err: VfsError) -> VfsError {
+fn map_xattr_get_err(err : VfsError) -> VfsError {
     match err {
         VfsError::InvalidPath => VfsError::NotFound,
         other => other,
@@ -745,7 +747,7 @@ fn map_xattr_get_err(err: VfsError) -> VfsError {
 
 /// 设置路径扩展属性。
 // 本方法代码由AI完成
-pub fn setxattr_path(path: &str, name: &str, value: &[u8]) -> VfsResult<()> {
+pub fn setxattr_path(path : &str, name : &str, value : &[u8]) -> VfsResult<()> {
     validate_xattr_name(path, name)?;
     let normalized = normalize_absolute_path(path)?;
     if char_dev_exists(normalized.as_str()) {
@@ -758,7 +760,7 @@ pub fn setxattr_path(path: &str, name: &str, value: &[u8]) -> VfsResult<()> {
 
 /// 读取路径扩展属性。
 // 本方法代码由AI完成
-pub fn getxattr_path(path: &str, name: &str, buf: &mut [u8]) -> VfsResult<usize> {
+pub fn getxattr_path(path : &str, name : &str, buf : &mut [u8]) -> VfsResult<usize> {
     validate_xattr_name(path, name)?;
     let normalized = normalize_absolute_path(path)?;
     if char_dev_exists(normalized.as_str()) {
@@ -772,7 +774,7 @@ pub fn getxattr_path(path: &str, name: &str, buf: &mut [u8]) -> VfsResult<usize>
 
 /// 列出路径扩展属性名。
 // 本方法代码由AI完成
-pub fn listxattr_path(path: &str, buf: &mut [u8]) -> VfsResult<usize> {
+pub fn listxattr_path(path : &str, buf : &mut [u8]) -> VfsResult<usize> {
     let normalized = normalize_absolute_path(path)?;
     if char_dev_exists(normalized.as_str()) {
         return Err(VfsError::Unsupported);
@@ -784,7 +786,7 @@ pub fn listxattr_path(path: &str, buf: &mut [u8]) -> VfsResult<usize> {
 
 /// 删除路径扩展属性。
 // 本方法代码由AI完成
-pub fn removexattr_path(path: &str, name: &str) -> VfsResult<()> {
+pub fn removexattr_path(path : &str, name : &str) -> VfsResult<()> {
     validate_xattr_name(path, name)?;
     let normalized = normalize_absolute_path(path)?;
     if char_dev_exists(normalized.as_str()) {
@@ -863,12 +865,12 @@ pub struct MountedRwSession {
 }
 
 impl MountedRwSession {
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     pub fn new(inner : SharedRwFs) -> Self { Self { inner } }
 }
 
 impl RootRwSession for MountedRwSession {
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn write_regular_file_at_root(&mut self, name : &str, data : &[u8]) -> VfsResult<()> {
         validate_root_file_name(name)?;
         self.inner
@@ -877,7 +879,7 @@ impl RootRwSession for MountedRwSession {
             .map_err(map_fs_err)
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn write_regular_file(&mut self, path : &str, data : &[u8]) -> VfsResult<()> {
         let n = normalize_absolute_path(path)?;
         self.inner
@@ -886,7 +888,7 @@ impl RootRwSession for MountedRwSession {
             .map_err(map_fs_err)
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn unlink(&mut self, path : &str) -> VfsResult<()> {
         let n = normalize_absolute_path(path)?;
         self.inner
@@ -895,7 +897,7 @@ impl RootRwSession for MountedRwSession {
             .map_err(map_fs_err)
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn rmdir(&mut self, path : &str) -> VfsResult<()> {
         let n = normalize_absolute_path(path)?;
         self.inner
@@ -904,7 +906,7 @@ impl RootRwSession for MountedRwSession {
             .map_err(map_fs_err)
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn write_range(&mut self, path : &str, offset : u64, data : &[u8]) -> VfsResult<usize> {
         let n = normalize_absolute_path(path)?;
         self.inner
@@ -913,7 +915,7 @@ impl RootRwSession for MountedRwSession {
             .map_err(map_fs_err)
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn truncate(&mut self, path : &str, len : u64) -> VfsResult<()> {
         let n = normalize_absolute_path(path)?;
         self.inner
@@ -922,7 +924,7 @@ impl RootRwSession for MountedRwSession {
             .map_err(map_fs_err)
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn mkdir(&mut self, path : &str, mode : u32) -> VfsResult<()> {
         let n = normalize_absolute_path(path)?;
         self.inner
@@ -931,7 +933,7 @@ impl RootRwSession for MountedRwSession {
             .map_err(map_fs_err)
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn chmod(&mut self, path : &str, mode : u32) -> VfsResult<()> {
         let n = normalize_absolute_path(path)?;
         self.inner
@@ -940,7 +942,7 @@ impl RootRwSession for MountedRwSession {
             .map_err(map_fs_err)
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn chown(&mut self, path : &str, uid : Option<u32>, gid : Option<u32>) -> VfsResult<()> {
         let n = normalize_absolute_path(path)?;
         self.inner
@@ -949,7 +951,7 @@ impl RootRwSession for MountedRwSession {
             .map_err(map_fs_err)
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn setxattr(&mut self, path : &str, name : &str, value : &[u8]) -> VfsResult<()> {
         let n = normalize_absolute_path(path)?;
         self.inner
@@ -958,7 +960,7 @@ impl RootRwSession for MountedRwSession {
             .map_err(map_fs_err)
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn getxattr(&self, path : &str, name : &str, buf : &mut [u8]) -> VfsResult<usize> {
         let n = normalize_absolute_path(path)?;
         self.inner
@@ -967,7 +969,7 @@ impl RootRwSession for MountedRwSession {
             .map_err(map_fs_err)
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn listxattr(&self, path : &str, buf : &mut [u8]) -> VfsResult<usize> {
         let n = normalize_absolute_path(path)?;
         self.inner
@@ -976,7 +978,7 @@ impl RootRwSession for MountedRwSession {
             .map_err(map_fs_err)
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn removexattr(&mut self, path : &str, name : &str) -> VfsResult<()> {
         let n = normalize_absolute_path(path)?;
         self.inner
@@ -985,7 +987,7 @@ impl RootRwSession for MountedRwSession {
             .map_err(map_fs_err)
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn rename(&mut self, old_path : &str, new_path : &str) -> VfsResult<()> {
         let old = normalize_absolute_path(old_path)?;
         let new = normalize_absolute_path(new_path)?;
@@ -995,7 +997,7 @@ impl RootRwSession for MountedRwSession {
             .map_err(map_fs_err)
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn hardlink(&mut self, existing_path : &str, new_path : &str) -> VfsResult<()> {
         let existing = normalize_absolute_path(existing_path)?;
         let new = normalize_absolute_path(new_path)?;
@@ -1005,7 +1007,7 @@ impl RootRwSession for MountedRwSession {
             .map_err(map_fs_err)
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn symlink(&mut self, link_path : &str, target : &str) -> VfsResult<()> {
         let link = normalize_absolute_path(link_path)?;
         self.inner
@@ -1014,7 +1016,7 @@ impl RootRwSession for MountedRwSession {
             .map_err(map_fs_err)
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn mknod(&mut self, path : &str, mode : u32, rdev : u32) -> VfsResult<()> {
         let n = normalize_absolute_path(path)?;
         self.inner
@@ -1025,21 +1027,21 @@ impl RootRwSession for MountedRwSession {
 }
 
 impl VfsMountOps for FsBridge {
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn supported_capabilities(&self) -> Vec<VfsCapability> {
         fs::supported_fs_summary().into_iter()
                                   .map(map_fs_cap)
                                   .collect()
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn mount_rw_session(&self, _kind : VfsFsKind) -> VfsResult<Box<dyn RootRwSession>> {
         Ok(Box::new(MountedRwSession::new(root_rw()?)))
     }
 }
 
 impl VfsDevInventory for FsBridge {
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn list_dev_nodes(&self) -> Vec<VfsDevNode> {
         let mut nodes = fs::devfs::active_impl::list_nodes().into_iter()
                                                             .map(|n| {
@@ -1074,32 +1076,32 @@ impl VfsDevInventory for FsBridge {
         nodes
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn default_root_block_path(&self) -> Option<String> {
         fs::devfs::active_impl::default_root_block_path()
     }
 }
 
 impl VfsOpenOps for FsBridge {
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn open(&self, path : &str, flags : VfsOpenFlags) -> VfsResult<Box<dyn VfsIoHandle>> {
         self.open_path(path, flags)
     }
 }
 
 impl VfsMountTable for FsBridge {
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn mount_at(&mut self, mount_point : &str, _kind : VfsFsKind) -> VfsResult<()> {
         let _ = mount_point;
         Err(VfsError::Unsupported)
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn unmount_at(&mut self, mount_point : &str) -> VfsResult<()> {
         mount_table::unmount_aux_at(mount_point, false)
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn resolve_mount(&self, path : &str) -> VfsResult<&str> {
         let _ = path;
         Err(VfsError::Unsupported)

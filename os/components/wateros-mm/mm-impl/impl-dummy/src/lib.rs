@@ -19,7 +19,7 @@ pub mod kernel_mm_impl {
     use super::*;
 
     /// 空操作；不安装 `satp`、不建立映射。启用 `impl-sv39` 后由真实实现替换。
-    pub fn init(_start_ppn: usize, _end_ppn: usize, _ram_end_exclusive: usize) {}
+    pub fn init(_dtb_pa: usize, _ram_end_exclusive: usize) {}
 
     /// 恒为 `0`；调用方不得将其当作合法 `satp` 写入硬件。
     #[inline]

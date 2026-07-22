@@ -12,15 +12,17 @@ use core::arch::global_asm;
 global_asm!(include_str!("../asm/trap.asm"));
 global_asm!(include_str!("../asm/switch.S"));
 
-/// Trap 向量、`TrapContext` 与 Rust 侧 `trap_entry_rust`（转入 `arch-api::kernel_trap`，见内核 `trap_handler::init`）。
-pub mod trap;
-/// `time` CSR 读 tick；频率查询返回不支持（由 platform 层提供 Hz）。
-pub mod time;
+/// 当前 CPU id 查询。
+pub mod cpu;
 /// `sie` / `sstatus` 级中断开关。
 pub mod interrupt;
 /// `satp` 读写与 `sfence.vma`。
 pub mod paging;
 /// 任务上下文与进入桩函数符号。
 pub mod task;
+/// `time` CSR 读 tick；频率查询返回不支持（由 platform 层提供 Hz）。
+pub mod time;
+/// Trap 向量、`TrapContext` 与 Rust 侧 `trap_entry_rust`（转入 `arch-api::kernel_trap`，见内核 `trap_handler::init`）。
+pub mod trap;
 /// 安装 trap 向量（`stvec`）；更完整的启动序列见调用方。
 pub use trap::init_trap;

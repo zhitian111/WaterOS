@@ -9,10 +9,6 @@ use alloc::vec::Vec;
 use mm::api::kernel_bringup::{LoadProgramError, LoadedElf, PrepareUserStackError};
 use runtime::logging::*;
 
-/// glibc / musl 根卷前缀。
-pub const LIBC_PREFIXES : &[&str] = &["/glibc",
-//"/musl"
-];
 
 /// bring-up 阶段一次用户态启动：`program` 为待装载 ELF，`argv` 为完整参数（busybox 时
 /// `argv[0]` 须为 applet 名，如 `"sh"` / `"timeout"`，而非 busybox 路径）。
@@ -154,32 +150,8 @@ fn libc_envp_for_path(path : &str) -> Vec<&'static str> {
     }
 }
 
-/// 串行执行 `/{prefix}/basic/{name}`，argv 仅含 ELF 自身路径。
-pub fn run_one_basic_elf(log_tag : &str, prefix : &str, name : &str) {
-    let elf_path = alloc::format!("{prefix}/basic/{name}");
-    let argv : Vec<&str> = vec![elf_path.as_str()];
-    run_one_elf_argv(log_tag, elf_path.as_str(), &argv);
-}
 
 /// 串行执行 shell 脚本：等价于 `busybox sh <脚本>`（见 [`BringupCommand`] 自行写 timeout 等）。
-pub fn run_one_busybox_script(log_tag : &str, script_path : &str) {
-    let busybox_path = match mm::api::executable::busybox_path_for_script(script_path) {
-        Some(path) => path,
-        None => {
-            warn!("[{log_tag}] skip script={script_path}: unknown libc prefix");
-            return;
-        }
-    };
-
-    #[cfg(feature = "vfs-bridge")]
-    if let Err(e) = warn_if_path_missing(log_tag, script_path) {
-        warn!("[{log_tag}] skip script={script_path}: rootfs check: {e:?}");
-        return;
-    }
-
-    run_one_elf_argv(log_tag, busybox_path, &["sh",
-                                              script_path]);
-}
 
 /// 装载 ELF 期间屏蔽全局中断，避免定时器抢占打断页表/地址空间临界区。
 fn load_program_without_timer_preemption(path : &str,

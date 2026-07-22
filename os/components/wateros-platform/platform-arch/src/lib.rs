@@ -87,6 +87,15 @@ pub mod trap {
     pub use impl_riscv64::trap::set_kernel_trap_satp;
 }
 
+/// 当前 CPU id。
+#[cfg(feature = "api-v0")]
+pub mod cpu {
+    #[cfg(feature = "impl-loongarch64")]
+    pub use impl_loongarch64::cpu::current_cpu_id;
+    #[cfg(feature = "impl-riscv64")]
+    pub use impl_riscv64::cpu::current_cpu_id;
+}
+
 /// 监管态中断屏蔽与使能（如 `sie` / `sstatus.SIE`），**不**包含对 CLINT/ACLINT
 /// 或 SBI `set_timer` 的编程。
 #[cfg(feature = "api-v0")]

@@ -11,6 +11,7 @@ use core::arch::global_asm;
 global_asm!(include_str!("../asm/trap.S"));
 global_asm!(include_str!("../asm/switch.S"));
 
+pub mod cpu;
 pub mod interrupt;
 pub mod paging;
 pub mod task;

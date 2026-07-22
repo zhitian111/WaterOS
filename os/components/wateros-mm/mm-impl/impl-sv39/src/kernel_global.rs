@@ -25,6 +25,7 @@ use api_v0::address_space::AddressSpaceOps;
 use api_v0::error::MmError;
 use api_v0::perm::PagePerm;
 use frame_alloctor::frame_alloc_result;
+use wateros_base::addr::BasePPN;
 
 use crate::pagetable::Sv39AddressSpace;
 
@@ -34,15 +35,6 @@ static KERNEL_ASPACE : AtomicPtr<Sv39AddressSpace> = AtomicPtr::new(core::ptr::n
 /// 装载等路径读取。
 static PHYS_RAM_END_EXCL : AtomicUsize = AtomicUsize::new(0);
 
-#[inline]
-pub(crate) fn phys_ram_end_exclusive() -> usize {
-    let v = PHYS_RAM_END_EXCL.load(Ordering::Acquire);
-    if v != 0 {
-        v
-    } else {
-        wateros_base_config::mm::QEMU_VIRT_PHYS_RAM_END
-    }
-}
 
 // `Acquire` 与 `init` 末尾 `Release` 配对；仅在 `init` 完成后合法调用。
 #[inline]
@@ -63,10 +55,27 @@ pub fn kernel_satp() -> usize { api_v0::kernel_satp::get() }
 ///
 /// `ram_end_exclusive` 为物理 RAM 上界（不包含），应与 DTB `/memory` 或
 /// bring-up 约定一致。
-pub fn init(start_ppn : usize, end_ppn : usize, ram_end_exclusive : usize) {
+pub fn init(dtb_pa : usize, ram_end_exclusive : usize) {
     assert!(ram_end_exclusive > 0x8000_0000,
             "kernel_mm: ram_end_exclusive must be above RAM base");
     PHYS_RAM_END_EXCL.store(ram_end_exclusive, Ordering::Release);
+
+    // 从 kernel_end → DTB → RAM 上界换算可用帧范围
+    // 用 inline asm 取 kernel_end 符号地址（避免 extern static 指针语法歧义）
+    let kernel_end_addr : usize;
+    unsafe {
+        core::arch::asm!("la {}, kernel_end", out(reg) kernel_end_addr);
+    }
+    let start_ppn = (kernel_end_addr + PAGE_SIZE - 1) / PAGE_SIZE;
+    let alloc_end = if dtb_pa >= 0x8000_0000 && dtb_pa < ram_end_exclusive {
+        dtb_pa & !(PAGE_SIZE - 1)
+    } else {
+        ram_end_exclusive
+    };
+    let end_ppn = alloc_end / PAGE_SIZE;
+
+    frame_alloctor::init_frame_allocator(BasePPN { val : start_ppn },
+                                         BasePPN { val : end_ppn });
 
     let mut aspace = Sv39AddressSpace::new().expect("kernel_mm: Sv39AddressSpace::new failed");
 
@@ -114,14 +123,14 @@ pub fn init(start_ppn : usize, end_ppn : usize, ram_end_exclusive : usize) {
           .expect("kernel_mm: map probe page");
 
     let satp_target = aspace.kernel_satp_value();
-    #[cfg(feature = "impl-riscv64")]
+    #[cfg(all(feature = "impl-riscv64", target_arch = "riscv64"))]
     platform::arch::trap::set_kernel_trap_satp(satp_target);
     runtime::logging::trace!("[kernel-mm] identity map RAM [0x80000000,{:#x}) MMIO [{:#x},{:#x}) \
-                             satp target={:#x}",
-                            ram_end_exclusive,
-                            wateros_base_config::mm::QEMU_VIRT_MMIO_PHYS_START,
-                            wateros_base_config::mm::QEMU_VIRT_MMIO_PHYS_END,
-                            satp_target);
+                              satp target={:#x}",
+                             ram_end_exclusive,
+                             wateros_base_config::mm::QEMU_VIRT_MMIO_PHYS_START,
+                             wateros_base_config::mm::QEMU_VIRT_MMIO_PHYS_END,
+                             satp_target);
     platform::arch::paging::activate_address_space_token_and_flush(satp_target);
     assert_eq!(platform::arch::paging::active_address_space_token(),
                satp_target,
@@ -143,8 +152,8 @@ pub fn init(start_ppn : usize, end_ppn : usize, ram_end_exclusive : usize) {
     let observed = unsafe { phys_ptr.read_volatile() };
     assert_eq!(observed, 0x1122_3344_5566_7788);
     runtime::logging::trace!("[kernel-mm] paging probe ok va={:#x} -> pa={:#x}",
-                            probe_va.0,
-                            probe_pa.0);
+                             probe_va.0,
+                             probe_pa.0);
 
     let leaked = Box::leak(Box::new(aspace));
     KERNEL_ASPACE.store(leaked as *mut Sv39AddressSpace,

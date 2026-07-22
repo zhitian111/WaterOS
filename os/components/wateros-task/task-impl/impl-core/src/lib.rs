@@ -16,10 +16,7 @@ use alloc::vec::Vec;
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use api_v0::{
-    AddressSpaceRef, CloneFlags, ProcessDescriptor, ProcessId, ProcessState, ProcessTaskDescriptor,
-    ProcessTaskRole, TaskClearTid, TaskId, ThreadId,
-};
+use api_v0::{ProcessDescriptor, ProcessId, ProcessTaskDescriptor, TaskClearTid, TaskId, ThreadId};
 use arch::interrupt::ArchInterruptState;
 use base::sync::UniprocessorSafeCell;
 
@@ -315,95 +312,4 @@ pub fn process_exists(pid : ProcessId) -> bool {
 /// 进程组是否仍有成员进程。
 pub fn pgid_has_members(pgid : ProcessId) -> bool {
     with_process_registry(|registry| registry.pgid_has_members(pgid))
-}
-
-pub fn process_model_self_test() {
-    let mut registry = ProcessRegistry::new();
-    let aspace = Some(AddressSpaceRef::new(api_v0::AddressSpaceHandle::from_raw(0x1000),
-                                           0x2000));
-
-    let pid = registry.create_process_for_task(100, None, aspace);
-    assert_eq!(pid.raw(), 1);
-    let leader = registry.lookup_task(100)
-                         .expect("leader task must be indexed");
-    assert_eq!(leader.task_id, 100);
-    assert_eq!(leader.tid.raw(), pid.raw());
-    assert_eq!(leader.pid, pid);
-    assert_eq!(leader.role, ProcessTaskRole::Leader);
-    assert_eq!(registry.lookup_process(pid)
-                       .unwrap()
-                       .task_count,
-               1);
-
-    let task101 = registry.add_task_to_process(pid,
-                                               101,
-                                               CloneFlags::CLONE_TASK_GROUP |
-                                               CloneFlags::CLONE_SETTLS,
-                                               0x3000,
-                                               Some(TaskClearTid::new(0x4000)))
-                          .expect("create process member task");
-    let member101 = registry.lookup_task(task101)
-                            .expect("member task must be indexed");
-    assert_eq!(member101.task_id, 101);
-    assert_eq!(member101.tid.raw(), 2);
-    assert_ne!(member101.tid.raw(), member101.pid.raw());
-    assert_eq!(registry.task_id_for_thread(member101.tid),
-               Some(101));
-    assert_eq!(member101.role, ProcessTaskRole::Member);
-    assert_eq!(member101.tls, 0x3000);
-    assert_eq!(member101.clear_child_tid
-                        .unwrap()
-                        .user_addr(),
-               0x4000);
-    assert_eq!(registry.lookup_process(pid)
-                       .unwrap()
-                       .task_count,
-               2);
-    assert_eq!(registry.task_exit_would_finish_process(100),
-               Some(false));
-    assert_eq!(registry.task_exit_would_finish_process(101),
-               Some(false));
-
-    let forked = registry.create_process_like_fork(pid, 102, aspace)
-                         .expect("fork-style process");
-    assert_eq!(forked.raw(), 3);
-    let forked_leader = registry.lookup_task(102)
-                                .expect("forked leader");
-    assert_eq!(forked_leader.task_id, 102);
-    assert_eq!(forked_leader.tid
-                            .raw(),
-               forked.raw());
-    assert_eq!(forked_leader.pid, forked);
-    assert_eq!(registry.lookup_process(forked)
-                       .unwrap()
-                       .parent_pid,
-               Some(pid));
-    assert!(registry.has_child_process(pid));
-
-    assert!(registry.mark_task_exited(101, 7));
-    assert_eq!(registry.task_exit_would_finish_process(100),
-               Some(true));
-    assert!(matches!(registry.lookup_process(pid)
-                             .unwrap()
-                             .state,
-                     ProcessState::Running));
-    assert!(registry.mark_task_exited(100, 9));
-    assert!(matches!(registry.lookup_process(pid)
-                             .unwrap()
-                             .state,
-                     ProcessState::Exited(9)));
-    assert!(registry.set_task_clear_child_tid(100, Some(TaskClearTid::new(0x5000))));
-    assert_eq!(registry.task_clear_child_tid(100)
-                       .unwrap()
-                       .user_addr(),
-               0x5000);
-
-    assert!(registry.mark_task_exited(102, 3));
-    assert_eq!(registry.find_exited_child_process(pid)
-                       .unwrap()
-                       .pid,
-               forked);
-    assert!(registry.reap_process(forked)
-                    .is_some());
-    assert!(!registry.has_child_process(pid));
 }

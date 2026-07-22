@@ -14,6 +14,7 @@ mod snapshot;
 mod task;
 mod user;
 mod wait;
+pub use base::cpu::{CpuId, CpuMask};
 pub use kernel::{KernelStack, KernelTaskEntry, TaskBootstrap};
 pub use process::{
     AddressSpaceRef, CloneFlags, ProcessDescriptor, ProcessId, ProcessState, ProcessTaskDescriptor,

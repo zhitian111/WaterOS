@@ -143,6 +143,7 @@ impl LoongArch64PteFlags {
 struct LoongArch64Pte(usize);
 
 impl LoongArch64Pte {
+    #[allow(dead_code)]
     #[inline]
     const fn zero() -> Self { Self(0) }
 
@@ -338,11 +339,13 @@ impl LoongArch64AddressSpace {
                            .any(|vma| vma.overlaps(start, end))
     }
 
+    #[allow(dead_code)]
     pub(crate) fn lazy_vma_contains(&self, page : VirtAddr) -> bool {
         self.lazy_file_vmas.iter()
                            .any(|vma| vma.contains_page(page))
     }
 
+    #[allow(dead_code)]
     pub(crate) fn merge_lazy_file_vma_perm(&mut self,
                                            start : VirtAddr,
                                            end : VirtAddr,

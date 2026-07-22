@@ -5,7 +5,6 @@
 //!
 //! **须在** `task::init()` **之后**调用 [`init`]。
 
-use abi::syscall_number::{ActiveSyscallNumberTable, SyscallNumberTable};
 use abi::user_ret::UserRet;
 use arch_api_v0::kernel_trap::register_kernel_trap_handler;
 use arch_api_v0::trap::{Exception, Interrupt, TrapCause, TrapFrameRead, TrapFrameWrite};
@@ -16,6 +15,7 @@ use platform::arch::paging;
 use platform::arch::trap::ActiveTrapFrame as TrapContext;
 use runtime::logging::*;
 use syscall::dispatch_syscall_from_trap;
+use syscall::{EXEC, RT_SIGRETURN};
 
 /// 热路径 syscall/trap 跟踪；release 构建默认关闭。
 macro_rules! hot_syscall_trace {
@@ -149,6 +149,8 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             let syscall_nr = cx.syscall_nr()
                                .raw();
             let syscall_args = cx.syscall_args();
+            #[cfg_attr(not(any(debug_assertions, feature = "syscall-trace")),
+                       allow(unused_variables))]
             let regs = syscall_args.as_regs();
             hot_syscall_trace!("[syscall] nr={} user_pc={:#x} user_sp={:#x} \
                                 args=[{:#x},{:#x},{:#x},{:#x},{:#x},{:#x}]",
@@ -161,7 +163,7 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                                regs[3],
                                regs[4],
                                regs[5],);
-            if syscall_nr == <ActiveSyscallNumberTable as SyscallNumberTable>::RT_SIGRETURN.raw() {
+            if syscall_nr == RT_SIGRETURN {
                 if !syscall::restore_signal_frame(authoritative) {
                     kill_current_user_task("invalid rt_sigreturn frame",
                                            trap_cause,
@@ -179,9 +181,7 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                                syscall_ret);
             // execve 成功时已替换整个 trap 帧，跳过 sepc 推进与返回值写入；
             // 失败时必须像普通 syscall 一样把 -errno 返回给原用户态，否则会反复执行同一条 ecall。
-            let exec_succeeded = syscall_nr ==
-                                 <ActiveSyscallNumberTable as SyscallNumberTable>::EXEC.raw() &&
-                                 syscall_ret >= 0;
+            let exec_succeeded = syscall_nr == EXEC && syscall_ret >= 0;
             if !exec_succeeded {
                 cx.add_user_pc(SYSCALL_INSN_BYTES);
                 cx.set_syscall_ret(UserRet(syscall_ret));
@@ -301,8 +301,6 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
 
     if cx.returns_to_user() {
         return_to_user_signal_delivery(authoritative, trap_cause, cx, restart);
-        let return_satp = cx.return_address_space_token();
-        let kernel_satp = paging::active_address_space_token();
         // `raw_cause` 来自 TrapContext.scause 快照，即 **本次** 进入内核的原因（如
         // ecall=0x8）， 不是硬件 CSR 的“下一异常预告”；`sret`
         // 前也不会用该槽位预测下一次 trap。
@@ -359,9 +357,7 @@ fn return_to_user_signal_delivery(frame : *mut u8,
 }
 
 /// 信号/页错等提前返回路径：打 trace 后把 TCB trap 帧拷回内核栈供 `sret`。
-fn finish_trap_return(frame : *mut u8, cx : &TrapContext, raw_cause : usize) {
-    let return_satp = cx.return_address_space_token();
-    let kernel_satp = paging::active_address_space_token();
+fn finish_trap_return(frame : *mut u8, _cx : &TrapContext, _raw_cause : usize) {
     hot_syscall_trace!("[trap] sret to user pc={:#x} sp={:#x} return_satp={:#x} \
                         kernel_satp={:#x} frame_scause={:#x}",
                        cx.user_pc(),
