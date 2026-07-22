@@ -1,6 +1,9 @@
+use crate::{
+    queues::{FifoQueue, OtherQueue, RrQueue},
+    registry, TaskRegistry, WaitQueues,
+};
 use arch::task::{ActiveArchTaskContext, ArchTaskContext};
 use task_api::{AddressSpaceHandle, CpuId, TaskExitCode, TaskId, TaskTick, TaskWaitTarget};
-
 pub type SwitchPair =
     (*mut arch::task::ActiveArchTaskContext, *const arch::task::ActiveArchTaskContext);
 
@@ -50,6 +53,9 @@ pub struct CPUScheduler {
     pub idle_task_id : Option<TaskId>,
     pub current_task_ticks : u64,
     pub online : bool,
+    pub other_queue : OtherQueue,
+    pub rr_queue : RrQueue,
+    pub fifo_queue : FifoQueue,
 }
 impl CPUScheduler {
     pub fn new(cpu_id : CpuId) -> Self {
@@ -58,11 +64,30 @@ impl CPUScheduler {
                current_task_id : None,
                idle_task_id : None,
                current_task_ticks : 0,
-               online : false }
+               online : false,
+               other_queue : OtherQueue::new(),
+               rr_queue : RrQueue::new(),
+               fifo_queue : FifoQueue::new() }
     }
     pub fn current_task_id(&self) -> Option<TaskId> { self.current_task_id }
     pub fn boot_task_cx(&mut self) -> *mut ActiveArchTaskContext {
         &mut self.boot_task_cx as *mut ActiveArchTaskContext
+    }
+}
+
+pub struct GlobalScheduler {
+    pub registry : TaskRegistry,
+    pub wait_queues : WaitQueues,
+}
+impl GlobalScheduler {
+    pub fn new() -> Self {
+        Self { registry : TaskRegistry::new(),
+               wait_queues : WaitQueues::new() }
+    }
+    pub fn init(&mut self) {
+        self.registry.init();
+        self.wait_queues
+            .init();
     }
 }
 pub struct CpuSnapshot {

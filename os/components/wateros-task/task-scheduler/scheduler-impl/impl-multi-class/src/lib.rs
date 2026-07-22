@@ -15,7 +15,6 @@ use arch::cpu;
 use arch::interrupt::ArchInterruptState;
 use arch::task::ActiveArchTaskContext as TaskContext;
 use base::sync::MultiprocessorSafeCell;
-use core::hint::black_box;
 use core::mem::MaybeUninit;
 use core::panic::Location;
 use core::sync::atomic::{compiler_fence, AtomicBool, Ordering};
@@ -24,9 +23,6 @@ use task_api::{
     TaskWaitResult, TaskWaitTarget, UserTask, WaitQueueId,
 };
 
-mod queues;
-mod rt_fifo_queue;
-mod rt_rr_queue;
 mod scheduler;
 pub use api_v0::{CpuSnapshot, SchedPolicyChangeAction, ScheduleReason};
 use scheduler::MultiClassScheduler;
@@ -85,7 +81,7 @@ fn scheduler_ready_raw_byte() -> u8 {
 /// 引导期诊断：打印 `SCHEDULER_READY` 当前值与静态地址，便于对比 init 与后续调用是否同一实例。
 #[inline(never)]
 fn log_scheduler_ready(tag : &str) {
-    let ready = black_box(SCHEDULER_READY.load(Ordering::Acquire));
+    let ready = SCHEDULER_READY.load(Ordering::Acquire);
     let raw_byte = scheduler_ready_raw_byte();
     let addr = scheduler_ready_addr();
     log::warn!("[boot-init] {} SCHEDULER_READY={} raw_byte={:#x} ready_addr={:#x}",
@@ -95,29 +91,16 @@ fn log_scheduler_ready(tag : &str) {
                addr);
 }
 
-#[inline(never)]
-#[cold]
-fn scheduler_not_ready_fatal(caller : &'static Location, ready : bool, raw_byte : u8) -> ! {
-    log::error!("[boot-init] scheduler_cell NOT READY caller={}:{} atomic={} raw_byte={:#x} \
-                 ready_addr={:#x}",
-                caller.file(),
-                caller.line(),
-                ready,
-                raw_byte,
-                scheduler_ready_addr());
-    panic!("scheduler not initialized: call init_scheduler() first");
-}
-
 // ── scheduler cell 访问 ────────────────────────────────────────────
 
 // 仅在 `SCHEDULER_READY` 为真后解引用；否则 panic，避免未初始化访问。
 #[inline(never)]
 fn scheduler_cell_inner(caller : &'static Location)
                         -> &'static MultiprocessorSafeCell<MultiClassScheduler> {
-    let ready = black_box(SCHEDULER_READY.load(Ordering::Acquire));
-    let raw_byte = scheduler_ready_raw_byte();
-    if !black_box(ready) {
-        scheduler_not_ready_fatal(caller, ready, raw_byte);
+    if !SCHEDULER_READY.load(Ordering::Acquire) {
+        panic!("scheduler not initialized: call init_scheduler() first, caller={}:{}",
+               caller.file(),
+               caller.line());
     }
     unsafe { &*SCHEDULER.as_ptr() }
 }
@@ -268,10 +251,6 @@ pub fn run_first_task_on_current_cpu(cpu_id : CpuId) -> ! {
 /// 创建内核任务并入就绪队列尾部。
 #[inline(never)]
 pub fn spawn_kernel_task(entry : KernelTaskEntry, arg : usize) -> TaskId {
-    const TAG : &[u8] = b"spawn_kernel_task enter";
-    wateros_mcs_boot_log_scheduler_ready(TAG.as_ptr(), TAG.len());
-    assert_addr_outside_kernel_heap("SCHEDULER_READY",
-                                    scheduler_ready_addr());
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.spawn_kernel_task(entry, arg, cpu::current_cpu_id()))
 }
@@ -291,7 +270,7 @@ pub fn spawn_user_task_spec(spec : UserTask) -> TaskId {
 /// 将已创建任务加入就绪队列尾部。
 pub fn enqueue_ready_task(task_id : TaskId) {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.enqueue_ready_task(task_id))
+    with_scheduler(|scheduler| scheduler.enqueue_ready_task(task_id, cpu::current_cpu_id()))
 }
 
 /// 从当前用户任务 fork 子任务（仅登记 TCB，不入就绪队列）。
@@ -391,6 +370,7 @@ pub fn suspend_current_and_run_next() {
                            cpu::current_cpu_id())
     });
     if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
+        _guard.release_before_switch();
         unsafe {
             __switch(current_task_cx_ptr, next_task_cx_ptr);
         }
@@ -552,22 +532,22 @@ pub fn wait_for_task_exit_timeout(task_id : TaskId, timeout_ticks : TaskTick) ->
 /// 若任务处于可唤醒队列则移回就绪队列并返回 `true`。
 pub fn wake_task(task_id : TaskId) -> bool {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.wake_task(task_id))
+    with_scheduler(|scheduler| scheduler.wake_task(task_id, cpu::current_cpu_id()))
 }
 
 pub fn interrupt_task(task_id : TaskId) -> bool {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.interrupt_task(task_id))
+    with_scheduler(|scheduler| scheduler.interrupt_task(task_id, cpu::current_cpu_id()))
 }
 
 pub fn block_task_manual(task_id : TaskId) {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.block_task_manual(task_id));
+    with_scheduler(|scheduler| scheduler.block_task_manual(task_id, cpu::current_cpu_id()));
 }
 
 pub fn wake_child_exit_waiters(parent_id : TaskId) {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.wake_child_exit_waiters(parent_id));
+    with_scheduler(|scheduler| scheduler.wake_child_exit_waiters(parent_id, cpu::current_cpu_id()));
 }
 
 // =============================================================================
@@ -589,13 +569,17 @@ pub fn try_release_wait_queue(wait_queue_id : WaitQueueId) -> bool {
 /// 从显式等待队列头部唤醒一个任务。
 pub fn wake_one_in_wait_queue(wait_queue_id : WaitQueueId) -> Option<TaskId> {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.wake_one_in_wait_queue(wait_queue_id))
+    with_scheduler(|scheduler| {
+        scheduler.wake_one_in_wait_queue(wait_queue_id, cpu::current_cpu_id())
+    })
 }
 
 /// 清空指定显式等待队列并将其中任务全部置为就绪。
 pub fn wake_all_in_wait_queue(wait_queue_id : WaitQueueId) -> usize {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.wake_all_in_wait_queue(wait_queue_id))
+    with_scheduler(|scheduler| {
+        scheduler.wake_all_in_wait_queue(wait_queue_id, cpu::current_cpu_id())
+    })
 }
 
 /// 从一个显式等待队列唤醒部分任务，并把其余等待者迁移到另一个等待队列。
@@ -609,7 +593,8 @@ pub fn requeue_wait_queue(from_wait_queue_id : WaitQueueId,
         scheduler.requeue_wait_queue(from_wait_queue_id,
                                      to_wait_queue_id,
                                      wake_count,
-                                     requeue_count)
+                                     requeue_count,
+                                     cpu::current_cpu_id())
     })
 }
 
@@ -770,8 +755,12 @@ pub fn apply_sched_policy_change(task_id : TaskId,
                                  param : SchedParam)
                                  -> Result<(), SchedError> {
     let _guard = InterruptGuard::new();
-    let action =
-        with_scheduler(|scheduler| scheduler.apply_sched_policy_change(task_id, policy, param))?;
+    let action = with_scheduler(|scheduler| {
+        scheduler.apply_sched_policy_change(task_id,
+                                            policy,
+                                            param,
+                                            cpu::current_cpu_id())
+    })?;
     match action {
         SchedPolicyChangeAction::NoReschedule => Ok(()),
         SchedPolicyChangeAction::RescheduleNow => {

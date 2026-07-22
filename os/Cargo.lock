@@ -1520,6 +1520,7 @@ name = "wateros-task-scheduler-api-v0"
 version = "0.1.0"
 dependencies = [
  "log",
+ "wateros-base-config",
  "wateros-platform-arch",
  "wateros-task-api-v0",
  "wateros-task-impl-core",
