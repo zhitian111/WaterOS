@@ -5,6 +5,11 @@
 //!
 //! 与 `arch-impl-loongarch64` 组合使用；不包含 trap 帧或页表格式实现。
 
+use core::arch::global_asm;
+
+// 平台 shim 只解释固件参数；栈与普通启动流程由 arch boot 汇编负责。
+global_asm!(include_str!("asm/_start.S"));
+
 pub mod console;
 /// ACPI GED 复位与关机后端。
 pub mod reset;

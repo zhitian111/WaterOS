@@ -7,6 +7,11 @@
 //!（见 `wateros-platform-arch-impl-riscv64`），但会接线该平台 profile 使用的
 //! OpenSBI console、timer 与 reset 后端。
 
+use core::arch::global_asm;
+
+// 平台 shim 只解释 OpenSBI 参数；栈与普通启动流程由 arch boot 汇编负责。
+global_asm!(include_str!("asm/_start.S"));
+
 pub mod console;
 /// OpenSBI system reset 后端。
 pub mod reset;

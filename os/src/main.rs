@@ -69,13 +69,9 @@ fn bringup_driver_and_user() {
 #[cfg(feature = "qemu-riscv64-opensbi")]
 mod qemu_riscv64_opensbi {
     use crate::bringup_driver_and_user;
-    use core::arch::global_asm;
-    use core::include_str;
     use core::sync::atomic::{AtomicBool, Ordering};
     use runtime::logging::*;
-    global_asm!(include_str!("../components/wateros-platform/platform-impl/\
-                              impl-qemu-riscv64-opensbi/src/asm/_start.S"));
-    /// 首个到达 `kernel_main` 的 hart 用 swap(true) 抢占 BSP 身份。
+    /// 首个到达 `wateros_kernel_main` 的 hart 用 swap(true) 抢占 BSP 身份。
     static BSP_CLAIMED : AtomicBool = AtomicBool::new(false);
     /// BSP 完成初始化后置 true，AP 自旋等待此标志。
     static AP_BOOT_READY : AtomicBool = AtomicBool::new(false);
@@ -107,28 +103,28 @@ mod qemu_riscv64_opensbi {
     }
 
     #[unsafe(no_mangle)]
-    pub fn kernel_main(boot_arg0 : usize, boot_arg1 : usize) -> ! {
+    pub fn wateros_kernel_main(cpu_raw : usize, dtb_pa : usize, _platform_arg1 : usize) -> ! {
         mask_boot_interrupts();
         // 原子 swap 决定 BSP：首个到达的 hart 成为 BSP，其余为 AP
         if BSP_CLAIMED.swap(true, Ordering::AcqRel) {
-            let cpu_id = task::CpuId::from_raw(boot_arg0);
+            let cpu_id = task::CpuId::from_raw(cpu_raw);
             wait_ap_boot_ready(cpu_id);
         }
         // BSP 初始化：驱动 → 日志 → timebase → 堆 → arch → 任务 → trap
-        driver::init_when_boot(boot_arg1);
+        driver::init_when_boot(dtb_pa);
         runtime::console::show_logo();
         klog::init();
         runtime::logging::init();
-        crate::boot_timebase::probe_and_init_timebase(boot_arg1);
+        crate::boot_timebase::probe_and_init_timebase(dtb_pa);
         runtime::heap_allocator::init();
-        platform::arch::cpu::init_current_cpu(task::CpuId::from_raw(boot_arg0))
+        platform::arch::cpu::init_current_cpu(task::CpuId::from_raw(cpu_raw))
             .expect("BSP init current CPU");
         platform::arch::init();
         task::init();
         crate::trap_handler::init();
         // MM 初始化
         let memory_end = driver::physical_ram_end_exclusive();
-        mm::kernel_mm::init(boot_arg1, memory_end);
+        mm::kernel_mm::init(dtb_pa, memory_end);
         AP_BOOT_READY.store(true, Ordering::Release);
 
         bringup_driver_and_user();
@@ -142,13 +138,8 @@ mod qemu_riscv64_opensbi {
 #[cfg(feature = "qemu-loongarch64-virt")]
 mod qemu_loongarch64_virt {
     use crate::bringup_driver_and_user;
-    use core::arch::global_asm;
-    use core::include_str;
     use core::sync::atomic::{AtomicBool, Ordering};
     use runtime::logging::*;
-
-    global_asm!(include_str!("../components/wateros-platform/platform-impl/\
-                              impl-qemu-loongarch64-virt/src/asm/_start.S"));
 
     static BSP_CLAIMED : AtomicBool = AtomicBool::new(false);
     static AP_BOOT_READY : AtomicBool = AtomicBool::new(false);
@@ -177,10 +168,10 @@ mod qemu_loongarch64_virt {
     }
 
     #[unsafe(no_mangle)]
-    pub fn kernel_main(_argc : usize, _argv : usize, envp : usize) -> ! {
+    pub fn wateros_kernel_main(cpu_raw : usize, _argc : usize, envp : usize) -> ! {
         mask_boot_interrupts();
         if BSP_CLAIMED.swap(true, Ordering::AcqRel) {
-            let cpu_id = platform::arch::cpu::current_cpu_id();
+            let cpu_id = task::CpuId::from_raw(cpu_raw);
             wait_ap_boot_ready(cpu_id);
         }
 
@@ -188,7 +179,7 @@ mod qemu_loongarch64_virt {
         klog::init();
         runtime::logging::init();
         runtime::heap_allocator::init();
-        platform::arch::cpu::init_current_cpu(platform::arch::cpu::current_cpu_id())
+        platform::arch::cpu::init_current_cpu(task::CpuId::from_raw(cpu_raw))
             .expect("BSP init current CPU");
         platform::arch::init();
         driver::init_when_boot(envp);
