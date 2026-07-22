@@ -4,7 +4,7 @@ use runtime::logging::*;
 
 use crate::user_bringup_common::BringupCommand;
 
-#[cfg(feature = "bringup-ltp-glibc-only")]
+#[cfg(all(feature = "pre", feature = "bringup-ltp-glibc-only"))]
 /// 仅跑 glibc LTP 长测（feature `bringup-ltp-glibc-only`）。
 const BRINGUP_COMMANDS : &[BringupCommand] =
     &[BringupCommand { program : "/glibc/busybox",
@@ -17,7 +17,7 @@ const BRINGUP_COMMANDS : &[BringupCommand] =
                                  ./lmbench_all lat_ctx -P 1 -s 32 2 4 8 16 24 32 64 96 && \
                                  echo '#### OS COMP TEST GROUP END lmbench-glibc ####'"] }];
 
-#[cfg(feature = "bringup-ltp-musl-only")]
+#[cfg(all(feature = "pre", feature = "bringup-ltp-musl-only"))]
 /// 仅跑 musl LTP 长测（feature `bringup-ltp-musl-only`）。
 const BRINGUP_COMMANDS : &[BringupCommand] = &[BringupCommand { program : "/musl/busybox",
                                                                 argv : &["timeout",
@@ -26,7 +26,8 @@ const BRINGUP_COMMANDS : &[BringupCommand] = &[BringupCommand { program : "/musl
                                                                          "/musl/ltp_testcode.\
                                                                           sh"] }];
 
-#[cfg(all(not(feature = "bringup-ltp-glibc-only"),
+#[cfg(all(feature = "pre",
+          not(feature = "bringup-ltp-glibc-only"),
           not(feature = "bringup-ltp-musl-only")))]
 // 默认赛题脚本队列：目标 wall ~35–45 min（timeout 上限 ~60 min）；LTP 放最后。
 // iozone 180 | libcbench 180 | lmbench 360 | unixbench 360 | ltp 480
@@ -110,6 +111,14 @@ const BRINGUP_COMMANDS : &[BringupCommand] = &[
                                 // "/musl/unixbench_testcode.sh"] }
     ];
 
+/// 线上决赛镜像的两组 glibc 测例，路径与 `final_test_case/README.md` 一致。
+#[cfg(feature = "final_online")]
+const BRINGUP_COMMANDS : &[BringupCommand] =
+    &[BringupCommand { program : "/busybox",
+                       argv : &["sh", "/scripts/cagent_testcode.sh"] },
+      BringupCommand { program : "/busybox",
+                       argv : &["sh", "/scripts/buildstorm_testcode.sh"] }];
+
 const LOG_TAG : &str = "busybox-bringup";
 
 /// 单调时钟纳秒（用于 bring-up 耗时统计；失败时返回 0）。
@@ -139,6 +148,7 @@ pub fn run_stage_busybox() {
 extern "C" fn bringup_kernel_runner(_arg : usize) -> ! {
     use platform::reset::shutdown;
 
+    #[cfg(feature = "pre")]
     crate::user_bringup_root_layout::refresh_ltp_accounts();
 
     for cmd in BRINGUP_COMMANDS {

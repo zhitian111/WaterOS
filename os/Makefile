@@ -6,9 +6,9 @@ BRANCH=$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
 BUILD_NUM = $(shell git rev-list --count HEAD 2>/dev/null || echo "0")
 
 .PHONY: clean check all all_start_info kernel configure fmt apply_features flush_img export
-.PHONY: rv_check rv_elf_info rv_obj_dump rv_qemu_run rv_qemu_run_snapshot rv_qemu_run_with_log rv_qemu_gdb rv_gdb
+.PHONY: rv_check rv_elf_info rv_obj_dump kernel-rv-pre kernel-rv-final rv_pre_run rv_final_run rv_pre_run_snapshot rv_final_run_snapshot rv_qemu_run rv_qemu_run_snapshot rv_qemu_run_with_log rv_qemu_gdb rv_gdb
 .PHONY: rv_pc_watch rv_symbol_at
-.PHONY: la_check la_elf_info kernel-la la_qemu_run la_symbol_at la_pc_watch
+.PHONY: la_check la_elf_info kernel-la-pre kernel-la-final la_pre_run la_final_run la_qemu_run la_symbol_at la_pc_watch
 .PHONY: rv_user_mode_bin
 COLOR_ANSI_RED := \033[31m
 COLOR_ANSI_GREEN := \033[32m
@@ -32,13 +32,23 @@ common_dependencies = $(shell find . -name "*.rs") \
 kernel_rv_dependencies = $(common_dependencies)
 
 kernel_rv_flag := --release --target riscv64gc-unknown-none-elf \
-                  --features qemu-riscv64-opensbi
+                  --features qemu-riscv64-opensbi,pre
+kernel_rv_pre_flag := --release --target riscv64gc-unknown-none-elf \
+                      --features qemu-riscv64-opensbi,pre
+kernel_rv_final_flag := --release --target riscv64gc-unknown-none-elf \
+                        --features qemu-riscv64-opensbi,final_online
 
 kernel_rv_build_artifact_path := ./target/riscv64gc-unknown-none-elf/release
 
 kernel_la_flag := --release --target loongarch64-unknown-none \
                   --no-default-features \
-                  --features qemu-loongarch64-virt
+                  --features qemu-loongarch64-virt,pre
+kernel_la_pre_flag := --release --target loongarch64-unknown-none \
+                      --no-default-features \
+                      --features qemu-loongarch64-virt,pre
+kernel_la_final_flag := --release --target loongarch64-unknown-none \
+                        --no-default-features \
+                        --features qemu-loongarch64-virt,final_online
 
 kernel_la_build_artifact_path := ./target/loongarch64-unknown-none/release
 
@@ -84,16 +94,16 @@ $(kernel_rv_build_artifact_path)/wateros: $(kernel_rv_dependencies) kernel
 	@cargo build $(kernel_rv_flag)
 	$(call INFO,"构建成功！");
 
-kernel-rv:	version $(kernel_rv_build_artifact_path)/wateros
-	@cp $(kernel_rv_build_artifact_path)/wateros ./kernel-rv
+kernel-rv: kernel-rv-pre
+	@cp ./kernel-rv-pre ./kernel-rv
 
 $(kernel_la_build_artifact_path)/wateros: $(common_dependencies) kernel
 	$(call INFO, "开始构建 loongarch64 内核...")
 	@cargo build $(kernel_la_flag)
 	$(call INFO,"构建成功！");
 
-kernel-la:	version $(kernel_la_build_artifact_path)/wateros
-	@cp $(kernel_la_build_artifact_path)/wateros ./kernel-la
+kernel-la: kernel-la-pre
+	@cp ./kernel-la-pre ./kernel-la
 
 kernel-rv-strip-image: $(kernel_rv_build_artifact_path)/wateros
 	$(call INFO,"清除文件元数据...");
@@ -116,10 +126,26 @@ la_elf_info: kernel-la
 	$(call INFO, "内核文件 elf 符号表")
 	@readelf -s ./kernel-la
 
-rv_qemu_run: kernel-rv
-	$(call INFO, "开始运行 riscv64 内核...")
-	@bash ./scripts/rv_qemu_run.sh
-	$(call INFO, "riscv64 内核运行结束")
+kernel-rv-pre: version
+	$(call INFO, "构建 riscv64 初赛内核...")
+	@cargo build $(kernel_rv_pre_flag)
+	@cp $(kernel_rv_build_artifact_path)/wateros ./kernel-rv-pre
+
+kernel-rv-final: version
+	$(call INFO, "构建 riscv64 决赛在线内核...")
+	@cargo build $(kernel_rv_final_flag)
+	@cp $(kernel_rv_build_artifact_path)/wateros ./kernel-rv-final
+
+rv_pre_run: kernel-rv-pre
+	$(call INFO, "运行 riscv64 初赛 bringup...")
+	@WOS_KERNEL=./kernel-rv-pre bash ./scripts/rv_pre_run.sh
+
+rv_final_run: kernel-rv-final
+	$(call INFO, "运行 riscv64 决赛在线 bringup...")
+	@WOS_KERNEL=./kernel-rv-final bash ./scripts/rv_final_run.sh
+
+# 兼容旧脚本调用：旧目标按初赛语义执行。
+rv_qemu_run: rv_pre_run
 
 rv_qemu_run_snapshot: kernel-rv
 	$(call INFO, "开始运行 riscv64 内核 snapshot 模式，不写回 sdcard-rv.img")
@@ -148,14 +174,26 @@ kernel-la-ltp-musl:
 
 .PHONY: kernel-rv-ltp-glibc kernel-rv-ltp-musl kernel-la-ltp-glibc kernel-la-ltp-musl rv_qemu_run_snapshot
 
-la_qemu_run: kernel-la
-	$(call INFO, "开始运行 loongarch64 内核...")
-	@qemu-system-loongarch64 -kernel kernel-la -m 1G -nographic -smp 1 \
-		-drive file=sdcard-la.img,if=none,format=raw,id=x0 \
-		-device virtio-blk-pci,drive=x0 -no-reboot \
-		-device virtio-net-pci,netdev=net0 \
-		-netdev user,id=net0 -rtc base=utc
-	$(call INFO, "loongarch64 内核运行结束")
+kernel-la-pre: version
+	$(call INFO, "构建 loongarch64 初赛内核...")
+	@cargo build $(kernel_la_pre_flag)
+	@cp $(kernel_la_build_artifact_path)/wateros ./kernel-la-pre
+
+kernel-la-final: version
+	$(call INFO, "构建 loongarch64 决赛在线内核...")
+	@cargo build $(kernel_la_final_flag)
+	@cp $(kernel_la_build_artifact_path)/wateros ./kernel-la-final
+
+la_pre_run: kernel-la-pre
+	$(call INFO, "运行 loongarch64 初赛 bringup...")
+	@WOS_KERNEL=./kernel-la-pre bash ./scripts/la_pre_run.sh
+
+la_final_run: kernel-la-final
+	$(call INFO, "运行 loongarch64 决赛在线 bringup...")
+	@WOS_KERNEL=./kernel-la-final bash ./scripts/la_final_run.sh
+
+# 兼容旧脚本调用：旧目标按初赛语义执行。
+la_qemu_run: la_pre_run
 
 la_qemu_run_snapshot: kernel-la
 	$(call INFO, "开始运行 loongarch64 内核 snapshot 模式，不写回 sdcard-la.img")
@@ -278,4 +316,3 @@ flush_img:
 	@cp ../test_case/sdcard-la.img ./
 	$(call INFO, "新磁盘镜像已拷贝完成！")
 	
-

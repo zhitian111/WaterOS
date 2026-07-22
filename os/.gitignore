@@ -25,3 +25,7 @@ kernel-la-ltp-musl
 kernel-rv-ltp-musl
 kernel-la-ltp-glibc
 kernel-rv-ltp-glibc
+kernel-rv-final
+kernel-rv-pre
+kernel-la-final
+kernel-la-pre

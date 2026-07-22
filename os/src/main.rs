@@ -2,6 +2,11 @@
 #![no_main]
 #![feature(alloc_error_handler)]
 
+#[cfg(all(feature = "pre", feature = "final_online"))]
+compile_error!("features `pre` and `final_online` are mutually exclusive");
+#[cfg(not(any(feature = "pre", feature = "final_online")))]
+compile_error!("select one competition stage feature: `pre` or `final_online`");
+
 extern crate alloc;
 
 use klog as _;
