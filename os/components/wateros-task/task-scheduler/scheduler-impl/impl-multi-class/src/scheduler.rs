@@ -55,6 +55,11 @@ impl MultiClassScheduler {
 
     /// 标记任务为 Running 并更新当前 CPU 的 current_task_id。
     fn set_current_task(&mut self, task_id : TaskId, cpu_id : CpuId) {
+        if !self.global.registry.is_idle(task_id) {
+            debug_assert_eq!(self.global.registry.ready_cpu_id(task_id),
+                             Some(cpu_id),
+                             "selected task is not owned by this CPU runqueue");
+        }
         self.cpu_states[cpu_id.raw()].current_task_id = Some(task_id);
         self.global
             .registry
@@ -403,9 +408,6 @@ impl MultiClassScheduler {
     fn enqueue_task(&mut self, target : QueueTarget, current_task_id : TaskId, cpu_id : CpuId) {
         match target {
             QueueTarget::Ready => {
-                self.global
-                    .registry
-                    .mark_ready(current_task_id);
                 self.enqueue_ready_by_policy(current_task_id, cpu_id);
             }
             QueueTarget::Blocked(reason) => {
@@ -432,9 +434,6 @@ impl MultiClassScheduler {
                     self.global
                         .registry
                         .finish_wait(*waiter_id, TaskWaitResult::Woken);
-                    self.global
-                        .registry
-                        .mark_ready(*waiter_id);
                     self.enqueue_ready_by_policy(*waiter_id, cpu_id);
                 }
                 if let Some(parent_id) = self.global
@@ -448,9 +447,6 @@ impl MultiClassScheduler {
                         self.global
                             .registry
                             .finish_wait(*waiter_id, TaskWaitResult::Woken);
-                        self.global
-                            .registry
-                            .mark_ready(*waiter_id);
                         self.enqueue_ready_by_policy(*waiter_id, cpu_id);
                     }
                 }
@@ -465,6 +461,12 @@ impl MultiClassScheduler {
     }
 
     fn enqueue_ready_by_policy(&mut self, task_id : TaskId, cpu_id : CpuId) {
+        // Publish lifecycle state and runqueue ownership together while the
+        // global scheduler lock is held.  No Ready task may be queued without
+        // this CPU-local ownership record.
+        self.global
+            .registry
+            .mark_ready(task_id, cpu_id);
         let snap = self.global
                        .registry
                        .task_snapshot(task_id);
@@ -517,9 +519,6 @@ impl MultiClassScheduler {
                             .wait_queues
                             .promote_sleeping_tasks()
         {
-            self.global
-                .registry
-                .mark_ready(*task_id);
             self.enqueue_ready_by_policy(*task_id, cpu_id);
         }
         for (task_id, target) in &self.global
@@ -536,9 +535,6 @@ impl MultiClassScheduler {
             self.global
                 .registry
                 .finish_wait(*task_id, TaskWaitResult::TimedOut);
-            self.global
-                .registry
-                .mark_ready(*task_id);
             self.enqueue_ready_by_policy(*task_id, cpu_id);
         }
     }
@@ -808,9 +804,6 @@ impl MultiClassScheduler {
         self.global
             .registry
             .finish_wait(task_id, TaskWaitResult::Woken);
-        self.global
-            .registry
-            .mark_ready(task_id);
         self.enqueue_ready_by_policy(task_id, cpu_id);
         true
     }
@@ -832,9 +825,6 @@ impl MultiClassScheduler {
         self.global
             .registry
             .finish_wait(task_id, TaskWaitResult::Interrupted);
-        self.global
-            .registry
-            .mark_ready(task_id);
         self.enqueue_ready_by_policy(task_id, cpu_id);
         true
     }
@@ -864,9 +854,6 @@ impl MultiClassScheduler {
             self.global
                 .registry
                 .finish_wait(*waiter_id, TaskWaitResult::Woken);
-            self.global
-                .registry
-                .mark_ready(*waiter_id);
             self.enqueue_ready_by_policy(*waiter_id, cpu_id);
         }
     }
@@ -888,9 +875,6 @@ impl MultiClassScheduler {
         self.global
             .registry
             .finish_wait(task_id, TaskWaitResult::Woken);
-        self.global
-            .registry
-            .mark_ready(task_id);
         self.enqueue_ready_by_policy(task_id, cpu_id);
         Some(task_id)
     }
@@ -914,9 +898,6 @@ impl MultiClassScheduler {
             self.global
                 .registry
                 .finish_wait(*task_id, TaskWaitResult::Woken);
-            self.global
-                .registry
-                .mark_ready(*task_id);
             self.enqueue_ready_by_policy(*task_id, cpu_id);
             count = count.saturating_add(1);
         }
@@ -940,9 +921,6 @@ impl MultiClassScheduler {
             self.global
                 .registry
                 .finish_wait(*task_id, TaskWaitResult::Woken);
-            self.global
-                .registry
-                .mark_ready(*task_id);
             self.enqueue_ready_by_policy(*task_id, cpu_id);
         }
         for (task_id, _from_id) in &moved {
@@ -1033,8 +1011,11 @@ impl MultiClassScheduler {
 
     /// 将指定 CPU 标记为 online。AP 完成初始化后调用。
     pub(super) fn set_cpu_online(&mut self, cpu_id : CpuId) {
-        if !cpu_id.fits_capacity(self.cpu_states.len()) {
-            log::warn!("[cpu] invalid CPU {} ignored", cpu_id.raw());
+        if !cpu_id.fits_capacity(self.cpu_states
+                                     .len())
+        {
+            log::warn!("[cpu] invalid CPU {} ignored",
+                       cpu_id.raw());
             return;
         }
         let cpu = &mut self.cpu_states[cpu_id.raw()];
@@ -1051,7 +1032,9 @@ impl MultiClassScheduler {
     pub(super) fn online_cpu_mask(&self) -> base::cpu::CpuMask {
         let mut mask = base::cpu::CpuMask::EMPTY;
         for cpu in &self.cpu_states {
-            if cpu.online { mask.insert(cpu.cpu_id); }
+            if cpu.online {
+                mask.insert(cpu.cpu_id);
+            }
         }
         mask
     }
@@ -1157,7 +1140,8 @@ impl MultiClassScheduler {
             .take_current_wait_result(task_id)
     }
     pub fn cpu_snapshot(&self, cpu_id : CpuId) -> Option<CpuSnapshot> {
-        let cpu = self.cpu_states.get(cpu_id.raw())?;
+        let cpu = self.cpu_states
+                      .get(cpu_id.raw())?;
         Some(CpuSnapshot { cpu_id : cpu_id,
                            online : cpu.online,
                            current_task_id : cpu.current_task_id,
@@ -1179,9 +1163,8 @@ impl MultiClassScheduler {
                                                     .current_tick() })
     }
     pub fn running_cpu(&self, task_id : TaskId) -> Option<CpuId> {
-        self.cpu_states
-            .iter()
-            .position(|c| c.current_task_id == Some(task_id))
-            .map(|i| CpuId::from_raw(i))
+        self.global
+            .registry
+            .running_cpu_id(task_id)
     }
 }

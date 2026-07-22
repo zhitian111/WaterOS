@@ -8,6 +8,8 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use api_v0::{VfsError, VfsIoHandle, VfsResult};
 use base::sync::MultiprocessorSafeCell;
+use core::mem::MaybeUninit;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use impl_fd_session::PerTaskFdRegistry;
 
 static mut FD_REGISTRY : MaybeUninit<MultiprocessorSafeCell<PerTaskFdRegistry>> =
