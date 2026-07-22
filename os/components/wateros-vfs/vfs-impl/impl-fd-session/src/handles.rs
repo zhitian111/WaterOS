@@ -555,6 +555,10 @@ impl VfsIoHandle for UnixStreamPairEnd {
         }))
     }
 
+    /// `socketpair` 的两端都可读写。glibc `fdopen(fd, "r+")` 会通过
+    /// `fcntl(F_GETFL)` 校验这里返回的访问模式。
+    fn open_accmode(&self) -> u32 { 2 }
+
 // 本方法代码由AI完成
     fn open_status_flags(&self) -> u32 {
         if self.read_end.nonblocking() {

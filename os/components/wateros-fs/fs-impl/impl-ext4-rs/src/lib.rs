@@ -34,6 +34,8 @@ const MAGIC_OFFSET_IN_SB : usize = 0x38;
 /// ext4 根目录 inode 号（固定为 2）。
 // 本变量代码由AI完成
 const ROOT_INODE : u32 = 2;
+/// Linux 路径解析允许的最大符号链接跳转次数。
+const MAX_SYMLINK_DEPTH : usize = 40;
 /// 普通文件 mode 前缀（`S_IFREG`）。
 // 本变量代码由AI完成
 const S_IFREG : u16 = 0o100000;
@@ -186,15 +188,82 @@ fn ensure_dir_inode(fs : &Ext4, inode : u32) -> FsResult<()> {
     }
 }
 
-// 按路径逐级 fuse_lookup，返回末级 inode 号。
-// 本方法代码由AI完成
-fn lookup_inode(fs : &Ext4, path : &str) -> FsResult<u32> {
+/// 读取符号链接 inode 的目标。
+///
+/// ext4 会把不超过 60 字节的“快速符号链接”直接放在 inode 的 `i_block` 字段中，
+/// 此时不能走普通文件的 extent 读取路径，否则会把链接文本误当成 extent header。
+fn read_symlink_inode(fs : &Ext4, inode : u32) -> FsResult<Vec<u8>> {
+    let inode_ref = fs.get_inode_ref(inode);
+    if inode_ref.inode.file_type() != InodeFileType::S_IFLNK {
+        return Err(FsError::NotAFile);
+    }
+    let size = usize::try_from(inode_ref.inode.size()).map_err(|_| FsError::Io)?;
+    if size <= 60 && inode_ref.inode.blocks_count() == 0 {
+        let words = inode_ref.inode.block();
+        let mut target = Vec::with_capacity(size);
+        for word in words {
+            target.extend_from_slice(&word.to_le_bytes());
+        }
+        target.truncate(size);
+        return Ok(target);
+    }
+    let mut target = vec![0u8; size];
+    if size > 0 {
+        let n = fs.read_at(inode, 0, &mut target).map_err(map_ext4_rs)?;
+        if n != size {
+            return Err(FsError::Io);
+        }
+    }
+    Ok(target)
+}
+
+fn push_path_components(out : &mut Vec<String>, path : &str) -> FsResult<()> {
+    for part in path.split('/') {
+        if part.is_empty() || part == "." {
+            continue;
+        }
+        if part == ".." {
+            let _ = out.pop();
+            continue;
+        }
+        if part.len() > 255 {
+            return Err(FsError::InvalidPath);
+        }
+        out.push(String::from(part));
+    }
+    Ok(())
+}
+
+fn components_to_absolute_path(parts : &[String]) -> String {
+    if parts.is_empty() {
+        return String::from("/");
+    }
+    let mut path = String::new();
+    for part in parts {
+        path.push('/');
+        path.push_str(part.as_str());
+    }
+    path
+}
+
+/// 按路径逐级查找 inode。中间路径中的符号链接始终跟随；`follow_final` 决定是否
+/// 跟随末级符号链接。这样 `metadata/read_symlink` 仍能观察链接本身，而普通文件读取
+/// 和 ELF 加载可以取得链接指向的真实文件。
+fn lookup_inode_inner(fs : &Ext4,
+                      path : &str,
+                      follow_final : bool,
+                      depth : usize)
+                      -> FsResult<u32> {
+    if depth >= MAX_SYMLINK_DEPTH {
+        return Err(FsError::InvalidPath);
+    }
     let p = path.trim_end_matches('/');
     if p.is_empty() || p == "/" {
         return Ok(ROOT_INODE);
     }
 
     let mut inode = ROOT_INODE;
+    let mut resolved_parts : Vec<String> = Vec::new();
     let mut parts = p.split('/')
                      .filter(|part| !part.is_empty())
                      .peekable();
@@ -204,15 +273,38 @@ fn lookup_inode(fs : &Ext4, path : &str) -> FsResult<u32> {
         }
         let attr = fs.fuse_lookup(inode as u64, part)
                      .map_err(map_ext4_rs)?;
-        if parts.peek()
-                .is_some() &&
-           attr.kind != InodeFileType::S_IFDIR
-        {
+        let has_remaining = parts.peek().is_some();
+        let child = u32::try_from(attr.ino).map_err(|_| FsError::Io)?;
+        if attr.kind == InodeFileType::S_IFLNK && (has_remaining || follow_final) {
+            let target = read_symlink_inode(fs, child)?;
+            let target = core::str::from_utf8(target.as_slice()).map_err(|_| FsError::NotUtf8)?;
+            let mut next_parts = if target.starts_with('/') {
+                Vec::new()
+            } else {
+                resolved_parts.clone()
+            };
+            push_path_components(&mut next_parts, target)?;
+            for remaining in parts {
+                push_path_components(&mut next_parts, remaining)?;
+            }
+            let next_path = components_to_absolute_path(next_parts.as_slice());
+            return lookup_inode_inner(fs, next_path.as_str(), follow_final, depth + 1);
+        }
+        if has_remaining && attr.kind != InodeFileType::S_IFDIR {
             return Err(FsError::NotAFile);
         }
-        inode = u32::try_from(attr.ino).map_err(|_| FsError::Io)?;
+        inode = child;
+        resolved_parts.push(String::from(part));
     }
     Ok(inode)
+}
+
+fn lookup_inode(fs : &Ext4, path : &str) -> FsResult<u32> {
+    lookup_inode_inner(fs, path, false, 0)
+}
+
+fn lookup_inode_follow(fs : &Ext4, path : &str) -> FsResult<u32> {
+    lookup_inode_inner(fs, path, true, 0)
 }
 
 // 由 inode 号构造 [`FsMetadata`] 快照。
@@ -257,7 +349,7 @@ fn walk_ext4_rs_tree(fs : &Ext4RsFs, path : &str) {
 // 本方法代码由AI完成
 fn create_regular(fs : &mut Ext4, path : &str, mode : u16) -> FsResult<u32> {
     let (parent_path, name) = split_parent_and_name(path)?;
-    let parent = lookup_inode(fs, parent_path)?;
+    let parent = lookup_inode_follow(fs, parent_path)?;
     ensure_dir_inode(fs, parent)?;
     fs.fuse_mknod(parent as u64,
                   name,
@@ -274,7 +366,7 @@ fn create_regular(fs : &mut Ext4, path : &str, mode : u16) -> FsResult<u32> {
 // 本方法代码由AI完成
 fn create_directory(fs : &mut Ext4, path : &str, mode : u16) -> FsResult<()> {
     let (parent_path, name) = split_parent_and_name(path)?;
-    let parent = lookup_inode(fs, parent_path)?;
+    let parent = lookup_inode_follow(fs, parent_path)?;
     ensure_dir_inode(fs, parent)?;
     match fs.fuse_lookup(parent as u64, name) {
         Ok(_) => return Err(FsError::Exists),
@@ -341,12 +433,19 @@ impl ReadOnlyFs for Ext4RsFs {
 
 // 本方法代码由AI完成
     fn read(&self, path : &str) -> FsResult<Vec<u8>> {
-        let meta = ReadOnlyFs::metadata(self, path)?;
+        let inode = lookup_inode_follow(self.fs()?, path)?;
+        let meta = metadata_for_inode(self.fs()?, inode)?;
         if meta.node_type != FsNodeType::File {
             return Err(FsError::NotAFile);
         }
         let mut out = vec![0u8; usize::try_from(meta.size).map_err(|_| FsError::Io)?];
-        let n = ReadOnlyFs::read_range(self, path, 0, &mut out)?;
+        let n = if out.is_empty() {
+            0
+        } else {
+            self.fs()?
+                .read_at(inode, 0, &mut out)
+                .map_err(map_ext4_rs)?
+        };
         if n != out.len() {
             return Err(FsError::Io);
         }
@@ -359,14 +458,14 @@ impl ReadOnlyFs for Ext4RsFs {
             return Ok(0);
         }
         let fs = self.fs()?;
-        let meta = ReadOnlyFs::metadata(self, path)?;
+        let inode = lookup_inode_follow(fs, path)?;
+        let meta = metadata_for_inode(fs, inode)?;
         if meta.node_type != FsNodeType::File {
             return Err(FsError::NotAFile);
         }
         if offset >= meta.size {
             return Ok(0);
         }
-        let inode = u32::try_from(meta.inode).map_err(|_| FsError::Io)?;
         let to_read = buf.len()
                          .min(usize::try_from(meta.size - offset).map_err(|_| FsError::Io)?);
         fs.read_at(inode,
@@ -415,17 +514,7 @@ impl ReadOnlyFs for Ext4RsFs {
     fn read_symlink(&self, path : &str) -> FsResult<Vec<u8>> {
         let fs = self.fs()?;
         let inode = lookup_inode(fs, path)?;
-        let meta = metadata_for_inode(fs, inode)?;
-        if meta.node_type != FsNodeType::Symlink {
-            return Err(FsError::NotAFile);
-        }
-        let inode_ref = fs.get_inode_ref(inode);
-        let file_size = inode_ref.inode.size();
-        let mut read_buf = vec![0u8; file_size as usize];
-        if file_size > 0 {
-            fs.read_at(inode, 0, &mut read_buf).map_err(map_ext4_rs)?;
-        }
-        Ok(read_buf)
+        read_symlink_inode(fs, inode)
     }
 
 // 本方法代码由AI完成
@@ -480,7 +569,7 @@ impl ReadWriteFs for Ext4RsFs {
     fn unlink(&mut self, path : &str) -> FsResult<()> {
         let fs = self.fs_mut()?;
         let (parent_path, name) = split_parent_and_name(path)?;
-        let parent = lookup_inode(fs, parent_path)?;
+        let parent = lookup_inode_follow(fs, parent_path)?;
         ensure_dir_inode(fs, parent)?;
         let attr = fs.fuse_lookup(parent as u64, name)
                      .map_err(map_ext4_rs)?;
@@ -527,7 +616,7 @@ impl ReadWriteFs for Ext4RsFs {
         }
         let fs = self.fs_mut()?;
         let (parent_path, name) = split_parent_and_name(path)?;
-        let parent = lookup_inode(fs, parent_path)?;
+        let parent = lookup_inode_follow(fs, parent_path)?;
         fs.fuse_rmdir(parent as u64, name)
           .map_err(map_ext4_rs)?;
         Ok(())
@@ -631,7 +720,7 @@ impl ReadWriteFs for Ext4RsFs {
         }
 
         let (parent_path, name) = split_parent_and_name(new_path)?;
-        let parent = lookup_inode(fs, parent_path)?;
+        let parent = lookup_inode_follow(fs, parent_path)?;
         ensure_dir_inode(fs, parent)?;
         match fs.fuse_lookup(parent as u64, name) {
             Ok(_) => return Err(FsError::Exists),
@@ -679,7 +768,7 @@ impl ReadWriteFs for Ext4RsFs {
         }
 
         let fs = self.fs_mut()?;
-        let parent = lookup_inode(fs, old_parent_path)?;
+        let parent = lookup_inode_follow(fs, old_parent_path)?;
         ensure_dir_inode(fs, parent)?;
         let old_attr = fs.fuse_lookup(parent as u64, old_name)
                          .map_err(map_ext4_rs)?;
@@ -723,7 +812,7 @@ impl ReadWriteFs for Ext4RsFs {
     fn symlink(&mut self, link_path : &str, target : &str) -> FsResult<()> {
         let fs = self.fs_mut()?;
         let (parent_path, name) = split_parent_and_name(link_path)?;
-        let parent = lookup_inode(fs, parent_path)?;
+        let parent = lookup_inode_follow(fs, parent_path)?;
         ensure_dir_inode(fs, parent)?;
         fs.fuse_symlink(parent as u64, name, target)
           .map_err(map_ext4_rs)?;
@@ -740,7 +829,7 @@ impl ReadWriteFs for Ext4RsFs {
     fn mknod(&mut self, path : &str, mode : u32, rdev : u32) -> FsResult<()> {
         let fs = self.fs_mut()?;
         let (parent_path, name) = split_parent_and_name(path)?;
-        let parent = lookup_inode(fs, parent_path)?;
+        let parent = lookup_inode_follow(fs, parent_path)?;
         ensure_dir_inode(fs, parent)?;
         match fs.fuse_lookup(parent as u64, name) {
             Ok(_) => return Err(FsError::Exists),
