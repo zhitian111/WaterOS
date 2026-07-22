@@ -1,5 +1,9 @@
 # WaterOS 内核性能优化分析（待办）
 
+## 决赛测例入口
+
+2026 年决赛 CAgent 与 BuildStorm 的静态差距、实施顺序和验收标准见 [`final-test-readiness.md`](./final-test-readiness.md)。三人任务分配、接口边界和阶段计划见 [`final-test-team-allocation.md`](./final-test-team-allocation.md)。未来两周的周一、周三、周五会议安排及第一次会议材料见 [`final-test-two-week-meetings.md`](./final-test-two-week-meetings.md)。A 与 B 第一轮 SMP 协作的接口、数据结构和改动位置见 [`smp-a-b-first-interface-contract.md`](./smp-a-b-first-interface-contract.md)。其中双架构 8 核 SMP、`/proc/uptime`、在线 CPU 报告和官方镜像端到端验证是当前 P0 阻断项。多核代码位置的详细预记录见 [`../单核设计转多核设计需要更改的位置的预记录.md`](../单核设计转多核设计需要更改的位置的预记录.md)。
+
 ## 用途
 
 本目录汇总对 WaterOS 内核**性能优化点**的系统化分析，覆盖热调用路径、资源回收与 flush、锁竞争三大方向，并为每一条改进点提供：精确源码 `文件:行号`、当前算法与复杂度、问题成因、改进方案、预期收益、双架构差异与风险。
