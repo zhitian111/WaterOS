@@ -3,8 +3,8 @@
 extern crate alloc;
 
 use api_v0::{
-    CPUScheduler, CpuSnapshot, FifoQueue, GlobalScheduler, QueueTarget, RrQueue, RrTickAction,
-    SchedPolicyChangeAction,
+    CPUScheduler, CpuSnapshot, FifoQueue, GlobalScheduler, OtherQueue, QueueTarget, RrQueue,
+    RrTickAction, SchedPolicyChangeAction,
 };
 use arch::task::ActiveArchTaskContext as TaskContext;
 use base::cpu::CpuMask;
@@ -123,6 +123,24 @@ impl MultiClassScheduler {
         }
     }
 
+    /// 为一个实际运行的 `SCHED_OTHER` 任务记一单位虚拟运行时间，并推进
+    /// 当前 CPU 的时间线。调用方须持有 scheduler 锁。
+    fn charge_other_vruntime(&mut self, task_id : TaskId, nice : i8, cpu_id : CpuId) {
+        if self.global
+               .registry
+               .is_idle(task_id)
+        {
+            return;
+        }
+        let delta = OtherQueue::vruntime_delta(nice);
+        let vruntime = self.global
+                           .registry
+                           .charge_other_vruntime(task_id, delta)
+                           .expect("running Other task must exist");
+        self.cpu_states[cpu_id.raw()].other_queue
+                                     .observe_current_vruntime(vruntime);
+    }
+
     /// 首次任务切换（冷启动入口）。
     pub(super) fn prepare_first_switch(&mut self, cpu_id : CpuId) -> SwitchPair {
         let next_task_id = self.pick_next_runnable(cpu_id);
@@ -194,8 +212,18 @@ impl MultiClassScheduler {
                     // 首次切换前尚未建立 current_task；正常运行时 idle 也会是 Some。
                     None => false,
                     Some((current_id, snap)) => match snap.sched_policy {
-                        SchedPolicy::Other => self.cpu_states[cpu_id.raw()].other_queue
-                                                                           .tick_current(),
+                        SchedPolicy::Other => {
+                            if self.global
+                                   .registry
+                                   .is_idle(current_id)
+                            {
+                                false
+                            } else {
+                                self.charge_other_vruntime(current_id, snap.nice, cpu_id);
+                                self.cpu_states[cpu_id.raw()].other_queue
+                                                             .tick_current()
+                            }
+                        }
                         SchedPolicy::Rr => matches!(self.cpu_states[cpu_id.raw()]
                                                         .rr_queue
                                                         .on_tick_current(current_id,
@@ -262,6 +290,16 @@ impl MultiClassScheduler {
         let current_ptr = self.global
                               .registry
                               .take_task_cx(current_task_id);
+        // `yield` 没有 timer tick；若不推进 vruntime，同 vruntime 的较小
+        // task id 可能马上再次被选中，违背主动让出 CPU 的语义。
+        if matches!(reason, ScheduleReason::Yield) {
+            let snap = self.global
+                           .registry
+                           .task_snapshot(current_task_id);
+            if snap.sched_policy == SchedPolicy::Other {
+                self.charge_other_vruntime(current_task_id, snap.nice, cpu_id);
+            }
+        }
         // Sleep 路径额外清除旧的 wait_result
         if matches!(reason, ScheduleReason::Sleep(_)) {
             self.global
@@ -652,8 +690,23 @@ impl MultiClassScheduler {
                        .registry
                        .task_snapshot(task_id);
         match snap.sched_policy {
-            SchedPolicy::Other => self.cpu_states[cpu_id.raw()].other_queue
-                                                               .enqueue_ready_task(task_id),
+            SchedPolicy::Other => {
+                let vruntime = self.global
+                                   .registry
+                                   .other_vruntime(task_id)
+                                   .expect("queued Other task must exist");
+                // 避免vruntime过小，调度器会反复优先选它，得到不合理的“迁移奖励”。
+                let normalized = self.cpu_states[cpu_id.raw()].other_queue
+                                                              .normalize_vruntime(vruntime);
+                if normalized != vruntime {
+                    self.global
+                        .registry
+                        .set_other_vruntime(task_id, normalized)
+                        .expect("queued Other task must exist");
+                }
+                self.cpu_states[cpu_id.raw()].other_queue
+                                             .enqueue_ready_task(task_id, normalized);
+            }
             SchedPolicy::Fifo => {
                 self.cpu_states[cpu_id.raw()].fifo_queue
                                              .enqueue(task_id, snap.sched_priority)

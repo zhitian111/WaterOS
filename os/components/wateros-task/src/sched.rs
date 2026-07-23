@@ -91,7 +91,7 @@ pub fn get_affinity(task_id : TaskId) -> Result<CpuMask, SchedError> {
     scheduler::get_affinity(task_id)
 }
 
-/// 设置线程级 nice。当前只保存属性，尚未接入 `SCHED_OTHER` 的队列选择。
+/// 设置线程级 nice。`SCHED_OTHER` 后续按它累计 vruntime，影响 CPU 时间份额。
 pub fn set_nice(task_id : TaskId, nice : i8) -> Result<(), SchedError> {
     ensure_task_exists(task_id)?;
     if !(SCHED_NICE_MIN..=SCHED_NICE_MAX).contains(&nice) {

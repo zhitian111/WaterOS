@@ -596,4 +596,32 @@ impl TaskRegistry {
             .map(|task| task.nice())
             .ok_or(SchedError::NoSuchTask)
     }
+
+    pub fn other_vruntime(&self, task_id : TaskId) -> Result<u64, SchedError> {
+        self.task_table
+            .task_opt(task_id)
+            .map(|task| task.other_vruntime())
+            .ok_or(SchedError::NoSuchTask)
+    }
+
+    pub fn set_other_vruntime(&mut self,
+                              task_id : TaskId,
+                              vruntime : u64)
+                              -> Result<(), SchedError> {
+        let task = self.task_table
+                       .task_mut_opt(task_id)
+                       .ok_or(SchedError::NoSuchTask)?;
+        task.set_other_vruntime(vruntime);
+        Ok(())
+    }
+
+    pub fn charge_other_vruntime(&mut self,
+                                 task_id : TaskId,
+                                 delta : u64)
+                                 -> Result<u64, SchedError> {
+        let task = self.task_table
+                       .task_mut_opt(task_id)
+                       .ok_or(SchedError::NoSuchTask)?;
+        Ok(task.charge_other_vruntime(delta))
+    }
 }

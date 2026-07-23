@@ -1,37 +1,77 @@
-//! `SCHED_OTHER` 专用就绪 FIFO。
+//! 多调度类的就绪队列。
 
 extern crate alloc;
 
-use alloc::collections::{BTreeMap, VecDeque};
+use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use config::task::{MAX_TICKS_PER_TASK, READY_QUEUE_STALE_COMPACT_THRESHOLD};
+use config::task::{MAX_RT_TICKS_PER_TASK, MAX_TICKS_PER_TASK};
 use task_api::TaskId;
 const RT_PRIORITY_MIN : i32 = 1;
 const RT_PRIORITY_MAX : i32 = 99;
 const RT_BUCKET_COUNT : usize = (RT_PRIORITY_MAX - RT_PRIORITY_MIN + 1) as usize;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct QueueEntry {
-    task_id : TaskId,
-    version : u64,
-}
-
 /// `SCHED_OTHER` 任务的就绪队列。
 ///
-/// 使用 per-task 版本号实现 O(1) 入队与去重：重复入队只需在队尾追加新条目并使旧条目失效，
-/// 避免原先 `VecDeque::retain` 在大量并存线程下退化为 O(n^2)。
+/// 按 `(vruntime, task_id)` 排序，选择虚拟运行时间最小的任务。`entries`
+/// 保留每个 task 当前的 key，因此防御性重复入队或跨 CPU 摘除都能精确移除
+/// 旧条目，不需要 FIFO 版本号和 stale 条目清理。
 pub struct OtherQueue {
-    ready_queue : VecDeque<QueueEntry>,
-    versions : BTreeMap<TaskId, u64>,
+    //按 (vruntime, task_id) 自动排序。调度器每次取最前面的元素
+    ready_queue : BTreeSet<(u64, TaskId)>,
+    // task_id -> vruntime 映射，便于精确移除旧条目
+    entries : BTreeMap<TaskId, u64>,
+    /// 本 CPU 已观察到的最小虚拟运行时间；只单调增加。
+    min_vruntime : u64,
     current_ticks : u64,
 }
 
 impl OtherQueue {
     pub(super) fn new() -> Self {
-        Self { ready_queue : VecDeque::new(),
-               current_ticks : 0,
-               versions : BTreeMap::new() }
+        Self { ready_queue : BTreeSet::new(),
+               entries : BTreeMap::new(),
+               min_vruntime : 0,
+               current_ticks : 0 }
     }
+
+    /// Linux CFS 使用的 nice 权重（nice=-20..=19）。nice 越小，权重越大，
+    /// 相同 wall-clock tick 下消耗的 vruntime 越少。
+    const NICE_WEIGHTS : [u64; 40] = [88761, 71755, 56483, 46273, 36291, 29154, 23254, 18705,
+                                      14949, 11916, 9548, 7620, 6100, 4904, 3906, 3121, 2501,
+                                      1991, 1586, 1277, 1024, 820, 655, 526, 423, 335, 272, 215,
+                                      172, 137, 110, 87, 70, 56, 45, 36, 29, 23, 18, 15];
+    const NICE_0_WEIGHT : u64 = 1024;
+    /// 将一个 scheduler tick 转换为 vruntime 的基础单位。
+    const VRUNTIME_TICK_SCALE : u64 = Self::NICE_0_WEIGHT * Self::NICE_0_WEIGHT;
+
+    /// 返回一个 scheduler tick 对 `nice` 任务增加的 vruntime。
+    pub fn vruntime_delta(nice : i8) -> u64 {
+        let index = (nice.clamp(-20, 19) + 20) as usize;
+        (Self::VRUNTIME_TICK_SCALE / Self::NICE_WEIGHTS[index]).max(1)
+    }
+
+    /// 将新到达或迁入任务的 vruntime 向本 CPU 的时间线靠齐。
+    ///
+    /// 不降低已有 vruntime，避免刚迁移的 CPU 获得不应有的运行优势；也不允许
+    /// 新建任务落在当前任务很久以前的时间线上并反复抢占。
+    pub fn normalize_vruntime(&self, vruntime : u64) -> u64 { vruntime.max(self.min_vruntime) }
+
+    /// 当前运行任务消耗时间后推进本 CPU 的虚拟时间线。
+    ///
+    /// 若队列内已有更久未运行的任务，`min_vruntime` 最多推进到该等待
+    /// 任务的时间，不能直接跳到 current 的 vruntime。否则新唤醒任务会被
+    /// 归一化到 current，同值时又由 task id 打破平局，可能长期落后于低
+    /// task id 的周期性内核任务。
+    pub fn observe_current_vruntime(&mut self, vruntime : u64) {
+        let next_ready_vruntime = self.ready_queue
+                                      .iter()
+                                      .next()
+                                      .map(|(ready_vruntime, _)| *ready_vruntime);
+        let observed = next_ready_vruntime.map_or(vruntime,
+                                                  |ready_vruntime| vruntime.min(ready_vruntime));
+        self.min_vruntime = self.min_vruntime
+                                .max(observed);
+    }
+
     /// 记录当前任务消耗的 tick 数；返回是否已达到最大值。
     pub fn tick_current(&mut self) -> bool {
         self.current_ticks = self.current_ticks
@@ -39,93 +79,62 @@ impl OtherQueue {
         self.current_ticks >= MAX_TICKS_PER_TASK
     }
     pub fn reset_ticks(&mut self) { self.current_ticks = 0; }
-    /// 检查就绪队列条目是否仍然有效。
-    fn entry_is_live(&self, entry : QueueEntry) -> bool {
-        self.versions
-            .get(&entry.task_id)
-            .copied()
-            .is_some_and(|ver| ver == entry.version)
-    }
-    /// 为指定任务号生成新的版本号并返回。
-    fn bump_version(&mut self, task_id : TaskId) -> u64 {
-        let entry = self.versions
-                        .entry(task_id)
-                        .or_insert(0);
-        *entry = entry.saturating_add(1);
-        *entry
-    }
-    /// 清理就绪队列中过期的条目。
-    fn compact_stale_entries(&mut self) {
-        let versions = &self.versions;
-        self.ready_queue
-            .retain(|entry| {
-                versions.get(&entry.task_id)
-                        .copied()
-                        .is_some_and(|ver| ver == entry.version)
-            });
-    }
-    /// 计算就绪队列中连续 stale 条目达到多少时触发清理。
-    fn stale_compact_threshold(&self) -> usize {
-        READY_QUEUE_STALE_COMPACT_THRESHOLD.max(self.ready_queue
-                                                    .len() /
-                                                4)
-    }
     /// 检查就绪队列中是否有可运行的任务。
     pub fn has_runnable(&self) -> bool {
-        self.ready_queue
-            .iter()
-            .copied()
-            .any(|entry| self.entry_is_live(entry))
+        !self.ready_queue
+             .is_empty()
     }
 
-    /// 任务已从 registry 永久移除后回收 `versions` 条目。
-    pub fn forget_task(&mut self, task_id : TaskId) {
-        self.versions
-            .remove(&task_id);
-    }
-    /// 将任务入就绪队列尾部；若已存在则生成新版本号并使旧条目失效。
-    pub fn enqueue_ready_task(&mut self, task_id : TaskId) {
-        let version = self.bump_version(task_id);
+    /// 任务已从 registry 永久移除后从就绪队列回收。
+    pub fn forget_task(&mut self, task_id : TaskId) { self.detach_task(task_id); }
+
+    /// 将任务按其 vruntime 放入就绪队列。
+    pub fn enqueue_ready_task(&mut self, task_id : TaskId, vruntime : u64) {
+        self.detach_task(task_id);
+        self.entries
+            .insert(task_id, vruntime);
         self.ready_queue
-            .push_back(QueueEntry { task_id, version });
+            .insert((vruntime, task_id));
     }
-    /// 清空就绪队列与版本号表。
+    /// 清空就绪队列与虚拟时间线。
     pub fn init(&mut self) {
         self.ready_queue
             .clear();
-        self.versions
-            .clear();
+        self.entries.clear();
+        self.min_vruntime = 0;
         self.current_ticks = 0;
     }
-    /// 任务被调度运行后从就绪队列中移除；若已存在多个条目则只使其余条目失效。
-    pub fn detach_task(&mut self, task_id : TaskId) { let _ = self.bump_version(task_id); }
+    /// 从就绪队列精确摘除任务；任务不在本队列时为无操作。
+    pub fn detach_task(&mut self, task_id : TaskId) {
+        if let Some(vruntime) = self.entries
+                                    .remove(&task_id)
+        {
+            self.ready_queue
+                .remove(&(vruntime, task_id));
+        }
+    }
     /// 从就绪队列中选取下一个可运行任务号；若无则返回 `None`。
     pub fn pick_next_runnable_task_id(&mut self) -> Option<TaskId> {
-        let mut consecutive_stale = 0usize;
-        while let Some(entry) = self.ready_queue
-                                    .pop_front()
-        {
-            if !self.entry_is_live(entry) {
-                consecutive_stale = consecutive_stale.saturating_add(1);
-                if consecutive_stale >= self.stale_compact_threshold() {
-                    self.compact_stale_entries();
-                    consecutive_stale = 0;
-                }
-                continue;
-            }
-            return Some(entry.task_id);
-        }
-        None
+        let (vruntime, task_id) = self.ready_queue
+                                      .iter()
+                                      .next()
+                                      .copied()?;
+        let removed = self.ready_queue
+                          .remove(&(vruntime, task_id));
+        assert!(removed,
+                "selected OtherQueue entry must exist");
+        let recorded = self.entries
+                           .remove(&task_id);
+        assert_eq!(recorded, Some(vruntime));
+        self.min_vruntime = self.min_vruntime
+                                .max(vruntime);
+        Some(task_id)
     }
     pub fn runnable_count(&self) -> usize {
         self.ready_queue
-            .iter()
-            .copied()
-            .filter(|entry| self.entry_is_live(*entry))
-            .count()
+            .len()
     }
 }
-
 
 fn bucket_index(priority : i32) -> Option<usize> {
     if (RT_PRIORITY_MIN..=RT_PRIORITY_MAX).contains(&priority) {
@@ -191,9 +200,6 @@ impl FifoQueue {
             .sum()
     }
 }
-
-
-use config::task::MAX_RT_TICKS_PER_TASK;
 
 
 fn priority_from_index(index : usize) -> i32 { (index as i32) + RT_PRIORITY_MIN }
