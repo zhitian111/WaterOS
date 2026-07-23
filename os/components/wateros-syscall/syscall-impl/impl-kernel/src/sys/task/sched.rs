@@ -69,8 +69,6 @@ fn read_user_sched_attr_size(attr_ptr : usize) -> Result<usize, ErrNo> {
     Ok(u32::from_ne_bytes(raw_size) as usize)
 }
 
-/// `sched_setparam(pid, param)`。
-// 本方法代码由AI完成
 pub(crate) fn sys_sched_setparam(args : SyscallArgs) -> UserRet {
     let pid = args.arg(0) as isize;
     let param_ptr = args.arg(1);
@@ -114,7 +112,7 @@ pub(crate) fn sys_sched_setscheduler(args : SyscallArgs) -> UserRet {
         Err(e) => return UserRet::from_error(sched_err_to_errno(e)),
     };
     let param = SchedParam { priority : user_param.sched_priority };
-    match task::set_scheduler(task_id, policy, param) {
+    match task::set_scheduler_policy(task_id, policy, param) {
         Ok(()) => UserRet::from_success(0),
         Err(e) => UserRet::from_error(sched_err_to_errno(e)),
     }
@@ -128,7 +126,7 @@ pub(crate) fn sys_sched_getscheduler(args : SyscallArgs) -> UserRet {
         Ok(id) => id,
         Err(e) => return UserRet::from_error(sched_err_to_errno(e)),
     };
-    match task::get_scheduler(task_id) {
+    match task::get_scheduler_policy(task_id) {
         Ok(policy) => UserRet::from_success(policy as isize as usize),
         Err(e) => UserRet::from_error(sched_err_to_errno(e)),
     }
@@ -237,7 +235,7 @@ pub(crate) fn sys_sched_getaffinity(args : SyscallArgs) -> UserRet {
         Ok(id) => id,
         Err(e) => return UserRet::from_error(sched_err_to_errno(e)),
     };
-    if task::get_scheduler(task_id).is_err() {
+    if task::get_scheduler_policy(task_id).is_err() {
         return UserRet::from_error(ErrNo::ESRCH);
     }
     let mut buf = match try_kbuf(cpusetsize, SCHED_CPUSET_MAX) {
@@ -296,7 +294,7 @@ pub(crate) fn sys_sched_setattr(args : SyscallArgs) -> UserRet {
         Err(e) => return UserRet::from_error(sched_err_to_errno(e)),
     };
     let param = SchedParam { priority : attr.sched_priority as i32 };
-    match task::set_scheduler(task_id, policy, param) {
+    match task::set_scheduler_policy(task_id, policy, param) {
         Ok(()) => UserRet::from_success(0),
         Err(e) => UserRet::from_error(sched_err_to_errno(e)),
     }
@@ -320,7 +318,7 @@ pub(crate) fn sys_sched_getattr(args : SyscallArgs) -> UserRet {
         Ok(id) => id,
         Err(e) => return UserRet::from_error(sched_err_to_errno(e)),
     };
-    let policy = match task::get_scheduler(task_id) {
+    let policy = match task::get_scheduler_policy(task_id) {
         Ok(value) => value,
         Err(e) => return UserRet::from_error(sched_err_to_errno(e)),
     };
@@ -329,8 +327,10 @@ pub(crate) fn sys_sched_getattr(args : SyscallArgs) -> UserRet {
         Err(e) => return UserRet::from_error(sched_err_to_errno(e)),
     };
 
-    let nice = task::process_task_snapshot(task_id).and_then(|desc| task::process_nice(desc.pid))
-                                                   .unwrap_or(0);
+    let nice = match task::get_nice(task_id) {
+        Ok(nice) => nice as i32,
+        Err(e) => return UserRet::from_error(sched_err_to_errno(e)),
+    };
     let attr = UserSchedAttr { size : size_of::<UserSchedAttr>() as u32,
                                sched_policy : policy as u32,
                                sched_nice : nice,

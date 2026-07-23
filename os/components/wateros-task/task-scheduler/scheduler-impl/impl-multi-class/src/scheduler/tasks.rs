@@ -290,4 +290,24 @@ impl MultiClassScheduler {
             .registry
             .get_affinity(task_id)
     }
+
+    /// 仅保存 task-level nice；暂不改变 `OtherQueue` 的 FIFO 选择或触发重调度。
+    pub fn set_nice(&mut self, task_id : TaskId, nice : i8) -> Result<(), SchedError> {
+        let state = self.global
+                        .registry
+                        .state(task_id)
+                        .ok_or(SchedError::NoSuchTask)?;
+        if matches!(state, TaskState::Exited(_)) {
+            return Err(SchedError::NoSuchTask);
+        }
+        self.global
+            .registry
+            .set_nice(task_id, nice)
+    }
+
+    pub fn get_nice(&self, task_id : TaskId) -> Result<i8, SchedError> {
+        self.global
+            .registry
+            .get_nice(task_id)
+    }
 }

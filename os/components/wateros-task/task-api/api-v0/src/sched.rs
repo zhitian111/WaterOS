@@ -36,6 +36,11 @@ pub struct SchedParam {
     pub priority : i32,
 }
 
+/// `SCHED_OTHER` 的最低 nice 值（CPU 份额最高）。
+pub const SCHED_NICE_MIN : i8 = -20;
+/// `SCHED_OTHER` 的最高 nice 值（CPU 份额最低）。
+pub const SCHED_NICE_MAX : i8 = 19;
+
 /// 调度/亲和性操作错误（由聚合层映射为 Linux errno）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SchedError {

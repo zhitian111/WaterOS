@@ -577,4 +577,23 @@ impl TaskRegistry {
             Err(SchedError::NoSuchTask)
         }
     }
+
+    /// 更新 task-level nice 属性；runqueue 位置由 scheduler 层决定。
+    pub fn set_nice(&mut self, task_id : TaskId, nice : i8) -> Result<(), SchedError> {
+        if let Some(task) = self.task_table
+                                .task_mut_opt(task_id)
+        {
+            task.set_nice(nice);
+            Ok(())
+        } else {
+            Err(SchedError::NoSuchTask)
+        }
+    }
+
+    pub fn get_nice(&self, task_id : TaskId) -> Result<i8, SchedError> {
+        self.task_table
+            .task_opt(task_id)
+            .map(|task| task.nice())
+            .ok_or(SchedError::NoSuchTask)
+    }
 }

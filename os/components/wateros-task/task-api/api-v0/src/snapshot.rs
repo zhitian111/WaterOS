@@ -82,6 +82,10 @@ pub struct TaskSnapshot {
     pub sched_policy : SchedPolicy,
     /// `sched_priority`；`SCHED_OTHER` 下恒为 0。
     pub sched_priority : i32,
+    /// `SCHED_OTHER` 的 nice 值，范围为 -20 到 19。
+    ///
+    /// 当前仅保存该属性；普通任务队列的加权公平选择将在后续接入。
+    pub nice : i8,
     /// 最近一次 trap 的语义快照。
     pub trap_frame : Option<TaskTrapSnapshot>,
     /// 调度器维护的运行统计。

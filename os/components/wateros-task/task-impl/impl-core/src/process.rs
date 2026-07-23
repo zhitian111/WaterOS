@@ -48,8 +48,6 @@ pub struct ProcessControlBlock {
     parent_pid : Option<ProcessId>,
     address_space : Option<AddressSpaceRef>,
     rlimits : BTreeMap<usize, ResourceLimit>,
-    /// LTP `setpriority`/`getpriority` 变量；不参与调度。
-    nice : i32,
     /// 进程组 id；fork 继承，由 `setpgid` 更新。
     pgid : ProcessId,
     tasks : Vec<ProcessTask>,
@@ -162,7 +160,6 @@ impl ProcessRegistry {
                                             parent_pid,
                                             address_space,
                                             rlimits : BTreeMap::new(),
-                                            nice : 0,
                                             pgid : pid,
                                             tasks : alloc::vec![ProcessTask {
                 task_id,
@@ -193,7 +190,6 @@ impl ProcessRegistry {
                          .get(&parent_pid)?;
         let parent_rlimits = parent.rlimits
                                    .clone();
-        let parent_nice = parent.nice;
         let parent_pgid = parent.pgid;
         let parent_sid = parent.sid;
         let parent_dumpable = parent.dumpable;
@@ -205,7 +201,6 @@ impl ProcessRegistry {
                                                      address_space);
         if let Some(process) = self.process_mut(child_pid) {
             process.rlimits = parent_rlimits;
-            process.nice = parent_nice;
             process.pgid = parent_pgid;
             process.sid = parent_sid;
             process.dumpable = parent_dumpable;
@@ -270,20 +265,6 @@ impl ProcessRegistry {
         false
     }
 
-    pub fn get_process_nice(&self, pid : ProcessId) -> Option<i32> {
-        self.processes
-            .get(&pid)
-            .map(|process| process.nice)
-    }
-
-    pub fn set_process_nice(&mut self, pid : ProcessId, nice : i32) -> bool {
-        let Some(process) = self.process_mut(pid) else {
-            return false;
-        };
-        process.nice = nice;
-        true
-    }
-
     pub fn get_process_pgid(&self, pid : ProcessId) -> Option<ProcessId> {
         self.processes
             .get(&pid)
@@ -296,28 +277,6 @@ impl ProcessRegistry {
         };
         process.pgid = pgid;
         true
-    }
-
-    pub fn set_nice_for_pgid(&mut self, pgid : ProcessId, nice : i32) -> bool {
-        let mut found = false;
-        for process in self.processes
-                           .values_mut()
-        {
-            if process.pgid == pgid {
-                process.nice = nice;
-                found = true;
-            }
-        }
-        found
-    }
-
-    /// `getpriority(PRIO_PGRP)`：组内最高优先级 = nice 最小值。
-    pub fn min_nice_in_pgid(&self, pgid : ProcessId) -> Option<i32> {
-        self.processes
-            .values()
-            .filter(|process| process.pgid == pgid)
-            .map(|process| process.nice)
-            .min()
     }
 
     pub fn process_exists(&self, pid : ProcessId) -> bool {

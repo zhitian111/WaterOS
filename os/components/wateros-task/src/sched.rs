@@ -2,7 +2,7 @@
 
 use api_v0::{
     CpuMask, ProcessId, SchedError, SchedParam, SchedPolicy, TaskId, ThreadId,
-    SCHED_CPU_MASK_MIN_BYTES, SCHED_CPU_MASK_RET_BYTES,
+    SCHED_CPU_MASK_MIN_BYTES, SCHED_CPU_MASK_RET_BYTES, SCHED_NICE_MAX, SCHED_NICE_MIN,
 };
 
 use crate::scheduler::{self};
@@ -36,7 +36,7 @@ pub fn resolve_sched_pid(pid : isize) -> Result<TaskId, SchedError> {
 }
 
 /// 查询任务的有效调度策略。
-pub fn get_scheduler(task_id : TaskId) -> Result<SchedPolicy, SchedError> {
+pub fn get_scheduler_policy(task_id : TaskId) -> Result<SchedPolicy, SchedError> {
     ensure_task_exists(task_id)?;
     Ok(scheduler::task_snapshot(task_id).expect("task exists")
                                         .sched_policy)
@@ -63,10 +63,10 @@ pub fn validate_cpu_affinity_buf_len(cpusetsize : usize) -> Result<(), SchedErro
 }
 
 /// 设置调度策略。
-pub fn set_scheduler(task_id : TaskId,
-                     policy : SchedPolicy,
-                     param : SchedParam)
-                     -> Result<(), SchedError> {
+pub fn set_scheduler_policy(task_id : TaskId,
+                            policy : SchedPolicy,
+                            param : SchedParam)
+                            -> Result<(), SchedError> {
     ensure_task_exists(task_id)?;
     validate_policy_param(policy, param)?;
     scheduler::apply_sched_policy_change(task_id, policy, param)
@@ -75,7 +75,7 @@ pub fn set_scheduler(task_id : TaskId,
 /// 设置调度参数（保持当前 policy 不变）。
 pub fn set_param(task_id : TaskId, param : SchedParam) -> Result<(), SchedError> {
     ensure_task_exists(task_id)?;
-    let policy = get_scheduler(task_id)?;
+    let policy = get_scheduler_policy(task_id)?;
     validate_policy_param(policy, param)?;
     let full_param = SchedParam { priority : param.priority };
     scheduler::apply_sched_policy_change(task_id, policy, full_param)
@@ -89,6 +89,21 @@ pub fn set_affinity(task_id : TaskId, mask : CpuMask) -> Result<(), SchedError> 
 pub fn get_affinity(task_id : TaskId) -> Result<CpuMask, SchedError> {
     ensure_task_exists(task_id)?;
     scheduler::get_affinity(task_id)
+}
+
+/// 设置线程级 nice。当前只保存属性，尚未接入 `SCHED_OTHER` 的队列选择。
+pub fn set_nice(task_id : TaskId, nice : i8) -> Result<(), SchedError> {
+    ensure_task_exists(task_id)?;
+    if !(SCHED_NICE_MIN..=SCHED_NICE_MAX).contains(&nice) {
+        return Err(SchedError::InvalidArg);
+    }
+    scheduler::set_nice(task_id, nice)
+}
+
+/// 查询线程级 nice。
+pub fn get_nice(task_id : TaskId) -> Result<i8, SchedError> {
+    ensure_task_exists(task_id)?;
+    scheduler::get_nice(task_id)
 }
 
 // 确认 task 仍存在于调度器 registry。

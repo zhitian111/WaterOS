@@ -1,10 +1,12 @@
-//! `setpriority(2)` / `getpriority(2)`：仅维护 per-process nice 变量，不参与调度。
+//! `setpriority(2)` / `getpriority(2)`：维护 task-level nice 属性。
 //! 本模块代码由AI完成
+use alloc::vec::Vec;
+
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use cred::current_credentials;
-use task::ProcessId;
+use task::{ProcessId, TaskId};
 
 const PRIO_PROCESS : i32 = 0;
 const PRIO_PGRP : i32 = 1;
@@ -20,20 +22,15 @@ fn caller_is_privileged() -> bool {
     0
 }
 
-fn resolve_process_target(who : i32) -> Result<ProcessId, ErrNo> {
+fn resolve_task_target(who : i32) -> Result<TaskId, ErrNo> {
     if who < 0 {
         return Err(ErrNo::ESRCH);
     }
-    let pid = if who == 0 {
-        task::current_process_task_snapshot().ok_or(ErrNo::ESRCH)?
-                                             .pid
+    if who == 0 {
+        task::current_task_id().ok_or(ErrNo::ESRCH)
     } else {
-        ProcessId::from_raw(who as usize)
-    };
-    if !task::process_exists(pid) {
-        return Err(ErrNo::ESRCH);
+        task::resolve_sched_pid(who as isize).map_err(|_| ErrNo::ESRCH)
     }
-    Ok(pid)
 }
 
 fn resolve_pgid_target(who : i32) -> Result<ProcessId, ErrNo> {
@@ -63,29 +60,69 @@ fn resolve_user_target(who : i32) -> Result<u32, ErrNo> {
     Ok(who as u32)
 }
 
-fn process_real_uid(pid : ProcessId) -> Option<u32> {
-    let leader = task::leader_task_for_process(pid)?;
-    Some(cred::credentials_for(leader).real_uid
-                                      .0)
+fn task_real_uid(task_id : TaskId) -> u32 {
+    cred::credentials_for(task_id).real_uid
+                                      .0
 }
 
-fn set_nice_for_uid(uid : u32, nice : i32) -> bool {
-    let mut found = false;
+fn all_live_task_ids() -> Vec<TaskId> {
+    let mut task_ids = Vec::new();
     for pid in task::all_process_pids() {
-        if process_real_uid(pid) == Some(uid) {
-            if task::set_process_nice(pid, nice) {
-                found = true;
+        if let Some(ids) = task::task_ids_for_process(pid) {
+            for task_id in ids {
+                if task::task_snapshot(task_id).is_some_and(|snapshot| {
+                    !matches!(snapshot.state, task::TaskState::Exited(_))
+                }) {
+                    task_ids.push(task_id);
+                }
             }
+        }
+    }
+    task_ids
+}
+
+fn task_ids_in_pgid(pgid : ProcessId) -> Vec<TaskId> {
+    let mut task_ids = Vec::new();
+    for pid in task::all_process_pids() {
+        if task::process_pgid(pid) == Some(pgid) {
+            for task_id in task::task_ids_for_process(pid).unwrap_or_default() {
+                if task::task_snapshot(task_id).is_some_and(|snapshot| {
+                    !matches!(snapshot.state, task::TaskState::Exited(_))
+                }) {
+                    task_ids.push(task_id);
+                }
+            }
+        }
+    }
+    task_ids
+}
+
+fn set_nice_for_tasks(task_ids : impl IntoIterator<Item = TaskId>, nice : i8) -> bool {
+    let mut found = false;
+    for task_id in task_ids {
+        if task::set_nice(task_id, nice).is_ok() {
+            found = true;
         }
     }
     found
 }
 
+fn min_nice_for_tasks(task_ids : impl IntoIterator<Item = TaskId>) -> Option<i32> {
+    task_ids.into_iter()
+            .filter_map(|task_id| task::get_nice(task_id).ok())
+            .map(i32::from)
+            .min()
+}
+
+fn set_nice_for_uid(uid : u32, nice : i8) -> bool {
+    set_nice_for_tasks(all_live_task_ids().into_iter()
+                                         .filter(|task_id| task_real_uid(*task_id) == uid),
+                       nice)
+}
+
 fn min_nice_for_uid(uid : u32) -> Option<i32> {
-    task::all_process_pids().into_iter()
-                            .filter(|pid| process_real_uid(*pid) == Some(uid))
-                            .filter_map(task::process_nice)
-                            .min()
+    min_nice_for_tasks(all_live_task_ids().into_iter()
+                                          .filter(|task_id| task_real_uid(*task_id) == uid))
 }
 
 fn check_setpermission(which : i32, who : i32, prio : i32) -> Result<(), ErrNo> {
@@ -94,16 +131,15 @@ fn check_setpermission(which : i32, who : i32, prio : i32) -> Result<(), ErrNo> 
     }
     match which {
         PRIO_PROCESS => {
-            // Linux：非特权用户可以修改任意自己拥有的进程（相同 UID）。
-            let target = resolve_process_target(who)?;
-            let target_uid = process_real_uid(target).ok_or(ErrNo::ESRCH)?;
+            // Linux 的 nice 是线程属性；`who == 0` 指当前线程。
+            let target_uid = task_real_uid(resolve_task_target(who)?);
             let cred = current_credentials();
             if target_uid != cred.real_uid.0 && target_uid != cred.effective_uid.0 {
                 return Err(ErrNo::EPERM);
             }
         }
         PRIO_PGRP => {
-            // 仅验证 PGID 存在；实际 per-process 的 UID 过滤在 sys_setpriority 中完成。
+            // 仅验证 PGID 存在；实际按 task UID 的过滤在 sys_setpriority 中完成。
             resolve_pgid_target(who)?;
         }
         PRIO_USER => {
@@ -139,11 +175,11 @@ pub(crate) fn sys_setpriority(args : SyscallArgs) -> UserRet {
 
     match which {
         PRIO_PROCESS => {
-            let pid = match resolve_process_target(who) {
-                Ok(pid) => pid,
+            let task_id = match resolve_task_target(who) {
+                Ok(task_id) => task_id,
                 Err(errno) => return UserRet::from_error(errno),
             };
-            if !task::set_process_nice(pid, prio) {
+            if task::set_nice(task_id, prio as i8).is_err() {
                 return UserRet::from_error(ErrNo::ESRCH);
             }
         }
@@ -153,23 +189,17 @@ pub(crate) fn sys_setpriority(args : SyscallArgs) -> UserRet {
                 Err(errno) => return UserRet::from_error(errno),
             };
             if caller_is_privileged() {
-                if !task::set_nice_for_pgid(pgid, prio) {
+                if !set_nice_for_tasks(task_ids_in_pgid(pgid), prio as i8) {
                     return UserRet::from_error(ErrNo::ESRCH);
                 }
             } else {
                 let cred = current_credentials();
                 let mut found = false;
-                for pid in task::all_process_pids() {
-                    if task::process_pgid(pid) != Some(pgid) {
-                        continue;
-                    }
-                    let Some(owner_uid) = process_real_uid(pid) else {
-                        continue;
-                    };
-                    if owner_uid != cred.real_uid.0 && owner_uid != cred.effective_uid.0 {
-                        continue;
-                    }
-                    if task::set_process_nice(pid, prio) {
+                for task_id in task_ids_in_pgid(pgid) {
+                    let owner_uid = task_real_uid(task_id);
+                    if (owner_uid == cred.real_uid.0 || owner_uid == cred.effective_uid.0) &&
+                       task::set_nice(task_id, prio as i8).is_ok()
+                    {
                         found = true;
                     }
                 }
@@ -183,7 +213,7 @@ pub(crate) fn sys_setpriority(args : SyscallArgs) -> UserRet {
                 Ok(uid) => uid,
                 Err(errno) => return UserRet::from_error(errno),
             };
-            if !set_nice_for_uid(uid, prio) {
+            if !set_nice_for_uid(uid, prio as i8) {
                 return UserRet::from_error(ErrNo::ESRCH);
             }
         }
@@ -204,13 +234,13 @@ pub(crate) fn sys_getpriority(args : SyscallArgs) -> UserRet {
     }
     let nice = match which {
         PRIO_PROCESS => {
-            let pid = match resolve_process_target(who) {
-                Ok(pid) => pid,
+            let task_id = match resolve_task_target(who) {
+                Ok(task_id) => task_id,
                 Err(errno) => return UserRet::from_error(errno),
             };
-            match task::process_nice(pid) {
-                Some(nice) => nice,
-                None => return UserRet::from_error(ErrNo::ESRCH),
+            match task::get_nice(task_id) {
+                Ok(nice) => i32::from(nice),
+                Err(_) => return UserRet::from_error(ErrNo::ESRCH),
             }
         }
         PRIO_PGRP => {
@@ -218,7 +248,7 @@ pub(crate) fn sys_getpriority(args : SyscallArgs) -> UserRet {
                 Ok(pgid) => pgid,
                 Err(errno) => return UserRet::from_error(errno),
             };
-            match task::min_nice_in_pgid(pgid) {
+            match min_nice_for_tasks(task_ids_in_pgid(pgid)) {
                 Some(nice) => nice,
                 None => return UserRet::from_error(ErrNo::ESRCH),
             }

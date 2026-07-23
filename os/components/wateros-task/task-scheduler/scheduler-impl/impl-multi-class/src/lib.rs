@@ -1011,3 +1011,16 @@ pub fn get_affinity(task_id : TaskId) -> Result<CpuMask, SchedError> {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.get_affinity(task_id))
 }
+
+/// 设置线程级 nice 属性。
+///
+/// 当前阶段只更新 TCB；`OtherQueue` 尚未按 nice 加权，因此不会改变运行顺序。
+pub fn set_nice(task_id : TaskId, nice : i8) -> Result<(), SchedError> {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.set_nice(task_id, nice))
+}
+
+pub fn get_nice(task_id : TaskId) -> Result<i8, SchedError> {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.get_nice(task_id))
+}

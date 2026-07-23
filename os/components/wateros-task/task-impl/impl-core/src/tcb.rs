@@ -94,6 +94,11 @@ pub struct TaskControlBlock {
     state : TaskState,
     sched_policy : SchedPolicy,
     sched_priority : i32,
+    /// 普通调度类（`SCHED_OTHER`）的线程级 nice 属性。
+    ///
+    /// 调度器尚未据此改变队列选择；该字段先作为唯一的 task-level 真相，
+    /// 避免继续把线程调度属性存成 process-wide 状态。
+    nice : i8,
     stats : TaskRuntimeStats,
     wait_result : Option<TaskWaitResult>,
     task_cx : TaskContext,
@@ -128,6 +133,7 @@ impl TaskControlBlock {
                state : TaskState::Ready,
                sched_policy : SchedPolicy::Other,
                sched_priority : 0,
+               nice : 0,
                stats : TaskRuntimeStats::default(),
                wait_result : None,
                task_cx,
@@ -152,6 +158,7 @@ impl TaskControlBlock {
                state : TaskState::Ready,
                sched_policy : SchedPolicy::Other,
                sched_priority : 0,
+               nice : 0,
                stats : TaskRuntimeStats::default(),
                wait_result : None,
                task_cx,
@@ -174,6 +181,7 @@ impl TaskControlBlock {
                state : TaskState::Ready,
                sched_policy : SchedPolicy::Other,
                sched_priority : 0,
+               nice : 0,
                stats : TaskRuntimeStats::default(),
                wait_result : None,
                task_cx,
@@ -228,6 +236,7 @@ impl TaskControlBlock {
                     state : TaskState::Ready,
                     sched_policy : self.sched_policy,
                     sched_priority : self.sched_priority,
+                    nice : self.nice,
                     stats : TaskRuntimeStats::default(),
                     wait_result : None,
                     task_cx,
@@ -269,6 +278,7 @@ impl TaskControlBlock {
                     state : TaskState::Ready,
                     sched_policy : self.sched_policy,
                     sched_priority : self.sched_priority,
+                    nice : self.nice,
                     stats : TaskRuntimeStats::default(),
                     wait_result : None,
                     task_cx,
@@ -344,10 +354,16 @@ impl TaskControlBlock {
     pub fn sched_priority(&self) -> i32 { self.sched_priority }
 
     #[inline]
+    pub fn nice(&self) -> i8 { self.nice }
+
+    #[inline]
     pub fn set_sched(&mut self, policy : SchedPolicy, priority : i32) {
         self.sched_policy = policy;
         self.sched_priority = priority;
     }
+
+    #[inline]
+    pub fn set_nice(&mut self, nice : i8) { self.nice = nice; }
     pub fn set_affinity(&mut self, mask : CpuMask) { self.affinity = mask; }
 
     #[inline]
@@ -383,6 +399,7 @@ impl TaskControlBlock {
                        state : self.state,
                        sched_policy : self.sched_policy,
                        sched_priority : self.sched_priority,
+                       nice : self.nice,
                        trap_frame,
                        stats : self.stats }
     }

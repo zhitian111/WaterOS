@@ -76,14 +76,6 @@ pub fn set_process_resource_limit(pid : ProcessId,
     active_impl::set_process_rlimit(pid, resource, limit)
 }
 
-/// 查询进程 nice 值。
-pub fn process_nice(pid : ProcessId) -> Option<i32> { active_impl::get_process_nice(pid) }
-
-/// 设置进程 nice 值。调整进程 CPU 调度优先级
-pub fn set_process_nice(pid : ProcessId, nice : i32) -> bool {
-    active_impl::set_process_nice(pid, nice)
-}
-
 /// 查询进程 umask。
 pub fn process_umask(pid : ProcessId) -> Option<u32> { active_impl::get_process_umask(pid) }
 
@@ -117,14 +109,6 @@ pub fn process_pgid(pid : ProcessId) -> Option<ProcessId> { active_impl::get_pro
 pub fn set_process_pgid(pid : ProcessId, pgid : ProcessId) -> bool {
     active_impl::set_process_pgid(pid, pgid)
 }
-
-/// 将 nice 写入同一 pgid 下全部进程。
-pub fn set_nice_for_pgid(pgid : ProcessId, nice : i32) -> bool {
-    active_impl::set_nice_for_pgid(pgid, nice)
-}
-
-/// 进程组内最小 nice。
-pub fn min_nice_in_pgid(pgid : ProcessId) -> Option<i32> { active_impl::min_nice_in_pgid(pgid) }
 
 /// 进程是否仍占 registry 槽位。
 pub fn process_exists(pid : ProcessId) -> bool { active_impl::process_exists(pid) }

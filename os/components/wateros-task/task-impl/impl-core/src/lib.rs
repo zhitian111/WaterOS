@@ -274,16 +274,6 @@ pub fn set_process_rlimit(pid : ProcessId,
     with_process_registry(|registry| registry.set_process_rlimit(pid, resource, limit))
 }
 
-/// 读取进程 nice 值。
-pub fn get_process_nice(pid : ProcessId) -> Option<i32> {
-    with_process_registry(|registry| registry.get_process_nice(pid))
-}
-
-/// 设置进程 nice 值。
-pub fn set_process_nice(pid : ProcessId, nice : i32) -> bool {
-    with_process_registry(|registry| registry.set_process_nice(pid, nice))
-}
-
 /// 读取进程 umask。
 pub fn get_process_umask(pid : ProcessId) -> Option<u32> {
     with_process_registry(|registry| registry.get_process_umask(pid))
@@ -322,16 +312,6 @@ pub fn get_process_pgid(pid : ProcessId) -> Option<ProcessId> {
 /// 设置进程组 id。
 pub fn set_process_pgid(pid : ProcessId, pgid : ProcessId) -> bool {
     with_process_registry(|registry| registry.set_process_pgid(pid, pgid))
-}
-
-/// 将 nice 写入同一 pgid 下全部进程。
-pub fn set_nice_for_pgid(pgid : ProcessId, nice : i32) -> bool {
-    with_process_registry(|registry| registry.set_nice_for_pgid(pgid, nice))
-}
-
-/// 进程组内最小 nice（最高优先级）。
-pub fn min_nice_in_pgid(pgid : ProcessId) -> Option<i32> {
-    with_process_registry(|registry| registry.min_nice_in_pgid(pgid))
 }
 
 /// 进程 pid 是否仍占 registry 槽位。

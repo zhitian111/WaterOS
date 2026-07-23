@@ -23,6 +23,7 @@ pub use process::{
 };
 pub use sched::{
     SchedError, SchedParam, SchedPolicy, SCHED_CPU_MASK_MIN_BYTES, SCHED_CPU_MASK_RET_BYTES,
+    SCHED_NICE_MAX, SCHED_NICE_MIN,
 };
 pub use snapshot::{TaskSnapshot, TaskTrapSnapshot};
 pub use task::{
