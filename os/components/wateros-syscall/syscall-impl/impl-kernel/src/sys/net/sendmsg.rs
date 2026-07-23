@@ -50,7 +50,7 @@ const SOCKET_RECVMSG_WAIT_TICKS: usize = 4096;
 pub(crate) fn sys_sendmsg(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let msg_ptr = args.arg(1);
-    let _flags = args.arg(2);
+    let flags = args.arg(2);
 
     if msg_ptr == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
@@ -114,25 +114,29 @@ pub(crate) fn sys_sendmsg(args: SyscallArgs) -> UserRet {
     };
     let handle = socket.handle();
 
-    // 有目标地址 → sendto；否则 → send
-    let sent = if msg.msg_name != 0 && msg.msg_namelen >= 16 {
+    // 有目标地址 → sendto；否则使用 connect() 保存的默认 peer。
+    let destination = if msg.msg_name != 0 && msg.msg_namelen >= 16 {
         let addr: SockAddrIn = match copy_from_user_struct(msg.msg_name) {
             Ok(a) => a,
             Err(_) => return UserRet::from_error(ErrNo::EFAULT),
         };
         let port = u16::from_be(addr.sin_port);
-        stack::socket_sendto(handle, &kbuf, addr.sin_addr, port)
+        Some((addr.sin_addr, port))
     } else {
-        stack::socket_send(handle, &kbuf)
+        None
     };
 
+    let sent = match stack::socket_kind(handle) {
+        Ok(stack::SocketKind::Udp) => {
+            super::sendto::send_udp_blocking(fd, handle, &kbuf, destination, flags)
+        }
+        Ok(stack::SocketKind::Tcp) => stack::socket_send(handle, &kbuf)
+            .map_err(super::sendto::socket_send_error_to_errno),
+        Err(_) => Err(ErrNo::ENOTSOCK),
+    };
     match sent {
         Ok(n) => UserRet::from_success(n),
-        Err("udp payload too large") => UserRet::from_error(ErrNo::EMSGSIZE),
-        Err(e) => {
-            log::warn!("[syscall] sendmsg failed: {}", e);
-            UserRet::from_error(ErrNo::EIO)
-        }
+        Err(err) => UserRet::from_error(err),
     }
 }
 

@@ -101,6 +101,19 @@ pub mod stack {
         Udp,
     }
 
+    /// socket 发送失败原因；syscall 层据此返回稳定的 Linux errno。
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum SocketSendError {
+        MessageTooLarge,
+        WouldBlock,
+        NoBufferSpace,
+        NotConnected,
+        InvalidDestination,
+        InvalidSocket,
+        StackUnavailable,
+        Io,
+    }
+
     /// 一次协议栈加锁内取得的 socket 就绪状态，避免多核下分次查询观察到不同瞬间。
     #[derive(Clone, Copy, Debug)]
     pub struct SocketPollSnapshot {
@@ -208,7 +221,10 @@ pub mod stack {
     static NETWORK_STACK: Mutex<Option<NetworkStack>> = Mutex::new(None);
     const TCP_BUFFER_SIZE: usize = 256 * 1024;
     const UDP_PACKET_DATA_SIZE: usize = 64 * 1024;
-    const UDP_PACKET_METADATA_COUNT: usize = 4;
+    const UDP_PACKET_METADATA_COUNT: usize = 64;
+    /// 临时迁移开关：true 时本机 UDP 也进入 smoltcp，由 SmoltcpAdapter
+    /// 回灌本地帧；false 时回退到旧的 udp_loopback 数据报队列。
+    const UDP_USE_SMOLTCP_LOOPBACK: bool = false;
     /// 防止零长度/极小数据报只消耗队列元数据而绕过字节限额；正常 MTU
     /// 数据报仍主要受 64 KiB 总字节数约束。
     const UDP_LOOPBACK_QUEUE_PACKET_LIMIT: usize = 256;
@@ -775,14 +791,19 @@ pub mod stack {
                     .udp_loopback
                     .get(&handle)
                     .is_some_and(|queue| !queue.is_empty());
-                let socket_ready = stack.sockets.get_mut::<udp::Socket>(handle).can_recv();
+                let socket = stack.sockets.get_mut::<udp::Socket>(handle);
+                let socket_ready = socket.can_recv();
+                let may_send = socket.can_send();
+                let send_capacity = socket
+                    .payload_send_capacity()
+                    .saturating_sub(socket.send_queue());
                 Ok(SocketPollSnapshot {
                     kind,
                     state,
                     can_recv: loopback_ready || socket_ready,
                     may_recv: true,
-                    may_send: true,
-                    send_capacity: usize::MAX,
+                    may_send,
+                    send_capacity,
                     is_connected: matches!(state, SocketState::Connected),
                     has_pending_accept: false,
                 })
@@ -843,14 +864,31 @@ pub mod stack {
         with_tcp_socket(handle, |socket| tcp_is_connected(socket)).ok_or("stack not initialized")
     }
 
-    /// TCP socket 是否可以发送。
+    /// socket 当前是否可以把数据写入发送缓冲。
     pub fn socket_may_send(handle: SocketHandle) -> Result<bool, &'static str> {
-        with_tcp_socket(handle, |s| s.may_send()).ok_or("stack not initialized")
+        let mut guard = NETWORK_STACK.lock();
+        let stack = guard.as_mut().ok_or("stack not initialized")?;
+        let kind = stack.metas.get(&handle).ok_or("invalid socket handle")?.kind;
+        Ok(match kind {
+            SocketKind::Tcp => stack.sockets.get_mut::<tcp::Socket>(handle).may_send(),
+            SocketKind::Udp => stack.sockets.get_mut::<udp::Socket>(handle).can_send(),
+        })
     }
 
-    /// TCP socket 当前发送缓冲还能容纳的字节数。
+    /// socket 当前发送缓冲还能容纳的字节数。
     pub fn socket_send_capacity(handle: SocketHandle) -> Result<usize, &'static str> {
-        with_tcp_socket(handle, |s| s.send_capacity()).ok_or("stack not initialized")
+        let mut guard = NETWORK_STACK.lock();
+        let stack = guard.as_mut().ok_or("stack not initialized")?;
+        let kind = stack.metas.get(&handle).ok_or("invalid socket handle")?.kind;
+        Ok(match kind {
+            SocketKind::Tcp => stack.sockets.get_mut::<tcp::Socket>(handle).send_capacity(),
+            SocketKind::Udp => {
+                let socket = stack.sockets.get_mut::<udp::Socket>(handle);
+                socket
+                    .payload_send_capacity()
+                    .saturating_sub(socket.send_queue())
+            }
+        })
     }
 
     /// TCP socket 是否可以接收。
@@ -864,21 +902,21 @@ pub mod stack {
     }
 
     /// 从 socket 发送数据（TCP 和已 connect 的 UDP）。
-    pub fn socket_send(handle: SocketHandle, data: &[u8]) -> Result<usize, &'static str> {
+    pub fn socket_send(handle: SocketHandle, data: &[u8]) -> Result<usize, SocketSendError> {
         let mut guard = NETWORK_STACK.lock();
-        let stack = guard.as_mut().ok_or("stack not initialized")?;
-        let meta = stack.metas.get(&handle).ok_or("invalid socket handle")?;
+        let stack = guard.as_mut().ok_or(SocketSendError::StackUnavailable)?;
+        let meta = stack.metas.get(&handle).ok_or(SocketSendError::InvalidSocket)?;
         match meta.kind {
             SocketKind::Tcp => stack
                 .sockets
                 .get_mut::<tcp::Socket>(handle)
                 .send_slice(data)
-                .map_err(|_| "send failed"),
+                .map_err(|_| SocketSendError::NotConnected),
             SocketKind::Udp => {
                 let ip = meta.peer_ip;
                 let port = meta.peer_port;
                 if ip == [0; 4] && port == 0 {
-                    return Err("udp not connected");
+                    return Err(SocketSendError::NotConnected);
                 }
                 drop(guard);
                 socket_sendto(handle, data, ip, port)
@@ -905,27 +943,36 @@ pub mod stack {
     }
 
     /// UDP sendto。
-    pub fn socket_sendto(handle: SocketHandle, data: &[u8], ip: [u8; 4], port: u16) -> Result<usize, &'static str> {
+    pub fn socket_sendto(
+        handle: SocketHandle,
+        data: &[u8],
+        ip: [u8; 4],
+        port: u16,
+    ) -> Result<usize, SocketSendError> {
         use smoltcp::wire::IpAddress;
         if data.len() > UDP_MAX_PAYLOAD_SIZE {
-            return Err("udp payload too large");
+            return Err(SocketSendError::MessageTooLarge);
         }
-        {
-            let mut guard = NETWORK_STACK.lock();
-            let stack = guard.as_mut().ok_or("stack not initialized")?;
-            let source_port = ensure_udp_bound(stack, handle)?;
-            if is_local_destination(ip, stack.local_ip) {
-                deliver_loopback_udp(stack, source_port, ip, port, data);
-                return Ok(data.len());
-            }
+        let mut guard = NETWORK_STACK.lock();
+        let stack = guard.as_mut().ok_or(SocketSendError::StackUnavailable)?;
+        let source_port = ensure_udp_bound(stack, handle).map_err(|err| match err {
+            "invalid socket handle" | "not a udp socket" => SocketSendError::InvalidSocket,
+            "udp socket not bound" => SocketSendError::NotConnected,
+            _ => SocketSendError::Io,
+        })?;
+        if !UDP_USE_SMOLTCP_LOOPBACK && is_local_destination(ip, stack.local_ip) {
+            deliver_loopback_udp(stack, source_port, ip, port, data);
+            return Ok(data.len());
         }
-        let sent = with_udp_socket(handle, |s| {
-            s.send_slice(data, (IpAddress::v4(ip[0], ip[1], ip[2], ip[3]), port))
-                .map(|()| data.len())
-        })
-        .ok_or("stack not initialized")
-        .and_then(|r| r.map_err(|_| "udp sendto failed"));
-        sent
+        stack
+            .sockets
+            .get_mut::<udp::Socket>(handle)
+            .send_slice(data, (IpAddress::v4(ip[0], ip[1], ip[2], ip[3]), port))
+            .map(|()| data.len())
+            .map_err(|err| match err {
+                udp::SendError::BufferFull => SocketSendError::WouldBlock,
+                udp::SendError::Unaddressable => SocketSendError::InvalidDestination,
+            })
     }
 
     /// UDP recvfrom。返回 (字节数, 来源IP, 来源端口)。
@@ -1083,6 +1130,7 @@ pub mod stack {
         const SOL_IP: usize = 0;
         const IPPROTO_IP: usize = 0;
         const SO_REUSEADDR: usize = 2;
+        const SO_DONTROUTE: usize = 5;
         const SO_REUSEPORT: usize = 15;
         const SO_SNDBUF: usize = 7;
         const SO_RCVBUF: usize = 8;
@@ -1118,6 +1166,12 @@ pub mod stack {
         }
 
         if level == SOL_SOCKET && matches!(optname, SO_REUSEADDR | SO_REUSEPORT) {
+            return Ok(());
+        }
+        // 对回环目标没有网关可绕行，SO_DONTROUTE 的开启与关闭不会改变
+        // 当前数据路径；仍解析布尔参数，避免把畸形 optval 当作成功。
+        if level == SOL_SOCKET && optname == SO_DONTROUTE {
+            let _enabled = sockopt_bool(optval)?;
             return Ok(());
         }
         // netperf/iperf 会 setsockopt(SO_SNDBUF/SO_RCVBUF)；记录请求值供 getsockopt 回报。

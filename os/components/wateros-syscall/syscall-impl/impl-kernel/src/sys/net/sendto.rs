@@ -7,10 +7,12 @@ use abi::user_ret::UserRet;
 use driver::network::stack;
 
 use crate::fallible_buf::{try_kbuf, SYSCALL_IO_MAX};
+use crate::socket_block::socket_blocking_tick;
 use crate::socket_fd;
 use crate::user_copy::{copy_from_user, copy_from_user_struct};
 
 const TCP_BULK_SEND_YIELD_THRESHOLD: usize = 64 * 1024;
+const MSG_DONTWAIT: usize = 0x40;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -27,7 +29,7 @@ pub(crate) fn sys_sendto(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let buf_ptr = args.arg(1);
     let len = args.arg(2);
-    let _flags = args.arg(3);
+    let flags = args.arg(3);
     let addr_ptr = args.arg(4);
     let addrlen = args.arg(5);
 
@@ -70,7 +72,7 @@ pub(crate) fn sys_sendto(args: SyscallArgs) -> UserRet {
         }
     } else {
         // 没有目标地址 → 作为 TCP send（或已 connect 的 UDP）
-        return match send_connected_socket(fd, handle, buf_ptr, len) {
+        return match send_connected_socket(fd, handle, buf_ptr, len, flags) {
             Ok(n) => UserRet::from_success(n),
             Err(err) => {
                 log::warn!("[syscall] sendto connected failed: {:?}", err);
@@ -88,13 +90,9 @@ pub(crate) fn sys_sendto(args: SyscallArgs) -> UserRet {
         _ => return UserRet::from_error(ErrNo::EFAULT),
     }
 
-    match stack::socket_sendto(handle, &kbuf, ip, port) {
+    match send_udp_blocking(fd, handle, &kbuf, Some((ip, port)), flags) {
         Ok(n) => UserRet::from_success(n),
-        Err("udp payload too large") => UserRet::from_error(ErrNo::EMSGSIZE),
-        Err(e) => {
-            log::warn!("[syscall] sendto failed: {}", e);
-            UserRet::from_error(ErrNo::EIO)
-        }
+        Err(err) => UserRet::from_error(err),
     }
 }
 
@@ -103,22 +101,17 @@ fn send_connected_socket(
     handle: smoltcp::iface::SocketHandle,
     buf_ptr: usize,
     len: usize,
+    flags: usize,
 ) -> Result<usize, ErrNo> {
     match stack::socket_kind(handle).map_err(|_| ErrNo::ENOTSOCK)? {
-        stack::SocketKind::Tcp => send_tcp_blocking(fd, handle, buf_ptr, len),
+        stack::SocketKind::Tcp => send_tcp_blocking(fd, handle, buf_ptr, len, flags),
         stack::SocketKind::Udp => {
             let mut kbuf = try_kbuf(len, SYSCALL_IO_MAX)?;
             match copy_from_user(&mut kbuf, buf_ptr) {
                 Ok(n) if n == len => {}
                 _ => return Err(ErrNo::EFAULT),
             }
-            stack::socket_send(handle, &kbuf).map_err(|err| {
-                if err == "udp payload too large" {
-                    ErrNo::EMSGSIZE
-                } else {
-                    ErrNo::EIO
-                }
-            })
+            send_udp_blocking(fd, handle, &kbuf, None, flags)
         }
     }
 }
@@ -128,8 +121,9 @@ fn send_tcp_blocking(
     handle: smoltcp::iface::SocketHandle,
     buf_ptr: usize,
     len: usize,
+    flags: usize,
 ) -> Result<usize, ErrNo> {
-    let nonblocking = socket_fd::is_nonblocking(fd);
+    let nonblocking = socket_fd::is_nonblocking(fd) || (flags & MSG_DONTWAIT) != 0;
     let task_id = task::current_task_id().unwrap_or(0);
     loop {
         drive_network_stack();
@@ -166,6 +160,47 @@ fn send_tcp_blocking(
             return Err(ErrNo::EPIPE);
         }
         crate::socket_block::socket_blocking_tick(nonblocking, task_id)?;
+    }
+}
+
+pub(super) fn send_udp_blocking(
+    fd: usize,
+    handle: smoltcp::iface::SocketHandle,
+    data: &[u8],
+    destination: Option<([u8; 4], u16)>,
+    flags: usize,
+) -> Result<usize, ErrNo> {
+    let nonblocking = socket_fd::is_nonblocking(fd) || (flags & MSG_DONTWAIT) != 0;
+    let task_id = task::current_task_id().unwrap_or(0);
+    loop {
+        drive_network_stack();
+        let result = match destination {
+            Some((ip, port)) => stack::socket_sendto(handle, data, ip, port),
+            None => stack::socket_send(handle, data),
+        };
+        match result {
+            Ok(n) => {
+                // 尽快把刚入队的数据报交给设备或 smoltcp 本机回灌队列。
+                drive_network_stack();
+                return Ok(n);
+            }
+            Err(stack::SocketSendError::WouldBlock) => {
+                socket_blocking_tick(nonblocking, task_id)?;
+            }
+            Err(err) => return Err(socket_send_error_to_errno(err)),
+        }
+    }
+}
+
+pub(crate) fn socket_send_error_to_errno(err: stack::SocketSendError) -> ErrNo {
+    match err {
+        stack::SocketSendError::MessageTooLarge => ErrNo::EMSGSIZE,
+        stack::SocketSendError::WouldBlock => ErrNo::EAGAIN,
+        stack::SocketSendError::NoBufferSpace => ErrNo::ENOBUFS,
+        stack::SocketSendError::NotConnected => ErrNo::ENOTCONN,
+        stack::SocketSendError::InvalidDestination => ErrNo::EDESTADDRREQ,
+        stack::SocketSendError::InvalidSocket => ErrNo::ENOTSOCK,
+        stack::SocketSendError::StackUnavailable | stack::SocketSendError::Io => ErrNo::EIO,
     }
 }
 

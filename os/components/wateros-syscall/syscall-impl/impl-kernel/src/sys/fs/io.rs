@@ -462,7 +462,12 @@ fn write_udp_socket_blocking(fd : usize, buf : &[u8]) -> Result<usize, ErrNo> {
                 }
                 return Ok(n);
             }
-            Err(_) => socket_blocking_tick(nonblocking, task_id)?,
+            Err(stack::SocketSendError::WouldBlock) => {
+                socket_blocking_tick(nonblocking, task_id)?;
+            }
+            Err(err) => {
+                return Err(crate::sys::net::sendto::socket_send_error_to_errno(err));
+            }
         }
     }
 }

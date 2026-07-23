@@ -110,7 +110,7 @@ impl VfsIoHandle for TcpStreamHandle {
     }
 
     fn write(&mut self, buf: &[u8]) -> VfsResult<usize> {
-        stack::socket_send(self.socket.handle(), buf).map_err(map_stack_err)
+        stack::socket_send(self.socket.handle(), buf).map_err(map_send_stack_err)
     }
 
     fn poll_revents(&mut self, events: i16) -> VfsResult<i16> {
@@ -185,7 +185,7 @@ impl VfsIoHandle for UdpSocketHandle {
     }
 
     fn write(&mut self, buf: &[u8]) -> VfsResult<usize> {
-        stack::socket_send(self.socket.handle(), buf).map_err(map_stack_err)
+        stack::socket_send(self.socket.handle(), buf).map_err(map_send_stack_err)
     }
 
     fn poll_revents(&mut self, events: i16) -> VfsResult<i16> {
@@ -195,7 +195,10 @@ impl VfsIoHandle for UdpSocketHandle {
         if events & POLLIN != 0 && snapshot.can_recv {
             revents |= POLLIN;
         }
-        if events & POLLOUT != 0 {
+        if events & POLLOUT != 0
+            && snapshot.may_send
+            && snapshot.send_capacity > 0
+        {
             revents |= POLLOUT;
         }
         Ok(revents)
@@ -222,5 +225,19 @@ fn map_stack_err(err: &'static str) -> VfsError {
         "no connected tcp socket" | "invalid socket handle" | "not a tcp socket" => VfsError::BadFd,
         "recv failed" | "send failed" | "udp recvfrom failed" => VfsError::Io,
         _ => VfsError::Unsupported,
+    }
+}
+
+fn map_send_stack_err(err: stack::SocketSendError) -> VfsError {
+    match err {
+        stack::SocketSendError::WouldBlock => VfsError::WouldBlock,
+        stack::SocketSendError::InvalidSocket | stack::SocketSendError::NotConnected => {
+            VfsError::BadFd
+        }
+        stack::SocketSendError::MessageTooLarge
+        | stack::SocketSendError::NoBufferSpace
+        | stack::SocketSendError::InvalidDestination
+        | stack::SocketSendError::StackUnavailable
+        | stack::SocketSendError::Io => VfsError::Io,
     }
 }

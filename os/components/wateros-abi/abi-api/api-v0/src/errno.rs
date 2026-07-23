@@ -120,6 +120,10 @@ impl ErrNo {
     pub const EALREADY: Self = Self(114);
     /// 不是 socket 描述符。
     pub const ENOTSOCK: Self = Self(88);
+    /// 目标地址缺失或无效。
+    pub const EDESTADDRREQ: Self = Self(89);
+    /// 内核网络缓冲区不足。
+    pub const ENOBUFS: Self = Self(105);
 }
 
 /// 内核侧常用的 `Result` 别名：成功载荷为 `T`，失败为 [`ErrNo`]。
