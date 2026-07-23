@@ -7,6 +7,7 @@ use api_v0::{
     SchedPolicyChangeAction,
 };
 use arch::task::ActiveArchTaskContext as TaskContext;
+use base::cpu::CpuMask;
 use config::task::MAX_CPUS;
 use task_api::{
     AddressSpaceHandle, CpuId, ExitedTask, KernelTaskEntry, SchedError, SchedParam, SchedPolicy,
@@ -18,9 +19,19 @@ use crate::{SwitchPair, TaskTrapFrame};
 
 use api_v0::ScheduleReason;
 pub(super) struct MultiClassScheduler {
-    global : GlobalScheduler,
-    cpu_states : [CPUScheduler; MAX_CPUS],
+    pub global : GlobalScheduler,
+    pub cpu_states : [CPUScheduler; MAX_CPUS],
+    /// 环形选核的起点。负载相同时，从这里开始的第一个 online CPU 获胜。
+    pub next_placement_cpu : usize,
+    /// 入队时在 scheduler 锁内累计，锁外再实际发送定向 IPI。
+    pending_reschedule_cpus : CpuMask,
 }
+
+include!("scheduler/cpu.rs");
+include!("scheduler/lifecycle.rs");
+include!("scheduler/policy.rs");
+include!("scheduler/tasks.rs");
+include!("scheduler/wait.rs");
 
 impl MultiClassScheduler {
     // ================================================================
@@ -28,11 +39,15 @@ impl MultiClassScheduler {
     // ================================================================
     pub(super) fn new() -> Self {
         Self { global : GlobalScheduler::new(),
-               cpu_states : core::array::from_fn(|i| CPUScheduler::new(CpuId::from_raw(i))) }
+               cpu_states : core::array::from_fn(|i| CPUScheduler::new(CpuId::from_raw(i))),
+               next_placement_cpu : 0,
+               pending_reschedule_cpus : CpuMask::EMPTY }
     }
 
     pub(super) fn init(&mut self) {
         self.global.init();
+        self.next_placement_cpu = 0;
+        self.pending_reschedule_cpus = CpuMask::EMPTY;
         // 为每个 configured CPU 创建 idle 任务
         for cpu_id in 0..self.cpu_states
                              .len()
@@ -42,6 +57,7 @@ impl MultiClassScheduler {
                                    .init();
             self.cpu_states[cpu_id].fifo_queue = FifoQueue::new();
             self.cpu_states[cpu_id].rr_queue = RrQueue::new();
+            self.cpu_states[cpu_id].need_resched = false;
             let idle_id = self.global
                               .registry
                               .spawn_idle_task();
@@ -55,10 +71,48 @@ impl MultiClassScheduler {
 
     /// 标记任务为 Running 并更新当前 CPU 的 current_task_id。
     fn set_current_task(&mut self, task_id : TaskId, cpu_id : CpuId) {
+        let previous_task_id = self.cpu_states[cpu_id.raw()].current_task_id;
+        if !self.global
+                .registry
+                .is_idle(task_id)
+        {
+            debug_assert!(self.cpu_states
+                              .iter()
+                              .enumerate()
+                              .all(|(index, cpu)| {
+                                  index == cpu_id.raw() || cpu.current_task_id != Some(task_id)
+                              }),
+                          "task is current on another CPU");
+            debug_assert_eq!(self.global
+                                 .registry
+                                 .ready_cpu_id(task_id),
+                             Some(cpu_id),
+                             "selected task is not owned by this CPU runqueue");
+        }
         self.cpu_states[cpu_id.raw()].current_task_id = Some(task_id);
+        if previous_task_id != Some(task_id) {
+            self.cpu_states[cpu_id.raw()].context_switches = self.cpu_states[cpu_id.raw()]
+                                                                   .context_switches
+                                                                   .saturating_add(1);
+        }
         self.global
             .registry
             .mark_running(task_id, cpu_id);
+        if !self.global
+                .registry
+                .is_idle(task_id)
+        {
+            debug_assert_eq!(self.global
+                                 .registry
+                                 .running_cpu_id(task_id),
+                             Some(cpu_id));
+            debug_assert_eq!(self.cpu_states
+                                 .iter()
+                                 .filter(|cpu| cpu.current_task_id == Some(task_id))
+                                 .count(),
+                             1,
+                             "task is current on more than one CPU");
+        }
     }
 
     /// 首次任务切换（冷启动入口）。
@@ -78,9 +132,25 @@ impl MultiClassScheduler {
                            -> Option<SwitchPair> {
         // ===== Phase 1: 根据 reason 做前置处理 =====
         match reason {
+            ScheduleReason::Reschedule => {
+                let Some(current_id) = self.cpu_states[cpu_id.raw()].current_task_id else {
+                    return None;
+                };
+                let current = self.global
+                                  .registry
+                                  .task_snapshot(current_id);
+                if !self.ready_task_should_preempt(current_id, current, cpu_id) {
+                    return None;
+                }
+                self.cpu_states[cpu_id.raw()].other_queue
+                                             .reset_ticks();
+            }
             // --- Tick 路径：检查时间片与抢占条件 ---
             ScheduleReason::Tick => {
                 // 1a. 推进全局 tick 和当前任务的 tick 计数
+                self.cpu_states[cpu_id.raw()].timer_ticks = self.cpu_states[cpu_id.raw()]
+                                                              .timer_ticks
+                                                              .saturating_add(1);
                 self.global
                     .wait_queues
                     .on_tick();
@@ -99,8 +169,9 @@ impl MultiClassScheduler {
                                                                     .task_snapshot(task_id))
                                                            });
 
-                // 1c. 判断时间片是否耗尽（按策略分别处理）
+                // 1c. 判断任务所剩时间片是否耗尽（按策略分别处理）
                 let quantum_expired = match current {
+                    // 首次切换前尚未建立 current_task；正常运行时 idle 也会是 Some。
                     None => false,
                     Some((current_id, snap)) => match snap.sched_policy {
                         SchedPolicy::Other => self.cpu_states[cpu_id.raw()].other_queue
@@ -123,14 +194,14 @@ impl MultiClassScheduler {
                 // 1e. 根据检查结果决定路径
                 if quantum_expired || ready_preempts {
                     // 需要重新调度 → promote + 清零时间片，继续往下
-                    self.promote_sleep_and_timeouts(cpu_id);
+                    self.promote_sleep_and_timeouts();
                     self.cpu_states[cpu_id.raw()].other_queue
                                                  .reset_ticks();
                 } else if self.global
                               .wait_queues
                               .has_due_timers()
                 {
-                    self.promote_sleep_and_timeouts(cpu_id);
+                    self.promote_sleep_and_timeouts();
                     return None;
                 } else {
                     return None;
@@ -146,8 +217,10 @@ impl MultiClassScheduler {
         }
 
         // ===== Phase 2: 前置 promote（非 Tick 路径在此处理） =====
-        if !matches!(reason, ScheduleReason::Tick) {
-            self.promote_sleep_and_timeouts(cpu_id);
+        if !matches!(reason,
+                     ScheduleReason::Tick | ScheduleReason::Reschedule)
+        {
+            self.promote_sleep_and_timeouts();
         }
 
         // ===== Phase 3: 从 cpu_states 取出当前任务 =====
@@ -200,7 +273,9 @@ impl MultiClassScheduler {
         let is_exit = matches!(reason, ScheduleReason::Exit(_));
         let queue_target = match reason {
             ScheduleReason::StartFirst => QueueTarget::Ready,
-            ScheduleReason::Yield | ScheduleReason::Tick => QueueTarget::Ready,
+            ScheduleReason::Yield | ScheduleReason::Tick | ScheduleReason::Reschedule => {
+                QueueTarget::Ready
+            }
             ScheduleReason::Block(block_reason) => QueueTarget::Blocked(block_reason),
             ScheduleReason::Sleep(ticks) => {
                 let wake_tick = self.global
@@ -250,7 +325,7 @@ impl MultiClassScheduler {
         // ===== Phase 1: 前置处理 =====
         self.cpu_states[cpu_id.raw()].other_queue
                                      .reset_ticks();
-        self.promote_sleep_and_timeouts(cpu_id);
+        self.promote_sleep_and_timeouts();
 
         // ===== Phase 2: 快速路径 — 目标已就绪，无需阻塞 =====
         if self.global
@@ -399,14 +474,12 @@ impl MultiClassScheduler {
                                                     .unwrap_or(IDLE_TASK_ID))
     }
 
-    /// Phase 7：将当前任务入队到目标队列（更新 TCB 状态后再入队）。
+    /// 在 scheduler 锁内将当前任务转换到目标状态。
     fn enqueue_task(&mut self, target : QueueTarget, current_task_id : TaskId, cpu_id : CpuId) {
         match target {
             QueueTarget::Ready => {
-                self.global
-                    .registry
-                    .mark_ready(current_task_id);
-                self.enqueue_ready_by_policy(current_task_id, cpu_id);
+                // Yield/Tick 的运行任务不迁移，始终回到它原来的 CPU。
+                self.enqueue_ready_by_cpu(current_task_id, cpu_id);
             }
             QueueTarget::Blocked(reason) => {
                 self.global
@@ -428,15 +501,14 @@ impl MultiClassScheduler {
                 let waiters = self.global
                                   .wait_queues
                                   .wake_all_waiters_for_task_exit(current_task_id);
+                // 唤醒所有等待当前任务退出的 waiters
                 for waiter_id in &waiters {
                     self.global
                         .registry
                         .finish_wait(*waiter_id, TaskWaitResult::Woken);
-                    self.global
-                        .registry
-                        .mark_ready(*waiter_id);
-                    self.enqueue_ready_by_policy(*waiter_id, cpu_id);
+                    self.enqueue_woken_task(*waiter_id);
                 }
+                // 唤醒等待当前任务的父任务
                 if let Some(parent_id) = self.global
                                              .registry
                                              .parent_id(current_task_id)
@@ -448,10 +520,7 @@ impl MultiClassScheduler {
                         self.global
                             .registry
                             .finish_wait(*waiter_id, TaskWaitResult::Woken);
-                        self.global
-                            .registry
-                            .mark_ready(*waiter_id);
-                        self.enqueue_ready_by_policy(*waiter_id, cpu_id);
+                        self.enqueue_woken_task(*waiter_id);
                     }
                 }
                 self.global
@@ -463,8 +532,75 @@ impl MultiClassScheduler {
             }
         }
     }
+    /// 选出一个 CPU 来放置新创建的任务（fork/clone/spawn）。
+    pub(super) fn enqueue_ready_task(&mut self, task_id : TaskId) {
+        let picked_cpu = self.pick_cpu_for_new_task();
+        self.enqueue_ready_by_cpu(task_id, picked_cpu);
+        self.request_reschedule(picked_cpu);
+    }
 
-    fn enqueue_ready_by_policy(&mut self, task_id : TaskId, cpu_id : CpuId) {
+
+    /// 将已阻塞任务优先放回其上次运行的 online CPU。
+    ///
+    /// `last_cpu_id` 不可用时才回退到新任务的最小负载选核策略。
+    pub(super) fn enqueue_woken_task(&mut self, task_id : TaskId) -> CpuId {
+        let target = self.global
+                         .registry
+                         .last_cpu_id(task_id)
+                         .filter(|cpu_id| {
+                             cpu_id.fits_capacity(self.cpu_states
+                                                      .len())
+                         })
+                         .filter(|cpu_id| self.cpu_states[cpu_id.raw()].online)
+                         .unwrap_or_else(|| self.pick_cpu_for_new_task());
+        self.enqueue_ready_by_cpu(task_id, target);
+        self.request_reschedule(target);
+        target
+    }
+
+    fn request_reschedule(&mut self, cpu_id : CpuId) {
+        self.cpu_states[cpu_id.raw()].need_resched = true;
+        self.pending_reschedule_cpus
+            .insert(cpu_id);
+    }
+
+    pub(super) fn take_pending_reschedule_cpus(&mut self) -> CpuMask {
+        let pending = self.pending_reschedule_cpus;
+        self.pending_reschedule_cpus = CpuMask::EMPTY;
+        pending
+    }
+
+    /// 消费当前 CPU 的重调度请求；SSIP 没有请求位时不应触发调度。
+    pub(super) fn take_need_resched(&mut self, cpu_id : CpuId) -> bool {
+        let need_resched = self.cpu_states[cpu_id.raw()].need_resched;
+        self.cpu_states[cpu_id.raw()].need_resched = false;
+        need_resched
+    }
+    fn enqueue_ready_by_cpu(&mut self, task_id : TaskId, cpu_id : CpuId) {
+        debug_assert!(!self.global
+                           .registry
+                           .is_idle(task_id),
+                      "idle task must not be placed on a ready queue");
+        if let Some(old_cpu_id) = self.global
+                                      .registry
+                                      .ready_cpu_id(task_id)
+        {
+            // 策略切换或防御性重复入队时，先根据 TCB 所记录的旧归属摘除。
+            // 这样同一任务不会同时存在于两个 CPU 的 runqueue。
+            self.remove_from_cpu_runqueue(task_id, old_cpu_id);
+        }
+        if let Some(running_cpu_id) = self.global
+                                          .registry
+                                          .running_cpu_id(task_id)
+        {
+            debug_assert_eq!(running_cpu_id, cpu_id,
+                             "a running task may only yield back to its own CPU");
+        }
+        // Publish lifecycle state and queue ownership as one scheduler-lock
+        // transaction.  No observer can see Ready without its target queue.
+        self.global
+            .registry
+            .mark_ready(task_id, cpu_id);
         let snap = self.global
                        .registry
                        .task_snapshot(task_id);
@@ -480,15 +616,33 @@ impl MultiClassScheduler {
                                              .on_task_unblocked(task_id, snap.sched_priority)
             }
         }
+        debug_assert_eq!(self.global
+                             .registry
+                             .ready_cpu_id(task_id),
+                         Some(cpu_id));
+        debug_assert_eq!(self.global
+                             .registry
+                             .running_cpu_id(task_id),
+                         None);
     }
 
-    fn detach_from_run_queues(&mut self, task_id : TaskId, cpu_id : CpuId) {
+    fn remove_from_cpu_runqueue(&mut self, task_id : TaskId, cpu_id : CpuId) {
         self.cpu_states[cpu_id.raw()].other_queue
                                      .detach_task(task_id);
         self.cpu_states[cpu_id.raw()].fifo_queue
                                      .remove(task_id);
         self.cpu_states[cpu_id.raw()].rr_queue
                                      .remove(task_id);
+    }
+
+    fn detach_from_run_queues(&mut self, task_id : TaskId, cpu_id : CpuId) {
+        // Ready 任务必须按 TCB 的实际归属摘除；当前运行任务没有
+        // `ready_cpu_id`，此时才使用调用 CPU 来清理 RR 当前状态。
+        let owner_cpu_id = self.global
+                               .registry
+                               .ready_cpu_id(task_id)
+                               .unwrap_or(cpu_id);
+        self.remove_from_cpu_runqueue(task_id, owner_cpu_id);
     }
 
     /// 从所有 CPU 的就绪队列摘除任务（用于 kill / discard 等跨 CPU 操作）。
@@ -512,15 +666,12 @@ impl MultiClassScheduler {
     }
 
     /// 推进到期睡眠/超时任务到就绪队列。
-    fn promote_sleep_and_timeouts(&mut self, cpu_id : CpuId) {
+    fn promote_sleep_and_timeouts(&mut self) {
         for task_id in &self.global
                             .wait_queues
                             .promote_sleeping_tasks()
         {
-            self.global
-                .registry
-                .mark_ready(*task_id);
-            self.enqueue_ready_by_policy(*task_id, cpu_id);
+            self.enqueue_woken_task(*task_id);
         }
         for (task_id, target) in &self.global
                                       .wait_queues
@@ -536,10 +687,7 @@ impl MultiClassScheduler {
             self.global
                 .registry
                 .finish_wait(*task_id, TaskWaitResult::TimedOut);
-            self.global
-                .registry
-                .mark_ready(*task_id);
-            self.enqueue_ready_by_policy(*task_id, cpu_id);
+            self.enqueue_woken_task(*task_id);
         }
     }
 
@@ -554,7 +702,7 @@ impl MultiClassScheduler {
             (fifo, rr) => fifo.or(rr),
         }
     }
-
+    ///当前 CPU 正在运行的任务，是否应该立刻被该 CPU 就绪队列里的任务抢占。
     fn ready_task_should_preempt(&self,
                                  current_id : TaskId,
                                  current : TaskSnapshot,
@@ -577,611 +725,5 @@ impl MultiClassScheduler {
                     .is_some_and(|priority| priority > current.sched_priority)
             }
         }
-    }
-
-    // ================================================================
-    //  任务创建
-    // ================================================================
-
-    pub(super) fn spawn_kernel_task(&mut self,
-                                    entry : KernelTaskEntry,
-                                    arg : usize,
-                                    cpu_id : CpuId)
-                                    -> TaskId {
-        let current_task_id = self.cpu_states[cpu_id.raw()].current_task_id;
-        let task_id = self.global
-                          .registry
-                          .spawn_kernel_task(entry, arg, current_task_id);
-        self.enqueue_ready_by_policy(task_id, cpu_id);
-        task_id
-    }
-
-    pub(super) fn create_user_task_spec(&mut self, spec : UserTask, cpu_id : CpuId) -> TaskId {
-        let current_task_id = self.cpu_states[cpu_id.raw()].current_task_id;
-        self.global
-            .registry
-            .spawn_user_task_spec(spec, current_task_id)
-    }
-
-    /// 就绪入队（仅入队，不创建 TCB）。
-    pub(super) fn enqueue_ready_task(&mut self, task_id : TaskId, cpu_id : CpuId) {
-        self.enqueue_ready_by_policy(task_id, cpu_id);
-    }
-
-    pub(super) fn spawn_user_task_spec(&mut self, spec : UserTask, cpu_id : CpuId) -> TaskId {
-        let task_id = self.create_user_task_spec(spec, cpu_id);
-        self.enqueue_ready_task(task_id, cpu_id);
-        task_id
-    }
-
-    // ================================================================
-    //  fork / clone / exec
-    // ================================================================
-
-    pub(super) fn create_fork_child(&mut self,
-                                    child_stack : usize,
-                                    new_aspace_ptr : usize,
-                                    new_satp : usize,
-                                    cpu_id : CpuId)
-                                    -> Option<TaskId> {
-        let current_task_id = self.cpu_states[cpu_id.raw()].current_task_id?;
-        self.global
-            .registry
-            .fork_current(child_stack,
-                          new_aspace_ptr,
-                          new_satp,
-                          current_task_id)
-    }
-
-    pub(super) fn fork_current(&mut self,
-                               child_stack : usize,
-                               new_aspace_ptr : usize,
-                               new_satp : usize,
-                               cpu_id : CpuId)
-                               -> Option<TaskId> {
-        let child_id = self.create_fork_child(child_stack,
-                                              new_aspace_ptr,
-                                              new_satp,
-                                              cpu_id)?;
-        self.enqueue_ready_task(child_id, cpu_id);
-        Some(child_id)
-    }
-
-    pub(super) fn create_clone_thread(&mut self,
-                                      child_stack : usize,
-                                      tls : usize,
-                                      set_tls : bool,
-                                      cpu_id : CpuId)
-                                      -> Option<TaskId> {
-        let parent_id = self.cpu_states[cpu_id.raw()].current_task_id?;
-        self.global
-            .registry
-            .clone_current_thread(child_stack, tls, set_tls, parent_id)
-    }
-
-    pub(super) fn clone_current_thread(&mut self,
-                                       child_stack : usize,
-                                       tls : usize,
-                                       set_tls : bool,
-                                       cpu_id : CpuId)
-                                       -> Option<TaskId> {
-        let child_id = self.create_clone_thread(child_stack, tls, set_tls, cpu_id)?;
-        self.enqueue_ready_task(child_id, cpu_id);
-        Some(child_id)
-    }
-
-    pub(super) fn execve_current(&mut self,
-                                 entry_pc : usize,
-                                 sp : usize,
-                                 argc : usize,
-                                 argv : usize,
-                                 envp : usize,
-                                 satp : usize,
-                                 user_aspace_ptr : usize,
-                                 image_info : task_api::UserImageInfo,
-                                 stack_info : task_api::UserStack,
-                                 cpu_id : CpuId) {
-        let current_id = self.cpu_states[cpu_id.raw()].current_task_id
-                                                      .expect("execve requires a current task");
-        self.global
-            .registry
-            .execve_current(entry_pc,
-                            sp,
-                            argc,
-                            argv,
-                            envp,
-                            satp,
-                            user_aspace_ptr,
-                            image_info,
-                            stack_info,
-                            current_id);
-    }
-
-    // ================================================================
-    //  任务销毁与回收
-    // ================================================================
-
-    pub(super) fn kill_task(&mut self, task_id : TaskId, exit_code : TaskExitCode) -> bool {
-        if self.global
-               .registry
-               .is_idle(task_id)
-        {
-            return false;
-        }
-        if self.global
-               .registry
-               .state(task_id)
-               .is_none()
-        {
-            return false;
-        }
-        if matches!(self.global
-                        .registry
-                        .state(task_id),
-                    Some(TaskState::Exited(_)))
-        {
-            return true;
-        }
-        // 检查是否正在某 CPU 上运行
-        if self.cpu_states
-               .iter()
-               .any(|c| c.current_task_id == Some(task_id))
-        {
-            return false;
-        }
-        self.detach_from_all_cpus(task_id);
-        self.global
-            .wait_queues
-            .kill_task(task_id);
-        self.global
-            .registry
-            .mark_exited(task_id, exit_code);
-        true
-    }
-
-    pub(super) fn discard_unstarted_task(&mut self, task_id : TaskId) {
-        self.detach_from_all_cpus(task_id);
-        self.global
-            .wait_queues
-            .detach_task_from_run_queues(task_id);
-        if self.global
-               .registry
-               .discard_task(task_id)
-        {
-            self.forget_task_on_all_cpus(task_id);
-        }
-    }
-
-    pub(super) fn reap_exited_task(&mut self, task_id : TaskId) -> Option<ExitedTask> {
-        let exited = self.global
-                         .wait_queues
-                         .reap_exited_task(&mut self.global.registry, task_id)?;
-        self.forget_task_on_all_cpus(task_id);
-        Some(exited)
-    }
-
-    pub(super) fn reap_one_exited_task(&mut self) -> Option<ExitedTask> {
-        let exited = self.global
-                         .wait_queues
-                         .reap_one_exited_task(&mut self.global.registry)?;
-        self.forget_task_on_all_cpus(exited.id);
-        Some(exited)
-    }
-
-    pub(super) fn reap_one_exited_child(&mut self, parent_id : TaskId) -> Option<ExitedTask> {
-        let task_id = self.global
-                          .registry
-                          .find_exited_child(parent_id)?;
-        self.reap_exited_task(task_id)
-    }
-
-    // ================================================================
-    //  等待队列操作
-    // ================================================================
-
-    pub(super) fn allocate_wait_queue(&mut self) -> WaitQueueId {
-        self.global
-            .wait_queues
-            .allocate_wait_queue()
-    }
-
-    pub(super) fn try_release_wait_queue(&mut self, wait_queue_id : WaitQueueId) -> bool {
-        self.global
-            .wait_queues
-            .try_release_wait_queue(wait_queue_id)
-    }
-
-    pub(super) fn wake_task(&mut self, task_id : TaskId, cpu_id : CpuId) -> bool {
-        if !self.global
-                .wait_queues
-                .wake_task(task_id)
-        {
-            return false;
-        }
-        if self.global
-               .registry
-               .state(task_id)
-               .is_none()
-        {
-            return false;
-        }
-        self.global
-            .registry
-            .finish_wait(task_id, TaskWaitResult::Woken);
-        self.global
-            .registry
-            .mark_ready(task_id);
-        self.enqueue_ready_by_policy(task_id, cpu_id);
-        true
-    }
-
-    pub(super) fn interrupt_task(&mut self, task_id : TaskId, cpu_id : CpuId) -> bool {
-        if !self.global
-                .wait_queues
-                .interrupt_task(task_id)
-        {
-            return false;
-        }
-        if self.global
-               .registry
-               .state(task_id)
-               .is_none()
-        {
-            return false;
-        }
-        self.global
-            .registry
-            .finish_wait(task_id, TaskWaitResult::Interrupted);
-        self.global
-            .registry
-            .mark_ready(task_id);
-        self.enqueue_ready_by_policy(task_id, cpu_id);
-        true
-    }
-
-    pub(super) fn block_task_manual(&mut self, task_id : TaskId, cpu_id : CpuId) {
-        if self.global
-               .registry
-               .state(task_id)
-               .is_none()
-        {
-            return;
-        }
-        self.detach_from_run_queues(task_id, cpu_id);
-        self.global
-            .registry
-            .mark_blocking(task_id, TaskWaitTarget::Manual);
-        self.global
-            .wait_queues
-            .block_task_manual(task_id);
-    }
-
-    pub(super) fn wake_child_exit_waiters(&mut self, parent_id : TaskId, cpu_id : CpuId) {
-        let waiters = self.global
-                          .wait_queues
-                          .wake_child_exit_waiters(parent_id);
-        for waiter_id in &waiters {
-            self.global
-                .registry
-                .finish_wait(*waiter_id, TaskWaitResult::Woken);
-            self.global
-                .registry
-                .mark_ready(*waiter_id);
-            self.enqueue_ready_by_policy(*waiter_id, cpu_id);
-        }
-    }
-
-    pub(super) fn wake_one_in_wait_queue(&mut self,
-                                         wait_queue_id : WaitQueueId,
-                                         cpu_id : CpuId)
-                                         -> Option<TaskId> {
-        let task_id = self.global
-                          .wait_queues
-                          .wake_one_in_wait_queue(wait_queue_id)?;
-        if self.global
-               .registry
-               .state(task_id)
-               .is_none()
-        {
-            return None;
-        }
-        self.global
-            .registry
-            .finish_wait(task_id, TaskWaitResult::Woken);
-        self.global
-            .registry
-            .mark_ready(task_id);
-        self.enqueue_ready_by_policy(task_id, cpu_id);
-        Some(task_id)
-    }
-
-    pub(super) fn wake_all_in_wait_queue(&mut self,
-                                         wait_queue_id : WaitQueueId,
-                                         cpu_id : CpuId)
-                                         -> usize {
-        let task_ids = self.global
-                           .wait_queues
-                           .wake_all_in_wait_queue(wait_queue_id);
-        let mut count = 0usize;
-        for task_id in &task_ids {
-            if self.global
-                   .registry
-                   .state(*task_id)
-                   .is_none()
-            {
-                continue;
-            }
-            self.global
-                .registry
-                .finish_wait(*task_id, TaskWaitResult::Woken);
-            self.global
-                .registry
-                .mark_ready(*task_id);
-            self.enqueue_ready_by_policy(*task_id, cpu_id);
-            count = count.saturating_add(1);
-        }
-        count
-    }
-
-    pub(super) fn requeue_wait_queue(&mut self,
-                                     from_wait_queue_id : WaitQueueId,
-                                     to_wait_queue_id : WaitQueueId,
-                                     wake_count : usize,
-                                     requeue_count : usize,
-                                     cpu_id : CpuId)
-                                     -> usize {
-        let (woken, moved, changed) = self.global
-                                          .wait_queues
-                                          .requeue_wait_queue(from_wait_queue_id,
-                                                              to_wait_queue_id,
-                                                              wake_count,
-                                                              requeue_count);
-        for task_id in &woken {
-            self.global
-                .registry
-                .finish_wait(*task_id, TaskWaitResult::Woken);
-            self.global
-                .registry
-                .mark_ready(*task_id);
-            self.enqueue_ready_by_policy(*task_id, cpu_id);
-        }
-        for (task_id, _from_id) in &moved {
-            self.global
-                .registry
-                .mark_blocking(*task_id,
-                               TaskWaitTarget::WaitQueue(to_wait_queue_id));
-        }
-        changed
-    }
-
-    // ================================================================
-    //  调度策略变更
-    // ================================================================
-
-    pub(super) fn apply_sched_policy_change(&mut self,
-                                            task_id : TaskId,
-                                            policy : SchedPolicy,
-                                            param : SchedParam,
-                                            cpu_id : CpuId)
-                                            -> Result<SchedPolicyChangeAction, SchedError> {
-        if !self.global
-                .registry
-                .is_schedulable(task_id)
-        {
-            return Err(SchedError::NoSuchTask);
-        }
-        let old_snap = self.global
-                           .registry
-                           .task_snapshot(task_id);
-        let was_ready = old_snap.state == TaskState::Ready;
-
-        self.detach_from_all_cpus(task_id);
-        if !self.global
-                .registry
-                .set_task_sched(task_id, policy, param.priority)
-        {
-            return Err(SchedError::NoSuchTask);
-        }
-        if was_ready {
-            self.enqueue_ready_by_policy(task_id, cpu_id);
-        }
-
-        // 检查当前 CPU 上的任务是否被抢占
-        if let Some(current_id) = self.cpu_states[cpu_id.raw()].current_task_id {
-            if current_id != task_id {
-                let new = self.global
-                              .registry
-                              .task_snapshot(task_id);
-                let cur = self.global
-                              .registry
-                              .task_snapshot(current_id);
-                if Self::beats_running(new.sched_policy,
-                                       new.sched_priority,
-                                       cur.sched_policy,
-                                       cur.sched_priority)
-                {
-                    return Ok(SchedPolicyChangeAction::RescheduleNow);
-                }
-            }
-        }
-        Ok(SchedPolicyChangeAction::NoReschedule)
-    }
-
-    /// 判断 challenger 是否比 runner 优先级高（先比调度类，再比优先级）。
-    fn beats_running(challenger_policy : SchedPolicy,
-                     challenger_priority : i32,
-                     runner_policy : SchedPolicy,
-                     runner_priority : i32)
-                     -> bool {
-        let chal_class = match challenger_policy {
-            SchedPolicy::Other => 0u8,
-            SchedPolicy::Fifo | SchedPolicy::Rr => 1u8,
-        };
-        let run_class = match runner_policy {
-            SchedPolicy::Other => 0u8,
-            SchedPolicy::Fifo | SchedPolicy::Rr => 1u8,
-        };
-        if chal_class != run_class {
-            return chal_class > run_class;
-        }
-        challenger_priority > runner_priority
-    }
-
-    // ================================================================
-    //  查询接口
-    // ================================================================
-
-    /// 将指定 CPU 标记为 online。AP 完成初始化后调用。
-    pub(super) fn set_cpu_online(&mut self, cpu_id : CpuId) {
-        if !cpu_id.fits_capacity(self.cpu_states.len()) {
-            log::warn!("[cpu] invalid CPU {} ignored", cpu_id.raw());
-            return;
-        }
-        let cpu = &mut self.cpu_states[cpu_id.raw()];
-        if cpu.online {
-            log::warn!("[cpu] CPU {} already online, ignored",
-                       cpu_id.raw());
-            return;
-        }
-        cpu.online = true;
-        log::info!("[cpu] CPU {} is now online",
-                   cpu_id.raw());
-    }
-
-    pub(super) fn online_cpu_mask(&self) -> base::cpu::CpuMask {
-        let mut mask = base::cpu::CpuMask::EMPTY;
-        for cpu in &self.cpu_states {
-            if cpu.online { mask.insert(cpu.cpu_id); }
-        }
-        mask
-    }
-
-    pub(super) fn current_task_id(&self, cpu_id : CpuId) -> Option<TaskId> {
-        self.cpu_states[cpu_id.raw()].current_task_id
-    }
-
-    pub(super) fn current_task_snapshot(&self, cpu_id : CpuId) -> Option<TaskSnapshot> {
-        Some(self.global
-                 .registry
-                 .task_snapshot(self.cpu_states[cpu_id.raw()].current_task_id?))
-    }
-
-    pub(super) fn task_snapshot(&self, task_id : TaskId) -> TaskSnapshot {
-        self.global
-            .registry
-            .task_snapshot(task_id)
-    }
-
-    pub(super) fn has_child(&self, parent_id : TaskId) -> bool {
-        self.global
-            .registry
-            .has_child(parent_id)
-    }
-
-    pub(super) fn current_tick(&self) -> TaskTick {
-        self.global
-            .wait_queues
-            .current_tick()
-    }
-
-    pub(super) fn current_task_kernel_stack_top(&self, cpu_id : CpuId) -> Option<usize> {
-        Some(self.global
-                 .registry
-                 .task_kernel_stack_top(self.cpu_states[cpu_id.raw()].current_task_id?))
-    }
-
-    pub(super) fn current_task_address_space_raw(&self, cpu_id : CpuId) -> usize {
-        self.cpu_states[cpu_id.raw()].current_task_id
-                                     .map(|id| {
-                                         self.global
-                                             .registry
-                                             .current_task_address_space_raw(id)
-                                     })
-                                     .unwrap_or(0)
-    }
-
-    pub(super) fn current_task_user_aspace_ptr(&self, cpu_id : CpuId) -> usize {
-        self.cpu_states[cpu_id.raw()].current_task_id
-                                     .map(|id| {
-                                         self.global
-                                             .registry
-                                             .current_task_user_aspace_ptr(id)
-                                     })
-                                     .unwrap_or(0)
-    }
-
-    pub(super) fn current_task_user_address_space_token(&self, cpu_id : CpuId) -> usize {
-        self.current_task_address_space_raw(cpu_id)
-    }
-
-    pub(super) fn current_task_trap_return_address_space_token(&self, cpu_id : CpuId) -> usize {
-        self.cpu_states[cpu_id.raw()].current_task_id
-                                     .map(|id| {
-                                         self.global
-                                             .registry
-                                             .current_task_trap_return_address_space_token(id)
-                                     })
-                                     .unwrap_or(0)
-    }
-
-    pub(super) fn begin_current_trap_frame_access(&mut self,
-                                                  trap_frame : TaskTrapFrame,
-                                                  cpu_id : CpuId)
-                                                  -> Option<*mut TaskTrapFrame> {
-        let task_id = self.cpu_states[cpu_id.raw()].current_task_id?;
-        self.global
-            .registry
-            .begin_trap_frame_access(trap_frame, task_id)
-    }
-
-    pub(super) fn restore_current_trap_frame(&self,
-                                             trap_frame : &mut TaskTrapFrame,
-                                             cpu_id : CpuId)
-                                             -> bool {
-        let task_id = match self.cpu_states[cpu_id.raw()].current_task_id {
-            Some(id) => id,
-            None => return false,
-        };
-        self.global
-            .registry
-            .restore_trap_frame(trap_frame, task_id)
-    }
-
-    pub(super) fn take_current_wait_result(&mut self, cpu_id : CpuId) -> TaskWaitResult {
-        let task_id =
-            self.cpu_states[cpu_id.raw()].current_task_id
-                                         .expect("wait result can only be taken for a running \
-                                                  task");
-        self.global
-            .registry
-            .take_current_wait_result(task_id)
-    }
-    pub fn cpu_snapshot(&self, cpu_id : CpuId) -> Option<CpuSnapshot> {
-        let cpu = self.cpu_states.get(cpu_id.raw())?;
-        Some(CpuSnapshot { cpu_id : cpu_id,
-                           online : cpu.online,
-                           current_task_id : cpu.current_task_id,
-                           idle_task_id : cpu.idle_task_id,
-                           current_address_space:
-                               cpu.current_task_id
-                                  .and_then(|id| {
-                                      let raw = self.global
-                                                    .registry
-                                                    .current_task_address_space_raw(id);
-                                      if raw != 0 {
-                                          Some(AddressSpaceHandle::from_raw(raw))
-                                      } else {
-                                          None
-                                      }
-                                  }),
-                           current_task_ticks : self.global
-                                                    .wait_queues
-                                                    .current_tick() })
-    }
-    pub fn running_cpu(&self, task_id : TaskId) -> Option<CpuId> {
-        self.cpu_states
-            .iter()
-            .position(|c| c.current_task_id == Some(task_id))
-            .map(|i| CpuId::from_raw(i))
     }
 }

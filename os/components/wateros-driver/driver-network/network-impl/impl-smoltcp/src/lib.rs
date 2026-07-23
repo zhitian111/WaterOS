@@ -16,6 +16,8 @@ const RX_BUF: usize = 64 * 1024;
 const TX_BUF: usize = 64 * 1024;
 const MAX_LOOPBACK_FRAMES: usize = 4096;
 const MAX_RX_DRAIN: usize = 32;
+/// Ethernet II 帧头长度；smoltcp 的 Ethernet MTU 包含该帧头，但不包含 FCS。
+const ETHERNET_HEADER_LEN: usize = 14;
 const ETHERTYPE_IPV4: u16 = 0x0800;
 const ETHERTYPE_ARP: u16 = 0x0806;
 
@@ -167,11 +169,14 @@ impl Device for SmoltcpAdapter {
     fn capabilities(&self) -> DeviceCapabilities {
         let mut caps = DeviceCapabilities::default();
         caps.medium = Medium::Ethernet;
-        caps.max_transmission_unit = self
+        let ip_mtu = self
             .inner
             .as_ref()
             .map(|dev| dev.lock().mtu())
             .unwrap_or(DEFAULT_MTU);
+        // NetworkDevice::mtu() 使用通常的 IP MTU 语义；smoltcp 在 Ethernet
+        // medium 下要求这里填写包含 14 字节 Ethernet 帧头的最大帧长度。
+        caps.max_transmission_unit = ip_mtu.saturating_add(ETHERNET_HEADER_LEN);
         caps
     }
 }

@@ -10,7 +10,7 @@ use spin::Mutex;
 
 pub use driver_api::{DriverError, DriverResult};
 
-/// 标准以太网 MTU（不含前导码/FCS）；具体设备可覆盖。
+/// 标准 IP MTU，即 Ethernet payload 上限；不包含 Ethernet 帧头与 FCS，具体设备可覆盖。
 pub const DEFAULT_MTU: usize = 1500;
 
 /// 可在多任务间共享的网络设备句柄（内部可变性由 `spin::Mutex` 提供）。
@@ -24,7 +24,7 @@ pub trait NetworkDevice: Send {
     /// 设备的 MAC 地址（6 字节）。
     fn mac_address(&self) -> [u8; 6];
 
-    /// 最大传输单元（字节）；默认 [`DEFAULT_MTU`]。
+    /// IP 最大传输单元（字节，不含 Ethernet 帧头与 FCS）；默认 [`DEFAULT_MTU`]。
     fn mtu(&self) -> usize {
         DEFAULT_MTU
     }

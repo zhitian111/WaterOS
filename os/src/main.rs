@@ -15,6 +15,7 @@ use runtime::logging::warn;
 use syscall as _;
 
 mod boot_timebase;
+mod dashboard;
 mod trap_handler;
 mod user_bringup_bus;
 mod user_bringup_busybox;
@@ -71,6 +72,21 @@ fn bringup_driver_and_user() {
     }
 }
 
+/// 完整 UART 字符设备注册后，内核 console 不再经 early console 直接写硬件，
+/// 而是与用户 stdout 共用 device #0 的锁，保证一整段输出不会相互穿插。
+fn write_registered_uart_console(bytes : &[u8]) -> platform::console::PlatformConsoleResult<()> {
+    driver::character::with_character_device(0, |device| {
+                          device.write(bytes)
+                                .map(|_| ())
+                                .map_err(|_| platform::console::PlatformConsoleError::WriteFailure)
+                      })
+        .unwrap_or(Err(platform::console::PlatformConsoleError::Unavailable))
+}
+
+fn register_runtime_console_writer() {
+    platform::console::register_runtime_writer(write_registered_uart_console);
+}
+
 #[cfg(feature = "qemu-riscv64-opensbi")]
 mod qemu_riscv64_opensbi {
     use crate::bringup_driver_and_user;
@@ -90,7 +106,9 @@ mod qemu_riscv64_opensbi {
         let mut requested = base::cpu::CpuMask::EMPTY;
         for raw in 0..base_config::task::MAX_CPUS {
             let cpu = task::CpuId::from_raw(raw);
-            if cpu == boot_cpu { continue; }
+            if cpu == boot_cpu {
+                continue;
+            }
             match platform::smp::start_cpu(cpu, entry, dtb_pa) {
                 Ok(()) | Err(platform::smp::PlatformSmpError::AlreadyAvailable) => {
                     requested.insert(cpu);
@@ -98,7 +116,9 @@ mod qemu_riscv64_opensbi {
                 }
                 // A smaller QEMU `-smp` simply has no hart at this index.
                 Err(platform::smp::PlatformSmpError::InvalidCpu) => break,
-                Err(error) => panic!("[smp] cannot start cpu={}: {:?}; use an OpenSBI firmware with HSM", raw, error),
+                Err(error) => panic!("[smp] cannot start cpu={}: {:?}; use an OpenSBI firmware \
+                                      with HSM",
+                                     raw, error),
             }
         }
         requested
@@ -118,7 +138,8 @@ mod qemu_riscv64_opensbi {
         }
         let online = task::online_cpu_mask();
         panic!("[smp] AP online timeout: requested={:#x}, online={:#x}",
-               requested.bits(), online.bits());
+               requested.bits(),
+               online.bits());
     }
     /// AP 入口：BSP 初始化完成后被调用；局部初始化后加入调度。
     fn ap_main(cpu_id : task::CpuId) -> ! {
@@ -158,7 +179,12 @@ mod qemu_riscv64_opensbi {
         mask_boot_interrupts();
         // OpenSBI supplies the boot hart.  Secondary harts can arrive either
         // directly from firmware or through the SBI HSM entry below.
-        if BSP_HART.compare_exchange(usize::MAX, cpu_raw, Ordering::AcqRel, Ordering::Acquire).is_err() {
+        if BSP_HART.compare_exchange(usize::MAX,
+                                     cpu_raw,
+                                     Ordering::AcqRel,
+                                     Ordering::Acquire)
+                   .is_err()
+        {
             wait_ap_boot_ready(cpu_id);
         }
         // BSP 初始化：驱动 → 日志 → timebase → 堆 → arch → 任务 → trap
@@ -170,6 +196,7 @@ mod qemu_riscv64_opensbi {
         runtime::heap_allocator::init();
         platform::arch::init();
         task::init();
+        crate::dashboard::init();
         task::set_cpu_online(cpu_id);
         crate::trap_handler::init();
         // MM 初始化
@@ -181,6 +208,8 @@ mod qemu_riscv64_opensbi {
         wait_for_secondary_online(requested_aps);
 
         bringup_driver_and_user();
+        crate::register_runtime_console_writer();
+        crate::dashboard::start();
         platform::interrupt::enable_timer_interrupt().unwrap();
         platform::arch::interrupt::enable_soft_interrupt();
         platform::timer::set_timer_after_ms(100).unwrap();
@@ -240,6 +269,7 @@ mod qemu_loongarch64_virt {
         driver::init_when_boot(envp);
         crate::boot_timebase::probe_and_init_timebase(envp);
         task::init();
+        crate::dashboard::init();
         crate::trap_handler::init();
         platform::arch::paging::init_paging_disable_mmu();
 
@@ -249,6 +279,8 @@ mod qemu_loongarch64_virt {
         AP_BOOT_READY.store(true, Ordering::Release);
 
         bringup_driver_and_user();
+        crate::register_runtime_console_writer();
+        crate::dashboard::start();
         platform::interrupt::enable_timer_interrupt().unwrap();
         platform::timer::set_timer_after_ms(100).unwrap();
         platform::interrupt::enable_global_interrupt().unwrap();

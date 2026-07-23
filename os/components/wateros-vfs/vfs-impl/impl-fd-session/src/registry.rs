@@ -520,13 +520,13 @@ impl PerTaskFdRegistry {
         oldfd: usize,
         newfd: usize,
         cloexec: bool,
-    ) -> VfsResult<usize> {
+    ) -> VfsResult<(usize, Option<Box<dyn VfsIoHandle>>)> {
         if oldfd == newfd {
             self.get_io_for_task(task_id, oldfd)?;
             if cloexec {
                 self.set_fd_cloexec(task_id, newfd, true)?;
             }
-            return Ok(newfd);
+            return Ok((newfd, None));
         }
 
         let dup_handle = {
@@ -548,14 +548,15 @@ impl PerTaskFdRegistry {
         if !newfd_was_open {
             self.check_nofile_before_open(task_id)?;
         }
-        if self.tables.get(&owner)
-                      .and_then(|table| table.get(newfd))
-                      .and_then(|slot| slot.as_ref())
-                      .is_some()
-        {
+        let displaced = if self.tables.get(&owner)
+                                      .and_then(|table| table.get(newfd))
+                                      .and_then(|slot| slot.as_ref())
+                                      .is_some() {
             self.ensure_fd_not_io_busy(owner, newfd)?;
-            self.close_slot(task_id, newfd)?;
-        }
+            Some(self.take_fd_for_close(task_id, newfd)?)
+        } else {
+            None
+        };
         {
             let table = self.tables.get_mut(&owner).expect("fd table owner");
             while table.len() <= newfd {
@@ -567,7 +568,7 @@ impl PerTaskFdRegistry {
         self.ensure_flags_len(task_id, len);
         self.fd_flags.get_mut(&owner).expect("fd flags owner")[newfd] =
             if cloexec { FD_CLOEXEC } else { 0 };
-        Ok(newfd)
+        Ok((newfd, displaced))
     }
 
     /// `fcntl(F_GETFD)`。

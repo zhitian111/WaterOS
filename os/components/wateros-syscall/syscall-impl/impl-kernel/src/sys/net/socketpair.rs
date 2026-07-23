@@ -53,23 +53,25 @@ pub(crate) fn sys_socketpair(args: SyscallArgs) -> UserRet {
     };
 
     let (end0, end1) = vfs::stream_pair_handle_pair(nonblocking);
-    let mut reg = vfs::fd::registry().exclusive_access();
-    let fd0 = match reg.alloc_fd_for_task(task_id, Box::new(end0)) {
-        Ok(fd) => fd,
-        Err(err) => return UserRet::from_error(vfs_error_to_errno(err)),
-    };
-    let fd1 = match reg.alloc_fd_for_task(task_id, Box::new(end1)) {
-        Ok(fd) => fd,
-        Err(err) => {
-            let _ = reg.close_fd_for_task(task_id, fd0);
-            return UserRet::from_error(vfs_error_to_errno(err));
-        }
-    };
-    if cloexec {
-        let _ = reg.set_fd_flags(task_id, fd0, FD_CLOEXEC);
-        let _ = reg.set_fd_flags(task_id, fd1, FD_CLOEXEC);
-    }
-    drop(reg);
+    let (fd0, fd1) =
+        match vfs::fd::with_registry(|reg| -> vfs::VfsResult<(usize, usize)> {
+            let fd0 = reg.alloc_fd_for_task(task_id, Box::new(end0))?;
+            let fd1 = match reg.alloc_fd_for_task(task_id, Box::new(end1)) {
+                Ok(fd) => fd,
+                Err(err) => {
+                    let _ = reg.close_fd_for_task(task_id, fd0);
+                    return Err(err);
+                }
+            };
+            if cloexec {
+                let _ = reg.set_fd_flags(task_id, fd0, FD_CLOEXEC);
+                let _ = reg.set_fd_flags(task_id, fd1, FD_CLOEXEC);
+            }
+            Ok((fd0, fd1))
+        }) {
+            Ok(fds) => fds,
+            Err(err) => return UserRet::from_error(vfs_error_to_errno(err)),
+        };
 
     let fds = [fd0 as i32, fd1 as i32];
     match copy_to_user(sv_ptr, unsafe {

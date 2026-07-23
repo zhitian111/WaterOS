@@ -68,23 +68,12 @@ fn fcntl_unknown_cmd(fd : usize) -> Result<usize, ErrNo> {
 }
 
 fn fcntl_dupfd(fd : usize, minfd : usize) -> Result<usize, ErrNo> {
-    let socket = socket_fd::lookup(fd);
-    let status_flags = socket_fd::status_flags(fd).unwrap_or(0);
-    let newfd = vfs::fd::dup_fd(fd, minfd).map_err(vfs_error_to_errno)?;
-    if let Some(socket) = socket {
-        socket_fd::register_with_flags(newfd, socket, status_flags);
-    }
-    Ok(newfd)
+    vfs::fd::dup_fd(fd, minfd).map_err(vfs_error_to_errno)
 }
 
 fn fcntl_dupfd_cloexec(fd : usize, minfd : usize) -> Result<usize, ErrNo> {
-    let socket = socket_fd::lookup(fd);
-    let status_flags = socket_fd::status_flags(fd).unwrap_or(0);
     let newfd = vfs::fd::dup_fd(fd, minfd).map_err(vfs_error_to_errno)?;
     vfs::fd::set_fd_flags(newfd, FD_CLOEXEC).map_err(vfs_error_to_errno)?;
-    if let Some(socket) = socket {
-        socket_fd::register_with_flags(newfd, socket, status_flags);
-    }
     Ok(newfd)
 }
 

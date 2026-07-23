@@ -36,12 +36,12 @@ fn create_epoll_fd(flags: usize) -> UserRet {
         Err(err) => return UserRet::from_error(vfs_error_to_errno(err)),
     };
     let (handle, instance) = EpollHandle::new_pair();
-    let mut reg = vfs::fd::registry().exclusive_access();
-    let fd = match reg.alloc_fd_for_task(task_id, alloc::boxed::Box::new(handle)) {
+    let fd = match vfs::fd::with_registry(|reg| {
+        reg.alloc_fd_for_task(task_id, alloc::boxed::Box::new(handle))
+    }) {
         Ok(fd) => fd,
         Err(err) => return UserRet::from_error(vfs_error_to_errno(err)),
     };
-    drop(reg);
     epoll_fd::register(fd, instance);
     if flags & EPOLL_CLOEXEC != 0 {
         if let Err(err) = vfs::fd::set_fd_flags(fd, FD_CLOEXEC) {

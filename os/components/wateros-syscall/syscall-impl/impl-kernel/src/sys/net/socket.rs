@@ -11,8 +11,6 @@ use driver::network::socket_handles::{SocketRef, TcpStreamHandle, UdpSocketHandl
 use driver::network::stack;
 use vfs::api::handle::VfsIoHandle;
 
-use crate::socket_fd;
-
 const AF_INET: usize = 2;
 const AF_UNIX: usize = 1;
 const SOCK_STREAM: usize = 1;
@@ -74,7 +72,7 @@ pub(crate) fn sys_socket(args: SyscallArgs) -> UserRet {
         Ok(h) => h,
         Err(_) => return UserRet::from_error(ErrNo::ENOMEM),
     };
-    let socket_ref = SocketRef::new(smoltcp_handle);
+    let socket_ref = SocketRef::new_with_status_flags(smoltcp_handle, status_flags);
 
     let io_handle: Box<dyn VfsIoHandle> = match typ {
         SOCK_STREAM => Box::new(TcpStreamHandle {
@@ -92,10 +90,9 @@ pub(crate) fn sys_socket(args: SyscallArgs) -> UserRet {
     };
     if cloexec {
         if vfs::fd::set_fd_flags(fd, FD_CLOEXEC).is_err() {
+            let _ = vfs::fd::close_fd(fd);
             return UserRet::from_error(ErrNo::EBADF);
         }
     }
-    socket_fd::register_with_flags(fd, socket_ref, status_flags);
-
     UserRet::from_success(fd)
 }

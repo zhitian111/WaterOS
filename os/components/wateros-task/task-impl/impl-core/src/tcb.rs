@@ -98,6 +98,13 @@ pub struct TaskControlBlock {
     wait_result : Option<TaskWaitResult>,
     task_cx : TaskContext,
     inner : TaskInner,
+    /// The CPU runqueue that owns this task while it is published as Ready.
+    /// `None` is also used for a newly created task that has not been queued.
+    ready_cpu_id : Option<CpuId>,
+    /// Most recent CPU that executed this task; retained across blocking.
+    last_cpu_id : Option<CpuId>,
+    /// Sole source of truth for the CPU while `state == Running`.
+    running_cpu_id : Option<CpuId>,
 }
 
 impl TaskControlBlock {
@@ -122,7 +129,10 @@ impl TaskControlBlock {
                wait_result : None,
                task_cx,
                inner : TaskInner::Kernel(KernelResources { kernel_stack,
-                                                           bootstrap }) }
+                                                           bootstrap }),
+               ready_cpu_id : None,
+               last_cpu_id : None,
+               running_cpu_id : None }
     }
 
     /// 创建 idle 任务。
@@ -142,7 +152,10 @@ impl TaskControlBlock {
                wait_result : None,
                task_cx,
                inner : TaskInner::Idle(KernelResources { kernel_stack,
-                                                         bootstrap }) }
+                                                         bootstrap }),
+               ready_cpu_id : None,
+               last_cpu_id : None,
+               running_cpu_id : None }
     }
 
     /// 创建一个用户任务。
@@ -159,7 +172,10 @@ impl TaskControlBlock {
                stats : TaskRuntimeStats::default(),
                wait_result : None,
                task_cx,
-               inner : TaskInner::User(user) }
+               inner : TaskInner::User(user),
+               ready_cpu_id : None,
+               last_cpu_id : None,
+               running_cpu_id : None }
     }
 
     /// 从父任务 fork 一个子用户任务。独立地址空间、独立 trap frame、独立内核栈，但共享父任务的用户映像。
@@ -211,7 +227,10 @@ impl TaskControlBlock {
                     task_cx,
                     inner : TaskInner::User(UserResources { kernel_stack,
                                                             trap_frame : child_trap,
-                                                            user : child_spec }) })
+                                                            user : child_spec }),
+                    ready_cpu_id : None,
+                    last_cpu_id : None,
+                    running_cpu_id : None })
     }
 
     /// 从当前用户任务 clone 一个同进程线程。共享地址空间
@@ -248,7 +267,10 @@ impl TaskControlBlock {
                     task_cx,
                     inner : TaskInner::User(UserResources { kernel_stack,
                                                             trap_frame : child_trap,
-                                                            user : parent_user.user }) })
+                                                            user : parent_user.user }),
+                    ready_cpu_id : None,
+                    last_cpu_id : None,
+                    running_cpu_id : None })
     }
 
     /// execve：替换当前任务的地址空间、栈和入口。
@@ -297,6 +319,15 @@ impl TaskControlBlock {
 
     #[inline]
     pub fn state(&self) -> TaskState { self.state }
+
+    #[inline]
+    pub fn ready_cpu_id(&self) -> Option<CpuId> { self.ready_cpu_id }
+
+    #[inline]
+    pub fn last_cpu_id(&self) -> Option<CpuId> { self.last_cpu_id }
+
+    #[inline]
+    pub fn running_cpu_id(&self) -> Option<CpuId> { self.running_cpu_id }
 
     #[inline]
     pub fn sched_policy(&self) -> SchedPolicy { self.sched_policy }
@@ -459,11 +490,24 @@ impl TaskControlBlock {
     // ── 状态变迁 ────────────────────────────────────────────────
 
     #[inline]
-    pub fn mark_ready(&mut self) { self.state = TaskState::Ready; }
+    pub fn mark_ready(&mut self, cpu_id : CpuId) {
+        self.state = TaskState::Ready;
+        self.ready_cpu_id = Some(cpu_id);
+        self.running_cpu_id = None;
+    }
 
     #[inline]
     pub fn mark_running(&mut self, cpu_id : CpuId) {
-        self.state = TaskState::Running { cpu_id };
+        self.state = TaskState::Running;
+        self.ready_cpu_id = None;
+        // Idle task 不属于普通任务的运行归属模型：它不会进入 ready queue，
+        // 也不应以 `running_cpu_id` 参与跨 CPU 任务唯一性判断。
+        if self.is_idle() {
+            self.running_cpu_id = None;
+        } else {
+            self.running_cpu_id = Some(cpu_id);
+            self.last_cpu_id = Some(cpu_id);
+        }
         self.stats
             .schedule_count = self.stats
                                   .schedule_count
@@ -473,11 +517,15 @@ impl TaskControlBlock {
     #[inline]
     pub fn mark_blocking(&mut self, reason : TaskWaitTarget) {
         self.state = TaskState::Blocking(reason);
+        self.ready_cpu_id = None;
+        self.running_cpu_id = None;
     }
 
     #[inline]
     pub fn mark_sleeping(&mut self, wake_tick : TaskTick) {
         self.state = TaskState::Sleeping { wake_tick };
+        self.ready_cpu_id = None;
+        self.running_cpu_id = None;
     }
 
     #[inline]
@@ -489,6 +537,8 @@ impl TaskControlBlock {
                       .without_user_aspace();
         }
         self.state = TaskState::Exited(exit_code);
+        self.ready_cpu_id = None;
+        self.running_cpu_id = None;
     }
 
     #[inline]

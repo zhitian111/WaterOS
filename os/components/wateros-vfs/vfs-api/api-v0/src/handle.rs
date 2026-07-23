@@ -3,6 +3,7 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
+use core::any::Any;
 
 use crate::error::{VfsError, VfsResult};
 use crate::meta::VfsMetadata;
@@ -36,8 +37,20 @@ impl VfsOpenFlags {
     }
 }
 
+/// 为 fd 句柄提供对象安全的类型识别，供 syscall 层从统一 VFS fd 表中
+/// 识别 socket、epoll 等特殊句柄。
+pub trait VfsHandleAny {
+    fn as_any(&self) -> &dyn Any;
+}
+
+impl<T: Any> VfsHandleAny for T {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 /// 流式读写的已打开对象（pipe、控制台、文件会话等）。
-pub trait VfsIoHandle {
+pub trait VfsIoHandle: Send + VfsHandleAny {
     fn read(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
         let _ = buf;
         Err(VfsError::Unsupported)
