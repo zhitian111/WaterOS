@@ -130,9 +130,13 @@ fn dispatch_reschedules(targets : CpuMask, current_cpu_id : CpuId, local : bool)
     let local_requested = remote.contains(current_cpu_id);
     remote.remove(current_cpu_id);
     if !remote.is_empty() {
-        if let Err(error) = arch::ipi::send_ipi(remote) {
+        log::info!("[ipi] send directed target_mask={:#x}", remote.bits());
+        if let Err(error) = platform::smp::send_ipi(remote) {
             log::warn!("[ipi] directed reschedule notification failed: {:?}",
                        error);
+        } else {
+            log::info!("[ipi] send directed succeeded target_mask={:#x}",
+                       remote.bits());
         }
     }
     if local && local_requested {
@@ -155,9 +159,13 @@ fn dispatch_remote_reschedules(targets : CpuMask, current_cpu_id : CpuId) {
     if remote.is_empty() {
         return;
     }
-    if let Err(error) = arch::ipi::send_ipi(remote) {
+    log::info!("[ipi] send remote target_mask={:#x}", remote.bits());
+    if let Err(error) = platform::smp::send_ipi(remote) {
         log::warn!("[ipi] directed reschedule notification failed: {:?}",
                    error);
+    } else {
+        log::info!("[ipi] send remote succeeded target_mask={:#x}",
+                   remote.bits());
     }
 }
 
@@ -227,23 +235,28 @@ pub extern "C" fn wateros_mcs_boot_log_scheduler_ready(tag_ptr : *const u8, tag_
 // =============================================================================
 
 /// 首次初始化路径：在 `SCHEDULER_READY` 置真前直接写入 cell，避免 chicken-and-egg。
-unsafe fn init_scheduler_storage_and_inner() {
+unsafe fn init_scheduler_storage_and_inner(boot_cpu: CpuId) {
     // 2024 edition: unsafe fn body 不是隐式 unsafe 块
     unsafe {
         SCHEDULER.write(MultiprocessorSafeCell::new(MultiClassScheduler::new()));
         (*SCHEDULER.as_mut_ptr()).exclusive_access()
-                                 .init();
+                                 .init_on_cpu(boot_cpu);
     }
 }
 
 /// 幂等初始化全局调度器与内部 `MultiClassScheduler` 状态。
 #[inline(never)]
 pub fn init() {
+    init_on_cpu(CpuId::from_raw(0));
+}
+
+#[inline(never)]
+pub fn init_on_cpu(boot_cpu: CpuId) {
     log_scheduler_ready("init_scheduler enter");
     if !SCHEDULER_READY.load(Ordering::Acquire) {
         log::warn!("[boot-init] init_scheduler: SCHEDULER.write + inner init (READY still false)");
         unsafe {
-            init_scheduler_storage_and_inner();
+            init_scheduler_storage_and_inner(boot_cpu);
         }
         SCHEDULER_READY.store(true, Ordering::Release);
         compiler_fence(Ordering::SeqCst);
@@ -251,7 +264,7 @@ pub fn init() {
     } else {
         log::warn!("[boot-init] init_scheduler: already ready, re-run inner init");
         let _guard = InterruptGuard::new();
-        with_scheduler(|scheduler| scheduler.init());
+        with_scheduler(|scheduler| scheduler.init_on_cpu(boot_cpu));
     }
     log_scheduler_ready("init_scheduler done");
     assert_addr_outside_kernel_heap("SCHEDULER_READY",

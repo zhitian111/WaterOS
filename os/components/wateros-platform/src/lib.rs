@@ -60,6 +60,18 @@ pub mod smp {
     pub fn configured_cpu_mask() -> CpuMask {
         crate::active_impl::smp::SmpImpl::configured_cpu_mask()
     }
+    #[inline]
+    pub fn send_ipi(mask : CpuMask) -> PlatformSmpResult<()> {
+        crate::active_impl::smp::SmpImpl::send_ipi(mask)
+    }
+    #[inline]
+    pub fn init_ipi() -> PlatformSmpResult<()> {
+        crate::active_impl::smp::SmpImpl::init_ipi()
+    }
+    #[inline]
+    pub fn clear_ipi() -> PlatformSmpResult<()> {
+        crate::active_impl::smp::SmpImpl::clear_ipi()
+    }
 }
 
 /// 平台层时间频率：由 `PlatformTime` 实现（通常来自板级 / DTB / 环境常量），

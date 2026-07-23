@@ -44,6 +44,9 @@ pub mod smp {
         fn start_cpu(_: CpuId, _: usize, _: usize) -> PlatformSmpResult<()> { Err(PlatformSmpError::Unsupported) }
         fn cpu_status(_: CpuId) -> PlatformSmpResult<HartStatus> { Err(PlatformSmpError::Unsupported) }
         fn configured_cpu_mask() -> CpuMask { CpuMask::EMPTY }
+        fn send_ipi(_: CpuMask) -> PlatformSmpResult<()> { Err(PlatformSmpError::Unsupported) }
+        fn init_ipi() -> PlatformSmpResult<()> { Err(PlatformSmpError::Unsupported) }
+        fn clear_ipi() -> PlatformSmpResult<()> { Err(PlatformSmpError::Unsupported) }
     }
     pub use DummySmp as SmpImpl;
 }

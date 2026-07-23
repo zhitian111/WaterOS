@@ -72,9 +72,13 @@ pub(crate) use impl_core as active_impl;
 // ============================================================================
 /// 初始化任务系统和底层调度器状态。
 pub fn init() {
+    init_on_cpu(CpuId::from_raw(0));
+}
+
+pub fn init_on_cpu(cpu_id: CpuId) {
     //log::warn!("[boot-init] task::init enter");
     log::warn!("[boot-init] task::init start");
-    scheduler::init();
+    scheduler::init_on_cpu(cpu_id);
     active_impl::init_process_registry();
     //log::warn!("[boot-init] task::init -> process_model_self_test");
     //active_impl::process_model_self_test();

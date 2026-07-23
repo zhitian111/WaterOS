@@ -1377,6 +1377,7 @@ name = "wateros-platform-impl-qemu-loongarch64-virt"
 version = "0.1.0"
 dependencies = [
  "wateros-base",
+ "wateros-base-config",
  "wateros-platform-api-v0",
 ]
 
@@ -1548,6 +1549,7 @@ dependencies = [
  "log",
  "wateros-base",
  "wateros-base-config",
+ "wateros-platform",
  "wateros-platform-arch",
  "wateros-task-api-v0",
  "wateros-task-scheduler-api-v0",

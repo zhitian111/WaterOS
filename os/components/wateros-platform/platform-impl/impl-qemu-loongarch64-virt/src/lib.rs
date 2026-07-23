@@ -18,11 +18,62 @@ pub mod timer;
 pub mod smp {
     use api_v0::smp::{HartStatus, PlatformSmp, PlatformSmpError, PlatformSmpResult};
     use base::cpu::{CpuId, CpuMask};
+
+    const IOCSR_IPI_STATUS : usize = 0x1000;
+    const IOCSR_IPI_EN : usize = 0x1004;
+    const IOCSR_IPI_CLEAR : usize = 0x100c;
+    const IOCSR_IPI_SEND : usize = 0x1040;
+    const IOCSR_IPI_SEND_BLOCKING : usize = 1 << 31;
+    const IOCSR_IPI_SEND_CPU_SHIFT : usize = 16;
+
+    #[inline]
+    fn iocsr_read32(address : usize) -> u32 {
+        let value : u32;
+        unsafe {
+            core::arch::asm!("iocsrrd.w {value}, {address}",
+                             value = out(reg) value,
+                             address = in(reg) address,
+                             options(nostack));
+        }
+        value
+    }
+
+    #[inline]
+    fn iocsr_write32(value : u32, address : usize) {
+        unsafe {
+            core::arch::asm!("iocsrwr.w {value}, {address}",
+                             value = in(reg) value,
+                             address = in(reg) address,
+                             options(nostack));
+        }
+    }
+
     pub struct QemuLoongArchSmp;
     impl PlatformSmp for QemuLoongArchSmp {
         fn start_cpu(_: CpuId, _: usize, _: usize) -> PlatformSmpResult<()> { Err(PlatformSmpError::Unsupported) }
         fn cpu_status(_: CpuId) -> PlatformSmpResult<HartStatus> { Err(PlatformSmpError::Unsupported) }
-        fn configured_cpu_mask() -> CpuMask { CpuMask::EMPTY }
+        fn configured_cpu_mask() -> CpuMask { CpuMask::from_bits((1u64 << config::task::MAX_CPUS) - 1) }
+
+        fn send_ipi(mask : CpuMask) -> PlatformSmpResult<()> {
+            for cpu in 0..config::task::MAX_CPUS {
+                if !mask.contains(CpuId::from_raw(cpu)) { continue; }
+                let value = IOCSR_IPI_SEND_BLOCKING |
+                            (cpu << IOCSR_IPI_SEND_CPU_SHIFT);
+                iocsr_write32(value as u32, IOCSR_IPI_SEND);
+            }
+            Ok(())
+        }
+
+        fn init_ipi() -> PlatformSmpResult<()> {
+            iocsr_write32(u32::MAX, IOCSR_IPI_EN);
+            Ok(())
+        }
+
+        fn clear_ipi() -> PlatformSmpResult<()> {
+            let pending = iocsr_read32(IOCSR_IPI_STATUS);
+            if pending != 0 { iocsr_write32(pending, IOCSR_IPI_CLEAR); }
+            Ok(())
+        }
     }
     pub use QemuLoongArchSmp as SmpImpl;
 }

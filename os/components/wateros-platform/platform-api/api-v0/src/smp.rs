@@ -28,4 +28,7 @@ pub trait PlatformSmp {
     fn start_cpu(cpu : CpuId, start_addr: usize, opaque: usize) -> PlatformSmpResult<()>;
     fn cpu_status(cpu : CpuId) -> PlatformSmpResult<HartStatus>;
     fn configured_cpu_mask() -> CpuMask;
+    fn send_ipi(mask : CpuMask) -> PlatformSmpResult<()>;
+    fn init_ipi() -> PlatformSmpResult<()>;
+    fn clear_ipi() -> PlatformSmpResult<()>;
 }

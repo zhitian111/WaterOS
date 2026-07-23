@@ -44,7 +44,8 @@ impl MultiClassScheduler {
                pending_reschedule_cpus : CpuMask::EMPTY }
     }
 
-    pub(super) fn init(&mut self) {
+    pub(super) fn init_on_cpu(&mut self, boot_cpu: CpuId) {
+        assert!(boot_cpu.fits_capacity(self.cpu_states.len()), "boot CPU is outside scheduler capacity");
         self.global.init();
         self.next_placement_cpu = 0;
         self.pending_reschedule_cpus = CpuMask::EMPTY;
@@ -57,6 +58,7 @@ impl MultiClassScheduler {
                                    .init();
             self.cpu_states[cpu_id].fifo_queue = FifoQueue::new();
             self.cpu_states[cpu_id].rr_queue = RrQueue::new();
+            self.cpu_states[cpu_id].online = cpu_id == boot_cpu.raw();
             self.cpu_states[cpu_id].need_resched = false;
             let idle_id = self.global
                               .registry

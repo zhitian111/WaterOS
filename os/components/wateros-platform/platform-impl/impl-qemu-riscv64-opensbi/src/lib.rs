@@ -62,6 +62,14 @@ pub mod smp {
         fn configured_cpu_mask() -> CpuMask {
             CpuMask::from_bits((1u64 << MAX_CPUS) - 1)
         }
+
+        fn send_ipi(mask : CpuMask) -> PlatformSmpResult<()> {
+            let hart_mask = sbi::HartMask::from_mask_base(mask.bits() as usize, 0);
+            result(sbi::send_ipi(hart_mask)).map(|_| ())
+        }
+
+        fn init_ipi() -> PlatformSmpResult<()> { Ok(()) }
+        fn clear_ipi() -> PlatformSmpResult<()> { Ok(()) }
     }
 
     pub use QemuRiscv64OpenSbiSmp as SmpImpl;

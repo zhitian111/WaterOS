@@ -109,10 +109,15 @@ mod qemu_riscv64_opensbi {
             if cpu == boot_cpu {
                 continue;
             }
+            info!("[smp] hart_start cpu={} entry={:#x} opaque={:#x}",
+                  raw,
+                  entry,
+                  dtb_pa);
             match platform::smp::start_cpu(cpu, entry, dtb_pa) {
                 Ok(()) | Err(platform::smp::PlatformSmpError::AlreadyAvailable) => {
                     requested.insert(cpu);
-                    info!("[smp] requested start for cpu={}", raw);
+                    let status = platform::smp::cpu_status(cpu);
+                    info!("[smp] hart_start accepted cpu={} status={:?}", raw, status);
                 }
                 // A smaller QEMU `-smp` simply has no hart at this index.
                 Err(platform::smp::PlatformSmpError::InvalidCpu) => break,
@@ -137,16 +142,20 @@ mod qemu_riscv64_opensbi {
             core::hint::spin_loop();
         }
         let online = task::online_cpu_mask();
+        warn!("[smp] AP online timeout requested={:#x} online={:#x}",
+              requested.bits(),
+              online.bits());
         panic!("[smp] AP online timeout: requested={:#x}, online={:#x}",
                requested.bits(),
                online.bits());
     }
     /// AP 入口：BSP 初始化完成后被调用；局部初始化后加入调度。
     fn ap_main(cpu_id : task::CpuId) -> ! {
-        warn!("[boot-init] AP cpu={} entering scheduler",
+        warn!("[smp] AP entered Rust cpu={}",
               cpu_id.raw());
         platform::arch::cpu::init_current_cpu(cpu_id).expect("AP init current CPU");
         platform::arch::init();
+        let _ = platform::smp::init_ipi();
         platform::arch::paging::activate_address_space_token_and_flush(mm::kernel_mm::kernel_satp());
         // 开 AP 定时器中断，使 idle 能被 tick 唤醒从而从全局就绪队列取任务
         platform::interrupt::enable_timer_interrupt().expect("AP enable timer interrupt");
@@ -195,9 +204,8 @@ mod qemu_riscv64_opensbi {
         crate::boot_timebase::probe_and_init_timebase(dtb_pa);
         runtime::heap_allocator::init();
         platform::arch::init();
-        task::init();
+        task::init_on_cpu(cpu_id);
         crate::dashboard::init();
-        task::set_cpu_online(cpu_id);
         crate::trap_handler::init();
         // MM 初始化
         let memory_end = driver::physical_ram_end_exclusive();
@@ -232,7 +240,9 @@ mod qemu_loongarch64_virt {
               cpu_id.raw());
         platform::arch::cpu::init_current_cpu(cpu_id).expect("AP init current CPU");
         platform::arch::init();
+        let _ = platform::smp::init_ipi();
         platform::interrupt::enable_timer_interrupt().expect("AP enable timer interrupt");
+        platform::arch::interrupt::enable_soft_interrupt();
         platform::timer::set_timer_after_ms(100).expect("AP set initial timer");
         task::set_cpu_online(cpu_id);
         task::run_first_task_on_current_cpu(cpu_id)
@@ -266,9 +276,10 @@ mod qemu_loongarch64_virt {
         platform::arch::cpu::init_current_cpu(task::CpuId::from_raw(cpu_raw))
             .expect("BSP init current CPU");
         platform::arch::init();
+        let _ = platform::smp::init_ipi();
         driver::init_when_boot(envp);
         crate::boot_timebase::probe_and_init_timebase(envp);
-        task::init();
+        task::init_on_cpu(task::CpuId::from_raw(cpu_raw));
         crate::dashboard::init();
         crate::trap_handler::init();
         platform::arch::paging::init_paging_disable_mmu();
@@ -282,6 +293,7 @@ mod qemu_loongarch64_virt {
         crate::register_runtime_console_writer();
         crate::dashboard::start();
         platform::interrupt::enable_timer_interrupt().unwrap();
+        platform::arch::interrupt::enable_soft_interrupt();
         platform::timer::set_timer_after_ms(100).unwrap();
         platform::interrupt::enable_global_interrupt().unwrap();
         task::run_first_task()
