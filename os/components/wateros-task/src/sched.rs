@@ -1,8 +1,8 @@
 //! 调度策略与 CPU 亲和性原语。
 
 use api_v0::{
-    ProcessId, SchedError, SchedParam, SchedPolicy, TaskId, ThreadId, SCHED_CPU_MASK_MIN_BYTES,
-    SCHED_CPU_MASK_RET_BYTES,
+    CpuMask, ProcessId, SchedError, SchedParam, SchedPolicy, TaskId, ThreadId,
+    SCHED_CPU_MASK_MIN_BYTES, SCHED_CPU_MASK_RET_BYTES,
 };
 
 use crate::scheduler::{self};
@@ -49,16 +49,6 @@ pub fn get_param(task_id : TaskId) -> Result<SchedParam, SchedError> {
                                                                 .sched_priority })
 }
 
-/// 将单节点 CPU 0 亲和性 mask 写入 `out`（长度至少为 `cpusetsize` 字节）。
-pub fn fill_cpu_affinity_mask(out : &mut [u8]) {
-    for byte in out.iter_mut() {
-        *byte = 0;
-    }
-    if !out.is_empty() {
-        out[0] |= 1;
-    }
-}
-
 /// 返回写入 userspace 的有效 mask 字节数。
 #[must_use]
 pub const fn cpu_affinity_ret_bytes() -> usize { SCHED_CPU_MASK_RET_BYTES }
@@ -91,16 +81,14 @@ pub fn set_param(task_id : TaskId, param : SchedParam) -> Result<(), SchedError>
     scheduler::apply_sched_policy_change(task_id, policy, full_param)
 }
 
-/// 设置 CPU 亲和性；单核 bring-up 仅支持 CPU0，mask 包含 CPU0 即成功。
-pub fn set_affinity(task_id : TaskId, mask : &[u8]) -> Result<(), SchedError> {
+/// 设置任务 CPU 亲和性。目标 mask 必须只包含已配置且至少一个 online CPU。
+pub fn set_affinity(task_id : TaskId, mask : CpuMask) -> Result<(), SchedError> {
     ensure_task_exists(task_id)?;
-    if mask.first()
-           .is_some_and(|byte| (byte & 1) != 0)
-    {
-        Ok(())
-    } else {
-        Err(SchedError::InvalidArg)
-    }
+    scheduler::set_affinity(task_id, mask)
+}
+pub fn get_affinity(task_id : TaskId) -> Result<CpuMask, SchedError> {
+    ensure_task_exists(task_id)?;
+    scheduler::get_affinity(task_id)
 }
 
 // 确认 task 仍存在于调度器 registry。

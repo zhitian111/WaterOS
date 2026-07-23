@@ -37,7 +37,7 @@ pub use process::{
     wake_parent_child_waiters, ProcessPurgeStats,
 };
 pub use sched::{
-    cpu_affinity_ret_bytes, fill_cpu_affinity_mask, get_param, get_scheduler, resolve_sched_pid,
+    cpu_affinity_ret_bytes, get_affinity, get_param, get_scheduler, resolve_sched_pid,
     set_affinity, set_param, set_scheduler, validate_cpu_affinity_buf_len,
 };
 pub use schedule::{

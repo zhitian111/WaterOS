@@ -993,3 +993,21 @@ pub fn apply_sched_policy_change(task_id : TaskId,
         }
     }
 }
+pub fn set_affinity(task_id : TaskId, mask : CpuMask) -> Result<(), SchedError> {
+    let cpu_id = cpu::current_cpu_id();
+    let (result, targets) = {
+        let _guard = InterruptGuard::new();
+        with_scheduler(|scheduler| {
+            let result = scheduler.set_affinity(task_id, mask);
+            let targets = scheduler.take_pending_reschedule_cpus();
+            (result, targets)
+        })
+    };
+    // SBI/IPI 调用绝不能发生在 scheduler 锁或中断 guard 的作用域内。
+    dispatch_reschedules(targets, cpu_id);
+    result
+}
+pub fn get_affinity(task_id : TaskId) -> Result<CpuMask, SchedError> {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.get_affinity(task_id))
+}

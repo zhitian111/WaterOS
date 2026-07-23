@@ -30,14 +30,18 @@ impl MultiClassScheduler {
     /// 为新建任务选择 online CPU 中就绪队列负载最小的一个。
     ///
     /// 遍历从 `next_placement_cpu` 开始，因此同样负载不会永远偏向 CPU 0。
-    pub(super) fn pick_cpu_for_new_task(&mut self) -> CpuId {
+    pub(super) fn pick_cpu_for_new_task(&mut self, task_id : TaskId) -> CpuId {
+        let affinity = self.global
+                           .registry
+                           .get_affinity(task_id)
+                           .expect("queued task must exist");
         let mut best_cpu = None;
         let mut min_load = usize::MAX;
         let cpu_count = self.cpu_states
                             .len();
         for offset in 0..cpu_count {
             let i = (self.next_placement_cpu + offset) % cpu_count;
-            if !self.cpu_states[i].online {
+            if !self.cpu_states[i].online || !affinity.contains(CpuId::from_raw(i)) {
                 continue;
             }
             let load = self.cpu_load(CpuId::from_raw(i));
@@ -229,5 +233,61 @@ impl MultiClassScheduler {
         self.global
             .registry
             .take_current_wait_result(task_id)
+    }
+    pub fn set_affinity(&mut self, task_id : TaskId, mask : CpuMask) -> Result<(), SchedError> {
+        if mask.bits() & !CpuMask::ALL.bits() != 0 {
+            return Err(SchedError::InvalidArg);
+        }
+        if mask.bits() & self.online_cpu_mask().bits() == 0 {
+            return Err(SchedError::InvalidArg);
+        }
+
+        let state = self.global
+                        .registry
+                        .state(task_id)
+                        .ok_or(SchedError::NoSuchTask)?;
+        if matches!(state, TaskState::Exited(_)) {
+            return Err(SchedError::NoSuchTask);
+        }
+        self.global
+            .registry
+            .set_affinity(task_id, mask)?;
+
+        match state {
+            TaskState::Ready => {
+                // create_* 会先登记一个 Ready TCB、稍后才入 runqueue。此时
+                // `ready_cpu_id` 为 None；只保存 affinity，首次入队会按新 mask
+                // 选核，不能把它当作调度器不变量而 panic。
+                if let Some(ready_cpu) = self.global
+                                                 .registry
+                                                 .ready_cpu_id(task_id)
+                {
+                    if !mask.contains(ready_cpu) {
+                        let target = self.pick_cpu_for_new_task(task_id);
+                        self.enqueue_ready_by_cpu(task_id, target);
+                        self.request_reschedule(target);
+                    }
+                }
+            }
+            TaskState::Running => {
+                let running_cpu = self.global
+                                      .registry
+                                      .running_cpu_id(task_id)
+                                      .expect("running task must have a CPU owner");
+                if !mask.contains(running_cpu) {
+                    // 不从远端 CPU 修改运行现场。由目标 CPU 在收到 IPI 后进入
+                    // Reschedule 路径，把当前任务重新入队到允许的 CPU。
+                    self.request_reschedule(running_cpu);
+                }
+            }
+            TaskState::Blocking(_) | TaskState::Sleeping { .. } => {}
+            TaskState::Exited(_) => unreachable!(),
+        }
+        Ok(())
+    }
+    pub fn get_affinity(&self, task_id : TaskId) -> Result<CpuMask, SchedError> {
+        self.global
+            .registry
+            .get_affinity(task_id)
     }
 }

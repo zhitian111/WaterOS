@@ -8,7 +8,7 @@ use core::mem::size_of;
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
-use task::{SchedError, SchedParam, SchedPolicy};
+use task::{CpuMask, SchedError, SchedParam, SchedPolicy};
 
 use crate::fallible_buf::{try_kbuf, SCHED_CPUSET_MAX};
 use crate::user_copy::{copy_from_user, copy_from_user_struct, copy_to_user, copy_to_user_struct};
@@ -186,7 +186,11 @@ pub(crate) fn sys_sched_setaffinity(args : SyscallArgs) -> UserRet {
     if let Err(e) = copy_from_user(&mut mask, mask_ptr) {
         return UserRet::from_error(e);
     }
-    match task::set_affinity(task_id, &mask) {
+    let mask = match CpuMask::try_from_le_bytes(&mask) {
+        Some(mask) => mask,
+        None => return UserRet::from_error(ErrNo::EINVAL),
+    };
+    match task::set_affinity(task_id, mask) {
         Ok(()) => UserRet::from_success(0),
         Err(e) => UserRet::from_error(sched_err_to_errno(e)),
     }
@@ -240,7 +244,11 @@ pub(crate) fn sys_sched_getaffinity(args : SyscallArgs) -> UserRet {
         Ok(buf) => buf,
         Err(err) => return UserRet::from_error(err),
     };
-    task::fill_cpu_affinity_mask(&mut buf);
+    let affinity = match task::get_affinity(task_id) {
+        Ok(mask) => mask,
+        Err(e) => return UserRet::from_error(sched_err_to_errno(e)),
+    };
+    affinity.write_le_bytes(&mut buf);
     match copy_to_user(mask_ptr, &buf) {
         Ok(n) if n == buf.len() => UserRet::from_success(task::cpu_affinity_ret_bytes()),
         Ok(_) => UserRet::from_error(ErrNo::EFAULT),

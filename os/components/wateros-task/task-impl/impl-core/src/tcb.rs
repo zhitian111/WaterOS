@@ -6,7 +6,7 @@
 use abi::user_ret::UserRet;
 use alloc::boxed::Box;
 use api_v0::{
-    AddressSpaceHandle, CpuId, ExitedTask, KernelStack, KernelTaskEntry, SchedPolicy,
+    AddressSpaceHandle, CpuId, CpuMask, ExitedTask, KernelStack, KernelTaskEntry, SchedPolicy,
     TaskBootstrap, TaskExitCode, TaskId, TaskKind, TaskRuntimeStats, TaskSnapshot, TaskState,
     TaskTick, TaskTrapSnapshot, TaskWaitResult, TaskWaitTarget, UserImageInfo, UserStack, UserTask,
 };
@@ -105,6 +105,9 @@ pub struct TaskControlBlock {
     last_cpu_id : Option<CpuId>,
     /// Sole source of truth for the CPU while `state == Running`.
     running_cpu_id : Option<CpuId>,
+    /// CPUs on which this task may run. The scheduler further intersects this
+    /// with its configured and online CPU sets before selecting a runqueue.
+    affinity : CpuMask,
 }
 
 impl TaskControlBlock {
@@ -132,7 +135,8 @@ impl TaskControlBlock {
                                                            bootstrap }),
                ready_cpu_id : None,
                last_cpu_id : None,
-               running_cpu_id : None }
+               running_cpu_id : None,
+               affinity : CpuMask::ALL }
     }
 
     /// 创建 idle 任务。
@@ -155,7 +159,8 @@ impl TaskControlBlock {
                                                          bootstrap }),
                ready_cpu_id : None,
                last_cpu_id : None,
-               running_cpu_id : None }
+               running_cpu_id : None,
+               affinity : CpuMask::ALL }
     }
 
     /// 创建一个用户任务。
@@ -175,7 +180,8 @@ impl TaskControlBlock {
                inner : TaskInner::User(user),
                ready_cpu_id : None,
                last_cpu_id : None,
-               running_cpu_id : None }
+               running_cpu_id : None,
+               affinity : CpuMask::ALL }
     }
 
     /// 从父任务 fork 一个子用户任务。独立地址空间、独立 trap frame、独立内核栈，但共享父任务的用户映像。
@@ -230,7 +236,8 @@ impl TaskControlBlock {
                                                             user : child_spec }),
                     ready_cpu_id : None,
                     last_cpu_id : None,
-                    running_cpu_id : None })
+                    running_cpu_id : None,
+                    affinity : self.affinity })
     }
 
     /// 从当前用户任务 clone 一个同进程线程。共享地址空间
@@ -270,7 +277,8 @@ impl TaskControlBlock {
                                                             user : parent_user.user }),
                     ready_cpu_id : None,
                     last_cpu_id : None,
-                    running_cpu_id : None })
+                    running_cpu_id : None,
+                    affinity : self.affinity })
     }
 
     /// execve：替换当前任务的地址空间、栈和入口。
@@ -340,7 +348,10 @@ impl TaskControlBlock {
         self.sched_policy = policy;
         self.sched_priority = priority;
     }
+    pub fn set_affinity(&mut self, mask : CpuMask) { self.affinity = mask; }
 
+    #[inline]
+    pub fn affinity(&self) -> CpuMask { self.affinity }
     #[inline]
     pub fn is_idle(&self) -> bool { matches!(self.inner, TaskInner::Idle(_)) }
 

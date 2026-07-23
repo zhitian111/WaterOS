@@ -6,8 +6,8 @@ use alloc::vec::Vec;
 use arch::task::ActiveArchTaskContext as TaskContext;
 use arch::trap::ActiveTrapFrame as TaskTrapFrame;
 use task_api::{
-    CpuId, ExitedTask, KernelTaskEntry, SchedPolicy, TaskExitCode, TaskId, TaskSnapshot, TaskState,
-    TaskTick, TaskWaitResult, TaskWaitTarget, UserTask, IDLE_TASK_ID,
+    CpuId, CpuMask, ExitedTask, KernelTaskEntry, SchedError, SchedPolicy, TaskExitCode, TaskId,
+    TaskSnapshot, TaskState, TaskTick, TaskWaitResult, TaskWaitTarget, UserTask, IDLE_TASK_ID,
 };
 use task_impl::TaskControlBlock;
 
@@ -210,10 +210,7 @@ impl TaskRegistry {
     }
 
     /// 按规格创建用户任务并返回其 id。
-    pub fn spawn_user_task_spec(&mut self,
-                                spec : UserTask,
-                                parent_id : Option<TaskId>)
-                                -> TaskId {
+    pub fn spawn_user_task_spec(&mut self, spec : UserTask, parent_id : Option<TaskId>) -> TaskId {
         let task_id = self.task_table
                           .allocate_id();
         log::trace!("[task-spawn] user spec id={} entry_pc={:#x} address_space_raw={:#x} \
@@ -560,5 +557,24 @@ impl TaskRegistry {
         self.task_table
             .task_opt(task_id)
             .is_some_and(|task| matches!(task.state(), TaskState::Ready))
+    }
+    pub fn set_affinity(&mut self, task_id : TaskId, mask : CpuMask) -> Result<(), SchedError> {
+        if let Some(task) = self.task_table
+                                .task_mut_opt(task_id)
+        {
+            task.set_affinity(mask);
+            Ok(())
+        } else {
+            Err(SchedError::NoSuchTask)
+        }
+    }
+    pub fn get_affinity(&self, task_id : TaskId) -> Result<CpuMask, SchedError> {
+        if let Some(task) = self.task_table
+                                .task_opt(task_id)
+        {
+            Ok(task.affinity())
+        } else {
+            Err(SchedError::NoSuchTask)
+        }
     }
 }

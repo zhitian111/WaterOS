@@ -147,7 +147,13 @@ impl MultiClassScheduler {
                 let current = self.global
                                   .registry
                                   .task_snapshot(current_id);
-                if !self.ready_task_should_preempt(current_id, current, cpu_id) {
+                let current_affinity = self.global
+                                           .registry
+                                           .get_affinity(current_id)
+                                           .expect("current task must exist");
+                if current_affinity.contains(cpu_id) &&
+                   !self.ready_task_should_preempt(current_id, current, cpu_id)
+                {
                     return None;
                 }
                 self.cpu_states[cpu_id.raw()].other_queue
@@ -499,8 +505,22 @@ impl MultiClassScheduler {
     fn enqueue_task(&mut self, target : QueueTarget, current_task_id : TaskId, cpu_id : CpuId) {
         match target {
             QueueTarget::Ready => {
-                // Yield/Tick 的运行任务不迁移，始终回到它原来的 CPU。
-                self.enqueue_ready_by_cpu(current_task_id, cpu_id);
+                // 通常 Yield/Tick 会回到当前 CPU；但若 affinity 在运行期间被
+                // 改为排除当前 CPU，必须由本 CPU 的 Reschedule 路径把它放到
+                // 允许的远端 runqueue，不能继续在禁止 CPU 上运行。
+                let affinity = self.global
+                                   .registry
+                                   .get_affinity(current_task_id)
+                                   .expect("current task must exist");
+                let target_cpu = if affinity.contains(cpu_id) {
+                    cpu_id
+                } else {
+                    self.pick_cpu_for_new_task(current_task_id)
+                };
+                self.enqueue_ready_by_cpu(current_task_id, target_cpu);
+                if target_cpu != cpu_id {
+                    self.request_reschedule(target_cpu);
+                }
             }
             QueueTarget::Blocked(reason) => {
                 self.global
@@ -555,7 +575,7 @@ impl MultiClassScheduler {
     }
     /// 选出一个 CPU 来放置新创建的任务（fork/clone/spawn）。
     pub(super) fn enqueue_ready_task(&mut self, task_id : TaskId) {
-        let picked_cpu = self.pick_cpu_for_new_task();
+        let picked_cpu = self.pick_cpu_for_new_task(task_id);
         self.enqueue_ready_by_cpu(task_id, picked_cpu);
         self.request_reschedule(picked_cpu);
     }
@@ -565,6 +585,10 @@ impl MultiClassScheduler {
     ///
     /// `last_cpu_id` 不可用时才回退到新任务的最小负载选核策略。
     pub(super) fn enqueue_woken_task(&mut self, task_id : TaskId) -> CpuId {
+        let affinity = self.global
+                           .registry
+                           .get_affinity(task_id)
+                           .expect("woken task must exist");
         let target = self.global
                          .registry
                          .last_cpu_id(task_id)
@@ -573,7 +597,8 @@ impl MultiClassScheduler {
                                                       .len())
                          })
                          .filter(|cpu_id| self.cpu_states[cpu_id.raw()].online)
-                         .unwrap_or_else(|| self.pick_cpu_for_new_task());
+                         .filter(|cpu_id| affinity.contains(*cpu_id))
+                         .unwrap_or_else(|| self.pick_cpu_for_new_task(task_id));
         self.enqueue_ready_by_cpu(task_id, target);
         self.request_reschedule(target);
         target
@@ -602,6 +627,14 @@ impl MultiClassScheduler {
                      .registry
                      .is_idle(task_id),
                 "idle task must not be placed on a ready queue");
+        debug_assert!(self.cpu_states[cpu_id.raw()].online,
+                      "ready task must target an online CPU");
+        debug_assert!(self.global
+                          .registry
+                          .get_affinity(task_id)
+                          .expect("queued task must exist")
+                          .contains(cpu_id),
+                      "ready task must target a CPU allowed by its affinity");
         if let Some(old_cpu_id) = self.global
                                       .registry
                                       .ready_cpu_id(task_id)
@@ -609,13 +642,6 @@ impl MultiClassScheduler {
             // 策略切换或防御性重复入队时，先根据 TCB 所记录的旧归属摘除。
             // 这样同一任务不会同时存在于两个 CPU 的 runqueue。
             self.remove_from_cpu_runqueue(task_id, old_cpu_id);
-        }
-        if let Some(running_cpu_id) = self.global
-                                          .registry
-                                          .running_cpu_id(task_id)
-        {
-            assert_eq!(running_cpu_id, cpu_id,
-                       "a running task may only yield back to its own CPU");
         }
         // Publish lifecycle state and queue ownership as one scheduler-lock
         // transaction.  No observer can see Ready without its target queue.
