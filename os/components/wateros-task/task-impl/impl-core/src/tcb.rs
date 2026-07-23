@@ -95,12 +95,10 @@ pub struct TaskControlBlock {
     sched_policy : SchedPolicy,
     sched_priority : i32,
     /// 普通调度类（`SCHED_OTHER`）的线程级 nice 属性。
-    nice : i8,
-    /// `SCHED_OTHER` 的累计虚拟运行时间。
     ///
-    /// 它属于调度实体而非某个 CPU runqueue，任务迁移到另一 CPU 时仍能
-    /// 保持已获得 CPU 时间的公平性。
-    other_vruntime : u64,
+    /// 调度器尚未据此改变队列选择；该字段先作为唯一的 task-level 真相，
+    /// 避免继续把线程调度属性存成 process-wide 状态。
+    nice : i8,
     stats : TaskRuntimeStats,
     wait_result : Option<TaskWaitResult>,
     task_cx : TaskContext,
@@ -136,7 +134,6 @@ impl TaskControlBlock {
                sched_policy : SchedPolicy::Other,
                sched_priority : 0,
                nice : 0,
-               other_vruntime : 0,
                stats : TaskRuntimeStats::default(),
                wait_result : None,
                task_cx,
@@ -162,7 +159,6 @@ impl TaskControlBlock {
                sched_policy : SchedPolicy::Other,
                sched_priority : 0,
                nice : 0,
-               other_vruntime : 0,
                stats : TaskRuntimeStats::default(),
                wait_result : None,
                task_cx,
@@ -186,7 +182,6 @@ impl TaskControlBlock {
                sched_policy : SchedPolicy::Other,
                sched_priority : 0,
                nice : 0,
-               other_vruntime : 0,
                stats : TaskRuntimeStats::default(),
                wait_result : None,
                task_cx,
@@ -242,7 +237,6 @@ impl TaskControlBlock {
                     sched_policy : self.sched_policy,
                     sched_priority : self.sched_priority,
                     nice : self.nice,
-                    other_vruntime : self.other_vruntime,
                     stats : TaskRuntimeStats::default(),
                     wait_result : None,
                     task_cx,
@@ -285,7 +279,6 @@ impl TaskControlBlock {
                     sched_policy : self.sched_policy,
                     sched_priority : self.sched_priority,
                     nice : self.nice,
-                    other_vruntime : self.other_vruntime,
                     stats : TaskRuntimeStats::default(),
                     wait_result : None,
                     task_cx,
@@ -364,9 +357,6 @@ impl TaskControlBlock {
     pub fn nice(&self) -> i8 { self.nice }
 
     #[inline]
-    pub fn other_vruntime(&self) -> u64 { self.other_vruntime }
-
-    #[inline]
     pub fn set_sched(&mut self, policy : SchedPolicy, priority : i32) {
         self.sched_policy = policy;
         self.sched_priority = priority;
@@ -374,16 +364,6 @@ impl TaskControlBlock {
 
     #[inline]
     pub fn set_nice(&mut self, nice : i8) { self.nice = nice; }
-
-    #[inline]
-    pub fn set_other_vruntime(&mut self, vruntime : u64) { self.other_vruntime = vruntime; }
-
-    #[inline]
-    pub fn charge_other_vruntime(&mut self, delta : u64) -> u64 {
-        self.other_vruntime = self.other_vruntime
-                                 .saturating_add(delta);
-        self.other_vruntime
-    }
     pub fn set_affinity(&mut self, mask : CpuMask) { self.affinity = mask; }
 
     #[inline]

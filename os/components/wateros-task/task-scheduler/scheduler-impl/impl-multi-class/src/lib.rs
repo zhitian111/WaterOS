@@ -1014,7 +1014,7 @@ pub fn get_affinity(task_id : TaskId) -> Result<CpuMask, SchedError> {
 
 /// 设置线程级 nice 属性。
 ///
-/// `SCHED_OTHER` 在后续 timer tick 按该值累计 vruntime，从而获得对应 CPU 份额。
+/// 当前阶段只更新 TCB；`OtherQueue` 尚未按 nice 加权，因此不会改变运行顺序。
 pub fn set_nice(task_id : TaskId, nice : i8) -> Result<(), SchedError> {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.set_nice(task_id, nice))

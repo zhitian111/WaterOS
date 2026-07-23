@@ -291,8 +291,7 @@ impl MultiClassScheduler {
             .get_affinity(task_id)
     }
 
-    /// 更新 task-level nice。`SCHED_OTHER` 在后续 timer tick 按新权重累计
-    /// vruntime；不把它当成实时优先级进行立即抢占。
+    /// 仅保存 task-level nice；暂不改变 `OtherQueue` 的 FIFO 选择或触发重调度。
     pub fn set_nice(&mut self, task_id : TaskId, nice : i8) -> Result<(), SchedError> {
         let state = self.global
                         .registry
