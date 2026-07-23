@@ -79,11 +79,11 @@ impl SocketRef {
     }
 
     /// 原子完成 accept 与监听句柄置换，串行化同一监听 fd 上的并发 accept。
-    pub fn accept(&self) -> Result<(SocketHandle, u16), &'static str> {
+    pub fn accept(&self) -> Result<(SocketHandle, [u8; 4], u16), &'static str> {
         let mut listener = self.inner.handle.lock();
-        let (established, replacement, port) = stack::socket_accept(*listener)?;
+        let (established, replacement, peer_ip, peer_port) = stack::socket_accept(*listener)?;
         *listener = replacement;
-        Ok((established, port))
+        Ok((established, peer_ip, peer_port))
     }
 
     pub fn status_flags(&self) -> usize {

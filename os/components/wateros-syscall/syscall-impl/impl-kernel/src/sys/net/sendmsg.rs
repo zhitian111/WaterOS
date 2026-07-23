@@ -128,6 +128,7 @@ pub(crate) fn sys_sendmsg(args: SyscallArgs) -> UserRet {
 
     match sent {
         Ok(n) => UserRet::from_success(n),
+        Err("udp payload too large") => UserRet::from_error(ErrNo::EMSGSIZE),
         Err(e) => {
             log::warn!("[syscall] sendmsg failed: {}", e);
             UserRet::from_error(ErrNo::EIO)

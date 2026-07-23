@@ -77,7 +77,7 @@ fn accept_inner(fd: usize, addr_ptr: usize, addrlen_ptr: usize, flags: usize) ->
         || socket_fd::is_nonblocking(fd);
     let task_id = task::current_task_id().unwrap_or(0);
 
-    let (established_handle, _accepted_port) = loop {
+    let (established_handle, peer_ip, peer_port) = loop {
         drive_network_stack();
         match socket.accept() {
             Ok(accepted) => break accepted,
@@ -117,11 +117,9 @@ fn accept_inner(fd: usize, addr_ptr: usize, addrlen_ptr: usize, flags: usize) ->
     // 写回客户端地址（如果有 addr 缓冲区）
     if addr_ptr != 0 && addrlen_ptr != 0 {
         let addr = SockAddrIn {
-            sin_family: 2,          // AF_INET
-            sin_port: 0u16.to_be(), // unknown client port from smoltcp
-            sin_addr: [
-                127, 0, 0, 1,
-            ],
+            sin_family: 2, // AF_INET
+            sin_port: peer_port.to_be(),
+            sin_addr: peer_ip,
             sin_zero: [0; 8],
         };
         if let Ok(addrlen_val) = crate::user_copy::copy_from_user_struct::<u32>(addrlen_ptr) {

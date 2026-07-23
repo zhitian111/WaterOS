@@ -90,6 +90,7 @@ pub(crate) fn sys_sendto(args: SyscallArgs) -> UserRet {
 
     match stack::socket_sendto(handle, &kbuf, ip, port) {
         Ok(n) => UserRet::from_success(n),
+        Err("udp payload too large") => UserRet::from_error(ErrNo::EMSGSIZE),
         Err(e) => {
             log::warn!("[syscall] sendto failed: {}", e);
             UserRet::from_error(ErrNo::EIO)
@@ -111,7 +112,13 @@ fn send_connected_socket(
                 Ok(n) if n == len => {}
                 _ => return Err(ErrNo::EFAULT),
             }
-            stack::socket_send(handle, &kbuf).map_err(|_| ErrNo::EIO)
+            stack::socket_send(handle, &kbuf).map_err(|err| {
+                if err == "udp payload too large" {
+                    ErrNo::EMSGSIZE
+                } else {
+                    ErrNo::EIO
+                }
+            })
         }
     }
 }

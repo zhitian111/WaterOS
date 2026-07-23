@@ -10,6 +10,10 @@ use crate::socket_block::socket_blocking_tick;
 use crate::socket_fd;
 use crate::user_copy::copy_from_user_struct;
 
+/// 兜底避免设备丢包或协议状态异常导致阻塞 connect 永久挂起。
+/// 调度 tick 当前为 10ms，约对应 30 秒。
+const TCP_CONNECT_WAIT_TICKS: usize = 3_000;
+
 #[repr(C)]
 #[derive(Copy, Clone)]
 // 本结构代码由AI完成
@@ -74,17 +78,24 @@ pub(crate) fn sys_connect(args: SyscallArgs) -> UserRet {
 
 fn wait_connected(handle: smoltcp::iface::SocketHandle) -> UserRet {
     let task_id = task::current_task_id().unwrap_or(0);
-    loop {
+    for _ in 0..TCP_CONNECT_WAIT_TICKS {
         drive_network_stack();
         if stack::socket_is_connected(handle).unwrap_or(false)
             && stack::socket_may_send(handle).unwrap_or(false)
         {
             return UserRet::from_success(0);
         }
+        if matches!(
+            stack::socket_state(handle),
+            Ok(stack::SocketState::Closed)
+        ) {
+            return UserRet::from_error(ErrNo::ECONNREFUSED);
+        }
         if let Err(errno) = socket_blocking_tick(false, task_id) {
             return UserRet::from_error(errno);
         }
     }
+    UserRet::from_error(ErrNo::ETIMEDOUT)
 }
 
 fn drive_network_stack() {
