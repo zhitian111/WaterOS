@@ -145,7 +145,6 @@ fn take_task_id_by_id(queue : &mut VecDeque<TaskId>, task_id : TaskId) -> bool {
     }
 }
 /// `SCHED_FIFO` 就绪队列。
-// 本结构代码由AI完成
 pub struct FifoQueue {
     buckets : [VecDeque<TaskId>; RT_BUCKET_COUNT],
 }
@@ -200,7 +199,6 @@ use config::task::MAX_RT_TICKS_PER_TASK;
 fn priority_from_index(index : usize) -> i32 { (index as i32) + RT_PRIORITY_MIN }
 
 /// RR tick 处理结果。
-// 本结构代码由AI完成
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RrTickAction {
     /// 继续运行当前 RR 任务。
@@ -210,7 +208,6 @@ pub enum RrTickAction {
 }
 
 /// `SCHED_RR` 就绪队列。
-// 本结构代码由AI完成
 pub struct RrQueue {
     buckets : [VecDeque<TaskId>; RT_BUCKET_COUNT],
     current : Option<(TaskId, i32)>,

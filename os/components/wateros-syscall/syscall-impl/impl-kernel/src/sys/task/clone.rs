@@ -1,10 +1,5 @@
 //! `clone`/`fork` 系统调用实现。
-//!
-//! fork 时会为子进程创建**独立地址空间**（通过 `mm::kernel_mm::fork_user_aspace`），
-//! 复制父进程 trap 帧（a0 置 0 作为子进程返回值），继承 cwd 与 fd 表（经 VFS duplicate）。
-//!
-//! clone（`child_stack ≠ 0`）时子进程使用调用者提供的独立栈。
-//! fork（`child_stack == 0`）时子进程 SP 由 [`task`] 层 `fork_from` 按父栈区间设置。
+//! 本模块代码由AI完成
 
 use alloc::string::String;
 
@@ -33,16 +28,14 @@ const CLONE_INTO_CGROUP : usize = 0x0000_0002_0000_0000;
 /// Linux `CSIGNAL`：fork 路径仅允许低 8 位退出信号号。
 const CLONE_CSIGNAL_MASK : usize = 0xFF;
 const CLONE_FORK_COMPAT_MASK : usize = CLONE_CSIGNAL_MASK |
-                                        CLONE_FS_RAW |
-                                        CLONE_FILES_RAW |
-                                        CLONE_NEWNS_RAW |
-                                        CLONE_PARENT_SETTID_RAW |
-                                        CLONE_CHILD_CLEARTID_RAW |
-                                        CLONE_CHILD_SETTID_RAW;
-const CLONE_VFORK_COMPAT_MASK : usize = CLONE_FORK_COMPAT_MASK |
-                                        CLONE_VM_RAW |
-                                        CLONE_VFORK |
-                                        CLONE_CLEAR_SIGHAND_RAW;
+                                       CLONE_FS_RAW |
+                                       CLONE_FILES_RAW |
+                                       CLONE_NEWNS_RAW |
+                                       CLONE_PARENT_SETTID_RAW |
+                                       CLONE_CHILD_CLEARTID_RAW |
+                                       CLONE_CHILD_SETTID_RAW;
+const CLONE_VFORK_COMPAT_MASK : usize =
+    CLONE_FORK_COMPAT_MASK | CLONE_VM_RAW | CLONE_VFORK | CLONE_CLEAR_SIGHAND_RAW;
 
 struct CloneRequest {
     clone_flags : task::CloneFlags,
@@ -59,8 +52,8 @@ struct CloneSetupGuard {
 
 impl CloneSetupGuard {
     fn new() -> Result<Self, ErrNo> {
-        let state = platform::arch::interrupt::read_global_interrupt_state()
-            .map_err(|_| ErrNo::EIO)?;
+        let state =
+            platform::arch::interrupt::read_global_interrupt_state().map_err(|_| ErrNo::EIO)?;
         platform::arch::interrupt::disable_global_interrupt().map_err(|_| ErrNo::EIO)?;
         Ok(Self { state })
     }
@@ -72,15 +65,33 @@ impl Drop for CloneSetupGuard {
     }
 }
 
-/// clone/fork 系统调用入口。
+/// `clone`/`fork` 系统调用入口（Linux legacy raw syscall ABI）。
 ///
-/// 参数（Linux legacy `clone` raw syscall ABI）：
+/// 参数：
 /// - `arg0`: flags
 /// - `arg1`: child_stack（0 表示复用父任务栈指针）
 /// - `arg2`: parent_tid
 /// - RISC-V: `arg3`: tls, `arg4`: child_tid
 /// - LoongArch: `arg3`: child_tid, `arg4`: tls
-pub(crate) fn sys_clone(args : SyscallArgs) -> UserRet { do_clone(args) }
+///
+/// 根据 flags 决定走 **fork 路径**（复制地址空间）或 **clone_thread 路径**（共享地址空间，创建线程）。
+pub(crate) fn sys_clone(args : SyscallArgs) -> UserRet {
+    #[cfg(target_arch = "loongarch64")]
+    let request = CloneRequest { clone_flags : task::CloneFlags::from_bits(args.arg(0)),
+                                 child_stack : args.arg(1),
+                                 parent_tid : args.arg(2),
+                                 tls : args.arg(4),
+                                 child_tid : args.arg(3),
+                                 cgroup_dir : None };
+    #[cfg(not(target_arch = "loongarch64"))]
+    let request = CloneRequest { clone_flags : task::CloneFlags::from_bits(args.arg(0)),
+                                 child_stack : args.arg(1),
+                                 parent_tid : args.arg(2),
+                                 tls : args.arg(3),
+                                 child_tid : args.arg(4),
+                                 cgroup_dir : None };
+    do_clone_request(request)
+}
 
 /// clone3 系统调用入口。
 ///
@@ -122,61 +133,31 @@ pub(crate) fn sys_clone3(args : SyscallArgs) -> UserRet {
         (clone_args.flags, None)
     };
 
-    if clone_flags & CLONE_INTO_CGROUP != 0 {
-        return UserRet::from_error(ErrNo::EINVAL);
-    }
-
     let child_stack = match clone3_child_stack(clone_args.stack, clone_args.stack_size) {
         Some(sp) => sp,
         None => return UserRet::from_error(ErrNo::EINVAL),
     };
-    do_clone_request(CloneRequest {
-        clone_flags : task::CloneFlags::from_bits(clone_flags | clone_args.exit_signal),
-        child_stack,
-        parent_tid : clone_args.parent_tid,
-        tls : clone_args.tls,
-        child_tid : clone_args.child_tid,
-        cgroup_dir,
-    })
+    do_clone_request(CloneRequest { clone_flags:
+                                        task::CloneFlags::from_bits(clone_flags |
+                                                                    clone_args.exit_signal),
+                                    child_stack,
+                                    parent_tid : clone_args.parent_tid,
+                                    tls : clone_args.tls,
+                                    child_tid : clone_args.child_tid,
+                                    cgroup_dir })
 }
 
-fn validate_clone_into_cgroup_fd(fd: usize) -> Result<String, ErrNo> {
-    let meta = vfs::fd::with_current_io(fd, |handle| handle.metadata()).map_err(vfs_error_to_errno)?;
+fn validate_clone_into_cgroup_fd(fd : usize) -> Result<String, ErrNo> {
+    let meta =
+        vfs::fd::with_current_io(fd, |handle| handle.metadata()).map_err(vfs_error_to_errno)?;
     if meta.node_type != VfsNodeType::Directory {
         return Err(ErrNo::ENOTDIR);
     }
     vfs::fd::with_current_io(fd, |handle| {
-        handle
-            .directory_path()
-            .map(String::from)
-            .ok_or(vfs::api::VfsError::InvalidPath)
-    })
-    .map_err(vfs_error_to_errno)
-}
-
-#[inline(never)]
-fn do_clone(args : SyscallArgs) -> UserRet {
-    do_clone_request(decode_legacy_clone_args(args))
-}
-
-#[cfg(target_arch = "loongarch64")]
-fn decode_legacy_clone_args(args : SyscallArgs) -> CloneRequest {
-    CloneRequest { clone_flags : task::CloneFlags::from_bits(args.arg(0)),
-                   child_stack : args.arg(1),
-                   parent_tid : args.arg(2),
-                   tls : args.arg(4),
-                   child_tid : args.arg(3),
-                   cgroup_dir : None }
-}
-
-#[cfg(not(target_arch = "loongarch64"))]
-fn decode_legacy_clone_args(args : SyscallArgs) -> CloneRequest {
-    CloneRequest { clone_flags : task::CloneFlags::from_bits(args.arg(0)),
-                   child_stack : args.arg(1),
-                   parent_tid : args.arg(2),
-                   tls : args.arg(3),
-                   child_tid : args.arg(4),
-                   cgroup_dir : None }
+        handle.directory_path()
+              .map(String::from)
+              .ok_or(vfs::api::VfsError::InvalidPath)
+    }).map_err(vfs_error_to_errno)
 }
 
 fn do_clone_request(request : CloneRequest) -> UserRet {
@@ -189,7 +170,7 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
                        parent_tid,
                        tls,
                        child_tid,
-                       cgroup_dir } = request;
+                       cgroup_dir, } = request;
 
     if clone_flags.contains(task::CloneFlags::CLONE_THREAD) &&
        !clone_flags.contains(task::CloneFlags::CLONE_VM)
@@ -230,11 +211,11 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
 
     if let Some(process_task) = task::current_process_task_snapshot() {
         if process_task.role != task::ProcessTaskRole::Leader {
-            log::warn!(
-                "[syscall] clone(nr=220) fork from non-leader tid={} pid={}",
-                process_task.tid.raw(),
-                process_task.pid.raw(),
-            );
+            log::warn!("[syscall] clone(nr=220) fork from non-leader tid={} pid={}",
+                       process_task.tid
+                                   .raw(),
+                       process_task.pid
+                                   .raw(),);
             return UserRet::from_error(ErrNo::EPERM);
         }
     }
@@ -285,18 +266,21 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
     }
     if clone_flags.contains(task::CloneFlags::CLONE_CHILD_SETTID) &&
        child_tid != 0 &&
-       copy_to_user_struct_in_aspace(new_aspace_ptr, child_tid, &child_tid_value).is_err()
+       copy_to_user_struct_in_aspace(new_aspace_ptr,
+                                     child_tid,
+                                     &child_tid_value).is_err()
     {
         let _ = task::abort_fork_child(child_id);
         return UserRet::from_error(ErrNo::EFAULT);
     }
     if clone_flags.contains(task::CloneFlags::CLONE_CHILD_CLEARTID) {
-        let _ = task::set_task_clear_child_tid(child_id, Some(task::TaskClearTid::new(child_tid)));
+        let _ = task::set_task_clear_child_tid(child_id,
+                                               Some(task::TaskClearTid::new(child_tid)));
     }
     if crate::sys::ipc::signal::on_fork(parent_signal.task_id,
-                              child_pid,
-                              child_id,
-                              child_tid_raw).is_err()
+                                        child_pid,
+                                        child_id,
+                                        child_tid_raw).is_err()
     {
         if let Some(rolled_pid) = task::abort_fork_child(child_id) {
             crate::sys::ipc::signal::abort_fork_signal(rolled_pid.raw(), child_id);
@@ -326,19 +310,20 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
     crate::unix_sock::copy_fds_from_parent(child_id, parent_id);
 
     cred::fork_cred(parent_id, child_id);
-    if let Err(error) = super::super::shm::fork_task_attachments(parent_id, child_id, new_aspace_ptr) {
+    if let Err(error) =
+        super::super::shm::fork_task_attachments(parent_id, child_id, new_aspace_ptr)
+    {
         log::warn!("[sys_clone] failed to inherit shm attachments: {:?}",
                    error);
     }
 
     if let Some(cgroup_dir) = cgroup_dir {
         if let Err(error) = write_cgroup_procs(cgroup_dir.as_str(), child_pid) {
-            log::warn!(
-                "[syscall] clone3 CLONE_INTO_CGROUP membership update failed dir={} pid={} err={:?}",
-                cgroup_dir,
-                child_pid,
-                error,
-            );
+            log::warn!("[syscall] clone3 CLONE_INTO_CGROUP membership update failed dir={} \
+                        pid={} err={:?}",
+                       cgroup_dir,
+                       child_pid,
+                       error,);
         }
     }
 
@@ -349,7 +334,8 @@ fn write_cgroup_procs(cgroup_dir : &str, child_pid : usize) -> Result<(), ErrNo>
     let path = if cgroup_dir == "/" {
         String::from("/cgroup.procs")
     } else {
-        alloc::format!("{}/cgroup.procs", cgroup_dir.trim_end_matches('/'))
+        alloc::format!("{}/cgroup.procs",
+                       cgroup_dir.trim_end_matches('/'))
     };
     let data = alloc::format!("{child_pid}\n");
     vfs::overwrite_absolute_file(path.as_str(), data.as_bytes()).map_err(vfs_error_to_errno)
@@ -411,13 +397,11 @@ fn do_clone_thread(clone_flags : task::CloneFlags,
         return UserRet::from_error(ErrNo::EFAULT);
     }
 
-    log::trace!(
-        "[pthread-debug] clone_thread tid={} child_tid_addr={:#x} cleartid={} settid={}",
-        child_tid_raw,
-        child_tid,
-        clone_flags.contains(task::CloneFlags::CLONE_CHILD_CLEARTID),
-        clone_flags.contains(task::CloneFlags::CLONE_CHILD_SETTID),
-    );
+    log::trace!("[pthread-debug] clone_thread tid={} child_tid_addr={:#x} cleartid={} settid={}",
+                child_tid_raw,
+                child_tid,
+                clone_flags.contains(task::CloneFlags::CLONE_CHILD_CLEARTID),
+                clone_flags.contains(task::CloneFlags::CLONE_CHILD_SETTID),);
 
     if clone_flags.contains(task::CloneFlags::CLONE_FS) {
         vfs::cwd::share_cwd_from_parent(child_id, parent_id);
@@ -495,7 +479,9 @@ fn validate_clone3_unknown_tail(ptr : usize, size : usize) -> Result<(), ErrNo> 
         if copied != len {
             return Err(ErrNo::EFAULT);
         }
-        if buf[..len].iter().any(|&byte| byte != 0) {
+        if buf[..len].iter()
+                     .any(|&byte| byte != 0)
+        {
             return Err(ErrNo::E2BIG);
         }
         offset += len;
@@ -526,20 +512,17 @@ fn validate_fork_clone_flags(clone_flags : task::CloneFlags) -> Result<(), ErrNo
     }
 
     if bits & !CLONE_VFORK_COMPAT_MASK == 0 && bits & CLONE_VFORK != 0 {
-        log::trace!(
-            "[syscall] clone(nr=220) emulating vfork flags={:#x} as fork",
-            bits,
-        );
+        log::trace!("[syscall] clone(nr=220) emulating vfork flags={:#x} as fork",
+                    bits,);
         return Ok(());
     }
 
     let unsupported = bits & !CLONE_FORK_COMPAT_MASK;
-    log::warn!(
-        "[syscall] clone(nr=220) fork unsupported flags={:#x} (allowed CSIGNAL={:#x}, tid compat={:#x}, vfork compat={:#x})",
-        unsupported,
-        bits & CLONE_CSIGNAL_MASK,
-        CLONE_PARENT_SETTID_RAW | CLONE_CHILD_CLEARTID_RAW | CLONE_CHILD_SETTID_RAW,
-        CLONE_VM_RAW | CLONE_VFORK | CLONE_CLEAR_SIGHAND_RAW,
-    );
+    log::warn!("[syscall] clone(nr=220) fork unsupported flags={:#x} (allowed CSIGNAL={:#x}, tid \
+                compat={:#x}, vfork compat={:#x})",
+               unsupported,
+               bits & CLONE_CSIGNAL_MASK,
+               CLONE_PARENT_SETTID_RAW | CLONE_CHILD_CLEARTID_RAW | CLONE_CHILD_SETTID_RAW,
+               CLONE_VM_RAW | CLONE_VFORK | CLONE_CLEAR_SIGHAND_RAW,);
     Err(ErrNo::EINVAL)
 }

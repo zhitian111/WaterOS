@@ -284,6 +284,36 @@ pub fn set_process_nice(pid : ProcessId, nice : i32) -> bool {
     with_process_registry(|registry| registry.set_process_nice(pid, nice))
 }
 
+/// 读取进程 umask。
+pub fn get_process_umask(pid : ProcessId) -> Option<u32> {
+    with_process_registry(|registry| registry.get_process_umask(pid))
+}
+
+/// 设置进程 umask。
+pub fn set_process_umask(pid : ProcessId, mask : u32) -> bool {
+    with_process_registry(|registry| registry.set_process_umask(pid, mask))
+}
+
+/// 读取进程 parent-death-signal。
+pub fn get_parent_death_signal(pid : ProcessId) -> Option<i32> {
+    with_process_registry(|registry| registry.get_parent_death_signal(pid))
+}
+
+/// 设置进程 parent-death-signal。
+pub fn set_parent_death_signal(pid : ProcessId, sig : i32) -> bool {
+    with_process_registry(|registry| registry.set_parent_death_signal(pid, sig))
+}
+
+/// 读取线程名（`comm`）。
+pub fn get_thread_comm(task_id : TaskId) -> Option<[u8; 16]> {
+    with_process_registry(|registry| registry.get_thread_comm(task_id))
+}
+
+/// 设置线程名（`comm`）。
+pub fn set_thread_comm(task_id : TaskId, comm : [u8; 16]) -> bool {
+    with_process_registry(|registry| registry.set_thread_comm(task_id, comm))
+}
+
 /// 读取进程组 id。
 pub fn get_process_pgid(pid : ProcessId) -> Option<ProcessId> {
     with_process_registry(|registry| registry.get_process_pgid(pid))

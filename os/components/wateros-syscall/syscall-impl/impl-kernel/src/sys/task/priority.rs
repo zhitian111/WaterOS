@@ -1,5 +1,4 @@
 //! `setpriority(2)` / `getpriority(2)`：仅维护 per-process nice 变量，不参与调度。
-
 //! 本模块代码由AI完成
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
@@ -7,28 +6,27 @@ use abi::user_ret::UserRet;
 use cred::current_credentials;
 use task::ProcessId;
 
-const PRIO_PROCESS: i32 = 0;
-const PRIO_PGRP: i32 = 1;
-const PRIO_USER: i32 = 2;
-const NICE_MIN: i32 = -20;
-const NICE_MAX: i32 = 19;
+const PRIO_PROCESS : i32 = 0;
+const PRIO_PGRP : i32 = 1;
+const PRIO_USER : i32 = 2;
+const NICE_MIN : i32 = -20;
+const NICE_MAX : i32 = 19;
 
-fn clamp_nice(prio: i32) -> i32 {
-    prio.clamp(NICE_MIN, NICE_MAX)
-}
+fn clamp_nice(prio : i32) -> i32 { prio.clamp(NICE_MIN, NICE_MAX) }
 
 fn caller_is_privileged() -> bool {
-    current_credentials().effective_uid.0 == 0
+    current_credentials().effective_uid
+                         .0 ==
+    0
 }
 
-fn resolve_process_target(who: i32) -> Result<ProcessId, ErrNo> {
+fn resolve_process_target(who : i32) -> Result<ProcessId, ErrNo> {
     if who < 0 {
         return Err(ErrNo::ESRCH);
     }
     let pid = if who == 0 {
-        task::current_process_task_snapshot()
-            .ok_or(ErrNo::ESRCH)?
-            .pid
+        task::current_process_task_snapshot().ok_or(ErrNo::ESRCH)?
+                                             .pid
     } else {
         ProcessId::from_raw(who as usize)
     };
@@ -38,7 +36,7 @@ fn resolve_process_target(who: i32) -> Result<ProcessId, ErrNo> {
     Ok(pid)
 }
 
-fn resolve_pgid_target(who: i32) -> Result<ProcessId, ErrNo> {
+fn resolve_pgid_target(who : i32) -> Result<ProcessId, ErrNo> {
     if who < 0 {
         return Err(ErrNo::ESRCH);
     }
@@ -54,22 +52,24 @@ fn resolve_pgid_target(who: i32) -> Result<ProcessId, ErrNo> {
     Ok(pgid)
 }
 
-fn resolve_user_target(who: i32) -> Result<u32, ErrNo> {
+fn resolve_user_target(who : i32) -> Result<u32, ErrNo> {
     if who < 0 {
         return Err(ErrNo::ESRCH);
     }
     if who == 0 {
-        return Ok(current_credentials().real_uid.0);
+        return Ok(current_credentials().real_uid
+                                       .0);
     }
     Ok(who as u32)
 }
 
-fn process_real_uid(pid: ProcessId) -> Option<u32> {
+fn process_real_uid(pid : ProcessId) -> Option<u32> {
     let leader = task::leader_task_for_process(pid)?;
-    Some(cred::credentials_for(leader).real_uid.0)
+    Some(cred::credentials_for(leader).real_uid
+                                      .0)
 }
 
-fn set_nice_for_uid(uid: u32, nice: i32) -> bool {
+fn set_nice_for_uid(uid : u32, nice : i32) -> bool {
     let mut found = false;
     for pid in task::all_process_pids() {
         if process_real_uid(pid) == Some(uid) {
@@ -81,38 +81,30 @@ fn set_nice_for_uid(uid: u32, nice: i32) -> bool {
     found
 }
 
-fn min_nice_for_uid(uid: u32) -> Option<i32> {
-    task::all_process_pids()
-        .into_iter()
-        .filter(|pid| process_real_uid(*pid) == Some(uid))
-        .filter_map(task::process_nice)
-        .min()
+fn min_nice_for_uid(uid : u32) -> Option<i32> {
+    task::all_process_pids().into_iter()
+                            .filter(|pid| process_real_uid(*pid) == Some(uid))
+                            .filter_map(task::process_nice)
+                            .min()
 }
 
-fn check_setpermission(which: i32, who: i32, prio: i32) -> Result<(), ErrNo> {
+fn check_setpermission(which : i32, who : i32, prio : i32) -> Result<(), ErrNo> {
     if caller_is_privileged() {
         return Ok(());
     }
-    let current = task::current_process_task_snapshot().ok_or(ErrNo::ESRCH)?;
     match which {
         PRIO_PROCESS => {
+            // Linux：非特权用户可以修改任意自己拥有的进程（相同 UID）。
             let target = resolve_process_target(who)?;
-            if target != current.pid {
+            let target_uid = process_real_uid(target).ok_or(ErrNo::ESRCH)?;
+            let cred = current_credentials();
+            if target_uid != cred.real_uid.0 && target_uid != cred.effective_uid.0 {
                 return Err(ErrNo::EPERM);
-            }
-            if prio < 0 {
-                return Err(ErrNo::EACCES);
             }
         }
         PRIO_PGRP => {
-            let pgid = resolve_pgid_target(who)?;
-            let current_pgid = task::process_pgid(current.pid).ok_or(ErrNo::ESRCH)?;
-            if pgid != current_pgid {
-                return Err(ErrNo::EPERM);
-            }
-            if prio < 0 {
-                return Err(ErrNo::EACCES);
-            }
+            // 仅验证 PGID 存在；实际 per-process 的 UID 过滤在 sys_setpriority 中完成。
+            resolve_pgid_target(who)?;
         }
         PRIO_USER => {
             let uid = resolve_user_target(who)?;
@@ -120,22 +112,25 @@ fn check_setpermission(which: i32, who: i32, prio: i32) -> Result<(), ErrNo> {
             if uid != cred.real_uid.0 && uid != cred.effective_uid.0 {
                 return Err(ErrNo::EPERM);
             }
-            if prio < 0 {
-                return Err(ErrNo::EACCES);
-            }
         }
         _ => return Err(ErrNo::EINVAL),
+    }
+    // 非特权用户不能降低 nice 值（提高优先级），等效于默认 RLIMIT_NICE=0。
+    if prio < 0 {
+        return Err(ErrNo::EACCES);
     }
     Ok(())
 }
 
 // 本方法代码由AI完成
-pub(crate) fn sys_setpriority(args: SyscallArgs) -> UserRet {
+pub(crate) fn sys_setpriority(args : SyscallArgs) -> UserRet {
     let which = args.arg(0) as i32;
     let who = args.arg(1) as i32;
     let prio = clamp_nice(args.arg(2) as i32);
 
-    if !matches!(which, PRIO_PROCESS | PRIO_PGRP | PRIO_USER) {
+    if !matches!(which,
+                 PRIO_PROCESS | PRIO_PGRP | PRIO_USER)
+    {
         return UserRet::from_error(ErrNo::EINVAL);
     }
     if let Err(errno) = check_setpermission(which, who, prio) {
@@ -157,8 +152,30 @@ pub(crate) fn sys_setpriority(args: SyscallArgs) -> UserRet {
                 Ok(pgid) => pgid,
                 Err(errno) => return UserRet::from_error(errno),
             };
-            if !task::set_nice_for_pgid(pgid, prio) {
-                return UserRet::from_error(ErrNo::ESRCH);
+            if caller_is_privileged() {
+                if !task::set_nice_for_pgid(pgid, prio) {
+                    return UserRet::from_error(ErrNo::ESRCH);
+                }
+            } else {
+                let cred = current_credentials();
+                let mut found = false;
+                for pid in task::all_process_pids() {
+                    if task::process_pgid(pid) != Some(pgid) {
+                        continue;
+                    }
+                    let Some(owner_uid) = process_real_uid(pid) else {
+                        continue;
+                    };
+                    if owner_uid != cred.real_uid.0 && owner_uid != cred.effective_uid.0 {
+                        continue;
+                    }
+                    if task::set_process_nice(pid, prio) {
+                        found = true;
+                    }
+                }
+                if !found {
+                    return UserRet::from_error(ErrNo::ESRCH);
+                }
             }
         }
         PRIO_USER => {
@@ -176,11 +193,13 @@ pub(crate) fn sys_setpriority(args: SyscallArgs) -> UserRet {
 }
 
 // 本方法代码由AI完成
-pub(crate) fn sys_getpriority(args: SyscallArgs) -> UserRet {
+pub(crate) fn sys_getpriority(args : SyscallArgs) -> UserRet {
     let which = args.arg(0) as i32;
     let who = args.arg(1) as i32;
 
-    if !matches!(which, PRIO_PROCESS | PRIO_PGRP | PRIO_USER) {
+    if !matches!(which,
+                 PRIO_PROCESS | PRIO_PGRP | PRIO_USER)
+    {
         return UserRet::from_error(ErrNo::EINVAL);
     }
     let nice = match which {

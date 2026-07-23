@@ -185,12 +185,26 @@ impl Drop for InterruptGuard {
     }
 }
 
+/// 唯一的 Rust 上下文切换出口。
+///
+/// 调用方必须已离开 `with_scheduler` 闭包，因此 scheduler 锁已经释放；本函数
+/// 再释放当前栈帧的中断 guard，避免把“中断关闭”带到下一个任务的上下文中。
+#[inline(never)]
+fn switch_after_unlock(guard : InterruptGuard, switch_pair : SwitchPair) {
+    guard.release_before_switch();
+    unsafe {
+        __switch(switch_pair.0, switch_pair.1);
+    }
+}
+
 /// `__switch` 返回后重新关中断，再取等待结果（避免 wait 路径长期关中断，见锁审计 RC-1）。
-fn finish_wait_after_switch(switch_pair : Option<SwitchPair>) -> TaskWaitResult {
-    if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
-        unsafe {
-            __switch(current_task_cx_ptr, next_task_cx_ptr);
-        }
+fn finish_wait_after_switch(guard : InterruptGuard,
+                            switch_pair : Option<SwitchPair>)
+                            -> TaskWaitResult {
+    if let Some(switch_pair) = switch_pair {
+        switch_after_unlock(guard, switch_pair);
+    } else {
+        drop(guard);
     }
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.take_current_wait_result(cpu::current_cpu_id()))
@@ -256,12 +270,9 @@ pub fn run_first_task() -> ! { run_first_task_on_current_cpu(cpu::current_cpu_id
 
 /// 指定 CPU 首次切入调度。BSP 和 AP 各调用一次，不返回。
 pub fn run_first_task_on_current_cpu(cpu_id : CpuId) -> ! {
-    let _guard = InterruptGuard::new();
-    let (current_task_cx_ptr, next_task_cx_ptr) =
-        with_scheduler(|scheduler| scheduler.prepare_first_switch(cpu_id));
-    unsafe {
-        __switch(current_task_cx_ptr, next_task_cx_ptr);
-    }
+    let guard = InterruptGuard::new();
+    let switch_pair = with_scheduler(|scheduler| scheduler.prepare_first_switch(cpu_id));
+    switch_after_unlock(guard, switch_pair);
     panic!("run_first_task_on_current_cpu must not return");
 }
 
@@ -433,11 +444,8 @@ pub fn suspend_current_and_run_next() {
         (switch_pair, targets)
     });
     dispatch_reschedules(targets, cpu_id);
-    if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
-        _guard.release_before_switch();
-        unsafe {
-            __switch(current_task_cx_ptr, next_task_cx_ptr);
-        }
+    if let Some(switch_pair) = switch_pair {
+        switch_after_unlock(_guard, switch_pair);
     }
 }
 
@@ -456,11 +464,8 @@ pub fn schedule_tick() {
         (switch_pair, targets)
     });
     dispatch_reschedules(targets, cpu_id);
-    if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
-        guard.release_before_switch();
-        unsafe {
-            __switch(current_task_cx_ptr, next_task_cx_ptr);
-        }
+    if let Some(switch_pair) = switch_pair {
+        switch_after_unlock(guard, switch_pair);
     }
 }
 
@@ -483,11 +488,8 @@ pub fn schedule_reschedule() {
         (switch_pair, targets)
     });
     dispatch_reschedules(targets, cpu_id);
-    if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
-        guard.release_before_switch();
-        unsafe {
-            __switch(current_task_cx_ptr, next_task_cx_ptr);
-        }
+    if let Some(switch_pair) = switch_pair {
+        switch_after_unlock(guard, switch_pair);
     }
 }
 
@@ -505,11 +507,8 @@ pub fn block_current(reason : TaskWaitTarget) {
         (switch_pair, targets)
     });
     dispatch_reschedules(targets, cpu_id);
-    if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
-        guard.release_before_switch();
-        unsafe {
-            __switch(current_task_cx_ptr, next_task_cx_ptr);
-        }
+    if let Some(switch_pair) = switch_pair {
+        switch_after_unlock(guard, switch_pair);
     }
 }
 
@@ -527,8 +526,7 @@ pub fn sleep_current_for_ticks(ticks : TaskTick) -> TaskWaitResult {
         (switch_pair, targets)
     });
     dispatch_reschedules(targets, cpu_id);
-    guard.release_before_switch();
-    finish_wait_after_switch(switch_pair)
+    finish_wait_after_switch(guard, switch_pair)
 }
 
 /// 标记当前任务退出并切换到其他任务；不应返回到已退出任务。
@@ -545,18 +543,19 @@ pub fn exit_current(exit_code : TaskExitCode) -> ! {
         (switch_pair, targets)
     });
     dispatch_reschedules(targets, cpu_id);
-    if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
-        guard.release_before_switch();
-        unsafe {
-            __switch(current_task_cx_ptr, next_task_cx_ptr);
+    match switch_pair {
+        Some(switch_pair) => {
+            switch_after_unlock(guard, switch_pair);
+            // `__switch` 不应回到已退出任务的栈帧；仅为满足 `-> !` 类型检查。
+            unsafe {
+                core::hint::unreachable_unchecked();
+            }
         }
-        // `__switch` 不回到本帧；仅为满足 `-> !` 类型检查。
-        unsafe {
-            core::hint::unreachable_unchecked();
+        None => {
+            drop(guard);
+            panic!("exit_current must not resume the exited task");
         }
     }
-    guard.release_before_switch();
-    panic!("exit_current must not resume the exited task");
 }
 
 // =============================================================================
@@ -577,8 +576,7 @@ pub fn wait_current(target : TaskWaitTarget) -> TaskWaitResult {
         (switch_pair, targets)
     });
     dispatch_reschedules(targets, cpu_id);
-    guard.release_before_switch();
-    finish_wait_after_switch(switch_pair)
+    finish_wait_after_switch(guard, switch_pair)
 }
 
 /// 在关中断调度临界区内复查条件；仅当条件仍成立时才把当前任务挂入等待。
@@ -600,8 +598,7 @@ pub fn wait_current_while(target : TaskWaitTarget,
         (switch_pair, targets)
     });
     dispatch_reschedules(targets, cpu_id);
-    guard.release_before_switch();
-    finish_wait_after_switch(switch_pair)
+    finish_wait_after_switch(guard, switch_pair)
 }
 
 /// 带超时的等待；`timeout_ticks == 0` 时立即返回 [`TaskWaitResult::TimedOut`]
@@ -623,8 +620,7 @@ pub fn wait_current_timeout(target : TaskWaitTarget, timeout_ticks : TaskTick) -
         (switch_pair, targets)
     });
     dispatch_reschedules(targets, cpu_id);
-    guard.release_before_switch();
-    finish_wait_after_switch(switch_pair)
+    finish_wait_after_switch(guard, switch_pair)
 }
 
 /// 带超时的条件等待；条件为假时立即按正常唤醒返回。
@@ -651,8 +647,7 @@ pub fn wait_current_timeout_while(target : TaskWaitTarget,
         (switch_pair, targets)
     });
     dispatch_reschedules(targets, cpu_id);
-    guard.release_before_switch();
-    finish_wait_after_switch(switch_pair)
+    finish_wait_after_switch(guard, switch_pair)
 }
 
 /// 在指定等待队列上无限期阻塞（语法糖）。

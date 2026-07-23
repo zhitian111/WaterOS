@@ -21,6 +21,8 @@ struct ProcessTask {
     tls : usize,
     //TaskClearTid 是一个用户态地址（指针），内核在该线程最后一次退出时需要往该地址写 0 并唤醒 futex 等待者。
     clear_child_tid : Option<TaskClearTid>,
+    /// 线程名（`prctl PR_SET_NAME`），上限 16 字节（含 NUL）。
+    comm : [u8; 16],
 }
 
 impl ProcessTask {
@@ -62,6 +64,10 @@ pub struct ProcessControlBlock {
     stop_wait_pending : bool,
     //SIGCONT 等待通知标记。
     continued_wait_pending : bool,
+    /// 文件创建权限掩码（umask）；fork 时继承。
+    umask : u32,
+    /// 父进程死亡时发送给本进程的信号（`prctl PR_SET_PDEATHSIG`）；0 表示未设置。
+    parent_death_signal : i32,
 }
 
 impl ProcessControlBlock {
@@ -164,13 +170,16 @@ impl ProcessRegistry {
                 state: ProcessTaskState::Runnable,
                 tls: 0,
                 clear_child_tid: None,
+                comm: [0u8; 16],
             }],
                                             state : ProcessState::Running,
+                                            parent_death_signal : 0,
                                             sid : ProcessId::from_raw(0),
                                             dumpable : true,
                                             child_subreaper : false,
                                             stop_wait_pending : false,
-                                            continued_wait_pending : false };
+                                            continued_wait_pending : false,
+                                            umask : 0o022 };
         self.insert_process(process);
         pid
     }
@@ -189,6 +198,8 @@ impl ProcessRegistry {
         let parent_sid = parent.sid;
         let parent_dumpable = parent.dumpable;
         let parent_subreaper = parent.child_subreaper;
+        let parent_umask = parent.umask;
+        let parent_death_signal = parent.parent_death_signal;
         let child_pid = self.create_process_for_task(child_task_id,
                                                      Some(parent_pid),
                                                      address_space);
@@ -199,8 +210,64 @@ impl ProcessRegistry {
             process.sid = parent_sid;
             process.dumpable = parent_dumpable;
             process.child_subreaper = parent_subreaper;
+            process.umask = parent_umask;
         }
         Some(child_pid)
+    }
+
+    pub fn get_process_umask(&self, pid : ProcessId) -> Option<u32> {
+        self.processes
+            .get(&pid)
+            .map(|process| process.umask)
+    }
+
+    pub fn set_process_umask(&mut self, pid : ProcessId, mask : u32) -> bool {
+        let Some(process) = self.process_mut(pid) else {
+            return false;
+        };
+        process.umask = mask;
+        true
+    }
+
+    pub fn get_parent_death_signal(&self, pid : ProcessId) -> Option<i32> {
+        self.processes
+            .get(&pid)
+            .map(|process| process.parent_death_signal)
+    }
+
+    pub fn set_parent_death_signal(&mut self, pid : ProcessId, sig : i32) -> bool {
+        let Some(process) = self.process_mut(pid) else {
+            return false;
+        };
+        process.parent_death_signal = sig;
+        true
+    }
+
+    pub fn get_thread_comm(&self, task_id : TaskId) -> Option<[u8; 16]> {
+        for process in self.processes
+                           .values()
+        {
+            for task in &process.tasks {
+                if task.task_id == task_id {
+                    return Some(task.comm);
+                }
+            }
+        }
+        None
+    }
+
+    pub fn set_thread_comm(&mut self, task_id : TaskId, comm : [u8; 16]) -> bool {
+        for process in self.processes
+                           .values_mut()
+        {
+            for task in &mut process.tasks {
+                if task.task_id == task_id {
+                    task.comm = comm;
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     pub fn get_process_nice(&self, pid : ProcessId) -> Option<i32> {
@@ -312,7 +379,8 @@ impl ProcessRegistry {
                                    } else {
                                        0
                                    },
-                                   clear_child_tid });
+                                   clear_child_tid,
+                                   comm : [0u8; 16] });
         Some(task_id)
     }
 

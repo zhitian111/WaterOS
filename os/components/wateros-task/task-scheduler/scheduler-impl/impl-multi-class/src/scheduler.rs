@@ -47,8 +47,10 @@ impl MultiClassScheduler {
                pending_reschedule_cpus : CpuMask::EMPTY }
     }
 
-    pub(super) fn init_on_cpu(&mut self, boot_cpu: CpuId) {
-        assert!(boot_cpu.fits_capacity(self.cpu_states.len()), "boot CPU is outside scheduler capacity");
+    pub(super) fn init_on_cpu(&mut self, boot_cpu : CpuId) {
+        assert!(boot_cpu.fits_capacity(self.cpu_states
+                                           .len()),
+                "boot CPU is outside scheduler capacity");
         self.global.init();
         self.next_placement_cpu = 0;
         self.timekeeper_cpu = None;
@@ -82,18 +84,18 @@ impl MultiClassScheduler {
                 .registry
                 .is_idle(task_id)
         {
-            debug_assert!(self.cpu_states
-                              .iter()
-                              .enumerate()
-                              .all(|(index, cpu)| {
-                                  index == cpu_id.raw() || cpu.current_task_id != Some(task_id)
-                              }),
-                          "task is current on another CPU");
-            debug_assert_eq!(self.global
-                                 .registry
-                                 .ready_cpu_id(task_id),
-                             Some(cpu_id),
-                             "selected task is not owned by this CPU runqueue");
+            assert!(self.cpu_states
+                        .iter()
+                        .enumerate()
+                        .all(|(index, cpu)| {
+                            index == cpu_id.raw() || cpu.current_task_id != Some(task_id)
+                        }),
+                    "task is current on another CPU");
+            assert_eq!(self.global
+                           .registry
+                           .ready_cpu_id(task_id),
+                       Some(cpu_id),
+                       "selected task is not owned by this CPU runqueue");
         }
         self.cpu_states[cpu_id.raw()].current_task_id = Some(task_id);
         if previous_task_id != Some(task_id) {
@@ -108,16 +110,16 @@ impl MultiClassScheduler {
                 .registry
                 .is_idle(task_id)
         {
-            debug_assert_eq!(self.global
-                                 .registry
-                                 .running_cpu_id(task_id),
-                             Some(cpu_id));
-            debug_assert_eq!(self.cpu_states
-                                 .iter()
-                                 .filter(|cpu| cpu.current_task_id == Some(task_id))
-                                 .count(),
-                             1,
-                             "task is current on more than one CPU");
+            assert_eq!(self.global
+                           .registry
+                           .running_cpu_id(task_id),
+                       Some(cpu_id));
+            assert_eq!(self.cpu_states
+                           .iter()
+                           .filter(|cpu| cpu.current_task_id == Some(task_id))
+                           .count(),
+                       1,
+                       "task is current on more than one CPU");
         }
     }
 
@@ -212,7 +214,8 @@ impl MultiClassScheduler {
                     }
                     self.cpu_states[cpu_id.raw()].other_queue
                                                  .reset_ticks();
-                } else if self.is_timekeeper_cpu(cpu_id) && self.global
+                } else if self.is_timekeeper_cpu(cpu_id) &&
+                          self.global
                               .wait_queues
                               .has_due_timers()
                 {
@@ -595,10 +598,10 @@ impl MultiClassScheduler {
         need_resched
     }
     fn enqueue_ready_by_cpu(&mut self, task_id : TaskId, cpu_id : CpuId) {
-        debug_assert!(!self.global
-                           .registry
-                           .is_idle(task_id),
-                      "idle task must not be placed on a ready queue");
+        assert!(!self.global
+                     .registry
+                     .is_idle(task_id),
+                "idle task must not be placed on a ready queue");
         if let Some(old_cpu_id) = self.global
                                       .registry
                                       .ready_cpu_id(task_id)
@@ -611,8 +614,8 @@ impl MultiClassScheduler {
                                           .registry
                                           .running_cpu_id(task_id)
         {
-            debug_assert_eq!(running_cpu_id, cpu_id,
-                             "a running task may only yield back to its own CPU");
+            assert_eq!(running_cpu_id, cpu_id,
+                       "a running task may only yield back to its own CPU");
         }
         // Publish lifecycle state and queue ownership as one scheduler-lock
         // transaction.  No observer can see Ready without its target queue.
@@ -634,14 +637,14 @@ impl MultiClassScheduler {
                                              .on_task_unblocked(task_id, snap.sched_priority)
             }
         }
-        debug_assert_eq!(self.global
-                             .registry
-                             .ready_cpu_id(task_id),
-                         Some(cpu_id));
-        debug_assert_eq!(self.global
-                             .registry
-                             .running_cpu_id(task_id),
-                         None);
+        assert_eq!(self.global
+                       .registry
+                       .ready_cpu_id(task_id),
+                   Some(cpu_id));
+        assert_eq!(self.global
+                       .registry
+                       .running_cpu_id(task_id),
+                   None);
     }
 
     fn remove_from_cpu_runqueue(&mut self, task_id : TaskId, cpu_id : CpuId) {

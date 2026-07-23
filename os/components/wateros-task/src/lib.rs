@@ -26,13 +26,15 @@ pub use process::{
     find_stopped_child_process_in_pgid, has_child_process, has_child_process_in_pgid,
     leader_task_for_process, mark_process_continued, mark_process_stopped, min_nice_in_pgid,
     nofile_rlimit_for_task, pgid_has_members, process_child_subreaper, process_dumpable,
-    process_exists, process_nice, process_pgid, process_resource_limit, process_snapshot,
-    process_task_snapshot, process_task_snapshot_by_task, purge_all_user_processes,
-    reap_all_exited_processes, reap_exited_member_threads, reap_exited_process, set_nice_for_pgid,
-    set_process_child_subreaper, set_process_dumpable, set_process_nice, set_process_pgid,
-    set_process_resource_limit, set_task_clear_child_tid, stop_process_tasks,
-    stopped_child_ready_for_wait, task_clear_child_tid, task_exit_would_finish_process,
-    task_id_for_thread, task_ids_for_process, wake_parent_child_waiters, ProcessPurgeStats,
+    process_exists, process_nice, process_parent_death_signal, process_pgid,
+    process_resource_limit, process_snapshot, process_task_snapshot, process_task_snapshot_by_task,
+    process_umask, purge_all_user_processes, reap_all_exited_processes, reap_exited_member_threads,
+    reap_exited_process, set_nice_for_pgid, set_process_child_subreaper, set_process_dumpable,
+    set_process_nice, set_process_parent_death_signal, set_process_pgid,
+    set_process_resource_limit, set_process_umask, set_task_clear_child_tid, set_thread_comm,
+    stop_process_tasks, stopped_child_ready_for_wait, task_clear_child_tid,
+    task_exit_would_finish_process, task_id_for_thread, task_ids_for_process, thread_comm,
+    wake_parent_child_waiters, ProcessPurgeStats,
 };
 pub use sched::{
     cpu_affinity_ret_bytes, fill_cpu_affinity_mask, get_param, get_scheduler, resolve_sched_pid,
@@ -61,21 +63,21 @@ pub use api_v0::{
     UserImageInfo, UserStack, UserTask, WaitQueueId,
 };
 pub use api_v0::{ExitedTask, TaskId, TaskKind};
-pub use scheduler::CpuSnapshot;
-pub use cpu::{cpu_snapshot, cpu_states, online_cpu_mask, print_cpu_states, running_cpu,
-              set_cpu_online, set_timekeeper_cpu};
+pub use cpu::{
+    cpu_snapshot, cpu_states, online_cpu_mask, print_cpu_states, running_cpu, set_cpu_online,
+    set_timekeeper_cpu,
+};
 #[cfg(feature = "impl-core")]
 pub(crate) use impl_core as active_impl;
+pub use scheduler::CpuSnapshot;
 
 // ============================================================================
 // 与主函数的接口
 // ============================================================================
 /// 初始化任务系统和底层调度器状态。
-pub fn init() {
-    init_on_cpu(CpuId::from_raw(0));
-}
+pub fn init() { init_on_cpu(CpuId::from_raw(0)); }
 
-pub fn init_on_cpu(cpu_id: CpuId) {
+pub fn init_on_cpu(cpu_id : CpuId) {
     //log::warn!("[boot-init] task::init enter");
     log::warn!("[boot-init] task::init start");
     scheduler::init_on_cpu(cpu_id);

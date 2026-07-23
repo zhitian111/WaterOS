@@ -84,6 +84,32 @@ pub fn set_process_nice(pid : ProcessId, nice : i32) -> bool {
     active_impl::set_process_nice(pid, nice)
 }
 
+/// 查询进程 umask。
+pub fn process_umask(pid : ProcessId) -> Option<u32> { active_impl::get_process_umask(pid) }
+
+/// 设置进程 umask。
+pub fn set_process_umask(pid : ProcessId, mask : u32) -> bool {
+    active_impl::set_process_umask(pid, mask)
+}
+
+/// 查询进程 parent-death-signal。
+pub fn process_parent_death_signal(pid : ProcessId) -> Option<i32> {
+    active_impl::get_parent_death_signal(pid)
+}
+
+/// 设置进程 parent-death-signal。
+pub fn set_process_parent_death_signal(pid : ProcessId, sig : i32) -> bool {
+    active_impl::set_parent_death_signal(pid, sig)
+}
+
+/// 查询线程名。
+pub fn thread_comm(task_id : TaskId) -> Option<[u8; 16]> { active_impl::get_thread_comm(task_id) }
+
+/// 设置线程名。
+pub fn set_thread_comm(task_id : TaskId, comm : [u8; 16]) -> bool {
+    active_impl::set_thread_comm(task_id, comm)
+}
+
 /// 查询进程组 id。
 pub fn process_pgid(pid : ProcessId) -> Option<ProcessId> { active_impl::get_process_pgid(pid) }
 
