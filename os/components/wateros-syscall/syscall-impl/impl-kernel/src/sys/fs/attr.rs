@@ -19,11 +19,10 @@ pub(crate) fn sys_fchmodat(args : SyscallArgs) -> UserRet {
     let dirfd = args.arg(0) as isize;
     let path_ptr = args.arg(1);
     let mut mode = (args.arg(2) as u32) & 0o7777;
-    let flags = args.arg(3) as u32;
-
-    if flags != 0 {
-        return UserRet::from_error(ErrNo::EINVAL);
-    }
+    // Linux `fchmodat(2)` (syscall 53) has exactly three arguments.  Do not
+    // inspect a3 here: callers are not required to initialize it, and treating
+    // its residual value as flags turns ordinary `chmod()` into EINVAL.
+    // Flag-bearing semantics belong to the distinct fchmodat2 syscall.
 
     let path = match copy_user_path_cstr(path_ptr,
                                          crate::user_copy::USER_PATH_MAX)
