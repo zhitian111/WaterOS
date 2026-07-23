@@ -77,3 +77,15 @@ pub fn clear_soft_interrupt() {
         asm!("csrc sip, {}", in(reg) 1usize << 1);
     }
 }
+
+/// Enable supervisor software interrupts (SSIE) on the current hart.
+#[inline]
+pub fn enable_soft_interrupt() {
+    unsafe { sie::set_ssoft(); }
+}
+
+/// Disable supervisor software interrupts (SSIE) on the current hart.
+#[inline]
+pub fn disable_soft_interrupt() {
+    unsafe { sie::clear_ssoft(); }
+}

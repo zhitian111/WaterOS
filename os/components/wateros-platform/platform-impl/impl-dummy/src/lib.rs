@@ -36,6 +36,18 @@ pub mod timer {
     }
 }
 
+pub mod smp {
+    use api_v0::smp::{HartStatus, PlatformSmp, PlatformSmpError, PlatformSmpResult};
+    use base::cpu::{CpuId, CpuMask};
+    pub struct DummySmp;
+    impl PlatformSmp for DummySmp {
+        fn start_cpu(_: CpuId, _: usize, _: usize) -> PlatformSmpResult<()> { Err(PlatformSmpError::Unsupported) }
+        fn cpu_status(_: CpuId) -> PlatformSmpResult<HartStatus> { Err(PlatformSmpError::Unsupported) }
+        fn configured_cpu_mask() -> CpuMask { CpuMask::EMPTY }
+    }
+    pub use DummySmp as SmpImpl;
+}
+
 /// 占位复位：始终返回 [`PlatformResetError::Unsupported`]。
 pub mod reset {
     use api_v0::reset::{

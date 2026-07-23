@@ -21,7 +21,8 @@
     impl-qemu-loongarch64-virt = { path = "./platform-impl/impl-qemu-loongarch64-virt/", package = "wateros-platform-impl-qemu-loongarch64-virt", default-features = true, optional = true }
     impl-qemu-riscv64-opensbi = { path = "./platform-impl/impl-qemu-riscv64-opensbi/", package = "wateros-platform-impl-qemu-riscv64-opensbi", default-features = false, optional = true }
     arch = { path = "./platform-arch/", package = "wateros-platform-arch", default-features = false }
-    log = { version = "0.4.29" }
+log = { version = "0.4.29" }
+base = { path = "../wateros-base/", package = "wateros-base", default-features = true }
 
 [features]
     api-v0 = [

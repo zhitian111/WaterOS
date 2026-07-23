@@ -9,7 +9,7 @@ use api_v0::{
     AccessCheck, Capability, CredentialBackend, CredentialMutation, Gid, ProcessCredentials, TaskId,
     Uid,
 };
-use base::sync::UniprocessorSafeCell;
+use base::sync::MultiprocessorSafeCell;
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -201,13 +201,13 @@ impl AccessCheck for PerTaskCredRegistry {
     }
 }
 
-static mut CRED_REGISTRY: MaybeUninit<UniprocessorSafeCell<PerTaskCredRegistry>> = MaybeUninit::uninit();
+static mut CRED_REGISTRY: MaybeUninit<MultiprocessorSafeCell<PerTaskCredRegistry>> = MaybeUninit::uninit();
 static CRED_REGISTRY_READY: AtomicUsize = AtomicUsize::new(0);
 
-fn registry() -> &'static UniprocessorSafeCell<PerTaskCredRegistry> {
+fn registry() -> &'static MultiprocessorSafeCell<PerTaskCredRegistry> {
     if CRED_REGISTRY_READY.load(Ordering::Acquire) == 0 {
         unsafe {
-            CRED_REGISTRY.write(UniprocessorSafeCell::new(PerTaskCredRegistry::new()));
+            CRED_REGISTRY.write(MultiprocessorSafeCell::new(PerTaskCredRegistry::new()));
         }
         CRED_REGISTRY_READY.store(1, Ordering::Release);
     }

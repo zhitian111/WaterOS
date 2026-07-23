@@ -82,3 +82,12 @@ impl ArchTimerInterruptControl for LoongArch64ArchInterrupt {
         }
     }
 }
+
+/// LoongArch SMP IPI support is not enabled yet.  Keep the architecture-neutral
+/// interrupt facade available so shared scheduler code can still build.
+#[inline]
+pub fn clear_soft_interrupt() {}
+#[inline]
+pub fn enable_soft_interrupt() {}
+#[inline]
+pub fn disable_soft_interrupt() {}
