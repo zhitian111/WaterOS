@@ -123,14 +123,18 @@ fn with_scheduler<R>(f : impl FnOnce(&mut MultiClassScheduler) -> R) -> R {
 }
 
 // ── 跨核 IPI 通知 ────────────────────────────────────────────────
-//
+
 /// 锁内完成入队后，向实际目标 CPU 发送重调度 IPI。
-fn dispatch_reschedules(targets : CpuMask, current_cpu_id : CpuId, local : bool) {
+///
+/// 调度入口会在其 `with_scheduler` 闭包中移除已处理的本核请求，因此到达
+/// 此处的本核 bit 一定来自普通入队/唤醒路径，可以安全进入本地重调度。
+fn dispatch_reschedules(targets : CpuMask, current_cpu_id : CpuId) {
     let mut remote = targets;
     let local_requested = remote.contains(current_cpu_id);
     remote.remove(current_cpu_id);
     if !remote.is_empty() {
-        log::info!("[ipi] send directed target_mask={:#x}", remote.bits());
+        log::info!("[ipi] send directed target_mask={:#x}",
+                   remote.bits());
         if let Err(error) = platform::smp::send_ipi(remote) {
             log::warn!("[ipi] directed reschedule notification failed: {:?}",
                        error);
@@ -139,36 +143,10 @@ fn dispatch_reschedules(targets : CpuMask, current_cpu_id : CpuId, local : bool)
                        remote.bits());
         }
     }
-    if local && local_requested {
+    if local_requested {
         schedule_reschedule();
     }
 }
-
-fn with_scheduler_and_reschedules<R>(f : impl FnOnce(&mut MultiClassScheduler) -> R)
-                                     -> (R, CpuMask) {
-    with_scheduler(|scheduler| {
-        let result = f(scheduler);
-        let targets = scheduler.take_pending_reschedule_cpus();
-        (result, targets)
-    })
-}
-
-fn dispatch_remote_reschedules(targets : CpuMask, current_cpu_id : CpuId) {
-    let mut remote = targets;
-    remote.remove(current_cpu_id);
-    if remote.is_empty() {
-        return;
-    }
-    log::info!("[ipi] send remote target_mask={:#x}", remote.bits());
-    if let Err(error) = platform::smp::send_ipi(remote) {
-        log::warn!("[ipi] directed reschedule notification failed: {:?}",
-                   error);
-    } else {
-        log::info!("[ipi] send remote succeeded target_mask={:#x}",
-                   remote.bits());
-    }
-}
-
 // ── 中断守卫 ──────────────────────────────────────────────────────
 
 // RAII：构造时关全局中断，drop 时恢复；包裹所有可能触碰就绪队列与 TCB
@@ -235,7 +213,7 @@ pub extern "C" fn wateros_mcs_boot_log_scheduler_ready(tag_ptr : *const u8, tag_
 // =============================================================================
 
 /// 首次初始化路径：在 `SCHEDULER_READY` 置真前直接写入 cell，避免 chicken-and-egg。
-unsafe fn init_scheduler_storage_and_inner(boot_cpu: CpuId) {
+unsafe fn init_scheduler_storage_and_inner(boot_cpu : CpuId) {
     // 2024 edition: unsafe fn body 不是隐式 unsafe 块
     unsafe {
         SCHEDULER.write(MultiprocessorSafeCell::new(MultiClassScheduler::new()));
@@ -246,12 +224,10 @@ unsafe fn init_scheduler_storage_and_inner(boot_cpu: CpuId) {
 
 /// 幂等初始化全局调度器与内部 `MultiClassScheduler` 状态。
 #[inline(never)]
-pub fn init() {
-    init_on_cpu(CpuId::from_raw(0));
-}
+pub fn init() { init_on_cpu(CpuId::from_raw(0)); }
 
 #[inline(never)]
-pub fn init_on_cpu(boot_cpu: CpuId) {
+pub fn init_on_cpu(boot_cpu : CpuId) {
     log_scheduler_ready("init_scheduler enter");
     if !SCHEDULER_READY.load(Ordering::Acquire) {
         log::warn!("[boot-init] init_scheduler: SCHEDULER.write + inner init (READY still false)");
@@ -299,9 +275,13 @@ pub fn spawn_kernel_task(entry : KernelTaskEntry, arg : usize) -> TaskId {
     let cpu_id = cpu::current_cpu_id();
     let (task_id, targets) = {
         let _guard = InterruptGuard::new();
-        with_scheduler_and_reschedules(|scheduler| scheduler.spawn_kernel_task(entry, arg, cpu_id))
+        with_scheduler(|scheduler| {
+            let task_id = scheduler.spawn_kernel_task(entry, arg, cpu_id);
+            let targets = scheduler.take_pending_reschedule_cpus();
+            (task_id, targets)
+        })
     };
-    dispatch_reschedules(targets, cpu_id, true);
+    dispatch_reschedules(targets, cpu_id);
     task_id
 }
 
@@ -316,20 +296,27 @@ pub fn spawn_user_task_spec(spec : UserTask) -> TaskId {
     let cpu_id = cpu::current_cpu_id();
     let (task_id, targets) = {
         let _guard = InterruptGuard::new();
-        with_scheduler_and_reschedules(|scheduler| scheduler.spawn_user_task_spec(spec, cpu_id))
+        with_scheduler(|scheduler| {
+            let task_id = scheduler.spawn_user_task_spec(spec, cpu_id);
+            let targets = scheduler.take_pending_reschedule_cpus();
+            (task_id, targets)
+        })
     };
-    dispatch_reschedules(targets, cpu_id, true);
+    dispatch_reschedules(targets, cpu_id);
     task_id
 }
 
 /// 将已创建任务加入就绪队列尾部。
 pub fn enqueue_ready_task(task_id : TaskId) {
     let cpu_id = cpu::current_cpu_id();
-    let (_, targets) = {
+    let targets = {
         let _guard = InterruptGuard::new();
-        with_scheduler_and_reschedules(|scheduler| scheduler.enqueue_ready_task(task_id))
+        with_scheduler(|scheduler| {
+            scheduler.enqueue_ready_task(task_id);
+            scheduler.take_pending_reschedule_cpus()
+        })
     };
-    dispatch_reschedules(targets, cpu_id, true);
+    dispatch_reschedules(targets, cpu_id);
 }
 
 /// 从当前用户任务 fork 子任务（仅登记 TCB，不入就绪队列）。
@@ -375,14 +362,16 @@ pub fn fork_current(child_stack : usize,
     let cpu_id = cpu::current_cpu_id();
     let (child_id, targets) = {
         let _guard = InterruptGuard::new();
-        with_scheduler_and_reschedules(|scheduler| {
-            scheduler.fork_current(child_stack,
-                                   new_aspace_ptr,
-                                   new_satp,
-                                   cpu_id)
+        with_scheduler(|scheduler| {
+            let child_id = scheduler.fork_current(child_stack,
+                                                  new_aspace_ptr,
+                                                  new_satp,
+                                                  cpu_id);
+            let targets = scheduler.take_pending_reschedule_cpus();
+            (child_id, targets)
         })
     };
-    dispatch_reschedules(targets, cpu_id, true);
+    dispatch_reschedules(targets, cpu_id);
     child_id
 }
 
@@ -391,11 +380,13 @@ pub fn clone_current_thread(child_stack : usize, tls : usize, set_tls : bool) ->
     let cpu_id = cpu::current_cpu_id();
     let (child_id, targets) = {
         let _guard = InterruptGuard::new();
-        with_scheduler_and_reschedules(|scheduler| {
-            scheduler.clone_current_thread(child_stack, tls, set_tls, cpu_id)
+        with_scheduler(|scheduler| {
+            let child_id = scheduler.clone_current_thread(child_stack, tls, set_tls, cpu_id);
+            let targets = scheduler.take_pending_reschedule_cpus();
+            (child_id, targets)
         })
     };
-    dispatch_reschedules(targets, cpu_id, true);
+    dispatch_reschedules(targets, cpu_id);
     child_id
 }
 
@@ -432,10 +423,16 @@ pub fn execve_current(entry_pc : usize,
 pub fn suspend_current_and_run_next() {
     let _guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
-    let (switch_pair, targets) = with_scheduler_and_reschedules(|scheduler| {
-        scheduler.schedule(ScheduleReason::Yield, cpu_id)
+    let (switch_pair, targets) = with_scheduler(|scheduler| {
+        let switch_pair = scheduler.schedule(ScheduleReason::Yield, cpu_id);
+        let mut targets = scheduler.take_pending_reschedule_cpus();
+        if targets.contains(cpu_id) {
+            targets.remove(cpu_id);
+            debug_assert!(scheduler.take_need_resched(cpu_id));
+        }
+        (switch_pair, targets)
     });
-    dispatch_remote_reschedules(targets, cpu_id);
+    dispatch_reschedules(targets, cpu_id);
     if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
         _guard.release_before_switch();
         unsafe {
@@ -449,10 +446,16 @@ pub fn suspend_current_and_run_next() {
 pub fn schedule_tick() {
     let guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
-    let (switch_pair, targets) = with_scheduler_and_reschedules(|scheduler| {
-        scheduler.schedule(ScheduleReason::Tick, cpu_id)
+    let (switch_pair, targets) = with_scheduler(|scheduler| {
+        let switch_pair = scheduler.schedule(ScheduleReason::Tick, cpu_id);
+        let mut targets = scheduler.take_pending_reschedule_cpus();
+        if targets.contains(cpu_id) {
+            targets.remove(cpu_id);
+            debug_assert!(scheduler.take_need_resched(cpu_id));
+        }
+        (switch_pair, targets)
     });
-    dispatch_remote_reschedules(targets, cpu_id);
+    dispatch_reschedules(targets, cpu_id);
     if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
         guard.release_before_switch();
         unsafe {
@@ -466,14 +469,20 @@ pub fn schedule_tick() {
 pub fn schedule_reschedule() {
     let guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
-    let (switch_pair, targets) = with_scheduler_and_reschedules(|scheduler| {
-        if scheduler.take_need_resched(cpu_id) {
+    let (switch_pair, targets) = with_scheduler(|scheduler| {
+        let switch_pair = if scheduler.take_need_resched(cpu_id) {
             scheduler.schedule(ScheduleReason::Reschedule, cpu_id)
         } else {
             None
+        };
+        let mut targets = scheduler.take_pending_reschedule_cpus();
+        if targets.contains(cpu_id) {
+            targets.remove(cpu_id);
+            debug_assert!(scheduler.take_need_resched(cpu_id));
         }
+        (switch_pair, targets)
     });
-    dispatch_remote_reschedules(targets, cpu_id);
+    dispatch_reschedules(targets, cpu_id);
     if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
         guard.release_before_switch();
         unsafe {
@@ -486,10 +495,16 @@ pub fn schedule_reschedule() {
 pub fn block_current(reason : TaskWaitTarget) {
     let guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
-    let (switch_pair, targets) = with_scheduler_and_reschedules(|scheduler| {
-        scheduler.schedule(ScheduleReason::Block(reason), cpu_id)
+    let (switch_pair, targets) = with_scheduler(|scheduler| {
+        let switch_pair = scheduler.schedule(ScheduleReason::Block(reason), cpu_id);
+        let mut targets = scheduler.take_pending_reschedule_cpus();
+        if targets.contains(cpu_id) {
+            targets.remove(cpu_id);
+            debug_assert!(scheduler.take_need_resched(cpu_id));
+        }
+        (switch_pair, targets)
     });
-    dispatch_remote_reschedules(targets, cpu_id);
+    dispatch_reschedules(targets, cpu_id);
     if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
         guard.release_before_switch();
         unsafe {
@@ -502,10 +517,16 @@ pub fn block_current(reason : TaskWaitTarget) {
 pub fn sleep_current_for_ticks(ticks : TaskTick) -> TaskWaitResult {
     let guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
-    let (switch_pair, targets) = with_scheduler_and_reschedules(|scheduler| {
-        scheduler.schedule(ScheduleReason::Sleep(ticks), cpu_id)
+    let (switch_pair, targets) = with_scheduler(|scheduler| {
+        let switch_pair = scheduler.schedule(ScheduleReason::Sleep(ticks), cpu_id);
+        let mut targets = scheduler.take_pending_reschedule_cpus();
+        if targets.contains(cpu_id) {
+            targets.remove(cpu_id);
+            debug_assert!(scheduler.take_need_resched(cpu_id));
+        }
+        (switch_pair, targets)
     });
-    dispatch_remote_reschedules(targets, cpu_id);
+    dispatch_reschedules(targets, cpu_id);
     guard.release_before_switch();
     finish_wait_after_switch(switch_pair)
 }
@@ -514,10 +535,16 @@ pub fn sleep_current_for_ticks(ticks : TaskTick) -> TaskWaitResult {
 pub fn exit_current(exit_code : TaskExitCode) -> ! {
     let guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
-    let (switch_pair, targets) = with_scheduler_and_reschedules(|scheduler| {
-        scheduler.schedule(ScheduleReason::Exit(exit_code), cpu_id)
+    let (switch_pair, targets) = with_scheduler(|scheduler| {
+        let switch_pair = scheduler.schedule(ScheduleReason::Exit(exit_code), cpu_id);
+        let mut targets = scheduler.take_pending_reschedule_cpus();
+        if targets.contains(cpu_id) {
+            targets.remove(cpu_id);
+            debug_assert!(scheduler.take_need_resched(cpu_id));
+        }
+        (switch_pair, targets)
     });
-    dispatch_remote_reschedules(targets, cpu_id);
+    dispatch_reschedules(targets, cpu_id);
     if let Some((current_task_cx_ptr, next_task_cx_ptr)) = switch_pair {
         guard.release_before_switch();
         unsafe {
@@ -540,9 +567,16 @@ pub fn exit_current(exit_code : TaskExitCode) -> ! {
 pub fn wait_current(target : TaskWaitTarget) -> TaskWaitResult {
     let guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
-    let (switch_pair, targets) =
-        with_scheduler_and_reschedules(|scheduler| scheduler.schedule_wait(target, None, cpu_id));
-    dispatch_remote_reschedules(targets, cpu_id);
+    let (switch_pair, targets) = with_scheduler(|scheduler| {
+        let switch_pair = scheduler.schedule_wait(target, None, cpu_id);
+        let mut targets = scheduler.take_pending_reschedule_cpus();
+        if targets.contains(cpu_id) {
+            targets.remove(cpu_id);
+            debug_assert!(scheduler.take_need_resched(cpu_id));
+        }
+        (switch_pair, targets)
+    });
+    dispatch_reschedules(targets, cpu_id);
     guard.release_before_switch();
     finish_wait_after_switch(switch_pair)
 }
@@ -556,9 +590,16 @@ pub fn wait_current_while(target : TaskWaitTarget,
         return TaskWaitResult::Woken;
     }
     let cpu_id = cpu::current_cpu_id();
-    let (switch_pair, targets) =
-        with_scheduler_and_reschedules(|scheduler| scheduler.schedule_wait(target, None, cpu_id));
-    dispatch_remote_reschedules(targets, cpu_id);
+    let (switch_pair, targets) = with_scheduler(|scheduler| {
+        let switch_pair = scheduler.schedule_wait(target, None, cpu_id);
+        let mut targets = scheduler.take_pending_reschedule_cpus();
+        if targets.contains(cpu_id) {
+            targets.remove(cpu_id);
+            debug_assert!(scheduler.take_need_resched(cpu_id));
+        }
+        (switch_pair, targets)
+    });
+    dispatch_reschedules(targets, cpu_id);
     guard.release_before_switch();
     finish_wait_after_switch(switch_pair)
 }
@@ -572,10 +613,16 @@ pub fn wait_current_timeout(target : TaskWaitTarget, timeout_ticks : TaskTick) -
 
     let guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
-    let (switch_pair, targets) = with_scheduler_and_reschedules(|scheduler| {
-        scheduler.schedule_wait(target, Some(timeout_ticks), cpu_id)
+    let (switch_pair, targets) = with_scheduler(|scheduler| {
+        let switch_pair = scheduler.schedule_wait(target, Some(timeout_ticks), cpu_id);
+        let mut targets = scheduler.take_pending_reschedule_cpus();
+        if targets.contains(cpu_id) {
+            targets.remove(cpu_id);
+            debug_assert!(scheduler.take_need_resched(cpu_id));
+        }
+        (switch_pair, targets)
     });
-    dispatch_remote_reschedules(targets, cpu_id);
+    dispatch_reschedules(targets, cpu_id);
     guard.release_before_switch();
     finish_wait_after_switch(switch_pair)
 }
@@ -594,10 +641,16 @@ pub fn wait_current_timeout_while(target : TaskWaitTarget,
         return TaskWaitResult::Woken;
     }
     let cpu_id = cpu::current_cpu_id();
-    let (switch_pair, targets) = with_scheduler_and_reschedules(|scheduler| {
-        scheduler.schedule_wait(target, Some(timeout_ticks), cpu_id)
+    let (switch_pair, targets) = with_scheduler(|scheduler| {
+        let switch_pair = scheduler.schedule_wait(target, Some(timeout_ticks), cpu_id);
+        let mut targets = scheduler.take_pending_reschedule_cpus();
+        if targets.contains(cpu_id) {
+            targets.remove(cpu_id);
+            debug_assert!(scheduler.take_need_resched(cpu_id));
+        }
+        (switch_pair, targets)
     });
-    dispatch_remote_reschedules(targets, cpu_id);
+    dispatch_reschedules(targets, cpu_id);
     guard.release_before_switch();
     finish_wait_after_switch(switch_pair)
 }
@@ -631,9 +684,13 @@ pub fn wake_task(task_id : TaskId) -> bool {
     let cpu_id = cpu::current_cpu_id();
     let (woken, targets) = {
         let _guard = InterruptGuard::new();
-        with_scheduler_and_reschedules(|scheduler| scheduler.wake_task(task_id))
+        with_scheduler(|scheduler| {
+            let woken = scheduler.wake_task(task_id);
+            let targets = scheduler.take_pending_reschedule_cpus();
+            (woken, targets)
+        })
     };
-    dispatch_reschedules(targets, cpu_id, true);
+    dispatch_reschedules(targets, cpu_id);
     woken
 }
 
@@ -641,9 +698,13 @@ pub fn interrupt_task(task_id : TaskId) -> bool {
     let cpu_id = cpu::current_cpu_id();
     let (interrupted, targets) = {
         let _guard = InterruptGuard::new();
-        with_scheduler_and_reschedules(|scheduler| scheduler.interrupt_task(task_id))
+        with_scheduler(|scheduler| {
+            let interrupted = scheduler.interrupt_task(task_id);
+            let targets = scheduler.take_pending_reschedule_cpus();
+            (interrupted, targets)
+        })
     };
-    dispatch_reschedules(targets, cpu_id, true);
+    dispatch_reschedules(targets, cpu_id);
     interrupted
 }
 
@@ -654,11 +715,14 @@ pub fn block_task_manual(task_id : TaskId) {
 
 pub fn wake_child_exit_waiters(parent_id : TaskId) {
     let cpu_id = cpu::current_cpu_id();
-    let (_, targets) = {
+    let targets = {
         let _guard = InterruptGuard::new();
-        with_scheduler_and_reschedules(|scheduler| scheduler.wake_child_exit_waiters(parent_id))
+        with_scheduler(|scheduler| {
+            scheduler.wake_child_exit_waiters(parent_id);
+            scheduler.take_pending_reschedule_cpus()
+        })
     };
-    dispatch_reschedules(targets, cpu_id, true);
+    dispatch_reschedules(targets, cpu_id);
 }
 
 // =============================================================================
@@ -682,9 +746,13 @@ pub fn wake_one_in_wait_queue(wait_queue_id : WaitQueueId) -> Option<TaskId> {
     let cpu_id = cpu::current_cpu_id();
     let (woken, targets) = {
         let _guard = InterruptGuard::new();
-        with_scheduler_and_reschedules(|scheduler| scheduler.wake_one_in_wait_queue(wait_queue_id))
+        with_scheduler(|scheduler| {
+            let woken = scheduler.wake_one_in_wait_queue(wait_queue_id);
+            let targets = scheduler.take_pending_reschedule_cpus();
+            (woken, targets)
+        })
     };
-    dispatch_reschedules(targets, cpu_id, true);
+    dispatch_reschedules(targets, cpu_id);
     woken
 }
 
@@ -693,9 +761,13 @@ pub fn wake_all_in_wait_queue(wait_queue_id : WaitQueueId) -> usize {
     let cpu_id = cpu::current_cpu_id();
     let (count, targets) = {
         let _guard = InterruptGuard::new();
-        with_scheduler_and_reschedules(|scheduler| scheduler.wake_all_in_wait_queue(wait_queue_id))
+        with_scheduler(|scheduler| {
+            let count = scheduler.wake_all_in_wait_queue(wait_queue_id);
+            let targets = scheduler.take_pending_reschedule_cpus();
+            (count, targets)
+        })
     };
-    dispatch_reschedules(targets, cpu_id, true);
+    dispatch_reschedules(targets, cpu_id);
     count
 }
 
@@ -708,14 +780,16 @@ pub fn requeue_wait_queue(from_wait_queue_id : WaitQueueId,
     let cpu_id = cpu::current_cpu_id();
     let (changed, targets) = {
         let _guard = InterruptGuard::new();
-        with_scheduler_and_reschedules(|scheduler| {
-            scheduler.requeue_wait_queue(from_wait_queue_id,
-                                         to_wait_queue_id,
-                                         wake_count,
-                                         requeue_count)
+        with_scheduler(|scheduler| {
+            let changed = scheduler.requeue_wait_queue(from_wait_queue_id,
+                                                       to_wait_queue_id,
+                                                       wake_count,
+                                                       requeue_count);
+            let targets = scheduler.take_pending_reschedule_cpus();
+            (changed, targets)
         })
     };
-    dispatch_reschedules(targets, cpu_id, true);
+    dispatch_reschedules(targets, cpu_id);
     changed
 }
 
@@ -884,6 +958,14 @@ pub fn running_cpu(task_id : TaskId) -> Option<CpuId> {
 pub fn set_cpu_online(cpu_id : CpuId) {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.set_cpu_online(cpu_id));
+}
+
+/// 指定唯一推进 sleep/wait 全局逻辑时间的 BSP。
+///
+/// 不能假设 BSP 恒为 hart 0：OpenSBI 会把实际 boot hart 作为入口参数传入。
+pub fn set_timekeeper_cpu(cpu_id : CpuId) {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.set_timekeeper_cpu(cpu_id));
 }
 
 /// Snapshot of CPUs that completed scheduler bring-up.

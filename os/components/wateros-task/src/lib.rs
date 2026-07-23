@@ -63,7 +63,7 @@ pub use api_v0::{
 pub use api_v0::{ExitedTask, TaskId, TaskKind};
 pub use scheduler::CpuSnapshot;
 pub use cpu::{cpu_snapshot, cpu_states, online_cpu_mask, print_cpu_states, running_cpu,
-              set_cpu_online};
+              set_cpu_online, set_timekeeper_cpu};
 #[cfg(feature = "impl-core")]
 pub(crate) use impl_core as active_impl;
 

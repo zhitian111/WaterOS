@@ -76,11 +76,10 @@ fn bringup_driver_and_user() {
 /// 而是与用户 stdout 共用 device #0 的锁，保证一整段输出不会相互穿插。
 fn write_registered_uart_console(bytes : &[u8]) -> platform::console::PlatformConsoleResult<()> {
     driver::character::with_character_device(0, |device| {
-                          device.write(bytes)
-                                .map(|_| ())
-                                .map_err(|_| platform::console::PlatformConsoleError::WriteFailure)
-                      })
-        .unwrap_or(Err(platform::console::PlatformConsoleError::Unavailable))
+        device.write(bytes)
+              .map(|_| ())
+              .map_err(|_| platform::console::PlatformConsoleError::WriteFailure)
+    }).unwrap_or(Err(platform::console::PlatformConsoleError::Unavailable))
 }
 
 fn register_runtime_console_writer() {
@@ -110,14 +109,13 @@ mod qemu_riscv64_opensbi {
                 continue;
             }
             info!("[smp] hart_start cpu={} entry={:#x} opaque={:#x}",
-                  raw,
-                  entry,
-                  dtb_pa);
+                  raw, entry, dtb_pa);
             match platform::smp::start_cpu(cpu, entry, dtb_pa) {
                 Ok(()) | Err(platform::smp::PlatformSmpError::AlreadyAvailable) => {
                     requested.insert(cpu);
                     let status = platform::smp::cpu_status(cpu);
-                    info!("[smp] hart_start accepted cpu={} status={:?}", raw, status);
+                    info!("[smp] hart_start accepted cpu={} status={:?}",
+                          raw, status);
                 }
                 // A smaller QEMU `-smp` simply has no hart at this index.
                 Err(platform::smp::PlatformSmpError::InvalidCpu) => break,
@@ -205,6 +203,7 @@ mod qemu_riscv64_opensbi {
         runtime::heap_allocator::init();
         platform::arch::init();
         task::init_on_cpu(cpu_id);
+        task::set_timekeeper_cpu(cpu_id);
         crate::dashboard::init();
         crate::trap_handler::init();
         // MM 初始化
@@ -230,6 +229,7 @@ mod qemu_riscv64_opensbi {
 mod qemu_loongarch64_virt {
     use crate::bringup_driver_and_user;
     use core::sync::atomic::{AtomicBool, Ordering};
+    use cred::active_impl::on_exec;
     use runtime::logging::*;
 
     static BSP_CLAIMED : AtomicBool = AtomicBool::new(false);
@@ -263,9 +263,9 @@ mod qemu_loongarch64_virt {
 
     #[unsafe(no_mangle)]
     pub fn wateros_kernel_main(cpu_raw : usize, _argc : usize, envp : usize) -> ! {
+        let cpu_id = task::CpuId::from_raw(cpu_raw);
         mask_boot_interrupts();
         if BSP_CLAIMED.swap(true, Ordering::AcqRel) {
-            let cpu_id = task::CpuId::from_raw(cpu_raw);
             wait_ap_boot_ready(cpu_id);
         }
 
@@ -273,13 +273,14 @@ mod qemu_loongarch64_virt {
         klog::init();
         runtime::logging::init();
         runtime::heap_allocator::init();
-        platform::arch::cpu::init_current_cpu(task::CpuId::from_raw(cpu_raw))
-            .expect("BSP init current CPU");
+        platform::arch::cpu::init_current_cpu(cpu_id).expect("BSP init current CPU");
         platform::arch::init();
         let _ = platform::smp::init_ipi();
         driver::init_when_boot(envp);
         crate::boot_timebase::probe_and_init_timebase(envp);
-        task::init_on_cpu(task::CpuId::from_raw(cpu_raw));
+        task::init_on_cpu(cpu_id);
+        task::set_timekeeper_cpu(cpu_id);
+        task::set_cpu_online(cpu_id);
         crate::dashboard::init();
         crate::trap_handler::init();
         platform::arch::paging::init_paging_disable_mmu();

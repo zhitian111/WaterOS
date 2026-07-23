@@ -23,6 +23,8 @@ pub(super) struct MultiClassScheduler {
     pub cpu_states : [CPUScheduler; MAX_CPUS],
     /// 环形选核的起点。负载相同时，从这里开始的第一个 online CPU 获胜。
     pub next_placement_cpu : usize,
+    /// 唯一推进全局 sleep/wait timeout 时间的 BSP。
+    pub timekeeper_cpu : Option<CpuId>,
     /// 入队时在 scheduler 锁内累计，锁外再实际发送定向 IPI。
     pending_reschedule_cpus : CpuMask,
 }
@@ -41,6 +43,7 @@ impl MultiClassScheduler {
         Self { global : GlobalScheduler::new(),
                cpu_states : core::array::from_fn(|i| CPUScheduler::new(CpuId::from_raw(i))),
                next_placement_cpu : 0,
+               timekeeper_cpu : None,
                pending_reschedule_cpus : CpuMask::EMPTY }
     }
 
@@ -48,6 +51,7 @@ impl MultiClassScheduler {
         assert!(boot_cpu.fits_capacity(self.cpu_states.len()), "boot CPU is outside scheduler capacity");
         self.global.init();
         self.next_placement_cpu = 0;
+        self.timekeeper_cpu = None;
         self.pending_reschedule_cpus = CpuMask::EMPTY;
         // 为每个 configured CPU 创建 idle 任务
         for cpu_id in 0..self.cpu_states
@@ -93,9 +97,9 @@ impl MultiClassScheduler {
         }
         self.cpu_states[cpu_id.raw()].current_task_id = Some(task_id);
         if previous_task_id != Some(task_id) {
-            self.cpu_states[cpu_id.raw()].context_switches = self.cpu_states[cpu_id.raw()]
-                                                                   .context_switches
-                                                                   .saturating_add(1);
+            self.cpu_states[cpu_id.raw()].context_switches =
+                self.cpu_states[cpu_id.raw()].context_switches
+                                             .saturating_add(1);
         }
         self.global
             .registry
@@ -150,12 +154,18 @@ impl MultiClassScheduler {
             // --- Tick 路径：检查时间片与抢占条件 ---
             ScheduleReason::Tick => {
                 // 1a. 推进全局 tick 和当前任务的 tick 计数
-                self.cpu_states[cpu_id.raw()].timer_ticks = self.cpu_states[cpu_id.raw()]
-                                                              .timer_ticks
-                                                              .saturating_add(1);
-                self.global
-                    .wait_queues
-                    .on_tick();
+                self.cpu_states[cpu_id.raw()].timer_ticks =
+                    self.cpu_states[cpu_id.raw()].timer_ticks
+                                                 .saturating_add(1);
+                // 全局逻辑时间只能由启动时登记的 BSP 推进。
+                // AP timer tick 只处理本 CPU 的时间片消耗和本地抢占检查，
+                // 不推进 wait_queues.on_tick()，否则多核下 sleep/wait timeout
+                // 会以 1/N 的时间提前到期（N = online CPU 数）。
+                if self.is_timekeeper_cpu(cpu_id) {
+                    self.global
+                        .wait_queues
+                        .on_tick();
+                }
                 if let Some(id) = self.cpu_states[cpu_id.raw()].current_task_id {
                     self.global
                         .registry
@@ -195,11 +205,14 @@ impl MultiClassScheduler {
 
                 // 1e. 根据检查结果决定路径
                 if quantum_expired || ready_preempts {
-                    // 需要重新调度 → promote + 清零时间片，继续往下
-                    self.promote_sleep_and_timeouts();
+                    // AP 只处理本 CPU 的时间片；全局 timeout 仅由 timekeeper
+                    // 在自己的 tick 中转为 Ready 任务。
+                    if self.is_timekeeper_cpu(cpu_id) {
+                        self.promote_sleep_and_timeouts();
+                    }
                     self.cpu_states[cpu_id.raw()].other_queue
                                                  .reset_ticks();
-                } else if self.global
+                } else if self.is_timekeeper_cpu(cpu_id) && self.global
                               .wait_queues
                               .has_due_timers()
                 {
@@ -219,7 +232,8 @@ impl MultiClassScheduler {
         }
 
         // ===== Phase 2: 前置 promote（非 Tick 路径在此处理） =====
-        if !matches!(reason,
+        if self.is_timekeeper_cpu(cpu_id) &&
+           !matches!(reason,
                      ScheduleReason::Tick | ScheduleReason::Reschedule)
         {
             self.promote_sleep_and_timeouts();
@@ -327,7 +341,9 @@ impl MultiClassScheduler {
         // ===== Phase 1: 前置处理 =====
         self.cpu_states[cpu_id.raw()].other_queue
                                      .reset_ticks();
-        self.promote_sleep_and_timeouts();
+        if self.is_timekeeper_cpu(cpu_id) {
+            self.promote_sleep_and_timeouts();
+        }
 
         // ===== Phase 2: 快速路径 — 目标已就绪，无需阻塞 =====
         if self.global

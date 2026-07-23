@@ -1,6 +1,27 @@
 // 每 CPU 调度器状态、在线状态与只读查询。
 
 impl MultiClassScheduler {
+    pub(super) fn set_timekeeper_cpu(&mut self, cpu_id : CpuId) {
+        assert!(cpu_id.fits_capacity(self.cpu_states
+                                         .len()),
+                "invalid scheduler timekeeper CPU {}",
+                cpu_id.raw());
+        if let Some(previous) = self.timekeeper_cpu.replace(cpu_id) {
+            assert_eq!(previous,
+                       cpu_id,
+                       "scheduler timekeeper changed from CPU {} to CPU {}",
+                       previous.raw(),
+                       cpu_id.raw());
+            return;
+        }
+        log::info!("[scheduler] CPU {} is global timekeeper", cpu_id.raw());
+    }
+
+    #[inline]
+    pub(super) fn is_timekeeper_cpu(&self, cpu_id : CpuId) -> bool {
+        self.timekeeper_cpu == Some(cpu_id)
+    }
+
     pub(super) fn set_cpu_online(&mut self, cpu_id : CpuId) {
         if !cpu_id.fits_capacity(self.cpu_states
                                      .len())
