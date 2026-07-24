@@ -42,7 +42,8 @@ wateros-fs/
 
 参考：
 
-- `fs-impl/impl-ext4-rs`（默认，`ext4_rs`）
+- `fs-impl/impl-another-ext4`（默认，vendored `another_ext4`）
+- `fs-impl/impl-ext4-rs`（回退，`ext4_rs`）
 - `fs-impl/impl-ext4`（ext4plus，`ro.rs`/`rw.rs`）
 
 ### 4. 注册到聚合层

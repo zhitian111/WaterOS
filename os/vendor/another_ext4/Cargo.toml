@@ -1,0 +1,15 @@
+[package]
+name = "another_ext4"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bitflags = "2.2.1"
+log = "0.4"
+# axsync = { git = "https://github.com/Starry-OS/axsync.git", optional = true }
+
+[features]
+# Keep the upstream conditional code explicit even though the cache is disabled
+# until WaterOS supplies a compatible cache implementation.
+block_cache = []
+fuser_root_inode = []

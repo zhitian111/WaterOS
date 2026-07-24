@@ -15,6 +15,7 @@
 - 设备文件抽象：`os/components/wateros-fs/fs-devfs/`（`devfs-api`、`impl-kernel` / `impl-dummy`）
 - 根卷管理：`os/components/wateros-fs/fs-rootfs/`（`rootfs-api`、`impl-kernel` / `impl-dummy`）
 - ext4 实现（RO + RW 合一）：`os/components/wateros-fs/fs-impl/impl-ext4/src/{lib.rs,ro.rs,rw.rs,selftest.rs}`
+- another_ext4 实现：`os/components/wateros-fs/fs-impl/impl-another-ext4/src/lib.rs`；上游源码固定 vendored 于 `os/vendor/another_ext4/`
 - 内核启动接线：`os/src/main.rs`（在 `driver::active_impl::init_after_boot()` 成功后调用 `fs::init()` / `fs::test()`；默认 QEMU feature 下可再跑 `vfs::test()`（含 `self_test` RW 读回校验），见 `docs/exports/public-api/wateros-vfs.md`）
 - QEMU 块设备（VirtIO-MMIO 实现）：`os/components/wateros-driver/driver-block/block-impl/impl-virtio-mmio/src/lib.rs`；DTB 枚举与注册：`os/components/wateros-driver/driver-impl/impl-qemu-riscv64-opensbi/src/lib.rs`
 
@@ -28,6 +29,7 @@
 | `fs-devfs` | 包名 `wateros-fs-devfs`：设备节点路径与块设备查找（`DevFsManager`），并暴露 `KernelDevFsImpl: FsImpl` 仅供 supported_fs 列示 |
 | `fs-rootfs` | 包名 `wateros-fs-rootfs`：根卷挂载与全局 `SharedFs` 句柄（`RootFsManager`），由聚合层注入选好的 `FsImpl` |
 | `fs-impl/impl-ext4` | 包名 `wateros-fs-impl-ext4`：ext4 单一 impl，**RO 路径**基于 `ext4-view`、**RW 路径**基于 `ext4plus`（beta），对外暴露 `Ext4FsImpl` 与 `pub static IMPL` |
+| `fs-impl/impl-another-ext4` | 包名 `wateros-fs-impl-another-ext4`：基于 vendored `another_ext4` 的 RO/RW impl；通过 4096-byte 文件系统块到 WaterOS LBA 块设备的适配层访问磁盘 |
 | `fs-impl/impl-dummy` | 占位（当前聚合层未作为默认根 FS） |
 | `fs-impl/impl-devfs` | 历史/备用 impl 目录，主线 devfs 在 **`fs-devfs`** |
 
@@ -37,9 +39,10 @@
 
 摘自 `wateros-fs/Cargo.toml`：
 
-- **`default`**：`api-v0` + **`impl-ext4`**（默认根卷为 ext4，RO+RW 同源）。
+- **`default`**：`api-v0` + **`impl-another-ext4`** + `impl-ramfs`；默认根卷由 another_ext4 提供。
 - **`api-v0`**：向下打开各子 crate 的 `api-v0` feature。
-- **`impl-ext4` / `impl-dummy` / `impl-devfs`**：独立 feature 位，用于裁剪 impl crate 编译入。
+- **`impl-another-ext4` / `impl-ext4-rs` / `impl-ext4`**：互斥的 ext4 后端 feature；需要回退时在 `wateros-fs` 这一层关闭默认 feature 并显式启用目标后端，不由 Makefile 选择。
+- **`impl-dummy` / `impl-devfs`**：独立 feature 位，用于裁剪 impl crate 编译入。
 
 `fs-devfs` 默认 **`impl-kernel`**（从 `driver_block_api_v0` 枚举块设备并生成 `/dev/vblkN`）。`fs-rootfs` 默认 **`impl-kernel`**（`mount_default_root`、`root_fs()` 等模块级入口；通过 `set_active_fs_impl(&dyn FsImpl)` 接受聚合层注入）。
 
@@ -71,7 +74,8 @@ flowchart TD
   blockapi --> devfsImpl["fs-devfs impl-kernel"]
   devfsImpl --> agg["wateros-fs aggregator"]
   fsApi["fs-api FsImpl FsKind FsAccessMode"] --> agg
-  ext4Impl["impl-ext4 ext4-view RO + ext4plus RW"] --> agg
+  ext4Impl["impl-another-ext4 (default)"] --> agg
+  ext4Fallback["impl-ext4-rs / impl-ext4 (fallback)"] --> agg
   agg -->|"probe + supports"| pick["pick_fs_impl"]
   pick -->|mount_ro| rootfsImpl["fs-rootfs impl-kernel"]
   pick -->|mount_rw| rwSelfTest["fs::test write smoke"]
@@ -107,6 +111,12 @@ flowchart TD
 - **错误映射**：RO 与 RW 各自把 `Ext4Error` / `ext4plus::error::Ext4Error` 映射到 `FsError`。
 - **自检**：`ro_self_test` 读固定路径 `/src/bin/000_hello_world.rs`、`/elf/000_hello_world.elf`；`rw_smoke_self_test` 在根目录写入指定文件（自检脚本由聚合层串起来）。
 
+### `impl-another-ext4`（当前默认实现）
+
+- 使用上游 `another_ext4` 的 `Ext4::load`、目录操作、区间读写和属性接口；适配器把 4096-byte 文件系统块拆分到 WaterOS 块设备的 512-byte LBA。
+- 保持与 `FsImpl` 相同的 probe、挂载和错误映射契约，因此上层不需要感知具体 ext4 实现。
+- 当前 vendor 版本的块缓存 feature 未启用；写入后的 `flush_all` 由后端接口调用，但持久化验证仍需在 QEMU 镜像上完成。
+
 ## 与 `wateros-vfs` 的边界
 
 当前 **`wateros-fs`** 栈提供 **「块设备 + devfs 路径 + ext4 根卷（RO+RW）」** 的 bring-up 能力。**`wateros-vfs`** 在启用 **`bridge-fs-api`** 时通过本组件**公开 API** 提供单根路径视图、RW 烟囱与 **`open`/`read`/`write`**（`impl-fs-bridge` + `fd-session`）。
@@ -130,7 +140,7 @@ flowchart TD
 ## 验证方式
 
 - 在 **`riscv64gc-unknown-none-elf`** 目标下对 **`wateros-fs`** 与 **`wateros`** 执行 **`cargo check`**（宿主 `x86_64` 直接 `cargo check` 可能因依赖链中的 RISC-V 内联汇编失败，属环境预期）。
-- QEMU **`qemu-riscv64-opensbi`** 镜像：配置 virtio-blk 与带 ext4 的磁盘镜像后，观察启动期日志：`[fs] supported: ...`、`[fs] init: probe matched impl=ext4 kind=Ext4`、`[fs::boot-tree] /...`、`[fs::ext4][test] wrote /hello`、`[fs::ext4][test] verify OK`。
+- QEMU **`qemu-riscv64-opensbi`** 镜像：配置 virtio-blk 与带 ext4 的磁盘镜像后，观察启动期日志中的 `impl=another-ext4`、`[fs::boot-tree] /...` 及 RW 读回结果。
 
 ## 当前缺口与后续方向
 

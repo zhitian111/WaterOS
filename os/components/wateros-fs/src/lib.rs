@@ -4,8 +4,15 @@
 //!
 //! 语义契约：[`init`] 刷新 devfs 并探测块设备、注入 rootfs 所选 impl，**不**挂载根卷；
 //! bring-up 通过 [`mount_default_root_rw`] 挂载单一 ext4 RW 视图；[`test`] 依赖该挂载状态。
-//! 默认 ext4 RW 实现为 `impl-ext4-rs`，旧 ext4plus 路径保留为 `impl-ext4` feature。
+//! 默认 ext4 RW 实现为 `impl-another-ext4`；旧实现保留为回退 feature。
 extern crate alloc;
+
+#[cfg(any(
+    all(feature = "impl-another-ext4", feature = "impl-ext4-rs"),
+    all(feature = "impl-another-ext4", feature = "impl-ext4"),
+    all(feature = "impl-ext4-rs", feature = "impl-ext4"),
+))]
+compile_error!("select only one ext4 backend");
 
 use alloc::vec::Vec;
 
@@ -32,6 +39,9 @@ pub use impl_ext4;
 #[cfg(feature = "impl-ext4-rs")]
 /// 可选的 ext4_rs 实现 crate（由 `impl-ext4-rs` feature 启用）。
 pub use impl_ext4_rs;
+#[cfg(feature = "impl-another-ext4")]
+/// 默认的 another_ext4 实现 crate。
+pub use impl_another_ext4;
 #[cfg(feature = "impl-ramfs")]
 /// 堆内存 ramfs 实现 crate；tmpfs 策略层复用此实现。
 pub use impl_ramfs;
@@ -45,6 +55,8 @@ pub fn registered_fs_impls() -> &'static [&'static dyn api_v0::FsImpl] {
     static TABLE: &[&'static dyn api_v0::FsImpl] = &[
         #[cfg(feature = "impl-ext4-rs")]
         &impl_ext4_rs::IMPL,
+        #[cfg(feature = "impl-another-ext4")]
+        &impl_another_ext4::IMPL,
         #[cfg(feature = "impl-ext4")]
         &impl_ext4::IMPL,
         #[cfg(feature = "impl-ramfs")]

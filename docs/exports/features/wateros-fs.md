@@ -13,7 +13,8 @@
 | `fs-devfs` + api/impl | 块设备枚举、`/dev` 节点、默认根块路径 | 已实现 |
 | `fs-procfs` + api/impl | `/proc` 伪文件（status、maps、mounts 等） | 已实现 |
 | `fs-rootfs` + api/impl | 根卷句柄、辅助 RO/RW 挂载、挂载代次 | 已实现 |
-| `fs-impl/impl-ext4-rs` | 基于 `ext4_rs` 的 ext4 RO/RW（**默认**） | 已实现 |
+| `fs-impl/impl-another-ext4` | 基于 vendored `another_ext4` 的 ext4 RO/RW（**默认**） | 已实现 |
+| `fs-impl/impl-ext4-rs` | 基于 `ext4_rs` 的 ext4 RO/RW 回退实现 | 已实现 |
 | `fs-impl/impl-ext4` | 基于 ext4plus 的旧路径（`impl-ext4` feature） | 已实现 |
 | `fs-impl/impl-devfs` | devfs 的 `FsImpl` 注册面 | 已实现 |
 | `fs-impl/impl-dummy` | API 层占位 | 已实现 |
@@ -24,9 +25,10 @@
 |---------|------|
 | `api-v0` | 链接各子 crate API |
 | `impl-devfs` | devfs 实现注册 |
-| `impl-ext4-rs` | 默认 ext4 RW（`ext4_rs`） |
+| `impl-another-ext4` | 默认 ext4 RO/RW（`another_ext4`） |
+| `impl-ext4-rs` | 可选 `ext4_rs` 回退实现 |
 | `impl-ext4` | 可选 ext4plus 实现 |
-| `default` | `api-v0` + `impl-devfs` + `impl-ext4-rs` |
+| `default` | `api-v0` + `impl-devfs` + `impl-another-ext4` + `impl-ramfs` |
 
 ## 已实现能力
 
@@ -44,7 +46,7 @@
 ## 缺口与后续
 
 - `FsAsyncIo` 未实现，均为 `Unsupported`。
-- `impl-ext4` 与 `impl-ext4-rs` 二选一由 feature 控制，勿同时依赖两套写路径。
+- `impl-another-ext4`、`impl-ext4-rs` 与 `impl-ext4` 由 `wateros-fs` feature 互斥选择，勿同时依赖多套 ext4 写路径；Makefile 不负责选择后端。
 - procfs 字段为 LTP/bring-up 子集，非完整 Linux `/proc`。
 - NUMA、quota、journal 异常恢复等生产级语义未覆盖。
 - `impl-dummy` rootfs/devfs 无真实设备。

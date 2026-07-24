@@ -3,6 +3,14 @@
 version = 4
 
 [[package]]
+name = "another_ext4"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.11.1",
+ "log",
+]
+
+[[package]]
 name = "async-lock"
 version = "3.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -898,6 +906,7 @@ dependencies = [
  "spin",
  "wateros-fs-api-v0",
  "wateros-fs-devfs",
+ "wateros-fs-impl-another-ext4",
  "wateros-fs-impl-devfs",
  "wateros-fs-impl-dummy",
  "wateros-fs-impl-ext4",
@@ -955,6 +964,17 @@ dependencies = [
  "wateros-fs-api-v0",
  "wateros-fs-devfs-api-v0",
  "wateros-runtime-logging",
+]
+
+[[package]]
+name = "wateros-fs-impl-another-ext4"
+version = "0.1.0"
+dependencies = [
+ "another_ext4",
+ "log",
+ "spin",
+ "wateros-driver-block-api-v0",
+ "wateros-fs-api-v0",
 ]
 
 [[package]]
@@ -1490,6 +1510,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "wateros-table-format"
+version = "0.1.0"
+dependencies = [
+ "unicode-width",
+]
+
+[[package]]
 name = "wateros-task"
 version = "0.1.0"
 dependencies = [
@@ -1559,6 +1586,9 @@ dependencies = [
 [[package]]
 name = "wateros-utils"
 version = "0.1.0"
+dependencies = [
+ "wateros-table-format",
+]
 
 [[package]]
 name = "wateros-vfs"
