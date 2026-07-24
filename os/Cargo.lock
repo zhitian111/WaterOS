@@ -1290,6 +1290,7 @@ name = "wateros-mm-impl-loongarch64"
 version = "0.1.0"
 dependencies = [
  "log",
+ "spin",
  "wateros-base",
  "wateros-base-config",
  "wateros-fs",
@@ -1298,6 +1299,7 @@ dependencies = [
  "wateros-mm-impl-common",
  "wateros-platform",
  "wateros-runtime",
+ "wateros-task",
  "wateros-vfs",
 ]
 
@@ -1306,6 +1308,7 @@ name = "wateros-mm-impl-sv39"
 version = "0.1.0"
 dependencies = [
  "log",
+ "spin",
  "wateros-base",
  "wateros-base-config",
  "wateros-fs",
@@ -1314,6 +1317,7 @@ dependencies = [
  "wateros-mm-impl-common",
  "wateros-platform",
  "wateros-runtime",
+ "wateros-task",
  "wateros-vfs",
 ]
 

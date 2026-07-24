@@ -17,6 +17,8 @@
     runtime = { package = "wateros-runtime", path = "../../../wateros-runtime", default-features = true }
     wateros-base = { path = "../../../wateros-base", package = "wateros-base", default-features = true }
     wateros-base-config = { path = "../../../wateros-base/base-config", package = "wateros-base-config" }
+    task = { package = "wateros-task", path = "../../../wateros-task", default-features = true }
+    spin = { version = "0.10.0", default-features = false, features = [ "mutex", "spin_mutex" ] }
     log = { version = "0.4.29" }
 
 [features]

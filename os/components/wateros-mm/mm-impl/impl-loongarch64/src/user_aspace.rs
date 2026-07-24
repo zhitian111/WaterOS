@@ -12,10 +12,12 @@ use core::sync::atomic::AtomicUsize;
 use api_v0::error::{MmError, MmResult};
 use wateros_base::sync::MultiprocessorSafeCell;
 use wateros_base_config::task::MAX_CPUS;
+use spin::Mutex;
 
 static TLB_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 static TLB_PENDING: [AtomicUsize; MAX_CPUS] = [const { AtomicUsize::new(0) }; MAX_CPUS];
 static TLB_COMPLETED: [AtomicUsize; MAX_CPUS] = [const { AtomicUsize::new(0) }; MAX_CPUS];
+static TLB_SHOOTDOWN_LOCK: Mutex<()> = Mutex::new(());
 
 use crate::pagetable::LoongArch64AddressSpace;
 
@@ -54,8 +56,15 @@ pub(crate) fn destroy(handle: usize) {
 }
 
 fn request_tlb_shootdown() {
+    // Serialize sequence allocation, pending publication, IPI delivery and
+    // acknowledgements.  A per-CPU pending slot cannot represent two
+    // concurrent transactions safely without this critical section.
+    let _request_guard = TLB_SHOOTDOWN_LOCK.lock();
     let current = platform::arch::cpu::current_cpu_id();
-    let mut targets = platform::smp::configured_cpu_mask();
+    // Stage one invalidates every online CPU.  Restricting this to online
+    // CPUs avoids waiting for configured-but-not-yet-started harts; tracking
+    // the CPUs actively using this address space is a later optimization.
+    let mut targets = task::online_cpu_mask();
     targets.remove(current);
     if targets.is_empty() { return; }
     let sequence = TLB_SEQUENCE.fetch_add(1, Ordering::AcqRel) + 1;
@@ -65,7 +74,13 @@ fn request_tlb_shootdown() {
         raw &= raw - 1;
         if cpu < MAX_CPUS { TLB_PENDING[cpu].store(sequence, Ordering::Release); }
     }
-    let _ = platform::smp::send_ipi(targets);
+    if let Err(error) = platform::smp::send_ipi(targets) {
+        log::warn!("[tlb] shootdown IPI failed sequence={} targets={:#x} error={:?}",
+                   sequence,
+                   targets.bits(),
+                   error);
+        return;
+    }
     let mut raw = targets.bits();
     while raw != 0 {
         let cpu = raw.trailing_zeros() as usize;

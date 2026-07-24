@@ -68,23 +68,23 @@ const BRINGUP_COMMANDS : &[BringupCommand] = &[
 /// 线上决赛镜像的两组 glibc 测例，路径与 `final_test_case/README.md` 一致。
 #[cfg(all(feature = "final_online", feature = "final_online_smp_test"))]
 const BRINGUP_COMMANDS : &[BringupCommand] =
-    &[BringupCommand { program : "/busybox",
+    &[BringupCommand { program : "/usr/bin/busybox",
                        argv : &["sh", "-c",
                                 "rm -rf /tmp/wateros-smp-test; mkdir -p /tmp/wateros-smp-test; \
                                  i=0; while [ $i -lt 32 ]; do (echo $i > /tmp/wateros-smp-test/$i; \
                                  cat /tmp/wateros-smp-test/$i > /dev/null; rm -f /tmp/wateros-smp-test/$i) & \
                                  i=$((i + 1)); done; wait; echo SMP_MM_TEST_DONE"] },
-      BringupCommand { program : "/busybox",
+      BringupCommand { program : "/usr/bin/busybox",
                        argv : &["sh", "/scripts/cagent_testcode.sh"] },
-      BringupCommand { program : "/busybox",
+      BringupCommand { program : "/usr/bin/busybox",
                        argv : &["sh", "/scripts/buildstorm_testcode.sh"] }];
 
 #[cfg(all(feature = "final_online", not(feature = "final_online_smp_test")))]
 const BRINGUP_COMMANDS : &[BringupCommand] =
-    &[BringupCommand { program : "/busybox",
+    &[BringupCommand { program : "/usr/bin/busybox",
                        argv : &["sh",
                                 "/scripts/cagent_testcode.sh"] },
-      BringupCommand { program : "/busybox",
+      BringupCommand { program : "/usr/bin/busybox",
                        argv : &["sh",
                                 "/scripts/buildstorm_testcode.sh"] }];
 
