@@ -60,6 +60,15 @@ pub mod kernel_mm {
     };
     pub use api_v0::executable::ExecResolveError;
 
+    pub fn handle_tlb_shootdown_ipi() -> bool {
+        #[cfg(feature = "impl-sv39")]
+        { return impl_sv39::kernel_mm_impl::handle_tlb_shootdown_ipi(); }
+        #[cfg(all(not(feature = "impl-sv39"), feature = "impl-loongarch64"))]
+        { return impl_loongarch64::kernel_mm_impl::handle_tlb_shootdown_ipi(); }
+        #[cfg(not(any(feature = "impl-sv39", feature = "impl-loongarch64")))]
+        { false }
+    }
+
     /// 在已装载 ELF 的用户栈上写入 argc/argv/envp/auxv，返回初始 `sp`。
     #[cfg(any(feature = "impl-sv39", feature = "impl-loongarch64"))]
     pub fn prepare_elf_user_stack(
@@ -106,7 +115,7 @@ pub mod kernel_mm {
             use api_v0::addr::VirtAddr;
             use api_v0::mmap::MmapOps;
             let mut alloc = crate::frame_alloctor::GlobalPhysFrameAllocator;
-            return crate::user_aspace::with_user_aspace_mut(aspace_ptr, |aspace| {
+            return crate::user_aspace::with_user_aspace_mut_and_flush(aspace_ptr, |aspace| {
                 MmapOps::handle_page_fault(aspace, &mut alloc, VirtAddr(fault_addr), access)
             })
             .unwrap_or(false);
@@ -116,7 +125,7 @@ pub mod kernel_mm {
             use api_v0::addr::VirtAddr;
             use api_v0::mmap::MmapOps;
             let mut alloc = crate::frame_alloctor::GlobalPhysFrameAllocator;
-            return crate::user_aspace::with_user_aspace_mut(aspace_ptr, |aspace| {
+            return crate::user_aspace::with_user_aspace_mut_and_flush(aspace_ptr, |aspace| {
                 MmapOps::handle_page_fault(aspace, &mut alloc, VirtAddr(fault_addr), access)
             })
             .unwrap_or(false);
@@ -136,7 +145,7 @@ pub mod kernel_mm {
         {
             use api_v0::addr::VirtAddr;
             let mut alloc = crate::frame_alloctor::GlobalPhysFrameAllocator;
-            return crate::user_aspace::with_user_aspace_mut(aspace_ptr, |aspace| {
+            return crate::user_aspace::with_user_aspace_mut_and_flush(aspace_ptr, |aspace| {
                 aspace.madvise_discard_mapped_pages(&mut alloc, VirtAddr(addr), len)
             });
         }
@@ -144,7 +153,7 @@ pub mod kernel_mm {
         {
             use api_v0::addr::VirtAddr;
             let mut alloc = crate::frame_alloctor::GlobalPhysFrameAllocator;
-            return crate::user_aspace::with_user_aspace_mut(aspace_ptr, |aspace| {
+            return crate::user_aspace::with_user_aspace_mut_and_flush(aspace_ptr, |aspace| {
                 aspace.madvise_discard_mapped_pages(&mut alloc, VirtAddr(addr), len)
             });
         }

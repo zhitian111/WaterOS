@@ -204,6 +204,7 @@ pub mod interrupt {
 /// 内核自身的地址空间 token 由 MM 层维护并通过 [`mm::kernel_mm::kernel_satp`]
 /// 提供。
 pub mod paging {
+    pub use api_v0::paging::TlbFlushRange;
     #[cfg(feature = "impl-loongarch64")]
     pub use impl_loongarch64::paging::LoongArch64Paging as ArchPagingImpl;
     #[cfg(feature = "impl-riscv64")]
@@ -222,6 +223,11 @@ pub mod paging {
     /// 当前地址空间下 PTE 已就地修改时，刷新本地 CPU/hart 的地址翻译缓存。
     #[inline]
     pub fn flush_address_space_translations() { ArchPagingImpl::flush_address_space_translations() }
+
+    /// Flush translations on the current CPU. Architectures may conservatively
+    /// widen a range when their ISA does not expose an equivalent operation.
+    #[inline]
+    pub fn flush_tlb_local(range: TlbFlushRange) { ArchPagingImpl::flush_tlb_local(range) }
 
     /// 关闭 MMU（CRMD.PG = 0），在构建内核页表前确认为直接物理寻址。
     #[inline]

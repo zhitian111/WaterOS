@@ -118,7 +118,7 @@ pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
                             kind };
 
     match file_fd {
-        None => match mm::user_aspace::with_user_aspace_mut(handle, |aspace| {
+        None => match mm::user_aspace::with_user_aspace_mut_and_flush(handle, |aspace| {
                   let mut alloc = GlobalPhysFrameAllocator;
                   let base = MmapOps::mmap(aspace, &mut alloc, req, None)?;
                   Ok(base.0)
@@ -139,7 +139,7 @@ pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
                 MmapKind::File { offset, .. } => offset,
                 MmapKind::Anonymous => 0,
             };
-            match mm::user_aspace::with_user_aspace_mut(handle, |aspace| {
+            match mm::user_aspace::with_user_aspace_mut_and_flush(handle, |aspace| {
                       let mut alloc = GlobalPhysFrameAllocator;
                       let base = if eager_shared {
                           let mut loader = loader;
@@ -196,7 +196,7 @@ pub(crate) fn sys_munmap(args : SyscallArgs) -> UserRet {
     use mm::frame_alloctor::GlobalPhysFrameAllocator;
     let addr = args.arg(0);
     let len = args.arg(1);
-    match mm::user_aspace::with_user_aspace_mut(handle, |aspace| {
+    match mm::user_aspace::with_user_aspace_mut_and_flush(handle, |aspace| {
               let mut alloc = GlobalPhysFrameAllocator;
               MmapOps::munmap(aspace, &mut alloc, VirtAddr(addr), len)
           }) {
@@ -244,7 +244,7 @@ pub(crate) fn sys_mprotect(args : SyscallArgs) -> UserRet {
     let len = args.arg(1);
     let prot = args.arg(2) as i32;
     let perm = linux_mmap_prot_to_perm(prot);
-    match mm::user_aspace::with_user_aspace_mut(handle, |aspace| {
+    match mm::user_aspace::with_user_aspace_mut_and_flush(handle, |aspace| {
               MmapOps::mprotect(aspace, VirtAddr(addr), len, perm)
           }) {
         Ok(()) => UserRet::from_success(0),
@@ -268,7 +268,7 @@ pub(crate) fn sys_mremap(args : SyscallArgs) -> UserRet {
     let flags = args.arg(3);
     let new_address = args.arg(4);
 
-    match mm::user_aspace::with_user_aspace_mut(handle, |aspace| {
+    match mm::user_aspace::with_user_aspace_mut_and_flush(handle, |aspace| {
               let mut alloc = GlobalPhysFrameAllocator;
               let base = MmapOps::mremap(aspace,
                                          &mut alloc,

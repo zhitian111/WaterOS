@@ -49,7 +49,8 @@ pub use schedule::{
     wait_on_while_for_ticks, wake_task, yield_now,
 };
 pub use spawn::{
-    spawn_kernel_task, spawn_user_task, spawn_user_task_from_loaded_elf, user_task_from_loaded_elf,
+    spawn_kernel_task, spawn_kernel_task_on_current_cpu, spawn_user_task,
+    spawn_user_task_from_loaded_elf, user_task_from_loaded_elf,
 };
 pub use trap::{begin_current_trap_frame_access, restore_current_trap_frame};
 mod scheduler {

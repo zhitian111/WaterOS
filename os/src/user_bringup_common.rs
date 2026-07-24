@@ -57,12 +57,8 @@ pub fn run_one_elf_argv(log_tag : &str, elf_path : &str, argv : &[&str]) {
 
 /// 串行执行单个 ELF/脚本并返回退出码；装载/创建失败返回 `None`。
 pub fn run_one_elf_argv_exit(log_tag : &str, elf_path : &str, argv : &[&str]) -> Option<isize> {
-    #[cfg(feature = "vfs-bridge")]
-    if let Err(e) = warn_if_path_missing(log_tag, elf_path) {
-        warn!("[{log_tag}] skip path={elf_path}: rootfs check: {e:?}");
-        return None;
-    }
-
+    // Let the ELF loader be the source of truth.  Some rootfs backends do not
+    // implement `exists`, although opening and loading the file works.
     let load_result = load_program_without_timer_preemption(elf_path, argv);
     let (loaded, final_argv) = match load_result {
         Ok(pair) => pair,
@@ -164,15 +160,4 @@ fn load_program_without_timer_preemption(path : &str,
         let _ = platform::interrupt::restore_global_interrupt_state(state);
     }
     result
-}
-
-#[cfg(feature = "vfs-bridge")]
-fn warn_if_path_missing(log_tag : &str, path : &str) -> Result<(), vfs::api::VfsError> {
-    use vfs::api::SingleRootReadView;
-    let view = vfs::root::read_view();
-    if !view.exists(path)? {
-        warn!("[{log_tag}] MISSING path: {path}");
-        return Err(vfs::api::VfsError::NotFound);
-    }
-    Ok(())
 }

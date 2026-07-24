@@ -20,6 +20,9 @@ pub struct LoongArch64Paging;
 
 impl LoongArch64Paging {
     #[inline]
+    pub fn flush_tlb_local(_range: api_v0::paging::TlbFlushRange) { Self::invtlb_all(); }
+
+    #[inline]
     fn read_pgdl() -> usize {
         let value: usize;
         unsafe {
@@ -56,7 +59,7 @@ impl LoongArch64Paging {
 
     #[inline]
     pub fn flush_address_space_translations() {
-        Self::invtlb_all();
+        Self::flush_tlb_local(api_v0::paging::TlbFlushRange::All);
     }
 
     /// 关闭 MMU（CRMD.DA = 1, CRMD.PG = 0），使后续访存直接使用物理地址。

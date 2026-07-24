@@ -66,7 +66,20 @@ const BRINGUP_COMMANDS : &[BringupCommand] = &[
     ];
 
 /// 线上决赛镜像的两组 glibc 测例，路径与 `final_test_case/README.md` 一致。
-#[cfg(feature = "final_online")]
+#[cfg(all(feature = "final_online", feature = "final_online_smp_test"))]
+const BRINGUP_COMMANDS : &[BringupCommand] =
+    &[BringupCommand { program : "/busybox",
+                       argv : &["sh", "-c",
+                                "rm -rf /tmp/wateros-smp-test; mkdir -p /tmp/wateros-smp-test; \
+                                 i=0; while [ $i -lt 32 ]; do (echo $i > /tmp/wateros-smp-test/$i; \
+                                 cat /tmp/wateros-smp-test/$i > /dev/null; rm -f /tmp/wateros-smp-test/$i) & \
+                                 i=$((i + 1)); done; wait; echo SMP_MM_TEST_DONE"] },
+      BringupCommand { program : "/busybox",
+                       argv : &["sh", "/scripts/cagent_testcode.sh"] },
+      BringupCommand { program : "/busybox",
+                       argv : &["sh", "/scripts/buildstorm_testcode.sh"] }];
+
+#[cfg(all(feature = "final_online", not(feature = "final_online_smp_test")))]
 const BRINGUP_COMMANDS : &[BringupCommand] =
     &[BringupCommand { program : "/busybox",
                        argv : &["sh",
@@ -95,7 +108,7 @@ fn log_elapsed(log_tag : &str, cmd : &BringupCommand, start_ns : u128, end_ns : 
 /// 执行 `stage-busybox`：登记内核串行 runner（不阻塞；用户态在 `run_first_task` 后运行）。
 pub fn run_stage_busybox() {
     error!("[bringup][stage-busybox] BEGIN");
-    task::spawn_kernel_task(bringup_kernel_runner, 0);
+    task::spawn_kernel_task_on_current_cpu(bringup_kernel_runner, 0);
     error!("[{LOG_TAG}] kernel runner enqueued ({} command(s))",
            BRINGUP_COMMANDS.len());
     error!("[bringup][stage-busybox] END");

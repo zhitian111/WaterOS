@@ -10,6 +10,7 @@ pub mod cpu;
 
 /// 特权级抽象（与 `sstatus` 等配合的语义，不包含固件调用）。
 pub mod privilege;
+pub mod paging;
 /// 通用寄存器组与控制寄存器的最小读写视图（与具体 trap 帧布局解耦的辅助 trait）。
 pub mod register;
 /// 定时器与全局中断在 ISA 层的开关原语。

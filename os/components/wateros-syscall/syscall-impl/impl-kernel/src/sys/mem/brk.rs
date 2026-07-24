@@ -9,7 +9,7 @@ fn sys_brk_mm(handle: usize, addr: usize) -> UserRet {
     use mm::api::addr::VirtAddr;
     use mm::api::brk::HeapBrk;
     use mm::frame_alloctor::GlobalPhysFrameAllocator;
-    match mm::user_aspace::with_user_aspace_mut(handle, |aspace| {
+    match mm::user_aspace::with_user_aspace_mut_and_flush(handle, |aspace| {
         let mut alloc = GlobalPhysFrameAllocator;
         if addr == 0 {
             return Ok(HeapBrk::brk_region(aspace)

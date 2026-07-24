@@ -265,6 +265,7 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
         TrapCause::Interrupt(Interrupt::SupervisiorSoft) => {
             // 来自其他 CPU 的 IPI：清除 SSIP 位，避免 sret 后立即再次 trap。
             let _ = platform::smp::clear_ipi();
+            let _ = mm::kernel_mm::handle_tlb_shootdown_ipi();
             // IPI is not a timer event: never advance timeout accounting or
             // consume a timeslice here.
             task::schedule_reschedule();

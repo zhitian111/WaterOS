@@ -5,9 +5,15 @@
 //! **Safety**：`handle` 须来自 bring-up 泄漏的用户地址空间，且与当前任务安装的 `satp` 一致。
 
 use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::AtomicUsize;
 
 use api_v0::error::{MmError, MmResult};
 use wateros_base::sync::MultiprocessorSafeCell;
+use wateros_base_config::task::MAX_CPUS;
+
+static TLB_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
+static TLB_PENDING: [AtomicUsize; MAX_CPUS] = [const { AtomicUsize::new(0) }; MAX_CPUS];
+static TLB_COMPLETED: [AtomicUsize; MAX_CPUS] = [const { AtomicUsize::new(0) }; MAX_CPUS];
 
 use crate::pagetable::Sv39AddressSpace;
 
@@ -45,6 +51,56 @@ pub(crate) fn destroy(handle: usize) {
     cell.inner.exclusive_access().destroy();
 }
 
+fn request_tlb_shootdown() {
+    let current = platform::arch::cpu::current_cpu_id();
+    let mut targets = platform::smp::configured_cpu_mask();
+    targets.remove(current);
+    if targets.is_empty() {
+        return;
+    }
+    let sequence = TLB_SEQUENCE.fetch_add(1, Ordering::AcqRel) + 1;
+    let mut raw = targets.bits();
+    while raw != 0 {
+        let cpu = raw.trailing_zeros() as usize;
+        raw &= raw - 1;
+        if cpu < MAX_CPUS {
+            TLB_PENDING[cpu].store(sequence, Ordering::Release);
+        }
+    }
+    let _ = platform::smp::send_ipi(targets);
+    let mut raw = targets.bits();
+    while raw != 0 {
+        let cpu = raw.trailing_zeros() as usize;
+        raw &= raw - 1;
+        if cpu >= MAX_CPUS {
+            continue;
+        }
+        let mut spins = 0usize;
+        while TLB_COMPLETED[cpu].load(Ordering::Acquire) < sequence && spins < 10_000_000 {
+            core::hint::spin_loop();
+            spins += 1;
+        }
+        if spins == 10_000_000 {
+            log::warn!("[tlb] shootdown timeout cpu={} sequence={}", cpu, sequence);
+        }
+    }
+}
+
+pub fn handle_tlb_shootdown_ipi() -> bool {
+    let cpu = platform::arch::cpu::current_cpu_id().raw();
+    if cpu >= MAX_CPUS {
+        return false;
+    }
+    let pending = TLB_PENDING[cpu].load(Ordering::Acquire);
+    let completed = TLB_COMPLETED[cpu].load(Ordering::Relaxed);
+    if pending <= completed {
+        return false;
+    }
+    platform::arch::paging::flush_tlb_local(platform::arch::paging::TlbFlushRange::All);
+    TLB_COMPLETED[cpu].store(pending, Ordering::Release);
+    true
+}
+
 #[inline]
 /// 在有效用户地址空间上执行 `f`；`handle == 0` 返回 [`MmError::InvalidAddress`]。
 pub fn with_user_aspace_mut<R>(
@@ -60,4 +116,14 @@ pub fn with_user_aspace_mut<R>(
         return Err(MmError::InvalidAddress);
     }
     f(&mut guard)
+}
+
+pub fn with_user_aspace_mut_and_flush<R>(
+    handle: usize,
+    f: impl FnOnce(&mut Sv39AddressSpace) -> MmResult<R>,
+) -> MmResult<R> {
+    let result = with_user_aspace_mut(handle, f);
+    platform::arch::paging::flush_tlb_local(platform::arch::paging::TlbFlushRange::All);
+    request_tlb_shootdown();
+    result
 }

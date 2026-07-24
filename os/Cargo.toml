@@ -40,6 +40,7 @@
     # 比赛阶段决定根镜像中的用户态 bring-up 队列。
     pre = [  ]
     final_online = [  ]
+    final_online_smp_test = [ "final_online" ]
     impl-sv39 = [ "mm/impl-sv39" ]
     qemu-loongarch64-virt = [
         "abi/impl-linux-generic64",

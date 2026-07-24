@@ -580,6 +580,13 @@ impl MultiClassScheduler {
         self.request_reschedule(picked_cpu);
     }
 
+    pub(super) fn enqueue_ready_task_on_cpu(&mut self, task_id : TaskId, cpu_id : CpuId) {
+        assert!(cpu_id.fits_capacity(self.cpu_states.len()), "invalid task target CPU");
+        assert!(self.cpu_states[cpu_id.raw()].online, "target CPU is offline");
+        self.enqueue_ready_by_cpu(task_id, cpu_id);
+        self.request_reschedule(cpu_id);
+    }
+
 
     /// 将已阻塞任务优先放回其上次运行的 online CPU。
     ///

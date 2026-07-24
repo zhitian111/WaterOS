@@ -101,7 +101,12 @@ pub fn mount_root_rw_from_block_path(path: &str) -> fs_api_v0::FsResult<()> {
         .lock()
         .ok_or(fs_api_v0::FsError::Unsupported)?;
     logging::info!("[fs::rootfs] mount root RW from {}", path);
+    // The VFS mutation path uses the RW handle, while ELF loading and other
+    // kernel readers use the RO handle.  A RW-only mount leaves the latter
+    // unset and makes every user ELF load fail as `RootVolume(Unsupported)`.
+    let root_ro = imp.mount_ro(device.clone())?;
     let root = imp.mount_rw(device)?;
+    *ROOT_FS.lock() = Some(root_ro);
     *ROOT_RW_FS.lock() = Some(root);
     *ROOT_DEV_PATH.lock() = Some(path.to_string());
     MOUNT_GENERATION.fetch_add(1, Ordering::Release);
@@ -197,4 +202,3 @@ pub fn mount_aux_rw_from_block_path(path: &str) -> fs_api_v0::FsResult<fs_api_v0
     bump_mount_generation();
     Ok(aux)
 }
-

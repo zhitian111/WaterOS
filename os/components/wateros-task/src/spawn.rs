@@ -12,6 +12,10 @@ pub fn spawn_kernel_task(entry : KernelTaskEntry, arg : usize) -> TaskId {
     scheduler::spawn_kernel_task(entry, arg)
 }
 
+pub fn spawn_kernel_task_on_current_cpu(entry : KernelTaskEntry, arg : usize) -> TaskId {
+    scheduler::spawn_kernel_task_on_current_cpu(entry, arg)
+}
+
 /// 按给定规格创建一个新的用户任务，并返回分配到的任务号。
 pub fn spawn_user_task(user : UserTask) -> TaskId {
     let task_id = scheduler::create_user_task_spec(user);

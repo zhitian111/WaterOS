@@ -85,6 +85,7 @@ pub mod kernel_mm_impl {
         ensure_user_execute_for_kernel_va, init, kernel_satp, map_anon_range_user,
         map_identity_range_user,
     };
+    pub use crate::user_aspace::handle_tlb_shootdown_ipi;
 
     /// 基于父地址空间创建独立子地址空间：分配新页表树并逐帧复制所有带 `U`
     /// 权限的用户页。
@@ -102,7 +103,7 @@ pub mod kernel_mm_impl {
         if parent_aspace_ptr == 0 {
             return Err(MmError::InvalidAddress);
         }
-        let (child, satp) = crate::user_aspace::with_user_aspace_mut(parent_aspace_ptr,
+        let (child, satp) = crate::user_aspace::with_user_aspace_mut_and_flush(parent_aspace_ptr,
             |parent| {
                 let child = parent.fork_cow()?;
                 let satp = child.satp_value();
@@ -121,7 +122,7 @@ pub mod kernel_mm_impl {
         if parent_aspace_ptr == 0 {
             return Err(MmError::InvalidAddress);
         }
-        crate::user_aspace::with_user_aspace_mut(parent_aspace_ptr,
+        crate::user_aspace::with_user_aspace_mut_and_flush(parent_aspace_ptr,
             |aspace| aspace.handle_cow_fault(VirtAddr(fault_addr)))
     }
 

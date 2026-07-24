@@ -159,7 +159,7 @@ fn reserve_attach_va(
         flags: map_flags,
         kind: MmapKind::Anonymous,
     };
-    mm::user_aspace::with_user_aspace_mut(handle, |aspace| {
+    mm::user_aspace::with_user_aspace_mut_and_flush(handle, |aspace| {
         let mut alloc = GlobalPhysFrameAllocator;
         let base = MmapOps::mmap(aspace, &mut alloc, req, None)?;
         Ok(base.0)
@@ -181,7 +181,7 @@ fn replace_range_with_shared(
     if !info.readonly {
         perm |= PagePerm::W;
     }
-    mm::user_aspace::with_user_aspace_mut(handle, |aspace| {
+    mm::user_aspace::with_user_aspace_mut_and_flush(handle, |aspace| {
         for (index, ppn) in info.pages.iter().copied().enumerate() {
             let vpn = VirtAddr(info.base + index * PAGE_SIZE).floor_page();
             if let Some(old_ppn) = aspace.unmap_page_to_ppn(vpn)? {
@@ -200,7 +200,7 @@ fn unmap_shared_range(handle: usize, info: &ShmAttachInfo) -> Result<(), ErrNo> 
     use mm::api::address_space::AddressSpaceOps;
     use mm::api::addr::{VirtAddr, PAGE_SIZE};
 
-    mm::user_aspace::with_user_aspace_mut(handle, |aspace| {
+    mm::user_aspace::with_user_aspace_mut_and_flush(handle, |aspace| {
         for index in 0..info.pages.len() {
             let vpn = VirtAddr(info.base + index * PAGE_SIZE).floor_page();
             let _ = aspace.unmap_page_to_ppn(vpn)?;
@@ -215,7 +215,7 @@ fn unmap_range_dealloc(handle: usize, base: usize, len: usize) -> Result<(), Err
     use mm::api::mmap::MmapOps;
     use mm::frame_alloctor::GlobalPhysFrameAllocator;
 
-    mm::user_aspace::with_user_aspace_mut(handle, |aspace| {
+    mm::user_aspace::with_user_aspace_mut_and_flush(handle, |aspace| {
         let mut alloc = GlobalPhysFrameAllocator;
         MmapOps::munmap(aspace, &mut alloc, VirtAddr(base), len)
     })

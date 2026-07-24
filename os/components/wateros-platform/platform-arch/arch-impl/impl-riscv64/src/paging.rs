@@ -9,6 +9,24 @@ use core::arch::asm;
 pub struct Riscv64Paging;
 
 impl Riscv64Paging {
+    #[inline]
+    pub fn flush_tlb_local(range: api_v0::paging::TlbFlushRange) {
+        unsafe {
+            match range {
+                api_v0::paging::TlbFlushRange::Page { addr } => {
+                    asm!("sfence.vma {0}, x0", in(reg) addr);
+                }
+                api_v0::paging::TlbFlushRange::AddressSpace { token } => {
+                    let asid = (token >> 44) & 0xffff;
+                    asm!("sfence.vma x0, {0}", in(reg) asid);
+                }
+                api_v0::paging::TlbFlushRange::Range { .. } | api_v0::paging::TlbFlushRange::All => {
+                    asm!("sfence.vma x0, x0");
+                }
+            }
+        }
+    }
+
     /// 读取当前地址空间 token；在 RISC-V Sv39 下即 `satp` 当前值。
     #[inline]
     pub fn active_address_space_token() -> usize {
@@ -32,9 +50,7 @@ impl Riscv64Paging {
     /// 刷新当前地址空间下的地址翻译缓存；在 RISC-V 下即全局 `sfence.vma`。
     #[inline]
     pub fn flush_address_space_translations() {
-        unsafe {
-            asm!("sfence.vma x0, x0");
-        }
+        Self::flush_tlb_local(api_v0::paging::TlbFlushRange::All);
     }
 
     /// RISC-V 下 MMU 由 OpenSBI 在 M 态管理，S 态不直接操作 MMU 使能位；no-op。

@@ -6,7 +6,7 @@ BRANCH=$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
 BUILD_NUM = $(shell git rev-list --count HEAD 2>/dev/null || echo "0")
 
 .PHONY: clean check all all_start_info kernel configure fmt apply_features flush_img export
-.PHONY: rv_check rv_elf_info rv_obj_dump kernel-rv-pre kernel-rv-final rv_pre_run rv_final_run rv_pre_run_snapshot rv_final_run_snapshot rv_qemu_run rv_qemu_run_snapshot rv_qemu_run_with_log rv_qemu_gdb rv_gdb
+.PHONY: rv_check rv_elf_info rv_obj_dump kernel-rv-pre kernel-rv-final kernel-rv-final-smp-test rv_pre_run rv_final_run rv_final_smp_test rv_pre_run_snapshot rv_final_run_snapshot rv_qemu_run rv_qemu_run_snapshot rv_qemu_run_with_log rv_qemu_gdb rv_gdb
 .PHONY: rv_pc_watch rv_symbol_at
 .PHONY: la_check la_elf_info kernel-la-pre kernel-la-final la_pre_run la_final_run la_qemu_run la_symbol_at la_pc_watch
 .PHONY: rv_user_mode_bin
@@ -37,6 +37,8 @@ kernel_rv_pre_flag := --release --target riscv64gc-unknown-none-elf \
                       --features qemu-riscv64-opensbi,pre
 kernel_rv_final_flag := --release --target riscv64gc-unknown-none-elf \
                         --features qemu-riscv64-opensbi,final_online
+kernel_rv_final_smp_flag := --release --target riscv64gc-unknown-none-elf \
+                            --features qemu-riscv64-opensbi,final_online_smp_test
 
 kernel_rv_build_artifact_path := ./target/riscv64gc-unknown-none-elf/release
 
@@ -143,6 +145,15 @@ rv_pre_run: kernel-rv-pre
 rv_final_run: kernel-rv-final
 	$(call INFO, "运行 riscv64 决赛在线 bringup...")
 	@WOS_KERNEL=./kernel-rv-final bash ./scripts/rv_final_run.sh
+
+kernel-rv-final-smp-test: version
+	$(call INFO, "构建 riscv64 决赛多核 MM 测试内核...")
+	@cargo build $(kernel_rv_final_smp_flag)
+	@cp $(kernel_rv_build_artifact_path)/wateros ./kernel-rv-final-smp-test
+
+rv_final_smp_test: kernel-rv-final-smp-test
+	$(call INFO, "运行 riscv64 决赛多核 MM 测试...")
+	@WOS_KERNEL=./kernel-rv-final-smp-test bash ./scripts/rv_final_run.sh
 
 # 兼容旧脚本调用：旧目标按初赛语义执行。
 rv_qemu_run: rv_pre_run
