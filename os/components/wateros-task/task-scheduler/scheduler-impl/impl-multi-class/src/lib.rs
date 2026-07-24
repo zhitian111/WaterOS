@@ -296,23 +296,6 @@ pub fn spawn_kernel_task(entry : KernelTaskEntry, arg : usize) -> TaskId {
     task_id
 }
 
-pub fn spawn_kernel_task_on_current_cpu(entry : KernelTaskEntry, arg : usize) -> TaskId {
-    let cpu_id = cpu::current_cpu_id();
-    let (task_id, targets) = {
-        let _guard = InterruptGuard::new();
-        with_scheduler(|scheduler| {
-            let task_id = scheduler.global.registry.spawn_kernel_task(entry,
-                                                                       arg,
-                                                                       scheduler.current_task_id(cpu_id));
-            scheduler.enqueue_ready_task_on_cpu(task_id, cpu_id);
-            let targets = scheduler.take_pending_reschedule_cpus();
-            (task_id, targets)
-        })
-    };
-    dispatch_reschedules(targets, cpu_id);
-    task_id
-}
-
 /// 按规格创建用户任务（仅登记 TCB，不入就绪队列）。
 pub fn create_user_task_spec(spec : UserTask) -> TaskId {
     let _guard = InterruptGuard::new();

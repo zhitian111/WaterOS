@@ -1,11 +1,11 @@
 // 任务创建、fork、clone 与 exec 的调度器内部实现。
-
+use super::*;
 impl MultiClassScheduler {
-    pub(super) fn spawn_kernel_task(&mut self,
-                                    entry : KernelTaskEntry,
-                                    arg : usize,
-                                    cpu_id : CpuId)
-                                    -> TaskId {
+    pub fn spawn_kernel_task(&mut self,
+                             entry : KernelTaskEntry,
+                             arg : usize,
+                             cpu_id : CpuId)
+                             -> TaskId {
         let current_task_id = self.cpu_states[cpu_id.raw()].current_task_id;
         let task_id = self.global
                           .registry
@@ -14,14 +14,14 @@ impl MultiClassScheduler {
         task_id
     }
 
-    pub(super) fn create_user_task_spec(&mut self, spec : UserTask, cpu_id : CpuId) -> TaskId {
+    pub fn create_user_task_spec(&mut self, spec : UserTask, cpu_id : CpuId) -> TaskId {
         let current_task_id = self.cpu_states[cpu_id.raw()].current_task_id;
         self.global
             .registry
             .spawn_user_task_spec(spec, current_task_id)
     }
 
-    pub(super) fn spawn_user_task_spec(&mut self, spec : UserTask, cpu_id : CpuId) -> TaskId {
+    pub fn spawn_user_task_spec(&mut self, spec : UserTask, cpu_id : CpuId) -> TaskId {
         let task_id = self.create_user_task_spec(spec, cpu_id);
         self.enqueue_ready_task(task_id);
         task_id
@@ -30,7 +30,7 @@ impl MultiClassScheduler {
     /// 为新建任务选择 online CPU 中就绪队列负载最小的一个。
     ///
     /// 遍历从 `next_placement_cpu` 开始，因此同样负载不会永远偏向 CPU 0。
-    pub(super) fn pick_cpu_for_new_task(&mut self, task_id : TaskId) -> CpuId {
+    pub fn pick_cpu_for_new_task(&mut self, task_id : TaskId) -> CpuId {
         let affinity = self.global
                            .registry
                            .get_affinity(task_id)
@@ -56,12 +56,12 @@ impl MultiClassScheduler {
     }
 
 
-    pub(super) fn create_fork_child(&mut self,
-                                    child_stack : usize,
-                                    new_aspace_ptr : usize,
-                                    new_satp : usize,
-                                    cpu_id : CpuId)
-                                    -> Option<TaskId> {
+    pub fn create_fork_child(&mut self,
+                             child_stack : usize,
+                             new_aspace_ptr : usize,
+                             new_satp : usize,
+                             cpu_id : CpuId)
+                             -> Option<TaskId> {
         let current_task_id = self.cpu_states[cpu_id.raw()].current_task_id?;
         self.global
             .registry
@@ -71,12 +71,12 @@ impl MultiClassScheduler {
                           current_task_id)
     }
 
-    pub(super) fn fork_current(&mut self,
-                               child_stack : usize,
-                               new_aspace_ptr : usize,
-                               new_satp : usize,
-                               cpu_id : CpuId)
-                               -> Option<TaskId> {
+    pub fn fork_current(&mut self,
+                        child_stack : usize,
+                        new_aspace_ptr : usize,
+                        new_satp : usize,
+                        cpu_id : CpuId)
+                        -> Option<TaskId> {
         let child_id = self.create_fork_child(child_stack,
                                               new_aspace_ptr,
                                               new_satp,
@@ -85,40 +85,40 @@ impl MultiClassScheduler {
         Some(child_id)
     }
 
-    pub(super) fn create_clone_thread(&mut self,
-                                      child_stack : usize,
-                                      tls : usize,
-                                      set_tls : bool,
-                                      cpu_id : CpuId)
-                                      -> Option<TaskId> {
+    pub fn create_clone_thread(&mut self,
+                               child_stack : usize,
+                               tls : usize,
+                               set_tls : bool,
+                               cpu_id : CpuId)
+                               -> Option<TaskId> {
         let parent_id = self.cpu_states[cpu_id.raw()].current_task_id?;
         self.global
             .registry
             .clone_current_thread(child_stack, tls, set_tls, parent_id)
     }
 
-    pub(super) fn clone_current_thread(&mut self,
-                                       child_stack : usize,
-                                       tls : usize,
-                                       set_tls : bool,
-                                       cpu_id : CpuId)
-                                       -> Option<TaskId> {
+    pub fn clone_current_thread(&mut self,
+                                child_stack : usize,
+                                tls : usize,
+                                set_tls : bool,
+                                cpu_id : CpuId)
+                                -> Option<TaskId> {
         let child_id = self.create_clone_thread(child_stack, tls, set_tls, cpu_id)?;
         self.enqueue_ready_task(child_id);
         Some(child_id)
     }
 
-    pub(super) fn execve_current(&mut self,
-                                 entry_pc : usize,
-                                 sp : usize,
-                                 argc : usize,
-                                 argv : usize,
-                                 envp : usize,
-                                 satp : usize,
-                                 user_aspace_ptr : usize,
-                                 image_info : task_api::UserImageInfo,
-                                 stack_info : task_api::UserStack,
-                                 cpu_id : CpuId) {
+    pub fn execve_current(&mut self,
+                          entry_pc : usize,
+                          sp : usize,
+                          argc : usize,
+                          argv : usize,
+                          envp : usize,
+                          satp : usize,
+                          user_aspace_ptr : usize,
+                          image_info : task_api::UserImageInfo,
+                          stack_info : task_api::UserStack,
+                          cpu_id : CpuId) {
         let current_id = self.cpu_states[cpu_id.raw()].current_task_id
                                                       .expect("execve requires a current task");
         self.global
@@ -134,41 +134,41 @@ impl MultiClassScheduler {
                             stack_info,
                             current_id);
     }
-    pub(super) fn current_task_id(&self, cpu_id : CpuId) -> Option<TaskId> {
+    pub fn current_task_id(&self, cpu_id : CpuId) -> Option<TaskId> {
         self.cpu_states[cpu_id.raw()].current_task_id
     }
 
-    pub(super) fn current_task_snapshot(&self, cpu_id : CpuId) -> Option<TaskSnapshot> {
+    pub fn current_task_snapshot(&self, cpu_id : CpuId) -> Option<TaskSnapshot> {
         Some(self.global
                  .registry
                  .task_snapshot(self.cpu_states[cpu_id.raw()].current_task_id?))
     }
 
-    pub(super) fn task_snapshot(&self, task_id : TaskId) -> TaskSnapshot {
+    pub fn task_snapshot(&self, task_id : TaskId) -> TaskSnapshot {
         self.global
             .registry
             .task_snapshot(task_id)
     }
 
-    pub(super) fn has_child(&self, parent_id : TaskId) -> bool {
+    pub fn has_child(&self, parent_id : TaskId) -> bool {
         self.global
             .registry
             .has_child(parent_id)
     }
 
-    pub(super) fn current_tick(&self) -> TaskTick {
+    pub fn current_tick(&self) -> TaskTick {
         self.global
             .wait_queues
             .current_tick()
     }
 
-    pub(super) fn current_task_kernel_stack_top(&self, cpu_id : CpuId) -> Option<usize> {
+    pub fn current_task_kernel_stack_top(&self, cpu_id : CpuId) -> Option<usize> {
         Some(self.global
                  .registry
                  .task_kernel_stack_top(self.cpu_states[cpu_id.raw()].current_task_id?))
     }
 
-    pub(super) fn current_task_address_space_raw(&self, cpu_id : CpuId) -> usize {
+    pub fn current_task_address_space_raw(&self, cpu_id : CpuId) -> usize {
         self.cpu_states[cpu_id.raw()].current_task_id
                                      .map(|id| {
                                          self.global
@@ -178,7 +178,7 @@ impl MultiClassScheduler {
                                      .unwrap_or(0)
     }
 
-    pub(super) fn current_task_user_aspace_ptr(&self, cpu_id : CpuId) -> usize {
+    pub fn current_task_user_aspace_ptr(&self, cpu_id : CpuId) -> usize {
         self.cpu_states[cpu_id.raw()].current_task_id
                                      .map(|id| {
                                          self.global
@@ -188,11 +188,11 @@ impl MultiClassScheduler {
                                      .unwrap_or(0)
     }
 
-    pub(super) fn current_task_user_address_space_token(&self, cpu_id : CpuId) -> usize {
+    pub fn current_task_user_address_space_token(&self, cpu_id : CpuId) -> usize {
         self.current_task_address_space_raw(cpu_id)
     }
 
-    pub(super) fn current_task_trap_return_address_space_token(&self, cpu_id : CpuId) -> usize {
+    pub fn current_task_trap_return_address_space_token(&self, cpu_id : CpuId) -> usize {
         self.cpu_states[cpu_id.raw()].current_task_id
                                      .map(|id| {
                                          self.global
@@ -202,20 +202,20 @@ impl MultiClassScheduler {
                                      .unwrap_or(0)
     }
 
-    pub(super) fn begin_current_trap_frame_access(&mut self,
-                                                  trap_frame : TaskTrapFrame,
-                                                  cpu_id : CpuId)
-                                                  -> Option<*mut TaskTrapFrame> {
+    pub fn begin_current_trap_frame_access(&mut self,
+                                           trap_frame : TaskTrapFrame,
+                                           cpu_id : CpuId)
+                                           -> Option<*mut TaskTrapFrame> {
         let task_id = self.cpu_states[cpu_id.raw()].current_task_id?;
         self.global
             .registry
             .begin_trap_frame_access(trap_frame, task_id)
     }
 
-    pub(super) fn restore_current_trap_frame(&self,
-                                             trap_frame : &mut TaskTrapFrame,
-                                             cpu_id : CpuId)
-                                             -> bool {
+    pub fn restore_current_trap_frame(&self,
+                                      trap_frame : &mut TaskTrapFrame,
+                                      cpu_id : CpuId)
+                                      -> bool {
         let task_id = match self.cpu_states[cpu_id.raw()].current_task_id {
             Some(id) => id,
             None => return false,
@@ -225,7 +225,7 @@ impl MultiClassScheduler {
             .restore_trap_frame(trap_frame, task_id)
     }
 
-    pub(super) fn take_current_wait_result(&mut self, cpu_id : CpuId) -> TaskWaitResult {
+    pub fn take_current_wait_result(&mut self, cpu_id : CpuId) -> TaskWaitResult {
         let task_id =
             self.cpu_states[cpu_id.raw()].current_task_id
                                          .expect("wait result can only be taken for a running \
@@ -238,7 +238,11 @@ impl MultiClassScheduler {
         if mask.bits() & !CpuMask::ALL.bits() != 0 {
             return Err(SchedError::InvalidArg);
         }
-        if mask.bits() & self.online_cpu_mask().bits() == 0 {
+        if mask.bits() &
+           self.online_cpu_mask()
+               .bits() ==
+           0
+        {
             return Err(SchedError::InvalidArg);
         }
 
@@ -259,8 +263,8 @@ impl MultiClassScheduler {
                 // `ready_cpu_id` 为 None；只保存 affinity，首次入队会按新 mask
                 // 选核，不能把它当作调度器不变量而 panic。
                 if let Some(ready_cpu) = self.global
-                                                 .registry
-                                                 .ready_cpu_id(task_id)
+                                             .registry
+                                             .ready_cpu_id(task_id)
                 {
                     if !mask.contains(ready_cpu) {
                         let target = self.pick_cpu_for_new_task(task_id);

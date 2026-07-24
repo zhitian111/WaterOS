@@ -1,7 +1,11 @@
 //! [`MultiClassScheduler`]：`SCHED_OTHER` + `SCHED_FIFO` + `SCHED_RR` 多类调度。
 
 extern crate alloc;
-
+mod cpu;
+mod lifecycle;
+mod policy;
+mod tasks;
+mod wait;
 use api_v0::{
     CPUScheduler, CpuSnapshot, FifoQueue, GlobalScheduler, QueueTarget, RrQueue, RrTickAction,
     SchedPolicyChangeAction,
@@ -29,11 +33,6 @@ pub(super) struct MultiClassScheduler {
     pending_reschedule_cpus : CpuMask,
 }
 
-include!("scheduler/cpu.rs");
-include!("scheduler/lifecycle.rs");
-include!("scheduler/policy.rs");
-include!("scheduler/tasks.rs");
-include!("scheduler/wait.rs");
 
 impl MultiClassScheduler {
     // ================================================================
@@ -578,13 +577,6 @@ impl MultiClassScheduler {
         let picked_cpu = self.pick_cpu_for_new_task(task_id);
         self.enqueue_ready_by_cpu(task_id, picked_cpu);
         self.request_reschedule(picked_cpu);
-    }
-
-    pub(super) fn enqueue_ready_task_on_cpu(&mut self, task_id : TaskId, cpu_id : CpuId) {
-        assert!(cpu_id.fits_capacity(self.cpu_states.len()), "invalid task target CPU");
-        assert!(self.cpu_states[cpu_id.raw()].online, "target CPU is offline");
-        self.enqueue_ready_by_cpu(task_id, cpu_id);
-        self.request_reschedule(cpu_id);
     }
 
 

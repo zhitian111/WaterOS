@@ -1,12 +1,12 @@
 // 调度策略修改与抢占比较。
-
+use super::*;
 impl MultiClassScheduler {
-    pub(super) fn apply_sched_policy_change(&mut self,
-                                            task_id : TaskId,
-                                            policy : SchedPolicy,
-                                            param : SchedParam,
-                                            cpu_id : CpuId)
-                                            -> Result<SchedPolicyChangeAction, SchedError> {
+    pub fn apply_sched_policy_change(&mut self,
+                                     task_id : TaskId,
+                                     policy : SchedPolicy,
+                                     param : SchedParam,
+                                     cpu_id : CpuId)
+                                     -> Result<SchedPolicyChangeAction, SchedError> {
         if !self.global
                 .registry
                 .is_schedulable(task_id)
