@@ -149,6 +149,8 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             let syscall_nr = cx.syscall_nr()
                                .raw();
             let syscall_args = cx.syscall_args();
+            #[cfg(feature = "dashboard-debug")]
+            crate::dashboard::record_syscall(syscall_nr);
             #[cfg_attr(not(any(debug_assertions, feature = "syscall-trace")),
                        allow(unused_variables))]
             let regs = syscall_args.as_regs();

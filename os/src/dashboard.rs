@@ -10,13 +10,14 @@ extern crate alloc;
 use alloc::string::String;
 use core::fmt::{self, Display, Write};
 use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicU64, AtomicUsize};
 use utils::table_format::{Alignment, Cell, Column, FixedTable, Overflow};
 
 /// 每 tick 为 10ms；500ms 刷新一次既足够观察调度状态，也不会长期占用 UART。
 const REFRESH_INTERVAL_TICKS : u64 = 50;
 const MAX_CPUS : usize = base_config::task::MAX_CPUS;
 /// 标题、空行、三条分隔线和 CPU 行组成的总行数。
-const PANEL_HEIGHT : usize = MAX_CPUS + 6;
+const PANEL_HEIGHT : usize = MAX_CPUS + 10;
 /// 普通 shell / 日志从这一行开始滚动，面板固定在它之前。
 const FIRST_SCROLLABLE_ROW : usize = PANEL_HEIGHT + 1;
 const CPU_COLUMNS : [Column; 7] =
@@ -30,6 +31,18 @@ const CPU_COLUMNS : [Column; 7] =
 
 static INITIALIZED : AtomicBool = AtomicBool::new(false);
 static STARTED : AtomicBool = AtomicBool::new(false);
+
+/// 记录用户态进入内核的 syscall 编号。只保留最近一次，避免在热路径维护大号数组
+/// 或做字符串格式化。
+static SYSCALL_TOTAL : AtomicU64 = AtomicU64::new(0);
+static LAST_SYSCALL_NR : AtomicUsize = AtomicUsize::new(0);
+
+/// 由 trap syscall 路径调用。
+#[inline]
+pub fn record_syscall(syscall_nr : usize) {
+    LAST_SYSCALL_NR.store(syscall_nr, Ordering::Relaxed);
+    SYSCALL_TOTAL.fetch_add(1, Ordering::Relaxed);
+}
 
 /// 初始化 dashboard 状态。
 ///
@@ -69,7 +82,7 @@ extern "C" fn dashboard_task(_arg : usize) -> ! {
 fn render_frame(first_frame : bool) -> String {
     let tick = task::current_tick();
     let states = task::cpu_states();
-    let mut frame = String::with_capacity(1_600);
+    let mut frame = String::with_capacity(2_048);
 
     if first_frame {
         // 先取消旧滚动区/原点模式，再清屏。面板总宽 70 列，可放入 QEMU 常见的
@@ -126,6 +139,8 @@ fn render_frame(first_frame : bool) -> String {
     }
     frame.push('\n');
 
+    render_debug_panel(&mut frame);
+
     if first_frame {
         // DECSTBM：仅第 15 行至屏幕底部可滚动。999 会由 ANSI 终端裁剪为实际
         // 最后一行，比省略底边界在部分终端上更可靠。
@@ -136,6 +151,55 @@ fn render_frame(first_frame : bool) -> String {
         frame.push_str("\x1b8");
     }
     frame
+}
+
+/// 低频调试摘要。
+fn render_debug_panel(frame : &mut String) {
+    let heap = runtime::heap_allocator::heap_mem_stats();
+    let frames = mm::frame_alloctor::frame_mem_stats();
+    let fds = vfs::fd::registry_stats();
+    let syscall_total = SYSCALL_TOTAL.load(Ordering::Relaxed);
+    let last_syscall = LAST_SYSCALL_NR.load(Ordering::Relaxed);
+
+    write_dashboard_line(frame,
+                         format_args!(" MEM heap {}/{} KiB free={} KiB; frames {}/{} MiB free={} MiB",
+                                      heap.used / 1024,
+                                      heap.capacity / 1024,
+                                      heap.free / 1024,
+                                      frames.used_bytes() / (1024 * 1024),
+                                      frames.total_bytes() / (1024 * 1024),
+                                      frames.free_bytes() / (1024 * 1024)));
+    write_dashboard_line(frame,
+                         format_args!(" FILE fd-open={} tables={} task-bindings={}",
+                                      fds.open_fd_count,
+                                      fds.table_count,
+                                      fds.task_bindings));
+    write_dashboard_line(frame,
+                         format_args!(" SYSCALL total={} last={} (0x{:x})",
+                                      syscall_total,
+                                      last_syscall,
+                                      last_syscall));
+}
+
+/// 将 ASCII 调试摘要限制为 CPU 表同样的 71 字符内宽，并补齐右侧空格。
+///
+/// 数值异常变长时宁可截断面板内容，也不能破坏边框或挤进普通终端输出区。
+fn write_dashboard_line(frame : &mut String, content : fmt::Arguments<'_>) {
+    const INNER_WIDTH : usize = 71;
+
+    frame.push('|');
+    let content_start = frame.len();
+    let _ = frame.write_fmt(content);
+    let content_end = frame.len();
+    let content_len = content_end - content_start;
+    if content_len > INNER_WIDTH {
+        frame.truncate(content_start + INNER_WIDTH);
+    } else {
+        for _ in content_len..INNER_WIDTH {
+            frame.push(' ');
+        }
+    }
+    frame.push_str("|\n");
 }
 
 /// 不分配地显示当前任务 ID。

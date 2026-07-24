@@ -16,6 +16,17 @@ static mut FD_REGISTRY : MaybeUninit<MultiprocessorSafeCell<PerTaskFdRegistry>> 
     MaybeUninit::uninit();
 static FD_REGISTRY_READY : AtomicUsize = AtomicUsize::new(0);
 
+/// 全局文件描述符注册表的只读调试摘要。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FdRegistryStats {
+    /// 关联 fd 表的任务数；共享 fd 表的线程会分别计数。
+    pub task_bindings : usize,
+    /// 实际独立 fd 表数。
+    pub table_count : usize,
+    /// 所有独立 fd 表中当前已打开的描述符槽位数（含 stdio）。
+    pub open_fd_count : usize,
+}
+
 /// 全局 per-task fd 注册表（自旋锁保护）。
 pub fn registry() -> &'static MultiprocessorSafeCell<PerTaskFdRegistry> {
     if FD_REGISTRY_READY.load(Ordering::Acquire) == 0 {
@@ -39,6 +50,18 @@ pub fn with_registry<R>(f : impl FnOnce(&mut PerTaskFdRegistry) -> R) -> R {
     impl_fd_session::with_interrupt_disabled(|| {
         let mut registry = registry().exclusive_access();
         f(&mut registry)
+    })
+}
+
+/// 返回全局 fd 表摘要；仅用于 dashboard 等低频诊断路径。
+pub fn registry_stats() -> FdRegistryStats {
+    // 观测不应改变系统状态：尚未有任何 fd 操作时不懒初始化注册表。
+    if FD_REGISTRY_READY.load(Ordering::Acquire) == 0 {
+        return FdRegistryStats::default();
+    }
+    with_registry(|registry| {
+        let (task_bindings, table_count, open_fd_count) = registry.debug_counts();
+        FdRegistryStats { task_bindings, table_count, open_fd_count }
     })
 }
 

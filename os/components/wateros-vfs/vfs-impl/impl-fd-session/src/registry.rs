@@ -285,6 +285,18 @@ impl PerTaskFdRegistry {
             .unwrap_or(0)
     }
 
+    /// 调试面板用的全局 fd 注册表摘要。
+    ///
+    /// `task_bindings` 包含共享同一张 fd 表的任务；`table_count` 是实际独立 fd 表数。
+    /// 调用方必须已经持有注册表锁。
+    pub fn debug_counts(&self) -> (usize, usize, usize) {
+        let open_fd_count = self.tables
+                                .values()
+                                .map(|table| table.iter().filter(|slot| slot.is_some()).count())
+                                .sum();
+        (self.owners.len(), self.tables.len(), open_fd_count)
+    }
+
 // 本方法代码由AI完成
     fn check_nofile_before_open(&self, task_id: task::TaskId) -> VfsResult<()> {
         let limit = task::nofile_rlimit_for_task(task_id);

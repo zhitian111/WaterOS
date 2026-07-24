@@ -41,6 +41,8 @@
     pre = [  ]
     final_online = [  ]
     final_online_smp_test = [ "final_online" ]
+    # 整个顶部 dashboard（CPU、内存、文件描述符与 syscall 摘要）；默认关闭。
+    dashboard-debug = [ "dep:vfs" ]
     impl-sv39 = [ "mm/impl-sv39" ]
     qemu-loongarch64-virt = [
         "abi/impl-linux-generic64",
@@ -60,6 +62,7 @@
         # "runtime/impl-debug",
         # "runtime/impl-warn",
         "runtime/impl-error",
+        # "dashboard-debug",
         "dep:klog",
         "klog/default",
         "runtime/impl-platform-console",
@@ -90,6 +93,7 @@
         "runtime/impl-info",
         # "runtime/impl-warn",
         "runtime/impl-error",
+        "dashboard-debug",
         "dep:klog",
         "klog/default",
         "runtime/impl-platform-console",

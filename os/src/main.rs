@@ -15,6 +15,7 @@ use runtime::logging::warn;
 use syscall as _;
 
 mod boot_timebase;
+#[cfg(feature = "dashboard-debug")]
 mod dashboard;
 mod trap_handler;
 mod user_bringup_bus;
@@ -214,6 +215,7 @@ mod qemu_riscv64_opensbi {
         platform::arch::init();
         task::init();
         task::set_timekeeper_cpu(cpu_id);
+        #[cfg(feature = "dashboard-debug")]
         crate::dashboard::init();
         crate::trap_handler::init();
         // MM 初始化
@@ -226,6 +228,7 @@ mod qemu_riscv64_opensbi {
 
         bringup_driver_and_user();
         crate::register_runtime_console_writer();
+        #[cfg(feature = "dashboard-debug")]
         crate::dashboard::start();
         platform::interrupt::enable_timer_interrupt().unwrap();
         platform::arch::interrupt::enable_soft_interrupt();
@@ -291,6 +294,7 @@ mod qemu_loongarch64_virt {
         task::init();
         task::set_timekeeper_cpu(cpu_id);
         task::set_cpu_online(cpu_id);
+        #[cfg(feature = "dashboard-debug")]
         crate::dashboard::init();
         crate::trap_handler::init();
         platform::arch::paging::init_paging_disable_mmu();
@@ -302,6 +306,7 @@ mod qemu_loongarch64_virt {
 
         bringup_driver_and_user();
         crate::register_runtime_console_writer();
+        #[cfg(feature = "dashboard-debug")]
         crate::dashboard::start();
         platform::interrupt::enable_timer_interrupt().unwrap();
         platform::arch::interrupt::enable_soft_interrupt();
