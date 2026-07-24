@@ -3,7 +3,7 @@
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
-use task::{ResourceLimit, SetResourceLimitError};
+use task::{ProcessError, ResourceLimit};
 
 use crate::user_copy::{copy_from_user_struct, copy_to_user_struct};
 
@@ -68,7 +68,8 @@ fn apply_process_rlimit(resource : usize, limit : UserRLimit) -> Result<(), ErrN
         },
     )
     .map_err(|err| match err {
-        SetResourceLimitError::InvalidArgument => ErrNo::EINVAL,
+        ProcessError::ProcessNotFound | ProcessError::TaskNotFound => ErrNo::ESRCH,
+        _ => ErrNo::EINVAL,
     })
 }
 
@@ -110,7 +111,7 @@ pub(crate) fn sys_umask(args : SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::ESRCH);
     };
     let old_mask = task::process_umask(pid).unwrap_or(0o022);
-    task::set_process_umask(pid, new_mask);
+    let _ = task::set_process_umask(pid, new_mask);
     UserRet::from_success(old_mask as usize)
 }
 

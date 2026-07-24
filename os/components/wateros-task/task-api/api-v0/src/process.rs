@@ -148,7 +148,7 @@ pub enum ProcessState {
 
 /// 对外可见的进程内任务语义快照。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ProcessTaskDescriptor {
+pub struct ProcessTaskSnapshot {
     pub task_id : TaskId,
     pub tid : ThreadId,
     pub pid : ProcessId,
@@ -165,16 +165,33 @@ pub struct ResourceLimit {
     pub max : u64,
 }
 
-/// `setrlimit` / `prlimit64` 写入失败原因。
+/// 进程操作失败原因。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SetResourceLimitError {
-    /// `cur > max` 或未知资源号。
+pub enum ProcessError {
+    /// 目标进程不存在。
+    ProcessNotFound,
+    /// 目标 task 不在任何进程中。
+    TaskNotFound,
+    /// 操作权限不足（如会话首进程试图修改 PGID，或非父子关系）。
+    PermissionDenied,
+    /// 参数无效（如 `cur > max`、未知资源号、`pgid < 0`）。
     InvalidArgument,
+    /// 已是会话首进程（`setsid` 由 session leader 调用）。
+    AlreadySessionLeader,
+    /// 目标进程组不存在于当前会话中（`setpgid` 加入不存在的组）。
+    ProcessGroupNotFound,
 }
+
+/// 进程 registry 的可失败操作统一返回此类型。
+///
+/// 查询接口中“目标不存在”是正常分支时仍使用 `Option`；会改变 registry
+/// 状态的接口使用 `ProcessResult`，以免把不存在、重复登记和非法状态压成
+/// 一个 `false`。
+pub type ProcessResult<T> = Result<T, ProcessError>;
 
 /// 对外可见的进程语义快照。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ProcessDescriptor {
+pub struct ProcessSnapshot {
     pub pid : ProcessId,
     pub leader_task_id : TaskId,
     pub parent_pid : Option<ProcessId>,

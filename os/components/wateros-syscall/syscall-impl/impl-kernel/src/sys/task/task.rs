@@ -28,9 +28,6 @@ pub(crate) fn sys_yield() -> UserRet {
 
 pub(crate) fn sys_exit(exit_code : isize) -> isize {
     if let Some(task_id) = task::current_task_id() {
-        if let Some(process_task) = task::current_process_task_snapshot() {
-            super::wait::reap_exited_member_threads_runtime_resources(process_task.pid);
-        }
         if let Some(process_task) = task::process_task_snapshot(task_id) {
             let last_thread = task::task_exit_would_finish_process(task_id)
                 .unwrap_or(process_task.role == task::ProcessTaskRole::Leader);
@@ -98,7 +95,7 @@ pub(crate) fn sys_prctl(args : SyscallArgs) -> UserRet {
             // Linux: 保证 NUL 终止（最后字节强制为 0）
             comm[15] = 0;
             if let Some(task_id) = task::current_task_id() {
-                task::set_thread_comm(task_id, comm);
+                let _ = task::set_thread_comm(task_id, comm);
             }
             UserRet::from_success(0)
         }
@@ -116,7 +113,7 @@ pub(crate) fn sys_prctl(args : SyscallArgs) -> UserRet {
         }
         PR_SET_DUMPABLE => {
             let dumpable = args.arg(1) != 0;
-            if task::set_process_dumpable(current_pid, dumpable) {
+            if task::set_process_dumpable(current_pid, dumpable).is_ok() {
                 UserRet::from_success(0)
             } else {
                 UserRet::from_error(ErrNo::ESRCH)
@@ -142,7 +139,7 @@ pub(crate) fn sys_prctl(args : SyscallArgs) -> UserRet {
         }
         PR_SET_CHILD_SUBREAPER => {
             let enabled = args.arg(1) != 0;
-            if task::set_process_child_subreaper(current_pid, enabled) {
+            if task::set_process_child_subreaper(current_pid, enabled).is_ok() {
                 UserRet::from_success(0)
             } else {
                 UserRet::from_error(ErrNo::ESRCH)
@@ -155,7 +152,7 @@ pub(crate) fn sys_prctl(args : SyscallArgs) -> UserRet {
         },
         PR_SET_PDEATHSIG => {
             let sig = args.arg(1) as i32;
-            if task::set_process_parent_death_signal(current_pid, sig) {
+            if task::set_process_parent_death_signal(current_pid, sig).is_ok() {
                 UserRet::from_success(0)
             } else {
                 UserRet::from_error(ErrNo::ESRCH)

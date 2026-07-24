@@ -351,7 +351,7 @@ fn wait_target_from_pid(pid : isize, caller_pgid : task::ProcessId) -> Result<Wa
 
 fn find_exited_child_for_wait(parent_pid : task::ProcessId,
                               target : WaitTarget)
-                              -> Option<task::ProcessDescriptor> {
+                              -> Option<task::ProcessSnapshot> {
     match target {
         WaitTarget::AnyChild => task::find_exited_child_process(parent_pid),
         WaitTarget::ProcessGroup(pgid) => task::find_exited_child_process_in_pgid(parent_pid, pgid),
@@ -372,7 +372,7 @@ fn find_exited_child_for_wait(parent_pid : task::ProcessId,
 
 fn find_stopped_child_for_wait(parent_pid : task::ProcessId,
                                target : WaitTarget)
-                               -> Option<task::ProcessDescriptor> {
+                               -> Option<task::ProcessSnapshot> {
     match target {
         WaitTarget::AnyChild => task::find_stopped_child_process(parent_pid),
         WaitTarget::ProcessGroup(pgid) => {
@@ -386,7 +386,7 @@ fn find_stopped_child_for_wait(parent_pid : task::ProcessId,
 
 fn find_continued_child_for_wait(parent_pid : task::ProcessId,
                                  target : WaitTarget)
-                                 -> Option<task::ProcessDescriptor> {
+                                 -> Option<task::ProcessSnapshot> {
     match target {
         WaitTarget::AnyChild => task::find_continued_child_process(parent_pid),
         WaitTarget::ProcessGroup(pgid) => {
