@@ -231,6 +231,11 @@ pub struct LoongArch64AddressSpace {
     pub(crate) shared_anon_vmas : Vec<SharedAnonVma>,
 }
 
+// The address space is accessed through MultiprocessorSafeCell.  The lock
+// serializes the non-Send lazy-loader state as well as page-table mutation.
+unsafe impl Send for LoongArch64AddressSpace {}
+unsafe impl Sync for LoongArch64AddressSpace {}
+
 // 本结构代码由AI完成
 pub(crate) struct LazyFileVma {
     pub start : VirtAddr,

@@ -96,35 +96,33 @@ pub mod kernel_mm_impl {
     /// 时返回 [`api_v0::error::MmError::InvalidAddress`]。
     // 本方法代码由AI完成
     pub fn fork_user_aspace(parent_aspace_ptr : usize) -> api_v0::error::MmResult<(usize, usize)> {
-        use crate::pagetable::Sv39AddressSpace;
-        use alloc::boxed::Box;
-        use api_v0::address_space::AddressSpaceOps;
         use api_v0::error::MmError;
+        use api_v0::address_space::AddressSpaceOps;
 
         if parent_aspace_ptr == 0 {
             return Err(MmError::InvalidAddress);
         }
-        // SAFETY: 调用方保证 parent_aspace_ptr 指向一直存活（泄漏）的 Sv39AddressSpace
-        let parent = unsafe { &mut *(parent_aspace_ptr as *mut Sv39AddressSpace) };
-        let child = parent.fork_cow()?;
-        let satp = child.satp_value();
-        let child_ptr = Box::into_raw(Box::new(child)) as usize;
-        Ok((child_ptr, satp))
+        let (child, satp) = crate::user_aspace::with_user_aspace_mut(parent_aspace_ptr,
+            |parent| {
+                let child = parent.fork_cow()?;
+                let satp = child.satp_value();
+                Ok((child, satp))
+            })?;
+        Ok((crate::user_aspace::into_handle(child), satp))
     }
 
     // 本方法代码由AI完成
     pub fn handle_cow_fault(parent_aspace_ptr : usize,
                             fault_addr : usize)
                             -> api_v0::error::MmResult<bool> {
-        use crate::pagetable::Sv39AddressSpace;
         use api_v0::addr::VirtAddr;
         use api_v0::error::MmError;
 
         if parent_aspace_ptr == 0 {
             return Err(MmError::InvalidAddress);
         }
-        let aspace = unsafe { &mut *(parent_aspace_ptr as *mut Sv39AddressSpace) };
-        aspace.handle_cow_fault(VirtAddr(fault_addr))
+        crate::user_aspace::with_user_aspace_mut(parent_aspace_ptr,
+            |aspace| aspace.handle_cow_fault(VirtAddr(fault_addr)))
     }
 
     /// 销毁用户地址空间：递归释放所有用户页帧和页表帧。
@@ -132,14 +130,6 @@ pub mod kernel_mm_impl {
     /// `aspace_ptr` 来自 `LoadedElf::user_aspace_ptr`，调用后指针失效。
     // 本方法代码由AI完成
     pub fn drop_user_aspace(aspace_ptr : usize) {
-        use crate::pagetable::Sv39AddressSpace;
-        use alloc::boxed::Box;
-
-        if aspace_ptr == 0 {
-            return;
-        }
-        let aspace = unsafe { Box::from_raw(aspace_ptr as *mut Sv39AddressSpace) };
-        // `Drop` 调用 `destroy()` 递归释放用户页帧与页表；`destroy` 对 root=0 为 no-op。
-        drop(aspace);
+        crate::user_aspace::destroy(aspace_ptr);
     }
 }

@@ -17,8 +17,7 @@
 
 extern crate alloc;
 
-use alloc::boxed::Box;
-use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use api_v0::addr::{PhysAddr, VirtAddr, VirtPageNum, PAGE_SIZE};
 use api_v0::address_space::AddressSpaceOps;
@@ -26,10 +25,15 @@ use api_v0::error::MmError;
 use api_v0::perm::PagePerm;
 use frame_alloctor::frame_alloc_result;
 use wateros_base::addr::BasePPN;
+use wateros_base::sync::{BootOnceCell, MultiprocessorSafeCell};
 
 use crate::pagetable::LoongArch64AddressSpace;
 
-static KERNEL_ASPACE : AtomicPtr<LoongArch64AddressSpace> = AtomicPtr::new(core::ptr::null_mut());
+struct KernelAddressSpaceCell {
+    inner : MultiprocessorSafeCell<LoongArch64AddressSpace>,
+}
+
+static KERNEL_ASPACE : BootOnceCell<KernelAddressSpaceCell> = BootOnceCell::new();
 
 /// 恒等映射物理 RAM 上界（不包含）；由 `kernel_mm::init` 写入，供 ELF
 /// 装载等路径读取。
@@ -55,11 +59,10 @@ pub(crate) fn phys_ram_end_exclusive() -> usize {
 
 // `Acquire` 与 `init` 末尾 `Release` 配对；仅在 `init` 完成后合法调用。
 #[inline]
-fn aspace_mut() -> &'static mut LoongArch64AddressSpace {
-    let p = KERNEL_ASPACE.load(Ordering::Acquire);
-    assert!(!p.is_null(),
-            "kernel_mm: not initialized");
-    unsafe { &mut *p }
+fn with_kernel_aspace<R>(f: impl FnOnce(&mut LoongArch64AddressSpace) -> R) -> R {
+    let cell = KERNEL_ASPACE.get().expect("kernel_mm: not initialized");
+    let mut guard = cell.inner.exclusive_access();
+    f(&mut guard)
 }
 
 /// 安装后的内核 PGDL 值（与 `AddressSpaceHandle::from_raw` 配合使用）。
@@ -168,9 +171,10 @@ pub fn init(_dtb_pa : usize, ram_end_exclusive : usize) {
                              probe_va.0,
                              probe_pa.0);
 
-    let leaked = Box::leak(Box::new(aspace));
-    KERNEL_ASPACE.store(leaked as *mut LoongArch64AddressSpace,
-                        Ordering::Release);
+    unsafe {
+        KERNEL_ASPACE.init(KernelAddressSpaceCell { inner : MultiprocessorSafeCell::new(aspace) })
+                     .expect("kernel_mm: duplicate initialization");
+    }
     api_v0::kernel_satp::set(pgdl_target);
     api_v0::user_aspace_lifecycle::register_drop_user_aspace_hook(crate::kernel_mm_impl::drop_user_aspace);
 }
@@ -182,8 +186,7 @@ pub fn map_identity_range_user(start : VirtAddr, end : VirtAddr, perm : PagePerm
             "kernel_mm: empty range");
     let mut vpn = start.floor_page();
     let vpn_end = end.ceil_page();
-    let a = aspace_mut();
-    while vpn.0 < vpn_end.0 {
+    with_kernel_aspace(|a| while vpn.0 < vpn_end.0 {
         let ppn = vpn.to_phys_page_identity();
         match a.map_page_to_ppn(vpn, ppn, perm) {
             Ok(()) => {}
@@ -192,16 +195,16 @@ pub fn map_identity_range_user(start : VirtAddr, end : VirtAddr, perm : PagePerm
                              vpn, ppn, e),
         }
         vpn = VirtPageNum(vpn.0 + 1);
-    }
+    });
 }
 
 /// 为已恒等映射的内核文本页增加 `U`，供用户态执行（如 stage4
 /// 入口落在内核镜像内）。
 pub fn ensure_user_execute_for_kernel_va(va : usize) {
     let vpn = VirtAddr(va).floor_page();
-    aspace_mut().protect_page(vpn,
-                              PagePerm::R | PagePerm::X | PagePerm::U)
-                .expect("kernel_mm: protect_page for user exec");
+    with_kernel_aspace(|a| a.protect_page(vpn,
+                              PagePerm::R | PagePerm::X | PagePerm::U))
+        .expect("kernel_mm: protect_page for user exec");
 }
 
 /// 为一段虚拟地址分配匿名帧并映射（用于用户栈等）。
@@ -210,8 +213,7 @@ pub fn map_anon_range_user(start : VirtAddr, end : VirtAddr, perm : PagePerm) {
             "kernel_mm: empty anon range");
     let mut vpn = start.floor_page();
     let vpn_end = end.ceil_page();
-    let a = aspace_mut();
-    while vpn.0 < vpn_end.0 {
+    with_kernel_aspace(|a| while vpn.0 < vpn_end.0 {
         if a.translate_addr(vpn.start_addr())
             .ok()
             .flatten()
@@ -225,5 +227,5 @@ pub fn map_anon_range_user(start : VirtAddr, end : VirtAddr, perm : PagePerm) {
             }
         }
         vpn = VirtPageNum(vpn.0 + 1);
-    }
+    });
 }

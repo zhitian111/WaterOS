@@ -4,23 +4,60 @@
 //!
 //! **Safety**：`handle` 须来自 bring-up 泄漏的用户地址空间，且与当前任务安装的 `satp` 一致。
 
+use core::sync::atomic::{AtomicBool, Ordering};
+
 use api_v0::error::{MmError, MmResult};
+use wateros_base::sync::MultiprocessorSafeCell;
 
 use crate::pagetable::Sv39AddressSpace;
 
-#[inline]
-unsafe fn aspace_mut(handle: usize) -> Option<&'static mut Sv39AddressSpace> {
-    if handle == 0 {
-        return None;
-    }
-    Some(unsafe { &mut *(handle as *mut Sv39AddressSpace) })
+pub(crate) struct UserAddressSpaceCell {
+    pub(crate) inner: MultiprocessorSafeCell<Sv39AddressSpace>,
+    dropped: AtomicBool,
 }
 
+impl UserAddressSpaceCell {
+    pub(crate) fn new(aspace: Sv39AddressSpace) -> Self {
+        Self { inner: MultiprocessorSafeCell::new(aspace),
+               dropped: AtomicBool::new(false) }
+    }
+
+    fn is_dropped(&self) -> bool { self.dropped.load(Ordering::Acquire) }
+
+    pub(crate) fn mark_dropped(&self) -> bool {
+        !self.dropped.swap(true, Ordering::AcqRel)
+    }
+}
+
+pub(crate) fn into_handle(aspace: Sv39AddressSpace) -> usize {
+    alloc::boxed::Box::into_raw(alloc::boxed::Box::new(UserAddressSpaceCell::new(aspace))) as usize
+}
+
+unsafe fn cell(handle: usize) -> Option<&'static UserAddressSpaceCell> {
+    (handle != 0).then(|| unsafe { &*(handle as *const UserAddressSpaceCell) })
+}
+
+pub(crate) fn destroy(handle: usize) {
+    let Some(cell) = (unsafe { cell(handle) }) else { return };
+    if !cell.mark_dropped() {
+        return;
+    }
+    cell.inner.exclusive_access().destroy();
+}
+
+#[inline]
 /// 在有效用户地址空间上执行 `f`；`handle == 0` 返回 [`MmError::InvalidAddress`]。
 pub fn with_user_aspace_mut<R>(
     handle: usize,
     f: impl FnOnce(&mut Sv39AddressSpace) -> MmResult<R>,
 ) -> MmResult<R> {
-    let a = unsafe { aspace_mut(handle).ok_or(MmError::InvalidAddress)? };
-    f(a)
+    let cell = unsafe { cell(handle) }.ok_or(MmError::InvalidAddress)?;
+    if cell.is_dropped() {
+        return Err(MmError::InvalidAddress);
+    }
+    let mut guard = cell.inner.exclusive_access();
+    if cell.is_dropped() {
+        return Err(MmError::InvalidAddress);
+    }
+    f(&mut guard)
 }

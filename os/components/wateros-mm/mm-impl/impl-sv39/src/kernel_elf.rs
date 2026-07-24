@@ -793,9 +793,8 @@ pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
     }
 
     let phdr_va = min_vaddr.saturating_add(e_phoff);
-    let leaked = Box::leak(Box::new(aspace));
-    let satp = leaked.satp_value();
-    let user_aspace_ptr = leaked as *mut crate::pagetable::Sv39AddressSpace as usize;
+    let satp = aspace.satp_value();
+    let user_aspace_ptr = crate::user_aspace::into_handle(aspace);
     runtime::logging::trace!("[elf-load] loaded ELF entry={:#x} satp={:#x} image=[{:#x},{:#x}) \
                               ...",
                              entry_pc,
@@ -1317,9 +1316,8 @@ pub fn from_elf_bytes(data : &[u8]) -> Result<LoadedElf, LoadElfError> {
     // `from_elf_bytes` 仅用于内存中的 ELF（boot info 等），不需要动态链接器
 
     let phdr_va = min_vaddr.saturating_add(e_phoff);
-    let leaked = Box::leak(Box::new(aspace));
-    let satp = leaked.satp_value();
-    let user_aspace_ptr = leaked as *mut crate::pagetable::Sv39AddressSpace as usize;
+    let satp = aspace.satp_value();
+    let user_aspace_ptr = crate::user_aspace::into_handle(aspace);
     runtime::logging::trace!("[elf-load] loaded ELF entry={:#x} satp={:#x} image=[{:#x},{:#x}) \
                               stack=[{:#x},{:#x}) brk=[{:#x},{:#x}) mmap_arena_base={:#x} \
                               aspace_ptr={:#x}",

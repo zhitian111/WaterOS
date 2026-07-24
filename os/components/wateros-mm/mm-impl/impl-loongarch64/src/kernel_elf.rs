@@ -1170,9 +1170,8 @@ pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
     }
 
     let phdr_va = min_vaddr.saturating_add(e_phoff);
-    let leaked = Box::leak(Box::new(aspace));
-    let pgdl = leaked.satp_value();
-    let user_aspace_ptr = leaked as *mut crate::pagetable::LoongArch64AddressSpace as usize;
+    let pgdl = aspace.satp_value();
+    let user_aspace_ptr = crate::user_aspace::into_handle(aspace);
     runtime::logging::trace!("[elf-load] loaded ELF entry={:#x} pgdl={:#x} image=[{:#x},{:#x}) \
                               stack=[{:#x},{:#x}) brk=[{:#x},{:#x}) mmap_arena_base={:#x} \
                               aspace_ptr={:#x}",
@@ -1359,9 +1358,8 @@ pub fn from_elf_bytes(data : &[u8]) -> Result<LoadedElf, LoadElfError> {
     verify_mapped_entry(&aspace, e_entry, data)?;
 
     let phdr_va = min_vaddr.saturating_add(e_phoff);
-    let leaked = Box::leak(Box::new(aspace));
-    let pgdl = leaked.satp_value();
-    let user_aspace_ptr = leaked as *mut crate::pagetable::LoongArch64AddressSpace as usize;
+    let pgdl = aspace.satp_value();
+    let user_aspace_ptr = crate::user_aspace::into_handle(aspace);
     runtime::logging::trace!("[elf-load] loaded ELF entry={:#x} pgdl={:#x} image=[{:#x},{:#x}) \
                               stack=[{:#x},{:#x}) brk=[{:#x},{:#x}) mmap_arena_base={:#x} \
                               aspace_ptr={:#x}",
