@@ -7,11 +7,9 @@
 //! 默认 ext4 RW 实现为 `impl-another-ext4`；旧实现保留为回退 feature。
 extern crate alloc;
 
-#[cfg(any(
-    all(feature = "impl-another-ext4", feature = "impl-ext4-rs"),
-    all(feature = "impl-another-ext4", feature = "impl-ext4"),
-    all(feature = "impl-ext4-rs", feature = "impl-ext4"),
-))]
+#[cfg(any(all(feature = "impl-another-ext4", feature = "impl-ext4-rs"),
+          all(feature = "impl-another-ext4", feature = "impl-ext4"),
+          all(feature = "impl-ext4-rs", feature = "impl-ext4"),))]
 compile_error!("select only one ext4 backend");
 
 use alloc::vec::Vec;
@@ -33,15 +31,15 @@ pub mod rootfs {
     pub use ::rootfs::*;
 }
 
+#[cfg(feature = "impl-another-ext4")]
+/// 默认的 another_ext4 实现 crate。
+pub use impl_another_ext4;
 #[cfg(feature = "impl-ext4")]
 /// 可选的 ext4 实现 crate（由 `impl-ext4` feature 启用）。
 pub use impl_ext4;
 #[cfg(feature = "impl-ext4-rs")]
 /// 可选的 ext4_rs 实现 crate（由 `impl-ext4-rs` feature 启用）。
 pub use impl_ext4_rs;
-#[cfg(feature = "impl-another-ext4")]
-/// 默认的 another_ext4 实现 crate。
-pub use impl_another_ext4;
 #[cfg(feature = "impl-ramfs")]
 /// 堆内存 ramfs 实现 crate；tmpfs 策略层复用此实现。
 pub use impl_ramfs;
@@ -52,18 +50,16 @@ pub use api_v0::*;
 ///
 /// 内核 devfs 是注册项之一（仅供 supported_fs 列示），ext4 是块设备路径上的真实根 FS impl。
 pub fn registered_fs_impls() -> &'static [&'static dyn api_v0::FsImpl] {
-    static TABLE: &[&'static dyn api_v0::FsImpl] = &[
-        #[cfg(feature = "impl-ext4-rs")]
-        &impl_ext4_rs::IMPL,
-        #[cfg(feature = "impl-another-ext4")]
-        &impl_another_ext4::IMPL,
-        #[cfg(feature = "impl-ext4")]
-        &impl_ext4::IMPL,
-        #[cfg(feature = "impl-ramfs")]
-        &impl_ramfs::IMPL,
-        &devfs::active_impl::IMPL,
-        &procfs::active_impl::IMPL,
-    ];
+    static TABLE : &[&'static dyn api_v0::FsImpl] = &[#[cfg(feature = "impl-ext4-rs")]
+                                                      &impl_ext4_rs::IMPL,
+                                                      #[cfg(feature = "impl-another-ext4")]
+                                                      &impl_another_ext4::IMPL,
+                                                      #[cfg(feature = "impl-ext4")]
+                                                      &impl_ext4::IMPL,
+                                                      #[cfg(feature = "impl-ramfs")]
+                                                      &impl_ramfs::IMPL,
+                                                      &devfs::active_impl::IMPL,
+                                                      &procfs::active_impl::IMPL];
     TABLE
 }
 
@@ -79,24 +75,20 @@ pub fn supported_fs_summary() -> Vec<api_v0::FsCapability> {
 }
 
 /// 在注册表中选择一条匹配 `(kind, mode)` 的 impl；无匹配返回 None。
-pub fn pick_fs_impl(
-    kind: api_v0::FsKind,
-    mode: api_v0::FsAccessMode,
-) -> Option<&'static dyn api_v0::FsImpl> {
-    registered_fs_impls()
-        .iter()
-        .copied()
-        .find(|imp| imp.supports(kind, mode))
+pub fn pick_fs_impl(kind : api_v0::FsKind,
+                    mode : api_v0::FsAccessMode)
+                    -> Option<&'static dyn api_v0::FsImpl> {
+    registered_fs_impls().iter()
+                         .copied()
+                         .find(|imp| imp.supports(kind, mode))
 }
 
 // 启动期诊断：把各 impl 声明的能力打到日志，便于对照 probe/mount 失败原因。
 fn log_supported_fs() {
     for cap in supported_fs_summary() {
-        logging::info!(
-            "[fs] supported: kind={:?} access={:?}",
-            cap.kind,
-            cap.access
-        );
+        logging::info!("[fs] supported: kind={:?} access={:?}",
+                       cap.kind,
+                       cap.access);
     }
 }
 
@@ -105,7 +97,8 @@ pub fn init() {
     logging::info!("[fs] init begin");
     log_supported_fs();
     let node_count = devfs::active_impl::refresh();
-    logging::info!("[fs] devfs refreshed, nodes={}", node_count);
+    logging::info!("[fs] devfs refreshed, nodes={}",
+                   node_count);
 
     let Some(dev_path) = devfs::active_impl::default_root_block_path() else {
         logging::warn!("[fs] init: no root block device available");
@@ -115,17 +108,15 @@ pub fn init() {
     let device = match devfs::active_impl::lookup_block_device(dev_path.as_str()) {
         Ok(d) => d,
         Err(err) => {
-            logging::warn!(
-                "[fs] init: lookup block device {:?} failed: {:?}",
-                dev_path,
-                err
-            );
+            logging::warn!("[fs] init: lookup block device {:?} failed: {:?}",
+                           dev_path,
+                           err);
             logging::info!("[fs] init end (lookup failed)");
             return;
         }
     };
 
-    let mut chosen: Option<(&'static dyn api_v0::FsImpl, api_v0::FsKind)> = None;
+    let mut chosen : Option<(&'static dyn api_v0::FsImpl, api_v0::FsKind)> = None;
     for imp in registered_fs_impls() {
         match imp.probe(&device) {
             Ok(Some(kind)) if imp.supports(kind, api_v0::FsAccessMode::ReadWrite) => {
@@ -137,27 +128,21 @@ pub fn init() {
                 break;
             }
             Ok(_) => {}
-            Err(err) => logging::warn!(
-                "[fs] probe via {} failed: {:?}",
-                imp.name(),
-                err
-            ),
+            Err(err) => logging::warn!("[fs] probe via {} failed: {:?}",
+                                       imp.name(),
+                                       err),
         }
     }
 
     let Some((imp, kind)) = chosen else {
-        logging::warn!(
-            "[fs] init: no impl recognizes block device {:?}",
-            dev_path
-        );
+        logging::warn!("[fs] init: no impl recognizes block device {:?}",
+                       dev_path);
         logging::info!("[fs] init end (probe miss)");
         return;
     };
-    logging::info!(
-        "[fs] init: probe matched impl={} kind={:?} (mount deferred to bring-up RW)",
-        imp.name(),
-        kind
-    );
+    logging::info!("[fs] init: probe matched impl={} kind={:?} (mount deferred to bring-up RW)",
+                   imp.name(),
+                   kind);
     rootfs::active_impl::set_active_fs_impl(imp);
     logging::info!("[fs] init end");
 }
@@ -168,23 +153,21 @@ pub fn mount_default_root_rw() -> api_v0::FsResult<()> {
 }
 
 /// 当前根读写句柄；未挂载时为 `None`。
-pub fn root_rw_fs() -> Option<api_v0::SharedRwFs> {
-    rootfs::active_impl::root_rw_fs()
-}
+pub fn root_rw_fs() -> Option<api_v0::SharedRwFs> { rootfs::active_impl::root_rw_fs() }
 
 /// 创建一个 heap-backed ramfs RW 句柄，供 VFS tmpfs 策略层挂载。
 #[cfg(feature = "impl-ramfs")]
-pub fn new_ramfs_rw(limit_bytes: Option<usize>, root_mode: u16) -> api_v0::SharedRwFs {
+pub fn new_ramfs_rw(limit_bytes : Option<usize>, root_mode : u16) -> api_v0::SharedRwFs {
     impl_ramfs::new_shared_rw(limit_bytes, root_mode)
 }
 
 /// 从块设备挂载独立 RO 卷（用户态 `mount` + `MS_RDONLY`）；不替换根卷句柄。
-pub fn mount_aux_ro_from_block_path(path: &str) -> api_v0::FsResult<api_v0::SharedFs> {
+pub fn mount_aux_ro_from_block_path(path : &str) -> api_v0::FsResult<api_v0::SharedFs> {
     rootfs::active_impl::mount_aux_ro_from_block_path(path)
 }
 
 /// 从块设备挂载独立 RW 卷（用户态 `mount`）；不替换根卷句柄。
-pub fn mount_aux_rw_from_block_path(path: &str) -> api_v0::FsResult<api_v0::SharedRwFs> {
+pub fn mount_aux_rw_from_block_path(path : &str) -> api_v0::FsResult<api_v0::SharedRwFs> {
     rootfs::active_impl::mount_aux_rw_from_block_path(path)
 }
 
@@ -199,10 +182,8 @@ pub fn test() {
     #[cfg(feature = "impl-ext4")]
     {
         let Some(rw) = rootfs::active_impl::root_rw_fs() else {
-            logging::warn!(
-                "[fs] ext4 rw test skipped: {:?}",
-                api_v0::FsError::NotMounted
-            );
+            logging::warn!("[fs] ext4 rw test skipped: {:?}",
+                           api_v0::FsError::NotMounted);
             logging::trace!("[fs] test end");
             return;
         };
@@ -210,7 +191,8 @@ pub fn test() {
             logging::warn!("[fs] ext4 rw test failed: {:?}", err);
         }
         if let Err(err) = impl_ext4::rw_mkdir_verify(rw, "fs_mkdir_smoke") {
-            logging::warn!("[fs] ext4 mkdir smoke failed: {:?}", err);
+            logging::warn!("[fs] ext4 mkdir smoke failed: {:?}",
+                           err);
         }
     }
     logging::trace!("[fs] test end");

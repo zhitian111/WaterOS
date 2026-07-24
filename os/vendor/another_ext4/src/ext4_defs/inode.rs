@@ -161,6 +161,8 @@ pub struct Inode {
     version_hi: u32,
     /// Project id
     projid: u32,
+    /// Unused tail of the 256-byte on-disk inode record.
+    padding: [u8; 96],
 }
 
 /// Because `[u8; 60]` cannot derive `Default`, we implement it manually.
@@ -192,7 +194,7 @@ impl Default for Inode {
                 l_checksum_lo: 0,
                 l_reserved: 0,
             },
-            extra_isize: (core::mem::size_of::<Inode>() - 128) as u16,
+            extra_isize: 32,
             checksum_hi: 0,
             ctime_extra: 0,
             mtime_extra: 0,
@@ -201,6 +203,7 @@ impl Default for Inode {
             crtime_extra: 0,
             version_hi: 0,
             projid: 0,
+            padding: [0; 96],
         }
     }
 }

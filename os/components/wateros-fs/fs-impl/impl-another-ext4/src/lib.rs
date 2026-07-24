@@ -113,8 +113,7 @@ fn metadata(fs : &Ext4, inode : u32) -> FsResult<FsMetadata> {
 
 fn parent_name(path : &str) -> FsResult<(&str, &str)> {
     let path = path.trim_end_matches('/');
-    let (parent, name) = path.rsplit_once('/')
-                             .ok_or(FsError::InvalidPath)?;
+    let (parent, name) = path.rsplit_once('/').ok_or(FsError::InvalidPath)?;
     if name.is_empty() || name.len() > 255 || name == "." || name == ".." {
         return Err(FsError::InvalidPath);
     }
@@ -132,10 +131,9 @@ impl AnotherExt4Fs {
             .as_ref()
             .ok_or(FsError::NotMounted)
     }
+
     fn get_mut(&mut self) -> FsResult<&mut Ext4> {
-        self.fs
-            .as_mut()
-            .ok_or(FsError::NotMounted)
+        self.fs.as_mut().ok_or(FsError::NotMounted)
     }
 }
 
@@ -168,8 +166,18 @@ impl ReadOnlyFs for AnotherExt4Fs {
         if map_type(attr.ftype) != FsNodeType::File {
             return Err(FsError::NotAFile);
         }
-        fs.read(inode, offset as usize, buf)
-          .map_err(map_error)
+        if offset > attr.size {
+            return Ok(0);
+        }
+        fs.read(inode, offset as usize, buf).map_err(|error| {
+            log::error!("[fs::another-ext4] read failed path={} inode={} offset={} len={} code={:?}",
+                        path,
+                        inode,
+                        offset,
+                        buf.len(),
+                        error.code());
+            map_error(error)
+        })
     }
 
     fn read(&self, path : &str) -> FsResult<Vec<u8>> {
@@ -227,6 +235,26 @@ impl ReadWriteFs for AnotherExt4Fs {
     fn mount_rw(&mut self, device : SharedBlockDevice) -> FsResult<()> { self.mount(device) }
     fn is_mounted(&self) -> bool { self.fs.is_some() }
 
+    fn exists(&self, path : &str) -> FsResult<bool> { ReadOnlyFs::exists(self, path) }
+
+    fn metadata(&self, path : &str) -> FsResult<FsMetadata> {
+        ReadOnlyFs::metadata(self, path)
+    }
+
+    fn read(&self, path : &str) -> FsResult<Vec<u8>> { ReadOnlyFs::read(self, path) }
+
+    fn read_range(&self, path : &str, offset : u64, buf : &mut [u8]) -> FsResult<usize> {
+        ReadOnlyFs::read_range(self, path, offset, buf)
+    }
+
+    fn read_dir(&self, path : &str) -> FsResult<Vec<FsDirEntry>> {
+        ReadOnlyFs::read_dir(self, path)
+    }
+
+    fn read_symlink(&self, path : &str) -> FsResult<Vec<u8>> {
+        ReadOnlyFs::read_symlink(self, path)
+    }
+
     fn write_regular_file_at_root(&mut self, name : &str, data : &[u8]) -> FsResult<()> {
         let mut path = String::from("/");
         path.push_str(name);
@@ -243,39 +271,25 @@ impl ReadWriteFs for AnotherExt4Fs {
                                         .map_err(map_error)?,
             Err(error) => return Err(error),
         };
-        fs.setattr(inode,
-                   None,
-                   None,
-                   None,
-                   Some(0),
-                   None,
-                   None,
-                   None,
-                   None)
+        fs.setattr(inode, None, None, None, Some(0), None, None, None, None)
           .map_err(map_error)?;
-        fs.write(inode, 0, data)
-          .map_err(map_error)?;
+        fs.write(inode, 0, data).map_err(map_error)?;
         fs.flush_all();
         Ok(())
     }
 
     fn unlink(&mut self, path : &str) -> FsResult<()> {
-        self.get_mut()?
-            .generic_remove(EXT4_ROOT_INO, path)
-            .map_err(map_error)
+        self.get_mut()?.generic_remove(EXT4_ROOT_INO, path).map_err(map_error)
     }
 
     fn rmdir(&mut self, path : &str) -> FsResult<()> {
-        self.get_mut()?
-            .generic_remove(EXT4_ROOT_INO, path)
-            .map_err(map_error)
+        self.get_mut()?.generic_remove(EXT4_ROOT_INO, path).map_err(map_error)
     }
 
     fn write_range(&mut self, path : &str, offset : u64, data : &[u8]) -> FsResult<usize> {
         let fs = self.get_mut()?;
         let inode = lookup(fs, path)?;
-        let written = fs.write(inode, offset as usize, data)
-                        .map_err(map_error)?;
+        let written = fs.write(inode, offset as usize, data).map_err(map_error)?;
         fs.flush_all();
         Ok(written)
     }
@@ -283,15 +297,7 @@ impl ReadWriteFs for AnotherExt4Fs {
     fn truncate(&mut self, path : &str, len : u64) -> FsResult<()> {
         let fs = self.get_mut()?;
         let inode = lookup(fs, path)?;
-        fs.setattr(inode,
-                   None,
-                   None,
-                   None,
-                   Some(len),
-                   None,
-                   None,
-                   None,
-                   None)
+        fs.setattr(inode, None, None, None, Some(len), None, None, None, None)
           .map_err(map_error)
     }
 
@@ -299,9 +305,7 @@ impl ReadWriteFs for AnotherExt4Fs {
         let fs = self.get_mut()?;
         let (parent, name) = parent_name(path)?;
         let parent = lookup(fs, parent)?;
-        fs.mkdir(parent,
-                 name,
-                 InodeMode::DIRECTORY | InodeMode::from_bits_retain(mode as u16))
+        fs.mkdir(parent, name, InodeMode::DIRECTORY | InodeMode::from_bits_retain(mode as u16))
           .map(|_| ())
           .map_err(map_error)
     }
@@ -309,15 +313,8 @@ impl ReadWriteFs for AnotherExt4Fs {
     fn chmod(&mut self, path : &str, mode : u32) -> FsResult<()> {
         let fs = self.get_mut()?;
         let inode = lookup(fs, path)?;
-        fs.setattr(inode,
-                   Some(InodeMode::from_bits_retain(mode as u16)),
-                   None,
-                   None,
-                   None,
-                   None,
-                   None,
-                   None,
-                   None)
+        fs.setattr(inode, Some(InodeMode::from_bits_retain(mode as u16)), None, None,
+                   None, None, None, None, None)
           .map_err(map_error)
     }
 
@@ -329,9 +326,7 @@ impl ReadWriteFs for AnotherExt4Fs {
     }
 
     fn rename(&mut self, old_path : &str, new_path : &str) -> FsResult<()> {
-        self.get_mut()?
-            .generic_rename(EXT4_ROOT_INO, old_path, new_path)
-            .map_err(map_error)
+        self.get_mut()?.generic_rename(EXT4_ROOT_INO, old_path, new_path).map_err(map_error)
     }
 }
 

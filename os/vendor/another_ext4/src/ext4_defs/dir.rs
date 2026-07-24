@@ -151,10 +151,16 @@ impl DirEntryTail {
     }
 
     pub fn set_checksum(&mut self, uuid: &[u8], ino: InodeId, ino_gen: u32, block: &Block) {
+        let tail_offset = BLOCK_SIZE - size_of::<DirEntryTail>();
+        let mut data = block.data.clone();
+        data[tail_offset + 8..tail_offset + 12].fill(0);
         let mut csum = crc32(CRC32_INIT, uuid);
         csum = crc32(csum, &ino.to_le_bytes());
         csum = crc32(csum, &ino_gen.to_le_bytes());
-        self.checksum = crc32(csum, &block.data[..size_of::<DirEntryTail>()]);
+        // ext4 hashes the directory payload and excludes the 12-byte tail
+        // (including its checksum field) from this calculation.
+        csum = crc32(csum, &data[..tail_offset]);
+        self.checksum = csum;
     }
 }
 
@@ -175,6 +181,7 @@ impl DirBlock {
     /// Initialize a directory block, create an unused entry
     /// and the dir entry tail.
     pub fn init(&mut self) {
+        self.0.data.fill(0);
         let tail_offset = BLOCK_SIZE - size_of::<DirEntryTail>();
         let entry = DirEntry::new(0, tail_offset as u16, "", FileType::Unknown);
         self.0.write_offset_as(0, &entry);
@@ -218,7 +225,7 @@ impl DirBlock {
             let mut de: DirEntry = self.0.read_offset_as(offset);
             let rec_len = de.rec_len as usize;
             // The size that `de` actually uses
-            let used_size = de.used_size();
+            let used_size = if de.unused() { 0 } else { de.used_size() };
             // The rest size
             let free_size = rec_len - used_size;
             // Try splitting dir entry
@@ -229,6 +236,11 @@ impl DirBlock {
                 continue;
             }
             // Has enough space
+            if de.unused() {
+                let new_entry = DirEntry::new(inode, rec_len as u16, name, file_type);
+                self.0.write_offset_as(offset, &new_entry);
+                return true;
+            }
             // Update the old entry
             de.rec_len = used_size as u16;
             self.0.write_offset_as(offset, &de);

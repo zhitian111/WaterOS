@@ -257,9 +257,7 @@ fn read_whole_file_ro_retry_bad_prefix_vfs(view : &dyn SingleRootReadView,
     let read_once = || {
         view.read(path)
             .map_err(|e| {
-                runtime::logging::trace!("[elf-load] abort: Vfs::read err={:?} path={}",
-                                         e,
-                                         path);
+                runtime::logging::error!("[elf-load] Vfs::read err={:?} path={}", e, path);
                 LoadElfError::RootVolume(map_vfs_to_root_vol(e))
             })
     };

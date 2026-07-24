@@ -201,9 +201,10 @@ impl SuperBlock {
     /// covering all content from start to before checksum field in superblock byte sequence.
     pub fn set_checksum(&mut self) {
         let off = core::mem::offset_of!(SuperBlock, checksum);
+        // The checksum field is excluded from the CRC calculation.  Reusing
+        // a loaded superblock must not feed its old checksum into the new one.
+        self.checksum = 0;
         let bytes = self.to_bytes();
-        let mut csum = crc32(CRC32_INIT, &self.uuid);
-        csum = crc32(csum, &bytes[..off]);
-        self.checksum = csum;
+        self.checksum = crc32(CRC32_INIT, &bytes[..off]);
     }
 }
