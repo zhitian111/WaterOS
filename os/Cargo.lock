@@ -1237,6 +1237,7 @@ version = "0.1.0"
 dependencies = [
  "log",
  "spin",
+ "wateros-base",
  "wateros-mm-frame-alloctor-api-v0",
 ]
 
@@ -1581,6 +1582,7 @@ dependencies = [
  "log",
  "wateros-base",
  "wateros-base-config",
+ "wateros-mm-api-v0",
  "wateros-platform",
  "wateros-platform-arch",
  "wateros-task-api-v0",

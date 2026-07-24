@@ -80,6 +80,10 @@ impl MultiClassScheduler {
     /// 标记任务为 Running 并更新当前 CPU 的 current_task_id。
     fn set_current_task(&mut self, task_id : TaskId, cpu_id : CpuId) {
         let previous_task_id = self.cpu_states[cpu_id.raw()].current_task_id;
+        let previous_aspace = previous_task_id.map(|id| {
+            self.global.registry.current_task_user_aspace_ptr(id)
+        }).unwrap_or(0);
+        let next_aspace = self.global.registry.current_task_user_aspace_ptr(task_id);
         if !self.global
                 .registry
                 .is_idle(task_id)
@@ -96,6 +100,10 @@ impl MultiClassScheduler {
                            .ready_cpu_id(task_id),
                        Some(cpu_id),
                        "selected task is not owned by this CPU runqueue");
+        }
+        if previous_aspace != next_aspace {
+            mm_api::user_aspace_lifecycle::notify_aspace_cpu_leave(previous_aspace, cpu_id);
+            mm_api::user_aspace_lifecycle::notify_aspace_cpu_enter(next_aspace, cpu_id);
         }
         self.cpu_states[cpu_id.raw()].current_task_id = Some(task_id);
         if previous_task_id != Some(task_id) {

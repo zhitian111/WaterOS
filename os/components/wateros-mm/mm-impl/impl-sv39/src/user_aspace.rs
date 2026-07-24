@@ -5,7 +5,7 @@
 //! **Safety**：`handle` 须来自 bring-up 泄漏的用户地址空间，且与当前任务安装的 `satp` 一致。
 
 use core::sync::atomic::{AtomicBool, Ordering};
-use core::sync::atomic::AtomicUsize;
+use core::sync::atomic::{AtomicU64, AtomicUsize};
 
 use api_v0::error::{MmError, MmResult};
 use wateros_base::sync::MultiprocessorSafeCell;
@@ -22,12 +22,14 @@ use crate::pagetable::Sv39AddressSpace;
 pub(crate) struct UserAddressSpaceCell {
     pub(crate) inner: MultiprocessorSafeCell<Sv39AddressSpace>,
     dropped: AtomicBool,
+    active_cpus: AtomicU64,
 }
 
 impl UserAddressSpaceCell {
     pub(crate) fn new(aspace: Sv39AddressSpace) -> Self {
         Self { inner: MultiprocessorSafeCell::new(aspace),
-               dropped: AtomicBool::new(false) }
+               dropped: AtomicBool::new(false),
+               active_cpus: AtomicU64::new(0) }
     }
 
     fn is_dropped(&self) -> bool { self.dropped.load(Ordering::Acquire) }
@@ -50,19 +52,32 @@ pub(crate) fn destroy(handle: usize) {
     if !cell.mark_dropped() {
         return;
     }
+    cell.active_cpus.store(0, Ordering::Release);
     cell.inner.exclusive_access().destroy();
 }
 
-fn request_tlb_shootdown() {
+pub fn mark_active(handle: usize, cpu: wateros_base::cpu::CpuId) {
+    let Some(cell) = (unsafe { cell(handle) }) else { return };
+    if cell.is_dropped() || cpu.raw() >= u64::BITS as usize { return; }
+    cell.active_cpus.fetch_or(1u64 << cpu.raw(), Ordering::AcqRel);
+}
+
+pub fn mark_inactive(handle: usize, cpu: wateros_base::cpu::CpuId) {
+    let Some(cell) = (unsafe { cell(handle) }) else { return };
+    if cpu.raw() >= u64::BITS as usize { return; }
+    cell.active_cpus.fetch_and(!(1u64 << cpu.raw()), Ordering::AcqRel);
+}
+
+fn request_tlb_shootdown(handle: usize) {
     // Serialize sequence allocation, pending publication, IPI delivery and
     // acknowledgements.  A per-CPU pending slot cannot represent two
     // concurrent transactions safely without this critical section.
     let _request_guard = TLB_SHOOTDOWN_LOCK.lock();
     let current = platform::arch::cpu::current_cpu_id();
-    // Stage one invalidates every online CPU.  Restricting this to online
-    // CPUs avoids waiting for configured-but-not-yet-started harts; tracking
-    // the CPUs actively using this address space is a later optimization.
-    let mut targets = task::online_cpu_mask();
+    let active = unsafe { cell(handle) }
+                    .map(|cell| cell.active_cpus.load(Ordering::Acquire))
+                    .unwrap_or(0);
+    let mut targets = wateros_base::cpu::CpuMask::from_bits(active & task::online_cpu_mask().bits());
     targets.remove(current);
     if targets.is_empty() {
         return;
@@ -139,6 +154,6 @@ pub fn with_user_aspace_mut_and_flush<R>(
 ) -> MmResult<R> {
     let result = with_user_aspace_mut(handle, f);
     platform::arch::paging::flush_tlb_local(platform::arch::paging::TlbFlushRange::All);
-    request_tlb_shootdown();
+    request_tlb_shootdown(handle);
     result
 }
