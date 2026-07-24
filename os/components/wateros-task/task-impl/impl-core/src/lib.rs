@@ -16,7 +16,10 @@ use alloc::vec::Vec;
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use api_v0::{ProcessDescriptor, ProcessId, ProcessTaskDescriptor, TaskClearTid, TaskId, ThreadId};
+use api_v0::{
+    ProcessId, ProcessResult, ProcessSnapshot, ProcessTaskSnapshot, TaskClearTid, TaskId,
+    ThreadId,
+};
 use arch::interrupt::ArchInterruptState;
 use base::sync::MultiprocessorSafeCell;
 
@@ -80,13 +83,13 @@ pub fn with_process_registry<R>(f : impl FnOnce(&mut ProcessRegistry) -> R) -> R
 }
 
 /// 查询进程语义快照。
-pub fn lookup_process(pid : ProcessId) -> Option<ProcessDescriptor> {
-    with_process_registry(|registry| registry.lookup_process(pid))
+pub fn process_snapshot(pid : ProcessId) -> Option<ProcessSnapshot> {
+    with_process_registry(|registry| registry.process_snapshot(pid))
 }
 
 /// 按调度实体查询进程内任务快照。
-pub fn lookup_task(task_id : TaskId) -> Option<ProcessTaskDescriptor> {
-    with_process_registry(|registry| registry.lookup_task(task_id))
+pub fn process_task_snapshot(task_id : TaskId) -> Option<ProcessTaskSnapshot> {
+    with_process_registry(|registry| registry.process_task_snapshot(task_id))
 }
 
 /// 返回进程的 leader task id。
@@ -115,64 +118,64 @@ pub fn task_exit_would_finish_process(task_id : TaskId) -> Option<bool> {
 }
 
 /// 查找父进程下一个已退出子进程。
-pub fn find_exited_child_process(parent_pid : ProcessId) -> Option<ProcessDescriptor> {
+pub fn find_exited_child_process(parent_pid : ProcessId) -> Option<ProcessSnapshot> {
     with_process_registry(|registry| registry.find_exited_child_process(parent_pid))
 }
 
 /// 在指定进程组内查找已退出子进程。
 pub fn find_exited_child_process_in_pgid(parent_pid : ProcessId,
                                          pgid : ProcessId)
-                                         -> Option<ProcessDescriptor> {
+                                         -> Option<ProcessSnapshot> {
     with_process_registry(|registry| registry.find_exited_child_process_in_pgid(parent_pid, pgid))
 }
 
 /// 查找父进程下一个可 wait 的 stopped 子进程。
-pub fn find_stopped_child_process(parent_pid : ProcessId) -> Option<ProcessDescriptor> {
+pub fn find_stopped_child_process(parent_pid : ProcessId) -> Option<ProcessSnapshot> {
     with_process_registry(|registry| registry.find_stopped_child_process(parent_pid))
 }
 
 /// 判断指定 stopped 子进程是否可被 wait。
 pub fn stopped_child_ready_for_wait(parent_pid : ProcessId,
                                     child_pid : ProcessId)
-                                    -> Option<ProcessDescriptor> {
+                                    -> Option<ProcessSnapshot> {
     with_process_registry(|registry| registry.stopped_child_ready_for_wait(parent_pid, child_pid))
 }
 
 /// 在进程组内查找 stopped 子进程。
 pub fn find_stopped_child_process_in_pgid(parent_pid : ProcessId,
                                           pgid : ProcessId)
-                                          -> Option<ProcessDescriptor> {
+                                          -> Option<ProcessSnapshot> {
     with_process_registry(|registry| registry.find_stopped_child_process_in_pgid(parent_pid, pgid))
 }
 
 /// 查找父进程下一个 continued 子进程。
-pub fn find_continued_child_process(parent_pid : ProcessId) -> Option<ProcessDescriptor> {
+pub fn find_continued_child_process(parent_pid : ProcessId) -> Option<ProcessSnapshot> {
     with_process_registry(|registry| registry.find_continued_child_process(parent_pid))
 }
 
 /// 判断指定 continued 子进程是否可被 wait。
 pub fn continued_child_ready_for_wait(parent_pid : ProcessId,
                                       child_pid : ProcessId)
-                                      -> Option<ProcessDescriptor> {
+                                      -> Option<ProcessSnapshot> {
     with_process_registry(|registry| registry.continued_child_ready_for_wait(parent_pid, child_pid))
 }
 
 /// 在进程组内查找 continued 子进程。
 pub fn find_continued_child_process_in_pgid(parent_pid : ProcessId,
                                             pgid : ProcessId)
-                                            -> Option<ProcessDescriptor> {
+                                            -> Option<ProcessSnapshot> {
     with_process_registry(|registry| {
         registry.find_continued_child_process_in_pgid(parent_pid, pgid)
     })
 }
 
 /// 将进程标为 SIGSTOP 停止态。
-pub fn mark_process_stopped(pid : ProcessId, signo : u8) -> bool {
+pub fn mark_process_stopped(pid : ProcessId, signo : u8) -> ProcessResult<()> {
     with_process_registry(|registry| registry.mark_process_stopped(pid, signo))
 }
 
 /// 将进程从 stopped 恢复为 running。
-pub fn mark_process_continued(pid : ProcessId) -> bool {
+pub fn mark_process_continued(pid : ProcessId) -> ProcessResult<()> {
     with_process_registry(|registry| registry.mark_process_continued(pid))
 }
 
@@ -197,7 +200,7 @@ pub fn has_child_process_in_pgid(parent_pid : ProcessId, pgid : ProcessId) -> bo
 }
 
 /// 为进程创建新会话。
-pub fn create_session_for_process(pid : ProcessId) -> Result<(), ()> {
+pub fn create_session_for_process(pid : ProcessId) -> ProcessResult<()> {
     with_process_registry(|registry| registry.create_session_for_process(pid))
 }
 
@@ -207,7 +210,7 @@ pub fn process_dumpable(pid : ProcessId) -> Option<bool> {
 }
 
 /// 设置进程 dumpable 标志。
-pub fn set_process_dumpable(pid : ProcessId, dumpable : bool) -> bool {
+pub fn set_process_dumpable(pid : ProcessId, dumpable : bool) -> ProcessResult<()> {
     with_process_registry(|registry| registry.set_process_dumpable(pid, dumpable))
 }
 
@@ -217,7 +220,7 @@ pub fn process_child_subreaper(pid : ProcessId) -> Option<bool> {
 }
 
 /// 设置 child subreaper 标志。
-pub fn set_process_child_subreaper(pid : ProcessId, enabled : bool) -> bool {
+pub fn set_process_child_subreaper(pid : ProcessId, enabled : bool) -> ProcessResult<()> {
     with_process_registry(|registry| registry.set_process_child_subreaper(pid, enabled))
 }
 
@@ -232,7 +235,9 @@ pub fn collect_exited_process_pids() -> Vec<ProcessId> {
 }
 
 /// 更新任务的 clear-child-tid 地址。
-pub fn set_task_clear_child_tid(task_id : TaskId, clear_child_tid : Option<TaskClearTid>) -> bool {
+pub fn set_task_clear_child_tid(task_id : TaskId,
+                                clear_child_tid : Option<TaskClearTid>)
+                                -> ProcessResult<()> {
     with_process_registry(|registry| registry.set_task_clear_child_tid(task_id, clear_child_tid))
 }
 
@@ -242,22 +247,22 @@ pub fn task_clear_child_tid(task_id : TaskId) -> Option<TaskClearTid> {
 }
 
 /// 回收已退出进程并返回其快照。
-pub fn reap_process(pid : ProcessId) -> Option<ProcessDescriptor> {
+pub fn reap_process(pid : ProcessId) -> Option<ProcessSnapshot> {
     with_process_registry(|registry| registry.reap_process(pid))
 }
 
 /// 回收已退出进程并返回关联 task id 列表。
-pub fn reap_process_with_tasks(pid : ProcessId) -> Option<(ProcessDescriptor, Vec<TaskId>)> {
+pub fn reap_process_with_tasks(pid : ProcessId) -> Option<(ProcessSnapshot, Vec<TaskId>)> {
     with_process_registry(|registry| registry.reap_process_with_tasks(pid))
 }
 
 /// fork 失败时撤销子进程 registry 记录。
-pub fn abort_forked_process(child_task_id : TaskId) -> Option<ProcessId> {
+pub fn abort_forked_process(child_task_id : TaskId) -> ProcessResult<ProcessId> {
     with_process_registry(|registry| registry.abort_forked_process(child_task_id))
 }
 
 /// clone 线程失败时从进程表移除子线程。
-pub fn abort_cloned_thread(child_task_id : TaskId) -> bool {
+pub fn abort_cloned_thread(child_task_id : TaskId) -> ProcessResult<()> {
     with_process_registry(|registry| registry.abort_cloned_thread(child_task_id))
 }
 
@@ -270,7 +275,7 @@ pub fn get_process_rlimit(pid : ProcessId, resource : usize) -> Option<api_v0::R
 pub fn set_process_rlimit(pid : ProcessId,
                           resource : usize,
                           limit : api_v0::ResourceLimit)
-                          -> Result<(), api_v0::SetResourceLimitError> {
+                          -> ProcessResult<()> {
     with_process_registry(|registry| registry.set_process_rlimit(pid, resource, limit))
 }
 
@@ -280,7 +285,7 @@ pub fn get_process_umask(pid : ProcessId) -> Option<u32> {
 }
 
 /// 设置进程 umask。
-pub fn set_process_umask(pid : ProcessId, mask : u32) -> bool {
+pub fn set_process_umask(pid : ProcessId, mask : u32) -> ProcessResult<()> {
     with_process_registry(|registry| registry.set_process_umask(pid, mask))
 }
 
@@ -290,7 +295,7 @@ pub fn get_parent_death_signal(pid : ProcessId) -> Option<i32> {
 }
 
 /// 设置进程 parent-death-signal。
-pub fn set_parent_death_signal(pid : ProcessId, sig : i32) -> bool {
+pub fn set_parent_death_signal(pid : ProcessId, sig : i32) -> ProcessResult<()> {
     with_process_registry(|registry| registry.set_parent_death_signal(pid, sig))
 }
 
@@ -300,7 +305,7 @@ pub fn get_thread_comm(task_id : TaskId) -> Option<[u8; 16]> {
 }
 
 /// 设置线程名（`comm`）。
-pub fn set_thread_comm(task_id : TaskId, comm : [u8; 16]) -> bool {
+pub fn set_thread_comm(task_id : TaskId, comm : [u8; 16]) -> ProcessResult<()> {
     with_process_registry(|registry| registry.set_thread_comm(task_id, comm))
 }
 
@@ -310,7 +315,7 @@ pub fn get_process_pgid(pid : ProcessId) -> Option<ProcessId> {
 }
 
 /// 设置进程组 id。
-pub fn set_process_pgid(pid : ProcessId, pgid : ProcessId) -> bool {
+pub fn set_process_pgid(pid : ProcessId, pgid : ProcessId) -> ProcessResult<()> {
     with_process_registry(|registry| registry.set_process_pgid(pid, pgid))
 }
 

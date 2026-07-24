@@ -30,14 +30,16 @@ pub(crate) fn sys_gettid() -> UserRet {
 pub(crate) fn sys_setsid() -> UserRet {
     let current = match task::current_process_snapshot() {
         Some(process) => process,
-        None => return UserRet::from_error(ErrNo::EPERM),
+        None => return UserRet::from_error(ErrNo::ESRCH),
     };
     if current.pgid == current.pid {
         return UserRet::from_error(ErrNo::EPERM);
     }
     match task::create_session_for_process(current.pid) {
         Ok(()) => UserRet::from_success(current.pid.raw()),
-        Err(()) => UserRet::from_error(ErrNo::EPERM),
+        Err(task::ProcessError::AlreadySessionLeader) => UserRet::from_error(ErrNo::EPERM),
+        Err(task::ProcessError::ProcessNotFound) => UserRet::from_error(ErrNo::ESRCH),
+        _ => UserRet::from_error(ErrNo::EPERM),
     }
 }
 
@@ -121,7 +123,7 @@ pub(crate) fn sys_setpgid(args : SyscallArgs) -> UserRet {
             return UserRet::from_error(ErrNo::EPERM);
         }
     }
-    if !task::set_process_pgid(target_pid, new_pgid) {
+    if task::set_process_pgid(target_pid, new_pgid).is_err() {
         return UserRet::from_error(ErrNo::ESRCH);
     }
     UserRet::from_success(0)

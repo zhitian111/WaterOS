@@ -15,9 +15,13 @@ pub fn fork_current(child_stack: usize, new_aspace_ptr: usize, new_satp: usize) 
         AddressSpaceHandle::from_raw(new_satp),
         new_aspace_ptr,
     ));
-    active_impl::with_process_registry(|registry| {
-        let _ = registry.create_process_like_fork(parent_pid, child_id, address_space);
+    let registered = active_impl::with_process_registry(|registry| {
+        registry.create_process_like_fork(parent_pid, child_id, address_space)
     });
+    if registered.is_err() {
+        scheduler::discard_unstarted_task(child_id);
+        return None;
+    }
     scheduler::enqueue_ready_task(child_id);
     Some(child_id)
 }
@@ -25,7 +29,7 @@ pub fn fork_current(child_stack: usize, new_aspace_ptr: usize, new_satp: usize) 
 /// fork 失败回滚：撤销子任务 TCB、进程槽位与地址空间；返回被撤销的子进程 PID（供信号表清理）。
 pub fn abort_fork_child(child_id: TaskId) -> Option<ProcessId> {
     scheduler::discard_unstarted_task(child_id);
-    active_impl::abort_forked_process(child_id)
+    active_impl::abort_forked_process(child_id).ok()
 }
 
 /// clone 线程失败回滚：撤销子线程 TCB 与进程内线程登记。
@@ -47,15 +51,19 @@ pub fn clone_current_thread(
         tls,
         clone_flags.contains(CloneFlags::CLONE_SETTLS),
     )?;
-    active_impl::with_process_registry(|registry| {
-        let _ = registry.add_task_to_process(
+    let registered = active_impl::with_process_registry(|registry| {
+        registry.add_task_to_process(
             process_task.pid,
             child_id,
             clone_flags,
             tls,
             clear_child_tid,
-        );
+        )
     });
+    if registered.is_err() {
+        scheduler::discard_unstarted_task(child_id);
+        return None;
+    }
     scheduler::enqueue_ready_task(child_id);
     Some(child_id)
 }
@@ -114,7 +122,7 @@ pub fn exit_group_current(exit_code: TaskExitCode) -> ! {
     if let Some(process_task) = crate::process::current_process_task_snapshot() {
         let task_ids = active_impl::task_ids_for_process(process_task.pid).unwrap_or_default();
         active_impl::with_process_registry(|registry| {
-            let _ = registry.mark_process_exiting(process_task.pid, exit_code);
+            let _ = registry.mark_process_exited(process_task.pid, exit_code);
         });
         for task_id in task_ids {
             if task_id != current_id {

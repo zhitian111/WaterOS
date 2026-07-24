@@ -18,8 +18,9 @@ pub fn spawn_user_task(user : UserTask) -> TaskId {
     let parent_pid = crate::process::current_process_task_snapshot().map(|task| task.pid);
     let address_space = user_address_space_ref(user);
     active_impl::with_process_registry(|registry| {
-        registry.create_process_for_task(task_id, parent_pid, address_space);
-    });
+        registry.create_process_for_task(task_id, parent_pid, address_space)
+    })
+    .expect("new user task must have a fresh process-registry entry");
     scheduler::enqueue_ready_task(task_id);
     task_id
 }

@@ -3,18 +3,17 @@
 //! 这里不参与调度决策；调度器仍只处理 `TaskId`。在 WaterOS 当前模型里，
 //! `ProcessRegistry` 只维护 process 对共享资源的归属，以及 process 下有哪些 task。
 
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec::Vec;
 
 use api_v0::{
-    AddressSpaceRef, CloneFlags, ProcessDescriptor, ProcessId, ProcessState,
-    ProcessTaskDescriptor, ProcessTaskRole, ProcessTaskState, ResourceLimit, SetResourceLimitError,
+    AddressSpaceRef, CloneFlags, ProcessError, ProcessId, ProcessResult, ProcessSnapshot,
+    ProcessState, ProcessTaskRole, ProcessTaskSnapshot, ProcessTaskState, ResourceLimit,
     TaskClearTid, TaskExitCode, TaskId, ThreadId,
 };
 
 #[derive(Clone, Debug)]
 struct ProcessTask {
-    task_id : TaskId,
     tid : ThreadId,
     state : ProcessTaskState,
     //线程本地存储（Thread-Local Storage）基址。
@@ -26,18 +25,22 @@ struct ProcessTask {
 }
 
 impl ProcessTask {
-    fn descriptor(&self, pid : ProcessId, leader_task_id : TaskId) -> ProcessTaskDescriptor {
-        ProcessTaskDescriptor { task_id : self.task_id,
-                                tid : self.tid,
-                                pid,
-                                role : if self.task_id == leader_task_id {
-                                    ProcessTaskRole::Leader
-                                } else {
-                                    ProcessTaskRole::Member
-                                },
-                                state : self.state,
-                                tls : self.tls,
-                                clear_child_tid : self.clear_child_tid }
+    fn snapshot(&self,
+                task_id : TaskId,
+                pid : ProcessId,
+                leader_task_id : TaskId)
+                -> ProcessTaskSnapshot {
+        ProcessTaskSnapshot { task_id,
+                              tid : self.tid,
+                              pid,
+                              role : if task_id == leader_task_id {
+                                  ProcessTaskRole::Leader
+                              } else {
+                                  ProcessTaskRole::Member
+                              },
+                              state : self.state,
+                              tls : self.tls,
+                              clear_child_tid : self.clear_child_tid }
     }
 }
 
@@ -50,7 +53,11 @@ pub struct ProcessControlBlock {
     rlimits : BTreeMap<usize, ResourceLimit>,
     /// 进程组 id；fork 继承，由 `setpgid` 更新。
     pgid : ProcessId,
-    tasks : Vec<ProcessTask>,
+    tasks : BTreeMap<TaskId, ProcessTask>,
+
+    /// 已退出的非 leader 线程。退出路径只向这里登记；维护路径按此队列精确
+    /// 回收，避免每次 `exit` 都扫描整个 `tasks` 映射。
+    exited_member_task_ids : VecDeque<TaskId>,
     state : ProcessState,
     //会话 ID（Session ID）。由 setsid() 系统调用设置，表示进程所属的会话（session）。会话是一组进程组的集合，通常与终端登录相关。
     sid : ProcessId,
@@ -69,22 +76,21 @@ pub struct ProcessControlBlock {
 }
 
 impl ProcessControlBlock {
-    fn descriptor(&self) -> ProcessDescriptor {
-        ProcessDescriptor { pid : self.pid,
-                            leader_task_id : self.leader_task_id,
-                            parent_pid : self.parent_pid,
-                            address_space : self.address_space,
-                            task_count : self.tasks.len(),
-                            state : self.state,
-                            pgid : self.pgid,
-                            sid : self.sid }
+    fn snapshot(&self) -> ProcessSnapshot {
+        ProcessSnapshot { pid : self.pid,
+                          leader_task_id : self.leader_task_id,
+                          parent_pid : self.parent_pid,
+                          address_space : self.address_space,
+                          task_count : self.tasks.len(),
+                          state : self.state,
+                          pgid : self.pgid,
+                          sid : self.sid }
     }
 
-    fn task_descriptor(&self, task_id : TaskId) -> Option<ProcessTaskDescriptor> {
+    fn ptask_snapshot(&self, task_id : TaskId) -> Option<ProcessTaskSnapshot> {
         self.tasks
-            .iter()
-            .find(|task| task.task_id == task_id)
-            .map(|task| task.descriptor(self.pid, self.leader_task_id))
+            .get(&task_id)
+            .map(|task| task.snapshot(task_id, self.pid, self.leader_task_id))
     }
 }
 
@@ -92,6 +98,8 @@ impl ProcessControlBlock {
 pub struct ProcessRegistry {
     //进程号有序，范围查询潜力，确定性迭代，稳定的 hash 性能
     processes : BTreeMap<ProcessId, ProcessControlBlock>,
+    pid_for_task : BTreeMap<TaskId, ProcessId>,
+    task_for_thread : BTreeMap<ThreadId, TaskId>,
     next_pid : usize,
     next_tid : usize,
 }
@@ -99,12 +107,18 @@ pub struct ProcessRegistry {
 impl ProcessRegistry {
     pub fn new() -> Self {
         Self { processes : BTreeMap::new(),
+               pid_for_task : BTreeMap::new(),
+               task_for_thread : BTreeMap::new(),
                next_pid : 1,
                next_tid : 1 }
     }
 
     pub fn clear(&mut self) {
+        self.pid_for_task
+            .clear();
         self.processes
+            .clear();
+        self.task_for_thread
             .clear();
         self.next_pid = 1;
         self.next_tid = 1;
@@ -117,8 +131,8 @@ impl ProcessRegistry {
                                 .saturating_add(1);
             if !self.processes
                     .contains_key(&pid) &&
-               self.task_id_for_thread(ThreadId::from_raw(pid.raw()))
-                   .is_none()
+               !self.task_for_thread
+                    .contains_key(&ThreadId::from_raw(pid.raw()))
             {
                 return pid;
             }
@@ -130,24 +144,56 @@ impl ProcessRegistry {
             let tid = ThreadId::from_raw(self.next_tid);
             self.next_tid = self.next_tid
                                 .saturating_add(1);
-            if self.task_id_for_thread(tid)
-                   .is_none()
+            if !self.task_for_thread
+                    .contains_key(&tid)
             {
                 return tid;
             }
         }
     }
+
+    fn process_mut(&mut self, pid : ProcessId) -> Option<&mut ProcessControlBlock> {
+        self.processes
+            .get_mut(&pid)
+    }
+
+    /// 从两个反查索引中移除一个已从进程任务表删除的任务。
+    fn remove_task_indexes(&mut self, pid : ProcessId, task_id : TaskId, tid : ThreadId) {
+        assert_eq!(self.pid_for_task
+                       .remove(&task_id),
+                   Some(pid));
+        assert_eq!(self.task_for_thread
+                       .remove(&tid),
+                   Some(task_id));
+    }
+
+    /// 移除完整进程并同步清理 task/tid 反查索引。
+    fn remove_process(&mut self, pid : ProcessId) -> Option<ProcessControlBlock> {
+        let process = self.processes
+                          .remove(&pid)?;
+        for (&task_id, task) in &process.tasks {
+            assert_eq!(self.pid_for_task
+                           .remove(&task_id),
+                       Some(pid));
+            assert_eq!(self.task_for_thread
+                           .remove(&task.tid),
+                       Some(task_id));
+        }
+        Some(process)
+    }
+
     // 根据taskid创建进程，返回pid
     pub fn create_process_for_task(&mut self,
                                    task_id : TaskId,
                                    parent_pid : Option<ProcessId>,
                                    address_space : Option<AddressSpaceRef>)
-                                   -> ProcessId {
+                                   -> ProcessResult<ProcessId> {
         // 确保 task_id 尚未注册到任何进程。
-        assert!(self.lookup_task(task_id)
-                    .is_none(),
-                "task {} is already registered in a process",
-                task_id);
+        if self.pid_for_task
+               .contains_key(&task_id)
+        {
+            return Err(ProcessError::InvalidArgument);
+        }
         let pid = self.alloc_pid();
         //保证 next_tid 始终大于或等于已分配的 PID 值，避免 TID 与已分配的 PID 冲突。
         if self.next_tid <= pid.raw() {
@@ -155,20 +201,21 @@ impl ProcessRegistry {
                                .saturating_add(1);
         }
         let tid = ThreadId::from_raw(pid.raw());
+        let process_task = ProcessTask { tid,
+                                         state : ProcessTaskState::Runnable,
+                                         tls : 0,
+                                         clear_child_tid : None,
+                                         comm : [0u8; 16] };
+        let mut map = BTreeMap::new();
+        map.insert(task_id, process_task);
         let process = ProcessControlBlock { pid,
                                             leader_task_id : task_id,
                                             parent_pid,
                                             address_space,
                                             rlimits : BTreeMap::new(),
                                             pgid : pid,
-                                            tasks : alloc::vec![ProcessTask {
-                task_id,
-                tid,
-                state: ProcessTaskState::Runnable,
-                tls: 0,
-                clear_child_tid: None,
-                comm: [0u8; 16],
-            }],
+                                            tasks : map,
+                                            exited_member_task_ids : VecDeque::new(),
                                             state : ProcessState::Running,
                                             parent_death_signal : 0,
                                             sid : ProcessId::from_raw(0),
@@ -178,16 +225,23 @@ impl ProcessRegistry {
                                             continued_wait_pending : false,
                                             umask : 0o022 };
         self.insert_process(process);
-        pid
+        assert_eq!(self.pid_for_task
+                       .insert(task_id, pid),
+                   None);
+        assert_eq!(self.task_for_thread
+                       .insert(tid, task_id),
+                   None);
+        Ok(pid)
     }
     // 根据父进程pid创建子进程，返回子进程pid
     pub fn create_process_like_fork(&mut self,
                                     parent_pid : ProcessId,
                                     child_task_id : TaskId,
                                     address_space : Option<AddressSpaceRef>)
-                                    -> Option<ProcessId> {
+                                    -> ProcessResult<ProcessId> {
         let parent = self.processes
-                         .get(&parent_pid)?;
+                         .get(&parent_pid)
+                         .ok_or(ProcessError::ProcessNotFound)?;
         let parent_rlimits = parent.rlimits
                                    .clone();
         let parent_pgid = parent.pgid;
@@ -198,7 +252,7 @@ impl ProcessRegistry {
         let parent_death_signal = parent.parent_death_signal;
         let child_pid = self.create_process_for_task(child_task_id,
                                                      Some(parent_pid),
-                                                     address_space);
+                                                     address_space)?;
         if let Some(process) = self.process_mut(child_pid) {
             process.rlimits = parent_rlimits;
             process.pgid = parent_pgid;
@@ -206,8 +260,9 @@ impl ProcessRegistry {
             process.dumpable = parent_dumpable;
             process.child_subreaper = parent_subreaper;
             process.umask = parent_umask;
+            process.parent_death_signal = parent_death_signal;
         }
-        Some(child_pid)
+        Ok(child_pid)
     }
 
     pub fn get_process_umask(&self, pid : ProcessId) -> Option<u32> {
@@ -216,12 +271,11 @@ impl ProcessRegistry {
             .map(|process| process.umask)
     }
 
-    pub fn set_process_umask(&mut self, pid : ProcessId, mask : u32) -> bool {
-        let Some(process) = self.process_mut(pid) else {
-            return false;
-        };
+    pub fn set_process_umask(&mut self, pid : ProcessId, mask : u32) -> ProcessResult<()> {
+        let process = self.process_mut(pid)
+                          .ok_or(ProcessError::ProcessNotFound)?;
         process.umask = mask;
-        true
+        Ok(())
     }
 
     pub fn get_parent_death_signal(&self, pid : ProcessId) -> Option<i32> {
@@ -230,40 +284,39 @@ impl ProcessRegistry {
             .map(|process| process.parent_death_signal)
     }
 
-    pub fn set_parent_death_signal(&mut self, pid : ProcessId, sig : i32) -> bool {
-        let Some(process) = self.process_mut(pid) else {
-            return false;
-        };
+    pub fn set_parent_death_signal(&mut self, pid : ProcessId, sig : i32) -> ProcessResult<()> {
+        let process = self.process_mut(pid)
+                          .ok_or(ProcessError::ProcessNotFound)?;
         process.parent_death_signal = sig;
-        true
+        Ok(())
     }
 
     pub fn get_thread_comm(&self, task_id : TaskId) -> Option<[u8; 16]> {
-        for process in self.processes
-                           .values()
-        {
-            for task in &process.tasks {
-                if task.task_id == task_id {
-                    return Some(task.comm);
-                }
-            }
-        }
-        None
+        let pid = self.pid_for_task
+                      .get(&task_id)?;
+        let process = self.processes
+                          .get(pid)?;
+        let task = process.tasks
+                          .get(&task_id)?;
+        Some(task.comm)
     }
 
-    pub fn set_thread_comm(&mut self, task_id : TaskId, comm : [u8; 16]) -> bool {
-        for process in self.processes
-                           .values_mut()
-        {
-            for task in &mut process.tasks {
-                if task.task_id == task_id {
-                    task.comm = comm;
-                    return true;
-                }
-            }
-        }
-        false
+    pub fn set_thread_comm(&mut self, task_id : TaskId, comm : [u8; 16]) -> ProcessResult<()> {
+        let pid = self.pid_for_task
+                      .get(&task_id)
+                      .copied()
+                      .ok_or(ProcessError::TaskNotFound)?;
+        let task = self.processes
+                       .get_mut(&pid)
+                       .and_then(|process| {
+                           process.tasks
+                                  .get_mut(&task_id)
+                       })
+                       .ok_or(ProcessError::TaskNotFound)?;
+        task.comm = comm;
+        Ok(())
     }
+
 
     pub fn get_process_pgid(&self, pid : ProcessId) -> Option<ProcessId> {
         self.processes
@@ -271,12 +324,11 @@ impl ProcessRegistry {
             .map(|process| process.pgid)
     }
 
-    pub fn set_process_pgid(&mut self, pid : ProcessId, pgid : ProcessId) -> bool {
-        let Some(process) = self.process_mut(pid) else {
-            return false;
-        };
+    pub fn set_process_pgid(&mut self, pid : ProcessId, pgid : ProcessId) -> ProcessResult<()> {
+        let process = self.process_mut(pid)
+                          .ok_or(ProcessError::ProcessNotFound)?;
         process.pgid = pgid;
-        true
+        Ok(())
     }
 
     pub fn process_exists(&self, pid : ProcessId) -> bool {
@@ -304,12 +356,12 @@ impl ProcessRegistry {
                               pid : ProcessId,
                               resource : usize,
                               limit : ResourceLimit)
-                              -> Result<(), SetResourceLimitError> {
+                              -> ProcessResult<()> {
         if limit.cur > limit.max {
-            return Err(SetResourceLimitError::InvalidArgument);
+            return Err(ProcessError::InvalidArgument);
         }
         let process = self.process_mut(pid)
-                          .ok_or(SetResourceLimitError::InvalidArgument)?;
+                          .ok_or(ProcessError::ProcessNotFound)?;
         process.rlimits
                .insert(resource, limit);
         Ok(())
@@ -321,225 +373,291 @@ impl ProcessRegistry {
                                clone_flags : CloneFlags,
                                tls : usize,
                                clear_child_tid : Option<TaskClearTid>)
-                               -> Option<TaskId> {
-        if self.lookup_task(task_id)
-               .is_some()
+                               -> ProcessResult<TaskId> {
+        if self.pid_for_task
+               .contains_key(&task_id)
         {
-            return None;
+            return Err(ProcessError::InvalidArgument);
         }
         let tid = self.alloc_tid();
-        let process = self.process_mut(pid)?;
+        let process = self.process_mut(pid)
+                          .ok_or(ProcessError::ProcessNotFound)?;
         process.tasks
-               .push(ProcessTask { task_id,
-                                   tid,
-                                   state : ProcessTaskState::Runnable,
-                                   tls : if clone_flags.contains(CloneFlags::CLONE_SETTLS) {
-                                       tls
-                                   } else {
-                                       0
-                                   },
-                                   clear_child_tid,
-                                   comm : [0u8; 16] });
-        Some(task_id)
+               .insert(task_id, ProcessTask { tid,
+                                              state:
+                                                  ProcessTaskState::Runnable,
+                                              tls:
+                                                  if clone_flags.contains(CloneFlags::CLONE_SETTLS)
+                                                  {
+                                                      tls
+                                                  } else {
+                                                      0
+                                                  },
+                                              clear_child_tid,
+                                              comm : [0u8;
+                                                      16] });
+        assert_eq!(self.pid_for_task
+                       .insert(task_id, pid),
+                   None);
+        assert_eq!(self.task_for_thread
+                       .insert(tid, task_id),
+                   None);
+        Ok(task_id)
     }
 
-    pub fn mark_task_exited(&mut self, task_id : TaskId, exit_code : TaskExitCode) -> bool {
-        for process in self.processes
-                           .values_mut()
-        {
-            let Some(task) = process.tasks
-                                    .iter_mut()
-                                    .find(|task| task.task_id == task_id)
-            else {
-                continue;
-            };
-            task.state = ProcessTaskState::Exited(exit_code);
-            if process.tasks
-                      .iter()
-                      .all(|task| matches!(task.state, ProcessTaskState::Exited(_)))
-            {
-                process.state = ProcessState::Exited(exit_code);
-            }
-            return true;
+    pub fn mark_task_exited(&mut self,
+                            task_id : TaskId,
+                            exit_code : TaskExitCode)
+                            -> ProcessResult<()> {
+        let pid = self.pid_for_task
+                      .get(&task_id)
+                      .copied()
+                      .ok_or(ProcessError::TaskNotFound)?;
+        let process = self.processes
+                          .get_mut(&pid)
+                          .ok_or(ProcessError::ProcessNotFound)?;
+        let task = process.tasks
+                          .get_mut(&task_id)
+                          .ok_or(ProcessError::TaskNotFound)?;
+        let was_exited = matches!(task.state, ProcessTaskState::Exited(_));
+        task.state = ProcessTaskState::Exited(exit_code);
+        if task_id != process.leader_task_id && !was_exited {
+            process.exited_member_task_ids
+                   .push_back(task_id);
         }
-        false
+        if process.tasks
+                  .values()
+                  .all(|task| matches!(task.state, ProcessTaskState::Exited(_)))
+        {
+            process.state = ProcessState::Exited(exit_code);
+        }
+        Ok(())
     }
 
-    pub fn mark_process_exiting(&mut self, pid : ProcessId, exit_code : TaskExitCode) -> bool {
+    pub fn mark_process_exited(&mut self,
+                               pid : ProcessId,
+                               exit_code : TaskExitCode)
+                               -> ProcessResult<()> {
         // 父进程死亡（exit_group）时立即将子进程托孤给 init，
         // 匹配 Linux 语义：子进程 getppid() 应返回 1（init）。
         // 必须在借用 self.process_mut(pid) 之前完成托孤。
         self.reparent_orphans(pid);
-        let Some(process) = self.process_mut(pid) else {
-            return false;
-        };
+        let process = self.process_mut(pid)
+                          .ok_or(ProcessError::ProcessNotFound)?;
         process.state = ProcessState::Exiting(exit_code);
-        for task in &mut process.tasks {
+        for task in process.tasks
+                           .values_mut()
+        {
             task.state = ProcessTaskState::Exited(exit_code);
         }
+        // 整个进程将由 wait/reap 路径一次性释放，无须再走 member 批量回收。
+        process.exited_member_task_ids
+               .clear();
         process.state = ProcessState::Exited(exit_code);
-        true
+        Ok(())
     }
 
     pub fn task_ids_for_process(&self, pid : ProcessId) -> Option<Vec<TaskId>> {
         let process = self.processes
                           .get(&pid)?;
         Some(process.tasks
-                    .iter()
-                    .map(|task| task.task_id)
+                    .keys()
+                    .copied()
                     .collect())
     }
 
-    pub fn task_id_for_thread(&self, tid : ThreadId) -> Option<TaskId> {
-        self.processes
-            .values()
-            .find_map(|process| {
-                process.tasks
-                       .iter()
-                       .find(|task| task.tid == tid)
-                       .map(|task| task.task_id)
-            })
-    }
-
     pub fn task_exit_would_finish_process(&self, task_id : TaskId) -> Option<bool> {
+        let pid = self.pid_for_task
+                      .get(&task_id)?;
         let process = self.processes
-                          .values()
-                          .find(|process| {
-                              process.tasks
-                                     .iter()
-                                     .any(|task| task.task_id == task_id)
-                          })?;
+                          .get(&pid)?;
+        //判断该进程中所有 task 是否都处于 Exited 状态
         Some(process.tasks
                     .iter()
-                    .all(|task| {
-                        task.task_id == task_id || matches!(task.state, ProcessTaskState::Exited(_))
+                    .all(|(&member_task_id, task)| {
+                        member_task_id == task_id ||
+                        matches!(task.state, ProcessTaskState::Exited(_))
                     }))
     }
-    // 移除进程中除了指定 task_id 外的所有任务，并将该 task_id 设为 leader。
+    /// 移除进程中除了指定 task_id 外的所有任务，并将该 task_id 设为 leader。
     pub fn retain_only_task_in_process(&mut self,
                                        pid : ProcessId,
                                        keep_task_id : TaskId)
                                        -> Option<Vec<TaskId>> {
-        let process = self.process_mut(pid)?;
-        let mut removed = Vec::new();
-        process.tasks
-               .retain(|task| {
-                   let keep = task.task_id == keep_task_id;
-                   if !keep {
-                       removed.push(task.task_id);
-                   }
-                   keep
-               });
-        process.leader_task_id = keep_task_id;
-        process.state = ProcessState::Running;
+        let removed = {
+            let process = self.process_mut(pid)?;
+            if !process.tasks
+                       .contains_key(&keep_task_id)
+            {
+                return None;
+            }
+            let removed = process.tasks
+                                 .keys()
+                                 .copied()
+                                 .filter(|task_id| *task_id != keep_task_id)
+                                 .collect::<Vec<_>>();
+            process.tasks
+                   .retain(|task_id, _| *task_id == keep_task_id);
+            process.leader_task_id = keep_task_id;
+            process.state = ProcessState::Running;
+            process.exited_member_task_ids
+                   .clear();
+            removed
+        };
+        for task_id in &removed {
+            if let Some(tid) =
+                self.task_for_thread
+                    .iter()
+                    .find_map(|(&tid, &mapped_task_id)| (mapped_task_id == *task_id).then_some(tid))
+            {
+                self.remove_task_indexes(pid, *task_id, tid);
+            }
+        }
         Some(removed)
     }
-    // 移除进程中所有已退出的 member 任务，并返回被移除的 task_id 列表。
+    /// 批量移除已登记为退出的 member 线程。
     pub fn take_exited_member_tasks(&mut self, pid : ProcessId) -> Option<Vec<TaskId>> {
-        let process = self.process_mut(pid)?;
-        let leader_task_id = process.leader_task_id;
-        let mut removed = Vec::new();
-        process.tasks
-               .retain(|task| {
-                   let reap = task.task_id != leader_task_id &&
-                              matches!(task.state, ProcessTaskState::Exited(_));
-                   if reap {
-                       removed.push(task.task_id);
-                   }
-                   !reap
-               });
+        let removed = {
+            let process = self.process_mut(pid)?;
+            let exited = core::mem::take(&mut process.exited_member_task_ids);
+            let mut removed = Vec::new();
+            for task_id in exited {
+                if task_id == process.leader_task_id {
+                    continue;
+                }
+                if process.tasks
+                          .get(&task_id)
+                          .is_some_and(|task| matches!(task.state, ProcessTaskState::Exited(_)))
+                {
+                    removed.push(task_id);
+                }
+            }
+            for task_id in &removed {
+                process.tasks
+                       .remove(task_id);
+            }
+            removed
+        };
+        for task_id in &removed {
+            if let Some(tid) =
+                self.task_for_thread
+                    .iter()
+                    .find_map(|(&tid, &mapped_task_id)| (mapped_task_id == *task_id).then_some(tid))
+            {
+                self.remove_task_indexes(pid, *task_id, tid);
+            }
+        }
         Some(removed)
     }
 
     /// fork 失败回滚：移除仅含单任务、仍在 Running 的子进程并释放其地址空间。
-    pub fn abort_forked_process(&mut self, child_task_id : TaskId) -> Option<ProcessId> {
-        let pid = self.lookup_task(child_task_id)?
-                      .pid;
+    pub fn abort_forked_process(&mut self, child_task_id : TaskId) -> ProcessResult<ProcessId> {
+        let pid = self.pid_for_task
+                      .get(&child_task_id)
+                      .copied()
+                      .ok_or(ProcessError::TaskNotFound)?;
         let process = self.processes
-                          .get(&pid)?;
-        if process.tasks.len() != 1 || process.tasks[0].task_id != child_task_id {
-            return None;
+                          .get(&pid)
+                          .ok_or(ProcessError::ProcessNotFound)?;
+        if process.tasks.len() != 1 ||
+           !process.tasks
+                   .contains_key(&child_task_id)
+        {
+            return Err(ProcessError::InvalidArgument);
         }
         if !matches!(process.state, ProcessState::Running) {
-            return None;
+            return Err(ProcessError::InvalidArgument);
         }
-        let process = self.processes
-                          .remove(&pid)?;
+        let process = self.remove_process(pid)
+                          .ok_or(ProcessError::ProcessNotFound)?;
         if let Some(aspace) = process.address_space {
             let ptr = aspace.user_aspace_ptr();
             if ptr != 0 {
                 mm_api::user_aspace_lifecycle::drop_user_aspace_on_task_exit(ptr);
             }
         }
-        Some(pid)
+        Ok(pid)
     }
 
     /// clone 线程创建失败回滚：从进程线程列表移除该任务（不释放共享地址空间）。
-    pub fn abort_cloned_thread(&mut self, child_task_id : TaskId) -> bool {
-        for process in self.processes
-                           .values_mut()
-        {
-            let before = process.tasks.len();
-            process.tasks
-                   .retain(|task| task.task_id != child_task_id);
-            if process.tasks.len() < before {
-                return true;
+    pub fn abort_cloned_thread(&mut self, child_task_id : TaskId) -> ProcessResult<()> {
+        let pid = self.pid_for_task
+                      .get(&child_task_id)
+                      .copied()
+                      .ok_or(ProcessError::TaskNotFound)?;
+        let task = {
+            let process = self.processes
+                              .get_mut(&pid)
+                              .ok_or(ProcessError::ProcessNotFound)?;
+            if process.leader_task_id == child_task_id {
+                return Err(ProcessError::InvalidArgument);
             }
-        }
-        false
+            process.tasks
+                   .remove(&child_task_id)
+                   .ok_or(ProcessError::TaskNotFound)?
+        };
+        self.remove_task_indexes(pid, child_task_id, task.tid);
+        Ok(())
     }
     // 设置指定 task 的 clear_child_tid 字段，返回是否成功
     pub fn set_task_clear_child_tid(&mut self,
                                     task_id : TaskId,
                                     clear_child_tid : Option<TaskClearTid>)
-                                    -> bool {
-        for process in self.processes
-                           .values_mut()
-        {
-            let Some(task) = process.tasks
-                                    .iter_mut()
-                                    .find(|task| task.task_id == task_id)
-            else {
-                continue;
-            };
-            task.clear_child_tid = clear_child_tid;
-            return true;
-        }
-        false
+                                    -> ProcessResult<()> {
+        let pid = self.pid_for_task
+                      .get(&task_id)
+                      .copied()
+                      .ok_or(ProcessError::TaskNotFound)?;
+        let task = self.processes
+                       .get_mut(&pid)
+                       .and_then(|process| {
+                           process.tasks
+                                  .get_mut(&task_id)
+                       })
+                       .ok_or(ProcessError::TaskNotFound)?;
+        task.clear_child_tid = clear_child_tid;
+        Ok(())
     }
     // 获取指定 task 的 clear_child_tid 字段，返回 Option<TaskClearTid>
     pub fn task_clear_child_tid(&self, task_id : TaskId) -> Option<TaskClearTid> {
-        self.processes
-            .values()
-            .find_map(|process| {
-                process.tasks
-                       .iter()
-                       .find(|task| task.task_id == task_id)
-                       .and_then(|task| task.clear_child_tid)
-            })
+        let pid = self.pid_for_task
+                      .get(&task_id)?;
+        let process = self.processes
+                          .get(pid)?;
+        let task = process.tasks
+                          .get(&task_id)?;
+        task.clear_child_tid
     }
     // 获取指定进程的地址空间，返回 Option<AddressSpaceRef>
     pub fn update_process_address_space(&mut self,
                                         pid : ProcessId,
                                         address_space : Option<AddressSpaceRef>)
-                                        -> bool {
-        let Some(process) = self.process_mut(pid) else {
-            return false;
-        };
+                                        -> ProcessResult<()> {
+        let process = self.processes
+                          .get_mut(&pid)
+                          .ok_or(ProcessError::ProcessNotFound)?;
         process.address_space = address_space;
-        true
+        Ok(())
     }
 
-    pub fn lookup_process(&self, pid : ProcessId) -> Option<ProcessDescriptor> {
+    pub fn process_snapshot(&self, pid : ProcessId) -> Option<ProcessSnapshot> {
         self.processes
             .get(&pid)
-            .map(ProcessControlBlock::descriptor)
+            .map(ProcessControlBlock::snapshot)
     }
 
-    pub fn lookup_task(&self, task_id : TaskId) -> Option<ProcessTaskDescriptor> {
+    pub fn process_task_snapshot(&self, task_id : TaskId) -> Option<ProcessTaskSnapshot> {
+        let pid = self.pid_for_task
+                      .get(&task_id)?;
         self.processes
-            .values()
-            .find_map(|process| process.task_descriptor(task_id))
+            .get(pid)?
+            .ptask_snapshot(task_id)
+    }
+
+    pub fn task_id_for_thread(&self, tid : ThreadId) -> Option<TaskId> {
+        self.task_for_thread
+            .get(&tid)
+            .copied()
     }
 
     pub fn leader_task_for_process(&self, pid : ProcessId) -> Option<TaskId> {
@@ -548,20 +666,20 @@ impl ProcessRegistry {
             .map(|process| process.leader_task_id)
     }
 
-    pub fn find_exited_child_process(&self, parent_pid : ProcessId) -> Option<ProcessDescriptor> {
+    pub fn find_exited_child_process(&self, parent_pid : ProcessId) -> Option<ProcessSnapshot> {
         self.processes
             .values()
             .find(|process| {
                 process.parent_pid == Some(parent_pid) &&
                 matches!(process.state, ProcessState::Exited(_))
             })
-            .map(ProcessControlBlock::descriptor)
+            .map(ProcessControlBlock::snapshot)
     }
 
     pub fn find_exited_child_process_in_pgid(&self,
                                              parent_pid : ProcessId,
                                              pgid : ProcessId)
-                                             -> Option<ProcessDescriptor> {
+                                             -> Option<ProcessSnapshot> {
         self.processes
             .values()
             .find(|process| {
@@ -569,7 +687,7 @@ impl ProcessRegistry {
                 process.pgid == pgid &&
                 matches!(process.state, ProcessState::Exited(_))
             })
-            .map(ProcessControlBlock::descriptor)
+            .map(ProcessControlBlock::snapshot)
     }
 
     pub fn has_child_process(&self, parent_pid : ProcessId) -> bool {
@@ -584,41 +702,37 @@ impl ProcessRegistry {
             .any(|process| process.parent_pid == Some(parent_pid) && process.pgid == pgid)
     }
 
-    pub fn mark_process_stopped(&mut self, pid : ProcessId, signo : u8) -> bool {
-        let process = match self.process_mut(pid) {
-            Some(process) => process,
-            None => return false,
-        };
+    pub fn mark_process_stopped(&mut self, pid : ProcessId, signo : u8) -> ProcessResult<()> {
+        let process = self.process_mut(pid)
+                          .ok_or(ProcessError::ProcessNotFound)?;
         if matches!(process.state,
                     ProcessState::Exited(_) | ProcessState::Exiting(_))
         {
-            return false;
+            return Err(ProcessError::InvalidArgument);
         }
         if matches!(process.state,
                     ProcessState::Stopped { .. })
         {
-            return true;
+            return Ok(());
         }
         process.state = ProcessState::Stopped { signo };
         process.stop_wait_pending = true;
         process.continued_wait_pending = false;
-        true
+        Ok(())
     }
 
-    pub fn mark_process_continued(&mut self, pid : ProcessId) -> bool {
-        let process = match self.process_mut(pid) {
-            Some(process) => process,
-            None => return false,
-        };
+    pub fn mark_process_continued(&mut self, pid : ProcessId) -> ProcessResult<()> {
+        let process = self.process_mut(pid)
+                          .ok_or(ProcessError::ProcessNotFound)?;
         if !matches!(process.state,
                      ProcessState::Stopped { .. })
         {
-            return false;
+            return Err(ProcessError::InvalidArgument);
         }
         process.state = ProcessState::Running;
         process.continued_wait_pending = true;
         process.stop_wait_pending = false;
-        true
+        Ok(())
     }
 
     pub fn consume_stop_wait(&mut self, pid : ProcessId, nowait : bool) {
@@ -639,7 +753,7 @@ impl ProcessRegistry {
         }
     }
 
-    pub fn find_stopped_child_process(&self, parent_pid : ProcessId) -> Option<ProcessDescriptor> {
+    pub fn find_stopped_child_process(&self, parent_pid : ProcessId) -> Option<ProcessSnapshot> {
         self.processes
             .values()
             .find(|process| {
@@ -648,13 +762,13 @@ impl ProcessRegistry {
                 matches!(process.state,
                          ProcessState::Stopped { .. })
             })
-            .map(ProcessControlBlock::descriptor)
+            .map(ProcessControlBlock::snapshot)
     }
 
     pub fn stopped_child_ready_for_wait(&self,
                                         parent_pid : ProcessId,
                                         child_pid : ProcessId)
-                                        -> Option<ProcessDescriptor> {
+                                        -> Option<ProcessSnapshot> {
         let process = self.processes
                           .get(&child_pid)?;
         if process.parent_pid != Some(parent_pid) || !process.stop_wait_pending {
@@ -665,13 +779,13 @@ impl ProcessRegistry {
         {
             return None;
         }
-        Some(process.descriptor())
+        Some(process.snapshot())
     }
 
     pub fn find_stopped_child_process_in_pgid(&self,
                                               parent_pid : ProcessId,
                                               pgid : ProcessId)
-                                              -> Option<ProcessDescriptor> {
+                                              -> Option<ProcessSnapshot> {
         self.processes
             .values()
             .find(|process| {
@@ -681,12 +795,10 @@ impl ProcessRegistry {
                 matches!(process.state,
                          ProcessState::Stopped { .. })
             })
-            .map(ProcessControlBlock::descriptor)
+            .map(ProcessControlBlock::snapshot)
     }
 
-    pub fn find_continued_child_process(&self,
-                                        parent_pid : ProcessId)
-                                        -> Option<ProcessDescriptor> {
+    pub fn find_continued_child_process(&self, parent_pid : ProcessId) -> Option<ProcessSnapshot> {
         self.processes
             .values()
             .find(|process| {
@@ -694,13 +806,13 @@ impl ProcessRegistry {
                 process.continued_wait_pending &&
                 matches!(process.state, ProcessState::Running)
             })
-            .map(ProcessControlBlock::descriptor)
+            .map(ProcessControlBlock::snapshot)
     }
 
     pub fn continued_child_ready_for_wait(&self,
                                           parent_pid : ProcessId,
                                           child_pid : ProcessId)
-                                          -> Option<ProcessDescriptor> {
+                                          -> Option<ProcessSnapshot> {
         let process = self.processes
                           .get(&child_pid)?;
         if process.parent_pid != Some(parent_pid) || !process.continued_wait_pending {
@@ -709,13 +821,13 @@ impl ProcessRegistry {
         if !matches!(process.state, ProcessState::Running) {
             return None;
         }
-        Some(process.descriptor())
+        Some(process.snapshot())
     }
 
     pub fn find_continued_child_process_in_pgid(&self,
                                                 parent_pid : ProcessId,
                                                 pgid : ProcessId)
-                                                -> Option<ProcessDescriptor> {
+                                                -> Option<ProcessSnapshot> {
         self.processes
             .values()
             .find(|process| {
@@ -724,14 +836,14 @@ impl ProcessRegistry {
                 process.continued_wait_pending &&
                 matches!(process.state, ProcessState::Running)
             })
-            .map(ProcessControlBlock::descriptor)
+            .map(ProcessControlBlock::snapshot)
     }
 
-    pub fn create_session_for_process(&mut self, pid : ProcessId) -> Result<(), ()> {
+    pub fn create_session_for_process(&mut self, pid : ProcessId) -> ProcessResult<()> {
         let process = self.process_mut(pid)
-                          .ok_or(())?;
+                          .ok_or(ProcessError::ProcessNotFound)?;
         if process.pgid == pid {
-            return Err(());
+            return Err(ProcessError::AlreadySessionLeader);
         }
         process.sid = pid;
         process.pgid = pid;
@@ -744,12 +856,11 @@ impl ProcessRegistry {
             .map(|process| process.dumpable)
     }
 
-    pub fn set_process_dumpable(&mut self, pid : ProcessId, dumpable : bool) -> bool {
-        let Some(process) = self.process_mut(pid) else {
-            return false;
-        };
+    pub fn set_process_dumpable(&mut self, pid : ProcessId, dumpable : bool) -> ProcessResult<()> {
+        let process = self.process_mut(pid)
+                          .ok_or(ProcessError::ProcessNotFound)?;
         process.dumpable = dumpable;
-        true
+        Ok(())
     }
 
     pub fn process_child_subreaper(&self, pid : ProcessId) -> Option<bool> {
@@ -758,12 +869,14 @@ impl ProcessRegistry {
             .map(|process| process.child_subreaper)
     }
 
-    pub fn set_process_child_subreaper(&mut self, pid : ProcessId, enabled : bool) -> bool {
-        let Some(process) = self.process_mut(pid) else {
-            return false;
-        };
+    pub fn set_process_child_subreaper(&mut self,
+                                       pid : ProcessId,
+                                       enabled : bool)
+                                       -> ProcessResult<()> {
+        let process = self.process_mut(pid)
+                          .ok_or(ProcessError::ProcessNotFound)?;
         process.child_subreaper = enabled;
-        true
+        Ok(())
     }
 
     /// 收集指定父进程的所有子进程 PID。
@@ -813,14 +926,14 @@ impl ProcessRegistry {
             .collect()
     }
 
-    pub fn reap_process(&mut self, pid : ProcessId) -> Option<ProcessDescriptor> {
+    pub fn reap_process(&mut self, pid : ProcessId) -> Option<ProcessSnapshot> {
         self.reap_process_with_tasks(pid)
-            .map(|(descriptor, _)| descriptor)
+            .map(|(snapshot, _)| snapshot)
     }
 
     pub fn reap_process_with_tasks(&mut self,
                                    pid : ProcessId)
-                                   -> Option<(ProcessDescriptor, Vec<TaskId>)> {
+                                   -> Option<(ProcessSnapshot, Vec<TaskId>)> {
         let process = self.processes
                           .get(&pid)?;
         if !matches!(process.state, ProcessState::Exited(_)) {
@@ -828,8 +941,7 @@ impl ProcessRegistry {
         }
         // 托孤：在移除本进程前，将所有子进程的 parent_pid 重定向到 init
         self.reparent_orphans(pid);
-        self.processes
-            .remove(&pid)
+        self.remove_process(pid)
             .map(|process| {
                 if let Some(aspace) = process.address_space {
                     let ptr = aspace.user_aspace_ptr();
@@ -838,10 +950,10 @@ impl ProcessRegistry {
                     }
                 }
                 let task_ids = process.tasks
-                                      .iter()
-                                      .map(|task| task.task_id)
+                                      .keys()
+                                      .copied()
                                       .collect();
-                (process.descriptor(), task_ids)
+                (process.snapshot(), task_ids)
             })
     }
 
@@ -853,10 +965,5 @@ impl ProcessRegistry {
                 pid.raw());
         self.processes
             .insert(pid, process);
-    }
-
-    fn process_mut(&mut self, pid : ProcessId) -> Option<&mut ProcessControlBlock> {
-        self.processes
-            .get_mut(&pid)
     }
 }

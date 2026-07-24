@@ -17,9 +17,9 @@ mod wait;
 pub use base::cpu::{CpuId, CpuMask};
 pub use kernel::{KernelStack, KernelTaskEntry, TaskBootstrap};
 pub use process::{
-    AddressSpaceRef, CloneFlags, ProcessDescriptor, ProcessId, ProcessState, ProcessTaskDescriptor,
-    ProcessTaskRole, ProcessTaskState, ResourceLimit, SetResourceLimitError, TaskClearTid,
-    ThreadId,
+    AddressSpaceRef, CloneFlags, ProcessError, ProcessId, ProcessResult, ProcessSnapshot,
+    ProcessState, ProcessTaskRole, ProcessTaskSnapshot, ProcessTaskState, ResourceLimit,
+    TaskClearTid, ThreadId,
 };
 pub use sched::{
     SchedError, SchedParam, SchedPolicy, SCHED_CPU_MASK_MIN_BYTES, SCHED_CPU_MASK_RET_BYTES,
