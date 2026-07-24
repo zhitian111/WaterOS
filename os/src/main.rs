@@ -66,7 +66,8 @@ fn bringup_driver_and_user() {
                         warn!("[boot] failed to initialize CLOCK_REALTIME from Goldfish RTC");
                     }
                 }
-                Err(err) => warn!("[boot] Goldfish RTC unavailable: {:?}", err),
+                Err(err) => warn!("[boot] Goldfish RTC unavailable: {:?}",
+                                  err),
             }
             let _ = driver::network::stack::init([10, 0, 2, 15], [10, 0, 2, 2]).inspect(|_| {
                         task::spawn_kernel_task(network_poller_task, 0);
@@ -170,7 +171,7 @@ mod qemu_riscv64_opensbi {
         platform::timer::set_timer_after_ms(100).expect("AP set initial timer");
         task::set_cpu_online(cpu_id);
         platform::interrupt::enable_global_interrupt().expect("AP enable global interrupt");
-        task::run_first_task_on_current_cpu(cpu_id)
+        task::run_first_task()
     }
 
     /// AP 在 BSP 完成初始化前自旋等待 `AP_BOOT_READY` 标志。
@@ -211,7 +212,7 @@ mod qemu_riscv64_opensbi {
         crate::boot_timebase::probe_and_init_timebase(dtb_pa);
         runtime::heap_allocator::init();
         platform::arch::init();
-        task::init_on_cpu(cpu_id);
+        task::init();
         task::set_timekeeper_cpu(cpu_id);
         crate::dashboard::init();
         crate::trap_handler::init();
@@ -254,7 +255,7 @@ mod qemu_loongarch64_virt {
         platform::arch::interrupt::enable_soft_interrupt();
         platform::timer::set_timer_after_ms(100).expect("AP set initial timer");
         task::set_cpu_online(cpu_id);
-        task::run_first_task_on_current_cpu(cpu_id)
+        task::run_first_task()
     }
 
     fn wait_ap_boot_ready(cpu_id : task::CpuId) -> ! {
@@ -287,7 +288,7 @@ mod qemu_loongarch64_virt {
         let _ = platform::smp::init_ipi();
         driver::init_when_boot(envp);
         crate::boot_timebase::probe_and_init_timebase(envp);
-        task::init_on_cpu(cpu_id);
+        task::init();
         task::set_timekeeper_cpu(cpu_id);
         task::set_cpu_online(cpu_id);
         crate::dashboard::init();

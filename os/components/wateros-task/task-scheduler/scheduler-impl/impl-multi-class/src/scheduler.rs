@@ -9,7 +9,7 @@ mod wait;
 use crate::{SwitchPair, TaskTrapFrame};
 use api_v0::{
     CPUScheduler, CpuSnapshot, FifoQueue, GlobalScheduler, QueueTarget, RrQueue, RrTickAction,
-    SchedPolicyChangeAction,
+    SchedPolicyChangeAction, TaskRegistry, WaitQueues,
 };
 use arch::task::ActiveArchTaskContext as TaskContext;
 use base::cpu::CpuMask;
@@ -22,14 +22,15 @@ use task_api::{
 
 use api_v0::ScheduleReason;
 pub(super) struct MultiClassScheduler {
-    pub global : GlobalScheduler,
+    pub registry : TaskRegistry,
+    pub wait_queues : WaitQueues,
     pub cpu_states : [CPUScheduler; MAX_CPUS],
     /// 环形选核的起点。负载相同时，从这里开始的第一个 online CPU 获胜。
     pub next_placement_cpu : usize,
     /// 唯一推进全局 sleep/wait timeout 时间的 BSP。
     pub timekeeper_cpu : Option<CpuId>,
     /// 入队时在 scheduler 锁内累计，锁外再实际发送定向 IPI。
-    pending_reschedule_cpus : CpuMask,
+    pub pending_reschedule_cpus : CpuMask,
 }
 
 
@@ -38,22 +39,22 @@ impl MultiClassScheduler {
     //  构造与初始化
     // ================================================================
     pub(super) fn new() -> Self {
-        Self { global : GlobalScheduler::new(),
+        Self { registry : TaskRegistry::new(),
+               wait_queues : WaitQueues::new(),
                cpu_states : core::array::from_fn(|i| CPUScheduler::new(CpuId::from_raw(i))),
                next_placement_cpu : 0,
                timekeeper_cpu : None,
                pending_reschedule_cpus : CpuMask::EMPTY }
     }
 
-    pub(super) fn init_on_cpu(&mut self, boot_cpu : CpuId) {
-        assert!(boot_cpu.fits_capacity(self.cpu_states
-                                           .len()),
-                "boot CPU is outside scheduler capacity");
-        self.global.init();
+    pub(super) fn init(&mut self, boot_cpu : CpuId) {
+        self.registry.init();
+        self.wait_queues
+            .init();
         self.next_placement_cpu = 0;
         self.timekeeper_cpu = None;
         self.pending_reschedule_cpus = CpuMask::EMPTY;
-        // 为每个 configured CPU 创建 idle 任务
+        // 为每个 CPU 创建 idle 任务
         for cpu_id in 0..self.cpu_states
                              .len()
         {
@@ -64,8 +65,7 @@ impl MultiClassScheduler {
             self.cpu_states[cpu_id].rr_queue = RrQueue::new();
             self.cpu_states[cpu_id].online = cpu_id == boot_cpu.raw();
             self.cpu_states[cpu_id].need_resched = false;
-            let idle_id = self.global
-                              .registry
+            let idle_id = self.registry
                               .spawn_idle_task();
             self.cpu_states[cpu_id].idle_task_id = Some(idle_id);
         }
@@ -79,16 +79,13 @@ impl MultiClassScheduler {
     fn set_current_task(&mut self, task_id : TaskId, cpu_id : CpuId) {
         let previous_task_id = self.cpu_states[cpu_id.raw()].current_task_id;
         let previous_aspace = previous_task_id.map(|id| {
-                                                  self.global
-                                                      .registry
+                                                  self.registry
                                                       .current_task_user_aspace_ptr(id)
                                               })
                                               .unwrap_or(0);
-        let next_aspace = self.global
-                              .registry
+        let next_aspace = self.registry
                               .current_task_user_aspace_ptr(task_id);
-        if !self.global
-                .registry
+        if !self.registry
                 .is_idle(task_id)
         {
             assert!(self.cpu_states
@@ -98,8 +95,7 @@ impl MultiClassScheduler {
                             index == cpu_id.raw() || cpu.current_task_id != Some(task_id)
                         }),
                     "task is current on another CPU");
-            assert_eq!(self.global
-                           .registry
+            assert_eq!(self.registry
                            .ready_cpu_id(task_id),
                        Some(cpu_id),
                        "selected task is not owned by this CPU runqueue");
@@ -114,15 +110,12 @@ impl MultiClassScheduler {
                 self.cpu_states[cpu_id.raw()].context_switches
                                              .saturating_add(1);
         }
-        self.global
-            .registry
+        self.registry
             .mark_running(task_id, cpu_id);
-        if !self.global
-                .registry
+        if !self.registry
                 .is_idle(task_id)
         {
-            assert_eq!(self.global
-                           .registry
+            assert_eq!(self.registry
                            .running_cpu_id(task_id),
                        Some(cpu_id));
             assert_eq!(self.cpu_states
@@ -139,8 +132,7 @@ impl MultiClassScheduler {
         let next_task_id = self.pick_next_runnable(cpu_id);
         self.set_current_task(next_task_id, cpu_id);
         (self.cpu_states[cpu_id.raw() as usize].boot_task_cx(),
-         self.global
-             .registry
+         self.registry
              .task_cx_ptr(next_task_id))
     }
 
@@ -155,11 +147,9 @@ impl MultiClassScheduler {
                 let Some(current_id) = self.cpu_states[cpu_id.raw()].current_task_id else {
                     return None;
                 };
-                let current = self.global
-                                  .registry
+                let current = self.registry
                                   .task_snapshot(current_id);
-                let current_affinity = self.global
-                                           .registry
+                let current_affinity = self.registry
                                            .get_affinity(current_id)
                                            .expect("current task must exist");
                 if current_affinity.contains(cpu_id) &&
@@ -181,13 +171,11 @@ impl MultiClassScheduler {
                 // 不推进 wait_queues.on_tick()，否则多核下 sleep/wait timeout
                 // 会以 1/N 的时间提前到期（N = online CPU 数）。
                 if self.is_timekeeper_cpu(cpu_id) {
-                    self.global
-                        .wait_queues
+                    self.wait_queues
                         .on_tick();
                 }
                 if let Some(id) = self.cpu_states[cpu_id.raw()].current_task_id {
-                    self.global
-                        .registry
+                    self.registry
                         .account_tick(id);
                 }
 
@@ -195,8 +183,7 @@ impl MultiClassScheduler {
                 let current = self.cpu_states[cpu_id.raw()].current_task_id
                                                            .map(|task_id| {
                                                                (task_id,
-                                                                self.global
-                                                                    .registry
+                                                                self.registry
                                                                     .task_snapshot(task_id))
                                                            });
 
@@ -232,8 +219,7 @@ impl MultiClassScheduler {
                     self.cpu_states[cpu_id.raw()].other_queue
                                                  .reset_ticks();
                 } else if self.is_timekeeper_cpu(cpu_id) &&
-                          self.global
-                              .wait_queues
+                          self.wait_queues
                               .has_due_timers()
                 {
                     self.promote_sleep_and_timeouts();
@@ -270,20 +256,17 @@ impl MultiClassScheduler {
                                                     self.cpu_states[cpu_id.raw()].online,
                                                     self.cpu_states[cpu_id.raw()].idle_task_id)
                                          });
-        let current_ptr = self.global
-                              .registry
+        let current_ptr = self.registry
                               .take_task_cx(current_task_id);
         // Sleep 路径额外清除旧的 wait_result
         if matches!(reason, ScheduleReason::Sleep(_)) {
-            self.global
-                .registry
+            self.registry
                 .clear_wait_result(current_task_id);
         }
 
         // ===== Phase 4: IDLE 任务特殊处理 =====
         // IDLE 不经过 enqueue（它不属于任何就绪队列），直接选下一个
-        if self.global
-               .registry
+        if self.registry
                .is_idle(current_task_id)
         {
             let next_task_id = self.pick_next_runnable(cpu_id);
@@ -291,16 +274,14 @@ impl MultiClassScheduler {
                 self.set_current_task(next_task_id, cpu_id);
                 return None;
             }
-            let snap = self.global
-                           .registry
+            let snap = self.registry
                            .task_snapshot(next_task_id);
             if snap.sched_policy == SchedPolicy::Rr {
                 self.cpu_states[cpu_id.raw()].rr_queue
                                              .note_running(next_task_id, snap.sched_priority);
             }
             self.set_current_task(next_task_id, cpu_id);
-            let next_ptr = self.global
-                               .registry
+            let next_ptr = self.registry
                                .task_cx_ptr(next_task_id);
             return Some((current_ptr, next_ptr));
         }
@@ -314,8 +295,7 @@ impl MultiClassScheduler {
             }
             ScheduleReason::Block(block_reason) => QueueTarget::Blocked(block_reason),
             ScheduleReason::Sleep(ticks) => {
-                let wake_tick = self.global
-                                    .wait_queues
+                let wake_tick = self.wait_queues
                                     .current_tick()
                                     .saturating_add(ticks.max(1));
                 QueueTarget::Sleeping(wake_tick)
@@ -330,8 +310,7 @@ impl MultiClassScheduler {
 
         // Yield/Tick 时清除 RR 的运行状态（如果当前是 RR 任务）
         if matches!(queue_target, QueueTarget::Ready) {
-            let snap = self.global
-                           .registry
+            let snap = self.registry
                            .task_snapshot(current_task_id);
             if snap.sched_policy == SchedPolicy::Rr {
                 self.cpu_states[cpu_id.raw()].rr_queue
@@ -366,13 +345,11 @@ impl MultiClassScheduler {
         }
 
         // ===== Phase 2: 快速路径 — 目标已就绪，无需阻塞 =====
-        if self.global
-               .registry
+        if self.registry
                .wait_target_ready(target)
         {
             if let Some(current_task_id) = self.cpu_states[cpu_id.raw()].current_task_id {
-                self.global
-                    .registry
+                self.registry
                     .finish_wait(current_task_id, TaskWaitResult::Woken);
             }
             return None;
@@ -380,11 +357,9 @@ impl MultiClassScheduler {
 
         // ===== Phase 3: 从 cpu_states 取出当前任务 =====
         let current_task_id = self.cpu_states[cpu_id.raw()].current_task_id?;
-        let current_ptr = self.global
-                              .registry
+        let current_ptr = self.registry
                               .take_task_cx(current_task_id);
-        self.global
-            .registry
+        self.registry
             .clear_wait_result(current_task_id);
         self.detach_from_run_queues(current_task_id, cpu_id);
 
@@ -395,27 +370,23 @@ impl MultiClassScheduler {
 
         // ===== Phase 5: 可选超时 =====
         if let Some(timeout_ticks) = timeout_ticks {
-            let wake_tick = self.global
-                                .wait_queues
+            let wake_tick = self.wait_queues
                                 .current_tick()
                                 .saturating_add(timeout_ticks.max(1));
-            self.global
-                .wait_queues
+            self.wait_queues
                 .enqueue_wait_timeout(current_task_id, target, wake_tick);
         }
 
         // ===== Phase 6: 选下一个任务，直接切换（当前已阻塞） =====
         let next_task_id = self.pick_next_runnable(cpu_id);
-        let snap = self.global
-                       .registry
+        let snap = self.registry
                        .task_snapshot(next_task_id);
         if snap.sched_policy == SchedPolicy::Rr {
             self.cpu_states[cpu_id.raw()].rr_queue
                                          .note_running(next_task_id, snap.sched_priority);
         }
         self.set_current_task(next_task_id, cpu_id);
-        let next_ptr = self.global
-                           .registry
+        let next_ptr = self.registry
                            .task_cx_ptr(next_task_id);
         Some((current_ptr, next_ptr))
     }
@@ -432,23 +403,20 @@ impl MultiClassScheduler {
         if next_task_id == current_task_id {
             // 当前任务在退出 → 不是 IDLE 就强行切到 IDLE
             if is_exit {
-                if !self.global
-                        .registry
+                if !self.registry
                         .is_idle(current_task_id)
                 {
                     let idle_id = self.cpu_states[cpu_id.raw()].idle_task_id
                                                                .unwrap_or(IDLE_TASK_ID);
                     self.set_current_task(idle_id, cpu_id);
-                    let next_ptr = self.global
-                                       .registry
+                    let next_ptr = self.registry
                                        .task_cx_ptr(idle_id);
                     return Some((current_ptr, next_ptr));
                 }
                 panic!("exit_current called on idle task — this should never happen");
             }
             // 选出了自己且非退出 → 重新标记为 Running，不切换
-            let snap = self.global
-                           .registry
+            let snap = self.registry
                            .task_snapshot(next_task_id);
             if snap.sched_policy == SchedPolicy::Rr {
                 self.cpu_states[cpu_id.raw()].rr_queue
@@ -458,16 +426,14 @@ impl MultiClassScheduler {
             return None;
         }
         // 选出不同任务 → 返回切换对，调用方执行 __switch
-        let snap = self.global
-                       .registry
+        let snap = self.registry
                        .task_snapshot(next_task_id);
         if snap.sched_policy == SchedPolicy::Rr {
             self.cpu_states[cpu_id.raw()].rr_queue
                                          .note_running(next_task_id, snap.sched_priority);
         }
         self.set_current_task(next_task_id, cpu_id);
-        let next_ptr = self.global
-                           .registry
+        let next_ptr = self.registry
                            .task_cx_ptr(next_task_id);
         Some((current_ptr, next_ptr))
     }
@@ -476,8 +442,7 @@ impl MultiClassScheduler {
     fn pick_next_runnable(&mut self, cpu_id : CpuId) -> TaskId {
         // 1) RR 当前任务（时间片未用完）
         if let Some(current_id) = self.cpu_states[cpu_id.raw()].current_task_id {
-            let snap = self.global
-                           .registry
+            let snap = self.registry
                            .task_snapshot(current_id);
             if snap.sched_policy == SchedPolicy::Rr &&
                self.cpu_states[cpu_id.raw()].rr_queue
@@ -519,8 +484,7 @@ impl MultiClassScheduler {
                 // 通常 Yield/Tick 会回到当前 CPU；但若 affinity 在运行期间被
                 // 改为排除当前 CPU，必须由本 CPU 的 Reschedule 路径把它放到
                 // 允许的远端 runqueue，不能继续在禁止 CPU 上运行。
-                let affinity = self.global
-                                   .registry
+                let affinity = self.registry
                                    .get_affinity(current_task_id)
                                    .expect("current task must exist");
                 let target_cpu = if affinity.contains(cpu_id) {
@@ -534,52 +498,41 @@ impl MultiClassScheduler {
                 }
             }
             QueueTarget::Blocked(reason) => {
-                self.global
-                    .registry
+                self.registry
                     .mark_blocking(current_task_id, reason);
-                self.global
-                    .wait_queues
+                self.wait_queues
                     .enqueue_wait_task(current_task_id, reason);
             }
             QueueTarget::Sleeping(wake_tick) => {
-                self.global
-                    .registry
+                self.registry
                     .mark_sleeping(current_task_id, wake_tick);
-                self.global
-                    .wait_queues
+                self.wait_queues
                     .enqueue_sleep_task(current_task_id, wake_tick);
             }
             QueueTarget::Exited(exit_code) => {
-                let waiters = self.global
-                                  .wait_queues
+                let waiters = self.wait_queues
                                   .wake_all_waiters_for_task_exit(current_task_id);
                 // 唤醒所有等待当前任务退出的 waiters
                 for waiter_id in &waiters {
-                    self.global
-                        .registry
+                    self.registry
                         .finish_wait(*waiter_id, TaskWaitResult::Woken);
                     self.enqueue_woken_task(*waiter_id);
                 }
                 // 唤醒等待当前任务的父任务
-                if let Some(parent_id) = self.global
-                                             .registry
+                if let Some(parent_id) = self.registry
                                              .parent_id(current_task_id)
                 {
-                    let child_waiters = self.global
-                                            .wait_queues
+                    let child_waiters = self.wait_queues
                                             .wake_child_exit_waiters(parent_id);
                     for waiter_id in &child_waiters {
-                        self.global
-                            .registry
+                        self.registry
                             .finish_wait(*waiter_id, TaskWaitResult::Woken);
                         self.enqueue_woken_task(*waiter_id);
                     }
                 }
-                self.global
-                    .wait_queues
+                self.wait_queues
                     .enqueue_exited_task(current_task_id);
-                self.global
-                    .registry
+                self.registry
                     .mark_exited(current_task_id, exit_code);
             }
         }
@@ -596,12 +549,10 @@ impl MultiClassScheduler {
     ///
     /// `last_cpu_id` 不可用时才回退到新任务的最小负载选核策略。
     pub(super) fn enqueue_woken_task(&mut self, task_id : TaskId) -> CpuId {
-        let affinity = self.global
-                           .registry
+        let affinity = self.registry
                            .get_affinity(task_id)
                            .expect("woken task must exist");
-        let target = self.global
-                         .registry
+        let target = self.registry
                          .last_cpu_id(task_id)
                          .filter(|cpu_id| {
                              cpu_id.fits_capacity(self.cpu_states
@@ -634,20 +585,17 @@ impl MultiClassScheduler {
         need_resched
     }
     fn enqueue_ready_by_cpu(&mut self, task_id : TaskId, cpu_id : CpuId) {
-        assert!(!self.global
-                     .registry
+        assert!(!self.registry
                      .is_idle(task_id),
                 "idle task must not be placed on a ready queue");
         debug_assert!(self.cpu_states[cpu_id.raw()].online,
                       "ready task must target an online CPU");
-        debug_assert!(self.global
-                          .registry
+        debug_assert!(self.registry
                           .get_affinity(task_id)
                           .expect("queued task must exist")
                           .contains(cpu_id),
                       "ready task must target a CPU allowed by its affinity");
-        if let Some(old_cpu_id) = self.global
-                                      .registry
+        if let Some(old_cpu_id) = self.registry
                                       .ready_cpu_id(task_id)
         {
             // 策略切换或防御性重复入队时，先根据 TCB 所记录的旧归属摘除。
@@ -656,11 +604,9 @@ impl MultiClassScheduler {
         }
         // Publish lifecycle state and queue ownership as one scheduler-lock
         // transaction.  No observer can see Ready without its target queue.
-        self.global
-            .registry
+        self.registry
             .mark_ready(task_id, cpu_id);
-        let snap = self.global
-                       .registry
+        let snap = self.registry
                        .task_snapshot(task_id);
         match snap.sched_policy {
             SchedPolicy::Other => self.cpu_states[cpu_id.raw()].other_queue
@@ -674,12 +620,10 @@ impl MultiClassScheduler {
                                              .on_task_unblocked(task_id, snap.sched_priority)
             }
         }
-        assert_eq!(self.global
-                       .registry
+        assert_eq!(self.registry
                        .ready_cpu_id(task_id),
                    Some(cpu_id));
-        assert_eq!(self.global
-                       .registry
+        assert_eq!(self.registry
                        .running_cpu_id(task_id),
                    None);
     }
@@ -696,8 +640,7 @@ impl MultiClassScheduler {
     fn detach_from_run_queues(&mut self, task_id : TaskId, cpu_id : CpuId) {
         // Ready 任务必须按 TCB 的实际归属摘除；当前运行任务没有
         // `ready_cpu_id`，此时才使用调用 CPU 来清理 RR 当前状态。
-        let owner_cpu_id = self.global
-                               .registry
+        let owner_cpu_id = self.registry
                                .ready_cpu_id(task_id)
                                .unwrap_or(cpu_id);
         self.remove_from_cpu_runqueue(task_id, owner_cpu_id);
@@ -725,25 +668,22 @@ impl MultiClassScheduler {
 
     /// 推进到期睡眠/超时任务到就绪队列。
     fn promote_sleep_and_timeouts(&mut self) {
-        for task_id in &self.global
-                            .wait_queues
+        for task_id in &self.wait_queues
                             .promote_sleeping_tasks()
         {
             self.enqueue_woken_task(*task_id);
         }
-        for (task_id, target) in &self.global
-                                      .wait_queues
+        for (task_id, target) in &self.wait_queues
                                       .promote_wait_timeouts()
         {
             let still_waiting = matches!(
-                self.global.registry.state(*task_id),
+                self.registry.state(*task_id),
                 Some(TaskState::Blocking(t)) if t == *target
             );
             if !still_waiting {
                 continue;
             }
-            self.global
-                .registry
+            self.registry
                 .finish_wait(*task_id, TaskWaitResult::TimedOut);
             self.enqueue_woken_task(*task_id);
         }
@@ -766,8 +706,7 @@ impl MultiClassScheduler {
                                  current : TaskSnapshot,
                                  cpu_id : CpuId)
                                  -> bool {
-        if self.global
-               .registry
+        if self.registry
                .is_idle(current_id)
         {
             return self.highest_ready_rt_priority(cpu_id)

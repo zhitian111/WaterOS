@@ -7,8 +7,7 @@ impl MultiClassScheduler {
                              cpu_id : CpuId)
                              -> TaskId {
         let current_task_id = self.cpu_states[cpu_id.raw()].current_task_id;
-        let task_id = self.global
-                          .registry
+        let task_id = self.registry
                           .spawn_kernel_task(entry, arg, current_task_id);
         self.enqueue_ready_task(task_id);
         task_id
@@ -16,8 +15,7 @@ impl MultiClassScheduler {
 
     pub fn create_user_task_spec(&mut self, spec : UserTask, cpu_id : CpuId) -> TaskId {
         let current_task_id = self.cpu_states[cpu_id.raw()].current_task_id;
-        self.global
-            .registry
+        self.registry
             .spawn_user_task_spec(spec, current_task_id)
     }
 
@@ -31,8 +29,7 @@ impl MultiClassScheduler {
     ///
     /// 遍历从 `next_placement_cpu` 开始，因此同样负载不会永远偏向 CPU 0。
     pub fn pick_cpu_for_new_task(&mut self, task_id : TaskId) -> CpuId {
-        let affinity = self.global
-                           .registry
+        let affinity = self.registry
                            .get_affinity(task_id)
                            .expect("queued task must exist");
         let mut best_cpu = None;
@@ -63,8 +60,7 @@ impl MultiClassScheduler {
                              cpu_id : CpuId)
                              -> Option<TaskId> {
         let current_task_id = self.cpu_states[cpu_id.raw()].current_task_id?;
-        self.global
-            .registry
+        self.registry
             .fork_current(child_stack,
                           new_aspace_ptr,
                           new_satp,
@@ -92,8 +88,7 @@ impl MultiClassScheduler {
                                cpu_id : CpuId)
                                -> Option<TaskId> {
         let parent_id = self.cpu_states[cpu_id.raw()].current_task_id?;
-        self.global
-            .registry
+        self.registry
             .clone_current_thread(child_stack, tls, set_tls, parent_id)
     }
 
@@ -121,8 +116,7 @@ impl MultiClassScheduler {
                           cpu_id : CpuId) {
         let current_id = self.cpu_states[cpu_id.raw()].current_task_id
                                                       .expect("execve requires a current task");
-        self.global
-            .registry
+        self.registry
             .execve_current(entry_pc,
                             sp,
                             argc,
@@ -139,40 +133,34 @@ impl MultiClassScheduler {
     }
 
     pub fn current_task_snapshot(&self, cpu_id : CpuId) -> Option<TaskSnapshot> {
-        Some(self.global
-                 .registry
+        Some(self.registry
                  .task_snapshot(self.cpu_states[cpu_id.raw()].current_task_id?))
     }
 
     pub fn task_snapshot(&self, task_id : TaskId) -> TaskSnapshot {
-        self.global
-            .registry
+        self.registry
             .task_snapshot(task_id)
     }
 
     pub fn has_child(&self, parent_id : TaskId) -> bool {
-        self.global
-            .registry
+        self.registry
             .has_child(parent_id)
     }
 
     pub fn current_tick(&self) -> TaskTick {
-        self.global
-            .wait_queues
+        self.wait_queues
             .current_tick()
     }
 
     pub fn current_task_kernel_stack_top(&self, cpu_id : CpuId) -> Option<usize> {
-        Some(self.global
-                 .registry
+        Some(self.registry
                  .task_kernel_stack_top(self.cpu_states[cpu_id.raw()].current_task_id?))
     }
 
     pub fn current_task_address_space_raw(&self, cpu_id : CpuId) -> usize {
         self.cpu_states[cpu_id.raw()].current_task_id
                                      .map(|id| {
-                                         self.global
-                                             .registry
+                                         self.registry
                                              .current_task_address_space_raw(id)
                                      })
                                      .unwrap_or(0)
@@ -181,8 +169,7 @@ impl MultiClassScheduler {
     pub fn current_task_user_aspace_ptr(&self, cpu_id : CpuId) -> usize {
         self.cpu_states[cpu_id.raw()].current_task_id
                                      .map(|id| {
-                                         self.global
-                                             .registry
+                                         self.registry
                                              .current_task_user_aspace_ptr(id)
                                      })
                                      .unwrap_or(0)
@@ -195,8 +182,7 @@ impl MultiClassScheduler {
     pub fn current_task_trap_return_address_space_token(&self, cpu_id : CpuId) -> usize {
         self.cpu_states[cpu_id.raw()].current_task_id
                                      .map(|id| {
-                                         self.global
-                                             .registry
+                                         self.registry
                                              .current_task_trap_return_address_space_token(id)
                                      })
                                      .unwrap_or(0)
@@ -207,8 +193,7 @@ impl MultiClassScheduler {
                                            cpu_id : CpuId)
                                            -> Option<*mut TaskTrapFrame> {
         let task_id = self.cpu_states[cpu_id.raw()].current_task_id?;
-        self.global
-            .registry
+        self.registry
             .begin_trap_frame_access(trap_frame, task_id)
     }
 
@@ -220,8 +205,7 @@ impl MultiClassScheduler {
             Some(id) => id,
             None => return false,
         };
-        self.global
-            .registry
+        self.registry
             .restore_trap_frame(trap_frame, task_id)
     }
 
@@ -230,8 +214,7 @@ impl MultiClassScheduler {
             self.cpu_states[cpu_id.raw()].current_task_id
                                          .expect("wait result can only be taken for a running \
                                                   task");
-        self.global
-            .registry
+        self.registry
             .take_current_wait_result(task_id)
     }
     pub fn set_affinity(&mut self, task_id : TaskId, mask : CpuMask) -> Result<(), SchedError> {
@@ -246,15 +229,13 @@ impl MultiClassScheduler {
             return Err(SchedError::InvalidArg);
         }
 
-        let state = self.global
-                        .registry
+        let state = self.registry
                         .state(task_id)
                         .ok_or(SchedError::NoSuchTask)?;
         if matches!(state, TaskState::Exited(_)) {
             return Err(SchedError::NoSuchTask);
         }
-        self.global
-            .registry
+        self.registry
             .set_affinity(task_id, mask)?;
 
         match state {
@@ -262,8 +243,7 @@ impl MultiClassScheduler {
                 // create_* 会先登记一个 Ready TCB、稍后才入 runqueue。此时
                 // `ready_cpu_id` 为 None；只保存 affinity，首次入队会按新 mask
                 // 选核，不能把它当作调度器不变量而 panic。
-                if let Some(ready_cpu) = self.global
-                                             .registry
+                if let Some(ready_cpu) = self.registry
                                              .ready_cpu_id(task_id)
                 {
                     if !mask.contains(ready_cpu) {
@@ -274,8 +254,7 @@ impl MultiClassScheduler {
                 }
             }
             TaskState::Running => {
-                let running_cpu = self.global
-                                      .registry
+                let running_cpu = self.registry
                                       .running_cpu_id(task_id)
                                       .expect("running task must have a CPU owner");
                 if !mask.contains(running_cpu) {
@@ -290,28 +269,24 @@ impl MultiClassScheduler {
         Ok(())
     }
     pub fn get_affinity(&self, task_id : TaskId) -> Result<CpuMask, SchedError> {
-        self.global
-            .registry
+        self.registry
             .get_affinity(task_id)
     }
 
     /// 仅保存 task-level nice；暂不改变 `OtherQueue` 的 FIFO 选择或触发重调度。
     pub fn set_nice(&mut self, task_id : TaskId, nice : i8) -> Result<(), SchedError> {
-        let state = self.global
-                        .registry
+        let state = self.registry
                         .state(task_id)
                         .ok_or(SchedError::NoSuchTask)?;
         if matches!(state, TaskState::Exited(_)) {
             return Err(SchedError::NoSuchTask);
         }
-        self.global
-            .registry
+        self.registry
             .set_nice(task_id, nice)
     }
 
     pub fn get_nice(&self, task_id : TaskId) -> Result<i8, SchedError> {
-        self.global
-            .registry
+        self.registry
             .get_nice(task_id)
     }
 }

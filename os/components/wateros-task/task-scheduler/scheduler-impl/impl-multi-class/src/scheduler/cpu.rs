@@ -56,14 +56,12 @@ impl MultiClassScheduler {
                       .get(cpu_id.raw())?;
         let current_is_idle = cpu.current_task_id
                                  .is_some_and(|id| {
-                                     self.global
-                                         .registry
+                                     self.registry
                                          .is_idle(id)
                                  });
         let current_address_space = cpu.current_task_id
                                        .and_then(|id| {
-                                           let raw = self.global
-                                                         .registry
+                                           let raw = self.registry
                                                          .current_task_address_space_raw(id);
                                            (raw != 0).then(|| AddressSpaceHandle::from_raw(raw))
                                        });
@@ -83,8 +81,7 @@ impl MultiClassScheduler {
                            need_resched : cpu.need_resched,
                            context_switches : cpu.context_switches,
                            timer_ticks : cpu.timer_ticks,
-                           current_task_ticks : self.global
-                                                    .wait_queues
+                           current_task_ticks : self.wait_queues
                                                     .current_tick() })
     }
 
@@ -101,8 +98,7 @@ impl MultiClassScheduler {
     }
 
     pub fn running_cpu(&self, task_id : TaskId) -> Option<CpuId> {
-        self.global
-            .registry
+        self.registry
             .running_cpu_id(task_id)
     }
 

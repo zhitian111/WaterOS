@@ -1,7 +1,7 @@
 #![no_std]
 
 extern crate alloc;
-
+use log::info;
 mod cpu;
 mod lifecycle;
 mod process;
@@ -17,6 +17,7 @@ pub use lifecycle::{
     abort_clone_thread, abort_fork_child, clone_current_thread, execve_current, exit_current,
     exit_group_current, fork_current, kill_task, terminate_other_threads_for_exec,
 };
+
 pub use process::{
     all_process_pids, collect_exited_process_pids, consume_continued_wait, consume_stop_wait,
     continue_process_tasks, continued_child_ready_for_wait, create_session_for_process,
@@ -75,19 +76,11 @@ pub use scheduler::CpuSnapshot;
 // 与主函数的接口
 // ============================================================================
 /// 初始化任务系统和底层调度器状态。
-pub fn init() { init_on_cpu(CpuId::from_raw(0)); }
-
-pub fn init_on_cpu(cpu_id : CpuId) {
-    //log::warn!("[boot-init] task::init enter");
-    log::warn!("[boot-init] task::init start");
-    scheduler::init_on_cpu(cpu_id);
+pub fn init() {
+    info!("[boot-init] task::init start");
+    scheduler::init();
     active_impl::init_process_registry();
-    //log::warn!("[boot-init] task::init -> process_model_self_test");
-    //active_impl::process_model_self_test();
-    log::warn!("[boot-init] task::init done");
+    info!("[boot-init] task::init done");
 }
 /// 启动调度器并切入第一批可运行任务。
 pub fn run_first_task() -> ! { scheduler::run_first_task() }
-pub fn run_first_task_on_current_cpu(cpu_id : CpuId) -> ! {
-    scheduler::run_first_task_on_current_cpu(cpu_id)
-}

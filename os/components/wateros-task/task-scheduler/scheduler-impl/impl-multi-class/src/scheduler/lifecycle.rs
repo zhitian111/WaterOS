@@ -2,21 +2,18 @@
 use super::*;
 impl MultiClassScheduler {
     pub fn kill_task(&mut self, task_id : TaskId, exit_code : TaskExitCode) -> bool {
-        if self.global
-               .registry
+        if self.registry
                .is_idle(task_id)
         {
             return false;
         }
-        if self.global
-               .registry
+        if self.registry
                .state(task_id)
                .is_none()
         {
             return false;
         }
-        if matches!(self.global
-                        .registry
+        if matches!(self.registry
                         .state(task_id),
                     Some(TaskState::Exited(_)))
         {
@@ -29,22 +26,18 @@ impl MultiClassScheduler {
             return false;
         }
         self.detach_from_all_cpus(task_id);
-        self.global
-            .wait_queues
+        self.wait_queues
             .kill_task(task_id);
-        self.global
-            .registry
+        self.registry
             .mark_exited(task_id, exit_code);
         true
     }
 
     pub fn discard_unstarted_task(&mut self, task_id : TaskId) {
         self.detach_from_all_cpus(task_id);
-        self.global
-            .wait_queues
+        self.wait_queues
             .detach_task_from_run_queues(task_id);
-        if self.global
-               .registry
+        if self.registry
                .discard_task(task_id)
         {
             self.forget_task_on_all_cpus(task_id);
@@ -52,24 +45,21 @@ impl MultiClassScheduler {
     }
 
     pub fn reap_exited_task(&mut self, task_id : TaskId) -> Option<ExitedTask> {
-        let exited = self.global
-                         .wait_queues
-                         .reap_exited_task(&mut self.global.registry, task_id)?;
+        let exited = self.wait_queues
+                         .reap_exited_task(&mut self.registry, task_id)?;
         self.forget_task_on_all_cpus(task_id);
         Some(exited)
     }
 
     pub fn reap_one_exited_task(&mut self) -> Option<ExitedTask> {
-        let exited = self.global
-                         .wait_queues
-                         .reap_one_exited_task(&mut self.global.registry)?;
+        let exited = self.wait_queues
+                         .reap_one_exited_task(&mut self.registry)?;
         self.forget_task_on_all_cpus(exited.id);
         Some(exited)
     }
 
     pub fn reap_one_exited_child(&mut self, parent_id : TaskId) -> Option<ExitedTask> {
-        let task_id = self.global
-                          .registry
+        let task_id = self.registry
                           .find_exited_child(parent_id)?;
         self.reap_exited_task(task_id)
     }

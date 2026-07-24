@@ -3,7 +3,7 @@
 
 extern crate alloc;
 use alloc::vec::Vec;
-use arch::cpu;
+use arch::cpu::{self, current_cpu_id};
 use arch::interrupt::ArchInterruptState;
 use arch::task::ActiveArchTaskContext as TaskContext;
 use base::cpu::CpuMask;
@@ -26,67 +26,17 @@ use task_api::{SchedError, SchedParam, SchedPolicy};
 pub type TaskTrapFrame = arch::trap::ActiveTrapFrame;
 
 unsafe extern "C" {
-    /// 架构提供的上下文切换：保存 `current`、恢复 `next`，约定与
-    /// `ActiveArchTaskContext` 布局一致。
     fn __switch(current_task_cx_ptr : *mut TaskContext, next_task_cx_ptr : *const TaskContext);
 }
-
 pub type SwitchPair = api_v0::SwitchPair;
 
 // ── 内部静态 ──────────────────────────────────────────────────────
-// 单处理器 bring-up：全局唯一调度器实例，由 `init_scheduler`
-// 一次性写入；`SCHEDULER_READY` 保证可见性。
-// 链入 `.bss.scheduler`（在 `.kernel.heap` 之前），避免 128MiB 堆池与调度器静态重叠。
-
 #[unsafe(link_section = ".bss.scheduler")]
 static mut SCHEDULER : MaybeUninit<MultiprocessorSafeCell<MultiClassScheduler>> =
     MaybeUninit::uninit();
 #[unsafe(link_section = ".bss.scheduler")]
 static SCHEDULER_READY : AtomicBool = AtomicBool::new(false);
-
-unsafe extern "C" {
-    static kernel_heap_start: u8;
-    static kernel_heap_end: u8;
-}
-/// 若 `addr` 落在链接脚本划定的堆池 `[kernel_heap_start, kernel_heap_end)` 内则 panic。
-fn assert_addr_outside_kernel_heap(label : &str, addr : usize) {
-    let heap_lo = core::ptr::addr_of!(kernel_heap_start) as usize;
-    let heap_hi = core::ptr::addr_of!(kernel_heap_end) as usize;
-    if addr >= heap_lo && addr < heap_hi {
-        log::error!("[boot-init] {} addr={:#x} overlaps kernel heap [{:#x},{:#x})",
-                    label,
-                    addr,
-                    heap_lo,
-                    heap_hi);
-        panic!("kernel static overlaps 128MiB heap pool — check link.ld .bss.scheduler / \
-                .kernel.heap");
-    }
-}
-
-#[inline]
-fn scheduler_ready_addr() -> usize { core::ptr::addr_of!(SCHEDULER_READY) as usize }
-
-#[inline(never)]
-fn scheduler_ready_raw_byte() -> u8 {
-    unsafe { core::ptr::read_volatile(scheduler_ready_addr() as *const u8) }
-}
-
-/// 引导期诊断：打印 `SCHEDULER_READY` 当前值与静态地址，便于对比 init 与后续调用是否同一实例。
-#[inline(never)]
-fn log_scheduler_ready(tag : &str) {
-    let ready = SCHEDULER_READY.load(Ordering::Acquire);
-    let raw_byte = scheduler_ready_raw_byte();
-    let addr = scheduler_ready_addr();
-    log::warn!("[boot-init] {} SCHEDULER_READY={} raw_byte={:#x} ready_addr={:#x}",
-               tag,
-               ready,
-               raw_byte,
-               addr);
-}
-
 // ── scheduler cell 访问 ────────────────────────────────────────────
-
-// 仅在 `SCHEDULER_READY` 为真后解引用；否则 panic，避免未初始化访问。
 #[inline(never)]
 fn scheduler_cell_inner(caller : &'static Location)
                         -> &'static MultiprocessorSafeCell<MultiClassScheduler> {
@@ -97,25 +47,12 @@ fn scheduler_cell_inner(caller : &'static Location)
     }
     unsafe { &*SCHEDULER.as_ptr() }
 }
-
-/// 取得调度器 cell；独立符号，供 GDB/外部探测。
-#[inline(never)]
-#[unsafe(no_mangle)]
-#[allow(private_interfaces)]
-pub extern "C" fn wateros_mcs_scheduler_cell(
-    )
-    -> *const MultiprocessorSafeCell<MultiClassScheduler>
-{
-    scheduler_cell_inner(Location::caller())
-}
-
+/// 取得调度器 cell
 #[track_caller]
 fn scheduler_cell() -> &'static MultiprocessorSafeCell<MultiClassScheduler> {
     scheduler_cell_inner(Location::caller())
 }
-
 // 在单调度器 cell 上取得独占引用并执行闭包；调用方已通过 `InterruptGuard`
-// 关当前 CPU 中断 + `spin::Mutex` 全局锁保证临界区安全。
 #[inline(never)]
 fn with_scheduler<R>(f : impl FnOnce(&mut MultiClassScheduler) -> R) -> R {
     let mut scheduler = scheduler_cell().exclusive_access();
@@ -123,11 +60,6 @@ fn with_scheduler<R>(f : impl FnOnce(&mut MultiClassScheduler) -> R) -> R {
 }
 
 // ── 跨核 IPI 通知 ────────────────────────────────────────────────
-
-/// 锁内完成入队后，向实际目标 CPU 发送重调度 IPI。
-///
-/// 调度入口会在其 `with_scheduler` 闭包中移除已处理的本核请求，因此到达
-/// 此处的本核 bit 一定来自普通入队/唤醒路径，可以安全进入本地重调度。
 fn dispatch_reschedules(targets : CpuMask, current_cpu_id : CpuId) {
     let mut remote = targets;
     let local_requested = remote.contains(current_cpu_id);
@@ -143,13 +75,11 @@ fn dispatch_reschedules(targets : CpuMask, current_cpu_id : CpuId) {
     }
 }
 // ── 中断守卫 ──────────────────────────────────────────────────────
-
 // RAII：构造时关全局中断，drop 时恢复；包裹所有可能触碰就绪队列与 TCB
 // 的调度路径。
 struct InterruptGuard {
     state : ArchInterruptState,
 }
-
 impl InterruptGuard {
     fn new() -> Self {
         let state = arch::interrupt::read_global_interrupt_state().expect("read global interrupt \
@@ -159,11 +89,7 @@ impl InterruptGuard {
                                                             scheduler guard");
         Self { state }
     }
-
-    /// 在即将 `__switch` 且 **不会** 再回到本栈帧（例如
-    /// `exit_current`）时调用：立刻恢复关中断前状态， 并用 `forget` 避免
-    /// `Drop` 二次恢复。否则下一条任务会永远继承「中断仍关闭」。
-    fn release_before_switch(self) {
+    fn release(self) {
         let state = self.state;
         core::mem::forget(self);
         arch::interrupt::restore_global_interrupt_state(state).expect("restore global interrupt \
@@ -171,102 +97,50 @@ impl InterruptGuard {
                                                                        switch");
     }
 }
-
-impl Drop for InterruptGuard {
-    fn drop(&mut self) {
-        arch::interrupt::restore_global_interrupt_state(self.state).expect("restore global \
-                                                                            interrupt state for \
-                                                                            scheduler guard");
-    }
-}
-
 /// 唯一的 Rust 上下文切换出口。
-///
-/// 调用方必须已离开 `with_scheduler` 闭包，因此 scheduler 锁已经释放；本函数
-/// 再释放当前栈帧的中断 guard，避免把“中断关闭”带到下一个任务的上下文中。
 #[inline(never)]
 fn switch_after_unlock(guard : InterruptGuard, switch_pair : SwitchPair) {
-    guard.release_before_switch();
+    guard.release();
     unsafe {
         __switch(switch_pair.0, switch_pair.1);
     }
 }
-
-/// `__switch` 返回后重新关中断，再取等待结果（避免 wait 路径长期关中断，见锁审计 RC-1）。
+/// `__switch` 返回后重新关中断，再取等待结果（避免 wait 路径长期关中断）。
 fn finish_wait_after_switch(guard : InterruptGuard,
                             switch_pair : Option<SwitchPair>)
                             -> TaskWaitResult {
     if let Some(switch_pair) = switch_pair {
         switch_after_unlock(guard, switch_pair);
     } else {
-        drop(guard);
+        guard.release();
     }
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.take_current_wait_result(cpu::current_cpu_id()))
 }
-
-/// 供 `kernel_main` / 外部 crate 在 `spawn_*` 前探测；`#[no_mangle]` 避免 release/LTO 内联掉对静态变量的 load。
-#[inline(never)]
-#[unsafe(no_mangle)]
-pub extern "C" fn wateros_mcs_boot_log_scheduler_ready(tag_ptr : *const u8, tag_len : usize) {
-    let tag = if tag_ptr.is_null() || tag_len == 0 {
-        "probe"
-    } else {
-        unsafe { core::str::from_utf8_unchecked(core::slice::from_raw_parts(tag_ptr, tag_len)) }
-    };
-    log_scheduler_ready(tag);
-}
-
 // =============================================================================
 //  1. 初始化与引导
 // =============================================================================
 
-/// 首次初始化路径：在 `SCHEDULER_READY` 置真前直接写入 cell，避免 chicken-and-egg。
-unsafe fn init_scheduler_storage_and_inner(boot_cpu : CpuId) {
-    // 2024 edition: unsafe fn body 不是隐式 unsafe 块
-    unsafe {
-        SCHEDULER.write(MultiprocessorSafeCell::new(MultiClassScheduler::new()));
-        (*SCHEDULER.as_mut_ptr()).exclusive_access()
-                                 .init_on_cpu(boot_cpu);
-    }
-}
-
-/// 幂等初始化全局调度器与内部 `MultiClassScheduler` 状态。
 #[inline(never)]
-pub fn init() { init_on_cpu(CpuId::from_raw(0)); }
-
-#[inline(never)]
-pub fn init_on_cpu(boot_cpu : CpuId) {
-    log_scheduler_ready("init_scheduler enter");
+pub fn init() {
     if !SCHEDULER_READY.load(Ordering::Acquire) {
-        log::warn!("[boot-init] init_scheduler: SCHEDULER.write + inner init (READY still false)");
         unsafe {
-            init_scheduler_storage_and_inner(boot_cpu);
+            SCHEDULER.write(MultiprocessorSafeCell::new(MultiClassScheduler::new()));
+            (*SCHEDULER.as_mut_ptr()).exclusive_access()
+                                     .init(current_cpu_id());
         }
         SCHEDULER_READY.store(true, Ordering::Release);
-        compiler_fence(Ordering::SeqCst);
-        log_scheduler_ready("init_scheduler after store(true)");
     } else {
-        log::warn!("[boot-init] init_scheduler: already ready, re-run inner init");
         let _guard = InterruptGuard::new();
-        with_scheduler(|scheduler| scheduler.init_on_cpu(boot_cpu));
+        with_scheduler(|scheduler| scheduler.init(current_cpu_id()));
     }
-    log_scheduler_ready("init_scheduler done");
-    assert_addr_outside_kernel_heap("SCHEDULER_READY",
-                                    scheduler_ready_addr());
-    assert_addr_outside_kernel_heap("SCHEDULER", unsafe {
-        SCHEDULER.as_ptr() as usize
-    });
     log::info!("[task-scheduler] initialized");
 }
 
-/// 切入多任务运行：从引导上下文切换到第一个被选中的就绪任务（通常非 idle）。
-pub fn run_first_task() -> ! { run_first_task_on_current_cpu(cpu::current_cpu_id()) }
-
-/// 指定 CPU 首次切入调度。BSP 和 AP 各调用一次，不返回。
-pub fn run_first_task_on_current_cpu(cpu_id : CpuId) -> ! {
+/// 从引导上下文切换到第一个被选中的就绪任务
+pub fn run_first_task() -> ! {
     let guard = InterruptGuard::new();
-    let switch_pair = with_scheduler(|scheduler| scheduler.prepare_first_switch(cpu_id));
+    let switch_pair = with_scheduler(|scheduler| scheduler.prepare_first_switch(current_cpu_id()));
     switch_after_unlock(guard, switch_pair);
     panic!("run_first_task_on_current_cpu must not return");
 }
@@ -357,10 +231,6 @@ pub fn discard_unstarted_task(task_id : TaskId) {
 }
 
 /// 从当前用户任务 fork 一个子任务，并返回子任务 id。
-///
-/// 子任务获得父任务 trap 帧副本（a0 置 0）、独立地址空间（`new_aspace_ptr` /
-/// `new_satp`）。 `child_stack` 非零时，子任务初始用户栈指针设为该值（用于
-/// clone 新栈场景）。 无当前任务或非用户任务时返回 `None`。
 pub fn fork_current(child_stack : usize,
                     new_aspace_ptr : usize,
                     new_satp : usize)
@@ -434,7 +304,7 @@ pub fn suspend_current_and_run_next() {
         let mut targets = scheduler.take_pending_reschedule_cpus();
         if targets.contains(cpu_id) {
             targets.remove(cpu_id);
-            debug_assert!(scheduler.take_need_resched(cpu_id));
+            assert!(scheduler.take_need_resched(cpu_id));
         }
         (switch_pair, targets)
     });
@@ -444,7 +314,7 @@ pub fn suspend_current_and_run_next() {
     }
 }
 
-/// 时钟 tick：推进调度器逻辑时间，并在需要时切换到下一任务。
+/// 时钟 tick：推进调度器逻辑时间，并在需要时切换到下一任务。可能会唤醒其他 CPU 上睡眠的任务
 #[inline(never)]
 pub fn schedule_tick() {
     let guard = InterruptGuard::new();
@@ -454,7 +324,7 @@ pub fn schedule_tick() {
         let mut targets = scheduler.take_pending_reschedule_cpus();
         if targets.contains(cpu_id) {
             targets.remove(cpu_id);
-            debug_assert!(scheduler.take_need_resched(cpu_id));
+            assert!(scheduler.take_need_resched(cpu_id));
         }
         (switch_pair, targets)
     });
@@ -464,8 +334,7 @@ pub fn schedule_tick() {
     }
 }
 
-/// Handle a reschedule IPI.  Unlike a timer tick this neither advances global
-/// time nor charges the interrupted task a timeslice.
+/// 中断当前任务并切换到下一任务；若当前任务已被阻塞或退出则不切换。
 pub fn schedule_reschedule() {
     let guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
@@ -478,7 +347,7 @@ pub fn schedule_reschedule() {
         let mut targets = scheduler.take_pending_reschedule_cpus();
         if targets.contains(cpu_id) {
             targets.remove(cpu_id);
-            debug_assert!(scheduler.take_need_resched(cpu_id));
+            assert!(scheduler.take_need_resched(cpu_id));
         }
         (switch_pair, targets)
     });
@@ -497,7 +366,7 @@ pub fn block_current(reason : TaskWaitTarget) {
         let mut targets = scheduler.take_pending_reschedule_cpus();
         if targets.contains(cpu_id) {
             targets.remove(cpu_id);
-            debug_assert!(scheduler.take_need_resched(cpu_id));
+            assert!(scheduler.take_need_resched(cpu_id));
         }
         (switch_pair, targets)
     });
@@ -516,7 +385,7 @@ pub fn sleep_current_for_ticks(ticks : TaskTick) -> TaskWaitResult {
         let mut targets = scheduler.take_pending_reschedule_cpus();
         if targets.contains(cpu_id) {
             targets.remove(cpu_id);
-            debug_assert!(scheduler.take_need_resched(cpu_id));
+            assert!(scheduler.take_need_resched(cpu_id));
         }
         (switch_pair, targets)
     });
@@ -533,7 +402,7 @@ pub fn exit_current(exit_code : TaskExitCode) -> ! {
         let mut targets = scheduler.take_pending_reschedule_cpus();
         if targets.contains(cpu_id) {
             targets.remove(cpu_id);
-            debug_assert!(scheduler.take_need_resched(cpu_id));
+            assert!(scheduler.take_need_resched(cpu_id));
         }
         (switch_pair, targets)
     });
@@ -566,7 +435,7 @@ pub fn wait_current(target : TaskWaitTarget) -> TaskWaitResult {
         let mut targets = scheduler.take_pending_reschedule_cpus();
         if targets.contains(cpu_id) {
             targets.remove(cpu_id);
-            debug_assert!(scheduler.take_need_resched(cpu_id));
+            assert!(scheduler.take_need_resched(cpu_id));
         }
         (switch_pair, targets)
     });
@@ -588,7 +457,7 @@ pub fn wait_current_while(target : TaskWaitTarget,
         let mut targets = scheduler.take_pending_reschedule_cpus();
         if targets.contains(cpu_id) {
             targets.remove(cpu_id);
-            debug_assert!(scheduler.take_need_resched(cpu_id));
+            assert!(scheduler.take_need_resched(cpu_id));
         }
         (switch_pair, targets)
     });
@@ -610,7 +479,7 @@ pub fn wait_current_timeout(target : TaskWaitTarget, timeout_ticks : TaskTick) -
         let mut targets = scheduler.take_pending_reschedule_cpus();
         if targets.contains(cpu_id) {
             targets.remove(cpu_id);
-            debug_assert!(scheduler.take_need_resched(cpu_id));
+            assert!(scheduler.take_need_resched(cpu_id));
         }
         (switch_pair, targets)
     });
@@ -637,7 +506,7 @@ pub fn wait_current_timeout_while(target : TaskWaitTarget,
         let mut targets = scheduler.take_pending_reschedule_cpus();
         if targets.contains(cpu_id) {
             targets.remove(cpu_id);
-            debug_assert!(scheduler.take_need_resched(cpu_id));
+            assert!(scheduler.take_need_resched(cpu_id));
         }
         (switch_pair, targets)
     });

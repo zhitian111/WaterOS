@@ -7,20 +7,17 @@ impl MultiClassScheduler {
                                      param : SchedParam,
                                      cpu_id : CpuId)
                                      -> Result<SchedPolicyChangeAction, SchedError> {
-        if !self.global
-                .registry
+        if !self.registry
                 .is_schedulable(task_id)
         {
             return Err(SchedError::NoSuchTask);
         }
-        let old_snap = self.global
-                           .registry
+        let old_snap = self.registry
                            .task_snapshot(task_id);
         let was_ready = old_snap.state == TaskState::Ready;
 
         self.detach_from_all_cpus(task_id);
-        if !self.global
-                .registry
+        if !self.registry
                 .set_task_sched(task_id, policy, param.priority)
         {
             return Err(SchedError::NoSuchTask);
@@ -31,11 +28,9 @@ impl MultiClassScheduler {
         // 如果当前 CPU 上有任务在运行，判断是否需要抢占。
         if let Some(current_id) = self.cpu_states[cpu_id.raw()].current_task_id {
             if current_id != task_id {
-                let new = self.global
-                              .registry
+                let new = self.registry
                               .task_snapshot(task_id);
-                let current = self.global
-                                  .registry
+                let current = self.registry
                                   .task_snapshot(current_id);
                 if Self::cmp_priority(new.sched_policy,
                                       new.sched_priority,
