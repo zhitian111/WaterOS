@@ -6,6 +6,7 @@ mod lifecycle;
 mod policy;
 mod tasks;
 mod wait;
+use crate::{SwitchPair, TaskTrapFrame};
 use api_v0::{
     CPUScheduler, CpuSnapshot, FifoQueue, GlobalScheduler, QueueTarget, RrQueue, RrTickAction,
     SchedPolicyChangeAction,
@@ -18,8 +19,6 @@ use task_api::{
     TaskExitCode, TaskId, TaskSnapshot, TaskState, TaskTick, TaskWaitResult, TaskWaitTarget,
     UserTask, WaitQueueId, IDLE_TASK_ID,
 };
-
-use crate::{SwitchPair, TaskTrapFrame};
 
 use api_v0::ScheduleReason;
 pub(super) struct MultiClassScheduler {
@@ -80,9 +79,14 @@ impl MultiClassScheduler {
     fn set_current_task(&mut self, task_id : TaskId, cpu_id : CpuId) {
         let previous_task_id = self.cpu_states[cpu_id.raw()].current_task_id;
         let previous_aspace = previous_task_id.map(|id| {
-            self.global.registry.current_task_user_aspace_ptr(id)
-        }).unwrap_or(0);
-        let next_aspace = self.global.registry.current_task_user_aspace_ptr(task_id);
+                                                  self.global
+                                                      .registry
+                                                      .current_task_user_aspace_ptr(id)
+                                              })
+                                              .unwrap_or(0);
+        let next_aspace = self.global
+                              .registry
+                              .current_task_user_aspace_ptr(task_id);
         if !self.global
                 .registry
                 .is_idle(task_id)

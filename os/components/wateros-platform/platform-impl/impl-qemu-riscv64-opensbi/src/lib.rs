@@ -69,7 +69,19 @@ pub mod smp {
         }
 
         fn init_ipi() -> PlatformSmpResult<()> { Ok(()) }
-        fn clear_ipi() -> PlatformSmpResult<()> { Ok(()) }
+
+        /// OpenSBI `send_ipi` raises supervisor software interrupt (SSIP) on
+        /// the target hart.  The receiver must clear its local `sip.SSIP`
+        /// bit before returning from the trap; otherwise the hart immediately
+        /// re-enters the same interrupt forever.
+        fn clear_ipi() -> PlatformSmpResult<()> {
+            unsafe {
+                core::arch::asm!("csrc sip, {}",
+                                 in(reg) 1usize << 1,
+                                 options(nomem, nostack));
+            }
+            Ok(())
+        }
     }
 
     pub use QemuRiscv64OpenSbiSmp as SmpImpl;

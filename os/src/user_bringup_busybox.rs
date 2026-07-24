@@ -166,7 +166,7 @@ pub fn run_stage_busybox() {
 
 extern "C" fn bringup_kernel_runner(_arg : usize) -> ! {
     use platform::reset::shutdown;
-
+    info!("entered runner");
     #[cfg(feature = "pre")]
     crate::user_bringup_root_layout::refresh_ltp_accounts();
 
