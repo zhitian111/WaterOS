@@ -328,6 +328,31 @@ impl ReadWriteFs for AnotherExt4Fs {
     fn rename(&mut self, old_path : &str, new_path : &str) -> FsResult<()> {
         self.get_mut()?.generic_rename(EXT4_ROOT_INO, old_path, new_path).map_err(map_error)
     }
+
+    fn hardlink(&mut self, existing_path : &str, new_path : &str) -> FsResult<()> {
+        let fs = self.get_mut()?;
+        let child = lookup(fs, existing_path)?;
+        let child_meta = metadata(fs, child)?;
+        if child_meta.node_type == FsNodeType::Directory {
+            return Err(FsError::NotAFile);
+        }
+        if child_meta.node_type != FsNodeType::File {
+            return Err(FsError::Unsupported);
+        }
+
+        let (parent_path, name) = parent_name(new_path)?;
+        let parent = lookup(fs, parent_path)?;
+        if metadata(fs, parent)?.node_type != FsNodeType::Directory {
+            return Err(FsError::NotAFile);
+        }
+        if lookup(fs, new_path).is_ok() {
+            return Err(FsError::Exists);
+        }
+
+        fs.link(child, parent, name).map_err(map_error)?;
+        fs.flush_all();
+        Ok(())
+    }
 }
 
 pub struct AnotherExt4Impl;

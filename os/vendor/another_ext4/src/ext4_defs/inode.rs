@@ -71,6 +71,10 @@ impl InodeMode {
             InodeMode::FIFO => FileType::Fifo,
             InodeMode::SOCKET => FileType::Socket,
             InodeMode::SOFTLINK => FileType::SymLink,
+            // Some early WaterOS images contain regular-file inodes with the
+            // POSIX permission bits but without S_IFREG.  Treat that legacy
+            // representation as a regular file; mode 0 remains Unknown.
+            _ if self.bits() & InodeMode::PERM_MASK.bits() != 0 => FileType::RegularFile,
             _ => FileType::Unknown,
         }
     }
