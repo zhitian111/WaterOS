@@ -229,6 +229,9 @@ pub mod console {
     pub type RuntimeConsoleWriter = fn(&[u8]) -> PlatformConsoleResult<()>;
     static RUNTIME_CONSOLE_WRITER : MultiprocessorSafeCell<Option<RuntimeConsoleWriter>> =
         MultiprocessorSafeCell::new(None);
+    /// Serializes complete console buffers across CPUs, including early boot
+    /// output before the runtime UART writer has been registered.
+    static CONSOLE_WRITE_LOCK : MultiprocessorSafeCell<()> = MultiprocessorSafeCell::new(());
 
     /// 安装运行期控制台写入端。后续内核日志与用户态 stdout 可汇聚到同一 UART
     /// 设备锁，而不让 platform 层反向依赖 driver 层。
@@ -246,6 +249,7 @@ pub mod console {
 
     #[inline]
     pub fn console_write_a_buffer(bytes : &[u8]) -> PlatformConsoleResult<()> {
+        let _guard = CONSOLE_WRITE_LOCK.lock();
         if let Some(writer) = runtime_writer() {
             return writer(bytes);
         }

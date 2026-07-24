@@ -12,6 +12,14 @@ use log::{info, Level, Metadata, Record, SetLoggerError};
 struct WaterOSLogger;
 static LOGGER : WaterOSLogger = WaterOSLogger;
 
+#[inline]
+fn current_cpu_label() -> usize {
+    #[cfg(feature = "impl-platform-console")]
+    { return platform::arch::cpu::current_cpu_id().raw(); }
+    #[cfg(not(feature = "impl-platform-console"))]
+    { 0 }
+}
+
 impl log::Log for WaterOSLogger {
     #[inline]
     #[allow(unused)]
@@ -41,8 +49,9 @@ impl log::Log for WaterOSLogger {
                 Level::Trace => AnsiColor::White,
             };
 
-            println!("{}[WaterOS]{}{}    [{}]  {}{}",
+            println!("{}[WaterOS][cpu={}]{}{}    [{}]  {}{}",
                      AnsiColor::Cyan,
+                     current_cpu_label(),
                      AnsiColor::Clear,
                      color,
                      record.level(),

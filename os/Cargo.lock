@@ -1431,6 +1431,7 @@ dependencies = [
 name = "wateros-runtime-console"
 version = "0.1.0"
 dependencies = [
+ "spin",
  "wateros-runtime-console-api-v0",
  "wateros-runtime-console-impl-platform-console",
 ]
@@ -1465,6 +1466,7 @@ name = "wateros-runtime-logging"
 version = "0.1.0"
 dependencies = [
  "log",
+ "wateros-platform",
  "wateros-runtime-console",
 ]
 
