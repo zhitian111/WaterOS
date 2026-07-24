@@ -12,10 +12,6 @@ pub fn spawn_kernel_task(entry : KernelTaskEntry, arg : usize) -> TaskId {
     scheduler::spawn_kernel_task(entry, arg)
 }
 
-pub fn spawn_kernel_task_on_current_cpu(entry : KernelTaskEntry, arg : usize) -> TaskId {
-    scheduler::spawn_kernel_task_on_current_cpu(entry, arg)
-}
-
 /// 按给定规格创建一个新的用户任务，并返回分配到的任务号。
 pub fn spawn_user_task(user : UserTask) -> TaskId {
     let task_id = scheduler::create_user_task_spec(user);
@@ -23,8 +19,7 @@ pub fn spawn_user_task(user : UserTask) -> TaskId {
     let address_space = user_address_space_ref(user);
     active_impl::with_process_registry(|registry| {
         registry.create_process_for_task(task_id, parent_pid, address_space)
-    })
-    .expect("new user task must have a fresh process-registry entry");
+    }).expect("new user task must have a fresh process-registry entry");
     scheduler::enqueue_ready_task(task_id);
     task_id
 }

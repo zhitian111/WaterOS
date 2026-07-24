@@ -27,11 +27,11 @@ pub use process::{
     leader_task_for_process, mark_process_continued, mark_process_stopped, nofile_rlimit_for_task,
     pgid_has_members, process_child_subreaper, process_dumpable, process_exists,
     process_parent_death_signal, process_pgid, process_resource_limit, process_snapshot,
-    process_task_snapshot, process_umask, purge_all_user_processes,
-    reap_all_exited_processes, reap_exited_member_threads, reap_exited_process,
-    set_process_child_subreaper, set_process_dumpable, set_process_parent_death_signal,
-    set_process_pgid, set_process_resource_limit, set_process_umask, set_task_clear_child_tid,
-    set_thread_comm, stop_process_tasks, stopped_child_ready_for_wait, task_clear_child_tid,
+    process_task_snapshot, process_umask, purge_all_user_processes, reap_all_exited_processes,
+    reap_exited_member_threads, reap_exited_process, set_process_child_subreaper,
+    set_process_dumpable, set_process_parent_death_signal, set_process_pgid,
+    set_process_resource_limit, set_process_umask, set_task_clear_child_tid, set_thread_comm,
+    stop_process_tasks, stopped_child_ready_for_wait, task_clear_child_tid,
     task_exit_would_finish_process, task_id_for_thread, task_ids_for_process, thread_comm,
     wake_parent_child_waiters, ProcessPurgeStats,
 };
@@ -49,8 +49,7 @@ pub use schedule::{
     wait_on_while_for_ticks, wake_task, yield_now,
 };
 pub use spawn::{
-    spawn_kernel_task, spawn_kernel_task_on_current_cpu, spawn_user_task,
-    spawn_user_task_from_loaded_elf, user_task_from_loaded_elf,
+    spawn_kernel_task, spawn_user_task, spawn_user_task_from_loaded_elf, user_task_from_loaded_elf,
 };
 pub use trap::{begin_current_trap_frame_access, restore_current_trap_frame};
 mod scheduler {
@@ -58,10 +57,10 @@ mod scheduler {
 }
 pub use api_v0::{
     AddressSpaceHandle, AddressSpaceRef, CloneFlags, CpuId, KernelTaskEntry, ProcessError,
-    ProcessId, ProcessResult, ProcessSnapshot, ProcessState, ProcessTaskRole,
-    ProcessTaskSnapshot, ProcessTaskState, ResourceLimit, SchedError, SchedParam, SchedPolicy,
-    TaskClearTid, TaskExitCode, TaskSnapshot, TaskState, TaskTick, TaskWaitResult,
-    TaskWaitTarget, ThreadId, UserImageInfo, UserStack, UserTask, WaitQueueId,
+    ProcessId, ProcessResult, ProcessSnapshot, ProcessState, ProcessTaskRole, ProcessTaskSnapshot,
+    ProcessTaskState, ResourceLimit, SchedError, SchedParam, SchedPolicy, TaskClearTid,
+    TaskExitCode, TaskSnapshot, TaskState, TaskTick, TaskWaitResult, TaskWaitTarget, ThreadId,
+    UserImageInfo, UserStack, UserTask, WaitQueueId,
 };
 pub use api_v0::{ExitedTask, TaskId, TaskKind};
 pub use cpu::{

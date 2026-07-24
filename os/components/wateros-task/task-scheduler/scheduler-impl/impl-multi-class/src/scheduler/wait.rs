@@ -1,19 +1,19 @@
 // 等待队列操作与唤醒后的 CPU 归属。
-
+use super::*;
 impl MultiClassScheduler {
-    pub(super) fn allocate_wait_queue(&mut self) -> WaitQueueId {
+    pub fn allocate_wait_queue(&mut self) -> WaitQueueId {
         self.global
             .wait_queues
             .allocate_wait_queue()
     }
 
-    pub(super) fn try_release_wait_queue(&mut self, wait_queue_id : WaitQueueId) -> bool {
+    pub fn try_release_wait_queue(&mut self, wait_queue_id : WaitQueueId) -> bool {
         self.global
             .wait_queues
             .try_release_wait_queue(wait_queue_id)
     }
 
-    pub(super) fn wake_task(&mut self, task_id : TaskId) -> bool {
+    pub fn wake_task(&mut self, task_id : TaskId) -> bool {
         if !self.global
                 .wait_queues
                 .wake_task(task_id) ||
@@ -30,7 +30,7 @@ impl MultiClassScheduler {
         self.enqueue_woken_task(task_id);
         true
     }
-    pub(super) fn interrupt_task(&mut self, task_id : TaskId) -> bool {
+    pub fn interrupt_task(&mut self, task_id : TaskId) -> bool {
         if !self.global
                 .wait_queues
                 .interrupt_task(task_id) ||
@@ -48,7 +48,7 @@ impl MultiClassScheduler {
         true
     }
 
-    pub(super) fn block_task_manual(&mut self, task_id : TaskId, cpu_id : CpuId) {
+    pub fn block_task_manual(&mut self, task_id : TaskId, cpu_id : CpuId) {
         if self.global
                .registry
                .state(task_id)
@@ -65,7 +65,7 @@ impl MultiClassScheduler {
             .block_task_manual(task_id);
     }
 
-    pub(super) fn wake_child_exit_waiters(&mut self, parent_id : TaskId) {
+    pub fn wake_child_exit_waiters(&mut self, parent_id : TaskId) {
         let waiters = self.global
                           .wait_queues
                           .wake_child_exit_waiters(parent_id);
@@ -77,7 +77,7 @@ impl MultiClassScheduler {
         }
     }
 
-    pub(super) fn wake_one_in_wait_queue(&mut self, wait_queue_id : WaitQueueId) -> Option<TaskId> {
+    pub fn wake_one_in_wait_queue(&mut self, wait_queue_id : WaitQueueId) -> Option<TaskId> {
         let task_id = self.global
                           .wait_queues
                           .wake_one_in_wait_queue(wait_queue_id)?;
@@ -95,7 +95,7 @@ impl MultiClassScheduler {
         Some(task_id)
     }
 
-    pub(super) fn wake_all_in_wait_queue(&mut self, wait_queue_id : WaitQueueId) -> usize {
+    pub fn wake_all_in_wait_queue(&mut self, wait_queue_id : WaitQueueId) -> usize {
         let task_ids = self.global
                            .wait_queues
                            .wake_all_in_wait_queue(wait_queue_id);
@@ -116,12 +116,12 @@ impl MultiClassScheduler {
         }
         count
     }
-    pub(super) fn requeue_wait_queue(&mut self,
-                                     from_wait_queue_id : WaitQueueId,
-                                     to_wait_queue_id : WaitQueueId,
-                                     wake_count : usize,
-                                     requeue_count : usize)
-                                     -> usize {
+    pub fn requeue_wait_queue(&mut self,
+                              from_wait_queue_id : WaitQueueId,
+                              to_wait_queue_id : WaitQueueId,
+                              wake_count : usize,
+                              requeue_count : usize)
+                              -> usize {
         let (woken, moved, changed) = self.global
                                           .wait_queues
                                           .requeue_wait_queue(from_wait_queue_id,

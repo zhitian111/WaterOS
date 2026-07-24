@@ -1,12 +1,14 @@
 // 每 CPU 调度器状态、在线状态与只读查询。
-
+use super::*;
 impl MultiClassScheduler {
-    pub(super) fn set_timekeeper_cpu(&mut self, cpu_id : CpuId) {
+    pub fn set_timekeeper_cpu(&mut self, cpu_id : CpuId) {
         assert!(cpu_id.fits_capacity(self.cpu_states
                                          .len()),
                 "invalid scheduler timekeeper CPU {}",
                 cpu_id.raw());
-        if let Some(previous) = self.timekeeper_cpu.replace(cpu_id) {
+        if let Some(previous) = self.timekeeper_cpu
+                                    .replace(cpu_id)
+        {
             assert_eq!(previous,
                        cpu_id,
                        "scheduler timekeeper changed from CPU {} to CPU {}",
@@ -14,15 +16,13 @@ impl MultiClassScheduler {
                        cpu_id.raw());
             return;
         }
-        log::info!("[scheduler] CPU {} is global timekeeper", cpu_id.raw());
+        log::info!("[scheduler] CPU {} is global timekeeper",
+                   cpu_id.raw());
     }
-
     #[inline]
-    pub(super) fn is_timekeeper_cpu(&self, cpu_id : CpuId) -> bool {
-        self.timekeeper_cpu == Some(cpu_id)
-    }
+    pub fn is_timekeeper_cpu(&self, cpu_id : CpuId) -> bool { self.timekeeper_cpu == Some(cpu_id) }
 
-    pub(super) fn set_cpu_online(&mut self, cpu_id : CpuId) {
+    pub fn set_cpu_online(&mut self, cpu_id : CpuId) {
         if !cpu_id.fits_capacity(self.cpu_states
                                      .len())
         {
@@ -41,7 +41,7 @@ impl MultiClassScheduler {
                    cpu_id.raw());
     }
 
-    pub(super) fn online_cpu_mask(&self) -> base::cpu::CpuMask {
+    pub fn online_cpu_mask(&self) -> base::cpu::CpuMask {
         let mut mask = base::cpu::CpuMask::EMPTY;
         for cpu in &self.cpu_states {
             if cpu.online {
@@ -55,9 +55,11 @@ impl MultiClassScheduler {
         let cpu = self.cpu_states
                       .get(cpu_id.raw())?;
         let current_is_idle = cpu.current_task_id
-                                 .is_some_and(|id| self.global
-                                                        .registry
-                                                        .is_idle(id));
+                                 .is_some_and(|id| {
+                                     self.global
+                                         .registry
+                                         .is_idle(id)
+                                 });
         let current_address_space = cpu.current_task_id
                                        .and_then(|id| {
                                            let raw = self.global
@@ -72,9 +74,12 @@ impl MultiClassScheduler {
                            current_is_idle,
                            current_is_user : current_address_space.is_some(),
                            current_address_space,
-                           runnable_other : cpu.other_queue.runnable_count(),
-                           runnable_fifo : cpu.fifo_queue.runnable_count(),
-                           runnable_rr : cpu.rr_queue.runnable_count(),
+                           runnable_other : cpu.other_queue
+                                               .runnable_count(),
+                           runnable_fifo : cpu.fifo_queue
+                                              .runnable_count(),
+                           runnable_rr : cpu.rr_queue
+                                            .runnable_count(),
                            need_resched : cpu.need_resched,
                            context_switches : cpu.context_switches,
                            timer_ticks : cpu.timer_ticks,
@@ -84,7 +89,7 @@ impl MultiClassScheduler {
     }
 
     /// 返回全部已配置 CPU 的稳定快照，包含尚未 online 的 CPU。
-    pub(super) fn cpu_states(&self) -> alloc::vec::Vec<(CpuId, CpuSnapshot)> {
+    pub fn cpu_states(&self) -> alloc::vec::Vec<(CpuId, CpuSnapshot)> {
         let mut states = alloc::vec::Vec::with_capacity(self.cpu_states
                                                             .len());
         for cpu in &self.cpu_states {
@@ -101,7 +106,7 @@ impl MultiClassScheduler {
             .running_cpu_id(task_id)
     }
 
-    pub(super) fn cpu_load(&self, cpu_id : CpuId) -> usize {
+    pub fn cpu_load(&self, cpu_id : CpuId) -> usize {
         self.cpu_states[cpu_id.raw()].rr_queue
                                      .runnable_count() +
         self.cpu_states[cpu_id.raw()].fifo_queue
