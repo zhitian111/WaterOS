@@ -1,0 +1,13 @@
+[package]
+name = "wateros-table-format"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Allocation-free no_std text table formatting over core::fmt"
+repository = "https://github.com/zhitian111/WaterOS"
+readme = "README.md"
+keywords = ["table", "no-std", "format", "embedded"]
+categories = ["no-std", "text-processing"]
+
+[dependencies]
+unicode-width = { version = "0.1.14", default-features = false }

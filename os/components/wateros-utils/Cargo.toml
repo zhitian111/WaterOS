@@ -4,3 +4,4 @@
     edition = "2024"
 
 [dependencies]
+table_format = { package = "wateros-table-format", path = "table-format" }

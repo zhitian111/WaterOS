@@ -8,8 +8,9 @@
 extern crate alloc;
 
 use alloc::string::String;
-use core::fmt::Write;
+use core::fmt::{self, Display, Write};
 use core::sync::atomic::{AtomicBool, Ordering};
+use utils::table_format::{Alignment, Cell, Column, FixedTable, Overflow};
 
 /// 每 tick 为 10ms；500ms 刷新一次既足够观察调度状态，也不会长期占用 UART。
 const REFRESH_INTERVAL_TICKS : u64 = 50;
@@ -18,6 +19,14 @@ const MAX_CPUS : usize = base_config::task::MAX_CPUS;
 const PANEL_HEIGHT : usize = MAX_CPUS + 6;
 /// 普通 shell / 日志从这一行开始滚动，面板固定在它之前。
 const FIRST_SCROLLABLE_ROW : usize = PANEL_HEIGHT + 1;
+const CPU_COLUMNS : [Column; 7] =
+    [Column::new(4, Alignment::Right).overflow(Overflow::Truncate(">")),
+     Column::new(14, Alignment::Right).overflow(Overflow::Truncate(">")),
+     Column::new(6, Alignment::Left).overflow(Overflow::Truncate(">")),
+     Column::new(9, Alignment::Right).overflow(Overflow::Truncate(">")),
+     Column::new(4, Alignment::Left).overflow(Overflow::Truncate(">")),
+     Column::new(6, Alignment::Right).overflow(Overflow::Truncate(">")),
+     Column::new(8, Alignment::Right).overflow(Overflow::Truncate(">"))];
 
 static INITIALIZED : AtomicBool = AtomicBool::new(false);
 static STARTED : AtomicBool = AtomicBool::new(false);
@@ -76,74 +85,92 @@ fn render_frame(first_frame : bool) -> String {
                      tick);
     let _ = writeln!(frame,
                      "|                                                                         |");
-    let _ = writeln!(frame,
-                     "+------+----------------+--------+-----------+------+--------+----------+");
-    let _ = writeln!(frame,
-                     "| CPU  | Current Task   | State  | Q O/F/R   | Rsch | Switch | Timer    |");
-    let _ = writeln!(frame,
-                     "+------+----------------+--------+-----------+------+--------+----------+");
+    if let Ok(mut table) = FixedTable::new(&CPU_COLUMNS).begin(&mut frame) {
+        let _ = table.row(&[Cell::text("CPU"),
+                            Cell::text("Current Task"),
+                            Cell::text("State"),
+                            Cell::text("Q O/F/R"),
+                            Cell::text("Rsch"),
+                            Cell::text("Switch"),
+                            Cell::text("Timer")]);
+        let _ = table.separator();
 
-    for raw in 0..MAX_CPUS {
-        let cpu_id = task::CpuId::from_raw(raw);
-        let snapshot = states.iter()
-                             .find_map(|(id, state)| (*id == cpu_id).then_some(state));
-        match snapshot {
-            Some(state) => {
-                let current = task_id_text(state.current_task_id);
-                let queues = alloc::format!("{}/{}/{}",
-                                            state.runnable_other,
-                                            state.runnable_fifo,
-                                            state.runnable_rr);
-                let _ = writeln!(frame,
-                                 "| {:>4} | {:>14} | {:<6} | {:>9} | {:<4} | {:>6} | {:>8} |",
-                                 raw,
-                                 current,
-                                 cpu_state_label(state),
-                                 queues,
-                                 if state.need_resched { "YES" } else { "-" },
-                                 state.context_switches,
-                                 state.timer_ticks);
-            }
-            None => {
-                let _ = writeln!(frame,
-                                 "| {:>4} | {:>14} | {:<6} | {:>9} | {:<4} | {:>6} | {:>8} |",
-                                 raw,
-                                 "-",
-                                 "-",
-                                 "-",
-                                 "-",
-                                 "-",
-                                 "-");
+        for raw in 0..MAX_CPUS {
+            let cpu_id = task::CpuId::from_raw(raw);
+            let snapshot = states.iter()
+                                 .find_map(|(id, state)| (*id == cpu_id).then_some(state));
+            match snapshot {
+                Some(state) => {
+                    let current = TaskIdText(&state.current_task_id);
+                    let queues = QueueCounts(state);
+                    let _ = table.row(&[Cell::display(&raw),
+                                        Cell::display(&current),
+                                        Cell::text(cpu_state_label(state)),
+                                        Cell::display(&queues),
+                                        Cell::text(if state.need_resched { "YES" } else { "-" }),
+                                        Cell::display(&state.context_switches),
+                                        Cell::display(&state.timer_ticks)]);
+                }
+                None => {
+                    let _ = table.row(&[Cell::display(&raw),
+                                        Cell::text("-"),
+                                        Cell::text("-"),
+                                        Cell::text("-"),
+                                        Cell::text("-"),
+                                        Cell::text("-"),
+                                        Cell::text("-")]);
+                }
             }
         }
+        let _ = table.finish();
     }
-    let _ = writeln!(frame,
-                     "+------+----------------+--------+-----------+------+--------+----------+");
+    frame.push('\n');
 
     if first_frame {
         // DECSTBM：仅第 15 行至屏幕底部可滚动。999 会由 ANSI 终端裁剪为实际
         // 最后一行，比省略底边界在部分终端上更可靠。
         let _ = write!(frame,
                        "\x1b[{};999r\x1b[{};1H",
-                       FIRST_SCROLLABLE_ROW,
-                       FIRST_SCROLLABLE_ROW);
+                       FIRST_SCROLLABLE_ROW, FIRST_SCROLLABLE_ROW);
     } else {
         frame.push_str("\x1b8");
     }
     frame
 }
 
-/// `Option<TaskId>` 的显示文本；刷新任务不是中断路径，少量分配可接受。
-fn task_id_text(id : Option<task::TaskId>) -> String {
-    id.map(|id| alloc::format!("{}", id))
-      .unwrap_or_else(|| String::from("-"))
+/// 不分配地显示当前任务 ID。
+struct TaskIdText<'a>(&'a Option<task::TaskId>);
+
+impl Display for TaskIdText<'_> {
+    fn fmt(&self, formatter : &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(id) => write!(formatter, "{}", id),
+            None => formatter.write_str("-"),
+        }
+    }
+}
+
+/// 不分配地显示 Other/FIFO/RR 三类可运行队列长度。
+struct QueueCounts<'a>(&'a task::CpuSnapshot);
+
+impl Display for QueueCounts<'_> {
+    fn fmt(&self, formatter : &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter,
+               "{}/{}/{}",
+               self.0
+                   .runnable_other,
+               self.0.runnable_fifo,
+               self.0.runnable_rr)
+    }
 }
 
 /// 一眼区分离线、尚未首次切换、idle、用户任务与内核任务。
 fn cpu_state_label(state : &task::CpuSnapshot) -> &'static str {
     if !state.online {
         "OFF"
-    } else if state.current_task_id.is_none() {
+    } else if state.current_task_id
+                   .is_none()
+    {
         "BOOT"
     } else if state.current_is_idle {
         "IDLE"
