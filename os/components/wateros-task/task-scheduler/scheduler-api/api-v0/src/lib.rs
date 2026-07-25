@@ -8,11 +8,11 @@
 
 extern crate alloc;
 
+mod cfs_queue;
 mod queues;
 mod registry;
 mod scheduler;
 mod wait_queues;
-
 pub use queues::*;
 pub use registry::TaskRegistry;
 pub use scheduler::*;

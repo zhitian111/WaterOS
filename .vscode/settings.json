@@ -1,0 +1,55 @@
+{
+    "todo-tree.general.tags": [
+        "TODO",
+        "FIXME",
+        "BUG",
+        "CHANGE",
+        "HACK",
+        "NOTE",
+        "OTHER",
+        "FIFO",
+        "RR"
+    ],
+    "todo-tree.highlights.customHighlight": {
+        "TODO":     { "icon": "check",  "type": "line", "background": "#2d7d46" },
+        "FIXME":    { "icon": "bug",    "type": "line", "background": "#c91e1e" },
+        "BUG":      { "icon": "bug",    "type": "line", "background": "#c91e1e" },
+        "CHANGE":   { "icon": "tools",  "type": "line", "background": "#ff6600" },
+        "HACK":     { "icon": "flame",  "type": "line", "background": "#8b5cf6" },
+        "NOTE":     { "icon": "note",   "type": "line", "background": "#1e6bb8" },
+        "OTHER":    { "icon": "list",   "type": "line", "background": "#607d8b" },
+        "FIFO":     { "icon": "star",   "type": "line", "background": "#9c27b0" },
+        "RR":       { "icon": "sync",   "type": "line", "background": "#00bcd4" }
+    },
+    "todohighlight.keywords": [
+        "CHANGE:",
+        "HACK:",
+        "BUG:",
+        "NOTE:",
+        "OTHER:",
+        "FIFO:",
+        "RR:"
+    ],
+    "better-todo-tree.general.tags": [
+        "TODO",
+        "FIXME",
+        "BUG",
+        "CHANGE",
+        "HACK",
+        "NOTE",
+        "OTHER",
+        "FIFO",
+        "RR"
+    ],
+    "better-todo-tree.highlights.customHighlight": {
+        "TODO":   { "icon": "check", "type": "line", "background": "#2d7d46" },
+        "FIXME":  { "icon": "bug",   "type": "line", "background": "#c91e1e" },
+        "BUG":    { "icon": "bug",   "type": "line", "background": "#c91e1e" },
+        "CHANGE": { "icon": "tools", "type": "line", "background": "#ff6600" },
+        "HACK":   { "icon": "flame", "type": "line", "background": "#8b5cf6" },
+        "NOTE":   { "icon": "note",  "type": "line", "background": "#1e6bb8" },
+        "OTHER":  { "icon": "list",  "type": "line", "background": "#607d8b" },
+        "FIFO":   { "icon": "star",  "type": "line", "background": "#9c27b0" },
+        "RR":     { "icon": "sync",  "type": "line", "background": "#00bcd4" }
+    }
+}

@@ -32,7 +32,7 @@ impl OtherQueue {
                current_ticks : 0,
                versions : BTreeMap::new() }
     }
-    /// 记录当前任务消耗的 tick 数；返回是否已达到最大值。
+    /// 增加tick；返回是否已达到最大值。
     pub fn tick(&mut self) -> bool {
         self.current_ticks = self.current_ticks
                                  .saturating_add(1);
@@ -198,7 +198,6 @@ use config::task::MAX_RT_TICKS_PER_TASK;
 
 fn priority_from_index(index : usize) -> i32 { (index as i32) + RT_PRIORITY_MIN }
 
-/// RR tick 处理结果。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RrTickAction {
     /// 继续运行当前 RR 任务。

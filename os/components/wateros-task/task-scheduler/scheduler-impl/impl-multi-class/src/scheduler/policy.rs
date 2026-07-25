@@ -4,7 +4,7 @@ impl MultiClassScheduler {
     pub fn apply_sched_policy_change(&mut self,
                                      task_id : TaskId,
                                      policy : SchedPolicy,
-                                     param : SchedParam,
+                                     priority : Priority,
                                      cpu_id : CpuId)
                                      -> Result<SchedPolicyChangeAction, SchedError> {
         if !self.registry
@@ -18,7 +18,7 @@ impl MultiClassScheduler {
 
         self.detach_from_all_cpus(task_id);
         if !self.registry
-                .set_task_sched(task_id, policy, param.priority)
+                .set_task_sched(task_id, policy, priority)
         {
             return Err(SchedError::NoSuchTask);
         }

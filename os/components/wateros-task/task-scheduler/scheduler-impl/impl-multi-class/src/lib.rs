@@ -12,14 +12,14 @@ use core::mem::MaybeUninit;
 use core::panic::Location;
 use core::sync::atomic::{compiler_fence, AtomicBool, Ordering};
 use task_api::{
-    CpuId, ExitedTask, KernelTaskEntry, TaskExitCode, TaskId, TaskSnapshot, TaskTick,
+    CpuId, ExitedTask, KernelTaskEntry, Priority, TaskExitCode, TaskId, TaskSnapshot, TaskTick,
     TaskWaitResult, TaskWaitTarget, UserTask, WaitQueueId,
 };
 
 mod scheduler;
 pub use api_v0::{CpuSnapshot, SchedPolicyChangeAction, ScheduleReason};
 use scheduler::MultiClassScheduler;
-use task_api::{SchedError, SchedParam, SchedPolicy};
+use task_api::{SchedError, SchedPolicy};
 
 /// 与本实现 crate 中 `MultiClassScheduler` 使用的 trap
 /// 帧类型一致，供聚合层类型别名复用。
@@ -840,13 +840,13 @@ pub fn online_cpu_mask() -> CpuMask {
 /// 应用调度策略变更（完整版：detach/入队/必要时 RescheduleNow）。
 pub fn apply_sched_policy_change(task_id : TaskId,
                                  policy : SchedPolicy,
-                                 param : SchedParam)
+                                 priority : Priority)
                                  -> Result<(), SchedError> {
     let _guard = InterruptGuard::new();
     let action = with_scheduler(|scheduler| {
         scheduler.apply_sched_policy_change(task_id,
                                             policy,
-                                            param,
+                                            priority,
                                             cpu::current_cpu_id())
     })?;
     match action {

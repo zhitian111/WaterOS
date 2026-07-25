@@ -15,9 +15,9 @@ use arch::task::ActiveArchTaskContext as TaskContext;
 use base::cpu::CpuMask;
 use config::task::MAX_CPUS;
 use task_api::{
-    AddressSpaceHandle, CpuId, ExitedTask, KernelTaskEntry, SchedError, SchedParam, SchedPolicy,
-    TaskExitCode, TaskId, TaskSnapshot, TaskState, TaskTick, TaskWaitResult, TaskWaitTarget,
-    UserTask, WaitQueueId, IDLE_TASK_ID,
+    AddressSpaceHandle, CpuId, ExitedTask, KernelTaskEntry, SchedError, SchedPolicy, TaskExitCode,
+    TaskId, TaskSnapshot, TaskState, TaskTick, TaskWaitResult, TaskWaitTarget, UserTask,
+    WaitQueueId, IDLE_TASK_ID,
 };
 
 use api_v0::ScheduleReason;
@@ -59,9 +59,12 @@ impl MultiClassScheduler {
                              .len()
         {
             // 重置 per-CPU 队列（init 可重入）
+            // OTHER: 初始化 per-CPU OtherQueue
             self.cpu_states[cpu_id].other_queue
                                    .init();
+            // FIFO: 创建 per-CPU FifoQueue
             self.cpu_states[cpu_id].fifo_queue = FifoQueue::new();
+            // RR: 创建 per-CPU RrQueue
             self.cpu_states[cpu_id].rr_queue = RrQueue::new();
             self.cpu_states[cpu_id].online = cpu_id == boot_cpu.raw();
             self.cpu_states[cpu_id].need_resched = false;
@@ -126,7 +129,6 @@ impl MultiClassScheduler {
                        "task is current on more than one CPU");
         }
     }
-
     /// 首次任务切换（冷启动入口）。
     pub(super) fn prepare_first_switch(&mut self, cpu_id : CpuId) -> SwitchPair {
         let next_task_id = self.pick_next_runnable(cpu_id);
@@ -204,6 +206,7 @@ impl MultiClassScheduler {
         {
             return None;
         }
+        // OTHER: 重置时间片计数，当前任务已确认要让出 CPU
         self.cpu_states[cpu_id.raw()].other_queue
                                      .reset_ticks();
         Some(())
@@ -233,8 +236,10 @@ impl MultiClassScheduler {
         let quantum_expired = match current {
             None => false,
             Some((current_id, snap)) => match snap.sched_policy {
+                // OTHER: 时间片 tick+1，达到上限则返回 true 触发切换
                 SchedPolicy::Other => self.cpu_states[cpu_id.raw()].other_queue
                                                                    .tick(),
+                // RR: 时间片 tick+1，由 RrQueue 内部判断是否耗尽
                 SchedPolicy::Rr => {
                     self.cpu_states[cpu_id.raw()].rr_queue
                                                  .tick(current_id, snap.sched_priority)
@@ -324,6 +329,7 @@ impl MultiClassScheduler {
             self.detach_from_run_queues(current_task_id, cpu_id);
         }
         if matches!(queue_target, QueueTarget::Ready) && current_sched_policy == SchedPolicy::Rr {
+            // RR: 当前任务回 Ready 队列前清除运行状态
             self.cpu_states[cpu_id.raw()].rr_queue
                                          .clear_running();
         }
@@ -354,6 +360,7 @@ impl MultiClassScheduler {
                 }
                 panic!("exit_current called on idle task — this should never happen");
             }
+            // RR: 选出了自己且非退出，重新标记运行状态
             if sched_policy == SchedPolicy::Rr {
                 self.cpu_states[cpu_id.raw()].rr_queue
                                              .note_running(next_task_id, sched_priority);
@@ -362,7 +369,8 @@ impl MultiClassScheduler {
             return None;
         }
 
-        // 选出不同任务
+        // 选出不同任务 → 返回切换对，调用方执行 __switch
+        // RR: 记录新选中任务的运行状态（用于时间片轮转）
         if sched_policy == SchedPolicy::Rr {
             self.cpu_states[cpu_id.raw()].rr_queue
                                          .note_running(next_task_id, sched_priority);
@@ -383,6 +391,7 @@ impl MultiClassScheduler {
                                 cpu_id : CpuId)
                                 -> Option<SwitchPair> {
         // ===== Phase 1: 前置处理 =====
+        //OTHER: 重置时间片计数
         self.cpu_states[cpu_id.raw()].other_queue
                                      .reset_ticks();
         if self.is_timekeeper_cpu(cpu_id) {
@@ -443,7 +452,7 @@ impl MultiClassScheduler {
 
     /// 按优先级从就绪队列中选择下一个可运行任务。
     fn pick_next_runnable(&mut self, cpu_id : CpuId) -> TaskId {
-        // 1) RR 当前任务（时间片未用完）
+        // 1) RR: 时间片未用完时继续当前任务
         if let Some(current_id) = self.cpu_states[cpu_id.raw()].current_task_id {
             let snap = self.registry
                            .task_snapshot(current_id);
@@ -457,20 +466,23 @@ impl MultiClassScheduler {
         }
         // 2) FIFO → 3) RR，按优先级 99→1 穿插扫描
         for priority in (1..=99).rev() {
+            // FIFO: 同优先级 FIFO 出队
             if let Some(task_id) = self.cpu_states[cpu_id.raw()].fifo_queue
                                                                 .pop_front_at_priority(priority)
             {
+                // RR: 选中 FIFO 任务，清除 RR 运行状态
                 self.cpu_states[cpu_id.raw()].rr_queue
                                              .clear_running();
                 return task_id;
             }
+            // RR: 同优先级 RR 出队
             if let Some(task_id) = self.cpu_states[cpu_id.raw()].rr_queue
                                                                 .pick_at_priority(priority)
             {
                 return task_id;
             }
         }
-        // 4) OTHER → 5) 当前 CPU 的 IDLE
+        // 4) OTHER: 从队列取出下一个可运行任务
         self.cpu_states[cpu_id.raw()].rr_queue
                                      .clear_running();
         self.cpu_states[cpu_id.raw()]
@@ -610,12 +622,15 @@ impl MultiClassScheduler {
         let snap = self.registry
                        .task_snapshot(task_id);
         match snap.sched_policy {
+            // OTHER: 版本号递增入队尾部
             SchedPolicy::Other => self.cpu_states[cpu_id.raw()].other_queue
                                                                .enqueue_ready_task(task_id),
+            // FIFO: 按优先级入队
             SchedPolicy::Fifo => {
                 self.cpu_states[cpu_id.raw()].fifo_queue
                                              .enqueue(task_id, snap.sched_priority)
             }
+            // RR: 解除阻塞后入队（放入同优先级环尾）
             SchedPolicy::Rr => {
                 self.cpu_states[cpu_id.raw()].rr_queue
                                              .on_task_unblocked(task_id, snap.sched_priority)
@@ -630,10 +645,13 @@ impl MultiClassScheduler {
     }
 
     fn remove_from_cpu_runqueue(&mut self, task_id : TaskId, cpu_id : CpuId) {
+        // OTHER:移除task
         self.cpu_states[cpu_id.raw()].other_queue
                                      .detach_task(task_id);
+        // FIFO: 从优先级队列移除
         self.cpu_states[cpu_id.raw()].fifo_queue
                                      .remove(task_id);
+        // RR: 从环形缓冲区移除
         self.cpu_states[cpu_id.raw()].rr_queue
                                      .remove(task_id);
     }
@@ -649,24 +667,26 @@ impl MultiClassScheduler {
 
     /// 从所有 CPU 的就绪队列摘除任务（用于 kill / discard 等跨 CPU 操作）。
     fn detach_from_all_cpus(&mut self, task_id : TaskId) {
+        // OTHER: 从所有 CPU 的 OtheQueue 中摘除
         for cpu in &mut self.cpu_states {
             cpu.other_queue
                .detach_task(task_id);
+            // FIFO: 从所有 CPU 的 FifoQueue 中移除
             cpu.fifo_queue
                .remove(task_id);
+            // RR: 从所有 CPU 的 RrQueue 中移除
             cpu.rr_queue
                .remove(task_id);
         }
     }
-
     /// 在所有 CPU 的 OtherQueue 上清理 version 表项（用于 reap / discard）。
     fn forget_task_on_all_cpus(&mut self, task_id : TaskId) {
+        // OTHER: 回收 version 表项，防止无限增长
         for cpu in &mut self.cpu_states {
             cpu.other_queue
                .forget_task(task_id);
         }
     }
-
     /// 到期睡眠/超时任务到就绪队列。
     fn enqueue_woken_and_timeout_tasks(&mut self) {
         for task_id in &self.wait_queues
@@ -692,8 +712,10 @@ impl MultiClassScheduler {
 
     /// 就绪队列中最高实时任务优先级（不含 IDLE）。
     fn highest_ready_rt_priority(&self, cpu_id : CpuId) -> Option<i32> {
-        match (self.cpu_states[cpu_id.raw()].fifo_queue
+        match (// FIFO: 获取最高可运行优先级
+               self.cpu_states[cpu_id.raw()].fifo_queue
                                             .highest_runnable_priority(),
+               // RR: 获取最高就绪优先级
                self.cpu_states[cpu_id.raw()].rr_queue
                                             .highest_ready_priority())
         {
@@ -708,6 +730,7 @@ impl MultiClassScheduler {
         {
             return self.highest_ready_rt_priority(cpu_id)
                        .is_some() ||
+                   // OTHER: 检查是否有 OTHER 任务可运行
                    self.cpu_states[cpu_id.raw()].other_queue
                                                 .has_runnable();
         }

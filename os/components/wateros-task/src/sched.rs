@@ -1,7 +1,7 @@
 //! 调度策略与 CPU 亲和性原语。
 
 use api_v0::{
-    CpuMask, ProcessId, SchedError, SchedParam, SchedPolicy, TaskId, ThreadId,
+    CpuMask, Priority, ProcessId, SchedError, SchedPolicy, TaskId, ThreadId,
     SCHED_CPU_MASK_MIN_BYTES, SCHED_CPU_MASK_RET_BYTES, SCHED_NICE_MAX, SCHED_NICE_MIN,
 };
 
@@ -116,21 +116,10 @@ fn ensure_task_exists(task_id : TaskId) -> Result<(), SchedError> {
 }
 
 // 按策略校验 priority 取值范围。
-fn validate_policy_param(policy : SchedPolicy, param : SchedParam) -> Result<(), SchedError> {
-    match policy {
-        SchedPolicy::Other => {
-            if param.priority != 0 {
-                Err(SchedError::InvalidArg)
-            } else {
-                Ok(())
-            }
-        }
-        SchedPolicy::Fifo | SchedPolicy::Rr => {
-            if (1..=99).contains(&param.priority) {
-                Ok(())
-            } else {
-                Err(SchedError::InvalidArg)
-            }
-        }
+fn validate_policy_param(policy : SchedPolicy, priority : Priority) -> Result<(), SchedError> {
+    if (1..=99).contains(&priority) {
+        Ok(())
+    } else {
+        Err(SchedError::InvalidArg)
     }
 }
