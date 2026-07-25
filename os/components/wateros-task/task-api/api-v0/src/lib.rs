@@ -22,8 +22,8 @@ pub use process::{
     TaskClearTid, ThreadId,
 };
 pub use sched::{
-    Nice, Priority, SchedError, SchedPolicy, VRunTime, SCHED_CPU_MASK_MIN_BYTES,
-    SCHED_CPU_MASK_RET_BYTES, SCHED_NICE_MAX, SCHED_NICE_MIN,
+    Nice, Priority, SchedError, SchedPolicy, VRunTime, BUCKET_COUNT, PRIORITY_MAX, PRIORITY_MIN,
+    SCHED_CPU_MASK_MIN_BYTES, SCHED_CPU_MASK_RET_BYTES, SCHED_NICE_MAX, SCHED_NICE_MIN,
 };
 pub use snapshot::{TaskSnapshot, TaskTrapSnapshot};
 pub use task::{

@@ -49,3 +49,6 @@ pub enum SchedError {
 pub const SCHED_CPU_MASK_RET_BYTES : usize = 8;
 /// 查询 affinity 时用户缓冲区的最小长度。
 pub const SCHED_CPU_MASK_MIN_BYTES : usize = 8;
+pub const PRIORITY_MIN : i32 = 1;
+pub const PRIORITY_MAX : i32 = 99;
+pub const BUCKET_COUNT : usize = (PRIORITY_MAX - PRIORITY_MIN + 1) as usize;

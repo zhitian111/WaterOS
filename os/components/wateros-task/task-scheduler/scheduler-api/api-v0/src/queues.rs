@@ -193,9 +193,6 @@ impl FifoQueue {
 }
 
 
-use config::task::MAX_RT_TICKS_PER_TASK;
-
-
 fn priority_from_index(index : usize) -> i32 { (index as i32) + RT_PRIORITY_MIN }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -233,7 +230,7 @@ impl RrQueue {
     pub fn tick(&mut self, current : TaskId, priority : i32) -> bool {
         if self.current != Some((current, priority)) {
             self.current = Some((current, priority));
-            self.remaining_ticks = MAX_RT_TICKS_PER_TASK;
+            self.remaining_ticks = MAX_TICKS_PER_TASK;
         }
         if self.remaining_ticks <= 1 {
             self.remaining_ticks = 0;
@@ -290,7 +287,7 @@ impl RrQueue {
         let index = bucket_index(priority)?;
         while let Some(task_id) = self.buckets[index].pop_front() {
             self.current = Some((task_id, priority));
-            self.remaining_ticks = MAX_RT_TICKS_PER_TASK;
+            self.remaining_ticks = MAX_TICKS_PER_TASK;
             return Some(task_id);
         }
         None
@@ -299,7 +296,7 @@ impl RrQueue {
     /// 记录任务成为当前 RR 运行者（从 FIFO/OTHER 切换过来时重置时间片）。
     pub fn note_running(&mut self, task_id : TaskId, priority : i32) {
         self.current = Some((task_id, priority));
-        self.remaining_ticks = MAX_RT_TICKS_PER_TASK;
+        self.remaining_ticks = MAX_TICKS_PER_TASK;
     }
 
     /// 清除当前 RR 运行状态（切换到非 RR 任务时）。

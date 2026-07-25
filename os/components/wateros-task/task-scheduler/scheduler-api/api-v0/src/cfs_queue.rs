@@ -24,6 +24,7 @@ impl CfsQueue {
             .or_insert_with(VecDeque::new)
             .push_back(task_id);
     }
+    //任务出队
     pub fn dequeue(&mut self, task_id : TaskId, vruntime : VRunTime) {
         self.vruntime_for_task
             .remove(&task_id);
@@ -47,7 +48,7 @@ impl CfsQueue {
                      .pop_front()
             })
     }
-
+    // 任务 tick 更新 vruntime，并返回是否需要抢占。
     pub fn tick(&mut self, task_id : TaskId, nice : Nice, vruntime : VRunTime) -> bool {
         let weight = NICE_TO_WEIGHT[(nice + 20) as usize];
         let delta = NICE_0_WEIGHT / weight;

@@ -22,11 +22,6 @@ pub const MAX_TICKS_PER_TASK : u64 = 50;
 /// 高 churn 场景（如 lat_ctx fork N 进程 pipe 乒乓）下 stale 会膨胀 pick 成本；
 /// compact 仅删除已失效条目，不改变调度语义。
 pub const READY_QUEUE_STALE_COMPACT_THRESHOLD : usize = 8;
-
-/// 每个 `SCHED_RR` 任务在被 Tick 抢占前可连续运行的逻辑 tick 数。
-///
-/// 实际时间片 = `MAX_RT_TICKS_PER_TASK` × 定时器间隔（当前为 10ms/tick）。
-pub const MAX_RT_TICKS_PER_TASK : u64 = 10;
 /// 内核任务栈大小（字节）。
 pub const KERNEL_TASK_STACK_SIZE : usize = 32 * 1024;
 pub const NICE_TO_WEIGHT : [u64; 40] = [
