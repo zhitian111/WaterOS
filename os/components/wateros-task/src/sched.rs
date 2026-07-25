@@ -38,15 +38,13 @@ pub fn resolve_sched_pid(pid : isize) -> Result<TaskId, SchedError> {
 /// 查询任务的有效调度策略。
 pub fn get_scheduler_policy(task_id : TaskId) -> Result<SchedPolicy, SchedError> {
     ensure_task_exists(task_id)?;
-    Ok(scheduler::task_snapshot(task_id).expect("task exists")
-                                        .sched_policy)
+    scheduler::policy(task_id)
 }
 
-/// 查询任务的调度参数。
-pub fn get_param(task_id : TaskId) -> Result<SchedParam, SchedError> {
+/// 查询任务的调度参数（优先级）。
+pub fn get_param(task_id : TaskId) -> Result<Priority, SchedError> {
     ensure_task_exists(task_id)?;
-    Ok(SchedParam { priority : scheduler::task_snapshot(task_id).expect("task exists")
-                                                                .sched_priority })
+    scheduler::priority(task_id)
 }
 
 /// 返回写入 userspace 的有效 mask 字节数。
@@ -65,20 +63,19 @@ pub fn validate_cpu_affinity_buf_len(cpusetsize : usize) -> Result<(), SchedErro
 /// 设置调度策略。
 pub fn set_scheduler_policy(task_id : TaskId,
                             policy : SchedPolicy,
-                            param : SchedParam)
+                            priority : Priority)
                             -> Result<(), SchedError> {
     ensure_task_exists(task_id)?;
-    validate_policy_param(policy, param)?;
-    scheduler::apply_sched_policy_change(task_id, policy, param)
+    validate_policy_param(policy, priority)?;
+    scheduler::apply_sched_policy_change(task_id, policy, priority)
 }
 
 /// 设置调度参数（保持当前 policy 不变）。
-pub fn set_param(task_id : TaskId, param : SchedParam) -> Result<(), SchedError> {
+pub fn set_param(task_id : TaskId, priority : Priority) -> Result<(), SchedError> {
     ensure_task_exists(task_id)?;
     let policy = get_scheduler_policy(task_id)?;
-    validate_policy_param(policy, param)?;
-    let full_param = SchedParam { priority : param.priority };
-    scheduler::apply_sched_policy_change(task_id, policy, full_param)
+    validate_policy_param(policy, priority)?;
+    scheduler::apply_sched_policy_change(task_id, policy, priority)
 }
 
 /// 设置任务 CPU 亲和性。目标 mask 必须只包含已配置且至少一个 online CPU。

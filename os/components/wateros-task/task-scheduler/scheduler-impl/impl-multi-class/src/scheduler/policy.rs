@@ -6,7 +6,7 @@ impl MultiClassScheduler {
                                      policy : SchedPolicy,
                                      priority : Priority,
                                      cpu_id : CpuId)
-                                     -> Result<SchedPolicyChangeAction, SchedError> {
+                                     -> Result<bool, SchedError> {
         if !self.registry
                 .is_schedulable(task_id)
         {
@@ -27,37 +27,10 @@ impl MultiClassScheduler {
         }
         // 如果当前 CPU 上有任务在运行，判断是否需要抢占。
         if let Some(current_id) = self.cpu_states[cpu_id.raw()].current_task_id {
-            if current_id != task_id {
-                let new = self.registry
-                              .task_snapshot(task_id);
-                let current = self.registry
-                                  .task_snapshot(current_id);
-                if Self::cmp_priority(new.sched_policy,
-                                      new.sched_priority,
-                                      current.sched_policy,
-                                      current.sched_priority)
-                {
-                    return Ok(SchedPolicyChangeAction::RescheduleNow);
-                }
+            if current_id != task_id && self.ready_task_should_preempt(current_id, cpu_id) {
+                return Ok(true);
             }
         }
-        Ok(SchedPolicyChangeAction::NoReschedule)
-    }
-
-    fn cmp_priority(challenger_policy : SchedPolicy,
-                    challenger_priority : i32,
-                    runner_policy : SchedPolicy,
-                    runner_priority : i32)
-                    -> bool {
-        let challenger_class = match challenger_policy {
-            SchedPolicy::Other => 0u8,
-            SchedPolicy::Fifo | SchedPolicy::Rr => 1u8,
-        };
-        let runner_class = match runner_policy {
-            SchedPolicy::Other => 0u8,
-            SchedPolicy::Fifo | SchedPolicy::Rr => 1u8,
-        };
-        challenger_class > runner_class ||
-        (challenger_class == runner_class && challenger_priority > runner_priority)
+        Ok(false)
     }
 }

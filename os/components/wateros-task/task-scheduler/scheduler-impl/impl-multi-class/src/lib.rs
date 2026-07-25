@@ -17,7 +17,7 @@ use task_api::{
 };
 
 mod scheduler;
-pub use api_v0::{CpuSnapshot, SchedPolicyChangeAction, ScheduleReason};
+pub use api_v0::{CpuSnapshot, ScheduleReason};
 use scheduler::MultiClassScheduler;
 use task_api::{SchedError, SchedPolicy};
 
@@ -849,13 +849,10 @@ pub fn apply_sched_policy_change(task_id : TaskId,
                                             priority,
                                             cpu::current_cpu_id())
     })?;
-    match action {
-        SchedPolicyChangeAction::NoReschedule => Ok(()),
-        SchedPolicyChangeAction::RescheduleNow => {
-            suspend_current_and_run_next();
-            Ok(())
-        }
+    if action {
+        suspend_current_and_run_next();
     }
+    Ok(())
 }
 pub fn set_affinity(task_id : TaskId, mask : CpuMask) -> Result<(), SchedError> {
     let cpu_id = cpu::current_cpu_id();
@@ -887,4 +884,12 @@ pub fn set_nice(task_id : TaskId, nice : i8) -> Result<(), SchedError> {
 pub fn get_nice(task_id : TaskId) -> Result<i8, SchedError> {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.get_nice(task_id))
+}
+pub fn policy(task_id : TaskId) -> Result<SchedPolicy, SchedError> {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.policy(task_id))
+}
+pub fn priority(task_id : TaskId) -> Result<Priority, SchedError> {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.priority(task_id))
 }

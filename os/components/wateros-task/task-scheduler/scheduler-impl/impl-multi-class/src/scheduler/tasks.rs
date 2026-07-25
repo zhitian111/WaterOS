@@ -289,4 +289,12 @@ impl MultiClassScheduler {
         self.registry
             .get_nice(task_id)
     }
+    pub fn priority(&self, task_id : TaskId) -> Result<Priority, SchedError> {
+        self.registry
+            .priority(task_id)
+    }
+    pub fn policy(&self, task_id : TaskId) -> Result<SchedPolicy, SchedError> {
+        self.registry
+            .policy(task_id)
+    }
 }

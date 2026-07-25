@@ -8,17 +8,10 @@ use core::mem::size_of;
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
-use task::{CpuMask, SchedError, SchedParam, SchedPolicy};
+use task::{CpuMask, SchedError, SchedPolicy};
 
 use crate::fallible_buf::{try_kbuf, SCHED_CPUSET_MAX};
-use crate::user_copy::{copy_from_user, copy_from_user_struct, copy_to_user, copy_to_user_struct};
-
-// 本结构代码由AI完成
-#[repr(C)]
-#[derive(Clone, Copy, Default)]
-struct UserSchedParam {
-    sched_priority : i32,
-}
+use crate::user_copy::{copy_from_user, copy_to_user};
 
 // 本结构代码由AI完成
 #[repr(C)]
@@ -69,22 +62,24 @@ fn read_user_sched_attr_size(attr_ptr : usize) -> Result<usize, ErrNo> {
     Ok(u32::from_ne_bytes(raw_size) as usize)
 }
 
+
 pub(crate) fn sys_sched_setparam(args : SyscallArgs) -> UserRet {
     let pid = args.arg(0) as isize;
     let param_ptr = args.arg(1);
     if param_ptr == 0 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
-    let user_param = match copy_from_user_struct::<UserSchedParam>(param_ptr) {
-        Ok(value) => value,
-        Err(e) => return UserRet::from_error(e),
-    };
+    let mut raw_priority = [0u8; 4];
+    if let Err(e) = copy_from_user(&mut raw_priority, param_ptr) {
+        return UserRet::from_error(e);
+    }
     let task_id = match task::resolve_sched_pid(pid) {
         Ok(id) => id,
         Err(e) => return UserRet::from_error(sched_err_to_errno(e)),
     };
-    let param = SchedParam { priority : user_param.sched_priority };
-    match task::set_param(task_id, param) {
+    match task::set_param(task_id,
+                          i32::from_ne_bytes(raw_priority))
+    {
         Ok(()) => UserRet::from_success(0),
         Err(e) => UserRet::from_error(sched_err_to_errno(e)),
     }
@@ -103,16 +98,18 @@ pub(crate) fn sys_sched_setscheduler(args : SyscallArgs) -> UserRet {
         Ok(value) => value,
         Err(e) => return UserRet::from_error(e),
     };
-    let user_param = match copy_from_user_struct::<UserSchedParam>(param_ptr) {
-        Ok(value) => value,
-        Err(e) => return UserRet::from_error(e),
-    };
+    let mut raw_priority = [0u8; 4];
+    if let Err(e) = copy_from_user(&mut raw_priority, param_ptr) {
+        return UserRet::from_error(e);
+    }
     let task_id = match task::resolve_sched_pid(pid) {
         Ok(id) => id,
         Err(e) => return UserRet::from_error(sched_err_to_errno(e)),
     };
-    let param = SchedParam { priority : user_param.sched_priority };
-    match task::set_scheduler_policy(task_id, policy, param) {
+    match task::set_scheduler_policy(task_id,
+                                     policy,
+                                     i32::from_ne_bytes(raw_priority))
+    {
         Ok(()) => UserRet::from_success(0),
         Err(e) => UserRet::from_error(sched_err_to_errno(e)),
     }
@@ -144,15 +141,14 @@ pub(crate) fn sys_sched_getparam(args : SyscallArgs) -> UserRet {
         Ok(id) => id,
         Err(e) => return UserRet::from_error(sched_err_to_errno(e)),
     };
-    let param = match task::get_param(task_id) {
+    let priority = match task::get_param(task_id) {
         Ok(value) => value,
         Err(e) => return UserRet::from_error(sched_err_to_errno(e)),
     };
-    let user_param = UserSchedParam { sched_priority : param.priority };
-    match copy_to_user_struct(param_ptr, &user_param) {
-        Ok(()) => UserRet::from_success(0),
-        Err(e) => UserRet::from_error(e),
+    if let Err(e) = copy_to_user(param_ptr, &priority.to_ne_bytes()) {
+        return UserRet::from_error(e);
     }
+    UserRet::from_success(0)
 }
 
 /// `sched_setaffinity(pid, cpusetsize, mask)`。
@@ -293,8 +289,10 @@ pub(crate) fn sys_sched_setattr(args : SyscallArgs) -> UserRet {
         Ok(id) => id,
         Err(e) => return UserRet::from_error(sched_err_to_errno(e)),
     };
-    let param = SchedParam { priority : attr.sched_priority as i32 };
-    match task::set_scheduler_policy(task_id, policy, param) {
+    match task::set_scheduler_policy(task_id,
+                                     policy,
+                                     attr.sched_priority as i32)
+    {
         Ok(()) => UserRet::from_success(0),
         Err(e) => UserRet::from_error(sched_err_to_errno(e)),
     }
@@ -322,7 +320,7 @@ pub(crate) fn sys_sched_getattr(args : SyscallArgs) -> UserRet {
         Ok(value) => value,
         Err(e) => return UserRet::from_error(sched_err_to_errno(e)),
     };
-    let param = match task::get_param(task_id) {
+    let priority = match task::get_param(task_id) {
         Ok(value) => value,
         Err(e) => return UserRet::from_error(sched_err_to_errno(e)),
     };
@@ -334,7 +332,7 @@ pub(crate) fn sys_sched_getattr(args : SyscallArgs) -> UserRet {
     let attr = UserSchedAttr { size : size_of::<UserSchedAttr>() as u32,
                                sched_policy : policy as u32,
                                sched_nice : nice,
-                               sched_priority : param.priority as u32,
+                               sched_priority : priority as u32,
                                ..UserSchedAttr::default() };
     let write_len = user_size.min(size_of::<UserSchedAttr>());
     let attr_bytes = unsafe {

@@ -39,15 +39,6 @@ pub enum QueueTarget {
     Exited(TaskExitCode),
 }
 
-/// `set_scheduler` 完成后调度器应执行的动作。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SchedPolicyChangeAction {
-    /// 无需立即重新调度。
-    NoReschedule,
-    /// 应立即抢占并切换到更高优先级任务。
-    RescheduleNow,
-}
-
 pub struct CPUScheduler {
     pub cpu_id : CpuId,
     pub boot_task_cx : ActiveArchTaskContext,
@@ -83,22 +74,6 @@ impl CPUScheduler {
     pub fn current_task_id(&self) -> Option<TaskId> { self.current_task_id }
     pub fn boot_task_cx(&mut self) -> *mut ActiveArchTaskContext {
         &mut self.boot_task_cx as *mut ActiveArchTaskContext
-    }
-}
-
-pub struct GlobalScheduler {
-    pub registry : TaskRegistry,
-    pub wait_queues : WaitQueues,
-}
-impl GlobalScheduler {
-    pub fn new() -> Self {
-        Self { registry : TaskRegistry::new(),
-               wait_queues : WaitQueues::new() }
-    }
-    pub fn init(&mut self) {
-        self.registry.init();
-        self.wait_queues
-            .init();
     }
 }
 pub struct CpuSnapshot {

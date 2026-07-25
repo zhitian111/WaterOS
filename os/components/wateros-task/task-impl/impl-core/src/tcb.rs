@@ -92,8 +92,8 @@ pub struct TaskControlBlock {
     id : TaskId,
     parent_id : Option<TaskId>,
     state : TaskState,
-    sched_policy : SchedPolicy,
-    sched_priority : i32,
+    policy : SchedPolicy,
+    priority : i32,
     /// 普通调度类（`SCHED_OTHER`）的线程级 nice 属性。
     ///
     /// 调度器尚未据此改变队列选择；该字段先作为唯一的 task-level 真相，
@@ -131,8 +131,8 @@ impl TaskControlBlock {
         Self { id,
                parent_id,
                state : TaskState::Ready,
-               sched_policy : SchedPolicy::Other,
-               sched_priority : 0,
+               policy : SchedPolicy::Other,
+               priority : 0,
                nice : 0,
                stats : TaskRuntimeStats::default(),
                wait_result : None,
@@ -156,8 +156,8 @@ impl TaskControlBlock {
         Self { id,
                parent_id : None,
                state : TaskState::Ready,
-               sched_policy : SchedPolicy::Other,
-               sched_priority : 0,
+               policy : SchedPolicy::Other,
+               priority : 0,
                nice : 0,
                stats : TaskRuntimeStats::default(),
                wait_result : None,
@@ -179,8 +179,8 @@ impl TaskControlBlock {
         Self { id,
                parent_id,
                state : TaskState::Ready,
-               sched_policy : SchedPolicy::Other,
-               sched_priority : 0,
+               policy : SchedPolicy::Other,
+               priority : 0,
                nice : 0,
                stats : TaskRuntimeStats::default(),
                wait_result : None,
@@ -234,8 +234,8 @@ impl TaskControlBlock {
         Some(Self { id : child_id,
                     parent_id : Some(self.id),
                     state : TaskState::Ready,
-                    sched_policy : self.sched_policy,
-                    sched_priority : self.sched_priority,
+                    policy : self.policy,
+                    priority : self.priority,
                     nice : self.nice,
                     stats : TaskRuntimeStats::default(),
                     wait_result : None,
@@ -276,8 +276,8 @@ impl TaskControlBlock {
         Some(Self { id : child_id,
                     parent_id : Some(self.id),
                     state : TaskState::Ready,
-                    sched_policy : self.sched_policy,
-                    sched_priority : self.sched_priority,
+                    policy : self.policy,
+                    priority : self.priority,
                     nice : self.nice,
                     stats : TaskRuntimeStats::default(),
                     wait_result : None,
@@ -348,18 +348,18 @@ impl TaskControlBlock {
     pub fn running_cpu_id(&self) -> Option<CpuId> { self.running_cpu_id }
 
     #[inline]
-    pub fn sched_policy(&self) -> SchedPolicy { self.sched_policy }
+    pub fn policy(&self) -> SchedPolicy { self.policy }
 
     #[inline]
-    pub fn sched_priority(&self) -> i32 { self.sched_priority }
+    pub fn priority(&self) -> i32 { self.priority }
 
     #[inline]
     pub fn nice(&self) -> i8 { self.nice }
 
     #[inline]
     pub fn set_sched(&mut self, policy : SchedPolicy, priority : i32) {
-        self.sched_policy = policy;
-        self.sched_priority = priority;
+        self.policy = policy;
+        self.priority = priority;
     }
 
     #[inline]
@@ -397,8 +397,8 @@ impl TaskControlBlock {
                        parent_id : self.parent_id,
                        kind,
                        state : self.state,
-                       sched_policy : self.sched_policy,
-                       sched_priority : self.sched_priority,
+                       policy : self.policy,
+                       priority : self.priority,
                        nice : self.nice,
                        trap_frame,
                        stats : self.stats }

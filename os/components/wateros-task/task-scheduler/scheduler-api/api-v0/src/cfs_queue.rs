@@ -48,8 +48,8 @@ impl CfsQueue {
             })
     }
 
-    pub fn tick(&mut self, task_id : TaskId, nice : i8, vruntime : VRunTime) -> bool {
-        let weight = NICE_TO_WEIGHT[nice + 20];
+    pub fn tick(&mut self, task_id : TaskId, nice : Nice, vruntime : VRunTime) -> bool {
+        let weight = NICE_TO_WEIGHT[(nice + 20) as usize];
         let delta = NICE_0_WEIGHT / weight;
         self.dequeue(task_id, vruntime);
         let cur_vruntime = vruntime + delta;

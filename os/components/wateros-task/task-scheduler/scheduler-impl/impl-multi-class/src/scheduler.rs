@@ -8,16 +8,16 @@ mod tasks;
 mod wait;
 use crate::{SwitchPair, TaskTrapFrame};
 use api_v0::{
-    CPUScheduler, CpuSnapshot, FifoQueue, GlobalScheduler, QueueTarget, RrQueue, RrTickAction,
-    SchedPolicyChangeAction, TaskRegistry, WaitQueues,
+    CPUScheduler, CpuSnapshot, FifoQueue, QueueTarget, RrQueue, RrTickAction, TaskRegistry,
+    WaitQueues,
 };
 use arch::task::ActiveArchTaskContext as TaskContext;
 use base::cpu::CpuMask;
 use config::task::MAX_CPUS;
 use task_api::{
-    AddressSpaceHandle, CpuId, ExitedTask, KernelTaskEntry, SchedError, SchedPolicy, TaskExitCode,
-    TaskId, TaskSnapshot, TaskState, TaskTick, TaskWaitResult, TaskWaitTarget, UserTask,
-    WaitQueueId, IDLE_TASK_ID,
+    AddressSpaceHandle, CpuId, ExitedTask, KernelTaskEntry, Priority, SchedError, SchedPolicy,
+    TaskExitCode, TaskId, TaskSnapshot, TaskState, TaskTick, TaskWaitResult, TaskWaitTarget,
+    UserTask, WaitQueueId, IDLE_TASK_ID,
 };
 
 use api_v0::ScheduleReason;
@@ -171,9 +171,9 @@ impl MultiClassScheduler {
                                          });
         let current_ptr = self.registry
                               .take_task_cx(current_task_id);
-        let current_sched_policy = self.registry
-                                       .sched_policy(current_task_id)
-                                       .expect("task not exist");
+        let current_policy = self.registry
+                                 .policy(current_task_id)
+                                 .expect("task not exist");
         if matches!(reason, ScheduleReason::Sleep(_)) {
             self.registry
                 .clear_wait_result(current_task_id);
@@ -191,7 +191,7 @@ impl MultiClassScheduler {
                                cpu_id,
                                current_task_id,
                                current_ptr,
-                               current_sched_policy)
+                               current_policy)
     }
 
     /// Reschedule 前置处理：检查是否需要抢占；不需要则提前返回。
@@ -235,14 +235,20 @@ impl MultiClassScheduler {
                                                    });
         let quantum_expired = match current {
             None => false,
-            Some((current_id, snap)) => match snap.sched_policy {
+            Some((current_id, _snap)) => match self.registry
+                                                   .policy(current_id)
+                                                   .expect("task not exist")
+            {
                 // OTHER: 时间片 tick+1，达到上限则返回 true 触发切换
                 SchedPolicy::Other => self.cpu_states[cpu_id.raw()].other_queue
                                                                    .tick(),
                 // RR: 时间片 tick+1，由 RrQueue 内部判断是否耗尽
                 SchedPolicy::Rr => {
                     self.cpu_states[cpu_id.raw()].rr_queue
-                                                 .tick(current_id, snap.sched_priority)
+                                                 .tick(current_id,
+                                                       self.registry
+                                                           .priority(current_id)
+                                                           .expect("task not exist"))
                 }
                 SchedPolicy::Fifo => false,
             },
@@ -283,15 +289,15 @@ impl MultiClassScheduler {
             self.set_current_task(next_task_id, cpu_id);
             return None;
         }
-        let sched_policy = self.registry
-                               .sched_policy(next_task_id)
-                               .expect("task not exist");
-        let sched_priority = self.registry
-                                 .sched_priority(next_task_id)
-                                 .expect("task not exist");
-        if sched_policy == SchedPolicy::Rr {
+        let policy = self.registry
+                         .policy(next_task_id)
+                         .expect("task not exist");
+        let priority = self.registry
+                           .priority(next_task_id)
+                           .expect("task not exist");
+        if policy == SchedPolicy::Rr {
             self.cpu_states[cpu_id.raw()].rr_queue
-                                         .note_running(next_task_id, sched_priority);
+                                         .note_running(next_task_id, priority);
         }
         self.set_current_task(next_task_id, cpu_id);
         let next_ptr = self.registry
@@ -305,7 +311,7 @@ impl MultiClassScheduler {
                          cpu_id : CpuId,
                          current_task_id : TaskId,
                          current_ptr : *mut TaskContext,
-                         current_sched_policy : SchedPolicy)
+                         current_policy : SchedPolicy)
                          -> Option<SwitchPair> {
         // Phase 5: 确定当前任务的去向
         let is_exit = matches!(reason, ScheduleReason::Exit(_));
@@ -328,7 +334,7 @@ impl MultiClassScheduler {
         if !matches!(queue_target, QueueTarget::Ready) {
             self.detach_from_run_queues(current_task_id, cpu_id);
         }
-        if matches!(queue_target, QueueTarget::Ready) && current_sched_policy == SchedPolicy::Rr {
+        if matches!(queue_target, QueueTarget::Ready) && current_policy == SchedPolicy::Rr {
             // RR: 当前任务回 Ready 队列前清除运行状态
             self.cpu_states[cpu_id.raw()].rr_queue
                                          .clear_running();
@@ -339,12 +345,12 @@ impl MultiClassScheduler {
 
         // Phase 8: 选下一个任务，决定是否 __switch
         let next_task_id = self.pick_next_runnable(cpu_id);
-        let sched_policy = self.registry
-                               .sched_policy(next_task_id)
-                               .expect("task not exist");
-        let sched_priority = self.registry
-                                 .sched_priority(next_task_id)
-                                 .expect("task not exist");
+        let policy = self.registry
+                         .policy(next_task_id)
+                         .expect("task not exist");
+        let priority = self.registry
+                           .priority(next_task_id)
+                           .expect("task not exist");
 
         if next_task_id == current_task_id {
             if is_exit {
@@ -361,9 +367,9 @@ impl MultiClassScheduler {
                 panic!("exit_current called on idle task — this should never happen");
             }
             // RR: 选出了自己且非退出，重新标记运行状态
-            if sched_policy == SchedPolicy::Rr {
+            if policy == SchedPolicy::Rr {
                 self.cpu_states[cpu_id.raw()].rr_queue
-                                             .note_running(next_task_id, sched_priority);
+                                             .note_running(next_task_id, priority);
             }
             self.set_current_task(next_task_id, cpu_id);
             return None;
@@ -371,9 +377,9 @@ impl MultiClassScheduler {
 
         // 选出不同任务 → 返回切换对，调用方执行 __switch
         // RR: 记录新选中任务的运行状态（用于时间片轮转）
-        if sched_policy == SchedPolicy::Rr {
+        if policy == SchedPolicy::Rr {
             self.cpu_states[cpu_id.raw()].rr_queue
-                                         .note_running(next_task_id, sched_priority);
+                                         .note_running(next_task_id, priority);
         }
         self.set_current_task(next_task_id, cpu_id);
         let next_ptr = self.registry
@@ -433,15 +439,15 @@ impl MultiClassScheduler {
 
         // ===== Phase 6: 选下一个任务，直接切换（当前已阻塞） =====
         let next_task_id = self.pick_next_runnable(cpu_id);
-        let sched_policy = self.registry
-                               .sched_policy(next_task_id)
-                               .expect("task not exist");
-        let sched_priority = self.registry
-                                 .sched_priority(next_task_id)
-                                 .expect("task not exist");
-        if sched_policy == SchedPolicy::Rr {
+        let policy = self.registry
+                         .policy(next_task_id)
+                         .expect("task not exist");
+        let priority = self.registry
+                           .priority(next_task_id)
+                           .expect("task not exist");
+        if policy == SchedPolicy::Rr {
             self.cpu_states[cpu_id.raw()].rr_queue
-                                         .note_running(next_task_id, sched_priority);
+                                         .note_running(next_task_id, priority);
         }
         self.set_current_task(next_task_id, cpu_id);
         let next_ptr = self.registry
@@ -454,12 +460,15 @@ impl MultiClassScheduler {
     fn pick_next_runnable(&mut self, cpu_id : CpuId) -> TaskId {
         // 1) RR: 时间片未用完时继续当前任务
         if let Some(current_id) = self.cpu_states[cpu_id.raw()].current_task_id {
-            let snap = self.registry
-                           .task_snapshot(current_id);
-            if snap.sched_policy == SchedPolicy::Rr &&
+            if self.registry
+                   .policy(current_id)
+                   .expect("task not exist") ==
+               SchedPolicy::Rr &&
                self.cpu_states[cpu_id.raw()].rr_queue
                                             .should_continue_current(current_id,
-                                                                     snap.sched_priority)
+                                                                     self.registry
+                                                                         .priority(current_id)
+                                                                         .expect("task not exist"))
             {
                 return current_id;
             }
@@ -619,21 +628,28 @@ impl MultiClassScheduler {
         }
         self.registry
             .mark_ready(task_id, cpu_id);
-        let snap = self.registry
-                       .task_snapshot(task_id);
-        match snap.sched_policy {
+        match self.registry
+                  .policy(task_id)
+                  .expect("task not exist")
+        {
             // OTHER: 版本号递增入队尾部
             SchedPolicy::Other => self.cpu_states[cpu_id.raw()].other_queue
                                                                .enqueue_ready_task(task_id),
             // FIFO: 按优先级入队
             SchedPolicy::Fifo => {
                 self.cpu_states[cpu_id.raw()].fifo_queue
-                                             .enqueue(task_id, snap.sched_priority)
+                                             .enqueue(task_id,
+                                                      self.registry
+                                                          .priority(task_id)
+                                                          .expect("task not exist"))
             }
             // RR: 解除阻塞后入队（放入同优先级环尾）
             SchedPolicy::Rr => {
                 self.cpu_states[cpu_id.raw()].rr_queue
-                                             .on_task_unblocked(task_id, snap.sched_priority)
+                                             .on_task_unblocked(task_id,
+                                                                self.registry
+                                                                    .priority(task_id)
+                                                                    .expect("task not exist"))
             }
         }
         assert_eq!(self.registry
@@ -734,18 +750,18 @@ impl MultiClassScheduler {
                    self.cpu_states[cpu_id.raw()].other_queue
                                                 .has_runnable();
         }
-        let current_sched_policy = self.registry
-                                       .sched_policy(current_id)
-                                       .expect("task not exist");
-        let current_sched_priority = self.registry
-                                         .sched_priority(current_id)
-                                         .expect("task not exist");
-        match current_sched_policy {
+        let current_policy = self.registry
+                                 .policy(current_id)
+                                 .expect("task not exist");
+        let current_priority = self.registry
+                                   .priority(current_id)
+                                   .expect("task not exist");
+        match current_policy {
             SchedPolicy::Other => self.highest_ready_rt_priority(cpu_id)
                                       .is_some(),
             SchedPolicy::Fifo | SchedPolicy::Rr => {
                 self.highest_ready_rt_priority(cpu_id)
-                    .is_some_and(|priority| priority > current_sched_priority)
+                    .is_some_and(|priority| priority > current_priority)
             }
         }
     }

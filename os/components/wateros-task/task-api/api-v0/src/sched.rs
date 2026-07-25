@@ -28,20 +28,13 @@ impl SchedPolicy {
     #[must_use]
     pub const fn effective_for_bringup() -> Self { Self::Other }
 }
-
-/// `struct sched_param` 中与 bring-up 相关的字段。
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct SchedParam {
-    /// `sched_priority`；`SCHED_OTHER` 下恒为 0。
-    pub priority : i32,
-}
-
 /// `SCHED_OTHER` 的最低 nice 值（CPU 份额最高）。
 pub const SCHED_NICE_MIN : i8 = -20;
 /// `SCHED_OTHER` 的最高 nice 值（CPU 份额最低）。
 pub const SCHED_NICE_MAX : i8 = 19;
 pub type Nice = i8;
 pub type VRunTime = u64;
+pub type Priority = i32;
 /// 调度/亲和性操作错误（由聚合层映射为 Linux errno）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SchedError {
@@ -52,10 +45,7 @@ pub enum SchedError {
     /// 无权限或策略不受支持（如 RT 策略、改 affinity）。
     NotPermitted,
 }
-
-
 /// lp64 下返回给 userspace 的有效 CPU mask 字节数。
 pub const SCHED_CPU_MASK_RET_BYTES : usize = 8;
-
 /// 查询 affinity 时用户缓冲区的最小长度。
 pub const SCHED_CPU_MASK_MIN_BYTES : usize = 8;

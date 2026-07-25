@@ -59,9 +59,9 @@ mod scheduler {
 pub use api_v0::{
     AddressSpaceHandle, AddressSpaceRef, CloneFlags, CpuId, KernelTaskEntry, ProcessError,
     ProcessId, ProcessResult, ProcessSnapshot, ProcessState, ProcessTaskRole, ProcessTaskSnapshot,
-    ProcessTaskState, ResourceLimit, SchedError, SchedParam, SchedPolicy, TaskClearTid,
-    TaskExitCode, TaskSnapshot, TaskState, TaskTick, TaskWaitResult, TaskWaitTarget, ThreadId,
-    UserImageInfo, UserStack, UserTask, WaitQueueId,
+    ProcessTaskState, ResourceLimit, SchedError, SchedPolicy, TaskClearTid, TaskExitCode,
+    TaskSnapshot, TaskState, TaskTick, TaskWaitResult, TaskWaitTarget, ThreadId, UserImageInfo,
+    UserStack, UserTask, WaitQueueId,
 };
 pub use api_v0::{ExitedTask, TaskId, TaskKind};
 pub use cpu::{

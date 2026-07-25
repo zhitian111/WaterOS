@@ -596,16 +596,16 @@ impl TaskRegistry {
             .map(|task| task.nice())
             .ok_or(SchedError::NoSuchTask)
     }
-    pub fn sched_policy(&self, task_id : TaskId) -> Result<SchedPolicy, SchedError> {
+    pub fn policy(&self, task_id : TaskId) -> Result<SchedPolicy, SchedError> {
         self.task_table
             .task_opt(task_id)
-            .map(|task| task.sched_policy())
+            .map(|task| task.policy())
             .ok_or(SchedError::NoSuchTask)
     }
-    pub fn sched_priority(&self, task_id : TaskId) -> Result<i32, SchedError> {
+    pub fn priority(&self, task_id : TaskId) -> Result<i32, SchedError> {
         self.task_table
             .task_opt(task_id)
-            .map(|task| task.sched_priority())
+            .map(|task| task.priority())
             .ok_or(SchedError::NoSuchTask)
     }
 }

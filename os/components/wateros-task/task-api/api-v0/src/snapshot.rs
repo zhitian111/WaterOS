@@ -79,9 +79,9 @@ pub struct TaskSnapshot {
     /// 当前任务状态。
     pub state : TaskState,
     /// 有效调度策略。
-    pub sched_policy : SchedPolicy,
+    pub policy : SchedPolicy,
     /// `sched_priority`；`SCHED_OTHER` 下恒为 0。
-    pub sched_priority : i32,
+    pub priority : i32,
     /// `SCHED_OTHER` 的 nice 值，范围为 -20 到 19。
     ///
     /// 当前仅保存该属性；普通任务队列的加权公平选择将在后续接入。
