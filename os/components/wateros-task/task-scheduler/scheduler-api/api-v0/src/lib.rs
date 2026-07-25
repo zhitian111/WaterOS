@@ -9,6 +9,7 @@
 extern crate alloc;
 
 mod cfs_queue;
+mod fifo_queue;
 mod queues;
 mod registry;
 mod scheduler;

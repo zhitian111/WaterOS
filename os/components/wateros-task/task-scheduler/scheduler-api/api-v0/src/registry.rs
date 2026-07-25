@@ -2,7 +2,7 @@
 //! 表、当前运行任务指针，以及首次切换用的引导上下文。
 
 use alloc::boxed::Box;
-use alloc::vec::Vec;
+use alloc::collections::BTreeMap;
 use arch::task::ActiveArchTaskContext as TaskContext;
 use arch::trap::ActiveTrapFrame as TaskTrapFrame;
 use task_api::{
@@ -17,182 +17,37 @@ unsafe extern "C" {
     safe fn __wateros_idle_task_runtime_main(arg : usize) -> !;
 }
 
-const TASK_ID_SLOT_BITS : usize = 32;
-const TASK_ID_SLOT_MASK : usize = (1usize << TASK_ID_SLOT_BITS) - 1;
-
-/// task_id api,用于从 task_id 中提取 slot 和 generation，并构造新的 task_id。
-#[inline]
-fn task_slot(task_id : TaskId) -> usize { task_id & TASK_ID_SLOT_MASK }
-
-#[inline]
-fn task_generation(task_id : TaskId) -> usize { task_id >> TASK_ID_SLOT_BITS }
-
-#[inline]
-fn make_task_id(slot : usize, generation : usize) -> TaskId {
-    (generation << TASK_ID_SLOT_BITS) | slot
-}
-
-struct TaskSlot {
-    generation : usize,
-    task : Option<Box<TaskControlBlock>>,
-}
-
-impl TaskSlot {
-    fn empty(generation : usize) -> Self {
-        Self { generation,
-               task : None }
-    }
-}
-
-struct TaskTable {
-    slots : Vec<TaskSlot>,
-    free_slots : Vec<usize>,
-}
-
-impl TaskTable {
-    fn new() -> Self {
-        Self { slots : Vec::new(),
-               free_slots : Vec::new() }
-    }
-
-    fn clear(&mut self) {
-        self.slots.clear();
-        self.free_slots
-            .clear();
-    }
-
-    fn allocate_id(&mut self) -> TaskId {
-        // 分支 A：有空闲槽位 → 复用
-        if let Some(slot) = self.free_slots
-                                .pop()
-        {
-            let generation = self.slots[slot].generation;
-            return make_task_id(slot, generation);
-        }
-        // 分支 B：无空闲槽位 → 追加
-        let slot = self.slots.len();
-        self.slots
-            .push(TaskSlot::empty(0));
-        make_task_id(slot, 0)
-    }
-
-    fn insert(&mut self, task : Box<TaskControlBlock>) {
-        let task_id = task.id();
-        let slot = task_slot(task_id);
-        let generation = task_generation(task_id);
-        if self.slots.len() <= slot {
-            self.slots
-                .resize_with(slot + 1, || TaskSlot::empty(0));
-        }
-        assert!(self.slots[slot].generation == generation,
-                "task slot {} generation mismatch for id {}",
-                slot,
-                task_id);
-        assert!(self.slots[slot].task
-                                .is_none(),
-                "task slot {} already occupied",
-                slot);
-        self.slots[slot].task = Some(task);
-    }
-
-    fn task(&self, task_id : TaskId) -> &TaskControlBlock {
-        self.task_opt(task_id)
-            .expect("task must exist in task table")
-    }
-
-    fn task_mut(&mut self, task_id : TaskId) -> &mut TaskControlBlock {
-        self.task_mut_opt(task_id)
-            .expect("task must exist in task table")
-    }
-
-    fn task_mut_opt(&mut self, task_id : TaskId) -> Option<&mut TaskControlBlock> {
-        let slot = task_slot(task_id);
-        let generation = task_generation(task_id);
-        self.slots
-            .get_mut(slot)
-            .filter(|entry| entry.generation == generation)
-            .and_then(|entry| {
-                entry.task
-                     .as_deref_mut()
-            })
-    }
-
-    fn task_opt(&self, task_id : TaskId) -> Option<&TaskControlBlock> {
-        let slot = task_slot(task_id);
-        let generation = task_generation(task_id);
-        self.slots
-            .get(slot)
-            .filter(|entry| entry.generation == generation)
-            .and_then(|entry| {
-                entry.task
-                     .as_deref()
-            })
-    }
-
-    fn cancel_pending_allocation(&mut self, task_id : TaskId) {
-        let slot = task_slot(task_id);
-        let generation = task_generation(task_id);
-        let Some(entry) = self.slots
-                              .get_mut(slot)
-        else {
-            return;
-        };
-        if entry.generation != generation || entry.task.is_some() {
-            return;
-        }
-        entry.generation = entry.generation
-                                .saturating_add(1);
-        self.free_slots
-            .push(slot);
-    }
-
-    fn remove(&mut self, task_id : TaskId) -> Option<Box<TaskControlBlock>> {
-        let slot = task_slot(task_id);
-        let generation = task_generation(task_id);
-        let entry = self.slots
-                        .get_mut(slot)?;
-        if entry.generation != generation {
-            return None;
-        }
-        let task = entry.task.take()?;
-        if !task.is_idle() {
-            entry.generation = entry.generation
-                                    .saturating_add(1);
-            self.free_slots
-                .push(slot);
-        }
-        Some(task)
-    }
-
-    fn iter_tasks(&self) -> impl Iterator<Item = &TaskControlBlock> {
-        self.slots
-            .iter()
-            .filter_map(|slot| slot.task.as_deref())
-    }
-}
-
 /// 各调度器实现共享的 TCB 表与「当前任务」元数据。
 pub struct TaskRegistry {
-    task_table : TaskTable,
+    tasks : BTreeMap<TaskId, Box<TaskControlBlock>>,
+    next_id : TaskId,
 }
 
 impl TaskRegistry {
     /// 构造空注册表（须再调用 [`Self::init`]）。
-    pub fn new() -> Self { Self { task_table : TaskTable::new() } }
+    pub fn new() -> Self {
+        Self { tasks : BTreeMap::new(),
+               next_id : 0 }
+    }
 
     /// 重置并插入 idle 任务。
     pub fn init(&mut self) {
-        self.task_table
-            .clear();
+        self.tasks.clear();
+        self.next_id = 0;
     }
 
     /// 创建一个 idle 任务，返回其 task_id。
     /// 每个 CPU 应调用一次以创建其专属 idle TCB。
     pub fn spawn_idle_task(&mut self) -> TaskId {
-        let task_id = self.task_table
-                          .allocate_id();
-        self.task_table
-            .insert(Box::new(TaskControlBlock::new_idle_task(task_id,
+        let task_id = {
+            let id = self.next_id;
+            self.next_id = self.next_id
+                               .saturating_add(1);
+            id
+        };
+        self.tasks
+            .insert(task_id,
+                    Box::new(TaskControlBlock::new_idle_task(task_id,
                                                              __wateros_idle_task_runtime_main)));
         task_id
     }
@@ -202,17 +57,26 @@ impl TaskRegistry {
                              arg : usize,
                              parent_id : Option<TaskId>)
                              -> TaskId {
-        let task_id = self.task_table
-                          .allocate_id();
-        self.task_table
-            .insert(Box::new(TaskControlBlock::new_kernel_task(task_id, parent_id, entry, arg)));
+        let task_id = {
+            let id = self.next_id;
+            self.next_id = self.next_id
+                               .saturating_add(1);
+            id
+        };
+        self.tasks
+            .insert(task_id,
+                    Box::new(TaskControlBlock::new_kernel_task(task_id, parent_id, entry, arg)));
         task_id
     }
 
     /// 按规格创建用户任务并返回其 id。
     pub fn spawn_user_task_spec(&mut self, spec : UserTask, parent_id : Option<TaskId>) -> TaskId {
-        let task_id = self.task_table
-                          .allocate_id();
+        let task_id = {
+            let id = self.next_id;
+            self.next_id = self.next_id
+                               .saturating_add(1);
+            id
+        };
         log::trace!("[task-spawn] user spec id={} entry_pc={:#x} address_space_raw={:#x} \
                      image={:?} external_stack={:?}",
                     task_id,
@@ -222,8 +86,9 @@ impl TaskRegistry {
                         .unwrap_or(0),
                     spec.image(),
                     spec.stack());
-        self.task_table
-            .insert(Box::new(TaskControlBlock::new_user_task(task_id, parent_id, spec)));
+        self.tasks
+            .insert(task_id,
+                    Box::new(TaskControlBlock::new_user_task(task_id, parent_id, spec)));
         task_id
     }
 
@@ -234,24 +99,26 @@ impl TaskRegistry {
                         new_satp : usize,
                         parent_id : TaskId)
                         -> Option<TaskId> {
-        let child_id = self.task_table
-                           .allocate_id();
-        let parent = self.task_table
-                         .task(parent_id);
+        let child_id = {
+            let id = self.next_id;
+            self.next_id = self.next_id
+                               .saturating_add(1);
+            id
+        };
+        let parent = self.tasks
+                         .get(&parent_id)
+                         .map(|b| b.as_ref())
+                         .expect("parent task must exist");
         let child = match parent.fork_from(child_id,
                                            child_stack,
                                            new_aspace_ptr,
                                            new_satp)
         {
             Some(child) => child,
-            None => {
-                self.task_table
-                    .cancel_pending_allocation(child_id);
-                return None;
-            }
+            None => return None,
         };
-        self.task_table
-            .insert(Box::new(child));
+        self.tasks
+            .insert(child.id(), Box::new(child));
         Some(child_id)
     }
 
@@ -262,20 +129,22 @@ impl TaskRegistry {
                                 set_tls : bool,
                                 parent_id : TaskId)
                                 -> Option<TaskId> {
-        let child_id = self.task_table
-                           .allocate_id();
-        let parent = self.task_table
-                         .task(parent_id);
+        let child_id = {
+            let id = self.next_id;
+            self.next_id = self.next_id
+                               .saturating_add(1);
+            id
+        };
+        let parent = self.tasks
+                         .get(&parent_id)
+                         .map(|b| b.as_ref())
+                         .expect("parent task must exist");
         let child = match parent.clone_thread_from(child_id, child_stack, tls, set_tls) {
             Some(child) => child,
-            None => {
-                self.task_table
-                    .cancel_pending_allocation(child_id);
-                return None;
-            }
+            None => return None,
         };
-        self.task_table
-            .insert(Box::new(child));
+        self.tasks
+            .insert(child.id(), Box::new(child));
         Some(child_id)
     }
 
@@ -291,8 +160,10 @@ impl TaskRegistry {
                           image_info : task_api::UserImageInfo,
                           stack_info : task_api::UserStack,
                           current_id : TaskId) {
-        self.task_table
-            .task_mut(current_id)
+        self.tasks
+            .get_mut(&current_id)
+            .map(|b| b.as_mut())
+            .expect("task must exist")
             .execve_from(entry_pc,
                          sp,
                          argc,
@@ -305,20 +176,25 @@ impl TaskRegistry {
     }
 
     pub fn take_task_cx(&mut self, task_id : TaskId) -> *mut TaskContext {
-        self.task_table
-            .task_mut(task_id)
+        self.tasks
+            .get_mut(&task_id)
+            .map(|b| b.as_mut())
+            .expect("task must exist")
             .context_mut_ptr()
     }
 
     pub fn task_cx_ptr(&self, task_id : TaskId) -> *const TaskContext {
-        self.task_table
-            .task(task_id)
+        self.tasks
+            .get(&task_id)
+            .map(|b| b.as_ref())
+            .expect("task must exist")
             .context_ptr()
     }
 
     pub fn tick(&mut self, task_id : TaskId) {
-        if let Some(task) = self.task_table
-                                .task_mut_opt(task_id)
+        if let Some(task) = self.tasks
+                                .get_mut(&task_id)
+                                .map(|b| b.as_mut())
         {
             if !task.is_idle() {
                 task.tick();
@@ -328,8 +204,10 @@ impl TaskRegistry {
 
     /// 将 `task_id` 标为 Running 并设为当前任务，返回其只读上下文指针。
     pub fn mark_running(&mut self, task_id : TaskId, cpu_id : CpuId) {
-        self.task_table
-            .task_mut(task_id)
+        self.tasks
+            .get_mut(&task_id)
+            .map(|b| b.as_mut())
+            .expect("task must exist")
             .mark_running(cpu_id);
     }
 
@@ -339,8 +217,9 @@ impl TaskRegistry {
                           policy : SchedPolicy,
                           priority : i32)
                           -> bool {
-        if let Some(task) = self.task_table
-                                .task_mut_opt(task_id)
+        if let Some(task) = self.tasks
+                                .get_mut(&task_id)
+                                .map(|b| b.as_mut())
         {
             task.set_sched(policy, priority);
             true
@@ -351,8 +230,9 @@ impl TaskRegistry {
 
     /// 将任务标为 Ready。
     pub fn mark_ready(&mut self, task_id : TaskId, cpu_id : CpuId) {
-        if let Some(task) = self.task_table
-                                .task_mut_opt(task_id)
+        if let Some(task) = self.tasks
+                                .get_mut(&task_id)
+                                .map(|b| b.as_mut())
         {
             task.mark_ready(cpu_id);
         }
@@ -360,8 +240,9 @@ impl TaskRegistry {
 
     /// 将任务标为 Blocking 并记录原因。
     pub fn mark_blocking(&mut self, task_id : TaskId, reason : TaskWaitTarget) {
-        if let Some(task) = self.task_table
-                                .task_mut_opt(task_id)
+        if let Some(task) = self.tasks
+                                .get_mut(&task_id)
+                                .map(|b| b.as_mut())
         {
             task.mark_blocking(reason);
         }
@@ -369,8 +250,9 @@ impl TaskRegistry {
 
     /// 将任务标为 Sleeping 并设置唤醒 tick。
     pub fn mark_sleeping(&mut self, task_id : TaskId, wake_tick : TaskTick) {
-        if let Some(task) = self.task_table
-                                .task_mut_opt(task_id)
+        if let Some(task) = self.tasks
+                                .get_mut(&task_id)
+                                .map(|b| b.as_mut())
         {
             task.mark_sleeping(wake_tick);
         }
@@ -378,46 +260,53 @@ impl TaskRegistry {
 
     /// 将任务标为 Exited。
     pub fn mark_exited(&mut self, task_id : TaskId, exit_code : TaskExitCode) {
-        if let Some(task) = self.task_table
-                                .task_mut_opt(task_id)
+        if let Some(task) = self.tasks
+                                .get_mut(&task_id)
+                                .map(|b| b.as_mut())
         {
             task.mark_exited(exit_code);
         }
     }
 
     pub fn ready_to_wake(&self, task_id : TaskId, current_tick : TaskTick) -> bool {
-        self.task_table
-            .task_opt(task_id)
+        self.tasks
+            .get(&task_id)
+            .map(|b| b.as_ref())
             .is_some_and(|task| task.ready_to_wake(current_tick))
     }
 
     pub fn is_idle(&self, task_id : TaskId) -> bool {
-        self.task_table
-            .task_opt(task_id)
+        self.tasks
+            .get(&task_id)
+            .map(|b| b.as_ref())
             .is_some_and(TaskControlBlock::is_idle)
     }
 
     pub fn state(&self, task_id : TaskId) -> Option<TaskState> {
-        self.task_table
-            .task_opt(task_id)
+        self.tasks
+            .get(&task_id)
+            .map(|b| b.as_ref())
             .map(TaskControlBlock::state)
     }
 
     pub fn ready_cpu_id(&self, task_id : TaskId) -> Option<CpuId> {
-        self.task_table
-            .task_opt(task_id)
+        self.tasks
+            .get(&task_id)
+            .map(|b| b.as_ref())
             .and_then(TaskControlBlock::ready_cpu_id)
     }
 
     pub fn last_cpu_id(&self, task_id : TaskId) -> Option<CpuId> {
-        self.task_table
-            .task_opt(task_id)
+        self.tasks
+            .get(&task_id)
+            .map(|b| b.as_ref())
             .and_then(TaskControlBlock::last_cpu_id)
     }
 
     pub fn running_cpu_id(&self, task_id : TaskId) -> Option<CpuId> {
-        self.task_table
-            .task_opt(task_id)
+        self.tasks
+            .get(&task_id)
+            .map(|b| b.as_ref())
             .and_then(TaskControlBlock::running_cpu_id)
     }
 
@@ -439,20 +328,23 @@ impl TaskRegistry {
     }
 
     pub fn parent_id(&self, task_id : TaskId) -> Option<TaskId> {
-        self.task_table
-            .task_opt(task_id)
+        self.tasks
+            .get(&task_id)
+            .map(|b| b.as_ref())
             .and_then(TaskControlBlock::parent_id)
     }
 
     pub fn has_child(&self, parent_id : TaskId) -> bool {
-        self.task_table
-            .iter_tasks()
+        self.tasks
+            .values()
+            .map(|b| b.as_ref())
             .any(|task| task.parent_id() == Some(parent_id))
     }
 
     pub fn find_exited_child(&self, parent_id : TaskId) -> Option<TaskId> {
-        self.task_table
-            .iter_tasks()
+        self.tasks
+            .values()
+            .map(|b| b.as_ref())
             .find(|task| {
                 task.parent_id() == Some(parent_id) && matches!(task.state(), TaskState::Exited(_))
             })
@@ -461,67 +353,81 @@ impl TaskRegistry {
 
 
     pub fn task_snapshot(&self, task_id : TaskId) -> TaskSnapshot {
-        self.task_table
-            .task(task_id)
+        self.tasks
+            .get(&task_id)
+            .map(|b| b.as_ref())
+            .expect("task must exist")
             .snapshot()
     }
 
     pub fn task_kernel_stack_top(&self, task_id : TaskId) -> usize {
-        self.task_table
-            .task(task_id)
+        self.tasks
+            .get(&task_id)
+            .map(|b| b.as_ref())
+            .expect("task must exist")
             .kernel_stack_top()
     }
 
     pub fn current_task_address_space_raw(&self, task_id : TaskId) -> usize {
-        self.task_table
-            .task(task_id)
+        self.tasks
+            .get(&task_id)
+            .map(|b| b.as_ref())
+            .expect("task must exist")
             .user_address_space_raw()
     }
 
     pub fn current_task_user_aspace_ptr(&self, task_id : TaskId) -> usize {
-        self.task_table
-            .task(task_id)
+        self.tasks
+            .get(&task_id)
+            .map(|b| b.as_ref())
+            .expect("task must exist")
             .user_aspace_ptr()
     }
 
     pub fn current_task_trap_return_address_space_token(&self, task_id : TaskId) -> usize {
-        self.task_table
-            .task(task_id)
+        self.tasks
+            .get(&task_id)
+            .map(|b| b.as_ref())
+            .expect("task must exist")
             .trap_return_address_space_token()
     }
 
     pub fn clear_wait_result(&mut self, task_id : TaskId) {
-        if let Some(task) = self.task_table
-                                .task_mut_opt(task_id)
+        if let Some(task) = self.tasks
+                                .get_mut(&task_id)
+                                .map(|b| b.as_mut())
         {
             task.clear_wait_result();
         }
     }
 
     pub fn finish_wait(&mut self, task_id : TaskId, result : TaskWaitResult) {
-        if let Some(task) = self.task_table
-                                .task_mut_opt(task_id)
+        if let Some(task) = self.tasks
+                                .get_mut(&task_id)
+                                .map(|b| b.as_mut())
         {
             task.finish_wait(result);
         }
     }
 
     pub fn take_current_wait_result(&mut self, task_id : TaskId) -> TaskWaitResult {
-        self.task_table
-            .task_mut(task_id)
+        self.tasks
+            .get_mut(&task_id)
+            .map(|b| b.as_mut())
+            .expect("task must exist")
             .take_wait_result()
     }
 
     pub fn reap_task(&mut self, task_id : TaskId) -> Option<ExitedTask> {
-        let task = self.task_table
-                       .remove(task_id)?;
+        let task = self.tasks
+                       .remove(&task_id)?;
         task.exited_task()
     }
 
     /// 丢弃尚未运行或刚创建、尚未进入 Exited 状态的任务（fork/clone 失败回滚）。
     pub fn discard_task(&mut self, task_id : TaskId) -> bool {
-        self.task_table
-            .remove(task_id)
+        self.tasks
+            .remove(&task_id)
             .is_some()
     }
 
@@ -532,35 +438,44 @@ impl TaskRegistry {
         if self.is_idle(task_id) {
             return None;
         }
-        if !self.task_table
-                .task(task_id)
+        if !self.tasks
+                .get(&task_id)
+                .map(|b| b.as_ref())
+                .expect("task must exist")
                 .is_user()
         {
             return None;
         }
-        Some(self.task_table
-                 .task_mut(task_id)
+        Some(self.tasks
+                 .get_mut(&task_id)
+                 .map(|b| b.as_mut())
+                 .expect("task must exist")
                  .begin_trap_frame_access(trap_frame))
     }
 
     pub fn restore_trap_frame(&self, trap_frame : &mut TaskTrapFrame, task_id : TaskId) -> bool {
-        self.task_table
-            .task(task_id)
+        self.tasks
+            .get(&task_id)
+            .map(|b| b.as_ref())
+            .expect("task must exist")
             .restore_trap_frame_into(trap_frame)
     }
     pub fn is_schedulable(&self, task_id : TaskId) -> bool {
         if task_id == IDLE_TASK_ID {
-            return self.task_table
-                       .task_opt(task_id)
+            return self.tasks
+                       .get(&task_id)
+                       .map(|b| b.as_ref())
                        .is_some();
         }
-        self.task_table
-            .task_opt(task_id)
+        self.tasks
+            .get(&task_id)
+            .map(|b| b.as_ref())
             .is_some_and(|task| matches!(task.state(), TaskState::Ready))
     }
     pub fn set_affinity(&mut self, task_id : TaskId, mask : CpuMask) -> Result<(), SchedError> {
-        if let Some(task) = self.task_table
-                                .task_mut_opt(task_id)
+        if let Some(task) = self.tasks
+                                .get_mut(&task_id)
+                                .map(|b| b.as_mut())
         {
             task.set_affinity(mask);
             Ok(())
@@ -569,8 +484,9 @@ impl TaskRegistry {
         }
     }
     pub fn get_affinity(&self, task_id : TaskId) -> Result<CpuMask, SchedError> {
-        if let Some(task) = self.task_table
-                                .task_opt(task_id)
+        if let Some(task) = self.tasks
+                                .get(&task_id)
+                                .map(|b| b.as_ref())
         {
             Ok(task.affinity())
         } else {
@@ -580,8 +496,9 @@ impl TaskRegistry {
 
     /// 更新 task-level nice 属性；runqueue 位置由 scheduler 层决定。
     pub fn set_nice(&mut self, task_id : TaskId, nice : i8) -> Result<(), SchedError> {
-        if let Some(task) = self.task_table
-                                .task_mut_opt(task_id)
+        if let Some(task) = self.tasks
+                                .get_mut(&task_id)
+                                .map(|b| b.as_mut())
         {
             task.set_nice(nice);
             Ok(())
@@ -591,20 +508,23 @@ impl TaskRegistry {
     }
 
     pub fn get_nice(&self, task_id : TaskId) -> Result<i8, SchedError> {
-        self.task_table
-            .task_opt(task_id)
+        self.tasks
+            .get(&task_id)
+            .map(|b| b.as_ref())
             .map(|task| task.nice())
             .ok_or(SchedError::NoSuchTask)
     }
     pub fn policy(&self, task_id : TaskId) -> Result<SchedPolicy, SchedError> {
-        self.task_table
-            .task_opt(task_id)
+        self.tasks
+            .get(&task_id)
+            .map(|b| b.as_ref())
             .map(|task| task.policy())
             .ok_or(SchedError::NoSuchTask)
     }
     pub fn priority(&self, task_id : TaskId) -> Result<i32, SchedError> {
-        self.task_table
-            .task_opt(task_id)
+        self.tasks
+            .get(&task_id)
+            .map(|b| b.as_ref())
             .map(|task| task.priority())
             .ok_or(SchedError::NoSuchTask)
     }
