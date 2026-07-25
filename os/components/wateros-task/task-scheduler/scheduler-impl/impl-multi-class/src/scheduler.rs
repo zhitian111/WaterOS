@@ -141,111 +141,22 @@ impl MultiClassScheduler {
                            reason : ScheduleReason,
                            cpu_id : CpuId)
                            -> Option<SwitchPair> {
-        // ===== Phase 1: 根据 reason 做前置处理 =====
+        // Phase 1: 根据 reason 做前置处理
         match reason {
-            ScheduleReason::Reschedule => {
-                let Some(current_id) = self.cpu_states[cpu_id.raw()].current_task_id else {
-                    return None;
-                };
-                let current = self.registry
-                                  .task_snapshot(current_id);
-                let current_affinity = self.registry
-                                           .get_affinity(current_id)
-                                           .expect("current task must exist");
-                if current_affinity.contains(cpu_id) &&
-                   !self.ready_task_should_preempt(current_id, current, cpu_id)
-                {
-                    return None;
-                }
-                self.cpu_states[cpu_id.raw()].other_queue
-                                             .reset_ticks();
-            }
-            // --- Tick 路径：检查时间片与抢占条件 ---
-            ScheduleReason::Tick => {
-                // 1a. 推进全局 tick 和当前任务的 tick 计数
-                self.cpu_states[cpu_id.raw()].timer_ticks =
-                    self.cpu_states[cpu_id.raw()].timer_ticks
-                                                 .saturating_add(1);
-                // 全局逻辑时间只能由启动时登记的 BSP 推进。
-                // AP timer tick 只处理本 CPU 的时间片消耗和本地抢占检查，
-                // 不推进 wait_queues.on_tick()，否则多核下 sleep/wait timeout
-                // 会以 1/N 的时间提前到期（N = online CPU 数）。
-                if self.is_timekeeper_cpu(cpu_id) {
-                    self.wait_queues
-                        .on_tick();
-                }
-                if let Some(id) = self.cpu_states[cpu_id.raw()].current_task_id {
-                    self.registry
-                        .account_tick(id);
-                }
-
-                // 1b. 获取当前任务的 (id, snapshot)
-                let current = self.cpu_states[cpu_id.raw()].current_task_id
-                                                           .map(|task_id| {
-                                                               (task_id,
-                                                                self.registry
-                                                                    .task_snapshot(task_id))
-                                                           });
-
-                // 1c. 判断任务所剩时间片是否耗尽（按策略分别处理）
-                let quantum_expired = match current {
-                    // 首次切换前尚未建立 current_task；正常运行时 idle 也会是 Some。
-                    None => false,
-                    Some((current_id, snap)) => match snap.sched_policy {
-                        SchedPolicy::Other => self.cpu_states[cpu_id.raw()].other_queue
-                                                                           .tick_current(),
-                        SchedPolicy::Rr => matches!(self.cpu_states[cpu_id.raw()]
-                                                        .rr_queue
-                                                        .on_tick_current(current_id,
-                                                                         snap.sched_priority),
-                                                    RrTickAction::YieldToSamePriority),
-                        SchedPolicy::Fifo => false,
-                    },
-                };
-
-                // 1d. 判断就绪队列中是否有更高优先级的任务要抢占
-                let ready_preempts = current.is_some_and(|(current_id, snap)| {
-                                                self.ready_task_should_preempt(current_id, snap,
-                                                                               cpu_id)
-                                            });
-
-                // 1e. 根据检查结果决定路径
-                if quantum_expired || ready_preempts {
-                    // AP 只处理本 CPU 的时间片；全局 timeout 仅由 timekeeper
-                    // 在自己的 tick 中转为 Ready 任务。
-                    if self.is_timekeeper_cpu(cpu_id) {
-                        self.promote_sleep_and_timeouts();
-                    }
-                    self.cpu_states[cpu_id.raw()].other_queue
-                                                 .reset_ticks();
-                } else if self.is_timekeeper_cpu(cpu_id) &&
-                          self.wait_queues
-                              .has_due_timers()
-                {
-                    self.promote_sleep_and_timeouts();
-                    return None;
-                } else {
-                    return None;
-                }
-            }
-            ScheduleReason::Sleep(ticks) if ticks == 0 => {
-                return self.schedule(ScheduleReason::Yield, cpu_id);
-            }
+            ScheduleReason::Reschedule => self.handle_reschedule(cpu_id)?,
+            ScheduleReason::Tick => self.handle_tick(cpu_id)?,
+            ScheduleReason::Sleep(0) => return self.schedule(ScheduleReason::Yield, cpu_id),
+            //其他情况当前任务要明确让出CPU
             _ => {
                 self.cpu_states[cpu_id.raw()].other_queue
                                              .reset_ticks();
+                if self.is_timekeeper_cpu(cpu_id) {
+                    self.enqueue_woken_and_timeout_tasks();
+                }
             }
         }
 
-        // ===== Phase 2: 前置 promote（非 Tick 路径在此处理） =====
-        if self.is_timekeeper_cpu(cpu_id) &&
-           !matches!(reason,
-                     ScheduleReason::Tick | ScheduleReason::Reschedule)
-        {
-            self.promote_sleep_and_timeouts();
-        }
-
-        // ===== Phase 3: 从 cpu_states 取出当前任务 =====
+        // Phase 3: 从 cpu_states 取出当前任务
         let current_task_id =
             self.cpu_states[cpu_id.raw()].current_task_id
                                          .unwrap_or_else(|| {
@@ -258,41 +169,146 @@ impl MultiClassScheduler {
                                          });
         let current_ptr = self.registry
                               .take_task_cx(current_task_id);
-        // Sleep 路径额外清除旧的 wait_result
+        let current_sched_policy = self.registry
+                                       .sched_policy(current_task_id)
+                                       .expect("task not exist");
         if matches!(reason, ScheduleReason::Sleep(_)) {
             self.registry
                 .clear_wait_result(current_task_id);
         }
 
-        // ===== Phase 4: IDLE 任务特殊处理 =====
-        // IDLE 不经过 enqueue（它不属于任何就绪队列），直接选下一个
+        // Phase 4: IDLE 特殊处理（不经过 enqueue）
         if self.registry
                .is_idle(current_task_id)
         {
-            let next_task_id = self.pick_next_runnable(cpu_id);
-            if next_task_id == current_task_id {
-                self.set_current_task(next_task_id, cpu_id);
-                return None;
-            }
-            let snap = self.registry
-                           .task_snapshot(next_task_id);
-            if snap.sched_policy == SchedPolicy::Rr {
-                self.cpu_states[cpu_id.raw()].rr_queue
-                                             .note_running(next_task_id, snap.sched_priority);
-            }
-            self.set_current_task(next_task_id, cpu_id);
-            let next_ptr = self.registry
-                               .task_cx_ptr(next_task_id);
-            return Some((current_ptr, next_ptr));
+            return self.schedule_from_idle(cpu_id, current_task_id, current_ptr);
         }
 
-        // ===== Phase 5: 确定当前任务的去向（queue_target） =====
+        // Phase 5-8: 非 IDLE 调度
+        self.schedule_non_idle(reason,
+                               cpu_id,
+                               current_task_id,
+                               current_ptr,
+                               current_sched_policy)
+    }
+
+    /// Reschedule 前置处理：检查是否需要抢占；不需要则提前返回。
+    fn handle_reschedule(&mut self, cpu_id : CpuId) -> Option<()> {
+        let Some(current_id) = self.cpu_states[cpu_id.raw()].current_task_id else {
+            return None;
+        };
+        let current_affinity = self.registry
+                                   .get_affinity(current_id)
+                                   .expect("current task must exist");
+        if current_affinity.contains(cpu_id) && !self.ready_task_should_preempt(current_id, cpu_id)
+        {
+            return None;
+        }
+        self.cpu_states[cpu_id.raw()].other_queue
+                                     .reset_ticks();
+        Some(())
+    }
+
+    /// Tick 前置处理：推进时间、检查时间片与抢占条件。
+    fn handle_tick(&mut self, cpu_id : CpuId) -> Option<()> {
+        // 1a. 推进全局 tick 和当前任务的 tick 计数
+        self.cpu_states[cpu_id.raw()].timer_ticks = self.cpu_states[cpu_id.raw()].timer_ticks
+                                                                                 .saturating_add(1);
+        if self.is_timekeeper_cpu(cpu_id) {
+            self.wait_queues
+                .tick();
+        }
+        if let Some(id) = self.cpu_states[cpu_id.raw()].current_task_id {
+            self.registry
+                .tick(id);
+        }
+
+        // 1b-c. 获取当前任务快照，判断时间片是否耗尽
+        let current = self.cpu_states[cpu_id.raw()].current_task_id
+                                                   .map(|task_id| {
+                                                       (task_id,
+                                                        self.registry
+                                                            .task_snapshot(task_id))
+                                                   });
+        let quantum_expired = match current {
+            None => false,
+            Some((current_id, snap)) => match snap.sched_policy {
+                SchedPolicy::Other => self.cpu_states[cpu_id.raw()].other_queue
+                                                                   .tick(),
+                SchedPolicy::Rr => {
+                    self.cpu_states[cpu_id.raw()].rr_queue
+                                                 .tick(current_id, snap.sched_priority)
+                }
+                SchedPolicy::Fifo => false,
+            },
+        };
+
+        // 1d. 判断是否有更高优先级任务要抢占
+        let ready_preempts = current.is_some_and(|(current_id, _snap)| {
+                                        self.ready_task_should_preempt(current_id, cpu_id)
+                                    });
+
+        // 1e. 根据检查结果决定路径
+        let needs_switch = quantum_expired || ready_preempts;
+        if needs_switch ||
+           self.wait_queues
+               .has_woken_or_timeout_tasks()
+        {
+            if self.is_timekeeper_cpu(cpu_id) {
+                self.enqueue_woken_and_timeout_tasks();
+            }
+        }
+        if needs_switch {
+            self.cpu_states[cpu_id.raw()].other_queue
+                                         .reset_ticks();
+            Some(())
+        } else {
+            None
+        }
+    }
+
+    /// Phase 4: IDLE 任务不经过 enqueue，直接选下一个任务。
+    fn schedule_from_idle(&mut self,
+                          cpu_id : CpuId,
+                          current_task_id : TaskId,
+                          current_ptr : *mut TaskContext)
+                          -> Option<SwitchPair> {
+        let next_task_id = self.pick_next_runnable(cpu_id);
+        if next_task_id == current_task_id {
+            self.set_current_task(next_task_id, cpu_id);
+            return None;
+        }
+        let sched_policy = self.registry
+                               .sched_policy(next_task_id)
+                               .expect("task not exist");
+        let sched_priority = self.registry
+                                 .sched_priority(next_task_id)
+                                 .expect("task not exist");
+        if sched_policy == SchedPolicy::Rr {
+            self.cpu_states[cpu_id.raw()].rr_queue
+                                         .note_running(next_task_id, sched_priority);
+        }
+        self.set_current_task(next_task_id, cpu_id);
+        let next_ptr = self.registry
+                           .task_cx_ptr(next_task_id);
+        Some((current_ptr, next_ptr))
+    }
+
+    /// Phase 5-8: 非 IDLE 任务的完整调度路径（确定去向 → 摘除 → 入队 → 选下一个）。
+    fn schedule_non_idle(&mut self,
+                         reason : ScheduleReason,
+                         cpu_id : CpuId,
+                         current_task_id : TaskId,
+                         current_ptr : *mut TaskContext,
+                         current_sched_policy : SchedPolicy)
+                         -> Option<SwitchPair> {
+        // Phase 5: 确定当前任务的去向
         let is_exit = matches!(reason, ScheduleReason::Exit(_));
         let queue_target = match reason {
-            ScheduleReason::StartFirst => QueueTarget::Ready,
-            ScheduleReason::Yield | ScheduleReason::Tick | ScheduleReason::Reschedule => {
-                QueueTarget::Ready
-            }
+            ScheduleReason::StartFirst |
+            ScheduleReason::Yield |
+            ScheduleReason::Tick |
+            ScheduleReason::Reschedule => QueueTarget::Ready,
             ScheduleReason::Block(block_reason) => QueueTarget::Blocked(block_reason),
             ScheduleReason::Sleep(ticks) => {
                 let wake_tick = self.wait_queues
@@ -303,29 +319,58 @@ impl MultiClassScheduler {
             ScheduleReason::Exit(exit_code) => QueueTarget::Exited(exit_code),
         };
 
-        // ===== Phase 6: 将当前任务从就绪队列摘除（如果不回 Ready） =====
+        // Phase 6: 摘除（如果不回 Ready）并清除 RR 运行状态
         if !matches!(queue_target, QueueTarget::Ready) {
             self.detach_from_run_queues(current_task_id, cpu_id);
         }
-
-        // Yield/Tick 时清除 RR 的运行状态（如果当前是 RR 任务）
-        if matches!(queue_target, QueueTarget::Ready) {
-            let snap = self.registry
-                           .task_snapshot(current_task_id);
-            if snap.sched_policy == SchedPolicy::Rr {
-                self.cpu_states[cpu_id.raw()].rr_queue
-                                             .clear_running();
-            }
+        if matches!(queue_target, QueueTarget::Ready) && current_sched_policy == SchedPolicy::Rr {
+            self.cpu_states[cpu_id.raw()].rr_queue
+                                         .clear_running();
         }
 
-        // ===== Phase 7: 将当前任务入队到目标队列 =====
+        // Phase 7: 入队
         self.enqueue_task(queue_target, current_task_id, cpu_id);
 
-        // ===== Phase 8: 从就绪队列选出下一个任务，决定是否需要 __switch =====
-        self.finish_schedule_switch(current_task_id,
-                                    current_ptr,
-                                    is_exit,
-                                    cpu_id)
+        // Phase 8: 选下一个任务，决定是否 __switch
+        let next_task_id = self.pick_next_runnable(cpu_id);
+        let sched_policy = self.registry
+                               .sched_policy(next_task_id)
+                               .expect("task not exist");
+        let sched_priority = self.registry
+                                 .sched_priority(next_task_id)
+                                 .expect("task not exist");
+
+        if next_task_id == current_task_id {
+            if is_exit {
+                if !self.registry
+                        .is_idle(current_task_id)
+                {
+                    let idle_id = self.cpu_states[cpu_id.raw()].idle_task_id
+                                                               .unwrap_or(IDLE_TASK_ID);
+                    self.set_current_task(idle_id, cpu_id);
+                    let next_ptr = self.registry
+                                       .task_cx_ptr(idle_id);
+                    return Some((current_ptr, next_ptr));
+                }
+                panic!("exit_current called on idle task — this should never happen");
+            }
+            if sched_policy == SchedPolicy::Rr {
+                self.cpu_states[cpu_id.raw()].rr_queue
+                                             .note_running(next_task_id, sched_priority);
+            }
+            self.set_current_task(next_task_id, cpu_id);
+            return None;
+        }
+
+        // 选出不同任务
+        if sched_policy == SchedPolicy::Rr {
+            self.cpu_states[cpu_id.raw()].rr_queue
+                                         .note_running(next_task_id, sched_priority);
+        }
+        self.set_current_task(next_task_id, cpu_id);
+        let next_ptr = self.registry
+                           .task_cx_ptr(next_task_id);
+        Some((current_ptr, next_ptr))
     }
 
     /// 等待调度入口：当前任务因等待某个 `target` 而阻塞。
@@ -341,7 +386,7 @@ impl MultiClassScheduler {
         self.cpu_states[cpu_id.raw()].other_queue
                                      .reset_ticks();
         if self.is_timekeeper_cpu(cpu_id) {
-            self.promote_sleep_and_timeouts();
+            self.enqueue_woken_and_timeout_tasks();
         }
 
         // ===== Phase 2: 快速路径 — 目标已就绪，无需阻塞 =====
@@ -379,11 +424,15 @@ impl MultiClassScheduler {
 
         // ===== Phase 6: 选下一个任务，直接切换（当前已阻塞） =====
         let next_task_id = self.pick_next_runnable(cpu_id);
-        let snap = self.registry
-                       .task_snapshot(next_task_id);
-        if snap.sched_policy == SchedPolicy::Rr {
+        let sched_policy = self.registry
+                               .sched_policy(next_task_id)
+                               .expect("task not exist");
+        let sched_priority = self.registry
+                                 .sched_priority(next_task_id)
+                                 .expect("task not exist");
+        if sched_policy == SchedPolicy::Rr {
             self.cpu_states[cpu_id.raw()].rr_queue
-                                         .note_running(next_task_id, snap.sched_priority);
+                                         .note_running(next_task_id, sched_priority);
         }
         self.set_current_task(next_task_id, cpu_id);
         let next_ptr = self.registry
@@ -391,52 +440,6 @@ impl MultiClassScheduler {
         Some((current_ptr, next_ptr))
     }
 
-    /// 选定下一个任务，决定是否需要 `__switch`。
-    fn finish_schedule_switch(&mut self,
-                              current_task_id : TaskId,
-                              current_ptr : *mut TaskContext,
-                              is_exit : bool,
-                              cpu_id : CpuId)
-                              -> Option<SwitchPair> {
-        let next_task_id = self.pick_next_runnable(cpu_id);
-        // 选出来的还是自己，就绪队列里只剩它自己
-        if next_task_id == current_task_id {
-            // 当前任务在退出 → 不是 IDLE 就强行切到 IDLE
-            if is_exit {
-                if !self.registry
-                        .is_idle(current_task_id)
-                {
-                    let idle_id = self.cpu_states[cpu_id.raw()].idle_task_id
-                                                               .unwrap_or(IDLE_TASK_ID);
-                    self.set_current_task(idle_id, cpu_id);
-                    let next_ptr = self.registry
-                                       .task_cx_ptr(idle_id);
-                    return Some((current_ptr, next_ptr));
-                }
-                panic!("exit_current called on idle task — this should never happen");
-            }
-            // 选出了自己且非退出 → 重新标记为 Running，不切换
-            let snap = self.registry
-                           .task_snapshot(next_task_id);
-            if snap.sched_policy == SchedPolicy::Rr {
-                self.cpu_states[cpu_id.raw()].rr_queue
-                                             .note_running(next_task_id, snap.sched_priority);
-            }
-            self.set_current_task(next_task_id, cpu_id);
-            return None;
-        }
-        // 选出不同任务 → 返回切换对，调用方执行 __switch
-        let snap = self.registry
-                       .task_snapshot(next_task_id);
-        if snap.sched_policy == SchedPolicy::Rr {
-            self.cpu_states[cpu_id.raw()].rr_queue
-                                         .note_running(next_task_id, snap.sched_priority);
-        }
-        self.set_current_task(next_task_id, cpu_id);
-        let next_ptr = self.registry
-                           .task_cx_ptr(next_task_id);
-        Some((current_ptr, next_ptr))
-    }
 
     /// 按优先级从就绪队列中选择下一个可运行任务。
     fn pick_next_runnable(&mut self, cpu_id : CpuId) -> TaskId {
@@ -588,13 +591,13 @@ impl MultiClassScheduler {
         assert!(!self.registry
                      .is_idle(task_id),
                 "idle task must not be placed on a ready queue");
-        debug_assert!(self.cpu_states[cpu_id.raw()].online,
-                      "ready task must target an online CPU");
-        debug_assert!(self.registry
-                          .get_affinity(task_id)
-                          .expect("queued task must exist")
-                          .contains(cpu_id),
-                      "ready task must target a CPU allowed by its affinity");
+        assert!(self.cpu_states[cpu_id.raw()].online,
+                "ready task must target an online CPU");
+        assert!(self.registry
+                    .get_affinity(task_id)
+                    .expect("queued task must exist")
+                    .contains(cpu_id),
+                "ready task must target a CPU allowed by its affinity");
         if let Some(old_cpu_id) = self.registry
                                       .ready_cpu_id(task_id)
         {
@@ -602,8 +605,6 @@ impl MultiClassScheduler {
             // 这样同一任务不会同时存在于两个 CPU 的 runqueue。
             self.remove_from_cpu_runqueue(task_id, old_cpu_id);
         }
-        // Publish lifecycle state and queue ownership as one scheduler-lock
-        // transaction.  No observer can see Ready without its target queue.
         self.registry
             .mark_ready(task_id, cpu_id);
         let snap = self.registry
@@ -666,15 +667,15 @@ impl MultiClassScheduler {
         }
     }
 
-    /// 推进到期睡眠/超时任务到就绪队列。
-    fn promote_sleep_and_timeouts(&mut self) {
+    /// 到期睡眠/超时任务到就绪队列。
+    fn enqueue_woken_and_timeout_tasks(&mut self) {
         for task_id in &self.wait_queues
-                            .promote_sleeping_tasks()
+                            .woken_tasks()
         {
             self.enqueue_woken_task(*task_id);
         }
         for (task_id, target) in &self.wait_queues
-                                      .promote_wait_timeouts()
+                                      .timeout_tasks()
         {
             let still_waiting = matches!(
                 self.registry.state(*task_id),
@@ -701,11 +702,7 @@ impl MultiClassScheduler {
         }
     }
     ///当前 CPU 正在运行的任务，是否应该立刻被该 CPU 就绪队列里的任务抢占。
-    fn ready_task_should_preempt(&self,
-                                 current_id : TaskId,
-                                 current : TaskSnapshot,
-                                 cpu_id : CpuId)
-                                 -> bool {
+    fn ready_task_should_preempt(&self, current_id : TaskId, cpu_id : CpuId) -> bool {
         if self.registry
                .is_idle(current_id)
         {
@@ -714,12 +711,18 @@ impl MultiClassScheduler {
                    self.cpu_states[cpu_id.raw()].other_queue
                                                 .has_runnable();
         }
-        match current.sched_policy {
+        let current_sched_policy = self.registry
+                                       .sched_policy(current_id)
+                                       .expect("task not exist");
+        let current_sched_priority = self.registry
+                                         .sched_priority(current_id)
+                                         .expect("task not exist");
+        match current_sched_policy {
             SchedPolicy::Other => self.highest_ready_rt_priority(cpu_id)
                                       .is_some(),
             SchedPolicy::Fifo | SchedPolicy::Rr => {
                 self.highest_ready_rt_priority(cpu_id)
-                    .is_some_and(|priority| priority > current.sched_priority)
+                    .is_some_and(|priority| priority > current_sched_priority)
             }
         }
     }

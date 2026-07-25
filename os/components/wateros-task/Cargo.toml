@@ -5,7 +5,6 @@
         "./task-scheduler/",
         "./task-scheduler/scheduler-api/api-v0/",
         "./task-scheduler/scheduler-impl/impl-multi-class/",
-        "./task-scheduler/scheduler-impl/impl-round-robin/",
     ]
 [package]
     name = "wateros-task"
@@ -19,8 +18,8 @@
     impl-core = { path = "./task-impl/impl-core/", package = "wateros-task-impl-core", default-features = false }
     mm-api = { path = "../wateros-mm/mm-api/api-v0/", package = "wateros-mm-api-v0", default-features = true }
     scheduler = { path = "./task-scheduler/", package = "wateros-task-scheduler", default-features = false }
-    base = {path="../wateros-base", package="wateros-base", default-features = false}
-    
+    base = { path = "../wateros-base", package = "wateros-base", default-features = false }
+
 
 [profile.dev]
     panic = "abort"

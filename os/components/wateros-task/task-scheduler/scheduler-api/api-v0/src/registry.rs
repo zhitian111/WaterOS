@@ -316,12 +316,12 @@ impl TaskRegistry {
             .context_ptr()
     }
 
-    pub fn account_tick(&mut self, task_id : TaskId) {
+    pub fn tick(&mut self, task_id : TaskId) {
         if let Some(task) = self.task_table
                                 .task_mut_opt(task_id)
         {
             if !task.is_idle() {
-                task.account_tick();
+                task.tick();
             }
         }
     }
@@ -594,6 +594,18 @@ impl TaskRegistry {
         self.task_table
             .task_opt(task_id)
             .map(|task| task.nice())
+            .ok_or(SchedError::NoSuchTask)
+    }
+    pub fn sched_policy(&self, task_id : TaskId) -> Result<SchedPolicy, SchedError> {
+        self.task_table
+            .task_opt(task_id)
+            .map(|task| task.sched_policy())
+            .ok_or(SchedError::NoSuchTask)
+    }
+    pub fn sched_priority(&self, task_id : TaskId) -> Result<i32, SchedError> {
+        self.task_table
+            .task_opt(task_id)
+            .map(|task| task.sched_priority())
             .ok_or(SchedError::NoSuchTask)
     }
 }

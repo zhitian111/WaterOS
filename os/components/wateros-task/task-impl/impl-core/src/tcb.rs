@@ -570,7 +570,7 @@ impl TaskControlBlock {
     }
 
     #[inline]
-    pub fn account_tick(&mut self) {
+    pub fn tick(&mut self) {
         self.stats
             .tick_count = self.stats
                               .tick_count

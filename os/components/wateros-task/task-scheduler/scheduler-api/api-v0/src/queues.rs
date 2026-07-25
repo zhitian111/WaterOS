@@ -33,7 +33,7 @@ impl OtherQueue {
                versions : BTreeMap::new() }
     }
     /// 记录当前任务消耗的 tick 数；返回是否已达到最大值。
-    pub fn tick_current(&mut self) -> bool {
+    pub fn tick(&mut self) -> bool {
         self.current_ticks = self.current_ticks
                                  .saturating_add(1);
         self.current_ticks >= MAX_TICKS_PER_TASK
@@ -231,7 +231,7 @@ impl RrQueue {
 
 
     /// 处理当前 RR 任务的 tick 消耗；返回是否应让出 CPU。
-    pub fn on_tick_current(&mut self, current : TaskId, priority : i32) -> RrTickAction {
+    pub fn tick(&mut self, current : TaskId, priority : i32) -> bool {
         if self.current != Some((current, priority)) {
             self.current = Some((current, priority));
             self.remaining_ticks = MAX_RT_TICKS_PER_TASK;
@@ -239,11 +239,11 @@ impl RrQueue {
         if self.remaining_ticks <= 1 {
             self.remaining_ticks = 0;
             self.current = None;
-            RrTickAction::YieldToSamePriority
+            true
         } else {
             self.remaining_ticks = self.remaining_ticks
                                        .saturating_sub(1);
-            RrTickAction::ContinueRunning
+            false
         }
     }
 

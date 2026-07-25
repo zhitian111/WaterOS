@@ -104,7 +104,7 @@ impl WaitQueues {
     }
 
     /// 推进全局逻辑 tick。
-    pub fn on_tick(&mut self) {
+    pub fn tick(&mut self) {
         self.current_tick = self.current_tick
                                 .saturating_add(1);
     }
@@ -113,7 +113,7 @@ impl WaitQueues {
     pub fn current_tick(&self) -> TaskTick { self.current_tick }
 
     /// 是否存在已到期的 sleep 或 wait timeout。队列是排序的，如果队首都没到期，后面的到期时间更晚，更不可能到期。
-    pub fn has_due_timers(&self) -> bool {
+    pub fn has_woken_or_timeout_tasks(&self) -> bool {
         if self.wait_timeouts
                .front()
                .is_some_and(|entry| entry.wake_tick <= self.current_tick)
@@ -201,7 +201,7 @@ impl WaitQueues {
     }
 
     /// 将到期的睡眠任务弹出，返回其 ID 列表（调度器负责标记就绪并入队）。
-    pub fn promote_sleeping_tasks(&mut self) -> VecDeque<TaskId> {
+    pub fn woken_tasks(&mut self) -> VecDeque<TaskId> {
         let mut woken = VecDeque::new();
         while let Some(&(task_id, wake_tick)) = self.sleep_queue
                                                     .front()
@@ -219,7 +219,7 @@ impl WaitQueues {
 
     /// 将到期的等待超时任务弹出，返回其 (task_id, wait_target) 列表。
     /// 调度器负责检查状态、标记超时结果并重新入就绪队列。
-    pub fn promote_wait_timeouts(&mut self) -> VecDeque<(TaskId, TaskWaitTarget)> {
+    pub fn timeout_tasks(&mut self) -> VecDeque<(TaskId, TaskWaitTarget)> {
         let mut timed_out = VecDeque::new();
         while self.wait_timeouts
                   .front()
