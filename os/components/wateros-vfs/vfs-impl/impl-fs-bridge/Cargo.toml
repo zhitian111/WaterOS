@@ -25,7 +25,5 @@
         "dep:fs",
         "dep:impl_fd_session",
         "dep:impl_page_cache",
-        "task/api-v0",
-        "task/impl-core",
     ]
     default = [ "api-v0", "bridge-fs-api" ]

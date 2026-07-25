@@ -34,8 +34,6 @@
         "dep:impl_fd_session",
         "dep:task",
         "impl_fd_session/impl-fd-session",
-        "task/api-v0",
-        "task/impl-core",
     ]
 
 [profile.dev]

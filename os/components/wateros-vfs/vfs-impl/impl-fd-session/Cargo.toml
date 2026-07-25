@@ -26,8 +26,6 @@
     impl-fd-session = [
         "api-v0",
         "ipc/pipe",
-        "task/api-v0",
-        "task/impl-core",
         "waitqueue/impl-task",
     ]
 

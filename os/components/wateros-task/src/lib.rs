@@ -68,7 +68,6 @@ pub use cpu::{
     cpu_snapshot, cpu_states, online_cpu_mask, print_cpu_states, running_cpu, set_cpu_online,
     set_timekeeper_cpu,
 };
-#[cfg(feature = "impl-core")]
 pub(crate) use impl_core as active_impl;
 pub use scheduler::CpuSnapshot;
 

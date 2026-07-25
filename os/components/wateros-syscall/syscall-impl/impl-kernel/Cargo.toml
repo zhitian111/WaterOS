@@ -44,8 +44,6 @@
         "klog/default",
         "platform/api-v0",
         "socket-net",
-        "task/api-v0",
-        "task/impl-core",
     ]
     socket-net = [
         "dep:driver",

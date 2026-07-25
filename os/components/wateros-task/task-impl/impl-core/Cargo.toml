@@ -9,7 +9,3 @@
     arch = { path = "../../../wateros-platform/platform-arch/", package = "wateros-platform-arch", default-features = false }
     base = { path = "../../../wateros-base/", package = "wateros-base", default-features = true }
     mm-api = { path = "../../../wateros-mm/mm-api/api-v0/", package = "wateros-mm-api-v0", default-features = true }
-
-[features]
-    api-v0 = [  ]
-    default = [  ]

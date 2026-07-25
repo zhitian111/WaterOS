@@ -14,7 +14,7 @@
 [features]
     api-v0 = [  ]
     default = [ "api-v0", "impl-root" ]
-    impl-root = [ "api-v0", "dep:task", "task/api-v0" ]
+    impl-root = [ "api-v0", "dep:task"]
 
 [profile.dev]
     panic = "abort"

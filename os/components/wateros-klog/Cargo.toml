@@ -14,10 +14,9 @@
 
 [features]
     api-v0 = [  ]
-    default = [ "api-v0", "impl-ringbuf", "platform-timer", "task-api" ]
+    default = [ "api-v0", "impl-ringbuf", "platform-timer"]
     impl-ringbuf = [  ]
     platform-timer = [ "platform/api-v0" ]
-    task-api = [ "task/api-v0", "task/impl-core" ]
 
 [profile.dev]
     panic = "abort"

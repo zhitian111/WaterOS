@@ -20,12 +20,7 @@
     mm-api = { path = "../wateros-mm/mm-api/api-v0/", package = "wateros-mm-api-v0", default-features = true }
     scheduler = { path = "./task-scheduler/", package = "wateros-task-scheduler", default-features = false }
     base = {path="../wateros-base", package="wateros-base", default-features = false}
-[features]
-    api-v0 = [ "impl-core/api-v0", "scheduler/api-v0" ]
-    default = [ "api-v0", "impl-core", "impl-multi-class" ]
-    impl-core = [  ]
-    impl-multi-class = [ "scheduler/impl-multi-class" ]
-    impl-round-robin = [ "scheduler/impl-round-robin" ]
+    
 
 [profile.dev]
     panic = "abort"

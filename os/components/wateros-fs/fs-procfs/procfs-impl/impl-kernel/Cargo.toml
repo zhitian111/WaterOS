@@ -6,9 +6,7 @@
 [dependencies]
     api-v0 = { path = "../../procfs-api/api-v0/", package = "wateros-fs-procfs-api-v0", default-features = true }
     fs-api-v0 = { path = "../../../fs-api/api-v0/", package = "wateros-fs-api-v0", default-features = true }
-    task = { path = "../../../../wateros-task/", package = "wateros-task", default-features = true, features = [
-        "impl-core",
-    ] }
+    task = { path = "../../../../wateros-task/", package = "wateros-task", default-features = false}
     cred = { path = "../../../../wateros-cred/", package = "wateros-cred", default-features = true, features = [
         "impl-root",
     ] }

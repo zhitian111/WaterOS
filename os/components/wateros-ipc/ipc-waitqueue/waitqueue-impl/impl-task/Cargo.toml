@@ -8,9 +8,9 @@
     wateros-task = { path = "../../../../wateros-task/", default-features = false }
 
 [features]
-    api-v0 = [ "api-v0/api-v0", "wateros-task/api-v0" ]
+    api-v0 = [ "api-v0/api-v0"]
     default = [ "impl-task" ]
-    impl-task = [ "api-v0", "wateros-task/impl-core" ]
+    impl-task = [ "api-v0"]
 
 [profile.dev]
     panic = "abort"
