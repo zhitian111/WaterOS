@@ -346,6 +346,13 @@ pub fn schedule_reschedule() {
     let guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
     let (switch_pair, targets) = with_scheduler(|scheduler| {
+        // boot code still executes on the firmware/early-kernel stack while
+        // CPUState is only logically seeded with its idle task.  A local IPI
+        // request caused by spawn must stay pending until run_first_task has
+        // performed the real boot-context switch.
+        if scheduler.boot_context_active(cpu_id) {
+            return (None, CpuMask::EMPTY);
+        }
         let switch_pair = if scheduler.take_need_resched(cpu_id) {
             scheduler.schedule(ScheduleReason::Reschedule, cpu_id)
         } else {

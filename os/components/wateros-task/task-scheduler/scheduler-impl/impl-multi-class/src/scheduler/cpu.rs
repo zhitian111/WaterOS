@@ -22,6 +22,13 @@ impl MultiClassScheduler {
     #[inline]
     pub fn is_timekeeper_cpu(&self, cpu_id : CpuId) -> bool { self.timekeeper_cpu == Some(cpu_id) }
 
+    /// 启动栈尚未通过 `run_first_task` 切出时，不能把预置的 idle cache 当作
+    /// 当前硬件上下文执行调度。
+    #[inline]
+    pub(crate) fn boot_context_active(&self, cpu_id : CpuId) -> bool {
+        self.cpu_states[cpu_id.raw()].boot_context_active
+    }
+
     pub fn set_cpu_online(&mut self, cpu_id : CpuId) {
         if !cpu_id.fits_capacity(self.cpu_states
                                      .len())

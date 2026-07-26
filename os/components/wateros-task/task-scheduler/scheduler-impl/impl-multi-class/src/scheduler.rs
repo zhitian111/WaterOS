@@ -23,6 +23,7 @@ unsafe extern "C" {
     static kernel_heap_start : u8;
     static kernel_heap_end : u8;
 }
+
 pub(super) struct MultiClassScheduler {
     pub registry : TaskRegistry,
     pub wait_queues : WaitQueues,
@@ -139,6 +140,7 @@ impl MultiClassScheduler {
 
     /// 首次任务切换（冷启动入口）。
     pub(super) fn prepare_first_switch(&mut self, cpu_id : CpuId) -> SwitchPair {
+        self.cpu_states[cpu_id.raw()].leave_boot_context();
         let next_task_id = self.cpu_states[cpu_id.raw()].pick_next_runnable();
         let snap = self.registry
                        .task_snapshot(next_task_id);
@@ -171,12 +173,12 @@ impl MultiClassScheduler {
         let current_task_id = self.cpu_states[cpu_id.raw()].current_task_id()
                                                            .expect("current task must exist");
         let current_ptr = self.cpu_states[cpu_id.raw()].current_task_cx;
-        let next_task_id = self.cpu_states[cpu_id.raw()].pick_next_runnable();
-        let snap = self.registry
-                       .task_snapshot(next_task_id);
 
         // Phase 4: IDLE 特殊处理（不经过 enqueue）
         if self.cpu_states[cpu_id.raw()].is_current_idle() {
+            let next_task_id = self.cpu_states[cpu_id.raw()].pick_next_runnable();
+            let snap = self.registry
+                           .task_snapshot(next_task_id);
             if next_task_id == current_task_id {
                 self.set_current_task(&snap, cpu_id);
                 return None;
@@ -188,16 +190,19 @@ impl MultiClassScheduler {
         // Phase 5-8: 非 IDLE 调度
         let queue_target = self.pick_queue(reason);
         self.enqueue_task(queue_target, current_task_id, cpu_id);
-        // Phase 8: 选下一个任务，决定是否 __switch
+        // 当前任务的状态转换可能唤醒其它任务（最典型是 Exit 唤醒父 runner）。
+        // 必须在转换之后取 next；提前 pick 会错误地选 idle，并令 CPU cache 与
+        // 实际将要恢复的任务脱节。
+        let next_task_id = self.cpu_states[cpu_id.raw()].pick_next_runnable();
+        let snap = self.registry
+                       .task_snapshot(next_task_id);
+        // Phase 8: 决定是否 __switch
         let is_exit = matches!(reason, ScheduleReason::Exit(_));
         if next_task_id == current_task_id {
             if is_exit {
-                let idle_id = self.cpu_states[cpu_id.raw()].idle_task_id?;
-                let snap = self.registry
-                               .task_snapshot(idle_id);
-                self.set_current_task(&snap, cpu_id);
-                let next_ptr = snap.task_cx as *const TaskContext;
-                return Some(self.switch_pair(current_ptr, idle_id, next_ptr, cpu_id));
+                panic!("[scheduler] exited task {} remained runnable on CPU {}",
+                       current_task_id,
+                       cpu_id.raw());
             }
             self.set_current_task(&snap, cpu_id);
             return None;

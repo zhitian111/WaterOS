@@ -48,6 +48,9 @@ pub enum QueueTarget {
 pub struct CPUState {
     pub cpu_id : CpuId,
     pub boot_task_cx : ActiveArchTaskContext,
+    /// `run_first_task` 前 CPU 仍在启动栈上；此时 current cache 预置为 idle，
+    /// 但尚不能据此校验运行中的 `sp`。
+    pub boot_context_active : bool,
     pub current_task_id : Option<TaskId>,
     pub idle_task_id : Option<TaskId>,
     pub online : bool,
@@ -78,6 +81,7 @@ impl CPUState {
     pub fn new(cpu_id : CpuId) -> Self {
         Self { cpu_id,
                boot_task_cx : ActiveArchTaskContext::zero_init(),
+               boot_context_active : true,
                current_task_id : None,
                idle_task_id : None,
                online : false,
@@ -100,6 +104,7 @@ impl CPUState {
     pub fn init(&mut self, cpu_id : CpuId) {
         self.cpu_id = cpu_id;
         self.boot_task_cx = ActiveArchTaskContext::zero_init();
+        self.boot_context_active = true;
         self.current_task_id = None;
         self.idle_task_id = None;
         self.online = false;
@@ -124,6 +129,7 @@ impl CPUState {
     pub fn boot_task_cx(&mut self) -> *mut ActiveArchTaskContext {
         &mut self.boot_task_cx as *mut ActiveArchTaskContext
     }
+    pub fn leave_boot_context(&mut self) { self.boot_context_active = false; }
     pub fn set_online(&mut self, online : bool) { self.online = online; }
     pub fn online(&self) -> bool { self.online }
     pub fn set_idle_task_id(&mut self, task_id : TaskId) { self.idle_task_id = Some(task_id); }
@@ -139,11 +145,11 @@ impl CPUState {
         match self.current_policy {
             SchedPolicy::Other => {
                 let weight = NICE_TO_WEIGHT[(self.current_nice + 20) as usize];
-                let delta = NICE_0_WEIGHT
-                                .saturating_mul(VRUNTIME_SCALE)
-                                .saturating_div(weight)
-                                .max(1);
-                self.current_vruntime = self.current_vruntime.saturating_add(delta);
+                let delta = NICE_0_WEIGHT.saturating_mul(VRUNTIME_SCALE)
+                                         .saturating_div(weight)
+                                         .max(1);
+                self.current_vruntime = self.current_vruntime
+                                            .saturating_add(delta);
             }
             SchedPolicy::Rr => {
                 self.current_ticks = self.current_ticks
@@ -154,11 +160,9 @@ impl CPUState {
     }
     pub fn is_current_runnable(&self) -> bool {
         match self.current_policy {
-            SchedPolicy::Other => {
-                self.cfs_queue
-                    .min_ready_vruntime()
-                    .is_none_or(|min| self.current_vruntime <= min)
-            }
+            SchedPolicy::Other => self.cfs_queue
+                                      .min_ready_vruntime()
+                                      .is_none_or(|min| self.current_vruntime <= min),
             SchedPolicy::Rr => self.current_ticks < MAX_TICKS_PER_TASK,
             SchedPolicy::Fifo => true,
         }
