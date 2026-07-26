@@ -15,6 +15,15 @@ impl MultiClassScheduler {
             return Err(SchedError::NoSuchTask);
         }
         let was_ready = old_snap.state == TaskState::Ready;
+        let ready_cpu = old_snap.ready_cpu_id;
+        let running_cpu = old_snap.running_cpu_id;
+
+        // `current_policy` 等是 CPU 本地热路径缓存。修改正在运行任务的
+        // SCHED_FIFO/RR 属性前，先回写旧统计；随后必须用新快照更新该 CPU，
+        // 否则 tick 和抢占仍会按旧 SCHED_OTHER 属性执行。
+        if let Some(running_cpu) = running_cpu {
+            self.sync_current_to_registry(running_cpu);
+        }
 
         self.dequeue_from_all_cpus(task_id);
         if !self.registry
@@ -22,15 +31,31 @@ impl MultiClassScheduler {
         {
             return Err(SchedError::NoSuchTask);
         }
+        let new_snap = self.registry
+                           .task_snapshot(task_id);
+        let mut reschedule_local = false;
         if was_ready {
-            self.enqueue_ready_by_cpu(task_id, cpu_id);
-        }
-        // 如果当前 CPU 上有任务在运行，判断是否需要抢占。
-        if let Some(current_id) = self.cpu_states[cpu_id.raw()].current_task_id {
-            if current_id != task_id && self.cpu_states[cpu_id.raw()].ready_task_should_preempt() {
-                return Ok(true);
+            let target_cpu = ready_cpu.unwrap_or(cpu_id);
+            self.enqueue_ready_by_cpu(task_id, target_cpu);
+            if self.cpu_states[target_cpu.raw()].ready_task_should_preempt() {
+                if target_cpu == cpu_id {
+                    reschedule_local = true;
+                } else {
+                    self.request_reschedule(target_cpu);
+                }
             }
         }
-        Ok(false)
+
+        if let Some(running_cpu) = running_cpu {
+            self.cpu_states[running_cpu.raw()].set_current_task(&new_snap);
+            if self.cpu_states[running_cpu.raw()].ready_task_should_preempt() {
+                if running_cpu == cpu_id {
+                    reschedule_local = true;
+                } else {
+                    self.request_reschedule(running_cpu);
+                }
+            }
+        }
+        Ok(reschedule_local)
     }
 }
