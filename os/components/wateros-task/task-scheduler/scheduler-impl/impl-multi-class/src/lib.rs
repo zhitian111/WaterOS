@@ -889,7 +889,7 @@ pub fn get_affinity(task_id : TaskId) -> Result<CpuMask, SchedError> {
 
 /// 设置线程级 nice 属性。
 ///
-/// 当前阶段只更新 TCB；`OtherQueue` 尚未按 nice 加权，因此不会改变运行顺序。
+/// 更新线程级 nice；正在运行的 `SCHED_OTHER` 任务会在下一 tick 使用新权重。
 pub fn set_nice(task_id : TaskId, nice : i8) -> Result<(), SchedError> {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.set_nice(task_id, nice))

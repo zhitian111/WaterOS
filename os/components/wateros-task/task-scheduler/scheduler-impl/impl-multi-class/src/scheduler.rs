@@ -20,8 +20,8 @@ use task_api::{
 use api_v0::ScheduleReason;
 
 unsafe extern "C" {
-    static kernel_heap_start : u8;
-    static kernel_heap_end : u8;
+    static kernel_heap_start: u8;
+    static kernel_heap_end: u8;
 }
 
 pub(super) struct MultiClassScheduler {
@@ -68,10 +68,6 @@ impl MultiClassScheduler {
             let idle_id = self.registry
                               .spawn_idle_task();
             cpu_state.set_idle_task_id(idle_id);
-            // The idle task is the initial logical current task on every CPU.
-            // Seed the complete cache here: the first switch saves the old
-            // context through `current_task_cx`, so setting its ID alone
-            // would make that save target a null pointer.
             let idle_snapshot = self.registry
                                     .task_snapshot(idle_id);
             cpu_state.set_current_task(&idle_snapshot);
@@ -83,6 +79,7 @@ impl MultiClassScheduler {
     // ================================================================
 
     /// 标记任务为 Running 并更新当前 CPU 的 current_task_id。
+    /// CACHE_SYNC: TaskSnapshot → CPUState;  TCB_SYNC: mark_running → Registry
     fn set_current_task(&mut self, snap : &TaskSnapshot, cpu_id : CpuId) {
         if let Some(running_cpu) = snap.running_cpu_id {
             assert_eq!(running_cpu,
@@ -116,7 +113,8 @@ impl MultiClassScheduler {
         let heap_start = core::ptr::addr_of!(kernel_heap_start) as usize;
         let heap_end = core::ptr::addr_of!(kernel_heap_end) as usize;
         if (heap_start..heap_end).contains(&ra) {
-            panic!("[scheduler] corrupted switch target: cpu={} task={} cx={:#x} ra={:#x} sp={:#x} heap=[{:#x},{:#x})",
+            panic!("[scheduler] corrupted switch target: cpu={} task={} cx={:#x} ra={:#x} \
+                    sp={:#x} heap=[{:#x},{:#x})",
                    cpu_id.raw(),
                    task_id,
                    cx as usize,
@@ -185,7 +183,10 @@ impl MultiClassScheduler {
             }
             self.set_current_task(&snap, cpu_id);
             let next_ptr = snap.task_cx as *const TaskContext;
-            return Some(self.switch_pair(current_ptr, next_task_id, next_ptr, cpu_id));
+            return Some(self.switch_pair(current_ptr,
+                                         next_task_id,
+                                         next_ptr,
+                                         cpu_id));
         }
         // Phase 5-8: 非 IDLE 调度
         let queue_target = self.pick_queue(reason);
@@ -209,14 +210,16 @@ impl MultiClassScheduler {
         }
         self.set_current_task(&snap, cpu_id);
         let next_ptr = snap.task_cx as *const TaskContext;
-        Some(self.switch_pair(current_ptr, next_task_id, next_ptr, cpu_id))
+        Some(self.switch_pair(current_ptr,
+                              next_task_id,
+                              next_ptr,
+                              cpu_id))
     }
 
 
     /// Tick 前置处理：推进时间、检查时间片与抢占条件。
     fn tick(&mut self, cpu_id : CpuId) -> Option<()> {
         // 1. 推进全局 tick
-        self.cpu_states[cpu_id.raw()].inc_timer_tick();
         if self.is_timekeeper_cpu(cpu_id) {
             self.wait_queues
                 .tick();
@@ -225,17 +228,10 @@ impl MultiClassScheduler {
         // 3. 推进当前任务的时间片/vruntime（由 CPUState::tick 按策略分发）
         self.cpu_states[cpu_id.raw()].tick();
 
-        // 4. 检查时间片是否耗尽
-        let Some(current_id) = self.cpu_states[cpu_id.raw()].current_task_id else {
-            return None;
-        };
-        let quantum_expired = !self.cpu_states[cpu_id.raw()].is_current_runnable();
+        let needs_switch = self.cpu_states[cpu_id.raw()].cpu_should_reschedule()
+                                                        .is_some();
 
-        // 5. 检查抢占
-        let ready_preempts = self.cpu_states[cpu_id.raw()].ready_task_should_preempt();
-
-        // 6. 处理唤醒/超时任务
-        let needs_switch = quantum_expired || ready_preempts;
+        // 5. 处理唤醒/超时任务
         if needs_switch ||
            self.wait_queues
                .has_woken_or_timeout_tasks()
@@ -289,7 +285,7 @@ impl MultiClassScheduler {
         if self.registry
                .wait_target_ready(target)
         {
-            if let Some(current_task_id) = self.cpu_states[cpu_id.raw()].current_task_id {
+            if let Some(current_task_id) = self.cpu_states[cpu_id.raw()].current_task_id() {
                 self.registry
                     .finish_wait(current_task_id, TaskWaitResult::Woken);
             }
@@ -297,7 +293,7 @@ impl MultiClassScheduler {
         }
 
         // ===== Phase 3: 从 cpu_states 取出当前任务 =====
-        let current_task_id = self.cpu_states[cpu_id.raw()].current_task_id?;
+        let current_task_id = self.cpu_states[cpu_id.raw()].current_task_id()?;
         let current_ptr = self.cpu_states[cpu_id.raw()].current_task_cx;
         self.cpu_states[cpu_id.raw()].dequeue(current_task_id);
 
@@ -321,9 +317,16 @@ impl MultiClassScheduler {
                        .task_snapshot(next_task_id);
         self.set_current_task(&snap, cpu_id);
         let next_ptr = snap.task_cx as *const TaskContext;
-        Some(self.switch_pair(current_ptr, next_task_id, next_ptr, cpu_id))
+        Some(self.switch_pair(current_ptr,
+                              next_task_id,
+                              next_ptr,
+                              cpu_id))
     }
 
+    /// TCB_SYNC: sync_current_to_registry → Registry 写回
+    ///
+    /// 这里只回写当前 CPU cache；目标 runqueue 的 vruntime 归一化只能在
+    /// `enqueue_ready_by_cpu` 中按目标 CPU 的 baseline 完成。
     fn sync_current_to_registry(&mut self, cpu_id : CpuId) {
         let (current_task_id, policy, vruntime, runtime_ticks) = {
             let cpu = &mut self.cpu_states[cpu_id.raw()];
@@ -344,6 +347,7 @@ impl MultiClassScheduler {
         self.registry
             .add_ticks(current_task_id, runtime_ticks);
     }
+    //TCB_SYNC: mark state → Registry
     /// 在 scheduler 锁内将当前任务转换到目标状态。
     fn enqueue_task(&mut self, target : QueueTarget, current_task_id : TaskId, cpu_id : CpuId) {
         self.sync_current_to_registry(cpu_id);
@@ -456,6 +460,7 @@ impl MultiClassScheduler {
         self.cpu_states[cpu_id.raw()].need_resched = false;
         need_resched
     }
+    /// TCB → 目标 CPU ready queue 的唯一入口。
     fn enqueue_ready_by_cpu(&mut self, task_id : TaskId, cpu_id : CpuId) {
         assert!(Some(task_id) != self.cpu_states[cpu_id.raw()].idle_task_id,
                 "idle task must not be placed on a ready queue");
@@ -469,37 +474,25 @@ impl MultiClassScheduler {
         if let Some(old_cpu_id) = self.registry
                                       .ready_cpu_id(task_id)
         {
-            // 策略切换或防御性重复入队时，先根据 TCB 所记录的旧归属摘除。
-            // 这样同一任务不会同时存在于两个 CPU 的 runqueue。
+            // 包括同 CPU 重复入队在内，先清掉旧归属，确保一个任务只在一个
+            // ready queue 中出现一次。
             self.cpu_states[old_cpu_id.raw()].dequeue(task_id);
         }
-        let snap = self.ready_snapshot_for_cpu(task_id, cpu_id);
+        let mut snap = self.registry
+                           .task_snapshot(task_id);
+        if snap.policy == SchedPolicy::Other {
+            let normalized = self.cpu_states[cpu_id.raw()].cfs_queue
+                                                          .normalize_vruntime(snap.vruntime);
+            if normalized != snap.vruntime {
+                self.registry
+                    .set_vruntime(task_id, normalized);
+                snap.vruntime = normalized;
+            }
+        }
         self.registry
             .mark_ready(task_id, cpu_id);
         self.cpu_states[cpu_id.raw()].enqueue(task_id, &snap);
     }
-
-    /// 准备进入 `cpu_id` 就绪队列的任务快照。
-    ///
-    /// CFS 的 vruntime 基线属于目标 CPU，不能在源 CPU 的
-    /// `sync_current_to_registry` 中处理；该函数同时覆盖新建、唤醒和迁移任务。
-    fn ready_snapshot_for_cpu(&mut self, task_id : TaskId, cpu_id : CpuId) -> TaskSnapshot {
-        let mut snap = self.registry
-                           .task_snapshot(task_id);
-        if snap.policy != SchedPolicy::Other {
-            return snap;
-        }
-
-        let normalized = self.cpu_states[cpu_id.raw()].cfs_queue
-                                                       .normalize_vruntime(snap.vruntime);
-        if normalized != snap.vruntime {
-            self.registry
-                .set_vruntime(task_id, normalized);
-            snap.vruntime = normalized;
-        }
-        snap
-    }
-
     /// 从所有 CPU 的就绪队列摘除任务（用于 kill / discard 等跨 CPU 操作）。
     fn dequeue_from_all_cpus(&mut self, task_id : TaskId) {
         for cpu in &mut self.cpu_states {

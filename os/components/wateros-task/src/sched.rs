@@ -88,7 +88,7 @@ pub fn get_affinity(task_id : TaskId) -> Result<CpuMask, SchedError> {
     scheduler::get_affinity(task_id)
 }
 
-/// 设置线程级 nice。当前只保存属性，尚未接入 `SCHED_OTHER` 的队列选择。
+/// 设置线程级 nice；新权重会在运行任务的下一 tick 生效。
 pub fn set_nice(task_id : TaskId, nice : i8) -> Result<(), SchedError> {
     ensure_task_exists(task_id)?;
     if !(NICE_MIN..=NICE_MAX).contains(&nice) {
@@ -114,9 +114,17 @@ fn ensure_task_exists(task_id : TaskId) -> Result<(), SchedError> {
 
 // 按策略校验 priority 取值范围。
 fn validate_policy_param(policy : SchedPolicy, priority : Priority) -> Result<(), SchedError> {
-    if (1..=99).contains(&priority) {
-        Ok(())
-    } else {
-        Err(SchedError::InvalidArg)
+    match policy {
+        SchedPolicy::Fifo | SchedPolicy::Rr => {
+            if !(1..=99).contains(&priority) {
+                return Err(SchedError::InvalidArg);
+            }
+        }
+        SchedPolicy::Other => {
+            if priority != 0 {
+                return Err(SchedError::InvalidArg);
+            }
+        }
     }
+    Ok(())
 }

@@ -38,12 +38,13 @@ impl CfsQueue {
     //任务出队
     pub fn dequeue(&mut self, task_id : TaskId) {
         let mut removed = 0usize;
-        self.tree.retain(|_, tasks| {
-            let before = tasks.len();
-            tasks.retain(|id| *id != task_id);
-            removed += before - tasks.len();
-            !tasks.is_empty()
-        });
+        self.tree
+            .retain(|_, tasks| {
+                let before = tasks.len();
+                tasks.retain(|id| *id != task_id);
+                removed += before - tasks.len();
+                !tasks.is_empty()
+            });
         if removed != 0 {
             self.task_count = self.task_count
                                   .saturating_sub(removed);
@@ -60,7 +61,9 @@ impl CfsQueue {
                                 .max(*entry.key());
         let task_id = entry.get_mut()
                            .pop_front();
-        if entry.get().is_empty() {
+        if entry.get()
+                .is_empty()
+        {
             entry.remove();
         }
         if task_id.is_some() {
@@ -76,5 +79,57 @@ impl CfsQueue {
             .keys()
             .next()
             .copied()
+    }
+    /// 以当前运行实体和 ready tree 的左端共同推进本 CPU 的 CFS 基线。
+    ///
+    /// 当前实体尚未进入 ready tree。若 tree 中仍有更落后的实体，不能直接将
+    /// baseline 跳到当前实体的 vruntime，否则会抹去该实体应有的追赶份额。
+    pub fn update_min_vruntime(&mut self, current_vruntime : VRunTime) {
+        let candidate = self.min_ready_vruntime()
+                            .map_or(current_vruntime, |ready_vruntime| {
+                                current_vruntime.min(ready_vruntime)
+                            });
+        self.min_vruntime = self.min_vruntime
+                                .max(candidate);
+    }
+
+    #[cfg(test)]
+    fn min_vruntime(&self) -> VRunTime { self.min_vruntime }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CfsQueue;
+
+    #[test]
+    fn current_advances_baseline_when_ready_tree_is_empty() {
+        let mut queue = CfsQueue::new();
+        queue.update_min_vruntime(10);
+        assert_eq!(queue.min_vruntime(), 10);
+    }
+
+    #[test]
+    fn lagging_ready_entity_limits_baseline_advance() {
+        let mut queue = CfsQueue::new();
+        queue.enqueue(1, 5);
+        queue.update_min_vruntime(10);
+        assert_eq!(queue.min_vruntime(), 5);
+    }
+
+    #[test]
+    fn enqueue_normalizes_to_baseline() {
+        let mut queue = CfsQueue::new();
+        queue.update_min_vruntime(10);
+        queue.enqueue(1, 0);
+        assert_eq!(queue.min_ready_vruntime(), Some(10));
+    }
+
+    #[test]
+    fn equal_vruntime_preserves_fifo_order() {
+        let mut queue = CfsQueue::new();
+        queue.enqueue(1, 7);
+        queue.enqueue(2, 7);
+        assert_eq!(queue.pick(), Some(1));
+        assert_eq!(queue.pick(), Some(2));
     }
 }

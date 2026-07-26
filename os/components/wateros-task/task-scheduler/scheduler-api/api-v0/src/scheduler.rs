@@ -133,23 +133,25 @@ impl CPUState {
     pub fn set_online(&mut self, online : bool) { self.online = online; }
     pub fn online(&self) -> bool { self.online }
     pub fn set_idle_task_id(&mut self, task_id : TaskId) { self.idle_task_id = Some(task_id); }
-
-    pub fn inc_timer_tick(&mut self) {
+    pub fn tick(&mut self) {
         self.timer_ticks = self.timer_ticks
                                .saturating_add(1);
-    }
-
-    pub fn tick(&mut self) {
         self.current_runtime_ticks = self.current_runtime_ticks
                                          .saturating_add(1);
         match self.current_policy {
             SchedPolicy::Other => {
-                let weight = NICE_TO_WEIGHT[(self.current_nice + 20) as usize];
-                let delta = NICE_0_WEIGHT.saturating_mul(VRUNTIME_SCALE)
-                                         .saturating_div(weight)
-                                         .max(1);
-                self.current_vruntime = self.current_vruntime
-                                            .saturating_add(delta);
+                // 物理 idle task 不属于 CFS；它运行时不能推进普通任务的
+                // vruntime 基线，否则新唤醒任务会被无端惩罚。
+                if !self.is_current_idle() {
+                    let weight = NICE_TO_WEIGHT[(self.current_nice + 20) as usize];
+                    let delta = NICE_0_WEIGHT.saturating_mul(VRUNTIME_SCALE)
+                                             .saturating_div(weight)
+                                             .max(1);
+                    self.current_vruntime = self.current_vruntime
+                                                .saturating_add(delta);
+                    self.cfs_queue
+                        .update_min_vruntime(self.current_vruntime);
+                }
             }
             SchedPolicy::Rr => {
                 self.current_ticks = self.current_ticks
@@ -178,33 +180,62 @@ impl CPUState {
             .max()
     }
 
-    /// 当前任务是否应被就绪队列中的任务抢占。
-    pub fn ready_task_should_preempt(&self) -> bool {
+    /// 统一调度判断：当前任务是否应让出 CPU。
+    pub fn cpu_should_reschedule(&self) -> Option<()> {
+        if !self.current_affinity
+                .contains(self.cpu_id)
+        {
+            return Some(());
+        }
+
         let is_idle = self.current_task_id == self.idle_task_id;
         if is_idle {
-            return self.cfs_queue
-                       .task_count() >
-                   0 ||
-                   self.highest_priority()
-                       .is_some();
-        }
-        match self.current_policy {
-            SchedPolicy::Other => self.highest_priority()
-                                      .is_some(),
-            SchedPolicy::Fifo | SchedPolicy::Rr => self.highest_priority()
-                                                       .is_some_and(|p| p > self.current_priority),
-        }
-    }
-
-    /// Reschedule 前置处理：检查是否需要抢占；不需要则提前返回。
-    pub fn cpu_should_reschedule(&self) -> Option<()> {
-        if self.current_affinity
-               .contains(self.cpu_id) &&
-           !self.ready_task_should_preempt()
-        {
+            if self.cfs_queue
+                   .task_count() >
+               0 ||
+               self.highest_priority()
+                   .is_some()
+            {
+                return Some(());
+            }
             return None;
         }
-        Some(())
+
+        match self.current_policy {
+            SchedPolicy::Other => {
+                if self.highest_priority()
+                       .is_some()
+                {
+                    return Some(());
+                }
+                if self.cfs_queue
+                       .min_ready_vruntime()
+                       .is_some_and(|min| self.current_vruntime > min)
+                {
+                    return Some(());
+                }
+                None
+            }
+            SchedPolicy::Fifo => {
+                if self.highest_priority()
+                       .is_some_and(|p| p > self.current_priority)
+                {
+                    return Some(());
+                }
+                None
+            }
+            SchedPolicy::Rr => {
+                if self.current_ticks >= MAX_TICKS_PER_TASK {
+                    return Some(());
+                }
+                if self.highest_priority()
+                       .is_some_and(|p| p > self.current_priority)
+                {
+                    return Some(());
+                }
+                None
+            }
+        }
     }
 
     /// 按优先级从就绪队列中选择下一个可运行任务。
@@ -217,13 +248,11 @@ impl CPUState {
         }
         // 2) FIFO → 3) RR，按优先级 99→1 穿插扫描
         for priority in (1..=99).rev() {
-            // FIFO: 同优先级 FIFO 出队（弹出即占据 CPU）
             if let Some(task_id) = self.fifo_queue
                                        .pick_at_priority(priority)
             {
                 return task_id;
             }
-            // RR: 同优先级 RR 轮转
             if let Some(task_id) = self.rr_queue
                                        .pick_at_priority(priority)
             {
@@ -241,6 +270,7 @@ impl CPUState {
     pub fn is_current_idle(&self) -> bool { self.current_task_id == self.idle_task_id }
 
     pub fn current_task_id(&self) -> Option<TaskId> { self.current_task_id }
+
     pub fn set_current_task_id(&mut self, task_id : TaskId) {
         self.current_task_id = Some(task_id);
     }

@@ -37,7 +37,9 @@ impl MultiClassScheduler {
         if was_ready {
             let target_cpu = ready_cpu.unwrap_or(cpu_id);
             self.enqueue_ready_by_cpu(task_id, target_cpu);
-            if self.cpu_states[target_cpu.raw()].ready_task_should_preempt() {
+            if self.cpu_states[target_cpu.raw()].cpu_should_reschedule()
+                                                .is_some()
+            {
                 if target_cpu == cpu_id {
                     reschedule_local = true;
                 } else {
@@ -48,7 +50,9 @@ impl MultiClassScheduler {
 
         if let Some(running_cpu) = running_cpu {
             self.cpu_states[running_cpu.raw()].set_current_task(&new_snap);
-            if self.cpu_states[running_cpu.raw()].ready_task_should_preempt() {
+            if self.cpu_states[running_cpu.raw()].cpu_should_reschedule()
+                                                 .is_some()
+            {
                 if running_cpu == cpu_id {
                     reschedule_local = true;
                 } else {

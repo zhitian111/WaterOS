@@ -153,24 +153,27 @@ impl MultiClassScheduler {
     }
 
     pub fn current_task_kernel_stack_top(&self, cpu_id : CpuId) -> Option<usize> {
-        Some(self.registry
-                 .task_kernel_stack_top(self.cpu_states[cpu_id.raw()].current_task_id?))
+        self.cpu_states[cpu_id.raw()].current_task_id
+                                     .map(|task_id| {
+                                         self.registry
+                                             .task_kernel_stack_top(task_id)
+                                     })
     }
 
     pub fn current_task_address_space_raw(&self, cpu_id : CpuId) -> usize {
         self.cpu_states[cpu_id.raw()].current_task_id
-                                     .map(|id| {
+                                     .map(|task_id| {
                                          self.registry
-                                             .current_task_address_space_raw(id)
+                                             .current_task_address_space_raw(task_id)
                                      })
                                      .unwrap_or(0)
     }
 
     pub fn current_task_user_aspace_ptr(&self, cpu_id : CpuId) -> usize {
         self.cpu_states[cpu_id.raw()].current_task_id
-                                     .map(|id| {
+                                     .map(|task_id| {
                                          self.registry
-                                             .current_task_user_aspace_ptr(id)
+                                             .current_task_user_aspace_ptr(task_id)
                                      })
                                      .unwrap_or(0)
     }
@@ -181,9 +184,9 @@ impl MultiClassScheduler {
 
     pub fn current_task_trap_return_address_space_token(&self, cpu_id : CpuId) -> usize {
         self.cpu_states[cpu_id.raw()].current_task_id
-                                     .map(|id| {
+                                     .map(|task_id| {
                                          self.registry
-                                             .current_task_trap_return_address_space_token(id)
+                                             .current_task_trap_return_address_space_token(task_id)
                                      })
                                      .unwrap_or(0)
     }
@@ -201,9 +204,8 @@ impl MultiClassScheduler {
                                       trap_frame : &mut TaskTrapFrame,
                                       cpu_id : CpuId)
                                       -> bool {
-        let task_id = match self.cpu_states[cpu_id.raw()].current_task_id {
-            Some(id) => id,
-            None => return false,
+        let Some(task_id) = self.cpu_states[cpu_id.raw()].current_task_id else {
+            return false;
         };
         self.registry
             .restore_trap_frame(trap_frame, task_id)
@@ -273,13 +275,18 @@ impl MultiClassScheduler {
             .get_affinity(task_id)
     }
 
-    /// 仅保存 task-level nice；暂不改变 `OtherQueue` 的 FIFO 选择或触发重调度。
+    /// 更新 TCB 中的 nice；运行中的任务还必须同步其所属 CPU 的热路径 cache。
     pub fn set_nice(&mut self, task_id : TaskId, nice : i8) -> Result<(), SchedError> {
         let state = self.registry
                         .state(task_id)
                         .ok_or(SchedError::NoSuchTask)?;
         if matches!(state, TaskState::Exited(_)) {
             return Err(SchedError::NoSuchTask);
+        }
+        if let Some(running_cpu) = self.registry
+                                       .running_cpu_id(task_id)
+        {
+            self.cpu_states[running_cpu.raw()].current_nice = nice;
         }
         self.registry
             .set_nice(task_id, nice)

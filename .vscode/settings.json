@@ -8,7 +8,9 @@
         "NOTE",
         "OTHER",
         "FIFO",
-        "RR"
+        "RR",
+        "CACHE_SYNC",
+        "TCB_SYNC"
     ],
     "todo-tree.highlights.customHighlight": {
         "TODO":     { "icon": "check",  "type": "line", "background": "#2d7d46" },
@@ -19,7 +21,9 @@
         "NOTE":     { "icon": "note",   "type": "line", "background": "#1e6bb8" },
         "OTHER":    { "icon": "list",   "type": "line", "background": "#607d8b" },
         "FIFO":     { "icon": "star",   "type": "line", "background": "#9c27b0" },
-        "RR":       { "icon": "sync",   "type": "line", "background": "#00bcd4" }
+        "RR":       { "icon": "sync",   "type": "line", "background": "#00bcd4" },
+        "CACHE_SYNC": { "icon": "database", "type": "line", "background": "#ff9800" },
+        "TCB_SYNC": { "icon": "repo",  "type": "line", "background": "#4caf50" }
     },
     "todohighlight.keywords": [
         "CHANGE:",
@@ -28,7 +32,9 @@
         "NOTE:",
         "OTHER:",
         "FIFO:",
-        "RR:"
+        "RR:",
+        "CACHE_SYNC:",
+        "TCB_SYNC:"
     ],
     "better-todo-tree.general.tags": [
         "TODO",
@@ -39,7 +45,9 @@
         "NOTE",
         "OTHER",
         "FIFO",
-        "RR"
+        "RR",
+        "CACHE_SYNC",
+        "TCB_SYNC"
     ],
     "better-todo-tree.highlights.customHighlight": {
         "TODO":   { "icon": "check", "type": "line", "background": "#2d7d46" },
@@ -50,6 +58,7 @@
         "NOTE":   { "icon": "note",  "type": "line", "background": "#1e6bb8" },
         "OTHER":  { "icon": "list",  "type": "line", "background": "#607d8b" },
         "FIFO":   { "icon": "star",  "type": "line", "background": "#9c27b0" },
-        "RR":     { "icon": "sync",  "type": "line", "background": "#00bcd4" }
+        "RR":     { "icon": "sync",  "type": "line", "background": "#00bcd4" },
+        "CACHE_SYNC": { "icon": "database", "type": "line", "background": "#ff9800" }
     }
 }

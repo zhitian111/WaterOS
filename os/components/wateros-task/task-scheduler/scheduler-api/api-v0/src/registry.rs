@@ -217,7 +217,6 @@ impl TaskRegistry {
         }
     }
 
-    /// 将 CPU 上缓存的 `SCHED_OTHER` vruntime 写回任务的持久状态。
     pub fn set_vruntime(&mut self, task_id : TaskId, vruntime : task_api::VRunTime) {
         self.tasks
             .get_mut(&task_id)
@@ -225,8 +224,6 @@ impl TaskRegistry {
             .expect("task must exist")
             .set_vruntime(vruntime);
     }
-
-    /// 将 `task_id` 标为 Running 并设为当前任务，返回其只读上下文指针。
     pub fn mark_running(&mut self, task_id : TaskId, cpu_id : CpuId) {
         self.tasks
             .get_mut(&task_id)
@@ -310,12 +307,11 @@ impl TaskRegistry {
     pub fn wait_target_ready(&self, target : TaskWaitTarget) -> bool {
         match target {
             TaskWaitTarget::WaitQueue(_) => false,
-            TaskWaitTarget::TaskExit(task_id) => self.tasks
-                                                     .get(&task_id)
-                                                     .is_some_and(|b| {
-                                                         matches!(b.state(),
-                                                                  TaskState::Exited(_))
-                                                     }),
+            TaskWaitTarget::TaskExit(task_id) => {
+                self.tasks
+                    .get(&task_id)
+                    .is_some_and(|b| matches!(b.state(), TaskState::Exited(_)))
+            }
             TaskWaitTarget::ChildExit(parent_id) => {
                 self.find_exited_child(parent_id)
                     .is_some() ||
