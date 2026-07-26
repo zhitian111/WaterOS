@@ -79,7 +79,7 @@ impl MultiClassScheduler {
     // ================================================================
 
     /// 标记任务为 Running 并更新当前 CPU 的 current_task_id。
-    /// CACHE_SYNC: TaskSnapshot → CPUState;  TCB_SYNC: mark_running → Registry
+    /// CACHE_SYNC: TaskSnapshot → CPUState;  
     fn set_current_task(&mut self, snap : &TaskSnapshot, cpu_id : CpuId) {
         if let Some(running_cpu) = snap.running_cpu_id {
             assert_eq!(running_cpu,
@@ -347,7 +347,6 @@ impl MultiClassScheduler {
         self.registry
             .add_ticks(current_task_id, runtime_ticks);
     }
-    //TCB_SYNC: mark state → Registry
     /// 在 scheduler 锁内将当前任务转换到目标状态。
     fn enqueue_task(&mut self, target : QueueTarget, current_task_id : TaskId, cpu_id : CpuId) {
         self.sync_current_to_registry(cpu_id);
@@ -460,7 +459,9 @@ impl MultiClassScheduler {
         self.cpu_states[cpu_id.raw()].need_resched = false;
         need_resched
     }
+    /// TCB_SYNC: mark_ready → Registry,vruntime 归一化 → Registry
     /// TCB → 目标 CPU ready queue 的唯一入口。
+    /// 有多个enqueue调用此接口，故要在这里统一清理旧归属和更新vruntime
     fn enqueue_ready_by_cpu(&mut self, task_id : TaskId, cpu_id : CpuId) {
         assert!(Some(task_id) != self.cpu_states[cpu_id.raw()].idle_task_id,
                 "idle task must not be placed on a ready queue");

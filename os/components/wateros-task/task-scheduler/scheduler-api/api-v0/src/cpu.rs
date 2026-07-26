@@ -276,12 +276,14 @@ impl CPUState {
     }
     /// 本 CPU 所有队列中的可运行任务总数。
     pub fn load(&self) -> usize {
+        let current = self.current_task_id != self.idle_task_id;
         self.rr_queue
             .task_count() +
         self.fifo_queue
             .task_count() +
         self.cfs_queue
-            .task_count()
+            .task_count() +
+        current as usize
     }
 
     /// 从本 CPU 所有队列中摘除任务。
