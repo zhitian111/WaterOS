@@ -42,6 +42,12 @@ impl ArchTaskContext for LoongArch64ArchTaskContext {
         cx.s[0] = bootstrap_ptr;
         cx
     }
+
+    #[inline]
+    fn return_address(&self) -> usize { self.ra }
+
+    #[inline]
+    fn stack_pointer(&self) -> usize { self.sp }
 }
 
 #[unsafe(no_mangle)]

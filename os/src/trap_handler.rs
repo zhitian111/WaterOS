@@ -71,6 +71,12 @@ fn log_unhandled_user_fault_probe(cx : &TrapContext, trap_cause : TrapCause, raw
 /// 记录用户任务 trap 杀进程上下文并终止当前进程。
 fn kill_current_user_task(context : &str, trap_cause : TrapCause, cx : &TrapContext) -> ! {
     if let Some(snapshot) = task::current_task_snapshot() {
+        if snapshot.kind != task::TaskKind::User {
+            fatal_kernel_trap("attempted to terminate a non-user task",
+                              trap_cause,
+                              cx.raw_cause(),
+                              cx);
+        }
         warn!("[trap] killing user task ({}) cause={:?} pc={:#x} fault_addr={:#x} task_id={} \
                parent_id={:?} state={:?}",
               context,

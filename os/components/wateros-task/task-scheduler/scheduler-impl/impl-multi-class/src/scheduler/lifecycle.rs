@@ -2,9 +2,7 @@
 use super::*;
 impl MultiClassScheduler {
     pub fn kill_task(&mut self, task_id : TaskId, exit_code : TaskExitCode) -> bool {
-        if self.registry
-               .is_idle(task_id)
-        {
+        if self.registry.is_idle_task(task_id) {
             return false;
         }
         if self.registry
@@ -25,7 +23,7 @@ impl MultiClassScheduler {
         {
             return false;
         }
-        self.detach_from_all_cpus(task_id);
+        self.dequeue_from_all_cpus(task_id);
         self.wait_queues
             .kill_task(task_id);
         self.registry
@@ -34,28 +32,21 @@ impl MultiClassScheduler {
     }
 
     pub fn discard_unstarted_task(&mut self, task_id : TaskId) {
-        self.detach_from_all_cpus(task_id);
+        self.dequeue_from_all_cpus(task_id);
         self.wait_queues
             .detach_task_from_run_queues(task_id);
-        if self.registry
-               .discard_task(task_id)
-        {
-            self.forget_task_on_all_cpus(task_id);
-        }
+        self.registry
+            .discard_task(task_id);
     }
 
     pub fn reap_exited_task(&mut self, task_id : TaskId) -> Option<ExitedTask> {
-        let exited = self.wait_queues
-                         .reap_exited_task(&mut self.registry, task_id)?;
-        self.forget_task_on_all_cpus(task_id);
-        Some(exited)
+        self.wait_queues
+            .reap_exited_task(&mut self.registry, task_id)
     }
 
     pub fn reap_one_exited_task(&mut self) -> Option<ExitedTask> {
-        let exited = self.wait_queues
-                         .reap_one_exited_task(&mut self.registry)?;
-        self.forget_task_on_all_cpus(exited.id);
-        Some(exited)
+        self.wait_queues
+            .reap_one_exited_task(&mut self.registry)
     }
 
     pub fn reap_one_exited_child(&mut self, parent_id : TaskId) -> Option<ExitedTask> {

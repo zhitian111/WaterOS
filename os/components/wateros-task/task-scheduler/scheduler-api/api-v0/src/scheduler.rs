@@ -1,9 +1,15 @@
-use crate::{
-    queues::{FifoQueue, OtherQueue, RrQueue},
-    registry, TaskRegistry, WaitQueues,
-};
+use crate::cfs_queue::CfsQueue;
+use crate::fifo_queue::FifoQueue;
+use crate::rr_queue::RrQueue;
+use crate::{registry, TaskRegistry, WaitQueues};
 use arch::task::{ActiveArchTaskContext, ArchTaskContext};
-use task_api::{AddressSpaceHandle, CpuId, TaskExitCode, TaskId, TaskTick, TaskWaitTarget};
+use config::task::{MAX_TICKS_PER_TASK, NICE_0_WEIGHT, NICE_TO_WEIGHT};
+use task_api::{
+    AddressSpaceHandle, CpuId, CpuMask, Nice, Priority, SchedPolicy, TaskExitCode, TaskId,
+    TaskSnapshot, TaskTick, TaskWaitTarget, VRunTime, IDLE_TASK_ID, NICE_MIN, PRIORITY_MIN,
+};
+/// 用固定点表示每 tick 的 vruntime，避免高权重（负 nice）任务因整数除法得到 0。
+const VRUNTIME_SCALE : u64 = 1 << 20;
 pub type SwitchPair =
     (*mut arch::task::ActiveArchTaskContext, *const arch::task::ActiveArchTaskContext);
 
@@ -39,12 +45,11 @@ pub enum QueueTarget {
     Exited(TaskExitCode),
 }
 
-pub struct CPUScheduler {
+pub struct CPUState {
     pub cpu_id : CpuId,
     pub boot_task_cx : ActiveArchTaskContext,
     pub current_task_id : Option<TaskId>,
     pub idle_task_id : Option<TaskId>,
-    pub current_task_ticks : u64,
     pub online : bool,
     /// 有新任务进入本 CPU 队列，需在安全点重新判断是否抢占。
     pub need_resched : bool,
@@ -52,28 +57,237 @@ pub struct CPUScheduler {
     pub context_switches : u64,
     /// 本 CPU 已处理的 scheduler timer tick 次数。
     pub timer_ticks : u64,
-    pub other_queue : OtherQueue,
+    pub cfs_queue : CfsQueue,
     pub rr_queue : RrQueue,
     pub fifo_queue : FifoQueue,
+    //当前任务运行的tick数
+    pub current_ticks : u64,
+    /// 当前任务自上次切入或同步以来实际运行的 tick 数，用于批量回写 TCB 统计。
+    pub current_runtime_ticks : u64,
+    pub current_policy : SchedPolicy,
+    pub current_priority : Priority,
+    pub current_vruntime : VRunTime,
+    pub current_nice : Nice,
+    pub current_affinity : CpuMask,
+    /// 缓存当前任务的上下文指针，避免每次调度都查 registry。
+    pub current_task_cx : *mut ActiveArchTaskContext,
+    /// 缓存当前任务的用户地址空间指针，用于快速判断是否需要切换页表。
+    pub current_aspace : usize,
 }
-impl CPUScheduler {
+impl CPUState {
     pub fn new(cpu_id : CpuId) -> Self {
         Self { cpu_id,
                boot_task_cx : ActiveArchTaskContext::zero_init(),
                current_task_id : None,
                idle_task_id : None,
-               current_task_ticks : 0,
                online : false,
                need_resched : false,
                context_switches : 0,
                timer_ticks : 0,
-               other_queue : OtherQueue::new(),
+               cfs_queue : CfsQueue::new(),
                rr_queue : RrQueue::new(),
-               fifo_queue : FifoQueue::new() }
+               fifo_queue : FifoQueue::new(),
+               current_ticks : 0,
+               current_runtime_ticks : 0,
+               current_policy : SchedPolicy::Other,
+               current_priority : PRIORITY_MIN,
+               current_vruntime : 0,
+               current_nice : NICE_MIN,
+               current_affinity : CpuMask::EMPTY,
+               current_task_cx : core::ptr::null_mut(),
+               current_aspace : 0 }
     }
-    pub fn current_task_id(&self) -> Option<TaskId> { self.current_task_id }
+    pub fn init(&mut self, cpu_id : CpuId) {
+        self.cpu_id = cpu_id;
+        self.boot_task_cx = ActiveArchTaskContext::zero_init();
+        self.current_task_id = None;
+        self.idle_task_id = None;
+        self.online = false;
+        self.need_resched = false;
+        self.context_switches = 0;
+        self.timer_ticks = 0;
+        self.cfs_queue
+            .init();
+        self.rr_queue.init();
+        self.fifo_queue
+            .init();
+        self.current_ticks = 0;
+        self.current_runtime_ticks = 0;
+        self.current_policy = SchedPolicy::Other;
+        self.current_priority = PRIORITY_MIN;
+        self.current_vruntime = 0;
+        self.current_nice = NICE_MIN;
+        self.current_affinity = CpuMask::EMPTY;
+        self.current_task_cx = core::ptr::null_mut();
+        self.current_aspace = 0;
+    }
     pub fn boot_task_cx(&mut self) -> *mut ActiveArchTaskContext {
         &mut self.boot_task_cx as *mut ActiveArchTaskContext
+    }
+    pub fn set_online(&mut self, online : bool) { self.online = online; }
+    pub fn online(&self) -> bool { self.online }
+    pub fn set_idle_task_id(&mut self, task_id : TaskId) { self.idle_task_id = Some(task_id); }
+
+    pub fn inc_timer_tick(&mut self) {
+        self.timer_ticks = self.timer_ticks
+                               .saturating_add(1);
+    }
+
+    pub fn tick(&mut self) {
+        self.current_runtime_ticks = self.current_runtime_ticks
+                                         .saturating_add(1);
+        match self.current_policy {
+            SchedPolicy::Other => {
+                let weight = NICE_TO_WEIGHT[(self.current_nice + 20) as usize];
+                let delta = NICE_0_WEIGHT
+                                .saturating_mul(VRUNTIME_SCALE)
+                                .saturating_div(weight)
+                                .max(1);
+                self.current_vruntime = self.current_vruntime.saturating_add(delta);
+            }
+            SchedPolicy::Rr => {
+                self.current_ticks = self.current_ticks
+                                         .saturating_add(1);
+            }
+            SchedPolicy::Fifo => {}
+        }
+    }
+    pub fn is_current_runnable(&self) -> bool {
+        match self.current_policy {
+            SchedPolicy::Other => {
+                self.cfs_queue
+                    .min_ready_vruntime()
+                    .is_none_or(|min| self.current_vruntime <= min)
+            }
+            SchedPolicy::Rr => self.current_ticks < MAX_TICKS_PER_TASK,
+            SchedPolicy::Fifo => true,
+        }
+    }
+
+    /// 就绪队列中最高实时优先级（FIFO/RR，不含 OTHER）。
+    pub fn highest_priority(&self) -> Option<Priority> {
+        self.fifo_queue
+            .highest_priority()
+            .into_iter()
+            .chain(self.rr_queue
+                       .highest_priority())
+            .max()
+    }
+
+    /// 当前任务是否应被就绪队列中的任务抢占。
+    pub fn ready_task_should_preempt(&self) -> bool {
+        let is_idle = self.current_task_id == self.idle_task_id;
+        if is_idle {
+            return self.cfs_queue
+                       .task_count() >
+                   0 ||
+                   self.highest_priority()
+                       .is_some();
+        }
+        match self.current_policy {
+            SchedPolicy::Other => self.highest_priority()
+                                      .is_some(),
+            SchedPolicy::Fifo | SchedPolicy::Rr => self.highest_priority()
+                                                       .is_some_and(|p| p > self.current_priority),
+        }
+    }
+
+    /// Reschedule 前置处理：检查是否需要抢占；不需要则提前返回。
+    pub fn cpu_should_reschedule(&self) -> Option<()> {
+        if self.current_affinity
+               .contains(self.cpu_id) &&
+           !self.ready_task_should_preempt()
+        {
+            return None;
+        }
+        Some(())
+    }
+
+    /// 按优先级从就绪队列中选择下一个可运行任务。
+    pub fn pick_next_runnable(&mut self) -> TaskId {
+        // 1) RR: 时间片未用完时继续当前任务
+        if self.current_policy == SchedPolicy::Rr && self.is_current_runnable() {
+            if let Some(current_id) = self.current_task_id {
+                return current_id;
+            }
+        }
+        // 2) FIFO → 3) RR，按优先级 99→1 穿插扫描
+        for priority in (1..=99).rev() {
+            // FIFO: 同优先级 FIFO 出队（弹出即占据 CPU）
+            if let Some(task_id) = self.fifo_queue
+                                       .pick_at_priority(priority)
+            {
+                return task_id;
+            }
+            // RR: 同优先级 RR 轮转
+            if let Some(task_id) = self.rr_queue
+                                       .pick_at_priority(priority)
+            {
+                return task_id;
+            }
+        }
+        // 4) OTHER: 从队列取出下一个可运行任务
+        self.cfs_queue
+            .pick()
+            .unwrap_or(self.idle_task_id
+                           .unwrap_or(IDLE_TASK_ID))
+    }
+
+    /// 当前任务是否为 idle 任务。
+    pub fn is_current_idle(&self) -> bool { self.current_task_id == self.idle_task_id }
+
+    pub fn current_task_id(&self) -> Option<TaskId> { self.current_task_id }
+    pub fn set_current_task_id(&mut self, task_id : TaskId) {
+        self.current_task_id = Some(task_id);
+    }
+    /// 本 CPU 所有队列中的可运行任务总数。
+    pub fn load(&self) -> usize {
+        self.rr_queue
+            .task_count() +
+        self.fifo_queue
+            .task_count() +
+        self.cfs_queue
+            .task_count()
+    }
+
+    /// 从本 CPU 所有队列中摘除任务。
+    pub fn dequeue(&mut self, task_id : TaskId) {
+        self.cfs_queue
+            .dequeue(task_id);
+        self.fifo_queue
+            .dequeue(task_id);
+        self.rr_queue
+            .dequeue(task_id);
+    }
+
+    /// 按策略将任务入队到对应的就绪队列。
+    pub fn enqueue(&mut self, task_id : TaskId, snap : &TaskSnapshot) {
+        match snap.policy {
+            SchedPolicy::Other => self.cfs_queue
+                                      .enqueue(task_id, snap.vruntime),
+            SchedPolicy::Fifo => self.fifo_queue
+                                     .enqueue(task_id, snap.priority),
+            SchedPolicy::Rr => self.rr_queue
+                                   .enqueue(task_id, snap.priority),
+        }
+    }
+
+    /// 用快照更新所有 CPUState 缓存；aspace 切换由 scheduler 层处理。
+    pub fn set_current_task(&mut self, snap : &TaskSnapshot) {
+        if self.current_task_id != Some(snap.id) {
+            self.context_switches = self.context_switches
+                                        .saturating_add(1);
+        }
+        self.current_task_id = Some(snap.id);
+        self.current_policy = snap.policy;
+        self.current_priority = snap.priority;
+        self.current_vruntime = snap.vruntime;
+        self.current_nice = snap.nice;
+        self.current_ticks = 0;
+        self.current_runtime_ticks = 0;
+        self.current_affinity = snap.affinity;
+        self.current_task_cx = snap.task_cx as *mut ActiveArchTaskContext;
+        self.current_aspace = snap.user_aspace_ptr;
     }
 }
 pub struct CpuSnapshot {
@@ -91,5 +305,5 @@ pub struct CpuSnapshot {
     pub need_resched : bool,
     pub context_switches : u64,
     pub timer_ticks : u64,
-    pub current_task_ticks : u64,
+    pub current_ticks : u64,
 }

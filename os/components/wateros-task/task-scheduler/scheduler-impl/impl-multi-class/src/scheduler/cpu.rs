@@ -31,20 +31,18 @@ impl MultiClassScheduler {
             return;
         }
         let cpu = &mut self.cpu_states[cpu_id.raw()];
-        if cpu.online {
+        if cpu.online() {
             log::warn!("[cpu] CPU {} already online, ignored",
                        cpu_id.raw());
             return;
         }
-        cpu.online = true;
-        log::info!("[cpu] CPU {} is now online",
-                   cpu_id.raw());
+        cpu.set_online(true);
     }
 
-    pub fn online_cpu_mask(&self) -> base::cpu::CpuMask {
-        let mut mask = base::cpu::CpuMask::EMPTY;
+    pub fn online_cpu_mask(&self) -> CpuMask {
+        let mut mask = CpuMask::EMPTY;
         for cpu in &self.cpu_states {
-            if cpu.online {
+            if cpu.online() {
                 mask.insert(cpu.cpu_id);
             }
         }
@@ -54,11 +52,7 @@ impl MultiClassScheduler {
     pub fn cpu_snapshot(&self, cpu_id : CpuId) -> Option<CpuSnapshot> {
         let cpu = self.cpu_states
                       .get(cpu_id.raw())?;
-        let current_is_idle = cpu.current_task_id
-                                 .is_some_and(|id| {
-                                     self.registry
-                                         .is_idle(id)
-                                 });
+        let current_is_idle = cpu.current_task_id == cpu.idle_task_id;
         let current_address_space = cpu.current_task_id
                                        .and_then(|id| {
                                            let raw = self.registry
@@ -66,23 +60,22 @@ impl MultiClassScheduler {
                                            (raw != 0).then(|| AddressSpaceHandle::from_raw(raw))
                                        });
         Some(CpuSnapshot { cpu_id,
-                           online : cpu.online,
+                           online : cpu.online(),
                            current_task_id : cpu.current_task_id,
                            idle_task_id : cpu.idle_task_id,
                            current_is_idle,
                            current_is_user : current_address_space.is_some(),
                            current_address_space,
-                           runnable_other : cpu.other_queue
-                                               .runnable_count(),
+                           runnable_other : cpu.cfs_queue
+                                               .task_count(),
                            runnable_fifo : cpu.fifo_queue
-                                              .runnable_count(),
+                                              .task_count(),
                            runnable_rr : cpu.rr_queue
-                                            .runnable_count(),
+                                            .task_count(),
                            need_resched : cpu.need_resched,
                            context_switches : cpu.context_switches,
                            timer_ticks : cpu.timer_ticks,
-                           current_task_ticks : self.wait_queues
-                                                    .current_tick() })
+                           current_ticks : cpu.current_ticks })
     }
 
     /// 返回全部已配置 CPU 的稳定快照，包含尚未 online 的 CPU。
@@ -102,12 +95,5 @@ impl MultiClassScheduler {
             .running_cpu_id(task_id)
     }
 
-    pub fn cpu_load(&self, cpu_id : CpuId) -> usize {
-        self.cpu_states[cpu_id.raw()].rr_queue
-                                     .runnable_count() +
-        self.cpu_states[cpu_id.raw()].fifo_queue
-                                     .runnable_count() +
-        self.cpu_states[cpu_id.raw()].other_queue
-                                     .runnable_count()
-    }
+    pub fn cpu_load(&self, cpu_id : CpuId) -> usize { self.cpu_states[cpu_id.raw()].load() }
 }

@@ -7,14 +7,16 @@ use config::task::MAX_TICKS_PER_TASK;
 use task_api::Priority;
 use task_api::TaskId;
 use task_api::BUCKET_COUNT;
-struct RrQueue {
+pub struct RrQueue {
     queues : [VecDeque<TaskId>; BUCKET_COUNT],
     current_ticks : u64,
+    task_count : usize,
 }
 impl RrQueue {
     pub fn new() -> Self {
         Self { queues : array::from_fn(|_| VecDeque::new()),
-               current_ticks : 0 }
+               current_ticks : 0,
+               task_count : 0 }
     }
     pub fn init(&mut self) {
         for q in self.queues
@@ -23,10 +25,13 @@ impl RrQueue {
             q.clear();
         }
         self.current_ticks = 0;
+        self.task_count = 0;
     }
     pub fn enqueue(&mut self, task_id : TaskId, priority : Priority) {
         let index = (priority - 1) as usize;
         self.queues[index].push_back(task_id);
+        self.task_count = self.task_count
+                              .saturating_add(1);
     }
     pub fn dequeue(&mut self, task_id : TaskId) {
         for q in self.queues
@@ -34,8 +39,15 @@ impl RrQueue {
         {
             q.retain(|&id| id != task_id);
         }
+        self.task_count = self.task_count
+                              .saturating_sub(1);
     }
     pub fn pick(&mut self) -> Option<TaskId> {
+        if self.task_count == 0 {
+            return None;
+        }
+        self.task_count = self.task_count
+                              .saturating_sub(1);
         for q in self.queues
                      .iter_mut()
                      .rev()
@@ -47,21 +59,17 @@ impl RrQueue {
         }
         None
     }
-    pub fn tick(&mut self) -> bool {
-        self.current_ticks = self.current_ticks
-                                 .saturating_add(1);
-        if self.current_ticks >= MAX_TICKS_PER_TASK {
-            return true;
-        }
-        false
-    }
     pub fn reset_tick(&mut self) { self.current_ticks = 0; }
     pub fn pick_at_priority(&mut self, priority : Priority) -> Option<TaskId> {
+        if self.task_count == 0 {
+            return None;
+        }
+        self.task_count = self.task_count
+                              .saturating_sub(1);
         let index = (priority - 1) as usize;
-        let task_id = self.queues[index].pop_front()?;
-        self.queues[index].push_back(task_id);
-        Some(task_id)
+        self.queues[index].pop_front()
     }
+    pub fn task_count(&self) -> usize { self.task_count }
     pub fn highest_priority(&self) -> Option<Priority> {
         for (i, q) in self.queues
                           .iter()
@@ -74,5 +82,4 @@ impl RrQueue {
         }
         None
     }
-    pub fn is_current_runnable(&self) -> bool { self.current_ticks < MAX_TICKS_PER_TASK }
 }

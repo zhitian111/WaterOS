@@ -47,7 +47,7 @@ impl MultiClassScheduler {
         {
             return;
         }
-        self.detach_from_run_queues(task_id, cpu_id);
+        self.cpu_states[cpu_id.raw()].dequeue(task_id);
         self.registry
             .mark_blocking(task_id, TaskWaitTarget::Manual);
         self.wait_queues

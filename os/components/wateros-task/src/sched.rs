@@ -1,8 +1,8 @@
 //! 调度策略与 CPU 亲和性原语。
 
 use api_v0::{
-    CpuMask, Priority, ProcessId, SchedError, SchedPolicy, TaskId, ThreadId,
-    SCHED_CPU_MASK_MIN_BYTES, SCHED_CPU_MASK_RET_BYTES, SCHED_NICE_MAX, SCHED_NICE_MIN,
+    CpuMask, Priority, ProcessId, SchedError, SchedPolicy, TaskId, ThreadId, NICE_MAX, NICE_MIN,
+    SCHED_CPU_MASK_MIN_BYTES, SCHED_CPU_MASK_RET_BYTES,
 };
 
 use crate::scheduler::{self};
@@ -91,7 +91,7 @@ pub fn get_affinity(task_id : TaskId) -> Result<CpuMask, SchedError> {
 /// 设置线程级 nice。当前只保存属性，尚未接入 `SCHED_OTHER` 的队列选择。
 pub fn set_nice(task_id : TaskId, nice : i8) -> Result<(), SchedError> {
     ensure_task_exists(task_id)?;
-    if !(SCHED_NICE_MIN..=SCHED_NICE_MAX).contains(&nice) {
+    if !(NICE_MIN..=NICE_MAX).contains(&nice) {
         return Err(SchedError::InvalidArg);
     }
     scheduler::set_nice(task_id, nice)

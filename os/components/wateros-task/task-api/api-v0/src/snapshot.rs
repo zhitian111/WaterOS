@@ -1,5 +1,5 @@
 //! 对外可见的 trap 与任务快照类型
-use crate::{SchedPolicy, TaskId, TaskKind, TaskRuntimeStats, TaskState};
+use crate::{CpuId, CpuMask, SchedPolicy, TaskId, TaskKind, TaskRuntimeStats, TaskState, VRunTime};
 
 /// 对外暴露的 trap 语义快照。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -86,8 +86,22 @@ pub struct TaskSnapshot {
     ///
     /// 当前仅保存该属性；普通任务队列的加权公平选择将在后续接入。
     pub nice : i8,
+    /// `SCHED_OTHER` 的累计虚拟运行时间；TCB 是唯一真相。
+    pub vruntime : VRunTime,
     /// 最近一次 trap 的语义快照。
     pub trap_frame : Option<TaskTrapSnapshot>,
     /// 调度器维护的运行统计。
     pub stats : TaskRuntimeStats,
+    /// 任务当前所属的就绪 CPU。
+    pub ready_cpu_id : Option<CpuId>,
+    /// 任务当前运行的 CPU。
+    pub running_cpu_id : Option<CpuId>,
+    /// 任务上次运行的 CPU。
+    pub last_cpu_id : Option<CpuId>,
+    /// CPU 亲和性掩码。
+    pub affinity : CpuMask,
+    /// 用户地址空间指针（内核任务为 0）。
+    pub user_aspace_ptr : usize,
+    /// 任务上下文指针（用于 __switch）。
+    pub task_cx : *const (),
 }

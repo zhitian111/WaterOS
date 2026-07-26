@@ -43,6 +43,12 @@ impl ArchTaskContext for Riscv64ArchTaskContext {
         cx.s[0] = bootstrap_ptr;
         cx
     }
+
+    #[inline]
+    fn return_address(&self) -> usize { self.ra }
+
+    #[inline]
+    fn stack_pointer(&self) -> usize { self.sp }
 }
 
 /// 内核任务首次运行入口：将 `bootstrap_ptr` 交给运行库 `__wateros_task_runtime_entry`。

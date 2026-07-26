@@ -286,15 +286,18 @@ impl MultiClassScheduler {
     }
 
     pub fn get_nice(&self, task_id : TaskId) -> Result<i8, SchedError> {
-        self.registry
-            .get_nice(task_id)
+        let snap = self.registry
+                       .task_snapshot(task_id);
+        Ok(snap.nice)
     }
     pub fn priority(&self, task_id : TaskId) -> Result<Priority, SchedError> {
-        self.registry
-            .priority(task_id)
+        let snap = self.registry
+                       .task_snapshot(task_id);
+        Ok(snap.priority)
     }
     pub fn policy(&self, task_id : TaskId) -> Result<SchedPolicy, SchedError> {
-        self.registry
-            .policy(task_id)
+        let snap = self.registry
+                       .task_snapshot(task_id);
+        Ok(snap.policy)
     }
 }

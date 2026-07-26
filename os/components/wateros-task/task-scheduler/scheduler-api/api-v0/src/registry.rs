@@ -7,7 +7,7 @@ use arch::task::ActiveArchTaskContext as TaskContext;
 use arch::trap::ActiveTrapFrame as TaskTrapFrame;
 use task_api::{
     CpuId, CpuMask, ExitedTask, KernelTaskEntry, SchedError, SchedPolicy, TaskExitCode, TaskId,
-    TaskSnapshot, TaskState, TaskTick, TaskWaitResult, TaskWaitTarget, UserTask, IDLE_TASK_ID,
+    TaskSnapshot, TaskState, TaskTick, TaskWaitResult, TaskWaitTarget, UserTask,
 };
 use task_impl::TaskControlBlock;
 
@@ -202,6 +202,30 @@ impl TaskRegistry {
         }
     }
 
+    /// 将 CPU 本地累计的实际运行 tick 写回任务统计。
+    pub fn add_ticks(&mut self, task_id : TaskId, ticks : u64) {
+        if ticks == 0 {
+            return;
+        }
+        if let Some(task) = self.tasks
+                                .get_mut(&task_id)
+                                .map(|b| b.as_mut())
+        {
+            if !task.is_idle() {
+                task.add_ticks(ticks);
+            }
+        }
+    }
+
+    /// 将 CPU 上缓存的 `SCHED_OTHER` vruntime 写回任务的持久状态。
+    pub fn set_vruntime(&mut self, task_id : TaskId, vruntime : task_api::VRunTime) {
+        self.tasks
+            .get_mut(&task_id)
+            .map(|b| b.as_mut())
+            .expect("task must exist")
+            .set_vruntime(vruntime);
+    }
+
     /// 将 `task_id` 标为 Running 并设为当前任务，返回其只读上下文指针。
     pub fn mark_running(&mut self, task_id : TaskId, cpu_id : CpuId) {
         self.tasks
@@ -268,6 +292,14 @@ impl TaskRegistry {
         }
     }
 
+    /// idle 任务是每 CPU 一条 TCB，不能用全局 task id（仅 CPU0 恰好为 0）判断。
+    pub fn is_idle_task(&self, task_id : TaskId) -> bool {
+        self.tasks
+            .get(&task_id)
+            .map(|task| task.as_ref())
+            .is_some_and(TaskControlBlock::is_idle)
+    }
+
     pub fn ready_to_wake(&self, task_id : TaskId, current_tick : TaskTick) -> bool {
         self.tasks
             .get(&task_id)
@@ -275,49 +307,15 @@ impl TaskRegistry {
             .is_some_and(|task| task.ready_to_wake(current_tick))
     }
 
-    pub fn is_idle(&self, task_id : TaskId) -> bool {
-        self.tasks
-            .get(&task_id)
-            .map(|b| b.as_ref())
-            .is_some_and(TaskControlBlock::is_idle)
-    }
-
-    pub fn state(&self, task_id : TaskId) -> Option<TaskState> {
-        self.tasks
-            .get(&task_id)
-            .map(|b| b.as_ref())
-            .map(TaskControlBlock::state)
-    }
-
-    pub fn ready_cpu_id(&self, task_id : TaskId) -> Option<CpuId> {
-        self.tasks
-            .get(&task_id)
-            .map(|b| b.as_ref())
-            .and_then(TaskControlBlock::ready_cpu_id)
-    }
-
-    pub fn last_cpu_id(&self, task_id : TaskId) -> Option<CpuId> {
-        self.tasks
-            .get(&task_id)
-            .map(|b| b.as_ref())
-            .and_then(TaskControlBlock::last_cpu_id)
-    }
-
-    pub fn running_cpu_id(&self, task_id : TaskId) -> Option<CpuId> {
-        self.tasks
-            .get(&task_id)
-            .map(|b| b.as_ref())
-            .and_then(TaskControlBlock::running_cpu_id)
-    }
-
     pub fn wait_target_ready(&self, target : TaskWaitTarget) -> bool {
         match target {
             TaskWaitTarget::WaitQueue(_) => false,
-            TaskWaitTarget::TaskExit(task_id) => {
-                self.state(task_id)
-                    .map(|state| matches!(state, TaskState::Exited(_)))
-                    .unwrap_or(true)
-            }
+            TaskWaitTarget::TaskExit(task_id) => self.tasks
+                                                     .get(&task_id)
+                                                     .is_some_and(|b| {
+                                                         matches!(b.state(),
+                                                                  TaskState::Exited(_))
+                                                     }),
             TaskWaitTarget::ChildExit(parent_id) => {
                 self.find_exited_child(parent_id)
                     .is_some() ||
@@ -325,13 +323,6 @@ impl TaskRegistry {
             }
             TaskWaitTarget::Manual => false,
         }
-    }
-
-    pub fn parent_id(&self, task_id : TaskId) -> Option<TaskId> {
-        self.tasks
-            .get(&task_id)
-            .map(|b| b.as_ref())
-            .and_then(TaskControlBlock::parent_id)
     }
 
     pub fn has_child(&self, parent_id : TaskId) -> bool {
@@ -435,7 +426,7 @@ impl TaskRegistry {
                                    trap_frame : TaskTrapFrame,
                                    task_id : TaskId)
                                    -> Option<*mut TaskTrapFrame> {
-        if self.is_idle(task_id) {
+        if self.is_idle_task(task_id) {
             return None;
         }
         if !self.tasks
@@ -460,18 +451,6 @@ impl TaskRegistry {
             .expect("task must exist")
             .restore_trap_frame_into(trap_frame)
     }
-    pub fn is_schedulable(&self, task_id : TaskId) -> bool {
-        if task_id == IDLE_TASK_ID {
-            return self.tasks
-                       .get(&task_id)
-                       .map(|b| b.as_ref())
-                       .is_some();
-        }
-        self.tasks
-            .get(&task_id)
-            .map(|b| b.as_ref())
-            .is_some_and(|task| matches!(task.state(), TaskState::Ready))
-    }
     pub fn set_affinity(&mut self, task_id : TaskId, mask : CpuMask) -> Result<(), SchedError> {
         if let Some(task) = self.tasks
                                 .get_mut(&task_id)
@@ -483,17 +462,6 @@ impl TaskRegistry {
             Err(SchedError::NoSuchTask)
         }
     }
-    pub fn get_affinity(&self, task_id : TaskId) -> Result<CpuMask, SchedError> {
-        if let Some(task) = self.tasks
-                                .get(&task_id)
-                                .map(|b| b.as_ref())
-        {
-            Ok(task.affinity())
-        } else {
-            Err(SchedError::NoSuchTask)
-        }
-    }
-
     /// 更新 task-level nice 属性；runqueue 位置由 scheduler 层决定。
     pub fn set_nice(&mut self, task_id : TaskId, nice : i8) -> Result<(), SchedError> {
         if let Some(task) = self.tasks
@@ -507,25 +475,36 @@ impl TaskRegistry {
         }
     }
 
-    pub fn get_nice(&self, task_id : TaskId) -> Result<i8, SchedError> {
+    /// 返回任务状态（None 表示任务不存在）。
+    pub fn state(&self, task_id : TaskId) -> Option<TaskState> {
         self.tasks
             .get(&task_id)
             .map(|b| b.as_ref())
-            .map(|task| task.nice())
-            .ok_or(SchedError::NoSuchTask)
+            .map(TaskControlBlock::state)
     }
-    pub fn policy(&self, task_id : TaskId) -> Result<SchedPolicy, SchedError> {
+
+    pub fn ready_cpu_id(&self, task_id : TaskId) -> Option<CpuId> {
         self.tasks
             .get(&task_id)
             .map(|b| b.as_ref())
-            .map(|task| task.policy())
-            .ok_or(SchedError::NoSuchTask)
+            .and_then(TaskControlBlock::ready_cpu_id)
     }
-    pub fn priority(&self, task_id : TaskId) -> Result<i32, SchedError> {
+
+    pub fn running_cpu_id(&self, task_id : TaskId) -> Option<CpuId> {
         self.tasks
             .get(&task_id)
             .map(|b| b.as_ref())
-            .map(|task| task.priority())
-            .ok_or(SchedError::NoSuchTask)
+            .and_then(TaskControlBlock::running_cpu_id)
+    }
+
+    pub fn get_affinity(&self, task_id : TaskId) -> Result<CpuMask, SchedError> {
+        if let Some(task) = self.tasks
+                                .get(&task_id)
+                                .map(|b| b.as_ref())
+        {
+            Ok(task.affinity())
+        } else {
+            Err(SchedError::NoSuchTask)
+        }
     }
 }

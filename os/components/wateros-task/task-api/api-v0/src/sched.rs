@@ -29,9 +29,9 @@ impl SchedPolicy {
     pub const fn effective_for_bringup() -> Self { Self::Other }
 }
 /// `SCHED_OTHER` 的最低 nice 值（CPU 份额最高）。
-pub const SCHED_NICE_MIN : i8 = -20;
+pub const NICE_MIN : i8 = -20;
 /// `SCHED_OTHER` 的最高 nice 值（CPU 份额最低）。
-pub const SCHED_NICE_MAX : i8 = 19;
+pub const NICE_MAX : i8 = 19;
 pub type Nice = i8;
 pub type VRunTime = u64;
 pub type Priority = i32;

@@ -9,6 +9,7 @@ use api_v0::{
     AddressSpaceHandle, CpuId, CpuMask, ExitedTask, KernelStack, KernelTaskEntry, SchedPolicy,
     TaskBootstrap, TaskExitCode, TaskId, TaskKind, TaskRuntimeStats, TaskSnapshot, TaskState,
     TaskTick, TaskTrapSnapshot, TaskWaitResult, TaskWaitTarget, UserImageInfo, UserStack, UserTask,
+    VRunTime,
 };
 use arch::task::{ActiveArchTaskContext as TaskContext, ArchTaskContext};
 use arch::trap::{ActiveTrapFrame as TaskTrapFrame, TrapFrameRead, TrapFrameWrite};
@@ -99,6 +100,8 @@ pub struct TaskControlBlock {
     /// 调度器尚未据此改变队列选择；该字段先作为唯一的 task-level 真相，
     /// 避免继续把线程调度属性存成 process-wide 状态。
     nice : i8,
+    /// `SCHED_OTHER` 的累计虚拟运行时间。跨 CPU 迁移时仍由 TCB 保持。
+    vruntime : VRunTime,
     stats : TaskRuntimeStats,
     wait_result : Option<TaskWaitResult>,
     task_cx : TaskContext,
@@ -134,6 +137,7 @@ impl TaskControlBlock {
                policy : SchedPolicy::Other,
                priority : 0,
                nice : 0,
+               vruntime : 0,
                stats : TaskRuntimeStats::default(),
                wait_result : None,
                task_cx,
@@ -159,6 +163,7 @@ impl TaskControlBlock {
                policy : SchedPolicy::Other,
                priority : 0,
                nice : 0,
+               vruntime : 0,
                stats : TaskRuntimeStats::default(),
                wait_result : None,
                task_cx,
@@ -182,6 +187,7 @@ impl TaskControlBlock {
                policy : SchedPolicy::Other,
                priority : 0,
                nice : 0,
+               vruntime : 0,
                stats : TaskRuntimeStats::default(),
                wait_result : None,
                task_cx,
@@ -237,6 +243,7 @@ impl TaskControlBlock {
                     policy : self.policy,
                     priority : self.priority,
                     nice : self.nice,
+                    vruntime : self.vruntime,
                     stats : TaskRuntimeStats::default(),
                     wait_result : None,
                     task_cx,
@@ -279,6 +286,7 @@ impl TaskControlBlock {
                     policy : self.policy,
                     priority : self.priority,
                     nice : self.nice,
+                    vruntime : self.vruntime,
                     stats : TaskRuntimeStats::default(),
                     wait_result : None,
                     task_cx,
@@ -400,8 +408,15 @@ impl TaskControlBlock {
                        policy : self.policy,
                        priority : self.priority,
                        nice : self.nice,
+                       vruntime : self.vruntime,
                        trap_frame,
-                       stats : self.stats }
+                       stats : self.stats,
+                       ready_cpu_id : self.ready_cpu_id,
+                       running_cpu_id : self.running_cpu_id,
+                       last_cpu_id : self.last_cpu_id,
+                       affinity : self.affinity,
+                       user_aspace_ptr : self.user_aspace_ptr(),
+                       task_cx : self.context_ptr() as *const () }
     }
 
     // ── 内核栈 ──────────────────────────────────────────────────
@@ -413,6 +428,9 @@ impl TaskControlBlock {
             TaskInner::User(u) => u.kernel_stack.top(),
         }
     }
+
+    #[inline]
+    pub fn set_vruntime(&mut self, vruntime : VRunTime) { self.vruntime = vruntime; }
 
     // ── 用户任务方法 ─────────────────────────────────────────────
 
@@ -571,10 +589,16 @@ impl TaskControlBlock {
 
     #[inline]
     pub fn tick(&mut self) {
+        self.add_ticks(1);
+    }
+
+    #[inline]
+    pub fn add_ticks(&mut self, ticks : u64) {
+        let ticks = ticks.min(usize::MAX as u64) as usize;
         self.stats
             .tick_count = self.stats
                               .tick_count
-                              .saturating_add(1);
+                              .saturating_add(ticks);
     }
 
     // ── 等待 ────────────────────────────────────────────────────

@@ -99,18 +99,25 @@ impl InterruptGuard {
 }
 /// 唯一的 Rust 上下文切换出口。
 #[inline(never)]
-fn switch_after_unlock(guard : InterruptGuard, switch_pair : SwitchPair) {
-    guard.release();
+fn switch_and_unlock(guard : InterruptGuard, switch_pair : SwitchPair) {
+    // `schedule` 已在锁内把 CPU 的 current-task cache 更新为 next。
+    // 若此时先开中断，SSIP/Timer 可在真正 `__switch` 前打断旧任务：trap
+    // 帧仍属于旧用户任务，scheduler 却会把它当成 next（常为 idle），造成
+    // “返回用户态但 current 是非用户任务”的状态错配。
+    //
+    // 保持中断关闭直至寄存器/栈都切换完成。首次进入的任务运行时会自行开
+    // 中断；已运行过的任务恢复到此函数时，再恢复它保存的原中断状态。
     unsafe {
         __switch(switch_pair.0, switch_pair.1);
     }
+    guard.release();
 }
 /// `__switch` 返回后重新关中断，再取等待结果（避免 wait 路径长期关中断）。
 fn finish_wait_after_switch(guard : InterruptGuard,
                             switch_pair : Option<SwitchPair>)
                             -> TaskWaitResult {
     if let Some(switch_pair) = switch_pair {
-        switch_after_unlock(guard, switch_pair);
+        switch_and_unlock(guard, switch_pair);
     } else {
         guard.release();
     }
@@ -141,7 +148,7 @@ pub fn init() {
 pub fn run_first_task() -> ! {
     let guard = InterruptGuard::new();
     let switch_pair = with_scheduler(|scheduler| scheduler.prepare_first_switch(current_cpu_id()));
-    switch_after_unlock(guard, switch_pair);
+    switch_and_unlock(guard, switch_pair);
     panic!("run_first_task_on_current_cpu must not return");
 }
 
@@ -310,7 +317,7 @@ pub fn suspend_current_and_run_next() {
     });
     dispatch_reschedules(targets, cpu_id);
     if let Some(switch_pair) = switch_pair {
-        switch_after_unlock(_guard, switch_pair);
+        switch_and_unlock(_guard, switch_pair);
     }
 }
 
@@ -330,7 +337,7 @@ pub fn schedule_tick() {
     });
     dispatch_reschedules(targets, cpu_id);
     if let Some(switch_pair) = switch_pair {
-        switch_after_unlock(guard, switch_pair);
+        switch_and_unlock(guard, switch_pair);
     }
 }
 
@@ -353,7 +360,7 @@ pub fn schedule_reschedule() {
     });
     dispatch_reschedules(targets, cpu_id);
     if let Some(switch_pair) = switch_pair {
-        switch_after_unlock(guard, switch_pair);
+        switch_and_unlock(guard, switch_pair);
     }
 }
 
@@ -372,7 +379,7 @@ pub fn block_current(reason : TaskWaitTarget) {
     });
     dispatch_reschedules(targets, cpu_id);
     if let Some(switch_pair) = switch_pair {
-        switch_after_unlock(guard, switch_pair);
+        switch_and_unlock(guard, switch_pair);
     }
 }
 
@@ -409,7 +416,7 @@ pub fn exit_current(exit_code : TaskExitCode) -> ! {
     dispatch_reschedules(targets, cpu_id);
     match switch_pair {
         Some(switch_pair) => {
-            switch_after_unlock(guard, switch_pair);
+            switch_and_unlock(guard, switch_pair);
             // `__switch` 不应回到已退出任务的栈帧；仅为满足 `-> !` 类型检查。
             unsafe {
                 core::hint::unreachable_unchecked();
@@ -803,7 +810,7 @@ pub fn print_cpu_states() {
                    state.idle_task_id,
                    state.current_address_space
                         .is_some(),
-                   state.current_task_ticks);
+                   state.current_ticks);
     }
 }
 
