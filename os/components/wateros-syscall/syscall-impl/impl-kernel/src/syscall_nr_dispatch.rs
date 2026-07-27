@@ -28,6 +28,7 @@ pub fn dispatch_syscall_by_nr(syscall_nr : usize, syscall_args : SyscallArgs) ->
         n if n == api_v0::PREADV => sys::sys_preadv(syscall_args).0,
         n if n == api_v0::PWRITEV => sys::sys_pwritev(syscall_args).0,
         n if n == api_v0::SENDFILE => sys::sys_sendfile(syscall_args).0,
+        n if n == api_v0::FADVISE64 => sys::sys_fadvise64(syscall_args).0,
         n if n == api_v0::READLINKAT => sys::sys_readlinkat(syscall_args).0,
         n if n == api_v0::FACCESSAT => sys::sys_faccessat(syscall_args).0,
         n if n == api_v0::FCHDIR => sys::sys_fchdir(syscall_args).0,

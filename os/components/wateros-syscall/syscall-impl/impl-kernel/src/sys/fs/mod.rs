@@ -6,6 +6,7 @@ pub(crate) mod cwd;
 pub(crate) mod dir;
 pub(crate) mod dup;
 pub(crate) mod faccessat;
+pub(crate) mod fadvise;
 pub(crate) mod fallocate;
 pub(crate) mod fcntl;
 pub(crate) mod flock;
@@ -29,6 +30,7 @@ pub(crate) use dir::{
 };
 pub(crate) use dup::{sys_dup, sys_dup3};
 pub(crate) use faccessat::{sys_faccessat, sys_faccessat2};
+pub(crate) use fadvise::sys_fadvise64;
 pub(crate) use fallocate::sys_fallocate;
 pub(crate) use fcntl::sys_fcntl;
 pub(crate) use flock::sys_flock;

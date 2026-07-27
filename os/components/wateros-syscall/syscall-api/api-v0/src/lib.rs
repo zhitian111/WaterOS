@@ -11,6 +11,7 @@ pub const PWRITE64 : usize = 68;
 pub const PREADV : usize = 69;
 pub const PWRITEV : usize = 70;
 pub const SENDFILE : usize = 71;
+pub const FADVISE64 : usize = 223;
 pub const PSELECT6 : usize = 72;
 pub const PPOLL : usize = 73;
 /// asm-generic 64 位无独立 `select` nr；riscv64/loong64 用户态经 `pselect6`(72) 实现。
