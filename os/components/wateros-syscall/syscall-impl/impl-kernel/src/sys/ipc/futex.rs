@@ -84,16 +84,9 @@ fn reject_unsupported_futex_bitset(cmd : u32, bitset : u32) -> Result<(), ErrNo>
     Err(ErrNo::ENOSYS)
 }
 
-fn wake_with_alternate_keys(hub : &FutexHub, key : FutexKey, max_wake : u32) -> Result<usize, ErrNo> {
-    let n = hub.wake(key, max_wake).map_err(futex_error_to_errno)?;
-    if n > 0 {
-        return Ok(n);
-    }
-    let alt = FutexKey {
-        uaddr : key.uaddr,
-        is_private : !key.is_private,
-    };
-    hub.wake(alt, max_wake).map_err(futex_error_to_errno)
+#[inline]
+fn current_futex_scope() -> usize {
+    task::current_task_user_aspace_ptr()
 }
 
 fn futex_wait(uaddr : usize,
@@ -104,7 +97,7 @@ fn futex_wait(uaddr : usize,
               -> Result<usize, ErrNo> {
     let _ = bitset;
 
-    let key = FutexKey::from_syscall(uaddr, futex_op);
+    let key = FutexKey::from_syscall(uaddr, futex_op, current_futex_scope());
     let is_private = key.is_private;
     let timeout = parse_futex_timeout(timeout_ptr, futex_op)?;
     if timeout == Some(0) {
@@ -159,8 +152,10 @@ fn futex_wait(uaddr : usize,
 
 fn futex_wake(uaddr : usize, max_wake : u32, bitset : u32, futex_op : u32) -> Result<usize, ErrNo> {
     let _ = bitset;
-    let key = FutexKey::from_syscall(uaddr, futex_op);
-    wake_with_alternate_keys(FutexHub::global(), key, max_wake)
+    let key = FutexKey::from_syscall(uaddr, futex_op, current_futex_scope());
+    FutexHub::global()
+        .wake(key, max_wake)
+        .map_err(futex_error_to_errno)
 }
 
 fn futex_requeue(uaddr : usize,
@@ -169,8 +164,9 @@ fn futex_requeue(uaddr : usize,
                  uaddr2 : usize,
                  futex_op : u32)
                  -> Result<usize, ErrNo> {
-    let from_key = FutexKey::from_syscall(uaddr, futex_op);
-    let to_key = FutexKey::from_syscall(uaddr2, futex_op);
+    let private_scope = current_futex_scope();
+    let from_key = FutexKey::from_syscall(uaddr, futex_op, private_scope);
+    let to_key = FutexKey::from_syscall(uaddr2, futex_op, private_scope);
     FutexHub::global()
         .requeue(from_key, to_key, wake_count, requeue_count)
         .map_err(futex_error_to_errno)
@@ -181,11 +177,9 @@ pub(crate) fn wake_user_addr(uaddr : usize) -> usize {
     // clear_child_tid 的 wake 需要同时尝试 private 和 shared 两种 key，
     // 因为等待者可能用任一种 flag（glibc 可能用 FUTEX_WAIT_BITSET 不带 PRIVATE 标志）
     let hub = FutexHub::global();
-    let n1 = hub.wake_all(FutexKey { uaddr,
-                                     is_private : true })
+    let n1 = hub.wake_all(FutexKey::private(uaddr, current_futex_scope()))
                 .unwrap_or(0);
-    let n2 = hub.wake_all(FutexKey { uaddr,
-                                     is_private : false })
+    let n2 = hub.wake_all(FutexKey::shared(uaddr))
                 .unwrap_or(0);
     let total = n1 + n2;
     log::trace!(

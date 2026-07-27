@@ -88,15 +88,10 @@ pub(crate) fn robust_exit_cleanup(task_id: TaskId) {
             if owner as usize == tid {
                 let new_val = (val & FUTEX_FLAG_MASK) | FUTEX_OWNER_DIED;
                 let _ = copy_to_user_struct(futex_uaddr, &new_val);
-                let key = FutexKey {
-                    uaddr: futex_uaddr,
-                    is_private: true,
-                };
+                let key =
+                    FutexKey::private(futex_uaddr, task::current_task_user_aspace_ptr());
                 let _ = hub.wake_all(key);
-                let alt = FutexKey {
-                    uaddr: futex_uaddr,
-                    is_private: false,
-                };
+                let alt = FutexKey::shared(futex_uaddr);
                 let _ = hub.wake_all(alt);
             }
         }
