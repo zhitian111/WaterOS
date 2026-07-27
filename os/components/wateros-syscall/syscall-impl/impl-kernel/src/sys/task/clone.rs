@@ -115,9 +115,6 @@ pub(crate) fn sys_clone3(args : SyscallArgs) -> UserRet {
         }
         return UserRet::from_error(ErrNo::ENOSYS);
     }
-    if clone_args.pidfd != 0 {
-        return UserRet::from_error(ErrNo::EINVAL);
-    }
     if clone_args.set_tid != 0 || clone_args.set_tid_size != 0 {
         return UserRet::from_error(ErrNo::ENOSYS);
     }
