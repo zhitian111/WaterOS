@@ -7,7 +7,6 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
-use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::cmp;
@@ -141,23 +140,8 @@ fn parse_elf_header(data : &[u8]) -> Result<ElfHeaderInfo, LoadElfError> {
                        phdrs })
 }
 
-fn remap_interp_path(program_path : &str, interp : &str) -> String {
-    let library = interp.strip_prefix("/lib/")
-                        .or_else(|| interp.strip_prefix("/lib64/"));
-    if let Some(name) = library {
-        if program_path.starts_with("/glibc/") {
-            return format!("/glibc/lib/{name}");
-        }
-        if program_path.starts_with("/musl/") {
-            // musl 的 libc.so 同时也是动态链接器，ld-musl-* 与 libc.so 是同一文件。
-            return String::from("/musl/lib/libc.so");
-        }
-    }
-    String::from(interp)
-}
-
 fn read_interp_path(data : &[u8],
-                    program_path : &str,
+                    _program_path : &str,
                     header : &ElfHeaderInfo)
                     -> Result<Option<String>, LoadElfError> {
     for i in 0..header.phnum {
@@ -178,7 +162,7 @@ fn read_interp_path(data : &[u8],
                        .position(|byte| *byte == 0)
                        .unwrap_or(bytes.len());
         let interp = core::str::from_utf8(&bytes[..nul]).map_err(|_| LoadElfError::Parse)?;
-        return Ok(Some(remap_interp_path(program_path, interp)));
+        return Ok(Some(String::from(interp)));
     }
     Ok(None)
 }
@@ -204,10 +188,11 @@ fn read_whole_file_ro_retry_bad_prefix(root : &SharedFs,
 
 /// 从根卷读取 `path` 的完整字节（含 ELF 双读校验）。
 pub fn read_path_bytes(path : &str) -> Result<Vec<u8>, LoadElfError> {
+    let path = resolve_elf_path(path)?;
     #[cfg(feature = "vfs-root-read")]
     {
         let view = vfs::root::read_view();
-        read_whole_file_ro_retry_bad_prefix_vfs(view, path)
+        read_whole_file_ro_retry_bad_prefix_vfs(view, path.as_str())
     }
     #[cfg(not(feature = "vfs-root-read"))]
     {
@@ -215,8 +200,13 @@ pub fn read_path_bytes(path : &str) -> Result<Vec<u8>, LoadElfError> {
                        runtime::logging::trace!("[elf-load] abort: no root_fs (mount/driver?)");
                        LoadElfError::NoRootFs
                    })?;
-        read_whole_file_ro_retry_bad_prefix(&root, path)
+        read_whole_file_ro_retry_bad_prefix(&root, path.as_str())
     }
+}
+
+fn resolve_elf_path(path : &str) -> Result<String, LoadElfError> {
+    vfs::resolve_symlink_absolute(path, vfs::api::FinalSymlink::Follow)
+        .map_err(|error| LoadElfError::RootVolume(map_vfs_to_root_vol(error)))
 }
 
 pub(crate) fn read_path_range(path : &str,
@@ -678,6 +668,8 @@ fn entry_file_offset_from_phdrs(phdrs : &[u8],
 /// 静态链接的 busybox 可达 ~1.5MB，整读需要连续大量内核堆内存。
 /// 本路径只读取 header + phdrs（仅几 KB），映射时从文件系统按页读取。
 pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
+    let resolved_path = resolve_elf_path(path)?;
+    let path = resolved_path.as_str();
     runtime::logging::trace!("[elf-load] from_elf_path begin path={}",
                              path);
 
@@ -871,7 +863,7 @@ fn read_interp_path_from_phdrs(path : &str,
                      .position(|b| *b == 0)
                      .unwrap_or(buf.len());
         let interp = core::str::from_utf8(&buf[..nul]).map_err(|_| LoadElfError::Parse)?;
-        return Ok(Some(remap_interp_path(path, interp)));
+        return resolve_elf_path(interp).map(Some);
     }
     Ok(None)
 }
