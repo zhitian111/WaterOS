@@ -1,33 +1,22 @@
 //! `set_robust_list` / `get_robust_list` 与线程退出时的 robust futex 深清理。
 
-//! 本模块代码由AI完成
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use ipc::futex::{
-    FutexError, FutexKey, FutexHub, KernelFutexOps, RobustListHead, FUTEX_OWNER_DIED, FUTEX_TID_MASK,
-    ROBUST_LIST_HEAD_SIZE, ROBUST_LIST_LIMIT,
+    FutexKey, RobustListHead, FUTEX_OWNER_DIED, FUTEX_TID_MASK, ROBUST_LIST_HEAD_SIZE,
+    ROBUST_LIST_LIMIT,
 };
 use task::TaskId;
 
 use crate::user_copy::{copy_from_user, copy_from_user_struct, copy_to_user_struct};
 
-const FUTEX_FLAG_MASK: u32 = !FUTEX_TID_MASK;
+const FUTEX_FLAG_MASK : u32 = !FUTEX_TID_MASK;
 
-// 本方法代码由AI完成
-pub(crate) fn futex_error_to_errno(error: FutexError) -> ErrNo {
-    match error {
-        FutexError::Again => ErrNo::EAGAIN,
-        FutexError::Fault => ErrNo::EFAULT,
-        FutexError::Invalid => ErrNo::EINVAL,
-        FutexError::Nosys => ErrNo::ENOSYS,
-        FutexError::TimedOut => ErrNo::ETIMEDOUT,
-        FutexError::Interrupted => ErrNo::EINTR,
-    }
-}
+use super::futex_error_to_errno;
 
-fn read_user_u32(uaddr: usize) -> Result<u32, ErrNo> {
-    let mut val: u32 = 0;
+fn read_user_u32(uaddr : usize) -> Result<u32, ErrNo> {
+    let mut val : u32 = 0;
     let buf = unsafe { core::slice::from_raw_parts_mut((&raw mut val) as *mut u8, 4) };
     if copy_from_user(buf, uaddr)? != 4 {
         return Err(ErrNo::EFAULT);
@@ -35,8 +24,8 @@ fn read_user_u32(uaddr: usize) -> Result<u32, ErrNo> {
     Ok(val)
 }
 
-fn read_user_list_next(entry: usize) -> Result<usize, ErrNo> {
-    let mut next: usize = 0;
+fn read_user_list_next(entry : usize) -> Result<usize, ErrNo> {
+    let mut next : usize = 0;
     let buf = unsafe { core::slice::from_raw_parts_mut((&raw mut next) as *mut u8, 8) };
     if copy_from_user(buf, entry)? != 8 {
         return Err(ErrNo::EFAULT);
@@ -45,30 +34,19 @@ fn read_user_list_next(entry: usize) -> Result<usize, ErrNo> {
 }
 
 /// 线程退出前遍历用户 robust 链表并唤醒 waiters。
-pub(crate) fn robust_exit_cleanup(task_id: TaskId) {
-    let hub = FutexHub::global();
+pub(crate) fn robust_exit_cleanup(task_id : TaskId) {
+    let (head_ptr, _len) = ipc::futex::take_robust_list(task_id);
     let tid = match task::process_task_snapshot(task_id) {
         Some(snapshot) => snapshot.tid.raw(),
-        None => {
-            hub.drop_robust_list(task_id);
-            return;
-        }
-    };
-    let (head_ptr, _len) = match hub.get_robust_list(task_id) {
-        Ok(state) => state,
-        Err(_) => return,
+        None => return,
     };
     if head_ptr == 0 {
-        hub.drop_robust_list(task_id);
         return;
     }
 
     let head = match copy_from_user_struct::<RobustListHead>(head_ptr) {
         Ok(h) => h,
-        Err(_) => {
-            hub.drop_robust_list(task_id);
-            return;
-        }
+        Err(_) => return,
     };
 
     if head.list_op_pending != 0 {
@@ -88,11 +66,10 @@ pub(crate) fn robust_exit_cleanup(task_id: TaskId) {
             if owner as usize == tid {
                 let new_val = (val & FUTEX_FLAG_MASK) | FUTEX_OWNER_DIED;
                 let _ = copy_to_user_struct(futex_uaddr, &new_val);
-                let key =
-                    FutexKey::private(futex_uaddr, task::current_task_user_aspace_ptr());
-                let _ = hub.wake_all(key);
-                let alt = FutexKey::shared(futex_uaddr);
-                let _ = hub.wake_all(alt);
+                let key = FutexKey::private(futex_uaddr,
+                                            task::current_task_user_aspace_ptr());
+                ipc::futex::wake_all(key);
+                ipc::futex::wake_all(FutexKey::shared(futex_uaddr));
             }
         }
         entry = match read_user_list_next(entry) {
@@ -100,13 +77,9 @@ pub(crate) fn robust_exit_cleanup(task_id: TaskId) {
             Err(_) => break,
         };
     }
-
-    hub.drop_robust_list(task_id);
 }
 
-pub(crate) fn drop_robust_state(task_id: TaskId) {
-    FutexHub::global().drop_robust_list(task_id);
-}
+pub(crate) fn drop_robust_state(task_id : TaskId) { ipc::futex::drop_robust_list(task_id); }
 
 /// execve 前清理同进程其它线程的 robust 状态。
 pub(crate) fn robust_exit_cleanup_siblings_for_exec() {
@@ -129,8 +102,7 @@ pub(crate) fn robust_exit_cleanup_siblings_for_exec() {
     }
 }
 
-// 本方法代码由AI完成
-pub(crate) fn sys_set_robust_list(args: SyscallArgs) -> UserRet {
+pub(crate) fn sys_set_robust_list(args : SyscallArgs) -> UserRet {
     let head = args.arg(0);
     let len = args.arg(1);
     if len != ROBUST_LIST_HEAD_SIZE {
@@ -145,14 +117,13 @@ pub(crate) fn sys_set_robust_list(args: SyscallArgs) -> UserRet {
             return UserRet::from_error(ErrNo::EFAULT);
         }
     }
-    match FutexHub::global().set_robust_list(tid, head, len) {
+    match ipc::futex::set_robust_list(tid, head, len) {
         Ok(()) => UserRet::from_success(0),
         Err(e) => UserRet::from_error(futex_error_to_errno(e)),
     }
 }
 
-// 本方法代码由AI完成
-pub(crate) fn sys_get_robust_list(args: SyscallArgs) -> UserRet {
+pub(crate) fn sys_get_robust_list(args : SyscallArgs) -> UserRet {
     let pid = args.arg(0) as isize;
     let head_out = args.arg(1);
     let len_out = args.arg(2);
@@ -161,21 +132,15 @@ pub(crate) fn sys_get_robust_list(args: SyscallArgs) -> UserRet {
         Ok(tid) => tid,
         Err(_) => return UserRet::from_error(ErrNo::ESRCH),
     };
-    if let (Some(current), Some(target)) = (
-        task::current_process_task_snapshot(),
-        task::process_task_snapshot(target_tid),
-    ) {
+    if let (Some(current), Some(target)) =
+        (task::current_process_task_snapshot(), task::process_task_snapshot(target_tid))
+    {
         if current.pid != target.pid {
-            log::warn!(
-                "[syscall] get_robust_list(nr=100) pid={pid} not in current thread group",
-            );
+            log::warn!("[syscall] get_robust_list(nr=100) pid={pid} not in current thread group",);
             return UserRet::from_error(ErrNo::EPERM);
         }
     }
-    let (head, len) = match FutexHub::global().get_robust_list(target_tid) {
-        Ok(v) => v,
-        Err(e) => return UserRet::from_error(futex_error_to_errno(e)),
-    };
+    let (head, len) = ipc::futex::get_robust_list(target_tid);
     if head_out != 0 && copy_to_user_struct(head_out, &head).is_err() {
         return UserRet::from_error(ErrNo::EFAULT);
     }

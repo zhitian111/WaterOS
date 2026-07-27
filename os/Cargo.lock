@@ -238,7 +238,6 @@ name = "ipc-futex"
 version = "0.1.0"
 dependencies = [
  "wateros-ipc-futex-api-v0",
- "wateros-ipc-futex-impl-dummy",
  "wateros-ipc-futex-impl-task",
 ]
 
@@ -1118,17 +1117,6 @@ version = "0.1.0"
 [[package]]
 name = "wateros-ipc-futex-api-v0"
 version = "0.1.0"
-dependencies = [
- "wateros-task-api-v0",
-]
-
-[[package]]
-name = "wateros-ipc-futex-impl-dummy"
-version = "0.1.0"
-dependencies = [
- "wateros-ipc-futex-api-v0",
- "wateros-task-api-v0",
-]
 
 [[package]]
 name = "wateros-ipc-futex-impl-task"

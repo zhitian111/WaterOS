@@ -3,7 +3,6 @@
         "./ipc-api/api-v0/",
         "./ipc-futex/",
         "./ipc-futex/futex-api/api-v0/",
-        "./ipc-futex/futex-impl/impl-dummy/",
         "./ipc-futex/futex-impl/impl-task/",
         "./ipc-impl/impl-dummy/",
         "./ipc-shm/",
@@ -32,7 +31,7 @@
     all = [ "api-v0", "futex", "impl-dummy", "pipe", "shm", "signal" ]
     api-v0 = [ "impl-dummy/api-v0" ]
     default = [ "api-v0", "impl-dummy" ]
-    futex = [ "dep:futex", "futex/api-v0", "futex/impl-task" ]
+    futex = [ "dep:futex", "futex/api-v0" ]
     impl-dummy = [ "impl-dummy/impl-dummy" ]
     pipe = [ "dep:pipe", "pipe/api-v0", "pipe/impl-ringbuf" ]
     shm = [ "dep:shm" ]

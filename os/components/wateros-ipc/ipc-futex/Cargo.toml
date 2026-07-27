@@ -5,14 +5,11 @@
 
 [dependencies]
     api-v0 = { path = "./futex-api/api-v0/", package = "wateros-ipc-futex-api-v0", default-features = true }
-    impl-dummy = { path = "./futex-impl/impl-dummy/", package = "wateros-ipc-futex-impl-dummy", default-features = false, optional = true }
-    impl-task = { path = "./futex-impl/impl-task/", package = "wateros-ipc-futex-impl-task", default-features = false, optional = true }
+    impl-task = { path = "./futex-impl/impl-task/", package = "wateros-ipc-futex-impl-task", default-features = true }
 
 [features]
-    api-v0 = [ "impl-dummy?/api-v0", "impl-task?/api-v0" ]
-    default = [ "api-v0", "impl-task" ]
-    impl-dummy = [ "dep:impl-dummy", "impl-dummy/impl-dummy" ]
-    impl-task = [ "dep:impl-task", "impl-task/impl-task" ]
+    api-v0 = []
+    default = [ "api-v0" ]
 
 [profile.dev]
     panic = "abort"
