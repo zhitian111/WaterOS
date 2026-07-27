@@ -38,6 +38,26 @@ pub(crate) fn copy_from_user(buf: &mut [u8], ptr: usize) -> Result<usize, ErrNo>
         })
 }
 
+/// 使用调用方已经捕获的地址空间读取用户内存。
+///
+/// 适用于持有 scheduler 锁的条件复查路径，避免再次通过 task API 查询当前
+/// 地址空间而重入 scheduler 锁。
+pub(crate) fn copy_from_user_in_aspace(handle : usize,
+                                       buf : &mut [u8],
+                                       ptr : usize)
+                                       -> Result<usize, ErrNo> {
+    if buf.is_empty() {
+        return Ok(0);
+    }
+    if handle == 0 || ptr == 0 {
+        return Err(ErrNo::EFAULT);
+    }
+    ActiveUserMemoryOps::new(handle)
+        .copy_from_user(buf, VirtAddr(ptr))
+        // 此函数允许在 scheduler 锁内调用；错误路径也不能查询当前 task。
+        .map_err(mm_err_to_errno)
+}
+
 // 本方法代码由AI完成
 pub(crate) fn copy_to_user(ptr: usize, buf: &[u8]) -> Result<usize, ErrNo> {
     if buf.is_empty() {

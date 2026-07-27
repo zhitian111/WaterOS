@@ -12,9 +12,16 @@ use task_api::{TaskId, TaskTick, TaskWaitResult};
 
 use crate::robust::RobustState;
 
+struct FutexQueue {
+    wait_queue : WaitQueue,
+    /// 已取得此 queue、但尚未完成锁外 scheduler 操作的引用数。
+    /// 非零时不能释放 WaitQueueId，否则并发 wait/wake 可能操作复用后的 ID。
+    active_users : usize,
+}
+
 // 本结构代码由AI完成
 struct FutexTables {
-    queues: BTreeMap<FutexKey, WaitQueue>,
+    queues: BTreeMap<FutexKey, FutexQueue>,
     robust: BTreeMap<TaskId, RobustState>,
 }
 
@@ -37,19 +44,51 @@ impl FutexHub {
     }
 
 // 本方法代码由AI完成
-    fn get_queue(tables: &mut FutexTables, key: FutexKey) -> WaitQueue {
-        *tables
+    fn get_or_create_queue(tables: &mut FutexTables, key: FutexKey) -> WaitQueue {
+        tables
             .queues
             .entry(key)
-            .or_insert_with(WaitQueue::new)
+            .or_insert_with(|| FutexQueue {
+                wait_queue : WaitQueue::new(),
+                active_users : 0,
+            })
+            .wait_queue
+    }
+
+    fn acquire_wait_queue(tables : &mut FutexTables, key : FutexKey) -> WaitQueue {
+        let queue = tables
+                        .queues
+                        .entry(key)
+                        .or_insert_with(|| FutexQueue {
+                            wait_queue : WaitQueue::new(),
+                            active_users : 0,
+                        });
+        queue.active_users = queue.active_users
+                                  .saturating_add(1);
+        queue.wait_queue
+    }
+
+    fn acquire_existing_queue(tables : &mut FutexTables, key : FutexKey) -> Option<WaitQueue> {
+        let queue = tables.queues.get_mut(&key)?;
+        queue.active_users = queue.active_users
+                                  .saturating_add(1);
+        Some(queue.wait_queue)
+    }
+
+    fn release_wait_queue(tables : &mut FutexTables, key : FutexKey) {
+        if let Some(queue) = tables.queues.get_mut(&key) {
+            queue.active_users = queue.active_users
+                                      .saturating_sub(1);
+        }
+        Self::cleanup_empty_queue(tables, key);
     }
 
 // 本方法代码由AI完成
     fn cleanup_empty_queue(tables: &mut FutexTables, key: FutexKey) {
-        let Some(wq) = tables.queues.get(&key).copied() else {
+        let Some(queue) = tables.queues.get(&key) else {
             return;
         };
-        if wq.try_release_empty() {
+        if queue.active_users == 0 && queue.wait_queue.try_release_empty() {
             tables.queues.remove(&key);
         }
     }
@@ -65,9 +104,11 @@ impl FutexHub {
         if !condition() {
             return FutexWaitOutcome::Woken;
         }
-        let wq = self.with_tables(|tables| Self::get_queue(tables, key));
+        // acquire/release 覆盖“取得 WaitQueueId → scheduler 真正阻塞”的窗口，
+        // 防止并发 wake 将尚未入队的空 queue 清理并复用其 ID。
+        let wq = self.with_tables(|tables| Self::acquire_wait_queue(tables, key));
         if !condition() {
-            self.with_tables(|tables| Self::cleanup_empty_queue(tables, key));
+            self.with_tables(|tables| Self::release_wait_queue(tables, key));
             return FutexWaitOutcome::Woken;
         }
         let outcome = match timeout {
@@ -90,7 +131,7 @@ impl FutexHub {
                 TaskWaitResult::Interrupted => FutexWaitOutcome::Interrupted,
             },
         };
-        self.with_tables(|tables| Self::cleanup_empty_queue(tables, key));
+        self.with_tables(|tables| Self::release_wait_queue(tables, key));
         outcome
     }
 
@@ -104,8 +145,8 @@ impl FutexHub {
                    requeue_count : u32)
                    -> FutexResult<usize> {
         Ok(self.with_tables(|tables| {
-            let from_wq = Self::get_queue(tables, from_key);
-            let to_wq = Self::get_queue(tables, to_key);
+            let from_wq = Self::get_or_create_queue(tables, from_key);
+            let to_wq = Self::get_or_create_queue(tables, to_key);
             let changed = from_wq.requeue_to(to_wq, wake_count as usize, requeue_count as usize);
             Self::cleanup_empty_queue(tables, from_key);
             Self::cleanup_empty_queue(tables, to_key);
@@ -125,11 +166,14 @@ static GLOBAL_HUB: FutexHub = FutexHub {
 impl KernelFutexOps for FutexHub {
 // 本方法代码由AI完成
     fn wake(&self, key: FutexKey, max_wake: u32) -> FutexResult<usize> {
-        let wq = self.with_tables(|tables| tables.queues.get(&key).copied());
+        if max_wake == 0 {
+            return Ok(0);
+        }
+        let wq = self.with_tables(|tables| Self::acquire_existing_queue(tables, key));
         let Some(wq) = wq else {
             return Ok(0);
         };
-        let limit = if max_wake == 0 { 1 } else { max_wake as usize };
+        let limit = max_wake as usize;
         let mut woken = 0usize;
         for _ in 0..limit {
             if wq.wake_one().is_none() {
@@ -137,15 +181,17 @@ impl KernelFutexOps for FutexHub {
             }
             woken += 1;
         }
-        self.with_tables(|tables| Self::cleanup_empty_queue(tables, key));
+        self.with_tables(|tables| Self::release_wait_queue(tables, key));
         Ok(woken)
     }
 
 // 本方法代码由AI完成
     fn wake_all(&self, key: FutexKey) -> FutexResult<usize> {
-        let wq = self.with_tables(|tables| tables.queues.get(&key).copied());
+        let wq = self.with_tables(|tables| Self::acquire_existing_queue(tables, key));
         let woken = wq.map(|wq| wq.wake_all()).unwrap_or(0);
-        self.with_tables(|tables| Self::cleanup_empty_queue(tables, key));
+        if wq.is_some() {
+            self.with_tables(|tables| Self::release_wait_queue(tables, key));
+        }
         Ok(woken)
     }
 

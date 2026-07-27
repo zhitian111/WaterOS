@@ -9,7 +9,7 @@ use platform::wall_clock;
 use task::TaskTick;
 
 use crate::poll_engine::ns_duration_to_ticks;
-use crate::user_copy::{copy_from_user, copy_from_user_struct};
+use crate::user_copy::{copy_from_user, copy_from_user_in_aspace, copy_from_user_struct};
 
 use crate::sys::ipc::robust::futex_error_to_errno;
 
@@ -37,6 +37,15 @@ fn read_user_u32(uaddr : usize) -> Result<u32, ErrNo> {
     let mut val : u32 = 0;
     let buf = unsafe { core::slice::from_raw_parts_mut((&raw mut val) as *mut u8, 4) };
     if copy_from_user(buf, uaddr)? != 4 {
+        return Err(ErrNo::EFAULT);
+    }
+    Ok(val)
+}
+
+fn read_user_u32_in_aspace(aspace : usize, uaddr : usize) -> Result<u32, ErrNo> {
+    let mut val : u32 = 0;
+    let buf = unsafe { core::slice::from_raw_parts_mut((&raw mut val) as *mut u8, 4) };
+    if copy_from_user_in_aspace(aspace, buf, uaddr)? != 4 {
         return Err(ErrNo::EFAULT);
     }
     Ok(val)
@@ -97,11 +106,14 @@ fn futex_wait(uaddr : usize,
               -> Result<usize, ErrNo> {
     let _ = bitset;
 
-    let key = FutexKey::from_syscall(uaddr, futex_op, current_futex_scope());
+    // 后续条件复查会在 scheduler 全局锁内执行；必须提前捕获地址空间，
+    // 不能在闭包中再次经 task API 查询当前任务而重入 scheduler 锁。
+    let current_aspace = current_futex_scope();
+    let key = FutexKey::from_syscall(uaddr, futex_op, current_aspace);
     let is_private = key.is_private;
     let timeout = parse_futex_timeout(timeout_ptr, futex_op)?;
     if timeout == Some(0) {
-        let cur = read_user_u32(uaddr)?;
+        let cur = read_user_u32_in_aspace(current_aspace, uaddr)?;
         log::trace!(
             "[pthread-debug] futex_wait zero-timeout uaddr={:#x} op={:#x} val={val} cur={cur} private={is_private}",
             uaddr,
@@ -115,7 +127,7 @@ fn futex_wait(uaddr : usize,
 
     let hub = FutexHub::global();
     loop {
-        let cur = read_user_u32(uaddr)?;
+        let cur = read_user_u32_in_aspace(current_aspace, uaddr)?;
         if cur != val {
             log::trace!(
                 "[pthread-debug] futex_wait EAGAIN uaddr={:#x} val={val} cur={cur} private={is_private}",
@@ -132,7 +144,10 @@ fn futex_wait(uaddr : usize,
         );
         super::super::misc::bringup_stats::record_futex_wait_sleep();
 
-        let outcome = hub.wait_while(key, timeout, || read_user_u32(uaddr).map_or(false, |v| v == val));
+        let outcome = hub.wait_while(key, timeout, || {
+                             read_user_u32_in_aspace(current_aspace, uaddr)
+                                 .map_or(false, |value| value == val)
+                         });
         match outcome {
             FutexWaitOutcome::Interrupted => {
                 log::trace!("[pthread-debug] futex_wait EINTR uaddr={:#x}", uaddr);

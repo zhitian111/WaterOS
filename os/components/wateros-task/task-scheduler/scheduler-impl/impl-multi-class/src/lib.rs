@@ -459,24 +459,30 @@ pub fn wait_current(target : TaskWaitTarget) -> TaskWaitResult {
     finish_wait_after_switch(guard, switch_pair)
 }
 
-/// 在关中断调度临界区内复查条件；仅当条件仍成立时才把当前任务挂入等待。
+/// 在持有全局 scheduler 锁时复查条件；仅当条件仍成立时才把当前任务挂入等待。
 pub fn wait_current_while(target : TaskWaitTarget,
                           condition : impl FnOnce() -> bool)
                           -> TaskWaitResult {
     let guard = InterruptGuard::new();
-    if !condition() {
-        return TaskWaitResult::Woken;
-    }
     let cpu_id = cpu::current_cpu_id();
-    let (switch_pair, targets) = with_scheduler(|scheduler| {
+    let scheduled = with_scheduler(|scheduler| {
+        // 必须在取得 scheduler 全局锁后复查。否则远端 CPU 可在“条件成立”
+        // 与“加入 wait queue”之间完成 wake，造成永久丢唤醒。
+        if !condition() {
+            return None;
+        }
         let switch_pair = scheduler.schedule_wait(target, None, cpu_id);
         let mut targets = scheduler.take_pending_reschedule_cpus();
         if targets.contains(cpu_id) {
             targets.remove(cpu_id);
             assert!(scheduler.take_need_resched(cpu_id));
         }
-        (switch_pair, targets)
+        Some((switch_pair, targets))
     });
+    let Some((switch_pair, targets)) = scheduled else {
+        guard.release();
+        return TaskWaitResult::Woken;
+    };
     dispatch_reschedules(targets, cpu_id);
     finish_wait_after_switch(guard, switch_pair)
 }
@@ -503,7 +509,7 @@ pub fn wait_current_timeout(target : TaskWaitTarget, timeout_ticks : TaskTick) -
     finish_wait_after_switch(guard, switch_pair)
 }
 
-/// 带超时的条件等待；条件为假时立即按正常唤醒返回。
+/// 带超时的条件等待；在 scheduler 全局锁内复查条件。
 pub fn wait_current_timeout_while(target : TaskWaitTarget,
                                   timeout_ticks : TaskTick,
                                   condition : impl FnOnce() -> bool)
@@ -513,19 +519,23 @@ pub fn wait_current_timeout_while(target : TaskWaitTarget,
     }
 
     let guard = InterruptGuard::new();
-    if !condition() {
-        return TaskWaitResult::Woken;
-    }
     let cpu_id = cpu::current_cpu_id();
-    let (switch_pair, targets) = with_scheduler(|scheduler| {
+    let scheduled = with_scheduler(|scheduler| {
+        if !condition() {
+            return None;
+        }
         let switch_pair = scheduler.schedule_wait(target, Some(timeout_ticks), cpu_id);
         let mut targets = scheduler.take_pending_reschedule_cpus();
         if targets.contains(cpu_id) {
             targets.remove(cpu_id);
             assert!(scheduler.take_need_resched(cpu_id));
         }
-        (switch_pair, targets)
+        Some((switch_pair, targets))
     });
+    let Some((switch_pair, targets)) = scheduled else {
+        guard.release();
+        return TaskWaitResult::Woken;
+    };
     dispatch_reschedules(targets, cpu_id);
     finish_wait_after_switch(guard, switch_pair)
 }

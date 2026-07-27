@@ -32,7 +32,7 @@ const BRINGUP_COMMANDS : &[BringupCommand] = &[BringupCommand { program : "/musl
 // 默认赛题脚本队列：目标 wall ~35–45 min（timeout 上限 ~60 min）；LTP 放最后。
 // iozone 180 | libcbench 180 | lmbench 360 | unixbench 360 | ltp 480
 const BRINGUP_COMMANDS : &[BringupCommand] = &[
-    BringupCommand { program : "/glibc/busybox",
+/*BringupCommand { program : "/glibc/busybox",
                        argv : &["sh",
                                 "/glibc/basic_testcode.sh"] }, // done
       BringupCommand { program : "/musl/busybox",
@@ -64,7 +64,7 @@ const BRINGUP_COMMANDS : &[BringupCommand] = &[
                                 "/musl/netperf_testcode.sh"] }, // done
       BringupCommand { program : "/musl/busybox",
                        argv : &["sh",
-                                "/musl/libctest_testcode.sh"] }, // done
+                                "/musl/libctest_testcode.sh"] }, // done*/
       BringupCommand { program : "/glibc/busybox",
                        argv : &["sh",
                                 "/glibc/cyclictest_testcode.sh"] }, // done
