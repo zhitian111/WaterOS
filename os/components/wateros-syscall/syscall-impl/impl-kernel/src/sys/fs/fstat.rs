@@ -64,6 +64,9 @@ pub(crate) fn sys_fstatat(args: SyscallArgs) -> UserRet {
     if stat_ptr == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
     }
+    if flags & !(AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT) != 0 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
 
     let path = if path_ptr == 0 && (flags & AT_EMPTY_PATH) != 0 {
         alloc::string::String::new()
@@ -86,6 +89,15 @@ pub(crate) fn sys_fstatat(args: SyscallArgs) -> UserRet {
         }
     } else {
         let resolved = match resolve_path_at(dirfd, path.as_str()) {
+            Ok(path) => path,
+            Err(e) => return UserRet::from_error(e),
+        };
+        let final_symlink = if flags & AT_SYMLINK_NOFOLLOW != 0 {
+            FinalSymlink::NoFollow
+        } else {
+            FinalSymlink::Follow
+        };
+        let resolved = match resolve_symlinks(resolved.as_str(), final_symlink) {
             Ok(path) => path,
             Err(e) => return UserRet::from_error(e),
         };
