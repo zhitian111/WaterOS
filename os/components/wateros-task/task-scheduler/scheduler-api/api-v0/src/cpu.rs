@@ -5,8 +5,8 @@ use crate::{registry, TaskRegistry, WaitQueues};
 use arch::task::{ActiveArchTaskContext, ArchTaskContext};
 use config::task::{MAX_TICKS_PER_TASK, NICE_0_WEIGHT, NICE_TO_WEIGHT};
 use task_api::{
-    AddressSpaceHandle, CpuId, CpuMask, Nice, Priority, SchedPolicy, TaskExitCode, TaskId,
-    TaskSnapshot, TaskTick, TaskWaitTarget, VRunTime, NICE_MIN, PRIORITY_MIN,
+    AddressSpaceHandle, CpuId, CpuMask, Nice, Priority, SchedError, SchedPolicy, TaskExitCode,
+    TaskId, TaskSnapshot, TaskTick, TaskWaitTarget, VRunTime, NICE_MIN, PRIORITY_MIN,
 };
 // 用固定点表示每 tick 的 vruntime，避免高权重（负 nice）任务因整数除法得到 0。
 const VRUNTIME_SCALE : u64 = 1 << 20;
@@ -31,6 +31,17 @@ pub enum ScheduleReason {
     Sleep(TaskTick),
     /// 当前任务退出。
     Exit(TaskExitCode),
+}
+
+/// CPU 本地重调度判断的触发来源。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RescheduleCause {
+    /// timer tick 或已设置 `need_resched` 后的常规调度检查。
+    Tick,
+    /// 一个指定 policy 的任务刚进入本 CPU ready queue。
+    Ready(SchedPolicy),
+    /// 当前任务已不允许继续运行，必须立刻重新调度。
+    Forced,
 }
 /// 将当前任务从运行态移出后应进入的调度桶。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,10 +74,12 @@ pub struct CPUState {
     /// 本 CPU 当前任务为 idle 时累计的 scheduler timer tick 次数。
     pub idle_ticks : u64,
     pub min_vruntime : u64,
+    pub idle_min_vruntime : u64,
     pub cfs_queue : CfsQueue,
     pub rr_queue : RrQueue,
     pub fifo_queue : FifoQueue,
     pub batch_queue : CfsQueue,
+    pub idle_queue : CfsQueue,
     //当前任务运行的tick数
     pub current_ticks : u64,
     /// 当前任务自上次切入或同步以来实际运行的 tick 数，用于批量回写 TCB 统计。
@@ -94,10 +107,12 @@ impl CPUState {
                timer_ticks : 0,
                idle_ticks : 0,
                min_vruntime : 0,
+               idle_min_vruntime : 0,
                cfs_queue : CfsQueue::new(),
                rr_queue : RrQueue::new(),
                fifo_queue : FifoQueue::new(),
                batch_queue : CfsQueue::new(),
+               idle_queue : CfsQueue::new(),
                current_ticks : 0,
                current_runtime_ticks : 0,
                current_policy : SchedPolicy::Other,
@@ -120,12 +135,15 @@ impl CPUState {
         self.timer_ticks = 0;
         self.idle_ticks = 0;
         self.min_vruntime = 0;
+        self.idle_min_vruntime = 0;
         self.cfs_queue
             .init();
         self.rr_queue.init();
         self.fifo_queue
             .init();
         self.batch_queue
+            .init();
+        self.idle_queue
             .init();
         self.current_ticks = 0;
         self.current_runtime_ticks = 0;
@@ -139,11 +157,28 @@ impl CPUState {
     }
     /// OTHER 与 BATCH 共用的公平调度基线。
     pub fn min_vruntime(&self) -> VRunTime { self.min_vruntime }
+    pub fn idle_min_vruntime(&self) -> VRunTime { self.idle_min_vruntime }
+
+    /// 使用 CFS vruntime 队列的 policy。
+    ///
+    /// `Idle` 使用独立 baseline，但仍由 CFS tree 保存并按 vruntime 排序。
+    pub const fn is_cfs_policy(policy : SchedPolicy) -> bool {
+        matches!(policy,
+                 SchedPolicy::Other | SchedPolicy::Batch | SchedPolicy::Idle)
+    }
+
     pub fn boot_task_cx(&mut self) -> *mut ActiveArchTaskContext {
         &mut self.boot_task_cx as *mut ActiveArchTaskContext
     }
-    pub fn normalize_vruntime(&self, vruntime : VRunTime) -> VRunTime {
-        vruntime.max(self.min_vruntime)
+    pub fn normalize_vruntime(&self,
+                              vruntime : VRunTime,
+                              policy : SchedPolicy)
+                              -> Option<VRunTime> {
+        match policy {
+            SchedPolicy::Other | SchedPolicy::Batch => Some(vruntime.max(self.min_vruntime)),
+            SchedPolicy::Idle => Some(vruntime.max(self.idle_min_vruntime)),
+            _ => None,
+        }
     }
 
     fn min_ready_fair_vruntime(&self) -> Option<VRunTime> {
@@ -154,7 +189,10 @@ impl CPUState {
                        .min_ready_vruntime())
             .min()
     }
-
+    fn min_idle_ready_vruntime(&self) -> Option<VRunTime> {
+        self.idle_queue
+            .min_ready_vruntime()
+    }
     /// 当前运行 fair 实体和两个 fair ready tree 的左端共同、单调地推进基线。
     fn update_min_vruntime(&mut self) {
         let mut candidate = self.min_ready_fair_vruntime();
@@ -169,6 +207,18 @@ impl CPUState {
         if let Some(candidate) = candidate {
             self.min_vruntime = self.min_vruntime
                                     .max(candidate);
+        }
+    }
+    fn update_idle_min_vruntime(&mut self) {
+        let mut candidate = self.min_idle_ready_vruntime();
+        if !self.is_current_idle() && matches!(self.current_policy, SchedPolicy::Idle) {
+            candidate = Some(candidate.map_or(self.current_vruntime, |ready| {
+                                          ready.min(self.current_vruntime)
+                                      }));
+        }
+        if let Some(candidate) = candidate {
+            self.idle_min_vruntime = self.idle_min_vruntime
+                                         .max(candidate);
         }
     }
     pub fn leave_boot_context(&mut self) { self.boot_context_active = false; }
@@ -209,6 +259,17 @@ impl CPUState {
                     self.update_min_vruntime();
                 }
             }
+            SchedPolicy::Idle => {
+                if !self.is_current_idle() {
+                    let weight = NICE_TO_WEIGHT[(self.current_nice + 20) as usize];
+                    let delta = NICE_0_WEIGHT.saturating_mul(VRUNTIME_SCALE)
+                                             .saturating_div(weight)
+                                             .max(1);
+                    self.current_vruntime = self.current_vruntime
+                                                .saturating_add(delta);
+                    self.update_idle_min_vruntime();
+                }
+            }
             SchedPolicy::Rr => {
                 self.current_ticks = self.current_ticks
                                          .saturating_add(1);
@@ -226,12 +287,27 @@ impl CPUState {
             .max()
     }
 
-    /// 统一调度判断：当前任务是否应让出 CPU。
-    pub fn cpu_should_reschedule(&self) -> bool {
+    /// 统一调度判断：给定触发来源时，当前任务是否应让出 CPU。
+    pub fn cpu_should_reschedule(&self, cause : RescheduleCause) -> bool {
         if !self.current_affinity
                 .contains(self.cpu_id)
         {
             return true;
+        }
+
+        match cause {
+            RescheduleCause::Forced => return true,
+            // 弱唤醒策略只唤醒物理 idle CPU；繁忙 CPU 在下一 tick 再比较
+            // 相应队列的 vruntime。
+            RescheduleCause::Ready(SchedPolicy::Batch)
+                if !self.is_current_idle() && self.current_policy != SchedPolicy::Idle =>
+            {
+                return false;
+            }
+            RescheduleCause::Ready(SchedPolicy::Idle) if !self.is_current_idle() => {
+                return false;
+            }
+            RescheduleCause::Tick | RescheduleCause::Ready(_) => {}
         }
 
 
@@ -240,6 +316,8 @@ impl CPUState {
             if self.min_ready_fair_vruntime()
                    .is_some() ||
                self.highest_priority()
+                   .is_some() ||
+               self.min_idle_ready_vruntime()
                    .is_some()
             {
                 return true;
@@ -261,6 +339,18 @@ impl CPUState {
                 self.highest_priority()
                     .is_some() ||
                 self.min_ready_fair_vruntime()
+                    .is_some_and(|min| self.current_vruntime > min)
+            }
+            SchedPolicy::Idle => {
+                self.highest_priority()
+                    .is_some() ||
+                self.cfs_queue
+                    .task_count() >
+                0 ||
+                self.batch_queue
+                    .task_count() >
+                0 ||
+                self.min_idle_ready_vruntime()
                     .is_some_and(|min| self.current_vruntime > min)
             }
             SchedPolicy::Fifo => {
@@ -322,6 +412,13 @@ impl CPUState {
                                     .max(vruntime);
             return task_id;
         }
+        if let Some((task_id, vruntime)) = self.idle_queue
+                                               .pick()
+        {
+            self.idle_min_vruntime = self.idle_min_vruntime
+                                         .max(vruntime);
+            return task_id;
+        }
         self.idle_task_id
             .expect("every CPU must have an idle task")
     }
@@ -345,6 +442,8 @@ impl CPUState {
             .task_count() +
         self.batch_queue
             .task_count() +
+        self.idle_queue
+            .task_count() +
         current as usize
     }
 
@@ -358,6 +457,8 @@ impl CPUState {
             .dequeue(task_id);
         self.rr_queue
             .dequeue(task_id);
+        self.idle_queue
+            .dequeue(task_id);
     }
 
     /// 按策略将任务入队到对应的就绪队列。
@@ -367,6 +468,8 @@ impl CPUState {
                                       .enqueue(task_id, snap.vruntime),
             SchedPolicy::Batch => self.batch_queue
                                       .enqueue(task_id, snap.vruntime),
+            SchedPolicy::Idle => self.idle_queue
+                                     .enqueue(task_id, snap.vruntime),
             SchedPolicy::Fifo => self.fifo_queue
                                      .enqueue(task_id, snap.priority),
             SchedPolicy::Rr => self.rr_queue
@@ -391,6 +494,22 @@ impl CPUState {
         self.current_task_cx = snap.task_cx as *mut ActiveArchTaskContext;
         self.current_aspace = snap.user_aspace_ptr;
     }
+
+    /// Policy 参数与本 CPU 调度队列的对应关系。
+    ///
+    /// 这是关联函数而非实例方法：校验不依赖具体 CPU 状态，但新增/删除队列时
+    /// 可与 `enqueue()` 的 policy 分派一起维护。
+    pub fn validate_policy_param(policy : SchedPolicy,
+                                 priority : Priority)
+                                 -> Result<(), SchedError> {
+        match policy {
+            SchedPolicy::Fifo | SchedPolicy::Rr if !(1..=99).contains(&priority) => {
+                Err(SchedError::InvalidArg)
+            }
+            policy if Self::is_cfs_policy(policy) && priority != 0 => Err(SchedError::InvalidArg),
+            _ => Ok(()),
+        }
+    }
 }
 pub struct CpuSnapshot {
     pub cpu_id : CpuId,
@@ -405,6 +524,7 @@ pub struct CpuSnapshot {
     pub runnable_batch : usize,
     pub runnable_fifo : usize,
     pub runnable_rr : usize,
+    pub runnable_idle : usize,
     pub need_resched : bool,
     pub context_switches : u64,
     pub timer_ticks : u64,

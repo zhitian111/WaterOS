@@ -81,7 +81,7 @@ fn render_snapshot() -> String {
         let _ = table.row(&[Cell::text("CPU"),
                             Cell::text("Current Task"),
                             Cell::text("State"),
-                            Cell::text("Q O/B/F/R"),
+                            Cell::text("Q O/B/I/F/R"),
                             Cell::text("Rsch"),
                             Cell::text("Switch"),
                             Cell::text("Timer")]);
@@ -180,17 +180,19 @@ impl Display for TaskIdText<'_> {
     }
 }
 
-/// 不分配地显示 Other/Batch/FIFO/RR 四类可运行队列长度。
+/// 不分配地显示 Other/Batch/Idle/FIFO/RR 五类可运行队列长度。
 struct QueueCounts<'a>(&'a task::CpuSnapshot);
 
 impl Display for QueueCounts<'_> {
     fn fmt(&self, formatter : &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter,
-               "{}/{}/{}/{}",
+               "{}/{}/{}/{}/{}",
                self.0
                    .runnable_other,
                self.0
                    .runnable_batch,
+               self.0
+                   .runnable_idle,
                self.0.runnable_fifo,
                self.0.runnable_rr)
     }

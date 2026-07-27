@@ -22,7 +22,7 @@ impl MultiClassScheduler {
         }
         self.registry
             .finish_wait(task_id, TaskWaitResult::Woken);
-        self.enqueue_woken_task(task_id);
+        self.activate_ready_task(task_id, ReadyPlacement::LastCpu);
         true
     }
     pub fn interrupt_task(&mut self, task_id : TaskId) -> bool {
@@ -36,7 +36,7 @@ impl MultiClassScheduler {
         }
         self.registry
             .finish_wait(task_id, TaskWaitResult::Interrupted);
-        self.enqueue_woken_task(task_id);
+        self.activate_ready_task(task_id, ReadyPlacement::LastCpu);
         true
     }
 
@@ -60,7 +60,7 @@ impl MultiClassScheduler {
         for task_id in waiters {
             self.registry
                 .finish_wait(task_id, TaskWaitResult::Woken);
-            self.enqueue_woken_task(task_id);
+            self.activate_ready_task(task_id, ReadyPlacement::LastCpu);
         }
     }
 
@@ -75,7 +75,7 @@ impl MultiClassScheduler {
         }
         self.registry
             .finish_wait(task_id, TaskWaitResult::Woken);
-        self.enqueue_woken_task(task_id);
+        self.activate_ready_task(task_id, ReadyPlacement::LastCpu);
         Some(task_id)
     }
 
@@ -92,7 +92,7 @@ impl MultiClassScheduler {
             }
             self.registry
                 .finish_wait(task_id, TaskWaitResult::Woken);
-            self.enqueue_woken_task(task_id);
+            self.activate_ready_task(task_id, ReadyPlacement::LastCpu);
             count = count.saturating_add(1);
         }
         count
@@ -111,7 +111,7 @@ impl MultiClassScheduler {
         for task_id in woken {
             self.registry
                 .finish_wait(task_id, TaskWaitResult::Woken);
-            self.enqueue_woken_task(task_id);
+            self.activate_ready_task(task_id, ReadyPlacement::LastCpu);
         }
         for (task_id, _) in moved {
             self.registry
