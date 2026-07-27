@@ -61,7 +61,9 @@ pub fn registry_stats() -> FdRegistryStats {
     }
     with_registry(|registry| {
         let (task_bindings, table_count, open_fd_count) = registry.debug_counts();
-        FdRegistryStats { task_bindings, table_count, open_fd_count }
+        FdRegistryStats { task_bindings,
+                          table_count,
+                          open_fd_count }
     })
 }
 
@@ -81,19 +83,15 @@ pub fn with_current_io<R>(fd : usize,
                           f : impl FnOnce(&mut (dyn VfsIoHandle + '_)) -> VfsResult<R>)
                           -> VfsResult<R> {
     let task_id = current_task_id()?;
-    let (owner, handle_ptr, slot_lock) =
-        with_fd_registry(|reg| reg.begin_io_for_task(task_id, fd))?;
-    let _slot_guard = slot_lock.lock();
-    let result = f(unsafe {
-        // SAFETY: inflight 计数、槽位锁和延迟清理保证句柄驻留且互斥访问。
-        &mut *handle_ptr
-    });
-    drop(_slot_guard);
-    with_fd_registry(|reg| {
-        reg.end_io_for_owner(owner, fd);
-        Ok(())
-    })?;
-    result
+    with_task_io(task_id, fd, f)
+}
+
+fn with_task_io<R>(task_id : task::TaskId,
+                   fd : usize,
+                   f : impl FnOnce(&mut (dyn VfsIoHandle + '_)) -> VfsResult<R>)
+                   -> VfsResult<R> {
+    let handle = with_fd_registry(|reg| reg.io_handle_for_task(task_id, fd))?;
+    handle.with_io(f)
 }
 
 /// 为当前任务分配 fd。
@@ -121,8 +119,11 @@ fn release_locks_for_current_process(handle : &(dyn VfsIoHandle + '_)) {
 /// 关闭当前任务的 fd（调用句柄 `close`）。
 pub fn close_fd(fd : usize) -> VfsResult<()> {
     let task_id = current_task_id()?;
-    let mut handle = with_fd_registry(|reg| reg.take_fd_for_close(task_id, fd))?;
-    release_locks_for_current_process(handle.as_ref());
+    let handle = with_fd_registry(|reg| reg.take_fd_for_close(task_id, fd))?;
+    handle.with_io(|io| {
+              release_locks_for_current_process(io);
+              Ok(())
+          })?;
     handle.close()
 }
 
@@ -131,8 +132,11 @@ pub fn close_fd_range(first : usize, last : usize) -> VfsResult<Vec<usize>> {
     let task_id = current_task_id()?;
     let handles = with_fd_registry(|reg| reg.take_fd_range_for_close(task_id, first, last))?;
     let mut closed = Vec::new();
-    for (fd, mut handle) in handles {
-        release_locks_for_current_process(handle.as_ref());
+    for (fd, handle) in handles {
+        handle.with_io(|io| {
+                  release_locks_for_current_process(io);
+                  Ok(())
+              })?;
         handle.close()?;
         closed.push(fd);
     }
@@ -140,20 +144,27 @@ pub fn close_fd_range(first : usize, last : usize) -> VfsResult<Vec<usize>> {
 }
 
 /// 请求全部打开句柄写回脏数据。
-pub fn flush_all_open_files() -> VfsResult<()> { with_fd_registry(|registry| registry.flush_all()) }
+pub fn flush_all_open_files() -> VfsResult<()> {
+    let handles = with_registry(|registry| registry.all_open_handles());
+    let mut first_error = None;
+    for handle in handles {
+        if let Err(err) = handle.with_io(|io| io.flush()) {
+            first_error.get_or_insert(err);
+        }
+    }
+    first_error.map_or(Ok(()), Err)
+}
 
 /// 当前任务下 `fd` 是否为 TTY 类字符设备。
 pub fn current_fd_is_tty_char(fd : usize) -> VfsResult<bool> {
-    with_current_task(|reg, task_id| {
-        let handle = reg.get_io_for_task(task_id, fd)?;
+    with_current_io(fd, |handle| {
         Ok(handle.is_tty_char_device())
     })
 }
 
 /// 当前任务下 `fd` 是否为软件 RTC 字符设备。
 pub fn current_fd_is_rtc(fd : usize) -> VfsResult<bool> {
-    with_current_task(|reg, task_id| {
-        let handle = reg.get_io_for_task(task_id, fd)?;
+    with_current_io(fd, |handle| {
         if handle.is_rtc_device() {
             return Ok(true);
         }
@@ -165,16 +176,33 @@ pub fn current_fd_is_rtc(fd : usize) -> VfsResult<bool> {
 
 /// `dup(oldfd)`：复制到 ≥ `minfd` 的最低可用 fd。
 pub fn dup_fd(oldfd : usize, minfd : usize) -> VfsResult<usize> {
-    with_current_task(|reg, task_id| reg.dup_fd_for_task(task_id, oldfd, minfd))
+    let task_id = current_task_id()?;
+    let dup_handle = with_fd_registry(|reg| reg.duplicate_handle_for_task(task_id, oldfd))?;
+    with_fd_registry(|reg| reg.install_dup_fd_for_task(task_id, minfd, dup_handle))
 }
 
 /// `dup3(oldfd, newfd, cloexec)`。
 pub fn dup3_fd(oldfd : usize, newfd : usize, cloexec : bool) -> VfsResult<usize> {
     let task_id = current_task_id()?;
-    let (fd, displaced) =
-        with_fd_registry(|registry| registry.dup3_fd_for_task(task_id, oldfd, newfd, cloexec))?;
-    if let Some(mut handle) = displaced {
-        release_locks_for_current_process(handle.as_ref());
+    if oldfd == newfd {
+        with_fd_registry(|reg| {
+            reg.io_handle_for_task(task_id, oldfd)
+               .map(|_| ())
+        })?;
+        if cloexec {
+            set_fd_flags(newfd, 1)?;
+        }
+        return Ok(newfd);
+    }
+    let dup_handle = with_fd_registry(|reg| reg.duplicate_handle_for_task(task_id, oldfd))?;
+    let (fd, displaced) = with_fd_registry(|registry| {
+        registry.install_dup3_fd_for_task(task_id, newfd, cloexec, dup_handle)
+    })?;
+    if let Some(handle) = displaced {
+        let _ = handle.with_io(|io| {
+                          release_locks_for_current_process(io);
+                          Ok(())
+                      });
         // dup3 已经原子替换 fd；Linux 语义不向调用方报告被覆盖 fd 的 close 错误。
         let _ = handle.close();
     }
@@ -219,7 +247,10 @@ pub fn init_child_fd_table(child_id : task::TaskId) {
 
 /// fork 时复制父任务 fd 表。
 pub fn copy_fd_table_from_parent(child_id : task::TaskId, parent_id : task::TaskId) {
-    with_registry(|registry| registry.copy_fd_table_from_parent(child_id, parent_id));
+    with_registry(|registry| {
+        let (parent_table, parent_flags) = registry.fd_table_copy_plan(parent_id);
+        registry.install_fd_table_copy(child_id, parent_table, parent_flags);
+    });
 }
 
 /// thread clone 时共享父任务 fd 表。
@@ -231,7 +262,7 @@ pub fn share_fd_table_from_parent(child_id : task::TaskId, parent_id : task::Tas
 pub fn close_cloexec_fds_for_current_task() -> VfsResult<()> {
     let task_id = current_task_id()?;
     let handles = with_registry(|registry| registry.take_cloexec_fds_for_task(task_id));
-    for mut handle in handles {
+    for handle in handles {
         handle.close()?;
     }
     Ok(())
@@ -240,7 +271,7 @@ pub fn close_cloexec_fds_for_current_task() -> VfsResult<()> {
 /// 任务退出后释放 fd 表。
 pub fn drop_task_fd_table(task_id : task::TaskId) {
     let handles = with_registry(|registry| registry.drain_task_fd_table(task_id));
-    for mut handle in handles {
+    for handle in handles {
         if let Err(e) = handle.close() {
             log::warn!("[vfs-fd] drop_task_fd_table task_id={task_id} close failed: {e:?}");
         }
@@ -255,7 +286,7 @@ pub fn self_test() {
                    .is_ok());
         assert!(reg.close_fd_for_task(stdio_task, api_v0::VFS_STDIN_FD)
                    .is_err());
-        assert!(reg.get_io_for_task(stdio_task, api_v0::VFS_STDIN_FD)
+        assert!(reg.io_handle_for_task(stdio_task, api_v0::VFS_STDIN_FD)
                    .is_err());
         let reused_stdin = reg.alloc_fd_for_task(stdio_task, stdio_replacement_handle())
                               .expect("alloc stdio");
@@ -271,38 +302,41 @@ pub fn self_test() {
                                          Box::new(impl_fd_session::ConsoleOutHandle))
                       .expect("alloc fd");
         assert_eq!(fd, fd_b);
-        assert!(reg.get_io_for_task(a, fd)
+        assert!(reg.io_handle_for_task(a, fd)
                    .is_ok());
-        assert!(reg.get_io_for_task(b, fd_b)
+        assert!(reg.io_handle_for_task(b, fd_b)
                    .is_ok());
-        let dup_fd = reg.dup_fd_for_task(a, fd, 0)
+        let dup_handle = reg.duplicate_handle_for_task(a, fd)
+                            .expect("dup source");
+        let dup_fd = reg.install_dup_fd_for_task(a, 0, dup_handle)
                         .expect("dup");
         assert_ne!(dup_fd, fd);
-        assert!(reg.get_io_for_task(a, dup_fd)
+        assert!(reg.io_handle_for_task(a, dup_fd)
                    .is_ok());
         assert!(reg.close_fd_for_task(a, dup_fd)
                    .is_ok());
         assert!(reg.close_fd_for_task(a, fd)
                    .is_ok());
-        assert!(reg.get_io_for_task(a, fd)
+        assert!(reg.io_handle_for_task(a, fd)
                    .is_err());
-        assert!(reg.get_io_for_task(b, fd_b)
+        assert!(reg.io_handle_for_task(b, fd_b)
                    .is_ok());
 
         let parent_extra = reg.alloc_fd_for_task(a,
                                                  Box::new(impl_fd_session::ConsoleOutHandle))
                               .expect("alloc fd");
-        reg.copy_fd_table_from_parent(b, a);
-        assert!(reg.get_io_for_task(b, parent_extra)
+        let (parent_table, parent_flags) = reg.fd_table_copy_plan(a);
+        reg.install_fd_table_copy(b, parent_table, parent_flags);
+        assert!(reg.io_handle_for_task(b, parent_extra)
                    .is_ok());
-        assert!(reg.get_io_for_task(a, parent_extra)
+        assert!(reg.io_handle_for_task(a, parent_extra)
                    .is_ok());
         let c : task::TaskId = 12;
         reg.share_fd_table_from_parent(c, a);
-        assert!(reg.get_io_for_task(c, parent_extra)
+        assert!(reg.io_handle_for_task(c, parent_extra)
                    .is_ok());
         reg.drop_task_fd_table(c);
-        assert!(reg.get_io_for_task(a, parent_extra)
+        assert!(reg.io_handle_for_task(a, parent_extra)
                    .is_ok());
 
         let _ = reg.close_fd_for_task(b, fd_b);
@@ -318,18 +352,17 @@ pub fn self_test() {
         // An in-flight stdio operation must keep the old table alive while the
         // task exits. Reusing the task id must receive a fresh stdio table.
         let lease_task : task::TaskId = 30;
-        let (old_owner, _, slot_lock) = reg.begin_io_for_task(lease_task,
-                                                               api_v0::VFS_STDIN_FD)
-                                            .expect("stdio lease");
-        let slot_guard = slot_lock.lock();
+        let old_handle = reg.io_handle_for_task(lease_task, api_v0::VFS_STDIN_FD)
+                            .expect("stdio lease");
         reg.drop_task_fd_table(lease_task);
         let new_fd = reg.alloc_fd_for_task(lease_task,
                                            Box::new(impl_fd_session::ConsoleOutHandle))
-                          .expect("reuse task id");
+                        .expect("reuse task id");
         assert_eq!(new_fd, api_v0::VFS_FIRST_DYNAMIC_FD);
-        drop(slot_guard);
-        reg.end_io_for_owner(old_owner, api_v0::VFS_STDIN_FD);
-        assert!(reg.get_io_for_task(lease_task, api_v0::VFS_STDIN_FD).is_ok());
+        old_handle.close()
+                  .expect("close detached stdio");
+        assert!(reg.io_handle_for_task(lease_task, api_v0::VFS_STDIN_FD)
+                   .is_ok());
         reg.drop_task_fd_table(lease_task);
 
         if impl_fd_session::poll_pipe_smoke() {
