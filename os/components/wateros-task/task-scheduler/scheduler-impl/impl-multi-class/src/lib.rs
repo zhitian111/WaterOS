@@ -65,7 +65,9 @@ fn dispatch_reschedules(targets : CpuMask, current_cpu_id : CpuId) {
     let local_requested = remote.contains(current_cpu_id);
     remote.remove(current_cpu_id);
     if !remote.is_empty() {
-        if let Err(error) = platform::smp::send_ipi(remote, platform::smp::IpiKind::Reschedule) {
+        if let Err(error) = platform::smp::send_ipi(remote,
+                                                    platform::smp::IpiKind::Reschedule)
+        {
             log::warn!("[ipi] directed reschedule notification failed: {:?}",
                        error);
         }
@@ -614,10 +616,16 @@ pub fn wake_child_exit_waiters(parent_id : TaskId) {
 //  5. 等待队列管理
 // =============================================================================
 
-/// 分配新的显式等待队列编号。
-pub fn allocate_wait_queue() -> WaitQueueId {
+/// 分配新的显式等待队列编号，并记录静态诊断标签。
+pub fn allocate_wait_queue(name : &'static str) -> WaitQueueId {
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.allocate_wait_queue())
+    with_scheduler(|scheduler| scheduler.allocate_wait_queue(name))
+}
+
+/// 返回等待队列的诊断标签。
+pub fn wait_queue_name(wait_queue_id : WaitQueueId) -> Option<&'static str> {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.wait_queue_name(wait_queue_id))
 }
 
 /// 当显式等待队列为空时释放其编号。
@@ -741,6 +749,12 @@ pub fn current_task_snapshot() -> Option<TaskSnapshot> {
 pub fn task_snapshot(task_id : TaskId) -> Option<TaskSnapshot> {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| Some(scheduler.task_snapshot(task_id)))
+}
+
+/// 返回除物理 idle 任务外的全部稳定任务快照，仅供低频停滞诊断。
+pub fn diagnostic_task_snapshots() -> Vec<TaskSnapshot> {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.diagnostic_task_snapshots())
 }
 
 /// 当前调度器逻辑 tick。

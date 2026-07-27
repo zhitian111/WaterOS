@@ -3,6 +3,7 @@
 
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
 use arch::task::ActiveArchTaskContext as TaskContext;
 use arch::trap::ActiveTrapFrame as TaskTrapFrame;
 use task_api::{
@@ -347,6 +348,16 @@ impl TaskRegistry {
             .map(|b| b.as_ref())
             .expect("task must exist")
             .snapshot()
+    }
+
+    /// 返回除物理 idle 任务外的全部稳定快照，仅供低频停滞诊断使用。
+    pub fn diagnostic_task_snapshots(&self) -> Vec<TaskSnapshot> {
+        self.tasks
+            .values()
+            .map(|task| task.as_ref())
+            .filter(|task| !task.is_idle())
+            .map(TaskControlBlock::snapshot)
+            .collect()
     }
 
     pub fn task_kernel_stack_top(&self, task_id : TaskId) -> usize {

@@ -17,6 +17,8 @@ use syscall as _;
 mod boot_timebase;
 #[cfg(feature = "dashboard-debug")]
 mod dashboard;
+#[cfg(feature = "stall-debug")]
+mod stall_debug;
 mod trap_handler;
 mod user_bringup_bus;
 mod user_bringup_busybox;
@@ -227,6 +229,8 @@ mod qemu_riscv64_opensbi {
         wait_for_secondary_online(requested_aps);
 
         bringup_driver_and_user();
+        #[cfg(feature = "stall-debug")]
+        crate::stall_debug::start();
         #[cfg(feature = "dashboard-debug")]
         crate::dashboard::start();
         platform::interrupt::enable_timer_interrupt().unwrap();
@@ -248,8 +252,6 @@ mod qemu_loongarch64_virt {
     static AP_BOOT_READY : AtomicBool = AtomicBool::new(false);
 
     fn ap_main(cpu_id : task::CpuId) -> ! {
-        warn!("[boot-init] AP cpu={} entering scheduler",
-              cpu_id.raw());
         platform::arch::cpu::init_current_cpu(cpu_id).expect("AP init current CPU");
         platform::arch::init();
         let _ = platform::smp::init_ipi();
@@ -305,6 +307,8 @@ mod qemu_loongarch64_virt {
 
         bringup_driver_and_user();
         crate::register_runtime_console_writer();
+        #[cfg(feature = "stall-debug")]
+        crate::stall_debug::start();
         #[cfg(feature = "dashboard-debug")]
         crate::dashboard::start();
         platform::interrupt::enable_timer_interrupt().unwrap();

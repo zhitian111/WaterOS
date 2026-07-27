@@ -1,7 +1,6 @@
 #![no_std]
 
 extern crate alloc;
-use log::info;
 mod cpu;
 mod lifecycle;
 mod process;
@@ -45,9 +44,9 @@ pub use sched::{
 pub use schedule::{
     block_current, current_task_id, current_task_snapshot,
     current_task_trap_return_address_space_token, current_task_user_address_space_token,
-    current_task_user_aspace_ptr, current_tick, interrupt_task, reap_exited_task,
-    schedule_reschedule, schedule_tick, sleep_for_ticks, task_snapshot, wait_for_task_exit,
-    wait_for_task_exit_for_ticks, wait_on, wait_on_for_ticks, wait_on_while,
+    current_task_user_aspace_ptr, current_tick, interrupt_task, log_stall_diagnostics,
+    reap_exited_task, schedule_reschedule, schedule_tick, sleep_for_ticks, task_snapshot,
+    wait_for_task_exit, wait_for_task_exit_for_ticks, wait_on, wait_on_for_ticks, wait_on_while,
     wait_on_while_for_ticks, wake_task, yield_now,
 };
 pub use spawn::{
@@ -67,8 +66,7 @@ pub use api_v0::{
 pub use api_v0::{ExitedTask, TaskId, TaskKind};
 pub use cpu::{
     cpu_snapshot, cpu_states, online_cpu_mask, print_cpu_states, running_cpu, set_cpu_online,
-    set_timekeeper_cpu,
-    total_idle_ticks,
+    set_timekeeper_cpu, total_idle_ticks,
 };
 pub(crate) use impl_core as active_impl;
 pub use scheduler::CpuSnapshot;
@@ -78,10 +76,8 @@ pub use scheduler::CpuSnapshot;
 // ============================================================================
 /// 初始化任务系统和底层调度器状态。
 pub fn init() {
-    info!("[boot-init] task::init start");
     scheduler::init();
     active_impl::init_process_registry();
-    info!("[boot-init] task::init done");
 }
 /// 启动调度器并切入第一批可运行任务。
 pub fn run_first_task() -> ! { scheduler::run_first_task() }

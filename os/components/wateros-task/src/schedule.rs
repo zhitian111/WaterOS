@@ -90,6 +90,39 @@ pub fn current_task_snapshot() -> Option<TaskSnapshot> { scheduler::current_task
 /// 返回指定任务的稳定快照；任务不存在或已被回收时返回 `None`。
 pub fn task_snapshot(task_id : TaskId) -> Option<TaskSnapshot> { scheduler::task_snapshot(task_id) }
 
+/// 输出全部非 idle 任务的状态，用于定位长时间无用户态进展时的等待链。
+pub fn log_stall_diagnostics() {
+    let snapshots = scheduler::diagnostic_task_snapshots();
+    log::warn!("[stall-debug][tasks] tick={} active_non_idle={}",
+               current_tick(),
+               snapshots.len());
+    for snapshot in snapshots {
+        let wait_queue_name = match snapshot.state {
+            crate::TaskState::Blocking(TaskWaitTarget::WaitQueue(wait_queue_id)) => {
+                scheduler::wait_queue_name(wait_queue_id)
+            }
+            _ => None,
+        };
+        log::warn!("[stall-debug][task] id={} parent={:?} kind={:?} state={:?} wait={:?} \
+                    policy={:?} ready_cpu={:?} running_cpu={:?} last_cpu={:?} schedules={} \
+                    ticks={} aspace={:#x}",
+                   snapshot.id,
+                   snapshot.parent_id,
+                   snapshot.kind,
+                   snapshot.state,
+                   wait_queue_name,
+                   snapshot.policy,
+                   snapshot.ready_cpu_id,
+                   snapshot.running_cpu_id,
+                   snapshot.last_cpu_id,
+                   snapshot.stats
+                           .schedule_count,
+                   snapshot.stats
+                           .tick_count,
+                   snapshot.user_aspace_ptr);
+    }
+}
+
 /// 返回当前调度器逻辑 tick。
 pub fn current_tick() -> TaskTick { scheduler::current_tick() }
 

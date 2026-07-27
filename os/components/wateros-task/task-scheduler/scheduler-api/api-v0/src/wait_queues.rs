@@ -17,6 +17,7 @@ struct TimeoutTask {
 pub struct WaitQueues {
     // ▲ 显式等待队列（供锁、futex、pipe 等同步对象使用）
     wait_queues : Vec<VecDeque<TaskId>>, // 动态增长的等待队列数组索引 0: [task_5, task_8]      ← 第 0 号等待队列，5 和 8 在等
+    wait_queue_names : Vec<Option<&'static str>>, // 仅用于诊断等待来源，不参与调度语义
     free_wait_queues : BTreeSet<WaitQueueId>, // 已释放可复用的队列 ID
 
     // ▲ 等待特定任务退出
@@ -37,6 +38,7 @@ impl WaitQueues {
     /// 构造空队列集。
     pub fn new() -> Self {
         Self { wait_queues : Vec::new(),
+               wait_queue_names : Vec::new(),
                free_wait_queues : BTreeSet::new(),
                exit_wait_queues : BTreeMap::new(),
                child_exit_wait_queues : BTreeMap::new(),
@@ -50,6 +52,8 @@ impl WaitQueues {
     /// 重置全部队列与逻辑 tick。
     pub fn init(&mut self) {
         self.wait_queues
+            .clear();
+        self.wait_queue_names
             .clear();
         self.free_wait_queues
             .clear();
@@ -69,18 +73,29 @@ impl WaitQueues {
     }
 
     /// 分配新的显式等待队列 id。
-    pub fn allocate_wait_queue(&mut self) -> WaitQueueId {
+    pub fn allocate_wait_queue(&mut self, name : &'static str) -> WaitQueueId {
         if let Some(wait_queue_id) = self.free_wait_queues
                                          .pop_first()
         {
             self.wait_queues[wait_queue_id].clear();
+            self.wait_queue_names[wait_queue_id] = Some(name);
             return wait_queue_id;
         }
         let wait_queue_id = self.wait_queues
                                 .len();
         self.wait_queues
             .push(VecDeque::new());
+        self.wait_queue_names
+            .push(Some(name));
         wait_queue_id
+    }
+
+    /// 返回等待队列的静态诊断标签；队列已释放或编号非法时返回 `None`。
+    pub fn wait_queue_name(&self, wait_queue_id : WaitQueueId) -> Option<&'static str> {
+        self.wait_queue_names
+            .get(wait_queue_id)
+            .copied()
+            .flatten()
     }
 
     /// 释放一个当前没有等待者的显式等待队列；失败说明队列仍在使用或 id 非法。
@@ -97,6 +112,7 @@ impl WaitQueues {
             return false;
         }
         let target = TaskWaitTarget::WaitQueue(wait_queue_id);
+        self.wait_queue_names[wait_queue_id] = None;
         // 移除所有等待该队列的超时项。retain:只保留闭包返回 true 的元素，删除返回 false 的。
         self.wait_timeouts
             .retain(|record| record.wait_target != target);

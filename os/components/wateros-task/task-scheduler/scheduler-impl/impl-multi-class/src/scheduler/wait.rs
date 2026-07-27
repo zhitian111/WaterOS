@@ -1,9 +1,14 @@
 // 等待队列操作与唤醒后的 CPU 归属。
 use super::*;
 impl MultiClassScheduler {
-    pub fn allocate_wait_queue(&mut self) -> WaitQueueId {
+    pub fn allocate_wait_queue(&mut self, name : &'static str) -> WaitQueueId {
         self.wait_queues
-            .allocate_wait_queue()
+            .allocate_wait_queue(name)
+    }
+
+    pub fn wait_queue_name(&self, wait_queue_id : WaitQueueId) -> Option<&'static str> {
+        self.wait_queues
+            .wait_queue_name(wait_queue_id)
     }
 
     pub fn try_release_wait_queue(&mut self, wait_queue_id : WaitQueueId) -> bool {

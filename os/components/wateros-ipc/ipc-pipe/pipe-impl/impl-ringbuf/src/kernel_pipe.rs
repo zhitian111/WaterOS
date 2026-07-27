@@ -303,8 +303,8 @@ impl KernelPipe for Pipe {
     fn with_capacity(capacity: usize) -> PipeResult<Self> {
         Ok(Self {
             state: Mutex::new(PipeState::with_capacity(capacity)?),
-            read_wait: WaitQueue::new(),
-            write_wait: WaitQueue::new(),
+            read_wait: WaitQueue::new_named("pipe-read"),
+            write_wait: WaitQueue::new_named("pipe-write"),
         })
     }
 

@@ -1123,6 +1123,7 @@ name = "wateros-ipc-futex-impl-task"
 version = "0.1.0"
 dependencies = [
  "ipc-waitqueue",
+ "log",
  "spin",
  "wateros-ipc-futex-api-v0",
  "wateros-task-api-v0",

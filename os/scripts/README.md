@@ -54,3 +54,9 @@ chmod +x ./scripts/*.sh
 | `make la_pc_watch` | 编译并监视 loongarch64 PC 变动 |
 | `make rv_symbol_at ADDR=0x80201234` | 查询 riscv64 内核地址所属符号 |
 | `make la_symbol_at ADDR=0x90001234` | 查询 loongarch64 内核地址所属符号 |
+| `make rv_final_run_log` | 启用 `stall-debug`，运行并保存 `output.log` |
+| `make rv_final_gdb_run` | 启用 `stall-debug` 并开放本机 GDB 端口 1234 |
+| `make rv_final_gdb_wait` | 同上，但 QEMU 启动后先暂停，等待调试器连接 |
+
+GDB/LLDB 的完整操作流程见
+[`docs/debugging/GDB_STALL_DEBUG.md`](../docs/debugging/GDB_STALL_DEBUG.md)。

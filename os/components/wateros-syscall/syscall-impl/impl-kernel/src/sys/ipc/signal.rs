@@ -555,7 +555,7 @@ pub(crate) fn sys_rt_sigsuspend(args : SyscallArgs) -> UserRet {
     }
     ltp_fuzz_sigsuspend_worker_fast_exit_if_standalone();
     ltp_standalone_skip_blocking_fast_exit_if_needed();
-    let wait = task::wait_queue::WaitQueue::new();
+    let wait = task::wait_queue::WaitQueue::new_named("sigsuspend");
     let _ =
         wait.wait_current_while(|| !ipc::signal::has_deliverable(snapshot.task_id).unwrap_or(true));
     let _ = wait.try_release_empty();
@@ -603,7 +603,7 @@ pub(crate) fn sys_rt_sigtimedwait(args : SyscallArgs) -> UserRet {
     if deadline.is_none() {
         ltp_standalone_skip_blocking_fast_exit_if_needed();
     }
-    let wait_queue = task::wait_queue::WaitQueue::new();
+    let wait_queue = task::wait_queue::WaitQueue::new_named("sigtimedwait");
     let sig = loop {
         if let Some(sig) = ipc::signal::take_pending(task_id, wait_set) {
             break sig;

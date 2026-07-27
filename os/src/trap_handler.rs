@@ -36,7 +36,6 @@ macro_rules! hot_syscall_trace {
 /// trampoline」，实为 **trap 风暴**而非 `sret` 损坏。
 const TIMER_REARM_MS : u64 = SCHED_TIMER_PERIOD_MS;
 static TIMER_TICK_COUNT : AtomicUsize = AtomicUsize::new(0);
-static BOOT_TRAP_LOG_COUNT : AtomicUsize = AtomicUsize::new(0);
 /// 当前支持架构的 syscall/trap 指令宽度，用于将用户 PC 前进到下一条指令。
 const SYSCALL_INSN_BYTES : usize = 4;
 
@@ -123,15 +122,6 @@ fn fatal_kernel_trap(context : &str,
 /// 调度），其余 cause 直接 `panic`。返回用户态前由 arch
 /// 层完成必要的帧访问准备。
 extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
-    let boot_trap_n = BOOT_TRAP_LOG_COUNT.fetch_add(1, Ordering::Relaxed);
-    if boot_trap_n < 8 {
-        let stack_cx = unsafe { &*(frame as *const TrapContext) };
-        warn!("[boot-init] trap #{} cause={:?} raw={:#x} to_user={}",
-              boot_trap_n,
-              stack_cx.trap_cause(),
-              stack_cx.raw_cause(),
-              stack_cx.returns_to_user());
-    }
     let stack_cx = unsafe { &mut *(frame as *mut TrapContext) };
     let authoritative = if stack_cx.returns_to_user() {
         unsafe { task::begin_current_trap_frame_access(frame) }
@@ -155,11 +145,12 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             let syscall_nr = cx.syscall_nr()
                                .raw();
             let syscall_args = cx.syscall_args();
-            #[cfg(feature = "dashboard-debug")]
-            crate::dashboard::record_syscall(syscall_nr);
             #[cfg_attr(not(any(debug_assertions, feature = "syscall-trace")),
                        allow(unused_variables))]
             let regs = syscall_args.as_regs();
+            #[cfg(feature = "stall-debug")]
+            let stall_trace =
+                crate::stall_debug::record_syscall_enter(syscall_nr, regs, cx.user_pc());
             hot_syscall_trace!("[syscall] nr={} user_pc={:#x} user_sp={:#x} \
                                 args=[{:#x},{:#x},{:#x},{:#x},{:#x},{:#x}]",
                                syscall_nr,
@@ -184,6 +175,8 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                 return;
             }
             let syscall_ret = dispatch_syscall_from_trap(syscall_nr, syscall_args);
+            #[cfg(feature = "stall-debug")]
+            crate::stall_debug::record_syscall_exit(stall_trace);
             hot_syscall_trace!("[syscall] nr={} ret={}",
                                syscall_nr,
                                syscall_ret);
@@ -288,16 +281,13 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                 panic!("failed to re-arm timer in trap: {:?}",
                        err);
             }
+            #[cfg(feature = "stall-debug")]
+            crate::stall_debug::record_timer(platform::arch::cpu::current_cpu_id().raw());
             let tick = TIMER_TICK_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
             if tick % 8 == 0 {
                 trace!("[trap] timer tick {}", tick);
             }
             syscall::timer_tick(cx.returns_to_user());
-            if tick <= 3 {
-                warn!("[boot-init] trap timer tick #{} -> task::schedule_tick (to_user={})",
-                      tick,
-                      cx.returns_to_user());
-            }
             task::schedule_tick();
         }
         _ => {
@@ -395,7 +385,5 @@ fn finish_trap_return(frame : *mut u8, _cx : &TrapContext, _raw_cause : usize) {
 /// 向 `arch_api_v0` 注册本模块的 C ABI trap 回调；须在 `task::init()`
 /// 之后调用。
 pub fn init() {
-    warn!("[boot-init] trap_handler::init register kernel_trap handler");
     register_kernel_trap_handler(wateros_kernel_trap_handler);
-    warn!("[boot-init] trap_handler::init done");
 }

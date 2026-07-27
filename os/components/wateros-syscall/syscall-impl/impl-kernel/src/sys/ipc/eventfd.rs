@@ -35,7 +35,7 @@ impl EventFdState {
     fn new(counter : u64, nonblocking : bool) -> Self {
         Self { inner : Mutex::new(EventFdInner { counter,
                                                  nonblocking }),
-               wait : task::wait_queue::WaitQueue::new() }
+               wait : task::wait_queue::WaitQueue::new_named("eventfd") }
     }
 
     fn ready(&self, events : i16) -> i16 {

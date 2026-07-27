@@ -33,6 +33,12 @@ impl WaitQueue {
     #[inline]
     pub fn new() -> Self { Self { inner : TaskWaitQueue::new() } }
 
+    /// 创建带静态诊断标签的 IPC 等待队列。
+    #[inline]
+    pub fn new_named(name : &'static str) -> Self {
+        Self { inner : TaskWaitQueue::new_named(name) }
+    }
+
     /// 返回该等待队列在底层任务系统中的编号。
     #[inline]
     pub const fn id(&self) -> WaitQueueId { self.inner.id() }

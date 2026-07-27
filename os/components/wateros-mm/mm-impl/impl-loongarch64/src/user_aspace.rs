@@ -70,11 +70,24 @@ pub fn mark_inactive(handle: usize, cpu: wateros_base::cpu::CpuId) {
     cell.active_cpus.fetch_and(!(1u64 << cpu.raw()), Ordering::AcqRel);
 }
 
+/// syscall trap 期间全局中断处于关闭状态，不能直接无限自旋等待 shootdown
+/// 串行锁。等待锁时主动处理本 CPU 已发布的 TLB 请求，避免持锁 CPU 等待
+/// 当前 CPU 确认、当前 CPU 又等待该锁的环形死锁。
+fn lock_tlb_shootdown() -> spin::MutexGuard<'static, ()> {
+    loop {
+        if let Some(guard) = TLB_SHOOTDOWN_LOCK.try_lock() {
+            return guard;
+        }
+        let _ = handle_tlb_shootdown_ipi();
+        core::hint::spin_loop();
+    }
+}
+
 fn request_tlb_shootdown(handle: usize) {
     // Serialize sequence allocation, pending publication, IPI delivery and
     // acknowledgements.  A per-CPU pending slot cannot represent two
     // concurrent transactions safely without this critical section.
-    let _request_guard = TLB_SHOOTDOWN_LOCK.lock();
+    let _request_guard = lock_tlb_shootdown();
     let current = platform::arch::cpu::current_cpu_id();
     let active = unsafe { cell(handle) }
                     .map(|cell| cell.active_cpus.load(Ordering::Acquire))

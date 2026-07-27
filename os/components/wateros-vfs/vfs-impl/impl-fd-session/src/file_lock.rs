@@ -104,7 +104,7 @@ impl InodeLocks {
                 posix: Vec::new(),
                 flock: FlockState::new(),
             }),
-            wait: WaitQueue::new(),
+            wait: WaitQueue::new_named("file-lock"),
         })
     }
 }

@@ -10,7 +10,6 @@ extern crate alloc;
 use alloc::string::String;
 use core::fmt::{self, Display, Write};
 use core::sync::atomic::{AtomicBool, Ordering};
-use core::sync::atomic::{AtomicU64, AtomicUsize};
 use utils::table_format::{Alignment, Cell, Column, FixedTable, Overflow};
 
 /// 每 tick 为 10ms；500ms 刷新一次既足够观察调度状态，也不会长期占用 UART。
@@ -27,18 +26,6 @@ const CPU_COLUMNS : [Column; 7] =
 
 static INITIALIZED : AtomicBool = AtomicBool::new(false);
 static STARTED : AtomicBool = AtomicBool::new(false);
-
-/// 记录用户态进入内核的 syscall 编号。只保留最近一次，避免在热路径维护大号数组
-/// 或做字符串格式化。
-static SYSCALL_TOTAL : AtomicU64 = AtomicU64::new(0);
-static LAST_SYSCALL_NR : AtomicUsize = AtomicUsize::new(0);
-
-/// 由 trap syscall 路径调用。
-#[inline]
-pub fn record_syscall(syscall_nr : usize) {
-    LAST_SYSCALL_NR.store(syscall_nr, Ordering::Relaxed);
-    SYSCALL_TOTAL.fetch_add(1, Ordering::Relaxed);
-}
 
 /// 初始化 dashboard 状态。
 ///
@@ -127,8 +114,7 @@ fn render_debug_panel(frame : &mut String) {
     let heap = runtime::heap_allocator::heap_mem_stats();
     let frames = mm::frame_alloctor::frame_mem_stats();
     let fds = vfs::fd::registry_stats();
-    let syscall_total = SYSCALL_TOTAL.load(Ordering::Relaxed);
-    let last_syscall = LAST_SYSCALL_NR.load(Ordering::Relaxed);
+    let (syscall_total, last_syscall) = crate::stall_debug::syscall_snapshot();
 
     write_dashboard_line(frame,
                          format_args!(" MEM heap {}/{} KiB free={} KiB; frames {}/{} MiB \
@@ -191,8 +177,7 @@ impl Display for QueueCounts<'_> {
                    .runnable_other,
                self.0
                    .runnable_batch,
-               self.0
-                   .runnable_idle,
+               self.0.runnable_idle,
                self.0.runnable_fifo,
                self.0.runnable_rr)
     }

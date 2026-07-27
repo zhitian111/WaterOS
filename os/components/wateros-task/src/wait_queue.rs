@@ -10,7 +10,13 @@ pub struct WaitQueue {
 impl WaitQueue {
     /// 创建一个新的等待队列句柄。
     #[inline]
-    pub fn new() -> Self { Self { id : scheduler::allocate_wait_queue() } }
+    pub fn new() -> Self { Self::new_named("anonymous") }
+
+    /// 创建带静态诊断标签的等待队列句柄。
+    #[inline]
+    pub fn new_named(name : &'static str) -> Self {
+        Self { id : scheduler::allocate_wait_queue(name) }
+    }
 
     /// 返回该等待队列对应的内部编号。
     #[inline]

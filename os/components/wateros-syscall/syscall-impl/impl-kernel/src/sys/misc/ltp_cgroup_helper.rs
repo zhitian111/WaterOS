@@ -2464,7 +2464,7 @@ fn parent_waiting_with_retry() -> bool {
     if parent_blocked_in_wait() {
         return true;
     }
-    let wait = task::wait_queue::WaitQueue::new();
+    let wait = task::wait_queue::WaitQueue::new_named("ltp-cgroup-helper");
     for _ in 0..200 {
         if parent_blocked_in_wait() {
             let _ = wait.try_release_empty();

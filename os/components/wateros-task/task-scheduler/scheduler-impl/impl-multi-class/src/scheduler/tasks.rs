@@ -117,6 +117,11 @@ impl MultiClassScheduler {
             .task_snapshot(task_id)
     }
 
+    pub fn diagnostic_task_snapshots(&self) -> alloc::vec::Vec<TaskSnapshot> {
+        self.registry
+            .diagnostic_task_snapshots()
+    }
+
     pub fn has_child(&self, parent_id : TaskId) -> bool {
         self.registry
             .has_child(parent_id)
