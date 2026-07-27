@@ -242,6 +242,7 @@ pub(crate) fn sys_sched_getaffinity(args : SyscallArgs) -> UserRet {
         Ok(mask) => mask,
         Err(e) => return UserRet::from_error(sched_err_to_errno(e)),
     };
+    let affinity = CpuMask::from_bits(affinity.bits() & task::online_cpu_mask().bits());
     affinity.write_le_bytes(&mut buf);
     match copy_to_user(mask_ptr, &buf) {
         Ok(n) if n == buf.len() => UserRet::from_success(task::cpu_affinity_ret_bytes()),

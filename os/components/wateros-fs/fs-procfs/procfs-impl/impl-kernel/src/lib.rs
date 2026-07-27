@@ -208,7 +208,19 @@ fn comm_for(pid : ProcessId) -> String {
 
 // 本方法代码由AI完成
 fn format_cpuinfo() -> Vec<u8> {
-    b"processor\t: 0\ncpu family\t: 0\nmodel name\t: WaterOS QEMU virt\n".to_vec()
+    let online = task::online_cpu_mask();
+    let mut output = String::new();
+    for cpu in 0..u64::BITS as usize {
+        if online.contains(task::CpuId::from_raw(cpu)) {
+            output.push_str(format!("processor\t: {cpu}\n").as_str());
+            output.push_str("hart\t\t: ");
+            output.push_str(cpu.to_string().as_str());
+            output.push('\n');
+            output.push_str("model name\t: WaterOS RISC-V virtual CPU\n");
+            output.push_str("isa\t\t: rv64imafdch\n\n");
+        }
+    }
+    output.into_bytes()
 }
 
 fn format_uptime() -> Vec<u8> {
