@@ -93,7 +93,6 @@
         "runtime/impl-info",
         # "runtime/impl-warn",
         "runtime/impl-error",
-        "dashboard-debug",
         "dep:klog",
         "klog/default",
         "runtime/impl-platform-console",
