@@ -56,6 +56,8 @@ fn map_vfs_to_root_vol(e : VfsError) -> RootVolumeReadError {
         VfsError::NotAFile => RootVolumeReadError::NotAFile,
         VfsError::InvalidPath | VfsError::Exists => RootVolumeReadError::InvalidPath,
         VfsError::NotUtf8 => RootVolumeReadError::NotUtf8,
+        VfsError::NotDirectory |
+        VfsError::TooManySymlinks |
         VfsError::Unsupported => RootVolumeReadError::Unsupported,
         VfsError::Driver => RootVolumeReadError::Driver,
         VfsError::Corrupt => RootVolumeReadError::Corrupt,

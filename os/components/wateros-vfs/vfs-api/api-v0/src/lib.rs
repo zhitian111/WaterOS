@@ -33,7 +33,10 @@ pub use meta::{VfsDirEntry, VfsMetadata, VfsNodeType};
 pub use mount::VfsMountOps;
 pub use namespace::VfsMountTable;
 pub use path::{normalize_absolute_path, validate_root_file_name, NormalizedPath};
-pub use resolve::{register_open_path_resolver, resolve_against_cwd, resolve_open_path};
+pub use resolve::{
+    register_open_path_resolver, resolve_against_cwd, resolve_open_path,
+    resolve_symlink_path_with, FinalSymlink,
+};
 pub use root_read::SingleRootReadView;
 pub use rw_session::RootRwSession;
 
@@ -49,4 +52,47 @@ pub fn test() {
         validate_root_file_name("a/b"),
         Err(VfsError::InvalidPath)
     ));
+
+    let links = [
+        ("/lib", "usr/lib"),
+        ("/usr/lib/tool", "../bin/real-tool"),
+    ];
+    let resolved = resolve_symlink_path_with(
+        "/lib/tool",
+        FinalSymlink::Follow,
+        |path| {
+            Ok(links
+                .iter()
+                .find(|(link, _)| *link == path)
+                .map(|(_, target)| alloc::string::String::from(*target)))
+        },
+        |path| Ok(matches!(path, "/usr" | "/usr/lib" | "/usr/bin")),
+    )
+    .unwrap();
+    assert_eq!(resolved, "/usr/bin/real-tool");
+
+    let unresolved = resolve_symlink_path_with(
+        "/lib",
+        FinalSymlink::NoFollow,
+        |_| Ok(None),
+        |_| Ok(false),
+    )
+    .unwrap();
+    assert_eq!(unresolved, "/lib");
+
+    let looped = resolve_symlink_path_with(
+        "/loop",
+        FinalSymlink::Follow,
+        |path| Ok((path == "/loop").then(|| alloc::string::String::from("/loop"))),
+        |_| Ok(true),
+    );
+    assert_eq!(looped, Err(VfsError::TooManySymlinks));
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn path_contracts() {
+        super::test();
+    }
 }

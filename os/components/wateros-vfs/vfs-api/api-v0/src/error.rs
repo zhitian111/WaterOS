@@ -9,6 +9,10 @@ pub enum VfsError {
     NotFound,
     /// 操作要求普通文件，当前节点类型不符。
     NotAFile,
+    /// 路径的中间分量不是目录。
+    NotDirectory,
+    /// 符号链接解析超过跳数上限。
+    TooManySymlinks,
     /// 路径非法（如非绝对、空段约定违反、根文件名含 `/` 等）。
     InvalidPath,
     /// 目标路径已存在。

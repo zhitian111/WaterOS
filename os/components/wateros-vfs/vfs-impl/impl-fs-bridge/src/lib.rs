@@ -644,6 +644,11 @@ pub fn read_symlink_path(path : &str) -> VfsResult<Vec<u8>> {
     }
 }
 
+/// 查询路径元数据（经挂载表路由）。
+pub fn metadata_path(path : &str) -> VfsResult<VfsMetadata> {
+    FsBridge.metadata(path)
+}
+
 /// 截断普通文件（经挂载表路由）；同步失效页缓存。
 // 本方法代码由AI完成
 pub fn truncate_path(path : &str, len : u64) -> VfsResult<()> {

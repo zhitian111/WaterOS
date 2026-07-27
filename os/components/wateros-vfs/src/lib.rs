@@ -21,7 +21,7 @@ extern crate task;
 pub use api_v0 as api;
 pub use api_v0::{
     normalize_absolute_path, register_open_path_resolver, resolve_against_cwd, resolve_open_path,
-    validate_root_file_name, NormalizedPath,
+    resolve_symlink_path_with, validate_root_file_name, FinalSymlink, NormalizedPath,
     RootRwSession, SingleRootReadView, VfsAccessMode, VfsBackend, VfsCapability, VfsDevInventory,
     VfsDevNode, VfsDevNodeType, VfsDirEntry, VfsError, VfsFd, VfsFdSession, VfsFileHandle,
     VfsFsKind, VfsIoHandle, VfsMetadata, VfsMountOps, VfsMountTable, VfsNodeType, VfsOpenFlags,
@@ -59,6 +59,31 @@ pub fn symlink_at_current(target: &str, link_path: &str) -> VfsResult<()> {
 #[cfg(feature = "bridge-fs-api")]
 pub fn read_symlink_absolute(path: &str) -> VfsResult<alloc::vec::Vec<u8>> {
     impl_fs_bridge::read_symlink_path(path)
+}
+
+/// 展开绝对路径的中间符号链接，并按 `final_symlink` 决定是否跟随最终链接。
+#[cfg(feature = "bridge-fs-api")]
+pub fn resolve_symlink_absolute(
+    path: &str,
+    final_symlink: FinalSymlink,
+) -> VfsResult<alloc::string::String> {
+    resolve_symlink_path_with(
+        path,
+        final_symlink,
+        |candidate| match impl_fs_bridge::read_symlink_path(candidate) {
+            Ok(target) => {
+                let target = alloc::string::String::from_utf8(target)
+                    .map_err(|_| VfsError::NotUtf8)?;
+                Ok(Some(target))
+            }
+            Err(VfsError::NotAFile) => Ok(None),
+            Err(error) => Err(error),
+        },
+        |candidate| {
+            impl_fs_bridge::metadata_path(candidate)
+                .map(|meta| meta.node_type == VfsNodeType::Directory)
+        },
+    )
 }
 
 /// 在已解析绝对路径处创建符号链接（`bridge-fs-api`）。
