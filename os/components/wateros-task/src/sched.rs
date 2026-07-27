@@ -120,7 +120,7 @@ fn validate_policy_param(policy : SchedPolicy, priority : Priority) -> Result<()
                 return Err(SchedError::InvalidArg);
             }
         }
-        SchedPolicy::Other => {
+        SchedPolicy::Other | SchedPolicy::Batch => {
             if priority != 0 {
                 return Err(SchedError::InvalidArg);
             }

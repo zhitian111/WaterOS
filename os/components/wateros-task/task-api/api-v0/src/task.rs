@@ -11,8 +11,6 @@ pub type TaskExitCode = isize;
 /// 等待队列在调度器中的唯一标识。
 pub type WaitQueueId = usize;
 
-/// 预留给 idle 任务的固定任务号。
-pub const IDLE_TASK_ID : TaskId = 0;
 
 /// 区分内核任务与用户态任务；影响 TCB 是否持有用户栈与地址空间句柄等资源路径。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -36,6 +36,11 @@ pub(super) struct MultiClassScheduler {
     pub pending_reschedule_cpus : CpuMask,
 }
 
+#[derive(Clone, Copy)]
+enum RescheduleRequest {
+    Ready(TaskId),
+    Forced,
+}
 
 impl MultiClassScheduler {
     // ================================================================
@@ -150,6 +155,7 @@ impl MultiClassScheduler {
                          cpu_id)
     }
 
+
     /// 普通调度入口：根据 `reason` 决定是否切换当前任务。
     pub(super) fn schedule(&mut self,
                            reason : ScheduleReason,
@@ -157,7 +163,11 @@ impl MultiClassScheduler {
                            -> Option<SwitchPair> {
         // Phase 1: 根据 reason 做前置处理
         match reason {
-            ScheduleReason::Reschedule => self.cpu_states[cpu_id.raw()].cpu_should_reschedule()?,
+            ScheduleReason::Reschedule => {
+                if !self.cpu_states[cpu_id.raw()].cpu_should_reschedule() {
+                    return None;
+                }
+            }
             ScheduleReason::Tick => self.tick(cpu_id)?,
             // Yield / Block / Sleep / Exit：在选下一个任务之前确保所有到期任务已入队
             _ => {
@@ -228,8 +238,7 @@ impl MultiClassScheduler {
         // 3. 推进当前任务的时间片/vruntime（由 CPUState::tick 按策略分发）
         self.cpu_states[cpu_id.raw()].tick();
 
-        let needs_switch = self.cpu_states[cpu_id.raw()].cpu_should_reschedule()
-                                                        .is_some();
+        let needs_switch = self.cpu_states[cpu_id.raw()].cpu_should_reschedule();
 
         // 5. 处理唤醒/超时任务
         if needs_switch ||
@@ -340,7 +349,9 @@ impl MultiClassScheduler {
             cpu.current_runtime_ticks = 0;
             values
         };
-        if policy == SchedPolicy::Other {
+        if matches!(policy,
+                    SchedPolicy::Other | SchedPolicy::Batch)
+        {
             self.registry
                 .set_vruntime(current_task_id, vruntime);
         }
@@ -365,7 +376,8 @@ impl MultiClassScheduler {
                 };
                 self.enqueue_ready_by_cpu(current_task_id, target_cpu);
                 if target_cpu != cpu_id {
-                    self.request_reschedule(target_cpu);
+                    self.request_reschedule(target_cpu,
+                                            RescheduleRequest::Ready(current_task_id));
                 }
             }
             QueueTarget::Blocked(reason) => {
@@ -417,7 +429,8 @@ impl MultiClassScheduler {
     pub(super) fn enqueue_ready_task(&mut self, task_id : TaskId) {
         let picked_cpu = self.pick_cpu_for_new_task(task_id);
         self.enqueue_ready_by_cpu(task_id, picked_cpu);
-        self.request_reschedule(picked_cpu);
+        self.request_reschedule(picked_cpu,
+                                RescheduleRequest::Ready(task_id));
     }
 
 
@@ -437,11 +450,27 @@ impl MultiClassScheduler {
                          .filter(|cpu_id| affinity.contains(*cpu_id))
                          .unwrap_or_else(|| self.pick_cpu_for_new_task(task_id));
         self.enqueue_ready_by_cpu(task_id, target);
-        self.request_reschedule(target);
+        self.request_reschedule(target,
+                                RescheduleRequest::Ready(task_id));
         target
     }
 
-    fn request_reschedule(&mut self, cpu_id : CpuId) {
+    fn request_reschedule(&mut self, cpu_id : CpuId, request : RescheduleRequest) {
+        let should_request = match request {
+            // BATCH 只唤醒 idle CPU；非 idle CPU 在下一 tick 再参与公平选择。
+            RescheduleRequest::Ready(task_id) => {
+                self.registry
+                    .task_snapshot(task_id)
+                    .policy !=
+                SchedPolicy::Batch ||
+                self.cpu_states[cpu_id.raw()].is_current_idle()
+            }
+            // 当前任务不能继续运行（例如 affinity 迁移），不能延迟。
+            RescheduleRequest::Forced => true,
+        };
+        if !should_request {
+            return;
+        }
         self.cpu_states[cpu_id.raw()].need_resched = true;
         self.pending_reschedule_cpus
             .insert(cpu_id);
@@ -481,9 +510,10 @@ impl MultiClassScheduler {
         }
         let mut snap = self.registry
                            .task_snapshot(task_id);
-        if snap.policy == SchedPolicy::Other {
-            let normalized = self.cpu_states[cpu_id.raw()].cfs_queue
-                                                          .normalize_vruntime(snap.vruntime);
+        if matches!(snap.policy,
+                    SchedPolicy::Other | SchedPolicy::Batch)
+        {
+            let normalized = self.cpu_states[cpu_id.raw()].normalize_vruntime(snap.vruntime);
             if normalized != snap.vruntime {
                 self.registry
                     .set_vruntime(task_id, normalized);

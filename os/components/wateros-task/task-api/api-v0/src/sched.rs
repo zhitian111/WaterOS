@@ -10,6 +10,8 @@ pub enum SchedPolicy {
     Fifo = 1,
     /// 实时 RR（`SCHED_RR`）；bring-up 未实现。
     Rr = 2,
+    /// 面向 CPU 密集型后台工作的公平调度策略。
+    Batch = 3,
 }
 
 impl SchedPolicy {
@@ -20,6 +22,7 @@ impl SchedPolicy {
             0 => Some(Self::Other),
             1 => Some(Self::Fifo),
             2 => Some(Self::Rr),
+            3 => Some(Self::Batch),
             _ => None,
         }
     }

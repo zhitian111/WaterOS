@@ -37,26 +37,23 @@ impl MultiClassScheduler {
         if was_ready {
             let target_cpu = ready_cpu.unwrap_or(cpu_id);
             self.enqueue_ready_by_cpu(task_id, target_cpu);
-            if self.cpu_states[target_cpu.raw()].cpu_should_reschedule()
-                                                .is_some()
-            {
+            if self.cpu_states[target_cpu.raw()].cpu_should_reschedule() {
                 if target_cpu == cpu_id {
                     reschedule_local = true;
                 } else {
-                    self.request_reschedule(target_cpu);
+                    self.request_reschedule(target_cpu,
+                                            RescheduleRequest::Ready(task_id));
                 }
             }
         }
 
         if let Some(running_cpu) = running_cpu {
             self.cpu_states[running_cpu.raw()].set_current_task(&new_snap);
-            if self.cpu_states[running_cpu.raw()].cpu_should_reschedule()
-                                                 .is_some()
-            {
+            if self.cpu_states[running_cpu.raw()].cpu_should_reschedule() {
                 if running_cpu == cpu_id {
                     reschedule_local = true;
                 } else {
-                    self.request_reschedule(running_cpu);
+                    self.request_reschedule(running_cpu, RescheduleRequest::Forced);
                 }
             }
         }

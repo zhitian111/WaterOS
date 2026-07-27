@@ -75,6 +75,8 @@ impl MultiClassScheduler {
                            current_address_space,
                            runnable_other : cpu.cfs_queue
                                                .task_count(),
+                           runnable_batch : cpu.batch_queue
+                                               .task_count(),
                            runnable_fifo : cpu.fifo_queue
                                               .task_count(),
                            runnable_rr : cpu.rr_queue

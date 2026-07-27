@@ -28,7 +28,6 @@ pub use sched::{
 pub use snapshot::{TaskSnapshot, TaskTrapSnapshot};
 pub use task::{
     ExitedTask, TaskExitCode, TaskId, TaskKind, TaskRuntimeStats, TaskState, TaskTick, WaitQueueId,
-    IDLE_TASK_ID,
 };
 pub use user::{AddressSpaceHandle, UserImageInfo, UserStack, UserTask, UserTaskEntryPc};
 pub use wait::{TaskWaitResult, TaskWaitTarget};

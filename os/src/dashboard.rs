@@ -102,7 +102,7 @@ fn render_frame(first_frame : bool) -> String {
         let _ = table.row(&[Cell::text("CPU"),
                             Cell::text("Current Task"),
                             Cell::text("State"),
-                            Cell::text("Q O/F/R"),
+                            Cell::text("Q O/B/F/R"),
                             Cell::text("Rsch"),
                             Cell::text("Switch"),
                             Cell::text("Timer")]);
@@ -162,7 +162,8 @@ fn render_debug_panel(frame : &mut String) {
     let last_syscall = LAST_SYSCALL_NR.load(Ordering::Relaxed);
 
     write_dashboard_line(frame,
-                         format_args!(" MEM heap {}/{} KiB free={} KiB; frames {}/{} MiB free={} MiB",
+                         format_args!(" MEM heap {}/{} KiB free={} KiB; frames {}/{} MiB \
+                                       free={} MiB",
                                       heap.used / 1024,
                                       heap.capacity / 1024,
                                       heap.free / 1024,
@@ -171,14 +172,10 @@ fn render_debug_panel(frame : &mut String) {
                                       frames.free_bytes() / (1024 * 1024)));
     write_dashboard_line(frame,
                          format_args!(" FILE fd-open={} tables={} task-bindings={}",
-                                      fds.open_fd_count,
-                                      fds.table_count,
-                                      fds.task_bindings));
+                                      fds.open_fd_count, fds.table_count, fds.task_bindings));
     write_dashboard_line(frame,
                          format_args!(" SYSCALL total={} last={} (0x{:x})",
-                                      syscall_total,
-                                      last_syscall,
-                                      last_syscall));
+                                      syscall_total, last_syscall, last_syscall));
 }
 
 /// 将 ASCII 调试摘要限制为 CPU 表同样的 71 字符内宽，并补齐右侧空格。
@@ -214,15 +211,17 @@ impl Display for TaskIdText<'_> {
     }
 }
 
-/// 不分配地显示 Other/FIFO/RR 三类可运行队列长度。
+/// 不分配地显示 Other/Batch/FIFO/RR 四类可运行队列长度。
 struct QueueCounts<'a>(&'a task::CpuSnapshot);
 
 impl Display for QueueCounts<'_> {
     fn fmt(&self, formatter : &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter,
-               "{}/{}/{}",
+               "{}/{}/{}/{}",
                self.0
                    .runnable_other,
+               self.0
+                   .runnable_batch,
                self.0.runnable_fifo,
                self.0.runnable_rr)
     }
