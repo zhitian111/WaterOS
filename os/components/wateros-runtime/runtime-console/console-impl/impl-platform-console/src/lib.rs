@@ -19,6 +19,11 @@ pub fn platform_console_write_a_buffer(bytes : &[u8]) {
     platform::console::console_write_a_buffer(bytes).unwrap();
 }
 
+/// 在 platform UART 锁内完成整次格式化。
+pub fn platform_console_write_fmt(args : core::fmt::Arguments<'_>) {
+    platform::console::console_write_fmt(args).unwrap();
+}
+
 use core::fmt::{self, Write};
 
 /// 基于平台控制台门面的 [`api_v0::Console`] 句柄，无内部状态。

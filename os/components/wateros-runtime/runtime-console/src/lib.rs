@@ -9,12 +9,6 @@
 //! **平台假设**：ANSI 转义序列依赖接收端（串口终端或 QEMU）对 SGR 的支持。
 
 use core::fmt;
-use spin::Mutex;
-
-/// Serializes one complete formatting operation.  A single `fmt::Write` call
-/// may invoke `write_str` multiple times, so locking only at the UART byte or
-/// buffer boundary still allows different log records to interleave.
-static CONSOLE_FORMAT_LOCK: Mutex<()> = Mutex::new(());
 
 /// 终端 ANSI 颜色前缀，用于在 `println!` 等输出中高亮级别或横幅。
 pub enum AnsiColor {
@@ -50,18 +44,30 @@ use api_v0::Console;
 /// 使用类型 `C` 的 [`Console`] 实现格式化输出；失败时 `unwrap`（内核早期路径约定为不可恢复错误）。
 #[inline]
 pub fn print<C : Console>(args : fmt::Arguments) {
-    let _guard = CONSOLE_FORMAT_LOCK.lock();
+    #[cfg(feature = "impl-platform-console")]
+    {
+        let _ = core::marker::PhantomData::<C>;
+        impl_platform_console::platform_console_write_fmt(args);
+        return;
+    }
+    #[cfg(not(feature = "impl-platform-console"))]
     let mut c = C::default();
-    c.write_fmt(args)
-     .unwrap();
+    #[cfg(not(feature = "impl-platform-console"))]
+    c.write_fmt(args).unwrap();
 }
 /// 使用类型 `C` 的 [`Console`] 实现写入整段 UTF-8 文本。
 #[inline]
 pub fn prints<C : Console>(str : &str) {
-    let _guard = CONSOLE_FORMAT_LOCK.lock();
-    let mut c = C::default();
-    c.write_str(str)
-     .unwrap();
+    #[cfg(feature = "impl-platform-console")]
+    {
+        let _ = core::marker::PhantomData::<C>;
+        impl_platform_console::platform_console_write_a_buffer(str.as_bytes());
+    }
+    #[cfg(not(feature = "impl-platform-console"))]
+    {
+        let mut c = C::default();
+        c.write_str(str).unwrap();
+    }
 }
 
 /// 将任意字节写入平台控制台（不要求 UTF-8）；供 `write` 系统调用等路径使用。

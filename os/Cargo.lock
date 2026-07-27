@@ -830,6 +830,7 @@ dependencies = [
  "wateros-driver-character-api-v0",
  "wateros-driver-network",
  "wateros-fs",
+ "wateros-platform",
 ]
 
 [[package]]
@@ -1432,7 +1433,6 @@ dependencies = [
 name = "wateros-runtime-console"
 version = "0.1.0"
 dependencies = [
- "spin",
  "wateros-runtime-console-api-v0",
  "wateros-runtime-console-impl-platform-console",
 ]

@@ -16,10 +16,6 @@ const REG_IER: usize = 1;
 const REG_LSR: usize = 5;
 
 const LSR_DATA_READY: u8 = 1;
-const LSR_THRE: u8 = 1 << 5;
-
-const SPIN_TX_MAX: usize = 1_000_000;
-
 /// NS16550 风格 MMIO 串口；`base` 为物理/恒等映射内核地址。
 #[derive(Debug, Clone, Copy)]
 pub struct QemuVirtUart16550 {
@@ -56,31 +52,17 @@ impl QemuVirtUart16550 {
         }
     }
 
-    fn write_byte_raw(&mut self, byte: u8) -> SerialResult<()> {
-        let mut spins = 0usize;
-        loop {
-            let lsr = unsafe { self.read_reg(REG_LSR) };
-            if (lsr & LSR_THRE) != 0 {
-                unsafe {
-                    self.write_reg(REG_THR, byte);
-                }
-                return Ok(());
-            }
-            spins = spins.saturating_add(1);
-            if spins > SPIN_TX_MAX {
-                return Err(SerialError::TransmitterStuck);
-            }
-            core::hint::spin_loop();
-        }
-    }
 }
 
 impl SerialPort for QemuVirtUart16550 {
     fn write_byte(&mut self, byte: u8) -> SerialResult<()> {
-        if byte == b'\n' {
-            self.write_byte_raw(b'\r')?;
-        }
-        self.write_byte_raw(byte)
+        platform::console::console_write_a_byte(byte)
+            .map_err(|_| SerialError::TransmitterStuck)
+    }
+
+    fn write_all(&mut self, bytes : &[u8]) -> SerialResult<()> {
+        platform::console::console_write_a_buffer(bytes)
+            .map_err(|_| SerialError::TransmitterStuck)
     }
 
     fn read_byte_blocking(&mut self) -> u8 {

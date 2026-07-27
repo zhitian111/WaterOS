@@ -1,30 +1,46 @@
 //! 本模块代码由AI完成
-//! OpenSBI 控制台后端。
+//! QEMU virt NS16550 UART0 控制台后端。
 
 use api_v0::console::{PlatformConsoleError, PlatformConsoleResult};
-#[allow(unused)]
-use sbi::{console_write, console_write_byte};
+use core::ptr::{read_volatile, write_volatile};
 
-/// 向 OpenSBI console 写入单字节。
-#[inline]
-pub fn console_write_a_byte(byte: u8) -> PlatformConsoleResult<()> {
-    if console_write_byte(byte).is_ok() {
-        Ok(())
-    } else {
-        Err(PlatformConsoleError::WriteFailure)
+const UART_BASE : usize = config::mm::QEMU_VIRT_MMIO_PHYS_START;
+const UART_THR : usize = UART_BASE;
+const UART_LSR : usize = UART_BASE + 5;
+const UART_LSR_THRE : u8 = 1 << 5;
+const SPIN_TX_MAX : usize = 1_000_000;
+
+fn write_raw(byte : u8) -> PlatformConsoleResult<()> {
+    for _ in 0..SPIN_TX_MAX {
+        let ready = unsafe { read_volatile(UART_LSR as *const u8) };
+        if ready & UART_LSR_THRE != 0 {
+            unsafe { write_volatile(UART_THR as *mut u8, byte) };
+            return Ok(());
+        }
+        core::hint::spin_loop();
     }
+    Err(PlatformConsoleError::WriteFailure)
 }
 
-/// 将缓冲区逐字节写入 OpenSBI console。
+/// 向 UART0 写入单字节。
 #[inline]
-pub fn console_write_a_buffer(bytes: &[u8]) -> PlatformConsoleResult<()> {
+pub fn console_write_a_byte(byte : u8) -> PlatformConsoleResult<()> {
+    if byte == b'\n' {
+        write_raw(b'\r')?;
+    }
+    write_raw(byte)
+}
+
+/// 将缓冲区逐字节写入 UART0。
+#[inline]
+pub fn console_write_a_buffer(bytes : &[u8]) -> PlatformConsoleResult<()> {
     for &byte in bytes {
         console_write_a_byte(byte)?;
     }
     Ok(())
 }
 
-/// SBI debug console 没有额外 flush 语义。
+/// 轮询 UART 没有额外 flush 语义。
 #[inline]
 pub fn console_flush() -> PlatformConsoleResult<()> {
     Ok(())

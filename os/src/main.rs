@@ -83,8 +83,7 @@ fn bringup_driver_and_user() {
     }
 }
 
-/// 完整 UART 字符设备注册后，内核 console 不再经 early console 直接写硬件，
-/// 而是与用户 stdout 共用 device #0 的锁，保证一整段输出不会相互穿插。
+#[cfg(feature = "qemu-loongarch64-virt")]
 fn write_registered_uart_console(bytes : &[u8]) -> platform::console::PlatformConsoleResult<()> {
     driver::character::with_character_device(0, |device| {
         device.write(bytes)
@@ -93,6 +92,7 @@ fn write_registered_uart_console(bytes : &[u8]) -> platform::console::PlatformCo
     }).unwrap_or(Err(platform::console::PlatformConsoleError::Unavailable))
 }
 
+#[cfg(feature = "qemu-loongarch64-virt")]
 fn register_runtime_console_writer() {
     platform::console::register_runtime_writer(write_registered_uart_console);
 }
@@ -227,7 +227,6 @@ mod qemu_riscv64_opensbi {
         wait_for_secondary_online(requested_aps);
 
         bringup_driver_and_user();
-        crate::register_runtime_console_writer();
         #[cfg(feature = "dashboard-debug")]
         crate::dashboard::start();
         platform::interrupt::enable_timer_interrupt().unwrap();

@@ -275,6 +275,25 @@ pub mod console {
         crate::active_impl::console::console_write_a_buffer(bytes)
     }
 
+    /// 在同一次底层控制台锁持有期间完成完整格式化操作。
+    pub fn console_write_fmt(args : core::fmt::Arguments<'_>) -> PlatformConsoleResult<()> {
+        struct Writer(Option<RuntimeConsoleWriter>);
+        impl core::fmt::Write for Writer {
+            fn write_str(&mut self, value : &str) -> core::fmt::Result {
+                if let Some(writer) = self.0 {
+                    writer(value.as_bytes()).map_err(|_| core::fmt::Error)
+                } else {
+                    crate::active_impl::console::console_write_a_buffer(value.as_bytes())
+                        .map_err(|_| core::fmt::Error)
+                }
+            }
+        }
+
+        let _guard = CONSOLE_WRITE_LOCK.lock();
+        core::fmt::Write::write_fmt(&mut Writer(runtime_writer()), args)
+            .map_err(|_| PlatformConsoleError::WriteFailure)
+    }
+
     #[inline]
     pub fn console_flush() -> PlatformConsoleResult<()> {
         crate::active_impl::console::console_flush()
