@@ -1328,6 +1328,7 @@ version = "0.1.0"
 dependencies = [
  "log",
  "wateros-base",
+ "wateros-base-config",
  "wateros-platform-api-v0",
  "wateros-platform-arch",
  "wateros-platform-impl-dummy",

@@ -89,7 +89,7 @@ fn request_tlb_shootdown(handle: usize) {
         raw &= raw - 1;
         if cpu < MAX_CPUS { TLB_PENDING[cpu].store(sequence, Ordering::Release); }
     }
-    if let Err(error) = platform::smp::send_ipi(targets) {
+    if let Err(error) = platform::smp::send_ipi(targets, platform::smp::IpiKind::TlbShootdown) {
         log::warn!("[tlb] shootdown IPI failed sequence={} targets={:#x} error={:?}",
                    sequence,
                    targets.bits(),

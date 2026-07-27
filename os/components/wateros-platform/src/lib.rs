@@ -45,8 +45,12 @@ pub mod arch {
 /// secondaries; other profiles deliberately report `Unsupported`.
 #[cfg(feature = "api-v0")]
 pub mod smp {
-    pub use api_v0::smp::{HartStatus, PlatformSmp, PlatformSmpError, PlatformSmpResult};
+    pub use api_v0::smp::{HartStatus, IpiKind, PlatformSmp, PlatformSmpError, PlatformSmpResult};
     use base::cpu::{CpuId, CpuMask};
+    use core::sync::atomic::{AtomicU8, Ordering};
+    use config::task::MAX_CPUS;
+
+    static PENDING_IPI : [AtomicU8; MAX_CPUS] = [const { AtomicU8::new(0) }; MAX_CPUS];
 
     #[inline]
     pub fn start_cpu(cpu: CpuId, start_addr: usize, opaque: usize) -> PlatformSmpResult<()> {
@@ -61,8 +65,23 @@ pub mod smp {
         crate::active_impl::smp::SmpImpl::configured_cpu_mask()
     }
     #[inline]
-    pub fn send_ipi(mask : CpuMask) -> PlatformSmpResult<()> {
+    pub fn send_ipi(mask : CpuMask, kind : IpiKind) -> PlatformSmpResult<()> {
+        let mut raw = mask.bits();
+        while raw != 0 {
+            let cpu = raw.trailing_zeros() as usize;
+            raw &= raw - 1;
+            if cpu < MAX_CPUS {
+                PENDING_IPI[cpu].fetch_or(kind.bits(), Ordering::Release);
+            }
+        }
         crate::active_impl::smp::SmpImpl::send_ipi(mask)
+    }
+
+    /// Take all software IPI reasons currently pending on this CPU.
+    #[inline]
+    pub fn take_pending_ipi(cpu : CpuId) -> u8 {
+        if cpu.raw() >= MAX_CPUS { return 0; }
+        PENDING_IPI[cpu.raw()].swap(0, Ordering::AcqRel)
     }
     #[inline]
     pub fn init_ipi() -> PlatformSmpResult<()> {

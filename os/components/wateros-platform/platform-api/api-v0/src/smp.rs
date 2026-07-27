@@ -24,6 +24,20 @@ pub enum HartStatus {
     Unknown(usize),
 }
 
+/// Software-level reason carried alongside the hardware IPI notification.
+/// SBI and platform IPI registers only deliver the interrupt signal itself.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IpiKind {
+    Reschedule = 1 << 0,
+    TlbShootdown = 1 << 1,
+}
+
+impl IpiKind {
+    #[inline]
+    pub const fn bits(self) -> u8 { self as u8 }
+}
+
 pub trait PlatformSmp {
     fn start_cpu(cpu : CpuId, start_addr: usize, opaque: usize) -> PlatformSmpResult<()>;
     fn cpu_status(cpu : CpuId) -> PlatformSmpResult<HartStatus>;

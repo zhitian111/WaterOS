@@ -65,7 +65,7 @@ fn dispatch_reschedules(targets : CpuMask, current_cpu_id : CpuId) {
     let local_requested = remote.contains(current_cpu_id);
     remote.remove(current_cpu_id);
     if !remote.is_empty() {
-        if let Err(error) = platform::smp::send_ipi(remote) {
+        if let Err(error) = platform::smp::send_ipi(remote, platform::smp::IpiKind::Reschedule) {
             log::warn!("[ipi] directed reschedule notification failed: {:?}",
                        error);
         }
