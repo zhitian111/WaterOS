@@ -89,6 +89,11 @@ pub const CLOCK_SETTIME : usize = 112;
 pub const CLOCK_GETTIME : usize = 113;
 pub const CLOCK_GETRES : usize = 114;
 pub const CLOCK_NANOSLEEP : usize = 115;
+pub const TIMER_CREATE : usize = 107;
+pub const TIMER_GETTIME : usize = 108;
+pub const TIMER_GETOVERRUN : usize = 109;
+pub const TIMER_SETTIME : usize = 110;
+pub const TIMER_DELETE : usize = 111;
 
 // 内存管理
 pub const BRK : usize = 214;

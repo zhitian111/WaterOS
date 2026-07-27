@@ -77,6 +77,40 @@ impl IntervalTimerState {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct PosixTimerState {
+    clock : PosixTimerClock,
+    signal : usize,
+    interval_ns : u128,
+    deadline_ns : Option<u128>,
+    overrun : i32,
+}
+
+impl PosixTimerState {
+    fn new(clock : PosixTimerClock, signal : usize) -> Self {
+        Self { clock,
+               signal,
+               interval_ns : 0,
+               deadline_ns : None,
+               overrun : 0 }
+    }
+
+    fn now(self, monotonic_ns : u128, realtime_ns : u128) -> u128 {
+        match self.clock {
+            PosixTimerClock::Realtime => realtime_ns,
+            PosixTimerClock::Monotonic => monotonic_ns,
+        }
+    }
+
+    fn remaining(self, monotonic_ns : u128, realtime_ns : u128) -> IntervalTimerSpec {
+        let now = self.now(monotonic_ns, realtime_ns);
+        IntervalTimerSpec { interval_ns : self.interval_ns,
+                            value_ns : self.deadline_ns
+                                           .map(|deadline| deadline.saturating_sub(now))
+                                           .unwrap_or(0) }
+    }
+}
+
 /// 进程级信号状态：disposition、进程 pending、三类 itimer 与 CPU 时钟累计。
 #[derive(Clone, Debug)]
 /// 单进程信号状态：disposition 表、进程级 pending 与三类 itimer。
@@ -86,6 +120,8 @@ struct ProcessSignalState {
     real : IntervalTimerState,
     virtual_timer : IntervalTimerState,
     prof : IntervalTimerState,
+    posix_timers : BTreeMap<usize, PosixTimerState>,
+    next_posix_timer_id : usize,
     user_cpu_ns : u128,
     total_cpu_ns : u128,
 }
@@ -97,6 +133,8 @@ impl ProcessSignalState {
                real : IntervalTimerState::default(),
                virtual_timer : IntervalTimerState::default(),
                prof : IntervalTimerState::default(),
+               posix_timers : BTreeMap::new(),
+               next_posix_timer_id : 0,
                user_cpu_ns : 0,
                total_cpu_ns : 0 }
     }
@@ -256,6 +294,8 @@ impl SignalRegistry {
                 *action = SignalAction::default_action();
             }
         }
+        process.posix_timers.clear();
+        process.next_posix_timer_id = 0;
         Ok(())
     }
 
@@ -725,6 +765,132 @@ impl SignalRegistry {
                   .remaining(now))
     }
 
+    pub fn create_posix_timer(&mut self,
+                              pid : usize,
+                              clock : PosixTimerClock,
+                              signal : usize)
+                              -> SignalResult<usize> {
+        if !valid_signal(signal) {
+            return Err(SignalError::InvalidSignal);
+        }
+        let process = self.processes
+                          .get_mut(&pid)
+                          .ok_or(SignalError::NoSuchProcess)?;
+        for _ in 0..=process.posix_timers.len() {
+            let timer_id = process.next_posix_timer_id;
+            process.next_posix_timer_id =
+                process.next_posix_timer_id.wrapping_add(1) & (i32::MAX as usize);
+            if !process.posix_timers.contains_key(&timer_id) {
+                process.posix_timers.insert(timer_id, PosixTimerState::new(clock, signal));
+                return Ok(timer_id);
+            }
+        }
+        Err(SignalError::InvalidTimer)
+    }
+
+    pub fn set_posix_timer(&mut self,
+                           pid : usize,
+                           timer_id : usize,
+                           spec : IntervalTimerSpec,
+                           monotonic_ns : u128,
+                           realtime_ns : u128,
+                           absolute : bool)
+                           -> SignalResult<IntervalTimerSpec> {
+        let timer = self.processes
+                        .get_mut(&pid)
+                        .ok_or(SignalError::NoSuchProcess)?
+                        .posix_timers
+                        .get_mut(&timer_id)
+                        .ok_or(SignalError::NoSuchTimer)?;
+        let old = timer.remaining(monotonic_ns, realtime_ns);
+        let now = timer.now(monotonic_ns, realtime_ns);
+        timer.interval_ns = spec.interval_ns;
+        timer.deadline_ns = if spec.value_ns == 0 {
+            None
+        } else if absolute {
+            Some(spec.value_ns)
+        } else {
+            Some(now.saturating_add(spec.value_ns))
+        };
+        timer.overrun = 0;
+        Ok(old)
+    }
+
+    pub fn get_posix_timer(&self,
+                           pid : usize,
+                           timer_id : usize,
+                           monotonic_ns : u128,
+                           realtime_ns : u128)
+                           -> SignalResult<IntervalTimerSpec> {
+        let timer = self.processes
+                        .get(&pid)
+                        .ok_or(SignalError::NoSuchProcess)?
+                        .posix_timers
+                        .get(&timer_id)
+                        .ok_or(SignalError::NoSuchTimer)?;
+        Ok(timer.remaining(monotonic_ns, realtime_ns))
+    }
+
+    pub fn get_posix_timer_overrun(&self,
+                                   pid : usize,
+                                   timer_id : usize)
+                                   -> SignalResult<i32> {
+        self.processes
+            .get(&pid)
+            .ok_or(SignalError::NoSuchProcess)?
+            .posix_timers
+            .get(&timer_id)
+            .map(|timer| timer.overrun)
+            .ok_or(SignalError::NoSuchTimer)
+    }
+
+    pub fn delete_posix_timer(&mut self, pid : usize, timer_id : usize) -> SignalResult<()> {
+        let removed = self.processes
+                          .get_mut(&pid)
+                          .ok_or(SignalError::NoSuchProcess)?
+                          .posix_timers
+                          .remove(&timer_id);
+        removed.map(|_| ())
+               .ok_or(SignalError::NoSuchTimer)
+    }
+
+    pub fn expire_posix_timers(&mut self,
+                               monotonic_ns : u128,
+                               realtime_ns : u128)
+                               -> Vec<(SignalDispatch, usize)> {
+        let mut expired = Vec::new();
+        for (pid, process) in self.processes.iter_mut() {
+            for timer in process.posix_timers.values_mut() {
+                let Some(deadline) = timer.deadline_ns else {
+                    continue;
+                };
+                let now = timer.now(monotonic_ns, realtime_ns);
+                if deadline > now {
+                    continue;
+                }
+                let expirations = if timer.interval_ns == 0 {
+                    timer.deadline_ns = None;
+                    1
+                } else {
+                    let expirations = now.saturating_sub(deadline) / timer.interval_ns + 1;
+                    timer.deadline_ns =
+                        Some(deadline.saturating_add(expirations.saturating_mul(timer.interval_ns)));
+                    expirations
+                };
+                timer.overrun = i32::try_from(expirations.saturating_sub(1))
+                                     .unwrap_or(i32::MAX);
+                expired.push((*pid, timer.signal));
+            }
+        }
+        expired.into_iter()
+               .filter_map(|(pid, signal)| {
+                   self.send_process(pid, signal)
+                       .ok()
+                       .map(|dispatch| (dispatch, signal))
+               })
+               .collect()
+    }
+
     /// 累计 CPU 时间并触发 virtual/prof timer 到期。
     pub fn account_cpu(&mut self,
                        pid : usize,
@@ -1100,5 +1266,62 @@ mod tests {
         assert_eq!(registry.replace_alternate_stack(100,
                                                     AlternateSignalStack::default()),
                    Ok(stack));
+    }
+
+    #[test]
+    fn posix_timer_reloads_reports_overrun_and_deletes() {
+        let mut registry = registry_with_process();
+        registry.set_action(100,
+                            SIGALRM,
+                            SignalAction { handler : 0x9000,
+                                           ..SignalAction::default_action() })
+                .unwrap();
+        let timer_id = registry.create_posix_timer(10,
+                                                   PosixTimerClock::Monotonic,
+                                                   SIGALRM)
+                               .unwrap();
+        registry.set_posix_timer(10,
+                                 timer_id,
+                                 IntervalTimerSpec { interval_ns : 10,
+                                                     value_ns : 20 },
+                                 100,
+                                 1_000,
+                                 false)
+                .unwrap();
+        assert_eq!(registry.get_posix_timer(10, timer_id, 105, 1_005)
+                           .unwrap()
+                           .value_ns,
+                   15);
+        assert_eq!(registry.expire_posix_timers(145, 1_045)
+                           .len(),
+                   1);
+        assert_eq!(registry.get_posix_timer_overrun(10, timer_id)
+                           .unwrap(),
+                   2);
+        assert_eq!(registry.get_posix_timer(10, timer_id, 145, 1_045)
+                           .unwrap()
+                           .value_ns,
+                   5);
+        registry.delete_posix_timer(10, timer_id)
+                .unwrap();
+        assert_eq!(registry.get_posix_timer(10, timer_id, 145, 1_045),
+                   Err(SignalError::NoSuchTimer));
+    }
+
+    #[test]
+    fn posix_timers_are_not_inherited_and_are_removed_on_exec() {
+        let mut registry = registry_with_process();
+        let timer_id = registry.create_posix_timer(10,
+                                                   PosixTimerClock::Realtime,
+                                                   SIGALRM)
+                               .unwrap();
+        registry.fork_process(100, 20, 200, 20)
+                .unwrap();
+        assert_eq!(registry.get_posix_timer(20, timer_id, 0, 0),
+                   Err(SignalError::NoSuchTimer));
+        registry.exec_process(100)
+                .unwrap();
+        assert_eq!(registry.get_posix_timer(10, timer_id, 0, 0),
+                   Err(SignalError::NoSuchTimer));
     }
 }

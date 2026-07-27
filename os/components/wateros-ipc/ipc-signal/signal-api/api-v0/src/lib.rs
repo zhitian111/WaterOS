@@ -65,6 +65,8 @@ pub enum SignalError {
     InvalidTimer,
     /// 当前线程正在备用信号栈上执行，不能替换该栈。
     AlternateStackActive,
+    /// POSIX timer id 不属于目标进程。
+    NoSuchTimer,
 }
 
 /// 信号操作结果。
@@ -190,6 +192,12 @@ pub struct IntervalTimerSpec {
     pub interval_ns: u128,
     /// 距下次到期的剩余时间；0 表示禁用。
     pub value_ns: u128,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PosixTimerClock {
+    Realtime,
+    Monotonic,
 }
 
 /// 待交付给陷阱处理器的信号帧信息。

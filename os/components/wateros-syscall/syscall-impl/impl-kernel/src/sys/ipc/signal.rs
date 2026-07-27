@@ -254,6 +254,11 @@ pub(crate) fn timer_tick(interrupted_user : bool) {
     let realtime = ipc::signal::with_registry(|registry| registry.expire_realtime(now));
     generated.extend(realtime.into_iter()
                              .map(|dispatch| (dispatch, ipc::signal::SIGALRM)));
+    if let Ok(realtime_now) = platform::wall_clock::realtime_ns() {
+        generated.extend(ipc::signal::with_registry(|registry| {
+            registry.expire_posix_timers(now, realtime_now)
+        }));
+    }
     for (dispatch, signal) in generated {
         apply_signal_dispatch(dispatch, signal);
     }
