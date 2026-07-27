@@ -313,8 +313,10 @@ impl ReadWriteFs for AnotherExt4Fs {
     fn chmod(&mut self, path : &str, mode : u32) -> FsResult<()> {
         let fs = self.get_mut()?;
         let inode = lookup(fs, path)?;
-        fs.setattr(inode, Some(InodeMode::from_bits_retain(mode as u16)), None, None,
-                   None, None, None, None, None)
+        let file_type = fs.getattr(inode).map_err(map_error)?.ftype;
+        let mode = InodeMode::from_type_and_perm(file_type,
+                                                 InodeMode::from_bits_retain(mode as u16));
+        fs.setattr(inode, Some(mode), None, None, None, None, None, None, None)
           .map_err(map_error)
     }
 
