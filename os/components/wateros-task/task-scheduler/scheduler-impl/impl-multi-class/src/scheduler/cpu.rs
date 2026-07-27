@@ -81,6 +81,8 @@ impl MultiClassScheduler {
                                               .task_count(),
                            runnable_rr : cpu.rr_queue
                                             .task_count(),
+                           runnable_idle : cpu.idle_queue
+                                              .task_count(),
                            need_resched : cpu.need_resched,
                            context_switches : cpu.context_switches,
                            timer_ticks : cpu.timer_ticks,

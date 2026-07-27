@@ -114,17 +114,5 @@ fn ensure_task_exists(task_id : TaskId) -> Result<(), SchedError> {
 
 // 按策略校验 priority 取值范围。
 fn validate_policy_param(policy : SchedPolicy, priority : Priority) -> Result<(), SchedError> {
-    match policy {
-        SchedPolicy::Fifo | SchedPolicy::Rr => {
-            if !(1..=99).contains(&priority) {
-                return Err(SchedError::InvalidArg);
-            }
-        }
-        SchedPolicy::Other | SchedPolicy::Batch => {
-            if priority != 0 {
-                return Err(SchedError::InvalidArg);
-            }
-        }
-    }
-    Ok(())
+    scheduler::validate_policy_param(policy, priority)
 }

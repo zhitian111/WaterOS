@@ -18,7 +18,7 @@ use task_api::{
 
 mod scheduler;
 pub use api_v0::{CpuSnapshot, ScheduleReason};
-use scheduler::MultiClassScheduler;
+use scheduler::{MultiClassScheduler, ReadyPlacement};
 use task_api::{SchedError, SchedPolicy};
 
 /// 与本实现 crate 中 `MultiClassScheduler` 使用的 trap
@@ -199,7 +199,7 @@ pub fn enqueue_ready_task(task_id : TaskId) {
     let targets = {
         let _guard = InterruptGuard::new();
         with_scheduler(|scheduler| {
-            scheduler.enqueue_ready_task(task_id);
+            scheduler.activate_ready_task(task_id, ReadyPlacement::LeastLoaded);
             scheduler.take_pending_reschedule_cpus()
         })
     };
@@ -906,4 +906,7 @@ pub fn policy(task_id : TaskId) -> Result<SchedPolicy, SchedError> {
 pub fn priority(task_id : TaskId) -> Result<Priority, SchedError> {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.priority(task_id))
+}
+pub fn validate_policy_param(policy : SchedPolicy, priority : Priority) -> Result<(), SchedError> {
+    api_v0::CPUState::validate_policy_param(policy, priority)
 }

@@ -17,7 +17,7 @@ use task_api::{
     UserTask, WaitQueueId,
 };
 
-use api_v0::ScheduleReason;
+use api_v0::{RescheduleCause, ScheduleReason};
 
 unsafe extern "C" {
     static kernel_heap_start: u8;
@@ -36,10 +36,12 @@ pub(super) struct MultiClassScheduler {
     pub pending_reschedule_cpus : CpuMask,
 }
 
+/// Ready 任务的放置偏好；最终目标仍须满足 online 与 affinity 约束。
 #[derive(Clone, Copy)]
-enum RescheduleRequest {
-    Ready(TaskId),
-    Forced,
+pub(super) enum ReadyPlacement {
+    LeastLoaded,
+    LastCpu,
+    Prefer(CpuId),
 }
 
 impl MultiClassScheduler {
@@ -164,7 +166,7 @@ impl MultiClassScheduler {
         // Phase 1: 根据 reason 做前置处理
         match reason {
             ScheduleReason::Reschedule => {
-                if !self.cpu_states[cpu_id.raw()].cpu_should_reschedule() {
+                if !self.cpu_states[cpu_id.raw()].cpu_should_reschedule(RescheduleCause::Tick) {
                     return None;
                 }
             }
@@ -172,7 +174,7 @@ impl MultiClassScheduler {
             // Yield / Block / Sleep / Exit：在选下一个任务之前确保所有到期任务已入队
             _ => {
                 if self.is_timekeeper_cpu(cpu_id) {
-                    self.enqueue_woken_and_timeout_tasks();
+                    self.activate_woken_and_timeout_tasks();
                 }
             }
         }
@@ -238,7 +240,8 @@ impl MultiClassScheduler {
         // 3. 推进当前任务的时间片/vruntime（由 CPUState::tick 按策略分发）
         self.cpu_states[cpu_id.raw()].tick();
 
-        let needs_switch = self.cpu_states[cpu_id.raw()].cpu_should_reschedule();
+        let needs_switch =
+            self.cpu_states[cpu_id.raw()].cpu_should_reschedule(RescheduleCause::Tick);
 
         // 5. 处理唤醒/超时任务
         if needs_switch ||
@@ -246,7 +249,7 @@ impl MultiClassScheduler {
                .has_woken_or_timeout_tasks()
         {
             if self.is_timekeeper_cpu(cpu_id) {
-                self.enqueue_woken_and_timeout_tasks();
+                self.activate_woken_and_timeout_tasks();
             }
         }
         if needs_switch {
@@ -255,7 +258,7 @@ impl MultiClassScheduler {
             None
         }
     }
-    pub fn pick_queue(&mut self, reason : ScheduleReason) -> QueueTarget {
+    fn pick_queue(&mut self, reason : ScheduleReason) -> QueueTarget {
         match reason {
             ScheduleReason::StartFirst |
             ScheduleReason::Yield |
@@ -287,7 +290,7 @@ impl MultiClassScheduler {
                                 -> Option<SwitchPair> {
         // ===== Phase 1: 前置处理 =====
         if self.is_timekeeper_cpu(cpu_id) {
-            self.enqueue_woken_and_timeout_tasks();
+            self.activate_woken_and_timeout_tasks();
         }
 
         // ===== Phase 2: 快速路径 — 目标已就绪，无需阻塞 =====
@@ -335,7 +338,7 @@ impl MultiClassScheduler {
     /// TCB_SYNC: sync_current_to_registry → Registry 写回
     ///
     /// 这里只回写当前 CPU cache；目标 runqueue 的 vruntime 归一化只能在
-    /// `enqueue_ready_by_cpu` 中按目标 CPU 的 baseline 完成。
+    /// `enqueue_ready_on_cpu` 中按目标 CPU 的 baseline 完成。
     fn sync_current_to_registry(&mut self, cpu_id : CpuId) {
         let (current_task_id, policy, vruntime, runtime_ticks) = {
             let cpu = &mut self.cpu_states[cpu_id.raw()];
@@ -349,8 +352,7 @@ impl MultiClassScheduler {
             cpu.current_runtime_ticks = 0;
             values
         };
-        if matches!(policy,
-                    SchedPolicy::Other | SchedPolicy::Batch)
+        if CPUState::is_cfs_policy(policy)
         {
             self.registry
                 .set_vruntime(current_task_id, vruntime);
@@ -362,23 +364,10 @@ impl MultiClassScheduler {
     fn enqueue_task(&mut self, target : QueueTarget, current_task_id : TaskId, cpu_id : CpuId) {
         self.sync_current_to_registry(cpu_id);
         match target {
+            // Yield/Tick 后优先留在本核；affinity 不允许时才回退到最小负载 CPU。
             QueueTarget::Ready => {
-                // 通常 Yield/Tick 会回到当前 CPU；但若 affinity 在运行期间被
-                // 改为排除当前 CPU，必须由本 CPU 的 Reschedule 路径把它放到
-                // 允许的远端 runqueue，不能继续在禁止 CPU 上运行。
-                let affinity = self.registry
-                                   .task_snapshot(current_task_id)
-                                   .affinity;
-                let target_cpu = if affinity.contains(cpu_id) {
-                    cpu_id
-                } else {
-                    self.pick_cpu_for_new_task(current_task_id)
-                };
-                self.enqueue_ready_by_cpu(current_task_id, target_cpu);
-                if target_cpu != cpu_id {
-                    self.request_reschedule(target_cpu,
-                                            RescheduleRequest::Ready(current_task_id));
-                }
+                self.activate_ready_task(current_task_id,
+                                         ReadyPlacement::Prefer(cpu_id));
             }
             QueueTarget::Blocked(reason) => {
                 self.registry
@@ -403,7 +392,7 @@ impl MultiClassScheduler {
                 for waiter_id in &waiters {
                     self.registry
                         .finish_wait(*waiter_id, TaskWaitResult::Woken);
-                    self.enqueue_woken_task(*waiter_id);
+                    self.activate_ready_task(*waiter_id, ReadyPlacement::LastCpu);
                 }
                 // 唤醒等待当前任务的父任务
                 if let Some(parent_id) = self.registry
@@ -415,7 +404,7 @@ impl MultiClassScheduler {
                     for waiter_id in &child_waiters {
                         self.registry
                             .finish_wait(*waiter_id, TaskWaitResult::Woken);
-                        self.enqueue_woken_task(*waiter_id);
+                        self.activate_ready_task(*waiter_id, ReadyPlacement::LastCpu);
                     }
                 }
                 self.wait_queues
@@ -425,52 +414,80 @@ impl MultiClassScheduler {
             }
         }
     }
-    /// 选出一个 CPU 来放置新创建的任务（fork/clone/spawn）。
-    pub(super) fn enqueue_ready_task(&mut self, task_id : TaskId) {
-        let picked_cpu = self.pick_cpu_for_new_task(task_id);
-        self.enqueue_ready_by_cpu(task_id, picked_cpu);
-        self.request_reschedule(picked_cpu,
-                                RescheduleRequest::Ready(task_id));
-    }
-
-
-    /// 将已阻塞任务优先放回其上次运行的 online CPU。
-    ///
-    /// `last_cpu_id` 不可用时才回退到新任务的最小负载选核策略。
-    pub(super) fn enqueue_woken_task(&mut self, task_id : TaskId) -> CpuId {
-        let snap = self.registry
-                       .task_snapshot(task_id);
-        let affinity = snap.affinity;
-        let target = snap.last_cpu_id
-                         .filter(|cpu_id| {
-                             cpu_id.fits_capacity(self.cpu_states
-                                                      .len())
-                         })
-                         .filter(|cpu_id| self.cpu_states[cpu_id.raw()].online)
-                         .filter(|cpu_id| affinity.contains(*cpu_id))
-                         .unwrap_or_else(|| self.pick_cpu_for_new_task(task_id));
-        self.enqueue_ready_by_cpu(task_id, target);
-        self.request_reschedule(target,
-                                RescheduleRequest::Ready(task_id));
+    /// 激活非当前任务：选核、入 ready queue，并按统一 CPU 抢占规则请求调度。
+    pub(super) fn activate_ready_task(&mut self,
+                                      task_id : TaskId,
+                                      placement : ReadyPlacement)
+                                      -> CpuId {
+        let target = self.pick_ready_cpu(task_id, placement);
+        self.enqueue_ready_on_cpu(task_id, target);
+        let policy = self.registry
+                         .task_snapshot(task_id)
+                         .policy;
+        self.request_reschedule(target, RescheduleCause::Ready(policy));
         target
     }
 
-    fn request_reschedule(&mut self, cpu_id : CpuId, request : RescheduleRequest) {
-        let should_request = match request {
-            // BATCH 只唤醒 idle CPU；非 idle CPU 在下一 tick 再参与公平选择。
-            RescheduleRequest::Ready(task_id) => {
-                self.registry
-                    .task_snapshot(task_id)
-                    .policy !=
-                SchedPolicy::Batch ||
-                self.cpu_states[cpu_id.raw()].is_current_idle()
-            }
-            // 当前任务不能继续运行（例如 affinity 迁移），不能延迟。
-            RescheduleRequest::Forced => true,
+    fn pick_ready_cpu(&mut self, task_id : TaskId, placement : ReadyPlacement) -> CpuId {
+        let snap = self.registry
+                       .task_snapshot(task_id);
+        let preferred = match placement {
+            ReadyPlacement::LeastLoaded => None,
+            ReadyPlacement::LastCpu => snap.last_cpu_id,
+            ReadyPlacement::Prefer(cpu_id) => Some(cpu_id),
         };
-        if !should_request {
+        if let Some(cpu_id) = preferred.filter(|cpu_id| {
+                                           cpu_id.fits_capacity(self.cpu_states
+                                                                    .len())
+                                       })
+                                       .filter(|cpu_id| self.cpu_states[cpu_id.raw()].online)
+                                       .filter(|cpu_id| {
+                                           snap.affinity
+                                               .contains(*cpu_id)
+                                       })
+        {
+            return cpu_id;
+        }
+
+        // 从环形起点开始选择负载最小的可用 CPU，避免相同负载长期偏向 CPU 0。
+        let mut best_cpu = None;
+        let mut min_load = usize::MAX;
+        for offset in 0..self.cpu_states
+                             .len()
+        {
+            let index = (self.next_placement_cpu + offset) %
+                        self.cpu_states
+                            .len();
+            let cpu_id = CpuId::from_raw(index);
+            if !self.cpu_states[index].online ||
+               !snap.affinity
+                    .contains(cpu_id)
+            {
+                continue;
+            }
+            let load = self.cpu_load(cpu_id);
+            if load < min_load {
+                min_load = load;
+                best_cpu = Some(cpu_id);
+            }
+        }
+        let cpu_id = best_cpu.expect("cannot enqueue a task without an online CPU");
+        self.next_placement_cpu = (cpu_id.raw() + 1) %
+                                  self.cpu_states
+                                      .len();
+        cpu_id
+    }
+
+    /// 根据 CPU 的统一抢占规则记录一次异步重调度请求。
+    fn request_reschedule(&mut self, cpu_id : CpuId, cause : RescheduleCause) {
+        if !self.cpu_states[cpu_id.raw()].cpu_should_reschedule(cause) {
             return;
         }
+        self.mark_need_resched(cpu_id);
+    }
+
+    /// `cpu_should_reschedule()` 已经判断为真时，只记录请求，不再重复判断。
+    fn mark_need_resched(&mut self, cpu_id : CpuId) {
         self.cpu_states[cpu_id.raw()].need_resched = true;
         self.pending_reschedule_cpus
             .insert(cpu_id);
@@ -490,8 +507,8 @@ impl MultiClassScheduler {
     }
     /// TCB_SYNC: mark_ready → Registry,vruntime 归一化 → Registry
     /// TCB → 目标 CPU ready queue 的唯一入口。
-    /// 有多个enqueue调用此接口，故要在这里统一清理旧归属和更新vruntime
-    fn enqueue_ready_by_cpu(&mut self, task_id : TaskId, cpu_id : CpuId) {
+    /// 只修改 TCB 与 runqueue，不产生 reschedule/IPI 请求。
+    fn enqueue_ready_on_cpu(&mut self, task_id : TaskId, cpu_id : CpuId) {
         assert!(Some(task_id) != self.cpu_states[cpu_id.raw()].idle_task_id,
                 "idle task must not be placed on a ready queue");
         assert!(self.cpu_states[cpu_id.raw()].online,
@@ -510,15 +527,12 @@ impl MultiClassScheduler {
         }
         let mut snap = self.registry
                            .task_snapshot(task_id);
-        if matches!(snap.policy,
-                    SchedPolicy::Other | SchedPolicy::Batch)
+        if let Some(vruntime) =
+            self.cpu_states[cpu_id.raw()].normalize_vruntime(snap.vruntime, snap.policy)
         {
-            let normalized = self.cpu_states[cpu_id.raw()].normalize_vruntime(snap.vruntime);
-            if normalized != snap.vruntime {
-                self.registry
-                    .set_vruntime(task_id, normalized);
-                snap.vruntime = normalized;
-            }
+            snap.vruntime = vruntime;
+            self.registry
+                .set_vruntime(task_id, vruntime);
         }
         self.registry
             .mark_ready(task_id, cpu_id);
@@ -531,11 +545,11 @@ impl MultiClassScheduler {
         }
     }
     /// 到期睡眠/超时任务到就绪队列。(超时唤醒)
-    fn enqueue_woken_and_timeout_tasks(&mut self) {
+    fn activate_woken_and_timeout_tasks(&mut self) {
         for task_id in &self.wait_queues
                             .woken_tasks()
         {
-            self.enqueue_woken_task(*task_id);
+            self.activate_ready_task(*task_id, ReadyPlacement::LastCpu);
         }
         for (task_id, target) in &self.wait_queues
                                       .timeout_tasks()
@@ -549,7 +563,7 @@ impl MultiClassScheduler {
             }
             self.registry
                 .finish_wait(*task_id, TaskWaitResult::TimedOut);
-            self.enqueue_woken_task(*task_id);
+            self.activate_ready_task(*task_id, ReadyPlacement::LastCpu);
         }
     }
 }

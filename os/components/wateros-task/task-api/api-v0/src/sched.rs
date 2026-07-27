@@ -12,6 +12,8 @@ pub enum SchedPolicy {
     Rr = 2,
     /// 面向 CPU 密集型后台工作的公平调度策略。
     Batch = 3,
+    /// Linux `SCHED_IDLE`（raw policy 值为 5）。
+    Idle = 5,
 }
 
 impl SchedPolicy {
@@ -23,6 +25,7 @@ impl SchedPolicy {
             1 => Some(Self::Fifo),
             2 => Some(Self::Rr),
             3 => Some(Self::Batch),
+            5 => Some(Self::Idle),
             _ => None,
         }
     }

@@ -9,7 +9,7 @@ impl MultiClassScheduler {
         let current_task_id = self.cpu_states[cpu_id.raw()].current_task_id;
         let task_id = self.registry
                           .spawn_kernel_task(entry, arg, current_task_id);
-        self.enqueue_ready_task(task_id);
+        self.activate_ready_task(task_id, ReadyPlacement::LeastLoaded);
         task_id
     }
 
@@ -21,37 +21,9 @@ impl MultiClassScheduler {
 
     pub fn spawn_user_task_spec(&mut self, spec : UserTask, cpu_id : CpuId) -> TaskId {
         let task_id = self.create_user_task_spec(spec, cpu_id);
-        self.enqueue_ready_task(task_id);
+        self.activate_ready_task(task_id, ReadyPlacement::LeastLoaded);
         task_id
     }
-
-    /// 为新建任务选择 online CPU 中就绪队列负载最小的一个。
-    ///
-    /// 遍历从 `next_placement_cpu` 开始，因此同样负载不会永远偏向 CPU 0。
-    pub fn pick_cpu_for_new_task(&mut self, task_id : TaskId) -> CpuId {
-        let affinity = self.registry
-                           .get_affinity(task_id)
-                           .expect("queued task must exist");
-        let mut best_cpu = None;
-        let mut min_load = usize::MAX;
-        let cpu_count = self.cpu_states
-                            .len();
-        for offset in 0..cpu_count {
-            let i = (self.next_placement_cpu + offset) % cpu_count;
-            if !self.cpu_states[i].online || !affinity.contains(CpuId::from_raw(i)) {
-                continue;
-            }
-            let load = self.cpu_load(CpuId::from_raw(i));
-            if load < min_load {
-                min_load = load;
-                best_cpu = Some(CpuId::from_raw(i));
-            }
-        }
-        let best_cpu = best_cpu.expect("cannot enqueue a task without an online CPU");
-        self.next_placement_cpu = (best_cpu.raw() + 1) % cpu_count;
-        best_cpu
-    }
-
 
     pub fn create_fork_child(&mut self,
                              child_stack : usize,
@@ -77,7 +49,7 @@ impl MultiClassScheduler {
                                               new_aspace_ptr,
                                               new_satp,
                                               cpu_id)?;
-        self.enqueue_ready_task(child_id);
+        self.activate_ready_task(child_id, ReadyPlacement::LeastLoaded);
         Some(child_id)
     }
 
@@ -99,7 +71,7 @@ impl MultiClassScheduler {
                                 cpu_id : CpuId)
                                 -> Option<TaskId> {
         let child_id = self.create_clone_thread(child_stack, tls, set_tls, cpu_id)?;
-        self.enqueue_ready_task(child_id);
+        self.activate_ready_task(child_id, ReadyPlacement::LeastLoaded);
         Some(child_id)
     }
 
@@ -249,10 +221,7 @@ impl MultiClassScheduler {
                                              .ready_cpu_id(task_id)
                 {
                     if !mask.contains(ready_cpu) {
-                        let target = self.pick_cpu_for_new_task(task_id);
-                        self.enqueue_ready_by_cpu(task_id, target);
-                        self.request_reschedule(target,
-                                                RescheduleRequest::Ready(task_id));
+                        self.activate_ready_task(task_id, ReadyPlacement::LeastLoaded);
                     }
                 }
             }
@@ -263,7 +232,7 @@ impl MultiClassScheduler {
                 if !mask.contains(running_cpu) {
                     // 不从远端 CPU 修改运行现场。由目标 CPU 在收到 IPI 后进入
                     // Reschedule 路径，把当前任务重新入队到允许的 CPU。
-                    self.request_reschedule(running_cpu, RescheduleRequest::Forced);
+                    self.request_reschedule(running_cpu, RescheduleCause::Forced);
                 }
             }
             TaskState::Blocking(_) | TaskState::Sleeping { .. } => {}
