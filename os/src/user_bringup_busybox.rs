@@ -124,19 +124,19 @@ const BRINGUP_COMMANDS : &[BringupCommand] =
                                  1)); done; wait; echo SMP_MM_TEST_DONE"] },
       BringupCommand { program : "/busybox",
                        argv : &["sh",
-                                "/scripts/cagent_testcode.sh"] },
+                                "/glibc/cagent_testcode.sh"] },
       BringupCommand { program : "/busybox",
                        argv : &["sh",
-                                "/scripts/buildstorm_testcode.sh"] }];
+                                "/glibc/buildstorm_testcode.sh"] }];
 
 #[cfg(all(feature = "final_online", not(feature = "final_online_smp_test")))]
 const BRINGUP_COMMANDS : &[BringupCommand] =
     &[BringupCommand { program : "/usr/bin/busybox",
                        argv : &["sh",
-                                "/scripts/cagent_testcode.sh"] },
+                                "/glibc/cagent_testcode.sh"] },
       BringupCommand { program : "/usr/bin/busybox",
                        argv : &["sh",
-                                "/scripts/buildstorm_testcode.sh"] }];
+                                "/glibc/buildstorm_testcode.sh"] }];
 
 const LOG_TAG : &str = "busybox-bringup";
 
