@@ -62,6 +62,7 @@ pub(crate) fn sys_exit_group(exit_code : isize) -> isize {
                         super::wait::wake_clear_child_tid_for_task(sibling);
                         crate::sys::ipc::robust::robust_exit_cleanup(sibling);
                         super::super::shm::drop_task_attachments(sibling, user_aspace);
+                        super::wait::drop_task_runtime_resources(sibling);
                     }
                 }
             }
