@@ -35,13 +35,39 @@ struct LinuxWinSize {
     ws_ypixel: u16,
 }
 
+const NCCS: usize = 19;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct LinuxTermios {
+    c_iflag: u32,
+    c_oflag: u32,
+    c_cflag: u32,
+    c_lflag: u32,
+    c_line: u8,
+    c_cc: [u8; NCCS],
+}
+
+const DEFAULT_TERMIOS: LinuxTermios = LinuxTermios {
+    c_iflag: 0x500,
+    c_oflag: 0x5,
+    c_cflag: 0xbf,
+    c_lflag: 0x8a3b,
+    c_line: 0,
+    c_cc: [
+        3, 28, 127, 21, 4, 0, 1, 0, 17, 19, 26, 0, 18, 15, 23, 22, 0, 0, 0,
+    ],
+};
+
+static TTY_TERMIOS: spin::Mutex<LinuxTermios> = spin::Mutex::new(DEFAULT_TERMIOS);
+
 fn ioctl_enotty(request: u32, fd: Option<usize>, argp: usize) -> UserRet {
     match fd {
-        Some(fd) => log::warn!(
+        Some(fd) => log::trace!(
             "[syscall] ioctl(nr=29) unsupported request={:#x} fd={fd} argp={argp:#x}",
             request,
         ),
-        None => log::warn!(
+        None => log::trace!(
             "[syscall] ioctl(nr=29) unsupported request={:#x} argp={argp:#x}",
             request,
         ),
@@ -51,13 +77,25 @@ fn ioctl_enotty(request: u32, fd: Option<usize>, argp: usize) -> UserRet {
 
 fn tty_char_ioctl(request: u32, argp: usize) -> UserRet {
     match request {
-        // glibc tcgetattr 常以 a2=sp 调用 TCGETS，成功写 termios 会覆盖同帧内的栈金丝雀。
-        TCGETS => UserRet::from_error(ErrNo::ENOTTY),
-        // 终端属性状态尚未建模；允许 stty/read -s 等保存/恢复路径继续执行。
+        TCGETS => {
+            if argp == 0 {
+                return UserRet::from_error(ErrNo::EFAULT);
+            }
+            let termios = *TTY_TERMIOS.lock();
+            match copy_to_user_struct(argp, &termios) {
+                Ok(()) => UserRet::from_success(0),
+                Err(e) => UserRet::from_error(e),
+            }
+        }
         TCSETS | TCSETSW | TCSETSF => {
             if argp == 0 {
                 return UserRet::from_error(ErrNo::EFAULT);
             }
+            let termios = match copy_from_user_struct::<LinuxTermios>(argp) {
+                Ok(termios) => termios,
+                Err(error) => return UserRet::from_error(error),
+            };
+            *TTY_TERMIOS.lock() = termios;
             UserRet::from_success(0)
         }
         TIOCGWINSZ => {
@@ -178,11 +216,5 @@ fn pipe_fionread(fd: usize, argp: usize) -> UserRet {
 }
 
 fn global_ioctl_fallback(fd: usize, request: u32, argp: usize) -> UserRet {
-    match request {
-        TCGETS => ioctl_enotty(request, Some(fd), argp),
-        TCSETS | TCSETSW | TCSETSF => tty_char_ioctl(request, argp),
-        TIOCGWINSZ => tty_char_ioctl(TIOCGWINSZ, argp),
-        TIOCNOTTY => UserRet::from_success(0),
-        _ => ioctl_enotty(request, Some(fd), argp),
-    }
+    ioctl_enotty(request, Some(fd), argp)
 }

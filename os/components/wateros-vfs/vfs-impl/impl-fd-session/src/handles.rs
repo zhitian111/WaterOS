@@ -66,6 +66,10 @@ impl VfsIoHandle for ConsoleInHandle {
     fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {
         Ok(Box::new(*self))
     }
+
+    fn is_tty_char_device(&self) -> bool {
+        true
+    }
 }
 
 /// 标准输出/错误：写入走控制台驱动。
@@ -99,6 +103,10 @@ impl VfsIoHandle for ConsoleOutHandle {
 // 本方法代码由AI完成
     fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {
         Ok(Box::new(*self))
+    }
+
+    fn is_tty_char_device(&self) -> bool {
+        true
     }
 }
 
