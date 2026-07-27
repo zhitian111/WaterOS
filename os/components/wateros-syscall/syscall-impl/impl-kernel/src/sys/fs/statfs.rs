@@ -8,7 +8,8 @@ use cred::api::ProcessCredentials;
 use vfs::active_impl;
 use vfs::api::{SingleRootReadView, VfsError, VfsNodeType};
 
-use super::path_at::{resolve_final_symlink, resolve_path_at, AT_FDCWD};
+use super::path_at::{resolve_path_at, resolve_symlinks, AT_FDCWD};
+use vfs::api::FinalSymlink;
 use crate::user_copy::{copy_to_user_struct, copy_user_path_cstr};
 use crate::vfs_util::vfs_error_to_errno;
 
@@ -78,7 +79,7 @@ pub(crate) fn sys_statfs(args: SyscallArgs) -> UserRet {
         Ok(path) => path,
         Err(e) => return UserRet::from_error(e),
     };
-    let resolved = match resolve_final_symlink(resolved.as_str()) {
+    let resolved = match resolve_symlinks(resolved.as_str(), FinalSymlink::Follow) {
         Ok(path) => path,
         Err(e) => return UserRet::from_error(e),
     };

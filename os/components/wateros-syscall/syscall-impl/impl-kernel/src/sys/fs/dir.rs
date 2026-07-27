@@ -7,7 +7,8 @@ use vfs::api::{VfsError, VfsMetadata, VfsNodeType};
 use vfs::SingleRootReadView;
 
 use crate::sys::misc::ltp_cgroup_helper::cgroup_regression_loop_fast_exit_if_standalone;
-use crate::sys::path_at::{resolve_final_symlink, resolve_path_at, AT_REMOVEDIR};
+use crate::sys::path_at::{resolve_path_at, resolve_symlinks, AT_REMOVEDIR};
+use vfs::api::FinalSymlink;
 use crate::user_copy::copy_user_path_cstr;
 use crate::vfs_util::vfs_error_to_errno;
 
@@ -203,14 +204,21 @@ pub(crate) fn sys_linkat(args : SyscallArgs) -> UserRet {
         Err(e) => return UserRet::from_error(e),
     };
     let old_resolved = if flags & AT_SYMLINK_FOLLOW != 0 {
-        match resolve_final_symlink(old_resolved.as_str()) {
+        match resolve_symlinks(old_resolved.as_str(), FinalSymlink::Follow) {
             Ok(path) => path,
             Err(e) => return UserRet::from_error(e),
         }
     } else {
-        old_resolved
+        match resolve_symlinks(old_resolved.as_str(), FinalSymlink::NoFollow) {
+            Ok(path) => path,
+            Err(e) => return UserRet::from_error(e),
+        }
     };
     let new_resolved = match resolve_path_at(new_dirfd, new_path.as_str()) {
+        Ok(path) => path,
+        Err(e) => return UserRet::from_error(e),
+    };
+    let new_resolved = match resolve_symlinks(new_resolved.as_str(), FinalSymlink::NoFollow) {
         Ok(path) => path,
         Err(e) => return UserRet::from_error(e),
     };

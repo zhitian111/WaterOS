@@ -9,7 +9,8 @@ use vfs::api::{SingleRootReadView, VFS_FIRST_DYNAMIC_FD, VFS_STDERR_FD, VFS_STDI
 
 use crate::linux_stat::{fill_linux_stat, fill_linux_statx};
 use crate::sys::stat_times;
-use super::path_at::{resolve_final_symlink, resolve_path_at};
+use super::path_at::{resolve_path_at, resolve_symlinks};
+use vfs::api::FinalSymlink;
 use crate::user_copy::{copy_to_user_struct, copy_user_path_cstr};
 use crate::vfs_util::vfs_error_to_errno;
 
@@ -149,9 +150,12 @@ pub(crate) fn sys_statx(args: SyscallArgs) -> UserRet {
             Err(e) => return UserRet::from_error(e),
         };
         let resolved = if flags & AT_SYMLINK_NOFOLLOW != 0 {
-            resolved
+            match resolve_symlinks(resolved.as_str(), FinalSymlink::NoFollow) {
+                Ok(path) => path,
+                Err(error) => return UserRet::from_error(error),
+            }
         } else {
-            match resolve_final_symlink(resolved.as_str()) {
+            match resolve_symlinks(resolved.as_str(), FinalSymlink::Follow) {
                 Ok(path) => path,
                 Err(e) => return UserRet::from_error(e),
             }

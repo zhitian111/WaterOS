@@ -12,10 +12,12 @@ use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use cred::api::{Gid, ProcessCredentials};
 use vfs::active_impl;
-use vfs::api::{SingleRootReadView, VfsError, VfsMetadata, VfsNodeType, VfsOpenFlags, VfsOpenOps};
+use vfs::api::{
+    FinalSymlink, SingleRootReadView, VfsError, VfsMetadata, VfsNodeType, VfsOpenFlags, VfsOpenOps,
+};
 
 use crate::sys::ltp_cgroup_helper::cgroup_regression_loop_fast_exit_if_standalone;
-use super::path_at::{resolve_final_symlink, resolve_path_at};
+use super::path_at::{resolve_path_at, resolve_symlinks};
 use crate::user_copy::copy_user_path_cstr;
 use crate::vfs_util::{linux_open_flags_to_vfs, vfs_error_to_errno};
 
@@ -176,24 +178,30 @@ fn open_tmpfile(dir_path: &str, flags: u32) -> UserRet {
 }
 
 fn prepare_open_path(resolved: &str, flags: u32) -> Result<String, ErrNo> {
+    let final_mode = if flags & O_NOFOLLOW != 0 {
+        FinalSymlink::NoFollow
+    } else {
+        FinalSymlink::Follow
+    };
+    let resolved = match resolve_symlinks(resolved, final_mode) {
+        Ok(path) => path,
+        Err(ErrNo::ENOENT) if flags & O_CREAT != 0 => {
+            resolve_symlinks(resolved, FinalSymlink::NoFollow)?
+        }
+        Err(error) => return Err(error),
+    };
+
     if flags & O_NOFOLLOW != 0 {
-        match active_impl::backend().metadata(resolved) {
+        match active_impl::backend().metadata(resolved.as_str()) {
             Ok(meta) if meta.node_type == vfs::api::VfsNodeType::Symlink => {
                 return Err(ErrNo::ELOOP);
             }
-            Ok(_) => return Ok(String::from(resolved)),
-            Err(VfsError::NotFound) => return Ok(String::from(resolved)),
+            Ok(_) => return Ok(resolved),
+            Err(VfsError::NotFound) => return Ok(resolved),
             Err(e) => return Err(vfs_error_to_errno(e)),
         }
     }
-    match active_impl::backend().metadata(resolved) {
-        Ok(meta) if meta.node_type == vfs::api::VfsNodeType::Symlink => {
-            resolve_final_symlink(resolved)
-        }
-        Ok(_) => Ok(String::from(resolved)),
-        Err(VfsError::NotFound) => Ok(String::from(resolved)),
-        Err(e) => Err(vfs_error_to_errno(e)),
-    }
+    Ok(resolved)
 }
 
 fn check_existing_open_permission(path: &str, flags: u32, creates_new_file: bool) -> Result<(), ErrNo> {

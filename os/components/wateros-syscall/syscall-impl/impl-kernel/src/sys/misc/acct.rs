@@ -12,7 +12,8 @@ use spin::Mutex;
 use vfs::active_impl;
 use vfs::api::{SingleRootReadView, VfsError, VfsNodeType, VfsOpenFlags, VfsOpenOps};
 
-use crate::sys::fs::path_at::{resolve_final_symlink, resolve_path_at, AT_FDCWD};
+use crate::sys::fs::path_at::{resolve_path_at, resolve_symlinks, AT_FDCWD};
+use vfs::api::FinalSymlink;
 use crate::user_copy::copy_user_path_cstr;
 use crate::vfs_util::vfs_error_to_errno;
 
@@ -73,7 +74,7 @@ fn do_acct(path_ptr: usize) -> Result<(), ErrNo> {
         return Err(ErrNo::EACCES);
     }
     let resolved = resolve_path_at(AT_FDCWD, path.as_str())?;
-    let resolved = resolve_final_symlink(resolved.as_str())?;
+    let resolved = resolve_symlinks(resolved.as_str(), FinalSymlink::Follow)?;
     if path.ends_with('/') {
         match active_impl::backend().metadata(resolved.as_str()) {
             Ok(meta) if meta.node_type != VfsNodeType::Directory => return Err(ErrNo::ENOTDIR),

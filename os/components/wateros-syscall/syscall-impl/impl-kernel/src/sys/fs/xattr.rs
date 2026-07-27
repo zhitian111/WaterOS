@@ -10,7 +10,8 @@ use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use vfs::api::VfsError;
 
-use super::path_at::{resolve_final_symlink, resolve_path_at};
+use super::path_at::{resolve_path_at, resolve_symlinks};
+use vfs::api::FinalSymlink;
 use crate::user_copy::{copy_from_user, copy_to_user, copy_user_path_cstr};
 use crate::vfs_util::vfs_error_to_errno;
 
@@ -65,9 +66,9 @@ fn resolve_xattr_path(path_ptr: usize, follow_last: bool) -> Result<alloc::strin
     let path = copy_user_path_cstr(path_ptr, crate::user_copy::USER_PATH_MAX)?;
     let resolved = resolve_path_at(-100, path.as_str())?;
     if follow_last {
-        resolve_final_symlink(resolved.as_str())
+        resolve_symlinks(resolved.as_str(), FinalSymlink::Follow)
     } else {
-        Ok(resolved)
+        resolve_symlinks(resolved.as_str(), FinalSymlink::NoFollow)
     }
 }
 

@@ -2,11 +2,11 @@ use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use cred::api::{Gid, ProcessCredentials, Uid};
-use vfs::api::{VfsError, VfsMetadata, VfsNodeType};
+use vfs::api::{FinalSymlink, VfsError, VfsMetadata, VfsNodeType};
 use vfs::active_impl;
 use vfs::SingleRootReadView;
 use crate::alloc::string::ToString;
-use crate::sys::path_at::resolve_path_at;
+use crate::sys::path_at::{resolve_path_at, resolve_symlinks};
 use crate::user_copy::copy_user_path_cstr;
 use crate::vfs_util::vfs_error_to_errno;
 
@@ -32,6 +32,10 @@ pub(crate) fn sys_fchmodat(args : SyscallArgs) -> UserRet {
     };
     let resolved = match resolve_path_at(dirfd, path.as_str()) {
         Ok(p) => p,
+        Err(e) => return UserRet::from_error(e),
+    };
+    let resolved = match resolve_symlinks(resolved.as_str(), FinalSymlink::Follow) {
+        Ok(path) => path,
         Err(e) => return UserRet::from_error(e),
     };
 
@@ -135,7 +139,11 @@ pub(crate) fn sys_fchownat(args : SyscallArgs) -> UserRet {
     if flags & AT_EMPTY_PATH != 0 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
-    let _nofollow = flags & AT_SYMLINK_NOFOLLOW != 0;
+    let final_mode = if flags & AT_SYMLINK_NOFOLLOW != 0 {
+        FinalSymlink::NoFollow
+    } else {
+        FinalSymlink::Follow
+    };
 
     let path = match copy_user_path_cstr(path_ptr,
                                          crate::user_copy::USER_PATH_MAX)
@@ -145,6 +153,10 @@ pub(crate) fn sys_fchownat(args : SyscallArgs) -> UserRet {
     };
     let resolved = match resolve_path_at(dirfd, path.as_str()) {
         Ok(p) => p,
+        Err(e) => return UserRet::from_error(e),
+    };
+    let resolved = match resolve_symlinks(resolved.as_str(), final_mode) {
+        Ok(path) => path,
         Err(e) => return UserRet::from_error(e),
     };
 
