@@ -142,6 +142,7 @@ pub fn dispatch_syscall_by_nr(syscall_nr : usize, syscall_args : SyscallArgs) ->
         n if n == api_v0::SET_TID_ADDRESS => sys::sys_set_tid_address(syscall_args).0,
         n if n == api_v0::SET_ROBUST_LIST => sys::sys_set_robust_list(syscall_args).0,
         n if n == api_v0::GET_ROBUST_LIST => sys::sys_get_robust_list(syscall_args).0,
+        n if n == api_v0::RSEQ => sys::sys_rseq(syscall_args).0,
         n if n == api_v0::GETRANDOM => sys::sys_getrandom(syscall_args).0,
         n if n == api_v0::GETITIMER => sys::sys_getitimer(syscall_args).0,
         n if n == api_v0::SETITIMER => sys::sys_setitimer(syscall_args).0,

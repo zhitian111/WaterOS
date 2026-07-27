@@ -3,6 +3,7 @@ pub(crate) mod execve;
 pub(crate) mod priority;
 pub(crate) mod process;
 pub(crate) mod rlimit;
+pub(crate) mod rseq;
 pub(crate) mod sched;
 pub(crate) mod task;
 pub(crate) mod unshare;
@@ -15,6 +16,7 @@ pub(crate) use process::{
     sys_getpgid, sys_getpid, sys_getppid, sys_gettid, sys_set_tid_address, sys_setpgid, sys_setsid,
 };
 pub(crate) use rlimit::{current_umask, sys_getrlimit, sys_prlimit64, sys_setrlimit, sys_umask};
+pub(crate) use rseq::sys_rseq;
 pub(crate) use sched::{
     sys_sched_get_priority_max, sys_sched_get_priority_min, sys_sched_getaffinity,
     sys_sched_getattr, sys_sched_getparam, sys_sched_getscheduler, sys_sched_setaffinity,

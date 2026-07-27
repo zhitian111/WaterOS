@@ -158,6 +158,7 @@ pub const TGKILL : usize = 131;
 pub const SET_TID_ADDRESS : usize = 96;
 pub const SET_ROBUST_LIST : usize = 99;
 pub const GET_ROBUST_LIST : usize = 100;
+pub const RSEQ : usize = 293;
 
 // 其它常用调用
 pub const GETRANDOM : usize = 278;
