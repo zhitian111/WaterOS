@@ -103,11 +103,12 @@ fn send_thread(task_id : usize, signal : usize) -> Result<(), ErrNo> {
     if signal == 0 {
         return Ok(());
     }
-    let dispatch = ipc::signal::with_registry(|registry| registry.send_thread(task_id, signal))
-        .map_err(|error| match error {
-            SignalError::NoSuchTask | SignalError::NoSuchProcess => ErrNo::ESRCH,
-            _ => ErrNo::EINVAL,
-        })?;
+    let dispatch =
+        ipc::signal::send_thread(task_id, signal).map_err(|error| match error {
+                                                     SignalError::NoSuchTask |
+                                                     SignalError::NoSuchProcess => ErrNo::ESRCH,
+                                                     _ => ErrNo::EINVAL,
+                                                 })?;
     apply_signal_dispatch(dispatch, signal);
     Ok(())
 }
@@ -116,13 +117,10 @@ fn send_thread(task_id : usize, signal : usize) -> Result<(), ErrNo> {
 
 pub(crate) fn ensure_current_signal_state() -> Result<task::ProcessTaskSnapshot, ErrNo> {
     let snapshot = task::current_process_task_snapshot().ok_or(ErrNo::ESRCH)?;
-    ipc::signal::with_registry(|registry| {
-        if !registry.has_thread(snapshot.task_id) {
-            registry.register_process(snapshot.pid.raw(),
-                                      snapshot.task_id,
-                                      snapshot.tid.raw());
-        }
-    });
+    ipc::signal::ensure_process(snapshot.pid.raw(),
+                                snapshot.task_id,
+                                snapshot.tid.raw(),
+                                []).map_err(|_| ErrNo::ESRCH)?;
     Ok(snapshot)
 }
 
@@ -135,23 +133,15 @@ pub(crate) fn ensure_process_signal_state(pid : ProcessId) -> Result<(), ErrNo> 
     let leader = descriptors.first()
                             .copied()
                             .ok_or(ErrNo::ESRCH)?;
-    ipc::signal::with_registry(|registry| {
-        if !registry.has_process(pid.raw()) {
-            registry.register_process(pid.raw(),
-                                      leader.task_id,
-                                      leader.tid.raw());
-        }
-        for snapshot in descriptors.iter()
+    ipc::signal::ensure_process(pid.raw(),
+                        leader.task_id,
+                        leader.tid.raw(),
+                        descriptors.iter()
                                    .skip(1)
-        {
-            if !registry.has_thread(snapshot.task_id) {
-                let _ = registry.register_thread(leader.task_id,
-                                                 snapshot.task_id,
-                                                 snapshot.tid.raw());
-            }
-        }
-    });
-    Ok(())
+                                   .map(|snapshot| {
+                                       (snapshot.task_id, snapshot.tid.raw())
+                                   }))
+        .map_err(|_| ErrNo::ESRCH)
 }
 
 pub(crate) fn apply_signal_dispatch(dispatch : SignalDispatch, signal : usize) {
@@ -201,7 +191,7 @@ pub(crate) fn apply_signal_dispatch(dispatch : SignalDispatch, signal : usize) {
                         let _ = task::kill_task(member, exit_code);
                     }
                 }
-                ipc::signal::with_registry(|registry| registry.drop_process(snapshot.pid.raw()));
+                ipc::signal::drop_process(snapshot.pid.raw());
             }
         }
     }
@@ -222,9 +212,7 @@ pub(crate) fn notify_parent_sigchld(pid : ProcessId) {
     if ensure_process_signal_state(parent_pid).is_err() {
         return;
     }
-    if let Ok(dispatch) = ipc::signal::with_registry(|registry| {
-        registry.send_process(parent_pid.raw(), ipc::signal::SIGCHLD)
-    }) {
+    if let Ok(dispatch) = ipc::signal::send_process(parent_pid.raw(), ipc::signal::SIGCHLD) {
         apply_signal_dispatch(dispatch, ipc::signal::SIGCHLD);
     }
 }
@@ -245,19 +233,15 @@ pub(crate) fn timer_tick(interrupted_user : bool) {
     let mut generated = alloc::vec::Vec::new();
     if let Ok(snapshot) = ensure_current_signal_state() {
         let user_delta = if interrupted_user { elapsed } else { 0 };
-        if let Ok(cpu_signals) = ipc::signal::with_registry(|registry| {
-            registry.account_cpu(snapshot.pid.raw(), user_delta, elapsed)
-        }) {
+        if let Ok(cpu_signals) = ipc::signal::account_cpu(snapshot.pid.raw(), user_delta, elapsed) {
             generated.extend(cpu_signals);
         }
     }
-    let realtime = ipc::signal::with_registry(|registry| registry.expire_realtime(now));
+    let realtime = ipc::signal::expire_realtime(now);
     generated.extend(realtime.into_iter()
                              .map(|dispatch| (dispatch, ipc::signal::SIGALRM)));
     if let Ok(realtime_now) = platform::wall_clock::realtime_ns() {
-        generated.extend(ipc::signal::with_registry(|registry| {
-            registry.expire_posix_timers(now, realtime_now)
-        }));
+        generated.extend(ipc::signal::expire_posix_timers(now, realtime_now));
     }
     for (dispatch, signal) in generated {
         apply_signal_dispatch(dispatch, signal);
@@ -266,11 +250,11 @@ pub(crate) fn timer_tick(interrupted_user : bool) {
 
 pub(crate) fn abort_fork_signal(child_pid : usize, child_task_id : usize) {
     let _ = child_task_id;
-    ipc::signal::with_registry(|registry| registry.drop_process(child_pid));
+    ipc::signal::drop_process(child_pid);
 }
 
 pub(crate) fn abort_clone_thread_signal(child_task_id : usize) {
-    ipc::signal::with_registry(|registry| registry.drop_thread(child_task_id));
+    ipc::signal::drop_thread(child_task_id);
 }
 
 pub(crate) fn on_fork(parent_task_id : usize,
@@ -278,45 +262,31 @@ pub(crate) fn on_fork(parent_task_id : usize,
                       child_task_id : usize,
                       child_tid : usize)
                       -> Result<(), SignalError> {
-    ipc::signal::with_registry(|registry| {
-        registry.fork_process(parent_task_id,
+    ipc::signal::fork_process(parent_task_id,
                               child_pid,
                               child_task_id,
                               child_tid)
-    })
 }
 
 pub(crate) fn on_clone_thread(parent_task_id : usize,
                               child_task_id : usize,
                               child_tid : usize)
                               -> Result<(), SignalError> {
-    ipc::signal::with_registry(|registry| {
-        registry.register_thread(parent_task_id, child_task_id, child_tid)
-    })
+    ipc::signal::register_thread(parent_task_id, child_task_id, child_tid)
 }
 
 pub(crate) fn on_exec(task_id : usize, removed_threads : &[task::ExitedTask]) {
-    ipc::signal::with_registry(|registry| {
-        for thread in removed_threads {
-            registry.drop_thread(thread.id);
-        }
-        let _ = registry.exec_process(task_id);
-    });
+    let _ = ipc::signal::exec_process(task_id,
+                                      removed_threads.iter()
+                                                     .map(|thread| thread.id));
 }
 
 pub(crate) fn on_thread_exit(task_id : usize, pid : usize, last_thread : bool) {
-    ipc::signal::with_registry(|registry| {
-        registry.drop_thread(task_id);
-        if last_thread {
-            registry.drop_process(pid);
-        }
-    });
+    ipc::signal::exit_thread(task_id, pid, last_thread);
 }
 
 pub(crate) fn drop_thread_state(task_id : usize) {
-    ipc::signal::with_registry(|registry| {
-        registry.drop_thread_and_empty_process(task_id);
-    });
+    ipc::signal::drop_thread_and_empty_process(task_id);
 }
 
 // ── 信号递送与恢复 ──────────────────────────────────────────
@@ -325,8 +295,7 @@ pub(crate) fn deliver_pending_signal(frame : *mut u8,
                                      restart : Option<(usize, SyscallArgs)>)
                                      -> Result<bool, ErrNo> {
     let snapshot = ensure_current_signal_state()?;
-    let pending =
-        ipc::signal::with_registry(|registry| registry.take_deliverable(snapshot.task_id));
+    let pending = ipc::signal::take_deliverable(snapshot.task_id);
     let Some(pending) = pending else {
         return Ok(false);
     };
@@ -346,9 +315,7 @@ pub(crate) fn deliver_pending_signal(frame : *mut u8,
                                                      4);
         }
     }
-    let alternate_stack =
-        ipc::signal::with_registry(|registry| registry.alternate_stack(snapshot.task_id))
-            .map_err(|_| ErrNo::ESRCH)?;
+    let alternate_stack = ipc::signal::alternate_stack(snapshot.task_id).map_err(|_| ErrNo::ESRCH)?;
     let interrupted_sp = TrapFrameRead::user_sp(context);
     let already_on_alternate =
         alternate_stack.active_frames != 0 || alternate_stack.contains(interrupted_sp);
@@ -372,21 +339,21 @@ pub(crate) fn deliver_pending_signal(frame : *mut u8,
                                                  errno : 0,
                                                  code : 0,
                                                  payload : [0; 116] },
-                            ucontext : UserUContext { flags : 0,
-                                                      link : 0,
-                                                      stack : signal_stack_for_user(
-                                                          alternate_stack,
-                                                          already_on_alternate,
-                                                      ),
-                                                      sigmask : pending.previous_mask
-                                                                       .bits(),
-                                                      reserved : [0; 15],
-                                                      machine : original },
+                            ucontext:
+                                UserUContext { flags : 0,
+                                               link : 0,
+                                               stack:
+                                                   signal_stack_for_user(alternate_stack,
+                                                                         already_on_alternate),
+                                               sigmask : pending.previous_mask
+                                                                .bits(),
+                                               reserved : [0; 15],
+                                               machine : original },
                             magic : SIGNAL_FRAME_MAGIC };
     copy_to_user_struct(frame_sp, &user_frame)?;
-    ipc::signal::with_registry(|registry| {
-        registry.enter_signal_frame(snapshot.task_id, frame_on_alternate)
-    }).map_err(|_| ErrNo::ESRCH)?;
+    ipc::signal::enter_signal_frame(snapshot.task_id, frame_on_alternate).map_err(|_| {
+                                                                             ErrNo::ESRCH
+                                                                         })?;
 
     let info_ptr = frame_sp;
     let ucontext_ptr = frame_sp + core::mem::offset_of!(UserRtSignalFrame, ucontext);
@@ -425,17 +392,10 @@ pub(crate) fn restore_signal_frame(frame : *mut u8) -> Result<(), ErrNo> {
     {
         return Err(ErrNo::EFAULT);
     }
-    let alternate_stack =
-        ipc::signal::with_registry(|registry| registry.alternate_stack(snapshot.task_id))
-            .map_err(|_| ErrNo::ESRCH)?;
-    ipc::signal::with_registry(|registry| {
-        registry.restore_mask(snapshot.task_id,
-                              SignalSet::from_bits(user_frame.ucontext
-                                                             .sigmask))
-    }).map_err(|_| ErrNo::ESRCH)?;
-    ipc::signal::with_registry(|registry| {
-        registry.leave_signal_frame(snapshot.task_id, alternate_stack.contains(frame_sp))
-    }).map_err(|_| ErrNo::ESRCH)
+    ipc::signal::leave_signal_frame(snapshot.task_id,
+                                    SignalSet::from_bits(user_frame.ucontext
+                                                                   .sigmask),
+                                    frame_sp).map_err(|_| ErrNo::ESRCH)
 }
 
 fn signal_stack_for_user(stack : ipc::signal::AlternateSignalStack,
@@ -469,7 +429,7 @@ pub(crate) fn sys_rt_sigpending(args : SyscallArgs) -> UserRet {
         Ok(snapshot) => snapshot,
         Err(error) => return UserRet::from_error(error),
     };
-    let pending = match ipc::signal::with_registry(|registry| registry.pending(snapshot.task_id)) {
+    let pending = match ipc::signal::pending(snapshot.task_id) {
         Ok(pending) => pending,
         Err(_) => return UserRet::from_error(ErrNo::ESRCH),
     };
@@ -500,12 +460,11 @@ pub(crate) fn sys_rt_sigprocmask(args : SyscallArgs) -> UserRet {
             Err(e) => return UserRet::from_error(e),
         }
     };
-    let old =
-        match ipc::signal::with_registry(|registry| registry.update_mask(task_id, how, new_set)) {
-            Ok(old) => old,
-            Err(SignalError::InvalidHow) => return UserRet::from_error(ErrNo::EINVAL),
-            Err(_) => return UserRet::from_error(ErrNo::EINVAL),
-        };
+    let old = match ipc::signal::update_mask(task_id, how, new_set) {
+        Ok(old) => old,
+        Err(SignalError::InvalidHow) => return UserRet::from_error(ErrNo::EINVAL),
+        Err(_) => return UserRet::from_error(ErrNo::EINVAL),
+    };
     if oldset != 0 {
         if let Err(e) = copy_to_user_struct(oldset, &old.bits()) {
             return UserRet::from_error(e);
@@ -521,7 +480,7 @@ pub(crate) fn sys_sigaltstack(args : SyscallArgs) -> UserRet {
         Ok(snapshot) => snapshot.task_id,
         Err(error) => return UserRet::from_error(error),
     };
-    let current = match ipc::signal::with_registry(|registry| registry.alternate_stack(task_id)) {
+    let current = match ipc::signal::alternate_stack(task_id) {
         Ok(stack) => stack,
         Err(_) => return UserRet::from_error(ErrNo::ESRCH),
     };
@@ -542,17 +501,14 @@ pub(crate) fn sys_sigaltstack(args : SyscallArgs) -> UserRet {
         Ok(stack) => stack,
         Err(error) => return UserRet::from_error(error),
     };
-    match ipc::signal::with_registry(|registry| {
-        registry.replace_alternate_stack(task_id, replacement)
-    }) {
+    match ipc::signal::replace_alternate_stack(task_id, replacement) {
         Ok(_) => UserRet::from_success(0),
         Err(SignalError::AlternateStackActive) => UserRet::from_error(ErrNo::EPERM),
         Err(_) => UserRet::from_error(ErrNo::ESRCH),
     }
 }
 
-fn parse_signal_stack(stack : UserSignalStack)
-                      -> Result<ipc::signal::AlternateSignalStack, ErrNo> {
+fn parse_signal_stack(stack : UserSignalStack) -> Result<ipc::signal::AlternateSignalStack, ErrNo> {
     if stack.flags == SS_DISABLE {
         return Ok(ipc::signal::AlternateSignalStack::default());
     }
@@ -562,7 +518,11 @@ fn parse_signal_stack(stack : UserSignalStack)
     if stack.size < MINSIGSTKSZ {
         return Err(ErrNo::ENOMEM);
     }
-    if stack.sp == 0 || stack.sp.checked_add(stack.size).is_none() {
+    if stack.sp == 0 ||
+       stack.sp
+            .checked_add(stack.size)
+            .is_none()
+    {
         return Err(ErrNo::EINVAL);
     }
     Ok(ipc::signal::AlternateSignalStack { sp : stack.sp,
@@ -587,24 +547,19 @@ pub(crate) fn sys_rt_sigsuspend(args : SyscallArgs) -> UserRet {
         Ok(bits) => bits,
         Err(error) => return UserRet::from_error(error),
     };
-    match ipc::signal::with_registry(|registry| {
-              registry.begin_sigsuspend(snapshot.task_id,
+    match ipc::signal::begin_sigsuspend(snapshot.task_id,
                                         SignalSet::from_bits(bits))
-          }) {
+    {
         Ok(()) => {}
         Err(_) => return UserRet::from_error(ErrNo::ESRCH),
     }
     ltp_fuzz_sigsuspend_worker_fast_exit_if_standalone();
     ltp_standalone_skip_blocking_fast_exit_if_needed();
     let wait = task::wait_queue::WaitQueue::new();
-    let _ = wait.wait_current_while(|| {
-                    ipc::signal::with_registry(|registry| {
-                        !registry.has_deliverable(snapshot.task_id)
-                                 .unwrap_or(true)
-                    })
-                });
+    let _ =
+        wait.wait_current_while(|| !ipc::signal::has_deliverable(snapshot.task_id).unwrap_or(true));
     let _ = wait.try_release_empty();
-    let _ = ipc::signal::with_registry(|registry| registry.end_sigsuspend(snapshot.task_id));
+    let _ = ipc::signal::end_sigsuspend(snapshot.task_id);
     UserRet::from_error(ErrNo::EINTR)
 }
 
@@ -650,9 +605,7 @@ pub(crate) fn sys_rt_sigtimedwait(args : SyscallArgs) -> UserRet {
     }
     let wait_queue = task::wait_queue::WaitQueue::new();
     let sig = loop {
-        if let Some(sig) =
-            ipc::signal::with_registry(|registry| registry.take_pending(task_id, wait_set))
-        {
+        if let Some(sig) = ipc::signal::take_pending(task_id, wait_set) {
             break sig;
         }
         let ticks = match deadline {
@@ -670,28 +623,19 @@ pub(crate) fn sys_rt_sigtimedwait(args : SyscallArgs) -> UserRet {
             }
             None => u64::MAX,
         };
-        let _ =
-            ipc::signal::with_registry(|registry| registry.begin_signal_wait(task_id, wait_set));
+        let _ = ipc::signal::begin_signal_wait(task_id, wait_set);
         let still_waiting = || {
-            ipc::signal::with_registry(|registry| {
-                registry.pending(task_id)
-                        .map(|pending| {
-                            pending.intersection(wait_set)
-                                   .is_empty()
-                        })
-                        .unwrap_or(false)
-            })
+            ipc::signal::pending_in(task_id, wait_set).map(|has_pending| !has_pending)
+                                                      .unwrap_or(false)
         };
         let wait_result = if deadline.is_some() {
             wait_queue.wait_current_while_for_ticks(ticks, still_waiting)
         } else {
             wait_queue.wait_current_while(still_waiting)
         };
-        let _ = ipc::signal::with_registry(|registry| registry.end_signal_wait(task_id));
+        let _ = ipc::signal::end_signal_wait(task_id);
         if wait_result == task::TaskWaitResult::Interrupted {
-            if let Some(sig) =
-                ipc::signal::with_registry(|registry| registry.take_pending(task_id, wait_set))
-            {
+            if let Some(sig) = ipc::signal::take_pending(task_id, wait_set) {
                 break sig;
             }
             let _ = wait_queue.try_release_empty();
@@ -724,7 +668,7 @@ pub(crate) fn sys_rt_sigaction(args : SyscallArgs) -> UserRet {
         Ok(snapshot) => snapshot.task_id,
         Err(error) => return UserRet::from_error(error),
     };
-    let old = match ipc::signal::with_registry(|registry| registry.get_action(task_id, sig)) {
+    let old = match ipc::signal::get_action(task_id, sig) {
         Ok(old) => old,
         Err(_) => return UserRet::from_error(ErrNo::EINVAL),
     };
@@ -745,7 +689,7 @@ pub(crate) fn sys_rt_sigaction(args : SyscallArgs) -> UserRet {
                                                  flags : user_action.flags,
                                                  restorer : 0,
                                                  mask : SignalSet::from_bits(user_action.mask) };
-        match ipc::signal::with_registry(|registry| registry.set_action(task_id, sig, action)) {
+        match ipc::signal::set_action(task_id, sig, action) {
             Ok(_) => {}
             Err(_) => return UserRet::from_error(ErrNo::EINVAL),
         }
@@ -862,16 +806,12 @@ fn send_signal_to_process(process : ProcessId, sig : usize) -> Result<(), ErrNo>
     if ensure_process_signal_state(process).is_err() {
         return Err(ErrNo::ESRCH);
     }
-    let dispatch = ipc::signal::with_registry(|registry| registry.send_process(process.raw(), sig))
-        .map_err(|_| ErrNo::EINVAL)?;
+    let dispatch = ipc::signal::send_process(process.raw(), sig).map_err(|_| ErrNo::EINVAL)?;
     apply_signal_dispatch(dispatch, sig);
     if dispatch.delivery == SignalDelivery::Pending {
         if let Some(task_ids) = task::task_ids_for_process(process) {
             for member in task_ids {
-                let deliverable = ipc::signal::with_registry(|registry| {
-                    registry.has_deliverable(member)
-                            .unwrap_or(false)
-                });
+                let deliverable = ipc::signal::has_deliverable(member).unwrap_or(false);
                 if deliverable {
                     let _ = task::interrupt_task(member);
                 }

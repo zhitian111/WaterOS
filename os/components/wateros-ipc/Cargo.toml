@@ -9,7 +9,7 @@
         "./ipc-shm/",
         "./ipc-signal/",
         "./ipc-signal/signal-api/api-v0/",
-        "./ipc-signal/signal-impl/impl-dummy/",
+        "./ipc-signal/signal-impl/impl-core/",
         "./ipc-waitqueue/",
         "./ipc-waitqueue/waitqueue-api/api-v0/",
         "./ipc-waitqueue/waitqueue-impl/impl-task/",

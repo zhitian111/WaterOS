@@ -263,9 +263,8 @@ dependencies = [
 name = "ipc-signal"
 version = "0.1.0"
 dependencies = [
- "spin",
  "wateros-ipc-signal-api-v0",
- "wateros-ipc-signal-impl-dummy",
+ "wateros-ipc-signal-impl-core",
 ]
 
 [[package]]
@@ -1170,9 +1169,10 @@ name = "wateros-ipc-signal-api-v0"
 version = "0.1.0"
 
 [[package]]
-name = "wateros-ipc-signal-impl-dummy"
+name = "wateros-ipc-signal-impl-core"
 version = "0.1.0"
 dependencies = [
+ "spin",
  "wateros-ipc-signal-api-v0",
 ]
 

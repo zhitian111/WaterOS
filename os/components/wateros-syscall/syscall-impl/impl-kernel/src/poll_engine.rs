@@ -187,8 +187,8 @@ pub(crate) fn poll_socket_revents(fd : usize, events : i16) -> i16 {
                 }
             }
             stack::SocketState::Connecting | stack::SocketState::Connected => {
-                let peer_read_closed = snapshot.state == stack::SocketState::Connected &&
-                                       !snapshot.may_recv;
+                let peer_read_closed =
+                    snapshot.state == stack::SocketState::Connected && !snapshot.may_recv;
                 if events & POLLIN != 0 && (snapshot.can_recv || peer_read_closed) {
                     revents |= POLLIN;
                 }
@@ -386,7 +386,7 @@ pub(crate) struct PollSigmaskGuard {
 impl Drop for PollSigmaskGuard {
     fn drop(&mut self) {
         if self.active {
-            let _ = ipc::signal::with_registry(|registry| registry.end_poll_sigmask(self.task_id));
+            let _ = ipc::signal::end_poll_sigmask(self.task_id);
         }
     }
 }
@@ -400,9 +400,9 @@ pub(crate) fn install_poll_sigmask(sigmask_ptr : usize,
     validate_sigmask(sigmask_ptr, sigsetsize)?;
     let bits = copy_from_user_struct::<u64>(sigmask_ptr)?;
     let task_id = task::current_task_id().ok_or(ErrNo::ESRCH)?;
-    ipc::signal::with_registry(|registry| {
-        registry.begin_poll_sigmask(task_id, SignalSet::from_bits(bits))
-    }).map_err(|_| ErrNo::EINVAL)?;
+    ipc::signal::begin_poll_sigmask(task_id, SignalSet::from_bits(bits)).map_err(|_| {
+                                                                            ErrNo::EINVAL
+                                                                        })?;
     Ok(Some(PollSigmaskGuard { task_id,
                                active:
                                    true }))

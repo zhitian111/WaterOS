@@ -71,14 +71,12 @@ pub(crate) fn sys_timer_create(args : SyscallArgs) -> UserRet {
     if crate::sys::ipc::signal::ensure_current_signal_state().is_err() {
         return UserRet::from_error(ErrNo::ESRCH);
     }
-    let timer_id = match ipc::signal::with_registry(|registry| {
-        registry.create_posix_timer(pid, clock, signal)
-    }) {
+    let timer_id = match ipc::signal::create_posix_timer(pid, clock, signal) {
         Ok(timer_id) => timer_id,
         Err(error) => return UserRet::from_error(timer_error_to_errno(error)),
     };
     if let Err(error) = copy_to_user_struct(timer_id_ptr, &(timer_id as i32)) {
-        let _ = ipc::signal::with_registry(|registry| registry.delete_posix_timer(pid, timer_id));
+        let _ = ipc::signal::delete_posix_timer(pid, timer_id);
         return UserRet::from_error(error);
     }
     UserRet::from_success(0)
@@ -98,29 +96,30 @@ pub(crate) fn sys_timer_settime(args : SyscallArgs) -> UserRet {
     if new_value_ptr == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
     }
-    let requested = match copy_from_user_struct::<UserItimerSpec>(new_value_ptr)
-        .and_then(user_spec_to_internal)
-    {
-        Ok(spec) => spec,
-        Err(error) => return UserRet::from_error(error),
-    };
+    let requested =
+        match copy_from_user_struct::<UserItimerSpec>(new_value_ptr).and_then(user_spec_to_internal)
+        {
+            Ok(spec) => spec,
+            Err(error) => return UserRet::from_error(error),
+        };
     let (pid, monotonic_ns, realtime_ns) = match timer_context() {
         Ok(context) => context,
         Err(error) => return UserRet::from_error(error),
     };
-    let old = match ipc::signal::with_registry(|registry| {
-        registry.set_posix_timer(pid,
-                                 timer_id,
-                                 requested,
-                                 monotonic_ns,
-                                 realtime_ns,
-                                 flags & TIMER_ABSTIME != 0)
-    }) {
+    let old = match ipc::signal::set_posix_timer(pid,
+                                                 timer_id,
+                                                 requested,
+                                                 monotonic_ns,
+                                                 realtime_ns,
+                                                 flags & TIMER_ABSTIME != 0)
+    {
         Ok(old) => old,
         Err(error) => return UserRet::from_error(timer_error_to_errno(error)),
     };
     if old_value_ptr != 0 {
-        if let Err(error) = copy_to_user_struct(old_value_ptr, &internal_spec_to_user(old)) {
+        if let Err(error) = copy_to_user_struct(old_value_ptr,
+                                                &internal_spec_to_user(old))
+        {
             return UserRet::from_error(error);
         }
     }
@@ -140,9 +139,7 @@ pub(crate) fn sys_timer_gettime(args : SyscallArgs) -> UserRet {
         Ok(context) => context,
         Err(error) => return UserRet::from_error(error),
     };
-    let spec = match ipc::signal::with_registry(|registry| {
-        registry.get_posix_timer(pid, timer_id, monotonic_ns, realtime_ns)
-    }) {
+    let spec = match ipc::signal::get_posix_timer(pid, timer_id, monotonic_ns, realtime_ns) {
         Ok(spec) => spec,
         Err(error) => return UserRet::from_error(timer_error_to_errno(error)),
     };
@@ -161,9 +158,7 @@ pub(crate) fn sys_timer_getoverrun(args : SyscallArgs) -> UserRet {
         Some(process) => process.pid.raw(),
         None => return UserRet::from_error(ErrNo::ESRCH),
     };
-    match ipc::signal::with_registry(|registry| {
-        registry.get_posix_timer_overrun(pid, timer_id)
-    }) {
+    match ipc::signal::get_posix_timer_overrun(pid, timer_id) {
         Ok(overrun) => UserRet::from_success(overrun as usize),
         Err(error) => UserRet::from_error(timer_error_to_errno(error)),
     }
@@ -178,16 +173,15 @@ pub(crate) fn sys_timer_delete(args : SyscallArgs) -> UserRet {
         Some(process) => process.pid.raw(),
         None => return UserRet::from_error(ErrNo::ESRCH),
     };
-    match ipc::signal::with_registry(|registry| registry.delete_posix_timer(pid, timer_id)) {
+    match ipc::signal::delete_posix_timer(pid, timer_id) {
         Ok(()) => UserRet::from_success(0),
         Err(error) => UserRet::from_error(timer_error_to_errno(error)),
     }
 }
 
 fn timer_context() -> Result<(usize, u128, u128), ErrNo> {
-    let pid = task::current_process_snapshot()
-        .map(|process| process.pid.raw())
-        .ok_or(ErrNo::ESRCH)?;
+    let pid = task::current_process_snapshot().map(|process| process.pid.raw())
+                                              .ok_or(ErrNo::ESRCH)?;
     let monotonic_ns = platform::wall_clock::monotonic_ns().map_err(|_| ErrNo::EIO)?;
     let realtime_ns = platform::wall_clock::realtime_ns().map_err(|_| ErrNo::EIO)?;
     Ok((pid, monotonic_ns, realtime_ns))
@@ -211,8 +205,8 @@ fn timespec_to_ns(value : UserTimespec) -> Result<u128, ErrNo> {
         return Err(ErrNo::EINVAL);
     }
     (value.sec as u128).checked_mul(1_000_000_000)
-                         .and_then(|seconds| seconds.checked_add(value.nsec as u128))
-                         .ok_or(ErrNo::EINVAL)
+                       .and_then(|seconds| seconds.checked_add(value.nsec as u128))
+                       .ok_or(ErrNo::EINVAL)
 }
 
 fn internal_spec_to_user(spec : IntervalTimerSpec) -> UserItimerSpec {

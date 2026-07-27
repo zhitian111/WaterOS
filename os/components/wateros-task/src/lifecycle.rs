@@ -44,7 +44,10 @@ pub fn abort_clone_thread(child_id: TaskId) {
     let _ = active_impl::abort_cloned_thread(child_id);
 }
 
-/// 从当前用户任务 clone 一个同进程线程，并登记到当前进程。
+/// 从当前用户任务 clone 一个同进程线程并登记到当前进程，但暂不发布到就绪队列。
+///
+/// syscall 层必须先完成 signal、credential、VFS 等线程侧表的继承，再调用
+/// [`start_clone_thread`]；否则其他 CPU 可能在侧表初始化完成前运行子线程。
 pub fn clone_current_thread(
     child_stack: usize,
     tls: usize,
@@ -70,8 +73,12 @@ pub fn clone_current_thread(
         scheduler::discard_unstarted_task(child_id);
         return None;
     }
-    scheduler::enqueue_ready_task(child_id);
     Some(child_id)
+}
+
+/// 完成 clone 线程的资源继承后，将子线程发布到调度器。
+pub fn start_clone_thread(child_id: TaskId) {
+    scheduler::enqueue_ready_task(child_id);
 }
 
 /// execve：替换当前任务的进程映像。

@@ -408,6 +408,7 @@ fn do_clone_thread(clone_flags : task::CloneFlags,
     cred::share_cred(parent_id, child_id);
 
     crate::sys::misc::bringup_stats::record_clone_thread();
+    task::start_clone_thread(child_id);
     UserRet::from_success(child_tid_raw)
 }
 
