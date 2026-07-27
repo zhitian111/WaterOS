@@ -18,13 +18,13 @@ pub struct BringupCommand {
 }
 
 /// 按 [`BringupCommand`] 串行执行：装载 `program` → spawn → wait → reap。
-pub fn run_one_bringup_command(log_tag : &str, cmd : &BringupCommand) {
+pub fn run_one_bringup_command(log_tag : &str, cmd : &BringupCommand) -> Option<isize> {
     if cmd.argv.is_empty() {
         warn!("[{log_tag}] skip cmd program={}: empty argv",
               cmd.program);
-        return;
+        return None;
     }
-    run_one_elf_argv(log_tag, cmd.program, cmd.argv);
+    run_one_elf_argv_exit(log_tag, cmd.program, cmd.argv)
 }
 
 /// 基于已装载 ELF 创建用户任务，并在用户栈上写入 `argv` / `envp`（与 `execve`
@@ -131,6 +131,13 @@ fn drop_reaped_task_runtime_resources(exited : &task::ExitedTask) {
 
 /// 按 ELF 路径前缀选择 glibc/musl 的 `LD_LIBRARY_PATH` 与 `PATH`。
 fn libc_envp_for_path(path : &str) -> Vec<&'static str> {
+    #[cfg(feature = "final_online")]
+    {
+        let _ = path;
+        return vec!["PATH=/glibc:/bin:/usr/bin:/sbin:/usr/sbin"];
+    }
+
+    #[cfg(not(feature = "final_online"))]
     if path.starts_with("/glibc/") {
         // LTP 脚本用 `. test.sh` 相对 PATH 加载库；须先于 /glibc/test.sh（lua 包装），
         // 否则 tst_resm 等会落到 PATH 里的 C 二进制并 fork/wait，attach 段与后台 job 组合会卡死。

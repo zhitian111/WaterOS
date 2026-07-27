@@ -122,21 +122,17 @@ const BRINGUP_COMMANDS : &[BringupCommand] =
                                  $i > /tmp/wateros-smp-test/$i; cat /tmp/wateros-smp-test/$i \
                                  > /dev/null; rm -f /tmp/wateros-smp-test/$i) & i=$((i + \
                                  1)); done; wait; echo SMP_MM_TEST_DONE"] },
-      BringupCommand { program : "/busybox",
-                       argv : &["sh",
-                                "/glibc/cagent_testcode.sh"] },
-      BringupCommand { program : "/busybox",
-                       argv : &["sh",
-                                "/glibc/buildstorm_testcode.sh"] }];
+      BringupCommand { program : "/glibc/cagent_testcode.sh",
+                       argv : &["/glibc/cagent_testcode.sh"] },
+      BringupCommand { program : "/glibc/buildstorm_testcode.sh",
+                       argv : &["/glibc/buildstorm_testcode.sh"] }];
 
 #[cfg(all(feature = "final_online", not(feature = "final_online_smp_test")))]
 const BRINGUP_COMMANDS : &[BringupCommand] =
-    &[BringupCommand { program : "/usr/bin/busybox",
-                       argv : &["sh",
-                                "/glibc/cagent_testcode.sh"] },
-      BringupCommand { program : "/usr/bin/busybox",
-                       argv : &["sh",
-                                "/glibc/buildstorm_testcode.sh"] }];
+    &[BringupCommand { program : "/glibc/cagent_testcode.sh",
+                       argv : &["/glibc/cagent_testcode.sh"] },
+      BringupCommand { program : "/glibc/buildstorm_testcode.sh",
+                       argv : &["/glibc/buildstorm_testcode.sh"] }];
 
 const LOG_TAG : &str = "busybox-bringup";
 
@@ -174,8 +170,21 @@ extern "C" fn bringup_kernel_runner(_arg : usize) -> ! {
         let start_ns = monotonic_ns();
         error!("[{LOG_TAG}] program={} argv={:?} start_mono_ns={start_ns}",
                cmd.program, cmd.argv);
-        crate::user_bringup_common::run_one_bringup_command(LOG_TAG, cmd);
+        let exit_code = crate::user_bringup_common::run_one_bringup_command(LOG_TAG, cmd);
         log_elapsed(LOG_TAG, cmd, start_ns, monotonic_ns());
+        match exit_code {
+            Some(0) => error!("[{LOG_TAG}] command succeeded program={} exit_code=0", cmd.program),
+            Some(code) => {
+                error!("[{LOG_TAG}] command failed program={} exit_code={code}; stop queue",
+                       cmd.program);
+                break;
+            }
+            None => {
+                error!("[{LOG_TAG}] command failed to load or spawn program={}; stop queue",
+                       cmd.program);
+                break;
+            }
+        }
     }
     error!("[{LOG_TAG}] all commands finished");
     let _ = shutdown(platform::reset::PlatformResetReason::NoReason);

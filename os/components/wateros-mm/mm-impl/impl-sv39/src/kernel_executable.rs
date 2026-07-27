@@ -29,15 +29,17 @@ fn load_program_from_path_rec(path : &str,
         return Err(LoadProgramError::Script(ExecResolveError::RecursionLimit));
     }
 
+    let resolved_path = crate::kernel_elf::resolve_elf_path(path).map_err(LoadProgramError::Elf)?;
+
     // 只读前 256 字节检测 shebang/ELF，不整读大文件
     let mut prefix = vec![0u8; 256];
-    let n =
-        crate::kernel_elf::read_path_range(path, 0, &mut prefix).map_err(LoadProgramError::Elf)?;
+    let n = crate::kernel_elf::read_path_range(resolved_path.as_str(), 0, &mut prefix)
+        .map_err(LoadProgramError::Elf)?;
     prefix.truncate(n);
 
     if executable::is_elf_prefix(&prefix) {
         let final_argv = argv_vec(path, argv);
-        let loaded = from_elf_path(path).map_err(LoadProgramError::Elf)?;
+        let loaded = from_elf_path(resolved_path.as_str()).map_err(LoadProgramError::Elf)?;
         return Ok((loaded, final_argv));
     }
 

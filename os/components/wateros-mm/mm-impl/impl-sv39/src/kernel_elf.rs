@@ -204,7 +204,7 @@ pub fn read_path_bytes(path : &str) -> Result<Vec<u8>, LoadElfError> {
     }
 }
 
-fn resolve_elf_path(path : &str) -> Result<String, LoadElfError> {
+pub(crate) fn resolve_elf_path(path : &str) -> Result<String, LoadElfError> {
     vfs::resolve_symlink_absolute(path, vfs::api::FinalSymlink::Follow)
         .map_err(|error| LoadElfError::RootVolume(map_vfs_to_root_vol(error)))
 }
