@@ -1,10 +1,12 @@
 //! 进程间通信（IPC）相关的 syscall 实现。
 
+pub(crate) mod eventfd;
 pub(crate) mod futex;
 pub(crate) mod robust;
 pub(crate) mod shm;
 pub(crate) mod signal;
 
+pub(crate) use eventfd::sys_eventfd2;
 pub(crate) use futex::sys_futex;
 pub(crate) use robust::{robust_exit_cleanup, drop_robust_state, futex_error_to_errno,
                         robust_exit_cleanup_siblings_for_exec, sys_get_robust_list, sys_set_robust_list};

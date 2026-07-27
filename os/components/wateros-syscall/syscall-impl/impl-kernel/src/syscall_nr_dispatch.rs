@@ -48,6 +48,7 @@ pub fn dispatch_syscall_by_nr(syscall_nr : usize, syscall_args : SyscallArgs) ->
         n if n == api_v0::DUP => sys::sys_dup(syscall_args).0,
         n if n == api_v0::DUP3 => sys::sys_dup3(syscall_args).0,
         n if n == api_v0::PIPE2 => sys::sys_pipe2(syscall_args).0,
+        n if n == api_v0::EVENTFD2 => sys::sys_eventfd2(syscall_args).0,
         n if n == api_v0::IOCTL => sys::sys_ioctl(syscall_args).0,
         n if n == api_v0::FCNTL => sys::sys_fcntl(syscall_args).0,
         n if n == api_v0::FLOCK => sys::sys_flock(syscall_args).0,

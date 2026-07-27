@@ -47,6 +47,7 @@ pub const LSEEK : usize = 62;
 pub const DUP : usize = 23;
 pub const DUP3 : usize = 24;
 pub const PIPE2 : usize = 59;
+pub const EVENTFD2 : usize = 19;
 pub const IOCTL : usize = 29;
 pub const FCNTL : usize = 25;
 pub const FLOCK : usize = 32;
