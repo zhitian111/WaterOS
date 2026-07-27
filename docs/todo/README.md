@@ -2,7 +2,7 @@
 
 ## 决赛测例入口
 
-2026 年决赛 CAgent 与 BuildStorm 的静态差距、实施顺序和验收标准见 [`final-test-readiness.md`](./final-test-readiness.md)。三人任务分配、接口边界和阶段计划见 [`final-test-team-allocation.md`](./final-test-team-allocation.md)。未来两周的周一、周三、周五会议安排及第一次会议材料见 [`final-test-two-week-meetings.md`](./final-test-two-week-meetings.md)。A 与 B 第一轮 SMP 协作的接口、数据结构和改动位置见 [`smp-a-b-first-interface-contract.md`](./smp-a-b-first-interface-contract.md)。其中双架构 8 核 SMP、`/proc/uptime`、在线 CPU 报告和官方镜像端到端验证是当前 P0 阻断项。多核代码位置的详细预记录见 [`../单核设计转多核设计需要更改的位置的预记录.md`](../单核设计转多核设计需要更改的位置的预记录.md)。
+2026 年决赛 CAgent 与 BuildStorm 的静态差距、实施顺序和验收标准见 [`final-test-readiness.md`](./final-test-readiness.md)。2026-07-27 官方镜像实测确认的动态 ELF、shell、脚本等待和 `/proc/uptime` 阻断见 [`final-cagent-buildstorm-runtime-blockers.md`](./final-cagent-buildstorm-runtime-blockers.md)。三人任务分配、接口边界和阶段计划见 [`final-test-team-allocation.md`](./final-test-team-allocation.md)。未来两周的周一、周三、周五会议安排及第一次会议材料见 [`final-test-two-week-meetings.md`](./final-test-two-week-meetings.md)。A 与 B 第一轮 SMP 协作的接口、数据结构和改动位置见 [`smp-a-b-first-interface-contract.md`](./smp-a-b-first-interface-contract.md)。其中双架构 8 核 SMP、`/proc/uptime`、在线 CPU 报告和官方镜像端到端验证是当前 P0 阻断项。多核代码位置的详细预记录见 [`../单核设计转多核设计需要更改的位置的预记录.md`](../单核设计转多核设计需要更改的位置的预记录.md)。
 
 ## 用途
 

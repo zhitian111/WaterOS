@@ -129,10 +129,10 @@ const BRINGUP_COMMANDS : &[BringupCommand] =
 
 #[cfg(all(feature = "final_online", not(feature = "final_online_smp_test")))]
 const BRINGUP_COMMANDS : &[BringupCommand] =
-    &[BringupCommand { program : "/glibc/cagent_testcode.sh",
-                       argv : &["/glibc/cagent_testcode.sh"] },
-      BringupCommand { program : "/glibc/buildstorm_testcode.sh",
-                       argv : &["/glibc/buildstorm_testcode.sh"] }];
+    &[BringupCommand { program : "/glibc/buildstorm_testcode.sh",
+                       argv : &["/glibc/buildstorm_testcode.sh"] },
+      BringupCommand { program : "/glibc/cagent_testcode.sh",
+                       argv : &["/glibc/cagent_testcode.sh"] }];
 
 const LOG_TAG : &str = "busybox-bringup";
 
@@ -173,7 +173,8 @@ extern "C" fn bringup_kernel_runner(_arg : usize) -> ! {
         let exit_code = crate::user_bringup_common::run_one_bringup_command(LOG_TAG, cmd);
         log_elapsed(LOG_TAG, cmd, start_ns, monotonic_ns());
         match exit_code {
-            Some(0) => error!("[{LOG_TAG}] command succeeded program={} exit_code=0", cmd.program),
+            Some(0) => error!("[{LOG_TAG}] command succeeded program={} exit_code=0",
+                              cmd.program),
             Some(code) => {
                 error!("[{LOG_TAG}] command failed program={} exit_code={code}; stop queue",
                        cmd.program);
