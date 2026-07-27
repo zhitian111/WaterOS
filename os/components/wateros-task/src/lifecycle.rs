@@ -7,10 +7,12 @@ use crate::{
     ProcessTaskRole, TaskClearTid, TaskExitCode, TaskId, UserImageInfo, UserStack,
 };
 
-/// 从当前用户任务 fork 一个子任务，并返回子任务 id。
+/// 从当前用户任务创建一个尚未进入就绪队列的 fork 子任务。
 pub fn fork_current(child_stack: usize, new_aspace_ptr: usize, new_satp: usize) -> Option<TaskId> {
     let parent_pid = crate::process::current_process_task_snapshot().map(|task| task.pid)?;
-    let child_id = scheduler::create_fork_child(child_stack, new_aspace_ptr, new_satp)?;
+    let parent_leader = crate::process::process_snapshot(parent_pid)?.leader_task_id;
+    let child_id =
+        scheduler::create_fork_child(child_stack, new_aspace_ptr, new_satp, parent_leader)?;
     let address_space = Some(AddressSpaceRef::new(
         AddressSpaceHandle::from_raw(new_satp),
         new_aspace_ptr,
@@ -22,8 +24,12 @@ pub fn fork_current(child_stack: usize, new_aspace_ptr: usize, new_satp: usize) 
         scheduler::discard_unstarted_task(child_id);
         return None;
     }
-    scheduler::enqueue_ready_task(child_id);
     Some(child_id)
+}
+
+/// 完成 fork 资源继承后，将子任务发布到调度器。
+pub fn start_fork_child(child_id: TaskId) {
+    scheduler::enqueue_ready_task(child_id);
 }
 
 /// fork 失败回滚：撤销子任务 TCB、进程槽位与地址空间；返回被撤销的子进程 PID（供信号表清理）。

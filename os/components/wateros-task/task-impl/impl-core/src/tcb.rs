@@ -201,6 +201,7 @@ impl TaskControlBlock {
     /// 从父任务 fork 一个子用户任务。独立地址空间、独立 trap frame、独立内核栈，但共享父任务的用户映像。
     pub fn fork_from(&self,
                      child_id : TaskId,
+                     child_parent_id : TaskId,
                      child_stack : usize,
                      new_aspace_ptr : usize,
                      new_satp : usize)
@@ -238,7 +239,7 @@ impl TaskControlBlock {
         let task_cx = TaskContext::goto_entry(__arch_user_task_entry as *const () as usize,
                                               kernel_stack.top());
         Some(Self { id : child_id,
-                    parent_id : Some(self.id),
+                    parent_id : Some(child_parent_id),
                     state : TaskState::Ready,
                     policy : self.policy,
                     priority : self.priority,

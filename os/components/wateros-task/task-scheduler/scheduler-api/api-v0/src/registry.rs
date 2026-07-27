@@ -97,7 +97,8 @@ impl TaskRegistry {
                         child_stack : usize,
                         new_aspace_ptr : usize,
                         new_satp : usize,
-                        parent_id : TaskId)
+                        source_task_id : TaskId,
+                        child_parent_id : TaskId)
                         -> Option<TaskId> {
         let child_id = {
             let id = self.next_id;
@@ -106,10 +107,11 @@ impl TaskRegistry {
             id
         };
         let parent = self.tasks
-                         .get(&parent_id)
+                         .get(&source_task_id)
                          .map(|b| b.as_ref())
                          .expect("parent task must exist");
         let child = match parent.fork_from(child_id,
+                                           child_parent_id,
                                            child_stack,
                                            new_aspace_ptr,
                                            new_satp)

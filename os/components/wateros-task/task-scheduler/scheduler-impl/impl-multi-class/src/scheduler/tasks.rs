@@ -57,14 +57,16 @@ impl MultiClassScheduler {
                              child_stack : usize,
                              new_aspace_ptr : usize,
                              new_satp : usize,
+                             child_parent_id : TaskId,
                              cpu_id : CpuId)
                              -> Option<TaskId> {
-        let current_task_id = self.cpu_states[cpu_id.raw()].current_task_id?;
+        let source_task_id = self.cpu_states[cpu_id.raw()].current_task_id?;
         self.registry
             .fork_current(child_stack,
                           new_aspace_ptr,
                           new_satp,
-                          current_task_id)
+                          source_task_id,
+                          child_parent_id)
     }
 
     pub fn fork_current(&mut self,
@@ -76,6 +78,7 @@ impl MultiClassScheduler {
         let child_id = self.create_fork_child(child_stack,
                                               new_aspace_ptr,
                                               new_satp,
+                                              self.cpu_states[cpu_id.raw()].current_task_id?,
                                               cpu_id)?;
         self.enqueue_ready_task(child_id);
         Some(child_id)

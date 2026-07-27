@@ -206,16 +206,6 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
                                child_tid);
     }
 
-    if let Some(process_task) = task::current_process_task_snapshot() {
-        if process_task.role != task::ProcessTaskRole::Leader {
-            log::warn!("[syscall] clone(nr=220) fork from non-leader tid={} pid={}",
-                       process_task.tid
-                                   .raw(),
-                       process_task.pid
-                                   .raw(),);
-            return UserRet::from_error(ErrNo::EPERM);
-        }
-    }
     if let Err(errno) = validate_fork_clone_flags(clone_flags) {
         return UserRet::from_error(errno);
     }
@@ -324,6 +314,7 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
         }
     }
 
+    task::start_fork_child(child_id);
     UserRet::from_success(child_pid)
 }
 

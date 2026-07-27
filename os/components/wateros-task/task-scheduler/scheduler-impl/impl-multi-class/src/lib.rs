@@ -209,13 +209,15 @@ pub fn enqueue_ready_task(task_id : TaskId) {
 /// 从当前用户任务 fork 子任务（仅登记 TCB，不入就绪队列）。
 pub fn create_fork_child(child_stack : usize,
                          new_aspace_ptr : usize,
-                         new_satp : usize)
+                         new_satp : usize,
+                         child_parent_id : TaskId)
                          -> Option<TaskId> {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| {
         scheduler.create_fork_child(child_stack,
                                     new_aspace_ptr,
                                     new_satp,
+                                    child_parent_id,
                                     cpu::current_cpu_id())
     })
 }

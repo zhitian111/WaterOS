@@ -15,7 +15,7 @@ pub use self::wait_queue::WaitQueue;
 pub use api_v0::CpuMask;
 pub use lifecycle::{
     abort_clone_thread, abort_fork_child, clone_current_thread, execve_current, exit_current,
-    exit_group_current, fork_current, kill_task, terminate_other_threads_for_exec,
+    exit_group_current, fork_current, kill_task, start_fork_child, terminate_other_threads_for_exec,
 };
 
 pub use process::{
