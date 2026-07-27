@@ -31,5 +31,8 @@ pub fn register_task_exe_lookup(_f : api_v0::TaskExeLookup) {}
 /// 占位：dummy 不消费挂载表回调。
 pub fn register_mount_list_lookup(_f : api_v0::MountListLookup) {}
 
+/// 占位：dummy 不消费 uptime 回调。
+pub fn register_uptime_lookup(_f : api_v0::UptimeLookup) {}
+
 /// 空自检。
 pub fn test() {}

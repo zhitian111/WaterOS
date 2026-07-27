@@ -31,6 +31,9 @@ pub type TaskExeLookup = fn(TaskId) -> Option<String>;
 /// 枚举当前挂载表（供 `/proc/mounts`）。
 pub type MountListLookup = fn() -> Vec<ProcMountLine>;
 
+/// 查询内核启动后的单调时长，单位纳秒。
+pub type UptimeLookup = fn() -> u128;
+
 /// procfs 只读路径操作；`rel_path` 为相对 `/proc` 的路径（可带或不带前导 `/`）。
 pub trait ProcFsView {
     /// 路径是否对应已知 proc 节点（含目录与文件）。

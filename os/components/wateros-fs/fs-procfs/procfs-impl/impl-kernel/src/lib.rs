@@ -13,7 +13,7 @@ use alloc::{
 };
 use api_v0::{
     FsDirEntry, FsError, FsMetadata, FsNodeType, FsResult, MountListLookup, ProcFsView,
-    ProcMountLine, TaskArgvLookup, TaskExeLookup, TaskId,
+    ProcMountLine, TaskArgvLookup, TaskExeLookup, TaskId, UptimeLookup,
 };
 use fs_api_v0::{FsAccessMode, FsCapability, FsImpl, FsKind};
 use spin::Mutex;
@@ -25,6 +25,7 @@ static ARGV_LOOKUP : Mutex<Option<TaskArgvLookup>> = Mutex::new(None);
 static EXE_LOOKUP : Mutex<Option<TaskExeLookup>> = Mutex::new(None);
 // 本变量代码由AI完成
 static MOUNT_LOOKUP : Mutex<Option<MountListLookup>> = Mutex::new(None);
+static UPTIME_LOOKUP : Mutex<Option<UptimeLookup>> = Mutex::new(None);
 
 /// 注册按 leader task id 查询 argv 的回调（VFS 层在 init 时注入）。
 // 本方法代码由AI完成
@@ -37,6 +38,9 @@ pub fn register_task_exe_lookup(f : TaskExeLookup) { *EXE_LOOKUP.lock() = Some(f
 /// 注册挂载表枚举回调（供 `/proc/mounts`）。
 // 本方法代码由AI完成
 pub fn register_mount_list_lookup(f : MountListLookup) { *MOUNT_LOOKUP.lock() = Some(f); }
+
+/// 注册内核单调启动时长回调。
+pub fn register_uptime_lookup(f : UptimeLookup) { *UPTIME_LOOKUP.lock() = Some(f); }
 
 // 经静态回调查 argv；未注册时返回 None。
 // 本方法代码由AI完成
@@ -66,6 +70,7 @@ enum ProcNode {
     Root,
     Meminfo,
     Cpuinfo,
+    Uptime,
     Cgroups,
     Mounts,
     SysKernelPidMax,
@@ -85,6 +90,7 @@ fn proc_inode(node : ProcNode) -> u64 {
         ProcNode::Root => 1,
         ProcNode::Meminfo => 2,
         ProcNode::Cpuinfo => 7,
+        ProcNode::Uptime => 8,
         ProcNode::Cgroups => 6,
         ProcNode::Mounts => 3,
         ProcNode::SysKernelPidMax => 4,
@@ -161,6 +167,7 @@ fn parse_node(path : &str) -> Option<ProcNode> {
     match comps.as_slice() {
         ["meminfo"] => Some(ProcNode::Meminfo),
         ["cpuinfo"] => Some(ProcNode::Cpuinfo),
+        ["uptime"] => Some(ProcNode::Uptime),
         ["cgroups"] => Some(ProcNode::Cgroups),
         ["mounts"] => Some(ProcNode::Mounts),
         ["sys", "kernel", "pid_max"] => Some(ProcNode::SysKernelPidMax),
@@ -198,6 +205,14 @@ fn comm_for(pid : ProcessId) -> String {
 // 本方法代码由AI完成
 fn format_cpuinfo() -> Vec<u8> {
     b"processor\t: 0\ncpu family\t: 0\nmodel name\t: WaterOS QEMU virt\n".to_vec()
+}
+
+fn format_uptime() -> Vec<u8> {
+    let nanos = (*UPTIME_LOOKUP.lock()).map(|lookup| lookup())
+                                         .unwrap_or(0);
+    let seconds = nanos / 1_000_000_000;
+    let centiseconds = nanos % 1_000_000_000 / 10_000_000;
+    format!("{seconds}.{centiseconds:02} 0.00\n").into_bytes()
 }
 
 // 本方法代码由AI完成
@@ -415,6 +430,7 @@ impl ProcFsView for KernelProcFs {
             ProcNode::Root |
             ProcNode::Meminfo |
             ProcNode::Cpuinfo |
+            ProcNode::Uptime |
             ProcNode::Cgroups |
             ProcNode::Mounts => true,
             ProcNode::SysKernelPidMax | ProcNode::SysKernelTainted => true,
@@ -441,6 +457,7 @@ impl ProcFsView for KernelProcFs {
                                                                     gid : 0 }),
             ProcNode::Meminfo |
             ProcNode::Cpuinfo |
+            ProcNode::Uptime |
             ProcNode::Cgroups |
             ProcNode::Mounts |
             ProcNode::SysKernelPidMax |
@@ -480,6 +497,7 @@ impl ProcFsView for KernelProcFs {
             ProcNode::Root | ProcNode::PidDir(_) => Err(FsError::NotAFile),
             ProcNode::Meminfo => Ok(format_meminfo()),
             ProcNode::Cpuinfo => Ok(format_cpuinfo()),
+            ProcNode::Uptime => Ok(format_uptime()),
             ProcNode::Cgroups => Ok(format_cgroups()),
             ProcNode::Mounts => Ok(format_mounts()),
             ProcNode::SysKernelPidMax => Ok(b"32768\n".to_vec()),
@@ -500,6 +518,8 @@ impl ProcFsView for KernelProcFs {
                 let mut entries = vec![FsDirEntry { name : String::from("meminfo"),
                                                     node_type : FsNodeType::File },
                                        FsDirEntry { name : String::from("cpuinfo"),
+                                                    node_type : FsNodeType::File },
+                                       FsDirEntry { name : String::from("uptime"),
                                                     node_type : FsNodeType::File },
                                        FsDirEntry { name : String::from("cgroups"),
                                                     node_type : FsNodeType::File },

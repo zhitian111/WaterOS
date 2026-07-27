@@ -25,6 +25,10 @@ pub fn run() {
         Ok(()) => {}
         Err(err) => warn!("[bringup][stage-00-bus] ensure /proc dir failed: {err:?}"),
     }
+    fs::procfs::active_impl::register_uptime_lookup(|| {
+        platform::timer::now_duration().map(|duration| duration.as_nanos())
+                                       .unwrap_or(0)
+    });
     match vfs::mount_procfs_at("/proc") {
         Ok(()) => info!("[bringup][stage-00-bus] procfs mounted at /proc"),
         Err(vfs::api::VfsError::Exists) => info!("[bringup][stage-00-bus] procfs already at /proc"),
