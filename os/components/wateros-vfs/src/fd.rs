@@ -81,31 +81,16 @@ pub fn with_current_io<R>(fd : usize,
                           f : impl FnOnce(&mut (dyn VfsIoHandle + '_)) -> VfsResult<R>)
                           -> VfsResult<R> {
     let task_id = current_task_id()?;
-    let shared = with_fd_registry(|reg| Ok(reg.is_fd_table_shared(task_id)))?;
-
-    if !shared {
-        let mut handle = with_fd_registry(|reg| reg.take_io_for_task(task_id, fd))?;
-        let result = f(handle.as_mut());
-        let restore_result = with_fd_registry(|reg| reg.restore_io_for_task(task_id, fd, handle));
-        if let Err(ref e) = restore_result {
-            log::warn!("[vfs-fd] with_current_io task_id={:?} fd={} restore_failed: {:?}",
-                       task_id,
-                       fd,
-                       e);
-        }
-        restore_result?;
-        return result;
-    }
-
-    let (handle_ptr, slot_lock) =
-        with_fd_registry(|reg| reg.begin_shared_io_for_task(task_id, fd))?;
+    let (owner, handle_ptr, slot_lock) =
+        with_fd_registry(|reg| reg.begin_io_for_task(task_id, fd))?;
     let _slot_guard = slot_lock.lock();
     let result = f(unsafe {
-        // SAFETY: inflight 计数与槽位锁保证句柄驻留且互斥访问。
+        // SAFETY: inflight 计数、槽位锁和延迟清理保证句柄驻留且互斥访问。
         &mut *handle_ptr
     });
+    drop(_slot_guard);
     with_fd_registry(|reg| {
-        reg.end_shared_io_for_task(task_id, fd);
+        reg.end_io_for_owner(owner, fd);
         Ok(())
     })?;
     result
@@ -329,6 +314,23 @@ pub fn self_test() {
         assert_eq!(fd_reuse, fd);
         reg.drop_task_fd_table(a);
         reg.drop_task_fd_table(b);
+
+        // An in-flight stdio operation must keep the old table alive while the
+        // task exits. Reusing the task id must receive a fresh stdio table.
+        let lease_task : task::TaskId = 30;
+        let (old_owner, _, slot_lock) = reg.begin_io_for_task(lease_task,
+                                                               api_v0::VFS_STDIN_FD)
+                                            .expect("stdio lease");
+        let slot_guard = slot_lock.lock();
+        reg.drop_task_fd_table(lease_task);
+        let new_fd = reg.alloc_fd_for_task(lease_task,
+                                           Box::new(impl_fd_session::ConsoleOutHandle))
+                          .expect("reuse task id");
+        assert_eq!(new_fd, api_v0::VFS_FIRST_DYNAMIC_FD);
+        drop(slot_guard);
+        reg.end_io_for_owner(old_owner, api_v0::VFS_STDIN_FD);
+        assert!(reg.get_io_for_task(lease_task, api_v0::VFS_STDIN_FD).is_ok());
+        reg.drop_task_fd_table(lease_task);
 
         if impl_fd_session::poll_pipe_smoke() {
             log::info!("[poll] ppoll pipe ok");

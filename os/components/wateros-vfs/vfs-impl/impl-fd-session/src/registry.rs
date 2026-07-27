@@ -37,6 +37,10 @@ pub struct PerTaskFdRegistry {
     io_inflight: BTreeMap<task::TaskId, Vec<u32>>,
     /// 共享 fd 表：按槽位串行化并发 I/O。
     io_slot_locks: BTreeMap<task::TaskId, Vec<Arc<Mutex<()>>>>,
+    /// 已退出但仍有活动 I/O 的 fd 表；I/O 结束后再回收。
+    pending_cleanup: BTreeMap<task::TaskId, ()>,
+    /// task id 复用时为旧 fd 表分配的临时 owner id。
+    next_owner: task::TaskId,
 }
 
 impl PerTaskFdRegistry {
@@ -48,14 +52,24 @@ impl PerTaskFdRegistry {
             ref_counts: BTreeMap::new(),
             io_inflight: BTreeMap::new(),
             io_slot_locks: BTreeMap::new(),
+            pending_cleanup: BTreeMap::new(),
+            next_owner: task::TaskId::MAX,
         }
     }
 
 // 本方法代码由AI完成
     fn ensure_task(&mut self, task_id: task::TaskId) {
-        self.owners.entry(task_id).or_insert(task_id);
-        self.ref_counts.entry(task_id).or_insert(1);
+        if !self.owners.contains_key(&task_id) {
+            let owner = if self.pending_cleanup.contains_key(&task_id) {
+                self.alloc_owner_id()
+            } else {
+                task_id
+            };
+            self.owners.insert(task_id, owner);
+            self.ref_counts.insert(owner, 1);
+        }
         let owner = self.effective_owner(task_id);
+        self.ref_counts.entry(owner).or_insert(1);
         let table = self.tables.entry(owner).or_insert_with(Vec::new);
         if table.len() < VFS_FIRST_DYNAMIC_FD {
             table.resize_with(VFS_FIRST_DYNAMIC_FD, || None);
@@ -65,6 +79,19 @@ impl PerTaskFdRegistry {
             let flags = self.fd_flags.entry(owner).or_insert_with(Vec::new);
             if flags.len() < VFS_FIRST_DYNAMIC_FD {
                 flags.resize(VFS_FIRST_DYNAMIC_FD, 0);
+            }
+        }
+    }
+
+    fn alloc_owner_id(&mut self) -> task::TaskId {
+        loop {
+            let owner = self.next_owner;
+            self.next_owner = self.next_owner.saturating_sub(1);
+            if !self.tables.contains_key(&owner) &&
+               !self.owners.values().any(|candidate| *candidate == owner) &&
+               !self.pending_cleanup.contains_key(&owner)
+            {
+                return owner;
             }
         }
     }
@@ -151,6 +178,9 @@ impl PerTaskFdRegistry {
             }
         }
         self.fd_flags.remove(&owner);
+        self.io_inflight.remove(&owner);
+        self.io_slot_locks.remove(&owner);
+        self.pending_cleanup.remove(&owner);
         handles
     }
 
@@ -406,13 +436,13 @@ impl PerTaskFdRegistry {
         self.ref_counts.get(&owner).copied().unwrap_or(0) > 1
     }
 
-    /// 共享 fd 表路径：登记 I/O 会话并返回句柄指针与槽位锁（句柄仍留在表中）。
+    /// 登记 I/O 会话并返回句柄指针与槽位锁（句柄仍留在表中）。
 // 本方法代码由AI完成
-    pub fn begin_shared_io_for_task(
+    pub fn begin_io_for_task(
         &mut self,
         task_id: task::TaskId,
         fd: usize,
-    ) -> VfsResult<(*mut dyn VfsIoHandle, Arc<Mutex<()>>)> {
+    ) -> VfsResult<(task::TaskId, *mut dyn VfsIoHandle, Arc<Mutex<()>>)> {
         self.ensure_task(task_id);
         let owner = self.effective_owner(task_id);
         self.ensure_shared_io_state(owner);
@@ -433,54 +463,25 @@ impl PerTaskFdRegistry {
             &mut **handle as *mut dyn VfsIoHandle
         };
         let slot_lock = self.io_slot_locks.get(&owner).expect("shared io locks")[fd].clone();
-        Ok((handle_ptr, slot_lock))
+        Ok((owner, handle_ptr, slot_lock))
     }
 
-    /// 结束共享 fd 表上的 I/O 会话。
+    /// 结束 fd 表上的 I/O 会话；若表已进入延迟清理状态，则在最后一个
+    /// lease 结束后回收全部句柄。
 // 本方法代码由AI完成
-    pub fn end_shared_io_for_task(&mut self, task_id: task::TaskId, fd: usize) {
-        let owner = self.effective_owner(task_id);
+    pub fn end_io_for_owner(&mut self, owner: task::TaskId, fd: usize) {
         if let Some(inflight) = self.io_inflight.get_mut(&owner) {
             if fd < inflight.len() && inflight[fd] > 0 {
                 inflight[fd] -= 1;
             }
         }
-    }
-
-    /// 临时取出指定 fd 的句柄，让调用方可在不持有 fd 注册表借用时执行 I/O。
-// 本方法代码由AI完成
-    pub fn take_io_for_task(
-        &mut self,
-        task_id: task::TaskId,
-        fd: usize,
-    ) -> VfsResult<Box<dyn VfsIoHandle>> {
-        self.ensure_task(task_id);
-        let owner = self.effective_owner(task_id);
-        match self.tables.get_mut(&owner).and_then(|table| table.get_mut(fd)) {
-            Some(slot @ Some(_)) => Ok(slot.take().expect("checked Some")),
-            _ => Err(VfsError::BadFd),
+        let idle = self.io_inflight
+                       .get(&owner)
+                       .map(|counts| counts.iter().all(|count| *count == 0))
+                       .unwrap_or(true);
+        if idle && self.pending_cleanup.contains_key(&owner) {
+            self.close_table(owner);
         }
-    }
-
-    /// 将 [`take_io_for_task`] 取出的句柄放回原 fd 槽位。
-// 本方法代码由AI完成
-    pub fn restore_io_for_task(
-        &mut self,
-        task_id: task::TaskId,
-        fd: usize,
-        handle: Box<dyn VfsIoHandle>,
-    ) -> VfsResult<()> {
-        self.ensure_task(task_id);
-        let owner = self.effective_owner(task_id);
-        let table = self.tables.get_mut(&owner).ok_or(VfsError::BadFd)?;
-        if fd >= table.len() {
-            return Err(VfsError::BadFd);
-        }
-        if table[fd].is_some() {
-            return Err(VfsError::BadFd);
-        }
-        table[fd] = Some(handle);
-        Ok(())
     }
 
     /// 按任务关闭 fd；关闭时调用句柄的 `close`。
@@ -758,7 +759,15 @@ impl PerTaskFdRegistry {
             return;
         };
         if self.ref_counts.get(&owner).copied().unwrap_or(0) == 0 {
-            self.close_table(owner);
+            let active_io = self.io_inflight
+                                  .get(&owner)
+                                  .map(|counts| counts.iter().any(|count| *count != 0))
+                                  .unwrap_or(false);
+            if active_io {
+                self.pending_cleanup.insert(owner, ());
+            } else {
+                self.close_table(owner);
+            }
         }
         if task_id != owner {
             self.tables.remove(&task_id);
