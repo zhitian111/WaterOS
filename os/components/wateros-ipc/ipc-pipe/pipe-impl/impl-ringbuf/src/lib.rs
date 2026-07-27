@@ -72,4 +72,15 @@ pub fn test() {
     write_eof.close();
     let mut eof_buf = [0u8; 4];
     assert_eq!(read_eof.read(&mut eof_buf), Ok(0));
+
+    // 未显式 close 的端点也必须在析构时释放引用并唤醒/通知另一端。
+    let (read_drop, write_after_drop) = PipeEndpoint::pair(false);
+    drop(read_drop);
+    assert_eq!(write_after_drop.write(b"x"),
+               Err(api_v0::PipeError::BrokenPipe));
+
+    let (read_after_drop, write_drop) = PipeEndpoint::pair(false);
+    drop(write_drop);
+    let mut dropped_eof = [0u8; 1];
+    assert_eq!(read_after_drop.read(&mut dropped_eof), Ok(0));
 }

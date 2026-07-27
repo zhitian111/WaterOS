@@ -177,9 +177,18 @@ pub(crate) fn apply_signal_dispatch(dispatch : SignalDispatch, signal : usize) {
                 if let Some(snapshot) = task::process_task_snapshot(task_id) {
                     notify_parent_sigchld(snapshot.pid);
                     on_thread_exit(task_id, snapshot.pid.raw(), true);
+                    if let Some(task_ids) = task::task_ids_for_process(snapshot.pid) {
+                        for member in task_ids {
+                            crate::sys::task::wait::wake_clear_child_tid_for_task(member);
+                            crate::sys::ipc::robust::robust_exit_cleanup(member);
+                            crate::sys::task::wait::drop_task_runtime_resources(member);
+                        }
+                    }
+                } else {
+                    crate::sys::task::wait::wake_clear_child_tid_for_task(task_id);
+                    crate::sys::ipc::robust::robust_exit_cleanup(task_id);
+                    crate::sys::task::wait::drop_task_runtime_resources(task_id);
                 }
-                crate::sys::task::wait::wake_clear_child_tid_for_task(task_id);
-                crate::sys::ipc::robust::robust_exit_cleanup(task_id);
                 task::exit_group_current(exit_code);
             }
             if let Some(snapshot) = task::process_task_snapshot(task_id) {
@@ -188,7 +197,9 @@ pub(crate) fn apply_signal_dispatch(dispatch : SignalDispatch, signal : usize) {
                     for member in task_ids {
                         crate::sys::task::wait::wake_clear_child_tid_for_task(member);
                         crate::sys::ipc::robust::robust_exit_cleanup(member);
-                        let _ = task::kill_task(member, exit_code);
+                        if task::kill_task(member, exit_code) {
+                            crate::sys::task::wait::drop_task_runtime_resources(member);
+                        }
                     }
                 }
                 ipc::signal::drop_process(snapshot.pid.raw());

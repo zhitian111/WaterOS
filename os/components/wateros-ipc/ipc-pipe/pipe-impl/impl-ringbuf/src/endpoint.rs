@@ -17,22 +17,32 @@ pub struct PipeEndpoint {
     kind: PipeEndpointKind,
     nonblocking: Cell<bool>,
     direct: Cell<bool>,
+    /// 每个端点实例只释放一次引用；显式 `close` 与析构可以安全共存。
+    closed: Cell<bool>,
 }
 
 impl Clone for PipeEndpoint {
 // 本方法代码由AI完成
     fn clone(&self) -> Self {
-        match self.kind {
-            PipeEndpointKind::Read => self.pipe.acquire_read(),
-            PipeEndpointKind::Write => self.pipe.acquire_write(),
+        let closed = self.closed.get();
+        if !closed {
+            match self.kind {
+                PipeEndpointKind::Read => self.pipe.acquire_read(),
+                PipeEndpointKind::Write => self.pipe.acquire_write(),
+            }
         }
         Self {
             pipe: self.pipe.clone(),
             kind: self.kind,
             nonblocking: Cell::new(self.nonblocking.get()),
             direct: Cell::new(self.direct.get()),
+            closed: Cell::new(closed),
         }
     }
+}
+
+impl Drop for PipeEndpoint {
+    fn drop(&mut self) { self.release_once(); }
 }
 
 impl PipeEndpoint {
@@ -114,6 +124,16 @@ impl PipeEndpoint {
     pub fn close(&self) {
         PipeEndpointOps::close(self);
     }
+
+    fn release_once(&self) {
+        if self.closed.replace(true) {
+            return;
+        }
+        match self.kind {
+            PipeEndpointKind::Read => self.pipe.release_read(),
+            PipeEndpointKind::Write => self.pipe.release_write(),
+        }
+    }
 }
 
 impl PipeEndpointOps for PipeEndpoint {
@@ -128,12 +148,14 @@ impl PipeEndpointOps for PipeEndpoint {
                 kind: PipeEndpointKind::Read,
                 nonblocking: Cell::new(nonblocking),
                 direct: Cell::new(false),
+                closed: Cell::new(false),
             },
             Self {
                 pipe,
                 kind: PipeEndpointKind::Write,
                 nonblocking: Cell::new(nonblocking),
                 direct: Cell::new(false),
+                closed: Cell::new(false),
             },
         )
     }
@@ -172,10 +194,7 @@ impl PipeEndpointOps for PipeEndpoint {
 
 // 本方法代码由AI完成
     fn close(&self) {
-        match self.kind {
-            PipeEndpointKind::Read => self.pipe.release_read(),
-            PipeEndpointKind::Write => self.pipe.release_write(),
-        }
+        self.release_once();
     }
 
 // 本方法代码由AI完成
