@@ -23,7 +23,7 @@ pub(crate) mod xattr;
 
 pub(crate) use attr::{sys_fchmod, sys_fchmodat, sys_fchown, sys_fchownat, sys_utimensat};
 pub(crate) use close::{sys_close, sys_close_range};
-pub(crate) use cwd::{sys_chdir, sys_getcwd};
+pub(crate) use cwd::{sys_chdir, sys_fchdir, sys_getcwd};
 pub(crate) use dir::{
     sys_linkat, sys_mkdirat, sys_mknodat, sys_readlinkat, sys_symlinkat, sys_unlinkat,
 };

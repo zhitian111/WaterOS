@@ -1,5 +1,6 @@
 //! 当前工作目录操作：`chdir(2)`、`getcwd(2)`。
 
+use alloc::string::String;
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
@@ -66,6 +67,41 @@ pub(crate) fn sys_chdir(args: SyscallArgs) -> UserRet {
         Ok(()) => UserRet::from_success(0),
         Err(VfsError::NotAFile) => UserRet::from_error(ErrNo::ENOTDIR),
         Err(e) => UserRet::from_error(vfs_error_to_errno(e)),
+    }
+}
+
+pub(crate) fn sys_fchdir(args : SyscallArgs) -> UserRet {
+    let fd = args.arg(0);
+    let path = match vfs::fd::with_current_io(fd, |handle| {
+        handle.directory_path()
+              .map(String::from)
+              .ok_or(VfsError::NotDirectory)
+    }) {
+        Ok(path) => path,
+        Err(VfsError::BadFd) => return UserRet::from_error(ErrNo::EBADF),
+        Err(VfsError::NotDirectory) | Err(VfsError::NotAFile) => {
+            return UserRet::from_error(ErrNo::ENOTDIR);
+        }
+        Err(error) => return UserRet::from_error(vfs_error_to_errno(error)),
+    };
+    let meta = match active_impl::backend().metadata(path.as_str()) {
+        Ok(meta) if meta.node_type == VfsNodeType::Directory => meta,
+        Ok(_) => return UserRet::from_error(ErrNo::ENOTDIR),
+        Err(error) => return UserRet::from_error(vfs_error_to_errno(error)),
+    };
+    if !can_search_directory(&meta, &cred::current_credentials()) {
+        return UserRet::from_error(ErrNo::EACCES);
+    }
+    let task_id = match vfs::fd::current_task_id() {
+        Ok(task_id) => task_id,
+        Err(error) => return UserRet::from_error(vfs_error_to_errno(error)),
+    };
+    match vfs::cwd::set_task_cwd(task_id, path.as_str()) {
+        Ok(()) => UserRet::from_success(0),
+        Err(VfsError::NotAFile) | Err(VfsError::NotDirectory) => {
+            UserRet::from_error(ErrNo::ENOTDIR)
+        }
+        Err(error) => UserRet::from_error(vfs_error_to_errno(error)),
     }
 }
 

@@ -17,6 +17,7 @@ pub const PPOLL : usize = 73;
 pub const SELECT : usize = usize::MAX;
 pub const READLINKAT : usize = 78;
 pub const FACCESSAT : usize = 48;
+pub const FCHDIR : usize = 50;
 pub const FCHMOD : usize = 52;
 pub const FCHMODAT : usize = 53;
 pub const FCHOWN : usize = 55;

@@ -30,6 +30,7 @@ pub fn dispatch_syscall_by_nr(syscall_nr : usize, syscall_args : SyscallArgs) ->
         n if n == api_v0::SENDFILE => sys::sys_sendfile(syscall_args).0,
         n if n == api_v0::READLINKAT => sys::sys_readlinkat(syscall_args).0,
         n if n == api_v0::FACCESSAT => sys::sys_faccessat(syscall_args).0,
+        n if n == api_v0::FCHDIR => sys::sys_fchdir(syscall_args).0,
         n if n == api_v0::FCHMOD => sys::sys_fchmod(syscall_args).0,
         n if n == api_v0::FCHMODAT => sys::sys_fchmodat(syscall_args).0,
         n if n == api_v0::FCHOWN => sys::sys_fchown(syscall_args).0,
