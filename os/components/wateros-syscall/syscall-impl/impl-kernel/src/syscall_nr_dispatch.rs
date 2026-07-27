@@ -121,6 +121,7 @@ pub fn dispatch_syscall_by_nr(syscall_nr : usize, syscall_args : SyscallArgs) ->
         n if n == api_v0::GETCWD => sys::sys_getcwd(syscall_args).0,
         n if n == api_v0::CHDIR => sys::sys_chdir(syscall_args).0,
         n if n == api_v0::FUTEX => sys::sys_futex(syscall_args).0,
+        n if n == api_v0::SIGALTSTACK => sys::sys_sigaltstack(syscall_args).0,
         n if n == api_v0::RT_SIGACTION => sys::sys_rt_sigaction(syscall_args).0,
         n if n == api_v0::RT_SIGPROCMASK => sys::sys_rt_sigprocmask(syscall_args).0,
         n if n == api_v0::RT_SIGPENDING => sys::sys_rt_sigpending(syscall_args).0,

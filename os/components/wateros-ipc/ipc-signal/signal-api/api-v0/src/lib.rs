@@ -63,6 +63,8 @@ pub enum SignalError {
     NoSuchProcess,
     /// `itimer` 种类非法。
     InvalidTimer,
+    /// 当前线程正在备用信号栈上执行，不能替换该栈。
+    AlternateStackActive,
 }
 
 /// 信号操作结果。

@@ -22,6 +22,9 @@ const RT_SIGSET_SIZE_64 : usize = 8;
 const RT_SIGACTION_SIZE : usize = 24;
 const NSIG : usize = 64;
 const SIGNAL_FRAME_MAGIC : u64 = 0x5741_5445_5253_4947;
+const SS_ONSTACK : i32 = 1;
+const SS_DISABLE : i32 = 2;
+const MINSIGSTKSZ : usize = 2048;
 static LAST_ACCOUNTING_NS : AtomicU64 = AtomicU64::new(0);
 
 #[cfg(target_arch = "riscv64")]
@@ -338,10 +341,27 @@ pub(crate) fn deliver_pending_signal(frame : *mut u8,
                                                      4);
         }
     }
+    let alternate_stack =
+        ipc::signal::with_registry(|registry| registry.alternate_stack(snapshot.task_id))
+            .map_err(|_| ErrNo::ESRCH)?;
+    let interrupted_sp = TrapFrameRead::user_sp(context);
+    let already_on_alternate =
+        alternate_stack.active_frames != 0 || alternate_stack.contains(interrupted_sp);
+    let switch_to_alternate = pending.action.flags & ipc::signal::SA_ONSTACK != 0 &&
+                              alternate_stack.is_enabled() &&
+                              !already_on_alternate;
+    let stack_top = if switch_to_alternate {
+        alternate_stack.sp
+                       .checked_add(alternate_stack.size)
+                       .ok_or(ErrNo::EFAULT)?
+    } else {
+        interrupted_sp
+    };
     let frame_size = core::mem::size_of::<UserRtSignalFrame>();
-    let frame_sp = TrapFrameRead::user_sp(context).checked_sub(frame_size)
-                                                  .map(|sp| sp & !0xF)
-                                                  .ok_or(ErrNo::EFAULT)?;
+    let frame_sp = stack_top.checked_sub(frame_size)
+                            .map(|sp| sp & !0xF)
+                            .ok_or(ErrNo::EFAULT)?;
+    let frame_on_alternate = already_on_alternate || switch_to_alternate;
     let user_frame =
         UserRtSignalFrame { info : UserSigInfo { signo : pending.signal as i32,
                                                  errno : 0,
@@ -349,13 +369,19 @@ pub(crate) fn deliver_pending_signal(frame : *mut u8,
                                                  payload : [0; 116] },
                             ucontext : UserUContext { flags : 0,
                                                       link : 0,
-                                                      stack : UserSignalStack::default(),
+                                                      stack : signal_stack_for_user(
+                                                          alternate_stack,
+                                                          already_on_alternate,
+                                                      ),
                                                       sigmask : pending.previous_mask
                                                                        .bits(),
                                                       reserved : [0; 15],
                                                       machine : original },
                             magic : SIGNAL_FRAME_MAGIC };
     copy_to_user_struct(frame_sp, &user_frame)?;
+    ipc::signal::with_registry(|registry| {
+        registry.enter_signal_frame(snapshot.task_id, frame_on_alternate)
+    }).map_err(|_| ErrNo::ESRCH)?;
 
     let info_ptr = frame_sp;
     let ucontext_ptr = frame_sp + core::mem::offset_of!(UserRtSignalFrame, ucontext);
@@ -384,7 +410,8 @@ pub(crate) fn deliver_pending_signal(frame : *mut u8,
 pub(crate) fn restore_signal_frame(frame : *mut u8) -> Result<(), ErrNo> {
     let snapshot = ensure_current_signal_state()?;
     let context = unsafe { &mut *(frame.cast::<ActiveTrapFrame>()) };
-    let user_frame = copy_from_user_struct::<UserRtSignalFrame>(TrapFrameRead::user_sp(context))?;
+    let frame_sp = TrapFrameRead::user_sp(context);
+    let user_frame = copy_from_user_struct::<UserRtSignalFrame>(frame_sp)?;
     if user_frame.magic != SIGNAL_FRAME_MAGIC {
         return Err(ErrNo::EFAULT);
     }
@@ -393,11 +420,33 @@ pub(crate) fn restore_signal_frame(frame : *mut u8) -> Result<(), ErrNo> {
     {
         return Err(ErrNo::EFAULT);
     }
+    let alternate_stack =
+        ipc::signal::with_registry(|registry| registry.alternate_stack(snapshot.task_id))
+            .map_err(|_| ErrNo::ESRCH)?;
     ipc::signal::with_registry(|registry| {
         registry.restore_mask(snapshot.task_id,
                               SignalSet::from_bits(user_frame.ucontext
                                                              .sigmask))
+    }).map_err(|_| ErrNo::ESRCH)?;
+    ipc::signal::with_registry(|registry| {
+        registry.leave_signal_frame(snapshot.task_id, alternate_stack.contains(frame_sp))
     }).map_err(|_| ErrNo::ESRCH)
+}
+
+fn signal_stack_for_user(stack : ipc::signal::AlternateSignalStack,
+                         on_stack : bool)
+                         -> UserSignalStack {
+    if !stack.is_enabled() {
+        UserSignalStack { sp : 0,
+                          flags : SS_DISABLE,
+                          padding : 0,
+                          size : 0 }
+    } else {
+        UserSignalStack { sp : stack.sp,
+                          flags : if on_stack { SS_ONSTACK } else { 0 },
+                          padding : 0,
+                          size : stack.size }
+    }
 }
 
 // ── syscall 实现 ────────────────────────────────────────────
@@ -458,6 +507,62 @@ pub(crate) fn sys_rt_sigprocmask(args : SyscallArgs) -> UserRet {
         }
     }
     UserRet::from_success(0)
+}
+
+pub(crate) fn sys_sigaltstack(args : SyscallArgs) -> UserRet {
+    let new_stack_ptr = args.arg(0);
+    let old_stack_ptr = args.arg(1);
+    let task_id = match ensure_current_signal_state() {
+        Ok(snapshot) => snapshot.task_id,
+        Err(error) => return UserRet::from_error(error),
+    };
+    let current = match ipc::signal::with_registry(|registry| registry.alternate_stack(task_id)) {
+        Ok(stack) => stack,
+        Err(_) => return UserRet::from_error(ErrNo::ESRCH),
+    };
+    if old_stack_ptr != 0 {
+        let old = signal_stack_for_user(current, current.active_frames != 0);
+        if let Err(error) = copy_to_user_struct(old_stack_ptr, &old) {
+            return UserRet::from_error(error);
+        }
+    }
+    if new_stack_ptr == 0 {
+        return UserRet::from_success(0);
+    }
+    let requested = match copy_from_user_struct::<UserSignalStack>(new_stack_ptr) {
+        Ok(stack) => stack,
+        Err(error) => return UserRet::from_error(error),
+    };
+    let replacement = match parse_signal_stack(requested) {
+        Ok(stack) => stack,
+        Err(error) => return UserRet::from_error(error),
+    };
+    match ipc::signal::with_registry(|registry| {
+        registry.replace_alternate_stack(task_id, replacement)
+    }) {
+        Ok(_) => UserRet::from_success(0),
+        Err(SignalError::AlternateStackActive) => UserRet::from_error(ErrNo::EPERM),
+        Err(_) => UserRet::from_error(ErrNo::ESRCH),
+    }
+}
+
+fn parse_signal_stack(stack : UserSignalStack)
+                      -> Result<ipc::signal::AlternateSignalStack, ErrNo> {
+    if stack.flags == SS_DISABLE {
+        return Ok(ipc::signal::AlternateSignalStack::default());
+    }
+    if stack.flags != 0 {
+        return Err(ErrNo::EINVAL);
+    }
+    if stack.size < MINSIGSTKSZ {
+        return Err(ErrNo::ENOMEM);
+    }
+    if stack.sp == 0 || stack.sp.checked_add(stack.size).is_none() {
+        return Err(ErrNo::EINVAL);
+    }
+    Ok(ipc::signal::AlternateSignalStack { sp : stack.sp,
+                                           size : stack.size,
+                                           active_frames : 0 })
 }
 
 pub(crate) fn sys_rt_sigsuspend(args : SyscallArgs) -> UserRet {

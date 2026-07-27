@@ -17,4 +17,5 @@ pub(crate) use signal::{
     on_clone_thread, on_exec, on_fork, on_thread_exit, raise_current_thread, restore_signal_frame,
     sys_kill, sys_rt_sigaction, sys_rt_sigpending, sys_rt_sigprocmask, sys_rt_sigsuspend,
     sys_rt_sigtimedwait, sys_tgkill, sys_tkill, timer_tick,
+    sys_sigaltstack,
 };

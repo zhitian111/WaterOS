@@ -15,6 +15,26 @@ pub mod api {
 
 pub use api_v0::*;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AlternateSignalStack {
+    pub sp : usize,
+    pub size : usize,
+    pub active_frames : usize,
+}
+
+impl AlternateSignalStack {
+    #[inline]
+    pub const fn is_enabled(self) -> bool { self.size != 0 }
+
+    #[inline]
+    pub fn contains(self, sp : usize) -> bool {
+        self.is_enabled() &&
+        sp >= self.sp &&
+        self.sp.checked_add(self.size)
+               .is_some_and(|end| sp < end)
+    }
+}
+
 /// 单进程 interval timer 内部状态。
 #[derive(Clone, Copy, Debug, Default)]
 struct IntervalTimerState {
@@ -122,6 +142,7 @@ struct ThreadSignalState {
     suspend_restore_mask : Option<SignalSet>,
     poll_restore_mask : Option<SignalSet>,
     waiting_for : Option<SignalSet>,
+    alternate_stack : AlternateSignalStack,
 }
 
 impl ThreadSignalState {
@@ -132,7 +153,8 @@ impl ThreadSignalState {
                pending : SignalSet::empty(),
                suspend_restore_mask : None,
                poll_restore_mask : None,
-               waiting_for : None }
+               waiting_for : None,
+               alternate_stack : AlternateSignalStack::default() }
     }
 }
 
@@ -196,8 +218,12 @@ impl SignalRegistry {
         self.processes
             .insert(child_pid, child);
         self.threads
-            .insert(child_task_id,
-                    ThreadSignalState::new(child_pid, child_tid, parent_thread.mask));
+            .insert(child_task_id, {
+                let mut child_thread =
+                    ThreadSignalState::new(child_pid, child_tid, parent_thread.mask);
+                child_thread.alternate_stack = parent_thread.alternate_stack;
+                child_thread
+            });
         Ok(())
     }
 
@@ -220,6 +246,8 @@ impl SignalRegistry {
     pub fn exec_process(&mut self, task_id : usize) -> SignalResult<()> {
         let pid = self.thread(task_id)?
                       .pid;
+        self.thread_mut(task_id)?
+            .alternate_stack = AlternateSignalStack::default();
         let process = self.processes
                           .get_mut(&pid)
                           .ok_or(SignalError::NoSuchProcess)?;
@@ -271,6 +299,48 @@ impl SignalRegistry {
         self.threads
             .get_mut(&task_id)
             .ok_or(SignalError::NoSuchTask)
+    }
+
+    pub fn alternate_stack(&self, task_id : usize) -> SignalResult<AlternateSignalStack> {
+        Ok(self.thread(task_id)?
+               .alternate_stack)
+    }
+
+    pub fn replace_alternate_stack(&mut self,
+                                   task_id : usize,
+                                   replacement : AlternateSignalStack)
+                                   -> SignalResult<AlternateSignalStack> {
+        let thread = self.thread_mut(task_id)?;
+        if thread.alternate_stack.active_frames != 0 {
+            return Err(SignalError::AlternateStackActive);
+        }
+        let old = thread.alternate_stack;
+        thread.alternate_stack = replacement;
+        Ok(old)
+    }
+
+    pub fn enter_signal_frame(&mut self,
+                              task_id : usize,
+                              on_alternate_stack : bool)
+                              -> SignalResult<()> {
+        if on_alternate_stack {
+            let stack = &mut self.thread_mut(task_id)?
+                                 .alternate_stack;
+            stack.active_frames = stack.active_frames.saturating_add(1);
+        }
+        Ok(())
+    }
+
+    pub fn leave_signal_frame(&mut self,
+                              task_id : usize,
+                              on_alternate_stack : bool)
+                              -> SignalResult<()> {
+        if on_alternate_stack {
+            let stack = &mut self.thread_mut(task_id)?
+                                 .alternate_stack;
+            stack.active_frames = stack.active_frames.saturating_sub(1);
+        }
+        Ok(())
     }
 
     /// 查询进程级 disposition（`rt_sigaction` GET）。
@@ -982,5 +1052,53 @@ mod tests {
         assert_eq!(registry.current_mask(100)
                            .unwrap(),
                    original);
+    }
+
+    #[test]
+    fn alternate_stack_follows_fork_clone_and_exec_rules() {
+        let mut registry = registry_with_process();
+        let stack = AlternateSignalStack { sp : 0x8000,
+                                           size : 0x4000,
+                                           active_frames : 0 };
+        registry.replace_alternate_stack(100, stack)
+                .unwrap();
+
+        registry.fork_process(100, 20, 200, 20)
+                .unwrap();
+        assert_eq!(registry.alternate_stack(200)
+                           .unwrap(),
+                   stack);
+
+        registry.register_thread(100, 101, 11)
+                .unwrap();
+        assert_eq!(registry.alternate_stack(101)
+                           .unwrap(),
+                   AlternateSignalStack::default());
+
+        registry.exec_process(100)
+                .unwrap();
+        assert_eq!(registry.alternate_stack(100)
+                           .unwrap(),
+                   AlternateSignalStack::default());
+    }
+
+    #[test]
+    fn active_alternate_stack_cannot_be_replaced() {
+        let mut registry = registry_with_process();
+        let stack = AlternateSignalStack { sp : 0x8000,
+                                           size : 0x4000,
+                                           active_frames : 0 };
+        registry.replace_alternate_stack(100, stack)
+                .unwrap();
+        registry.enter_signal_frame(100, true)
+                .unwrap();
+        assert_eq!(registry.replace_alternate_stack(100,
+                                                    AlternateSignalStack::default()),
+                   Err(SignalError::AlternateStackActive));
+        registry.leave_signal_frame(100, true)
+                .unwrap();
+        assert_eq!(registry.replace_alternate_stack(100,
+                                                    AlternateSignalStack::default()),
+                   Ok(stack));
     }
 }

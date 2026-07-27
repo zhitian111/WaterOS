@@ -140,6 +140,7 @@ pub const GETRESGID : usize = 150;
 // 线程、同步与信号
 pub const FUTEX : usize = 98;
 pub const RT_SIGACTION : usize = 134;
+pub const SIGALTSTACK : usize = 132;
 pub const RT_SIGPROCMASK : usize = 135;
 pub const RT_SIGPENDING : usize = 136;
 pub const RT_SIGTIMEDWAIT : usize = 137;
