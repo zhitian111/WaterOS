@@ -254,7 +254,8 @@ impl MultiClassScheduler {
                     if !mask.contains(ready_cpu) {
                         let target = self.pick_cpu_for_new_task(task_id);
                         self.enqueue_ready_by_cpu(task_id, target);
-                        self.request_reschedule(target);
+                        self.request_reschedule(target,
+                                                RescheduleRequest::Ready(task_id));
                     }
                 }
             }
@@ -265,7 +266,7 @@ impl MultiClassScheduler {
                 if !mask.contains(running_cpu) {
                     // 不从远端 CPU 修改运行现场。由目标 CPU 在收到 IPI 后进入
                     // Reschedule 路径，把当前任务重新入队到允许的 CPU。
-                    self.request_reschedule(running_cpu);
+                    self.request_reschedule(running_cpu, RescheduleRequest::Forced);
                 }
             }
             TaskState::Blocking(_) | TaskState::Sleeping { .. } => {}

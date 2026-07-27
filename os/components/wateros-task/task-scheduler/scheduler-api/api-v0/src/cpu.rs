@@ -6,9 +6,9 @@ use arch::task::{ActiveArchTaskContext, ArchTaskContext};
 use config::task::{MAX_TICKS_PER_TASK, NICE_0_WEIGHT, NICE_TO_WEIGHT};
 use task_api::{
     AddressSpaceHandle, CpuId, CpuMask, Nice, Priority, SchedPolicy, TaskExitCode, TaskId,
-    TaskSnapshot, TaskTick, TaskWaitTarget, VRunTime, IDLE_TASK_ID, NICE_MIN, PRIORITY_MIN,
+    TaskSnapshot, TaskTick, TaskWaitTarget, VRunTime, NICE_MIN, PRIORITY_MIN,
 };
-/// 用固定点表示每 tick 的 vruntime，避免高权重（负 nice）任务因整数除法得到 0。
+// 用固定点表示每 tick 的 vruntime，避免高权重（负 nice）任务因整数除法得到 0。
 const VRUNTIME_SCALE : u64 = 1 << 20;
 pub type SwitchPair =
     (*mut arch::task::ActiveArchTaskContext, *const arch::task::ActiveArchTaskContext);
@@ -62,9 +62,11 @@ pub struct CPUState {
     pub timer_ticks : u64,
     /// 本 CPU 当前任务为 idle 时累计的 scheduler timer tick 次数。
     pub idle_ticks : u64,
+    pub min_vruntime : u64,
     pub cfs_queue : CfsQueue,
     pub rr_queue : RrQueue,
     pub fifo_queue : FifoQueue,
+    pub batch_queue : CfsQueue,
     //当前任务运行的tick数
     pub current_ticks : u64,
     /// 当前任务自上次切入或同步以来实际运行的 tick 数，用于批量回写 TCB 统计。
@@ -91,9 +93,11 @@ impl CPUState {
                context_switches : 0,
                timer_ticks : 0,
                idle_ticks : 0,
+               min_vruntime : 0,
                cfs_queue : CfsQueue::new(),
                rr_queue : RrQueue::new(),
                fifo_queue : FifoQueue::new(),
+               batch_queue : CfsQueue::new(),
                current_ticks : 0,
                current_runtime_ticks : 0,
                current_policy : SchedPolicy::Other,
@@ -115,10 +119,13 @@ impl CPUState {
         self.context_switches = 0;
         self.timer_ticks = 0;
         self.idle_ticks = 0;
+        self.min_vruntime = 0;
         self.cfs_queue
             .init();
         self.rr_queue.init();
         self.fifo_queue
+            .init();
+        self.batch_queue
             .init();
         self.current_ticks = 0;
         self.current_runtime_ticks = 0;
@@ -130,8 +137,39 @@ impl CPUState {
         self.current_task_cx = core::ptr::null_mut();
         self.current_aspace = 0;
     }
+    /// OTHER 与 BATCH 共用的公平调度基线。
+    pub fn min_vruntime(&self) -> VRunTime { self.min_vruntime }
     pub fn boot_task_cx(&mut self) -> *mut ActiveArchTaskContext {
         &mut self.boot_task_cx as *mut ActiveArchTaskContext
+    }
+    pub fn normalize_vruntime(&self, vruntime : VRunTime) -> VRunTime {
+        vruntime.max(self.min_vruntime)
+    }
+
+    fn min_ready_fair_vruntime(&self) -> Option<VRunTime> {
+        self.cfs_queue
+            .min_ready_vruntime()
+            .into_iter()
+            .chain(self.batch_queue
+                       .min_ready_vruntime())
+            .min()
+    }
+
+    /// 当前运行 fair 实体和两个 fair ready tree 的左端共同、单调地推进基线。
+    fn update_min_vruntime(&mut self) {
+        let mut candidate = self.min_ready_fair_vruntime();
+        if !self.is_current_idle() &&
+           matches!(self.current_policy,
+                    SchedPolicy::Other | SchedPolicy::Batch)
+        {
+            candidate = Some(candidate.map_or(self.current_vruntime, |ready| {
+                                          ready.min(self.current_vruntime)
+                                      }));
+        }
+        if let Some(candidate) = candidate {
+            self.min_vruntime = self.min_vruntime
+                                    .max(candidate);
+        }
     }
     pub fn leave_boot_context(&mut self) { self.boot_context_active = false; }
     pub fn set_online(&mut self, online : bool) { self.online = online; }
@@ -157,8 +195,18 @@ impl CPUState {
                                              .max(1);
                     self.current_vruntime = self.current_vruntime
                                                 .saturating_add(delta);
-                    self.cfs_queue
-                        .update_min_vruntime(self.current_vruntime);
+                    self.update_min_vruntime();
+                }
+            }
+            SchedPolicy::Batch => {
+                if !self.is_current_idle() {
+                    let weight = NICE_TO_WEIGHT[(self.current_nice + 20) as usize];
+                    let delta = NICE_0_WEIGHT.saturating_mul(VRUNTIME_SCALE)
+                                             .saturating_div(weight)
+                                             .max(1);
+                    self.current_vruntime = self.current_vruntime
+                                                .saturating_add(delta);
+                    self.update_min_vruntime();
                 }
             }
             SchedPolicy::Rr => {
@@ -168,16 +216,6 @@ impl CPUState {
             SchedPolicy::Fifo => {}
         }
     }
-    pub fn is_current_runnable(&self) -> bool {
-        match self.current_policy {
-            SchedPolicy::Other => self.cfs_queue
-                                      .min_ready_vruntime()
-                                      .is_none_or(|min| self.current_vruntime <= min),
-            SchedPolicy::Rr => self.current_ticks < MAX_TICKS_PER_TASK,
-            SchedPolicy::Fifo => true,
-        }
-    }
-
     /// 就绪队列中最高实时优先级（FIFO/RR，不含 OTHER）。
     pub fn highest_priority(&self) -> Option<Priority> {
         self.fifo_queue
@@ -189,24 +227,24 @@ impl CPUState {
     }
 
     /// 统一调度判断：当前任务是否应让出 CPU。
-    pub fn cpu_should_reschedule(&self) -> Option<()> {
+    pub fn cpu_should_reschedule(&self) -> bool {
         if !self.current_affinity
                 .contains(self.cpu_id)
         {
-            return Some(());
+            return true;
         }
+
 
         let is_idle = self.current_task_id == self.idle_task_id;
         if is_idle {
-            if self.cfs_queue
-                   .task_count() >
-               0 ||
+            if self.min_ready_fair_vruntime()
+                   .is_some() ||
                self.highest_priority()
                    .is_some()
             {
-                return Some(());
+                return true;
             }
-            return None;
+            return false;
         }
 
         match self.current_policy {
@@ -214,47 +252,42 @@ impl CPUState {
                 if self.highest_priority()
                        .is_some()
                 {
-                    return Some(());
+                    return true;
                 }
-                if self.cfs_queue
-                       .min_ready_vruntime()
-                       .is_some_and(|min| self.current_vruntime > min)
-                {
-                    return Some(());
-                }
-                None
+                self.min_ready_fair_vruntime()
+                    .is_some_and(|min| self.current_vruntime > min)
+            }
+            SchedPolicy::Batch => {
+                self.highest_priority()
+                    .is_some() ||
+                self.min_ready_fair_vruntime()
+                    .is_some_and(|min| self.current_vruntime > min)
             }
             SchedPolicy::Fifo => {
                 if self.highest_priority()
                        .is_some_and(|p| p > self.current_priority)
                 {
-                    return Some(());
+                    return true;
                 }
-                None
+                false
             }
             SchedPolicy::Rr => {
                 if self.current_ticks >= MAX_TICKS_PER_TASK {
-                    return Some(());
+                    return true;
                 }
                 if self.highest_priority()
                        .is_some_and(|p| p > self.current_priority)
                 {
-                    return Some(());
+                    return true;
                 }
-                None
+                false
             }
         }
     }
 
     /// 按优先级从就绪队列中选择下一个可运行任务。
     pub fn pick_next_runnable(&mut self) -> TaskId {
-        // 1) RR: 时间片未用完时继续当前任务
-        if self.current_policy == SchedPolicy::Rr && self.is_current_runnable() {
-            if let Some(current_id) = self.current_task_id {
-                return current_id;
-            }
-        }
-        // 2) FIFO → 3) RR，按优先级 99→1 穿插扫描
+        // FIFO → RR，按优先级 99→1 穿插扫描。
         for priority in (1..=99).rev() {
             if let Some(task_id) = self.fifo_queue
                                        .pick_at_priority(priority)
@@ -267,11 +300,30 @@ impl CPUState {
                 return task_id;
             }
         }
-        // 4) OTHER: 从队列取出下一个可运行任务
-        self.cfs_queue
-            .pick()
-            .unwrap_or(self.idle_task_id
-                           .unwrap_or(IDLE_TASK_ID))
+        // OTHER 与 BATCH 属于同一 fair class，按跨队列的最小 vruntime 选择。
+        // 相同 vruntime 时优先 Other，形成轻微的 Batch 劣后而不会饿死 Batch。
+        let other_min = self.cfs_queue
+                            .min_ready_vruntime();
+        let batch_min = self.batch_queue
+                            .min_ready_vruntime();
+        let picked = match (other_min, batch_min) {
+            (Some(_), None) => self.cfs_queue
+                                   .pick(),
+            (None, Some(_)) => self.batch_queue
+                                   .pick(),
+            (Some(other), Some(batch)) if other <= batch => self.cfs_queue
+                                                                .pick(),
+            (Some(_), Some(_)) => self.batch_queue
+                                      .pick(),
+            (None, None) => None,
+        };
+        if let Some((task_id, vruntime)) = picked {
+            self.min_vruntime = self.min_vruntime
+                                    .max(vruntime);
+            return task_id;
+        }
+        self.idle_task_id
+            .expect("every CPU must have an idle task")
     }
 
     /// 当前任务是否为 idle 任务。
@@ -291,12 +343,16 @@ impl CPUState {
             .task_count() +
         self.cfs_queue
             .task_count() +
+        self.batch_queue
+            .task_count() +
         current as usize
     }
 
     /// 从本 CPU 所有队列中摘除任务。
     pub fn dequeue(&mut self, task_id : TaskId) {
         self.cfs_queue
+            .dequeue(task_id);
+        self.batch_queue
             .dequeue(task_id);
         self.fifo_queue
             .dequeue(task_id);
@@ -308,6 +364,8 @@ impl CPUState {
     pub fn enqueue(&mut self, task_id : TaskId, snap : &TaskSnapshot) {
         match snap.policy {
             SchedPolicy::Other => self.cfs_queue
+                                      .enqueue(task_id, snap.vruntime),
+            SchedPolicy::Batch => self.batch_queue
                                       .enqueue(task_id, snap.vruntime),
             SchedPolicy::Fifo => self.fifo_queue
                                      .enqueue(task_id, snap.priority),
@@ -342,8 +400,9 @@ pub struct CpuSnapshot {
     pub current_address_space : Option<AddressSpaceHandle>,
     pub current_is_idle : bool,
     pub current_is_user : bool,
-    /// 三类队列中等待运行的任务数，不含当前正在运行的任务。
+    /// 四类队列中等待运行的任务数，不含当前正在运行的任务。
     pub runnable_other : usize,
+    pub runnable_batch : usize,
     pub runnable_fifo : usize,
     pub runnable_rr : usize,
     pub need_resched : bool,
