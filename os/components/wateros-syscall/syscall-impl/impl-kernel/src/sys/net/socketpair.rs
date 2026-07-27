@@ -1,4 +1,4 @@
-//! `socketpair(2)`：创建一对已连接的 AF_UNIX stream socket fd。
+//! `socketpair(2)`：创建一对已连接的 AF_UNIX stream-compatible socket fd。
 
 //! 本模块代码由AI完成
 extern crate alloc;
@@ -15,6 +15,7 @@ use crate::vfs_util::vfs_error_to_errno;
 const AF_UNIX: usize = 1;
 const SOCK_STREAM: usize = 1;
 const SOCK_DGRAM: usize = 2;
+const SOCK_SEQPACKET: usize = 5;
 const SOCK_NONBLOCK: usize = 0o4000;
 const SOCK_CLOEXEC: usize = 0o2000000;
 const FD_CLOEXEC: usize = 1;
@@ -40,7 +41,7 @@ pub(crate) fn sys_socketpair(args: SyscallArgs) -> UserRet {
     let nonblocking = typ & SOCK_NONBLOCK != 0;
     typ &= !(SOCK_NONBLOCK | SOCK_CLOEXEC);
 
-    if typ != SOCK_STREAM {
+    if typ != SOCK_STREAM && typ != SOCK_SEQPACKET {
         if typ == SOCK_DGRAM {
             return UserRet::from_error(ErrNo::EPROTONOSUPPORT);
         }
