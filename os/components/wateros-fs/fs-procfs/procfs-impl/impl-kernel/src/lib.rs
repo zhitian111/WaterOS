@@ -85,6 +85,7 @@ enum ProcNode {
     PidSmaps(ProcessId),
     PidMaps(ProcessId),
     PidCmdline(ProcessId),
+    PidExe(ProcessId),
 }
 
 // 为 proc 节点分配稳定 inode 号（pid 子树按 pid 编码）。
@@ -105,6 +106,7 @@ fn proc_inode(node : ProcNode) -> u64 {
         ProcNode::PidSmaps(pid) => 0x1000_0003 | ((pid.raw() as u64) << 4),
         ProcNode::PidMaps(pid) => 0x1000_0005 | ((pid.raw() as u64) << 4),
         ProcNode::PidCmdline(pid) => 0x1000_0004 | ((pid.raw() as u64) << 4),
+        ProcNode::PidExe(pid) => 0x1000_0006 | ((pid.raw() as u64) << 4),
     }
 }
 
@@ -183,6 +185,7 @@ fn parse_node(path : &str) -> Option<ProcNode> {
         [pid_name, "maps"] => Some(ProcNode::PidMaps(parse_pid(pid_name)?)),
         [_pid_name, "mounts"] => Some(ProcNode::Mounts),
         [pid_name, "cmdline"] => Some(ProcNode::PidCmdline(parse_pid(pid_name)?)),
+        [pid_name, "exe"] => Some(ProcNode::PidExe(parse_pid(pid_name)?)),
         _ => None,
     }
 }
@@ -459,7 +462,8 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidStatus(pid) |
             ProcNode::PidSmaps(pid) |
             ProcNode::PidMaps(pid) |
-            ProcNode::PidCmdline(pid) => process_visible(pid),
+            ProcNode::PidCmdline(pid) |
+            ProcNode::PidExe(pid) => process_visible(pid),
         })
     }
 
@@ -507,6 +511,18 @@ impl ProcFsView for KernelProcFs {
                                 uid : 0,
                                 gid : 0 })
             }
+            ProcNode::PidExe(pid) => {
+                if !process_visible(pid) {
+                    return Err(FsError::NotFound);
+                }
+                Ok(FsMetadata { node_type: FsNodeType::Symlink,
+                                size: self.read_symlink(rel_path)?.len() as u64,
+                                mode: 0o777,
+                                inode: proc_inode(node),
+                                nlink: 1,
+                                uid: 0,
+                                gid: 0 })
+            }
         }
     }
 
@@ -514,7 +530,9 @@ impl ProcFsView for KernelProcFs {
     fn read(&self, rel_path : &str) -> FsResult<Vec<u8>> {
         let node = parse_node(rel_path).ok_or(FsError::NotFound)?;
         match node {
-            ProcNode::Root | ProcNode::PidDir(_) => Err(FsError::NotAFile),
+            ProcNode::Root | ProcNode::PidDir(_) | ProcNode::PidExe(_) => {
+                Err(FsError::NotAFile)
+            }
             ProcNode::Meminfo => Ok(format_meminfo()),
             ProcNode::Cpuinfo => Ok(format_cpuinfo()),
             ProcNode::Uptime => Ok(format_uptime()),
@@ -528,6 +546,17 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidMaps(pid) => format_maps(pid),
             ProcNode::PidCmdline(pid) => format_cmdline(pid),
         }
+    }
+
+    fn read_symlink(&self, rel_path : &str) -> FsResult<Vec<u8>> {
+        let node = parse_node(rel_path).ok_or(FsError::NotFound)?;
+        let ProcNode::PidExe(pid) = node else {
+            return Err(FsError::NotAFile);
+        };
+        let process = task::process_snapshot(pid).ok_or(FsError::NotFound)?;
+        exe_for(process.leader_task_id)
+            .map(String::into_bytes)
+            .ok_or(FsError::NotFound)
     }
 
     // 本方法代码由AI完成
@@ -578,7 +607,11 @@ impl ProcFsView for KernelProcFs {
                         FsDirEntry { name:
                                          String::from("cmdline"),
                                      node_type:
-                                         FsNodeType::File },])
+                                         FsNodeType::File },
+                        FsDirEntry { name:
+                                         String::from("exe"),
+                                     node_type:
+                                         FsNodeType::Symlink },])
             }
             _ => Err(FsError::NotAFile),
         }

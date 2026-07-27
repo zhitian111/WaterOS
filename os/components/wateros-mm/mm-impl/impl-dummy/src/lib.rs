@@ -7,11 +7,9 @@
 
 extern crate alloc;
 
-use alloc::string::String;
-use alloc::vec::Vec;
 use api_v0::addr::VirtAddr;
 use api_v0::error::MmError;
-use api_v0::kernel_bringup::{LoadElfError, LoadProgramError, LoadedElf};
+use api_v0::kernel_bringup::{LoadElfError, LoadProgramError, LoadedElf, LoadedProgram};
 use api_v0::perm::PagePerm;
 
 /// 无 Sv39 / 非 QEMU bring-up 时的桩实现；由 `wateros-mm` 聚合为 `mm::kernel_mm`。
@@ -42,7 +40,7 @@ pub mod kernel_mm_impl {
     }
 
     /// 桩实现：与 [`from_elf_path`] 一致，不支持 shebang 解析。
-    pub fn load_program_from_path(_path: &str, _argv: &[&str]) -> Result<(LoadedElf, Vec<String>), LoadProgramError> {
+    pub fn load_program_from_path(_path: &str, _argv: &[&str]) -> Result<LoadedProgram, LoadProgramError> {
         Err(LoadProgramError::Elf(LoadElfError::BadClass))
     }
 

@@ -9,7 +9,7 @@ use vfs::SingleRootReadView;
 use crate::sys::misc::ltp_cgroup_helper::cgroup_regression_loop_fast_exit_if_standalone;
 use crate::sys::path_at::{resolve_path_at, resolve_symlinks, AT_REMOVEDIR};
 use vfs::api::FinalSymlink;
-use crate::user_copy::copy_user_path_cstr;
+use crate::user_copy::{copy_to_user, copy_user_path_cstr};
 use crate::vfs_util::vfs_error_to_errno;
 
 const S_IFMT : u32 = 0o170_000;
@@ -407,5 +407,33 @@ fn can_write_search_directory(meta : &VfsMetadata, cred : &ProcessCredentials) -
     mode & required == required
 }
 
-// 本方法代码由AI完成
-pub(crate) fn sys_readlinkat(_args : SyscallArgs) -> UserRet { UserRet::from_error(ErrNo::ENOSYS) }
+pub(crate) fn sys_readlinkat(args : SyscallArgs) -> UserRet {
+    let dirfd = args.arg(0) as isize;
+    let path_ptr = args.arg(1);
+    let buf_ptr = args.arg(2);
+    let buf_size = args.arg(3);
+
+    if buf_size == 0 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    let path = match copy_user_path_cstr(path_ptr, crate::user_copy::USER_PATH_MAX) {
+        Ok(path) => path,
+        Err(e) => return UserRet::from_error(e),
+    };
+    let resolved = match resolve_path_at(dirfd, path.as_str())
+        .and_then(|path| resolve_symlinks(path.as_str(), FinalSymlink::NoFollow))
+    {
+        Ok(path) => path,
+        Err(e) => return UserRet::from_error(e),
+    };
+    let target = match vfs::read_symlink_absolute(resolved.as_str()) {
+        Ok(target) => target,
+        Err(VfsError::NotAFile) => return UserRet::from_error(ErrNo::EINVAL),
+        Err(e) => return UserRet::from_error(vfs_error_to_errno(e)),
+    };
+    let count = core::cmp::min(buf_size, target.len());
+    match copy_to_user(buf_ptr, &target[..count]) {
+        Ok(_) => UserRet::from_success(count),
+        Err(e) => UserRet::from_error(e),
+    }
+}

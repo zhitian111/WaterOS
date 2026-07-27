@@ -8,23 +8,23 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use api_v0::executable::{self, ExecResolveError, MAX_INTERPRETER_RECURSION};
-use api_v0::kernel_bringup::{LoadProgramError, LoadedElf};
+use api_v0::kernel_bringup::{LoadProgramError, LoadedProgram};
 
 use crate::kernel_elf::from_elf_path;
 
 /// 装载 `path` 指向的程序：ELF 直载，或解析 shebang 后递归加载解释器。
 ///
-/// 返回 `(LoadedElf, 最终 argv)`；脚本场景下 argv 已按 Linux binfmt_script 重组。
+/// 脚本场景下 argv 已按 Linux binfmt_script 重组，executable_path 指向最终 ELF。
 pub fn load_program_from_path(path : &str,
                               argv : &[&str])
-                              -> Result<(LoadedElf, Vec<String>), LoadProgramError> {
+                              -> Result<LoadedProgram, LoadProgramError> {
     load_program_from_path_rec(path, argv, 0)
 }
 
 fn load_program_from_path_rec(path : &str,
                               argv : &[&str],
                               depth : usize)
-                              -> Result<(LoadedElf, Vec<String>), LoadProgramError> {
+                              -> Result<LoadedProgram, LoadProgramError> {
     if depth >= MAX_INTERPRETER_RECURSION {
         return Err(LoadProgramError::Script(ExecResolveError::RecursionLimit));
     }
@@ -40,7 +40,9 @@ fn load_program_from_path_rec(path : &str,
     if executable::is_elf_prefix(&prefix) {
         let final_argv = argv_vec(path, argv);
         let loaded = from_elf_path(resolved_path.as_str()).map_err(LoadProgramError::Elf)?;
-        return Ok((loaded, final_argv));
+        return Ok(LoadedProgram { elf: loaded,
+                                  argv: final_argv,
+                                  executable_path: resolved_path });
     }
 
     if !executable::is_text_script_candidate(&prefix) {

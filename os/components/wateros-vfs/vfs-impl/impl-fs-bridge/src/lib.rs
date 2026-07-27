@@ -631,7 +631,10 @@ pub fn hardlink_path(existing_path : &str, new_path : &str) -> VfsResult<()> {
 pub fn read_symlink_path(path : &str) -> VfsResult<Vec<u8>> {
     let abs = normalize_absolute_path(path)?;
     match resolve_route(abs.as_str())? {
-        FsRoute::PseudoProc { .. } | FsRoute::PseudoSecurity { .. } => Err(VfsError::NotAFile),
+        FsRoute::PseudoProc { rel, .. } => proc_view()
+            .read_symlink(rel.as_str())
+            .map_err(map_fs_err),
+        FsRoute::PseudoSecurity { .. } => Err(VfsError::NotAFile),
         FsRoute::Root { abs, .. } => root_rw()?.lock()
                                                .read_symlink(abs.as_str())
                                                .map_err(map_fs_err),

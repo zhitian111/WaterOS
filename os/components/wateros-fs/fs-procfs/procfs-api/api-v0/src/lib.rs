@@ -45,6 +45,8 @@ pub trait ProcFsView {
     fn metadata(&self, rel_path: &str) -> FsResult<FsMetadata>;
     /// 读取普通文件内容；目录路径返回 [`FsError::NotAFile`]。
     fn read(&self, rel_path: &str) -> FsResult<Vec<u8>>;
+    /// 读取符号链接目标；非符号链接返回 [`FsError::NotAFile`]。
+    fn read_symlink(&self, rel_path: &str) -> FsResult<Vec<u8>>;
     /// 列出目录项；非目录返回 [`FsError::NotAFile`]。
     fn read_dir(&self, rel_path: &str) -> FsResult<Vec<FsDirEntry>>;
 }

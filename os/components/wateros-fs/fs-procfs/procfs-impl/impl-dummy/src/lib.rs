@@ -19,6 +19,8 @@ impl ProcFsView for DummyProcFs {
 
     fn read(&self, _rel_path : &str) -> FsResult<Vec<u8>> { Err(FsError::NotFound) }
 
+    fn read_symlink(&self, _rel_path : &str) -> FsResult<Vec<u8>> { Err(FsError::NotFound) }
+
     fn read_dir(&self, _rel_path : &str) -> FsResult<Vec<api_v0::FsDirEntry>> { Ok(Vec::new()) }
 }
 

@@ -52,14 +52,17 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
     let argv_refs : Vec<&str> = argv.iter()
                                     .map(String::as_str)
                                     .collect();
-    let (new_elf, final_argv) =
+    let loaded_program =
         match mm::kernel_mm::load_program_from_path(abs_path.as_str(), &argv_refs) {
-            Ok(loaded) => loaded,
+            Ok(program) => program,
             Err(err) => {
                 let errno = load_program_to_errno(err);
                 return Err(errno);
             }
         };
+    let new_elf = loaded_program.elf;
+    let final_argv = loaded_program.argv;
+    let executable_path = loaded_program.executable_path;
     let final_argv_refs : Vec<&str> = final_argv.iter()
                                                 .map(String::as_str)
                                                 .collect();
@@ -108,7 +111,7 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
 
     // TODO(cred-exec-setuid): 可执行文件 S_ISUID/S_ISGID 应在 cred::on_exec 内更新凭证。
     cred::on_exec(current_tid);
-    if let Err(e) = vfs::cwd::set_task_exe_path(current_tid, abs_path.as_str()) {
+    if let Err(e) = vfs::cwd::set_task_exe_path(current_tid, executable_path.as_str()) {
         log::warn!("[execve] set_task_exe_path failed (continuing): {:?}",
                    e);
     }

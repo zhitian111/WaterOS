@@ -4,6 +4,10 @@
 //!
 //! 根卷读错误使用 [`RootVolumeReadError`]，由 `mm-impl` 从具体 FS 错误映射而来，**不**依赖 `wateros-fs` API crate，以保持 mm-api 与文件系统实现解耦。
 
+extern crate alloc;
+
+use alloc::{string::String, vec::Vec};
+
 use crate::error::MmError;
 use crate::executable::ExecResolveError;
 
@@ -119,4 +123,14 @@ pub struct LoadedElf {
     pub phnum: usize,
     /// 用户 auxv `AT_PHENT`：单个程序头字节大小。
     pub phentsize: usize,
+}
+
+/// 完成 ELF/shebang/符号链接解析后的程序装载结果。
+pub struct LoadedProgram {
+    /// 已建立的用户地址空间和 ELF 入口信息。
+    pub elf: LoadedElf,
+    /// shebang 展开后的最终参数列表。
+    pub argv: Vec<String>,
+    /// 最终被装载的 ELF 绝对路径，供 `/proc/<pid>/exe` 使用。
+    pub executable_path: String,
 }

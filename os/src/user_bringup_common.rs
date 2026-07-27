@@ -6,7 +6,9 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use mm::api::kernel_bringup::{LoadProgramError, LoadedElf, PrepareUserStackError};
+use mm::api::kernel_bringup::{
+    LoadProgramError, LoadedElf, LoadedProgram, PrepareUserStackError,
+};
 use runtime::logging::*;
 
 
@@ -60,13 +62,16 @@ pub fn run_one_elf_argv_exit(log_tag : &str, elf_path : &str, argv : &[&str]) ->
     // Let the ELF loader be the source of truth.  Some rootfs backends do not
     // implement `exists`, although opening and loading the file works.
     let load_result = load_program_without_timer_preemption(elf_path, argv);
-    let (loaded, final_argv) = match load_result {
-        Ok(pair) => pair,
+    let loaded_program = match load_result {
+        Ok(program) => program,
         Err(e) => {
             warn!("[{log_tag}] skip load path={elf_path}: {e:?}");
             return None;
         }
     };
+    let loaded = loaded_program.elf;
+    let final_argv = loaded_program.argv;
+    let executable_path = loaded_program.executable_path;
 
     let final_argv_refs : Vec<&str> = final_argv.iter()
                                                 .map(String::as_str)
@@ -86,7 +91,7 @@ pub fn run_one_elf_argv_exit(log_tag : &str, elf_path : &str, argv : &[&str]) ->
     cred::on_user_task_spawned(tid);
 
     #[cfg(feature = "vfs-bridge")]
-    vfs::cwd::on_user_task_spawned_for_elf(tid, elf_path, &final_argv_refs);
+    vfs::cwd::on_user_task_spawned_for_elf(tid, executable_path.as_str(), &final_argv_refs);
     #[cfg(feature = "vfs-bridge")]
     vfs::mount_ns::on_user_task_spawned(tid);
 
@@ -159,7 +164,7 @@ fn libc_envp_for_path(path : &str) -> Vec<&'static str> {
 /// 装载 ELF 期间屏蔽全局中断，避免定时器抢占打断页表/地址空间临界区。
 fn load_program_without_timer_preemption(path : &str,
                                          argv : &[&str])
-                                         -> Result<(LoadedElf, Vec<String>), LoadProgramError> {
+                                         -> Result<LoadedProgram, LoadProgramError> {
     let state = platform::interrupt::read_global_interrupt_state().ok();
     let _ = platform::interrupt::disable_global_interrupt();
     let result = mm::kernel_mm::load_program_from_path(path, argv);
