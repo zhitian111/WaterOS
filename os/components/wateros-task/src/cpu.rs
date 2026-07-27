@@ -20,4 +20,7 @@ pub fn set_cpu_online(cpu_id : CpuId) { scheduler::set_cpu_online(cpu_id) }
 pub fn set_timekeeper_cpu(cpu_id : CpuId) { scheduler::set_timekeeper_cpu(cpu_id) }
 /// Snapshot of CPUs that have completed task-scheduler bring-up.
 pub fn online_cpu_mask() -> CpuMask { scheduler::online_cpu_mask() }
+
+/// 所有 online CPU 累计的 idle scheduler tick。
+pub fn total_idle_ticks() -> u64 { scheduler::total_idle_ticks() }
 pub fn print_cpu_states() { scheduler::print_cpu_states(); }

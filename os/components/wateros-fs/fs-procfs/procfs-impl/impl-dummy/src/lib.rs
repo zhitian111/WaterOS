@@ -34,5 +34,8 @@ pub fn register_mount_list_lookup(_f : api_v0::MountListLookup) {}
 /// 占位：dummy 不消费 uptime 回调。
 pub fn register_uptime_lookup(_f : api_v0::UptimeLookup) {}
 
+/// 占位：dummy 不消费 idle time 回调。
+pub fn register_idle_time_lookup(_f : api_v0::IdleTimeLookup) {}
+
 /// 空自检。
 pub fn test() {}

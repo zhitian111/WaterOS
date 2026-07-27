@@ -88,7 +88,9 @@ pub(crate) fn sys_sysinfo(args: SyscallArgs) -> UserRet {
     }
 
     let info = UserSysInfo {
-        uptime: task::current_tick() as isize,
+        uptime: platform::timer::now_duration()
+                    .map(|duration| duration.as_secs() as isize)
+                    .unwrap_or(0),
         loads: [0; 3],
         totalram: SYSINFO_TOTAL_RAM,
         freeram: SYSINFO_FREE_RAM,

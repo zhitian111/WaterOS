@@ -82,6 +82,7 @@ impl MultiClassScheduler {
                            need_resched : cpu.need_resched,
                            context_switches : cpu.context_switches,
                            timer_ticks : cpu.timer_ticks,
+                           idle_ticks : cpu.idle_ticks,
                            current_ticks : cpu.current_ticks })
     }
 
@@ -95,6 +96,12 @@ impl MultiClassScheduler {
             states.push((cpu.cpu_id, snapshot));
         }
         states
+    }
+
+    pub fn total_idle_ticks(&self) -> u64 {
+        self.cpu_states.iter()
+                       .filter(|cpu| cpu.online())
+                       .fold(0u64, |total, cpu| total.saturating_add(cpu.idle_ticks))
     }
 
     pub fn running_cpu(&self, task_id : TaskId) -> Option<CpuId> {

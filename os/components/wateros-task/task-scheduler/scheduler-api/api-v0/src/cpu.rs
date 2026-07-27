@@ -60,6 +60,8 @@ pub struct CPUState {
     pub context_switches : u64,
     /// 本 CPU 已处理的 scheduler timer tick 次数。
     pub timer_ticks : u64,
+    /// 本 CPU 当前任务为 idle 时累计的 scheduler timer tick 次数。
+    pub idle_ticks : u64,
     pub cfs_queue : CfsQueue,
     pub rr_queue : RrQueue,
     pub fifo_queue : FifoQueue,
@@ -88,6 +90,7 @@ impl CPUState {
                need_resched : false,
                context_switches : 0,
                timer_ticks : 0,
+               idle_ticks : 0,
                cfs_queue : CfsQueue::new(),
                rr_queue : RrQueue::new(),
                fifo_queue : FifoQueue::new(),
@@ -111,6 +114,7 @@ impl CPUState {
         self.need_resched = false;
         self.context_switches = 0;
         self.timer_ticks = 0;
+        self.idle_ticks = 0;
         self.cfs_queue
             .init();
         self.rr_queue.init();
@@ -136,6 +140,10 @@ impl CPUState {
     pub fn tick(&mut self) {
         self.timer_ticks = self.timer_ticks
                                .saturating_add(1);
+        if self.is_current_idle() {
+            self.idle_ticks = self.idle_ticks
+                                  .saturating_add(1);
+        }
         self.current_runtime_ticks = self.current_runtime_ticks
                                          .saturating_add(1);
         match self.current_policy {
@@ -341,5 +349,6 @@ pub struct CpuSnapshot {
     pub need_resched : bool,
     pub context_switches : u64,
     pub timer_ticks : u64,
+    pub idle_ticks : u64,
     pub current_ticks : u64,
 }

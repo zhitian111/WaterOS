@@ -12,7 +12,7 @@ use alloc::{
     vec::Vec,
 };
 use api_v0::{
-    FsDirEntry, FsError, FsMetadata, FsNodeType, FsResult, MountListLookup, ProcFsView,
+    FsDirEntry, FsError, FsMetadata, FsNodeType, FsResult, IdleTimeLookup, MountListLookup, ProcFsView,
     ProcMountLine, TaskArgvLookup, TaskExeLookup, TaskId, UptimeLookup,
 };
 use fs_api_v0::{FsAccessMode, FsCapability, FsImpl, FsKind};
@@ -26,6 +26,7 @@ static EXE_LOOKUP : Mutex<Option<TaskExeLookup>> = Mutex::new(None);
 // 本变量代码由AI完成
 static MOUNT_LOOKUP : Mutex<Option<MountListLookup>> = Mutex::new(None);
 static UPTIME_LOOKUP : Mutex<Option<UptimeLookup>> = Mutex::new(None);
+static IDLE_TIME_LOOKUP : Mutex<Option<IdleTimeLookup>> = Mutex::new(None);
 
 /// 注册按 leader task id 查询 argv 的回调（VFS 层在 init 时注入）。
 // 本方法代码由AI完成
@@ -41,6 +42,9 @@ pub fn register_mount_list_lookup(f : MountListLookup) { *MOUNT_LOOKUP.lock() = 
 
 /// 注册内核单调启动时长回调。
 pub fn register_uptime_lookup(f : UptimeLookup) { *UPTIME_LOOKUP.lock() = Some(f); }
+
+/// 注册所有 CPU 聚合 idle 时间回调。
+pub fn register_idle_time_lookup(f : IdleTimeLookup) { *IDLE_TIME_LOOKUP.lock() = Some(f); }
 
 // 经静态回调查 argv；未注册时返回 None。
 // 本方法代码由AI完成
@@ -212,7 +216,11 @@ fn format_uptime() -> Vec<u8> {
                                          .unwrap_or(0);
     let seconds = nanos / 1_000_000_000;
     let centiseconds = nanos % 1_000_000_000 / 10_000_000;
-    format!("{seconds}.{centiseconds:02} 0.00\n").into_bytes()
+    let idle_nanos = (*IDLE_TIME_LOOKUP.lock()).map(|lookup| lookup())
+                                                    .unwrap_or(0);
+    let idle_seconds = idle_nanos / 1_000_000_000;
+    let idle_centiseconds = idle_nanos % 1_000_000_000 / 10_000_000;
+    format!("{seconds}.{centiseconds:02} {idle_seconds}.{idle_centiseconds:02}\n").into_bytes()
 }
 
 // 本方法代码由AI完成

@@ -847,6 +847,12 @@ pub fn online_cpu_mask() -> CpuMask {
     with_scheduler(|scheduler| scheduler.online_cpu_mask())
 }
 
+/// 所有 online CPU 累计的 idle scheduler tick。
+pub fn total_idle_ticks() -> u64 {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.total_idle_ticks())
+}
+
 // =============================================================================
 //  9. 调度策略
 // =============================================================================

@@ -67,6 +67,7 @@ pub use api_v0::{ExitedTask, TaskId, TaskKind};
 pub use cpu::{
     cpu_snapshot, cpu_states, online_cpu_mask, print_cpu_states, running_cpu, set_cpu_online,
     set_timekeeper_cpu,
+    total_idle_ticks,
 };
 pub(crate) use impl_core as active_impl;
 pub use scheduler::CpuSnapshot;
