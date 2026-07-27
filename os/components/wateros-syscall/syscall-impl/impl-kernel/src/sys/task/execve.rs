@@ -52,9 +52,8 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
     let argv_refs : Vec<&str> = argv.iter()
                                     .map(String::as_str)
                                     .collect();
-    let load_path = compat_exec_load_path(abs_path.as_str());
     let (new_elf, final_argv) =
-        match mm::kernel_mm::load_program_from_path(load_path.as_str(), &argv_refs) {
+        match mm::kernel_mm::load_program_from_path(abs_path.as_str(), &argv_refs) {
             Ok(loaded) => loaded,
             Err(err) => {
                 let errno = load_program_to_errno(err);
@@ -130,28 +129,6 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
                          stack_info);
 
     Ok(())
-}
-
-fn compat_exec_load_path(abs_path : &str) -> String {
-    if matches!(abs_path,
-                "/bin/sh" |
-                "/usr/bin/sh" |
-                "/bin/bash" |
-                "/usr/bin/bash" |
-                "/bin/dash" |
-                "/usr/bin/dash")
-    {
-        return String::from("/glibc/busybox");
-    }
-    if matches!(abs_path, "/bin/true" | "/usr/bin/true") {
-        if vfs::cwd::current_exe_path().map(|p| p.starts_with("/musl/"))
-                                       .unwrap_or(false)
-        {
-            return String::from("/musl/busybox");
-        }
-        return String::from("/glibc/busybox");
-    }
-    String::from(abs_path)
 }
 
 fn initial_entry_args(sp : usize, argc : usize) -> (usize, usize, usize) {

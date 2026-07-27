@@ -133,28 +133,15 @@ pub fn busybox_path_for_script(script_path: &str) -> Option<&'static str> {
     }
 }
 
-fn is_shell_like_interpreter(interpreter: &str) -> bool {
-    matches!(
-        interpreter,
-        "/busybox" | "/bin/sh" | "/bin/bash" | "/bin/dash"
-    ) || interpreter.ends_with("/busybox")
-        || interpreter.ends_with("/sh")
-        || interpreter.ends_with("/bash")
-        || interpreter.ends_with("/dash")
-}
-
-/// 将 shebang 中的解释器路径映射到根卷内实际路径（测试盘常用 `/busybox`、`/bin/sh`）。
+/// 将镜像约定的 `#!/busybox` 映射到脚本所属 libc 目录。
 pub fn remap_interpreter_path(script_path: &str, interpreter: &str) -> String {
     if interpreter.starts_with("/glibc/") || interpreter.starts_with("/musl/") {
         return String::from(interpreter);
     }
     if let Some(busybox) = busybox_path_for_script(script_path) {
-        if interpreter == "/busybox" || is_shell_like_interpreter(interpreter) {
+        if interpreter == "/busybox" {
             return String::from(busybox);
         }
-    }
-    if is_shell_like_interpreter(interpreter) {
-        return String::from("/glibc/busybox");
     }
     String::from(interpreter)
 }
@@ -172,11 +159,7 @@ pub fn resolve_script_interpreter(
     if stripped.len() >= 2 && &stripped[0..2] == b"#!" {
         let parsed = parse_shebang_line_at(stripped)?;
         let interpreter = remap_interpreter_path(script_path, &parsed.interpreter);
-        let mut args = parsed.args;
-        if args.is_empty() && is_shell_like_interpreter(&parsed.interpreter) {
-            args.push(String::from("sh"));
-        }
-        return Ok((interpreter, args));
+        return Ok((interpreter, parsed.args));
     }
     let busybox = busybox_path_for_script(script_path).ok_or(ExecResolveError::NotExecutable)?;
     Ok((String::from(busybox), vec![String::from("sh")]))
@@ -256,8 +239,8 @@ pub fn test() {
 
     let (interp, args) =
         resolve_script_interpreter("/glibc/unixbench_testcode.sh", b"#!/bin/bash\n").unwrap();
-    assert_eq!(interp, "/glibc/busybox");
-    assert_eq!(args, vec![String::from("sh")]);
+    assert_eq!(interp, "/bin/bash");
+    assert!(args.is_empty());
 
     let leading_nl = b"\n./busybox echo test\n";
     let (interp, _) =
