@@ -43,6 +43,11 @@ pub trait PlatformSmp {
     fn cpu_status(cpu : CpuId) -> PlatformSmpResult<HartStatus>;
     fn configured_cpu_mask() -> CpuMask;
     fn send_ipi(mask : CpuMask) -> PlatformSmpResult<()>;
+    /// Synchronously invalidate all address translations on the selected CPUs.
+    ///
+    /// Firmware-backed platforms may complete this without requiring the
+    /// target CPUs to take a supervisor software interrupt.
+    fn flush_tlb_remote(mask : CpuMask) -> PlatformSmpResult<()>;
     fn init_ipi() -> PlatformSmpResult<()>;
     fn clear_ipi() -> PlatformSmpResult<()>;
 }

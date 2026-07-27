@@ -76,6 +76,10 @@ pub mod smp {
         }
         crate::active_impl::smp::SmpImpl::send_ipi(mask)
     }
+    #[inline]
+    pub fn flush_tlb_remote(mask : CpuMask) -> PlatformSmpResult<()> {
+        crate::active_impl::smp::SmpImpl::flush_tlb_remote(mask)
+    }
 
     /// Take all software IPI reasons currently pending on this CPU.
     #[inline]

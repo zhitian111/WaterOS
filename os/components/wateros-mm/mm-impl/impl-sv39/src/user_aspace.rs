@@ -82,6 +82,16 @@ fn request_tlb_shootdown(handle: usize) {
     if targets.is_empty() {
         return;
     }
+    match platform::smp::flush_tlb_remote(targets) {
+        Ok(()) => return,
+        Err(platform::smp::PlatformSmpError::Unsupported) => {}
+        Err(error) => {
+            log::warn!("[tlb] platform remote flush failed targets={:#x} error={:?}; \
+                        falling back to software IPI",
+                       targets.bits(),
+                       error);
+        }
+    }
     let sequence = TLB_SEQUENCE.fetch_add(1, Ordering::AcqRel) + 1;
     let mut raw = targets.bits();
     while raw != 0 {

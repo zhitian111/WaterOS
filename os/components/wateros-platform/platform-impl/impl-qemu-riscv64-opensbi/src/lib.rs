@@ -68,6 +68,11 @@ pub mod smp {
             result(sbi::send_ipi(hart_mask)).map(|_| ())
         }
 
+        fn flush_tlb_remote(mask : CpuMask) -> PlatformSmpResult<()> {
+            let hart_mask = sbi::HartMask::from_mask_base(mask.bits() as usize, 0);
+            result(sbi::remote_sfence_vma(hart_mask, 0, usize::MAX)).map(|_| ())
+        }
+
         fn init_ipi() -> PlatformSmpResult<()> { Ok(()) }
 
         /// OpenSBI `send_ipi` raises supervisor software interrupt (SSIP) on

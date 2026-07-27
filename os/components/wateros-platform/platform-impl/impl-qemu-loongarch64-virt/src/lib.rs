@@ -64,6 +64,10 @@ pub mod smp {
             Ok(())
         }
 
+        fn flush_tlb_remote(_: CpuMask) -> PlatformSmpResult<()> {
+            Err(PlatformSmpError::Unsupported)
+        }
+
         fn init_ipi() -> PlatformSmpResult<()> {
             iocsr_write32(u32::MAX, IOCSR_IPI_EN);
             Ok(())
