@@ -1,10 +1,6 @@
 //! `socketpair(2)`：创建一对已连接的 AF_UNIX stream-compatible socket fd。
 
 //! 本模块代码由AI完成
-extern crate alloc;
-
-use alloc::boxed::Box;
-
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
@@ -53,11 +49,12 @@ pub(crate) fn sys_socketpair(args: SyscallArgs) -> UserRet {
         Err(err) => return UserRet::from_error(vfs_error_to_errno(err)),
     };
 
-    let (end0, end1) = vfs::stream_pair_handle_pair(nonblocking);
+    let ((end0, sock0), (end1, sock1)) =
+        crate::unix_sock::alloc_unix_stream_pair(nonblocking);
     let (fd0, fd1) =
         match vfs::fd::with_registry(|reg| -> vfs::VfsResult<(usize, usize)> {
-            let fd0 = reg.alloc_fd_for_task(task_id, Box::new(end0))?;
-            let fd1 = match reg.alloc_fd_for_task(task_id, Box::new(end1)) {
+            let fd0 = reg.alloc_fd_for_task(task_id, end0)?;
+            let fd1 = match reg.alloc_fd_for_task(task_id, end1) {
                 Ok(fd) => fd,
                 Err(err) => {
                     let _ = reg.close_fd_for_task(task_id, fd0);
@@ -73,12 +70,20 @@ pub(crate) fn sys_socketpair(args: SyscallArgs) -> UserRet {
             Ok(fds) => fds,
             Err(err) => return UserRet::from_error(vfs_error_to_errno(err)),
         };
+    crate::unix_sock::register(fd0, sock0);
+    crate::unix_sock::register(fd1, sock1);
 
     let fds = [fd0 as i32, fd1 as i32];
     match copy_to_user(sv_ptr, unsafe {
         core::slice::from_raw_parts(fds.as_ptr() as *const u8, core::mem::size_of_val(&fds))
     }) {
         Ok(n) if n == core::mem::size_of_val(&fds) => UserRet::from_success(0),
-        _ => UserRet::from_error(ErrNo::EFAULT),
+        _ => {
+            crate::unix_sock::unregister(task_id, fd0);
+            crate::unix_sock::unregister(task_id, fd1);
+            let _ = vfs::fd::close_fd(fd0);
+            let _ = vfs::fd::close_fd(fd1);
+            UserRet::from_error(ErrNo::EFAULT)
+        }
     }
 }

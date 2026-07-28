@@ -160,6 +160,36 @@ pub(crate) fn alloc_unix_socket(
     Ok((handle, sock))
 }
 
+/// Create the two registered AF_UNIX endpoints used by `socketpair(2)`.
+#[allow(private_interfaces)]
+pub(crate) fn alloc_unix_stream_pair(
+    nonblocking: bool,
+) -> (
+    (Box<dyn VfsIoHandle>, UnixSockRef),
+    (Box<dyn VfsIoHandle>, UnixSockRef),
+) {
+    let (endpoint0, endpoint1) = vfs::stream_pair_handle_pair(nonblocking);
+    let make_socket = |endpoint| {
+        let sock = UnixSockRef {
+            inner: Arc::new(Mutex::new(UnixSockInner {
+                sock_type: UnixSockType::Stream,
+                nonblocking,
+                bound_key: None,
+                peer_key: Some(Vec::new()),
+                listening: false,
+                endpoint: Some(endpoint),
+                dgram_peer: None,
+                inbox: VecDeque::new(),
+            })),
+        };
+        let inode = NEXT_INODE.fetch_add(1, Ordering::Relaxed);
+        let handle: Box<dyn VfsIoHandle> =
+            Box::new(UnixSocketHandle { sock: sock.clone(), inode });
+        (handle, sock)
+    };
+    (make_socket(endpoint0), make_socket(endpoint1))
+}
+
 #[allow(private_interfaces)]
 pub(crate) fn parse_sockaddr_un(addr_ptr: usize, addrlen: usize) -> Result<UnixAddr, ErrNo> {
     if addrlen < 2 || addr_ptr == 0 {
@@ -356,8 +386,15 @@ pub(crate) fn sendto_unix(
     addrlen: usize,
 ) -> Result<usize, ErrNo> {
     let sock = lookup_current(fd)?;
-    let sender_key = sock.inner.lock().bound_key.clone();
     let inner = sock.inner.lock();
+    if let Some(mut endpoint) = inner.endpoint.clone() {
+        drop(inner);
+        if addr_ptr != 0 && addrlen != 0 {
+            return Err(ErrNo::EINVAL);
+        }
+        return endpoint.write(buf).map_err(vfs_error_to_errno);
+    }
+    let sender_key = inner.bound_key.clone();
     let key = if addr_ptr != 0 && addrlen >= 2 {
         parse_sockaddr_un(addr_ptr, addrlen)?.key
     } else {
@@ -392,6 +429,10 @@ pub(crate) fn recvfrom_unix(
     loop {
         let packet = {
             let mut inner = sock.inner.lock();
+            if let Some(mut endpoint) = inner.endpoint.clone() {
+                drop(inner);
+                return endpoint.read(buf).map_err(vfs_error_to_errno);
+            }
             if let Some(packet) = inner.inbox.pop_front() {
                 Some((packet, None))
             } else if let Some(key) = inner.bound_key.clone() {
@@ -519,7 +560,8 @@ impl VfsIoHandle for UnixSocketHandle {
         loop {
             let packet = {
                 let mut inner = sock.inner.lock();
-                if let Some(endpoint) = inner.endpoint.as_mut() {
+                if let Some(mut endpoint) = inner.endpoint.clone() {
+                    drop(inner);
                     return endpoint.read(buf);
                 }
                 if inner.sock_type == UnixSockType::Dgram {
@@ -542,8 +584,9 @@ impl VfsIoHandle for UnixSocketHandle {
 
     fn write(&mut self, buf: &[u8]) -> VfsResult<usize> {
         let sock = self.sock.clone();
-        let mut inner = sock.inner.lock();
-        if let Some(endpoint) = inner.endpoint.as_mut() {
+        let inner = sock.inner.lock();
+        if let Some(mut endpoint) = inner.endpoint.clone() {
+            drop(inner);
             return endpoint.write(buf);
         }
         if inner.sock_type == UnixSockType::Dgram {

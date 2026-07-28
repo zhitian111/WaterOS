@@ -466,6 +466,7 @@ impl VfsIoHandle for PipeWriteHandle {
 
 /// Unix domain stream socket pair 的一端：读/写分别连到交叉 pipe。
 // 本结构代码由AI完成
+#[derive(Clone)]
 pub struct UnixStreamPairEnd {
     read_end: PipeEndpoint,
     write_end: PipeEndpoint,
