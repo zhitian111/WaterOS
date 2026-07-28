@@ -328,3 +328,8 @@ pub fn process_exists(pid : ProcessId) -> bool {
 pub fn pgid_has_members(pgid : ProcessId) -> bool {
     with_process_registry(|registry| registry.pgid_has_members(pgid))
 }
+
+/// 原子快照指定进程组中的全部进程 pid。
+pub fn process_pids_in_pgid(pgid : ProcessId) -> Vec<ProcessId> {
+    with_process_registry(|registry| registry.process_pids_in_pgid(pgid))
+}

@@ -340,6 +340,14 @@ impl ProcessRegistry {
             .any(|process| process.pgid == pgid)
     }
 
+    pub fn process_pids_in_pgid(&self, pgid : ProcessId) -> Vec<ProcessId> {
+        self.processes
+            .values()
+            .filter(|process| process.pgid == pgid)
+            .map(|process| process.pid)
+            .collect()
+    }
+
     pub fn get_process_rlimit(&self, pid : ProcessId, resource : usize) -> Option<ResourceLimit> {
         self.processes
             .get(&pid)
@@ -968,6 +976,8 @@ impl ProcessRegistry {
 
 #[cfg(test)]
 mod tests {
+    use api_v0::ProcessId;
+
     use super::ProcessRegistry;
 
     #[test]
@@ -983,5 +993,26 @@ mod tests {
 
         assert_eq!(registry.get_parent_death_signal(parent_pid), Some(9));
         assert_eq!(registry.get_parent_death_signal(child_pid), Some(0));
+    }
+
+    #[test]
+    fn selects_only_members_of_requested_process_group() {
+        let mut registry = ProcessRegistry::new();
+        let first = registry.create_process_for_task(10, None, None)
+                            .expect("create first process");
+        let second = registry.create_process_for_task(11, None, None)
+                             .expect("create second process");
+        let third = registry.create_process_for_task(12, None, None)
+                            .expect("create third process");
+        let pgid = ProcessId::from_raw(77);
+        registry.set_process_pgid(first, pgid)
+                .expect("move first process");
+        registry.set_process_pgid(third, pgid)
+                .expect("move third process");
+
+        assert_eq!(registry.process_pids_in_pgid(pgid),
+                   alloc::vec![first, third]);
+        assert!(!registry.process_pids_in_pgid(second)
+                         .contains(&first));
     }
 }

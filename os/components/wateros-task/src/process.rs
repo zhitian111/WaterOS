@@ -114,6 +114,11 @@ pub fn process_exists(pid : ProcessId) -> bool { active_impl::process_exists(pid
 /// 进程组是否仍有成员。
 pub fn pgid_has_members(pgid : ProcessId) -> bool { active_impl::pgid_has_members(pgid) }
 
+/// 返回指定进程组中的全部进程 PID。
+pub fn process_pids_in_pgid(pgid : ProcessId) -> Vec<ProcessId> {
+    active_impl::process_pids_in_pgid(pgid)
+}
+
 /// 按调度实体查询 `RLIMIT_NOFILE` 软限制；无进程上下文时回退 1024。
 pub fn nofile_rlimit_for_task(task_id : TaskId) -> u64 {
     const RLIMIT_NOFILE : usize = 7;

@@ -16,6 +16,7 @@ use crate::sys::misc::ltp_cgroup_helper::{
 };
 use wateros_platform_arch_api_v0::trap::{SignalFrameCodec, SignalMachineContext, TrapFrameRead};
 
+use super::kill_target::{classify_kill_target, KillTargetSelector};
 use crate::user_copy::{copy_from_user_struct, copy_to_user_struct};
 
 const RT_SIGSET_SIZE_64 : usize = 8;
@@ -759,53 +760,30 @@ pub(crate) fn sys_tgkill(args : SyscallArgs) -> UserRet {
 
 const _NSIG : i32 = 64;
 
-fn collect_process_tree(root : ProcessId) -> Vec<ProcessId> {
-    let mut targets = Vec::new();
-    if task::process_snapshot(root).is_none() {
-        return targets;
+fn resolve_process_group_targets(pgid : ProcessId) -> Result<Vec<ProcessId>, ErrNo> {
+    let targets = task::process_pids_in_pgid(pgid);
+    if targets.is_empty() {
+        Err(ErrNo::ESRCH)
+    } else {
+        Ok(targets)
     }
-
-    targets.push(root);
-    let mut scan = 0;
-    while scan < targets.len() {
-        let parent = targets[scan];
-        scan += 1;
-        for pid in task::all_process_pids() {
-            if targets.contains(&pid) {
-                continue;
-            }
-            let Some(snapshot) = task::process_snapshot(pid) else {
-                continue;
-            };
-            if snapshot.parent_pid == Some(parent) {
-                targets.push(pid);
-            }
-        }
-    }
-    targets
 }
 
 fn resolve_kill_targets(pid : isize) -> Result<Vec<ProcessId>, ErrNo> {
-    match pid {
-        p if p > 0 => Ok(alloc::vec![ProcessId::from_raw(p as usize)]),
-        0 => {
+    match classify_kill_target(pid) {
+        KillTargetSelector::Process(pid) => Ok(alloc::vec![ProcessId::from_raw(pid)]),
+        KillTargetSelector::CurrentProcessGroup => {
             let current = task::current_process_snapshot().ok_or(ErrNo::ESRCH)?;
-            Ok(alloc::vec![current.pid])
+            resolve_process_group_targets(current.pgid)
         }
-        -1 => {
+        KillTargetSelector::Broadcast => {
             let current = task::current_process_snapshot().ok_or(ErrNo::ESRCH)?;
             Ok(task::all_process_pids().into_iter()
                                        .filter(|p| *p != current.pid && p.raw() != 1)
                                        .collect())
         }
-        _ => {
-            let pgid = pid.unsigned_abs();
-            let targets = collect_process_tree(ProcessId::from_raw(pgid));
-            if targets.is_empty() {
-                Err(ErrNo::ESRCH)
-            } else {
-                Ok(targets)
-            }
+        KillTargetSelector::ProcessGroup(pgid) => {
+            resolve_process_group_targets(ProcessId::from_raw(pgid))
         }
     }
 }
@@ -850,12 +828,12 @@ pub(crate) fn sys_kill(args : SyscallArgs) -> UserRet {
     }
 
     if sig == 0 {
-        for process in &targets {
-            if task::leader_task_for_process(*process).is_none() {
-                return UserRet::from_error(ErrNo::ESRCH);
-            }
+        if targets.into_iter()
+                  .any(|process| task::leader_task_for_process(process).is_some())
+        {
+            return UserRet::from_success(0);
         }
-        return UserRet::from_success(0);
+        return UserRet::from_error(ErrNo::ESRCH);
     }
 
     let mut sent = false;

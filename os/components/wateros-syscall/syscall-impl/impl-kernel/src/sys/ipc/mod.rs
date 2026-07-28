@@ -5,6 +5,7 @@ use ipc::futex::FutexError;
 
 pub(crate) mod eventfd;
 pub(crate) mod futex;
+mod kill_target;
 pub(crate) mod robust;
 pub(crate) mod shm;
 pub(crate) mod signal;
