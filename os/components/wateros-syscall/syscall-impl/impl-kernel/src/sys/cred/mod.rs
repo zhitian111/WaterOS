@@ -50,6 +50,15 @@ fn apply_gid_triplet(ids : IdTriplet) {
                      Some(Gid(ids.saved)));
 }
 
+fn write_id_triplet(pointers : [usize; 3], values : [u32; 3]) -> Result<(), ErrNo> {
+    for (pointer, value) in pointers.into_iter()
+                                    .zip(values)
+    {
+        copy_to_user_struct(pointer, &value)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn sys_getuid() -> UserRet {
     let cred = cred::current_credentials();
     UserRet::from_success(cred.real_uid.0 as usize)
@@ -243,18 +252,22 @@ pub(crate) fn sys_getresuid(args : SyscallArgs) -> UserRet {
     let euid_ptr = args.arg(1);
     let suid_ptr = args.arg(2);
     let cred = cred::current_credentials();
-    let _ = copy_to_user_struct(ruid_ptr, &cred.real_uid.0);
-    let _ = copy_to_user_struct(euid_ptr, &cred.effective_uid.0);
-    let _ = copy_to_user_struct(suid_ptr, &cred.saved_uid.0);
-    UserRet::from_success(0)
+    match write_id_triplet([ruid_ptr, euid_ptr, suid_ptr],
+                           [cred.real_uid.0, cred.effective_uid.0, cred.saved_uid.0])
+    {
+        Ok(()) => UserRet::from_success(0),
+        Err(error) => UserRet::from_error(error),
+    }
 }
 pub(crate) fn sys_getresgid(args : SyscallArgs) -> UserRet {
     let rgid_ptr = args.arg(0);
     let egid_ptr = args.arg(1);
     let sgid_ptr = args.arg(2);
     let cred = cred::current_credentials();
-    let _ = copy_to_user_struct(rgid_ptr, &cred.real_gid.0);
-    let _ = copy_to_user_struct(egid_ptr, &cred.effective_gid.0);
-    let _ = copy_to_user_struct(sgid_ptr, &cred.saved_gid.0);
-    UserRet::from_success(0)
+    match write_id_triplet([rgid_ptr, egid_ptr, sgid_ptr],
+                           [cred.real_gid.0, cred.effective_gid.0, cred.saved_gid.0])
+    {
+        Ok(()) => UserRet::from_success(0),
+        Err(error) => UserRet::from_error(error),
+    }
 }
