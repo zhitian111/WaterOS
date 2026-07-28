@@ -446,6 +446,14 @@ impl Ext4 {
         }
         // Move
         self.unlink_inode(&mut parent, &mut child, name, false)?;
+        // `parent` and `new_parent` are independent inode snapshots. For a
+        // same-directory rename, unlink updated the on-disk link count while
+        // `new_parent` still contains the old value. Reload it before linking
+        // a directory, otherwise every rename increments the parent's link
+        // count by one.
+        if parent.id == new_parent.id {
+            new_parent = self.read_inode(parent.id);
+        }
         self.link_inode(&mut new_parent, &mut child, new_name)
     }
 
