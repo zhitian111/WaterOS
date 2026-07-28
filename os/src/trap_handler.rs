@@ -131,9 +131,11 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
     let cx = unsafe { &mut *(authoritative as *mut TrapContext) };
 
     if cx.returns_to_user() {
-        let kernel_satp = mm::kernel_mm::kernel_satp();
-        if paging::active_address_space_token() != kernel_satp {
-            paging::activate_address_space_token_and_flush(kernel_satp);
+        if platform::arch::trap::user_trap_requires_kernel_address_space() {
+            let kernel_satp = mm::kernel_mm::kernel_satp();
+            if paging::active_address_space_token() != kernel_satp {
+                paging::activate_address_space_token_and_flush(kernel_satp);
+            }
         }
         platform::arch::trap::prepare_user_trap_frame_access();
     }

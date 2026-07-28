@@ -18,9 +18,9 @@
 
 ## 设计决策
 
-首版只支持 RISC-V QEMU/OpenSBI：
+本文件描述的首版只支持 RISC-V QEMU/OpenSBI；LoongArch 后续已通过 IOCSR
+mailbox + boot IPI 实现独立的 AP 启动路径：
 
-- 不同步实现 LoongArch SMP。
 - hart 上限固定为 `MAX_CPUS = 8`，暂不解析 DTB CPU 节点。
 - 调度器采用全局 ready queue + 全局自旋锁。
 - AP hart 参与普通任务调度，不只是启动后空转。
@@ -36,7 +36,8 @@ cd os
 SMP_CORES=4 WATEROS_OPENSBI_FW=/path/to/opensbi-hsm-fw.bin ./scripts/rv_qemu_run.sh
 ```
 
-可使用 `SMP_CORES=1` 做单核回归。LoongArch 当前只保证 IPI/SMP 接口可编译，未启动 AP。
+可使用 `SMP_CORES=1` 做 RISC-V 单核回归。LoongArch QEMU 脚本固定使用
+`-smp 8`，BSP 会通过 mailbox 逐个启动其余 7 个 vCPU。
 
 ## 启动流程
 

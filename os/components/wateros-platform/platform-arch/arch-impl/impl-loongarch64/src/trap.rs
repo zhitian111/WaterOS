@@ -54,6 +54,8 @@ const LOONGARCH_PRMD_PIE : usize = 1 << 2;
 const LOONGARCH_USER_PLV : usize = 0x3;
 /// `ESTAT.IS.TI`：定时器中断挂起位（与 `decode_loongarch64_trap_cause` 一致）。
 const TIMER_INTERRUPT_PENDING : usize = 1 << 11;
+/// `ESTAT.IS.IPI`：核间中断挂起位。
+const IPI_INTERRUPT_PENDING : usize = 1 << 12;
 /// 单次定时器中断后重新武装的切片长度（StableCounter
 /// 刻度）；与调度策略相关，非用户 ABI。
 const TIMER_SLICE_TICKS : u64 = 10_000_000;
@@ -124,6 +126,9 @@ unsafe fn restore_fp_state(regs : &[u64; 32], fcsr : u32) {
 
 #[inline]
 fn decode_loongarch64_trap_cause(estat : usize) -> TrapCause {
+    if (estat & IPI_INTERRUPT_PENDING) != 0 {
+        return TrapCause::Interrupt(Interrupt::SupervisiorSoft);
+    }
     if (estat & TIMER_INTERRUPT_PENDING) != 0 {
         return TrapCause::Interrupt(Interrupt::SupervisiorTimer);
     }
@@ -177,6 +182,11 @@ pub fn init_trap() {
 /// LoongArch64 当前不需要 RISC-V `SUM` 一类的用户页访问准备。
 #[inline]
 pub fn prepare_user_trap_frame_access() {}
+
+/// PLV0 通过 DMW0 直接访问内核 RAM/MMIO，用户 trap 处理期间可以保留用户
+/// PGDL。这样普通 syscall 返回同一地址空间时无需往返切换 PGDL 和清空 TLB。
+#[inline]
+pub const fn user_trap_requires_kernel_address_space() -> bool { false }
 
 /// 当前 LoongArch64 trap 调度时间片长度。
 #[inline]

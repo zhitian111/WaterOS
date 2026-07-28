@@ -200,15 +200,142 @@ macOS 没有 LA GDB 时，使用仓库内的只读快照客户端：
 make la_gdb_snapshot
 ```
 
-它通过 QEMU GDB Remote 协议暂停 guest，读取每个 vCPU 的
-`pc`、`ra`、`sp`、`fp`，扫描栈中的内核代码地址，解析符号后自动 detach 并恢复
-guest。调试决赛 ELF 或自定义端口：
+它实际调用 [`os/scripts/gdb_remote_snapshot.py`](../../os/scripts/gdb_remote_snapshot.py)：
+脚本通过 QEMU GDB Remote 协议暂停 guest，读取每个 vCPU 的寄存器，扫描栈中的
+内核代码地址，解析符号后自动 detach 并恢复 guest。快照客户端不提供单步和断点；
+需要这些能力时仍应安装 GNU GDB。
+
+### 3.2 使用 `gdb_remote_snapshot.py`
+
+#### 最短操作流程
+
+先进入 `os` 目录，在终端 A 启动带 GDB Remote 端口的 QEMU：
 
 ```bash
-make la_gdb_snapshot LA_GDB_ELF=./kernel-la-final GDB_PORT=1235
+cd /Users/x/code/WaterOS/os
+make la_pre_gdb_run
 ```
 
-快照客户端不提供单步和断点；需要这些能力时仍应安装 GNU GDB。
+等系统运行到疑似卡死的位置后，在终端 B 采集快照：
+
+```bash
+cd /Users/x/code/WaterOS/os
+make la_gdb_snapshot
+```
+
+决赛内核需要让快照脚本读取与 QEMU 完全相同的 ELF：
+
+```bash
+# 终端 A
+make la_final_gdb_run
+
+# 终端 B
+make la_gdb_snapshot LA_GDB_ELF=./kernel-la-final
+```
+
+如果 1234 端口已占用，两端必须使用同一个新端口：
+
+```bash
+# 终端 A
+WOS_QEMU_GDB_PORT=1235 make la_pre_gdb_run
+
+# 终端 B
+make la_gdb_snapshot GDB_PORT=1235
+```
+
+`make la_gdb_snapshot` 默认等价于：
+
+```bash
+python3 ./scripts/gdb_remote_snapshot.py \
+  --arch la \
+  --elf ./kernel-la-pre \
+  --host 127.0.0.1 \
+  --port 1234
+```
+
+脚本也支持 RISC-V；只需将架构和 ELF 改为当前实际运行的内核：
+
+```bash
+python3 ./scripts/gdb_remote_snapshot.py \
+  --arch rv \
+  --elf ./kernel-rv-final-log \
+  --port 1234
+```
+
+#### 参数
+
+| 参数 | 含义 |
+|------|------|
+| `--arch {la,rv}` | 必填，选择 LoongArch 或 RISC-V 寄存器和地址规则 |
+| `--elf PATH` | 必填，用于解析地址的未剥离内核 ELF，必须与 QEMU 中运行的文件一致 |
+| `--host HOST` | GDB Remote 地址，默认 `127.0.0.1` |
+| `--port PORT` | GDB Remote 端口，默认 `1234` |
+| `--timeout SECONDS` | 建连和读取超时，默认 5 秒 |
+| `--stack-words N` | 从每个 CPU 的 SP 开始扫描多少个 64 位机器字，默认 64；设为 0 可关闭 |
+| `--leave-stopped` | 采集后不 detach，让 QEMU 保持暂停 |
+
+通常不要使用 `--leave-stopped`。默认模式采集结束会显示：
+
+```text
+[gdb-snapshot] detached; guest resumed
+```
+
+此时 guest 已恢复运行。如果使用了 `--leave-stopped`，脚本会显示：
+
+```text
+[gdb-snapshot] guest remains stopped
+```
+
+此时必须用 GNU GDB 连接并执行 `continue`，或者重新连接后 detach，系统才会继续
+运行。
+
+#### 如何阅读输出
+
+一次正常的 LA 多核快照类似：
+
+```text
+[gdb-snapshot] guest stopped: T...
+[gdb-snapshot] 8 CPU thread(s)
+cpu=0 thread=1 pc=0x0000000090... ra=0x... sp=0x... fp=0x... badv=0x...
+  0x0000000090...  function_name+offset
+  stack+0x030: 0x0000000090...  caller_name+offset
+```
+
+- `CPU thread(s)` 应与 QEMU 的 `-smp` 数量一致；
+- `pc` 是该 CPU 当前执行地址，`ra` 是返回地址，`sp`/`fp` 是栈指针/帧指针；
+- LA 目标若由 QEMU 暴露相应 CSR，还会打印 `badv`、`era`、`estat`、`prmd`
+  等诊断寄存器；
+- 紧随寄存器行的符号是 `pc` 对应的 Rust/汇编函数；
+- `stack+0x...` 是在栈中找到的疑似内核返回地址，只是调用链线索，不保证每一项
+  都是有效栈帧；
+- 若 CPU 位于 `fatal_kernel_trap`，脚本还会尝试打印 `raw_cause`、
+  `trapped_pc`、`fault_addr` 和异常发生位置；
+- 地址显示为 `firmware/out of kernel ELF` 时，该 CPU 仍在 QEMU 固件范围；
+  `<unknown>` 则表示地址不在当前 ELF 的已知符号范围，首先检查 ELF 是否匹配。
+
+判断是否真的卡死时应间隔数秒采集两次。如果同一批 CPU 的 `pc` 始终停在同一
+自旋锁，而且 syscall/任务状态没有推进，才更像内核死锁；两次快照地址持续变化
+通常表示任务仍在执行。
+
+#### 依赖与失败处理
+
+脚本本身只依赖 Python 3 标准库和仓库内的 `scripts/debug/symbol_index.py`，不要求
+Python GDB 模块。符号解析还需要 `nm`：
+
+- LA 优先使用 `loongarch64-linux-gnu-nm`；
+- RISC-V 优先使用 `riscv64-elf-nm`；
+- 找不到交叉工具时，会尝试使用当前 Rust toolchain 自带的 `llvm-nm`。
+
+常见错误：
+
+- `Connection refused`：QEMU 没有用 `*_gdb_run`/`*_gdb_wait` 启动，端口写错，
+  或 QEMU 已退出；
+- `ELF not found`：先构建对应内核，或通过 `LA_GDB_ELF`/`--elf` 指定正确文件；
+- `failed to run nm`：安装对应 binutils，或通过 rustup 安装包含 LLVM tools 的
+  Rust 组件；
+- 地址都解析成不相关函数：QEMU 与脚本使用的不是同一次构建产生的 ELF；
+- 连接后一直没有串口输出：检查是否使用了 `--leave-stopped`，或 QEMU 是否由
+  `*_gdb_wait` 的 `-S` 停在启动阶段。
 
 ## 4. 从地址查函数
 
@@ -379,9 +506,43 @@ lower-level table，而 WaterOS 的新页表目录直接清零。为避免硬件
 - [Linux LoongArch `pgtable.h`](https://github.com/torvalds/linux/blob/master/arch/loongarch/include/asm/pgtable.h)
   展示空目录项与 invalid lower-level table 的关系。
 
-另外，vCPU 1～7 位于固件且 `ra/sp=0` 表示它们没有进入 WaterOS，并不是
-scheduler idle。当前 LA 平台尚未实现从 BSP 主动启动 AP；调度行为应先按单核
-解释，不能仅因 QEMU 使用了 `-smp 8` 就假定 8 核已上线。
+当时 vCPU 1～7 位于固件且 `ra/sp=0`，说明它们没有进入 WaterOS，并不是
+scheduler idle。后续补齐的 LA SMP 启动流程使用了与 Linux 相同的 mailbox
+协议：BSP 向目标核 mailbox 0 写入平台 `_start`，再发送 boot IPI；AP 从
+`CSR.CPUID`（CSR `0x20`）读取核号并选择独立 boot stack。
+
+这里曾有一个很隐蔽的错误：入口和 `current_cpu_id()` 同时把 CPUID CSR 错写成
+`0x10`。两边读到的都是 0，所以初始化校验会错误通过，但所有 AP 实际共用 CPU0
+启动栈，随后表现为随机非法指令和嵌套 page fault。修正为 `0x20` 后，GDB 快照
+应看到 8 个 vCPU 均位于 WaterOS 符号范围，且内核栈地址不再全部落在 CPU0 的
+boot stack。
+
+LA 多核正常启动还依赖两项配套逻辑：
+
+- 运行期 IOCSR IPI 必须携带一个非零硬件 action bit，不能只写目标 CPU 编号；
+- trap 解码必须先识别 `ESTAT.IS.IPI`，清除本地 IPI 状态后再处理 WaterOS
+  保存的软件 reschedule/TLB shootdown 原因。
+
+在 cyclictest + 400-worker hackbench 中，多数 CPU 可能被快照在
+`__tlb_refill`。这不必然表示 refill 入口死循环：应间隔采样并检查其他 CPU 是否
+在 signal、pipe、syscall 和 scheduler 路径间变化。一次实测中 `STRESS_P8` 停在
+T1 后仍持续占用约 6 个宿主核，最终约 140 秒完成全部 T2～T7 并成功回收
+hackbench。
+
+当时还存在两处可消除的冗余 TLB 刷新：
+
+- 公共 trap handler 在每次用户 trap 入口切换到 kernel PGDL；
+- LA 返回用户态时无条件重写 PGDL 并执行全量 `invtlb`。
+
+LA 已配置仅供 PLV0 使用的 DMW0，内核 RAM/MMIO 不依赖 kernel PGDL，因此修复后
+用户 trap 期间保留当前用户 PGDL，返回时也只在目标 PGDL 真正变化时刷新。RISC-V
+仍保持进入 kernel `satp` 的原有语义。不同进程切换目前仍必须刷新，因为 LA
+地址空间尚未分配硬件 ASID；不能简单删除这次刷新，否则不同进程的同一虚拟地址
+可能复用错误的旧 TLB 映射。
+
+参考实现可对照
+[Linux LoongArch `smp.c`](https://github.com/torvalds/linux/blob/master/arch/loongarch/kernel/smp.c)
+和 [QEMU LoongArch `boot.c`](https://github.com/qemu/qemu/blob/master/hw/loongarch/boot.c)。
 
 ## 7. 如何区分三种“卡住”
 

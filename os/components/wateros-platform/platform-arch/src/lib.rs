@@ -79,6 +79,11 @@ pub mod trap {
     pub use impl_riscv64::trap::prepare_user_trap_frame_access;
 
     #[cfg(feature = "impl-loongarch64")]
+    pub use impl_loongarch64::trap::user_trap_requires_kernel_address_space;
+    #[cfg(feature = "impl-riscv64")]
+    pub use impl_riscv64::trap::user_trap_requires_kernel_address_space;
+
+    #[cfg(feature = "impl-loongarch64")]
     pub use impl_loongarch64::trap::timer_slice_ticks;
     #[cfg(feature = "impl-riscv64")]
     pub use impl_riscv64::trap::timer_slice_ticks;

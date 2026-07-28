@@ -7,5 +7,5 @@
 
 _start:
     move $r5, $r4
-    csrrd $r4, 0x10
+    csrrd $r4, 0x20
     b __wateros_arch_boot

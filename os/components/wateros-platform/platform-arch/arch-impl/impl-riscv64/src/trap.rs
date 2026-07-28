@@ -160,6 +160,11 @@ pub fn prepare_user_trap_frame_access() {
     }
 }
 
+/// RISC-V 内核代码依赖内核 `satp` 中的映射，用户 trap 进入 Rust 前必须切换
+/// 到内核地址空间。
+#[inline]
+pub const fn user_trap_requires_kernel_address_space() -> bool { true }
+
 /// 当前 RISC-V trap 调度时间片长度。
 #[inline]
 pub const fn timer_slice_ticks() -> u64 { TIMER_SLICE_TICKS }

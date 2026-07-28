@@ -215,12 +215,18 @@ def main() -> int:
             sp_reg = find_register(registers, "r3", "sp")
             fp_reg = find_register(registers, "r22", "fp")
             badv_reg = find_register(registers, "badv")
+            diagnostic_regs = [
+                register
+                for name in ("era", "estat", "prmd", "crmd", "ecfg", "eentry")
+                if (register := find_register(registers, name)) is not None
+            ]
         else:
             pc_reg = find_register(registers, "pc")
             ra_reg = find_register(registers, "ra", "x1")
             sp_reg = find_register(registers, "sp", "x2")
             fp_reg = find_register(registers, "fp", "s0", "x8")
             badv_reg = find_register(registers, "badv", "stval")
+            diagnostic_regs = []
         if pc_reg is None:
             names = ", ".join(register.name for register in registers)
             raise RemoteError(f"target XML has no PC register (registers: {names})")
@@ -242,19 +248,42 @@ def main() -> int:
             if pc is None:
                 print(f"cpu={cpu_index} thread={thread_id} pc=<unavailable>")
                 continue
-            location = index.lookup_fast(pc).format_short()
+            pc_lookup = index.lookup_fast(pc)
+            location = pc_lookup.format_short()
             ra_text = f"0x{ra:016x}" if ra is not None else "<unavailable>"
             sp_text = f"0x{sp:016x}" if sp is not None else "<unavailable>"
             fp_text = f"0x{fp:016x}" if fp is not None else "<unavailable>"
             badv_text = (
                 f" badv=0x{badv:016x}" if badv is not None else ""
             )
+            diagnostic_text = "".join(
+                f" {register.name}=0x{value:016x}"
+                for register in diagnostic_regs
+                if (value := read_register(remote, register)) is not None
+            )
             print(
                 f"cpu={cpu_index} thread={thread_id} "
                 f"pc=0x{pc:016x} ra={ra_text} sp={sp_text} fp={fp_text}"
-                f"{badv_text}"
+                f"{badv_text}{diagnostic_text}"
             )
             print(f"  {location}")
+            if (
+                sp is not None
+                and pc_lookup.symbol is not None
+                and "fatal_kernel_trap" in pc_lookup.symbol.name
+            ):
+                fatal_frame = read_memory(remote, sp + 16, 24)
+                if fatal_frame is not None and len(fatal_frame) == 24:
+                    raw_cause = int.from_bytes(fatal_frame[0:8], "little")
+                    trapped_pc = int.from_bytes(fatal_frame[8:16], "little")
+                    fault_addr = int.from_bytes(fatal_frame[16:24], "little")
+                    trapped_location = index.lookup_fast(trapped_pc).format_short()
+                    print(
+                        f"  fatal: raw_cause=0x{raw_cause:x} "
+                        f"trapped_pc=0x{trapped_pc:016x} "
+                        f"fault_addr=0x{fault_addr:016x}"
+                    )
+                    print(f"  trapped-at: {trapped_location}")
             if sp is not None and args.stack_words > 0:
                 stack = read_memory(remote, sp, args.stack_words * 8)
                 if stack is not None:

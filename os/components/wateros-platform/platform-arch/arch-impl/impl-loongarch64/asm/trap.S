@@ -158,9 +158,15 @@ __alltraps:
 
 .Lreturn_to_user:
     # TrapContext.return_address_space_token 为用户态下使用的 PGDL 基址。
+    # 普通 syscall/trap 返回同一任务时 PGDL 没有变化，不得每次都清空 TLB；
+    # 页表内容修改由 MM 的本地 flush/远端 shootdown 路径负责。只有真正切换
+    # 地址空间时才安装新 PGDL 并刷新本 CPU TLB。
     ld.d $r12, $r3, 36*8
+    csrrd $r13, CSR_PGDL
+    beq $r12, $r13, .Luser_pgdl_ready
     csrwr $r12, CSR_PGDL
     invtlb 0, $r0, $r0
+.Luser_pgdl_ready:
     csrrd $r12, CSR_CRMD
     addi.d $r13, $r0, -9
     and $r12, $r12, $r13

@@ -237,6 +237,49 @@ mod qemu_loongarch64_virt {
     static BSP_CLAIMED : AtomicBool = AtomicBool::new(false);
     static AP_BOOT_READY : AtomicBool = AtomicBool::new(false);
 
+    unsafe extern "C" {
+        fn _start();
+    }
+
+    fn start_secondary_cpus(boot_cpu : task::CpuId) -> base::cpu::CpuMask {
+        // QEMU 的 AP 固件不会为 mailbox 入口准备 a0；必须从平台 `_start`
+        // 进入，由它读取 CSR.CPUNUM，再跳转到通用 arch boot 入口。
+        let entry = _start as *const () as usize;
+        let configured = platform::smp::configured_cpu_mask();
+        let mut requested = base::cpu::CpuMask::EMPTY;
+        for raw in 0..base_config::task::MAX_CPUS {
+            let cpu = task::CpuId::from_raw(raw);
+            if cpu == boot_cpu || !configured.contains(cpu) {
+                continue;
+            }
+            info!("[smp] starting LA cpu={} entry={:#x}", raw, entry);
+            match platform::smp::start_cpu(cpu, entry, 0) {
+                Ok(()) | Err(platform::smp::PlatformSmpError::AlreadyAvailable) => {
+                    requested.insert(cpu);
+                }
+                Err(platform::smp::PlatformSmpError::InvalidCpu) => break,
+                Err(error) => panic!("[smp] cannot start LA cpu={}: {:?}", raw, error),
+            }
+        }
+        requested
+    }
+
+    fn wait_for_secondary_online(requested : base::cpu::CpuMask) {
+        const ONLINE_WAIT_SPINS : usize = 100_000_000;
+        for _ in 0..ONLINE_WAIT_SPINS {
+            let online = task::online_cpu_mask();
+            if online.bits() & requested.bits() == requested.bits() {
+                info!("[smp] all LA CPUs online mask={:#x}", online.bits());
+                return;
+            }
+            core::hint::spin_loop();
+        }
+        let online = task::online_cpu_mask();
+        panic!("[smp] LA AP online timeout: requested={:#x}, online={:#x}",
+               requested.bits(),
+               online.bits());
+    }
+
     fn ap_main(cpu_id : task::CpuId) -> ! {
         platform::arch::cpu::init_current_cpu(cpu_id).expect("AP init current CPU");
         platform::arch::init();
@@ -291,6 +334,8 @@ mod qemu_loongarch64_virt {
         mm::kernel_mm::init(envp, memory_end);
 
         AP_BOOT_READY.store(true, Ordering::Release);
+        let requested_aps = start_secondary_cpus(cpu_id);
+        wait_for_secondary_online(requested_aps);
 
         bringup_driver_and_user();
         #[cfg(feature = "stall-debug")]

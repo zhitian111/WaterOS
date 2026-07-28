@@ -85,8 +85,7 @@ impl ArchTimerInterruptControl for LoongArch64ArchInterrupt {
     }
 }
 
-/// LoongArch SMP IPI support is not enabled yet.  Keep the architecture-neutral
-/// interrupt facade available so shared scheduler code can still build.
+/// IPI 的硬件 pending 位由板级 IOCSR 控制器清除。
 #[inline]
 pub fn clear_soft_interrupt() {}
 #[inline]

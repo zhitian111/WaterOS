@@ -1,15 +1,15 @@
-//! 当前正在执行本段内核代码的逻辑 CPU（LoongArch 占位实现）。
+//! 当前正在执行本段内核代码的逻辑 CPU。
 
 use base::cpu::CpuId;
 use api_v0::cpu::{ArchCpuInitError, ArchCpuInitResult};
 use config::task::MAX_CPUS;
 
 /// 返回当前正在执行本段内核代码的逻辑 CPU。
-/// LoongArch 单核 bring-up 阶段暂时返回 CPU 0。
+/// QEMU virt 的 `CSR.CPUID` 位于 CSR `0x20`。
 pub fn current_cpu_id() -> CpuId {
     let cpu_id : usize;
     unsafe {
-        core::arch::asm!("csrrd {}, 0x10", out(reg) cpu_id);
+        core::arch::asm!("csrrd {}, 0x20", out(reg) cpu_id);
     }
     CpuId::from_raw(cpu_id)
 }
