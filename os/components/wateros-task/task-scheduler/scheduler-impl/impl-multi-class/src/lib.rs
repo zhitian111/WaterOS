@@ -333,15 +333,14 @@ pub fn schedule_tick() {
     let (switch_pair, targets) = with_scheduler(|scheduler| {
         let mut switch_pair = scheduler.schedule(ScheduleReason::Tick, cpu_id);
         let mut targets = scheduler.take_pending_reschedule_cpus();
-        if targets.contains(cpu_id) {
-            targets.remove(cpu_id);
-            // A timekeeper tick can make a sleeper runnable after tick() has
-            // already decided that the current task need not switch. Do not
-            // consume that newly-created local request without honoring it.
-            if switch_pair.is_none() {
-                switch_pair = scheduler.schedule(ScheduleReason::Reschedule, cpu_id);
-            }
-            assert!(scheduler.take_need_resched(cpu_id));
+        targets.remove(cpu_id);
+        // A remote sender consumes the global pending mask before raising the
+        // IPI, while the per-CPU request remains set until this CPU handles it.
+        // Honor that request from the timer path as a correctness fallback for
+        // a coalesced or delayed hardware IPI.
+        let local_requested = scheduler.take_need_resched(cpu_id);
+        if switch_pair.is_none() && local_requested {
+            switch_pair = scheduler.schedule(ScheduleReason::Reschedule, cpu_id);
         }
         (switch_pair, targets)
     });
