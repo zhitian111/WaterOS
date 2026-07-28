@@ -1,6 +1,7 @@
 //! 用户/组凭证与 capability 系统调用：uid/gid 系列 + capget/capset。
 
 pub(crate) mod cap;
+mod groups;
 mod setid;
 
 pub(crate) use cap::{sys_capget, sys_capset};
@@ -12,6 +13,7 @@ use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use cred::api::{Gid, Uid, SUPPLEMENTARY_GROUP_COUNT};
 
+use groups::{plan_getgroups, valid_setgroups_size, GetGroupsPlan};
 use setid::{plan_set_id, plan_set_re_id, plan_set_res_id, IdTriplet};
 
 fn current_uid_triplet() -> (IdTriplet, bool) {
@@ -68,12 +70,15 @@ pub(crate) fn sys_getgroups(args : SyscallArgs) -> UserRet {
     let size = args.arg(0);
     let list_ptr = args.arg(1);
     let cred = cred::current_credentials();
-    if size == 0 {
-        return UserRet::from_success(SUPPLEMENTARY_GROUP_COUNT as usize);
-    }
-    let n = cred.supplementary_group_len
-                .min(size as usize);
+    let n = match plan_getgroups(size, cred.supplementary_group_len) {
+        Some(GetGroupsPlan::Query(count)) => return UserRet::from_success(count),
+        Some(GetGroupsPlan::Copy(count)) => count,
+        None => return UserRet::from_error(ErrNo::EINVAL),
+    };
     if n > 0 {
+        if list_ptr == 0 {
+            return UserRet::from_error(ErrNo::EFAULT);
+        }
         let raw : alloc::vec::Vec<u32> = cred.supplementary_groups[..n].iter()
                                                                        .map(|g| g.0)
                                                                        .collect();
@@ -90,14 +95,17 @@ pub(crate) fn sys_getgroups(args : SyscallArgs) -> UserRet {
 pub(crate) fn sys_setgroups(args : SyscallArgs) -> UserRet {
     let size = args.arg(0);
     let list_ptr = args.arg(1);
-    if list_ptr == 0 {
-        return UserRet::from_error(ErrNo::EFAULT);
+    if !valid_setgroups_size(size, SUPPLEMENTARY_GROUP_COUNT) {
+        return UserRet::from_error(ErrNo::EINVAL);
     }
     let cred = cred::current_credentials();
     if cred.effective_uid.0 != 0 {
         return UserRet::from_error(ErrNo::EPERM);
     }
-    let count = size.min(SUPPLEMENTARY_GROUP_COUNT as usize);
+    let count = size;
+    if count > 0 && list_ptr == 0 {
+        return UserRet::from_error(ErrNo::EFAULT);
+    }
     let mut raw = alloc::vec![0u32; count];
     if count > 0 {
         let raw_bytes = unsafe {
