@@ -249,7 +249,6 @@ impl ProcessRegistry {
         let parent_dumpable = parent.dumpable;
         let parent_subreaper = parent.child_subreaper;
         let parent_umask = parent.umask;
-        let parent_death_signal = parent.parent_death_signal;
         let child_pid = self.create_process_for_task(child_task_id,
                                                      Some(parent_pid),
                                                      address_space)?;
@@ -260,7 +259,6 @@ impl ProcessRegistry {
             process.dumpable = parent_dumpable;
             process.child_subreaper = parent_subreaper;
             process.umask = parent_umask;
-            process.parent_death_signal = parent_death_signal;
         }
         Ok(child_pid)
     }
@@ -965,5 +963,25 @@ impl ProcessRegistry {
                 pid.raw());
         self.processes
             .insert(pid, process);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ProcessRegistry;
+
+    #[test]
+    fn fork_clears_parent_death_signal() {
+        let mut registry = ProcessRegistry::new();
+        let parent_pid = registry.create_process_for_task(10, None, None)
+                                 .expect("create parent process");
+        registry.set_parent_death_signal(parent_pid, 9)
+                .expect("set parent death signal");
+
+        let child_pid = registry.create_process_like_fork(parent_pid, 11, None)
+                                .expect("fork child process");
+
+        assert_eq!(registry.get_parent_death_signal(parent_pid), Some(9));
+        assert_eq!(registry.get_parent_death_signal(child_pid), Some(0));
     }
 }
