@@ -25,6 +25,9 @@ pub struct LoongArch64Paging;
 
 impl LoongArch64Paging {
     #[inline]
+    pub fn initialize_address_space_ids() -> usize { 10 }
+
+    #[inline]
     pub fn flush_tlb_local(_range: api_v0::paging::TlbFlushRange) { Self::invtlb_all(); }
 
     #[inline]

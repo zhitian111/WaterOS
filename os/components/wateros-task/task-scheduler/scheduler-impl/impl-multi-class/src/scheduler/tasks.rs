@@ -102,6 +102,13 @@ impl MultiClassScheduler {
                             image_info,
                             stack_info,
                             current_id);
+        let cpu = &mut self.cpu_states[cpu_id.raw()];
+        let previous_aspace = cpu.current_aspace;
+        if previous_aspace != user_aspace_ptr {
+            mm_api::user_aspace_lifecycle::notify_aspace_cpu_leave(previous_aspace, cpu_id);
+            mm_api::user_aspace_lifecycle::notify_aspace_cpu_enter(user_aspace_ptr, cpu_id);
+            cpu.current_aspace = user_aspace_ptr;
+        }
     }
     pub fn current_task_id(&self, cpu_id : CpuId) -> Option<TaskId> {
         self.cpu_states[cpu_id.raw()].current_task_id

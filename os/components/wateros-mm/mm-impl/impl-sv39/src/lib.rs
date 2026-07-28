@@ -16,6 +16,7 @@ use api_v0::perm::PagePerm;
 use frame_alloctor::{frame_alloc_result, frame_dealloc_result};
 use wateros_base::addr::BasePPN;
 
+mod asid;
 mod pagetable;
 
 mod kernel_elf;

@@ -7,6 +7,7 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::sync::atomic::{AtomicU64, AtomicUsize};
 
+use api_v0::address_space::AddressSpaceOps;
 use api_v0::error::{MmError, MmResult};
 use wateros_base::sync::MultiprocessorSafeCell;
 use wateros_base_config::task::MAX_CPUS;
@@ -22,14 +23,18 @@ use crate::pagetable::Sv39AddressSpace;
 pub(crate) struct UserAddressSpaceCell {
     pub(crate) inner: MultiprocessorSafeCell<Sv39AddressSpace>,
     dropped: AtomicBool,
-    active_cpus: AtomicU64,
+    /// 所有可能缓存该 ASID TLB 项的 hart；ASID 有效期间只增不减。
+    tlb_cpus: AtomicU64,
+    token: usize,
 }
 
 impl UserAddressSpaceCell {
     pub(crate) fn new(aspace: Sv39AddressSpace) -> Self {
+        let token = aspace.satp_value();
         Self { inner: MultiprocessorSafeCell::new(aspace),
                dropped: AtomicBool::new(false),
-               active_cpus: AtomicU64::new(0) }
+               tlb_cpus: AtomicU64::new(0),
+               token }
     }
 
     fn is_dropped(&self) -> bool { self.dropped.load(Ordering::Acquire) }
@@ -52,20 +57,38 @@ pub(crate) fn destroy(handle: usize) {
     if !cell.mark_dropped() {
         return;
     }
-    cell.active_cpus.store(0, Ordering::Release);
-    cell.inner.exclusive_access().destroy();
+    let cached = cell.tlb_cpus.swap(0, Ordering::AcqRel);
+    let asid = cell.inner
+                   .exclusive_access()
+                   .destroy_and_take_asid();
+    if asid != crate::asid::KERNEL_ASID {
+        platform::arch::paging::flush_tlb_local(
+            platform::arch::paging::TlbFlushRange::AddressSpace { token : cell.token });
+        if request_tlb_shootdown_targets(wateros_base::cpu::CpuMask::from_bits(cached)) {
+            crate::asid::release_user(asid);
+        } else {
+            log::warn!("[tlb] retiring RISC-V ASID {} because shootdown did not complete", asid);
+        }
+    }
 }
 
 pub fn mark_active(handle: usize, cpu: wateros_base::cpu::CpuId) {
     let Some(cell) = (unsafe { cell(handle) }) else { return };
     if cell.is_dropped() || cpu.raw() >= u64::BITS as usize { return; }
-    cell.active_cpus.fetch_or(1u64 << cpu.raw(), Ordering::AcqRel);
+    let cpu_bit = 1u64 << cpu.raw();
+    let previous = cell.tlb_cpus.fetch_or(cpu_bit, Ordering::AcqRel);
+    let asid = crate::asid::from_token(cell.token);
+    if previous & cpu_bit == 0 && asid != 0 {
+        // 首次在本 hart 使用该 ASID：清除可能由复用遗留的项，同时使页表构造
+        // 写入先于后续地址翻译可见。
+        platform::arch::paging::flush_tlb_local(
+            platform::arch::paging::TlbFlushRange::AddressSpace { token : cell.token });
+    }
 }
 
-pub fn mark_inactive(handle: usize, cpu: wateros_base::cpu::CpuId) {
-    let Some(cell) = (unsafe { cell(handle) }) else { return };
-    if cpu.raw() >= u64::BITS as usize { return; }
-    cell.active_cpus.fetch_and(!(1u64 << cpu.raw()), Ordering::AcqRel);
+pub fn mark_inactive(_handle: usize, _cpu: wateros_base::cpu::CpuId) {
+    // satp 切换不再全量刷新后，hart 离开地址空间并不代表其 TLB 中已无该 ASID。
+    // 该位保持到地址空间销毁，保证页表修改与 ASID 回收会通知所有缓存 hart。
 }
 
 /// syscall trap 期间全局中断处于关闭状态，不能直接无限自旋等待 shootdown
@@ -85,22 +108,20 @@ fn lock_tlb_shootdown() -> spin::MutexGuard<'static, ()> {
     }
 }
 
-fn request_tlb_shootdown(handle: usize) {
+fn request_tlb_shootdown_targets(mut targets : wateros_base::cpu::CpuMask) -> bool {
     // Serialize sequence allocation, pending publication, IPI delivery and
     // acknowledgements.  A per-CPU pending slot cannot represent two
     // concurrent transactions safely without this critical section.
     let _request_guard = lock_tlb_shootdown();
     let current = platform::arch::cpu::current_cpu_id();
-    let active = unsafe { cell(handle) }
-                    .map(|cell| cell.active_cpus.load(Ordering::Acquire))
-                    .unwrap_or(0);
-    let mut targets = wateros_base::cpu::CpuMask::from_bits(active & task::online_cpu_mask().bits());
+    targets = wateros_base::cpu::CpuMask::from_bits(targets.bits() &
+                                                     task::online_cpu_mask().bits());
     targets.remove(current);
     if targets.is_empty() {
-        return;
+        return true;
     }
     match platform::smp::flush_tlb_remote(targets) {
-        Ok(()) => return,
+        Ok(()) => return true,
         Err(platform::smp::PlatformSmpError::Unsupported) => {}
         Err(error) => {
             log::warn!("[tlb] platform remote flush failed targets={:#x} error={:?}; \
@@ -123,8 +144,9 @@ fn request_tlb_shootdown(handle: usize) {
                    sequence,
                    targets.bits(),
                    error);
-        return;
+        return false;
     }
+    let mut completed = true;
     let mut raw = targets.bits();
     while raw != 0 {
         let cpu = raw.trailing_zeros() as usize;
@@ -139,8 +161,17 @@ fn request_tlb_shootdown(handle: usize) {
         }
         if spins == 10_000_000 {
             log::warn!("[tlb] shootdown timeout cpu={} sequence={}", cpu, sequence);
+            completed = false;
         }
     }
+    completed
+}
+
+fn request_tlb_shootdown(handle: usize) {
+    let cached = unsafe { cell(handle) }
+                    .map(|cell| cell.tlb_cpus.load(Ordering::Acquire))
+                    .unwrap_or(0);
+    let _ = request_tlb_shootdown_targets(wateros_base::cpu::CpuMask::from_bits(cached));
 }
 
 pub fn handle_tlb_shootdown_ipi() -> bool {

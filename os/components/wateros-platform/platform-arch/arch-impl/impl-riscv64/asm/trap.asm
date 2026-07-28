@@ -84,8 +84,12 @@ gdb_point_0:
     addi sp, sp, -296
     la t1, __wateros_riscv_kernel_satp
     ld t1, 0(t1)
+    la t2, __wateros_riscv_asid_enabled
+    ld t2, 0(t2)
     csrw satp, t1
+    bnez t2, .Lkernel_aspace_ready
     sfence.vma x0, x0
+.Lkernel_aspace_ready:
 
     # t0 是 sscratch 给出的本 CPU return frame。用户 tp 是 TLS，必须在进入
     # 任何 Rust 代码前从 supervisor-only 槽恢复可信 CPU id。
@@ -263,8 +267,12 @@ gdb_point_1:
     ld x31, 31*8(sp)
 
     ld t0, 36*8(sp)
+    la t1, __wateros_riscv_asid_enabled
+    ld t1, 0(t1)
     csrw satp, t0
+    bnez t1, .Lold_user_aspace_ready
     sfence.vma x0, x0
+.Lold_user_aspace_ready:
     ld t0, 2*8(sp)
     mv sp, t0
     sret
@@ -299,9 +307,13 @@ __wateros_riscv_restore_user_from_frame:
     csrw sstatus, t1
     ld t1, 33*8(t0)
     csrw sepc, t1
+    la t2, __wateros_riscv_asid_enabled
+    ld t2, 0(t2)
     ld t1, 36*8(t0)
     csrw satp, t1
+    bnez t2, .Luser_aspace_ready
     sfence.vma x0, x0
+.Luser_aspace_ready:
 
     csrw sscratch, t0
 
@@ -341,9 +353,12 @@ gdb_point_3:
     sret
 
     .section .data.trampoline
-    .globl __wateros_riscv_kernel_satp, __wateros_riscv_return_frame, __wateros_riscv_return_frames
+    .globl __wateros_riscv_kernel_satp, __wateros_riscv_asid_enabled
+    .globl __wateros_riscv_return_frame, __wateros_riscv_return_frames
     .balign 4096
 __wateros_riscv_kernel_satp:
+    .quad 0
+__wateros_riscv_asid_enabled:
     .quad 0
     .balign 4096
 __wateros_riscv_return_frames:

@@ -219,6 +219,14 @@ pub mod paging {
     #[inline]
     pub fn active_address_space_token() -> usize { ArchPagingImpl::active_address_space_token() }
 
+    /// 初始化并返回硬件实际实现的地址空间标识位数。
+    ///
+    /// RISC-V 通过 `satp` WARL 规则探测；LoongArch64 返回架构固定宽度。
+    #[inline]
+    pub fn initialize_address_space_ids() -> usize {
+        ArchPagingImpl::initialize_address_space_ids()
+    }
+
     /// 切换地址空间 token 并刷新本地翻译缓存。
     #[inline]
     pub fn activate_address_space_token_and_flush(token : usize) {

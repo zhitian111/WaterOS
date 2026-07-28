@@ -78,6 +78,11 @@ flowchart TB
 
 用户地址空间以 **裸指针** `LoadedElf::user_aspace_ptr` 泄漏给 task；syscall 经 `user_aspace::with_user_aspace_mut` 修改页表。
 
+RISC-V 在内核页表启用后通过 `satp` 的 WARL 行为探测实际 `ASIDLEN`。ASID 0
+保留给内核，用户地址空间使用稳定编号；trap 进出只切换 `satp`，硬件支持 ASID
+时不再无条件执行全量 `sfence.vma`。若硬件未实现 ASID，则所有地址空间回退到
+ASID 0，并保留原来的全量 fence。
+
 LoongArch64 保留 ASID 0 给内核，并从硬件 10 位空间中为用户地址空间分配
 1..=1023。任务切换同时安装 PGDL 和 ASID，不再因为 PGDL 改变而全量刷新本地
 TLB。地址空间记录所有可能缓存过其 TLB 项的 CPU；销毁时必须先完成这些 CPU
@@ -130,7 +135,7 @@ trap_handler
 api::user_aspace_lifecycle::drop_user_aspace_on_task_exit
   → kernel_mm::drop_user_aspace (impl 注册)
   → 本地/远端 TLB shootdown
-  → 归还 LoongArch64 ASID
+  → 归还架构 ASID
 ```
 
 ## 与周边组件边界

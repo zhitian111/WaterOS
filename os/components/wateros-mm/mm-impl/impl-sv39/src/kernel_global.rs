@@ -80,7 +80,8 @@ pub fn init(dtb_pa : usize, ram_end_exclusive : usize) {
     frame_alloctor::init_frame_allocator(BasePPN { val : start_ppn },
                                          BasePPN { val : end_ppn });
 
-    let mut aspace = Sv39AddressSpace::new().expect("kernel_mm: Sv39AddressSpace::new failed");
+    let mut aspace = Sv39AddressSpace::new_kernel()
+        .expect("kernel_mm: Sv39AddressSpace::new_kernel failed");
 
     let map_identity = |aspace : &mut Sv39AddressSpace,
                         start : usize,
@@ -145,6 +146,11 @@ pub fn init(dtb_pa : usize, ram_end_exclusive : usize) {
     assert_eq!(platform::arch::paging::active_address_space_token(),
                satp_target,
                "kernel_mm: satp mismatch");
+    let asid_bits = platform::arch::paging::initialize_address_space_ids();
+    crate::asid::initialize(asid_bits);
+    runtime::logging::trace!("[kernel-mm] RISC-V ASID bits={} enabled={}",
+                             asid_bits,
+                             asid_bits != 0);
 
     let translated = aspace.translate_addr(probe_va)
                            .expect("kernel_mm: translate")

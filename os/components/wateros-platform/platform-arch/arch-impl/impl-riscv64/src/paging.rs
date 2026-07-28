@@ -5,6 +5,13 @@
 
 use core::arch::asm;
 
+const SATP_ASID_SHIFT: usize = 44;
+const SATP_ASID_MASK: usize = 0xffffusize << SATP_ASID_SHIFT;
+
+unsafe extern "C" {
+    static mut __wateros_riscv_asid_enabled: usize;
+}
+
 /// RISC-V Sv39 分页控制原语。
 pub struct Riscv64Paging;
 
@@ -17,7 +24,7 @@ impl Riscv64Paging {
                     asm!("sfence.vma {0}, x0", in(reg) addr);
                 }
                 api_v0::paging::TlbFlushRange::AddressSpace { token } => {
-                    let asid = (token >> 44) & 0xffff;
+                    let asid = (token & SATP_ASID_MASK) >> SATP_ASID_SHIFT;
                     asm!("sfence.vma x0, {0}", in(reg) asid);
                 }
                 api_v0::paging::TlbFlushRange::Range { .. } | api_v0::paging::TlbFlushRange::All => {
@@ -35,6 +42,29 @@ impl Riscv64Paging {
             asm!("csrr {0}, satp", out(reg) value);
         }
         value
+    }
+
+    /// 探测 `satp.ASID` 实际实现的 WARL 位数，并配置 trap 汇编的快速切换开关。
+    ///
+    /// 调用时当前 `satp` 必须指向可执行的有效页表；探测过程保持 MODE/PPN
+    /// 不变，恢复原 token 后执行一次全量 fence。
+    pub fn initialize_address_space_ids() -> usize {
+        let original : usize;
+        let observed : usize;
+        unsafe {
+            asm!("csrr {0}, satp", out(reg) original);
+            let probe = original | SATP_ASID_MASK;
+            asm!("csrw satp, {0}", in(reg) probe);
+            asm!("csrr {0}, satp", out(reg) observed);
+            asm!("csrw satp, {0}", in(reg) original);
+            asm!("sfence.vma x0, x0");
+        }
+        let implemented = ((observed & SATP_ASID_MASK) >> SATP_ASID_SHIFT).count_ones() as usize;
+        unsafe {
+            core::ptr::write_volatile(core::ptr::addr_of_mut!(__wateros_riscv_asid_enabled),
+                                      usize::from(implemented != 0));
+        }
+        implemented
     }
 
     /// 激活指定地址空间 token；在 RISC-V Sv39 下即写入 `satp` 并执行全局

@@ -15,7 +15,6 @@
 extern crate alloc;
 
 use alloc::{boxed::Box, vec::Vec};
-use core::sync::atomic::{AtomicUsize, Ordering};
 
 use api_v0::addr::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum, PAGE_SIZE};
 use api_v0::address_space::AddressSpaceOps;
@@ -156,10 +155,6 @@ const SV39_LEVELS : usize = 3;
 const SV39_ENTRIES : usize = 512;
 const VPN_INDEX_BITS : usize = 9;
 const SV39_SATP_MODE : usize = 8usize << 60;
-const SV39_ASID_SHIFT : usize = 44;
-const SV39_ASID_MASK : usize = 0xFFFF;
-const KERNEL_ASID : usize = 1;
-static NEXT_USER_ASID : AtomicUsize = AtomicUsize::new(2);
 pub(crate) const USER_VA_LIMIT : usize = 0x0000_0040_0000_0000;
 
 unsafe extern "C" {
@@ -179,18 +174,10 @@ fn page_range_overlaps_addr(start : VirtAddr, end : VirtAddr, addr : usize) -> b
 }
 
 #[inline]
-fn alloc_user_asid() -> usize {
-    let raw = NEXT_USER_ASID.fetch_add(1, Ordering::Relaxed) & SV39_ASID_MASK;
-    if raw < 2 {
-        2
-    } else {
-        raw
-    }
-}
-
-#[inline]
 fn make_satp(root : PhysPageNum, asid : usize) -> usize {
-    SV39_SATP_MODE | ((asid & SV39_ASID_MASK) << SV39_ASID_SHIFT) | (root.0 & ((1usize << 44) - 1))
+    SV39_SATP_MODE |
+    ((asid & crate::asid::TOKEN_ASID_MASK) << crate::asid::TOKEN_ASID_SHIFT) |
+    (root.0 & ((1usize << 44) - 1))
 }
 
 #[inline]
@@ -229,7 +216,7 @@ fn alloc_table_frame_zeroed() -> MmResult<PhysPageNum> {
 /// Sv39 根页表与 walk 状态；所有映射均为 **4 KiB 叶子**。
 pub struct Sv39AddressSpace {
     root : PhysPageNum,
-    asid : usize,
+    asid : u16,
     /// 用户堆起点（页对齐，位于 ELF 镜像尾之后）。
     pub(crate) user_brk_start : VirtAddr,
     /// 当前 program break（堆尾上界，可非页对齐）。
@@ -304,9 +291,16 @@ impl SharedAnonVma {
 impl Sv39AddressSpace {
     /// 分配并清零根页表帧；依赖帧分配器与 [`table_mut`] 的物理访问假设。
     pub(crate) fn new() -> MmResult<Self> {
-        let root = alloc_table_frame_zeroed()?;
+        let asid = crate::asid::allocate_user()?;
+        let root = match alloc_table_frame_zeroed() {
+            Ok(root) => root,
+            Err(error) => {
+                crate::asid::release_user(asid);
+                return Err(error);
+            }
+        };
         Ok(Self { root,
-                  asid : alloc_user_asid(),
+                  asid,
                   user_brk_start : VirtAddr(0),
                   user_brk_current_end : VirtAddr(0),
                   user_brk_max : VirtAddr(0),
@@ -319,7 +313,26 @@ impl Sv39AddressSpace {
                   shared_anon_vmas : Vec::new() })
     }
 
-    pub(crate) fn kernel_satp_value(&self) -> usize { make_satp(self.root, KERNEL_ASID) }
+    /// 创建内核地址空间；ASID 0 不参与用户编号复用。
+    pub(crate) fn new_kernel() -> MmResult<Self> {
+        let root = alloc_table_frame_zeroed()?;
+        Ok(Self { root,
+                  asid : crate::asid::KERNEL_ASID,
+                  user_brk_start : VirtAddr(0),
+                  user_brk_current_end : VirtAddr(0),
+                  user_brk_max : VirtAddr(0),
+                  mmap_anon_cursor : VirtAddr(0),
+                  mmap_file_cursor : VirtAddr(0),
+                  mmap_base : VirtAddr(0),
+                  user_stack_bottom : VirtAddr(0),
+                  user_stack_top : VirtAddr(0),
+                  lazy_file_vmas : Vec::new(),
+                  shared_anon_vmas : Vec::new() })
+    }
+
+    pub(crate) fn kernel_satp_value(&self) -> usize {
+        make_satp(self.root, crate::asid::KERNEL_ASID as usize)
+    }
 
     /// ELF 装载完成后初始化用户堆与匿名映射区游标（须在泄漏页表对象前调用一次）。
     pub(crate) fn init_user_layout(&mut self,
@@ -691,7 +704,18 @@ impl Sv39AddressSpace {
     pub fn fork_cow(&mut self) -> MmResult<Sv39AddressSpace> {
         log::trace!("[mm-fork] Sv39AddressSpace::fork begin root_ppn={}",
                     self.root.0);
-        let child_root = alloc_table_frame_zeroed()?;
+        let child_lazy_file_vmas = self.lazy_file_vmas
+                                       .iter()
+                                       .map(LazyFileVma::duplicate)
+                                       .collect::<MmResult<Vec<_>>>()?;
+        let child_asid = crate::asid::allocate_user()?;
+        let child_root = match alloc_table_frame_zeroed() {
+            Ok(root) => root,
+            Err(error) => {
+                crate::asid::release_user(child_asid);
+                return Err(error);
+            }
+        };
         // SAFETY: 刚分配并清零的帧作为子地址空间根页表。
         if let Err(err) = unsafe {
             fork_table(self.root,
@@ -703,13 +727,14 @@ impl Sv39AddressSpace {
             unsafe {
                 destroy_table(child_root, SV39_LEVELS - 1, 0, &self.shared_anon_vmas);
             }
+            crate::asid::release_user(child_asid);
             return Err(err);
         }
         platform::arch::paging::flush_address_space_translations();
         log::trace!("[mm-fork] Sv39AddressSpace::fork done child_root={}",
                     child_root.0);
         Ok(Sv39AddressSpace { root : child_root,
-                              asid : alloc_user_asid(),
+                              asid : child_asid,
                               user_brk_start : self.user_brk_start,
                               user_brk_current_end : self.user_brk_current_end,
                               user_brk_max : self.user_brk_max,
@@ -718,17 +743,14 @@ impl Sv39AddressSpace {
                               mmap_base : self.mmap_base,
                               user_stack_bottom : self.user_stack_bottom,
                               user_stack_top : self.user_stack_top,
-                              lazy_file_vmas : self.lazy_file_vmas
-                                                   .iter()
-                                                   .map(LazyFileVma::duplicate)
-                                                   .collect::<MmResult<Vec<_>>>()?,
+                              lazy_file_vmas : child_lazy_file_vmas,
                               shared_anon_vmas : self.shared_anon_vmas.clone() })
     }
 
     /// 递归释放所有用户页帧及页表帧，不触碰内核恒等映射。
     ///
     /// 调用后本地址空间不再可用。
-    pub fn destroy(&mut self) {
+    fn destroy_page_tables(&mut self) {
         if self.root.0 == 0 {
             return;
         }
@@ -739,6 +761,12 @@ impl Sv39AddressSpace {
                           &self.shared_anon_vmas);
         }
         self.root = PhysPageNum(0);
+    }
+
+    /// 释放页表并转移 ASID 所有权。调用方须在归还非零 ASID 前完成 TLB 失效。
+    pub(crate) fn destroy_and_take_asid(&mut self) -> u16 {
+        self.destroy_page_tables();
+        core::mem::replace(&mut self.asid, crate::asid::KERNEL_ASID)
     }
 
     /// 对单页执行写时复制：仅处理已标记 COW 且曾为可写的用户叶映射。
@@ -978,7 +1006,7 @@ unsafe fn fork_table(parent_ppn : PhysPageNum,
 }
 
 impl AddressSpaceOps for Sv39AddressSpace {
-    fn satp_value(&self) -> usize { make_satp(self.root, self.asid) }
+    fn satp_value(&self) -> usize { make_satp(self.root, self.asid as usize) }
 
     fn map_page_to_ppn(&mut self,
                        vpn : VirtPageNum,
@@ -1057,5 +1085,10 @@ impl AddressSpaceOps for Sv39AddressSpace {
 }
 
 impl Drop for Sv39AddressSpace {
-    fn drop(&mut self) { self.destroy(); }
+    fn drop(&mut self) {
+        // 未装入 UserAddressSpaceCell 的对象尚未被调度，不会在远端 hart 留下
+        // TLB 项，因此可以直接归还 ASID。
+        let asid = self.destroy_and_take_asid();
+        crate::asid::release_user(asid);
+    }
 }
