@@ -4,7 +4,7 @@
     .globl __wateros_arch_boot
     .equ STACK_PER_CPU_SHIFT, 16
     .equ STACK_PER_CPU, 1 << STACK_PER_CPU_SHIFT
-    .equ MAX_CPUS, 8
+    .equ MAX_CPUS, {max_cpus}
 
 __wateros_arch_boot:
     mv tp, a0

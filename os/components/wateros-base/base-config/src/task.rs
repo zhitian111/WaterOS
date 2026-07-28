@@ -3,7 +3,7 @@
 /// 当前内核静态支持的最大逻辑 CPU 数。
 ///
 /// 这是静态容量上限，不表示 configured 或 online CPU 数量。
-pub const MAX_CPUS : usize = 8;
+pub const MAX_CPUS : usize = 32;
 
 /// 监督态定时器重武装间隔（毫秒），与 [`trap_handler`] 及 clock syscall 的 sleep 换算一致。
 ///

@@ -8,7 +8,7 @@
 
 use core::arch::global_asm;
 
-global_asm!(include_str!("../asm/boot.S"));
+global_asm!(include_str!("../asm/boot.S"), max_cpus = const config::task::MAX_CPUS);
 global_asm!(include_str!("../asm/trap.S"));
 global_asm!(include_str!("../asm/switch.S"));
 
