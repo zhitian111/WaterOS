@@ -38,9 +38,21 @@ pub(crate) fn classify_kill_target(pid : isize) -> KillTargetSelector {
     }
 }
 
+pub(crate) fn validate_thread_target(raw : usize) -> Option<usize> {
+    let target = raw as isize;
+    if target > 0 {
+        Some(target as usize)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{can_signal, classify_kill_target, KillTargetSelector, SignalIdentity};
+    use super::{
+        can_signal, classify_kill_target, validate_thread_target, KillTargetSelector,
+        SignalIdentity,
+    };
 
     fn identity(real_uid : u32,
                 effective_uid : u32,
@@ -103,5 +115,15 @@ mod tests {
                             identity(2000, 2001, 2002, 0),
                             18,
                             false));
+    }
+
+    #[test]
+    fn rejects_non_positive_thread_targets() {
+        assert_eq!(validate_thread_target(42), Some(42));
+        assert_eq!(validate_thread_target(0), None);
+        assert_eq!(validate_thread_target((-1isize) as usize),
+                   None);
+        assert_eq!(validate_thread_target(isize::MIN as usize),
+                   None);
     }
 }

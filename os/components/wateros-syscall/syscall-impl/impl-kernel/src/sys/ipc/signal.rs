@@ -16,7 +16,9 @@ use crate::sys::misc::ltp_cgroup_helper::{
 };
 use wateros_platform_arch_api_v0::trap::{SignalFrameCodec, SignalMachineContext, TrapFrameRead};
 
-use super::kill_target::{can_signal, classify_kill_target, KillTargetSelector, SignalIdentity};
+use super::kill_target::{
+    can_signal, classify_kill_target, validate_thread_target, KillTargetSelector, SignalIdentity,
+};
 use crate::user_copy::{copy_from_user_struct, copy_to_user_struct};
 
 const RT_SIGSET_SIZE_64 : usize = 8;
@@ -710,7 +712,10 @@ pub(crate) fn sys_rt_sigaction(args : SyscallArgs) -> UserRet {
 }
 
 pub(crate) fn sys_tkill(args : SyscallArgs) -> UserRet {
-    let tid = args.arg(0);
+    let tid = match validate_thread_target(args.arg(0)) {
+        Some(tid) => tid,
+        None => return UserRet::from_error(ErrNo::EINVAL),
+    };
     let signal = match validate_signal(args.arg(1) as isize) {
         Ok(signal) => signal,
         Err(error) => return UserRet::from_error(error),
@@ -736,8 +741,14 @@ pub(crate) fn sys_tkill(args : SyscallArgs) -> UserRet {
 }
 
 pub(crate) fn sys_tgkill(args : SyscallArgs) -> UserRet {
-    let tgid = args.arg(0);
-    let tid = args.arg(1);
+    let tgid = match validate_thread_target(args.arg(0)) {
+        Some(tgid) => tgid,
+        None => return UserRet::from_error(ErrNo::EINVAL),
+    };
+    let tid = match validate_thread_target(args.arg(1)) {
+        Some(tid) => tid,
+        None => return UserRet::from_error(ErrNo::EINVAL),
+    };
     let signal = match validate_signal(args.arg(2) as isize) {
         Ok(signal) => signal,
         Err(error) => return UserRet::from_error(error),
