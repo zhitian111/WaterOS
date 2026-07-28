@@ -12,6 +12,8 @@ use crate::socket_fd;
 use crate::user_copy::{copy_from_user, copy_from_user_struct};
 
 const TCP_BULK_SEND_YIELD_THRESHOLD: usize = 64 * 1024;
+const TCP_MSS_BYTES: usize = 1460;
+const TCP_LOOPBACK_POLL_ROUNDS: usize = 4;
 const MSG_DONTWAIT: usize = 0x40;
 
 #[repr(C)]
@@ -139,6 +141,7 @@ fn send_tcp_blocking(
             }
             match stack::socket_send(handle, &kbuf) {
                 Ok(n) if n > 0 => {
+                    flush_segmented_loopback_send(handle, n);
                     if n >= TCP_BULK_SEND_YIELD_THRESHOLD {
                         drive_network_stack();
                         task::yield_now();
@@ -213,4 +216,13 @@ fn drive_network_stack() {
         Err(_) => stack::poll(),
     }
     stack::poll_socket_events();
+}
+
+fn flush_segmented_loopback_send(handle : smoltcp::iface::SocketHandle, sent : usize) {
+    if sent <= TCP_MSS_BYTES || !stack::socket_peer_is_loopback(handle).unwrap_or(false) {
+        return;
+    }
+    for _ in 0..TCP_LOOPBACK_POLL_ROUNDS {
+        drive_network_stack();
+    }
 }

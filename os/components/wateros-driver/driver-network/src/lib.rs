@@ -858,8 +858,13 @@ pub mod stack {
                     _ => return Err("invalid tcp socket state for connect"),
                 };
                 let cx = stack.iface.context();
-                stack.sockets
-                    .get_mut::<tcp::Socket>(handle)
+                let socket = stack.sockets.get_mut::<tcp::Socket>(handle);
+                if ip[0] == 127 {
+                    // 回环仍经过 Ethernet MTU 分段；禁用 Nagle 可让同一次
+                    // send() 的尾部短段无需等待首段 ACK。
+                    socket.set_nagle_enabled(false);
+                }
+                socket
                     .connect(
                         cx,
                         (IpAddress::v4(ip[0], ip[1], ip[2], ip[3]), port),
@@ -1507,6 +1512,9 @@ pub mod stack {
             let peer_ip = match remote.addr {
                 IpAddress::Ipv4(ip) => ip.octets(),
             };
+            if peer_ip[0] == 127 {
+                tcp.set_nagle_enabled(false);
+            }
             (peer_ip, remote.port)
         };
         // 取出的监听槽变为普通已连接 socket。
@@ -1566,6 +1574,14 @@ pub mod stack {
             return Err("not connected");
         }
         Ok((meta.peer_ip, meta.peer_port))
+    }
+
+    /// 对端是否位于 IPv4 loopback 网段。
+    pub fn socket_peer_is_loopback(handle: SocketHandle) -> Result<bool, &'static str> {
+        let guard = NETWORK_STACK.lock();
+        let stack = guard.as_ref().ok_or("stack not initialized")?;
+        let meta = stack.metas.get(&handle).ok_or("invalid socket handle")?;
+        Ok(meta.peer_ip[0] == 127)
     }
 
     /// 查询 socket 绑定的本地端口。

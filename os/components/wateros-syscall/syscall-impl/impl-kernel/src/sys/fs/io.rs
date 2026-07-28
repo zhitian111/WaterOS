@@ -18,6 +18,8 @@ const SMALL_READ_BUF_SIZE: usize = 256;
 const MAX_IO: usize = 0x7ffff000;
 const IO_CHUNK: usize = 64 * 1024;
 const TCP_BULK_WRITE_YIELD_THRESHOLD: usize = 4096;
+const TCP_MSS_BYTES: usize = 1460;
+const TCP_LOOPBACK_POLL_ROUNDS: usize = 4;
 const UDP_SMALL_WRITE_YIELD_THRESHOLD: usize = 256;
 const UDP_BULK_WRITE_YIELD_INTERVAL: u64 = 4;
 
@@ -283,6 +285,15 @@ fn drive_network_stack() {
     stack::poll_socket_events();
 }
 
+fn flush_segmented_loopback_send(handle : smoltcp::iface::SocketHandle, sent : usize) {
+    if sent <= TCP_MSS_BYTES || !stack::socket_peer_is_loopback(handle).unwrap_or(false) {
+        return;
+    }
+    for _ in 0..TCP_LOOPBACK_POLL_ROUNDS {
+        drive_network_stack();
+    }
+}
+
 pub(crate) fn sys_write(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let ptr = args.arg(1);
@@ -423,6 +434,7 @@ fn write_tcp_socket_blocking(fd : usize, buf : &[u8]) -> Result<usize, ErrNo> {
                               .min(send_capacity);
             match stack::socket_send(handle, &buf[..send_len]) {
                 Ok(n) if n > 0 => {
+                    flush_segmented_loopback_send(handle, n);
                     if n >= TCP_BULK_WRITE_YIELD_THRESHOLD {
                         drive_network_stack();
                         task::yield_now();
