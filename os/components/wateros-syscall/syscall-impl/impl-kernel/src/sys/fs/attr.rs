@@ -1,19 +1,30 @@
+use crate::alloc::string::ToString;
+use crate::sys::path_at::{resolve_path_at, resolve_symlinks};
+use crate::sys::stat_times::{self, StatTime};
+use crate::user_copy::{copy_from_user_struct, copy_user_path_cstr};
+use crate::vfs_util::vfs_error_to_errno;
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use cred::api::{Gid, ProcessCredentials, Uid};
-use vfs::api::{FinalSymlink, VfsError, VfsMetadata, VfsNodeType};
 use vfs::active_impl;
+use vfs::api::{FinalSymlink, VfsError, VfsMetadata, VfsNodeType};
 use vfs::SingleRootReadView;
-use crate::alloc::string::ToString;
-use crate::sys::path_at::{resolve_path_at, resolve_symlinks};
-use crate::user_copy::copy_user_path_cstr;
-use crate::vfs_util::vfs_error_to_errno;
 
-const FCHOWNAT_VALID_FLAGS: u32 = 0x1000 | 0x100; // AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW
-const AT_EMPTY_PATH: u32 = 0x1000;
-const AT_SYMLINK_NOFOLLOW: u32 = 0x100;
-const CHOWN_OMIT_ID: u32 = !0u32 as u32;
+const FCHOWNAT_VALID_FLAGS : u32 = 0x1000 | 0x100; // AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW
+const AT_EMPTY_PATH : u32 = 0x1000;
+const AT_SYMLINK_NOFOLLOW : u32 = 0x100;
+const UTIMENSAT_VALID_FLAGS : u32 = AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW;
+const UTIME_NOW : isize = (1 << 30) - 1;
+const UTIME_OMIT : isize = (1 << 30) - 2;
+const CHOWN_OMIT_ID : u32 = !0u32 as u32;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct UserTimespec {
+    sec : isize,
+    nsec : isize,
+}
 
 pub(crate) fn sys_fchmodat(args : SyscallArgs) -> UserRet {
     let dirfd = args.arg(0) as isize;
@@ -260,7 +271,204 @@ fn apply_chown_mode_fixup(path : &str, meta : &VfsMetadata) -> Result<(), ErrNo>
     }
 }
 
-// 本方法代码由AI完成
-pub(crate) fn sys_utimensat(_args: SyscallArgs) -> UserRet {
-    UserRet::from_error(ErrNo::ENOSYS)
+pub(crate) fn sys_utimensat(args : SyscallArgs) -> UserRet {
+    let dirfd = args.arg(0) as isize;
+    let path_ptr = args.arg(1);
+    let times_ptr = args.arg(2);
+    let flags = args.arg(3) as u32;
+    if flags & !UTIMENSAT_VALID_FLAGS != 0 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+
+    let now = match current_realtime() {
+        Ok(now) => now,
+        Err(error) => return UserRet::from_error(error),
+    };
+    let (atime, mtime, times_are_now) = match read_requested_times(times_ptr, now) {
+        Ok(times) => times,
+        Err(error) => return UserRet::from_error(error),
+    };
+    let final_symlink = if flags & AT_SYMLINK_NOFOLLOW != 0 {
+        FinalSymlink::NoFollow
+    } else {
+        FinalSymlink::Follow
+    };
+    let (_path, meta) = match resolve_utimens_target(dirfd, path_ptr, flags, final_symlink) {
+        Ok(target) => target,
+        Err(error) => return UserRet::from_error(error),
+    };
+
+    if let Err(error) = check_utimens_permission(&meta, times_are_now) {
+        return UserRet::from_error(error);
+    }
+    if atime.is_none() && mtime.is_none() {
+        return UserRet::from_success(0);
+    }
+
+    // VFS metadata does not yet expose writable timestamps. Keep the values in
+    // the existing inode-keyed syscall sidecar so stat/statx observe Linux
+    // utimensat semantics without coupling this syscall to an ext4 backend.
+    stat_times::set(&meta, atime, mtime);
+    UserRet::from_success(0)
+}
+
+fn current_realtime() -> Result<StatTime, ErrNo> {
+    let ns = platform::wall_clock::realtime_ns().map_err(|_| ErrNo::EIO)?;
+    Ok(StatTime { sec : (ns / 1_000_000_000) as i64,
+                  nsec : (ns % 1_000_000_000) as i64 })
+}
+
+fn read_requested_times(times_ptr : usize,
+                        now : StatTime)
+                        -> Result<(Option<StatTime>, Option<StatTime>, bool), ErrNo> {
+    if times_ptr == 0 {
+        return Ok((Some(now), Some(now), true));
+    }
+    let atime = copy_from_user_struct::<UserTimespec>(times_ptr)?;
+    let mtime =
+        copy_from_user_struct::<UserTimespec>(times_ptr + core::mem::size_of::<UserTimespec>())?;
+    let atime = parse_requested_time(atime, now)?;
+    let mtime = parse_requested_time(mtime, now)?;
+    let times_are_now = matches!(atime,
+                                 RequestedTime::Now(_) | RequestedTime::Omit) &&
+                        matches!(mtime,
+                                 RequestedTime::Now(_) | RequestedTime::Omit);
+    Ok((atime.value(), mtime.value(), times_are_now))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RequestedTime {
+    Value(StatTime),
+    Now(StatTime),
+    Omit,
+}
+
+impl RequestedTime {
+    fn value(self) -> Option<StatTime> {
+        match self {
+            Self::Value(value) => Some(value),
+            Self::Now(value) => Some(value),
+            Self::Omit => None,
+        }
+    }
+}
+
+fn parse_requested_time(value : UserTimespec, now : StatTime) -> Result<RequestedTime, ErrNo> {
+    match value.nsec {
+        UTIME_NOW => Ok(RequestedTime::Now(now)),
+        UTIME_OMIT => Ok(RequestedTime::Omit),
+        0..=999_999_999 => Ok(RequestedTime::Value(StatTime { sec : value.sec as i64,
+                                                              nsec : value.nsec as i64 })),
+        _ => Err(ErrNo::EINVAL),
+    }
+}
+
+fn resolve_utimens_target(dirfd : isize,
+                          path_ptr : usize,
+                          flags : u32,
+                          final_symlink : FinalSymlink)
+                          -> Result<(alloc::string::String, VfsMetadata), ErrNo> {
+    if path_ptr == 0 {
+        if flags != 0 {
+            return Err(ErrNo::EINVAL);
+        }
+        if dirfd < 0 {
+            return Err(ErrNo::EBADF);
+        }
+        return vfs::fd::with_current_io(dirfd as usize, |handle| {
+                   let path = handle.backing_path()
+                                    .map(ToString::to_string)
+                                    .ok_or(VfsError::Unsupported)?;
+                   Ok((path, handle.metadata()?))
+               }).map_err(vfs_error_to_errno);
+    }
+    let path = copy_user_path_cstr(path_ptr,
+                                   crate::user_copy::USER_PATH_MAX)?;
+    if path.is_empty() {
+        if flags & AT_EMPTY_PATH == 0 {
+            return Err(ErrNo::ENOENT);
+        }
+        if dirfd < 0 {
+            return Err(ErrNo::EBADF);
+        }
+        return vfs::fd::with_current_io(dirfd as usize, |handle| {
+                   let path = handle.backing_path()
+                                    .map(ToString::to_string)
+                                    .ok_or(VfsError::Unsupported)?;
+                   Ok((path, handle.metadata()?))
+               }).map_err(vfs_error_to_errno);
+    }
+
+    let resolved = resolve_path_at(dirfd, path.as_str())?;
+    let resolved = resolve_symlinks(resolved.as_str(), final_symlink)?;
+    let meta = active_impl::backend().metadata(resolved.as_str())
+                                     .map_err(vfs_error_to_errno)?;
+    Ok((resolved, meta))
+}
+
+fn check_utimens_permission(meta : &VfsMetadata, times_are_now : bool) -> Result<(), ErrNo> {
+    let credentials = cred::current_credentials();
+    if credentials.effective_uid
+                  .0 ==
+       0 ||
+       credentials.effective_uid
+                  .0 ==
+       meta.uid
+    {
+        return Ok(());
+    }
+    if !times_are_now {
+        return Err(ErrNo::EPERM);
+    }
+    let write_bit = if credentials.effective_gid
+                                  .0 ==
+                       meta.gid ||
+                       cred_has_group(&credentials, Gid(meta.gid))
+    {
+        0o020
+    } else {
+        0o002
+    };
+    if meta.mode as u32 & write_bit != 0 {
+        Ok(())
+    } else {
+        Err(ErrNo::EACCES)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const NOW : StatTime = StatTime { sec : 123,
+                                      nsec : 456 };
+
+    #[test]
+    fn utimens_time_markers_are_parsed_without_using_tv_sec() {
+        assert_eq!(parse_requested_time(UserTimespec { sec : -1,
+                                                       nsec : UTIME_NOW },
+                                        NOW),
+                   Ok(RequestedTime::Now(NOW)));
+        assert_eq!(parse_requested_time(UserTimespec { sec : -1,
+                                                       nsec : UTIME_OMIT },
+                                        NOW),
+                   Ok(RequestedTime::Omit));
+    }
+
+    #[test]
+    fn utimens_explicit_time_accepts_negative_seconds_and_validates_nanoseconds() {
+        assert_eq!(parse_requested_time(UserTimespec { sec : -10,
+                                                       nsec : 999_999_999 },
+                                        NOW),
+                   Ok(RequestedTime::Value(StatTime { sec : -10,
+                                                      nsec : 999_999_999 })));
+        assert_eq!(parse_requested_time(UserTimespec { sec : 0,
+                                                       nsec : -1 },
+                                        NOW),
+                   Err(ErrNo::EINVAL));
+        assert_eq!(parse_requested_time(UserTimespec { sec : 0,
+                                                       nsec : 1_000_000_000 },
+                                        NOW),
+                   Err(ErrNo::EINVAL));
+    }
 }

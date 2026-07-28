@@ -10,7 +10,7 @@ use vfs::api::VfsMetadata;
 
 use crate::linux_stat::{LinuxStat, LinuxStatx};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 // 本结构代码由AI完成
 pub(crate) struct StatTime {
     pub sec: i64,
