@@ -113,5 +113,12 @@ impl MultiClassScheduler {
             .running_cpu_id(task_id)
     }
 
+    /// 若任务正在某个 CPU 上运行，请求该 CPU 尽快进入调度安全点。
+    pub fn request_task_reschedule(&mut self, task_id : TaskId) {
+        if let Some(cpu_id) = self.running_cpu(task_id) {
+            self.request_reschedule(cpu_id, RescheduleCause::Forced);
+        }
+    }
+
     pub fn cpu_load(&self, cpu_id : CpuId) -> usize { self.cpu_states[cpu_id.raw()].load() }
 }

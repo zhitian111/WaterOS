@@ -59,10 +59,18 @@ pub(crate) fn sys_exit_group(exit_code : isize) -> isize {
                 let user_aspace = task::current_task_user_aspace_ptr();
                 for sibling in task_ids {
                     if sibling != task_id {
-                        super::wait::wake_clear_child_tid_for_task(sibling);
-                        crate::sys::ipc::robust::robust_exit_cleanup(sibling);
-                        super::super::shm::drop_task_attachments(sibling, user_aspace);
-                        super::wait::drop_task_runtime_resources(sibling);
+                        // 正在远端 CPU 执行的线程不能由本 CPU 提前释放 cred/fd/
+                        // futex 等运行时资源。kill_task 成功表示它已经不再执行；
+                        // 失败的远端线程会在下一次返回用户态时观察到进程 Exited，
+                        // 再通过自己的 sys_exit 路径完成清理。
+                        if task::kill_task(sibling, exit_code) {
+                            super::wait::wake_clear_child_tid_for_task(sibling);
+                            crate::sys::ipc::robust::robust_exit_cleanup(sibling);
+                            super::super::shm::drop_task_attachments(sibling, user_aspace);
+                            super::wait::drop_task_runtime_resources(sibling);
+                        } else {
+                            task::request_task_reschedule(sibling);
+                        }
                     }
                 }
             }

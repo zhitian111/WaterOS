@@ -201,32 +201,19 @@ pub fn consume_continued_wait(pid : ProcessId, nowait : bool) {
     active_impl::consume_continued_wait(pid, nowait)
 }
 
-/// 阻塞进程内所有尚未退出的任务（SIGSTOP）。
-pub fn stop_process_tasks(pid : ProcessId) {
-    let Some(task_ids) = task_ids_for_process(pid) else {
-        return;
-    };
-    for task_id in task_ids {
-        if !scheduler::task_snapshot(task_id).is_some_and(|snapshot| {
-                                                 matches!(snapshot.state, TaskState::Exited(_))
-                                             })
-        {
-            if crate::schedule::current_task_id() == Some(task_id) {
-                crate::schedule::block_current(TaskWaitTarget::Manual);
-            } else {
-                scheduler::block_task_manual(task_id);
-            }
-        }
-    }
-}
-
 /// 恢复进程内被 SIGSTOP 挂起的任务（SIGCONT）。
 pub fn continue_process_tasks(pid : ProcessId) {
     let Some(task_ids) = task_ids_for_process(pid) else {
         return;
     };
     for task_id in task_ids {
-        let _ = scheduler::wake_task(task_id);
+        if scheduler::task_snapshot(task_id).is_some_and(|snapshot| {
+                                               snapshot.state ==
+                                               TaskState::Blocking(TaskWaitTarget::Manual)
+                                           })
+        {
+            let _ = scheduler::wake_task(task_id);
+        }
     }
 }
 

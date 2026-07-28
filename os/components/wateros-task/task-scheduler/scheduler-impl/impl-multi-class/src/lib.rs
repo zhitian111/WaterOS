@@ -595,11 +595,6 @@ pub fn interrupt_task(task_id : TaskId) -> bool {
     interrupted
 }
 
-pub fn block_task_manual(task_id : TaskId) {
-    let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.block_task_manual(task_id, cpu::current_cpu_id()));
-}
-
 pub fn wake_child_exit_waiters(parent_id : TaskId) {
     let cpu_id = cpu::current_cpu_id();
     let targets = {
@@ -875,6 +870,33 @@ pub fn print_cpu_states() {
 pub fn running_cpu(task_id : TaskId) -> Option<CpuId> {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.running_cpu(task_id))
+}
+
+/// 若指定任务正在远端 CPU 运行，发送重调度 IPI；非运行态任务无需处理。
+pub fn request_task_reschedule(task_id : TaskId) {
+    let cpu_id = cpu::current_cpu_id();
+    let targets = {
+        let _guard = InterruptGuard::new();
+        with_scheduler(|scheduler| {
+            scheduler.request_task_reschedule(task_id);
+            let mut targets = scheduler.take_pending_reschedule_cpus();
+            if targets.contains(cpu_id) {
+                targets.remove(cpu_id);
+                let _ = scheduler.take_need_resched(cpu_id);
+            }
+            targets
+        })
+    };
+    // 本地任务会在当前 trap 的统一返回路径处理状态变化，不在 syscall 中途
+    // 自我切换。远端 CPU 需要区分普通抢占与“先处理目标任务状态再切换”。
+    if !targets.is_empty() {
+        if let Err(error) =
+            platform::smp::send_ipi(targets, platform::smp::IpiKind::TaskNotify)
+        {
+            log::warn!("[ipi] task notification failed: {:?}",
+                       error);
+        }
+    }
 }
 
 /// 将指定 CPU 标记为 online。AP 完成初始化后调用。

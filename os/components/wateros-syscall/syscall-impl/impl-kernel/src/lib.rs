@@ -48,6 +48,12 @@ pub fn restore_signal_frame(frame : *mut u8) -> bool { sys::restore_signal_frame
 
 pub fn raise_current_signal(signal : usize) -> bool { sys::raise_current_thread(signal).is_ok() }
 
+/// trap 等非 syscall 路径统一使用 exit_group 的资源清理与 SMP 退出流程。
+pub fn terminate_current_process(exit_code : isize) -> ! {
+    sys::sys_exit_group(exit_code);
+    unreachable!("sys_exit_group must not return")
+}
+
 /// 透明转发至 `sys::drop_reaped_task_runtime_resources`。
 #[inline]
 pub fn drop_reaped_task_runtime_resources(task_id : usize, aspace : usize) {

@@ -58,7 +58,7 @@ pub(crate) fn sys_timer_create(args : SyscallArgs) -> UserRet {
         };
         if event.notify != SIGEV_SIGNAL ||
            event.signo <= 0 ||
-           event.signo as usize >= ipc::signal::NSIG
+           event.signo as usize > ipc::signal::NSIG
         {
             return UserRet::from_error(ErrNo::EINVAL);
         }

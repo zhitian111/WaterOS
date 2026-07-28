@@ -110,7 +110,7 @@ impl ProcessSignalState {
                total_cpu_ns : 0 }
     }
 
-    pub(super) fn action(&self, sig : usize) -> SignalAction { self.actions[sig] }
+    pub(super) fn action(&self, sig : usize) -> SignalAction { self.actions[sig - 1] }
 
     pub(super) fn timer(&self, which : usize) -> SignalResult<&IntervalTimerState> {
         match which {
@@ -147,8 +147,8 @@ pub(super) struct ThreadSignalState {
     pub(super) tid : usize,
     pub(super) mask : SignalSet,
     pub(super) pending : SignalSet,
-    pub(super) suspend_restore_mask : Option<SignalSet>,
-    pub(super) poll_restore_mask : Option<SignalSet>,
+    /// `sigsuspend` / `ppoll` / `pselect6` 共用的临时 mask 恢复值。
+    pub(super) temporary_restore_mask : Option<SignalSet>,
     pub(super) waiting_for : Option<SignalSet>,
     pub(super) alternate_stack : AlternateSignalStack,
 }
@@ -159,8 +159,7 @@ impl ThreadSignalState {
                tid,
                mask : inherited_mask,
                pending : SignalSet::empty(),
-               suspend_restore_mask : None,
-               poll_restore_mask : None,
+               temporary_restore_mask : None,
                waiting_for : None,
                alternate_stack : AlternateSignalStack::default() }
     }

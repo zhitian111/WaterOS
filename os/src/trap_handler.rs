@@ -93,7 +93,7 @@ fn kill_current_user_task(context : &str, trap_cause : TrapCause, cx : &TrapCont
               cx.user_pc(),
               cx.fault_addr());
     }
-    task::exit_group_current(-1);
+    syscall::terminate_current_process(-1);
 }
 
 /// 内核态不可恢复 trap：记录诊断后停机，避免 `sret` 到损坏 PC 形成级联 fault。
@@ -272,7 +272,12 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             if pending & platform::smp::IpiKind::TlbShootdown.bits() != 0 {
                 let _ = mm::kernel_mm::handle_tlb_shootdown_ipi();
             }
-            if pending & platform::smp::IpiKind::Reschedule.bits() != 0 {
+            if pending & platform::smp::IpiKind::TaskNotify.bits() != 0 {
+                if cx.returns_to_user() {
+                    return_to_user_signal_delivery(authoritative, trap_cause, cx, None);
+                }
+                task::schedule_reschedule();
+            } else if pending & platform::smp::IpiKind::Reschedule.bits() != 0 {
                 // IPI is not a timer event: never advance timeout accounting or
                 // consume a timeslice here.
                 task::schedule_reschedule();
@@ -321,8 +326,8 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                             kernel_satp={:#x} frame_scause={:#x} (this trap's scause snapshot)",
                            cx.user_pc(),
                            cx.user_sp(),
-                           return_satp,
-                           kernel_satp,
+                           cx.return_address_space_token(),
+                           paging::active_address_space_token(),
                            raw_cause,);
     }
 
@@ -370,13 +375,13 @@ fn return_to_user_signal_delivery(frame : *mut u8,
 }
 
 /// 信号/页错等提前返回路径：打 trace 后把 TCB trap 帧拷回内核栈供 `sret`。
-fn finish_trap_return(frame : *mut u8, _cx : &TrapContext, _raw_cause : usize) {
+fn finish_trap_return(frame : *mut u8, cx : &TrapContext, raw_cause : usize) {
     hot_syscall_trace!("[trap] sret to user pc={:#x} sp={:#x} return_satp={:#x} \
                         kernel_satp={:#x} frame_scause={:#x}",
                        cx.user_pc(),
                        cx.user_sp(),
-                       return_satp,
-                       kernel_satp,
+                       cx.return_address_space_token(),
+                       paging::active_address_space_token(),
                        raw_cause);
     let restored = unsafe { task::restore_current_trap_frame(frame) };
     if !restored {

@@ -203,18 +203,20 @@ impl SignalRegistry {
     pub fn set_action(&mut self,
                       task_id : usize,
                       sig : usize,
-                      action : SignalAction)
+                      mut action : SignalAction)
                       -> SignalResult<SignalAction> {
         if !valid_signal(sig) || immutable_signal(sig) {
             return Err(SignalError::InvalidSignal);
         }
         let pid = self.thread(task_id)?
                       .pid;
+        action.mask.remove(SIGKILL);
+        action.mask.remove(SIGSTOP);
         let process = self.processes
                           .get_mut(&pid)
                           .ok_or(SignalError::NoSuchProcess)?;
-        let old = process.actions[sig];
-        process.actions[sig] = action;
+        let old = process.actions[sig - 1];
+        process.actions[sig - 1] = action;
         if action.is_ignore() {
             process.pending
                    .remove(sig);
@@ -252,12 +254,12 @@ impl SignalRegistry {
         temporary_mask.remove(SIGKILL);
         temporary_mask.remove(SIGSTOP);
         let thread = self.thread_mut(task_id)?;
-        if thread.suspend_restore_mask
+        if thread.temporary_restore_mask
                  .is_some()
         {
             return Err(SignalError::InvalidHow);
         }
-        thread.suspend_restore_mask = Some(thread.mask);
+        thread.temporary_restore_mask = Some(thread.mask);
         thread.mask = temporary_mask;
         Ok(())
     }
@@ -265,7 +267,7 @@ impl SignalRegistry {
     /// `sigsuspend` 退出：恢复原掩码。
     pub fn end_sigsuspend(&mut self, task_id : usize) -> SignalResult<()> {
         let thread = self.thread_mut(task_id)?;
-        if let Some(restore) = thread.suspend_restore_mask
+        if let Some(restore) = thread.temporary_restore_mask
                                      .take()
         {
             thread.mask = restore;
@@ -281,21 +283,19 @@ impl SignalRegistry {
         temporary_mask.remove(SIGKILL);
         temporary_mask.remove(SIGSTOP);
         let thread = self.thread_mut(task_id)?;
-        if thread.suspend_restore_mask
-                 .is_some() ||
-           thread.poll_restore_mask
+        if thread.temporary_restore_mask
                  .is_some()
         {
             return Err(SignalError::InvalidHow);
         }
-        thread.poll_restore_mask = Some(thread.mask);
+        thread.temporary_restore_mask = Some(thread.mask);
         thread.mask = temporary_mask;
         Ok(())
     }
 
     pub fn end_poll_sigmask(&mut self, task_id : usize) -> SignalResult<()> {
         let thread = self.thread_mut(task_id)?;
-        if let Some(restore) = thread.poll_restore_mask
+        if let Some(restore) = thread.temporary_restore_mask
                                      .take()
         {
             thread.mask = restore;
@@ -341,15 +341,12 @@ impl SignalRegistry {
         Ok(old)
     }
 
-    fn classify(&self, pid : usize, sig : usize) -> SignalResult<SignalDelivery> {
+    fn generation_delivery(&self, pid : usize, sig : usize) -> SignalResult<SignalDelivery> {
         if !valid_signal(sig) {
             return Err(SignalError::InvalidSignal);
         }
         if sig == SIGSTOP {
             return Ok(SignalDelivery::Stop);
-        }
-        if sig == SIGCONT {
-            return Ok(SignalDelivery::Continue);
         }
         let action = self.processes
                          .get(&pid)
@@ -357,8 +354,8 @@ impl SignalRegistry {
                          .action(sig);
         if action.is_ignore() || action.is_default() && default_ignored(sig) {
             Ok(SignalDelivery::Ignored)
-        } else if immutable_signal(sig) || action.is_default() && default_terminates(sig) {
-            Ok(SignalDelivery::Terminate)
+        } else if sig == SIGCONT {
+            Ok(SignalDelivery::Continue)
         } else {
             Ok(SignalDelivery::Pending)
         }
@@ -368,23 +365,37 @@ impl SignalRegistry {
     pub fn send_thread(&mut self, task_id : usize, sig : usize) -> SignalResult<SignalDispatch> {
         let pid = self.thread(task_id)?
                       .pid;
-        match self.classify(pid, sig)? {
+        match self.generation_delivery(pid, sig)? {
             SignalDelivery::Ignored => Ok(SignalDispatch::ignored()),
-            SignalDelivery::Terminate => Ok(SignalDispatch::terminate(Some(task_id))),
+            SignalDelivery::Continue => {
+                let action = self.processes
+                                 .get(&pid)
+                                 .ok_or(SignalError::NoSuchProcess)?
+                                 .action(sig);
+                if action.has_user_handler() {
+                    self.thread_mut(task_id)?
+                        .pending
+                        .insert(sig);
+                }
+                Ok(SignalDispatch::continued(Some(task_id)))
+            }
             SignalDelivery::Stop => Ok(SignalDispatch::stop(Some(task_id))),
-            SignalDelivery::Continue => Ok(SignalDispatch::continued(Some(task_id))),
             SignalDelivery::Pending => {
-                self.thread_mut(task_id)?
+                let thread = self.thread_mut(task_id)?;
+                thread
                     .pending
                     .insert(sig);
-                Ok(SignalDispatch::pending(Some(task_id)))
+                let should_wake = !thread.mask.contains(sig) ||
+                                  thread.waiting_for
+                                        .is_some_and(|set| set.contains(sig));
+                Ok(SignalDispatch::pending(should_wake.then_some(task_id)))
             }
         }
     }
 
     /// 向进程投递信号（`kill` 路径）；选择最低未屏蔽 tid 或唤醒 `sigwait` 线程。
     pub fn send_process(&mut self, pid : usize, sig : usize) -> SignalResult<SignalDispatch> {
-        let delivery = self.classify(pid, sig)?;
+        let delivery = self.generation_delivery(pid, sig)?;
         if delivery == SignalDelivery::Ignored {
             return Ok(SignalDispatch::ignored());
         }
@@ -392,9 +403,8 @@ impl SignalRegistry {
                          .iter()
                          .filter(|(_, thread)| {
                              thread.pid == pid &&
-                             (delivery == SignalDelivery::Terminate ||
-                              delivery == SignalDelivery::Stop ||
-                              delivery == SignalDelivery::Continue ||
+                             (matches!(delivery,
+                                       SignalDelivery::Stop | SignalDelivery::Continue) ||
                               !thread.mask
                                      .contains(sig) ||
                               thread.waiting_for
@@ -402,14 +412,22 @@ impl SignalRegistry {
                          })
                          .min_by_key(|(_, thread)| thread.tid)
                          .map(|(task_id, _)| *task_id);
-        if delivery == SignalDelivery::Terminate {
-            return Ok(SignalDispatch::terminate(target));
+        if delivery == SignalDelivery::Continue {
+            let action = self.processes
+                             .get(&pid)
+                             .ok_or(SignalError::NoSuchProcess)?
+                             .action(sig);
+            if action.has_user_handler() {
+                self.processes
+                    .get_mut(&pid)
+                    .ok_or(SignalError::NoSuchProcess)?
+                    .pending
+                    .insert(sig);
+            }
+            return Ok(SignalDispatch::continued(target));
         }
         if delivery == SignalDelivery::Stop {
             return Ok(SignalDispatch::stop(target));
-        }
-        if delivery == SignalDelivery::Continue {
-            return Ok(SignalDispatch::continued(target));
         }
         self.processes
             .get_mut(&pid)
@@ -451,6 +469,46 @@ impl SignalRegistry {
                   .is_empty())
     }
 
+    /// 停止态线程仍必须能消费 SIGKILL；其它 pending 保持到 SIGCONT 之后。
+    pub fn take_sigkill(&mut self, task_id : usize) -> bool {
+        let Some(thread) = self.threads
+                               .get(&task_id)
+                               .copied()
+        else {
+            return false;
+        };
+        if self.threads
+               .get(&task_id)
+               .is_some_and(|thread| thread.pending.contains(SIGKILL))
+        {
+            self.threads
+                .get_mut(&task_id)
+                .expect("thread checked above")
+                .pending
+                .remove(SIGKILL);
+        } else {
+            let Some(process) = self.processes
+                                    .get_mut(&thread.pid)
+            else {
+                return false;
+            };
+            if !process.pending
+                       .contains(SIGKILL)
+            {
+                return false;
+            }
+            process.pending
+                   .remove(SIGKILL);
+        }
+        if let Some(thread) = self.threads
+                                  .get_mut(&task_id)
+        {
+            thread.temporary_restore_mask = None;
+            thread.waiting_for = None;
+        }
+        true
+    }
+
     /// 从 pending 中取出 `wait_set` 内第一个信号（`sigwait`）。
     pub fn take_pending(&mut self, task_id : usize, wait_set : SignalSet) -> Option<usize> {
         let thread = *self.threads
@@ -474,8 +532,8 @@ impl SignalRegistry {
         Some(sig)
     }
 
-    /// 取出下一个可交付信号并应用 `SA_NODEFER` / `SA_RESETHAND` 语义。
-    pub fn take_deliverable(&mut self, task_id : usize) -> Option<PendingSignal> {
+    /// 在目标线程的安全点取出下一个信号，并按此时的 disposition 决定效果。
+    pub fn take_deliverable(&mut self, task_id : usize) -> Option<SignalEffect> {
         let thread = *self.threads
                           .get(&task_id)?;
         let process = self.processes
@@ -502,25 +560,56 @@ impl SignalRegistry {
                 .pending
                 .remove(sig);
         }
-        let previous_mask = thread.suspend_restore_mask
-                                  .unwrap_or(thread.mask);
-        let mut handler_mask = previous_mask.union(action.mask);
+        let delivery_mask = thread.mask;
+        let previous_mask = thread.temporary_restore_mask
+                                  .unwrap_or(delivery_mask);
+        if sig == SIGKILL || action.is_default() && default_terminates(sig) {
+            let target_thread = self.threads
+                                    .get_mut(&task_id)?;
+            target_thread.temporary_restore_mask = None;
+            target_thread.waiting_for = None;
+            return Some(SignalEffect::Terminate { signal : sig });
+        }
+        if action.is_default() && default_stops(sig) {
+            let target_thread = self.threads
+                                    .get_mut(&task_id)?;
+            target_thread.mask = previous_mask;
+            target_thread.temporary_restore_mask = None;
+            target_thread.waiting_for = None;
+            return Some(SignalEffect::Stop { signal : sig });
+        }
+        if sig == SIGCONT && !action.has_user_handler() {
+            let target_thread = self.threads
+                                    .get_mut(&task_id)?;
+            target_thread.mask = previous_mask;
+            target_thread.temporary_restore_mask = None;
+            target_thread.waiting_for = None;
+            return Some(SignalEffect::Continue { signal : sig });
+        }
+        if action.is_ignore() || action.is_default() {
+            let next = self.take_deliverable(task_id);
+            if next.is_none() {
+                let _ = self.end_sigsuspend(task_id);
+            }
+            return next;
+        }
+        let mut handler_mask = delivery_mask.union(action.mask);
         if action.flags & SA_NODEFER == 0 {
             handler_mask.insert(sig);
         }
         let target_thread = self.threads
                                 .get_mut(&task_id)?;
         target_thread.mask = handler_mask;
-        target_thread.suspend_restore_mask = None;
+        target_thread.temporary_restore_mask = None;
         target_thread.waiting_for = None;
         if action.flags & SA_RESETHAND != 0 {
             self.processes
                 .get_mut(&thread.pid)?
-                .actions[sig] = SignalAction::default_action();
+                .actions[sig - 1] = SignalAction::default_action();
         }
-        Some(PendingSignal { signal : sig,
-                             action,
-                             previous_mask })
+        Some(SignalEffect::Handler(PendingSignal { signal : sig,
+                                                   action,
+                                                   previous_mask }))
     }
 }
 
@@ -757,14 +846,105 @@ mod tests {
         registry.send_thread(100, SIGUSR1)
                 .unwrap();
 
-        let pending = registry.take_deliverable(100)
-                              .unwrap();
+        let SignalEffect::Handler(pending) = registry.take_deliverable(100)
+                                                      .unwrap()
+        else {
+            panic!("expected handler delivery");
+        };
         assert_eq!(pending.previous_mask, original);
+        let handler_mask = registry.current_mask(100)
+                                   .unwrap();
+        assert!(handler_mask.contains(SIGUSR1));
+        assert!(!handler_mask.contains(SIGUSR2));
         registry.replace_mask(100, pending.previous_mask)
                 .unwrap();
         assert_eq!(registry.current_mask(100)
                            .unwrap(),
                    original);
+    }
+
+    #[test]
+    fn blocked_default_terminate_remains_pending_until_unblocked() {
+        let mut registry = registry_with_process();
+        let mut blocked = SignalSet::empty();
+        blocked.insert(SIGTERM);
+        registry.replace_mask(100, blocked)
+                .unwrap();
+
+        let dispatch = registry.send_thread(100, SIGTERM)
+                               .unwrap();
+        assert_eq!(dispatch.delivery, SignalDelivery::Pending);
+        assert_eq!(dispatch.target_task_id, None);
+        assert!(registry.pending(100)
+                        .unwrap()
+                        .contains(SIGTERM));
+        assert_eq!(registry.take_deliverable(100), None);
+
+        registry.replace_mask(100, SignalSet::empty())
+                .unwrap();
+        assert_eq!(registry.take_deliverable(100),
+                   Some(SignalEffect::Terminate { signal : SIGTERM }));
+    }
+
+    #[test]
+    fn sigkill_can_be_consumed_while_other_signals_remain_pending() {
+        let mut registry = registry_with_process();
+        registry.send_process(10, SIGKILL)
+                .unwrap();
+        registry.send_process(10, SIGTERM)
+                .unwrap();
+
+        assert!(registry.take_sigkill(100));
+        assert!(!registry.take_sigkill(100));
+        assert!(registry.pending(100)
+                        .unwrap()
+                        .contains(SIGTERM));
+    }
+
+    #[test]
+    fn stop_signals_are_decided_at_delivery_and_sigstop_is_immutable() {
+        let mut registry = registry_with_process();
+        assert_eq!(registry.set_action(100, SIGSTOP, SignalAction::ignore()),
+                   Err(SignalError::InvalidSignal));
+        assert_eq!(registry.send_thread(100, SIGSTOP)
+                           .unwrap()
+                           .delivery,
+                   SignalDelivery::Stop);
+        assert!(!registry.pending(100)
+                         .unwrap()
+                         .contains(SIGSTOP));
+
+        registry.send_thread(100, SIGTSTP)
+                .unwrap();
+        assert_eq!(registry.take_deliverable(100),
+                   Some(SignalEffect::Stop { signal : SIGTSTP }));
+    }
+
+    #[test]
+    fn signal_64_is_valid_and_caught_sigcont_is_both_continue_and_pending() {
+        let mut registry = registry_with_process();
+        let handler = SignalAction { handler : 0x8000,
+                                     ..SignalAction::default_action() };
+        registry.set_action(100, NSIG, handler)
+                .unwrap();
+        registry.send_thread(100, NSIG)
+                .unwrap();
+        assert!(matches!(registry.take_deliverable(100),
+                         Some(SignalEffect::Handler(PendingSignal {
+                             signal: NSIG,
+                             ..
+                         }))));
+
+        registry.set_action(100, SIGCONT, handler)
+                .unwrap();
+        let dispatch = registry.send_process(10, SIGCONT)
+                               .unwrap();
+        assert_eq!(dispatch.delivery, SignalDelivery::Continue);
+        assert!(matches!(registry.take_deliverable(100),
+                         Some(SignalEffect::Handler(PendingSignal {
+                             signal: SIGCONT,
+                             ..
+                         }))));
     }
 
     #[test]

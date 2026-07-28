@@ -377,10 +377,24 @@ pub(crate) fn validate_sigmask(sigmask_ptr : usize, sigsetsize : usize) -> Resul
     Ok(())
 }
 
-/// `ppoll` / `pselect6` 期间临时替换线程信号掩码；`Drop` 时恢复。
+/// `ppoll` / `pselect6` 期间临时替换线程信号掩码。
+///
+/// 正常完成时立即恢复；若 syscall 因当前临时 mask 下的信号返回 EINTR，则把恢复
+/// 延迟到 signal frame/sigreturn，保证该信号仍可被真正投递。
 pub(crate) struct PollSigmaskGuard {
     task_id : usize,
     active : bool,
+}
+
+impl PollSigmaskGuard {
+    pub(crate) fn finish(mut self, interrupted : bool) {
+        let defer_to_signal_frame =
+            interrupted && ipc::signal::has_deliverable(self.task_id).unwrap_or(false);
+        if !defer_to_signal_frame {
+            let _ = ipc::signal::end_poll_sigmask(self.task_id);
+        }
+        self.active = false;
+    }
 }
 
 impl Drop for PollSigmaskGuard {

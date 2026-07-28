@@ -45,20 +45,6 @@ impl MultiClassScheduler {
         true
     }
 
-    pub fn block_task_manual(&mut self, task_id : TaskId, cpu_id : CpuId) {
-        if self.registry
-               .state(task_id)
-               .is_none()
-        {
-            return;
-        }
-        self.cpu_states[cpu_id.raw()].dequeue(task_id);
-        self.registry
-            .mark_blocking(task_id, TaskWaitTarget::Manual);
-        self.wait_queues
-            .block_task_manual(task_id);
-    }
-
     pub fn wake_child_exit_waiters(&mut self, parent_id : TaskId) {
         let waiters = self.wait_queues
                           .wake_child_exit_waiters(parent_id);

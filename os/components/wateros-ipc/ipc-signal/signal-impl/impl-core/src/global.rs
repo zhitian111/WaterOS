@@ -6,8 +6,8 @@
 use alloc::vec::Vec;
 
 use api_v0::{
-    AlternateSignalStack, IntervalTimerSpec, PendingSignal, PosixTimerClock, SignalAction,
-    SignalDispatch, SignalResult, SignalSet,
+    AlternateSignalStack, IntervalTimerSpec, PosixTimerClock, SignalAction, SignalDispatch,
+    SignalEffect, SignalResult, SignalSet,
 };
 use spin::Mutex;
 
@@ -110,8 +110,12 @@ pub fn take_pending(task_id : usize, wait_set : SignalSet) -> Option<usize> {
     with_registry(|registry| registry.take_pending(task_id, wait_set))
 }
 
-pub fn take_deliverable(task_id : usize) -> Option<PendingSignal> {
+pub fn take_deliverable(task_id : usize) -> Option<SignalEffect> {
     with_registry(|registry| registry.take_deliverable(task_id))
+}
+
+pub fn take_sigkill(task_id : usize) -> bool {
+    with_registry(|registry| registry.take_sigkill(task_id))
 }
 
 pub fn get_action(task_id : usize, signal : usize) -> SignalResult<SignalAction> {

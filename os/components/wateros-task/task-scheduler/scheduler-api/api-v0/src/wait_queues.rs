@@ -522,12 +522,6 @@ impl WaitQueues {
         woken
     }
 
-    /// 将任务推入通用阻塞队列（调度器负责 registry 更新和 ready queue 摘除）。
-    pub fn block_task_manual(&mut self, task_id : TaskId) {
-        self.blocked_queue
-            .push_back(task_id);
-    }
-
     fn child_exit_wait_queue_mut(&mut self, parent_id : TaskId) -> &mut VecDeque<TaskId> {
         self.child_exit_wait_queues
             .entry(parent_id)
