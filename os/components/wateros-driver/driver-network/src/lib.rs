@@ -238,7 +238,15 @@ pub mod stack {
     const TCP_LISTEN_BACKLOG_MAX: usize = 16;
 
     fn tcp_listener_slot_count(backlog: usize) -> usize {
-        backlog.clamp(1, TCP_LISTEN_BACKLOG_MAX)
+        // Linux defines backlog as the queue of fully established connections
+        // still waiting for accept(). The connection currently being accepted
+        // is not part of that queue. Keep one transition slot in addition to
+        // the requested queue depth so a replacement listener is available
+        // while a userspace server handles the accepted connection.
+        backlog
+            .max(1)
+            .saturating_add(1)
+            .min(TCP_LISTEN_BACKLOG_MAX)
     }
 
     fn default_snd_buf_size(kind: SocketKind) -> i32 {
@@ -1643,8 +1651,9 @@ pub mod stack {
 
         #[test]
         fn listener_slot_count_honors_cagent_backlog() {
-            assert_eq!(tcp_listener_slot_count(0), 1);
-            assert_eq!(tcp_listener_slot_count(10), 10);
+            assert_eq!(tcp_listener_slot_count(0), 2);
+            assert_eq!(tcp_listener_slot_count(1), 2);
+            assert_eq!(tcp_listener_slot_count(10), 11);
             assert_eq!(
                 tcp_listener_slot_count(TCP_LISTEN_BACKLOG_MAX + 1),
                 TCP_LISTEN_BACKLOG_MAX
