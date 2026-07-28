@@ -119,13 +119,27 @@ pub fn execve_current(
 }
 
 /// 让当前任务以给定退出码结束运行。
-pub fn exit_current(exit_code: TaskExitCode) -> ! {
+pub fn record_current_task_exit(exit_code: TaskExitCode) {
     if let Some(task_id) = crate::schedule::current_task_id() {
         active_impl::with_process_registry(|registry| {
             let _ = registry.mark_task_exited(task_id, exit_code);
         });
     }
+}
+
+/// 让当前任务以给定退出码结束运行。
+pub fn exit_current(exit_code: TaskExitCode) -> ! {
+    record_current_task_exit(exit_code);
     scheduler::exit_current(exit_code)
+}
+
+/// 在进程注册表中记录当前进程退出，供退出通知前建立可见性顺序。
+pub fn record_current_process_exit(exit_code: TaskExitCode) {
+    if let Some(process_task) = crate::process::current_process_task_snapshot() {
+        active_impl::with_process_registry(|registry| {
+            let _ = registry.mark_process_exited(process_task.pid, exit_code);
+        });
+    }
 }
 
 /// 以 exit_group 语义终止当前进程内所有线程。
@@ -134,9 +148,7 @@ pub fn exit_group_current(exit_code: TaskExitCode) -> ! {
         crate::schedule::current_task_id().expect("exit_group requires a current task");
     if let Some(process_task) = crate::process::current_process_task_snapshot() {
         let task_ids = active_impl::task_ids_for_process(process_task.pid).unwrap_or_default();
-        active_impl::with_process_registry(|registry| {
-            let _ = registry.mark_process_exited(process_task.pid, exit_code);
-        });
+        record_current_process_exit(exit_code);
         for task_id in task_ids {
             if task_id != current_id {
                 let _ = scheduler::kill_task(task_id, exit_code);

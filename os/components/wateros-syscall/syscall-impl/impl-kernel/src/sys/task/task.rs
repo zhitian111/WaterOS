@@ -33,13 +33,14 @@ fn normalize_user_exit_code(exit_code : isize) -> isize {
 
 pub(crate) fn sys_exit(exit_code : isize) -> isize {
     let exit_code = normalize_user_exit_code(exit_code);
+    let mut exiting_process = None;
     if let Some(task_id) = task::current_task_id() {
         if let Some(process_task) = task::process_task_snapshot(task_id) {
             let last_thread = task::task_exit_would_finish_process(task_id)
                 .unwrap_or(process_task.role == task::ProcessTaskRole::Leader);
             if last_thread {
                 super::super::acct::record_current_process_exit(exit_code);
-                crate::sys::ipc::signal::notify_parent_sigchld(process_task.pid);
+                exiting_process = Some(process_task.pid);
             }
             crate::sys::ipc::signal::on_thread_exit(task_id,
                                                     process_task.pid
@@ -50,18 +51,24 @@ pub(crate) fn sys_exit(exit_code : isize) -> isize {
         crate::sys::ipc::robust::robust_exit_cleanup(task_id);
         super::wait::drop_task_runtime_resources(task_id);
     }
+    task::record_current_task_exit(exit_code);
+    if let Some(pid) = exiting_process {
+        crate::sys::ipc::signal::notify_parent_sigchld(pid);
+        task::wake_parent_child_waiters(pid);
+    }
     crate::sys::misc::bringup_stats::record_sys_exit();
     task::exit_current(exit_code)
 }
 
 pub(crate) fn sys_exit_group(exit_code : isize) -> isize {
     let exit_code = normalize_user_exit_code(exit_code);
+    let mut exiting_process = None;
     if let Some(task_id) = task::current_task_id() {
         super::wait::wake_clear_child_tid_for_task(task_id);
         if let Some(process_task) = task::current_process_task_snapshot() {
             super::wait::reap_exited_member_threads_runtime_resources(process_task.pid);
             super::super::acct::record_current_process_exit(exit_code);
-            crate::sys::ipc::signal::notify_parent_sigchld(process_task.pid);
+            exiting_process = Some(process_task.pid);
             if let Some(task_ids) = task::task_ids_for_process(process_task.pid) {
                 let user_aspace = task::current_task_user_aspace_ptr();
                 for sibling in task_ids {
@@ -88,6 +95,11 @@ pub(crate) fn sys_exit_group(exit_code : isize) -> isize {
         }
         crate::sys::ipc::robust::robust_exit_cleanup(task_id);
         super::wait::drop_task_runtime_resources(task_id);
+    }
+    task::record_current_process_exit(exit_code);
+    if let Some(pid) = exiting_process {
+        crate::sys::ipc::signal::notify_parent_sigchld(pid);
+        task::wake_parent_child_waiters(pid);
     }
     task::exit_group_current(exit_code)
 }
