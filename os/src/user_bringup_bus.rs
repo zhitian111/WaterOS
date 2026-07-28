@@ -44,7 +44,10 @@ pub fn run() {
     #[cfg(feature = "pre")]
     {
         crate::user_bringup_root_layout::ensure_busybox_path_links();
-        crate::user_bringup_root_layout::prune_ltp_excluded_testcases();
+        // The skip list contains thousands of entries. Unlinking both libc
+        // trees here serializes boot behind thousands of ext4 transactions;
+        // exec-time fast-exit handling already prevents excluded workers from
+        // blocking the LTP runner.
     }
 
     // crate::user_bringup_mm::run_stage_02();
