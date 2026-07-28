@@ -28,6 +28,7 @@ pub fn panic_handler(_panic_info : &core::panic::PanicInfo) -> ! {
                  _panic_info.message(),
                  AnsiColor::Clear);
     }
+    let _ = platform::console::console_flush();
 
     use platform::reset::{shutdown, PlatformResetReason};
     // 关机可能因固件状态返回 Err；持续重试直至成功，避免误返回用户态。

@@ -8,6 +8,7 @@ const UART_BASE : usize = config::mm::QEMU_VIRT_MMIO_PHYS_START;
 const UART_THR : usize = UART_BASE;
 const UART_LSR : usize = UART_BASE + 5;
 const UART_LSR_THRE : u8 = 1 << 5;
+const UART_LSR_TEMT : u8 = 1 << 6;
 const SPIN_TX_MAX : usize = 1_000_000;
 
 fn write_raw(byte : u8) -> PlatformConsoleResult<()> {
@@ -40,8 +41,15 @@ pub fn console_write_a_buffer(bytes : &[u8]) -> PlatformConsoleResult<()> {
     Ok(())
 }
 
-/// 轮询 UART 没有额外 flush 语义。
+/// 等待发送保持寄存器和移位寄存器均为空。
 #[inline]
 pub fn console_flush() -> PlatformConsoleResult<()> {
-    Ok(())
+    for _ in 0..SPIN_TX_MAX {
+        let status = unsafe { read_volatile(UART_LSR as *const u8) };
+        if status & UART_LSR_TEMT != 0 {
+            return Ok(());
+        }
+        core::hint::spin_loop();
+    }
+    Err(PlatformConsoleError::WriteFailure)
 }

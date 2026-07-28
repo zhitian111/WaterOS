@@ -11,6 +11,7 @@ const UART_BASE: usize = 0x1FE0_01E0;
 const UART_THR: usize = UART_BASE;
 const UART_LSR: usize = UART_BASE + 5;
 const UART_LSR_THRE: u8 = 1 << 5;
+const UART_LSR_TEMT: u8 = 1 << 6;
 
 #[inline]
 fn uart_lsr() -> u8 {
@@ -46,8 +47,11 @@ pub fn console_write_a_buffer(bytes: &[u8]) -> PlatformConsoleResult<()> {
     Ok(())
 }
 
-/// UART 轮询输出没有独立 flush 通道。
+/// 等待发送保持寄存器和移位寄存器均为空。
 #[inline]
 pub fn console_flush() -> PlatformConsoleResult<()> {
+    while (uart_lsr() & UART_LSR_TEMT) == 0 {
+        core::hint::spin_loop();
+    }
     Ok(())
 }
