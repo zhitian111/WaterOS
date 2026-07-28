@@ -61,6 +61,11 @@ impl PerTaskCredRegistry {
             .unwrap_or_else(|| panic!("[cred] no cred for tid={tid} ({context})"))
     }
 
+    fn try_cred(&self, tid: TaskId) -> Option<ProcessCredentials> {
+        let owner = self.effective_owner(tid);
+        self.creds.get(&owner).copied()
+    }
+
     fn cred_mut_or_panic(&mut self, tid: TaskId, context: &str) -> &mut ProcessCredentials {
         let owner = self.effective_owner(tid);
         self.creds
@@ -236,6 +241,10 @@ pub fn drop_task_cred(tid: TaskId) {
 
 pub fn current_credentials_for(tid: TaskId) -> ProcessCredentials {
     registry().exclusive_access().current(tid)
+}
+
+pub fn try_credentials_for(tid: TaskId) -> Option<ProcessCredentials> {
+    registry().exclusive_access().try_cred(tid)
 }
 
 pub fn set_resuid(

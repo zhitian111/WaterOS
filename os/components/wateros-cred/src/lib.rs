@@ -51,6 +51,12 @@ pub fn credentials_for(tid: TaskId) -> ProcessCredentials {
 }
 
 #[cfg(feature = "impl-root")]
+/// 尝试读取指定任务的凭证；任务尚未发布或已被回收时返回 `None`。
+pub fn try_credentials_for(tid: TaskId) -> Option<ProcessCredentials> {
+    active_impl::try_credentials_for(tid)
+}
+
+#[cfg(feature = "impl-root")]
 /// 读取当前运行任务的凭证；无当前任务或无侧表条目时 panic。
 pub fn current_credentials() -> ProcessCredentials {
     let tid = task::current_task_id()

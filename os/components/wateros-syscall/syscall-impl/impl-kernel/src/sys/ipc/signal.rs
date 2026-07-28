@@ -16,7 +16,7 @@ use crate::sys::misc::ltp_cgroup_helper::{
 };
 use wateros_platform_arch_api_v0::trap::{SignalFrameCodec, SignalMachineContext, TrapFrameRead};
 
-use super::kill_target::{classify_kill_target, KillTargetSelector};
+use super::kill_target::{can_signal, classify_kill_target, KillTargetSelector, SignalIdentity};
 use crate::user_copy::{copy_from_user_struct, copy_to_user_struct};
 
 const RT_SIGSET_SIZE_64 : usize = 8;
@@ -723,6 +723,9 @@ pub(crate) fn sys_tkill(args : SyscallArgs) -> UserRet {
         Some(snapshot) => snapshot,
         None => return UserRet::from_error(ErrNo::ESRCH),
     };
+    if let Err(error) = check_signal_permission(snapshot.pid, signal) {
+        return UserRet::from_error(error);
+    }
     if ensure_process_signal_state(snapshot.pid).is_err() {
         return UserRet::from_error(ErrNo::ESRCH);
     }
@@ -747,6 +750,9 @@ pub(crate) fn sys_tgkill(args : SyscallArgs) -> UserRet {
         Some(snapshot) if snapshot.pid.raw() == tgid => snapshot,
         _ => return UserRet::from_error(ErrNo::ESRCH),
     };
+    if let Err(error) = check_signal_permission(snapshot.pid, signal) {
+        return UserRet::from_error(error);
+    }
     if ensure_process_signal_state(snapshot.pid).is_err() {
         return UserRet::from_error(ErrNo::ESRCH);
     }
@@ -788,10 +794,44 @@ fn resolve_kill_targets(pid : isize) -> Result<Vec<ProcessId>, ErrNo> {
     }
 }
 
+fn signal_identity(credentials : cred::ProcessCredentials,
+                   session_id : ProcessId)
+                   -> SignalIdentity {
+    SignalIdentity { real_uid : credentials.real_uid
+                                           .0,
+                     effective_uid : credentials.effective_uid
+                                                .0,
+                     saved_uid : credentials.saved_uid
+                                            .0,
+                     session_id : session_id.raw() }
+}
+
+fn check_signal_permission(process : ProcessId, sig : usize) -> Result<(), ErrNo> {
+    let caller_process = task::current_process_snapshot().ok_or(ErrNo::ESRCH)?;
+    let target_process = task::process_snapshot(process).ok_or(ErrNo::ESRCH)?;
+    let target_credentials =
+        cred::try_credentials_for(target_process.leader_task_id).ok_or(ErrNo::ESRCH)?;
+    let caller_credentials = cred::current_credentials();
+    let privileged = caller_credentials.effective_uid
+                                       .0 ==
+                     0;
+
+    if can_signal(signal_identity(caller_credentials, caller_process.sid),
+                  signal_identity(target_credentials, target_process.sid),
+                  sig,
+                  privileged)
+    {
+        Ok(())
+    } else {
+        Err(ErrNo::EPERM)
+    }
+}
+
 fn send_signal_to_process(process : ProcessId, sig : usize) -> Result<(), ErrNo> {
     if task::leader_task_for_process(process).is_none() {
         return Err(ErrNo::ESRCH);
     }
+    check_signal_permission(process, sig)?;
     if ensure_process_signal_state(process).is_err() {
         return Err(ErrNo::ESRCH);
     }
@@ -828,10 +868,16 @@ pub(crate) fn sys_kill(args : SyscallArgs) -> UserRet {
     }
 
     if sig == 0 {
-        if targets.into_iter()
-                  .any(|process| task::leader_task_for_process(process).is_some())
-        {
-            return UserRet::from_success(0);
+        let mut found = false;
+        for process in targets {
+            match check_signal_permission(process, 0) {
+                Ok(()) => return UserRet::from_success(0),
+                Err(ErrNo::EPERM) => found = true,
+                Err(_) => {}
+            }
+        }
+        if found {
+            return UserRet::from_error(ErrNo::EPERM);
         }
         return UserRet::from_error(ErrNo::ESRCH);
     }
