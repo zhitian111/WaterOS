@@ -7,6 +7,7 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
+use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::cmp;
@@ -140,8 +141,28 @@ fn parse_elf_header(data : &[u8]) -> Result<ElfHeaderInfo, LoadElfError> {
                        phdrs })
 }
 
+fn remap_interp_path(program_path : &str, interp : &str) -> String {
+    let library = interp.strip_prefix("/lib/")
+                        .or_else(|| interp.strip_prefix("/lib64/"));
+    if let Some(name) = library {
+        if program_path.starts_with("/glibc/") {
+            return format!("/glibc/lib/{name}");
+        }
+        if program_path.starts_with("/musl/") {
+            // musl 的 libc.so 同时也是动态链接器。
+            return String::from("/musl/lib/libc.so");
+        }
+    }
+    String::from(interp)
+}
+
+fn resolve_interp_path(program_path : &str, interp : &str) -> Result<String, LoadElfError> {
+    let remapped = remap_interp_path(program_path, interp);
+    resolve_elf_path(remapped.as_str())
+}
+
 fn read_interp_path(data : &[u8],
-                    _program_path : &str,
+                    program_path : &str,
                     header : &ElfHeaderInfo)
                     -> Result<Option<String>, LoadElfError> {
     for i in 0..header.phnum {
@@ -162,7 +183,7 @@ fn read_interp_path(data : &[u8],
                        .position(|byte| *byte == 0)
                        .unwrap_or(bytes.len());
         let interp = core::str::from_utf8(&bytes[..nul]).map_err(|_| LoadElfError::Parse)?;
-        return Ok(Some(String::from(interp)));
+        return resolve_interp_path(program_path, interp).map(Some);
     }
     Ok(None)
 }
@@ -863,9 +884,35 @@ fn read_interp_path_from_phdrs(path : &str,
                      .position(|b| *b == 0)
                      .unwrap_or(buf.len());
         let interp = core::str::from_utf8(&buf[..nul]).map_err(|_| LoadElfError::Parse)?;
-        return resolve_elf_path(interp).map(Some);
+        return resolve_interp_path(path, interp).map(Some);
     }
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::remap_interp_path;
+
+    #[test]
+    fn remaps_glibc_interpreter_into_bundle() {
+        assert_eq!(remap_interp_path("/glibc/hackbench",
+                                     "/lib/ld-linux-riscv64-lp64d.so.1"),
+                   "/glibc/lib/ld-linux-riscv64-lp64d.so.1");
+    }
+
+    #[test]
+    fn remaps_musl_interpreter_to_libc() {
+        assert_eq!(remap_interp_path("/musl/hackbench",
+                                     "/lib/ld-musl-riscv64.so.1"),
+                   "/musl/lib/libc.so");
+    }
+
+    #[test]
+    fn preserves_standard_root_interpreter() {
+        assert_eq!(remap_interp_path("/usr/bin/sleep",
+                                     "/lib/ld-linux-riscv64-lp64d.so.1"),
+                   "/lib/ld-linux-riscv64-lp64d.so.1");
+    }
 }
 
 struct ElfPathSegmentLoader {
