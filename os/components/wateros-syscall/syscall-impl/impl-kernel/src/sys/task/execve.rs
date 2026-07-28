@@ -104,9 +104,16 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
 
     // 越过不可回退点：后续操作不可传播错误，否则进程将处于无地址空间的死亡状态。
     // 只能 log 警告后继续，确保 execve 最终一定成功。
-    if let Err(e) = vfs::fd::close_cloexec_fds_for_current_task() {
-        log::warn!("[execve] close_cloexec_fds failed (continuing): {:?}",
-                   e);
+    match vfs::fd::close_cloexec_fds_for_current_task() {
+        Ok(closed_fds) => {
+            for fd in closed_fds {
+                crate::unix_sock::unregister(current_tid, fd);
+            }
+        }
+        Err(e) => {
+            log::warn!("[execve] close_cloexec_fds failed (continuing): {:?}",
+                       e);
+        }
     }
 
     // TODO(cred-exec-setuid): 可执行文件 S_ISUID/S_ISGID 应在 cred::on_exec 内更新凭证。

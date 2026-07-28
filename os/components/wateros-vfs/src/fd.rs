@@ -259,13 +259,15 @@ pub fn share_fd_table_from_parent(child_id : task::TaskId, parent_id : task::Tas
 }
 
 /// `execve` 前关闭带 `FD_CLOEXEC` 的 fd。
-pub fn close_cloexec_fds_for_current_task() -> VfsResult<()> {
+pub fn close_cloexec_fds_for_current_task() -> VfsResult<Vec<usize>> {
     let task_id = current_task_id()?;
     let handles = with_registry(|registry| registry.take_cloexec_fds_for_task(task_id));
-    for handle in handles {
+    let mut closed = Vec::with_capacity(handles.len());
+    for (fd, handle) in handles {
         handle.close()?;
+        closed.push(fd);
     }
-    Ok(())
+    Ok(closed)
 }
 
 /// 任务退出后释放 fd 表。

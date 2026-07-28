@@ -287,7 +287,9 @@ impl PerTaskFdRegistry {
     }
 
     // 本方法代码由AI完成
-    pub fn take_cloexec_fds_for_task(&mut self, task_id : task::TaskId) -> Vec<SharedIoHandle> {
+    pub fn take_cloexec_fds_for_task(&mut self,
+                                     task_id : task::TaskId)
+                                     -> Vec<(usize, SharedIoHandle)> {
         self.ensure_task(task_id);
         let owner = self.effective_owner(task_id);
         let table_len = self.tables
@@ -303,7 +305,7 @@ impl PerTaskFdRegistry {
             let cloexec = fd < flags.len() && (flags[fd] & FD_CLOEXEC) != 0;
             if cloexec {
                 if let Ok(handle) = self.take_fd_for_close(task_id, fd) {
-                    handles.push(handle);
+                    handles.push((fd, handle));
                 }
             }
         }
