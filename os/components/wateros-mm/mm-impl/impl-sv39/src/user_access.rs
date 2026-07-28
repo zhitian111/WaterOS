@@ -7,7 +7,7 @@
 use api_v0::addr::{PhysAddr, VirtAddr, PAGE_SIZE};
 use api_v0::address_space::AddressSpaceOps;
 use api_v0::error::{MmError, MmResult};
-use api_v0::mmap::PageFaultAccess;
+use api_v0::mmap::{MmapOps, PageFaultAccess};
 use api_v0::perm::PagePerm;
 use api_v0::user_access::UserMemoryOps;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -104,9 +104,10 @@ fn atomic_load_user_u32(handle : usize, user_addr : VirtAddr) -> MmResult<u32> {
             Some(pa) => pa,
             None => {
                 let mut allocator = GlobalPhysFrameAllocator;
-                if !aspace.handle_lazy_page_fault(&mut allocator,
-                                                  user_addr,
-                                                  PageFaultAccess::Read)?
+                if !MmapOps::handle_page_fault(aspace,
+                                               &mut allocator,
+                                               user_addr,
+                                               PageFaultAccess::Read)?
                 {
                     return Err(MmError::AccessViolation);
                 }
@@ -131,9 +132,10 @@ fn shared_futex_key_user_u32(handle : usize, user_addr : VirtAddr) -> MmResult<u
             Some(pa) => pa,
             None => {
                 let mut allocator = GlobalPhysFrameAllocator;
-                if !aspace.handle_lazy_page_fault(&mut allocator,
-                                                  user_addr,
-                                                  PageFaultAccess::Read)?
+                if !MmapOps::handle_page_fault(aspace,
+                                               &mut allocator,
+                                               user_addr,
+                                               PageFaultAccess::Read)?
                 {
                     return Err(MmError::AccessViolation);
                 }
@@ -162,9 +164,10 @@ fn atomic_compare_exchange_user_u32(handle : usize,
             Some(perm) => perm,
             None => {
                 let mut allocator = GlobalPhysFrameAllocator;
-                if !aspace.handle_lazy_page_fault(&mut allocator,
-                                                  user_addr,
-                                                  PageFaultAccess::Write)?
+                if !MmapOps::handle_page_fault(aspace,
+                                               &mut allocator,
+                                               user_addr,
+                                               PageFaultAccess::Write)?
                 {
                     return Err(MmError::AccessViolation);
                 }
@@ -209,9 +212,10 @@ fn copy_from_user_in_aspace(aspace : &mut Sv39AddressSpace,
             Some(pa) => pa,
             None => {
                 let mut allocator = GlobalPhysFrameAllocator;
-                if aspace.handle_lazy_page_fault(&mut allocator,
-                                                 user_addr,
-                                                 PageFaultAccess::Read)?
+                if MmapOps::handle_page_fault(aspace,
+                                              &mut allocator,
+                                              user_addr,
+                                              PageFaultAccess::Read)?
                 {
                     match aspace.translate_addr(user_addr)? {
                         Some(pa) => pa,
@@ -251,9 +255,10 @@ fn copy_to_user_in_aspace(aspace : &mut Sv39AddressSpace,
             Some(perm) => perm,
             None => {
                 let mut allocator = GlobalPhysFrameAllocator;
-                if aspace.handle_lazy_page_fault(&mut allocator,
-                                                 user_addr,
-                                                 PageFaultAccess::Write)?
+                if MmapOps::handle_page_fault(aspace,
+                                              &mut allocator,
+                                              user_addr,
+                                              PageFaultAccess::Write)?
                 {
                     aspace.leaf_page_perm(vpn)?
                           .ok_or(MmError::AccessViolation)?
