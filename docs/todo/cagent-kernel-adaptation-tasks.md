@@ -42,19 +42,21 @@ agent 的 `popen()` 依赖 fork/exec、pipe、fd 继承、SIGCHLD 和 wait 语�
 
 ### 已满足
 
+- 2026-07-29 最终验收已连续三轮达到 20/20 HTTP 请求、10/10 pass 和
+  GROUP END，客体耗时分别为 12.204、13.058、13.228 秒。
 - 动态解释器路径和脚本 cwd 已由 `327f02af`、`fc0d84cf` 修复。
 - 用户任务初始化后发布，提交 `72cbf633`。
 - `sigsuspend` 在信号投递前保留临时 mask，提交 `526b2e0e`。
 - ext4/page-cache 并发加固由 `fba81834` 完成。
 - `touch` 所需 `utimensat` 由 `6e7e04dd` 实现。
-- 当前运行中 factorial、date、network、cpu、fs-create、fs-search 和
-  fs-usage 已通过；kernel、fs-readwrite、fs-directory 在超时边界失败。
-- kernel 与 fs-directory 单项探针均能成功，说明剩余失败不是命令或 syscall
-  完全缺失。
+- 本文识别的网络、退出通知和定时唤醒阻断均已修复；具体提交与验证结果见
+  `docs/tasks/cagent-kernel-adaptation-summary.md`。
 
-### 已确认阻断
+### 实施前已确认阻断（已解决）
 
 #### CAG-NET-01：监听 backlog 小于测试并发数
+
+状态：已由 `dba747a2`、`0d25a32b` 解决。
 
 `simple_llm_server.c` 请求 backlog 10，但
 `wateros-driver/driver-network/src/lib.rs` 将监听槽数限制为 6。首轮并发会耗尽
@@ -67,6 +69,8 @@ agent 的 `popen()` 依赖 fork/exec、pipe、fd 继承、SIGCHLD 和 wait 语�
 - 验证连续多轮 CAgent 都出现 20 次请求、10 项 pass 和 GROUP END。
 
 #### CAG-NET-02：本地 TCP burst 前进与等待
+
+状态：已由 `1fec182a` 解决。
 
 当前阻塞 connect/accept/send/recv 通过“poll 一次、sleep 一个 tick”推进协议栈，
 没有基于 socket 状态的事件唤醒。单项可运行但十项并发耗时约 4 秒，并在监听槽

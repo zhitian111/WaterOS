@@ -3,6 +3,13 @@
 本计划以 `cagent-kernel-adaptation-tasks.md` 为需求基线。工作按条目进行：
 每条只解决一个根因，完成验证后立即单独 commit，再进入下一条。
 
+## 执行状态
+
+计划内的 CAgent 阻断修复和 RISC-V 验收已于 2026-07-29 完成。最终结果为连续
+三轮 20/20 请求、10/10 pass、GROUP END；pre 稳定性窗口内持续推进且无
+panic、OOM 或异常 trap。提交、命令和剩余限制见
+`docs/tasks/cagent-kernel-adaptation-summary.md`。
+
 ## 一、测试与基线
 
 ### CAG-BASE-01：建立可重复运行口径
