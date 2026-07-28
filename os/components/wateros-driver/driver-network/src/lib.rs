@@ -232,7 +232,14 @@ pub mod stack {
     const UDP_MAX_PAYLOAD_SIZE: usize = 65_507;
     const TCP_MSS: u32 = 1460;
     /// 每个监听槽都带 256 KiB 收、发缓冲，限制槽数以约束内核内存。
-    const TCP_LISTEN_BACKLOG_MAX: usize = 6;
+    ///
+    /// CAgent 的本地 HTTP server 使用 backlog 10；上限必须至少覆盖该并发量，
+    /// 否则首轮连接会在所有监听槽进入 Established 后丢失 SYN。
+    const TCP_LISTEN_BACKLOG_MAX: usize = 16;
+
+    fn tcp_listener_slot_count(backlog: usize) -> usize {
+        backlog.clamp(1, TCP_LISTEN_BACKLOG_MAX)
+    }
 
     fn default_snd_buf_size(kind: SocketKind) -> i32 {
         match kind {
@@ -469,8 +476,9 @@ pub mod stack {
         Ok(socket)
     }
 
-    fn add_tcp_listener_slot(
+    fn register_tcp_listener_slot(
         stack: &mut NetworkStack,
+        socket: tcp::Socket<'static>,
         group_id: u64,
         local_ip: Option<[u8; 4]>,
         port: u16,
@@ -478,8 +486,7 @@ pub mod stack {
         tcp_nodelay: bool,
         snd_buf_size: i32,
         rcv_buf_size: i32,
-    ) -> Result<SocketHandle, &'static str> {
-        let socket = new_tcp_listener_socket(local_ip, port, tcp_nodelay)?;
+    ) -> SocketHandle {
         let handle = stack.sockets.add(socket);
         let mut meta = new_socket_meta(SocketKind::Tcp);
         meta.state = SocketState::Listening { port };
@@ -492,7 +499,31 @@ pub mod stack {
         meta.snd_buf_size = snd_buf_size;
         meta.rcv_buf_size = rcv_buf_size;
         stack.metas.insert(handle, meta);
-        Ok(handle)
+        handle
+    }
+
+    fn add_tcp_listener_slot(
+        stack: &mut NetworkStack,
+        group_id: u64,
+        local_ip: Option<[u8; 4]>,
+        port: u16,
+        recv_timeout_ms: Option<u64>,
+        tcp_nodelay: bool,
+        snd_buf_size: i32,
+        rcv_buf_size: i32,
+    ) -> Result<SocketHandle, &'static str> {
+        let socket = new_tcp_listener_socket(local_ip, port, tcp_nodelay)?;
+        Ok(register_tcp_listener_slot(
+            stack,
+            socket,
+            group_id,
+            local_ip,
+            port,
+            recv_timeout_ms,
+            tcp_nodelay,
+            snd_buf_size,
+            rcv_buf_size,
+        ))
     }
 
     fn next_ephemeral_port(stack: &mut NetworkStack) -> u16 {
@@ -693,6 +724,14 @@ pub mod stack {
             meta.state = SocketState::Bound { port };
             meta.local_port = port;
         }
+        let slot_count = tcp_listener_slot_count(backlog);
+        let mut prepared_slots = Vec::with_capacity(slot_count.saturating_sub(1));
+        for _ in 1..slot_count {
+            prepared_slots.push(new_tcp_listener_socket(local_ip, port, tcp_nodelay)?);
+        }
+
+        // Extra slots are prepared before mutating the caller's socket. A
+        // recoverable listen error therefore cannot leave a partial group.
         stack.sockets
             .get_mut::<tcp::Socket>(handle)
             .listen(listen_endpoint(local_ip, port))
@@ -705,12 +744,12 @@ pub mod stack {
         stack.next_listener_group = stack.next_listener_group.wrapping_add(1).max(1);
         meta.listener_group = Some(group_id);
 
-        let slot_count = backlog.clamp(1, TCP_LISTEN_BACKLOG_MAX);
         let mut handles = Vec::with_capacity(slot_count);
         handles.push(handle);
-        for _ in 1..slot_count {
-            let slot = add_tcp_listener_slot(
+        for socket in prepared_slots {
+            let slot = register_tcp_listener_slot(
                 stack,
+                socket,
                 group_id,
                 local_ip,
                 port,
@@ -718,7 +757,7 @@ pub mod stack {
                 tcp_nodelay,
                 snd_buf_size,
                 rcv_buf_size,
-            )?;
+            );
             handles.push(slot);
         }
         stack
@@ -1579,6 +1618,21 @@ pub mod stack {
         for h in closed {
             stack.tcp_close_pending.remove(&h);
             stack.sockets.remove(h);
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{tcp_listener_slot_count, TCP_LISTEN_BACKLOG_MAX};
+
+        #[test]
+        fn listener_slot_count_honors_cagent_backlog() {
+            assert_eq!(tcp_listener_slot_count(0), 1);
+            assert_eq!(tcp_listener_slot_count(10), 10);
+            assert_eq!(
+                tcp_listener_slot_count(TCP_LISTEN_BACKLOG_MAX + 1),
+                TCP_LISTEN_BACKLOG_MAX
+            );
         }
     }
 }
