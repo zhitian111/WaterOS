@@ -29,18 +29,18 @@ pub fn run_one_bringup_command(log_tag : &str, cmd : &BringupCommand) -> Option<
     run_one_elf_argv_exit(log_tag, cmd.program, cmd.argv)
 }
 
-/// 基于已装载 ELF 创建用户任务，并在用户栈上写入 `argv` / `envp`（与 `execve`
-/// 布局一致）。
-pub fn spawn_user_task_from_loaded_elf_with_argv(loaded : &LoadedElf,
-                                                 argv : &[&str],
-                                                 envp : &[&str])
-                                                 -> Result<task::TaskId, PrepareUserStackError> {
+/// 基于已装载 ELF 创建尚未发布的用户任务，并在用户栈上写入 `argv` / `envp`
+///（与 `execve` 布局一致）。
+pub fn create_user_task_from_loaded_elf_with_argv(loaded : &LoadedElf,
+                                                  argv : &[&str],
+                                                  envp : &[&str])
+                                                  -> Result<task::TaskId, PrepareUserStackError> {
     let sp = mm::kernel_mm::prepare_elf_user_stack(loaded, argv, envp)?;
     let (argc, argv_ptr, envp_ptr) = initial_entry_args(sp, argv.len());
     let spec =
         task::user_task_from_loaded_elf(loaded).with_initial_user_sp(sp)
                                                .with_initial_user_args(argc, argv_ptr, envp_ptr);
-    Ok(task::spawn_user_task(spec))
+    Ok(task::create_user_task(spec))
 }
 
 /// 根据 `prepare_elf_user_stack` 返回的栈顶，推算 argc/argv/envp 指针（与
@@ -79,7 +79,7 @@ pub fn run_one_elf_argv_exit(log_tag : &str, elf_path : &str, argv : &[&str]) ->
     info!("[{log_tag}] spawn path={elf_path} entry_pc={:#x} satp={:#x} argv={final_argv:?}",
           loaded.entry_pc, loaded.satp);
     let envp = libc_envp_for_path(elf_path);
-    let tid = match spawn_user_task_from_loaded_elf_with_argv(&loaded, &final_argv_refs, &envp) {
+    let tid = match create_user_task_from_loaded_elf_with_argv(&loaded, &final_argv_refs, &envp) {
         Ok(t) => t,
         Err(e) => {
             warn!("[{log_tag}] skip spawn path={elf_path}: {e:?}");
@@ -95,6 +95,7 @@ pub fn run_one_elf_argv_exit(log_tag : &str, elf_path : &str, argv : &[&str]) ->
     #[cfg(feature = "vfs-bridge")]
     vfs::mount_ns::on_user_task_spawned(tid);
 
+    task::start_user_task(tid);
     task::wait_for_task_exit(tid);
     let exit_code = task::reap_exited_task(tid).map(|e| {
                                                    drop_reaped_task_runtime_resources(&e);
