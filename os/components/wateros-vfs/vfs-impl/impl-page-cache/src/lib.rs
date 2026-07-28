@@ -56,6 +56,7 @@ struct PageFrame {
     key : Option<(FileCacheKey, u64)>,
     data : Vec<u8>,
     dirty : bool,
+    version : u64,
 }
 
 // 本结构代码由AI完成
@@ -65,6 +66,7 @@ struct GlobalCacheState {
     index : BTreeMap<(FileCacheKey, u64), usize>,
     lru : VecDeque<usize>,
     free : Vec<usize>,
+    next_version : u64,
 }
 
 impl GlobalCacheState {
@@ -78,7 +80,8 @@ impl GlobalCacheState {
             for _ in 0..cap {
                 frames.push(PageFrame { key : None,
                                         data : vec![0u8; FILE_PAGE_SIZE],
-                                        dirty : false });
+                                        dirty : false,
+                                        version : 0 });
             }
             free.extend((0..cap).rev());
         }
@@ -86,7 +89,8 @@ impl GlobalCacheState {
                frames,
                index : BTreeMap::new(),
                lru : VecDeque::new(),
-               free }
+               free,
+               next_version : 0 }
     }
 
 // 本方法代码由AI完成
@@ -120,13 +124,14 @@ impl GlobalCacheState {
                       .unwrap();
         self.frames[idx].key = None;
         self.frames[idx].dirty = false;
+        self.frames[idx].version = 0;
         idx
     }
 
 // 本方法代码由AI完成
     fn detach_slot_for_reuse(&mut self,
                              idx : usize)
-                             -> Option<((FileCacheKey, u64), Vec<u8>)> {
+                             -> Option<((FileCacheKey, u64), Vec<u8>, u64)> {
         let old = self.frames[idx].key.take();
         if let Some(ref key) = old {
             self.index.remove(key);
@@ -139,12 +144,24 @@ impl GlobalCacheState {
         }
         let dirty_data = if self.frames[idx].dirty {
             old.clone()
-               .map(|key| (key, self.frames[idx].data.clone()))
+               .map(|key| (key,
+                           self.frames[idx].data.clone(),
+                           self.frames[idx].version))
         } else {
             None
         };
         self.frames[idx].dirty = false;
         dirty_data
+    }
+
+    fn mark_dirty(&mut self, idx : usize) -> u64 {
+        self.next_version = self.next_version.wrapping_add(1);
+        if self.next_version == 0 {
+            self.next_version = 1;
+        }
+        self.frames[idx].dirty = true;
+        self.frames[idx].version = self.next_version;
+        self.next_version
     }
 
 // 本方法代码由AI完成
@@ -167,6 +184,7 @@ impl GlobalCacheState {
         {
             frame.key = None;
             frame.dirty = false;
+            frame.version = 0;
         }
         self.index
             .clear();
@@ -183,7 +201,7 @@ impl GlobalCacheState {
 // 本结构代码由AI完成
 struct FileEntryInner {
     logical_size : u64,
-    dirty_pages : BTreeMap<u64, ()>,
+    dirty_pages : BTreeMap<u64, u64>,
     /// 上次 read 结束页号；用于顺序读检测后再预取（F-14）。
     last_read_end_page : Option<u64>,
 }
@@ -284,13 +302,16 @@ impl GlobalFilePageCache {
     }
 
 // 本方法代码由AI完成
-    fn note_page_written_back(&self, path : &str, page_idx : u64) {
-        let key = self.file_key(path);
+    fn note_page_written_back(&self,
+                              key : &FileCacheKey,
+                              page_idx : u64,
+                              version : u64) {
         let files = self.files.lock();
-        if let Some(entry) = files.get(&key) {
-            entry.write()
-                 .dirty_pages
-                 .remove(&page_idx);
+        if let Some(entry) = files.get(key) {
+            let mut entry = entry.write();
+            if entry.dirty_pages.get(&page_idx) == Some(&version) {
+                entry.dirty_pages.remove(&page_idx);
+            }
         }
     }
 
@@ -300,6 +321,7 @@ impl GlobalFilePageCache {
                                        key : &FileCacheKey,
                                        page_idx : u64,
                                        saved_data : &[u8],
+                                       version : u64,
                                        logical_size : u64,
                                        map_err : fn(Io::Error) -> E)
                                        -> Result<(), E>
@@ -312,7 +334,7 @@ impl GlobalFilePageCache {
         let len = FILE_PAGE_SIZE.min(usize::try_from(logical_size - off).unwrap_or(0));
         io.write_range(key.path.as_ref(), off, &saved_data[..len])
           .map_err(map_err)?;
-        self.note_page_written_back(key.path.as_ref(), page_idx);
+        self.note_page_written_back(key, page_idx, version);
         Ok(())
     }
 
@@ -343,10 +365,10 @@ impl GlobalFilePageCache {
     fn flush_dirty_run<Io, E>(&self,
                               io : &mut Io,
                               key : &FileCacheKey,
-                              pages : &[u64],
+                              pages : &[(u64, u64)],
                               logical_size : u64,
                               map_err : fn(Io::Error) -> E)
-                              -> Result<Vec<u64>, E>
+                              -> Result<Vec<(u64, u64)>, E>
         where Io : PageCacheIo
     {
         let mut batches : Vec<(u64, Vec<u8>)> = Vec::new();
@@ -357,7 +379,7 @@ impl GlobalFilePageCache {
                                                 FILE_PAGE_SIZE);
         let mut flushed_pages = Vec::new();
 
-        for &page_idx in pages {
+        for &(page_idx, expected_version) in pages {
             let off = page_idx * FILE_PAGE_SIZE as u64;
             let mut slot = {
                 let cache = self.state.lock();
@@ -376,16 +398,27 @@ impl GlobalFilePageCache {
             let cache = self.state.lock();
             let Some(slot) = slot else {
                 if off >= logical_size {
-                    flushed_pages.push(page_idx);
+                    flushed_pages.push((page_idx, expected_version));
                 }
                 continue;
             };
-            if off >= logical_size || !cache.frames[slot].dirty {
+            let frame = &cache.frames[slot];
+            let same_page = frame.key
+                                 .as_ref()
+                                 .map(|(frame_key, frame_page)| {
+                                     frame_key == key && *frame_page == page_idx
+                                 })
+                                 .unwrap_or(false);
+            if off >= logical_size ||
+               !frame.dirty ||
+               frame.version != expected_version ||
+               !same_page
+            {
                 Self::queue_flush_batch(&mut batches,
                                         &mut batch_start,
                                         &mut batch_data);
                 batch_last = None;
-                flushed_pages.push(page_idx);
+                flushed_pages.push((page_idx, expected_version));
                 continue;
             }
             if batch_last.is_some_and(|last| last + 1 != page_idx) {
@@ -400,7 +433,7 @@ impl GlobalFilePageCache {
             let len = FILE_PAGE_SIZE.min(usize::try_from(logical_size - off).unwrap_or(0));
             batch_data.extend_from_slice(&cache.frames[slot].data[..len]);
             batch_last = Some(page_idx);
-            flushed_pages.push(page_idx);
+            flushed_pages.push((page_idx, expected_version));
         }
         Self::queue_flush_batch(&mut batches,
                                 &mut batch_start,
@@ -413,9 +446,12 @@ impl GlobalFilePageCache {
         }
 
         let mut cache = self.state.lock();
-        for &page_idx in &flushed_pages {
+        for &(page_idx, version) in &flushed_pages {
             if let Some(&slot) = cache.index.get(&(key.clone(), page_idx)) {
-                cache.frames[slot].dirty = false;
+                let frame = &mut cache.frames[slot];
+                if frame.dirty && frame.version == version {
+                    frame.dirty = false;
+                }
             }
         }
 
@@ -475,23 +511,35 @@ impl GlobalFilePageCache {
 
         let idx = cache.pop_free_or_lru_index();
         let pending_flush = cache.detach_slot_for_reuse(idx);
-        if let Some(((ref k, evicted_page), ref saved_data)) = pending_flush {
+        if let Some(((ref k, evicted_page), ref saved_data, version)) = pending_flush {
             drop(cache);
             let evicted_logical =
                 self.logical_size_for_key(k, evicted_page.saturating_mul(FILE_PAGE_SIZE as u64) +
                                               FILE_PAGE_SIZE as u64);
             if let Err(err) =
-                self.writeback_evicted_page(io, k, evicted_page, saved_data, evicted_logical, map_err)
+                self.writeback_evicted_page(io,
+                                            k,
+                                            evicted_page,
+                                            saved_data,
+                                            version,
+                                            evicted_logical,
+                                            map_err)
             {
                 let mut cache = self.state.lock();
                 cache.return_detached_slot(idx);
                 return Err(err);
             }
             cache = self.state.lock();
+            if let Some(&existing) = cache.index.get(&(key.clone(), page_idx)) {
+                cache.return_detached_slot(idx);
+                cache.touch_lru(existing);
+                return Ok(());
+            }
         }
         cache.frames[idx].data
                          .copy_from_slice(&page_buf);
         cache.frames[idx].dirty = false;
+        cache.frames[idx].version = 0;
         cache.frames[idx].key = Some((key.clone(), page_idx));
         cache.index
              .insert((key, page_idx), idx);
@@ -535,23 +583,35 @@ impl GlobalFilePageCache {
 
         let idx = cache.pop_free_or_lru_index();
         let pending_flush = cache.detach_slot_for_reuse(idx);
-        if let Some(((ref k, evicted_page), ref saved_data)) = pending_flush {
+        if let Some(((ref k, evicted_page), ref saved_data, version)) = pending_flush {
             drop(cache);
             let evicted_logical =
                 self.logical_size_for_key(k, evicted_page.saturating_mul(FILE_PAGE_SIZE as u64) +
                                               FILE_PAGE_SIZE as u64);
             if let Err(err) =
-                self.writeback_evicted_page(io, k, evicted_page, saved_data, evicted_logical, map_err)
+                self.writeback_evicted_page(io,
+                                            k,
+                                            evicted_page,
+                                            saved_data,
+                                            version,
+                                            evicted_logical,
+                                            map_err)
             {
                 let mut cache = self.state.lock();
                 cache.return_detached_slot(idx);
                 return Err(err);
             }
             cache = self.state.lock();
+            if let Some(&existing) = cache.index.get(&(key.clone(), page_idx)) {
+                cache.return_detached_slot(idx);
+                cache.touch_lru(existing);
+                return Ok(());
+            }
         }
         cache.frames[idx].data
                          .fill(0);
         cache.frames[idx].dirty = false;
+        cache.frames[idx].version = 0;
         cache.frames[idx].key = Some((key.clone(), page_idx));
         cache.index
              .insert((key, page_idx), idx);
@@ -653,7 +713,7 @@ impl GlobalFilePageCache {
                                   logical_size,
                                   map_err)?;
             }
-            {
+            let version = {
                 let mut cache = self.state.lock();
                 let idx = *cache.index
                                 .get(&(self.file_key(path), page_idx))
@@ -661,12 +721,13 @@ impl GlobalFilePageCache {
                 cache.frames[idx].data[page_off..page_off + chunk].copy_from_slice(&buf[written..
                                                                                         written +
                                                                                         chunk]);
-                cache.frames[idx].dirty = true;
+                let version = cache.mark_dirty(idx);
                 cache.touch_lru(idx);
-            }
+                version
+            };
             let mut guard = entry.write();
             guard.dirty_pages
-                 .insert(page_idx, ());
+                 .insert(page_idx, version);
             let end = pos + chunk as u64;
             if end > guard.logical_size {
                 guard.logical_size = end;
@@ -732,16 +793,16 @@ impl GlobalFilePageCache {
         let (dirty, logical_size) = {
             let guard = entry.write();
             (guard.dirty_pages
-                  .keys()
-                  .copied()
+                  .iter()
+                  .map(|(&page, &version)| (page, version))
                   .collect::<Vec<_>>(),
              guard.logical_size)
         };
 
         let mut run = Vec::new();
-        for page_idx in dirty {
+        for (page_idx, version) in dirty {
             let should_flush = run.last()
-                                  .is_some_and(|last| *last + 1 != page_idx) ||
+                                  .is_some_and(|last : &(u64, u64)| last.0 + 1 != page_idx) ||
                                run.len() >= FLUSH_RUN_MAX_PAGES;
             if should_flush {
                 let flushed = self.flush_dirty_run(io,
@@ -751,14 +812,15 @@ impl GlobalFilePageCache {
                                                    map_err)?;
                 {
                     let mut guard = entry.write();
-                    for flushed_page in flushed {
-                        guard.dirty_pages
-                             .remove(&flushed_page);
+                    for (flushed_page, flushed_version) in flushed {
+                        if guard.dirty_pages.get(&flushed_page) == Some(&flushed_version) {
+                            guard.dirty_pages.remove(&flushed_page);
+                        }
                     }
                 }
                 run.clear();
             }
-            run.push(page_idx);
+            run.push((page_idx, version));
         }
         if !run.is_empty() {
             let flushed = self.flush_dirty_run(io,
@@ -767,9 +829,10 @@ impl GlobalFilePageCache {
                                                logical_size,
                                                map_err)?;
             let mut guard = entry.write();
-            for flushed_page in flushed {
-                guard.dirty_pages
-                     .remove(&flushed_page);
+            for (flushed_page, flushed_version) in flushed {
+                if guard.dirty_pages.get(&flushed_page) == Some(&flushed_version) {
+                    guard.dirty_pages.remove(&flushed_page);
+                }
             }
         }
         Ok(())
@@ -817,6 +880,7 @@ impl GlobalFilePageCache {
             {
                 cache.frames[slot].key = None;
                 cache.frames[slot].dirty = false;
+                cache.frames[slot].version = 0;
                 if let Some(p) = cache.lru
                                       .iter()
                                       .position(|&x| x == slot)
@@ -876,6 +940,7 @@ impl GlobalFilePageCache {
             {
                 cache.frames[slot].key = None;
                 cache.frames[slot].dirty = false;
+                cache.frames[slot].version = 0;
                 if let Some(p) = cache.lru
                                       .iter()
                                       .position(|&x| x == slot)
@@ -886,7 +951,6 @@ impl GlobalFilePageCache {
                      .push(slot);
             }
         }
-
         if len > 0 {
             let tail = (len % FILE_PAGE_SIZE as u64) as usize;
             if tail > 0 {
@@ -951,6 +1015,48 @@ mod tests {
         reads : Cell<usize>,
         writes : usize,
         data : Vec<u8>,
+    }
+
+    struct RacingIo {
+        cache : Arc<GlobalFilePageCache>,
+        raced : bool,
+        data : Vec<u8>,
+    }
+
+    impl PageCacheIo for RacingIo {
+        type Error = ();
+
+        fn read_range(&self, _path : &str, _offset : u64, _buf : &mut [u8]) -> Result<usize, ()> {
+            Ok(0)
+        }
+
+        fn write_range(&mut self, path : &str, offset : u64, data : &[u8]) -> Result<usize, ()> {
+            if !self.raced {
+                self.raced = true;
+                let key = self.cache.file_key(path);
+                let version = {
+                    let mut state = self.cache.state.lock();
+                    let idx = *state.index
+                                    .get(&(key.clone(), 0))
+                                    .unwrap();
+                    state.frames[idx].data.fill(0x22);
+                    state.mark_dirty(idx)
+                };
+                let entry = self.cache.files
+                                      .lock()
+                                      .get(&key)
+                                      .cloned()
+                                      .unwrap();
+                entry.write().dirty_pages.insert(0, version);
+            }
+            let start = offset as usize;
+            let end = start + data.len();
+            if self.data.len() < end {
+                self.data.resize(end, 0);
+            }
+            self.data[start..end].copy_from_slice(data);
+            Ok(data.len())
+        }
     }
 
     impl CountingIo {
@@ -1054,6 +1160,53 @@ mod tests {
              .unwrap();
         assert_eq!(io.writes, 1);
         assert_eq!(io.data, payload);
+    }
+
+    #[test]
+    fn flush_preserves_a_write_racing_with_writeback() {
+        let cache = Arc::new(GlobalFilePageCache::new(7));
+        let mut io = RacingIo { cache : cache.clone(),
+                                raced : false,
+                                data : Vec::new() };
+        let initial = vec![0x11u8; FILE_PAGE_SIZE];
+
+        cache.write(&mut io, "/tmp/racing", 0, 0, &initial, |e| e)
+             .unwrap();
+        cache.flush(&mut io, "/tmp/racing", |e| e)
+             .unwrap();
+
+        assert_eq!(cache.dirty_page_count("/tmp/racing"), 1);
+        assert_eq!(io.data, initial);
+
+        cache.flush(&mut io, "/tmp/racing", |e| e)
+             .unwrap();
+        assert_eq!(cache.dirty_page_count("/tmp/racing"), 0);
+        assert_eq!(io.data, vec![0x22u8; FILE_PAGE_SIZE]);
+    }
+
+    #[test]
+    fn truncate_clears_cached_bytes_past_new_eof() {
+        let cache = GlobalFilePageCache::new(7);
+        let mut io = CountingIo::new();
+        let payload = vec![0x66u8; FILE_PAGE_SIZE];
+
+        cache.write(&mut io, "/tmp/truncate", 0, 0, &payload, |e| e)
+             .unwrap();
+        cache.flush(&mut io, "/tmp/truncate", |e| e)
+             .unwrap();
+        cache.truncate("/tmp/truncate", 100);
+        cache.truncate("/tmp/truncate", FILE_PAGE_SIZE as u64);
+
+        let mut out = vec![0u8; FILE_PAGE_SIZE];
+        cache.read(&mut io,
+                   "/tmp/truncate",
+                   FILE_PAGE_SIZE as u64,
+                   0,
+                   &mut out,
+                   |e| e)
+             .unwrap();
+        assert_eq!(&out[..100], &payload[..100]);
+        assert!(out[100..].iter().all(|byte| *byte == 0));
     }
 
     #[test]

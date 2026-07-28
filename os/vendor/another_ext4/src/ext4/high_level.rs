@@ -81,15 +81,16 @@ impl Ext4 {
                     if e.code() != ErrCode::ENOENT {
                         return_error!(e.code(), "Unexpected error: {:?}", e);
                     }
-                    let mut child = if i == search_path.len() - 1 {
-                        // Reach the object, create it
-                        self.create_inode(mode)?
+                    let child_id = if i == search_path.len() - 1 {
+                        if mode.file_type() == FileType::Directory {
+                            self.mkdir(cur.id, path, mode)?
+                        } else {
+                            self.create(cur.id, path, mode)?
+                        }
                     } else {
-                        // Create parent directory
-                        self.create_inode(InodeMode::DIRECTORY | InodeMode::ALL_RWX)?
+                        self.mkdir(cur.id, path, InodeMode::ALL_RWX)?
                     };
-                    self.link_inode(&mut cur, &mut child, path)?;
-                    cur = child;
+                    cur = self.read_inode(child_id);
                 }
             }
         }

@@ -14,6 +14,8 @@
 //! the use of extra metadata blocks.
 
 use crate::prelude::*;
+use crate::constants::CRC32_INIT;
+use super::crc::crc32;
 
 #[derive(Debug, Default, Clone, Copy)]
 #[repr(C)]
@@ -195,7 +197,11 @@ impl Extent {
 
     /// Set the number of blocks covered by this extent
     pub fn set_block_count(&mut self, block_count: LBlockId) {
+        let unwritten = self.is_unwritten();
         self.block_count = block_count as u16;
+        if unwritten {
+            self.mark_unwritten();
+        }
     }
 
     /// Check if the extent is unwritten
@@ -210,6 +216,9 @@ impl Extent {
 
     /// Check whether the `ex2` extent can be appended to the `ex1` extent
     pub fn can_append(ex1: &Extent, ex2: &Extent) -> bool {
+        if ex1.is_unwritten() != ex2.is_unwritten() {
+            return false;
+        }
         if ex1.start_pblock() + ex1.block_count() as u64 != ex2.start_pblock() {
             return false;
         }
@@ -314,6 +323,9 @@ impl<'a> ExtentNode<'a> {
     /// should be inserted.
     pub fn search_extent_index(&self, lblock: LBlockId) -> core::result::Result<usize, usize> {
         // debug!("Search extent index: {}", lblock);
+        if self.header().entries_count == 0 {
+            return Err(0);
+        }
         let mut i = 0;
         while i < self.header().entries_count as usize {
             let extent_index = self.extent_index_at(i);
@@ -324,7 +336,7 @@ impl<'a> ExtentNode<'a> {
         }
 
         // debug!("Search res: {:?}", res);
-        Ok(i - 1)
+        Ok(i.saturating_sub(1))
     }
 
     pub fn print(&self) {
@@ -429,6 +441,27 @@ impl<'a> ExtentNodeMut<'a> {
         *self.header_mut() = ExtentHeader::new(0, max_entries_count as u16, depth, generation);
     }
 
+    /// Set the checksum stored in the final four-byte extent tail.
+    pub fn set_checksum(&mut self, uuid: &[u8], ino: InodeId, ino_gen: u32) {
+        const TAIL_SIZE: usize = size_of::<u32>();
+        let data_len = self.raw_data.len() - TAIL_SIZE;
+        self.raw_data[data_len..].fill(0);
+        let mut checksum = crc32(CRC32_INIT, uuid);
+        checksum = crc32(checksum, &ino.to_le_bytes());
+        checksum = crc32(checksum, &ino_gen.to_le_bytes());
+        checksum = crc32(checksum, &self.raw_data[..data_len]);
+        self.raw_data[data_len..].copy_from_slice(&checksum.to_le_bytes());
+    }
+
+    fn remove_extent_at(&mut self, pos: usize) {
+        let count = self.header().entries_count() as usize;
+        for i in pos + 1..count {
+            *self.extent_mut_at(i - 1) = *self.extent_at(i);
+        }
+        *self.extent_mut_at(count - 1) = Extent::default();
+        self.header_mut().entries_count -= 1;
+    }
+
     /// Insert a new extent into current node.
     ///
     /// Return `Ok(())` if the insertion is successful. Return `Err(extents)` if
@@ -441,51 +474,29 @@ impl<'a> ExtentNodeMut<'a> {
         extent: &Extent,
         pos: usize,
     ) -> core::result::Result<(), Vec<FakeExtent>> {
-        if self.extent_at(pos).is_unwritten() {
-            // The position has an uninitialized extent
-            *self.extent_mut_at(pos) = *extent;
-            self.header_mut().entries_count += 1;
+        let count = self.header().entries_count() as usize;
+        assert!(pos <= count);
+
+        if pos > 0 && Extent::can_append(self.extent_at(pos - 1), extent) {
+            let new_count = self.extent_at(pos - 1).block_count() + extent.block_count();
+            self.extent_mut_at(pos - 1).set_block_count(new_count);
+            if pos < count && Extent::can_append(self.extent_at(pos - 1), self.extent_at(pos)) {
+                let merged =
+                    self.extent_at(pos - 1).block_count() + self.extent_at(pos).block_count();
+                self.extent_mut_at(pos - 1).set_block_count(merged);
+                self.remove_extent_at(pos);
+            }
             return Ok(());
         }
-        // The position has a valid extent
+        if pos < count && Extent::can_append(extent, self.extent_at(pos)) {
+            let mut merged = *extent;
+            merged.set_block_count(extent.block_count() + self.extent_at(pos).block_count());
+            *self.extent_mut_at(pos) = merged;
+            return Ok(());
+        }
         if self.header().entries_count() < self.header().max_entries_count() {
-            // The extent node is not full
-            // Insert the extent and move the following extents
-            let mut i = pos;
-            while i < self.header().entries_count() as usize {
+            for i in (pos..count).rev() {
                 *self.extent_mut_at(i + 1) = *self.extent_at(i);
-                i += 1;
-            }
-            *self.extent_mut_at(pos) = *extent;
-            self.header_mut().entries_count += 1;
-            return Ok(());
-        }
-        // The extent node is full
-        // There may be some unwritten extents, we could find the first
-        // unwritten extent and adjust the extents.
-        let mut unwritten = None;
-        for i in 0..self.header().entries_count() as usize {
-            if self.extent_at(i).is_unwritten() {
-                unwritten = Some(i);
-                break;
-            }
-        }
-        if let Some(unwritten) = unwritten {
-            // There is an uninitialized extent, we could adjust the extents.
-            if unwritten < pos {
-                // Move the extents from `unwritten` to `pos`
-                let mut i = unwritten;
-                while i < pos {
-                    *self.extent_mut_at(i) = *self.extent_at(i + 1);
-                    i += 1;
-                }
-            } else {
-                // Move the extents from `pos` to `unwritten`
-                let mut i = pos;
-                while i < unwritten {
-                    *self.extent_mut_at(i + 1) = *self.extent_at(i);
-                    i += 1;
-                }
             }
             *self.extent_mut_at(pos) = *extent;
             self.header_mut().entries_count += 1;
@@ -528,12 +539,9 @@ impl<'a> ExtentNodeMut<'a> {
         pos: usize,
     ) -> core::result::Result<(), Vec<FakeExtent>> {
         if self.header().entries_count() < self.header().max_entries_count() {
-            // The extent node is not full
-            // Insert the extent index and move the following extent indexs
-            let mut i = pos;
-            while i < self.header().entries_count() as usize {
+            let count = self.header().entries_count() as usize;
+            for i in (pos..count).rev() {
                 *self.extent_index_mut_at(i + 1) = *self.extent_index_at(i);
-                i += 1;
             }
             *self.extent_index_mut_at(pos) = *extent_index;
             self.header_mut().entries_count += 1;

@@ -357,6 +357,18 @@ impl Inode {
         self.set_block_count(cnt * BLOCK_SIZE as u64 / INODE_BLOCK_SIZE as u64);
     }
 
+    pub fn add_fs_blocks(&mut self, cnt: u64) {
+        self.set_fs_block_count(self.fs_block_count() + cnt);
+    }
+
+    pub fn remove_fs_blocks(&mut self, cnt: u64) {
+        self.set_fs_block_count(
+            self.fs_block_count()
+                .checked_sub(cnt)
+                .expect("inode block count underflow"),
+        );
+    }
+
     pub fn generation(&self) -> u32 {
         self.generation
     }

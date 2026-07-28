@@ -174,11 +174,19 @@ impl SuperBlock {
 
     pub fn inode_count_in_group(&self, bgid: u32) -> u32 {
         let bg_count = self.block_group_count();
-        if bgid < bg_count {
+        if bgid + 1 < bg_count {
             self.inodes_per_group
         } else {
-            // Last group
             self.inode_count - (bg_count - 1) * self.inodes_per_group
+        }
+    }
+
+    pub fn block_count_in_group(&self, bgid: u32) -> u32 {
+        let bg_count = self.block_group_count();
+        if bgid + 1 < bg_count {
+            self.blocks_per_group
+        } else {
+            (self.block_count() - (bg_count as u64 - 1) * self.blocks_per_group as u64) as u32
         }
     }
 

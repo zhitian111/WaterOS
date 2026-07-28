@@ -89,10 +89,22 @@ impl Ext4 {
             inode.inode.set_gid(gid);
         }
         if let Some(size) = size {
-            // If size increases, allocate new blocks if needed.
-            let required_blocks = (size as usize).div_ceil(INODE_BLOCK_SIZE);
-            for _ in inode.inode.block_count()..required_blocks as u64 {
-                self.inode_append_block(&mut inode)?;
+            let old_size = inode.inode.size();
+            if size < old_size {
+                let keep_blocks = size.div_ceil(BLOCK_SIZE as u64) as LBlockId;
+                let old_blocks = old_size.div_ceil(BLOCK_SIZE as u64) as LBlockId;
+                if keep_blocks < old_blocks {
+                    self.extent_truncate(&mut inode, keep_blocks)?;
+                }
+                let tail = size as usize % BLOCK_SIZE;
+                if tail != 0 {
+                    let iblock = (size as usize / BLOCK_SIZE) as LBlockId;
+                    if let Ok(pblock) = self.extent_query(&inode, iblock) {
+                        let mut block = self.read_block(pblock);
+                        block.data[tail..].fill(0);
+                        self.write_block(&block);
+                    }
+                }
             }
             inode.inode.set_size(size);
         }
@@ -136,6 +148,7 @@ impl Ext4 {
         if !parent.inode.is_dir() {
             return_error!(ErrCode::ENOTDIR, "Inode {} is not a directory", parent.id);
         }
+        self.dir_ensure_entry_absent(&parent, name)?;
         // Create child inode and link it to parent directory
         let mut child = self.create_inode(mode)?;
         self.link_inode(&mut parent, &mut child, name)?;
@@ -170,6 +183,9 @@ impl Ext4 {
         if buf.is_empty() {
             return Ok(0);
         }
+        if offset >= file.inode.size() as usize {
+            return Ok(0);
+        }
         // Calc the actual size to read
         let read_size = min(buf.len(), file.inode.size() as usize - offset);
         // Calc the start block of reading
@@ -182,10 +198,13 @@ impl Ext4 {
         // Read first block
         if misaligned > 0 {
             let read_len = min(BLOCK_SIZE - misaligned, read_size);
-            let fblock = self.extent_query(&file, start_iblock).unwrap();
-            let block = self.read_block(fblock);
-            // Copy data from block to the user buffer
-            buf[cursor..cursor + read_len].copy_from_slice(block.read_offset(misaligned, read_len));
+            if let Ok(fblock) = self.extent_query(&file, start_iblock) {
+                let block = self.read_block(fblock);
+                buf[cursor..cursor + read_len]
+                    .copy_from_slice(block.read_offset(misaligned, read_len));
+            } else {
+                buf[cursor..cursor + read_len].fill(0);
+            }
             cursor += read_len;
             iblock += 1;
         }
@@ -295,14 +314,13 @@ impl Ext4 {
         }
 
         let write_size = data.len();
-        // Calc the start and end block of writing
-        let start_iblock = (offset / BLOCK_SIZE) as LBlockId;
-        let end_iblock = ((offset + write_size) / BLOCK_SIZE) as LBlockId;
-        // Append enough block for writing
-        let append_block_count = end_iblock as i64 + 1 - file.inode.fs_block_count() as i64;
-        for _ in 0..append_block_count {
-            self.inode_append_block(&mut file)?;
+        if write_size == 0 {
+            return Ok(0);
         }
+        let end_offset = offset
+            .checked_add(write_size)
+            .ok_or(format_error!(ErrCode::EINVAL, "Write offset overflow"))?;
+        let start_iblock = (offset / BLOCK_SIZE) as LBlockId;
 
         // Write data
         let mut cursor = 0;
@@ -310,7 +328,7 @@ impl Ext4 {
         while cursor < write_size {
             let block_offset = (offset + cursor) % BLOCK_SIZE;
             let write_len = min(BLOCK_SIZE - block_offset, write_size - cursor);
-            let fblock = self.extent_query(&file, iblock)?;
+            let fblock = self.extent_query_or_create(&mut file, iblock, 1)?;
             let mut block = self.read_block(fblock);
             block.write_offset(
                 (offset + cursor) % BLOCK_SIZE,
@@ -320,8 +338,8 @@ impl Ext4 {
             cursor += write_len;
             iblock += 1;
         }
-        if offset + cursor > file.inode.size() as usize {
-            file.inode.set_size((offset + cursor) as u64);
+        if end_offset > file.inode.size() as usize {
+            file.inode.set_size(end_offset as u64);
         }
         self.write_inode_with_csum(&mut file);
 
@@ -346,6 +364,7 @@ impl Ext4 {
         if !parent.inode.is_dir() {
             return_error!(ErrCode::ENOTDIR, "Inode {} is not a directory", parent.id);
         }
+        self.dir_ensure_entry_absent(&parent, name)?;
         let mut child = self.read_inode(child);
         // Cannot link a directory
         if child.inode.is_dir() {
@@ -453,6 +472,7 @@ impl Ext4 {
         if !parent.inode.is_dir() {
             return_error!(ErrCode::ENOTDIR, "Inode {} is not a directory", parent.id);
         }
+        self.dir_ensure_entry_absent(&parent, name)?;
         // Create file/directory
         let mode = mode & InodeMode::PERM_MASK | InodeMode::DIRECTORY;
         let mut child = self.create_inode(mode)?;

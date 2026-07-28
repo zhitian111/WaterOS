@@ -59,21 +59,27 @@ impl BlockDevice for BlockAdapter {
         let mut guard = self.device.lock();
         let block_size = guard.block_size() as u64;
         if block_size == 0 || BLOCK_SIZE as u64 % block_size != 0 {
-            return Block::new(block_id, data);
+            panic!("another-ext4: unsupported device block size {block_size}");
         }
-        let result = guard.read_blocks(Lba(block_id * (BLOCK_SIZE as u64 / block_size)),
-                                       &mut data[..]);
-        if result.is_err() {
-            data.fill(0);
-        }
+        guard.read_blocks(Lba(block_id * (BLOCK_SIZE as u64 / block_size)),
+                          &mut data[..])
+             .unwrap_or_else(|error| {
+                 panic!("another-ext4: failed to read block {block_id}: {error:?}")
+             });
         Block::new(block_id, data)
     }
 
     fn write_block(&self, block : &Block) {
         let mut guard = self.device.lock();
-        let lba_count = BLOCK_SIZE / guard.block_size();
-        let _ = guard.write_blocks(Lba(block.id * lba_count as u64),
-                                   &block.data[..]);
+        let block_size = guard.block_size();
+        if block_size == 0 || BLOCK_SIZE % block_size != 0 {
+            panic!("another-ext4: unsupported device block size {block_size}");
+        }
+        let lba_count = BLOCK_SIZE / block_size;
+        guard.write_blocks(Lba(block.id * lba_count as u64), &block.data[..])
+             .unwrap_or_else(|error| {
+                 panic!("another-ext4: failed to write block {}: {error:?}", block.id)
+             });
     }
 }
 
@@ -279,11 +285,25 @@ impl ReadWriteFs for AnotherExt4Fs {
     }
 
     fn unlink(&mut self, path : &str) -> FsResult<()> {
-        self.get_mut()?.generic_remove(EXT4_ROOT_INO, path).map_err(map_error)
+        let fs = self.get_mut()?;
+        let inode = lookup(fs, path)?;
+        if metadata(fs, inode)?.node_type == FsNodeType::Directory {
+            return Err(FsError::NotAFile);
+        }
+        fs.generic_remove(EXT4_ROOT_INO, path).map_err(map_error)?;
+        fs.flush_all();
+        Ok(())
     }
 
     fn rmdir(&mut self, path : &str) -> FsResult<()> {
-        self.get_mut()?.generic_remove(EXT4_ROOT_INO, path).map_err(map_error)
+        let fs = self.get_mut()?;
+        let inode = lookup(fs, path)?;
+        if metadata(fs, inode)?.node_type != FsNodeType::Directory {
+            return Err(FsError::NotAFile);
+        }
+        fs.generic_remove(EXT4_ROOT_INO, path).map_err(map_error)?;
+        fs.flush_all();
+        Ok(())
     }
 
     fn write_range(&mut self, path : &str, offset : u64, data : &[u8]) -> FsResult<usize> {
@@ -298,16 +318,24 @@ impl ReadWriteFs for AnotherExt4Fs {
         let fs = self.get_mut()?;
         let inode = lookup(fs, path)?;
         fs.setattr(inode, None, None, None, Some(len), None, None, None, None)
-          .map_err(map_error)
+          .map_err(map_error)?;
+        fs.flush_all();
+        Ok(())
     }
 
     fn mkdir(&mut self, path : &str, mode : u32) -> FsResult<()> {
         let fs = self.get_mut()?;
+        match lookup(fs, path) {
+            Ok(_) => return Err(FsError::Exists),
+            Err(FsError::NotFound) => {}
+            Err(error) => return Err(error),
+        }
         let (parent, name) = parent_name(path)?;
         let parent = lookup(fs, parent)?;
         fs.mkdir(parent, name, InodeMode::DIRECTORY | InodeMode::from_bits_retain(mode as u16))
-          .map(|_| ())
-          .map_err(map_error)
+          .map_err(map_error)?;
+        fs.flush_all();
+        Ok(())
     }
 
     fn chmod(&mut self, path : &str, mode : u32) -> FsResult<()> {
@@ -317,18 +345,25 @@ impl ReadWriteFs for AnotherExt4Fs {
         let mode = InodeMode::from_type_and_perm(file_type,
                                                  InodeMode::from_bits_retain(mode as u16));
         fs.setattr(inode, Some(mode), None, None, None, None, None, None, None)
-          .map_err(map_error)
+          .map_err(map_error)?;
+        fs.flush_all();
+        Ok(())
     }
 
     fn chown(&mut self, path : &str, uid : Option<u32>, gid : Option<u32>) -> FsResult<()> {
         let fs = self.get_mut()?;
         let inode = lookup(fs, path)?;
         fs.setattr(inode, None, uid, gid, None, None, None, None, None)
-          .map_err(map_error)
+          .map_err(map_error)?;
+        fs.flush_all();
+        Ok(())
     }
 
     fn rename(&mut self, old_path : &str, new_path : &str) -> FsResult<()> {
-        self.get_mut()?.generic_rename(EXT4_ROOT_INO, old_path, new_path).map_err(map_error)
+        let fs = self.get_mut()?;
+        fs.generic_rename(EXT4_ROOT_INO, old_path, new_path).map_err(map_error)?;
+        fs.flush_all();
+        Ok(())
     }
 
     fn hardlink(&mut self, existing_path : &str, new_path : &str) -> FsResult<()> {
