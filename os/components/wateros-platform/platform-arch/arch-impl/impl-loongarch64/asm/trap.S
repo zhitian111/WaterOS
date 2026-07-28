@@ -178,7 +178,7 @@ __alltraps:
 __tlb_refill:
     csrwr $r12, CSR_TLBRSAVE
     csrrd $r12, CSR_PGD
-    lddir $r12, $r12, 2
+    lddir $r12, $r12, 3
     lddir $r12, $r12, 1
     ldpte $r12, 0
     ldpte $r12, 1

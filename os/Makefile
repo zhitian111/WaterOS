@@ -8,7 +8,7 @@ BUILD_NUM = $(shell git rev-list --count HEAD 2>/dev/null || echo "0")
 .PHONY: clean check all all_start_info kernel configure fmt apply_features flush_img export
 .PHONY: rv_check rv_elf_info rv_obj_dump kernel-rv-pre kernel-rv-final kernel-rv-final-log kernel-rv-final-debug kernel-rv-final-smp-test rv_pre_run rv_final_run rv_final_run_log rv_final_gdb_run rv_final_gdb_wait rv_final_debug_run rv_final_smp_test rv_pre_run_snapshot rv_final_run_snapshot rv_qemu_run rv_qemu_run_snapshot rv_qemu_run_with_log rv_qemu_gdb rv_gdb
 .PHONY: rv_pc_watch rv_symbol_at
-.PHONY: la_check la_elf_info kernel-la-pre kernel-la-final la_pre_run la_final_run la_qemu_run la_symbol_at la_pc_watch
+.PHONY: la_check la_elf_info kernel-la-pre kernel-la-final la_pre_run la_final_run la_qemu_run la_symbol_at la_pc_watch la_pre_gdb_run la_pre_gdb_wait la_final_gdb_run la_final_gdb_wait la_gdb_run la_gdb_wait la_gdb la_gdb_snapshot
 .PHONY: rv_user_mode_bin
 COLOR_ANSI_RED := \033[31m
 COLOR_ANSI_GREEN := \033[32m
@@ -57,6 +57,9 @@ kernel_la_final_flag := --release --target loongarch64-unknown-none \
                         --features qemu-loongarch64-virt,final_online
 
 kernel_la_build_artifact_path := ./target/loongarch64-unknown-none/release
+GDB_PORT ?= 1234
+LA_GDB_ELF ?= ./kernel-la-pre
+LA_GDB ?= loongarch64-linux-gnu-gdb
 
 define TRACE
 	@echo -e "$(COLOR_ANSI_PURPLE)[MAKEFILE]$(COLOR_ANSI_CLEAR)$(COLOR_ANSI_BLUE)\t[TRACE]\t$(1)$(COLOR_ANSI_CLEAR)"
@@ -235,6 +238,43 @@ la_final_run: kernel-la-final
 la_final_run_log: kernel-la-final
 	$(call INFO, "运行 loongarch64 决赛在线 bringup 并记录日志...")
 	@WOS_KERNEL=./kernel-la-final bash ./scripts/la_final_run.sh 2>&1 | tee output.log
+
+la_pre_gdb_run: kernel-la-pre
+	$(call INFO, "运行带 GDB 远程端口的 loongarch64 初赛 bringup...")
+	@WOS_KERNEL=./kernel-la-pre WOS_QEMU_GDB=1 \
+		bash ./scripts/la_pre_run.sh
+
+la_pre_gdb_wait: kernel-la-pre
+	$(call INFO, "运行 loongarch64 初赛内核，等待 GDB 连接后再启动...")
+	@WOS_KERNEL=./kernel-la-pre WOS_QEMU_GDB_WAIT=1 \
+		bash ./scripts/la_pre_run.sh
+
+la_final_gdb_run: kernel-la-final
+	$(call INFO, "运行带 GDB 远程端口的 loongarch64 决赛在线 bringup...")
+	@WOS_KERNEL=./kernel-la-final WOS_QEMU_GDB=1 \
+		bash ./scripts/la_final_run.sh
+
+la_final_gdb_wait: kernel-la-final
+	$(call INFO, "运行 loongarch64 决赛在线内核，等待 GDB 连接后再启动...")
+	@WOS_KERNEL=./kernel-la-final WOS_QEMU_GDB_WAIT=1 \
+		bash ./scripts/la_final_run.sh
+
+# 当前 LoongArch 调试默认针对初赛镜像。
+la_gdb_run: la_pre_gdb_run
+la_gdb_wait: la_pre_gdb_wait
+
+la_gdb:
+	@command -v $(LA_GDB) >/dev/null 2>&1 || \
+		(echo "找不到 $(LA_GDB)；可用 LA_GDB=gdb-multiarch 覆盖，或运行 make la_gdb_snapshot" && exit 1)
+	@$(LA_GDB) $(LA_GDB_ELF) \
+		-ex 'set architecture loongarch64' \
+		-ex 'target remote 127.0.0.1:$(GDB_PORT)'
+
+la_gdb_snapshot:
+	@test -f "$(LA_GDB_ELF)" || \
+		(echo "找不到 ELF: $(LA_GDB_ELF)；请先构建对应 LA 内核" && exit 1)
+	@python3 ./scripts/gdb_remote_snapshot.py --arch la \
+		--elf "$(LA_GDB_ELF)" --port "$(GDB_PORT)"
 
 # 兼容旧脚本调用：旧目标按初赛语义执行。
 la_qemu_run: la_pre_run

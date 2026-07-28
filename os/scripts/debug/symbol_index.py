@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import bisect
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,11 +23,38 @@ ARCH_TOOLS: dict[Arch, ArchTooling] = {
 }
 
 
+def _rust_llvm_tool(name: str) -> str | None:
+    """Find an LLVM binutil shipped with the active rustup toolchain."""
+    try:
+        sysroot = Path(
+            subprocess.check_output(
+                ["rustc", "--print", "sysroot"], text=True
+            ).strip()
+        )
+        host = subprocess.check_output(
+            ["rustc", "-vV"], text=True
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+    host_line = next(
+        (line.removeprefix("host: ") for line in host.splitlines()
+         if line.startswith("host: ")),
+        None,
+    )
+    if host_line is None:
+        return None
+    candidate = (
+        sysroot / "lib" / "rustlib" / host_line / "bin" / name
+    )
+    return str(candidate) if candidate.is_file() else None
+
+
 @dataclass(frozen=True)
 class SymbolEntry:
     start: int
     size: int
     name: str
+    kind: str
 
     @property
     def end(self) -> int:
@@ -102,7 +130,13 @@ class SymbolIndex:
     def __init__(self, elf_path: Path, arch: Arch) -> None:
         self.elf_path = elf_path
         self.arch = arch
-        self._tools = ARCH_TOOLS[arch]
+        configured = ARCH_TOOLS[arch]
+        self._nm = (
+            shutil.which(configured["nm"])
+            or _rust_llvm_tool("llvm-nm")
+            or configured["nm"]
+        )
+        self._addr2line_tool = shutil.which(configured["addr2line"])
         self._symbols = self._load_symbols()
         self._starts = [s.start for s in self._symbols]
 
@@ -131,7 +165,7 @@ class SymbolIndex:
 
     def _load_symbols(self) -> list[SymbolEntry]:
         cmd = [
-            self._tools["nm"],
+            self._nm,
             "--print-size",
             "--size-sort",
             "--radix=x",
@@ -157,7 +191,9 @@ class SymbolIndex:
                 continue
             if size == 0:
                 size = 1
-            symbols.append(SymbolEntry(start=start, size=size, name=name))
+            symbols.append(
+                SymbolEntry(start=start, size=size, name=name, kind=sym_type)
+            )
 
         symbols.sort(key=lambda s: s.start)
         merged: list[SymbolEntry] = []
@@ -189,8 +225,10 @@ class SymbolIndex:
         return self._symbols[0]
 
     def _addr2line(self, addr: int) -> tuple[str | None, str | None, str | None]:
+        if self._addr2line_tool is None:
+            return None, None, None
         cmd = [
-            self._tools["addr2line"],
+            self._addr2line_tool,
             "-f",
             "-C",
             "-e",

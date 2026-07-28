@@ -57,6 +57,13 @@ chmod +x ./scripts/*.sh
 | `make rv_final_run_log` | 启用 `stall-debug`，运行并保存 `output.log` |
 | `make rv_final_gdb_run` | 启用 `stall-debug` 并开放本机 GDB 端口 1234 |
 | `make rv_final_gdb_wait` | 同上，但 QEMU 启动后先暂停，等待调试器连接 |
+| `make la_pre_gdb_run` | LoongArch 初赛内核运行并开放 GDB 端口 1234 |
+| `make la_pre_gdb_wait` | LoongArch 初赛内核启动即暂停，等待调试器连接 |
+| `make la_final_gdb_run` | LoongArch 决赛内核运行并开放 GDB 端口 1234 |
+| `make la_final_gdb_wait` | LoongArch 决赛内核启动即暂停，等待调试器连接 |
+| `make la_gdb_run` / `make la_gdb_wait` | 当前分别是初赛两个目标的别名 |
+| `make la_gdb` | 用 LA GDB 连接端口 1234（可通过 `LA_GDB=` 覆盖客户端） |
+| `make la_gdb_snapshot` | 无需本机 GDB，抓取全部 LA vCPU 的 PC/RA/SP 并解析符号 |
 
 GDB/LLDB 的完整操作流程见
-[`docs/debugging/GDB_STALL_DEBUG.md`](../docs/debugging/GDB_STALL_DEBUG.md)。
+[`docs/debugging/GDB_STALL_DEBUG.md`](../../docs/debugging/GDB_STALL_DEBUG.md)。

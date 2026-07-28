@@ -40,7 +40,8 @@ const CSR_DMW0 : usize = 0x180;
 const CSR_EUEN : usize = 0x2;
 const LOONGARCH_PAGE_SIZE_BITS : usize = 12;
 const LOONGARCH_PWCL_4K_3LEVEL : usize =
-    12 | (9 << 5) | (21 << 10) | (9 << 15) | (30 << 20) | (9 << 25);
+    12 | (9 << 5) | (21 << 10) | (9 << 15);
+const LOONGARCH_PWCH_4K_3LEVEL : usize = 30 | (9 << 6);
 /// PLV0 专用直接映射窗口：VA[47:0] → PA[47:0]，MAT 为一致可缓存。
 /// 此处不开放 PLV3，迫使用户代码走 PGDL/TLB，同时 trap/重填入口与内核栈不依赖
 /// 当前用户 PGDL。
@@ -165,7 +166,7 @@ pub fn init_trap() {
     write_csr::<CSR_STLBPS>(LOONGARCH_PAGE_SIZE_BITS);
     write_csr::<CSR_TLBREHI>(LOONGARCH_PAGE_SIZE_BITS);
     write_csr::<CSR_PWCL>(LOONGARCH_PWCL_4K_3LEVEL);
-    write_csr::<CSR_PWCH>(0);
+    write_csr::<CSR_PWCH>(LOONGARCH_PWCH_4K_3LEVEL);
     write_csr::<CSR_ASID>(0);
     write_csr::<CSR_EUEN>(LOONGARCH_EUEN_FPE);
     unsafe {

@@ -85,20 +85,6 @@ fn bringup_driver_and_user() {
     }
 }
 
-#[cfg(feature = "qemu-loongarch64-virt")]
-fn write_registered_uart_console(bytes : &[u8]) -> platform::console::PlatformConsoleResult<()> {
-    driver::character::with_character_device(0, |device| {
-        device.write(bytes)
-              .map(|_| ())
-              .map_err(|_| platform::console::PlatformConsoleError::WriteFailure)
-    }).unwrap_or(Err(platform::console::PlatformConsoleError::Unavailable))
-}
-
-#[cfg(feature = "qemu-loongarch64-virt")]
-fn register_runtime_console_writer() {
-    platform::console::register_runtime_writer(write_registered_uart_console);
-}
-
 #[cfg(feature = "qemu-riscv64-opensbi")]
 mod qemu_riscv64_opensbi {
     use crate::bringup_driver_and_user;
@@ -259,6 +245,7 @@ mod qemu_loongarch64_virt {
         platform::arch::interrupt::enable_soft_interrupt();
         platform::timer::set_timer_after_ms(100).expect("AP set initial timer");
         task::set_cpu_online(cpu_id);
+        platform::interrupt::enable_global_interrupt().expect("AP enable global interrupt");
         task::run_first_task()
     }
 
@@ -306,7 +293,6 @@ mod qemu_loongarch64_virt {
         AP_BOOT_READY.store(true, Ordering::Release);
 
         bringup_driver_and_user();
-        crate::register_runtime_console_writer();
         #[cfg(feature = "stall-debug")]
         crate::stall_debug::start();
         #[cfg(feature = "dashboard-debug")]

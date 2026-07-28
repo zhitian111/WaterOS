@@ -15,6 +15,9 @@ impl<T> MultiprocessorSafeCell<T> {
 
     /// `exclusive_access` 的常用锁语义别名。
     pub fn lock(&self) -> MutexGuard<'_, T> { self.inner.lock() }
+
+    /// 尝试获取跨核独占 guard；锁已被持有时立即返回 `None`。
+    pub fn try_lock(&self) -> Option<MutexGuard<'_, T>> { self.inner.try_lock() }
 }
 
 #[cfg(test)]
@@ -26,5 +29,14 @@ mod tests {
         let value = MultiprocessorSafeCell::new(1);
         *value.exclusive_access() += 1;
         assert_eq!(*value.lock(), 2);
+    }
+
+    #[test]
+    fn try_lock_reports_contention() {
+        let value = MultiprocessorSafeCell::new(1);
+        let guard = value.lock();
+        assert!(value.try_lock().is_none());
+        drop(guard);
+        assert!(value.try_lock().is_some());
     }
 }

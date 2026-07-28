@@ -247,6 +247,25 @@ pub mod console {
     pub use api_v0::console::{PlatformConsoleError, PlatformConsoleResult};
     use base::sync::MultiprocessorSafeCell;
 
+    struct ConsoleInterruptGuard(Option<arch::interrupt::ArchInterruptState>);
+
+    impl ConsoleInterruptGuard {
+        #[inline]
+        fn new() -> Self {
+            let state = arch::interrupt::read_global_interrupt_state().ok();
+            let _ = arch::interrupt::disable_global_interrupt();
+            Self(state)
+        }
+    }
+
+    impl Drop for ConsoleInterruptGuard {
+        fn drop(&mut self) {
+            if let Some(state) = self.0 {
+                let _ = arch::interrupt::restore_global_interrupt_state(state);
+            }
+        }
+    }
+
     /// 运行期可选的控制台接收端。OS 在完整 UART 字符设备注册后安装它；
     /// 在此之前必须保持 `None`，以便 early console 仍能用于引导日志。
     pub type RuntimeConsoleWriter = fn(&[u8]) -> PlatformConsoleResult<()>;
@@ -272,7 +291,10 @@ pub mod console {
 
     #[inline]
     pub fn console_write_a_buffer(bytes : &[u8]) -> PlatformConsoleResult<()> {
-        let _guard = CONSOLE_WRITE_LOCK.lock();
+        let _interrupt_guard = ConsoleInterruptGuard::new();
+        let Some(_guard) = CONSOLE_WRITE_LOCK.try_lock() else {
+            return crate::active_impl::console::console_write_a_buffer(bytes);
+        };
         if let Some(writer) = runtime_writer() {
             return writer(bytes);
         }
@@ -293,7 +315,11 @@ pub mod console {
             }
         }
 
-        let _guard = CONSOLE_WRITE_LOCK.lock();
+        let _interrupt_guard = ConsoleInterruptGuard::new();
+        let Some(_guard) = CONSOLE_WRITE_LOCK.try_lock() else {
+            return core::fmt::Write::write_fmt(&mut Writer(None), args)
+                .map_err(|_| PlatformConsoleError::WriteFailure);
+        };
         core::fmt::Write::write_fmt(&mut Writer(runtime_writer()), args)
             .map_err(|_| PlatformConsoleError::WriteFailure)
     }

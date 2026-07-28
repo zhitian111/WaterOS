@@ -1,4 +1,4 @@
-# WaterOS RISC-V 卡死诊断：stall-debug 与 GDB/LLDB
+# WaterOS RISC-V / LoongArch 卡死诊断：stall-debug 与 GDB
 
 本文记录一次真实的 WaterOS SMP 卡死排查方法。目标不是讲完 GDB，而是让第一次使用
 GDB 的人能够完成下面这条链路：
@@ -10,7 +10,7 @@ GDB 的人能够完成下面这条链路：
 5. 反汇编锁的自旋循环；
 6. 根据多个 hart 的位置判断死锁或锁顺序反转。
 
-## 1. 三种调试开关
+## 1. 启动调试内核
 
 普通运行不包含 stall watchdog，也不开放 GDB 端口：
 
@@ -55,6 +55,22 @@ WOS_QEMU_GDB_PORT=1234 \
 bash ./scripts/rv_final_run.sh
 ```
 
+LoongArch 对应目标如下：
+
+```bash
+# 初赛镜像：运行并开放 1234 端口
+make la_pre_gdb_run
+
+# 初赛镜像：停在第一条指令，连接后才运行
+make la_pre_gdb_wait
+
+# 决赛镜像
+make la_final_gdb_run
+make la_final_gdb_wait
+```
+
+`make la_gdb_run` 和 `make la_gdb_wait` 当前是初赛目标的简写。
+
 `stall-debug` 只在连续多个采样周期没有 syscall 进展时打印：
 
 - 各 CPU 的 timer 是否仍在到达；
@@ -83,7 +99,7 @@ ELF 64-bit ... RISC-V ... statically linked, not stripped
 `not stripped` 表示函数符号仍在。若 QEMU 使用了旧内核，而调试器打开了新内核，
 地址解析结果会完全错误。每次改代码后重新执行对应的 `make` 目标。
 
-## 3. macOS：使用 LLDB 连接 QEMU
+## 3. macOS：RISC-V 使用 LLDB
 
 macOS 通常没有 `riscv64-unknown-elf-gdb`，但系统 LLDB 可以使用同一个 GDB
 Remote 协议。
@@ -154,6 +170,45 @@ release 内核或手写上下文切换可能导致栈展开失败。此时不要
 
 QEMU GDB stub 不一定暴露 `satp`、`scause`、`sepc`、`stval` 等 CSR；提示寄存器
 不存在时，以内核 trap 日志和 trap frame 为准。
+
+### 3.1 LoongArch 不要使用 Apple LLDB
+
+当前 Apple LLDB 可以识别 `kernel-la-pre` 的 LoongArch ELF 类型，但无法正确解析
+QEMU 返回的 LA 寄存器描述。典型现象是 `thread list` 可见 8 个 CPU，
+`register read pc ra sp` 却失败或显示 `0xffffffffffffffff`。断开一个由 `-S`
+暂停的连接还可能使 QEMU 退出。
+
+有支持 LA 的 GNU GDB 时，终端 A、B 分别运行：
+
+```bash
+# 终端 A
+make la_pre_gdb_run
+
+# 终端 B
+make la_gdb
+```
+
+默认客户端是 `loongarch64-linux-gnu-gdb`。使用 multiarch GDB 或非默认端口：
+
+```bash
+make la_gdb LA_GDB=gdb-multiarch GDB_PORT=1235
+```
+
+macOS 没有 LA GDB 时，使用仓库内的只读快照客户端：
+
+```bash
+make la_gdb_snapshot
+```
+
+它通过 QEMU GDB Remote 协议暂停 guest，读取每个 vCPU 的
+`pc`、`ra`、`sp`、`fp`，扫描栈中的内核代码地址，解析符号后自动 detach 并恢复
+guest。调试决赛 ELF 或自定义端口：
+
+```bash
+make la_gdb_snapshot LA_GDB_ELF=./kernel-la-final GDB_PORT=1235
+```
+
+快照客户端不提供单步和断点；需要这些能力时仍应安装 GNU GDB。
 
 ## 4. 从地址查函数
 
@@ -274,6 +329,60 @@ hart B:
 修复原则是：futex 条件中的用户地址访问必须发生在 scheduler 锁外。进入
 scheduler 临界区后只比较内核原子 wake sequence，避免再次取得地址空间锁。
 
+### 6.1 本次 LoongArch 停滞是怎样继续缩小的
+
+串口停在 `kernel runner enqueued` 后，`make la_gdb_snapshot` 首次得到：
+
+```text
+cpu=0 pc=0x900021b4  write_registered_uart_console
+cpu=1..7 pc=0x1c000050  firmware/out of kernel ELF
+```
+
+反汇编 `0x900021b4` 后确认它是字符设备 `spin::Mutex` 的短自旋循环。修正
+UART 日志重入后再次采样，CPU0 落到 `console_write_fmt` 的控制台锁；栈扫描同时
+发现 `fatal_kernel_trap`，说明真正的异常正被日志路径的二次死锁掩盖。控制台因此
+改为：
+
+- 内核日志保持使用板级 raw UART，不再反向进入 `/dev/console` 字符设备锁；
+- 控制台持锁期间屏蔽本 CPU 中断，重入/争用时不等待而直接使用 raw UART；
+- 日志写失败采用 best-effort，不因 `unwrap` 触发第二次 panic。
+
+解除日志死锁后，稳定的采样点变为：
+
+```text
+cpu=0 pc=__tlb_refill badv=0x12032f04c
+```
+
+对照 Linux 官方 `arch/loongarch/mm/tlb.c` 与 `tlbex.S` 后确认，WaterOS
+的三级页表 walker 配置错了一层：
+
+- WaterOS 把 VA bit 30 的 PGD 索引写到了 `PWCL.Dir2`，并将 `PWCH` 置 0；
+- refill 汇编相应使用 `lddir ..., 2`；
+- Linux 的三级配置把 PTE/PMD 写入 `PWCL`，把 bit 30、宽 9 的 PGD 写入
+  `PWCH`，refill 顺序为 `lddir ..., 3` 再 `lddir ..., 1`。
+
+因此硬件 walker 并非只在某个 lazy VMA 上失败，而是在用户态发生 TLB miss 时
+按错误层级索引页表，最终不断重新进入 `__tlb_refill`。修复是将 PGD 配置移到
+`PWCH`，同时把汇编首个目录层级改为 3。
+
+还有一个实现差异需要配套处理：Linux 的空 PGD/PMD 项指向共享的 invalid
+lower-level table，而 WaterOS 的新页表目录直接清零。为避免硬件 refill walker
+沿空目录走到物理地址 0，WaterOS 在登记 lazy VMA 时预建其目录路径，但叶 PTE
+仍保持无效，因此实际数据页仍由普通 page-fault 路径按需分配。
+
+对应参考源码：
+
+- [Linux LoongArch `tlb.c`](https://github.com/torvalds/linux/blob/master/arch/loongarch/mm/tlb.c)
+  展示 `PWCL`/`PWCH` 的三级、四级页表配置；
+- [Linux LoongArch `tlbex.S`](https://github.com/torvalds/linux/blob/master/arch/loongarch/mm/tlbex.S)
+  展示 refill 路径所用的 `lddir` 层级；
+- [Linux LoongArch `pgtable.h`](https://github.com/torvalds/linux/blob/master/arch/loongarch/include/asm/pgtable.h)
+  展示空目录项与 invalid lower-level table 的关系。
+
+另外，vCPU 1～7 位于固件且 `ra/sp=0` 表示它们没有进入 WaterOS，并不是
+scheduler idle。当前 LA 平台尚未实现从 BSP 主动启动 AP；调度行为应先按单核
+解释，不能仅因 QEMU 使用了 `-smp 8` 就假定 8 核已上线。
+
 ## 7. 如何区分三种“卡住”
 
 ### 7.1 全局锁死
@@ -311,7 +420,7 @@ scheduler 临界区后只比较内核原子 wake sequence，避免再次取得�
 
 ## 8. GNU GDB 等价命令
 
-如果已经安装支持 RISC-V 的 GDB：
+如果已经安装支持目标架构的 GNU GDB：
 
 ```bash
 riscv64-unknown-elf-gdb ./kernel-rv-final-log
@@ -350,6 +459,15 @@ Rust 泛型符号可能很长，直接按完整函数名下断点不方便。可
 (gdb) break *0x802e1022
 ```
 
+LoongArch 可直接通过 Makefile 连接：
+
+```bash
+make la_gdb
+```
+
+连接后常用寄存器名仍是 `pc`、`ra`、`sp`；部分 GDB 将 LA 通用寄存器显示为
+`r1`（RA）、`r3`（SP）和 `r22`（FP）。
+
 ## 9. 栈无法展开时的最低限度方法
 
 即使 `bt` 完全失败，仍可以按下面顺序工作：
@@ -370,6 +488,9 @@ Rust 泛型符号可能很长，直接按完整函数名下断点不方便。可
 WaterOS RISC-V 内核通常从 `0x80200000` 附近开始，栈中的相近地址可优先尝试，但
 最终必须以当前 ELF 的符号查询结果为准。
 
+WaterOS LoongArch 内核文本通常从 `0x90000000` 开始；`0x1c000000` 附近属于
+QEMU LA 固件，不应使用内核 ELF 强行解析。
+
 ## 10. 常见问题
 
 ### 端口 1234 已被占用
@@ -384,7 +505,12 @@ lsof -nP -iTCP:1234 -sTCP:LISTEN
 WOS_QEMU_GDB_PORT=1235 make rv_final_gdb_run
 ```
 
-连接时也改成 1235。
+LA 同样适用：
+
+```bash
+WOS_QEMU_GDB_PORT=1235 make la_pre_gdb_run
+make la_gdb_snapshot GDB_PORT=1235
+```
 
 ### 地址全部解析成错误函数
 

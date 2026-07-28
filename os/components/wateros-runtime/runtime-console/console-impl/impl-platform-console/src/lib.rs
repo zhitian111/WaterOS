@@ -4,24 +4,24 @@
 //! **边界**：本模块不选择硬件或固件后端；具体输出路径由 `platform::console`
 //! 在当前 board feature 下决定。本模块只把 runtime 的 `fmt::Write` 接到平台门面。
 
-/// 向平台控制台写入单字节；错误时 `unwrap`（引导阶段视为致命失败）。
+/// 向平台控制台写入单字节；控制台错误按 best-effort 语义忽略。
 #[inline]
 #[allow(unused)]
 pub fn platform_console_write_a_byte(byte : u8) {
-    // 平台门面返回 Err 表示底层控制台不可用；早期内核无恢复策略，直接 panic。
-    platform::console::console_write_a_byte(byte).unwrap();
+    // 日志输出本身不能再次触发 panic，否则会掩盖最初的内核错误。
+    let _ = platform::console::console_write_a_byte(byte);
 }
 
 /// 将缓冲区原样写入平台控制台（不要求合法 UTF-8）。
 #[inline]
 #[allow(unused)]
 pub fn platform_console_write_a_buffer(bytes : &[u8]) {
-    platform::console::console_write_a_buffer(bytes).unwrap();
+    let _ = platform::console::console_write_a_buffer(bytes);
 }
 
 /// 在 platform UART 锁内完成整次格式化。
 pub fn platform_console_write_fmt(args : core::fmt::Arguments<'_>) {
-    platform::console::console_write_fmt(args).unwrap();
+    let _ = platform::console::console_write_fmt(args);
 }
 
 use core::fmt::{self, Write};

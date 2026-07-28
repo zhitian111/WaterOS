@@ -488,6 +488,7 @@ impl LoongArch64AddressSpace {
         if self.lazy_vma_overlaps(start, end) {
             return Err(MmError::InvalidAddress);
         }
+        self.ensure_lazy_refill_paths(start, end)?;
         self.lazy_file_vmas.push(LazyFileVma { start,
                                                end,
                                                perm,
@@ -495,6 +496,32 @@ impl LoongArch64AddressSpace {
                                                file_size,
                                                loader });
         Ok(())
+    }
+
+    /// Allocate the directory levels needed by the hardware refill walker.
+    ///
+    /// Linux points every empty directory slot at shared invalid lower-level
+    /// tables. WaterOS uses zero-filled directories instead, so lazy VMAs must
+    /// materialize their directory path while keeping the leaf PTE invalid.
+    fn ensure_lazy_refill_paths(&mut self, start : VirtAddr, end : VirtAddr) -> MmResult<()> {
+        const LEAF_TABLE_SPAN : usize = PAGE_SIZE * LOONGARCH64_ENTRIES;
+
+        let last = end.0.checked_sub(1)
+                        .ok_or(MmError::InvalidAddress)?;
+        let mut address = start.floor_page()
+                               .start_addr()
+                               .0;
+        loop {
+            let _ = self.walk_create(VirtAddr(address).floor_page())?;
+            let next = address.checked_div(LEAF_TABLE_SPAN)
+                              .and_then(|span| span.checked_add(1))
+                              .and_then(|span| span.checked_mul(LEAF_TABLE_SPAN))
+                              .ok_or(MmError::InvalidAddress)?;
+            if next > last {
+                return Ok(());
+            }
+            address = next;
+        }
     }
 
     pub(crate) fn remove_lazy_file_vmas(&mut self, start : VirtAddr, end : VirtAddr) -> MmResult<()> {
