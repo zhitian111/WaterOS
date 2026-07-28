@@ -765,6 +765,10 @@ mod tests {
         assert_eq!(registry.current_mask(100)
                            .unwrap(),
                    original);
+        registry.begin_sigsuspend(100, SignalSet::empty())
+                .expect("delivery must clear the previous sigsuspend state");
+        registry.end_sigsuspend(100)
+                .unwrap();
     }
 
     #[test]

@@ -573,7 +573,9 @@ pub(crate) fn sys_rt_sigsuspend(args : SyscallArgs) -> UserRet {
     let _ =
         wait.wait_current_while(|| !ipc::signal::has_deliverable(snapshot.task_id).unwrap_or(true));
     let _ = wait.try_release_empty();
-    let _ = ipc::signal::end_sigsuspend(snapshot.task_id);
+    // Keep the temporary mask installed until the trap return path consumes the
+    // pending signal. `take_deliverable` clears the suspend state and records
+    // the original mask in the user signal frame for `rt_sigreturn`.
     UserRet::from_error(ErrNo::EINTR)
 }
 
