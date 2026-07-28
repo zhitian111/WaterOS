@@ -31,6 +31,8 @@ pub enum HartStatus {
 pub enum IpiKind {
     Reschedule = 1 << 0,
     TlbShootdown = 1 << 1,
+    /// 目标任务有必须在其 trap-return 安全点处理的状态变化（如 signal）。
+    TaskNotify = 1 << 2,
 }
 
 impl IpiKind {

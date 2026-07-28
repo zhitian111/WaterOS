@@ -32,7 +32,7 @@ pub use process::{
     reap_all_exited_processes, reap_exited_member_threads, reap_exited_process,
     set_process_child_subreaper, set_process_dumpable, set_process_parent_death_signal,
     set_process_pgid, set_process_resource_limit, set_process_umask, set_task_clear_child_tid,
-    set_thread_comm, stop_process_tasks, stopped_child_ready_for_wait, task_clear_child_tid,
+    set_thread_comm, stopped_child_ready_for_wait, task_clear_child_tid,
     task_exit_would_finish_process, task_id_for_thread, task_ids_for_process, thread_comm,
     wake_parent_child_waiters, ProcessPurgeStats,
 };
@@ -66,8 +66,8 @@ pub use api_v0::{
 };
 pub use api_v0::{ExitedTask, TaskId, TaskKind};
 pub use cpu::{
-    cpu_snapshot, cpu_states, online_cpu_mask, print_cpu_states, running_cpu, set_cpu_online,
-    set_timekeeper_cpu, total_idle_ticks,
+    cpu_snapshot, cpu_states, online_cpu_mask, print_cpu_states, request_task_reschedule,
+    running_cpu, set_cpu_online, set_timekeeper_cpu, total_idle_ticks,
 };
 pub(crate) use impl_core as active_impl;
 pub use scheduler::CpuSnapshot;

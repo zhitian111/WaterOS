@@ -14,6 +14,8 @@ pub fn cpu_states() -> alloc::vec::Vec<(CpuId, scheduler::CpuSnapshot)> {
 }
 /// 查询指定任务当前在哪个 CPU 上运行。
 pub fn running_cpu(task_id : TaskId) -> Option<CpuId> { scheduler::running_cpu(task_id) }
+/// 请求正在运行指定任务的 CPU 尽快进入调度安全点。
+pub fn request_task_reschedule(task_id : TaskId) { scheduler::request_task_reschedule(task_id) }
 /// 将指定 CPU 标记为 online。AP 完成初始化后调用。
 pub fn set_cpu_online(cpu_id : CpuId) { scheduler::set_cpu_online(cpu_id) }
 /// 指定唯一推进 sleep/wait timeout 的 BSP CPU。

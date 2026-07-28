@@ -485,7 +485,7 @@ impl MultiClassScheduler {
     }
 
     /// 根据 CPU 的统一抢占规则记录一次异步重调度请求。
-    fn request_reschedule(&mut self, cpu_id : CpuId, cause : RescheduleCause) {
+    pub(super) fn request_reschedule(&mut self, cpu_id : CpuId, cause : RescheduleCause) {
         if !self.cpu_states[cpu_id.raw()].cpu_should_reschedule(cause) {
             return;
         }

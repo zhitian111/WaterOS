@@ -6,7 +6,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
-use ipc::signal::{SignalDelivery, SignalDispatch, SignalError, SignalSet};
+use ipc::signal::{SignalDelivery, SignalDispatch, SignalEffect, SignalError, SignalSet};
 use platform::arch::trap::ActiveTrapFrame;
 use task::{ProcessId, ThreadId};
 
@@ -27,8 +27,12 @@ const NSIG : usize = 64;
 const SIGNAL_FRAME_MAGIC : u64 = 0x5741_5445_5253_4947;
 const SS_ONSTACK : i32 = 1;
 const SS_DISABLE : i32 = 2;
+#[cfg(target_arch = "riscv64")]
 const MINSIGSTKSZ : usize = 2048;
-static LAST_ACCOUNTING_NS : AtomicU64 = AtomicU64::new(0);
+#[cfg(target_arch = "loongarch64")]
+const MINSIGSTKSZ : usize = 4096;
+static LAST_ACCOUNTING_NS : [AtomicU64; wateros_base_config::task::MAX_CPUS] =
+    [const { AtomicU64::new(0) }; wateros_base_config::task::MAX_CPUS];
 
 #[cfg(target_arch = "riscv64")]
 const SIGNAL_TRAMPOLINE : usize = 0x0000_0000_7FFF_B000;
@@ -95,7 +99,7 @@ const _ : () = assert!(core::mem::size_of::<UserSigInfo>() == 128);
 // ── 内部辅助 ────────────────────────────────────────────────
 
 fn validate_signal(signal : isize) -> Result<usize, ErrNo> {
-    if signal < 0 || signal as usize >= NSIG {
+    if signal < 0 || signal as usize > NSIG {
         Err(ErrNo::EINVAL)
     } else {
         Ok(signal as usize)
@@ -155,13 +159,18 @@ pub(crate) fn apply_signal_dispatch(dispatch : SignalDispatch, signal : usize) {
         SignalDelivery::Ignored => {}
         SignalDelivery::Pending => {
             let _ = task::interrupt_task(task_id);
+            task::request_task_reschedule(task_id);
         }
         SignalDelivery::Stop => {
             if let Some(snapshot) = task::process_task_snapshot(task_id) {
                 if task::mark_process_stopped(snapshot.pid, signal as u8).is_ok() {
-                    task::stop_process_tasks(snapshot.pid);
                     notify_parent_sigchld(snapshot.pid);
                     task::wake_parent_child_waiters(snapshot.pid);
+                }
+                if let Some(task_ids) = task::task_ids_for_process(snapshot.pid) {
+                    for member in task_ids {
+                        task::request_task_reschedule(member);
+                    }
                 }
             }
         }
@@ -172,40 +181,12 @@ pub(crate) fn apply_signal_dispatch(dispatch : SignalDispatch, signal : usize) {
                     notify_parent_sigchld(snapshot.pid);
                     task::wake_parent_child_waiters(snapshot.pid);
                 }
-            }
-        }
-        SignalDelivery::Terminate => {
-            let exit_code = crate::sys::task::wait::signal_terminate_exit_code(signal, task_id);
-            if task::current_task_id() == Some(task_id) {
-                if let Some(snapshot) = task::process_task_snapshot(task_id) {
-                    notify_parent_sigchld(snapshot.pid);
-                    on_thread_exit(task_id, snapshot.pid.raw(), true);
-                    if let Some(task_ids) = task::task_ids_for_process(snapshot.pid) {
-                        for member in task_ids {
-                            crate::sys::task::wait::wake_clear_child_tid_for_task(member);
-                            crate::sys::ipc::robust::robust_exit_cleanup(member);
-                            crate::sys::task::wait::drop_task_runtime_resources(member);
-                        }
-                    }
-                } else {
-                    crate::sys::task::wait::wake_clear_child_tid_for_task(task_id);
-                    crate::sys::ipc::robust::robust_exit_cleanup(task_id);
-                    crate::sys::task::wait::drop_task_runtime_resources(task_id);
+                // SIGCONT 的恢复副作用不受 mask/disposition 影响；若安装了 handler，
+                // registry 同时保留 pending，这里再唤醒一个可投递线程。
+                if ipc::signal::has_deliverable(task_id).unwrap_or(false) {
+                    let _ = task::interrupt_task(task_id);
+                    task::request_task_reschedule(task_id);
                 }
-                task::exit_group_current(exit_code);
-            }
-            if let Some(snapshot) = task::process_task_snapshot(task_id) {
-                notify_parent_sigchld(snapshot.pid);
-                if let Some(task_ids) = task::task_ids_for_process(snapshot.pid) {
-                    for member in task_ids {
-                        crate::sys::task::wait::wake_clear_child_tid_for_task(member);
-                        crate::sys::ipc::robust::robust_exit_cleanup(member);
-                        if task::kill_task(member, exit_code) {
-                            crate::sys::task::wait::drop_task_runtime_resources(member);
-                        }
-                    }
-                }
-                ipc::signal::drop_process(snapshot.pid.raw());
             }
         }
     }
@@ -237,7 +218,8 @@ pub(crate) fn timer_tick(interrupted_user : bool) {
         Err(_) => return,
     };
     let now_u64 = u64::try_from(now).unwrap_or(u64::MAX);
-    let previous = LAST_ACCOUNTING_NS.swap(now_u64, Ordering::Relaxed);
+    let cpu_id = platform::arch::cpu::current_cpu_id().raw();
+    let previous = LAST_ACCOUNTING_NS[cpu_id].swap(now_u64, Ordering::Relaxed);
     let elapsed = if previous == 0 {
         (wateros_base_config::task::SCHED_TIMER_PERIOD_MS as u128) * 1_000_000
     } else {
@@ -308,16 +290,58 @@ pub(crate) fn drop_thread_state(task_id : usize) {
 pub(crate) fn deliver_pending_signal(frame : *mut u8,
                                      restart : Option<(usize, SyscallArgs)>)
                                      -> Result<bool, ErrNo> {
+    if let Some(process) = task::current_process_snapshot() {
+        match process.state {
+            task::ProcessState::Stopped { .. } => {
+                if task::current_task_id().is_some_and(ipc::signal::take_sigkill) {
+                    let task_id = task::current_task_id().ok_or(ErrNo::ESRCH)?;
+                    let exit_code = crate::sys::task::wait::signal_terminate_exit_code(
+                        ipc::signal::SIGKILL,
+                        task_id,
+                    );
+                    crate::sys::task::sys_exit_group(exit_code);
+                    unreachable!("sys_exit_group must not return");
+                }
+                task::block_current(task::TaskWaitTarget::Manual);
+            }
+            task::ProcessState::Exiting(exit_code) |
+            task::ProcessState::Exited(exit_code) => {
+                crate::sys::task::sys_exit(exit_code);
+                unreachable!("sys_exit must not return");
+            }
+            task::ProcessState::Running => {}
+        }
+    }
     let snapshot = ensure_current_signal_state()?;
-    let pending = ipc::signal::take_deliverable(snapshot.task_id);
-    let Some(pending) = pending else {
+    let effect = ipc::signal::take_deliverable(snapshot.task_id);
+    let Some(effect) = effect else {
         return Ok(false);
     };
-    if !pending.action
-               .has_user_handler()
-    {
-        return Err(ErrNo::EINVAL);
-    }
+    let pending = match effect {
+        SignalEffect::Handler(pending) => pending,
+        SignalEffect::Terminate { signal } => {
+            let exit_code =
+                crate::sys::task::wait::signal_terminate_exit_code(signal, snapshot.task_id);
+            crate::sys::task::sys_exit_group(exit_code);
+            unreachable!("sys_exit_group must not return");
+        }
+        SignalEffect::Stop { signal } => {
+            if task::mark_process_stopped(snapshot.pid, signal as u8).is_ok() {
+                notify_parent_sigchld(snapshot.pid);
+                task::wake_parent_child_waiters(snapshot.pid);
+            }
+            if let Some(task_ids) = task::task_ids_for_process(snapshot.pid) {
+                for member in task_ids {
+                    if member != snapshot.task_id {
+                        task::request_task_reschedule(member);
+                    }
+                }
+            }
+            task::block_current(task::TaskWaitTarget::Manual);
+            return Ok(false);
+        }
+        SignalEffect::Continue { .. } => return Ok(false),
+    };
 
     let context = unsafe { &mut *(frame.cast::<ActiveTrapFrame>()) };
     let mut original = context.capture_signal_context();
@@ -573,6 +597,9 @@ pub(crate) fn sys_rt_sigsuspend(args : SyscallArgs) -> UserRet {
     let _ =
         wait.wait_current_while(|| !ipc::signal::has_deliverable(snapshot.task_id).unwrap_or(true));
     let _ = wait.try_release_empty();
+    if !ipc::signal::has_deliverable(snapshot.task_id).unwrap_or(false) {
+        let _ = ipc::signal::end_sigsuspend(snapshot.task_id);
+    }
     // Keep the temporary mask installed until the trap return path consumes the
     // pending signal. `take_deliverable` clears the suspend state and records
     // the original mask in the user signal frame for `rt_sigreturn`.
@@ -868,7 +895,7 @@ pub(crate) fn sys_kill(args : SyscallArgs) -> UserRet {
     let pid = args.arg(0) as isize;
     let sig = args.arg(1) as i32;
 
-    if sig < 0 || sig >= _NSIG {
+    if sig < 0 || sig > _NSIG {
         return UserRet::from_error(ErrNo::EINVAL);
     }
 

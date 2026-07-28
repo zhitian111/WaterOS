@@ -29,8 +29,11 @@ pub const SIGALRM : usize = 14;
 pub const SIGTERM : usize = 15;
 pub const SIGPIPE : usize = 13;
 pub const SIGCHLD : usize = 17;
-pub const SIGSTOP : usize = 19;
 pub const SIGCONT : usize = 18;
+pub const SIGSTOP : usize = 19;
+pub const SIGTSTP : usize = 20;
+pub const SIGTTIN : usize = 21;
+pub const SIGTTOU : usize = 22;
 pub const SIGURG : usize = 23;
 pub const SIGVTALRM : usize = 26;
 pub const SIGPROF : usize = 27;
@@ -172,16 +175,14 @@ impl SignalAction {
     pub const fn has_user_handler(self) -> bool { self.handler > SIG_IGN }
 }
 
-/// 信号投递分类结果（尚未写入 pending 集）。
+/// 信号生成阶段的路由结果。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SignalDelivery {
     /// 被忽略或默认忽略。
     Ignored,
     /// 应进入 pending 集等待交付。
     Pending,
-    /// 应终止目标。
-    Terminate,
-    /// 应停止目标（`SIGSTOP`）。
+    /// `SIGSTOP` 的不可屏蔽进程停止副作用。
     Stop,
     /// 应继续目标（`SIGCONT`）。
     Continue,
@@ -211,6 +212,18 @@ pub struct PendingSignal {
     pub action : SignalAction,
     /// 进入处理函数前应恢复的线程掩码。
     pub previous_mask : SignalSet,
+}
+
+/// 目标线程在返回用户态前取出的信号效果。
+///
+/// 信号生成阶段只负责写入 pending；disposition 必须到目标线程的安全点才判断，
+/// 因为 pending 期间线程 mask 和进程 sigaction 都可能改变。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SignalEffect {
+    Handler(PendingSignal),
+    Terminate { signal : usize },
+    Stop { signal : usize },
+    Continue { signal : usize },
 }
 
 /// 线程备用信号栈状态。
@@ -250,11 +263,6 @@ impl SignalDispatch {
                target_task_id : None }
     }
 
-    pub const fn terminate(target_task_id : Option<usize>) -> Self {
-        Self { delivery : SignalDelivery::Terminate,
-               target_task_id }
-    }
-
     pub const fn pending(target_task_id : Option<usize>) -> Self {
         Self { delivery : SignalDelivery::Pending,
                target_task_id }
@@ -271,8 +279,8 @@ impl SignalDispatch {
     }
 }
 
-/// 信号编号是否在 `(0, NSIG)` 范围内。
-pub const fn valid_signal(sig : usize) -> bool { sig > 0 && sig < NSIG }
+/// 信号编号是否在 `1..=NSIG` 范围内。
+pub const fn valid_signal(sig : usize) -> bool { sig > 0 && sig <= NSIG }
 
 /// `itimer` 种类是否合法。
 pub const fn valid_itimer(which : usize) -> bool {
@@ -280,8 +288,8 @@ pub const fn valid_itimer(which : usize) -> bool {
              ITIMER_REAL | ITIMER_VIRTUAL | ITIMER_PROF)
 }
 
-/// 信号是否不可被阻塞或更改 disposition（`SIGKILL`）。
-pub const fn immutable_signal(sig : usize) -> bool { sig == SIGKILL }
+/// 信号是否不可被阻塞或更改 disposition。
+pub const fn immutable_signal(sig : usize) -> bool { sig == SIGKILL || sig == SIGSTOP }
 
 /// 将信号号转为掩码位；非法编号返回 `None`。
 pub const fn signal_bit(sig : usize) -> Option<u64> {
@@ -297,7 +305,12 @@ pub const fn default_ignored(sig : usize) -> bool {
     sig == SIGCHLD || sig == SIGURG || sig == SIGWINCH
 }
 
+/// 默认 disposition 下应停止进程的信号。
+pub const fn default_stops(sig : usize) -> bool {
+    matches!(sig, SIGSTOP | SIGTSTP | SIGTTIN | SIGTTOU)
+}
+
 /// 默认 disposition 下应终止进程的信号。
 pub const fn default_terminates(sig : usize) -> bool {
-    valid_signal(sig) && !default_ignored(sig) && sig != SIGSTOP
+    valid_signal(sig) && !default_ignored(sig) && !default_stops(sig) && sig != SIGCONT
 }
