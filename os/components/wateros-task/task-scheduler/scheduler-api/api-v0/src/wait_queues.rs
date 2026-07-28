@@ -244,7 +244,12 @@ impl WaitQueues {
             let entry = self.wait_timeouts
                             .pop_front()
                             .expect("front entry checked above");
-            timed_out.push_back((entry.task_id, entry.wait_target));
+            // 超时与显式 wake 一样，必须先从实际等待队列摘除任务。否则队列中
+            // 会残留已经 Ready/Running 的 TaskId，后续 wake/requeue 会再次激活
+            // 同一任务并破坏调度状态。
+            if self.remove_task_from_wait_target(entry.task_id, entry.wait_target) {
+                timed_out.push_back((entry.task_id, entry.wait_target));
+            }
         }
         timed_out
     }
@@ -309,8 +314,11 @@ impl WaitQueues {
 
     /// 从显式等待队列弹出一个任务（调度器负责状态更新和就绪入队）。
     pub fn wake_one_in_wait_queue(&mut self, wait_queue_id : WaitQueueId) -> Option<TaskId> {
-        self.wait_queue_mut(wait_queue_id)
-            .pop_front()
+        let task_id = self.wait_queue_mut(wait_queue_id)
+                          .pop_front()?;
+        self.remove_wait_timeout(task_id,
+                                 TaskWaitTarget::WaitQueue(wait_queue_id));
+        Some(task_id)
     }
 
     /// 清空显式等待队列，返回所有任务 ID（调度器负责状态更新和就绪入队）。
@@ -319,6 +327,8 @@ impl WaitQueues {
         while let Some(task_id) = self.wait_queue_mut(wait_queue_id)
                                       .pop_front()
         {
+            self.remove_wait_timeout(task_id,
+                                     TaskWaitTarget::WaitQueue(wait_queue_id));
             woken.push_back(task_id);
         }
         woken
@@ -370,6 +380,8 @@ impl WaitQueues {
                       .pop_front()
             {
                 Some(task_id) => {
+                    self.remove_wait_timeout(task_id,
+                                             TaskWaitTarget::WaitQueue(wait_queue_id));
                     woken.push_back(task_id);
                     *changed = changed.saturating_add(1);
                 }
@@ -463,6 +475,31 @@ impl WaitQueues {
         }
     }
 
+    fn remove_wait_timeout(&mut self, task_id : TaskId, target : TaskWaitTarget) {
+        self.wait_timeouts
+            .retain(|entry| entry.task_id != task_id || entry.wait_target != target);
+    }
+
+    /// 从任务登记的精确等待目标摘除它。调用方已经单独移除当前超时记录，
+    /// 因而这里不再扫描 `wait_timeouts`。
+    fn remove_task_from_wait_target(&mut self, task_id : TaskId, target : TaskWaitTarget) -> bool {
+        match target {
+            TaskWaitTarget::WaitQueue(wait_queue_id) => {
+                take_task_id_by_id(self.wait_queue_mut(wait_queue_id),
+                                   task_id)
+            }
+            TaskWaitTarget::ChildExit(parent_id) => {
+                take_task_id_by_id(self.child_exit_wait_queue_mut(parent_id),
+                                   task_id)
+            }
+            TaskWaitTarget::TaskExit(target_id) => {
+                take_task_id_by_id(self.exit_wait_queue_mut(target_id),
+                                   task_id)
+            }
+            TaskWaitTarget::Manual => take_task_id_by_id(&mut self.blocked_queue, task_id),
+        }
+    }
+
     /// 从退出等待队列中取出所有等 `task_id` 退出的 waiter，返回其 ID 列表。
     pub fn wake_all_waiters_for_task_exit(&mut self, task_id : TaskId) -> VecDeque<TaskId> {
         let mut woken = VecDeque::new();
@@ -502,4 +539,50 @@ fn take_task_id_by_id(queue : &mut VecDeque<TaskId>, task_id : TaskId) -> bool {
     let old_len = queue.len();
     queue.retain(|candidate_task_id| *candidate_task_id != task_id);
     queue.len() != old_len
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timeout_removes_task_from_explicit_wait_queue() {
+        let mut queues = WaitQueues::new();
+        let wait_queue_id = queues.allocate_wait_queue("test-timeout");
+        let target = TaskWaitTarget::WaitQueue(wait_queue_id);
+        queues.enqueue_wait_task(7, target);
+        queues.enqueue_wait_timeout(7, target, 1);
+
+        queues.tick();
+
+        assert_eq!(queues.timeout_tasks()
+                         .pop_front(),
+                   Some((7, target)));
+        assert_eq!(queues.wake_one_in_wait_queue(wait_queue_id),
+                   None);
+        assert!(queues.try_release_wait_queue(wait_queue_id));
+    }
+
+    #[test]
+    fn requeued_timeout_is_removed_from_destination_queue() {
+        let mut queues = WaitQueues::new();
+        let from = queues.allocate_wait_queue("test-from");
+        let to = queues.allocate_wait_queue("test-to");
+        let from_target = TaskWaitTarget::WaitQueue(from);
+        let to_target = TaskWaitTarget::WaitQueue(to);
+        queues.enqueue_wait_task(11, from_target);
+        queues.enqueue_wait_timeout(11, from_target, 1);
+
+        let (_, moved, changed) = queues.requeue_wait_queue(from, to, 0, 1);
+        assert_eq!(moved.front()
+                        .map(|(task_id, _)| *task_id),
+                   Some(11));
+        assert_eq!(changed, 1);
+        queues.tick();
+
+        assert_eq!(queues.timeout_tasks()
+                         .pop_front(),
+                   Some((11, to_target)));
+        assert_eq!(queues.wake_one_in_wait_queue(to), None);
+    }
 }

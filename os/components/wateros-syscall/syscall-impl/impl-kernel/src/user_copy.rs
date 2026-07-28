@@ -14,7 +14,7 @@ use mm::ActiveUserMemoryOps;
 
 use crate::mm_util::{current_user_aspace_handle, mm_err_to_errno};
 
-pub(crate) const USER_PATH_MAX: usize = 4096;
+pub(crate) const USER_PATH_MAX : usize = 4096;
 
 // 本方法代码由AI完成
 pub(crate) fn user_aspace_required() -> Result<ActiveUserMemoryOps, ErrNo> {
@@ -23,7 +23,7 @@ pub(crate) fn user_aspace_required() -> Result<ActiveUserMemoryOps, ErrNo> {
 }
 
 // 本方法代码由AI完成
-pub(crate) fn copy_from_user(buf: &mut [u8], ptr: usize) -> Result<usize, ErrNo> {
+pub(crate) fn copy_from_user(buf : &mut [u8], ptr : usize) -> Result<usize, ErrNo> {
     if buf.is_empty() {
         return Ok(0);
     }
@@ -32,10 +32,10 @@ pub(crate) fn copy_from_user(buf: &mut [u8], ptr: usize) -> Result<usize, ErrNo>
     }
     let ops = user_aspace_required()?;
     ops.copy_from_user(buf, VirtAddr(ptr))
-        .map_err(|e| {
-            trace_user_copy_failure("copy_from_user", ptr, buf.len(), e);
-            mm_err_to_errno(e)
-        })
+       .map_err(|e| {
+           trace_user_copy_failure("copy_from_user", ptr, buf.len(), e);
+           mm_err_to_errno(e)
+       })
 }
 
 /// 使用调用方已经捕获的地址空间读取用户内存。
@@ -52,14 +52,41 @@ pub(crate) fn copy_from_user_in_aspace(handle : usize,
     if handle == 0 || ptr == 0 {
         return Err(ErrNo::EFAULT);
     }
-    ActiveUserMemoryOps::new(handle)
-        .copy_from_user(buf, VirtAddr(ptr))
-        // 此函数允许在 scheduler 锁内调用；错误路径也不能查询当前 task。
-        .map_err(mm_err_to_errno)
+    ActiveUserMemoryOps::new(handle).copy_from_user(buf, VirtAddr(ptr))
+                                    // 此函数允许在 scheduler 锁内调用；错误路径也不能查询当前 task。
+                                    .map_err(mm_err_to_errno)
+}
+
+pub(crate) fn atomic_load_user_u32_in_aspace(handle : usize, ptr : usize) -> Result<u32, ErrNo> {
+    if handle == 0 || ptr == 0 {
+        return Err(ErrNo::EFAULT);
+    }
+    ActiveUserMemoryOps::new(handle).atomic_load_u32(VirtAddr(ptr))
+                                    .map_err(mm_err_to_errno)
+}
+
+pub(crate) fn atomic_compare_exchange_user_u32_in_aspace(handle : usize,
+                                                         ptr : usize,
+                                                         expected : u32,
+                                                         desired : u32)
+                                                         -> Result<u32, ErrNo> {
+    if handle == 0 || ptr == 0 {
+        return Err(ErrNo::EFAULT);
+    }
+    ActiveUserMemoryOps::new(handle).atomic_compare_exchange_u32(VirtAddr(ptr), expected, desired)
+                                    .map_err(mm_err_to_errno)
+}
+
+pub(crate) fn shared_futex_key_u32_in_aspace(handle : usize, ptr : usize) -> Result<usize, ErrNo> {
+    if handle == 0 || ptr == 0 {
+        return Err(ErrNo::EFAULT);
+    }
+    ActiveUserMemoryOps::new(handle).shared_futex_key_u32(VirtAddr(ptr))
+                                    .map_err(mm_err_to_errno)
 }
 
 // 本方法代码由AI完成
-pub(crate) fn copy_to_user(ptr: usize, buf: &[u8]) -> Result<usize, ErrNo> {
+pub(crate) fn copy_to_user(ptr : usize, buf : &[u8]) -> Result<usize, ErrNo> {
     if buf.is_empty() {
         return Ok(0);
     }
@@ -71,21 +98,18 @@ pub(crate) fn copy_to_user(ptr: usize, buf: &[u8]) -> Result<usize, ErrNo> {
     let trap_satp = task::current_task_trap_return_address_space_token();
     if handle != 0 && task_satp != 0 && trap_satp != 0 && task_satp != trap_satp {
         warn!("[user-copy] satp mismatch task={:#x} trap={:#x} handle={:#x} va={:#x}",
-              task_satp,
-              trap_satp,
-              handle,
-              ptr);
+              task_satp, trap_satp, handle, ptr);
     }
     let ops = ActiveUserMemoryOps::new(handle);
     ops.copy_to_user(VirtAddr(ptr), buf)
-        .map_err(|e| {
-            trace_user_copy_failure("copy_to_user", ptr, buf.len(), e);
-            mm_err_to_errno(e)
-        })
+       .map_err(|e| {
+           trace_user_copy_failure("copy_to_user", ptr, buf.len(), e);
+           mm_err_to_errno(e)
+       })
 }
 
 #[cfg(target_arch = "riscv64")]
-fn trace_user_copy_failure(op: &str, va: usize, len: usize, err: mm::api::error::MmError) {
+fn trace_user_copy_failure(op : &str, va : usize, len : usize, err : mm::api::error::MmError) {
     let handle = current_user_aspace_handle().unwrap_or(0);
     let task_satp = task::current_task_user_address_space_token();
     let trap_satp = task::current_task_trap_return_address_space_token();
@@ -98,7 +122,7 @@ fn trace_user_copy_failure(op: &str, va: usize, len: usize, err: mm::api::error:
 }
 
 #[cfg(target_arch = "loongarch64")]
-fn trace_user_copy_failure(op: &str, va: usize, len: usize, err: mm::api::error::MmError) {
+fn trace_user_copy_failure(op : &str, va : usize, len : usize, err : mm::api::error::MmError) {
     let handle = current_user_aspace_handle().unwrap_or(0);
     let task_satp = task::current_task_user_address_space_token();
     let trap_satp = task::current_task_trap_return_address_space_token();
@@ -108,11 +132,11 @@ fn trace_user_copy_failure(op: &str, va: usize, len: usize, err: mm::api::error:
 }
 
 #[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
-fn trace_user_copy_failure(_op: &str, _va: usize, _len: usize, _err: mm::api::error::MmError) {}
+fn trace_user_copy_failure(_op : &str, _va : usize, _len : usize, _err : mm::api::error::MmError) {}
 
 /// 读取以 NUL 结尾的用户路径（上限 `max` 字节，含终止符空间）。
 // 本方法代码由AI完成
-pub(crate) fn copy_user_path_cstr(ptr: usize, max: usize) -> Result<String, ErrNo> {
+pub(crate) fn copy_user_path_cstr(ptr : usize, max : usize) -> Result<String, ErrNo> {
     if ptr == 0 {
         return Err(ErrNo::EFAULT);
     }
@@ -126,7 +150,7 @@ pub(crate) fn copy_user_path_cstr(ptr: usize, max: usize) -> Result<String, ErrN
     while len < max {
         let mut byte = [0u8; 1];
         ops.copy_from_user(&mut byte, VirtAddr(ptr + len))
-            .map_err(mm_err_to_errno)?;
+           .map_err(mm_err_to_errno)?;
         if byte[0] == 0 {
             break;
         }
@@ -141,62 +165,73 @@ pub(crate) fn copy_user_path_cstr(ptr: usize, max: usize) -> Result<String, ErrN
 }
 
 // 本方法代码由AI完成
-pub(crate) fn copy_to_user_struct<T: Copy>(ptr: usize, value: &T) -> Result<(), ErrNo> {
+pub(crate) fn copy_to_user_struct<T : Copy>(ptr : usize, value : &T) -> Result<(), ErrNo> {
     let bytes = unsafe {
-        core::slice::from_raw_parts(
-            (value as *const T) as *const u8,
-            core::mem::size_of::<T>(),
-        )
+        core::slice::from_raw_parts((value as *const T) as *const u8,
+                                    core::mem::size_of::<T>())
     };
     copy_to_user(ptr, bytes).map(|n| {
-        if n == bytes.len() {
-            Ok(())
-        } else {
-            Err(ErrNo::EFAULT)
-        }
-    })?
+                                if n == bytes.len() {
+                                    Ok(())
+                                } else {
+                                    Err(ErrNo::EFAULT)
+                                }
+                            })?
 }
 
 // 本方法代码由AI完成
-pub(crate) fn copy_to_user_struct_in_aspace<T: Copy>(
-    handle: usize,
-    ptr: usize,
-    value: &T,
-) -> Result<(), ErrNo> {
+pub(crate) fn copy_to_user_struct_in_aspace<T : Copy>(handle : usize,
+                                                      ptr : usize,
+                                                      value : &T)
+                                                      -> Result<(), ErrNo> {
     if ptr == 0 || handle == 0 {
         return Err(ErrNo::EFAULT);
     }
     let bytes = unsafe {
-        core::slice::from_raw_parts(
-            (value as *const T) as *const u8,
-            core::mem::size_of::<T>(),
-        )
+        core::slice::from_raw_parts((value as *const T) as *const u8,
+                                    core::mem::size_of::<T>())
     };
     let ops = ActiveUserMemoryOps::new(handle);
     ops.copy_to_user(VirtAddr(ptr), bytes)
-        .map_err(|e| {
-            trace_user_copy_failure("copy_to_user_in_aspace", ptr, bytes.len(), e);
-            mm_err_to_errno(e)
-        })
-        .and_then(|n| {
-            if n == bytes.len() {
-                Ok(())
-            } else {
-                Err(ErrNo::EFAULT)
-            }
-        })
+       .map_err(|e| {
+           trace_user_copy_failure("copy_to_user_in_aspace",
+                                   ptr,
+                                   bytes.len(),
+                                   e);
+           mm_err_to_errno(e)
+       })
+       .and_then(|n| {
+           if n == bytes.len() {
+               Ok(())
+           } else {
+               Err(ErrNo::EFAULT)
+           }
+       })
 }
 
 // 本方法代码由AI完成
-pub(crate) fn copy_from_user_struct<T: Copy>(ptr: usize) -> Result<T, ErrNo> {
+pub(crate) fn copy_from_user_struct<T : Copy>(ptr : usize) -> Result<T, ErrNo> {
     let mut value = core::mem::MaybeUninit::<T>::uninit();
     let bytes = unsafe {
-        core::slice::from_raw_parts_mut(
-            value.as_mut_ptr() as *mut u8,
-            core::mem::size_of::<T>(),
-        )
+        core::slice::from_raw_parts_mut(value.as_mut_ptr() as *mut u8,
+                                        core::mem::size_of::<T>())
     };
     let copied = copy_from_user(bytes, ptr)?;
+    if copied != bytes.len() {
+        return Err(ErrNo::EFAULT);
+    }
+    Ok(unsafe { value.assume_init() })
+}
+
+pub(crate) fn copy_from_user_struct_in_aspace<T : Copy>(handle : usize,
+                                                        ptr : usize)
+                                                        -> Result<T, ErrNo> {
+    let mut value = core::mem::MaybeUninit::<T>::uninit();
+    let bytes = unsafe {
+        core::slice::from_raw_parts_mut(value.as_mut_ptr() as *mut u8,
+                                        core::mem::size_of::<T>())
+    };
+    let copied = copy_from_user_in_aspace(handle, bytes, ptr)?;
     if copied != bytes.len() {
         return Err(ErrNo::EFAULT);
     }

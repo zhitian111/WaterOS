@@ -12,8 +12,8 @@ mod wait;
 pub use error::{FutexError, FutexResult};
 pub use key::{FutexKey, FUTEX_PRIVATE_FLAG};
 pub use robust::{
-    RobustListHead, FUTEX_OWNER_DIED, FUTEX_TID_MASK, ROBUST_LIST_ENTRY_SIZE,
-    ROBUST_LIST_HEAD_SIZE, ROBUST_LIST_LIMIT,
+    RobustListHead, RobustListRegistration, FUTEX_OWNER_DIED, FUTEX_TID_MASK, FUTEX_WAITERS,
+    ROBUST_LIST_ENTRY_SIZE, ROBUST_LIST_HEAD_SIZE, ROBUST_LIST_LIMIT,
 };
 pub use wait::FutexWaitOutcome;
 
@@ -30,6 +30,8 @@ mod tests {
     fn wait_outcomes_are_distinct() {
         assert_ne!(FutexWaitOutcome::Woken,
                    FutexWaitOutcome::TimedOut);
+        assert_ne!(FutexWaitOutcome::Woken,
+                   FutexWaitOutcome::ConditionChanged);
         assert_ne!(FutexWaitOutcome::TimedOut,
                    FutexWaitOutcome::Interrupted);
     }

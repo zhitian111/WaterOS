@@ -6,6 +6,7 @@ use api_v0::address_space::AddressSpaceOps;
 use api_v0::error::{MmError, MmResult};
 use api_v0::mmap::PageFaultAccess;
 use api_v0::user_access::UserMemoryOps;
+use core::sync::atomic::{AtomicU32, Ordering};
 use frame_alloctor::GlobalPhysFrameAllocator;
 
 use crate::pagetable::LoongArch64AddressSpace;
@@ -28,6 +29,133 @@ impl UserMemoryOps for LoongArch64UserMemoryOps {
     fn copy_to_user(&self, dst : VirtAddr, src : &[u8]) -> MmResult<usize> {
         user_copy_to(self.handle, src, dst)
     }
+
+    fn atomic_load_u32(&self, src : VirtAddr) -> MmResult<u32> {
+        atomic_load_user_u32(self.handle, src)
+    }
+
+    fn atomic_compare_exchange_u32(&self,
+                                   dst : VirtAddr,
+                                   expected : u32,
+                                   desired : u32)
+                                   -> MmResult<u32> {
+        atomic_compare_exchange_user_u32(self.handle, dst, expected, desired)
+    }
+
+    fn shared_futex_key_u32(&self, src : VirtAddr) -> MmResult<usize> {
+        shared_futex_key_user_u32(self.handle, src)
+    }
+}
+
+fn validate_atomic_u32_addr(user_addr : VirtAddr) -> MmResult<()> {
+    if user_addr.0 % core::mem::align_of::<u32>() != 0 ||
+       user_addr.page_offset() > PAGE_SIZE - core::mem::size_of::<u32>()
+    {
+        return Err(MmError::InvalidAddress);
+    }
+    Ok(())
+}
+
+fn atomic_load_user_u32(handle : usize, user_addr : VirtAddr) -> MmResult<u32> {
+    validate_atomic_u32_addr(user_addr)?;
+    user_aspace::with_user_aspace_mut(handle, |aspace| {
+        let pa = match aspace.translate_addr(user_addr)? {
+            Some(pa) => pa,
+            None => {
+                let mut allocator = GlobalPhysFrameAllocator;
+                if !aspace.handle_lazy_page_fault(&mut allocator,
+                                                  user_addr,
+                                                  PageFaultAccess::Read)?
+                {
+                    return Err(MmError::AccessViolation);
+                }
+                aspace.translate_addr(user_addr)?
+                      .ok_or(MmError::AccessViolation)?
+            }
+        };
+        let perm = aspace.leaf_page_perm(user_addr.floor_page())?
+                         .ok_or(MmError::AccessViolation)?;
+        if !perm.user() || !perm.readable() {
+            return Err(MmError::AccessViolation);
+        }
+        let value = unsafe { &*(pa.0 as *const AtomicU32) }.load(Ordering::SeqCst);
+        Ok(value)
+    })
+}
+
+fn shared_futex_key_user_u32(handle : usize, user_addr : VirtAddr) -> MmResult<usize> {
+    validate_atomic_u32_addr(user_addr)?;
+    user_aspace::with_user_aspace_mut(handle, |aspace| {
+        let pa = match aspace.translate_addr(user_addr)? {
+            Some(pa) => pa,
+            None => {
+                let mut allocator = GlobalPhysFrameAllocator;
+                if !aspace.handle_lazy_page_fault(&mut allocator,
+                                                  user_addr,
+                                                  PageFaultAccess::Read)?
+                {
+                    return Err(MmError::AccessViolation);
+                }
+                aspace.translate_addr(user_addr)?
+                      .ok_or(MmError::AccessViolation)?
+            }
+        };
+        let perm = aspace.leaf_page_perm(user_addr.floor_page())?
+                         .ok_or(MmError::AccessViolation)?;
+        if !perm.user() || !perm.readable() {
+            return Err(MmError::AccessViolation);
+        }
+        Ok(pa.0)
+    })
+}
+
+fn atomic_compare_exchange_user_u32(handle : usize,
+                                    user_addr : VirtAddr,
+                                    expected : u32,
+                                    desired : u32)
+                                    -> MmResult<u32> {
+    validate_atomic_u32_addr(user_addr)?;
+    user_aspace::with_user_aspace_mut(handle, |aspace| {
+        let vpn = user_addr.floor_page();
+        let mut perm = match aspace.leaf_page_perm(vpn)? {
+            Some(perm) => perm,
+            None => {
+                let mut allocator = GlobalPhysFrameAllocator;
+                if !aspace.handle_lazy_page_fault(&mut allocator,
+                                                  user_addr,
+                                                  PageFaultAccess::Write)?
+                {
+                    return Err(MmError::AccessViolation);
+                }
+                aspace.leaf_page_perm(vpn)?
+                      .ok_or(MmError::AccessViolation)?
+            }
+        };
+        if !perm.user() {
+            return Err(MmError::AccessViolation);
+        }
+        if perm.writable() {
+            if !aspace.ensure_private_for_write(vpn)? {
+                return Err(MmError::AccessViolation);
+            }
+        } else if aspace.handle_cow_fault(user_addr)? {
+            perm = aspace.leaf_page_perm(vpn)?
+                         .ok_or(MmError::AccessViolation)?;
+        }
+        if !perm.writable() {
+            return Err(MmError::AccessViolation);
+        }
+        let pa = aspace.translate_addr(user_addr)?
+                       .ok_or(MmError::AccessViolation)?;
+        let atomic = unsafe { &*(pa.0 as *const AtomicU32) };
+        Ok(match atomic.compare_exchange(expected,
+                                         desired,
+                                         Ordering::SeqCst,
+                                         Ordering::SeqCst)
+           {
+               Ok(old) | Err(old) => old,
+           })
+    })
 }
 
 fn user_copy(handle : usize, kernel_buf : &mut [u8], user_addr : VirtAddr) -> MmResult<usize> {
@@ -51,7 +179,10 @@ fn user_copy_to(handle : usize, kernel_src : &[u8], mut user_addr : VirtAddr) ->
                 Some(perm) => perm,
                 None => {
                     let mut allocator = GlobalPhysFrameAllocator;
-                    if aspace.handle_lazy_page_fault(&mut allocator, user_addr, PageFaultAccess::Write)? {
+                    if aspace.handle_lazy_page_fault(&mut allocator,
+                                                     user_addr,
+                                                     PageFaultAccess::Write)?
+                    {
                         aspace.leaf_page_perm(vpn)?
                               .ok_or(MmError::AccessViolation)?
                     } else {
@@ -68,7 +199,7 @@ fn user_copy_to(handle : usize, kernel_src : &[u8], mut user_addr : VirtAddr) ->
                 }
             } else if aspace.handle_cow_fault(user_addr)? {
                 perm = aspace.leaf_page_perm(vpn)?
-                              .ok_or(MmError::AccessViolation)?;
+                             .ok_or(MmError::AccessViolation)?;
             }
             if !perm.writable() {
                 return Err(MmError::AccessViolation);
@@ -100,7 +231,10 @@ fn copy_from_user_in_aspace(aspace : &mut LoongArch64AddressSpace,
             Some(pa) => pa,
             None => {
                 let mut allocator = GlobalPhysFrameAllocator;
-                if aspace.handle_lazy_page_fault(&mut allocator, user_addr, PageFaultAccess::Read)? {
+                if aspace.handle_lazy_page_fault(&mut allocator,
+                                                 user_addr,
+                                                 PageFaultAccess::Read)?
+                {
                     match aspace.translate_addr(user_addr)? {
                         Some(pa) => pa,
                         None => return Err(MmError::AccessViolation),

@@ -32,9 +32,7 @@ impl WaitQueue {
 
     /// 让当前任务在该等待队列上休眠，直到被显式唤醒。
     #[inline]
-    pub fn wait_current(&self) -> TaskWaitResult {
-        scheduler::wait_current(self.wait_target())
-    }
+    pub fn wait_current(&self) -> TaskWaitResult { scheduler::wait_current(self.wait_target()) }
 
     /// 让当前任务在该等待队列上等待，超时后返回等待结果。
     #[inline]
@@ -44,9 +42,7 @@ impl WaitQueue {
 
     /// 在调度临界区内复查条件；条件仍成立才让当前任务在该队列上休眠。
     #[inline]
-    pub fn wait_current_while(&self,
-                              condition : impl FnOnce() -> bool)
-                              -> TaskWaitResult {
+    pub fn wait_current_while(&self, condition : impl FnOnce() -> bool) -> TaskWaitResult {
         scheduler::wait_current_while(self.wait_target(), condition)
     }
 
@@ -71,11 +67,25 @@ impl WaitQueue {
 
     /// 唤醒本队列中的部分任务，并把其余等待者迁移到另一个等待队列。
     #[inline]
-    pub fn requeue_to(&self,
-                      target : Self,
-                      wake_count : usize,
-                      requeue_count : usize)
-                      -> usize {
-        scheduler::requeue_wait_queue(self.id, target.id, wake_count, requeue_count)
+    pub fn requeue_to(&self, target : Self, wake_count : usize, requeue_count : usize) -> usize {
+        scheduler::requeue_wait_queue(self.id,
+                                      target.id,
+                                      wake_count,
+                                      requeue_count)
+    }
+
+    /// 在调度临界区内复查条件；条件成立才执行 wake/requeue。
+    #[inline]
+    pub fn requeue_to_while(&self,
+                            target : Self,
+                            wake_count : usize,
+                            requeue_count : usize,
+                            condition : impl FnOnce() -> bool)
+                            -> Option<usize> {
+        scheduler::requeue_wait_queue_while(self.id,
+                                            target.id,
+                                            wake_count,
+                                            requeue_count,
+                                            condition)
     }
 }

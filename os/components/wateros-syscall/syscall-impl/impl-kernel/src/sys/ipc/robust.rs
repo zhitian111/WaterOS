@@ -4,78 +4,106 @@ use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use ipc::futex::{
-    FutexKey, RobustListHead, FUTEX_OWNER_DIED, FUTEX_TID_MASK, ROBUST_LIST_HEAD_SIZE,
-    ROBUST_LIST_LIMIT,
+    FutexKey, RobustListHead, FUTEX_OWNER_DIED, FUTEX_TID_MASK, FUTEX_WAITERS,
+    ROBUST_LIST_HEAD_SIZE, ROBUST_LIST_LIMIT,
 };
 use task::TaskId;
 
-use crate::user_copy::{copy_from_user, copy_from_user_struct, copy_to_user_struct};
+use crate::user_copy::{
+    atomic_compare_exchange_user_u32_in_aspace, atomic_load_user_u32_in_aspace,
+    copy_from_user_struct_in_aspace, copy_to_user_struct,
+};
 
-const FUTEX_FLAG_MASK : u32 = !FUTEX_TID_MASK;
+const FUTEX_ROBUST_MOD_MASK : usize = 1;
 
 use super::futex_error_to_errno;
 
-fn read_user_u32(uaddr : usize) -> Result<u32, ErrNo> {
-    let mut val : u32 = 0;
-    let buf = unsafe { core::slice::from_raw_parts_mut((&raw mut val) as *mut u8, 4) };
-    if copy_from_user(buf, uaddr)? != 4 {
-        return Err(ErrNo::EFAULT);
-    }
-    Ok(val)
+fn robust_entry(raw : usize) -> (usize, bool) {
+    (raw & !FUTEX_ROBUST_MOD_MASK, raw & FUTEX_ROBUST_MOD_MASK != 0)
 }
 
-fn read_user_list_next(entry : usize) -> Result<usize, ErrNo> {
-    let mut next : usize = 0;
-    let buf = unsafe { core::slice::from_raw_parts_mut((&raw mut next) as *mut u8, 8) };
-    if copy_from_user(buf, entry)? != 8 {
-        return Err(ErrNo::EFAULT);
+fn mark_owner_died(user_aspace : usize, entry : usize, futex_offset : isize, tid : usize) {
+    let Some(futex_uaddr) = entry.checked_add_signed(futex_offset) else {
+        return;
+    };
+    if futex_uaddr % core::mem::size_of::<u32>() != 0 {
+        return;
     }
-    Ok(next)
+    loop {
+        let Ok(old) = atomic_load_user_u32_in_aspace(user_aspace, futex_uaddr) else {
+            return;
+        };
+        if (old & FUTEX_TID_MASK) as usize != tid {
+            return;
+        }
+        let new = (old & FUTEX_WAITERS) | FUTEX_OWNER_DIED;
+        let Ok(observed) =
+            atomic_compare_exchange_user_u32_in_aspace(user_aspace, futex_uaddr, old, new)
+        else {
+            return;
+        };
+        if observed != old {
+            continue;
+        }
+        if old & FUTEX_WAITERS != 0 {
+            let private = FutexKey::private(futex_uaddr, user_aspace);
+            if ipc::futex::wake(private, 1) == 0 {
+                if let Ok(shared) =
+                    super::futex::shared_futex_key_for_aspace(user_aspace, futex_uaddr)
+                {
+                    let _ = ipc::futex::wake(shared, 1);
+                }
+            }
+        }
+        return;
+    }
 }
 
 /// 线程退出前遍历用户 robust 链表并唤醒 waiters。
 pub(crate) fn robust_exit_cleanup(task_id : TaskId) {
-    let (head_ptr, _len) = ipc::futex::take_robust_list(task_id);
+    let Some(registration) = ipc::futex::take_robust_list(task_id) else {
+        return;
+    };
     let tid = match task::process_task_snapshot(task_id) {
         Some(snapshot) => snapshot.tid.raw(),
         None => return,
     };
+    let head_ptr = registration.head;
+    let user_aspace = registration.user_aspace;
     if head_ptr == 0 {
         return;
     }
 
-    let head = match copy_from_user_struct::<RobustListHead>(head_ptr) {
+    let head = match copy_from_user_struct_in_aspace::<RobustListHead>(user_aspace, head_ptr) {
         Ok(h) => h,
         Err(_) => return,
     };
 
-    if head.list_op_pending != 0 {
-        // 首版跳过 list_op；BusyBox 常规路径多为 0。
-    }
-
     let list_head = head_ptr;
     let futex_offset = head.futex_offset;
-    let mut entry = head.list;
+    let (pending, pending_is_pi) = robust_entry(head.list_op_pending);
+    let (mut entry, mut entry_is_pi) = robust_entry(head.list);
     let mut steps = 0usize;
 
     while entry != list_head && entry != 0 && steps < ROBUST_LIST_LIMIT {
         steps += 1;
-        let futex_uaddr = entry.wrapping_add_signed(futex_offset);
-        if let Ok(val) = read_user_u32(futex_uaddr) {
-            let owner = val & FUTEX_TID_MASK;
-            if owner as usize == tid {
-                let new_val = (val & FUTEX_FLAG_MASK) | FUTEX_OWNER_DIED;
-                let _ = copy_to_user_struct(futex_uaddr, &new_val);
-                let key = FutexKey::private(futex_uaddr,
-                                            task::current_task_user_aspace_ptr());
-                ipc::futex::wake_all(key);
-                ipc::futex::wake_all(FutexKey::shared(futex_uaddr));
-            }
-        }
-        entry = match read_user_list_next(entry) {
+        let next_raw = match copy_from_user_struct_in_aspace::<usize>(user_aspace, entry) {
             Ok(next) => next,
-            Err(_) => break,
+            Err(_) => return,
         };
+        if entry != pending && !entry_is_pi {
+            mark_owner_died(user_aspace, entry, futex_offset, tid);
+        }
+        (entry, entry_is_pi) = robust_entry(next_raw);
+    }
+    if steps == ROBUST_LIST_LIMIT && entry != list_head && entry != 0 {
+        log::warn!("[robust] list traversal limit reached task_id={} head={:#x}",
+                   task_id,
+                   head_ptr);
+    }
+    if pending != 0 && !pending_is_pi {
+        // pending 可能已在主链表中，上面的 `entry != pending` 保证只处理一次。
+        mark_owner_died(user_aspace, pending, futex_offset, tid);
     }
 }
 
@@ -112,12 +140,9 @@ pub(crate) fn sys_set_robust_list(args : SyscallArgs) -> UserRet {
         Some(tid) => tid,
         None => return UserRet::from_error(ErrNo::ESRCH),
     };
-    if head != 0 {
-        if copy_from_user_struct::<RobustListHead>(head).is_err() {
-            return UserRet::from_error(ErrNo::EFAULT);
-        }
-    }
-    match ipc::futex::set_robust_list(tid, head, len) {
+    // 与 Linux ABI 一致：set 只登记指针并校验结构大小，不提前解引用用户链表。
+    let user_aspace = task::current_task_user_aspace_ptr();
+    match ipc::futex::set_robust_list(tid, head, len, user_aspace) {
         Ok(()) => UserRet::from_success(0),
         Err(e) => UserRet::from_error(futex_error_to_errno(e)),
     }
@@ -127,6 +152,9 @@ pub(crate) fn sys_get_robust_list(args : SyscallArgs) -> UserRet {
     let pid = args.arg(0) as isize;
     let head_out = args.arg(1);
     let len_out = args.arg(2);
+    if head_out == 0 || len_out == 0 {
+        return UserRet::from_error(ErrNo::EFAULT);
+    }
 
     let target_tid = match task::resolve_sched_pid(pid) {
         Ok(tid) => tid,
@@ -141,10 +169,10 @@ pub(crate) fn sys_get_robust_list(args : SyscallArgs) -> UserRet {
         }
     }
     let (head, len) = ipc::futex::get_robust_list(target_tid);
-    if head_out != 0 && copy_to_user_struct(head_out, &head).is_err() {
+    if copy_to_user_struct(len_out, &len).is_err() {
         return UserRet::from_error(ErrNo::EFAULT);
     }
-    if len_out != 0 && copy_to_user_struct(len_out, &len).is_err() {
+    if copy_to_user_struct(head_out, &head).is_err() {
         return UserRet::from_error(ErrNo::EFAULT);
     }
     UserRet::from_success(0)

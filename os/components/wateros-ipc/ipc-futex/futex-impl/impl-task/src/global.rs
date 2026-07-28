@@ -3,7 +3,10 @@
 //! 公开函数隐藏 registry 与锁。等待和唤醒期间不会长期持有 registry 锁；
 //! `active_users` 保护锁外 scheduler 操作所引用的等待队列。
 
-use api_v0::{FutexError, FutexKey, FutexResult, FutexWaitOutcome, ROBUST_LIST_HEAD_SIZE};
+use api_v0::{
+    FutexError, FutexKey, FutexResult, FutexWaitOutcome, RobustListRegistration,
+    ROBUST_LIST_HEAD_SIZE,
+};
 use core::sync::atomic::Ordering;
 use spin::Mutex;
 use task_api::{TaskId, TaskTick, TaskWaitResult};
@@ -19,26 +22,28 @@ fn with_registry<R>(f : impl FnOnce(&mut FutexRegistry) -> R) -> R {
 }
 
 /// 在 `key` 对应队列上等待，阻塞前通过 `condition` 再次确认用户态条件。
-pub fn wait_while(key : FutexKey,
+pub fn wait_while(task_id : TaskId,
+                  key : FutexKey,
                   timeout : Option<TaskTick>,
                   mut condition : impl FnMut() -> bool)
                   -> FutexWaitOutcome {
     if !condition() {
-        return FutexWaitOutcome::Woken;
+        return FutexWaitOutcome::ConditionChanged;
     }
 
     let (wait_queue, wake_sequence) = with_registry(|registry| {
         let (wait_queue, wake_sequence) = registry.acquire_queue(key);
+        registry.register_waiting_task(task_id, key);
         registry.record_wait_attempt(key, wait_queue.id());
         (wait_queue, wake_sequence)
     });
     let observed_wake = wake_sequence.load(Ordering::Acquire);
     if !condition() {
         with_registry(|registry| {
-            registry.record_wait_result(key, FutexWaitOutcome::Woken);
-            registry.release_queue(key);
+            registry.record_wait_result(key, FutexWaitOutcome::ConditionChanged);
+            registry.finish_waiting_task(task_id, key);
         });
-        return FutexWaitOutcome::Woken;
+        return FutexWaitOutcome::ConditionChanged;
     }
 
     // condition 已在 scheduler 锁外复查。进入调度临界区后只比较原子 wake
@@ -54,7 +59,7 @@ pub fn wait_while(key : FutexKey,
             if condition() {
                 FutexWaitOutcome::TimedOut
             } else {
-                FutexWaitOutcome::Woken
+                FutexWaitOutcome::ConditionChanged
             }
         }
         Some(ticks) => match wait_queue.wait_current_while_for_ticks(ticks, not_woken) {
@@ -66,9 +71,14 @@ pub fn wait_while(key : FutexKey,
 
     with_registry(|registry| {
         registry.record_wait_result(key, outcome);
-        registry.release_queue(key);
+        registry.finish_waiting_task(task_id, key);
     });
     outcome
+}
+
+/// 任务在 futex syscall 返回前被终止时，代其释放 registry 使用权。
+pub fn cancel_task_wait(task_id : TaskId) {
+    with_registry(|registry| registry.cancel_waiting_task(task_id));
 }
 
 /// 唤醒 `key` 队列上最多 `max_wake` 个等待者。
@@ -129,39 +139,90 @@ pub fn requeue(from_key : FutexKey,
                wake_count : u32,
                requeue_count : u32)
                -> FutexResult<usize> {
+    match requeue_if(from_key,
+                     to_key,
+                     wake_count,
+                     requeue_count,
+                     || Ok(true))?
+    {
+        Some(changed) => Ok(changed),
+        None => Ok(0),
+    }
+}
+
+/// 比较条件与队列迁移在同一个 scheduler 临界区内完成。
+pub fn cmp_requeue(from_key : FutexKey,
+                   to_key : FutexKey,
+                   wake_count : u32,
+                   requeue_count : u32,
+                   condition : impl FnOnce() -> FutexResult<bool>)
+                   -> FutexResult<usize> {
+    match requeue_if(from_key,
+                     to_key,
+                     wake_count,
+                     requeue_count,
+                     condition)?
+    {
+        Some(changed) => Ok(changed),
+        None => Err(FutexError::Again),
+    }
+}
+
+fn requeue_if(from_key : FutexKey,
+              to_key : FutexKey,
+              wake_count : u32,
+              requeue_count : u32,
+              condition : impl FnOnce() -> FutexResult<bool>)
+              -> FutexResult<Option<usize>> {
     if from_key == to_key {
         return Err(FutexError::Invalid);
     }
     let Some(((from_queue, from_wake_sequence), (to_queue, _to_wake_sequence))) =
         with_registry(|registry| {
-        let queues = registry.acquire_requeue_queues(from_key, to_key);
-        if queues.is_none() {
-            registry.record_requeue(from_key,
-                                    to_key,
-                                    wake_count,
-                                    requeue_count,
-                                    0);
-        }
-        queues
-    })
+            let queues = registry.acquire_requeue_queues(from_key, to_key);
+            if queues.is_none() {
+                registry.record_requeue(from_key,
+                                        to_key,
+                                        wake_count,
+                                        requeue_count,
+                                        0);
+            }
+            queues
+        })
     else {
-        return Ok(0);
+        return condition().map(|matched| matched.then_some(0));
     };
 
-    from_wake_sequence.fetch_add(1, Ordering::Release);
-    let changed = from_queue.requeue_to(to_queue,
-                                        wake_count as usize,
-                                        requeue_count as usize);
+    let mut condition_result = None;
+    let changed = from_queue.requeue_to_while(to_queue,
+                                    wake_count as usize,
+                                    requeue_count as usize,
+                                    || {
+                                        let result = condition();
+                                        let matched = matches!(result, Ok(true));
+                                        condition_result = Some(result);
+                                        if matched {
+                                            // 与 waiter 的 scheduler 临界区复查串行化：
+                                            // 成功 requeue 后，尚未真正入队的 waiter
+                                            // 会观察到序列变化而不会睡回源队列。
+                                            from_wake_sequence.fetch_add(1, Ordering::Release);
+                                        }
+                                        matched
+                                    });
     with_registry(|registry| {
         registry.record_requeue(from_key,
                                 to_key,
                                 wake_count,
                                 requeue_count,
-                                changed);
+                                changed.unwrap_or(0));
         registry.release_queue(from_key);
         registry.release_queue(to_key);
     });
-    Ok(changed)
+    match condition_result {
+        Some(Ok(_)) => Ok(changed),
+        Some(Err(error)) => Err(error),
+        None => Err(FutexError::Invalid),
+    }
 }
 
 /// 输出 futex registry 的低频停滞快照。
@@ -190,25 +251,30 @@ pub fn log_debug_snapshot() {
                 .iter()
                 .map(|queue| (queue.wait_queue_id, queue.active_users))
                 .collect();
-    log::warn!("[stall-debug][futex] active_queue_ids={:?}", active_queue_ids);
+    log::warn!("[stall-debug][futex] active_queue_ids={:?}",
+               active_queue_ids);
 }
 
 /// 登记线程的 robust 链表头。
-pub fn set_robust_list(task_id : TaskId, head : usize, len : usize) -> FutexResult<()> {
+pub fn set_robust_list(task_id : TaskId,
+                       head : usize,
+                       len : usize,
+                       user_aspace : usize)
+                       -> FutexResult<()> {
     if len != ROBUST_LIST_HEAD_SIZE {
         return Err(FutexError::Invalid);
     }
-    with_registry(|registry| registry.set_robust_list(task_id, head, len));
+    with_registry(|registry| registry.set_robust_list(task_id, head, len, user_aspace));
     Ok(())
 }
 
-/// 查询线程的 robust 链表头；未登记时返回 `(0, 0)`。
+/// 查询线程的 robust 链表头；未登记时返回空指针和 ABI 规定的头长度。
 pub fn get_robust_list(task_id : TaskId) -> (usize, usize) {
     with_registry(|registry| registry.robust_list(task_id))
 }
 
 /// 取出并删除线程的 robust 链表状态，供退出路径执行一次性清理。
-pub fn take_robust_list(task_id : TaskId) -> (usize, usize) {
+pub fn take_robust_list(task_id : TaskId) -> Option<RobustListRegistration> {
     with_registry(|registry| registry.take_robust_list(task_id))
 }
 
@@ -224,12 +290,18 @@ mod tests {
     #[test]
     fn robust_state_round_trip_and_take() {
         let task_id = usize::MAX - 1;
-        set_robust_list(task_id, 0x1000, ROBUST_LIST_HEAD_SIZE).unwrap();
+        set_robust_list(task_id,
+                        0x1000,
+                        ROBUST_LIST_HEAD_SIZE,
+                        0x2000).unwrap();
         assert_eq!(get_robust_list(task_id),
                    (0x1000, ROBUST_LIST_HEAD_SIZE));
         assert_eq!(take_robust_list(task_id),
-                   (0x1000, ROBUST_LIST_HEAD_SIZE));
-        assert_eq!(get_robust_list(task_id), (0, 0));
+                   Some(RobustListRegistration { head : 0x1000,
+                                                 len : ROBUST_LIST_HEAD_SIZE,
+                                                 user_aspace : 0x2000 }));
+        assert_eq!(get_robust_list(task_id),
+                   (0, ROBUST_LIST_HEAD_SIZE));
     }
 
     #[test]

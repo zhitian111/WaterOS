@@ -5,7 +5,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::sync::atomic::AtomicU64;
 
-use api_v0::{FutexKey, FutexWaitOutcome};
+use api_v0::{FutexKey, FutexWaitOutcome, RobustListRegistration, ROBUST_LIST_HEAD_SIZE};
 use ipc_waitqueue::WaitQueue;
 use task_api::TaskId;
 
@@ -18,12 +18,6 @@ struct FutexQueue {
     ///
     /// 非零时不能释放 `WaitQueueId`，否则并发 wait/wake 可能操作复用后的 ID。
     active_users : usize,
-}
-
-#[derive(Clone, Copy)]
-struct RobustState {
-    head : usize,
-    len : usize,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -48,7 +42,8 @@ pub(crate) struct FutexDebugSnapshot {
 
 pub(crate) struct FutexRegistry {
     queues : BTreeMap<FutexKey, FutexQueue>,
-    robust : BTreeMap<TaskId, RobustState>,
+    waiting_tasks : BTreeMap<TaskId, FutexKey>,
+    robust : BTreeMap<TaskId, RobustListRegistration>,
     wait_attempts : u64,
     wait_returns : u64,
     wake_calls : u64,
@@ -63,6 +58,7 @@ pub(crate) struct FutexRegistry {
 impl FutexRegistry {
     pub const fn new() -> Self {
         Self { queues : BTreeMap::new(),
+               waiting_tasks : BTreeMap::new(),
                robust : BTreeMap::new(),
                wait_attempts : 0,
                wait_returns : 0,
@@ -78,14 +74,14 @@ impl FutexRegistry {
     pub fn acquire_queue(&mut self, key : FutexKey) -> (WaitQueue, Arc<AtomicU64>) {
         let queue = self.queues
                         .entry(key)
-                        .or_insert_with(|| FutexQueue { wait_queue :
-                                                          WaitQueue::new_named("futex"),
-                                                        wake_sequence :
-                                                            Arc::new(AtomicU64::new(0)),
+                        .or_insert_with(|| FutexQueue { wait_queue : WaitQueue::new_named("futex"),
+                                                        wake_sequence : Arc::new(AtomicU64::new(0)),
                                                         active_users : 0 });
         queue.active_users = queue.active_users
                                   .saturating_add(1);
-        (queue.wait_queue, queue.wake_sequence.clone())
+        (queue.wait_queue,
+         queue.wake_sequence
+              .clone())
     }
 
     pub fn acquire_existing_queue(&mut self,
@@ -95,14 +91,16 @@ impl FutexRegistry {
                         .get_mut(&key)?;
         queue.active_users = queue.active_users
                                   .saturating_add(1);
-        Some((queue.wait_queue, queue.wake_sequence.clone()))
+        Some((queue.wait_queue,
+              queue.wake_sequence
+                   .clone()))
     }
 
-    pub fn acquire_requeue_queues(&mut self,
-                                  from_key : FutexKey,
-                                  to_key : FutexKey)
-                                  -> Option<((WaitQueue, Arc<AtomicU64>),
-                                             (WaitQueue, Arc<AtomicU64>))> {
+    pub fn acquire_requeue_queues(
+        &mut self,
+        from_key : FutexKey,
+        to_key : FutexKey)
+        -> Option<((WaitQueue, Arc<AtomicU64>), (WaitQueue, Arc<AtomicU64>))> {
         let from_queue = self.acquire_existing_queue(from_key)?;
         let to_queue = self.acquire_queue(to_key);
         Some((from_queue, to_queue))
@@ -116,6 +114,33 @@ impl FutexRegistry {
                                       .saturating_sub(1);
         }
         self.cleanup_empty_queue(key);
+    }
+
+    pub fn register_waiting_task(&mut self, task_id : TaskId, key : FutexKey) {
+        let previous = self.waiting_tasks
+                           .insert(task_id, key);
+        if let Some(previous_key) = previous {
+            self.release_queue(previous_key);
+        }
+    }
+
+    pub fn finish_waiting_task(&mut self, task_id : TaskId, key : FutexKey) {
+        if self.waiting_tasks
+               .get(&task_id) ==
+           Some(&key)
+        {
+            self.waiting_tasks
+                .remove(&task_id);
+            self.release_queue(key);
+        }
+    }
+
+    pub fn cancel_waiting_task(&mut self, task_id : TaskId) {
+        if let Some(key) = self.waiting_tasks
+                               .remove(&task_id)
+        {
+            self.release_queue(key);
+        }
     }
 
     pub fn record_wait_attempt(&mut self, key : FutexKey, wait_queue_id : usize) {
@@ -153,8 +178,8 @@ impl FutexRegistry {
         let queues = self.queues
                          .iter()
                          .map(|(_, queue)| FutexQueueDebug { wait_queue_id : queue.wait_queue
-                                                                                 .id(),
-                                                            active_users : queue.active_users })
+                                                                                  .id(),
+                                                             active_users : queue.active_users })
                          .collect();
         FutexDebugSnapshot { wait_attempts : self.wait_attempts,
                              wait_returns : self.wait_returns,
@@ -183,23 +208,27 @@ impl FutexRegistry {
         }
     }
 
-    pub fn set_robust_list(&mut self, task_id : TaskId, head : usize, len : usize) {
+    pub fn set_robust_list(&mut self,
+                           task_id : TaskId,
+                           head : usize,
+                           len : usize,
+                           user_aspace : usize) {
         self.robust
-            .insert(task_id, RobustState { head, len });
+            .insert(task_id, RobustListRegistration { head,
+                                                      len,
+                                                      user_aspace });
     }
 
     pub fn robust_list(&self, task_id : TaskId) -> (usize, usize) {
         self.robust
             .get(&task_id)
             .map(|state| (state.head, state.len))
-            .unwrap_or((0, 0))
+            .unwrap_or((0, ROBUST_LIST_HEAD_SIZE))
     }
 
-    pub fn take_robust_list(&mut self, task_id : TaskId) -> (usize, usize) {
+    pub fn take_robust_list(&mut self, task_id : TaskId) -> Option<RobustListRegistration> {
         self.robust
             .remove(&task_id)
-            .map(|state| (state.head, state.len))
-            .unwrap_or((0, 0))
     }
 
     pub fn drop_robust_list(&mut self, task_id : TaskId) {

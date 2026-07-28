@@ -686,6 +686,30 @@ pub fn requeue_wait_queue(from_wait_queue_id : WaitQueueId,
     changed
 }
 
+/// 在同一个 scheduler 临界区内复查条件并执行等待队列迁移。
+pub fn requeue_wait_queue_while(from_wait_queue_id : WaitQueueId,
+                                to_wait_queue_id : WaitQueueId,
+                                wake_count : usize,
+                                requeue_count : usize,
+                                condition : impl FnOnce() -> bool)
+                                -> Option<usize> {
+    let cpu_id = cpu::current_cpu_id();
+    let (changed, targets) = {
+        let _guard = InterruptGuard::new();
+        with_scheduler(|scheduler| {
+            let changed = scheduler.requeue_wait_queue_while(from_wait_queue_id,
+                                                             to_wait_queue_id,
+                                                             wake_count,
+                                                             requeue_count,
+                                                             condition);
+            let targets = scheduler.take_pending_reschedule_cpus();
+            (changed, targets)
+        })
+    };
+    dispatch_reschedules(targets, cpu_id);
+    changed
+}
+
 // =============================================================================
 //  6. 退出回收
 // =============================================================================

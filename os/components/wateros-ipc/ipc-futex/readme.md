@@ -26,6 +26,8 @@ ipc-futex
 
 `wait_while()` 在取得队列前后复查用户态条件，队列的 `active_users` 覆盖取得
 `WaitQueueId` 到 scheduler 操作完成的窗口，避免空队列被释放后 ID 立即复用。
+private futex 使用“地址空间 + 用户虚拟地址”作为 key；shared futex 由 MM
+先解析为物理字身份，因此同一共享页映射到不同进程或不同虚拟地址时仍能互相唤醒。
 
 ## Robust 生命周期
 
@@ -38,5 +40,5 @@ ipc-futex
 ## 当前限制
 
 - `FUTEX_WAIT_BITSET` / `FUTEX_WAKE_BITSET` 仅支持 `FUTEX_BITSET_MATCH_ALL`。
-- shared futex 当前仍以用户虚拟地址为 key；跨不同虚拟地址映射同一共享页的场景尚需
-  引入物理页或共享对象标识。
+- PI futex 尚未实现；robust 链表中带 PI 标记的节点会跳过，避免按普通 futex
+  错误清理。

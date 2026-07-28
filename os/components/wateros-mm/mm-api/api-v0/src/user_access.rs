@@ -13,9 +13,23 @@ pub trait UserMemoryOps {
     /// 从用户虚拟地址 `src` 起读取，写入 `dst`；可跨页，遇未映射或权限不足返回错误。
     ///
     /// 成功返回实际拷贝的字节数（当前 API 与全量成功语义一致时可等于 `dst.len()`，以实现为准）。
-    fn copy_from_user(&self, dst: &mut [u8], src: VirtAddr) -> MmResult<usize>;
+    fn copy_from_user(&self, dst : &mut [u8], src : VirtAddr) -> MmResult<usize>;
 
     /// 将 `src` 写入用户缓冲区 `dst` 起始处；可跨页。
-    fn copy_to_user(&self, dst: VirtAddr, src: &[u8]) -> MmResult<usize>;
-}
+    fn copy_to_user(&self, dst : VirtAddr, src : &[u8]) -> MmResult<usize>;
 
+    /// 原子读取一个四字节对齐的用户 `u32`。
+    fn atomic_load_u32(&self, src : VirtAddr) -> MmResult<u32>;
+
+    /// 当用户 `u32` 等于 `expected` 时原子写入 `desired`，无论交换是否
+    /// 成功都返回操作时观察到的旧值。
+    fn atomic_compare_exchange_u32(&self,
+                                   dst : VirtAddr,
+                                   expected : u32,
+                                   desired : u32)
+                                   -> MmResult<u32>;
+
+    /// 返回 shared futex 使用的映射身份。当前实现使用已翻译物理字地址，
+    /// 因而同一共享页在不同进程、不同 VA 下仍能得到相同 key。
+    fn shared_futex_key_u32(&self, src : VirtAddr) -> MmResult<usize>;
+}

@@ -19,9 +19,9 @@ impl MultiClassScheduler {
     pub fn wake_task(&mut self, task_id : TaskId) -> bool {
         if !self.wait_queues
                 .wake_task(task_id) ||
-           self.registry
-               .state(task_id)
-               .is_none()
+           !matches!(self.registry
+                         .state(task_id),
+                     Some(TaskState::Blocking(_)) | Some(TaskState::Sleeping { .. }))
         {
             return false;
         }
@@ -33,9 +33,9 @@ impl MultiClassScheduler {
     pub fn interrupt_task(&mut self, task_id : TaskId) -> bool {
         if !self.wait_queues
                 .interrupt_task(task_id) ||
-           self.registry
-               .state(task_id)
-               .is_none()
+           !matches!(self.registry
+                         .state(task_id),
+                     Some(TaskState::Blocking(_)) | Some(TaskState::Sleeping { .. }))
         {
             return false;
         }
@@ -70,28 +70,35 @@ impl MultiClassScheduler {
     }
 
     pub fn wake_one_in_wait_queue(&mut self, wait_queue_id : WaitQueueId) -> Option<TaskId> {
-        let task_id = self.wait_queues
-                          .wake_one_in_wait_queue(wait_queue_id)?;
-        if self.registry
-               .state(task_id)
-               .is_none()
+        let target = TaskWaitTarget::WaitQueue(wait_queue_id);
+        while let Some(task_id) = self.wait_queues
+                                      .wake_one_in_wait_queue(wait_queue_id)
         {
-            return None;
+            if self.registry
+                   .state(task_id) !=
+               Some(TaskState::Blocking(target))
+            {
+                // 防御性丢弃旧版本或异常路径遗留的陈旧队列项，绝不能重新
+                // 激活一个已经 Ready/Running 的任务。
+                continue;
+            }
+            self.registry
+                .finish_wait(task_id, TaskWaitResult::Woken);
+            self.activate_ready_task(task_id, ReadyPlacement::LastCpu);
+            return Some(task_id);
         }
-        self.registry
-            .finish_wait(task_id, TaskWaitResult::Woken);
-        self.activate_ready_task(task_id, ReadyPlacement::LastCpu);
-        Some(task_id)
+        None
     }
 
     pub fn wake_all_in_wait_queue(&mut self, wait_queue_id : WaitQueueId) -> usize {
         let task_ids = self.wait_queues
                            .wake_all_in_wait_queue(wait_queue_id);
+        let target = TaskWaitTarget::WaitQueue(wait_queue_id);
         let mut count = 0usize;
         for task_id in task_ids {
             if self.registry
-                   .state(task_id)
-                   .is_none()
+                   .state(task_id) !=
+               Some(TaskState::Blocking(target))
             {
                 continue;
             }
@@ -108,21 +115,57 @@ impl MultiClassScheduler {
                               wake_count : usize,
                               requeue_count : usize)
                               -> usize {
-        let (woken, moved, changed) = self.wait_queues
-                                          .requeue_wait_queue(from_wait_queue_id,
-                                                              to_wait_queue_id,
-                                                              wake_count,
-                                                              requeue_count);
+        let (woken, moved, _) = self.wait_queues
+                                    .requeue_wait_queue(from_wait_queue_id,
+                                                        to_wait_queue_id,
+                                                        wake_count,
+                                                        requeue_count);
+        let from_target = TaskWaitTarget::WaitQueue(from_wait_queue_id);
+        let to_target = TaskWaitTarget::WaitQueue(to_wait_queue_id);
+        let mut valid_changed = 0usize;
         for task_id in woken {
+            if self.registry
+                   .state(task_id) !=
+               Some(TaskState::Blocking(from_target))
+            {
+                continue;
+            }
             self.registry
                 .finish_wait(task_id, TaskWaitResult::Woken);
             self.activate_ready_task(task_id, ReadyPlacement::LastCpu);
+            valid_changed = valid_changed.saturating_add(1);
         }
         for (task_id, _) in moved {
+            if self.registry
+                   .state(task_id) !=
+               Some(TaskState::Blocking(from_target))
+            {
+                // `WaitQueues` 已把此项移到目标队列；若它不是合法 waiter，
+                // 立即摘除，避免目标队列继续保存陈旧 TaskId。
+                let _ = self.wait_queues
+                            .wake_task(task_id);
+                continue;
+            }
             self.registry
-                .mark_blocking(task_id,
-                               TaskWaitTarget::WaitQueue(to_wait_queue_id));
+                .mark_blocking(task_id, to_target);
+            valid_changed = valid_changed.saturating_add(1);
         }
-        changed
+        valid_changed
+    }
+
+    pub fn requeue_wait_queue_while(&mut self,
+                                    from_wait_queue_id : WaitQueueId,
+                                    to_wait_queue_id : WaitQueueId,
+                                    wake_count : usize,
+                                    requeue_count : usize,
+                                    condition : impl FnOnce() -> bool)
+                                    -> Option<usize> {
+        if !condition() {
+            return None;
+        }
+        Some(self.requeue_wait_queue(from_wait_queue_id,
+                                     to_wait_queue_id,
+                                     wake_count,
+                                     requeue_count))
     }
 }

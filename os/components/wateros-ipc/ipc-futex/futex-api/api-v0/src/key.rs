@@ -6,7 +6,7 @@ pub const FUTEX_PRIVATE_FLAG : u32 = 128;
 /// 由用户 futex 地址与 private 标志派生的队列键。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FutexKey {
-    /// 用户态 futex 字地址。
+    /// private futex 为用户 VA；shared futex 为 MM 解析出的共享字身份。
     pub uaddr : usize,
     /// 是否为进程私有 futex（`FUTEX_PRIVATE_FLAG`）。
     pub is_private : bool,
@@ -23,15 +23,18 @@ impl FutexKey {
                private_scope }
     }
 
-    /// 构造全局 shared futex 键。
+    /// 使用 MM 已解析的稳定共享字身份构造 shared futex 键。
     #[inline]
-    pub const fn shared(uaddr : usize) -> Self {
-        Self { uaddr,
+    pub const fn shared(shared_identity : usize) -> Self {
+        Self { uaddr : shared_identity,
                is_private : false,
                private_scope : 0 }
     }
 
     /// 从 syscall 参数解析队列键。
+    ///
+    /// 该便捷接口只适合测试 private flag 的解析；生产 syscall 对 shared
+    /// futex 必须先通过 MM 把 VA 解析为共享映射身份，再调用 [`Self::shared`]。
     #[inline]
     pub const fn from_syscall(uaddr : usize, futex_op : u32, private_scope : usize) -> Self {
         if futex_op & FUTEX_PRIVATE_FLAG != 0 {

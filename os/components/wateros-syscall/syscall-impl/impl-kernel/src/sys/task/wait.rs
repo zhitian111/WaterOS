@@ -12,7 +12,10 @@ use crate::sys::time::timer::{
     account_child_cpu, child_cpu_from_exited, ticks_to_timeval, write_child_rusage,
     write_zero_rusage, ChildCpuTicks,
 };
-use crate::user_copy::{copy_from_user_struct, copy_to_user_struct};
+use crate::user_copy::{
+    atomic_compare_exchange_user_u32_in_aspace, atomic_load_user_u32_in_aspace,
+    copy_from_user_struct, copy_to_user_struct,
+};
 
 /// 等待目标类型：任意子进程、指定进程组、或特定进程。
 #[derive(Clone, Copy)]
@@ -74,11 +77,26 @@ pub(crate) fn wake_clear_child_tid_for_task(task_id : task::TaskId) -> usize {
     if addr == 0 {
         return 0;
     }
-    let tid_raw = task::process_task_snapshot(task_id).map(|s| s.tid.raw())
-                                                      .unwrap_or(0);
-    let clear_result = copy_to_user_struct(addr, &0u32);
+    let Some(task_snapshot) = task::process_task_snapshot(task_id) else {
+        return 0;
+    };
+    let tid_raw = task_snapshot.tid
+                               .raw();
+    let Some(user_aspace) =
+        task::process_snapshot(task_snapshot.pid).and_then(|process| process.address_space)
+                                                 .map(|aspace| aspace.user_aspace_ptr())
+    else {
+        return 0;
+    };
+    let clear_result = (|| loop {
+        let old = atomic_load_user_u32_in_aspace(user_aspace, addr)?;
+        let observed = atomic_compare_exchange_user_u32_in_aspace(user_aspace, addr, old, 0)?;
+        if observed == old {
+            return Ok::<(), ErrNo>(());
+        }
+    })();
     fence(core::sync::atomic::Ordering::SeqCst);
-    let woken = super::super::futex::wake_user_addr(addr);
+    let woken = super::super::futex::wake_user_addr(user_aspace, addr);
     log::trace!("[pthread-debug] clear_child_tid task_id={} tid={} addr={:#x} write_ok={} \
                  woken={}",
                 task_id,
@@ -139,6 +157,7 @@ pub(crate) fn drop_task_runtime_resources(task_id : task::TaskId) {
 }
 
 fn drop_task_runtime_resources_with_aspace(task_id : task::TaskId, aspace : usize) {
+    ipc::futex::cancel_task_wait(task_id);
     super::super::shm::drop_task_attachments(task_id, aspace);
     vfs::cwd::drop_task_cwd(task_id);
     vfs::mount_ns::drop_task_mount_ns(task_id);
