@@ -110,7 +110,8 @@ fn initial_cwd_for_spawn(elf_vfs_path: &str, argv: &[&str]) -> String {
 }
 
 fn is_shell_invocation(argv0: &str) -> bool {
-    argv0 == "sh" || argv0.ends_with("/sh") || argv0.ends_with("busybox")
+    let name = argv0.rsplit('/').next().unwrap_or(argv0);
+    matches!(name, "sh" | "bash" | "dash" | "ash" | "busybox")
 }
 
 // 取路径父目录；根下文件返回 `/`。
@@ -295,4 +296,15 @@ pub fn self_test() {
 
     let resolved = resolve_against_cwd("/glibc/basic", Some("./text.txt")).expect("resolve");
     assert_eq!(resolved, "/glibc/basic/text.txt");
+    assert_eq!(
+        initial_cwd_for_spawn(
+            "/bin/bash",
+            &["/bin/bash", "/glibc/cagent_testcode.sh"],
+        ),
+        "/glibc"
+    );
+    assert_eq!(
+        initial_cwd_for_spawn("/glibc/busybox", &["sh", "/glibc/basic_testcode.sh"]),
+        "/glibc"
+    );
 }
