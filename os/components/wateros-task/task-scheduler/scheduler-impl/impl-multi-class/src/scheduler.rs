@@ -1,6 +1,8 @@
 //! [`MultiClassScheduler`]：`SCHED_OTHER` + `SCHED_FIFO` + `SCHED_RR` 多类调度。
 
 extern crate alloc;
+use alloc::boxed::Box;
+use alloc::vec::Vec;
 mod cpu;
 mod lifecycle;
 mod policy;
@@ -27,7 +29,7 @@ unsafe extern "C" {
 pub(super) struct MultiClassScheduler {
     pub registry : TaskRegistry,
     pub wait_queues : WaitQueues,
-    pub cpu_states : [CPUState; MAX_CPUS],
+    pub cpu_states : Box<[CPUState]>,
     /// 环形选核的起点。负载相同时，从这里开始的第一个 online CPU 获胜。
     pub next_placement_cpu : usize,
     /// 唯一推进全局 sleep/wait timeout 时间的 BSP。
@@ -49,9 +51,13 @@ impl MultiClassScheduler {
     //  构造与初始化
     // ================================================================
     pub(super) fn new() -> Self {
+        let mut cpu_states = Vec::with_capacity(MAX_CPUS);
+        for raw in 0..MAX_CPUS {
+            cpu_states.push(CPUState::new(CpuId::from_raw(raw)));
+        }
         Self { registry : TaskRegistry::new(),
                wait_queues : WaitQueues::new(),
-               cpu_states : core::array::from_fn(|i| CPUState::new(CpuId::from_raw(i))),
+               cpu_states : cpu_states.into_boxed_slice(),
                next_placement_cpu : 0,
                timekeeper_cpu : None,
                pending_reschedule_cpus : CpuMask::EMPTY }
