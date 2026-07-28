@@ -1,6 +1,7 @@
 //! 用户/组凭证与 capability 系统调用：uid/gid 系列 + capget/capset。
 
 pub(crate) mod cap;
+mod setid;
 
 pub(crate) use cap::{sys_capget, sys_capset};
 
@@ -10,6 +11,42 @@ use abi::errno::ErrNo;
 use abi::syscall_args::SyscallArgs;
 use abi::user_ret::UserRet;
 use cred::api::{Gid, Uid, SUPPLEMENTARY_GROUP_COUNT};
+
+use setid::{plan_set_id, plan_set_re_id, plan_set_res_id, IdTriplet};
+
+fn current_uid_triplet() -> (IdTriplet, bool) {
+    let current = cred::current_credentials();
+    (IdTriplet { real : current.real_uid.0,
+                 effective : current.effective_uid
+                                    .0,
+                 saved : current.saved_uid.0 },
+     current.effective_uid
+            .0 ==
+     0)
+}
+
+fn current_gid_triplet() -> (IdTriplet, bool) {
+    let current = cred::current_credentials();
+    (IdTriplet { real : current.real_gid.0,
+                 effective : current.effective_gid
+                                    .0,
+                 saved : current.saved_gid.0 },
+     current.effective_uid
+            .0 ==
+     0)
+}
+
+fn apply_uid_triplet(ids : IdTriplet) {
+    cred::set_resuid(Some(Uid(ids.real)),
+                     Some(Uid(ids.effective)),
+                     Some(Uid(ids.saved)));
+}
+
+fn apply_gid_triplet(ids : IdTriplet) {
+    cred::set_resgid(Some(Gid(ids.real)),
+                     Some(Gid(ids.effective)),
+                     Some(Gid(ids.saved)));
+}
 
 pub(crate) fn sys_getuid() -> UserRet {
     let cred = cred::current_credentials();
@@ -78,13 +115,19 @@ pub(crate) fn sys_setgroups(args : SyscallArgs) -> UserRet {
     UserRet::from_success(0)
 }
 pub(crate) fn sys_setuid(args : SyscallArgs) -> UserRet {
-    let uid = Uid(args.arg(0) as u32);
-    cred::set_uid(uid);
+    let (current, privileged) = current_uid_triplet();
+    let Some(next) = plan_set_id(current, args.arg(0) as u32, privileged) else {
+        return UserRet::from_error(ErrNo::EPERM);
+    };
+    apply_uid_triplet(next);
     UserRet::from_success(0)
 }
 pub(crate) fn sys_setgid(args : SyscallArgs) -> UserRet {
-    let gid = Gid(args.arg(0) as u32);
-    cred::set_gid(gid);
+    let (current, privileged) = current_gid_triplet();
+    let Some(next) = plan_set_id(current, args.arg(0) as u32, privileged) else {
+        return UserRet::from_error(ErrNo::EPERM);
+    };
+    apply_gid_triplet(next);
     UserRet::from_success(0)
 }
 pub(crate) fn sys_setreuid(args : SyscallArgs) -> UserRet {
@@ -98,7 +141,15 @@ pub(crate) fn sys_setreuid(args : SyscallArgs) -> UserRet {
     } else {
         Some(Uid(args.arg(1) as u32))
     };
-    cred::set_reuid(ruid, euid);
+    let (current, privileged) = current_uid_triplet();
+    let Some(next) = plan_set_re_id(current,
+                                    ruid.map(|id| id.0),
+                                    euid.map(|id| id.0),
+                                    privileged)
+    else {
+        return UserRet::from_error(ErrNo::EPERM);
+    };
+    apply_uid_triplet(next);
     UserRet::from_success(0)
 }
 pub(crate) fn sys_setregid(args : SyscallArgs) -> UserRet {
@@ -112,7 +163,15 @@ pub(crate) fn sys_setregid(args : SyscallArgs) -> UserRet {
     } else {
         Some(Gid(args.arg(1) as u32))
     };
-    cred::set_regid(rgid, egid);
+    let (current, privileged) = current_gid_triplet();
+    let Some(next) = plan_set_re_id(current,
+                                    rgid.map(|id| id.0),
+                                    egid.map(|id| id.0),
+                                    privileged)
+    else {
+        return UserRet::from_error(ErrNo::EPERM);
+    };
+    apply_gid_triplet(next);
     UserRet::from_success(0)
 }
 pub(crate) fn sys_setresuid(args : SyscallArgs) -> UserRet {
@@ -131,7 +190,16 @@ pub(crate) fn sys_setresuid(args : SyscallArgs) -> UserRet {
     } else {
         Some(Uid(args.arg(2) as u32))
     };
-    cred::set_resuid(ruid, euid, suid);
+    let (current, privileged) = current_uid_triplet();
+    let Some(next) = plan_set_res_id(current,
+                                     ruid.map(|id| id.0),
+                                     euid.map(|id| id.0),
+                                     suid.map(|id| id.0),
+                                     privileged)
+    else {
+        return UserRet::from_error(ErrNo::EPERM);
+    };
+    apply_uid_triplet(next);
     UserRet::from_success(0)
 }
 pub(crate) fn sys_setresgid(args : SyscallArgs) -> UserRet {
@@ -150,7 +218,16 @@ pub(crate) fn sys_setresgid(args : SyscallArgs) -> UserRet {
     } else {
         Some(Gid(args.arg(2) as u32))
     };
-    cred::set_resgid(rgid, egid, sgid);
+    let (current, privileged) = current_gid_triplet();
+    let Some(next) = plan_set_res_id(current,
+                                     rgid.map(|id| id.0),
+                                     egid.map(|id| id.0),
+                                     sgid.map(|id| id.0),
+                                     privileged)
+    else {
+        return UserRet::from_error(ErrNo::EPERM);
+    };
+    apply_gid_triplet(next);
     UserRet::from_success(0)
 }
 pub(crate) fn sys_getresuid(args : SyscallArgs) -> UserRet {
