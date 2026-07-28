@@ -99,6 +99,10 @@ impl Ext4 {
         );
         // Write the block back to disk
         self.write_block(new_dir_block.block());
+        // inode_append_block persisted the extent before the directory size
+        // was increased. Persist the updated size after the new block is
+        // initialized so later lookups scan every allocated directory block.
+        self.write_inode_with_csum(dir);
 
         Ok(())
     }
