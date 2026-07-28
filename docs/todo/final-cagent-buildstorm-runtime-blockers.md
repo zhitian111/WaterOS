@@ -1,5 +1,38 @@
 # 决赛 CAgent 与 BuildStorm 运行阻断项
 
+## 2026-07-28 复核状态
+
+本节是当前状态，优先于下方 2026-07-27 的历史诊断。复核同时参考了
+`report.md`、`output.log`、当前源码和干净镜像的 qcow2 overlay 运行结果。
+
+### 已完成
+
+- 顶层用户任务改为“创建、初始化 cred/cwd/mount namespace、最后发布”，提交
+  `72cbf633`。
+- RISC-V 恢复 `/glibc`、`/musl` 动态解释器重映射，同时保留通用符号链接解析，
+  提交 `327f02af`。`test_case/sdcard-rv.img` 中 musl `abs01` 三项均 `TPASS`。
+- CAgent 的 `/bin/bash <script>` 启动能够从脚本目录推导 cwd，提交 `fc0d84cf`。
+  `simple_llm_server` 已成功监听，原 `No such file` 消失。
+- 决赛 SMP 测试入口改用镜像内 `/glibc/busybox`，提交 `620f3cbb`。
+- `readlinkat`、proc exe link、eventfd2、sigaltstack、fchdir、fadvise64、POSIX
+  timer、rseq fallback、RISC-V hwprobe、proc uptime/online CPU 和决赛 dashboard
+  开关均已有实现，不再是“尚未实现”状态。
+- LoongArch 已通过 ASID 避免每次返回用户态都全量刷新 TLB，提交 `4ae4217b`。
+
+### 仍需处理
+
+| 类别 | 当前证据 | 责任与下一步 |
+| --- | --- | --- |
+| 文件系统/VFS | BuildStorm 工具链通过，但 minibuild 在离线解析 `web-sys` 时失败；虚拟 `/dev/*` 的 symlink resolver 仍可能提前返回 `NotFound` | 交文件系统成员复现大索引文件读取和虚拟设备最终分量解析；本轮不修改 FS |
+| task/signal | CAgent server 启动后多个 `agent_lite` 收到 `Hangup`，十项均 `reject` | 成员 B 跟踪 SIGHUP 来源、进程组/session、父进程退出与 `wait` 语义 |
+| 并发交界 | 32 路后台文件创建/读取/删除已成功 exec，但 30 秒内未打印 `SMP_MM_TEST_DONE` | 先用 stall-debug 定位阻塞任务，再判断归属 task wait 还是 ext4 并发锁 |
+| 测试脚本 | CAgent 全部 reject 后脚本仍返回 0；BuildStorm 内部失败也会被外层记录为成功 | 测例维护者修正退出码聚合，内核不得伪造成功 |
+
+当前 `output.log` 已完整结束，不是 futex 死锁：BuildStorm 为
+`TOOLCHAIN ok`、`MINIBUILD fail`、完整编译 `rc=101`；旧 CAgent cwd 失败已由本轮
+复验取代。RISC-V pre/final 与 LoongArch pre/final 内核均构建通过；LoongArch
+本轮只有构建验证，没有可用决赛镜像做运行验证。
+
 ## 检查范围
 
 检查日期：2026-07-27。测试环境为 RISC-V64、OpenSBI、QEMU `virt`、8 核、
