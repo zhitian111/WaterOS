@@ -1378,7 +1378,7 @@ pub fn from_elf_bytes(data : &[u8]) -> Result<LoadedElf, LoadElfError> {
     Ok(LoadedElf { entry_pc : e_entry,
                    program_entry : e_entry,
                    interp_base : 0,
-                   satp : pgdl, // `satp` 字段名保留，实际内容为 LoongArch PGDL 值
+                   satp : pgdl, // `satp` 字段名保留，实际内容为 LoongArch PGDL+ASID token
                    stack_bottom,
                    stack_top : ELF_STACK_TOP,
                    image_base : min_vaddr,

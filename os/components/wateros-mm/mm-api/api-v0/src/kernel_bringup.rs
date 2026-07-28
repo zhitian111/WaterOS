@@ -1,6 +1,8 @@
 //! 内核全局页表 bring-up 与用户 ELF 装载相关的 **API 契约**（实现见 `mm-impl`）。
 //!
-//! 成功路径返回的 [`LoadedElf::satp`] 为 **RISC-V `satp` 寄存器编码值**（MODE/ASID/根表 PPN），由具体 `mm-impl` 填写；切换用户任务前须由 arch 层 `csrw satp` 并刷新 TLB。
+//! 成功路径返回的 [`LoadedElf::satp`] 是架构地址空间 token：RISC-V 为
+//! `satp` 编码，LoongArch64 为 PGDL+ASID 组合编码。具体 `mm-impl` 负责构造，
+//! arch 层负责安装；TLB 一致性由地址空间切换与 shootdown 路径共同维护。
 //!
 //! 根卷读错误使用 [`RootVolumeReadError`]，由 `mm-impl` 从具体 FS 错误映射而来，**不**依赖 `wateros-fs` API crate，以保持 mm-api 与文件系统实现解耦。
 

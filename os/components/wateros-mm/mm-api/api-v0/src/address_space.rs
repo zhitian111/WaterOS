@@ -1,15 +1,15 @@
 //! 地址空间操作契约：以 **4 KiB 虚拟页** 为粒度（见 [`crate::addr::PAGE_SIZE`]）。
 //!
 //! `satp_value` 是历史命名，实际含义是当前架构可安装的地址空间 token：
-//! RISC-V 为 `satp` 编码，LoongArch64 为 PGDL 物理基址。安装 token 与 TLB
-//! 刷新由 arch/platform 层完成；本 trait 本身不隐含额外硬件副作用。
+//! RISC-V 为 `satp` 编码，LoongArch64 为 PGDL 与 ASID 的组合编码。安装 token
+//! 与 TLB 刷新由 arch/platform 层完成；本 trait 本身不隐含额外硬件副作用。
 
 use crate::addr::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
 use crate::error::{MmError, MmResult};
 use crate::frame_allocator::PhysicalFrameAllocator;
 use crate::perm::PagePerm;
 
-/// 地址空间标识（ASID 等）；API 预留字段，当前 bring-up 可不使用或与 `satp` ASID 域对齐。
+/// 地址空间标识（ASID 等）；具体分配与复用规则由架构 MM 实现负责。
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AddressSpaceId(pub u32);

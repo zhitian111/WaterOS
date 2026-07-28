@@ -20,6 +20,7 @@
     .equ CSR_ESTAT, 0x5
     .equ CSR_BADV, 0x7
     .equ CSR_CRMD, 0x0
+    .equ CSR_ASID, 0x18
     .equ CSR_PGDL, 0x19
     .equ CSR_PGD, 0x1B
     .equ CSR_SAVE0, 0x30
@@ -137,8 +138,10 @@ __alltraps:
     st.d $r12, $r3, 272
     csrrd $r12, CSR_BADV
     st.d $r12, $r3, 280
-    # 保存 trap 入口时激活的地址空间 token：用户 trap 为用户 PGDL，内核 trap 为内核 PGDL。
+    # 保存 trap 入口时激活的地址空间 token：低 48 位为 PGDL，高 10 位为 ASID。
     csrrd $r12, CSR_PGDL
+    csrrd $r13, CSR_ASID
+    bstrins.d $r12, $r13, 57, 48
     st.d $r12, $r3, 288
 
     move $r4, $r3
@@ -157,16 +160,21 @@ __alltraps:
     ertn
 
 .Lreturn_to_user:
-    # TrapContext.return_address_space_token 为用户态下使用的 PGDL 基址。
-    # 普通 syscall/trap 返回同一任务时 PGDL 没有变化，不得每次都清空 TLB；
-    # 页表内容修改由 MM 的本地 flush/远端 shootdown 路径负责。只有真正切换
-    # 地址空间时才安装新 PGDL 并刷新本 CPU TLB。
+    # TrapContext token：低 48 位为 PGDL，bit[57:48] 为 ASID。
+    # ASID 分配/复用时的 shootdown 由 MM 保证，因此地址空间切换只需原子式
+    # 更新 PGDL/ASID，不再清空本 CPU 的其它地址空间 TLB。
     ld.d $r12, $r3, 36*8
+    bstrpick.d $r14, $r12, 57, 48
+    bstrpick.d $r12, $r12, 47, 0
     csrrd $r13, CSR_PGDL
-    beq $r12, $r13, .Luser_pgdl_ready
+    bne $r12, $r13, .Lswitch_user_aspace
+    csrrd $r15, CSR_ASID
+    andi $r15, $r15, 0x3ff
+    beq $r14, $r15, .Luser_aspace_ready
+.Lswitch_user_aspace:
     csrwr $r12, CSR_PGDL
-    invtlb 0, $r0, $r0
-.Luser_pgdl_ready:
+    csrwr $r14, CSR_ASID
+.Luser_aspace_ready:
     csrrd $r12, CSR_CRMD
     addi.d $r13, $r0, -9
     and $r12, $r12, $r13

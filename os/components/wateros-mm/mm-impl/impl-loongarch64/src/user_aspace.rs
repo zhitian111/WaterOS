@@ -24,14 +24,15 @@ use crate::pagetable::LoongArch64AddressSpace;
 pub(crate) struct UserAddressSpaceCell {
     pub(crate) inner: MultiprocessorSafeCell<LoongArch64AddressSpace>,
     dropped: AtomicBool,
-    active_cpus: AtomicU64,
+    /// 所有可能缓存该 ASID TLB 项的 CPU。ASID 有效期间只增不减。
+    tlb_cpus: AtomicU64,
 }
 
 impl UserAddressSpaceCell {
     pub(crate) fn new(aspace: LoongArch64AddressSpace) -> Self {
         Self { inner: MultiprocessorSafeCell::new(aspace),
                dropped: AtomicBool::new(false),
-               active_cpus: AtomicU64::new(0) }
+               tlb_cpus: AtomicU64::new(0) }
     }
 
     fn is_dropped(&self) -> bool { self.dropped.load(Ordering::Acquire) }
@@ -54,20 +55,32 @@ pub(crate) fn destroy(handle: usize) {
     if !cell.mark_dropped() {
         return;
     }
-    cell.active_cpus.store(0, Ordering::Release);
-    cell.inner.exclusive_access().destroy();
+    let cached = cell.tlb_cpus.swap(0, Ordering::AcqRel);
+    let asid = cell.inner
+                   .exclusive_access()
+                   .destroy_and_take_asid();
+    if asid != crate::asid::KERNEL_ASID {
+        // ASID 只有在所有可能缓存它的 CPU 完成失效后才允许复用。
+        platform::arch::paging::flush_tlb_local(platform::arch::paging::TlbFlushRange::All);
+        if request_tlb_shootdown_targets(wateros_base::cpu::CpuMask::from_bits(cached)) {
+            crate::asid::release_user(asid);
+        } else {
+            // 不能证明旧 TLB 项已经失效时，宁可永久退休这枚 ASID，也不能让
+            // 新地址空间复用后命中旧映射。
+            log::warn!("[tlb] retiring ASID {} because shootdown did not complete", asid);
+        }
+    }
 }
 
 pub fn mark_active(handle: usize, cpu: wateros_base::cpu::CpuId) {
     let Some(cell) = (unsafe { cell(handle) }) else { return };
     if cell.is_dropped() || cpu.raw() >= u64::BITS as usize { return; }
-    cell.active_cpus.fetch_or(1u64 << cpu.raw(), Ordering::AcqRel);
+    cell.tlb_cpus.fetch_or(1u64 << cpu.raw(), Ordering::AcqRel);
 }
 
-pub fn mark_inactive(handle: usize, cpu: wateros_base::cpu::CpuId) {
-    let Some(cell) = (unsafe { cell(handle) }) else { return };
-    if cpu.raw() >= u64::BITS as usize { return; }
-    cell.active_cpus.fetch_and(!(1u64 << cpu.raw()), Ordering::AcqRel);
+pub fn mark_inactive(_handle: usize, _cpu: wateros_base::cpu::CpuId) {
+    // 使用 ASID 后，CPU 离开地址空间并不等于它不再缓存该地址空间的 TLB 项。
+    // 该位保持到地址空间销毁，确保后续页表修改仍会通知这枚 CPU。
 }
 
 /// syscall trap 期间全局中断处于关闭状态，不能直接无限自旋等待 shootdown
@@ -83,20 +96,18 @@ fn lock_tlb_shootdown() -> spin::MutexGuard<'static, ()> {
     }
 }
 
-fn request_tlb_shootdown(handle: usize) {
+fn request_tlb_shootdown_targets(mut targets : wateros_base::cpu::CpuMask) -> bool {
     // Serialize sequence allocation, pending publication, IPI delivery and
     // acknowledgements.  A per-CPU pending slot cannot represent two
     // concurrent transactions safely without this critical section.
     let _request_guard = lock_tlb_shootdown();
     let current = platform::arch::cpu::current_cpu_id();
-    let active = unsafe { cell(handle) }
-                    .map(|cell| cell.active_cpus.load(Ordering::Acquire))
-                    .unwrap_or(0);
-    let mut targets = wateros_base::cpu::CpuMask::from_bits(active & task::online_cpu_mask().bits());
+    targets = wateros_base::cpu::CpuMask::from_bits(targets.bits() &
+                                                     task::online_cpu_mask().bits());
     targets.remove(current);
-    if targets.is_empty() { return; }
+    if targets.is_empty() { return true; }
     match platform::smp::flush_tlb_remote(targets) {
-        Ok(()) => return,
+        Ok(()) => return true,
         Err(platform::smp::PlatformSmpError::Unsupported) => {}
         Err(error) => {
             log::warn!("[tlb] platform remote flush failed targets={:#x} error={:?}; \
@@ -117,8 +128,9 @@ fn request_tlb_shootdown(handle: usize) {
                    sequence,
                    targets.bits(),
                    error);
-        return;
+        return false;
     }
+    let mut completed = true;
     let mut raw = targets.bits();
     while raw != 0 {
         let cpu = raw.trailing_zeros() as usize;
@@ -131,8 +143,17 @@ fn request_tlb_shootdown(handle: usize) {
         }
         if spins == 10_000_000 {
             log::warn!("[tlb] shootdown timeout cpu={} sequence={}", cpu, sequence);
+            completed = false;
         }
     }
+    completed
+}
+
+fn request_tlb_shootdown(handle: usize) {
+    let cached = unsafe { cell(handle) }
+                    .map(|cell| cell.tlb_cpus.load(Ordering::Acquire))
+                    .unwrap_or(0);
+    let _ = request_tlb_shootdown_targets(wateros_base::cpu::CpuMask::from_bits(cached));
 }
 
 pub fn handle_tlb_shootdown_ipi() -> bool {

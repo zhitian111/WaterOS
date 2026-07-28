@@ -212,6 +212,8 @@ fn alloc_table_frame_zeroed() -> MmResult<PhysPageNum> {
 /// LoongArch64 根页表与 walk 状态；所有映射均为 **4 KiB 叶子**。
 pub struct LoongArch64AddressSpace {
     root : PhysPageNum,
+    /// 硬件 TLB 地址空间标识；0 仅供内核地址空间使用。
+    asid : u16,
     /// 用户堆起点（页对齐，位于 ELF 镜像尾之后）。
     pub(crate) user_brk_start : VirtAddr,
     /// 当前 program break（堆尾上界，可非页对齐）。
@@ -281,8 +283,33 @@ impl SharedAnonVma {
 impl LoongArch64AddressSpace {
     /// 分配并清零根页表帧；依赖帧分配器与 [`table_mut`] 的物理访问假设。
     pub(crate) fn new() -> MmResult<Self> {
+        let asid = crate::asid::allocate_user()?;
+        let root = match alloc_table_frame_zeroed() {
+            Ok(root) => root,
+            Err(error) => {
+                crate::asid::release_user(asid);
+                return Err(error);
+            }
+        };
+        Ok(Self { root,
+                  asid,
+                  user_brk_start : VirtAddr(0),
+                  user_brk_current_end : VirtAddr(0),
+                  user_brk_max : VirtAddr(0),
+                  mmap_anon_cursor : VirtAddr(0),
+                  mmap_file_cursor : VirtAddr(0),
+                  mmap_base : VirtAddr(0),
+                  user_stack_bottom : VirtAddr(0),
+                  user_stack_top : VirtAddr(0),
+                  lazy_file_vmas : Vec::new(),
+                  shared_anon_vmas : Vec::new() })
+    }
+
+    /// 创建内核地址空间；ASID 0 不参与用户 ASID 分配与复用。
+    pub(crate) fn new_kernel() -> MmResult<Self> {
         let root = alloc_table_frame_zeroed()?;
         Ok(Self { root,
+                  asid : crate::asid::KERNEL_ASID,
                   user_brk_start : VirtAddr(0),
                   user_brk_current_end : VirtAddr(0),
                   user_brk_max : VirtAddr(0),
@@ -655,7 +682,18 @@ impl LoongArch64AddressSpace {
     pub fn fork_cow(&mut self) -> MmResult<LoongArch64AddressSpace> {
         log::trace!("[mm-fork] LoongArch64AddressSpace::fork begin root_ppn={}",
                     self.root.0);
-        let child_root = alloc_table_frame_zeroed()?;
+        let child_lazy_file_vmas = self.lazy_file_vmas
+                                       .iter()
+                                       .map(LazyFileVma::duplicate)
+                                       .collect::<MmResult<Vec<_>>>()?;
+        let child_asid = crate::asid::allocate_user()?;
+        let child_root = match alloc_table_frame_zeroed() {
+            Ok(root) => root,
+            Err(error) => {
+                crate::asid::release_user(child_asid);
+                return Err(error);
+            }
+        };
         // SAFETY: 刚分配并清零的帧作为子地址空间根页表。
         if let Err(err) = unsafe {
             fork_table(self.root,
@@ -667,12 +705,14 @@ impl LoongArch64AddressSpace {
             unsafe {
                 destroy_table(child_root, LOONGARCH64_LEVELS - 1, 0, &self.shared_anon_vmas);
             }
+            crate::asid::release_user(child_asid);
             return Err(err);
         }
         platform::arch::paging::flush_address_space_translations();
         log::trace!("[mm-fork] LoongArch64AddressSpace::fork done child_root={}",
                     child_root.0);
         Ok(LoongArch64AddressSpace { root : child_root,
+                                     asid : child_asid,
                                      user_brk_start : self.user_brk_start,
                                      user_brk_current_end : self.user_brk_current_end,
                                      user_brk_max : self.user_brk_max,
@@ -681,9 +721,7 @@ impl LoongArch64AddressSpace {
                               mmap_base : self.mmap_base,
                               user_stack_bottom : self.user_stack_bottom,
                               user_stack_top : self.user_stack_top,
-                              lazy_file_vmas : self.lazy_file_vmas.iter()
-                                                                         .map(LazyFileVma::duplicate)
-                                                                         .collect::<MmResult<Vec<_>>>()?,
+                              lazy_file_vmas : child_lazy_file_vmas,
                               shared_anon_vmas : self.shared_anon_vmas.clone() })
     }
 
@@ -806,7 +844,7 @@ impl LoongArch64AddressSpace {
     /// 递归释放所有用户页帧及页表帧，不触碰内核恒等映射。
     ///
     /// 调用后本地址空间不再可用。
-    pub fn destroy(&mut self) {
+    fn destroy_page_tables(&mut self) {
         if self.root.0 == 0 {
             return;
         }
@@ -817,6 +855,12 @@ impl LoongArch64AddressSpace {
                           &self.shared_anon_vmas);
         }
         self.root = PhysPageNum(0);
+    }
+
+    /// 释放页表并转移 ASID 所有权。调用方须在归还非零 ASID 前完成 TLB 失效。
+    pub(crate) fn destroy_and_take_asid(&mut self) -> u16 {
+        self.destroy_page_tables();
+        core::mem::replace(&mut self.asid, crate::asid::KERNEL_ASID)
     }
 }
 
@@ -923,9 +967,10 @@ unsafe fn fork_table(parent_ppn : PhysPageNum,
 }
 
 impl AddressSpaceOps for LoongArch64AddressSpace {
-    /// LoongArch64 用 CSR.PGDL 存储根页表物理基址（不是 Sv39 的 satp 编码）。
-    /// 此方法返回 PGDL 可直接写入值：`root_ppn * PAGE_SIZE`。
-    fn satp_value(&self) -> usize { self.root.0 * PAGE_SIZE }
+    /// 返回 WaterOS LA 地址空间 token：低 48 位为 PGDL，高位携带 10 位 ASID。
+    fn satp_value(&self) -> usize {
+        crate::asid::encode_token(self.root.0 * PAGE_SIZE, self.asid)
+    }
 
     fn map_page_to_ppn(&mut self,
                        vpn : VirtPageNum,
@@ -1008,6 +1053,9 @@ impl AddressSpaceOps for LoongArch64AddressSpace {
 
 impl Drop for LoongArch64AddressSpace {
     fn drop(&mut self) {
-        self.destroy();
+        // 未装入 UserAddressSpaceCell 的对象尚未被调度，不会在远端 CPU 留下
+        // TLB 项，因此可以直接归还 ASID。
+        let asid = self.destroy_and_take_asid();
+        crate::asid::release_user(asid);
     }
 }

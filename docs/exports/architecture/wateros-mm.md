@@ -71,12 +71,18 @@ flowchart TB
 | 概念 | RISC-V Sv39 | LoongArch64 |
 |------|-------------|-------------|
 | 用户页表根 | `Sv39AddressSpace.root` (PPN) | `LoongArch64AddressSpace.root` |
-| 安装寄存器 | `satp` (MODE/ASID/PPN) | `CSR.PGDL` |
-| `AddressSpaceOps::satp_value` | Sv39 编码 | `root * PAGE_SIZE` |
+| 安装寄存器 | `satp` (MODE/ASID/PPN) | `CSR.PGDL` + `CSR.ASID` |
+| `AddressSpaceOps::satp_value` | Sv39 编码 | bit `[47:0]` PGDL + bit `[57:48]` ASID |
 | 内核全局表 | `kernel_global` 泄漏的 `Sv39AddressSpace` | 同结构，恒等基址 `0x9000_0000` |
 | token 缓存 | `api::kernel_satp`（供 task/trap） | 同上 |
 
 用户地址空间以 **裸指针** `LoadedElf::user_aspace_ptr` 泄漏给 task；syscall 经 `user_aspace::with_user_aspace_mut` 修改页表。
+
+LoongArch64 保留 ASID 0 给内核，并从硬件 10 位空间中为用户地址空间分配
+1..=1023。任务切换同时安装 PGDL 和 ASID，不再因为 PGDL 改变而全量刷新本地
+TLB。地址空间记录所有可能缓存过其 TLB 项的 CPU；销毁时必须先完成这些 CPU
+的 shootdown，随后才归还 ASID。若 shootdown 未确认完成，则退休该 ASID，
+避免编号复用后命中旧映射。
 
 ## 页表 walk 与物理访问假设
 
@@ -106,7 +112,7 @@ kernel_mm::load_program_from_path
   → 建立用户页表 + LoadedElf
 prepare_elf_user_stack (ActiveUserMemoryOps)
   → 用户栈 argc/argv/envp/auxv
-task 安装 user_aspace_ptr 与 satp/PGDL
+task 安装 user_aspace_ptr 与地址空间 token
 ```
 
 ### 页故障
@@ -123,6 +129,8 @@ trap_handler
 ```text
 api::user_aspace_lifecycle::drop_user_aspace_on_task_exit
   → kernel_mm::drop_user_aspace (impl 注册)
+  → 本地/远端 TLB shootdown
+  → 归还 LoongArch64 ASID
 ```
 
 ## 与周边组件边界

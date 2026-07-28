@@ -52,10 +52,12 @@ __wateros_arch_restore_user_task:
     csrwr $r13, 0x1
     ld.d $r13, $r21, 33*8
     csrwr $r13, 0x6
-    # 36*8：return_address_space_token，即用户 PGDL 物理基址。
+    # 36*8：return_address_space_token，低 48 位 PGDL，高 10 位 ASID。
     ld.d $r13, $r21, 36*8
+    bstrpick.d $r14, $r13, 57, 48
+    bstrpick.d $r13, $r13, 47, 0
     csrwr $r13, 0x19
-    invtlb 0, $r0, $r0
+    csrwr $r14, 0x18
     csrrd $r13, 0x0
     addi.d $r14, $r0, -9
     and $r13, $r13, $r14

@@ -10,6 +10,11 @@ use core::arch::asm;
 const CSR_CRMD: usize = 0x0;
 /// PGDL 寄存器编号。
 const CSR_PGDL: usize = 0x19;
+/// ASID 寄存器编号。
+const CSR_ASID: usize = 0x18;
+const ASID_MASK: usize = 0x3ff;
+const TOKEN_ASID_SHIFT: usize = 48;
+const TOKEN_PGDL_MASK: usize = (1usize << TOKEN_ASID_SHIFT) - 1;
 /// CRMD.PG（bit 4）：分页使能。
 const CRMD_PG: usize = 1 << 4;
 /// CRMD.DA（bit 3）：直接地址翻译模式。
@@ -32,11 +37,33 @@ impl LoongArch64Paging {
     }
 
     #[inline]
-    fn write_pgdl(token: usize) {
+    fn write_pgdl(pgdl: usize) {
         unsafe {
-            asm!("csrwr {0}, {1}", in(reg) token, const CSR_PGDL);
+            asm!("csrwr {0}, {1}", in(reg) pgdl, const CSR_PGDL);
         }
     }
+
+    #[inline]
+    fn read_asid() -> usize {
+        let value: usize;
+        unsafe {
+            asm!("csrrd {0}, {1}", out(reg) value, const CSR_ASID);
+        }
+        value & ASID_MASK
+    }
+
+    #[inline]
+    fn write_asid(asid: usize) {
+        unsafe {
+            asm!("csrwr {0}, {1}", in(reg) (asid & ASID_MASK), const CSR_ASID);
+        }
+    }
+
+    #[inline]
+    const fn token_pgdl(token: usize) -> usize { token & TOKEN_PGDL_MASK }
+
+    #[inline]
+    const fn token_asid(token: usize) -> usize { (token >> TOKEN_ASID_SHIFT) & ASID_MASK }
 
     /// 全局 TLB 刷新。
     #[inline]
@@ -48,12 +75,13 @@ impl LoongArch64Paging {
 
     #[inline]
     pub fn active_address_space_token() -> usize {
-        Self::read_pgdl()
+        Self::token_pgdl(Self::read_pgdl()) | (Self::read_asid() << TOKEN_ASID_SHIFT)
     }
 
     #[inline]
     pub fn activate_address_space_token_and_flush(token: usize) {
-        Self::write_pgdl(token);
+        Self::write_pgdl(Self::token_pgdl(token));
+        Self::write_asid(Self::token_asid(token));
         Self::invtlb_all();
     }
 

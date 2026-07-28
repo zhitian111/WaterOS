@@ -92,8 +92,8 @@ pub fn init(_dtb_pa : usize, ram_end_exclusive : usize) {
     frame_alloctor::init_frame_allocator(BasePPN { val : start_ppn },
                                          BasePPN { val : usable_end_ppn });
 
-    let mut aspace =
-        LoongArch64AddressSpace::new().expect("kernel_mm: LoongArch64AddressSpace::new failed");
+    let mut aspace = LoongArch64AddressSpace::new_kernel()
+        .expect("kernel_mm: LoongArch64AddressSpace::new_kernel failed");
 
     let map_identity = |aspace : &mut LoongArch64AddressSpace,
                         start : usize,

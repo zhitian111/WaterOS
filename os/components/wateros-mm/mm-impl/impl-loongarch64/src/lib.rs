@@ -16,6 +16,7 @@ use api_v0::perm::PagePerm;
 use frame_alloctor::{frame_alloc_result, frame_dealloc_result};
 use wateros_base::addr::BasePPN;
 
+mod asid;
 mod pagetable;
 
 mod kernel_elf;
@@ -91,7 +92,7 @@ pub mod kernel_mm_impl {
     /// `UserTask::user_aspace_ptr()`， 即 `LoongArch64AddressSpace`
     /// 的泄漏裸指针。
     ///
-    /// 返回 `(子地址空间裸指针, 子 PGDL 值)`；`parent_aspace_ptr == 0`
+    /// 返回 `(子地址空间裸指针, 子地址空间 token)`；`parent_aspace_ptr == 0`
     /// 时返回 [`api_v0::error::MmError::InvalidAddress`]。
     // 本方法代码由AI完成
     pub fn fork_user_aspace(parent_aspace_ptr : usize) -> api_v0::error::MmResult<(usize, usize)> {
