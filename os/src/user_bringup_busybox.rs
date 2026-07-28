@@ -114,7 +114,7 @@ const BRINGUP_COMMANDS : &[BringupCommand] = &[
 /// 线上决赛镜像的两组 glibc 测例，路径与 `final_test_case/README.md` 一致。
 #[cfg(all(feature = "final_online", feature = "final_online_smp_test"))]
 const BRINGUP_COMMANDS : &[BringupCommand] =
-    &[BringupCommand { program : "/busybox",
+    &[BringupCommand { program : "/glibc/busybox",
                        argv : &["sh",
                                 "-c",
                                 "rm -rf /tmp/wateros-smp-test; mkdir -p \
