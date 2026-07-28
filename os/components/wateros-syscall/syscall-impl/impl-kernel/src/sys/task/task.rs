@@ -26,7 +26,13 @@ pub(crate) fn sys_yield() -> UserRet {
     UserRet::from_success(0)
 }
 
+#[inline]
+fn normalize_user_exit_code(exit_code : isize) -> isize {
+    (exit_code as usize & 0xFF) as isize
+}
+
 pub(crate) fn sys_exit(exit_code : isize) -> isize {
+    let exit_code = normalize_user_exit_code(exit_code);
     if let Some(task_id) = task::current_task_id() {
         if let Some(process_task) = task::process_task_snapshot(task_id) {
             let last_thread = task::task_exit_would_finish_process(task_id)
@@ -49,6 +55,7 @@ pub(crate) fn sys_exit(exit_code : isize) -> isize {
 }
 
 pub(crate) fn sys_exit_group(exit_code : isize) -> isize {
+    let exit_code = normalize_user_exit_code(exit_code);
     if let Some(task_id) = task::current_task_id() {
         super::wait::wake_clear_child_tid_for_task(task_id);
         if let Some(process_task) = task::current_process_task_snapshot() {
@@ -75,6 +82,19 @@ pub(crate) fn sys_exit_group(exit_code : isize) -> isize {
         super::wait::drop_task_runtime_resources(task_id);
     }
     task::exit_group_current(exit_code)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_user_exit_code;
+
+    #[test]
+    fn user_exit_status_is_limited_to_low_byte() {
+        assert_eq!(normalize_user_exit_code(0), 0);
+        assert_eq!(normalize_user_exit_code(256), 0);
+        assert_eq!(normalize_user_exit_code(-1), 255);
+        assert_eq!(normalize_user_exit_code(-129), 127);
+    }
 }
 
 pub(crate) fn sys_prctl(args : SyscallArgs) -> UserRet {
