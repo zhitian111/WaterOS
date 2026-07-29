@@ -855,15 +855,29 @@ pub fn mknod_path(path : &str, mode : u32, rdev : u32) -> VfsResult<()> {
 /// 重命名绝对路径（经挂载表路由；要求 old/new 落在同一 RW 卷）。
 // 本方法代码由AI完成
 pub fn rename_path(old_path : &str, new_path : &str) -> VfsResult<()> {
-    mount_table::assert_path_writable(old_path)?;
-    mount_table::assert_path_writable(new_path)?;
-    let (fs_old, rel_old) = fs_and_rel_rw(old_path)?;
-    let (fs_new, rel_new) = fs_and_rel_rw(new_path)?;
+    let old_path = normalize_absolute_path(old_path)?;
+    let new_path = normalize_absolute_path(new_path)?;
+    mount_table::assert_path_writable(old_path.as_str())?;
+    mount_table::assert_path_writable(new_path.as_str())?;
+    let (fs_old, rel_old) = fs_and_rel_rw(old_path.as_str())?;
+    let (fs_new, rel_new) = fs_and_rel_rw(new_path.as_str())?;
     if !Arc::ptr_eq(&fs_old, &fs_new) {
         return Err(VfsError::Unsupported);
     }
+
+    // The page cache is path-keyed. Flush before the directory entry moves so
+    // a later eviction never tries to write a dirty page through the stale
+    // source path and poison an unrelated cache miss.
+    let cache = impl_page_cache::global_cache(fs::rootfs::active_impl::mount_generation());
+    let mut io = paged_handle::FsPageIo;
+    cache.flush(&mut io, old_path.as_str(), core::convert::identity)?;
+    cache.flush(&mut io, new_path.as_str(), core::convert::identity)?;
+
     let mut sess = MountedRwSession::new(fs_old);
-    sess.rename(rel_old.as_str(), rel_new.as_str())
+    sess.rename(rel_old.as_str(), rel_new.as_str())?;
+    cache.purge_closed_file(old_path.as_str());
+    cache.purge_closed_file(new_path.as_str());
+    Ok(())
 }
 
 /// 与只读根句柄分离的可写挂载会话。

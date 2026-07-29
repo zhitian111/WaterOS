@@ -110,6 +110,19 @@ impl GlobalCacheState {
         if let Some(idx) = self.free.pop() {
             return idx;
         }
+        // A cache miss must not depend on writing back an unrelated temporary
+        // file when a clean page can be discarded immediately. Build tools
+        // keep many renamed/unlinked temporary files in flight, so blindly
+        // evicting the oldest page can turn a stale dirty path into a failed
+        // executable-page read.
+        if let Some(pos) = self.lru
+                               .iter()
+                               .position(|&idx| !self.frames[idx].dirty)
+        {
+            return self.lru
+                       .remove(pos)
+                       .expect("clean LRU position must remain valid");
+        }
         if let Some(idx) = self.lru.pop_front() {
             return idx;
         }
@@ -648,14 +661,20 @@ impl GlobalFilePageCache {
             let page_idx = pos / FILE_PAGE_SIZE as u64;
             let page_off = (pos % FILE_PAGE_SIZE as u64) as usize;
             let chunk = (FILE_PAGE_SIZE - page_off).min(max - done);
-            self.install_page(io, path, page_idx, file_size, map_err)?;
-            let cache = self.state.lock();
-            let idx = *cache.index
-                            .get(&(self.file_key(path), page_idx))
-                            .expect("page installed");
-            buf[done..done + chunk].copy_from_slice(&cache.frames[idx].data
-                                                        [page_off..page_off + chunk]);
-            drop(cache);
+            loop {
+                self.install_page(io, path, page_idx, file_size, map_err)?;
+                let cache = self.state.lock();
+                let Some(&idx) = cache.index
+                                      .get(&(self.file_key(path), page_idx))
+                else {
+                    // Eviction or path invalidation may race between
+                    // install_page dropping the cache lock and this lookup.
+                    continue;
+                };
+                buf[done..done + chunk].copy_from_slice(&cache.frames[idx].data
+                                                            [page_off..page_off + chunk]);
+                break;
+            }
             done += chunk;
             pos += chunk as u64;
         }
@@ -704,26 +723,28 @@ impl GlobalFilePageCache {
                 let guard = entry.read();
                 guard.logical_size
             };
-            if page_start >= logical_size || (page_off == 0 && chunk == FILE_PAGE_SIZE) {
-                self.install_zero_page(io, path, page_idx, map_err)?;
-            } else {
-                self.install_page(io,
-                                  path,
-                                  page_idx,
-                                  logical_size,
-                                  map_err)?;
-            }
-            let version = {
+            let version = loop {
+                if page_start >= logical_size || (page_off == 0 && chunk == FILE_PAGE_SIZE) {
+                    self.install_zero_page(io, path, page_idx, map_err)?;
+                } else {
+                    self.install_page(io,
+                                      path,
+                                      page_idx,
+                                      logical_size,
+                                      map_err)?;
+                }
                 let mut cache = self.state.lock();
-                let idx = *cache.index
-                                .get(&(self.file_key(path), page_idx))
-                                .expect("page for write");
+                let Some(&idx) = cache.index
+                                      .get(&(self.file_key(path), page_idx))
+                else {
+                    continue;
+                };
                 cache.frames[idx].data[page_off..page_off + chunk].copy_from_slice(&buf[written..
                                                                                         written +
                                                                                         chunk]);
                 let version = cache.mark_dirty(idx);
                 cache.touch_lru(idx);
-                version
+                break version;
             };
             let mut guard = entry.write();
             guard.dirty_pages
@@ -1259,5 +1280,29 @@ mod tests {
 
         cache.release_open_ref("/tmp/refcount");
         assert!(!cache.files.lock().contains_key(&cache.file_key("/tmp/refcount")));
+    }
+
+    #[test]
+    fn eviction_prefers_clean_page_over_older_dirty_page() {
+        let mut state = GlobalCacheState {
+            capacity : 2,
+            frames : vec![
+                PageFrame { key : None,
+                            data : vec![0; FILE_PAGE_SIZE],
+                            dirty : true,
+                            version : 1 },
+                PageFrame { key : None,
+                            data : vec![0; FILE_PAGE_SIZE],
+                            dirty : false,
+                            version : 0 },
+            ],
+            index : BTreeMap::new(),
+            lru : VecDeque::from([0, 1]),
+            free : Vec::new(),
+            next_version : 1,
+        };
+
+        assert_eq!(state.pop_free_or_lru_index(), 1);
+        assert_eq!(state.lru, VecDeque::from([0]));
     }
 }
