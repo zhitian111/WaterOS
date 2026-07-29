@@ -48,18 +48,16 @@ pub(crate) fn sys_read(args : SyscallArgs) -> UserRet {
     if ptr == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
     }
-    if len > SYSCALL_IO_MAX {
-        return UserRet::from_error(ErrNo::EINVAL);
-    }
-    if len as usize <= SMALL_READ_BUF_SIZE {
+    let transfer_len = read_transfer_len(len);
+    if transfer_len <= SMALL_READ_BUF_SIZE {
         let mut kbuf = [0u8; SMALL_READ_BUF_SIZE];
-        let n = match read_fd(fd, &mut kbuf[..len]) {
+        let n = match read_fd(fd, &mut kbuf[..transfer_len]) {
             Ok(n) => n,
             Err(err) => return UserRet::from_error(err),
         };
         return do_finish_read(fd, ptr, &kbuf[..n], n);
     }
-    let mut kbuf = match try_kbuf(len, SYSCALL_IO_MAX) {
+    let mut kbuf = match try_kbuf(transfer_len, SYSCALL_IO_MAX) {
         Ok(buf) => buf,
         Err(err) => return UserRet::from_error(err),
     };
@@ -68,6 +66,12 @@ pub(crate) fn sys_read(args : SyscallArgs) -> UserRet {
         Err(err) => return UserRet::from_error(err),
     };
     do_finish_read(fd, ptr, &kbuf[..n], n)
+}
+
+/// 内核缓冲区有独立上限；大 `count` 通过合法短读分批完成，不能返回 `EINVAL`。
+fn read_transfer_len(requested : usize) -> usize {
+    requested.min(MAX_IO)
+             .min(SYSCALL_IO_MAX)
 }
 
 // 本方法代码由AI完成
@@ -231,6 +235,22 @@ fn read_fd(fd : usize, buf : &mut [u8]) -> Result<usize, ErrNo> {
                               e),
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_transfer_len_preserves_small_requests() {
+        assert_eq!(read_transfer_len(4096), 4096);
+    }
+
+    #[test]
+    fn read_transfer_len_turns_large_requests_into_short_reads() {
+        assert_eq!(read_transfer_len(SYSCALL_IO_MAX + 1), SYSCALL_IO_MAX);
+        assert_eq!(read_transfer_len(usize::MAX), SYSCALL_IO_MAX);
+    }
 }
 
 fn read_tcp_socket_blocking(fd : usize, buf : &mut [u8]) -> Result<usize, ErrNo> {

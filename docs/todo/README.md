@@ -1,5 +1,18 @@
 # WaterOS 内核性能优化分析（待办）
 
+## 当前统一任务入口
+
+当前开放问题、已实现待复验项目、依赖关系和 agent 可直接执行的任务统一见
+[`../tasks/known-issues/README.md`](../tasks/known-issues/README.md)。该入口不按成员
+划分，并优先于本目录中较早的人员分配和历史状态描述；本目录的 `perf-*.md` 继续作为
+完整问题证据与风险清单。
+
+## 当前后续路线
+
+BuildStorm 大文件读取问题修复后的兼容性收口、测量、优化和最终回归，统一从
+[`final-followup-roadmap.md`](./final-followup-roadmap.md) 进入。该路线按四个阶段
+分文件，并以完整 BuildStorm 成功作为进入性能优化的门禁。
+
 ## 决赛测例入口
 
 2026 年决赛 CAgent 与 BuildStorm 的静态差距、实施顺序和验收标准见 [`final-test-readiness.md`](./final-test-readiness.md)。2026-07-27 官方镜像实测确认的动态 ELF、shell、脚本等待和 `/proc/uptime` 阻断见 [`final-cagent-buildstorm-runtime-blockers.md`](./final-cagent-buildstorm-runtime-blockers.md)。三人任务分配、接口边界和阶段计划见 [`final-test-team-allocation.md`](./final-test-team-allocation.md)。未来两周的周一、周三、周五会议安排及第一次会议材料见 [`final-test-two-week-meetings.md`](./final-test-two-week-meetings.md)。A 与 B 第一轮 SMP 协作的接口、数据结构和改动位置见 [`smp-a-b-first-interface-contract.md`](./smp-a-b-first-interface-contract.md)。其中双架构 8 核 SMP、`/proc/uptime`、在线 CPU 报告和官方镜像端到端验证是当前 P0 阻断项。多核代码位置的详细预记录见 [`../单核设计转多核设计需要更改的位置的预记录.md`](../单核设计转多核设计需要更改的位置的预记录.md)。
