@@ -20,6 +20,12 @@
 - 当前参考镜像不能解析完整负载：`/work/tgoskits/Cargo.lock` 锁定
   `web-sys 0.3.103`，镜像离线索引最高仅含 `0.3.94`。这是镜像内容不一致，不是
   WaterOS 的文件读取错误。
+- 8 crate、8 job 并行探针已完成一轮：`rc=0 built=8 elapsed_s=566.82`；随后
+  CAgent 10/10 通过，运行后镜像通过 `e2fsck -fn` 五阶段检查。
+- 已修复并行编译暴露的 ext4 目录扩容、同目录 rename link count、页缓存脏页淘汰
+  错误串扰和页安装/淘汰 TOCTOU 竞态。
+- 已修复 `exit_group` 提前把远端线程标记为 Exited 的竞态；进程只有在所有线程实际
+  退出后才进入可 reap 状态。
 
 在取得依赖完整的评测镜像前，使用
 `os/scripts/guest_buildstorm_parallel_probe.sh` 验证 8 crate、8 job 的
@@ -30,10 +36,10 @@
 
 ### E1. 并行编译正确性
 
-- [ ] 将 guest probe 注入临时 overlay，连续运行至少三轮。
+- [ ] 将 guest probe 注入临时镜像副本，连续运行至少三轮（当前完成 1/3）。
 - [ ] 每轮必须出现 `BUILDSTORM_PROBE_END rc=0 built=8`，且无 panic、死锁和用户任务
       永久阻塞。
-- [ ] 若失败，按首个错误 syscall 或等待对象定位；每个根因独立修复、验证和提交。
+- [x] 按首个错误 syscall、fault 或等待对象定位；已按根因独立修复、验证和提交。
 
 ### E2. IPC 与调度热点
 
@@ -44,15 +50,15 @@
 
 ### E3. 文件与进程调用链
 
-- [ ] 记录 8 crate probe 的墙钟时间，定位 ext4、页缓存、fork/exec 或 fd table 的
+- [x] 记录 8 crate probe 的墙钟时间，定位 ext4、页缓存、fork/exec 或 fd table 的
       主要耗时。
 - [ ] 优先消除全局锁下的阻塞 I/O、重复路径解析和逐页/逐小块串行操作。
 - [ ] 每项优化前后使用相同 overlay、8 核和 8 GiB 配置对比。
 
 ### E4. 最终验收
 
-- [ ] `make kernel-rv-final` 通过。
-- [ ] CAgent 10/10 至少再回归一轮。
+- [x] `make kernel-rv-final` 通过。
+- [x] CAgent 10/10 至少再回归一轮。
 - [ ] 初赛脚本不出现新增 panic、卡死或关键 syscall 语义回归。
 - [ ] 取得依赖完整镜像后运行官方 BuildStorm，要求正式产物不少于 500 KiB。
 
