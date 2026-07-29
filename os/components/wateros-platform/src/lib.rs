@@ -246,6 +246,7 @@ pub mod reset {
 pub mod console {
     pub use api_v0::console::{PlatformConsoleError, PlatformConsoleResult};
     use base::sync::MultiprocessorSafeCell;
+    use core::sync::atomic::{AtomicUsize, Ordering};
 
     struct ConsoleInterruptGuard(Option<arch::interrupt::ArchInterruptState>);
 
@@ -274,6 +275,8 @@ pub mod console {
     /// Serializes complete console buffers across CPUs, including early boot
     /// output before the runtime UART writer has been registered.
     static CONSOLE_WRITE_LOCK : MultiprocessorSafeCell<()> = MultiprocessorSafeCell::new(());
+    const NO_CONSOLE_OWNER : usize = usize::MAX;
+    static CONSOLE_WRITE_OWNER : AtomicUsize = AtomicUsize::new(NO_CONSOLE_OWNER);
 
     /// 安装运行期控制台写入端。后续内核日志与用户态 stdout 可汇聚到同一 UART
     /// 设备锁，而不让 platform 层反向依赖 driver 层。
@@ -284,6 +287,24 @@ pub mod console {
     #[inline]
     fn runtime_writer() -> Option<RuntimeConsoleWriter> { *RUNTIME_CONSOLE_WRITER.lock() }
 
+    fn with_console_write_lock<R>(write : impl FnOnce(bool) -> R) -> R {
+        let _interrupt_guard = ConsoleInterruptGuard::new();
+        let cpu = arch::cpu::current_cpu_id().raw();
+        let guard = match CONSOLE_WRITE_LOCK.try_lock() {
+            Some(guard) => guard,
+            None if CONSOLE_WRITE_OWNER.load(Ordering::Acquire) == cpu => {
+                return write(true);
+            }
+            None => CONSOLE_WRITE_LOCK.lock(),
+        };
+
+        CONSOLE_WRITE_OWNER.store(cpu, Ordering::Release);
+        let result = write(false);
+        CONSOLE_WRITE_OWNER.store(NO_CONSOLE_OWNER, Ordering::Release);
+        drop(guard);
+        result
+    }
+
     #[inline]
     pub fn console_write_a_byte(byte : u8) -> PlatformConsoleResult<()> {
         console_write_a_buffer(core::slice::from_ref(&byte))
@@ -291,14 +312,14 @@ pub mod console {
 
     #[inline]
     pub fn console_write_a_buffer(bytes : &[u8]) -> PlatformConsoleResult<()> {
-        let _interrupt_guard = ConsoleInterruptGuard::new();
-        let Some(_guard) = CONSOLE_WRITE_LOCK.try_lock() else {
-            return crate::active_impl::console::console_write_a_buffer(bytes);
-        };
-        if let Some(writer) = runtime_writer() {
-            return writer(bytes);
-        }
-        crate::active_impl::console::console_write_a_buffer(bytes)
+        with_console_write_lock(|reentrant| {
+            if !reentrant {
+                if let Some(writer) = runtime_writer() {
+                    return writer(bytes);
+                }
+            }
+            crate::active_impl::console::console_write_a_buffer(bytes)
+        })
     }
 
     /// 在同一次底层控制台锁持有期间完成完整格式化操作。
@@ -315,13 +336,11 @@ pub mod console {
             }
         }
 
-        let _interrupt_guard = ConsoleInterruptGuard::new();
-        let Some(_guard) = CONSOLE_WRITE_LOCK.try_lock() else {
-            return core::fmt::Write::write_fmt(&mut Writer(None), args)
-                .map_err(|_| PlatformConsoleError::WriteFailure);
-        };
-        core::fmt::Write::write_fmt(&mut Writer(runtime_writer()), args)
-            .map_err(|_| PlatformConsoleError::WriteFailure)
+        with_console_write_lock(|reentrant| {
+            let writer = if reentrant { None } else { runtime_writer() };
+            core::fmt::Write::write_fmt(&mut Writer(writer), args)
+                .map_err(|_| PlatformConsoleError::WriteFailure)
+        })
     }
 
     #[inline]
