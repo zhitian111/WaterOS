@@ -451,15 +451,16 @@ impl ProcessRegistry {
         let process = self.process_mut(pid)
                           .ok_or(ProcessError::ProcessNotFound)?;
         process.state = ProcessState::Exiting(exit_code);
-        for task in process.tasks
-                           .values_mut()
+        // Running siblings cannot be declared exited here: a parent could reap
+        // the process and destroy its address space while they are still
+        // executing on remote CPUs. Each sibling observes Exiting at its next
+        // trap boundary and marks itself exited through mark_task_exited.
+        if process.tasks
+                  .values()
+                  .all(|task| matches!(task.state, ProcessTaskState::Exited(_)))
         {
-            task.state = ProcessTaskState::Exited(exit_code);
+            process.state = ProcessState::Exited(exit_code);
         }
-        // 整个进程将由 wait/reap 路径一次性释放，无须再走 member 批量回收。
-        process.exited_member_task_ids
-               .clear();
-        process.state = ProcessState::Exited(exit_code);
         Ok(())
     }
 
@@ -976,7 +977,7 @@ impl ProcessRegistry {
 
 #[cfg(test)]
 mod tests {
-    use api_v0::ProcessId;
+    use api_v0::{CloneFlags, ProcessId, ProcessState};
 
     use super::ProcessRegistry;
 
@@ -1014,5 +1015,31 @@ mod tests {
                    alloc::vec![first, third]);
         assert!(!registry.process_pids_in_pgid(second)
                          .contains(&first));
+    }
+
+    #[test]
+    fn process_stays_exiting_until_every_thread_exits() {
+        let mut registry = ProcessRegistry::new();
+        let pid = registry.create_process_for_task(10, None, None)
+                          .expect("create process");
+        registry.add_task_to_process(pid, 11, CloneFlags::CLONE_THREAD, 0, None)
+                .expect("add member thread");
+
+        registry.mark_process_exited(pid, 9)
+                .expect("start process exit");
+        assert_eq!(registry.process_snapshot(pid).unwrap().state,
+                   ProcessState::Exiting(9));
+        assert!(registry.reap_process(pid).is_none());
+
+        registry.mark_task_exited(10, 9)
+                .expect("exit leader");
+        assert_eq!(registry.process_snapshot(pid).unwrap().state,
+                   ProcessState::Exiting(9));
+        assert!(registry.reap_process(pid).is_none());
+
+        registry.mark_task_exited(11, 9)
+                .expect("exit final member");
+        assert_eq!(registry.process_snapshot(pid).unwrap().state,
+                   ProcessState::Exited(9));
     }
 }

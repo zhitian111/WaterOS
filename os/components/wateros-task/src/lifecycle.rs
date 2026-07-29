@@ -138,6 +138,7 @@ pub fn record_current_process_exit(exit_code: TaskExitCode) {
     if let Some(process_task) = crate::process::current_process_task_snapshot() {
         active_impl::with_process_registry(|registry| {
             let _ = registry.mark_process_exited(process_task.pid, exit_code);
+            let _ = registry.mark_task_exited(process_task.task_id, exit_code);
         });
     }
 }
