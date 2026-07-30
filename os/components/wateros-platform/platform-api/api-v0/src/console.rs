@@ -17,30 +17,3 @@ pub enum PlatformConsoleError {
 
 /// [`PlatformConsoleError`] 上的 `Result` 别名。
 pub type PlatformConsoleResult<T> = Result<T, PlatformConsoleError>;
-
-/// 平台控制台能力；实现可以是 SBI console、MMIO UART 或其它 board 后端。
-pub trait PlatformConsole {
-    #[inline]
-    fn platform_console_write_a_byte(_byte : u8) -> PlatformConsoleResult<()> {
-        Err(PlatformConsoleError::Unsupported)
-    }
-
-    #[inline]
-    fn platform_console_write_a_buffer(bytes : &[u8]) -> PlatformConsoleResult<()> {
-        if !bytes.is_empty() && !Self::is_available() {
-            return Err(PlatformConsoleError::Unavailable);
-        }
-        for &byte in bytes {
-            Self::platform_console_write_a_byte(byte)?;
-        }
-        Ok(())
-    }
-
-    #[inline]
-    fn platform_console_flush() -> PlatformConsoleResult<()> {
-        Err(PlatformConsoleError::BufferFailure)
-    }
-
-    #[inline]
-    fn is_available() -> bool { true }
-}

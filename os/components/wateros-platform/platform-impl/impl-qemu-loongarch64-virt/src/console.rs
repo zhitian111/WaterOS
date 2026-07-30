@@ -3,8 +3,8 @@
 //! 这是 board 层的 early console：用于 runtime logging 初始化前后的最小输出。
 //! 完整串口设备对象位于 `wateros-driver` 的 LoongArch QEMU 实现中。
 
-use core::ptr::{read_volatile, write_volatile};
 use api_v0::console::PlatformConsoleResult;
+use core::ptr::{read_volatile, write_volatile};
 
 /// QEMU LoongArch64 `virt` UART16550 默认 MMIO 物理基址。
 const UART_BASE: usize = 0x1FE0_01E0;
@@ -18,6 +18,10 @@ fn uart_lsr() -> u8 {
     unsafe { read_volatile(UART_LSR as *const u8) }
 }
 
+/// 忙等直到 UART THR 可写，再执行一个 volatile MMIO 写。
+///
+/// 早期控制台没有 timeout：QEMU machine 的 UART 不可用代表启动环境已异常；运行期
+/// 的跨核串行化与死锁规避不在此处，而在 `platform::console`。
 #[inline]
 fn uart_write_byte_raw(byte: u8) {
     while (uart_lsr() & UART_LSR_THRE) == 0 {
@@ -39,6 +43,8 @@ pub fn console_write_a_byte(byte: u8) -> PlatformConsoleResult<()> {
 }
 
 /// 将缓冲区原样写入早期 UART 控制台。
+///
+/// `\n` 会由单字节接口转换为 CRLF，因此“原样”指字节顺序而非 wire 字节完全不变。
 #[inline]
 pub fn console_write_a_buffer(bytes: &[u8]) -> PlatformConsoleResult<()> {
     for &byte in bytes {

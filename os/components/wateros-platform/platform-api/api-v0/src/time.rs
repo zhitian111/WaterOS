@@ -22,13 +22,16 @@ pub type PlatformTimeResult<T> = Result<T, PlatformTimeError>;
 /// 固件查询或板级常量。**不应**与“是否能在 arch 层读到 `timebase-frequency` CSR”
 /// 混为一谈——后者属于 `wateros-platform-arch` 的职责与能力集。
 ///
-/// 实现体提供的 [`PlatformTime::time_frequency_hz`] 为 **板级默认 / 回退**；
+/// 实现体提供的 [`PlatformTime::get_time_frequency_hz`] 为 **板级默认 / 回退**；
 /// 内核引导期若已从 DTB 探测到频率，应经 `wateros-platform` 聚合层的
 /// `platform::time::set_frequency_hz` 覆盖后再供 [`crate::timer`] 使用。
 pub trait PlatformTime {
+    /// 返回 profile 的默认 tick 频率。
+    ///
+    /// TIME_CONTRACT: 返回的单位必须是 tick/秒，并且必须匹配 arch `read_time_tick`
+    /// 的来源；DTB 探测值会在聚合层覆盖这个回退值。
     #[inline]
     fn get_time_frequency_hz() -> PlatformTimeResult<u64> {
         Err(PlatformTimeError::Unsupported)
     }
 }
-

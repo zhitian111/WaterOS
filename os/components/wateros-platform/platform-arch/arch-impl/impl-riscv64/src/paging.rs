@@ -27,7 +27,8 @@ impl Riscv64Paging {
                     let asid = (token & SATP_ASID_MASK) >> SATP_ASID_SHIFT;
                     asm!("sfence.vma x0, {0}", in(reg) asid);
                 }
-                api_v0::paging::TlbFlushRange::Range { .. } | api_v0::paging::TlbFlushRange::All => {
+                api_v0::paging::TlbFlushRange::Range { .. }
+                | api_v0::paging::TlbFlushRange::All => {
                     asm!("sfence.vma x0, x0");
                 }
             }
@@ -37,7 +38,7 @@ impl Riscv64Paging {
     /// 读取当前地址空间 token；在 RISC-V Sv39 下即 `satp` 当前值。
     #[inline]
     pub fn active_address_space_token() -> usize {
-        let value : usize;
+        let value: usize;
         unsafe {
             asm!("csrr {0}, satp", out(reg) value);
         }
@@ -49,8 +50,8 @@ impl Riscv64Paging {
     /// 调用时当前 `satp` 必须指向可执行的有效页表；探测过程保持 MODE/PPN
     /// 不变，恢复原 token 后执行一次全量 fence。
     pub fn initialize_address_space_ids() -> usize {
-        let original : usize;
-        let observed : usize;
+        let original: usize;
+        let observed: usize;
         unsafe {
             asm!("csrr {0}, satp", out(reg) original);
             let probe = original | SATP_ASID_MASK;
@@ -61,8 +62,10 @@ impl Riscv64Paging {
         }
         let implemented = ((observed & SATP_ASID_MASK) >> SATP_ASID_SHIFT).count_ones() as usize;
         unsafe {
-            core::ptr::write_volatile(core::ptr::addr_of_mut!(__wateros_riscv_asid_enabled),
-                                      usize::from(implemented != 0));
+            core::ptr::write_volatile(
+                core::ptr::addr_of_mut!(__wateros_riscv_asid_enabled),
+                usize::from(implemented != 0),
+            );
         }
         implemented
     }
@@ -70,7 +73,7 @@ impl Riscv64Paging {
     /// 激活指定地址空间 token；在 RISC-V Sv39 下即写入 `satp` 并执行全局
     /// `sfence.vma`。
     #[inline]
-    pub fn activate_address_space_token_and_flush(token : usize) {
+    pub fn activate_address_space_token_and_flush(token: usize) {
         unsafe {
             asm!("csrw satp, {0}", in(reg) token);
             asm!("sfence.vma x0, x0");

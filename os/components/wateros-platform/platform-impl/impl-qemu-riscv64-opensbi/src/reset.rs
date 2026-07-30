@@ -1,13 +1,14 @@
-//! 本模块代码由AI完成
 //! OpenSBI system reset 后端。
+//!
+//! PLATFORM_BOUNDARY: 复位请求经 SBI System Reset 扩展离开 S-mode；该函数若返回，
+//! 表示固件拒绝或未实现请求，而不是已经完成复位。
 
 use api_v0::reset::{
     PlatformResetError, PlatformResetReason, PlatformResetResult, PlatformResetType,
 };
 use sbi::{system_reset, ResetReason, ResetType};
 
-/// 映射到 SBI 的复位类型枚举。
-// 本结构代码由AI完成
+/// WaterOS reset 类型到 SBI raw reset type 的窄映射。
 pub enum OpenSBIResetType {
     /// 关机。
     Shutdown,
@@ -17,8 +18,7 @@ pub enum OpenSBIResetType {
     WarmReboot,
 }
 
-/// 映射到 SBI 的复位原因枚举。
-// 本结构代码由AI完成
+/// WaterOS reset 原因到 SBI raw reset reason 的窄映射。
 pub enum OpenSBIResetReason {
     /// 无特定原因。
     NoReason,
@@ -69,9 +69,14 @@ impl ResetType for OpenSBIResetType {
 }
 
 #[inline]
-pub fn reset(reset_type: PlatformResetType,
-             reset_reason: PlatformResetReason)
-             -> PlatformResetResult<()> {
+/// 向 OpenSBI 发起系统 reset。
+///
+/// 调用成功时 firmware 不应返回；因此返回路径统一映射为 `Failed`，保留给调用方的
+/// panic/降级逻辑处理。不得在持锁或中断上下文中依赖该调用返回。
+pub fn reset(
+    reset_type: PlatformResetType,
+    reset_reason: PlatformResetReason,
+) -> PlatformResetResult<()> {
     system_reset(
         Into::<OpenSBIResetType>::into(reset_type),
         Into::<OpenSBIResetReason>::into(reset_reason),
@@ -80,11 +85,19 @@ pub fn reset(reset_type: PlatformResetType,
 }
 
 #[inline]
+/// 请求冷重启的便捷入口。
 pub fn reboot(reset_reason: PlatformResetReason) -> PlatformResetResult<()> {
-    reset(PlatformResetType::ColdReboot, reset_reason)
+    reset(
+        PlatformResetType::ColdReboot,
+        reset_reason,
+    )
 }
 
 #[inline]
+/// 请求关机的便捷入口。
 pub fn shutdown(reset_reason: PlatformResetReason) -> PlatformResetResult<()> {
-    reset(PlatformResetType::Shutdown, reset_reason)
+    reset(
+        PlatformResetType::Shutdown,
+        reset_reason,
+    )
 }

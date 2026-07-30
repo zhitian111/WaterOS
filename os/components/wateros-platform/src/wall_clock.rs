@@ -2,15 +2,21 @@
 
 use core::sync::atomic::{AtomicI64, Ordering};
 
+/// `CLOCK_REALTIME - CLOCK_MONOTONIC` 的软件偏移。
+///
+/// TIME_CONTRACT: 单调时钟绝不回退；设置时间只更新该偏移。`Relaxed` 足够，因为
+/// 偏移不保护其他数据，调用者只需要读到某一次完整的 `i64` 值。
 static REALTIME_OFFSET_NS: AtomicI64 = AtomicI64::new(0);
 
 /// 当前单调时钟纳秒（与 [`crate::timer::now_duration`] 同源）。
+///
+/// 返回错误表示底层 tick 或频率尚不可用，而不是“时间为 0”。
 pub fn monotonic_ns() -> Result<u128, ()> {
     let duration = crate::timer::now_duration().map_err(|_| ())?;
     Ok(duration.as_nanos())
 }
 
-/// 当前 `CLOCK_REALTIME` 纳秒。
+/// 当前 `CLOCK_REALTIME` 纳秒；若设置为早于 epoch 则钳制为 0。
 pub fn realtime_ns() -> Result<u128, ()> {
     let mono = monotonic_ns()?;
     let offset = REALTIME_OFFSET_NS.load(Ordering::Relaxed) as i128;
@@ -18,6 +24,8 @@ pub fn realtime_ns() -> Result<u128, ()> {
 }
 
 /// 将 `CLOCK_REALTIME` 设为 `target_ns`（相对单调时钟偏移）。
+///
+/// 该操作不访问 RTC 硬件，也不持久化；重启后需由更高层重新设置。
 pub fn set_realtime_ns(target_ns: u128) -> Result<(), ()> {
     let mono = monotonic_ns()?;
     let offset = (target_ns as i128) - (mono as i128);
@@ -73,9 +81,13 @@ pub fn ns_to_rtc_time(ns: u128) -> RtcTimeFields {
 
     let mut m = 0usize;
     let days_in_months = if is_leap_year(y) {
-        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+        [
+            31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+        ]
     } else {
-        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+        [
+            31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+        ]
     };
     while m < 12 && remaining_days >= days_in_months[m] as i64 {
         remaining_days -= days_in_months[m] as i64;
@@ -110,10 +122,12 @@ pub fn rtc_time_to_ns(fields: &RtcTimeFields) -> Result<u128, ()> {
         return Err(());
     }
     let y = fields.tm_year as i64 + 1900;
-    let days = days_since_epoch(y, fields.tm_mon as usize, fields.tm_mday as i32);
-    let sec = fields.tm_hour as u128 * 3600
-        + fields.tm_min as u128 * 60
-        + fields.tm_sec as u128;
+    let days = days_since_epoch(
+        y,
+        fields.tm_mon as usize,
+        fields.tm_mday as i32,
+    );
+    let sec = fields.tm_hour as u128 * 3600 + fields.tm_min as u128 * 60 + fields.tm_sec as u128;
     Ok(days * 86_400 * 1_000_000_000 + sec * 1_000_000_000)
 }
 
@@ -127,9 +141,13 @@ fn days_since_epoch(year: i64, month: usize, mday: i32) -> u128 {
         days += if is_leap_year(y) { 366 } else { 365 };
     }
     let mdays = if is_leap_year(year) {
-        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+        [
+            31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+        ]
     } else {
-        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+        [
+            31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+        ]
     };
     for m in 0..month {
         days += mdays[m] as u128;

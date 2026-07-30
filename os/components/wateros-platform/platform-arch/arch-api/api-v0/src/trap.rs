@@ -54,11 +54,15 @@ pub enum TrapCause {
 impl TrapCause {
     #[inline]
     #[allow(unused)]
-    pub fn is_exception(&self) -> bool { matches!(self, TrapCause::Exception(_)) }
+    pub fn is_exception(&self) -> bool {
+        matches!(self, TrapCause::Exception(_))
+    }
 
     #[inline]
     #[allow(unused)]
-    pub fn is_interrupt(&self) -> bool { matches!(self, TrapCause::Interrupt(_)) }
+    pub fn is_interrupt(&self) -> bool {
+        matches!(self, TrapCause::Interrupt(_))
+    }
 
     #[inline]
     #[allow(unused)]
@@ -108,72 +112,77 @@ pub trait TrapFrameRead {
     /// 线程局部存储指针（LoongArch `$r2` / RISC-V `tp`）。
     #[inline]
     #[allow(unused)]
-    fn user_tls(&self) -> usize { 0 }
+    fn user_tls(&self) -> usize {
+        0
+    }
 
     /// trap 返回用户态时将激活的地址空间 token（RISC-V Sv39 下为 `satp` 编码）。
     fn return_address_space_token(&self) -> usize;
 
     #[inline]
     #[allow(unused)]
-    fn returns_to_kernel(&self) -> bool { !self.returns_to_user() }
+    fn returns_to_kernel(&self) -> bool {
+        !self.returns_to_user()
+    }
 }
 
 #[allow(unused)]
 pub trait TrapFrameWrite {
     /// 设置用户态 PC。
-    fn set_user_pc(&mut self, pc : usize);
+    fn set_user_pc(&mut self, pc: usize);
     /// 将用户态 PC 前移 `bytes` 字节（跳过已模拟的指令）。
-    fn add_user_pc(&mut self, bytes : usize);
+    fn add_user_pc(&mut self, bytes: usize);
     /// 设置用户态栈指针。
-    fn set_user_sp(&mut self, sp : usize);
+    fn set_user_sp(&mut self, sp: usize);
     /// 设置用户程序入口栈布局（`argc`/`argv`/`envp`）；默认无操作。
-    fn set_user_entry_args(&mut self, _argc : usize, _argv : usize, _envp : usize) {}
+    fn set_user_entry_args(&mut self, _argc: usize, _argv: usize, _envp: usize) {}
     /// 标记 trap 返回路径回到用户态。
     fn set_return_to_user(&mut self);
     /// 标记 trap 返回路径留在内核态。
     fn set_return_to_kernel(&mut self);
     /// 写入系统调用返回值到 trap 帧。
-    fn set_syscall_ret(&mut self, ret : UserRet);
+    fn set_syscall_ret(&mut self, ret: UserRet);
     /// 设置用户态 TLS 寄存器（`clone(CLONE_SETTLS)` 等）。
-    fn set_user_tls(&mut self, tls : usize);
+    fn set_user_tls(&mut self, tls: usize);
     /// 具体 token 编码由当前 arch/mm 实现决定；RISC-V Sv39 下为 `satp` 编码值。
-    fn set_return_address_space_token(&mut self, token : usize);
+    fn set_return_address_space_token(&mut self, token: usize);
     #[inline]
     #[allow(unused)]
-    fn prepare_user_return(&mut self, entry_pc : usize, user_sp : usize) {
+    fn prepare_user_return(&mut self, entry_pc: usize, user_sp: usize) {
         self.set_user_pc(entry_pc);
         self.set_user_sp(user_sp);
         self.set_return_to_user();
     }
 }
 
-
 /// 用户态信号帧中保存的、与架构无关的最小机器上下文子集。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C)]
 pub struct SignalMachineContext {
     /// 通用寄存器组（布局由具体 ISA 的 [`SignalFrameCodec`] 解释）。
-    pub gprs : [usize; 32],
+    pub gprs: [usize; 32],
     /// 程序计数器。
-    pub pc : usize,
+    pub pc: usize,
     /// 特权/状态字（如 `sstatus`、LoongArch `prmd` 的用户态子集）。
-    pub status : usize,
+    pub status: usize,
     /// 浮点寄存器快照。
-    pub fpregs : [u64; 32],
+    pub fpregs: [u64; 32],
     /// 浮点控制状态。
-    pub fcsr : u32,
+    pub fcsr: u32,
     /// 对齐填充，保留。
-    pub reserved : u32,
+    pub reserved: u32,
 }
 
 impl Default for SignalMachineContext {
     fn default() -> Self {
-        Self { gprs : [0; 32],
-               pc : 0,
-               status : 0,
-               fpregs : [0; 32],
-               fcsr : 0,
-               reserved : 0 }
+        Self {
+            gprs: [0; 32],
+            pc: 0,
+            status: 0,
+            fpregs: [0; 32],
+            fcsr: 0,
+            reserved: 0,
+        }
     }
 }
 
@@ -183,20 +192,24 @@ pub trait SignalFrameCodec {
     fn capture_signal_context(&self) -> SignalMachineContext;
 
     /// 仅恢复用户态合法的状态；上下文畸形时返回 `false`。
-    fn restore_signal_context(&mut self, context : &SignalMachineContext) -> bool;
+    fn restore_signal_context(&mut self, context: &SignalMachineContext) -> bool;
 
     /// 在用户栈上布置信号处理函数入口帧（handler、restorer、siginfo 等）。
-    fn prepare_signal_handler(&mut self,
-                              handler : usize,
-                              restorer : usize,
-                              frame_sp : usize,
-                              signal : usize,
-                              siginfo : usize,
-                              ucontext : usize);
+    fn prepare_signal_handler(
+        &mut self,
+        handler: usize,
+        restorer: usize,
+        frame_sp: usize,
+        signal: usize,
+        siginfo: usize,
+        ucontext: usize,
+    );
 
     /// 改写已保存的用户上下文，使 `rt_sigreturn` 后以原参数重入被中断的系统调用。
-    fn prepare_syscall_restart(context : &mut SignalMachineContext,
-                               syscall_nr : usize,
-                               args : [usize; 6],
-                               instruction_bytes : usize);
+    fn prepare_syscall_restart(
+        context: &mut SignalMachineContext,
+        syscall_nr: usize,
+        args: [usize; 6],
+        instruction_bytes: usize,
+    );
 }

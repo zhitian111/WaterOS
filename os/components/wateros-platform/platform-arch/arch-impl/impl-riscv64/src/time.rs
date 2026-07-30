@@ -2,9 +2,7 @@
 //!
 //! 与 trap 路径中定时器中断重新武装配合时，应使用同一 tick 语义。
 
-use api_v0::time::{
-    ArchTime, ArchTimeError, ArchTimeFrequency, ArchTimeResult, ArchTimeTick,
-};
+use api_v0::time::{ArchTime, ArchTimeError, ArchTimeFrequency, ArchTimeResult, ArchTimeTick};
 use core::arch::asm;
 
 /// RISC-V 架构时间原语实现：
@@ -28,4 +26,3 @@ impl ArchTime for Riscv64ArchTime {
         Err(ArchTimeError::Unsupported)
     }
 }
-

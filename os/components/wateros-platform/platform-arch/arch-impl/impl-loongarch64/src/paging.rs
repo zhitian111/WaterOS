@@ -25,10 +25,14 @@ pub struct LoongArch64Paging;
 
 impl LoongArch64Paging {
     #[inline]
-    pub fn initialize_address_space_ids() -> usize { 10 }
+    pub fn initialize_address_space_ids() -> usize {
+        10
+    }
 
     #[inline]
-    pub fn flush_tlb_local(_range: api_v0::paging::TlbFlushRange) { Self::invtlb_all(); }
+    pub fn flush_tlb_local(_range: api_v0::paging::TlbFlushRange) {
+        Self::invtlb_all();
+    }
 
     #[inline]
     fn read_pgdl() -> usize {
@@ -63,10 +67,14 @@ impl LoongArch64Paging {
     }
 
     #[inline]
-    const fn token_pgdl(token: usize) -> usize { token & TOKEN_PGDL_MASK }
+    const fn token_pgdl(token: usize) -> usize {
+        token & TOKEN_PGDL_MASK
+    }
 
     #[inline]
-    const fn token_asid(token: usize) -> usize { (token >> TOKEN_ASID_SHIFT) & ASID_MASK }
+    const fn token_asid(token: usize) -> usize {
+        (token >> TOKEN_ASID_SHIFT) & ASID_MASK
+    }
 
     /// 全局 TLB 刷新。
     #[inline]

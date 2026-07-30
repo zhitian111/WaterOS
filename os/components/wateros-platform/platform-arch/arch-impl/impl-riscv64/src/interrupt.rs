@@ -8,6 +8,9 @@ use core::arch::asm;
 use riscv::register::{sie, sstatus};
 
 /// RISC-V 架构中断控制实现（与时间计数读取解耦）。
+///
+/// PLATFORM_BOUNDARY: 所有方法只修改本 hart 的 CSR；timer deadline 由 platform
+/// profile 编程，IPI 的 reason 与调度动作不属于本实现。
 pub struct Riscv64ArchInterrupt;
 
 impl ArchTimerInterruptControl for Riscv64ArchInterrupt {
@@ -69,7 +72,8 @@ impl ArchTimerInterruptControl for Riscv64ArchInterrupt {
 
 /// 清除监督态软中断（SSIP），即写 `sip.SSIP = 0`。
 ///
-/// 在收到来自其他 hart 的 IPI（Supervisor Soft Interrupt）后调用，避免 trap 返回后立即再次触发。
+/// IPI_SYNC: 在取 pending reason 前或后均可，但必须在 trap 返回前调用；否则 SSIP
+/// 保持 pending，`sret` 后会立即再次陷入同一个中断。
 #[inline]
 pub fn clear_soft_interrupt() {
     // SSIP 位于 sip 寄存器的 bit 1；csrc 将目标位清零。
@@ -78,14 +82,18 @@ pub fn clear_soft_interrupt() {
     }
 }
 
-/// Enable supervisor software interrupts (SSIE) on the current hart.
+/// 在当前 hart 打开 SSIE；不会补发此前未处理的 scheduler reason。
 #[inline]
 pub fn enable_soft_interrupt() {
-    unsafe { sie::set_ssoft(); }
+    unsafe {
+        sie::set_ssoft();
+    }
 }
 
-/// Disable supervisor software interrupts (SSIE) on the current hart.
+/// 在当前 hart 关闭 SSIE；仅用于初始化/受控临界阶段，不能作为跨核同步手段。
 #[inline]
 pub fn disable_soft_interrupt() {
-    unsafe { sie::clear_ssoft(); }
+    unsafe {
+        sie::clear_ssoft();
+    }
 }

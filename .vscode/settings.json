@@ -10,7 +10,11 @@
         "FIFO",
         "RR",
         "CACHE_SYNC",
-        "TCB_SYNC"
+        "TCB_SYNC",
+        "PLATFORM_BOUNDARY",
+        "IPI_SYNC",
+        "BOOT_CONTRACT",
+        "TIME_CONTRACT"
     ],
     "todo-tree.highlights.customHighlight": {
         "TODO":     { "icon": "check",  "type": "line", "background": "#2d7d46" },
@@ -23,7 +27,11 @@
         "FIFO":     { "icon": "star",   "type": "line", "background": "#9c27b0" },
         "RR":       { "icon": "sync",   "type": "line", "background": "#00bcd4" },
         "CACHE_SYNC": { "icon": "database", "type": "line", "background": "#ff9800" },
-        "TCB_SYNC": { "icon": "repo",  "type": "line", "background": "#4caf50" }
+        "TCB_SYNC": { "icon": "repo",  "type": "line", "background": "#4caf50" },
+        "PLATFORM_BOUNDARY": { "icon": "layers", "type": "line", "background": "#6b7280" },
+        "IPI_SYNC": { "icon": "sync", "type": "line", "background": "#0f766e" },
+        "BOOT_CONTRACT": { "icon": "rocket", "type": "line", "background": "#7c3aed" },
+        "TIME_CONTRACT": { "icon": "clock", "type": "line", "background": "#2563eb" }
     },
     "todohighlight.keywords": [
         "CHANGE:",
@@ -34,7 +42,11 @@
         "FIFO:",
         "RR:",
         "CACHE_SYNC:",
-        "TCB_SYNC:"
+        "TCB_SYNC:",
+        "PLATFORM_BOUNDARY:",
+        "IPI_SYNC:",
+        "BOOT_CONTRACT:",
+        "TIME_CONTRACT:"
     ],
     "better-todo-tree.general.tags": [
         "TODO",
@@ -47,7 +59,11 @@
         "FIFO",
         "RR",
         "CACHE_SYNC",
-        "TCB_SYNC"
+        "TCB_SYNC",
+        "PLATFORM_BOUNDARY",
+        "IPI_SYNC",
+        "BOOT_CONTRACT",
+        "TIME_CONTRACT"
     ],
     "better-todo-tree.highlights.customHighlight": {
         "TODO":   { "icon": "check", "type": "line", "background": "#2d7d46" },
@@ -59,6 +75,11 @@
         "OTHER":  { "icon": "list",  "type": "line", "background": "#607d8b" },
         "FIFO":   { "icon": "star",  "type": "line", "background": "#9c27b0" },
         "RR":     { "icon": "sync",  "type": "line", "background": "#00bcd4" },
-        "CACHE_SYNC": { "icon": "database", "type": "line", "background": "#ff9800" }
+        "CACHE_SYNC": { "icon": "database", "type": "line", "background": "#ff9800" },
+        "TCB_SYNC": { "icon": "repo", "type": "line", "background": "#4caf50" },
+        "PLATFORM_BOUNDARY": { "icon": "layers", "type": "line", "background": "#6b7280" },
+        "IPI_SYNC": { "icon": "sync", "type": "line", "background": "#0f766e" },
+        "BOOT_CONTRACT": { "icon": "rocket", "type": "line", "background": "#7c3aed" },
+        "TIME_CONTRACT": { "icon": "clock", "type": "line", "background": "#2563eb" }
     }
 }

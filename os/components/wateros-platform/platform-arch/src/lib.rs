@@ -3,12 +3,14 @@
 //!
 //! ## 与 `wateros-platform-impl` 的边界
 //! - 本 crate **仅**操作 CPU 可见的 CSR/汇编约定（如 RISC-V `stimecmp`
-//!   若将来直接 访问也属于 arch 讨论范围）；**经 SBI
-//!   设置下次中断时刻**、**经固件写串口** 等 属于 firmware 层，由依赖方分别引用
-//!   `arch` 与 `firmware` crate 组合使用。
+//!   若将来直接访问也属于 arch 讨论范围）；**经 SBI 设置下次中断时刻**、
+//!   **经固件写串口** 等属于 platform profile。
 //! - trap 路径中的定时器重载、调度 tick、syscall 分发等业务由组合层通过
 //!   `arch-api::kernel_trap` 接入；arch impl 只负责 trap 向量、帧布局和 CSR
 //!   语义。
+//!
+//! 特别地，IPI 的发送属于 profile 的运输层；而目标 CPU 在 trap 中清除本地
+//! SSIP/IOCSR pending 位属于本 crate 的 `interrupt` 模块。
 #![no_std]
 #[cfg(all(feature = "impl-riscv64", feature = "impl-loongarch64"))]
 compile_error!("select only one platform-arch implementation");
@@ -95,7 +97,7 @@ pub mod trap {
 /// 当前 CPU id。
 #[cfg(feature = "api-v0")]
 pub mod cpu {
-    pub use api_v0::cpu::{ArchCpu, ArchCpuInitError, ArchCpuInitResult};
+    pub use api_v0::cpu::{ArchCpuInitError, ArchCpuInitResult};
     #[cfg(feature = "impl-loongarch64")]
     pub use impl_loongarch64::cpu::{current_cpu_id, init_current_cpu};
     #[cfg(feature = "impl-riscv64")]
@@ -117,9 +119,13 @@ pub mod ipi {
     #[cfg(feature = "impl-riscv64")]
     pub fn send_ipi(cpu_mask : base::cpu::CpuMask) -> Result<(), IpiError> {
         impl_riscv64::ipi::send_ipi(cpu_mask).map_err(|error| match error {
-            impl_riscv64::ipi::IpiError::Firmware(code) => IpiError::Firmware(code),
-            impl_riscv64::ipi::IpiError::Unsupported => IpiError::Unsupported,
-        })
+                                                 impl_riscv64::ipi::IpiError::Firmware(code) => {
+                                                     IpiError::Firmware(code)
+                                                 }
+                                                 impl_riscv64::ipi::IpiError::Unsupported => {
+                                                     IpiError::Unsupported
+                                                 }
+                                             })
     }
     #[cfg(not(feature = "impl-riscv64"))]
     pub fn send_ipi(_cpu_mask : base::cpu::CpuMask) -> Result<(), IpiError> {
@@ -240,7 +246,7 @@ pub mod paging {
     /// Flush translations on the current CPU. Architectures may conservatively
     /// widen a range when their ISA does not expose an equivalent operation.
     #[inline]
-    pub fn flush_tlb_local(range: TlbFlushRange) { ArchPagingImpl::flush_tlb_local(range) }
+    pub fn flush_tlb_local(range : TlbFlushRange) { ArchPagingImpl::flush_tlb_local(range) }
 
     /// 关闭 MMU（CRMD.PG = 0），在构建内核页表前确认为直接物理寻址。
     #[inline]

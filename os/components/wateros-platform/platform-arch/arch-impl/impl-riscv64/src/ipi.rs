@@ -12,7 +12,7 @@ pub enum IpiError {
 
 /// 将 `SbiRet` 转换为 `Result<(), ()>`：`error == 0` 为成功。
 #[inline]
-fn sbi_ok(ret : SbiRet) -> Result<(), IpiError> {
+fn sbi_ok(ret: SbiRet) -> Result<(), IpiError> {
     if ret.error == 0 {
         Ok(())
     } else {
@@ -25,7 +25,7 @@ fn sbi_ok(ret : SbiRet) -> Result<(), IpiError> {
 /// 接收方将通过 `SupervisiorSoft` trap 进入内核，处理函数应调用
 /// [`super::interrupt::clear_soft_interrupt`] 清除 SSIP 位。
 #[inline]
-pub fn send_ipi(cpu_mask : CpuMask) -> Result<(), IpiError> {
+pub fn send_ipi(cpu_mask: CpuMask) -> Result<(), IpiError> {
     let hart_mask = HartMask::from_mask_base(cpu_mask.bits() as usize, 0);
     sbi_ok(sbi::send_ipi(hart_mask))
 }

@@ -16,6 +16,9 @@ pub enum PlatformDeadlineTimerError {
 }
 
 /// 绝对 tick deadline；tick 源需与 `platform::timer::now_tick()` 同源。
+///
+/// TIME_CONTRACT: 这是绝对值而非 duration；后端若只接受相对值，必须用同一计数器
+/// 读取 `now` 后自行做饱和转换。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PlatformTimerDeadline(
     /// 绝对 tick deadline，与 `platform::timer::now_tick()` 同源。
@@ -24,14 +27,3 @@ pub struct PlatformTimerDeadline(
 
 /// [`PlatformDeadlineTimerError`] 上的 `Result` 别名。
 pub type PlatformDeadlineTimerResult<T> = Result<T, PlatformDeadlineTimerError>;
-
-/// 平台 deadline timer 能力。
-pub trait PlatformDeadlineTimer {
-    #[inline]
-    fn platform_set_timer(_time : PlatformTimerDeadline) -> PlatformDeadlineTimerResult<()> {
-        Err(PlatformDeadlineTimerError::Unsupported)
-    }
-
-    #[inline]
-    fn is_available() -> bool { true }
-}

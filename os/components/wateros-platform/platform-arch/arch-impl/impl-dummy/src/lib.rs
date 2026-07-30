@@ -1,13 +1,17 @@
 #![no_std]
 
-//! 本模块代码由AI完成
 //! **占位**架构实现：用于未启用真实 ISA profile 的构建或依赖占位；非生产路径。
+//!
+//! PLATFORM_BOUNDARY: 此 crate 不代表可启动 ISA；任何需要 trap、timer 或 SMP 的
+//! 内核配置都必须选择真实的 RISC-V 或 LoongArch arch impl。
 //!
 //! 与 `impl-riscv64` 互斥由上层 feature 选择；当前保留最小可编译表面，后续可替换为
 //! 与 `arch-api` 对齐的 no-op 类型集。
 
 /// 占位算术（仅用于保留测试/链接样例，与平台无关）。
-pub fn add(left : u64, right : u64) -> u64 { left + right }
+pub fn add(left: u64, right: u64) -> u64 {
+    left + right
+}
 #[cfg(test)]
 mod tests {
     use super::*;

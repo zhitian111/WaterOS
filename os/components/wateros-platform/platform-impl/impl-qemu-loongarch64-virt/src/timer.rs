@@ -27,6 +27,7 @@ fn read_stable_counter() -> u64 {
 }
 
 #[inline]
+/// 写定时器相关 CSR；仅允许本文件的 `CSR_TCFG` / `CSR_TICLR` 常量作为参数。
 fn write_csr<const CSR: usize>(value: usize) {
     let old = value;
     unsafe {
@@ -35,6 +36,10 @@ fn write_csr<const CSR: usize>(value: usize) {
 }
 
 /// 设置下一次定时器中断 deadline。
+///
+/// TIME_CONTRACT: `time` 为绝对 StableCounter tick；硬件 TCFG 接收的是相对 delta，
+/// 因此必须在本 CPU 上紧邻 `rdtime.d` 读取后换算。`max(1)` 防止 past deadline
+/// 关闭定时器或产生 0 tick 间隔。
 #[inline]
 pub fn set_timer(time: PlatformTimerDeadline) -> PlatformDeadlineTimerResult<()> {
     let now = read_stable_counter();
@@ -42,8 +47,7 @@ pub fn set_timer(time: PlatformTimerDeadline) -> PlatformDeadlineTimerResult<()>
         .0
         .saturating_sub(now)
         .max(1);
-    let delta = usize::try_from(delta)
-        .map_err(|_| PlatformDeadlineTimerError::InvalidDeadline)?;
+    let delta = usize::try_from(delta).map_err(|_| PlatformDeadlineTimerError::InvalidDeadline)?;
     if delta > (usize::MAX >> 2) {
         return Err(PlatformDeadlineTimerError::InvalidDeadline);
     }

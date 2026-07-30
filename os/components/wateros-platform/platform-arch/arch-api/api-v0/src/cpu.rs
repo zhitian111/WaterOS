@@ -1,18 +1,10 @@
 //! 当前 CPU 标识的架构契约。
 
-use base::cpu::CpuId;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ArchCpuInitError {
+    /// 启动入口提供的逻辑 CPU 超出容量，或与当前硬件 CPU 标识不一致。
     InvalidCpu,
 }
 
+/// 每 CPU arch 初始化的结果；成功不代表 scheduler 已将 CPU 标记为 online。
 pub type ArchCpuInitResult<T> = core::result::Result<T, ArchCpuInitError>;
-
-pub trait ArchCpu {
-    /// 返回当前执行 Rust 内核代码的逻辑 CPU。
-    fn current_cpu_id() -> CpuId;
-
-    /// 在当前 CPU 进入普通内核路径前建立架构 CPU-local 状态。
-    fn init_current_cpu(cpu : CpuId) -> ArchCpuInitResult<()>;
-}

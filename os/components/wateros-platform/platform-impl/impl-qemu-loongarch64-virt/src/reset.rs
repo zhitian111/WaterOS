@@ -4,7 +4,8 @@ use api_v0::reset::{
     PlatformResetError, PlatformResetReason, PlatformResetResult, PlatformResetType,
 };
 
-const VIRT_GED_REG_ADDR: usize = 0x100e_001c;
+/// QEMU `virt` ACPI GED 寄存器基址及其 shutdown/reset 偏移。
+const VIRT_GED_REG_ADDR: usize = 0x100E_001C;
 const ACPI_GED_REG_SLEEP_CTL: usize = 0x00;
 const ACPI_GED_REG_RESET: usize = 0x02;
 const ACPI_GED_RESET_VALUE: u8 = 0x42;
@@ -13,21 +14,29 @@ const ACPI_GED_SLP_EN: u8 = 0x20;
 const ACPI_GED_SLP_TYP_SHIFT: u8 = 2;
 
 /// 经 ACPI GED 寄存器请求关机或重启。
+///
+/// PLATFORM_BOUNDARY: 这些 MMIO 常量是 QEMU machine 约定，不能移动到 LoongArch
+/// arch crate。硬件一般不会返回；函数返回 `Failed` 仅代表执行流意外继续。
 #[inline]
-pub fn reset(reset_type: PlatformResetType,
-             _reset_reason: PlatformResetReason)
-             -> PlatformResetResult<()> {
+pub fn reset(
+    reset_type: PlatformResetType,
+    _reset_reason: PlatformResetReason,
+) -> PlatformResetResult<()> {
     match reset_type {
         PlatformResetType::Shutdown => {
             let value = (ACPI_GED_SLP_TYP_S5 << ACPI_GED_SLP_TYP_SHIFT) | ACPI_GED_SLP_EN;
             unsafe {
-                core::ptr::write_volatile((VIRT_GED_REG_ADDR + ACPI_GED_REG_SLEEP_CTL) as *mut u8,
-                                          value);
+                core::ptr::write_volatile(
+                    (VIRT_GED_REG_ADDR + ACPI_GED_REG_SLEEP_CTL) as *mut u8,
+                    value,
+                );
             }
         }
         PlatformResetType::ColdReboot | PlatformResetType::WarmReboot => unsafe {
-            core::ptr::write_volatile((VIRT_GED_REG_ADDR + ACPI_GED_REG_RESET) as *mut u8,
-                                      ACPI_GED_RESET_VALUE);
+            core::ptr::write_volatile(
+                (VIRT_GED_REG_ADDR + ACPI_GED_REG_RESET) as *mut u8,
+                ACPI_GED_RESET_VALUE,
+            );
         },
     }
 
@@ -37,11 +46,17 @@ pub fn reset(reset_type: PlatformResetType,
 /// 冷重启快捷入口。
 #[inline]
 pub fn reboot(reset_reason: PlatformResetReason) -> PlatformResetResult<()> {
-    reset(PlatformResetType::ColdReboot, reset_reason)
+    reset(
+        PlatformResetType::ColdReboot,
+        reset_reason,
+    )
 }
 
 /// 关机快捷入口。
 #[inline]
 pub fn shutdown(reset_reason: PlatformResetReason) -> PlatformResetResult<()> {
-    reset(PlatformResetType::Shutdown, reset_reason)
+    reset(
+        PlatformResetType::Shutdown,
+        reset_reason,
+    )
 }

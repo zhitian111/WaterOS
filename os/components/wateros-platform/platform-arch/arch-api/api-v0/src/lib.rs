@@ -5,21 +5,16 @@
 //! 本 crate **不**依赖任何固件、SBI 或板级 profile；与 `wateros-platform-api-v0` 正交，
 //! 由上层 `wateros-platform` 或 `arch-impl` 在必要时组合调用。
 
-/// 当前 CPU 标识与本核早期初始化契约。
+/// 当前 CPU 标识与本核早期初始化结果类型。
 pub mod cpu;
-
-/// 特权级抽象（与 `sstatus` 等配合的语义，不包含固件调用）。
-pub mod privilege;
-pub mod paging;
-/// 通用寄存器组与控制寄存器的最小读写视图（与具体 trap 帧布局解耦的辅助 trait）。
-pub mod register;
 /// 定时器与全局中断在 ISA 层的开关原语。
 pub mod interrupt;
+/// 组合层 trap 路由：单入口 + 运行期注册，避免 `arch-impl` 直接依赖 `task`/`syscall`。
+pub mod kernel_trap;
+pub mod paging;
 /// 任务初次运行与切换所需的架构上下文构造。
 pub mod task;
 /// 单调时间计数与可选频率查询（**不含** `set_timer` / SBI）。
 pub mod time;
 /// 异常与中断：trap 帧、原因解码、与 syscall ABI 的读写接口。
 pub mod trap;
-/// 组合层 trap 路由：单入口 + 运行期注册，避免 `arch-impl` 直接依赖 `task`/`syscall`。
-pub mod kernel_trap;

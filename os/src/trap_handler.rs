@@ -266,8 +266,8 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                               cx);
         }
         TrapCause::Interrupt(Interrupt::SupervisiorSoft) => {
-            // 来自其他 CPU 的 IPI：清除 SSIP 位，避免 sret 后立即再次 trap。
-            let _ = platform::smp::clear_ipi();
+            // 来自其他 CPU 的 IPI：清除本地 pending 位，避免 trap 返回后立即重入。
+            platform::smp::clear_ipi();
             let pending = platform::smp::take_pending_ipi(platform::arch::cpu::current_cpu_id());
             if pending & platform::smp::IpiKind::TlbShootdown.bits() != 0 {
                 let _ = mm::kernel_mm::handle_tlb_shootdown_ipi();
@@ -391,6 +391,4 @@ fn finish_trap_return(frame : *mut u8, cx : &TrapContext, raw_cause : usize) {
 
 /// 向 `arch_api_v0` 注册本模块的 C ABI trap 回调；须在 `task::init()`
 /// 之后调用。
-pub fn init() {
-    register_kernel_trap_handler(wateros_kernel_trap_handler);
-}
+pub fn init() { register_kernel_trap_handler(wateros_kernel_trap_handler); }

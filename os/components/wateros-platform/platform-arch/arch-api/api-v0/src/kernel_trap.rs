@@ -14,14 +14,22 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 /// 组合层实现的 trap 处理函数：参数为 **原始** trap 帧字节指针（与各 `trap_entry_*` 传入一致）。
 pub type KernelTrapHandlerFn = extern "C" fn(*mut u8);
 
-// `Release`/`Acquire`：与首次 trap 前的注册建立 happens-before，避免看到半初始化 handler。
+/// 唯一的组合层 trap handler 指针。
+///
+/// BOOT_CONTRACT: `Release`/`Acquire` 与首次 trap 前的注册建立 happens-before，避免
+/// arch trap 入口看到半初始化 handler。运行期替换虽可原子发生，但调用方必须自行
+/// 保证旧 handler 不再依赖已释放的状态。
 static HANDLER: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
 
 /// 注册组合层 trap 路由；仅保留最后一次注册。
+///
+/// 必须在 `arch_boot` 安装向量后、首次允许 trap 前完成。未注册即触发 trap 会 panic，
+/// 这是为了避免静默跳过 page fault、timer 或 IPI。
 pub fn register_kernel_trap_handler(handler: KernelTrapHandlerFn) {
     HANDLER.store(handler as *mut (), Ordering::Release);
 }
 
+/// 以 Acquire 读取当前 handler，并拒绝未初始化状态。
 fn handler_fn() -> KernelTrapHandlerFn {
     let p = HANDLER.load(Ordering::Acquire);
     if p.is_null() {
@@ -31,6 +39,7 @@ fn handler_fn() -> KernelTrapHandlerFn {
 }
 
 /// `arch-impl` 的 `trap_entry_rust` 应调用此函数（Rust 路径），与 [`wateros_kernel_trap_enter`] 等价。
+/// `frame` 的布局只由当前 arch impl 解释，组合层在 handler 内转换它。
 pub fn invoke_kernel_trap_handler(frame: *mut u8) {
     handler_fn()(frame);
 }
