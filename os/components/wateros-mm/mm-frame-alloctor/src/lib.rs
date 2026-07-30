@@ -18,8 +18,10 @@ pub use impl_stack::*;
 #[cfg(feature = "impl-dummy")]
 pub use impl_dummy::*;
 
-/// 按当前 feature 运行帧分配器自测：`BasePPN` 为半开区间 `[start, end)`，与 `init_frame_allocator` 约定一致；dummy 实现仅打日志。
-pub fn test_with_range(start_ppn: wateros_base::addr::BasePPN, end_ppn: wateros_base::addr::BasePPN) {
+/// 按当前 feature 运行帧分配器自测：`PhysPageNum` 为半开区间 `[start, end)`，
+/// 与 `init_frame_allocator` 约定一致；dummy 实现仅打日志。
+pub fn test_with_range(start_ppn : mm_api::addr::PhysPageNum,
+                       end_ppn : mm_api::addr::PhysPageNum) {
     log::trace!("[frame-alloctor] test begin");
     #[cfg(feature = "impl-stack")]
     impl_stack::test_with_range(start_ppn, end_ppn);

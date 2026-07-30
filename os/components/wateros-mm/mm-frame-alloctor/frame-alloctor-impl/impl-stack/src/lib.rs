@@ -12,7 +12,6 @@ use alloc::vec::Vec;
 
 use api_v0::{FrameAllocError, FrameAllocResult, FrameMemStats, PhysicalFrameAllocator};
 use mm_api::addr::{PhysPageNum, PAGE_SIZE};
-use wateros_base::addr::BasePPN;
 use wateros_base::sync::MultiprocessorSafeCell;
 use arch::interrupt::{
     disable_global_interrupt, read_global_interrupt_state, restore_global_interrupt_state,
@@ -80,20 +79,20 @@ impl StackFrameAllocator {
 
     /// 将可用帧限制为半开区间 `[start_ppn,
     /// end_ppn)`（PPN）；会清空回收栈并重置惰性上界。
-    pub fn init(&mut self, start_ppn : BasePPN, end_ppn : BasePPN) {
+    pub fn init(&mut self, start_ppn : PhysPageNum, end_ppn : PhysPageNum) {
         self.recycled
             .clear();
-        self.start_ppn = start_ppn.val;
-        self.end_ppn = end_ppn.val;
-        self.next_novel = end_ppn.val;
+        self.start_ppn = start_ppn.0;
+        self.end_ppn = end_ppn.0;
+        self.next_novel = end_ppn.0;
         self.allocated
             .clear();
         self.allocated
-            .resize(end_ppn.val.saturating_sub(start_ppn.val), false);
+            .resize(end_ppn.0.saturating_sub(start_ppn.0), false);
         self.ref_counts
             .clear();
         self.ref_counts
-            .resize(end_ppn.val.saturating_sub(start_ppn.val), 0);
+            .resize(end_ppn.0.saturating_sub(start_ppn.0), 0);
     }
 
     #[inline]
@@ -216,14 +215,14 @@ impl StackFrameAllocator {
     }
 }
 
-// ===== 全局单例（安全单核）=====
+// ===== 全局单例（BSP 初始化，运行期多核加锁）=====
 
 static mut FRAME_ALLOCATOR : MaybeUninit<MultiprocessorSafeCell<StackFrameAllocator>> =
     MaybeUninit::uninit();
 static FRAME_ALLOCATOR_READY : AtomicBool = AtomicBool::new(false);
 
-// `FRAME_ALLOCATOR` 仅在首次 `init_frame_allocator` 中 `write`
-// 一次，之后只读；与 `READY` 发布顺序配对。
+// BOOT_CONTRACT: `FRAME_ALLOCATOR` 只能由 BSP 在开放 AP 前初始化。`READY` 的
+// Release/Acquire 负责发布已构造对象，不把并发的首次初始化变成安全操作。
 fn get_frame_allocator_cell() -> &'static MultiprocessorSafeCell<StackFrameAllocator> {
     assert!(FRAME_ALLOCATOR_READY.load(Ordering::Acquire),
             "frame allocator not initialized: call init_frame_allocator() first");
@@ -231,7 +230,7 @@ fn get_frame_allocator_cell() -> &'static MultiprocessorSafeCell<StackFrameAlloc
 }
 
 /// 初始化全局帧分配器（临时 stack 实现）。
-pub fn init_frame_allocator(start_ppn : BasePPN, end_ppn : BasePPN) {
+pub fn init_frame_allocator(start_ppn : PhysPageNum, end_ppn : PhysPageNum) {
     if !FRAME_ALLOCATOR_READY.load(Ordering::Acquire) {
         unsafe {
             FRAME_ALLOCATOR.write(MultiprocessorSafeCell::new(StackFrameAllocator::new()));
@@ -293,7 +292,7 @@ pub fn frame_mem_stats() -> FrameMemStats {
 /// 供 `HeapBrk` / `MmapOps` 等路径使用。**不得**在已持有
 /// [`frame_allocator_cell`] 的 [`MultiprocessorSafeCell::exclusive_access`]
 /// 期间再跑会嵌套调用 [`frame_alloc_result`] 的页表 walk，否则重入同一
-/// `RefCell` 会 panic。
+/// 自旋锁会永久等待。
 pub struct GlobalPhysFrameAllocator;
 
 impl PhysicalFrameAllocator for GlobalPhysFrameAllocator {
@@ -308,16 +307,16 @@ impl PhysicalFrameAllocator for GlobalPhysFrameAllocator {
     }
 }
 
-pub fn test_with_range(start_ppn : BasePPN, end_ppn : BasePPN) {
+pub fn test_with_range(start_ppn : PhysPageNum, end_ppn : PhysPageNum) {
     log::trace!("[frame-alloctor::impl-stack] test begin");
     log::trace!("[frame-alloctor::impl-stack] init range: [{:#x}, {:#x})",
-                start_ppn.val,
-                end_ppn.val);
+                start_ppn.0,
+                end_ppn.0);
 
     init_frame_allocator(start_ppn, end_ppn);
 
-    let cap = end_ppn.val
-                     .saturating_sub(start_ppn.val);
+    let cap = end_ppn.0
+                     .saturating_sub(start_ppn.0);
     if cap == 0 {
         log::info!("[frame-alloctor::impl-stack] empty range, skip alloc test");
         log::trace!("[frame-alloctor::impl-stack] test end");

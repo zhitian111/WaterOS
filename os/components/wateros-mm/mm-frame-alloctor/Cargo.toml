@@ -7,7 +7,7 @@
     impl-dummy = { path = "./frame-alloctor-impl/impl-dummy/", package = "wateros-mm-frame-alloctor-impl-dummy" }
     impl-stack = { path = "./frame-alloctor-impl/impl-stack/", package = "wateros-mm-frame-alloctor-impl-stack" }
     api-v0 = { path = "./frame-alloctor-api/api-v0/", package = "wateros-mm-frame-alloctor-api-v0" }
-    wateros-base = { path = "../../wateros-base", package = "wateros-base", default-features = true }
+    mm-api = { path = "../mm-api/api-v0", package = "wateros-mm-api-v0", default-features = true }
     log = { version = "0.4.29" }
 
 [features]

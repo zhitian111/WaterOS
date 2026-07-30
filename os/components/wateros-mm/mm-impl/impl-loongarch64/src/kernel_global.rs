@@ -19,12 +19,11 @@ extern crate alloc;
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use api_v0::addr::{PhysAddr, VirtAddr, VirtPageNum, PAGE_SIZE};
+use api_v0::addr::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum, PAGE_SIZE};
 use api_v0::address_space::AddressSpaceOps;
 use api_v0::error::MmError;
 use api_v0::perm::PagePerm;
 use frame_alloctor::frame_alloc_result;
-use wateros_base::addr::BasePPN;
 use wateros_base::sync::{BootOnceCell, MultiprocessorSafeCell};
 
 use crate::pagetable::LoongArch64AddressSpace;
@@ -89,8 +88,8 @@ pub fn init(_dtb_pa : usize, ram_end_exclusive : usize) {
     let start_ppn = (kernel_end_addr + PAGE_SIZE - 1) / PAGE_SIZE;
     let end_ppn = ram_end_exclusive / PAGE_SIZE;
     let usable_end_ppn = end_ppn.min(0x1_0000_0000usize / PAGE_SIZE);
-    frame_alloctor::init_frame_allocator(BasePPN { val : start_ppn },
-                                         BasePPN { val : usable_end_ppn });
+    frame_alloctor::init_frame_allocator(PhysPageNum(start_ppn),
+                                         PhysPageNum(usable_end_ppn));
 
     let mut aspace = LoongArch64AddressSpace::new_kernel()
         .expect("kernel_mm: LoongArch64AddressSpace::new_kernel failed");
@@ -171,10 +170,8 @@ pub fn init(_dtb_pa : usize, ram_end_exclusive : usize) {
                              probe_va.0,
                              probe_pa.0);
 
-    unsafe {
-        KERNEL_ASPACE.init(KernelAddressSpaceCell { inner : MultiprocessorSafeCell::new(aspace) })
-                     .expect("kernel_mm: duplicate initialization");
-    }
+    KERNEL_ASPACE.init(KernelAddressSpaceCell { inner : MultiprocessorSafeCell::new(aspace) })
+                 .expect("kernel_mm: duplicate initialization");
     api_v0::kernel_satp::set(pgdl_target);
     api_v0::user_aspace_lifecycle::register_drop_user_aspace_hook(crate::kernel_mm_impl::drop_user_aspace);
     api_v0::user_aspace_lifecycle::register_aspace_cpu_hooks(crate::user_aspace::mark_active,

@@ -5,4 +5,4 @@
 /// Linux 通常以 16 个 4 KiB 页作为新 pipe 的初始容量。保持相同量级可避免编译器等
 /// 生产者在消费者短暂调度延迟时过早阻塞，同时 `PIPE_BUF` 的原子写语义仍由 4 KiB
 /// 上限单独约束，不应与总容量混为一谈。
-pub const DEFAULT_PIPE_CAPACITY: usize = 64 * 1024;
+pub const DEFAULT_PIPE_CAPACITY : usize = 64 * 1024;

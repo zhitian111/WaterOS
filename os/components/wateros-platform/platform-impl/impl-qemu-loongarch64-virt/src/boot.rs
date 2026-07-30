@@ -1,4 +1,4 @@
-//! LoongArch QEMU `virt` 固件传入的参数及其类型化视图。
+//! LoongArch QEMU `virt` 固件传入的原始参数。
 
 use api_v0::boot::PlatformBootArgs;
 
@@ -36,25 +36,4 @@ impl PlatformBootArgs for QEMULoongArch64VirtBootArgs {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-/// 原始参数的命名视图；保留公开字段以供当前 LoongArch 启动代码逐步消费。
-pub struct QEMULoongArch64VirtBootContext {
-    pub arg0: usize,
-    pub arg1: usize,
-    pub arg2: usize,
-}
-
-impl From<QEMULoongArch64VirtBootArgs> for QEMULoongArch64VirtBootContext {
-    /// 无损转换，不赋予参数额外语义。
-    #[inline]
-    fn from(value: QEMULoongArch64VirtBootArgs) -> Self {
-        Self {
-            arg0: value.arg0,
-            arg1: value.arg1,
-            arg2: value.arg2,
-        }
-    }
-}
-
 pub use QEMULoongArch64VirtBootArgs as BootArgs;
-pub use QEMULoongArch64VirtBootContext as BootContext;

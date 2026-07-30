@@ -3,14 +3,12 @@
 //! 真机或自定义 `-m` 时应以 DTB/固件为准；此处常量多用于 bring-up 与缺省回退。
 //! 堆容量等配置只在本 crate 维护，`wateros-base` 不再复制这些数值。
 
-#[allow(unused)]
 /// 内核堆大小的以 2 为底的指数位宽。
 ///
 /// 降低此值可释放更多物理内存给用户态。不能设太低：`StackFrameAllocator` 的
 /// `ref_counts` Vec（约 2MB）与 `allocated` Vec（约 250KB）也从内核堆分配。
 /// 当前 `2^27 = 128MB`：全量 benchmark 需要比 64MB 更大余量，又避免 256MB 占用过多页帧。
 pub const KERNEL_HEAP_SIZE_BIT_WIDTH : usize = 27;
-#[allow(unused)]
 /// 内核堆字节容量，即 `1 << KERNEL_HEAP_SIZE_BIT_WIDTH`。
 pub const KERNEL_HEAP_SIZE : usize = 1 << KERNEL_HEAP_SIZE_BIT_WIDTH;
 

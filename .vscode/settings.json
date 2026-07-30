@@ -20,7 +20,9 @@
         "OUTPUT_SYNC",
         "PANIC_PATH",
         "ABI_CONTRACT",
-        "FORMAT_STATE"
+        "FORMAT_STATE",
+        "BASE_INVARIANT",
+        "ONCE_PUBLISH"
     ],
     "todo-tree.highlights.customHighlight": {
         "TODO":     { "icon": "check",  "type": "line", "background": "#2d7d46" },
@@ -43,7 +45,9 @@
         "OUTPUT_SYNC": { "icon": "terminal", "type": "line", "background": "#0f766e" },
         "PANIC_PATH": { "icon": "alert", "type": "line", "background": "#be123c" },
         "ABI_CONTRACT": { "icon": "law", "type": "line", "background": "#7c2d12" },
-        "FORMAT_STATE": { "icon": "table", "type": "line", "background": "#1d4ed8" }
+        "FORMAT_STATE": { "icon": "table", "type": "line", "background": "#1d4ed8" },
+        "BASE_INVARIANT": { "icon": "law", "type": "line", "background": "#475569" },
+        "ONCE_PUBLISH": { "icon": "broadcast", "type": "line", "background": "#0e7490" }
     },
     "todohighlight.keywords": [
         "CHANGE:",
@@ -64,7 +68,9 @@
         "OUTPUT_SYNC:",
         "PANIC_PATH:",
         "ABI_CONTRACT:",
-        "FORMAT_STATE:"
+        "FORMAT_STATE:",
+        "BASE_INVARIANT:",
+        "ONCE_PUBLISH:"
     ],
     "better-todo-tree.general.tags": [
         "TODO",
@@ -87,7 +93,9 @@
         "OUTPUT_SYNC",
         "PANIC_PATH",
         "ABI_CONTRACT",
-        "FORMAT_STATE"
+        "FORMAT_STATE",
+        "BASE_INVARIANT",
+        "ONCE_PUBLISH"
     ],
     "better-todo-tree.highlights.customHighlight": {
         "TODO":   { "icon": "check", "type": "line", "background": "#2d7d46" },
@@ -110,6 +118,8 @@
         "OUTPUT_SYNC": { "icon": "terminal", "type": "line", "background": "#0f766e" },
         "PANIC_PATH": { "icon": "alert", "type": "line", "background": "#be123c" },
         "ABI_CONTRACT": { "icon": "law", "type": "line", "background": "#7c2d12" },
-        "FORMAT_STATE": { "icon": "table", "type": "line", "background": "#1d4ed8" }
+        "FORMAT_STATE": { "icon": "table", "type": "line", "background": "#1d4ed8" },
+        "BASE_INVARIANT": { "icon": "law", "type": "line", "background": "#475569" },
+        "ONCE_PUBLISH": { "icon": "broadcast", "type": "line", "background": "#0e7490" }
     }
 }

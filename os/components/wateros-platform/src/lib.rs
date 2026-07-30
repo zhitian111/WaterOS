@@ -240,13 +240,13 @@ pub mod console {
     /// BOOT_CONTRACT: 只能在字符设备和其内部锁已完全初始化后调用；替换 writer 时
     /// 必须由启动序列保证没有并发输出，当前接口不提供注销或热替换同步。
     pub fn register_runtime_writer(writer: RuntimeConsoleWriter) {
-        *RUNTIME_CONSOLE_WRITER.lock() = Some(writer);
+        *RUNTIME_CONSOLE_WRITER.exclusive_access() = Some(writer);
     }
 
     /// 写一个字节；换行转换和后端错误语义由选中的 console profile 决定。
     #[inline]
     fn runtime_writer() -> Option<RuntimeConsoleWriter> {
-        *RUNTIME_CONSOLE_WRITER.lock()
+        *RUNTIME_CONSOLE_WRITER.exclusive_access()
     }
 
     /// 在中断屏蔽和跨 CPU 输出锁保护下执行一次完整写入。
@@ -261,7 +261,7 @@ pub mod console {
             None if CONSOLE_WRITE_OWNER.load(Ordering::Acquire) == cpu => {
                 return write(true);
             }
-            None => CONSOLE_WRITE_LOCK.lock(),
+            None => CONSOLE_WRITE_LOCK.exclusive_access(),
         };
 
         CONSOLE_WRITE_OWNER.store(cpu, Ordering::Release);

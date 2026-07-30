@@ -24,8 +24,12 @@ pub const MAX_TICKS_PER_TASK : u64 = 50;
 pub const READY_QUEUE_STALE_COMPACT_THRESHOLD : usize = 8;
 /// 内核任务栈大小（字节）。
 pub const KERNEL_TASK_STACK_SIZE : usize = 32 * 1024;
+
+/// Linux/CFS 兼容的 `nice -20..=19` 到调度权重映射。
+///
+/// 下标为 `nice + 20`。权重越大，SCHED_OTHER 任务相同实际运行时间累积的
+/// vruntime 越少；实时调度类不得使用本表决定 FIFO/RR 优先级。
 pub const NICE_TO_WEIGHT : [u64; 40] = [
-    // nice -20 ~ +19, Linux 标准权重表
     88761, 71755, 56483, 46273, 36291,  // -20 ~ -16
     29154, 23254, 18705, 14949, 11916,  // -15 ~ -11
     9548, 7620, 6100, 4904, 3906,       // -10 ~ -6
@@ -35,4 +39,6 @@ pub const NICE_TO_WEIGHT : [u64; 40] = [
     110, 87, 70, 56, 45,                // 10 ~ 14
     36, 29, 23, 18, 15,                 // 15 ~ 19
 ];
+
+/// `nice = 0` 的基准权重，用于把实际运行时间换算为 vruntime。
 pub const NICE_0_WEIGHT : u64 = 1024;

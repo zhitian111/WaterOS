@@ -5,9 +5,6 @@
 /// 文件页缓存行大小（字节）；read/write 按该粒度加载与淘汰。
 pub const FILE_PAGE_SIZE : usize = 4096;
 
-/// 超过该大小的普通文件在 VFS `open` 时走页缓存句柄，不再整文件读入 RAM。
-pub const FILE_LARGE_THRESHOLD : u64 = 64 * 1024;
-
 /// 全局页帧 LRU 槽位数（所有文件共享，非每文件容量）。
 /// 4096 * 4KiB = 16MiB，覆盖多数测试热集。内核堆共 128MiB，
 /// 需为 ELF 加载、VFS 元数据、进程控制块等留出充足内存。

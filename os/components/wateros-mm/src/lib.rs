@@ -181,8 +181,8 @@ pub mod kernel_mm {
 /// 自测入口：`start_ppn`/`end_ppn` 为 **物理页号（PPN）**
 /// 闭开区间，供栈式帧分配器初始化； 与 QEMU virt 等 bring-up 传入的可用 RAM
 /// 帧范围应对齐（具体由平台传入 `kernel_mm::init` 的区间约定）。
-pub fn test_with_range(start_ppn : wateros_base::addr::BasePPN,
-                       end_ppn : wateros_base::addr::BasePPN) {
+pub fn test_with_range(start_ppn : api::addr::PhysPageNum,
+                       end_ppn : api::addr::PhysPageNum) {
     log::trace!("[wateros-mm] test begin");
 
     api::test();

@@ -8,14 +8,12 @@
 
 extern crate alloc;
 
-use api_v0::addr::{VirtAddr, VirtPageNum, PAGE_SIZE};
+use api_v0::addr::{PhysPageNum, VirtAddr, VirtPageNum, PAGE_SIZE};
 use api_v0::address_space::AddressSpaceOps;
 use api_v0::error::MmError;
 use api_v0::perm::PagePerm;
 
 use frame_alloctor::{frame_alloc_result, frame_dealloc_result};
-use wateros_base::addr::BasePPN;
-
 mod asid;
 mod pagetable;
 
@@ -28,7 +26,7 @@ mod user_heap_mmap;
 
 /// LoongArch64 三级页表 walk、映射/解映射/权限与翻译的自测；
 /// 依赖已初始化的全局帧分配器（区间语义同 bring-up）。
-pub fn test_with_range(start_ppn : BasePPN, end_ppn : BasePPN) {
+pub fn test_with_range(start_ppn : PhysPageNum, end_ppn : PhysPageNum) {
     log::trace!("[mm-impl::loongarch64] test begin");
     frame_alloctor::test_with_range(start_ppn, end_ppn);
 

@@ -1,9 +1,15 @@
 //! 无平台策略的逻辑 CPU 标识和 CPU 集合类型。
 
-use core::cell::UnsafeCell;
 use config::task::MAX_CPUS;
+use core::cell::UnsafeCell;
+
+// BASE_INVARIANT: CpuMask 的公开位图格式固定为 u64，静态 CPU 容量不能溢出它。
+const _ : () = assert!(MAX_CPUS <= u64::BITS as usize);
 
 /// 逻辑 CPU 标识。
+///
+/// 该编号用于索引内核的 per-CPU 数组，不必等同于硬件 hart/core 编号。当前
+/// RISC-V profile 选择二者相等，但映射策略属于 platform。
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CpuId(usize);
@@ -12,28 +18,45 @@ impl CpuId {
     /// 引导 CPU 的默认逻辑编号。
     pub const BOOT : Self = Self(0);
 
+    /// 从逻辑编号构造；容量检查由接收该编号的容器或子系统完成。
+    #[inline]
     pub const fn from_raw(raw : usize) -> Self { Self(raw) }
 
+    /// 返回逻辑编号。
+    #[inline]
     pub const fn raw(self) -> usize { self.0 }
 
+    /// 返回可用于数组索引的逻辑编号。
+    #[inline]
     pub const fn index(self) -> usize { self.0 }
 
+    /// 判断编号是否落在调用方给定的静态容量内。
+    #[inline]
     pub const fn fits_capacity(self, capacity : usize) -> bool { self.0 < capacity }
 }
 
-/// 一组逻辑 CPU。容量校验由使用方依据平台配置完成。
+/// 一组逻辑 CPU。
+///
+/// 位 `n` 对应 [`CpuId::from_raw(n)`]。类型最多表达 64 个 CPU，而 [`Self::ALL`]
+/// 仅包含 `wateros-base-config` 配置的静态 CPU 容量；online/configured 状态仍由
+/// platform 或 scheduler 单独维护。
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CpuMask(u64);
 
 impl CpuMask {
+    /// 空集合。
     pub const EMPTY : Self = Self(0);
+
     /// WaterOS 当前配置的全部逻辑 CPU。
-    pub const ALL : Self = Self(if MAX_CPUS >= u64::BITS as usize {
-        u64::MAX
-    } else {
-        (1u64 << MAX_CPUS) - 1
-    });
+    pub const ALL : Self = Self(if MAX_CPUS == u64::BITS as usize {
+                                    u64::MAX
+                                } else {
+                                    (1u64 << MAX_CPUS) - 1
+                                });
+
+    /// 从原始 64 位集合构造。
+    #[inline]
     pub const fn from_bits(bits : u64) -> Self { Self(bits) }
 
     /// 从 Linux cpu_set_t 使用的小端字节序解析掩码。
@@ -42,14 +65,16 @@ impl CpuMask {
     /// `None`，而不是静默丢弃调用者的 affinity 请求。
     pub fn try_from_le_bytes(bytes : &[u8]) -> Option<Self> {
         if bytes.get(core::mem::size_of::<u64>()..)
-                .is_some_and(|tail| tail.iter()
-                                         .any(|byte| *byte != 0))
+                .is_some_and(|tail| {
+                    tail.iter()
+                        .any(|byte| *byte != 0)
+                })
         {
             return None;
         }
         let mut bits = 0;
         for (i, byte) in bytes.iter()
-                            .enumerate()
+                              .enumerate()
         {
             if i >= core::mem::size_of::<u64>() {
                 break;
@@ -69,41 +94,42 @@ impl CpuMask {
                      .min(bytes.len());
         out[..len].copy_from_slice(&bytes[..len]);
     }
-    pub fn to_vec(&self, out : &mut [u8]) {
-        for (i, byte) in out.iter_mut()
-                            .enumerate()
-        {
-            if i >= 8 {
-                break;
-            }
-            *byte = ((self.0 >> (i * 8)) & 0xFF) as u8;
-        }
-    }
+
+    /// 返回原始 64 位集合。
+    #[inline]
     pub const fn bits(self) -> u64 { self.0 }
 
+    /// 判断集合是否包含 `cpu`；无法由 64 位集合表达的编号返回 `false`。
     pub const fn contains(self, cpu : CpuId) -> bool {
         cpu.raw() < u64::BITS as usize && self.0 & (1u64 << cpu.raw()) != 0
     }
 
+    /// 插入一个可由本集合表达的 CPU。
+    ///
+    /// # Panics
+    /// `cpu >= 64` 时 panic；静态配置容量检查应在更上层完成。
     pub fn insert(&mut self, cpu : CpuId) {
         assert!(cpu.raw() < u64::BITS as usize,
                 "CpuId does not fit CpuMask");
         self.0 |= 1u64 << cpu.raw();
     }
 
+    /// 移除一个可由本集合表达的 CPU。
+    ///
+    /// # Panics
+    /// `cpu >= 64` 时 panic。
     pub fn remove(&mut self, cpu : CpuId) {
         assert!(cpu.raw() < u64::BITS as usize,
                 "CpuId does not fit CpuMask");
         self.0 &= !(1u64 << cpu.raw());
     }
 
+    /// 返回集合中的 CPU 数。
     pub const fn count(self) -> usize { self.0.count_ones() as usize }
 
+    /// 判断集合是否为空。
     pub const fn is_empty(self) -> bool { self.0 == 0 }
 }
-
-/// 旧接口兼容别名。新代码应使用 [`CpuId`]。
-pub type CPUHartID = usize;
 
 /// 固定容量、无需堆分配的 CPU-local 存储。
 ///
@@ -113,16 +139,22 @@ pub struct CpuLocal<T, const N: usize> {
     slots : [UnsafeCell<T>; N],
 }
 
+// BASE_INVARIANT: `get` 可能把不同槽位的 `&T` 交给多个 CPU，因此共享
+// CpuLocal 只在 T 本身允许并发共享时才安全；可变访问另外由
+// `get_local_mut` 的调用约束保证不会与这些引用重叠。
 unsafe impl<T : Sync, const N: usize> Sync for CpuLocal<T, N> {}
 
 impl<T, const N: usize> CpuLocal<T, N> {
+    /// 用每个 CPU 的初始值构造容器。
     pub fn new(values : [T; N]) -> Self { Self { slots : values.map(UnsafeCell::new) } }
 
     /// 用已经包装好的槽构造静态 CPU-local 存储。
     pub const fn from_cells(slots : [UnsafeCell<T>; N]) -> Self { Self { slots } }
 
+    /// 返回静态槽位数。
     pub const fn capacity(&self) -> usize { N }
 
+    /// 获取指定 CPU 的共享槽位；编号越界时返回 `None`。
     pub fn get(&self, cpu : CpuId) -> Option<&T> {
         self.slots
             .get(cpu.index())
@@ -160,19 +192,23 @@ mod tests {
     #[test]
     fn cpu_mask_round_trips_linux_little_endian_bytes() {
         let mask = CpuMask::from_bits((1 << 0) | (1 << 9) | (1 << 63));
-        let mut bytes = [0xff; 12];
+        let mut bytes = [0xFF; 12];
         mask.write_le_bytes(&mut bytes);
         assert_eq!(bytes[0], 0b0000_0001);
         assert_eq!(bytes[1], 0b0000_0010);
         assert_eq!(bytes[7], 0b1000_0000);
-        assert!(bytes[8..].iter().all(|byte| *byte == 0));
-        assert_eq!(CpuMask::try_from_le_bytes(&bytes), Some(mask));
+        assert!(bytes[8..].iter()
+                          .all(|byte| *byte == 0));
+        assert_eq!(CpuMask::try_from_le_bytes(&bytes),
+                   Some(mask));
     }
 
     #[test]
     fn cpu_mask_rejects_bits_outside_its_64_bit_capacity() {
-        assert_eq!(CpuMask::try_from_le_bytes(&[0; 9]), Some(CpuMask::EMPTY));
-        assert_eq!(CpuMask::try_from_le_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]), None);
+        assert_eq!(CpuMask::try_from_le_bytes(&[0; 9]),
+                   Some(CpuMask::EMPTY));
+        assert_eq!(CpuMask::try_from_le_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]),
+                   None);
     }
 
     #[test]

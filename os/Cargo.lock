@@ -1196,7 +1196,6 @@ name = "wateros-mm"
 version = "0.1.0"
 dependencies = [
  "log",
- "wateros-base",
  "wateros-mm-api-v0",
  "wateros-mm-frame-alloctor",
  "wateros-mm-impl-common",
@@ -1220,7 +1219,7 @@ name = "wateros-mm-frame-alloctor"
 version = "0.1.0"
 dependencies = [
  "log",
- "wateros-base",
+ "wateros-mm-api-v0",
  "wateros-mm-frame-alloctor-api-v0",
  "wateros-mm-frame-alloctor-impl-dummy",
  "wateros-mm-frame-alloctor-impl-stack",
