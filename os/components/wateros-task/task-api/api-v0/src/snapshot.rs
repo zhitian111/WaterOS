@@ -80,13 +80,13 @@ pub struct TaskSnapshot {
     pub state : TaskState,
     /// 有效调度策略。
     pub policy : SchedPolicy,
-    /// `sched_priority`；`SCHED_OTHER` 下恒为 0。
+    /// `sched_priority`；三个 fair 策略（OTHER/BATCH/IDLE）下恒为 0。
     pub priority : i32,
-    /// `SCHED_OTHER` 的 nice 值，范围为 -20 到 19。
+    /// fair 策略（OTHER/BATCH/IDLE）的 nice 值，范围为 -20 到 19。
     ///
-    /// 当前仅保存该属性；普通任务队列的加权公平选择将在后续接入。
+    /// 该值用于 tick 时计算 vruntime 增量；FIFO/RR 保存该字段但不以它决定实时优先级。
     pub nice : i8,
-    /// `SCHED_OTHER` 的累计虚拟运行时间；TCB 是唯一真相。
+    /// fair 策略的累计虚拟运行时间；TCB 是唯一真相。
     pub vruntime : VRunTime,
     /// 最近一次 trap 的语义快照。
     pub trap_frame : Option<TaskTrapSnapshot>,

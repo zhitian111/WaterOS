@@ -1,4 +1,4 @@
-//! [`MultiClassScheduler`]：`SCHED_OTHER` + `SCHED_FIFO` + `SCHED_RR` 多类调度。
+//! [`MultiClassScheduler`]：OTHER/BATCH/IDLE/FIFO/RR 五类调度。
 
 extern crate alloc;
 use alloc::boxed::Box;

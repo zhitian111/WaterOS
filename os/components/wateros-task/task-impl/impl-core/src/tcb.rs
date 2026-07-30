@@ -95,12 +95,12 @@ pub struct TaskControlBlock {
     state : TaskState,
     policy : SchedPolicy,
     priority : i32,
-    /// 普通调度类（`SCHED_OTHER`）的线程级 nice 属性。
+    /// fair 调度类（OTHER/BATCH/IDLE）的线程级 nice 属性。
     ///
-    /// 调度器尚未据此改变队列选择；该字段先作为唯一的 task-level 真相，
-    /// 避免继续把线程调度属性存成 process-wide 状态。
+    /// 调度器在 tick 时据此计算 vruntime 增量；该字段是唯一的 task-level 真相，
+    /// 避免把线程调度属性错误地存成 process-wide 状态。
     nice : i8,
-    /// `SCHED_OTHER` 的累计虚拟运行时间。跨 CPU 迁移时仍由 TCB 保持。
+    /// fair 调度类的累计虚拟运行时间。跨 CPU 迁移时仍由 TCB 保持。
     vruntime : VRunTime,
     stats : TaskRuntimeStats,
     wait_result : Option<TaskWaitResult>,

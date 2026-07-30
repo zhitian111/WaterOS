@@ -519,7 +519,7 @@ pub struct CpuSnapshot {
     pub current_address_space : Option<AddressSpaceHandle>,
     pub current_is_idle : bool,
     pub current_is_user : bool,
-    /// 四类队列中等待运行的任务数，不含当前正在运行的任务。
+    /// 五类 runnable 队列中等待运行的任务数，不含当前正在运行的任务。
     pub runnable_other : usize,
     pub runnable_batch : usize,
     pub runnable_fifo : usize,

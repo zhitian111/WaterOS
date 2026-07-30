@@ -4,11 +4,11 @@
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SchedPolicy {
-    /// 默认分时策略（`SCHED_OTHER`）；当前 WaterOS 轮转调度对用户态呈现为此类。
+    /// 默认分时公平策略（`SCHED_OTHER`）。
     Other = 0,
-    /// 实时 FIFO（`SCHED_FIFO`）；bring-up 未实现。
+    /// 实时 FIFO（`SCHED_FIFO`）。
     Fifo = 1,
-    /// 实时 RR（`SCHED_RR`）；bring-up 未实现。
+    /// 实时 RR（`SCHED_RR`）。
     Rr = 2,
     /// 面向 CPU 密集型后台工作的公平调度策略。
     Batch = 3,
@@ -30,7 +30,7 @@ impl SchedPolicy {
         }
     }
 
-    /// 当前 bring-up 下内核实际提供的有效策略。
+    /// 新建任务在未显式设置策略时采用的默认策略。
     #[must_use]
     pub const fn effective_for_bringup() -> Self { Self::Other }
 }
