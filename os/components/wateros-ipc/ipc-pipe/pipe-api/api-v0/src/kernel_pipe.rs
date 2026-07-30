@@ -45,12 +45,6 @@ pub trait KernelPipe {
     /// 阻塞写入，尽量写完整个输入缓冲；若部分写入后被中断，允许返回已写字节数。
     fn write(&self, input: &[u8]) -> PipeResult<usize>;
 
-    /// 关闭读端并唤醒可能阻塞的写者。
-    fn close_read(&self);
-
-    /// 关闭写端并唤醒可能阻塞的读者。
-    fn close_write(&self);
-
     /// 读端 poll 就绪位（`POLLIN` / `POLLHUP` 等，与 Linux 语义对齐的原始位）。
     fn poll_revents_read(&self) -> i16 {
         let _ = self;

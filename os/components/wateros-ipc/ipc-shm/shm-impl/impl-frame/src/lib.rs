@@ -13,4 +13,4 @@ mod state;
 
 pub use api_v0::*;
 pub use global::registry;
-pub use registry::ShmRegistry;
+pub use registry::{ShmAttachReservation, ShmRegistry};

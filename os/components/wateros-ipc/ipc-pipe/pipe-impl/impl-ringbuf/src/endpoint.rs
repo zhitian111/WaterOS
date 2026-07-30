@@ -113,6 +113,7 @@ impl PipeEndpoint {
 
     /// 调整底层 pipe 缓冲区容量（`fcntl(F_SETPIPE_SZ)`）。
     pub fn set_pipe_capacity(&self, capacity: usize) -> PipeResult<usize> {
+        self.ensure_open()?;
         self.pipe
             .set_capacity(capacity)
     }
@@ -147,6 +148,15 @@ impl PipeEndpoint {
             PipeEndpointKind::Write => self
                 .pipe
                 .release_write(),
+        }
+    }
+
+    /// 关闭后的端点可能仍被某个内核对象暂时持有，但不再代表有效 fd。
+    fn ensure_open(&self) -> PipeResult<()> {
+        if self.closed.get() {
+            Err(PipeError::Closed)
+        } else {
+            Ok(())
         }
     }
 }
@@ -184,6 +194,7 @@ impl PipeEndpointOps for PipeEndpoint {
     }
 
     fn read(&self, out: &mut [u8]) -> PipeResult<usize> {
+        self.ensure_open()?;
         if self.kind != PipeEndpointKind::Read {
             return Err(PipeError::BrokenPipe);
         }
@@ -199,6 +210,7 @@ impl PipeEndpointOps for PipeEndpoint {
     }
 
     fn write(&self, input: &[u8]) -> PipeResult<usize> {
+        self.ensure_open()?;
         if self.kind != PipeEndpointKind::Write {
             return Err(PipeError::BrokenPipe);
         }
@@ -219,6 +231,7 @@ impl PipeEndpointOps for PipeEndpoint {
     }
 
     fn poll_revents(&self, events: i16) -> PipeResult<i16> {
+        self.ensure_open()?;
         const POLLIN: i16 = 0x001;
         const POLLOUT: i16 = 0x004;
         let raw = match self.kind {
@@ -249,6 +262,7 @@ impl PipeEndpointOps for PipeEndpoint {
         timeout_ticks: u64,
         still_waiting: &mut dyn FnMut() -> bool,
     ) -> PipeResult<()> {
+        self.ensure_open()?;
         const POLLIN: i16 = 0x001;
         const POLLOUT: i16 = 0x004;
         if events & POLLIN != 0 && self.kind == PipeEndpointKind::Read {

@@ -16,10 +16,10 @@ ABI，也不直接修改用户页表。
 ```text
 shmget ──> ShmRegistry::create_or_get ──> 分配并清零物理帧
 
-shmat ──> begin_attach ──> 解锁 ──> MM 预留 VA / 映射共享页
+shmat ──> begin_attach（reservation + 页快照）──> 解锁 ──> MM 预留 VA / 映射共享页
                              │失败              │成功
                              ▼                  ▼
-                 cancel_attach_reservation   finish_attach
+        cancel_attach_reservation(token)   finish_attach(token)
 
 shmdt / task exit ──> detach / drop_task ──> 调用方解除页表映射
 IPC_RMID ──> 删除 key 索引；nattch 归零后才释放物理帧
@@ -36,7 +36,8 @@ IPC_RMID ──> 删除 key 索引；nattch 归零后才释放物理帧
 | `ShmAttachInfo` | API | 映射或解除映射一段用户 VA 所需的快照。 |
 
 - `IPC_RMID` 不会立即解除仍在使用的映射；只有 `marked_removed && nattch == 0` 才回收物理帧。
-- `begin_attach` 与 `finish_attach` 必须成对；MM 映射失败必须走 `cancel_attach_reservation`。
+- `begin_attach` 返回唯一 reservation；`finish_attach` 与 `cancel_attach_reservation` 必须使用同一
+  token，MM 映射失败必须走 cancel。
 - `ShmAttachInfo.pages` 的物理帧所有权仍属于 registry。MM 只能映射/取消映射，不能释放它们。
 - `TaskId` 是 WaterOS 内核任务标识，不是 Linux PID 或 TID。
 

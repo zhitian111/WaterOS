@@ -17,12 +17,26 @@ use crate::state::{ShmAttachment, ShmSegment};
 /// 的一个 `nattch` 引用。所有字段必须在 global 的 `SHM_REGISTRY` 锁内修改。
 pub struct ShmRegistry {
     next_id: ShmId,
+    /// 下一次 `shmat` 两阶段操作使用的 reservation ID。
+    next_attach_reservation_id: usize,
     /// 段 ID 到物理页后备段的主索引。
     segments: BTreeMap<ShmId, ShmSegment>,
     /// 非 private SysV key 到当前段 ID 的索引。
     key_index: BTreeMap<usize, ShmId>,
     /// task ID 到该任务的所有 SHM 映射记录。
     attachments: BTreeMap<TaskId, Vec<ShmAttachment>>,
+    /// 已经增加 `nattch`、但尚未完成 MM 映射提交的 attach reservation。
+    attach_reservations: BTreeMap<usize, ShmId>,
+}
+
+/// `DATA:` 一次 `shmat` 的不可伪造（对外字段私有）提交凭据。
+///
+/// 只有 [`ShmRegistry::begin_attach`] 能创建它；调用方必须把同一个 reservation 交给
+/// `finish_attach` 或 `cancel_attach_reservation`，不能只凭 `shmid` 结束另一条并发 attach。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ShmAttachReservation {
+    id: usize,
+    shmid: ShmId,
 }
 
 impl ShmRegistry {
@@ -30,9 +44,11 @@ impl ShmRegistry {
     pub const fn new() -> Self {
         Self {
             next_id: 1,
+            next_attach_reservation_id: 1,
             segments: BTreeMap::new(),
             key_index: BTreeMap::new(),
             attachments: BTreeMap::new(),
+            attach_reservations: BTreeMap::new(),
         }
     }
 
@@ -101,15 +117,20 @@ impl ShmRegistry {
         base: usize,
         readonly: bool,
     ) -> ShmResult<ShmAttachInfo> {
-        let _ = self.begin_attach(shmid)?;
-        self.finish_attach(shmid, task_id, base, readonly)
+        let (reservation, _) = self.begin_attach(shmid)?;
+        self.finish_attach(&reservation, task_id, base, readonly)
     }
 
     /// `FLOW:` `shmat` 的第一阶段，在 MM 映射前保留一份 `nattch`。
     ///
-    /// `LOCK:` 返回页快照后调用方必须释放 registry 锁再进入 MM；映射失败必须调用
-    /// [`Self::cancel_attach_reservation`]，成功后必须调用 [`Self::finish_attach`]。
-    pub fn begin_attach(&mut self, shmid: ShmId) -> ShmResult<ShmSegmentInfo> {
+    /// `LOCK:` 返回 reservation 与页快照后调用方必须释放 registry 锁再进入 MM；映射失败必须以
+    /// 同一个 reservation 调用 [`Self::cancel_attach_reservation`]，成功后必须交给
+    /// [`Self::finish_attach`]。
+    pub fn begin_attach(&mut self,
+                        shmid: ShmId)
+                        -> ShmResult<(ShmAttachReservation, ShmSegmentInfo)> {
+        let info = self.segment_info(shmid)?;
+        let reservation_id = self.alloc_attach_reservation_id()?;
         let segment = self
             .segments
             .get_mut(&shmid)
@@ -118,25 +139,23 @@ impl ShmRegistry {
             .nattch
             .checked_add(1)
             .ok_or(ShmError::Invalid)?;
-        Ok(ShmSegmentInfo {
-            shmid,
-            key: segment.key,
-            size: segment.size,
-            mode: segment.mode,
-            pages: segment
-                .pages
-                .clone(),
-        })
+        self.attach_reservations.insert(reservation_id, shmid);
+        Ok((ShmAttachReservation { id: reservation_id, shmid }, info))
     }
 
-    /// `FLOW:` `begin_attach` 成功且 MM 映射完成后提交 task attachment；不再增加 `nattch`。
+    /// `FLOW:` `begin_attach` 成功且 MM 映射完成后，以同一个 reservation 提交 task attachment；
+    /// 不再增加 `nattch`。
     pub fn finish_attach(
         &mut self,
-        shmid: ShmId,
+        reservation: &ShmAttachReservation,
         task_id: TaskId,
         base: usize,
         readonly: bool,
     ) -> ShmResult<ShmAttachInfo> {
+        if !self.has_attach_reservation(reservation) {
+            return Err(ShmError::Invalid);
+        }
+        let shmid = reservation.shmid;
         let segment = self
             .segments
             .get(&shmid)
@@ -159,11 +178,20 @@ impl ShmRegistry {
                 size: segment.size,
                 readonly,
             });
+        self.attach_reservations.remove(&reservation.id);
         Ok(info)
     }
 
-    /// `FLOW:` MM 映射失败时撤销 `begin_attach` 预留；对已不存在段幂等。
-    pub fn cancel_attach_reservation(&mut self, shmid: ShmId) {
+    /// `FLOW:` MM 映射失败时撤销指定 `begin_attach` reservation；重复或错配 token 返回 `EINVAL`。
+    pub fn cancel_attach_reservation(
+        &mut self,
+        reservation: &ShmAttachReservation,
+    ) -> ShmResult<()> {
+        if !self.has_attach_reservation(reservation) {
+            return Err(ShmError::Invalid);
+        }
+        let shmid = reservation.shmid;
+        self.attach_reservations.remove(&reservation.id);
         let remove_now = if let Some(segment) = self
             .segments
             .get_mut(&shmid)
@@ -178,6 +206,30 @@ impl ShmRegistry {
         if remove_now {
             self.remove_segment(shmid);
         }
+        Ok(())
+    }
+
+    /// 返回一个现有 task attachment 的映射快照，但不改变 `nattch`。
+    ///
+    /// 调用方据此在 registry 锁外解除页表映射；只有成功解除后才能调用 [`Self::detach`]。
+    pub fn attachment_info(&self, task_id: TaskId, base: usize) -> ShmResult<ShmAttachInfo> {
+        let attach = self
+            .attachments
+            .get(&task_id)
+            .and_then(|list| list.iter().find(|attach| attach.base == base))
+            .copied()
+            .ok_or(ShmError::Invalid)?;
+        self.attachment_info_from_attachment(attach)
+    }
+
+    /// 返回一个 task 当前所有 attachment 的快照，不改变 registry。
+    pub fn task_attachments(&self, task_id: TaskId) -> Vec<ShmAttachInfo> {
+        self.attachments
+            .get(&task_id)
+            .into_iter()
+            .flatten()
+            .filter_map(|attach| self.attachment_info_from_attachment(*attach).ok())
+            .collect()
     }
 
     /// `FLOW:` `shmdt`：先删除 attachment 并递减 `nattch`，返回页信息给调用方解除页表映射。
@@ -291,6 +343,35 @@ impl ShmRegistry {
             }
         }
         Err(ShmError::NoMem)
+    }
+
+    fn alloc_attach_reservation_id(&mut self) -> ShmResult<usize> {
+        for _ in 0..usize::MAX {
+            let id = self.next_attach_reservation_id;
+            self.next_attach_reservation_id = self.next_attach_reservation_id.wrapping_add(1);
+            if self.next_attach_reservation_id == 0 {
+                self.next_attach_reservation_id = 1;
+            }
+            if id != 0 && !self.attach_reservations.contains_key(&id) {
+                return Ok(id);
+            }
+        }
+        Err(ShmError::NoMem)
+    }
+
+    fn has_attach_reservation(&self, reservation: &ShmAttachReservation) -> bool {
+        self.attach_reservations.get(&reservation.id) == Some(&reservation.shmid)
+    }
+
+    fn attachment_info_from_attachment(&self, attach: ShmAttachment) -> ShmResult<ShmAttachInfo> {
+        let segment = self.segments.get(&attach.shmid).ok_or(ShmError::Invalid)?;
+        Ok(ShmAttachInfo {
+            shmid: attach.shmid,
+            base: attach.base,
+            size: attach.size,
+            readonly: attach.readonly,
+            pages: segment.pages.clone(),
+        })
     }
 
     /// `INVARIANT:` 每次 attachment 只递减一次；必要时在返回 MM 信息前回收已删除段的帧。

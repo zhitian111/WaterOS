@@ -50,10 +50,10 @@ pub(crate) fn sys_shmat(args : SyscallArgs) -> UserRet {
     let shmflg = args.arg(2);
     let readonly = shmflg & SHM_RDONLY != 0;
 
-    let segment = {
+    let (reservation, segment) = {
         let mut reg = ipc::shm::registry().lock();
         match reg.begin_attach(shmid) {
-            Ok(info) => info,
+            Ok(reservation) => reservation,
             Err(error) => return UserRet::from_error(shm_error_to_errno(error)),
         }
     };
@@ -65,8 +65,8 @@ pub(crate) fn sys_shmat(args : SyscallArgs) -> UserRet {
     {
         Ok(base) => base,
         Err(error) => {
-            ipc::shm::registry().lock()
-                                .cancel_attach_reservation(shmid);
+            let _ = ipc::shm::registry().lock()
+                                        .cancel_attach_reservation(&reservation);
             return UserRet::from_error(error);
         }
     };
@@ -77,19 +77,19 @@ pub(crate) fn sys_shmat(args : SyscallArgs) -> UserRet {
                                pages : segment.pages };
     if let Err(error) = replace_range_with_shared(handle, &info, true) {
         let _ = unmap_range_dealloc(handle, base, info.size);
-        ipc::shm::registry().lock()
-                            .cancel_attach_reservation(shmid);
+        let _ = ipc::shm::registry().lock()
+                                    .cancel_attach_reservation(&reservation);
         return UserRet::from_error(error);
     }
 
     match ipc::shm::registry().lock()
-                              .finish_attach(shmid, task_id(), base, readonly)
+                              .finish_attach(&reservation, task_id(), base, readonly)
     {
         Ok(_) => UserRet::from_success(base),
         Err(error) => {
             let _ = unmap_shared_range(handle, &info);
-            ipc::shm::registry().lock()
-                                .cancel_attach_reservation(shmid);
+            let _ = ipc::shm::registry().lock()
+                                        .cancel_attach_reservation(&reservation);
             UserRet::from_error(shm_error_to_errno(error))
         }
     }
@@ -101,24 +101,35 @@ pub(crate) fn sys_shmdt(args : SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EFAULT);
     };
     let base = args.arg(0);
+    // 先在锁内复制 attachment，再释放锁解除页表映射。attachment 仍保留在 registry 中，
+    // 因而并发 IPC_RMID 不会在 unmap 前回收共享帧。
     let info = match ipc::shm::registry().lock()
-                                         .detach(task_id(), base)
+                                         .attachment_info(task_id(), base)
     {
         Ok(info) => info,
         Err(error) => return UserRet::from_error(shm_error_to_errno(error)),
     };
-    let _ = unmap_shared_range(handle, &info);
-    UserRet::from_success(0)
+    if let Err(error) = unmap_shared_range(handle, &info) {
+        return UserRet::from_error(error);
+    }
+    match ipc::shm::registry().lock().detach(task_id(), base) {
+        Ok(_) => UserRet::from_success(0),
+        // 同一 task 不会同时在两个 CPU 上执行 syscall；此处失败意味着 registry 已被违规修改。
+        Err(error) => UserRet::from_error(shm_error_to_errno(error)),
+    }
 }
 
 pub(crate) fn drop_task_attachments(task_id : task::TaskId, aspace_handle : usize) {
-    let attached = ipc::shm::registry().lock()
-                                       .drop_task(task_id);
     if aspace_handle == 0 {
+        let _ = ipc::shm::registry().lock().drop_task(task_id);
         return;
     }
+    let attached = ipc::shm::registry().lock().task_attachments(task_id);
     for info in &attached {
-        let _ = unmap_shared_range(aspace_handle, info);
+        if unmap_shared_range(aspace_handle, info).is_ok() {
+            // 仅在地址空间不再引用帧后递减 nattch，避免把仍映射的页交还 allocator。
+            let _ = ipc::shm::registry().lock().detach(task_id, info.base);
+        }
     }
 }
 
@@ -129,7 +140,15 @@ pub(crate) fn fork_task_attachments(parent : task::TaskId,
     let attached = ipc::shm::registry().lock()
                                        .fork_task(parent, child);
     for info in &attached {
-        replace_range_with_shared(child_aspace_handle, info, true)?;
+        if let Err(error) = replace_range_with_shared(child_aspace_handle, info, true) {
+            // fork_task 已增加 child 的 nattch；先撤销所有可能已映射的共享页，再删除 child
+            // attachment，确保 IPC_RMID 不能在页表仍引用这些帧时回收它们。
+            for rollback in &attached {
+                let _ = unmap_shared_range(child_aspace_handle, rollback);
+            }
+            let _ = ipc::shm::registry().lock().drop_task(child);
+            return Err(error);
+        }
     }
     Ok(())
 }

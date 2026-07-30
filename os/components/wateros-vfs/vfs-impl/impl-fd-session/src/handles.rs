@@ -632,6 +632,7 @@ fn map_pipe_err(err: PipeError) -> VfsError {
         PipeError::WouldBlock => VfsError::WouldBlock,
         PipeError::Interrupted => VfsError::Interrupted,
         PipeError::BrokenPipe => VfsError::BrokenPipe,
+        PipeError::Closed => VfsError::BadFd,
         PipeError::InvalidCapacity => VfsError::Unsupported,
     }
 }

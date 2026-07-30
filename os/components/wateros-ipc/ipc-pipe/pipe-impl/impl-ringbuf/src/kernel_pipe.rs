@@ -107,7 +107,7 @@ impl PipeState {
 /// `DATA:` 内核内部 pipe 对象；缓冲和端点开放状态由 `state` 保护。
 ///
 /// 两个等待队列按等待条件分离：读者等待“非空或写端关闭”，写者等待“未满或读端关闭”。
-pub struct Pipe {
+pub(crate) struct Pipe {
     state: Mutex<PipeState>,
     read_wait: WaitQueue,
     write_wait: WaitQueue,
@@ -160,16 +160,6 @@ impl Pipe {
     /// 阻塞写入，尽量写完整个输入缓冲。
     pub fn write(&self, input: &[u8]) -> PipeResult<usize> {
         KernelPipe::write(self, input)
-    }
-
-    /// 关闭读端并唤醒可能阻塞的写者。
-    pub fn close_read(&self) {
-        KernelPipe::close_read(self);
-    }
-
-    /// 关闭写端并唤醒可能阻塞的读者。
-    pub fn close_write(&self) {
-        KernelPipe::close_write(self);
     }
 
     /// 读端 fd 引用 +1（`dup` / `fork` 继承 / `Clone`）。
@@ -391,16 +381,6 @@ impl KernelPipe for Pipe {
             }
         }
         Ok(written)
-    }
-
-    fn close_read(&self) {
-        self.state.lock().read_open = false;
-        self.write_wait.wake_all();
-    }
-
-    fn close_write(&self) {
-        self.state.lock().write_open = false;
-        self.read_wait.wake_all();
     }
 
     fn poll_revents_read(&self) -> i16 {

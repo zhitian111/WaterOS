@@ -7,7 +7,7 @@ I/O，以及 `poll` 等待。它不管理 fd 表；VFS fd-session 层把 `PipeEn
 
 | 层 | 路径 | 职责 |
 | --- | --- | --- |
-| 聚合 | `src/lib.rs` | 选择 ring-buffer 实现、重导出 `Pipe` 与 `PipeEndpoint`。 |
+| 聚合 | `src/lib.rs` | 选择 ring-buffer 实现、重导出 fd 可持有的 `PipeEndpoint`。 |
 | API | `pipe-api/api-v0/` | `KernelPipe`、`PipeEndpointOps`、端点方向与错误。 |
 | 实现 | `pipe-impl/impl-ringbuf/` | `PipeState`、ring buffer、端点引用和两个等待队列。 |
 | 调用方 | `vfs-impl/impl-fd-session` | fd 生命周期、`pipe2`/`fcntl`/`poll` 的 Linux ABI。 |
@@ -35,6 +35,7 @@ close: 最后一个端点引用释放 -> 改变 open 状态 -> 唤醒对侧等�
 - 条件等待在 task scheduler 的临界区重新检查 pipe 状态，避免“状态改变后仍睡眠”的 lost wake。
 - 等待队列唤醒后的 CPU 选择、远端入队和定向 IPI 都由 `wateros-task` 处理；pipe 不固定目标 CPU。
 - `PipeEndpoint::closed` 保证显式 `close` 与 `Drop` 至多释放一次端点引用。
+- 已关闭端点不再允许 read、write、poll 或调整容量；fd-session 应将其映射为 `EBADF`。
 
 ## 当前限制
 

@@ -19,4 +19,4 @@ pub use api_v0::*;
 
 /// 保持 `ipc::shm::registry().lock()` 的既有调用 ABI；锁内仅访问 SHM 元数据。
 #[cfg(feature = "impl-frame")]
-pub use active_impl::{registry, ShmRegistry};
+pub use active_impl::{registry, ShmAttachReservation, ShmRegistry};

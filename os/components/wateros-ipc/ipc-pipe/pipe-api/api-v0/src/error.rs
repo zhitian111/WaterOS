@@ -12,6 +12,8 @@ pub enum PipeError {
     Interrupted,
     /// 对端已经关闭，继续执行当前方向的 I/O 没有意义。
     BrokenPipe,
+    /// 当前 fd 端点已关闭，不能再进行 I/O 或 poll 等操作。
+    Closed,
     /// pipe 容量为零或不满足实现约束。
     InvalidCapacity,
 }
