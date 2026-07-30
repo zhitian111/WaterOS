@@ -1,9 +1,9 @@
 //! `dup`/`dup3` 系统调用实现。
 
 //! 本模块代码由AI完成
-use abi::errno::ErrNo;
-use abi::syscall_args::SyscallArgs;
-use abi::user_ret::UserRet;
+use api_v0::ErrNo;
+use api_v0::SyscallArgs;
+use api_v0::UserRet;
 
 use crate::epoll_fd;
 use crate::vfs_util::vfs_error_to_errno;

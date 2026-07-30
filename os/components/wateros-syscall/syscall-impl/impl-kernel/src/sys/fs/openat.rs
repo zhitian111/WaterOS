@@ -7,9 +7,9 @@ use alloc::format;
 use alloc::string::String;
 use core::sync::atomic::{AtomicU64, Ordering};
 
-use abi::errno::ErrNo;
-use abi::syscall_args::SyscallArgs;
-use abi::user_ret::UserRet;
+use api_v0::ErrNo;
+use api_v0::SyscallArgs;
+use api_v0::UserRet;
 use cred::api::{Gid, ProcessCredentials};
 use vfs::active_impl;
 use vfs::api::{

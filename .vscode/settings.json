@@ -18,7 +18,9 @@
         "RUNTIME_ORDER",
         "ALLOC_SYNC",
         "OUTPUT_SYNC",
-        "PANIC_PATH"
+        "PANIC_PATH",
+        "ABI_CONTRACT",
+        "FORMAT_STATE"
     ],
     "todo-tree.highlights.customHighlight": {
         "TODO":     { "icon": "check",  "type": "line", "background": "#2d7d46" },
@@ -39,7 +41,9 @@
         "RUNTIME_ORDER": { "icon": "list-ordered", "type": "line", "background": "#0369a1" },
         "ALLOC_SYNC": { "icon": "lock", "type": "line", "background": "#b45309" },
         "OUTPUT_SYNC": { "icon": "terminal", "type": "line", "background": "#0f766e" },
-        "PANIC_PATH": { "icon": "alert", "type": "line", "background": "#be123c" }
+        "PANIC_PATH": { "icon": "alert", "type": "line", "background": "#be123c" },
+        "ABI_CONTRACT": { "icon": "law", "type": "line", "background": "#7c2d12" },
+        "FORMAT_STATE": { "icon": "table", "type": "line", "background": "#1d4ed8" }
     },
     "todohighlight.keywords": [
         "CHANGE:",
@@ -58,7 +62,9 @@
         "RUNTIME_ORDER:",
         "ALLOC_SYNC:",
         "OUTPUT_SYNC:",
-        "PANIC_PATH:"
+        "PANIC_PATH:",
+        "ABI_CONTRACT:",
+        "FORMAT_STATE:"
     ],
     "better-todo-tree.general.tags": [
         "TODO",
@@ -79,7 +85,9 @@
         "RUNTIME_ORDER",
         "ALLOC_SYNC",
         "OUTPUT_SYNC",
-        "PANIC_PATH"
+        "PANIC_PATH",
+        "ABI_CONTRACT",
+        "FORMAT_STATE"
     ],
     "better-todo-tree.highlights.customHighlight": {
         "TODO":   { "icon": "check", "type": "line", "background": "#2d7d46" },
@@ -100,6 +108,8 @@
         "RUNTIME_ORDER": { "icon": "list-ordered", "type": "line", "background": "#0369a1" },
         "ALLOC_SYNC": { "icon": "lock", "type": "line", "background": "#b45309" },
         "OUTPUT_SYNC": { "icon": "terminal", "type": "line", "background": "#0f766e" },
-        "PANIC_PATH": { "icon": "alert", "type": "line", "background": "#be123c" }
+        "PANIC_PATH": { "icon": "alert", "type": "line", "background": "#be123c" },
+        "ABI_CONTRACT": { "icon": "law", "type": "line", "background": "#7c2d12" },
+        "FORMAT_STATE": { "icon": "table", "type": "line", "background": "#1d4ed8" }
     }
 }

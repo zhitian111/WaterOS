@@ -5,7 +5,7 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use abi::errno::ErrNo;
+use api_v0::ErrNo;
 
 /// 与 `read`/`write`/`pread` 族 syscall 对齐的上限。
 // 本变量代码由AI完成

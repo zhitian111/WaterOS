@@ -1,7 +1,7 @@
 //! [`VfsError`] 到 ABI [`ErrNo`] 的映射。
 //! 本模块代码由AI完成
 
-use abi::errno::ErrNo;
+use api_v0::ErrNo;
 use vfs::api::{VfsError, VfsOpenFlags};
 
 // 本方法代码由AI完成

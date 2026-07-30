@@ -1,5 +1,5 @@
 #![no_std]
-//! WaterOS 系统调用聚合 crate：直接导出 api-v0 常量与 impl-kernel 实现。
+//! WaterOS 系统调用 facade：导出 v0 的调用号与边界类型，以及内核实现入口。
 
 #[cfg(feature = "api-v0")]
 pub use api_v0::*;

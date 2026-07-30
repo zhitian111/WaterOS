@@ -1,9 +1,9 @@
 //! `statfs(2)`：bring-up 最小兼容实现。
 //! 本模块代码由AI完成
 
-use abi::errno::ErrNo;
-use abi::syscall_args::SyscallArgs;
-use abi::user_ret::UserRet;
+use api_v0::ErrNo;
+use api_v0::SyscallArgs;
+use api_v0::UserRet;
 use cred::api::ProcessCredentials;
 use vfs::active_impl;
 use vfs::api::{SingleRootReadView, VfsError, VfsNodeType};

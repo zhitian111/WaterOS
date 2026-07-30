@@ -1,8 +1,8 @@
 //! `futex(2)` — 用户态快速互斥锁原语；等待/唤醒委托 `ipc::futex` facade。
 
-use abi::errno::ErrNo;
-use abi::syscall_args::SyscallArgs;
-use abi::user_ret::UserRet;
+use api_v0::ErrNo;
+use api_v0::SyscallArgs;
+use api_v0::UserRet;
 use ipc::futex::{FutexError, FutexKey, FutexWaitOutcome};
 use platform::wall_clock;
 use task::TaskTick;

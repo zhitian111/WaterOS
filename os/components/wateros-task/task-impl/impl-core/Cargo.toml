@@ -4,8 +4,8 @@
     edition = "2024"
 
 [dependencies]
-    abi = { path = "../../../wateros-abi/", package = "wateros-abi", default-features = true }
     api-v0 = { path = "../../task-api/api-v0/", package = "wateros-task-api-v0", default-features = true }
     arch = { path = "../../../wateros-platform/platform-arch/", package = "wateros-platform-arch", default-features = false }
     base = { path = "../../../wateros-base/", package = "wateros-base", default-features = true }
     mm-api = { path = "../../../wateros-mm/mm-api/api-v0/", package = "wateros-mm-api-v0", default-features = true }
+    syscall-api = { path = "../../../wateros-syscall/syscall-api/api-v0/", package = "wateros-syscall-api-v0", default-features = true }

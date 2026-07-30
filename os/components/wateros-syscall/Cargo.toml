@@ -7,12 +7,11 @@
     edition = "2024"
 
 [dependencies]
-    abi = { path = "../wateros-abi/", package = "wateros-abi", default-features = false, optional = true }
     api-v0 = { path = "./syscall-api/api-v0/", package = "wateros-syscall-api-v0", default-features = true, optional = true }
     impl-kernel = { path = "./syscall-impl/impl-kernel/", package = "wateros-syscall-impl-kernel", default-features = false, optional = true }
 
 [features]
-    api-v0 = [ "abi/api-v0", "dep:abi", "dep:api-v0", "impl-kernel?/api-v0" ]
+    api-v0 = [ "dep:api-v0", "impl-kernel?/api-v0" ]
     default = [ "impl-kernel" ]
     impl-kernel = [ "api-v0", "dep:impl-kernel", "impl-kernel/impl-kernel" ]
 [profile.dev]

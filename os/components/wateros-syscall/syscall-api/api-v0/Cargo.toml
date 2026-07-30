@@ -4,10 +4,10 @@
     edition = "2024"
 
 [dependencies]
-    abi = { path = "../../../wateros-abi/", package = "wateros-abi", default-features = false }
+    config = { path = "../../../wateros-base/base-config/", package = "wateros-base-config", default-features = true }
 
 [features]
-    api-v0 = [ "abi/api-v0" ]
+    api-v0 = [  ]
     default = [ "api-v0" ]
 
 [profile.dev]

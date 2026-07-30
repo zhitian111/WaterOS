@@ -1,9 +1,9 @@
 //! `umount2(2)`：卸载辅助卷挂载点；支持 `MNT_DETACH`。
 //! 本模块代码由AI完成
 
-use abi::errno::ErrNo;
-use abi::syscall_args::SyscallArgs;
-use abi::user_ret::UserRet;
+use api_v0::ErrNo;
+use api_v0::SyscallArgs;
+use api_v0::UserRet;
 use vfs::api::VfsError;
 
 use crate::sys::fs::path_at::resolve_path_at;

@@ -5,9 +5,7 @@
 //! 注册；本文件只做帧类型与 **一次** `invoke_kernel_trap_handler`，不依赖
 //! `task`/`syscall`。
 
-use abi::syscall_args::SyscallArgs;
-use abi::syscall_number::SyscallNumber;
-use abi::user_ret::UserRet;
+use syscall_api::{SyscallArgs, SyscallNumber, UserRet};
 use api_v0::kernel_trap;
 use api_v0::trap::{
     Exception, Interrupt, SignalFrameCodec, SignalMachineContext, TrapCause, TrapFrameRead,

@@ -5,7 +5,6 @@
 
 [dependencies]
     api-v0 = { path = "../../syscall-api/api-v0/", package = "wateros-syscall-api-v0", default-features = true }
-    abi = { path = "../../../wateros-abi/", package = "wateros-abi", default-features = false }
     task = { path = "../../../wateros-task/", package = "wateros-task", default-features = false }
     ipc = { path = "../../../wateros-ipc/", package = "wateros-ipc", default-features = false, optional = true }
     cred = { path = "../../../wateros-cred/", package = "wateros-cred", default-features = false, optional = true }
@@ -22,7 +21,7 @@
     klog = { path = "../../../wateros-klog/", package = "wateros-klog", default-features = true }
 
 [features]
-    api-v0 = [ "abi/api-v0", "api-v0/api-v0", "fd-session" ]
+    api-v0 = [ "api-v0/api-v0", "fd-session" ]
     cred-session = [ "cred/api-v0", "cred/impl-root", "dep:cred" ]
     default = [ "impl-kernel" ]
     fd-session = [

@@ -1,7 +1,7 @@
 //! 系统调用层与 [`wateros-mm`] API 之间的错误与标志转换。
 //! 本模块代码由AI完成
 
-use abi::errno::ErrNo;
+use api_v0::ErrNo;
 
 /// 用户态 `brk` 的单调递增假顶：在无 ELF
 /// 用户页表（`user_aspace_ptr==0`）时兜底。

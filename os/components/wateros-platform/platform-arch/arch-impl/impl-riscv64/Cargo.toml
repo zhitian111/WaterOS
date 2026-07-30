@@ -5,7 +5,7 @@
 
 [dependencies]
     api-v0 = { path = "../../arch-api/api-v0/", package = "wateros-platform-arch-api-v0", default-features = true }
-    abi = { path = "../../../../wateros-abi/", package = "wateros-abi", default-features = true }
+    syscall-api = { path = "../../../../wateros-syscall/syscall-api/api-v0/", package = "wateros-syscall-api-v0", default-features = true }
     base = { path = "../../../../wateros-base/", package = "wateros-base", default-features = true }
     config = { path = "../../../../wateros-base/base-config/", package = "wateros-base-config" }
     riscv = { version = "0.16.0" }

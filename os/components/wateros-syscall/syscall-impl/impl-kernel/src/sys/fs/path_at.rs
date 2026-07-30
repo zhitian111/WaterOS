@@ -5,7 +5,7 @@ extern crate alloc;
 
 use alloc::string::String;
 
-use abi::errno::ErrNo;
+use api_v0::ErrNo;
 use vfs::api::{resolve_against_cwd, resolve_open_path, FinalSymlink, VfsError};
 
 use crate::vfs_util::vfs_error_to_errno;

@@ -3,7 +3,7 @@
 //!
 //! 调度器只通过 `task_api` 抽象操作本模块类型。
 
-use abi::user_ret::UserRet;
+use syscall_api::UserRet;
 use alloc::boxed::Box;
 use api_v0::{
     AddressSpaceHandle, CpuId, CpuMask, ExitedTask, KernelStack, KernelTaskEntry, SchedPolicy,

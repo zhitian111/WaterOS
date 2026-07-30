@@ -1,8 +1,8 @@
 //! `set_robust_list` / `get_robust_list` 与线程退出时的 robust futex 深清理。
 
-use abi::errno::ErrNo;
-use abi::syscall_args::SyscallArgs;
-use abi::user_ret::UserRet;
+use api_v0::ErrNo;
+use api_v0::SyscallArgs;
+use api_v0::UserRet;
 use ipc::futex::{
     FutexKey, RobustListHead, FUTEX_OWNER_DIED, FUTEX_TID_MASK, FUTEX_WAITERS,
     ROBUST_LIST_HEAD_SIZE, ROBUST_LIST_LIMIT,

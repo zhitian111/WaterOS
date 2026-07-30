@@ -5,9 +5,9 @@ extern crate alloc;
 
 use alloc::boxed::Box;
 
-use abi::errno::ErrNo;
-use abi::syscall_args::SyscallArgs;
-use abi::user_ret::UserRet;
+use api_v0::ErrNo;
+use api_v0::SyscallArgs;
+use api_v0::UserRet;
 use mm::api::addr::PAGE_SIZE;
 use mm::api::error::{MmError, MmResult};
 use mm::api::flags::MapFlags;

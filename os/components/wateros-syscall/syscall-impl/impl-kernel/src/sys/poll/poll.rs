@@ -1,8 +1,8 @@
 //! `poll(2)`（号 271）：委托共享 [`poll_engine`]。
 
 //! 本模块代码由AI完成
-use abi::syscall_args::SyscallArgs;
-use abi::user_ret::UserRet;
+use api_v0::SyscallArgs;
+use api_v0::UserRet;
 
 use crate::poll_engine::{PollDeadline, do_poll_with_deadline};
 

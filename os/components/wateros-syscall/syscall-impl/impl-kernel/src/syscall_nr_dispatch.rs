@@ -2,7 +2,7 @@
 // 本模块代码由AI完成
 
 use crate::sys;
-use abi::syscall_args::SyscallArgs;
+use api_v0::SyscallArgs;
 /// 按裸 syscall 号分发；未命中时走旁路号与 ENOSYS。
 #[inline]
 // 本方法代码由AI完成
@@ -135,7 +135,7 @@ pub fn dispatch_syscall_by_nr(syscall_nr : usize, syscall_args : SyscallArgs) ->
         n if n == api_v0::RT_SIGSUSPEND => sys::sys_rt_sigsuspend(syscall_args).0,
         n if n == api_v0::RT_SIGTIMEDWAIT => sys::sys_rt_sigtimedwait(syscall_args).0,
         n if n == api_v0::RT_SIGRETURN => {
-            abi::user_ret::UserRet::from_error(abi::errno::ErrNo::ENOSYS).0
+            api_v0::UserRet::from_error(api_v0::ErrNo::ENOSYS).0
         }
         n if n == api_v0::TKILL => sys::sys_tkill(syscall_args).0,
         n if n == api_v0::TGKILL => sys::sys_tgkill(syscall_args).0,
@@ -202,7 +202,7 @@ pub fn dispatch_syscall_by_nr(syscall_nr : usize, syscall_args : SyscallArgs) ->
         n if n == api_v0::REMOVEXATTR => sys::sys_removexattr(syscall_args).0,
         n if n == api_v0::LREMOVEXATTR => sys::sys_lremovexattr(syscall_args).0,
         n if n == api_v0::FREMOVEXATTR => sys::sys_fremovexattr(syscall_args).0,
-        _ => abi::user_ret::UserRet::from_error(abi::errno::ErrNo::ENOSYS).0,
+        _ => api_v0::UserRet::from_error(api_v0::ErrNo::ENOSYS).0,
     }
 }
 

@@ -1,8 +1,8 @@
 //! `capget(2)` / `capset(2)` 最小实现：供 LTP 探测 POSIX capabilities。
 
-use abi::errno::ErrNo;
-use abi::syscall_args::SyscallArgs;
-use abi::user_ret::UserRet;
+use api_v0::ErrNo;
+use api_v0::SyscallArgs;
+use api_v0::UserRet;
 use task::ProcessId;
 
 use crate::user_copy::{copy_from_user_struct, copy_to_user_struct};

@@ -1,9 +1,9 @@
 //! `fstat(2)`：将已打开文件的元数据写入用户 `stat` 缓冲。
 
 //! 本模块代码由AI完成
-use abi::errno::ErrNo;
-use abi::syscall_args::SyscallArgs;
-use abi::user_ret::UserRet;
+use api_v0::ErrNo;
+use api_v0::SyscallArgs;
+use api_v0::UserRet;
 use vfs::active_impl;
 use vfs::api::{SingleRootReadView, VFS_FIRST_DYNAMIC_FD, VFS_STDERR_FD, VFS_STDIN_FD};
 

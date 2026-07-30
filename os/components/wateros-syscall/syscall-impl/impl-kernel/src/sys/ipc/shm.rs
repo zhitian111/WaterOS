@@ -1,9 +1,9 @@
 //! SysV 共享内存 syscall 子集（`shmget` / `shmctl` / `shmat` / `shmdt`）。
 
 //! 本模块代码由AI完成
-use abi::errno::ErrNo;
-use abi::syscall_args::SyscallArgs;
-use abi::user_ret::UserRet;
+use api_v0::ErrNo;
+use api_v0::SyscallArgs;
+use api_v0::UserRet;
 use ipc::shm::{ShmAttachInfo, ShmError, SHM_RDONLY};
 
 use crate::mm_util::{current_user_aspace_handle, mm_err_to_errno};

@@ -5,9 +5,9 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use abi::errno::ErrNo;
-use abi::syscall_args::SyscallArgs;
-use abi::user_ret::UserRet;
+use api_v0::ErrNo;
+use api_v0::SyscallArgs;
+use api_v0::UserRet;
 use mm::api::mempolicy::{MempolicyError, MPOL_F_ADDR, MPOL_F_NODE};
 
 use crate::mm_util::{current_user_aspace_handle, mm_err_to_errno};

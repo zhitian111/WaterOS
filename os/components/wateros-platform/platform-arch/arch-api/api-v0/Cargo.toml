@@ -4,7 +4,5 @@
     edition = "2024"
 
 [dependencies]
-base = { path = "../../../../wateros-base/", package = "wateros-base", default-features = true }
-    abi = { path = "../../../../wateros-abi/", package = "wateros-abi", features = [
-        "api-v0",
-    ] }
+    base = { path = "../../../../wateros-base/", package = "wateros-base", default-features = true }
+    syscall-api = { path = "../../../../wateros-syscall/syscall-api/api-v0/", package = "wateros-syscall-api-v0", default-features = true }

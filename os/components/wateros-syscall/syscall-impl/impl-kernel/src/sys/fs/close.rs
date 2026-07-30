@@ -1,8 +1,8 @@
 //! 文件描述符关闭操作：`close(2)`、`close_range(2)`。
 
-use abi::errno::ErrNo;
-use abi::syscall_args::SyscallArgs;
-use abi::user_ret::UserRet;
+use api_v0::ErrNo;
+use api_v0::SyscallArgs;
+use api_v0::UserRet;
 
 use crate::epoll_fd;
 use crate::vfs_util::vfs_error_to_errno;

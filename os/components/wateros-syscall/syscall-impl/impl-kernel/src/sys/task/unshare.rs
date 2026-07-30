@@ -1,9 +1,9 @@
 //! `unshare(2)`：创建新挂载命名空间（`CLONE_NEWNS`）。
 //! 本模块代码由AI完成
 
-use abi::errno::ErrNo;
-use abi::syscall_args::SyscallArgs;
-use abi::user_ret::UserRet;
+use api_v0::ErrNo;
+use api_v0::SyscallArgs;
+use api_v0::UserRet;
 
 const CLONE_NEWNS : usize = 0x0002_0000;
 

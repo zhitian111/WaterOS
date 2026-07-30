@@ -1,7 +1,7 @@
 //! 阻塞套接字等待：真阻塞 + 可中断（`EINTR`），非阻塞立即 `EAGAIN`。
 
 //! 本模块代码由AI完成
-use abi::errno::ErrNo;
+use api_v0::ErrNo;
 
 /// 阻塞模式下每 tick 检查一次可投递信号；非阻塞模式直接返回 `EAGAIN`。
 // 本方法代码由AI完成

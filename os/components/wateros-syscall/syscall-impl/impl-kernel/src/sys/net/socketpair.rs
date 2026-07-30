@@ -1,9 +1,9 @@
 //! `socketpair(2)`：创建一对已连接的 AF_UNIX stream-compatible socket fd。
 
 //! 本模块代码由AI完成
-use abi::errno::ErrNo;
-use abi::syscall_args::SyscallArgs;
-use abi::user_ret::UserRet;
+use api_v0::ErrNo;
+use api_v0::SyscallArgs;
+use api_v0::UserRet;
 
 use crate::user_copy::copy_to_user;
 use crate::vfs_util::vfs_error_to_errno;

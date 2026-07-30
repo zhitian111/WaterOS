@@ -226,6 +226,11 @@ impl<'a> FixedTable<'a> {
 }
 
 /// Active fixed-width table stream.
+///
+/// FORMAT_STATE: `begin` produces an active writer; `row` and `separator`
+/// append to it; consuming `finish` writes the bottom border. The writer
+/// borrows its destination, so an unfinished table cannot be written to from
+/// another owner at the same time.
 pub struct FixedTableWriter<'a, 'w, W> {
     output : &'w mut W,
     table : FixedTable<'a>,
@@ -416,11 +421,9 @@ impl<T : AsRef<str>, const ROWS: usize, const COLS: usize> AutoTable<'_, T, ROWS
         }
 
         let mut widths = [0; COLS];
-        for (row_index, row) in self.records
-                                    .iter()
-                                    .enumerate()
+        for row in self.records
+                       .iter()
         {
-            let _ = row_index;
             for (column, value) in row.iter()
                                       .enumerate()
             {
@@ -523,7 +526,6 @@ fn validate_columns(columns : &[Column]) -> Result<(), Error> {
 #[derive(Clone, Copy)]
 struct Measurement {
     width : usize,
-    multiline : bool,
 }
 
 enum MeasureError {
@@ -539,8 +541,7 @@ fn measure(cell : &Cell<'_>) -> Result<Measurement, MeasureError> {
     if writer.multiline {
         Err(MeasureError::Multiline)
     } else {
-        Ok(Measurement { width : writer.width,
-                         multiline : false })
+        Ok(Measurement { width : writer.width })
     }
 }
 
@@ -548,9 +549,6 @@ fn validate_measurement(column : usize,
                         spec : &Column,
                         measurement : Measurement)
                         -> Result<(), Error> {
-    if measurement.multiline {
-        return Err(Error::MultilineUnsupported { column });
-    }
     if measurement.width > spec.width && matches!(spec.overflow, Overflow::Error) {
         return Err(Error::ContentOverflow { column,
                                             width : spec.width,

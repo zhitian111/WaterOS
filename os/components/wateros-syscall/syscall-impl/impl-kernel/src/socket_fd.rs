@@ -26,11 +26,11 @@ pub(crate) fn lookup(fd: usize) -> Option<SocketRef> {
 }
 
 /// 查找 inet socket fd；无效 fd 返回 `EBADF`，有效非 socket 返回 `ENOTSOCK`。
-pub(crate) fn lookup_or_errno(fd: usize) -> Result<SocketRef, abi::errno::ErrNo> {
+pub(crate) fn lookup_or_errno(fd: usize) -> Result<SocketRef, api_v0::ErrNo> {
     match vfs::fd::with_current_io(fd, |handle| Ok(socket_ref(handle))) {
         Ok(Some(socket)) => Ok(socket),
-        Ok(None) => Err(abi::errno::ErrNo::ENOTSOCK),
-        Err(_) => Err(abi::errno::ErrNo::EBADF),
+        Ok(None) => Err(api_v0::ErrNo::ENOTSOCK),
+        Err(_) => Err(api_v0::ErrNo::EBADF),
     }
 }
 

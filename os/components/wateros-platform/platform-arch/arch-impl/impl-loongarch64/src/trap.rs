@@ -5,9 +5,7 @@
 //! **ABI**：用户态系统调用按 LoongArch Linux 约定使用 `$r4`–`r9` 为参数、`$r11`
 //! 为 系统调用号；返回值写入 `$r4`（见 `TrapSyscallWrite`）。
 
-use abi::syscall_args::SyscallArgs;
-use abi::syscall_number::SyscallNumber;
-use abi::user_ret::UserRet;
+use syscall_api::{SyscallArgs, SyscallNumber, UserRet};
 use api_v0::kernel_trap;
 use api_v0::trap::{
     Exception, Interrupt, SignalFrameCodec, SignalMachineContext, TrapCause, TrapFrameRead,

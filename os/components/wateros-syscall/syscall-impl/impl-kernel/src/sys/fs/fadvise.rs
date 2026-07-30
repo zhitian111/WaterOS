@@ -1,8 +1,8 @@
 //! `fadvise64(2)` compatibility for file access-pattern hints.
 
-use abi::errno::ErrNo;
-use abi::syscall_args::SyscallArgs;
-use abi::user_ret::UserRet;
+use api_v0::ErrNo;
+use api_v0::SyscallArgs;
+use api_v0::UserRet;
 use vfs::api::{VfsError, VfsNodeType};
 
 const POSIX_FADV_NORMAL : usize = 0;

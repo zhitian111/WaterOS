@@ -1,8 +1,8 @@
 //! `/dev/misc/rtc` 等软件 RTC 的 `ioctl(2)` 处理。
 
 //! 本模块代码由AI完成
-use abi::errno::ErrNo;
-use abi::user_ret::UserRet;
+use api_v0::ErrNo;
+use api_v0::UserRet;
 use platform::wall_clock::{ns_to_rtc_time, realtime_ns, rtc_time_to_ns, set_realtime_ns};
 
 use crate::user_copy::{copy_from_user_struct, copy_to_user_struct};

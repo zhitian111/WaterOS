@@ -4,7 +4,7 @@ extern crate alloc;
 
 use alloc::{boxed::Box, sync::Arc};
 
-use abi::{errno::ErrNo, syscall_args::SyscallArgs, user_ret::UserRet};
+use api_v0::{ErrNo, SyscallArgs, UserRet};
 use spin::Mutex;
 use vfs::{
     api::{VfsError, VfsIoHandle, VfsMetadata, VfsNodeType, VfsResult},

@@ -10,7 +10,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
-use abi::errno::ErrNo;
+use api_v0::ErrNo;
 use spin::Mutex;
 use vfs::api::resolve_open_path;
 use vfs::api::handle::VfsIoHandle;

@@ -5,7 +5,7 @@
 //!
 //! **须在** `task::init()` **之后**调用 [`init`]。
 
-use abi::user_ret::UserRet;
+use syscall::UserRet;
 use arch_api_v0::kernel_trap::register_kernel_trap_handler;
 use arch_api_v0::trap::{Exception, Interrupt, TrapCause, TrapFrameRead, TrapFrameWrite};
 use base_config::task::SCHED_TIMER_PERIOD_MS;
@@ -188,7 +188,7 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             if !exec_succeeded {
                 cx.add_user_pc(SYSCALL_INSN_BYTES);
                 cx.set_syscall_ret(UserRet(syscall_ret));
-                if syscall_ret == abi::errno::ErrNo::EINTR.user_ret() &&
+                if syscall_ret == syscall::ErrNo::EINTR.user_ret() &&
                    syscall::is_restartable_syscall(syscall_nr)
                 {
                     restart = Some((syscall_nr, syscall_args));
@@ -363,7 +363,7 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
 fn return_to_user_signal_delivery(frame : *mut u8,
                                   trap_cause : TrapCause,
                                   cx : &TrapContext,
-                                  restart : Option<(usize, abi::syscall_args::SyscallArgs)>)
+                                  restart : Option<(usize, syscall::SyscallArgs)>)
                                   -> bool {
     let delivered = syscall::deliver_pending_signal(frame, restart);
     if delivered < 0 {

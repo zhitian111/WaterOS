@@ -1,9 +1,9 @@
 //! 时钟类系统调用：`clock_gettime` / `clock_settime` / `clock_getres` /
 //! `clock_nanosleep`，以及 `gettimeofday` / `nanosleep` 的统一时间语义。
 
-use abi::errno::ErrNo;
-use abi::syscall_args::SyscallArgs;
-use abi::user_ret::UserRet;
+use api_v0::ErrNo;
+use api_v0::SyscallArgs;
+use api_v0::UserRet;
 use platform::timer;
 use platform::wall_clock::{realtime_ns, set_realtime_ns};
 use spin::Mutex;

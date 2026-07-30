@@ -8,9 +8,7 @@
 //! - **`TrapFrameRead::trap_cause`** 必须由每个 trap 帧类型 **显式实现**；`arch-api` **不**提供
 //!   从裸 `usize` 到 `TrapCause` 的默认转换，以免把某一 ISA 的编码误当成通用契约。
 
-use abi::syscall_args::{SyscallArgs, SyscallPacket};
-use abi::syscall_number::SyscallNumber;
-use abi::user_ret::UserRet;
+use syscall_api::{SyscallArgs, SyscallNumber, SyscallPacket, UserRet};
 #[allow(unused)]
 /// 同步异常语义（跨架构统一枚举；原始 CSR 解码由各 `arch-impl` 完成）。
 #[derive(Clone, Copy, Debug)]

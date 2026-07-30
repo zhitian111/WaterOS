@@ -1,9 +1,9 @@
 //! `ppoll`(73) / `pselect6`(72) / `select`(23)。
 
 //! 本模块代码由AI完成
-use abi::syscall_args::SyscallArgs;
-use abi::user_ret::UserRet;
-use abi::errno::ErrNo;
+use api_v0::SyscallArgs;
+use api_v0::UserRet;
+use api_v0::ErrNo;
 
 use crate::poll_engine::{
     install_poll_sigmask, PollDeadline, do_poll_with_deadline, do_pselect_with_deadline,

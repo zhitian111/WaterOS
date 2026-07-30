@@ -1,6 +1,7 @@
 //! Linux 风格错误码及其与系统调用返回值的对应关系。
 //!
-//! 数值与 Linux errno 一致；错误路径经 [`crate::user_ret::UserRet`] 以负值返回用户态。
+//! 数值与 Linux errno 一致；错误路径经 [`crate::return_value::UserRet`]
+//! 以负值返回用户态。
 
 /// 内核错误码（Linux errno 数值的用户态可用形式）。
 ///
@@ -9,10 +10,16 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ErrNo(
     /// 正数 errno 数值（与 Linux libc 中 `errno` 含义一致，不含符号位约定）。
-    pub isize,
+    isize,
 );
 
 impl ErrNo {
+    /// 从一个正的 Linux errno 数值构造错误码；零和负数不是合法 errno。
+    #[inline]
+    pub const fn from_raw(value : isize) -> Option<Self> {
+        if value > 0 { Some(Self(value)) } else { None }
+    }
+
     /// 取原始正数 errno（与 libc 中 `errno` 的数值一致）。
     #[inline]
     pub const fn raw(self) -> isize {
@@ -126,7 +133,8 @@ impl ErrNo {
     pub const ENOBUFS: Self = Self(105);
 }
 
-/// 内核侧常用的 `Result` 别名：成功载荷为 `T`，失败为 [`ErrNo`]。
+/// ABI_CONTRACT: 内核内部错误仍是正 errno；仅 [`crate::return_value::UserRet`]
+/// 会把它编码为用户态可见的负返回值。
 ///
-/// 经转换后才对应用户态可见的负返回值。
+/// 成功载荷为 `T`，失败为 [`ErrNo`]。该别名不表示返回寄存器已经编码。
 pub type KernelResult<T> = core::result::Result<T, ErrNo>;

@@ -1,6 +1,6 @@
 //! 进程间通信（IPC）相关的 syscall 实现。
 
-use abi::errno::ErrNo;
+use api_v0::ErrNo;
 use ipc::futex::FutexError;
 
 pub(crate) mod eventfd;

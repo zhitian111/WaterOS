@@ -577,7 +577,6 @@ name = "wateros"
 version = "0.1.0"
 dependencies = [
  "fdt",
- "wateros-abi",
  "wateros-base",
  "wateros-base-config",
  "wateros-cred",
@@ -593,37 +592,6 @@ dependencies = [
  "wateros-task",
  "wateros-utils",
  "wateros-vfs",
-]
-
-[[package]]
-name = "wateros-abi"
-version = "0.1.0"
-dependencies = [
- "wateros-abi-api-v0",
- "wateros-abi-impl-dummy",
- "wateros-abi-impl-linux-generic64",
- "wateros-base-config",
-]
-
-[[package]]
-name = "wateros-abi-api-v0"
-version = "0.1.0"
-dependencies = [
- "wateros-base-config",
-]
-
-[[package]]
-name = "wateros-abi-impl-dummy"
-version = "0.1.0"
-dependencies = [
- "wateros-abi-api-v0",
-]
-
-[[package]]
-name = "wateros-abi-impl-linux-generic64"
-version = "0.1.0"
-dependencies = [
- "wateros-abi-api-v0",
 ]
 
 [[package]]
@@ -1364,8 +1332,8 @@ dependencies = [
 name = "wateros-platform-arch-api-v0"
 version = "0.1.0"
 dependencies = [
- "wateros-abi",
  "wateros-base",
+ "wateros-syscall-api-v0",
 ]
 
 [[package]]
@@ -1379,10 +1347,10 @@ dependencies = [
 name = "wateros-platform-arch-impl-loongarch64"
 version = "0.1.0"
 dependencies = [
- "wateros-abi",
  "wateros-base",
  "wateros-base-config",
  "wateros-platform-arch-api-v0",
+ "wateros-syscall-api-v0",
 ]
 
 [[package]]
@@ -1391,10 +1359,10 @@ version = "0.1.0"
 dependencies = [
  "riscv",
  "sbi-rt",
- "wateros-abi",
  "wateros-base",
  "wateros-base-config",
  "wateros-platform-arch-api-v0",
+ "wateros-syscall-api-v0",
 ]
 
 [[package]]
@@ -1488,7 +1456,6 @@ dependencies = [
 name = "wateros-syscall"
 version = "0.1.0"
 dependencies = [
- "wateros-abi",
  "wateros-syscall-api-v0",
  "wateros-syscall-impl-kernel",
 ]
@@ -1497,7 +1464,7 @@ dependencies = [
 name = "wateros-syscall-api-v0"
 version = "0.1.0"
 dependencies = [
- "wateros-abi",
+ "wateros-base-config",
 ]
 
 [[package]]
@@ -1507,7 +1474,6 @@ dependencies = [
  "log",
  "smoltcp",
  "spin",
- "wateros-abi",
  "wateros-base-config",
  "wateros-cred",
  "wateros-driver",
@@ -1554,10 +1520,10 @@ dependencies = [
 name = "wateros-task-impl-core"
 version = "0.1.0"
 dependencies = [
- "wateros-abi",
  "wateros-base",
  "wateros-mm-api-v0",
  "wateros-platform-arch",
+ "wateros-syscall-api-v0",
  "wateros-task-api-v0",
 ]
 

@@ -5,7 +5,6 @@
 
 [dependencies]
     arch_api_v0 = { package = "wateros-platform-arch-api-v0", path = "./components/wateros-platform/platform-arch/arch-api/api-v0/", default-features = true }
-    abi = { package = "wateros-abi", path = "./components/wateros-abi/", default-features = false }
     base = { package = "wateros-base", path = "./components/wateros-base/", default-features = true }
     base_config = { package = "wateros-base-config", path = "./components/wateros-base/base-config/", default-features = true }
     fs = { package = "wateros-fs", path = "./components/wateros-fs/", default-features = true, optional = true }
@@ -47,7 +46,6 @@
     dashboard-debug = [ "stall-debug", "dep:vfs" ]
     impl-sv39 = [ "mm/impl-sv39" ]
     qemu-loongarch64-virt = [
-        "abi/impl-linux-generic64",
         "dep:cred",
         "dep:driver",
         "dep:fdt",
@@ -77,7 +75,6 @@
     bringup-ltp-musl-only = [  ]
     # 热路径 syscall/trap 参数跟踪（默认关闭；见 trap_handler hot_syscall_trace!）
     qemu-riscv64-opensbi = [
-        "abi/impl-linux-generic64",
         "dep:cred",
         "dep:driver",
         "dep:fdt",

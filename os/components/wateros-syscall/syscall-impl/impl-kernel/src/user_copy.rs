@@ -6,7 +6,7 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use abi::errno::ErrNo;
+use api_v0::ErrNo;
 use log::{trace, warn};
 use mm::api::addr::VirtAddr;
 use mm::api::user_access::UserMemoryOps;

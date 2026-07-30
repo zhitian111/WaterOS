@@ -1,9 +1,9 @@
 //! `sendmsg(2)` / `recvmsg(2)` — 将 scatter/gather I/O 转换为内部 send/recv 调用。
 
 //! 本模块代码由AI完成
-use abi::errno::ErrNo;
-use abi::syscall_args::SyscallArgs;
-use abi::user_ret::UserRet;
+use api_v0::ErrNo;
+use api_v0::SyscallArgs;
+use api_v0::UserRet;
 use driver::network::stack;
 use wateros_base_config::task::SCHED_TIMER_PERIOD_MS;
 
