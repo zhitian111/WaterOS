@@ -12,6 +12,9 @@ pub enum PipeEndpointKind {
 }
 
 /// 可放入 fd 表的 pipe 端点契约。
+///
+/// `DATA:` 每个端点有独立的方向、状态标志与一次性关闭生命周期；clone 必须增加底层对应端
+/// 的引用，最后一次 close/drop 才改变 pipe 的对端可见状态。
 pub trait PipeEndpointOps {
     /// 创建一对读/写端点。
     fn pair(nonblocking: bool) -> (Self, Self)

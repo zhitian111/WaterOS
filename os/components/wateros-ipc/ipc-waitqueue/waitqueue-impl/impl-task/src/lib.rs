@@ -1,11 +1,8 @@
 #![no_std]
-//! IPC 视角下的任务等待队列：对 `wateros_task::WaitQueue` 的薄包装，便于 IPC
-//! 模块与调度子系统解耦命名。
+//! IPC 视角下的任务等待队列：对 `wateros_task::WaitQueue` 的薄包装。
 //!
-//! 不变量：不在此类型上附加第二套等待状态；唤醒与 tick 超时语义与
-//! `wateros_task` 完全一致。若 IPC 需要额外元数据，应在更高层组合本类型而非扩展
-//! `inner`。
-//! 本模块代码由AI完成
+//! `ARCH:` 不在此类型上附加第二套等待状态；唤醒、timeout 和 SMP 运行队列语义与
+//! `wateros_task` 完全一致。IPC 额外元数据应由对象自己的 registry 持有，不能扩展 `inner`。
 
 /// 任务标识（重导出自 `api-v0`）。
 pub use api_v0::TaskId;
@@ -20,32 +17,40 @@ pub use api_v0::WaitQueueId;
 
 use wateros_task::wait_queue::WaitQueue as TaskWaitQueue;
 
-/// IPC 侧对任务等待队列的薄包装。
+/// `DATA:` IPC 侧对任务等待队列的零额外状态包装。
+///
+/// `SMP:` `wake_*` 只委托 task scheduler；被唤醒任务的目标 CPU 与 IPI 由 scheduler 决定。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-// 本结构代码由AI完成
 pub struct WaitQueue {
-    // 仅委托底层队列；不在 IPC 层缓存 waiters 或附加锁。
-    inner : TaskWaitQueue,
+    /// 仅委托底层队列；不在 IPC 层缓存 waiter 或附加锁。
+    inner: TaskWaitQueue,
 }
 
 impl WaitQueue {
     /// 创建一个新的 IPC 等待队列。
     #[inline]
-    pub fn new() -> Self { Self { inner : TaskWaitQueue::new() } }
+    pub fn new() -> Self {
+        Self {
+            inner: TaskWaitQueue::new(),
+        }
+    }
 
     /// 创建带静态诊断标签的 IPC 等待队列。
     #[inline]
-    pub fn new_named(name : &'static str) -> Self {
-        Self { inner : TaskWaitQueue::new_named(name) }
+    pub fn new_named(name: &'static str) -> Self {
+        Self {
+            inner: TaskWaitQueue::new_named(name),
+        }
     }
 
     /// 返回该等待队列在底层任务系统中的编号。
     #[inline]
-    pub const fn id(&self) -> WaitQueueId { self.inner.id() }
+    pub const fn id(&self) -> WaitQueueId {
+        self.inner.id()
+    }
 
     /// 如果队列当前没有等待者，则释放底层编号供后续等待队列复用。
     #[inline]
-    // 本方法代码由AI完成
     pub fn try_release_empty(&self) -> bool {
         self.inner
             .try_release_empty()
@@ -60,7 +65,6 @@ impl WaitQueue {
 
     /// 让当前任务在该 IPC 等待队列上休眠。
     #[inline]
-    // 本方法代码由AI完成
     pub fn wait_current(&self) -> TaskWaitResult {
         self.inner
             .wait_current()
@@ -68,34 +72,31 @@ impl WaitQueue {
 
     /// 让当前任务在该 IPC 等待队列上等待，并带一个 tick 级超时。
     #[inline]
-    // 本方法代码由AI完成
-    pub fn wait_current_for_ticks(&self, timeout_ticks : TaskTick) -> TaskWaitResult {
+    pub fn wait_current_for_ticks(&self, timeout_ticks: TaskTick) -> TaskWaitResult {
         self.inner
             .wait_current_for_ticks(timeout_ticks)
     }
 
     /// 在调度临界区内复查条件；条件仍成立才让当前任务在该 IPC 等待队列上休眠。
     #[inline]
-    // 本方法代码由AI完成
-    pub fn wait_current_while(&self, condition : impl FnOnce() -> bool) -> TaskWaitResult {
+    pub fn wait_current_while(&self, condition: impl FnOnce() -> bool) -> TaskWaitResult {
         self.inner
             .wait_current_while(condition)
     }
 
     /// 在调度临界区内复查条件；条件仍成立才让当前任务带超时等待。
     #[inline]
-    // 本方法代码由AI完成
-    pub fn wait_current_while_for_ticks(&self,
-                                        timeout_ticks : TaskTick,
-                                        condition : impl FnOnce() -> bool)
-                                        -> TaskWaitResult {
+    pub fn wait_current_while_for_ticks(
+        &self,
+        timeout_ticks: TaskTick,
+        condition: impl FnOnce() -> bool,
+    ) -> TaskWaitResult {
         self.inner
             .wait_current_while_for_ticks(timeout_ticks, condition)
     }
 
     /// 唤醒一个等待中的任务，并返回被唤醒的任务号。
     #[inline]
-    // 本方法代码由AI完成
     pub fn wake_one(&self) -> Option<TaskId> {
         self.inner
             .wake_one()
@@ -103,7 +104,6 @@ impl WaitQueue {
 
     /// 唤醒该等待队列上的全部任务，并返回唤醒数量。
     #[inline]
-    // 本方法代码由AI完成
     pub fn wake_all(&self) -> usize {
         self.inner
             .wake_all()
@@ -111,92 +111,132 @@ impl WaitQueue {
 
     /// 唤醒本队列中的部分任务，并把其余等待者迁移到另一个等待队列。
     #[inline]
-    // 本方法代码由AI完成
-    pub fn requeue_to(&self, target : Self, wake_count : usize, requeue_count : usize) -> usize {
+    pub fn requeue_to(&self, target: Self, wake_count: usize, requeue_count: usize) -> usize {
         self.inner
             .requeue_to(target.inner, wake_count, requeue_count)
     }
 
     /// 在底层 scheduler 临界区内复查条件后执行迁移。
     #[inline]
-    pub fn requeue_to_while(&self,
-                            target : Self,
-                            wake_count : usize,
-                            requeue_count : usize,
-                            condition : impl FnOnce() -> bool)
-                            -> Option<usize> {
+    pub fn requeue_to_while(
+        &self,
+        target: Self,
+        wake_count: usize,
+        requeue_count: usize,
+        condition: impl FnOnce() -> bool,
+    ) -> Option<usize> {
         self.inner
-            .requeue_to_while(target.inner,
-                              wake_count,
-                              requeue_count,
-                              condition)
+            .requeue_to_while(
+                target.inner,
+                wake_count,
+                requeue_count,
+                condition,
+            )
     }
 }
 
 impl Default for WaitQueue {
     #[inline]
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl api_v0::IpcWaitQueueOps for WaitQueue {
     #[inline]
-    fn new() -> Self { Self::new() }
+    fn new() -> Self {
+        WaitQueue::new()
+    }
 
     #[inline]
-    fn id(&self) -> WaitQueueId { self.inner.id() }
+    fn id(&self) -> WaitQueueId {
+        self.inner.id()
+    }
 
     #[inline]
-    // 本方法代码由AI完成
     fn wait_target(&self) -> TaskWaitTarget {
         self.inner
             .wait_target()
     }
 
     #[inline]
-    // 本方法代码由AI完成
     fn wait_current(&self) -> TaskWaitResult {
         self.inner
             .wait_current()
     }
 
     #[inline]
-    // 本方法代码由AI完成
-    fn wait_current_for_ticks(&self, timeout_ticks : TaskTick) -> TaskWaitResult {
+    fn wait_current_for_ticks(&self, timeout_ticks: TaskTick) -> TaskWaitResult {
         self.inner
             .wait_current_for_ticks(timeout_ticks)
     }
 
     #[inline]
-    // 本方法代码由AI完成
-    fn wait_current_while<F>(&self, condition : F) -> TaskWaitResult
-        where F : FnOnce() -> bool {
+    fn wait_current_while<F>(&self, condition: F) -> TaskWaitResult
+    where
+        F: FnOnce() -> bool,
+    {
         self.inner
             .wait_current_while(condition)
     }
 
     #[inline]
-    // 本方法代码由AI完成
-    fn wait_current_while_for_ticks<F>(&self,
-                                       timeout_ticks : TaskTick,
-                                       condition : F)
-                                       -> TaskWaitResult
-        where F : FnOnce() -> bool
+    fn wait_current_while_for_ticks<F>(
+        &self,
+        timeout_ticks: TaskTick,
+        condition: F,
+    ) -> TaskWaitResult
+    where
+        F: FnOnce() -> bool,
     {
         self.inner
             .wait_current_while_for_ticks(timeout_ticks, condition)
     }
 
     #[inline]
-    // 本方法代码由AI完成
     fn wake_one(&self) -> Option<TaskId> {
         self.inner
             .wake_one()
     }
 
     #[inline]
-    // 本方法代码由AI完成
     fn wake_all(&self) -> usize {
         self.inner
             .wake_all()
+    }
+
+    #[inline]
+    fn new_named(name: &'static str) -> Self {
+        WaitQueue::new_named(name)
+    }
+
+    #[inline]
+    fn try_release_empty(&self) -> bool {
+        WaitQueue::try_release_empty(self)
+    }
+
+    #[inline]
+    fn requeue_to(&self, target: Self, wake_count: usize, requeue_count: usize) -> usize {
+        WaitQueue::requeue_to(self, target, wake_count, requeue_count)
+    }
+
+    #[inline]
+    fn requeue_to_while<F>(
+        &self,
+        target: Self,
+        wake_count: usize,
+        requeue_count: usize,
+        condition: F,
+    ) -> Option<usize>
+    where
+        F: FnOnce() -> bool,
+    {
+        WaitQueue::requeue_to_while(
+            self,
+            target,
+            wake_count,
+            requeue_count,
+            condition,
+        )
     }
 }

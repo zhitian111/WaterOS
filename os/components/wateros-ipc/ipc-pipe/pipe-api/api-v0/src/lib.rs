@@ -1,8 +1,8 @@
 #![no_std]
 //! 管道 API v0：错误、端点方向与内核 pipe / fd 端点 trait 契约。
 //!
-//! 与 `ipc-pipe` 聚合及 `pipe-impl` 的边界：稳定类型与语义在此定义；具体 ring buffer 与等待队列逻辑由 impl 提供。
-//! 默认缓冲区容量来自 `wateros-base-config::ipc`。
+//! `ARCH:` 稳定类型与 I/O 语义在此定义；ring buffer、端点引用与等待队列逻辑由 impl 提供。
+//! API 不管理 fd 表、任务阻塞或 IPI。默认缓冲区容量来自 `wateros-base-config::ipc`。
 
 mod endpoint;
 mod error;
@@ -15,7 +15,10 @@ pub use kernel_pipe::KernelPipe;
 /// API 层自检：校验默认容量与错误枚举可比较。
 pub fn test() {
     assert_ne!(DEFAULT_PIPE_CAPACITY, 0);
-    assert_eq!(PipeError::WouldBlock, PipeError::WouldBlock);
+    assert_eq!(
+        PipeError::WouldBlock,
+        PipeError::WouldBlock
+    );
 }
 
 #[cfg(test)]

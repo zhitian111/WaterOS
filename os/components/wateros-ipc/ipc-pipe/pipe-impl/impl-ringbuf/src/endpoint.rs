@@ -1,17 +1,20 @@
 //! fd 表 pipe 端点实现。
-//! 本模块代码由AI完成
+//!
+//! `DATA:` 每个端点持有同一个 `Arc<Pipe>`，但拥有独立的方向、`O_NONBLOCK`/`O_DIRECT`
+//! 标记和 close 位。端点引用数在 clone/close/drop 时同步到底层 `Pipe`。
 
 extern crate alloc;
 
 use alloc::sync::Arc;
-use core::cell::Cell;
 use api_v0::{PipeEndpointKind, PipeEndpointOps, PipeError, PipeResult};
+use core::cell::Cell;
 use waitqueue::TaskWaitResult;
 
 use crate::kernel_pipe::Pipe;
 
 /// 可放入 fd table 的 pipe 端点。
-// 本结构代码由AI完成
+///
+/// `INVARIANT:` `closed == true` 后不得再次减少 pipe 引用；这让显式 close 与析构幂等。
 pub struct PipeEndpoint {
     pipe: Arc<Pipe>,
     kind: PipeEndpointKind,
@@ -22,19 +25,25 @@ pub struct PipeEndpoint {
 }
 
 impl Clone for PipeEndpoint {
-// 本方法代码由AI完成
     fn clone(&self) -> Self {
         let closed = self.closed.get();
         if !closed {
             match self.kind {
-                PipeEndpointKind::Read => self.pipe.acquire_read(),
-                PipeEndpointKind::Write => self.pipe.acquire_write(),
+                PipeEndpointKind::Read => self
+                    .pipe
+                    .acquire_read(),
+                PipeEndpointKind::Write => self
+                    .pipe
+                    .acquire_write(),
             }
         }
         Self {
             pipe: self.pipe.clone(),
             kind: self.kind,
-            nonblocking: Cell::new(self.nonblocking.get()),
+            nonblocking: Cell::new(
+                self.nonblocking
+                    .get(),
+            ),
             direct: Cell::new(self.direct.get()),
             closed: Cell::new(closed),
         }
@@ -42,18 +51,18 @@ impl Clone for PipeEndpoint {
 }
 
 impl Drop for PipeEndpoint {
-    fn drop(&mut self) { self.release_once(); }
+    fn drop(&mut self) {
+        self.release_once();
+    }
 }
 
 impl PipeEndpoint {
     /// 创建一对读/写端点。
-// 本方法代码由AI完成
     pub fn pair(nonblocking: bool) -> (Self, Self) {
         PipeEndpointOps::pair(nonblocking)
     }
 
     /// 创建一对读/写端点，并保留 pipe 状态标志。
-// 本方法代码由AI完成
     pub fn pair_with_flags(nonblocking: bool, direct: bool) -> (Self, Self) {
         let (read, write) = <Self as PipeEndpointOps>::pair(nonblocking);
         read.set_direct(direct);
@@ -68,13 +77,14 @@ impl PipeEndpoint {
 
     /// 是否按非阻塞语义执行。
     pub fn nonblocking(&self) -> bool {
-        self.nonblocking.get()
+        self.nonblocking
+            .get()
     }
 
     /// 切换非阻塞模式（`fcntl(F_SETFL)`）。
-// 本方法代码由AI完成
     pub fn set_nonblocking(&self, value: bool) {
-        self.nonblocking.set(value);
+        self.nonblocking
+            .set(value);
     }
 
     /// 是否按 Linux `O_DIRECT` pipe packet-mode 标记打开。
@@ -84,9 +94,9 @@ impl PipeEndpoint {
     }
 
     /// 切换 `O_DIRECT` pipe 状态位（`pipe2` / `fcntl(F_SETFL)`）。
-// 本方法代码由AI完成
     pub fn set_direct(&self, value: bool) {
-        self.direct.set(value);
+        self.direct
+            .set(value);
     }
 
     /// 返回底层 pipe 缓冲区容量。
@@ -102,42 +112,46 @@ impl PipeEndpoint {
     }
 
     /// 调整底层 pipe 缓冲区容量（`fcntl(F_SETPIPE_SZ)`）。
-// 本方法代码由AI完成
     pub fn set_pipe_capacity(&self, capacity: usize) -> PipeResult<usize> {
-        self.pipe.set_capacity(capacity)
+        self.pipe
+            .set_capacity(capacity)
     }
 
     /// 从读端读取。
-// 本方法代码由AI完成
     pub fn read(&self, out: &mut [u8]) -> PipeResult<usize> {
         PipeEndpointOps::read(self, out)
     }
 
     /// 从写端写入。
-// 本方法代码由AI完成
     pub fn write(&self, input: &[u8]) -> PipeResult<usize> {
         PipeEndpointOps::write(self, input)
     }
 
     /// 显式关闭该端点。
-// 本方法代码由AI完成
     pub fn close(&self) {
         PipeEndpointOps::close(self);
     }
 
+    /// `FLOW:` 端点的唯一释放点；最后一个同方向端点会唤醒对端等待者。
     fn release_once(&self) {
-        if self.closed.replace(true) {
+        if self
+            .closed
+            .replace(true)
+        {
             return;
         }
         match self.kind {
-            PipeEndpointKind::Read => self.pipe.release_read(),
-            PipeEndpointKind::Write => self.pipe.release_write(),
+            PipeEndpointKind::Read => self
+                .pipe
+                .release_read(),
+            PipeEndpointKind::Write => self
+                .pipe
+                .release_write(),
         }
     }
 }
 
 impl PipeEndpointOps for PipeEndpoint {
-// 本方法代码由AI完成
     fn pair(nonblocking: bool) -> (Self, Self) {
         let pipe = Arc::new(Pipe::new());
         pipe.acquire_read();
@@ -165,47 +179,55 @@ impl PipeEndpointOps for PipeEndpoint {
     }
 
     fn nonblocking(&self) -> bool {
-        self.nonblocking.get()
+        self.nonblocking
+            .get()
     }
 
-// 本方法代码由AI完成
     fn read(&self, out: &mut [u8]) -> PipeResult<usize> {
         if self.kind != PipeEndpointKind::Read {
             return Err(PipeError::BrokenPipe);
         }
-        if self.nonblocking.get() {
-            self.pipe.try_read(out)
+        if self
+            .nonblocking
+            .get()
+        {
+            self.pipe
+                .try_read(out)
         } else {
             self.pipe.read(out)
         }
     }
 
-// 本方法代码由AI完成
     fn write(&self, input: &[u8]) -> PipeResult<usize> {
         if self.kind != PipeEndpointKind::Write {
             return Err(PipeError::BrokenPipe);
         }
-        if self.nonblocking.get() {
-            self.pipe.try_write(input)
+        if self
+            .nonblocking
+            .get()
+        {
+            self.pipe
+                .try_write(input)
         } else {
-            self.pipe.write(input)
+            self.pipe
+                .write(input)
         }
     }
 
-// 本方法代码由AI完成
     fn close(&self) {
         self.release_once();
     }
 
-// 本方法代码由AI完成
     fn poll_revents(&self, events: i16) -> PipeResult<i16> {
-// 本变量代码由AI完成
         const POLLIN: i16 = 0x001;
-// 本变量代码由AI完成
         const POLLOUT: i16 = 0x004;
         let raw = match self.kind {
-            PipeEndpointKind::Read => self.pipe.poll_revents_read(),
-            PipeEndpointKind::Write => self.pipe.poll_revents_write(),
+            PipeEndpointKind::Read => self
+                .pipe
+                .poll_revents_read(),
+            PipeEndpointKind::Write => self
+                .pipe
+                .poll_revents_write(),
         };
         let mut out = 0i16;
         if events & POLLIN != 0 && raw & POLLIN != 0 {
@@ -220,16 +242,14 @@ impl PipeEndpointOps for PipeEndpoint {
         Ok(out)
     }
 
-// 本方法代码由AI完成
+    /// `FLOW:` 仅在端点方向与请求事件匹配时把 poll 交给对应 pipe 等待队列。
     fn poll_wait_for_ticks(
         &self,
         events: i16,
         timeout_ticks: u64,
         still_waiting: &mut dyn FnMut() -> bool,
     ) -> PipeResult<()> {
-// 本变量代码由AI完成
         const POLLIN: i16 = 0x001;
-// 本变量代码由AI完成
         const POLLOUT: i16 = 0x004;
         if events & POLLIN != 0 && self.kind == PipeEndpointKind::Read {
             let result = self

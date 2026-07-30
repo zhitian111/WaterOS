@@ -3,6 +3,9 @@
 use crate::{PipeResult, DEFAULT_PIPE_CAPACITY};
 
 /// 内核内部 ring-buffer pipe 契约。
+///
+/// `LOCK:` 实现必须在不持有 buffer/state 锁时调用阻塞或唤醒路径；条件等待必须在底层
+/// scheduler 临界区再次检查“空/满且对端存在”。
 pub trait KernelPipe {
     /// 创建指定容量的 pipe。
     fn with_capacity(capacity: usize) -> PipeResult<Self>
@@ -15,8 +18,7 @@ pub trait KernelPipe {
     where
         Self: Sized,
     {
-        Self::with_capacity(DEFAULT_PIPE_CAPACITY)
-            .expect("default pipe capacity must be valid")
+        Self::with_capacity(DEFAULT_PIPE_CAPACITY).expect("default pipe capacity must be valid")
     }
 
     /// 返回缓冲区容量。
@@ -40,7 +42,7 @@ pub trait KernelPipe {
     /// 非阻塞写入；满且读端仍打开时返回 [`PipeError::WouldBlock`]。
     fn try_write(&self, input: &[u8]) -> PipeResult<usize>;
 
-    /// 阻塞写入，尽量写完整个输入缓冲。
+    /// 阻塞写入，尽量写完整个输入缓冲；若部分写入后被中断，允许返回已写字节数。
     fn write(&self, input: &[u8]) -> PipeResult<usize>;
 
     /// 关闭读端并唤醒可能阻塞的写者。

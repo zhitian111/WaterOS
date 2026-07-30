@@ -1,0 +1,17 @@
+[package]
+name = "wateros-ipc-shm-api-v0"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+mm-api = { path = "../../../../wateros-mm/mm-api/api-v0/", package = "wateros-mm-api-v0", default-features = true }
+
+[features]
+api-v0 = []
+default = [ "api-v0" ]
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"

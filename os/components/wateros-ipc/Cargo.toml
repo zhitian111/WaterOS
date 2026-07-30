@@ -5,7 +5,12 @@
         "./ipc-futex/futex-api/api-v0/",
         "./ipc-futex/futex-impl/impl-task/",
         "./ipc-impl/impl-dummy/",
+        "./ipc-pipe/",
+        "./ipc-pipe/pipe-api/api-v0/",
+        "./ipc-pipe/pipe-impl/impl-ringbuf/",
         "./ipc-shm/",
+        "./ipc-shm/shm-api/api-v0/",
+        "./ipc-shm/shm-impl/impl-frame/",
         "./ipc-signal/",
         "./ipc-signal/signal-api/api-v0/",
         "./ipc-signal/signal-impl/impl-core/",
@@ -34,7 +39,7 @@
     futex = [ "dep:futex", "futex/api-v0" ]
     impl-dummy = [ "impl-dummy/impl-dummy" ]
     pipe = [ "dep:pipe", "pipe/api-v0", "pipe/impl-ringbuf" ]
-    shm = [ "dep:shm" ]
+    shm = [ "dep:shm", "shm/api-v0", "shm/impl-frame" ]
     signal = [ "dep:signal", "signal/api-v0" ]
 [profile.dev]
     panic = "abort"

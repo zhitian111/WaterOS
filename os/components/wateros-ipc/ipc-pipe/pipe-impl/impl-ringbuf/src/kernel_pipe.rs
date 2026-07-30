@@ -1,5 +1,7 @@
 //! 固定容量 ring buffer pipe 实现。
-//! 本模块代码由AI完成
+//!
+//! `LOCK:` `state` 保护缓冲区和端点引用；每次状态改变后先释放它，再调用 waitqueue。
+//! `SMP:` waitqueue 的 wake 路径交给 task scheduler，它决定 ready CPU 与定向 IPI。
 
 extern crate alloc;
 
@@ -9,21 +11,19 @@ use api_v0::{KernelPipe, PipeError, PipeResult};
 use spin::Mutex;
 use waitqueue::{TaskWaitResult, WaitQueue};
 
-// 本变量代码由AI完成
 const POLLIN: i16 = 0x001;
-// 本变量代码由AI完成
 const POLLOUT: i16 = 0x004;
-// 本变量代码由AI完成
 const POLLHUP: i16 = 0x010;
-// 本变量代码由AI完成
 const POLLERR: i16 = 0x008;
 
-// 本结构代码由AI完成
+/// `DATA:` 同一 pipe 的全部可变状态，必须只在 `Pipe::state` 锁内访问。
 struct PipeState {
     buf: Vec<u8>,
     head: usize,
     len: usize,
+    /// 最后一个读端引用尚未关闭。
     read_open: bool,
+    /// 最后一个写端引用尚未关闭。
     write_open: bool,
     /// 读端 fd 引用计数；归零时 `read_open` 置 false。
     read_refs: usize,
@@ -32,7 +32,6 @@ struct PipeState {
 }
 
 impl PipeState {
-// 本方法代码由AI完成
     fn with_capacity(capacity: usize) -> PipeResult<Self> {
         if capacity == 0 {
             return Err(PipeError::InvalidCapacity);
@@ -68,7 +67,7 @@ impl PipeState {
         self.len == self.capacity()
     }
 
-// 本方法代码由AI完成
+    /// 从 ring buffer 的 head 开始读；调用方已确认非空。
     fn read_into(&mut self, out: &mut [u8]) -> usize {
         let count = out.len().min(self.len);
         if count == 0 {
@@ -86,7 +85,7 @@ impl PipeState {
         count
     }
 
-// 本方法代码由AI完成
+    /// 从 `(head + len) % capacity` 写入；调用方已确认存在空位。
     fn write_from(&mut self, input: &[u8]) -> usize {
         let count = input.len().min(self.free_len());
         if count == 0 {
@@ -105,8 +104,9 @@ impl PipeState {
     }
 }
 
-/// 内核内部 pipe 对象；读写端关闭状态与缓冲区由 `spin::Mutex` 保护。
-// 本结构代码由AI完成
+/// `DATA:` 内核内部 pipe 对象；缓冲和端点开放状态由 `state` 保护。
+///
+/// 两个等待队列按等待条件分离：读者等待“非空或写端关闭”，写者等待“未满或读端关闭”。
 pub struct Pipe {
     state: Mutex<PipeState>,
     read_wait: WaitQueue,
@@ -121,7 +121,6 @@ impl Pipe {
     }
 
     /// 创建指定容量的 pipe。
-// 本方法代码由AI完成
     pub fn with_capacity(capacity: usize) -> PipeResult<Self> {
         KernelPipe::with_capacity(capacity)
     }
@@ -133,7 +132,6 @@ impl Pipe {
     }
 
     /// 调整缓冲区容量；仅当管道为空时可缩小/扩大底层缓冲。
-// 本方法代码由AI完成
     pub fn set_capacity(&self, capacity: usize) -> PipeResult<usize> {
         KernelPipe::set_capacity(self, capacity)
     }
@@ -145,55 +143,46 @@ impl Pipe {
     }
 
     /// 非阻塞读取；空且写端未关闭时返回 [`PipeError::WouldBlock`]。
-// 本方法代码由AI完成
     pub fn try_read(&self, out: &mut [u8]) -> PipeResult<usize> {
         KernelPipe::try_read(self, out)
     }
 
     /// 阻塞读取；空且写端关闭时返回 EOF（`Ok(0)`）。
-// 本方法代码由AI完成
     pub fn read(&self, out: &mut [u8]) -> PipeResult<usize> {
         KernelPipe::read(self, out)
     }
 
     /// 非阻塞写入；满且读端仍打开时返回 [`PipeError::WouldBlock`]。
-// 本方法代码由AI完成
     pub fn try_write(&self, input: &[u8]) -> PipeResult<usize> {
         KernelPipe::try_write(self, input)
     }
 
     /// 阻塞写入，尽量写完整个输入缓冲。
-// 本方法代码由AI完成
     pub fn write(&self, input: &[u8]) -> PipeResult<usize> {
         KernelPipe::write(self, input)
     }
 
     /// 关闭读端并唤醒可能阻塞的写者。
-// 本方法代码由AI完成
     pub fn close_read(&self) {
         KernelPipe::close_read(self);
     }
 
     /// 关闭写端并唤醒可能阻塞的读者。
-// 本方法代码由AI完成
     pub fn close_write(&self) {
         KernelPipe::close_write(self);
     }
 
     /// 读端 fd 引用 +1（`dup` / `fork` 继承 / `Clone`）。
-// 本方法代码由AI完成
     pub fn acquire_read(&self) {
         self.state.lock().read_refs += 1;
     }
 
     /// 写端 fd 引用 +1（`dup` / `fork` 继承 / `Clone`）。
-// 本方法代码由AI完成
     pub fn acquire_write(&self) {
         self.state.lock().write_refs += 1;
     }
 
-    /// 读端 fd 引用 -1；归零时关闭读端。
-// 本方法代码由AI完成
+    /// `FLOW:` 读端 fd 引用 -1；归零时关闭读端并在锁外唤醒所有写者。
     pub fn release_read(&self) {
         let mut state = self.state.lock();
         if state.read_refs > 0 {
@@ -206,8 +195,7 @@ impl Pipe {
         }
     }
 
-    /// 写端 fd 引用 -1；归零时关闭写端。
-// 本方法代码由AI完成
+    /// `FLOW:` 写端 fd 引用 -1；归零时关闭写端并在锁外唤醒所有读者。
     pub fn release_write(&self) {
         let mut state = self.state.lock();
         if state.write_refs > 0 {
@@ -221,7 +209,6 @@ impl Pipe {
     }
 
     /// 读端在 `poll(2)` 中的就绪位。
-// 本方法代码由AI完成
     pub fn poll_revents_read(&self) -> i16 {
         let state = self.state.lock();
         if !state.read_open {
@@ -238,7 +225,6 @@ impl Pipe {
     }
 
     /// 写端在 `poll(2)` 中的就绪位。
-// 本方法代码由AI完成
     pub fn poll_revents_write(&self) -> i16 {
         let state = self.state.lock();
         if !state.write_open {
@@ -254,8 +240,8 @@ impl Pipe {
         revents
     }
 
-    /// 阻塞直到读端可读或 `still_waiting` 为假（用于多 fd `poll` 重扫）。
-// 本方法代码由AI完成
+    /// `FLOW:` 阻塞直到读端可读、最后一个写端关闭，或 `still_waiting` 为假。
+    /// 条件由 scheduler 原子复查，避免 poll 注册与写入之间丢失唤醒。
     pub fn poll_wait_read_for_ticks(
         &self,
         timeout_ticks: u64,
@@ -266,8 +252,7 @@ impl Pipe {
         })
     }
 
-    /// 阻塞直到写端可写或 `still_waiting` 为假。
-// 本方法代码由AI完成
+    /// `FLOW:` 阻塞直到写端可写、读端关闭，或 `still_waiting` 为假。
     pub fn poll_wait_write_for_ticks(
         &self,
         timeout_ticks: u64,
@@ -278,13 +263,11 @@ impl Pipe {
         })
     }
 
-// 本方法代码由AI完成
     fn read_poll_blocked(&self) -> bool {
         let state = self.state.lock();
         state.is_empty() && state.write_open
     }
 
-// 本方法代码由AI完成
     fn write_poll_blocked(&self) -> bool {
         let state = self.state.lock();
         state.is_full() && state.read_open
@@ -299,7 +282,6 @@ impl Default for Pipe {
 }
 
 impl KernelPipe for Pipe {
-// 本方法代码由AI完成
     fn with_capacity(capacity: usize) -> PipeResult<Self> {
         Ok(Self {
             state: Mutex::new(PipeState::with_capacity(capacity)?),
@@ -308,12 +290,10 @@ impl KernelPipe for Pipe {
         })
     }
 
-// 本方法代码由AI完成
     fn capacity(&self) -> usize {
         self.state.lock().capacity()
     }
 
-// 本方法代码由AI完成
     fn set_capacity(&self, capacity: usize) -> PipeResult<usize> {
         if capacity == 0 {
             return Err(PipeError::InvalidCapacity);
@@ -327,12 +307,11 @@ impl KernelPipe for Pipe {
         Ok(capacity)
     }
 
-// 本方法代码由AI完成
     fn len(&self) -> usize {
         self.state.lock().len
     }
 
-// 本方法代码由AI完成
+    /// `FLOW:` 在锁内取出字节，解锁后通知写者；空且写端关闭返回 EOF。
     fn try_read(&self, out: &mut [u8]) -> PipeResult<usize> {
         if out.is_empty() {
             return Ok(0);
@@ -351,7 +330,7 @@ impl KernelPipe for Pipe {
         Ok(read)
     }
 
-// 本方法代码由AI完成
+    /// `FLOW:` 条件等待与 `try_read` 重试；不持有 state 锁进入 scheduler。
     fn read(&self, out: &mut [u8]) -> PipeResult<usize> {
         loop {
             match self.try_read(out) {
@@ -369,7 +348,7 @@ impl KernelPipe for Pipe {
         }
     }
 
-// 本方法代码由AI完成
+    /// `FLOW:` 在锁内写入字节，解锁后通知读者；读端关闭优先返回 `BrokenPipe`。
     fn try_write(&self, input: &[u8]) -> PipeResult<usize> {
         if input.is_empty() {
             return Ok(0);
@@ -387,7 +366,7 @@ impl KernelPipe for Pipe {
         Ok(written)
     }
 
-// 本方法代码由AI完成
+    /// `FLOW:` 尽量完成整次写入；部分成功后被中断或遇到断管返回已写部分。
     fn write(&self, input: &[u8]) -> PipeResult<usize> {
         let mut written = 0usize;
         while written < input.len() {
@@ -414,24 +393,20 @@ impl KernelPipe for Pipe {
         Ok(written)
     }
 
-// 本方法代码由AI完成
     fn close_read(&self) {
         self.state.lock().read_open = false;
         self.write_wait.wake_all();
     }
 
-// 本方法代码由AI完成
     fn close_write(&self) {
         self.state.lock().write_open = false;
         self.read_wait.wake_all();
     }
 
-// 本方法代码由AI完成
     fn poll_revents_read(&self) -> i16 {
         Pipe::poll_revents_read(self)
     }
 
-// 本方法代码由AI完成
     fn poll_revents_write(&self) -> i16 {
         Pipe::poll_revents_write(self)
     }

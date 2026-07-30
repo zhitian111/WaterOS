@@ -1,0 +1,21 @@
+[package]
+name = "wateros-ipc-shm-impl-frame"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+api-v0 = { path = "../../shm-api/api-v0/", package = "wateros-ipc-shm-api-v0", default-features = true }
+mm-api = { path = "../../../../wateros-mm/mm-api/api-v0/", package = "wateros-mm-api-v0", default-features = true }
+frame-alloctor = { path = "../../../../wateros-mm/mm-frame-alloctor/", package = "wateros-mm-frame-alloctor", default-features = true }
+spin = "0.10.0"
+
+[features]
+api-v0 = []
+default = [ "impl-frame" ]
+impl-frame = [ "api-v0" ]
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"

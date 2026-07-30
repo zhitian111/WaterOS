@@ -1,8 +1,9 @@
 #![no_std]
 //! 管道 v0 ring buffer 实现：固定容量 ring buffer + task waitqueue。
 //!
-//! 行为为可用的内核内部 pipe，实现 [`api_v0::KernelPipe`] 与 [`api_v0::PipeEndpointOps`]。
-//! 本模块代码由AI完成
+//! `ARCH:` [`kernel_pipe::Pipe`] 保存共享字节流和两个等待队列；[`endpoint::PipeEndpoint`]
+//! 提供 fd 可持有的方向与引用生命周期。实现 [`api_v0::KernelPipe`] 与
+//! [`api_v0::PipeEndpointOps`]，不负责 fd 表或 syscall errno。
 
 mod endpoint;
 mod kernel_pipe;
@@ -10,8 +11,7 @@ mod kernel_pipe;
 pub use endpoint::PipeEndpoint;
 pub use kernel_pipe::Pipe;
 
-/// impl 层自检：创建最小 pipe 并验证阻塞/非阻塞契约。
-// 本方法代码由AI完成
+/// impl 层自检：创建最小 pipe 并验证非阻塞、端点 clone/close 与 EOF 语义。
 pub fn test() {
     let pipe = Pipe::with_capacity(8).expect("pipe capacity should be valid");
     assert_eq!(pipe.capacity(), 8);

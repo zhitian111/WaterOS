@@ -44,11 +44,12 @@ ipc-signal
 
 注册表的三个索引分别是：
 
-| 索引 | key | 内容 | 用途 |
-| --- | --- | --- | --- |
-| `processes` | PID | `ProcessSignalState` | 进程共享 disposition、pending 和 timer |
-| `threads` | WaterOS task ID | `ThreadSignalState` | 线程 mask、pending、等待与备用栈 |
-| `real_deadlines` | 单调时钟 deadline | `(PID, generation)` 列表 | 高效找到到期的 `ITIMER_REAL` |
+
+| 索引             | key               | 内容                     | 用途                                   |
+| ------------------ | ------------------- | -------------------------- | ---------------------------------------- |
+| `processes`      | PID               | `ProcessSignalState`     | 进程共享 disposition、pending 和 timer |
+| `threads`        | WaterOS task ID   | `ThreadSignalState`      | 线程 mask、pending、等待与备用栈       |
+| `real_deadlines` | 单调时钟 deadline | `(PID, generation)` 列表 | 高效找到到期的`ITIMER_REAL`            |
 
 其中 `task ID` 是内核内部任务标识，`tid` 是用于进程内信号选择顺序的线程 ID；两者不能
 互换。`SignalSet` 是 64 位位集，表示同一种普通信号至多有一个 pending 位，并不保存
