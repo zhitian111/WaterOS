@@ -1,4 +1,7 @@
 //! 信号注册表内部状态。
+//!
+//! `DATA:` 本文件的结构只可经 `SignalRegistry` 使用；跨 CPU 的并发保护由 global facade
+//! 的唯一 registry 锁提供。
 
 use alloc::collections::BTreeMap;
 
@@ -7,7 +10,9 @@ use api_v0::{
     SignalResult, SignalSet, ITIMER_PROF, ITIMER_REAL, ITIMER_VIRTUAL, NSIG,
 };
 
-/// 单进程 interval timer 状态。
+/// `DATA:` 单进程 interval timer 状态。
+///
+/// `generation` 每次替换 timer 都递增，供 `ITIMER_REAL` deadline 索引跳过陈旧条目。
 #[derive(Clone, Copy, Debug, Default)]
 pub(super) struct IntervalTimerState {
     pub(super) interval_ns : u128,
@@ -83,7 +88,10 @@ impl PosixTimerState {
     }
 }
 
-/// 单进程信号状态：disposition、pending、timer 与 CPU 时间。
+/// `DATA:` 单进程共享信号状态：disposition、pending、timer 与 CPU 时间。
+///
+/// 线程不能各自拥有 `actions` 或 process pending；同一 PID 的所有线程经 registry 访问
+/// 这一份状态。
 #[derive(Clone, Debug)]
 pub(super) struct ProcessSignalState {
     pub(super) actions : [SignalAction; NSIG],
@@ -140,7 +148,10 @@ impl ProcessSignalState {
     }
 }
 
-/// 单线程信号状态：mask、pending、临时 mask 与备用信号栈。
+/// `DATA:` 单线程信号状态：mask、线程 pending、临时 mask 与备用信号栈。
+///
+/// `INVARIANT:` `temporary_restore_mask` 为 `Some` 表示线程正处于 `sigsuspend`、`ppoll`
+/// 或 `pselect6` 的临时掩码范围；结束、停止或 SIGKILL 路径必须清除它。
 #[derive(Clone, Copy, Debug)]
 pub(super) struct ThreadSignalState {
     pub(super) pid : usize,
@@ -165,7 +176,9 @@ impl ThreadSignalState {
     }
 }
 
-/// `generation` 用于丢弃已被替换的 `ITIMER_REAL` deadline。
+/// `DATA:` `ITIMER_REAL` deadline 索引条目。
+///
+/// `generation` 用于丢弃已被替换、禁用或重设后的旧 deadline，而无需在重设时遍历 BTreeMap。
 #[derive(Clone, Copy, Debug)]
 pub(super) struct RealDeadlineEntry {
     pub(super) pid : usize,

@@ -3,7 +3,10 @@
 /// Linux `futex(2)` 操作码中的 private 标志位。
 pub const FUTEX_PRIVATE_FLAG : u32 = 128;
 
-/// 由用户 futex 地址与 private 标志派生的队列键。
+/// DATA: 由用户 futex 地址与作用域派生的队列键。
+///
+/// ABI: private key 的相等性包含地址空间 scope；shared key 的 `uaddr` 必须是
+/// MM 解析出的稳定共享身份，而不是任意进程的用户虚拟地址。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FutexKey {
     /// private futex 为用户 VA；shared futex 为 MM 解析出的共享字身份。

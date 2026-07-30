@@ -1,4 +1,7 @@
 //! Interval timer、POSIX timer 与 CPU timer 逻辑。
+//!
+//! `FLOW:` 到期处理只修改信号状态并返回 `SignalDispatch`；调用者必须在 registry 锁释放后
+//! 执行唤醒、停止、终止或跨核通知。
 
 use alloc::vec::Vec;
 
@@ -11,7 +14,9 @@ use crate::registry::SignalRegistry;
 use crate::state::{PosixTimerState, RealDeadlineEntry};
 
 impl SignalRegistry {
-    /// 设置进程 interval timer（`setitimer`）。
+    /// `FLOW:` 设置进程 interval timer（`setitimer`），并为 `ITIMER_REAL` 登记 deadline 索引。
+    ///
+    /// `INVARIANT:` 旧 deadline 不立即删除；generation 使其在到期扫描时成为无效项。
     pub fn set_timer(&mut self,
                      pid : usize,
                      which : usize,
@@ -52,6 +57,7 @@ impl SignalRegistry {
                   .remaining(now))
     }
 
+    /// `DATA:` 分配进程内 POSIX timer ID；ID 只在该 PID 的表中有效。
     pub fn create_posix_timer(&mut self,
                               pid : usize,
                               clock : PosixTimerClock,
@@ -145,6 +151,7 @@ impl SignalRegistry {
             .ok_or(SignalError::NoSuchTimer)
     }
 
+    /// `FLOW:` 扫描 POSIX timer，记录 overrun 并把到期项转成普通进程信号投递。
     pub fn expire_posix_timers(&mut self,
                                monotonic_ns : u128,
                                realtime_ns : u128)
@@ -185,7 +192,9 @@ impl SignalRegistry {
                .collect()
     }
 
-    /// 累计 CPU 时间并触发 virtual/prof timer 到期。
+    /// `SMP:` 累计 CPU 时间并触发 virtual/prof timer 到期。
+    ///
+    /// 调用者必须只为实际正在某 CPU 上运行的该 PID 记账；本函数不拥有全局 tick 语义。
     pub fn account_cpu(&mut self,
                        pid : usize,
                        user_delta_ns : u128,
@@ -212,7 +221,10 @@ impl SignalRegistry {
         Ok(dispatches)
     }
 
-    /// 扫描已到期 realtime timer 并投递 `SIGALRM`。
+    /// `FLOW:` 扫描已到期 realtime timer 并投递 `SIGALRM`。
+    ///
+    /// 从 BTreeMap 删除 bucket 后以 `(pid, generation, deadline)` 三元条件验证，保证重设
+    /// timer 留下的陈旧索引项不会错误触发。
     pub fn expire_realtime(&mut self, monotonic_ns : u128) -> Vec<SignalDispatch> {
         let deadlines : Vec<u128> = self.real_deadlines
                                         .range(..=monotonic_ns)

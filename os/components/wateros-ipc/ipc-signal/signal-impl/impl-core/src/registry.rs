@@ -1,4 +1,7 @@
 //! 进程、线程信号状态的生命周期与投递逻辑。
+//!
+//! `ARCH:` 本文件只变更信号状态并产生 `SignalDispatch` / `SignalEffect`，不执行 scheduler
+//! 或用户态 signal frame 副作用；调用方必须在 registry 锁外落实这些结果。
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
@@ -6,11 +9,17 @@ use api_v0::*;
 
 use crate::state::{ProcessSignalState, RealDeadlineEntry, ThreadSignalState};
 
-/// 全局信号注册表：按 pid 存进程状态，按 task id 存线程状态。
+/// `DATA:` 全局信号注册表：按 PID 存进程共享状态，按 WaterOS task ID 存线程私有状态。
+///
+/// `INVARIANT:` `threads` 中每个条目的 `pid` 都应存在于 `processes`。`real_deadlines`
+/// 可包含已失效的旧项，消费时依靠 generation 与实际 deadline 过滤。
 #[derive(Default)]
 pub struct SignalRegistry {
+    /// disposition、进程 pending 及所有进程级 timer。
     pub(super) processes : BTreeMap<usize, ProcessSignalState>,
+    /// mask、线程 pending、临时等待状态和备用信号栈；key 不是 Linux tid。
     pub(super) threads : BTreeMap<usize, ThreadSignalState>,
+    /// `ITIMER_REAL` 的 deadline 索引，避免每个 tick 扫描所有进程。
     pub(super) real_deadlines : BTreeMap<u128, Vec<RealDeadlineEntry>>,
 }
 
@@ -36,6 +45,7 @@ impl SignalRegistry {
             .contains_key(&task_id)
     }
 
+    /// `FLOW:` `fork` 只继承 disposition、调用线程 mask 和备用栈，不继承 pending/timer。
     pub fn fork_process(&mut self,
                         parent_task_id : usize,
                         child_pid : usize,
@@ -77,7 +87,9 @@ impl SignalRegistry {
         Ok(())
     }
 
-    /// `execve`：重置已安装用户处理函数为默认，保留 ignore/pending/timer。
+    /// `FLOW:` `execve` 重置用户 handler 与调用线程备用栈，清除 POSIX timer。
+    ///
+    /// 忽略 disposition、pending 以及 interval timer 保持不变；其余线程应由 facade 先删除。
     pub fn exec_process(&mut self, task_id : usize) -> SignalResult<()> {
         let pid = self.thread(task_id)?
                       .pid;
@@ -361,7 +373,10 @@ impl SignalRegistry {
         }
     }
 
-    /// 向指定线程投递信号（`tkill` / `pthread_kill` 路径）。
+    /// `FLOW:` 向指定线程投递信号（`tkill` / `pthread_kill` 路径）。
+    ///
+    /// 线程定向信号只进入 `ThreadSignalState::pending`。结果中的 target 仅供锁外唤醒，
+    /// 不是已经切换到该线程。
     pub fn send_thread(&mut self, task_id : usize, sig : usize) -> SignalResult<SignalDispatch> {
         let pid = self.thread(task_id)?
                       .pid;
@@ -393,7 +408,10 @@ impl SignalRegistry {
         }
     }
 
-    /// 向进程投递信号（`kill` 路径）；选择最低未屏蔽 tid 或唤醒 `sigwait` 线程。
+    /// `FLOW:` 向进程投递信号（`kill` 路径）；选择最低未屏蔽 tid 或 `sigwait` 线程。
+    ///
+    /// 普通信号记录在进程共享 pending 中；选择的 task ID 只决定优先唤醒谁，真正消费者在
+    /// 自己的安全点通过 [`Self::take_deliverable`] 决定。
     pub fn send_process(&mut self, pid : usize, sig : usize) -> SignalResult<SignalDispatch> {
         let delivery = self.generation_delivery(pid, sig)?;
         if delivery == SignalDelivery::Ignored {
@@ -532,7 +550,10 @@ impl SignalRegistry {
         Some(sig)
     }
 
-    /// 在目标线程的安全点取出下一个信号，并按此时的 disposition 决定效果。
+    /// `FLOW:` 在目标线程安全点取出最低编号可交付信号，并按**当前** disposition 决定效果。
+    ///
+    /// `INVARIANT:` 初次投递到最终交付之间，mask 与 `sigaction` 可能改变，所以不能在
+    /// `send_*` 时提前固定 handler/终止语义。忽略信号会递归跳过，直到得到有效效果或无信号。
     pub fn take_deliverable(&mut self, task_id : usize) -> Option<SignalEffect> {
         let thread = *self.threads
                           .get(&task_id)?;

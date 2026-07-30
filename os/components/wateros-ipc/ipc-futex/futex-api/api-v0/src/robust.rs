@@ -15,7 +15,10 @@ pub const ROBUST_LIST_LIMIT : usize = 4096;
 /// 用户态 `struct robust_list` 中 `list` 指针字段大小（64-bit）。
 pub const ROBUST_LIST_ENTRY_SIZE : usize = core::mem::size_of::<usize>();
 
-/// 用户态 robust 链表头布局。
+/// DATA: 用户态 robust 链表头布局。
+///
+/// ABI: 字段顺序和宽度必须与 64 位 Linux `struct robust_list_head` 保持一致；
+/// IPC 层只描述布局，实际用户指针访问由 syscall 层完成。
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RobustListHead {
@@ -30,7 +33,10 @@ pub struct RobustListHead {
 /// Linux `set_robust_list(2)` 在 riscv64 等 64 位平台上的头结构大小。
 pub const ROBUST_LIST_HEAD_SIZE : usize = core::mem::size_of::<RobustListHead>();
 
-/// 线程登记的 robust 链表及其所属用户地址空间。
+/// DATA: 线程登记的 robust 链表及其所属用户地址空间。
+///
+/// 生命周期：`set_robust_list` 写入、退出路径 `take_robust_list` 一次性取走，
+/// 之后由 syscall 层完成 `FUTEX_OWNER_DIED` 清理与唤醒。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RobustListRegistration {
     pub head : usize,

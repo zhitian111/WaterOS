@@ -1,7 +1,8 @@
 //! 全局信号服务。
 //!
-//! 这一层是实现 crate 的公开入口，负责隐藏 registry 锁，并把必须原子完成的多个
-//! registry 操作合并为一个领域操作。
+//! `ARCH:` 此 facade 是 signal API 的状态边界：它隐藏唯一的 `SignalRegistry` 锁，并把
+//! 必须原子完成的 registry 操作合并为领域操作。它不直接调度、唤醒或终止任务；这些副作用
+//! 由调用者根据返回的 [`SignalDispatch`] 在锁释放后执行。
 
 use alloc::vec::Vec;
 
@@ -13,15 +14,24 @@ use spin::Mutex;
 
 use crate::registry::SignalRegistry;
 
-/// 唯一的信号状态实例；锁与 registry 均不跨越本模块边界。
+/// `LOCK:` 唯一的信号状态实例，串行化所有进程/线程信号表操作。
+///
+/// `SMP:` 该锁只保护信号状态，不覆盖 scheduler、process registry、用户地址空间或 IPI。
+/// 因此不得在持锁闭包中进行阻塞、调度或可能回调本模块的操作。
 static REGISTRY : Mutex<SignalRegistry> = Mutex::new(SignalRegistry::new());
 
+/// `LOCK:` 以最小临界区访问注册表。
+///
+/// 闭包只应完成纯信号状态读写；`spin::Mutex` 不可重入，不能从闭包中再次调用本 facade。
 fn with_registry<R>(f : impl FnOnce(&mut SignalRegistry) -> R) -> R {
     let mut registry = REGISTRY.lock();
     f(&mut registry)
 }
 
-/// 确保进程和已有线程均已登记。
+/// `FLOW:` 确保进程及其已存在的线程均已登记；可安全重复调用。
+///
+/// 进程创建或从 task/process 表恢复信号状态时使用。`leader_task_id` 必须属于 `pid`，其余
+/// `(task_id, tid)` 作为同进程线程补登记。
 pub fn ensure_process<I>(pid : usize,
                          leader_task_id : usize,
                          leader_tid : usize,
@@ -40,6 +50,7 @@ pub fn ensure_process<I>(pid : usize,
     })
 }
 
+/// `FLOW:` 建立 `fork` 子进程的独立信号状态（复制 disposition、父线程 mask 与备用栈）。
 pub fn fork_process(parent_task_id : usize,
                     child_pid : usize,
                     child_task_id : usize,
@@ -53,6 +64,7 @@ pub fn fork_process(parent_task_id : usize,
     })
 }
 
+/// `FLOW:` `CLONE_THREAD` 路径登记同进程线程；只继承调用线程的阻塞 mask。
 pub fn register_thread(parent_task_id : usize, task_id : usize, tid : usize) -> SignalResult<()> {
     with_registry(|registry| registry.register_thread(parent_task_id, task_id, tid))
 }
@@ -80,7 +92,7 @@ pub fn drop_thread_and_empty_process(task_id : usize) {
     with_registry(|registry| registry.drop_thread_and_empty_process(task_id));
 }
 
-/// 删除退出线程；最后一个线程退出时同时删除进程状态。
+/// `FLOW:` 退出路径删除线程；`last_thread` 时一并清除共享进程信号状态与 timers。
 pub fn exit_thread(task_id : usize, pid : usize, last_thread : bool) {
     with_registry(|registry| {
         registry.drop_thread(task_id);
@@ -90,10 +102,12 @@ pub fn exit_thread(task_id : usize, pid : usize, last_thread : bool) {
     });
 }
 
+/// `FLOW:` 向一个指定线程投递信号，并返回调用方应在锁外执行的唤醒/停止/继续意图。
 pub fn send_thread(task_id : usize, signal : usize) -> SignalResult<SignalDispatch> {
     with_registry(|registry| registry.send_thread(task_id, signal))
 }
 
+/// `FLOW:` 向进程投递信号；registry 选择候选线程，但不直接操作 task/scheduler。
 pub fn send_process(pid : usize, signal : usize) -> SignalResult<SignalDispatch> {
     with_registry(|registry| registry.send_process(pid, signal))
 }
@@ -110,6 +124,10 @@ pub fn take_pending(task_id : usize, wait_set : SignalSet) -> Option<usize> {
     with_registry(|registry| registry.take_pending(task_id, wait_set))
 }
 
+/// `FLOW:` 目标线程在返回用户态前消费一个可交付信号并得到最终效果。
+///
+/// `ABI:` `Handler` 的 signal frame 由 syscall/trap 层构造；`Terminate`、`Stop`、`Continue`
+/// 也必须由调用者在锁外落实到任务状态。
 pub fn take_deliverable(task_id : usize) -> Option<SignalEffect> {
     with_registry(|registry| registry.take_deliverable(task_id))
 }
@@ -184,7 +202,9 @@ pub fn enter_signal_frame(task_id : usize, on_alternate_stack : bool) -> SignalR
     with_registry(|registry| registry.enter_signal_frame(task_id, on_alternate_stack))
 }
 
-/// 恢复信号 mask，并离开可能使用的备用信号栈。
+/// `ABI:` `rt_sigreturn` 路径恢复信号 mask，并离开可能使用的备用信号栈。
+///
+/// `frame_sp` 是恢复前 signal frame 的栈指针，用来判断这次返回是否消耗了备用栈帧。
 pub fn leave_signal_frame(task_id : usize,
                           restored_mask : SignalSet,
                           frame_sp : usize)
@@ -197,6 +217,7 @@ pub fn leave_signal_frame(task_id : usize,
     })
 }
 
+/// `FLOW:` 配置 interval timer；返回替换前的剩余时间。
 pub fn set_timer(pid : usize,
                  which : usize,
                  spec : IntervalTimerSpec,
@@ -252,6 +273,7 @@ pub fn delete_posix_timer(pid : usize, timer_id : usize) -> SignalResult<()> {
     with_registry(|registry| registry.delete_posix_timer(pid, timer_id))
 }
 
+/// `SMP:` 对实际运行的进程累计 CPU 时间，并返回到期 timer 的 dispatch；调用者在锁外处理它们。
 pub fn account_cpu(pid : usize,
                    user_delta_ns : u128,
                    total_delta_ns : u128)
@@ -259,6 +281,7 @@ pub fn account_cpu(pid : usize,
     with_registry(|registry| registry.account_cpu(pid, user_delta_ns, total_delta_ns))
 }
 
+/// `FLOW:` 扫描到期的 `ITIMER_REAL`，生成对应 `SIGALRM` dispatch。
 pub fn expire_realtime(monotonic_ns : u128) -> Vec<SignalDispatch> {
     with_registry(|registry| registry.expire_realtime(monotonic_ns))
 }

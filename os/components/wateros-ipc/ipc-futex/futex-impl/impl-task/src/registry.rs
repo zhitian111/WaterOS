@@ -1,4 +1,7 @@
 //! Futex 等待队列与 robust 状态表。
+//!
+//! ARCH: 本文件只管理 key 到 `WaitQueue` 的生命周期及 per-task 侧表；实际任务
+//! 状态切换在 `ipc-waitqueue` / `wateros-task` 中完成。
 
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
@@ -9,6 +12,10 @@ use api_v0::{FutexKey, FutexWaitOutcome, RobustListRegistration, ROBUST_LIST_HEA
 use ipc_waitqueue::WaitQueue;
 use task_api::TaskId;
 
+/// DATA: 一个已被至少一个 waiter 或并发操作引用的 futex key。
+///
+/// 该结构始终由 `FutexRegistry::queues` 持有，且只能在 registry 锁内创建、
+/// 递增/递减 `active_users` 或删除。
 struct FutexQueue {
     wait_queue : WaitQueue,
     /// 先于 scheduler wake 递增；等待者在 scheduler 临界区只需比较此序列，
@@ -40,9 +47,17 @@ pub(crate) struct FutexDebugSnapshot {
     pub queues : Vec<FutexQueueDebug>,
 }
 
+/// DATA: futex 模块的全部可变元数据。
+///
+/// LOCK: 所有字段由 `global.rs` 的 `REGISTRY` 独占保护。任何从本结构返回的
+/// `WaitQueue` 都可在解锁后使用，但调用者必须以 `release_queue` 对称归还其
+/// `active_users` 使用权。
 pub(crate) struct FutexRegistry {
+    /// 每个正在使用的 futex key 对应的 scheduler 等待队列。
     queues : BTreeMap<FutexKey, FutexQueue>,
+    /// DATA: 一个 task 同时只能挂在一个 futex key 上；用于异常退出收尾。
     waiting_tasks : BTreeMap<TaskId, FutexKey>,
+    /// DATA: task 到用户 robust 链表登记的侧表；不保存或解引用用户内存。
     robust : BTreeMap<TaskId, RobustListRegistration>,
     wait_attempts : u64,
     wait_returns : u64,
@@ -71,6 +86,9 @@ impl FutexRegistry {
                last_requeue : None }
     }
 
+    /// 取得或创建 key 的队列，并为即将发生的锁外操作增加使用权。
+    ///
+    /// INVARIANT: 成功调用一次，调用方最终必须调用一次 [`Self::release_queue`]。
     pub fn acquire_queue(&mut self, key : FutexKey) -> (WaitQueue, Arc<AtomicU64>) {
         let queue = self.queues
                         .entry(key)
@@ -84,6 +102,7 @@ impl FutexRegistry {
               .clone())
     }
 
+    /// 取得既有队列；缺失时不创建空队列，供 wake 快速返回 0。
     pub fn acquire_existing_queue(&mut self,
                                   key : FutexKey)
                                   -> Option<(WaitQueue, Arc<AtomicU64>)> {
@@ -96,6 +115,10 @@ impl FutexRegistry {
                    .clone()))
     }
 
+    /// 同时取得 requeue 的源/目标队列。
+    ///
+    /// 源队列必须已存在；目标队列可按需创建。成功时两个队列都各有一次需要
+    /// 归还的使用权。
     pub fn acquire_requeue_queues(
         &mut self,
         from_key : FutexKey,
@@ -106,6 +129,7 @@ impl FutexRegistry {
         Some((from_queue, to_queue))
     }
 
+    /// 归还一次锁外操作使用权，并在队列确实为空时释放其 `WaitQueueId`。
     pub fn release_queue(&mut self, key : FutexKey) {
         if let Some(queue) = self.queues
                                  .get_mut(&key)
@@ -116,6 +140,10 @@ impl FutexRegistry {
         self.cleanup_empty_queue(key);
     }
 
+    /// 发布 task 正在等待 key 的登记。
+    ///
+    /// INVARIANT: 若 task 已登记在其他 key，旧 key 的使用权必须立即归还，
+    /// 从而维持一个 task 至多对应一个 futex wait 的关系。
     pub fn register_waiting_task(&mut self, task_id : TaskId, key : FutexKey) {
         let previous = self.waiting_tasks
                            .insert(task_id, key);
@@ -193,6 +221,10 @@ impl FutexRegistry {
                              queues }
     }
 
+    /// 尝试删除无人使用且没有 scheduler waiter 的队列。
+    ///
+    /// LOCK: 只能由 registry 锁内的 `release_queue` 调用；`active_users` 是防止
+    /// `WaitQueueId` 在锁外 wait/wake/requeue 仍在使用时被复用的关键保护。
     fn cleanup_empty_queue(&mut self, key : FutexKey) {
         let Some(queue) = self.queues
                               .get(&key)

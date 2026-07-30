@@ -1,5 +1,8 @@
 //! 全局 futex 服务。
 //!
+//! ARCH: 本文件是 IPC 与 task scheduler 的边界。它只维护 futex 元数据，
+//! 通过 [`ipc_waitqueue::WaitQueue`] 请求阻塞或唤醒，绝不直接选择 CPU 或发送 IPI。
+//!
 //! 公开函数隐藏 registry 与锁。等待和唤醒期间不会长期持有 registry 锁；
 //! `active_users` 保护锁外 scheduler 操作所引用的等待队列。
 
@@ -14,14 +17,27 @@ use task_api::{TaskId, TaskTick, TaskWaitResult};
 use crate::registry::FutexRegistry;
 
 /// 唯一的 futex 状态实例；registry 和锁均不跨越本模块边界。
+///
+/// LOCK: 此锁只保护 [`FutexRegistry`] 元数据。拿到 `WaitQueue` 后必须先释放
+/// 此锁，再调用可能进入 scheduler 的 wait/wake/requeue 操作。
 static REGISTRY : Mutex<FutexRegistry> = Mutex::new(FutexRegistry::new());
 
+/// 在短暂 registry 临界区内访问 futex 元数据。
+///
+/// LOCK: `f` 不得阻塞、调度、访问用户内存或重入本模块的公开 futex 接口，
+/// 否则可能形成 registry 锁重入或锁顺序问题。
 fn with_registry<R>(f : impl FnOnce(&mut FutexRegistry) -> R) -> R {
     let mut registry = REGISTRY.lock();
     f(&mut registry)
 }
 
 /// 在 `key` 对应队列上等待，阻塞前通过 `condition` 再次确认用户态条件。
+///
+/// FLOW: 条件预检 -> 登记 waiter / 取得队列 -> 条件复检 -> scheduler 等待 ->
+/// 取消登记。`wake_sequence` 覆盖“条件复检到真正睡眠”之间的 lost-wake 窗口。
+///
+/// Concurrency: `condition` 在 scheduler 锁外执行；调用方负责安全读取用户 futex
+/// 字并把访问错误转换为其自己的错误路径。
 pub fn wait_while(task_id : TaskId,
                   key : FutexKey,
                   timeout : Option<TaskTick>,
@@ -46,7 +62,7 @@ pub fn wait_while(task_id : TaskId,
         return FutexWaitOutcome::ConditionChanged;
     }
 
-    // condition 已在 scheduler 锁外复查。进入调度临界区后只比较原子 wake
+    // LOCK: condition 已在 scheduler 锁外复查。进入调度临界区后只比较原子 wake
     // 序列：若 wake 发生在“复查—入队”窗口，序列变化会阻止当前任务睡眠；
     // 若 wake 稍后发生，唤醒者会等待 scheduler 锁并看到已入队任务。
     let not_woken = || wake_sequence.load(Ordering::Acquire) == observed_wake;
@@ -77,11 +93,16 @@ pub fn wait_while(task_id : TaskId,
 }
 
 /// 任务在 futex syscall 返回前被终止时，代其释放 registry 使用权。
+///
+/// FLOW: 这是正常 `wait_while` 收尾之外的退出/异常回滚路径；幂等调用。
 pub fn cancel_task_wait(task_id : TaskId) {
     with_registry(|registry| registry.cancel_waiting_task(task_id));
 }
 
 /// 唤醒 `key` 队列上最多 `max_wake` 个等待者。
+///
+/// SMP: 被唤醒任务的目标 CPU 和定向重调度 IPI 由 `wateros-task` 决定；本函数
+/// 仅对 WaitQueue 发出唤醒请求。
 pub fn wake(key : FutexKey, max_wake : u32) -> usize {
     if max_wake == 0 {
         return 0;
@@ -96,6 +117,8 @@ pub fn wake(key : FutexKey, max_wake : u32) -> usize {
         return 0;
     };
 
+    // FLOW: 必须先发布序列变化、后执行 scheduler wake；并发 waiter 因而不会在
+    // 观察到旧序列后错过这次唤醒。
     wake_sequence.fetch_add(1, Ordering::Release);
     let mut woken = 0;
     for _ in 0..max_wake {
@@ -114,6 +137,8 @@ pub fn wake(key : FutexKey, max_wake : u32) -> usize {
 }
 
 /// 唤醒 `key` 队列上的全部等待者。
+///
+/// Concurrency: 与 [`wake`] 使用相同的序列发布和 `active_users` 生命周期约束。
 pub fn wake_all(key : FutexKey) -> usize {
     let Some((wait_queue, wake_sequence)) = with_registry(|registry| {
         let queue = registry.acquire_existing_queue(key);
@@ -134,6 +159,9 @@ pub fn wake_all(key : FutexKey) -> usize {
 }
 
 /// 唤醒 `from_key` 上的部分等待者，并把后续等待者迁移到 `to_key`。
+///
+/// FLOW: 不带用户字比较的 requeue；源和目标相同会被拒绝，避免自迁移破坏
+/// WaitQueue 的队列顺序。
 pub fn requeue(from_key : FutexKey,
                to_key : FutexKey,
                wake_count : u32,
@@ -151,6 +179,9 @@ pub fn requeue(from_key : FutexKey,
 }
 
 /// 比较条件与队列迁移在同一个 scheduler 临界区内完成。
+///
+/// LOCK: `condition` 由 WaitQueue 在其 scheduler 临界区调用。调用方只能做不会
+/// 阻塞、不会重入 futex 的条件读取；不匹配时返回 [`FutexError::Again`]。
 pub fn cmp_requeue(from_key : FutexKey,
                    to_key : FutexKey,
                    wake_count : u32,
@@ -168,6 +199,10 @@ pub fn cmp_requeue(from_key : FutexKey,
     }
 }
 
+/// `requeue` 与 `cmp_requeue` 的共同实现。
+///
+/// FLOW: 持 registry 锁取得两个队列并增加使用权 -> 解锁后完成 scheduler
+/// requeue -> 回到 registry 锁记录结果并对两个 key 各释放一次使用权。
 fn requeue_if(from_key : FutexKey,
               to_key : FutexKey,
               wake_count : u32,
@@ -202,7 +237,7 @@ fn requeue_if(from_key : FutexKey,
                                         let matched = matches!(result, Ok(true));
                                         condition_result = Some(result);
                                         if matched {
-                                            // 与 waiter 的 scheduler 临界区复查串行化：
+                                            // SMP: 与 waiter 的 scheduler 临界区复查串行化：
                                             // 成功 requeue 后，尚未真正入队的 waiter
                                             // 会观察到序列变化而不会睡回源队列。
                                             from_wake_sequence.fetch_add(1, Ordering::Release);

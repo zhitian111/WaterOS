@@ -1,7 +1,9 @@
 #![no_std]
 //! 信号 API v0：Linux 风格信号编号、掩码与 `rt_sigaction` 状态类型。
 //!
-//! 本 crate 只定义跨实现稳定的类型与常量；状态机由具体实现 crate 提供。
+//! `ARCH:` 本 crate 只定义跨实现稳定的类型与常量；状态机由具体实现 crate 提供。
+//! `ABI:` `SignalAction` 的 `repr(C)` 布局供 syscall 的 Linux `rt_sigaction` 转换使用，
+//! 但它本身不读取用户内存或构造 signal frame。
 
 /// 支持的最大信号编号（不含 0）。
 pub const NSIG : usize = 64;
@@ -75,7 +77,9 @@ pub enum SignalError {
 /// 信号操作结果。
 pub type SignalResult<T> = Result<T, SignalError>;
 
-/// 64 位信号掩码（每位对应一个信号号）。
+/// `DATA:` 64 位信号掩码（每位对应一个信号号）。
+///
+/// 普通信号在本层按位合并：同一信号的重复投递不会记录次数，`first_signal` 始终选择最低编号。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SignalSet(u64);
 
@@ -203,7 +207,7 @@ pub enum PosixTimerClock {
     Monotonic,
 }
 
-/// 待交付给陷阱处理器的信号帧信息。
+/// `ABI:` 待交付给 trap/syscall 层、用于构造用户态 signal frame 的信息。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PendingSignal {
     /// 信号编号。
@@ -214,7 +218,7 @@ pub struct PendingSignal {
     pub previous_mask : SignalSet,
 }
 
-/// 目标线程在返回用户态前取出的信号效果。
+/// `FLOW:` 目标线程在返回用户态前取出的信号效果。
 ///
 /// 信号生成阶段只负责写入 pending；disposition 必须到目标线程的安全点才判断，
 /// 因为 pending 期间线程 mask 和进程 sigaction 都可能改变。
@@ -248,7 +252,9 @@ impl AlternateSignalStack {
     }
 }
 
-/// `kill` / `tkill` 等路径的投递摘要。
+/// `FLOW:` `kill` / `tkill` 等路径的投递摘要。
+///
+/// `target_task_id` 表示锁外应优先处理的 WaterOS task，不代表这里已经执行了唤醒或调度。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SignalDispatch {
     /// 投递分类。
