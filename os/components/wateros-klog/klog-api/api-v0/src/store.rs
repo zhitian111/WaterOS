@@ -1,10 +1,10 @@
 //! 内核消息环存储 trait。
-//! 本模块代码由AI完成
 
 use crate::{AppendResult, KlogError, KlogRecordMeta};
 
-/// 提交后的一条记录（正文切片指向环内存储）。
-// 本结构代码由AI完成
+/// `DATA:` 提交后的一条记录视图（正文切片借用环内存储）。
+///
+/// 视图只能在产生它的 store 锁闭包内使用；不得跨越下一次 append、解锁或调度保存它。
 pub struct KlogRecordView<'a> {
     /// 记录头。
     pub meta: KlogRecordMeta,
@@ -12,8 +12,10 @@ pub struct KlogRecordView<'a> {
     pub text: &'a [u8],
 }
 
-/// 全局 klog 环契约（由 `klog-ringbuf` 实现）。
-// 本结构代码由AI完成
+/// 全局 klog 环契约（由 `klog-impl/impl-kernel` 实现）。
+///
+/// `LOCK:` 本 trait 的引用视图方法要求调用方维持实现的互斥保护；实现可用全局锁，但不应把
+/// 锁策略暴露给 API 消费者。
 pub trait KlogStore {
     /// 追加一条记录；`meta` 中 `seq` 由实现写入。
     fn append(&mut self, meta: &mut KlogRecordMeta, text: &[u8]) -> AppendResult;
@@ -27,7 +29,7 @@ pub trait KlogStore {
     /// `SIZE_BUFFER`：返回 text 环容量（Linux 语义近似为 log 缓冲区大小）。
     fn buffer_bytes(&self) -> usize;
 
-    /// 取下一条未读记录（`seq == read_cursor` 的最小可用记录）。
+    /// 取下一条未读记录（sequence 不小于 read cursor 的最小可用记录）。
     fn peek_next_unread(&self) -> Result<KlogRecordView<'_>, KlogError>;
 
     /// 推进读游标：`after_seq` 为刚消费完的序号；`clear_only` 为 true 时不要求曾 peek。
@@ -37,8 +39,7 @@ pub trait KlogStore {
     fn clear_read_cursor(&mut self);
 }
 
-/// 环统计。
-// 本结构代码由AI完成
+/// `DATA:` 环统计快照；值在复制时一致，但不会阻止后续并发追加或覆盖。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct KlogStats {
     /// 成功提交条数。

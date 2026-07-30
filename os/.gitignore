@@ -10,6 +10,11 @@ __pycache__/
 *.pyc
 *.log
 *log/
+# `wateros-klog` is source code, not a generated log directory.  Keep its
+# newly added modules and module documentation visible to Git.
+!components/
+!components/wateros-klog/
+!components/wateros-klog/**
 *log.txt
 cache*
 **/Cargo.lock

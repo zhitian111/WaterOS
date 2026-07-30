@@ -1,0 +1,18 @@
+[package]
+name = "wateros-klog-impl-kernel"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+api-v0 = { path = "../../klog-api/api-v0/", package = "wateros-klog-api-v0", default-features = true }
+platform = { path = "../../../wateros-platform/", package = "wateros-platform", default-features = false }
+task = { path = "../../../wateros-task/", package = "wateros-task", default-features = false }
+arch = { path = "../../../wateros-platform/platform-arch/", package = "wateros-platform-arch", default-features = false, features = [ "api-v0" ] }
+spin = "0.10.0"
+wateros-base-config = { path = "../../../wateros-base/base-config/", package = "wateros-base-config", default-features = true }
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"

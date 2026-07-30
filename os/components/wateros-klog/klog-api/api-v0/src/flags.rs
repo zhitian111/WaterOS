@@ -1,8 +1,6 @@
 //! 记录标志位（内核私有语义，不导出给用户态裸结构）。
-//! 本模块代码由AI完成
 
 /// [`KlogRecordMeta::flags`] 位域。
-// 本结构代码由AI完成
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct KlogFlags(pub u8);
 

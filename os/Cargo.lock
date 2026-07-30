@@ -1201,9 +1201,7 @@ name = "wateros-klog"
 version = "0.1.0"
 dependencies = [
  "wateros-klog-api-v0",
- "wateros-klog-impl-ringbuf",
- "wateros-platform",
- "wateros-task",
+ "wateros-klog-impl-kernel",
 ]
 
 [[package]]
@@ -1214,13 +1212,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "wateros-klog-impl-ringbuf"
+name = "wateros-klog-impl-kernel"
 version = "0.1.0"
 dependencies = [
  "spin",
  "wateros-base-config",
  "wateros-klog-api-v0",
+ "wateros-platform",
  "wateros-platform-arch",
+ "wateros-task",
 ]
 
 [[package]]
