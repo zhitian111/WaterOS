@@ -1,14 +1,21 @@
 #![no_std]
-//! 控制台输出抽象与便捷 API：基于 `api_v0::Console`
-//! 的类型参数化输出，并在 feature 下绑定具体 `ConsoleHandle`。
+//! 控制台输出抽象与统一写入入口。
 //!
-//! - 带泛型的 `print` / `prints` 供库代码在已知 `Console` 实现时调用。
-//! - `print!` / `println!` 宏默认使用本 crate 选中的 `ConsoleHandle`。
+//! `Console` trait 仅用于约束具体后端句柄；运行期调用方应使用 [`write_fmt`]、
+//! [`write_str`] 或 [`write_raw_bytes`]，而不是自行选择后端类型。
+//!
+//! - `print!` / `println!` 宏调用统一 [`write_fmt`] 路径。
 //! - `write_raw_bytes` 面向非 UTF-8 或 syscall 路径；未启用平台控制台时为吞掉输出的占位行为。
 //!
 //! **平台假设**：ANSI 转义序列依赖接收端（串口终端或 QEMU）对 SGR 的支持。
+//!
+//! OUTPUT_SYNC: backend 只负责设备写入，跨 CPU 的输出锁由 `platform::console` 提供；
+//! runtime 绝不能再持有 scheduler、VFS 或 allocator 锁后调用输出。
 
 use core::fmt;
+
+#[cfg(all(feature = "impl-dummy", feature = "impl-platform-console"))]
+compile_error!("enable only one runtime-console implementation");
 
 /// 终端 ANSI 颜色前缀，用于在 `println!` 等输出中高亮级别或横幅。
 pub enum AnsiColor {
@@ -39,34 +46,49 @@ impl fmt::Display for AnsiColor {
     }
 }
 
-use api_v0::Console;
-
-/// 使用类型 `C` 的 [`Console`] 实现格式化输出；失败时 `unwrap`（内核早期路径约定为不可恢复错误）。
+/// 将格式化参数作为一条完整输出交给当前控制台后端。
+///
+/// RUNTIME_OUTPUT: platform backend 会在 platform console 的跨 CPU 锁中完成格式化；
+/// 因此不能将 `fmt::Arguments` 拆成多次 `write_str`，否则不同 CPU 的日志仍可能交错。
+/// 无 runtime console feature 时输出被显式丢弃，仅允许最小依赖构建使用。
 #[inline]
-pub fn print<C : Console>(args : fmt::Arguments) {
+pub fn write_fmt(args : fmt::Arguments<'_>) {
     #[cfg(feature = "impl-platform-console")]
     {
-        let _ = core::marker::PhantomData::<C>;
         impl_platform_console::platform_console_write_fmt(args);
         return;
     }
-    #[cfg(not(feature = "impl-platform-console"))]
-    let mut c = C::default();
-    #[cfg(not(feature = "impl-platform-console"))]
-    c.write_fmt(args).unwrap();
+    #[cfg(feature = "impl-dummy")]
+    {
+        use core::fmt::Write;
+        let mut console = ConsoleHandle::default();
+        let _ = console.write_fmt(args);
+        return;
+    }
+    #[cfg(not(any(feature = "impl-platform-console", feature = "impl-dummy")))]
+    {
+        let _ = args;
+    }
 }
-/// 使用类型 `C` 的 [`Console`] 实现写入整段 UTF-8 文本。
+
+/// 写入一段 UTF-8 文本；与 [`write_fmt`] 使用相同的整段原子性边界。
 #[inline]
-pub fn prints<C : Console>(str : &str) {
+pub fn write_str(text : &str) {
     #[cfg(feature = "impl-platform-console")]
     {
-        let _ = core::marker::PhantomData::<C>;
-        impl_platform_console::platform_console_write_a_buffer(str.as_bytes());
+        impl_platform_console::platform_console_write_a_buffer(text.as_bytes());
+        return;
     }
-    #[cfg(not(feature = "impl-platform-console"))]
+    #[cfg(feature = "impl-dummy")]
     {
-        let mut c = C::default();
-        c.write_str(str).unwrap();
+        use core::fmt::Write;
+        let mut console = ConsoleHandle::default();
+        let _ = console.write_str(text);
+        return;
+    }
+    #[cfg(not(any(feature = "impl-platform-console", feature = "impl-dummy")))]
+    {
+        let _ = text;
     }
 }
 
@@ -74,6 +96,7 @@ pub fn prints<C : Console>(str : &str) {
 ///
 /// **契约**：无平台控制台后端时静默丢弃，避免在无串口构建中引入链接依赖；
 /// 有后端时按字节原样下发。
+/// OUTPUT_SYNC: 一次调用对应一次聚合层锁临界区，syscall 不应逐字节调用本函数。
 #[inline]
 pub fn write_raw_bytes(bytes : &[u8]) {
     #[cfg(feature = "impl-platform-console")]
@@ -85,24 +108,26 @@ pub fn write_raw_bytes(bytes : &[u8]) {
     }
 }
 
-/// 当前 feature 选中的默认控制台句柄类型，供 `print!` / `println!` 使用。
+/// 当前 feature 选中的默认控制台句柄类型。
+///
+/// 此类型用于 backend 实现和测试；普通 runtime 调用方不应直接实例化它。
 #[cfg(feature = "impl-dummy")]
 pub use impl_dummy::DummyConsoleHandle as ConsoleHandle;
 #[cfg(feature = "impl-platform-console")]
 pub use impl_platform_console::PlatformConsoleHandle as ConsoleHandle;
 
-/// 使用 [`ConsoleHandle`] 的 `print!` 风格宏，等价于 `print::<ConsoleHandle>(format_args!(...))`。
+/// 使用当前 feature 选中的控制台后端格式化输出。
 #[macro_export]
 macro_rules! print {
     ($fmt: literal $(, $($arg: tt)+)?) => {
-        $crate::print::<$crate::ConsoleHandle>(format_args!($fmt $(,$($arg)+)?));
+        $crate::write_fmt(format_args!($fmt $(,$($arg)+)?));
     }
 }
-/// 使用 [`ConsoleHandle`] 的 `println!` 风格宏，自动追加换行。
+/// 使用当前 feature 选中的控制台后端格式化输出并自动追加换行。
 #[macro_export]
 macro_rules! println {
     ($fmt: literal $(, $($arg: tt)+)?) => {
-        $crate::print::<$crate::ConsoleHandle>(format_args!(concat!($fmt, "\n") $(,$($arg)+)?));
+        $crate::write_fmt(format_args!(concat!($fmt, "\n") $(,$($arg)+)?));
     }
 }
 

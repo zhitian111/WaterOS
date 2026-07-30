@@ -2,6 +2,9 @@
 //! 内核 panic 入口：打印位置与消息后请求平台关机并死循环兜底。
 //!
 //! **边界**：依赖 `runtime-console` 与平台 reset 门面；控制台未就绪时仍尽力格式化输出（可能无显示）。
+//!
+//! PANIC_PATH: 不获取 scheduler/VFS/allocator 锁、不尝试恢复任务，也不假定 heap 可用；
+//! 该路径只能输出、请求 shutdown、停止执行。
 
 /// `#[panic_handler]` 使用的实现：输出到控制台后调用 `platform::reset::shutdown`。
 ///

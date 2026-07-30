@@ -3,6 +3,9 @@
 //! 可通过 feature `impl-tlsf` 切换为 [`rlsf::Tlsf`]（O(1) alloc/dealloc）。
 //!
 //! 堆大小与对齐来自 `wateros-base-config` 的 MM 配置；[`init`] 必须在任何分配前调用一次。
+//!
+//! RUNTIME_ORDER: `init` 在 BSP 的单线程启动阶段完成后，AP 才可执行可能分配的路径。
+//! ALLOC_SYNC: 后端锁保护分配器元数据，`interrupt_guard` 同时禁止本 CPU 的中断重入。
 
 mod interrupt_guard;
 mod stress;
@@ -41,6 +44,9 @@ pub struct HeapMemStats {
 pub(crate) use backend::HEAP_ALLOCATOR;
 
 /// 返回当前内核堆用量（`used`/`free`/`capacity`）。
+///
+/// 这是诊断快照：拿到值后 allocator 可立即变化；TLSF backend 的 `used` 还是按 layout
+/// 大小累计的估算值，不能用于内存回收决策。
 pub fn heap_mem_stats() -> HeapMemStats {
     interrupt_guard::with_allocator_interrupt_guard(|| backend::stats())
 }
@@ -68,6 +74,7 @@ pub(crate) static mut HEAP_SPACE : [u8; KERNEL_HEAP_SIZE] = [0; KERNEL_HEAP_SIZE
 /// 使用静态 `HEAP_SPACE` 初始化堆分配器区域。
 ///
 /// **契约**：仅在单核引导路径、且堆尚未使用时调用；调用方保证无并发重入。
+/// 重复初始化会破坏 allocator 元数据，不能作为 AP 初始化步骤调用。
 pub fn init() {
     backend::init_heap();
 }

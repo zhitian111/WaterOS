@@ -4,10 +4,14 @@
 //! 各子能力的行为与平台实现由对应子 crate 的 feature 决定；本文件不包含独立逻辑。
 //!
 //! **边界**：本 crate 只做再导出，不引入新的类型或初始化顺序；根 crate 负责按引导顺序调用各子模块的 `init` / `panic_handler` 等入口。
+//!
+//! RUNTIME_ORDER: 推荐顺序是 arch/platform early init → console 可写 → logging init →
+//! heap init → 可能分配内存的 driver、VFS、task。panic handler 可在最早阶段安装，
+//! 但早期输出只能是 best-effort。
 
 // 以下子模块与依赖 crate 同名，便于 `wateros` 使用 `runtime::console` 等形式引用。
 
-/// 再导出 [`panic::panic_handler`]，供根 crate 挂接 `#[panic_handler]`。
+/// 再导出 panic 终止路径，供根 crate 挂接 `#[panic_handler]`。
 pub mod panic {
     pub use panic::panic_handler;
 }
@@ -20,7 +24,7 @@ pub mod logging {
     pub use logging::*;
 }
 
-/// 再导出堆初始化与分配错误处理（若启用伙伴分配器 feature）。
+/// 再导出堆初始化、统计和分配错误处理。
 pub mod heap_allocator {
     pub use heap_allocator::*;
 }

@@ -9,6 +9,9 @@ use core::result::Result;
 use log::{info, Level, Metadata, Record, SetLoggerError};
 
 /// 静态全局 logger 实现，无字段；与 `LOGGER` 静态实例配合满足 `log::set_logger` 要求。
+///
+/// OUTPUT_SYNC: 该对象不持有锁，所有串行化下沉到 runtime/platform console；`log()`
+/// 内不得分配或再次调用 `log`，否则会在 allocator/console 路径上递归。
 struct WaterOSLogger;
 static LOGGER : WaterOSLogger = WaterOSLogger;
 
@@ -49,6 +52,7 @@ impl log::Log for WaterOSLogger {
                 Level::Trace => AnsiColor::White,
             };
 
+            // 一条 `println!` 对应 console 的一次整段写入，避免字段被不同 CPU 插入。
             println!("{}[WaterOS][cpu={}]{}{}    [{}]  {}{}",
                      AnsiColor::Cyan,
                      current_cpu_label(),
@@ -66,6 +70,9 @@ impl log::Log for WaterOSLogger {
 }
 
 /// 注册静态 [`WaterOSLogger`] 并设置 `log` 全局最大级别。
+///
+/// RUNTIME_ORDER: 成功注册后才设 max level，避免在无 logger 时放行记录；失败时保持
+/// 既有 logger 和 max level 原样不变。
 #[inline]
 #[allow(unused)]
 pub fn init(level : log::LevelFilter) -> Result<(), SetLoggerError> {

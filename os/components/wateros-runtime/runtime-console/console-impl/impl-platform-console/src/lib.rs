@@ -3,8 +3,12 @@
 //!
 //! **边界**：本模块不选择硬件或固件后端；具体输出路径由 `platform::console`
 //! 在当前 board feature 下决定。本模块只把 runtime 的 `fmt::Write` 接到平台门面。
+//!
+//! OUTPUT_SYNC: 单字节/缓冲写函数为 syscall 等原始字节路径服务；日志应优先使用
+//! `platform_console_write_fmt`，以保持完整格式化记录处于同一次 platform 锁内。
 
 /// 向平台控制台写入单字节；控制台错误按 best-effort 语义忽略。
+/// 不能用于 panic 前的可靠持久化确认，调用方若需要 drain 应显式调用 flush。
 #[inline]
 #[allow(unused)]
 pub fn platform_console_write_a_byte(byte : u8) {
@@ -20,6 +24,7 @@ pub fn platform_console_write_a_buffer(bytes : &[u8]) {
 }
 
 /// 在 platform UART 锁内完成整次格式化。
+/// `Arguments` 仅在当前调用期间有效，因此不得缓存或转发到异步队列。
 pub fn platform_console_write_fmt(args : core::fmt::Arguments<'_>) {
     let _ = platform::console::console_write_fmt(args);
 }
