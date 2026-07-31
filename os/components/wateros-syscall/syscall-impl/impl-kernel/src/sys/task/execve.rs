@@ -23,6 +23,11 @@ use super::super::ltp_cgroup_helper::{
 };
 use crate::user_copy::copy_user_path_cstr;
 
+/// Linux-compatible upper bound reported for the combined argv/envp payload.
+const EXEC_ARG_MAX : usize = 2 * 1024 * 1024;
+/// Leave room in the fixed 2 MiB initial user stack for argc and auxv.
+const EXEC_STACK_OVERHEAD : usize = 16 * 1024;
+
 // ── 公开入口 ─────────────────────────────────────────────────────
 
 pub(crate) fn sys_execve(args : SyscallArgs) -> UserRet {
@@ -41,8 +46,9 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
                                    crate::user_copy::USER_PATH_MAX)?;
     let abs_path = vfs::cwd::resolve_for_current_task(&path).unwrap_or(path);
 
-    let argv = read_string_array(argv_ptr)?;
-    let envp = read_string_array(envp_ptr)?;
+    let mut arg_budget = EXEC_ARG_MAX - EXEC_STACK_OVERHEAD;
+    let argv = read_string_array(argv_ptr, &mut arg_budget)?;
+    let envp = read_string_array(envp_ptr, &mut arg_budget)?;
 
     cgroup_regression_exec_fast_exit_if_standalone(abs_path.as_str(), &argv);
     ltp_fuzz_sigsuspend_worker_exec_fast_exit_if_standalone(abs_path.as_str(), &argv);
@@ -164,7 +170,7 @@ fn initial_entry_args(sp : usize, argc : usize) -> (usize, usize, usize) {
 
 fn prepare_stack_to_errno(e : PrepareUserStackError) -> ErrNo {
     match e {
-        PrepareUserStackError::StackOverflow |
+        PrepareUserStackError::StackOverflow => ErrNo::E2BIG,
         PrepareUserStackError::AccessViolation |
         PrepareUserStackError::NoUserAspace => ErrNo::EFAULT,
     }
@@ -210,29 +216,48 @@ fn root_volume_to_errno(e : RootVolumeReadError) -> ErrNo {
     }
 }
 
-/// 从用户态 `char **` 数组读取所有字符串。
-fn read_string_array(array_ptr : usize) -> Result<Vec<String>, ErrNo> {
+/// 从用户态 `char **` 数组读取字符串，并从 argv/envp 共享预算中扣除字符串和指针。
+fn read_string_array(array_ptr : usize, budget : &mut usize) -> Result<Vec<String>, ErrNo> {
     let mut result = Vec::new();
     if array_ptr == 0 {
         return Ok(result);
     }
     let ops = ActiveUserMemoryOps::new(task::current_task_user_aspace_ptr());
-    let mut ptr_size = [0u8; 8];
+    let word_size = core::mem::size_of::<usize>();
+    let mut ptr_bytes = [0u8; core::mem::size_of::<usize>()];
     loop {
-        if ops.copy_from_user(&mut ptr_size,
-                              mm::api::addr::VirtAddr(array_ptr + result.len() * 8))
+        let offset = result.len()
+                           .checked_mul(word_size)
+                           .and_then(|offset| array_ptr.checked_add(offset))
+                           .ok_or(ErrNo::EFAULT)?;
+        if *budget < word_size {
+            return Err(ErrNo::E2BIG);
+        }
+        if ops.copy_from_user(&mut ptr_bytes,
+                              mm::api::addr::VirtAddr(offset))
               .is_err()
         {
             return Err(ErrNo::EFAULT);
         }
-        let ptr = usize::from_le_bytes(ptr_size);
+        *budget -= word_size;
+        let ptr = usize::from_le_bytes(ptr_bytes);
         if ptr == 0 {
             break;
         }
-        match copy_user_path_cstr(ptr, crate::user_copy::USER_PATH_MAX) {
-            Ok(s) => result.push(s),
-            Err(e) => return Err(e),
+        let max_len = crate::user_copy::USER_PATH_MAX.min(*budget);
+        if max_len == 0 {
+            return Err(ErrNo::E2BIG);
         }
+        let value = copy_user_path_cstr(ptr, max_len).map_err(|error| {
+                                                        if error == ErrNo::ENAMETOOLONG {
+                                                            ErrNo::E2BIG
+                                                        } else {
+                                                            error
+                                                        }
+                                                    })?;
+        *budget = budget.checked_sub(value.len() + 1)
+                        .ok_or(ErrNo::E2BIG)?;
+        result.push(value);
     }
     Ok(result)
 }
