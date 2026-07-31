@@ -1,7 +1,28 @@
 //! 用户缓冲区访问：通常在 **trap 处理 / syscall 内核路径** 中调用，此时应已持有正确的地址空间上下文（或能推导当前任务页表）。
 
 use crate::addr::VirtAddr;
-use crate::error::MmResult;
+use crate::error::{MmError, MmResult};
+
+/// 内核向用户空间写入时已经完成的前缀及随后发生的错误。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UserCopyProgress {
+    pub copied : usize,
+    pub error : Option<MmError>,
+}
+
+impl UserCopyProgress {
+    #[inline]
+    pub const fn complete(copied : usize) -> Self {
+        Self { copied,
+               error : None }
+    }
+
+    #[inline]
+    pub const fn failed(copied : usize, error : MmError) -> Self {
+        Self { copied,
+               error : Some(error) }
+    }
+}
 
 /// 用户态内存访问（用于 syscall、glibc、文件系统等）。
 ///
@@ -15,8 +36,23 @@ pub trait UserMemoryOps {
     /// 成功返回实际拷贝的字节数（当前 API 与全量成功语义一致时可等于 `dst.len()`，以实现为准）。
     fn copy_from_user(&self, dst : &mut [u8], src : VirtAddr) -> MmResult<usize>;
 
-    /// 将 `src` 写入用户缓冲区 `dst` 起始处；可跨页。
-    fn copy_to_user(&self, dst : VirtAddr, src : &[u8]) -> MmResult<usize>;
+    /// 将 `src` 写入用户缓冲区 `dst` 起始处，保留错误前已复制的精确前缀。
+    ///
+    /// 空输入必须返回 `{ copied: 0, error: None }` 且不访问 `dst`。每一页都必须在
+    /// 写入前完成缺页/COW 处理、权限检查和物理地址翻译。
+    fn copy_to_user_progress(&self, dst : VirtAddr, src : &[u8]) -> UserCopyProgress;
+
+    /// 将 `src` 完整写入用户缓冲区 `dst`；可跨页。
+    ///
+    /// 此兼容接口保持原有全量成功语义。需要处理中途进度的调用方应使用
+    /// [`Self::copy_to_user_progress`]。
+    fn copy_to_user(&self, dst : VirtAddr, src : &[u8]) -> MmResult<usize> {
+        let progress = self.copy_to_user_progress(dst, src);
+        match progress.error {
+            Some(error) => Err(error),
+            None => Ok(progress.copied),
+        }
+    }
 
     /// 原子读取一个四字节对齐的用户 `u32`。
     fn atomic_load_u32(&self, src : VirtAddr) -> MmResult<u32>;
@@ -32,4 +68,38 @@ pub trait UserMemoryOps {
     /// 返回 shared futex 使用的映射身份。当前实现使用已翻译物理字地址，
     /// 因而同一共享页在不同进程、不同 VA 下仍能得到相同 key。
     fn shared_futex_key_u32(&self, src : VirtAddr) -> MmResult<usize>;
+}
+
+pub fn test() {
+    struct PartialWrite;
+
+    impl UserMemoryOps for PartialWrite {
+        fn copy_from_user(&self, _dst : &mut [u8], _src : VirtAddr) -> MmResult<usize> {
+            Err(MmError::Unsupported)
+        }
+
+        fn copy_to_user_progress(&self, _dst : VirtAddr, _src : &[u8]) -> UserCopyProgress {
+            UserCopyProgress::failed(3, MmError::AccessViolation)
+        }
+
+        fn atomic_load_u32(&self, _src : VirtAddr) -> MmResult<u32> { Err(MmError::Unsupported) }
+
+        fn atomic_compare_exchange_u32(&self,
+                                       _dst : VirtAddr,
+                                       _expected : u32,
+                                       _desired : u32)
+                                       -> MmResult<u32> {
+            Err(MmError::Unsupported)
+        }
+
+        fn shared_futex_key_u32(&self, _src : VirtAddr) -> MmResult<usize> {
+            Err(MmError::Unsupported)
+        }
+    }
+
+    let progress = PartialWrite.copy_to_user_progress(VirtAddr(0), &[0; 8]);
+    assert_eq!(progress,
+               UserCopyProgress::failed(3, MmError::AccessViolation));
+    assert_eq!(PartialWrite.copy_to_user(VirtAddr(0), &[0; 8]),
+               Err(MmError::AccessViolation));
 }

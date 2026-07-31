@@ -69,7 +69,7 @@ RIO-01..09 ───────────────────────
 | 状态 | 文件 | 交付 |
 |---|---|---|
 | [x] | [`01-read-access-and-errors.md`](./01-read-access-and-errors.md) | fd/access/type 校验和 errno 顺序 |
-| [ ] | [`02-user-copy-progress.md`](./02-user-copy-progress.md) | 双架构部分 user-copy 结果 |
+| [x] | [`02-user-copy-progress.md`](./02-user-copy-progress.md) | 双架构部分 user-copy 结果 |
 | [ ] | [`03-open-file-description-state.md`](./03-open-file-description-state.md) | `dup/fork` 共享 offset/status |
 | [ ] | [`04-vfs-read-lease-and-files.md`](./04-vfs-read-lease-and-files.md) | 统一租约 API 和普通文件/proc 实现 |
 | [ ] | [`05-pipe-and-unix-socket-read.md`](./05-pipe-and-unix-socket-read.md) | pipe、Unix stream/dgram 保留与提交 |

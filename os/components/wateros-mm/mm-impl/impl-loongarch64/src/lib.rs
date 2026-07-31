@@ -69,6 +69,7 @@ pub fn test_with_range(start_ppn : PhysPageNum, end_ppn : PhysPageNum) {
     assert!(second_unmap.is_none());
 
     frame_dealloc_result(ppn).expect("dealloc test frame");
+    user_access::test_copy_to_user_progress();
 
     log::trace!("[mm-impl::loongarch64] test end");
 }

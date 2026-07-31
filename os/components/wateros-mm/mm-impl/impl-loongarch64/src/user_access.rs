@@ -5,7 +5,7 @@ use api_v0::addr::{VirtAddr, PAGE_SIZE};
 use api_v0::address_space::AddressSpaceOps;
 use api_v0::error::{MmError, MmResult};
 use api_v0::mmap::{MmapOps, PageFaultAccess};
-use api_v0::user_access::UserMemoryOps;
+use api_v0::user_access::{UserCopyProgress, UserMemoryOps};
 use core::sync::atomic::{AtomicU32, Ordering};
 use frame_alloctor::GlobalPhysFrameAllocator;
 
@@ -26,8 +26,8 @@ impl UserMemoryOps for LoongArch64UserMemoryOps {
         user_copy(self.handle, dst, src)
     }
 
-    fn copy_to_user(&self, dst : VirtAddr, src : &[u8]) -> MmResult<usize> {
-        user_copy_to(self.handle, src, dst)
+    fn copy_to_user_progress(&self, dst : VirtAddr, src : &[u8]) -> UserCopyProgress {
+        user_copy_to_progress(self.handle, src, dst)
     }
 
     fn atomic_load_u32(&self, src : VirtAddr) -> MmResult<u32> {
@@ -170,13 +170,40 @@ fn user_copy(handle : usize, kernel_buf : &mut [u8], user_addr : VirtAddr) -> Mm
     })
 }
 
-fn user_copy_to(handle : usize, kernel_src : &[u8], mut user_addr : VirtAddr) -> MmResult<usize> {
+fn user_copy_to_progress(handle : usize,
+                         kernel_src : &[u8],
+                         user_addr : VirtAddr)
+                         -> UserCopyProgress {
     if kernel_src.is_empty() {
-        return Ok(0);
+        return UserCopyProgress::complete(0);
     }
-    user_aspace::with_user_aspace_mut(handle, |aspace| {
-        let mut done = 0usize;
-        while done < kernel_src.len() {
+    match user_aspace::with_user_aspace_mut(handle, |aspace| {
+              Ok(copy_to_user_in_aspace(aspace,
+                                        user_addr,
+                                        kernel_src))
+          }) {
+        Ok(progress) => progress,
+        Err(error) => UserCopyProgress::failed(0, error),
+    }
+}
+
+fn copy_to_user_in_aspace(aspace : &mut LoongArch64AddressSpace,
+                          mut user_addr : VirtAddr,
+                          kernel_src : &[u8])
+                          -> UserCopyProgress {
+    if kernel_src.is_empty() {
+        return UserCopyProgress::complete(0);
+    }
+    if user_addr.0
+                .checked_add(kernel_src.len() - 1)
+                .is_none()
+    {
+        return UserCopyProgress::failed(0, MmError::InvalidAddress);
+    }
+
+    let mut done = 0usize;
+    while done < kernel_src.len() {
+        let step = (|| -> MmResult<usize> {
             let vpn = user_addr.floor_page();
             let mut perm = match aspace.leaf_page_perm(vpn)? {
                 Some(perm) => perm,
@@ -216,13 +243,24 @@ fn user_copy_to(handle : usize, kernel_src : &[u8], mut user_addr : VirtAddr) ->
             let chunk = page_room.min(kernel_src.len() - done);
             let dst = unsafe { core::slice::from_raw_parts_mut(pa.0 as *mut u8, chunk) };
             dst.copy_from_slice(&kernel_src[done..done + chunk]);
-            done += chunk;
-            user_addr = VirtAddr(user_addr.0
-                                          .checked_add(chunk)
-                                          .ok_or(MmError::AccessViolation)?);
+            Ok(chunk)
+        })();
+        match step {
+            Ok(chunk) => {
+                done += chunk;
+                if done < kernel_src.len() {
+                    let Some(next) = user_addr.0
+                                              .checked_add(chunk)
+                    else {
+                        return UserCopyProgress::failed(done, MmError::InvalidAddress);
+                    };
+                    user_addr = VirtAddr(next);
+                }
+            }
+            Err(error) => return UserCopyProgress::failed(done, error),
         }
-        Ok(done)
-    })
+    }
+    UserCopyProgress::complete(done)
 }
 
 fn copy_from_user_in_aspace(aspace : &mut LoongArch64AddressSpace,
@@ -265,4 +303,96 @@ fn copy_from_user_in_aspace(aspace : &mut LoongArch64AddressSpace,
                                       .ok_or(MmError::AccessViolation)?);
     }
     Ok(done)
+}
+
+pub fn test_copy_to_user_progress() {
+    use api_v0::addr::VirtPageNum;
+    use api_v0::perm::PagePerm;
+    use frame_alloctor::{frame_alloc_result, frame_dealloc_result};
+
+    let mut aspace = LoongArch64AddressSpace::new().expect("create user-copy test address space");
+    let first = frame_alloc_result().expect("allocate first user-copy test page");
+    let second = frame_alloc_result().expect("allocate second user-copy test page");
+    let first_vpn = VirtPageNum(0x400);
+    let second_vpn = VirtPageNum(first_vpn.0 + 1);
+    let writable = PagePerm::R | PagePerm::W | PagePerm::U;
+    aspace.map_page_to_ppn(first_vpn, first, writable)
+          .expect("map first user-copy test page");
+    aspace.map_page_to_ppn(second_vpn, second, writable)
+          .expect("map second user-copy test page");
+
+    let single = [0x31u8; 16];
+    let single_va = VirtAddr(first_vpn.start_addr()
+                                      .0 +
+                             64);
+    assert_eq!(copy_to_user_in_aspace(&mut aspace, single_va, &single),
+               UserCopyProgress::complete(single.len()));
+    let single_dst = unsafe {
+        core::slice::from_raw_parts((first.0 * PAGE_SIZE + 64) as *const u8,
+                                    single.len())
+    };
+    assert_eq!(single_dst, &single);
+
+    let cross = [0x42u8; 16];
+    let cross_va = VirtAddr(second_vpn.start_addr()
+                                      .0 -
+                            8);
+    assert_eq!(copy_to_user_in_aspace(&mut aspace, cross_va, &cross),
+               UserCopyProgress::complete(cross.len()));
+    let first_tail = unsafe {
+        core::slice::from_raw_parts((first.0 * PAGE_SIZE + PAGE_SIZE - 8) as *const u8,
+                                    8)
+    };
+    let second_head =
+        unsafe { core::slice::from_raw_parts((second.0 * PAGE_SIZE) as *const u8, 8) };
+    assert_eq!(first_tail, &cross[..8]);
+    assert_eq!(second_head, &cross[8..]);
+
+    assert_eq!(aspace.unmap_page_to_ppn(second_vpn)
+                     .expect("unmap second user-copy test page"),
+               Some(second));
+    frame_dealloc_result(second).expect("release second user-copy test page");
+    let partial = copy_to_user_in_aspace(&mut aspace, cross_va, &cross);
+    assert_eq!(partial,
+               UserCopyProgress::failed(8, MmError::AccessViolation));
+
+    aspace.protect_page(first_vpn, PagePerm::R | PagePerm::U)
+          .expect("make user-copy test page read-only");
+    assert_eq!(copy_to_user_in_aspace(&mut aspace, single_va, &single),
+               UserCopyProgress::failed(0, MmError::AccessViolation));
+    assert_eq!(copy_to_user_in_aspace(&mut aspace,
+                                      VirtAddr(usize::MAX - 1),
+                                      &[1; 4]),
+               UserCopyProgress::failed(0, MmError::InvalidAddress));
+    assert_eq!(copy_to_user_in_aspace(&mut aspace, VirtAddr(usize::MAX), &[]),
+               UserCopyProgress::complete(0));
+    drop(aspace);
+
+    let mut parent = LoongArch64AddressSpace::new().expect("create COW parent address space");
+    let cow_page = frame_alloc_result().expect("allocate COW user-copy test page");
+    let cow_vpn = VirtPageNum(0x500);
+    parent.map_page_to_ppn(cow_vpn, cow_page, writable)
+          .expect("map COW user-copy test page");
+    unsafe {
+        *(cow_page.start_addr()
+                  .0 as *mut u8) = 0x55;
+    }
+    let mut child = parent.fork_cow()
+                          .expect("fork COW user-copy test address space");
+    assert_eq!(copy_to_user_in_aspace(&mut child,
+                                      cow_vpn.start_addr(),
+                                      &[0xAA]),
+               UserCopyProgress::complete(1));
+    let parent_pa = parent.translate_addr(cow_vpn.start_addr())
+                          .expect("translate COW parent")
+                          .expect("COW parent mapping");
+    let child_pa = child.translate_addr(cow_vpn.start_addr())
+                        .expect("translate COW child")
+                        .expect("COW child mapping");
+    assert_ne!(parent_pa.floor_page(),
+               child_pa.floor_page());
+    assert_eq!(unsafe { *(parent_pa.0 as *const u8) },
+               0x55);
+    assert_eq!(unsafe { *(child_pa.0 as *const u8) },
+               0xAA);
 }

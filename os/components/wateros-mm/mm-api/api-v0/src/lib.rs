@@ -37,5 +37,6 @@ pub fn test() {
     perm::test();
     flags::test();
     executable::test();
+    user_access::test();
     log::trace!("[mm-api] test end");
 }

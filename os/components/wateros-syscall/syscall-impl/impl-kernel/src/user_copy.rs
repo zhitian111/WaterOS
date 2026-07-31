@@ -16,6 +16,12 @@ use crate::mm_util::{current_user_aspace_handle, mm_err_to_errno};
 
 pub(crate) const USER_PATH_MAX : usize = 4096;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct UserWriteProgress {
+    pub copied : usize,
+    pub error : Option<ErrNo>,
+}
+
 // 本方法代码由AI完成
 pub(crate) fn user_aspace_required() -> Result<ActiveUserMemoryOps, ErrNo> {
     let handle = current_user_aspace_handle().ok_or(ErrNo::EFAULT)?;
@@ -87,13 +93,26 @@ pub(crate) fn shared_futex_key_u32_in_aspace(handle : usize, ptr : usize) -> Res
 
 // 本方法代码由AI完成
 pub(crate) fn copy_to_user(ptr : usize, buf : &[u8]) -> Result<usize, ErrNo> {
+    let progress = copy_to_user_progress(ptr, buf);
+    match progress.error {
+        Some(error) => Err(error),
+        None => Ok(progress.copied),
+    }
+}
+
+pub(crate) fn copy_to_user_progress(ptr : usize, buf : &[u8]) -> UserWriteProgress {
     if buf.is_empty() {
-        return Ok(0);
+        return UserWriteProgress { copied : 0,
+                                   error : None };
     }
     if ptr == 0 {
-        return Err(ErrNo::EFAULT);
+        return UserWriteProgress { copied : 0,
+                                   error : Some(ErrNo::EFAULT) };
     }
-    let handle = current_user_aspace_handle().ok_or(ErrNo::EFAULT)?;
+    let Some(handle) = current_user_aspace_handle() else {
+        return UserWriteProgress { copied : 0,
+                                   error : Some(ErrNo::EFAULT) };
+    };
     let task_satp = task::current_task_user_address_space_token();
     let trap_satp = task::current_task_trap_return_address_space_token();
     if handle != 0 && task_satp != 0 && trap_satp != 0 && task_satp != trap_satp {
@@ -101,11 +120,14 @@ pub(crate) fn copy_to_user(ptr : usize, buf : &[u8]) -> Result<usize, ErrNo> {
               task_satp, trap_satp, handle, ptr);
     }
     let ops = ActiveUserMemoryOps::new(handle);
-    ops.copy_to_user(VirtAddr(ptr), buf)
-       .map_err(|e| {
-           trace_user_copy_failure("copy_to_user", ptr, buf.len(), e);
-           mm_err_to_errno(e)
-       })
+    let progress = ops.copy_to_user_progress(VirtAddr(ptr), buf);
+    let error = progress.error
+                        .map(|error| {
+                            trace_user_copy_failure("copy_to_user", ptr, buf.len(), error);
+                            mm_err_to_errno(error)
+                        });
+    UserWriteProgress { copied : progress.copied,
+                        error }
 }
 
 #[cfg(target_arch = "riscv64")]

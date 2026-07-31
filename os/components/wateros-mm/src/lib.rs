@@ -200,3 +200,12 @@ pub fn test_with_range(start_ppn : api::addr::PhysPageNum,
 
     log::trace!("[wateros-mm] test end");
 }
+
+/// 用户写入进度契约与两套页表实现的定向自测。
+///
+/// 依赖已经初始化的物理帧分配器；测试结束后会释放临时地址空间和数据页。
+pub fn test_user_copy_progress() {
+    api::user_access::test();
+    impl_sv39::user_access::test_copy_to_user_progress();
+    impl_loongarch64::user_access::test_copy_to_user_progress();
+}
