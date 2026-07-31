@@ -134,7 +134,9 @@ pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
                 Ok(loader) => loader,
                 Err(e) => return UserRet::from_error(e),
             };
-            let eager_shared = mf.contains(MapFlags::SHARED);
+            // Writable shared mappings need stable frames across fork. Read-only shared mappings
+            // can retain file-backed lazy faults without changing observable sharing semantics.
+            let eager_shared = mf.contains(MapFlags::SHARED) && perm.writable();
             let file_map_offset = match kind {
                 MmapKind::File { offset, .. } => offset,
                 MmapKind::Anonymous => 0,
