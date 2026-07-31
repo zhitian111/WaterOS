@@ -44,6 +44,10 @@ handle.flush()
   `flush_all()`，非持久化句柄默认返回不支持。双架构 check、CAgent 10/10、
   BuildStorm toolchain/minibuild 和 overlay `e2fsck -fn` 已通过；完整编译仍待闭环。
   详见 [`results/k01-20260731.md`](./results/k01-20260731.md)。
+- 2026-07-31 已修复 `write/writev/pwrite64/pwritev` 将 4 MiB 内核暂存上限错误暴露为
+  ABI `EINVAL` 的问题。BuildStorm 已越过原先 `libc` 写入 `lib.rmeta` 的失败点并开始
+  编译其依赖项；完整 BuildStorm 和崩溃一致性仍未闭环。详见
+  [`results/k01-large-write-20260731.md`](./results/k01-large-write-20260731.md)。
 
 ## 涉及文件
 

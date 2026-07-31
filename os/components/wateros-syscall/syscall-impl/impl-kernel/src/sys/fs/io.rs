@@ -251,6 +251,17 @@ mod tests {
         assert_eq!(read_transfer_len(SYSCALL_IO_MAX + 1), SYSCALL_IO_MAX);
         assert_eq!(read_transfer_len(usize::MAX), SYSCALL_IO_MAX);
     }
+
+    #[test]
+    fn write_transfer_len_preserves_small_requests() {
+        assert_eq!(write_transfer_len(4096), 4096);
+    }
+
+    #[test]
+    fn write_transfer_len_turns_large_requests_into_short_writes() {
+        assert_eq!(write_transfer_len(SYSCALL_IO_MAX + 1), SYSCALL_IO_MAX);
+        assert_eq!(write_transfer_len(usize::MAX), SYSCALL_IO_MAX);
+    }
 }
 
 fn read_tcp_socket_blocking(fd : usize, buf : &mut [u8]) -> Result<usize, ErrNo> {
@@ -324,15 +335,13 @@ pub(crate) fn sys_write(args : SyscallArgs) -> UserRet {
     if ptr == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
     }
-    if len > SYSCALL_IO_MAX {
-        return UserRet::from_error(ErrNo::EINVAL);
-    }
-    let mut kbuf = match try_kbuf(len, SYSCALL_IO_MAX) {
+    let transfer_len = write_transfer_len(len);
+    let mut kbuf = match try_kbuf(transfer_len, SYSCALL_IO_MAX) {
         Ok(buf) => buf,
         Err(err) => return UserRet::from_error(err),
     };
     match copy_from_user(&mut kbuf, ptr) {
-        Ok(n) if n == len => {}
+        Ok(n) if n == transfer_len => {}
         _ => return UserRet::from_error(ErrNo::EFAULT),
     }
     // iozone 调试：每 128 次 write 才打一次 trace，避免刷屏淹没 readv 日志
@@ -343,7 +352,7 @@ pub(crate) fn sys_write(args : SyscallArgs) -> UserRet {
             log::trace!("[sys_write] cnt={} fd={} len={} ptr={:#x}",
                         cnt,
                         fd,
-                        len,
+                        transfer_len,
                         ptr);
         }
     }
@@ -367,6 +376,14 @@ pub(crate) fn sys_write(args : SyscallArgs) -> UserRet {
     ret
 }
 
+/// `MAX_RW_COUNT` is the ABI limit while `SYSCALL_IO_MAX` only bounds kernel
+/// staging. Requests larger than staging capacity must make progress via a
+/// legal short write instead of failing with `EINVAL`.
+fn write_transfer_len(requested : usize) -> usize {
+    requested.min(MAX_IO)
+             .min(SYSCALL_IO_MAX)
+}
+
 // 本方法代码由AI完成
 pub(crate) fn sys_writev(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
@@ -385,7 +402,13 @@ pub(crate) fn sys_writev(args : SyscallArgs) -> UserRet {
     let iov_size = core::mem::size_of::<UserIoVec>();
     let mut out = Vec::new();
     for i in 0..iovcnt {
-        let iov = match copy_from_user_struct::<UserIoVec>(iov_ptr + i * iov_size) {
+        let iov_addr = match i.checked_mul(iov_size)
+                              .and_then(|offset| iov_ptr.checked_add(offset))
+        {
+            Some(addr) => addr,
+            None => return UserRet::from_error(ErrNo::EFAULT),
+        };
+        let iov = match copy_from_user_struct::<UserIoVec>(iov_addr) {
             Ok(v) => v,
             Err(e) => return UserRet::from_error(e),
         };
@@ -395,23 +418,23 @@ pub(crate) fn sys_writev(args : SyscallArgs) -> UserRet {
         if iov.base == 0 {
             return UserRet::from_error(ErrNo::EFAULT);
         }
-        let new_len = match out.len()
-                               .checked_add(iov.len)
-        {
-            Some(v) => v,
-            None => return UserRet::from_error(ErrNo::EINVAL),
-        };
-        if new_len > SYSCALL_IO_MAX {
-            return UserRet::from_error(ErrNo::EINVAL);
+        let remaining = SYSCALL_IO_MAX - out.len();
+        if remaining == 0 {
+            break;
         }
+        let segment_len = iov.len.min(remaining);
+        let new_len = out.len() + segment_len;
         let old_len = out.len();
         if out.try_reserve_exact(new_len - old_len).is_err() {
             return UserRet::from_error(ErrNo::ENOMEM);
         }
         out.resize(new_len, 0);
         match copy_from_user(&mut out[old_len..], iov.base) {
-            Ok(n) if n == iov.len => {}
+            Ok(n) if n == segment_len => {}
             _ => return UserRet::from_error(ErrNo::EFAULT),
+        }
+        if segment_len < iov.len {
+            break;
         }
     }
 
@@ -526,24 +549,32 @@ fn gather_user_iovecs(iov_ptr : usize, iovcnt : usize) -> Result<Vec<u8>, ErrNo>
     let iov_size = core::mem::size_of::<UserIoVec>();
     let mut out = Vec::new();
     for i in 0..iovcnt {
-        let iov = copy_from_user_struct::<UserIoVec>(iov_ptr + i * iov_size)?;
+        let iov_addr = i.checked_mul(iov_size)
+                        .and_then(|offset| iov_ptr.checked_add(offset))
+                        .ok_or(ErrNo::EFAULT)?;
+        let iov = copy_from_user_struct::<UserIoVec>(iov_addr)?;
         if iov.len == 0 {
             continue;
         }
         if iov.base == 0 {
             return Err(ErrNo::EFAULT);
         }
-        let new_len = out.len()
-                         .checked_add(iov.len)
-                         .ok_or(ErrNo::EINVAL)?;
-        if new_len > MAX_IO {
-            return Err(ErrNo::EINVAL);
+        let remaining = SYSCALL_IO_MAX - out.len();
+        if remaining == 0 {
+            break;
         }
+        let segment_len = iov.len.min(remaining);
+        let new_len = out.len() + segment_len;
         let old_len = out.len();
+        out.try_reserve_exact(segment_len)
+           .map_err(|_| ErrNo::ENOMEM)?;
         out.resize(new_len, 0);
         match copy_from_user(&mut out[old_len..], iov.base) {
-            Ok(n) if n == iov.len => {}
+            Ok(n) if n == segment_len => {}
             _ => return Err(ErrNo::EFAULT),
+        }
+        if segment_len < iov.len {
+            break;
         }
     }
     Ok(out)
@@ -653,18 +684,18 @@ pub(crate) fn sys_pwrite64(args : SyscallArgs) -> UserRet {
     if ptr == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
     }
-    if len > MAX_IO {
-        return UserRet::from_error(ErrNo::EINVAL);
-    }
     let offset = match offset_from_arg(args.arg(3)) {
         Ok(v) => v,
         Err(e) => return UserRet::from_error(e),
     };
 
-    let mut kbuf = Vec::with_capacity(len);
-    kbuf.resize(len, 0);
+    let transfer_len = write_transfer_len(len);
+    let mut kbuf = match try_kbuf(transfer_len, SYSCALL_IO_MAX) {
+        Ok(buf) => buf,
+        Err(err) => return UserRet::from_error(err),
+    };
     match copy_from_user(&mut kbuf, ptr) {
-        Ok(n) if n == len => {}
+        Ok(n) if n == transfer_len => {}
         _ => return UserRet::from_error(ErrNo::EFAULT),
     }
     match vfs::fd::with_current_io(fd, |handle| {
