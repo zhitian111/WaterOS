@@ -49,7 +49,10 @@
 
 **Linux 语义**：终止调用进程内**所有**线程；向父发 `SIGCHLD`；托孤子进程；当前线程 `clear_child_tid`；整组退出码一致。
 
-**当前覆盖**：当前线程 `clear_child_tid`；`reap_exited_member_threads_runtime_resources`；`notify_parent_sigchld`；对兄弟线程 `robust_exit_cleanup` + `drop_task_attachments`；`on_thread_exit(..., true)`；`task::exit_group_current` 内 `mark_process_exiting` + `kill_task` 兄弟 + `reparent_orphans`。
+**当前覆盖**：当前线程 `clear_child_tid`；`reap_exited_member_threads_runtime_resources`；
+先发布 `ProcessState::Exiting` 再 kill/通知兄弟线程；每个线程自行清理运行时资源。
+`mark_task_exited` 在进程表同一临界区内判断是否刚完成退出，只有完成者执行
+`on_thread_exit(..., true)`、`notify_parent_sigchld` 和父 wait 唤醒。
 
 | 严重度 | 问题 | 收敛建议 |
 |--------|------|----------|

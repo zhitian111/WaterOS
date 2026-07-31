@@ -124,7 +124,7 @@ ProcessRegistryInterruptGuard::new()   // 关中断
 
 ### 3.2 持锁区间内的跨子系统调用
 
-`reap_process_with_tasks`（`process.rs:454-478`）在 **仍持有 Registry 借用的闭包内** 调用：
+历史实现的 `reap_process_with_tasks` 曾在 **仍持有 Registry 借用的闭包内** 调用：
 
 ```rust
 mm_api::user_aspace_lifecycle::drop_user_aspace_on_task_exit(ptr);
@@ -132,7 +132,8 @@ mm_api::user_aspace_lifecycle::drop_user_aspace_on_task_exit(ptr);
 
 - MM 钩子经 `register_drop_user_aspace_hook` 注册，典型实现走堆/帧释放（`LockedHeap` / `StackFrameAllocator` 等带锁路径）。
 - 已确认 MM **不会**回调 `ProcessRegistry`（无重入 RefCell）。
-- **风险**：关中断 + 持 Registry 借用期间做页表/帧释放与堆锁操作 → **临界区过长**；若堆路径将来触发 task 层回调 → RefCell panic 或隐式死锁。
+- **当前状态**：已改为 `detach_exited_process` / `detach_aborted_fork` 锁内移除并返回
+  owned `RetiredProcess`，闭包返回后再执行 `cleanup()` 和 MM drop。PR-02 已关闭。
 
 ### 3.3 与 Scheduler 锁的交互
 
@@ -175,7 +176,7 @@ Scheduler 使用独立 `UniprocessorSafeCell<RoundRobinScheduler|MultiClassSched
 | ID | 问题 | 路径 | 机制 |
 |----|------|------|------|
 | **PR-01** | **Spawn/Fork/Clone 登记窗口** | `spawn_user_task`、`fork_current`、`clone_current_thread` | Scheduler 在 `with_scheduler` 内 `enqueue_ready_task` 后释锁；Registry 登记前若 tick 调度到新 task，`current_process_task_snapshot()` 为 `None`，syscall 返回 `ESRCH` 或 robust/futex 清理异常；压测下可能与 wait/reap 互相等待 |
-| **PR-02** | **持锁内 MM 释放延长临界区** | `reap_process_with_tasks` | 关中断 + RefCell 借用期间 `drop_user_aspace_on_task_exit`（堆锁 + 帧释放）；中断延迟与潜在锁序耦合 |
+| **PR-02** | **持锁内 MM 释放延长临界区** | `detach_exited_process` / `RetiredProcess::cleanup` | **已修复**：detach 在锁内，MM drop 在锁外 |
 | **PR-03** | **RefCell 重入 panic** | 任意嵌套 `with_process_registry` | 当前无嵌套；若 reap 钩子回调 cred/fd/procfs 再查 Registry → **必 panic**，表现为硬卡死 |
 
 ### P1 — 语义偏差 / 单核 TOCTOU
@@ -269,8 +270,10 @@ for ptr in ptrs { drop_user_aspace_on_task_exit(ptr); }
 | 项 | 说明 | 状态 |
 |----|------|------|
 | **exit_group 托孤** | `mark_process_exiting` 在修改 PCB 前调用 `reparent_orphans`（`process.rs:256-269`） | **已合入**（生命周期语义，减轻 zombie 泄漏；不消除 PR-06 锁窗口） |
-| **PR-01–PR-03 锁收敛** | spawn 窗口、MM 持锁释放、重入防护 | **未修复** |
-| **PR-04–PR-07 TOCTOU** | kill/reap/waitpid 原子化 | **未修复** |
+| **PR-02 锁外销毁** | process detach 后才销毁 MM | **已修复** |
+| **末线程完成判定** | `mark_task_exited` 在同一 Registry 临界区内返回是否刚转为 `Exited`，消除父进程漏唤醒 TOCTOU | **已修复** |
+| **PR-01、PR-03** | spawn 窗口、重入防护 | **未修复** |
+| **PR-04–PR-07 其余 TOCTOU** | kill/reap/waitpid 复合路径 | **部分未修复** |
 
 ---
 

@@ -75,6 +75,30 @@ pub struct ProcessControlBlock {
     parent_death_signal : i32,
 }
 
+/// A process removed from the registry whose owned resources can be dropped
+/// after the registry lock has been released.
+pub(crate) struct RetiredProcess {
+    process : ProcessControlBlock,
+}
+
+impl RetiredProcess {
+    pub(crate) fn cleanup(self) -> (ProcessSnapshot, Vec<TaskId>) {
+        let snapshot = self.process.snapshot();
+        let task_ids = self.process
+                           .tasks
+                           .keys()
+                           .copied()
+                           .collect();
+        if let Some(aspace) = self.process.address_space {
+            let ptr = aspace.user_aspace_ptr();
+            if ptr != 0 {
+                mm_api::user_aspace_lifecycle::drop_user_aspace_on_task_exit(ptr);
+            }
+        }
+        (snapshot, task_ids)
+    }
+}
+
 impl ProcessControlBlock {
     fn snapshot(&self) -> ProcessSnapshot {
         ProcessSnapshot { pid : self.pid,
@@ -414,7 +438,7 @@ impl ProcessRegistry {
     pub fn mark_task_exited(&mut self,
                             task_id : TaskId,
                             exit_code : TaskExitCode)
-                            -> ProcessResult<()> {
+                            -> ProcessResult<bool> {
         let pid = self.pid_for_task
                       .get(&task_id)
                       .copied()
@@ -422,6 +446,7 @@ impl ProcessRegistry {
         let process = self.processes
                           .get_mut(&pid)
                           .ok_or(ProcessError::ProcessNotFound)?;
+        let process_was_exited = matches!(process.state, ProcessState::Exited(_));
         let task = process.tasks
                           .get_mut(&task_id)
                           .ok_or(ProcessError::TaskNotFound)?;
@@ -437,7 +462,7 @@ impl ProcessRegistry {
         {
             process.state = ProcessState::Exited(exit_code);
         }
-        Ok(())
+        Ok(!process_was_exited && matches!(process.state, ProcessState::Exited(_)))
     }
 
     pub fn mark_process_exited(&mut self,
@@ -473,19 +498,6 @@ impl ProcessRegistry {
                     .collect())
     }
 
-    pub fn task_exit_would_finish_process(&self, task_id : TaskId) -> Option<bool> {
-        let pid = self.pid_for_task
-                      .get(&task_id)?;
-        let process = self.processes
-                          .get(&pid)?;
-        //判断该进程中所有 task 是否都处于 Exited 状态
-        Some(process.tasks
-                    .iter()
-                    .all(|(&member_task_id, task)| {
-                        member_task_id == task_id ||
-                        matches!(task.state, ProcessTaskState::Exited(_))
-                    }))
-    }
     /// 移除进程中除了指定 task_id 外的所有任务，并将该 task_id 设为 leader。
     pub fn retain_only_task_in_process(&mut self,
                                        pid : ProcessId,
@@ -557,8 +569,10 @@ impl ProcessRegistry {
         Some(removed)
     }
 
-    /// fork 失败回滚：移除仅含单任务、仍在 Running 的子进程并释放其地址空间。
-    pub fn abort_forked_process(&mut self, child_task_id : TaskId) -> ProcessResult<ProcessId> {
+    /// fork 失败回滚：锁内移除仅含单任务、仍在 Running 的子进程。
+    pub(crate) fn detach_aborted_fork(&mut self,
+                                      child_task_id : TaskId)
+                                      -> ProcessResult<(ProcessId, RetiredProcess)> {
         let pid = self.pid_for_task
                       .get(&child_task_id)
                       .copied()
@@ -577,13 +591,7 @@ impl ProcessRegistry {
         }
         let process = self.remove_process(pid)
                           .ok_or(ProcessError::ProcessNotFound)?;
-        if let Some(aspace) = process.address_space {
-            let ptr = aspace.user_aspace_ptr();
-            if ptr != 0 {
-                mm_api::user_aspace_lifecycle::drop_user_aspace_on_task_exit(ptr);
-            }
-        }
-        Ok(pid)
+        Ok((pid, RetiredProcess { process }))
     }
 
     /// clone 线程创建失败回滚：从进程线程列表移除该任务（不释放共享地址空间）。
@@ -944,14 +952,7 @@ impl ProcessRegistry {
             .collect()
     }
 
-    pub fn reap_process(&mut self, pid : ProcessId) -> Option<ProcessSnapshot> {
-        self.reap_process_with_tasks(pid)
-            .map(|(snapshot, _)| snapshot)
-    }
-
-    pub fn reap_process_with_tasks(&mut self,
-                                   pid : ProcessId)
-                                   -> Option<(ProcessSnapshot, Vec<TaskId>)> {
+    pub(crate) fn detach_exited_process(&mut self, pid : ProcessId) -> Option<RetiredProcess> {
         let process = self.processes
                           .get(&pid)?;
         if !matches!(process.state, ProcessState::Exited(_)) {
@@ -960,19 +961,7 @@ impl ProcessRegistry {
         // 托孤：在移除本进程前，将所有子进程的 parent_pid 重定向到 init
         self.reparent_orphans(pid);
         self.remove_process(pid)
-            .map(|process| {
-                if let Some(aspace) = process.address_space {
-                    let ptr = aspace.user_aspace_ptr();
-                    if ptr != 0 {
-                        mm_api::user_aspace_lifecycle::drop_user_aspace_on_task_exit(ptr);
-                    }
-                }
-                let task_ids = process.tasks
-                                      .keys()
-                                      .copied()
-                                      .collect();
-                (process.snapshot(), task_ids)
-            })
+            .map(|process| RetiredProcess { process })
     }
 
     fn insert_process(&mut self, process : ProcessControlBlock) {
@@ -1053,17 +1042,19 @@ mod tests {
                 .expect("start process exit");
         assert_eq!(registry.process_snapshot(pid).unwrap().state,
                    ProcessState::Exiting(9));
-        assert!(registry.reap_process(pid).is_none());
+        assert!(registry.detach_exited_process(pid).is_none());
 
-        registry.mark_task_exited(10, 9)
-                .expect("exit leader");
+        assert!(!registry.mark_task_exited(10, 9)
+                         .expect("exit leader"));
         assert_eq!(registry.process_snapshot(pid).unwrap().state,
                    ProcessState::Exiting(9));
-        assert!(registry.reap_process(pid).is_none());
+        assert!(registry.detach_exited_process(pid).is_none());
 
-        registry.mark_task_exited(11, 9)
-                .expect("exit final member");
+        assert!(registry.mark_task_exited(11, 9)
+                        .expect("exit final member"));
         assert_eq!(registry.process_snapshot(pid).unwrap().state,
                    ProcessState::Exited(9));
+        assert!(registry.detach_exited_process(pid).is_some());
+        assert!(registry.detach_exited_process(pid).is_none());
     }
 }

@@ -29,11 +29,6 @@ pub fn reap_exited_member_threads(pid : ProcessId) -> Vec<ExitedTask> {
 }
 
 
-/// 判断指定 task 退出后，其所属进程是否没有其它仍运行的 task。
-pub fn task_exit_would_finish_process(task_id : TaskId) -> Option<bool> {
-    active_impl::task_exit_would_finish_process(task_id)
-}
-
 /// 查询进程内任务语义快照。
 pub fn process_task_snapshot(task_id : TaskId) -> Option<ProcessTaskSnapshot> {
     active_impl::process_task_snapshot(task_id)

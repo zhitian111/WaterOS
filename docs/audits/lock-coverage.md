@@ -39,7 +39,7 @@
 |------|--------|-----------|-------------------|------|
 | `RoundRobinScheduler` / `MultiClassScheduler` | UniprocessorSafeCell | 常规 API：InterruptGuard + `with_scheduler`；`__switch` 前释锁 | wait/sleep 跨 switch 关中断（RC-1）；`run_first_task` 无 guard；RR 策略变更不迁队列 | `locks/scheduler.md` |
 | `TaskRegistry` + `WaitQueues` | （调度器内，无独立锁） | 阻塞/唤醒/超时队列在调度器临界区内 | 与 ProcessRegistry 复合操作非原子 | 同上 |
-| `ProcessRegistry` | UniprocessorSafeCell | 单次 lookup/rlimit/mark/reap | Spawn/Fork/Clone 登记窗口；Kill/Reap 与 Scheduler 非原子；reap 持锁 MM 释放 | `locks/process-registry.md` |
+| `ProcessRegistry` | UniprocessorSafeCell | 单次 lookup/rlimit/mark；reap 锁内 detach、锁外 MM drop | Kill/Reap 与 Scheduler 仍非原子；waitpid 复合查询仍有窗口 | `locks/process-registry.md` |
 
 ### 3.2 wateros-vfs
 

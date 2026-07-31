@@ -118,11 +118,6 @@ pub fn task_id_for_thread(tid : ThreadId) -> Option<TaskId> {
     with_process_registry(|registry| registry.task_id_for_thread(tid))
 }
 
-/// 判断该 task 退出后进程是否无其它存活 task。
-pub fn task_exit_would_finish_process(task_id : TaskId) -> Option<bool> {
-    with_process_registry(|registry| registry.task_exit_would_finish_process(task_id))
-}
-
 /// 查找父进程下一个已退出子进程。
 pub fn find_exited_child_process(parent_pid : ProcessId) -> Option<ProcessSnapshot> {
     with_process_registry(|registry| registry.find_exited_child_process(parent_pid))
@@ -254,17 +249,22 @@ pub fn task_clear_child_tid(task_id : TaskId) -> Option<TaskClearTid> {
 
 /// 回收已退出进程并返回其快照。
 pub fn reap_process(pid : ProcessId) -> Option<ProcessSnapshot> {
-    with_process_registry(|registry| registry.reap_process(pid))
+    let retired = with_process_registry(|registry| registry.detach_exited_process(pid))?;
+    Some(retired.cleanup().0)
 }
 
 /// 回收已退出进程并返回关联 task id 列表。
 pub fn reap_process_with_tasks(pid : ProcessId) -> Option<(ProcessSnapshot, Vec<TaskId>)> {
-    with_process_registry(|registry| registry.reap_process_with_tasks(pid))
+    let retired = with_process_registry(|registry| registry.detach_exited_process(pid))?;
+    Some(retired.cleanup())
 }
 
 /// fork 失败时撤销子进程 registry 记录。
 pub fn abort_forked_process(child_task_id : TaskId) -> ProcessResult<ProcessId> {
-    with_process_registry(|registry| registry.abort_forked_process(child_task_id))
+    let (pid, retired) =
+        with_process_registry(|registry| registry.detach_aborted_fork(child_task_id))?;
+    let _ = retired.cleanup();
+    Ok(pid)
 }
 
 /// clone 线程失败时从进程表移除子线程。

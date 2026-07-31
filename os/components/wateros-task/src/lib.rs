@@ -13,8 +13,9 @@ pub mod wait_queue;
 pub use self::wait_queue::WaitQueue;
 pub use api_v0::CpuMask;
 pub use lifecycle::{
-    abort_clone_thread, abort_fork_child, clone_current_thread, execve_current, exit_current,
-    exit_group_current, fork_current, kill_task, record_current_process_exit,
+    abort_clone_thread, abort_fork_child, begin_current_process_exit, clone_current_thread,
+    execve_current, exit_current, exit_group_current, fork_current, kill_task,
+    record_current_process_exit,
     record_current_task_exit, start_clone_thread, start_fork_child, terminate_other_threads_for_exec,
 };
 
@@ -34,8 +35,8 @@ pub use process::{
     set_process_child_subreaper, set_process_dumpable, set_process_parent_death_signal,
     set_process_pgid, set_process_resource_limit, set_process_umask, set_task_clear_child_tid,
     set_thread_comm, stopped_child_ready_for_wait, task_clear_child_tid,
-    task_exit_would_finish_process, task_id_for_thread, task_ids_for_process, thread_comm,
-    wake_parent_child_waiters, ProcessPurgeStats,
+    task_id_for_thread, task_ids_for_process, thread_comm, wake_parent_child_waiters,
+    ProcessPurgeStats,
 };
 pub use sched::{
     cpu_affinity_ret_bytes, get_affinity, get_nice, get_param, get_scheduler_policy,

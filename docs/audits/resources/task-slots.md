@@ -202,17 +202,21 @@ leader 的 **TID 初始等于 PID**（`ThreadId::from_raw(pid.raw())`）。
 | `purge_all_user_processes` | kill + `reap_exited_process` |
 | 托孤 | `reparent_orphans`：父 reap/exit_group 时子 `parent_pid` → init(1) |
 
-`reap_process_with_tasks` 仅在 `ProcessState::Exited` 时移除；移除前 `reparent_orphans`；若 PCB 持 `address_space` 则 `drop_user_aspace_on_task_exit`。
+`detach_exited_process` 仅在 `ProcessState::Exited` 时移除；移除前
+`reparent_orphans`。它返回 owned `RetiredProcess`，调用方离开 Registry 临界区后再由
+`cleanup()` 执行 `drop_user_aspace_on_task_exit`。
 
 ### 5.4 生命周期状态机
 
 ```
 （无 PCB）──create_process_for_task──► Running（1..N 个 ProcessTask）
          ──mark_task_exited（末线程）──► Exited（zombie，仍占 PID）
-         ──reap_process_with_tasks──► 已释放（PID 可经 alloc_pid 跳过复用）
+         ──detach_exited_process──► RetiredProcess ──锁外 cleanup──► 已释放
 ```
 
-`mark_process_exiting`（exit_group）：立即将所有 `ProcessTask` 标 Exited 并 `reparent_orphans`。
+`mark_process_exited`（exit_group）先把 PCB 发布为 `Exiting` 并 `reparent_orphans`；
+各线程在自己的退出路径中标记 `ProcessTask::Exited`。最后一次
+`mark_task_exited` 原子返回“进程刚完成”，由该线程负责唤醒父进程。
 
 ### 5.5 耗尽处理
 

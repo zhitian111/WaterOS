@@ -37,26 +37,28 @@ pub(crate) fn sys_exit(exit_code : isize) -> isize {
 }
 
 pub(crate) fn exit_current_with_wait_code(exit_code : isize) -> isize {
-    let mut exiting_process = None;
+    let mut process_task = None;
+    let mut process_was_exiting = false;
     if let Some(task_id) = task::current_task_id() {
-        if let Some(process_task) = task::process_task_snapshot(task_id) {
-            let last_thread = task::task_exit_would_finish_process(task_id)
-                .unwrap_or(process_task.role == task::ProcessTaskRole::Leader);
-            if last_thread {
-                super::super::acct::record_current_process_exit(exit_code);
-                exiting_process = Some(process_task.pid);
-            }
-            crate::sys::ipc::signal::on_thread_exit(task_id,
-                                                    process_task.pid
-                                                                .raw(),
-                                                    last_thread);
+        if let Some(snapshot) = task::process_task_snapshot(task_id) {
+            process_was_exiting = task::process_snapshot(snapshot.pid)
+                .is_some_and(|process| matches!(process.state, task::ProcessState::Exiting(_)));
+            process_task = Some(snapshot);
         }
         super::wait::wake_clear_child_tid_for_task(task_id);
         crate::sys::ipc::robust::robust_exit_cleanup(task_id);
         super::wait::drop_task_runtime_resources(task_id);
     }
-    task::record_current_task_exit(exit_code);
-    if let Some(pid) = exiting_process {
+    let completed_process = task::record_current_task_exit(exit_code);
+    if let (Some(task_id), Some(process_task)) = (task::current_task_id(), process_task) {
+        crate::sys::ipc::signal::on_thread_exit(task_id,
+                                                process_task.pid.raw(),
+                                                completed_process.is_some());
+    }
+    if let Some(pid) = completed_process {
+        if !process_was_exiting {
+            super::super::acct::record_current_process_exit(exit_code);
+        }
         crate::sys::ipc::signal::notify_parent_sigchld(pid);
         task::wake_parent_child_waiters(pid);
     }
@@ -70,14 +72,17 @@ pub(crate) fn sys_exit_group(exit_code : isize) -> isize {
 }
 
 pub(crate) fn exit_group_with_wait_code(exit_code : isize) -> isize {
-    let mut exiting_process = None;
+    let mut process_task = None;
     if let Some(task_id) = task::current_task_id() {
         super::wait::wake_clear_child_tid_for_task(task_id);
-        if let Some(process_task) = task::current_process_task_snapshot() {
-            super::wait::reap_exited_member_threads_runtime_resources(process_task.pid);
+        if let Some(snapshot) = task::current_process_task_snapshot() {
+            super::wait::reap_exited_member_threads_runtime_resources(snapshot.pid);
             super::super::acct::record_current_process_exit(exit_code);
-            exiting_process = Some(process_task.pid);
-            if let Some(task_ids) = task::task_ids_for_process(process_task.pid) {
+            process_task = Some(snapshot);
+            // Publish Exiting before any remote reschedule. Otherwise a sibling
+            // can consume the IPI, still observe Running, and continue forever.
+            task::begin_current_process_exit(exit_code);
+            if let Some(task_ids) = task::task_ids_for_process(snapshot.pid) {
                 let user_aspace = task::current_task_user_aspace_ptr();
                 for sibling in task_ids {
                     if sibling != task_id {
@@ -96,20 +101,21 @@ pub(crate) fn exit_group_with_wait_code(exit_code : isize) -> isize {
                     }
                 }
             }
-            crate::sys::ipc::signal::on_thread_exit(task_id,
-                                                    process_task.pid
-                                                                .raw(),
-                                                    true);
         }
         crate::sys::ipc::robust::robust_exit_cleanup(task_id);
         super::wait::drop_task_runtime_resources(task_id);
     }
-    task::record_current_process_exit(exit_code);
-    if let Some(pid) = exiting_process {
+    let completed_process = task::record_current_task_exit(exit_code);
+    if let (Some(task_id), Some(process_task)) = (task::current_task_id(), process_task) {
+        crate::sys::ipc::signal::on_thread_exit(task_id,
+                                                process_task.pid.raw(),
+                                                completed_process.is_some());
+    }
+    if let Some(pid) = completed_process {
         crate::sys::ipc::signal::notify_parent_sigchld(pid);
         task::wake_parent_child_waiters(pid);
     }
-    task::exit_group_current(exit_code)
+    task::exit_current(exit_code)
 }
 
 #[cfg(test)]
