@@ -455,6 +455,10 @@ fn wait_for_child_exit(parent_pid : task::ProcessId,
     loop {
         if let Some(child) = find_exited_child_for_wait(parent_pid, target) {
             let Some(exited) = task::reap_exited_process(child.pid) else {
+                if task::process_snapshot(child.pid).is_some() {
+                    task::yield_now();
+                    continue;
+                }
                 return UserRet::from_error(ErrNo::ECHILD);
             };
             return finish_wait_process_result(parent_pid,
@@ -470,6 +474,13 @@ fn wait_for_child_exit(parent_pid : task::ProcessId,
             return UserRet::from_success(0);
         }
         if waitpid_wait_for_child(parent_pid, target) == task::TaskWaitResult::Interrupted {
+            // SIGCHLD may become pending just before the child-exit wait queue
+            // wakes us. Prefer the now-observable child result over EINTR;
+            // otherwise callers that do not retry EINTR leave one zombie and
+            // kernel stack behind per fork.
+            if find_exited_child_for_wait(parent_pid, target).is_some() {
+                continue;
+            }
             return UserRet::from_error(ErrNo::EINTR);
         }
     }
@@ -489,6 +500,10 @@ fn waitid_for_child(parent_pid : task::ProcessId,
         if want_exited {
             if let Some(child) = find_exited_child_for_wait(parent_pid, target) {
                 let Some(exited) = task::reap_exited_process(child.pid) else {
+                    if task::process_snapshot(child.pid).is_some() {
+                        task::yield_now();
+                        continue;
+                    }
                     return UserRet::from_error(ErrNo::ECHILD);
                 };
                 return finish_waitid_process_result(parent_pid,
@@ -532,6 +547,14 @@ fn waitid_for_child(parent_pid : task::ProcessId,
                                 want_continued) ==
            task::TaskWaitResult::Interrupted
         {
+            if has_pending_wait_event(parent_pid,
+                                      target,
+                                      want_exited,
+                                      want_stopped,
+                                      want_continued)
+            {
+                continue;
+            }
             return UserRet::from_error(ErrNo::EINTR);
         }
     }

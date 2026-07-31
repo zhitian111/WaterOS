@@ -1,7 +1,7 @@
 //! 调度、等待、唤醒与当前任务查询接口。
 
 use crate::{
-    active_impl, scheduler, ExitedTask, ProcessState, TaskId, TaskSnapshot, TaskTick,
+    active_impl, scheduler, ExitedTask, ProcessState, TaskId, TaskSnapshot, TaskState, TaskTick,
     TaskWaitResult, TaskWaitTarget,
 };
 
@@ -89,6 +89,9 @@ pub fn current_task_snapshot() -> Option<TaskSnapshot> { scheduler::current_task
 
 /// 返回指定任务的稳定快照；任务不存在或已被回收时返回 `None`。
 pub fn task_snapshot(task_id : TaskId) -> Option<TaskSnapshot> { scheduler::task_snapshot(task_id) }
+
+/// 返回指定任务的调度生命周期状态；任务不存在时返回 `None`。
+pub fn task_state(task_id : TaskId) -> Option<TaskState> { scheduler::task_state(task_id) }
 
 /// 输出全部非 idle 任务的状态，用于定位长时间无用户态进展时的等待链。
 pub fn log_stall_diagnostics() {

@@ -45,7 +45,7 @@ pub use schedule::{
     block_current, current_task_id, current_task_snapshot,
     current_task_trap_return_address_space_token, current_task_user_address_space_token,
     current_task_user_aspace_ptr, current_tick, interrupt_task, log_stall_diagnostics,
-    reap_exited_task, schedule_reschedule, schedule_tick, sleep_for_ticks, task_snapshot,
+    reap_exited_task, schedule_reschedule, schedule_tick, sleep_for_ticks, task_snapshot, task_state,
     wait_for_task_exit, wait_for_task_exit_for_ticks, wait_on, wait_on_for_ticks, wait_on_while,
     wait_on_while_for_ticks, wake_task, yield_now,
 };

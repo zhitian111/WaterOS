@@ -766,6 +766,12 @@ impl Sv39AddressSpace {
     /// 释放页表并转移 ASID 所有权。调用方须在归还非零 ASID 前完成 TLB 失效。
     pub(crate) fn destroy_and_take_asid(&mut self) -> u16 {
         self.destroy_page_tables();
+        // UserAddressSpaceCell remains as a small tombstone so stale raw
+        // handles can observe `dropped` without a use-after-free. The VMA
+        // vectors are no longer consulted after page-table teardown, so free
+        // their backing allocations and demand-page loaders here.
+        drop(core::mem::take(&mut self.lazy_file_vmas));
+        drop(core::mem::take(&mut self.shared_anon_vmas));
         core::mem::replace(&mut self.asid, crate::asid::KERNEL_ASID)
     }
 

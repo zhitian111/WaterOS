@@ -74,14 +74,28 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
         Ok(new_sp) => new_sp,
         Err(err) => {
             let errno = prepare_stack_to_errno(err);
+            mm::kernel_mm::drop_user_aspace(new_elf.user_aspace_ptr);
             return Err(errno);
         }
     };
 
-    // 加载成功后再终止兄弟线程，避免失败时原映像不可恢复（Linux 原子 exec 语义）。
+    let current_signal_task = match crate::sys::ipc::signal::ensure_current_signal_state() {
+        Ok(state) => state.task_id,
+        Err(errno) => {
+            mm::kernel_mm::drop_user_aspace(new_elf.user_aspace_ptr);
+            return Err(errno);
+        }
+    };
+    // Allocate signal state before entering sibling teardown; this is the last
+    // preparation step that can fail independently of the thread group.
     crate::sys::ipc::robust::robust_exit_cleanup_siblings_for_exec();
-    let killed_threads = task::terminate_other_threads_for_exec().map_err(|_| ErrNo::EINVAL)?;
-    let current_signal_task = crate::sys::ipc::signal::ensure_current_signal_state()?.task_id;
+    let killed_threads = match task::terminate_other_threads_for_exec() {
+        Ok(threads) => threads,
+        Err(_) => {
+            mm::kernel_mm::drop_user_aspace(new_elf.user_aspace_ptr);
+            return Err(ErrNo::EINVAL);
+        }
+    };
 
     let (argc, argv_ptr, envp_ptr) = initial_entry_args(new_sp, final_argv_refs.len());
 

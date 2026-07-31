@@ -419,9 +419,13 @@ impl TaskRegistry {
     }
 
     pub fn reap_task(&mut self, task_id : TaskId) -> Option<ExitedTask> {
+        if !matches!(self.state(task_id), Some(TaskState::Exited(_))) {
+            return None;
+        }
         let task = self.tasks
                        .remove(&task_id)?;
-        task.exited_task()
+        Some(task.exited_task()
+                 .expect("reap precondition requires an exited task"))
     }
 
     /// 丢弃尚未运行或刚创建、尚未进入 Exited 状态的任务（fork/clone 失败回滚）。

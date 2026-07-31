@@ -352,6 +352,13 @@ pub fn reap_all_exited_processes() -> usize {
 
 /// 回收已退出进程的所有线程 task 与 process registry 记录。
 pub fn reap_exited_process(pid : ProcessId) -> Option<Vec<ExitedTask>> {
+    let task_ids = active_impl::task_ids_for_process(pid)?;
+    if task_ids
+        .iter()
+        .any(|task_id| !matches!(scheduler::task_state(*task_id), Some(TaskState::Exited(_))))
+    {
+        return None;
+    }
     let (_process, task_ids) = active_impl::reap_process_with_tasks(pid)?;
     let mut exited = Vec::new();
     for task_id in task_ids {

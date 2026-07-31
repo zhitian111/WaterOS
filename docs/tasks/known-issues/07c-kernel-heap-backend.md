@@ -1,5 +1,13 @@
 # K-07C：内核堆后端 A/B 与碎片压力
 
+## 当前进展
+
+2026-07-31 已定位并修复一项先于 allocator A/B 的 fork/wait 生命周期泄漏：
+`epoll-ltp` 的堆增长主要来自未回收的 32 KiB task 内核栈，而不是 allocator 碎片。
+根因、修改和隔离 QEMU 结果见
+[`results/k07c-20260731.md`](results/k07c-20260731.md)。本任务的双后端 A/B 和完整
+workload 门禁仍未完成。
+
 ## 任务目标
 
 用现有 linked-list/TLSF 双后端验证长期 fork/exit 退化是否来自 allocator。只有 TLSF

@@ -13,7 +13,7 @@ use core::panic::Location;
 use core::sync::atomic::{compiler_fence, AtomicBool, Ordering};
 use task_api::{
     CpuId, ExitedTask, KernelTaskEntry, Priority, TaskExitCode, TaskId, TaskSnapshot, TaskTick,
-    TaskWaitResult, TaskWaitTarget, UserTask, WaitQueueId,
+    TaskState, TaskWaitResult, TaskWaitTarget, UserTask, WaitQueueId,
 };
 
 mod scheduler;
@@ -773,6 +773,12 @@ pub fn current_task_snapshot() -> Option<TaskSnapshot> {
 pub fn task_snapshot(task_id : TaskId) -> Option<TaskSnapshot> {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| Some(scheduler.task_snapshot(task_id)))
+}
+
+/// 返回指定任务的调度生命周期状态；任务不存在时返回 `None`。
+pub fn task_state(task_id : TaskId) -> Option<TaskState> {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.task_state(task_id))
 }
 
 /// 返回除物理 idle 任务外的全部稳定任务快照，仅供低频停滞诊断。

@@ -860,6 +860,10 @@ impl LoongArch64AddressSpace {
     /// 释放页表并转移 ASID 所有权。调用方须在归还非零 ASID 前完成 TLB 失效。
     pub(crate) fn destroy_and_take_asid(&mut self) -> u16 {
         self.destroy_page_tables();
+        // Keep only the UserAddressSpaceCell tombstone needed by stale raw
+        // handles; mappings and their demand-page loaders are dead now.
+        drop(core::mem::take(&mut self.lazy_file_vmas));
+        drop(core::mem::take(&mut self.shared_anon_vmas));
         core::mem::replace(&mut self.asid, crate::asid::KERNEL_ASID)
     }
 }

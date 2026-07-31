@@ -124,6 +124,11 @@ impl MultiClassScheduler {
             .task_snapshot(task_id)
     }
 
+    pub fn task_state(&self, task_id : TaskId) -> Option<TaskState> {
+        self.registry
+            .state(task_id)
+    }
+
     pub fn diagnostic_task_snapshots(&self) -> alloc::vec::Vec<TaskSnapshot> {
         self.registry
             .diagnostic_task_snapshots()
