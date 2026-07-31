@@ -22,7 +22,10 @@ pub(crate) use sched::{
     sys_sched_getattr, sys_sched_getparam, sys_sched_getscheduler, sys_sched_setaffinity,
     sys_sched_setattr, sys_sched_setparam, sys_sched_setscheduler,
 };
-pub(crate) use task::{sys_exit, sys_exit_group, sys_prctl, sys_yield};
+pub(crate) use task::{
+    exit_current_with_wait_code, exit_group_with_wait_code, sys_exit, sys_exit_group, sys_prctl,
+    sys_yield,
+};
 pub(crate) use unshare::sys_unshare;
 pub(crate) use wait::{
     drop_reaped_task_runtime_resources, drop_task_runtime_resources,

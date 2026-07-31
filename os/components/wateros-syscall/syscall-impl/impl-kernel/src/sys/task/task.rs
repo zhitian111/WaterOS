@@ -33,6 +33,10 @@ fn normalize_user_exit_code(exit_code : isize) -> isize {
 
 pub(crate) fn sys_exit(exit_code : isize) -> isize {
     let exit_code = normalize_user_exit_code(exit_code);
+    exit_current_with_wait_code(exit_code)
+}
+
+pub(crate) fn exit_current_with_wait_code(exit_code : isize) -> isize {
     let mut exiting_process = None;
     if let Some(task_id) = task::current_task_id() {
         if let Some(process_task) = task::process_task_snapshot(task_id) {
@@ -62,6 +66,10 @@ pub(crate) fn sys_exit(exit_code : isize) -> isize {
 
 pub(crate) fn sys_exit_group(exit_code : isize) -> isize {
     let exit_code = normalize_user_exit_code(exit_code);
+    exit_group_with_wait_code(exit_code)
+}
+
+pub(crate) fn exit_group_with_wait_code(exit_code : isize) -> isize {
     let mut exiting_process = None;
     if let Some(task_id) = task::current_task_id() {
         super::wait::wake_clear_child_tid_for_task(task_id);

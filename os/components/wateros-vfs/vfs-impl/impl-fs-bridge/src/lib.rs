@@ -646,6 +646,9 @@ pub fn hardlink_path(existing_path : &str, new_path : &str) -> VfsResult<()> {
 // 本方法代码由AI完成
 pub fn read_symlink_path(path : &str) -> VfsResult<Vec<u8>> {
     let abs = normalize_absolute_path(path)?;
+    if char_dev_exists(abs.as_str()) {
+        return Err(VfsError::NotAFile);
+    }
     match resolve_route(abs.as_str())? {
         FsRoute::PseudoProc { rel, .. } => proc_view()
             .read_symlink(rel.as_str())

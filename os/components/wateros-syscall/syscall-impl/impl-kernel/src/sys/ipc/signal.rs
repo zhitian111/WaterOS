@@ -299,15 +299,15 @@ pub(crate) fn deliver_pending_signal(frame : *mut u8,
                         ipc::signal::SIGKILL,
                         task_id,
                     );
-                    crate::sys::task::sys_exit_group(exit_code);
-                    unreachable!("sys_exit_group must not return");
+                    crate::sys::task::exit_group_with_wait_code(exit_code);
+                    unreachable!("exit_group_with_wait_code must not return");
                 }
                 task::block_current(task::TaskWaitTarget::Manual);
             }
             task::ProcessState::Exiting(exit_code) |
             task::ProcessState::Exited(exit_code) => {
-                crate::sys::task::sys_exit(exit_code);
-                unreachable!("sys_exit must not return");
+                crate::sys::task::exit_current_with_wait_code(exit_code);
+                unreachable!("exit_current_with_wait_code must not return");
             }
             task::ProcessState::Running => {}
         }
@@ -322,8 +322,8 @@ pub(crate) fn deliver_pending_signal(frame : *mut u8,
         SignalEffect::Terminate { signal } => {
             let exit_code =
                 crate::sys::task::wait::signal_terminate_exit_code(signal, snapshot.task_id);
-            crate::sys::task::sys_exit_group(exit_code);
-            unreachable!("sys_exit_group must not return");
+            crate::sys::task::exit_group_with_wait_code(exit_code);
+            unreachable!("exit_group_with_wait_code must not return");
         }
         SignalEffect::Stop { signal } => {
             if task::mark_process_stopped(snapshot.pid, signal as u8).is_ok() {
