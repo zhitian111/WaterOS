@@ -544,6 +544,22 @@ pub(crate) fn mount_tmpfs_at_with_limit(mount_point : &str,
     Ok(())
 }
 
+/// 在 bootstrap namespace 中挂载 tmpfs，供之后创建的任务继承。
+pub(crate) fn mount_bootstrap_tmpfs_at(mount_point : &str) -> VfsResult<()> {
+    let fs : SharedRwFs = fs::new_ramfs_rw(None, 0o1777);
+    {
+        let mut ns = BOOTSTRAP_MOUNT_NS.lock();
+        mount_aux_common(&mut ns,
+                         mount_point,
+                         AuxMount::Rw(fs),
+                         "tmpfs",
+                         "tmpfs",
+                         false)?;
+    }
+    bump_mount_generation_after_cache_flush();
+    Ok(())
+}
+
 // 本方法代码由AI完成
 pub(crate) fn mount_cgroup_at(mount_point : &str, v2 : bool, options : &str) -> VfsResult<()> {
     let tmp = super::tmpfs::TmpFs::new_cgroup(v2, options).map_err(super::map_fs_err)?;
@@ -794,6 +810,21 @@ pub fn mount_aux_proc_at(mount_point : &str) -> VfsResult<()> {
                          "proc",
                          true)
     })?;
+    bump_mount_generation_after_cache_flush();
+    Ok(())
+}
+
+/// 在 bootstrap namespace 中挂载 procfs，供之后创建的内核/用户任务继承。
+pub fn mount_bootstrap_proc_at(mount_point : &str) -> VfsResult<()> {
+    {
+        let mut ns = BOOTSTRAP_MOUNT_NS.lock();
+        mount_aux_common(&mut ns,
+                         mount_point,
+                         AuxMount::PseudoProc,
+                         "proc",
+                         "proc",
+                         true)?;
+    }
     bump_mount_generation_after_cache_flush();
     Ok(())
 }

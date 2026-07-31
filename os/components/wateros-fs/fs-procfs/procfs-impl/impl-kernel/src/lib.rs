@@ -77,6 +77,8 @@ enum ProcNode {
     Uptime,
     Cgroups,
     Mounts,
+    SysDir,
+    SysKernelDir,
     SysKernelPidMax,
     SysKernelTainted,
     PidDir(ProcessId),
@@ -98,6 +100,8 @@ fn proc_inode(node : ProcNode) -> u64 {
         ProcNode::Uptime => 8,
         ProcNode::Cgroups => 6,
         ProcNode::Mounts => 3,
+        ProcNode::SysDir => 9,
+        ProcNode::SysKernelDir => 10,
         ProcNode::SysKernelPidMax => 4,
         ProcNode::SysKernelTainted => 5,
         ProcNode::PidDir(pid) => 0x1000_0000 | ((pid.raw() as u64) << 4),
@@ -176,6 +180,8 @@ fn parse_node(path : &str) -> Option<ProcNode> {
         ["uptime"] => Some(ProcNode::Uptime),
         ["cgroups"] => Some(ProcNode::Cgroups),
         ["mounts"] => Some(ProcNode::Mounts),
+        ["sys"] => Some(ProcNode::SysDir),
+        ["sys", "kernel"] => Some(ProcNode::SysKernelDir),
         ["sys", "kernel", "pid_max"] => Some(ProcNode::SysKernelPidMax),
         ["sys", "kernel", "tainted"] => Some(ProcNode::SysKernelTainted),
         [pid_name] => Some(ProcNode::PidDir(parse_pid(pid_name)?)),
@@ -240,10 +246,19 @@ fn format_uptime() -> Vec<u8> {
 
 // 本方法代码由AI完成
 fn format_cgroups() -> Vec<u8> {
-    alloc::format!("#subsys_name\thierarchy\tnum_cgroups\tenabled\nmemory\t1\t1\t1\ncpuset\t2\t1\\
-                    t1\ncpu\t3\t1\t1\ncpuacct\t4\t1\t1\npids\t5\t1\t1\nfreezer\t6\t1\t1\ndevices\\
-                    t7\t1\t1\nblkio\t8\t1\t1\nnet_cls\t9\t1\t1\nperf_event\t10\t1\t1\nnet_prio\\
-                    t11\t1\t1\nhugetlb\t12\t1\t1\n").into_bytes()
+    b"#subsys_name\thierarchy\tnum_cgroups\tenabled\n\
+      memory\t1\t1\t1\n\
+      cpuset\t2\t1\t1\n\
+      cpu\t3\t1\t1\n\
+      cpuacct\t4\t1\t1\n\
+      pids\t5\t1\t1\n\
+      freezer\t6\t1\t1\n\
+      devices\t7\t1\t1\n\
+      blkio\t8\t1\t1\n\
+      net_cls\t9\t1\t1\n\
+      perf_event\t10\t1\t1\n\
+      net_prio\t11\t1\t1\n\
+      hugetlb\t12\t1\t1\n".to_vec()
 }
 
 // 取路径最后一段作为 comm 展示名。
@@ -417,9 +432,8 @@ fn format_cmdline(pid : ProcessId) -> FsResult<Vec<u8>> {
 // 本方法代码由AI完成
 fn format_meminfo() -> Vec<u8> {
     let stats = mm_frame_alloctor::frame_mem_stats();
-    format!("MemTotal:\t{}\tkB\nMemFree:\t{}\tkB\nMemAvailable:\t{}\tkB\nBuffers:\t0\tkB\nCached:\\
-             \
-             t0\tkB\n",
+    format!("MemTotal:\t{}\tkB\nMemFree:\t{}\tkB\nMemAvailable:\t{}\tkB\nBuffers:\t0\tkB\n\
+             Cached:\t0\tkB\n",
             stats.total_bytes() / 1024,
             stats.free_bytes() / 1024,
             stats.free_bytes() / 1024,).into_bytes()
@@ -455,7 +469,9 @@ impl ProcFsView for KernelProcFs {
             ProcNode::Cpuinfo |
             ProcNode::Uptime |
             ProcNode::Cgroups |
-            ProcNode::Mounts => true,
+            ProcNode::Mounts |
+            ProcNode::SysDir |
+            ProcNode::SysKernelDir => true,
             ProcNode::SysKernelPidMax | ProcNode::SysKernelTainted => true,
             ProcNode::PidDir(pid) |
             ProcNode::PidStat(pid) |
@@ -471,14 +487,16 @@ impl ProcFsView for KernelProcFs {
     fn metadata(&self, rel_path : &str) -> FsResult<FsMetadata> {
         let node = parse_node(rel_path).ok_or(FsError::NotFound)?;
         match node {
-            ProcNode::Root | ProcNode::PidDir(_) => Ok(FsMetadata { node_type:
-                                                                        FsNodeType::Directory,
-                                                                    size : 0,
-                                                                    mode : 0o555,
-                                                                    inode : proc_inode(node),
-                                                                    nlink : 1,
-                                                                    uid : 0,
-                                                                    gid : 0 }),
+            ProcNode::Root |
+            ProcNode::SysDir |
+            ProcNode::SysKernelDir |
+            ProcNode::PidDir(_) => Ok(FsMetadata { node_type : FsNodeType::Directory,
+                                                   size : 0,
+                                                   mode : 0o555,
+                                                   inode : proc_inode(node),
+                                                   nlink : 1,
+                                                   uid : 0,
+                                                   gid : 0 }),
             ProcNode::Meminfo |
             ProcNode::Cpuinfo |
             ProcNode::Uptime |
@@ -530,7 +548,11 @@ impl ProcFsView for KernelProcFs {
     fn read(&self, rel_path : &str) -> FsResult<Vec<u8>> {
         let node = parse_node(rel_path).ok_or(FsError::NotFound)?;
         match node {
-            ProcNode::Root | ProcNode::PidDir(_) | ProcNode::PidExe(_) => {
+            ProcNode::Root |
+            ProcNode::SysDir |
+            ProcNode::SysKernelDir |
+            ProcNode::PidDir(_) |
+            ProcNode::PidExe(_) => {
                 Err(FsError::NotAFile)
             }
             ProcNode::Meminfo => Ok(format_meminfo()),
@@ -573,12 +595,22 @@ impl ProcFsView for KernelProcFs {
                                        FsDirEntry { name : String::from("cgroups"),
                                                     node_type : FsNodeType::File },
                                        FsDirEntry { name : String::from("mounts"),
-                                                    node_type : FsNodeType::File },];
+                                                    node_type : FsNodeType::File },
+                                       FsDirEntry { name : String::from("sys"),
+                                                    node_type : FsNodeType::Directory },];
                 for pid in task::all_process_pids() {
                     entries.push(FsDirEntry { name : format!("{}", pid.raw()),
                                               node_type : FsNodeType::Directory });
                 }
                 Ok(entries)
+            }
+            ProcNode::SysDir => Ok(vec![FsDirEntry { name : String::from("kernel"),
+                                                     node_type : FsNodeType::Directory }]),
+            ProcNode::SysKernelDir => {
+                Ok(vec![FsDirEntry { name : String::from("pid_max"),
+                                     node_type : FsNodeType::File },
+                        FsDirEntry { name : String::from("tainted"),
+                                     node_type : FsNodeType::File }])
             }
             ProcNode::PidDir(pid) => {
                 if !process_visible(pid) {

@@ -482,6 +482,11 @@ pub fn mount_tmpfs_at_with_limit(mount_point : &str, limit_bytes : Option<usize>
     mount_table::mount_tmpfs_at_with_limit(mount_point, limit_bytes)
 }
 
+/// 在首个任务继承的 bootstrap namespace 中挂载 tmpfs。
+pub fn mount_bootstrap_tmpfs_at(mount_point : &str) -> VfsResult<()> {
+    mount_table::mount_bootstrap_tmpfs_at(mount_point)
+}
+
 /// 挂载 cgroup v1/v2 到 `mount_point`。
 // 本方法代码由AI完成
 pub fn mount_cgroup_at(mount_point : &str, v2 : bool, options : &str) -> VfsResult<()> {
@@ -553,6 +558,7 @@ pub use mount_table::{
 
 pub use mount_table::{
     assert_path_writable, is_proc_mounted_at, list_proc_mount_lines, mount_aux_proc_at,
+    mount_bootstrap_proc_at,
 };
 
 /// 删除绝对路径（经挂载表路由）。

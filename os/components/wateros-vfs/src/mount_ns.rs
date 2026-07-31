@@ -7,9 +7,13 @@ pub fn init_task_mount_ns(task_id: task::TaskId) {
     impl_fs_bridge::init_task_mount_ns(task_id);
 }
 
-/// 用户任务 spawn 后建立挂载命名空间（与 `init_task_mount_ns` 等价）。
+/// 首个用户任务继承启动它的内核任务 namespace；无当前任务时继承 bootstrap。
 pub fn on_user_task_spawned(task_id: task::TaskId) {
-    init_task_mount_ns(task_id);
+    if let Some(parent_id) = task::current_task_id() {
+        copy_mount_ns_from_parent(task_id, parent_id);
+    } else {
+        init_task_mount_ns(task_id);
+    }
 }
 
 /// fork 时复制父任务挂载命名空间。

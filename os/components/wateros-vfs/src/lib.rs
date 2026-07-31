@@ -210,6 +210,12 @@ pub fn mount_tmpfs_at_with_limit(mount_point: &str, limit_bytes: Option<usize>) 
     impl_fs_bridge::mount_tmpfs_at_with_limit(mount_point, limit_bytes)
 }
 
+/// 在首个任务继承的 bootstrap namespace 中挂载 tmpfs。
+#[cfg(feature = "bridge-fs-api")]
+pub fn mount_bootstrap_tmpfs_at(mount_point: &str) -> VfsResult<()> {
+    impl_fs_bridge::mount_bootstrap_tmpfs_at(mount_point)
+}
+
 /// 挂载 cgroup v1/v2 到 `mount_point`。
 #[cfg(feature = "bridge-fs-api")]
 pub fn mount_cgroup_at(mount_point: &str, v2: bool, options: &str) -> VfsResult<()> {
@@ -249,6 +255,17 @@ pub fn mount_procfs_at(mount_point: &str) -> VfsResult<()> {
         impl_fs_bridge::list_proc_mount_lines()
     });
     impl_fs_bridge::mount_procfs_at(mount_point)
+}
+
+/// 在首个任务继承的 bootstrap namespace 中挂载 procfs。
+#[cfg(all(feature = "bridge-fs-api", feature = "impl-fd-session"))]
+pub fn mount_bootstrap_procfs_at(mount_point: &str) -> VfsResult<()> {
+    fs::procfs::active_impl::register_task_argv_lookup(|tid| cwd::lookup_argv_for_task(tid));
+    fs::procfs::active_impl::register_task_exe_lookup(|tid| cwd::lookup_exe_for_task(tid));
+    fs::procfs::active_impl::register_mount_list_lookup(|| {
+        impl_fs_bridge::list_proc_mount_lines()
+    });
+    impl_fs_bridge::mount_bootstrap_proc_at(mount_point)
 }
 
 /// procfs 是否已挂在 `mount_point`。

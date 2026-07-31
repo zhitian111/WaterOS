@@ -65,7 +65,7 @@ pub fn ensure_busybox_path_links() {
                 return;
             }
         }
-        match vfs::mount_tmpfs_at("/tmp") {
+        match vfs::mount_bootstrap_tmpfs_at("/tmp") {
             Ok(()) => info!("[{LOG_TAG}] mounted tmpfs at /tmp"),
             Err(VfsError::Exists) => trace!("[{LOG_TAG}] tmpfs already mounted at /tmp"),
             Err(e) => warn!("[{LOG_TAG}] mount tmpfs /tmp failed: {e:?}"),
