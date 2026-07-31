@@ -18,7 +18,7 @@
 #![no_std]
 extern crate alloc;
 
-use alloc::collections::{BTreeMap, VecDeque};
+use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -57,6 +57,15 @@ struct PageFrame {
     data : Vec<u8>,
     dirty : bool,
     version : u64,
+    lru_prev : Option<usize>,
+    lru_next : Option<usize>,
+    lru_class : Option<LruClass>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LruClass {
+    Clean,
+    Dirty,
 }
 
 // 本结构代码由AI完成
@@ -64,15 +73,19 @@ struct GlobalCacheState {
     capacity : usize,
     frames : Vec<PageFrame>,
     index : BTreeMap<(FileCacheKey, u64), usize>,
-    lru : VecDeque<usize>,
+    clean_lru_head : Option<usize>,
+    clean_lru_tail : Option<usize>,
+    dirty_lru_head : Option<usize>,
+    dirty_lru_tail : Option<usize>,
     free : Vec<usize>,
     next_version : u64,
 }
 
 impl GlobalCacheState {
 // 本方法代码由AI完成
-    fn new() -> Self {
-        let cap = FILE_PAGE_CACHE_CAPACITY;
+    fn new() -> Self { Self::with_capacity(FILE_PAGE_CACHE_CAPACITY) }
+
+    fn with_capacity(cap : usize) -> Self {
         let mut frames = Vec::new();
         let mut free = Vec::new();
         if cap > 0 {
@@ -81,28 +94,103 @@ impl GlobalCacheState {
                 frames.push(PageFrame { key : None,
                                         data : vec![0u8; FILE_PAGE_SIZE],
                                         dirty : false,
-                                        version : 0 });
+                                        version : 0,
+                                        lru_prev : None,
+                                        lru_next : None,
+                                        lru_class : None });
             }
             free.extend((0..cap).rev());
         }
         Self { capacity : cap,
                frames,
                index : BTreeMap::new(),
-               lru : VecDeque::new(),
+               clean_lru_head : None,
+               clean_lru_tail : None,
+               dirty_lru_head : None,
+               dirty_lru_tail : None,
                free,
                next_version : 0 }
     }
 
+    fn lru_ends(&self, class : LruClass) -> (Option<usize>, Option<usize>) {
+        match class {
+            LruClass::Clean => (self.clean_lru_head, self.clean_lru_tail),
+            LruClass::Dirty => (self.dirty_lru_head, self.dirty_lru_tail),
+        }
+    }
+
+    fn set_lru_head(&mut self, class : LruClass, head : Option<usize>) {
+        match class {
+            LruClass::Clean => self.clean_lru_head = head,
+            LruClass::Dirty => self.dirty_lru_head = head,
+        }
+    }
+
+    fn set_lru_tail(&mut self, class : LruClass, tail : Option<usize>) {
+        match class {
+            LruClass::Clean => self.clean_lru_tail = tail,
+            LruClass::Dirty => self.dirty_lru_tail = tail,
+        }
+    }
+
+    fn remove_from_lru(&mut self, idx : usize) {
+        let (class, prev, next) = {
+            let frame = &mut self.frames[idx];
+            let Some(class) = frame.lru_class.take() else {
+                return;
+            };
+            let prev = frame.lru_prev.take();
+            let next = frame.lru_next.take();
+            (class, prev, next)
+        };
+        if let Some(prev) = prev {
+            self.frames[prev].lru_next = next;
+        } else {
+            self.set_lru_head(class, next);
+        }
+        if let Some(next) = next {
+            self.frames[next].lru_prev = prev;
+        } else {
+            self.set_lru_tail(class, prev);
+        }
+    }
+
+    fn push_lru_back(&mut self, idx : usize, class : LruClass) {
+        debug_assert!(self.frames[idx].lru_class.is_none());
+        let (_, tail) = self.lru_ends(class);
+        self.frames[idx].lru_prev = tail;
+        self.frames[idx].lru_next = None;
+        self.frames[idx].lru_class = Some(class);
+        if let Some(tail) = tail {
+            self.frames[tail].lru_next = Some(idx);
+        } else {
+            self.set_lru_head(class, Some(idx));
+        }
+        self.set_lru_tail(class, Some(idx));
+    }
+
 // 本方法代码由AI完成
     fn touch_lru(&mut self, idx : usize) {
-        if let Some(p) = self.lru
-                             .iter()
-                             .position(|&x| x == idx)
+        let class = if self.frames[idx].dirty {
+            LruClass::Dirty
+        } else {
+            LruClass::Clean
+        };
+        if self.frames[idx].lru_class == Some(class) &&
+           self.lru_ends(class).1 == Some(idx)
         {
-            self.lru.remove(p);
+            return;
         }
-        self.lru
-            .push_back(idx);
+        self.remove_from_lru(idx);
+        self.push_lru_back(idx, class);
+    }
+
+    fn pop_lru_front(&mut self, class : LruClass) -> Option<usize> {
+        let (head, _) = self.lru_ends(class);
+        if let Some(idx) = head {
+            self.remove_from_lru(idx);
+        }
+        head
     }
 
 // 本方法代码由AI完成
@@ -110,20 +198,13 @@ impl GlobalCacheState {
         if let Some(idx) = self.free.pop() {
             return idx;
         }
-        // A cache miss must not depend on writing back an unrelated temporary
-        // file when a clean page can be discarded immediately. Build tools
-        // keep many renamed/unlinked temporary files in flight, so blindly
-        // evicting the oldest page can turn a stale dirty path into a failed
-        // executable-page read.
-        if let Some(pos) = self.lru
-                               .iter()
-                               .position(|&idx| !self.frames[idx].dirty)
-        {
-            return self.lru
-                       .remove(pos)
-                       .expect("clean LRU position must remain valid");
+        // Keep clean and dirty slots in separate intrusive LRUs. A miss can
+        // discard the oldest clean page in O(1) without making an unrelated
+        // temporary-file writeback part of an executable-page read.
+        if let Some(idx) = self.pop_lru_front(LruClass::Clean) {
+            return idx;
         }
-        if let Some(idx) = self.lru.pop_front() {
+        if let Some(idx) = self.pop_lru_front(LruClass::Dirty) {
             return idx;
         }
         // 兜底：从 index 中驱逐第一个条目，防止 free 和 lru 双空时 panic
@@ -135,6 +216,7 @@ impl GlobalCacheState {
         let idx = self.index
                       .remove(&victim_key)
                       .unwrap();
+        self.remove_from_lru(idx);
         self.frames[idx].key = None;
         self.frames[idx].dirty = false;
         self.frames[idx].version = 0;
@@ -149,12 +231,7 @@ impl GlobalCacheState {
         if let Some(ref key) = old {
             self.index.remove(key);
         }
-        if let Some(p) = self.lru
-                          .iter()
-                          .position(|&x| x == idx)
-        {
-            self.lru.remove(p);
-        }
+        self.remove_from_lru(idx);
         let dirty_data = if self.frames[idx].dirty {
             old.clone()
                .map(|key| (key,
@@ -168,13 +245,26 @@ impl GlobalCacheState {
     }
 
     fn mark_dirty(&mut self, idx : usize) -> u64 {
+        self.remove_from_lru(idx);
         self.next_version = self.next_version.wrapping_add(1);
         if self.next_version == 0 {
             self.next_version = 1;
         }
         self.frames[idx].dirty = true;
         self.frames[idx].version = self.next_version;
+        self.push_lru_back(idx, LruClass::Dirty);
         self.next_version
+    }
+
+    fn mark_clean(&mut self, idx : usize) {
+        if !self.frames[idx].dirty {
+            return;
+        }
+        self.remove_from_lru(idx);
+        self.frames[idx].dirty = false;
+        if self.frames[idx].key.is_some() {
+            self.push_lru_back(idx, LruClass::Clean);
+        }
     }
 
 // 本方法代码由AI完成
@@ -198,15 +288,71 @@ impl GlobalCacheState {
             frame.key = None;
             frame.dirty = false;
             frame.version = 0;
+            frame.lru_prev = None;
+            frame.lru_next = None;
+            frame.lru_class = None;
         }
         self.index
             .clear();
-        self.lru
-            .clear();
+        self.clean_lru_head = None;
+        self.clean_lru_tail = None;
+        self.dirty_lru_head = None;
+        self.dirty_lru_tail = None;
         self.free
             .clear();
         self.free
             .extend((0..self.capacity).rev());
+    }
+
+    #[cfg(test)]
+    fn assert_lru_invariants(&self) {
+        let mut seen = vec![false; self.capacity];
+        for class in [LruClass::Clean, LruClass::Dirty] {
+            let (head, tail) = self.lru_ends(class);
+            let mut cursor = head;
+            let mut previous = None;
+            let mut count = 0usize;
+            while let Some(idx) = cursor {
+                assert!(idx < self.capacity);
+                assert!(!seen[idx], "slot {idx} appears in more than one LRU position");
+                seen[idx] = true;
+                let frame = &self.frames[idx];
+                assert_eq!(frame.lru_class, Some(class));
+                assert_eq!(frame.lru_prev, previous);
+                assert_eq!(frame.dirty, class == LruClass::Dirty);
+                assert!(frame.key.is_some());
+                previous = Some(idx);
+                cursor = frame.lru_next;
+                count += 1;
+                assert!(count <= self.capacity, "LRU cycle detected");
+            }
+            assert_eq!(previous, tail);
+            assert_eq!(head.is_none(), tail.is_none());
+        }
+
+        let mut free_seen = vec![false; self.capacity];
+        for &idx in &self.free {
+            assert!(idx < self.capacity);
+            assert!(!free_seen[idx], "duplicate free slot {idx}");
+            free_seen[idx] = true;
+            assert!(!seen[idx], "slot {idx} is both free and active");
+            assert!(self.frames[idx].key.is_none());
+            assert!(self.frames[idx].lru_class.is_none());
+        }
+
+        for (idx, frame) in self.frames.iter().enumerate() {
+            match &frame.key {
+                Some(key) => {
+                    assert_eq!(self.index.get(key), Some(&idx));
+                    assert!(seen[idx], "active slot {idx} is missing from LRU");
+                }
+                None => {
+                    assert!(!seen[idx], "detached slot {idx} remains in LRU");
+                    assert!(free_seen[idx], "stable detached slot {idx} is not free");
+                }
+            }
+        }
+        assert_eq!(self.index.len(), seen.iter().filter(|seen| **seen).count());
     }
 }
 
@@ -461,9 +607,8 @@ impl GlobalFilePageCache {
         let mut cache = self.state.lock();
         for &(page_idx, version) in &flushed_pages {
             if let Some(&slot) = cache.index.get(&(key.clone(), page_idx)) {
-                let frame = &mut cache.frames[slot];
-                if frame.dirty && frame.version == version {
-                    frame.dirty = false;
+                if cache.frames[slot].dirty && cache.frames[slot].version == version {
+                    cache.mark_clean(slot);
                 }
             }
         }
@@ -902,12 +1047,7 @@ impl GlobalFilePageCache {
                 cache.frames[slot].key = None;
                 cache.frames[slot].dirty = false;
                 cache.frames[slot].version = 0;
-                if let Some(p) = cache.lru
-                                      .iter()
-                                      .position(|&x| x == slot)
-                {
-                    cache.lru.remove(p);
-                }
+                cache.remove_from_lru(slot);
                 if !cache.free
                          .iter()
                          .any(|&free_idx| free_idx == slot)
@@ -962,12 +1102,7 @@ impl GlobalFilePageCache {
                 cache.frames[slot].key = None;
                 cache.frames[slot].dirty = false;
                 cache.frames[slot].version = 0;
-                if let Some(p) = cache.lru
-                                      .iter()
-                                      .position(|&x| x == slot)
-                {
-                    cache.lru.remove(p);
-                }
+                cache.remove_from_lru(slot);
                 cache.free
                      .push(slot);
             }
@@ -1138,6 +1273,7 @@ mod tests {
              .unwrap();
         assert_eq!(io.writes, 1);
         assert_eq!(io.data, payload);
+        cache.state.lock().assert_lru_invariants();
     }
 
     #[test]
@@ -1160,6 +1296,7 @@ mod tests {
              .unwrap();
         assert_eq!(io.writes, 1);
         assert_eq!(io.data, payload);
+        cache.state.lock().assert_lru_invariants();
     }
 
     #[test]
@@ -1181,6 +1318,7 @@ mod tests {
              .unwrap();
         assert_eq!(io.writes, 1);
         assert_eq!(io.data, payload);
+        cache.state.lock().assert_lru_invariants();
     }
 
     #[test]
@@ -1203,6 +1341,7 @@ mod tests {
              .unwrap();
         assert_eq!(cache.dirty_page_count("/tmp/racing"), 0);
         assert_eq!(io.data, vec![0x22u8; FILE_PAGE_SIZE]);
+        cache.state.lock().assert_lru_invariants();
     }
 
     #[test]
@@ -1228,6 +1367,7 @@ mod tests {
              .unwrap();
         assert_eq!(&out[..100], &payload[..100]);
         assert!(out[100..].iter().all(|byte| *byte == 0));
+        cache.state.lock().assert_lru_invariants();
     }
 
     #[test]
@@ -1258,6 +1398,7 @@ mod tests {
              .unwrap();
 
         assert_eq!(out, io.data);
+        cache.state.lock().assert_lru_invariants();
     }
 
     #[test]
@@ -1280,29 +1421,68 @@ mod tests {
 
         cache.release_open_ref("/tmp/refcount");
         assert!(!cache.files.lock().contains_key(&cache.file_key("/tmp/refcount")));
+        cache.state.lock().assert_lru_invariants();
+    }
+
+    fn activate_test_frame(state : &mut GlobalCacheState,
+                           idx : usize,
+                           page_idx : u64,
+                           dirty : bool) {
+        if let Some(pos) = state.free.iter().position(|free_idx| *free_idx == idx) {
+            state.free.swap_remove(pos);
+        }
+        let key = (FileCacheKey { mount_gen : 7,
+                                  path : Arc::from("/tmp/lru") },
+                   page_idx);
+        state.frames[idx].key = Some(key.clone());
+        state.frames[idx].dirty = false;
+        state.frames[idx].version = 0;
+        state.index.insert(key, idx);
+        state.touch_lru(idx);
+        if dirty {
+            state.mark_dirty(idx);
+        }
+    }
+
+    #[test]
+    fn intrusive_lru_touch_and_class_transitions_preserve_invariants() {
+        let mut state = GlobalCacheState::with_capacity(3);
+        activate_test_frame(&mut state, 0, 0, false);
+        activate_test_frame(&mut state, 1, 1, false);
+        activate_test_frame(&mut state, 2, 2, false);
+        state.assert_lru_invariants();
+        assert_eq!(state.clean_lru_head, Some(0));
+        assert_eq!(state.clean_lru_tail, Some(2));
+
+        state.touch_lru(0);
+        state.assert_lru_invariants();
+        assert_eq!(state.clean_lru_head, Some(1));
+        assert_eq!(state.clean_lru_tail, Some(0));
+
+        state.mark_dirty(1);
+        state.assert_lru_invariants();
+        assert_eq!(state.clean_lru_head, Some(2));
+        assert_eq!(state.dirty_lru_head, Some(1));
+
+        state.mark_clean(1);
+        state.assert_lru_invariants();
+        assert_eq!(state.clean_lru_tail, Some(1));
+        assert_eq!(state.dirty_lru_head, None);
     }
 
     #[test]
     fn eviction_prefers_clean_page_over_older_dirty_page() {
-        let mut state = GlobalCacheState {
-            capacity : 2,
-            frames : vec![
-                PageFrame { key : None,
-                            data : vec![0; FILE_PAGE_SIZE],
-                            dirty : true,
-                            version : 1 },
-                PageFrame { key : None,
-                            data : vec![0; FILE_PAGE_SIZE],
-                            dirty : false,
-                            version : 0 },
-            ],
-            index : BTreeMap::new(),
-            lru : VecDeque::from([0, 1]),
-            free : Vec::new(),
-            next_version : 1,
-        };
+        let mut state = GlobalCacheState::with_capacity(2);
+        activate_test_frame(&mut state, 0, 0, true);
+        activate_test_frame(&mut state, 1, 1, false);
+        state.assert_lru_invariants();
 
         assert_eq!(state.pop_free_or_lru_index(), 1);
-        assert_eq!(state.lru, VecDeque::from([0]));
+        let evicted = state.detach_slot_for_reuse(1);
+        assert!(evicted.is_none());
+        state.return_detached_slot(1);
+        state.assert_lru_invariants();
+        assert_eq!(state.dirty_lru_head, Some(0));
+        assert_eq!(state.clean_lru_head, None);
     }
 }

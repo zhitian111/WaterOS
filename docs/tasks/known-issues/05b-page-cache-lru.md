@@ -26,6 +26,15 @@ self.lru.push_back(idx);
 
 frame 已按 capacity 预分配，因此可用 slot index 维护 prev/next，无需移动 page data。
 
+## 当前进度（2026-07-31）
+
+已用 clean/dirty 两条侵入式双向 LRU 替换 `VecDeque` 线性搜索。hit、class
+迁移、remove 和 clean-first victim 选择均为 O(1)，dirty writeback 仍保持锁外执行。
+host 9 项测试和双架构 check 通过；fresh final 在相同 21/446 观察点由约
+10分21秒缩短到约 8分27秒。完整 BuildStorm、三轮性能基准和测试后 e2fsck
+仍属于总体验收，详见
+[`results/k05b-20260731.md`](./results/k05b-20260731.md)。
+
 ## 涉及文件
 
 - `os/components/wateros-vfs/vfs-impl/impl-page-cache/src/lib.rs`
