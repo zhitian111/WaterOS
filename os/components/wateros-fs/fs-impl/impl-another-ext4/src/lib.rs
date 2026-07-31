@@ -314,9 +314,7 @@ impl ReadWriteFs for AnotherExt4Fs {
     fn write_range(&mut self, path : &str, offset : u64, data : &[u8]) -> FsResult<usize> {
         let fs = self.get_mut()?;
         let inode = lookup(fs, path)?;
-        let written = fs.write(inode, offset as usize, data).map_err(map_error)?;
-        fs.flush_all();
-        Ok(written)
+        fs.write(inode, offset as usize, data).map_err(map_error)
     }
 
     fn truncate(&mut self, path : &str, len : u64) -> FsResult<()> {

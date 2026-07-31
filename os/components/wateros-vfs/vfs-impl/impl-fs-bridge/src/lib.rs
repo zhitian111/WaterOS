@@ -591,6 +591,7 @@ pub fn reset_file_page_cache() -> VfsResult<()> {
     let cache = impl_page_cache::global_cache(mount_gen);
     let mut io = paged_handle::FsPageIo;
     cache.flush_all(&mut io, core::convert::identity)?;
+    root_rw()?.lock().sync().map_err(map_fs_err)?;
     impl_page_cache::reset_global_cache(mount_gen);
     Ok(())
 }

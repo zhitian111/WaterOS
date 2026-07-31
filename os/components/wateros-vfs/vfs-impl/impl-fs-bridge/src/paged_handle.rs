@@ -218,10 +218,12 @@ impl PagedFileHandle {
         }
         let mut io = FsPageIo;
         let cache = global_cache(self.mount_gen);
+        let had_dirty_pages = cache.dirty_page_count(self.path.as_str()) != 0;
         match cache.flush(&mut io,
                           self.path.as_str(),
                           core::convert::identity)
         {
+            Ok(()) if had_dirty_pages => crate::sync_path_filesystem(self.path.as_str()),
             Ok(()) => Ok(()),
             Err(VfsError::NotFound) => {
                 self.detached = true;
