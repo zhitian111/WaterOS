@@ -16,6 +16,8 @@ pub enum PipeError {
     Closed,
     /// pipe 容量为零或不满足实现约束。
     InvalidCapacity,
+    /// staging buffer 无法分配。
+    NoMemory,
 }
 
 /// pipe 操作结果。

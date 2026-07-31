@@ -16,8 +16,12 @@ const O_CLOEXEC: usize = 0o2000000;
 pub(crate) fn sys_dup(args: SyscallArgs) -> UserRet {
     let oldfd = args.arg(0);
     let epoll = epoll_fd::lookup(oldfd);
+    let task_id = vfs::fd::current_task_id().ok();
     match vfs::fd::dup_fd(oldfd, 0) {
         Ok(newfd) => {
+            if let Some(task_id) = task_id {
+                crate::unix_sock::duplicate_registration(task_id, oldfd, newfd);
+            }
             if let Some(instance) = epoll {
                 epoll_fd::register(newfd, instance);
             }
@@ -42,8 +46,12 @@ pub(crate) fn sys_dup3(args: SyscallArgs) -> UserRet {
     let cloexec = (flags & O_CLOEXEC) != 0;
     let epoll = epoll_fd::lookup(oldfd);
     let overwritten_epoll = epoll_fd::is_epoll_fd(newfd);
+    let task_id = vfs::fd::current_task_id().ok();
     match vfs::fd::dup3_fd(oldfd, newfd, cloexec) {
         Ok(fd) => {
+            if let Some(task_id) = task_id {
+                crate::unix_sock::duplicate_registration(task_id, oldfd, fd);
+            }
             if overwritten_epoll {
                 epoll_fd::remove(newfd);
             }

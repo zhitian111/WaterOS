@@ -15,7 +15,8 @@ pub mod api {
 pub use impl_ringbuf as active_impl;
 
 pub use api_v0::{
-    KernelPipe, PipeEndpointKind, PipeEndpointOps, PipeError, PipeResult, DEFAULT_PIPE_CAPACITY,
+    KernelPipe, PipeEndpointKind, PipeEndpointOps, PipeError, PipeReadFinish, PipeReadLease,
+    PipeResult, DEFAULT_PIPE_CAPACITY,
 };
 
 #[cfg(feature = "impl-ringbuf")]

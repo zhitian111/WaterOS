@@ -1,5 +1,9 @@
 //! fd 表可见的 pipe 端点契约。
 
+extern crate alloc;
+
+use alloc::boxed::Box;
+
 use crate::{PipeError, PipeResult};
 
 /// pipe 端点方向。
@@ -9,6 +13,27 @@ pub enum PipeEndpointKind {
     Read,
     /// 只写端点。
     Write,
+}
+
+/// pipe reservation 根据 user-copy 结果产生的提交结果。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PipeReadFinish {
+    /// stream 数据已提交指定前缀，或 packet 已完整交付。
+    Bytes(usize),
+    /// packet 发生部分 user-copy fault；packet 已按记录语义消费。
+    Fault,
+}
+
+/// 在 pipe 锁外持有的稳定读取快照。
+pub trait PipeReadLease: Send {
+    fn bytes(&self) -> &[u8];
+
+    /// `complete` 表示整个 staging 已复制；消耗 lease 后必须提交或取消 reservation。
+    fn finish(
+        self: Box<Self>,
+        copied: usize,
+        complete: bool,
+    ) -> PipeResult<PipeReadFinish>;
 }
 
 /// 可放入 fd 表的 pipe 端点契约。
@@ -29,6 +54,9 @@ pub trait PipeEndpointOps {
 
     /// 从读端读取。
     fn read(&self, out: &mut [u8]) -> PipeResult<usize>;
+
+    /// 在不持 fd 锁的调用路径中等待数据并建立 read reservation。
+    fn acquire_read_lease(&self, max_len: usize) -> PipeResult<Box<dyn PipeReadLease>>;
 
     /// 从写端写入。
     fn write(&self, input: &[u8]) -> PipeResult<usize>;

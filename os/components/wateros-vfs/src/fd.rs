@@ -291,6 +291,7 @@ pub fn drop_task_fd_table(task_id : task::TaskId) {
 
 /// bring-up：两任务 fd 表隔离、dup 与 fork 继承烟囱。
 pub fn self_test() {
+    impl_fd_session::test();
     with_registry(|reg| {
         let stdio_task : task::TaskId = 20;
         assert!(reg.close_fd_for_task(stdio_task, api_v0::VFS_STDIN_FD)

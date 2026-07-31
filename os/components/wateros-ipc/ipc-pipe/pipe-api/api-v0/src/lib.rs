@@ -8,7 +8,7 @@ mod endpoint;
 mod error;
 mod kernel_pipe;
 
-pub use endpoint::{PipeEndpointKind, PipeEndpointOps};
+pub use endpoint::{PipeEndpointKind, PipeEndpointOps, PipeReadFinish, PipeReadLease};
 pub use error::{PipeError, PipeResult, DEFAULT_PIPE_CAPACITY};
 pub use kernel_pipe::KernelPipe;
 

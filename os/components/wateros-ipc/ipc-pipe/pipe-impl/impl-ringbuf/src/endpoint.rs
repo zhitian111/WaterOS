@@ -6,8 +6,11 @@
 
 extern crate alloc;
 
+use alloc::boxed::Box;
 use alloc::sync::Arc;
-use api_v0::{PipeEndpointKind, PipeEndpointOps, PipeError, PipeResult};
+use api_v0::{
+    PipeEndpointKind, PipeEndpointOps, PipeError, PipeReadLease, PipeResult,
+};
 use core::cell::Cell;
 use core::sync::atomic::{AtomicBool, Ordering};
 use waitqueue::TaskWaitResult;
@@ -122,6 +125,11 @@ impl PipeEndpoint {
         PipeEndpointOps::read(self, out)
     }
 
+    /// 等待可读数据并建立锁外 read reservation。
+    pub fn acquire_read_lease(&self, max_len: usize) -> PipeResult<Box<dyn PipeReadLease>> {
+        PipeEndpointOps::acquire_read_lease(self, max_len)
+    }
+
     /// 从写端写入。
     pub fn write(&self, input: &[u8]) -> PipeResult<usize> {
         PipeEndpointOps::write(self, input)
@@ -208,6 +216,14 @@ impl PipeEndpointOps for PipeEndpoint {
         }
     }
 
+    fn acquire_read_lease(&self, max_len: usize) -> PipeResult<Box<dyn PipeReadLease>> {
+        self.ensure_open()?;
+        if self.kind != PipeEndpointKind::Read {
+            return Err(PipeError::BrokenPipe);
+        }
+        self.pipe.acquire_read_lease(max_len, self.nonblocking())
+    }
+
     fn write(&self, input: &[u8]) -> PipeResult<usize> {
         self.ensure_open()?;
         if self.kind != PipeEndpointKind::Write {
@@ -218,10 +234,9 @@ impl PipeEndpointOps for PipeEndpoint {
             .load(Ordering::Acquire)
         {
             self.pipe
-                .try_write(input)
+                .try_write_mode(input, self.direct())
         } else {
-            self.pipe
-                .write(input)
+            self.pipe.write_mode(input, self.direct())
         }
     }
 

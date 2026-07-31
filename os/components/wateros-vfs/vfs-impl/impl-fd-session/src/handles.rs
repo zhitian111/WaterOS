@@ -7,9 +7,13 @@ use alloc::boxed::Box;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use api_v0::{
-    VfsError, VfsIoHandle, VfsMetadata, VfsNodeType, VfsResult, VfsSeekWhence,
+    VfsCopyProgress, VfsError, VfsIoHandle, VfsMetadata, VfsNodeType, VfsPreparedRead,
+    VfsReadFinish, VfsReadLease, VfsResult, VfsSeekWhence,
 };
-use ipc::pipe::{PipeEndpoint, PipeEndpointOps, PipeError};
+use ipc::pipe::{
+    PipeEndpoint, PipeEndpointOps, PipeError, PipeReadFinish as IpcPipeReadFinish,
+    PipeReadLease as IpcPipeReadLease,
+};
 
 // 本变量代码由AI完成
 static NEXT_PIPE_INODE: AtomicU64 = AtomicU64::new(1);
@@ -364,6 +368,13 @@ pub fn pipe_handle_pair_with_flags(
 impl VfsIoHandle for PipeReadHandle {
     fn open_accmode(&self) -> u32 { 0 }
 
+    fn prepare_read(&mut self, max_len: usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
+        Ok(Box::new(PipePreparedRead {
+            endpoint: self.endpoint.clone(),
+            max_len,
+        }))
+    }
+
 // 本方法代码由AI完成
     fn read(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
         self.endpoint.read(buf).map_err(map_pipe_err)
@@ -549,6 +560,13 @@ pub fn stream_pair_handle_pair(nonblocking: bool) -> (UnixStreamPairEnd, UnixStr
 }
 
 impl VfsIoHandle for UnixStreamPairEnd {
+    fn prepare_read(&mut self, max_len: usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
+        Ok(Box::new(PipePreparedRead {
+            endpoint: self.read_end.clone(),
+            max_len,
+        }))
+    }
+
 // 本方法代码由AI完成
     fn read(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
         self.read_end.read(buf).map_err(map_pipe_err)
@@ -642,6 +660,42 @@ impl VfsIoHandle for UnixStreamPairEnd {
     }
 }
 
+struct PipePreparedRead {
+    endpoint: PipeEndpoint,
+    max_len: usize,
+}
+
+impl VfsPreparedRead for PipePreparedRead {
+    fn acquire(self: Box<Self>) -> VfsResult<Box<dyn VfsReadLease>> {
+        let lease = self
+            .endpoint
+            .acquire_read_lease(self.max_len)
+            .map_err(map_pipe_err)?;
+        Ok(Box::new(PipeVfsReadLease { lease }))
+    }
+}
+
+struct PipeVfsReadLease {
+    lease: Box<dyn IpcPipeReadLease>,
+}
+
+impl VfsReadLease for PipeVfsReadLease {
+    fn bytes(&self) -> &[u8] {
+        self.lease.bytes()
+    }
+
+    fn finish(self: Box<Self>, progress: VfsCopyProgress) -> VfsResult<VfsReadFinish> {
+        let Self { lease } = *self;
+        match lease
+            .finish(progress.copied, progress.complete)
+            .map_err(map_pipe_err)?
+        {
+            IpcPipeReadFinish::Bytes(copied) => Ok(VfsReadFinish::Bytes(copied)),
+            IpcPipeReadFinish::Fault => Ok(VfsReadFinish::Fault),
+        }
+    }
+}
+
 /// bring-up：验证 socketpair 双向读写与 poll。
 // 本方法代码由AI完成
 pub fn stream_pair_smoke() -> bool {
@@ -690,5 +744,6 @@ fn map_pipe_err(err: PipeError) -> VfsError {
         PipeError::BrokenPipe => VfsError::BrokenPipe,
         PipeError::Closed => VfsError::BadFd,
         PipeError::InvalidCapacity => VfsError::Unsupported,
+        PipeError::NoMemory => VfsError::NoMemory,
     }
 }

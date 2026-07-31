@@ -24,3 +24,7 @@ pub use handles::{
 };
 pub use registry::PerTaskFdRegistry;
 pub use interrupt_guard::with_interrupt_disabled;
+
+pub fn test() {
+    ipc::pipe::test();
+}

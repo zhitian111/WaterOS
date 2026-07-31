@@ -14,11 +14,16 @@ use api_v0::ErrNo;
 use spin::Mutex;
 use vfs::api::resolve_open_path;
 use vfs::api::handle::VfsIoHandle;
-use vfs::api::{SingleRootReadView, VfsError, VfsMetadata, VfsNodeType, VfsResult};
+use vfs::api::{
+    SingleRootReadView, VfsCopyProgress, VfsError, VfsMetadata, VfsNodeType, VfsPreparedRead,
+    VfsReadFinish, VfsReadLease, VfsResult,
+};
 use vfs::UnixStreamPairEnd;
 
 use crate::socket_block::socket_blocking_tick;
-use crate::user_copy::{copy_from_user, copy_to_user, copy_to_user_struct};
+use crate::user_copy::{
+    copy_from_user, copy_to_user, copy_to_user_progress, copy_to_user_struct,
+};
 use crate::vfs_util::vfs_error_to_errno;
 
 const AF_UNIX: u16 = 1;
@@ -53,14 +58,104 @@ struct UnixSockInner {
     listening: bool,
     endpoint: Option<UnixStreamPairEnd>,
     dgram_peer: Option<Vec<u8>>,
-    inbox: VecDeque<Vec<u8>>,
+    dgram_inbox: Option<Arc<DgramInbox>>,
 }
 
 struct BoundEntry {
     sock_type: UnixSockType,
     listening: bool,
     accept_queue: VecDeque<UnixStreamPairEnd>,
-    dgram_inbox: VecDeque<(Vec<u8>, Option<Vec<u8>>)>,
+    dgram_inbox: Option<Arc<DgramInbox>>,
+}
+
+struct DgramPacket {
+    data: Vec<u8>,
+    sender: Option<Vec<u8>>,
+}
+
+struct DgramInboxState {
+    queue: VecDeque<DgramPacket>,
+    active_reservation: Option<u64>,
+    next_reservation_id: u64,
+    closed: bool,
+}
+
+struct DgramInbox {
+    state: Mutex<DgramInboxState>,
+    read_wait: task::WaitQueue,
+}
+
+impl DgramInbox {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(DgramInboxState {
+                queue: VecDeque::new(),
+                active_reservation: None,
+                next_reservation_id: 1,
+                closed: false,
+            }),
+            read_wait: task::WaitQueue::new_named("unix-dgram-read"),
+        }
+    }
+
+    fn push(&self, packet: DgramPacket) -> Result<(), ErrNo> {
+        let mut state = self.state.lock();
+        if state.closed {
+            return Err(ErrNo::ECONNREFUSED);
+        }
+        let occupied = state.queue.len() + usize::from(state.active_reservation.is_some());
+        if occupied >= UNIX_DGRAM_INBOX_MAX {
+            return Err(ErrNo::EAGAIN);
+        }
+        state.queue.push_back(packet);
+        drop(state);
+        self.read_wait.wake_all();
+        Ok(())
+    }
+
+    fn acquire(self: &Arc<Self>, nonblocking: bool) -> Result<DgramReadLease, VfsError> {
+        loop {
+            let mut state = self.state.lock();
+            if state.closed {
+                return Err(VfsError::BadFd);
+            }
+            if state.active_reservation.is_none() {
+                if let Some(packet) = state.queue.pop_front() {
+                    let id = state.next_reservation_id;
+                    state.next_reservation_id = state.next_reservation_id.wrapping_add(1).max(1);
+                    state.active_reservation = Some(id);
+                    drop(state);
+                    return Ok(DgramReadLease {
+                        inbox: self.clone(),
+                        reservation_id: Some(id),
+                        packet: Some(packet),
+                    });
+                }
+            }
+            if nonblocking {
+                return Err(VfsError::WouldBlock);
+            }
+            drop(state);
+            let result = self.read_wait.wait_current_while(|| {
+                let state = self.state.lock();
+                !state.closed &&
+                (state.active_reservation.is_some() || state.queue.is_empty())
+            });
+            if result == task::TaskWaitResult::Interrupted {
+                return Err(VfsError::Interrupted);
+            }
+        }
+    }
+
+    fn has_data(&self) -> bool {
+        let state = self.state.lock();
+        state.active_reservation.is_none() && !state.queue.is_empty()
+    }
+
+    fn close(&self) {
+        self.state.lock().closed = true;
+        self.read_wait.wake_all();
+    }
 }
 
 static NEXT_INODE: AtomicU64 = AtomicU64::new(0x4_0000);
@@ -70,6 +165,71 @@ static BOUND: Mutex<BTreeMap<Vec<u8>, BoundEntry>> = Mutex::new(BTreeMap::new())
 pub(crate) struct UnixSocketHandle {
     sock: UnixSockRef,
     inode: u64,
+}
+
+struct DgramReadLease {
+    inbox: Arc<DgramInbox>,
+    reservation_id: Option<u64>,
+    packet: Option<DgramPacket>,
+}
+
+impl DgramReadLease {
+    fn bytes(&self, max_len: usize) -> &[u8] {
+        let data = self
+            .packet
+            .as_ref()
+            .map(|packet| packet.data.as_slice())
+            .unwrap_or(&[]);
+        &data[..data.len().min(max_len)]
+    }
+
+    fn sender(&self) -> Option<&[u8]> {
+        self.packet
+            .as_ref()
+            .and_then(|packet| packet.sender.as_deref())
+    }
+
+    fn finish(
+        mut self,
+        copied: usize,
+        complete: bool,
+    ) -> VfsResult<VfsReadFinish> {
+        let id = self.reservation_id.take().ok_or(VfsError::Io)?;
+        let packet = self.packet.take().ok_or(VfsError::Io)?;
+        let mut state = self.inbox.state.lock();
+        if state.active_reservation != Some(id) {
+            return Err(VfsError::Io);
+        }
+        state.active_reservation = None;
+        let finish = if complete {
+            VfsReadFinish::Bytes(copied)
+        } else if copied == 0 {
+            state.queue.push_front(packet);
+            VfsReadFinish::Fault
+        } else {
+            VfsReadFinish::Fault
+        };
+        drop(state);
+        self.inbox.read_wait.wake_all();
+        Ok(finish)
+    }
+}
+
+impl Drop for DgramReadLease {
+    fn drop(&mut self) {
+        let (Some(id), Some(packet)) =
+            (self.reservation_id.take(), self.packet.take())
+        else {
+            return;
+        };
+        let mut state = self.inbox.state.lock();
+        if state.active_reservation == Some(id) {
+            state.active_reservation = None;
+            state.queue.push_front(packet);
+        }
+        drop(state);
+        self.inbox.read_wait.wake_all();
+    }
 }
 
 pub(crate) fn is_unix_fd(fd: usize) -> bool {
@@ -90,13 +250,42 @@ pub(crate) fn unregister(task_id: usize, fd: usize) {
     let Some(sock) = table.remove(&(task_id, fd)) else {
         return;
     };
-    let key = sock.inner.lock().bound_key.clone();
     let still_referenced = table
         .values()
         .any(|other| Arc::ptr_eq(&other.inner, &sock.inner));
+    drop(table);
+    cleanup_removed_socket(sock, still_referenced);
+}
+
+pub(crate) fn duplicate_registration(task_id: usize, oldfd: usize, newfd: usize) {
+    let mut table = FD_TABLE.lock();
+    let source = table.get(&(task_id, oldfd)).cloned();
+    let displaced = table.remove(&(task_id, newfd));
+    if let Some(source) = source {
+        table.insert((task_id, newfd), source);
+    }
+    let displaced_still_referenced = displaced.as_ref().is_some_and(|sock| {
+        table
+            .values()
+            .any(|other| Arc::ptr_eq(&other.inner, &sock.inner))
+    });
+    drop(table);
+    if let Some(displaced) = displaced {
+        cleanup_removed_socket(displaced, displaced_still_referenced);
+    }
+}
+
+fn cleanup_removed_socket(sock: UnixSockRef, still_referenced: bool) {
+    let (key, inbox) = {
+        let inner = sock.inner.lock();
+        (inner.bound_key.clone(), inner.dgram_inbox.clone())
+    };
     drop(sock);
-    if let Some(key) = key {
-        if !still_referenced {
+    if !still_referenced {
+        if let Some(inbox) = inbox {
+            inbox.close();
+        }
+        if let Some(key) = key {
             BOUND.lock().remove(&key);
         }
     }
@@ -143,6 +332,8 @@ pub(crate) fn alloc_unix_socket(
         _ => return Err(ErrNo::EPROTONOSUPPORT),
     };
     let nonblocking = status_flags & SOCK_NONBLOCK != 0;
+    let dgram_inbox =
+        (sock_type == UnixSockType::Dgram).then(|| Arc::new(DgramInbox::new()));
     let sock = UnixSockRef {
         inner: Arc::new(Mutex::new(UnixSockInner {
             sock_type,
@@ -152,7 +343,7 @@ pub(crate) fn alloc_unix_socket(
             listening: false,
             endpoint: None,
             dgram_peer: None,
-            inbox: VecDeque::new(),
+            dgram_inbox,
         })),
     };
     let inode = NEXT_INODE.fetch_add(1, Ordering::Relaxed);
@@ -179,7 +370,7 @@ pub(crate) fn alloc_unix_stream_pair(
                 listening: false,
                 endpoint: Some(endpoint),
                 dgram_peer: None,
-                inbox: VecDeque::new(),
+                dgram_inbox: None,
             })),
         };
         let inode = NEXT_INODE.fetch_add(1, Ordering::Relaxed);
@@ -245,13 +436,14 @@ pub(crate) fn bind(fd: usize, addr_ptr: usize, addrlen: usize) -> Result<(), Err
     if bound.contains_key(&addr.key) {
         return Err(ErrNo::EADDRINUSE);
     }
+    let dgram_inbox = inner.dgram_inbox.clone();
     bound.insert(
         addr.key.clone(),
         BoundEntry {
             sock_type: inner.sock_type,
             listening: false,
             accept_queue: VecDeque::new(),
-            dgram_inbox: VecDeque::new(),
+            dgram_inbox,
         },
     );
     inner.bound_key = Some(addr.key);
@@ -364,7 +556,7 @@ pub(crate) fn accept(fd: usize) -> Result<(Box<dyn VfsIoHandle>, UnixSockRef), E
                     listening: false,
                     endpoint: Some(end),
                     dgram_peer: None,
-                    inbox: VecDeque::new(),
+                    dgram_inbox: None,
                 })),
             };
             let inode = NEXT_INODE.fetch_add(1, Ordering::Relaxed);
@@ -404,61 +596,65 @@ pub(crate) fn sendto_unix(
         return Err(ErrNo::EOPNOTSUPP);
     }
     drop(inner);
-    let mut bound = BOUND.lock();
-    let entry = bound.get_mut(&key).ok_or(ErrNo::ECONNREFUSED)?;
+    let bound = BOUND.lock();
+    let entry = bound.get(&key).ok_or(ErrNo::ECONNREFUSED)?;
     if entry.sock_type != UnixSockType::Dgram {
         return Err(ErrNo::ECONNREFUSED);
     }
-    if entry.dgram_inbox.len() >= UNIX_DGRAM_INBOX_MAX {
-        log::warn!("[unix_sock] dgram_inbox full key_len={} cap={}",
-                   key.len(),
-                   UNIX_DGRAM_INBOX_MAX);
-        return Err(ErrNo::EAGAIN);
-    }
-    entry.dgram_inbox.push_back((buf.to_vec(), sender_key));
+    let inbox = entry.dgram_inbox.clone().ok_or(ErrNo::ECONNREFUSED)?;
+    drop(bound);
+    inbox.push(DgramPacket {
+        data: buf.to_vec(),
+        sender: sender_key,
+    })?;
     Ok(buf.len())
 }
 
 pub(crate) fn recvfrom_unix(
     fd: usize,
-    buf: &mut [u8],
+    buf_ptr: usize,
+    max_len: usize,
     addr_ptr: usize,
     addrlen_ptr: usize,
 ) -> Result<usize, ErrNo> {
     let sock = lookup_current(fd)?;
-    loop {
-        let packet = {
-            let mut inner = sock.inner.lock();
-            if let Some(mut endpoint) = inner.endpoint.clone() {
-                drop(inner);
-                return endpoint.read(buf).map_err(vfs_error_to_errno);
-            }
-            if let Some(packet) = inner.inbox.pop_front() {
-                Some((packet, None))
-            } else if let Some(key) = inner.bound_key.clone() {
-                let mut bound = BOUND.lock();
-                bound
-                    .get_mut(&key)
-                    .and_then(|entry| entry.dgram_inbox.pop_front())
-            } else {
-                None
-            }
+    let (endpoint, inbox, nonblocking) = {
+        let inner = sock.inner.lock();
+        (inner.endpoint.clone(), inner.dgram_inbox.clone(), inner.nonblocking)
+    };
+    if endpoint.is_some() {
+        let prepared =
+            vfs::fd::prepare_current_read(fd, max_len).map_err(vfs_error_to_errno)?;
+        let lease = prepared.acquire().map_err(vfs_error_to_errno)?;
+        let progress = copy_to_user_progress(buf_ptr, lease.bytes());
+        let finish = lease
+            .finish(VfsCopyProgress {
+                copied: progress.copied,
+                complete: progress.error.is_none(),
+            })
+            .map_err(vfs_error_to_errno)?;
+        return match finish {
+            VfsReadFinish::Bytes(copied) => Ok(copied),
+            VfsReadFinish::Fault => Err(progress.error.unwrap_or(ErrNo::EFAULT)),
         };
-        if let Some((packet, sender)) = packet {
-            let n = packet.len().min(buf.len());
-            buf[..n].copy_from_slice(&packet[..n]);
+    }
+    let inbox = inbox.ok_or(ErrNo::ENOTCONN)?;
+    let lease = inbox.acquire(nonblocking).map_err(vfs_error_to_errno)?;
+    let sender = lease.sender().map(Vec::from);
+    let progress = copy_to_user_progress(buf_ptr, lease.bytes(max_len));
+    let finish = lease
+        .finish(progress.copied, progress.error.is_none())
+        .map_err(vfs_error_to_errno)?;
+    match finish {
+        VfsReadFinish::Fault => Err(progress.error.unwrap_or(ErrNo::EFAULT)),
+        VfsReadFinish::Bytes(copied) => {
             if addr_ptr != 0 && addrlen_ptr != 0 {
                 if let Some(sender_key) = sender {
-                    let _ = write_unix_addr_to_user(addr_ptr, addrlen_ptr, &sender_key);
+                    write_unix_addr_to_user(addr_ptr, addrlen_ptr, &sender_key)?;
                 }
             }
-            return Ok(n);
+            Ok(copied)
         }
-        let nonblocking = sock.inner.lock().nonblocking;
-        if nonblocking {
-            return Err(ErrNo::EAGAIN);
-        }
-        task::sleep_for_ticks(1);
     }
 }
 
@@ -485,29 +681,18 @@ fn write_unix_addr_to_user(
     Ok(())
 }
 
-fn pop_dgram_packet(inner: &mut UnixSockInner) -> Option<(Vec<u8>, Option<Vec<u8>>)> {
-    if let Some(packet) = inner.inbox.pop_front() {
-        return Some((packet, None));
-    }
-    let key = inner.bound_key.clone()?;
-    BOUND.lock()
-        .get_mut(&key)
-        .and_then(|entry| entry.dgram_inbox.pop_front())
-}
-
 fn deliver_dgram(peer: &[u8], buf: &[u8], sender: Option<Vec<u8>>) -> Result<usize, ErrNo> {
-    let mut bound = BOUND.lock();
-    let entry = bound.get_mut(peer).ok_or(ErrNo::ECONNREFUSED)?;
+    let bound = BOUND.lock();
+    let entry = bound.get(peer).ok_or(ErrNo::ECONNREFUSED)?;
     if entry.sock_type != UnixSockType::Dgram {
         return Err(ErrNo::ECONNREFUSED);
     }
-    if entry.dgram_inbox.len() >= UNIX_DGRAM_INBOX_MAX {
-        log::warn!("[unix_sock] dgram_inbox full peer_len={} cap={}",
-                   peer.len(),
-                   UNIX_DGRAM_INBOX_MAX);
-        return Err(ErrNo::EAGAIN);
-    }
-    entry.dgram_inbox.push_back((buf.to_vec(), sender));
+    let inbox = entry.dgram_inbox.clone().ok_or(ErrNo::ECONNREFUSED)?;
+    drop(bound);
+    inbox.push(DgramPacket {
+        data: buf.to_vec(),
+        sender,
+    })?;
     Ok(buf.len())
 }
 
@@ -557,6 +742,23 @@ fn install_pathname_socket(key: &[u8]) -> Result<(), ErrNo> {
 impl VfsIoHandle for UnixSocketHandle {
     fn open_accmode(&self) -> u32 { 2 }
 
+    fn prepare_read(&mut self, max_len: usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
+        let inner = self.sock.inner.lock();
+        if let Some(mut endpoint) = inner.endpoint.clone() {
+            drop(inner);
+            return endpoint.prepare_read(max_len);
+        }
+        if inner.sock_type != UnixSockType::Dgram {
+            return Err(VfsError::Unsupported);
+        }
+        let inbox = inner.dgram_inbox.clone().ok_or(VfsError::Unsupported)?;
+        Ok(Box::new(DgramPreparedRead {
+            inbox,
+            nonblocking: inner.nonblocking,
+            max_len,
+        }))
+    }
+
     fn open_status_flags(&self) -> u32 {
         if self.sock.inner.lock().nonblocking {
             SOCK_NONBLOCK as u32
@@ -580,29 +782,16 @@ impl VfsIoHandle for UnixSocketHandle {
     }
 
     fn read(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
-        let sock = self.sock.clone();
-        loop {
-            let packet = {
-                let mut inner = sock.inner.lock();
-                if let Some(mut endpoint) = inner.endpoint.clone() {
-                    drop(inner);
-                    return endpoint.read(buf);
-                }
-                if inner.sock_type == UnixSockType::Dgram {
-                    if let Some((packet, _)) = pop_dgram_packet(&mut inner) {
-                        let n = packet.len().min(buf.len());
-                        buf[..n].copy_from_slice(&packet[..n]);
-                        return Ok(n);
-                    }
-                    if inner.nonblocking {
-                        return Err(VfsError::WouldBlock);
-                    }
-                } else if inner.nonblocking {
-                    return Err(VfsError::WouldBlock);
-                }
-            };
-            let _ = packet;
-            task::sleep_for_ticks(1);
+        let prepared = self.prepare_read(buf.len())?;
+        let lease = prepared.acquire()?;
+        let n = lease.bytes().len();
+        buf[..n].copy_from_slice(lease.bytes());
+        match lease.finish(VfsCopyProgress {
+            copied: n,
+            complete: true,
+        })? {
+            VfsReadFinish::Bytes(copied) => Ok(copied),
+            VfsReadFinish::Fault => Err(VfsError::Io),
         }
     }
 
@@ -631,13 +820,10 @@ impl VfsIoHandle for UnixSocketHandle {
         const POLLOUT: i16 = 0x004;
         let mut revents = 0i16;
         if events & POLLIN != 0 {
-            let has_data = !inner.inbox.is_empty()
-                || inner.bound_key.as_ref().is_some_and(|key| {
-                    BOUND
-                        .lock()
-                        .get(key)
-                        .is_some_and(|entry| !entry.dgram_inbox.is_empty())
-                });
+            let has_data = inner
+                .dgram_inbox
+                .as_ref()
+                .is_some_and(|inbox| inbox.has_data());
             if has_data {
                 revents |= POLLIN;
             }
@@ -668,6 +854,43 @@ impl VfsIoHandle for UnixSocketHandle {
             sock: self.sock.clone(),
             inode: self.inode,
         }))
+    }
+}
+
+struct DgramPreparedRead {
+    inbox: Arc<DgramInbox>,
+    nonblocking: bool,
+    max_len: usize,
+}
+
+impl VfsPreparedRead for DgramPreparedRead {
+    fn acquire(self: Box<Self>) -> VfsResult<Box<dyn VfsReadLease>> {
+        let lease = self.inbox.acquire(self.nonblocking)?;
+        Ok(Box::new(DgramVfsReadLease {
+            lease: Some(lease),
+            max_len: self.max_len,
+        }))
+    }
+}
+
+struct DgramVfsReadLease {
+    lease: Option<DgramReadLease>,
+    max_len: usize,
+}
+
+impl VfsReadLease for DgramVfsReadLease {
+    fn bytes(&self) -> &[u8] {
+        self.lease
+            .as_ref()
+            .map(|lease| lease.bytes(self.max_len))
+            .unwrap_or(&[])
+    }
+
+    fn finish(mut self: Box<Self>, progress: VfsCopyProgress) -> VfsResult<VfsReadFinish> {
+        self.lease
+            .take()
+            .ok_or(VfsError::Io)?
+            .finish(progress.copied, progress.complete)
     }
 }
 
