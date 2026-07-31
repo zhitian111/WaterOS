@@ -38,32 +38,38 @@ pub(crate) fn sys_fallocate(args: SyscallArgs) -> UserRet {
         None => return UserRet::from_error(ErrNo::EINVAL),
     };
 
-    let result = vfs::fd::with_current_io(fd, |handle| -> Result<(), VfsError> {
-        const O_ACCMODE: u32 = 3;
-        const O_RDONLY: u32 = 0;
-        if handle.open_accmode() & O_ACCMODE == O_RDONLY {
-            return Err(VfsError::BadFd);
-        }
+    let result = loop {
+        let result = vfs::fd::with_current_io(fd, |handle| -> Result<(), VfsError> {
+            const O_ACCMODE: u32 = 3;
+            const O_RDONLY: u32 = 0;
+            if handle.open_accmode() & O_ACCMODE == O_RDONLY {
+                return Err(VfsError::BadFd);
+            }
 
-        if mode & FALLOC_FL_KEEP_SIZE != 0 {
-            let meta = handle.metadata()?;
-            if meta.size >= end {
+            if mode & FALLOC_FL_KEEP_SIZE != 0 {
+                let meta = handle.metadata()?;
+                if meta.size >= end {
+                    return Ok(());
+                }
+                log::trace!(
+                    "[syscall] fallocate(nr=47) KEEP_SIZE prealloc stub (size {} -> {})",
+                    meta.size,
+                    end,
+                );
                 return Ok(());
             }
-            log::trace!(
-                "[syscall] fallocate(nr=47) KEEP_SIZE prealloc stub (size {} -> {})",
-                meta.size,
-                end,
-            );
-            return Ok(());
-        }
 
-        let meta = handle.metadata()?;
-        if meta.size < end {
-            handle.truncate(end)?;
+            let meta = handle.metadata()?;
+            if meta.size < end {
+                handle.truncate(end)?;
+            }
+            Ok(())
+        });
+        if result != Err(VfsError::Busy) {
+            break result;
         }
-        Ok(())
-    });
+        task::yield_now();
+    };
 
     match result {
         Ok(()) => UserRet::from_success(0),

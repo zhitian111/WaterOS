@@ -70,8 +70,8 @@ fn map_vfs_to_root_vol(e : VfsError) -> RootVolumeReadError {
         VfsError::NoTask |
         VfsError::TooManyOpenFiles |
         VfsError::NoSpace |
+        VfsError::NoMemory |
         VfsError::ReadOnlyFs => RootVolumeReadError::Unsupported,
-        VfsError::Busy => RootVolumeReadError::Io,
     }
 }
 

@@ -155,14 +155,21 @@ pub(crate) fn sys_ftruncate(args: SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EINVAL);
     }
 
-    match vfs::fd::with_current_io(fd, |handle| {
-        const O_ACCMODE: u32 = 3;
-        const O_RDONLY: u32 = 0;
-        if handle.open_accmode() & O_ACCMODE == O_RDONLY {
-            return Err(vfs::api::VfsError::Unsupported);
+    let result = loop {
+        let result = vfs::fd::with_current_io(fd, |handle| {
+            const O_ACCMODE: u32 = 3;
+            const O_RDONLY: u32 = 0;
+            if handle.open_accmode() & O_ACCMODE == O_RDONLY {
+                return Err(vfs::api::VfsError::Unsupported);
+            }
+            handle.truncate(len as u64)
+        });
+        if result != Err(vfs::api::VfsError::Busy) {
+            break result;
         }
-        handle.truncate(len as u64)
-    }) {
+        task::yield_now();
+    };
+    match result {
         Ok(()) => UserRet::from_success(0),
         Err(vfs::api::VfsError::Unsupported) => UserRet::from_error(ErrNo::EINVAL),
         Err(e) => UserRet::from_error(vfs_error_to_errno(e)),

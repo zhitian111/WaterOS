@@ -528,6 +528,80 @@ pub mod self_test {
         Ok(())
     }
 
+    /// Prepared read 仅按 user-copy 进度提交，并在 Drop 时取消 reservation。
+    #[cfg(feature = "bridge-fs-api")]
+    pub fn prepared_read_smoke() -> VfsResult<()> {
+        use super::api::{VfsCopyProgress, VfsError, VfsReadFinish};
+
+        let backend = active_impl::backend();
+        let mut handle =
+            backend.open("/vfs_ofd_smoke",
+                         VfsOpenFlags(VfsOpenFlags::READ | VfsOpenFlags::WRITE))?;
+        let mut duplicate = handle.duplicate()?;
+
+        let lease = handle.prepare_read(3)?.acquire()?;
+        if lease.bytes() != b"abc" {
+            return Err(VfsError::Io);
+        }
+        if !matches!(duplicate.prepare_read(1), Err(VfsError::Busy)) ||
+           duplicate.seek(0, VfsSeekWhence::Cur) != Err(VfsError::Busy) ||
+           duplicate.write(b"q") != Err(VfsError::Busy)
+        {
+            return Err(VfsError::Io);
+        }
+        let mut independent = backend.open("/vfs_ofd_smoke", VfsOpenFlags::read())?;
+        let independent_lease = independent.prepare_read(1)?.acquire()?;
+        if independent_lease.bytes() != b"a" {
+            return Err(VfsError::Io);
+        }
+        drop(independent_lease);
+        if lease.finish(VfsCopyProgress { copied : 1,
+                                          complete : false })? !=
+           VfsReadFinish::Bytes(1)
+        {
+            return Err(VfsError::Io);
+        }
+        if duplicate.seek(0, VfsSeekWhence::Cur)? != 1 {
+            return Err(VfsError::Io);
+        }
+
+        let cancelled = handle.prepare_read(2)?.acquire()?;
+        if cancelled.bytes() != b"bc" {
+            return Err(VfsError::Io);
+        }
+        drop(cancelled);
+        if handle.seek(0, VfsSeekWhence::Cur)? != 1 {
+            return Err(VfsError::Io);
+        }
+
+        let faulted = handle.prepare_read(2)?.acquire()?;
+        if faulted.finish(VfsCopyProgress { copied : 0,
+                                            complete : false })? !=
+           VfsReadFinish::Fault ||
+           handle.seek(0, VfsSeekWhence::Cur)? != 1
+        {
+            return Err(VfsError::Io);
+        }
+
+        let complete = handle.prepare_read(8)?.acquire()?;
+        if complete.finish(VfsCopyProgress { copied : 3,
+                                             complete : true })? !=
+           VfsReadFinish::Bytes(3) ||
+           handle.seek(0, VfsSeekWhence::Cur)? != 4
+        {
+            return Err(VfsError::Io);
+        }
+        let eof = handle.prepare_read(1)?.acquire()?;
+        if !eof.bytes().is_empty() ||
+           eof.finish(VfsCopyProgress { copied : 0,
+                                        complete : true })? !=
+           VfsReadFinish::Bytes(0)
+        {
+            return Err(VfsError::Io);
+        }
+        Ok(())
+    }
+
     pub fn run() {
         #[cfg(feature = "bridge-fs-api")]
         {
@@ -550,6 +624,11 @@ pub mod self_test {
                 log::warn!("[vfs] self_test OFD sharing skipped or failed: {:?}", e);
             } else {
                 log::info!("[vfs] self_test OFD sharing ok");
+            }
+            if let Err(e) = prepared_read_smoke() {
+                log::warn!("[vfs] self_test prepared read skipped or failed: {:?}", e);
+            } else {
+                log::info!("[vfs] self_test prepared read ok");
             }
             const MKDIR_NAME: &str = "vfs_mkdir_smoke";
             if let Err(e) = rw_mkdir_verify(VfsFsKind::Ext4, MKDIR_NAME) {

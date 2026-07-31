@@ -13,8 +13,12 @@ use crate::mount_table::{resolve_route, FsRoute};
 use crate::{replace_file_contents, FsBridge};
 use api_v0::{
     SingleRootReadView, VfsError, VfsIoHandle, VfsMetadata, VfsNodeType,
-    VfsOpenDescriptionState, VfsOpenFlags, VfsResult, VfsSeekWhence,
+    VfsOpenDescriptionState, VfsOpenFlags, VfsPreparedRead, VfsReadLease, VfsResult,
+    VfsSeekWhence,
 };
+use spin::Mutex;
+
+use crate::read_lease::{try_zeroed, ReservationGuard, StagedReadLease};
 
 const S_IFMT : u16 = 0o170000;
 const S_IFCHR : u16 = 0o020000;
@@ -36,7 +40,7 @@ fn open_accmode(flags : VfsOpenFlags) -> u32 {
 // 本结构代码由AI完成
 pub struct BufferedFileHandle {
     path : String,
-    data : Vec<u8>,
+    data : Arc<Mutex<Vec<u8>>>,
     description : Arc<VfsOpenDescriptionState>,
     meta : VfsMetadata,
     writable : bool,
@@ -101,7 +105,7 @@ impl BufferedFileHandle {
         let accmode = open_accmode(flags);
 
         Ok(Self { path,
-                  data,
+                  data : Arc::new(Mutex::new(data)),
                   description : Arc::new(VfsOpenDescriptionState::new(offset, status_flags)),
                   meta,
                   writable : want_write,
@@ -128,28 +132,44 @@ impl BufferedFileHandle {
             self.dirty = false;
             return Ok(());
         }
-        replace_file_contents(self.path.as_str(), &self.data)?;
+        let data = self.data.lock();
+        let mut snapshot = Vec::new();
+        snapshot.try_reserve_exact(data.len()).map_err(|_| VfsError::NoMemory)?;
+        snapshot.extend_from_slice(data.as_slice());
+        drop(data);
+        replace_file_contents(self.path.as_str(), snapshot.as_slice())?;
         self.dirty = false;
-        self.meta.size = self.data.len() as u64;
+        self.meta.size = snapshot.len() as u64;
         Ok(())
     }
 }
 
 impl VfsIoHandle for BufferedFileHandle {
+    fn prepare_read(&mut self, max_len : usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
+        let reservation = ReservationGuard::begin(self.description.clone())?;
+        Ok(Box::new(BufferedPreparedRead { reservation,
+                                          data : self.data.clone(),
+                                          max_len }))
+    }
+
     // 本方法代码由AI完成
     fn read(&mut self, buf : &mut [u8]) -> VfsResult<usize> {
         if buf.is_empty() {
             return Ok(0);
         }
-        let offset = self.description.offset();
+        let mut reservation = ReservationGuard::begin(self.description.clone())?;
+        let offset = reservation.offset();
         let off = usize::try_from(offset).map_err(|_| VfsError::Io)?;
-        if off >= self.data.len() {
+        let data = self.data.lock();
+        if off >= data.len() {
+            reservation.commit(0, 0)?;
             return Ok(0);
         }
         let n = buf.len()
-                   .min(self.data.len() - off);
-        buf[..n].copy_from_slice(&self.data[off..off + n]);
-        self.description.advance_offset(n as u64)?;
+                   .min(data.len() - off);
+        buf[..n].copy_from_slice(&data[off..off + n]);
+        drop(data);
+        reservation.commit(n, n)?;
         Ok(n)
     }
 
@@ -162,19 +182,22 @@ impl VfsIoHandle for BufferedFileHandle {
             return Ok(0);
         }
         const O_APPEND : u32 = 0o2000;
+        let mut reservation = ReservationGuard::begin(self.description.clone())?;
         if self.description.status_flags() & O_APPEND != 0 {
-            self.description.set_offset(self.data.len() as u64);
+            let end = self.data.lock().len() as u64;
+            reservation.retarget(end)?;
         }
-        let off = usize::try_from(self.description.offset()).map_err(|_| VfsError::Io)?;
+        let off = usize::try_from(reservation.offset()).map_err(|_| VfsError::Io)?;
+        let mut data = self.data.lock();
         let end = off.checked_add(buf.len())
                      .ok_or(VfsError::Io)?;
-        if end > self.data.len() {
-            self.data
-                .resize(end, 0);
+        if end > data.len() {
+            data.resize(end, 0);
         }
-        self.data[off..end].copy_from_slice(buf);
-        self.description.set_offset(end as u64);
-        self.meta.size = self.data.len() as u64;
+        data[off..end].copy_from_slice(buf);
+        self.meta.size = data.len() as u64;
+        drop(data);
+        reservation.commit(buf.len(), buf.len())?;
         self.dirty = true;
         Ok(buf.len())
     }
@@ -188,7 +211,7 @@ impl VfsIoHandle for BufferedFileHandle {
             Ok(meta) => meta,
             Err(_) => self.meta.clone(),
         };
-        m.size = self.data.len() as u64;
+        m.size = self.data.lock().len() as u64;
         Ok(m)
     }
 
@@ -207,12 +230,13 @@ impl VfsIoHandle for BufferedFileHandle {
             return Ok(0);
         }
         let off = usize::try_from(offset).map_err(|_| VfsError::Io)?;
-        if off >= self.data.len() {
+        let data = self.data.lock();
+        if off >= data.len() {
             return Ok(0);
         }
         let n = buf.len()
-                   .min(self.data.len() - off);
-        buf[..n].copy_from_slice(&self.data[off..off + n]);
+                   .min(data.len() - off);
+        buf[..n].copy_from_slice(&data[off..off + n]);
         Ok(n)
     }
 
@@ -227,12 +251,12 @@ impl VfsIoHandle for BufferedFileHandle {
         let off = usize::try_from(offset).map_err(|_| VfsError::Io)?;
         let end = off.checked_add(buf.len())
                      .ok_or(VfsError::Io)?;
-        if end > self.data.len() {
-            self.data
-                .resize(end, 0);
+        let mut data = self.data.lock();
+        if end > data.len() {
+            data.resize(end, 0);
         }
-        self.data[off..end].copy_from_slice(buf);
-        self.meta.size = self.data.len() as u64;
+        data[off..end].copy_from_slice(buf);
+        self.meta.size = data.len() as u64;
         self.dirty = true;
         Ok(buf.len())
     }
@@ -242,13 +266,11 @@ impl VfsIoHandle for BufferedFileHandle {
         if !self.writable {
             return Err(VfsError::Unsupported);
         }
+        let mut reservation = ReservationGuard::begin(self.description.clone())?;
         let len = usize::try_from(len).map_err(|_| VfsError::InvalidPath)?;
-        self.data
-            .resize(len, 0);
+        self.data.lock().resize(len, 0);
         self.meta.size = len as u64;
-        if self.description.offset() > self.meta.size {
-            self.description.set_offset(self.meta.size);
-        }
+        reservation.commit_at(reservation.offset().min(self.meta.size))?;
         self.dirty = true;
         Ok(())
     }
@@ -263,10 +285,10 @@ impl VfsIoHandle for BufferedFileHandle {
                 offset as u64
             }
             VfsSeekWhence::Cur => {
-                return self.description.add_signed_offset(offset);
+                return self.description.add_signed_offset_if_idle(offset);
             }
             VfsSeekWhence::End => {
-                let base = self.data.len() as u64;
+                let base = self.data.lock().len() as u64;
                 if offset < 0 {
                     base.checked_sub((-offset) as u64)
                         .ok_or(VfsError::InvalidPath)?
@@ -276,8 +298,7 @@ impl VfsIoHandle for BufferedFileHandle {
                 }
             }
         };
-        self.description.set_offset(new_off);
-        Ok(new_off)
+        self.description.set_offset_if_idle(new_off)
     }
 
     // 本方法代码由AI完成
@@ -309,6 +330,29 @@ impl VfsIoHandle for BufferedFileHandle {
             revents |= POLLOUT;
         }
         Ok(revents)
+    }
+}
+
+struct BufferedPreparedRead {
+    reservation : ReservationGuard,
+    data : Arc<Mutex<Vec<u8>>>,
+    max_len : usize,
+}
+
+impl VfsPreparedRead for BufferedPreparedRead {
+    fn acquire(self : Box<Self>) -> VfsResult<Box<dyn VfsReadLease>> {
+        let start = usize::try_from(self.reservation.offset()).map_err(|_| VfsError::Io)?;
+        let data = self.data.lock();
+        let len = data.len()
+                      .saturating_sub(start)
+                      .min(self.max_len);
+        let mut staged = try_zeroed(len)?;
+        if len != 0 {
+            staged.copy_from_slice(&data[start..start + len]);
+        }
+        drop(data);
+        let Self { reservation, .. } = *self;
+        Ok(Box::new(StagedReadLease::new(reservation, staged)))
     }
 }
 

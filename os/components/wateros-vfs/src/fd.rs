@@ -86,6 +86,15 @@ pub fn with_current_io<R>(fd : usize,
     with_task_io(task_id, fd, f)
 }
 
+/// Capture a prepared sequential read without retaining the fd-slot lock.
+pub fn prepare_current_read(fd : usize,
+                            max_len : usize)
+                            -> VfsResult<Box<dyn api_v0::VfsPreparedRead>> {
+    let task_id = current_task_id()?;
+    let handle = with_fd_registry(|reg| reg.io_handle_for_task(task_id, fd))?;
+    handle.prepare_read(max_len)
+}
+
 fn with_task_io<R>(task_id : task::TaskId,
                    fd : usize,
                    f : impl FnOnce(&mut (dyn VfsIoHandle + '_)) -> VfsResult<R>)

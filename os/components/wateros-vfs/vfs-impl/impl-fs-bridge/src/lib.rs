@@ -20,6 +20,7 @@ mod mount_ns;
 mod mount_table;
 mod paged_handle;
 mod proc_handle;
+mod read_lease;
 mod tmpfs;
 
 pub use dir_handle::DirectoryHandle;
@@ -1156,4 +1157,5 @@ pub fn test() {
     api_v0::test();
     let _ = FsBridge::default();
     let _ = mount_table::mount_table_self_test();
+    read_lease::allocation_failure_self_test().expect("prepared-read allocation self-test");
 }

@@ -7,9 +7,11 @@ use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
 
 use api_v0::{
     VfsDirEntry, VfsError, VfsIoHandle, VfsMetadata, VfsNodeType, VfsOpenDescriptionState,
-    VfsOpenFlags, VfsResult, VfsSeekWhence,
+    VfsOpenFlags, VfsPreparedRead, VfsReadLease, VfsResult, VfsSeekWhence,
 };
 use fs::procfs::api::ProcFsView;
+
+use crate::read_lease::{try_zeroed, ReservationGuard, StagedReadLease};
 
 use crate::dir_handle::{encode_one, node_type_to_dt};
 use crate::mount_table::MountIdentity;
@@ -40,7 +42,7 @@ pub struct ProcFileHandle {
     #[allow(dead_code)]
     rel: String,
     meta: VfsMetadata,
-    data: Vec<u8>,
+    data: Arc<Vec<u8>>,
     description: Arc<VfsOpenDescriptionState>,
 }
 
@@ -79,7 +81,7 @@ pub fn open_proc(
     Ok(Box::new(ProcFileHandle {
         rel,
         meta,
-        data,
+        data: Arc::new(data),
         description: Arc::new(VfsOpenDescriptionState::new(0, 0)),
     }))
 }
@@ -110,6 +112,10 @@ impl VfsIoHandle for ProcDirectoryHandle {
     fn validate_read_access(&self) -> VfsResult<()> { Err(VfsError::NotAFile) }
 
     fn open_accmode(&self) -> u32 { 0 }
+
+    fn prepare_read(&mut self, _max_len : usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
+        Err(VfsError::NotAFile)
+    }
 
 // 本方法代码由AI完成
     fn metadata(&self) -> VfsResult<VfsMetadata> {
@@ -163,6 +169,13 @@ impl VfsIoHandle for ProcDirectoryHandle {
 impl VfsIoHandle for ProcFileHandle {
     fn open_accmode(&self) -> u32 { 0 }
 
+    fn prepare_read(&mut self, max_len : usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
+        let reservation = ReservationGuard::begin(self.description.clone())?;
+        Ok(Box::new(ProcPreparedRead { reservation,
+                                      data : self.data.clone(),
+                                      max_len }))
+    }
+
 // 本方法代码由AI完成
     fn metadata(&self) -> VfsResult<VfsMetadata> {
         Ok(self.meta.clone())
@@ -170,13 +183,15 @@ impl VfsIoHandle for ProcFileHandle {
 
 // 本方法代码由AI完成
     fn read(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
-        let start = usize::try_from(self.description.offset()).map_err(|_| VfsError::Io)?;
+        let mut reservation = ReservationGuard::begin(self.description.clone())?;
+        let start = usize::try_from(reservation.offset()).map_err(|_| VfsError::Io)?;
         if start >= self.data.len() {
+            reservation.commit(0, 0)?;
             return Ok(0);
         }
         let n = core::cmp::min(buf.len(), self.data.len() - start);
         buf[..n].copy_from_slice(&self.data[start..start + n]);
-        self.description.advance_offset(n as u64)?;
+        reservation.commit(n, n)?;
         Ok(n)
     }
 
@@ -200,18 +215,37 @@ impl VfsIoHandle for ProcFileHandle {
     fn seek(&mut self, offset: i64, whence: VfsSeekWhence) -> VfsResult<u64> {
         let new_off = match whence {
             VfsSeekWhence::Set => offset.max(0) as u64,
-            VfsSeekWhence::Cur => return self.description.add_signed_offset(offset),
+            VfsSeekWhence::Cur => return self.description.add_signed_offset_if_idle(offset),
             VfsSeekWhence::End => self
                 .data
                 .len()
                 .saturating_add_signed(offset as isize) as u64,
         };
-        self.description.set_offset(new_off);
-        Ok(new_off)
+        self.description.set_offset_if_idle(new_off)
     }
 
 // 本方法代码由AI完成
     fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {
         Ok(Box::new(self.clone()))
+    }
+}
+
+struct ProcPreparedRead {
+    reservation : ReservationGuard,
+    data : Arc<Vec<u8>>,
+    max_len : usize,
+}
+
+impl VfsPreparedRead for ProcPreparedRead {
+    fn acquire(self : Box<Self>) -> VfsResult<Box<dyn VfsReadLease>> {
+        let start = usize::try_from(self.reservation.offset()).map_err(|_| VfsError::Io)?;
+        let available = self.data.len().saturating_sub(start);
+        let len = available.min(self.max_len);
+        let mut staged = try_zeroed(len)?;
+        if len != 0 {
+            staged.copy_from_slice(&self.data[start..start + len]);
+        }
+        let Self { reservation, .. } = *self;
+        Ok(Box::new(StagedReadLease::new(reservation, staged)))
     }
 }

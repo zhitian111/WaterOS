@@ -28,7 +28,8 @@ pub use fd::{
     VfsFd, VfsFdSession, VFS_FIRST_DYNAMIC_FD, VFS_STDERR_FD, VFS_STDIN_FD, VFS_STDOUT_FD,
 };
 pub use handle::{
-    VfsFileHandle, VfsIoHandle, VfsOpenDescriptionState, VfsOpenFlags, VfsOpenOps, VfsSeekWhence,
+    VfsCopyProgress, VfsFileHandle, VfsIoHandle, VfsOpenDescriptionState, VfsOpenFlags,
+    VfsOpenOps, VfsPreparedRead, VfsReadFinish, VfsReadLease, VfsReadReservation, VfsSeekWhence,
 };
 pub use kind::{VfsAccessMode, VfsCapability, VfsFsKind};
 pub use meta::{VfsDirEntry, VfsMetadata, VfsNodeType};
@@ -99,6 +100,13 @@ pub fn test() {
     assert_eq!(description.add_signed_offset(-2), Ok(5));
     assert_eq!(duplicate.next_reservation_generation(), 1);
     assert_eq!(description.next_reservation_generation(), 2);
+    let reservation = description.begin_read().expect("reserve");
+    assert_eq!(reservation.offset(), 5);
+    assert_eq!(description.begin_read(), Err(VfsError::Busy));
+    assert_eq!(description.finish_read(reservation, 2, 3), Ok(7));
+    let cancelled = description.begin_read().expect("reserve cancel");
+    assert_eq!(description.cancel_read(cancelled), Ok(()));
+    assert_eq!(description.offset(), 7);
 }
 
 #[cfg(test)]

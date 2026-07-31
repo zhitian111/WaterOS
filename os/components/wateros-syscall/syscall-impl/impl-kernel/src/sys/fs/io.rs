@@ -7,11 +7,13 @@ use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
 use driver::network::stack;
-use vfs::api::VfsSeekWhence;
+use vfs::api::{VfsCopyProgress, VfsError, VfsReadFinish, VfsSeekWhence};
 use crate::fallible_buf::{try_kbuf, SYSCALL_IO_MAX};
 use crate::socket_block::socket_blocking_tick;
 use crate::socket_fd;
-use crate::user_copy::{copy_from_user, copy_from_user_struct, copy_to_user};
+use crate::user_copy::{
+    copy_from_user, copy_from_user_struct, copy_to_user, copy_to_user_progress,
+};
 use crate::vfs_util::{vfs_error_to_errno, vfs_io_at_error_to_errno};
 
 const SMALL_READ_BUF_SIZE: usize = 256;
@@ -52,13 +54,49 @@ pub(crate) fn sys_read(args : SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EFAULT);
     }
     let transfer_len = read_transfer_len(len);
+    match read_fd_prepared(fd, ptr, transfer_len) {
+        Ok(Some(ret)) => return ret,
+        Ok(None) => {}
+        Err(err) => return UserRet::from_error(err),
+    }
+    read_fd_legacy(fd, ptr, transfer_len)
+}
+
+/// Run lease-capable sources without retaining the fd-slot lock. RIO-05 through
+/// RIO-08 replace the explicit legacy branch for stream and device handles.
+fn read_fd_prepared(fd : usize,
+                    ptr : usize,
+                    transfer_len : usize)
+                    -> Result<Option<UserRet>, ErrNo> {
+    let prepared = loop {
+        match vfs::fd::prepare_current_read(fd, transfer_len) {
+            Ok(prepared) => break prepared,
+            Err(VfsError::Busy) => task::yield_now(),
+            Err(VfsError::Unsupported) => return Ok(None),
+            Err(error) => return Err(vfs_error_to_errno(error)),
+        }
+    };
+    let lease = prepared.acquire().map_err(vfs_error_to_errno)?;
+    let progress = copy_to_user_progress(ptr, lease.bytes());
+    let finish = lease.finish(VfsCopyProgress {
+                          copied : progress.copied,
+                          complete : progress.error.is_none(),
+                      })
+                      .map_err(vfs_error_to_errno)?;
+    Ok(Some(match finish {
+        VfsReadFinish::Bytes(copied) => UserRet::from_success(copied),
+        VfsReadFinish::Fault => UserRet::from_error(progress.error.unwrap_or(ErrNo::EFAULT)),
+    }))
+}
+
+fn read_fd_legacy(fd : usize, ptr : usize, transfer_len : usize) -> UserRet {
     if transfer_len <= SMALL_READ_BUF_SIZE {
         let mut kbuf = [0u8; SMALL_READ_BUF_SIZE];
         let n = match read_fd(fd, &mut kbuf[..transfer_len]) {
             Ok(n) => n,
             Err(err) => return UserRet::from_error(err),
         };
-        return do_finish_read(fd, ptr, &kbuf[..n], n);
+        return do_finish_read(ptr, &kbuf[..n], n);
     }
     let mut kbuf = match try_kbuf(transfer_len, SYSCALL_IO_MAX) {
         Ok(buf) => buf,
@@ -68,7 +106,7 @@ pub(crate) fn sys_read(args : SyscallArgs) -> UserRet {
         Ok(n) => n,
         Err(err) => return UserRet::from_error(err),
     };
-    do_finish_read(fd, ptr, &kbuf[..n], n)
+    do_finish_read(ptr, &kbuf[..n], n)
 }
 
 fn validate_read_fd(fd : usize) -> Result<(), ErrNo> {
@@ -211,7 +249,7 @@ pub(crate) fn sys_readv(args : SyscallArgs) -> UserRet {
 }
 
 /// 将内核缓冲区的数据拷贝到用户空间并返回结果。
-fn do_finish_read(fd: usize, ptr: usize, kbuf: &[u8], n: usize) -> UserRet {
+fn do_finish_read(ptr : usize, kbuf : &[u8], n : usize) -> UserRet {
     if n == 0 {
         return UserRet::from_success(0);
     }
@@ -473,7 +511,12 @@ fn write_fd(fd : usize, buf : &[u8]) -> Result<usize, ErrNo> {
     if vfs::fd::is_path_only_fd(fd).map_err(vfs_error_to_errno)? {
         return Err(ErrNo::EBADF);
     }
-    vfs::fd::with_current_io(fd, |handle| handle.write(buf)).map_err(vfs_error_to_errno)
+    loop {
+        match vfs::fd::with_current_io(fd, |handle| handle.write(buf)) {
+            Err(VfsError::Busy) => task::yield_now(),
+            result => return result.map_err(vfs_error_to_errno),
+        }
+    }
 }
 
 fn write_tcp_socket_blocking(fd : usize, buf : &[u8]) -> Result<usize, ErrNo> {
@@ -813,7 +856,13 @@ pub(crate) fn sys_lseek(args : SyscallArgs) -> UserRet {
         _ => return UserRet::from_error(ErrNo::EINVAL),
     };
 
-    match vfs::fd::with_current_io(fd, |handle| handle.seek(offset, whence)) {
+    let result = loop {
+        match vfs::fd::with_current_io(fd, |handle| handle.seek(offset, whence)) {
+            Err(VfsError::Busy) => task::yield_now(),
+            result => break result,
+        }
+    };
+    match result {
         Ok(pos) => UserRet::from_success(pos as usize),
         Err(e) => {
             let errno = match vfs_error_to_errno(e) {

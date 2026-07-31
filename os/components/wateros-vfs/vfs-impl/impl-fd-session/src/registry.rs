@@ -11,8 +11,8 @@ use alloc::vec::Vec;
 use spin::Mutex;
 
 use api_v0::{
-    VfsError, VfsFdSession, VfsIoHandle, VfsResult, VFS_FIRST_DYNAMIC_FD, VFS_STDERR_FD,
-    VFS_STDIN_FD, VFS_STDOUT_FD,
+    VfsError, VfsFdSession, VfsIoHandle, VfsPreparedRead, VfsResult, VFS_FIRST_DYNAMIC_FD,
+    VFS_STDERR_FD, VFS_STDIN_FD, VFS_STDOUT_FD,
 };
 use driver_character_api_v0::{
     character_device_at, character_device_count, character_device_kind_at, CharacterDeviceKind,
@@ -71,6 +71,12 @@ impl SharedIoHandle {
         let mut inner = self.inner.lock();
         f(inner.handle
                .as_mut())
+    }
+
+    /// Capture a prepared read while holding the fd-slot lock only briefly.
+    pub fn prepare_read(&self, max_len : usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
+        let mut inner = self.inner.lock();
+        inner.handle.prepare_read(max_len)
     }
 
     /// Create an independent fd-slot handle. If the live handle is blocked in

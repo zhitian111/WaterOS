@@ -5,6 +5,7 @@ extern crate alloc;
 use alloc::boxed::Box;
 use core::any::Any;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use spin::Mutex;
 
 use crate::error::{VfsError, VfsResult};
 use crate::meta::VfsMetadata;
@@ -20,13 +21,15 @@ pub struct VfsOpenDescriptionState {
     offset : AtomicU64,
     status_flags : AtomicU32,
     reservation_generation : AtomicU64,
+    read_reservation : Mutex<Option<VfsReadReservation>>,
 }
 
 impl VfsOpenDescriptionState {
     pub const fn new(offset : u64, status_flags : u32) -> Self {
         Self { offset : AtomicU64::new(offset),
                status_flags : AtomicU32::new(status_flags),
-               reservation_generation : AtomicU64::new(1) }
+               reservation_generation : AtomicU64::new(1),
+               read_reservation : Mutex::new(None) }
     }
 
     #[inline]
@@ -78,6 +81,145 @@ impl VfsOpenDescriptionState {
     pub fn next_reservation_generation(&self) -> u64 {
         self.reservation_generation.fetch_add(1, Ordering::AcqRel)
     }
+
+    /// Reserve the current sequential offset for a prepared read.
+    pub fn begin_read(&self) -> VfsResult<VfsReadReservation> {
+        let mut active = self.read_reservation.lock();
+        if active.is_some() {
+            return Err(VfsError::Busy);
+        }
+        let reservation =
+            VfsReadReservation { id : self.next_reservation_generation(),
+                                 offset : self.offset() };
+        *active = Some(reservation);
+        Ok(reservation)
+    }
+
+    /// Change the captured position while retaining the same active reservation.
+    pub fn retarget_read(&self,
+                         reservation : VfsReadReservation,
+                         offset : u64)
+                         -> VfsResult<VfsReadReservation> {
+        let mut active = self.read_reservation.lock();
+        if active.as_ref().map(|entry| entry.id) != Some(reservation.id) {
+            return Err(VfsError::Io);
+        }
+        let updated = VfsReadReservation { id : reservation.id,
+                                           offset };
+        *active = Some(updated);
+        Ok(updated)
+    }
+
+    /// Commit only bytes that reached userspace, then release the reservation.
+    pub fn finish_read(&self,
+                       reservation : VfsReadReservation,
+                       copied : usize,
+                       staged : usize)
+                       -> VfsResult<u64> {
+        let mut active = self.read_reservation.lock();
+        if active.as_ref().map(|entry| entry.id) != Some(reservation.id) {
+            return Err(VfsError::Io);
+        }
+        let new_offset = if copied <= staged {
+            reservation.offset.checked_add(copied as u64)
+        } else {
+            None
+        };
+        *active = None;
+        let new_offset = new_offset.ok_or(VfsError::Io)?;
+        self.offset.store(new_offset, Ordering::Release);
+        Ok(new_offset)
+    }
+
+    /// Complete a reserved sequential operation at an explicitly chosen offset.
+    pub fn finish_read_at(&self,
+                          reservation : VfsReadReservation,
+                          new_offset : u64)
+                          -> VfsResult<u64> {
+        let mut active = self.read_reservation.lock();
+        if active.as_ref().map(|entry| entry.id) != Some(reservation.id) {
+            return Err(VfsError::Io);
+        }
+        *active = None;
+        self.offset.store(new_offset, Ordering::Release);
+        Ok(new_offset)
+    }
+
+    /// Cancel a prepared read without changing the shared offset.
+    pub fn cancel_read(&self, reservation : VfsReadReservation) -> VfsResult<()> {
+        let mut active = self.read_reservation.lock();
+        if active.as_ref().map(|entry| entry.id) != Some(reservation.id) {
+            return Err(VfsError::Io);
+        }
+        *active = None;
+        Ok(())
+    }
+
+    #[inline]
+    pub fn read_reservation_active(&self) -> bool { self.read_reservation.lock().is_some() }
+
+    pub fn set_offset_if_idle(&self, offset : u64) -> VfsResult<u64> {
+        let active = self.read_reservation.lock();
+        if active.is_some() {
+            return Err(VfsError::Busy);
+        }
+        self.offset.store(offset, Ordering::Release);
+        Ok(offset)
+    }
+
+    pub fn add_signed_offset_if_idle(&self, displacement : i64) -> VfsResult<u64> {
+        let active = self.read_reservation.lock();
+        if active.is_some() {
+            return Err(VfsError::Busy);
+        }
+        self.add_signed_offset(displacement)
+    }
+
+    pub fn clamp_offset_if_idle(&self, maximum : u64) -> VfsResult<u64> {
+        let active = self.read_reservation.lock();
+        if active.is_some() {
+            return Err(VfsError::Busy);
+        }
+        let offset = self.offset().min(maximum);
+        self.offset.store(offset, Ordering::Release);
+        Ok(offset)
+    }
+}
+
+/// Identity and captured offset of one active sequential read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VfsReadReservation {
+    id : u64,
+    offset : u64,
+}
+
+impl VfsReadReservation {
+    #[inline]
+    pub const fn offset(self) -> u64 { self.offset }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VfsCopyProgress {
+    pub copied : usize,
+    pub complete : bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VfsReadFinish {
+    Bytes(usize),
+    Fault,
+}
+
+/// Stable staged data whose source position is committed only by `finish`.
+pub trait VfsReadLease: Send {
+    fn bytes(&self) -> &[u8];
+
+    fn finish(self : Box<Self>, progress : VfsCopyProgress) -> VfsResult<VfsReadFinish>;
+}
+
+/// Owned read operation produced while the fd slot lock is held briefly.
+pub trait VfsPreparedRead: Send {
+    fn acquire(self : Box<Self>) -> VfsResult<Box<dyn VfsReadLease>>;
 }
 
 /// `open` 标志位（占位；与 ABI `O_*` 对齐将随 syscall 工作包演进）。
@@ -123,6 +265,11 @@ impl<T: Any> VfsHandleAny for T {
 
 /// 流式读写的已打开对象（pipe、控制台、文件会话等）。
 pub trait VfsIoHandle: Send + VfsHandleAny {
+    /// Capture owned state for a sequential read without waiting or doing I/O.
+    fn prepare_read(&mut self, _max_len : usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
+        Err(VfsError::Unsupported)
+    }
+
     fn read(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
         let _ = buf;
         Err(VfsError::Unsupported)

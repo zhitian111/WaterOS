@@ -45,6 +45,8 @@ pub enum VfsError {
     ReadOnlyFs,
     /// 设备无剩余空间；cgroup cpuset 无可用 cpus/mems 时拒绝 attach 也用此语义。
     NoSpace,
+    /// 内核无法为本次操作分配临时内存。
+    NoMemory,
 }
 
 /// [`VfsError`] 上的 [`core::result::Result`] 别名。

@@ -10,7 +10,7 @@ use alloc::vec::Vec;
 
 use api_v0::{
     SingleRootReadView, VfsDirEntry, VfsError, VfsIoHandle, VfsMetadata, VfsNodeType,
-    VfsOpenDescriptionState, VfsResult,
+    VfsOpenDescriptionState, VfsPreparedRead, VfsResult,
 };
 
 use crate::FsBridge;
@@ -109,6 +109,10 @@ impl VfsIoHandle for DirectoryHandle {
     fn validate_read_access(&self) -> VfsResult<()> { Err(VfsError::NotAFile) }
 
     fn open_accmode(&self) -> u32 { 0 }
+
+    fn prepare_read(&mut self, _max_len : usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
+        Err(VfsError::NotAFile)
+    }
 
     // 本方法代码由AI完成
     fn metadata(&self) -> VfsResult<VfsMetadata> { Ok(self.meta.clone()) }
