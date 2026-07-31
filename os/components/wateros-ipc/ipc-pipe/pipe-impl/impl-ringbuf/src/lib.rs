@@ -31,6 +31,15 @@ pub fn test() {
     assert_eq!(read_end.kind(), api_v0::PipeEndpointKind::Read);
     assert_eq!(write_end.kind(), api_v0::PipeEndpointKind::Write);
 
+    // dup/fork clone 共享同一个端点的 OFD status；另一方向是独立 OFD。
+    let read_dup = read_end.clone();
+    read_dup.set_nonblocking(true);
+    read_dup.set_direct(true);
+    assert!(read_end.nonblocking());
+    assert!(read_end.direct());
+    assert!(!write_end.nonblocking());
+    assert!(!write_end.direct());
+
     // 部分 close 仍可读：clone 读端 → close 原读端 → 写端 write → clone 读端 read。
     let (read_a, write_a) = PipeEndpoint::pair(false);
     let read_b = read_a.clone();

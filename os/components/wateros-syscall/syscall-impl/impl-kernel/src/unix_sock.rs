@@ -557,6 +557,28 @@ fn install_pathname_socket(key: &[u8]) -> Result<(), ErrNo> {
 impl VfsIoHandle for UnixSocketHandle {
     fn open_accmode(&self) -> u32 { 2 }
 
+    fn open_status_flags(&self) -> u32 {
+        if self.sock.inner.lock().nonblocking {
+            SOCK_NONBLOCK as u32
+        } else {
+            0
+        }
+    }
+
+    fn set_open_status_flags(&mut self, flags : u32) -> VfsResult<()> {
+        let nonblocking = flags as usize & SOCK_NONBLOCK != 0;
+        let mut inner = self.sock.inner.lock();
+        inner.nonblocking = nonblocking;
+        if let Some(endpoint) = inner.endpoint.as_mut() {
+            endpoint.set_open_status_flags(if nonblocking {
+                                              SOCK_NONBLOCK as u32
+                                          } else {
+                                              0
+                                          })?;
+        }
+        Ok(())
+    }
+
     fn read(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
         let sock = self.sock.clone();
         loop {

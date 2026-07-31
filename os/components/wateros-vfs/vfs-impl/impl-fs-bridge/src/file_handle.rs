@@ -4,6 +4,7 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
+use alloc::sync::Arc;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -11,8 +12,8 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use crate::mount_table::{resolve_route, FsRoute};
 use crate::{replace_file_contents, FsBridge};
 use api_v0::{
-    SingleRootReadView, VfsError, VfsIoHandle, VfsMetadata, VfsNodeType, VfsOpenFlags, VfsResult,
-    VfsSeekWhence,
+    SingleRootReadView, VfsError, VfsIoHandle, VfsMetadata, VfsNodeType,
+    VfsOpenDescriptionState, VfsOpenFlags, VfsResult, VfsSeekWhence,
 };
 
 const S_IFMT : u16 = 0o170000;
@@ -36,7 +37,7 @@ fn open_accmode(flags : VfsOpenFlags) -> u32 {
 pub struct BufferedFileHandle {
     path : String,
     data : Vec<u8>,
-    offset : u64,
+    description : Arc<VfsOpenDescriptionState>,
     meta : VfsMetadata,
     writable : bool,
     accmode : u32,
@@ -88,8 +89,10 @@ impl BufferedFileHandle {
         }
 
         let mut offset = 0u64;
+        let mut status_flags = 0u32;
         if flags.contains(VfsOpenFlags::APPEND) {
             offset = data.len() as u64;
+            status_flags |= 0o2000;
         }
 
         let mut meta = meta;
@@ -99,7 +102,7 @@ impl BufferedFileHandle {
 
         Ok(Self { path,
                   data,
-                  offset,
+                  description : Arc::new(VfsOpenDescriptionState::new(offset, status_flags)),
                   meta,
                   writable : want_write,
                   accmode,
@@ -138,16 +141,15 @@ impl VfsIoHandle for BufferedFileHandle {
         if buf.is_empty() {
             return Ok(0);
         }
-        let off = usize::try_from(self.offset).map_err(|_| VfsError::Io)?;
+        let offset = self.description.offset();
+        let off = usize::try_from(offset).map_err(|_| VfsError::Io)?;
         if off >= self.data.len() {
             return Ok(0);
         }
         let n = buf.len()
                    .min(self.data.len() - off);
         buf[..n].copy_from_slice(&self.data[off..off + n]);
-        self.offset = self.offset
-                          .checked_add(n as u64)
-                          .ok_or(VfsError::Io)?;
+        self.description.advance_offset(n as u64)?;
         Ok(n)
     }
 
@@ -159,7 +161,11 @@ impl VfsIoHandle for BufferedFileHandle {
         if buf.is_empty() {
             return Ok(0);
         }
-        let off = usize::try_from(self.offset).map_err(|_| VfsError::Io)?;
+        const O_APPEND : u32 = 0o2000;
+        if self.description.status_flags() & O_APPEND != 0 {
+            self.description.set_offset(self.data.len() as u64);
+        }
+        let off = usize::try_from(self.description.offset()).map_err(|_| VfsError::Io)?;
         let end = off.checked_add(buf.len())
                      .ok_or(VfsError::Io)?;
         if end > self.data.len() {
@@ -167,7 +173,7 @@ impl VfsIoHandle for BufferedFileHandle {
                 .resize(end, 0);
         }
         self.data[off..end].copy_from_slice(buf);
-        self.offset = end as u64;
+        self.description.set_offset(end as u64);
         self.meta.size = self.data.len() as u64;
         self.dirty = true;
         Ok(buf.len())
@@ -240,8 +246,8 @@ impl VfsIoHandle for BufferedFileHandle {
         self.data
             .resize(len, 0);
         self.meta.size = len as u64;
-        if self.offset > self.meta.size {
-            self.offset = self.meta.size;
+        if self.description.offset() > self.meta.size {
+            self.description.set_offset(self.meta.size);
         }
         self.dirty = true;
         Ok(())
@@ -257,15 +263,7 @@ impl VfsIoHandle for BufferedFileHandle {
                 offset as u64
             }
             VfsSeekWhence::Cur => {
-                if offset < 0 {
-                    self.offset
-                        .checked_sub((-offset) as u64)
-                        .ok_or(VfsError::InvalidPath)?
-                } else {
-                    self.offset
-                        .checked_add(offset as u64)
-                        .ok_or(VfsError::InvalidPath)?
-                }
+                return self.description.add_signed_offset(offset);
             }
             VfsSeekWhence::End => {
                 let base = self.data.len() as u64;
@@ -278,12 +276,21 @@ impl VfsIoHandle for BufferedFileHandle {
                 }
             }
         };
-        self.offset = new_off;
+        self.description.set_offset(new_off);
         Ok(new_off)
     }
 
     // 本方法代码由AI完成
     fn flush(&mut self) -> VfsResult<()> { self.sync_dirty() }
+
+    fn open_status_flags(&self) -> u32 { self.description.status_flags() }
+
+    fn set_open_status_flags(&mut self, flags : u32) -> VfsResult<()> {
+        const O_APPEND : u32 = 0o2000;
+        const O_NONBLOCK : u32 = 0o4000;
+        self.description.set_status_flags(flags & (O_APPEND | O_NONBLOCK));
+        Ok(())
+    }
 
     // 本方法代码由AI完成
     fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> { Ok(Box::new(self.clone())) }

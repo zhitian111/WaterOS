@@ -313,6 +313,15 @@ pub fn self_test() {
         let dup_fd = reg.install_dup_fd_for_task(a, 0, dup_handle)
                         .expect("dup");
         assert_ne!(dup_fd, fd);
+        reg.set_fd_flags(a,
+                         fd,
+                         usize::from(impl_fd_session::registry::FD_CLOEXEC))
+           .expect("set source cloexec");
+        assert_eq!(reg.get_fd_flags(a, fd),
+                   Ok(usize::from(impl_fd_session::registry::FD_CLOEXEC)));
+        assert_eq!(reg.get_fd_flags(a, dup_fd),
+                   Ok(0),
+                   "dup descriptor flags must be independent");
         assert!(reg.io_handle_for_task(a, dup_fd)
                    .is_ok());
         assert!(reg.close_fd_for_task(a, dup_fd)
@@ -327,12 +336,23 @@ pub fn self_test() {
         let parent_extra = reg.alloc_fd_for_task(a,
                                                  Box::new(impl_fd_session::ConsoleOutHandle))
                               .expect("alloc fd");
+        reg.set_fd_flags(a,
+                         parent_extra,
+                         usize::from(impl_fd_session::registry::FD_CLOEXEC))
+           .expect("set inherited cloexec");
         let (parent_table, parent_flags) = reg.fd_table_copy_plan(a);
         reg.install_fd_table_copy(b, parent_table, parent_flags);
         assert!(reg.io_handle_for_task(b, parent_extra)
                    .is_ok());
         assert!(reg.io_handle_for_task(a, parent_extra)
                    .is_ok());
+        assert_eq!(reg.get_fd_flags(b, parent_extra),
+                   Ok(usize::from(impl_fd_session::registry::FD_CLOEXEC)));
+        reg.set_fd_flags(b, parent_extra, 0)
+           .expect("clear child cloexec");
+        assert_eq!(reg.get_fd_flags(a, parent_extra),
+                   Ok(usize::from(impl_fd_session::registry::FD_CLOEXEC)),
+                   "fork descriptor flags must use separate tables");
         let c : task::TaskId = 12;
         reg.share_fd_table_from_parent(c, a);
         assert!(reg.io_handle_for_task(c, parent_extra)

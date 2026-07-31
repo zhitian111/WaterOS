@@ -27,7 +27,9 @@ pub use error::{VfsError, VfsResult};
 pub use fd::{
     VfsFd, VfsFdSession, VFS_FIRST_DYNAMIC_FD, VFS_STDERR_FD, VFS_STDIN_FD, VFS_STDOUT_FD,
 };
-pub use handle::{VfsFileHandle, VfsIoHandle, VfsOpenFlags, VfsOpenOps, VfsSeekWhence};
+pub use handle::{
+    VfsFileHandle, VfsIoHandle, VfsOpenDescriptionState, VfsOpenFlags, VfsOpenOps, VfsSeekWhence,
+};
 pub use kind::{VfsAccessMode, VfsCapability, VfsFsKind};
 pub use meta::{VfsDirEntry, VfsMetadata, VfsNodeType};
 pub use mount::VfsMountOps;
@@ -87,6 +89,16 @@ pub fn test() {
         |_| Ok(true),
     );
     assert_eq!(looped, Err(VfsError::TooManySymlinks));
+
+    let description = alloc::sync::Arc::new(VfsOpenDescriptionState::new(4, 0));
+    let duplicate = description.clone();
+    assert_eq!(description.advance_offset(3), Ok(7));
+    assert_eq!(duplicate.offset(), 7);
+    duplicate.set_status_flags(0o4000);
+    assert_eq!(description.status_flags(), 0o4000);
+    assert_eq!(description.add_signed_offset(-2), Ok(5));
+    assert_eq!(duplicate.next_reservation_generation(), 1);
+    assert_eq!(description.next_reservation_generation(), 2);
 }
 
 #[cfg(test)]

@@ -3,11 +3,11 @@
 
 extern crate alloc;
 
-use alloc::{boxed::Box, string::String, vec::Vec};
+use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
 
 use api_v0::{
-    VfsDirEntry, VfsError, VfsIoHandle, VfsMetadata, VfsNodeType, VfsOpenFlags, VfsResult,
-    VfsSeekWhence,
+    VfsDirEntry, VfsError, VfsIoHandle, VfsMetadata, VfsNodeType, VfsOpenDescriptionState,
+    VfsOpenFlags, VfsResult, VfsSeekWhence,
 };
 use fs::procfs::api::ProcFsView;
 
@@ -30,7 +30,7 @@ pub struct ProcDirectoryHandle {
     abs: String,
     meta: VfsMetadata,
     dirents: Option<Vec<VfsDirEntry>>,
-    next_index: usize,
+    description: Arc<VfsOpenDescriptionState>,
 }
 
 /// procfs 普通文件句柄（内容按需生成并缓存）。
@@ -41,7 +41,7 @@ pub struct ProcFileHandle {
     rel: String,
     meta: VfsMetadata,
     data: Vec<u8>,
-    offset: u64,
+    description: Arc<VfsOpenDescriptionState>,
 }
 
 // 本方法代码由AI完成
@@ -67,7 +67,7 @@ pub fn open_proc(
                 abs,
                 meta,
                 dirents: None,
-                next_index: 0,
+                description: Arc::new(VfsOpenDescriptionState::new(0, 0)),
             }));
         }
         return Err(VfsError::NotAFile);
@@ -80,7 +80,7 @@ pub fn open_proc(
         rel,
         meta,
         data,
-        offset: 0,
+        description: Arc::new(VfsOpenDescriptionState::new(0, 0)),
     }))
 }
 
@@ -102,7 +102,6 @@ impl ProcDirectoryHandle {
                 })
                 .collect(),
         );
-        self.next_index = 0;
         Ok(())
     }
 }
@@ -143,9 +142,10 @@ impl VfsIoHandle for ProcDirectoryHandle {
         let entries = self.dirents.as_ref().expect("load_dirents");
         let mut out = 0usize;
         let mut off = 0usize;
-        while self.next_index < entries.len() {
-            let ent = &entries[self.next_index];
-            let next_off = (self.next_index + 1) as i64;
+        let mut next_index = usize::try_from(self.description.offset()).map_err(|_| VfsError::Io)?;
+        while next_index < entries.len() {
+            let ent = &entries[next_index];
+            let next_off = (next_index + 1) as i64;
             let d_type = node_type_to_dt(ent.node_type);
             let slice = &mut buf[off..];
             let Some(reclen) = encode_one(slice, 1, next_off, ent.name.as_str(), d_type) else {
@@ -153,7 +153,8 @@ impl VfsIoHandle for ProcDirectoryHandle {
             };
             off += reclen;
             out += reclen;
-            self.next_index += 1;
+            next_index += 1;
+            self.description.set_offset(next_index as u64);
         }
         Ok(out)
     }
@@ -169,13 +170,13 @@ impl VfsIoHandle for ProcFileHandle {
 
 // 本方法代码由AI完成
     fn read(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
-        let start = self.offset as usize;
+        let start = usize::try_from(self.description.offset()).map_err(|_| VfsError::Io)?;
         if start >= self.data.len() {
             return Ok(0);
         }
         let n = core::cmp::min(buf.len(), self.data.len() - start);
         buf[..n].copy_from_slice(&self.data[start..start + n]);
-        self.offset += n as u64;
+        self.description.advance_offset(n as u64)?;
         Ok(n)
     }
 
@@ -199,14 +200,14 @@ impl VfsIoHandle for ProcFileHandle {
     fn seek(&mut self, offset: i64, whence: VfsSeekWhence) -> VfsResult<u64> {
         let new_off = match whence {
             VfsSeekWhence::Set => offset.max(0) as u64,
-            VfsSeekWhence::Cur => self.offset.saturating_add_signed(offset),
+            VfsSeekWhence::Cur => return self.description.add_signed_offset(offset),
             VfsSeekWhence::End => self
                 .data
                 .len()
                 .saturating_add_signed(offset as isize) as u64,
         };
-        self.offset = new_off;
-        Ok(self.offset)
+        self.description.set_offset(new_off);
+        Ok(new_off)
     }
 
 // 本方法代码由AI完成

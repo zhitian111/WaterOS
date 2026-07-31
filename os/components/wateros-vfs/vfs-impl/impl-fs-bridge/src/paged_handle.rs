@@ -14,12 +14,13 @@ extern crate alloc;
 
 use alloc::boxed::Box;
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use api_v0::{
-    normalize_absolute_path, SingleRootReadView, VfsError, VfsIoHandle, VfsMetadata, VfsOpenFlags,
-    VfsResult, VfsSeekWhence,
+    normalize_absolute_path, SingleRootReadView, VfsError, VfsIoHandle, VfsMetadata,
+    VfsOpenDescriptionState, VfsOpenFlags, VfsResult, VfsSeekWhence,
 };
 use impl_page_cache::{global_cache, PageCacheIo};
 use wateros_base_config::fs::{FileIoMode, FILE_IO_MODE};
@@ -99,11 +100,10 @@ impl PageCacheIo for FsPageIo {
 // 本结构代码由AI完成
 pub struct PagedFileHandle {
     path : String,
-    offset : u64,
+    description : Arc<VfsOpenDescriptionState>,
     meta : VfsMetadata,
     writable : bool,
     accmode : u32,
-    status_flags : u32,
     mount_gen : u64,
     on_disk_size : u64,
     detached : bool,
@@ -119,11 +119,10 @@ impl Clone for PagedFileHandle {
             global_cache(self.mount_gen).acquire_open_ref(self.path.as_str());
         }
         Self { path : self.path.clone(),
-               offset : self.offset,
+               description : self.description.clone(),
                meta : self.meta.clone(),
                writable : self.writable,
                accmode : self.accmode,
-               status_flags : self.status_flags,
                mount_gen : self.mount_gen,
                on_disk_size : self.on_disk_size,
                detached : self.detached,
@@ -186,11 +185,10 @@ impl PagedFileHandle {
         }
 
         Ok(Self { path,
-                  offset,
+                  description : Arc::new(VfsOpenDescriptionState::new(offset, status_flags)),
                   meta,
                   writable : want_write,
                   accmode,
-                  status_flags,
                   mount_gen,
                   on_disk_size,
                   detached : false,
@@ -273,7 +271,7 @@ impl PagedFileHandle {
         }
         self.detached_data[start..end_usize].copy_from_slice(buf);
         if advance_offset {
-            self.offset = end;
+            self.description.set_offset(end);
         }
         let new_size = core::cmp::max(self.current_size(), end);
         let cache = global_cache(self.mount_gen);
@@ -290,19 +288,18 @@ impl VfsIoHandle for PagedFileHandle {
             return Ok(0);
         }
         let size = self.current_size();
-        if self.offset >= size {
+        let offset = self.description.offset();
+        if offset >= size {
             return Ok(0);
         }
         if self.detached {
-            let n = self.read_detached_at(self.offset, buf)?;
-            self.offset = self.offset
-                              .checked_add(n as u64)
-                              .ok_or(VfsError::Io)?;
+            let n = self.read_detached_at(offset, buf)?;
+            self.description.advance_offset(n as u64)?;
             return Ok(n);
         }
         log::trace!("[paged_handle] read path={} offset={} len={} size={}",
                     self.path,
-                    self.offset,
+                    offset,
                     buf.len(),
                     size);
         let mut io = FsPageIo;
@@ -310,17 +307,15 @@ impl VfsIoHandle for PagedFileHandle {
         let n = cache.read(&mut io,
                            self.path.as_str(),
                            size,
-                           self.offset,
+                           offset,
                            buf,
                            core::convert::identity)?;
         log::trace!("[paged_handle] read OK path={} offset={} n={}/{}",
                     self.path,
-                    self.offset,
+                    offset,
                     n,
                     buf.len());
-        self.offset = self.offset
-                          .checked_add(n as u64)
-                          .ok_or(VfsError::Io)?;
+        self.description.advance_offset(n as u64)?;
         Ok(n)
     }
 
@@ -331,14 +326,14 @@ impl VfsIoHandle for PagedFileHandle {
         }
 // 本变量代码由AI完成
         const O_APPEND : u32 = 0o2000;
-        if self.status_flags & O_APPEND != 0 {
-            self.offset = self.current_size();
+        if self.description.status_flags() & O_APPEND != 0 {
+            self.description.set_offset(self.current_size());
         }
         if buf.is_empty() {
             return Ok(0);
         }
         if self.detached {
-            return self.account_detached_write(self.offset, buf, true);
+            return self.account_detached_write(self.description.offset(), buf, true);
         }
         let size = self.current_size();
         let mut io = FsPageIo;
@@ -346,20 +341,18 @@ impl VfsIoHandle for PagedFileHandle {
         let n = match cache.write(&mut io,
                                   self.path.as_str(),
                                   size,
-                                  self.offset,
+                                  self.description.offset(),
                                   buf,
                                   core::convert::identity)
         {
             Ok(n) => n,
             Err(VfsError::NotFound) => {
                 self.detached = true;
-                return self.account_detached_write(self.offset, buf, true);
+                return self.account_detached_write(self.description.offset(), buf, true);
             }
             Err(e) => return Err(e),
         };
-        self.offset = self.offset
-                          .checked_add(n as u64)
-                          .ok_or(VfsError::Io)?;
+        self.description.advance_offset(n as u64)?;
         self.meta.size = self.current_size();
         Ok(n)
     }
@@ -461,15 +454,7 @@ impl VfsIoHandle for PagedFileHandle {
                 offset as u64
             }
             VfsSeekWhence::Cur => {
-                if offset < 0 {
-                    self.offset
-                        .checked_sub((-offset) as u64)
-                        .ok_or(VfsError::InvalidPath)?
-                } else {
-                    self.offset
-                        .checked_add(offset as u64)
-                        .ok_or(VfsError::InvalidPath)?
-                }
+                return self.description.add_signed_offset(offset);
             }
             VfsSeekWhence::End => {
                 if offset < 0 {
@@ -481,7 +466,7 @@ impl VfsIoHandle for PagedFileHandle {
                 }
             }
         };
-        self.offset = new_off;
+        self.description.set_offset(new_off);
         Ok(new_off)
     }
 
@@ -528,8 +513,8 @@ impl VfsIoHandle for PagedFileHandle {
         cache.truncate(self.path.as_str(), len);
         self.on_disk_size = len;
         self.meta.size = len;
-        if self.offset > len {
-            self.offset = len;
+        if self.description.offset() > len {
+            self.description.set_offset(len);
         }
         if self.detached {
             let new_len = usize::try_from(len).map_err(|_| VfsError::Io)?;
@@ -544,7 +529,7 @@ impl VfsIoHandle for PagedFileHandle {
 
 // 本方法代码由AI完成
     fn open_status_flags(&self) -> u32 {
-        self.status_flags
+        self.description.status_flags()
     }
 
 // 本方法代码由AI完成
@@ -558,7 +543,7 @@ impl VfsIoHandle for PagedFileHandle {
         const O_APPEND : u32 = 0o2000;
 // 本变量代码由AI完成
         const O_NONBLOCK : u32 = 0o4000;
-        self.status_flags = flags & (O_APPEND | O_NONBLOCK);
+        self.description.set_status_flags(flags & (O_APPEND | O_NONBLOCK));
         Ok(())
     }
 

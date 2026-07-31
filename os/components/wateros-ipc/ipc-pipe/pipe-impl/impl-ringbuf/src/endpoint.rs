@@ -1,13 +1,15 @@
 //! fd 表 pipe 端点实现。
 //!
-//! `DATA:` 每个端点持有同一个 `Arc<Pipe>`，但拥有独立的方向、`O_NONBLOCK`/`O_DIRECT`
-//! 标记和 close 位。端点引用数在 clone/close/drop 时同步到底层 `Pipe`。
+//! `DATA:` 每个端点持有同一个 `Arc<Pipe>`；dup/fork clone 共享
+//! `O_NONBLOCK`/`O_DIRECT`，但每个 wrapper 保留独立 close 位。端点引用数在
+//! clone/close/drop 时同步到底层 `Pipe`。
 
 extern crate alloc;
 
 use alloc::sync::Arc;
 use api_v0::{PipeEndpointKind, PipeEndpointOps, PipeError, PipeResult};
 use core::cell::Cell;
+use core::sync::atomic::{AtomicBool, Ordering};
 use waitqueue::TaskWaitResult;
 
 use crate::kernel_pipe::Pipe;
@@ -18,8 +20,8 @@ use crate::kernel_pipe::Pipe;
 pub struct PipeEndpoint {
     pipe: Arc<Pipe>,
     kind: PipeEndpointKind,
-    nonblocking: Cell<bool>,
-    direct: Cell<bool>,
+    nonblocking: Arc<AtomicBool>,
+    direct: Arc<AtomicBool>,
     /// 每个端点实例只释放一次引用；显式 `close` 与析构可以安全共存。
     closed: Cell<bool>,
 }
@@ -40,11 +42,8 @@ impl Clone for PipeEndpoint {
         Self {
             pipe: self.pipe.clone(),
             kind: self.kind,
-            nonblocking: Cell::new(
-                self.nonblocking
-                    .get(),
-            ),
-            direct: Cell::new(self.direct.get()),
+            nonblocking: self.nonblocking.clone(),
+            direct: self.direct.clone(),
             closed: Cell::new(closed),
         }
     }
@@ -78,25 +77,25 @@ impl PipeEndpoint {
     /// 是否按非阻塞语义执行。
     pub fn nonblocking(&self) -> bool {
         self.nonblocking
-            .get()
+            .load(Ordering::Acquire)
     }
 
     /// 切换非阻塞模式（`fcntl(F_SETFL)`）。
     pub fn set_nonblocking(&self, value: bool) {
         self.nonblocking
-            .set(value);
+            .store(value, Ordering::Release);
     }
 
     /// 是否按 Linux `O_DIRECT` pipe packet-mode 标记打开。
     #[inline]
     pub fn direct(&self) -> bool {
-        self.direct.get()
+        self.direct.load(Ordering::Acquire)
     }
 
     /// 切换 `O_DIRECT` pipe 状态位（`pipe2` / `fcntl(F_SETFL)`）。
     pub fn set_direct(&self, value: bool) {
         self.direct
-            .set(value);
+            .store(value, Ordering::Release);
     }
 
     /// 返回底层 pipe 缓冲区容量。
@@ -170,15 +169,15 @@ impl PipeEndpointOps for PipeEndpoint {
             Self {
                 pipe: pipe.clone(),
                 kind: PipeEndpointKind::Read,
-                nonblocking: Cell::new(nonblocking),
-                direct: Cell::new(false),
+                nonblocking: Arc::new(AtomicBool::new(nonblocking)),
+                direct: Arc::new(AtomicBool::new(false)),
                 closed: Cell::new(false),
             },
             Self {
                 pipe,
                 kind: PipeEndpointKind::Write,
-                nonblocking: Cell::new(nonblocking),
-                direct: Cell::new(false),
+                nonblocking: Arc::new(AtomicBool::new(nonblocking)),
+                direct: Arc::new(AtomicBool::new(false)),
                 closed: Cell::new(false),
             },
         )
@@ -190,7 +189,7 @@ impl PipeEndpointOps for PipeEndpoint {
 
     fn nonblocking(&self) -> bool {
         self.nonblocking
-            .get()
+            .load(Ordering::Acquire)
     }
 
     fn read(&self, out: &mut [u8]) -> PipeResult<usize> {
@@ -200,7 +199,7 @@ impl PipeEndpointOps for PipeEndpoint {
         }
         if self
             .nonblocking
-            .get()
+            .load(Ordering::Acquire)
         {
             self.pipe
                 .try_read(out)
@@ -216,7 +215,7 @@ impl PipeEndpointOps for PipeEndpoint {
         }
         if self
             .nonblocking
-            .get()
+            .load(Ordering::Acquire)
         {
             self.pipe
                 .try_write(input)

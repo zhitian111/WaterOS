@@ -4,8 +4,8 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
-use core::cell::Cell;
-use core::sync::atomic::{AtomicU64, Ordering};
+use alloc::sync::Arc;
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use api_v0::{VfsError, VfsIoHandle, VfsMetadata, VfsNodeType, VfsResult};
 use driver_api::DriverError;
@@ -64,7 +64,7 @@ pub struct CharDevHandle {
     device: SharedCharacterDevice,
     stdin_eof: bool,
     rtc: bool,
-    nonblocking: Cell<bool>,
+    nonblocking: Arc<AtomicBool>,
     accmode: u32,
     mode: u16,
     inode: u64,
@@ -77,7 +77,7 @@ impl CharDevHandle {
             device,
             stdin_eof,
             rtc: false,
-            nonblocking: Cell::new(false),
+            nonblocking: Arc::new(AtomicBool::new(false)),
             accmode: if stdin_eof { 0 } else { 1 },
             mode: if stdin_eof { 0o20600 } else { 0o20660 },
             inode: if stdin_eof { 1 } else { 2 },
@@ -90,7 +90,7 @@ impl CharDevHandle {
             device,
             stdin_eof: false,
             rtc: true,
-            nonblocking: Cell::new(false),
+            nonblocking: Arc::new(AtomicBool::new(false)),
             accmode: 2,
             mode: 0o20644,
             inode: path_inode("/dev/rtc0"),
@@ -104,7 +104,7 @@ impl CharDevHandle {
                 device,
                 stdin_eof: false,
                 rtc: false,
-                nonblocking: Cell::new(false),
+                nonblocking: Arc::new(AtomicBool::new(false)),
                 accmode,
                 mode: 0o20666,
                 inode: path_inode(path),
@@ -229,7 +229,7 @@ impl VfsIoHandle for CharDevHandle {
         loop {
             match try_read_serial_tty(&self.device, buf) {
                 Ok(n) => return Ok(n),
-                Err(VfsError::WouldBlock) if self.nonblocking.get() => {
+                Err(VfsError::WouldBlock) if self.nonblocking.load(Ordering::Acquire) => {
                     return Err(VfsError::WouldBlock);
                 }
                 Err(VfsError::WouldBlock) => {
@@ -325,7 +325,7 @@ impl VfsIoHandle for CharDevHandle {
             device: self.device.clone(),
             stdin_eof: self.stdin_eof,
             rtc: self.rtc,
-            nonblocking: Cell::new(self.nonblocking.get()),
+            nonblocking: self.nonblocking.clone(),
             accmode: self.accmode,
             mode: self.mode,
             inode: self.inode,
@@ -334,7 +334,7 @@ impl VfsIoHandle for CharDevHandle {
 
 // 本方法代码由AI完成
     fn open_status_flags(&self) -> u32 {
-        if self.nonblocking.get() {
+        if self.nonblocking.load(Ordering::Acquire) {
             0o0004000
         } else {
             0
@@ -345,7 +345,7 @@ impl VfsIoHandle for CharDevHandle {
 
 // 本方法代码由AI完成
     fn set_open_status_flags(&mut self, flags: u32) -> VfsResult<()> {
-        self.nonblocking.set(flags & 0o0004000 != 0);
+        self.nonblocking.store(flags & 0o0004000 != 0, Ordering::Release);
         Ok(())
     }
 }

@@ -5,10 +5,12 @@ extern crate alloc;
 
 use alloc::boxed::Box;
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use api_v0::{
-    SingleRootReadView, VfsDirEntry, VfsError, VfsIoHandle, VfsMetadata, VfsNodeType, VfsResult,
+    SingleRootReadView, VfsDirEntry, VfsError, VfsIoHandle, VfsMetadata, VfsNodeType,
+    VfsOpenDescriptionState, VfsResult,
 };
 
 use crate::FsBridge;
@@ -20,7 +22,7 @@ pub struct DirectoryHandle {
     path : String,
     meta : VfsMetadata,
     dirents : Option<Vec<VfsDirEntry>>,
-    next_index : usize,
+    description : Arc<VfsOpenDescriptionState>,
 }
 
 impl DirectoryHandle {
@@ -36,7 +38,7 @@ impl DirectoryHandle {
         Ok(Box::new(Self { path,
                            meta,
                            dirents : None,
-                           next_index : 0 }))
+                           description : Arc::new(VfsOpenDescriptionState::new(0, 0)) }))
     }
 
     // 本方法代码由AI完成
@@ -47,7 +49,6 @@ impl DirectoryHandle {
             return Ok(());
         }
         self.dirents = Some(bridge.read_dir(self.path.as_str())?);
-        self.next_index = 0;
         Ok(())
     }
 }
@@ -142,9 +143,10 @@ impl VfsIoHandle for DirectoryHandle {
                           .expect("load_dirents");
         let mut out = 0usize;
         let mut off = 0usize;
-        while self.next_index < entries.len() {
-            let ent = &entries[self.next_index];
-            let next_off = (self.next_index + 1) as i64;
+        let mut next_index = usize::try_from(self.description.offset()).map_err(|_| VfsError::Io)?;
+        while next_index < entries.len() {
+            let ent = &entries[next_index];
+            let next_off = (next_index + 1) as i64;
             let d_type = node_type_to_dt(ent.node_type);
             let slice = &mut buf[off..];
             let Some(reclen) = encode_one(slice,
@@ -157,7 +159,8 @@ impl VfsIoHandle for DirectoryHandle {
             };
             off += reclen;
             out += reclen;
-            self.next_index += 1;
+            next_index += 1;
+            self.description.set_offset(next_index as u64);
         }
         Ok(out)
     }

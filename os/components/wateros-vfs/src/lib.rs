@@ -492,6 +492,42 @@ pub mod self_test {
         Ok(())
     }
 
+    /// `dup`/`fork` concrete wrapper 共享 OFD offset/status，独立 `open` 不共享。
+    #[cfg(feature = "bridge-fs-api")]
+    pub fn open_description_sharing_smoke() -> VfsResult<()> {
+        const NAME : &str = "vfs_ofd_smoke";
+        const DATA : &[u8] = b"abcd";
+        const O_NONBLOCK : u32 = 0o4000;
+        rw_write_root_verify(VfsFsKind::Ext4, NAME, DATA)?;
+        let mut path = String::from("/");
+        path.push_str(NAME);
+        let backend = active_impl::backend();
+        let mut first = backend.open(path.as_str(), VfsOpenFlags::read())?;
+        let mut duplicate = first.duplicate()?;
+
+        let mut byte = [0u8; 1];
+        if first.read(&mut byte)? != 1 || byte[0] != b'a' {
+            return Err(super::api::VfsError::Io);
+        }
+        if duplicate.read(&mut byte)? != 1 || byte[0] != b'b' {
+            return Err(super::api::VfsError::Io);
+        }
+        duplicate.set_open_status_flags(O_NONBLOCK)?;
+        if first.open_status_flags() & O_NONBLOCK == 0 {
+            return Err(super::api::VfsError::Io);
+        }
+        duplicate.close()?;
+        if first.read(&mut byte)? != 1 || byte[0] != b'c' {
+            return Err(super::api::VfsError::Io);
+        }
+
+        let mut independent = backend.open(path.as_str(), VfsOpenFlags::read())?;
+        if independent.read(&mut byte)? != 1 || byte[0] != b'a' {
+            return Err(super::api::VfsError::Io);
+        }
+        Ok(())
+    }
+
     pub fn run() {
         #[cfg(feature = "bridge-fs-api")]
         {
@@ -509,6 +545,11 @@ pub mod self_test {
                 log::warn!("[vfs] self_test read_at/write_at skipped or failed: {:?}", e);
             } else {
                 log::info!("[vfs] self_test read_at/write_at ok");
+            }
+            if let Err(e) = open_description_sharing_smoke() {
+                log::warn!("[vfs] self_test OFD sharing skipped or failed: {:?}", e);
+            } else {
+                log::info!("[vfs] self_test OFD sharing ok");
             }
             const MKDIR_NAME: &str = "vfs_mkdir_smoke";
             if let Err(e) = rw_mkdir_verify(VfsFsKind::Ext4, MKDIR_NAME) {

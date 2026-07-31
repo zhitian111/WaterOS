@@ -4,9 +4,81 @@ extern crate alloc;
 
 use alloc::boxed::Box;
 use core::any::Any;
+use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use crate::error::{VfsError, VfsResult};
 use crate::meta::VfsMetadata;
+
+/// One Linux open-file-description's shared seek position and status flags.
+///
+/// Each successful `open` creates a new state. `dup` and `fork` wrappers share
+/// it through an `Arc`; descriptor flags such as `FD_CLOEXEC` do not belong
+/// here. Slow backing I/O must not execute while holding an OFD spin lock, so
+/// these scalar fields use atomics. RIO-04 uses `next_reservation_generation`
+/// to order prepared read reservations.
+pub struct VfsOpenDescriptionState {
+    offset : AtomicU64,
+    status_flags : AtomicU32,
+    reservation_generation : AtomicU64,
+}
+
+impl VfsOpenDescriptionState {
+    pub const fn new(offset : u64, status_flags : u32) -> Self {
+        Self { offset : AtomicU64::new(offset),
+               status_flags : AtomicU32::new(status_flags),
+               reservation_generation : AtomicU64::new(1) }
+    }
+
+    #[inline]
+    pub fn offset(&self) -> u64 { self.offset.load(Ordering::Acquire) }
+
+    #[inline]
+    pub fn set_offset(&self, offset : u64) { self.offset.store(offset, Ordering::Release); }
+
+    /// Atomically add a completed sequential I/O length to the shared offset.
+    pub fn advance_offset(&self, amount : u64) -> VfsResult<u64> {
+        self.offset
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |offset| {
+                offset.checked_add(amount)
+            })
+            .map(|old| old + amount)
+            .map_err(|_| VfsError::Io)
+    }
+
+    /// Atomically apply `SEEK_CUR` style signed displacement.
+    pub fn add_signed_offset(&self, displacement : i64) -> VfsResult<u64> {
+        self.offset
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |offset| {
+                if displacement < 0 {
+                    offset.checked_sub(displacement.unsigned_abs())
+                } else {
+                    offset.checked_add(displacement as u64)
+                }
+            })
+            .map(|old| {
+                if displacement < 0 {
+                    old - displacement.unsigned_abs()
+                } else {
+                    old + displacement as u64
+                }
+            })
+            .map_err(|_| VfsError::InvalidPath)
+    }
+
+    #[inline]
+    pub fn status_flags(&self) -> u32 { self.status_flags.load(Ordering::Acquire) }
+
+    #[inline]
+    pub fn set_status_flags(&self, flags : u32) {
+        self.status_flags.store(flags, Ordering::Release);
+    }
+
+    /// Allocate a monotonically increasing id for a future prepared read.
+    #[inline]
+    pub fn next_reservation_generation(&self) -> u64 {
+        self.reservation_generation.fetch_add(1, Ordering::AcqRel)
+    }
+}
 
 /// `open` 标志位（占位；与 ABI `O_*` 对齐将随 syscall 工作包演进）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
