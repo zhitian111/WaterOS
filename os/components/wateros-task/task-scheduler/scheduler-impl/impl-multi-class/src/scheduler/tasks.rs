@@ -115,8 +115,20 @@ impl MultiClassScheduler {
     }
 
     pub fn current_task_snapshot(&self, cpu_id : CpuId) -> Option<TaskSnapshot> {
-        Some(self.registry
-                 .task_snapshot(self.cpu_states[cpu_id.raw()].current_task_id?))
+        let cpu = &self.cpu_states[cpu_id.raw()];
+        let mut snapshot = self.registry
+                               .task_snapshot(cpu.current_task_id?);
+        // Running-task accounting is cached per CPU and written back to the
+        // TCB only when the task leaves the CPU. Observers such as getrusage
+        // must include the live delta even when the task has not switched.
+        let live_ticks = usize::try_from(cpu.current_runtime_ticks).unwrap_or(usize::MAX);
+        snapshot.stats.tick_count = snapshot.stats
+                                            .tick_count
+                                            .saturating_add(live_ticks);
+        if CPUState::is_cfs_policy(cpu.current_policy) {
+            snapshot.vruntime = cpu.current_vruntime;
+        }
+        Some(snapshot)
     }
 
     pub fn task_snapshot(&self, task_id : TaskId) -> TaskSnapshot {

@@ -9,19 +9,17 @@ use crate::user_bringup_common::BringupCommand;
 const BRINGUP_COMMANDS : &[BringupCommand] =
     &[BringupCommand { program : "/glibc/busybox",
                        argv : &["timeout",
-                                "300",
+                                "7200",
+                                "/glibc/busybox",
                                 "sh",
-                                "-c",
-                                "cd /glibc && echo '#### OS COMP TEST GROUP START \
-                                 lmbench-glibc ####' && echo context switch overhead && \
-                                 ./lmbench_all lat_ctx -P 1 -s 32 2 4 8 16 24 32 64 96 && \
-                                 echo '#### OS COMP TEST GROUP END lmbench-glibc ####'"] }];
+                                "/glibc/ltp_testcode.sh"] }];
 
 #[cfg(all(feature = "pre", feature = "bringup-ltp-musl-only"))]
 /// 仅跑 musl LTP 长测（feature `bringup-ltp-musl-only`）。
 const BRINGUP_COMMANDS : &[BringupCommand] = &[BringupCommand { program : "/musl/busybox",
                                                                 argv : &["timeout",
                                                                          "7200",
+                                                                         "/musl/busybox",
                                                                          "sh",
                                                                          "/musl/ltp_testcode.\
                                                                           sh"] }];
