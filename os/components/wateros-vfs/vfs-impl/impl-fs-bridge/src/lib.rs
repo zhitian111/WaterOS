@@ -155,6 +155,15 @@ fn fs_and_rel_rw(path : &str) -> VfsResult<(SharedRwFs, String)> {
     }
 }
 
+/// 同步路径所属的可写文件系统。
+///
+/// 文件句柄在调用这里前负责写回自身页缓存；目录句柄没有文件数据，只需提交后端
+/// 已完成的目录项和元数据更新。
+pub(crate) fn sync_path_filesystem(path : &str) -> VfsResult<()> {
+    let (fs, _) = fs_and_rel_rw(path)?;
+    fs.lock().sync().map_err(map_fs_err)
+}
+
 // 本方法代码由AI完成
 fn char_dev_exists(abs : &str) -> bool {
     if is_builtin_dev_path(abs) {

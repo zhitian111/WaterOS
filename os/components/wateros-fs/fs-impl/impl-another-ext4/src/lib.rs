@@ -241,6 +241,11 @@ impl ReadWriteFs for AnotherExt4Fs {
     fn mount_rw(&mut self, device : SharedBlockDevice) -> FsResult<()> { self.mount(device) }
     fn is_mounted(&self) -> bool { self.fs.is_some() }
 
+    fn sync(&mut self) -> FsResult<()> {
+        self.get_mut()?.flush_all();
+        Ok(())
+    }
+
     fn exists(&self, path : &str) -> FsResult<bool> { ReadOnlyFs::exists(self, path) }
 
     fn metadata(&self, path : &str) -> FsResult<FsMetadata> {

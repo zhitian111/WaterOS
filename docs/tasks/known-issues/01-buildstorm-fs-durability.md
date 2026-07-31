@@ -40,6 +40,10 @@ handle.flush()
   风险。
 - page cache 已有 dirty version 和批量 flush；近期提交修复了目录增长、同父目录
   rename 和 eviction 失败隔离。不能把这些提交等同于所有并发写回已闭环。
+- 2026-07-31 已完成目录 `fsync` 的句柄能力分发：another-ext4 真实执行
+  `flush_all()`，非持久化句柄默认返回不支持。双架构 check、CAgent 10/10、
+  BuildStorm toolchain/minibuild 和 overlay `e2fsck -fn` 已通过；完整编译仍待闭环。
+  详见 [`results/k01-20260731.md`](./results/k01-20260731.md)。
 
 ## 涉及文件
 

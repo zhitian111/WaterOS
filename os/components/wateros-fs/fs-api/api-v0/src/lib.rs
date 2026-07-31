@@ -191,6 +191,13 @@ pub trait ReadWriteFs: Send {
     /// 是否已完成 RW 挂载。
     fn is_mounted(&self) -> bool;
 
+    /// 将该挂载上已提交给文件系统的脏数据和元数据同步到底层存储。
+    ///
+    /// 具体文件的页缓存由 VFS 句柄先行写回；本方法负责文件系统及块缓存层。
+    fn sync(&mut self) -> FsResult<()> {
+        Err(FsError::Unsupported)
+    }
+
     /// 在根目录下创建或替换名为 `name` 的普通文件（不含 `/`，如 `hello`），写入 `data`。
     fn write_regular_file_at_root(&mut self, name: &str, data: &[u8]) -> FsResult<()>;
 
@@ -376,6 +383,8 @@ impl ReadWriteFs for LocalRwFs {
     }
 
     fn is_mounted(&self) -> bool { self.deref().is_mounted() }
+
+    fn sync(&mut self) -> FsResult<()> { self.deref_mut().sync() }
 
     fn write_regular_file_at_root(&mut self, name: &str, data: &[u8]) -> FsResult<()> {
         self.deref_mut().write_regular_file_at_root(name, data)

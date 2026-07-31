@@ -120,6 +120,12 @@ impl VfsIoHandle for DirectoryHandle {
     // 本方法代码由AI完成
     fn write(&mut self, _buf : &[u8]) -> VfsResult<usize> { Err(VfsError::NotAFile) }
 
+    // Directory fsync commits directory-entry and inode metadata through the
+    // filesystem that owns this opened path.
+    fn flush(&mut self) -> VfsResult<()> {
+        crate::sync_path_filesystem(self.path.as_str())
+    }
+
     // 本方法代码由AI完成
     fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> { Ok(Box::new(self.clone())) }
 

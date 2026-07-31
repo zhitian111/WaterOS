@@ -85,7 +85,7 @@ pub trait VfsIoHandle: Send + VfsHandleAny {
     }
 
     fn flush(&mut self) -> VfsResult<()> {
-        Ok(())
+        Err(VfsError::Unsupported)
     }
 
     fn truncate(&mut self, _len: u64) -> VfsResult<()> {

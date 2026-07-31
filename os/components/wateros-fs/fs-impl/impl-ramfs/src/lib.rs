@@ -271,6 +271,11 @@ impl ReadWriteFs for RamFs {
 
     fn is_mounted(&self) -> bool { self.mounted }
 
+    fn sync(&mut self) -> FsResult<()> {
+        // Data in ramfs is already committed to its in-memory tree.
+        Ok(())
+    }
+
     fn write_regular_file_at_root(&mut self, name: &str, data: &[u8]) -> FsResult<()> {
         self.write_regular_file(alloc::format!("/{name}").as_str(), data)
     }

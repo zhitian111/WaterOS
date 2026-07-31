@@ -9,15 +9,7 @@ use crate::vfs_util::vfs_error_to_errno;
 
 // 本方法代码由AI完成
 fn sync_fd(op : &str, fd : usize) -> UserRet {
-    use vfs::api::VfsNodeType;
-
-    match vfs::fd::with_current_io(fd, |handle| {
-        let meta = handle.metadata()?;
-        if meta.node_type != VfsNodeType::File {
-            return Err(vfs::api::VfsError::Unsupported);
-        }
-        handle.flush()
-    }) {
+    match vfs::fd::with_current_io(fd, |handle| handle.flush()) {
         Ok(()) => UserRet::from_success(0),
         Err(err) => {
             let errno = vfs_error_to_errno(err);
