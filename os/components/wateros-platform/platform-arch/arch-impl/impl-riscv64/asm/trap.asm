@@ -238,8 +238,6 @@ gdb_point_1:
     ld x1,  1*8(sp)
     ld x3,  3*8(sp)
     ld x4,  4*8(sp)
-    ld x5,  5*8(sp)
-    ld x6,  6*8(sp)
     ld x7,  7*8(sp)
     ld x8,  8*8(sp)
     ld x9,  9*8(sp)
@@ -273,8 +271,12 @@ gdb_point_1:
     bnez t1, .Lold_user_aspace_ready
     sfence.vma x0, x0
 .Lold_user_aspace_ready:
-    ld t0, 2*8(sp)
-    mv sp, t0
+    # t0/t1 were scratch registers for satp/ASID above. Restore them only after
+    # all return preparation is complete; restoring them earlier corrupts every
+    # interrupted kernel task (ASID enabled made t1 equal to 1).
+    ld x5,  5*8(sp)
+    ld x6,  6*8(sp)
+    ld sp,  2*8(sp)
     sret
 
 # a0 = TrapContext*，a1 = sret 后写入 sscratch 的内核栈顶。
