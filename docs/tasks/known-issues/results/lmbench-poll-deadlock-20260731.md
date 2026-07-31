@@ -34,12 +34,18 @@ raw_logs: /tmp/wateros-tick-cache-{1,2,3}.log; /tmp/wateros-lat-syscall.log
 
 - fork + 四 pipe 的 lmbench 风格控制协议连续 3/3 次退出 0。
 - 每轮都完成子进程 raw `getppid`、结果交换、退出通知和 `waitpid`。
+- 当前内核设置 `ENOUGH=1` 后，真实
+  `lmbench_all lat_syscall -P 1 -N 1 null` 在约 166 ms 内退出 0，输出
+  `Simple syscall: 39.0000 microseconds`。
+- Linux 上以 `qemu-riscv64` 运行同一个镜像二进制：默认校准 15 秒仍未完成，
+  `ENOUGH=1` 则约 22 ms 完成。默认长时间无输出主要是 lmbench
+  `compute_enough()` 的用户态校准与 TCG 成本，不能据此判定 WaterOS 卡死。
 - `make check` 和 `make kernel-la` 通过，只有仓库已有 warning。
 - 仓库级 `cargo fmt --all -- --check` 因嵌套 workspace root 配置失败；修改文件按现有
   rustfmt 风格人工校正，`git diff --check` 通过。
 
 ## 未完成项
 
-真实 `lat_syscall -P 1 -N 1 null` 在 10 秒短超时内仍未输出结果。因此本次只确认
-递归锁死已消除，不宣称 lmbench 已达到性能验收线。完整 lmbench、pre/final 和
-BuildStorm 留待夜间授权后运行；白天继续用短探针定位后续校准或协议瓶颈。
+默认校准下的 `lat_syscall -P 1 -N 1 null` 在 10 秒短超时内仍未输出结果，但
+`ENOUGH=1` 已证明完整测量协议可结束。当前仍不能宣称 lmbench 达到正式性能验收线；
+完整 lmbench、pre/final 和 BuildStorm 留待夜间授权后运行。

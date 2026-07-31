@@ -27,8 +27,9 @@ cd /glibc && ./lmbench_all lat_syscall -P 1 -N 1 null
 - 窄接口加按需网络轮询：20 秒及 60 秒超时，未完成。
 - 临时诊断确认 `pselect6(nfds=4)` 父进程与监控 fd 5 的子进程均持续扫描；pipe
   readiness 曾从 0 变为 `POLLIN`，因此不是固定卡在第一次 `pselect6`。
-- 此 lmbench 版本的 `get_enough()` 不读取 `ENOUGH` 环境变量，而是始终执行
-  `compute_enough()`；设置 `ENOUGH=5000` 不能缩短测试。所有临时日志均已删除。
+- 后续源码、镜像二进制反汇编及修复后复验确认，此 lmbench 版本会读取 `ENOUGH`。
+  早期设置 `ENOUGH=5000` 仍超时，是当时尚未修复的 poll deadline 递归 scheduler
+  锁死所致，不应归因于 `get_enough()` 忽略环境变量。所有临时日志均已删除。
 
 ## 验证
 
