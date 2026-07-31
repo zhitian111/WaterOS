@@ -8,12 +8,13 @@ use arch::interrupt::ArchInterruptState;
 use arch::task::ActiveArchTaskContext as TaskContext;
 use base::cpu::CpuMask;
 use base::sync::MultiprocessorSafeCell;
+use config::task::MAX_CPUS;
 use core::mem::MaybeUninit;
 use core::panic::Location;
-use core::sync::atomic::{compiler_fence, AtomicBool, Ordering};
+use core::sync::atomic::{compiler_fence, AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use task_api::{
-    CpuId, ExitedTask, KernelTaskEntry, Priority, TaskExitCode, TaskId, TaskSnapshot, TaskTick,
-    TaskState, TaskWaitResult, TaskWaitTarget, UserTask, WaitQueueId,
+    CpuId, ExitedTask, KernelTaskEntry, Priority, TaskExitCode, TaskId, TaskSnapshot, TaskState,
+    TaskTick, TaskWaitResult, TaskWaitTarget, UserTask, WaitQueueId,
 };
 
 mod scheduler;
@@ -36,6 +37,12 @@ static mut SCHEDULER : MaybeUninit<MultiprocessorSafeCell<MultiClassScheduler>> 
     MaybeUninit::uninit();
 #[unsafe(link_section = ".bss.scheduler")]
 static SCHEDULER_READY : AtomicBool = AtomicBool::new(false);
+// Scheduler-owned fields that must also be readable from scheduler condition
+// callbacks. Publishing them avoids recursively acquiring the global lock.
+const NO_CURRENT_TASK : usize = usize::MAX;
+static CURRENT_TASK_IDS : [AtomicUsize; MAX_CPUS] =
+    [const { AtomicUsize::new(NO_CURRENT_TASK) }; MAX_CPUS];
+static CURRENT_TICK : AtomicU64 = AtomicU64::new(0);
 // ── scheduler cell 访问 ────────────────────────────────────────────
 #[inline(never)]
 fn scheduler_cell_inner(caller : &'static Location)
@@ -56,7 +63,14 @@ fn scheduler_cell() -> &'static MultiprocessorSafeCell<MultiClassScheduler> {
 #[inline(never)]
 fn with_scheduler<R>(f : impl FnOnce(&mut MultiClassScheduler) -> R) -> R {
     let mut scheduler = scheduler_cell().exclusive_access();
-    f(&mut scheduler)
+    let cpu_id = cpu::current_cpu_id();
+    let result = f(&mut scheduler);
+    let current_task_id = scheduler.current_task_id(cpu_id)
+                                   .unwrap_or(NO_CURRENT_TASK);
+    CURRENT_TASK_IDS[cpu_id.raw()].store(current_task_id, Ordering::Release);
+    CURRENT_TICK.store(scheduler.current_tick(),
+                       Ordering::Release);
+    result
 }
 
 // ── 跨核 IPI 通知 ────────────────────────────────────────────────
@@ -759,8 +773,11 @@ pub fn kill_task(task_id : TaskId, exit_code : TaskExitCode) -> bool {
 
 /// 当前运行任务号；引导阶段尚未切换时为 `None`。
 pub fn current_task_id() -> Option<TaskId> {
+    // Prevent a local context switch between selecting the per-CPU slot and
+    // reading the task id published by the scheduler.
     let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.current_task_id(cpu::current_cpu_id()))
+    let task_id = CURRENT_TASK_IDS[cpu::current_cpu_id().raw()].load(Ordering::Acquire);
+    (task_id != NO_CURRENT_TASK).then_some(task_id)
 }
 
 /// 当前运行任务的稳定快照（语义层，不含内核栈指针等实现细节）。
@@ -788,10 +805,7 @@ pub fn diagnostic_task_snapshots() -> Vec<TaskSnapshot> {
 }
 
 /// 当前调度器逻辑 tick。
-pub fn current_tick() -> TaskTick {
-    let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.current_tick())
-}
+pub fn current_tick() -> TaskTick { CURRENT_TICK.load(Ordering::Acquire) }
 
 /// 当前任务内核栈顶，供 trap/用户态恢复路径使用。
 pub fn current_task_kernel_stack_top() -> Option<usize> {
