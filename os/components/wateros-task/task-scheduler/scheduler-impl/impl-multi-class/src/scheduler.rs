@@ -171,11 +171,9 @@ impl MultiClassScheduler {
                            -> Option<SwitchPair> {
         // Phase 1: 根据 reason 做前置处理
         match reason {
-            ScheduleReason::Reschedule => {
-                if !self.cpu_states[cpu_id.raw()].cpu_should_reschedule(RescheduleCause::Tick) {
-                    return None;
-                }
-            }
+            // The caller has already consumed `need_resched`. Rechecking with
+            // Tick semantics here would discard a Forced request.
+            ScheduleReason::Reschedule => {}
             ScheduleReason::Tick => self.tick(cpu_id)?,
             // Yield / Block / Sleep / Exit：在选下一个任务之前确保所有到期任务已入队
             _ => {
@@ -207,6 +205,9 @@ impl MultiClassScheduler {
                                          cpu_id));
         }
         // Phase 5-8: 非 IDLE 调度
+        if matches!(reason, ScheduleReason::Yield | ScheduleReason::Sleep(0)) {
+            self.cpu_states[cpu_id.raw()].prepare_yield();
+        }
         let queue_target = self.pick_queue(reason);
         self.enqueue_task(queue_target, current_task_id, cpu_id);
         // 当前任务的状态转换可能唤醒其它任务（最典型是 Exit 唤醒父 runner）。

@@ -221,6 +221,22 @@ impl CPUState {
                                          .max(candidate);
         }
     }
+    /// Move a yielding fair task behind an already-ready fair peer.
+    ///
+    /// A yield does not consume a timer tick. Without this adjustment, a task
+    /// whose vruntime is below the ready minimum can enqueue and immediately
+    /// select itself forever.
+    pub fn prepare_yield(&mut self) {
+        let ready_vruntime = match self.current_policy {
+            SchedPolicy::Other | SchedPolicy::Batch => self.min_ready_fair_vruntime(),
+            SchedPolicy::Idle => self.min_idle_ready_vruntime(),
+            SchedPolicy::Fifo | SchedPolicy::Rr => None,
+        };
+        if let Some(ready_vruntime) = ready_vruntime {
+            self.current_vruntime = self.current_vruntime
+                                        .max(ready_vruntime.saturating_add(1));
+        }
+    }
     pub fn leave_boot_context(&mut self) { self.boot_context_active = false; }
     pub fn set_online(&mut self, online : bool) { self.online = online; }
     pub fn online(&self) -> bool { self.online }
@@ -509,6 +525,35 @@ impl CPUState {
             policy if Self::is_cfs_policy(policy) && priority != 0 => Err(SchedError::InvalidArg),
             _ => Ok(()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fair_yield_places_current_after_ready_peer() {
+        let mut cpu = CPUState::new(CpuId::from_raw(0));
+        cpu.current_policy = SchedPolicy::Other;
+        cpu.current_vruntime = 1;
+        cpu.cfs_queue.enqueue(2, 10);
+
+        cpu.prepare_yield();
+        cpu.cfs_queue.enqueue(1, cpu.current_vruntime);
+
+        assert_eq!(cpu.cfs_queue.pick(), Some((2, 10)));
+    }
+
+    #[test]
+    fn fair_yield_without_ready_peer_keeps_vruntime() {
+        let mut cpu = CPUState::new(CpuId::from_raw(0));
+        cpu.current_policy = SchedPolicy::Other;
+        cpu.current_vruntime = 7;
+
+        cpu.prepare_yield();
+
+        assert_eq!(cpu.current_vruntime, 7);
     }
 }
 pub struct CpuSnapshot {
