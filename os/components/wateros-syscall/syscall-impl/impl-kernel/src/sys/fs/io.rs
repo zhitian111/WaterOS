@@ -42,6 +42,9 @@ pub(crate) fn sys_read(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let ptr = args.arg(1);
     let len = args.arg(2);
+    if let Err(err) = validate_read_fd(fd) {
+        return UserRet::from_error(err);
+    }
     if len == 0 {
         return UserRet::from_success(0);
     }
@@ -66,6 +69,17 @@ pub(crate) fn sys_read(args : SyscallArgs) -> UserRet {
         Err(err) => return UserRet::from_error(err),
     };
     do_finish_read(fd, ptr, &kbuf[..n], n)
+}
+
+fn validate_read_fd(fd : usize) -> Result<(), ErrNo> {
+    if socket_fd::lookup(fd).is_some() {
+        return Ok(());
+    }
+    if vfs::fd::is_path_only_fd(fd).map_err(vfs_error_to_errno)? {
+        return Err(ErrNo::EBADF);
+    }
+    vfs::fd::with_current_io(fd, |handle| handle.validate_read_access())
+        .map_err(vfs_error_to_errno)
 }
 
 /// 内核缓冲区有独立上限；大 `count` 通过合法短读分批完成，不能返回 `EINVAL`。

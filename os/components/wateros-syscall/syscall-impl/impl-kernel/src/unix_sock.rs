@@ -555,6 +555,8 @@ fn install_pathname_socket(key: &[u8]) -> Result<(), ErrNo> {
 }
 
 impl VfsIoHandle for UnixSocketHandle {
+    fn open_accmode(&self) -> u32 { 2 }
+
     fn read(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
         let sock = self.sock.clone();
         loop {

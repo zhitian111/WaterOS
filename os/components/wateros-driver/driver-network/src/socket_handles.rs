@@ -105,6 +105,8 @@ pub struct TcpStreamHandle {
 }
 
 impl VfsIoHandle for TcpStreamHandle {
+    fn open_accmode(&self) -> u32 { 2 }
+
     fn read(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
         stack::socket_recv(self.socket.handle(), buf).map_err(map_stack_err)
     }
@@ -156,6 +158,8 @@ pub struct TcpListenerHandle {
 }
 
 impl VfsIoHandle for TcpListenerHandle {
+    fn open_accmode(&self) -> u32 { 2 }
+
     fn close(&mut self) -> VfsResult<()> {
         Ok(())
     }
@@ -177,6 +181,8 @@ pub struct UdpSocketHandle {
 }
 
 impl VfsIoHandle for UdpSocketHandle {
+    fn open_accmode(&self) -> u32 { 2 }
+
     fn read(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
         // UDP read: recvfrom 并丢弃来源地址
         stack::socket_recvfrom(self.socket.handle(), buf)

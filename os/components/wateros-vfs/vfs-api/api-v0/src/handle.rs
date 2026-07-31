@@ -143,10 +143,21 @@ pub trait VfsIoHandle: Send + VfsHandleAny {
         0
     }
 
-    /// Linux `fcntl(F_GETFL)` 访问模式（`O_ACCMODE`：0/1/2）；默认只读。
-    fn open_accmode(&self) -> u32 {
-        0
+    /// 在不执行 I/O 的情况下验证句柄是否允许 `read(2)`。
+    fn validate_read_access(&self) -> VfsResult<()> {
+        const O_ACCMODE: u32 = 3;
+        const O_WRONLY: u32 = 1;
+        if self.open_accmode() & O_ACCMODE == O_WRONLY {
+            Err(VfsError::BadFd)
+        } else {
+            Ok(())
+        }
     }
+
+    /// Linux `fcntl(F_GETFL)` 访问模式（`O_ACCMODE`：0/1/2）。
+    ///
+    /// 访问模式没有安全的默认值；每类句柄必须明确声明。
+    fn open_accmode(&self) -> u32;
 
     /// Linux `fcntl(F_SETFL)`；默认忽略（pipe/socket 等由具体实现覆盖）。
     fn set_open_status_flags(&mut self, flags: u32) -> VfsResult<()> {

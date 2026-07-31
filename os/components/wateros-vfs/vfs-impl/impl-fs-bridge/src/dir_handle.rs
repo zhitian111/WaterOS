@@ -105,6 +105,10 @@ pub(crate) fn encode_one(buf : &mut [u8],
 }
 
 impl VfsIoHandle for DirectoryHandle {
+    fn validate_read_access(&self) -> VfsResult<()> { Err(VfsError::NotAFile) }
+
+    fn open_accmode(&self) -> u32 { 0 }
+
     // 本方法代码由AI完成
     fn metadata(&self) -> VfsResult<VfsMetadata> { Ok(self.meta.clone()) }
 

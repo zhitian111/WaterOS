@@ -47,6 +47,8 @@ fn special_dev_meta(mode: u16, inode: u64, device_major: u32, device_minor: u32)
 pub struct ConsoleInHandle;
 
 impl VfsIoHandle for ConsoleInHandle {
+    fn open_accmode(&self) -> u32 { 0 }
+
 // 本方法代码由AI完成
     fn read(&mut self, _buf: &mut [u8]) -> VfsResult<usize> {
         Ok(0)
@@ -78,6 +80,8 @@ impl VfsIoHandle for ConsoleInHandle {
 pub struct ConsoleOutHandle;
 
 impl VfsIoHandle for ConsoleOutHandle {
+    fn open_accmode(&self) -> u32 { 1 }
+
 // 本方法代码由AI完成
     fn write(&mut self, buf: &[u8]) -> VfsResult<usize> {
         console::write_raw_bytes(buf);
@@ -111,11 +115,23 @@ impl VfsIoHandle for ConsoleOutHandle {
 }
 
 /// `/dev/null`：读 EOF，写入丢弃。
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 // 本结构代码由AI完成
-pub struct NullDeviceHandle;
+pub struct NullDeviceHandle {
+    accmode: u32,
+}
+
+impl NullDeviceHandle {
+    pub const fn new(accmode: u32) -> Self { Self { accmode } }
+}
+
+impl Default for NullDeviceHandle {
+    fn default() -> Self { Self::new(2) }
+}
 
 impl VfsIoHandle for NullDeviceHandle {
+    fn open_accmode(&self) -> u32 { self.accmode }
+
 // 本方法代码由AI完成
     fn read(&mut self, _buf: &mut [u8]) -> VfsResult<usize> {
         Ok(0)
@@ -147,11 +163,23 @@ impl VfsIoHandle for NullDeviceHandle {
 }
 
 /// `/dev/zero`：读出零字节，写入丢弃。
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 // 本结构代码由AI完成
-pub struct ZeroDeviceHandle;
+pub struct ZeroDeviceHandle {
+    accmode: u32,
+}
+
+impl ZeroDeviceHandle {
+    pub const fn new(accmode: u32) -> Self { Self { accmode } }
+}
+
+impl Default for ZeroDeviceHandle {
+    fn default() -> Self { Self::new(2) }
+}
 
 impl VfsIoHandle for ZeroDeviceHandle {
+    fn open_accmode(&self) -> u32 { self.accmode }
+
 // 本方法代码由AI完成
     fn read(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
         buf.fill(0);
@@ -184,11 +212,23 @@ impl VfsIoHandle for ZeroDeviceHandle {
 }
 
 /// `/dev/cpu_dma_latency`：cyclictest 写入 latency 值；stub 吞掉写入即可。
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 // 本结构代码由AI完成
-pub struct CpuDmaLatencyDeviceHandle;
+pub struct CpuDmaLatencyDeviceHandle {
+    accmode: u32,
+}
+
+impl CpuDmaLatencyDeviceHandle {
+    pub const fn new(accmode: u32) -> Self { Self { accmode } }
+}
+
+impl Default for CpuDmaLatencyDeviceHandle {
+    fn default() -> Self { Self::new(2) }
+}
 
 impl VfsIoHandle for CpuDmaLatencyDeviceHandle {
+    fn open_accmode(&self) -> u32 { self.accmode }
+
 // 本方法代码由AI完成
     fn read(&mut self, _buf: &mut [u8]) -> VfsResult<usize> {
         Ok(0)
@@ -225,11 +265,23 @@ impl VfsIoHandle for CpuDmaLatencyDeviceHandle {
 }
 
 /// `/dev/urandom`：早期兼容伪随机字节流，满足 libc/benchmark 对随机设备的读取需求。
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 // 本结构代码由AI完成
-pub struct UrandomDeviceHandle;
+pub struct UrandomDeviceHandle {
+    accmode: u32,
+}
+
+impl UrandomDeviceHandle {
+    pub const fn new(accmode: u32) -> Self { Self { accmode } }
+}
+
+impl Default for UrandomDeviceHandle {
+    fn default() -> Self { Self::new(2) }
+}
 
 impl VfsIoHandle for UrandomDeviceHandle {
+    fn open_accmode(&self) -> u32 { self.accmode }
+
 // 本方法代码由AI完成
     fn read(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
         let mut state = URANDOM_STATE.fetch_add(
@@ -310,6 +362,8 @@ pub fn pipe_handle_pair_with_flags(
 }
 
 impl VfsIoHandle for PipeReadHandle {
+    fn open_accmode(&self) -> u32 { 0 }
+
 // 本方法代码由AI完成
     fn read(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
         self.endpoint.read(buf).map_err(map_pipe_err)
@@ -388,6 +442,8 @@ impl VfsIoHandle for PipeReadHandle {
 
 /// pipe 写端。
 impl VfsIoHandle for PipeWriteHandle {
+    fn open_accmode(&self) -> u32 { 1 }
+
 // 本方法代码由AI完成
     fn write(&mut self, buf: &[u8]) -> VfsResult<usize> {
         self.endpoint.write(buf).map_err(map_pipe_err)

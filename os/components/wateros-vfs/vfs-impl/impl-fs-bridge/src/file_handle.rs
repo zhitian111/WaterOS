@@ -20,6 +20,16 @@ const S_IFCHR : u16 = 0o020000;
 
 static NEXT_FLOCK_OWNER_ID : AtomicU64 = AtomicU64::new(1);
 
+fn open_accmode(flags : VfsOpenFlags) -> u32 {
+    let read = flags.contains(VfsOpenFlags::READ);
+    let write = flags.contains(VfsOpenFlags::WRITE);
+    match (read, write) {
+        (false, true) => 1,
+        (true, true) => 2,
+        _ => 0,
+    }
+}
+
 /// 已打开的根卷普通文件（小文件：全文缓冲于内存）。
 #[derive(Clone)]
 // 本结构代码由AI完成
@@ -29,6 +39,7 @@ pub struct BufferedFileHandle {
     offset : u64,
     meta : VfsMetadata,
     writable : bool,
+    accmode : u32,
     dirty : bool,
     flock_owner_id : u64,
 }
@@ -84,11 +95,14 @@ impl BufferedFileHandle {
         let mut meta = meta;
         meta.size = data.len() as u64;
 
+        let accmode = open_accmode(flags);
+
         Ok(Self { path,
                   data,
                   offset,
                   meta,
                   writable : want_write,
+                  accmode,
                   dirty,
                   flock_owner_id : NEXT_FLOCK_OWNER_ID.fetch_add(1, Ordering::Relaxed) })
     }
@@ -179,13 +193,7 @@ impl VfsIoHandle for BufferedFileHandle {
     fn flock_owner_id(&self) -> Option<u64> { Some(self.flock_owner_id) }
 
     // 本方法代码由AI完成
-    fn open_accmode(&self) -> u32 {
-        if self.writable {
-            2
-        } else {
-            0
-        }
-    }
+    fn open_accmode(&self) -> u32 { self.accmode }
 
     // 本方法代码由AI完成
     fn read_at(&mut self, offset : u64, buf : &mut [u8]) -> VfsResult<usize> {
@@ -321,23 +329,30 @@ impl FsBridge {
             _ => {}
         }
         match abs.as_str() {
-            "/dev/null" => return Ok(Box::new(impl_fd_session::NullDeviceHandle)),
-            "/dev/zero" => return Ok(Box::new(impl_fd_session::ZeroDeviceHandle)),
+            "/dev/null" => {
+                return Ok(Box::new(impl_fd_session::NullDeviceHandle::new(open_accmode(flags))));
+            }
+            "/dev/zero" => {
+                return Ok(Box::new(impl_fd_session::ZeroDeviceHandle::new(open_accmode(flags))));
+            }
             "/dev/random" | "/dev/urandom" => {
-                return Ok(Box::new(impl_fd_session::UrandomDeviceHandle));
+                return Ok(Box::new(impl_fd_session::UrandomDeviceHandle::new(open_accmode(flags))));
             }
             "/dev/cpu_dma_latency" => {
-                return Ok(Box::new(impl_fd_session::CpuDmaLatencyDeviceHandle));
+                return Ok(Box::new(impl_fd_session::CpuDmaLatencyDeviceHandle::new(
+                    open_accmode(flags),
+                )));
             }
             _ => {}
         }
         if let Ok(dev) = fs::devfs::active_impl::lookup_character_device(abs.as_str()) {
             return Ok(Box::new(impl_fd_session::CharDevHandle::from_devfs_path(dev,
-                                                                               abs.as_str())));
+                                                                               abs.as_str(),
+                                                                               open_accmode(flags))));
         }
         if let Ok(meta) = self.metadata(abs.as_str()) {
             if meta.node_type == VfsNodeType::Special && meta.mode & S_IFMT == S_IFCHR {
-                return Ok(Box::new(impl_fd_session::NullDeviceHandle));
+                return Ok(Box::new(impl_fd_session::NullDeviceHandle::new(open_accmode(flags))));
             }
             if meta.node_type == VfsNodeType::Directory && !flags.contains(VfsOpenFlags::WRITE) {
                 return super::dir_handle::DirectoryHandle::open(self, abs);

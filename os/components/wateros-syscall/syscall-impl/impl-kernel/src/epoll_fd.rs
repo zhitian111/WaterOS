@@ -50,6 +50,8 @@ impl EpollHandle {
 }
 
 impl VfsIoHandle for EpollHandle {
+    fn open_accmode(&self) -> u32 { 2 }
+
     fn poll_revents(&mut self, events : i16) -> VfsResult<i16> {
         if events & POLLIN == 0 {
             return Ok(0);

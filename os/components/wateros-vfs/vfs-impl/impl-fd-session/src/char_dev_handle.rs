@@ -65,6 +65,7 @@ pub struct CharDevHandle {
     stdin_eof: bool,
     rtc: bool,
     nonblocking: Cell<bool>,
+    accmode: u32,
     mode: u16,
     inode: u64,
 }
@@ -77,6 +78,7 @@ impl CharDevHandle {
             stdin_eof,
             rtc: false,
             nonblocking: Cell::new(false),
+            accmode: if stdin_eof { 0 } else { 1 },
             mode: if stdin_eof { 0o20600 } else { 0o20660 },
             inode: if stdin_eof { 1 } else { 2 },
         }
@@ -89,28 +91,32 @@ impl CharDevHandle {
             stdin_eof: false,
             rtc: true,
             nonblocking: Cell::new(false),
+            accmode: 2,
             mode: 0o20644,
             inode: path_inode("/dev/rtc0"),
         }
     }
 
 // 本方法代码由AI完成
-    pub fn from_devfs_path(device: SharedCharacterDevice, path: &str) -> Self {
+    pub fn from_devfs_path(device: SharedCharacterDevice, path: &str, accmode: u32) -> Self {
         if path == "/dev/null" {
             Self {
                 device,
                 stdin_eof: false,
                 rtc: false,
                 nonblocking: Cell::new(false),
+                accmode,
                 mode: 0o20666,
                 inode: path_inode(path),
             }
         } else if is_rtc_dev_path(path) {
             let mut handle = Self::new_rtc(device);
             handle.inode = path_inode(path);
+            handle.accmode = accmode;
             handle
         } else {
             let mut handle = Self::new(device, false);
+            handle.accmode = accmode;
             handle.inode = path_inode(path);
             handle
         }
@@ -320,6 +326,7 @@ impl VfsIoHandle for CharDevHandle {
             stdin_eof: self.stdin_eof,
             rtc: self.rtc,
             nonblocking: Cell::new(self.nonblocking.get()),
+            accmode: self.accmode,
             mode: self.mode,
             inode: self.inode,
         }))
@@ -333,6 +340,8 @@ impl VfsIoHandle for CharDevHandle {
             0
         }
     }
+
+    fn open_accmode(&self) -> u32 { self.accmode }
 
 // 本方法代码由AI完成
     fn set_open_status_flags(&mut self, flags: u32) -> VfsResult<()> {

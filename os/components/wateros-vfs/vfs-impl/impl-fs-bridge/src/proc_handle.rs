@@ -108,6 +108,10 @@ impl ProcDirectoryHandle {
 }
 
 impl VfsIoHandle for ProcDirectoryHandle {
+    fn validate_read_access(&self) -> VfsResult<()> { Err(VfsError::NotAFile) }
+
+    fn open_accmode(&self) -> u32 { 0 }
+
 // 本方法代码由AI完成
     fn metadata(&self) -> VfsResult<VfsMetadata> {
         Ok(self.meta.clone())
@@ -156,6 +160,8 @@ impl VfsIoHandle for ProcDirectoryHandle {
 }
 
 impl VfsIoHandle for ProcFileHandle {
+    fn open_accmode(&self) -> u32 { 0 }
+
 // 本方法代码由AI完成
     fn metadata(&self) -> VfsResult<VfsMetadata> {
         Ok(self.meta.clone())
