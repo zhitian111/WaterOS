@@ -661,6 +661,17 @@ impl ProcessRegistry {
             .ptask_snapshot(task_id)
     }
 
+    pub fn process_identity_for_task(&self,
+                                     task_id : TaskId)
+                                     -> Option<(ProcessId, Option<ProcessId>)> {
+        let pid = *self.pid_for_task
+                       .get(&task_id)?;
+        let parent_pid = self.processes
+                             .get(&pid)?
+                             .parent_pid;
+        Some((pid, parent_pid))
+    }
+
     pub fn task_id_for_thread(&self, tid : ThreadId) -> Option<TaskId> {
         self.task_for_thread
             .get(&tid)
@@ -994,6 +1005,19 @@ mod tests {
 
         assert_eq!(registry.get_parent_death_signal(parent_pid), Some(9));
         assert_eq!(registry.get_parent_death_signal(child_pid), Some(0));
+    }
+
+    #[test]
+    fn resolves_process_identity_directly_from_task() {
+        let mut registry = ProcessRegistry::new();
+        let parent_pid = registry.create_process_for_task(10, None, None)
+                                 .expect("create parent process");
+        let child_pid = registry.create_process_like_fork(parent_pid, 11, None)
+                                .expect("fork child process");
+
+        assert_eq!(registry.process_identity_for_task(11),
+                   Some((child_pid, Some(parent_pid))));
+        assert_eq!(registry.process_identity_for_task(99), None);
     }
 
     #[test]

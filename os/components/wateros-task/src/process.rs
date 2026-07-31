@@ -50,6 +50,12 @@ pub fn current_process_task_snapshot() -> Option<ProcessTaskSnapshot> {
     process_task_snapshot(task_id)
 }
 
+/// 当前运行任务所属进程及其父进程标识。
+pub fn current_process_identity() -> Option<(ProcessId, Option<ProcessId>)> {
+    let task_id = crate::schedule::current_task_id()?;
+    active_impl::process_identity_for_task(task_id)
+}
+
 /// 当前运行任务的用户态线程 ID。
 pub fn current_thread_id() -> Option<ThreadId> {
     current_process_task_snapshot().map(|snapshot| snapshot.tid)

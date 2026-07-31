@@ -92,6 +92,12 @@ pub fn process_task_snapshot(task_id : TaskId) -> Option<ProcessTaskSnapshot> {
     with_process_registry(|registry| registry.process_task_snapshot(task_id))
 }
 
+/// 按调度实体查询进程及其父进程标识，避免为标识类 syscall 构造完整快照。
+pub fn process_identity_for_task(task_id : TaskId)
+                                 -> Option<(ProcessId, Option<ProcessId>)> {
+    with_process_registry(|registry| registry.process_identity_for_task(task_id))
+}
+
 /// 返回进程的 leader task id。
 pub fn leader_task_for_process(pid : ProcessId) -> Option<TaskId> {
     with_process_registry(|registry| registry.leader_task_for_process(pid))

@@ -151,7 +151,6 @@ struct ScanCtx {
 
 impl ScanCtx {
     fn scan_count(&self) -> Result<usize, ErrNo> {
-        drive_network_stack();
         let (n, _) = scan_pollfds(self.fds_ptr, self.nfds)?;
         Ok(n)
     }
@@ -226,7 +225,6 @@ pub(crate) fn poll_revents_fd(fd : usize, events : i16) -> i16 {
 }
 
 pub(crate) fn scan_pollfds(fds_ptr : usize, nfds : usize) -> Result<(usize, usize), ErrNo> {
-    drive_network_stack();
     if nfds == 0 {
         return Ok((0, 0));
     }
@@ -239,6 +237,7 @@ pub(crate) fn scan_pollfds(fds_ptr : usize, nfds : usize) -> Result<(usize, usiz
 
     let pollfd_size = core::mem::size_of::<PollFd>();
     let mut ready_count = 0usize;
+    let mut network_driven = false;
 
     for i in 0..nfds {
         let ptr = fds_ptr + i * pollfd_size;
@@ -250,6 +249,10 @@ pub(crate) fn scan_pollfds(fds_ptr : usize, nfds : usize) -> Result<(usize, usiz
         }
 
         let fd = pfd.fd as usize;
+        if !network_driven && socket_fd::lookup(fd).is_some() {
+            drive_network_stack();
+            network_driven = true;
+        }
         let revents = poll_revents_fd(fd, pfd.events);
         if revents & POLLNVAL != 0 {
             pfd.revents = POLLNVAL;
@@ -473,7 +476,6 @@ fn scan_fd_sets_inner(nfds : usize,
                       exceptfds_ptr : usize,
                       writeback : bool)
                       -> Result<usize, ErrNo> {
-    drive_network_stack();
     if nfds > FD_SETSIZE {
         return Err(ErrNo::EINVAL);
     }
@@ -485,6 +487,7 @@ fn scan_fd_sets_inner(nfds : usize,
     let mut write_out = [0u64; FD_SET_WORDS];
     let mut except_out = [0u64; FD_SET_WORDS];
     let mut ready_count = 0usize;
+    let mut network_driven = false;
 
     for fd in 0..nfds {
         let mut events = 0i16;
@@ -505,6 +508,10 @@ fn scan_fd_sets_inner(nfds : usize,
         }
         if events == 0 {
             continue;
+        }
+        if !network_driven && socket_fd::lookup(fd).is_some() {
+            drive_network_stack();
+            network_driven = true;
         }
         let revents = poll_revents_fd(fd, events);
         if revents == 0 {

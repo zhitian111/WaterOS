@@ -8,18 +8,17 @@ use task::{ProcessId, TaskClearTid};
 const ORPHAN_PARENT_PID : usize = 1;
 
 pub(crate) fn sys_getpid() -> UserRet {
-    task::current_process_task_snapshot().map(|snapshot| UserRet::from_success(snapshot.pid.raw()))
-                                         .unwrap_or_else(|| UserRet::from_error(ErrNo::ESRCH))
+    task::current_process_identity().map(|(pid, _)| UserRet::from_success(pid.raw()))
+                                    .unwrap_or_else(|| UserRet::from_error(ErrNo::ESRCH))
 }
 
 pub(crate) fn sys_getppid() -> UserRet {
-    let snapshot = match task::current_process_snapshot() {
-        Some(snapshot) => snapshot,
+    let (_, parent_pid) = match task::current_process_identity() {
+        Some(identity) => identity,
         None => return UserRet::from_error(ErrNo::ESRCH),
     };
-    UserRet::from_success(snapshot.parent_pid
-                                  .map(|pid| pid.raw())
-                                  .unwrap_or(ORPHAN_PARENT_PID))
+    UserRet::from_success(parent_pid.map(|pid| pid.raw())
+                                   .unwrap_or(ORPHAN_PARENT_PID))
 }
 
 pub(crate) fn sys_gettid() -> UserRet {
