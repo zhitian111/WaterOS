@@ -106,11 +106,14 @@ impl InterruptGuard {
         Self { state }
     }
     fn release(self) {
-        let state = self.state;
-        core::mem::forget(self);
-        arch::interrupt::restore_global_interrupt_state(state).expect("restore global interrupt \
-                                                                       state before context \
-                                                                       switch");
+        drop(self);
+    }
+}
+impl Drop for InterruptGuard {
+    fn drop(&mut self) {
+        arch::interrupt::restore_global_interrupt_state(self.state).expect("restore global \
+                                                                            interrupt state for \
+                                                                            scheduler guard");
     }
 }
 /// 唯一的 Rust 上下文切换出口。
