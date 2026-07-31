@@ -47,13 +47,16 @@ pub fn wait_while(task_id : TaskId,
         return FutexWaitOutcome::ConditionChanged;
     }
 
-    let (wait_queue, wake_sequence) = with_registry(|registry| {
+    let (wait_queue, wake_sequence, observed_wake) = with_registry(|registry| {
         let (wait_queue, wake_sequence) = registry.acquire_queue(key);
         registry.register_waiting_task(task_id, key);
         registry.record_wait_attempt(key, wait_queue.id());
-        (wait_queue, wake_sequence)
+        // The registry lock linearizes waiter publication with wakers obtaining
+        // this queue. Loading after unlock would let a concurrent wake become
+        // the waiter's baseline and then be lost before scheduler enqueue.
+        let observed_wake = wake_sequence.load(Ordering::Acquire);
+        (wait_queue, wake_sequence, observed_wake)
     });
-    let observed_wake = wake_sequence.load(Ordering::Acquire);
     if !condition() {
         with_registry(|registry| {
             registry.record_wait_result(key, FutexWaitOutcome::ConditionChanged);
