@@ -292,6 +292,9 @@ pub(crate) fn sys_write(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let ptr = args.arg(1);
     let len = args.arg(2);
+    if let Err(error) = validate_write_fd(fd) {
+        return UserRet::from_error(error);
+    }
     if len == 0 {
         return UserRet::from_success(0);
     }
@@ -352,54 +355,17 @@ pub(crate) fn sys_writev(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let iov_ptr = args.arg(1);
     let iovcnt = args.arg(2);
-    if iovcnt == 0 {
-        return UserRet::from_success(0);
+    if let Err(error) = validate_write_fd(fd) {
+        return UserRet::from_error(error);
     }
-    if iov_ptr == 0 {
-        return UserRet::from_error(ErrNo::EFAULT);
-    }
-    if iovcnt > 1024 {
-        return UserRet::from_error(ErrNo::EINVAL);
-    }
-
-    let iov_size = core::mem::size_of::<UserIoVec>();
-    let mut out = Vec::new();
-    for i in 0..iovcnt {
-        let iov_addr = match i.checked_mul(iov_size)
-                              .and_then(|offset| iov_ptr.checked_add(offset))
-        {
-            Some(addr) => addr,
-            None => return UserRet::from_error(ErrNo::EFAULT),
-        };
-        let iov = match copy_from_user_struct::<UserIoVec>(iov_addr) {
-            Ok(v) => v,
-            Err(e) => return UserRet::from_error(e),
-        };
-        if iov.len == 0 {
-            continue;
-        }
-        if iov.base == 0 {
-            return UserRet::from_error(ErrNo::EFAULT);
-        }
-        let remaining = SYSCALL_IO_MAX - out.len();
-        if remaining == 0 {
-            break;
-        }
-        let segment_len = iov.len.min(remaining);
-        let new_len = out.len() + segment_len;
-        let old_len = out.len();
-        if out.try_reserve_exact(new_len - old_len).is_err() {
-            return UserRet::from_error(ErrNo::ENOMEM);
-        }
-        out.resize(new_len, 0);
-        match copy_from_user(&mut out[old_len..], iov.base) {
-            Ok(n) if n == segment_len => {}
-            _ => return UserRet::from_error(ErrNo::EFAULT),
-        }
-        if segment_len < iov.len {
-            break;
-        }
-    }
+    let iovecs = match import_iovecs(iov_ptr, iovcnt) {
+        Ok(iovecs) => iovecs,
+        Err(error) => return UserRet::from_error(error),
+    };
+    let out = match gather_imported_iovecs(&iovecs) {
+        Ok(out) => out,
+        Err(error) => return UserRet::from_error(error),
+    };
 
     match write_fd(fd, &out) {
         Ok(n) => UserRet::from_success(n),
@@ -428,6 +394,25 @@ fn write_fd(fd : usize, buf : &[u8]) -> Result<usize, ErrNo> {
             result => return result.map_err(vfs_error_to_errno),
         }
     }
+}
+
+fn validate_write_fd(fd : usize) -> Result<(), ErrNo> {
+    if socket_fd::lookup(fd).is_some() {
+        return Ok(());
+    }
+    if vfs::fd::is_path_only_fd(fd).map_err(vfs_error_to_errno)? {
+        return Err(ErrNo::EBADF);
+    }
+    vfs::fd::with_current_io(fd, |handle| {
+        const O_ACCMODE : u32 = 3;
+        const O_RDONLY : u32 = 0;
+        if handle.open_accmode() & O_ACCMODE == O_RDONLY {
+            Err(VfsError::BadFd)
+        } else {
+            Ok(())
+        }
+    })
+    .map_err(vfs_error_to_errno)
 }
 
 fn write_tcp_socket_blocking(fd : usize, buf : &[u8]) -> Result<usize, ErrNo> {
@@ -503,29 +488,11 @@ fn offset_from_arg(raw : usize) -> Result<u64, ErrNo> {
     Ok(off as u64)
 }
 
-fn gather_user_iovecs(iov_ptr : usize, iovcnt : usize) -> Result<Vec<u8>, ErrNo> {
-    if iovcnt == 0 {
-        return Ok(Vec::new());
-    }
-    if iov_ptr == 0 {
-        return Err(ErrNo::EFAULT);
-    }
-    if iovcnt > 1024 {
-        return Err(ErrNo::EINVAL);
-    }
-
-    let iov_size = core::mem::size_of::<UserIoVec>();
+fn gather_imported_iovecs(iovecs : &ImportedIoVecs) -> Result<Vec<u8>, ErrNo> {
     let mut out = Vec::new();
-    for i in 0..iovcnt {
-        let iov_addr = i.checked_mul(iov_size)
-                        .and_then(|offset| iov_ptr.checked_add(offset))
-                        .ok_or(ErrNo::EFAULT)?;
-        let iov = copy_from_user_struct::<UserIoVec>(iov_addr)?;
+    for iov in &iovecs.entries {
         if iov.len == 0 {
             continue;
-        }
-        if iov.base == 0 {
-            return Err(ErrNo::EFAULT);
         }
         let remaining = SYSCALL_IO_MAX - out.len();
         if remaining == 0 {
@@ -608,6 +575,9 @@ pub(crate) fn sys_pwrite64(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let ptr = args.arg(1);
     let len = args.arg(2);
+    if let Err(error) = validate_write_fd(fd) {
+        return UserRet::from_error(error);
+    }
     if len == 0 {
         return UserRet::from_success(0);
     }
@@ -711,12 +681,19 @@ pub(crate) fn sys_pwritev(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let iov_ptr = args.arg(1);
     let iovcnt = args.arg(2);
+    if let Err(error) = validate_write_fd(fd) {
+        return UserRet::from_error(error);
+    }
     let offset = match offset_from_arg(args.arg(3)) {
         Ok(v) => v,
         Err(e) => return UserRet::from_error(e),
     };
 
-    let data = match gather_user_iovecs(iov_ptr, iovcnt) {
+    let iovecs = match import_iovecs(iov_ptr, iovcnt) {
+        Ok(iovecs) => iovecs,
+        Err(error) => return UserRet::from_error(error),
+    };
+    let data = match gather_imported_iovecs(&iovecs) {
         Ok(v) => v,
         Err(e) => return UserRet::from_error(e),
     };
