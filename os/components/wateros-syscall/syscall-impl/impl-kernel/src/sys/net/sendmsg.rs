@@ -4,12 +4,15 @@
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
-use driver::network::stack;
+use driver::network::{stack, SocketReceiveLease};
 use wateros_base_config::task::SCHED_TIMER_PERIOD_MS;
 
 use crate::fallible_buf::{try_kbuf, SYSCALL_IO_MAX};
 use crate::socket_fd;
-use crate::user_copy::{copy_from_user, copy_from_user_struct, copy_to_user};
+use crate::user_copy::{
+    copy_from_user, copy_from_user_struct, copy_to_user, copy_to_user_progress,
+    copy_to_user_struct,
+};
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -44,6 +47,10 @@ struct SockAddrIn {
 
 const IOV_MAX: usize = 256;
 const MSG_DONTWAIT: usize = 0x40;
+const MSG_TRUNC: usize = 0x20;
+const MSG_PEEK: usize = 0x02;
+const MSG_OOB: usize = 0x01;
+const MSG_ERRQUEUE: usize = 0x2000;
 const SOCKET_RECVMSG_WAIT_TICKS: usize = 4096;
 
 // 本方法代码由AI完成
@@ -149,14 +156,23 @@ pub(crate) fn sys_recvmsg(args: SyscallArgs) -> UserRet {
     if msg_ptr == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
     }
+    if flags & MSG_OOB != 0 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    if flags & MSG_ERRQUEUE != 0 {
+        return UserRet::from_error(ErrNo::EAGAIN);
+    }
 
-    let msg: MsgHdr = match copy_from_user_struct(msg_ptr) {
+    let mut msg: MsgHdr = match copy_from_user_struct(msg_ptr) {
         Ok(v) => v,
         Err(_) => return UserRet::from_error(ErrNo::EFAULT),
     };
 
-    if msg.msg_iovlen == 0 || msg.msg_iovlen > IOV_MAX {
+    if msg.msg_iovlen == 0 {
         return UserRet::from_error(ErrNo::EINVAL);
+    }
+    if msg.msg_iovlen > IOV_MAX {
+        return UserRet::from_error(ErrNo::EMSGSIZE);
     }
     if msg.msg_iov == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
@@ -183,35 +199,29 @@ pub(crate) fn sys_recvmsg(args: SyscallArgs) -> UserRet {
         return UserRet::from_success(0);
     }
 
-    let socket = match socket_fd::lookup(fd) {
-        Some(s) => s,
-        None => return UserRet::from_error(ErrNo::ENOTSOCK),
+    let socket = match socket_fd::lookup_or_errno(fd) {
+        Ok(socket) => socket,
+        Err(error) => return UserRet::from_error(error),
     };
     let handle = socket.handle();
 
-    let mut kbuf = match try_kbuf(total_len, SYSCALL_IO_MAX) {
-        Ok(buf) => buf,
-        Err(err) => return UserRet::from_error(err),
+    let kind = match stack::socket_kind(handle) {
+        Ok(kind) => kind,
+        Err(_) => return UserRet::from_error(ErrNo::ENOTSOCK),
     };
-
-    // 根据 socket 类型接收，写回发送方地址
-    let (n, from_ip, from_port) = match stack::socket_kind(handle) {
-        Ok(stack::SocketKind::Tcp) => match recvmsg_tcp_blocking(fd, handle, flags, &mut kbuf) {
-            Ok(n) if n > 0 => (n, [0u8; 4], 0u16),
-            Ok(_) => return UserRet::from_success(0),
-            Err(e) => return UserRet::from_error(e),
-        },
-        Ok(stack::SocketKind::Udp) => match recvmsg_udp_blocking(fd, handle, flags, &mut kbuf) {
-            Ok((n, ip, port)) if n > 0 => (n, ip, port),
-            Ok(_) => return UserRet::from_success(0),
-            Err(e) => return UserRet::from_error(e),
-        },
-        _ => return UserRet::from_error(ErrNo::ENOTSOCK),
+    let lease = match recvmsg_receive_blocking(fd, &socket, flags, total_len) {
+        Ok(Some(lease)) => lease,
+        Ok(None) => return UserRet::from_success(0),
+        Err(error) => return UserRet::from_error(error),
     };
+    let (from_ip, from_port) = lease.source();
+    let staged_len = lease.bytes().len();
+    let datagram_len = lease.datagram_len();
 
     // 将数据分发到 iovec 缓冲区
     let mut offset = 0;
-    let mut remaining = n;
+    let mut remaining = staged_len;
+    let mut copy_error = None;
     for iov in &iovs {
         if remaining == 0 {
             break;
@@ -220,21 +230,37 @@ pub(crate) fn sys_recvmsg(args: SyscallArgs) -> UserRet {
             .iov_len
             .min(remaining);
         if chunk > 0 {
-            if copy_to_user(
+            let progress = copy_to_user_progress(
                 iov.iov_base,
-                &kbuf[offset..offset + chunk],
-            )
-            .is_err()
-            {
-                return UserRet::from_error(ErrNo::EFAULT);
+                &lease.bytes()[offset..offset + chunk],
+            );
+            offset += progress.copied;
+            remaining -= progress.copied;
+            if let Some(error) = progress.error {
+                copy_error = Some(error);
+                break;
             }
-            offset += chunk;
-            remaining -= chunk;
         }
     }
 
+    if copy_error.is_some() {
+        if flags & MSG_PEEK != 0 {
+            let _ = lease.finish(0, false);
+            return if offset > 0 {
+                UserRet::from_success(offset)
+            } else {
+                UserRet::from_error(ErrNo::EFAULT)
+            };
+        }
+        return match lease.finish(offset, false) {
+            Ok(stack::SocketRecvFinish::Bytes(copied)) => UserRet::from_success(copied),
+            Ok(stack::SocketRecvFinish::Fault) => UserRet::from_error(ErrNo::EFAULT),
+            Err(error) => UserRet::from_error(recv_error_to_errno(error)),
+        };
+    }
+
     // 写回发送方地址到 msg_name
-    if msg.msg_name != 0 && (from_ip != [0; 4] || from_port != 0) {
+    if kind == stack::SocketKind::Udp && msg.msg_name != 0 {
         let addr = SockAddrIn {
             sin_family: 2, // AF_INET
             sin_port: from_port.to_be(),
@@ -248,34 +274,62 @@ pub(crate) fn sys_recvmsg(args: SyscallArgs) -> UserRet {
                 write_len,
             )
         };
-        let _ = copy_to_user(msg.msg_name, addr_bytes);
+        if copy_to_user(msg.msg_name, addr_bytes).is_err() {
+            let _ = lease.finish(0, false);
+            return UserRet::from_error(ErrNo::EFAULT);
+        }
+    }
+    msg.msg_flags = if kind == stack::SocketKind::Udp && datagram_len > staged_len {
+        MSG_TRUNC as i32
+    } else {
+        0
+    };
+    if copy_to_user_struct(msg_ptr, &msg).is_err() {
+        let _ = lease.finish(0, false);
+        return UserRet::from_error(ErrNo::EFAULT);
     }
 
-    UserRet::from_success(n)
+    if flags & MSG_PEEK != 0 {
+        let _ = lease.finish(0, false);
+        return if kind == stack::SocketKind::Udp && flags & MSG_TRUNC != 0 {
+            UserRet::from_success(datagram_len)
+        } else {
+            UserRet::from_success(staged_len)
+        };
+    }
+
+    match lease.finish(staged_len, true) {
+        Ok(stack::SocketRecvFinish::Bytes(copied)) => {
+            if kind == stack::SocketKind::Udp && flags & MSG_TRUNC != 0 {
+                UserRet::from_success(datagram_len)
+            } else {
+                UserRet::from_success(copied)
+            }
+        }
+        Ok(stack::SocketRecvFinish::Fault) => UserRet::from_error(ErrNo::EFAULT),
+        Err(error) => UserRet::from_error(recv_error_to_errno(error)),
+    }
 }
 
 fn recvmsg_is_nonblocking(fd: usize, flags: usize) -> bool {
     socket_fd::is_nonblocking(fd) || (flags & MSG_DONTWAIT) != 0
 }
 
-fn recvmsg_tcp_blocking(
+fn recvmsg_receive_blocking(
     fd: usize,
-    handle: smoltcp::iface::SocketHandle,
+    socket: &driver::network::SocketRef,
     flags: usize,
-    buf: &mut [u8],
-) -> Result<usize, ErrNo> {
+    max_len: usize,
+) -> Result<Option<SocketReceiveLease>, ErrNo> {
     let nonblocking = recvmsg_is_nonblocking(fd, flags);
-    let wait_ticks = socket_recv_wait_ticks(handle, SOCKET_RECVMSG_WAIT_TICKS);
+    let wait_ticks = socket_recv_wait_ticks(socket.handle(), SOCKET_RECVMSG_WAIT_TICKS);
     for _ in 0..wait_ticks {
         drive_network_stack();
-        if stack::socket_can_recv(handle).unwrap_or(false) {
-            return stack::socket_recv(handle, buf).map_err(|_| ErrNo::EIO);
-        }
-        if !stack::socket_may_recv(handle).unwrap_or(false) {
-            return Ok(0);
-        }
-        if matches!(stack::socket_state(handle), Ok(stack::SocketState::Closed)) {
-            return Ok(0);
+        match socket.prepare_receive(max_len) {
+            Ok(lease) => return Ok(Some(lease)),
+            Err(stack::SocketRecvError::Finished) => return Ok(None),
+            Err(stack::SocketRecvError::Busy | stack::SocketRecvError::Empty) => {}
+            Err(error) => return Err(recv_error_to_errno(error)),
         }
         if nonblocking {
             return Err(ErrNo::EAGAIN);
@@ -285,25 +339,14 @@ fn recvmsg_tcp_blocking(
     Err(ErrNo::EAGAIN)
 }
 
-fn recvmsg_udp_blocking(
-    fd: usize,
-    handle: smoltcp::iface::SocketHandle,
-    flags: usize,
-    buf: &mut [u8],
-) -> Result<(usize, [u8; 4], u16), ErrNo> {
-    let nonblocking = recvmsg_is_nonblocking(fd, flags);
-    let wait_ticks = socket_recv_wait_ticks(handle, SOCKET_RECVMSG_WAIT_TICKS);
-    for _ in 0..wait_ticks {
-        drive_network_stack();
-        if stack::socket_udp_can_recv(handle).unwrap_or(false) {
-            return stack::socket_recvfrom(handle, buf).map_err(|_| ErrNo::EIO);
-        }
-        if nonblocking {
-            return Err(ErrNo::EAGAIN);
-        }
-        task::sleep_for_ticks(1);
+fn recv_error_to_errno(error: stack::SocketRecvError) -> ErrNo {
+    match error {
+        stack::SocketRecvError::Busy | stack::SocketRecvError::Empty => ErrNo::EAGAIN,
+        stack::SocketRecvError::Finished => ErrNo::EIO,
+        stack::SocketRecvError::InvalidSocket => ErrNo::ENOTSOCK,
+        stack::SocketRecvError::NoMemory => ErrNo::ENOMEM,
+        stack::SocketRecvError::Io => ErrNo::EIO,
     }
-    Err(ErrNo::EAGAIN)
 }
 
 fn socket_recv_wait_ticks(handle: smoltcp::iface::SocketHandle, default_ticks: usize) -> usize {

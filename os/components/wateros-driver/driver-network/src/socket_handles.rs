@@ -4,11 +4,14 @@
 
 use alloc::boxed::Box;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use smoltcp::iface::SocketHandle;
 use spin::Mutex;
 use vfs_api::error::{VfsError, VfsResult};
-use vfs_api::handle::VfsIoHandle;
+use vfs_api::handle::{
+    VfsCopyProgress, VfsIoHandle, VfsPreparedRead, VfsReadFinish, VfsReadLease,
+};
 use vfs_api::meta::{VfsMetadata, VfsNodeType};
 
 use crate::stack;
@@ -94,8 +97,130 @@ impl SocketRef {
         self.inner.status_flags.store(flags, Ordering::Release);
     }
 
+    /// Reserve received bytes while retaining this socket's lifetime.
+    pub fn prepare_receive(&self, max_len: usize) -> Result<SocketReceiveLease, stack::SocketRecvError> {
+        let snapshot = stack::socket_poll_snapshot(self.handle())
+            .map_err(|_| stack::SocketRecvError::InvalidSocket)?;
+        if !snapshot.can_recv {
+            if snapshot.kind == stack::SocketKind::Tcp && !snapshot.may_recv {
+                return Err(stack::SocketRecvError::Finished);
+            }
+            return Err(stack::SocketRecvError::Empty);
+        }
+        let mut data = Vec::new();
+        data.try_reserve_exact(max_len)
+            .map_err(|_| stack::SocketRecvError::NoMemory)?;
+        data.resize(max_len, 0);
+        let reservation = stack::socket_prepare_recv(self.handle(), &mut data)?;
+        data.truncate(reservation.staged_len());
+        Ok(SocketReceiveLease {
+            _socket: self.clone(),
+            reservation: Some(reservation),
+            data,
+        })
+    }
+
     fn inode(&self) -> u64 {
         self.inode
+    }
+}
+
+/// Owned receive reservation shared by read, recvfrom and recvmsg.
+pub struct SocketReceiveLease {
+    _socket: SocketRef,
+    reservation: Option<stack::SocketRecvReservation>,
+    data: Vec<u8>,
+}
+
+impl SocketReceiveLease {
+    pub fn bytes(&self) -> &[u8] { self.data.as_slice() }
+
+    pub fn source(&self) -> ([u8; 4], u16) {
+        self.reservation.as_ref()
+                        .map(stack::SocketRecvReservation::source)
+                        .unwrap_or(([0; 4], 0))
+    }
+
+    pub fn kind(&self) -> stack::SocketKind {
+        self.reservation.as_ref()
+                        .map(stack::SocketRecvReservation::kind)
+                        .unwrap_or(stack::SocketKind::Tcp)
+    }
+
+    pub fn datagram_len(&self) -> usize {
+        self.reservation.as_ref()
+                        .map(stack::SocketRecvReservation::datagram_len)
+                        .unwrap_or(0)
+    }
+
+    pub fn finish(mut self, copied: usize, complete: bool)
+                  -> Result<stack::SocketRecvFinish, stack::SocketRecvError> {
+        let reservation = self.reservation.take().ok_or(stack::SocketRecvError::Io)?;
+        stack::socket_finish_recv(reservation, copied, complete)
+    }
+}
+
+impl Drop for SocketReceiveLease {
+    fn drop(&mut self) {
+        if let Some(reservation) = self.reservation.take() {
+            let _ = stack::socket_finish_recv(reservation, 0, false);
+        }
+    }
+}
+
+struct SocketPreparedRead {
+    socket: SocketRef,
+    max_len: usize,
+}
+
+impl VfsPreparedRead for SocketPreparedRead {
+    fn acquire(self: Box<Self>) -> VfsResult<Box<dyn VfsReadLease>> {
+        match self.socket.prepare_receive(self.max_len) {
+            Ok(lease) => Ok(Box::new(SocketVfsReadLease { lease: Some(lease) })),
+            Err(stack::SocketRecvError::Finished) => Ok(Box::new(EmptySocketReadLease)),
+            Err(stack::SocketRecvError::Busy | stack::SocketRecvError::Empty) => {
+                const O_NONBLOCK: usize = 0o4000;
+                if self.socket.status_flags() & O_NONBLOCK != 0 {
+                    Err(VfsError::WouldBlock)
+                } else {
+                    Err(VfsError::Busy)
+                }
+            }
+            Err(error) => Err(map_recv_stack_err(error)),
+        }
+    }
+}
+
+struct EmptySocketReadLease;
+
+impl VfsReadLease for EmptySocketReadLease {
+    fn bytes(&self) -> &[u8] { &[] }
+
+    fn finish(self: Box<Self>, progress: VfsCopyProgress) -> VfsResult<VfsReadFinish> {
+        if progress.copied != 0 {
+            return Err(VfsError::Io);
+        }
+        Ok(VfsReadFinish::Bytes(0))
+    }
+}
+
+struct SocketVfsReadLease {
+    lease: Option<SocketReceiveLease>,
+}
+
+impl VfsReadLease for SocketVfsReadLease {
+    fn bytes(&self) -> &[u8] {
+        self.lease.as_ref().map(SocketReceiveLease::bytes).unwrap_or(&[])
+    }
+
+    fn finish(mut self: Box<Self>, progress: VfsCopyProgress) -> VfsResult<VfsReadFinish> {
+        match self.lease.take()
+                        .ok_or(VfsError::Io)?
+                        .finish(progress.copied, progress.complete)
+                        .map_err(map_recv_stack_err)? {
+            stack::SocketRecvFinish::Bytes(copied) => Ok(VfsReadFinish::Bytes(copied)),
+            stack::SocketRecvFinish::Fault => Ok(VfsReadFinish::Fault),
+        }
     }
 }
 
@@ -115,8 +240,12 @@ impl VfsIoHandle for TcpStreamHandle {
         Ok(())
     }
 
+    fn prepare_read(&mut self, max_len: usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
+        Ok(Box::new(SocketPreparedRead { socket: self.socket.clone(), max_len }))
+    }
+
     fn read(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
-        stack::socket_recv(self.socket.handle(), buf).map_err(map_stack_err)
+        read_with_lease(&self.socket, buf)
     }
 
     fn write(&mut self, buf: &[u8]) -> VfsResult<usize> {
@@ -207,11 +336,12 @@ impl VfsIoHandle for UdpSocketHandle {
         Ok(())
     }
 
+    fn prepare_read(&mut self, max_len: usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
+        Ok(Box::new(SocketPreparedRead { socket: self.socket.clone(), max_len }))
+    }
+
     fn read(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
-        // UDP read: recvfrom 并丢弃来源地址
-        stack::socket_recvfrom(self.socket.handle(), buf)
-            .map(|(n, _ip, _port)| n)
-            .map_err(map_stack_err)
+        read_with_lease(&self.socket, buf)
     }
 
     fn write(&mut self, buf: &[u8]) -> VfsResult<usize> {
@@ -249,6 +379,16 @@ impl VfsIoHandle for UdpSocketHandle {
     }
 }
 
+fn read_with_lease(socket: &SocketRef, buf: &mut [u8]) -> VfsResult<usize> {
+    let lease = socket.prepare_receive(buf.len()).map_err(map_recv_stack_err)?;
+    let len = lease.bytes().len();
+    buf[..len].copy_from_slice(lease.bytes());
+    match lease.finish(len, true).map_err(map_recv_stack_err)? {
+        stack::SocketRecvFinish::Bytes(copied) => Ok(copied),
+        stack::SocketRecvFinish::Fault => Err(VfsError::Io),
+    }
+}
+
 /// 将协议栈 `&'static str` 错误映射为 VFS 错误码。
 fn map_stack_err(err: &'static str) -> VfsError {
     match err {
@@ -269,5 +409,16 @@ fn map_send_stack_err(err: stack::SocketSendError) -> VfsError {
         | stack::SocketSendError::InvalidDestination
         | stack::SocketSendError::StackUnavailable
         | stack::SocketSendError::Io => VfsError::Io,
+    }
+}
+
+fn map_recv_stack_err(err: stack::SocketRecvError) -> VfsError {
+    match err {
+        stack::SocketRecvError::Busy => VfsError::Busy,
+        stack::SocketRecvError::Empty => VfsError::WouldBlock,
+        stack::SocketRecvError::Finished => VfsError::Unsupported,
+        stack::SocketRecvError::InvalidSocket => VfsError::BadFd,
+        stack::SocketRecvError::NoMemory => VfsError::NoMemory,
+        stack::SocketRecvError::Io => VfsError::Io,
     }
 }

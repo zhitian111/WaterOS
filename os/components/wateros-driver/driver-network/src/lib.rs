@@ -25,7 +25,9 @@ pub use impl_smoltcp::SmoltcpAdapter;
 #[cfg(feature = "impl-smoltcp")]
 pub mod socket_handles;
 #[cfg(feature = "impl-smoltcp")]
-pub use socket_handles::{SocketRef, TcpListenerHandle, TcpStreamHandle, UdpSocketHandle};
+pub use socket_handles::{
+    SocketReceiveLease, SocketRef, TcpListenerHandle, TcpStreamHandle, UdpSocketHandle,
+};
 
 /// 网络子系统在 DTB 中声明可尝试绑定的设备（与 feature 无关；用于扫描阶段匹配）。
 pub const NETWORK_SUPPORTED_DEVICES: &[SupportedDeviceEntry] = &[SupportedDeviceEntry {
@@ -114,6 +116,47 @@ pub mod stack {
         Io,
     }
 
+    /// Receive reservation setup/commit failures exposed without smoltcp types.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum SocketRecvError {
+        Busy,
+        Empty,
+        Finished,
+        InvalidSocket,
+        NoMemory,
+        Io,
+    }
+
+    /// Result of committing or cancelling a receive lease.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum SocketRecvFinish {
+        Bytes(usize),
+        Fault,
+    }
+
+    pub(crate) struct SocketRecvReservation {
+        handle: SocketHandle,
+        id: u64,
+        kind: SocketKind,
+        staged_len: usize,
+        datagram_len: usize,
+        source_ip: [u8; 4],
+        source_port: u16,
+        loopback_udp: bool,
+    }
+
+    impl SocketRecvReservation {
+        pub(crate) fn staged_len(&self) -> usize { self.staged_len }
+
+        pub(crate) fn source(&self) -> ([u8; 4], u16) {
+            (self.source_ip, self.source_port)
+        }
+
+        pub(crate) fn kind(&self) -> SocketKind { self.kind }
+
+        pub(crate) fn datagram_len(&self) -> usize { self.datagram_len }
+    }
+
     /// 一次协议栈加锁内取得的 socket 就绪状态，避免多核下分次查询观察到不同瞬间。
     #[derive(Clone, Copy, Debug)]
     pub struct SocketPollSnapshot {
@@ -150,6 +193,9 @@ pub mod stack {
         snd_buf_size: i32,
         /// `setsockopt(SO_RCVBUF)` 记录值，供 `getsockopt` / iperf 查询。
         rcv_buf_size: i32,
+        /// Only one read/recv/recvfrom may own the receive queue prefix.
+        recv_reservation: Option<u64>,
+        next_recv_reservation: u64,
     }
 
     struct TcpListenerGroup {
@@ -194,6 +240,10 @@ pub mod stack {
             let packet = self.packets.pop_front()?;
             self.queued_bytes -= packet.data.len();
             Some(packet)
+        }
+
+        fn front(&self) -> Option<&LoopbackUdpPacket> {
+            self.packets.front()
         }
 
         fn is_empty(&self) -> bool {
@@ -275,6 +325,8 @@ pub mod stack {
             mcast_groups: BTreeSet::new(),
             snd_buf_size: default_snd_buf_size(kind),
             rcv_buf_size: default_rcv_buf_size(kind),
+            recv_reservation: None,
+            next_recv_reservation: 1,
         }
     }
 
@@ -792,13 +844,14 @@ pub mod stack {
     pub fn socket_poll_snapshot(handle: SocketHandle) -> Result<SocketPollSnapshot, &'static str> {
         let mut guard = NETWORK_STACK.lock();
         let stack = guard.as_mut().ok_or("stack not initialized")?;
-        let (kind, state, is_listener, listener_group) = {
+        let (kind, state, is_listener, listener_group, recv_reserved) = {
             let meta = stack.metas.get(&handle).ok_or("invalid socket handle")?;
             (
                 meta.kind,
                 meta.state,
                 meta.is_listener,
                 meta.listener_group,
+                meta.recv_reservation.is_some(),
             )
         };
 
@@ -816,7 +869,7 @@ pub mod stack {
                 Ok(SocketPollSnapshot {
                     kind,
                     state,
-                    can_recv: socket.can_recv(),
+                    can_recv: !recv_reserved && socket.can_recv(),
                     may_recv: socket.may_recv(),
                     may_send: socket.may_send(),
                     send_capacity: socket.send_capacity(),
@@ -838,7 +891,7 @@ pub mod stack {
                 Ok(SocketPollSnapshot {
                     kind,
                     state,
-                    can_recv: loopback_ready || socket_ready,
+                    can_recv: !recv_reserved && (loopback_ready || socket_ready),
                     may_recv: true,
                     may_send,
                     send_capacity,
@@ -941,7 +994,13 @@ pub mod stack {
 
     /// TCP socket 当前是否有数据可读。
     pub fn socket_can_recv(handle: SocketHandle) -> Result<bool, &'static str> {
-        with_tcp_socket(handle, |s| s.can_recv()).ok_or("stack not initialized")
+        let mut guard = NETWORK_STACK.lock();
+        let stack = guard.as_mut().ok_or("stack not initialized")?;
+        let meta = stack.metas.get(&handle).ok_or("invalid socket handle")?;
+        if meta.recv_reservation.is_some() {
+            return Ok(false);
+        }
+        Ok(stack.sockets.get_mut::<tcp::Socket>(handle).can_recv())
     }
 
     /// 从 socket 发送数据（TCP 和已 connect 的 UDP）。
@@ -967,21 +1026,198 @@ pub mod stack {
         }
     }
 
-    /// 从 socket 接收数据（TCP 和已 connect 的 UDP）。
-    pub fn socket_recv(handle: SocketHandle, buf: &mut [u8]) -> Result<usize, &'static str> {
+    /// Reserve the receive queue prefix without consuming it.
+    pub(crate) fn socket_prepare_recv(
+        handle: SocketHandle,
+        buf: &mut [u8],
+    ) -> Result<SocketRecvReservation, SocketRecvError> {
         let mut guard = NETWORK_STACK.lock();
-        let stack = guard.as_mut().ok_or("stack not initialized")?;
-        let meta = stack.metas.get(&handle).ok_or("invalid socket handle")?;
-        match meta.kind {
-            SocketKind::Tcp => stack
-                .sockets
-                .get_mut::<tcp::Socket>(handle)
-                .recv_slice(buf)
-                .map_err(|_| "recv failed"),
-            SocketKind::Udp => {
-                drop(guard);
-                socket_recvfrom(handle, buf).map(|(n, _, _)| n)
+        let stack = guard.as_mut().ok_or(SocketRecvError::Io)?;
+        let (kind, id, peer_ip, peer_port) = {
+            let meta = stack.metas.get_mut(&handle).ok_or(SocketRecvError::InvalidSocket)?;
+            if meta.recv_reservation.is_some() {
+                return Err(SocketRecvError::Busy);
             }
+            let id = meta.next_recv_reservation;
+            meta.next_recv_reservation = meta.next_recv_reservation.wrapping_add(1);
+            meta.recv_reservation = Some(id);
+            (meta.kind, id, meta.peer_ip, meta.peer_port)
+        };
+
+        let prepared = match kind {
+            SocketKind::Tcp => {
+                let socket = stack.sockets.get_mut::<tcp::Socket>(handle);
+                let n = match socket.peek_slice(buf) {
+                    Ok(n) => n,
+                    Err(_) => {
+                        if let Some(meta) = stack.metas.get_mut(&handle) {
+                            meta.recv_reservation = None;
+                        }
+                        return Err(SocketRecvError::Io);
+                    }
+                };
+                if n == 0 {
+                    if let Some(meta) = stack.metas.get_mut(&handle) {
+                        meta.recv_reservation = None;
+                    }
+                    return if socket.may_recv() {
+                        Err(SocketRecvError::Empty)
+                    } else {
+                        Err(SocketRecvError::Finished)
+                    };
+                }
+                SocketRecvReservation {
+                    handle,
+                    id,
+                    kind,
+                    staged_len: n,
+                    datagram_len: n,
+                    source_ip: peer_ip,
+                    source_port: peer_port,
+                    loopback_udp: false,
+                }
+            }
+            SocketKind::Udp => {
+                if let Some(packet) = stack.udp_loopback.get(&handle)
+                                                    .and_then(LoopbackUdpQueue::front) {
+                    let n = packet.data.len().min(buf.len());
+                    buf[..n].copy_from_slice(&packet.data[..n]);
+                    SocketRecvReservation {
+                        handle,
+                        id,
+                        kind,
+                        staged_len: n,
+                        datagram_len: packet.data.len(),
+                        source_ip: packet.source_ip,
+                        source_port: packet.source_port,
+                        loopback_udp: true,
+                    }
+                } else {
+                    let socket = stack.sockets.get_mut::<udp::Socket>(handle);
+                    let (payload, metadata) = match socket.peek() {
+                        Ok(value) => value,
+                        Err(udp::RecvError::Exhausted) => {
+                            if let Some(meta) = stack.metas.get_mut(&handle) {
+                                meta.recv_reservation = None;
+                            }
+                            return Err(SocketRecvError::Empty);
+                        }
+                        Err(_) => {
+                            if let Some(meta) = stack.metas.get_mut(&handle) {
+                                meta.recv_reservation = None;
+                            }
+                            return Err(SocketRecvError::Io);
+                        }
+                    };
+                    let n = payload.len().min(buf.len());
+                    buf[..n].copy_from_slice(&payload[..n]);
+                    let source_ip = match metadata.endpoint.addr {
+                        IpAddress::Ipv4(addr) => addr.octets(),
+                    };
+                    SocketRecvReservation {
+                        handle,
+                        id,
+                        kind,
+                        staged_len: n,
+                        datagram_len: payload.len(),
+                        source_ip,
+                        source_port: metadata.endpoint.port,
+                        loopback_udp: false,
+                    }
+                }
+            }
+        };
+        Ok(prepared)
+    }
+
+    /// Commit a copied prefix, or cancel without consuming on an immediate fault.
+    pub(crate) fn socket_finish_recv(
+        reservation: SocketRecvReservation,
+        copied: usize,
+        complete: bool,
+    ) -> Result<SocketRecvFinish, SocketRecvError> {
+        if copied > reservation.staged_len {
+            let mut guard = NETWORK_STACK.lock();
+            if let Some(stack) = guard.as_mut() {
+                if let Some(meta) = stack.metas.get_mut(&reservation.handle) {
+                    if meta.recv_reservation == Some(reservation.id) {
+                        meta.recv_reservation = None;
+                    }
+                }
+            }
+            return Err(SocketRecvError::Io);
+        }
+        let mut guard = NETWORK_STACK.lock();
+        let stack = guard.as_mut().ok_or(SocketRecvError::Io)?;
+        let active_matches = stack.metas
+                                  .get(&reservation.handle)
+                                  .is_some_and(|meta| meta.recv_reservation == Some(reservation.id));
+        if !active_matches {
+            return Err(SocketRecvError::InvalidSocket);
+        }
+
+        if copied == 0 && !complete {
+            if let Some(meta) = stack.metas.get_mut(&reservation.handle) {
+                meta.recv_reservation = None;
+            }
+            return Ok(SocketRecvFinish::Fault);
+        }
+
+        let consume_result = match reservation.kind {
+            SocketKind::Tcp => {
+                if copied == 0 {
+                    Ok(())
+                } else {
+                    let socket = stack.sockets.get_mut::<tcp::Socket>(reservation.handle);
+                    let mut remaining = copied;
+                    let mut result = Ok(());
+                    while remaining > 0 {
+                        let consumed = match socket.recv(|data| {
+                            let n = remaining.min(data.len());
+                            (n, n)
+                        }) {
+                            Ok(consumed) => consumed,
+                            Err(_) => {
+                                result = Err(SocketRecvError::Io);
+                                break;
+                            }
+                        };
+                        if consumed == 0 {
+                            result = Err(SocketRecvError::Io);
+                            break;
+                        }
+                        remaining -= consumed;
+                    }
+                    result
+                }
+            }
+            SocketKind::Udp if reservation.loopback_udp => {
+                stack.udp_loopback
+                     .get_mut(&reservation.handle)
+                     .and_then(LoopbackUdpQueue::pop_front)
+                     .map(|_| ())
+                     .ok_or(SocketRecvError::Io)
+            }
+            SocketKind::Udp => stack.sockets
+                                    .get_mut::<udp::Socket>(reservation.handle)
+                                    .recv()
+                                    .map(|_| ())
+                                    .map_err(|_| SocketRecvError::Io),
+        };
+        if let Some(meta) = stack.metas.get_mut(&reservation.handle) {
+            meta.recv_reservation = None;
+        }
+        consume_result?;
+        Ok(SocketRecvFinish::Bytes(copied))
+    }
+
+    /// From socket receive compatibility path. New syscall paths use receive leases.
+    pub fn socket_recv(handle: SocketHandle, buf: &mut [u8]) -> Result<usize, &'static str> {
+        let reservation = socket_prepare_recv(handle, buf).map_err(map_recv_error)?;
+        let copied = reservation.staged_len();
+        match socket_finish_recv(reservation, copied, true).map_err(map_recv_error)? {
+            SocketRecvFinish::Bytes(n) => Ok(n),
+            SocketRecvFinish::Fault => Err("recv failed"),
         }
     }
 
@@ -1020,27 +1256,28 @@ pub mod stack {
 
     /// UDP recvfrom。返回 (字节数, 来源IP, 来源端口)。
     pub fn socket_recvfrom(handle: SocketHandle, buf: &mut [u8]) -> Result<(usize, [u8; 4], u16), &'static str> {
-        use smoltcp::wire::IpAddress;
-        {
-            let mut guard = NETWORK_STACK.lock();
-            let stack = guard.as_mut().ok_or("stack not initialized")?;
-            if let Some(queue) = stack.udp_loopback.get_mut(&handle) {
-                if let Some(packet) = queue.pop_front() {
-                    let n = packet.data.len().min(buf.len());
-                    buf[..n].copy_from_slice(&packet.data[..n]);
-                    return Ok((n, packet.source_ip, packet.source_port));
-                }
-            }
+        let reservation = socket_prepare_recv(handle, buf).map_err(map_recv_error)?;
+        if reservation.kind() != SocketKind::Udp {
+            let _ = socket_finish_recv(reservation, 0, false);
+            return Err("not a udp socket");
         }
-        with_udp_socket(handle, |s| s.recv_slice(buf))
-            .ok_or("stack not initialized")
-            .and_then(|r| r.map_err(|_| "recvfrom failed"))
-            .map(|(n, meta)| {
-                let ip = match meta.endpoint.addr {
-                    IpAddress::Ipv4(addr) => addr.octets(),
-                };
-                (n, ip, meta.endpoint.port)
-            })
+        let copied = reservation.staged_len();
+        let (ip, port) = reservation.source();
+        match socket_finish_recv(reservation, copied, true).map_err(map_recv_error)? {
+            SocketRecvFinish::Bytes(n) => Ok((n, ip, port)),
+            SocketRecvFinish::Fault => Err("recvfrom failed"),
+        }
+    }
+
+    fn map_recv_error(error: SocketRecvError) -> &'static str {
+        match error {
+            SocketRecvError::Busy => "recv busy",
+            SocketRecvError::Empty => "recv empty",
+            SocketRecvError::Finished => "recv finished",
+            SocketRecvError::InvalidSocket => "invalid socket handle",
+            SocketRecvError::NoMemory => "recv no memory",
+            SocketRecvError::Io => "recv failed",
+        }
     }
 
     /// UDP socket 是否有数据可读。
@@ -1048,6 +1285,10 @@ pub mod stack {
         {
             let guard = NETWORK_STACK.lock();
             let stack = guard.as_ref().ok_or("stack not initialized")?;
+            let meta = stack.metas.get(&handle).ok_or("invalid socket handle")?;
+            if meta.recv_reservation.is_some() {
+                return Ok(false);
+            }
             if stack
                 .udp_loopback
                 .get(&handle)

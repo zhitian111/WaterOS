@@ -1372,8 +1372,6 @@ const LTP_SUBMIT_SKIP_BASENAMES: &[&str] = &[
     "realpath01",
     "reboot01",
     "reboot02",
-    "recv01",
-    "recvfrom01",
     "recvmmsg01",
     "recvmsg02",
     "recvmsg03",
