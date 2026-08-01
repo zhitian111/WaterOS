@@ -56,6 +56,10 @@ struct PipeState {
 
 impl PipeState {
     fn with_capacity(capacity: usize) -> PipeResult<Self> {
+        Self::with_capacity_and_open_state(capacity, true)
+    }
+
+    fn with_capacity_and_open_state(capacity: usize, open: bool) -> PipeResult<Self> {
         if capacity == 0 {
             return Err(PipeError::InvalidCapacity);
         }
@@ -66,8 +70,8 @@ impl PipeState {
             segments: VecDeque::new(),
             read_reservation: None,
             next_reservation_id: 1,
-            read_open: true,
-            write_open: true,
+            read_open: open,
+            write_open: open,
             read_refs: 0,
             write_refs: 0,
         })
@@ -254,6 +258,20 @@ impl Pipe {
         KernelPipe::with_capacity(capacity)
     }
 
+    pub(crate) fn new_named() -> Self {
+        Self {
+            state: Mutex::new(
+                PipeState::with_capacity_and_open_state(
+                    api_v0::DEFAULT_PIPE_CAPACITY,
+                    false,
+                )
+                .expect("default pipe capacity must be non-zero"),
+            ),
+            read_wait: WaitQueue::new_named("fifo-read"),
+            write_wait: WaitQueue::new_named("fifo-write"),
+        }
+    }
+
     /// 返回缓冲区容量。
     #[inline]
     pub fn capacity(&self) -> usize {
@@ -383,12 +401,52 @@ impl Pipe {
 
     /// 读端 fd 引用 +1（`dup` / `fork` 继承 / `Clone`）。
     pub fn acquire_read(&self) {
-        self.state.lock().read_refs += 1;
+        let mut state = self.state.lock();
+        let reopened = state.read_refs == 0;
+        state.read_refs += 1;
+        state.read_open = true;
+        drop(state);
+        if reopened {
+            self.write_wait.wake_all();
+        }
     }
 
     /// 写端 fd 引用 +1（`dup` / `fork` 继承 / `Clone`）。
     pub fn acquire_write(&self) {
-        self.state.lock().write_refs += 1;
+        let mut state = self.state.lock();
+        let reopened = state.write_refs == 0;
+        state.write_refs += 1;
+        state.write_open = true;
+        drop(state);
+        if reopened {
+            self.read_wait.wake_all();
+        }
+    }
+
+    pub(crate) fn has_readers(&self) -> bool {
+        self.state.lock().read_refs != 0
+    }
+
+    pub(crate) fn wait_for_reader(&self) -> PipeResult<()> {
+        let result = self
+            .write_wait
+            .wait_current_while(|| self.state.lock().read_refs == 0);
+        if result == TaskWaitResult::Interrupted {
+            Err(PipeError::Interrupted)
+        } else {
+            Ok(())
+        }
+    }
+
+    pub(crate) fn wait_for_writer(&self) -> PipeResult<()> {
+        let result = self
+            .read_wait
+            .wait_current_while(|| self.state.lock().write_refs == 0);
+        if result == TaskWaitResult::Interrupted {
+            Err(PipeError::Interrupted)
+        } else {
+            Ok(())
+        }
     }
 
     /// `FLOW:` 读端 fd 引用 -1；归零时关闭读端并在锁外唤醒所有写者。

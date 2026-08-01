@@ -47,6 +47,8 @@ impl ErrNo {
     pub const EINTR: Self = Self(4);
     /// 输入/输出错误。
     pub const EIO: Self = Self(5);
+    /// 设备不存在，或非阻塞 FIFO 写端当前没有读端。
+    pub const ENXIO: Self = Self(6);
     /// 参数列表过长；也用于 clone3 未识别尾部含非零扩展字段。
     pub const E2BIG: Self = Self(7);
     /// 文件描述符无效。

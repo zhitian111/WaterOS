@@ -90,7 +90,7 @@ impl Node {
             kind: NodeKind::Special,
             data: Vec::new(),
             children: BTreeMap::new(),
-            mode: (mode as u16) & 0o7777,
+            mode: mode as u16,
             inode,
             nlink: 1,
             uid: 0,

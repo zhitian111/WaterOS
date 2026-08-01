@@ -21,6 +21,7 @@ use spin::Mutex;
 use crate::read_lease::{try_zeroed, ReservationGuard, StagedReadLease};
 
 const S_IFMT : u16 = 0o170000;
+const S_IFIFO : u16 = 0o010000;
 const S_IFCHR : u16 = 0o020000;
 
 static NEXT_FLOCK_OWNER_ID : AtomicU64 = AtomicU64::new(1);
@@ -402,6 +403,12 @@ impl FsBridge {
                                                                                open_accmode(flags))));
         }
         if let Ok(meta) = self.metadata(abs.as_str()) {
+            if flags.contains(VfsOpenFlags::DIRECTORY) && meta.node_type != VfsNodeType::Directory {
+                return Err(VfsError::NotDirectory);
+            }
+            if meta.node_type == VfsNodeType::Special && meta.mode & S_IFMT == S_IFIFO {
+                return impl_fd_session::open_named_pipe(meta, flags);
+            }
             if meta.node_type == VfsNodeType::Special && meta.mode & S_IFMT == S_IFCHR {
                 return Ok(Box::new(impl_fd_session::NullDeviceHandle::new(open_accmode(flags))));
             }

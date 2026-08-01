@@ -10,7 +10,7 @@ extern crate alloc;
 mod endpoint;
 mod kernel_pipe;
 
-pub use endpoint::PipeEndpoint;
+pub use endpoint::{NamedPipe, PipeEndpoint};
 pub(crate) use kernel_pipe::Pipe;
 
 /// impl 层自检：创建最小 pipe 并验证非阻塞、端点 clone/close 与 EOF 语义。
@@ -106,6 +106,26 @@ pub fn test() {
     closed_write.close();
     assert_eq!(closed_write.write(b"x"),
                Err(api_v0::PipeError::Closed));
+
+    // A filesystem FIFO has no hidden sentinel endpoints: nonblocking writer
+    // open requires a reader, and closing the final writer exposes EOF.
+    let fifo = NamedPipe::new();
+    assert_eq!(fifo.open_write(true).err(),
+               Some(api_v0::PipeError::BrokenPipe));
+    let fifo_read = fifo.open_read(true).expect("open named pipe reader");
+    let mut fifo_buf = [0u8; 1];
+    assert_eq!(fifo_read.read(&mut fifo_buf), Ok(0));
+    let fifo_write = fifo.open_write(true).expect("open named pipe writer");
+    assert_eq!(fifo_read.read(&mut fifo_buf),
+               Err(api_v0::PipeError::WouldBlock));
+    assert_eq!(fifo_write.write(b"n"), Ok(1));
+    assert_eq!(fifo_read.read(&mut fifo_buf), Ok(1));
+    assert_eq!(&fifo_buf, b"n");
+    fifo_write.close();
+    assert_eq!(fifo_read.read(&mut fifo_buf), Ok(0));
+    fifo_read.close();
+    assert_eq!(fifo.open_write(true).err(),
+               Some(api_v0::PipeError::BrokenPipe));
 
     // stream reservation 只提交到达用户空间的前缀。
     let stream = Arc::new(Pipe::with_capacity(6).expect("reservation pipe"));

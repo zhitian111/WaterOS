@@ -20,7 +20,7 @@ pub use api_v0::{
 };
 
 #[cfg(feature = "impl-ringbuf")]
-pub use active_impl::PipeEndpoint;
+pub use active_impl::{NamedPipe, PipeEndpoint};
 
 /// 聚合层自检：串联 API 与当前激活 impl。
 #[cfg(feature = "impl-ringbuf")]

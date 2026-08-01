@@ -7,8 +7,8 @@ LTP_BIN_DIR=${LTP_BIN_DIR:-/glibc/ltp/testcases/bin}
 CASE_TIMEOUT=${READ_FAMILY_CASE_TIMEOUT:-45}
 BUSYBOX=${READ_FAMILY_BUSYBOX:-/glibc/busybox}
 DEFAULT_CASES="
-open09
-read01 read02 readv01 readv02 pread01 pread02 preadv01 preadv02
+open06 open09
+read01 read02 read03 read04 readv01 readv02 pread01 pread02 preadv01 preadv02
 pipe03 pipe14 pipe2_04 socketpair01 socketpair02
 recv01 recvfrom01 recvmsg01
 eventfd01 eventfd02 eventfd03 eventfd04 eventfd05

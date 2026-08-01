@@ -18,9 +18,9 @@ pub use cwd::{PerTaskCwdRegistry, PATH_MAX};
 pub use file_lock::{Flock, InodeKey, LOCK_EX, LOCK_NB, LOCK_SH, LOCK_UN};
 pub use handles::{
     ConsoleInHandle, ConsoleOutHandle, CpuDmaLatencyDeviceHandle, NullDeviceHandle,
-    PipeReadHandle, PipeWriteHandle, UnixStreamPairEnd, UrandomDeviceHandle, ZeroDeviceHandle,
-    pipe_handle_pair, pipe_handle_pair_with_flags, poll_pipe_smoke, stream_pair_handle_pair,
-    stream_pair_smoke,
+    NamedPipeHandle, PipeReadHandle, PipeWriteHandle, UnixStreamPairEnd, UrandomDeviceHandle,
+    ZeroDeviceHandle, open_named_pipe, pipe_handle_pair, pipe_handle_pair_with_flags,
+    poll_pipe_smoke, stream_pair_handle_pair, stream_pair_smoke,
 };
 pub use registry::PerTaskFdRegistry;
 pub use interrupt_guard::with_interrupt_disabled;

@@ -7,6 +7,8 @@ pub enum VfsError {
     NotMounted,
     /// 规范化路径下无对应节点。
     NotFound,
+    /// 设备或命名管道当前没有可连接的对端。
+    NoDevice,
     /// 操作要求普通文件，当前节点类型不符。
     NotAFile,
     /// 路径的中间分量不是目录。

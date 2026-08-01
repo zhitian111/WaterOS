@@ -17,6 +17,45 @@ use waitqueue::TaskWaitResult;
 
 use crate::kernel_pipe::Pipe;
 
+/// Shared backing object for a filesystem FIFO. It owns no endpoint reference,
+/// so EOF and `ENXIO` depend only on currently open file descriptions.
+pub struct NamedPipe {
+    pipe: Arc<Pipe>,
+}
+
+impl NamedPipe {
+    pub fn new() -> Self {
+        Self {
+            pipe: Arc::new(Pipe::new_named()),
+        }
+    }
+
+    pub fn open_read(&self, nonblocking: bool) -> PipeResult<PipeEndpoint> {
+        let endpoint = PipeEndpoint::open(self.pipe.clone(), PipeEndpointKind::Read, nonblocking);
+        if !nonblocking {
+            self.pipe.wait_for_writer()?;
+        }
+        Ok(endpoint)
+    }
+
+    pub fn open_write(&self, nonblocking: bool) -> PipeResult<PipeEndpoint> {
+        if nonblocking && !self.pipe.has_readers() {
+            return Err(PipeError::BrokenPipe);
+        }
+        let endpoint = PipeEndpoint::open(self.pipe.clone(), PipeEndpointKind::Write, nonblocking);
+        if !nonblocking {
+            self.pipe.wait_for_reader()?;
+        }
+        Ok(endpoint)
+    }
+}
+
+impl Default for NamedPipe {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// 可放入 fd table 的 pipe 端点。
 ///
 /// `INVARIANT:` `closed == true` 后不得再次减少 pipe 引用；这让显式 close 与析构幂等。
@@ -59,6 +98,20 @@ impl Drop for PipeEndpoint {
 }
 
 impl PipeEndpoint {
+    fn open(pipe: Arc<Pipe>, kind: PipeEndpointKind, nonblocking: bool) -> Self {
+        match kind {
+            PipeEndpointKind::Read => pipe.acquire_read(),
+            PipeEndpointKind::Write => pipe.acquire_write(),
+        }
+        Self {
+            pipe,
+            kind,
+            nonblocking: Arc::new(AtomicBool::new(nonblocking)),
+            direct: Arc::new(AtomicBool::new(false)),
+            closed: Cell::new(false),
+        }
+    }
+
     /// 创建一对读/写端点。
     pub fn pair(nonblocking: bool) -> (Self, Self) {
         PipeEndpointOps::pair(nonblocking)

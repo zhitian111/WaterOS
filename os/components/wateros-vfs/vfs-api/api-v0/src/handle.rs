@@ -239,6 +239,8 @@ impl VfsOpenFlags {
     pub const APPEND: u32 = 16;
     /// 仅打开目录（`O_DIRECTORY`）。
     pub const DIRECTORY: u32 = 32;
+    /// 打开本身以及后续 I/O 均不得阻塞（`O_NONBLOCK`）。
+    pub const NONBLOCK: u32 = 64;
 
     /// 只读打开标志组合。
     pub const fn read() -> Self {

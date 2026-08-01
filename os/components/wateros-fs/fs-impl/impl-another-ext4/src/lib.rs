@@ -108,9 +108,10 @@ fn lookup(fs : &Ext4, path : &str) -> FsResult<u32> {
 fn metadata(fs : &Ext4, inode : u32) -> FsResult<FsMetadata> {
     let attr = fs.getattr(inode)
                  .map_err(map_error)?;
+    let mode = InodeMode::from_type_and_perm(attr.ftype, attr.perm).bits();
     Ok(FsMetadata { node_type : map_type(attr.ftype),
                     size : attr.size,
-                    mode : attr.perm.bits(),
+                    mode,
                     inode : attr.ino as u64,
                     nlink : attr.links as u32,
                     uid : attr.uid,
@@ -357,6 +358,20 @@ impl ReadWriteFs for AnotherExt4Fs {
         let fs = self.get_mut()?;
         let inode = lookup(fs, path)?;
         fs.setattr(inode, None, uid, gid, None, None, None, None, None)
+          .map_err(map_error)?;
+        fs.flush_all();
+        Ok(())
+    }
+
+    fn mknod(&mut self, path : &str, mode : u32, rdev : u32) -> FsResult<()> {
+        let fs = self.get_mut()?;
+        let inode_mode = InodeMode::from_bits_retain(mode as u16);
+        match inode_mode.file_type() {
+            FileType::RegularFile | FileType::Fifo | FileType::Socket => {}
+            FileType::CharacterDev | FileType::BlockDev if rdev == 0 => {}
+            _ => return Err(FsError::Unsupported),
+        }
+        fs.generic_create(EXT4_ROOT_INO, path, inode_mode)
           .map_err(map_error)?;
         fs.flush_all();
         Ok(())

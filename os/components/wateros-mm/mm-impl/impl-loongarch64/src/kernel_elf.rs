@@ -68,6 +68,7 @@ fn map_vfs_to_root_vol(e : VfsError) -> RootVolumeReadError {
         VfsError::WouldBlock |
         VfsError::Interrupted |
         VfsError::BrokenPipe |
+        VfsError::NoDevice |
         VfsError::NoTask |
         VfsError::TooManyOpenFiles |
         VfsError::NoSpace |

@@ -20,6 +20,7 @@ pub(crate) fn vfs_error_to_errno(err : VfsError) -> ErrNo {
         VfsError::Exists => ErrNo::EEXIST,
         VfsError::ReadOnlyFs => ErrNo::EROFS,
         VfsError::NotFound => ErrNo::ENOENT,
+        VfsError::NoDevice => ErrNo::ENXIO,
         VfsError::NotDirectory => ErrNo::ENOTDIR,
         VfsError::TooManySymlinks => ErrNo::ELOOP,
         VfsError::NotAFile => ErrNo::EISDIR,
@@ -49,6 +50,7 @@ pub(crate) fn linux_open_flags_to_vfs(flags : u32) -> VfsOpenFlags {
     const O_CREAT : u32 = 0o100;
     const O_TRUNC : u32 = 0o1000;
     const O_APPEND : u32 = 0o2000;
+    const O_NONBLOCK : u32 = 0o4000;
     const O_DIRECTORY : u32 = 0o200_000;
 
     let mut vf = VfsOpenFlags(0);
@@ -68,6 +70,9 @@ pub(crate) fn linux_open_flags_to_vfs(flags : u32) -> VfsOpenFlags {
     }
     if flags & O_DIRECTORY != 0 {
         vf.0 |= VfsOpenFlags::DIRECTORY;
+    }
+    if flags & O_NONBLOCK != 0 {
+        vf.0 |= VfsOpenFlags::NONBLOCK;
     }
     vf
 }

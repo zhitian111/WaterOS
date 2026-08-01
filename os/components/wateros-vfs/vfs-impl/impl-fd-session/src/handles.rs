@@ -4,6 +4,8 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
+use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -12,13 +14,14 @@ use api_v0::{
     VfsReadFinish, VfsReadLease, VfsResult, VfsSeekWhence,
 };
 use ipc::pipe::{
-    PipeEndpoint, PipeEndpointOps, PipeError, PipeReadFinish as IpcPipeReadFinish,
+    NamedPipe, PipeEndpoint, PipeEndpointOps, PipeError, PipeReadFinish as IpcPipeReadFinish,
     PipeReadLease as IpcPipeReadLease,
 };
 use spin::Mutex;
 
 // 本变量代码由AI完成
 static NEXT_PIPE_INODE: AtomicU64 = AtomicU64::new(1);
+static NAMED_PIPES: Mutex<BTreeMap<(u64, u64), Weak<NamedPipe>>> = Mutex::new(BTreeMap::new());
 // 本变量代码由AI完成
 static NEXT_STREAM_PAIR_INODE: AtomicU64 = AtomicU64::new(1);
 // 本变量代码由AI完成
@@ -635,6 +638,87 @@ pub struct PipeWriteHandle {
     inode: u64,
 }
 
+/// One open file description for a filesystem FIFO.
+pub struct NamedPipeHandle {
+    named: Arc<NamedPipe>,
+    registry_key: (u64, u64),
+    read_end: Option<PipeEndpoint>,
+    write_end: Option<PipeEndpoint>,
+    metadata: VfsMetadata,
+}
+
+pub fn open_named_pipe(
+    metadata: VfsMetadata,
+    flags: api_v0::VfsOpenFlags,
+) -> VfsResult<Box<dyn VfsIoHandle>> {
+    let key = (metadata.mount_id, metadata.inode);
+    let named = {
+        let mut registry = NAMED_PIPES.lock();
+        if let Some(existing) = registry.get(&key).and_then(Weak::upgrade) {
+            existing
+        } else {
+            let created = Arc::new(NamedPipe::new());
+            registry.insert(key, Arc::downgrade(&created));
+            created
+        }
+    };
+    let wants_read = flags.contains(api_v0::VfsOpenFlags::READ);
+    let wants_write = flags.contains(api_v0::VfsOpenFlags::WRITE);
+    let nonblocking = flags.contains(api_v0::VfsOpenFlags::NONBLOCK);
+
+    let (read_end, write_end) = if wants_read && wants_write {
+        let read = named.open_read(true).map_err(map_pipe_err)?;
+        let write = named.open_write(true).map_err(map_named_pipe_open_error)?;
+        read.set_nonblocking(nonblocking);
+        write.set_nonblocking(nonblocking);
+        (Some(read), Some(write))
+    } else if wants_read {
+        (Some(named.open_read(nonblocking).map_err(map_pipe_err)?), None)
+    } else if wants_write {
+        (
+            None,
+            Some(
+                named
+                    .open_write(nonblocking)
+                    .map_err(map_named_pipe_open_error)?,
+            ),
+        )
+    } else {
+        return Err(VfsError::InvalidPath);
+    };
+
+    Ok(Box::new(NamedPipeHandle {
+        named,
+        registry_key: key,
+        read_end,
+        write_end,
+        metadata,
+    }))
+}
+
+impl Drop for NamedPipeHandle {
+    fn drop(&mut self) {
+        if Arc::strong_count(&self.named) != 1 {
+            return;
+        }
+        let mut registry = NAMED_PIPES.lock();
+        let owns_entry = registry
+            .get(&self.registry_key)
+            .is_some_and(|weak| weak.as_ptr() == Arc::as_ptr(&self.named));
+        if owns_entry {
+            registry.remove(&self.registry_key);
+        }
+    }
+}
+
+fn map_named_pipe_open_error(error: PipeError) -> VfsError {
+    if error == PipeError::BrokenPipe {
+        VfsError::NoDevice
+    } else {
+        map_pipe_err(error)
+    }
+}
+
 // 本方法代码由AI完成
 pub fn pipe_handle_pair(nonblocking: bool) -> (PipeReadHandle, PipeWriteHandle) {
     pipe_handle_pair_with_flags(nonblocking, false)
@@ -657,6 +741,147 @@ pub fn pipe_handle_pair_with_flags(
             inode,
         },
     )
+}
+
+impl VfsIoHandle for NamedPipeHandle {
+    fn open_accmode(&self) -> u32 {
+        match (self.read_end.is_some(), self.write_end.is_some()) {
+            (true, true) => 2,
+            (false, true) => 1,
+            _ => 0,
+        }
+    }
+
+    fn prepare_read(&mut self, max_len: usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
+        let endpoint = self.read_end.as_ref().ok_or(VfsError::BadFd)?;
+        Ok(Box::new(PipePreparedRead {
+            endpoint: endpoint.clone(),
+            max_len,
+        }))
+    }
+
+    fn read(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
+        self.read_end
+            .as_ref()
+            .ok_or(VfsError::BadFd)?
+            .read(buf)
+            .map_err(map_pipe_err)
+    }
+
+    fn write(&mut self, buf: &[u8]) -> VfsResult<usize> {
+        self.write_end
+            .as_ref()
+            .ok_or(VfsError::BadFd)?
+            .write(buf)
+            .map_err(map_pipe_err)
+    }
+
+    fn poll_revents(&mut self, events: i16) -> VfsResult<i16> {
+        const POLLIN: i16 = 0x001;
+        const POLLOUT: i16 = 0x004;
+        let mut revents = 0;
+        if events & POLLIN != 0 {
+            if let Some(read) = &self.read_end {
+                revents |= read.poll_revents(POLLIN).map_err(map_pipe_err)?;
+            }
+        }
+        if events & POLLOUT != 0 {
+            if let Some(write) = &self.write_end {
+                revents |= write.poll_revents(POLLOUT).map_err(map_pipe_err)?;
+            }
+        }
+        Ok(revents)
+    }
+
+    fn poll_wait_for_ticks(
+        &mut self,
+        events: i16,
+        timeout_ticks: u64,
+        still_waiting: &mut dyn FnMut() -> bool,
+    ) -> VfsResult<()> {
+        const POLLIN: i16 = 0x001;
+        const POLLOUT: i16 = 0x004;
+        if events & POLLIN != 0 {
+            if let Some(read) = &self.read_end {
+                return read
+                    .poll_wait_for_ticks(POLLIN, timeout_ticks, still_waiting)
+                    .map_err(map_pipe_err);
+            }
+        }
+        if events & POLLOUT != 0 {
+            if let Some(write) = &self.write_end {
+                return write
+                    .poll_wait_for_ticks(POLLOUT, timeout_ticks, still_waiting)
+                    .map_err(map_pipe_err);
+            }
+        }
+        Ok(())
+    }
+
+    fn close(&mut self) -> VfsResult<()> {
+        if let Some(read) = &self.read_end {
+            read.close();
+        }
+        if let Some(write) = &self.write_end {
+            write.close();
+        }
+        Ok(())
+    }
+
+    fn metadata(&self) -> VfsResult<VfsMetadata> {
+        Ok(self.metadata.clone())
+    }
+
+    fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {
+        Ok(Box::new(Self {
+            named: self.named.clone(),
+            registry_key: self.registry_key,
+            read_end: self.read_end.clone(),
+            write_end: self.write_end.clone(),
+            metadata: self.metadata.clone(),
+        }))
+    }
+
+    fn open_status_flags(&self) -> u32 {
+        let endpoint = self.read_end.as_ref().or(self.write_end.as_ref());
+        endpoint
+            .filter(|endpoint| endpoint.nonblocking())
+            .map_or(0, |_| O_NONBLOCK)
+    }
+
+    fn set_open_status_flags(&mut self, flags: u32) -> VfsResult<()> {
+        let nonblocking = flags & O_NONBLOCK != 0;
+        if let Some(read) = &self.read_end {
+            read.set_nonblocking(nonblocking);
+        }
+        if let Some(write) = &self.write_end {
+            write.set_nonblocking(nonblocking);
+        }
+        Ok(())
+    }
+
+    fn pipe_capacity(&self) -> Option<usize> {
+        self.read_end
+            .as_ref()
+            .or(self.write_end.as_ref())
+            .map(PipeEndpoint::pipe_capacity)
+    }
+
+    fn pipe_buffer_len(&self) -> Option<usize> {
+        self.read_end
+            .as_ref()
+            .or(self.write_end.as_ref())
+            .map(PipeEndpoint::pipe_len)
+    }
+
+    fn pipe_set_capacity(&mut self, capacity: usize) -> VfsResult<usize> {
+        self.read_end
+            .as_ref()
+            .or(self.write_end.as_ref())
+            .ok_or(VfsError::BadFd)?
+            .set_pipe_capacity(capacity)
+            .map_err(map_pipe_err)
+    }
 }
 
 impl VfsIoHandle for PipeReadHandle {
