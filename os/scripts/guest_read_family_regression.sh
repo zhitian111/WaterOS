@@ -9,7 +9,8 @@ BUSYBOX=${READ_FAMILY_BUSYBOX:-/glibc/busybox}
 DEFAULT_CASES="
 open06 open09
 read01 read02 read03 read04 readv01 readv02 pread01 pread02 preadv01 preadv02
-pipe03 pipe06 pipe07 pipe08 pipe10 pipe12 pipe13 pipe14 pipe2_04 socketpair01 socketpair02
+pipe01 pipe02 pipe03 pipe04 pipe05 pipe06 pipe07 pipe08 pipe09 pipe10 pipe11 pipe12 pipe13 pipe14
+pipe2_04 socketpair01 socketpair02
 recv01 recvfrom01 recvmsg01
 eventfd01 eventfd02 eventfd03 eventfd04 eventfd05
 eventfd2_01 eventfd2_02 eventfd2_03
