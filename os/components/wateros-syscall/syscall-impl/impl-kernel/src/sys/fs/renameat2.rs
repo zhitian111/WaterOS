@@ -145,6 +145,12 @@ fn check_existing_type_mismatch(old_path: &str, new_path: &str) -> Result<(), Er
         {
             Err(ErrNo::ENOTDIR)
         }
+        Ok(new_meta)
+            if old_meta.node_type != VfsNodeType::Directory
+                && new_meta.node_type == VfsNodeType::Directory =>
+        {
+            Err(ErrNo::EISDIR)
+        }
         Ok(_) | Err(VfsError::NotFound) => Ok(()),
         Err(e) => Err(vfs_error_to_errno(e)),
     }

@@ -38,6 +38,7 @@ static NEXT_FLOCK_OWNER_ID : AtomicU64 = AtomicU64::new(1);
 
 struct DetachedState {
     detached : bool,
+    path : String,
     data : Vec<u8>,
 }
 
@@ -52,6 +53,7 @@ fn detached_state_for_open(mount_gen : u64, path : &str) -> Arc<Mutex<DetachedSt
         return state;
     }
     let state = Arc::new(Mutex::new(DetachedState { detached : false,
+                                                    path : String::from(path),
                                                     data : Vec::new() }));
     states.insert(key, Arc::downgrade(&state));
     state
@@ -69,6 +71,33 @@ impl PendingUnlinkDetach {
         let mut state = self.state.lock();
         state.data = self.data;
         state.detached = true;
+    }
+}
+
+pub(crate) fn commit_rename_state(old_path : &str,
+                                  new_path : &str,
+                                  replaced : Option<PendingUnlinkDetach>) {
+    let mount_gen = fs::rootfs::active_impl::mount_generation();
+    let old_key = (mount_gen, String::from(old_path));
+    let new_key = (mount_gen, String::from(new_path));
+    let mut states = DETACHED_STATES.lock();
+    let source = states.remove(&old_key).and_then(|state| state.upgrade());
+    states.remove(&new_key);
+
+    let (target_state, mut target_data) = match replaced {
+        Some(replaced) => (Some(replaced.state), Some(replaced.data)),
+        None => (None, None),
+    };
+    let mut target = target_state.as_ref().map(|state| state.lock());
+    let mut source_state = source.as_ref().map(|source| source.lock());
+    global_cache(mount_gen).finish_rename(old_path, new_path);
+    if let (Some(target), Some(data)) = (target.as_mut(), target_data.take()) {
+        target.data = data;
+        target.detached = true;
+    }
+    if let (Some(source), Some(source_state)) = (source.as_ref(), source_state.as_mut()) {
+        source_state.path = String::from(new_path);
+        states.insert(new_key, Arc::downgrade(&source));
     }
 }
 
@@ -194,7 +223,8 @@ impl Clone for PagedFileHandle {
 // 本方法代码由AI完成
     fn clone(&self) -> Self {
         if self.open_ref_held {
-            global_cache(self.mount_gen).acquire_open_ref(self.path.as_str());
+            let path = self.active_path();
+            global_cache(self.mount_gen).acquire_open_ref(path.as_str());
         }
         Self { path : self.path.clone(),
                description : self.description.clone(),
@@ -277,7 +307,8 @@ impl PagedFileHandle {
 // 本方法代码由AI完成
     fn release_open_ref_if_held(&mut self) {
         if self.open_ref_held {
-            global_cache(self.mount_gen).release_open_ref(self.path.as_str());
+            let path = self.active_path();
+            global_cache(self.mount_gen).release_open_ref(path.as_str());
             self.open_ref_held = false;
         }
     }
@@ -291,14 +322,15 @@ impl PagedFileHandle {
                         self.is_detached());
             return Ok(());
         }
+        let path = self.active_path();
         let mut io = FsPageIo;
         let cache = global_cache(self.mount_gen);
-        let had_dirty_pages = cache.dirty_page_count(self.path.as_str()) != 0;
+        let had_dirty_pages = cache.dirty_page_count(path.as_str()) != 0;
         match cache.flush(&mut io,
-                          self.path.as_str(),
+                          path.as_str(),
                           core::convert::identity)
         {
-            Ok(()) if had_dirty_pages => crate::sync_path_filesystem(self.path.as_str()),
+            Ok(()) if had_dirty_pages => crate::sync_path_filesystem(path.as_str()),
             Ok(()) => Ok(()),
             Err(VfsError::NotFound) => {
                 self.mark_detached();
@@ -314,9 +346,12 @@ impl PagedFileHandle {
         if detached.detached {
             return detached.data.len() as u64;
         }
+        let path = detached.path.clone();
         drop(detached);
-        global_cache(self.mount_gen).logical_size(self.path.as_str(), self.on_disk_size)
+        global_cache(self.mount_gen).logical_size(path.as_str(), self.on_disk_size)
     }
+
+    fn active_path(&self) -> String { self.detached.lock().path.clone() }
 
     fn is_detached(&self) -> bool { self.detached.lock().detached }
 
@@ -359,10 +394,10 @@ impl PagedFileHandle {
 impl VfsIoHandle for PagedFileHandle {
     fn prepare_read(&mut self, max_len : usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
         let reservation = ReservationGuard::begin(self.description.clone())?;
-        global_cache(self.mount_gen).acquire_open_ref(self.path.as_str());
+        let path = self.active_path();
+        global_cache(self.mount_gen).acquire_open_ref(path.as_str());
         Ok(Box::new(PagedPreparedRead {
             reservation : Some(reservation),
-            path : self.path.clone(),
             mount_gen : self.mount_gen,
             on_disk_size : self.on_disk_size,
             detached : self.detached.clone(),
@@ -389,20 +424,21 @@ impl VfsIoHandle for PagedFileHandle {
             return Ok(n);
         }
         log::trace!("[paged_handle] read path={} offset={} len={} size={}",
-                    self.path,
+                    self.active_path(),
                     offset,
                     buf.len(),
                     size);
         let mut io = FsPageIo;
         let cache = global_cache(self.mount_gen);
+        let path = self.active_path();
         let n = cache.read(&mut io,
-                           self.path.as_str(),
+                           path.as_str(),
                            size,
                            offset,
                            buf,
                            core::convert::identity)?;
         log::trace!("[paged_handle] read OK path={} offset={} n={}/{}",
-                    self.path,
+                    path,
                     offset,
                     n,
                     buf.len());
@@ -433,8 +469,9 @@ impl VfsIoHandle for PagedFileHandle {
         let size = self.current_size();
         let mut io = FsPageIo;
         let cache = global_cache(self.mount_gen);
+        let path = self.active_path();
         let n = match cache.write(&mut io,
-                                  self.path.as_str(),
+                                  path.as_str(),
                                   size,
                                   offset,
                                   buf,
@@ -468,8 +505,9 @@ impl VfsIoHandle for PagedFileHandle {
         }
         let mut io = FsPageIo;
         let cache = global_cache(self.mount_gen);
+        let path = self.active_path();
         let n = cache.read(&mut io,
-                           self.path.as_str(),
+                           path.as_str(),
                            size,
                            offset,
                            buf,
@@ -491,8 +529,9 @@ impl VfsIoHandle for PagedFileHandle {
         let size = self.current_size();
         let mut io = FsPageIo;
         let cache = global_cache(self.mount_gen);
+        let path = self.active_path();
         let n = match cache.write(&mut io,
-                                  self.path.as_str(),
+                                  path.as_str(),
                                   size,
                                   offset,
                                   buf,
@@ -522,7 +561,8 @@ impl VfsIoHandle for PagedFileHandle {
 
 // 本方法代码由AI完成
     fn metadata(&self) -> VfsResult<VfsMetadata> {
-        let mut m = match FsBridge.metadata(self.path.as_str()) {
+        let path = self.active_path();
+        let mut m = match FsBridge.metadata(path.as_str()) {
             Ok(meta) => meta,
             Err(_) => self.meta.clone(),
         };
@@ -585,8 +625,9 @@ impl VfsIoHandle for PagedFileHandle {
             }
         }
         if !self.is_detached() {
-            let n = normalize_absolute_path(self.path.as_str())?;
-            match resolve_route(self.path.as_str())? {
+            let path = self.active_path();
+            let n = normalize_absolute_path(path.as_str())?;
+            match resolve_route(path.as_str())? {
                 FsRoute::Root { .. } => {
                     match root_rw()?.lock().truncate(n.as_str(), len).map_err(map_fs_err) {
                         Ok(()) => {}
@@ -608,7 +649,8 @@ impl VfsIoHandle for PagedFileHandle {
         }
         let cache = global_cache(self.mount_gen);
         if !self.is_detached() {
-            cache.truncate(self.path.as_str(), len);
+            let path = self.active_path();
+            cache.truncate(path.as_str(), len);
         }
         self.on_disk_size = len;
         self.meta.size = len;
@@ -667,7 +709,6 @@ impl VfsIoHandle for PagedFileHandle {
 
 struct PagedPreparedRead {
     reservation : Option<ReservationGuard>,
-    path : String,
     mount_gen : u64,
     on_disk_size : u64,
     detached : Arc<Mutex<DetachedState>>,
@@ -689,9 +730,10 @@ impl VfsPreparedRead for PagedPreparedRead {
             staged.copy_from_slice(&detached.data[start..start + len]);
             (staged, len)
         } else {
+            let path = detached.path.clone();
             drop(detached);
             let cache = global_cache(self.mount_gen);
-            let size = cache.logical_size(self.path.as_str(), self.on_disk_size);
+            let size = cache.logical_size(path.as_str(), self.on_disk_size);
             let available = size.saturating_sub(offset);
             let len = usize::try_from(available.min(self.max_len as u64)).map_err(|_| VfsError::Io)?;
             let mut staged = try_zeroed(len)?;
@@ -700,7 +742,7 @@ impl VfsPreparedRead for PagedPreparedRead {
             } else {
                 let mut io = FsPageIo;
                 cache.read(&mut io,
-                           self.path.as_str(),
+                           path.as_str(),
                            size,
                            offset,
                            staged.as_mut_slice(),
@@ -717,7 +759,8 @@ impl VfsPreparedRead for PagedPreparedRead {
 impl Drop for PagedPreparedRead {
     fn drop(&mut self) {
         if self.open_ref_held {
-            global_cache(self.mount_gen).release_open_ref(self.path.as_str());
+            let path = self.detached.lock().path.clone();
+            global_cache(self.mount_gen).release_open_ref(path.as_str());
             self.open_ref_held = false;
         }
     }

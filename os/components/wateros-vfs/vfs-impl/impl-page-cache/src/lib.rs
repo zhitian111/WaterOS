@@ -1117,6 +1117,47 @@ impl GlobalFilePageCache {
         }
     }
 
+    /// Rename 完成后丢弃两个旧 path-key 缓存，并把源对象的打开引用迁移到新路径。
+    pub fn finish_rename(&self, old_path : &str, new_path : &str) {
+        let old_key = self.file_key(old_path);
+        let new_key = self.file_key(new_path);
+        let source_refs = {
+            let mut refs = self.open_refs.lock();
+            let source_refs = refs.remove(&old_key).unwrap_or(0);
+            refs.remove(&new_key);
+            if source_refs != 0 {
+                refs.insert(new_key.clone(), source_refs);
+            }
+            source_refs
+        };
+        self.files.lock().remove(&old_key);
+        self.files.lock().remove(&new_key);
+
+        let mut cache = self.state.lock();
+        let keys_to_remove : Vec<(FileCacheKey, u64)> = cache.index
+                                                             .keys()
+                                                             .filter(|(key, _)| {
+                                                                 *key == old_key || *key == new_key
+                                                             })
+                                                             .cloned()
+                                                             .collect();
+        for key in keys_to_remove {
+            if let Some(slot) = cache.index.remove(&key) {
+                cache.frames[slot].key = None;
+                cache.frames[slot].dirty = false;
+                cache.frames[slot].version = 0;
+                cache.remove_from_lru(slot);
+                if !cache.free.iter().any(|&free_idx| free_idx == slot) {
+                    cache.free.push(slot);
+                }
+            }
+        }
+        log::trace!("[page-cache] rename refs={} old={} new={}",
+                    source_refs,
+                    old_path,
+                    new_path);
+    }
+
     /// 更新逻辑长度，并丢弃 EOF 之后的缓存页。
 // 本方法代码由AI完成
     pub fn truncate(&self, path : &str, len : u64) {
@@ -1592,6 +1633,7 @@ mod tests {
         let payload = vec![0x33u8; FILE_PAGE_SIZE];
 
         cache.acquire_open_ref("/tmp/refcount");
+        cache.acquire_open_ref("/tmp/refcount");
         cache.write(&mut io,
                     "/tmp/refcount",
                     0,
@@ -1604,7 +1646,35 @@ mod tests {
         assert!(cache.files.lock().contains_key(&cache.file_key("/tmp/refcount")));
 
         cache.release_open_ref("/tmp/refcount");
+        assert!(cache.files.lock().contains_key(&cache.file_key("/tmp/refcount")));
+        cache.release_open_ref("/tmp/refcount");
         assert!(!cache.files.lock().contains_key(&cache.file_key("/tmp/refcount")));
+        cache.state.lock().assert_lru_invariants();
+    }
+
+    #[test]
+    fn rename_moves_source_open_refs_and_drops_target_refs() {
+        let cache = GlobalFilePageCache::new(7);
+        let mut io = CountingIo::new();
+        let payload = vec![0x44u8; FILE_PAGE_SIZE];
+
+        cache.acquire_open_ref("/tmp/source");
+        cache.acquire_open_ref("/tmp/source");
+        cache.acquire_open_ref("/tmp/target");
+        cache.write(&mut io, "/tmp/source", 0, 0, &payload, |e| e)
+             .unwrap();
+        cache.flush(&mut io, "/tmp/source", |e| e).unwrap();
+
+        cache.finish_rename("/tmp/source", "/tmp/target");
+        assert!(!cache.files.lock().contains_key(&cache.file_key("/tmp/source")));
+        assert!(!cache.files.lock().contains_key(&cache.file_key("/tmp/target")));
+
+        cache.write(&mut io, "/tmp/target", 0, 0, &payload, |e| e)
+             .unwrap();
+        cache.release_open_ref("/tmp/target");
+        assert!(cache.files.lock().contains_key(&cache.file_key("/tmp/target")));
+        cache.release_open_ref("/tmp/target");
+        assert!(!cache.files.lock().contains_key(&cache.file_key("/tmp/target")));
         cache.state.lock().assert_lru_invariants();
     }
 

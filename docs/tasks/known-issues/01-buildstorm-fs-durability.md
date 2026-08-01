@@ -56,6 +56,9 @@ handle.flush()
   旧句柄切换到 unlink 前一致快照，独立 open 继续共享旧对象，失败的 unlink 不再
   清除缓存。同时补齐中间分量非目录的 `ENOTDIR`。详见
   [`results/k01-open-unlink-identity-20260801.md`](./results/k01-open-unlink-identity-20260801.md)。
+- 2026-08-01 补齐 another-ext4 不直接支持的 rename overwrite，并让源对象旧 fd
+  跟随到新路径、被覆盖目标旧 fd 保持独立；页缓存 path key 与 open-ref 同步迁移。
+  详见 [`results/k01-rename-replacement-20260801.md`](./results/k01-rename-replacement-20260801.md)。
 
 ## 涉及文件
 

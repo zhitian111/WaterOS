@@ -5,7 +5,8 @@
 #![allow(static_mut_refs)]
 extern crate alloc;
 
-use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
+use alloc::{boxed::Box, format, string::String, sync::Arc, vec::Vec};
+use core::sync::atomic::{AtomicU64, Ordering};
 
 use api_v0::{
     normalize_absolute_path, validate_root_file_name, RootRwSession, SingleRootReadView,
@@ -32,6 +33,8 @@ use fs::{
 };
 use mount_table::{resolve_route, FsRoute, MountIdentity};
 pub use paged_handle::PagedFileHandle;
+
+static RENAME_TEMP_ID : AtomicU64 = AtomicU64::new(1);
 
 fn proc_view() -> &'static impl ProcFsView { fs::procfs::active_impl::view() }
 
@@ -886,6 +889,9 @@ pub fn mknod_path(path : &str, mode : u32, rdev : u32) -> VfsResult<()> {
 pub fn rename_path(old_path : &str, new_path : &str) -> VfsResult<()> {
     let old_path = normalize_absolute_path(old_path)?;
     let new_path = normalize_absolute_path(new_path)?;
+    if old_path == new_path {
+        return Ok(());
+    }
     mount_table::assert_path_writable(old_path.as_str())?;
     mount_table::assert_path_writable(new_path.as_str())?;
     let (fs_old, rel_old) = fs_and_rel_rw(old_path.as_str())?;
@@ -902,11 +908,66 @@ pub fn rename_path(old_path : &str, new_path : &str) -> VfsResult<()> {
     cache.flush(&mut io, old_path.as_str(), core::convert::identity)?;
     cache.flush(&mut io, new_path.as_str(), core::convert::identity)?;
 
+    let replacement = match FsBridge.metadata(new_path.as_str()) {
+        Ok(meta) => Some(meta.node_type),
+        Err(VfsError::NotFound) => None,
+        Err(e) => return Err(e),
+    };
+    let pending_detach = if replacement == Some(VfsNodeType::File) {
+        paged_handle::prepare_unlink_detach(new_path.as_str())?
+    } else {
+        None
+    };
     let mut sess = MountedRwSession::new(fs_old);
-    sess.rename(rel_old.as_str(), rel_new.as_str())?;
-    cache.purge_closed_file(old_path.as_str());
-    cache.purge_closed_file(new_path.as_str());
+    if let Some(replaced_type) = replacement {
+        let temp_path = unused_rename_temp_path(new_path.as_str())?;
+        let (temp_fs, rel_temp) = fs_and_rel_rw(temp_path.as_str())?;
+        if !Arc::ptr_eq(&sess.inner, &temp_fs) {
+            return Err(VfsError::Unsupported);
+        }
+        sess.rename(rel_new.as_str(), rel_temp.as_str())?;
+        if let Err(e) = sess.rename(rel_old.as_str(), rel_new.as_str()) {
+            if let Err(rollback) = sess.rename(rel_temp.as_str(), rel_new.as_str()) {
+                log::error!("[vfs-rename] target rollback failed temp={} target={} err={rollback:?}",
+                            temp_path,
+                            new_path.as_str());
+            }
+            return Err(e);
+        }
+        let cleanup = if replaced_type == VfsNodeType::Directory {
+            sess.rmdir(rel_temp.as_str())
+        } else {
+            sess.unlink(rel_temp.as_str())
+        };
+        if let Err(e) = cleanup {
+            log::error!("[vfs-rename] replaced target cleanup failed temp={} err={e:?}", temp_path);
+            return Err(e);
+        }
+    } else {
+        sess.rename(rel_old.as_str(), rel_new.as_str())?;
+    }
+    paged_handle::commit_rename_state(old_path.as_str(), new_path.as_str(), pending_detach);
     Ok(())
+}
+
+fn unused_rename_temp_path(target : &str) -> VfsResult<String> {
+    let parent = target.rsplit_once('/')
+                       .map(|(parent, _)| if parent.is_empty() { "/" } else { parent })
+                       .unwrap_or("/");
+    for _ in 0..64 {
+        let id = RENAME_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+        let candidate = if parent == "/" {
+            format!("/.wateros-rename-replaced-{id}")
+        } else {
+            format!("{parent}/.wateros-rename-replaced-{id}")
+        };
+        match FsBridge.metadata(candidate.as_str()) {
+            Err(VfsError::NotFound) => return Ok(candidate),
+            Ok(_) => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Err(VfsError::Exists)
 }
 
 /// 与只读根句柄分离的可写挂载会话。
