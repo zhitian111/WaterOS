@@ -322,7 +322,7 @@ la_symbol_at: kernel-la
 
 rv_check:
 	$(call INFO, "开始对 riscv 平台进行 cargo check ...")
-	@-cargo check $(kernel_rv_flag)
+	@cargo check $(kernel_rv_flag)
 	$(call INFO, "对 riscv 平台的 cargo check 完成！")
 
 la_check:
