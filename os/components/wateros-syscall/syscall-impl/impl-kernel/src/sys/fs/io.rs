@@ -13,11 +13,10 @@ use crate::fallible_buf::{try_kbuf, SYSCALL_IO_MAX};
 use crate::socket_block::socket_blocking_tick;
 use crate::socket_fd;
 use crate::user_copy::{
-    copy_from_user, copy_from_user_struct, copy_to_user, copy_to_user_progress, UserWriteProgress,
+    copy_from_user, copy_from_user_struct, copy_to_user_progress, UserWriteProgress,
 };
 use crate::vfs_util::{vfs_error_to_errno, vfs_io_at_error_to_errno};
 
-const SMALL_READ_BUF_SIZE: usize = 256;
 const MAX_IO: usize = 0x7ffff000;
 const IO_CHUNK: usize = 64 * 1024;
 const IOV_MAX: usize = 1024;
@@ -67,30 +66,15 @@ pub(crate) fn sys_read(args : SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EFAULT);
     }
     let transfer_len = read_transfer_len(len);
-    match read_fd_prepared(fd, ptr, transfer_len) {
-        Ok(Some(ret)) => return ret,
-        Ok(None) => {}
-        Err(err) => return UserRet::from_error(err),
-    }
-    read_fd_legacy(fd, ptr, transfer_len)
-}
-
-/// Run lease-capable sources without retaining the fd-slot lock. RIO-05 through
-/// RIO-08 replace the explicit legacy branch for stream and device handles.
-fn read_fd_prepared(fd : usize,
-                    ptr : usize,
-                    transfer_len : usize)
-                    -> Result<Option<UserRet>, ErrNo> {
-    let Some(lease) = try_acquire_read_lease(fd, transfer_len)? else {
-        return Ok(None);
+    let lease = match acquire_read_lease(fd, transfer_len) {
+        Ok(lease) => lease,
+        Err(error) => return UserRet::from_error(error),
     };
     let progress = copy_to_user_progress(ptr, lease.bytes());
-    Ok(Some(finish_scattered_read(lease, progress)))
+    finish_scattered_read(lease, progress)
 }
 
-fn try_acquire_read_lease(fd : usize,
-                          transfer_len : usize)
-                          -> Result<Option<Box<dyn VfsReadLease>>, ErrNo> {
+fn acquire_read_lease(fd : usize, transfer_len : usize) -> Result<Box<dyn VfsReadLease>, ErrNo> {
     let lease = loop {
         let prepared = match vfs::fd::prepare_current_read(fd, transfer_len) {
             Ok(prepared) => prepared,
@@ -98,7 +82,6 @@ fn try_acquire_read_lease(fd : usize,
                 task::yield_now();
                 continue;
             }
-            Err(VfsError::Unsupported) => return Ok(None),
             Err(error) => return Err(vfs_error_to_errno(error)),
         };
         match prepared.acquire() {
@@ -107,11 +90,7 @@ fn try_acquire_read_lease(fd : usize,
             Err(error) => return Err(vfs_error_to_errno(error)),
         }
     };
-    Ok(Some(lease))
-}
-
-fn acquire_read_lease(fd : usize, transfer_len : usize) -> Result<Box<dyn VfsReadLease>, ErrNo> {
-    try_acquire_read_lease(fd, transfer_len)?.ok_or(ErrNo::EINVAL)
+    Ok(lease)
 }
 
 fn finish_scattered_read(lease : Box<dyn VfsReadLease>, progress : UserWriteProgress) -> UserRet {
@@ -129,26 +108,6 @@ fn finish_scattered_read(lease : Box<dyn VfsReadLease>, progress : UserWriteProg
         }
         Err(error) => UserRet::from_error(error),
     }
-}
-
-fn read_fd_legacy(fd : usize, ptr : usize, transfer_len : usize) -> UserRet {
-    if transfer_len <= SMALL_READ_BUF_SIZE {
-        let mut kbuf = [0u8; SMALL_READ_BUF_SIZE];
-        let n = match read_fd(fd, &mut kbuf[..transfer_len]) {
-            Ok(n) => n,
-            Err(err) => return UserRet::from_error(err),
-        };
-        return do_finish_read(ptr, &kbuf[..n], n);
-    }
-    let mut kbuf = match try_kbuf(transfer_len, SYSCALL_IO_MAX) {
-        Ok(buf) => buf,
-        Err(err) => return UserRet::from_error(err),
-    };
-    let n = match read_fd(fd, &mut kbuf) {
-        Ok(n) => n,
-        Err(err) => return UserRet::from_error(err),
-    };
-    do_finish_read(ptr, &kbuf[..n], n)
 }
 
 fn validate_read_fd(fd : usize) -> Result<(), ErrNo> {
@@ -281,47 +240,6 @@ pub(crate) fn sys_readv(args : SyscallArgs) -> UserRet {
     finish_scattered_read(lease, progress)
 }
 
-/// 将内核缓冲区的数据拷贝到用户空间并返回结果。
-fn do_finish_read(ptr : usize, kbuf : &[u8], n : usize) -> UserRet {
-    if n == 0 {
-        return UserRet::from_success(0);
-    }
-    match copy_to_user(ptr, &kbuf[..n]) {
-        Ok(w) if w == n => UserRet::from_success(n),
-        _ => UserRet::from_error(ErrNo::EFAULT),
-    }
-}
-
-fn read_fd(fd : usize, buf : &mut [u8]) -> Result<usize, ErrNo> {
-    if let Some(socket) = socket_fd::lookup(fd) {
-        return match stack::socket_kind(socket.handle()) {
-            Ok(stack::SocketKind::Tcp) => read_tcp_socket_blocking(fd, buf),
-            Ok(stack::SocketKind::Udp) => read_udp_socket_blocking(fd, buf),
-            Err(_) => Err(ErrNo::ENOTSOCK),
-        };
-    }
-    if vfs::fd::is_path_only_fd(fd).map_err(vfs_error_to_errno)? {
-        return Err(ErrNo::EBADF);
-    }
-    // iozone 调试：VFS read 调用前
-    log::trace!("[read_fd] vfs_read fd={} len={}",
-                fd,
-                buf.len());
-    let result =
-        vfs::fd::with_current_io(fd, |handle| handle.read(buf)).map_err(vfs_error_to_errno);
-    // iozone 调试：VFS read 返回后
-    match &result {
-        Ok(n) => log::trace!("[read_fd] vfs_read OK fd={} n={}/{}",
-                             fd,
-                             n,
-                             buf.len()),
-        Err(e) => log::trace!("[read_fd] vfs_read ERR fd={} err={:?}",
-                              fd,
-                              e),
-    }
-    result
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -346,46 +264,6 @@ mod tests {
     fn write_transfer_len_turns_large_requests_into_short_writes() {
         assert_eq!(write_transfer_len(SYSCALL_IO_MAX + 1), SYSCALL_IO_MAX);
         assert_eq!(write_transfer_len(usize::MAX), SYSCALL_IO_MAX);
-    }
-}
-
-fn read_tcp_socket_blocking(fd : usize, buf : &mut [u8]) -> Result<usize, ErrNo> {
-    let nonblocking = socket_fd::is_nonblocking(fd);
-    let task_id = task::current_task_id().unwrap_or(0);
-    loop {
-        let socket = socket_fd::lookup(fd).ok_or(ErrNo::ENOTSOCK)?;
-        let handle = socket.handle();
-        drive_network_stack();
-        let can_recv = stack::socket_can_recv(handle).unwrap_or(false);
-        let may_recv = stack::socket_may_recv(handle).unwrap_or(false);
-        let state = stack::socket_state(handle);
-        if can_recv {
-            match stack::socket_recv(handle, buf) {
-                Ok(n) => return Ok(n),
-                Err(_) => return Err(ErrNo::EIO),
-            }
-        }
-        if !may_recv {
-            return Ok(0);
-        }
-        if matches!(state, Ok(stack::SocketState::Closed)) {
-            return Ok(0);
-        }
-        socket_blocking_tick(nonblocking, task_id)?;
-    }
-}
-
-fn read_udp_socket_blocking(fd : usize, buf : &mut [u8]) -> Result<usize, ErrNo> {
-    let nonblocking = socket_fd::is_nonblocking(fd);
-    let task_id = task::current_task_id().unwrap_or(0);
-    loop {
-        let socket = socket_fd::lookup(fd).ok_or(ErrNo::ENOTSOCK)?;
-        let handle = socket.handle();
-        drive_network_stack();
-        if stack::socket_udp_can_recv(handle).unwrap_or(false) {
-            return stack::socket_recv(handle, buf).map_err(|_| ErrNo::EIO);
-        }
-        socket_blocking_tick(nonblocking, task_id)?;
     }
 }
 
