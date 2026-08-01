@@ -1,24 +1,26 @@
 //! 文件 I/O 操作：`read`/`readv`、`write`/`writev`、`pread64`/`pwrite64`/`preadv`/`pwritev`/`lseek`。
 
 extern crate alloc;
-use core::sync::atomic::{AtomicU64, Ordering};
+use alloc::boxed::Box;
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicU64, Ordering};
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
 use driver::network::stack;
-use vfs::api::{VfsCopyProgress, VfsError, VfsReadFinish, VfsSeekWhence};
+use vfs::api::{VfsCopyProgress, VfsError, VfsReadFinish, VfsReadLease, VfsSeekWhence};
 use crate::fallible_buf::{try_kbuf, SYSCALL_IO_MAX};
 use crate::socket_block::socket_blocking_tick;
 use crate::socket_fd;
 use crate::user_copy::{
-    copy_from_user, copy_from_user_struct, copy_to_user, copy_to_user_progress,
+    copy_from_user, copy_from_user_struct, copy_to_user, copy_to_user_progress, UserWriteProgress,
 };
 use crate::vfs_util::{vfs_error_to_errno, vfs_io_at_error_to_errno};
 
 const SMALL_READ_BUF_SIZE: usize = 256;
 const MAX_IO: usize = 0x7ffff000;
 const IO_CHUNK: usize = 64 * 1024;
+const IOV_MAX: usize = 1024;
 const TCP_BULK_WRITE_YIELD_THRESHOLD: usize = 4096;
 const TCP_MSS_BYTES: usize = 1460;
 const TCP_LOOPBACK_POLL_ROUNDS: usize = 4;
@@ -37,6 +39,17 @@ const SEEK_END: u32 = 2;
 struct UserIoVec {
     base: usize,
     len: usize,
+}
+
+#[derive(Clone, Copy)]
+struct ImportedIoVec {
+    base: usize,
+    len: usize,
+}
+
+struct ImportedIoVecs {
+    entries: Vec<ImportedIoVec>,
+    total_len: usize,
 }
 
 
@@ -68,6 +81,16 @@ fn read_fd_prepared(fd : usize,
                     ptr : usize,
                     transfer_len : usize)
                     -> Result<Option<UserRet>, ErrNo> {
+    let Some(lease) = try_acquire_read_lease(fd, transfer_len)? else {
+        return Ok(None);
+    };
+    let progress = copy_to_user_progress(ptr, lease.bytes());
+    Ok(Some(finish_scattered_read(lease, progress)))
+}
+
+fn try_acquire_read_lease(fd : usize,
+                          transfer_len : usize)
+                          -> Result<Option<Box<dyn VfsReadLease>>, ErrNo> {
     let lease = loop {
         let prepared = match vfs::fd::prepare_current_read(fd, transfer_len) {
             Ok(prepared) => prepared,
@@ -84,16 +107,28 @@ fn read_fd_prepared(fd : usize,
             Err(error) => return Err(vfs_error_to_errno(error)),
         }
     };
-    let progress = copy_to_user_progress(ptr, lease.bytes());
+    Ok(Some(lease))
+}
+
+fn acquire_read_lease(fd : usize, transfer_len : usize) -> Result<Box<dyn VfsReadLease>, ErrNo> {
+    try_acquire_read_lease(fd, transfer_len)?.ok_or(ErrNo::EINVAL)
+}
+
+fn finish_scattered_read(lease : Box<dyn VfsReadLease>, progress : UserWriteProgress) -> UserRet {
     let finish = lease.finish(VfsCopyProgress {
                           copied : progress.copied,
                           complete : progress.error.is_none(),
                       })
-                      .map_err(vfs_error_to_errno)?;
-    Ok(Some(match finish {
-        VfsReadFinish::Bytes(copied) => UserRet::from_success(copied),
-        VfsReadFinish::Fault => UserRet::from_error(progress.error.unwrap_or(ErrNo::EFAULT)),
-    }))
+                      .map_err(vfs_error_to_errno);
+    match finish {
+        Ok(VfsReadFinish::Bytes(copied)) if copied > 0 || progress.error.is_none() => {
+            UserRet::from_success(copied)
+        }
+        Ok(VfsReadFinish::Bytes(_)) | Ok(VfsReadFinish::Fault) => {
+            UserRet::from_error(progress.error.unwrap_or(ErrNo::EFAULT))
+        }
+        Err(error) => UserRet::from_error(error),
+    }
 }
 
 fn read_fd_legacy(fd : usize, ptr : usize, transfer_len : usize) -> UserRet {
@@ -133,126 +168,117 @@ fn read_transfer_len(requested : usize) -> usize {
              .min(SYSCALL_IO_MAX)
 }
 
+fn import_iovecs(iov_ptr : usize, iovcnt : usize) -> Result<ImportedIoVecs, ErrNo> {
+    if iovcnt > IOV_MAX {
+        return Err(ErrNo::EINVAL);
+    }
+    if iovcnt > 0 && iov_ptr == 0 {
+        return Err(ErrNo::EFAULT);
+    }
+    let mut entries = Vec::new();
+    entries.try_reserve_exact(iovcnt).map_err(|_| ErrNo::ENOMEM)?;
+    let iov_size = core::mem::size_of::<UserIoVec>();
+    let mut total_len = 0usize;
+    for index in 0..iovcnt {
+        let address = index.checked_mul(iov_size)
+                           .and_then(|offset| iov_ptr.checked_add(offset))
+                           .ok_or(ErrNo::EFAULT)?;
+        let iov = copy_from_user_struct::<UserIoVec>(address)?;
+        if iov.len > 0 && iov.base == 0 {
+            return Err(ErrNo::EFAULT);
+        }
+        total_len = total_len.checked_add(iov.len).ok_or(ErrNo::EINVAL)?;
+        if total_len > isize::MAX as usize {
+            return Err(ErrNo::EINVAL);
+        }
+        entries.push(ImportedIoVec { base : iov.base,
+                                     len : iov.len });
+    }
+    Ok(ImportedIoVecs { entries,
+                        total_len })
+}
+
+struct IovScatterCursor<'a> {
+    entries : &'a [ImportedIoVec],
+    index : usize,
+    offset : usize,
+    copied : usize,
+}
+
+impl<'a> IovScatterCursor<'a> {
+    fn new(entries : &'a [ImportedIoVec]) -> Self {
+        Self { entries,
+               index : 0,
+               offset : 0,
+               copied : 0 }
+    }
+
+    fn write(&mut self, data : &[u8]) -> UserWriteProgress {
+        let start = self.copied;
+        let mut source_offset = 0usize;
+        while source_offset < data.len() {
+            while self.index < self.entries.len() &&
+                  self.offset == self.entries[self.index].len
+            {
+                self.index += 1;
+                self.offset = 0;
+            }
+            let Some(iov) = self.entries.get(self.index).copied() else {
+                return UserWriteProgress { copied : self.copied - start,
+                                           error : Some(ErrNo::EFAULT) };
+            };
+            let chunk = (iov.len - self.offset).min(data.len() - source_offset);
+            let destination = match iov.base.checked_add(self.offset) {
+                Some(destination) => destination,
+                None => {
+                    return UserWriteProgress { copied : self.copied - start,
+                                               error : Some(ErrNo::EFAULT) };
+                }
+            };
+            let progress = copy_to_user_progress(destination,
+                                                 &data[source_offset..source_offset + chunk]);
+            source_offset += progress.copied;
+            self.offset += progress.copied;
+            self.copied += progress.copied;
+            if progress.error.is_some() {
+                return UserWriteProgress { copied : self.copied - start,
+                                           error : Some(ErrNo::EFAULT) };
+            }
+            if progress.copied != chunk {
+                return UserWriteProgress { copied : self.copied - start,
+                                           error : Some(ErrNo::EFAULT) };
+            }
+        }
+        UserWriteProgress { copied : self.copied - start,
+                            error : None }
+    }
+}
+
+fn scatter_progress(iovecs : &[ImportedIoVec], data : &[u8]) -> UserWriteProgress {
+    IovScatterCursor::new(iovecs).write(data)
+}
+
 // 本方法代码由AI完成
 pub(crate) fn sys_readv(args : SyscallArgs) -> UserRet {
-    // iozone 调试：最早期 trace，在参数解包前
     let fd = args.arg(0);
     let iov_ptr = args.arg(1);
     let iovcnt = args.arg(2);
-    let arg4 = args.arg(3);
-    let arg5 = args.arg(4);
-    let arg6 = args.arg(5);
-    log::trace!("[sys_readv] RAW fd={} iov_ptr={:#x} iovcnt={:#x}({}) a3={:#x} a4={:#x} a5={:#x}",
-                fd,
-                iov_ptr,
-                iovcnt,
-                iovcnt,
-                arg4,
-                arg5,
-                arg6);
-    if iovcnt == 0 {
+    if let Err(error) = validate_read_fd(fd) {
+        return UserRet::from_error(error);
+    }
+    let iovecs = match import_iovecs(iov_ptr, iovcnt) {
+        Ok(iovecs) => iovecs,
+        Err(error) => return UserRet::from_error(error),
+    };
+    if iovecs.total_len == 0 {
         return UserRet::from_success(0);
     }
-    if iov_ptr == 0 {
-        return UserRet::from_error(ErrNo::EFAULT);
-    }
-    if iovcnt > 1024 {
-        log::trace!("[sys_readv] EINVAL iovcnt={} > 1024 (BUG: iozone passed garbage iovcnt)",
-                    iovcnt);
-        return UserRet::from_error(ErrNo::EINVAL);
-    }
-
-    let iov_size = core::mem::size_of::<UserIoVec>();
-    let mut total = 0usize;
-    for i in 0..iovcnt {
-        let iov = match copy_from_user_struct::<UserIoVec>(iov_ptr + i * iov_size) {
-            Ok(v) => v,
-            Err(e) => return UserRet::from_error(e),
-        };
-        if iov.len == 0 {
-            continue;
-        }
-        if iov.base == 0 {
-            return UserRet::from_error(ErrNo::EFAULT);
-        }
-        if iov.len > SYSCALL_IO_MAX {
-            return UserRet::from_error(ErrNo::EINVAL);
-        }
-        if total.checked_add(iov.len)
-                .is_none()
-        {
-            return UserRet::from_error(ErrNo::EINVAL);
-        }
-
-        // iozone 调试：每个 iov 段读取前
-        log::trace!("[sys_readv] iov[{}/{}] base={:#x} len={} total_before={} -> \
-                     read_fd(fd={})...",
-                    i,
-                    iovcnt,
-                    iov.base,
-                    iov.len,
-                    total,
-                    fd);
-        let mut kbuf = match try_kbuf(iov.len, SYSCALL_IO_MAX) {
-            Ok(buf) => buf,
-            Err(err) => {
-                log::trace!("[sys_readv] iov[{}/{}] alloc ERR fd={} err={:?} total={}",
-                            i,
-                            iovcnt,
-                            fd,
-                            err,
-                            total);
-                return if total > 0 {
-                    UserRet::from_success(total)
-                } else {
-                    UserRet::from_error(err)
-                };
-            }
-        };
-        let n = match read_fd(fd, &mut kbuf) {
-            Ok(n) => n,
-            Err(err) => {
-                log::trace!("[sys_readv] iov[{}/{}] read_fd ERR fd={} err={:?} total={}",
-                            i,
-                            iovcnt,
-                            fd,
-                            err,
-                            total);
-                return if total > 0 {
-                    UserRet::from_success(total)
-                } else {
-                    UserRet::from_error(err)
-                };
-            }
-        };
-        // iozone 调试：read_fd 返回后
-        log::trace!("[sys_readv] iov[{}/{}] read_fd OK fd={} n={} (want {})",
-                    i,
-                    iovcnt,
-                    fd,
-                    n,
-                    iov.len);
-        if n == 0 {
-            return UserRet::from_success(total);
-        }
-        match copy_to_user(iov.base, &kbuf[..n]) {
-            Ok(written) if written == n => {}
-            _ => return UserRet::from_error(ErrNo::EFAULT),
-        }
-        total += n;
-        if n < iov.len {
-            log::trace!("[sys_readv] iov[{}/{}] short read n={} < len={} total={} EXIT",
-                        i,
-                        iovcnt,
-                        n,
-                        iov.len,
-                        total);
-            return UserRet::from_success(total);
-        }
-    }
-
-    log::trace!("[sys_readv] EXIT total={}", total);
-    UserRet::from_success(total)
+    let lease = match acquire_read_lease(fd, read_transfer_len(iovecs.total_len)) {
+        Ok(lease) => lease,
+        Err(error) => return UserRet::from_error(error),
+    };
+    let progress = scatter_progress(&iovecs.entries, lease.bytes());
+    finish_scattered_read(lease, progress)
 }
 
 /// 将内核缓冲区的数据拷贝到用户空间并返回结果。
@@ -644,61 +670,19 @@ fn gather_user_iovecs(iov_ptr : usize, iovcnt : usize) -> Result<Vec<u8>, ErrNo>
     Ok(out)
 }
 
-fn scatter_to_user_iovecs(iov_ptr : usize, iovcnt : usize, data : &[u8]) -> Result<usize, ErrNo> {
-    if data.is_empty() {
-        return Ok(0);
+fn validate_pread_fd(fd : usize) -> Result<(), ErrNo> {
+    if socket_fd::lookup(fd).is_some() {
+        return Err(ErrNo::ESPIPE);
     }
-    if iovcnt == 0 {
-        return Ok(0);
+    if vfs::fd::is_path_only_fd(fd).map_err(vfs_error_to_errno)? {
+        return Err(ErrNo::EBADF);
     }
-    if iov_ptr == 0 {
-        return Err(ErrNo::EFAULT);
-    }
-
-    let iov_size = core::mem::size_of::<UserIoVec>();
-    let mut written = 0usize;
-    let mut src_off = 0usize;
-    for i in 0..iovcnt {
-        if src_off >= data.len() {
-            break;
-        }
-        let iov = copy_from_user_struct::<UserIoVec>(iov_ptr + i * iov_size)?;
-        if iov.len == 0 {
-            continue;
-        }
-        if iov.base == 0 {
-            return Err(ErrNo::EFAULT);
-        }
-        let n = iov.len
-                   .min(data.len() - src_off);
-        copy_to_user(iov.base, &data[src_off..src_off + n])?;
-        src_off += n;
-        written += n;
-    }
-    Ok(written)
-}
-
-fn total_iov_len(iov_ptr : usize, iovcnt : usize) -> Result<usize, ErrNo> {
-    if iovcnt == 0 {
-        return Ok(0);
-    }
-    if iov_ptr == 0 {
-        return Err(ErrNo::EFAULT);
-    }
-    if iovcnt > 1024 {
-        return Err(ErrNo::EINVAL);
-    }
-    let iov_size = core::mem::size_of::<UserIoVec>();
-    let mut total = 0usize;
-    for i in 0..iovcnt {
-        let iov = copy_from_user_struct::<UserIoVec>(iov_ptr + i * iov_size)?;
-        total = total.checked_add(iov.len)
-                     .ok_or(ErrNo::EINVAL)?;
-        if total > MAX_IO {
-            return Err(ErrNo::EINVAL);
-        }
-    }
-    Ok(total)
+    vfs::fd::with_current_io(fd, |handle| {
+        handle.validate_read_access()?;
+        let mut empty = [];
+        handle.read_at(0, &mut empty).map(|_| ())
+    })
+    .map_err(vfs_io_at_error_to_errno)
 }
 
 // 本方法代码由AI完成
@@ -706,22 +690,24 @@ pub(crate) fn sys_pread64(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let ptr = args.arg(1);
     let len = args.arg(2);
+    if let Err(error) = validate_pread_fd(fd) {
+        return UserRet::from_error(error);
+    }
+    let offset = match offset_from_arg(args.arg(3)) {
+        Ok(offset) => offset,
+        Err(error) => return UserRet::from_error(error),
+    };
     if len == 0 {
         return UserRet::from_success(0);
     }
     if ptr == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
     }
-    if len > MAX_IO {
-        return UserRet::from_error(ErrNo::EINVAL);
-    }
-    let offset = match offset_from_arg(args.arg(3)) {
-        Ok(v) => v,
-        Err(e) => return UserRet::from_error(e),
+    let transfer_len = read_transfer_len(len);
+    let mut kbuf = match try_kbuf(transfer_len, SYSCALL_IO_MAX) {
+        Ok(kbuf) => kbuf,
+        Err(error) => return UserRet::from_error(error),
     };
-
-    let mut kbuf = Vec::with_capacity(len);
-    kbuf.resize(len, 0);
     let n = match vfs::fd::with_current_io(fd, |handle| {
               handle.read_at(offset, &mut kbuf)
           }) {
@@ -731,9 +717,11 @@ pub(crate) fn sys_pread64(args : SyscallArgs) -> UserRet {
     if n == 0 {
         return UserRet::from_success(0);
     }
-    match copy_to_user(ptr, &kbuf[..n]) {
-        Ok(w) if w == n => UserRet::from_success(n),
-        _ => UserRet::from_error(ErrNo::EFAULT),
+    let progress = copy_to_user_progress(ptr, &kbuf[..n]);
+    if progress.copied > 0 || progress.error.is_none() {
+        UserRet::from_success(progress.copied)
+    } else {
+        UserRet::from_error(ErrNo::EFAULT)
     }
 }
 
@@ -775,55 +763,69 @@ pub(crate) fn sys_preadv(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let iov_ptr = args.arg(1);
     let iovcnt = args.arg(2);
-    let want = match total_iov_len(iov_ptr, iovcnt) {
-        Ok(v) => v,
-        Err(e) => return UserRet::from_error(e),
-    };
-    if want == 0 {
-        return UserRet::from_success(0);
+    if let Err(error) = validate_pread_fd(fd) {
+        return UserRet::from_error(error);
     }
     let offset = match offset_from_arg(args.arg(3)) {
-        Ok(v) => v,
-        Err(e) => return UserRet::from_error(e),
+        Ok(offset) => offset,
+        Err(error) => return UserRet::from_error(error),
     };
-
-    log::info!("[sys_preadv] fd={} want={} offset={}",
-               fd,
-               want,
-               offset);
+    let iovecs = match import_iovecs(iov_ptr, iovcnt) {
+        Ok(iovecs) => iovecs,
+        Err(error) => return UserRet::from_error(error),
+    };
+    if iovecs.total_len == 0 {
+        return UserRet::from_success(0);
+    }
+    let want = read_transfer_len(iovecs.total_len);
+    let mut kbuf = match try_kbuf(want.min(IO_CHUNK), IO_CHUNK) {
+        Ok(kbuf) => kbuf,
+        Err(error) => return UserRet::from_error(error),
+    };
     let mut file_off = offset;
-    let mut gathered = Vec::new();
     let mut remaining = want;
+    let mut cursor = IovScatterCursor::new(&iovecs.entries);
     while remaining > 0 {
-        let chunk = remaining.min(IO_CHUNK);
-        let mut kbuf = Vec::new();
-        kbuf.resize(chunk, 0);
+        let chunk = remaining.min(kbuf.len());
         let n = match vfs::fd::with_current_io(fd, |handle| {
-                  handle.read_at(file_off, &mut kbuf)
+                  handle.read_at(file_off, &mut kbuf[..chunk])
               }) {
             Ok(n) => n,
-            Err(err) => return UserRet::from_error(vfs_io_at_error_to_errno(err)),
+            Err(error) => {
+                return if cursor.copied > 0 {
+                    UserRet::from_success(cursor.copied)
+                } else {
+                    UserRet::from_error(vfs_io_at_error_to_errno(error))
+                };
+            }
         };
         if n == 0 {
             break;
         }
-        gathered.extend_from_slice(&kbuf[..n]);
+        let progress = cursor.write(&kbuf[..n]);
+        if let Some(error) = progress.error {
+            return if cursor.copied > 0 {
+                UserRet::from_success(cursor.copied)
+            } else {
+                UserRet::from_error(error)
+            };
+        }
         file_off = match file_off.checked_add(n as u64) {
             Some(v) => v,
-            None => return UserRet::from_error(ErrNo::EINVAL),
+            None => {
+                return if cursor.copied > 0 {
+                    UserRet::from_success(cursor.copied)
+                } else {
+                    UserRet::from_error(ErrNo::EINVAL)
+                };
+            }
         };
         remaining -= n;
+        if n < chunk {
+            break;
+        }
     }
-
-    let scattered = match scatter_to_user_iovecs(iov_ptr, iovcnt, &gathered) {
-        Ok(n) => n,
-        Err(e) => return UserRet::from_error(e),
-    };
-    log::info!("[sys_preadv] fd={} ret={}/{}",
-               fd,
-               scattered,
-               want);
-    UserRet::from_success(scattered)
+    UserRet::from_success(cursor.copied)
 }
 
 // 本方法代码由AI完成
