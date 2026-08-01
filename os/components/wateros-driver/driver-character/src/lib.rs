@@ -9,8 +9,9 @@ use driver_api::{DeviceType, SupportedDeviceEntry};
 
 pub use api_v0::{
     character_device_at, character_device_count, first_character_device,
-    register_character_device, with_character_device, CharacterDevice, SerialError,
-    SerialPort, SerialPortCharacterDevice, SerialResult, SharedCharacterDevice,
+    register_character_device, with_character_device, CharacterDevice, CharacterReadFinish,
+    CharacterReadReservation, SerialError, SerialPort, SerialPortCharacterDevice, SerialResult,
+    SharedCharacterDevice,
 };
 
 /// 字符设备 API v0。

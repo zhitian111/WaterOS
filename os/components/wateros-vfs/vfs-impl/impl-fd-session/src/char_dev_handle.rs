@@ -5,11 +5,18 @@ extern crate alloc;
 
 use alloc::boxed::Box;
 use alloc::sync::Arc;
-use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use alloc::vec::Vec;
+use core::sync::atomic::{AtomicBool, Ordering};
 
-use api_v0::{VfsError, VfsIoHandle, VfsMetadata, VfsNodeType, VfsResult};
+use api_v0::{
+    VfsCopyProgress, VfsError, VfsIoHandle, VfsMetadata, VfsNodeType, VfsPreparedRead,
+    VfsReadFinish, VfsReadLease, VfsResult,
+};
 use driver_api::DriverError;
-use driver_character_api_v0::SharedCharacterDevice;
+use driver_character_api_v0::{
+    CharacterReadFinish, CharacterReadReservation, SharedCharacterDevice,
+};
+use spin::Mutex;
 
 /// QEMU 无主机输入时，经若干次 poll 后注入的合成密码（供 LTP ask_password.sh 等非交互场景）。
 // 本变量代码由AI完成
@@ -18,9 +25,19 @@ const HEADLESS_STUB_INPUT: &[u8] = b"password\n";
 const HEADLESS_POLL_THRESHOLD: u64 = 2;
 
 // 本变量代码由AI完成
-static HEADLESS_STUB_OFFSET: AtomicU64 = AtomicU64::new(0);
-// 本变量代码由AI完成
-static HEADLESS_SERIAL_POLLS: AtomicU64 = AtomicU64::new(0);
+struct HeadlessStubState {
+    offset: usize,
+    polls: u64,
+    active_read: Option<u64>,
+    next_read_id: u64,
+}
+
+static HEADLESS_STUB_STATE: Mutex<HeadlessStubState> = Mutex::new(HeadlessStubState {
+    offset: 0,
+    polls: 0,
+    active_read: None,
+    next_read_id: 1,
+});
 
 // 本方法代码由AI完成
 fn map_driver_err(e: DriverError) -> VfsError {
@@ -39,7 +56,7 @@ fn char_metadata(mode: u16, inode: u64) -> VfsMetadata {
         size: 0,
         mode,
         device_major: 0,
-        device_minor: 0x7fff_0001,
+        device_minor: 0x7FFF_0001,
         inode,
         mount_id: 0,
         nlink: 1,
@@ -50,10 +67,10 @@ fn char_metadata(mode: u16, inode: u64) -> VfsMetadata {
 
 // 本方法代码由AI完成
 fn path_inode(path: &str) -> u64 {
-    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    let mut hash = 0xCBF2_9CE4_8422_2325u64;
     for byte in path.as_bytes() {
         hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100_0000_01b3);
+        hash = hash.wrapping_mul(0x100_0000_01B3);
     }
     hash | (1u64 << 63)
 }
@@ -64,6 +81,7 @@ pub struct CharDevHandle {
     device: SharedCharacterDevice,
     stdin_eof: bool,
     rtc: bool,
+    tty: bool,
     nonblocking: Arc<AtomicBool>,
     accmode: u32,
     mode: u16,
@@ -77,6 +95,7 @@ impl CharDevHandle {
             device,
             stdin_eof,
             rtc: false,
+            tty: true,
             nonblocking: Arc::new(AtomicBool::new(false)),
             accmode: if stdin_eof { 0 } else { 1 },
             mode: if stdin_eof { 0o20600 } else { 0o20660 },
@@ -90,6 +109,7 @@ impl CharDevHandle {
             device,
             stdin_eof: false,
             rtc: true,
+            tty: false,
             nonblocking: Arc::new(AtomicBool::new(false)),
             accmode: 2,
             mode: 0o20644,
@@ -102,8 +122,9 @@ impl CharDevHandle {
         if path == "/dev/null" {
             Self {
                 device,
-                stdin_eof: false,
+                stdin_eof: true,
                 rtc: false,
+                tty: false,
                 nonblocking: Arc::new(AtomicBool::new(false)),
                 accmode,
                 mode: 0o20666,
@@ -135,46 +156,65 @@ impl CharDevHandle {
 
 // 本方法代码由AI完成
 fn headless_stub_pending() -> bool {
-    HEADLESS_STUB_OFFSET.load(Ordering::Relaxed) < HEADLESS_STUB_INPUT.len() as u64
+    let state = HEADLESS_STUB_STATE.lock();
+    state.active_read.is_none() && state.offset < HEADLESS_STUB_INPUT.len()
 }
 
 // 本方法代码由AI完成
 fn arm_headless_stub_if_needed() {
-    if headless_stub_pending() {
+    let mut state = HEADLESS_STUB_STATE.lock();
+    if state.active_read.is_some() || state.offset < HEADLESS_STUB_INPUT.len() {
         return;
     }
-    let polls = HEADLESS_SERIAL_POLLS.fetch_add(1, Ordering::Relaxed);
-    if polls + 1 >= HEADLESS_POLL_THRESHOLD {
-        HEADLESS_STUB_OFFSET.store(0, Ordering::Relaxed);
+    state.polls = state.polls.saturating_add(1);
+    if state.polls >= HEADLESS_POLL_THRESHOLD {
+        state.offset = 0;
+        state.polls = 0;
     }
 }
 
-// 本方法代码由AI完成
-fn read_headless_stub(buf: &mut [u8]) -> usize {
-    let offset = HEADLESS_STUB_OFFSET.load(Ordering::Relaxed) as usize;
-    if offset >= HEADLESS_STUB_INPUT.len() {
-        return 0;
-    }
-    let n = core::cmp::min(buf.len(), HEADLESS_STUB_INPUT.len() - offset);
-    buf[..n].copy_from_slice(&HEADLESS_STUB_INPUT[offset..offset + n]);
-    HEADLESS_STUB_OFFSET.store((offset + n) as u64, Ordering::Relaxed);
-    n
+struct HeadlessReadReservation {
+    id: u64,
+    offset: usize,
+    bytes: Vec<u8>,
 }
 
-// 本方法代码由AI完成
-fn try_read_serial_tty(device: &SharedCharacterDevice, buf: &mut [u8]) -> VfsResult<usize> {
-    let mut guard = device.lock();
-    match guard.read(buf) {
-        Ok(n) if n > 0 => Ok(n),
-        Ok(_) | Err(DriverError::Unsupported) => {
-            drop(guard);
-            if headless_stub_pending() {
-                Ok(read_headless_stub(buf))
-            } else {
-                Err(VfsError::WouldBlock)
-            }
-        }
-        Err(e) => Err(map_driver_err(e)),
+fn prepare_headless_read(max_len: usize) -> Option<HeadlessReadReservation> {
+    let mut state = HEADLESS_STUB_STATE.lock();
+    if state.active_read.is_some() || state.offset >= HEADLESS_STUB_INPUT.len() {
+        return None;
+    }
+    let id = state.next_read_id;
+    state.next_read_id = state.next_read_id.wrapping_add(1);
+    state.active_read = Some(id);
+    let offset = state.offset;
+    let len = max_len.min(HEADLESS_STUB_INPUT.len() - offset);
+    Some(HeadlessReadReservation {
+        id,
+        offset,
+        bytes: HEADLESS_STUB_INPUT[offset..offset + len].to_vec(),
+    })
+}
+
+fn finish_headless_read(
+    reservation: HeadlessReadReservation,
+    copied: usize,
+    complete: bool,
+) -> VfsResult<VfsReadFinish> {
+    let mut state = HEADLESS_STUB_STATE.lock();
+    if state.active_read != Some(reservation.id) || state.offset != reservation.offset {
+        return Err(VfsError::Io);
+    }
+    if copied > reservation.bytes.len() {
+        state.active_read = None;
+        return Err(VfsError::Io);
+    }
+    state.offset += copied;
+    state.active_read = None;
+    if copied == 0 && !complete {
+        Ok(VfsReadFinish::Fault)
+    } else {
+        Ok(VfsReadFinish::Bytes(copied))
     }
 }
 
@@ -188,14 +228,9 @@ fn serial_poll_revents(device: &SharedCharacterDevice, events: i16) -> VfsResult
     let mut revents = guard.poll_revents(events).map_err(map_driver_err)?;
     drop(guard);
     if events & POLLIN != 0 {
-        let has_uart = {
-            let mut guard = device.lock();
-            let mut byte = [0u8; 1];
-            guard.read(&mut byte).is_ok_and(|n| n > 0)
-        };
-        if has_uart || headless_stub_pending() {
+        if headless_stub_pending() {
             revents |= POLLIN;
-        } else {
+        } else if revents & POLLIN == 0 {
             arm_headless_stub_if_needed();
             if headless_stub_pending() {
                 revents |= POLLIN;
@@ -208,37 +243,162 @@ fn serial_poll_revents(device: &SharedCharacterDevice, events: i16) -> VfsResult
     Ok(revents)
 }
 
+struct CharDevPreparedRead {
+    device: SharedCharacterDevice,
+    stdin_eof: bool,
+    rtc: bool,
+    nonblocking: Arc<AtomicBool>,
+    max_len: usize,
+}
+
+impl VfsPreparedRead for CharDevPreparedRead {
+    fn acquire(self: Box<Self>) -> VfsResult<Box<dyn VfsReadLease>> {
+        loop {
+            let prepared = self.device.lock().prepare_read(self.max_len);
+            match prepared {
+                Ok(Some(reservation)) => {
+                    return Ok(Box::new(CharacterDeviceVfsReadLease {
+                        device: self.device.clone(),
+                        reservation: Some(reservation),
+                    }));
+                }
+                Ok(None) => {}
+                Err(DriverError::Unsupported) if self.rtc || self.stdin_eof => {
+                    return Ok(Box::new(EmptyCharacterReadLease));
+                }
+                Err(error) => return Err(map_driver_err(error)),
+            }
+            if let Some(reservation) = prepare_headless_read(self.max_len) {
+                return Ok(Box::new(HeadlessVfsReadLease {
+                    reservation: Some(reservation),
+                }));
+            }
+            if self.stdin_eof || self.rtc {
+                return Ok(Box::new(EmptyCharacterReadLease));
+            }
+            if self.nonblocking.load(Ordering::Acquire) {
+                return Err(VfsError::WouldBlock);
+            }
+            task::yield_now();
+        }
+    }
+}
+
+struct EmptyCharacterReadLease;
+
+impl VfsReadLease for EmptyCharacterReadLease {
+    fn bytes(&self) -> &[u8] { &[] }
+
+    fn finish(self: Box<Self>, progress: VfsCopyProgress) -> VfsResult<VfsReadFinish> {
+        if progress.copied != 0 {
+            return Err(VfsError::Io);
+        }
+        Ok(VfsReadFinish::Bytes(0))
+    }
+}
+
+struct CharacterDeviceVfsReadLease {
+    device: SharedCharacterDevice,
+    reservation: Option<CharacterReadReservation>,
+}
+
+impl VfsReadLease for CharacterDeviceVfsReadLease {
+    fn bytes(&self) -> &[u8] {
+        self.reservation.as_ref()
+                        .map(CharacterReadReservation::bytes)
+                        .unwrap_or(&[])
+    }
+
+    fn finish(mut self: Box<Self>, progress: VfsCopyProgress) -> VfsResult<VfsReadFinish> {
+        let reservation = self.reservation.take().ok_or(VfsError::Io)?;
+        match self.device.lock()
+                         .finish_read(reservation, progress.copied, progress.complete)
+                         .map_err(map_driver_err)? {
+            CharacterReadFinish::Bytes(copied) => Ok(VfsReadFinish::Bytes(copied)),
+            CharacterReadFinish::Fault => Ok(VfsReadFinish::Fault),
+        }
+    }
+}
+
+impl Drop for CharacterDeviceVfsReadLease {
+    fn drop(&mut self) {
+        if let Some(reservation) = self.reservation.take() {
+            let _ = self.device.lock().finish_read(reservation, 0, false);
+        }
+    }
+}
+
+struct HeadlessVfsReadLease {
+    reservation: Option<HeadlessReadReservation>,
+}
+
+impl VfsReadLease for HeadlessVfsReadLease {
+    fn bytes(&self) -> &[u8] {
+        self.reservation.as_ref()
+                        .map(|reservation| reservation.bytes.as_slice())
+                        .unwrap_or(&[])
+    }
+
+    fn finish(mut self: Box<Self>, progress: VfsCopyProgress) -> VfsResult<VfsReadFinish> {
+        finish_headless_read(self.reservation.take().ok_or(VfsError::Io)?,
+                             progress.copied,
+                             progress.complete)
+    }
+}
+
+impl Drop for HeadlessVfsReadLease {
+    fn drop(&mut self) {
+        if let Some(reservation) = self.reservation.take() {
+            let _ = finish_headless_read(reservation, 0, false);
+        }
+    }
+}
+
+pub(crate) fn read_lease_self_test() {
+    {
+        let mut state = HEADLESS_STUB_STATE.lock();
+        state.offset = 0;
+        state.polls = 0;
+        state.active_read = None;
+    }
+    let cancelled = prepare_headless_read(3).expect("prepare headless read");
+    assert_eq!(cancelled.bytes, b"pas");
+    assert_eq!(finish_headless_read(cancelled, 0, false), Ok(VfsReadFinish::Fault));
+
+    let partial = prepare_headless_read(3).expect("prepare headless retry");
+    assert_eq!(partial.bytes, b"pas");
+    assert_eq!(finish_headless_read(partial, 1, false), Ok(VfsReadFinish::Bytes(1)));
+    let suffix = prepare_headless_read(2).expect("prepare headless suffix");
+    assert_eq!(suffix.bytes, b"as");
+    drop(HeadlessVfsReadLease { reservation: Some(suffix) });
+    assert_eq!(HEADLESS_STUB_STATE.lock().offset, 1);
+
+    let mut state = HEADLESS_STUB_STATE.lock();
+    state.offset = 0;
+    state.polls = 0;
+    state.active_read = None;
+}
+
 impl VfsIoHandle for CharDevHandle {
+    fn prepare_read(&mut self, max_len: usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
+        Ok(Box::new(CharDevPreparedRead {
+            device: self.device.clone(),
+            stdin_eof: self.stdin_eof,
+            rtc: self.rtc,
+            nonblocking: self.nonblocking.clone(),
+            max_len,
+        }))
+    }
+
 // 本方法代码由AI完成
     fn read(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
-        if buf.is_empty() {
-            return Ok(0);
-        }
-        if self.rtc {
-            let mut guard = self.device.lock();
-            return guard.read(buf).map_err(map_driver_err);
-        }
-        if self.stdin_eof {
-            let mut guard = self.device.lock();
-            return match guard.read(buf) {
-                Ok(n) => Ok(n),
-                Err(DriverError::Unsupported) => Ok(0),
-                Err(e) => Err(map_driver_err(e)),
-            };
-        }
-        loop {
-            match try_read_serial_tty(&self.device, buf) {
-                Ok(n) => return Ok(n),
-                Err(VfsError::WouldBlock) if self.nonblocking.load(Ordering::Acquire) => {
-                    return Err(VfsError::WouldBlock);
-                }
-                Err(VfsError::WouldBlock) => {
-// 本变量代码由AI完成
-                    const POLLIN: i16 = 0x001;
-                    self.poll_wait_for_ticks(POLLIN, 1, &mut || true)?;
-                }
-                Err(e) => return Err(e),
-            }
+        let prepared = self.prepare_read(buf.len())?;
+        let lease = prepared.acquire()?;
+        let len = lease.bytes().len();
+        buf[..len].copy_from_slice(lease.bytes());
+        match lease.finish(VfsCopyProgress { copied: len, complete: true })? {
+            VfsReadFinish::Bytes(copied) => Ok(copied),
+            VfsReadFinish::Fault => Err(VfsError::Io),
         }
     }
 
@@ -311,7 +471,7 @@ impl VfsIoHandle for CharDevHandle {
     }
 
     fn is_tty_char_device(&self) -> bool {
-        !self.rtc
+        self.tty
     }
 
 // 本方法代码由AI完成
@@ -325,6 +485,7 @@ impl VfsIoHandle for CharDevHandle {
             device: self.device.clone(),
             stdin_eof: self.stdin_eof,
             rtc: self.rtc,
+            tty: self.tty,
             nonblocking: self.nonblocking.clone(),
             accmode: self.accmode,
             mode: self.mode,

@@ -27,4 +27,7 @@ pub use interrupt_guard::with_interrupt_disabled;
 
 pub fn test() {
     ipc::pipe::test();
+    driver_character_api_v0::test();
+    char_dev_handle::read_lease_self_test();
+    handles::read_lease_self_test();
 }

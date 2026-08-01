@@ -68,15 +68,22 @@ fn read_fd_prepared(fd : usize,
                     ptr : usize,
                     transfer_len : usize)
                     -> Result<Option<UserRet>, ErrNo> {
-    let prepared = loop {
-        match vfs::fd::prepare_current_read(fd, transfer_len) {
-            Ok(prepared) => break prepared,
-            Err(VfsError::Busy) => task::yield_now(),
+    let lease = loop {
+        let prepared = match vfs::fd::prepare_current_read(fd, transfer_len) {
+            Ok(prepared) => prepared,
+            Err(VfsError::Busy) => {
+                task::yield_now();
+                continue;
+            }
             Err(VfsError::Unsupported) => return Ok(None),
+            Err(error) => return Err(vfs_error_to_errno(error)),
+        };
+        match prepared.acquire() {
+            Ok(lease) => break lease,
+            Err(VfsError::Busy) => task::yield_now(),
             Err(error) => return Err(vfs_error_to_errno(error)),
         }
     };
-    let lease = prepared.acquire().map_err(vfs_error_to_errno)?;
     let progress = copy_to_user_progress(ptr, lease.bytes());
     let finish = lease.finish(VfsCopyProgress {
                           copied : progress.copied,

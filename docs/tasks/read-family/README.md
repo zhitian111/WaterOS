@@ -75,7 +75,7 @@ RIO-01..09 ───────────────────────
 | [x] | [`05-pipe-and-unix-socket-read.md`](./05-pipe-and-unix-socket-read.md) | pipe、Unix stream/dgram 保留与提交；[完成报告](./rio05-20260801.md) |
 | [ ] | [`06-inet-socket-read.md`](./06-inet-socket-read.md) | TCP/UDP/loopback 非破坏性接收 |
 | [x] | [`07-eventfd-read.md`](./07-eventfd-read.md) | eventfd 固定宽度原子读取；[完成报告](./rio07-20260801.md) |
-| [ ] | [`08-character-and-pseudo-device-read.md`](./08-character-and-pseudo-device-read.md) | UART/RTC/zero/urandom 等设备 |
+| [x] | [`08-character-and-pseudo-device-read.md`](./08-character-and-pseudo-device-read.md) | UART/RTC/zero/urandom 等设备；[完成报告](./rio08-20260801.md) |
 | [ ] | [`09-vector-and-positional-read.md`](./09-vector-and-positional-read.md) | readv/pread/preadv、上限和 iovec |
 | [ ] | [`10-integration-and-regression.md`](./10-integration-and-regression.md) | Linux 对照、LTP、双架构和 BuildStorm |
 

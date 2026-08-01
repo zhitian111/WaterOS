@@ -4,6 +4,7 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use api_v0::{
@@ -14,15 +15,185 @@ use ipc::pipe::{
     PipeEndpoint, PipeEndpointOps, PipeError, PipeReadFinish as IpcPipeReadFinish,
     PipeReadLease as IpcPipeReadLease,
 };
+use spin::Mutex;
 
 // 本变量代码由AI完成
 static NEXT_PIPE_INODE: AtomicU64 = AtomicU64::new(1);
 // 本变量代码由AI完成
 static NEXT_STREAM_PAIR_INODE: AtomicU64 = AtomicU64::new(1);
 // 本变量代码由AI完成
-static URANDOM_STATE: AtomicU64 = AtomicU64::new(0x6a09_e667_f3bc_c909);
+struct UrandomState {
+    value: u64,
+    active_read: Option<u64>,
+    next_read_id: u64,
+    pending_mix: u64,
+}
+
+static URANDOM_STATE: Mutex<UrandomState> = Mutex::new(UrandomState {
+    value: 0x6A09_E667_F3BC_C909,
+    active_read: None,
+    next_read_id: 1,
+    pending_mix: 0,
+});
 const O_NONBLOCK: u32 = 0o0004000;
 const O_DIRECT: u32 = 0o00040000;
+
+#[derive(Clone, Copy)]
+enum GeneratedReadKind {
+    Empty,
+    Zero,
+}
+
+struct GeneratedPreparedRead {
+    kind: GeneratedReadKind,
+    max_len: usize,
+}
+
+impl VfsPreparedRead for GeneratedPreparedRead {
+    fn acquire(self: Box<Self>) -> VfsResult<Box<dyn VfsReadLease>> {
+        let mut data = Vec::new();
+        if matches!(self.kind, GeneratedReadKind::Zero) {
+            data.try_reserve_exact(self.max_len)
+                .map_err(|_| VfsError::NoMemory)?;
+            data.resize(self.max_len, 0);
+        }
+        Ok(Box::new(GeneratedReadLease { data }))
+    }
+}
+
+struct GeneratedReadLease {
+    data: Vec<u8>,
+}
+
+impl VfsReadLease for GeneratedReadLease {
+    fn bytes(&self) -> &[u8] {
+        self.data.as_slice()
+    }
+
+    fn finish(self: Box<Self>, progress: VfsCopyProgress) -> VfsResult<VfsReadFinish> {
+        if progress.copied > self.data.len() {
+            return Err(VfsError::Io);
+        }
+        if progress.copied == 0 && !progress.complete {
+            Ok(VfsReadFinish::Fault)
+        } else {
+            Ok(VfsReadFinish::Bytes(progress.copied))
+        }
+    }
+}
+
+fn generated_read(kind: GeneratedReadKind, max_len: usize) -> Box<dyn VfsPreparedRead> {
+    Box::new(GeneratedPreparedRead { kind, max_len })
+}
+
+fn urandom_next(state: &mut u64) -> u8 {
+    *state ^= *state << 13;
+    *state ^= *state >> 7;
+    *state ^= *state << 17;
+    (*state >> 24) as u8
+}
+
+fn urandom_advance(mut state: u64, len: usize) -> u64 {
+    for _ in 0..len {
+        let _ = urandom_next(&mut state);
+    }
+    state
+}
+
+fn urandom_mix(buf: &[u8]) -> u64 {
+    let mut mix = buf.len() as u64;
+    for byte in buf.iter().take(32) {
+        mix = mix.rotate_left(5) ^ (*byte as u64);
+    }
+    mix
+}
+
+struct UrandomPreparedRead {
+    max_len: usize,
+}
+
+impl VfsPreparedRead for UrandomPreparedRead {
+    fn acquire(self: Box<Self>) -> VfsResult<Box<dyn VfsReadLease>> {
+        let (id, start) = {
+            let mut state = URANDOM_STATE.lock();
+            if state.active_read.is_some() {
+                return Err(VfsError::Busy);
+            }
+            let id = state.next_read_id;
+            state.next_read_id = state.next_read_id.wrapping_add(1);
+            state.active_read = Some(id);
+            state.pending_mix = 0;
+            (id, state.value)
+        };
+        let mut data = Vec::new();
+        if data.try_reserve_exact(self.max_len).is_err() {
+            cancel_urandom_read(id, start);
+            return Err(VfsError::NoMemory);
+        }
+        let mut generated_state = start;
+        for _ in 0..self.max_len {
+            data.push(urandom_next(&mut generated_state));
+        }
+        Ok(Box::new(UrandomReadLease {
+            id,
+            start,
+            data,
+            active: true,
+        }))
+    }
+}
+
+fn cancel_urandom_read(id: u64, start: u64) {
+    let mut state = URANDOM_STATE.lock();
+    if state.active_read == Some(id) {
+        state.value = start ^ state.pending_mix;
+        state.pending_mix = 0;
+        state.active_read = None;
+    }
+}
+
+struct UrandomReadLease {
+    id: u64,
+    start: u64,
+    data: Vec<u8>,
+    active: bool,
+}
+
+impl VfsReadLease for UrandomReadLease {
+    fn bytes(&self) -> &[u8] {
+        self.data.as_slice()
+    }
+
+    fn finish(mut self: Box<Self>, progress: VfsCopyProgress) -> VfsResult<VfsReadFinish> {
+        if progress.copied > self.data.len() {
+            return Err(VfsError::Io);
+        }
+        let committed_state = urandom_advance(self.start, progress.copied);
+        {
+            let mut state = URANDOM_STATE.lock();
+            if state.active_read != Some(self.id) {
+                return Err(VfsError::Io);
+            }
+            state.value = committed_state ^ state.pending_mix;
+            state.pending_mix = 0;
+            state.active_read = None;
+        }
+        self.active = false;
+        if progress.copied == 0 && !progress.complete {
+            Ok(VfsReadFinish::Fault)
+        } else {
+            Ok(VfsReadFinish::Bytes(progress.copied))
+        }
+    }
+}
+
+impl Drop for UrandomReadLease {
+    fn drop(&mut self) {
+        if self.active {
+            cancel_urandom_read(self.id, self.start);
+        }
+    }
+}
 
 // 本方法代码由AI完成
 fn special_meta(mode: u16, inode: u64) -> VfsMetadata {
@@ -51,7 +222,13 @@ fn special_dev_meta(mode: u16, inode: u64, device_major: u32, device_minor: u32)
 pub struct ConsoleInHandle;
 
 impl VfsIoHandle for ConsoleInHandle {
-    fn open_accmode(&self) -> u32 { 0 }
+    fn open_accmode(&self) -> u32 {
+        0
+    }
+
+    fn prepare_read(&mut self, max_len: usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
+        Ok(generated_read(GeneratedReadKind::Empty, max_len))
+    }
 
 // 本方法代码由AI完成
     fn read(&mut self, _buf: &mut [u8]) -> VfsResult<usize> {
@@ -84,7 +261,9 @@ impl VfsIoHandle for ConsoleInHandle {
 pub struct ConsoleOutHandle;
 
 impl VfsIoHandle for ConsoleOutHandle {
-    fn open_accmode(&self) -> u32 { 1 }
+    fn open_accmode(&self) -> u32 {
+        1
+    }
 
 // 本方法代码由AI完成
     fn write(&mut self, buf: &[u8]) -> VfsResult<usize> {
@@ -126,15 +305,25 @@ pub struct NullDeviceHandle {
 }
 
 impl NullDeviceHandle {
-    pub const fn new(accmode: u32) -> Self { Self { accmode } }
+    pub const fn new(accmode: u32) -> Self {
+        Self { accmode }
+    }
 }
 
 impl Default for NullDeviceHandle {
-    fn default() -> Self { Self::new(2) }
+    fn default() -> Self {
+        Self::new(2)
+    }
 }
 
 impl VfsIoHandle for NullDeviceHandle {
-    fn open_accmode(&self) -> u32 { self.accmode }
+    fn open_accmode(&self) -> u32 {
+        self.accmode
+    }
+
+    fn prepare_read(&mut self, max_len: usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
+        Ok(generated_read(GeneratedReadKind::Empty, max_len))
+    }
 
 // 本方法代码由AI完成
     fn read(&mut self, _buf: &mut [u8]) -> VfsResult<usize> {
@@ -174,15 +363,25 @@ pub struct ZeroDeviceHandle {
 }
 
 impl ZeroDeviceHandle {
-    pub const fn new(accmode: u32) -> Self { Self { accmode } }
+    pub const fn new(accmode: u32) -> Self {
+        Self { accmode }
+    }
 }
 
 impl Default for ZeroDeviceHandle {
-    fn default() -> Self { Self::new(2) }
+    fn default() -> Self {
+        Self::new(2)
+    }
 }
 
 impl VfsIoHandle for ZeroDeviceHandle {
-    fn open_accmode(&self) -> u32 { self.accmode }
+    fn open_accmode(&self) -> u32 {
+        self.accmode
+    }
+
+    fn prepare_read(&mut self, max_len: usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
+        Ok(generated_read(GeneratedReadKind::Zero, max_len))
+    }
 
 // 本方法代码由AI完成
     fn read(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
@@ -223,15 +422,25 @@ pub struct CpuDmaLatencyDeviceHandle {
 }
 
 impl CpuDmaLatencyDeviceHandle {
-    pub const fn new(accmode: u32) -> Self { Self { accmode } }
+    pub const fn new(accmode: u32) -> Self {
+        Self { accmode }
+    }
 }
 
 impl Default for CpuDmaLatencyDeviceHandle {
-    fn default() -> Self { Self::new(2) }
+    fn default() -> Self {
+        Self::new(2)
+    }
 }
 
 impl VfsIoHandle for CpuDmaLatencyDeviceHandle {
-    fn open_accmode(&self) -> u32 { self.accmode }
+    fn open_accmode(&self) -> u32 {
+        self.accmode
+    }
+
+    fn prepare_read(&mut self, max_len: usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
+        Ok(generated_read(GeneratedReadKind::Empty, max_len))
+    }
 
 // 本方法代码由AI完成
     fn read(&mut self, _buf: &mut [u8]) -> VfsResult<usize> {
@@ -286,29 +495,31 @@ impl Default for UrandomDeviceHandle {
 impl VfsIoHandle for UrandomDeviceHandle {
     fn open_accmode(&self) -> u32 { self.accmode }
 
+    fn prepare_read(&mut self, max_len: usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
+        Ok(Box::new(UrandomPreparedRead { max_len }))
+    }
+
 // 本方法代码由AI完成
     fn read(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
-        let mut state = URANDOM_STATE.fetch_add(
-            0x9e37_79b9_7f4a_7c15u64 ^ (buf.as_ptr() as u64).rotate_left(17),
-            Ordering::Relaxed,
-        );
-        for byte in buf.iter_mut() {
-            state ^= state << 13;
-            state ^= state >> 7;
-            state ^= state << 17;
-            *byte = (state >> 24) as u8;
+        let prepared = self.prepare_read(buf.len())?;
+        let lease = prepared.acquire()?;
+        let len = lease.bytes().len();
+        buf[..len].copy_from_slice(lease.bytes());
+        match lease.finish(VfsCopyProgress { copied: len, complete: true })? {
+            VfsReadFinish::Bytes(copied) => Ok(copied),
+            VfsReadFinish::Fault => Err(VfsError::Io),
         }
-        URANDOM_STATE.store(state, Ordering::Relaxed);
-        Ok(buf.len())
     }
 
 // 本方法代码由AI完成
     fn write(&mut self, buf: &[u8]) -> VfsResult<usize> {
-        let mut mix = buf.len() as u64;
-        for byte in buf.iter().take(32) {
-            mix = mix.rotate_left(5) ^ (*byte as u64);
+        let mix = urandom_mix(buf);
+        let mut state = URANDOM_STATE.lock();
+        if state.active_read.is_some() {
+            state.pending_mix ^= mix;
+        } else {
+            state.value ^= mix;
         }
-        URANDOM_STATE.fetch_xor(mix, Ordering::Relaxed);
         Ok(buf.len())
     }
 
@@ -330,6 +541,83 @@ impl VfsIoHandle for UrandomDeviceHandle {
     fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {
         Ok(Box::new(*self))
     }
+}
+
+pub(crate) fn read_lease_self_test() {
+    let mut zero = ZeroDeviceHandle::default();
+    let lease = zero
+        .prepare_read(3)
+        .expect("prepare zero read")
+        .acquire()
+        .expect("acquire zero read");
+    assert_eq!(lease.bytes(), &[0, 0, 0]);
+    assert_eq!(
+        lease.finish(VfsCopyProgress {
+            copied: 1,
+            complete: false
+        }),
+        Ok(VfsReadFinish::Bytes(1))
+    );
+
+    const START: u64 = 0x6A09_E667_F3BC_C909;
+    {
+        let mut state = URANDOM_STATE.lock();
+        state.value = START;
+        state.active_read = None;
+        state.pending_mix = 0;
+    }
+    let mut random = UrandomDeviceHandle::default();
+    let cancelled = random
+        .prepare_read(4)
+        .expect("prepare random read")
+        .acquire()
+        .expect("acquire random read");
+    let first = cancelled.bytes().to_vec();
+    assert_eq!(
+        cancelled.finish(VfsCopyProgress {
+            copied: 0,
+            complete: false
+        }),
+        Ok(VfsReadFinish::Fault)
+    );
+    let partial = random
+        .prepare_read(4)
+        .expect("prepare random retry")
+        .acquire()
+        .expect("acquire random retry");
+    assert_eq!(partial.bytes(), first.as_slice());
+    assert_eq!(
+        partial.finish(VfsCopyProgress {
+            copied: 2,
+            complete: false
+        }),
+        Ok(VfsReadFinish::Bytes(2))
+    );
+    assert_eq!(URANDOM_STATE.lock().value, urandom_advance(START, 2));
+
+    let concurrent = random
+        .prepare_read(2)
+        .expect("prepare random concurrent write")
+        .acquire()
+        .expect("acquire random concurrent write");
+    let before_write = URANDOM_STATE.lock().value;
+    let entropy = b"mix";
+    assert_eq!(random.write(entropy), Ok(entropy.len()));
+    assert_eq!(
+        concurrent.finish(VfsCopyProgress {
+            copied: 2,
+            complete: true
+        }),
+        Ok(VfsReadFinish::Bytes(2))
+    );
+    assert_eq!(
+        URANDOM_STATE.lock().value,
+        urandom_advance(before_write, 2) ^ urandom_mix(entropy)
+    );
+    let mut state = URANDOM_STATE.lock();
+    state.value = START;
+    state.active_read = None;
+    state.pending_mix = 0;
 }
 
 /// pipe 读端。
@@ -360,13 +648,21 @@ pub fn pipe_handle_pair_with_flags(
     let (read, write) = PipeEndpoint::pair_with_flags(nonblocking, direct);
     let inode = NEXT_PIPE_INODE.fetch_add(1, Ordering::Relaxed);
     (
-        PipeReadHandle { endpoint: read, inode },
-        PipeWriteHandle { endpoint: write, inode },
+        PipeReadHandle {
+            endpoint: read,
+            inode,
+        },
+        PipeWriteHandle {
+            endpoint: write,
+            inode,
+        },
     )
 }
 
 impl VfsIoHandle for PipeReadHandle {
-    fn open_accmode(&self) -> u32 { 0 }
+    fn open_accmode(&self) -> u32 {
+        0
+    }
 
     fn prepare_read(&mut self, max_len: usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
         Ok(Box::new(PipePreparedRead {
@@ -447,13 +743,17 @@ impl VfsIoHandle for PipeReadHandle {
 
 // 本方法代码由AI完成
     fn pipe_set_capacity(&mut self, capacity: usize) -> VfsResult<usize> {
-        self.endpoint.set_pipe_capacity(capacity).map_err(map_pipe_err)
+        self.endpoint
+            .set_pipe_capacity(capacity)
+            .map_err(map_pipe_err)
     }
 }
 
 /// pipe 写端。
 impl VfsIoHandle for PipeWriteHandle {
-    fn open_accmode(&self) -> u32 { 1 }
+    fn open_accmode(&self) -> u32 {
+        1
+    }
 
 // 本方法代码由AI完成
     fn write(&mut self, buf: &[u8]) -> VfsResult<usize> {
@@ -527,7 +827,9 @@ impl VfsIoHandle for PipeWriteHandle {
 
 // 本方法代码由AI完成
     fn pipe_set_capacity(&mut self, capacity: usize) -> VfsResult<usize> {
-        self.endpoint.set_pipe_capacity(capacity).map_err(map_pipe_err)
+        self.endpoint
+            .set_pipe_capacity(capacity)
+            .map_err(map_pipe_err)
     }
 }
 
@@ -640,7 +942,9 @@ impl VfsIoHandle for UnixStreamPairEnd {
 
     /// `socketpair` 的两端都可读写。glibc `fdopen(fd, "r+")` 会通过
     /// `fcntl(F_GETFL)` 校验这里返回的访问模式。
-    fn open_accmode(&self) -> u32 { 2 }
+    fn open_accmode(&self) -> u32 {
+        2
+    }
 
 // 本方法代码由AI完成
     fn open_status_flags(&self) -> u32 {
