@@ -566,6 +566,11 @@ pub use mount_table::{
 // 本方法代码由AI完成
 pub fn unlink_path(path : &str, remove_dir : bool) -> VfsResult<()> {
     mount_table::assert_path_writable(path)?;
+    let pending_detach = if remove_dir {
+        None
+    } else {
+        paged_handle::prepare_unlink_detach(path)?
+    };
     let (fs, rel) = fs_and_rel_rw(path)?;
     let mut sess = MountedRwSession::new(fs);
     let result = if remove_dir {
@@ -573,8 +578,12 @@ pub fn unlink_path(path : &str, remove_dir : bool) -> VfsResult<()> {
     } else {
         sess.unlink(rel.as_str())
     };
-    // 释放页缓存中的文件条目，防止 files BTreeMap 无限增长内核堆
-    if !remove_dir {
+    // 仅在删除成功后切断旧路径。打开句柄先切换到 unlink 前的一致快照，
+    // 后续同名文件才能使用独立的 path-key cache。
+    if result.is_ok() && !remove_dir {
+        if let Some(pending) = pending_detach {
+            pending.commit();
+        }
         let cache = impl_page_cache::global_cache(fs::rootfs::active_impl::mount_generation());
         cache.purge_closed_file(path);
     }

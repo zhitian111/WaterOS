@@ -52,6 +52,10 @@ handle.flush()
   key/data/dirty/version 保持可重试，并发更新通过 version 检查避免被旧 snapshot
   错误清理。详见
   [`results/k01-page-cache-eviction-failure-20260801.md`](./results/k01-page-cache-eviction-failure-20260801.md)。
+- 2026-08-01 修复 unlink 后打开 fd 与同名新文件发生 path-key cache 别名的问题；
+  旧句柄切换到 unlink 前一致快照，独立 open 继续共享旧对象，失败的 unlink 不再
+  清除缓存。同时补齐中间分量非目录的 `ENOTDIR`。详见
+  [`results/k01-open-unlink-identity-20260801.md`](./results/k01-open-unlink-identity-20260801.md)。
 
 ## 涉及文件
 

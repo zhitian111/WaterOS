@@ -350,6 +350,9 @@ pub(crate) fn sys_unlinkat(args : SyscallArgs) -> UserRet {
     if flags & !AT_REMOVEDIR != 0 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
+    if let Err(e) = reject_non_directory_prefix(resolved.as_str()) {
+        return UserRet::from_error(e);
+    }
     if let Err(e) = check_unlink_permission(resolved.as_str()) {
         return UserRet::from_error(e);
     }

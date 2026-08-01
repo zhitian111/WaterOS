@@ -13,8 +13,9 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
 use alloc::string::String;
-use alloc::sync::Arc;
+use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -38,6 +39,76 @@ static NEXT_FLOCK_OWNER_ID : AtomicU64 = AtomicU64::new(1);
 struct DetachedState {
     detached : bool,
     data : Vec<u8>,
+}
+
+type DetachedKey = (u64, String);
+static DETACHED_STATES : Mutex<BTreeMap<DetachedKey, Weak<Mutex<DetachedState>>>> =
+    Mutex::new(BTreeMap::new());
+
+fn detached_state_for_open(mount_gen : u64, path : &str) -> Arc<Mutex<DetachedState>> {
+    let key = (mount_gen, String::from(path));
+    let mut states = DETACHED_STATES.lock();
+    if let Some(state) = states.get(&key).and_then(Weak::upgrade) {
+        return state;
+    }
+    let state = Arc::new(Mutex::new(DetachedState { detached : false,
+                                                    data : Vec::new() }));
+    states.insert(key, Arc::downgrade(&state));
+    state
+}
+
+pub(crate) struct PendingUnlinkDetach {
+    key : DetachedKey,
+    state : Arc<Mutex<DetachedState>>,
+    data : Vec<u8>,
+}
+
+impl PendingUnlinkDetach {
+    pub(crate) fn commit(self) {
+        DETACHED_STATES.lock().remove(&self.key);
+        let mut state = self.state.lock();
+        state.data = self.data;
+        state.detached = true;
+    }
+}
+
+pub(crate) fn prepare_unlink_detach(path : &str) -> VfsResult<Option<PendingUnlinkDetach>> {
+    let mount_gen = fs::rootfs::active_impl::mount_generation();
+    let key = (mount_gen, String::from(path));
+    let state = {
+        let mut states = DETACHED_STATES.lock();
+        let state = states.get(&key).and_then(Weak::upgrade);
+        if state.is_none() {
+            states.remove(&key);
+        }
+        state
+    };
+    let Some(state) = state else {
+        return Ok(None);
+    };
+    if state.lock().detached {
+        return Ok(None);
+    }
+
+    let meta = FsBridge.metadata(path)?;
+    let cache = global_cache(mount_gen);
+    let logical_size = cache.logical_size(path, meta.size);
+    let len = usize::try_from(logical_size).map_err(|_| VfsError::Io)?;
+    check_detached_len(len)?;
+    let mut data = try_zeroed(len)?;
+    if len != 0 {
+        let mut io = FsPageIo;
+        let read = cache.read(&mut io,
+                              path,
+                              logical_size,
+                              0,
+                              &mut data,
+                              core::convert::identity)?;
+        if read != len {
+            return Err(VfsError::Io);
+        }
+    }
+    Ok(Some(PendingUnlinkDetach { key, state, data }))
 }
 
 // 本方法代码由AI完成
@@ -190,6 +261,7 @@ impl PagedFileHandle {
             status_flags |= O_APPEND;
         }
 
+        let detached = detached_state_for_open(mount_gen, path.as_str());
         Ok(Self { path,
                   description : Arc::new(VfsOpenDescriptionState::new(offset, status_flags)),
                   meta,
@@ -197,8 +269,7 @@ impl PagedFileHandle {
                   accmode,
                   mount_gen,
                   on_disk_size,
-                  detached : Arc::new(Mutex::new(DetachedState { detached : false,
-                                                                 data : Vec::new() })),
+                  detached,
                   open_ref_held : true,
                   flock_owner_id : NEXT_FLOCK_OWNER_ID.fetch_add(1, Ordering::Relaxed) })
     }
@@ -239,6 +310,11 @@ impl PagedFileHandle {
 
 // 本方法代码由AI完成
     fn current_size(&self) -> u64 {
+        let detached = self.detached.lock();
+        if detached.detached {
+            return detached.data.len() as u64;
+        }
+        drop(detached);
         global_cache(self.mount_gen).logical_size(self.path.as_str(), self.on_disk_size)
     }
 
@@ -275,8 +351,6 @@ impl PagedFileHandle {
             detached.data[start..end_usize].copy_from_slice(buf);
         }
         let new_size = core::cmp::max(self.current_size(), end);
-        let cache = global_cache(self.mount_gen);
-        cache.set_logical_size(self.path.as_str(), new_size);
         self.meta.size = new_size;
         Ok(buf.len())
     }
@@ -533,7 +607,9 @@ impl VfsIoHandle for PagedFileHandle {
             }
         }
         let cache = global_cache(self.mount_gen);
-        cache.truncate(self.path.as_str(), len);
+        if !self.is_detached() {
+            cache.truncate(self.path.as_str(), len);
+        }
         self.on_disk_size = len;
         self.meta.size = len;
         if self.is_detached() {
@@ -605,22 +681,23 @@ impl VfsPreparedRead for PagedPreparedRead {
                          .as_ref()
                          .ok_or(VfsError::Io)?
                          .offset();
-        let cache = global_cache(self.mount_gen);
-        let size = cache.logical_size(self.path.as_str(), self.on_disk_size);
-        let available = size.saturating_sub(offset);
-        let len = usize::try_from(available.min(self.max_len as u64)).map_err(|_| VfsError::Io)?;
-        let mut staged = try_zeroed(len)?;
-        let n = if len == 0 {
-            0
+        let detached = self.detached.lock();
+        let (mut staged, n) = if detached.detached {
+            let start = usize::try_from(offset).map_err(|_| VfsError::Io)?;
+            let len = self.max_len.min(detached.data.len().saturating_sub(start));
+            let mut staged = try_zeroed(len)?;
+            staged.copy_from_slice(&detached.data[start..start + len]);
+            (staged, len)
         } else {
-            let detached = self.detached.lock();
-            if detached.detached {
-                let start = usize::try_from(offset).map_err(|_| VfsError::Io)?;
-                let n = len.min(detached.data.len().saturating_sub(start));
-                staged[..n].copy_from_slice(&detached.data[start..start + n]);
-                n
+            drop(detached);
+            let cache = global_cache(self.mount_gen);
+            let size = cache.logical_size(self.path.as_str(), self.on_disk_size);
+            let available = size.saturating_sub(offset);
+            let len = usize::try_from(available.min(self.max_len as u64)).map_err(|_| VfsError::Io)?;
+            let mut staged = try_zeroed(len)?;
+            let n = if len == 0 {
+                0
             } else {
-                drop(detached);
                 let mut io = FsPageIo;
                 cache.read(&mut io,
                            self.path.as_str(),
@@ -628,7 +705,8 @@ impl VfsPreparedRead for PagedPreparedRead {
                            offset,
                            staged.as_mut_slice(),
                            core::convert::identity)?
-            }
+            };
+            (staged, n)
         };
         staged.truncate(n);
         let reservation = self.reservation.take().ok_or(VfsError::Io)?;
