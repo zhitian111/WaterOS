@@ -784,9 +784,6 @@ pub(crate) fn open_file(bridge : &FsBridge,
         if !flags.contains(VfsOpenFlags::CREATE) {
             return Err(VfsError::NotFound);
         }
-        if !want_write {
-            return Err(VfsError::Unsupported);
-        }
         crate::replace_file_contents(path.as_str(), &[])?;
         let meta = bridge.metadata(path.as_str())?;
         let h = PagedFileHandle::open(bridge, path, flags, meta)?;

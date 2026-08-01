@@ -56,9 +56,7 @@ pub type RootFileHandle = BufferedFileHandle;
 impl BufferedFileHandle {
     // 本方法代码由AI完成
     pub(crate) fn open(bridge : &FsBridge, path : String, flags : VfsOpenFlags) -> VfsResult<Self> {
-        let want_read = flags.contains(VfsOpenFlags::READ) ||
-                        (!flags.contains(VfsOpenFlags::WRITE) &&
-                         !flags.contains(VfsOpenFlags::CREATE));
+        let want_read = flags.contains(VfsOpenFlags::READ);
         let want_write = flags.contains(VfsOpenFlags::WRITE);
         if !want_read && !want_write {
             return Err(VfsError::Unsupported);
@@ -66,11 +64,8 @@ impl BufferedFileHandle {
 
         let exists = bridge.exists(path.as_str())?;
         if !exists {
-            if !flags.contains(VfsOpenFlags::CREATE) && !want_write {
+            if !flags.contains(VfsOpenFlags::CREATE) {
                 return Err(VfsError::NotFound);
-            }
-            if !want_write {
-                return Err(VfsError::Unsupported);
             }
             replace_file_contents(path.as_str(), &[])?;
         }

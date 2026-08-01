@@ -63,6 +63,10 @@ handle.flush()
   300 MiB 测试设备文件时的内核堆 OOM。定向测试已推进到申请 loop/test device，
   当前剩余阻塞是 `No free devices found`，不能视为 `rename01` 已通过。详见
   [`results/k01-ramfs-sparse-files-20260801.md`](./results/k01-ramfs-sparse-files-20260801.md)。
+- 2026-08-01 修复 fs-bridge 将 `O_RDONLY|O_CREAT` 错误拒绝为 `EINVAL` 的问题，
+  创建动作与返回 fd 的写权限现已分离。LTP `open11`、`ftruncate03` 及相关同步、
+  truncate、并发 rename 定向回归共 44 个断言通过。详见
+  [`results/k01-open-readonly-create-20260801.md`](./results/k01-open-readonly-create-20260801.md)。
 
 ## 涉及文件
 
