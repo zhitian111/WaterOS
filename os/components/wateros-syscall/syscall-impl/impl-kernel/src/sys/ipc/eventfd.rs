@@ -7,7 +7,10 @@ use alloc::{boxed::Box, sync::Arc};
 use api_v0::{ErrNo, SyscallArgs, UserRet};
 use spin::Mutex;
 use vfs::{
-    api::{VfsError, VfsIoHandle, VfsMetadata, VfsNodeType, VfsResult},
+    api::{
+        VfsCopyProgress, VfsError, VfsIoHandle, VfsMetadata, VfsNodeType, VfsPreparedRead,
+        VfsReadFinish, VfsReadLease, VfsResult,
+    },
     fd,
 };
 
@@ -21,9 +24,17 @@ const POLLIN : i16 = 0x001;
 const POLLOUT : i16 = 0x004;
 const MAX_COUNTER : u64 = u64::MAX - 1;
 
+#[derive(Clone, Copy)]
+struct EventReadReservation {
+    id : u64,
+    value : u64,
+}
+
 struct EventFdInner {
     counter : u64,
     nonblocking : bool,
+    next_read_id : u64,
+    read_reservation : Option<EventReadReservation>,
 }
 
 struct EventFdState {
@@ -34,14 +45,83 @@ struct EventFdState {
 impl EventFdState {
     fn new(counter : u64, nonblocking : bool) -> Self {
         Self { inner : Mutex::new(EventFdInner { counter,
-                                                 nonblocking }),
+                                                 nonblocking,
+                                                 next_read_id : 1,
+                                                 read_reservation : None }),
                wait : task::wait_queue::WaitQueue::new_named("eventfd") }
+    }
+
+    fn reserve_read(&self, semaphore : bool) -> VfsResult<EventReadReservation> {
+        loop {
+            {
+                let mut inner = self.inner.lock();
+                if inner.read_reservation
+                        .is_none() &&
+                   inner.counter != 0
+                {
+                    let reservation =
+                        EventReadReservation { id : inner.next_read_id,
+                                               value : if semaphore { 1 } else { inner.counter } };
+                    inner.next_read_id = inner.next_read_id
+                                              .wrapping_add(1);
+                    inner.read_reservation = Some(reservation);
+                    return Ok(reservation);
+                }
+                if inner.nonblocking {
+                    return Err(VfsError::WouldBlock);
+                }
+            }
+            if self.wait
+                   .wait_current_while(|| {
+                       let inner = self.inner.lock();
+                       inner.read_reservation
+                            .is_some() ||
+                       inner.counter == 0
+                   }) ==
+               task::TaskWaitResult::Interrupted
+            {
+                return Err(VfsError::Interrupted);
+            }
+        }
+    }
+
+    fn finish_read(&self, reservation : EventReadReservation, commit : bool) -> VfsResult<()> {
+        let mut inner = self.inner.lock();
+        let active = inner.read_reservation
+                          .ok_or(VfsError::Io)?;
+        if active.id != reservation.id || active.value != reservation.value {
+            return Err(VfsError::Io);
+        }
+        if commit {
+            inner.counter = inner.counter
+                                 .checked_sub(reservation.value)
+                                 .ok_or(VfsError::Io)?;
+        }
+        inner.read_reservation = None;
+        drop(inner);
+        self.wait.wake_all();
+        Ok(())
+    }
+
+    fn cancel_read(&self, reservation : EventReadReservation) {
+        let mut inner = self.inner.lock();
+        if inner.read_reservation
+                .is_some_and(|active| active.id == reservation.id)
+        {
+            inner.read_reservation = None;
+            drop(inner);
+            self.wait.wake_all();
+        }
     }
 
     fn ready(&self, events : i16) -> i16 {
         let inner = self.inner.lock();
         let mut ready = 0;
-        if events & POLLIN != 0 && inner.counter != 0 {
+        if events & POLLIN != 0 &&
+           inner.counter != 0 &&
+           inner.read_reservation
+                .is_none()
+        {
             ready |= POLLIN;
         }
         if events & POLLOUT != 0 && inner.counter < MAX_COUNTER {
@@ -72,42 +152,23 @@ impl EventFdHandle {
 }
 
 impl VfsIoHandle for EventFdHandle {
-    fn read(&mut self, buf : &mut [u8]) -> VfsResult<usize> {
-        if buf.len() < core::mem::size_of::<u64>() {
+    fn prepare_read(&mut self, max_len : usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
+        if max_len < core::mem::size_of::<u64>() {
             return Err(VfsError::InvalidPath);
         }
-        loop {
-            {
-                let mut inner = self.state
-                                    .inner
-                                    .lock();
-                if inner.counter != 0 {
-                    let value = if self.semaphore { 1 } else { inner.counter };
-                    inner.counter -= value;
-                    buf[..8].copy_from_slice(&value.to_ne_bytes());
-                    drop(inner);
-                    self.state
-                        .wait
-                        .wake_all();
-                    return Ok(8);
-                }
-                if inner.nonblocking {
-                    return Err(VfsError::WouldBlock);
-                }
-            }
-            if self.state
-                   .wait
-                   .wait_current_while(|| {
-                       self.state
-                           .inner
-                           .lock()
-                           .counter ==
-                       0
-                   }) ==
-               task::TaskWaitResult::Interrupted
-            {
-                return Err(VfsError::Interrupted);
-            }
+        Ok(Box::new(EventFdPreparedRead { state : self.state.clone(),
+                                          semaphore : self.semaphore }))
+    }
+
+    fn read(&mut self, buf : &mut [u8]) -> VfsResult<usize> {
+        let prepared = self.prepare_read(buf.len())?;
+        let lease = prepared.acquire()?;
+        buf[..8].copy_from_slice(lease.bytes());
+        match lease.finish(VfsCopyProgress { copied : 8,
+                                             complete : true })?
+        {
+            VfsReadFinish::Bytes(8) => Ok(8),
+            _ => Err(VfsError::Io),
         }
     }
 
@@ -225,6 +286,60 @@ impl VfsIoHandle for EventFdHandle {
             .lock()
             .nonblocking = flags & EFD_NONBLOCK as u32 != 0;
         Ok(())
+    }
+}
+
+struct EventFdPreparedRead {
+    state : Arc<EventFdState>,
+    semaphore : bool,
+}
+
+impl VfsPreparedRead for EventFdPreparedRead {
+    fn acquire(self: Box<Self>) -> VfsResult<Box<dyn VfsReadLease>> {
+        let reservation = self.state
+                              .reserve_read(self.semaphore)?;
+        Ok(Box::new(EventFdReadLease { state : self.state,
+                                       reservation : Some(reservation),
+                                       bytes : reservation.value
+                                                          .to_ne_bytes() }))
+    }
+}
+
+struct EventFdReadLease {
+    state : Arc<EventFdState>,
+    reservation : Option<EventReadReservation>,
+    bytes : [u8; 8],
+}
+
+impl VfsReadLease for EventFdReadLease {
+    fn bytes(&self) -> &[u8] { &self.bytes }
+
+    fn finish(mut self: Box<Self>, progress : VfsCopyProgress) -> VfsResult<VfsReadFinish> {
+        if progress.copied > self.bytes.len() {
+            return Err(VfsError::Io);
+        }
+        let reservation = self.reservation
+                              .take()
+                              .ok_or(VfsError::Io)?;
+        let complete = progress.complete && progress.copied == self.bytes.len();
+        self.state
+            .finish_read(reservation, complete)?;
+        if complete {
+            Ok(VfsReadFinish::Bytes(self.bytes.len()))
+        } else {
+            Ok(VfsReadFinish::Fault)
+        }
+    }
+}
+
+impl Drop for EventFdReadLease {
+    fn drop(&mut self) {
+        if let Some(reservation) = self.reservation
+                                       .take()
+        {
+            self.state
+                .cancel_read(reservation);
+        }
     }
 }
 

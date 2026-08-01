@@ -177,6 +177,7 @@ fn ensure_kernel_config(sess : &mut (impl vfs::api::RootRwSession + ?Sized)) {
 # WaterOS kernel config exposed for LTP kconfig probes
 CONFIG_BSD_PROCESS_ACCT=y
 # CONFIG_BSD_PROCESS_ACCT_V3 is not set
+CONFIG_EVENTFD=y
 # CONFIG_KEYS is not set
 # CONFIG_AF_ALG is not set
 # CONFIG_AIO is not set

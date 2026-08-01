@@ -10,7 +10,7 @@
 //! 不会被 fast-exit。名单维护见 `docs/tasks/ltp_fast_exit_skip_list.md`。
 
 use task::{TaskState, TaskWaitTarget};
-/// 源：Read 判读 + rv_local_run_all 手工增补；共 2331 条。
+/// 源：Read 判读 + rv_local_run_all 手工增补；共 2355 条。
 const LTP_SUBMIT_SKIP_BASENAMES: &[&str] = &[
     "acct02_helper",
     "acl1",
@@ -249,15 +249,7 @@ const LTP_SUBMIT_SKIP_BASENAMES: &[&str] = &[
     "epoll_ctl05",
     "epoll_pwait01",
     "event_generator",
-    "eventfd01",
-    "eventfd02",
-    "eventfd03",
-    "eventfd04",
-    "eventfd05",
     "eventfd06",
-    "eventfd2_01",
-    "eventfd2_02",
-    "eventfd2_03",
     "evm_overlay.sh",
     "exec_with_inh",
     "exec_without_inh",
