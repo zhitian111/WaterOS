@@ -58,6 +58,7 @@ struct UnixSockInner {
     listening: bool,
     endpoint: Option<UnixStreamPairEnd>,
     dgram_peer: Option<Vec<u8>>,
+    dgram_peer_inbox: Option<Arc<DgramInbox>>,
     dgram_inbox: Option<Arc<DgramInbox>>,
 }
 
@@ -343,6 +344,7 @@ pub(crate) fn alloc_unix_socket(
             listening: false,
             endpoint: None,
             dgram_peer: None,
+            dgram_peer_inbox: None,
             dgram_inbox,
         })),
     };
@@ -370,6 +372,7 @@ pub(crate) fn alloc_unix_stream_pair(
                 listening: false,
                 endpoint: Some(endpoint),
                 dgram_peer: None,
+                dgram_peer_inbox: None,
                 dgram_inbox: None,
             })),
         };
@@ -379,6 +382,38 @@ pub(crate) fn alloc_unix_stream_pair(
         (handle, sock)
     };
     (make_socket(endpoint0), make_socket(endpoint1))
+}
+
+/// Create a connected AF_UNIX datagram pair with one inbox per endpoint.
+#[allow(private_interfaces)]
+pub(crate) fn alloc_unix_dgram_pair(
+    nonblocking: bool,
+) -> (
+    (Box<dyn VfsIoHandle>, UnixSockRef),
+    (Box<dyn VfsIoHandle>, UnixSockRef),
+) {
+    let inbox0 = Arc::new(DgramInbox::new());
+    let inbox1 = Arc::new(DgramInbox::new());
+    let make_socket = |inbox: Arc<DgramInbox>, peer: Arc<DgramInbox>| {
+        let sock = UnixSockRef {
+            inner: Arc::new(Mutex::new(UnixSockInner {
+                sock_type: UnixSockType::Dgram,
+                nonblocking,
+                bound_key: None,
+                peer_key: Some(Vec::new()),
+                listening: false,
+                endpoint: None,
+                dgram_peer: None,
+                dgram_peer_inbox: Some(peer),
+                dgram_inbox: Some(inbox),
+            })),
+        };
+        let inode = NEXT_INODE.fetch_add(1, Ordering::Relaxed);
+        let handle: Box<dyn VfsIoHandle> =
+            Box::new(UnixSocketHandle { sock: sock.clone(), inode });
+        (handle, sock)
+    };
+    (make_socket(inbox0.clone(), inbox1.clone()), make_socket(inbox1, inbox0))
 }
 
 #[allow(private_interfaces)]
@@ -474,6 +509,7 @@ pub(crate) fn connect(fd: usize, addr_ptr: usize, addrlen: usize) -> Result<(), 
         UnixSockType::Stream => connect_stream(&mut inner, &addr.key),
         UnixSockType::Dgram => {
             inner.dgram_peer = Some(addr.key);
+            inner.dgram_peer_inbox = None;
             Ok(())
         }
     }
@@ -556,6 +592,7 @@ pub(crate) fn accept(fd: usize) -> Result<(Box<dyn VfsIoHandle>, UnixSockRef), E
                     listening: false,
                     endpoint: Some(end),
                     dgram_peer: None,
+                    dgram_peer_inbox: None,
                     dgram_inbox: None,
                 })),
             };
@@ -587,6 +624,14 @@ pub(crate) fn sendto_unix(
         return endpoint.write(buf).map_err(vfs_error_to_errno);
     }
     let sender_key = inner.bound_key.clone();
+    if addr_ptr == 0 && addrlen == 0 {
+        if let Some(peer) = inner.dgram_peer_inbox.clone() {
+            drop(inner);
+            peer.push(DgramPacket { data: buf.to_vec(),
+                                    sender: sender_key })?;
+            return Ok(buf.len());
+        }
+    }
     let key = if addr_ptr != 0 && addrlen >= 2 {
         parse_sockaddr_un(addr_ptr, addrlen)?.key
     } else {
@@ -803,6 +848,14 @@ impl VfsIoHandle for UnixSocketHandle {
             return endpoint.write(buf);
         }
         if inner.sock_type == UnixSockType::Dgram {
+            if let Some(peer) = inner.dgram_peer_inbox.clone() {
+                let sender = inner.bound_key.clone();
+                drop(inner);
+                return peer.push(DgramPacket { data: buf.to_vec(),
+                                               sender })
+                           .map(|()| buf.len())
+                           .map_err(map_errno);
+            }
             let peer = inner.dgram_peer.clone().ok_or(VfsError::Unsupported)?;
             let sender = inner.bound_key.clone();
             drop(inner);
