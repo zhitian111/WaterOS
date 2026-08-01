@@ -65,7 +65,8 @@ assert(errno == EBADF);
 
 ## 任务内容
 
-1. 新增可在 Linux host 和 WaterOS guest 上运行的读取调用族回归程序。
+1. 使用同一组 LTP 源码定义 Linux/WaterOS 读取调用族语义，并新增可选择、可限时的 guest
+   runner；不再重复实现一份平行 C 测试。
 2. 覆盖 fd、访问模式、用户内存、OFD、普通文件、pipe、socket、eventfd、设备、
    `readv` 和 `pread*` 的语义矩阵。
 3. 在单核及至少 8 核 RISC-V 配置下运行竞态测试，并执行现有 final workload。
@@ -73,15 +74,16 @@ assert(errno == EBADF);
 
 ## 测试程序交付
 
-增加一份可同时在 Linux 和 WaterOS guest 运行的 C 回归程序，优先放在：
+原计划建议增加一份可同时在 Linux 和 WaterOS guest 运行的 C 回归程序。根据实际执行
+约束，当前优先复用初赛镜像已有的 LTP 静态二进制及其开源 C 源码，并增加：
 
 ```text
-test_case/basic/user/src/oscomp/read_family_semantics.c
+os/scripts/guest_read_family_regression.sh
 ```
 
-若 basic 镜像构建链不适合 glibc socket/eventfd 测试，则增加
-`os/scripts/guest_read_family_regression.sh` 和对应静态测试二进制，参照现有
-`guest_buildstorm_parallel_probe.sh` 的注入方式。测试必须输出稳定的逐项标记：
+该脚本不得提交测试二进制；通过 `LTP_BIN_DIR` 选择现有 LTP 安装，通过
+`READ_FAMILY_CASES` 选择短回归或全矩阵，通过 `READ_FAMILY_CASE_TIMEOUT` 设置逐项上限。
+测试必须输出稳定的逐项标记：
 
 ```text
 READ_FAMILY case=<name> ok=true
