@@ -194,33 +194,22 @@ impl GlobalCacheState {
     }
 
 // 本方法代码由AI完成
-    fn pop_free_or_lru_index(&mut self) -> usize {
+    fn pop_free_or_lru_index(&mut self) -> Option<usize> {
         if let Some(idx) = self.free.pop() {
-            return idx;
+            return Some(idx);
         }
         // Keep clean and dirty slots in separate intrusive LRUs. A miss can
         // discard the oldest clean page in O(1) without making an unrelated
         // temporary-file writeback part of an executable-page read.
         if let Some(idx) = self.pop_lru_front(LruClass::Clean) {
-            return idx;
+            return Some(idx);
         }
         if let Some(idx) = self.pop_lru_front(LruClass::Dirty) {
-            return idx;
+            return Some(idx);
         }
-        // 兜底：从 index 中驱逐第一个条目，防止 free 和 lru 双空时 panic
-        let victim_key = self.index
-                             .keys()
-                             .next()
-                             .cloned()
-                             .expect("page cache: no entries to evict");
-        let idx = self.index
-                      .remove(&victim_key)
-                      .unwrap();
-        self.remove_from_lru(idx);
-        self.frames[idx].key = None;
-        self.frames[idx].dirty = false;
-        self.frames[idx].version = 0;
-        idx
+        // 所有槽位都可能正在锁外写回。调用方等待其重新进入 LRU，不能绕过
+        // dirty/version 协议强制清理 index 中的任意槽位。
+        None
     }
 
 // 本方法代码由AI完成
@@ -488,6 +477,7 @@ impl GlobalFilePageCache {
     {
         let off = page_idx * FILE_PAGE_SIZE as u64;
         if off >= logical_size {
+            self.note_page_written_back(key, page_idx, version);
             return Ok(());
         }
         let len = FILE_PAGE_SIZE.min(usize::try_from(logical_size - off).unwrap_or(0));
@@ -667,42 +657,76 @@ impl GlobalFilePageCache {
             return Ok(());
         }
 
-        let idx = cache.pop_free_or_lru_index();
-        let pending_flush = cache.detach_slot_for_reuse(idx);
-        if let Some(((ref k, evicted_page), ref saved_data, version)) = pending_flush {
-            drop(cache);
-            let evicted_logical =
-                self.logical_size_for_key(k, evicted_page.saturating_mul(FILE_PAGE_SIZE as u64) +
-                                              FILE_PAGE_SIZE as u64);
-            if let Err(err) =
-                self.writeback_evicted_page(io,
-                                            k,
-                                            evicted_page,
-                                            saved_data,
-                                            version,
-                                            evicted_logical,
-                                            map_err)
-            {
-                let mut cache = self.state.lock();
-                cache.return_detached_slot(idx);
-                return Err(err);
+        loop {
+            let Some(idx) = cache.pop_free_or_lru_index() else {
+                drop(cache);
+                core::hint::spin_loop();
+                cache = self.state.lock();
+                if let Some(&existing) = cache.index.get(&(key.clone(), page_idx)) {
+                    cache.touch_lru(existing);
+                    return Ok(());
+                }
+                continue;
+            };
+            let dirty_victim = if cache.frames[idx].dirty {
+                cache.frames[idx].key.clone().map(|(victim_key, victim_page)| {
+                    (victim_key,
+                     victim_page,
+                     cache.frames[idx].data.clone(),
+                     cache.frames[idx].version)
+                })
+            } else {
+                None
+            };
+            if let Some((victim_key, victim_page, saved_data, version)) = dirty_victim {
+                drop(cache);
+                let victim_logical = self.logical_size_for_key(
+                    &victim_key,
+                    victim_page.saturating_mul(FILE_PAGE_SIZE as u64) + FILE_PAGE_SIZE as u64,
+                );
+                let writeback = self.writeback_evicted_page(io,
+                                                            &victim_key,
+                                                            victim_page,
+                                                            &saved_data,
+                                                            version,
+                                                            victim_logical,
+                                                            map_err);
+                cache = self.state.lock();
+                let still_same = cache.frames[idx].dirty &&
+                                 cache.frames[idx].version == version &&
+                                 cache.frames[idx].key.as_ref() ==
+                                 Some(&(victim_key.clone(), victim_page));
+                if let Err(err) = writeback {
+                    if still_same {
+                        cache.touch_lru(idx);
+                    }
+                    return Err(err);
+                }
+                if !still_same {
+                    if let Some(&existing) = cache.index.get(&(key.clone(), page_idx)) {
+                        cache.touch_lru(existing);
+                        return Ok(());
+                    }
+                    continue;
+                }
+                cache.mark_clean(idx);
             }
-            cache = self.state.lock();
+            let _ = cache.detach_slot_for_reuse(idx);
             if let Some(&existing) = cache.index.get(&(key.clone(), page_idx)) {
                 cache.return_detached_slot(idx);
                 cache.touch_lru(existing);
                 return Ok(());
             }
+            cache.frames[idx].data
+                             .copy_from_slice(&page_buf);
+            cache.frames[idx].dirty = false;
+            cache.frames[idx].version = 0;
+            cache.frames[idx].key = Some((key.clone(), page_idx));
+            cache.index
+                 .insert((key, page_idx), idx);
+            cache.touch_lru(idx);
+            return Ok(());
         }
-        cache.frames[idx].data
-                         .copy_from_slice(&page_buf);
-        cache.frames[idx].dirty = false;
-        cache.frames[idx].version = 0;
-        cache.frames[idx].key = Some((key.clone(), page_idx));
-        cache.index
-             .insert((key, page_idx), idx);
-        cache.touch_lru(idx);
-        Ok(())
     }
 
 // 本方法代码由AI完成
@@ -739,42 +763,76 @@ impl GlobalFilePageCache {
             return Ok(());
         }
 
-        let idx = cache.pop_free_or_lru_index();
-        let pending_flush = cache.detach_slot_for_reuse(idx);
-        if let Some(((ref k, evicted_page), ref saved_data, version)) = pending_flush {
-            drop(cache);
-            let evicted_logical =
-                self.logical_size_for_key(k, evicted_page.saturating_mul(FILE_PAGE_SIZE as u64) +
-                                              FILE_PAGE_SIZE as u64);
-            if let Err(err) =
-                self.writeback_evicted_page(io,
-                                            k,
-                                            evicted_page,
-                                            saved_data,
-                                            version,
-                                            evicted_logical,
-                                            map_err)
-            {
-                let mut cache = self.state.lock();
-                cache.return_detached_slot(idx);
-                return Err(err);
+        loop {
+            let Some(idx) = cache.pop_free_or_lru_index() else {
+                drop(cache);
+                core::hint::spin_loop();
+                cache = self.state.lock();
+                if let Some(&existing) = cache.index.get(&(key.clone(), page_idx)) {
+                    cache.touch_lru(existing);
+                    return Ok(());
+                }
+                continue;
+            };
+            let dirty_victim = if cache.frames[idx].dirty {
+                cache.frames[idx].key.clone().map(|(victim_key, victim_page)| {
+                    (victim_key,
+                     victim_page,
+                     cache.frames[idx].data.clone(),
+                     cache.frames[idx].version)
+                })
+            } else {
+                None
+            };
+            if let Some((victim_key, victim_page, saved_data, version)) = dirty_victim {
+                drop(cache);
+                let victim_logical = self.logical_size_for_key(
+                    &victim_key,
+                    victim_page.saturating_mul(FILE_PAGE_SIZE as u64) + FILE_PAGE_SIZE as u64,
+                );
+                let writeback = self.writeback_evicted_page(io,
+                                                            &victim_key,
+                                                            victim_page,
+                                                            &saved_data,
+                                                            version,
+                                                            victim_logical,
+                                                            map_err);
+                cache = self.state.lock();
+                let still_same = cache.frames[idx].dirty &&
+                                 cache.frames[idx].version == version &&
+                                 cache.frames[idx].key.as_ref() ==
+                                 Some(&(victim_key.clone(), victim_page));
+                if let Err(err) = writeback {
+                    if still_same {
+                        cache.touch_lru(idx);
+                    }
+                    return Err(err);
+                }
+                if !still_same {
+                    if let Some(&existing) = cache.index.get(&(key.clone(), page_idx)) {
+                        cache.touch_lru(existing);
+                        return Ok(());
+                    }
+                    continue;
+                }
+                cache.mark_clean(idx);
             }
-            cache = self.state.lock();
+            let _ = cache.detach_slot_for_reuse(idx);
             if let Some(&existing) = cache.index.get(&(key.clone(), page_idx)) {
                 cache.return_detached_slot(idx);
                 cache.touch_lru(existing);
                 return Ok(());
             }
+            cache.frames[idx].data
+                             .fill(0);
+            cache.frames[idx].dirty = false;
+            cache.frames[idx].version = 0;
+            cache.frames[idx].key = Some((key.clone(), page_idx));
+            cache.index
+                 .insert((key, page_idx), idx);
+            cache.touch_lru(idx);
+            return Ok(());
         }
-        cache.frames[idx].data
-                         .fill(0);
-        cache.frames[idx].dirty = false;
-        cache.frames[idx].version = 0;
-        cache.frames[idx].key = Some((key.clone(), page_idx));
-        cache.index
-             .insert((key, page_idx), idx);
-        cache.touch_lru(idx);
-        Ok(())
     }
 
     /// Direct 模式：从 `offset` 读入 `buf`。
@@ -1179,6 +1237,11 @@ mod tests {
         data : Vec<u8>,
     }
 
+    struct FailOnceIo {
+        fail_write : bool,
+        data : Vec<u8>,
+    }
+
     impl PageCacheIo for RacingIo {
         type Error = ();
 
@@ -1220,6 +1283,34 @@ mod tests {
             Self { reads : Cell::new(0),
                    writes : 0,
                    data : Vec::new() }
+        }
+    }
+
+    impl PageCacheIo for FailOnceIo {
+        type Error = ();
+
+        fn read_range(&self, _path : &str, offset : u64, buf : &mut [u8]) -> Result<usize, ()> {
+            let start = usize::try_from(offset).map_err(|_| ())?;
+            if start >= self.data.len() {
+                return Ok(0);
+            }
+            let n = buf.len().min(self.data.len() - start);
+            buf[..n].copy_from_slice(&self.data[start..start + n]);
+            Ok(n)
+        }
+
+        fn write_range(&mut self, _path : &str, offset : u64, data : &[u8]) -> Result<usize, ()> {
+            if self.fail_write {
+                self.fail_write = false;
+                return Err(());
+            }
+            let start = usize::try_from(offset).map_err(|_| ())?;
+            let end = start.checked_add(data.len()).ok_or(())?;
+            if self.data.len() < end {
+                self.data.resize(end, 0);
+            }
+            self.data[start..end].copy_from_slice(data);
+            Ok(data.len())
         }
     }
 
@@ -1341,6 +1432,99 @@ mod tests {
              .unwrap();
         assert_eq!(cache.dirty_page_count("/tmp/racing"), 0);
         assert_eq!(io.data, vec![0x22u8; FILE_PAGE_SIZE]);
+        cache.state.lock().assert_lru_invariants();
+    }
+
+    #[test]
+    fn failed_dirty_eviction_preserves_data_for_retry() {
+        let cache = GlobalFilePageCache::new(7);
+        *cache.state.lock() = GlobalCacheState::with_capacity(1);
+        let payload = vec![0x5Cu8; FILE_PAGE_SIZE];
+        let mut io = FailOnceIo { fail_write : true,
+                                  data : Vec::new() };
+
+        cache.write(&mut io, "/tmp/dirty", 0, 0, &payload, |e| e)
+             .unwrap();
+        let mut other = vec![0u8; FILE_PAGE_SIZE];
+        assert!(cache.read(&mut io,
+                           "/tmp/other",
+                           FILE_PAGE_SIZE as u64,
+                           0,
+                           &mut other,
+                           |e| e)
+                     .is_err());
+
+        assert_eq!(cache.dirty_page_count("/tmp/dirty"), 1);
+        {
+            let state = cache.state.lock();
+            let idx = *state.index.get(&(cache.file_key("/tmp/dirty"), 0)).unwrap();
+            assert!(state.frames[idx].dirty);
+            assert_eq!(state.frames[idx].data, payload);
+            state.assert_lru_invariants();
+        }
+
+        cache.read(&mut io,
+                   "/tmp/other",
+                   FILE_PAGE_SIZE as u64,
+                   0,
+                   &mut other,
+                   |e| e)
+             .unwrap();
+        assert_eq!(io.data, payload);
+        assert_eq!(cache.dirty_page_count("/tmp/dirty"), 0);
+        cache.state.lock().assert_lru_invariants();
+    }
+
+    #[test]
+    fn failed_dirty_eviction_during_new_page_write_preserves_victim() {
+        let cache = GlobalFilePageCache::new(7);
+        *cache.state.lock() = GlobalCacheState::with_capacity(1);
+        let payload = vec![0x6Du8; FILE_PAGE_SIZE];
+        let replacement = vec![0x7Eu8; FILE_PAGE_SIZE];
+        let mut io = FailOnceIo { fail_write : true,
+                                  data : Vec::new() };
+
+        cache.write(&mut io, "/tmp/dirty", 0, 0, &payload, |e| e)
+             .unwrap();
+        assert!(cache.write(&mut io,
+                            "/tmp/replacement",
+                            0,
+                            0,
+                            &replacement,
+                            |e| e)
+                     .is_err());
+        assert_eq!(cache.dirty_page_count("/tmp/dirty"), 1);
+
+        cache.flush(&mut io, "/tmp/dirty", |e| e).unwrap();
+        assert_eq!(io.data, payload);
+        assert_eq!(cache.dirty_page_count("/tmp/dirty"), 0);
+        cache.state.lock().assert_lru_invariants();
+    }
+
+    #[test]
+    fn dirty_eviction_retries_when_victim_changes_during_writeback() {
+        let cache = Arc::new(GlobalFilePageCache::new(7));
+        *cache.state.lock() = GlobalCacheState::with_capacity(1);
+        let initial = vec![0x11u8; FILE_PAGE_SIZE];
+        let latest = vec![0x22u8; FILE_PAGE_SIZE];
+        let mut io = RacingIo { cache : cache.clone(),
+                                raced : false,
+                                data : Vec::new() };
+
+        cache.write(&mut io, "/tmp/racing", 0, 0, &initial, |e| e)
+             .unwrap();
+        let mut other = vec![0u8; FILE_PAGE_SIZE];
+        cache.read(&mut io,
+                   "/tmp/other",
+                   FILE_PAGE_SIZE as u64,
+                   0,
+                   &mut other,
+                   |e| e)
+             .unwrap();
+
+        assert!(io.raced);
+        assert_eq!(io.data, latest);
+        assert_eq!(cache.dirty_page_count("/tmp/racing"), 0);
         cache.state.lock().assert_lru_invariants();
     }
 
@@ -1477,7 +1661,7 @@ mod tests {
         activate_test_frame(&mut state, 1, 1, false);
         state.assert_lru_invariants();
 
-        assert_eq!(state.pop_free_or_lru_index(), 1);
+        assert_eq!(state.pop_free_or_lru_index(), Some(1));
         let evicted = state.detach_slot_for_reuse(1);
         assert!(evicted.is_none());
         state.return_detached_slot(1);

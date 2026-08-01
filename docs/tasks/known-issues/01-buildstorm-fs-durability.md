@@ -48,6 +48,10 @@ handle.flush()
   ABI `EINVAL` 的问题。BuildStorm 已越过原先 `libc` 写入 `lib.rmeta` 的失败点并开始
   编译其依赖项；完整 BuildStorm 和崩溃一致性仍未闭环。详见
   [`results/k01-large-write-20260731.md`](./results/k01-large-write-20260731.md)。
+- 2026-08-01 修复页缓存脏 victim 在底层写回失败时被提前分离并丢弃的问题。失败后
+  key/data/dirty/version 保持可重试，并发更新通过 version 检查避免被旧 snapshot
+  错误清理。详见
+  [`results/k01-page-cache-eviction-failure-20260801.md`](./results/k01-page-cache-eviction-failure-20260801.md)。
 
 ## 涉及文件
 
