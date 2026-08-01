@@ -28,6 +28,9 @@ pub type TaskArgvLookup = fn(TaskId) -> Option<Vec<String>>;
 /// 按 leader task id 查询 exe 路径。
 pub type TaskExeLookup = fn(TaskId) -> Option<String>;
 
+/// 按 task id 枚举当前打开的文件描述符。
+pub type TaskFdLookup = fn(TaskId) -> Vec<usize>;
+
 /// 枚举当前挂载表（供 `/proc/mounts`）。
 pub type MountListLookup = fn() -> Vec<ProcMountLine>;
 

@@ -251,6 +251,7 @@ pub fn ensure_proc_mount_point() -> VfsResult<()> {
 pub fn mount_procfs_at(mount_point: &str) -> VfsResult<()> {
     fs::procfs::active_impl::register_task_argv_lookup(|tid| cwd::lookup_argv_for_task(tid));
     fs::procfs::active_impl::register_task_exe_lookup(|tid| cwd::lookup_exe_for_task(tid));
+    fs::procfs::active_impl::register_task_fd_lookup(|tid| fd::open_fds_for_task(tid));
     fs::procfs::active_impl::register_mount_list_lookup(|| {
         impl_fs_bridge::list_proc_mount_lines()
     });
@@ -262,6 +263,7 @@ pub fn mount_procfs_at(mount_point: &str) -> VfsResult<()> {
 pub fn mount_bootstrap_procfs_at(mount_point: &str) -> VfsResult<()> {
     fs::procfs::active_impl::register_task_argv_lookup(|tid| cwd::lookup_argv_for_task(tid));
     fs::procfs::active_impl::register_task_exe_lookup(|tid| cwd::lookup_exe_for_task(tid));
+    fs::procfs::active_impl::register_task_fd_lookup(|tid| fd::open_fds_for_task(tid));
     fs::procfs::active_impl::register_mount_list_lookup(|| {
         impl_fs_bridge::list_proc_mount_lines()
     });

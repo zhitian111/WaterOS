@@ -450,6 +450,20 @@ impl VfsFdSession for PerTaskFdRegistry {
 }
 
 impl PerTaskFdRegistry {
+    /// 返回指定任务 fd 表中已占用的槽位，不创建缺失的 fd 表。
+    pub fn open_fds_for_task(&self, task_id : task::TaskId) -> Vec<usize> {
+        let owner = self.effective_owner(task_id);
+        self.tables
+            .get(&owner)
+            .map(|table| {
+                table.iter()
+                     .enumerate()
+                     .filter_map(|(fd, slot)| slot.as_ref().map(|_| fd))
+                     .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// 为指定任务分配 fd（`pipe2` 等可在已知 `task_id` 下使用）。
     // 本方法代码由AI完成
     pub fn alloc_fd_for_task(&mut self,

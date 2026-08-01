@@ -30,6 +30,9 @@ pub fn register_task_argv_lookup(_f : api_v0::TaskArgvLookup) {}
 /// 占位：dummy 不消费 exe 回调。
 pub fn register_task_exe_lookup(_f : api_v0::TaskExeLookup) {}
 
+/// 占位：dummy 不消费 fd 枚举回调。
+pub fn register_task_fd_lookup(_f : api_v0::TaskFdLookup) {}
+
 /// 占位：dummy 不消费挂载表回调。
 pub fn register_mount_list_lookup(_f : api_v0::MountListLookup) {}
 

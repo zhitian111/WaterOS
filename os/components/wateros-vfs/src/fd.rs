@@ -67,6 +67,14 @@ pub fn registry_stats() -> FdRegistryStats {
     })
 }
 
+/// 返回指定任务当前打开的 fd 号快照。
+pub fn open_fds_for_task(task_id : task::TaskId) -> Vec<usize> {
+    if FD_REGISTRY_READY.load(Ordering::Acquire) == 0 {
+        return Vec::new();
+    }
+    with_registry(|registry| registry.open_fds_for_task(task_id))
+}
+
 fn with_fd_registry<R>(f : impl FnOnce(&mut PerTaskFdRegistry) -> VfsResult<R>) -> VfsResult<R> {
     with_registry(f)
 }
