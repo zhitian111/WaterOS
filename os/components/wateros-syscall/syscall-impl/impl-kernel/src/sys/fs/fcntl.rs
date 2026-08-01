@@ -149,13 +149,17 @@ fn resolve_lock_start(handle : &mut (dyn VfsIoHandle + '_),
 }
 
 fn normalize_pipe_size(size : usize) -> Result<usize, ErrNo> {
-    if size < PAGE_SIZE {
-        return Err(ErrNo::EINVAL);
-    }
     if size > MAX_PIPE_SIZE {
         return Err(ErrNo::EPERM);
     }
-    Ok(size)
+    let pages = size.max(1)
+                    .div_ceil(PAGE_SIZE);
+    let rounded_pages = pages.checked_next_power_of_two().ok_or(ErrNo::EPERM)?;
+    let capacity = rounded_pages.checked_mul(PAGE_SIZE).ok_or(ErrNo::EPERM)?;
+    if capacity > MAX_PIPE_SIZE {
+        return Err(ErrNo::EPERM);
+    }
+    Ok(capacity)
 }
 
 fn fcntl_getpipe_sz(fd : usize) -> Result<usize, ErrNo> {
@@ -213,4 +217,23 @@ fn fcntl_setlk(fd : usize, flock_ptr : usize, blocking : bool) -> Result<usize, 
 
     fd::posix_setlk(&key, pid, &flock, blocking).map_err(vfs_error_to_errno)?;
     Ok(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pipe_size_rounds_to_page_power_of_two() {
+        assert_eq!(normalize_pipe_size(0), Ok(PAGE_SIZE));
+        assert_eq!(normalize_pipe_size(1), Ok(PAGE_SIZE));
+        assert_eq!(normalize_pipe_size(PAGE_SIZE), Ok(PAGE_SIZE));
+        assert_eq!(normalize_pipe_size(PAGE_SIZE + 1), Ok(PAGE_SIZE * 2));
+        assert_eq!(normalize_pipe_size(PAGE_SIZE * 3), Ok(PAGE_SIZE * 4));
+    }
+
+    #[test]
+    fn pipe_size_rejects_over_limit() {
+        assert_eq!(normalize_pipe_size(MAX_PIPE_SIZE + 1), Err(ErrNo::EPERM));
+    }
 }
