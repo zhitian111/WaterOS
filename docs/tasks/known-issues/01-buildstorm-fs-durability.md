@@ -59,6 +59,10 @@ handle.flush()
 - 2026-08-01 补齐 another-ext4 不直接支持的 rename overwrite，并让源对象旧 fd
   跟随到新路径、被覆盖目标旧 fd 保持独立；页缓存 path key 与 open-ref 同步迁移。
   详见 [`results/k01-rename-replacement-20260801.md`](./results/k01-rename-replacement-20260801.md)。
+- 2026-08-01 将 ramfs 普通文件改为按 4 KiB 页分配的稀疏存储，修复 LTP 创建
+  300 MiB 测试设备文件时的内核堆 OOM。定向测试已推进到申请 loop/test device，
+  当前剩余阻塞是 `No free devices found`，不能视为 `rename01` 已通过。详见
+  [`results/k01-ramfs-sparse-files-20260801.md`](./results/k01-ramfs-sparse-files-20260801.md)。
 
 ## 涉及文件
 

@@ -21,6 +21,153 @@ use api_v0::{
 use driver_block_api_v0::SharedBlockDevice;
 use spin::Mutex;
 
+const RAMFS_PAGE_SIZE: usize = 4096;
+
+#[derive(Clone, Default)]
+struct SparseFile {
+    len: u64,
+    pages: BTreeMap<u64, Vec<u8>>,
+}
+
+impl SparseFile {
+    fn allocated_bytes_for_data(data: &[u8]) -> FsResult<usize> {
+        let pages = data.chunks(RAMFS_PAGE_SIZE)
+                        .filter(|page| page.iter().any(|byte| *byte != 0))
+                        .count();
+        pages.checked_mul(RAMFS_PAGE_SIZE).ok_or(FsError::NoSpace)
+    }
+
+    fn from_bytes(data: &[u8]) -> FsResult<Self> {
+        let mut file = Self::default();
+        file.write_at(0, data)?;
+        Ok(file)
+    }
+
+    fn allocated_bytes(&self) -> usize {
+        self.pages.len().saturating_mul(RAMFS_PAGE_SIZE)
+    }
+
+    fn additional_bytes_for_write(&self, offset: u64, data: &[u8]) -> FsResult<usize> {
+        let mut added_pages = 0usize;
+        let mut done = 0usize;
+        while done < data.len() {
+            let pos = offset.checked_add(done as u64).ok_or(FsError::Io)?;
+            let page_idx = pos / RAMFS_PAGE_SIZE as u64;
+            let page_off = (pos % RAMFS_PAGE_SIZE as u64) as usize;
+            let chunk = (RAMFS_PAGE_SIZE - page_off).min(data.len() - done);
+            if !self.pages.contains_key(&page_idx) &&
+               data[done..done + chunk].iter().any(|byte| *byte != 0)
+            {
+                added_pages = added_pages.checked_add(1).ok_or(FsError::NoSpace)?;
+            }
+            done += chunk;
+        }
+        added_pages.checked_mul(RAMFS_PAGE_SIZE).ok_or(FsError::NoSpace)
+    }
+
+    fn zero_page() -> FsResult<Vec<u8>> {
+        let mut page = Vec::new();
+        page.try_reserve_exact(RAMFS_PAGE_SIZE)
+            .map_err(|_| FsError::NoSpace)?;
+        page.resize(RAMFS_PAGE_SIZE, 0);
+        Ok(page)
+    }
+
+    fn write_at(&mut self, offset: u64, data: &[u8]) -> FsResult<usize> {
+        if data.is_empty() {
+            return Ok(0);
+        }
+        let end = offset.checked_add(data.len() as u64).ok_or(FsError::Io)?;
+        let mut done = 0usize;
+        while done < data.len() {
+            let pos = offset + done as u64;
+            let page_idx = pos / RAMFS_PAGE_SIZE as u64;
+            let page_off = (pos % RAMFS_PAGE_SIZE as u64) as usize;
+            let chunk = (RAMFS_PAGE_SIZE - page_off).min(data.len() - done);
+            let source = &data[done..done + chunk];
+            if source.iter().all(|byte| *byte == 0) {
+                let remove = if let Some(page) = self.pages.get_mut(&page_idx) {
+                    page[page_off..page_off + chunk].fill(0);
+                    page.iter().all(|byte| *byte == 0)
+                } else {
+                    false
+                };
+                if remove {
+                    self.pages.remove(&page_idx);
+                }
+            } else {
+                if !self.pages.contains_key(&page_idx) {
+                    self.pages.insert(page_idx, Self::zero_page()?);
+                }
+                self.pages.get_mut(&page_idx)
+                          .ok_or(FsError::Io)?[page_off..page_off + chunk]
+                          .copy_from_slice(source);
+            }
+            done += chunk;
+        }
+        self.len = self.len.max(end);
+        Ok(data.len())
+    }
+
+    fn truncate(&mut self, len: u64) {
+        if len < self.len {
+            let first_removed = len.saturating_add(RAMFS_PAGE_SIZE as u64 - 1) /
+                                RAMFS_PAGE_SIZE as u64;
+            let removed: Vec<u64> = self.pages.range(first_removed..)
+                                              .map(|(&page_idx, _)| page_idx)
+                                              .collect();
+            for page_idx in removed {
+                self.pages.remove(&page_idx);
+            }
+            let tail = (len % RAMFS_PAGE_SIZE as u64) as usize;
+            if tail != 0 {
+                let page_idx = len / RAMFS_PAGE_SIZE as u64;
+                let remove = if let Some(page) = self.pages.get_mut(&page_idx) {
+                    page[tail..].fill(0);
+                    page.iter().all(|byte| *byte == 0)
+                } else {
+                    false
+                };
+                if remove {
+                    self.pages.remove(&page_idx);
+                }
+            }
+        }
+        self.len = len;
+    }
+
+    fn read_at(&self, offset: u64, buf: &mut [u8]) -> FsResult<usize> {
+        if offset >= self.len || buf.is_empty() {
+            return Ok(0);
+        }
+        let available = usize::try_from((self.len - offset).min(buf.len() as u64))
+            .map_err(|_| FsError::Io)?;
+        buf[..available].fill(0);
+        let mut done = 0usize;
+        while done < available {
+            let pos = offset + done as u64;
+            let page_idx = pos / RAMFS_PAGE_SIZE as u64;
+            let page_off = (pos % RAMFS_PAGE_SIZE as u64) as usize;
+            let chunk = (RAMFS_PAGE_SIZE - page_off).min(available - done);
+            if let Some(page) = self.pages.get(&page_idx) {
+                buf[done..done + chunk]
+                    .copy_from_slice(&page[page_off..page_off + chunk]);
+            }
+            done += chunk;
+        }
+        Ok(available)
+    }
+
+    fn materialize(&self) -> FsResult<Vec<u8>> {
+        let len = usize::try_from(self.len).map_err(|_| FsError::NoSpace)?;
+        let mut data = Vec::new();
+        data.try_reserve_exact(len).map_err(|_| FsError::NoSpace)?;
+        data.resize(len, 0);
+        self.read_at(0, data.as_mut_slice())?;
+        Ok(data)
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum NodeKind {
     File,
@@ -32,6 +179,7 @@ enum NodeKind {
 #[derive(Clone)]
 struct Node {
     kind: NodeKind,
+    file_data: SparseFile,
     data: Vec<u8>,
     children: BTreeMap<String, Node>,
     mode: u16,
@@ -46,6 +194,7 @@ impl Node {
     fn dir(inode: u64, mode: u16) -> Self {
         Self {
             kind: NodeKind::Dir,
+            file_data: SparseFile::default(),
             data: Vec::new(),
             children: BTreeMap::new(),
             mode: 0o040000 | (mode & 0o7777),
@@ -57,10 +206,11 @@ impl Node {
         }
     }
 
-    fn file(inode: u64, data: &[u8]) -> Self {
-        Self {
+    fn file(inode: u64, data: &[u8]) -> FsResult<Self> {
+        Ok(Self {
             kind: NodeKind::File,
-            data: data.to_vec(),
+            file_data: SparseFile::from_bytes(data)?,
+            data: Vec::new(),
             children: BTreeMap::new(),
             mode: 0o100644,
             inode,
@@ -68,12 +218,13 @@ impl Node {
             uid: 0,
             gid: 0,
             xattrs: BTreeMap::new(),
-        }
+        })
     }
 
     fn symlink(inode: u64, target: &str) -> Self {
         Self {
             kind: NodeKind::Symlink,
+            file_data: SparseFile::default(),
             data: target.as_bytes().to_vec(),
             children: BTreeMap::new(),
             mode: 0o120777,
@@ -88,6 +239,7 @@ impl Node {
     fn special(inode: u64, mode: u32, _rdev: u32) -> Self {
         Self {
             kind: NodeKind::Special,
+            file_data: SparseFile::default(),
             data: Vec::new(),
             children: BTreeMap::new(),
             mode: mode as u16,
@@ -101,7 +253,8 @@ impl Node {
 
     fn accounted_bytes(&self) -> usize {
         let own = match self.kind {
-            NodeKind::File | NodeKind::Symlink => self.data.len(),
+            NodeKind::File => self.file_data.allocated_bytes(),
+            NodeKind::Symlink => self.data.len(),
             NodeKind::Dir | NodeKind::Special => 0,
         };
         let xattrs = self.xattrs.values().map(Vec::len).sum::<usize>();
@@ -117,10 +270,10 @@ impl Node {
         };
         FsMetadata {
             node_type,
-            size: if matches!(self.kind, NodeKind::File | NodeKind::Symlink) {
-                self.data.len() as u64
-            } else {
-                0
+            size: match self.kind {
+                NodeKind::File => self.file_data.len,
+                NodeKind::Symlink => self.data.len() as u64,
+                NodeKind::Dir | NodeKind::Special => 0,
             },
             mode: self.mode,
             inode: self.inode,
@@ -285,12 +438,20 @@ impl ReadWriteFs for RamFs {
         if parts.is_empty() {
             return Err(FsError::InvalidPath);
         }
-        let node = Node::file(self.alloc_inode(), data);
-        self.ensure_capacity_after_replace(Self::node_ref(&self.root, &parts).ok(), &node)?;
-        let (children, name) = Self::parent_mut(&mut self.root, &parts)?;
-        if matches!(children.get(name).map(|n| n.kind), Some(NodeKind::Dir)) {
+        if matches!(
+            Self::node_ref(&self.root, &parts).ok().map(|node| node.kind),
+            Some(NodeKind::Dir)
+        ) {
             return Err(FsError::NotAFile);
         }
+        let old_bytes = Self::node_ref(&self.root, &parts)
+                             .ok()
+                             .map(Node::accounted_bytes)
+                             .unwrap_or(0);
+        let new_bytes = SparseFile::allocated_bytes_for_data(data)?;
+        self.ensure_capacity_delta(old_bytes, new_bytes)?;
+        let node = Node::file(self.alloc_inode(), data)?;
+        let (children, name) = Self::parent_mut(&mut self.root, &parts)?;
         children.insert(String::from(name), node);
         Ok(())
     }
@@ -330,33 +491,25 @@ impl ReadWriteFs for RamFs {
             if node.kind != NodeKind::File {
                 return Err(FsError::NotAFile);
             }
-            node.data.len()
+            node.file_data.allocated_bytes()
         };
         let end = offset.checked_add(data.len() as u64).ok_or(FsError::Io)?;
-        let new_len = core::cmp::max(old_len, usize::try_from(end).map_err(|_| FsError::Io)?);
-        self.ensure_capacity_delta(old_len, new_len)?;
+        let added = Self::node_ref(&self.root, &parts)?
+            .file_data
+            .additional_bytes_for_write(offset, data)?;
+        self.ensure_capacity_delta(old_len, old_len.checked_add(added).ok_or(FsError::NoSpace)?)?;
         let node = Self::node_mut(&mut self.root, &parts)?;
-        if new_len > node.data.len() {
-            node.data.resize(new_len, 0);
-        }
-        let start = offset as usize;
-        node.data[start..start + data.len()].copy_from_slice(data);
-        Ok(data.len())
+        debug_assert!(end >= offset);
+        node.file_data.write_at(offset, data)
     }
 
     fn truncate(&mut self, path: &str, len: u64) -> FsResult<()> {
         let parts = Self::split_path(path)?;
-        let new_len = usize::try_from(len).map_err(|_| FsError::Io)?;
-        let old_len = {
-            let node = Self::node_ref(&self.root, &parts)?;
-            if node.kind != NodeKind::File {
-                return Err(FsError::NotAFile);
-            }
-            node.data.len()
-        };
-        self.ensure_capacity_delta(old_len, new_len)?;
         let node = Self::node_mut(&mut self.root, &parts)?;
-        node.data.resize(new_len, 0);
+        if node.kind != NodeKind::File {
+            return Err(FsError::NotAFile);
+        }
+        node.file_data.truncate(len);
         Ok(())
     }
 
@@ -535,7 +688,7 @@ impl ReadWriteFs for RamFs {
         if node.kind != NodeKind::File {
             return Err(FsError::NotAFile);
         }
-        Ok(node.data.clone())
+        node.file_data.materialize()
     }
 
     fn read_range(&self, path: &str, offset: u64, buf: &mut [u8]) -> FsResult<usize> {
@@ -547,13 +700,7 @@ impl ReadWriteFs for RamFs {
         if node.kind != NodeKind::File {
             return Err(FsError::NotAFile);
         }
-        if offset >= node.data.len() as u64 {
-            return Ok(0);
-        }
-        let start = offset as usize;
-        let n = core::cmp::min(buf.len(), node.data.len() - start);
-        buf[..n].copy_from_slice(&node.data[start..start + n]);
-        Ok(n)
+        node.file_data.read_at(offset, buf)
     }
 
     fn read_dir(&self, path: &str) -> FsResult<Vec<FsDirEntry>> {
@@ -619,7 +766,7 @@ impl FsImpl for RamFsImpl {
 
 /// Minimal runtime self-test for tree operations, content I/O, and size limits.
 pub fn test() {
-    let mut fs = RamFs::with_limit(8);
+    let mut fs = RamFs::with_limit(RAMFS_PAGE_SIZE);
     fs.mkdir("/work", 0o755).expect("mkdir /work");
     fs.write_regular_file("/work/a", b"abc")
         .expect("write /work/a");
@@ -627,11 +774,66 @@ pub fn test() {
     let n = fs.read_range("/work/a", 1, &mut buf).expect("read range");
     assert_eq!(n, 2);
     assert_eq!(&buf, b"bc");
-    assert_eq!(fs.used_bytes(), 3);
+    assert_eq!(fs.used_bytes(), RAMFS_PAGE_SIZE);
     assert_eq!(
-        fs.write_regular_file("/work/b", b"123456"),
+        fs.write_regular_file("/work/b", b"1"),
         Err(FsError::NoSpace)
     );
     fs.unlink("/work/a").expect("unlink /work/a");
     fs.rmdir("/work").expect("rmdir /work");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RamFs, ReadWriteFs, SparseFile, RAMFS_PAGE_SIZE};
+
+    #[test]
+    fn large_truncate_remains_sparse() {
+        let mut fs = RamFs::new();
+        fs.write_regular_file("/image", &[]).unwrap();
+        fs.truncate("/image", 300 * 1024 * 1024).unwrap();
+
+        assert_eq!(fs.metadata("/image").unwrap().size, 300 * 1024 * 1024);
+        assert_eq!(fs.used_bytes(), 0);
+        let mut tail = [0xFF; 32];
+        assert_eq!(fs.read_range("/image", 300 * 1024 * 1024 - 32, &mut tail).unwrap(), 32);
+        assert_eq!(tail, [0; 32]);
+    }
+
+    #[test]
+    fn cross_page_write_preserves_holes() {
+        let mut file = SparseFile::default();
+        let offset = RAMFS_PAGE_SIZE as u64 - 2;
+        file.write_at(offset, b"abcd").unwrap();
+        assert_eq!(file.pages.len(), 2);
+
+        let mut data = [0xFF; 8];
+        assert_eq!(file.read_at(offset - 2, &mut data).unwrap(), 6);
+        assert_eq!(&data[..6], b"\0\0abcd");
+    }
+
+    #[test]
+    fn shrink_then_grow_does_not_reveal_old_tail() {
+        let mut file = SparseFile::from_bytes(b"persist-old-tail").unwrap();
+        file.truncate(7);
+        file.truncate(16);
+
+        let mut data = [0xFF; 16];
+        assert_eq!(file.read_at(0, &mut data).unwrap(), data.len());
+        assert_eq!(&data[..7], b"persist");
+        assert_eq!(&data[7..], &[0; 9]);
+    }
+
+    #[test]
+    fn size_limit_charges_allocated_pages_not_holes() {
+        let mut fs = RamFs::with_limit(RAMFS_PAGE_SIZE);
+        fs.write_regular_file("/sparse", &[]).unwrap();
+        fs.truncate("/sparse", 64 * 1024 * 1024).unwrap();
+        assert_eq!(fs.used_bytes(), 0);
+
+        fs.write_range("/sparse", 64 * 1024 * 1024 - 1, b"x")
+          .unwrap();
+        assert_eq!(fs.used_bytes(), RAMFS_PAGE_SIZE);
+        assert_eq!(fs.write_range("/sparse", 0, b"y"), Err(super::FsError::NoSpace));
+    }
 }
