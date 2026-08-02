@@ -4,7 +4,7 @@
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
-use driver::network::stack;
+use network::stack;
 
 use crate::fallible_buf::{try_kbuf, SYSCALL_IO_MAX};
 use crate::socket_block::socket_blocking_tick;
@@ -61,7 +61,7 @@ pub(crate) fn sys_recvfrom(args: SyscallArgs) -> UserRet {
     let handle = socket.handle();
 
     match stack::socket_kind(handle) {
-        Ok(driver::network::stack::SocketKind::Tcp) => {
+        Ok(stack::SocketKind::Tcp) => {
             match recv_tcp_blocking(fd, handle, &mut kbuf) {
                 Ok(n) if n > 0 => {
                     match copy_to_user(buf_ptr, &kbuf[..n]) {
@@ -73,7 +73,7 @@ pub(crate) fn sys_recvfrom(args: SyscallArgs) -> UserRet {
                 Err(e) => UserRet::from_error(e),
             }
         }
-        Ok(driver::network::stack::SocketKind::Udp) => {
+        Ok(stack::SocketKind::Udp) => {
             match recv_udp_blocking(fd, handle, &mut kbuf) {
                 Ok((n, ip, port)) if n > 0 => {
                     if copy_to_user(buf_ptr, &kbuf[..n]).is_err() {
@@ -113,7 +113,7 @@ pub(crate) fn sys_recvfrom(args: SyscallArgs) -> UserRet {
 
 fn recv_tcp_blocking(
     fd: usize,
-    handle: smoltcp::iface::SocketHandle,
+    handle: stack::StackSocketHandle,
     buf: &mut [u8],
 ) -> Result<usize, ErrNo> {
     let nonblocking = socket_fd::is_nonblocking(fd);
@@ -135,7 +135,7 @@ fn recv_tcp_blocking(
 
 fn recv_udp_blocking(
     fd: usize,
-    handle: smoltcp::iface::SocketHandle,
+    handle: stack::StackSocketHandle,
     buf: &mut [u8],
 ) -> Result<(usize, [u8; 4], u16), ErrNo> {
     let nonblocking = socket_fd::is_nonblocking(fd);

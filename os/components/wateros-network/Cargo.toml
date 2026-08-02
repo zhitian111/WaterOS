@@ -1,0 +1,39 @@
+[workspace]
+members = [
+    "./network-api/api-v0",
+    "./network-impl/impl-smoltcp",
+]
+
+[package]
+name = "wateros-network"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+api-v0 = {
+    path = "./network-api/api-v0",
+    package = "wateros-network-api-v0",
+    default-features = false,
+}
+
+impl-smoltcp = {
+    path = "./network-impl/impl-smoltcp",
+    package = "wateros-network-impl-smoltcp",
+    default-features = false,
+    optional = true,
+}
+
+spin = { version = "0.10.0", optional = true }
+log = { version = "0.4.29", optional = true }
+
+vfs-api = {
+    path = "../wateros-vfs/vfs-api/api-v0",
+    package = "wateros-vfs-api-v0",
+    optional = true,
+}
+
+[features]
+default = ["api-v0", "impl-smoltcp", "vfs-handles"]
+api-v0 = []
+impl-smoltcp = ["dep:impl-smoltcp"]
+vfs-handles = ["impl-smoltcp", "dep:log", "dep:spin", "dep:vfs-api"]

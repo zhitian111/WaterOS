@@ -5,7 +5,7 @@ extern crate alloc;
 
 use api_v0::ErrNo;
 use api_v0::UserRet;
-use driver::network::stack;
+use network::stack;
 use ipc::signal::SignalSet;
 use task::TaskTick;
 use wateros_base_config::task::SCHED_TIMER_PERIOD_MS;

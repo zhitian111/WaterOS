@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
-use driver::network::stack;
+use network::stack;
 use vfs::api::{VfsCopyProgress, VfsError, VfsReadFinish, VfsSeekWhence};
 use crate::fallible_buf::{try_kbuf, SYSCALL_IO_MAX};
 use crate::socket_block::socket_blocking_tick;
@@ -368,7 +368,7 @@ fn drive_network_stack() {
     stack::poll_socket_events();
 }
 
-fn flush_segmented_loopback_send(handle : smoltcp::iface::SocketHandle, sent : usize) {
+fn flush_segmented_loopback_send(handle : stack::StackSocketHandle, sent : usize) {
     if sent <= TCP_MSS_BYTES || !stack::socket_peer_is_loopback(handle).unwrap_or(false) {
         return;
     }

@@ -585,6 +585,7 @@ dependencies = [
  "wateros-ipc",
  "wateros-klog",
  "wateros-mm",
+ "wateros-network",
  "wateros-platform",
  "wateros-platform-arch-api-v0",
  "wateros-runtime",
@@ -803,15 +804,11 @@ name = "wateros-driver-network"
 version = "0.1.0"
 dependencies = [
  "log",
- "smoltcp",
- "spin",
  "wateros-driver-api-v0",
  "wateros-driver-network-api-v0",
  "wateros-driver-network-impl-dummy",
- "wateros-driver-network-impl-smoltcp",
  "wateros-driver-network-impl-virtio-mmio",
  "wateros-driver-network-impl-virtio-pci",
- "wateros-vfs-api-v0",
 ]
 
 [[package]]
@@ -828,15 +825,6 @@ name = "wateros-driver-network-impl-dummy"
 version = "0.1.0"
 dependencies = [
  "spin",
- "wateros-driver-network-api-v0",
-]
-
-[[package]]
-name = "wateros-driver-network-impl-smoltcp"
-version = "0.1.0"
-dependencies = [
- "log",
- "smoltcp",
  "wateros-driver-network-api-v0",
 ]
 
@@ -1296,6 +1284,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "wateros-network"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "spin",
+ "wateros-network-api-v0",
+ "wateros-network-impl-smoltcp",
+ "wateros-vfs-api-v0",
+]
+
+[[package]]
+name = "wateros-network-api-v0"
+version = "0.1.0"
+
+[[package]]
+name = "wateros-network-impl-smoltcp"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "smoltcp",
+ "spin",
+ "wateros-driver-network",
+ "wateros-network-api-v0",
+]
+
+[[package]]
 name = "wateros-platform"
 version = "0.1.0"
 dependencies = [
@@ -1471,15 +1485,13 @@ name = "wateros-syscall-impl-kernel"
 version = "0.1.0"
 dependencies = [
  "log",
- "smoltcp",
  "spin",
  "wateros-base-config",
  "wateros-cred",
- "wateros-driver",
- "wateros-driver-network",
  "wateros-ipc",
  "wateros-klog",
  "wateros-mm",
+ "wateros-network",
  "wateros-platform",
  "wateros-platform-arch-api-v0",
  "wateros-syscall-api-v0",

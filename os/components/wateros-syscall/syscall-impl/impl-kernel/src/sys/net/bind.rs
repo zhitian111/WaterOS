@@ -4,7 +4,7 @@
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
-use driver::network::stack;
+use network::stack;
 
 use crate::socket_fd;
 use crate::user_copy::copy_from_user_struct;
@@ -70,7 +70,10 @@ pub(crate) fn sys_bind(args: SyscallArgs) -> UserRet {
         Ok(()) => {
             UserRet::from_success(0)
         }
-        Err("address not available") => UserRet::from_error(ErrNo::EADDRNOTAVAIL),
+        Err(stack::NetworkError::AddressNotAvailable) => {
+            UserRet::from_error(ErrNo::EADDRNOTAVAIL)
+        }
+        Err(stack::NetworkError::AddressInUse) => UserRet::from_error(ErrNo::EADDRINUSE),
         Err(_) => UserRet::from_error(ErrNo::EADDRINUSE),
     }
 }

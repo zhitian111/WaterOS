@@ -1,0 +1,34 @@
+[package]
+name = "wateros-network-impl-smoltcp"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+api-v0 = {
+    path = "../../network-api/api-v0",
+    package = "wateros-network-api-v0",
+    default-features = false,
+}
+
+driver-network = {
+    path = "../../../wateros-driver/driver-network",
+    package = "wateros-driver-network",
+    default-features = false,
+    features = ["api-v0"],
+}
+
+smoltcp = {
+    version = "=0.12.0",
+    default-features = false,
+    features = [
+        "alloc",
+        "log",
+        "medium-ethernet",
+        "proto-ipv4",
+        "socket-tcp",
+        "socket-udp",
+    ],
+}
+
+spin = "0.10.0"
+log = "0.4.29"

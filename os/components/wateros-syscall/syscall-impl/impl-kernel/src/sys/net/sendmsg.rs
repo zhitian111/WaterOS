@@ -4,7 +4,7 @@
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
-use driver::network::stack;
+use network::stack;
 use wateros_base_config::task::SCHED_TIMER_PERIOD_MS;
 
 use crate::fallible_buf::{try_kbuf, SYSCALL_IO_MAX};
@@ -260,7 +260,7 @@ fn recvmsg_is_nonblocking(fd: usize, flags: usize) -> bool {
 
 fn recvmsg_tcp_blocking(
     fd: usize,
-    handle: smoltcp::iface::SocketHandle,
+    handle: stack::StackSocketHandle,
     flags: usize,
     buf: &mut [u8],
 ) -> Result<usize, ErrNo> {
@@ -287,7 +287,7 @@ fn recvmsg_tcp_blocking(
 
 fn recvmsg_udp_blocking(
     fd: usize,
-    handle: smoltcp::iface::SocketHandle,
+    handle: stack::StackSocketHandle,
     flags: usize,
     buf: &mut [u8],
 ) -> Result<(usize, [u8; 4], u16), ErrNo> {
@@ -306,7 +306,7 @@ fn recvmsg_udp_blocking(
     Err(ErrNo::EAGAIN)
 }
 
-fn socket_recv_wait_ticks(handle: smoltcp::iface::SocketHandle, default_ticks: usize) -> usize {
+fn socket_recv_wait_ticks(handle: stack::StackSocketHandle, default_ticks: usize) -> usize {
     match stack::socket_recv_timeout_ms(handle) {
         Ok(Some(ms)) => {
             let tick_ms = (SCHED_TIMER_PERIOD_MS as u64).max(1);

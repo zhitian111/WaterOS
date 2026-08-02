@@ -4,7 +4,7 @@
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
-use driver::network::stack;
+use network::stack;
 
 use crate::socket_fd;
 
@@ -24,7 +24,7 @@ pub(crate) fn sys_shutdown(args: SyscallArgs) -> UserRet {
 
     match stack::socket_shutdown(socket.handle()) {
         Ok(()) => UserRet::from_success(0),
-        Err("shutdown unsupported for udp") => UserRet::from_error(ErrNo::EOPNOTSUPP),
+        Err(stack::NetworkError::Unsupported) => UserRet::from_error(ErrNo::EOPNOTSUPP),
         Err(_) => UserRet::from_error(ErrNo::EIO),
     }
 }
