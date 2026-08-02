@@ -3,6 +3,7 @@
     .section .text
     .globl __switch
 __switch:
+    .cfi_startproc
     st.d $r1,  $r4, 0
     st.d $r3,  $r4, 8
     st.d $r22, $r4, 16
@@ -28,22 +29,29 @@ __switch:
     ld.d $r29, $r5, 72
     ld.d $r30, $r5, 80
     ld.d $r31, $r5, 88
+    .cfi_undefined 1
     jr $r1
+    .cfi_endproc
 
     .globl __arch_task_entry
 __arch_task_entry:
+    .cfi_startproc
     move $r4, $r22
     b __wateros_arch_task_entry_trampoline
+    .cfi_endproc
 
     .globl __arch_user_task_entry
 __arch_user_task_entry:
+    .cfi_startproc
     b __wateros_arch_user_task_entry_trampoline
+    .cfi_endproc
 
     .globl __wateros_arch_restore_user_task
 # Rust `TrapContext` 指针在 $r4；$r5 = 用户 trap 时应使用的内核栈顶（与 RISC-V 侧 a1 约定对齐）。
 # CSR SAVE0(0x30) 在用户态运行期间保存该内核栈顶，供 trap.S 在 User -> Kernel
 # 时先切回内核栈再保存 TrapContext。
 __wateros_arch_restore_user_task:
+    .cfi_startproc
     move $r21, $r4
     csrwr $r5, 0x30
 
@@ -96,3 +104,4 @@ __wateros_arch_restore_user_task:
     ld.d $r4,  $r21, 4*8
     ld.d $r21, $r21, 21*8
     ertn
+    .cfi_endproc

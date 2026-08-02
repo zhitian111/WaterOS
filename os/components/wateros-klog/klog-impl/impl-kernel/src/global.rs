@@ -5,13 +5,14 @@ use arch::interrupt::{
     ArchInterruptState,
 };
 use api_v0::{AppendResult, KlogFlags, KlogRecordMeta, KlogStats, KlogStore};
-use spin::Mutex;
-
 use crate::state::KlogRingbufInner;
 
 /// `LOCK:` 全局环的唯一锁。所有访问都必须先屏蔽本 CPU 全局中断，防止同 CPU 中断日志重入
 /// `spin::Mutex` 而自旋死锁。
-static KLOG : Mutex<Option<KlogRingbufInner>> = Mutex::new(None);
+fn debug_cpu_id() -> usize { arch::cpu::current_cpu_id().raw() }
+
+static KLOG : debug::TrackedMutex<Option<KlogRingbufInner>> =
+    debug::TrackedMutex::new(None, debug::DebugLockKind::Klog, debug_cpu_id);
 
 /// 保存并在析构时恢复中断状态；不会无条件开启原本关闭的中断。
 struct KlogInterruptGuard {

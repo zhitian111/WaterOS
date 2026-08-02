@@ -48,8 +48,28 @@ pub fn current_task_id() -> VfsResult<task::TaskId> {
 /// 闭包内只应执行短小的注册表操作；不要阻塞，也不要调用可能再次访问 fd 表的代码。
 pub fn with_registry<R>(f : impl FnOnce(&mut PerTaskFdRegistry) -> R) -> R {
     impl_fd_session::with_interrupt_disabled(|| {
-        let mut registry = registry().exclusive_access();
-        f(&mut registry)
+        let cell = registry();
+        let cpu = arch::cpu::current_cpu_id().raw();
+        let object = cell as *const _ as usize;
+        let mut registry = if debug::ENABLED {
+            if let Some(guard) = cell.try_lock() {
+                guard
+            } else {
+                debug::lock_wait(cpu,
+                                 0,
+                                 task::current_task_id().unwrap_or(debug::NO_TASK as usize) as u64,
+                                 debug::DebugLockKind::Vfs,
+                                 object);
+                cell.exclusive_access()
+            }
+        } else {
+            cell.exclusive_access()
+        };
+        debug::lock_acquired(cpu, debug::DebugLockKind::Vfs, object);
+        let result = f(&mut registry);
+        drop(registry);
+        debug::lock_released(cpu, debug::DebugLockKind::Vfs, object);
+        result
     })
 }
 

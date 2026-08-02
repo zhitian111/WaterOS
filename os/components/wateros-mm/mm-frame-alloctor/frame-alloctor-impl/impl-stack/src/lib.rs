@@ -42,8 +42,29 @@ impl Drop for FrameAllocatorInterruptGuard {
 }
 
 fn with_frame_allocator<R>(f : impl FnOnce(&mut StackFrameAllocator) -> R) -> R {
-    let _guard = FrameAllocatorInterruptGuard::new();
-    f(&mut get_frame_allocator_cell().exclusive_access())
+    let _irq = FrameAllocatorInterruptGuard::new();
+    let cell = get_frame_allocator_cell();
+    let cpu = arch::cpu::current_cpu_id().raw();
+    let object = cell as *const _ as usize;
+    let mut allocator = if debug::ENABLED {
+        if let Some(guard) = cell.try_lock() {
+            guard
+        } else {
+            debug::lock_wait(cpu,
+                             0,
+                             debug::NO_TASK,
+                             debug::DebugLockKind::FrameAllocator,
+                             object);
+            cell.exclusive_access()
+        }
+    } else {
+        cell.exclusive_access()
+    };
+    debug::lock_acquired(cpu, debug::DebugLockKind::FrameAllocator, object);
+    let result = f(&mut allocator);
+    drop(allocator);
+    debug::lock_released(cpu, debug::DebugLockKind::FrameAllocator, object);
+    result
 }
 
 /// 临时的 LIFO 栈式帧分配器：

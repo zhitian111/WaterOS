@@ -3,6 +3,8 @@
 /.idea
 /kernel-rv
 /kernel-la
+/kernel-*-gdb
+/debug-reports/
 /sdcard-rv.img
 /sdcard-la.img
 __pycache__/

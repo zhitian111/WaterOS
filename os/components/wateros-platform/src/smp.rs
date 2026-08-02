@@ -53,6 +53,22 @@ pub fn configured_cpu_mask() -> CpuMask {
 /// MM 层维护。
 #[inline]
 pub fn send_ipi(mask: CpuMask, kind: IpiKind) -> PlatformSmpResult<()> {
+    if debug::ENABLED {
+        let sender = crate::arch::cpu::current_cpu_id().raw();
+        debug::update_cpu_state(sender, |state| {
+            state.ipi_sent = state.ipi_sent.wrapping_add(1);
+        });
+        debug::record_event(sender,
+                            0,
+                            debug::NO_TASK,
+                            if kind.bits() & IpiKind::TlbShootdown.bits() != 0 {
+                                debug::DebugEventKind::TlbShootdown
+                            } else {
+                                debug::DebugEventKind::IpiSend
+                            },
+                            0,
+                            [mask.bits() as u64, kind.bits() as u64, 0]);
+    }
     let mut raw = mask.bits();
     while raw != 0 {
         let cpu = raw.trailing_zeros() as usize;

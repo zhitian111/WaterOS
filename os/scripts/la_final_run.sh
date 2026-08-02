@@ -5,7 +5,7 @@ qemu_args=(
     -kernel "${WOS_KERNEL:-./kernel-la-final}"
     -m 8G
     -nographic
-    -smp 8
+    -smp "${WOS_SMP:-8}"
     -drive "file=${WOS_SDCARD:-./sdcard-la.img},if=none,format=raw,id=x0"
     -device virtio-blk-pci,drive=x0
     -no-reboot
@@ -13,6 +13,10 @@ qemu_args=(
     -netdev user,id=net0
     -rtc base=utc
 )
+
+if [[ "${WOS_QEMU_SNAPSHOT:-0}" == "1" ]]; then
+    qemu_args+=(-snapshot)
+fi
 
 if [[ "${WOS_QEMU_GDB:-0}" == "1" || "${WOS_QEMU_GDB_WAIT:-0}" == "1" ]]; then
     qemu_args+=(-gdb "tcp:127.0.0.1:${WOS_QEMU_GDB_PORT:-1234}")

@@ -20,6 +20,8 @@
         "socket-udp",
     ], optional = true }
     spin = "0.10.0"
+    arch = { path = "../../wateros-platform/platform-arch/", package = "wateros-platform-arch", default-features = false, features = [ "api-v0" ] }
+    debug = { path = "../../wateros-debug/", package = "wateros-debug", default-features = false }
     vfs-api = { path = "../../wateros-vfs/vfs-api/api-v0/", package = "wateros-vfs-api-v0", default-features = true, optional = true }
 
 [features]

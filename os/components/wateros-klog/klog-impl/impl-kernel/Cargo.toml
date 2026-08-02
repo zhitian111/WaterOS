@@ -10,6 +10,7 @@ task = { path = "../../../wateros-task/", package = "wateros-task", default-feat
 arch = { path = "../../../wateros-platform/platform-arch/", package = "wateros-platform-arch", default-features = false, features = [ "api-v0" ] }
 spin = "0.10.0"
 wateros-base-config = { path = "../../../wateros-base/base-config/", package = "wateros-base-config", default-features = true }
+debug = { path = "../../../wateros-debug/", package = "wateros-debug", default-features = false }
 
 [profile.dev]
 panic = "abort"

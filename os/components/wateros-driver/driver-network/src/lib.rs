@@ -80,7 +80,6 @@ pub mod stack {
     use smoltcp::socket::{tcp, udp};
     use smoltcp::time::{Duration, Instant};
     use smoltcp::wire::{EthernetAddress, HardwareAddress, IpAddress, IpCidr, IpListenEndpoint, Ipv4Address};
-    use spin::Mutex;
 
     use crate::{first_network_device, SmoltcpAdapter};
 
@@ -268,7 +267,12 @@ pub mod stack {
         next_listener_group: u64,
     }
 
-    static NETWORK_STACK: Mutex<Option<NetworkStack>> = Mutex::new(None);
+    fn debug_cpu_id() -> usize { arch::cpu::current_cpu_id().raw() }
+
+    /// 全局协议栈锁是 socket 卡死时最关键的 wait-for 节点。包装类型保留原有
+    /// `.lock()` API，只有 `gdb-debug` 构建会发布 owner/contention。
+    static NETWORK_STACK: debug::TrackedMutex<Option<NetworkStack>> =
+        debug::TrackedMutex::new(None, debug::DebugLockKind::Network, debug_cpu_id);
     const TCP_BUFFER_SIZE: usize = 256 * 1024;
     const UDP_PACKET_DATA_SIZE: usize = 64 * 1024;
     const UDP_PACKET_METADATA_COUNT: usize = 64;

@@ -13,8 +13,8 @@ ArchTooling = dict[str, str]
 
 ARCH_TOOLS: dict[Arch, ArchTooling] = {
     "rv": {
-        "nm": "riscv64-elf-nm",
-        "addr2line": "riscv64-elf-addr2line",
+        "nm": "riscv64-unknown-elf-nm",
+        "addr2line": "riscv64-unknown-elf-addr2line",
     },
     "la": {
         "nm": "loongarch64-linux-gnu-nm",
@@ -131,12 +131,19 @@ class SymbolIndex:
         self.elf_path = elf_path
         self.arch = arch
         configured = ARCH_TOOLS[arch]
-        self._nm = (
-            shutil.which(configured["nm"])
-            or _rust_llvm_tool("llvm-nm")
-            or configured["nm"]
+        legacy_nm = "riscv64-elf-nm" if arch == "rv" else configured["nm"]
+        legacy_addr2line = (
+            "riscv64-elf-addr2line" if arch == "rv" else configured["addr2line"]
         )
-        self._addr2line_tool = shutil.which(configured["addr2line"])
+        self._nm = (shutil.which(configured["nm"])
+                    or shutil.which(legacy_nm)
+                    or _rust_llvm_tool("llvm-nm")
+                    or shutil.which("nm")
+                    or configured["nm"])
+        self._addr2line_tool = (shutil.which(configured["addr2line"])
+                                or shutil.which(legacy_addr2line)
+                                or _rust_llvm_tool("llvm-addr2line")
+                                or shutil.which("addr2line"))
         self._symbols = self._load_symbols()
         self._starts = [s.start for s in self._symbols]
 

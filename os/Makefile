@@ -43,35 +43,47 @@ common_dependencies = $(shell find . -name "*.rs") \
 
 kernel_rv_dependencies = $(common_dependencies)
 
-kernel_rv_flag := --release --target riscv64gc-unknown-none-elf \
-                  --features qemu-riscv64-opensbi,pre
-kernel_rv_pre_flag := --release --target riscv64gc-unknown-none-elf \
-                      --features qemu-riscv64-opensbi,pre
-kernel_rv_final_flag := --release --target riscv64gc-unknown-none-elf \
-                        --features qemu-riscv64-opensbi,final_online
-kernel_rv_final_log_flag := --release --target riscv64gc-unknown-none-elf \
-                            --features qemu-riscv64-opensbi,final_online,stall-debug
-kernel_rv_final_debug_flag := --release --target riscv64gc-unknown-none-elf \
-                              --features qemu-riscv64-opensbi,final_online,dashboard-debug
-kernel_rv_final_smp_flag := --release --target riscv64gc-unknown-none-elf \
-                            --features qemu-riscv64-opensbi,final_online_smp_test
+COMMA := ,
+GDB_BUILD ?= 0
+GDB_FAULTS ?= 0
+GDB_SUFFIX := $(if $(filter 1,$(GDB_BUILD)),-gdb,)
+GDB_FAULT_FEATURE := $(if $(filter 1,$(GDB_FAULTS)),$(COMMA)gdb-fault-injection,)
+GDB_FEATURE_SUFFIX := $(if $(filter 1,$(GDB_BUILD)),$(COMMA)gdb-debug$(GDB_FAULT_FEATURE),)
+CARGO_PROFILE_ARG := $(if $(filter 1,$(GDB_BUILD)),--profile gdb,--release)
+GDB_FRAME_FLAGS := $(if $(filter 1,$(GDB_BUILD)),-C force-frame-pointers=yes,)
+GDB_BUILD_ID ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)-$(shell date +%s)
+cargo_env = $(if $(filter 1,$(GDB_BUILD)),WATEROS_DEBUG_BUILD_ID="$(GDB_BUILD_ID)" WATEROS_DEBUG_FRAME_POINTERS=1 RUSTFLAGS="$(strip $(RUSTFLAGS) $(GDB_FRAME_FLAGS))",)
+cargo_build = $(cargo_env) cargo build
 
-kernel_rv_build_artifact_path := ./target/riscv64gc-unknown-none-elf/release
+kernel_rv_flag := $(CARGO_PROFILE_ARG) --target riscv64gc-unknown-none-elf \
+                  --features qemu-riscv64-opensbi,pre$(GDB_FEATURE_SUFFIX)
+kernel_rv_pre_flag := $(CARGO_PROFILE_ARG) --target riscv64gc-unknown-none-elf \
+                      --features qemu-riscv64-opensbi,pre$(GDB_FEATURE_SUFFIX)
+kernel_rv_final_flag := $(CARGO_PROFILE_ARG) --target riscv64gc-unknown-none-elf \
+                        --features qemu-riscv64-opensbi,final_online$(GDB_FEATURE_SUFFIX)
+kernel_rv_final_log_flag := $(CARGO_PROFILE_ARG) --target riscv64gc-unknown-none-elf \
+                            --features qemu-riscv64-opensbi,final_online,stall-debug$(GDB_FEATURE_SUFFIX)
+kernel_rv_final_debug_flag := $(CARGO_PROFILE_ARG) --target riscv64gc-unknown-none-elf \
+                              --features qemu-riscv64-opensbi,final_online,dashboard-debug$(GDB_FEATURE_SUFFIX)
+kernel_rv_final_smp_flag := $(CARGO_PROFILE_ARG) --target riscv64gc-unknown-none-elf \
+                            --features qemu-riscv64-opensbi,final_online_smp_test$(GDB_FEATURE_SUFFIX)
 
-kernel_la_flag := --release --target loongarch64-unknown-none \
+kernel_rv_build_artifact_path := ./target/riscv64gc-unknown-none-elf/$(if $(filter 1,$(GDB_BUILD)),gdb,release)
+
+kernel_la_flag := $(CARGO_PROFILE_ARG) --target loongarch64-unknown-none \
                   --no-default-features \
-                  --features qemu-loongarch64-virt,pre
-kernel_la_pre_flag := --release --target loongarch64-unknown-none \
+                  --features qemu-loongarch64-virt,pre$(GDB_FEATURE_SUFFIX)
+kernel_la_pre_flag := $(CARGO_PROFILE_ARG) --target loongarch64-unknown-none \
                       --no-default-features \
-                      --features qemu-loongarch64-virt,pre
-kernel_la_final_flag := --release --target loongarch64-unknown-none \
+                      --features qemu-loongarch64-virt,pre$(GDB_FEATURE_SUFFIX)
+kernel_la_final_flag := $(CARGO_PROFILE_ARG) --target loongarch64-unknown-none \
                         --no-default-features \
-                        --features qemu-loongarch64-virt,final_online
+                        --features qemu-loongarch64-virt,final_online$(GDB_FEATURE_SUFFIX)
 
-kernel_la_build_artifact_path := ./target/loongarch64-unknown-none/release
+kernel_la_build_artifact_path := ./target/loongarch64-unknown-none/$(if $(filter 1,$(GDB_BUILD)),gdb,release)
 GDB_PORT ?= 1234
 GDB_WAIT ?= 1
-LA_GDB_ELF ?= ./kernel-la-pre
+LA_GDB_ELF ?= ./kernel-la-pre-gdb
 
 define TRACE
 	@echo -e "$(COLOR_ANSI_PURPLE)[MAKEFILE]$(COLOR_ANSI_CLEAR)$(COLOR_ANSI_BLUE)\t[TRACE]\t$(1)$(COLOR_ANSI_CLEAR)"
@@ -96,6 +108,8 @@ help:
 	@echo "  make <run-target>-gdb           以 GDB 模式运行，默认暂停等待连接"
 	@echo "  make <run-target>-gdb GDB_WAIT=0  开放 GDB 端口但立即运行"
 	@echo "  make <run-target>-gdb GDB_PORT=1235 使用指定 GDB 端口"
+	@echo "  make <run-target>-gdb GDB_FAULTS=1 构建确定性故障注入测试内核"
+	@echo "  ./scripts/wateros_debug.py doctor / run / snapshot / watch / gdb"
 	@echo "  make rv_check / make la_check   检查对应架构"
 	@echo "  make rv_pc_watch / la_pc_watch  监视各架构 PC"
 
@@ -124,7 +138,7 @@ kernel:
 
 $(kernel_rv_build_artifact_path)/wateros: $(kernel_rv_dependencies) kernel
 	$(call INFO, "开始构建 riscv64 内核...")
-	@cargo build $(kernel_rv_flag)
+	@$(cargo_build) $(kernel_rv_flag)
 	$(call INFO,"构建成功！");
 
 kernel-rv: kernel-rv-pre
@@ -132,7 +146,7 @@ kernel-rv: kernel-rv-pre
 
 $(kernel_la_build_artifact_path)/wateros: $(common_dependencies) kernel
 	$(call INFO, "开始构建 loongarch64 内核...")
-	@cargo build $(kernel_la_flag)
+	@$(cargo_build) $(kernel_la_flag)
 	$(call INFO,"构建成功！");
 
 kernel-la: kernel-la-pre
@@ -161,47 +175,47 @@ la_elf_info: kernel-la
 
 kernel-rv-pre: version
 	$(call INFO, "构建 riscv64 初赛内核...")
-	@cargo build $(kernel_rv_pre_flag)
-	@cp $(kernel_rv_build_artifact_path)/wateros ./kernel-rv-pre
+	@$(cargo_build) $(kernel_rv_pre_flag)
+	@cp $(kernel_rv_build_artifact_path)/wateros ./kernel-rv-pre$(GDB_SUFFIX)
 
 kernel-rv-final: version
 	$(call INFO, "构建 riscv64 决赛在线内核...")
-	@cargo build $(kernel_rv_final_flag)
-	@cp $(kernel_rv_build_artifact_path)/wateros ./kernel-rv-final
+	@$(cargo_build) $(kernel_rv_final_flag)
+	@cp $(kernel_rv_build_artifact_path)/wateros ./kernel-rv-final$(GDB_SUFFIX)
 
 kernel-rv-final-log: version
 	$(call INFO, "构建带停滞诊断的 riscv64 决赛在线内核...")
-	@cargo build $(kernel_rv_final_log_flag)
-	@cp $(kernel_rv_build_artifact_path)/wateros ./kernel-rv-final-log
+	@$(cargo_build) $(kernel_rv_final_log_flag)
+	@cp $(kernel_rv_build_artifact_path)/wateros ./kernel-rv-final-log$(GDB_SUFFIX)
 
 kernel-rv-final-debug: version
 	$(call INFO, "构建带 dashboard 的 riscv64 决赛调试内核...")
-	@cargo build $(kernel_rv_final_debug_flag)
-	@cp $(kernel_rv_build_artifact_path)/wateros ./kernel-rv-final-debug
+	@$(cargo_build) $(kernel_rv_final_debug_flag)
+	@cp $(kernel_rv_build_artifact_path)/wateros ./kernel-rv-final-debug$(GDB_SUFFIX)
 
 rv_pre_run: kernel-rv-pre
 	$(call INFO, "运行 riscv64 初赛 bringup...")
-	@WOS_KERNEL=./kernel-rv-pre bash ./scripts/rv_pre_run.sh
+	@WOS_KERNEL=./kernel-rv-pre$(GDB_SUFFIX) bash ./scripts/rv_pre_run.sh
 
 rv_final_run: kernel-rv-final
 	$(call INFO, "运行 riscv64 决赛在线 bringup...")
-	@WOS_KERNEL=./kernel-rv-final bash ./scripts/rv_final_run.sh
+	@WOS_KERNEL=./kernel-rv-final$(GDB_SUFFIX) bash ./scripts/rv_final_run.sh
 rv_final_run_log: kernel-rv-final-log
 	$(call INFO, "运行 riscv64 决赛在线 bringup 并记录日志...")
-	@WOS_KERNEL=./kernel-rv-final-log \
+	@WOS_KERNEL=./kernel-rv-final-log$(GDB_SUFFIX) \
 		bash ./scripts/rv_final_run.sh 2>&1 | tee output.log
 rv_final_debug_run: kernel-rv-final-debug
 	$(call INFO, "运行带 dashboard 的 riscv64 决赛调试 bringup...")
-	@WOS_KERNEL=./kernel-rv-final-debug bash ./scripts/rv_final_run.sh
+	@WOS_KERNEL=./kernel-rv-final-debug$(GDB_SUFFIX) bash ./scripts/rv_final_run.sh
 
 kernel-rv-final-smp-test: version
 	$(call INFO, "构建 riscv64 决赛多核 MM 测试内核...")
-	@cargo build $(kernel_rv_final_smp_flag)
-	@cp $(kernel_rv_build_artifact_path)/wateros ./kernel-rv-final-smp-test
+	@$(cargo_build) $(kernel_rv_final_smp_flag)
+	@cp $(kernel_rv_build_artifact_path)/wateros ./kernel-rv-final-smp-test$(GDB_SUFFIX)
 
 rv_final_smp_test: kernel-rv-final-smp-test
 	$(call INFO, "运行 riscv64 决赛多核 MM 测试...")
-	@WOS_KERNEL=./kernel-rv-final-smp-test bash ./scripts/rv_final_run.sh
+	@WOS_KERNEL=./kernel-rv-final-smp-test$(GDB_SUFFIX) bash ./scripts/rv_final_run.sh
 
 # 兼容旧脚本调用：旧目标按初赛语义执行。
 rv_qemu_run: rv_pre_run
@@ -235,39 +249,41 @@ kernel-la-ltp-musl:
 
 kernel-la-pre: version
 	$(call INFO, "构建 loongarch64 初赛内核...")
-	@cargo build $(kernel_la_pre_flag)
-	@cp $(kernel_la_build_artifact_path)/wateros ./kernel-la-pre
+	@$(cargo_build) $(kernel_la_pre_flag)
+	@cp $(kernel_la_build_artifact_path)/wateros ./kernel-la-pre$(GDB_SUFFIX)
 
 kernel-la-final: version
 	$(call INFO, "构建 loongarch64 决赛在线内核...")
-	@cargo build $(kernel_la_final_flag)
-	@cp $(kernel_la_build_artifact_path)/wateros ./kernel-la-final
+	@$(cargo_build) $(kernel_la_final_flag)
+	@cp $(kernel_la_build_artifact_path)/wateros ./kernel-la-final$(GDB_SUFFIX)
 
 la_pre_run: kernel-la-pre
 	$(call INFO, "运行 loongarch64 初赛 bringup...")
-	@WOS_KERNEL=./kernel-la-pre bash ./scripts/la_pre_run.sh
+	@WOS_KERNEL=./kernel-la-pre$(GDB_SUFFIX) bash ./scripts/la_pre_run.sh
 
 la_final_run: kernel-la-final
 	$(call INFO, "运行 loongarch64 决赛在线 bringup...")
-	@WOS_KERNEL=./kernel-la-final bash ./scripts/la_final_run.sh
+	@WOS_KERNEL=./kernel-la-final$(GDB_SUFFIX) bash ./scripts/la_final_run.sh
 #make 2>&1 | tee output.log
 la_final_run_log: kernel-la-final
 	$(call INFO, "运行 loongarch64 决赛在线 bringup 并记录日志...")
-	@WOS_KERNEL=./kernel-la-final bash ./scripts/la_final_run.sh 2>&1 | tee output.log
+	@WOS_KERNEL=./kernel-la-final$(GDB_SUFFIX) bash ./scripts/la_final_run.sh 2>&1 | tee output.log
 
 # 所有真实运行目标共用同一个 GDB 后缀。默认传入 QEMU `-S`，因此调试器连接并
 # 执行 continue 前 guest 不会运行；GDB_WAIT=0 可用于对运行中的卡死现场采样。
 $(GDB_RUN_TARGETS):
 	$(call INFO, "以 GDB 模式运行 $(patsubst %-gdb,%,$@)，port=$(GDB_PORT) wait=$(GDB_WAIT)")
 	@$(MAKE) --no-print-directory $(patsubst %-gdb,%,$@) \
+		GDB_BUILD=1 \
 		WOS_QEMU_GDB=1 \
 		WOS_QEMU_GDB_WAIT=$(GDB_WAIT) \
-		WOS_QEMU_GDB_PORT=$(GDB_PORT)
+		WOS_QEMU_GDB_PORT=$(GDB_PORT) \
+		WOS_QEMU_SNAPSHOT=$${WOS_QEMU_SNAPSHOT:-1}
 
 la_gdb_snapshot:
 	@test -f "$(LA_GDB_ELF)" || \
 		(echo "找不到 ELF: $(LA_GDB_ELF)；请先构建对应 LA 内核" && exit 1)
-	@python3 ./scripts/gdb_remote_snapshot.py --arch la \
+	@python3 ./scripts/wateros_debug.py snapshot --arch la \
 		--elf "$(LA_GDB_ELF)" --port "$(GDB_PORT)"
 
 # 兼容旧脚本调用：旧目标按初赛语义执行。
@@ -304,12 +320,12 @@ la_symbol_at: kernel-la
 
 rv_check:
 	$(call INFO, "开始对 riscv 平台进行 cargo check ...")
-	@cargo check $(kernel_rv_flag)
+	@$(cargo_env) cargo check $(kernel_rv_flag)
 	$(call INFO, "对 riscv 平台的 cargo check 完成！")
 
 la_check:
 	$(call INFO, "开始对 loongarch64 平台进行 cargo check ...")
-	@cargo check $(kernel_la_flag)
+	@$(cargo_env) cargo check $(kernel_la_flag)
 	$(call INFO, "对 loongarch64 平台的 cargo check 完成！")
 
 # rv_link_app_asm:

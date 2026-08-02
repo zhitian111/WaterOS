@@ -11,6 +11,7 @@
     .section .text
     .globl __switch
 __switch:
+    .cfi_startproc
     sd sp, 8(a0)
     sd ra, 0(a0)
     .set n, 0
@@ -26,18 +27,28 @@ __switch:
         .set n, n + 1
     .endr
     ld sp, 8(a1)
+    # 新栈属于另一个任务，旧调用者不能再由普通 CFA 表达；切换完成后的真实
+    # 调用链从新上下文保存的 ra 继续。
+    .cfi_undefined ra
     ret
+    .cfi_endproc
 
     .globl __arch_task_entry
 __arch_task_entry:
+    .cfi_startproc
     mv a0, s0
     tail __wateros_arch_task_entry_trampoline
+    .cfi_endproc
 
     .globl __arch_user_task_entry
 __arch_user_task_entry:
+    .cfi_startproc
     tail __wateros_arch_user_task_entry_trampoline
+    .cfi_endproc
 
     .globl __wateros_arch_restore_user_task
 # a0 = `TrapContext*`（与 `trap.rs` #[repr(C)] 一致）；a1 = 下次用户态 trap 时使用的内核栈顶。
 __wateros_arch_restore_user_task:
+    .cfi_startproc
     tail __wateros_riscv_restore_user_from_frame
+    .cfi_endproc

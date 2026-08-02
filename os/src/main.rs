@@ -17,6 +17,8 @@ use syscall as _;
 mod boot_timebase;
 #[cfg(feature = "dashboard-debug")]
 mod dashboard;
+#[cfg(feature = "gdb-fault-injection")]
+mod debug_fault;
 #[cfg(feature = "stall-debug")]
 mod stall_debug;
 mod trap_handler;
