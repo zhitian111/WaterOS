@@ -9,6 +9,7 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec;
@@ -25,6 +26,7 @@ use spin::Mutex;
 
 const EXT4_SUPER_MAGIC : u16 = 0xEF53;
 const SUPERBLOCK_MAGIC_OFFSET : u64 = 1024 + 0x38;
+const LOOKUP_CACHE_CAPACITY : usize = 4096;
 
 fn map_error(error : Ext4Error) -> FsError {
     match error.code() {
@@ -129,10 +131,14 @@ fn parent_name(path : &str) -> FsResult<(&str, &str)> {
 
 pub struct AnotherExt4Fs {
     fs : Option<Ext4>,
+    lookup_cache : Mutex<BTreeMap<String, u32>>,
 }
 
 impl AnotherExt4Fs {
-    const fn new() -> Self { Self { fs : None } }
+    const fn new() -> Self {
+        Self { fs : None,
+               lookup_cache : Mutex::new(BTreeMap::new()) }
+    }
     fn get(&self) -> FsResult<&Ext4> {
         self.fs
             .as_ref()
@@ -142,19 +148,90 @@ impl AnotherExt4Fs {
     fn get_mut(&mut self) -> FsResult<&mut Ext4> {
         self.fs.as_mut().ok_or(FsError::NotMounted)
     }
+
+    fn lookup(&self, path : &str) -> FsResult<u32> {
+        if let Some(inode) = self.lookup_cache.lock().get(path).copied() {
+            return Ok(inode);
+        }
+        let inode = lookup(self.get()?, path)?;
+        let mut cache = self.lookup_cache.lock();
+        if cache.len() >= LOOKUP_CACHE_CAPACITY {
+            cache.clear();
+        }
+        cache.insert(String::from(path), inode);
+        Ok(inode)
+    }
+
+    fn cache_insert(&self, path : &str, inode : u32) {
+        let mut cache = self.lookup_cache.lock();
+        if cache.len() >= LOOKUP_CACHE_CAPACITY && !cache.contains_key(path) {
+            cache.clear();
+        }
+        cache.insert(String::from(path), inode);
+    }
+
+    fn cache_remove_subtree(&self, path : &str) {
+        let prefix = if path.ends_with('/') {
+            String::from(path)
+        } else {
+            let mut prefix = String::from(path);
+            prefix.push('/');
+            prefix
+        };
+        self.lookup_cache
+            .lock()
+            .retain(|cached, _| cached != path && !cached.starts_with(prefix.as_str()));
+    }
+
+    fn cache_rename_subtree(&self, old_path : &str, new_path : &str) {
+        let old_prefix = if old_path.ends_with('/') {
+            String::from(old_path)
+        } else {
+            let mut prefix = String::from(old_path);
+            prefix.push('/');
+            prefix
+        };
+        let new_prefix = if new_path.ends_with('/') {
+            String::from(new_path)
+        } else {
+            let mut prefix = String::from(new_path);
+            prefix.push('/');
+            prefix
+        };
+        let mut moved = Vec::new();
+        let mut cache = self.lookup_cache.lock();
+        cache.retain(|cached, inode| {
+            if cached == old_path {
+                moved.push((String::from(new_path), *inode));
+                return false;
+            }
+            if let Some(suffix) = cached.strip_prefix(old_prefix.as_str()) {
+                let mut renamed = String::from(new_path.trim_end_matches('/'));
+                renamed.push('/');
+                renamed.push_str(suffix);
+                moved.push((renamed, *inode));
+                return false;
+            }
+            cached != new_path && !cached.starts_with(new_prefix.as_str())
+        });
+        for (path, inode) in moved {
+            cache.insert(path, inode);
+        }
+    }
 }
 
 impl ReadOnlyFs for AnotherExt4Fs {
     fn mount(&mut self, device : SharedBlockDevice) -> FsResult<()> {
         let backend = Arc::new(BlockAdapter { device });
         self.fs = Some(Ext4::load(backend).map_err(map_error)?);
+        self.lookup_cache.lock().clear();
         Ok(())
     }
 
     fn is_mounted(&self) -> bool { self.fs.is_some() }
 
     fn exists(&self, path : &str) -> FsResult<bool> {
-        match lookup(self.get()?, path) {
+        match self.lookup(path) {
             Ok(_) => Ok(true),
             Err(FsError::NotFound) => Ok(false),
             Err(error) => Err(error),
@@ -162,20 +239,12 @@ impl ReadOnlyFs for AnotherExt4Fs {
     }
 
     fn metadata(&self, path : &str) -> FsResult<FsMetadata> {
-        metadata(self.get()?, lookup(self.get()?, path)?)
+        metadata(self.get()?, self.lookup(path)?)
     }
 
     fn read_range(&self, path : &str, offset : u64, buf : &mut [u8]) -> FsResult<usize> {
         let fs = self.get()?;
-        let inode = lookup(fs, path)?;
-        let attr = fs.getattr(inode)
-                     .map_err(map_error)?;
-        if map_type(attr.ftype) != FsNodeType::File {
-            return Err(FsError::NotAFile);
-        }
-        if offset > attr.size {
-            return Ok(0);
-        }
+        let inode = self.lookup(path)?;
         fs.read(inode, offset as usize, buf).map_err(|error| {
             log::error!("[fs::another-ext4] read failed path={} inode={} offset={} len={} code={:?}",
                         path,
@@ -200,7 +269,7 @@ impl ReadOnlyFs for AnotherExt4Fs {
 
     fn read_dir(&self, path : &str) -> FsResult<Vec<FsDirEntry>> {
         let fs = self.get()?;
-        let inode = lookup(fs, path)?;
+        let inode = self.lookup(path)?;
         let attr = fs.getattr(inode)
                      .map_err(map_error)?;
         if map_type(attr.ftype) != FsNodeType::Directory {
@@ -224,7 +293,7 @@ impl ReadOnlyFs for AnotherExt4Fs {
 
     fn read_symlink(&self, path : &str) -> FsResult<Vec<u8>> {
         let fs = self.get()?;
-        let inode = lookup(fs, path)?;
+        let inode = self.lookup(path)?;
         let attr = fs.getattr(inode)
                      .map_err(map_error)?;
         if map_type(attr.ftype) != FsNodeType::Symlink {
@@ -275,18 +344,21 @@ impl ReadWriteFs for AnotherExt4Fs {
 
     fn write_regular_file(&mut self, path : &str, data : &[u8]) -> FsResult<()> {
         let fs = self.get_mut()?;
-        let inode = match lookup(fs, path) {
-            Ok(inode) => inode,
-            Err(FsError::NotFound) => fs.generic_create(EXT4_ROOT_INO,
-                                                        path,
-                                                        InodeMode::FILE | InodeMode::ALL_RW)
-                                        .map_err(map_error)?,
+        let (inode, created) = match lookup(fs, path) {
+            Ok(inode) => (inode, false),
+            Err(FsError::NotFound) => (fs.generic_create(EXT4_ROOT_INO,
+                                                         path,
+                                                         InodeMode::FILE | InodeMode::ALL_RW)
+                                         .map_err(map_error)?, true),
             Err(error) => return Err(error),
         };
         fs.setattr(inode, None, None, None, Some(0), None, None, None, None)
           .map_err(map_error)?;
         fs.write(inode, 0, data).map_err(map_error)?;
         fs.flush_all();
+        if created {
+            self.cache_insert(path, inode);
+        }
         Ok(())
     }
 
@@ -298,6 +370,7 @@ impl ReadWriteFs for AnotherExt4Fs {
         }
         fs.generic_remove(EXT4_ROOT_INO, path).map_err(map_error)?;
         fs.flush_all();
+        self.cache_remove_subtree(path);
         Ok(())
     }
 
@@ -309,6 +382,7 @@ impl ReadWriteFs for AnotherExt4Fs {
         }
         fs.generic_remove(EXT4_ROOT_INO, path).map_err(map_error)?;
         fs.flush_all();
+        self.cache_remove_subtree(path);
         Ok(())
     }
 
@@ -336,9 +410,12 @@ impl ReadWriteFs for AnotherExt4Fs {
         }
         let (parent, name) = parent_name(path)?;
         let parent = lookup(fs, parent)?;
-        fs.mkdir(parent, name, InodeMode::DIRECTORY | InodeMode::from_bits_retain(mode as u16))
-          .map_err(map_error)?;
+        let inode = fs.mkdir(parent,
+                             name,
+                             InodeMode::DIRECTORY | InodeMode::from_bits_retain(mode as u16))
+                      .map_err(map_error)?;
         fs.flush_all();
+        self.cache_insert(path, inode);
         Ok(())
     }
 
@@ -371,9 +448,10 @@ impl ReadWriteFs for AnotherExt4Fs {
             FileType::CharacterDev | FileType::BlockDev if rdev == 0 => {}
             _ => return Err(FsError::Unsupported),
         }
-        fs.generic_create(EXT4_ROOT_INO, path, inode_mode)
-          .map_err(map_error)?;
+        let inode = fs.generic_create(EXT4_ROOT_INO, path, inode_mode)
+                      .map_err(map_error)?;
         fs.flush_all();
+        self.cache_insert(path, inode);
         Ok(())
     }
 
@@ -381,6 +459,7 @@ impl ReadWriteFs for AnotherExt4Fs {
         let fs = self.get_mut()?;
         fs.generic_rename(EXT4_ROOT_INO, old_path, new_path).map_err(map_error)?;
         fs.flush_all();
+        self.cache_rename_subtree(old_path, new_path);
         Ok(())
     }
 
@@ -406,6 +485,7 @@ impl ReadWriteFs for AnotherExt4Fs {
 
         fs.link(child, parent, name).map_err(map_error)?;
         fs.flush_all();
+        self.cache_insert(new_path, child);
         Ok(())
     }
 }
@@ -431,5 +511,44 @@ impl FsImpl for AnotherExt4Impl {
         let mut fs = AnotherExt4Fs::new();
         ReadWriteFs::mount_rw(&mut fs, device)?;
         Ok(Arc::new(Mutex::new(LocalRwFs::new(Box::new(fs)))))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AnotherExt4Fs;
+
+    #[test]
+    fn lookup_cache_rename_moves_only_source_subtree() {
+        let fs = AnotherExt4Fs::new();
+        fs.cache_insert("/src", 10);
+        fs.cache_insert("/src/child", 11);
+        fs.cache_insert("/dst/stale", 12);
+        fs.cache_insert("/unrelated", 13);
+
+        fs.cache_rename_subtree("/src", "/dst");
+
+        let cache = fs.lookup_cache.lock();
+        assert_eq!(cache.get("/dst"), Some(&10));
+        assert_eq!(cache.get("/dst/child"), Some(&11));
+        assert_eq!(cache.get("/unrelated"), Some(&13));
+        assert!(!cache.contains_key("/src"));
+        assert!(!cache.contains_key("/src/child"));
+        assert!(!cache.contains_key("/dst/stale"));
+    }
+
+    #[test]
+    fn lookup_cache_remove_invalidates_descendants_only() {
+        let fs = AnotherExt4Fs::new();
+        fs.cache_insert("/tmp/work", 20);
+        fs.cache_insert("/tmp/work/output", 21);
+        fs.cache_insert("/tmp/worker", 22);
+
+        fs.cache_remove_subtree("/tmp/work");
+
+        let cache = fs.lookup_cache.lock();
+        assert!(!cache.contains_key("/tmp/work"));
+        assert!(!cache.contains_key("/tmp/work/output"));
+        assert_eq!(cache.get("/tmp/worker"), Some(&22));
     }
 }

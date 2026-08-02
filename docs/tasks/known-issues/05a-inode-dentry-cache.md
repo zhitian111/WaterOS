@@ -26,6 +26,17 @@ fs.read(inode, offset as usize, buf)
 
 这在 page miss、stat/open 和顺序读中可能重复，但收益必须由 lookup 计数确认。
 
+## 当前进度（2026-08-02）
+
+已完成第一阶段：another-ext4 适配层使用容量为 4096 的 path→inode cache，覆盖
+mount、create、unlink/rmdir、rename、hardlink 和 mknod 的失效或迁移；range read
+命中后直接使用 inode 读取。final 工具链微基准中 `rustc --version` 从约 11 秒降至
+约 3.6 秒，详见
+[`results/k05a-path-inode-cache-phase1-20260802.md`](./results/k05a-path-inode-cache-phase1-20260802.md)。
+
+稳定 open-file object handle、unlink 后对象生命周期和 VFS bridge identity key 仍未完成，
+因此 K-05A 总任务保持开放。
+
 ## 涉及文件
 
 - `os/components/wateros-fs/fs-api/api-v0/src/lib.rs`
