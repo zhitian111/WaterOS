@@ -6,7 +6,7 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
-use alloc::collections::{BTreeMap, VecDeque};
+use alloc::collections::BTreeMap;
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -34,6 +34,8 @@ impl Default for BlockCacheConfig {
 struct Slot {
     lba: Option<Lba>,
     data: Vec<u8>,
+    prev: Option<usize>,
+    next: Option<usize>,
 }
 
 /// 写穿块缓存装饰器：[`read_blocks`] 命中则避免访问 `inner`；未命中合并读入并填入 LRU。
@@ -45,8 +47,9 @@ pub struct CachingBlockDevice {
     slots: Vec<Slot>,
     /// 空闲槽下标（仅 `capacity > 0` 时使用）。
     free: Vec<usize>,
-    /// 已占用槽的 LRU 顺序：前部最久未使用。
-    lru: VecDeque<usize>,
+    /// 已占用槽组成的双向链表；头部最久未使用，尾部最近使用。
+    lru_head: Option<usize>,
+    lru_tail: Option<usize>,
 }
 
 impl CachingBlockDevice {
@@ -62,6 +65,8 @@ impl CachingBlockDevice {
                 slots.push(Slot {
                     lba: None,
                     data: vec![0u8; block_size],
+                    prev: None,
+                    next: None,
                 });
             }
             free.extend((0..capacity).rev());
@@ -73,7 +78,8 @@ impl CachingBlockDevice {
             map: BTreeMap::new(),
             slots,
             free,
-            lru: VecDeque::new(),
+            lru_head: None,
+            lru_tail: None,
         }
     }
 
@@ -84,10 +90,36 @@ impl CachingBlockDevice {
     }
 
     fn touch_lru(&mut self, idx: usize) {
-        if let Some(p) = self.lru.iter().position(|&x| x == idx) {
-            self.lru.remove(p);
+        if self.lru_tail == Some(idx) {
+            return;
         }
-        self.lru.push_back(idx);
+        self.detach_lru(idx);
+        self.push_lru_back(idx);
+    }
+
+    fn detach_lru(&mut self, idx: usize) {
+        let prev = self.slots[idx].prev.take();
+        let next = self.slots[idx].next.take();
+        match prev {
+            Some(prev) => self.slots[prev].next = next,
+            None => self.lru_head = next,
+        }
+        match next {
+            Some(next) => self.slots[next].prev = prev,
+            None => self.lru_tail = prev,
+        }
+    }
+
+    fn push_lru_back(&mut self, idx: usize) {
+        debug_assert!(self.slots[idx].prev.is_none());
+        debug_assert!(self.slots[idx].next.is_none());
+        self.slots[idx].prev = self.lru_tail;
+        if let Some(tail) = self.lru_tail {
+            self.slots[tail].next = Some(idx);
+        } else {
+            self.lru_head = Some(idx);
+        }
+        self.lru_tail = Some(idx);
     }
 
     fn alloc_slot(&mut self) -> usize {
@@ -107,10 +139,11 @@ impl CachingBlockDevice {
     }
 
     fn evict_lru_slot(&mut self) -> DriverResult<usize> {
-        let Some(idx) = self.lru.pop_front() else {
+        let Some(idx) = self.lru_head else {
             log::warn!("[block-cache] evict_lru_slot: lru empty");
             return Err(DriverError::IoError);
         };
+        self.detach_lru(idx);
         let Some(lba) = self.slots[idx].lba.take() else {
             log::warn!("[block-cache] evict_lru_slot: slot {idx} unoccupied");
             return Err(DriverError::IoError);
@@ -121,10 +154,13 @@ impl CachingBlockDevice {
 
     fn reset_cache_invariant(&mut self) {
         self.map.clear();
-        self.lru.clear();
+        self.lru_head = None;
+        self.lru_tail = None;
         self.free.clear();
         for (i, slot) in self.slots.iter_mut().enumerate() {
             slot.lba = None;
+            slot.prev = None;
+            slot.next = None;
             self.free.push(i);
         }
     }
@@ -144,7 +180,7 @@ impl CachingBlockDevice {
         self.slots[idx].lba = Some(lba);
         self.slots[idx].data.copy_from_slice(block);
         self.map.insert(lba, idx);
-        self.lru.push_back(idx);
+        self.push_lru_back(idx);
     }
 
     fn cache_copy_out(&mut self, lba: Lba, dst: &mut [u8]) -> bool {
@@ -308,6 +344,28 @@ mod tests {
         let mut buf = vec![0u8; bs * 3];
         cache.read_blocks(Lba(2), &mut buf).unwrap();
         assert_eq!(*reads.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn hit_refreshes_lru_before_eviction() {
+        let reads = Arc::new(Mutex::new(0));
+        let writes = Arc::new(Mutex::new(0));
+        let inner = Box::new(CountingMem::new(4, reads.clone(), writes));
+        let mut cache = CachingBlockDevice::new(
+            inner,
+            BlockCacheConfig { capacity_blocks: 2 },
+        );
+        let mut buf = vec![0u8; cache.block_size()];
+
+        cache.read_blocks(Lba(0), &mut buf).unwrap();
+        cache.read_blocks(Lba(1), &mut buf).unwrap();
+        cache.read_blocks(Lba(0), &mut buf).unwrap();
+        cache.read_blocks(Lba(2), &mut buf).unwrap();
+        cache.read_blocks(Lba(0), &mut buf).unwrap();
+        assert_eq!(*reads.lock().unwrap(), 3);
+
+        cache.read_blocks(Lba(1), &mut buf).unwrap();
+        assert_eq!(*reads.lock().unwrap(), 4);
     }
 
     #[test]
