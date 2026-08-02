@@ -448,8 +448,6 @@ pub const MREMAP_FIXED : usize = 2;
 pub const MREMAP_DONTUNMAP : usize = 4;
 const MREMAP_KNOWN : usize = MREMAP_MAYMOVE | MREMAP_FIXED | MREMAP_DONTUNMAP;
 
-const MREMAP_STACK_PERM : PagePerm = PagePerm(PagePerm::R.0 | PagePerm::W.0 | PagePerm::U.0);
-
 fn region_is_mapped<S : AddressSpaceOps>(aspace : &S,
                                          start : VirtAddr,
                                          end_exclusive : VirtAddr)
@@ -501,21 +499,23 @@ fn mremap_relocate<S, A>(aspace : &mut S,
                          old_start : VirtAddr,
                          old_end : VirtAddr,
                          new_size : usize,
-                         search_cursor : VirtAddr,
+                         new_base : VirtAddr,
+                         perm : PagePerm,
                          unmap_old : bool)
                          -> MmResult<VirtAddr>
     where S : AddressSpaceOps,
           A : PhysicalFrameAllocator<FrameId = PhysPageNum>
 {
-    let new_base = find_free_mmap_base(aspace, search_cursor, new_size)?;
     let new_end = mmap_map_end(new_base, new_size)?;
     map_zeroed_range_with_alloc(aspace,
                                 allocator,
                                 new_base,
                                 new_end,
-                                MREMAP_STACK_PERM)?;
-    let copy_len = old_end.0
-                          .saturating_sub(old_start.0);
+                                perm)?;
+    let copy_len = core::cmp::min(old_end.0
+                                         .saturating_sub(old_start.0),
+                                  new_end.0
+                                         .saturating_sub(new_base.0));
     copy_mapped_bytes(aspace, old_start, new_base, copy_len)?;
     if unmap_old {
         aspace.unmap_range_with_alloc(allocator, old_start, old_end)?;
@@ -531,7 +531,9 @@ pub fn mremap_range<S, A>(aspace : &mut S,
                           new_size : usize,
                           flags : usize,
                           new_address : VirtAddr,
-                          search_cursor : VirtAddr)
+                          relocation_base : VirtAddr,
+                          force_move : bool,
+                          perm : PagePerm)
                           -> MmResult<VirtAddr>
     where S : AddressSpaceOps,
           A : PhysicalFrameAllocator<FrameId = PhysPageNum>
@@ -540,6 +542,9 @@ pub fn mremap_range<S, A>(aspace : &mut S,
         return Err(MmError::InvalidAddress);
     }
     if flags & !MREMAP_KNOWN != 0 {
+        return Err(MmError::InvalidAddress);
+    }
+    if flags & MREMAP_FIXED != 0 && flags & MREMAP_MAYMOVE == 0 {
         return Err(MmError::InvalidAddress);
     }
     if flags & MREMAP_DONTUNMAP != 0 && flags & MREMAP_FIXED == 0 {
@@ -572,14 +577,19 @@ pub fn mremap_range<S, A>(aspace : &mut S,
                                            .checked_add(new_size)
                                            .ok_or(MmError::InvalidAddress)?).ceil_page()
                                                                             .start_addr();
+        if dest_start.0 < old_end.0 && dest_end.0 > old_start.0 {
+            return Err(MmError::InvalidAddress);
+        }
         aspace.unmap_range_with_alloc(allocator, dest_start, dest_end)?;
         map_zeroed_range_with_alloc(aspace,
                                     allocator,
                                     dest_start,
                                     dest_end,
-                                    MREMAP_STACK_PERM)?;
-        let copy_len = old_end.0
-                              .saturating_sub(old_start.0);
+                                    perm)?;
+        let copy_len = core::cmp::min(old_end.0
+                                             .saturating_sub(old_start.0),
+                                      dest_end.0
+                                              .saturating_sub(dest_start.0));
         copy_mapped_bytes(aspace, old_start, dest_start, copy_len)?;
         if flags & MREMAP_DONTUNMAP == 0 {
             aspace.unmap_range_with_alloc(allocator, old_start, old_end)?;
@@ -593,6 +603,20 @@ pub fn mremap_range<S, A>(aspace : &mut S,
             aspace.unmap_range_with_alloc(allocator, new_end, old_end)?;
         }
         return Ok(old_addr);
+    }
+
+    if force_move {
+        if flags & MREMAP_MAYMOVE == 0 {
+            return Err(MmError::InvalidAddress);
+        }
+        return mremap_relocate(aspace,
+                               allocator,
+                               old_start,
+                               old_end,
+                               new_size,
+                               relocation_base,
+                               perm,
+                               true);
     }
 
     let mut vpn = old_end.floor_page();
@@ -610,7 +634,8 @@ pub fn mremap_range<S, A>(aspace : &mut S,
                                    old_start,
                                    old_end,
                                    new_size,
-                                   search_cursor,
+                                   relocation_base,
+                                   perm,
                                    true);
         }
         vpn = VirtPageNum(vpn.0 + 1);
@@ -620,6 +645,6 @@ pub fn mremap_range<S, A>(aspace : &mut S,
                                 allocator,
                                 old_end,
                                 new_end,
-                                MREMAP_STACK_PERM)?;
+                                perm)?;
     Ok(old_addr)
 }

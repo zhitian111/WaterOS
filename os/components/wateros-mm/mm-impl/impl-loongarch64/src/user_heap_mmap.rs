@@ -18,10 +18,10 @@ use api_v0::mmap::{DemandPageLoader, MmapKind, MmapOps, MmapRequest, PageFaultAc
 use api_v0::perm::PagePerm;
 use impl_common::{
     map_range_from_backing, map_range_from_loader, map_zeroed_page_with_alloc,
-    map_zeroed_range_with_alloc, mmap_map_end, mremap_range, MREMAP_FIXED,
+    map_zeroed_range_with_alloc, mmap_map_end, mremap_range, MREMAP_FIXED, MREMAP_MAYMOVE,
 };
 
-use crate::pagetable::LoongArch64AddressSpace;
+use crate::pagetable::{LazyFileVma, LoongArch64AddressSpace};
 
 #[inline]
 fn fence_user_ptes() { platform::arch::paging::flush_address_space_translations(); }
@@ -495,6 +495,11 @@ impl MmapOps for LoongArch64AddressSpace {
                                                                  flags : usize,
                                                                  new_address : VirtAddr)
                                                                  -> MmResult<VirtAddr> {
+        if old_addr.0 % api_v0::addr::PAGE_SIZE != 0 || old_size == 0 {
+            return Err(MmError::InvalidAddress);
+        }
+        let old_start = old_addr.floor_page()
+                                .start_addr();
         let old_end = mmap_map_end(old_addr, old_size)?;
         if old_end.0 > crate::pagetable::USER_VA_LIMIT ||
            self.range_overlaps_stack(old_addr, old_end) ||
@@ -505,6 +510,9 @@ impl MmapOps for LoongArch64AddressSpace {
         if flags & MREMAP_FIXED != 0 {
             let end = mmap_map_end(new_address, new_size)?;
             self.validate_user_mapping_range(new_address, end)?;
+            if new_address.0 < old_end.0 && end.0 > old_start.0 {
+                return Err(MmError::InvalidAddress);
+            }
         } else {
             let end = mmap_map_end(old_addr, new_size)?;
             if end.0 > crate::pagetable::USER_VA_LIMIT ||
@@ -514,14 +522,100 @@ impl MmapOps for LoongArch64AddressSpace {
                 return Err(MmError::InvalidAddress);
             }
         }
-        mremap_range(self,
-                     allocator,
-                     old_addr,
-                     old_size,
-                     new_size,
-                     flags,
-                     new_address,
-                     self.mmap_anon_cursor)
+        let lazy_overlap = self.lazy_vma_overlaps(old_start, old_end);
+        let lazy_vma =
+            self.lazy_file_vmas
+                .iter()
+                .find(|vma| vma.start.0 == old_start.0 && vma.end.0 == old_end.0)
+                .map(|vma| {
+                    Ok::<LazyFileVma, MmError>(LazyFileVma { start : vma.start,
+                                                             end : vma.end,
+                                                             perm : vma.perm,
+                                                             file_offset : vma.file_offset,
+                                                             file_size : vma.file_size,
+                                                             loader : vma.loader
+                                                                         .duplicate_box()? })
+                })
+                .transpose()?;
+        if lazy_overlap && lazy_vma.is_none() {
+            return Err(MmError::Unsupported);
+        }
+        // Copying a shared mapping would break its physical-page identity.
+        if self.shared_anon_vma_overlaps(old_start, old_end) {
+            return Err(MmError::Unsupported);
+        }
+        let perm = match lazy_vma.as_ref() {
+            Some(vma) => vma.perm,
+            None => {
+                let perm = self.leaf_page_perm(old_start.floor_page())?
+                               .ok_or(MmError::NotMapped)?;
+                let mut vpn = old_start.floor_page();
+                let vpn_end = old_end.ceil_page();
+                while vpn.0 < vpn_end.0 {
+                    if self.leaf_page_perm(vpn)? != Some(perm) {
+                        return Err(MmError::Unsupported);
+                    }
+                    vpn = VirtPageNum(vpn.0 + 1);
+                }
+                perm
+            }
+        };
+        let requested_end = mmap_map_end(old_addr, new_size)?;
+        let mut force_move = flags & MREMAP_FIXED == 0 &&
+                             requested_end.0 > old_end.0 &&
+                             (self.lazy_vma_overlaps(old_end, requested_end) ||
+                              self.shared_anon_vma_overlaps(old_end, requested_end));
+        if flags & MREMAP_FIXED == 0 && requested_end.0 > old_end.0 && !force_move {
+            let mut vpn = old_end.floor_page();
+            let vpn_end = requested_end.ceil_page();
+            while vpn.0 < vpn_end.0 {
+                if self.translate_addr(vpn.start_addr())?
+                       .is_some()
+                {
+                    force_move = true;
+                    break;
+                }
+                vpn = VirtPageNum(vpn.0 + 1);
+            }
+        }
+        let relocation_base = if force_move && flags & MREMAP_MAYMOVE != 0
+        {
+            self.find_free_mmap_base_considering_vmas(self.mmap_anon_cursor, new_size)?
+        } else {
+            old_addr
+        };
+        let result = mremap_range(self,
+                                  allocator,
+                                  old_addr,
+                                  old_size,
+                                  new_size,
+                                  flags,
+                                  new_address,
+                                  relocation_base,
+                                  force_move,
+                                  perm)?;
+        let result_end = mmap_map_end(result, new_size)?;
+        let keep_old = flags & impl_common::MREMAP_DONTUNMAP != 0;
+        if let Some(mut vma) = lazy_vma {
+            if !keep_old {
+                self.remove_lazy_file_vmas(old_start, old_end)?;
+            }
+            self.remove_lazy_file_vmas(result, result_end)?;
+            vma.start = result;
+            vma.end = result_end;
+            self.register_lazy_file_vma(vma.start,
+                                        vma.end,
+                                        vma.perm,
+                                        vma.file_offset,
+                                        vma.file_size,
+                                        vma.loader)?;
+        } else if flags & MREMAP_FIXED != 0 {
+            self.remove_lazy_file_vmas(result, result_end)?;
+        }
+        if flags & MREMAP_FIXED != 0 {
+            self.remove_shared_anon_vmas(result, result_end);
+        }
+        Ok(result)
     }
 }
 

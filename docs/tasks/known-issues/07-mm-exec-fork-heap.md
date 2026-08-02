@@ -41,6 +41,9 @@ impl-tlsf = []
   `fork+/bin/sh` 与长期 fork/exit 退化只提供方向，不是当前 main 的充分证据。
 - RIO-02 会修改 user-copy fault progress，RIO-03 会修改 fork/dup OFD 共享；本任务
   不得并行定义冲突契约。
+- BuildStorm `rustc` 的一次稳定 SIGSEGV 已定位为 `mremap` 搬迁地址撞入未驻留 lazy
+  VMA，并完成双架构修复与初赛 `mremap01..06` 回归；完整 final 门禁仍待夜间验证，
+  见 [`k07-mremap-vma-relocation-20260802.md`](./results/k07-mremap-vma-relocation-20260802.md)。
 
 ## 涉及文件
 
