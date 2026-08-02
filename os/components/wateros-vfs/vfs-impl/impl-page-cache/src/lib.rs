@@ -926,7 +926,7 @@ impl GlobalFilePageCache {
                 let guard = entry.read();
                 guard.logical_size
             };
-            let version = loop {
+            loop {
                 if page_start >= logical_size || (page_off == 0 && chunk == FILE_PAGE_SIZE) {
                     self.install_zero_page(io, path, page_idx, map_err)?;
                 } else {
@@ -936,6 +936,9 @@ impl GlobalFilePageCache {
                                       logical_size,
                                       map_err)?;
                 }
+                // Publish frame data and file metadata together so eviction
+                // cannot discard an extending write using the old EOF.
+                let mut guard = entry.write();
                 let mut cache = self.state.lock();
                 let Some(&idx) = cache.index
                                       .get(&(self.file_key(path), page_idx))
@@ -947,16 +950,14 @@ impl GlobalFilePageCache {
                                                                                         chunk]);
                 let version = cache.mark_dirty(idx);
                 cache.touch_lru(idx);
-                break version;
-            };
-            let mut guard = entry.write();
-            guard.dirty_pages
-                 .insert(page_idx, version);
-            let end = pos + chunk as u64;
-            if end > guard.logical_size {
-                guard.logical_size = end;
+                guard.dirty_pages
+                     .insert(page_idx, version);
+                let end = pos + chunk as u64;
+                if end > guard.logical_size {
+                    guard.logical_size = end;
+                }
+                break;
             }
-            drop(guard);
             written += chunk;
             pos += chunk as u64;
         }
