@@ -16,7 +16,7 @@ use crate::epoll_fd::{
 use crate::poll_engine::{
     poll_revents_fd, PollDeadline, POLLIN, POLLNVAL, POLLOUT, POLLPRI,
 };
-use crate::user_copy::{copy_from_user_struct, copy_to_user_struct};
+use crate::user_copy::{copy_from_user, copy_to_user};
 use crate::vfs_util::vfs_error_to_errno;
 
 const FD_CLOEXEC: usize = 1;
@@ -76,7 +76,7 @@ pub(crate) fn sys_epoll_ctl(args: SyscallArgs) -> UserRet {
             if event_ptr == 0 {
                 return UserRet::from_error(ErrNo::EFAULT);
             }
-            let event = match copy_from_user_struct::<EpollEvent>(event_ptr) {
+            let event = match read_epoll_event(event_ptr) {
                 Ok(event) => event,
                 Err(err) => return UserRet::from_error(err),
             };
@@ -120,9 +120,6 @@ pub(crate) fn sys_epoll_ctl(args: SyscallArgs) -> UserRet {
             let mut guard = instance.lock();
             if !guard.interests.remove(&target_fd).is_some() {
                 return UserRet::from_error(ErrNo::ENOENT);
-            }
-            if event_ptr != 0 {
-                let _ = copy_from_user_struct::<EpollEvent>(event_ptr);
             }
             UserRet::from_success(0)
         }
@@ -176,6 +173,9 @@ fn do_epoll_wait(
     };
 
     loop {
+        if instance.lock().is_closed() {
+            return UserRet::from_error(ErrNo::EBADF);
+        }
         match scan_epoll_ready(&instance, events_ptr, maxevents) {
             Ok(0) => {}
             Ok(n) => return UserRet::from_success(n),
@@ -212,6 +212,15 @@ fn fd_is_pollable(fd: usize) -> bool {
     poll_revents_fd(fd, POLLIN | POLLOUT | POLLPRI) != POLLNVAL
 }
 
+fn read_epoll_event(ptr : usize) -> Result<EpollEvent, ErrNo> {
+    let mut bytes = [0; EpollEvent::ABI_SIZE];
+    let copied = copy_from_user(&mut bytes, ptr)?;
+    if copied != bytes.len() {
+        return Err(ErrNo::EFAULT);
+    }
+    Ok(EpollEvent::from_abi_bytes(&bytes))
+}
+
 fn scan_epoll_ready(
     instance: &alloc::sync::Arc<spin::Mutex<epoll_fd::EpollInstance>>,
     events_ptr: usize,
@@ -220,7 +229,7 @@ fn scan_epoll_ready(
     crate::poll_engine::drive_network_stack();
     let guard = instance.lock();
     let mut ready = 0usize;
-    let event_size = core::mem::size_of::<EpollEvent>();
+    let event_size = EpollEvent::ABI_SIZE;
 
     for (&fd, interest) in &guard.interests {
         if ready >= maxevents {
@@ -241,7 +250,10 @@ fn scan_epoll_ready(
             data: interest.data,
         };
         let ptr = events_ptr + ready * event_size;
-        copy_to_user_struct(ptr, &out)?;
+        let bytes = out.to_abi_bytes();
+        if copy_to_user(ptr, &bytes)? != bytes.len() {
+            return Err(ErrNo::EFAULT);
+        }
         ready += 1;
     }
     Ok(ready)

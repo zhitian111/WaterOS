@@ -5,7 +5,7 @@ extern crate alloc;
 
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use spin::Mutex;
 use vfs::api::{VfsIoHandle, VfsMetadata, VfsNodeType, VfsResult};
@@ -23,29 +23,39 @@ pub(crate) struct EpollInterest {
 }
 
 /// epoll 实例状态。
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 // 本结构代码由AI完成
 pub(crate) struct EpollInstance {
     pub interests : BTreeMap<usize, EpollInterest>,
     inode : u64,
+    handle_refs : AtomicUsize,
 }
 
 impl EpollInstance {
     pub(crate) fn new() -> Self {
         Self { interests : BTreeMap::new(),
-               inode : NEXT_EPOLL_INODE.fetch_add(1, Ordering::Relaxed) }
+               inode : NEXT_EPOLL_INODE.fetch_add(1, Ordering::Relaxed),
+               handle_refs : AtomicUsize::new(1) }
     }
+
+    pub(crate) fn is_closed(&self) -> bool { self.handle_refs.load(Ordering::Acquire) == 0 }
+
+    fn acquire_handle(&self) { self.handle_refs.fetch_add(1, Ordering::Relaxed); }
+
+    fn release_handle(&self) -> bool { self.handle_refs.fetch_sub(1, Ordering::AcqRel) == 1 }
 }
 
 /// epoll 匿名 fd 句柄。
 pub(crate) struct EpollHandle {
     inner : Arc<Mutex<EpollInstance>>,
+    closed : bool,
 }
 
 impl EpollHandle {
     pub(crate) fn new_pair() -> (Self, Arc<Mutex<EpollInstance>>) {
         let inner = Arc::new(Mutex::new(EpollInstance::new()));
-        (Self { inner : inner.clone() }, inner)
+        (Self { inner : inner.clone(),
+                closed : false }, inner)
     }
 }
 
@@ -68,14 +78,22 @@ impl VfsIoHandle for EpollHandle {
     }
 
     fn duplicate(&self) -> VfsResult<alloc::boxed::Box<dyn VfsIoHandle>> {
-        Ok(alloc::boxed::Box::new(Self { inner : self.inner.clone() }))
+        self.inner
+            .lock()
+            .acquire_handle();
+        Ok(alloc::boxed::Box::new(Self { inner : self.inner.clone(),
+                                         closed : false }))
     }
 
     fn close(&mut self) -> VfsResult<()> {
-        self.inner
-            .lock()
-            .interests
-            .clear();
+        if self.closed {
+            return Ok(());
+        }
+        self.closed = true;
+        let mut inner = self.inner.lock();
+        if inner.release_handle() {
+            inner.interests.clear();
+        }
         Ok(())
     }
 
@@ -253,11 +271,29 @@ pub(crate) const EPOLL_CTL_MOD : usize = 3;
 pub(crate) const EPOLL_VALID_EVENTS : u32 =
     EPOLLIN | EPOLLOUT | EPOLLPRI | EPOLLERR | EPOLLHUP | EPOLLRDHUP | EPOLLET | EPOLLONESHOT;
 
-#[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub(crate) struct EpollEvent {
     pub events : u32,
     pub data : u64,
+}
+
+impl EpollEvent {
+    /// Linux defines `epoll_event` as packed on all supported user ABIs.
+    pub(crate) const ABI_SIZE : usize = 12;
+
+    pub(crate) fn from_abi_bytes(bytes : &[u8; Self::ABI_SIZE]) -> Self {
+        Self { events : u32::from_ne_bytes(bytes[..4].try_into()
+                                                    .expect("epoll events width")),
+               data : u64::from_ne_bytes(bytes[4..].try_into()
+                                                   .expect("epoll data width")) }
+    }
+
+    pub(crate) fn to_abi_bytes(self) -> [u8; Self::ABI_SIZE] {
+        let mut bytes = [0; Self::ABI_SIZE];
+        bytes[..4].copy_from_slice(&self.events.to_ne_bytes());
+        bytes[4..].copy_from_slice(&self.data.to_ne_bytes());
+        bytes
+    }
 }
 
 // 本方法代码由AI完成
@@ -300,4 +336,37 @@ pub(crate) fn poll_to_epoll_events(revents : i16) -> u32 {
         events |= EPOLLHUP;
     }
     events
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EpollEvent;
+
+    #[test]
+    fn epoll_event_uses_linux_packed_abi() {
+        let event = EpollEvent { events : 0x8123_4567,
+                                 data : 0x0123_4567_89ab_cdef };
+        let bytes = event.to_abi_bytes();
+
+        assert_eq!(bytes.len(), 12);
+        assert_eq!(&bytes[..4], &event.events.to_ne_bytes());
+        assert_eq!(&bytes[4..], &event.data.to_ne_bytes());
+
+        let decoded = EpollEvent::from_abi_bytes(&bytes);
+        assert_eq!(decoded.events, event.events);
+        assert_eq!(decoded.data, event.data);
+    }
+
+    #[test]
+    fn epoll_instance_closes_after_last_handle() {
+        use vfs::api::VfsIoHandle;
+
+        let (mut first, instance) = super::EpollHandle::new_pair();
+        let mut second = first.duplicate().expect("duplicate epoll handle");
+
+        first.close().expect("close first handle");
+        assert!(!instance.lock().is_closed());
+        second.close().expect("close final handle");
+        assert!(instance.lock().is_closed());
+    }
 }

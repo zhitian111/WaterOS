@@ -69,16 +69,28 @@ fn fcntl_unknown_cmd(fd : usize) -> Result<usize, ErrNo> {
 
 fn fcntl_dupfd(fd : usize, minfd : usize) -> Result<usize, ErrNo> {
     let task_id = vfs::fd::current_task_id().map_err(vfs_error_to_errno)?;
+    let epoll = crate::epoll_fd::lookup(fd);
     let newfd = vfs::fd::dup_fd(fd, minfd).map_err(vfs_error_to_errno)?;
     crate::unix_sock::duplicate_registration(task_id, fd, newfd);
+    if let Some(instance) = epoll {
+        crate::epoll_fd::register(newfd, instance);
+    }
     Ok(newfd)
 }
 
 fn fcntl_dupfd_cloexec(fd : usize, minfd : usize) -> Result<usize, ErrNo> {
     let task_id = vfs::fd::current_task_id().map_err(vfs_error_to_errno)?;
+    let epoll = crate::epoll_fd::lookup(fd);
     let newfd = vfs::fd::dup_fd(fd, minfd).map_err(vfs_error_to_errno)?;
     crate::unix_sock::duplicate_registration(task_id, fd, newfd);
-    vfs::fd::set_fd_flags(newfd, FD_CLOEXEC).map_err(vfs_error_to_errno)?;
+    if let Some(instance) = epoll {
+        crate::epoll_fd::register(newfd, instance);
+    }
+    if let Err(error) = vfs::fd::set_fd_flags(newfd, FD_CLOEXEC) {
+        crate::epoll_fd::remove(newfd);
+        let _ = vfs::fd::close_fd(newfd);
+        return Err(vfs_error_to_errno(error));
+    }
     Ok(newfd)
 }
 
