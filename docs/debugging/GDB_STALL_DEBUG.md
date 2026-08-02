@@ -25,26 +25,26 @@ make rv_final_run_log
 ```
 
 启用 `stall-debug`，同时在本机 `127.0.0.1:1234` 开放 QEMU GDB Remote
-端口：
+端口，并在第一条指令前暂停：
 
 ```bash
-make rv_final_gdb_run
+make rv_final_run_log-gdb
 ```
 
-如果需要从第一条内核指令开始调试，可以让 QEMU 启动后立即暂停：
+如果要先运行到疑似卡死的位置，再连接调试器：
 
 ```bash
-make rv_final_gdb_wait
+make rv_final_run_log-gdb GDB_WAIT=0
 ```
 
-对应的底层开关如下：
+`-gdb` 是所有真实运行目标共用的后缀，对应参数如下：
 
-| 开关 | 作用 |
+| Make 参数 | 作用 |
 |------|------|
 | Cargo feature `stall-debug` | 编译 syscall/timer 原子采样和低频 watchdog；默认关闭 |
-| `WOS_QEMU_GDB=1` | 开放 GDB 端口，guest 仍正常运行 |
-| `WOS_QEMU_GDB_WAIT=1` | 开放 GDB 端口并传入 QEMU `-S`，连接前不运行 |
-| `WOS_QEMU_GDB_PORT=1235` | 修改监听端口，默认是 1234 |
+| `GDB_WAIT=1` | 默认值；传入 QEMU `-S`，连接并执行 `continue` 前不运行 |
+| `GDB_WAIT=0` | 开放端口后立即运行，适合采集运行中卡死现场 |
+| `GDB_PORT=1235` | 修改监听端口，默认是 1234 |
 
 也可以直接调用脚本：
 
@@ -58,18 +58,15 @@ bash ./scripts/rv_final_run.sh
 LoongArch 对应目标如下：
 
 ```bash
-# 初赛镜像：运行并开放 1234 端口
-make la_pre_gdb_run
+# 初赛镜像：暂停并等待连接
+make la_pre_run-gdb
 
-# 初赛镜像：停在第一条指令，连接后才运行
-make la_pre_gdb_wait
+# 初赛镜像：立即运行并开放端口
+make la_pre_run-gdb GDB_WAIT=0
 
-# 决赛镜像
-make la_final_gdb_run
-make la_final_gdb_wait
+# 决赛镜像：暂停并等待连接
+make la_final_run-gdb
 ```
-
-`make la_gdb_run` 和 `make la_gdb_wait` 当前是初赛目标的简写。
 
 `stall-debug` 只在连续多个采样周期没有 syscall 进展时打印：
 
@@ -107,7 +104,7 @@ Remote 协议。
 先在终端 A 启动：
 
 ```bash
-make rv_final_gdb_run
+make rv_final_run_log-gdb GDB_WAIT=0
 ```
 
 程序疑似卡死时，在终端 B 执行：
@@ -182,16 +179,20 @@ QEMU 返回的 LA 寄存器描述。典型现象是 `thread list` 可见 8 个 C
 
 ```bash
 # 终端 A
-make la_pre_gdb_run
+make la_pre_run-gdb
 
 # 终端 B
-make la_gdb
+loongarch64-linux-gnu-gdb ./kernel-la-pre \
+  -ex 'set architecture loongarch64' \
+  -ex 'target remote 127.0.0.1:1234'
 ```
 
-默认客户端是 `loongarch64-linux-gnu-gdb`。使用 multiarch GDB 或非默认端口：
+使用 multiarch GDB 或非默认端口：
 
 ```bash
-make la_gdb LA_GDB=gdb-multiarch GDB_PORT=1235
+gdb-multiarch ./kernel-la-pre \
+  -ex 'set architecture loongarch64' \
+  -ex 'target remote 127.0.0.1:1235'
 ```
 
 macOS 没有 LA GDB 时，使用仓库内的只读快照客户端：
@@ -213,7 +214,7 @@ make la_gdb_snapshot
 
 ```bash
 cd /Users/x/code/WaterOS/os
-make la_pre_gdb_run
+make la_pre_run-gdb GDB_WAIT=0
 ```
 
 等系统运行到疑似卡死的位置后，在终端 B 采集快照：
@@ -227,7 +228,7 @@ make la_gdb_snapshot
 
 ```bash
 # 终端 A
-make la_final_gdb_run
+make la_final_run-gdb GDB_WAIT=0
 
 # 终端 B
 make la_gdb_snapshot LA_GDB_ELF=./kernel-la-final
@@ -237,7 +238,7 @@ make la_gdb_snapshot LA_GDB_ELF=./kernel-la-final
 
 ```bash
 # 终端 A
-WOS_QEMU_GDB_PORT=1235 make la_pre_gdb_run
+make la_pre_run-gdb GDB_WAIT=0 GDB_PORT=1235
 
 # 终端 B
 make la_gdb_snapshot GDB_PORT=1235
@@ -620,10 +621,12 @@ Rust 泛型符号可能很长，直接按完整函数名下断点不方便。可
 (gdb) break *0x802e1022
 ```
 
-LoongArch 可直接通过 Makefile 连接：
+LoongArch 使用对应交叉 GDB 连接：
 
 ```bash
-make la_gdb
+loongarch64-linux-gnu-gdb ./kernel-la-pre \
+  -ex 'set architecture loongarch64' \
+  -ex 'target remote 127.0.0.1:1234'
 ```
 
 连接后常用寄存器名仍是 `pc`、`ra`、`sp`；部分 GDB 将 LA 通用寄存器显示为
@@ -663,13 +666,13 @@ lsof -nP -iTCP:1234 -sTCP:LISTEN
 换端口启动：
 
 ```bash
-WOS_QEMU_GDB_PORT=1235 make rv_final_gdb_run
+make rv_final_run_log-gdb GDB_WAIT=0 GDB_PORT=1235
 ```
 
 LA 同样适用：
 
 ```bash
-WOS_QEMU_GDB_PORT=1235 make la_pre_gdb_run
+make la_pre_run-gdb GDB_WAIT=0 GDB_PORT=1235
 make la_gdb_snapshot GDB_PORT=1235
 ```
 
@@ -682,6 +685,7 @@ make la_gdb_snapshot GDB_PORT=1235
 
 调试器连接或命中断点时 guest 是暂停的。执行 `continue` 才会恢复。
 
-### `rv_final_gdb_wait` 启动后没有任何内核输出
+### `*-gdb` 启动后没有任何内核输出
 
-这是预期行为：QEMU 使用了 `-S`。连接调试器后执行 `continue`。
+这是预期行为：`GDB_WAIT=1` 是默认值，QEMU 使用了 `-S`。连接调试器后执行
+`continue`；若不希望启动时暂停，追加 `GDB_WAIT=0`。

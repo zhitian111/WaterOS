@@ -94,7 +94,7 @@
 | 运行 | `rv_qemu_run` | 编译并 QEMU 运行 RISC-V（bring-up / 测例） |
 | 运行 | `la_qemu_run` | QEMU 运行 LoongArch |
 | 运行 | `rv_qemu_run_with_log` | RISC-V + QEMU int/cpu 日志 |
-| 调试 | `rv_qemu_gdb` / `rv_gdb` | GDB 调试 RISC-V |
+| 调试 | `<run-target>-gdb` | 开放 GDB 端口并暂停等待连接，例如 `rv_pre_run-gdb` |
 | 检查 | `rv_check` / `la_check` / `check` | cargo check（feature 已对齐） |
 | 分析 | `rv_elf_info` / `la_elf_info` | readelf 内核 ELF |
 | 维护 | `clean` | 清理构建产物 |
@@ -102,7 +102,8 @@
 | 维护 | `fmt` | taplo + rustfmt |
 | 其他 | `version` / `stat` | 版本与仓库统计 |
 
-底层脚本：`os/scripts/rv_qemu_run.sh`、`rv_qemu_run_with_log.sh`、`rv_qemu_gdb.sh` 等；修改 QEMU 参数时同步检查 `docs/tasks/run_testsuits_qemu.md` 中的环境说明。
+底层脚本：`os/scripts/rv_pre_run.sh`、`rv_final_run.sh`、`rv_qemu_run_with_log.sh`
+等；修改 QEMU 参数时同步检查 `docs/tasks/run_testsuits_qemu.md` 中的环境说明。
 
 要求：
 

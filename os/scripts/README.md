@@ -55,15 +55,15 @@ chmod +x ./scripts/*.sh
 | `make rv_symbol_at ADDR=0x80201234` | 查询 riscv64 内核地址所属符号 |
 | `make la_symbol_at ADDR=0x90001234` | 查询 loongarch64 内核地址所属符号 |
 | `make rv_final_run_log` | 启用 `stall-debug`，运行并保存 `output.log` |
-| `make rv_final_gdb_run` | 启用 `stall-debug` 并开放本机 GDB 端口 1234 |
-| `make rv_final_gdb_wait` | 同上，但 QEMU 启动后先暂停，等待调试器连接 |
-| `make la_pre_gdb_run` | LoongArch 初赛内核运行并开放 GDB 端口 1234 |
-| `make la_pre_gdb_wait` | LoongArch 初赛内核启动即暂停，等待调试器连接 |
-| `make la_final_gdb_run` | LoongArch 决赛内核运行并开放 GDB 端口 1234 |
-| `make la_final_gdb_wait` | LoongArch 决赛内核启动即暂停，等待调试器连接 |
-| `make la_gdb_run` / `make la_gdb_wait` | 当前分别是初赛两个目标的别名 |
-| `make la_gdb` | 用 LA GDB 连接端口 1234（可通过 `LA_GDB=` 覆盖客户端） |
+| `make rv_pre_run-gdb` | RISC-V 初赛内核开放 GDB 端口并暂停等待连接 |
+| `make rv_final_run_log-gdb` | `stall-debug` 内核开放 GDB 端口并保存串口日志 |
+| `make la_pre_run-gdb` | LoongArch 初赛内核开放 GDB 端口并暂停等待连接 |
+| `make la_final_run-gdb` | LoongArch 决赛内核开放 GDB 端口并暂停等待连接 |
 | `make la_gdb_snapshot` | 无需本机 GDB，抓取全部 LA vCPU 的 PC/RA/SP 并解析符号 |
+
+所有真实运行目标都支持 `-gdb` 后缀。默认 `GDB_WAIT=1`，QEMU 使用 `-S`；若要
+让系统先运行到卡死位置，再连接调试器，使用
+`make rv_final_run_log-gdb GDB_WAIT=0`。端口可通过 `GDB_PORT=1235` 修改。
 
 GDB/LLDB 的完整操作流程见
 [`docs/debugging/GDB_STALL_DEBUG.md`](../../docs/debugging/GDB_STALL_DEBUG.md)。

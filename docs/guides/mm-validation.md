@@ -67,7 +67,7 @@
 
 ### 深度诊断
 - `make rv_qemu_run_with_log`（收集 `qemu.log`）
-- `make rv_qemu_gdb` 与另一个终端 `make rv_gdb`，重点查看：
+- `make rv_pre_run-gdb` 启动后，在另一个终端连接 `127.0.0.1:1234`，重点查看：
   - `satp`
   - `scause`
   - `stval`

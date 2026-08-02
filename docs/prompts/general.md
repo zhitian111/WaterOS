@@ -40,7 +40,7 @@ cd os   # 工作目录固定为 os/
 | `make kernel-rv` | 编译 riscv64 内核，产物 `./kernel-rv` |
 | `make rv_qemu_run` | **编译并**在 QEMU 中运行 riscv64 内核（日常 bring-up / 测例首选） |
 | `make rv_qemu_run_with_log` | 运行并写 QEMU 调试日志 |
-| `make rv_qemu_gdb` / `make rv_gdb` | QEMU + GDB 调试 |
+| `make rv_pre_run-gdb` | QEMU 开放 GDB 端口并暂停等待连接；其他运行目标同样支持 `-gdb` |
 | `make rv_pc_watch` | PC 变动监视：仅当 PC 跳变时打印一行（符号 + 循环提示） |
 | `make rv_symbol_at ADDR=0x...` | 查询 riscv64 地址所属内核符号 |
 | `make rv_check` | `cargo check`（riscv64 feature 已配置） |

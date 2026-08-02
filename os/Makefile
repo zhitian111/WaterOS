@@ -1,15 +1,27 @@
 SHELL := /bin/bash
-.PHONY: version stat
+.DEFAULT_GOAL := help
+
 VERSION_BASE := 0.1.0
 STAGE := prototype
 BRANCH=$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
 BUILD_NUM = $(shell git rev-list --count HEAD 2>/dev/null || echo "0")
 
-.PHONY: clean check all all_start_info kernel configure fmt apply_features flush_img export
-.PHONY: rv_check rv_elf_info rv_obj_dump kernel-rv-pre kernel-rv-final kernel-rv-final-log kernel-rv-final-debug kernel-rv-final-smp-test rv_pre_run rv_final_run rv_final_run_log rv_final_gdb_run rv_final_gdb_wait rv_final_debug_run rv_final_smp_test rv_pre_run_snapshot rv_final_run_snapshot rv_qemu_run rv_qemu_run_snapshot rv_qemu_run_with_log rv_qemu_gdb rv_gdb
-.PHONY: rv_pc_watch rv_symbol_at
-.PHONY: la_check la_elf_info kernel-la-pre kernel-la-final la_pre_run la_final_run la_qemu_run la_symbol_at la_pc_watch la_pre_gdb_run la_pre_gdb_wait la_final_gdb_run la_final_gdb_wait la_gdb_run la_gdb_wait la_gdb la_gdb_snapshot
-.PHONY: rv_user_mode_bin
+RV_RUN_TARGETS := rv_pre_run rv_final_run rv_final_run_log \
+				  rv_final_debug_run rv_final_smp_test
+LA_RUN_TARGETS := la_pre_run la_final_run la_final_run_log
+DEBUGGABLE_RUN_TARGETS := $(RV_RUN_TARGETS) $(LA_RUN_TARGETS)
+GDB_RUN_TARGETS := $(addsuffix -gdb,$(DEBUGGABLE_RUN_TARGETS))
+
+.PHONY: help version stat clean check all all_start_info kernel configure fmt
+.PHONY: apply_features apply_features_la flush_img export rv_user_mode_bin
+.PHONY: rv_check rv_elf_info rv_obj_dump rv_pc_watch rv_symbol_at
+.PHONY: kernel-rv kernel-rv-pre kernel-rv-final kernel-rv-final-log
+.PHONY: kernel-rv-final-debug kernel-rv-final-smp-test kernel-rv-strip-image
+.PHONY: $(RV_RUN_TARGETS) $(GDB_RUN_TARGETS) rv_qemu_run rv_qemu_run_snapshot
+.PHONY: rv_qemu_run_with_log
+.PHONY: la_check la_elf_info la_symbol_at la_pc_watch la_gdb_snapshot
+.PHONY: kernel-la kernel-la-pre kernel-la-final $(LA_RUN_TARGETS)
+.PHONY: la_qemu_run la_qemu_run_snapshot
 COLOR_ANSI_RED := \033[31m
 COLOR_ANSI_GREEN := \033[32m
 COLOR_ANSI_YELLOW := \033[33m
@@ -58,8 +70,8 @@ kernel_la_final_flag := --release --target loongarch64-unknown-none \
 
 kernel_la_build_artifact_path := ./target/loongarch64-unknown-none/release
 GDB_PORT ?= 1234
+GDB_WAIT ?= 1
 LA_GDB_ELF ?= ./kernel-la-pre
-LA_GDB ?= loongarch64-linux-gnu-gdb
 
 define TRACE
 	@echo -e "$(COLOR_ANSI_PURPLE)[MAKEFILE]$(COLOR_ANSI_CLEAR)$(COLOR_ANSI_BLUE)\t[TRACE]\t$(1)$(COLOR_ANSI_CLEAR)"
@@ -74,6 +86,18 @@ define ERROR
 	@echo -e "$(COLOR_ANSI_PURPLE)[MAKEFILE]$(COLOR_ANSI_CLEAR)$(COLOR_ANSI_RED)\t[ERROR]\t$(1)	错误代码:$(2)$(COLOR_ANSI_CLEAR)"
 	@exit $$2
 endef
+
+help:
+	@echo "WaterOS 常用目标（在 os/ 目录执行）"
+	@echo "  make rv_pre_run                 构建并运行 RISC-V 初赛内核"
+	@echo "  make rv_final_run               构建并运行 RISC-V 决赛内核"
+	@echo "  make la_pre_run                 构建并运行 LoongArch 初赛内核"
+	@echo "  make la_final_run               构建并运行 LoongArch 决赛内核"
+	@echo "  make <run-target>-gdb           以 GDB 模式运行，默认暂停等待连接"
+	@echo "  make <run-target>-gdb GDB_WAIT=0  开放 GDB 端口但立即运行"
+	@echo "  make <run-target>-gdb GDB_PORT=1235 使用指定 GDB 端口"
+	@echo "  make rv_check / make la_check   检查对应架构"
+	@echo "  make rv_pc_watch / la_pc_watch  监视各架构 PC"
 
 
 version:
@@ -166,14 +190,6 @@ rv_final_run_log: kernel-rv-final-log
 	$(call INFO, "运行 riscv64 决赛在线 bringup 并记录日志...")
 	@WOS_KERNEL=./kernel-rv-final-log \
 		bash ./scripts/rv_final_run.sh 2>&1 | tee output.log
-rv_final_gdb_run: kernel-rv-final-log
-	$(call INFO, "运行带停滞诊断和 GDB 远程端口的 riscv64 决赛在线 bringup...")
-	@WOS_KERNEL=./kernel-rv-final-log WOS_QEMU_GDB=1 \
-		bash ./scripts/rv_final_run.sh 2>&1 | tee output.log
-rv_final_gdb_wait: kernel-rv-final-log
-	$(call INFO, "运行带停滞诊断的 riscv64 内核，等待 GDB 连接后再启动...")
-	@WOS_KERNEL=./kernel-rv-final-log WOS_QEMU_GDB_WAIT=1 \
-		bash ./scripts/rv_final_run.sh 2>&1 | tee output.log
 rv_final_debug_run: kernel-rv-final-debug
 	$(call INFO, "运行带 dashboard 的 riscv64 决赛调试 bringup...")
 	@WOS_KERNEL=./kernel-rv-final-debug bash ./scripts/rv_final_run.sh
@@ -239,36 +255,14 @@ la_final_run_log: kernel-la-final
 	$(call INFO, "运行 loongarch64 决赛在线 bringup 并记录日志...")
 	@WOS_KERNEL=./kernel-la-final bash ./scripts/la_final_run.sh 2>&1 | tee output.log
 
-la_pre_gdb_run: kernel-la-pre
-	$(call INFO, "运行带 GDB 远程端口的 loongarch64 初赛 bringup...")
-	@WOS_KERNEL=./kernel-la-pre WOS_QEMU_GDB=1 \
-		bash ./scripts/la_pre_run.sh
-
-la_pre_gdb_wait: kernel-la-pre
-	$(call INFO, "运行 loongarch64 初赛内核，等待 GDB 连接后再启动...")
-	@WOS_KERNEL=./kernel-la-pre WOS_QEMU_GDB_WAIT=1 \
-		bash ./scripts/la_pre_run.sh
-
-la_final_gdb_run: kernel-la-final
-	$(call INFO, "运行带 GDB 远程端口的 loongarch64 决赛在线 bringup...")
-	@WOS_KERNEL=./kernel-la-final WOS_QEMU_GDB=1 \
-		bash ./scripts/la_final_run.sh
-
-la_final_gdb_wait: kernel-la-final
-	$(call INFO, "运行 loongarch64 决赛在线内核，等待 GDB 连接后再启动...")
-	@WOS_KERNEL=./kernel-la-final WOS_QEMU_GDB_WAIT=1 \
-		bash ./scripts/la_final_run.sh
-
-# 当前 LoongArch 调试默认针对初赛镜像。
-la_gdb_run: la_pre_gdb_run
-la_gdb_wait: la_pre_gdb_wait
-
-la_gdb:
-	@command -v $(LA_GDB) >/dev/null 2>&1 || \
-		(echo "找不到 $(LA_GDB)；可用 LA_GDB=gdb-multiarch 覆盖，或运行 make la_gdb_snapshot" && exit 1)
-	@$(LA_GDB) $(LA_GDB_ELF) \
-		-ex 'set architecture loongarch64' \
-		-ex 'target remote 127.0.0.1:$(GDB_PORT)'
+# 所有真实运行目标共用同一个 GDB 后缀。默认传入 QEMU `-S`，因此调试器连接并
+# 执行 continue 前 guest 不会运行；GDB_WAIT=0 可用于对运行中的卡死现场采样。
+$(GDB_RUN_TARGETS):
+	$(call INFO, "以 GDB 模式运行 $(patsubst %-gdb,%,$@)，port=$(GDB_PORT) wait=$(GDB_WAIT)")
+	@$(MAKE) --no-print-directory $(patsubst %-gdb,%,$@) \
+		WOS_QEMU_GDB=1 \
+		WOS_QEMU_GDB_WAIT=$(GDB_WAIT) \
+		WOS_QEMU_GDB_PORT=$(GDB_PORT)
 
 la_gdb_snapshot:
 	@test -f "$(LA_GDB_ELF)" || \
@@ -288,18 +282,6 @@ rv_qemu_run_with_log: kernel-rv
 	$(call INFO, "开始运行 riscv64 内核...")
 	@bash ./scripts/rv_qemu_run_with_log.sh
 	$(call INFO, "riscv64 内核运行结束, 调试信息请见qemu.log")
-
-rv_qemu_gdb: kernel-rv
-	$(call INFO, "开始运行 riscv64 内核和 QEMU 的 GDB 服务...")
-	@bash ./scripts/rv_qemu_gdb.sh
-	$(call INFO, "riscv64 内核和 QEMU 的 GDB 服务运行已结束")
-rv_gdb: kernel-rv
-	$(call INFO, "开始运行 GDB 客户端调试 riscv64 内核...")
-	@riscv64-elf-gdb \
-		-ex 'file kernel-rv' \
-		-ex 'set arch riscv:riscv64' \
-		-ex 'target remote localhost:1234'
-	$(call INFO, "GDB 客户端及 riscv64 内核调试已结束...")
 
 rv_pc_watch: kernel-rv
 	$(call INFO, "riscv64 PC 变动监视（仅 PC 变化时打印）...")
