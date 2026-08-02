@@ -26,7 +26,7 @@ fs.read(inode, offset as usize, buf)
 
 这在 page miss、stat/open 和顺序读中可能重复，但收益必须由 lookup 计数确认。
 
-## 当前进度（2026-08-02）
+## 当前进度（2026-08-03）
 
 已完成第一阶段：another-ext4 适配层使用容量为 4096 的 path→inode cache，覆盖
 mount、create、unlink/rmdir、rename、hardlink 和 mknod 的失效或迁移；range read
@@ -34,8 +34,15 @@ mount、create、unlink/rmdir、rename、hardlink 和 mknod 的失效或迁移�
 约 3.6 秒，详见
 [`results/k05a-path-inode-cache-phase1-20260802.md`](./results/k05a-path-inode-cache-phase1-20260802.md)。
 
-稳定 open-file object handle、unlink 后对象生命周期和 VFS bridge identity key 仍未完成，
-因此 K-05A 总任务保持开放。
+稳定节点实现已经分三次独立提交完成：FS `api-v0` 契约、another-ext4 inode/open
+生命周期、VFS bridge identity page-cache key。打开句柄现在通过
+`(mount generation, mount identity, FsNodeId)` 区分对象；hardlink 共享缓存，unlink 和
+rename overwrite 后旧 fd 继续访问原 inode，稳定后端不再复制最大 16 MiB 的 detached
+缓冲。初赛和新版决赛镜像的 8 核定向回归及写后 `e2fsck -fn` 已通过，详见
+[`results/k05a-vfs-stable-node-20260803.md`](./results/k05a-vfs-stable-node-20260803.md)。
+
+实现闭环已经完成；K-05A 总任务仍保持开放，等待 BuildStorm/LTP 全量回归和三轮性能
+数据满足下方验收条件。
 
 ## 涉及文件
 

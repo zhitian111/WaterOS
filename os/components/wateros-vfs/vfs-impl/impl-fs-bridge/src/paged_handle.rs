@@ -27,34 +27,118 @@ use api_v0::{
 use impl_page_cache::{global_cache, PageCacheIo};
 use spin::Mutex;
 use wateros_base_config::fs::{FileIoMode, FILE_IO_MODE};
+use fs::{FsError, FsNodeId, SharedRwFs};
 
 use crate::read_lease::{try_zeroed, ReservationGuard, StagedReadLease};
-use crate::{map_fs_err, mount_table::{resolve_route, FsRoute}, root_rw, FsBridge};
+use crate::{map_fs_err, mount_table::{resolve_route, FsRoute, MountIdentity}, root_rw, FsBridge};
 
 /// detached 模式下单文件内核堆缓冲上限。
 // 本变量代码由AI完成
 const DETACHED_DATA_MAX : usize = 16 * 1024 * 1024;
 static NEXT_FLOCK_OWNER_ID : AtomicU64 = AtomicU64::new(1);
 
+struct StableNodeLease {
+    fs : SharedRwFs,
+    node : FsNodeId,
+    identity : MountIdentity,
+}
+
+impl StableNodeLease {
+    fn cache_key(&self) -> String {
+        alloc::format!("@node:{:016x}:{:016x}", self.identity.mount_id, self.node.raw())
+    }
+
+    fn metadata(&self) -> VfsResult<VfsMetadata> {
+        self.fs.lock()
+               .metadata_node(self.node)
+               .map(|meta| crate::map_meta(meta, self.identity))
+               .map_err(map_fs_err)
+    }
+
+    fn read_range(&self, offset : u64, buf : &mut [u8]) -> VfsResult<usize> {
+        self.fs.lock()
+               .read_range_node(self.node, offset, buf)
+               .map_err(map_fs_err)
+    }
+
+    fn write_range(&self, offset : u64, data : &[u8]) -> VfsResult<usize> {
+        let mut done = 0usize;
+        while done < data.len() {
+            let written = self.fs.lock()
+                                  .write_range_node(self.node,
+                                                    offset + done as u64,
+                                                    &data[done..])
+                                  .map_err(map_fs_err)?;
+            if written == 0 {
+                return Err(VfsError::Io);
+            }
+            done = done.checked_add(written).ok_or(VfsError::Io)?;
+        }
+        Ok(done)
+    }
+
+    fn truncate(&self, len : u64) -> VfsResult<()> {
+        self.fs.lock().truncate_node(self.node, len).map_err(map_fs_err)
+    }
+
+    fn sync(&self) -> VfsResult<()> { self.fs.lock().sync().map_err(map_fs_err) }
+}
+
+impl Drop for StableNodeLease {
+    fn drop(&mut self) {
+        if let Err(error) = self.fs.lock().close_node(self.node) {
+            log::warn!("[paged_handle] stable node close failed node={} mount={} err={error:?}",
+                       self.node.raw(),
+                       self.identity.mount_id);
+        }
+    }
+}
+
+fn open_stable_node(path : &str) -> VfsResult<Option<Arc<StableNodeLease>>> {
+    let (fs, rel, identity) = match resolve_route(path)? {
+        FsRoute::Root { abs, identity } => (root_rw()?, abs, identity),
+        FsRoute::AuxRw { fs, rel, identity, .. } => (fs, rel, identity),
+        FsRoute::AuxRo { .. } | FsRoute::PseudoProc { .. } | FsRoute::PseudoSecurity { .. } => {
+            return Ok(None);
+        }
+    };
+    let node = match fs.lock().open_node(rel.as_str()) {
+        Ok(node) => node,
+        Err(FsError::Unsupported) => return Ok(None),
+        Err(error) => return Err(map_fs_err(error)),
+    };
+    Ok(Some(Arc::new(StableNodeLease { fs, node, identity })))
+}
+
 struct DetachedState {
     detached : bool,
     path : String,
     data : Vec<u8>,
+    stable : Option<Arc<StableNodeLease>>,
+    cache_key : String,
 }
 
 type DetachedKey = (u64, String);
 static DETACHED_STATES : Mutex<BTreeMap<DetachedKey, Weak<Mutex<DetachedState>>>> =
     Mutex::new(BTreeMap::new());
 
-fn detached_state_for_open(mount_gen : u64, path : &str) -> Arc<Mutex<DetachedState>> {
+fn detached_state_for_open(mount_gen : u64,
+                           path : &str,
+                           stable : Option<Arc<StableNodeLease>>)
+                           -> Arc<Mutex<DetachedState>> {
     let key = (mount_gen, String::from(path));
     let mut states = DETACHED_STATES.lock();
     if let Some(state) = states.get(&key).and_then(Weak::upgrade) {
         return state;
     }
+    let cache_key = stable.as_ref()
+                          .map(|node| node.cache_key())
+                          .unwrap_or_else(|| String::from(path));
     let state = Arc::new(Mutex::new(DetachedState { detached : false,
                                                     path : String::from(path),
-                                                    data : Vec::new() }));
+                                                    data : Vec::new(),
+                                                    stable,
+                                                    cache_key }));
     states.insert(key, Arc::downgrade(&state));
     state
 }
@@ -62,15 +146,17 @@ fn detached_state_for_open(mount_gen : u64, path : &str) -> Arc<Mutex<DetachedSt
 pub(crate) struct PendingUnlinkDetach {
     key : DetachedKey,
     state : Arc<Mutex<DetachedState>>,
-    data : Vec<u8>,
+    data : Option<Vec<u8>>,
 }
 
 impl PendingUnlinkDetach {
     pub(crate) fn commit(self) {
         DETACHED_STATES.lock().remove(&self.key);
         let mut state = self.state.lock();
-        state.data = self.data;
-        state.detached = true;
+        if let Some(data) = self.data {
+            state.data = data;
+            state.detached = true;
+        }
     }
 }
 
@@ -91,12 +177,15 @@ pub(crate) fn commit_rename_state(old_path : &str,
     let mut target = target_state.as_ref().map(|state| state.lock());
     let mut source_state = source.as_ref().map(|source| source.lock());
     global_cache(mount_gen).finish_rename(old_path, new_path);
-    if let (Some(target), Some(data)) = (target.as_mut(), target_data.take()) {
+    if let (Some(target), Some(Some(data))) = (target.as_mut(), target_data.take()) {
         target.data = data;
         target.detached = true;
     }
     if let (Some(source), Some(source_state)) = (source.as_ref(), source_state.as_mut()) {
         source_state.path = String::from(new_path);
+        if source_state.stable.is_none() {
+            source_state.cache_key = String::from(new_path);
+        }
         states.insert(new_key, Arc::downgrade(&source));
     }
 }
@@ -119,16 +208,26 @@ pub(crate) fn prepare_unlink_detach(path : &str) -> VfsResult<Option<PendingUnli
         return Ok(None);
     }
 
-    let meta = FsBridge.metadata(path)?;
+    let (meta, cache_key, stable) = {
+        let state = state.lock();
+        let meta = match state.stable.as_ref() {
+            Some(node) => node.metadata()?,
+            None => FsBridge.metadata(path)?,
+        };
+        (meta, state.cache_key.clone(), state.stable.clone())
+    };
+    if stable.is_some() {
+        return Ok(Some(PendingUnlinkDetach { key, state, data : None }));
+    }
     let cache = global_cache(mount_gen);
-    let logical_size = cache.logical_size(path, meta.size);
+    let logical_size = cache.logical_size(cache_key.as_str(), meta.size);
     let len = usize::try_from(logical_size).map_err(|_| VfsError::Io)?;
     check_detached_len(len)?;
     let mut data = try_zeroed(len)?;
     if len != 0 {
-        let mut io = FsPageIo;
+        let mut io = FsPageIo::new(stable);
         let read = cache.read(&mut io,
-                              path,
+                              cache_key.as_str(),
                               logical_size,
                               0,
                               &mut data,
@@ -137,7 +236,7 @@ pub(crate) fn prepare_unlink_detach(path : &str) -> VfsResult<Option<PendingUnli
             return Err(VfsError::Io);
         }
     }
-    Ok(Some(PendingUnlinkDetach { key, state, data }))
+    Ok(Some(PendingUnlinkDetach { key, state, data : Some(data) }))
 }
 
 // 本方法代码由AI完成
@@ -163,18 +262,32 @@ fn grow_detached_data(buf : &mut Vec<u8>, new_len : usize) -> VfsResult<()> {
 }
 
 /// 页缓存 miss / flush 时下探根卷的 I/O 委托；ext4 锁在每次 `read_range`/`write_range` 内按需短持。
-pub(crate) struct FsPageIo;
+pub(crate) struct FsPageIo {
+    stable : Option<Arc<StableNodeLease>>,
+}
+
+impl FsPageIo {
+    pub(crate) const fn path() -> Self { Self { stable : None } }
+
+    fn new(stable : Option<Arc<StableNodeLease>>) -> Self { Self { stable } }
+}
 
 impl PageCacheIo for FsPageIo {
     type Error = VfsError;
 
 // 本方法代码由AI完成
     fn read_range(&self, path : &str, offset : u64, buf : &mut [u8]) -> Result<usize, VfsError> {
+        if let Some(node) = self.stable.as_ref() {
+            return node.read_range(offset, buf);
+        }
         FsBridge.read_range(path, offset, buf)
     }
 
 // 本方法代码由AI完成
     fn write_range(&mut self, path : &str, offset : u64, data : &[u8]) -> Result<usize, VfsError> {
+        if let Some(node) = self.stable.as_ref() {
+            return node.write_range(offset, data);
+        }
         match resolve_route(path)? {
             FsRoute::Root { abs, .. } => {
                 let n = normalize_absolute_path(abs.as_str())?;
@@ -223,8 +336,8 @@ impl Clone for PagedFileHandle {
 // 本方法代码由AI完成
     fn clone(&self) -> Self {
         if self.open_ref_held {
-            let path = self.active_path();
-            global_cache(self.mount_gen).acquire_open_ref(path.as_str());
+            let key = self.cache_key();
+            global_cache(self.mount_gen).acquire_open_ref(key.as_str());
         }
         Self { path : self.path.clone(),
                description : self.description.clone(),
@@ -254,24 +367,36 @@ impl PagedFileHandle {
         let want_write = flags.contains(VfsOpenFlags::WRITE);
         let mount_gen = fs::rootfs::active_impl::mount_generation();
         let cache = global_cache(mount_gen);
+        let stable = open_stable_node(path.as_str())?;
+        let detached = detached_state_for_open(mount_gen, path.as_str(), stable);
+        let (cache_key, stable) = {
+            let state = detached.lock();
+            (state.cache_key.clone(), state.stable.clone())
+        };
 
         let mut on_disk_size = meta.size;
         if flags.contains(VfsOpenFlags::TRUNC) && want_write {
-            crate::replace_file_contents(path.as_str(), &[])?;
-            meta = bridge.metadata(path.as_str())?;
-            cache.truncate(path.as_str(), 0);
+            match stable.as_ref() {
+                Some(node) => node.truncate(0)?,
+                None => crate::replace_file_contents(path.as_str(), &[])?,
+            }
+            meta = match stable.as_ref() {
+                Some(node) => node.metadata()?,
+                None => bridge.metadata(path.as_str())?,
+            };
+            cache.truncate(cache_key.as_str(), 0);
             on_disk_size = 0;
         }
 
         let mut offset = 0u64;
         if flags.contains(VfsOpenFlags::APPEND) {
-            offset = cache.logical_size(path.as_str(), on_disk_size);
+            offset = cache.logical_size(cache_key.as_str(), on_disk_size);
         }
 
         let mut meta = meta;
-        meta.size = cache.logical_size(path.as_str(), on_disk_size);
+        meta.size = cache.logical_size(cache_key.as_str(), on_disk_size);
 
-        cache.acquire_open_ref(path.as_str());
+        cache.acquire_open_ref(cache_key.as_str());
 
 // 本变量代码由AI完成
         const O_WRONLY : u32 = 1;
@@ -291,7 +416,6 @@ impl PagedFileHandle {
             status_flags |= O_APPEND;
         }
 
-        let detached = detached_state_for_open(mount_gen, path.as_str());
         Ok(Self { path,
                   description : Arc::new(VfsOpenDescriptionState::new(offset, status_flags)),
                   meta,
@@ -307,8 +431,8 @@ impl PagedFileHandle {
 // 本方法代码由AI完成
     fn release_open_ref_if_held(&mut self) {
         if self.open_ref_held {
-            let path = self.active_path();
-            global_cache(self.mount_gen).release_open_ref(path.as_str());
+            let key = self.cache_key();
+            global_cache(self.mount_gen).release_open_ref(key.as_str());
             self.open_ref_held = false;
         }
     }
@@ -323,16 +447,20 @@ impl PagedFileHandle {
             return Ok(());
         }
         let path = self.active_path();
-        let mut io = FsPageIo;
+        let key = self.cache_key();
+        let mut io = self.page_io();
         let cache = global_cache(self.mount_gen);
-        let had_dirty_pages = cache.dirty_page_count(path.as_str()) != 0;
+        let had_dirty_pages = cache.dirty_page_count(key.as_str()) != 0;
         match cache.flush(&mut io,
-                          path.as_str(),
+                          key.as_str(),
                           core::convert::identity)
         {
-            Ok(()) if had_dirty_pages => crate::sync_path_filesystem(path.as_str()),
+            Ok(()) if had_dirty_pages => match self.stable_node() {
+                Some(node) => node.sync(),
+                None => crate::sync_path_filesystem(path.as_str()),
+            },
             Ok(()) => Ok(()),
-            Err(VfsError::NotFound) => {
+            Err(VfsError::NotFound) if self.stable_node().is_none() => {
                 self.mark_detached();
                 Ok(())
             }
@@ -346,12 +474,25 @@ impl PagedFileHandle {
         if detached.detached {
             return detached.data.len() as u64;
         }
-        let path = detached.path.clone();
+        let key = detached.cache_key.clone();
+        let stable = detached.stable.clone();
         drop(detached);
-        global_cache(self.mount_gen).logical_size(path.as_str(), self.on_disk_size)
+        let backing_size = stable.as_ref()
+                                 .and_then(|node| node.metadata().ok())
+                                 .map(|meta| meta.size)
+                                 .unwrap_or(self.on_disk_size);
+        global_cache(self.mount_gen).logical_size(key.as_str(), backing_size)
     }
 
     fn active_path(&self) -> String { self.detached.lock().path.clone() }
+
+    fn cache_key(&self) -> String { self.detached.lock().cache_key.clone() }
+
+    fn stable_node(&self) -> Option<Arc<StableNodeLease>> {
+        self.detached.lock().stable.clone()
+    }
+
+    fn page_io(&self) -> FsPageIo { FsPageIo::new(self.stable_node()) }
 
     fn is_detached(&self) -> bool { self.detached.lock().detached }
 
@@ -394,8 +535,8 @@ impl PagedFileHandle {
 impl VfsIoHandle for PagedFileHandle {
     fn prepare_read(&mut self, max_len : usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
         let reservation = ReservationGuard::begin(self.description.clone())?;
-        let path = self.active_path();
-        global_cache(self.mount_gen).acquire_open_ref(path.as_str());
+        let key = self.cache_key();
+        global_cache(self.mount_gen).acquire_open_ref(key.as_str());
         Ok(Box::new(PagedPreparedRead {
             reservation : Some(reservation),
             mount_gen : self.mount_gen,
@@ -428,17 +569,17 @@ impl VfsIoHandle for PagedFileHandle {
                     offset,
                     buf.len(),
                     size);
-        let mut io = FsPageIo;
+        let mut io = self.page_io();
         let cache = global_cache(self.mount_gen);
-        let path = self.active_path();
+        let key = self.cache_key();
         let n = cache.read(&mut io,
-                           path.as_str(),
+                           key.as_str(),
                            size,
                            offset,
                            buf,
                            core::convert::identity)?;
         log::trace!("[paged_handle] read OK path={} offset={} n={}/{}",
-                    path,
+                    self.active_path(),
                     offset,
                     n,
                     buf.len());
@@ -467,18 +608,18 @@ impl VfsIoHandle for PagedFileHandle {
             return Ok(n);
         }
         let size = self.current_size();
-        let mut io = FsPageIo;
+        let mut io = self.page_io();
         let cache = global_cache(self.mount_gen);
-        let path = self.active_path();
+        let key = self.cache_key();
         let n = match cache.write(&mut io,
-                                  path.as_str(),
+                                  key.as_str(),
                                   size,
                                   offset,
                                   buf,
                                   core::convert::identity)
         {
             Ok(n) => n,
-            Err(VfsError::NotFound) => {
+            Err(VfsError::NotFound) if self.stable_node().is_none() => {
                 self.mark_detached();
                 let n = self.account_detached_write(offset, buf)?;
                 reservation.commit(n, n)?;
@@ -503,11 +644,11 @@ impl VfsIoHandle for PagedFileHandle {
         if self.is_detached() {
             return self.read_detached_at(offset, buf);
         }
-        let mut io = FsPageIo;
+        let mut io = self.page_io();
         let cache = global_cache(self.mount_gen);
-        let path = self.active_path();
+        let key = self.cache_key();
         let n = cache.read(&mut io,
-                           path.as_str(),
+                           key.as_str(),
                            size,
                            offset,
                            buf,
@@ -527,18 +668,18 @@ impl VfsIoHandle for PagedFileHandle {
             return self.account_detached_write(offset, buf);
         }
         let size = self.current_size();
-        let mut io = FsPageIo;
+        let mut io = self.page_io();
         let cache = global_cache(self.mount_gen);
-        let path = self.active_path();
+        let key = self.cache_key();
         let n = match cache.write(&mut io,
-                                  path.as_str(),
+                                  key.as_str(),
                                   size,
                                   offset,
                                   buf,
                                   core::convert::identity)
         {
             Ok(n) => n,
-            Err(VfsError::NotFound) => {
+            Err(VfsError::NotFound) if self.stable_node().is_none() => {
                 self.mark_detached();
                 return self.account_detached_write(offset, buf);
             }
@@ -562,9 +703,12 @@ impl VfsIoHandle for PagedFileHandle {
 // 本方法代码由AI完成
     fn metadata(&self) -> VfsResult<VfsMetadata> {
         let path = self.active_path();
-        let mut m = match FsBridge.metadata(path.as_str()) {
-            Ok(meta) => meta,
-            Err(_) => self.meta.clone(),
+        let mut m = match self.stable_node() {
+            Some(node) if !self.is_detached() => node.metadata().unwrap_or_else(|_| self.meta.clone()),
+            _ => match FsBridge.metadata(path.as_str()) {
+                Ok(meta) => meta,
+                Err(_) => self.meta.clone(),
+            },
         };
         m.size = self.current_size();
         Ok(m)
@@ -625,32 +769,35 @@ impl VfsIoHandle for PagedFileHandle {
             }
         }
         if !self.is_detached() {
-            let path = self.active_path();
-            let n = normalize_absolute_path(path.as_str())?;
-            match resolve_route(path.as_str())? {
-                FsRoute::Root { .. } => {
-                    match root_rw()?.lock().truncate(n.as_str(), len).map_err(map_fs_err) {
-                        Ok(()) => {}
-                        Err(VfsError::NotFound) => self.mark_detached(),
-                        Err(e) => return Err(e),
+            if let Some(node) = self.stable_node() {
+                node.truncate(len)?;
+            } else {
+                let path = self.active_path();
+                let n = normalize_absolute_path(path.as_str())?;
+                match resolve_route(path.as_str())? {
+                    FsRoute::Root { .. } => {
+                        match root_rw()?.lock().truncate(n.as_str(), len).map_err(map_fs_err) {
+                            Ok(()) => {}
+                            Err(VfsError::NotFound) => self.mark_detached(),
+                            Err(e) => return Err(e),
+                        }
                     }
-                }
-                FsRoute::AuxRw { fs, rel, .. } => {
-                    match fs.lock().truncate(rel.as_str(), len).map_err(map_fs_err) {
-                        Ok(()) => {}
-                        Err(VfsError::NotFound) => self.mark_detached(),
-                        Err(e) => return Err(e),
+                    FsRoute::AuxRw { fs, rel, .. } => {
+                        match fs.lock().truncate(rel.as_str(), len).map_err(map_fs_err) {
+                            Ok(()) => {}
+                            Err(VfsError::NotFound) => self.mark_detached(),
+                            Err(e) => return Err(e),
+                        }
                     }
-                }
-                FsRoute::AuxRo { .. } | FsRoute::PseudoProc { .. } | FsRoute::PseudoSecurity { .. } => {
-                    return Err(VfsError::ReadOnlyFs);
+                    FsRoute::AuxRo { .. } | FsRoute::PseudoProc { .. } |
+                    FsRoute::PseudoSecurity { .. } => return Err(VfsError::ReadOnlyFs),
                 }
             }
         }
         let cache = global_cache(self.mount_gen);
         if !self.is_detached() {
-            let path = self.active_path();
-            cache.truncate(path.as_str(), len);
+            let key = self.cache_key();
+            cache.truncate(key.as_str(), len);
         }
         self.on_disk_size = len;
         self.meta.size = len;
@@ -730,19 +877,24 @@ impl VfsPreparedRead for PagedPreparedRead {
             staged.copy_from_slice(&detached.data[start..start + len]);
             (staged, len)
         } else {
-            let path = detached.path.clone();
+            let key = detached.cache_key.clone();
+            let stable = detached.stable.clone();
             drop(detached);
             let cache = global_cache(self.mount_gen);
-            let size = cache.logical_size(path.as_str(), self.on_disk_size);
+            let backing_size = stable.as_ref()
+                                     .and_then(|node| node.metadata().ok())
+                                     .map(|meta| meta.size)
+                                     .unwrap_or(self.on_disk_size);
+            let size = cache.logical_size(key.as_str(), backing_size);
             let available = size.saturating_sub(offset);
             let len = usize::try_from(available.min(self.max_len as u64)).map_err(|_| VfsError::Io)?;
             let mut staged = try_zeroed(len)?;
             let n = if len == 0 {
                 0
             } else {
-                let mut io = FsPageIo;
+                let mut io = FsPageIo::new(stable);
                 cache.read(&mut io,
-                           path.as_str(),
+                           key.as_str(),
                            size,
                            offset,
                            staged.as_mut_slice(),
@@ -759,8 +911,8 @@ impl VfsPreparedRead for PagedPreparedRead {
 impl Drop for PagedPreparedRead {
     fn drop(&mut self) {
         if self.open_ref_held {
-            let path = self.detached.lock().path.clone();
-            global_cache(self.mount_gen).release_open_ref(path.as_str());
+            let key = self.detached.lock().cache_key.clone();
+            global_cache(self.mount_gen).release_open_ref(key.as_str());
             self.open_ref_held = false;
         }
     }

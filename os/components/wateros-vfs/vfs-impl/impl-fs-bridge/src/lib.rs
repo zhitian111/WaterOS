@@ -602,7 +602,7 @@ pub fn unlink_path(path : &str, remove_dir : bool) -> VfsResult<()> {
 pub fn reset_file_page_cache() -> VfsResult<()> {
     let mount_gen = fs::rootfs::active_impl::mount_generation();
     let cache = impl_page_cache::global_cache(mount_gen);
-    let mut io = paged_handle::FsPageIo;
+    let mut io = paged_handle::FsPageIo::path();
     cache.flush_all(&mut io, core::convert::identity)?;
     root_rw()?.lock().sync().map_err(map_fs_err)?;
     impl_page_cache::reset_global_cache(mount_gen);
@@ -904,7 +904,7 @@ pub fn rename_path(old_path : &str, new_path : &str) -> VfsResult<()> {
     // a later eviction never tries to write a dirty page through the stale
     // source path and poison an unrelated cache miss.
     let cache = impl_page_cache::global_cache(fs::rootfs::active_impl::mount_generation());
-    let mut io = paged_handle::FsPageIo;
+    let mut io = paged_handle::FsPageIo::path();
     cache.flush(&mut io, old_path.as_str(), core::convert::identity)?;
     cache.flush(&mut io, new_path.as_str(), core::convert::identity)?;
 
