@@ -112,6 +112,22 @@ pub struct FsMetadata {
     pub gid: u32,
 }
 
+/// 文件系统实例内稳定的节点身份。
+///
+/// 该值只在创建它的挂载实例及对应 open/close 生命周期内有效。调用方必须同时保存
+/// mount generation，不得把它跨卸载复用。具体数值由实现解释，不泄漏后端 inode 类型。
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct FsNodeId(u64);
+
+impl FsNodeId {
+    /// 由文件系统实现构造实例内节点身份。
+    pub const fn new(raw: u64) -> Self { Self(raw) }
+
+    /// 返回用于缓存键和诊断的实例内数值；不能据此绕过文件系统方法访问节点。
+    pub const fn raw(self) -> u64 { self.0 }
+}
+
 /// 根卷文件 I/O 模式（与 `wateros-base-config::fs::FileIoMode` 对齐）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FsIoMode {
@@ -195,6 +211,55 @@ pub trait ReadWriteFs: Send {
     ///
     /// 具体文件的页缓存由 VFS 句柄先行写回；本方法负责文件系统及块缓存层。
     fn sync(&mut self) -> FsResult<()> {
+        Err(FsError::Unsupported)
+    }
+
+    /// 打开路径对应的稳定节点并持有一个后端 open 引用。
+    ///
+    /// 成功后调用方必须恰好调用一次 [`Self::close_node`]。rename 和 unlink 不得让该
+    /// identity 指向其它文件；实现不支持稳定节点时返回 [`FsError::Unsupported`]。
+    fn open_node(&mut self, path: &str) -> FsResult<FsNodeId> {
+        let _ = path;
+        Err(FsError::Unsupported)
+    }
+
+    /// 释放 [`Self::open_node`] 获取的后端 open 引用。
+    fn close_node(&mut self, node: FsNodeId) -> FsResult<()> {
+        let _ = node;
+        Err(FsError::Unsupported)
+    }
+
+    /// 按稳定节点身份查询元数据。
+    fn metadata_node(&self, node: FsNodeId) -> FsResult<FsMetadata> {
+        let _ = node;
+        Err(FsError::Unsupported)
+    }
+
+    /// 按稳定节点身份读取区间。
+    fn read_range_node(
+        &self,
+        node: FsNodeId,
+        offset: u64,
+        buf: &mut [u8],
+    ) -> FsResult<usize> {
+        let _ = (node, offset, buf);
+        Err(FsError::Unsupported)
+    }
+
+    /// 按稳定节点身份写入区间。
+    fn write_range_node(
+        &mut self,
+        node: FsNodeId,
+        offset: u64,
+        data: &[u8],
+    ) -> FsResult<usize> {
+        let _ = (node, offset, data);
+        Err(FsError::Unsupported)
+    }
+
+    /// 按稳定节点身份调整普通文件长度。
+    fn truncate_node(&mut self, node: FsNodeId, len: u64) -> FsResult<()> {
+        let _ = (node, len);
         Err(FsError::Unsupported)
     }
 
@@ -385,6 +450,40 @@ impl ReadWriteFs for LocalRwFs {
     fn is_mounted(&self) -> bool { self.deref().is_mounted() }
 
     fn sync(&mut self) -> FsResult<()> { self.deref_mut().sync() }
+
+    fn open_node(&mut self, path: &str) -> FsResult<FsNodeId> {
+        self.deref_mut().open_node(path)
+    }
+
+    fn close_node(&mut self, node: FsNodeId) -> FsResult<()> {
+        self.deref_mut().close_node(node)
+    }
+
+    fn metadata_node(&self, node: FsNodeId) -> FsResult<FsMetadata> {
+        self.deref().metadata_node(node)
+    }
+
+    fn read_range_node(
+        &self,
+        node: FsNodeId,
+        offset: u64,
+        buf: &mut [u8],
+    ) -> FsResult<usize> {
+        self.deref().read_range_node(node, offset, buf)
+    }
+
+    fn write_range_node(
+        &mut self,
+        node: FsNodeId,
+        offset: u64,
+        data: &[u8],
+    ) -> FsResult<usize> {
+        self.deref_mut().write_range_node(node, offset, data)
+    }
+
+    fn truncate_node(&mut self, node: FsNodeId, len: u64) -> FsResult<()> {
+        self.deref_mut().truncate_node(node, len)
+    }
 
     fn write_regular_file_at_root(&mut self, name: &str, data: &[u8]) -> FsResult<()> {
         self.deref_mut().write_regular_file_at_root(name, data)
