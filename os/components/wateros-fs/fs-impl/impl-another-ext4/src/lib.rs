@@ -18,8 +18,8 @@ use another_ext4::{
     Block, BlockDevice, ErrCode, Ext4, Ext4Error, FileType, InodeMode, BLOCK_SIZE, EXT4_ROOT_INO,
 };
 use api_v0::{
-    FsAccessMode, FsCapability, FsDirEntry, FsError, FsImpl, FsKind, FsMetadata, FsNodeType,
-    FsResult, LocalFs, LocalRwFs, ReadOnlyFs, ReadWriteFs, SharedFs, SharedRwFs,
+    FsAccessMode, FsCapability, FsDirEntry, FsError, FsImpl, FsKind, FsMetadata, FsNodeId,
+    FsNodeType, FsResult, LocalFs, LocalRwFs, ReadOnlyFs, ReadWriteFs, SharedFs, SharedRwFs,
 };
 use driver_block_api_v0::{Lba, SharedBlockDevice};
 use spin::Mutex;
@@ -27,6 +27,7 @@ use spin::Mutex;
 const EXT4_SUPER_MAGIC : u16 = 0xEF53;
 const SUPERBLOCK_MAGIC_OFFSET : u64 = 1024 + 0x38;
 const LOOKUP_CACHE_CAPACITY : usize = 4096;
+const OPEN_INODE_DIR : &str = "/.wateros-open-inodes";
 
 fn map_error(error : Ext4Error) -> FsError {
     match error.code() {
@@ -132,12 +133,18 @@ fn parent_name(path : &str) -> FsResult<(&str, &str)> {
 pub struct AnotherExt4Fs {
     fs : Option<Ext4>,
     lookup_cache : Mutex<BTreeMap<String, u32>>,
+    open_nodes : BTreeMap<u32, usize>,
+    orphan_nodes : BTreeMap<u32, String>,
+    orphan_dir : Option<u32>,
 }
 
 impl AnotherExt4Fs {
     const fn new() -> Self {
         Self { fs : None,
-               lookup_cache : Mutex::new(BTreeMap::new()) }
+               lookup_cache : Mutex::new(BTreeMap::new()),
+               open_nodes : BTreeMap::new(),
+               orphan_nodes : BTreeMap::new(),
+               orphan_dir : None }
     }
     fn get(&self) -> FsResult<&Ext4> {
         self.fs
@@ -218,6 +225,78 @@ impl AnotherExt4Fs {
             cache.insert(path, inode);
         }
     }
+
+    fn open_inode(&self, node : FsNodeId) -> FsResult<u32> {
+        let inode = u32::try_from(node.raw()).map_err(|_| FsError::InvalidPath)?;
+        self.open_nodes
+            .contains_key(&inode)
+            .then_some(inode)
+            .ok_or(FsError::NotFound)
+    }
+
+    fn cleanup_stale_orphans(&mut self) -> FsResult<()> {
+        let fs = self.get_mut()?;
+        let dir = match lookup(fs, OPEN_INODE_DIR) {
+            Ok(dir) => dir,
+            Err(FsError::NotFound) => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        if metadata(fs, dir)?.node_type != FsNodeType::Directory {
+            return Err(FsError::InvalidPath);
+        }
+        let names : Vec<String> = fs.listdir(dir)
+                                    .map_err(map_error)?
+                                    .into_iter()
+                                    .filter(|entry| {
+                                        let name = entry.name();
+                                        name != "." && name != ".." && !entry.unused()
+                                    })
+                                    .map(|entry| entry.name())
+                                    .collect();
+        let had_stale = !names.is_empty();
+        for name in names {
+            fs.unlink(dir, name.as_str()).map_err(map_error)?;
+        }
+        if had_stale {
+            fs.flush_all();
+        }
+        self.orphan_dir = Some(dir);
+        Ok(())
+    }
+
+    fn ensure_orphan_dir(&mut self) -> FsResult<u32> {
+        if let Some(dir) = self.orphan_dir {
+            return Ok(dir);
+        }
+        let fs = self.get_mut()?;
+        let dir = match lookup(fs, OPEN_INODE_DIR) {
+            Ok(dir) => dir,
+            Err(FsError::NotFound) => {
+                fs.mkdir(EXT4_ROOT_INO,
+                         OPEN_INODE_DIR.trim_start_matches('/'),
+                         InodeMode::DIRECTORY | InodeMode::from_bits_retain(0o700))
+                  .map_err(map_error)?
+            }
+            Err(error) => return Err(error),
+        };
+        if metadata(fs, dir)?.node_type != FsNodeType::Directory {
+            return Err(FsError::InvalidPath);
+        }
+        self.orphan_dir = Some(dir);
+        Ok(dir)
+    }
+
+    fn preserve_inode_if_open(&mut self, inode : u32) -> FsResult<()> {
+        if !self.open_nodes.contains_key(&inode) || self.orphan_nodes.contains_key(&inode) {
+            return Ok(());
+        }
+        let dir = self.ensure_orphan_dir()?;
+        let name = alloc::format!("{inode:08x}");
+        self.get_mut()?.link(inode, dir, name.as_str()).map_err(map_error)?;
+        self.get_mut()?.flush_all();
+        self.orphan_nodes.insert(inode, name);
+        Ok(())
+    }
 }
 
 impl ReadOnlyFs for AnotherExt4Fs {
@@ -225,6 +304,9 @@ impl ReadOnlyFs for AnotherExt4Fs {
         let backend = Arc::new(BlockAdapter { device });
         self.fs = Some(Ext4::load(backend).map_err(map_error)?);
         self.lookup_cache.lock().clear();
+        self.open_nodes.clear();
+        self.orphan_nodes.clear();
+        self.orphan_dir = None;
         Ok(())
     }
 
@@ -308,10 +390,72 @@ impl ReadOnlyFs for AnotherExt4Fs {
 }
 
 impl ReadWriteFs for AnotherExt4Fs {
-    fn mount_rw(&mut self, device : SharedBlockDevice) -> FsResult<()> { self.mount(device) }
+    fn mount_rw(&mut self, device : SharedBlockDevice) -> FsResult<()> {
+        self.mount(device)?;
+        self.cleanup_stale_orphans()
+    }
     fn is_mounted(&self) -> bool { self.fs.is_some() }
 
     fn sync(&mut self) -> FsResult<()> {
+        self.get_mut()?.flush_all();
+        Ok(())
+    }
+
+    fn open_node(&mut self, path : &str) -> FsResult<FsNodeId> {
+        let inode = self.lookup(path)?;
+        if metadata(self.get()?, inode)?.node_type != FsNodeType::File {
+            return Err(FsError::NotAFile);
+        }
+        let count = self.open_nodes.entry(inode).or_insert(0);
+        *count = count.checked_add(1).ok_or(FsError::NoSpace)?;
+        Ok(FsNodeId::new(inode as u64))
+    }
+
+    fn close_node(&mut self, node : FsNodeId) -> FsResult<()> {
+        let inode = self.open_inode(node)?;
+        let count = *self.open_nodes.get(&inode).ok_or(FsError::NotFound)?;
+        if count > 1 {
+            self.open_nodes.insert(inode, count - 1);
+            return Ok(());
+        }
+        if count == 0 {
+            return Err(FsError::Io);
+        }
+        if let Some(name) = self.orphan_nodes.get(&inode).cloned() {
+            let dir = self.orphan_dir.ok_or(FsError::Io)?;
+            self.get_mut()?.unlink(dir, name.as_str()).map_err(map_error)?;
+            self.get_mut()?.flush_all();
+            self.orphan_nodes.remove(&inode);
+        }
+        self.open_nodes.remove(&inode);
+        Ok(())
+    }
+
+    fn metadata_node(&self, node : FsNodeId) -> FsResult<FsMetadata> {
+        metadata(self.get()?, self.open_inode(node)?)
+    }
+
+    fn read_range_node(&self,
+                       node : FsNodeId,
+                       offset : u64,
+                       buf : &mut [u8])
+                       -> FsResult<usize> {
+        self.get()?.read(self.open_inode(node)?, offset as usize, buf).map_err(map_error)
+    }
+
+    fn write_range_node(&mut self,
+                        node : FsNodeId,
+                        offset : u64,
+                        data : &[u8])
+                        -> FsResult<usize> {
+        let inode = self.open_inode(node)?;
+        self.get_mut()?.write(inode, offset as usize, data).map_err(map_error)
+    }
+
+    fn truncate_node(&mut self, node : FsNodeId, len : u64) -> FsResult<()> {
+        let inode = self.open_inode(node)?;
+        self.get_mut()?.setattr(inode, None, None, None, Some(len), None, None, None, None)
+                       .map_err(map_error)?;
         self.get_mut()?.flush_all();
         Ok(())
     }
@@ -363,13 +507,13 @@ impl ReadWriteFs for AnotherExt4Fs {
     }
 
     fn unlink(&mut self, path : &str) -> FsResult<()> {
-        let fs = self.get_mut()?;
-        let inode = lookup(fs, path)?;
-        if metadata(fs, inode)?.node_type == FsNodeType::Directory {
+        let inode = self.lookup(path)?;
+        if metadata(self.get()?, inode)?.node_type == FsNodeType::Directory {
             return Err(FsError::NotAFile);
         }
-        fs.generic_remove(EXT4_ROOT_INO, path).map_err(map_error)?;
-        fs.flush_all();
+        self.preserve_inode_if_open(inode)?;
+        self.get_mut()?.generic_remove(EXT4_ROOT_INO, path).map_err(map_error)?;
+        self.get_mut()?.flush_all();
         self.cache_remove_subtree(path);
         Ok(())
     }
@@ -516,7 +660,7 @@ impl FsImpl for AnotherExt4Impl {
 
 #[cfg(test)]
 mod tests {
-    use super::AnotherExt4Fs;
+    use super::{AnotherExt4Fs, FsError, FsNodeId, ReadWriteFs};
 
     #[test]
     fn lookup_cache_rename_moves_only_source_subtree() {
@@ -535,6 +679,19 @@ mod tests {
         assert!(!cache.contains_key("/src"));
         assert!(!cache.contains_key("/src/child"));
         assert!(!cache.contains_key("/dst/stale"));
+    }
+
+    #[test]
+    fn stable_node_refcount_closes_exactly_once() {
+        let mut fs = AnotherExt4Fs::new();
+        fs.open_nodes.insert(42, 2);
+        let node = FsNodeId::new(42);
+
+        fs.close_node(node).unwrap();
+        assert_eq!(fs.open_nodes.get(&42), Some(&1));
+        fs.close_node(node).unwrap();
+        assert!(!fs.open_nodes.contains_key(&42));
+        assert_eq!(fs.close_node(node), Err(FsError::NotFound));
     }
 
     #[test]
