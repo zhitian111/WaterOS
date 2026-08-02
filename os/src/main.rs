@@ -44,6 +44,13 @@ pub fn alloc_error_handler(layout : core::alloc::Layout) -> ! {
 /// 网络协议栈轮询任务：周期性驱动 smoltcp 收发包。
 extern "C" fn network_poller_task(_arg : usize) -> ! {
     loop {
+        // NETWORK_STACK is a cross-CPU spin lock. Keep this kernel task from
+        // being switched out while it owns the lock: syscall callers enter
+        // with interrupts disabled and otherwise cannot yield while spinning.
+        let interrupt_state = platform::arch::interrupt::read_global_interrupt_state()
+            .expect("read interrupt state for network poll");
+        platform::arch::interrupt::disable_global_interrupt()
+            .expect("disable interrupts for network poll");
         match platform::timer::now_duration() {
             Ok(now) => {
                 let millis = now.as_millis()
@@ -53,6 +60,8 @@ extern "C" fn network_poller_task(_arg : usize) -> ! {
             Err(_) => driver::network::stack::poll(),
         }
         driver::network::stack::poll_socket_events();
+        platform::arch::interrupt::restore_global_interrupt_state(interrupt_state)
+            .expect("restore interrupts after network poll");
         task::sleep_for_ticks(1);
     }
 }
