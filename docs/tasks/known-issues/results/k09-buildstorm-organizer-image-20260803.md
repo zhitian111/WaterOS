@@ -5,6 +5,7 @@
 - 架构：RISC-V64，QEMU `virt`，8 hart，8 GiB RAM，OpenSBI。
 - 根镜像：主办方修订后的 `os/sdcard-rv-pub.img`。
 - 原始镜像 SHA-256：`61d1fb20a61d2af1bf2d1e7c8d0031eb0c867bb6599bd659b41465c7cf420926`。
+- LoongArch 镜像 SHA-256：`cf8660bdc216d3dd6c82f4b50cdc4271d1be6dc49eb647ccbb9a0f24f36ad245`。
 - 写盘方式：以原始镜像为只读 backing file 的 qcow2 覆盖盘。
 - 内核：`kernel-rv-final-log`，包含 `stall-debug`。
 
@@ -15,6 +16,7 @@
 3. BuildStorm 工具链检查、mini build 和 `tg-xtask` 预构建通过。
 4. 正式构建已越过此前发生 `SIGSEGV` 的 `compiler_builtins`，成功推进到最终 `arceos-helloworld` crate；未再出现 rustc `SIGSEGV`。
 5. 中止后对覆盖盘执行 `e2fsck -fn`，Pass 1 至 Pass 5 全部通过；仅报告 extent tree 可选压缩，无 inode、目录、块位图或 extent 结构错误。
+6. 主办方 LoongArch 原始镜像也通过 `e2fsck -fn` 全部五阶段检查，未发现结构错误；本轮未运行 LoongArch 全量 BuildStorm。
 
 因此，当前 BuildStorm 阻塞不能归因于镜像损坏或本轮文件系统写坏。页缓存稳定节点写回修复已在真实编译负载下保持文件系统一致性。
 
