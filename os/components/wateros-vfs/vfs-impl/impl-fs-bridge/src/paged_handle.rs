@@ -446,7 +446,7 @@ impl PagedFileHandle {
         if flags.contains(VfsOpenFlags::TRUNC) && want_write {
             match stable.as_ref() {
                 Some(node) => node.truncate(0)?,
-                None => crate::replace_file_contents(path.as_str(), &[])?,
+                None => crate::truncate_path(path.as_str(), 0)?,
             }
             meta = match stable.as_ref() {
                 Some(node) => node.metadata()?,

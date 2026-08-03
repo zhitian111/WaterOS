@@ -93,7 +93,7 @@ pub fn ensure_busybox_path_links() {
         /// 通过 PATH 误用另一套动态库；同时保留 /bin 兼容路径。
         /// `test` 不链到 `/glibc`/`/musl` 根：赛题 busybox 用例会 `mv test_dir test` 建目录。
         const APPLETS : &[&str] =
-            &["ls", "sleep", "basename", "cp", "mkdir", "rmdir", "cat", "grep", "awk", "cut",
+            &["sh", "ls", "sleep", "basename", "cp", "mkdir", "rmdir", "cat", "grep", "awk", "cut",
               "sed", "tr", "wc", "head", "tail", "sort", "uniq", "expr", "dirname", "readlink",
               "ln", "rm", "touch", "chmod", "chown", "mktemp", "printf", "test", "true", "false",
               "pwd", "env", "which", "id", "whoami", "groups", "date", "uname", "dd", "od",
