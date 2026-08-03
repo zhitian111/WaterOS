@@ -385,6 +385,10 @@ impl Inode {
         self.flags |= f;
     }
 
+    pub fn clear_flags(&mut self, f: u32) {
+        self.flags &= !f;
+    }
+
     pub fn xattr_block(&self) -> PBlockId {
         ((self.osd2.l_file_acl_hi as u64) << 32) | self.file_acl as u64
     }

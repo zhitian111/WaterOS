@@ -189,6 +189,32 @@ impl DirBlock {
         self.0.write_offset_as(tail_offset, &tail);
     }
 
+    /// Ensure the block ends with a normal ext4 directory checksum tail.
+    pub fn ensure_tail(&mut self) {
+        let tail_offset = BLOCK_SIZE - size_of::<DirEntryTail>();
+        let tail: DirEntryTail = self.0.read_offset_as(tail_offset);
+        if tail.reserved_zero1 == 0 &&
+           tail.rec_len == size_of::<DirEntryTail>() as u16 &&
+           tail.reserved_zero2 == 0 &&
+           tail.reserved_ft == 0xDE
+        {
+            return;
+        }
+
+        let mut offset = 0usize;
+        while offset < tail_offset {
+            let mut entry: DirEntry = self.0.read_offset_as(offset);
+            let next = offset.saturating_add(entry.rec_len as usize);
+            if entry.rec_len == 0 || next > tail_offset {
+                entry.rec_len = (tail_offset - offset) as u16;
+                self.0.write_offset_as(offset, &entry);
+                break;
+            }
+            offset = next;
+        }
+        self.0.write_offset_as(tail_offset, &DirEntryTail::new());
+    }
+
     /// Get a directory entry by name, return the inode id of the entry.
     pub fn get(&self, name: &str) -> Option<InodeId> {
         let mut offset = 0;

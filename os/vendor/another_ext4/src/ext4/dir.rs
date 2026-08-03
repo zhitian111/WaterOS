@@ -4,7 +4,28 @@ use crate::ext4_defs::*;
 use crate::prelude::*;
 use crate::return_error;
 
+const EXT4_INDEX_FL: u32 = 0x0000_1000;
+
 impl Ext4 {
+    fn dir_ensure_linear(&self, dir: &mut InodeRef) -> Result<()> {
+        if dir.inode.flags() & EXT4_INDEX_FL != 0 {
+            // The dx root occupies slack in ".."; linear insertion may only reuse
+            // that space after the inode no longer advertises an index.
+            let fblock = self.extent_query(dir, 0)?;
+            let mut block = DirBlock::new(self.read_block(fblock));
+            block.ensure_tail();
+            block.set_checksum(
+                &self.read_super_block().uuid(),
+                dir.id,
+                dir.inode.generation(),
+            );
+            self.write_block(block.block());
+            dir.inode.clear_flags(EXT4_INDEX_FL);
+            self.write_inode_with_csum(dir);
+        }
+        Ok(())
+    }
+
     pub(super) fn dir_ensure_entry_absent(&self, dir: &InodeRef, name: &str) -> Result<()> {
         match self.dir_find_entry(dir, name) {
             Ok(_) => {
@@ -59,6 +80,7 @@ impl Ext4 {
             name
         );
         self.dir_ensure_entry_absent(dir, name)?;
+        self.dir_ensure_linear(dir)?;
         let total_blocks = dir.inode.size().div_ceil(BLOCK_SIZE as u64) as u32;
         let mut iblock: LBlockId = 0;
         // Try finding a block with enough space
@@ -108,8 +130,9 @@ impl Ext4 {
     }
 
     /// Remove a entry from a directory
-    pub(super) fn dir_remove_entry(&self, dir: &InodeRef, name: &str) -> Result<()> {
+    pub(super) fn dir_remove_entry(&self, dir: &mut InodeRef, name: &str) -> Result<()> {
         trace!("Dir remove entry: dir {}, name {}", dir.id, name);
+        self.dir_ensure_linear(dir)?;
         let total_blocks = dir.inode.size().div_ceil(BLOCK_SIZE as u64) as u32;
         // Check each block
         let mut iblock: LBlockId = 0;
