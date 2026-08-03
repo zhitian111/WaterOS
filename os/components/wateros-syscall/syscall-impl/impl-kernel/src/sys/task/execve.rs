@@ -105,20 +105,13 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
 
     let (argc, argv_ptr, envp_ptr) = initial_entry_args(new_sp, final_argv_refs.len());
 
-    for exited in &killed_threads {
-        vfs::cwd::drop_task_cwd(exited.id);
-        vfs::mount_ns::drop_task_mount_ns(exited.id);
-        vfs::fd::drop_task_fd_table(exited.id);
-        crate::unix_sock::drop_task(exited.id);
-        cred::drop_task_cred(exited.id);
-    }
     crate::sys::ipc::signal::on_exec(current_signal_task, &killed_threads);
 
     let old_aspace = task::current_task_user_aspace_ptr();
     let current_tid = task::current_task_id().expect("execve requires a current task");
     super::super::shm::drop_task_attachments(current_tid, old_aspace);
     for exited in &killed_threads {
-        super::super::shm::drop_task_attachments(exited.id, old_aspace);
+        super::wait::drop_task_runtime_resources_with_aspace(exited.id, old_aspace);
     }
     mm::kernel_mm::drop_user_aspace(old_aspace);
 

@@ -156,7 +156,7 @@ pub(crate) fn drop_task_runtime_resources(task_id : task::TaskId) {
     drop_task_runtime_resources_with_aspace(task_id, aspace);
 }
 
-fn drop_task_runtime_resources_with_aspace(task_id : task::TaskId, aspace : usize) {
+pub(crate) fn drop_task_runtime_resources_with_aspace(task_id : task::TaskId, aspace : usize) {
     ipc::futex::cancel_task_wait(task_id);
     super::super::shm::drop_task_attachments(task_id, aspace);
     vfs::cwd::drop_task_cwd(task_id);
