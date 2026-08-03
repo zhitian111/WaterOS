@@ -75,22 +75,38 @@ pub(crate) fn sys_read(args : SyscallArgs) -> UserRet {
 }
 
 fn acquire_read_lease(fd : usize, transfer_len : usize) -> Result<Box<dyn VfsReadLease>, ErrNo> {
+    let socket_wait = socket_fd::lookup(fd).map(|_| {
+                                               (socket_fd::is_nonblocking(fd),
+                                                task::current_task_id().unwrap_or(0))
+                                           });
     let lease = loop {
+        if socket_wait.is_some() {
+            drive_network_stack();
+        }
         let prepared = match vfs::fd::prepare_current_read(fd, transfer_len) {
             Ok(prepared) => prepared,
             Err(VfsError::Busy) => {
-                task::yield_now();
+                wait_for_read_retry(socket_wait)?;
                 continue;
             }
             Err(error) => return Err(vfs_error_to_errno(error)),
         };
         match prepared.acquire() {
             Ok(lease) => break lease,
-            Err(VfsError::Busy) => task::yield_now(),
+            Err(VfsError::Busy) => wait_for_read_retry(socket_wait)?,
             Err(error) => return Err(vfs_error_to_errno(error)),
         }
     };
     Ok(lease)
+}
+
+fn wait_for_read_retry(socket_wait : Option<(bool, usize)>) -> Result<(), ErrNo> {
+    if let Some((nonblocking, task_id)) = socket_wait {
+        socket_blocking_tick(nonblocking, task_id)
+    } else {
+        task::yield_now();
+        Ok(())
+    }
 }
 
 fn finish_scattered_read(lease : Box<dyn VfsReadLease>, progress : UserWriteProgress) -> UserRet {
