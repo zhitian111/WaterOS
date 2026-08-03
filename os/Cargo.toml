@@ -12,6 +12,7 @@
     platform = { package = "wateros-platform", path = "./components/wateros-platform/", default-features = false }
     utils = { package = "wateros-utils", path = "./components/wateros-utils/", default-features = true }
     driver = { package = "wateros-driver", path = "./components/wateros-driver/", default-features = false, optional = true }
+    network = { package = "wateros-network", path = "./components/wateros-network/", default-features = true, optional = true }
     ipc = { package = "wateros-ipc", path = "./components/wateros-ipc/", default-features = false, optional = true }
     runtime = { package = "wateros-runtime", path = "./components/wateros-runtime/", default-features = false }
     mm = { package = "wateros-mm", path = "./components/wateros-mm/", default-features = false }
@@ -19,6 +20,7 @@
     syscall = { package = "wateros-syscall", path = "./components/wateros-syscall/", default-features = false }
     klog = { package = "wateros-klog", path = "./components/wateros-klog/", default-features = false, optional = true }
     task = { package = "wateros-task", path = "./components/wateros-task/", default-features = true }
+    debug = { package = "wateros-debug", path = "./components/wateros-debug/", default-features = false }
     fdt = { version = "0.1.5", optional = true }
 
 # 使用本地 vendor 的 ext4plus（修复了块分配器在 block group
@@ -34,6 +36,14 @@
 [profile.release]
     panic = "abort"
 
+# 保持 release 优化以复现时序问题，同时保留 GDB 所需的完整 DWARF。
+# frame pointer 由 Makefile 仅对 GDB 构建追加，避免改变普通 release。
+[profile.gdb]
+    inherits = "release"
+    debug = 2
+    strip = "none"
+    split-debuginfo = "off"
+
 [features]
     default = [ "qemu-riscv64-opensbi" ]
     # 比赛阶段决定根镜像中的用户态 bring-up 队列。
@@ -44,6 +54,10 @@
     stall-debug = [ "dep:ipc", "ipc/futex" ]
     # 整个顶部 dashboard（CPU、内存、文件描述符与 syscall 摘要）；默认关闭。
     dashboard-debug = [ "stall-debug", "dep:vfs" ]
+    # 版本化内存诊断区和无锁事件环；普通构建中 debug 记录接口为空操作。
+    gdb-debug = [ "debug/enabled", "stall-debug" ]
+    # 只供 GDB 诊断集成测试使用；通过导出变量确定性注入 loop/ABBA/timer/stall。
+    gdb-fault-injection = [ "gdb-debug" ]
     impl-sv39 = [ "mm/impl-sv39" ]
     qemu-loongarch64-virt = [
         "dep:cred",
@@ -51,6 +65,7 @@
         "dep:fdt",
         "dep:fs",
         "dep:ipc",
+        "dep:network",
         "driver/impl-block-cache",
         "driver/impl-qemu-loongarch64-virt",
         "ipc/all",
@@ -80,6 +95,7 @@
         "dep:fdt",
         "dep:fs",
         "dep:ipc",
+        "dep:network",
         "driver/impl-block-cache",
         "driver/impl-qemu-riscv64-opensbi",
         "ipc/all",

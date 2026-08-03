@@ -4,7 +4,7 @@
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
-use driver::network::stack;
+use network::stack;
 
 use crate::socket_fd;
 

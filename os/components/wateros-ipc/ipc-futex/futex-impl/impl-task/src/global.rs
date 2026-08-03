@@ -27,8 +27,27 @@ static REGISTRY : Mutex<FutexRegistry> = Mutex::new(FutexRegistry::new());
 /// LOCK: `f` 不得阻塞、调度、访问用户内存或重入本模块的公开 futex 接口，
 /// 否则可能形成 registry 锁重入或锁顺序问题。
 fn with_registry<R>(f : impl FnOnce(&mut FutexRegistry) -> R) -> R {
-    let mut registry = REGISTRY.lock();
-    f(&mut registry)
+    let cpu = arch::cpu::current_cpu_id().raw();
+    let object = &REGISTRY as *const _ as usize;
+    let mut registry = if debug::ENABLED {
+        if let Some(registry) = REGISTRY.try_lock() {
+            registry
+        } else {
+            debug::lock_wait(cpu,
+                             0,
+                             debug::NO_TASK,
+                             debug::DebugLockKind::FutexRegistry,
+                             object);
+            REGISTRY.lock()
+        }
+    } else {
+        REGISTRY.lock()
+    };
+    debug::lock_acquired(cpu, debug::DebugLockKind::FutexRegistry, object);
+    let result = f(&mut registry);
+    drop(registry);
+    debug::lock_released(cpu, debug::DebugLockKind::FutexRegistry, object);
+    result
 }
 
 /// 在 `key` 对应队列上等待，阻塞前通过 `condition` 再次确认用户态条件。
@@ -43,6 +62,13 @@ pub fn wait_while(task_id : TaskId,
                   timeout : Option<TaskTick>,
                   mut condition : impl FnMut() -> bool)
                   -> FutexWaitOutcome {
+    let cpu = arch::cpu::current_cpu_id().raw();
+    debug::record_event(cpu,
+                        0,
+                        task_id as u64,
+                        debug::DebugEventKind::FutexWait,
+                        0,
+                        [key.uaddr as u64, key.private_scope as u64, timeout.unwrap_or(u64::MAX)]);
     if !condition() {
         return FutexWaitOutcome::ConditionChanged;
     }
@@ -136,6 +162,12 @@ pub fn wake(key : FutexKey, max_wake : u32) -> usize {
         registry.record_wake(key, max_wake, woken);
         registry.release_queue(key);
     });
+    debug::record_event(arch::cpu::current_cpu_id().raw(),
+                        0,
+                        debug::NO_TASK,
+                        debug::DebugEventKind::FutexWake,
+                        0,
+                        [key.uaddr as u64, max_wake as u64, woken as u64]);
     woken
 }
 
@@ -158,6 +190,12 @@ pub fn wake_all(key : FutexKey) -> usize {
         registry.record_wake(key, u32::MAX, woken);
         registry.release_queue(key);
     });
+    debug::record_event(arch::cpu::current_cpu_id().raw(),
+                        0,
+                        debug::NO_TASK,
+                        debug::DebugEventKind::FutexWake,
+                        0,
+                        [key.uaddr as u64, u32::MAX as u64, woken as u64]);
     woken
 }
 

@@ -9,6 +9,8 @@
     log = "0.4"
     spin = "0.10.0"
     task-api = { path = "../../../../wateros-task/task-api/api-v0/", package = "wateros-task-api-v0", default-features = true }
+    arch = { path = "../../../../wateros-platform/platform-arch/", package = "wateros-platform-arch", default-features = false, features = ["api-v0"] }
+    debug = { path = "../../../../wateros-debug/", package = "wateros-debug", default-features = false }
 
 [profile.dev]
     panic = "abort"

@@ -3,14 +3,11 @@
 //! socket 不再维护第二张 fd 映射表；`dup`、`close`、`fork/clone` 的生命周期
 //! 统一由 VFS fd 表管理，避免多核下两张表分步更新产生不一致。
 
-use driver_network::{SocketRef, TcpListenerHandle, TcpStreamHandle, UdpSocketHandle};
+use network::{SocketRef, TcpSocketHandle, UdpSocketHandle};
 use vfs::VfsIoHandle;
 
 fn socket_ref(handle: &(dyn VfsIoHandle + '_)) -> Option<SocketRef> {
-    if let Some(handle) = handle.as_any().downcast_ref::<TcpStreamHandle>() {
-        return Some(handle.socket.clone());
-    }
-    if let Some(handle) = handle.as_any().downcast_ref::<TcpListenerHandle>() {
+    if let Some(handle) = handle.as_any().downcast_ref::<TcpSocketHandle>() {
         return Some(handle.socket.clone());
     }
     handle

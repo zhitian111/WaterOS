@@ -7,8 +7,8 @@ use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
 use alloc::boxed::Box;
-use driver::network::socket_handles::{SocketRef, TcpStreamHandle, UdpSocketHandle};
-use driver::network::stack;
+use network::socket_handles::{SocketRef, TcpSocketHandle, UdpSocketHandle};
+use network::stack;
 use vfs::api::handle::VfsIoHandle;
 
 const AF_INET: usize = 2;
@@ -75,7 +75,7 @@ pub(crate) fn sys_socket(args: SyscallArgs) -> UserRet {
     let socket_ref = SocketRef::new_with_status_flags(smoltcp_handle, status_flags);
 
     let io_handle: Box<dyn VfsIoHandle> = match typ {
-        SOCK_STREAM => Box::new(TcpStreamHandle {
+        SOCK_STREAM => Box::new(TcpSocketHandle {
             socket: socket_ref.clone(),
         }),
         SOCK_DGRAM => Box::new(UdpSocketHandle {

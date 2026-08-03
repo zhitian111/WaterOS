@@ -12,12 +12,14 @@ use core::sync::atomic::{AtomicU64, AtomicUsize};
 use api_v0::error::{MmError, MmResult};
 use wateros_base::sync::MultiprocessorSafeCell;
 use wateros_base_config::task::MAX_CPUS;
-use spin::Mutex;
 
 static TLB_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 static TLB_PENDING: [AtomicUsize; MAX_CPUS] = [const { AtomicUsize::new(0) }; MAX_CPUS];
 static TLB_COMPLETED: [AtomicUsize; MAX_CPUS] = [const { AtomicUsize::new(0) }; MAX_CPUS];
-static TLB_SHOOTDOWN_LOCK: Mutex<()> = Mutex::new(());
+fn debug_cpu_id() -> usize { platform::arch::cpu::current_cpu_id().raw() }
+
+static TLB_SHOOTDOWN_LOCK: debug::TrackedMutex<()> =
+    debug::TrackedMutex::new((), debug::DebugLockKind::AddressSpace, debug_cpu_id);
 
 use crate::pagetable::LoongArch64AddressSpace;
 
@@ -86,10 +88,17 @@ pub fn mark_inactive(_handle: usize, _cpu: wateros_base::cpu::CpuId) {
 /// syscall trap 期间全局中断处于关闭状态，不能直接无限自旋等待 shootdown
 /// 串行锁。等待锁时主动处理本 CPU 已发布的 TLB 请求，避免持锁 CPU 等待
 /// 当前 CPU 确认、当前 CPU 又等待该锁的环形死锁。
-fn lock_tlb_shootdown() -> spin::MutexGuard<'static, ()> {
+fn lock_tlb_shootdown() -> debug::TrackedMutexGuard<'static, ()> {
+    let mut reported_wait = false;
     loop {
         if let Some(guard) = TLB_SHOOTDOWN_LOCK.try_lock() {
             return guard;
+        }
+        if debug::ENABLED && !reported_wait {
+            let cpu = platform::arch::cpu::current_cpu_id().raw();
+            let (kind, object) = TLB_SHOOTDOWN_LOCK.debug_identity();
+            debug::lock_wait(cpu, 0, debug::NO_TASK, kind, object);
+            reported_wait = true;
         }
         let _ = handle_tlb_shootdown_ipi();
         core::hint::spin_loop();

@@ -11,10 +11,11 @@ use base::sync::MultiprocessorSafeCell;
 use config::task::MAX_CPUS;
 use core::mem::MaybeUninit;
 use core::panic::Location;
-use core::sync::atomic::{compiler_fence, AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use debug::{DebugEventKind, DebugLockKind};
 use task_api::{
-    CpuId, ExitedTask, KernelTaskEntry, Priority, TaskExitCode, TaskId, TaskSnapshot, TaskState,
-    TaskTick, TaskWaitResult, TaskWaitTarget, UserTask, WaitQueueId,
+    CpuId, ExitedTask, KernelTaskEntry, Priority, TaskExitCode, TaskId, TaskKind, TaskSnapshot,
+    TaskState, TaskTick, TaskWaitResult, TaskWaitTarget, UserTask, WaitQueueId,
 };
 
 mod scheduler;
@@ -59,17 +60,114 @@ fn scheduler_cell_inner(caller : &'static Location)
 fn scheduler_cell() -> &'static MultiprocessorSafeCell<MultiClassScheduler> {
     scheduler_cell_inner(Location::caller())
 }
+
+#[inline]
+fn publish_schedule_reason(cpu_id : CpuId, reason : u32) {
+    debug::update_cpu_state(cpu_id.raw(), |state| {
+        state.last_schedule_reason = reason;
+    });
+}
 // 在单调度器 cell 上取得独占引用并执行闭包；调用方已通过 `InterruptGuard`
 #[inline(never)]
 fn with_scheduler<R>(f : impl FnOnce(&mut MultiClassScheduler) -> R) -> R {
-    let mut scheduler = scheduler_cell().exclusive_access();
     let cpu_id = cpu::current_cpu_id();
+    let cell = scheduler_cell();
+    let lock_address = cell as *const _ as usize;
+    let mut scheduler = if debug::ENABLED {
+        if let Some(guard) = cell.try_lock() {
+            guard
+        } else {
+            debug::lock_wait(cpu_id.raw(),
+                             CURRENT_TICK.load(Ordering::Relaxed),
+                             CURRENT_TASK_IDS[cpu_id.raw()].load(Ordering::Relaxed) as u64,
+                             DebugLockKind::Scheduler,
+                             lock_address);
+            cell.exclusive_access()
+        }
+    } else {
+        // 关闭 GDB 诊断时保留原始加锁路径，避免为了探测 contention 增加一次
+        // `try_lock`，也确保普通 release 构建与诊断功能引入前语义一致。
+        cell.exclusive_access()
+    };
+    debug::lock_acquired(cpu_id.raw(), DebugLockKind::Scheduler, lock_address);
     let result = f(&mut scheduler);
     let current_task_id = scheduler.current_task_id(cpu_id)
                                    .unwrap_or(NO_CURRENT_TASK);
     CURRENT_TASK_IDS[cpu_id.raw()].store(current_task_id, Ordering::Release);
     CURRENT_TICK.store(scheduler.current_tick(),
                        Ordering::Release);
+    let diagnostic_snapshot = if debug::ENABLED {
+        scheduler.cpu_snapshot(cpu_id)
+                 .map(|cpu| (cpu, scheduler.current_task_snapshot(cpu_id)))
+    } else {
+        None
+    };
+    drop(scheduler);
+    debug::lock_released(cpu_id.raw(), DebugLockKind::Scheduler, lock_address);
+    if let Some((snapshot, task_snapshot)) = diagnostic_snapshot {
+        debug::update_cpu_state(cpu_id.raw(), |state| {
+            state.flags = (if snapshot.online { debug::DebugCpuState::FLAG_ONLINE } else { 0 }) |
+                          (if snapshot.current_is_idle {
+                               debug::DebugCpuState::FLAG_IDLE
+                           } else {
+                               0
+                           }) |
+                          (if snapshot.current_is_user {
+                               debug::DebugCpuState::FLAG_USER
+                           } else {
+                               0
+                           }) |
+                          (if snapshot.need_resched {
+                               debug::DebugCpuState::FLAG_NEED_RESCHED
+                           } else {
+                               0
+                           });
+            state.current_task = snapshot.current_task_id.unwrap_or(NO_CURRENT_TASK) as u64;
+            state.current_address_space = snapshot.current_address_space
+                                                  .map(|handle| handle.raw() as u64)
+                                                  .unwrap_or(0);
+            state.timer_ticks = snapshot.timer_ticks;
+            state.context_switches = snapshot.context_switches;
+            state.runnable = [snapshot.runnable_other as u32,
+                              snapshot.runnable_batch as u32,
+                              snapshot.runnable_fifo as u32,
+                              snapshot.runnable_rr as u32,
+                              snapshot.runnable_idle as u32];
+            if let Some(task) = task_snapshot {
+                state.task_kind = match task.kind {
+                    TaskKind::Kernel => 1,
+                    TaskKind::User => 2,
+                };
+                state.task_state = match task.state {
+                    TaskState::Ready => 1,
+                    TaskState::Running => 2,
+                    TaskState::Blocking(_) => 3,
+                    TaskState::Sleeping { .. } => 4,
+                    TaskState::Exited(_) => 5,
+                };
+                state.sched_policy = task.policy as u16;
+                state.nice = task.nice;
+                let (wait_kind, wait_value) = match task.state {
+                    TaskState::Blocking(TaskWaitTarget::WaitQueue(id)) => (1, id as u64),
+                    TaskState::Blocking(TaskWaitTarget::TaskExit(id)) => (2, id as u64),
+                    TaskState::Blocking(TaskWaitTarget::ChildExit(id)) => (3, id as u64),
+                    TaskState::Blocking(TaskWaitTarget::Manual) => (4, 0),
+                    TaskState::Sleeping { wake_tick } => (5, wake_tick),
+                    TaskState::Exited(code) => (6, code as i64 as u64),
+                    _ => (0, 0),
+                };
+                state.wait_kind = wait_kind;
+                state.wait_value = wait_value;
+            } else {
+                state.task_kind = 0;
+                state.task_state = 0;
+                state.sched_policy = 0;
+                state.wait_kind = 0;
+                state.wait_value = 0;
+                state.nice = 0;
+            }
+        });
+    }
     result
 }
 
@@ -89,6 +187,20 @@ fn dispatch_reschedules(targets : CpuMask, current_cpu_id : CpuId) {
     if local_requested {
         schedule_reschedule();
     }
+}
+
+#[inline]
+fn record_task_event(kind : DebugEventKind, task_id : TaskId, args : [u64; 3]) {
+    if !debug::ENABLED {
+        return;
+    }
+    let cpu_id = cpu::current_cpu_id();
+    debug::record_event(cpu_id.raw(),
+                        CURRENT_TICK.load(Ordering::Relaxed),
+                        task_id as u64,
+                        kind,
+                        0,
+                        args);
 }
 // ── 中断守卫 ──────────────────────────────────────────────────────
 // RAII：构造时关全局中断，drop 时恢复；包裹所有可能触碰就绪队列与 TCB
@@ -126,6 +238,13 @@ fn switch_and_unlock(guard : InterruptGuard, switch_pair : SwitchPair) {
     //
     // 保持中断关闭直至寄存器/栈都切换完成。首次进入的任务运行时会自行开
     // 中断；已运行过的任务恢复到此函数时，再恢复它保存的原中断状态。
+    let cpu_id = cpu::current_cpu_id();
+    debug::record_event(cpu_id.raw(),
+                        CURRENT_TICK.load(Ordering::Relaxed),
+                        CURRENT_TASK_IDS[cpu_id.raw()].load(Ordering::Relaxed) as u64,
+                        DebugEventKind::TaskSwitch,
+                        0,
+                        [switch_pair.0 as usize as u64, switch_pair.1 as usize as u64, 0]);
     unsafe {
         __switch(switch_pair.0, switch_pair.1);
     }
@@ -166,6 +285,7 @@ pub fn init() {
 /// 从引导上下文切换到第一个被选中的就绪任务
 pub fn run_first_task() -> ! {
     let guard = InterruptGuard::new();
+    publish_schedule_reason(current_cpu_id(), 1);
     let switch_pair = with_scheduler(|scheduler| scheduler.prepare_first_switch(current_cpu_id()));
     switch_and_unlock(guard, switch_pair);
     panic!("run_first_task_on_current_cpu must not return");
@@ -188,6 +308,7 @@ pub fn spawn_kernel_task(entry : KernelTaskEntry, arg : usize) -> TaskId {
         })
     };
     dispatch_reschedules(targets, cpu_id);
+    record_task_event(DebugEventKind::TaskEnqueue, task_id, [cpu_id.raw() as u64, 0, 0]);
     task_id
 }
 
@@ -209,6 +330,7 @@ pub fn spawn_user_task_spec(spec : UserTask) -> TaskId {
         })
     };
     dispatch_reschedules(targets, cpu_id);
+    record_task_event(DebugEventKind::TaskEnqueue, task_id, [cpu_id.raw() as u64, 0, 0]);
     task_id
 }
 
@@ -223,6 +345,7 @@ pub fn enqueue_ready_task(task_id : TaskId) {
         })
     };
     dispatch_reschedules(targets, cpu_id);
+    record_task_event(DebugEventKind::TaskEnqueue, task_id, [cpu_id.raw() as u64, 0, 0]);
 }
 
 /// 从当前用户任务 fork 子任务（仅登记 TCB，不入就绪队列）。
@@ -327,6 +450,7 @@ pub fn execve_current(entry_pc : usize,
 pub fn suspend_current_and_run_next() {
     let _guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
+    publish_schedule_reason(cpu_id, 2);
     let (switch_pair, targets) = with_scheduler(|scheduler| {
         let switch_pair = scheduler.schedule(ScheduleReason::Yield, cpu_id);
         let mut targets = scheduler.take_pending_reschedule_cpus();
@@ -347,6 +471,7 @@ pub fn suspend_current_and_run_next() {
 pub fn schedule_tick() {
     let guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
+    publish_schedule_reason(cpu_id, 4);
     let (switch_pair, targets) = with_scheduler(|scheduler| {
         let mut switch_pair = scheduler.schedule(ScheduleReason::Tick, cpu_id);
         let mut targets = scheduler.take_pending_reschedule_cpus();
@@ -371,6 +496,7 @@ pub fn schedule_tick() {
 pub fn schedule_reschedule() {
     let guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
+    publish_schedule_reason(cpu_id, 3);
     let (switch_pair, targets) = with_scheduler(|scheduler| {
         // boot code still executes on the firmware/early-kernel stack while
         // CPUState is only logically seeded with its idle task.  A local IPI
@@ -401,6 +527,8 @@ pub fn schedule_reschedule() {
 pub fn block_current(reason : TaskWaitTarget) {
     let guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
+    publish_schedule_reason(cpu_id, 5);
+    let blocked_task = CURRENT_TASK_IDS[cpu_id.raw()].load(Ordering::Acquire);
     let (switch_pair, targets) = with_scheduler(|scheduler| {
         let switch_pair = scheduler.schedule(ScheduleReason::Block(reason), cpu_id);
         let mut targets = scheduler.take_pending_reschedule_cpus();
@@ -411,6 +539,7 @@ pub fn block_current(reason : TaskWaitTarget) {
         (switch_pair, targets)
     });
     dispatch_reschedules(targets, cpu_id);
+    record_task_event(DebugEventKind::TaskBlock, blocked_task, [0, 0, 0]);
     if let Some(switch_pair) = switch_pair {
         switch_and_unlock(guard, switch_pair);
     }
@@ -420,6 +549,8 @@ pub fn block_current(reason : TaskWaitTarget) {
 pub fn sleep_current_for_ticks(ticks : TaskTick) -> TaskWaitResult {
     let guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
+    publish_schedule_reason(cpu_id, 6);
+    let sleeping_task = CURRENT_TASK_IDS[cpu_id.raw()].load(Ordering::Acquire);
     let (switch_pair, targets) = with_scheduler(|scheduler| {
         let switch_pair = scheduler.schedule(ScheduleReason::Sleep(ticks), cpu_id);
         let mut targets = scheduler.take_pending_reschedule_cpus();
@@ -430,6 +561,7 @@ pub fn sleep_current_for_ticks(ticks : TaskTick) -> TaskWaitResult {
         (switch_pair, targets)
     });
     dispatch_reschedules(targets, cpu_id);
+    record_task_event(DebugEventKind::TaskBlock, sleeping_task, [ticks, 0, 0]);
     finish_wait_after_switch(guard, switch_pair)
 }
 
@@ -437,6 +569,8 @@ pub fn sleep_current_for_ticks(ticks : TaskTick) -> TaskWaitResult {
 pub fn exit_current(exit_code : TaskExitCode) -> ! {
     let guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
+    publish_schedule_reason(cpu_id, 7);
+    let exited_task = CURRENT_TASK_IDS[cpu_id.raw()].load(Ordering::Acquire);
     let (switch_pair, targets) = with_scheduler(|scheduler| {
         let switch_pair = scheduler.schedule(ScheduleReason::Exit(exit_code), cpu_id);
         let mut targets = scheduler.take_pending_reschedule_cpus();
@@ -447,6 +581,7 @@ pub fn exit_current(exit_code : TaskExitCode) -> ! {
         (switch_pair, targets)
     });
     dispatch_reschedules(targets, cpu_id);
+    record_task_event(DebugEventKind::TaskExit, exited_task, [exit_code as u64, 0, 0]);
     match switch_pair {
         Some(switch_pair) => {
             switch_and_unlock(guard, switch_pair);
@@ -600,6 +735,9 @@ pub fn wake_task(task_id : TaskId) -> bool {
         })
     };
     dispatch_reschedules(targets, cpu_id);
+    if woken {
+        record_task_event(DebugEventKind::TaskWake, task_id, [0, 0, 0]);
+    }
     woken
 }
 
@@ -614,6 +752,9 @@ pub fn interrupt_task(task_id : TaskId) -> bool {
         })
     };
     dispatch_reschedules(targets, cpu_id);
+    if interrupted {
+        record_task_event(DebugEventKind::TaskWake, task_id, [1, 0, 0]);
+    }
     interrupted
 }
 
@@ -663,6 +804,11 @@ pub fn wake_one_in_wait_queue(wait_queue_id : WaitQueueId) -> Option<TaskId> {
         })
     };
     dispatch_reschedules(targets, cpu_id);
+    if let Some(task_id) = woken {
+        record_task_event(DebugEventKind::TaskWake,
+                          task_id,
+                          [wait_queue_id as u64, 0, 0]);
+    }
     woken
 }
 
@@ -678,6 +824,11 @@ pub fn wake_all_in_wait_queue(wait_queue_id : WaitQueueId) -> usize {
         })
     };
     dispatch_reschedules(targets, cpu_id);
+    if count != 0 {
+        record_task_event(DebugEventKind::TaskWake,
+                          NO_CURRENT_TASK,
+                          [wait_queue_id as u64, count as u64, 0]);
+    }
     count
 }
 
@@ -931,6 +1082,9 @@ pub fn request_task_reschedule(task_id : TaskId) {
 pub fn set_cpu_online(cpu_id : CpuId) {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.set_cpu_online(cpu_id));
+    debug::update_cpu_state(cpu_id.raw(), |state| {
+        state.flags |= debug::DebugCpuState::FLAG_ONLINE;
+    });
 }
 
 /// 指定唯一推进 sleep/wait 全局逻辑时间的 BSP。

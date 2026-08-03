@@ -5,8 +5,8 @@ use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
 use alloc::boxed::Box;
-use driver::network::socket_handles::{SocketRef, TcpStreamHandle};
-use driver::network::stack;
+use network::socket_handles::{SocketRef, TcpSocketHandle};
+use network::stack;
 use vfs::api::handle::VfsIoHandle;
 
 use crate::socket_block::socket_blocking_tick;
@@ -81,7 +81,7 @@ fn accept_inner(fd: usize, addr_ptr: usize, addrlen_ptr: usize, flags: usize) ->
         drive_network_stack();
         match socket.accept() {
             Ok(accepted) => break accepted,
-            Err("no pending connection") => {
+            Err(stack::NetworkError::NoPendingConnection) => {
                 if nonblocking {
                     return UserRet::from_error(ErrNo::EAGAIN);
                 }
@@ -89,7 +89,7 @@ fn accept_inner(fd: usize, addr_ptr: usize, addrlen_ptr: usize, flags: usize) ->
                     return UserRet::from_error(errno);
                 }
             }
-            Err("not a listening socket") => return UserRet::from_error(ErrNo::EINVAL),
+            Err(stack::NetworkError::NotListening) => return UserRet::from_error(ErrNo::EINVAL),
             Err(_) => return UserRet::from_error(ErrNo::ENOTSOCK),
         }
     };
@@ -101,7 +101,7 @@ fn accept_inner(fd: usize, addr_ptr: usize, addrlen_ptr: usize, flags: usize) ->
     let established_socket = SocketRef::new_with_status_flags(established_handle, status_flags);
 
     // 为新连接分配 fd
-    let io_handle: Box<dyn VfsIoHandle> = Box::new(TcpStreamHandle {
+    let io_handle: Box<dyn VfsIoHandle> = Box::new(TcpSocketHandle {
         socket: established_socket.clone(),
     });
     let new_fd = match vfs::fd::alloc_fd(io_handle) {

@@ -18,7 +18,6 @@
         "./driver-network/",
         "./driver-network/network-api/api-v0/",
         "./driver-network/network-impl/impl-dummy/",
-        "./driver-network/network-impl/impl-smoltcp/",
         "./driver-network/network-impl/impl-virtio-mmio/",
         "./driver-network/network-impl/impl-virtio-pci/",
     ]

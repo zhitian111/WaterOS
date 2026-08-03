@@ -580,11 +580,13 @@ dependencies = [
  "wateros-base",
  "wateros-base-config",
  "wateros-cred",
+ "wateros-debug",
  "wateros-driver",
  "wateros-fs",
  "wateros-ipc",
  "wateros-klog",
  "wateros-mm",
+ "wateros-network",
  "wateros-platform",
  "wateros-platform-arch-api-v0",
  "wateros-runtime",
@@ -626,6 +628,14 @@ dependencies = [
  "log",
  "wateros-base",
  "wateros-cred-api-v0",
+]
+
+[[package]]
+name = "wateros-debug"
+version = "0.1.0"
+dependencies = [
+ "spin",
+ "wateros-base-config",
 ]
 
 [[package]]
@@ -803,15 +813,11 @@ name = "wateros-driver-network"
 version = "0.1.0"
 dependencies = [
  "log",
- "smoltcp",
- "spin",
  "wateros-driver-api-v0",
  "wateros-driver-network-api-v0",
  "wateros-driver-network-impl-dummy",
- "wateros-driver-network-impl-smoltcp",
  "wateros-driver-network-impl-virtio-mmio",
  "wateros-driver-network-impl-virtio-pci",
- "wateros-vfs-api-v0",
 ]
 
 [[package]]
@@ -828,15 +834,6 @@ name = "wateros-driver-network-impl-dummy"
 version = "0.1.0"
 dependencies = [
  "spin",
- "wateros-driver-network-api-v0",
-]
-
-[[package]]
-name = "wateros-driver-network-impl-smoltcp"
-version = "0.1.0"
-dependencies = [
- "log",
- "smoltcp",
  "wateros-driver-network-api-v0",
 ]
 
@@ -1092,7 +1089,9 @@ dependencies = [
  "ipc-waitqueue",
  "log",
  "spin",
+ "wateros-debug",
  "wateros-ipc-futex-api-v0",
+ "wateros-platform-arch",
  "wateros-task-api-v0",
 ]
 
@@ -1185,6 +1184,7 @@ version = "0.1.0"
 dependencies = [
  "spin",
  "wateros-base-config",
+ "wateros-debug",
  "wateros-klog-api-v0",
  "wateros-platform",
  "wateros-platform-arch",
@@ -1239,6 +1239,7 @@ version = "0.1.0"
 dependencies = [
  "log",
  "wateros-base",
+ "wateros-debug",
  "wateros-mm-api-v0",
  "wateros-mm-frame-alloctor-api-v0",
  "wateros-platform-arch",
@@ -1267,6 +1268,7 @@ dependencies = [
  "spin",
  "wateros-base",
  "wateros-base-config",
+ "wateros-debug",
  "wateros-fs",
  "wateros-mm-api-v0",
  "wateros-mm-frame-alloctor",
@@ -1285,6 +1287,7 @@ dependencies = [
  "spin",
  "wateros-base",
  "wateros-base-config",
+ "wateros-debug",
  "wateros-fs",
  "wateros-mm-api-v0",
  "wateros-mm-frame-alloctor",
@@ -1296,12 +1299,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "wateros-network"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "spin",
+ "wateros-network-api-v0",
+ "wateros-network-impl-smoltcp",
+ "wateros-vfs-api-v0",
+]
+
+[[package]]
+name = "wateros-network-api-v0"
+version = "0.1.0"
+
+[[package]]
+name = "wateros-network-impl-smoltcp"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "smoltcp",
+ "wateros-debug",
+ "wateros-driver-network",
+ "wateros-network-api-v0",
+ "wateros-platform-arch",
+]
+
+[[package]]
 name = "wateros-platform"
 version = "0.1.0"
 dependencies = [
  "log",
  "wateros-base",
  "wateros-base-config",
+ "wateros-debug",
  "wateros-platform-api-v0",
  "wateros-platform-arch",
  "wateros-platform-impl-dummy",
@@ -1471,15 +1502,13 @@ name = "wateros-syscall-impl-kernel"
 version = "0.1.0"
 dependencies = [
  "log",
- "smoltcp",
  "spin",
  "wateros-base-config",
  "wateros-cred",
- "wateros-driver",
- "wateros-driver-network",
  "wateros-ipc",
  "wateros-klog",
  "wateros-mm",
+ "wateros-network",
  "wateros-platform",
  "wateros-platform-arch-api-v0",
  "wateros-syscall-api-v0",
@@ -1520,6 +1549,7 @@ name = "wateros-task-impl-core"
 version = "0.1.0"
 dependencies = [
  "wateros-base",
+ "wateros-debug",
  "wateros-mm-api-v0",
  "wateros-platform-arch",
  "wateros-syscall-api-v0",
@@ -1555,6 +1585,7 @@ dependencies = [
  "log",
  "wateros-base",
  "wateros-base-config",
+ "wateros-debug",
  "wateros-mm-api-v0",
  "wateros-platform",
  "wateros-platform-arch",
@@ -1575,7 +1606,9 @@ version = "0.1.0"
 dependencies = [
  "log",
  "wateros-base",
+ "wateros-debug",
  "wateros-fs",
+ "wateros-platform-arch",
  "wateros-task",
  "wateros-vfs-api-v0",
  "wateros-vfs-impl-dummy",

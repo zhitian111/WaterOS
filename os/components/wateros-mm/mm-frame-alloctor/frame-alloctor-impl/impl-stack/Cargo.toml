@@ -11,6 +11,7 @@
         "api-v0",
     ] }
     log = { version = "0.4.29" }
+    debug = { path = "../../../../wateros-debug/", package = "wateros-debug", default-features = false }
 
 [features]
     api-v0 = [  ]

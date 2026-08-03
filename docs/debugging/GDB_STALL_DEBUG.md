@@ -1,4 +1,87 @@
-# WaterOS RISC-V / LoongArch 卡死诊断：stall-debug 与 GDB
+# WaterOS RISC-V / LoongArch 卡死诊断：统一 GDB 工具
+
+## 0. 推荐入口
+
+WaterOS 现在使用 `os/scripts/wateros_debug.py` 统一构建、启动、监测和归档现场。
+`gdb_remote_snapshot.py` 只保留 Remote packet/register/memory 底层模块，不再提供
+独立 CLI；本文后半部分的旧命令仅作为历史排障案例，新的脚本或自动化不得调用它。
+
+Ubuntu 首次使用先安装依赖并执行预检：
+
+```bash
+sudo apt install gdb-multiarch binutils-riscv64-unknown-elf \
+  binutils-loongarch64-linux-gnu qemu-system-misc
+cd os
+./scripts/wateros_debug.py doctor
+```
+
+最常用命令：
+
+```bash
+# 独立的 release 优化 + DWARF + frame pointer 内核，一键启动并监测
+./scripts/wateros_debug.py run rv-final --smp 8
+./scripts/wateros_debug.py run la-final --smp 8
+
+# 附加到 make ...-gdb GDB_WAIT=0 已经启动的 QEMU
+./scripts/wateros_debug.py snapshot --arch rv --elf ./kernel-rv-final-gdb
+./scripts/wateros_debug.py watch --arch rv --elf ./kernel-rv-final-gdb
+
+# 交互式 GDB，自动加载 wos-* 命令
+./scripts/wateros_debug.py gdb --arch rv --elf ./kernel-rv-final-gdb
+```
+
+`run` 默认以 QEMU snapshot 模式运行，不写回基础磁盘。只有明确需要保存 guest
+写入时才传 `--write-disk`。监测默认每秒采样，按 CPU 组合检查 PC/SP、timer、
+context switch、syscall、trap、IPI、事件 sequence、runqueue 与锁等待；同一停滞原因
+连续出现十次后才抓取完整现场。可用 `--interval`、`--confirm` 调整。健康 idle CPU
+的 timer 不会掩盖另一个 CPU 的锁死，长时间用户计算只要 PC 或中断/事件仍推进也
+不会被当作全局卡死。
+
+确认停滞后 QEMU 会保持暂停，报告位于：
+
+```text
+os/debug-reports/<timestamp>-<arch>-<build-id>/
+  summary.txt       人工可读结论、CPU 表和 PC/SP/RA/FP
+  metadata.json     Git、ELF SHA-256、build ID、GDB 版本
+  snapshot.json     结构化 CPU/寄存器/调度状态
+  events.json       最近调度、trap、syscall、IPI、futex 与锁事件
+  gdb.txt           全寄存器、反汇编、栈内存与 thread apply all bt full
+  serial.log        本次运行串口
+  serial-tail.txt   串口末尾 300 行
+  reproduce.txt     重新连接现场的命令
+```
+
+交互 GDB 可使用 `wos-cpus`、`wos-tasks`、`wos-task <id>`、
+`wos-events [cpu]`、`wos-locks` 和 `wos-snapshot`。诊断区通过 build ID 校验本地
+ELF 与 guest；不匹配时工具拒绝继续符号化，避免给出看似合理但完全错误的函数名。
+`wos-tasks` 第一版列出各 CPU 当前任务及其 state/policy/nice/wait；`wos-task <id>`
+再结合最近事件环定位该任务。尚未运行且不在最近事件窗口内的任务不会被枚举，用户态
+也只报告保存的 PC/SP、trap 与 syscall，不尝试展开用户 ELF 调用栈。
+
+### 0.1 确定性故障测试
+
+故障代码只存在于显式测试构建：
+
+```bash
+make rv_pre_run-gdb GDB_FAULTS=1 GDB_WAIT=0
+# LoongArch 同样使用 la_pre_run-gdb
+# 统一入口也可使用：./scripts/wateros_debug.py run rv-pre --smp 2 --faults
+```
+
+连接 GDB 后，在系统完成 AP online 后写入模式；下一次 timer trap 触发：
+
+```gdb
+set *(unsigned long *)&WATEROS_DEBUG_FAULT_MODE = 1  # 固定 PC 死循环
+set *(unsigned long *)&WATEROS_DEBUG_FAULT_MODE = 2  # CPU 0/1 ABBA
+set *(unsigned long *)&WATEROS_DEBUG_FAULT_MODE = 3  # 停止本 CPU timer
+set *(unsigned long *)&WATEROS_DEBUG_FAULT_MODE = 4  # timer 继续但不调度
+continue
+```
+
+模式 2 至少需要 `WOS_SMP=2`；模式 3/4 应在目标 CPU 有对应 idle/runnable 条件时
+使用。普通 `make ...-gdb` 和所有 release 内核都不包含这些符号。
+
+## 1. 原理与手工流程
 
 本文记录一次真实的 WaterOS SMP 卡死排查方法。目标不是讲完 GDB，而是让第一次使用
 GDB 的人能够完成下面这条链路：
@@ -10,7 +93,7 @@ GDB 的人能够完成下面这条链路：
 5. 反汇编锁的自旋循环；
 6. 根据多个 hart 的位置判断死锁或锁顺序反转。
 
-## 1. 启动调试内核
+### 1.1 启动调试内核
 
 普通运行不包含 stall watchdog，也不开放 GDB 端口：
 
@@ -25,26 +108,29 @@ make rv_final_run_log
 ```
 
 启用 `stall-debug`，同时在本机 `127.0.0.1:1234` 开放 QEMU GDB Remote
-端口：
+端口，并在第一条指令前暂停：
 
 ```bash
-make rv_final_gdb_run
+make rv_final_run_log-gdb
 ```
 
-如果需要从第一条内核指令开始调试，可以让 QEMU 启动后立即暂停：
+如果要先运行到疑似卡死的位置，再连接调试器：
 
 ```bash
-make rv_final_gdb_wait
+make rv_final_run_log-gdb GDB_WAIT=0
 ```
 
-对应的底层开关如下：
+`-gdb` 是所有真实运行目标共用的后缀，对应参数如下：
 
-| 开关 | 作用 |
+| Make 参数 | 作用 |
 |------|------|
 | Cargo feature `stall-debug` | 编译 syscall/timer 原子采样和低频 watchdog；默认关闭 |
-| `WOS_QEMU_GDB=1` | 开放 GDB 端口，guest 仍正常运行 |
-| `WOS_QEMU_GDB_WAIT=1` | 开放 GDB 端口并传入 QEMU `-S`，连接前不运行 |
-| `WOS_QEMU_GDB_PORT=1235` | 修改监听端口，默认是 1234 |
+| `GDB_WAIT=1` | 默认值；传入 QEMU `-S`，连接并执行 `continue` 前不运行 |
+| `GDB_WAIT=0` | 开放端口后立即运行，适合采集运行中卡死现场 |
+| `GDB_PORT=1235` | 修改监听端口，默认是 1234 |
+
+所有 `-gdb` 目标使用独立 Cargo `gdb` profile，并生成 `kernel-*-gdb`；普通
+`kernel-rv-pre`、`kernel-rv-final`、`kernel-la-*` 不会被调试构建覆盖。
 
 也可以直接调用脚本：
 
@@ -58,18 +144,15 @@ bash ./scripts/rv_final_run.sh
 LoongArch 对应目标如下：
 
 ```bash
-# 初赛镜像：运行并开放 1234 端口
-make la_pre_gdb_run
+# 初赛镜像：暂停并等待连接
+make la_pre_run-gdb
 
-# 初赛镜像：停在第一条指令，连接后才运行
-make la_pre_gdb_wait
+# 初赛镜像：立即运行并开放端口
+make la_pre_run-gdb GDB_WAIT=0
 
-# 决赛镜像
-make la_final_gdb_run
-make la_final_gdb_wait
+# 决赛镜像：暂停并等待连接
+make la_final_run-gdb
 ```
-
-`make la_gdb_run` 和 `make la_gdb_wait` 当前是初赛目标的简写。
 
 `stall-debug` 只在连续多个采样周期没有 syscall 进展时打印：
 
@@ -107,7 +190,7 @@ Remote 协议。
 先在终端 A 启动：
 
 ```bash
-make rv_final_gdb_run
+make rv_final_run_log-gdb GDB_WAIT=0
 ```
 
 程序疑似卡死时，在终端 B 执行：
@@ -182,30 +265,37 @@ QEMU 返回的 LA 寄存器描述。典型现象是 `thread list` 可见 8 个 C
 
 ```bash
 # 终端 A
-make la_pre_gdb_run
+make la_pre_run-gdb
 
 # 终端 B
-make la_gdb
+loongarch64-linux-gnu-gdb ./kernel-la-pre \
+  -ex 'set architecture loongarch64' \
+  -ex 'target remote 127.0.0.1:1234'
 ```
 
-默认客户端是 `loongarch64-linux-gnu-gdb`。使用 multiarch GDB 或非默认端口：
+使用 multiarch GDB 或非默认端口：
 
 ```bash
-make la_gdb LA_GDB=gdb-multiarch GDB_PORT=1235
+gdb-multiarch ./kernel-la-pre \
+  -ex 'set architecture loongarch64' \
+  -ex 'target remote 127.0.0.1:1235'
 ```
 
-macOS 没有 LA GDB 时，使用仓库内的只读快照客户端：
+旧版本在 macOS 没有 LA GDB 时曾使用只读快照客户端：
 
 ```bash
 make la_gdb_snapshot
 ```
 
-它实际调用 [`os/scripts/gdb_remote_snapshot.py`](../../os/scripts/gdb_remote_snapshot.py)：
-脚本通过 QEMU GDB Remote 协议暂停 guest，读取每个 vCPU 的寄存器，扫描栈中的
-内核代码地址，解析符号后自动 detach 并恢复 guest。快照客户端不提供单步和断点；
-需要这些能力时仍应安装 GNU GDB。
+当前该 Make 目标已经改为统一 `wateros_debug.py snapshot` 的兼容别名，并强制依赖
+`gdb-multiarch`。底层 [`gdb_remote_snapshot.py`](../../os/scripts/gdb_remote_snapshot.py)
+只负责 Remote packet、寄存器描述和内存读取，不再接受命令行参数。
 
-### 3.2 使用 `gdb_remote_snapshot.py`
+### 3.2 历史快照客户端（CLI 已移除）
+
+> 本节记录旧实现，命令已经不可执行。现在统一使用
+> `wateros_debug.py snapshot --arch la --elf ./kernel-la-pre-gdb`；该入口强制
+> `gdb-multiarch`、校验 build ID 并生成完整报告包。
 
 #### 最短操作流程
 
@@ -213,7 +303,7 @@ make la_gdb_snapshot
 
 ```bash
 cd /Users/x/code/WaterOS/os
-make la_pre_gdb_run
+make la_pre_run-gdb GDB_WAIT=0
 ```
 
 等系统运行到疑似卡死的位置后，在终端 B 采集快照：
@@ -227,7 +317,7 @@ make la_gdb_snapshot
 
 ```bash
 # 终端 A
-make la_final_gdb_run
+make la_final_run-gdb GDB_WAIT=0
 
 # 终端 B
 make la_gdb_snapshot LA_GDB_ELF=./kernel-la-final
@@ -237,13 +327,13 @@ make la_gdb_snapshot LA_GDB_ELF=./kernel-la-final
 
 ```bash
 # 终端 A
-WOS_QEMU_GDB_PORT=1235 make la_pre_gdb_run
+make la_pre_run-gdb GDB_WAIT=0 GDB_PORT=1235
 
 # 终端 B
 make la_gdb_snapshot GDB_PORT=1235
 ```
 
-`make la_gdb_snapshot` 默认等价于：
+旧版 `make la_gdb_snapshot` 曾等价于（仅供理解历史报告）：
 
 ```bash
 python3 ./scripts/gdb_remote_snapshot.py \
@@ -253,7 +343,7 @@ python3 ./scripts/gdb_remote_snapshot.py \
   --port 1234
 ```
 
-脚本也支持 RISC-V；只需将架构和 ELF 改为当前实际运行的内核：
+旧版底层脚本也曾直接支持 RISC-V：
 
 ```bash
 python3 ./scripts/gdb_remote_snapshot.py \
@@ -620,10 +710,12 @@ Rust 泛型符号可能很长，直接按完整函数名下断点不方便。可
 (gdb) break *0x802e1022
 ```
 
-LoongArch 可直接通过 Makefile 连接：
+LoongArch 使用对应交叉 GDB 连接：
 
 ```bash
-make la_gdb
+loongarch64-linux-gnu-gdb ./kernel-la-pre \
+  -ex 'set architecture loongarch64' \
+  -ex 'target remote 127.0.0.1:1234'
 ```
 
 连接后常用寄存器名仍是 `pc`、`ra`、`sp`；部分 GDB 将 LA 通用寄存器显示为
@@ -663,13 +755,13 @@ lsof -nP -iTCP:1234 -sTCP:LISTEN
 换端口启动：
 
 ```bash
-WOS_QEMU_GDB_PORT=1235 make rv_final_gdb_run
+make rv_final_run_log-gdb GDB_WAIT=0 GDB_PORT=1235
 ```
 
 LA 同样适用：
 
 ```bash
-WOS_QEMU_GDB_PORT=1235 make la_pre_gdb_run
+make la_pre_run-gdb GDB_WAIT=0 GDB_PORT=1235
 make la_gdb_snapshot GDB_PORT=1235
 ```
 
@@ -682,6 +774,7 @@ make la_gdb_snapshot GDB_PORT=1235
 
 调试器连接或命中断点时 guest 是暂停的。执行 `continue` 才会恢复。
 
-### `rv_final_gdb_wait` 启动后没有任何内核输出
+### `*-gdb` 启动后没有任何内核输出
 
-这是预期行为：QEMU 使用了 `-S`。连接调试器后执行 `continue`。
+这是预期行为：`GDB_WAIT=1` 是默认值，QEMU 使用了 `-S`。连接调试器后执行
+`continue`；若不希望启动时暂停，追加 `GDB_WAIT=0`。

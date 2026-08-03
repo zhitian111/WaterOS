@@ -9,23 +9,11 @@
     impl-dummy = { path = "./network-impl/impl-dummy/", package = "wateros-driver-network-impl-dummy", default-features = true }
     impl-virtio-mmio = { path = "./network-impl/impl-virtio-mmio/", package = "wateros-driver-network-impl-virtio-mmio", default-features = true, optional = true }
     impl-virtio-pci = { path = "./network-impl/impl-virtio-pci/", package = "wateros-driver-network-impl-virtio-pci", default-features = true, optional = true }
-    impl-smoltcp = { path = "./network-impl/impl-smoltcp/", package = "wateros-driver-network-impl-smoltcp", default-features = true, optional = true }
     log = { version = "0.4.29" }
-    smoltcp = { version = "=0.12.0", default-features = false, features = [
-        "alloc",
-        "log",
-        "medium-ethernet",
-        "proto-ipv4",
-        "socket-tcp",
-        "socket-udp",
-    ], optional = true }
-    spin = "0.10.0"
-    vfs-api = { path = "../../wateros-vfs/vfs-api/api-v0/", package = "wateros-vfs-api-v0", default-features = true, optional = true }
 
 [features]
     api-v0 = [ "impl-dummy/api-v0" ]
-    default = [ "api-v0", "impl-dummy", "impl-smoltcp", "impl-virtio-mmio" ]
+    default = [ "api-v0", "impl-dummy", "impl-virtio-mmio" ]
     impl-dummy = [  ]
-    impl-smoltcp = [ "dep:impl-smoltcp", "dep:smoltcp", "dep:vfs-api" ]
     impl-virtio-mmio = [ "dep:impl-virtio-mmio" ]
     impl-virtio-pci = [ "dep:impl-virtio-pci" ]

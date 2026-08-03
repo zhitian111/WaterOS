@@ -1,0 +1,19 @@
+[package]
+name = "wateros-debug"
+version = "0.1.0"
+edition = "2024"
+build = "build.rs"
+
+[dependencies]
+config = { package = "wateros-base-config", path = "../wateros-base/base-config" }
+spin = { version = "0.10.0", default-features = false, features = [ "mutex", "spin_mutex" ] }
+
+[features]
+default = []
+enabled = []
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"

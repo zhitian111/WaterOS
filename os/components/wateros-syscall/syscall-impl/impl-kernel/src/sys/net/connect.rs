@@ -4,7 +4,7 @@
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
-use driver::network::stack;
+use network::stack;
 
 use crate::socket_block::socket_blocking_tick;
 use crate::socket_fd;
@@ -76,7 +76,7 @@ pub(crate) fn sys_connect(args: SyscallArgs) -> UserRet {
     }
 }
 
-fn wait_connected(handle: smoltcp::iface::SocketHandle) -> UserRet {
+fn wait_connected(handle: stack::StackSocketHandle) -> UserRet {
     let task_id = task::current_task_id().unwrap_or(0);
     for _ in 0..TCP_CONNECT_WAIT_TICKS {
         drive_network_stack();

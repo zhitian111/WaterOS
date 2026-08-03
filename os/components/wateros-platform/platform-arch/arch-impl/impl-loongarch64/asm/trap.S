@@ -67,6 +67,8 @@
     .endm
 
 __alltraps:
+    .cfi_startproc
+    .cfi_signal_frame
     # 先用临时寄存器保存现场，再判断是否需切换栈。
     csrwr $r12, CSR_SAVE1
     csrwr $r13, CSR_SAVE2
@@ -145,6 +147,9 @@ __alltraps:
     st.d $r12, $r3, 288
 
     move $r4, $r3
+    # r1/ra 位于 TrapContext+8，CFA 为进入 trap 前的内核栈顶。
+    .cfi_def_cfa 3, TRAP_CONTEXT_SIZE
+    .cfi_offset 1, -288
     bl trap_entry_rust
 
     ld.d $r12, $r3, 256
@@ -185,6 +190,7 @@ __alltraps:
     RESTORE_GENERAL_REGS
     ld.d $r3, $r3, 3*8
     ertn
+    .cfi_endproc
 
     .section .text.tlb_refill
     .globl __tlb_refill

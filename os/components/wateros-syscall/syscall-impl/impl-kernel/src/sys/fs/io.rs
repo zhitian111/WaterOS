@@ -1,14 +1,6 @@
 //! 文件 I/O 操作：`read`/`readv`、`write`/`writev`、`pread64`/`pwrite64`/`preadv`/`pwritev`/`lseek`。
 
 extern crate alloc;
-use alloc::boxed::Box;
-use alloc::vec::Vec;
-use core::sync::atomic::{AtomicU64, Ordering};
-use api_v0::ErrNo;
-use api_v0::SyscallArgs;
-use api_v0::UserRet;
-use driver::network::stack;
-use vfs::api::{VfsCopyProgress, VfsError, VfsReadFinish, VfsReadLease, VfsSeekWhence};
 use crate::fallible_buf::{try_kbuf, SYSCALL_IO_MAX};
 use crate::socket_block::socket_blocking_tick;
 use crate::socket_fd;
@@ -16,39 +8,47 @@ use crate::user_copy::{
     copy_from_user, copy_from_user_struct, copy_to_user_progress, UserWriteProgress,
 };
 use crate::vfs_util::{vfs_error_to_errno, vfs_io_at_error_to_errno};
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+use api_v0::ErrNo;
+use api_v0::SyscallArgs;
+use api_v0::UserRet;
+use core::sync::atomic::{AtomicU64, Ordering};
+use network::stack;
+use vfs::api::{VfsCopyProgress, VfsError, VfsReadFinish, VfsReadLease, VfsSeekWhence};
 
-const MAX_IO: usize = 0x7ffff000;
-const IO_CHUNK: usize = 64 * 1024;
-const IOV_MAX: usize = 1024;
-const TCP_BULK_WRITE_YIELD_THRESHOLD: usize = 4096;
-const TCP_MSS_BYTES: usize = 1460;
-const TCP_LOOPBACK_POLL_ROUNDS: usize = 4;
-const UDP_SMALL_WRITE_YIELD_THRESHOLD: usize = 256;
-const UDP_BULK_WRITE_YIELD_INTERVAL: u64 = 4;
+const MAX_IO : usize = 0x7FFFF000;
+const IO_CHUNK : usize = 64 * 1024;
+const IOV_MAX : usize = 1024;
+const TCP_BULK_WRITE_YIELD_THRESHOLD : usize = 4096;
+const TCP_MSS_BYTES : usize = 1460;
+const TCP_LOOPBACK_POLL_ROUNDS : usize = 4;
+const UDP_SMALL_WRITE_YIELD_THRESHOLD : usize = 256;
+const UDP_BULK_WRITE_YIELD_INTERVAL : u64 = 4;
 
-static UDP_BULK_WRITE_COUNT: AtomicU64 = AtomicU64::new(0);
+static UDP_BULK_WRITE_COUNT : AtomicU64 = AtomicU64::new(0);
 
-const SEEK_SET: u32 = 0;
-const SEEK_CUR: u32 = 1;
-const SEEK_END: u32 = 2;
+const SEEK_SET : u32 = 0;
+const SEEK_CUR : u32 = 1;
+const SEEK_END : u32 = 2;
 
 /// 用户态 iovec 结构（与 Linux `struct iovec` 布局一致）。
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct UserIoVec {
-    base: usize,
-    len: usize,
+    base : usize,
+    len : usize,
 }
 
 #[derive(Clone, Copy)]
 struct ImportedIoVec {
-    base: usize,
-    len: usize,
+    base : usize,
+    len : usize,
 }
 
 struct ImportedIoVecs {
-    entries: Vec<ImportedIoVec>,
-    total_len: usize,
+    entries : Vec<ImportedIoVec>,
+    total_len : usize,
 }
 
 
@@ -94,17 +94,21 @@ fn acquire_read_lease(fd : usize, transfer_len : usize) -> Result<Box<dyn VfsRea
 }
 
 fn finish_scattered_read(lease : Box<dyn VfsReadLease>, progress : UserWriteProgress) -> UserRet {
-    let finish = lease.finish(VfsCopyProgress {
-                          copied : progress.copied,
-                          complete : progress.error.is_none(),
-                      })
+    let finish = lease.finish(VfsCopyProgress { copied : progress.copied,
+                                                complete : progress.error
+                                                                   .is_none() })
                       .map_err(vfs_error_to_errno);
     match finish {
-        Ok(VfsReadFinish::Bytes(copied)) if copied > 0 || progress.error.is_none() => {
+        Ok(VfsReadFinish::Bytes(copied))
+            if copied > 0 ||
+               progress.error
+                       .is_none() =>
+        {
             UserRet::from_success(copied)
         }
         Ok(VfsReadFinish::Bytes(_)) | Ok(VfsReadFinish::Fault) => {
-            UserRet::from_error(progress.error.unwrap_or(ErrNo::EFAULT))
+            UserRet::from_error(progress.error
+                                        .unwrap_or(ErrNo::EFAULT))
         }
         Err(error) => UserRet::from_error(error),
     }
@@ -117,8 +121,9 @@ fn validate_read_fd(fd : usize) -> Result<(), ErrNo> {
     if vfs::fd::is_path_only_fd(fd).map_err(vfs_error_to_errno)? {
         return Err(ErrNo::EBADF);
     }
-    vfs::fd::with_current_io(fd, |handle| handle.validate_read_access())
-        .map_err(vfs_error_to_errno)
+    vfs::fd::with_current_io(fd, |handle| {
+        handle.validate_read_access()
+    }).map_err(vfs_error_to_errno)
 }
 
 /// 内核缓冲区有独立上限；大 `count` 通过合法短读分批完成，不能返回 `EINVAL`。
@@ -135,7 +140,8 @@ fn import_iovecs(iov_ptr : usize, iovcnt : usize) -> Result<ImportedIoVecs, ErrN
         return Err(ErrNo::EFAULT);
     }
     let mut entries = Vec::new();
-    entries.try_reserve_exact(iovcnt).map_err(|_| ErrNo::ENOMEM)?;
+    entries.try_reserve_exact(iovcnt)
+           .map_err(|_| ErrNo::ENOMEM)?;
     let iov_size = core::mem::size_of::<UserIoVec>();
     let mut total_len = 0usize;
     for index in 0..iovcnt {
@@ -146,15 +152,15 @@ fn import_iovecs(iov_ptr : usize, iovcnt : usize) -> Result<ImportedIoVecs, ErrN
         if iov.len > 0 && iov.base == 0 {
             return Err(ErrNo::EFAULT);
         }
-        total_len = total_len.checked_add(iov.len).ok_or(ErrNo::EINVAL)?;
+        total_len = total_len.checked_add(iov.len)
+                             .ok_or(ErrNo::EINVAL)?;
         if total_len > isize::MAX as usize {
             return Err(ErrNo::EINVAL);
         }
         entries.push(ImportedIoVec { base : iov.base,
                                      len : iov.len });
     }
-    Ok(ImportedIoVecs { entries,
-                        total_len })
+    Ok(ImportedIoVecs { entries, total_len })
 }
 
 struct IovScatterCursor<'a> {
@@ -176,18 +182,21 @@ impl<'a> IovScatterCursor<'a> {
         let start = self.copied;
         let mut source_offset = 0usize;
         while source_offset < data.len() {
-            while self.index < self.entries.len() &&
-                  self.offset == self.entries[self.index].len
-            {
+            while self.index < self.entries.len() && self.offset == self.entries[self.index].len {
                 self.index += 1;
                 self.offset = 0;
             }
-            let Some(iov) = self.entries.get(self.index).copied() else {
+            let Some(iov) = self.entries
+                                .get(self.index)
+                                .copied()
+            else {
                 return UserWriteProgress { copied : self.copied - start,
                                            error : Some(ErrNo::EFAULT) };
             };
             let chunk = (iov.len - self.offset).min(data.len() - source_offset);
-            let destination = match iov.base.checked_add(self.offset) {
+            let destination = match iov.base
+                                       .checked_add(self.offset)
+            {
                 Some(destination) => destination,
                 None => {
                     return UserWriteProgress { copied : self.copied - start,
@@ -199,7 +208,9 @@ impl<'a> IovScatterCursor<'a> {
             source_offset += progress.copied;
             self.offset += progress.copied;
             self.copied += progress.copied;
-            if progress.error.is_some() {
+            if progress.error
+                       .is_some()
+            {
                 return UserWriteProgress { copied : self.copied - start,
                                            error : Some(ErrNo::EFAULT) };
             }
@@ -251,8 +262,10 @@ mod tests {
 
     #[test]
     fn read_transfer_len_turns_large_requests_into_short_reads() {
-        assert_eq!(read_transfer_len(SYSCALL_IO_MAX + 1), SYSCALL_IO_MAX);
-        assert_eq!(read_transfer_len(usize::MAX), SYSCALL_IO_MAX);
+        assert_eq!(read_transfer_len(SYSCALL_IO_MAX + 1),
+                   SYSCALL_IO_MAX);
+        assert_eq!(read_transfer_len(usize::MAX),
+                   SYSCALL_IO_MAX);
     }
 
     #[test]
@@ -262,8 +275,10 @@ mod tests {
 
     #[test]
     fn write_transfer_len_turns_large_requests_into_short_writes() {
-        assert_eq!(write_transfer_len(SYSCALL_IO_MAX + 1), SYSCALL_IO_MAX);
-        assert_eq!(write_transfer_len(usize::MAX), SYSCALL_IO_MAX);
+        assert_eq!(write_transfer_len(SYSCALL_IO_MAX + 1),
+                   SYSCALL_IO_MAX);
+        assert_eq!(write_transfer_len(usize::MAX),
+                   SYSCALL_IO_MAX);
     }
 }
 
@@ -279,7 +294,7 @@ fn drive_network_stack() {
     stack::poll_socket_events();
 }
 
-fn flush_segmented_loopback_send(handle : smoltcp::iface::SocketHandle, sent : usize) {
+fn flush_segmented_loopback_send(handle : stack::StackSocketHandle, sent : usize) {
     if sent <= TCP_MSS_BYTES || !stack::socket_peer_is_loopback(handle).unwrap_or(false) {
         return;
     }
@@ -411,8 +426,7 @@ fn validate_write_fd(fd : usize) -> Result<(), ErrNo> {
         } else {
             Ok(())
         }
-    })
-    .map_err(vfs_error_to_errno)
+    }).map_err(vfs_error_to_errno)
 }
 
 fn write_tcp_socket_blocking(fd : usize, buf : &[u8]) -> Result<usize, ErrNo> {
@@ -498,7 +512,8 @@ fn gather_imported_iovecs(iovecs : &ImportedIoVecs) -> Result<Vec<u8>, ErrNo> {
         if remaining == 0 {
             break;
         }
-        let segment_len = iov.len.min(remaining);
+        let segment_len = iov.len
+                             .min(remaining);
         let new_len = out.len() + segment_len;
         let old_len = out.len();
         out.try_reserve_exact(segment_len)
@@ -525,9 +540,9 @@ fn validate_pread_fd(fd : usize) -> Result<(), ErrNo> {
     vfs::fd::with_current_io(fd, |handle| {
         handle.validate_read_access()?;
         let mut empty = [];
-        handle.read_at(0, &mut empty).map(|_| ())
-    })
-    .map_err(vfs_io_at_error_to_errno)
+        handle.read_at(0, &mut empty)
+              .map(|_| ())
+    }).map_err(vfs_io_at_error_to_errno)
 }
 
 // 本方法代码由AI完成
@@ -563,7 +578,10 @@ pub(crate) fn sys_pread64(args : SyscallArgs) -> UserRet {
         return UserRet::from_success(0);
     }
     let progress = copy_to_user_progress(ptr, &kbuf[..n]);
-    if progress.copied > 0 || progress.error.is_none() {
+    if progress.copied > 0 ||
+       progress.error
+               .is_none()
+    {
         UserRet::from_success(progress.copied)
     } else {
         UserRet::from_error(ErrNo::EFAULT)

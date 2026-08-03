@@ -24,6 +24,8 @@
 # - 返回用户态时，sscratch 重新指向 trampoline frame，用户 sp 从 TrapContext 恢复。
 
 __alltraps:
+    .cfi_startproc
+    .cfi_signal_frame
     # 用户态进入时 sscratch = __wateros_riscv_return_frame。
     # 内核态保持 sscratch = 0。首次 csrrw 把用户 x5/t0 存入 sscratch，同时拿到
     # 跳板帧指针，快照前不必先破坏其它用户 GPR。
@@ -215,6 +217,11 @@ gdb_point_0:
 
 .Lcall_rust:
 
+    # TrapContext 位于 CFA 下方：x1/ra 在 sp+8，原始 sp 在 sp+16。
+    # 这使 GDB 能从 Rust trap handler 回到被中断的内核调用链。
+    .cfi_def_cfa sp, 296
+    .cfi_offset ra, -288
+
     # a0 = cx_ptr
     mv a0, sp
     # 调用 Rust 入口，返回后从当前 sp 上的 TrapContext 恢复现场
@@ -278,6 +285,8 @@ gdb_point_1:
     ld x6,  6*8(sp)
     ld sp,  2*8(sp)
     sret
+
+    .cfi_endproc
 
 # a0 = TrapContext*，a1 = sret 后写入 sscratch 的内核栈顶。
 # 该跳板映射在用户地址空间内：切 satp 前把帧复制到跳板数据页；切换后只从跳板

@@ -78,8 +78,28 @@ impl Drop for ProcessRegistryInterruptGuard {
 /// 在关中断临界区内访问进程 registry。
 pub fn with_process_registry<R>(f : impl FnOnce(&mut ProcessRegistry) -> R) -> R {
     let _guard = ProcessRegistryInterruptGuard::new();
-    let mut registry = registry_cell().exclusive_access();
-    f(&mut registry)
+    let cpu = arch::cpu::current_cpu_id().raw();
+    let cell = registry_cell();
+    let object = cell as *const _ as usize;
+    let mut registry = if debug::ENABLED {
+        if let Some(registry) = cell.try_lock() {
+            registry
+        } else {
+            debug::lock_wait(cpu,
+                             0,
+                             debug::NO_TASK,
+                             debug::DebugLockKind::ProcessRegistry,
+                             object);
+            cell.exclusive_access()
+        }
+    } else {
+        cell.exclusive_access()
+    };
+    debug::lock_acquired(cpu, debug::DebugLockKind::ProcessRegistry, object);
+    let result = f(&mut registry);
+    drop(registry);
+    debug::lock_released(cpu, debug::DebugLockKind::ProcessRegistry, object);
+    result
 }
 
 /// 查询进程语义快照。

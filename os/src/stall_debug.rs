@@ -33,13 +33,23 @@ static MEMORY_SYSCALL_ARG2 : [AtomicUsize; MAX_CPUS] = [const { AtomicUsize::new
 pub fn record_syscall_enter(syscall_nr : usize, args : [usize; 6], user_pc : usize) -> usize {
     LAST_SYSCALL_NR.store(syscall_nr, Ordering::Relaxed);
     SYSCALL_TOTAL.fetch_add(1, Ordering::Relaxed);
-    if !traces_memory_syscall(syscall_nr) {
-        return 0;
-    }
-
     let cpu = platform::arch::cpu::current_cpu_id().raw();
+    debug::update_cpu_state(cpu, |state| {
+        state.syscalls = state.syscalls.wrapping_add(1);
+        state.last_syscall_nr = syscall_nr as u64;
+        state.last_syscall_pc = user_pc as u64;
+    });
+    debug::record_event(cpu,
+                        task::current_tick(),
+                        task::current_task_id().map_or(debug::NO_TASK, |id| id as u64),
+                        debug::DebugEventKind::SyscallEnter,
+                        0,
+                        [syscall_nr as u64, user_pc as u64, args[0] as u64]);
     if cpu >= MAX_CPUS {
         return 0;
+    }
+    if !traces_memory_syscall(syscall_nr) {
+        return (syscall_nr << 8) | cpu.saturating_add(1);
     }
     // nr 最后以 Release 发布，watchdog 以 Acquire 读取后才访问其余字段。
     MEMORY_SYSCALL_PC[cpu].store(user_pc, Ordering::Relaxed);
@@ -47,15 +57,22 @@ pub fn record_syscall_enter(syscall_nr : usize, args : [usize; 6], user_pc : usi
     MEMORY_SYSCALL_ARG1[cpu].store(args[1], Ordering::Relaxed);
     MEMORY_SYSCALL_ARG2[cpu].store(args[2], Ordering::Relaxed);
     MEMORY_SYSCALL_NR[cpu].store(syscall_nr, Ordering::Release);
-    cpu.saturating_add(1)
+    (syscall_nr << 8) | cpu.saturating_add(1)
 }
 
 #[inline]
 pub fn record_syscall_exit(token : usize) {
-    let Some(cpu) = token.checked_sub(1) else {
+    let Some(cpu) = (token & 0xff).checked_sub(1) else {
         return;
     };
     if cpu < MAX_CPUS {
+        let syscall_nr = token >> 8;
+        debug::record_event(cpu,
+                            task::current_tick(),
+                            task::current_task_id().map_or(debug::NO_TASK, |id| id as u64),
+                            debug::DebugEventKind::SyscallExit,
+                            0,
+                            [syscall_nr as u64, 0, 0]);
         MEMORY_SYSCALL_NR[cpu].store(0, Ordering::Release);
     }
 }
@@ -73,7 +90,18 @@ pub fn record_timer(cpu : usize) {
     if cpu >= MAX_CPUS {
         return;
     }
-    TIMER_ENTRIES[cpu].fetch_add(1, Ordering::Relaxed);
+    let count = TIMER_ENTRIES[cpu].fetch_add(1, Ordering::Relaxed) + 1;
+    debug::update_cpu_state(cpu, |state| {
+        state.timer_ticks = count;
+    });
+    if count & 63 == 0 {
+        debug::record_event(cpu,
+                            task::current_tick(),
+                            task::current_task_id().map_or(debug::NO_TASK, |id| id as u64),
+                            debug::DebugEventKind::Timer,
+                            0,
+                            [count, 0, 0]);
+    }
 }
 
 fn log_execution_snapshot() {

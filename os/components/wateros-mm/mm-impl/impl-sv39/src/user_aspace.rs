@@ -11,12 +11,14 @@ use api_v0::address_space::AddressSpaceOps;
 use api_v0::error::{MmError, MmResult};
 use wateros_base::sync::MultiprocessorSafeCell;
 use wateros_base_config::task::MAX_CPUS;
-use spin::Mutex;
 
 static TLB_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 static TLB_PENDING: [AtomicUsize; MAX_CPUS] = [const { AtomicUsize::new(0) }; MAX_CPUS];
 static TLB_COMPLETED: [AtomicUsize; MAX_CPUS] = [const { AtomicUsize::new(0) }; MAX_CPUS];
-static TLB_SHOOTDOWN_LOCK: Mutex<()> = Mutex::new(());
+fn debug_cpu_id() -> usize { platform::arch::cpu::current_cpu_id().raw() }
+
+static TLB_SHOOTDOWN_LOCK: debug::TrackedMutex<()> =
+    debug::TrackedMutex::new((), debug::DebugLockKind::AddressSpace, debug_cpu_id);
 
 use crate::pagetable::Sv39AddressSpace;
 
@@ -98,10 +100,17 @@ pub fn mark_inactive(_handle: usize, _cpu: wateros_base::cpu::CpuId) {
 ///
 /// 等锁期间主动消费本 CPU 已发布的请求，使 A 能完成并释放锁。稍后到达的
 /// SSIP 仍会经过正常 trap 路径清除；由于 completed 已推进，不会重复 flush。
-fn lock_tlb_shootdown() -> spin::MutexGuard<'static, ()> {
+fn lock_tlb_shootdown() -> debug::TrackedMutexGuard<'static, ()> {
+    let mut reported_wait = false;
     loop {
         if let Some(guard) = TLB_SHOOTDOWN_LOCK.try_lock() {
             return guard;
+        }
+        if debug::ENABLED && !reported_wait {
+            let cpu = platform::arch::cpu::current_cpu_id().raw();
+            let (kind, object) = TLB_SHOOTDOWN_LOCK.debug_identity();
+            debug::lock_wait(cpu, 0, debug::NO_TASK, kind, object);
+            reported_wait = true;
         }
         let _ = handle_tlb_shootdown_ipi();
         core::hint::spin_loop();
