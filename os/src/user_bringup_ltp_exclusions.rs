@@ -2359,6 +2359,15 @@ const LTP_SUBMIT_SKIP_BASENAMES: &[&str] = &[
     "zram_lib.sh",
 ];
 
+/// musl libc 自身缺少、但 glibc 可运行的用例；严格按字典序维护。
+const LTP_MUSL_SKIP_BASENAMES: &[&str] = &[
+    "asapi_01",
+];
+
 pub(crate) fn ltp_submit_skip_basenames() -> &'static [&'static str] {
     LTP_SUBMIT_SKIP_BASENAMES
+}
+
+pub(crate) fn ltp_musl_skip_basenames() -> &'static [&'static str] {
+    LTP_MUSL_SKIP_BASENAMES
 }

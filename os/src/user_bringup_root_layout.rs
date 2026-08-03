@@ -227,9 +227,24 @@ pub fn prune_ltp_excluded_testcases() {
             }
         }
     }
-    info!("[{LOG_TAG}] prune_ltp_excluded: {} basenames × 2 libc, removed={removed} \
-           absent={absent} failed={failed}",
-          basenames.len());
+    let musl_basenames = crate::user_bringup_ltp_exclusions::ltp_musl_skip_basenames();
+    for basename in musl_basenames {
+        let path = alloc::format!("/musl/ltp/testcases/bin/{basename}");
+        match sess.unlink(path.as_str()) {
+            Ok(()) => removed += 1,
+            Err(VfsError::NotFound) => absent += 1,
+            Err(e) => {
+                failed += 1;
+                if failed <= 8 {
+                    warn!("[{LOG_TAG}] prune musl LTP {path}: {e:?}");
+                }
+            }
+        }
+    }
+    info!("[{LOG_TAG}] prune_ltp_excluded: {} common basenames × 2 libc + {} musl-only, \
+           removed={removed} absent={absent} failed={failed}",
+          basenames.len(),
+          musl_basenames.len());
 }
 
 #[cfg(all(feature = "pre", not(feature = "vfs-bridge")))]
