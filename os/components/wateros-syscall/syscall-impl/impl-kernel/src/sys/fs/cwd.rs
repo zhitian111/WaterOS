@@ -129,7 +129,9 @@ pub(crate) fn sys_getcwd(args: SyscallArgs) -> UserRet {
     }
 
     match copy_to_user(buf_ptr, &kernel_buf[..written]) {
-        Ok(n) if n == written => UserRet::from_success(buf_ptr),
+        // The getcwd syscall ABI returns the byte count including the trailing NUL.
+        // The libc wrapper converts that result into the caller's buffer pointer.
+        Ok(n) if n == written => UserRet::from_success(written),
         Ok(_) => UserRet::from_error(ErrNo::EFAULT),
         Err(e) => UserRet::from_error(e),
     }
