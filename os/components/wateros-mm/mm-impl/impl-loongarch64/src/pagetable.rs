@@ -578,12 +578,13 @@ impl LoongArch64AddressSpace {
         let n_pages = len.checked_add(PAGE_SIZE - 1)
                          .ok_or(MmError::InvalidAddress)? /
                       PAGE_SIZE;
-        let _hint = cursor;
         let brk_guard = self.user_brk_current_end
                             .ceil_page()
                             .start_addr();
-        let mut base = VirtAddr(core::cmp::max(self.mmap_base.0, brk_guard.0)).ceil_page()
-                                                                              .start_addr();
+        let search_start = core::cmp::max(cursor.0,
+                                          core::cmp::max(self.mmap_base.0, brk_guard.0));
+        let mut base = VirtAddr(search_start).ceil_page()
+                                             .start_addr();
         let mut skipped = 0usize;
         loop {
             if skipped > MAX_SEARCH_PAGES {
