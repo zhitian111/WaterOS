@@ -9,7 +9,7 @@ use api_v0::timer::{
     PlatformDeadlineTimerError, PlatformDeadlineTimerResult, PlatformTimerDeadline,
 };
 
-/// 定时器配置 CSR：写入 `(delta << 2) | ENABLE` 形式与硬件解码约定一致。
+/// 定时器配置 CSR：低两位为控制位，计时值必须按 4 tick 对齐。
 const CSR_TCFG: usize = 0x41;
 /// 定时器中断清除 CSR。
 const CSR_TICLR: usize = 0x44;
@@ -48,10 +48,11 @@ pub fn set_timer(time: PlatformTimerDeadline) -> PlatformDeadlineTimerResult<()>
         .saturating_sub(now)
         .max(1);
     let delta = usize::try_from(delta).map_err(|_| PlatformDeadlineTimerError::InvalidDeadline)?;
-    if delta > (usize::MAX >> 2) {
-        return Err(PlatformDeadlineTimerError::InvalidDeadline);
-    }
+    let timer_ticks = delta
+        .checked_add(3)
+        .ok_or(PlatformDeadlineTimerError::InvalidDeadline)?
+        & !0b11;
     write_csr::<CSR_TICLR>(TICLR_CLEAR_TIMER);
-    write_csr::<CSR_TCFG>((delta << 2) | TCFG_ENABLE);
+    write_csr::<CSR_TCFG>(timer_ticks | TCFG_ENABLE);
     Ok(())
 }
