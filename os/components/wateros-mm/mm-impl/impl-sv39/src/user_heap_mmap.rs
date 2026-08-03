@@ -109,13 +109,16 @@ impl Sv39AddressSpace {
         if self.translate_addr(vpn.start_addr())?
                .is_some()
         {
+            platform::arch::paging::flush_tlb_local(
+                platform::arch::paging::TlbFlushRange::Page { addr : vpn.start_addr().0 });
             return Ok(true);
         }
         map_zeroed_page_with_alloc(self,
                                    allocator,
                                    vpn,
                                    PagePerm::R | PagePerm::W | PagePerm::U)?;
-        fence_user_ptes();
+        platform::arch::paging::flush_tlb_local(
+            platform::arch::paging::TlbFlushRange::Page { addr : vpn.start_addr().0 });
         Ok(true)
     }
 
@@ -138,10 +141,13 @@ impl Sv39AddressSpace {
         if self.translate_addr(vpn.start_addr())?
                .is_some()
         {
+            platform::arch::paging::flush_tlb_local(
+                platform::arch::paging::TlbFlushRange::Page { addr : vpn.start_addr().0 });
             return Ok(true);
         }
         map_zeroed_page_with_alloc(self, allocator, vpn, Self::brk_perm())?;
-        fence_user_ptes();
+        platform::arch::paging::flush_tlb_local(
+            platform::arch::paging::TlbFlushRange::Page { addr : vpn.start_addr().0 });
         Ok(true)
     }
 

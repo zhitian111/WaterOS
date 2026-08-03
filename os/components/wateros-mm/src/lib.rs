@@ -115,7 +115,7 @@ pub mod kernel_mm {
             use api_v0::addr::VirtAddr;
             use api_v0::mmap::MmapOps;
             let mut alloc = crate::frame_alloctor::GlobalPhysFrameAllocator;
-            return crate::user_aspace::with_user_aspace_mut_and_flush(aspace_ptr, |aspace| {
+            return crate::user_aspace::with_user_aspace_mut(aspace_ptr, |aspace| {
                 MmapOps::handle_page_fault(aspace, &mut alloc, VirtAddr(fault_addr), access)
             })
             .unwrap_or(false);
@@ -125,7 +125,7 @@ pub mod kernel_mm {
             use api_v0::addr::VirtAddr;
             use api_v0::mmap::MmapOps;
             let mut alloc = crate::frame_alloctor::GlobalPhysFrameAllocator;
-            return crate::user_aspace::with_user_aspace_mut_and_flush(aspace_ptr, |aspace| {
+            return crate::user_aspace::with_user_aspace_mut(aspace_ptr, |aspace| {
                 MmapOps::handle_page_fault(aspace, &mut alloc, VirtAddr(fault_addr), access)
             })
             .unwrap_or(false);

@@ -933,6 +933,8 @@ impl LoongArch64AddressSpace {
         if self.translate_addr(page)?
                .is_some()
         {
+            platform::arch::paging::flush_tlb_local(
+                platform::arch::paging::TlbFlushRange::Page { addr : page.0 });
             return Ok(true);
         }
         let ppn = allocator.alloc_frame()?;
@@ -953,7 +955,8 @@ impl LoongArch64AddressSpace {
             let _ = allocator.dealloc_frame(ppn);
             return Err(e);
         }
-        platform::arch::paging::flush_address_space_translations();
+        platform::arch::paging::flush_tlb_local(
+            platform::arch::paging::TlbFlushRange::Page { addr : page.0 });
         Ok(true)
     }
 
