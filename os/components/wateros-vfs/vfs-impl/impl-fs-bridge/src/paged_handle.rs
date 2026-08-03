@@ -411,10 +411,10 @@ impl Drop for PagedFileHandle {
         if !self.open_ref_held {
             return;
         }
-        let sync_err = self.sync_dirty();
+        let writeback_err = self.writeback_dirty();
         self.release_open_ref_if_held();
-        if let Err(error) = sync_err {
-            log::warn!("[paged_handle] drop sync_dirty failed path={:?} err={error:?}",
+        if let Err(error) = writeback_err {
+            log::warn!("[paged_handle] drop writeback failed path={:?} err={error:?}",
                        self.path);
         }
     }
@@ -506,7 +506,9 @@ impl PagedFileHandle {
     }
 
 // 本方法代码由AI完成
-    fn sync_dirty(&mut self) -> VfsResult<()> {
+    /// 将当前文件的脏页写入文件系统缓存，以便 close 后回收 VFS 页缓存条目；
+    /// 不把普通 close(2) 扩大为整个文件系统的 fsync。
+    fn writeback_dirty(&mut self) -> VfsResult<()> {
         if !self.writable || self.is_detached() {
             log::trace!("[vfs-flush] skip path={} writable={} detached={}",
                         self.path,
@@ -514,25 +516,32 @@ impl PagedFileHandle {
                         self.is_detached());
             return Ok(());
         }
-        let path = self.active_path();
         let key = self.cache_key();
         let mut io = self.page_io();
         let cache = global_cache(self.mount_gen);
-        let had_dirty_pages = cache.dirty_page_count(key.as_str()) != 0;
         match cache.flush(&mut io,
                           key.as_str(),
                           core::convert::identity)
         {
-            Ok(()) if had_dirty_pages => match self.stable_node() {
-                Some(node) => node.sync(),
-                None => crate::sync_path_filesystem(path.as_str()),
-            },
             Ok(()) => Ok(()),
             Err(VfsError::NotFound) if self.stable_node().is_none() => {
                 self.mark_detached();
                 Ok(())
             }
             Err(e) => Err(e),
+        }
+    }
+
+    /// Persist this file's data and the filesystem metadata beneath it.
+    fn sync_dirty(&mut self) -> VfsResult<()> {
+        self.writeback_dirty()?;
+        if !self.writable || self.is_detached() {
+            return Ok(());
+        }
+        let path = self.active_path();
+        match self.stable_node() {
+            Some(node) => node.sync(),
+            None => crate::sync_path_filesystem(path.as_str()),
         }
     }
 
@@ -759,13 +768,13 @@ impl VfsIoHandle for PagedFileHandle {
 
 // 本方法代码由AI完成
     fn close(&mut self) -> VfsResult<()> {
-        let sync_err = self.sync_dirty();
+        let writeback_err = self.writeback_dirty();
         self.release_open_ref_if_held();
-        if let Err(e) = &sync_err {
-            log::warn!("[paged_handle] close sync_dirty failed path={:?} err={e:?}",
+        if let Err(e) = &writeback_err {
+            log::warn!("[paged_handle] close writeback failed path={:?} err={e:?}",
                        self.path);
         }
-        sync_err
+        writeback_err
     }
 
 // 本方法代码由AI完成
@@ -830,7 +839,7 @@ impl VfsIoHandle for PagedFileHandle {
         }
         let mut reservation = ReservationGuard::begin(self.description.clone())?;
         if len > 0 {
-            match self.sync_dirty() {
+            match self.writeback_dirty() {
                 Ok(()) => {}
                 Err(VfsError::NotFound) => self.mark_detached(),
                 Err(e) => return Err(e),

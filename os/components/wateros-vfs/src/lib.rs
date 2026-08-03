@@ -319,6 +319,12 @@ pub fn reset_file_page_cache() -> VfsResult<()> {
     impl_fs_bridge::reset_file_page_cache()
 }
 
+/// 将文件页缓存和根文件系统缓存同步到底层块设备，不回收热缓存。
+#[cfg(feature = "bridge-fs-api")]
+pub fn sync_file_page_cache() -> VfsResult<()> {
+    impl_fs_bridge::sync_file_page_cache()
+}
+
 /// 相对当前任务 cwd 删除路径。
 #[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
 pub fn unlink_at_current(path: &str, remove_dir: bool) -> VfsResult<()> {

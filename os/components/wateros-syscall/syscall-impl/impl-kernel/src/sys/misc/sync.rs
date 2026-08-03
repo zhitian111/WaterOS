@@ -30,6 +30,6 @@ pub(crate) fn sys_fdatasync(args : SyscallArgs) -> UserRet { sync_fd("fdatasync"
 // 本方法代码由AI完成
 pub(crate) fn sys_sync(_args : SyscallArgs) -> UserRet {
     // Linux sync(2) 发起系统级写回并始终返回 0；单个写回错误由后续文件操作报告。
-    let _ = vfs::fd::flush_all_open_files();
+    let _ = vfs::sync_file_page_cache();
     UserRet::from_success(0)
 }

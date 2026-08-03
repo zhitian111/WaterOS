@@ -593,6 +593,15 @@ pub fn unlink_path(path : &str, remove_dir : bool) -> VfsResult<()> {
     result
 }
 
+/// 将全局文件页缓存和根文件系统缓存同步到底层块设备。
+pub fn sync_file_page_cache() -> VfsResult<()> {
+    let mount_gen = fs::rootfs::active_impl::mount_generation();
+    let cache = impl_page_cache::global_cache(mount_gen);
+    let mut io = paged_handle::FsPageIo::path();
+    cache.flush_all(&mut io, core::convert::identity)?;
+    root_rw()?.lock().sync().map_err(map_fs_err)
+}
+
 /// 刷回并丢弃整个文件页缓存（用于测例脚本切换等批量回收点）。
 ///
 /// 先把所有脏页写回根卷，再重建空缓存：既避免长跑后 `files`/LRU 饱和推高内核堆，
@@ -601,10 +610,7 @@ pub fn unlink_path(path : &str, remove_dir : bool) -> VfsResult<()> {
 // 本方法代码由AI完成
 pub fn reset_file_page_cache() -> VfsResult<()> {
     let mount_gen = fs::rootfs::active_impl::mount_generation();
-    let cache = impl_page_cache::global_cache(mount_gen);
-    let mut io = paged_handle::FsPageIo::path();
-    cache.flush_all(&mut io, core::convert::identity)?;
-    root_rw()?.lock().sync().map_err(map_fs_err)?;
+    sync_file_page_cache()?;
     impl_page_cache::reset_global_cache(mount_gen);
     Ok(())
 }
