@@ -4,7 +4,7 @@
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
-use driver::network::stack;
+use network::stack;
 
 use crate::socket_fd;
 use crate::user_copy::copy_to_user_struct;
@@ -37,17 +37,15 @@ pub(crate) fn sys_getsockname(args: SyscallArgs) -> UserRet {
         Err(e) => return UserRet::from_error(e),
     };
 
-    let port: u16 = match stack::socket_local_port(socket.handle()) {
-        Ok(p) => p,
-        Err(_) => 0,
+    let endpoint = match stack::socket_local_endpoint(socket.handle()) {
+        Ok(endpoint) => endpoint,
+        Err(_) => return UserRet::from_error(ErrNo::ENOTSOCK),
     };
 
     let addr = SockAddrIn {
         sin_family: 2, // AF_INET
-        sin_port: port.to_be(),
-        sin_addr: [
-            127, 0, 0, 1,
-        ],
+        sin_port: endpoint.port.to_be(),
+        sin_addr: endpoint.address,
         sin_zero: [0; 8],
     };
 
@@ -86,15 +84,15 @@ pub(crate) fn sys_getpeername(args: SyscallArgs) -> UserRet {
         Err(e) => return UserRet::from_error(e),
     };
 
-    let (ip, port) = match stack::socket_peername(socket.handle()) {
-        Ok(v) => v,
+    let endpoint = match stack::socket_peer_endpoint(socket.handle()) {
+        Ok(endpoint) => endpoint,
         Err(_) => return UserRet::from_error(ErrNo::ENOTCONN),
     };
 
     let addr = SockAddrIn {
         sin_family: 2, // AF_INET
-        sin_port: port.to_be(),
-        sin_addr: ip,
+        sin_port: endpoint.port.to_be(),
+        sin_addr: endpoint.address,
         sin_zero: [0; 8],
     };
 

@@ -4,57 +4,56 @@
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
-use driver::network::{stack, SocketReceiveLease};
+use network::{stack, SocketReceiveLease};
 use wateros_base_config::task::SCHED_TIMER_PERIOD_MS;
 
 use crate::fallible_buf::{try_kbuf, SYSCALL_IO_MAX};
 use crate::socket_fd;
 use crate::user_copy::{
-    copy_from_user, copy_from_user_struct, copy_to_user, copy_to_user_progress,
-    copy_to_user_struct,
+    copy_from_user, copy_from_user_struct, copy_to_user, copy_to_user_progress, copy_to_user_struct,
 };
 
 #[repr(C)]
 #[derive(Copy, Clone)]
 struct IoVec {
-    iov_base: usize,
-    iov_len: usize,
+    iov_base : usize,
+    iov_len : usize,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone)]
 struct MsgHdr {
-    msg_name: usize,
-    msg_namelen: u32,
-    _pad0: u32,
-    msg_iov: usize,
-    msg_iovlen: usize,
-    msg_control: usize,
-    msg_controllen: usize,
-    msg_flags: i32,
-    _pad1: u32,
+    msg_name : usize,
+    msg_namelen : u32,
+    _pad0 : u32,
+    msg_iov : usize,
+    msg_iovlen : usize,
+    msg_control : usize,
+    msg_controllen : usize,
+    msg_flags : i32,
+    _pad1 : u32,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone)]
 // 本结构代码由AI完成
 struct SockAddrIn {
-    sin_family: u16,
-    sin_port: u16,
-    sin_addr: [u8; 4],
-    sin_zero: [u8; 8],
+    sin_family : u16,
+    sin_port : u16,
+    sin_addr : [u8; 4],
+    sin_zero : [u8; 8],
 }
 
-const IOV_MAX: usize = 256;
-const MSG_DONTWAIT: usize = 0x40;
-const MSG_TRUNC: usize = 0x20;
-const MSG_PEEK: usize = 0x02;
-const MSG_OOB: usize = 0x01;
-const MSG_ERRQUEUE: usize = 0x2000;
-const SOCKET_RECVMSG_WAIT_TICKS: usize = 4096;
+const IOV_MAX : usize = 256;
+const MSG_DONTWAIT : usize = 0x40;
+const MSG_TRUNC : usize = 0x20;
+const MSG_PEEK : usize = 0x02;
+const MSG_OOB : usize = 0x01;
+const MSG_ERRQUEUE : usize = 0x2000;
+const SOCKET_RECVMSG_WAIT_TICKS : usize = 4096;
 
 // 本方法代码由AI完成
-pub(crate) fn sys_sendmsg(args: SyscallArgs) -> UserRet {
+pub(crate) fn sys_sendmsg(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let msg_ptr = args.arg(1);
     let flags = args.arg(2);
@@ -63,7 +62,7 @@ pub(crate) fn sys_sendmsg(args: SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EFAULT);
     }
 
-    let msg: MsgHdr = match copy_from_user_struct(msg_ptr) {
+    let msg : MsgHdr = match copy_from_user_struct(msg_ptr) {
         Ok(v) => v,
         Err(_) => return UserRet::from_error(ErrNo::EFAULT),
     };
@@ -77,11 +76,11 @@ pub(crate) fn sys_sendmsg(args: SyscallArgs) -> UserRet {
 
     // 读取 iovec 数组并收集数据
     let iov_size = core::mem::size_of::<IoVec>();
-    let mut total_len: usize = 0;
-    let mut iovs: alloc::vec::Vec<IoVec> = alloc::vec![];
+    let mut total_len : usize = 0;
+    let mut iovs : alloc::vec::Vec<IoVec> = alloc::vec![];
 
     for i in 0..msg.msg_iovlen {
-        let iov: IoVec = match copy_from_user_struct(msg.msg_iov + i * iov_size) {
+        let iov : IoVec = match copy_from_user_struct(msg.msg_iov + i * iov_size) {
             Ok(v) => v,
             Err(_) => return UserRet::from_error(ErrNo::EFAULT),
         };
@@ -123,7 +122,7 @@ pub(crate) fn sys_sendmsg(args: SyscallArgs) -> UserRet {
 
     // 有目标地址 → sendto；否则使用 connect() 保存的默认 peer。
     let destination = if msg.msg_name != 0 && msg.msg_namelen >= 16 {
-        let addr: SockAddrIn = match copy_from_user_struct(msg.msg_name) {
+        let addr : SockAddrIn = match copy_from_user_struct(msg.msg_name) {
             Ok(a) => a,
             Err(_) => return UserRet::from_error(ErrNo::EFAULT),
         };
@@ -137,8 +136,9 @@ pub(crate) fn sys_sendmsg(args: SyscallArgs) -> UserRet {
         Ok(stack::SocketKind::Udp) => {
             super::sendto::send_udp_blocking(fd, handle, &kbuf, destination, flags)
         }
-        Ok(stack::SocketKind::Tcp) => stack::socket_send(handle, &kbuf)
-            .map_err(super::sendto::socket_send_error_to_errno),
+        Ok(stack::SocketKind::Tcp) => {
+            stack::socket_send(handle, &kbuf).map_err(super::sendto::socket_send_error_to_errno)
+        }
         Err(_) => Err(ErrNo::ENOTSOCK),
     };
     match sent {
@@ -148,7 +148,7 @@ pub(crate) fn sys_sendmsg(args: SyscallArgs) -> UserRet {
 }
 
 // 本方法代码由AI完成
-pub(crate) fn sys_recvmsg(args: SyscallArgs) -> UserRet {
+pub(crate) fn sys_recvmsg(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let msg_ptr = args.arg(1);
     let flags = args.arg(2);
@@ -163,7 +163,7 @@ pub(crate) fn sys_recvmsg(args: SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EAGAIN);
     }
 
-    let mut msg: MsgHdr = match copy_from_user_struct(msg_ptr) {
+    let mut msg : MsgHdr = match copy_from_user_struct(msg_ptr) {
         Ok(v) => v,
         Err(_) => return UserRet::from_error(ErrNo::EFAULT),
     };
@@ -180,11 +180,11 @@ pub(crate) fn sys_recvmsg(args: SyscallArgs) -> UserRet {
 
     // 读取 iovec 数组并计算总接收空间
     let iov_size = core::mem::size_of::<IoVec>();
-    let mut total_len: usize = 0;
-    let mut iovs: alloc::vec::Vec<IoVec> = alloc::vec![];
+    let mut total_len : usize = 0;
+    let mut iovs : alloc::vec::Vec<IoVec> = alloc::vec![];
 
     for i in 0..msg.msg_iovlen {
-        let iov: IoVec = match copy_from_user_struct(msg.msg_iov + i * iov_size) {
+        let iov : IoVec = match copy_from_user_struct(msg.msg_iov + i * iov_size) {
             Ok(v) => v,
             Err(_) => return UserRet::from_error(ErrNo::EFAULT),
         };
@@ -226,14 +226,11 @@ pub(crate) fn sys_recvmsg(args: SyscallArgs) -> UserRet {
         if remaining == 0 {
             break;
         }
-        let chunk = iov
-            .iov_len
-            .min(remaining);
+        let chunk = iov.iov_len
+                       .min(remaining);
         if chunk > 0 {
-            let progress = copy_to_user_progress(
-                iov.iov_base,
-                &lease.bytes()[offset..offset + chunk],
-            );
+            let progress = copy_to_user_progress(iov.iov_base,
+                                                 &lease.bytes()[offset..offset + chunk]);
             offset += progress.copied;
             remaining -= progress.copied;
             if let Some(error) = progress.error {
@@ -261,18 +258,14 @@ pub(crate) fn sys_recvmsg(args: SyscallArgs) -> UserRet {
 
     // 写回发送方地址到 msg_name
     if kind == stack::SocketKind::Udp && msg.msg_name != 0 {
-        let addr = SockAddrIn {
-            sin_family: 2, // AF_INET
-            sin_port: from_port.to_be(),
-            sin_addr: from_ip,
-            sin_zero: [0; 8],
-        };
+        let addr = SockAddrIn { sin_family : 2, // AF_INET
+                                sin_port : from_port.to_be(),
+                                sin_addr : from_ip,
+                                sin_zero : [0; 8] };
         let write_len = core::mem::size_of::<SockAddrIn>().min(msg.msg_namelen as usize);
         let addr_bytes = unsafe {
-            core::slice::from_raw_parts(
-                &addr as *const SockAddrIn as *const u8,
-                write_len,
-            )
+            core::slice::from_raw_parts(&addr as *const SockAddrIn as *const u8,
+                                        write_len)
         };
         if copy_to_user(msg.msg_name, addr_bytes).is_err() {
             let _ = lease.finish(0, false);
@@ -311,18 +304,18 @@ pub(crate) fn sys_recvmsg(args: SyscallArgs) -> UserRet {
     }
 }
 
-fn recvmsg_is_nonblocking(fd: usize, flags: usize) -> bool {
+fn recvmsg_is_nonblocking(fd : usize, flags : usize) -> bool {
     socket_fd::is_nonblocking(fd) || (flags & MSG_DONTWAIT) != 0
 }
 
-fn recvmsg_receive_blocking(
-    fd: usize,
-    socket: &driver::network::SocketRef,
-    flags: usize,
-    max_len: usize,
-) -> Result<Option<SocketReceiveLease>, ErrNo> {
+fn recvmsg_receive_blocking(fd : usize,
+                            socket : &network::SocketRef,
+                            flags : usize,
+                            max_len : usize)
+                            -> Result<Option<SocketReceiveLease>, ErrNo> {
     let nonblocking = recvmsg_is_nonblocking(fd, flags);
-    let wait_ticks = socket_recv_wait_ticks(socket.handle(), SOCKET_RECVMSG_WAIT_TICKS);
+    let wait_ticks = socket_recv_wait_ticks(socket.handle(),
+                                            SOCKET_RECVMSG_WAIT_TICKS);
     for _ in 0..wait_ticks {
         drive_network_stack();
         match socket.prepare_receive(max_len) {
@@ -339,7 +332,7 @@ fn recvmsg_receive_blocking(
     Err(ErrNo::EAGAIN)
 }
 
-fn recv_error_to_errno(error: stack::SocketRecvError) -> ErrNo {
+fn recv_error_to_errno(error : stack::SocketRecvError) -> ErrNo {
     match error {
         stack::SocketRecvError::Busy | stack::SocketRecvError::Empty => ErrNo::EAGAIN,
         stack::SocketRecvError::Finished => ErrNo::EIO,
@@ -349,12 +342,13 @@ fn recv_error_to_errno(error: stack::SocketRecvError) -> ErrNo {
     }
 }
 
-fn socket_recv_wait_ticks(handle: smoltcp::iface::SocketHandle, default_ticks: usize) -> usize {
+fn socket_recv_wait_ticks(handle : stack::StackSocketHandle, default_ticks : usize) -> usize {
     match stack::socket_recv_timeout_ms(handle) {
         Ok(Some(ms)) => {
             let tick_ms = (SCHED_TIMER_PERIOD_MS as u64).max(1);
             let ticks = ms.saturating_add(tick_ms - 1) / tick_ms;
-            usize::try_from(ticks).unwrap_or(usize::MAX).max(1)
+            usize::try_from(ticks).unwrap_or(usize::MAX)
+                                  .max(1)
         }
         _ => default_ticks,
     }
@@ -363,7 +357,8 @@ fn socket_recv_wait_ticks(handle: smoltcp::iface::SocketHandle, default_ticks: u
 fn drive_network_stack() {
     match platform::timer::now_duration() {
         Ok(now) => {
-            let millis = now.as_millis().min(i64::MAX as u128) as i64;
+            let millis = now.as_millis()
+                            .min(i64::MAX as u128) as i64;
             stack::poll_at_millis(millis);
         }
         Err(_) => stack::poll(),

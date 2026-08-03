@@ -49,12 +49,12 @@ extern "C" fn network_poller_task(_arg : usize) -> ! {
         match platform::timer::now_duration() {
             Ok(now) => {
                 let millis = now.as_millis()
-                                .min(i64::MAX as u128) as i64;
-                driver::network::stack::poll_at_millis(millis);
+                                .min((i64::MAX / 1000) as u128) as i64;
+                network::stack::poll_at_millis(millis);
             }
-            Err(_) => driver::network::stack::poll(),
+            Err(_) => network::stack::poll(),
         }
-        driver::network::stack::poll_socket_events();
+        network::stack::poll_socket_events();
         task::sleep_for_ticks(1);
     }
 }
@@ -74,10 +74,16 @@ fn bringup_driver_and_user() {
                 Err(err) => warn!("[boot] Goldfish RTC unavailable: {:?}",
                                   err),
             }
-            let _ = driver::network::stack::init([10, 0, 2, 15], [10, 0, 2, 2]).inspect(|_| {
-                        task::spawn_kernel_task(network_poller_task, 0);
-                    })
-                    .inspect_err(|e| warn!("network stack init skipped: {}", e));
+            match network::stack::init(network::NetworkConfig {
+                address: [10, 0, 2, 15],
+                prefix_len: 24,
+                gateway: [10, 0, 2, 2],
+            }) {
+                Ok(()) => {
+                    task::spawn_kernel_task(network_poller_task, 0);
+                }
+                Err(e) => warn!("network stack init skipped: {}", e),
+            }
             fs::init();
             crate::user_bringup_bus::run();
             fs::test();

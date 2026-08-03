@@ -4,7 +4,7 @@
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
-use driver::network::stack;
+use network::stack;
 
 use crate::fallible_buf::{try_kbuf, SYSCALL_SOCK_IO_MAX};
 use crate::socket_fd;
@@ -42,7 +42,9 @@ pub(crate) fn sys_setsockopt(args: SyscallArgs) -> UserRet {
 
     match stack::socket_setsockopt(socket.handle(), level, optname, &kbuf) {
         Ok(()) => UserRet::from_success(0),
-        Err("addr not available") => UserRet::from_error(ErrNo::EADDRNOTAVAIL),
+        Err(stack::NetworkError::AddressNotAvailable) => {
+            UserRet::from_error(ErrNo::EADDRNOTAVAIL)
+        }
         Err(_) => UserRet::from_error(ErrNo::EOPNOTSUPP),
     }
 }
