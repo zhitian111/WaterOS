@@ -21,6 +21,10 @@ impl<'a> Bitmap<'a> {
         self.0[bit / 8] &= !(1 << (bit % 8));
     }
 
+    pub fn set_all(&mut self) {
+        self.0.fill(u8::MAX);
+    }
+
     /// Find the first clear bit in the range `[start, end)`
     pub fn first_clear_bit(&self, start: usize, end: usize) -> Option<usize> {
         let end = core::cmp::min(end, self.0.len() * 8);

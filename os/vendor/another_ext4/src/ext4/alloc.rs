@@ -6,6 +6,65 @@ use crate::prelude::*;
 use crate::return_error;
 
 impl Ext4 {
+    fn is_group_metadata_block(&self, sb: &SuperBlock, pblock: PBlockId) -> bool {
+        let inode_table_blocks =
+            (sb.inodes_per_group() as usize * sb.inode_size()).div_ceil(BLOCK_SIZE) as u64;
+        for id in 0..sb.block_group_count() {
+            let desc = self.read_block_group(id).desc;
+            if pblock == desc.block_bitmap_block() || pblock == desc.inode_bitmap_block() {
+                return true;
+            }
+            let table = desc.inode_table_first_block();
+            if pblock >= table && pblock < table + inode_table_blocks {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn initialize_block_bitmap_if_needed(
+        &self,
+        sb: &SuperBlock,
+        bg: &mut BlockGroupRef,
+        bitmap: &mut Bitmap<'_>,
+    ) -> Result<()> {
+        if !bg.desc.has_flag(BlockGroupDesc::FLAG_BLOCK_UNINIT) {
+            return Ok(());
+        }
+
+        // An uninitialized bitmap has no on-disk allocation semantics. Reconstruct a
+        // conservative bitmap with exactly the descriptor's free count. Keeping the
+        // low-numbered implicit overhead allocated also covers sparse-super/GDT copies.
+        bitmap.set_all();
+        let block_count = sb.block_count_in_group(bg.id) as usize;
+        let free_target = bg.desc.get_free_blocks_count() as usize;
+        let group_start = sb.first_data_block() as u64
+            + bg.id as u64 * sb.blocks_per_group() as u64;
+        let mut freed = 0usize;
+        for local in (0..block_count).rev() {
+            let pblock = group_start + local as u64;
+            if self.is_group_metadata_block(sb, pblock) {
+                continue;
+            }
+            bitmap.clear_bit(local);
+            freed += 1;
+            if freed == free_target {
+                break;
+            }
+        }
+        if freed != free_target {
+            return_error!(
+                ErrCode::EIO,
+                "Cannot initialize block bitmap for group {}: free={} expected={}",
+                bg.id,
+                freed,
+                free_target
+            );
+        }
+        bg.desc.clear_flag(BlockGroupDesc::FLAG_BLOCK_UNINIT);
+        Ok(())
+    }
+
     /// Create a new inode, returning the inode and its number
     #[inline(never)]
     pub(super) fn create_inode(&self, mode: InodeMode) -> Result<InodeRef> {
@@ -117,6 +176,7 @@ impl Ext4 {
             let mut bitmap_block = self.read_block(bitmap_block_id);
             let block_count = sb.block_count_in_group(bgid) as usize;
             let mut bitmap = Bitmap::new(&mut *bitmap_block.data, 8 * BLOCK_SIZE);
+            self.initialize_block_bitmap_if_needed(&sb, &mut bg, &mut bitmap)?;
             let local = match bitmap.find_and_set_first_clear_bit(0, block_count) {
                 Some(local) => local as u64,
                 None => continue,

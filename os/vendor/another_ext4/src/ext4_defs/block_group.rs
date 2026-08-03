@@ -53,6 +53,8 @@ pub struct BlockGroupDesc {
 unsafe impl AsBytes for BlockGroupDesc {}
 
 impl BlockGroupDesc {
+    pub const FLAG_BLOCK_UNINIT: u16 = 0x0002;
+
     #[allow(unused)]
     const MIN_BLOCK_GROUP_DESC_SIZE: usize = 32;
     #[allow(unused)]
@@ -104,6 +106,14 @@ impl BlockGroupDesc {
     pub fn set_free_blocks_count(&mut self, cnt: u64) {
         self.free_blocks_count_lo = ((cnt << 32) >> 32) as u16;
         self.free_blocks_count_hi = (cnt >> 32) as u16;
+    }
+
+    pub fn has_flag(&self, flag: u16) -> bool {
+        self.flags & flag != 0
+    }
+
+    pub fn clear_flag(&mut self, flag: u16) {
+        self.flags &= !flag;
     }
 
     pub fn set_inode_bitmap_csum(&mut self, uuid: &[u8], bitmap: &Bitmap) {
