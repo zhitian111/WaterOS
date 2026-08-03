@@ -18,7 +18,7 @@ pub use impl_dummy::DummyNetworkDevice;
 pub use impl_virtio_mmio::VirtioNetDevice;
 #[cfg(feature = "impl-virtio-pci")]
 #[doc(inline)]
-pub use impl_virtio_pci::{VirtioNetPciBarAllocator, VirtioPciNetDevice, VirtioPciNetProbeInfo};
+pub use impl_virtio_pci::{VirtioNetPciBarAllocator, VirtioNetPciProbeInfo, VirtioPciNetDevice};
 
 /// 网络子系统在 DTB 中声明可尝试绑定的设备（与 feature 无关；用于扫描阶段匹配）。
 pub const NETWORK_SUPPORTED_DEVICES : &[SupportedDeviceEntry] =
