@@ -23,8 +23,9 @@ use api_v0::perm::PagePerm;
 use frame_alloctor::frame_alloc_result;
 #[cfg(not(feature = "vfs-root-read"))]
 use fs::api::{FsError, SharedFs};
-use impl_common::{entry_file_offset, finalize_elf_read, rd_u16, rd_u32, rd_u64, ElfSegmentLoadParams,
-                  PT_LOAD};
+use impl_common::{
+    entry_file_offset, finalize_elf_read, rd_u16, rd_u32, rd_u64, ElfSegmentLoadParams, PT_LOAD,
+};
 
 use crate::pagetable::{zero_phys_page, LoongArch64AddressSpace};
 
@@ -57,9 +58,9 @@ fn map_vfs_to_root_vol(e : VfsError) -> RootVolumeReadError {
         VfsError::NotAFile => RootVolumeReadError::NotAFile,
         VfsError::InvalidPath | VfsError::Exists => RootVolumeReadError::InvalidPath,
         VfsError::NotUtf8 => RootVolumeReadError::NotUtf8,
-        VfsError::NotDirectory |
-        VfsError::TooManySymlinks |
-        VfsError::Unsupported => RootVolumeReadError::Unsupported,
+        VfsError::NotDirectory | VfsError::TooManySymlinks | VfsError::Unsupported => {
+            RootVolumeReadError::Unsupported
+        }
         VfsError::Driver => RootVolumeReadError::Driver,
         VfsError::Corrupt => RootVolumeReadError::Corrupt,
         VfsError::Io => RootVolumeReadError::Io,
@@ -86,10 +87,10 @@ const USER_STACK_PREMAP_PAGES : usize = 16;
 const PREFERRED_MMAP_BASE : usize = 0x1000_0000;
 const USER_HEAP_MMAP_GAP : usize = 64 * 1024 * 1024;
 const MUSL_LIBC_PATH : &str = "/musl/lib/libc.so";
-const LOONGARCH_INSN_SYSCALL : u32 = 0x002b_0000;
-const LOONGARCH_INSN_RET : u32 = 0x4c00_0020;
+const LOONGARCH_INSN_SYSCALL : u32 = 0x002B_0000;
+const LOONGARCH_INSN_RET : u32 = 0x4C00_0020;
 const LOONGARCH_INSN_SLLI_W_A0_A0_0 : u32 = 0x0040_8084;
-const LOONGARCH_MUSL_SCHED_STUB_MARKER : u32 = 0x02bf_6804; // li.w a0, -ENOSYS
+const LOONGARCH_MUSL_SCHED_STUB_MARKER : u32 = 0x02BF_6804; // li.w a0, -ENOSYS
 
 struct MuslSchedStubPatch {
     offset : usize,
@@ -107,7 +108,7 @@ const MUSL_SCHED_STUB_PATCHES : &[MuslSchedStubPatch] =
       MuslSchedStubPatch { offset : 0x54500,
                            syscall_nr : 120,
                            name : "sched_getscheduler" },
-      MuslSchedStubPatch { offset : 0x544e0,
+      MuslSchedStubPatch { offset : 0x544E0,
                            syscall_nr : 121,
                            name : "sched_getparam" }];
 
@@ -159,6 +160,17 @@ pub fn read_path_bytes(path : &str) -> Result<Vec<u8>, LoadElfError> {
                    })?;
         read_whole_file_ro_retry_bad_prefix(&root, path)
     }
+}
+
+#[cfg(feature = "vfs-root-read")]
+pub(crate) fn resolve_elf_path(path : &str) -> Result<String, LoadElfError> {
+    vfs::resolve_symlink_absolute(path, vfs::api::FinalSymlink::Follow)
+        .map_err(|error| LoadElfError::RootVolume(map_vfs_to_root_vol(error)))
+}
+
+#[cfg(not(feature = "vfs-root-read"))]
+pub(crate) fn resolve_elf_path(path : &str) -> Result<String, LoadElfError> {
+    Ok(String::from(path))
 }
 
 fn read_path_range(path : &str, offset : u64, buf : &mut [u8]) -> Result<usize, LoadElfError> {
@@ -398,7 +410,12 @@ struct ElfPathSegmentLoader {
 
 impl ElfPathSegmentLoader {
     #[allow(dead_code)]
-    fn new(path : &str, vbase : usize, p_offset : usize, filesz : usize, vma_start : usize) -> Self {
+    fn new(path : &str,
+           vbase : usize,
+           p_offset : usize,
+           filesz : usize,
+           vma_start : usize)
+           -> Self {
         let vma_file_origin = p_offset.saturating_sub(vbase.saturating_sub(vma_start));
         Self { path : String::from(path),
                params : ElfSegmentLoadParams { vbase,
@@ -411,8 +428,10 @@ impl ElfPathSegmentLoader {
 
 impl DemandPageLoader for ElfPathSegmentLoader {
     fn duplicate_box(&self) -> MmResult<Box<dyn DemandPageLoader>> {
-        Ok(Box::new(Self { path : self.path.clone(),
-                           params : self.params.clone() }))
+        Ok(Box::new(Self { path : self.path
+                                      .clone(),
+                           params:
+                               self.params.clone() }))
     }
 
     fn load_page(&mut self, file_offset : usize, dst : &mut [u8]) -> MmResult<()> {
@@ -483,17 +502,11 @@ fn map_segment_from_path_lazy(aspace : &mut LoongArch64AddressSpace,
 
         if let Some(run_start) = lazy_run_start {
             if aspace.translate_addr(page_va)
-                      .map_err(LoadElfError::Mm)?
-                      .is_some() ||
+                     .map_err(LoadElfError::Mm)?
+                     .is_some() ||
                aspace.lazy_vma_contains(page_va)
             {
-                register_lazy_segment_run(aspace,
-                                          path,
-                                          run_start,
-                                          page_va,
-                                          vbase,
-                                          fo,
-                                          filesz,
+                register_lazy_segment_run(aspace, path, run_start, page_va, vbase, fo, filesz,
                                           perm)?;
                 lazy_run_start = None;
             }
@@ -544,13 +557,13 @@ fn map_segment_from_path_lazy(aspace : &mut LoongArch64AddressSpace,
 /// ELF 头/程序头缓冲。
 #[cfg(not(feature = "elf-lazy-map"))]
 fn map_segment_from_path_eager<A : AddressSpaceOps>(aspace : &mut A,
-                                              path : &str,
-                                              p_vaddr : u64,
-                                              p_offset : u64,
-                                              p_filesz : u64,
-                                              p_memsz : u64,
-                                              perm : PagePerm)
-                                              -> Result<(), LoadElfError> {
+                                                    path : &str,
+                                                    p_vaddr : u64,
+                                                    p_offset : u64,
+                                                    p_filesz : u64,
+                                                    p_memsz : u64,
+                                                    perm : PagePerm)
+                                                    -> Result<(), LoadElfError> {
     let vbase = p_vaddr as usize;
     let memsz = p_memsz as usize;
     let filesz = p_filesz as usize;
@@ -647,33 +660,22 @@ fn map_segment_from_path(aspace : &mut LoongArch64AddressSpace,
                          -> Result<(), LoadElfError> {
     #[cfg(feature = "elf-lazy-map")]
     {
-        return map_segment_from_path_lazy(aspace,
-                                          path,
-                                          p_vaddr,
-                                          p_offset,
-                                          p_filesz,
-                                          p_memsz,
+        return map_segment_from_path_lazy(aspace, path, p_vaddr, p_offset, p_filesz, p_memsz,
                                           perm);
     }
     #[cfg(not(feature = "elf-lazy-map"))]
     {
-        map_segment_from_path_eager(aspace,
-                                    path,
-                                    p_vaddr,
-                                    p_offset,
-                                    p_filesz,
-                                    p_memsz,
-                                    perm)
+        map_segment_from_path_eager(aspace, path, p_vaddr, p_offset, p_filesz, p_memsz, perm)
     }
 }
 
 fn map_load_segments_from_path_at(aspace : &mut LoongArch64AddressSpace,
-                                                       path : &str,
-                                                       phdrs : &[u8],
-                                                       phentsize : usize,
-                                                       phnum : usize,
-                                                       load_bias : usize)
-                                                       -> Result<(usize, usize), LoadElfError> {
+                                  path : &str,
+                                  phdrs : &[u8],
+                                  phentsize : usize,
+                                  phnum : usize,
+                                  load_bias : usize)
+                                  -> Result<(usize, usize), LoadElfError> {
     let mut min_vaddr = usize::MAX;
     let mut max_vaddr = 0usize;
     for i in 0..phnum {
@@ -716,7 +718,9 @@ fn read_mapped_u32<A : AddressSpaceOps>(aspace : &A, va : usize) -> Result<u32, 
                    .ok_or(LoadElfError::Mm(MmError::NotMapped))?
                    .0;
     let bytes = unsafe { core::slice::from_raw_parts(pa as *const u8, 4) };
-    Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    Ok(u32::from_le_bytes([bytes[0],
+                           bytes[1],
+                           bytes[2], bytes[3]]))
 }
 
 fn write_mapped_u32<A : AddressSpaceOps>(aspace : &A,
@@ -738,7 +742,7 @@ fn write_mapped_u32<A : AddressSpaceOps>(aspace : &A,
     Ok(())
 }
 
-fn loongarch_li_w_a7_imm(imm : u32) -> u32 { 0x0380_000b | ((imm & 0xfff) << 10) }
+fn loongarch_li_w_a7_imm(imm : u32) -> u32 { 0x0380_000B | ((imm & 0xFFF) << 10) }
 
 fn patch_loongarch_musl_sched_stubs<A : AddressSpaceOps>(aspace : &A,
                                                          interp_path : &str,
@@ -753,8 +757,8 @@ fn patch_loongarch_musl_sched_stubs<A : AddressSpaceOps>(aspace : &A,
                             .ok_or(LoadElfError::Parse)?;
         let marker = read_mapped_u32(aspace, va + 4)?;
         if marker != LOONGARCH_MUSL_SCHED_STUB_MARKER {
-            runtime::logging::warn!("[elf-load] skip musl sched shim {} at {:#x}: marker \
-                                     {:#x} != expected {:#x}",
+            runtime::logging::warn!("[elf-load] skip musl sched shim {} at {:#x}: marker {:#x} \
+                                     != expected {:#x}",
                                     patch.name,
                                     va,
                                     marker,
@@ -762,9 +766,13 @@ fn patch_loongarch_musl_sched_stubs<A : AddressSpaceOps>(aspace : &A,
             continue;
         }
 
-        write_mapped_u32(aspace, va, loongarch_li_w_a7_imm(patch.syscall_nr))?;
+        write_mapped_u32(aspace,
+                         va,
+                         loongarch_li_w_a7_imm(patch.syscall_nr))?;
         write_mapped_u32(aspace, va + 4, LOONGARCH_INSN_SYSCALL)?;
-        write_mapped_u32(aspace, va + 8, LOONGARCH_INSN_SLLI_W_A0_A0_0)?;
+        write_mapped_u32(aspace,
+                         va + 8,
+                         LOONGARCH_INSN_SLLI_W_A0_A0_0)?;
         write_mapped_u32(aspace, va + 12, LOONGARCH_INSN_RET)?;
         runtime::logging::debug!("[elf-load] patched loongarch musl {} stub at {:#x} -> syscall \
                                   {}",
@@ -936,13 +944,15 @@ fn prefault_elf_entry_page(aspace : &mut LoongArch64AddressSpace,
     let page = VirtAddr(entry_pc).floor_page()
                                  .start_addr();
     if aspace.translate_addr(page)
-              .map_err(LoadElfError::Mm)?
-              .is_some()
+             .map_err(LoadElfError::Mm)?
+             .is_some()
     {
         return Ok(());
     }
     let mut allocator = GlobalPhysFrameAllocator;
-    if !aspace.handle_lazy_page_fault(&mut allocator, page, PageFaultAccess::Execute)
+    if !aspace.handle_lazy_page_fault(&mut allocator,
+                                      page,
+                                      PageFaultAccess::Execute)
               .map_err(LoadElfError::Mm)?
     {
         return Err(LoadElfError::Parse);
@@ -975,7 +985,7 @@ fn read_interp_path(path : &str,
                      .position(|b| *b == 0)
                      .unwrap_or(buf.len());
         let interp = core::str::from_utf8(&buf[..nul]).map_err(|_| LoadElfError::Parse)?;
-        return Ok(Some(remap_interp_path(path, interp)));
+        return resolve_interp_path(path, interp).map(Some);
     }
     Ok(None)
 }
@@ -996,8 +1006,15 @@ fn remap_interp_path(program_path : &str, interp : &str) -> String {
     String::from(interp)
 }
 
+fn resolve_interp_path(program_path : &str, interp : &str) -> Result<String, LoadElfError> {
+    let remapped = remap_interp_path(program_path, interp);
+    resolve_elf_path(remapped.as_str())
+}
+
 /// 从已挂载根文件系统按区间读取 `path` 指向的 ELF，避免大文件整读撑爆内核堆。
 pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
+    let resolved_path = resolve_elf_path(path)?;
+    let path = resolved_path.as_str();
     runtime::logging::trace!("[elf-load] from_elf_path begin path={}",
                              path);
     let mut ehdr = [0u8; 64];
@@ -1166,7 +1183,9 @@ pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
                                          interp.phentsize,
                                          interp.phnum,
                                          interp_base)?;
-        patch_loongarch_musl_sched_stubs(&aspace, interp_path.as_str(), interp_base)?;
+        patch_loongarch_musl_sched_stubs(&aspace,
+                                         interp_path.as_str(),
+                                         interp_base)?;
         runtime::logging::trace!("[elf-load] interpreter path={} base={:#x} entry={:#x}",
                                  interp_path,
                                  interp_base,

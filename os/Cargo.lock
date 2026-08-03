@@ -1407,6 +1407,7 @@ dependencies = [
 name = "wateros-platform-impl-qemu-loongarch64-virt"
 version = "0.1.0"
 dependencies = [
+ "fdt",
  "wateros-base",
  "wateros-base-config",
  "wateros-platform-api-v0",

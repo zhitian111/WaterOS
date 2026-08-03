@@ -5,7 +5,6 @@
 //!
 //! **须在** `task::init()` **之后**调用 [`init`]。
 
-use syscall::UserRet;
 use arch_api_v0::kernel_trap::register_kernel_trap_handler;
 use arch_api_v0::trap::{Exception, Interrupt, TrapCause, TrapFrameRead, TrapFrameWrite};
 use base_config::task::SCHED_TIMER_PERIOD_MS;
@@ -15,6 +14,7 @@ use platform::arch::paging;
 use platform::arch::trap::ActiveTrapFrame as TrapContext;
 use runtime::logging::*;
 use syscall::dispatch_syscall_from_trap;
+use syscall::UserRet;
 use syscall::{EXEC, RT_SIGRETURN};
 
 #[inline]
@@ -27,19 +27,20 @@ fn record_debug_trap(kind : debug::DebugEventKind, cx : &TrapContext, raw_cause 
     let tick = task::current_tick();
     if matches!(kind, debug::DebugEventKind::TrapEnter) {
         debug::update_cpu_state(cpu, |state| {
-            state.traps = state.traps.wrapping_add(1);
+            state.traps = state.traps
+                               .wrapping_add(1);
             state.last_trap_cause = raw_cause as u64;
             state.last_trap_pc = cx.user_pc() as u64;
             state.last_trap_sp = cx.user_sp() as u64;
             state.last_fault_addr = cx.fault_addr() as u64;
         });
     }
-    debug::record_event(cpu,
-                        tick,
-                        task_id,
-                        kind,
-                        0,
-                        [raw_cause as u64, cx.user_pc() as u64, cx.fault_addr() as u64]);
+    debug::record_event(cpu, tick, task_id, kind, 0, [raw_cause
+                                                      as u64,
+                                                      cx.user_pc()
+                                                      as u64,
+                                                      cx.fault_addr()
+                                                      as u64]);
 }
 
 /// 热路径 syscall/trap 跟踪；release 构建默认关闭。
@@ -165,7 +166,9 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
         platform::arch::trap::prepare_user_trap_frame_access();
     }
     let raw_cause = cx.raw_cause();
-    record_debug_trap(debug::DebugEventKind::TrapEnter, cx, raw_cause);
+    record_debug_trap(debug::DebugEventKind::TrapEnter,
+                      cx,
+                      raw_cause);
     let trap_cause = cx.trap_cause();
     let mut restart = None;
     match trap_cause {
@@ -298,15 +301,17 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             if debug::ENABLED {
                 let cpu = platform::arch::cpu::current_cpu_id().raw();
                 debug::update_cpu_state(cpu, |state| {
-                    state.ipi_received = state.ipi_received.wrapping_add(1);
+                    state.ipi_received = state.ipi_received
+                                              .wrapping_add(1);
                 });
                 debug::record_event(cpu,
                                     task::current_tick(),
-                                    task::current_task_id()
-                                        .map_or(debug::NO_TASK, |id| id as u64),
+                                    task::current_task_id().map_or(debug::NO_TASK, |id| id as u64),
                                     debug::DebugEventKind::IpiReceive,
                                     0,
-                                    [pending as u64, 0, 0]);
+                                    [pending as u64,
+                                     0,
+                                     0]);
             }
             if pending & platform::smp::IpiKind::TlbShootdown.bits() != 0 {
                 let _ = mm::kernel_mm::handle_tlb_shootdown_ipi();
@@ -349,6 +354,13 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                     TrapCause::Exception(Exception::IllegalInstruction) => 4,
                     _ => 11,
                 };
+                warn!("[trap] unhandled user exception cause={:?} raw={:#x} pc={:#x} \
+                       fault_addr={:#x} signal={}",
+                      trap_cause,
+                      raw_cause,
+                      cx.user_pc(),
+                      cx.fault_addr(),
+                      signal);
                 if !syscall::raise_current_signal(signal) {
                     kill_current_user_task("user exception", trap_cause, cx);
                 }
@@ -377,7 +389,9 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                            raw_cause,);
     }
 
-    record_debug_trap(debug::DebugEventKind::TrapExit, cx, raw_cause);
+    record_debug_trap(debug::DebugEventKind::TrapExit,
+                      cx,
+                      raw_cause);
 
     // --- 返回路径（与 `trap.asm` 成对）：本函数返回后 **没有** 更多 Rust
     // 代码会执行；汇编从 `sp` 指向的 `TrapContext` 装载 CSR/通用寄存器并
@@ -431,7 +445,9 @@ fn finish_trap_return(frame : *mut u8, cx : &TrapContext, raw_cause : usize) {
                        cx.return_address_space_token(),
                        paging::active_address_space_token(),
                        raw_cause);
-    record_debug_trap(debug::DebugEventKind::TrapExit, cx, raw_cause);
+    record_debug_trap(debug::DebugEventKind::TrapExit,
+                      cx,
+                      raw_cause);
     let restored = unsafe { task::restore_current_trap_frame(frame) };
     if !restored {
         panic!("restore_current_trap_frame failed before signal return");

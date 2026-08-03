@@ -72,6 +72,42 @@ __wateros_arch_restore_user_task:
     ori $r13, $r13, 0x10
     csrwr $r13, 0x0
 
+    # TrapContext+37*8 保存 32 个 128-bit LSX 寄存器。
+    vld $vr0,  $r21, 296
+    vld $vr1,  $r21, 312
+    vld $vr2,  $r21, 328
+    vld $vr3,  $r21, 344
+    vld $vr4,  $r21, 360
+    vld $vr5,  $r21, 376
+    vld $vr6,  $r21, 392
+    vld $vr7,  $r21, 408
+    vld $vr8,  $r21, 424
+    vld $vr9,  $r21, 440
+    vld $vr10, $r21, 456
+    vld $vr11, $r21, 472
+    vld $vr12, $r21, 488
+    vld $vr13, $r21, 504
+    vld $vr14, $r21, 520
+    vld $vr15, $r21, 536
+    vld $vr16, $r21, 552
+    vld $vr17, $r21, 568
+    vld $vr18, $r21, 584
+    vld $vr19, $r21, 600
+    vld $vr20, $r21, 616
+    vld $vr21, $r21, 632
+    vld $vr22, $r21, 648
+    vld $vr23, $r21, 664
+    vld $vr24, $r21, 680
+    vld $vr25, $r21, 696
+    vld $vr26, $r21, 712
+    vld $vr27, $r21, 728
+    vld $vr28, $r21, 744
+    vld $vr29, $r21, 760
+    vld $vr30, $r21, 776
+    vld $vr31, $r21, 792
+    ld.d $r13, $r21, 808
+    movgr2fcsr $fcsr0, $r13
+
     ld.d $r1,  $r21, 1*8
     ld.d $r2,  $r21, 2*8
     ld.d $r5,  $r21, 5*8

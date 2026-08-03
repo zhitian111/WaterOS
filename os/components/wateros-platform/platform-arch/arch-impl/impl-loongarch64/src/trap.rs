@@ -5,13 +5,13 @@
 //! **ABI**：用户态系统调用按 LoongArch Linux 约定使用 `$r4`–`r9` 为参数、`$r11`
 //! 为 系统调用号；返回值写入 `$r4`（见 `TrapSyscallWrite`）。
 
-use syscall_api::{SyscallArgs, SyscallNumber, UserRet};
 use api_v0::kernel_trap;
 use api_v0::trap::{
     Exception, Interrupt, SignalFrameCodec, SignalMachineContext, TrapCause, TrapFrameRead,
     TrapFrameWrite,
 };
 use core::arch::asm;
+use syscall_api::{SyscallArgs, SyscallNumber, UserRet};
 
 /// 字段顺序/大小必须与 `asm/trap.S` 的偏移保持一致。
 #[repr(C)]
@@ -23,6 +23,10 @@ pub struct TrapContext {
     estat : usize,
     badv : usize,
     return_address_space_token : usize,
+    /// 32 个 128-bit LSX 向量寄存器，按每个寄存器低/高 64 位保存。
+    lsx : [[u64; 2]; 32],
+    /// 浮点控制状态；基础 FPR 是对应 LSX 寄存器的低 64 位。
+    fcsr : usize,
 }
 
 /// 异常入口向量 CSR（`EENTRY`）：`trap.S` 中 `__alltraps` 的物理入口地址写入此
@@ -37,8 +41,7 @@ const CSR_TLBREHI : usize = 0x8E;
 const CSR_DMW0 : usize = 0x180;
 const CSR_EUEN : usize = 0x2;
 const LOONGARCH_PAGE_SIZE_BITS : usize = 12;
-const LOONGARCH_PWCL_4K_3LEVEL : usize =
-    12 | (9 << 5) | (21 << 10) | (9 << 15);
+const LOONGARCH_PWCL_4K_3LEVEL : usize = 12 | (9 << 5) | (21 << 10) | (9 << 15);
 const LOONGARCH_PWCH_4K_3LEVEL : usize = 30 | (9 << 6);
 /// PLV0 专用直接映射窗口：VA[47:0] → PA[47:0]，MAT 为一致可缓存。
 /// 此处不开放 PLV3，迫使用户代码走 PGDL/TLB，同时 trap/重填入口与内核栈不依赖
@@ -57,11 +60,11 @@ const IPI_INTERRUPT_PENDING : usize = 1 << 12;
 /// 单次定时器中断后重新武装的切片长度（StableCounter
 /// 刻度）；与调度策略相关，非用户 ABI。
 const TIMER_SLICE_TICKS : u64 = 10_000_000;
-/// `EUEN.FPE`：允许当前执行流使用基础浮点寄存器。
+/// `EUEN.FPE|SXE`：允许当前执行流使用基础浮点与 LSX 寄存器。
 ///
-/// bring-up 阶段用户任务串行运行，先全局打开以支持 hard-float glibc/musl
-/// busybox；后续多任务并发时应在任务切换路径补充 FPU 上下文保存/恢复。
-const LOONGARCH_EUEN_FPE : usize = 1 << 0;
+/// LSX 状态随用户 trap 帧保存和恢复，因此定时器抢占和跨核调度不会串改用户状态。
+/// 基础浮点状态仍由现有信号上下文路径管理。
+const LOONGARCH_EUEN_FPE_SXE : usize = (1 << 0) | (1 << 1);
 
 unsafe fn save_fp_state() -> ([u64; 32], u32) {
     let mut regs = [0u64; 32];
@@ -171,7 +174,7 @@ pub fn init_trap() {
     write_csr::<CSR_PWCL>(LOONGARCH_PWCL_4K_3LEVEL);
     write_csr::<CSR_PWCH>(LOONGARCH_PWCH_4K_3LEVEL);
     write_csr::<CSR_ASID>(0);
-    write_csr::<CSR_EUEN>(LOONGARCH_EUEN_FPE);
+    write_csr::<CSR_EUEN>(LOONGARCH_EUEN_FPE_SXE);
     unsafe {
         asm!("invtlb 0, $zero, $zero");
     }

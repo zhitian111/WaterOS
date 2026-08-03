@@ -325,7 +325,7 @@ mod qemu_loongarch64_virt {
     }
 
     #[unsafe(no_mangle)]
-    pub fn wateros_kernel_main(cpu_raw : usize, _argc : usize, envp : usize) -> ! {
+    pub fn wateros_kernel_main(cpu_raw : usize, _argc : usize, _envp : usize) -> ! {
         let cpu_id = task::CpuId::from_raw(cpu_raw);
         mask_boot_interrupts();
         if BSP_CLAIMED.swap(true, Ordering::AcqRel) {
@@ -339,8 +339,12 @@ mod qemu_loongarch64_virt {
         platform::arch::cpu::init_current_cpu(cpu_id).expect("BSP init current CPU");
         platform::arch::init();
         let _ = platform::smp::init_ipi();
-        driver::init_when_boot(envp);
-        crate::boot_timebase::probe_and_init_timebase(envp);
+        let dtb_pa = platform::active_impl::boot::device_tree_phys_addr();
+        driver::init_when_boot(dtb_pa);
+        let configured = platform::active_impl::smp::init_configured_cpu_mask(dtb_pa)
+            .expect("initialize LoongArch CPU topology from DTB");
+        info!("[smp] LA configured CPU mask={:#x}", configured.bits());
+        crate::boot_timebase::probe_and_init_timebase(dtb_pa);
         task::init();
         task::set_timekeeper_cpu(cpu_id);
         task::set_cpu_online(cpu_id);
@@ -350,7 +354,7 @@ mod qemu_loongarch64_virt {
         platform::arch::paging::init_paging_disable_mmu();
 
         let memory_end = driver::physical_ram_end_exclusive();
-        mm::kernel_mm::init(envp, memory_end);
+        mm::kernel_mm::init(dtb_pa, memory_end);
 
         AP_BOOT_READY.store(true, Ordering::Release);
         let requested_aps = start_secondary_cpus(cpu_id);

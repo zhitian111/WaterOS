@@ -10,11 +10,13 @@
 # - estat    : 34 * 8
 # - badv     : 35 * 8
 # - return_address_space_token : 36 * 8
+# - lsx      : 37 * 8, 32 * 16 bytes
+# - fcsr     : 101 * 8
 #
 # CSR SAVE0 在用户态运行时保存当前任务的内核栈顶。
 # 用户态进入内核 trap 时，在构建 TrapContext 前用 SAVE0 与 $r3 交换，与 RISC-V
 # 实现中的 sscratch 约定对应。
-    .equ TRAP_CONTEXT_SIZE, 296
+    .equ TRAP_CONTEXT_SIZE, 816
     .equ CSR_PRMD, 0x1
     .equ CSR_ERA, 0x6
     .equ CSR_ESTAT, 0x5
@@ -64,6 +66,76 @@
     ld.d $r29, $r3, 232
     ld.d $r30, $r3, 240
     ld.d $r31, $r3, 248
+    .endm
+
+    .macro SAVE_LSX_REGS
+    vst $vr0,  $r3, 296
+    vst $vr1,  $r3, 312
+    vst $vr2,  $r3, 328
+    vst $vr3,  $r3, 344
+    vst $vr4,  $r3, 360
+    vst $vr5,  $r3, 376
+    vst $vr6,  $r3, 392
+    vst $vr7,  $r3, 408
+    vst $vr8,  $r3, 424
+    vst $vr9,  $r3, 440
+    vst $vr10, $r3, 456
+    vst $vr11, $r3, 472
+    vst $vr12, $r3, 488
+    vst $vr13, $r3, 504
+    vst $vr14, $r3, 520
+    vst $vr15, $r3, 536
+    vst $vr16, $r3, 552
+    vst $vr17, $r3, 568
+    vst $vr18, $r3, 584
+    vst $vr19, $r3, 600
+    vst $vr20, $r3, 616
+    vst $vr21, $r3, 632
+    vst $vr22, $r3, 648
+    vst $vr23, $r3, 664
+    vst $vr24, $r3, 680
+    vst $vr25, $r3, 696
+    vst $vr26, $r3, 712
+    vst $vr27, $r3, 728
+    vst $vr28, $r3, 744
+    vst $vr29, $r3, 760
+    vst $vr30, $r3, 776
+    vst $vr31, $r3, 792
+    .endm
+
+    .macro RESTORE_LSX_REGS base
+    vld $vr0,  \base, 296
+    vld $vr1,  \base, 312
+    vld $vr2,  \base, 328
+    vld $vr3,  \base, 344
+    vld $vr4,  \base, 360
+    vld $vr5,  \base, 376
+    vld $vr6,  \base, 392
+    vld $vr7,  \base, 408
+    vld $vr8,  \base, 424
+    vld $vr9,  \base, 440
+    vld $vr10, \base, 456
+    vld $vr11, \base, 472
+    vld $vr12, \base, 488
+    vld $vr13, \base, 504
+    vld $vr14, \base, 520
+    vld $vr15, \base, 536
+    vld $vr16, \base, 552
+    vld $vr17, \base, 568
+    vld $vr18, \base, 584
+    vld $vr19, \base, 600
+    vld $vr20, \base, 616
+    vld $vr21, \base, 632
+    vld $vr22, \base, 648
+    vld $vr23, \base, 664
+    vld $vr24, \base, 680
+    vld $vr25, \base, 696
+    vld $vr26, \base, 712
+    vld $vr27, \base, 728
+    vld $vr28, \base, 744
+    vld $vr29, \base, 760
+    vld $vr30, \base, 776
+    vld $vr31, \base, 792
     .endm
 
 __alltraps:
@@ -145,6 +217,9 @@ __alltraps:
     csrrd $r13, CSR_ASID
     bstrins.d $r12, $r13, 57, 48
     st.d $r12, $r3, 288
+    SAVE_LSX_REGS
+    movfcsr2gr $r12, $fcsr0
+    st.d $r12, $r3, 808
 
     move $r4, $r3
     # r1/ra 位于 TrapContext+8，CFA 为进入 trap 前的内核栈顶。
@@ -160,6 +235,9 @@ __alltraps:
     csrwr $r12, CSR_ERA
 
     beq $r13, $r14, .Lreturn_to_user
+    RESTORE_LSX_REGS $r3
+    ld.d $r12, $r3, 808
+    movgr2fcsr $fcsr0, $r12
     RESTORE_GENERAL_REGS
     addi.d $r3, $r3, TRAP_CONTEXT_SIZE
     ertn
@@ -187,6 +265,9 @@ __alltraps:
     csrwr $r12, CSR_CRMD
     addi.d $r12, $r3, TRAP_CONTEXT_SIZE
     csrwr $r12, CSR_SAVE0
+    RESTORE_LSX_REGS $r3
+    ld.d $r12, $r3, 808
+    movgr2fcsr $fcsr0, $r12
     RESTORE_GENERAL_REGS
     ld.d $r3, $r3, 3*8
     ertn
