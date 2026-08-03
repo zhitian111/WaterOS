@@ -10,8 +10,7 @@ use task::TaskTick;
 
 use crate::poll_engine::ns_duration_to_ticks;
 use crate::user_copy::{
-    atomic_load_user_u32_in_aspace, copy_from_user_struct,
-    futex_mapping_identity_u32_in_aspace,
+    atomic_load_user_u32_in_aspace, copy_from_user_struct, futex_mapping_identity_u32_in_aspace,
 };
 
 use super::futex_error_to_errno;
@@ -34,6 +33,27 @@ const FUTEX_BITSET_MATCH_ALL : u32 = !0;
 struct UserTimespec {
     sec : isize,
     nsec : isize,
+}
+
+#[derive(Clone, Copy)]
+struct FutexDeadline {
+    target_ns : u128,
+    realtime : bool,
+}
+
+impl FutexDeadline {
+    fn now_ns(self) -> Result<u128, ErrNo> {
+        if self.realtime {
+            wall_clock::realtime_ns()
+        } else {
+            wall_clock::monotonic_ns()
+        }.map_err(|_| ErrNo::EIO)
+    }
+
+    fn remaining_ticks(self) -> Result<TaskTick, ErrNo> {
+        Ok(ns_duration_to_ticks(self.target_ns
+                                    .saturating_sub(self.now_ns()?)))
+    }
 }
 
 fn read_user_u32_in_aspace(aspace : usize, uaddr : usize) -> Result<u32, ErrNo> {
@@ -67,37 +87,26 @@ fn validate_requeue_count(count : u32) -> Result<u32, ErrNo> {
 fn parse_futex_timeout(timeout_ptr : usize,
                        cmd : u32,
                        futex_op : u32)
-                       -> Result<Option<TaskTick>, ErrNo> {
+                       -> Result<Option<FutexDeadline>, ErrNo> {
     if timeout_ptr == 0 {
         return Ok(None);
     }
     let ts = copy_from_user_struct::<UserTimespec>(timeout_ptr)?;
     let timeout_ns = timespec_to_ns(ts)?;
-    let duration_ns = match cmd {
+    let deadline = match cmd {
         // FUTEX_WAIT 使用相对时长。
-        FUTEX_WAIT => timeout_ns,
-        // FUTEX_WAIT_BITSET 使用绝对 deadline；未指定 CLOCK_REALTIME 时
-        // 基于 CLOCK_MONOTONIC，而不是把绝对值再次当作相对时长。
-        FUTEX_WAIT_BITSET => {
-            let now_ns = if futex_op & FUTEX_CLOCK_REALTIME != 0 {
-                             wall_clock::realtime_ns()
-                         } else {
-                             wall_clock::monotonic_ns()
-                         }.map_err(|_| ErrNo::EIO)?;
-            if timeout_ns <= now_ns {
-                0
-            } else {
-                timeout_ns - now_ns
-            }
+        FUTEX_WAIT => {
+            let now_ns = wall_clock::monotonic_ns().map_err(|_| ErrNo::EIO)?;
+            FutexDeadline { target_ns : now_ns.saturating_add(timeout_ns),
+                            realtime : false }
         }
+        // FUTEX_WAIT_BITSET 使用绝对 deadline；未指定 CLOCK_REALTIME 时
+        // 基于对应时钟，而不是把绝对值再次当作相对时长。
+        FUTEX_WAIT_BITSET => FutexDeadline { target_ns : timeout_ns,
+                                             realtime : futex_op & FUTEX_CLOCK_REALTIME != 0 },
         _ => return Err(ErrNo::EINVAL),
     };
-    let ticks = if duration_ns == 0 {
-        0
-    } else {
-        ns_duration_to_ticks(duration_ns)
-    };
-    Ok(Some(ticks))
+    Ok(Some(deadline))
 }
 
 fn reject_unsupported_futex_bitset(cmd : u32, bitset : u32) -> Result<(), ErrNo> {
@@ -155,7 +164,10 @@ fn futex_wait(uaddr : usize,
     let key = futex_key_in_aspace(uaddr, futex_op, current_aspace)?;
     let is_private = key.is_private;
     let timeout = parse_futex_timeout(timeout_ptr, cmd, futex_op)?;
-    if timeout == Some(0) {
+    if timeout.map(FutexDeadline::remaining_ticks)
+              .transpose()? ==
+       Some(0)
+    {
         let cur = read_user_u32_in_aspace(current_aspace, uaddr)?;
         log::trace!("[pthread-debug] futex_wait zero-timeout uaddr={:#x} op={:#x} val={val} \
                      cur={cur} private={is_private}",
@@ -182,39 +194,52 @@ fn futex_wait(uaddr : usize,
                 futex_op,);
     super::super::misc::bringup_stats::record_futex_wait_sleep();
 
-    let mut condition_error = None;
     let task_id = task::current_task_id().ok_or(ErrNo::ESRCH)?;
-    let outcome = ipc::futex::wait_while(task_id, key, timeout, || {
-        match read_user_u32_in_aspace(current_aspace, uaddr) {
-            Ok(value) => value == val,
-            Err(error) => {
-                condition_error = Some(error);
-                false
+    loop {
+        let timeout_ticks = timeout.map(FutexDeadline::remaining_ticks)
+                                   .transpose()?;
+        if timeout_ticks == Some(0) {
+            return Err(ErrNo::ETIMEDOUT);
+        }
+        let mut condition_error = None;
+        let outcome = ipc::futex::wait_while(task_id, key, timeout_ticks, || {
+            match read_user_u32_in_aspace(current_aspace, uaddr) {
+                Ok(value) => value == val,
+                Err(error) => {
+                    condition_error = Some(error);
+                    false
+                }
             }
+        });
+        if let Some(error) = condition_error {
+            return Err(error);
         }
-    });
-    if let Some(error) = condition_error {
-        return Err(error);
-    }
-    match outcome {
-        FutexWaitOutcome::ConditionChanged => {
-            super::super::misc::bringup_stats::record_futex_wait_eagain();
-            Err(ErrNo::EAGAIN)
-        }
-        FutexWaitOutcome::Interrupted => {
-            log::trace!("[pthread-debug] futex_wait EINTR uaddr={:#x}",
-                        uaddr);
-            Err(ErrNo::EINTR)
-        }
-        FutexWaitOutcome::TimedOut => {
-            log::trace!("[pthread-debug] futex_wait ETIMEDOUT uaddr={:#x}",
-                        uaddr);
-            Err(ErrNo::ETIMEDOUT)
-        }
-        FutexWaitOutcome::Woken => {
-            log::trace!("[pthread-debug] futex_wait ok uaddr={:#x} val={val}",
-                        uaddr);
-            Ok(0)
+        match outcome {
+            FutexWaitOutcome::ConditionChanged => {
+                super::super::misc::bringup_stats::record_futex_wait_eagain();
+                return Err(ErrNo::EAGAIN);
+            }
+            FutexWaitOutcome::Interrupted => {
+                log::trace!("[pthread-debug] futex_wait EINTR uaddr={:#x}",
+                            uaddr);
+                return Err(ErrNo::EINTR);
+            }
+            FutexWaitOutcome::TimedOut => {
+                if timeout.map(FutexDeadline::remaining_ticks)
+                          .transpose()? !=
+                   Some(0)
+                {
+                    continue;
+                }
+                log::trace!("[pthread-debug] futex_wait ETIMEDOUT uaddr={:#x}",
+                            uaddr);
+                return Err(ErrNo::ETIMEDOUT);
+            }
+            FutexWaitOutcome::Woken => {
+                log::trace!("[pthread-debug] futex_wait ok uaddr={:#x} val={val}",
+                            uaddr);
+                return Ok(0);
+            }
         }
     }
 }
@@ -246,15 +271,17 @@ fn futex_requeue(uaddr : usize,
         if read_user_u32_in_aspace(private_scope, uaddr)? != expected {
             return Err(ErrNo::EAGAIN);
         }
-        ipc::futex::cmp_requeue(from_key,
+        ipc::futex::cmp_requeue(
+                                from_key,
                                 to_key,
                                 wake_count,
                                 requeue_count,
                                 || {
                                     read_user_u32_in_aspace(private_scope, uaddr)
-                                       .map(|value| value == expected)
-                                       .map_err(|_| FutexError::Fault)
-                                }).map_err(futex_error_to_errno)
+                .map(|value| value == expected)
+                .map_err(|_| FutexError::Fault)
+                                },
+        ).map_err(futex_error_to_errno)
     } else {
         ipc::futex::requeue(from_key,
                             to_key,
@@ -286,12 +313,12 @@ pub(crate) fn wake_user_addr(user_aspace : usize, uaddr : usize) -> usize {
     let private_key = FutexKey::private(uaddr, user_aspace);
     let n1 = ipc::futex::wake_all(private_key);
     let n2 = nonprivate_futex_key_for_aspace(user_aspace, uaddr).map(|key| {
-                                                                     if key == private_key {
-                                                                         0
-                                                                     } else {
-                                                                         ipc::futex::wake_all(key)
-                                                                     }
-                                                                 })
+                                                                    if key == private_key {
+                                                                        0
+                                                                    } else {
+                                                                        ipc::futex::wake_all(key)
+                                                                    }
+                                                                })
                                                                 .unwrap_or(0);
     let total = n1 + n2;
     log::trace!("[pthread-debug] wake_user_addr uaddr={:#x} private={n1} shared={n2} \

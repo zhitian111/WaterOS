@@ -5,8 +5,9 @@ extern crate alloc;
 
 use api_v0::ErrNo;
 use api_v0::UserRet;
-use network::stack;
 use ipc::signal::SignalSet;
+use network::stack;
+use platform::wall_clock;
 use task::TaskTick;
 use wateros_base_config::task::SCHED_TIMER_PERIOD_MS;
 
@@ -57,11 +58,14 @@ pub(crate) struct UserTimeVal {
 pub(crate) type FdSet = [u64; FD_SET_WORDS];
 
 pub(crate) struct PollDeadline {
-    expire_tick : Option<u64>,
+    expire_ns : Option<u128>,
 }
 
-/// 将纳秒时长向上取整为调度 tick，与 `clock.rs` 中 `sleep_for_ns` 一致。
+/// 将纳秒时长向上取整为调度 tick。
 pub(crate) fn ns_duration_to_ticks(total_ns : u128) -> u64 {
+    if total_ns == 0 {
+        return 0;
+    }
     let tick_ns = (SCHED_TIMER_PERIOD_MS as u128).max(1) * 1_000_000;
     let ticks = total_ns.saturating_add(tick_ns - 1) / tick_ns;
     u64::try_from(ticks).unwrap_or(u64::MAX)
@@ -69,13 +73,15 @@ pub(crate) fn ns_duration_to_ticks(total_ns : u128) -> u64 {
 }
 
 impl PollDeadline {
-    fn duration_to_ticks(sec : isize, nsec : isize) -> u64 {
-        let total_ns = (sec as u128).saturating_mul(1_000_000_000)
-                                    .saturating_add(nsec as u128);
-        ns_duration_to_ticks(total_ns)
+    fn now_ns() -> u128 {
+        wall_clock::monotonic_ns().unwrap_or_else(|_| {
+                                      (task::current_tick() as u128) *
+                                      (SCHED_TIMER_PERIOD_MS as u128) *
+                                      1_000_000
+                                  })
     }
 
-    pub(crate) fn infinite() -> Self { Self { expire_tick : None } }
+    pub(crate) fn infinite() -> Self { Self { expire_ns : None } }
 
     pub(crate) fn from_timespec_ptr(ptr : usize) -> Result<Self, ErrNo> {
         if ptr == 0 {
@@ -89,12 +95,9 @@ impl PollDeadline {
         if ts.sec < 0 || ts.nsec < 0 || ts.nsec >= 1_000_000_000 {
             return Err(ErrNo::EINVAL);
         }
-        if ts.sec == 0 && ts.nsec == 0 {
-            return Ok(Self { expire_tick : Some(task::current_tick()) });
-        }
-        let base = task::current_tick();
-        let extra = Self::duration_to_ticks(ts.sec, ts.nsec);
-        Ok(Self { expire_tick : Some(base.saturating_add(extra)) })
+        let duration_ns = (ts.sec as u128).saturating_mul(1_000_000_000)
+                                          .saturating_add(ts.nsec as u128);
+        Ok(Self { expire_ns : Some(Self::now_ns().saturating_add(duration_ns)) })
     }
 
     pub(crate) fn from_poll_millis(timeout_ms : isize) -> Result<Self, ErrNo> {
@@ -102,11 +105,10 @@ impl PollDeadline {
             return Ok(Self::infinite());
         }
         if timeout_ms == 0 {
-            return Ok(Self { expire_tick : Some(task::current_tick()) });
+            return Ok(Self { expire_ns : Some(Self::now_ns()) });
         }
-        let tick_ms = (SCHED_TIMER_PERIOD_MS as u64).max(1);
-        let extra = (timeout_ms as u64).saturating_add(tick_ms - 1) / tick_ms;
-        Ok(Self { expire_tick : Some(task::current_tick().saturating_add(extra.max(1))) })
+        let timeout_ns = (timeout_ms as u128).saturating_mul(1_000_000);
+        Ok(Self { expire_ns : Some(Self::now_ns().saturating_add(timeout_ns)) })
     }
 
     pub(crate) fn from_timeval_ptr(ptr : usize) -> Result<Self, ErrNo> {
@@ -123,24 +125,31 @@ impl PollDeadline {
     }
 
     pub(crate) fn expired(&self) -> bool {
-        match self.expire_tick {
-            Some(exp) => task::current_tick() >= exp,
+        match self.expire_ns {
+            Some(exp) => Self::now_ns() >= exp,
             None => false,
         }
     }
 
     pub(crate) fn remaining_ticks(&self) -> u64 {
-        match self.expire_tick {
-            Some(exp) => {
-                let now = task::current_tick();
-                if now >= exp {
-                    0
-                } else {
-                    exp - now
-                }
-            }
+        match self.expire_ns {
+            Some(exp) => ns_duration_to_ticks(exp.saturating_sub(Self::now_ns())),
             None => u64::MAX,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn duration_ticks_round_up() {
+        let tick_ns = (SCHED_TIMER_PERIOD_MS as u128) * 1_000_000;
+        assert_eq!(ns_duration_to_ticks(0), 0);
+        assert_eq!(ns_duration_to_ticks(1), 1);
+        assert_eq!(ns_duration_to_ticks(tick_ns), 1);
+        assert_eq!(ns_duration_to_ticks(tick_ns + 1), 2);
     }
 }
 
@@ -443,7 +452,6 @@ pub(crate) fn fd_set_set(set : &mut FdSet, fd : usize) {
     set[word] |= 1u64 << bit;
 }
 
-
 pub(crate) fn copy_fd_set_from_user(ptr : usize) -> Result<Option<FdSet>, ErrNo> {
     if ptr == 0 {
         return Ok(None);
@@ -468,7 +476,6 @@ pub(crate) fn copy_fd_set_to_user(ptr : usize, set : &FdSet) -> Result<(), ErrNo
         _ => Err(ErrNo::EFAULT),
     }
 }
-
 
 fn scan_fd_sets_inner(nfds : usize,
                       readfds_ptr : usize,
