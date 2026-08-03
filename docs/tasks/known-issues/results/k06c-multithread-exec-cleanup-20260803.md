@@ -44,3 +44,18 @@ robust list 仍在旧地址空间销毁前处理，signal 状态仍由 `on_exec(
 该修复证明并消除了 exec 侧表泄漏，但尚不能单独证明此前 BuildStorm 最终 join 停滞
 完全解决。白天未运行完整 final；下一夜间窗口需要用干净主办方镜像重新执行完整
 CAgent 和 BuildStorm，并检查 futex 队列是否长期有界。
+
+## 正式负载短回归
+
+提交修复后又运行了一次 300 秒硬超时的正式 final 前段：
+
+- CAgent 10/10、`BUILDSTORM_TOOLCHAIN ok`、`BUILDSTORM_MINIBUILD ok`；
+- `tg-xtask` 预构建在 58.79 秒完成，正式 ArceOS release 构建已经启动；
+- futex 队列快照依次为 `6, 0, 1, 0, 1, 7, 7, 7`。前几次工具进程退出后均回落到
+  0/1；最后 7 个队列与仍存活的 rustc 工作线程同时存在，未出现退出任务残留或单调增长；
+- 300 秒由 host `timeout` 主动终止，不是 guest panic、死锁或测试失败；
+- 停机后 `e2fsck -fn` 通过，无文件系统结构错误。
+
+原始日志：`/tmp/wateros-final-exec-cleanup-5m-20260803.log`。压缩备份：
+`~/Downloads/WaterOS-test-logs/final-exec-cleanup-5m-20260803.log.gz`，SHA-256
+`ba2257a9816e29dbd2a3e7db0e88788efcbe33099fc97f444a37af2a63d6d2a0`。
