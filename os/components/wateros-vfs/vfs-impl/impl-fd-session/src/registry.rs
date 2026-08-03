@@ -588,6 +588,9 @@ impl PerTaskFdRegistry {
                                    minfd : usize,
                                    dup_handle : SharedIoHandle)
                                    -> VfsResult<usize> {
+        if minfd >= task::nofile_rlimit_for_task(task_id) as usize {
+            return Err(VfsError::TooManyOpenFiles);
+        }
         self.check_nofile_before_open(task_id)?;
         self.ensure_task(task_id);
         let newfd = {

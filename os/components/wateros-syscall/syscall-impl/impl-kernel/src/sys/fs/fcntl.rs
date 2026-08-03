@@ -69,6 +69,9 @@ fn fcntl_unknown_cmd(fd : usize) -> Result<usize, ErrNo> {
 
 fn fcntl_dupfd(fd : usize, minfd : usize) -> Result<usize, ErrNo> {
     let task_id = vfs::fd::current_task_id().map_err(vfs_error_to_errno)?;
+    if minfd >= task::nofile_rlimit_for_task(task_id) as usize {
+        return Err(ErrNo::EINVAL);
+    }
     let epoll = crate::epoll_fd::lookup(fd);
     let newfd = vfs::fd::dup_fd(fd, minfd).map_err(vfs_error_to_errno)?;
     crate::unix_sock::duplicate_registration(task_id, fd, newfd);
@@ -80,6 +83,9 @@ fn fcntl_dupfd(fd : usize, minfd : usize) -> Result<usize, ErrNo> {
 
 fn fcntl_dupfd_cloexec(fd : usize, minfd : usize) -> Result<usize, ErrNo> {
     let task_id = vfs::fd::current_task_id().map_err(vfs_error_to_errno)?;
+    if minfd >= task::nofile_rlimit_for_task(task_id) as usize {
+        return Err(ErrNo::EINVAL);
+    }
     let epoll = crate::epoll_fd::lookup(fd);
     let newfd = vfs::fd::dup_fd(fd, minfd).map_err(vfs_error_to_errno)?;
     crate::unix_sock::duplicate_registration(task_id, fd, newfd);

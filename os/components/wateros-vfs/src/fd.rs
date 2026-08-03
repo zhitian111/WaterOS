@@ -354,6 +354,10 @@ pub fn self_test() {
                    .is_ok());
         let dup_handle = reg.duplicate_handle_for_task(a, fd)
                             .expect("dup source");
+        let rejected_dup = reg.install_dup_fd_for_task(a,
+                                                        task::nofile_rlimit_for_task(a) as usize,
+                                                        dup_handle.clone());
+        assert_eq!(rejected_dup, Err(VfsError::TooManyOpenFiles));
         let dup_fd = reg.install_dup_fd_for_task(a, 0, dup_handle)
                         .expect("dup");
         assert_ne!(dup_fd, fd);
