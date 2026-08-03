@@ -58,6 +58,8 @@ pub struct ProcessControlBlock {
     /// 已退出的非 leader 线程。退出路径只向这里登记；维护路径按此队列精确
     /// 回收，避免每次 `exit` 都扫描整个 `tasks` 映射。
     exited_member_task_ids : VecDeque<TaskId>,
+    /// exec 清理旧线程组期间禁止注册新的 member。
+    exec_in_progress : bool,
     state : ProcessState,
     //会话 ID（Session ID）。由 setsid() 系统调用设置，表示进程所属的会话（session）。会话是一组进程组的集合，通常与终端登录相关。
     sid : ProcessId,
@@ -240,6 +242,7 @@ impl ProcessRegistry {
                                             pgid : pid,
                                             tasks : map,
                                             exited_member_task_ids : VecDeque::new(),
+                                            exec_in_progress : false,
                                             state : ProcessState::Running,
                                             parent_death_signal : 0,
                                             sid : ProcessId::from_raw(0),
@@ -412,6 +415,9 @@ impl ProcessRegistry {
         let tid = self.alloc_tid();
         let process = self.process_mut(pid)
                           .ok_or(ProcessError::ProcessNotFound)?;
+        if process.exec_in_progress {
+            return Err(ProcessError::InvalidArgument);
+        }
         process.tasks
                .insert(task_id, ProcessTask { tid,
                                               state:
@@ -433,6 +439,20 @@ impl ProcessRegistry {
                        .insert(tid, task_id),
                    None);
         Ok(task_id)
+    }
+
+    /// 原子地阻止并发 clone，并返回 exec 需要清理的稳定线程列表。
+    pub fn begin_process_exec(&mut self,
+                              pid : ProcessId,
+                              exec_task_id : TaskId)
+                              -> ProcessResult<Vec<TaskId>> {
+        let process = self.process_mut(pid)
+                          .ok_or(ProcessError::ProcessNotFound)?;
+        if process.exec_in_progress || process.leader_task_id != exec_task_id {
+            return Err(ProcessError::InvalidArgument);
+        }
+        process.exec_in_progress = true;
+        Ok(process.tasks.keys().copied().collect())
     }
 
     pub fn mark_task_exited(&mut self,
@@ -518,6 +538,7 @@ impl ProcessRegistry {
             process.tasks
                    .retain(|task_id, _| *task_id == keep_task_id);
             process.leader_task_id = keep_task_id;
+            process.exec_in_progress = false;
             process.state = ProcessState::Running;
             process.exited_member_task_ids
                    .clear();
@@ -1056,5 +1077,25 @@ mod tests {
                    ProcessState::Exited(9));
         assert!(registry.detach_exited_process(pid).is_some());
         assert!(registry.detach_exited_process(pid).is_none());
+    }
+
+    #[test]
+    fn exec_barrier_rejects_clone_until_thread_group_is_retained() {
+        let mut registry = ProcessRegistry::new();
+        let pid = registry.create_process_for_task(10, None, None)
+                          .expect("create process");
+        registry.add_task_to_process(pid, 11, CloneFlags::CLONE_THREAD, 0, None)
+                .expect("add existing member");
+
+        assert_eq!(registry.begin_process_exec(pid, 10)
+                           .expect("begin exec"),
+                   alloc::vec![10, 11]);
+        assert!(registry.add_task_to_process(pid, 12, CloneFlags::CLONE_THREAD, 0, None)
+                        .is_err());
+
+        registry.retain_only_task_in_process(pid, 10)
+                .expect("finish exec");
+        registry.add_task_to_process(pid, 13, CloneFlags::CLONE_THREAD, 0, None)
+                .expect("clone after exec");
     }
 }

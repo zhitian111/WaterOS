@@ -182,24 +182,34 @@ pub fn kill_task(task_id: TaskId, exit_code: TaskExitCode) -> bool {
 pub fn terminate_other_threads_for_exec() -> Result<Vec<ExitedTask>, ()> {
     let current_id = crate::schedule::current_task_id().ok_or(())?;
     let process_task = crate::process::current_process_task_snapshot().ok_or(())?;
-    let process = crate::process::process_snapshot(process_task.pid).ok_or(())?;
-    if process.task_count <= 1 {
-        return Ok(Vec::new());
-    }
     if process_task.role != ProcessTaskRole::Leader {
         return Err(());
     }
 
-    let task_ids = active_impl::task_ids_for_process(process_task.pid).ok_or(())?;
+    let task_ids = active_impl::with_process_registry(|registry| {
+        registry.begin_process_exec(process_task.pid, current_id)
+    }).map_err(|_| ())?;
+    let mut pending = task_ids.into_iter()
+                              .filter(|task_id| *task_id != current_id)
+                              .collect::<Vec<_>>();
     let mut reaped = Vec::new();
-    for task_id in task_ids {
-        if task_id == current_id {
-            continue;
-        }
-        if kill_task(task_id, 0) {
-            if let Some(exited) = scheduler::reap_exited_task(task_id) {
+    while !pending.is_empty() {
+        let mut still_running = Vec::new();
+        for task_id in pending {
+            if kill_task(task_id, 0) {
+                if let Some(exited) = scheduler::reap_exited_task(task_id) {
+                    reaped.push(exited);
+                }
+            } else if let Some(exited) = scheduler::reap_exited_task(task_id) {
                 reaped.push(exited);
+            } else if scheduler::task_state(task_id).is_some() {
+                scheduler::request_task_reschedule(task_id);
+                still_running.push(task_id);
             }
+        }
+        pending = still_running;
+        if !pending.is_empty() {
+            crate::schedule::yield_now();
         }
     }
     active_impl::with_process_registry(|registry| {
