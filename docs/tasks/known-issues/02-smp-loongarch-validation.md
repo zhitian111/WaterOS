@@ -87,7 +87,7 @@ assert_eq!(online & configured, configured);
 - [ ] 每个 CPU 都运行过用户 task、timer tick 和 idle 路径。
 - [ ] 10,000 次跨核 wake/reschedule 无丢失唤醒、永久 idle 或 IPI storm。
 - [ ] TLB shootdown 压测无旧映射、错页、UAF 或跨进程数据泄漏。
-- [ ] LoongArch-musl LTP 得到有效结果；仍阻塞时报告精确复现和首个根因。
+- [x] LoongArch-musl LTP 得到有效结果；仍阻塞时报告精确复现和首个根因。
 - [ ] SMP 测试结束无 scheduler 锁递归、持锁 SBI/IOCSR 调用和 panic。
 
 结果写入 `docs/tasks/known-issues/results/k02-YYYYMMDD.md`。缺少 LoongArch final 镜像

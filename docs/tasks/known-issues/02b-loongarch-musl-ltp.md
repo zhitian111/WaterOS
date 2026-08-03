@@ -46,7 +46,7 @@ const BRINGUP_COMMANDS: &[BringupCommand] = &[/* /musl/ltp_testcode.sh */];
 
 ## 如何验收
 
-- [ ] musl-la LTP 产生有效统计，不再是整套未运行。
+- [x] musl-la LTP 产生有效统计，不再是整套未运行。
 - [ ] 最小层级和完整脚本均有退出码、标记与原始日志。
 - [ ] 修复不以架构/libc 路径硬编码 Linux syscall 语义。
 - [ ] `make la_check`、glibc-la、musl-rv 抽样无回归。
