@@ -67,7 +67,3 @@ pub fn record_user_page_fault_handled() { sys::record_user_page_fault_handled();
 /// 透明转发至 `sys::log_thread_bringup_stats_summary`。
 #[inline]
 pub fn log_thread_bringup_stats_summary() { sys::log_thread_bringup_stats_summary(); }
-
-/// 透明转发至 `sys::ltp_submit_skip_basenames`。
-#[inline]
-pub fn ltp_submit_skip_basenames() -> &'static [&'static str] { sys::ltp_submit_skip_basenames() }

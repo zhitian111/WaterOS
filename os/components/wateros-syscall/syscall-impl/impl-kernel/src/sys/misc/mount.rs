@@ -9,7 +9,6 @@ use api_v0::UserRet;
 use vfs::api::VfsError;
 use vfs::MountPropagation;
 
-use super::ltp_cgroup_helper::cgroup_regression_loop_fast_exit_if_standalone;
 use crate::sys::fs::path_at::resolve_path_at;
 use crate::user_copy::copy_user_path_cstr;
 use crate::vfs_util::vfs_error_to_errno;
@@ -86,8 +85,6 @@ fn parse_tmpfs_size_option(options: &str) -> Result<Option<usize>, ErrNo> {
 
 // 本方法代码由AI完成
 pub(crate) fn sys_mount(args: SyscallArgs) -> UserRet {
-    cgroup_regression_loop_fast_exit_if_standalone();
-
     let source_ptr = args.arg(0);
     let target_ptr = args.arg(1);
     let fstype_ptr = args.arg(2);

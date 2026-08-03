@@ -195,8 +195,8 @@ CONFIG_EVENTFD=y
 /// Bring-up：从 `/{glibc,musl}/ltp/testcases/bin/` 删除排除名单中的顶层用例文件。
 ///
 /// `ltp_testcode.sh` 用 `for file in "$target_dir"/*` 顺序跑测；删文件比 exec 后 fast-exit
-/// 更省时（不 fork/exec/wait）。fast-exit 仍作兜底。
-#[cfg(feature = "vfs-bridge")]
+/// 更省时（不 fork/exec/wait），并避免在通用 syscall 路径中识别测试程序。
+#[cfg(all(feature = "pre", feature = "vfs-bridge"))]
 pub fn prune_ltp_excluded_testcases() {
     use vfs::api::{VfsError, VfsFsKind};
 
@@ -205,7 +205,7 @@ pub fn prune_ltp_excluded_testcases() {
         return;
     };
 
-    let basenames = syscall::ltp_submit_skip_basenames();
+    let basenames = crate::user_bringup_ltp_exclusions::ltp_submit_skip_basenames();
     let mut removed = 0u32;
     let mut absent = 0u32;
     let mut failed = 0u32;
@@ -232,7 +232,7 @@ pub fn prune_ltp_excluded_testcases() {
           basenames.len());
 }
 
-#[cfg(not(feature = "vfs-bridge"))]
+#[cfg(all(feature = "pre", not(feature = "vfs-bridge")))]
 pub fn prune_ltp_excluded_testcases() {
     warn!("[{LOG_TAG}] vfs-bridge off: skip LTP testcase prune");
 }

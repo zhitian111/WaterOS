@@ -6,7 +6,6 @@ use vfs::active_impl;
 use vfs::api::{VfsError, VfsMetadata, VfsNodeType};
 use vfs::SingleRootReadView;
 
-use crate::sys::misc::ltp_cgroup_helper::cgroup_regression_loop_fast_exit_if_standalone;
 use crate::sys::path_at::{resolve_path_at, resolve_symlinks, AT_REMOVEDIR};
 use vfs::api::FinalSymlink;
 use crate::user_copy::{copy_to_user, copy_user_path_cstr};
@@ -21,8 +20,6 @@ const S_IFSOCK : u32 = 0o140_000;
 const AT_SYMLINK_FOLLOW : u32 = 0x400;
 
 pub(crate) fn sys_mkdirat(args : SyscallArgs) -> UserRet {
-    cgroup_regression_loop_fast_exit_if_standalone();
-
     let dirfd = args.arg(0) as isize;
     let path_ptr = args.arg(1);
     let mode = args.arg(2) as u32;
@@ -328,8 +325,6 @@ pub(crate) fn sys_symlinkat(args : SyscallArgs) -> UserRet {
 
 
 pub(crate) fn sys_unlinkat(args : SyscallArgs) -> UserRet {
-    cgroup_regression_loop_fast_exit_if_standalone();
-
     let dirfd = args.arg(0) as isize;
     let path_ptr = args.arg(1);
     let flags = args.arg(2) as u32;

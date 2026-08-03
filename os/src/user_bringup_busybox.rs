@@ -162,7 +162,10 @@ extern "C" fn bringup_kernel_runner(_arg : usize) -> ! {
     use platform::reset::shutdown;
     info!("entered runner");
     #[cfg(feature = "pre")]
-    crate::user_bringup_root_layout::refresh_ltp_accounts();
+    {
+        crate::user_bringup_root_layout::prune_ltp_excluded_testcases();
+        crate::user_bringup_root_layout::refresh_ltp_accounts();
+    }
 
     for cmd in BRINGUP_COMMANDS {
         let start_ns = monotonic_ns();

@@ -18,7 +18,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-SKIP_RS="$ROOT/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/ltp_cgroup_helper.rs"
+SKIP_RS="$ROOT/src/user_bringup_ltp_exclusions.rs"
 SDCARD="$ROOT/sdcard-rv.img"
 SDCARD_SRC="$ROOT/../test_case/sdcard-rv.img"
 LTP_LOG_DIR="$ROOT/ltp_log"

@@ -16,11 +16,6 @@ use mm::api::kernel_bringup::{
 use mm::api::user_access::UserMemoryOps;
 use mm::ActiveUserMemoryOps;
 
-use super::super::ltp_cgroup_helper::{
-    cgroup_regression_exec_fast_exit_if_standalone, ltp_cpuhotplug_exec_fast_exit_if_standalone,
-    ltp_fuzz_sigsuspend_worker_exec_fast_exit_if_standalone,
-    ltp_standalone_skip_exec_fast_exit_if_needed,
-};
 use crate::user_copy::copy_user_path_cstr;
 
 /// Linux-compatible upper bound reported for the combined argv/envp payload.
@@ -49,11 +44,6 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
     let mut arg_budget = EXEC_ARG_MAX - EXEC_STACK_OVERHEAD;
     let argv = read_string_array(argv_ptr, &mut arg_budget)?;
     let envp = read_string_array(envp_ptr, &mut arg_budget)?;
-
-    cgroup_regression_exec_fast_exit_if_standalone(abs_path.as_str(), &argv);
-    ltp_fuzz_sigsuspend_worker_exec_fast_exit_if_standalone(abs_path.as_str(), &argv);
-    ltp_cpuhotplug_exec_fast_exit_if_standalone(abs_path.as_str(), &argv);
-    ltp_standalone_skip_exec_fast_exit_if_needed(abs_path.as_str(), &argv);
 
     let argv_refs : Vec<&str> = argv.iter()
                                     .map(String::as_str)
