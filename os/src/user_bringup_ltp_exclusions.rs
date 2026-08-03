@@ -3,9 +3,8 @@
 //! 清单严格按字典序维护，仅供根卷布局阶段删除不参与提交的测例。通用 syscall 实现
 //! 不得根据该清单、可执行文件名或 argv 改变行为。
 
-/// 源：Read 判读 + rv_local_run_all 手工增补；共 2353 条。
+/// 源：Read 判读 + rv_local_run_all 手工增补；共 2352 条。
 const LTP_SUBMIT_SKIP_BASENAMES: &[&str] = &[
-    "acct02_helper",
     "acl1",
     "add_ipv6addr",
     "add_key01",
