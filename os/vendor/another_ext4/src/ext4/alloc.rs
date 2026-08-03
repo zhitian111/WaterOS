@@ -65,6 +65,39 @@ impl Ext4 {
         Ok(())
     }
 
+    fn initialize_inode_bitmap_if_needed(
+        &self,
+        bg: &mut BlockGroupRef,
+        bitmap_data: &mut [u8],
+        inode_count: usize,
+    ) -> Result<()> {
+        if !bg.desc.has_flag(BlockGroupDesc::FLAG_INODE_UNINIT) {
+            return Ok(());
+        }
+
+        let free_target = bg.desc.free_inodes_count() as usize;
+        if free_target > inode_count {
+            return_error!(
+                ErrCode::EIO,
+                "Cannot initialize inode bitmap for group {}: free={} inodes={}",
+                bg.id,
+                free_target,
+                inode_count
+            );
+        }
+
+        // INODE_UNINIT makes the on-disk bitmap undefined. Reconstruct the logical
+        // state from the descriptor, preserving any low-numbered reserved inodes.
+        // Ext4 requires bits beyond the valid inode range to remain set as padding.
+        let mut bitmap = Bitmap::new(bitmap_data, 8 * BLOCK_SIZE);
+        bitmap.set_all();
+        for local in (inode_count - free_target..inode_count).rev() {
+            bitmap.clear_bit(local);
+        }
+        bg.desc.clear_flag(BlockGroupDesc::FLAG_INODE_UNINIT);
+        Ok(())
+    }
+
     /// Create a new inode, returning the inode and its number
     #[inline(never)]
     pub(super) fn create_inode(&self, mode: InodeMode) -> Result<InodeRef> {
@@ -261,6 +294,11 @@ impl Ext4 {
             let bitmap_block_id = bg.desc.inode_bitmap_block();
             let mut bitmap_block = self.read_block(bitmap_block_id);
             let inode_count = sb.inode_count_in_group(bgid) as usize;
+            self.initialize_inode_bitmap_if_needed(
+                &mut bg,
+                &mut *bitmap_block.data,
+                inode_count,
+            )?;
             let mut bitmap = Bitmap::new(&mut *bitmap_block.data, inode_count);
 
             // Find a free inode

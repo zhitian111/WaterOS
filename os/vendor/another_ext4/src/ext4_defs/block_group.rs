@@ -53,6 +53,7 @@ pub struct BlockGroupDesc {
 unsafe impl AsBytes for BlockGroupDesc {}
 
 impl BlockGroupDesc {
+    pub const FLAG_INODE_UNINIT: u16 = 0x0001;
     pub const FLAG_BLOCK_UNINIT: u16 = 0x0002;
 
     #[allow(unused)]
