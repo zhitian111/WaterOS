@@ -57,6 +57,13 @@ fn validate_futex_uaddr(uaddr : usize) -> Result<(), ErrNo> {
     Ok(())
 }
 
+fn validate_requeue_count(count : u32) -> Result<u32, ErrNo> {
+    if count > i32::MAX as u32 {
+        return Err(ErrNo::EINVAL);
+    }
+    Ok(count)
+}
+
 fn parse_futex_timeout(timeout_ptr : usize,
                        cmd : u32,
                        futex_op : u32)
@@ -226,6 +233,8 @@ fn futex_requeue(uaddr : usize,
                  futex_op : u32,
                  compare : Option<u32>)
                  -> Result<usize, ErrNo> {
+    let wake_count = validate_requeue_count(wake_count)?;
+    let requeue_count = validate_requeue_count(requeue_count)?;
     validate_futex_uaddr(uaddr)?;
     validate_futex_uaddr(uaddr2)?;
     let private_scope = current_futex_scope();
@@ -251,6 +260,22 @@ fn futex_requeue(uaddr : usize,
                             to_key,
                             wake_count,
                             requeue_count).map_err(futex_error_to_errno)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn requeue_counts_must_fit_signed_int() {
+        assert_eq!(validate_requeue_count(0), Ok(0));
+        assert_eq!(validate_requeue_count(i32::MAX as u32),
+                   Ok(i32::MAX as u32));
+        assert_eq!(validate_requeue_count(i32::MAX as u32 + 1),
+                   Err(ErrNo::EINVAL));
+        assert_eq!(validate_requeue_count(u32::MAX),
+                   Err(ErrNo::EINVAL));
     }
 }
 
