@@ -6,6 +6,18 @@
 当前现象可以确定为“用户任务最终全部阻塞，最后活跃系统调用为 futex”，但尚不能直接
 断言唯一根因就是 futex 实现。修复时必须先补诊断，再逐项关闭竞态。
 
+### 2026-08-03 状态更新
+
+本文第 4 节记录的是历史基线，不再是当前未修复项。`83ce4608` 已在 futex registry
+中用 `wake_sequence` 将 waiter 发布与 wake 线性化；`e7b31a73` 又补齐多线程 exec
+删除 sibling 时的 futex、epoll 等运行时侧表清理。修复后的 8 crate、`cargo -j8`
+定向探针已经以 `rc=0 built=8` 完成并正常关机，详见
+`docs/tasks/known-issues/results/k10-buildstorm-parallel-exit-probe-20260803.md`。
+
+当前门禁不是继续修改 futex 协议，而是用 fresh overlay 完成官方 BuildStorm，并取得
+`BUILDSTORM_COMPILE mode=multi ok=true`。只有新日志再次证明 waiter/waker 不一致时，
+才重新打开第 4 节问题。
+
 基准提交：
 
 - `837d6b79`：按地址空间隔离 private futex key。
@@ -204,4 +216,3 @@ wake 是否早于 waiter 入队。
 - 8 核 QEMU 中 BuildStorm 超过原停止点 `24461`，出现
   `BUILDSTORM_MINIBUILD ok`，并继续到 `BUILDSTORM_COMPILE`。
 - final 构建不依赖 dashboard 或高频调试日志，且无用户任务永久留在 wait queue。
-
