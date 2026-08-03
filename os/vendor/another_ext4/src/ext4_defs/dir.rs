@@ -192,15 +192,6 @@ impl DirBlock {
     /// Ensure the block ends with a normal ext4 directory checksum tail.
     pub fn ensure_tail(&mut self) {
         let tail_offset = BLOCK_SIZE - size_of::<DirEntryTail>();
-        let tail: DirEntryTail = self.0.read_offset_as(tail_offset);
-        if tail.reserved_zero1 == 0 &&
-           tail.rec_len == size_of::<DirEntryTail>() as u16 &&
-           tail.reserved_zero2 == 0 &&
-           tail.reserved_ft == 0xDE
-        {
-            return;
-        }
-
         let mut offset = 0usize;
         while offset < tail_offset {
             let mut entry: DirEntry = self.0.read_offset_as(offset);
@@ -301,5 +292,39 @@ impl DirBlock {
         let mut tail: DirEntryTail = self.0.read_offset_as(tail_offset);
         tail.set_checksum(uuid, ino, ino_gen, &self.0);
         self.0.write_offset_as(tail_offset, &tail);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ensure_tail_separates_tail_hidden_by_directory_entry() {
+        let mut block = Block::default();
+        block.write_offset_as(
+            0,
+            &DirEntry::new(2, 12, ".", FileType::Directory),
+        );
+        block.write_offset_as(
+            12,
+            &DirEntry::new(
+                2,
+                (BLOCK_SIZE - 12) as u16,
+                "..",
+                FileType::Directory,
+            ),
+        );
+        let tail_offset = BLOCK_SIZE - size_of::<DirEntryTail>();
+        block.write_offset_as(tail_offset, &DirEntryTail::new());
+
+        let mut dir = DirBlock::new(block);
+        dir.ensure_tail();
+
+        let dotdot: DirEntry = dir.block().read_offset_as(12);
+        let tail: DirEntryTail = dir.block().read_offset_as(tail_offset);
+        assert_eq!(dotdot.rec_len as usize, tail_offset - 12);
+        assert_eq!(tail.rec_len as usize, size_of::<DirEntryTail>());
+        assert_eq!(tail.reserved_ft, 0xDE);
     }
 }
