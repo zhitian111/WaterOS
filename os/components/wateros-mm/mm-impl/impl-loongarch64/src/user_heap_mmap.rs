@@ -251,26 +251,25 @@ impl LoongArch64AddressSpace {
         Ok(base)
     }
 
-    fn mmap_file_with_loader_inner<A, F>(&mut self,
-                                         allocator : &mut A,
-                                         req : MmapRequest,
-                                         load_page : F)
-                                         -> MmResult<VirtAddr>
-        where A : PhysicalFrameAllocator<FrameId = PhysPageNum>,
-              F : FnMut(usize, &mut [u8]) -> MmResult<()>
+    fn mmap_file_shared_inner<A>(&mut self,
+                                 allocator : &mut A,
+                                 req : MmapRequest,
+                                 mut loader : Box<dyn DemandPageLoader>)
+                                 -> MmResult<VirtAddr>
+        where A : PhysicalFrameAllocator<FrameId = PhysPageNum>
     {
         if req.flags
               .contains(MapFlags::ANONYMOUS)
         {
             return Err(MmError::InvalidAddress);
         }
-        if !req.flags
-               .contains(MapFlags::SHARED) &&
-           !req.flags
-               .contains(MapFlags::PRIVATE)
-        {
+        if !req.flags.contains(MapFlags::SHARED) {
             return Err(MmError::InvalidAddress);
         }
+        let file_offset = match req.kind {
+            MmapKind::File { offset, .. } => offset,
+            MmapKind::Anonymous => return Err(MmError::InvalidAddress),
+        };
         let base = match req.addr_hint {
             Some(hint)
                 if req.flags
@@ -287,13 +286,19 @@ impl LoongArch64AddressSpace {
         if req.flags
               .contains(MapFlags::FIXED)
         {
+            self.sync_shared_file_vmas(base, end)?;
             self.unmap_range_with_alloc(allocator, base, end)?;
+            self.remove_shared_file_vmas(base, end)?;
             self.remove_shared_anon_vmas(base, end);
         }
-        map_range_from_loader(self, allocator, base, end, perm, load_page)?;
-        if req.flags.contains(MapFlags::SHARED) {
-            self.register_shared_anon_vma(base, end);
-        }
+        map_range_from_loader(self, allocator, base, end, perm, |page_index, page| {
+            let offset = file_offset.checked_add(page_index.checked_mul(api_v0::addr::PAGE_SIZE)
+                                                           .ok_or(MmError::InvalidAddress)?)
+                                    .ok_or(MmError::InvalidAddress)?;
+            loader.load_page(offset, page)
+        })?;
+        self.register_shared_anon_vma(base, end);
+        self.register_shared_file_vma(base, end, file_offset, loader);
         if req.addr_hint
               .is_none()
         {
@@ -328,19 +333,18 @@ impl MmapOps for LoongArch64AddressSpace {
         }
     }
 
-    fn mmap_file_with_loader<A, F>(&mut self,
-                                   allocator : &mut A,
-                                   req : MmapRequest,
-                                   load_page : F)
-                                   -> MmResult<VirtAddr>
-        where A : PhysicalFrameAllocator<FrameId = PhysPageNum>,
-              F : FnMut(usize, &mut [u8]) -> MmResult<()>
+    fn mmap_file_shared<A>(&mut self,
+                           allocator : &mut A,
+                           req : MmapRequest,
+                           loader : Box<dyn DemandPageLoader>)
+                           -> MmResult<VirtAddr>
+        where A : PhysicalFrameAllocator<FrameId = PhysPageNum>
     {
         if req.len == 0 {
             return Err(MmError::InvalidAddress);
         }
         match req.kind {
-            MmapKind::File { .. } => self.mmap_file_with_loader_inner(allocator, req, load_page),
+            MmapKind::File { .. } => self.mmap_file_shared_inner(allocator, req, loader),
             MmapKind::Anonymous => Err(MmError::InvalidAddress),
         }
     }
@@ -433,6 +437,9 @@ impl MmapOps for LoongArch64AddressSpace {
         {
             return Err(MmError::InvalidAddress);
         }
+        let page_start = addr.floor_page().start_addr();
+        let page_end = end.ceil_page().start_addr();
+        self.sync_shared_file_vmas(page_start, page_end)?;
         self.unmap_range_with_alloc(allocator, addr, end)?;
         self.remove_lazy_file_vmas(addr.floor_page()
                                        .start_addr(),
@@ -442,8 +449,18 @@ impl MmapOps for LoongArch64AddressSpace {
                                          .start_addr(),
                                      end.ceil_page()
                                         .start_addr());
+        self.remove_shared_file_vmas(page_start, page_end)?;
         fence_user_ptes();
         Ok(())
+    }
+
+    fn msync(&mut self, addr : VirtAddr, len : usize) -> MmResult<()> {
+        if len == 0 {
+            return Ok(());
+        }
+        let end = VirtAddr(addr.0.checked_add(len).ok_or(MmError::InvalidAddress)?);
+        self.sync_shared_file_vmas(addr.floor_page().start_addr(),
+                                   end.ceil_page().start_addr())
     }
 
     fn mprotect(&mut self, addr : VirtAddr, len : usize, perm : PagePerm) -> MmResult<()> {

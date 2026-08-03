@@ -54,6 +54,31 @@ impl DemandPageLoader for VfsMmapPageLoader {
         }
         Ok(())
     }
+
+    fn write_page(&mut self, file_offset : usize, src : &[u8]) -> MmResult<()> {
+        if file_offset >= self.file_size {
+            return Ok(());
+        }
+        let writable = core::cmp::min(src.len(), self.file_size - file_offset);
+        let mut done = 0usize;
+        while done < writable {
+            let off = file_offset.checked_add(done)
+                                 .ok_or(MmError::InvalidAddress)?;
+            let n = self.handle
+                        .write_at(off as u64, &src[done..writable])
+                        .map_err(|_| MmError::AccessViolation)?;
+            if n == 0 {
+                return Err(MmError::AccessViolation);
+            }
+            done = done.checked_add(n)
+                       .ok_or(MmError::InvalidAddress)?;
+        }
+        Ok(())
+    }
+
+    fn flush(&mut self) -> MmResult<()> {
+        self.handle.flush().map_err(|_| MmError::AccessViolation)
+    }
 }
 
 // 本方法代码由AI完成
@@ -137,23 +162,10 @@ pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
             // Writable shared mappings need stable frames across fork. Read-only shared mappings
             // can retain file-backed lazy faults without changing observable sharing semantics.
             let eager_shared = mf.contains(MapFlags::SHARED) && perm.writable();
-            let file_map_offset = match kind {
-                MmapKind::File { offset, .. } => offset,
-                MmapKind::Anonymous => 0,
-            };
             match mm::user_aspace::with_user_aspace_mut_and_flush(handle, |aspace| {
                       let mut alloc = GlobalPhysFrameAllocator;
                       let base = if eager_shared {
-                          let mut loader = loader;
-                          MmapOps::mmap_file_with_loader(aspace,
-                                                         &mut alloc,
-                                                         req,
-                                                         |page_index, page| {
-                              let file_offset = file_map_offset
-                                  .checked_add(page_index * PAGE_SIZE)
-                                  .ok_or(MmError::InvalidAddress)?;
-                              loader.load_page(file_offset, page)
-                          })?
+                          MmapOps::mmap_file_shared(aspace, &mut alloc, req, loader)?
                       } else {
                           MmapOps::mmap_file_lazy(aspace, &mut alloc, req, file_size, loader)?
                       };
@@ -209,7 +221,7 @@ pub(crate) fn sys_munmap(args : SyscallArgs) -> UserRet {
 
 // 本方法代码由AI完成
 pub(crate) fn sys_msync(args : SyscallArgs) -> UserRet {
-    use mm::api::addr::PAGE_SIZE;
+    use mm::api::addr::{VirtAddr, PAGE_SIZE};
 
     const MS_ASYNC : usize = 0x1;
     const MS_INVALIDATE : usize = 0x2;
@@ -217,7 +229,7 @@ pub(crate) fn sys_msync(args : SyscallArgs) -> UserRet {
     const MS_KNOWN : usize = MS_ASYNC | MS_INVALIDATE | MS_SYNC;
 
     let addr = args.arg(0);
-    let _len = args.arg(1);
+    let len = args.arg(1);
     let flags = args.arg(2);
 
     if addr % PAGE_SIZE != 0 {
@@ -230,8 +242,16 @@ pub(crate) fn sys_msync(args : SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EINVAL);
     }
 
-    log::trace!("[syscall] msync(nr=26) no-op success (flags={flags:#x})");
-    UserRet::from_success(0)
+    let handle = match require_user_aspace("msync") {
+        Ok(handle) => handle,
+        Err(e) => return UserRet::from_error(e),
+    };
+    match mm::user_aspace::with_user_aspace_mut(handle, |aspace| {
+              MmapOps::msync(aspace, VirtAddr(addr), len)
+          }) {
+        Ok(()) => UserRet::from_success(0),
+        Err(e) => UserRet::from_error(mm_err_to_errno(e)),
+    }
 }
 
 // 本方法代码由AI完成

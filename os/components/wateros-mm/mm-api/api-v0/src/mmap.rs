@@ -50,6 +50,14 @@ pub trait DemandPageLoader {
 
     /// 将文件偏移 `file_offset` 对应的一页加载到已清零的 `dst`。
     fn load_page(&mut self, file_offset : usize, dst : &mut [u8]) -> MmResult<()>;
+
+    /// 将共享映射页写回文件后备。只读 loader 可保留默认的不支持实现。
+    fn write_page(&mut self, _file_offset : usize, _src : &[u8]) -> MmResult<()> {
+        Err(crate::error::MmError::Unsupported)
+    }
+
+    /// 提交此前的共享映射写回。
+    fn flush(&mut self) -> MmResult<()> { Ok(()) }
 }
 
 /// mmap / munmap 与地址空间组合的契约；实现须与 [`crate::addr::PAGE_SIZE`] 页粒度一致。
@@ -64,17 +72,13 @@ pub trait MmapOps: AddressSpaceOps {
                                                                file_backing : Option<&[u8]>)
                                                                -> MmResult<VirtAddr>;
 
-    /// 按请求建立文件映射，并由调用方逐页填充新分配的物理页。
-    ///
-    /// `load_page(page_index, page)` 在每个新页清零后、映射到用户页表前调用。
-    /// 这是 eager 文件映射的低内存峰值入口，避免 syscall 层先持有整段文件副本。
-    fn mmap_file_with_loader<A, F>(&mut self,
-                                   allocator : &mut A,
-                                   req : MmapRequest,
-                                   load_page : F)
-                                   -> MmResult<VirtAddr>
-        where A : PhysicalFrameAllocator<FrameId = PhysPageNum>,
-              F : FnMut(usize, &mut [u8]) -> MmResult<()>;
+    /// 建立 eager 共享文件映射，并保留 loader 供 `msync`/`munmap`/销毁时写回。
+    fn mmap_file_shared<A>(&mut self,
+                           allocator : &mut A,
+                           req : MmapRequest,
+                           loader : Box<dyn DemandPageLoader>)
+                           -> MmResult<VirtAddr>
+        where A : PhysicalFrameAllocator<FrameId = PhysPageNum>;
 
     /// 登记文件懒映射；成功返回实际映射起始虚拟地址。实现不得在该调用中读取整段文件。
     fn mmap_file_lazy<A>(&mut self,
@@ -99,6 +103,9 @@ pub trait MmapOps: AddressSpaceOps {
                                                                  addr : VirtAddr,
                                                                  len : usize)
                                                                  -> MmResult<()>;
+
+    /// 将范围内的可写共享文件映射同步到其文件后备。
+    fn msync(&mut self, addr : VirtAddr, len : usize) -> MmResult<()>;
 
     /// 将 `[addr, addr+len)` 内已映射的叶子页权限更新为 `perm`（按页对齐到边界）。
     fn mprotect(&mut self, addr : VirtAddr, len : usize, perm : PagePerm) -> MmResult<()>;

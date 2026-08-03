@@ -231,6 +231,7 @@ pub struct LoongArch64AddressSpace {
     pub(crate) user_stack_top : VirtAddr,
     pub(crate) lazy_file_vmas : Vec<LazyFileVma>,
     pub(crate) shared_anon_vmas : Vec<SharedAnonVma>,
+    pub(crate) shared_file_vmas : Vec<SharedFileVma>,
 }
 
 // The address space is accessed through MultiprocessorSafeCell.  The lock
@@ -272,6 +273,26 @@ pub(crate) struct SharedAnonVma {
     pub end : VirtAddr,
 }
 
+pub(crate) struct SharedFileVma {
+    pub start : VirtAddr,
+    pub end : VirtAddr,
+    pub file_offset : usize,
+    pub loader : Box<dyn DemandPageLoader>,
+}
+
+impl SharedFileVma {
+    fn duplicate(&self) -> MmResult<Self> {
+        Ok(Self { start : self.start,
+                  end : self.end,
+                  file_offset : self.file_offset,
+                  loader : self.loader.duplicate_box()? })
+    }
+
+    fn overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
+        start.0 < self.end.0 && end.0 > self.start.0
+    }
+}
+
 impl SharedAnonVma {
     fn contains_page(&self, page : VirtAddr) -> bool { page.0 >= self.start.0 && page.0 < self.end.0 }
 
@@ -302,7 +323,8 @@ impl LoongArch64AddressSpace {
                   user_stack_bottom : VirtAddr(0),
                   user_stack_top : VirtAddr(0),
                   lazy_file_vmas : Vec::new(),
-                  shared_anon_vmas : Vec::new() })
+                  shared_anon_vmas : Vec::new(),
+                  shared_file_vmas : Vec::new() })
     }
 
     /// 创建内核地址空间；ASID 0 不参与用户 ASID 分配与复用。
@@ -319,7 +341,8 @@ impl LoongArch64AddressSpace {
                   user_stack_bottom : VirtAddr(0),
                   user_stack_top : VirtAddr(0),
                   lazy_file_vmas : Vec::new(),
-                  shared_anon_vmas : Vec::new() })
+                  shared_anon_vmas : Vec::new(),
+                  shared_file_vmas : Vec::new() })
     }
 
     /// ELF 装载完成后初始化用户堆与匿名映射区游标（须在泄漏页表对象前调用一次）。
@@ -451,6 +474,76 @@ impl LoongArch64AddressSpace {
             }
         }
         self.shared_anon_vmas = next;
+    }
+
+    pub(crate) fn register_shared_file_vma(&mut self,
+                                            start : VirtAddr,
+                                            end : VirtAddr,
+                                            file_offset : usize,
+                                            loader : Box<dyn DemandPageLoader>) {
+        self.shared_file_vmas.push(SharedFileVma { start,
+                                                   end,
+                                                   file_offset,
+                                                   loader });
+    }
+
+    pub(crate) fn sync_shared_file_vmas(&mut self,
+                                         start : VirtAddr,
+                                         end : VirtAddr)
+                                         -> MmResult<()> {
+        let mut vmas = core::mem::take(&mut self.shared_file_vmas);
+        let result = (|| {
+            for vma in &mut vmas {
+                if !vma.overlaps(start, end) {
+                    continue;
+                }
+                let mut page = VirtAddr(core::cmp::max(start.0, vma.start.0)).floor_page()
+                                                                                 .start_addr();
+                let page_end = VirtAddr(core::cmp::min(end.0, vma.end.0)).ceil_page()
+                                                                              .start_addr();
+                while page.0 < page_end.0 {
+                    if let Some(pa) = self.translate_addr(page)? {
+                        let src = unsafe {
+                            core::slice::from_raw_parts(pa.page_start().0 as *const u8, PAGE_SIZE)
+                        };
+                        let file_offset = vma.file_offset + (page.0 - vma.start.0);
+                        vma.loader.write_page(file_offset, src)?;
+                    }
+                    page.0 += PAGE_SIZE;
+                }
+                vma.loader.flush()?;
+            }
+            Ok(())
+        })();
+        self.shared_file_vmas = vmas;
+        result
+    }
+
+    pub(crate) fn remove_shared_file_vmas(&mut self,
+                                           start : VirtAddr,
+                                           end : VirtAddr)
+                                           -> MmResult<()> {
+        let mut next = Vec::new();
+        for vma in self.shared_file_vmas.drain(..) {
+            if !vma.overlaps(start, end) {
+                next.push(vma);
+                continue;
+            }
+            if start.0 > vma.start.0 {
+                next.push(SharedFileVma { start : vma.start,
+                                          end : start,
+                                          file_offset : vma.file_offset,
+                                          loader : vma.loader.duplicate_box()? });
+            }
+            if end.0 < vma.end.0 {
+                next.push(SharedFileVma { start : end,
+                                          end : vma.end,
+                                          file_offset : vma.file_offset + (end.0 - vma.start.0),
+                                          loader : vma.loader });
+            }
+        }
+        self.shared_file_vmas = next;
+        Ok(())
     }
 
     pub(crate) fn find_free_mmap_base_considering_vmas(&self,
@@ -691,6 +784,10 @@ impl LoongArch64AddressSpace {
                                        .iter()
                                        .map(LazyFileVma::duplicate)
                                        .collect::<MmResult<Vec<_>>>()?;
+        let child_shared_file_vmas = self.shared_file_vmas
+                                         .iter()
+                                         .map(SharedFileVma::duplicate)
+                                         .collect::<MmResult<Vec<_>>>()?;
         let child_asid = crate::asid::allocate_user()?;
         let child_root = match alloc_table_frame_zeroed() {
             Ok(root) => root,
@@ -727,7 +824,8 @@ impl LoongArch64AddressSpace {
                               user_stack_bottom : self.user_stack_bottom,
                               user_stack_top : self.user_stack_top,
                               lazy_file_vmas : child_lazy_file_vmas,
-                              shared_anon_vmas : self.shared_anon_vmas.clone() })
+                              shared_anon_vmas : self.shared_anon_vmas.clone(),
+                              shared_file_vmas : child_shared_file_vmas })
     }
 
     // 本方法代码由AI完成
@@ -864,11 +962,15 @@ impl LoongArch64AddressSpace {
 
     /// 释放页表并转移 ASID 所有权。调用方须在归还非零 ASID 前完成 TLB 失效。
     pub(crate) fn destroy_and_take_asid(&mut self) -> u16 {
+        if let Err(error) = self.sync_shared_file_vmas(VirtAddr(0), VirtAddr(USER_VA_LIMIT)) {
+            log::warn!("[mm] shared file writeback during address-space destroy failed: {error:?}");
+        }
         self.destroy_page_tables();
         // Keep only the UserAddressSpaceCell tombstone needed by stale raw
         // handles; mappings and their demand-page loaders are dead now.
         drop(core::mem::take(&mut self.lazy_file_vmas));
         drop(core::mem::take(&mut self.shared_anon_vmas));
+        drop(core::mem::take(&mut self.shared_file_vmas));
         core::mem::replace(&mut self.asid, crate::asid::KERNEL_ASID)
     }
 }
