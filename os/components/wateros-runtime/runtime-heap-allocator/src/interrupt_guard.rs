@@ -11,7 +11,7 @@ use config::task::MAX_CPUS;
 
 /// 每 CPU 的 allocator 进入深度。
 ///
-/// ALLOC_SYNC: 在关中断前增加深度，以捕获 logger/allocator 等同步路径上的递归分配；
+/// ALLOC_SYNC: 关中断后增加深度，以捕获 logger/allocator 等同步路径上的递归分配；
 /// 它不是全局锁，跨 CPU 互斥由具体 allocator backend 的锁负责。
 static HEAP_GUARD_DEPTH : CpuLocal<AtomicUsize, MAX_CPUS> =
     CpuLocal::from_cells([const { UnsafeCell::new(AtomicUsize::new(0)) }; MAX_CPUS]);
@@ -31,19 +31,20 @@ pub(crate) fn with_allocator_interrupt_guard<R>(f : impl FnOnce() -> R) -> R {
                                                     panic!("heap guard: invalid CPU id {}",
                                                            cpu.raw())
                                                 });
+    let state = arch::interrupt::read_global_interrupt_state()
+                    .expect("heap guard: read interrupt state");
+    let _ = arch::interrupt::disable_global_interrupt();
     let depth = local_depth.fetch_add(1, Ordering::Acquire);
     if depth > 0 {
         local_depth.fetch_sub(1, Ordering::Release);
+        let _ = arch::interrupt::restore_global_interrupt_state(state);
         panic!("recursive heap allocation detected (cpu={} depth={})",
                cpu.raw(),
                depth + 1);
     }
-    let state = arch::interrupt::read_global_interrupt_state()
-                    .expect("heap guard: read interrupt state");
-    let _ = arch::interrupt::disable_global_interrupt();
     let ret = f();
-    let _ = arch::interrupt::restore_global_interrupt_state(state);
     local_depth.fetch_sub(1, Ordering::Release);
+    let _ = arch::interrupt::restore_global_interrupt_state(state);
     ret
 }
 

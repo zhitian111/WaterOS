@@ -37,14 +37,15 @@ impl InterruptSafeLockedHeap {
 
 unsafe impl GlobalAlloc for InterruptSafeLockedHeap {
     unsafe fn alloc(&self, layout : Layout) -> *mut u8 {
-        with_allocator_interrupt_guard(|| {
+        let (ptr, used, free) = with_allocator_interrupt_guard(|| {
             let heap = self.inner.lock();
             let used = heap.used();
             let free = heap.free();
             drop(heap);
-            maybe_warn_high_water(used, free);
-            unsafe { GlobalAlloc::alloc(&self.inner, layout) }
-        })
+            (unsafe { GlobalAlloc::alloc(&self.inner, layout) }, used, free)
+        });
+        maybe_warn_high_water(used, free);
+        ptr
     }
 
     unsafe fn dealloc(&self, ptr : *mut u8, layout : Layout) {

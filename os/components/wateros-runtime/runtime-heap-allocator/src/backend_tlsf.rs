@@ -78,18 +78,20 @@ impl InterruptSafeTlsfHeap {
 
 unsafe impl GlobalAlloc for InterruptSafeTlsfHeap {
     unsafe fn alloc(&self, layout : Layout) -> *mut u8 {
-        with_allocator_interrupt_guard(|| {
+        let (ptr, stats) = with_allocator_interrupt_guard(|| {
             let stats = self.mem_stats();
-            maybe_warn_high_water(stats.used, stats.free);
             let mut tlsf = self.inner.lock();
-            match tlsf.allocate(layout) {
+            let ptr = match tlsf.allocate(layout) {
                 Some(ptr) => {
                     self.estimate_add(layout.size());
                     ptr.as_ptr()
                 }
                 None => ptr::null_mut(),
-            }
-        })
+            };
+            (ptr, stats)
+        });
+        maybe_warn_high_water(stats.used, stats.free);
+        ptr
     }
 
     unsafe fn dealloc(&self, ptr : *mut u8, layout : Layout) {
