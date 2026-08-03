@@ -227,11 +227,17 @@ fn scan_epoll_ready(
     maxevents: usize,
 ) -> Result<usize, ErrNo> {
     crate::poll_engine::drive_network_stack();
-    let guard = instance.lock();
+    let interests : alloc::vec::Vec<(usize, EpollInterest)> = {
+        let guard = instance.lock();
+        guard.interests
+             .iter()
+             .map(|(&fd, interest)| (fd, interest.clone()))
+             .collect()
+    };
     let mut ready = 0usize;
     let event_size = EpollEvent::ABI_SIZE;
 
-    for (&fd, interest) in &guard.interests {
+    for (fd, interest) in interests {
         if ready >= maxevents {
             break;
         }

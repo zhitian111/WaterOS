@@ -66,9 +66,14 @@ impl VfsIoHandle for EpollHandle {
         if events & POLLIN == 0 {
             return Ok(0);
         }
-        let guard = self.inner.lock();
-        for (&fd, interest) in &guard.interests {
-            let poll_events = epoll_to_poll_events(interest.events);
+        let interests : alloc::vec::Vec<(usize, i16)> = {
+            let guard = self.inner.lock();
+            guard.interests
+                 .iter()
+                 .map(|(&fd, interest)| (fd, epoll_to_poll_events(interest.events)))
+                 .collect()
+        };
+        for (fd, poll_events) in interests {
             let revents = poll_revents_fd(fd, poll_events);
             if revents != 0 && revents & POLLNVAL == 0 {
                 return Ok(POLLIN);

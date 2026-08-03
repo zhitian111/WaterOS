@@ -264,9 +264,15 @@ pub fn init_child_fd_table(child_id : task::TaskId) {
 
 /// fork 时复制父任务 fd 表。
 pub fn copy_fd_table_from_parent(child_id : task::TaskId, parent_id : task::TaskId) {
+    let (parent_snapshot, parent_flags) =
+        with_registry(|registry| registry.fd_table_copy_snapshot(parent_id));
+    let parent_table = parent_snapshot.into_iter()
+                                      .map(|slot| {
+                                          slot.and_then(|handle| handle.duplicate().ok())
+                                      })
+                                      .collect();
     with_registry(|registry| {
-        let (parent_table, parent_flags) = registry.fd_table_copy_plan(parent_id);
-        registry.install_fd_table_copy(child_id, parent_table, parent_flags);
+        registry.install_fd_table_copy(child_id, parent_table, parent_flags)
     });
 }
 
@@ -358,7 +364,12 @@ pub fn self_test() {
                          parent_extra,
                          usize::from(impl_fd_session::registry::FD_CLOEXEC))
            .expect("set inherited cloexec");
-        let (parent_table, parent_flags) = reg.fd_table_copy_plan(a);
+        let (parent_table, parent_flags) = reg.fd_table_copy_snapshot(a);
+        let parent_table = parent_table.into_iter()
+                                       .map(|slot| {
+                                           slot.and_then(|handle| handle.duplicate().ok())
+                                       })
+                                       .collect();
         reg.install_fd_table_copy(b, parent_table, parent_flags);
         assert!(reg.io_handle_for_task(b, parent_extra)
                    .is_ok());

@@ -785,23 +785,18 @@ impl PerTaskFdRegistry {
     // 本方法代码由AI完成
     pub fn init_child_fd_table(&mut self, child : task::TaskId) { let _ = self.table_mut(child); }
 
-    /// Snapshot a fork child's fd table. Each slot gets an independent handle
-    /// lock while the concrete handle keeps sharing its underlying resource.
-    pub fn fd_table_copy_plan(&mut self,
-                              parent : task::TaskId)
-                              -> (Vec<Option<SharedIoHandle>>, Vec<u8>) {
+    /// Snapshot a parent's fd slots and flags without calling concrete handles.
+    ///
+    /// The caller duplicates the returned handles after releasing the registry
+    /// lock, then installs the independent child table in a second short section.
+    pub fn fd_table_copy_snapshot(&mut self,
+                                  parent : task::TaskId)
+                                  -> (Vec<Option<SharedIoHandle>>, Vec<u8>) {
         self.ensure_task(parent);
         let parent_owner = self.effective_owner(parent);
         let parent_table = self.tables
                                .get(&parent_owner)
-                               .map(|table| {
-                                   table.iter()
-                                        .map(|slot| {
-                                            slot.as_ref()
-                                                .and_then(|handle| handle.duplicate().ok())
-                                        })
-                                        .collect()
-                               })
+                               .cloned()
                                .unwrap_or_default();
         let parent_flags = self.fd_flags
                                .get(&parent_owner)
