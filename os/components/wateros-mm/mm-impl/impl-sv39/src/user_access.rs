@@ -9,7 +9,7 @@ use api_v0::address_space::AddressSpaceOps;
 use api_v0::error::{MmError, MmResult};
 use api_v0::mmap::{MmapOps, PageFaultAccess};
 use api_v0::perm::PagePerm;
-use api_v0::user_access::{UserCopyProgress, UserMemoryOps};
+use api_v0::user_access::{FutexMappingIdentity, UserCopyProgress, UserMemoryOps};
 use core::sync::atomic::{AtomicU32, Ordering};
 use frame_alloctor::GlobalPhysFrameAllocator;
 
@@ -46,8 +46,10 @@ impl UserMemoryOps for Sv39UserMemoryOps {
         atomic_compare_exchange_user_u32(self.handle, dst, expected, desired)
     }
 
-    fn shared_futex_key_u32(&self, src : VirtAddr) -> MmResult<usize> {
-        shared_futex_key_user_u32(self.handle, src)
+    fn futex_mapping_identity_u32(&self,
+                                  src : VirtAddr)
+                                  -> MmResult<FutexMappingIdentity> {
+        futex_mapping_identity_user_u32(self.handle, src)
     }
 }
 
@@ -133,7 +135,9 @@ fn atomic_load_user_u32(handle : usize, user_addr : VirtAddr) -> MmResult<u32> {
     })
 }
 
-fn shared_futex_key_user_u32(handle : usize, user_addr : VirtAddr) -> MmResult<usize> {
+fn futex_mapping_identity_user_u32(handle : usize,
+                                   user_addr : VirtAddr)
+                                   -> MmResult<FutexMappingIdentity> {
     validate_atomic_u32_addr(user_addr)?;
     user_aspace::with_user_aspace_mut(handle, |aspace| {
         let pa = match aspace.translate_addr(user_addr)? {
@@ -156,7 +160,12 @@ fn shared_futex_key_user_u32(handle : usize, user_addr : VirtAddr) -> MmResult<u
         if !perm.user() || !perm.readable() {
             return Err(MmError::AccessViolation);
         }
-        Ok(pa.0)
+        if aspace.shared_vma_contains(user_addr.floor_page()
+                                               .start_addr()) {
+            Ok(FutexMappingIdentity::Shared(pa.0))
+        } else {
+            Ok(FutexMappingIdentity::Private)
+        }
     })
 }
 

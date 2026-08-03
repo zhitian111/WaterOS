@@ -4,12 +4,14 @@ use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
 use ipc::futex::{FutexError, FutexKey, FutexWaitOutcome};
+use mm::api::user_access::FutexMappingIdentity;
 use platform::wall_clock;
 use task::TaskTick;
 
 use crate::poll_engine::ns_duration_to_ticks;
 use crate::user_copy::{
-    atomic_load_user_u32_in_aspace, copy_from_user_struct, shared_futex_key_u32_in_aspace,
+    atomic_load_user_u32_in_aspace, copy_from_user_struct,
+    futex_mapping_identity_u32_in_aspace,
 };
 
 use super::futex_error_to_errno;
@@ -116,17 +118,18 @@ fn futex_key_in_aspace(uaddr : usize,
     if futex_op & ipc::futex::FUTEX_PRIVATE_FLAG != 0 {
         Ok(FutexKey::private(uaddr, user_aspace))
     } else {
-        let shared_identity = shared_futex_key_u32_in_aspace(user_aspace, uaddr)?;
-        Ok(FutexKey::shared(shared_identity))
+        match futex_mapping_identity_u32_in_aspace(user_aspace, uaddr)? {
+            FutexMappingIdentity::Private => Ok(FutexKey::private(uaddr, user_aspace)),
+            FutexMappingIdentity::Shared(identity) => Ok(FutexKey::shared(identity)),
+        }
     }
 }
 
-pub(crate) fn shared_futex_key_for_aspace(user_aspace : usize,
-                                          uaddr : usize)
-                                          -> Result<FutexKey, ErrNo> {
+pub(crate) fn nonprivate_futex_key_for_aspace(user_aspace : usize,
+                                              uaddr : usize)
+                                              -> Result<FutexKey, ErrNo> {
     validate_futex_uaddr(uaddr)?;
-    let shared_identity = shared_futex_key_u32_in_aspace(user_aspace, uaddr)?;
-    Ok(FutexKey::shared(shared_identity))
+    futex_key_in_aspace(uaddr, 0, user_aspace)
 }
 
 fn futex_wait(uaddr : usize,
@@ -255,9 +258,16 @@ pub(crate) fn wake_user_addr(user_aspace : usize, uaddr : usize) -> usize {
     super::super::misc::bringup_stats::record_futex_wake_user_addr();
     // clear_child_tid 的 wake 需要同时尝试 private 和 shared 两种 key，
     // 因为等待者可能用任一种 flag（glibc 可能用 FUTEX_WAIT_BITSET 不带 PRIVATE 标志）
-    let n1 = ipc::futex::wake_all(FutexKey::private(uaddr, user_aspace));
-    let n2 = shared_futex_key_for_aspace(user_aspace, uaddr).map(ipc::futex::wake_all)
-                                                            .unwrap_or(0);
+    let private_key = FutexKey::private(uaddr, user_aspace);
+    let n1 = ipc::futex::wake_all(private_key);
+    let n2 = nonprivate_futex_key_for_aspace(user_aspace, uaddr).map(|key| {
+                                                                     if key == private_key {
+                                                                         0
+                                                                     } else {
+                                                                         ipc::futex::wake_all(key)
+                                                                     }
+                                                                 })
+                                                                .unwrap_or(0);
     let total = n1 + n2;
     log::trace!("[pthread-debug] wake_user_addr uaddr={:#x} private={n1} shared={n2} \
                  total={total}",

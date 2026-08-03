@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 use api_v0::ErrNo;
 use log::{trace, warn};
 use mm::api::addr::VirtAddr;
-use mm::api::user_access::UserMemoryOps;
+use mm::api::user_access::{FutexMappingIdentity, UserMemoryOps};
 use mm::ActiveUserMemoryOps;
 
 use crate::mm_util::{current_user_aspace_handle, mm_err_to_errno};
@@ -83,11 +83,13 @@ pub(crate) fn atomic_compare_exchange_user_u32_in_aspace(handle : usize,
                                     .map_err(mm_err_to_errno)
 }
 
-pub(crate) fn shared_futex_key_u32_in_aspace(handle : usize, ptr : usize) -> Result<usize, ErrNo> {
+pub(crate) fn futex_mapping_identity_u32_in_aspace(handle : usize,
+                                                   ptr : usize)
+                                                   -> Result<FutexMappingIdentity, ErrNo> {
     if handle == 0 || ptr == 0 {
         return Err(ErrNo::EFAULT);
     }
-    ActiveUserMemoryOps::new(handle).shared_futex_key_u32(VirtAddr(ptr))
+    ActiveUserMemoryOps::new(handle).futex_mapping_identity_u32(VirtAddr(ptr))
                                     .map_err(mm_err_to_errno)
 }
 

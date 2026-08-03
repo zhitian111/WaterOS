@@ -49,7 +49,7 @@ fn mark_owner_died(user_aspace : usize, entry : usize, futex_offset : isize, tid
             let private = FutexKey::private(futex_uaddr, user_aspace);
             if ipc::futex::wake(private, 1) == 0 {
                 if let Ok(shared) =
-                    super::futex::shared_futex_key_for_aspace(user_aspace, futex_uaddr)
+                    super::futex::nonprivate_futex_key_for_aspace(user_aspace, futex_uaddr)
                 {
                     let _ = ipc::futex::wake(shared, 1);
                 }

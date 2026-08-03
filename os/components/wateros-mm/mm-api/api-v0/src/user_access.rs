@@ -3,6 +3,15 @@
 use crate::addr::VirtAddr;
 use crate::error::{MmError, MmResult};
 
+/// 非 private futex 地址在当前映射中的稳定身份。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FutexMappingIdentity {
+    /// 映射不跨地址空间共享，futex 应按当前地址空间和用户 VA 建键。
+    Private,
+    /// 映射跨地址空间共享，值为共享字的稳定物理身份。
+    Shared(usize),
+}
+
 /// 内核向用户空间写入时已经完成的前缀及随后发生的错误。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UserCopyProgress {
@@ -65,9 +74,11 @@ pub trait UserMemoryOps {
                                    desired : u32)
                                    -> MmResult<u32>;
 
-    /// 返回 shared futex 使用的映射身份。当前实现使用已翻译物理字地址，
-    /// 因而同一共享页在不同进程、不同 VA 下仍能得到相同 key。
-    fn shared_futex_key_u32(&self, src : VirtAddr) -> MmResult<usize>;
+    /// 返回非 private futex 使用的映射身份。
+    ///
+    /// 私有/COW 映射必须返回 [`FutexMappingIdentity::Private`]，避免首次写入
+    /// 改变物理页后丢失已有等待队列；真正共享映射返回稳定共享字身份。
+    fn futex_mapping_identity_u32(&self, src : VirtAddr) -> MmResult<FutexMappingIdentity>;
 }
 
 pub fn test() {
@@ -92,7 +103,9 @@ pub fn test() {
             Err(MmError::Unsupported)
         }
 
-        fn shared_futex_key_u32(&self, _src : VirtAddr) -> MmResult<usize> {
+        fn futex_mapping_identity_u32(&self,
+                                      _src : VirtAddr)
+                                      -> MmResult<FutexMappingIdentity> {
             Err(MmError::Unsupported)
         }
     }

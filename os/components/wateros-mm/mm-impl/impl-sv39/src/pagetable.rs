@@ -457,6 +457,12 @@ impl Sv39AddressSpace {
             .any(|vma| vma.overlaps(start, end))
     }
 
+    pub(crate) fn shared_vma_contains(&self, page : VirtAddr) -> bool {
+        self.shared_anon_vmas
+            .iter()
+            .any(|vma| vma.contains_page(page))
+    }
+
     pub(crate) fn register_shared_anon_vma(&mut self, start : VirtAddr, end : VirtAddr) {
         self.shared_anon_vmas.push(SharedAnonVma { start, end });
     }
