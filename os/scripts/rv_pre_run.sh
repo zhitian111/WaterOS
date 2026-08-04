@@ -10,7 +10,7 @@ qemu_args=(
     -nographic
     -smp "${WOS_SMP:-8}"
     -bios default
-    -drive "file=${WOS_SDCARD:-./sdcard-rv.img},if=none,format=raw,id=x0"
+    -drive "file=${WOS_SDCARD:-./sdcard-rv.img},if=none,format=raw,id=x0${WOS_QEMU_IMAGE_DRIVE_OPTIONS:+,${WOS_QEMU_IMAGE_DRIVE_OPTIONS}}"
     -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
     -no-reboot
     -device virtio-net-device,netdev=net

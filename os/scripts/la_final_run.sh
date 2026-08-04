@@ -8,7 +8,7 @@ qemu_args=(
     -m 8G
     -nographic
     -smp "${WOS_SMP:-8}"
-    -drive "file=${WOS_SDCARD:-./sdcard-la.img},if=none,format=raw,id=x0"
+    -drive "file=${WOS_SDCARD:-./sdcard-la.img},if=none,format=raw,id=x0${WOS_QEMU_IMAGE_DRIVE_OPTIONS:+,${WOS_QEMU_IMAGE_DRIVE_OPTIONS}}"
     -device virtio-blk-pci,drive=x0
     -no-reboot
     -device virtio-net-pci,netdev=net0
