@@ -49,7 +49,7 @@ RISC-V 已有 SBI HSM/IPI，LoongArch 已有 IOCSR send/clear。开放项是双�
 
 - [x] 两架构均报告 8 CPU online，且 CPU 0--7 的 affinity 可设置并回读。
 - [x] CPU 1--7 各完成 10,000 次远端 wake，无丢失或永久 idle。
-- [ ] IPI 合并/清除无 storm，runnable task 不会长期留在 idle CPU 外。
+- [x] IPI 合并/清除无 storm，runnable task 不会长期留在 idle CPU 外。
 - [ ] TLB 压测无旧映射、错页、UAF 和跨进程泄漏。
 - [x] `make rv_check && make la_check` 通过，阶段结果已回填报告。
 
@@ -62,10 +62,14 @@ RISC-V 已有 SBI HSM/IPI，LoongArch 已有 IOCSR send/clear。开放项是双�
 通过；LoongArch 修正 PTE D 位权限后，完成三轮、每轮 10,000 次远端同 VA 物理页
 替换测试。两架构 `getcpu(2)` 各完成 8,000 次强制迁移验证。
 
-当前仍缺 fork/exec/跨进程 TLB 覆盖、显式 IPI event/clear 无 storm 记录，以及每 CPU
-timer/idle 证据。LoongArch 测试还暴露出独立的 signal trampoline/`rt_sigreturn`
-兼容问题，不影响无信号依赖的 remap 验证，但需在 signal 回归项中修复。
+LoongArch 测试还暴露出独立的 signal trampoline/`rt_sigreturn` 兼容问题，不影响
+无信号依赖的 remap 验证，但需在 signal 回归项中修复。
+
+后续 GDB 双快照已补齐 IPI clear 和逐核 timer/idle 证据，详见
+[`results/k02a-ipi-timer-20260805.md`](./results/k02a-ipi-timer-20260805.md)。当前 K-02A
+只剩 fork/exec/跨进程 TLB 覆盖，不能整体归档。
 
 阶段报告：[`results/k02a-20260805.md`](./results/k02a-20260805.md)、
 [`results/k02a-getcpu-20260805.md`](./results/k02a-getcpu-20260805.md)、
-[`results/k02a-loongarch-tlb-20260805.md`](./results/k02a-loongarch-tlb-20260805.md)。
+[`results/k02a-loongarch-tlb-20260805.md`](./results/k02a-loongarch-tlb-20260805.md)、
+[`results/k02a-ipi-timer-20260805.md`](./results/k02a-ipi-timer-20260805.md)。
