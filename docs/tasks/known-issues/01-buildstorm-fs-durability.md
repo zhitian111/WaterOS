@@ -67,6 +67,11 @@ handle.flush()
   创建动作与返回 fd 的写权限现已分离。LTP `open11`、`ftruncate03` 及相关同步、
   truncate、并发 rename 定向回归共 44 个断言通过。详见
   [`results/k01-open-readonly-create-20260801.md`](./results/k01-open-readonly-create-20260801.md)。
+- 2026-08-04 修复 another-ext4 扩展写先分配 extent、后更新 `i_size` 的掉电窗口。
+  适配层现在先提交合法的新长度，再写 extent/data；中断最多留下稀疏文件，不再留下
+  extent 越过 EOF 的损坏 inode。并发 rename/unlink/truncate/fsync 正常轮、强制断电
+  轮和完整 BuildStorm 后的 `e2fsck -fn` 均通过。详见
+  [`results/k01-crash-safe-extend-20260804.md`](./results/k01-crash-safe-extend-20260804.md)。
 
 ## 涉及文件
 

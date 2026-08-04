@@ -121,6 +121,25 @@ fn metadata(fs : &Ext4, inode : u32) -> FsResult<FsMetadata> {
                     gid : attr.gid })
 }
 
+fn write_with_ordered_size(fs : &Ext4,
+                           inode : u32,
+                           offset : u64,
+                           data : &[u8])
+                           -> FsResult<usize> {
+    let data_len = u64::try_from(data.len()).map_err(|_| FsError::NoSpace)?;
+    let end = offset.checked_add(data_len).ok_or(FsError::NoSpace)?;
+    let offset = usize::try_from(offset).map_err(|_| FsError::NoSpace)?;
+
+    // another_ext4 normally allocates extents before updating i_size.  Commit an
+    // extending size first so a reset can leave a sparse file, never extents past EOF.
+    if end > fs.getattr(inode).map_err(map_error)?.size {
+        fs.setattr(inode, None, None, None, Some(end), None, None, None, None)
+          .map_err(map_error)?;
+        fs.flush_all();
+    }
+    fs.write(inode, offset, data).map_err(map_error)
+}
+
 fn parent_name(path : &str) -> FsResult<(&str, &str)> {
     let path = path.trim_end_matches('/');
     let (parent, name) = path.rsplit_once('/').ok_or(FsError::InvalidPath)?;
@@ -449,7 +468,7 @@ impl ReadWriteFs for AnotherExt4Fs {
                         data : &[u8])
                         -> FsResult<usize> {
         let inode = self.open_inode(node)?;
-        self.get_mut()?.write(inode, offset as usize, data).map_err(map_error)
+        write_with_ordered_size(self.get_mut()?, inode, offset, data)
     }
 
     fn truncate_node(&mut self, node : FsNodeId, len : u64) -> FsResult<()> {
@@ -498,7 +517,7 @@ impl ReadWriteFs for AnotherExt4Fs {
         };
         fs.setattr(inode, None, None, None, Some(0), None, None, None, None)
           .map_err(map_error)?;
-        fs.write(inode, 0, data).map_err(map_error)?;
+        write_with_ordered_size(fs, inode, 0, data)?;
         fs.flush_all();
         if created {
             self.cache_insert(path, inode);
@@ -533,7 +552,7 @@ impl ReadWriteFs for AnotherExt4Fs {
     fn write_range(&mut self, path : &str, offset : u64, data : &[u8]) -> FsResult<usize> {
         let fs = self.get_mut()?;
         let inode = lookup(fs, path)?;
-        fs.write(inode, offset as usize, data).map_err(map_error)
+        write_with_ordered_size(fs, inode, offset, data)
     }
 
     fn truncate(&mut self, path : &str, len : u64) -> FsResult<()> {
