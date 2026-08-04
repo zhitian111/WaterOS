@@ -18,11 +18,14 @@
     panic = { path = "./runtime-panic/", package = "wateros-runtime-panic", default-features = false }
     console = { path = "./runtime-console/", package = "wateros-runtime-console", default-features = false }
     logging = { path = "./runtime-logging/", package = "wateros-runtime-logging", default-features = false }
-    heap-allocator = { path = "./runtime-heap-allocator/", package = "wateros-runtime-heap-allocator", default-features = true }
+    heap-allocator = { path = "./runtime-heap-allocator/", package = "wateros-runtime-heap-allocator", default-features = false }
     runtime-serial = { path = "./runtime-serial/", package = "wateros-runtime-serial", default-features = true, optional = true }
 
 [features]
     default = [  ]
+    heap-linked-list = [ "heap-allocator/impl-linked-list-allocator" ]
+    heap-stress = [ "heap-allocator/stress-on-init" ]
+    heap-tlsf = [ "heap-allocator/impl-tlsf" ]
     impl-debug = [ "logging/impl-debug" ]
     impl-dummy = [
         "console/impl-dummy",

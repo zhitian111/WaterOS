@@ -52,33 +52,40 @@ GDB_FEATURE_SUFFIX := $(if $(filter 1,$(GDB_BUILD)),$(COMMA)gdb-debug$(GDB_FAULT
 CARGO_PROFILE_ARG := $(if $(filter 1,$(GDB_BUILD)),--profile gdb,--release)
 GDB_FRAME_FLAGS := $(if $(filter 1,$(GDB_BUILD)),-C force-frame-pointers=yes,)
 GDB_BUILD_ID ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)-$(shell date +%s)
+HEAP_ALLOCATOR_FEATURE ?= heap-tlsf
 cargo_env = $(if $(filter 1,$(GDB_BUILD)),WATEROS_DEBUG_BUILD_ID="$(GDB_BUILD_ID)" WATEROS_DEBUG_FRAME_POINTERS=1 RUSTFLAGS="$(strip $(RUSTFLAGS) $(GDB_FRAME_FLAGS))",)
 cargo_build = $(cargo_env) cargo build
 
 kernel_rv_flag := $(CARGO_PROFILE_ARG) --target riscv64gc-unknown-none-elf \
-                  --features qemu-riscv64-opensbi,pre$(GDB_FEATURE_SUFFIX)
+                  --no-default-features \
+                  --features qemu-riscv64-opensbi,pre,$(HEAP_ALLOCATOR_FEATURE)$(GDB_FEATURE_SUFFIX)
 kernel_rv_pre_flag := $(CARGO_PROFILE_ARG) --target riscv64gc-unknown-none-elf \
-                      --features qemu-riscv64-opensbi,pre$(GDB_FEATURE_SUFFIX)
+                      --no-default-features \
+                      --features qemu-riscv64-opensbi,pre,$(HEAP_ALLOCATOR_FEATURE)$(GDB_FEATURE_SUFFIX)
 kernel_rv_final_flag := $(CARGO_PROFILE_ARG) --target riscv64gc-unknown-none-elf \
-                        --features qemu-riscv64-opensbi,final_online$(GDB_FEATURE_SUFFIX)
+                        --no-default-features \
+                        --features qemu-riscv64-opensbi,final_online,$(HEAP_ALLOCATOR_FEATURE)$(GDB_FEATURE_SUFFIX)
 kernel_rv_final_log_flag := $(CARGO_PROFILE_ARG) --target riscv64gc-unknown-none-elf \
-                            --features qemu-riscv64-opensbi,final_online,stall-debug$(GDB_FEATURE_SUFFIX)
+                            --no-default-features \
+                            --features qemu-riscv64-opensbi,final_online,stall-debug,$(HEAP_ALLOCATOR_FEATURE)$(GDB_FEATURE_SUFFIX)
 kernel_rv_final_debug_flag := $(CARGO_PROFILE_ARG) --target riscv64gc-unknown-none-elf \
-                              --features qemu-riscv64-opensbi,final_online,dashboard-debug$(GDB_FEATURE_SUFFIX)
+                              --no-default-features \
+                              --features qemu-riscv64-opensbi,final_online,dashboard-debug,$(HEAP_ALLOCATOR_FEATURE)$(GDB_FEATURE_SUFFIX)
 kernel_rv_final_smp_flag := $(CARGO_PROFILE_ARG) --target riscv64gc-unknown-none-elf \
-                            --features qemu-riscv64-opensbi,final_online_smp_test$(GDB_FEATURE_SUFFIX)
+                            --no-default-features \
+                            --features qemu-riscv64-opensbi,final_online_smp_test,$(HEAP_ALLOCATOR_FEATURE)$(GDB_FEATURE_SUFFIX)
 
 kernel_rv_build_artifact_path := ./target/riscv64gc-unknown-none-elf/$(if $(filter 1,$(GDB_BUILD)),gdb,release)
 
 kernel_la_flag := $(CARGO_PROFILE_ARG) --target loongarch64-unknown-none \
                   --no-default-features \
-                  --features qemu-loongarch64-virt,pre$(GDB_FEATURE_SUFFIX)
+                  --features qemu-loongarch64-virt,pre,$(HEAP_ALLOCATOR_FEATURE)$(GDB_FEATURE_SUFFIX)
 kernel_la_pre_flag := $(CARGO_PROFILE_ARG) --target loongarch64-unknown-none \
                       --no-default-features \
-                      --features qemu-loongarch64-virt,pre$(GDB_FEATURE_SUFFIX)
+                      --features qemu-loongarch64-virt,pre,$(HEAP_ALLOCATOR_FEATURE)$(GDB_FEATURE_SUFFIX)
 kernel_la_final_flag := $(CARGO_PROFILE_ARG) --target loongarch64-unknown-none \
                         --no-default-features \
-                        --features qemu-loongarch64-virt,final_online$(GDB_FEATURE_SUFFIX)
+                        --features qemu-loongarch64-virt,final_online,$(HEAP_ALLOCATOR_FEATURE)$(GDB_FEATURE_SUFFIX)
 
 kernel_la_build_artifact_path := ./target/loongarch64-unknown-none/$(if $(filter 1,$(GDB_BUILD)),gdb,release)
 GDB_PORT ?= 1234

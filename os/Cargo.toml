@@ -45,7 +45,7 @@
     split-debuginfo = "off"
 
 [features]
-    default = [ "qemu-riscv64-opensbi" ]
+    default = [ "qemu-riscv64-opensbi", "heap-tlsf" ]
     # 比赛阶段决定根镜像中的用户态 bring-up 队列。
     pre = [  ]
     final_online = [  ]
@@ -58,6 +58,10 @@
     gdb-debug = [ "debug/enabled", "stall-debug" ]
     # 只供 GDB 诊断集成测试使用；通过导出变量确定性注入 loop/ABBA/timer/stall。
     gdb-fault-injection = [ "gdb-debug" ]
+    # 内核全局堆后端由顶层统一选择；架构 feature 不隐式绑定具体实现。
+    heap-linked-list = [ "runtime/heap-linked-list" ]
+    heap-stress = [ "runtime/heap-stress" ]
+    heap-tlsf = [ "runtime/heap-tlsf" ]
     impl-sv39 = [ "mm/impl-sv39" ]
     qemu-loongarch64-virt = [
         "dep:cred",
