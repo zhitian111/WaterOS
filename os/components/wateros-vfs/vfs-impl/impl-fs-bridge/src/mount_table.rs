@@ -15,6 +15,7 @@ use spin::Mutex;
 
 use api_v0::{normalize_absolute_path, VfsError, VfsResult};
 use base::sync::MultiprocessorSafeCell;
+use wateros_base_config::fs::BOOTSTRAP_TMPFS_LIMIT_BYTES;
 
 use crate::mount_ns::PerTaskMountNsRegistry;
 
@@ -546,7 +547,8 @@ pub(crate) fn mount_tmpfs_at_with_limit(mount_point : &str,
 
 /// 在 bootstrap namespace 中挂载 tmpfs，供之后创建的任务继承。
 pub(crate) fn mount_bootstrap_tmpfs_at(mount_point : &str) -> VfsResult<()> {
-    let fs : SharedRwFs = fs::new_ramfs_rw(None, 0o1777);
+    let fs : SharedRwFs = fs::new_ramfs_rw(Some(BOOTSTRAP_TMPFS_LIMIT_BYTES),
+                                           0o1777);
     {
         let mut ns = BOOTSTRAP_MOUNT_NS.lock();
         mount_aux_common(&mut ns,

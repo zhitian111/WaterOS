@@ -984,9 +984,11 @@ dependencies = [
 name = "wateros-fs-impl-ramfs"
 version = "0.1.0"
 dependencies = [
+ "log",
  "spin",
  "wateros-driver-block-api-v0",
  "wateros-fs-api-v0",
+ "wateros-mm-frame-alloctor",
 ]
 
 [[package]]

@@ -41,7 +41,7 @@ pub use impl_ext4;
 /// 可选的 ext4_rs 实现 crate（由 `impl-ext4-rs` feature 启用）。
 pub use impl_ext4_rs;
 #[cfg(feature = "impl-ramfs")]
-/// 堆内存 ramfs 实现 crate；tmpfs 策略层复用此实现。
+/// 物理页 payload 后端 ramfs 实现 crate；tmpfs 策略层复用此实现。
 pub use impl_ramfs;
 
 pub use api_v0::*;
@@ -155,7 +155,7 @@ pub fn mount_default_root_rw() -> api_v0::FsResult<()> {
 /// 当前根读写句柄；未挂载时为 `None`。
 pub fn root_rw_fs() -> Option<api_v0::SharedRwFs> { rootfs::active_impl::root_rw_fs() }
 
-/// 创建一个 heap-backed ramfs RW 句柄，供 VFS tmpfs 策略层挂载。
+/// 创建一个 physical-page-backed ramfs RW 句柄，供 VFS tmpfs 策略层挂载。
 #[cfg(feature = "impl-ramfs")]
 pub fn new_ramfs_rw(limit_bytes : Option<usize>, root_mode : u16) -> api_v0::SharedRwFs {
     impl_ramfs::new_shared_rw(limit_bytes, root_mode)

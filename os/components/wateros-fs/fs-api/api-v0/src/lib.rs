@@ -51,7 +51,7 @@ pub enum FsKind {
     Ext4,
     /// 内核设备文件树（非块卷 FS）。
     DevFs,
-    /// 堆内存后端 ramfs；tmpfs 由 VFS 策略层基于它创建挂载实例。
+    /// 物理页 payload 后端 ramfs；tmpfs 由 VFS 策略层基于它创建挂载实例。
     RamFs,
     /// 其他具名子系统；字符串为稳定展示名。
     Other(&'static str),

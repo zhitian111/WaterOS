@@ -5,6 +5,12 @@
 /// 文件页缓存行大小（字节）；read/write 按该粒度加载与淘汰。
 pub const FILE_PAGE_SIZE : usize = 4096;
 
+/// Bootstrap `/tmp` 可占用的 resident 文件 payload 上限。
+///
+/// 该限制不计 sparse hole，且为 1 GiB QEMU 留出至少一半物理内存供用户页、页表和
+/// 内核使用。用户态显式挂载 tmpfs 时仍由 `size=` 选项覆盖其挂载实例的限制。
+pub const BOOTSTRAP_TMPFS_LIMIT_BYTES : usize = 512 * 1024 * 1024;
+
 /// 全局页帧 LRU 槽位数（所有文件共享，非每文件容量）。
 /// 4096 * 4KiB = 16MiB，覆盖多数测试热集。内核堆共 128MiB，
 /// 需为 ELF 加载、VFS 元数据、进程控制块等留出充足内存。
