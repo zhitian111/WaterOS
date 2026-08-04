@@ -87,6 +87,8 @@ enum ProcNode {
     Uptime,
     Cgroups,
     Mounts,
+    NetDir,
+    ProcNetTcp,
     SysDir,
     SysKernelDir,
     SysKernelPidMax,
@@ -112,6 +114,8 @@ fn proc_inode(node : ProcNode) -> u64 {
         ProcNode::Uptime => 8,
         ProcNode::Cgroups => 6,
         ProcNode::Mounts => 3,
+        ProcNode::NetDir => 11,
+        ProcNode::ProcNetTcp => 12,
         ProcNode::SysDir => 9,
         ProcNode::SysKernelDir => 10,
         ProcNode::SysKernelPidMax => 4,
@@ -196,6 +200,8 @@ fn parse_node(path : &str) -> Option<ProcNode> {
         ["uptime"] => Some(ProcNode::Uptime),
         ["cgroups"] => Some(ProcNode::Cgroups),
         ["mounts"] => Some(ProcNode::Mounts),
+        ["net"] => Some(ProcNode::NetDir),
+        ["net", "tcp"] => Some(ProcNode::ProcNetTcp),
         ["sys"] => Some(ProcNode::SysDir),
         ["sys", "kernel"] => Some(ProcNode::SysKernelDir),
         ["sys", "kernel", "pid_max"] => Some(ProcNode::SysKernelPidMax),
@@ -490,8 +496,10 @@ impl ProcFsView for KernelProcFs {
             ProcNode::Uptime |
             ProcNode::Cgroups |
             ProcNode::Mounts |
+            ProcNode::NetDir |
             ProcNode::SysDir |
             ProcNode::SysKernelDir => true,
+            ProcNode::ProcNetTcp => true,
             ProcNode::SysKernelPidMax | ProcNode::SysKernelTainted => true,
             ProcNode::PidDir(pid) |
             ProcNode::PidStat(pid) |
@@ -529,10 +537,12 @@ impl ProcFsView for KernelProcFs {
             ProcNode::Uptime |
             ProcNode::Cgroups |
             ProcNode::Mounts |
+            ProcNode::NetDir |
+            ProcNode::ProcNetTcp |
             ProcNode::SysKernelPidMax |
             ProcNode::SysKernelTainted => Ok(FsMetadata { node_type : FsNodeType::File,
                                                           size : self.read(rel_path)?
-                                                                     .len()
+                                                             .len()
                                                                  as u64,
                                                           mode : 0o444,
                                                           inode : proc_inode(node),
@@ -580,10 +590,13 @@ impl ProcFsView for KernelProcFs {
             ProcNode::SysKernelDir |
             ProcNode::PidDir(_) |
             ProcNode::PidFdDir(_) |
+            ProcNode::NetDir |
             ProcNode::PidExe(_) |
             ProcNode::PidFd(_, _) => {
                 Err(FsError::NotAFile)
             }
+            ProcNode::ProcNetTcp => Ok(b"sl local_address rem_address st tx_queue rx_queue tr tm->when retrnsmt\n\
+ 0: 00000000:0000 00000000:0000 0A 00000000:00000000 00:00000000 0\n".to_vec()),
             ProcNode::Meminfo => Ok(format_meminfo()),
             ProcNode::Cpuinfo => Ok(format_cpuinfo()),
             ProcNode::Uptime => Ok(format_uptime()),
@@ -634,6 +647,8 @@ impl ProcFsView for KernelProcFs {
                                                     node_type : FsNodeType::File },
                                        FsDirEntry { name : String::from("mounts"),
                                                     node_type : FsNodeType::File },
+                                       FsDirEntry { name : String::from("net"),
+                                                    node_type : FsNodeType::Directory },
                                        FsDirEntry { name : String::from("sys"),
                                                     node_type : FsNodeType::Directory },];
                 for pid in task::all_process_pids() {
@@ -650,6 +665,8 @@ impl ProcFsView for KernelProcFs {
                         FsDirEntry { name : String::from("tainted"),
                                      node_type : FsNodeType::File }])
             }
+            ProcNode::NetDir => Ok(vec![FsDirEntry { name : String::from("tcp"),
+                                                   node_type : FsNodeType::File }]),
             ProcNode::PidDir(pid) => {
                 if !process_visible(pid) {
                     return Err(FsError::NotFound);
