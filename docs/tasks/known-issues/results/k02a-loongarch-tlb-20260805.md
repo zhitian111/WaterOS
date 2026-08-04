@@ -31,6 +31,7 @@ SMP_K02A_REMAP_PASS iterations=10000 remote_cpu=1 controller_cpu=0
 
 ## 剩余边界
 
-K-02A 尚未整体归档：仍需覆盖 fork/exec/跨进程地址空间、显式 IPI pending/clear 计数
-和逐核 timer/idle。测试还发现 LoongArch raw handler 可进入，但未通过固定 trampoline
-完成 `rt_sigreturn`；这是独立 signal ABI 缺陷，不应由 TLB 测试绕过后遗忘。
+本阶段结束时仍需覆盖 fork/exec/跨进程地址空间、显式 IPI pending/clear 计数和逐核
+timer/idle，后续报告已补齐。初始 raw handler 使用 `longjmp` 绕过 `rt_sigreturn`，并非
+trampoline 缺陷；标准 libc handler-return 路径的双架构回归见
+`k02a-signal-return-20260805.md`。

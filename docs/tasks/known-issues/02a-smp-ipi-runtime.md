@@ -62,16 +62,18 @@ RISC-V 已有 SBI HSM/IPI，LoongArch 已有 IOCSR send/clear。开放项是双�
 通过；LoongArch 修正 PTE D 位权限后，完成三轮、每轮 10,000 次远端同 VA 物理页
 替换测试。两架构 `getcpu(2)` 各完成 8,000 次强制迁移验证。
 
-LoongArch 测试还暴露出独立的 signal trampoline/`rt_sigreturn` 兼容问题，不影响
-无信号依赖的 remap 验证，但需在 signal 回归项中修复。
+初始 LoongArch 探针受旧 glibc 的 16-byte sigset ABI 与 `longjmp` 绕过
+`rt_sigreturn` 影响；后续标准 libc handler-return 测试已证明 trampoline 正常，详见
+[`results/k02a-signal-return-20260805.md`](./results/k02a-signal-return-20260805.md)。
 
 后续 GDB 双快照已补齐 IPI clear 和逐核 timer/idle 证据，详见
 [`results/k02a-ipi-timer-20260805.md`](./results/k02a-ipi-timer-20260805.md)。最终双架构
 各完成 1,000 次跨 CPU fork/COW/exec，父子私有页隔离且 exec 后新地址空间正常执行。
-K-02A 验收项已全部完成，可以归档；signal trampoline 问题转为独立缺陷继续处理。
+K-02A 验收项已全部完成，可以归档。
 
 阶段报告：[`results/k02a-20260805.md`](./results/k02a-20260805.md)、
 [`results/k02a-getcpu-20260805.md`](./results/k02a-getcpu-20260805.md)、
 [`results/k02a-loongarch-tlb-20260805.md`](./results/k02a-loongarch-tlb-20260805.md)、
 [`results/k02a-ipi-timer-20260805.md`](./results/k02a-ipi-timer-20260805.md)、
-[`results/k02a-forkexec-20260805.md`](./results/k02a-forkexec-20260805.md)。
+[`results/k02a-forkexec-20260805.md`](./results/k02a-forkexec-20260805.md)、
+[`results/k02a-signal-return-20260805.md`](./results/k02a-signal-return-20260805.md)。
