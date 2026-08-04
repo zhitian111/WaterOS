@@ -93,10 +93,39 @@ WOS_MAX_PARALLEL_JOBS=4 \
   "WOS_SMP=8 make rv_final_run"
 ```
 
+如果你机器是 32 核（`nproc`=32），上面会自动分配核区间 `0-7 / 8-15 / 16-23 / 24-31`，
+4 个实例可并行执行。也可在命令中省略 `WOS_SMP`，通过自动注入让其等于
+`WOS_CORES_PER_JOB`：
+
+```bash
+WOS_CORES_PER_JOB=4 WOS_AUTO_SMP=1 \
+./scripts/run_qemu_parallel.sh \
+  "make rv_final_run" \
+  "make rv_final_run" \
+  "make rv_final_run" \
+  "make rv_final_run"
+```
+
 在 32 核机器上，上面会使用 `0-7 / 8-15 / 16-23 / 24-31` 四组核。
 
 如果测试要写盘，使用 snapshot 时要给每实例分配不同的 `WOS_SNAPSHOT_ID`，
 避免 overlay 文件互相覆盖。
+
+并行运行同一镜像多个实例时，可通过总控脚本关闭 qemu 磁盘锁验证（仅推荐 qcow2 镜像）:
+
+```bash
+cd os
+WOS_CORES_PER_JOB=4 WOS_AUTO_SMP=1 WOS_AUTO_UNLOCK_DRIVE=1 \
+./scripts/run_qemu_parallel.sh \
+  "WOS_QEMU_SNAPSHOT=1 WOS_SDCARD=./sdcard-rv-pub.qcow2 make rv_pre_run" \
+  "WOS_QEMU_SNAPSHOT=1 WOS_SDCARD=./sdcard-rv-pub.qcow2 make rv_pre_run"
+```
+
+`WOS_AUTO_UNLOCK_DRIVE=1` 会为每个任务注入
+`WOS_QEMU_IMAGE_DRIVE_OPTIONS=locking=off`（会自动忽略非 qcow2 镜像）。若要避免读共享冲突请改用独立镜像文件。
+
+若你现在只有 raw 镜像，可先克隆为 qcow2 供并行测试：
+`qemu-img convert -f raw -O qcow2 sdcard-rv-pub.img sdcard-rv-pub.qcow2`
 
 GDB/LLDB 的完整操作流程见
 [`docs/debugging/GDB_STALL_DEBUG.md`](../../docs/debugging/GDB_STALL_DEBUG.md)。

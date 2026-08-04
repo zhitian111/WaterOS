@@ -144,11 +144,56 @@ GDB 模式默认使用 snapshot 磁盘。相关环境变量如下：
 | 变量                             | 含义                                 |
 | ---------------------------------- | -------------------------------------- |
 | `WOS_SMP`                        | QEMU vCPU 数量，统一工具限制为`1..8` |
+| `WOS_TASKSET_CPUS`                | 传给 `taskset -c` 的 CPU 绑定列表，如 `0-7` |
+| `WOS_QEMU_IMAGE_DRIVE_OPTIONS`    | 追加到 `-drive` 的可选参数，例如 `locking=off`（建议仅 qcow2 镜像） |
 | `WOS_QEMU_GDB_PORT` / `GDB_PORT` | GDB Remote 端口，默认`1234`          |
 | `WOS_QEMU_GDB_WAIT` / `GDB_WAIT` | `1` 表示传入 `-S`，`0` 表示立即运行  |
 | `WOS_QEMU_SNAPSHOT`              | `1` 表示不写回磁盘，GDB 模式默认启用 |
 | `WOS_KERNEL`                     | QEMU 实际加载的内核 ELF              |
 | `WOS_SDCARD`                     | QEMU 使用的磁盘镜像                  |
+
+### 并行执行测试（32 核机器可直接提速）
+
+```bash
+WOS_CORES_PER_JOB=8 \
+WOS_MAX_PARALLEL_JOBS=4 \
+./scripts/run_qemu_parallel.sh \
+  "WOS_SMP=8 make rv_final_run" \
+  "WOS_SMP=8 make rv_final_run" \
+  "WOS_SMP=8 make rv_final_run" \
+  "WOS_SMP=8 make rv_final_run"
+```
+
+32 核时可直接按 1/2/4/8 vCPU 分组并行，例如想同时跑 8 个较轻量的 `buildstorm` 任务：
+
+```bash
+WOS_CORES_PER_JOB=4 \
+WOS_AUTO_SMP=1 \
+WOS_MAX_PARALLEL_JOBS=8 \
+./scripts/run_qemu_parallel.sh \
+  "WOS_QEMU_SNAPSHOT=1 make rv_final_run" \
+  "WOS_QEMU_SNAPSHOT=1 make rv_final_run" \
+  "WOS_QEMU_SNAPSHOT=1 make rv_final_run" \
+  "WOS_QEMU_SNAPSHOT=1 make rv_final_run" \
+  "WOS_QEMU_SNAPSHOT=1 make rv_final_run" \
+  "WOS_QEMU_SNAPSHOT=1 make rv_final_run" \
+  "WOS_QEMU_SNAPSHOT=1 make rv_final_run" \
+  "WOS_QEMU_SNAPSHOT=1 make rv_final_run"
+```
+
+若并行跑同一镜像且需要关闭锁定，请改用 qcow2 镜像（`locking=off` 对 raw 不兼容）：
+
+```bash
+cd os
+WOS_CORES_PER_JOB=4 WOS_AUTO_SMP=1 WOS_AUTO_UNLOCK_DRIVE=1 \
+  WOS_SDCARD=./sdcard-rv-pub.qcow2 WOS_QEMU_SNAPSHOT=1 \
+  ./scripts/run_qemu_parallel.sh \
+    "make rv_final_run" \
+    "make rv_final_run"
+```
+
+`run_qemu_parallel.sh` 会按主机核分片并发启动实例，默认使用 `nproc` 发现 32 核时会分配
+`0-7 / 8-15 / 16-23 / 24-31`。如需避免并发写同一镜像，可改用 snapshot 目标（`rv_pre_run` / `la_pre_run`）或为每实例配独立镜像。
 
 ## 5. 附加到已经运行的 QEMU
 
