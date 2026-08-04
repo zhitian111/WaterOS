@@ -11,7 +11,7 @@ use api_v0::UserRet;
 use task::{CpuMask, SchedError, SchedPolicy};
 
 use crate::fallible_buf::{try_kbuf, SCHED_CPUSET_MAX};
-use crate::user_copy::{copy_from_user, copy_to_user};
+use crate::user_copy::{copy_from_user, copy_to_user, copy_to_user_struct};
 
 // 本结构代码由AI完成
 #[repr(C)]
@@ -60,6 +60,28 @@ fn read_user_sched_attr_size(attr_ptr : usize) -> Result<usize, ErrNo> {
     let mut raw_size = [0u8; size_of::<u32>()];
     copy_from_user(&mut raw_size, attr_ptr)?;
     Ok(u32::from_ne_bytes(raw_size) as usize)
+}
+
+/// `getcpu(cpu, node, tcache)`：返回执行当前 syscall 的逻辑 CPU 与 NUMA node。
+///
+/// QEMU 支持的平台目前都是单 NUMA node；Linux 已忽略第三个 cache 参数。
+pub(crate) fn sys_getcpu(args : SyscallArgs) -> UserRet {
+    let cpu_ptr = args.arg(0);
+    let node_ptr = args.arg(1);
+    let cpu = platform::arch::cpu::current_cpu_id().raw() as u32;
+    let node = 0u32;
+
+    if cpu_ptr != 0 {
+        if let Err(error) = copy_to_user_struct(cpu_ptr, &cpu) {
+            return UserRet::from_error(error);
+        }
+    }
+    if node_ptr != 0 {
+        if let Err(error) = copy_to_user_struct(node_ptr, &node) {
+            return UserRet::from_error(error);
+        }
+    }
+    UserRet::from_success(0)
 }
 
 

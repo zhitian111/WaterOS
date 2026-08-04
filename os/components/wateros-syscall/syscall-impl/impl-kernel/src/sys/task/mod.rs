@@ -18,7 +18,7 @@ pub(crate) use process::{
 pub(crate) use rlimit::{current_umask, sys_getrlimit, sys_prlimit64, sys_setrlimit, sys_umask};
 pub(crate) use rseq::sys_rseq;
 pub(crate) use sched::{
-    sys_sched_get_priority_max, sys_sched_get_priority_min, sys_sched_getaffinity,
+    sys_getcpu, sys_sched_get_priority_max, sys_sched_get_priority_min, sys_sched_getaffinity,
     sys_sched_getattr, sys_sched_getparam, sys_sched_getscheduler, sys_sched_setaffinity,
     sys_sched_setattr, sys_sched_setparam, sys_sched_setscheduler,
 };
