@@ -59,7 +59,13 @@ RISC-V 已有 SBI HSM/IPI，LoongArch 已有 IOCSR send/clear。开放项是双�
 
 已修复强制跨核迁移时“源 CPU 尚未保存上下文，目标 CPU 已运行同一任务”的发布
 竞态，并完成双架构 8 核 wake/affinity 回归。RISC-V 跨核 TLB 权限切换 10,000 轮
-通过；LoongArch 的 `sigaction` 当前返回 `EINVAL`，尚缺等价 TLB 探针。`sched_getcpu()`
-在两架构返回 `-1`，因此 cpuinfo/getcpu 一致性和显式 IPI event/clear 证据仍待补齐。
+通过；LoongArch 修正 PTE D 位权限后，完成三轮、每轮 10,000 次远端同 VA 物理页
+替换测试。两架构 `getcpu(2)` 各完成 8,000 次强制迁移验证。
 
-阶段报告：[`results/k02a-20260805.md`](./results/k02a-20260805.md)。
+当前仍缺 fork/exec/跨进程 TLB 覆盖、显式 IPI event/clear 无 storm 记录，以及每 CPU
+timer/idle 证据。LoongArch 测试还暴露出独立的 signal trampoline/`rt_sigreturn`
+兼容问题，不影响无信号依赖的 remap 验证，但需在 signal 回归项中修复。
+
+阶段报告：[`results/k02a-20260805.md`](./results/k02a-20260805.md)、
+[`results/k02a-getcpu-20260805.md`](./results/k02a-getcpu-20260805.md)、
+[`results/k02a-loongarch-tlb-20260805.md`](./results/k02a-loongarch-tlb-20260805.md)。
