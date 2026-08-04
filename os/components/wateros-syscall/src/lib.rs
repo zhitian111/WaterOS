@@ -9,5 +9,6 @@ pub use impl_kernel::{
     deliver_pending_signal, dispatch_syscall_from_trap, drop_reaped_task_runtime_resources,
     is_restartable_syscall, log_thread_bringup_stats_summary,
     raise_current_signal, record_user_page_fault_handled, restore_signal_frame,
+    send_kernel_signal_to_process_group,
     terminate_current_process, timer_tick,
 };

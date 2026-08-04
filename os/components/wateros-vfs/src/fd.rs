@@ -43,6 +43,13 @@ pub fn current_task_id() -> VfsResult<task::TaskId> {
     task::current_task_id().ok_or(VfsError::NoTask)
 }
 
+/// 从已注册的控制台字符设备轮询一个原始字节，并交给独立 TTY 行规程。
+///
+/// 设备发现属于 VFS；行编辑、输入缓冲和终端策略属于 `wateros-tty`。
+pub fn poll_console_input_once() -> Option<tty::TtyControlEvent> {
+    impl_fd_session::poll_console_input_once()
+}
+
 /// 在“本核不可抢占 + 跨核互斥”的临界区内访问 fd 注册表。
 ///
 /// 闭包内只应执行短小的注册表操作；不要阻塞，也不要调用可能再次访问 fd 表的代码。

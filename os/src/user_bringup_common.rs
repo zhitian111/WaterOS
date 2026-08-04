@@ -59,6 +59,17 @@ pub fn run_one_elf_argv(log_tag : &str, elf_path : &str, argv : &[&str]) {
 
 /// 串行执行单个 ELF/脚本并返回退出码；装载/创建失败返回 `None`。
 pub fn run_one_elf_argv_exit(log_tag : &str, elf_path : &str, argv : &[&str]) -> Option<isize> {
+    let envp = libc_envp_for_path(elf_path);
+    run_one_elf_argv_env_exit(log_tag, elf_path, argv, &envp)
+}
+
+/// Execute one program with an explicit initial environment. Operator mode
+/// uses this instead of the competition-image path heuristic.
+pub fn run_one_elf_argv_env_exit(log_tag : &str,
+                                 elf_path : &str,
+                                 argv : &[&str],
+                                 envp : &[&str])
+                                 -> Option<isize> {
     // Let the ELF loader be the source of truth.  Some rootfs backends do not
     // implement `exists`, although opening and loading the file works.
     let load_result = load_program_without_timer_preemption(elf_path, argv);
@@ -78,8 +89,7 @@ pub fn run_one_elf_argv_exit(log_tag : &str, elf_path : &str, argv : &[&str]) ->
                                                 .collect();
     info!("[{log_tag}] spawn path={elf_path} entry_pc={:#x} satp={:#x} argv={final_argv:?}",
           loaded.entry_pc, loaded.satp);
-    let envp = libc_envp_for_path(elf_path);
-    let tid = match create_user_task_from_loaded_elf_with_argv(&loaded, &final_argv_refs, &envp) {
+    let tid = match create_user_task_from_loaded_elf_with_argv(&loaded, &final_argv_refs, envp) {
         Ok(t) => t,
         Err(e) => {
             warn!("[{log_tag}] skip spawn path={elf_path}: {e:?}");
@@ -93,7 +103,23 @@ pub fn run_one_elf_argv_exit(log_tag : &str, elf_path : &str, argv : &[&str]) ->
     #[cfg(feature = "vfs-bridge")]
     vfs::cwd::on_user_task_spawned_for_elf(tid, executable_path.as_str(), &final_argv_refs);
     #[cfg(feature = "vfs-bridge")]
+    if envp.iter().any(|entry| *entry == "PWD=/root") {
+        if let Err(error) = vfs::cwd::set_task_cwd(tid, "/root") {
+            warn!("[{log_tag}] failed to set operator cwd to /root: {error:?}");
+        }
+    }
+    #[cfg(feature = "vfs-bridge")]
     vfs::mount_ns::on_user_task_spawned(tid);
+
+    #[cfg(feature = "vfs-bridge")]
+    if tty::mode() == tty::ConsoleTtyMode::Interactive {
+        if let Some(process) = task::process_task_snapshot(tid) {
+            tty::set_foreground_pgid(process.pid.raw());
+            if tty::controlling_sid() == 0 {
+                tty::set_controlling_sid(process.pid.raw());
+            }
+        }
+    }
 
     task::start_user_task(tid);
     task::wait_for_task_exit(tid);

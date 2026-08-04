@@ -23,6 +23,13 @@ pub fn platform_console_write_a_buffer(bytes : &[u8]) {
     let _ = platform::console::console_write_a_buffer(bytes);
 }
 
+/// Write exact terminal bytes while retaining the platform's cross-CPU output
+/// serialization.
+#[inline]
+pub fn platform_console_write_raw_buffer(bytes: &[u8]) {
+    let _ = platform::console::console_write_raw_buffer(bytes);
+}
+
 /// 在 platform UART 锁内完成整次格式化。
 /// `Arguments` 仅在当前调用期间有效，因此不得缓存或转发到异步队列。
 pub fn platform_console_write_fmt(args : core::fmt::Arguments<'_>) {

@@ -15,7 +15,10 @@ use block::{
 };
 #[cfg(feature = "block-cache")]
 use block::BlockCacheManager;
-use character::{character_device_count, register_builtin_character_devices};
+use character::{
+    character_device_count, register_builtin_character_devices, register_character_device,
+    CharacterDevice, SerialPortCharacterDevice,
+};
 use fs::devfs::active_impl as devfs_impl;
 use network::{network_device_count, register_network_device, NetworkDevice, VirtioNetPciProbeInfo};
 use spin::Mutex;
@@ -206,6 +209,7 @@ fn init_after_boot_inner() -> DriverResult<()> {
     }
 
     register_builtin_character_devices();
+    register_uart_character_device();
 
     let registered = block_device_count();
     let registered_net = network_device_count();
@@ -245,6 +249,18 @@ fn init_after_boot_inner() -> DriverResult<()> {
     log::info!("[driver-la] QEMU LoongArch64 UART16550 ready (serial I/O)");
 
     Ok(())
+}
+
+/// Register the platform UART in the shared character-device table used by
+/// VFS stdin. The legacy early-console singleton alone is not discoverable by
+/// fd-session and would make every LoongArch shell observe immediate EOF.
+fn register_uart_character_device() -> usize {
+    let mut uart = uart::QemuLoongArch64Uart16550::qemu_virt_default();
+    uart.init_minimal();
+    let shared: character::SharedCharacterDevice = Arc::new(Mutex::new(
+        Box::new(SerialPortCharacterDevice::new(uart)) as Box<dyn CharacterDevice>,
+    ));
+    register_character_device(shared)
 }
 
 /// 对已注册的首个 virtio-blk 执行块 0 读取自检。

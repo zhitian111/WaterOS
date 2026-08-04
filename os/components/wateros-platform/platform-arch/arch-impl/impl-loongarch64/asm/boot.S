@@ -1,5 +1,5 @@
 # LoongArch64 通用内核启动：使用规范化参数选择 per-CPU 栈，再进入 Rust。
-# $r4 = logical CPU id, $r5/$r6 = platform boot arguments.
+# $r4 = logical CPU id, $r5/$r6/$r7 = platform boot arguments.
     .section .text.entry.arch
     .globl __wateros_arch_boot
     .equ STACK_PER_CPU_SHIFT, 16

@@ -14,3 +14,8 @@ pub fn console_write_a_byte(_ : u8) -> PlatformConsoleResult<()> {
 pub fn console_write_a_buffer(_ : &[u8]) -> PlatformConsoleResult<()> {
     Err(PlatformConsoleError::Unsupported)
 }
+
+#[inline]
+pub fn console_write_raw_buffer(_ : &[u8]) -> PlatformConsoleResult<()> {
+    Err(PlatformConsoleError::Unsupported)
+}

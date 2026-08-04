@@ -53,6 +53,15 @@ pub fn console_write_a_buffer(bytes: &[u8]) -> PlatformConsoleResult<()> {
     Ok(())
 }
 
+/// Write wire bytes without newline conversion. The TTY line discipline uses
+/// this after applying `OPOST/ONLCR` itself.
+pub fn console_write_raw_buffer(bytes: &[u8]) -> PlatformConsoleResult<()> {
+    for &byte in bytes {
+        uart_write_byte_raw(byte);
+    }
+    Ok(())
+}
+
 /// 等待发送保持寄存器和移位寄存器均为空。
 #[inline]
 pub fn console_flush() -> PlatformConsoleResult<()> {

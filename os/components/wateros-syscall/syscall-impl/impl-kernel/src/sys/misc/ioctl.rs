@@ -14,11 +14,15 @@ const TCGETS: u32 = 0x5401;
 const TCSETS: u32 = 0x5402;
 const TCSETSW: u32 = 0x5403;
 const TCSETSF: u32 = 0x5404;
+const TIOCSCTTY: u32 = 0x540e;
 const TIOCGPGRP: u32 = 0x540f;
+const TIOCSPGRP: u32 = 0x5410;
 const TIOCGWINSZ: u32 = 0x5413;
+const TIOCSWINSZ: u32 = 0x5414;
 const FIONREAD: u32 = 0x541b;
 const FIONBIO: u32 = 0x5421;
 const TIOCNOTTY: u32 = 0x5422;
+const TIOCGSID: u32 = 0x5429;
 const RTC_RD_TIME: u32 = 0x8024_7009;
 const RTC_SET_TIME: u32 = 0x4024_700a;
 
@@ -35,7 +39,7 @@ struct LinuxWinSize {
     ws_ypixel: u16,
 }
 
-const NCCS: usize = 19;
+const NCCS: usize = tty::NCCS;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -48,18 +52,27 @@ struct LinuxTermios {
     c_cc: [u8; NCCS],
 }
 
-const DEFAULT_TERMIOS: LinuxTermios = LinuxTermios {
-    c_iflag: 0x500,
-    c_oflag: 0x5,
-    c_cflag: 0xbf,
-    c_lflag: 0x8a3b,
-    c_line: 0,
-    c_cc: [
-        3, 28, 127, 21, 4, 0, 1, 0, 17, 19, 26, 0, 18, 15, 23, 22, 0, 0, 0,
-    ],
-};
+impl From<tty::TtyTermios> for LinuxTermios {
+    fn from(value: tty::TtyTermios) -> Self {
+        Self { c_iflag: value.iflag,
+               c_oflag: value.oflag,
+               c_cflag: value.cflag,
+               c_lflag: value.lflag,
+               c_line: value.line,
+               c_cc: value.cc }
+    }
+}
 
-static TTY_TERMIOS: spin::Mutex<LinuxTermios> = spin::Mutex::new(DEFAULT_TERMIOS);
+impl From<LinuxTermios> for tty::TtyTermios {
+    fn from(value: LinuxTermios) -> Self {
+        Self { iflag: value.c_iflag,
+               oflag: value.c_oflag,
+               cflag: value.c_cflag,
+               lflag: value.c_lflag,
+               line: value.c_line,
+               cc: value.c_cc }
+    }
+}
 
 fn ioctl_enotty(request: u32, fd: Option<usize>, argp: usize) -> UserRet {
     match fd {
@@ -81,7 +94,7 @@ fn tty_char_ioctl(request: u32, argp: usize) -> UserRet {
             if argp == 0 {
                 return UserRet::from_error(ErrNo::EFAULT);
             }
-            let termios = *TTY_TERMIOS.lock();
+            let termios = LinuxTermios::from(tty::termios());
             match copy_to_user_struct(argp, &termios) {
                 Ok(()) => UserRet::from_success(0),
                 Err(e) => UserRet::from_error(e),
@@ -95,19 +108,18 @@ fn tty_char_ioctl(request: u32, argp: usize) -> UserRet {
                 Ok(termios) => termios,
                 Err(error) => return UserRet::from_error(error),
             };
-            *TTY_TERMIOS.lock() = termios;
+            tty::set_termios(termios.into(), request == TCSETSF);
             UserRet::from_success(0)
         }
         TIOCGWINSZ => {
             if argp == 0 {
                 return UserRet::from_error(ErrNo::EFAULT);
             }
-            let winsize = LinuxWinSize {
-                ws_row: 25,
-                ws_col: 80,
-                ws_xpixel: 0,
-                ws_ypixel: 0,
-            };
+            let current = tty::winsize();
+            let winsize = LinuxWinSize { ws_row: current.row,
+                                         ws_col: current.col,
+                                         ws_xpixel: current.xpixel,
+                                         ws_ypixel: current.ypixel };
             match copy_to_user_struct(argp, &winsize) {
                 Ok(()) => UserRet::from_success(0),
                 Err(e) => UserRet::from_error(e),
@@ -117,14 +129,104 @@ fn tty_char_ioctl(request: u32, argp: usize) -> UserRet {
             if argp == 0 {
                 return UserRet::from_error(ErrNo::EFAULT);
             }
-            let pgrp = task::current_task_id().unwrap_or(0) as i32;
+            let pgrp = tty::foreground_pgid().min(i32::MAX as usize) as i32;
             match copy_to_user_struct(argp, &pgrp) {
                 Ok(()) => UserRet::from_success(0),
                 Err(e) => UserRet::from_error(e),
             }
         }
-        // 守护进程化常用此 ioctl 脱离控制终端；WaterOS 尚未建模控制终端，按 no-op 处理。
-        TIOCNOTTY => UserRet::from_success(0),
+        TIOCSPGRP => {
+            if argp == 0 {
+                return UserRet::from_error(ErrNo::EFAULT);
+            }
+            let pgrp = match copy_from_user_struct::<i32>(argp) {
+                Ok(value) if value > 0 => value as usize,
+                Ok(_) => return UserRet::from_error(ErrNo::EINVAL),
+                Err(error) => return UserRet::from_error(error),
+            };
+            if !task::pgid_has_members(task::ProcessId::from_raw(pgrp)) {
+                return UserRet::from_error(ErrNo::ESRCH);
+            }
+            let Some(caller) = task::current_process_snapshot() else {
+                return UserRet::from_error(ErrNo::ESRCH);
+            };
+            let same_session = task::process_pids_in_pgid(task::ProcessId::from_raw(pgrp))
+                .into_iter()
+                .filter_map(task::process_snapshot)
+                .any(|member| member.sid == caller.sid);
+            if !same_session {
+                return UserRet::from_error(ErrNo::EPERM);
+            }
+            tty::set_foreground_pgid(pgrp);
+            UserRet::from_success(0)
+        }
+        TIOCSCTTY => {
+            let Some(process) = task::current_process_snapshot() else {
+                return UserRet::from_error(ErrNo::ESRCH);
+            };
+            let sid = if process.sid.raw() == 0 { process.pid.raw() } else { process.sid.raw() };
+            let controlling = tty::controlling_sid();
+            if controlling != 0 && controlling != sid && argp == 0 {
+                return UserRet::from_error(ErrNo::EPERM);
+            }
+            tty::set_controlling_sid(sid);
+            tty::set_foreground_pgid(process.pgid.raw());
+            UserRet::from_success(0)
+        }
+        TIOCNOTTY => {
+            let Some(process) = task::current_process_snapshot() else {
+                return UserRet::from_error(ErrNo::ESRCH);
+            };
+            if tty::controlling_sid() != 0 &&
+               tty::controlling_sid() != process.sid.raw() &&
+               tty::controlling_sid() != process.pid.raw()
+            {
+                return UserRet::from_error(ErrNo::ENOTTY);
+            }
+            tty::detach_controlling_terminal();
+            UserRet::from_success(0)
+        }
+        TIOCSWINSZ => {
+            if argp == 0 {
+                return UserRet::from_error(ErrNo::EFAULT);
+            }
+            let winsize = match copy_from_user_struct::<LinuxWinSize>(argp) {
+                Ok(value) => value,
+                Err(error) => return UserRet::from_error(error),
+            };
+            tty::set_winsize(tty::TtyWinSize { row: winsize.ws_row,
+                                               col: winsize.ws_col,
+                                               xpixel: winsize.ws_xpixel,
+                                               ypixel: winsize.ws_ypixel });
+            let foreground = tty::foreground_pgid();
+            if foreground != 0 {
+                crate::sys::ipc::signal::send_kernel_signal_to_process_group(
+                    task::ProcessId::from_raw(foreground),
+                    ipc::signal::SIGWINCH,
+                );
+            }
+            UserRet::from_success(0)
+        }
+        TIOCGSID => {
+            if argp == 0 {
+                return UserRet::from_error(ErrNo::EFAULT);
+            }
+            let sid = tty::controlling_sid().min(i32::MAX as usize) as i32;
+            match copy_to_user_struct(argp, &sid) {
+                Ok(()) => UserRet::from_success(0),
+                Err(error) => UserRet::from_error(error),
+            }
+        }
+        FIONREAD => {
+            if argp == 0 {
+                return UserRet::from_error(ErrNo::EFAULT);
+            }
+            let available = tty::readable_len().min(i32::MAX as usize) as i32;
+            match copy_to_user_struct(argp, &available) {
+                Ok(()) => UserRet::from_success(0),
+                Err(error) => UserRet::from_error(error),
+            }
+        }
         _ => ioctl_enotty(request, None, argp),
     }
 }
@@ -139,15 +241,16 @@ pub(crate) fn sys_ioctl(args: SyscallArgs) -> UserRet {
         return sys_rtc_ioctl(request, argp);
     }
 
+    if request == FIONBIO {
+        return fd_fionbio(fd, argp);
+    }
+
     if vfs::fd::current_fd_is_tty_char(fd).unwrap_or(false) {
         return tty_char_ioctl(request, argp);
     }
 
     if request == FIONREAD {
         return pipe_fionread(fd, argp);
-    }
-    if request == FIONBIO {
-        return fd_fionbio(fd, argp);
     }
 
     match vfs::fd::with_current_io(fd, |handle| handle.ioctl(request as usize, argp)) {

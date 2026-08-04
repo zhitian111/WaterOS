@@ -30,6 +30,7 @@ mod user_bringup_ltp_exclusions;
 mod user_bringup_mm;
 mod user_bringup_posix_fs;
 mod user_bringup_root_layout;
+mod user_operator;
 
 // ── Panic / Alloc ───────────────────────────────────────────────
 
@@ -51,10 +52,12 @@ extern "C" fn network_poller_task(_arg : usize) -> ! {
         // NETWORK_STACK is a cross-CPU spin lock. Keep this kernel task from
         // being switched out while it owns the lock: syscall callers enter
         // with interrupts disabled and otherwise cannot yield while spinning.
-        let interrupt_state = platform::arch::interrupt::read_global_interrupt_state()
-            .expect("read interrupt state for network poll");
-        platform::arch::interrupt::disable_global_interrupt()
-            .expect("disable interrupts for network poll");
+        let interrupt_state =
+            platform::arch::interrupt::read_global_interrupt_state().expect("read interrupt \
+                                                                             state for network \
+                                                                             poll");
+        platform::arch::interrupt::disable_global_interrupt().expect("disable interrupts for \
+                                                                      network poll");
         match platform::timer::now_duration() {
             Ok(now) => {
                 let millis = now.as_millis()
@@ -85,11 +88,10 @@ fn bringup_driver_and_user() {
                 Err(err) => warn!("[boot] Goldfish RTC unavailable: {:?}",
                                   err),
             }
-            match network::stack::init(network::NetworkConfig {
-                address: [10, 0, 2, 15],
-                prefix_len: 24,
-                gateway: [10, 0, 2, 2],
-            }) {
+            match network::stack::init(network::NetworkConfig { address : [10, 0, 2, 15],
+                                                                prefix_len : 24,
+                                                                gateway : [10, 0, 2, 2] })
+            {
                 Ok(()) => {
                     task::spawn_kernel_task(network_poller_task, 0);
                 }
@@ -97,9 +99,6 @@ fn bringup_driver_and_user() {
             }
             fs::init();
             crate::user_bringup_bus::run();
-            fs::test();
-            #[cfg(feature = "vfs-bridge")]
-            vfs::test();
         }
     }
 }
@@ -212,6 +211,7 @@ mod qemu_riscv64_opensbi {
         {
             wait_ap_boot_ready(cpu_id);
         }
+        unsafe { platform::boot::init_command_line(cpu_raw, dtb_pa, _platform_arg1) };
         // BSP 初始化：驱动 → 日志 → timebase → 堆 → arch → 任务 → trap
         driver::init_when_boot(dtb_pa);
         runtime::console::show_logo();
@@ -250,7 +250,6 @@ mod qemu_riscv64_opensbi {
 mod qemu_loongarch64_virt {
     use crate::bringup_driver_and_user;
     use core::sync::atomic::{AtomicBool, Ordering};
-    use cred::active_impl::on_exec;
     use runtime::logging::*;
 
     static BSP_CLAIMED : AtomicBool = AtomicBool::new(false);
@@ -271,13 +270,15 @@ mod qemu_loongarch64_virt {
             if cpu == boot_cpu || !configured.contains(cpu) {
                 continue;
             }
-            info!("[smp] starting LA cpu={} entry={:#x}", raw, entry);
+            info!("[smp] starting LA cpu={} entry={:#x}",
+                  raw, entry);
             match platform::smp::start_cpu(cpu, entry, 0) {
                 Ok(()) | Err(platform::smp::PlatformSmpError::AlreadyAvailable) => {
                     requested.insert(cpu);
                 }
                 Err(platform::smp::PlatformSmpError::InvalidCpu) => break,
-                Err(error) => panic!("[smp] cannot start LA cpu={}: {:?}", raw, error),
+                Err(error) => panic!("[smp] cannot start LA cpu={}: {:?}",
+                                     raw, error),
             }
         }
         requested
@@ -288,7 +289,8 @@ mod qemu_loongarch64_virt {
         for _ in 0..ONLINE_WAIT_SPINS {
             let online = task::online_cpu_mask();
             if online.bits() & requested.bits() == requested.bits() {
-                info!("[smp] all LA CPUs online mask={:#x}", online.bits());
+                info!("[smp] all LA CPUs online mask={:#x}",
+                      online.bits());
                 return;
             }
             core::hint::spin_loop();
@@ -325,12 +327,14 @@ mod qemu_loongarch64_virt {
     }
 
     #[unsafe(no_mangle)]
-    pub fn wateros_kernel_main(cpu_raw : usize, _argc : usize, _envp : usize) -> ! {
+    pub fn wateros_kernel_main(cpu_raw : usize, argc : usize, argv : usize, envp : usize) -> ! {
         let cpu_id = task::CpuId::from_raw(cpu_raw);
         mask_boot_interrupts();
         if BSP_CLAIMED.swap(true, Ordering::AcqRel) {
             wait_ap_boot_ready(cpu_id);
         }
+
+        unsafe { platform::boot::init_command_line(argc, argv, envp) };
 
         runtime::console::show_logo();
         klog::init();
@@ -341,9 +345,13 @@ mod qemu_loongarch64_virt {
         let _ = platform::smp::init_ipi();
         let dtb_pa = platform::active_impl::boot::device_tree_phys_addr();
         driver::init_when_boot(dtb_pa);
-        let configured = platform::active_impl::smp::init_configured_cpu_mask(dtb_pa)
-            .expect("initialize LoongArch CPU topology from DTB");
-        info!("[smp] LA configured CPU mask={:#x}", configured.bits());
+        let configured =
+            platform::active_impl::smp::init_configured_cpu_mask(dtb_pa).expect("initialize \
+                                                                                 LoongArch CPU \
+                                                                                 topology from \
+                                                                                 DTB");
+        info!("[smp] LA configured CPU mask={:#x}",
+              configured.bits());
         crate::boot_timebase::probe_and_init_timebase(dtb_pa);
         task::init();
         task::set_timekeeper_cpu(cpu_id);

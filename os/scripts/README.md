@@ -49,6 +49,30 @@ chmod +x ./scripts/*.sh
     双架构统一 GDB 入口：`doctor` 检查依赖，`run` 一键构建/启动/监测，
     `snapshot` 手动抓取，`watch` 自动判断停滞，`gdb` 打开带 `wos-*` 命令的交互
     调试器。默认使用磁盘 snapshot，报告写入 `debug-reports/`。
+- ./scripts/operator_smoke.py
+    仅用 Python 标准库通过 PTY 驱动 operator 串口，验证管道/重定向、后台
+    `wait`、Ctrl-C、raw termios 和救援 shell；`--mode run --script /...` 验证
+    脚本模式，`--vim` 另要求镜像包含 Vim 并验证其 raw mode 保存。
+
+### QEMU operator 参数
+
+`rv_pre_run.sh`、`rv_final_run.sh`、`la_pre_run.sh` 和 `la_final_run.sh`
+均把下列环境变量转换成内核 `-append` 启动参数：
+
+| 变量 | 用途 |
+| --- | --- |
+| `WOS_MODE=auto\|shell\|run` | 选择自动评测、交互 shell 或脚本 |
+| `WOS_SHELL=/path` | 指定 shell/BusyBox ELF |
+| `WOS_SCRIPT=/path` | `run` 模式脚本 |
+| `WOS_ON_EXIT=shutdown\|shell\|reboot` | 主程序退出策略 |
+| `WOS_TTY=interactive\|closed\|fixture` | 真实 UART、EOF 或自动密码输入 |
+| `WOS_LOG=error\|warn\|info\|debug\|trace` | 运行时日志级别 |
+| `WOS_SMP=1..8` | QEMU vCPU 数；LoongArch 同时据此限制 mailbox/AP 目标 |
+| `WOS_WRITE_DISK=1` | operator 模式显式写回基础镜像 |
+| `WOS_QEMU_SNAPSHOT=1` | 对任意模式强制 QEMU snapshot |
+
+operator 模式在没有 `WOS_WRITE_DISK=1` 时默认加 `-snapshot`。自动模式保持
+原有磁盘行为。完整的现场命令表与 TTY 排查见 `os/README.md`。
 
 ### Makefile 调试目标（在 `os/` 目录下）
 

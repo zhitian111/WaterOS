@@ -100,7 +100,7 @@ pub fn write_str(text : &str) {
 #[inline]
 pub fn write_raw_bytes(bytes : &[u8]) {
     #[cfg(feature = "impl-platform-console")]
-    impl_platform_console::platform_console_write_a_buffer(bytes);
+    impl_platform_console::platform_console_write_raw_buffer(bytes);
     // 未链平台控制台实现时保持无操作，便于仅编译/单测场景。
     #[cfg(not(feature = "impl-platform-console"))]
     {

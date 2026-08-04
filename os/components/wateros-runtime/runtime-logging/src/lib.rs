@@ -75,3 +75,8 @@ pub use log::error;
 pub use log::info;
 pub use log::trace;
 pub use log::warn;
+pub use log::LevelFilter;
+
+/// Change the runtime filter after the logger has been installed. Operator
+/// mode uses this to keep an interactive prompt readable without rebuilding.
+pub fn set_max_level(level: LevelFilter) { log::set_max_level(level); }

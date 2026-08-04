@@ -59,6 +59,9 @@ pub(crate) fn sys_read(args : SyscallArgs) -> UserRet {
     if let Err(err) = validate_read_fd(fd) {
         return UserRet::from_error(err);
     }
+    if let Err(error) = check_tty_foreground(fd, false) {
+        return UserRet::from_error(error);
+    }
     if len == 0 {
         return UserRet::from_success(0);
     }
@@ -252,6 +255,9 @@ pub(crate) fn sys_readv(args : SyscallArgs) -> UserRet {
     if let Err(error) = validate_read_fd(fd) {
         return UserRet::from_error(error);
     }
+    if let Err(error) = check_tty_foreground(fd, false) {
+        return UserRet::from_error(error);
+    }
     let iovecs = match import_iovecs(iov_ptr, iovcnt) {
         Ok(iovecs) => iovecs,
         Err(error) => return UserRet::from_error(error),
@@ -326,6 +332,9 @@ pub(crate) fn sys_write(args : SyscallArgs) -> UserRet {
     if let Err(error) = validate_write_fd(fd) {
         return UserRet::from_error(error);
     }
+    if let Err(error) = check_tty_foreground(fd, true) {
+        return UserRet::from_error(error);
+    }
     if len == 0 {
         return UserRet::from_success(0);
     }
@@ -389,6 +398,9 @@ pub(crate) fn sys_writev(args : SyscallArgs) -> UserRet {
     if let Err(error) = validate_write_fd(fd) {
         return UserRet::from_error(error);
     }
+    if let Err(error) = check_tty_foreground(fd, true) {
+        return UserRet::from_error(error);
+    }
     let iovecs = match import_iovecs(iov_ptr, iovcnt) {
         Ok(iovecs) => iovecs,
         Err(error) => return UserRet::from_error(error),
@@ -443,6 +455,32 @@ fn validate_write_fd(fd : usize) -> Result<(), ErrNo> {
             Ok(())
         }
     }).map_err(vfs_error_to_errno)
+}
+
+/// Enforce controlling-terminal foreground process-group rules before user
+/// memory is copied. Terminal-generated signals use the kernel delivery path,
+/// then the interrupted syscall returns `EINTR`; the trap layer already knows
+/// how to restart read/write when the installed action has `SA_RESTART`.
+fn check_tty_foreground(fd: usize, writing: bool) -> Result<(), ErrNo> {
+    if !vfs::fd::current_fd_is_tty_char(fd).unwrap_or(false) {
+        return Ok(());
+    }
+    if writing && !tty::output_stops_background() {
+        return Ok(());
+    }
+    let foreground = tty::foreground_pgid();
+    if foreground == 0 {
+        return Ok(());
+    }
+    let Some(process) = task::current_process_snapshot() else {
+        return Ok(());
+    };
+    if process.pgid.raw() == foreground {
+        return Ok(());
+    }
+    let signal = if writing { ipc::signal::SIGTTOU } else { ipc::signal::SIGTTIN };
+    crate::sys::ipc::signal::send_kernel_signal_to_process_group(process.pgid, signal);
+    Err(ErrNo::EINTR)
 }
 
 fn write_tcp_socket_blocking(fd : usize, buf : &[u8]) -> Result<usize, ErrNo> {

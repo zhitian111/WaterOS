@@ -16,6 +16,8 @@ const REG_IER: usize = 1;
 const REG_LSR: usize = 5;
 
 const LSR_DATA_READY: u8 = 1;
+const LSR_THRE: u8 = 1 << 5;
+const SPIN_TX_MAX: usize = 1_000_000;
 /// NS16550 风格 MMIO 串口；`base` 为物理/恒等映射内核地址。
 #[derive(Debug, Clone, Copy)]
 pub struct QemuVirtUart16550 {
@@ -56,13 +58,14 @@ impl QemuVirtUart16550 {
 
 impl SerialPort for QemuVirtUart16550 {
     fn write_byte(&mut self, byte: u8) -> SerialResult<()> {
-        platform::console::console_write_a_byte(byte)
-            .map_err(|_| SerialError::TransmitterStuck)
-    }
-
-    fn write_all(&mut self, bytes : &[u8]) -> SerialResult<()> {
-        platform::console::console_write_a_buffer(bytes)
-            .map_err(|_| SerialError::TransmitterStuck)
+        for _ in 0..SPIN_TX_MAX {
+            if unsafe { self.read_reg(REG_LSR) } & LSR_THRE != 0 {
+                unsafe { self.write_reg(REG_THR, byte) };
+                return Ok(());
+            }
+            core::hint::spin_loop();
+        }
+        Err(SerialError::TransmitterStuck)
     }
 
     fn read_byte_blocking(&mut self) -> u8 {

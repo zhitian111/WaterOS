@@ -1,4 +1,4 @@
-# WaterOS 内核构建与 GDB 卡死诊断
+# WaterOS 现场操作、内核构建与 GDB 诊断
 
 本目录是 WaterOS 内核工作目录。下面重点说明 RISC-V、LoongArch 两套 GDB 调试
 流程，用于分析内核卡死、死循环、锁等待、调度停滞、中断停止、IPI/TLB shootdown
@@ -9,6 +9,252 @@
 ```bash
 cd /home/kasss/WaterOS/os
 ```
+
+## 现场 operator 模式
+
+内核现在从启动参数选择自动评测、交互 shell 或指定脚本，无需修改
+Rust 源码或 Cargo feature。不传参数的 `rv_final_run` / `la_final_run` 仍执行原
+自动测例队列并在结束后关机。
+
+最常用的四条现场命令：
+
+```bash
+# RISC-V / LoongArch 交互 shell（默认 snapshot，不写回镜像）
+make rv_final_run WOS_MODE=shell
+make la_final_run WOS_MODE=shell
+
+# 运行镜像内脚本，完成或失败后都进入救援 shell
+make rv_final_run WOS_MODE=run WOS_SCRIPT=/root/test.sh
+make la_final_run WOS_MODE=run WOS_SCRIPT=/root/test.sh
+```
+
+shell 候选顺序是 `WOS_SHELL` 指定路径、`/bin/bash`、`/bin/sh`、
+`/glibc/busybox sh`、`/musl/busybox sh`。shell 意外退出后 supervisor 会清理残留
+子进程并再次启动救援 shell。operator 默认日志级别为 `warn`，避免 SMP
+日志覆盖提示符。
+
+### 从构建到进入终端
+
+运行目标会自动构建对应内核，不需要先单独执行 `make kernel-*`。第一次验证建议先用
+单核，确认串口和镜像正常后再把 `WOS_SMP` 改为 `2/4/8`：
+
+```bash
+cd /home/kasss/WaterOS/os
+
+# 初赛镜像
+make rv_pre_run WOS_MODE=shell WOS_SMP=1 WOS_LOG=warn
+make la_pre_run WOS_MODE=shell WOS_SMP=1 WOS_LOG=warn
+
+# 决赛镜像
+make rv_final_run WOS_MODE=shell WOS_SMP=1 WOS_LOG=warn
+make la_final_run WOS_MODE=shell WOS_SMP=1 WOS_LOG=warn
+```
+
+启动完成后会看到类似提示符：
+
+```text
+~ #
+```
+
+这已经是镜像内的用户态 shell，不是 QEMU monitor，也不是 WaterOS 内核命令行。
+当前比赛镜像可能没有独立的 Bash 或 `/bin/sh`，supervisor 会自动回退到
+`/glibc/busybox sh` 或 `/musl/busybox sh`。可以用下面的命令确认实际环境：
+
+```sh
+echo "$SHELL"
+echo "$PATH"
+pwd
+id
+uname -a
+```
+
+若要固定使用某个 shell：
+
+```bash
+make rv_final_run WOS_MODE=shell WOS_SHELL=/glibc/busybox
+make la_final_run WOS_MODE=shell WOS_SHELL=/musl/busybox
+```
+
+指定路径装载失败时，内核会继续尝试后续候选并打印具体错误；所有候选都失败时不会
+自动关机，仍可连接 GDB 查看现场。
+
+### 进入终端后的常用操作
+
+普通文件、管道、重定向和目录操作：
+
+```sh
+cd /root
+ls -la /
+echo "hello WaterOS"
+echo "hello WaterOS" > /tmp/hello.txt
+cat /tmp/hello.txt
+cat /etc/passwd | wc -l
+mkdir -p /tmp/demo
+cp /tmp/hello.txt /tmp/demo/
+```
+
+创建并执行脚本：
+
+```sh
+printf '#!/bin/sh\necho script-start\npwd\necho script-end\n' > /root/test.sh
+chmod +x /root/test.sh
+"$SHELL" /root/test.sh
+```
+
+后台任务和 job control：
+
+```sh
+sleep 10 &
+jobs
+wait
+
+# 前台命令可按 Ctrl-C 中断，随后应重新出现提示符
+sleep 30
+```
+
+`Ctrl-C` 会向前台进程组发送 `SIGINT`，`Ctrl-Z` 会发送 `SIGTSTP`。是否显示完整的
+`jobs/fg/bg` 行为还取决于镜像中 shell 的 job-control 支持。
+
+检查或恢复终端状态时优先直接调用 BusyBox applet，因为部分镜像没有安装独立的
+`stty` 链接：
+
+```sh
+busybox stty -a
+busybox stty raw -echo
+busybox stty sane
+```
+
+如果程序异常退出后提示符不回显或输入显示混乱，可先盲输 `busybox stty sane` 并按
+回车。若仍无效，先按 `Ctrl-A`，再按小写 `x` 退出 QEMU 后重新启动。这个组合是 QEMU
+`-nographic` 控制键；`Ctrl-C` 才是发送给 guest 前台程序的终端信号。
+
+当前 pre 镜像实测没有 Vim。使用前先检查：
+
+```sh
+command -v vim
+```
+
+只有镜像确实包含 Vim 时，才能执行 `vim /root/test.txt`；内核 TTY 已支持 Vim 需要的
+raw 模式和 `VMIN/VTIME`，但用户程序本身仍必须存在于磁盘镜像中。
+
+### 自动评测、脚本和退出策略
+
+保持原有自动评测和自动关机行为：
+
+```bash
+make rv_final_run
+make la_final_run
+
+# 等价的显式写法
+make rv_final_run WOS_MODE=auto
+```
+
+`run` 模式要求脚本在启动前已经存在于镜像中。脚本成功、失败或无法装载后都会进入
+救援 shell：
+
+```bash
+make rv_final_run WOS_MODE=run WOS_SCRIPT=/root/test.sh
+make la_final_run WOS_MODE=run WOS_SCRIPT=/root/test.sh
+```
+
+默认 `shell` 模式下执行 `exit` 不会关机，而是由 supervisor 清理残留用户进程并重新
+启动一个救援 shell。需要通过 `exit` 关机或重启时，在启动 QEMU 时指定：
+
+```bash
+make rv_final_run WOS_MODE=shell WOS_ON_EXIT=shutdown
+make rv_final_run WOS_MODE=shell WOS_ON_EXIT=reboot
+```
+
+QEMU 运行脚本带有 `-no-reboot`，因此 `reboot` 策略会让当前 QEMU 进程退出，而不是在
+同一个终端里再次启动 guest；重新运行 `make ..._run` 即可开机。
+
+可用启动参数：
+
+| Make 变量 | 内核参数 | 取值 / 作用 |
+| --- | --- | --- |
+| `WOS_MODE` | `wos.mode` | `auto` / `shell` / `run` |
+| `WOS_SHELL` | `wos.shell` | 绝对 shell/BusyBox 路径 |
+| `WOS_SCRIPT` | `wos.script` | `run` 模式的绝对脚本路径 |
+| `WOS_ON_EXIT` | `wos.on_exit` | `shutdown` / `shell` / `reboot` |
+| `WOS_TTY` | `wos.tty` | `interactive` / `closed` / `fixture` |
+| `WOS_LOG` | `wos.log` | `error` / `warn` / `info` / `debug` / `trace` |
+| `WOS_SMP` | platform hint | QEMU vCPU 数量（`1..8`；LoongArch 同时用于限制 mailbox 目标） |
+
+`interactive` 从真实 UART 读取；`closed` 立即 EOF；`fixture` 只为原无人值守
+LTP 密码输入提供 `password\n`。已知 `wos.*` 参数的非法值会打印错误并
+进入救援 shell，不会静默跑评测。完全没有 bootargs 时串口显示 3 秒菜单，
+超时保持当前构建的默认自动模式。
+
+operator 模式默认向 QEMU 加 `-snapshot`。只有明确要保存文件时才写回基础
+镜像：
+
+```bash
+make rv_final_run WOS_MODE=shell WOS_WRITE_DISK=1
+make la_final_run WOS_MODE=shell WOS_WRITE_DISK=1
+```
+
+默认 snapshot 下，`/root` 等磁盘文件的修改会在 QEMU 退出后消失；`/tmp` 是 tmpfs，
+即使启用写盘也不会跨重启保存。如果想创建一个供下一次 `WOS_MODE=run` 使用的脚本：
+
+1. 使用 `WOS_MODE=shell WOS_WRITE_DISK=1` 启动。
+2. 在 `/root` 创建脚本并执行 `sync`。
+3. 退出 QEMU，然后以 `WOS_MODE=run WOS_SCRIPT=/root/...` 再次启动。
+
+基础镜像用于评测或回归时不要打开 `WOS_WRITE_DISK=1`，避免一次现场操作污染后续结果。
+
+自动评测为保持原行为不强制 snapshot；需要只读回归时显式传
+`WOS_QEMU_SNAPSHOT=1`。
+
+### TTY 能力和排查
+
+控制台实现 canonical/raw 输入、echo、`VMIN/VTIME`、`poll/select` 可读性、
+`TCGETS/TCSETS*`、窗口大小、控制终端与前台进程组。Ctrl-C/Ctrl-Z 分别向
+前台进程组投递 `SIGINT`/`SIGTSTP`；后台读控制终端会收到 `SIGTTIN`，
+`TOSTOP` 下后台写会收到 `SIGTTOU`。
+
+- 没有输入：确认使用 `WOS_MODE=shell`，不要设 `WOS_TTY=closed`；检查 QEMU
+  命令包含 `-nographic` 且没有其他进程占用串口。
+- 提示符被日志打乱：用 `WOS_LOG=warn` 或 `WOS_LOG=error`；不要在交互时开 CPU
+  dashboard。
+- Ctrl-C 无效：用 `busybox stty -a` 检查 `isig` 和 `intr = ^C`，再检查
+  `tcgetpgrp`/shell job control；可立即用下面的 GDB snapshot 查任务和锁。
+- Bash 装载失败：日志会列出每个候选及 ELF loader 错误；尝试
+  `WOS_SHELL=/glibc/busybox`。所有候选都失败时内核保持运行，便于附加 GDB。
+
+一边现场操作一边开放 GDB：
+
+```bash
+# 终端 1：立即运行 shell，保持磁盘 snapshot
+make rv_final_run-gdb GDB_WAIT=0 WOS_MODE=shell
+
+# 终端 2：立即保存现场（默认抓取后继续运行）
+./scripts/wateros_debug.py snapshot --arch rv --elf ./kernel-rv-final-gdb
+
+# 或持续监测，确认卡死后生成报告并保持暂停
+./scripts/wateros_debug.py watch --arch rv --elf ./kernel-rv-final-gdb
+```
+
+LoongArch 将 `rv`/`kernel-rv` 替换为 `la`/`kernel-la`即可。上述命令、镜像、
+ELF 和 Python 脚本均在仓库内，可断网使用。
+
+断网自动交互 smoke（默认 snapshot）：
+
+```bash
+./scripts/operator_smoke.py --arch rv --profile pre --smp 1
+./scripts/operator_smoke.py --arch la --profile pre --smp 1
+./scripts/operator_smoke.py --arch rv --profile final --smp 4 --vim
+
+# 脚本不存在或执行失败后也必须出现救援 shell
+./scripts/operator_smoke.py --arch rv --profile pre --smp 1 \
+  --mode run --script /does/not/exist
+
+# 多核首次 bring-up 较慢时提高整次测试预算
+./scripts/operator_smoke.py --arch la --profile final --smp 8 --timeout 300
+```
+
+---
+
+## GDB 卡死诊断
 
 ## 1. 支持的内核配置
 

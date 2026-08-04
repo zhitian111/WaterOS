@@ -20,6 +20,7 @@
     syscall = { package = "wateros-syscall", path = "./components/wateros-syscall/", default-features = false }
     klog = { package = "wateros-klog", path = "./components/wateros-klog/", default-features = false, optional = true }
     task = { package = "wateros-task", path = "./components/wateros-task/", default-features = true }
+    tty = { package = "wateros-tty", path = "./components/wateros-tty/", default-features = true }
     debug = { package = "wateros-debug", path = "./components/wateros-debug/", default-features = false }
     fdt = { version = "0.1.5", optional = true }
 

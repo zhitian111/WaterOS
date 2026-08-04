@@ -592,6 +592,7 @@ dependencies = [
  "wateros-runtime",
  "wateros-syscall",
  "wateros-task",
+ "wateros-tty",
  "wateros-utils",
  "wateros-vfs",
 ]
@@ -1419,6 +1420,7 @@ dependencies = [
 name = "wateros-platform-impl-qemu-riscv64-opensbi"
 version = "0.1.0"
 dependencies = [
+ "fdt",
  "sbi-rt",
  "wateros-base",
  "wateros-base-config",
@@ -1516,6 +1518,7 @@ dependencies = [
  "wateros-platform-arch-api-v0",
  "wateros-syscall-api-v0",
  "wateros-task",
+ "wateros-tty",
  "wateros-vfs",
 ]
 
@@ -1597,6 +1600,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "wateros-tty"
+version = "0.1.0"
+dependencies = [
+ "wateros-tty-api-v0",
+ "wateros-tty-impl-console",
+]
+
+[[package]]
+name = "wateros-tty-api-v0"
+version = "0.1.0"
+
+[[package]]
+name = "wateros-tty-impl-console"
+version = "0.1.0"
+dependencies = [
+ "ipc-waitqueue",
+ "spin",
+ "wateros-tty-api-v0",
+]
+
+[[package]]
 name = "wateros-utils"
 version = "0.1.0"
 dependencies = [
@@ -1613,6 +1637,7 @@ dependencies = [
  "wateros-fs",
  "wateros-platform-arch",
  "wateros-task",
+ "wateros-tty",
  "wateros-vfs-api-v0",
  "wateros-vfs-impl-dummy",
  "wateros-vfs-impl-fd-session",
@@ -1640,12 +1665,14 @@ dependencies = [
  "ipc-waitqueue",
  "spin",
  "wateros-base",
+ "wateros-base-config",
  "wateros-driver-api-v0",
  "wateros-driver-character-api-v0",
  "wateros-ipc",
  "wateros-platform-arch",
  "wateros-runtime-console",
  "wateros-task",
+ "wateros-tty",
  "wateros-vfs-api-v0",
 ]
 

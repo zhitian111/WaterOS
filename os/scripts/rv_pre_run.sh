@@ -16,7 +16,17 @@ qemu_args=(
     -rtc base=utc
 )
 
-if [[ "${WOS_QEMU_SNAPSHOT:-0}" == "1" ]]; then
+wos_mode="${WOS_MODE:-auto}"
+wos_cmdline="wos.mode=${wos_mode}"
+[[ -n "${WOS_SHELL:-}" ]] && wos_cmdline+=" wos.shell=${WOS_SHELL}"
+[[ -n "${WOS_SCRIPT:-}" ]] && wos_cmdline+=" wos.script=${WOS_SCRIPT}"
+[[ -n "${WOS_ON_EXIT:-}" ]] && wos_cmdline+=" wos.on_exit=${WOS_ON_EXIT}"
+[[ -n "${WOS_TTY:-}" ]] && wos_cmdline+=" wos.tty=${WOS_TTY}"
+[[ -n "${WOS_LOG:-}" ]] && wos_cmdline+=" wos.log=${WOS_LOG}"
+qemu_args+=(-append "$wos_cmdline")
+
+if [[ "${WOS_QEMU_SNAPSHOT:-0}" == "1" ||
+      ( "$wos_mode" != "auto" && "${WOS_WRITE_DISK:-0}" != "1" ) ]]; then
     qemu_args+=(-snapshot)
 fi
 

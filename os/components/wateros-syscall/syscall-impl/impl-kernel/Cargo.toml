@@ -10,6 +10,7 @@
     cred = { path = "../../../wateros-cred/", package = "wateros-cred", default-features = false, optional = true }
     mm = { path = "../../../wateros-mm/", package = "wateros-mm", default-features = true, optional = true }
     vfs = { path = "../../../wateros-vfs/", package = "wateros-vfs", default-features = false, optional = true }
+    tty = { path = "../../../wateros-tty/", package = "wateros-tty", default-features = true, optional = true }
     network = { path = "../../../wateros-network/", package = "wateros-network", default-features = true, optional = true }
     log = { version = "0.4.29" }
     platform = { path = "../../../wateros-platform/", package = "wateros-platform", default-features = false }
@@ -27,6 +28,7 @@
         "dep:ipc",
         "dep:mm",
         "dep:vfs",
+        "dep:tty",
         "ipc/futex",
         "ipc/pipe",
         "ipc/shm",

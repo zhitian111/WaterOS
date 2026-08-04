@@ -22,7 +22,7 @@ pub use handles::{
     ZeroDeviceHandle, open_named_pipe, pipe_handle_pair, pipe_handle_pair_with_flags,
     poll_pipe_smoke, stream_pair_handle_pair, stream_pair_smoke,
 };
-pub use registry::PerTaskFdRegistry;
+pub use registry::{PerTaskFdRegistry, poll_console_input_once};
 pub use interrupt_guard::with_interrupt_disabled;
 
 pub fn test() {

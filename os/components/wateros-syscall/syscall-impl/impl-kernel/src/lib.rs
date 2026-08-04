@@ -48,6 +48,11 @@ pub fn restore_signal_frame(frame : *mut u8) -> bool { sys::restore_signal_frame
 
 pub fn raise_current_signal(signal : usize) -> bool { sys::raise_current_thread(signal).is_ok() }
 
+/// Send a signal produced by the controlling terminal to its foreground group.
+pub fn send_kernel_signal_to_process_group(pgid : usize, signal : usize) -> usize {
+    sys::send_kernel_signal_to_process_group(task::ProcessId::from_raw(pgid), signal)
+}
+
 /// trap 等非 syscall 路径统一使用 exit_group 的资源清理与 SMP 退出流程。
 pub fn terminate_current_process(exit_code : isize) -> ! {
     sys::sys_exit_group(exit_code);

@@ -21,6 +21,7 @@
     task = { path = "../wateros-task/", package = "wateros-task", default-features = false, optional = true }
     arch = { path = "../wateros-platform/platform-arch/", package = "wateros-platform-arch", default-features = false, features = [ "api-v0" ], optional = true }
     debug = { path = "../wateros-debug/", package = "wateros-debug", default-features = false, optional = true }
+    tty = { path = "../wateros-tty/", package = "wateros-tty", default-features = true, optional = true }
 
 [features]
     api-v0 = [ "impl-dummy/api-v0", "impl_fs_bridge?/api-v0" ]
@@ -37,6 +38,7 @@
         "dep:task",
         "dep:arch",
         "dep:debug",
+        "dep:tty",
         "impl_fd_session/impl-fd-session",
     ]
 
