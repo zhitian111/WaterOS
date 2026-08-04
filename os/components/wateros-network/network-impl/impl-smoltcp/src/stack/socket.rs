@@ -48,6 +48,14 @@ pub(super) fn listen_endpoint(addr : Option<[u8; 4]>, port : u16) -> IpListenEnd
                        port }
 }
 
+fn normalize_connect_ip(ip : [u8; 4]) -> [u8; 4] {
+    if ip == [0; 4] {
+        [127, 0, 0, 1]
+    } else {
+        ip
+    }
+}
+
 
 pub(super) fn next_ephemeral_port(stack : &mut NetworkStack) -> u16 {
     let port = stack.ephemeral_port;
@@ -211,6 +219,9 @@ pub fn socket_poll_snapshot(handle : SocketHandle) -> Result<SocketPollSnapshot,
 /// 发起 TCP/UDP connect。TCP 非阻塞返回后需 poll 驱动握手完成；UDP 只记录默认 peer。
 pub fn socket_connect(handle : SocketHandle, ip : [u8; 4], port : u16) -> Result<(), NetworkError> {
     use smoltcp::wire::IpAddress;
+    // Linux treats INADDR_ANY as the local host when it is used as a
+    // connect destination. smoltcp rejects the unspecified address.
+    let ip = normalize_connect_ip(ip);
     let mut guard = NETWORK_STACK.lock();
     let stack = guard.as_mut()
                      .ok_or(NetworkError::StackUnavailable)?;
@@ -738,4 +749,15 @@ pub fn socket_local_endpoint(handle : SocketHandle) -> Result<Ipv4Endpoint, Netw
 /// 兼容原有调用路径的本地端口查询。
 pub fn socket_local_port(handle : SocketHandle) -> Result<u16, NetworkError> {
     socket_local_endpoint(handle).map(|endpoint| endpoint.port)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_connect_ip;
+
+    #[test]
+    fn connect_maps_unspecified_destination_to_loopback() {
+        assert_eq!(normalize_connect_ip([0, 0, 0, 0]), [127, 0, 0, 1]);
+        assert_eq!(normalize_connect_ip([10, 0, 2, 2]), [10, 0, 2, 2]);
+    }
 }

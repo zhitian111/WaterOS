@@ -158,6 +158,11 @@ struct ScanCtx {
     nfds : usize,
 }
 
+fn current_task_has_deliverable_signal() -> bool {
+    task::current_task_id()
+        .is_some_and(|task_id| ipc::signal::has_deliverable(task_id).unwrap_or(false))
+}
+
 impl ScanCtx {
     fn scan_count(&self) -> Result<usize, ErrNo> {
         let (n, _) = scan_pollfds(self.fds_ptr, self.nfds)?;
@@ -329,6 +334,13 @@ pub(crate) fn poll_block_until_ready(fds_ptr : usize,
         let n = ctx.scan_count()?;
         if n > 0 {
             return Ok(n);
+        }
+        // A signal can arrive while this task is still running, immediately
+        // before it enters the one-tick sleep. In that window interrupt_task()
+        // cannot remove it from a wait queue, so every loop must also observe
+        // the pending signal explicitly.
+        if current_task_has_deliverable_signal() {
+            return Err(ErrNo::EINTR);
         }
         if deadline.expired() {
             return Ok(0);
@@ -634,6 +646,9 @@ pub(crate) fn poll_block_fd_sets(nfds : usize,
                                       writefds_ptr,
                                       exceptfds_ptr,
                                       true);
+        }
+        if current_task_has_deliverable_signal() {
+            return Err(ErrNo::EINTR);
         }
         if deadline.expired() {
             scan_fd_sets_inner(nfds,
