@@ -4,7 +4,9 @@
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
-use network::{stack, SocketReceiveLease};
+use network::{
+    stack, SocketKind, SocketReceiveLease, SocketRecvError, SocketRecvFinish, SocketRef,
+};
 use wateros_base_config::task::SCHED_TIMER_PERIOD_MS;
 
 use crate::fallible_buf::{try_kbuf, SYSCALL_IO_MAX};
@@ -118,8 +120,6 @@ pub(crate) fn sys_sendmsg(args : SyscallArgs) -> UserRet {
         Some(s) => s,
         None => return UserRet::from_error(ErrNo::ENOTSOCK),
     };
-    let handle = socket.handle();
-
     // 有目标地址 → sendto；否则使用 connect() 保存的默认 peer。
     let destination = if msg.msg_name != 0 && msg.msg_namelen >= 16 {
         let addr : SockAddrIn = match copy_from_user_struct(msg.msg_name) {
@@ -132,13 +132,12 @@ pub(crate) fn sys_sendmsg(args : SyscallArgs) -> UserRet {
         None
     };
 
-    let sent = match stack::socket_kind(handle) {
-        Ok(stack::SocketKind::Udp) => {
-            super::sendto::send_udp_blocking(fd, handle, &kbuf, destination, flags)
+    let sent = match socket.kind() {
+        Ok(SocketKind::Udp) => {
+            super::sendto::send_udp_blocking(fd, &socket, &kbuf, destination, flags)
         }
-        Ok(stack::SocketKind::Tcp) => {
-            stack::socket_send(handle, &kbuf).map_err(super::sendto::socket_send_error_to_errno)
-        }
+        Ok(SocketKind::Tcp) => socket.send(&kbuf)
+                                     .map_err(super::sendto::socket_send_error_to_errno),
         Err(_) => Err(ErrNo::ENOTSOCK),
     };
     match sent {
@@ -203,9 +202,7 @@ pub(crate) fn sys_recvmsg(args : SyscallArgs) -> UserRet {
         Ok(socket) => socket,
         Err(error) => return UserRet::from_error(error),
     };
-    let handle = socket.handle();
-
-    let kind = match stack::socket_kind(handle) {
+    let kind = match socket.kind() {
         Ok(kind) => kind,
         Err(_) => return UserRet::from_error(ErrNo::ENOTSOCK),
     };
@@ -250,14 +247,14 @@ pub(crate) fn sys_recvmsg(args : SyscallArgs) -> UserRet {
             };
         }
         return match lease.finish(offset, false) {
-            Ok(stack::SocketRecvFinish::Bytes(copied)) => UserRet::from_success(copied),
-            Ok(stack::SocketRecvFinish::Fault) => UserRet::from_error(ErrNo::EFAULT),
+            Ok(SocketRecvFinish::Bytes(copied)) => UserRet::from_success(copied),
+            Ok(SocketRecvFinish::Fault) => UserRet::from_error(ErrNo::EFAULT),
             Err(error) => UserRet::from_error(recv_error_to_errno(error)),
         };
     }
 
     // 写回发送方地址到 msg_name
-    if kind == stack::SocketKind::Udp && msg.msg_name != 0 {
+    if kind == SocketKind::Udp && msg.msg_name != 0 {
         let addr = SockAddrIn { sin_family : 2, // AF_INET
                                 sin_port : from_port.to_be(),
                                 sin_addr : from_ip,
@@ -272,7 +269,7 @@ pub(crate) fn sys_recvmsg(args : SyscallArgs) -> UserRet {
             return UserRet::from_error(ErrNo::EFAULT);
         }
     }
-    msg.msg_flags = if kind == stack::SocketKind::Udp && datagram_len > staged_len {
+    msg.msg_flags = if kind == SocketKind::Udp && datagram_len > staged_len {
         MSG_TRUNC as i32
     } else {
         0
@@ -284,7 +281,7 @@ pub(crate) fn sys_recvmsg(args : SyscallArgs) -> UserRet {
 
     if flags & MSG_PEEK != 0 {
         let _ = lease.finish(0, false);
-        return if kind == stack::SocketKind::Udp && flags & MSG_TRUNC != 0 {
+        return if kind == SocketKind::Udp && flags & MSG_TRUNC != 0 {
             UserRet::from_success(datagram_len)
         } else {
             UserRet::from_success(staged_len)
@@ -292,14 +289,14 @@ pub(crate) fn sys_recvmsg(args : SyscallArgs) -> UserRet {
     }
 
     match lease.finish(staged_len, true) {
-        Ok(stack::SocketRecvFinish::Bytes(copied)) => {
-            if kind == stack::SocketKind::Udp && flags & MSG_TRUNC != 0 {
+        Ok(SocketRecvFinish::Bytes(copied)) => {
+            if kind == SocketKind::Udp && flags & MSG_TRUNC != 0 {
                 UserRet::from_success(datagram_len)
             } else {
                 UserRet::from_success(copied)
             }
         }
-        Ok(stack::SocketRecvFinish::Fault) => UserRet::from_error(ErrNo::EFAULT),
+        Ok(SocketRecvFinish::Fault) => UserRet::from_error(ErrNo::EFAULT),
         Err(error) => UserRet::from_error(recv_error_to_errno(error)),
     }
 }
@@ -309,19 +306,18 @@ fn recvmsg_is_nonblocking(fd : usize, flags : usize) -> bool {
 }
 
 fn recvmsg_receive_blocking(fd : usize,
-                            socket : &network::SocketRef,
+                            socket : &SocketRef,
                             flags : usize,
                             max_len : usize)
                             -> Result<Option<SocketReceiveLease>, ErrNo> {
     let nonblocking = recvmsg_is_nonblocking(fd, flags);
-    let wait_ticks = socket_recv_wait_ticks(socket.handle(),
-                                            SOCKET_RECVMSG_WAIT_TICKS);
+    let wait_ticks = socket_recv_wait_ticks(socket, SOCKET_RECVMSG_WAIT_TICKS);
     for _ in 0..wait_ticks {
         drive_network_stack();
         match socket.prepare_receive(max_len) {
             Ok(lease) => return Ok(Some(lease)),
-            Err(stack::SocketRecvError::Finished) => return Ok(None),
-            Err(stack::SocketRecvError::Busy | stack::SocketRecvError::Empty) => {}
+            Err(SocketRecvError::Finished) => return Ok(None),
+            Err(SocketRecvError::Busy | SocketRecvError::Empty) => {}
             Err(error) => return Err(recv_error_to_errno(error)),
         }
         if nonblocking {
@@ -332,18 +328,18 @@ fn recvmsg_receive_blocking(fd : usize,
     Err(ErrNo::EAGAIN)
 }
 
-fn recv_error_to_errno(error : stack::SocketRecvError) -> ErrNo {
+fn recv_error_to_errno(error : SocketRecvError) -> ErrNo {
     match error {
-        stack::SocketRecvError::Busy | stack::SocketRecvError::Empty => ErrNo::EAGAIN,
-        stack::SocketRecvError::Finished => ErrNo::EIO,
-        stack::SocketRecvError::InvalidSocket => ErrNo::ENOTSOCK,
-        stack::SocketRecvError::NoMemory => ErrNo::ENOMEM,
-        stack::SocketRecvError::Io => ErrNo::EIO,
+        SocketRecvError::Busy | SocketRecvError::Empty => ErrNo::EAGAIN,
+        SocketRecvError::Finished => ErrNo::EIO,
+        SocketRecvError::InvalidSocket => ErrNo::ENOTSOCK,
+        SocketRecvError::NoMemory => ErrNo::ENOMEM,
+        SocketRecvError::Io => ErrNo::EIO,
     }
 }
 
-fn socket_recv_wait_ticks(handle : stack::StackSocketHandle, default_ticks : usize) -> usize {
-    match stack::socket_recv_timeout_ms(handle) {
+fn socket_recv_wait_ticks(socket : &SocketRef, default_ticks : usize) -> usize {
+    match socket.recv_timeout_ms() {
         Ok(Some(ms)) => {
             let tick_ms = (SCHED_TIMER_PERIOD_MS as u64).max(1);
             let ticks = ms.saturating_add(tick_ms - 1) / tick_ms;

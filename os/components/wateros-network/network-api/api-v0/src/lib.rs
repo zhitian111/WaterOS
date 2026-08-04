@@ -126,6 +126,7 @@ pub struct SocketPollSnapshot {
     pub can_recv : bool,
     pub may_recv : bool,
     pub may_send : bool,
+    /// 当前发送缓冲区还能接收的字节数，不是缓冲区总容量。
     pub send_capacity : usize,
     pub is_connected : bool,
     pub has_pending_accept : bool,

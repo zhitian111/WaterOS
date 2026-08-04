@@ -1,26 +1,21 @@
 //! `socket(2)`：创建 socket 并分配 fd。
 
 //! 本模块代码由AI完成
-extern crate alloc;
-
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
-use alloc::boxed::Box;
-use network::socket_handles::{SocketRef, TcpSocketHandle, UdpSocketHandle};
-use network::stack;
-use vfs::api::handle::VfsIoHandle;
+use network::SocketRef;
 
-const AF_INET: usize = 2;
-const AF_UNIX: usize = 1;
-const SOCK_STREAM: usize = 1;
-const SOCK_DGRAM: usize = 2;
-const SOCK_NONBLOCK: usize = 0o4000;
-const SOCK_CLOEXEC: usize = 0o2000000;
-const FD_CLOEXEC: usize = 1;
+const AF_INET : usize = 2;
+const AF_UNIX : usize = 1;
+const SOCK_STREAM : usize = 1;
+const SOCK_DGRAM : usize = 2;
+const SOCK_NONBLOCK : usize = 0o4000;
+const SOCK_CLOEXEC : usize = 0o2000000;
+const FD_CLOEXEC : usize = 1;
 
 // 本方法代码由AI完成
-pub(crate) fn sys_socket(args: SyscallArgs) -> UserRet {
+pub(crate) fn sys_socket(args : SyscallArgs) -> UserRet {
     let domain = args.arg(0);
     let mut typ = args.arg(1);
     let _protocol = args.arg(2);
@@ -62,26 +57,20 @@ pub(crate) fn sys_socket(args: SyscallArgs) -> UserRet {
     };
     typ &= !(SOCK_NONBLOCK | SOCK_CLOEXEC);
 
-    let handle_result = match typ {
-        SOCK_STREAM => stack::create_tcp_socket(),
-        SOCK_DGRAM => stack::create_udp_socket(),
+    let socket_result = match typ {
+        SOCK_STREAM => SocketRef::new_tcp(status_flags),
+        SOCK_DGRAM => SocketRef::new_udp(status_flags),
         _ => return UserRet::from_error(ErrNo::EPROTONOSUPPORT),
     };
 
-    let smoltcp_handle = match handle_result {
-        Ok(h) => h,
+    let socket_ref = match socket_result {
+        Ok(socket) => socket,
         Err(_) => return UserRet::from_error(ErrNo::ENOMEM),
     };
-    let socket_ref = SocketRef::new_with_status_flags(smoltcp_handle, status_flags);
 
-    let io_handle: Box<dyn VfsIoHandle> = match typ {
-        SOCK_STREAM => Box::new(TcpSocketHandle {
-            socket: socket_ref.clone(),
-        }),
-        SOCK_DGRAM => Box::new(UdpSocketHandle {
-            socket: socket_ref.clone(),
-        }),
-        _ => unreachable!(),
+    let io_handle = match socket_ref.into_vfs_handle() {
+        Ok(handle) => handle,
+        Err(_) => return UserRet::from_error(ErrNo::ENOTSOCK),
     };
 
     let fd = match vfs::fd::alloc_fd(io_handle) {

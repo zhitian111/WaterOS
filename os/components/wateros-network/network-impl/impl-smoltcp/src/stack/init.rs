@@ -1,15 +1,14 @@
 //! 网络接口、IPv4 地址与路由初始化。
 
-use alloc::collections::{BTreeMap, BTreeSet};
-use alloc::vec;
-use smoltcp::iface::{Config, Interface, SocketSet};
+use smoltcp::iface::{Config, Interface};
 use smoltcp::time::Instant;
 use smoltcp::wire::{EthernetAddress, HardwareAddress, IpCidr, Ipv4Address};
 
 use crate::adapter::SmoltcpAdapter;
 use driver_network::first_network_device;
 
-use super::state::{NetworkStack, NETWORK_STACK};
+use super::global::install_stack;
+use super::state::NetworkStack;
 use super::types::{NetworkConfig, NetworkError};
 
 /// 创建 smoltcp 协议栈并配置 IP；无真实网卡时仍启用 loopback-only 模式。
@@ -70,21 +69,7 @@ pub fn init(network_config : NetworkConfig) -> Result<(), NetworkError> {
         });
          });
 
-    let mut stack_slot = NETWORK_STACK.lock();
-    if stack_slot.is_some() {
-        return Err(NetworkError::AlreadyInitialized);
-    }
-    *stack_slot = Some(NetworkStack { adapter,
-                                      iface,
-                                      sockets : SocketSet::new(vec![]),
-                                      metas : BTreeMap::new(),
-                                      tcp_listener_groups : BTreeMap::new(),
-                                      tcp_close_pending : BTreeSet::new(),
-                                      udp_loopback : BTreeMap::new(),
-                                      local_ip : ip,
-                                      ephemeral_port : 49152,
-                                      next_listener_group : 1 });
-    drop(stack_slot);
+    install_stack(NetworkStack::new(adapter, iface, ip))?;
 
     log::info!("[network-stack] initialized ip={}.{}.{}.{}/{} gateway={}.{}.{}.{}",
                ip[0],

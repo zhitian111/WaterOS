@@ -4,12 +4,12 @@
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
-use network::stack;
+use network::NetworkError;
 
 use crate::socket_fd;
 
 // 本方法代码由AI完成
-pub(crate) fn sys_shutdown(args: SyscallArgs) -> UserRet {
+pub(crate) fn sys_shutdown(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let how = args.arg(1);
 
@@ -22,9 +22,9 @@ pub(crate) fn sys_shutdown(args: SyscallArgs) -> UserRet {
         None => return UserRet::from_error(ErrNo::ENOTSOCK),
     };
 
-    match stack::socket_shutdown(socket.handle()) {
+    match socket.shutdown() {
         Ok(()) => UserRet::from_success(0),
-        Err(stack::NetworkError::Unsupported) => UserRet::from_error(ErrNo::EOPNOTSUPP),
+        Err(NetworkError::Unsupported) => UserRet::from_error(ErrNo::EOPNOTSUPP),
         Err(_) => UserRet::from_error(ErrNo::EIO),
     }
 }

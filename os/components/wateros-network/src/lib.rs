@@ -13,10 +13,25 @@ pub use api_v0::{
 };
 
 #[cfg(feature = "impl-smoltcp")]
-pub use impl_smoltcp::stack;
+pub mod stack {
+    //! 当前活动协议栈的稳定调用面。
+    //!
+    //! 这里选择性转发 syscall、VFS 和内核启动路径实际需要的能力，避免把
+    //! `impl-smoltcp` 的内部辅助函数整体暴露给上层。
+
+    pub use impl_smoltcp::stack::{init, poll, poll_at_millis, poll_socket_events};
+
+    pub(crate) use impl_smoltcp::stack::{
+        create_tcp_socket, create_udp_socket, socket_accept, socket_bind, socket_close,
+        socket_connect, socket_finish_recv, socket_getsockopt, socket_kind, socket_listen,
+        socket_local_endpoint, socket_peer_endpoint, socket_peer_is_loopback, socket_poll_snapshot,
+        socket_prepare_recv, socket_recv_timeout_ms, socket_send, socket_sendto, socket_setsockopt,
+        socket_shutdown, SocketRecvReservation, StackSocketHandle,
+    };
+}
 
 #[cfg(feature = "vfs-handles")]
-pub mod socket_handles;
+mod socket;
 
 #[cfg(feature = "vfs-handles")]
-pub use socket_handles::{SocketReceiveLease, SocketRef, TcpSocketHandle, UdpSocketHandle};
+pub use socket::{SocketReceiveLease, SocketRef};

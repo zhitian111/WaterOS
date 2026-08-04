@@ -2,6 +2,7 @@
 
 use crate::adapter::SmoltcpAdapter;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
+use alloc::vec;
 use alloc::vec::Vec;
 use smoltcp::iface::{Interface, SocketHandle, SocketSet};
 
@@ -33,6 +34,26 @@ pub(super) struct SocketMeta {
     /// 同一时刻仅允许一个 read/recv/recvfrom 持有接收队列前缀。
     pub(super) recv_reservation : Option<u64>,
     pub(super) next_recv_reservation : u64,
+}
+
+impl SocketMeta {
+    pub(super) fn new(kind : SocketKind) -> Self {
+        Self { kind,
+               state : SocketState::Created,
+               local_ip : None,
+               local_port : 0,
+               is_listener : false,
+               listener_group : None,
+               peer_ip : [0; 4],
+               peer_port : 0,
+               recv_timeout_ms : None,
+               tcp_nodelay : false,
+               mcast_groups : BTreeSet::new(),
+               snd_buf_size : default_snd_buf_size(kind),
+               rcv_buf_size : default_rcv_buf_size(kind),
+               recv_reservation : None,
+               next_recv_reservation : 1 }
+    }
 }
 
 pub(super) struct TcpListenerGroup {
@@ -107,21 +128,60 @@ pub(super) struct NetworkStack {
     /// 已投递到本机 UDP socket、等待用户态接收的有限队列。
     pub(super) udp_loopback : BTreeMap<SocketHandle, LoopbackUdpQueue>,
     pub(super) local_ip : [u8; 4],
+    /// 最近一次交给 smoltcp 的单调毫秒时间，防止无时钟轮询使时间倒退。
+    pub(super) last_poll_millis : i64,
     /// 临时端口分配器。
     pub(super) ephemeral_port : u16,
     pub(super) next_listener_group : u64,
 }
 
-fn debug_cpu_id() -> usize { arch::cpu::current_cpu_id().raw() }
+impl NetworkStack {
+    pub(super) fn new(adapter : SmoltcpAdapter, iface : Interface, local_ip : [u8; 4]) -> Self {
+        Self { adapter,
+               iface,
+               sockets : SocketSet::new(vec![]),
+               metas : BTreeMap::new(),
+               tcp_listener_groups : BTreeMap::new(),
+               tcp_close_pending : BTreeSet::new(),
+               udp_loopback : BTreeMap::new(),
+               local_ip,
+               last_poll_millis : 0,
+               ephemeral_port : 49152,
+               next_listener_group : 1 }
+    }
 
-/// 全局协议栈锁是 socket 卡死时最关键的 wait-for 节点。包装类型保留原有
-/// `.lock()` API，只有 `gdb-debug` 构建会发布 owner/contention。
-pub(super) static NETWORK_STACK : debug::TrackedMutex<Option<NetworkStack>> =
-    debug::TrackedMutex::new(None,
-                             debug::DebugLockKind::Network,
-                             debug_cpu_id);
+    pub(super) fn socket_meta(&self,
+                              handle : SocketHandle)
+                              -> Result<&SocketMeta, super::types::NetworkError> {
+        self.metas
+            .get(&handle)
+            .ok_or(super::types::NetworkError::InvalidSocket)
+    }
 
-pub(super) const TCP_BUFFER_SIZE : usize = 256 * 1024;
+    pub(super) fn socket_meta_mut(&mut self,
+                                  handle : SocketHandle)
+                                  -> Result<&mut SocketMeta, super::types::NetworkError> {
+        self.metas
+            .get_mut(&handle)
+            .ok_or(super::types::NetworkError::InvalidSocket)
+    }
+
+    pub(super) fn next_ephemeral_port(&mut self) -> u16 {
+        let port = self.ephemeral_port;
+        self.ephemeral_port = self.ephemeral_port
+                                  .wrapping_add(1);
+        if self.ephemeral_port == 0 {
+            self.ephemeral_port = 49152;
+        }
+        port
+    }
+}
+
+/// smoltcp 0.12 的 `last_scaled_window()` 没有处理窗口缩放向下取整后，
+/// 新 ACK 极少量越过旧通告窗口右边界的情况，会在序列号减法处 panic。
+/// 接收缓冲保持在未缩放窗口可表达的上限；发送缓冲使用相同大小以节省内存。
+pub(super) const TCP_RX_BUFFER_SIZE : usize = u16::MAX as usize;
+pub(super) const TCP_TX_BUFFER_SIZE : usize = u16::MAX as usize;
 pub(super) const UDP_PACKET_DATA_SIZE : usize = 64 * 1024;
 pub(super) const UDP_PACKET_METADATA_COUNT : usize = 64;
 
@@ -137,7 +197,7 @@ pub(super) const UDP_LOOPBACK_QUEUE_PACKET_LIMIT : usize = 256;
 pub(super) const UDP_MAX_PAYLOAD_SIZE : usize = 65_507;
 pub(super) const TCP_MSS : u32 = 1460;
 
-/// 每个监听槽都带 256 KiB 收、发缓冲，限制槽数以约束内核内存。
+/// 每个监听槽都带约 64 KiB 接收、发送缓冲，限制槽数以约束内核内存。
 ///
 /// CAgent 的本地 HTTP server 使用 backlog 10；上限必须至少覆盖该并发量，
 /// 否则首轮连接会在所有监听槽进入 Established 后丢失 SYN。
@@ -145,27 +205,14 @@ pub(super) const TCP_LISTEN_BACKLOG_MAX : usize = 16;
 
 fn default_snd_buf_size(kind : SocketKind) -> i32 {
     match kind {
-        SocketKind::Tcp => TCP_BUFFER_SIZE as i32,
+        SocketKind::Tcp => TCP_TX_BUFFER_SIZE as i32,
         SocketKind::Udp => UDP_PACKET_DATA_SIZE as i32,
     }
 }
 
-fn default_rcv_buf_size(kind : SocketKind) -> i32 { default_snd_buf_size(kind) }
-
-pub(super) fn new_socket_meta(kind : SocketKind) -> SocketMeta {
-    SocketMeta { kind,
-                 state : SocketState::Created,
-                 local_ip : None,
-                 local_port : 0,
-                 is_listener : false,
-                 listener_group : None,
-                 peer_ip : [0; 4],
-                 peer_port : 0,
-                 recv_timeout_ms : None,
-                 tcp_nodelay : false,
-                 mcast_groups : BTreeSet::new(),
-                 snd_buf_size : default_snd_buf_size(kind),
-                 rcv_buf_size : default_rcv_buf_size(kind),
-                 recv_reservation : None,
-                 next_recv_reservation : 1 }
+fn default_rcv_buf_size(kind : SocketKind) -> i32 {
+    match kind {
+        SocketKind::Tcp => TCP_RX_BUFFER_SIZE as i32,
+        SocketKind::Udp => UDP_PACKET_DATA_SIZE as i32,
+    }
 }

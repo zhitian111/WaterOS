@@ -6,7 +6,7 @@ extern crate alloc;
 use api_v0::ErrNo;
 use api_v0::UserRet;
 use ipc::signal::SignalSet;
-use network::stack;
+use network::{stack, SocketKind, SocketState};
 use platform::wall_clock;
 use task::TaskTick;
 use wateros_base_config::task::SCHED_TIMER_PERIOD_MS;
@@ -159,8 +159,9 @@ struct ScanCtx {
 }
 
 fn current_task_has_deliverable_signal() -> bool {
-    task::current_task_id()
-        .is_some_and(|task_id| ipc::signal::has_deliverable(task_id).unwrap_or(false))
+    task::current_task_id().is_some_and(|task_id| {
+                               ipc::signal::has_deliverable(task_id).unwrap_or(false)
+                           })
 }
 
 impl ScanCtx {
@@ -186,22 +187,21 @@ pub(crate) fn poll_socket_revents(fd : usize, events : i16) -> i16 {
     let Some(socket) = socket_fd::lookup(fd) else {
         return 0;
     };
-    let handle = socket.handle();
     let mut revents = 0i16;
-    let Ok(snapshot) = stack::socket_poll_snapshot(handle) else {
+    let Ok(snapshot) = socket.poll_snapshot() else {
         return POLLNVAL;
     };
 
     match snapshot.kind {
-        stack::SocketKind::Tcp => match snapshot.state {
-            stack::SocketState::Listening { .. } => {
+        SocketKind::Tcp => match snapshot.state {
+            SocketState::Listening { .. } => {
                 if events & POLLIN != 0 && snapshot.has_pending_accept {
                     revents |= POLLIN;
                 }
             }
-            stack::SocketState::Connecting | stack::SocketState::Connected => {
+            SocketState::Connecting | SocketState::Connected => {
                 let peer_read_closed =
-                    snapshot.state == stack::SocketState::Connected && !snapshot.may_recv;
+                    snapshot.state == SocketState::Connected && !snapshot.may_recv;
                 if events & POLLIN != 0 && (snapshot.can_recv || peer_read_closed) {
                     revents |= POLLIN;
                 }
@@ -212,10 +212,10 @@ pub(crate) fn poll_socket_revents(fd : usize, events : i16) -> i16 {
                     revents |= POLLHUP;
                 }
             }
-            stack::SocketState::Closed => revents |= POLLHUP,
+            SocketState::Closed => revents |= POLLHUP,
             _ => {}
         },
-        stack::SocketKind::Udp => {
+        SocketKind::Udp => {
             if events & POLLOUT != 0 {
                 revents |= POLLOUT;
             }

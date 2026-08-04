@@ -4,30 +4,30 @@
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
-use network::stack;
+use network::{stack, Ipv4Endpoint, SocketKind, SocketRef, SocketSendError, SocketState};
 
 use crate::fallible_buf::{try_kbuf, SYSCALL_IO_MAX};
 use crate::socket_block::socket_blocking_tick;
 use crate::socket_fd;
 use crate::user_copy::{copy_from_user, copy_from_user_struct};
 
-const TCP_BULK_SEND_YIELD_THRESHOLD: usize = 64 * 1024;
-const TCP_MSS_BYTES: usize = 1460;
-const TCP_LOOPBACK_POLL_ROUNDS: usize = 4;
-const MSG_DONTWAIT: usize = 0x40;
+const TCP_BULK_SEND_YIELD_THRESHOLD : usize = 64 * 1024;
+const TCP_MSS_BYTES : usize = 1460;
+const TCP_LOOPBACK_POLL_ROUNDS : usize = 4;
+const MSG_DONTWAIT : usize = 0x40;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
 // 本结构代码由AI完成
 struct SockAddrIn {
-    sin_family: u16,
-    sin_port: u16,
-    sin_addr: [u8; 4],
-    sin_zero: [u8; 8],
+    sin_family : u16,
+    sin_port : u16,
+    sin_addr : [u8; 4],
+    sin_zero : [u8; 8],
 }
 
 // 本方法代码由AI完成
-pub(crate) fn sys_sendto(args: SyscallArgs) -> UserRet {
+pub(crate) fn sys_sendto(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let buf_ptr = args.arg(1);
     let len = args.arg(2);
@@ -61,23 +61,19 @@ pub(crate) fn sys_sendto(args: SyscallArgs) -> UserRet {
         Some(s) => s,
         None => return UserRet::from_error(ErrNo::ENOTSOCK),
     };
-    let handle = socket.handle();
-
     // 解析目标地址
     let (ip, port) = if addr_ptr != 0 && addrlen >= 16 {
         match copy_from_user_struct::<SockAddrIn>(addr_ptr) {
-            Ok(addr) => (
-                addr.sin_addr,
-                u16::from_be(addr.sin_port),
-            ),
+            Ok(addr) => (addr.sin_addr, u16::from_be(addr.sin_port)),
             Err(_) => return UserRet::from_error(ErrNo::EFAULT),
         }
     } else {
         // 没有目标地址 → 作为 TCP send（或已 connect 的 UDP）
-        return match send_connected_socket(fd, handle, buf_ptr, len, flags) {
+        return match send_connected_socket(fd, &socket, buf_ptr, len, flags) {
             Ok(n) => UserRet::from_success(n),
             Err(err) => {
-                log::warn!("[syscall] sendto connected failed: {:?}", err);
+                log::warn!("[syscall] sendto connected failed: {:?}",
+                           err);
                 UserRet::from_error(err)
             }
         };
@@ -92,56 +88,59 @@ pub(crate) fn sys_sendto(args: SyscallArgs) -> UserRet {
         _ => return UserRet::from_error(ErrNo::EFAULT),
     }
 
-    match send_udp_blocking(fd, handle, &kbuf, Some((ip, port)), flags) {
+    match send_udp_blocking(fd,
+                            &socket,
+                            &kbuf,
+                            Some((ip, port)),
+                            flags)
+    {
         Ok(n) => UserRet::from_success(n),
         Err(err) => UserRet::from_error(err),
     }
 }
 
-fn send_connected_socket(
-    fd: usize,
-    handle: stack::StackSocketHandle,
-    buf_ptr: usize,
-    len: usize,
-    flags: usize,
-) -> Result<usize, ErrNo> {
-    match stack::socket_kind(handle).map_err(|_| ErrNo::ENOTSOCK)? {
-        stack::SocketKind::Tcp => send_tcp_blocking(fd, handle, buf_ptr, len, flags),
-        stack::SocketKind::Udp => {
+fn send_connected_socket(fd : usize,
+                         socket : &SocketRef,
+                         buf_ptr : usize,
+                         len : usize,
+                         flags : usize)
+                         -> Result<usize, ErrNo> {
+    match socket.kind()
+                .map_err(|_| ErrNo::ENOTSOCK)?
+    {
+        SocketKind::Tcp => send_tcp_blocking(fd, socket, buf_ptr, len, flags),
+        SocketKind::Udp => {
             let mut kbuf = try_kbuf(len, SYSCALL_IO_MAX)?;
             match copy_from_user(&mut kbuf, buf_ptr) {
                 Ok(n) if n == len => {}
                 _ => return Err(ErrNo::EFAULT),
             }
-            send_udp_blocking(fd, handle, &kbuf, None, flags)
+            send_udp_blocking(fd, socket, &kbuf, None, flags)
         }
     }
 }
 
-fn send_tcp_blocking(
-    fd: usize,
-    handle: stack::StackSocketHandle,
-    buf_ptr: usize,
-    len: usize,
-    flags: usize,
-) -> Result<usize, ErrNo> {
+fn send_tcp_blocking(fd : usize,
+                     socket : &SocketRef,
+                     buf_ptr : usize,
+                     len : usize,
+                     flags : usize)
+                     -> Result<usize, ErrNo> {
     let nonblocking = socket_fd::is_nonblocking(fd) || (flags & MSG_DONTWAIT) != 0;
     let task_id = task::current_task_id().unwrap_or(0);
     loop {
         drive_network_stack();
-        let may_send = stack::socket_may_send(handle).unwrap_or(false);
-        let send_capacity = stack::socket_send_capacity(handle).unwrap_or(0);
-        let connected = stack::socket_is_connected(handle).unwrap_or(false);
-        if may_send && send_capacity > 0 {
-            let send_len = len.min(send_capacity);
+        let snapshot = socket.poll_snapshot().map_err(|_| ErrNo::ENOTSOCK)?;
+        if snapshot.may_send && snapshot.send_capacity > 0 {
+            let send_len = len.min(snapshot.send_capacity);
             let mut kbuf = try_kbuf(send_len, SYSCALL_IO_MAX)?;
             match copy_from_user(&mut kbuf, buf_ptr) {
                 Ok(n) if n == send_len => {}
                 _ => return Err(ErrNo::EFAULT),
             }
-            match stack::socket_send(handle, &kbuf) {
+            match socket.send(&kbuf) {
                 Ok(n) if n > 0 => {
-                    flush_segmented_loopback_send(handle, n);
+                    flush_segmented_loopback_send(socket, n);
                     if n >= TCP_BULK_SEND_YIELD_THRESHOLD {
                         drive_network_stack();
                         task::yield_now();
@@ -153,10 +152,10 @@ fn send_tcp_blocking(
                 Err(_) => return Err(ErrNo::EIO),
             }
         }
-        if !connected {
-            if !may_send
-                && !stack::socket_may_recv(handle).unwrap_or(false)
-                && matches!(stack::socket_state(handle), Ok(stack::SocketState::Connected))
+        if !snapshot.is_connected {
+            if !snapshot.may_send &&
+               !snapshot.may_recv &&
+               snapshot.state == SocketState::Connected
             {
                 return Ok(len);
             }
@@ -166,20 +165,20 @@ fn send_tcp_blocking(
     }
 }
 
-pub(super) fn send_udp_blocking(
-    fd: usize,
-    handle: stack::StackSocketHandle,
-    data: &[u8],
-    destination: Option<([u8; 4], u16)>,
-    flags: usize,
-) -> Result<usize, ErrNo> {
+pub(super) fn send_udp_blocking(fd : usize,
+                                socket : &SocketRef,
+                                data : &[u8],
+                                destination : Option<([u8; 4], u16)>,
+                                flags : usize)
+                                -> Result<usize, ErrNo> {
     let nonblocking = socket_fd::is_nonblocking(fd) || (flags & MSG_DONTWAIT) != 0;
     let task_id = task::current_task_id().unwrap_or(0);
     loop {
         drive_network_stack();
         let result = match destination {
-            Some((ip, port)) => stack::socket_sendto(handle, data, ip, port),
-            None => stack::socket_send(handle, data),
+            Some((ip, port)) => socket.send_to(data, Ipv4Endpoint { address : ip,
+                                                                    port }),
+            None => socket.send(data),
         };
         match result {
             Ok(n) => {
@@ -187,7 +186,7 @@ pub(super) fn send_udp_blocking(
                 drive_network_stack();
                 return Ok(n);
             }
-            Err(stack::SocketSendError::WouldBlock) => {
+            Err(SocketSendError::WouldBlock) => {
                 socket_blocking_tick(nonblocking, task_id)?;
             }
             Err(err) => return Err(socket_send_error_to_errno(err)),
@@ -195,22 +194,23 @@ pub(super) fn send_udp_blocking(
     }
 }
 
-pub(crate) fn socket_send_error_to_errno(err: stack::SocketSendError) -> ErrNo {
+pub(crate) fn socket_send_error_to_errno(err : SocketSendError) -> ErrNo {
     match err {
-        stack::SocketSendError::MessageTooLarge => ErrNo::EMSGSIZE,
-        stack::SocketSendError::WouldBlock => ErrNo::EAGAIN,
-        stack::SocketSendError::NoBufferSpace => ErrNo::ENOBUFS,
-        stack::SocketSendError::NotConnected => ErrNo::ENOTCONN,
-        stack::SocketSendError::InvalidDestination => ErrNo::EDESTADDRREQ,
-        stack::SocketSendError::InvalidSocket => ErrNo::ENOTSOCK,
-        stack::SocketSendError::StackUnavailable | stack::SocketSendError::Io => ErrNo::EIO,
+        SocketSendError::MessageTooLarge => ErrNo::EMSGSIZE,
+        SocketSendError::WouldBlock => ErrNo::EAGAIN,
+        SocketSendError::NoBufferSpace => ErrNo::ENOBUFS,
+        SocketSendError::NotConnected => ErrNo::ENOTCONN,
+        SocketSendError::InvalidDestination => ErrNo::EDESTADDRREQ,
+        SocketSendError::InvalidSocket => ErrNo::ENOTSOCK,
+        SocketSendError::StackUnavailable | SocketSendError::Io => ErrNo::EIO,
     }
 }
 
 fn drive_network_stack() {
     match platform::timer::now_duration() {
         Ok(now) => {
-            let millis = now.as_millis().min(i64::MAX as u128) as i64;
+            let millis = now.as_millis()
+                            .min(i64::MAX as u128) as i64;
             stack::poll_at_millis(millis);
         }
         Err(_) => stack::poll(),
@@ -218,8 +218,11 @@ fn drive_network_stack() {
     stack::poll_socket_events();
 }
 
-fn flush_segmented_loopback_send(handle : stack::StackSocketHandle, sent : usize) {
-    if sent <= TCP_MSS_BYTES || !stack::socket_peer_is_loopback(handle).unwrap_or(false) {
+fn flush_segmented_loopback_send(socket : &SocketRef, sent : usize) {
+    if sent <= TCP_MSS_BYTES ||
+       !socket.peer_is_loopback()
+              .unwrap_or(false)
+    {
         return;
     }
     for _ in 0..TCP_LOOPBACK_POLL_ROUNDS {

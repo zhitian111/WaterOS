@@ -4,7 +4,7 @@
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
-use network::{stack, SocketReceiveLease};
+use network::{stack, SocketKind, SocketReceiveLease, SocketRecvError, SocketRecvFinish};
 
 use crate::fallible_buf::SYSCALL_IO_MAX;
 use crate::socket_block::socket_blocking_tick;
@@ -65,9 +65,7 @@ pub(crate) fn sys_recvfrom(args : SyscallArgs) -> UserRet {
         Ok(socket) => socket,
         Err(error) => return UserRet::from_error(error),
     };
-    let handle = socket.handle();
-
-    let kind = match stack::socket_kind(handle) {
+    let kind = match socket.kind() {
         Ok(kind) => kind,
         Err(_) => return UserRet::from_error(ErrNo::ENOTSOCK),
     };
@@ -87,7 +85,7 @@ pub(crate) fn sys_recvfrom(args : SyscallArgs) -> UserRet {
     let datagram_len = lease.datagram_len();
     let progress = copy_to_user_progress(buf_ptr, lease.bytes());
 
-    if kind == stack::SocketKind::Udp &&
+    if kind == SocketKind::Udp &&
        progress.error
                .is_none()
     {
@@ -109,7 +107,7 @@ pub(crate) fn sys_recvfrom(args : SyscallArgs) -> UserRet {
                   progress.error
                           .is_none()
         {
-            let returned = if kind == stack::SocketKind::Udp && flags & MSG_TRUNC != 0 {
+            let returned = if kind == SocketKind::Udp && flags & MSG_TRUNC != 0 {
                 datagram_len
             } else {
                 progress.copied
@@ -124,14 +122,14 @@ pub(crate) fn sys_recvfrom(args : SyscallArgs) -> UserRet {
                        progress.error
                                .is_none())
     {
-        Ok(stack::SocketRecvFinish::Bytes(copied)) => {
-            if kind == stack::SocketKind::Udp && flags & MSG_TRUNC != 0 {
+        Ok(SocketRecvFinish::Bytes(copied)) => {
+            if kind == SocketKind::Udp && flags & MSG_TRUNC != 0 {
                 UserRet::from_success(datagram_len)
             } else {
                 UserRet::from_success(copied)
             }
         }
-        Ok(stack::SocketRecvFinish::Fault) => UserRet::from_error(ErrNo::EFAULT),
+        Ok(SocketRecvFinish::Fault) => UserRet::from_error(ErrNo::EFAULT),
         Err(error) => UserRet::from_error(recv_error_to_errno(error)),
     }
 }
@@ -145,8 +143,8 @@ fn receive_blocking(socket : &network::SocketRef,
         drive_network_stack();
         match socket.prepare_receive(max_len) {
             Ok(lease) => return Ok(Some(lease)),
-            Err(stack::SocketRecvError::Finished) => return Ok(None),
-            Err(stack::SocketRecvError::Busy | stack::SocketRecvError::Empty) => {}
+            Err(SocketRecvError::Finished) => return Ok(None),
+            Err(SocketRecvError::Busy | SocketRecvError::Empty) => {}
             Err(error) => return Err(recv_error_to_errno(error)),
         }
         socket_blocking_tick(nonblocking, task_id)?;
@@ -191,13 +189,13 @@ fn source_address_capacity(addr_ptr : usize, addrlen_ptr : usize) -> Result<Opti
     Ok(Some(addrlen))
 }
 
-fn recv_error_to_errno(error : stack::SocketRecvError) -> ErrNo {
+fn recv_error_to_errno(error : SocketRecvError) -> ErrNo {
     match error {
-        stack::SocketRecvError::Busy | stack::SocketRecvError::Empty => ErrNo::EAGAIN,
-        stack::SocketRecvError::Finished => ErrNo::EIO,
-        stack::SocketRecvError::InvalidSocket => ErrNo::ENOTSOCK,
-        stack::SocketRecvError::NoMemory => ErrNo::ENOMEM,
-        stack::SocketRecvError::Io => ErrNo::EIO,
+        SocketRecvError::Busy | SocketRecvError::Empty => ErrNo::EAGAIN,
+        SocketRecvError::Finished => ErrNo::EIO,
+        SocketRecvError::InvalidSocket => ErrNo::ENOTSOCK,
+        SocketRecvError::NoMemory => ErrNo::ENOMEM,
+        SocketRecvError::Io => ErrNo::EIO,
     }
 }
 

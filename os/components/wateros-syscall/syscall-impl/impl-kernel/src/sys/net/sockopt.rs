@@ -4,14 +4,14 @@
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
-use network::stack;
+use network::NetworkError;
 
 use crate::fallible_buf::{try_kbuf, SYSCALL_SOCK_IO_MAX};
 use crate::socket_fd;
 use crate::user_copy::{copy_from_user, copy_from_user_struct, copy_to_user, copy_to_user_struct};
 
 // 本方法代码由AI完成
-pub(crate) fn sys_setsockopt(args: SyscallArgs) -> UserRet {
+pub(crate) fn sys_setsockopt(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let level = args.arg(1);
     let optname = args.arg(2);
@@ -40,17 +40,15 @@ pub(crate) fn sys_setsockopt(args: SyscallArgs) -> UserRet {
         }
     }
 
-    match stack::socket_setsockopt(socket.handle(), level, optname, &kbuf) {
+    match socket.set_sockopt(level, optname, &kbuf) {
         Ok(()) => UserRet::from_success(0),
-        Err(stack::NetworkError::AddressNotAvailable) => {
-            UserRet::from_error(ErrNo::EADDRNOTAVAIL)
-        }
+        Err(NetworkError::AddressNotAvailable) => UserRet::from_error(ErrNo::EADDRNOTAVAIL),
         Err(_) => UserRet::from_error(ErrNo::EOPNOTSUPP),
     }
 }
 
 // 本方法代码由AI完成
-pub(crate) fn sys_getsockopt(args: SyscallArgs) -> UserRet {
+pub(crate) fn sys_getsockopt(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let level = args.arg(1);
     let optname = args.arg(2);
@@ -70,11 +68,12 @@ pub(crate) fn sys_getsockopt(args: SyscallArgs) -> UserRet {
         Err(e) => return UserRet::from_error(e),
     };
 
-    let value = match stack::socket_getsockopt(socket.handle(), level, optname) {
+    let value = match socket.get_sockopt(level, optname) {
         Ok(v) => v,
         Err(_) => return UserRet::from_error(ErrNo::EOPNOTSUPP),
     };
-    let write_len = value.len().min(user_len);
+    let write_len = value.len()
+                         .min(user_len);
     if write_len > 0 {
         match copy_to_user(optval, &value[..write_len]) {
             Ok(n) if n == write_len => {}
