@@ -71,5 +71,32 @@ chmod +x ./scripts/*.sh
 `WOS_SMP=1..8` 控制 vCPU 数量；GDB 模式默认传入 `WOS_QEMU_SNAPSHOT=1`，普通
 运行目标仍保持原磁盘语义。
 
+#### 并行跑 QEMU（32 核可直接按核分片）
+
+所有 RISC-V / LoongArch 的 run 脚本都支持 `WOS_TASKSET_CPUS`，用逗号/横杠指定主机
+CPU 集合，例如：
+
+```bash
+WOS_TASKSET_CPUS=0-7 ./scripts/rv_final_run.sh
+```
+
+也可以用总控脚本同时启动多个测试（按主机核心自动分配）：
+
+```bash
+cd os
+WOS_CORES_PER_JOB=8 \
+WOS_MAX_PARALLEL_JOBS=4 \
+./scripts/run_qemu_parallel.sh \
+  "WOS_SMP=8 make rv_final_run" \
+  "WOS_SMP=8 make rv_final_run" \
+  "WOS_SMP=8 make rv_final_run" \
+  "WOS_SMP=8 make rv_final_run"
+```
+
+在 32 核机器上，上面会使用 `0-7 / 8-15 / 16-23 / 24-31` 四组核。
+
+如果测试要写盘，使用 snapshot 时要给每实例分配不同的 `WOS_SNAPSHOT_ID`，
+避免 overlay 文件互相覆盖。
+
 GDB/LLDB 的完整操作流程见
 [`docs/debugging/GDB_STALL_DEBUG.md`](../../docs/debugging/GDB_STALL_DEBUG.md)。

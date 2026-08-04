@@ -15,7 +15,9 @@ if [[ -n "${WATEROS_OPENSBI_FW:-}" ]]; then
     BIOS_ARGS=(-bios "$WATEROS_OPENSBI_FW")
 fi
 
-qemu-system-riscv64 -machine virt \
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+"$SCRIPT_DIR/qemu_exec_with_taskset.sh" qemu-system-riscv64 -machine virt \
                     -kernel $os_file \
                     -m 1G \
                     -nographic \

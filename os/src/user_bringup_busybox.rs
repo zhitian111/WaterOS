@@ -125,12 +125,13 @@ const BRINGUP_COMMANDS : &[BringupCommand] =
       BringupCommand { program : "/glibc/buildstorm_testcode.sh",
                        argv : &["/glibc/buildstorm_testcode.sh"] }];
 
-#[cfg(all(feature = "final_online", not(feature = "final_online_smp_test")))]
+#[cfg(all(feature = "final_online",
+          not(feature = "final_online_smp_test")))]
 const BRINGUP_COMMANDS : &[BringupCommand] =
-    &[BringupCommand { program : "/glibc/buildstorm_testcode.sh",
-                       argv : &["/glibc/buildstorm_testcode.sh"] },
-      BringupCommand { program : "/glibc/cagent_testcode.sh",
-                       argv : &["/glibc/cagent_testcode.sh"] }];
+    &[BringupCommand { program : "/glibc/cagent_testcode.sh",
+                       argv : &["/glibc/cagent_testcode.sh"] },
+      BringupCommand { program : "/glibc/buildstorm_testcode.sh",
+                       argv : &["/glibc/buildstorm_testcode.sh"] }];
 
 const LOG_TAG : &str = "busybox-bringup";
 

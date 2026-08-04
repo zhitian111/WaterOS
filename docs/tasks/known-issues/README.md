@@ -28,6 +28,9 @@
   “没有 IPI 实现”是过期结论；双架构 8 核运行门禁仍未完整记录。
 - block cache 已在 RV/LA feature 中启用，容量为 1024 块；网络 RX/TX 已扩到 64 KiB
   且支持批量收包；ELF lazy map 和 TLSF 可选后端也已存在。这些任务从测量开始。
+- ramfs 已支持稀疏文件，但已写入数据页仍是 `BTreeMap<u64, Vec<u8>>`，
+  bootstrap `/tmp` 也没有容量上限。大量临时文件会消耗 128 MiB 全局内核堆；
+  这是 [`K-05D`](./05d-ramfs-physical-pages.md) 的资源正确性问题，不等待 K-04 性能排名。
 
 ## 必须同做与并行关系
 
@@ -60,7 +63,7 @@ K-01 内的 `fsync`、page-cache writeback、unlink/rename 失效和 another-ext
 | [ ] | [`K-02`](./02-smp-loongarch-validation.md) | 待复验 | RV/LA 8 核、IPI、LA-musl LTP |
 | [ ] | [`K-03`](./03-functional-zero-scores.md) | 待复验 | regex、Pagefaults、busybox 0 分项 |
 | [ ] | [`K-04`](./04-baseline-and-instrumentation.md) | 确认未完成 | Linux/WaterOS 三轮基线与 Top 3 |
-| [ ] | [`K-05`](./05-fs-vfs-performance.md) | 测量后候选 | dcache、页缓存 LRU、读写放大 |
+| [ ] | [`K-05`](./05-fs-vfs-performance.md) | 混合 | dcache、页缓存 LRU、读写放大、ramfs 物理页 |
 | [ ] | [`K-06`](./06-task-scheduler-futex.md) | 测量后候选 | ctx、队列、futex、退出生命周期 |
 | [ ] | [`K-07`](./07-mm-exec-fork-heap.md) | 测量后候选 | lazy ELF、fork/COW、回收、allocator |
 | [ ] | [`K-08`](./08-network-throughput.md) | 测量后候选 | poll、锁、收发批处理、缓冲 |
@@ -73,13 +76,14 @@ K-02、K-03、K-05、K-06、K-07 是共享契约和合并门禁，实际分派�
 |---|---|
 | K-02 | [`02A SMP/IPI`](./02a-smp-ipi-runtime.md)、[`02B LA-musl`](./02b-loongarch-musl-ltp.md) |
 | K-03 | [`03A regex`](./03a-regex-zero-score.md)、[`03B Pagefaults`](./03b-musl-rv-pagefault.md)、[`03C busybox`](./03c-busybox-kill-mv-rmdir.md) |
-| K-05 | [`05A inode/dcache`](./05a-inode-dentry-cache.md)、[`05B page LRU`](./05b-page-cache-lru.md)、[`05C I/O/prefetch`](./05c-io-merge-prefetch.md) |
+| K-05 | [`05A inode/dcache`](./05a-inode-dentry-cache.md)、[`05B page LRU`](./05b-page-cache-lru.md)、[`05C I/O/prefetch`](./05c-io-merge-prefetch.md)、[`05D ramfs 物理页`](./05d-ramfs-physical-pages.md) |
 | K-06 | [`06A scheduler`](./06a-scheduler-ctx.md)、[`06B futex`](./06b-futex-waitqueue.md)、[`06C reap`](./06c-process-reap-lifecycle.md) |
 | K-07 | [`07A lazy ELF`](./07a-elf-lazy-map.md)、[`07B fork/page table`](./07b-fork-pagetable-lifecycle.md)、[`07C heap`](./07c-kernel-heap-backend.md) |
 
 K-07B 依赖 K-06C 的 retired-process 接口，不能同时修改生命周期 API；K-05A 与 K-05B
 可并行，但必须先冻结 file identity/cache key。其余同一行 leaf 可使用独立 worktree
-并行，最终按父任务验收合并。
+并行，最终按父任务验收合并。K-05D 可立即启动，但页所有权契约需与 K-07
+协调，不允许让 FS 依赖某个架构的 MM 实现。
 
 ## 完整问题映射
 

@@ -1,8 +1,9 @@
 #!/bin/bash
 os_file="./kernel-rv"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 fs="./sdcard-rv.img"
 
-qemu-system-riscv64 -machine virt \
+"$SCRIPT_DIR/qemu_exec_with_taskset.sh" qemu-system-riscv64 -machine virt \
                     -kernel $os_file \
                     -m 1G \
                     -nographic \
