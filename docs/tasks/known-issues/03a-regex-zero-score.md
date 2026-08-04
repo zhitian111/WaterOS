@@ -1,5 +1,11 @@
 # K-03A：libc-bench regex_search 0 分
 
+## 当前进展
+
+**2026-08-04 已完成。** RISC-V64/LoongArch64 的 glibc/musl 四种组合均使用
+原始 `libc-bench` 运行到 regex 末尾并退出 0，两个历史 0 分 search 项均产生非零
+耗时。结果见 [`results/k03a-final-20260804.md`](results/k03a-final-20260804.md)。
+
 ## 任务目标
 
 复验四配置 regex_search 历史 0 分，并区分结果解析、超时、栈溢出、signal 和 MM
@@ -42,9 +48,9 @@ PC、VA 和 task，因此最小复现必须保留这些字段：
 
 ## 如何验收
 
-- [ ] 可运行配置中 regex_search 均 pass 或得到有效 score。
-- [ ] 根因有最小复现和 Linux 对照，不靠增加 timeout 掩盖。
-- [ ] 无用户栈、signal、mmap 与其它 libcbench 回归。
-- [ ] `make rv_check && make la_check` 通过。
+- [x] 可运行配置中 regex_search 均 pass 或得到有效 score。
+- [x] 根因有最小复现和 Linux 对照，不靠增加 timeout 掩盖。
+- [x] 无用户栈、signal、mmap 与其它 libcbench 回归。
+- [x] `make rv_check && make la_check` 通过。
 
 交付 `docs/tasks/known-issues/results/k03a-YYYYMMDD.md`。

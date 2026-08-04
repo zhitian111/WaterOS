@@ -1,5 +1,11 @@
 # K-03：功能性 0 分项复现与修复
 
+## 当前进展
+
+**2026-08-04 已完成。** G4 regex、G5 musl-rv Pagefaults 和 G9 BusyBox 三个分项均已
+使用原始测试 workload 复验，产生有效分数或明确 pass，并且通过对应的
+双架构、双 libc 与文件系统完整性门禁。详见 K-03A/K-03B/K-03C 结果报告。
+
 ## 任务目标
 
 重新验证旧评分中的 libc-bench regex、musl-rv Pagefaults 和 busybox
@@ -90,12 +96,12 @@ VFS/FS，缺页在 MM。
 
 ## 如何验收
 
-- [ ] 四种 libc/arch 组合中可运行的组合均有最新结果，不再引用旧 score 代替复验。
-- [ ] 每个历史 0 分项变为 pass 或有效 score；不可运行组合有精确阻断。
-- [ ] errno、文件系统副作用和 signal 结果与 Linux 对照一致。
-- [ ] `make rv_check && make la_check` 通过。
-- [ ] G4 修复后运行 signal/mmap/stack 相关回归。
-- [ ] G5 修复后运行 COW、lazy mmap、fork 和 exec 回归。
-- [ ] G9 修复后运行 busybox 及 rename/unlink/rmdir LTP 子集，并执行 `e2fsck -fn`。
+- [x] 四种 libc/arch 组合中可运行的组合均有最新结果，不再引用旧 score 代替复验。
+- [x] 每个历史 0 分项变为 pass 或有效 score；不可运行组合有精确阻断。
+- [x] errno、文件系统副作用和 signal 结果与 Linux 对照一致。
+- [x] `make rv_check && make la_check` 通过。
+- [x] G4 修复后运行 signal/mmap/stack 相关回归。
+- [x] G5 修复后运行 COW、lazy mmap、fork 和 exec 回归。
+- [x] G9 修复后运行 busybox 及 rename/unlink/rmdir LTP 子集，并执行 `e2fsck -fn`。
 
 每个分项独立记录到 `docs/tasks/known-issues/results/k03-<g4|g5|g9>-YYYYMMDD.md`。

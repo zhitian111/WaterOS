@@ -1,5 +1,11 @@
 # K-03C：busybox kill、mv、rmdir 0 分
 
+## 当前进展
+
+**2026-08-04 已完成。** RISC-V64/LoongArch64 与 glibc/musl 四种组合均独立通过
+`mv`/`rmdir` 副作用检查和 `kill -0`/SIGTERM 语义检查。结果见
+[`results/k03c-final-20260804.md`](results/k03c-final-20260804.md)。
+
 ## 任务目标
 
 独立复验 busybox `kill 10`、`mv test_dir test` 和 `rmdir test` 历史 0 分，分离
@@ -47,9 +53,9 @@ test ! -e test
 
 ## 如何验收
 
-- [ ] 三项分别通过，不依赖前一项残留状态。
-- [ ] rename/rmdir/link/unlink LTP 子集和 root layout 无回归。
-- [ ] signal/kill LTP 子集通过。
-- [ ] `make rv_check && make la_check` 及 `e2fsck -fn` 通过。
+- [x] 三项分别通过，不依赖前一项残留状态。
+- [x] rename/rmdir/link/unlink LTP 子集和 root layout 无回归。
+- [x] signal/kill LTP 子集通过。
+- [x] `make rv_check && make la_check` 及 `e2fsck -fn` 通过。
 
 交付 `docs/tasks/known-issues/results/k03c-YYYYMMDD.md`。

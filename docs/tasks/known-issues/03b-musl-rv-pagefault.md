@@ -1,5 +1,11 @@
 # K-03B：musl-rv Pagefaults 0 分
 
+## 当前进展
+
+**2026-08-04 已完成。** 初赛镜像原始 lmbench 在同轮中得到 glibc-rv
+`78.8320 us` 和 musl-rv `75.4296 us`，历史 0 分已消失。结果见
+[`results/k03b-final-20260804.md`](results/k03b-final-20260804.md)。
+
 ## 任务目标
 
 复验仅 musl-rv lmbench Pagefaults 历史 0 分，定位 ELF 布局、VMA、lazy/COW 或结果
@@ -42,9 +48,9 @@ self.handle_lazy_page_fault(&mut allocator, fault_addr, access)
 
 ## 如何验收
 
-- [ ] musl-rv Pagefaults 产出有效值，glibc-rv 结果无回归。
-- [ ] anonymous/file/COW/lazy fault 定向测试通过。
-- [ ] 8 核并发 fault 无错页、UAF 或泄漏。
-- [ ] `make rv_check && make la_check` 通过。
+- [x] musl-rv Pagefaults 产出有效值，glibc-rv 结果无回归。
+- [x] anonymous/file/COW/lazy fault 定向测试通过。
+- [x] 8 核并发 fault 无错页、UAF 或泄漏。
+- [x] `make rv_check && make la_check` 通过。
 
 交付 `docs/tasks/known-issues/results/k03b-YYYYMMDD.md`。
