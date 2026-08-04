@@ -43,6 +43,8 @@ chmod +x ./scripts/*.sh
     启动 QEMU，**仅在 guest PC 变化时**向 stdout 打印一行（含符号）。无 TUI、无额外依赖。`make rv_pc_watch` / `make la_pc_watch`。
 - ./scripts/debug/qemu_launcher.py
     构建 QEMU 命令（trace 走独立 fd，串口 stdout 后台排空）。
+- ./scripts/qemu_run.py
+    普通运行、GDB 和四个兼容 shell 脚本共用的 QEMU 参数组装器。
 - ./scripts/resolve_pc_symbol.py
     给定地址，解析其所属内核符号区间与源码位置（`--arch rv|la`）。
 - ./scripts/wateros_debug.py
@@ -70,6 +72,12 @@ chmod +x ./scripts/*.sh
 | `WOS_SMP=1..8` | QEMU vCPU 数；LoongArch 同时据此限制 mailbox/AP 目标 |
 | `WOS_WRITE_DISK=1` | operator 模式显式写回基础镜像 |
 | `WOS_QEMU_SNAPSHOT=1` | 对任意模式强制 QEMU snapshot |
+| `WOS_SDCARD=/path/image.img` | QEMU 使用的根文件系统镜像；直接运行脚本时必须指定 |
+
+推荐通过 `make run`、`make shell` 或 `make debug-server` 启动；Makefile 会按
+`ARCH/PROFILE` 从 `RV_PRE_IMAGE`、`RV_FINAL_IMAGE`、`LA_PRE_IMAGE`、
+`LA_FINAL_IMAGE` 中选择镜像。只有绕过 Make 直接执行上述兼容脚本时，才需要
+显式设置 `WOS_SDCARD`。
 
 operator 模式在没有 `WOS_WRITE_DISK=1` 时默认加 `-snapshot`。自动模式保持
 原有磁盘行为。完整的现场命令表与 TTY 排查见 `os/README.md`。
@@ -82,18 +90,16 @@ operator 模式在没有 `WOS_WRITE_DISK=1` 时默认加 `-snapshot`。自动模
 | `make la_pc_watch` | 编译并监视 loongarch64 PC 变动 |
 | `make rv_symbol_at ADDR=0x80201234` | 查询 riscv64 内核地址所属符号 |
 | `make la_symbol_at ADDR=0x90001234` | 查询 loongarch64 内核地址所属符号 |
-| `make rv_final_run_log` | 启用 `stall-debug`，运行并保存 `output.log` |
-| `make rv_pre_run-gdb` | 构建独立 `kernel-rv-pre-gdb`，开放 GDB 端口并暂停 |
-| `make rv_final_run_log-gdb` | `stall-debug` 内核开放 GDB 端口并保存串口日志 |
-| `make la_pre_run-gdb` | LoongArch 初赛内核开放 GDB 端口并暂停等待连接 |
-| `make la_final_run-gdb` | LoongArch 决赛内核开放 GDB 端口并暂停等待连接 |
-| `make la_gdb_snapshot` | 统一 snapshot 命令的兼容别名，使用 GDB 抓取 LA 完整报告 |
+| `make debug ARCH=rv PROFILE=pre` | 自动构建、启动和 watch |
+| `make debug-server ARCH=la PROFILE=final` | 终端一启动手动 GDB server |
+| `make gdb` | 终端二从活动会话恢复 ELF/端口并连接 |
+| `make snapshot` | 对活动会话立即生成一次完整报告 |
+| `make watch` | 对活动会话启动停滞监测 |
 
-所有真实运行目标都支持 `-gdb` 后缀。默认 `GDB_WAIT=1`，QEMU 使用 `-S`；若要
-让系统先运行到卡死位置，再连接调试器，使用
-`make rv_final_run_log-gdb GDB_WAIT=0`。端口可通过 `GDB_PORT=1235` 修改。
-`WOS_SMP=1..8` 控制 vCPU 数量；GDB 模式默认传入 `WOS_QEMU_SNAPSHOT=1`，普通
-运行目标仍保持原磁盘语义。
+`debug-server` 默认 `START_PAUSED=1`；运行期手动附加使用
+`START_PAUSED=0`。活动会话保存在 `debug-reports/active/session.json`，
+所以 `make gdb/snapshot/watch` 不需要重复架构、ELF 和端口。旧 `*-gdb`
+目标仅作弃用兼容转发。
 
 GDB/LLDB 的完整操作流程见
 [`docs/debugging/GDB_STALL_DEBUG.md`](../../docs/debugging/GDB_STALL_DEBUG.md)。

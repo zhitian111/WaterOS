@@ -2,7 +2,8 @@
 
 ## 0. 推荐入口
 
-WaterOS 现在使用 `os/scripts/wateros_debug.py` 统一构建、启动、监测和归档现场。
+WaterOS 使用 `os/Makefile` 作为操作者入口，并由
+`os/scripts/wateros_debug.py` 完成构建、启动、监测和归档现场。
 `gdb_remote_snapshot.py` 只保留 Remote packet/register/memory 底层模块，不再提供
 独立 CLI；本文后半部分的旧命令仅作为历史排障案例，新的脚本或自动化不得调用它。
 
@@ -12,26 +13,28 @@ Ubuntu 首次使用先安装依赖并执行预检：
 sudo apt install gdb-multiarch binutils-riscv64-unknown-elf \
   binutils-loongarch64-linux-gnu qemu-system-misc
 cd os
-./scripts/wateros_debug.py doctor
+make doctor
 ```
 
 最常用命令：
 
 ```bash
-# 独立的 release 优化 + DWARF + frame pointer 内核，一键启动并监测
-./scripts/wateros_debug.py run rv-final --smp 8
-./scripts/wateros_debug.py run la-final --smp 8
+# 自动挡：启动 QEMU 并 watch
+make debug ARCH=rv PROFILE=final SMP=8
+make debug ARCH=la PROFILE=final SMP=8
 
-# 附加到 make ...-gdb GDB_WAIT=0 已经启动的 QEMU
-./scripts/wateros_debug.py snapshot --arch rv --elf ./kernel-rv-final-gdb
-./scripts/wateros_debug.py watch --arch rv --elf ./kernel-rv-final-gdb
+# 手动挡：终端一
+make debug-server ARCH=rv PROFILE=final SMP=8
 
-# 交互式 GDB，自动加载 wos-* 命令
-./scripts/wateros_debug.py gdb --arch rv --elf ./kernel-rv-final-gdb
+# 手动挡：终端二
+make gdb
+make snapshot
+make watch
 ```
 
-`run` 默认以 QEMU snapshot 模式运行，不写回基础磁盘。只有明确需要保存 guest
-写入时才传 `--write-disk`。监测默认每秒采样，按 CPU 组合检查 PC/SP、timer、
+`make debug` 默认以 QEMU snapshot 模式运行，不写回基础磁盘。
+只有明确需要保存 guest 写入时才传 `WRITE_DISK=1`。监测默认每秒
+采样，按 CPU 组合检查 PC/SP、timer、
 context switch、syscall、trap、IPI、事件 sequence、runqueue 与锁等待；同一停滞原因
 连续出现十次后才抓取完整现场。可用 `--interval`、`--confirm` 调整。健康 idle CPU
 的 timer 不会掩盖另一个 CPU 的锁死，长时间用户计算只要 PC 或中断/事件仍推进也
@@ -60,12 +63,11 @@ ELF 与 guest；不匹配时工具拒绝继续符号化，避免给出看似合�
 
 ### 0.1 确定性故障测试
 
-故障代码只存在于显式测试构建：
+故障代码只存在于显式调试构建：
 
 ```bash
-make rv_pre_run-gdb GDB_FAULTS=1 GDB_WAIT=0
-# LoongArch 同样使用 la_pre_run-gdb
-# 统一入口也可使用：./scripts/wateros_debug.py run rv-pre --smp 2 --faults
+make debug-server ARCH=rv PROFILE=pre SMP=2 FAULTS=1 START_PAUSED=0
+# LoongArch 使用 ARCH=la；第二个终端执行 make gdb
 ```
 
 连接 GDB 后，在系统完成 AP online 后写入模式；下一次 timer trap 触发：
