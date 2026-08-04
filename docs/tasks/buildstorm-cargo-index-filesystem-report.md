@@ -111,10 +111,11 @@ e2fsck -fn overlay-expanded.img
 
 ## 后续验证
 
-完整 BuildStorm 已越过本问题，但 QEMU 内的 446 单元编译在本次 15 分钟诊断窗口内
-未完成，当前吞吐停滞应作为独立的编译执行/性能问题继续检查。运行中还会看到
-`fsync fd=6 flush failed: Unsupported`；它没有阻止 Cargo metadata 和依赖编译，
-但仍应独立确认 fd 类型与 Linux 返回值。
+截至 2026-08-04，双架构完整 BuildStorm 均已输出
+`BUILDSTORM_COMPILE mode=multi ok=true`。历史 `fsync fd=6` 已确认是目录 fd，并由
+句柄能力分派修复；当前正式日志不再出现该警告。完整持久化闭环及日志见
+[`known-issues/results/k01-final-20260804.md`](./known-issues/results/k01-final-20260804.md)。
+剩余工作是 K-04/K-10 的性能基线与最终候选冻结，不再属于 Cargo 索引正确性问题。
 
 ## 验收标准
 
@@ -122,5 +123,5 @@ e2fsck -fn overlay-expanded.img
 - [x] `cargo metadata --offline` 成功，`web-sys` 索引保持有效。
 - [x] `make rv_check` 通过。
 - [x] 运行后的文件系统通过 `e2fsck -fn` 五阶段检查。
-- [ ] 完整输出 `BUILDSTORM_COMPILE mode=multi ok=true`。
-- [ ] CAgent 10/10 和初赛用例无新增回归。
+- [x] 完整输出 `BUILDSTORM_COMPILE mode=multi ok=true`。
+- [x] CAgent 10/10 和初赛用例无新增回归。

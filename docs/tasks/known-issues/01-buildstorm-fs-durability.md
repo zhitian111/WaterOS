@@ -1,10 +1,14 @@
-# K-01：BuildStorm 与文件系统持久化闭环
+# K-01：BuildStorm 与文件系统持久化闭环（已完成）
 
 ## 任务目标
 
 让正式 BuildStorm 完整成功，并证明 `fsync/fdatasync`、页缓存、another-ext4 与
 rename/unlink/truncate 使用一致的持久化语义。最终必须输出
 `BUILDSTORM_COMPILE mode=multi ok=true`，且测试后 ext4 结构完整。
+
+状态：2026-08-04 已完成。双架构 final BuildStorm、增量复用、并发/掉电一致性、
+双架构 pre basic/busybox 和运行后 ext4 检查均通过。汇总证据见
+[`results/k01-final-20260804.md`](./results/k01-final-20260804.md)。
 
 ## 执行前必读
 
@@ -23,9 +27,10 @@ rename/unlink/truncate 使用一致的持久化语义。最终必须输出
 
 - 大于 4 MiB 的 Cargo sparse-index 读取问题已定位为 syscall 短读错误，镜像和
   another-ext4 基本读取不是根因。
-- 最新记录只证明 446 个编译单元已经开始编译，没有证明完整成功。
-- 运行仍出现 `fsync fd=6 flush failed: Unsupported`，当前 syscall 在调用
-  `flush()` 前硬拒绝所有非普通文件：
+- 历史记录只证明 446 个编译单元开始编译；当前双架构已经完整输出成功标记。
+- 历史 `fsync fd=6 flush failed: Unsupported` 已确认是 Cargo 对目录 fd 执行
+  `fsync`。提交 `dad1fcb3` 改为由句柄能力分派，目录句柄真实同步所属文件系统；
+  当前双架构完整日志不再出现该警告。旧实现为：
 
 ```rust
 let meta = handle.metadata()?;
@@ -126,14 +131,14 @@ match handle.flush() {
 
 ## 如何验收
 
-- [ ] `make rv_check`、`make la_check` 和两个 final kernel 构建成功。
-- [ ] `cargo metadata --offline` 成功，`web-sys` inode、大小和 SHA-256 不变。
-- [ ] BuildStorm 输出 toolchain、minibuild 和完整 compile 三个成功标记。
-- [ ] fd=6 的类型和 Linux 对照结论记录清楚，正式日志中无未解释 flush 警告。
-- [ ] 两次连续构建和重启复用实验得到明确时间戳结论。
-- [ ] rename/unlink/truncate/fsync 并发测试无丢数据、旧页写回或 panic。
-- [ ] 每轮 overlay 的 `e2fsck -fn` 五阶段通过，原始镜像 hash 不变。
-- [ ] CAgent 三轮 10/10，初赛 basic/busybox 无新增回归。
+- [x] `make rv_check`、`make la_check` 和两个 final kernel 构建成功。
+- [x] `cargo metadata --offline` 成功，`web-sys` inode、大小和 SHA-256 不变。
+- [x] BuildStorm 输出 toolchain、minibuild 和完整 compile 三个成功标记。
+- [x] fd=6 的类型和 Linux 对照结论记录清楚，正式日志中无未解释 flush 警告。
+- [x] 两次连续构建和重启复用实验得到明确时间戳结论。
+- [x] rename/unlink/truncate/fsync 并发测试无丢数据、旧页写回或 panic。
+- [x] 每轮 overlay 的 `e2fsck -fn` 五阶段通过，原始镜像 hash 不变。
+- [x] CAgent 三轮 10/10，初赛 basic/busybox 无新增回归。
 
 结果写入 `docs/tasks/known-issues/results/k01-YYYYMMDD.md`，包含 commit、镜像 hash、
 QEMU 参数、命令、耗时、首个失败点和日志路径。
