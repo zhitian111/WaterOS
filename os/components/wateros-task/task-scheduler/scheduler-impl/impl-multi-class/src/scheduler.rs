@@ -36,6 +36,9 @@ pub(super) struct MultiClassScheduler {
     pub timekeeper_cpu : Option<CpuId>,
     /// 入队时在 scheduler 锁内累计，锁外再实际发送定向 IPI。
     pub pending_reschedule_cpus : CpuMask,
+    /// 被强制迁出本 CPU 的当前任务。在 `__switch` 保存完上下文前，
+    /// 目标 CPU 不能在 runqueue 中看到它。
+    deferred_ready_after_switch : [Option<TaskId>; MAX_CPUS],
 }
 
 /// Ready 任务的放置偏好；最终目标仍须满足 online 与 affinity 约束。
@@ -60,7 +63,8 @@ impl MultiClassScheduler {
                cpu_states : cpu_states.into_boxed_slice(),
                next_placement_cpu : 0,
                timekeeper_cpu : None,
-               pending_reschedule_cpus : CpuMask::EMPTY }
+               pending_reschedule_cpus : CpuMask::EMPTY,
+               deferred_ready_after_switch : [None; MAX_CPUS] }
     }
 
     pub(super) fn init(&mut self, boot_cpu : CpuId) {
@@ -70,6 +74,7 @@ impl MultiClassScheduler {
         self.next_placement_cpu = 0;
         self.timekeeper_cpu = None;
         self.pending_reschedule_cpus = CpuMask::EMPTY;
+        self.deferred_ready_after_switch = [None; MAX_CPUS];
         // 为每个 CPU 创建 idle 任务
         for (cpu_id, cpu_state) in self.cpu_states
                                        .iter_mut()
@@ -373,8 +378,19 @@ impl MultiClassScheduler {
         match target {
             // Yield/Tick 后优先留在本核；affinity 不允许时才回退到最小负载 CPU。
             QueueTarget::Ready => {
-                self.activate_ready_task(current_task_id,
-                                         ReadyPlacement::Prefer(cpu_id));
+                let affinity = self.registry
+                                   .get_affinity(current_task_id)
+                                   .expect("current task must exist");
+                if affinity.contains(cpu_id) {
+                    self.activate_ready_task(current_task_id,
+                                             ReadyPlacement::Prefer(cpu_id));
+                } else {
+                    let slot = &mut self.deferred_ready_after_switch[cpu_id.raw()];
+                    assert!(slot.is_none(),
+                            "CPU {} already has a deferred task migration",
+                            cpu_id.raw());
+                    *slot = Some(current_task_id);
+                }
             }
             QueueTarget::Blocked(reason) => {
                 self.registry
@@ -420,6 +436,15 @@ impl MultiClassScheduler {
                     .mark_exited(current_task_id, exit_code);
             }
         }
+    }
+
+    /// 在源 CPU 已经物理保存完离开任务的寄存器和内核栈后，再将它
+    /// 发布到 affinity 允许的目标 runqueue。
+    pub(super) fn complete_context_switch(&mut self, cpu_id : CpuId) {
+        let Some(task_id) = self.deferred_ready_after_switch[cpu_id.raw()].take() else {
+            return;
+        };
+        self.activate_ready_task(task_id, ReadyPlacement::LeastLoaded);
     }
     /// 激活非当前任务：选核、入 ready queue，并按统一 CPU 抢占规则请求调度。
     pub(super) fn activate_ready_task(&mut self,

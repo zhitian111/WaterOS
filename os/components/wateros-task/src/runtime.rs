@@ -33,6 +33,7 @@ unsafe extern "C" {
 /// arch 恢复例程。
 #[unsafe(no_mangle)]
 pub extern "C" fn __wateros_task_runtime_enter_current_user_task() -> ! {
+    scheduler::complete_context_switch();
     let mut trap_frame = TaskTrapFrame::default();
     let restored = scheduler::restore_current_trap_frame(&mut trap_frame);
     assert!(restored,
@@ -48,6 +49,7 @@ pub extern "C" fn __wateros_task_runtime_enter_current_user_task() -> ! {
 /// Idle任务入口：仅启用全局中断并循环等待中断。
 #[unsafe(no_mangle)]
 pub extern "C" fn __wateros_idle_task_runtime_main(_arg : usize) -> ! {
+    scheduler::complete_context_switch();
     let _ = arch::interrupt::enable_global_interrupt();
     loop {
         arch::interrupt::wait_for_interrupt();
@@ -58,6 +60,7 @@ pub extern "C" fn __wateros_idle_task_runtime_main(_arg : usize) -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn __wateros_task_runtime_entry(bootstrap_ptr : usize) -> ! {
     let bootstrap = unsafe { &*(bootstrap_ptr as *const TaskBootstrap) };
+    scheduler::complete_context_switch();
     arch::interrupt::enable_global_interrupt().expect("enable global interrupt for task runtime");
     bootstrap.run()
 }

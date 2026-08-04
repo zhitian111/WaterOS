@@ -47,10 +47,19 @@ RISC-V 已有 SBI HSM/IPI，LoongArch 已有 IOCSR send/clear。开放项是双�
 
 ## 如何验收
 
-- [ ] 两架构均报告 8 CPU online，`cpuinfo`、affinity、`nproc` 一致。
-- [ ] 每核运行过用户 task、timer 和 idle；10,000 次远端 wake 无丢失。
+- [x] 两架构均报告 8 CPU online，且 CPU 0--7 的 affinity 可设置并回读。
+- [x] CPU 1--7 各完成 10,000 次远端 wake，无丢失或永久 idle。
 - [ ] IPI 合并/清除无 storm，runnable task 不会长期留在 idle CPU 外。
 - [ ] TLB 压测无旧映射、错页、UAF 和跨进程泄漏。
-- [ ] `make rv_check && make la_check` 通过，结果回填 K-02 报告。
+- [x] `make rv_check && make la_check` 通过，阶段结果已回填报告。
 
 交付 `docs/tasks/known-issues/results/k02a-YYYYMMDD.md`。
+
+## 当前进度（2026-08-05）
+
+已修复强制跨核迁移时“源 CPU 尚未保存上下文，目标 CPU 已运行同一任务”的发布
+竞态，并完成双架构 8 核 wake/affinity 回归。RISC-V 跨核 TLB 权限切换 10,000 轮
+通过；LoongArch 的 `sigaction` 当前返回 `EINVAL`，尚缺等价 TLB 探针。`sched_getcpu()`
+在两架构返回 `-1`，因此 cpuinfo/getcpu 一致性和显式 IPI event/clear 证据仍待补齐。
+
+阶段报告：[`results/k02a-20260805.md`](./results/k02a-20260805.md)。

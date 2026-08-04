@@ -248,7 +248,24 @@ fn switch_and_unlock(guard : InterruptGuard, switch_pair : SwitchPair) {
     unsafe {
         __switch(switch_pair.0, switch_pair.1);
     }
+    complete_context_switch();
     guard.release();
+}
+
+/// 完成上一次物理上下文切换后延迟的跨核迁移发布。
+///
+/// 运行过的任务会从 `__switch` 返回到上面的路径；首次运行的任务由
+/// runtime 入口显式调用。
+pub fn complete_context_switch() {
+    let cpu_id = cpu::current_cpu_id();
+    let targets = {
+        let _guard = InterruptGuard::new();
+        with_scheduler(|scheduler| {
+            scheduler.complete_context_switch(cpu_id);
+            scheduler.take_pending_reschedule_cpus()
+        })
+    };
+    dispatch_reschedules(targets, cpu_id);
 }
 /// `__switch` 返回后重新关中断，再取等待结果（避免 wait 路径长期关中断）。
 fn finish_wait_after_switch(guard : InterruptGuard,
