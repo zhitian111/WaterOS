@@ -92,6 +92,8 @@
     # LTP 并行跑测：busybox bringup 仅跑单个 ltp_testcode.sh
     bringup-ltp-glibc-only = [  ]
     bringup-ltp-musl-only = [  ]
+    # 低扰动 bring-up 计数器；默认关闭，性能测量时显式启用。
+    bringup-stats = [ "syscall/bringup-stats" ]
     # 热路径 syscall/trap 参数跟踪（默认关闭；见 trap_handler hot_syscall_trace!）
     qemu-riscv64-opensbi = [
         "dep:cred",

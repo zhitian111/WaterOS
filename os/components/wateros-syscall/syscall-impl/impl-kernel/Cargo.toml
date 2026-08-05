@@ -20,6 +20,7 @@
 
 [features]
     api-v0 = [ "api-v0/api-v0", "fd-session" ]
+    bringup-stats = [  ]
     cred-session = [ "cred/api-v0", "cred/impl-root", "dep:cred" ]
     default = [ "impl-kernel" ]
     fd-session = [
