@@ -2,11 +2,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+QEMU_MEM="${WOS_QEMU_MEM:-8G}"
 
 qemu_args=(
     -machine virt
     -kernel "${WOS_KERNEL:-./kernel-rv-final}"
-    -m 8G
+    -m "${QEMU_MEM}"
     -nographic
     -smp "${WOS_SMP:-8}"
     -bios default

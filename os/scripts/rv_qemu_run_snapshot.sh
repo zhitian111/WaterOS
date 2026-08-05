@@ -6,6 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 os_file="${WOS_KERNEL:-./kernel-rv}"
 backing="${WOS_SDCARD_BACKING:-../test_case/sdcard-rv.img}"
+QEMU_MEM="${WOS_QEMU_MEM:-1G}"
 if [[ ! -f "$backing" ]]; then
     backing="./sdcard-rv.img"
 fi
@@ -21,7 +22,7 @@ echo "[rv_qemu_run_snapshot] kernel=$os_file backing=$backing overlay=$overlay i
 
 "$SCRIPT_DIR/qemu_exec_with_taskset.sh" qemu-system-riscv64 -machine virt \
     -kernel "$os_file" \
-    -m 1G \
+    -m "${QEMU_MEM}" \
     -nographic \
     -smp 1 \
     -bios default \

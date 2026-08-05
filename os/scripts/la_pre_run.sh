@@ -2,10 +2,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+QEMU_MEM="${WOS_QEMU_MEM:-1G}"
 
 qemu_args=(
     -kernel "${WOS_KERNEL:-./kernel-la-pre}"
-    -m 1G
+    -m "${QEMU_MEM}"
     -nographic
     -smp "${WOS_SMP:-8}"
     -drive "file=${WOS_SDCARD:-./sdcard-la.img},if=none,format=raw,id=x0"

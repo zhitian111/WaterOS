@@ -2,6 +2,7 @@
 os_file="./kernel-rv"
 fs="./sdcard-rv.img"
 SMP_CORES="${SMP_CORES:-1}"
+QEMU_MEM="${WOS_QEMU_MEM:-1G}"
 if [[ ! "$SMP_CORES" =~ ^[1-8]$ ]]; then
     echo "SMP_CORES must be an integer in 1..8 (WaterOS RISC-V SMP capacity)" >&2
     exit 2
@@ -19,7 +20,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 "$SCRIPT_DIR/qemu_exec_with_taskset.sh" qemu-system-riscv64 -machine virt \
                     -kernel $os_file \
-                    -m 1G \
+                    -m "${QEMU_MEM}" \
                     -nographic \
                     -smp "$SMP_CORES" \
                     -snapshot \

@@ -145,6 +145,7 @@ GDB 模式默认使用 snapshot 磁盘。相关环境变量如下：
 | ---------------------------------- | -------------------------------------- |
 | `WOS_SMP`                        | QEMU vCPU 数量，统一工具限制为`1..8` |
 | `WOS_TASKSET_CPUS`                | 传给 `taskset -c` 的 CPU 绑定列表，如 `0-7` |
+| `WOS_QEMU_MEM`                    | 覆盖 `-m`，建议在并行时调小，默认 `rv`/`la` 决赛 8G，初赛 1G |
 | `WOS_QEMU_IMAGE_DRIVE_OPTIONS`    | 追加到 `-drive` 的可选参数，例如 `locking=off`（建议仅 qcow2 镜像） |
 | `WOS_QEMU_GDB_PORT` / `GDB_PORT` | GDB Remote 端口，默认`1234`          |
 | `WOS_QEMU_GDB_WAIT` / `GDB_WAIT` | `1` 表示传入 `-S`，`0` 表示立即运行  |
@@ -168,6 +169,7 @@ WOS_MAX_PARALLEL_JOBS=4 \
 
 ```bash
 WOS_CORES_PER_JOB=4 \
+WOS_QEMU_MEM=2G \
 WOS_AUTO_SMP=1 \
 WOS_MAX_PARALLEL_JOBS=8 \
 ./scripts/run_qemu_parallel.sh \
@@ -186,7 +188,8 @@ WOS_MAX_PARALLEL_JOBS=8 \
 ```bash
 cd os
 WOS_CORES_PER_JOB=4 WOS_AUTO_SMP=1 WOS_AUTO_UNLOCK_DRIVE=1 \
-  WOS_SDCARD=./sdcard-rv-pub.qcow2 WOS_QEMU_SNAPSHOT=1 \
+  WOS_QEMU_MEM=2G WOS_QEMU_SNAPSHOT=1 \
+  WOS_SDCARD=./sdcard-rv-pub.qcow2 \
   ./scripts/run_qemu_parallel.sh \
     "make rv_final_run" \
     "make rv_final_run"
