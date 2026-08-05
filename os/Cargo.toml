@@ -45,7 +45,9 @@
     split-debuginfo = "off"
 
 [features]
-    default = [ "qemu-riscv64-opensbi", "heap-tlsf" ]
+    # Cargo builds that use the default feature set select the current
+    # RISC-V final candidate, TLSF, and no diagnostic hot-path features.
+    default = [ "qemu-riscv64-opensbi", "final_online", "heap-tlsf" ]
     # 比赛阶段决定根镜像中的用户态 bring-up 队列。
     pre = [  ]
     final_online = [  ]

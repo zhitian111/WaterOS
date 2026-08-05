@@ -15,12 +15,12 @@ GDB_RUN_TARGETS := $(addsuffix -gdb,$(DEBUGGABLE_RUN_TARGETS))
 .PHONY: help version stat clean check all all_start_info kernel configure fmt
 .PHONY: apply_features apply_features_la flush_img export rv_user_mode_bin
 .PHONY: rv_check rv_elf_info rv_obj_dump rv_pc_watch rv_symbol_at
-.PHONY: kernel-rv kernel-rv-pre kernel-rv-final kernel-rv-final-log
+.PHONY: kernel-rv kernel-rv-pre kernel-rv-final kernel-rv-best kernel-rv-final-log
 .PHONY: kernel-rv-final-debug kernel-rv-final-smp-test kernel-rv-strip-image
 .PHONY: $(RV_RUN_TARGETS) $(GDB_RUN_TARGETS) rv_qemu_run rv_qemu_run_snapshot
 .PHONY: rv_qemu_run_with_log
 .PHONY: la_check la_elf_info la_symbol_at la_pc_watch la_gdb_snapshot
-.PHONY: kernel-la kernel-la-pre kernel-la-final $(LA_RUN_TARGETS)
+.PHONY: kernel-la kernel-la-pre kernel-la-final kernel-la-best $(LA_RUN_TARGETS)
 .PHONY: la_qemu_run la_qemu_run_snapshot
 COLOR_ANSI_RED := \033[31m
 COLOR_ANSI_GREEN := \033[32m
@@ -108,6 +108,7 @@ endef
 
 help:
 	@echo "WaterOS 常用目标（在 os/ 目录执行）"
+	@echo "  make all                        构建双架构最佳 Final 候选"
 	@echo "  make rv_pre_run                 构建并运行 RISC-V 初赛内核"
 	@echo "  make rv_final_run               构建并运行 RISC-V 决赛内核"
 	@echo "  make la_pre_run                 构建并运行 LoongArch 初赛内核"
@@ -190,6 +191,11 @@ kernel-rv-final: version
 	@$(cargo_build) $(kernel_rv_final_flag)
 	@cp $(kernel_rv_build_artifact_path)/wateros ./kernel-rv-final$(GDB_SUFFIX)
 
+# `make all` 的交付产物。保留显式 pre/final 文件，同时将已验证的 Final 配置复制为
+# 在线平台约定的通用文件名。
+kernel-rv-best: kernel-rv-final
+	@cp ./kernel-rv-final$(GDB_SUFFIX) ./kernel-rv$(GDB_SUFFIX)
+
 kernel-rv-final-log: version
 	$(call INFO, "构建带停滞诊断的 riscv64 决赛在线内核...")
 	@$(cargo_build) $(kernel_rv_final_log_flag)
@@ -263,6 +269,9 @@ kernel-la-final: version
 	$(call INFO, "构建 loongarch64 决赛在线内核...")
 	@$(cargo_build) $(kernel_la_final_flag)
 	@cp $(kernel_la_build_artifact_path)/wateros ./kernel-la-final$(GDB_SUFFIX)
+
+kernel-la-best: kernel-la-final
+	@cp ./kernel-la-final$(GDB_SUFFIX) ./kernel-la$(GDB_SUFFIX)
 
 la_pre_run: kernel-la-pre
 	$(call INFO, "运行 loongarch64 初赛 bringup...")
@@ -367,8 +376,9 @@ clean:
 	$(call INFO, "清理完成！")
 
 all_start_info:
-	$(call INFO, "开始构建完整项目...")
-all: all_start_info kernel-rv kernel-la
+	$(call INFO, "开始构建双架构最佳 Final 候选（release + TLSF，无诊断热路径）...")
+all: all_start_info kernel-rv-best kernel-la-best
+	$(call INFO, "候选产物：kernel-rv、kernel-la（同时保留 kernel-*-final）")
 
 fmt:
 	$(call INFO, "开始格式化项目文件...")
