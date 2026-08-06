@@ -27,6 +27,29 @@ pub fn fork_current(child_stack: usize, new_aspace_ptr: usize, new_satp: usize) 
     Some(child_id)
 }
 
+/// 创建临时共享父进程地址空间的 vfork 子进程。
+/// 子进程不持有该地址空间的所有权；在子进程 exec 或退出前，地址空间始终由父进程所有。
+pub fn vfork_current(child_stack: usize,
+                     shared_aspace_ptr: usize,
+                     shared_satp: usize)
+                     -> Option<TaskId> {
+    let parent_pid = crate::process::current_process_task_snapshot().map(|task| task.pid)?;
+    let parent_leader = crate::process::process_snapshot(parent_pid)?.leader_task_id;
+    let child_id =
+        scheduler::create_fork_child(child_stack,
+                                     shared_aspace_ptr,
+                                     shared_satp,
+                                     parent_leader)?;
+    let registered = active_impl::with_process_registry(|registry| {
+        registry.create_process_like_fork(parent_pid, child_id, None)
+    });
+    if registered.is_err() {
+        scheduler::discard_unstarted_task(child_id);
+        return None;
+    }
+    Some(child_id)
+}
+
 /// 完成 fork 资源继承后，将子任务发布到调度器。
 pub fn start_fork_child(child_id: TaskId) {
     scheduler::enqueue_ready_task(child_id);

@@ -13,8 +13,7 @@ use crate::sys::time::timer::{
     write_zero_rusage, ChildCpuTicks,
 };
 use crate::user_copy::{
-    atomic_compare_exchange_user_u32_in_aspace, atomic_load_user_u32_in_aspace,
-    copy_from_user_struct, copy_to_user_struct,
+    copy_from_user_struct, copy_to_user_struct, copy_to_user_struct_in_aspace,
 };
 
 /// 等待目标类型：任意子进程、指定进程组、或特定进程。
@@ -88,13 +87,10 @@ pub(crate) fn wake_clear_child_tid_for_task(task_id : task::TaskId) -> usize {
     else {
         return 0;
     };
-    let clear_result = (|| loop {
-        let old = atomic_load_user_u32_in_aspace(user_aspace, addr)?;
-        let observed = atomic_compare_exchange_user_u32_in_aspace(user_aspace, addr, old, 0)?;
-        if observed == old {
-            return Ok::<(), ErrNo>(());
-        }
-    })();
+    // Linux 的 clear_child_tid 语义是退出时执行一次 put_user(0)，随后 futex
+    // wake；这里不需要比较交换。普通用户写还能正确处理延迟映射和 COW 页，
+    // 避免原子 CAS 访问失败后 tid 值残留，导致 pthread_join 永久等待。
+    let clear_result = copy_to_user_struct_in_aspace(user_aspace, addr, &0u32);
     fence(core::sync::atomic::Ordering::SeqCst);
     let woken = super::super::futex::wake_user_addr(user_aspace, addr);
     log::trace!("[pthread-debug] clear_child_tid task_id={} tid={} addr={:#x} write_ok={} \
