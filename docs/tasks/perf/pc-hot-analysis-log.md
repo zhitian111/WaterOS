@@ -268,3 +268,17 @@ raw_log: /tmp/pc-hot-k36-current-20260807.log
 
 P-core 上再显式加 `-accel tcg,thread=multi` 做 60s 短采样，进度与不加参数一致
 （均到 `BUILDSTORM_MINIBUILD ok`），因此不额外加入启动参数。
+
+## 2026-08-07 K-38 页缓存扩容 16MiB -> 32MiB
+
+`FILE_PAGE_CACHE_CAPACITY` 从 `4096` 调到 `8192`。P-core 完整 Final：
+
+| 配置 | `elapsed_s` |
+|---|---:|
+| K-36 16MiB 页缓存 | 1348.86 |
+| K-38 32MiB 页缓存 | 1282.12 |
+
+分析：
+
+- 32MiB 页缓存完整轮比 16MiB 快约 5%。
+- 决策：保留扩容，进入 Pre smoke 验收并提交。
