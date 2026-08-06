@@ -312,3 +312,33 @@ raw_log: /tmp/k39-full-pcore-rv-20260807.log
 P-core 60s 短采样使用 `-cpu max`，OpenSBI 报 Base ISA 含 `v`，但 39s 时只到
 `BUILDSTORM_TOOLCHAIN ok`；默认 CPU 同窗口已到 `BUILDSTORM_MINIBUILD ok`。
 V 扩展模拟开销未带来收益，不加入 Final 启动参数。
+
+## 2026-08-07 K-43 页缓存 8 路组相联索引
+
+`GlobalCacheState.index` 从 `BTreeMap<(FileCacheKey,u64),usize>` 改为 8 路组相联
+哈希索引。P-core 180s 同窗口：
+
+| 符号 | K-38 基线 | K-43 当前 |
+|---|---:|---:|
+| 总指令 | 23.35B | 23.35B |
+| `memcmp` | 2.70B | 1.34B |
+| 页缓存 BTreeMap insert/remove | 35.83M | 消失 |
+| `PageIndex::bucket/get/insert` | - | 0.21B |
+
+分析：
+
+- `memcmp` 下降约 50%，BTreeMap 页索引查找热路径被替换。
+- 决策：进入完整 Final 和 Pre smoke 验收。
+
+后续结果：
+
+- 完整 Final 在 `BUILDSTORM_MINIBUILD fail` 停止，说明 8 路组相联索引在 bucket 满
+  替换旧条目时没有正确回收到被替换 frame，导致缓存正确性回归。
+- 决策：回退 K-43，不进入 Pre smoke，也不提交。
+
+```text
+run_id: k43-full-pcore-hash-index
+date: 2026-08-07
+result: FAILED at MINIBUILD, reverted
+raw_log: /tmp/k43-full-pcore-rv-20260807.log
+```
