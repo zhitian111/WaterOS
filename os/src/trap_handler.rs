@@ -157,6 +157,11 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
     let cx = unsafe { &mut *(authoritative as *mut TrapContext) };
 
     if cx.returns_to_user() {
+        if let Some(process) = task::current_process_snapshot() {
+            if let task::ProcessState::Exiting(exit_code) = process.state {
+                task::exit_group_current(exit_code);
+            }
+        }
         if platform::arch::trap::user_trap_requires_kernel_address_space() {
             let kernel_satp = mm::kernel_mm::kernel_satp();
             if paging::active_address_space_token() != kernel_satp {
@@ -340,6 +345,10 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             #[cfg(not(feature = "gdb-fault-injection"))]
             let suppress_scheduler = false;
             let tick = TIMER_TICK_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+            #[cfg(feature = "bringup-stats")]
+            if tick % 300 == 0 {
+                syscall::log_thread_bringup_stats_summary();
+            }
             if tick % 8 == 0 {
                 trace!("[trap] timer tick {}", tick);
             }
