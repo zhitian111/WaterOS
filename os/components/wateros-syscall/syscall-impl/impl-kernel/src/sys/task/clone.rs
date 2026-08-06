@@ -210,23 +210,42 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
         return UserRet::from_error(errno);
     }
 
+    let is_vfork = clone_flags.bits() & CLONE_VFORK != 0;
     let parent_aspace = task::current_task_user_aspace_ptr();
-    let (new_aspace_ptr, new_satp) = match mm::kernel_mm::fork_user_aspace(parent_aspace) {
-        Ok(p) => p,
-        Err(_) => return UserRet::from_error(ErrNo::ENOMEM),
+    let (new_aspace_ptr, new_satp) = if is_vfork {
+        let Some(address_space) = task::current_process_snapshot()
+                                             .and_then(|process| process.address_space)
+        else {
+            return UserRet::from_error(ErrNo::ENOMEM);
+        };
+        (address_space.user_aspace_ptr(), address_space.token().raw())
+    } else {
+        match mm::kernel_mm::fork_user_aspace(parent_aspace) {
+            Ok(pair) => pair,
+            Err(_) => return UserRet::from_error(ErrNo::ENOMEM),
+        }
     };
 
-    let _setup_guard = match CloneSetupGuard::new() {
+    let setup_guard = match CloneSetupGuard::new() {
         Ok(guard) => guard,
         Err(error) => {
-            mm::kernel_mm::drop_user_aspace(new_aspace_ptr);
+            if !is_vfork {
+                mm::kernel_mm::drop_user_aspace(new_aspace_ptr);
+            }
             return UserRet::from_error(error);
         }
     };
-    let child_id = match task::fork_current(child_stack, new_aspace_ptr, new_satp) {
+    let child = if is_vfork {
+        task::vfork_current(child_stack, new_aspace_ptr, new_satp)
+    } else {
+        task::fork_current(child_stack, new_aspace_ptr, new_satp)
+    };
+    let child_id = match child {
         Some(id) => id,
         None => {
-            mm::kernel_mm::drop_user_aspace(new_aspace_ptr);
+            if !is_vfork {
+                mm::kernel_mm::drop_user_aspace(new_aspace_ptr);
+            }
             return UserRet::from_error(ErrNo::EAGAIN);
         }
     };
@@ -314,7 +333,12 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
         }
     }
 
+    let vfork_wait = is_vfork.then(|| super::vfork::register(child_id));
     task::start_fork_child(child_id);
+    drop(setup_guard);
+    if let Some(wait) = vfork_wait {
+        super::vfork::wait_for_completion(child_id, wait);
+    }
     UserRet::from_success(child_pid)
 }
 
@@ -493,7 +517,7 @@ fn clone3_child_stack(stack : usize, stack_size : usize) -> Option<usize> {
 }
 
 /// fork 路径（非 `CLONE_VM|CLONE_THREAD`）接受 `fork` 与 libc/busybox 常见
-/// `vfork` 形态。`vfork` 在 WaterOS 中降级为普通 fork：复制地址空间，不共享 VM。
+/// `vfork` 形态。父任务等待共享地址空间的子任务完成 exec 或退出。
 fn validate_fork_clone_flags(clone_flags : task::CloneFlags) -> Result<(), ErrNo> {
     let bits = clone_flags.bits();
     if bits & !CLONE_FORK_COMPAT_MASK == 0 {
@@ -501,7 +525,7 @@ fn validate_fork_clone_flags(clone_flags : task::CloneFlags) -> Result<(), ErrNo
     }
 
     if bits & !CLONE_VFORK_COMPAT_MASK == 0 && bits & CLONE_VFORK != 0 {
-        log::trace!("[syscall] clone(nr=220) emulating vfork flags={:#x} as fork",
+        log::trace!("[syscall] clone(nr=220) vfork flags={:#x}",
                     bits,);
         return Ok(());
     }
