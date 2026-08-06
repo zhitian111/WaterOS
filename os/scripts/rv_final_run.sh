@@ -3,6 +3,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 QEMU_MEM="${WOS_QEMU_MEM:-8G}"
+# 本机 i9-13980HX 的 P-core 为逻辑 CPU 0-15；默认避免落到 E-core。
+WOS_TASKSET_CPUS="${WOS_TASKSET_CPUS:-0,2,4,6,8,10,12,14}"
+export WOS_TASKSET_CPUS
 
 qemu_args=(
     -machine virt

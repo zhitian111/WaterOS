@@ -57,10 +57,13 @@
   页缓存 read/write 复用 FileCacheKey，降低 TLSF 分配热路径，完整 Final 通过。
 - [`K-36`](./results/k36-page-cache-close-no-purge-20260807.md)：
   最后 close 不再立即 purge 页缓存，`purge_closed_file` 热点大幅下降。
+- [`K-37`](./results/k37-pcore-affinity-20260807.md)：
+  Final 运行默认绑定 P-core，完整 Final `elapsed_s=1348.86`。
 
-以上组合完整 Final 可跑通。当前最优 `elapsed_s=1365.70`；K-31 完整轮在宿主高负载
+以上组合完整 Final 可跑通。当前最优 `elapsed_s=1348.86`；K-31 完整轮在宿主高负载
 下为 `1941.42`，K-32 低负载完整轮为 `1957.45`，K-33 为 `1873.87`，K-35 为
-`1896.21`，K-36 为 `1881.13`，仍未达到 700-800s 目标。
+`1896.21`，K-36 为 `1881.13`；P-core 亲和性下为 `1348.86`，仍未达到 700-800s
+目标。
 
 ## 必须同做与并行关系
 

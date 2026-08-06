@@ -249,3 +249,19 @@ raw_log: /tmp/pc-hot-k36-current-20260807.log
 显式加入 `-accel tcg,thread=multi` 跑 60 秒 Final 早期，QEMU 进程约 `171%` CPU、
 12 个线程，未观察到比默认参数明显更高的宿主核利用率。该方向不改变内核，当前不作为
 独立优化提交。
+
+## 2026-08-07 P-core / E-core 亲和性对比
+
+本机 `lscpu -e` 显示 CPU 0-15 为 P-core（最高 5.4-5.6GHz），CPU 16-31 为 E-core
+（4GHz）。此前完整测试绑定到 24-31。
+
+| 运行 | CPU 集 | 结果 |
+|---|---|---|
+| K-36 E-core 完整 | `24-31` | `elapsed_s=1881.13` |
+| K-36 P-core 完整 | `0,2,4,6,8,10,12,14` | `elapsed_s=1348.86` |
+
+分析：
+
+- P-core 完整轮比 E-core 快约 28%，`elapsed_s=1348.86`。
+- 决策：`rv_final_run.sh` 和 `la_final_run.sh` 默认绑定到 P-core，保留
+  `WOS_TASKSET_CPUS` 覆盖。
