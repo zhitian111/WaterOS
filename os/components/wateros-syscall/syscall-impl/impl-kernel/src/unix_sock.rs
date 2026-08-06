@@ -295,13 +295,9 @@ fn cleanup_removed_socket(sock: UnixSockRef, still_referenced: bool) {
 pub(crate) fn copy_fds_from_parent(child: usize, parent: usize) {
     let mut table = FD_TABLE.lock();
     let inherited: Vec<_> = table
-        .iter()
-        .filter_map(|(&(owner, fd), sock)| {
-            if owner == parent {
-                Some(((child, fd), sock.clone()))
-            } else {
-                None
-            }
+        .range((parent, 0)..=(parent, usize::MAX))
+        .map(|(&(_, fd), sock)| {
+            ((child, fd), sock.clone())
         })
         .collect();
     for (key, sock) in inherited {
@@ -312,9 +308,8 @@ pub(crate) fn copy_fds_from_parent(child: usize, parent: usize) {
 pub(crate) fn drop_task(task_id: usize) {
     let fds: Vec<usize> = FD_TABLE
         .lock()
-        .keys()
-        .filter(|(owner, _)| *owner == task_id)
-        .map(|(_, fd)| *fd)
+        .range((task_id, 0)..=(task_id, usize::MAX))
+        .map(|(&(_, fd), _)| fd)
         .collect();
     for fd in fds {
         unregister(task_id, fd);
