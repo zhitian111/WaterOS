@@ -53,10 +53,12 @@
   block cache 连续 miss 区间直接插入，避免二次索引查找，完整 Final 可跑通。
 - [`K-33`](./results/k33-paged-handle-size-cache-20260807.md)：
   PagedFileHandle 读路径不再逐次锁 ext4 metadata，完整 Final `1873.87s`。
+- [`K-35`](./results/k35-page-cache-key-reuse-20260807.md)：
+  页缓存 read/write 复用 FileCacheKey，降低 TLSF 分配热路径，完整 Final 通过。
 
 以上组合完整 Final 可跑通。当前最优 `elapsed_s=1365.70`；K-31 完整轮在宿主高负载
-下为 `1941.42`，K-32 低负载完整轮为 `1957.45`，K-33 为 `1873.87`，仍未达到
-700-800s 目标。
+下为 `1941.42`，K-32 低负载完整轮为 `1957.45`，K-33 为 `1873.87`，K-35 为
+`1896.21`，仍未达到 700-800s 目标。
 
 ## 必须同做与并行关系
 

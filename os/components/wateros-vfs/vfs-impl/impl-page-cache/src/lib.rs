@@ -397,13 +397,23 @@ impl GlobalFilePageCache {
 
 // 本方法代码由AI完成
     fn file_key(&self, path : &str) -> FileCacheKey {
+        self.file_key_from_arc(Arc::from(path))
+    }
+
+    fn file_key_from_arc(&self, path : Arc<str>) -> FileCacheKey {
         FileCacheKey { mount_gen : self.mount_gen(),
-                       path : Arc::from(path) }
+                       path }
     }
 
 // 本方法代码由AI完成
     fn get_file_entry(&self, path : &str, initial_size : u64) -> Arc<RwLock<FileEntryInner>> {
-        let key = self.file_key(path);
+        self.get_file_entry_for_key(&self.file_key(path), initial_size)
+    }
+
+    fn get_file_entry_for_key(&self,
+                              key : &FileCacheKey,
+                              initial_size : u64)
+                              -> Arc<RwLock<FileEntryInner>> {
         let mut files = self.files.lock();
         if let Some(e) = files.get(&key) {
             let entry = e.clone();
@@ -415,7 +425,7 @@ impl GlobalFilePageCache {
         let e = Arc::new(RwLock::new(FileEntryInner { logical_size : initial_size,
                                                       dirty_pages : BTreeMap::new(),
                                                       last_read_end_page : None }));
-        files.insert(key, e.clone());
+        files.insert(key.clone(), e.clone());
         e
     }
 
@@ -537,7 +547,7 @@ impl GlobalFilePageCache {
                      .copied()
             };
             if slot.is_none() && off < logical_size {
-                self.install_page(io, key.path.as_ref(), page_idx, logical_size, map_err)?;
+                self.install_page(io, key, page_idx, logical_size, map_err)?;
                 slot = self.state.lock()
                                  .index
                                  .get(&(key.clone(), page_idx))
@@ -609,14 +619,13 @@ impl GlobalFilePageCache {
 // 本方法代码由AI完成
     fn install_page<Io, E>(&self,
                            io : &mut Io,
-                           path : &str,
+                           key : &FileCacheKey,
                            page_idx : u64,
                            file_size : u64,
                            map_err : fn(Io::Error) -> E)
                            -> Result<(), E>
         where Io : PageCacheIo
     {
-        let key = self.file_key(path);
         {
             let mut cache = self.state.lock();
             if cache.capacity == 0 {
@@ -637,7 +646,7 @@ impl GlobalFilePageCache {
                 usize::try_from(file_size.saturating_sub(page_off)).unwrap_or(0),
             );
             if to_read > 0 {
-                let n = io.read_range(path, page_off, &mut page_buf[..to_read])
+                let n = io.read_range(key.path.as_ref(), page_off, &mut page_buf[..to_read])
                           .map_err(map_err)?;
                 if n < to_read {
                     page_buf[n..to_read].fill(0);
@@ -723,7 +732,7 @@ impl GlobalFilePageCache {
             cache.frames[idx].version = 0;
             cache.frames[idx].key = Some((key.clone(), page_idx));
             cache.index
-                 .insert((key, page_idx), idx);
+                 .insert((key.clone(), page_idx), idx);
             cache.touch_lru(idx);
             return Ok(());
         }
@@ -732,13 +741,12 @@ impl GlobalFilePageCache {
 // 本方法代码由AI完成
     fn install_zero_page<Io, E>(&self,
                                 io : &mut Io,
-                                path : &str,
+                                key : &FileCacheKey,
                                 page_idx : u64,
                                 map_err : fn(Io::Error) -> E)
                                 -> Result<(), E>
         where Io : PageCacheIo
     {
-        let key = self.file_key(path);
         {
             let mut cache = self.state.lock();
             if cache.capacity == 0 {
@@ -829,7 +837,7 @@ impl GlobalFilePageCache {
             cache.frames[idx].version = 0;
             cache.frames[idx].key = Some((key.clone(), page_idx));
             cache.index
-                 .insert((key, page_idx), idx);
+                 .insert((key.clone(), page_idx), idx);
             cache.touch_lru(idx);
             return Ok(());
         }
@@ -850,7 +858,8 @@ impl GlobalFilePageCache {
         if buf.is_empty() || offset >= file_size {
             return Ok(0);
         }
-        let entry = self.get_file_entry(path, file_size);
+        let key = self.file_key(path);
+        let entry = self.get_file_entry_for_key(&key, file_size);
         let start_page = offset / FILE_PAGE_SIZE as u64;
         let sequential = entry.read()
                               .last_read_end_page
@@ -865,10 +874,10 @@ impl GlobalFilePageCache {
             let page_off = (pos % FILE_PAGE_SIZE as u64) as usize;
             let chunk = (FILE_PAGE_SIZE - page_off).min(max - done);
             loop {
-                self.install_page(io, path, page_idx, file_size, map_err)?;
+                self.install_page(io, &key, page_idx, file_size, map_err)?;
                 let cache = self.state.lock();
                 let Some(&idx) = cache.index
-                                      .get(&(self.file_key(path), page_idx))
+                                      .get(&(key.clone(), page_idx))
                 else {
                     // Eviction or path invalidation may race between
                     // install_page dropping the cache lock and this lookup.
@@ -892,7 +901,7 @@ impl GlobalFilePageCache {
                 if pi * FILE_PAGE_SIZE as u64 >= file_size {
                     break;
                 }
-                let _ = self.install_page(io, path, pi, file_size, map_err);
+                let _ = self.install_page(io, &key, pi, file_size, map_err);
             }
         }
         Ok(done)
@@ -914,7 +923,8 @@ impl GlobalFilePageCache {
             return Ok(0);
         }
 
-        let entry = self.get_file_entry(path, file_size);
+        let key = self.file_key(path);
+        let entry = self.get_file_entry_for_key(&key, file_size);
         let mut pos = offset;
         let mut written = 0usize;
         while written < buf.len() {
@@ -928,10 +938,10 @@ impl GlobalFilePageCache {
             };
             loop {
                 if page_start >= logical_size || (page_off == 0 && chunk == FILE_PAGE_SIZE) {
-                    self.install_zero_page(io, path, page_idx, map_err)?;
+                    self.install_zero_page(io, &key, page_idx, map_err)?;
                 } else {
                     self.install_page(io,
-                                      path,
+                                      &key,
                                       page_idx,
                                       logical_size,
                                       map_err)?;
@@ -941,7 +951,7 @@ impl GlobalFilePageCache {
                 let mut guard = entry.write();
                 let mut cache = self.state.lock();
                 let Some(&idx) = cache.index
-                                      .get(&(self.file_key(path), page_idx))
+                                      .get(&(key.clone(), page_idx))
                 else {
                     continue;
                 };
@@ -966,14 +976,7 @@ impl GlobalFilePageCache {
 
 // 本方法代码由AI完成
     pub fn logical_size(&self, path : &str, fallback : u64) -> u64 {
-        let key = self.file_key(path);
-        let files = self.files.lock();
-        files.get(&key)
-             .map(|e| {
-                 e.read()
-                  .logical_size
-             })
-             .unwrap_or(fallback)
+        self.logical_size_for_key(&self.file_key(path), fallback)
     }
 
 // 本方法代码由AI完成

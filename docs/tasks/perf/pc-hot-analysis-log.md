@@ -192,3 +192,29 @@ pcs_path: /tmp/pcs-rv-k34b-current-20260807.txt
 pcs_sha256: 1677b13aaaf5581fd0ce9d59ad7f8f8f55daa5c5a6931db5e0429cf84834b0e5
 raw_log: /tmp/pc-hot-k34b-current-20260807.log
 ```
+
+## 2026-08-07 K-35 页缓存 FileCacheKey 复用
+
+基线为 K-33 commit `5587cb76`，当前为工作树 K-35。同一 180 秒 Final 早期阶段：
+
+| 符号 | 基线 | 当前 |
+|---|---:|---:|
+| 总指令 | 17.25B | 17.10B |
+| `file_key` | 11.51M | 3.53M |
+| TLSF `allocate` | 508.97M | 466.59M |
+| TLSF `deallocate` | 365.99M | 336.60M |
+| `purge_closed_file` | 350.89M | 350.08M |
+
+```text
+run_id: pc-hot-k35-current-20260807
+date: 2026-08-07 02:57 CST
+pcs_path: /tmp/pcs-rv-k35-current-20260807.txt
+pcs_sha256: 863c56eb9e68a2444d7775804d77d94dc76be68e7122b533cfcd376c55311fa6
+raw_log: /tmp/pc-hot-k35-current-20260807.log
+```
+
+分析：
+
+- read/write/install 路径现在复用同一个 `FileCacheKey`，避免每页重复 `Arc::from`。
+- `file_key` 下降约 69%，TLSF allocate/deallocate 各下降约 8%。
+- 决策：进入完整 Final 和 Pre smoke 验收。
