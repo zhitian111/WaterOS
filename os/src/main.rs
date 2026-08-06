@@ -10,7 +10,7 @@ compile_error!("select one competition stage feature: `pre` or `final_online`");
 extern crate alloc;
 
 use klog as _;
-#[cfg(feature = "display-demo")]
+#[cfg(feature = "gui")]
 use runtime::logging::info;
 use runtime::logging::warn;
 #[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
@@ -21,8 +21,6 @@ mod boot_timebase;
 mod dashboard;
 #[cfg(feature = "gdb-fault-injection")]
 mod debug_fault;
-#[cfg(feature = "display-demo")]
-mod gui;
 #[cfg(feature = "stall-debug")]
 mod stall_debug;
 mod trap_handler;
@@ -77,15 +75,56 @@ extern "C" fn network_poller_task(_arg : usize) -> ! {
     }
 }
 
+/// GUI 常驻任务：处理输入、更新默认动画并仅在 dirty 时提交画面。
+#[cfg(feature = "gui")]
+extern "C" fn gui_refresh_task(_arg : usize) -> ! {
+    let mut frame = 0u64;
+    loop {
+        let _ = gui::push_input(gui::InputEvent::Tick(frame));
+        let _ = gui::update_default_desktop(frame);
+        let _ = gui::render_if_dirty();
+
+        // 默认桌面拥有这些事件；未来由专用 GUI 服务任务把事件转交应用。
+        while let Ok(Some(event)) = gui::poll_event() {
+            match event.kind {
+                gui::GuiEventKind::CloseRequested => {
+                    let _ = gui::remove_window(event.window);
+                }
+                gui::GuiEventKind::Clicked if event.widget == Some(gui::ACTION_BUTTON) => {
+                    let _ = gui::set_label_text(gui::MAIN_WINDOW,
+                                                gui::STATUS_LABEL,
+                                                "Self-check event delivered successfully");
+                }
+                gui::GuiEventKind::Submitted => {
+                    let _ = gui::set_label_text(gui::MAIN_WINDOW,
+                                                gui::STATUS_LABEL,
+                                                "Text input submitted");
+                }
+                _ => {}
+            }
+        }
+        frame = frame.wrapping_add(1);
+        task::sleep_for_ticks(2);
+    }
+}
+
 /// 驱动 → 网络 → FS → 用户态 bring-up。两 board 模块共用。
 fn bringup_driver_and_user() {
     match driver::active_impl::init_after_boot() {
         Err(ref err) => warn!("driver init failed: {:?}", err),
         Ok(()) => {
-            #[cfg(feature = "display-demo")]
-            match crate::gui::draw_boot_screen() {
-                Ok(()) => info!("[gui] VirtIO GPU welcome screen ready"),
-                Err(error) => warn!("[gui] display demo skipped: {:?}", error),
+            #[cfg(feature = "gui")]
+            match (|| -> gui::GuiResult<()> {
+                gui::initialize()?;
+                gui::install_default_desktop()?;
+                let _ = gui::render()?;
+                Ok(())
+            })() {
+                Ok(()) => {
+                    task::spawn_kernel_task(gui_refresh_task, 0);
+                    info!("[gui] wateros-gui desktop and refresh task ready");
+                }
+                Err(error) => warn!("[gui] initialization skipped: {:?}", error),
             }
             #[cfg(feature = "qemu-riscv64-opensbi")]
             match driver::active_impl::goldfish_rtc_realtime_ns() {

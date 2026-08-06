@@ -201,7 +201,11 @@ def build_qemu_launch(
             "-netdev", "user,id=net", "-rtc", "base=utc",
         ]
         if graphics:
-            argv.extend(["-device", "virtio-gpu-device"])
+            argv.extend([
+                "-device", "virtio-gpu-device",
+                "-device", "virtio-keyboard-device",
+                "-device", "virtio-tablet-device",
+            ])
     else:
         argv = [
             "qemu-system-loongarch64", "-kernel", str(kernel), "-m", memory,
@@ -212,7 +216,11 @@ def build_qemu_launch(
             "-rtc", "base=utc",
         ]
         if graphics:
-            argv.extend(["-device", "virtio-gpu-pci"])
+            argv.extend([
+                "-device", "virtio-gpu-pci",
+                "-device", "virtio-keyboard-pci",
+                "-device", "virtio-tablet-pci",
+            ])
 
     argv.extend(["-append", bootargs])
     temporary_files: list[Path] = []

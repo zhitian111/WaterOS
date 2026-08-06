@@ -6,6 +6,7 @@
 - `display-impl/impl-virtio-mmio`：RISC-V QEMU `virtio-gpu-device`。
 - `display-impl/impl-virtio-pci`：LoongArch QEMU `virtio-gpu-pci`。
 
-当前像素格式固定为 BGRA8888。绘制方写入 framebuffer 后必须调用 `flush()`，
-否则 QEMU 窗口不会更新。该模块由顶层 `display-demo` feature 显式启用，默认比赛
+当前像素格式固定为 BGRA8888。绘制方写入 framebuffer 后必须调用 `flush()` 或
+`flush_region()`，否则 QEMU 窗口不会更新；默认 `flush_region` 会安全退化为全屏
+刷新。该模块由顶层 `gui` feature 显式启用，`display-demo` 是兼容别名。默认比赛
 构建不会探测 GPU，也不会额外分配 framebuffer。

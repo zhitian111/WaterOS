@@ -78,8 +78,8 @@ PORT ?= 1234
 START_PAUSED ?= 1
 FAULTS ?= 0
 EXTRA_FEATURES ?=
-# EXTRA_FEATURES 含 display-demo 时默认打开 QEMU 图形窗口，也可显式覆盖。
-GRAPHICS ?= $(if $(findstring display-demo,$(EXTRA_FEATURES)),1,0)
+# EXTRA_FEATURES 含 gui/display-demo 时默认打开 QEMU 图形窗口，也可显式覆盖。
+GRAPHICS ?= $(if $(or $(findstring display-demo,$(EXTRA_FEATURES)),$(findstring gui,$(EXTRA_FEATURES))),1,0)
 GRAPHICS_BACKEND ?= auto
 GDB_BUILD ?= 0
 GDB_FAULTS ?= $(FAULTS)
@@ -168,7 +168,7 @@ help:
 	@echo "  make show-config                     显示当前最终生效配置"
 	@echo ""
 	@echo "常用变量：SMP MODE SCRIPT GUEST_SHELL TTY LOG ON_EXIT SNAPSHOT WRITE_DISK SDCARD"
-	@echo "图形变量：EXTRA_FEATURES=display-demo GRAPHICS=1 GRAPHICS_BACKEND=auto|gtk|sdl|cocoa|none"
+	@echo "图形变量：EXTRA_FEATURES=gui GRAPHICS=1 GRAPHICS_BACKEND=auto|gtk|sdl|cocoa|none"
 	@echo "镜像默认值：RV_PRE_IMAGE RV_FINAL_IMAGE LA_PRE_IMAGE LA_FINAL_IMAGE"
 	@echo "Make 不维护测试目录；auto 模式的测试由内核 bringup 选择。"
 

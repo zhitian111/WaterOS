@@ -26,6 +26,11 @@ use display::{
     display_device_count, display_subsystem_claims_device, register_display_device,
     DisplayDevice, VirtioGpuMmioDevice,
 };
+#[cfg(feature = "input")]
+use input::{
+    input_device_count, input_subsystem_claims_device, register_input_device, InputDevice,
+    VirtioInputMmioDevice,
+};
 use character::{
     character_device_count, character_subsystem_claims_device, is_uart_compatible,
     register_builtin_character_devices, register_character_device, CharacterDevice,
@@ -192,6 +197,7 @@ fn probe_virtio_device_type(mmio: MmioRegion) -> DeviceType {
         2 => DeviceType::Block,
         1 => DeviceType::Network,
         16 => DeviceType::Display,
+        18 => DeviceType::Input,
         _ => DeviceType::Unknown,
     }
 }
@@ -300,6 +306,8 @@ fn probe_virtio_blk_and_collect_unsupported() -> Vec<String> {
         #[cfg(feature = "display")]
         let claimed_by_display =
             display_subsystem_claims_device(&info.compatibles, info.device_type);
+        #[cfg(feature = "input")]
+        let claimed_by_input = input_subsystem_claims_device(&info.compatibles, info.device_type);
 
         let mut handled = false;
         if claimed_by_block && info.device_type == DeviceType::Block {
@@ -384,6 +392,24 @@ fn probe_virtio_blk_and_collect_unsupported() -> Vec<String> {
                         "[driver] failed to init virtio-gpu at base={:#x}: {:?}",
                         mmio.base, err
                     );
+                    unsupported.push(path.clone());
+                }
+            }
+        }
+        #[cfg(feature = "input")]
+        if !handled && claimed_by_input && info.device_type == DeviceType::Input {
+            handled = true;
+            match VirtioInputMmioDevice::from_mmio(mmio) {
+                Ok(device) => {
+                    let metadata = device.info().clone();
+                    let device: Box<dyn InputDevice> = Box::new(device);
+                    let idx = register_input_device(Arc::new(Mutex::new(device)));
+                    log::info!("[driver] registered virtio-input #{} kind={:?} name={}",
+                               idx, metadata.kind, metadata.name);
+                }
+                Err(err) => {
+                    log::warn!("[driver] failed to init virtio-input at base={:#x}: {:?}",
+                               mmio.base, err);
                     unsupported.push(path.clone());
                 }
             }
@@ -560,6 +586,11 @@ fn init_after_boot_inner() -> DriverResult<()> {
             e.subsystem, e.name, e.compatible
         );
     }
+    #[cfg(feature = "input")]
+    for e in input::supported_devices() {
+        log::info!("[driver] supported-device catalog: subsystem={} name={} compatible={}",
+                   e.subsystem, e.name, e.compatible);
+    }
 
     let count = scan_device_info()?;
     log::trace!("[driver] dtb scan done, devices={}", count);
@@ -570,6 +601,8 @@ fn init_after_boot_inner() -> DriverResult<()> {
     let registered_chr = character_device_count();
     #[cfg(feature = "display")]
     let registered_display = display_device_count();
+    #[cfg(feature = "input")]
+    let registered_input = input_device_count();
     log::info!(
         "[driver] devices registered: block={} network={} character={}",
         registered_blk,
@@ -578,6 +611,8 @@ fn init_after_boot_inner() -> DriverResult<()> {
     );
     #[cfg(feature = "display")]
     log::info!("[driver] display devices registered: count={}", registered_display);
+    #[cfg(feature = "input")]
+    log::info!("[driver] input devices registered: count={}", registered_input);
     if registered_blk == 0 {
         log::warn!(
             "[driver] no block device registered; root fs may use NotMounted unless a virtio-blk is present. \

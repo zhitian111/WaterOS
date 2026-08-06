@@ -121,5 +121,12 @@
         "FORMAT_STATE": { "icon": "table", "type": "line", "background": "#1d4ed8" },
         "BASE_INVARIANT": { "icon": "law", "type": "line", "background": "#475569" },
         "ONCE_PUBLISH": { "icon": "broadcast", "type": "line", "background": "#0e7490" }
-    }
+    },
+    "rust-analyzer.cargo.noDefaultFeatures": true,
+    "rust-analyzer.cargo.features": [
+        "qemu-riscv64-opensbi",
+        "pre",
+        "heap-tlsf",
+        "display-demo"
+    ]
 }

@@ -89,8 +89,11 @@ class QemuRunTests(unittest.TestCase):
                 )
             )
 
-    def test_graphics_replaces_nographic_and_adds_gpu(self) -> None:
-        for arch, gpu in (("rv", "virtio-gpu-device"), ("la", "virtio-gpu-pci")):
+    def test_graphics_replaces_nographic_and_adds_gui_devices(self) -> None:
+        for arch, gpu, keyboard, tablet in (
+            ("rv", "virtio-gpu-device", "virtio-keyboard-device", "virtio-tablet-device"),
+            ("la", "virtio-gpu-pci", "virtio-keyboard-pci", "virtio-tablet-pci"),
+        ):
             with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
                 class Result:
                     stdout = "Available display backend types:\nnone\nsdl\n"
@@ -111,6 +114,8 @@ class QemuRunTests(unittest.TestCase):
                     self.assertIn("sdl", launch.argv)
                     self.assertIn("-serial", launch.argv)
                     self.assertIn(gpu, launch.argv)
+                    self.assertIn(keyboard, launch.argv)
+                    self.assertIn(tablet, launch.argv)
                     launch.cleanup()
 
     def test_graphics_auto_selects_supported_backend(self) -> None:

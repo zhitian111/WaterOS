@@ -1,0 +1,13 @@
+[package]
+name = "wateros-gui-impl-software"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+api-v0 = { path = "../../gui-api/api-v0", package = "wateros-gui-api-v0" }
+display = { path = "../../../wateros-driver/driver-display", package = "wateros-driver-display", default-features = false, features = [ "api-v0" ] }
+input = { path = "../../../wateros-driver/driver-input", package = "wateros-driver-input", default-features = false, features = [ "api-v0" ] }
+spin = "0.10.0"
+
+[features]
+default = []

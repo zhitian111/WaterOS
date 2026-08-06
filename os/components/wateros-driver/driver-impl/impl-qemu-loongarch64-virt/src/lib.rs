@@ -25,6 +25,10 @@ use network::{network_device_count, register_network_device, NetworkDevice, Virt
 use display::{
     display_device_count, register_display_device, DisplayDevice, VirtioGpuPciProbeInfo,
 };
+#[cfg(feature = "input")]
+use input::{
+    input_device_count, register_input_device, InputDevice, VirtioInputPciProbeInfo,
+};
 use spin::Mutex;
 
 mod pci;
@@ -38,6 +42,8 @@ static VIRTIO_BLK_PCI: Mutex<Vec<VirtioPciProbeInfo>> = Mutex::new(Vec::new());
 static VIRTIO_NET_PCI: Mutex<Vec<VirtioNetPciProbeInfo>> = Mutex::new(Vec::new());
 #[cfg(feature = "display")]
 static VIRTIO_GPU_PCI: Mutex<Vec<VirtioGpuPciProbeInfo>> = Mutex::new(Vec::new());
+#[cfg(feature = "input")]
+static VIRTIO_INPUT_PCI: Mutex<Vec<VirtioInputPciProbeInfo>> = Mutex::new(Vec::new());
 static INIT_AFTER_BOOT_DONE: AtomicBool = AtomicBool::new(false);
 
 /// 与上层 `wateros-driver` 聚合入口的引导约定一致：保存 DTB 并初始化早期 UART。
@@ -137,6 +143,13 @@ fn init_after_boot_inner() -> DriverResult<()> {
             e.subsystem, e.name, e.compatible
         );
     }
+    #[cfg(feature = "input")]
+    for e in input::supported_devices() {
+        log::info!(
+            "[driver-la] supported-device catalog: subsystem={} name={} compatible={}",
+            e.subsystem, e.name, e.compatible
+        );
+    }
 
     let mut blk = VIRTIO_BLK_PCI.lock();
     blk.clear();
@@ -144,6 +157,8 @@ fn init_after_boot_inner() -> DriverResult<()> {
     VIRTIO_NET_PCI.lock().clear();
     #[cfg(feature = "display")]
     VIRTIO_GPU_PCI.lock().clear();
+    #[cfg(feature = "input")]
+    VIRTIO_INPUT_PCI.lock().clear();
 
     // 尝试 PCIe ECAM 枚举 virtio-blk 设备。
     let config_base = pci::find_config_base(DTB_BASE_ADDR.load(Ordering::Acquire));
@@ -249,6 +264,25 @@ fn init_after_boot_inner() -> DriverResult<()> {
         }
     }
 
+    #[cfg(feature = "input")]
+    match pci::probe_virtio_input_pci(config_base) {
+        Ok(devices) => {
+            for (device, info) in devices {
+                let device_info = device.info().clone();
+                let device: Box<dyn InputDevice> = Box::new(device);
+                let idx = register_input_device(Arc::new(Mutex::new(device)));
+                VIRTIO_INPUT_PCI.lock().push(info);
+                log::info!(
+                    "[driver-la] registered virtio-input #{} via PCI {}:{}.{} name={} kind={:?}",
+                    idx, info.bus, info.device, info.function, device_info.name, device_info.kind
+                );
+            }
+        }
+        Err(err) => {
+            log::warn!("[driver-la] failed to init virtio-input via PCI: {:?}", err);
+        }
+    }
+
     register_builtin_character_devices();
     register_uart_character_device();
 
@@ -257,6 +291,8 @@ fn init_after_boot_inner() -> DriverResult<()> {
     let registered_chr = character_device_count();
     #[cfg(feature = "display")]
     let registered_display = display_device_count();
+    #[cfg(feature = "input")]
+    let registered_input = input_device_count();
     log::info!(
         "[driver-la] devices registered: block={} network={} character={}",
         registered,
@@ -265,6 +301,8 @@ fn init_after_boot_inner() -> DriverResult<()> {
     );
     #[cfg(feature = "display")]
     log::info!("[driver-la] display devices registered: count={}", registered_display);
+    #[cfg(feature = "input")]
+    log::info!("[driver-la] input devices registered: count={}", registered_input);
     if registered == 0 {
         log::warn!(
             "[driver-la] no block device registered; root fs may use NotMounted \

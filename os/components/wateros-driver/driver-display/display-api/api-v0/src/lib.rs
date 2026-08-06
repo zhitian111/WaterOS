@@ -36,6 +36,15 @@ pub struct FramebufferInfo {
     pub base : usize,
 }
 
+/// framebuffer 中需要提交的矩形区域。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FramebufferRegion {
+    pub x : u32,
+    pub y : u32,
+    pub width : u32,
+    pub height : u32,
+}
+
 /// 可在多任务间共享的显示设备。锁同时保护驱动状态和可写 framebuffer。
 pub type SharedDisplayDevice = Arc<Mutex<Box<dyn DisplayDevice>>>;
 
@@ -51,6 +60,10 @@ pub trait DisplayDevice: Send {
 
     /// 将软件写入的 framebuffer 提交到显示设备。
     fn flush(&mut self) -> DriverResult<()>;
+
+    /// 提交一个矩形区域。首版 VirtIO GPU 仍会退化为全屏刷新；提供此接口是为了让
+    /// GUI 的脏矩形策略不依赖具体设备，后续驱动可直接覆盖为区域传输。
+    fn flush_region(&mut self, _region : FramebufferRegion) -> DriverResult<()> { self.flush() }
 }
 
 /// 注册一个显示设备并返回稳定索引。

@@ -10,7 +10,7 @@
 
 | 子 crate | 职责 | 状态 |
 |----------|------|------|
-| `wateros-driver`（聚合） | 导出 `api`/`block`/`character`/`network`；`init_when_boot`/`init_after_boot`/`test`；`active_impl` | 已实现 |
+| `wateros-driver`（聚合） | 导出 block/character/network/display/input；引导入口与 `active_impl` | 已实现 |
 | `wateros-driver-api-v0` | `DeviceInfo`、`DeviceType`、`MmioRegion`、`DriverError` 等跨子系统模型 | 已实现 |
 | `wateros-driver-block` | `BlockDevice` trait、全局注册表、DTB 绑定声明 | 已实现 |
 | `wateros-driver-block-api-v0` | 块 API 契约与样例自检 | 已实现 |
@@ -20,6 +20,8 @@
 | `block-impl-dummy` | 占位 | 已实现（占位） |
 | `wateros-driver-character` | 字符设备注册表、UART 兼容声明、RTC/null stub | 已实现 |
 | `wateros-driver-network` | 网卡注册表、smoltcp 协议栈、`socket_handles` | 已实现 |
+| `wateros-driver-display` | framebuffer API、显示注册表、VirtIO GPU MMIO/PCI | 已实现（可选） |
+| `wateros-driver-input` | 原始事件 API、输入注册表、VirtIO input MMIO/PCI | 已实现（可选） |
 | `network-impl-virtio-mmio` / `impl-virtio-pci` | VirtIO 网卡 | 已实现 |
 | `network-impl-smoltcp` | `SmoltcpAdapter` + `stack` 模块 | 已实现 |
 | `impl-qemu-riscv64-opensbi` | DTB 扫描、virtio-mmio blk/net、UART、devfs 同步 | 已实现 |
@@ -35,6 +37,8 @@
 | `impl-qemu-riscv64-opensbi` | `block/impl-virtio-mmio` + `network/impl-virtio-mmio` |
 | `impl-qemu-loongarch64-virt` | `block/impl-virtio-pci` + `network/impl-virtio-pci` |
 | `impl-block-cache` | 注册 virtio-blk 时用 `CachingBlockDevice` 包装 |
+| `display` | 向平台 impl 传递 VirtIO GPU 后端 |
+| `input` | 向平台 impl 传递 VirtIO keyboard/tablet 后端 |
 | `impl-dummy` | 平台占位（空） |
 
 根 `wateros` 默认 `qemu-riscv64-opensbi` 同时打开 `driver/impl-qemu-riscv64-opensbi` 与 `driver/impl-block-cache`。
@@ -60,6 +64,13 @@
 - **smoltcp**：`driver::network::stack::init` 配置 IP/路由；`poll`/`poll_at_millis` 驱动；socket 工厂与 `setsockopt` 子集（iperf/netperf 依赖）。
 - **loopback**：无网卡时 `SmoltcpAdapter::loopback_only`；UDP/TCP 127.0.0.1 软件队列。
 - **VFS 桥**：`socket_handles` 实现 `VfsIoHandle`（`impl-smoltcp` feature）。
+
+### 显示与输入
+
+- **VirtIO GPU**：RV 走 MMIO、LA 走 PCI，向上提供 BGRA8888 framebuffer 与刷新接口。
+- **区域刷新契约**：`flush_region` 默认安全退化到全屏 `flush`。
+- **VirtIO input**：键盘和平板注册为独立设备，输出非阻塞 evdev 三元组。
+- `wateros-gui` 消费两个子系统；默认比赛 feature 不启用它们。
 
 ### 平台 bring-up
 

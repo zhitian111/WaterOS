@@ -24,6 +24,10 @@
         "api-v0",
         "impl-virtio-mmio",
     ] }
+    input = { path = "../../driver-input", package = "wateros-driver-input", default-features = false, optional = true, features = [
+        "api-v0",
+        "impl-virtio-mmio",
+    ] }
     fs = { path = "../../../wateros-fs", package = "wateros-fs", default-features = true }
     wateros-base-config = { path = "../../../wateros-base/base-config", package = "wateros-base-config" }
     platform = { path = "../../../wateros-platform", package = "wateros-platform", default-features = false, features = [ "impl-qemu-riscv64-opensbi" ] }
@@ -33,3 +37,4 @@
     block-cache = [ "block/impl-block-cache" ]
     default = [ "api-v0" ]
     display = [ "dep:display" ]
+    input = [ "dep:input" ]

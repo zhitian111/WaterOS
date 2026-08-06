@@ -25,6 +25,10 @@
         "api-v0",
         "impl-virtio-pci",
     ] }
+    input = { path = "../../driver-input", package = "wateros-driver-input", default-features = false, optional = true, features = [
+        "api-v0",
+        "impl-virtio-pci",
+    ] }
     fs = { path = "../../../wateros-fs", package = "wateros-fs", default-features = true }
     wateros-base-config = { path = "../../../wateros-base/base-config", package = "wateros-base-config" }
 
@@ -33,3 +37,4 @@
     block-cache = [ "block/impl-block-cache" ]
     default = [ "api-v0" ]
     display = [ "dep:display" ]
+    input = [ "dep:input" ]

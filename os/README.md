@@ -89,31 +89,31 @@ make run ARCH=rv PROFILE=final \
 `SCRIPT` 必须是 guest 中的绝对路径，且只能和 `MODE=run` 一起使用。
 脚本成功、失败或装载失败后，supervisor 都会进入救援 shell。
 
-## 4. 可选图形欢迎页
+## 4. 可选图形桌面
 
-图形显示默认关闭，不影响比赛构建。下面的命令会同时编译 `display-demo`
-feature、给 QEMU 挂载 VirtIO GPU，并打开 GTK 窗口：
+图形显示默认关闭，不影响比赛构建。下面的命令会编译 `wateros-gui`，给 QEMU
+挂载 VirtIO GPU、键盘和平板，并打开图形窗口：
 
 ```bash
-make run ARCH=rv PROFILE=pre EXTRA_FEATURES=display-demo
-make run ARCH=la PROFILE=pre EXTRA_FEATURES=display-demo
+make run ARCH=rv PROFILE=pre EXTRA_FEATURES=gui
+make run ARCH=la PROFILE=pre EXTRA_FEATURES=gui
 ```
 
-图形窗口显示 WaterOS 欢迎页，原终端仍承载 UART 日志和交互 shell。当前版本只验证
-GPU、DMA framebuffer、软件绘制和 `flush()` 通路，还没有图形终端、鼠标或窗口管理器。
-显示驱动结构见
-[`driver-display/README.md`](./components/wateros-driver/driver-display/README.md)。
+图形窗口显示 WaterOS 内核桌面；可以拖动窗口、点击按钮、编辑文本框并用 Tab 切换
+焦点。原终端仍承载 UART 日志和交互 shell，图形桌面不是 shell 的替代品。模块结构和
+扩展方式见 [`wateros-gui/README.md`](./components/wateros-gui/README.md)。
 
 无桌面环境时，可以保留 GPU 设备但隐藏窗口，用于启动回归：
 
 ```bash
 make run ARCH=rv PROFILE=pre \
-  EXTRA_FEATURES=display-demo \
+  EXTRA_FEATURES=gui \
   GRAPHICS_BACKEND=none
 ```
 
-如果只设置 `GRAPHICS=1` 而不编译 `display-demo`，QEMU 虽然会挂 GPU，内核不会绑定
-它；反之，`display-demo` 会默认令 `GRAPHICS=1`，仍可显式用 `GRAPHICS=0` 覆盖。
+`display-demo` 是 `gui` 的兼容别名。如果只设置 `GRAPHICS=1` 而不编译 `gui`，QEMU
+虽然会挂图形设备，内核不会绑定；启用 `gui` 会默认令 `GRAPHICS=1`，仍可显式用
+`GRAPHICS=0` 覆盖。
 
 ## 5. 磁盘 snapshot
 
@@ -236,7 +236,7 @@ make gdb                      # 交互式调试
 | `LA_FINAL_IMAGE` | `./sdcard-la.img` | LoongArch final 默认镜像 |
 | `SDCARD` | 由上述四项选择 | 覆盖本次运行的镜像路径 |
 | `EXTRA_FEATURES` | 空 | 逗号分隔的额外根 crate feature |
-| `GRAPHICS` | `EXTRA_FEATURES` 含 `display-demo` 时为 `1`，否则 `0` | 是否挂载 QEMU VirtIO GPU 并启用图形输出 |
+| `GRAPHICS` | `EXTRA_FEATURES` 含 `gui`/`display-demo` 时为 `1`，否则 `0` | 是否挂载 QEMU VirtIO GPU、键盘、平板并启用图形输出 |
 | `GRAPHICS_BACKEND` | `auto` | QEMU display backend，`auto` 会按宿主/QEMU 支持自动选择，也可显式指定 `gtk`、`sdl`、`cocoa` 或 `none` |
 
 镜像名称只在 Makefile 的四个 `*_IMAGE` 变量中定义，QEMU 启动脚本不会
@@ -260,5 +260,5 @@ make run ARCH=rv PROFILE=pre RV_PRE_IMAGE=/data/wateros-pre.img
 - shell 无输入：使用 `make shell`，不要设置 `TTY=closed`。
 - 提示符被日志覆盖：使用 `LOG=warn` 或 `LOG=error`。
 - 退出 QEMU：按 `Ctrl-A` 后按 `x`。Guest 内的 Ctrl-C 仍用于中断前台进程。
-- 图形窗口未出现：确认使用了 `EXTRA_FEATURES=display-demo`，并检查宿主是否安装了
+- 图形窗口未出现：确认使用了 `EXTRA_FEATURES=gui`，并检查宿主是否安装了
   对应的 QEMU 显示后端；服务器环境可先用 `GRAPHICS_BACKEND=none` 验证驱动。
