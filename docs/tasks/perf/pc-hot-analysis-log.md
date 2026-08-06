@@ -306,3 +306,9 @@ raw_log: /tmp/k39-full-pcore-rv-20260807.log
 | K-41 预取 16 页 | 1321.26 |
 
 分析：增大预取反而更慢，已回退到 8 页。
+
+## 2026-08-07 K-42 `-cpu max` 短采样
+
+P-core 60s 短采样使用 `-cpu max`，OpenSBI 报 Base ISA 含 `v`，但 39s 时只到
+`BUILDSTORM_TOOLCHAIN ok`；默认 CPU 同窗口已到 `BUILDSTORM_MINIBUILD ok`。
+V 扩展模拟开销未带来收益，不加入 Final 启动参数。
