@@ -21,6 +21,10 @@ use character::{
 };
 use fs::devfs::active_impl as devfs_impl;
 use network::{network_device_count, register_network_device, NetworkDevice, VirtioNetPciProbeInfo};
+#[cfg(feature = "display")]
+use display::{
+    display_device_count, register_display_device, DisplayDevice, VirtioGpuPciProbeInfo,
+};
 use spin::Mutex;
 
 mod pci;
@@ -32,6 +36,8 @@ static DTB_BASE_ADDR: AtomicUsize = AtomicUsize::new(0);
 static VIRTIO_BLK_PCI: Mutex<Vec<VirtioPciProbeInfo>> = Mutex::new(Vec::new());
 /// 成功注册为 virtio-net 的 PCI 设备列表。
 static VIRTIO_NET_PCI: Mutex<Vec<VirtioNetPciProbeInfo>> = Mutex::new(Vec::new());
+#[cfg(feature = "display")]
+static VIRTIO_GPU_PCI: Mutex<Vec<VirtioGpuPciProbeInfo>> = Mutex::new(Vec::new());
 static INIT_AFTER_BOOT_DONE: AtomicBool = AtomicBool::new(false);
 
 /// 与上层 `wateros-driver` 聚合入口的引导约定一致：保存 DTB 并初始化早期 UART。
@@ -124,11 +130,20 @@ fn init_after_boot_inner() -> DriverResult<()> {
             e.compatible
         );
     }
+    #[cfg(feature = "display")]
+    for e in display::supported_devices() {
+        log::info!(
+            "[driver-la] supported-device catalog: subsystem={} name={} compatible={}",
+            e.subsystem, e.name, e.compatible
+        );
+    }
 
     let mut blk = VIRTIO_BLK_PCI.lock();
     blk.clear();
     drop(blk);
     VIRTIO_NET_PCI.lock().clear();
+    #[cfg(feature = "display")]
+    VIRTIO_GPU_PCI.lock().clear();
 
     // 尝试 PCIe ECAM 枚举 virtio-blk 设备。
     let config_base = pci::find_config_base(DTB_BASE_ADDR.load(Ordering::Acquire));
@@ -208,18 +223,48 @@ fn init_after_boot_inner() -> DriverResult<()> {
         }
     }
 
+    #[cfg(feature = "display")]
+    match pci::probe_virtio_gpu_pci(config_base) {
+        Ok(Some((device, info))) => {
+            let framebuffer = device.info();
+            let device: Box<dyn DisplayDevice> = Box::new(device);
+            let idx = register_display_device(Arc::new(Mutex::new(device)));
+            VIRTIO_GPU_PCI.lock().push(info);
+            log::info!(
+                "[driver-la] registered virtio-gpu #{} via PCI {}:{}.{} resolution={}x{} stride={}",
+                idx,
+                info.bus,
+                info.device,
+                info.function,
+                framebuffer.width,
+                framebuffer.height,
+                framebuffer.stride
+            );
+        }
+        Ok(None) => {
+            log::warn!("[driver-la][pci] no virtio-gpu device found on PCI bus 0");
+        }
+        Err(err) => {
+            log::warn!("[driver-la] failed to init virtio-gpu via PCI: {:?}", err);
+        }
+    }
+
     register_builtin_character_devices();
     register_uart_character_device();
 
     let registered = block_device_count();
     let registered_net = network_device_count();
     let registered_chr = character_device_count();
+    #[cfg(feature = "display")]
+    let registered_display = display_device_count();
     log::info!(
         "[driver-la] devices registered: block={} network={} character={}",
         registered,
         registered_net,
         registered_chr
     );
+    #[cfg(feature = "display")]
+    log::info!("[driver-la] display devices registered: count={}", registered_display);
     if registered == 0 {
         log::warn!(
             "[driver-la] no block device registered; root fs may use NotMounted \

@@ -1,0 +1,15 @@
+[package]
+name = "wateros-driver-display-impl-virtio-pci"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+api-v0 = { path = "../../display-api/api-v0", package = "wateros-driver-display-api-v0" }
+driver-api = { path = "../../../driver-api/api-v0", package = "wateros-driver-api-v0" }
+frame-alloctor = { path = "../../../../wateros-mm/mm-frame-alloctor", package = "wateros-mm-frame-alloctor" }
+logging = { path = "../../../../wateros-runtime/runtime-logging", package = "wateros-runtime-logging" }
+mm-api = { path = "../../../../wateros-mm/mm-api/api-v0", package = "wateros-mm-api-v0" }
+virtio-drivers = "=0.12.0"
+
+[features]
+default = []

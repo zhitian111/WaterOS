@@ -14,11 +14,15 @@
 use api_v0::DriverResult;
 use block::{VirtioPciBarAllocator, VirtioPciBlkDevice, VirtioPciProbeInfo};
 use network::{VirtioNetPciBarAllocator, VirtioNetPciProbeInfo, VirtioPciNetDevice};
+#[cfg(feature = "display")]
+use display::{VirtioGpuPciBarAllocator, VirtioGpuPciDevice, VirtioGpuPciProbeInfo};
 
 /// QEMU LoongArch64 virt 的默认 PCIe ECAM 配置空间基址。
 const PCI_CONFIG_DEFAULT_BASE: usize = 0x2000_0000;
 const PCI_MMIO_BASE: u64 = 0x4000_0000;
 const PCI_NET_MMIO_BASE: u64 = 0x5000_0000;
+#[cfg(feature = "display")]
+const PCI_GPU_MMIO_BASE: u64 = 0x6000_0000;
 const PCI_MMIO_END: u64 = 0x8000_0000;
 
 /// 从 DTB 中解析 `pci@*` 节点的 `reg` 段，优先寻找 QEMU LoongArch 的配置窗口；
@@ -62,4 +66,13 @@ pub fn probe_virtio_net_pci(
 ) -> DriverResult<Option<(VirtioPciNetDevice, VirtioNetPciProbeInfo)>> {
     let mut allocator = VirtioNetPciBarAllocator::new(PCI_NET_MMIO_BASE, PCI_MMIO_END);
     unsafe { VirtioPciNetDevice::probe_first_from_ecam(config_base, &mut allocator) }
+}
+
+/// 扫描 PCI bus 0 上所有设备，定位并初始化 virtio-gpu。
+#[cfg(feature = "display")]
+pub fn probe_virtio_gpu_pci(
+    config_base: usize,
+) -> DriverResult<Option<(VirtioGpuPciDevice, VirtioGpuPciProbeInfo)>> {
+    let mut allocator = VirtioGpuPciBarAllocator::new(PCI_GPU_MMIO_BASE, PCI_MMIO_END);
+    unsafe { VirtioGpuPciDevice::probe_first_from_ecam(config_base, &mut allocator) }
 }

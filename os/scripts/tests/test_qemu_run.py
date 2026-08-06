@@ -88,6 +88,37 @@ class QemuRunTests(unittest.TestCase):
                 )
             )
 
+    def test_graphics_replaces_nographic_and_adds_gpu(self) -> None:
+        for arch, gpu in (("rv", "virtio-gpu-device"), ("la", "virtio-gpu-pci")):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                launch = build_qemu_launch(
+                    arch,
+                    "pre",
+                    {
+                        "WOS_SDCARD": "/images/root.img",
+                        "WOS_GRAPHICS": "1",
+                        "WOS_QEMU_DISPLAY": "sdl",
+                    },
+                    root=Path(directory),
+                )
+                self.assertNotIn("-nographic", launch.argv)
+                self.assertIn("-display", launch.argv)
+                self.assertIn("sdl", launch.argv)
+                self.assertIn("-serial", launch.argv)
+                self.assertIn(gpu, launch.argv)
+                launch.cleanup()
+
+    def test_graphics_defaults_to_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            launch = build_qemu_launch(
+                "rv",
+                "pre",
+                {"WOS_SDCARD": "/images/root.img"},
+                root=Path(directory),
+            )
+            self.assertIn("-nographic", launch.argv)
+            self.assertNotIn("virtio-gpu-device", launch.argv)
+
 
 if __name__ == "__main__":
     unittest.main()

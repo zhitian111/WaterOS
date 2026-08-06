@@ -129,24 +129,40 @@ def build_qemu_launch(
     if not sdcard.is_absolute():
         sdcard = root / sdcard
 
+    graphics_value = _value(env, "WOS_GRAPHICS", "0")
+    if graphics_value not in {"0", "1"}:
+        raise QemuConfigError("WOS_GRAPHICS 必须是 0 或 1")
+    graphics = graphics_value == "1"
+    display_backend = _value(env, "WOS_QEMU_DISPLAY", "gtk")
+    _validate_token("WOS_QEMU_DISPLAY", display_backend)
+    console_args = (
+        ["-display", display_backend, "-serial", "stdio", "-monitor", "none"]
+        if graphics
+        else ["-nographic"]
+    )
+
     if arch == "rv":
         argv = [
             "qemu-system-riscv64", "-machine", "virt", "-kernel", str(kernel),
-            "-m", memory, "-nographic", "-smp", smp, "-bios", "default",
+            "-m", memory, *console_args, "-smp", smp, "-bios", "default",
             "-drive", f"file={sdcard},if=none,format=raw,id=x0",
             "-device", "virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0",
             "-no-reboot", "-device", "virtio-net-device,netdev=net",
             "-netdev", "user,id=net", "-rtc", "base=utc",
         ]
+        if graphics:
+            argv.extend(["-device", "virtio-gpu-device"])
     else:
         argv = [
             "qemu-system-loongarch64", "-kernel", str(kernel), "-m", memory,
-            "-nographic", "-smp", smp,
+            *console_args, "-smp", smp,
             "-drive", f"file={sdcard},if=none,format=raw,id=x0",
             "-device", "virtio-blk-pci,drive=x0", "-no-reboot",
             "-device", "virtio-net-pci,netdev=net0", "-netdev", "user,id=net0",
             "-rtc", "base=utc",
         ]
+        if graphics:
+            argv.extend(["-device", "virtio-gpu-pci"])
 
     argv.extend(["-append", bootargs])
     temporary_files: list[Path] = []

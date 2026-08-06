@@ -12,6 +12,10 @@
         "./driver-character/character-impl/impl-dummy/",
         "./driver-character/character-impl/impl-null-stub/",
         "./driver-character/character-impl/impl-rtc-stub/",
+        "./driver-display/",
+        "./driver-display/display-api/api-v0/",
+        "./driver-display/display-impl/impl-virtio-mmio/",
+        "./driver-display/display-impl/impl-virtio-pci/",
         "./driver-impl/impl-dummy/",
         "./driver-impl/impl-qemu-loongarch64-virt/",
         "./driver-impl/impl-qemu-riscv64-opensbi/",
@@ -36,6 +40,7 @@
         "impl-null-stub",
         "impl-rtc-stub",
     ] }
+    display = { path = "./driver-display/", package = "wateros-driver-display", default-features = true }
     network = { path = "./driver-network/", package = "wateros-driver-network", default-features = true }
     wateros-base-config = { path = "../wateros-base/base-config", package = "wateros-base-config" }
     log = { version = "0.4.29" }
@@ -44,12 +49,17 @@
     api-v0 = [
         "block/api-v0",
         "character/api-v0",
+        "display/api-v0",
         "impl-dummy/api-v0",
         "impl-qemu-loongarch64-virt?/api-v0",
         "impl-qemu-riscv64-opensbi?/api-v0",
         "network/api-v0",
     ]
     default = [ "api-v0" ]
+    display = [
+        "impl-qemu-loongarch64-virt?/display",
+        "impl-qemu-riscv64-opensbi?/display",
+    ]
     impl-block-cache = [
         "block/impl-block-cache",
         "impl-qemu-loongarch64-virt?/block-cache",

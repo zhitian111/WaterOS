@@ -89,7 +89,33 @@ make run ARCH=rv PROFILE=final \
 `SCRIPT` 必须是 guest 中的绝对路径，且只能和 `MODE=run` 一起使用。
 脚本成功、失败或装载失败后，supervisor 都会进入救援 shell。
 
-## 4. 磁盘 snapshot
+## 4. 可选图形欢迎页
+
+图形显示默认关闭，不影响比赛构建。下面的命令会同时编译 `display-demo`
+feature、给 QEMU 挂载 VirtIO GPU，并打开 GTK 窗口：
+
+```bash
+make run ARCH=rv PROFILE=pre EXTRA_FEATURES=display-demo
+make run ARCH=la PROFILE=pre EXTRA_FEATURES=display-demo
+```
+
+图形窗口显示 WaterOS 欢迎页，原终端仍承载 UART 日志和交互 shell。当前版本只验证
+GPU、DMA framebuffer、软件绘制和 `flush()` 通路，还没有图形终端、鼠标或窗口管理器。
+显示驱动结构见
+[`driver-display/README.md`](./components/wateros-driver/driver-display/README.md)。
+
+无桌面环境时，可以保留 GPU 设备但隐藏窗口，用于启动回归：
+
+```bash
+make run ARCH=rv PROFILE=pre \
+  EXTRA_FEATURES=display-demo \
+  GRAPHICS_BACKEND=none
+```
+
+如果只设置 `GRAPHICS=1` 而不编译 `display-demo`，QEMU 虽然会挂 GPU，内核不会绑定
+它；反之，`display-demo` 会默认令 `GRAPHICS=1`，仍可显式用 `GRAPHICS=0` 覆盖。
+
+## 5. 磁盘 snapshot
 
 统一入口默认 `SNAPSHOT=1`。QEMU 会把 guest 的磁盘写入保存在内存/
 临时层，退出时丢弃；它不是先复制整个 `.img`，也不会改动基础
@@ -105,7 +131,7 @@ make shell ARCH=rv PROFILE=pre WRITE_DISK=1
 `SNAPSHOT=1` 强制不写盘。自动评测、回归和 GDB 调试不应写回基础
 镜像。
 
-## 5. GDB 自动挡
+## 6. GDB 自动挡
 
 ```bash
 make doctor
@@ -123,7 +149,7 @@ make debug ARCH=rv PROFILE=pre SMP=8
 自动挡终端显示 watch 摘要，完整串口保存在
 `debug-reports/active/*.log`。
 
-## 6. GDB 手动挡（两个终端）
+## 7. GDB 手动挡（两个终端）
 
 终端一：
 
@@ -164,7 +190,7 @@ make debug-server ARCH=rv PROFILE=pre START_PAUSED=0
 make gdb
 ```
 
-## 7. 附加已运行的调试会话
+## 8. 附加已运行的调试会话
 
 `debug-server` 会把 QEMU PID、架构、profile、ELF、build ID、端口和
 串口日志记录到 `debug-reports/active/session.json`。因此第二个终端
@@ -183,7 +209,7 @@ make gdb                      # 交互式调试
 完整 GDB 命令、报告结构、确定性故障注入和底层原理见
 [`GDB_STALL_DEBUG.md`](../docs/debugging/GDB_STALL_DEBUG.md)。
 
-## 8. 常用变量
+## 9. 常用变量
 
 下表记录 Makefile 中的静态默认值。需要确认某次命令实际会使用什么，请执行
 `make show-config` 并传入与运行命令相同的变量。
@@ -210,6 +236,8 @@ make gdb                      # 交互式调试
 | `LA_FINAL_IMAGE` | `./sdcard-la.img` | LoongArch final 默认镜像 |
 | `SDCARD` | 由上述四项选择 | 覆盖本次运行的镜像路径 |
 | `EXTRA_FEATURES` | 空 | 逗号分隔的额外根 crate feature |
+| `GRAPHICS` | `EXTRA_FEATURES` 含 `display-demo` 时为 `1`，否则 `0` | 是否挂载 QEMU VirtIO GPU 并启用图形输出 |
+| `GRAPHICS_BACKEND` | `gtk` | QEMU display backend，例如 `gtk`、`sdl` 或 `none` |
 
 镜像名称只在 Makefile 的四个 `*_IMAGE` 变量中定义，QEMU 启动脚本不会
 根据 profile 猜测镜像，也不会让 final 静默回退到 pre 镜像。可以永久修改
@@ -223,7 +251,7 @@ make run ARCH=rv PROFILE=final SDCARD=/data/wateros-final.img
 make run ARCH=rv PROFILE=pre RV_PRE_IMAGE=/data/wateros-pre.img
 ```
 
-## 9. 常见问题
+## 10. 常见问题
 
 - `debug-server` 没有串口输出：默认停在复位入口，在第二个终端
   `make gdb` 后执行 `continue`。
@@ -232,3 +260,5 @@ make run ARCH=rv PROFILE=pre RV_PRE_IMAGE=/data/wateros-pre.img
 - shell 无输入：使用 `make shell`，不要设置 `TTY=closed`。
 - 提示符被日志覆盖：使用 `LOG=warn` 或 `LOG=error`。
 - 退出 QEMU：按 `Ctrl-A` 后按 `x`。Guest 内的 Ctrl-C 仍用于中断前台进程。
+- 图形窗口未出现：确认使用了 `EXTRA_FEATURES=display-demo`，并检查宿主是否安装了
+  对应的 QEMU GTK/SDL 显示后端；服务器环境可先用 `GRAPHICS_BACKEND=none` 验证驱动。

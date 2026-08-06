@@ -55,6 +55,8 @@
     stall-debug = [ "dep:ipc", "ipc/futex" ]
     # 整个顶部 dashboard（CPU、内存、文件描述符与 syscall 摘要）；默认关闭。
     dashboard-debug = [ "stall-debug", "dep:vfs" ]
+    # 可选的 VirtIO GPU 启动画面；默认比赛构建不探测显示设备。
+    display-demo = [ "driver/display" ]
     # 版本化内存诊断区和无锁事件环；普通构建中 debug 记录接口为空操作。
     gdb-debug = [ "debug/enabled", "stall-debug" ]
     # 只供 GDB 诊断集成测试使用；通过导出变量确定性注入 loop/ABBA/timer/stall。

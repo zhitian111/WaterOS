@@ -78,6 +78,9 @@ PORT ?= 1234
 START_PAUSED ?= 1
 FAULTS ?= 0
 EXTRA_FEATURES ?=
+# EXTRA_FEATURES 含 display-demo 时默认打开 QEMU 图形窗口，也可显式覆盖。
+GRAPHICS ?= $(if $(findstring display-demo,$(EXTRA_FEATURES)),1,0)
+GRAPHICS_BACKEND ?= gtk
 GDB_BUILD ?= 0
 GDB_FAULTS ?= $(FAULTS)
 GDB_SUFFIX := $(if $(filter 1,$(GDB_BUILD)),-gdb,)
@@ -155,6 +158,7 @@ help:
 	@echo "  make check ARCH=la PROFILE=final     检查内核"
 	@echo "  make run ARCH=rv PROFILE=final       执行内核 BRINGUP_COMMANDS"
 	@echo "  make shell ARCH=rv PROFILE=pre       进入交互 shell"
+	@echo "  make run EXTRA_FEATURES=display-demo 启动 VirtIO GPU 欢迎页"
 	@echo "  make run MODE=run SCRIPT=/root/x.sh  运行 guest 绝对路径脚本"
 	@echo "  make debug ARCH=rv PROFILE=pre       自动启动并 watch"
 	@echo "  make debug-server ARCH=rv PROFILE=pre  手动挡：终端一启动 QEMU"
@@ -164,6 +168,7 @@ help:
 	@echo "  make show-config                     显示当前最终生效配置"
 	@echo ""
 	@echo "常用变量：SMP MODE SCRIPT GUEST_SHELL TTY LOG ON_EXIT SNAPSHOT WRITE_DISK SDCARD"
+	@echo "图形变量：EXTRA_FEATURES=display-demo GRAPHICS=1 GRAPHICS_BACKEND=gtk|sdl"
 	@echo "镜像默认值：RV_PRE_IMAGE RV_FINAL_IMAGE LA_PRE_IMAGE LA_FINAL_IMAGE"
 	@echo "Make 不维护测试目录；auto 模式的测试由内核 bringup 选择。"
 
@@ -186,6 +191,8 @@ show-config:
 	@printf "  %-18s %s\n" "START_PAUSED" "$(START_PAUSED)"
 	@printf "  %-18s %s\n" "FAULTS" "$(FAULTS)"
 	@printf "  %-18s %s\n" "EXTRA_FEATURES" "$(if $(strip $(EXTRA_FEATURES)),$(EXTRA_FEATURES),(空))"
+	@printf "  %-18s %s\n" "GRAPHICS" "$(GRAPHICS)"
+	@printf "  %-18s %s\n" "GRAPHICS_BACKEND" "$(GRAPHICS_BACKEND)"
 
 validate-config:
 	@case "$(ARCH)" in rv|la) ;; *) echo "错误: ARCH 必须是 rv 或 la" >&2; exit 2 ;; esac
@@ -197,6 +204,7 @@ validate-config:
 	@test -n "$(SDCARD)" || { echo "错误: 未配置根文件系统镜像；请设置对应的 *_IMAGE 或 SDCARD" >&2; exit 2; }
 	@case "$(FAULTS)" in 0|1) ;; *) echo "错误: FAULTS 必须是 0 或 1" >&2; exit 2 ;; esac
 	@case "$(START_PAUSED)" in 0|1) ;; *) echo "错误: START_PAUSED 必须是 0 或 1" >&2; exit 2 ;; esac
+	@case "$(GRAPHICS)" in 0|1) ;; *) echo "错误: GRAPHICS 必须是 0 或 1" >&2; exit 2 ;; esac
 	@if [[ "$(MODE)" == run ]]; then \
 		test -n "$(SCRIPT)" || { echo "错误: MODE=run 时必须提供 SCRIPT" >&2; exit 2; }; \
 		[[ "$(SCRIPT)" == /* ]] || { echo "错误: SCRIPT 必须是 guest 绝对路径" >&2; exit 2; }; \
@@ -217,6 +225,7 @@ run: validate-config build
 	@WOS_KERNEL="$(SELECTED_KERNEL)" WOS_SMP="$(SMP)" WOS_MODE="$(MODE)" \
 	 WOS_SCRIPT="$(SCRIPT)" WOS_SHELL="$(GUEST_SHELL)" WOS_ON_EXIT="$(ON_EXIT)" \
 	 WOS_TTY="$(TTY)" WOS_LOG="$(LOG)" WOS_QEMU_SNAPSHOT="$(SNAPSHOT)" \
+	 WOS_GRAPHICS="$(GRAPHICS)" WOS_QEMU_DISPLAY="$(GRAPHICS_BACKEND)" \
 	 WOS_WRITE_DISK="$(WRITE_DISK)" WOS_SDCARD="$(SDCARD)" \
 	 python3 ./scripts/qemu_run.py --arch "$(ARCH)" --profile "$(PROFILE)"
 
@@ -230,6 +239,7 @@ debug: validate-config
 	@WOS_MODE="$(MODE)" WOS_SCRIPT="$(SCRIPT)" WOS_SHELL="$(GUEST_SHELL)" \
 	 WOS_ON_EXIT="$(ON_EXIT)" WOS_TTY="$(TTY)" WOS_LOG="$(LOG)" WOS_SDCARD="$(SDCARD)" \
 	 WOS_QEMU_SNAPSHOT="$(SNAPSHOT)" WOS_EXTRA_FEATURES="$(EXTRA_FEATURES)" \
+	 WOS_GRAPHICS="$(GRAPHICS)" WOS_QEMU_DISPLAY="$(GRAPHICS_BACKEND)" \
 	 python3 ./scripts/wateros_debug.py run "$(DEBUG_PROFILE)" --smp "$(SMP)" \
 		--port "$(PORT)" $(if $(filter 1,$(WRITE_DISK)),--write-disk,) \
 		$(if $(filter 1,$(FAULTS)),--faults,)
@@ -238,6 +248,7 @@ debug-server: validate-config
 	@WOS_MODE="$(MODE)" WOS_SCRIPT="$(SCRIPT)" WOS_SHELL="$(GUEST_SHELL)" \
 	 WOS_ON_EXIT="$(ON_EXIT)" WOS_TTY="$(TTY)" WOS_LOG="$(LOG)" WOS_SDCARD="$(SDCARD)" \
 	 WOS_QEMU_SNAPSHOT="$(SNAPSHOT)" WOS_EXTRA_FEATURES="$(EXTRA_FEATURES)" \
+	 WOS_GRAPHICS="$(GRAPHICS)" WOS_QEMU_DISPLAY="$(GRAPHICS_BACKEND)" \
 	 python3 ./scripts/wateros_debug.py server "$(DEBUG_PROFILE)" --smp "$(SMP)" \
 		--port "$(PORT)" $(if $(filter 0,$(START_PAUSED)),--no-start-paused,) \
 		$(if $(filter 1,$(WRITE_DISK)),--write-disk,) $(if $(filter 1,$(FAULTS)),--faults,)

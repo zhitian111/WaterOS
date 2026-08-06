@@ -17,6 +17,8 @@ pub enum DeviceType {
     Character,
     /// VirtIO 网络等（如 device id 1）。
     Network,
+    /// 图形显示设备（当前为 VirtIO GPU，device id 16）。
+    Display,
     /// 非 virtio、魔数不匹配或未识别的节点。
     Unknown,
 }

@@ -648,6 +648,7 @@ dependencies = [
  "wateros-driver-api-v0",
  "wateros-driver-block",
  "wateros-driver-character",
+ "wateros-driver-display",
  "wateros-driver-impl-dummy",
  "wateros-driver-impl-qemu-loongarch64-virt",
  "wateros-driver-impl-qemu-riscv64-opensbi",
@@ -770,6 +771,48 @@ dependencies = [
 ]
 
 [[package]]
+name = "wateros-driver-display"
+version = "0.1.0"
+dependencies = [
+ "wateros-driver-api-v0",
+ "wateros-driver-display-api-v0",
+ "wateros-driver-display-impl-virtio-mmio",
+ "wateros-driver-display-impl-virtio-pci",
+]
+
+[[package]]
+name = "wateros-driver-display-api-v0"
+version = "0.1.0"
+dependencies = [
+ "spin",
+ "wateros-driver-api-v0",
+]
+
+[[package]]
+name = "wateros-driver-display-impl-virtio-mmio"
+version = "0.1.0"
+dependencies = [
+ "virtio-drivers",
+ "wateros-driver-api-v0",
+ "wateros-driver-display-api-v0",
+ "wateros-mm-api-v0",
+ "wateros-mm-frame-alloctor",
+ "wateros-runtime-logging",
+]
+
+[[package]]
+name = "wateros-driver-display-impl-virtio-pci"
+version = "0.1.0"
+dependencies = [
+ "virtio-drivers",
+ "wateros-driver-api-v0",
+ "wateros-driver-display-api-v0",
+ "wateros-mm-api-v0",
+ "wateros-mm-frame-alloctor",
+ "wateros-runtime-logging",
+]
+
+[[package]]
 name = "wateros-driver-impl-dummy"
 version = "0.1.0"
 dependencies = [
@@ -788,6 +831,7 @@ dependencies = [
  "wateros-driver-block",
  "wateros-driver-character",
  "wateros-driver-character-api-v0",
+ "wateros-driver-display",
  "wateros-driver-network",
  "wateros-fs",
 ]
@@ -804,6 +848,7 @@ dependencies = [
  "wateros-driver-block",
  "wateros-driver-character",
  "wateros-driver-character-api-v0",
+ "wateros-driver-display",
  "wateros-driver-network",
  "wateros-fs",
  "wateros-platform",

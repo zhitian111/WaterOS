@@ -10,6 +10,8 @@ compile_error!("select one competition stage feature: `pre` or `final_online`");
 extern crate alloc;
 
 use klog as _;
+#[cfg(feature = "display-demo")]
+use runtime::logging::info;
 use runtime::logging::warn;
 #[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
 use syscall as _;
@@ -19,6 +21,8 @@ mod boot_timebase;
 mod dashboard;
 #[cfg(feature = "gdb-fault-injection")]
 mod debug_fault;
+#[cfg(feature = "display-demo")]
+mod gui;
 #[cfg(feature = "stall-debug")]
 mod stall_debug;
 mod trap_handler;
@@ -78,6 +82,11 @@ fn bringup_driver_and_user() {
     match driver::active_impl::init_after_boot() {
         Err(ref err) => warn!("driver init failed: {:?}", err),
         Ok(()) => {
+            #[cfg(feature = "display-demo")]
+            match crate::gui::draw_boot_screen() {
+                Ok(()) => info!("[gui] VirtIO GPU welcome screen ready"),
+                Err(error) => warn!("[gui] display demo skipped: {:?}", error),
+            }
             #[cfg(feature = "qemu-riscv64-opensbi")]
             match driver::active_impl::goldfish_rtc_realtime_ns() {
                 Ok(ns) => {
