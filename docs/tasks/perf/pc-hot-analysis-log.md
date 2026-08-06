@@ -243,3 +243,9 @@ raw_log: /tmp/pc-hot-k36-current-20260807.log
   仍强制 purge。
 - `purge_closed_file` 基本退出早期 Final 热点，总指令下降约 3.6%。
 - 决策：进入完整 Final 和 Pre smoke 验收。
+
+## 2026-08-07 QEMU `thread=multi` 短采样
+
+显式加入 `-accel tcg,thread=multi` 跑 60 秒 Final 早期，QEMU 进程约 `171%` CPU、
+12 个线程，未观察到比默认参数明显更高的宿主核利用率。该方向不改变内核，当前不作为
+独立优化提交。
