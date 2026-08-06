@@ -18,6 +18,7 @@ mod enabled {
         futex_wait_sleep : AtomicU64,
         futex_wait_eagain : AtomicU64,
         user_page_fault_handled : AtomicU64,
+        syscalls : AtomicU64,
     }
 
     impl CpuCounters {
@@ -30,7 +31,8 @@ mod enabled {
                    futex_wake_zero_waiters : AtomicU64::new(0),
                    futex_wait_sleep : AtomicU64::new(0),
                    futex_wait_eagain : AtomicU64::new(0),
-                   user_page_fault_handled : AtomicU64::new(0) }
+                   user_page_fault_handled : AtomicU64::new(0),
+                   syscalls : AtomicU64::new(0) }
         }
     }
 
@@ -49,6 +51,7 @@ mod enabled {
         futex_wait_sleep : u64,
         futex_wait_eagain : u64,
         user_page_fault_handled : u64,
+        syscalls : u64,
     }
 
     #[inline]
@@ -77,6 +80,8 @@ mod enabled {
                                                 .load(Ordering::Relaxed);
             result.user_page_fault_handled += counters.user_page_fault_handled
                                                       .load(Ordering::Relaxed);
+            result.syscalls += counters.syscalls
+                                       .load(Ordering::Relaxed);
         }
         result
     }
@@ -133,10 +138,29 @@ mod enabled {
                  .fetch_add(1, Ordering::Relaxed);
     }
 
+    #[inline]
+    pub(super) fn record_syscall() {
+        current().syscalls
+                 .fetch_add(1, Ordering::Relaxed);
+    }
+
     pub(super) fn log_summary() {
         let counters = snapshot();
-        log::info!("[bringup-stats] clone_thread={} exit={} reap_calls={} reap_tasks={} \
-                    futex_wake={} futex_wake_zero={} futex_sleep={} futex_eagain={} user_pf={}",
+        let mut context_switches = 0u64;
+        let mut idle_ticks = 0u64;
+        let mut timer_ticks = 0u64;
+        for (_, state) in task::cpu_states() {
+            context_switches = context_switches
+                                   .saturating_add(state.context_switches);
+            idle_ticks = idle_ticks
+                             .saturating_add(state.idle_ticks);
+            timer_ticks = timer_ticks
+                              .saturating_add(state.timer_ticks);
+        }
+        log::info!("[bringup-stats] syscalls={} clone_thread={} exit={} reap_calls={} \
+                    reap_tasks={} futex_wake={} futex_wake_zero={} futex_sleep={} \
+                    futex_eagain={} user_pf={} ctx={} idle_ticks={} timer_ticks={}",
+                   counters.syscalls,
                    counters.clone_thread,
                    counters.sys_exit,
                    counters.reap_member_calls,
@@ -145,7 +169,10 @@ mod enabled {
                    counters.futex_wake_zero_waiters,
                    counters.futex_wait_sleep,
                    counters.futex_wait_eagain,
-                   counters.user_page_fault_handled);
+                   counters.user_page_fault_handled,
+                   context_switches,
+                   idle_ticks,
+                   timer_ticks);
     }
 }
 
@@ -196,6 +223,12 @@ pub(crate) fn record_futex_wait_eagain() {
 pub fn record_user_page_fault_handled() {
     #[cfg(feature = "bringup-stats")]
     enabled::record_user_page_fault_handled();
+}
+
+#[inline]
+pub fn record_syscall() {
+    #[cfg(feature = "bringup-stats")]
+    enabled::record_syscall();
 }
 
 /// 输出当前累计计数（脚本切换等检查点可调用）。
