@@ -5,7 +5,7 @@ use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
 use network::stack;
-use network::{Ipv4Endpoint, SocketKind, SocketRef, SocketState};
+use network::{Ipv4Endpoint, SocketConnectError, SocketKind, SocketRef, SocketState};
 
 use crate::socket_block::socket_blocking_tick;
 use crate::socket_fd;
@@ -88,7 +88,11 @@ fn wait_connected(socket : &SocketRef) -> UserRet {
             return UserRet::from_success(0);
         }
         if snapshot.state == SocketState::Closed {
-            return UserRet::from_error(ErrNo::ECONNREFUSED);
+            let errno = match snapshot.connect_error {
+                Some(SocketConnectError::TimedOut) => ErrNo::ETIMEDOUT,
+                Some(SocketConnectError::ConnectionRefused) | None => ErrNo::ECONNREFUSED,
+            };
+            return UserRet::from_error(errno);
         }
         if let Err(errno) = socket_blocking_tick(false, task_id) {
             return UserRet::from_error(errno);

@@ -315,11 +315,12 @@ impl TaskRegistry {
                     .get(&task_id)
                     .is_some_and(|b| matches!(b.state(), TaskState::Exited(_)))
             }
-            TaskWaitTarget::ChildExit(parent_id) => {
-                self.find_exited_child(parent_id)
-                    .is_some() ||
-                !self.has_child(parent_id)
-            }
+            // waitpid/waitid 等待的是整个子进程，而不是其中某一个任务。
+            // 多线程子进程的 leader 先退出时，任务表已经可见 Exited，但进程表
+            // 仍可能是 Running；若在这里提前返回，父任务会在关中断的 syscall
+            // 中反复重试，剩余子线程永远无法获得 CPU。调用方的 wait_on_while
+            // 已在同一调度器锁下按进程状态复查条件，退出路径也会显式唤醒队列。
+            TaskWaitTarget::ChildExit(_) => false,
             TaskWaitTarget::Manual => false,
         }
     }

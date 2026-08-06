@@ -223,6 +223,9 @@ impl NetworkStack {
 
         let meta = self.socket_meta_mut(established)?;
         meta.state = SocketState::Connected;
+        meta.connection_established = true;
+        meta.connect_error = None;
+        meta.connect_deadline_ms = None;
         meta.is_listener = false;
         meta.listener_group = None;
         meta.peer_ip = peer_ip;

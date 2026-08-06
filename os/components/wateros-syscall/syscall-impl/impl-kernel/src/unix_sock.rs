@@ -321,6 +321,15 @@ pub(crate) fn drop_task(task_id: usize) {
     }
 }
 
+/// 关闭 AF_UNIX 流式套接字的读方向、写方向或两个方向。
+pub(crate) fn shutdown(fd: usize, how: usize) -> Result<(), ErrNo> {
+    let sock = lookup_current(fd)?;
+    let inner = sock.inner.lock();
+    let endpoint = inner.endpoint.as_ref().ok_or(ErrNo::EOPNOTSUPP)?;
+    endpoint.shutdown(how);
+    Ok(())
+}
+
 // 本方法代码由AI完成
 #[allow(private_interfaces)]
 pub(crate) fn alloc_unix_socket(
@@ -885,6 +894,25 @@ impl VfsIoHandle for UnixSocketHandle {
             revents |= POLLOUT;
         }
         Ok(revents)
+    }
+
+    fn poll_wait_for_ticks(
+        &mut self,
+        events: i16,
+        timeout_ticks: u64,
+        still_waiting: &mut dyn FnMut() -> bool,
+    ) -> VfsResult<()> {
+        // socketpair 的流式端点底层就是两条交叉 pipe。必须把 poll 等待也
+        // 转交给对应 pipe 的等待队列，否则异步 DNS 线程写入完成通知时，
+        // 主线程只能依赖定时轮询，容易错过 libcurl 的线程唤醒窗口。
+        let inner = self.sock.inner.lock();
+        let Some(mut endpoint) = inner.endpoint.clone() else {
+            // AF_UNIX 数据报目前没有统一的 VFS 等待接口，保留上层按 tick
+            // 重扫的兼容路径；poll_revents 仍会准确报告现有数据。
+            return Err(VfsError::Unsupported);
+        };
+        drop(inner);
+        endpoint.poll_wait_for_ticks(events, timeout_ticks, still_waiting)
     }
 
     fn metadata(&self) -> VfsResult<VfsMetadata> {

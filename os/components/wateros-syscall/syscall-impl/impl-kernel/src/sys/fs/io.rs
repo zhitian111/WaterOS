@@ -435,7 +435,9 @@ fn write_fd(fd : usize, buf : &[u8]) -> Result<usize, ErrNo> {
         return Err(ErrNo::EBADF);
     }
     loop {
-        match vfs::fd::with_current_io(fd, |handle| handle.write(buf)) {
+        // pipe/socketpair 写满时会进入等待队列；使用独立临时句柄，避免睡眠时
+        // 占住共享 fd 槽锁并与同进程的读/poll 线程形成单核死锁。
+        match vfs::fd::with_current_io_detached(fd, |handle| handle.write(buf)) {
             Err(VfsError::Busy) => task::yield_now(),
             result => return result.map_err(vfs_error_to_errno),
         }

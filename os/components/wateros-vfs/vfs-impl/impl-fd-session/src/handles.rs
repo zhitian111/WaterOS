@@ -1189,6 +1189,21 @@ impl VfsIoHandle for UnixStreamPairEnd {
     }
 }
 
+impl UnixStreamPairEnd {
+    /// 对该全双工流端点执行 `shutdown(2)` 的方向关闭语义。
+    ///
+    /// `dup` 或 `fork` 得到的描述符共享同一个 AF_UNIX 对象，因此关闭底层管道的
+    /// 对应方向后，该套接字的所有描述符都能观察到变化，与套接字 shutdown 的语义一致。
+    pub fn shutdown(&self, how: usize) {
+        if how == 0 || how == 2 {
+            self.read_end.close();
+        }
+        if how == 1 || how == 2 {
+            self.write_end.close();
+        }
+    }
+}
+
 struct PipePreparedRead {
     endpoint: PipeEndpoint,
     max_len: usize,
