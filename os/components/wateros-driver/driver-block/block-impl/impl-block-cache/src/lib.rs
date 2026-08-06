@@ -254,6 +254,26 @@ impl CachingBlockDevice {
         self.push_lru_back(idx);
     }
 
+    /// 与 [`Self::cache_put`] 相同，但假定调用方已确认该 LBA 不在索引中。
+    /// 连续 miss 区间在扫描阶段已经逐个查过索引，可省去第二次查找。
+    fn cache_put_new(&mut self, lba: Lba, block: &[u8]) {
+        if self.capacity == 0 {
+            return;
+        }
+        debug_assert_eq!(block.len(), self.block_size);
+        let idx = self.alloc_slot();
+        self.slots[idx].lba = Some(lba);
+        self.slots[idx].data.copy_from_slice(block);
+        if let Some((old_lba, old_idx)) = self.map.insert(lba, idx) {
+            if self.slots[old_idx].lba == Some(old_lba) {
+                self.detach_lru(old_idx);
+                self.slots[old_idx].lba = None;
+                self.free.push(old_idx);
+            }
+        }
+        self.push_lru_back(idx);
+    }
+
 }
 
 impl BlockDevice for CachingBlockDevice {
@@ -309,7 +329,7 @@ impl BlockDevice for CachingBlockDevice {
             self.inner.read_blocks(Lba(base + i as u64), &mut buf[i * bs..i * bs + run_bytes])?;
             for k in i..j {
                 let lk = Lba(base + k as u64);
-                self.cache_put(lk, &buf[k * bs..(k + 1) * bs]);
+                self.cache_put_new(lk, &buf[k * bs..(k + 1) * bs]);
             }
             i = j;
         }
