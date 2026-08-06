@@ -47,8 +47,11 @@
   AF_UNIX fork/exit 清理按 owner range 查询，不再扫描全局表。
 - [`K-30`](./results/k30-block-cache-set-associative-index-20260806.md)：
   block cache 使用 8 路组相联 LBA 索引，完整 Final 记录 `1365.70s`。
+- [`K-31`](./results/k31-block-cache-hit-run-lru-20260806.md)：
+  block cache 连续命中区间批量拷贝并只刷新一次 LRU，完整 Final 可跑通。
 
-以上组合完整 Final 可跑通，最近两次 `elapsed_s` 为 `1575.50` 和 `1690.74`。
+以上组合完整 Final 可跑通。当前最优 `elapsed_s=1365.70`；K-31 完整轮在宿主高负载
+下为 `1941.42`，不能作为低负载性能结论。
 
 ## 必须同做与并行关系
 

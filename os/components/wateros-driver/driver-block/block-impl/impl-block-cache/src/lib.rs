@@ -254,17 +254,6 @@ impl CachingBlockDevice {
         self.push_lru_back(idx);
     }
 
-    fn cache_copy_out(&mut self, lba: Lba, dst: &mut [u8]) -> bool {
-        if self.capacity == 0 {
-            return false;
-        }
-        let Some(idx) = self.map.get(lba) else {
-            return false;
-        };
-        dst.copy_from_slice(&self.slots[idx].data);
-        self.touch_lru(idx);
-        true
-    }
 }
 
 impl BlockDevice for CachingBlockDevice {
@@ -289,10 +278,23 @@ impl BlockDevice for CachingBlockDevice {
         let base = start_block.0;
         let mut i = 0usize;
         while i < nblocks {
-            let lba = Lba(base + i as u64);
-            let row = &mut buf[i * bs..(i + 1) * bs];
-            if self.cache_copy_out(lba, row) {
-                i += 1;
+            let mut hit_end = i;
+            let mut last_hit_idx = None;
+            while hit_end < nblocks {
+                let lk = Lba(base + hit_end as u64);
+                let Some(idx) = self.map.get(lk) else {
+                    break;
+                };
+                buf[hit_end * bs..(hit_end + 1) * bs]
+                    .copy_from_slice(&self.slots[idx].data);
+                last_hit_idx = Some(idx);
+                hit_end += 1;
+            }
+            if hit_end > i {
+                if let Some(idx) = last_hit_idx {
+                    self.touch_lru(idx);
+                }
+                i = hit_end;
                 continue;
             }
             let mut j = i + 1;
@@ -415,6 +417,27 @@ mod tests {
         let mut buf = vec![0u8; bs * 3];
         cache.read_blocks(Lba(2), &mut buf).unwrap();
         assert_eq!(*reads.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn contiguous_hit_run_serves_all_from_cache() {
+        let reads = Arc::new(Mutex::new(0));
+        let writes = Arc::new(Mutex::new(0));
+        let inner = Box::new(CountingMem::new(4, reads.clone(), writes.clone()));
+        let mut cache = CachingBlockDevice::new(
+            inner,
+            BlockCacheConfig { capacity_blocks: 4 },
+        );
+        let bs = cache.block_size();
+        let mut first = vec![0u8; bs * 2];
+        cache.read_blocks(Lba(0), &mut first).unwrap();
+        assert_eq!(*reads.lock().unwrap(), 1);
+
+        let before = *reads.lock().unwrap();
+        let mut second = vec![0u8; bs * 2];
+        cache.read_blocks(Lba(0), &mut second).unwrap();
+        assert_eq!(second, first);
+        assert_eq!(*reads.lock().unwrap(), before);
     }
 
     #[test]
