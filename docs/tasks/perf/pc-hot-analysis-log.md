@@ -265,3 +265,6 @@ raw_log: /tmp/pc-hot-k36-current-20260807.log
 - P-core 完整轮比 E-core 快约 28%，`elapsed_s=1348.86`。
 - 决策：`rv_final_run.sh` 和 `la_final_run.sh` 默认绑定到 P-core，保留
   `WOS_TASKSET_CPUS` 覆盖。
+
+P-core 上再显式加 `-accel tcg,thread=multi` 做 60s 短采样，进度与不加参数一致
+（均到 `BUILDSTORM_MINIBUILD ok`），因此不额外加入启动参数。
