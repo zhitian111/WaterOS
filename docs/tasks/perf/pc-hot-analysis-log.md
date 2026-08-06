@@ -295,3 +295,14 @@ date: 2026-08-07
 result: inconclusive (hang after cagent), reverted
 raw_log: /tmp/k39-full-pcore-rv-20260807.log
 ```
+
+## 2026-08-07 K-41 顺序读预取 16 页实验（已回退）
+
+`FILE_READ_AHEAD_STRIDE` 试调为 `16`（64KiB）。P-core 完整 Final：
+
+| 配置 | `elapsed_s` |
+|---|---:|
+| K-38 预取 8 页 | 1282.12 |
+| K-41 预取 16 页 | 1321.26 |
+
+分析：增大预取反而更慢，已回退到 8 页。
