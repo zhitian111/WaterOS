@@ -3,6 +3,7 @@
 
 use crate::sys;
 use api_v0::SyscallArgs;
+
 /// 按裸 syscall 号分发；未命中时走旁路号与 ENOSYS。
 #[inline]
 // 本方法代码由AI完成
@@ -166,6 +167,7 @@ pub fn dispatch_syscall_by_nr(syscall_nr : usize, syscall_args : SyscallArgs) ->
         n if n == api_v0::RECVFROM => sys::sys_recvfrom(syscall_args).0,
         n if n == api_v0::SENDMSG => sys::sys_sendmsg(syscall_args).0,
         n if n == api_v0::RECVMSG => sys::sys_recvmsg(syscall_args).0,
+        n if n == api_v0::SENDMMSG => sys::sys_sendmmsg(syscall_args).0,
         n if n == api_v0::SETSOCKOPT => sys::sys_setsockopt(syscall_args).0,
         n if n == api_v0::GETSOCKOPT => sys::sys_getsockopt(syscall_args).0,
         n if n == api_v0::SHUTDOWN => sys::sys_shutdown(syscall_args).0,
@@ -221,5 +223,6 @@ pub fn is_restartable_syscall_nr(syscall_nr : usize) -> bool {
     syscall_nr == api_v0::SENDTO ||
     syscall_nr == api_v0::RECVFROM ||
     syscall_nr == api_v0::SENDMSG ||
-    syscall_nr == api_v0::RECVMSG
+    syscall_nr == api_v0::RECVMSG ||
+    syscall_nr == api_v0::SENDMMSG
 }

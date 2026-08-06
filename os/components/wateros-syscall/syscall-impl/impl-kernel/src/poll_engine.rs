@@ -199,9 +199,13 @@ pub(crate) fn poll_socket_revents(fd : usize, events : i16) -> i16 {
                     revents |= POLLIN;
                 }
             }
-            SocketState::Connecting | SocketState::Connected => {
+            SocketState::Connecting => {
+                // EINPROGRESS 只表示握手尚未完成，不能把等待状态误报成挂断。
+                // 每轮 poll/epoll 扫描都会先驱动网络栈，状态变化后再在下面报告。
+            }
+            SocketState::Connected => {
                 let peer_read_closed =
-                    snapshot.state == SocketState::Connected && !snapshot.may_recv;
+                    !snapshot.may_recv;
                 if events & POLLIN != 0 && (snapshot.can_recv || peer_read_closed) {
                     revents |= POLLIN;
                 }
@@ -212,7 +216,17 @@ pub(crate) fn poll_socket_revents(fd : usize, events : i16) -> i16 {
                     revents |= POLLHUP;
                 }
             }
-            SocketState::Closed => revents |= POLLHUP,
+            SocketState::Closed => {
+                if snapshot.connect_error.is_some() {
+                    // connect 失败也属于一次“可写完成”；select 依赖 POLLOUT，
+                    // poll/epoll 则通过 POLLERR 唤醒并继续读取 SO_ERROR。
+                    if events & POLLOUT != 0 {
+                        revents |= POLLOUT;
+                    }
+                    revents |= POLLERR;
+                }
+                revents |= POLLHUP;
+            }
             _ => {}
         },
         SocketKind::Udp => {
@@ -309,10 +323,10 @@ fn poll_wait_pipe_fds(fds_ptr : usize,
         if socket_fd::lookup(fd).is_some() {
             continue;
         }
-        // `with_current_io` 会临时把句柄从 fd 表移出；在等待条件里重扫同一 fd
-        // 会得到 `POLLNVAL` 并忙等，不能 yield。
+        // 等待过程会主动切换任务，必须使用独立临时句柄，不能持有共享 fd
+        // 槽锁睡眠；否则同进程线程访问该 fd 时会在单核上永久自旋。
         let mut wait_on_this_fd = || !deadline.expired();
-        match vfs::fd::with_current_io(fd, |handle| {
+        match vfs::fd::with_current_io_detached(fd, |handle| {
                   handle.poll_wait_for_ticks(pfd.events,
                                              wait_ticks,
                                              &mut wait_on_this_fd)
@@ -615,9 +629,9 @@ fn poll_wait_monitored_fds(nfds : usize,
         if socket_fd::lookup(fd).is_some() {
             continue;
         }
-        // 同 `poll_wait_pipe_fds`：句柄借出 fd 表期间重扫同一 fd 会误报 `POLLNVAL`。
+        // 同 `poll_wait_pipe_fds`：等待时不能占用共享 fd 槽锁。
         let mut wait_on_this_fd = || !deadline.expired();
-        match vfs::fd::with_current_io(fd, |handle| {
+        match vfs::fd::with_current_io_detached(fd, |handle| {
                   handle.poll_wait_for_ticks(events, wait_ticks, &mut wait_on_this_fd)
               }) {
             Ok(()) => any_pipe = true,

@@ -10,7 +10,7 @@ use super::global::{with_stack, with_stack_mut};
 use super::poll::poll_socket_events;
 use super::state::{NetworkStack, SocketMeta, TCP_MSS, TCP_RX_BUFFER_SIZE, TCP_TX_BUFFER_SIZE};
 use super::tcp::tcp_is_connected;
-use super::types::{NetworkError, SocketKind};
+use super::types::{NetworkError, SocketConnectError, SocketKind};
 
 const SOL_IP : usize = 0;
 const IPPROTO_IP : usize = 0;
@@ -30,9 +30,12 @@ const MCAST_JOIN_GROUP : usize = 42;
 const MCAST_LEAVE_GROUP : usize = 45;
 const SO_RCVTIMEO_NEW : usize = 66;
 const SO_SNDTIMEO_NEW : usize = 67;
+const IP_RECVERR : usize = 11;
 const TCP_NODELAY : usize = 1;
 const TCP_MAXSEG : usize = 2;
 const TCP_INFO : usize = 11;
+const ETIMEDOUT : i32 = 110;
+const ECONNREFUSED : i32 = 111;
 
 fn timeval_to_millis(optval : &[u8]) -> Result<Option<u64>, NetworkError> {
     if optval.len() >= 16 {
@@ -179,6 +182,13 @@ impl NetworkStack {
             mcast_leave(self.socket_meta_mut(handle)?, group)?;
             return Ok(false);
         }
+        if (level == SOL_IP || level == IPPROTO_IP) && optname == IP_RECVERR {
+            // glibc 的 DNS 解析器会先启用 IP_RECVERR，失败时不会继续使用该 UDP
+            // 套接字发送查询。smoltcp 尚未实现 Linux 错误队列，因此这里只校验参数
+            // 并兼容性地返回成功，保持原有 UDP 收发行为不变。
+            let _enabled = sockopt_bool(optval)?;
+            return Ok(false);
+        }
         if level == SOL_SOCKET && matches!(optname, SO_REUSEADDR | SO_REUSEPORT) {
             return Ok(false);
         }
@@ -291,8 +301,17 @@ impl NetworkStack {
                    optname : usize)
                    -> Result<Vec<u8>, NetworkError> {
         if level == SOL_SOCKET && optname == SO_ERROR {
-            return Ok(0i32.to_ne_bytes()
-                          .to_vec());
+            // Linux 的 SO_ERROR 会取出并清除待处理错误；连接仍在进行或已经成功时为 0。
+            let error = self.socket_meta_mut(handle)?
+                            .connect_error
+                            .take();
+            let errno = match error {
+                Some(SocketConnectError::TimedOut) => ETIMEDOUT,
+                Some(SocketConnectError::ConnectionRefused) => ECONNREFUSED,
+                None => 0,
+            };
+            return Ok(errno.to_ne_bytes()
+                           .to_vec());
         }
         if level == SOL_SOCKET && optname == SO_SNDBUF {
             return Ok(self.socket_meta(handle)?

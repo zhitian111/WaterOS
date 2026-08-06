@@ -12,6 +12,9 @@ use super::types::{
     Ipv4Endpoint, NetworkError, SocketKind, SocketPollSnapshot, SocketSendError, SocketState,
 };
 
+/// 与 syscall 阻塞 connect 的兜底时间一致；成功建连后会取消，不影响长连接空闲时间。
+const TCP_CONNECT_TIMEOUT_MS : u64 = 30_000;
+
 fn is_valid_local_addr(addr : Option<[u8; 4]>, configured : [u8; 4]) -> bool {
     match addr {
         None => true,
@@ -89,14 +92,15 @@ impl NetworkStack {
 
     // 单次加锁取得读、写和连接状态，供 poll/read/write 共用。
     fn poll_snapshot(&mut self, handle : SocketHandle) -> Result<SocketPollSnapshot, NetworkError> {
-        let (kind, state, is_listener, listener_group, recv_reserved) = {
+        let (kind, state, is_listener, listener_group, recv_reserved, connect_error) = {
             let meta = self.socket_meta(handle)?;
             (meta.kind,
              meta.state,
              meta.is_listener,
              meta.listener_group,
              meta.recv_reservation
-                 .is_some())
+                 .is_some(),
+             meta.connect_error)
         };
 
         match kind {
@@ -126,6 +130,7 @@ impl NetworkStack {
                                         may_send,
                                         send_capacity,
                                         is_connected : tcp_is_connected(socket),
+                                        connect_error,
                                         has_pending_accept : is_listener && has_pending_accept })
             }
             SocketKind::Udp => {
@@ -146,6 +151,7 @@ impl NetworkStack {
                                         may_send,
                                         send_capacity,
                                         is_connected : matches!(state, SocketState::Connected),
+                                        connect_error : None,
                                         has_pending_accept : false })
             }
         }
@@ -168,9 +174,14 @@ impl NetworkStack {
                     SocketState::Bound { .. } if bound_port != 0 => bound_port,
                     _ => return Err(NetworkError::InvalidState),
                 };
+                let connect_deadline_ms = self.last_poll_millis
+                                              .saturating_add(TCP_CONNECT_TIMEOUT_MS as i64);
                 let cx = self.iface.context();
                 let socket = self.sockets
                                  .get_mut::<tcp::Socket>(handle);
+                socket.set_timeout(Some(smoltcp::time::Duration::from_millis(
+                    TCP_CONNECT_TIMEOUT_MS,
+                )));
                 if ip[0] == 127 {
                     // 回环仍经过 Ethernet MTU 分段；禁用 Nagle 可让同一次
                     // send() 的尾部短段无需等待首段 ACK。
@@ -190,6 +201,9 @@ impl NetworkStack {
                 {
                     meta.state = SocketState::Connecting;
                     meta.local_port = local_port;
+                    meta.connection_established = false;
+                    meta.connect_error = None;
+                    meta.connect_deadline_ms = Some(connect_deadline_ms);
                 }
             }
             SocketKind::Udp => {
@@ -200,6 +214,9 @@ impl NetworkStack {
                                         .get_mut(&handle)
                 {
                     meta.state = SocketState::Connected;
+                    meta.connection_established = true;
+                    meta.connect_error = None;
+                    meta.connect_deadline_ms = None;
                 }
             }
         }
@@ -321,7 +338,7 @@ impl NetworkStack {
     // 本地与对端地址查询。
     fn peer_endpoint(&self, handle : SocketHandle) -> Result<Ipv4Endpoint, NetworkError> {
         let meta = self.socket_meta(handle)?;
-        if meta.peer_ip == [0; 4] && meta.peer_port == 0 {
+        if !meta.connection_established || (meta.peer_ip == [0; 4] && meta.peer_port == 0) {
             return Err(NetworkError::NotConnected);
         }
         Ok(Ipv4Endpoint { address : meta.peer_ip,

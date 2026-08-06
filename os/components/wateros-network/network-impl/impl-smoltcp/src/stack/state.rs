@@ -6,7 +6,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use smoltcp::iface::{Interface, SocketHandle, SocketSet};
 
-use super::types::{SocketKind, SocketState};
+use super::types::{SocketConnectError, SocketKind, SocketState};
 
 pub(super) struct SocketMeta {
     pub(super) kind : SocketKind,
@@ -21,6 +21,12 @@ pub(super) struct SocketMeta {
     /// 对端地址（connect 发起时或 accept 完成时填入）。
     pub(super) peer_ip : [u8; 4],
     pub(super) peer_port : u16,
+    /// TCP 三次握手是否至少成功过一次；不能仅凭已填写对端地址判断已连接。
+    pub(super) connection_established : bool,
+    /// 异步 connect 的待取错误；`getsockopt(SO_ERROR)` 读取后清除。
+    pub(super) connect_error : Option<SocketConnectError>,
+    /// 仅约束 TCP 建连阶段，握手成功后会立即取消协议栈超时。
+    pub(super) connect_deadline_ms : Option<i64>,
     /// SO_RCVTIMEO 毫秒值；`None` 表示默认阻塞等待。
     pub(super) recv_timeout_ms : Option<u64>,
     /// TCP_NODELAY 是否启用。
@@ -46,6 +52,9 @@ impl SocketMeta {
                listener_group : None,
                peer_ip : [0; 4],
                peer_port : 0,
+               connection_established : false,
+               connect_error : None,
+               connect_deadline_ms : None,
                recv_timeout_ms : None,
                tcp_nodelay : false,
                mcast_groups : BTreeSet::new(),

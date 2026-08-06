@@ -8,8 +8,8 @@ extern crate alloc;
 
 pub use api_v0 as api;
 pub use api_v0::{
-    Ipv4Endpoint, NetworkConfig, NetworkError, NetworkResult, SocketKind, SocketPollSnapshot,
-    SocketRecvError, SocketRecvFinish, SocketSendError, SocketState,
+    Ipv4Endpoint, NetworkConfig, NetworkError, NetworkResult, SocketConnectError, SocketKind,
+    SocketPollSnapshot, SocketRecvError, SocketRecvFinish, SocketSendError, SocketState,
 };
 
 #[cfg(feature = "impl-smoltcp")]

@@ -25,7 +25,7 @@ pub use socket::{
 pub use sockopt::{socket_getsockopt, socket_recv_timeout_ms, socket_setsockopt};
 pub use tcp::{create_tcp_socket, socket_accept, socket_listen};
 pub use types::{
-    NetworkError, SocketKind, SocketRecvError, SocketRecvFinish, SocketSendError, SocketState,
-    StackSocketHandle,
+    NetworkError, SocketConnectError, SocketKind, SocketRecvError, SocketRecvFinish,
+    SocketSendError, SocketState, StackSocketHandle,
 };
 pub use udp::{create_udp_socket, socket_sendto};

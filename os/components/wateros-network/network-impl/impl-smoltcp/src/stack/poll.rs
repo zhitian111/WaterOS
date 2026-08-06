@@ -9,7 +9,7 @@ use smoltcp::time::Instant;
 use super::global::with_stack_if_ready;
 use super::state::NetworkStack;
 use super::tcp::tcp_is_connected;
-use super::types::SocketState;
+use super::types::{SocketConnectError, SocketState};
 
 /// 使用最近一次单调时间驱动协议栈处理一个轮询周期。
 ///
@@ -38,23 +38,38 @@ impl NetworkStack {
     fn poll_socket_events(&mut self) {
         // 检查 Connecting → Connected/Closed 转换。RST 或重传耗尽后必须把
         // 失败状态同步到元数据，阻塞 connect 才能退出而不是永久等待。
-        let mut updated : BTreeMap<SocketHandle, SocketState> = BTreeMap::new();
+        let mut updated : BTreeMap<SocketHandle, (SocketState, Option<SocketConnectError>)> =
+            BTreeMap::new();
         for (&h, meta) in &self.metas {
             if meta.state == SocketState::Connecting {
                 let socket = self.sockets
                                  .get_mut::<tcp::Socket>(h);
                 if tcp_is_connected(socket) {
-                    updated.insert(h, SocketState::Connected);
+                    // 建连超时只用于 SYN 阶段；成功后必须取消，不能误伤空闲长连接。
+                    socket.set_timeout(None);
+                    updated.insert(h, (SocketState::Connected, None));
                 } else if socket.state() == tcp::State::Closed {
-                    updated.insert(h, SocketState::Closed);
+                    let error = if meta.connect_deadline_ms
+                                               .is_some_and(|deadline| {
+                                                   self.last_poll_millis >= deadline
+                                               })
+                    {
+                        SocketConnectError::TimedOut
+                    } else {
+                        SocketConnectError::ConnectionRefused
+                    };
+                    updated.insert(h, (SocketState::Closed, Some(error)));
                 }
             }
         }
-        for (h, state) in updated {
+        for (h, (state, error)) in updated {
             if let Some(meta) = self.metas
                                     .get_mut(&h)
             {
                 meta.state = state;
+                meta.connection_established = state == SocketState::Connected;
+                meta.connect_error = error;
+                meta.connect_deadline_ms = None;
             }
         }
 

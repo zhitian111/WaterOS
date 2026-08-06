@@ -47,6 +47,7 @@ struct SockAddrIn {
 }
 
 const IOV_MAX : usize = 256;
+const MMSG_MAX : usize = 1024;
 const MSG_DONTWAIT : usize = 0x40;
 const MSG_TRUNC : usize = 0x20;
 const MSG_PEEK : usize = 0x02;
@@ -60,20 +61,86 @@ pub(crate) fn sys_sendmsg(args : SyscallArgs) -> UserRet {
     let msg_ptr = args.arg(1);
     let flags = args.arg(2);
 
-    if msg_ptr == 0 {
+    match sendmsg_one(fd, msg_ptr, flags) {
+        Ok(n) => UserRet::from_success(n),
+        Err(err) => UserRet::from_error(err),
+    }
+}
+
+pub(crate) fn sys_sendmmsg(args : SyscallArgs) -> UserRet {
+    let fd = args.arg(0);
+    let msgvec_ptr = args.arg(1);
+    let vlen = args.arg(2);
+    let flags = args.arg(3);
+
+    if vlen == 0 || vlen > MMSG_MAX {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    if msgvec_ptr == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
+    }
+
+    // 64 位 Linux ABI 中 mmsghdr 按 8 字节对齐：56 字节的 msghdr 后是
+    // 4 字节 msg_len，并以 4 字节尾部填充将单个数组元素补齐到 64 字节。
+    let entry_size = core::mem::size_of::<MsgHdr>() + core::mem::size_of::<usize>();
+    let msg_len_offset = core::mem::size_of::<MsgHdr>();
+    let mut sent = 0usize;
+    for index in 0..vlen {
+        let Some(entry_ptr) = index.checked_mul(entry_size)
+                                         .and_then(|offset| msgvec_ptr.checked_add(offset))
+        else {
+            return if sent > 0 {
+                UserRet::from_success(sent)
+            } else {
+                UserRet::from_error(ErrNo::EFAULT)
+            };
+        };
+        match sendmsg_one(fd, entry_ptr, flags) {
+            Ok(message_len) => {
+                let Some(msg_len_ptr) = entry_ptr.checked_add(msg_len_offset) else {
+                    return if sent > 0 {
+                        UserRet::from_success(sent)
+                    } else {
+                        UserRet::from_error(ErrNo::EFAULT)
+                    };
+                };
+                if copy_to_user_struct(msg_len_ptr, &(message_len as u32)).is_err() {
+                    return if sent > 0 {
+                        UserRet::from_success(sent)
+                    } else {
+                        UserRet::from_error(ErrNo::EFAULT)
+                    };
+                }
+                sent += 1;
+            }
+            Err(error) => {
+                return if sent > 0 {
+                    UserRet::from_success(sent)
+                } else {
+                    UserRet::from_error(error)
+                };
+            }
+        }
+    }
+    UserRet::from_success(sent)
+}
+
+fn sendmsg_one(fd : usize, msg_ptr : usize, flags : usize) -> Result<usize, ErrNo> {
+
+    if msg_ptr == 0 {
+        return Err(ErrNo::EFAULT);
     }
 
     let msg : MsgHdr = match copy_from_user_struct(msg_ptr) {
         Ok(v) => v,
-        Err(_) => return UserRet::from_error(ErrNo::EFAULT),
+        Err(_) => return Err(ErrNo::EFAULT),
     };
 
     if msg.msg_iovlen == 0 || msg.msg_iovlen > IOV_MAX {
-        return UserRet::from_error(ErrNo::EINVAL);
+        return Err(ErrNo::EINVAL);
     }
     if msg.msg_iov == 0 {
-        return UserRet::from_error(ErrNo::EFAULT);
+        return Err(ErrNo::EFAULT);
     }
 
     // 读取 iovec 数组并收集数据
@@ -84,33 +151,33 @@ pub(crate) fn sys_sendmsg(args : SyscallArgs) -> UserRet {
     for i in 0..msg.msg_iovlen {
         let iov : IoVec = match copy_from_user_struct(msg.msg_iov + i * iov_size) {
             Ok(v) => v,
-            Err(_) => return UserRet::from_error(ErrNo::EFAULT),
+            Err(_) => return Err(ErrNo::EFAULT),
         };
         total_len = match total_len.checked_add(iov.iov_len) {
             Some(total) => total,
-            None => return UserRet::from_error(ErrNo::EINVAL),
+            None => return Err(ErrNo::EINVAL),
         };
         if total_len > SYSCALL_IO_MAX {
-            return UserRet::from_error(ErrNo::EMSGSIZE);
+            return Err(ErrNo::EMSGSIZE);
         }
         iovs.push(iov);
     }
 
     if total_len == 0 {
-        return UserRet::from_success(0);
+        return Ok(0);
     }
 
     // 将 iovec 数据拼接到单个缓冲区
     let mut kbuf = match try_kbuf(total_len, SYSCALL_IO_MAX) {
         Ok(buf) => buf,
-        Err(err) => return UserRet::from_error(err),
+        Err(err) => return Err(err),
     };
     let mut offset = 0;
     for iov in &iovs {
         if iov.iov_len > 0 {
             let dst = &mut kbuf[offset..offset + iov.iov_len];
             if copy_from_user(dst, iov.iov_base).is_err() {
-                return UserRet::from_error(ErrNo::EFAULT);
+                return Err(ErrNo::EFAULT);
             }
             offset += iov.iov_len;
         }
@@ -118,13 +185,13 @@ pub(crate) fn sys_sendmsg(args : SyscallArgs) -> UserRet {
 
     let socket = match socket_fd::lookup(fd) {
         Some(s) => s,
-        None => return UserRet::from_error(ErrNo::ENOTSOCK),
+        None => return Err(ErrNo::ENOTSOCK),
     };
     // 有目标地址 → sendto；否则使用 connect() 保存的默认 peer。
     let destination = if msg.msg_name != 0 && msg.msg_namelen >= 16 {
         let addr : SockAddrIn = match copy_from_user_struct(msg.msg_name) {
             Ok(a) => a,
-            Err(_) => return UserRet::from_error(ErrNo::EFAULT),
+            Err(_) => return Err(ErrNo::EFAULT),
         };
         let port = u16::from_be(addr.sin_port);
         Some((addr.sin_addr, port))
@@ -140,10 +207,7 @@ pub(crate) fn sys_sendmsg(args : SyscallArgs) -> UserRet {
                                      .map_err(super::sendto::socket_send_error_to_errno),
         Err(_) => Err(ErrNo::ENOTSOCK),
     };
-    match sent {
-        Ok(n) => UserRet::from_success(n),
-        Err(err) => UserRet::from_error(err),
-    }
+    sent
 }
 
 // 本方法代码由AI完成

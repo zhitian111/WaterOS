@@ -121,6 +121,23 @@ pub fn with_current_io<R>(fd : usize,
     with_task_io(task_id, fd, f)
 }
 
+/// 在独立的临时句柄上执行可能阻塞的 I/O。
+///
+/// 普通 `with_current_io` 在闭包返回前会一直持有共享 fd 槽锁；pipe 写入或
+/// poll 等待会主动切换任务，单核下另一个线程若访问同一 fd 就会在该锁上
+/// 自旋，并因 trap 内中断关闭而无法让持锁线程恢复。这里先复制打开文件描述，
+/// 随后只持有临时句柄自己的锁；底层文件偏移、pipe 和 socket 状态仍按
+/// `duplicate()` 的语义共享。
+pub fn with_current_io_detached<R>(fd : usize,
+                                   f : impl FnOnce(&mut (dyn VfsIoHandle + '_)) -> VfsResult<R>)
+                                   -> VfsResult<R> {
+    let task_id = current_task_id()?;
+    let handle = with_fd_registry(|registry| {
+        registry.duplicate_handle_for_task(task_id, fd)
+    })?;
+    handle.with_io(f)
+}
+
 /// Capture a prepared sequential read without retaining the fd-slot lock.
 pub fn prepare_current_read(fd : usize,
                             max_len : usize)

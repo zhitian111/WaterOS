@@ -17,6 +17,13 @@ pub(crate) fn sys_shutdown(args : SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EINVAL);
     }
 
+    if crate::unix_sock::is_unix_fd(fd) {
+        return match crate::unix_sock::shutdown(fd, how) {
+            Ok(()) => UserRet::from_success(0),
+            Err(error) => UserRet::from_error(error),
+        };
+    }
+
     let socket = match socket_fd::lookup(fd) {
         Some(s) => s,
         None => return UserRet::from_error(ErrNo::ENOTSOCK),
