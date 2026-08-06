@@ -342,3 +342,17 @@ date: 2026-08-07
 result: FAILED at MINIBUILD, reverted
 raw_log: /tmp/k43-full-pcore-rv-20260807.log
 ```
+
+## 2026-08-07 K-44 页缓存动态哈希桶（已回退）
+
+用每桶动态 `Vec` 替代固定 8 路组相联，避免 bucket 满替换丢 frame。P-core 完整 Final：
+
+| 配置 | `elapsed_s` |
+|---|---:|
+| K-38 BTreeMap + 32MiB | 1282.12 |
+| K-44 动态哈希桶 | 1292.96 |
+
+分析：
+
+- 动态哈希桶完整 Final 未超过 K-38，且增加内存与代码复杂度。
+- 决策：回退 K-44，不进入 Pre smoke，也不提交。
