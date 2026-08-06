@@ -51,9 +51,12 @@
   block cache 连续命中区间批量拷贝并只刷新一次 LRU，完整 Final 可跑通。
 - [`K-32`](./results/k32-block-cache-miss-run-insert-20260807.md)：
   block cache 连续 miss 区间直接插入，避免二次索引查找，完整 Final 可跑通。
+- [`K-33`](./results/k33-paged-handle-size-cache-20260807.md)：
+  PagedFileHandle 读路径不再逐次锁 ext4 metadata，完整 Final `1873.87s`。
 
 以上组合完整 Final 可跑通。当前最优 `elapsed_s=1365.70`；K-31 完整轮在宿主高负载
-下为 `1941.42`，K-32 低负载完整轮为 `1957.45`，仍未达到 700-800s 目标。
+下为 `1941.42`，K-32 低负载完整轮为 `1957.45`，K-33 为 `1873.87`，仍未达到
+700-800s 目标。
 
 ## 必须同做与并行关系
 
