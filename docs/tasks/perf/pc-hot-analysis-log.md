@@ -394,3 +394,9 @@ P-core 60s 短采样使用 `-cpu rva22s64`，进度与默认 CPU 基本一致，
 | `0-7` | 1603.94 |
 
 分析：HT 共享物理核反而明显更慢，现有每物理核单线程配置保持最优。
+
+## 2026-08-07 K-49 QEMU `cache=unsafe` 完整轮
+
+`-drive cache=unsafe` 完整轮构建本体 `done (1267.20s)`，与默认接近；构建完成后约
+3 分钟未打印 `BUILDSTORM_COMPILE`，命中已知 `cargo xtask` 返回竞态。该参数未带来
+可见收益，不加入 Final 启动参数。
