@@ -378,3 +378,8 @@ raw_log: /tmp/k43-full-pcore-rv-20260807.log
 
 P-core 60s 短采样使用 `-accel tcg,tb-size=4096`，进度与默认 TCG 一致
 （均到 `BUILDSTORM_MINIBUILD ok`），未观察到明显收益。不加入 Final 启动参数。
+
+## 2026-08-07 K-47 `-cpu rva22s64` 短采样
+
+P-core 60s 短采样使用 `-cpu rva22s64`，进度与默认 CPU 基本一致，约 42s 进入
+`BUILDSTORM_BEGIN`。未观察到足以投入完整 Final 的收益，不加入启动参数。
