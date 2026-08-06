@@ -282,3 +282,16 @@ P-core 上再显式加 `-accel tcg,thread=multi` 做 60s 短采样，进度与�
 
 - 32MiB 页缓存完整轮比 16MiB 快约 5%。
 - 决策：保留扩容，进入 Pre smoke 验收并提交。
+
+## 2026-08-07 K-39 页缓存 48MiB 实验（已回退）
+
+`FILE_PAGE_CACHE_CAPACITY` 试调为 `12288`（48MiB）。完整 Final 在 cagent 结束后约
+8 分钟无串口输出，QEMU CPU 约 724%，疑似页缓存/内核堆压力或进程生命周期停滞。
+终止本轮并回退到 32MiB。
+
+```text
+run_id: k39-full-pcore-48mib
+date: 2026-08-07
+result: inconclusive (hang after cagent), reverted
+raw_log: /tmp/k39-full-pcore-rv-20260807.log
+```
