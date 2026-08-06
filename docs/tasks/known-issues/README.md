@@ -32,6 +32,22 @@
   bootstrap `/tmp` 也没有容量上限。大量临时文件会消耗 128 MiB 全局内核堆；
   这是 [`K-05D`](./05d-ramfs-physical-pages.md) 的资源正确性问题，不等待 K-04 性能排名。
 
+## 最近已验证闭环（2026-08-06）
+
+- [`K-25`](./results/k25-sched-getaffinity-cpusetsize-20260806.md)：
+  `sched_getaffinity` 接受大 `cpusetsize`，guest `nproc` 从 1 恢复为 8。
+- [`K-26`](./results/k26-exit-group-exiting-trap-boundary-20260806.md)：
+  trap 返回用户态前处理 `ProcessState::Exiting`，修复多线程 `exit_group`
+  后父进程 wait 永久等待，完整 Final 正常输出结果。
+- [`K-27`](./results/k27-rust-parallelism-evidence-20260806.md)：
+  Rust `available_parallelism()` 实测为 8，确认不是 Cargo job 数量被限制。
+- [`K-28`](./results/k28-fd-registry-free-list-20260806.md)：
+  fd registry 使用空闲集合与增量 open 计数，消除 O(N²) 路径。
+- [`K-29`](./results/k29-unix-sock-owner-range-20260806.md)：
+  AF_UNIX fork/exit 清理按 owner range 查询，不再扫描全局表。
+
+以上组合完整 Final 可跑通，最近两次 `elapsed_s` 为 `1575.50` 和 `1690.74`。
+
 ## 必须同做与并行关系
 
 ```text
