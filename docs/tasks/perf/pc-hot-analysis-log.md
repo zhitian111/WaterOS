@@ -218,3 +218,28 @@ raw_log: /tmp/pc-hot-k35-current-20260807.log
 - read/write/install 路径现在复用同一个 `FileCacheKey`，避免每页重复 `Arc::from`。
 - `file_key` 下降约 69%，TLSF allocate/deallocate 各下降约 8%。
 - 决策：进入完整 Final 和 Pre smoke 验收。
+
+## 2026-08-07 K-36 关闭句柄不立即 purge 页缓存
+
+基线为 K-35 commit `f3bf2006`，当前为工作树 K-36。同一 180 秒 Final 早期阶段：
+
+| 符号 | 基线 | 当前 |
+|---|---:|---:|
+| 总指令 | 17.10B | 16.49B |
+| `purge_closed_file` | 350.08M | 0.03M |
+| `file_key` | 3.53M | 3.53M |
+
+```text
+run_id: pc-hot-k36-current-20260807
+date: 2026-08-07 03:37 CST
+pcs_path: /tmp/pcs-rv-k36-current-20260807.txt
+pcs_sha256: d9913a13bc5a2cb4e694d3a37a924c3b1c8a5ccb1225b65b85f5dbf7b2ca380f
+raw_log: /tmp/pc-hot-k36-current-20260807.log
+```
+
+分析：
+
+- 最后 close 只移除 open_refs/files 元数据，缓存页继续由 LRU 保留；unlink/rename
+  仍强制 purge。
+- `purge_closed_file` 基本退出早期 Final 热点，总指令下降约 3.6%。
+- 决策：进入完整 Final 和 Pre smoke 验收。

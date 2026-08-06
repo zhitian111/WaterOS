@@ -455,8 +455,17 @@ impl GlobalFilePageCache {
             }
         };
         if should_purge {
-            self.purge_closed_file(path);
+            self.forget_closed_file(path);
         }
+    }
+
+    /// 最后一个句柄关闭时只移除路径元数据，缓存页继续由 LRU 保留。
+    /// unlink/rename 路径仍调用 [`Self::purge_closed_file`] 强制清页。
+    fn forget_closed_file(&self, path : &str) {
+        let key = self.file_key(path);
+        self.files
+            .lock()
+            .remove(&key);
     }
 
 // 本方法代码由AI完成
