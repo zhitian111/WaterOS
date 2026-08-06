@@ -356,3 +356,20 @@ raw_log: /tmp/k43-full-pcore-rv-20260807.log
 
 - 动态哈希桶完整 Final 未超过 K-38，且增加内存与代码复杂度。
 - 决策：回退 K-44，不进入 Pre smoke，也不提交。
+
+## 2026-08-07 K-45 RISC-V virtio-pci 实验（已回退）
+
+给 RISC-V 增加 PCIe ECAM `0x3000_0000` 的 virtio-blk-pci probe，并把内核 MMIO
+恒等映射扩展到 `0x1000_0000..0x8000_0000`。PCI 可正常挂载根卷并进入 MINIBUILD。
+
+完整 Final：
+
+| 配置 | `elapsed_s` |
+|---|---:|
+| K-38 MMIO | 1282.12 |
+| K-45 PCI | 1294.06 |
+
+分析：
+
+- PCI 完整 Final 未超过 MMIO，且需要扩展 1.75GB MMIO 映射与新增平台 probe。
+- 决策：回退 K-45，不进入 Pre smoke，也不提交。
