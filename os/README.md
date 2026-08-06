@@ -237,7 +237,7 @@ make gdb                      # 交互式调试
 | `SDCARD` | 由上述四项选择 | 覆盖本次运行的镜像路径 |
 | `EXTRA_FEATURES` | 空 | 逗号分隔的额外根 crate feature |
 | `GRAPHICS` | `EXTRA_FEATURES` 含 `display-demo` 时为 `1`，否则 `0` | 是否挂载 QEMU VirtIO GPU 并启用图形输出 |
-| `GRAPHICS_BACKEND` | `gtk` | QEMU display backend，例如 `gtk`、`sdl` 或 `none` |
+| `GRAPHICS_BACKEND` | `auto` | QEMU display backend，`auto` 会按宿主/QEMU 支持自动选择，也可显式指定 `gtk`、`sdl`、`cocoa` 或 `none` |
 
 镜像名称只在 Makefile 的四个 `*_IMAGE` 变量中定义，QEMU 启动脚本不会
 根据 profile 猜测镜像，也不会让 final 静默回退到 pre 镜像。可以永久修改
@@ -261,4 +261,4 @@ make run ARCH=rv PROFILE=pre RV_PRE_IMAGE=/data/wateros-pre.img
 - 提示符被日志覆盖：使用 `LOG=warn` 或 `LOG=error`。
 - 退出 QEMU：按 `Ctrl-A` 后按 `x`。Guest 内的 Ctrl-C 仍用于中断前台进程。
 - 图形窗口未出现：确认使用了 `EXTRA_FEATURES=display-demo`，并检查宿主是否安装了
-  对应的 QEMU GTK/SDL 显示后端；服务器环境可先用 `GRAPHICS_BACKEND=none` 验证驱动。
+  对应的 QEMU 显示后端；服务器环境可先用 `GRAPHICS_BACKEND=none` 验证驱动。

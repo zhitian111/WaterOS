@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import platform
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -22,6 +23,9 @@ VALID_MODES = {"auto", "shell", "run"}
 VALID_TTYS = {"interactive", "closed", "fixture"}
 VALID_ON_EXIT = {"shutdown", "shell", "reboot"}
 VALID_LOGS = {"error", "warn", "info", "debug", "trace"}
+DISPLAY_BACKEND_PREFERENCES = {
+    "Darwin": ["cocoa", "sdl", "gtk", "none"],
+}
 
 
 class QemuConfigError(ValueError):
@@ -50,6 +54,53 @@ def _value(environment: Mapping[str, str], name: str, default: str = "") -> str:
 def _validate_token(name: str, value: str) -> None:
     if any(character.isspace() for character in value):
         raise QemuConfigError(f"{name} 不能包含空白字符: {value!r}")
+
+
+def _supported_display_backends(arch: str) -> set[str]:
+    qemu_binary = "qemu-system-riscv64" if arch == "rv" else "qemu-system-loongarch64"
+    try:
+        result = subprocess.run(
+            [qemu_binary, "-display", "help"],
+            cwd=OS_ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return {"none"}
+
+    supported: set[str] = set()
+    capture = False
+    for line in result.stdout.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            if capture:
+                break
+            continue
+        if stripped == "Available display backend types:":
+            capture = True
+            continue
+        if capture:
+            supported.add(stripped.split(",", 1)[0])
+    return supported or {"none"}
+
+
+def _choose_display_backend(arch: str, requested: str) -> str:
+    supported = _supported_display_backends(arch)
+    if requested and requested != "auto":
+        _validate_token("WOS_QEMU_DISPLAY", requested)
+        if requested not in supported:
+            raise QemuConfigError(
+                f"WOS_QEMU_DISPLAY={requested!r} 不受当前 QEMU 支持，可用值: {', '.join(sorted(supported))}"
+            )
+        return requested
+
+    preferences = DISPLAY_BACKEND_PREFERENCES.get(platform.system(), ["gtk", "sdl", "cocoa", "none"])
+    for backend in preferences:
+        if backend in supported:
+            return backend
+    return "none"
 
 
 def _bootargs(arch: str, environment: Mapping[str, str]) -> tuple[str, str]:
@@ -133,8 +184,7 @@ def build_qemu_launch(
     if graphics_value not in {"0", "1"}:
         raise QemuConfigError("WOS_GRAPHICS 必须是 0 或 1")
     graphics = graphics_value == "1"
-    display_backend = _value(env, "WOS_QEMU_DISPLAY", "gtk")
-    _validate_token("WOS_QEMU_DISPLAY", display_backend)
+    display_backend = _choose_display_backend(arch, _value(env, "WOS_QEMU_DISPLAY", "auto"))
     console_args = (
         ["-display", display_backend, "-serial", "stdio", "-monitor", "none"]
         if graphics

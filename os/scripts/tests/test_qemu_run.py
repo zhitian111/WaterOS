@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
@@ -91,21 +92,50 @@ class QemuRunTests(unittest.TestCase):
     def test_graphics_replaces_nographic_and_adds_gpu(self) -> None:
         for arch, gpu in (("rv", "virtio-gpu-device"), ("la", "virtio-gpu-pci")):
             with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                class Result:
+                    stdout = "Available display backend types:\nnone\nsdl\n"
+
+                with patch("qemu_run.subprocess.run", return_value=Result()):
+                    launch = build_qemu_launch(
+                        arch,
+                        "pre",
+                        {
+                            "WOS_SDCARD": "/images/root.img",
+                            "WOS_GRAPHICS": "1",
+                            "WOS_QEMU_DISPLAY": "sdl",
+                        },
+                        root=Path(directory),
+                    )
+                    self.assertNotIn("-nographic", launch.argv)
+                    self.assertIn("-display", launch.argv)
+                    self.assertIn("sdl", launch.argv)
+                    self.assertIn("-serial", launch.argv)
+                    self.assertIn(gpu, launch.argv)
+                    launch.cleanup()
+
+    def test_graphics_auto_selects_supported_backend(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            class Result:
+                stdout = "Available display backend types:\nnone\ncocoa\n"
+
+            with patch("qemu_run.platform.system", return_value="Darwin"), patch(
+                "qemu_run.subprocess.run", return_value=Result()
+            ):
                 launch = build_qemu_launch(
-                    arch,
+                    "rv",
                     "pre",
                     {
                         "WOS_SDCARD": "/images/root.img",
                         "WOS_GRAPHICS": "1",
-                        "WOS_QEMU_DISPLAY": "sdl",
+                        "WOS_QEMU_DISPLAY": "auto",
                     },
-                    root=Path(directory),
+                    root=root,
                 )
-                self.assertNotIn("-nographic", launch.argv)
                 self.assertIn("-display", launch.argv)
-                self.assertIn("sdl", launch.argv)
-                self.assertIn("-serial", launch.argv)
-                self.assertIn(gpu, launch.argv)
+                self.assertIn("cocoa", launch.argv)
+                self.assertNotIn("gtk", launch.argv)
                 launch.cleanup()
 
     def test_graphics_defaults_to_disabled(self) -> None:
