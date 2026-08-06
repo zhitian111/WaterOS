@@ -182,4 +182,13 @@ raw_log: /tmp/pc-hot-k34-current-20260807.log
 
 - 反向索引去掉了全表扫描（原 `from_iter` 约 11.9M），但新增 `BTreeMap<FileCacheKey,
   BTreeSet<u64>>` 的插入/删除维护成本基本抵消，`purge_closed_file` 无净收益。
-- 决策：回退 K-34，不进入完整 Final。
+- 随后改用 `BTreeMap::range` 只遍历目标文件页键，避免全表扫描且不引入反向索引，
+  但 `purge_closed_file` 仍约 `351.16M`，没有净收益。
+- 决策：回退 K-34 两个版本，不进入完整 Final。
+
+```text
+run_id: pc-hot-k34b-current-20260807
+pcs_path: /tmp/pcs-rv-k34b-current-20260807.txt
+pcs_sha256: 1677b13aaaf5581fd0ce9d59ad7f8f8f55daa5c5a6931db5e0429cf84834b0e5
+raw_log: /tmp/pc-hot-k34b-current-20260807.log
+```
