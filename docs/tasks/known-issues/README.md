@@ -45,6 +45,8 @@
   fd registry 使用空闲集合与增量 open 计数，消除 O(N²) 路径。
 - [`K-29`](./results/k29-unix-sock-owner-range-20260806.md)：
   AF_UNIX fork/exit 清理按 owner range 查询，不再扫描全局表。
+- [`K-30`](./results/k30-block-cache-set-associative-index-20260806.md)：
+  block cache 使用 8 路组相联 LBA 索引，完整 Final 记录 `1365.70s`。
 
 以上组合完整 Final 可跑通，最近两次 `elapsed_s` 为 `1575.50` 和 `1690.74`。
 
