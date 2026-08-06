@@ -373,3 +373,8 @@ raw_log: /tmp/k43-full-pcore-rv-20260807.log
 
 - PCI 完整 Final 未超过 MMIO，且需要扩展 1.75GB MMIO 映射与新增平台 probe。
 - 决策：回退 K-45，不进入 Pre smoke，也不提交。
+
+## 2026-08-07 K-46 TCG `tb-size=4096` 短采样
+
+P-core 60s 短采样使用 `-accel tcg,tb-size=4096`，进度与默认 TCG 一致
+（均到 `BUILDSTORM_MINIBUILD ok`），未观察到明显收益。不加入 Final 启动参数。
