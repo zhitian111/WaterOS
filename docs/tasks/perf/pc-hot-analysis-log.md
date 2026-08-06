@@ -151,3 +151,35 @@ raw_log: /tmp/pc-hot-k33-current-20260807.log
 
 - `current_size` 热路径下降约 99%，ext4 metadata 锁基本退出读路径。
 - 决策：进入完整 Final 和 Pre smoke 验收；若语义回归则回退。
+
+## 2026-08-07 K-34 页缓存反向索引（已回退）
+
+运行：
+
+```text
+run_id: pc-hot-k34-baseline-20260807
+date: 2026-08-07 02:43 CST
+kernel_commit: 5587cb76 (K-33)
+pcs_path: /tmp/pcs-rv-k34-baseline-20260807.txt
+pcs_sha256: b243f730817ff91e5a5f1d5fa8546cf033942e8e06f5b24b32b9d21d91ee9de3
+raw_log: /tmp/pc-hot-k34-baseline-20260807.log
+
+run_id: pc-hot-k34-current-20260807
+kernel_commit: 5587cb76 + K-34 working tree
+pcs_path: /tmp/pcs-rv-k34-current-20260807.txt
+pcs_sha256: a33d511e0503dba35026aaa9751402cb1f4bb04ff7db33365606151c6963640a
+raw_log: /tmp/pc-hot-k34-current-20260807.log
+```
+
+关键对比：
+
+| 符号 | 基线 | 当前 |
+|---|---:|---:|
+| 总指令 | 17.27B | 17.06B |
+| `purge_closed_file` | 350.89M | 351.09M |
+
+分析：
+
+- 反向索引去掉了全表扫描（原 `from_iter` 约 11.9M），但新增 `BTreeMap<FileCacheKey,
+  BTreeSet<u64>>` 的插入/删除维护成本基本抵消，`purge_closed_file` 无净收益。
+- 决策：回退 K-34，不进入完整 Final。
