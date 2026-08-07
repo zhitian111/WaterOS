@@ -106,10 +106,17 @@ fn log_unhandled_user_fault_probe(cx : &TrapContext, trap_cause : TrapCause, raw
 fn kill_current_user_task(context : &str, trap_cause : TrapCause, cx : &TrapContext) -> ! {
     if let Some(snapshot) = task::current_task_snapshot() {
         if snapshot.kind != task::TaskKind::User {
-            fatal_kernel_trap("attempted to terminate a non-user task",
-                              trap_cause,
-                              cx.raw_cause(),
-                              cx);
+            if !cx.returns_to_user() || task::current_process_task_snapshot().is_none() {
+                fatal_kernel_trap("attempted to terminate a non-user task",
+                                  trap_cause,
+                                  cx.raw_cause(),
+                                  cx);
+            }
+            warn!("[trap] user trap on mismatched task kind={:?} task_id={} state={:?} \
+                   returns_to_user=true; terminating current process",
+                  snapshot.kind,
+                  snapshot.id,
+                  snapshot.state);
         }
         warn!("[trap] killing user task ({}) cause={:?} pc={:#x} fault_addr={:#x} task_id={} \
                parent_id={:?} state={:?}",
@@ -205,9 +212,22 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                                regs[5],);
             if syscall_nr == RT_SIGRETURN {
                 if !syscall::restore_signal_frame(authoritative) {
-                    kill_current_user_task("invalid rt_sigreturn frame",
-                                           trap_cause,
-                                           cx);
+                    let has_user_context =
+                        task::current_task_snapshot()
+                            .is_some_and(|task| task.kind == task::TaskKind::User) &&
+                        task::current_process_task_snapshot()
+                            .is_some();
+                    if has_user_context {
+                        kill_current_user_task("invalid rt_sigreturn frame",
+                                               trap_cause,
+                                               cx);
+                    }
+                    warn!("[trap] ignoring invalid rt_sigreturn on non-user context pc={:#x}",
+                          cx.user_pc());
+                    cx.add_user_pc(SYSCALL_INSN_BYTES);
+                    cx.set_syscall_ret(UserRet(syscall::ErrNo::EINVAL.user_ret()));
+                    finish_trap_return(frame, cx, raw_cause);
+                    return;
                 }
                 hot_syscall_trace!("[syscall] nr={} restored signal frame",
                                    syscall_nr);
