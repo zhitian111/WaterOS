@@ -115,8 +115,9 @@ pub(crate) fn copy_to_user_progress(ptr : usize, buf : &[u8]) -> UserWriteProgre
         return UserWriteProgress { copied : 0,
                                    error : Some(ErrNo::EFAULT) };
     };
-    let task_satp = task::current_task_user_address_space_token();
-    let trap_satp = task::current_task_trap_return_address_space_token();
+    let task_snap = task::current_task_snapshot();
+    let task_satp = task_snap.map_or(0, |snap| snap.user_address_space_token);
+    let trap_satp = task_snap.map_or(0, |snap| snap.trap_return_address_space_token);
     if handle != 0 && task_satp != 0 && trap_satp != 0 && task_satp != trap_satp {
         warn!("[user-copy] satp mismatch task={:#x} trap={:#x} handle={:#x} va={:#x}",
               task_satp, trap_satp, handle, ptr);
@@ -135,8 +136,9 @@ pub(crate) fn copy_to_user_progress(ptr : usize, buf : &[u8]) -> UserWriteProgre
 #[cfg(target_arch = "riscv64")]
 fn trace_user_copy_failure(op : &str, va : usize, len : usize, err : mm::api::error::MmError) {
     let handle = current_user_aspace_handle().unwrap_or(0);
-    let task_satp = task::current_task_user_address_space_token();
-    let trap_satp = task::current_task_trap_return_address_space_token();
+    let task_snap = task::current_task_snapshot();
+    let task_satp = task_snap.map_or(0, |snap| snap.user_address_space_token);
+    let trap_satp = task_snap.map_or(0, |snap| snap.trap_return_address_space_token);
     #[cfg(debug_assertions)]
     let probe = mm::user_access::debug_probe_user_virt(handle, VirtAddr(va));
     #[cfg(not(debug_assertions))]
@@ -148,8 +150,9 @@ fn trace_user_copy_failure(op : &str, va : usize, len : usize, err : mm::api::er
 #[cfg(target_arch = "loongarch64")]
 fn trace_user_copy_failure(op : &str, va : usize, len : usize, err : mm::api::error::MmError) {
     let handle = current_user_aspace_handle().unwrap_or(0);
-    let task_satp = task::current_task_user_address_space_token();
-    let trap_satp = task::current_task_trap_return_address_space_token();
+    let task_snap = task::current_task_snapshot();
+    let task_satp = task_snap.map_or(0, |snap| snap.user_address_space_token);
+    let trap_satp = task_snap.map_or(0, |snap| snap.trap_return_address_space_token);
     trace!("[user-copy] {op} fail va={va:#x} len={len} err={err:?} handle={handle:#x} \
             task_satp={task_satp:#x} trap_satp={trap_satp:#x}");
     let _ = (handle, task_satp, trap_satp);

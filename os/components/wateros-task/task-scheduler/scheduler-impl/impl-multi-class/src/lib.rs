@@ -961,37 +961,6 @@ pub fn diagnostic_task_snapshots() -> Vec<TaskSnapshot> {
 /// 当前调度器逻辑 tick。
 pub fn current_tick() -> TaskTick { CURRENT_TICK.load(Ordering::Acquire) }
 
-/// 当前任务内核栈顶，供 trap/用户态恢复路径使用。
-pub fn current_task_kernel_stack_top() -> Option<usize> {
-    let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.current_task_kernel_stack_top(cpu::current_cpu_id()))
-}
-
-/// 返回当前运行任务的用户地址空间 token；`0` 表示回落到内核地址空间。
-pub fn current_task_address_space_raw() -> usize {
-    let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.current_task_address_space_raw(cpu::current_cpu_id()))
-}
-
-pub fn current_task_user_aspace_ptr() -> usize {
-    let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.current_task_user_aspace_ptr(cpu::current_cpu_id()))
-}
-
-pub fn current_task_user_address_space_token() -> usize {
-    let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| {
-        scheduler.current_task_user_address_space_token(cpu::current_cpu_id())
-    })
-}
-
-pub fn current_task_trap_return_address_space_token() -> usize {
-    let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| {
-        scheduler.current_task_trap_return_address_space_token(cpu::current_cpu_id())
-    })
-}
-
 /// 判断指定任务是否仍有子任务。
 pub fn has_child(parent_id : TaskId) -> bool {
     let _guard = InterruptGuard::new();

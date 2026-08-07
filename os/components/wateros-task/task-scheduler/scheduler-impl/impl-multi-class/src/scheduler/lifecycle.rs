@@ -19,7 +19,7 @@ impl MultiClassScheduler {
         }
         if self.cpu_states
                .iter()
-               .any(|cpu| cpu.current_task_id == Some(task_id))
+               .any(|cpu| cpu.current_task_id() == Some(task_id))
         {
             return false;
         }

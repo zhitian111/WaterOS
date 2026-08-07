@@ -103,7 +103,7 @@ impl MultiClassScheduler {
                        cpu_id.raw());
         }
         let cpu_state = &mut self.cpu_states[cpu_id.raw()];
-        let previous_aspace = cpu_state.current_aspace;
+        let previous_aspace = cpu_state.current_aspace();
         if previous_aspace != snap.user_aspace_ptr {
             mm_api::user_aspace_lifecycle::notify_aspace_cpu_leave(previous_aspace, cpu_id);
             mm_api::user_aspace_lifecycle::notify_aspace_cpu_enter(snap.user_aspace_ptr, cpu_id);
@@ -186,7 +186,7 @@ impl MultiClassScheduler {
         // Phase 3: 从 cpu_states 取出当前任务
         let current_task_id = self.cpu_states[cpu_id.raw()].current_task_id()
                                                            .expect("current task must exist");
-        let current_ptr = self.cpu_states[cpu_id.raw()].current_task_cx;
+        let current_ptr = self.cpu_states[cpu_id.raw()].current_task_cx();
 
         // Phase 4: IDLE 特殊处理（不经过 enqueue）
         if self.cpu_states[cpu_id.raw()].is_current_idle() {
@@ -320,7 +320,7 @@ impl MultiClassScheduler {
 
         // ===== Phase 3: 从 cpu_states 取出当前任务 =====
         let current_task_id = self.cpu_states[cpu_id.raw()].current_task_id()?;
-        let current_ptr = self.cpu_states[cpu_id.raw()].current_task_cx;
+        let current_ptr = self.cpu_states[cpu_id.raw()].current_task_cx();
         self.cpu_states[cpu_id.raw()].dequeue(current_task_id);
 
         // ===== Phase 4: 将当前任务入队到等待队列 =====
@@ -360,8 +360,8 @@ impl MultiClassScheduler {
                 return;
             };
             let values = (current_task_id,
-                          cpu.current_policy,
-                          cpu.current_vruntime,
+                          cpu.current_policy(),
+                          cpu.current_vruntime(),
                           cpu.current_runtime_ticks);
             cpu.current_runtime_ticks = 0;
             values

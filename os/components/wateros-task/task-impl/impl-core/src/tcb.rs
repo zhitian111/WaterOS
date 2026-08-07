@@ -417,6 +417,9 @@ impl TaskControlBlock {
                        last_cpu_id : self.last_cpu_id,
                        affinity : self.affinity,
                        user_aspace_ptr : self.user_aspace_ptr(),
+                       user_address_space_token : self.user_address_space_raw(),
+                       trap_return_address_space_token : self.trap_return_address_space_token(),
+                       kernel_stack_top : self.kernel_stack_top(),
                        task_cx : self.context_ptr() as *const () }
     }
 

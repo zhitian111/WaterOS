@@ -129,12 +129,7 @@ pub fn log_stall_diagnostics() {
 /// 返回当前调度器逻辑 tick。
 pub fn current_tick() -> TaskTick { scheduler::current_tick() }
 
-pub fn current_task_user_aspace_ptr() -> usize { scheduler::current_task_user_aspace_ptr() }
-
-pub fn current_task_user_address_space_token() -> usize {
-    scheduler::current_task_user_address_space_token()
-}
-
-pub fn current_task_trap_return_address_space_token() -> usize {
-    scheduler::current_task_trap_return_address_space_token()
+/// 当前运行任务的用户地址空间指针（内核任务为 0）；基于 `current_task_snapshot` 的单字段便捷封装。
+pub fn current_task_user_aspace_ptr() -> usize {
+    scheduler::current_task_snapshot().map_or(0, |snap| snap.user_aspace_ptr)
 }
