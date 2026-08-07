@@ -467,9 +467,19 @@ fn return_to_user_signal_delivery(frame : *mut u8,
                                   -> bool {
     let delivered = syscall::deliver_pending_signal(frame, restart);
     if delivered < 0 {
-        kill_current_user_task("signal frame setup failed",
-                               trap_cause,
-                               cx);
+        let has_user_context =
+            task::current_task_snapshot()
+                .is_some_and(|task| task.kind == task::TaskKind::User) &&
+            task::current_process_task_snapshot()
+                .is_some();
+        if has_user_context {
+            kill_current_user_task("signal frame setup failed",
+                                   trap_cause,
+                                   cx);
+        }
+        warn!("[trap] ignoring signal frame setup failure on non-user context pc={:#x}",
+              cx.user_pc());
+        return false;
     }
     delivered > 0
 }
