@@ -649,7 +649,7 @@ impl GlobalFilePageCache {
         }
 
         let page_off = page_idx * FILE_PAGE_SIZE as u64;
-        let mut page_buf = vec![0u8; FILE_PAGE_SIZE];
+        let mut page_buf = [0u8; FILE_PAGE_SIZE];
         if page_off < file_size {
             let to_read = FILE_PAGE_SIZE.min(
                 usize::try_from(file_size.saturating_sub(page_off)).unwrap_or(0),
