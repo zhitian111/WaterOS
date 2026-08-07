@@ -1,53 +1,6 @@
 //! OpenSBI 传入的启动参数及其类型化视图。
 
 use api_v0::boot::PlatformBootArgs;
-use core::cell::UnsafeCell;
-use core::sync::atomic::{AtomicUsize, Ordering};
-
-const COMMAND_LINE_CAPACITY: usize = 1024;
-
-struct CommandLineCell(UnsafeCell<[u8; COMMAND_LINE_CAPACITY]>);
-
-unsafe impl Sync for CommandLineCell {}
-
-static COMMAND_LINE: CommandLineCell = CommandLineCell(UnsafeCell::new([0; COMMAND_LINE_CAPACITY]));
-static COMMAND_LINE_LEN: AtomicUsize = AtomicUsize::new(0);
-
-/// Copy `/chosen/bootargs` out of the firmware DTB while it is still directly
-/// addressable. Only the BSP calls this function.
-pub unsafe fn init_command_line(_arg0: usize, dtb_pa: usize, _arg2: usize) {
-    if dtb_pa == 0 || COMMAND_LINE_LEN.load(Ordering::Acquire) != 0 {
-        return;
-    }
-    let Ok(fdt) = (unsafe { fdt::Fdt::from_ptr(dtb_pa as *const u8) }) else {
-        return;
-    };
-    let Some(chosen) = fdt.find_node("/chosen") else {
-        return;
-    };
-    let Some(property) = chosen.property("bootargs") else {
-        return;
-    };
-    let bytes = property.value.split(|byte| *byte == 0).next().unwrap_or(&[]);
-    let len = bytes.len().min(COMMAND_LINE_CAPACITY - 1);
-    unsafe {
-        let storage = &mut *COMMAND_LINE.0.get();
-        storage[..len].copy_from_slice(&bytes[..len]);
-        storage[len] = 0;
-    }
-    if len != 0 {
-        COMMAND_LINE_LEN.store(len, Ordering::Release);
-    }
-}
-
-pub fn command_line() -> Option<&'static str> {
-    let len = COMMAND_LINE_LEN.load(Ordering::Acquire);
-    if len == 0 {
-        return None;
-    }
-    let bytes = unsafe { &(&*COMMAND_LINE.0.get())[..len] };
-    core::str::from_utf8(bytes).ok()
-}
 
 #[derive(Debug, Clone, Copy)]
 /// OpenSBI 交给内核入口的原始 `a0/a1` 参数。

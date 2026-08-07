@@ -55,4 +55,5 @@ syscall 层只负责在 Linux 用户 ABI 的 `termios`/`winsize` 内存布局与
 - `wateros-tty`：终端机制和状态。
 - `wateros-vfs`：UART/字符设备发现以及 TTY 文件描述符适配。
 - `wateros-syscall`：TTY ioctl、用户内存复制、后台进程组检查和信号返回值。
-- `os/src/user_operator.rs`：选择 interactive/closed/fixture，并启动唯一控制台输入任务。
+- `os/src/user_operator.rs`：按 `pre`/`final_online`/`operator-shell` 等编译期
+  feature 选择 interactive/closed/fixture，并启动唯一控制台输入任务。

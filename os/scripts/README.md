@@ -56,31 +56,20 @@ chmod +x ./scripts/*.sh
     `wait`、Ctrl-C、raw termios 和救援 shell；`--mode run --script /...` 验证
     脚本模式，`--vim` 另要求镜像包含 Vim 并验证其 raw mode 保存。
 
-### QEMU operator 参数
+### 启动行为由编译期 feature 控制
 
-`rv_pre_run.sh`、`rv_final_run.sh`、`la_pre_run.sh` 和 `la_final_run.sh`
-均把下列环境变量转换成内核 `-append` 启动参数：
-
-| 变量 | 用途 |
-| --- | --- |
-| `WOS_MODE=auto\|shell\|run` | 选择自动评测、交互 shell 或脚本 |
-| `WOS_SHELL=/path` | 指定 shell/BusyBox ELF |
-| `WOS_SCRIPT=/path` | `run` 模式脚本 |
-| `WOS_ON_EXIT=shutdown\|shell\|reboot` | 主程序退出策略 |
-| `WOS_TTY=interactive\|closed\|fixture` | 真实 UART、EOF 或自动密码输入 |
-| `WOS_LOG=error\|warn\|info\|debug\|trace` | 运行时日志级别 |
-| `WOS_SMP=1..8` | QEMU vCPU 数；LoongArch 同时据此限制 mailbox/AP 目标 |
-| `WOS_WRITE_DISK=1` | operator 模式显式写回基础镜像 |
-| `WOS_QEMU_SNAPSHOT=1` | 对任意模式强制 QEMU snapshot |
-| `WOS_SDCARD=/path/image.img` | QEMU 使用的根文件系统镜像；直接运行脚本时必须指定 |
+QEMU 启动命令不再携带 `-append` 或 `wos.*` bootargs。`make MODE=...` 只在构建期
+选择根 crate feature：`auto` 不加 operator feature，`shell` 启用
+`operator-shell`，`run` 启用 `operator-run`。shell 路径和 run 脚本分别通过
+`GUEST_SHELL`、`SCRIPT` 在编译时嵌入内核。
 
 推荐通过 `make run`、`make shell` 或 `make debug-server` 启动；Makefile 会按
 `ARCH/PROFILE` 从 `RV_PRE_IMAGE`、`RV_FINAL_IMAGE`、`LA_PRE_IMAGE`、
 `LA_FINAL_IMAGE` 中选择镜像。只有绕过 Make 直接执行上述兼容脚本时，才需要
 显式设置 `WOS_SDCARD`。
 
-operator 模式在没有 `WOS_WRITE_DISK=1` 时默认加 `-snapshot`。自动模式保持
-原有磁盘行为。完整的现场命令表与 TTY 排查见 `os/README.md`。
+磁盘策略只由 `WOS_QEMU_SNAPSHOT` / Makefile 的 `SNAPSHOT`、`WRITE_DISK`
+控制，与启动行为无关。完整的现场命令表见 `os/README.md`。
 
 ### Makefile 调试目标（在 `os/` 目录下）
 

@@ -186,24 +186,10 @@ impl PlatformSmp for QemuLoongArchSmp {
 
     /// 返回 QEMU 实际配置且不超过编译期容量的候选 CPU 集合。
     fn configured_cpu_mask() -> CpuMask {
-        // QEMU's direct LoongArch ELF entry does not expose the machine's SMP
-        // topology in argc/argv. The run script mirrors `-smp` into the
-        // validated early command line so we never send a mailbox IPI to a
-        // CPU that QEMU did not instantiate (QEMU 8.2 dereferences a null CPU
-        // object in that case). A hand-launched kernel without this internal
-        // hint safely starts only its boot CPU.
-        let configured = crate::boot::command_line().and_then(|line| {
-                                                        line.split_ascii_whitespace()
-                                                            .find_map(|field| {
-                                                                field.strip_prefix("wos.cpus=")?
-                                                                     .parse::<usize>()
-                                                                     .ok()
-                                                            })
-                                                    })
-                                                    .filter(|count| *count != 0)
-                                                    .unwrap_or(1)
-                                                    .min(config::task::MAX_CPUS);
-        CpuMask::from_bits((1u64 << configured) - 1)
+        // QEMU virt 的 DTB `/cpus` 会如实反映 `-smp`。`init_configured_cpu_mask`
+        // 在 BSP 启动阶段解析并缓存，这里只读取该结果；未初始化时仅启动 boot CPU。
+        let configured = CONFIGURED_CPU_MASK.load(Ordering::Acquire);
+        CpuMask::from_bits(configured)
     }
 
     /// 为 mask 中每个 CPU 发送运行期通知，pending reason 已由聚合层写入。

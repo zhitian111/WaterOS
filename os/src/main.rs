@@ -259,7 +259,6 @@ mod qemu_riscv64_opensbi {
         {
             wait_ap_boot_ready(cpu_id);
         }
-        unsafe { platform::boot::init_command_line(cpu_raw, dtb_pa, _platform_arg1) };
         // BSP 初始化：驱动 → 日志 → timebase → 堆 → arch → 任务 → trap
         driver::init_when_boot(dtb_pa);
         runtime::console::show_logo();
@@ -375,14 +374,12 @@ mod qemu_loongarch64_virt {
     }
 
     #[unsafe(no_mangle)]
-    pub fn wateros_kernel_main(cpu_raw : usize, argc : usize, argv : usize, envp : usize) -> ! {
+    pub fn wateros_kernel_main(cpu_raw : usize, _argc : usize, _argv : usize, _envp : usize) -> ! {
         let cpu_id = task::CpuId::from_raw(cpu_raw);
         mask_boot_interrupts();
         if BSP_CLAIMED.swap(true, Ordering::AcqRel) {
             wait_ap_boot_ready(cpu_id);
         }
-
-        unsafe { platform::boot::init_command_line(argc, argv, envp) };
 
         runtime::console::show_logo();
         klog::init();

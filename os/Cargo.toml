@@ -54,6 +54,9 @@
     pre = [  ]
     final_online = [  ]
     final_online_smp_test = [ "final_online" ]
+    # 开发/诊断启动行为由编译期选择，不再通过 QEMU bootargs 传入。
+    operator-shell = [  ]
+    operator-run = [  ]
     # syscall 长时间无进展时输出任务/futex 等待链；默认关闭。
     stall-debug = [ "dep:ipc", "ipc/futex" ]
     # 整个顶部 dashboard（CPU、内存、文件描述符与 syscall 摘要）；默认关闭。

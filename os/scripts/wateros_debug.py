@@ -968,6 +968,15 @@ def build_debug_elf(
         "GDB_BUILD=1",
         f"GDB_FAULTS={1 if faults else 0}",
     ]
+    mode = os.environ.get("WATEROS_MODE", "auto")
+    if mode in {"auto", "shell", "run"}:
+        command.append(f"MODE={mode}")
+    script = os.environ.get("WATEROS_OPERATOR_SCRIPT", "").strip()
+    if script:
+        command.append(f"SCRIPT={script}")
+    shell = os.environ.get("WATEROS_OPERATOR_SHELL", "").strip()
+    if shell:
+        command.append(f"GUEST_SHELL={shell}")
     extra_features = os.environ.get("WOS_EXTRA_FEATURES", "").strip()
     if extra_features:
         command.append(f"EXTRA_FEATURES={extra_features}")

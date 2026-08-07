@@ -22,7 +22,8 @@ make show-config ARCH=la PROFILE=pre LA_PRE_IMAGE=/data/la-pre.img
 ## 1. 构建与自动评测
 
 统一变量的默认值是 `ARCH=rv PROFILE=pre SMP=8 MODE=auto
-SNAPSHOT=1`。
+SNAPSHOT=1`。`MODE` 只在编译期选择 operator feature，不会作为 bootargs
+传给 QEMU。
 
 ```bash
 # 构建或检查
@@ -38,7 +39,8 @@ make run ARCH=la PROFILE=final
 
 Make 不扫描镜像、不维护测试目录，也不提供 `make tests` 或
 `make test TEST=...`。`MODE=auto` 执行什么由内核现有 bringup
-配置决定。额外 Cargo feature 可通过通用变量传入：
+配置决定，QEMU 启动命令不包含 `-append`。额外 Cargo feature 可通过
+通用变量传入：
 
 ```bash
 make run ARCH=rv PROFILE=pre EXTRA_FEATURES=bringup-ltp-glibc-only
@@ -67,7 +69,8 @@ cat /tmp/hello.txt
 sleep 30                 # 可按 Ctrl-C 中断
 ```
 
-指定 shell 时使用 `GUEST_SHELL`，不要使用 Make 保留变量 `SHELL`：
+指定 shell 时使用 `GUEST_SHELL`，不要使用 Make 保留变量 `SHELL`；
+该路径在构建时通过 `operator-shell` feature 嵌入内核：
 
 ```bash
 make shell ARCH=rv PROFILE=final GUEST_SHELL=/glibc/busybox
@@ -78,7 +81,8 @@ make shell ARCH=rv PROFILE=final GUEST_SHELL=/glibc/busybox
 
 ## 3. 运行镜像内指定脚本
 
-`MODE=run` 保留为通用 operator 能力，它不是 Make 测试目录。
+`MODE=run` 保留为通用 operator 能力，它不是 Make 测试目录。它会构建
+`operator-run` feature，并把 `SCRIPT` 在编译时嵌入内核：
 
 ```bash
 make run ARCH=rv PROFILE=final \
@@ -219,12 +223,9 @@ make gdb                      # 交互式调试
 | `ARCH` | `rv` | `rv` / `la` |
 | `PROFILE` | `pre` | `pre` / `final` |
 | `SMP` | `8` | QEMU vCPU 数，`1..8` |
-| `MODE` | `auto` | `auto` / `shell` / `run` |
-| `SCRIPT` | 空 | `run` 模式的 guest 绝对路径 |
-| `GUEST_SHELL` | 空 | 指定 guest shell/BusyBox ELF |
-| `TTY` | 由内核决定 | `interactive` / `closed` / `fixture` |
-| `LOG` | 由内核决定 | `error` / `warn` / `info` / `debug` / `trace` |
-| `ON_EXIT` | 由模式决定 | `shutdown` / `shell` / `reboot` |
+| `MODE` | `auto` | 编译期 feature 选择：`auto` / `shell` / `run` |
+| `SCRIPT` | 空 | `run` 模式下编译期嵌入的 guest 绝对路径 |
+| `GUEST_SHELL` | 空 | 指定 shell/BusyBox ELF，编译期嵌入 |
 | `SNAPSHOT` | `1` | `1` 不写回基础镜像 |
 | `WRITE_DISK` | `0` | `1` 允许写回，并默认关闭 snapshot |
 | `PORT` | `1234` | QEMU GDB Remote 端口 |
@@ -257,8 +258,8 @@ make run ARCH=rv PROFILE=pre RV_PRE_IMAGE=/data/wateros-pre.img
   `make gdb` 后执行 `continue`。
 - 端口被占用：在终端一传入 `PORT=1235`；终端二会从会话自动
   读取，不用再传。
-- shell 无输入：使用 `make shell`，不要设置 `TTY=closed`。
-- 提示符被日志覆盖：使用 `LOG=warn` 或 `LOG=error`。
+- shell 无输入：使用 `make shell`；交互 TTY 由 `operator-shell` 固定启用。
+- 提示符被日志覆盖：shell/run 的 operator 日志级别固定为 `warn`。
 - 退出 QEMU：按 `Ctrl-A` 后按 `x`。Guest 内的 Ctrl-C 仍用于中断前台进程。
 - 图形窗口未出现：确认使用了 `EXTRA_FEATURES=gui`，并检查宿主是否安装了
   对应的 QEMU 显示后端；服务器环境可先用 `GRAPHICS_BACKEND=none` 验证驱动。

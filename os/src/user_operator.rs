@@ -1,4 +1,4 @@
-//! Runtime-selectable user supervisor used by the on-site operator profile.
+//! Build-time-selectable user supervisor used by the on-site operator profile.
 
 extern crate alloc;
 
@@ -13,6 +13,7 @@ const LOG_TAG : &str = "operator";
 static CONSOLE_INPUT_TASK_STARTED : AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
 enum OperatorMode {
     Auto,
     Shell,
@@ -20,6 +21,7 @@ enum OperatorMode {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
 enum ExitPolicy {
     Shutdown,
     Shell,
@@ -27,6 +29,7 @@ enum ExitPolicy {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
 enum TtyMode {
     Interactive,
     Closed,
@@ -36,12 +39,11 @@ enum TtyMode {
 #[derive(Debug)]
 struct BootPlan {
     mode : OperatorMode,
-    shell : Option<String>,
-    script : Option<String>,
+    shell : Option<&'static str>,
+    script : Option<&'static str>,
     on_exit : ExitPolicy,
     tty : TtyMode,
     log : Option<LevelFilter>,
-    invalid : bool,
 }
 
 impl BootPlan {
@@ -54,107 +56,49 @@ impl BootPlan {
                tty : TtyMode::Fixture,
                #[cfg(feature = "final_online")]
                tty : TtyMode::Closed,
-               log : None,
-               invalid : false }
+               log : None }
     }
 
-    fn parse(command_line : Option<&str>) -> Self {
-        let mut plan = Self::defaults();
-        let mut explicit_exit = false;
-        let mut explicit_tty = false;
-        for field in command_line.unwrap_or("")
-                                 .split_ascii_whitespace()
+    fn selected_mode() -> OperatorMode {
+        #[cfg(feature = "operator-shell")]
         {
-            let Some((key, value)) = field.split_once('=') else {
-                continue;
-            };
-            match key {
-                "wos.mode" => match value {
-                    "auto" => plan.mode = OperatorMode::Auto,
-                    "shell" => plan.mode = OperatorMode::Shell,
-                    "run" => plan.mode = OperatorMode::Run,
-                    _ => plan.invalid = true,
-                },
-                "wos.shell" if value.starts_with('/') => plan.shell = Some(value.to_string()),
-                "wos.shell" => plan.invalid = true,
-                "wos.script" if value.starts_with('/') => plan.script = Some(value.to_string()),
-                "wos.script" => plan.invalid = true,
-                "wos.on_exit" => {
-                    explicit_exit = true;
-                    match value {
-                        "shutdown" => plan.on_exit = ExitPolicy::Shutdown,
-                        "shell" => plan.on_exit = ExitPolicy::Shell,
-                        "reboot" => plan.on_exit = ExitPolicy::Reboot,
-                        _ => plan.invalid = true,
-                    }
-                }
-                "wos.tty" => {
-                    explicit_tty = true;
-                    match value {
-                        "interactive" => plan.tty = TtyMode::Interactive,
-                        "closed" => plan.tty = TtyMode::Closed,
-                        "fixture" => plan.tty = TtyMode::Fixture,
-                        _ => plan.invalid = true,
-                    }
-                }
-                "wos.log" => {
-                    plan.log = match value {
-                        "error" => Some(LevelFilter::Error),
-                        "warn" => Some(LevelFilter::Warn),
-                        "info" => Some(LevelFilter::Info),
-                        "debug" => Some(LevelFilter::Debug),
-                        "trace" => Some(LevelFilter::Trace),
-                        _ => {
-                            plan.invalid = true;
-                            None
-                        }
-                    }
-                }
-                // Internal QEMU topology hint consumed by the LoongArch
-                // platform SMP backend. Validate it here so a malformed run
-                // command follows the same rescue policy as other known
-                // WaterOS options.
-                "wos.cpus" => {
-                    if value.parse::<usize>()
-                            .ok()
-                            .filter(|count| (1..=base_config::task::MAX_CPUS).contains(count))
-                            .is_none()
-                    {
-                        plan.invalid = true;
-                    }
-                }
-                key if key.starts_with("wos.") => {
-                    warn!("[{LOG_TAG}] ignored unknown boot option {key}")
-                }
-                _ => {}
-            }
+            OperatorMode::Shell
         }
-        if plan.mode != OperatorMode::Auto {
-            if !explicit_exit {
-                plan.on_exit = ExitPolicy::Shell;
-            }
-            if !explicit_tty {
-                plan.tty = TtyMode::Interactive;
-            }
-            if plan.log.is_none() {
-                plan.log = Some(LevelFilter::Warn);
-            }
-        }
-        if plan.mode == OperatorMode::Run &&
-           plan.script
-               .is_none()
+        #[cfg(feature = "operator-run")]
         {
-            plan.invalid = true;
+            OperatorMode::Run
         }
-        if plan.invalid {
+        #[cfg(not(any(feature = "operator-shell", feature = "operator-run")))]
+        {
+            OperatorMode::Auto
+        }
+    }
+}
+
+#[cfg(all(feature = "operator-shell", feature = "operator-run"))]
+compile_error!("features `operator-shell` and `operator-run` are mutually exclusive");
+
+/// 从编译期 feature 与构建环境构造启动方案，不再读取 QEMU bootargs。
+fn build_plan() -> BootPlan {
+    let mut plan = BootPlan::defaults();
+    match BootPlan::selected_mode() {
+        OperatorMode::Auto => {}
+        OperatorMode::Shell => {
             plan.mode = OperatorMode::Shell;
             plan.on_exit = ExitPolicy::Shell;
             plan.tty = TtyMode::Interactive;
-            plan.log
-                .get_or_insert(LevelFilter::Warn);
+            plan.log = Some(LevelFilter::Warn);
+            plan.shell = option_env!("WATEROS_OPERATOR_SHELL");
         }
-        plan
+        OperatorMode::Run => {
+            plan.mode = OperatorMode::Run;
+            plan.on_exit = ExitPolicy::Shell;
+            plan.tty = TtyMode::Interactive;
+            plan.log = Some(LevelFilter::Warn);
+            plan.script = option_env!("WATEROS_OPERATOR_SCRIPT");
+        }
     }
+    plan
 }
 
 struct ShellCandidate {
@@ -266,31 +210,13 @@ extern "C" fn console_input_main(_arg : usize) -> ! {
     }
 }
 
-/// 根据平台提供的可选命令行生成启动方案。
-///
-/// COMPETITION_BOOT: 决赛评测的 QEMU 命令不包含 `-append`，因此缺少
-/// bootargs 是正常启动方式，必须立即采用由 `pre` / `final_online` feature
-/// 决定的自动评测默认值，不能等待串口菜单。开发环境仍可通过 `wos.*`
-/// 参数覆盖为 shell 或指定脚本模式。
-fn plan_from_command_line(command_line : Option<&str>) -> BootPlan {
-    match command_line {
-        Some(command_line) => BootPlan::parse(Some(command_line)),
-        None => BootPlan::defaults(),
-    }
-}
-
 extern "C" fn operator_main(_arg : usize) -> ! {
-    let command_line = platform::boot::command_line();
-    let plan = plan_from_command_line(command_line);
-    if plan.invalid {
-        error!("[{LOG_TAG}] invalid WaterOS boot options: {:?}; entering rescue shell",
-               command_line);
-    }
+    let plan = build_plan();
     if let Some(level) = plan.log {
         runtime::logging::set_max_level(level);
     }
     configure_tty(plan.tty);
-    info!("[{LOG_TAG}] command_line={command_line:?} plan={plan:?}");
+    info!("[{LOG_TAG}] plan={plan:?}");
 
     match plan.mode {
         OperatorMode::Auto => crate::user_bringup_busybox::run_auto_queue(0),
@@ -332,39 +258,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn missing_bootargs_start_automatic_evaluation_immediately() {
-        let plan = plan_from_command_line(None);
-        assert_eq!(plan.mode, OperatorMode::Auto);
-        assert_eq!(plan.on_exit, ExitPolicy::Shutdown);
-        assert!(!plan.invalid);
-        #[cfg(feature = "pre")]
-        assert_eq!(plan.tty, TtyMode::Fixture);
-        #[cfg(feature = "final_online")]
-        assert_eq!(plan.tty, TtyMode::Closed);
-    }
-
-    #[test]
-    fn operator_defaults_to_interactive_rescue() {
-        let plan = BootPlan::parse(Some("wos.mode=shell"));
-        assert_eq!(plan.mode, OperatorMode::Shell);
-        assert_eq!(plan.on_exit, ExitPolicy::Shell);
-        assert_eq!(plan.tty, TtyMode::Interactive);
-    }
-
-    #[test]
-    fn invalid_known_option_forces_rescue_shell() {
-        let plan = BootPlan::parse(Some("wos.mode=broken"));
-        assert!(plan.invalid);
-        assert_eq!(plan.mode, OperatorMode::Shell);
-    }
-
-    #[test]
-    fn run_requires_an_absolute_script() {
-        assert!(BootPlan::parse(Some("wos.mode=run")).invalid);
-        assert!(BootPlan::parse(Some("wos.mode=run wos.script=relative.sh")).invalid);
-        let plan = BootPlan::parse(Some("wos.mode=run wos.script=/root/test.sh"));
-        assert!(!plan.invalid);
-        assert_eq!(plan.mode, OperatorMode::Run);
+    fn default_build_selects_automatic_evaluation() {
+        #[cfg(not(any(feature = "operator-shell", feature = "operator-run")))]
+        {
+            let plan = build_plan();
+            assert_eq!(plan.mode, OperatorMode::Auto);
+            assert_eq!(plan.on_exit, ExitPolicy::Shutdown);
+        }
+        #[cfg(feature = "operator-shell")]
+        assert_eq!(build_plan().mode, OperatorMode::Shell);
+        #[cfg(feature = "operator-run")]
+        assert_eq!(build_plan().mode, OperatorMode::Run);
     }
 
     #[test]
