@@ -92,7 +92,7 @@ fn build_plan() -> BootPlan {
         }
         OperatorMode::Run => {
             plan.mode = OperatorMode::Run;
-            plan.on_exit = ExitPolicy::Shell;
+            plan.on_exit = ExitPolicy::Shutdown;
             plan.tty = TtyMode::Interactive;
             plan.log = Some(LevelFilter::Warn);
             plan.script = option_env!("WATEROS_OPERATOR_SCRIPT");

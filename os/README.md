@@ -91,7 +91,8 @@ make run ARCH=rv PROFILE=final \
 ```
 
 `SCRIPT` 必须是 guest 中的绝对路径，且只能和 `MODE=run` 一起使用。
-脚本成功、失败或装载失败后，supervisor 都会进入救援 shell。
+脚本执行完成后 supervisor 会关机，适合自动化测试与 pc-hot 采样；需要保留现场时
+请改用 `make shell`。
 
 ## 4. 可选图形桌面
 
