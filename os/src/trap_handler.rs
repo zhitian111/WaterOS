@@ -51,6 +51,15 @@ macro_rules! hot_syscall_trace {
     };
 }
 
+#[inline]
+fn exit_current_if_process_exiting() {
+    if let Some(process) = task::current_process_snapshot() {
+        if let task::ProcessState::Exiting(exit_code) = process.state {
+            task::exit_group_current(exit_code);
+        }
+    }
+}
+
 /// 监督态定时器中断后，用 **与 `kernel_main` 相同的 wall-clock 语义**
 /// 重新武装固件定时器。
 ///
@@ -157,11 +166,7 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
     let cx = unsafe { &mut *(authoritative as *mut TrapContext) };
 
     if cx.returns_to_user() {
-        if let Some(process) = task::current_process_snapshot() {
-            if let task::ProcessState::Exiting(exit_code) = process.state {
-                task::exit_group_current(exit_code);
-            }
-        }
+        exit_current_if_process_exiting();
         if platform::arch::trap::user_trap_requires_kernel_address_space() {
             let kernel_satp = mm::kernel_mm::kernel_satp();
             if paging::active_address_space_token() != kernel_satp {
@@ -352,6 +357,9 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             if tick % 8 == 0 {
                 trace!("[trap] timer tick {}", tick);
             }
+            if !cx.returns_to_user() {
+                exit_current_if_process_exiting();
+            }
             syscall::timer_tick(cx.returns_to_user());
             if !suppress_scheduler {
                 task::schedule_tick();
@@ -385,6 +393,7 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
     }
 
     if cx.returns_to_user() {
+        exit_current_if_process_exiting();
         return_to_user_signal_delivery(authoritative, trap_cause, cx, restart);
         // `raw_cause` 来自 TrapContext.scause 快照，即 **本次** 进入内核的原因（如
         // ecall=0x8）， 不是硬件 CSR 的“下一异常预告”；`sret`
@@ -447,6 +456,9 @@ fn return_to_user_signal_delivery(frame : *mut u8,
 
 /// 信号/页错等提前返回路径：打 trace 后把 TCB trap 帧拷回内核栈供 `sret`。
 fn finish_trap_return(frame : *mut u8, cx : &TrapContext, raw_cause : usize) {
+    if cx.returns_to_user() {
+        exit_current_if_process_exiting();
+    }
     hot_syscall_trace!("[trap] sret to user pc={:#x} sp={:#x} return_satp={:#x} \
                         kernel_satp={:#x} frame_scause={:#x}",
                        cx.user_pc(),
