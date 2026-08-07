@@ -429,3 +429,9 @@ BUILDSTORM_COMPILE mode=multi ok=true elapsed_s=1281.26 cores=8 bytes=1681000 ar
 安装 `gdb-multiarch` 兼容入口后运行 `wateros_debug.py run rv-final --write-disk`。
 40 分钟内未出现 stable=10 停滞，debug/GDB 采样开销使完整编译极慢，未捕获现场。
 后续需要更轻量的停滞判断或直接复现更短负载。
+
+## 2026-08-07 快速增量 cargo xtask 复现
+
+离线把 K-51 overlay 的 `/glibc/buildstorm_testcode.sh` 改成不删除 target，并在已构建
+产物上重跑 `cargo xtask`。结果 `QUICK_BUILDSTORM_RESULT rc=0 elapsed_s=65.42`，
+正常返回。说明该竞态只出现在完整重编译的长负载路径，普通增量流程不复现。
