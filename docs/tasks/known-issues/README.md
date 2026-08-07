@@ -61,8 +61,10 @@
   Final 运行默认绑定 P-core，完整 Final `elapsed_s=1348.86`。
 - [`K-38`](./results/k38-page-cache-capacity-32mib-20260807.md)：
   页缓存扩容到 32MiB，完整 Final `elapsed_s=1282.12`。
+- [`K-50`](./results/k50-procfs-read-range-20260807.md)：
+  procfs 增加 range 读取，完整 Final `elapsed_s=1281.26`。
 
-以上组合完整 Final 可跑通。当前最优 `elapsed_s=1282.12`；K-31 完整轮在宿主高负载
+以上组合完整 Final 可跑通。当前最优 `elapsed_s=1281.26`；K-31 完整轮在宿主高负载
 下为 `1941.42`，K-32 低负载完整轮为 `1957.45`，K-33 为 `1873.87`，K-35 为
 `1896.21`，K-36 为 `1881.13`；P-core 亲和性下为 `1348.86`，仍未达到 700-800s
 目标。

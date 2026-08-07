@@ -400,3 +400,14 @@ P-core 60s 短采样使用 `-cpu rva22s64`，进度与默认 CPU 基本一致，
 `-drive cache=unsafe` 完整轮构建本体 `done (1267.20s)`，与默认接近；构建完成后约
 3 分钟未打印 `BUILDSTORM_COMPILE`，命中已知 `cargo xtask` 返回竞态。该参数未带来
 可见收益，不加入 Final 启动参数。
+
+## 2026-08-07 K-50 procfs range 读取
+
+给 `ProcFsView` 增加 `read_range`，FsBridge 的 `/proc` 路径改走 range 接口；静态
+proc 文件直接切片，不再整文件分配。完整 Final：
+
+```text
+BUILDSTORM_COMPILE mode=multi ok=true elapsed_s=1281.26 cores=8 bytes=1681000 arch=riscv64
+```
+
+分析：该改动是新最优 `1281.26s`，同时修复已知的 procfs 整文件读取路径。

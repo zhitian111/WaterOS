@@ -612,6 +612,26 @@ impl ProcFsView for KernelProcFs {
         }
     }
 
+    fn read_range(&self, rel_path : &str, offset : u64, buf : &mut [u8]) -> FsResult<usize> {
+        let node = parse_node(rel_path).ok_or(FsError::NotFound)?;
+        let static_data : &[u8] = match node {
+            ProcNode::ProcNetTcp => {
+                b"sl local_address rem_address st tx_queue rx_queue tr tm->when retrnsmt\n\
+ 0: 00000000:0000 00000000:0000 0A 00000000:00000000 00:00000000 0\n"
+            }
+            ProcNode::SysKernelPidMax => b"32768\n",
+            ProcNode::SysKernelTainted => b"0\n",
+            _ => return ProcFsView::read_range(self, rel_path, offset, buf),
+        };
+        let start = offset as usize;
+        if start >= static_data.len() {
+            return Ok(0);
+        }
+        let n = core::cmp::min(buf.len(), static_data.len() - start);
+        buf[..n].copy_from_slice(&static_data[start..start + n]);
+        Ok(n)
+    }
+
     fn read_symlink(&self, rel_path : &str) -> FsResult<Vec<u8>> {
         let node = parse_node(rel_path).ok_or(FsError::NotFound)?;
         match node {
