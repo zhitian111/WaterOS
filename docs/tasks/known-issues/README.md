@@ -63,6 +63,9 @@
   页缓存扩容到 32MiB，完整 Final `elapsed_s=1282.12`。
 - [`K-50`](./results/k50-procfs-read-range-20260807.md)：
   procfs 增加 range 读取，完整 Final `elapsed_s=1281.26`。
+- [`回归汇总`](./results/regression-known-issues-20260807.md)：
+  已知问题回归：RV Final/Pre、read-family、iozone、并行探针通过；LA Final 仍受
+  `cargo xtask` 返回竞态阻断。
 
 以上组合完整 Final 可跑通。当前最优 `elapsed_s=1281.26`；K-31 完整轮在宿主高负载
 下为 `1941.42`，K-32 低负载完整轮为 `1957.45`，K-33 为 `1873.87`，K-35 为
