@@ -411,3 +411,9 @@ BUILDSTORM_COMPILE mode=multi ok=true elapsed_s=1281.26 cores=8 bytes=1681000 ar
 ```
 
 分析：该改动是新最优 `1281.26s`，同时修复已知的 procfs 整文件读取路径。
+
+## 2026-08-07 K-51 procfs 小型动态文件栈上 range（已回退）
+
+为 uptime/meminfo/cpuinfo/cgroups/mounts 增加栈上 `SliceWriter` 直接 range 生成。
+完整 Final 构建本体 `done (1259.49s)`，但构建完成后约 3 分钟未打印
+`BUILDSTORM_COMPILE`，命中已知 `cargo xtask` 返回竞态。本轮不可验收，已回退。
