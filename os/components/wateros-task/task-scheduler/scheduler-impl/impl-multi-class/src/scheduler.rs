@@ -152,7 +152,7 @@ impl MultiClassScheduler {
     /// 首次任务切换（冷启动入口）。
     pub(super) fn prepare_first_switch(&mut self, cpu_id : CpuId) -> SwitchPair {
         self.cpu_states[cpu_id.raw()].leave_boot_context();
-        let next_task_id = self.cpu_states[cpu_id.raw()].pick_next_runnable();
+        let next_task_id = self.pick_next_runnable_or_steal(cpu_id);
         let snap = self.registry
                        .task_snapshot(next_task_id);
         self.set_current_task(&snap, cpu_id);
@@ -190,7 +190,7 @@ impl MultiClassScheduler {
 
         // Phase 4: IDLE 特殊处理（不经过 enqueue）
         if self.cpu_states[cpu_id.raw()].is_current_idle() {
-            let next_task_id = self.cpu_states[cpu_id.raw()].pick_next_runnable();
+            let next_task_id = self.pick_next_runnable_or_steal(cpu_id);
             let snap = self.registry
                            .task_snapshot(next_task_id);
             if next_task_id == current_task_id {
@@ -205,15 +205,17 @@ impl MultiClassScheduler {
                                          cpu_id));
         }
         // Phase 5-8: 非 IDLE 调度
-        if matches!(reason, ScheduleReason::Yield | ScheduleReason::Sleep(0)) {
+        if matches!(reason,
+                    ScheduleReason::Yield | ScheduleReason::Sleep(0))
+        {
             self.cpu_states[cpu_id.raw()].prepare_yield();
         }
         let queue_target = self.pick_queue(reason);
         self.enqueue_task(queue_target, current_task_id, cpu_id);
         // 当前任务的状态转换可能唤醒其它任务（最典型是 Exit 唤醒父 runner）。
         // 必须在转换之后取 next；提前 pick 会错误地选 idle，并令 CPU cache 与
-        // 实际将要恢复的任务脱节。
-        let next_task_id = self.cpu_states[cpu_id.raw()].pick_next_runnable();
+        // 实际将要恢复的任务脱节。本地无任务可跑时顺势尝试从其它核偷取。
+        let next_task_id = self.pick_next_runnable_or_steal(cpu_id);
         let snap = self.registry
                        .task_snapshot(next_task_id);
         // Phase 8: 决定是否 __switch
@@ -247,6 +249,11 @@ impl MultiClassScheduler {
         // 3. 推进当前任务的时间片/vruntime（由 CPUState::tick 按策略分发）
         self.cpu_states[cpu_id.raw()].tick();
 
+        // 4. 空闲核周期性尝试从其它核偷取任务，避免“忙碌核排队、空闲核空转”。
+        let stole = self.cpu_states[cpu_id.raw()].is_current_idle() &&
+                    self.steal_ready_task(cpu_id)
+                        .is_some();
+
         let needs_switch =
             self.cpu_states[cpu_id.raw()].cpu_should_reschedule(RescheduleCause::Tick);
 
@@ -259,7 +266,7 @@ impl MultiClassScheduler {
                 self.activate_woken_and_timeout_tasks();
             }
         }
-        if needs_switch {
+        if needs_switch || stole {
             Some(())
         } else {
             None
@@ -331,7 +338,7 @@ impl MultiClassScheduler {
         }
 
         // ===== Phase 6: 选下一个任务，直接切换（当前已阻塞） =====
-        let next_task_id = self.cpu_states[cpu_id.raw()].pick_next_runnable();
+        let next_task_id = self.pick_next_runnable_or_steal(cpu_id);
         let snap = self.registry
                        .task_snapshot(next_task_id);
         self.set_current_task(&snap, cpu_id);
@@ -359,8 +366,7 @@ impl MultiClassScheduler {
             cpu.current_runtime_ticks = 0;
             values
         };
-        if CPUState::is_cfs_policy(policy)
-        {
+        if CPUState::is_cfs_policy(policy) {
             self.registry
                 .set_vruntime(current_task_id, vruntime);
         }
@@ -440,7 +446,9 @@ impl MultiClassScheduler {
                        .task_snapshot(task_id);
         let preferred = match placement {
             ReadyPlacement::LeastLoaded => None,
-            ReadyPlacement::LastCpu => snap.last_cpu_id,
+            // 唤醒亲和性放宽：last_cpu 过载时，把任务放到更空的核。
+            ReadyPlacement::LastCpu => snap.last_cpu_id
+                                           .filter(|cpu_id| !self.cpu_is_overloaded(*cpu_id)),
             ReadyPlacement::Prefer(cpu_id) => Some(cpu_id),
         };
         if let Some(cpu_id) = preferred.filter(|cpu_id| {

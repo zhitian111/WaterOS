@@ -439,6 +439,48 @@ impl CPUState {
             .expect("every CPU must have an idle task")
     }
 
+    /// 从本 CPU 就绪队列中挑选一个可迁移的任务并摘除（负载均衡偷取）。
+    ///
+    /// 实时任务（FIFO/RR）从高优先级往下优先；fair 任务（OTHER/BATCH/IDLE）
+    /// 挑最小 vruntime。队首任务若 `can_migrate` 返回 false（如 affinity 限制），
+    /// 则放弃本 CPU（返回 None），避免破坏实时任务的队列顺序。
+    pub fn steal_candidate(&mut self,
+                           mut can_migrate : impl FnMut(TaskId) -> bool)
+                           -> Option<TaskId> {
+        // FIFO/RR：从最高优先级往下找第一个非空队列。
+        for priority in (1..=99).rev() {
+            if let Some(task_id) = self.fifo_queue.front_at_priority(priority) {
+                return can_migrate(task_id).then(|| {
+                    self.fifo_queue
+                        .pick_at_priority(priority)
+                        .expect("peeked task must still be present")
+                });
+            }
+            if let Some(task_id) = self.rr_queue.front_at_priority(priority) {
+                return can_migrate(task_id).then(|| {
+                    self.rr_queue
+                        .pick_at_priority(priority)
+                        .expect("peeked task must still be present")
+                });
+            }
+        }
+        // fair 队列（OTHER/BATCH/IDLE）中挑最小 vruntime 的任务。
+        let mut best = None;
+        for queue in [&self.cfs_queue, &self.batch_queue, &self.idle_queue] {
+            if let Some(candidate @ (_, vr)) = queue.front() {
+                if best.map_or(true, |(_, best_vr)| vr < best_vr) {
+                    best = Some(candidate);
+                }
+            }
+        }
+        let (task_id, _) = best?;
+        if !can_migrate(task_id) {
+            return None;
+        }
+        self.dequeue(task_id);
+        Some(task_id)
+    }
+
     /// 当前任务是否为 idle 任务。
     pub fn is_current_idle(&self) -> bool { self.current_task_id == self.idle_task_id }
 

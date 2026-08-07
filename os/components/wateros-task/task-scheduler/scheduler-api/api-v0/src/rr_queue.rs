@@ -73,6 +73,12 @@ impl RrQueue {
                               .saturating_sub(1);
         Some(task_id)
     }
+    /// 查看指定优先级队首任务而不出队；用于负载均衡的偷取判断。
+    pub fn front_at_priority(&self, priority : Priority) -> Option<TaskId> {
+        let index = (priority - 1) as usize;
+        self.queues[index].front()
+                          .copied()
+    }
     pub fn task_count(&self) -> usize { self.task_count }
     pub fn highest_priority(&self) -> Option<Priority> {
         for (i, q) in self.queues
