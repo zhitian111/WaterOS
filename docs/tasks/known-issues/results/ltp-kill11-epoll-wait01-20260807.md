@@ -1,4 +1,4 @@
-# LTP kill11 / epoll_wait01 修复结果
+# LTP kill11 / epoll_wait01 / sigtimedwait01 修复结果
 
 ## 范围
 
@@ -6,6 +6,7 @@
 
 - `kill11`：`WCOREDUMP` 位错误地为不产生 core 的信号置位。
 - `epoll_wait01`：`epoll_wait` 返回多个事件时第二个事件丢失。
+- `sigtimedwait01`：`siginfo` 缺少 sender 信息，且无效指针路径返回错误 errno。
 
 ## 根因
 
@@ -29,6 +30,10 @@ glibc 使用 16 字节布局：`events` 4 字节、4 字节 padding、`data` 8 �
   按 Linux 信号表决定 `WCOREDUMP`。
 - `os/components/wateros-syscall/syscall-impl/impl-kernel/src/epoll_fd.rs`：
   RISC-V/LoongArch 使用 16 字节 `epoll_event` ABI，并保留 12 字节路径供宿主测试。
+- `os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/ipc/signal.rs`：
+  `sigwaitinfo`/`sigtimedwait` 按 Linux `siginfo_t` 布局回填 `si_pid`/`si_uid`；
+  已退出未 reap 的子进程允许 `kill`；非 8 字节对齐的 `sigset_t`/timeout 指针按
+  `EFAULT` 返回。
 
 ## 验证
 
@@ -38,8 +43,4 @@ glibc 使用 16 字节布局：`events` 4 字节、4 字节 padding、`data` 8 �
 - `make check ARCH=la PROFILE=final`
 - RISC-V QEMU 单独运行 `kill11`：全部 TPASS，`KILL11_RC=0`
 - RISC-V QEMU 单独运行 `epoll_wait01`：全部 TPASS，`EPOLL_WAIT01_RC=0`
-
-## 剩余
-
-`sigtimedwait01` 的 `siginfo` 与已退出子进程 `kill` 已部分改善，但
-`test_bad_address2` 仍在无效 `sigset_t` 指针的用户拷贝路径阻塞，尚未闭环。
+- RISC-V QEMU 单独运行 `sigtimedwait01`：全部 TPASS，`SIGTIMEDWAIT01_RC=0`
