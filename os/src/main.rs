@@ -10,6 +10,8 @@ compile_error!("select one competition stage feature: `pre` or `final_online`");
 extern crate alloc;
 
 use klog as _;
+#[cfg(feature = "gui")]
+use runtime::logging::info;
 use runtime::logging::warn;
 #[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
 use syscall as _;
@@ -30,6 +32,7 @@ mod user_bringup_ltp_exclusions;
 mod user_bringup_mm;
 mod user_bringup_posix_fs;
 mod user_bringup_root_layout;
+mod user_operator;
 
 // ── Panic / Alloc ───────────────────────────────────────────────
 
@@ -51,10 +54,12 @@ extern "C" fn network_poller_task(_arg : usize) -> ! {
         // NETWORK_STACK is a cross-CPU spin lock. Keep this kernel task from
         // being switched out while it owns the lock: syscall callers enter
         // with interrupts disabled and otherwise cannot yield while spinning.
-        let interrupt_state = platform::arch::interrupt::read_global_interrupt_state()
-            .expect("read interrupt state for network poll");
-        platform::arch::interrupt::disable_global_interrupt()
-            .expect("disable interrupts for network poll");
+        let interrupt_state =
+            platform::arch::interrupt::read_global_interrupt_state().expect("read interrupt \
+                                                                             state for network \
+                                                                             poll");
+        platform::arch::interrupt::disable_global_interrupt().expect("disable interrupts for \
+                                                                      network poll");
         match platform::timer::now_duration() {
             Ok(now) => {
                 let millis = now.as_millis()
@@ -70,11 +75,57 @@ extern "C" fn network_poller_task(_arg : usize) -> ! {
     }
 }
 
+/// GUI 常驻任务：处理输入、更新默认动画并仅在 dirty 时提交画面。
+#[cfg(feature = "gui")]
+extern "C" fn gui_refresh_task(_arg : usize) -> ! {
+    let mut frame = 0u64;
+    loop {
+        let _ = gui::push_input(gui::InputEvent::Tick(frame));
+        let _ = gui::update_default_desktop(frame);
+        let _ = gui::render_if_dirty();
+
+        // 默认桌面拥有这些事件；未来由专用 GUI 服务任务把事件转交应用。
+        while let Ok(Some(event)) = gui::poll_event() {
+            match event.kind {
+                gui::GuiEventKind::CloseRequested => {
+                    let _ = gui::remove_window(event.window);
+                }
+                gui::GuiEventKind::Clicked if event.widget == Some(gui::ACTION_BUTTON) => {
+                    let _ = gui::set_label_text(gui::MAIN_WINDOW,
+                                                gui::STATUS_LABEL,
+                                                "Self-check event delivered successfully");
+                }
+                gui::GuiEventKind::Submitted => {
+                    let _ = gui::set_label_text(gui::MAIN_WINDOW,
+                                                gui::STATUS_LABEL,
+                                                "Text input submitted");
+                }
+                _ => {}
+            }
+        }
+        frame = frame.wrapping_add(1);
+        task::sleep_for_ticks(2);
+    }
+}
+
 /// 驱动 → 网络 → FS → 用户态 bring-up。两 board 模块共用。
 fn bringup_driver_and_user() {
     match driver::active_impl::init_after_boot() {
         Err(ref err) => warn!("driver init failed: {:?}", err),
         Ok(()) => {
+            #[cfg(feature = "gui")]
+            match (|| -> gui::GuiResult<()> {
+                gui::initialize()?;
+                gui::install_default_desktop()?;
+                let _ = gui::render()?;
+                Ok(())
+            })() {
+                Ok(()) => {
+                    task::spawn_kernel_task(gui_refresh_task, 0);
+                    info!("[gui] wateros-gui desktop and refresh task ready");
+                }
+                Err(error) => warn!("[gui] initialization skipped: {:?}", error),
+            }
             #[cfg(feature = "qemu-riscv64-opensbi")]
             match driver::active_impl::goldfish_rtc_realtime_ns() {
                 Ok(ns) => {
@@ -85,11 +136,10 @@ fn bringup_driver_and_user() {
                 Err(err) => warn!("[boot] Goldfish RTC unavailable: {:?}",
                                   err),
             }
-            match network::stack::init(network::NetworkConfig {
-                address: [10, 0, 2, 15],
-                prefix_len: 24,
-                gateway: [10, 0, 2, 2],
-            }) {
+            match network::stack::init(network::NetworkConfig { address : [10, 0, 2, 15],
+                                                                prefix_len : 24,
+                                                                gateway : [10, 0, 2, 2] })
+            {
                 Ok(()) => {
                     task::spawn_kernel_task(network_poller_task, 0);
                 }
@@ -97,9 +147,6 @@ fn bringup_driver_and_user() {
             }
             fs::init();
             crate::user_bringup_bus::run();
-            fs::test();
-            #[cfg(feature = "vfs-bridge")]
-            vfs::test();
         }
     }
 }
@@ -212,6 +259,7 @@ mod qemu_riscv64_opensbi {
         {
             wait_ap_boot_ready(cpu_id);
         }
+        unsafe { platform::boot::init_command_line(cpu_raw, dtb_pa, _platform_arg1) };
         // BSP 初始化：驱动 → 日志 → timebase → 堆 → arch → 任务 → trap
         driver::init_when_boot(dtb_pa);
         runtime::console::show_logo();
@@ -250,7 +298,6 @@ mod qemu_riscv64_opensbi {
 mod qemu_loongarch64_virt {
     use crate::bringup_driver_and_user;
     use core::sync::atomic::{AtomicBool, Ordering};
-    use cred::active_impl::on_exec;
     use runtime::logging::*;
 
     static BSP_CLAIMED : AtomicBool = AtomicBool::new(false);
@@ -271,13 +318,15 @@ mod qemu_loongarch64_virt {
             if cpu == boot_cpu || !configured.contains(cpu) {
                 continue;
             }
-            info!("[smp] starting LA cpu={} entry={:#x}", raw, entry);
+            info!("[smp] starting LA cpu={} entry={:#x}",
+                  raw, entry);
             match platform::smp::start_cpu(cpu, entry, 0) {
                 Ok(()) | Err(platform::smp::PlatformSmpError::AlreadyAvailable) => {
                     requested.insert(cpu);
                 }
                 Err(platform::smp::PlatformSmpError::InvalidCpu) => break,
-                Err(error) => panic!("[smp] cannot start LA cpu={}: {:?}", raw, error),
+                Err(error) => panic!("[smp] cannot start LA cpu={}: {:?}",
+                                     raw, error),
             }
         }
         requested
@@ -288,7 +337,8 @@ mod qemu_loongarch64_virt {
         for _ in 0..ONLINE_WAIT_SPINS {
             let online = task::online_cpu_mask();
             if online.bits() & requested.bits() == requested.bits() {
-                info!("[smp] all LA CPUs online mask={:#x}", online.bits());
+                info!("[smp] all LA CPUs online mask={:#x}",
+                      online.bits());
                 return;
             }
             core::hint::spin_loop();
@@ -325,12 +375,14 @@ mod qemu_loongarch64_virt {
     }
 
     #[unsafe(no_mangle)]
-    pub fn wateros_kernel_main(cpu_raw : usize, _argc : usize, _envp : usize) -> ! {
+    pub fn wateros_kernel_main(cpu_raw : usize, argc : usize, argv : usize, envp : usize) -> ! {
         let cpu_id = task::CpuId::from_raw(cpu_raw);
         mask_boot_interrupts();
         if BSP_CLAIMED.swap(true, Ordering::AcqRel) {
             wait_ap_boot_ready(cpu_id);
         }
+
+        unsafe { platform::boot::init_command_line(argc, argv, envp) };
 
         runtime::console::show_logo();
         klog::init();
@@ -341,9 +393,13 @@ mod qemu_loongarch64_virt {
         let _ = platform::smp::init_ipi();
         let dtb_pa = platform::active_impl::boot::device_tree_phys_addr();
         driver::init_when_boot(dtb_pa);
-        let configured = platform::active_impl::smp::init_configured_cpu_mask(dtb_pa)
-            .expect("initialize LoongArch CPU topology from DTB");
-        info!("[smp] LA configured CPU mask={:#x}", configured.bits());
+        let configured =
+            platform::active_impl::smp::init_configured_cpu_mask(dtb_pa).expect("initialize \
+                                                                                 LoongArch CPU \
+                                                                                 topology from \
+                                                                                 DTB");
+        info!("[smp] LA configured CPU mask={:#x}",
+              configured.bits());
         crate::boot_timebase::probe_and_init_timebase(dtb_pa);
         task::init();
         task::set_timekeeper_cpu(cpu_id);

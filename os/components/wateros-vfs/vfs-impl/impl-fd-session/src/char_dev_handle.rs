@@ -5,7 +5,6 @@ extern crate alloc;
 
 use alloc::boxed::Box;
 use alloc::sync::Arc;
-use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use api_v0::{
@@ -16,28 +15,7 @@ use driver_api::DriverError;
 use driver_character_api_v0::{
     CharacterReadFinish, CharacterReadReservation, SharedCharacterDevice,
 };
-use spin::Mutex;
-
-/// QEMU 无主机输入时，经若干次 poll 后注入的合成密码（供 LTP ask_password.sh 等非交互场景）。
-// 本变量代码由AI完成
-const HEADLESS_STUB_INPUT: &[u8] = b"password\n";
-// 本变量代码由AI完成
-const HEADLESS_POLL_THRESHOLD: u64 = 2;
-
-// 本变量代码由AI完成
-struct HeadlessStubState {
-    offset: usize,
-    polls: u64,
-    active_read: Option<u64>,
-    next_read_id: u64,
-}
-
-static HEADLESS_STUB_STATE: Mutex<HeadlessStubState> = Mutex::new(HeadlessStubState {
-    offset: 0,
-    polls: 0,
-    active_read: None,
-    next_read_id: 1,
-});
+use tty::{self, TtyPreparedRead, TtyReadReservation};
 
 // 本方法代码由AI完成
 fn map_driver_err(e: DriverError) -> VfsError {
@@ -79,9 +57,11 @@ fn path_inode(path: &str) -> u64 {
 // 本结构代码由AI完成
 pub struct CharDevHandle {
     device: SharedCharacterDevice,
-    stdin_eof: bool,
+    read_eof: bool,
     rtc: bool,
     tty: bool,
+    tty_input: bool,
+    tty_output: bool,
     nonblocking: Arc<AtomicBool>,
     accmode: u32,
     mode: u16,
@@ -90,16 +70,18 @@ pub struct CharDevHandle {
 
 impl CharDevHandle {
 // 本方法代码由AI完成
-    pub fn new(device: SharedCharacterDevice, stdin_eof: bool) -> Self {
+    pub fn new(device: SharedCharacterDevice, input: bool) -> Self {
         Self {
             device,
-            stdin_eof,
+            read_eof: false,
             rtc: false,
             tty: true,
+            tty_input: input,
+            tty_output: !input,
             nonblocking: Arc::new(AtomicBool::new(false)),
-            accmode: if stdin_eof { 0 } else { 1 },
-            mode: if stdin_eof { 0o20600 } else { 0o20660 },
-            inode: if stdin_eof { 1 } else { 2 },
+            accmode: if input { 0 } else { 1 },
+            mode: if input { 0o20600 } else { 0o20660 },
+            inode: if input { 1 } else { 2 },
         }
     }
 
@@ -107,9 +89,11 @@ impl CharDevHandle {
     pub fn new_rtc(device: SharedCharacterDevice) -> Self {
         Self {
             device,
-            stdin_eof: false,
+            read_eof: true,
             rtc: true,
             tty: false,
+            tty_input: false,
+            tty_output: false,
             nonblocking: Arc::new(AtomicBool::new(false)),
             accmode: 2,
             mode: 0o20644,
@@ -122,9 +106,11 @@ impl CharDevHandle {
         if path == "/dev/null" {
             Self {
                 device,
-                stdin_eof: true,
+                read_eof: true,
                 rtc: false,
                 tty: false,
+                tty_input: false,
+                tty_output: false,
                 nonblocking: Arc::new(AtomicBool::new(false)),
                 accmode,
                 mode: 0o20666,
@@ -136,9 +122,10 @@ impl CharDevHandle {
             handle.accmode = accmode;
             handle
         } else {
-            let mut handle = Self::new(device, false);
+            let mut handle = Self::new(device, accmode != 1);
             handle.accmode = accmode;
             handle.inode = path_inode(path);
+            handle.tty_output = accmode != 0;
             handle
         }
     }
@@ -155,88 +142,13 @@ impl CharDevHandle {
 }
 
 // 本方法代码由AI完成
-fn headless_stub_pending() -> bool {
-    let state = HEADLESS_STUB_STATE.lock();
-    state.active_read.is_none() && state.offset < HEADLESS_STUB_INPUT.len()
-}
-
-// 本方法代码由AI完成
-fn arm_headless_stub_if_needed() {
-    let mut state = HEADLESS_STUB_STATE.lock();
-    if state.active_read.is_some() || state.offset < HEADLESS_STUB_INPUT.len() {
-        return;
-    }
-    state.polls = state.polls.saturating_add(1);
-    if state.polls >= HEADLESS_POLL_THRESHOLD {
-        state.offset = 0;
-        state.polls = 0;
-    }
-}
-
-struct HeadlessReadReservation {
-    id: u64,
-    offset: usize,
-    bytes: Vec<u8>,
-}
-
-fn prepare_headless_read(max_len: usize) -> Option<HeadlessReadReservation> {
-    let mut state = HEADLESS_STUB_STATE.lock();
-    if state.active_read.is_some() || state.offset >= HEADLESS_STUB_INPUT.len() {
-        return None;
-    }
-    let id = state.next_read_id;
-    state.next_read_id = state.next_read_id.wrapping_add(1);
-    state.active_read = Some(id);
-    let offset = state.offset;
-    let len = max_len.min(HEADLESS_STUB_INPUT.len() - offset);
-    Some(HeadlessReadReservation {
-        id,
-        offset,
-        bytes: HEADLESS_STUB_INPUT[offset..offset + len].to_vec(),
-    })
-}
-
-fn finish_headless_read(
-    reservation: HeadlessReadReservation,
-    copied: usize,
-    complete: bool,
-) -> VfsResult<VfsReadFinish> {
-    let mut state = HEADLESS_STUB_STATE.lock();
-    if state.active_read != Some(reservation.id) || state.offset != reservation.offset {
-        return Err(VfsError::Io);
-    }
-    if copied > reservation.bytes.len() {
-        state.active_read = None;
-        return Err(VfsError::Io);
-    }
-    state.offset += copied;
-    state.active_read = None;
-    if copied == 0 && !complete {
-        Ok(VfsReadFinish::Fault)
-    } else {
-        Ok(VfsReadFinish::Bytes(copied))
-    }
-}
-
-// 本方法代码由AI完成
 fn serial_poll_revents(device: &SharedCharacterDevice, events: i16) -> VfsResult<i16> {
 // 本变量代码由AI完成
-    const POLLIN: i16 = 0x001;
 // 本变量代码由AI完成
     const POLLOUT: i16 = 0x004;
     let mut guard = device.lock();
     let mut revents = guard.poll_revents(events).map_err(map_driver_err)?;
     drop(guard);
-    if events & POLLIN != 0 {
-        if headless_stub_pending() {
-            revents |= POLLIN;
-        } else if revents & POLLIN == 0 {
-            arm_headless_stub_if_needed();
-            if headless_stub_pending() {
-                revents |= POLLIN;
-            }
-        }
-    }
     if events & POLLOUT != 0 {
         revents |= POLLOUT;
     }
@@ -245,8 +157,9 @@ fn serial_poll_revents(device: &SharedCharacterDevice, events: i16) -> VfsResult
 
 struct CharDevPreparedRead {
     device: SharedCharacterDevice,
-    stdin_eof: bool,
+    read_eof: bool,
     rtc: bool,
+    tty_input: bool,
     nonblocking: Arc<AtomicBool>,
     max_len: usize,
 }
@@ -254,6 +167,48 @@ struct CharDevPreparedRead {
 impl VfsPreparedRead for CharDevPreparedRead {
     fn acquire(self: Box<Self>) -> VfsResult<Box<dyn VfsReadLease>> {
         loop {
+            if self.tty_input {
+                match tty::prepare_read(self.max_len) {
+                    TtyPreparedRead::Data(reservation) => {
+                        return Ok(Box::new(TtyVfsReadLease { reservation: Some(reservation) }));
+                    }
+                    TtyPreparedRead::Eof => return Ok(Box::new(EmptyCharacterReadLease)),
+                    TtyPreparedRead::Pending => {}
+                }
+                if self.nonblocking.load(Ordering::Acquire) {
+                    return Err(VfsError::WouldBlock);
+                }
+                let (canonical, minimum, deciseconds) = tty::read_settings();
+                let buffered = tty::readable_len();
+                let wait_result = if canonical || deciseconds == 0 {
+                    tty::wait_for_input(self.max_len)
+                } else if minimum != 0 && buffered == 0 {
+                    tty::wait_for_input_change(0)
+                } else {
+                    let tick_ms = base_config::task::SCHED_TIMER_PERIOD_MS.max(1);
+                    let timeout_ms = deciseconds.saturating_mul(100);
+                    let timeout_ticks = timeout_ms.saturating_add(tick_ms - 1) / tick_ms;
+                    tty::wait_for_input_change_for_ticks(buffered,
+                                                         timeout_ticks.max(1))
+                };
+                match wait_result {
+                    waitqueue::TaskWaitResult::Interrupted => return Err(VfsError::Interrupted),
+                    waitqueue::TaskWaitResult::TimedOut => {
+                        if minimum == 0 {
+                            return Ok(Box::new(EmptyCharacterReadLease));
+                        }
+                        if let TtyPreparedRead::Data(reservation) =
+                            tty::prepare_partial_read(self.max_len)
+                        {
+                            return Ok(Box::new(TtyVfsReadLease {
+                                reservation: Some(reservation),
+                            }));
+                        }
+                    }
+                    waitqueue::TaskWaitResult::Woken => {}
+                }
+                continue;
+            }
             let prepared = self.device.lock().prepare_read(self.max_len);
             match prepared {
                 Ok(Some(reservation)) => {
@@ -263,17 +218,12 @@ impl VfsPreparedRead for CharDevPreparedRead {
                     }));
                 }
                 Ok(None) => {}
-                Err(DriverError::Unsupported) if self.rtc || self.stdin_eof => {
+                Err(DriverError::Unsupported) if self.rtc || self.read_eof => {
                     return Ok(Box::new(EmptyCharacterReadLease));
                 }
                 Err(error) => return Err(map_driver_err(error)),
             }
-            if let Some(reservation) = prepare_headless_read(self.max_len) {
-                return Ok(Box::new(HeadlessVfsReadLease {
-                    reservation: Some(reservation),
-                }));
-            }
-            if self.stdin_eof || self.rtc {
+            if self.read_eof || self.rtc {
                 return Ok(Box::new(EmptyCharacterReadLease));
             }
             if self.nonblocking.load(Ordering::Acquire) {
@@ -328,63 +278,51 @@ impl Drop for CharacterDeviceVfsReadLease {
     }
 }
 
-struct HeadlessVfsReadLease {
-    reservation: Option<HeadlessReadReservation>,
+struct TtyVfsReadLease {
+    reservation: Option<TtyReadReservation>,
 }
 
-impl VfsReadLease for HeadlessVfsReadLease {
+impl VfsReadLease for TtyVfsReadLease {
     fn bytes(&self) -> &[u8] {
         self.reservation.as_ref()
-                        .map(|reservation| reservation.bytes.as_slice())
+                        .map(TtyReadReservation::bytes)
                         .unwrap_or(&[])
     }
 
     fn finish(mut self: Box<Self>, progress: VfsCopyProgress) -> VfsResult<VfsReadFinish> {
-        finish_headless_read(self.reservation.take().ok_or(VfsError::Io)?,
-                             progress.copied,
-                             progress.complete)
+        tty::finish_read(self.reservation.take().ok_or(VfsError::Io)?,
+                         progress.copied,
+                         progress.complete)
+            .map(VfsReadFinish::Bytes)
+            .map_err(|_| VfsError::Io)
     }
 }
 
-impl Drop for HeadlessVfsReadLease {
+impl Drop for TtyVfsReadLease {
     fn drop(&mut self) {
         if let Some(reservation) = self.reservation.take() {
-            let _ = finish_headless_read(reservation, 0, false);
+            let _ = tty::finish_read(reservation, 0, false);
         }
     }
 }
 
 pub(crate) fn read_lease_self_test() {
-    {
-        let mut state = HEADLESS_STUB_STATE.lock();
-        state.offset = 0;
-        state.polls = 0;
-        state.active_read = None;
-    }
-    let cancelled = prepare_headless_read(3).expect("prepare headless read");
-    assert_eq!(cancelled.bytes, b"pas");
-    assert_eq!(finish_headless_read(cancelled, 0, false), Ok(VfsReadFinish::Fault));
-
-    let partial = prepare_headless_read(3).expect("prepare headless retry");
-    assert_eq!(partial.bytes, b"pas");
-    assert_eq!(finish_headless_read(partial, 1, false), Ok(VfsReadFinish::Bytes(1)));
-    let suffix = prepare_headless_read(2).expect("prepare headless suffix");
-    assert_eq!(suffix.bytes, b"as");
-    drop(HeadlessVfsReadLease { reservation: Some(suffix) });
-    assert_eq!(HEADLESS_STUB_STATE.lock().offset, 1);
-
-    let mut state = HEADLESS_STUB_STATE.lock();
-    state.offset = 0;
-    state.polls = 0;
-    state.active_read = None;
+    tty::configure(tty::ConsoleTtyMode::Fixture);
+    let TtyPreparedRead::Data(read) = tty::prepare_read(3) else {
+        panic!("fixture must be readable");
+    };
+    assert_eq!(read.bytes(), b"pas");
+    assert_eq!(tty::finish_read(read, 1, true), Ok(1));
+    tty::configure(tty::ConsoleTtyMode::Closed);
 }
 
 impl VfsIoHandle for CharDevHandle {
     fn prepare_read(&mut self, max_len: usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
         Ok(Box::new(CharDevPreparedRead {
             device: self.device.clone(),
-            stdin_eof: self.stdin_eof,
+            read_eof: self.read_eof,
             rtc: self.rtc,
+            tty_input: self.tty_input,
             nonblocking: self.nonblocking.clone(),
             max_len,
         }))
@@ -404,6 +342,11 @@ impl VfsIoHandle for CharDevHandle {
 
 // 本方法代码由AI完成
     fn write(&mut self, buf: &[u8]) -> VfsResult<usize> {
+        if self.tty_output {
+            let output = tty::transform_output(buf);
+            console::write_raw_bytes(&output);
+            return Ok(buf.len());
+        }
         let mut guard = self.device.lock();
         guard.write(buf).map_err(map_driver_err)
     }
@@ -414,7 +357,7 @@ impl VfsIoHandle for CharDevHandle {
             let mut guard = self.device.lock();
             return guard.poll_revents(events).map_err(map_driver_err);
         }
-        if self.stdin_eof {
+        if self.read_eof {
 // 本变量代码由AI完成
             const POLLIN: i16 = 0x001;
 // 本变量代码由AI完成
@@ -424,6 +367,18 @@ impl VfsIoHandle for CharDevHandle {
                 revents |= POLLIN;
             }
             if events & POLLOUT != 0 {
+                revents |= POLLOUT;
+            }
+            return Ok(revents);
+        }
+        if self.tty_input {
+            const POLLIN: i16 = 0x001;
+            const POLLOUT: i16 = 0x004;
+            let mut revents = 0;
+            if events & POLLIN != 0 && tty::poll_readable() {
+                revents |= POLLIN;
+            }
+            if events & POLLOUT != 0 && self.tty_output {
                 revents |= POLLOUT;
             }
             return Ok(revents);
@@ -438,7 +393,7 @@ impl VfsIoHandle for CharDevHandle {
         timeout_ticks: u64,
         still_waiting: &mut dyn FnMut() -> bool,
     ) -> VfsResult<()> {
-        if self.rtc || self.stdin_eof {
+        if self.rtc || self.read_eof {
             return Err(VfsError::Unsupported);
         }
 // 本变量代码由AI完成
@@ -450,9 +405,15 @@ impl VfsIoHandle for CharDevHandle {
             if !still_waiting() {
                 return Ok(());
             }
-            if (serial_poll_revents(&self.device, POLLIN)? & POLLIN) != 0 {
+            let readable = if self.tty_input {
+                tty::poll_readable()
+            } else {
+                (serial_poll_revents(&self.device, POLLIN)? & POLLIN) != 0
+            };
+            if readable {
                 return Ok(());
             }
+            task::yield_now();
         }
         Ok(())
     }
@@ -483,9 +444,11 @@ impl VfsIoHandle for CharDevHandle {
     fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {
         Ok(Box::new(Self {
             device: self.device.clone(),
-            stdin_eof: self.stdin_eof,
+            read_eof: self.read_eof,
             rtc: self.rtc,
             tty: self.tty,
+            tty_input: self.tty_input,
+            tty_output: self.tty_output,
             nonblocking: self.nonblocking.clone(),
             accmode: self.accmode,
             mode: self.mode,

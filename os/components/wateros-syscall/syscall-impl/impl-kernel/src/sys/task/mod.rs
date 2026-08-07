@@ -7,6 +7,7 @@ pub(crate) mod rseq;
 pub(crate) mod sched;
 pub(crate) mod task;
 pub(crate) mod unshare;
+pub(crate) mod vfork;
 pub(crate) mod wait;
 
 pub(crate) use clone::{sys_clone, sys_clone3};

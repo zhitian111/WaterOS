@@ -205,6 +205,7 @@ pub const SENDTO : usize = 206;
 pub const RECVFROM : usize = 207;
 pub const SENDMSG : usize = 211;
 pub const RECVMSG : usize = 212;
+pub const SENDMMSG : usize = 269;
 pub const SETSOCKOPT : usize = 208;
 pub const GETSOCKOPT : usize = 209;
 pub const SHUTDOWN : usize = 210;

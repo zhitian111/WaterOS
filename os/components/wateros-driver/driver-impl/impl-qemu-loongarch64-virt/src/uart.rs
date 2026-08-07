@@ -79,9 +79,6 @@ impl QemuLoongArch64Uart16550 {
 
 impl SerialPort for QemuLoongArch64Uart16550 {
     fn write_byte(&mut self, byte: u8) -> SerialResult<()> {
-        if byte == b'\n' {
-            self.write_byte_raw(b'\r')?;
-        }
         self.write_byte_raw(byte)
     }
 

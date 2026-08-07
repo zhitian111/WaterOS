@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import struct
 import subprocess
 import sys
@@ -45,17 +46,14 @@ from gdb_remote_snapshot import (  # noqa: E402
     read_register_description,
     read_threads,
 )
+from qemu_run import QemuConfigError, build_qemu_launch  # noqa: E402
 
 
 PROFILES = {
-    "rv-pre": ("rv", "rv_pre_run-gdb", "kernel-rv-pre-gdb"),
-    "rv-final": ("rv", "rv_final_run-gdb", "kernel-rv-final-gdb"),
-    "rv-final-log": ("rv", "rv_final_run_log-gdb", "kernel-rv-final-log-gdb"),
-    "rv-final-debug": ("rv", "rv_final_debug_run-gdb", "kernel-rv-final-debug-gdb"),
-    "rv-smp-test": ("rv", "rv_final_smp_test-gdb", "kernel-rv-final-smp-test-gdb"),
-    "la-pre": ("la", "la_pre_run-gdb", "kernel-la-pre-gdb"),
-    "la-final": ("la", "la_final_run-gdb", "kernel-la-final-gdb"),
-    "la-final-log": ("la", "la_final_run_log-gdb", "kernel-la-final-gdb"),
+    "rv-pre": ("rv", "pre", "kernel-rv-pre-gdb"),
+    "rv-final": ("rv", "final", "kernel-rv-final-gdb"),
+    "la-pre": ("la", "pre", "kernel-la-pre-gdb"),
+    "la-final": ("la", "final", "kernel-la-final-gdb"),
 }
 
 ARCH_TO_QEMU = {"rv": "qemu-system-riscv64", "la": "qemu-system-loongarch64"}
@@ -68,10 +66,140 @@ ARCH_TO_ADDR2LINE = {
     "la": ["loongarch64-linux-gnu-addr2line", "addr2line"],
 }
 DEBUG_FAULT_REASON_BASE = 0xF0170000
+ACTIVE_SESSION = OS_ROOT / "debug-reports" / "active" / "session.json"
+SESSION_VERSION = 1
 
 
 class DebugToolError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class DebugConnection:
+    """已校验的调试连接参数。"""
+
+    arch: str
+    elf: Path
+    host: str
+    port: int
+    serial_log: Path | None = None
+
+
+def process_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def write_active_session(
+    *,
+    pid: int,
+    arch: str,
+    profile: str,
+    elf: Path,
+    host: str,
+    port: int,
+    serial_log: Path,
+    start_paused: bool,
+) -> None:
+    ACTIVE_SESSION.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": SESSION_VERSION,
+        "pid": pid,
+        "arch": arch,
+        "profile": profile,
+        "elf": str(elf.resolve()),
+        "build_id": local_build_id(elf, arch),
+        "host": host,
+        "port": port,
+        "serial_log": str(serial_log.resolve()),
+        "start_paused": start_paused,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+    }
+    temporary = ACTIVE_SESSION.with_suffix(".tmp")
+    temporary.write_text(json.dumps(payload, indent=2) + "\n")
+    temporary.replace(ACTIVE_SESSION)
+
+
+def clear_active_session(pid: int) -> None:
+    try:
+        payload = json.loads(ACTIVE_SESSION.read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return
+    if payload.get("pid") == pid:
+        ACTIVE_SESSION.unlink(missing_ok=True)
+
+
+def load_active_session() -> dict[str, Any]:
+    try:
+        payload = json.loads(ACTIVE_SESSION.read_text())
+    except FileNotFoundError as exc:
+        raise DebugToolError(
+            "no active debug session; run `make debug` or `make debug-server` first"
+        ) from exc
+    except (json.JSONDecodeError, OSError) as exc:
+        raise DebugToolError(f"invalid active debug session: {exc}") from exc
+    if payload.get("version") != SESSION_VERSION:
+        raise DebugToolError(
+            f"unsupported active session version: {payload.get('version')!r}"
+        )
+    pid = payload.get("pid")
+    if not isinstance(pid, int) or not process_alive(pid):
+        raise DebugToolError(
+            "active debug session is stale; run `make debug` or "
+            "`make debug-server` again"
+        )
+    return payload
+
+
+def resolve_connection(args: argparse.Namespace) -> DebugConnection:
+    """优先使用显式参数，否则从活动会话恢复连接信息。"""
+
+    explicit = args.arch is not None or args.elf is not None
+    if explicit:
+        if args.arch is None or args.elf is None:
+            raise DebugToolError("--arch and --elf must be supplied together")
+        connection = DebugConnection(
+            args.arch,
+            args.elf.resolve(),
+            args.host or "127.0.0.1",
+            args.port or 1234,
+            getattr(args, "serial_log", None),
+        )
+    else:
+        session = load_active_session()
+        connection = DebugConnection(
+            session["arch"],
+            Path(session["elf"]),
+            args.host or session["host"],
+            args.port or int(session["port"]),
+            getattr(args, "serial_log", None) or Path(session["serial_log"]),
+        )
+        observed = local_build_id(connection.elf, connection.arch)
+        if observed != session.get("build_id"):
+            raise DebugToolError(
+                "active session ELF changed: "
+                f"session={session.get('build_id')!r} elf={observed!r}"
+            )
+    if not connection.elf.is_file():
+        raise DebugToolError(f"ELF not found: {connection.elf}")
+    return connection
+
+
+def ensure_port_available(host: str, port: int) -> None:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.bind((host, port))
+    except OSError as exc:
+        raise DebugToolError(f"GDB port is already in use: {host}:{port}") from exc
+    else:
+        return
 
 
 def verify_build_id(expected: str, observed: str | None) -> None:
@@ -732,6 +860,11 @@ def watch(
                 leave_stopped=True,
             )
             print(f"[wos-debug] report: {report}")
+            serial_tail = report / "serial-tail.txt"
+            if serial_tail.is_file():
+                lines = serial_tail.read_text(errors="replace").splitlines()
+                print("[wos-debug] serial tail (last 40 lines):")
+                print("\n".join(lines[-40:]))
             print(
                 f"[wos-debug] guest left stopped; continue with: "
                 f"{gdb_command()} {elf} -ex 'target remote {host}:{port}'"
@@ -820,68 +953,179 @@ def tee_output(process: subprocess.Popen, destination: Path) -> None:
             sys.stdout.buffer.flush()
 
 
-def command_run(args: argparse.Namespace) -> int:
-    arch, make_target, elf_name = PROFILES[args.profile]
+def build_debug_elf(
+    profile_name: str, faults: bool, build_timeout: float = 600.0
+) -> tuple[str, str, Path]:
+    arch, profile, elf_name = PROFILES[profile_name]
     if doctor(arch, None) != 0:
-        return 2
+        raise DebugToolError("host debug dependencies are incomplete")
+    command = [
+        "make",
+        "--no-print-directory",
+        "build",
+        f"ARCH={arch}",
+        f"PROFILE={profile}",
+        "GDB_BUILD=1",
+        f"GDB_FAULTS={1 if faults else 0}",
+    ]
+    extra_features = os.environ.get("WOS_EXTRA_FEATURES", "").strip()
+    if extra_features:
+        command.append(f"EXTRA_FEATURES={extra_features}")
+    subprocess.run(
+        command,
+        cwd=OS_ROOT,
+        check=True,
+        timeout=build_timeout,
+    )
     elf = OS_ROOT / elf_name
-    run_dir = OS_ROOT / "debug-reports" / "active"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    serial_log = run_dir / f"{args.profile}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.log"
+    if not elf.is_file():
+        raise DebugToolError(f"debug ELF was not produced: {elf}")
+    if doctor(arch, elf) != 0:
+        raise DebugToolError(f"debug ELF validation failed: {elf}")
+    return arch, profile, elf
+
+
+def debug_environment(
+    args: argparse.Namespace, elf: Path, *, start_paused: bool
+) -> dict[str, str]:
     environment = os.environ.copy()
+    snapshot = environment.get(
+        "WOS_QEMU_SNAPSHOT", "0" if args.write_disk else "1"
+    )
     environment.update(
         {
+            "WOS_KERNEL": str(elf),
             "WOS_SMP": str(args.smp),
             "WOS_QEMU_GDB": "1",
-            "WOS_QEMU_GDB_WAIT": "0",
+            "WOS_QEMU_GDB_WAIT": "1" if start_paused else "0",
             "WOS_QEMU_GDB_PORT": str(args.port),
-            "WOS_QEMU_SNAPSHOT": "0" if args.write_disk else "1",
+            "WOS_QEMU_SNAPSHOT": snapshot,
+            "WOS_WRITE_DISK": "1" if args.write_disk else "0",
         }
     )
-    previous_mtime = elf.stat().st_mtime_ns if elf.exists() else None
-    process = subprocess.Popen(
-        [
-            "make",
-            make_target,
-            "GDB_WAIT=0",
-            f"GDB_PORT={args.port}",
-            f"GDB_FAULTS={1 if args.faults else 0}",
-        ],
-        cwd=OS_ROOT,
-        env=environment,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+    return environment
+
+
+def serial_log_path(profile_name: str) -> Path:
+    directory = ACTIVE_SESSION.parent
+    directory.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return directory / f"{profile_name}-{timestamp}.log"
+
+
+def command_run(args: argparse.Namespace) -> int:
+    arch, profile, elf = build_debug_elf(
+        args.profile, args.faults, args.build_timeout
     )
-    output_thread = threading.Thread(target=tee_output, args=(process, serial_log), daemon=True)
-    output_thread.start()
-    # Build happens in the child; wait for the exact GDB ELF before sampling.
-    deadline = time.monotonic() + args.build_timeout
-    while process.poll() is None and time.monotonic() < deadline:
-        if elf.is_file() and (previous_mtime is None or elf.stat().st_mtime_ns != previous_mtime):
-            break
-        time.sleep(0.25)
-    if (not elf.is_file() or
-        (previous_mtime is not None and elf.stat().st_mtime_ns == previous_mtime)):
-        process.terminate()
-        raise DebugToolError(f"debug ELF was not produced: {elf}")
-    return watch(
-        arch,
-        elf,
-        args.host,
-        args.port,
-        args.interval,
-        args.confirm,
-        args.timeout,
-        serial_log=serial_log,
-        process=process,
+    ensure_port_available(args.host, args.port)
+    environment = debug_environment(args, elf, start_paused=False)
+    launch = build_qemu_launch(arch, profile, environment)
+    serial_log = serial_log_path(args.profile)
+    stream = serial_log.open("wb")
+    process: subprocess.Popen | None = None
+    keep_running = False
+    try:
+        process = subprocess.Popen(
+            launch.argv,
+            cwd=OS_ROOT,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=stream,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        write_active_session(
+            pid=process.pid,
+            arch=arch,
+            profile=profile,
+            elf=elf,
+            host=args.host,
+            port=args.port,
+            serial_log=serial_log,
+            start_paused=False,
+        )
+        print(f"[wos-debug] QEMU pid={process.pid} serial={serial_log}")
+        result = watch(
+            arch,
+            elf,
+            args.host,
+            args.port,
+            args.interval,
+            args.confirm,
+            args.timeout,
+            serial_log=serial_log,
+            process=process,
+        )
+        keep_running = result == 2 and process.poll() is None
+        return result
+    finally:
+        stream.close()
+        launch.cleanup()
+        if process is not None:
+            if not keep_running and process.poll() is None:
+                process.terminate()
+                process.wait(timeout=5)
+            if process.poll() is not None:
+                clear_active_session(process.pid)
+
+
+def command_server(args: argparse.Namespace) -> int:
+    arch, profile, elf = build_debug_elf(
+        args.profile, args.faults, args.build_timeout
     )
+    ensure_port_available(args.host, args.port)
+    environment = debug_environment(args, elf, start_paused=args.start_paused)
+    launch = build_qemu_launch(arch, profile, environment)
+    serial_log = serial_log_path(args.profile)
+    process: subprocess.Popen | None = None
+    output_thread: threading.Thread | None = None
+    try:
+        process = subprocess.Popen(
+            launch.argv,
+            cwd=OS_ROOT,
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        write_active_session(
+            pid=process.pid,
+            arch=arch,
+            profile=profile,
+            elf=elf,
+            host=args.host,
+            port=args.port,
+            serial_log=serial_log,
+            start_paused=args.start_paused,
+        )
+        output_thread = threading.Thread(
+            target=tee_output, args=(process, serial_log), daemon=True
+        )
+        output_thread.start()
+        state = "paused at reset" if args.start_paused else "running"
+        print(
+            f"[wos-debug] manual server pid={process.pid} {state}; "
+            "connect from another terminal with: make gdb",
+            flush=True,
+        )
+        return process.wait()
+    except KeyboardInterrupt:
+        if process is not None and process.poll() is None:
+            process.terminate()
+            process.wait(timeout=5)
+        return 130
+    finally:
+        if output_thread is not None:
+            output_thread.join(timeout=1)
+        launch.cleanup()
+        if process is not None and process.poll() is not None:
+            clear_active_session(process.pid)
 
 
 def add_connection_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--arch", choices=["rv", "la"], required=True)
-    parser.add_argument("--elf", type=Path, required=True)
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=1234)
+    parser.add_argument("--arch", choices=["rv", "la"])
+    parser.add_argument("--elf", type=Path)
+    parser.add_argument("--host")
+    parser.add_argument("--port", type=int)
     parser.add_argument("--timeout", type=float, default=5.0)
 
 
@@ -909,6 +1153,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="include test-only deterministic fault injection hooks",
     )
 
+    server_parser = subparsers.add_parser(
+        "server", help="build and run a manual two-terminal GDB server"
+    )
+    server_parser.add_argument("profile", choices=sorted(PROFILES))
+    server_parser.add_argument("--smp", type=int, default=8, choices=range(1, 9))
+    server_parser.add_argument("--host", default="127.0.0.1")
+    server_parser.add_argument("--port", type=int, default=1234)
+    server_parser.add_argument("--write-disk", action="store_true")
+    server_parser.add_argument("--faults", action="store_true")
+    server_parser.add_argument("--build-timeout", type=float, default=600.0)
+    server_parser.add_argument(
+        "--start-paused",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="pass QEMU -S (default: true)",
+    )
+
     snapshot_parser = subparsers.add_parser("snapshot", help="collect one complete report")
     add_connection_arguments(snapshot_parser)
     snapshot_parser.add_argument("--leave-stopped", action="store_true")
@@ -932,28 +1193,29 @@ def main() -> int:
             return doctor(args.arch, args.elf)
         if args.command == "run":
             return command_run(args)
-        if not args.elf.is_file():
-            raise DebugToolError(f"ELF not found: {args.elf}")
+        if args.command == "server":
+            return command_server(args)
+        connection = resolve_connection(args)
         # snapshot/watch 最终都必须执行完整的 all-thread GDB 抓取；在改变 guest
         # 状态前先失败，避免缺少依赖时留下一个半成品报告目录。
         gdb_command()
         if args.command == "snapshot":
             sample = collect_remote_sample(
-                args.arch,
-                args.elf,
-                args.host,
-                args.port,
+                connection.arch,
+                connection.elf,
+                connection.host,
+                connection.port,
                 args.timeout,
                 full_events=True,
             )
             report = write_report(
-                args.arch,
-                args.elf,
+                connection.arch,
+                connection.elf,
                 sample,
                 "manual-snapshot",
-                args.host,
-                args.port,
-                serial_log=args.serial_log,
+                connection.host,
+                connection.port,
+                serial_log=connection.serial_log,
                 leave_stopped=args.leave_stopped,
             )
             print((report / "summary.txt").read_text(), end="")
@@ -961,14 +1223,14 @@ def main() -> int:
             return 0
         if args.command == "watch":
             return watch(
-                args.arch,
-                args.elf,
-                args.host,
-                args.port,
+                connection.arch,
+                connection.elf,
+                connection.host,
+                connection.port,
                 args.interval,
                 args.confirm,
                 args.timeout,
-                serial_log=args.serial_log,
+                serial_log=connection.serial_log,
             )
         if args.command == "gdb":
             os.execv(
@@ -976,14 +1238,24 @@ def main() -> int:
                 [
                     gdb_command(),
                     "--nx",
-                    str(args.elf.resolve()),
-                    "-ex",
-                    f"target remote {args.host}:{args.port}",
+                    str(connection.elf),
                     "-ex",
                     f"source {GDB_EXTENSION.resolve()}",
+                    "-ex",
+                    f"target remote {connection.host}:{connection.port}",
+                    "-ex",
+                    "wos-cpus",
                 ],
             )
-    except (DebugToolError, DebugAbiError, RemoteError, OSError) as exc:
+    except (
+        DebugToolError,
+        DebugAbiError,
+        QemuConfigError,
+        RemoteError,
+        OSError,
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+    ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     return 0

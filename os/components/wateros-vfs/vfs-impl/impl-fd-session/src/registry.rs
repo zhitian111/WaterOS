@@ -22,6 +22,7 @@ use driver_character_api_v0::{
 
 use crate::char_dev_handle::CharDevHandle;
 use crate::handles::{ConsoleInHandle, ConsoleOutHandle};
+use tty::{self, TtyControlEvent};
 
 /// Linux `FD_CLOEXEC`（`fcntl` / `dup3`）。
 pub const FD_CLOEXEC : u8 = 1;
@@ -996,4 +997,26 @@ fn default_serial_device() -> Option<SharedCharacterDevice> {
                                      Some(CharacterDeviceKind::Serial)
                                  })
                                  .and_then(character_device_at)
+}
+
+/// 最多从物理控制台读取一个字节并送入共享 TTY。
+///
+/// 在执行行规程处理和投递终端信号前释放设备锁。本函数只应由唯一的低优先级控制台
+/// 输入任务调用。
+pub fn poll_console_input_once() -> Option<TtyControlEvent> {
+    let device = default_serial_device()?;
+    const POLLIN: i16 = 0x001;
+    if device.lock().poll_revents(POLLIN).ok()? & POLLIN == 0 {
+        return None;
+    }
+    let mut byte = [0u8; 1];
+    let read = device.lock().read(&mut byte).ok()?;
+    if read == 0 {
+        return None;
+    }
+    let (event, echo, echo_len) = tty::feed_input(byte[0]);
+    if echo_len != 0 {
+        console::write_raw_bytes(&echo[..echo_len]);
+    }
+    event
 }

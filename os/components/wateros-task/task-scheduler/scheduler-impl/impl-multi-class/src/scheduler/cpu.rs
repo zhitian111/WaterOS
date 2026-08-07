@@ -1,4 +1,4 @@
-// 每 CPU 调度器状态、在线状态与只读查询。
+// 每 CPU 调度器状态、在线状态、只读查询与负载均衡（空闲偷取）。
 use super::*;
 impl MultiClassScheduler {
     pub fn set_timekeeper_cpu(&mut self, cpu_id : CpuId) {
@@ -121,4 +121,73 @@ impl MultiClassScheduler {
     }
 
     pub fn cpu_load(&self, cpu_id : CpuId) -> usize { self.cpu_states[cpu_id.raw()].load() }
+
+    // ================================================================
+    //  负载均衡：空闲偷取（idle pull）+ 唤醒亲和性放宽
+    // ================================================================
+
+    /// 判断某 CPU 是否负载偏高（高于系统平均负载 + 1 视为过载）。
+    /// 用于唤醒亲和性放宽：last_cpu 过载时，把任务放到更空的核。
+    pub(super) fn cpu_is_overloaded(&self, cpu_id : CpuId) -> bool {
+        let mut online = 0usize;
+        let mut total = 0usize;
+        for cpu in &self.cpu_states {
+            if cpu.online {
+                online += 1;
+                total += cpu.load();
+            }
+        }
+        if online == 0 {
+            return false;
+        }
+        self.cpu_states[cpu_id.raw()].load() > total / online + 1
+    }
+
+    /// 选择本 CPU 下一个可运行任务；本地无任务可跑时尝试从其它核偷取，
+    /// 避免出现“有的核在排队、有的核空转”的负载失衡。
+    pub(super) fn pick_next_runnable_or_steal(&mut self, cpu_id : CpuId) -> TaskId {
+        let next = self.cpu_states[cpu_id.raw()].pick_next_runnable();
+        let idle_id = self.cpu_states[cpu_id.raw()].idle_task_id
+                                                   .expect("every CPU must have an idle task");
+        if next != idle_id {
+            return next;
+        }
+        if self.steal_ready_task(cpu_id).is_some() {
+            return self.cpu_states[cpu_id.raw()].pick_next_runnable();
+        }
+        idle_id
+    }
+
+    /// 从负载最重的其它 online CPU 偷取一个可运行任务并迁到本 CPU。
+    /// 源核 load 至少为 2（一个正在运行 + 一个可偷）才值得偷，既不会偷走
+    /// 源核唯一的正在运行任务，也能避免任务在两核间来回震荡。
+    pub(super) fn steal_ready_task(&mut self, cpu_id : CpuId) -> Option<TaskId> {
+        // 本 CPU 已有可运行任务时不偷取。
+        if self.cpu_states[cpu_id.raw()].load() > 0 {
+            return None;
+        }
+        let mut busiest = None;
+        let mut busiest_load = 1usize;
+        for (index, cpu) in self.cpu_states.iter().enumerate() {
+            let other = CpuId::from_raw(index);
+            if other == cpu_id || !cpu.online {
+                continue;
+            }
+            let load = cpu.load();
+            if load > busiest_load {
+                busiest_load = load;
+                busiest = Some(other);
+            }
+        }
+        let src = busiest?;
+        // 从最忙核挑一个可迁移到本核的任务；affinity 由调用侧判定。
+        let task_id = self.cpu_states[src.raw()]
+                          .steal_candidate(|task_id| {
+                              self.registry.task_snapshot(task_id)
+                                           .affinity
+                                           .contains(cpu_id)
+                          })?;
+        self.enqueue_ready_on_cpu(task_id, cpu_id);
+        Some(task_id)
+    }
 }

@@ -98,12 +98,15 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
     crate::sys::ipc::signal::on_exec(current_signal_task, &killed_threads);
 
     let old_aspace = task::current_task_user_aspace_ptr();
+    let vfork_child = super::vfork::current_is_child();
     let current_tid = task::current_task_id().expect("execve requires a current task");
     super::super::shm::drop_task_attachments(current_tid, old_aspace);
     for exited in &killed_threads {
         super::wait::drop_task_runtime_resources_with_aspace(exited.id, old_aspace);
     }
-    mm::kernel_mm::drop_user_aspace(old_aspace);
+    if !vfork_child {
+        mm::kernel_mm::drop_user_aspace(old_aspace);
+    }
 
     // 越过不可回退点：后续操作不可传播错误，否则进程将处于无地址空间的死亡状态。
     // 只能 log 警告后继续，确保 execve 最终一定成功。
@@ -140,6 +143,9 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
                          new_elf.user_aspace_ptr,
                          image_info,
                          stack_info);
+    if vfork_child {
+        super::vfork::complete_current();
+    }
 
     Ok(())
 }

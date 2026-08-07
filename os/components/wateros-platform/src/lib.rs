@@ -290,6 +290,19 @@ pub mod console {
         })
     }
 
+    /// Write exact terminal wire bytes under the same cross-CPU lock used by
+    /// kernel logging. No CR/LF conversion is performed by the board backend.
+    pub fn console_write_raw_buffer(bytes: &[u8]) -> PlatformConsoleResult<()> {
+        with_console_write_lock(|reentrant| {
+            if !reentrant {
+                if let Some(writer) = runtime_writer() {
+                    return writer(bytes);
+                }
+            }
+            crate::active_impl::console::console_write_raw_buffer(bytes)
+        })
+    }
+
     /// 在同一次底层控制台锁持有期间完成完整格式化操作。
     ///
     /// `fmt::Write` 可以多次调用 `write_str`，因此不能把锁放在 `Writer` 内的每次

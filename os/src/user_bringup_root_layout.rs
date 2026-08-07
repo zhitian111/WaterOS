@@ -36,6 +36,7 @@ pub fn ensure_busybox_path_links() {
         ensure_dir(sess.as_mut(), "/usr/sbin", 0o755);
         ensure_dir(sess.as_mut(), "/etc", 0o755);
         ensure_dir(sess.as_mut(), "/boot", 0o755);
+        ensure_dir(sess.as_mut(), "/root", 0o700);
         ensure_etc_passwd(sess.as_mut());
         ensure_kernel_config(sess.as_mut());
 

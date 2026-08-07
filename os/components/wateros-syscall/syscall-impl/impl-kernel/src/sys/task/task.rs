@@ -63,6 +63,7 @@ pub(crate) fn exit_current_with_wait_code(exit_code : isize) -> isize {
         task::wake_parent_child_waiters(pid);
     }
     crate::sys::misc::bringup_stats::record_sys_exit();
+    super::vfork::complete_current();
     task::exit_current(exit_code)
 }
 
@@ -115,6 +116,7 @@ pub(crate) fn exit_group_with_wait_code(exit_code : isize) -> isize {
         crate::sys::ipc::signal::notify_parent_sigchld(pid);
         task::wake_parent_child_waiters(pid);
     }
+    super::vfork::complete_current();
     task::exit_current(exit_code)
 }
 

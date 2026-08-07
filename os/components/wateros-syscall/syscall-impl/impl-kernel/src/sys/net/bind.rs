@@ -4,26 +4,26 @@
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
-use network::stack;
+use network::NetworkError;
 
 use crate::socket_fd;
 use crate::user_copy::copy_from_user_struct;
 
-const AF_UNSPEC: u16 = 0;
-const AF_INET: u16 = 2;
+const AF_UNSPEC : u16 = 0;
+const AF_INET : u16 = 2;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
 // 本结构代码由AI完成
 struct SockAddrIn {
-    sin_family: u16,
-    sin_port: u16, // network byte order
-    sin_addr: [u8; 4],
-    sin_zero: [u8; 8],
+    sin_family : u16,
+    sin_port : u16, // network byte order
+    sin_addr : [u8; 4],
+    sin_zero : [u8; 8],
 }
 
 // 本方法代码由AI完成
-pub(crate) fn sys_bind(args: SyscallArgs) -> UserRet {
+pub(crate) fn sys_bind(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let addr_ptr = args.arg(1);
     let addrlen = args.arg(2);
@@ -43,7 +43,7 @@ pub(crate) fn sys_bind(args: SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EINVAL);
     }
 
-    let addr: SockAddrIn = match copy_from_user_struct(addr_ptr) {
+    let addr : SockAddrIn = match copy_from_user_struct(addr_ptr) {
         Ok(a) => a,
         Err(e) => return UserRet::from_error(e),
     };
@@ -53,7 +53,12 @@ pub(crate) fn sys_bind(args: SyscallArgs) -> UserRet {
     }
 
     let port = u16::from_be(addr.sin_port);
-    if port != 0 && port < 1024 && cred::current_credentials().effective_uid.0 != 0 {
+    if port != 0 &&
+       port < 1024 &&
+       cred::current_credentials().effective_uid
+                                  .0 !=
+       0
+    {
         return UserRet::from_error(ErrNo::EACCES);
     }
     let local_ip = if addr.sin_addr == [0; 4] {
@@ -66,14 +71,10 @@ pub(crate) fn sys_bind(args: SyscallArgs) -> UserRet {
         Err(e) => return UserRet::from_error(e),
     };
 
-    match stack::socket_bind(socket.handle(), local_ip, port) {
-        Ok(()) => {
-            UserRet::from_success(0)
-        }
-        Err(stack::NetworkError::AddressNotAvailable) => {
-            UserRet::from_error(ErrNo::EADDRNOTAVAIL)
-        }
-        Err(stack::NetworkError::AddressInUse) => UserRet::from_error(ErrNo::EADDRINUSE),
+    match socket.bind(local_ip, port) {
+        Ok(()) => UserRet::from_success(0),
+        Err(NetworkError::AddressNotAvailable) => UserRet::from_error(ErrNo::EADDRNOTAVAIL),
+        Err(NetworkError::AddressInUse) => UserRet::from_error(ErrNo::EADDRINUSE),
         Err(_) => UserRet::from_error(ErrNo::EADDRINUSE),
     }
 }

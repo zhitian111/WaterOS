@@ -62,6 +62,13 @@ impl CfsQueue {
                               .saturating_sub(1);
         Some((task_id, vruntime))
     }
+    /// 查看队首（最小 vruntime 任务）而不出队；用于负载均衡的偷取判断。
+    pub fn front(&self) -> Option<(TaskId, VRunTime)> {
+        let (vruntime, tasks) = self.tree
+                                    .first_key_value()?;
+        tasks.front()
+             .map(|task_id| (*task_id, *vruntime))
+    }
     pub fn task_count(&self) -> usize { self.task_count }
     /// ready tree 中的最小 vruntime；用于判断当前任务是否应让出 CPU。
     pub fn min_ready_vruntime(&self) -> Option<VRunTime> {

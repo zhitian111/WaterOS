@@ -153,13 +153,13 @@ fn log_elapsed(log_tag : &str, cmd : &BringupCommand, start_ns : u128, end_ns : 
 /// 执行 `stage-busybox`：登记内核串行 runner（不阻塞；用户态在 `run_first_task` 后运行）。
 pub fn run_stage_busybox() {
     error!("[bringup][stage-busybox] BEGIN");
-    task::spawn_kernel_task(bringup_kernel_runner, 0);
+    crate::user_operator::start();
     error!("[{LOG_TAG}] kernel runner enqueued ({} command(s))",
            BRINGUP_COMMANDS.len());
     error!("[bringup][stage-busybox] END");
 }
 
-extern "C" fn bringup_kernel_runner(_arg : usize) -> ! {
+pub(crate) extern "C" fn run_auto_queue(_arg : usize) -> ! {
     use platform::reset::shutdown;
     info!("entered runner");
     #[cfg(feature = "pre")]

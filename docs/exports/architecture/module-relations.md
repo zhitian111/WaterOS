@@ -134,9 +134,22 @@ trap 路径：`platform-arch` → 根 `trap_handler` → `syscall::dispatch_sysc
 | block | `driver-block-api-v0` | RISC-V: `impl-virtio-mmio`；LA: `impl-virtio-pci`；共用 `impl-block-cache` |
 | character | `character-api-v0` | DTB UART + stub |
 | network | `network-api-v0` | RISC-V: `impl-virtio-mmio`；LA: `impl-virtio-pci`；栈 `impl-smoltcp` |
+| display | `display-api-v0` | RISC-V: VirtIO GPU MMIO；LA: VirtIO GPU PCI（可选） |
+| input | `input-api-v0` | RISC-V: VirtIO input MMIO；LA: VirtIO input PCI（可选） |
 | 板级 | — | `impl-qemu-riscv64-opensbi` / `impl-qemu-loongarch64-virt` |
 
 `syscall/socket-net` 与 `driver-network` 的 `socket_handles` 对接 VFS fd。
+
+---
+
+## wateros-gui（可选）
+
+| 层 | crate | feature |
+|----|-------|---------|
+| api | `wateros-gui-api-v0` | `api-v0` |
+| 软件实现 | `wateros-gui-impl-software` | `impl-software` |
+
+根 `gui` feature 同时传递 `driver/display` 与 `driver/input`；旧 `display-demo` 是兼容别名。
 
 ---
 

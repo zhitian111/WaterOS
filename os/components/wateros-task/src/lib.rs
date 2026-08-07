@@ -17,6 +17,7 @@ pub use lifecycle::{
     execve_current, exit_current, exit_group_current, fork_current, kill_task,
     record_current_process_exit,
     record_current_task_exit, start_clone_thread, start_fork_child, terminate_other_threads_for_exec,
+    vfork_current,
 };
 
 pub use process::{

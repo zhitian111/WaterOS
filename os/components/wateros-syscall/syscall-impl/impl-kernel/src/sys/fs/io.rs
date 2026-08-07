@@ -14,7 +14,7 @@ use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
 use core::sync::atomic::{AtomicU64, Ordering};
-use network::stack;
+use network::{stack, SocketKind, SocketRef, SocketSendError};
 use vfs::api::{VfsCopyProgress, VfsError, VfsReadFinish, VfsReadLease, VfsSeekWhence};
 
 const MAX_IO : usize = 0x7FFFF000;
@@ -58,6 +58,9 @@ pub(crate) fn sys_read(args : SyscallArgs) -> UserRet {
     let len = args.arg(2);
     if let Err(err) = validate_read_fd(fd) {
         return UserRet::from_error(err);
+    }
+    if let Err(error) = check_tty_foreground(fd, false) {
+        return UserRet::from_error(error);
     }
     if len == 0 {
         return UserRet::from_success(0);
@@ -252,6 +255,9 @@ pub(crate) fn sys_readv(args : SyscallArgs) -> UserRet {
     if let Err(error) = validate_read_fd(fd) {
         return UserRet::from_error(error);
     }
+    if let Err(error) = check_tty_foreground(fd, false) {
+        return UserRet::from_error(error);
+    }
     let iovecs = match import_iovecs(iov_ptr, iovcnt) {
         Ok(iovecs) => iovecs,
         Err(error) => return UserRet::from_error(error),
@@ -310,8 +316,11 @@ fn drive_network_stack() {
     stack::poll_socket_events();
 }
 
-fn flush_segmented_loopback_send(handle : stack::StackSocketHandle, sent : usize) {
-    if sent <= TCP_MSS_BYTES || !stack::socket_peer_is_loopback(handle).unwrap_or(false) {
+fn flush_segmented_loopback_send(socket : &SocketRef, sent : usize) {
+    if sent <= TCP_MSS_BYTES ||
+       !socket.peer_is_loopback()
+              .unwrap_or(false)
+    {
         return;
     }
     for _ in 0..TCP_LOOPBACK_POLL_ROUNDS {
@@ -324,6 +333,9 @@ pub(crate) fn sys_write(args : SyscallArgs) -> UserRet {
     let ptr = args.arg(1);
     let len = args.arg(2);
     if let Err(error) = validate_write_fd(fd) {
+        return UserRet::from_error(error);
+    }
+    if let Err(error) = check_tty_foreground(fd, true) {
         return UserRet::from_error(error);
     }
     if len == 0 {
@@ -389,6 +401,9 @@ pub(crate) fn sys_writev(args : SyscallArgs) -> UserRet {
     if let Err(error) = validate_write_fd(fd) {
         return UserRet::from_error(error);
     }
+    if let Err(error) = check_tty_foreground(fd, true) {
+        return UserRet::from_error(error);
+    }
     let iovecs = match import_iovecs(iov_ptr, iovcnt) {
         Ok(iovecs) => iovecs,
         Err(error) => return UserRet::from_error(error),
@@ -410,9 +425,9 @@ pub(crate) fn sys_writev(args : SyscallArgs) -> UserRet {
 
 fn write_fd(fd : usize, buf : &[u8]) -> Result<usize, ErrNo> {
     if let Some(socket) = socket_fd::lookup(fd) {
-        return match stack::socket_kind(socket.handle()) {
-            Ok(stack::SocketKind::Tcp) => write_tcp_socket_blocking(fd, buf),
-            Ok(stack::SocketKind::Udp) => write_udp_socket_blocking(fd, buf),
+        return match socket.kind() {
+            Ok(SocketKind::Tcp) => write_tcp_socket_blocking(fd, buf),
+            Ok(SocketKind::Udp) => write_udp_socket_blocking(fd, buf),
             Err(_) => Err(ErrNo::ENOTSOCK),
         };
     }
@@ -420,7 +435,9 @@ fn write_fd(fd : usize, buf : &[u8]) -> Result<usize, ErrNo> {
         return Err(ErrNo::EBADF);
     }
     loop {
-        match vfs::fd::with_current_io(fd, |handle| handle.write(buf)) {
+        // pipe/socketpair 写满时会进入等待队列；使用独立临时句柄，避免睡眠时
+        // 占住共享 fd 槽锁并与同进程的读/poll 线程形成单核死锁。
+        match vfs::fd::with_current_io_detached(fd, |handle| handle.write(buf)) {
             Err(VfsError::Busy) => task::yield_now(),
             result => return result.map_err(vfs_error_to_errno),
         }
@@ -445,22 +462,49 @@ fn validate_write_fd(fd : usize) -> Result<(), ErrNo> {
     }).map_err(vfs_error_to_errno)
 }
 
+/// Enforce controlling-terminal foreground process-group rules before user
+/// memory is copied. Terminal-generated signals use the kernel delivery path,
+/// then the interrupted syscall returns `EINTR`; the trap layer already knows
+/// how to restart read/write when the installed action has `SA_RESTART`.
+fn check_tty_foreground(fd : usize, writing : bool) -> Result<(), ErrNo> {
+    if !vfs::fd::current_fd_is_tty_char(fd).unwrap_or(false) {
+        return Ok(());
+    }
+    if writing && !tty::output_stops_background() {
+        return Ok(());
+    }
+    let foreground = tty::foreground_pgid();
+    if foreground == 0 {
+        return Ok(());
+    }
+    let Some(process) = task::current_process_snapshot() else {
+        return Ok(());
+    };
+    if process.pgid.raw() == foreground {
+        return Ok(());
+    }
+    let signal = if writing {
+        ipc::signal::SIGTTOU
+    } else {
+        ipc::signal::SIGTTIN
+    };
+    crate::sys::ipc::signal::send_kernel_signal_to_process_group(process.pgid, signal);
+    Err(ErrNo::EINTR)
+}
+
 fn write_tcp_socket_blocking(fd : usize, buf : &[u8]) -> Result<usize, ErrNo> {
     let nonblocking = socket_fd::is_nonblocking(fd);
     let task_id = task::current_task_id().unwrap_or(0);
     loop {
         let socket = socket_fd::lookup(fd).ok_or(ErrNo::ENOTSOCK)?;
-        let handle = socket.handle();
         drive_network_stack();
-        let may_send = stack::socket_may_send(handle).unwrap_or(false);
-        let send_capacity = stack::socket_send_capacity(handle).unwrap_or(0);
-        let connected = stack::socket_is_connected(handle).unwrap_or(false);
-        if may_send && send_capacity > 0 {
+        let snapshot = socket.poll_snapshot().map_err(|_| ErrNo::ENOTSOCK)?;
+        if snapshot.may_send && snapshot.send_capacity > 0 {
             let send_len = buf.len()
-                              .min(send_capacity);
-            match stack::socket_send(handle, &buf[..send_len]) {
+                              .min(snapshot.send_capacity);
+            match socket.send(&buf[..send_len]) {
                 Ok(n) if n > 0 => {
-                    flush_segmented_loopback_send(handle, n);
+                    flush_segmented_loopback_send(&socket, n);
                     if n >= TCP_BULK_WRITE_YIELD_THRESHOLD {
                         drive_network_stack();
                         task::yield_now();
@@ -474,7 +518,7 @@ fn write_tcp_socket_blocking(fd : usize, buf : &[u8]) -> Result<usize, ErrNo> {
                 }
             }
         }
-        if !connected {
+        if !snapshot.is_connected {
             return Err(ErrNo::EPIPE);
         }
         socket_blocking_tick(nonblocking, task_id)?;
@@ -487,7 +531,7 @@ fn write_udp_socket_blocking(fd : usize, buf : &[u8]) -> Result<usize, ErrNo> {
     loop {
         let socket = socket_fd::lookup(fd).ok_or(ErrNo::ENOTSOCK)?;
         drive_network_stack();
-        match stack::socket_send(socket.handle(), buf) {
+        match socket.send(buf) {
             Ok(n) => {
                 let should_yield = n <= UDP_SMALL_WRITE_YIELD_THRESHOLD ||
                                    UDP_BULK_WRITE_COUNT.fetch_add(1, Ordering::Relaxed) %
@@ -500,7 +544,7 @@ fn write_udp_socket_blocking(fd : usize, buf : &[u8]) -> Result<usize, ErrNo> {
                 }
                 return Ok(n);
             }
-            Err(stack::SocketSendError::WouldBlock) => {
+            Err(SocketSendError::WouldBlock) => {
                 socket_blocking_tick(nonblocking, task_id)?;
             }
             Err(err) => {

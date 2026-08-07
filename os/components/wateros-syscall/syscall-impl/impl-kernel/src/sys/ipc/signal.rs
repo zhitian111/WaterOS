@@ -881,6 +881,41 @@ fn send_signal_to_process(process : ProcessId, sig : usize) -> Result<(), ErrNo>
     Ok(())
 }
 
+/// Deliver a terminal-generated signal to every process in a foreground group.
+///
+/// This is a kernel-originated path: unlike `kill(2)` it deliberately bypasses
+/// caller credential checks, while reusing the normal pending-signal,
+/// stop/continue and scheduler wakeup machinery.
+pub(crate) fn send_kernel_signal_to_process_group(pgid : ProcessId,
+                                                   sig : usize)
+                                                   -> usize {
+    if sig == 0 || sig > NSIG {
+        return 0;
+    }
+    let mut delivered = 0;
+    for process in task::process_pids_in_pgid(pgid) {
+        if ensure_process_signal_state(process).is_err() {
+            continue;
+        }
+        let Ok(dispatch) = ipc::signal::send_process(process.raw(), sig) else {
+            continue;
+        };
+        apply_signal_dispatch(dispatch, sig);
+        if dispatch.delivery == SignalDelivery::Pending {
+            if let Some(task_ids) = task::task_ids_for_process(process) {
+                for member in task_ids {
+                    if ipc::signal::has_deliverable(member).unwrap_or(false) {
+                        let _ = task::interrupt_task(member);
+                        task::request_task_reschedule(member);
+                    }
+                }
+            }
+        }
+        delivered += 1;
+    }
+    delivered
+}
+
 /// `kill(pid, sig)` — riscv64 系统调用号 129。
 pub(crate) fn sys_kill(args : SyscallArgs) -> UserRet {
     let pid = args.arg(0) as isize;

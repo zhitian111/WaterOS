@@ -1,0 +1,14 @@
+[package]
+name = "wateros-tty-api-v0"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+api-v0 = []
+default = ["api-v0"]
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"

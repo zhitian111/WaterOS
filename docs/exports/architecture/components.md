@@ -28,10 +28,13 @@ flowchart TB
     ipc["wateros-ipc"]
     cred["wateros-cred"]
     klog["wateros-klog"]
+    gui["wateros-gui<br/>optional"]
   end
 
   main --> always
   main --> qemu
+  main -. gui feature .-> gui
+  gui --> driver
 
   syscall --> abi
   syscall --> task
@@ -102,7 +105,7 @@ flowchart LR
 | L0 | base, abi, utils | 类型、常量、syscall ABI；utils 暂为空壳 |
 | L1 | platform, runtime | trap/时间/串口、panic/堆/开发日志 |
 | L2 | mm, task, ipc, cred, klog | 地址空间、调度、同步/信号、凭证、内核环 |
-| L3 | driver, fs, vfs | 硬件、块 FS/伪 FS、路径与 fd 语义 |
+| L3 | driver, fs, vfs, gui（可选） | 硬件、块 FS/伪 FS、路径/fd 与内核图形界面 |
 | L4 | syscall | trap 入口、Linux 号表分发 |
 
 ## 平台 feature 分叉
@@ -153,5 +156,6 @@ flowchart TB
 ## 未纳入根依赖
 
 - `wateros-pseudo-shell`：feature `pseudo-shell` 可选。
+- `wateros-gui`：feature `gui` 可选，默认比赛构建不链接。
 - `arch_api_v0`：根直接依赖平台 arch API，供 `trap_handler` 等使用。
 - workspace 内大量 `*-api-v0`、`*-impl-*` 子 crate 由组件聚合层 feature 拉入，不单独出现在根 `Cargo.toml`。

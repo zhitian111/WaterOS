@@ -87,6 +87,13 @@ pub enum SocketState {
     Closed,
 }
 
+/// 非阻塞 TCP 连接完成后，通过 `SO_ERROR` 交给用户态的结果。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SocketConnectError {
+    ConnectionRefused,
+    TimedOut,
+}
+
 /// socket 发送失败原因；syscall 层据此返回稳定的 Linux errno。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SocketSendError {
@@ -126,7 +133,10 @@ pub struct SocketPollSnapshot {
     pub can_recv : bool,
     pub may_recv : bool,
     pub may_send : bool,
+    /// 当前发送缓冲区还能接收的字节数，不是缓冲区总容量。
     pub send_capacity : usize,
     pub is_connected : bool,
+    /// 异步 connect 失败时保留到用户态读取 `SO_ERROR`。
+    pub connect_error : Option<SocketConnectError>,
     pub has_pending_accept : bool,
 }

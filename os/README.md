@@ -1,531 +1,264 @@
-# WaterOS 内核构建与 GDB 卡死诊断
+# WaterOS 内核快速使用
 
-本目录是 WaterOS 内核工作目录。下面重点说明 RISC-V、LoongArch 两套 GDB 调试
-流程，用于分析内核卡死、死循环、锁等待、调度停滞、中断停止、IPI/TLB shootdown
-等待等问题。
+WaterOS 同时支持 RISC-V 和 LoongArch QEMU。Make 是面向操作者的
+统一入口；Python 脚本作为调试工具的底层和高级接口。
 
-所有命令默认在本目录执行：
+以下命令均在 `os/` 目录执行：
 
 ```bash
 cd /home/kasss/WaterOS/os
+make help
+make show-config
 ```
 
-## 1. 支持的内核配置
-
-GDB 调试同时支持 pre 和 final，并生成独立的、未裁剪的 ELF，不会覆盖普通 release
-内核。
-
-
-| 统一工具配置     | Make 运行目标            | 调试 ELF                       |
-| ------------------ | -------------------------- | -------------------------------- |
-| `rv-pre`         | `rv_pre_run-gdb`         | `kernel-rv-pre-gdb`            |
-| `rv-final`       | `rv_final_run-gdb`       | `kernel-rv-final-gdb`          |
-| `rv-final-log`   | `rv_final_run_log-gdb`   | `kernel-rv-final-log-gdb`      |
-| `rv-final-debug` | `rv_final_debug_run-gdb` | `kernel-rv-final-debug-gdb`    |
-| `rv-smp-test`    | `rv_final_smp_test-gdb`  | `kernel-rv-final-smp-test-gdb` |
-| `la-pre`         | `la_pre_run-gdb`         | `kernel-la-pre-gdb`            |
-| `la-final`       | `la_final_run-gdb`       | `kernel-la-final-gdb`          |
-| `la-final-log`   | `la_final_run_log-gdb`   | `kernel-la-final-gdb`          |
-
-调试 ELF 使用 Cargo `gdb` profile：保留 release 优化，同时启用完整 DWARF、符号表、
-frame information 和 frame pointer。RISC-V、LoongArch 的 trap entry、`__switch`、
-内核任务入口也包含 CFI。
-
-## 2. 安装和检查依赖
-
-Ubuntu 安装命令：
+`make help` 显示入口命令和主要默认值；`make show-config` 显示经过
+`ARCH/PROFILE`、环境变量和命令行覆盖后最终生效的内核、镜像与运行参数。例如：
 
 ```bash
-sudo apt install gdb-multiarch \
-  binutils-riscv64-unknown-elf \
-  binutils-loongarch64-linux-gnu \
-  qemu-system-misc
+make show-config ARCH=rv PROFILE=final SMP=4
+make show-config ARCH=la PROFILE=pre LA_PRE_IMAGE=/data/la-pre.img
 ```
 
-工具不会自动执行 `sudo`。安装后运行：
+## 1. 构建与自动评测
+
+统一变量的默认值是 `ARCH=rv PROFILE=pre SMP=8 MODE=auto
+SNAPSHOT=1`。
 
 ```bash
-./scripts/wateros_debug.py doctor
+# 构建或检查
+make build ARCH=rv PROFILE=pre
+make check ARCH=la PROFILE=final
+
+# 运行内核中现有的 BRINGUP_COMMANDS
+make run ARCH=rv PROFILE=pre
+make run ARCH=rv PROFILE=final
+make run ARCH=la PROFILE=pre
+make run ARCH=la PROFILE=final
 ```
 
-检查某一个架构和已经构建的 ELF：
+Make 不扫描镜像、不维护测试目录，也不提供 `make tests` 或
+`make test TEST=...`。`MODE=auto` 执行什么由内核现有 bringup
+配置决定。额外 Cargo feature 可通过通用变量传入：
 
 ```bash
-./scripts/wateros_debug.py doctor \
-  --arch rv \
-  --elf ./kernel-rv-pre-gdb
-
-./scripts/wateros_debug.py doctor \
-  --arch la \
-  --elf ./kernel-la-pre-gdb
+make run ARCH=rv PROFILE=pre EXTRA_FEATURES=bringup-ltp-glibc-only
 ```
 
-`doctor` 会检查：
-
-- `gdb-multiarch`、QEMU、Python、`readelf`；
-- 对应架构的 `nm` 和 `addr2line`，找不到交叉工具时尝试宿主工具；
-- ELF 的 DWARF、符号表和 frame information；
-- trap、`__switch` 和任务入口是否有 CFI；
-- 调试构建是否强制保留 frame pointer；
-- ELF 内嵌的 WaterOS build ID。
-
-任何必要项缺失时，`doctor` 返回非零状态。
-
-## 3. 最简单的一键调试
-
-推荐使用统一入口，它会依次构建调试 ELF、以 snapshot 模式启动 QEMU、保存串口，
-然后自动监测卡死：
+## 2. 进入交互终端
 
 ```bash
-./scripts/wateros_debug.py run rv-pre --smp 8
-./scripts/wateros_debug.py run rv-final --smp 8
-
-./scripts/wateros_debug.py run la-pre --smp 8
-./scripts/wateros_debug.py run la-final --smp 8
+make shell ARCH=rv PROFILE=pre SMP=1
+make shell ARCH=la PROFILE=final SMP=4
 ```
 
-默认行为：
+启动后看到 `~ #` 或 `/ #` 表示已进入镜像内的用户态 shell。
+这个提示符由 Bash/BusyBox ash 绘制，TTY 负责 UART 字节、行编辑、
+echo、raw mode 和 Ctrl-C 等终端语义。
 
-- 使用 `kernel-*-gdb`，不会覆盖普通内核；
-- QEMU 启动后立即运行，同时开放 `127.0.0.1:1234`；
-- 每秒采样一次，连续十次确认同一停滞原因后抓取完整现场；
-- 使用 QEMU `-snapshot`，不写回基础磁盘镜像；
-- 确认卡死并完成报告后保持 guest 暂停。
+常用 guest 命令：
 
-调整监测参数：
+```sh
+pwd
+ls -la /
+cd /glibc
+/glibc/busybox sh /glibc/iperf_testcode.sh
+echo hello > /tmp/hello.txt
+cat /tmp/hello.txt
+sleep 30                 # 可按 Ctrl-C 中断
+```
+
+指定 shell 时使用 `GUEST_SHELL`，不要使用 Make 保留变量 `SHELL`：
 
 ```bash
-./scripts/wateros_debug.py run rv-pre \
-  --smp 4 \
-  --port 1235 \
-  --interval 0.5 \
-  --confirm 20 \
-  --timeout 5
+make shell ARCH=rv PROFILE=final GUEST_SHELL=/glibc/busybox
 ```
 
-只有明确需要保存 guest 磁盘写入时才使用：
+更完整的 TTY、Ctrl-C、raw mode、救援 shell 和排查说明见
+[`wateros-tty/README.md`](./components/wateros-tty/README.md)。
+
+## 3. 运行镜像内指定脚本
+
+`MODE=run` 保留为通用 operator 能力，它不是 Make 测试目录。
 
 ```bash
-./scripts/wateros_debug.py run rv-final --smp 8 --write-disk
+make run ARCH=rv PROFILE=final \
+  MODE=run \
+  SCRIPT=/glibc/iperf_testcode.sh
 ```
 
-调试和回归测试通常不要使用 `--write-disk`。
+`SCRIPT` 必须是 guest 中的绝对路径，且只能和 `MODE=run` 一起使用。
+脚本成功、失败或装载失败后，supervisor 都会进入救援 shell。
 
-## 4. 使用 Makefile 启动
+## 4. 可选图形桌面
 
-所有真实运行目标都使用统一的 `-gdb` 后缀：
+图形显示默认关闭，不影响比赛构建。下面的命令会编译 `wateros-gui`，给 QEMU
+挂载 VirtIO GPU、键盘和平板，并打开图形窗口：
 
 ```bash
-make rv_pre_run-gdb
-make rv_final_run-gdb
-make rv_final_run_log-gdb
-
-make la_pre_run-gdb
-make la_final_run-gdb
+make run ARCH=rv PROFILE=pre EXTRA_FEATURES=gui
+make run ARCH=la PROFILE=pre EXTRA_FEATURES=gui
 ```
 
-Make 模式默认传入 QEMU `-S`，即停在第一条指令等待调试器连接。让内核立即运行，
-适合等待问题复现后再附加：
+图形窗口显示 WaterOS 内核桌面；可以拖动窗口、点击按钮、编辑文本框并用 Tab 切换
+焦点。原终端仍承载 UART 日志和交互 shell，图形桌面不是 shell 的替代品。模块结构和
+扩展方式见 [`wateros-gui/README.md`](./components/wateros-gui/README.md)。
+
+无桌面环境时，可以保留 GPU 设备但隐藏窗口，用于启动回归：
 
 ```bash
-make rv_pre_run-gdb GDB_WAIT=0
-make la_pre_run-gdb GDB_WAIT=0
+make run ARCH=rv PROFILE=pre \
+  EXTRA_FEATURES=gui \
+  GRAPHICS_BACKEND=none
 ```
 
-修改端口或 CPU 数量：
+`display-demo` 是 `gui` 的兼容别名。如果只设置 `GRAPHICS=1` 而不编译 `gui`，QEMU
+虽然会挂图形设备，内核不会绑定；启用 `gui` 会默认令 `GRAPHICS=1`，仍可显式用
+`GRAPHICS=0` 覆盖。
+
+## 5. 磁盘 snapshot
+
+统一入口默认 `SNAPSHOT=1`。QEMU 会把 guest 的磁盘写入保存在内存/
+临时层，退出时丢弃；它不是先复制整个 `.img`，也不会改动基础
+镜像。
+
+只有明确需要保存 guest 文件时才开启写盘：
 
 ```bash
-WOS_SMP=4 make rv_pre_run-gdb GDB_WAIT=0 GDB_PORT=1235
+make shell ARCH=rv PROFILE=pre WRITE_DISK=1
 ```
 
-GDB 模式默认使用 snapshot 磁盘。相关环境变量如下：
+`WRITE_DISK=1` 会默认把 `SNAPSHOT` 切换为 `0`。仍可显式指定
+`SNAPSHOT=1` 强制不写盘。自动评测、回归和 GDB 调试不应写回基础
+镜像。
 
-
-| 变量                             | 含义                                 |
-| ---------------------------------- | -------------------------------------- |
-| `WOS_SMP`                        | QEMU vCPU 数量，统一工具限制为`1..8` |
-| `WOS_TASKSET_CPUS`                | 传给 `taskset -c` 的 CPU 绑定列表，如 `0-7` |
-| `WOS_QEMU_MEM`                    | 覆盖 `-m`，建议在并行时调小，默认 `rv`/`la` 决赛 8G，初赛 1G |
-| `WOS_QEMU_IMAGE_DRIVE_OPTIONS`    | 追加到 `-drive` 的可选参数，例如 `locking=off`（建议仅 qcow2 镜像） |
-| `WOS_QEMU_GDB_PORT` / `GDB_PORT` | GDB Remote 端口，默认`1234`          |
-| `WOS_QEMU_GDB_WAIT` / `GDB_WAIT` | `1` 表示传入 `-S`，`0` 表示立即运行  |
-| `WOS_QEMU_SNAPSHOT`              | `1` 表示不写回磁盘，GDB 模式默认启用 |
-| `WOS_KERNEL`                     | QEMU 实际加载的内核 ELF              |
-| `WOS_SDCARD`                     | QEMU 使用的磁盘镜像                  |
-
-### 并行执行测试（32 核机器可直接提速）
+## 6. GDB 自动挡
 
 ```bash
-WOS_CORES_PER_JOB=8 \
-WOS_MAX_PARALLEL_JOBS=4 \
-./scripts/run_qemu_parallel.sh \
-  "WOS_SMP=8 make rv_final_run" \
-  "WOS_SMP=8 make rv_final_run" \
-  "WOS_SMP=8 make rv_final_run" \
-  "WOS_SMP=8 make rv_final_run"
+make doctor
+make debug ARCH=rv PROFILE=pre SMP=8
 ```
 
-32 核时可直接按 1/2/4/8 vCPU 分组并行，例如想同时跑 8 个较轻量的 `buildstorm` 任务：
+`make debug` 会：
+
+1. 构建独立的 `kernel-*-gdb` ELF；
+2. 以 snapshot 模式启动 QEMU 并立即运行；
+3. 每秒监测 CPU、PC、timer、调度、事件和锁；
+4. 确认停滞后暂停 guest，生成 `debug-reports/` 报告；
+5. 保留活动会话，可再执行 `make gdb`。
+
+自动挡终端显示 watch 摘要，完整串口保存在
+`debug-reports/active/*.log`。
+
+## 7. GDB 手动挡（两个终端）
+
+终端一：
 
 ```bash
-WOS_CORES_PER_JOB=4 \
-WOS_QEMU_MEM=2G \
-WOS_AUTO_SMP=1 \
-WOS_MAX_PARALLEL_JOBS=8 \
-./scripts/run_qemu_parallel.sh \
-  "WOS_QEMU_SNAPSHOT=1 make rv_final_run" \
-  "WOS_QEMU_SNAPSHOT=1 make rv_final_run" \
-  "WOS_QEMU_SNAPSHOT=1 make rv_final_run" \
-  "WOS_QEMU_SNAPSHOT=1 make rv_final_run" \
-  "WOS_QEMU_SNAPSHOT=1 make rv_final_run" \
-  "WOS_QEMU_SNAPSHOT=1 make rv_final_run" \
-  "WOS_QEMU_SNAPSHOT=1 make rv_final_run" \
-  "WOS_QEMU_SNAPSHOT=1 make rv_final_run"
+cd /home/kasss/WaterOS/os
+make debug-server ARCH=rv PROFILE=pre SMP=8
 ```
 
-若并行跑同一镜像且需要关闭锁定，请改用 qcow2 镜像（`locking=off` 对 raw 不兼容）：
+默认 `START_PAUSED=1`，QEMU 停在复位入口，因此连接 GDB 前可能没有
+串口输出。
+
+终端二：
 
 ```bash
-cd os
-WOS_CORES_PER_JOB=4 WOS_AUTO_SMP=1 WOS_AUTO_UNLOCK_DRIVE=1 \
-  WOS_QEMU_MEM=2G WOS_QEMU_SNAPSHOT=1 \
-  WOS_SDCARD=./sdcard-rv-pub.qcow2 \
-  ./scripts/run_qemu_parallel.sh \
-    "make rv_final_run" \
-    "make rv_final_run"
+cd /home/kasss/WaterOS/os
+make gdb
 ```
 
-`run_qemu_parallel.sh` 会按主机核分片并发启动实例，默认使用 `nproc` 发现 32 核时会分配
-`0-7 / 8-15 / 16-23 / 24-31`。如需避免并发写同一镜像，可改用 snapshot 目标（`rv_pre_run` / `la_pre_run`）或为每实例配独立镜像。
-
-## 5. 附加到已经运行的 QEMU
-
-先启动 QEMU：
-
-```bash
-make rv_pre_run-gdb GDB_WAIT=0
-```
-
-然后在另一个终端选择以下方式之一。
-
-### 5.1 自动监测
-
-```bash
-./scripts/wateros_debug.py watch \
-  --arch rv \
-  --elf ./kernel-rv-pre-gdb
-```
-
-指定其他端口：
-
-```bash
-./scripts/wateros_debug.py watch \
-  --arch rv \
-  --elf ./kernel-rv-pre-gdb \
-  --port 1235
-```
-
-### 5.2 立即抓取一次完整现场
-
-```bash
-./scripts/wateros_debug.py snapshot \
-  --arch rv \
-  --elf ./kernel-rv-pre-gdb
-```
-
-默认抓取后恢复 guest。需要保留暂停状态：
-
-```bash
-./scripts/wateros_debug.py snapshot \
-  --arch rv \
-  --elf ./kernel-rv-pre-gdb \
-  --leave-stopped
-```
-
-LoongArch 只需替换架构和 ELF：
-
-```bash
-./scripts/wateros_debug.py snapshot \
-  --arch la \
-  --elf ./kernel-la-pre-gdb
-```
-
-### 5.3 交互式 GDB
-
-```bash
-./scripts/wateros_debug.py gdb \
-  --arch rv \
-  --elf ./kernel-rv-pre-gdb
-```
-
-统一入口会自动连接 QEMU 并加载 WaterOS GDB 扩展。
-
-## 6. WaterOS GDB 命令
-
-交互 GDB 中可使用：
+GDB 连接后可执行：
 
 ```gdb
+break wateros_kernel_main
+continue
 wos-cpus
 wos-tasks
-wos-task 10
 wos-events
-wos-events 3
 wos-locks
-wos-snapshot
-wos-snapshot 256
-```
-
-命令含义：
-
-
-| 命令                  | 作用                                                     |
-| ----------------------- | ---------------------------------------------------------- |
-| `wos-cpus`            | 显示每 CPU online、当前任务、模式、队列、计数器和锁等待  |
-| `wos-tasks`           | 显示各 CPU 当前任务的 kind/state/policy/nice/wait/aspace |
-| `wos-task <id>`       | 查找指定任务的当前 CPU 状态和最近事件                    |
-| `wos-events [cpu]`    | 显示全部或指定 CPU 的最近事件                            |
-| `wos-locks`           | 显示锁 owner/waiter 和 wait-for 关系                     |
-| `wos-snapshot [数量]` | 一次打印 CPU、事件及锁关系                               |
-
-`wos-tasks` 第一版以每 CPU 当前任务和事件环为数据源，不枚举从未运行且已经离开
-事件窗口的休眠任务。用户态首版只报告 user PC/SP、task、syscall 和 trap，不展开
-用户 ELF 调用栈。
-
-普通 GDB 命令仍然可用：
-
-```gdb
-info threads
-thread apply all info all-registers
 thread apply all bt full
-x/12i $pc-16
-x/32gx $sp
-continue
-detach
 ```
 
-## 7. 如何理解 watch 输出
-
-示例：
-
-```text
-[wos-debug] stable=1/10 reason=cpu6:lock pc=[0x..., 0x...]
-```
-
-- `stable=1/10`：同一停滞原因只连续出现了一次；达到 `10/10` 才确认卡死；
-- `reason=cpu6:lock`：CPU 6 本次仍在等待同一个关键锁；
-- 下一次恢复为 `0/10 reason=none` 表示只是正常的短暂锁竞争；
-- `pc=[...]` 按 QEMU vCPU 顺序显示当前 PC。
-
-轻量 watch 阶段不对每个 PC 反复执行 `addr2line`，因此只显示地址。确认卡死后的
-`summary.txt` 和 `gdb.txt` 会包含函数、偏移、源码行、反汇编和调用栈。
-
-手动解析单个内核地址：
+需要让内核先运行，再在可疑时刻连接：
 
 ```bash
-./scripts/resolve_pc_symbol.py \
-  --arch rv \
-  --elf ./kernel-rv-pre-gdb \
-  0x80248a18
+# 终端一
+make debug-server ARCH=rv PROFILE=pre START_PAUSED=0
+
+# 终端二，需要时执行
+make gdb
 ```
 
-`0x80201000` 一类地址通常位于内核 trap 入口。较小的地址，例如 `0x2084`，通常是
-用户程序 PC，无法使用内核 ELF 解析。
+## 8. 附加已运行的调试会话
 
-自动判定按 CPU 组合检查：
-
-- PC、SP 和事件 sequence 是否变化；
-- timer、context switch、syscall、trap、IPI 是否推进；
-- runqueue 非空且 `need_resched` 时是否长期不切换；
-- 等待锁及已持有锁是否形成稳定 wait-for 链；
-- 当前 CPU 是否正常 idle 且没有 runnable 任务。
-
-健康 idle CPU 的 timer 不会掩盖另一个 CPU 的停滞。全部 CPU idle 且队列为空属于
-正常静止；用户计算期间只要 PC、中断或事件仍有进展，也不会被判为卡死。
-
-## 8. 诊断报告
-
-完整报告保存到：
-
-```text
-debug-reports/<timestamp>-<arch>-<build-id>/
-├── summary.txt
-├── metadata.json
-├── snapshot.json
-├── events.json
-├── gdb.txt
-├── serial.log
-├── serial-tail.txt
-└── reproduce.txt
-```
-
-各文件用途：
-
-- `summary.txt`：推断类型、CPU 表、PC/RA/SP/FP、函数和源码位置；
-- `metadata.json`：架构、Git、ELF SHA-256、build ID 和 GDB 版本；
-- `snapshot.json`：完整寄存器与 WaterOS 诊断状态；
-- `events.json`：最近 task、syscall、trap、IPI、futex、TLB 和锁事件；
-- `gdb.txt`：全寄存器、所有 CPU 的 `bt full`、反汇编和栈内存；
-- `serial.log`：本次运行的完整串口；
-- `serial-tail.txt`：串口末尾 300 行；
-- `reproduce.txt`：重新连接当前现场的命令。
-
-自动模式完成报告后保持 QEMU 暂停，并打印继续交互调试的命令。
-
-## 9. 内核诊断区记录了什么
-
-根 crate 的 `gdb-debug` feature 会启用
-[`wateros-debug`](./components/wateros-debug/README.md)。诊断区包含：
-
-- header：magic、ABI 版本、架构、build ID、CPU 容量和记录尺寸；
-- 每 CPU 双缓冲状态：online、task、地址空间、模式、五类 runqueue、计数器、
-  `need_resched`、调度原因、等待目标和关键锁；
-- 每 CPU 256 项事件环：task enqueue/switch/block/wake/exit、syscall、trap、timer、
-  IPI、futex、TLB shootdown 和锁事件；
-- scheduler、process registry、futex registry、frame allocator、address-space/TLB、
-  VFS、network 和 klog 的锁 owner/waiter；
-- `dropped_updates`、`dropped_events` 和正在写入标记。
-
-CPU 状态采用双缓冲发布。CPU 停在写入中间时，主机只读取上一份完整状态。事件记录
-最后发布 sequence，主机忽略正在覆写或 sequence 不匹配的槽。
-
-热路径不分配内存、不打印串口，也不获取诊断锁。关闭 `gdb-debug` 后记录接口为空操作，
-普通 release 不导出诊断区。
-
-## 10. Build ID 与符号文件
-
-每次 GDB 构建都会生成独立 WaterOS build ID，并同时写入：
-
-- 调试 ELF 导出符号；
-- 版本化诊断 header；
-- QEMU guest 内存。
-
-工具在解释任何内核地址前进行三方校验。出现以下错误时：
-
-```text
-ELF/guest build ID mismatch
-```
-
-说明本地 ELF 不是 QEMU 当前加载的内核。停止 QEMU，重新执行对应的 Make 或 `run`
-命令，不要用旧 ELF 强行解析地址。
-
-## 11. 确定性故障注入
-
-故障代码只在显式测试构建中存在：
+`debug-server` 会把 QEMU PID、架构、profile、ELF、build ID、端口和
+串口日志记录到 `debug-reports/active/session.json`。因此第二个终端
+无需重复参数：
 
 ```bash
-make rv_pre_run-gdb GDB_FAULTS=1 GDB_WAIT=0
-make la_pre_run-gdb GDB_FAULTS=1 GDB_WAIT=0
+make snapshot                 # 抓取现场后默认继续运行
+make snapshot LEAVE_STOPPED=1
+make watch                    # 附加自动停滞检测
+make gdb                      # 交互式调试
 ```
 
-统一入口：
+会话过期、PID 不存在、ELF 被重建或 build ID 不匹配时，工具会拒绝
+继续并要求重新执行 `make debug` 或 `make debug-server`。
+
+完整 GDB 命令、报告结构、确定性故障注入和底层原理见
+[`GDB_STALL_DEBUG.md`](../docs/debugging/GDB_STALL_DEBUG.md)。
+
+## 9. 常用变量
+
+下表记录 Makefile 中的静态默认值。需要确认某次命令实际会使用什么，请执行
+`make show-config` 并传入与运行命令相同的变量。
+
+| 变量 | 默认 | 作用 |
+| --- | --- | --- |
+| `ARCH` | `rv` | `rv` / `la` |
+| `PROFILE` | `pre` | `pre` / `final` |
+| `SMP` | `8` | QEMU vCPU 数，`1..8` |
+| `MODE` | `auto` | `auto` / `shell` / `run` |
+| `SCRIPT` | 空 | `run` 模式的 guest 绝对路径 |
+| `GUEST_SHELL` | 空 | 指定 guest shell/BusyBox ELF |
+| `TTY` | 由内核决定 | `interactive` / `closed` / `fixture` |
+| `LOG` | 由内核决定 | `error` / `warn` / `info` / `debug` / `trace` |
+| `ON_EXIT` | 由模式决定 | `shutdown` / `shell` / `reboot` |
+| `SNAPSHOT` | `1` | `1` 不写回基础镜像 |
+| `WRITE_DISK` | `0` | `1` 允许写回，并默认关闭 snapshot |
+| `PORT` | `1234` | QEMU GDB Remote 端口 |
+| `START_PAUSED` | `1` | `debug-server` 是否传入 `-S` |
+| `FAULTS` | `0` | 编译确定性故障注入钩子 |
+| `RV_PRE_IMAGE` | `./sdcard-rv.img` | RISC-V pre 默认镜像 |
+| `RV_FINAL_IMAGE` | `./sdcard-rv.img` | RISC-V final 默认镜像，可独立覆盖 |
+| `LA_PRE_IMAGE` | `./sdcard-la.img` | LoongArch pre 默认镜像 |
+| `LA_FINAL_IMAGE` | `./sdcard-la.img` | LoongArch final 默认镜像 |
+| `SDCARD` | 由上述四项选择 | 覆盖本次运行的镜像路径 |
+| `EXTRA_FEATURES` | 空 | 逗号分隔的额外根 crate feature |
+| `GRAPHICS` | `EXTRA_FEATURES` 含 `gui`/`display-demo` 时为 `1`，否则 `0` | 是否挂载 QEMU VirtIO GPU、键盘、平板并启用图形输出 |
+| `GRAPHICS_BACKEND` | `auto` | QEMU display backend，`auto` 会按宿主/QEMU 支持自动选择，也可显式指定 `gtk`、`sdl`、`cocoa` 或 `none` |
+
+镜像名称只在 Makefile 的四个 `*_IMAGE` 变量中定义，QEMU 启动脚本不会
+根据 profile 猜测镜像，也不会让 final 静默回退到 pre 镜像。可以永久修改
+Makefile 中的默认值，也可以只覆盖一次：
 
 ```bash
-./scripts/wateros_debug.py run rv-pre --smp 2 --faults
+# 临时替换一次 final 镜像
+make run ARCH=rv PROFILE=final SDCARD=/data/wateros-final.img
+
+# 为本次 Make 调用修改该组合的默认值
+make run ARCH=rv PROFILE=pre RV_PRE_IMAGE=/data/wateros-pre.img
 ```
 
-连接 GDB，在 CPU 初始化完成后设置：
+## 10. 常见问题
 
-```gdb
-set *(unsigned long *)&WATEROS_DEBUG_FAULT_MODE = 1
-continue
-```
-
-故障模式：
-
-
-| 值  | 故障                                             |
-| ----- | -------------------------------------------------- |
-| `0` | 关闭故障注入                                     |
-| `1` | CPU 0 在 timer trap 中进入固定死循环             |
-| `2` | CPU 0/1 构造 ABBA 锁死，要求至少两个 CPU         |
-| `3` | CPU 0 关闭本地 timer 并停止调度                  |
-| `4` | CPU 0 的 timer 继续，但故意不执行 scheduler tick |
-
-普通 `gdb-debug` 和 release 构建不包含 `WATEROS_DEBUG_FAULT_MODE`。
-
-## 12. 测试调试工具
-
-运行 Python 单元测试：
-
-```bash
-python3 -m unittest discover -s scripts/tests -v
-```
-
-检查双架构普通构建：
-
-```bash
-make rv_check
-make la_check
-```
-
-检查双架构 GDB 构建：
-
-```bash
-make rv_check GDB_BUILD=1
-make la_check GDB_BUILD=1
-```
-
-检查故障注入构建：
-
-```bash
-make rv_check GDB_BUILD=1 GDB_FAULTS=1
-make la_check GDB_BUILD=1 GDB_FAULTS=1
-```
-
-构建独立调试 ELF：
-
-```bash
-make kernel-rv-pre GDB_BUILD=1
-make kernel-la-pre GDB_BUILD=1
-```
-
-## 13. 常见问题
-
-### QEMU 一启动就没有输出
-
-`make ...-gdb` 默认 `GDB_WAIT=1`，QEMU 停在第一条指令。连接 GDB 后执行
-`continue`，或者用 `GDB_WAIT=0` 重新启动。
-
-### 端口被占用
-
-启动端和调试端必须使用相同的新端口：
-
-```bash
-make rv_pre_run-gdb GDB_WAIT=0 GDB_PORT=1235
-
-./scripts/wateros_debug.py watch \
-  --arch rv \
-  --elf ./kernel-rv-pre-gdb \
-  --port 1235
-```
-
-### watch 没有立即判定锁死
-
-一次锁等待通常只是正常竞争。工具要求同一原因连续达到确认阈值，避免把短临界区误报
-为死锁。可通过 `--confirm` 修改阈值，但不建议在压力测试中设置得过低。
-
-### 报告中的事件有 dropped 数量
-
-事件环固定为每 CPU 256 项。高频压力测试会覆盖旧记录，`dropped_events` 表示已经
-回卷的数量。卡死后事件停止推进，报告仍会保留停滞前最后 256 项。CPU 表中
-`DROP(U/E)` 分别表示状态更新丢弃数和事件覆盖数，末尾 `*` 表示采样时 CPU 正在
-发布新状态。
-
-### 如何恢复一个被 watch 留在暂停状态的 guest
-
-重新连接：
-
-```bash
-./scripts/wateros_debug.py gdb \
-  --arch rv \
-  --elf ./kernel-rv-pre-gdb
-```
-
-然后执行：
-
-```gdb
-continue
-```
-
-完整的底层设计和历史排障案例另见
-[`docs/debugging/GDB_STALL_DEBUG.md`](../docs/debugging/GDB_STALL_DEBUG.md)。
+- `debug-server` 没有串口输出：默认停在复位入口，在第二个终端
+  `make gdb` 后执行 `continue`。
+- 端口被占用：在终端一传入 `PORT=1235`；终端二会从会话自动
+  读取，不用再传。
+- shell 无输入：使用 `make shell`，不要设置 `TTY=closed`。
+- 提示符被日志覆盖：使用 `LOG=warn` 或 `LOG=error`。
+- 退出 QEMU：按 `Ctrl-A` 后按 `x`。Guest 内的 Ctrl-C 仍用于中断前台进程。
+- 图形窗口未出现：确认使用了 `EXTRA_FEATURES=gui`，并检查宿主是否安装了
+  对应的 QEMU 显示后端；服务器环境可先用 `GRAPHICS_BACKEND=none` 验证驱动。

@@ -1,15 +1,13 @@
 //! `listen(2)`：标记 TCP socket 为监听状态。
 
 //! 本模块代码由AI完成
+use crate::socket_fd;
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
-use network::stack;
-
-use crate::socket_fd;
 
 // 本方法代码由AI完成
-pub(crate) fn sys_listen(args: SyscallArgs) -> UserRet {
+pub(crate) fn sys_listen(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let backlog = args.arg(1);
 
@@ -25,10 +23,12 @@ pub(crate) fn sys_listen(args: SyscallArgs) -> UserRet {
         Err(e) => return UserRet::from_error(e),
     };
 
-    match stack::socket_listen(socket.handle(), backlog) {
+    match socket.listen(backlog) {
         Ok(()) => UserRet::from_success(0),
         Err(e) => {
-            log::warn!("[syscall] listen failed fd={} err={}", fd, e);
+            log::warn!("[syscall] listen failed fd={} err={}",
+                       fd,
+                       e);
             UserRet::from_error(ErrNo::EINVAL)
         }
     }

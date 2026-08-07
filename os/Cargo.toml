@@ -20,7 +20,9 @@
     syscall = { package = "wateros-syscall", path = "./components/wateros-syscall/", default-features = false }
     klog = { package = "wateros-klog", path = "./components/wateros-klog/", default-features = false, optional = true }
     task = { package = "wateros-task", path = "./components/wateros-task/", default-features = true }
+    tty = { package = "wateros-tty", path = "./components/wateros-tty/", default-features = true }
     debug = { package = "wateros-debug", path = "./components/wateros-debug/", default-features = false }
+    gui = { package = "wateros-gui", path = "./components/wateros-gui/", default-features = true, optional = true }
     fdt = { version = "0.1.5", optional = true }
 
 # 使用本地 vendor 的 ext4plus（修复了块分配器在 block group
@@ -56,6 +58,10 @@
     stall-debug = [ "dep:ipc", "ipc/futex" ]
     # 整个顶部 dashboard（CPU、内存、文件描述符与 syscall 摘要）；默认关闭。
     dashboard-debug = [ "stall-debug", "dep:vfs" ]
+    # 完整内核 GUI；默认比赛构建不探测显示或启动刷新任务。
+    gui = [ "dep:gui", "driver/display", "driver/input" ]
+    # 兼容原启动命令，现转发到完整 wateros-gui 组件。
+    display-demo = [ "gui" ]
     # 版本化内存诊断区和无锁事件环；普通构建中 debug 记录接口为空操作。
     gdb-debug = [ "debug/enabled", "stall-debug" ]
     # 只供 GDB 诊断集成测试使用；通过导出变量确定性注入 loop/ABBA/timer/stall。

@@ -1,6 +1,6 @@
 //! WaterOS 设备驱动聚合层：统一导出子系统 API、可选平台实现与引导期入口。
 //!
-//! `api`、`block`、`character`、`network`
+//! `api`、`block`、`character`、`display`、`input`、`network`
 //! 模块不做按子系统裁剪，便于上层一次性依赖；具体硬件绑定由 feature 选中的
 //! [`active_impl`] 完成。
 
@@ -18,6 +18,12 @@ pub mod block {
 }
 pub mod character {
     pub use ::character::*;
+}
+pub mod display {
+    pub use ::display::*;
+}
+pub mod input {
+    pub use ::input::*;
 }
 pub mod network {
     pub use ::network::*;
@@ -44,6 +50,8 @@ use api_v0::SupportedDeviceEntry;
 pub fn supported_device_entries() -> Vec<&'static SupportedDeviceEntry> {
     block::supported_devices().iter()
                               .chain(character::supported_devices())
+                              .chain(display::supported_devices())
+                              .chain(input::supported_devices())
                               .chain(network::supported_devices())
                               .collect()
 }
@@ -106,6 +114,7 @@ pub fn test() {
     api_v0::test();
     block::test();
     character::api_v0::test();
+    assert_eq!(display::supported_devices().len(), 3);
     network::test();
     #[cfg(feature = "impl-qemu-riscv64-opensbi")]
     impl_qemu_riscv64_opensbi::test();

@@ -31,6 +31,7 @@
 | wateros-vfs | [vfs](features/wateros-vfs.md) | [api](public-api/wateros-vfs.md) | [guide](impl-guide/wateros-vfs.md) |
 | wateros-fs | [fs](features/wateros-fs.md) | [api](public-api/wateros-fs.md) | [guide](impl-guide/wateros-fs.md) |
 | wateros-driver | [driver](features/wateros-driver.md) | [api](public-api/wateros-driver.md) | [guide](impl-guide/wateros-driver.md) |
+| wateros-gui（可选） | [gui](features/wateros-gui.md) | [api](public-api/wateros-gui.md) | [guide](impl-guide/wateros-gui.md) |
 | wateros-ipc | [ipc](features/wateros-ipc.md) | [api](public-api/wateros-ipc.md) | [guide](impl-guide/wateros-ipc.md) |
 | wateros-cred | [cred](features/wateros-cred.md) | [api](public-api/wateros-cred.md) | — |
 | wateros-klog | [klog](features/wateros-klog.md) | [api](public-api/wateros-klog.md) | — |

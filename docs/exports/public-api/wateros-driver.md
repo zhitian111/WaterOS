@@ -11,6 +11,8 @@ driver::
   api::*              # wateros-driver-api-v0
   block::*            # wateros-driver-block
   character::*        # wateros-driver-character
+  display::*          # wateros-driver-display
+  input::*            # wateros-driver-input
   network::*          # wateros-driver-network
   active_impl         # feature 选中的 platform-impl crate
   uart                # [riscv/loongarch impl] 板级 UART 辅助
@@ -30,7 +32,7 @@ driver::
 
 | 类型 / 函数 | 说明 |
 |-------------|------|
-| `DeviceType` | `Block` / `Character` / `Network` / `Unknown` |
+| `DeviceType` | `Block` / `Character` / `Network` / `Display` / `Input` / `Unknown` |
 | `MmioRegion` | DTB `reg` 首段 `{ base, size }` |
 | `IrqLine` | `{ irq, parent? }` |
 | `SupportedDeviceEntry` | 子系统声明的 `compatible` 绑定表项 |
@@ -92,6 +94,18 @@ driver::
 | `socket_bind` / `listen` / `connect` / `accept` / `send` / `recv` | socket 操作 |
 | `socket_setsockopt` / `socket_getsockopt` | iperf 依赖的子集 |
 | `poll_socket_events` | Connecting → Connected 状态同步 |
+
+## `driver::display`
+
+`DisplayDevice` 提供 `info`、`framebuffer`、`flush` 和可覆盖的 `flush_region`；注册表入口为
+`register_display_device`、`display_device_count`、`first_display_device`、
+`display_device_at`。当前格式为 `PixelFormat::Bgra8888`。
+
+## `driver::input`
+
+`InputDevice` 提供设备元数据和非阻塞 `pop_event`；`RawInputEvent` 使用 evdev
+`event_type/code/value`。注册表入口为 `register_input_device`、`input_device_count`、
+`input_device_at`、`input_devices`。
 
 ## 平台 impl（`active_impl`）
 

@@ -234,6 +234,15 @@ impl ProcessRegistry {
                                          comm : [0u8; 16] };
         let mut map = BTreeMap::new();
         map.insert(task_id, process_task);
+        // A user process launched directly by the kernel is the leader of its
+        // initial login session. Fork children overwrite both fields from the
+        // parent below. Leaving such a process with sid=0 makes controlling
+        // terminal and shell job-control checks impossible to satisfy.
+        let initial_sid = if parent_pid.is_none() {
+            pid
+        } else {
+            ProcessId::from_raw(0)
+        };
         let process = ProcessControlBlock { pid,
                                             leader_task_id : task_id,
                                             parent_pid,
@@ -245,7 +254,7 @@ impl ProcessRegistry {
                                             exec_in_progress : false,
                                             state : ProcessState::Running,
                                             parent_death_signal : 0,
-                                            sid : ProcessId::from_raw(0),
+                                            sid : initial_sid,
                                             dumpable : true,
                                             child_subreaper : false,
                                             stop_wait_pending : false,

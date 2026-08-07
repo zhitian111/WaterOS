@@ -6,7 +6,7 @@ extern crate alloc;
 use api_v0::ErrNo;
 use api_v0::UserRet;
 use ipc::signal::SignalSet;
-use network::stack;
+use network::{stack, SocketKind, SocketState};
 use platform::wall_clock;
 use task::TaskTick;
 use wateros_base_config::task::SCHED_TIMER_PERIOD_MS;
@@ -159,8 +159,9 @@ struct ScanCtx {
 }
 
 fn current_task_has_deliverable_signal() -> bool {
-    task::current_task_id()
-        .is_some_and(|task_id| ipc::signal::has_deliverable(task_id).unwrap_or(false))
+    task::current_task_id().is_some_and(|task_id| {
+                               ipc::signal::has_deliverable(task_id).unwrap_or(false)
+                           })
 }
 
 impl ScanCtx {
@@ -186,22 +187,25 @@ pub(crate) fn poll_socket_revents(fd : usize, events : i16) -> i16 {
     let Some(socket) = socket_fd::lookup(fd) else {
         return 0;
     };
-    let handle = socket.handle();
     let mut revents = 0i16;
-    let Ok(snapshot) = stack::socket_poll_snapshot(handle) else {
+    let Ok(snapshot) = socket.poll_snapshot() else {
         return POLLNVAL;
     };
 
     match snapshot.kind {
-        stack::SocketKind::Tcp => match snapshot.state {
-            stack::SocketState::Listening { .. } => {
+        SocketKind::Tcp => match snapshot.state {
+            SocketState::Listening { .. } => {
                 if events & POLLIN != 0 && snapshot.has_pending_accept {
                     revents |= POLLIN;
                 }
             }
-            stack::SocketState::Connecting | stack::SocketState::Connected => {
+            SocketState::Connecting => {
+                // EINPROGRESS 只表示握手尚未完成，不能把等待状态误报成挂断。
+                // 每轮 poll/epoll 扫描都会先驱动网络栈，状态变化后再在下面报告。
+            }
+            SocketState::Connected => {
                 let peer_read_closed =
-                    snapshot.state == stack::SocketState::Connected && !snapshot.may_recv;
+                    !snapshot.may_recv;
                 if events & POLLIN != 0 && (snapshot.can_recv || peer_read_closed) {
                     revents |= POLLIN;
                 }
@@ -212,10 +216,20 @@ pub(crate) fn poll_socket_revents(fd : usize, events : i16) -> i16 {
                     revents |= POLLHUP;
                 }
             }
-            stack::SocketState::Closed => revents |= POLLHUP,
+            SocketState::Closed => {
+                if snapshot.connect_error.is_some() {
+                    // connect 失败也属于一次“可写完成”；select 依赖 POLLOUT，
+                    // poll/epoll 则通过 POLLERR 唤醒并继续读取 SO_ERROR。
+                    if events & POLLOUT != 0 {
+                        revents |= POLLOUT;
+                    }
+                    revents |= POLLERR;
+                }
+                revents |= POLLHUP;
+            }
             _ => {}
         },
-        stack::SocketKind::Udp => {
+        SocketKind::Udp => {
             if events & POLLOUT != 0 {
                 revents |= POLLOUT;
             }
@@ -309,10 +323,10 @@ fn poll_wait_pipe_fds(fds_ptr : usize,
         if socket_fd::lookup(fd).is_some() {
             continue;
         }
-        // `with_current_io` 会临时把句柄从 fd 表移出；在等待条件里重扫同一 fd
-        // 会得到 `POLLNVAL` 并忙等，不能 yield。
+        // 等待过程会主动切换任务，必须使用独立临时句柄，不能持有共享 fd
+        // 槽锁睡眠；否则同进程线程访问该 fd 时会在单核上永久自旋。
         let mut wait_on_this_fd = || !deadline.expired();
-        match vfs::fd::with_current_io(fd, |handle| {
+        match vfs::fd::with_current_io_detached(fd, |handle| {
                   handle.poll_wait_for_ticks(pfd.events,
                                              wait_ticks,
                                              &mut wait_on_this_fd)
@@ -615,9 +629,9 @@ fn poll_wait_monitored_fds(nfds : usize,
         if socket_fd::lookup(fd).is_some() {
             continue;
         }
-        // 同 `poll_wait_pipe_fds`：句柄借出 fd 表期间重扫同一 fd 会误报 `POLLNVAL`。
+        // 同 `poll_wait_pipe_fds`：等待时不能占用共享 fd 槽锁。
         let mut wait_on_this_fd = || !deadline.expired();
-        match vfs::fd::with_current_io(fd, |handle| {
+        match vfs::fd::with_current_io_detached(fd, |handle| {
                   handle.poll_wait_for_ticks(events, wait_ticks, &mut wait_on_this_fd)
               }) {
             Ok(()) => any_pipe = true,
