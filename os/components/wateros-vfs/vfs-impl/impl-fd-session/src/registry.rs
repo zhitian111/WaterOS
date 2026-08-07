@@ -133,16 +133,10 @@ impl PerTaskFdRegistry {
 
     // 本方法代码由AI完成
     fn ensure_task(&mut self, task_id : task::TaskId) {
-        // 常见路径：任务已经绑定 owner，且 fd 表已初始化。避免每次 syscall
-        // 都重复做 BTreeMap entry/insert 查询。
-        if let Some(&owner) = self.owners.get(&task_id) {
-            if let Some(table) = self.tables.get(&owner) {
-                if table.len() >= VFS_FIRST_DYNAMIC_FD &&
-                   self.ref_counts.contains_key(&owner)
-                {
-                    return;
-                }
-            }
+        if self.initialized_owner(task_id)
+               .is_some()
+        {
+            return;
         }
         if !self.owners
                 .contains_key(&task_id)
@@ -177,6 +171,20 @@ impl PerTaskFdRegistry {
                 .or_default()
                 .clear();
         }
+    }
+
+    /// 返回已绑定、fd 表已初始化且 refcount 已登记的 owner。
+    ///
+    /// 这是 syscall 热路径的常见状态；调用方拿到 `Some(owner)` 后可直接访问
+    /// `tables`，不再重复执行 BTreeMap entry/insert。
+    fn initialized_owner(&self, task_id : task::TaskId) -> Option<task::TaskId> {
+        let owner = self.owners
+                        .get(&task_id)
+                        .copied()?;
+        let table = self.tables
+                        .get(&owner)?;
+        (table.len() >= VFS_FIRST_DYNAMIC_FD && self.ref_counts.contains_key(&owner))
+            .then_some(owner)
     }
 
     // 本方法代码由AI完成
@@ -640,6 +648,13 @@ impl PerTaskFdRegistry {
                               task_id : task::TaskId,
                               fd : usize)
                               -> VfsResult<SharedIoHandle> {
+        if let Some(owner) = self.initialized_owner(task_id) {
+            return self.tables
+                       .get(&owner)
+                       .and_then(|table| table.get(fd))
+                       .and_then(|slot| slot.clone())
+                       .ok_or(VfsError::BadFd);
+        }
         self.ensure_task(task_id);
         let owner = self.effective_owner(task_id);
         self.tables
@@ -654,6 +669,14 @@ impl PerTaskFdRegistry {
                                      task_id : task::TaskId,
                                      fd : usize)
                                      -> VfsResult<SharedIoHandle> {
+        if let Some(owner) = self.initialized_owner(task_id) {
+            return self.tables
+                       .get(&owner)
+                       .and_then(|table| table.get(fd))
+                       .and_then(|slot| slot.as_ref())
+                       .ok_or(VfsError::BadFd)?
+                       .duplicate();
+        }
         self.ensure_task(task_id);
         let owner = self.effective_owner(task_id);
         self.tables
