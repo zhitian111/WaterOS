@@ -133,6 +133,17 @@ impl PerTaskFdRegistry {
 
     // 本方法代码由AI完成
     fn ensure_task(&mut self, task_id : task::TaskId) {
+        // 常见路径：任务已经绑定 owner，且 fd 表已初始化。避免每次 syscall
+        // 都重复做 BTreeMap entry/insert 查询。
+        if let Some(&owner) = self.owners.get(&task_id) {
+            if let Some(table) = self.tables.get(&owner) {
+                if table.len() >= VFS_FIRST_DYNAMIC_FD &&
+                   self.ref_counts.contains_key(&owner)
+                {
+                    return;
+                }
+            }
+        }
         if !self.owners
                 .contains_key(&task_id)
         {
