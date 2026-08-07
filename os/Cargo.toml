@@ -122,6 +122,6 @@
         "klog/default",
         "runtime/impl-platform-console",
         "syscall/impl-kernel",
-        #"dashboard-debug",
+        "dashboard-debug",
     ]
     syscall-trace = [  ]

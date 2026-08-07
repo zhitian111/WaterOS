@@ -110,52 +110,6 @@ impl MultiClassScheduler {
             cpu.set_current_aspace(user_aspace_ptr);
         }
     }
-    pub fn current_task_id(&self, cpu_id : CpuId) -> Option<TaskId> {
-        self.cpu_states[cpu_id.raw()].current_task_id()
-    }
-
-    pub fn current_task_snapshot(&self, cpu_id : CpuId) -> Option<TaskSnapshot> {
-        let cpu = &self.cpu_states[cpu_id.raw()];
-        let mut snapshot = self.registry
-                               .task_snapshot(cpu.current_task_id()?);
-        // Running-task accounting is cached per CPU and written back to the
-        // TCB only when the task leaves the CPU. Observers such as getrusage
-        // must include the live delta even when the task has not switched.
-        let live_ticks = usize::try_from(cpu.current_runtime_ticks).unwrap_or(usize::MAX);
-        snapshot.stats.tick_count = snapshot.stats
-                                            .tick_count
-                                            .saturating_add(live_ticks);
-        if CPUState::is_cfs_policy(cpu.current_policy()) {
-            snapshot.vruntime = cpu.current_vruntime();
-        }
-        Some(snapshot)
-    }
-
-    pub fn task_snapshot(&self, task_id : TaskId) -> TaskSnapshot {
-        self.registry
-            .task_snapshot(task_id)
-    }
-
-    pub fn task_state(&self, task_id : TaskId) -> Option<TaskState> {
-        self.registry
-            .state(task_id)
-    }
-
-    pub fn diagnostic_task_snapshots(&self) -> alloc::vec::Vec<TaskSnapshot> {
-        self.registry
-            .diagnostic_task_snapshots()
-    }
-
-    pub fn has_child(&self, parent_id : TaskId) -> bool {
-        self.registry
-            .has_child(parent_id)
-    }
-
-    pub fn current_tick(&self) -> TaskTick {
-        self.wait_queues
-            .current_tick()
-    }
-
     pub fn begin_current_trap_frame_access(&mut self,
                                            trap_frame : TaskTrapFrame,
                                            cpu_id : CpuId)
@@ -184,90 +138,59 @@ impl MultiClassScheduler {
         self.registry
             .take_current_wait_result(task_id)
     }
-    pub fn set_affinity(&mut self, task_id : TaskId, mask : CpuMask) -> Result<(), SchedError> {
-        if mask.bits() & !CpuMask::ALL.bits() != 0 {
-            return Err(SchedError::InvalidArg);
-        }
-        if mask.bits() &
-           self.online_cpu_mask()
-               .bits() ==
-           0
+    pub fn kill_task(&mut self, task_id : TaskId, exit_code : TaskExitCode) -> bool {
+        if self.registry
+               .is_idle_task(task_id)
         {
-            return Err(SchedError::InvalidArg);
+            return false;
         }
-
-        let state = self.registry
-                        .state(task_id)
-                        .ok_or(SchedError::NoSuchTask)?;
-        if matches!(state, TaskState::Exited(_)) {
-            return Err(SchedError::NoSuchTask);
-        }
-        self.registry
-            .set_affinity(task_id, mask)?;
-
-        match state {
-            TaskState::Ready => {
-                // create_* 会先登记一个 Ready TCB、稍后才入 runqueue。此时
-                // `ready_cpu_id` 为 None；只保存 affinity，首次入队会按新 mask
-                // 选核，不能把它当作调度器不变量而 panic。
-                if let Some(ready_cpu) = self.registry
-                                             .ready_cpu_id(task_id)
-                {
-                    if !mask.contains(ready_cpu) {
-                        self.activate_ready_task(task_id, ReadyPlacement::LeastLoaded);
-                    }
-                }
-            }
-            TaskState::Running => {
-                let running_cpu = self.registry
-                                      .running_cpu_id(task_id)
-                                      .expect("running task must have a CPU owner");
-                if !mask.contains(running_cpu) {
-                    // 不从远端 CPU 修改运行现场。由目标 CPU 在收到 IPI 后进入
-                    // Reschedule 路径，把当前任务重新入队到允许的 CPU。
-                    self.request_reschedule(running_cpu, RescheduleCause::Forced);
-                }
-            }
-            TaskState::Blocking(_) | TaskState::Sleeping { .. } => {}
-            TaskState::Exited(_) => unreachable!(),
-        }
-        Ok(())
-    }
-    pub fn get_affinity(&self, task_id : TaskId) -> Result<CpuMask, SchedError> {
-        self.registry
-            .get_affinity(task_id)
-    }
-
-    /// 更新 TCB 中的 nice；运行中的任务还必须同步其所属 CPU 的热路径 cache。
-    pub fn set_nice(&mut self, task_id : TaskId, nice : i8) -> Result<(), SchedError> {
-        let state = self.registry
-                        .state(task_id)
-                        .ok_or(SchedError::NoSuchTask)?;
-        if matches!(state, TaskState::Exited(_)) {
-            return Err(SchedError::NoSuchTask);
-        }
-        if let Some(running_cpu) = self.registry
-                                       .running_cpu_id(task_id)
+        if self.registry
+               .state(task_id)
+               .is_none()
         {
-            self.cpu_states[running_cpu.raw()].set_current_nice(nice);
+            return false;
         }
+        if matches!(self.registry
+                        .state(task_id),
+                    Some(TaskState::Exited(_)))
+        {
+            return true;
+        }
+        if self.cpu_states
+               .iter()
+               .any(|cpu| cpu.current_task_id() == Some(task_id))
+        {
+            return false;
+        }
+        self.dequeue_from_all_cpus(task_id);
+        self.wait_queues
+            .kill_task(task_id);
         self.registry
-            .set_nice(task_id, nice)
+            .mark_exited(task_id, exit_code);
+        true
     }
 
-    pub fn get_nice(&self, task_id : TaskId) -> Result<i8, SchedError> {
-        let snap = self.registry
-                       .task_snapshot(task_id);
-        Ok(snap.nice)
+    pub fn discard_unstarted_task(&mut self, task_id : TaskId) {
+        self.dequeue_from_all_cpus(task_id);
+        self.wait_queues
+            .detach_task_from_run_queues(task_id);
+        self.registry
+            .discard_task(task_id);
     }
-    pub fn priority(&self, task_id : TaskId) -> Result<Priority, SchedError> {
-        let snap = self.registry
-                       .task_snapshot(task_id);
-        Ok(snap.priority)
+
+    pub fn reap_exited_task(&mut self, task_id : TaskId) -> Option<ExitedTask> {
+        self.wait_queues
+            .reap_exited_task(&mut self.registry, task_id)
     }
-    pub fn policy(&self, task_id : TaskId) -> Result<SchedPolicy, SchedError> {
-        let snap = self.registry
-                       .task_snapshot(task_id);
-        Ok(snap.policy)
+
+    pub fn reap_one_exited_task(&mut self) -> Option<ExitedTask> {
+        self.wait_queues
+            .reap_one_exited_task(&mut self.registry)
+    }
+
+    pub fn reap_one_exited_child(&mut self, parent_id : TaskId) -> Option<ExitedTask> {
+        let task_id = self.registry
+                          .find_exited_child(parent_id)?;
+        self.reap_exited_task(task_id)
     }
 }
