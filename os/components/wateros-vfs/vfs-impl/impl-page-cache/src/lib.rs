@@ -649,25 +649,17 @@ impl GlobalFilePageCache {
         }
 
         let page_off = page_idx * FILE_PAGE_SIZE as u64;
-        let mut page_buf = core::mem::MaybeUninit::<[u8; FILE_PAGE_SIZE]>::uninit();
-        let page_buf_ptr = page_buf.as_mut_ptr() as *mut u8;
-        let mut initialized_len = 0usize;
+        let mut page_buf = [0u8; FILE_PAGE_SIZE];
         if page_off < file_size {
             let to_read = FILE_PAGE_SIZE.min(
                 usize::try_from(file_size.saturating_sub(page_off)).unwrap_or(0),
             );
             if to_read > 0 {
-                let dst = unsafe {
-                    core::slice::from_raw_parts_mut(page_buf_ptr, to_read)
-                };
-                let n = io.read_range(key.path.as_ref(), page_off, dst)
+                let n = io.read_range(key.path.as_ref(), page_off, &mut page_buf[..to_read])
                           .map_err(map_err)?;
                 if n < to_read {
-                    unsafe {
-                        core::ptr::write_bytes(page_buf_ptr.add(n), 0, to_read - n);
-                    }
+                    page_buf[n..to_read].fill(0);
                 }
-                initialized_len = to_read;
             }
         }
 
@@ -743,15 +735,8 @@ impl GlobalFilePageCache {
                 cache.touch_lru(existing);
                 return Ok(());
             }
-            if initialized_len > 0 {
-                let src = unsafe {
-                    core::slice::from_raw_parts(page_buf_ptr, initialized_len)
-                };
-                cache.frames[idx].data[..initialized_len]
-                                 .copy_from_slice(src);
-            }
-            cache.frames[idx].data[initialized_len..]
-                             .fill(0);
+            cache.frames[idx].data
+                             .copy_from_slice(&page_buf);
             cache.frames[idx].dirty = false;
             cache.frames[idx].version = 0;
             cache.frames[idx].key = Some((key.clone(), page_idx));

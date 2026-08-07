@@ -1,4 +1,7 @@
-# 页缓存 miss 临时页避免整页 memset
+# 页缓存 miss 临时页避免整页 memset（已回退）
+
+> 状态：2026-08-07 完整 RISC-V Final 出现内核态 `LoadPageFault`，发生在 trap
+> 日志格式化路径；为避免把 `MaybeUninit` 的未定义行为风险带进决赛，本改动已回退。
 
 ## 优化思路
 
@@ -42,4 +45,5 @@ if n < to_read { page_buf[n..to_read].fill(0); }
 | `memcpy` | 94,544,360 | 94,532,611 |
 
 短负载中页缓存 miss 占比不高，收益不明显；完整 BuildStorm 的页 miss 量更高，
-后续需要完整轮继续验证。
+但该 unsafe 路径未通过完整轮验收，后续需要先在受控环境中证明内存安全性，再重新
+实验。
