@@ -417,3 +417,9 @@ BUILDSTORM_COMPILE mode=multi ok=true elapsed_s=1281.26 cores=8 bytes=1681000 ar
 为 uptime/meminfo/cpuinfo/cgroups/mounts 增加栈上 `SliceWriter` 直接 range 生成。
 完整 Final 构建本体 `done (1259.49s)`，但构建完成后约 3 分钟未打印
 `BUILDSTORM_COMPILE`，命中已知 `cargo xtask` 返回竞态。本轮不可验收，已回退。
+
+## 2026-08-07 管道继承复现测试
+
+临时把 Final 命令改为 `(sleep 10 &) | cat; echo PIPE_TEST_DONE`。结果正常打印
+`PIPE_TEST_DONE`，说明简单后台子进程继承 stdout 不会复现 `cargo xtask` 卡死。
+卡死更可能在 cargo/rustc 的多进程、多 fd、exec/exit 组合路径中。
