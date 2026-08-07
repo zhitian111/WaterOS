@@ -435,3 +435,10 @@ BUILDSTORM_COMPILE mode=multi ok=true elapsed_s=1281.26 cores=8 bytes=1681000 ar
 离线把 K-51 overlay 的 `/glibc/buildstorm_testcode.sh` 改成不删除 target，并在已构建
 产物上重跑 `cargo xtask`。结果 `QUICK_BUILDSTORM_RESULT rc=0 elapsed_s=65.42`，
 正常返回。说明该竞态只出现在完整重编译的长负载路径，普通增量流程不复现。
+
+## 2026-08-07 K-52 timer 内核态 Exiting 强制退出（已回退）
+
+在 timer 中断进入内核态时检查 `ProcessState::Exiting` 并调用 `exit_group_current`，
+用于覆盖远端线程卡在内核未回用户态的场景。完整 Final 通过但
+`elapsed_s=1327.53`，比 K-50 的 `1281.26` 慢，且本轮无法证明修复了偶发竞态。
+已回退。
