@@ -113,14 +113,19 @@ pub(crate) fn wake_clear_child_tid_for_task(task_id : task::TaskId) -> usize {
 /// 信号终止进程的 wait(2) 编码：负值表示被信号杀死，低 7 位为信号号，bit7 为 core dump。
 pub(crate) fn signal_terminate_exit_code(signal : usize, task_id : usize) -> isize {
     let mut status = (signal & 0x7F) as isize;
-    if let Some(snapshot) = task::process_task_snapshot(task_id) {
-        if task::process_resource_limit(snapshot.pid, RLIMIT_CORE).map(|limit| limit.cur > 0)
-                                                                  .unwrap_or(false)
-        {
-            status |= 0x80;
-        }
+    let core_allowed = task::process_task_snapshot(task_id)
+        .and_then(|snapshot| task::process_resource_limit(snapshot.pid, RLIMIT_CORE))
+        .map(|limit| limit.cur > 0)
+        .unwrap_or(false);
+    if core_allowed && signal_dumps_core(signal) {
+        status |= 0x80;
     }
     -status
+}
+
+fn signal_dumps_core(signal : usize) -> bool {
+    // Linux 只对这些默认终止信号设置 WCOREDUMP。SIGIOT 与 SIGABRT 同号。
+    matches!(signal, 3 | 4 | 5 | 6 | 7 | 8 | 11 | 24 | 25 | 31)
 }
 
 fn write_exit_code(exit_code_ptr : usize, exit_code : isize) -> Result<(), ErrNo> {
@@ -687,4 +692,19 @@ fn waitpid_wait_for_child(parent_pid : task::ProcessId,
                           target : WaitTarget)
                           -> task::TaskWaitResult {
     wait_for_child_event(parent_pid, target, true, false, false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::signal_dumps_core;
+
+    #[test]
+    fn core_dump_signal_list_matches_linux() {
+        for signal in [3, 4, 5, 6, 7, 8, 11, 24, 25, 31] {
+            assert!(signal_dumps_core(signal), "signal {signal} should dump core");
+        }
+        for signal in [1, 2, 9, 10, 12, 13, 14, 15, 16, 26, 27, 29, 30] {
+            assert!(!signal_dumps_core(signal), "signal {signal} should not dump core");
+        }
+    }
 }
