@@ -423,3 +423,9 @@ BUILDSTORM_COMPILE mode=multi ok=true elapsed_s=1281.26 cores=8 bytes=1681000 ar
 临时把 Final 命令改为 `(sleep 10 &) | cat; echo PIPE_TEST_DONE`。结果正常打印
 `PIPE_TEST_DONE`，说明简单后台子进程继承 stdout 不会复现 `cargo xtask` 卡死。
 卡死更可能在 cargo/rustc 的多进程、多 fd、exec/exit 组合路径中。
+
+## 2026-08-07 wateros_debug 自动停滞抓取尝试
+
+安装 `gdb-multiarch` 兼容入口后运行 `wateros_debug.py run rv-final --write-disk`。
+40 分钟内未出现 stable=10 停滞，debug/GDB 采样开销使完整编译极慢，未捕获现场。
+后续需要更轻量的停滞判断或直接复现更短负载。
