@@ -790,6 +790,71 @@ def classify_stall(sample: RemoteSample, baseline: RemoteSample | None = None) -
     return "unknown-stall"
 
 
+def render_watch_cpus(snapshot: dict[str, Any]) -> str:
+    """watch 精简面板：竖线分隔的 CPU 状态表（省略 syscall/trap/ipi/drop/wait）。"""
+    visible = snapshot["cpus"][: snapshot.get("observed_vcpus", len(snapshot["cpus"]))]
+    header = ["CPU", "ON", "MODE", "TASK", "RUNNABLE", "TICKS", "SWITCH"]
+    align = [">", "<", "<", ">", "<", ">", ">"]
+    rows: list[list[str]] = []
+    for cpu in visible:
+        mode = "OFF"
+        if cpu["online"]:
+            mode = "IDLE" if cpu["idle"] else ("USER" if cpu["user"] else "KERN")
+        task = "-" if cpu["current_task"] is None else str(cpu["current_task"])
+        runnable = "/".join(str(value) for value in cpu["runnable"])
+        rows.append([
+            str(cpu["cpu"]),
+            "Y" if cpu["online"] else "N",
+            mode,
+            task,
+            runnable,
+            str(cpu["timer_ticks"]),
+            str(cpu["context_switches"]),
+        ])
+    widths: list[int] = []
+    for index in range(len(header)):
+        width = len(header[index])
+        for row in rows:
+            width = max(width, len(row[index]))
+        widths.append(width)
+
+    def render_row(row: list[str]) -> str:
+        cells = [
+            f"{cell:{align[index]}{widths[index]}}" for index, cell in enumerate(row)
+        ]
+        return "| " + " | ".join(cells) + " |"
+
+    separator = "+" + "+".join("-" * (width + 2) for width in widths) + "+"
+    lines = [separator, render_row(header), separator]
+    lines.extend(render_row(row) for row in rows)
+    lines.append(separator)
+    return "\n".join(lines)
+
+
+def render_watch_frame(
+    sample: RemoteSample,
+    stagnant: int,
+    confirm: int,
+    reason: str,
+) -> str:
+    """生成 dashboard 风格的采样帧：边框标题 + CPU 状态表 + PC 摘要。"""
+    build_id = sample.build_id or "?"
+    title = (
+        f"+--- WaterOS Watch build={build_id} "
+        f"stable={stagnant}/{confirm} reason={reason} ---+"
+    )
+    pcs = ", ".join(_hex(row["pc"]) for row in sample.registers)
+    lines = [title]
+    if sample.debug and "cpus" in sample.debug:
+        lines.extend(render_watch_cpus(sample.debug).splitlines())
+    else:
+        lines.append("(debug ABI unavailable; register summary only)")
+    lines.append(f" pc=[{pcs}] ")
+    width = max(len(line) for line in lines)
+    lines.append("+" + "-" * (width - 2) + "+")
+    return "\n".join(lines)
+
+
 def watch(
     arch: str,
     elf: Path,
@@ -834,10 +899,8 @@ def watch(
         leading_reason, stagnant = max(
             reason_streaks.items(), key=lambda item: item[1], default=("none", 0)
         )
-        pcs = ", ".join(_hex(row["pc"]) for row in sample.registers)
         print(
-            f"[wos-debug] stable={stagnant}/{confirm} reason={leading_reason} "
-            f"pc=[{pcs}]",
+            render_watch_frame(sample, stagnant, confirm, leading_reason),
             flush=True,
         )
         if stagnant >= confirm:
