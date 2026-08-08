@@ -52,7 +52,7 @@ pub(crate) fn sys_socketpair(args: SyscallArgs) -> UserRet {
     if typ == SOCK_RAW || protocol != 0 {
         return UserRet::from_error(ErrNo::EPROTONOSUPPORT);
     }
-    if sv_ptr == 0 {
+    if sv_ptr == 0 || sv_ptr % core::mem::align_of::<i32>() != 0 {
         return UserRet::from_error(ErrNo::EFAULT);
     }
 
