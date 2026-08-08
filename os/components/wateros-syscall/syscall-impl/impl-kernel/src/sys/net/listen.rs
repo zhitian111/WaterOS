@@ -5,6 +5,7 @@ use crate::socket_fd;
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
+use network::NetworkError;
 
 // 本方法代码由AI完成
 pub(crate) fn sys_listen(args : SyscallArgs) -> UserRet {
@@ -29,7 +30,12 @@ pub(crate) fn sys_listen(args : SyscallArgs) -> UserRet {
             log::warn!("[syscall] listen failed fd={} err={}",
                        fd,
                        e);
-            UserRet::from_error(ErrNo::EINVAL)
+            match e {
+                NetworkError::WrongSocketType | NetworkError::Unsupported => {
+                    UserRet::from_error(ErrNo::EOPNOTSUPP)
+                }
+                _ => UserRet::from_error(ErrNo::EINVAL),
+            }
         }
     }
 }
