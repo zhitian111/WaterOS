@@ -295,6 +295,7 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
     }
 
     let parent_id = task::current_task_id().expect("current task must exist after fork");
+    super::task::copy_timer_slack(parent_id, child_id);
     if clone_flags.contains(task::CloneFlags::CLONE_FS) {
         vfs::cwd::share_cwd_from_parent(child_id, parent_id);
     } else {
@@ -385,6 +386,7 @@ fn do_clone_thread(clone_flags : task::CloneFlags,
         }
     };
     let parent_id = task::current_task_id().expect("current task must exist after clone");
+    super::task::copy_timer_slack(parent_id, child_id);
     if crate::sys::ipc::signal::on_clone_thread(parent_id, child_id, child_tid_raw).is_err() {
         task::abort_clone_thread(child_id);
         crate::sys::ipc::signal::abort_clone_thread_signal(child_id);

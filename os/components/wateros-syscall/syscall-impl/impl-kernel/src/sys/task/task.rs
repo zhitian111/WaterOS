@@ -1,8 +1,11 @@
 //! 进程生命周期类系统调用：`yield`、`exit`、`exit_group`、`prctl`。
 //! 本模块代码由AI完成
+use alloc::collections::BTreeMap;
+
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
+use spin::Mutex;
 
 use crate::user_copy::{copy_from_user, copy_to_user_struct};
 
@@ -21,6 +24,8 @@ const PR_CAPBSET_READ : usize = 23;
 const PR_CAPBSET_DROP : usize = 24;
 const PR_SET_TIMING : usize = 14;
 const PR_SET_SECUREBITS : usize = 28;
+const PR_SET_TIMERSLACK : usize = 29;
+const PR_GET_TIMERSLACK : usize = 30;
 const PR_SET_THP_DISABLE : usize = 41;
 const PR_GET_THP_DISABLE : usize = 42;
 const PR_CAP_AMBIENT : usize = 47;
@@ -28,6 +33,35 @@ const PR_GET_SPECULATION_CTRL : usize = 52;
 const PR_GET_CHILD_SUBREAPER : usize = 36;
 const PR_SET_CHILD_SUBREAPER : usize = 37;
 const NSIG : i32 = 64;
+
+const DEFAULT_TIMER_SLACK_NS : u64 = 50_000;
+
+#[derive(Clone, Copy)]
+struct TimerSlack {
+    default_ns : u64,
+    current_ns : u64,
+}
+
+static TIMER_SLACKS : Mutex<BTreeMap<usize, TimerSlack>> = Mutex::new(BTreeMap::new());
+
+fn timer_slack(task_id : usize) -> u64 {
+    TIMER_SLACKS.lock()
+                .entry(task_id)
+                .or_insert(TimerSlack { default_ns : DEFAULT_TIMER_SLACK_NS,
+                                        current_ns : DEFAULT_TIMER_SLACK_NS })
+                .current_ns
+}
+
+pub(crate) fn copy_timer_slack(parent : usize, child : usize) {
+    let mut slacks = TIMER_SLACKS.lock();
+    let current_ns = slacks.entry(parent)
+                           .or_insert(TimerSlack { default_ns : DEFAULT_TIMER_SLACK_NS,
+                                                   current_ns : DEFAULT_TIMER_SLACK_NS })
+                           .current_ns;
+    slacks.insert(child,
+                  TimerSlack { default_ns : current_ns,
+                               current_ns });
+}
 
 pub(crate) fn sys_yield() -> UserRet {
     task::yield_now();
@@ -266,6 +300,27 @@ pub(crate) fn sys_prctl(args : SyscallArgs) -> UserRet {
         }
         PR_CAP_AMBIENT | PR_GET_SPECULATION_CTRL => UserRet::from_error(ErrNo::EINVAL),
         PR_SET_SECUREBITS => UserRet::from_error(ErrNo::EPERM),
+        PR_SET_TIMERSLACK => {
+            let Some(task_id) = task::current_task_id() else {
+                return UserRet::from_error(ErrNo::ESRCH);
+            };
+            let mut slacks = TIMER_SLACKS.lock();
+            let slot = slacks.entry(task_id)
+                             .or_insert(TimerSlack { default_ns : DEFAULT_TIMER_SLACK_NS,
+                                                     current_ns : DEFAULT_TIMER_SLACK_NS });
+            slot.current_ns = if args.arg(1) == 0 {
+                slot.default_ns
+            } else {
+                args.arg(1) as u64
+            };
+            UserRet::from_success(0)
+        }
+        PR_GET_TIMERSLACK => {
+            let Some(task_id) = task::current_task_id() else {
+                return UserRet::from_error(ErrNo::ESRCH);
+            };
+            UserRet::from_success(timer_slack(task_id) as usize)
+        }
         PR_GET_PDEATHSIG => {
             let addr_ptr = args.arg(1);
             if addr_ptr == 0 {
