@@ -63,6 +63,8 @@
   `mkdirat02` 的 `ELOOP` 路径正确返回。
 - [`statfs 父目录权限顺序`](./results/statfs-parent-search-order-20260808.md)：
   `pathconf02` 的 `EACCES` 路径正确返回。
+- [`madvise 未实现 advice`](./results/madvise-unsupported-advice-20260808.md)：
+  `madvise02` 的未实现 advice 正确返回 `EINVAL`，失败数从 10 降到 5。
 
 - [`RISC-V sscratch 切换修复`](./results/riscv64-sscratch-switch-20260808.md)：
   协作式上下文切换进入内核/idle 任务时清理 `sscratch`，消除“内核任务被误判为用户态

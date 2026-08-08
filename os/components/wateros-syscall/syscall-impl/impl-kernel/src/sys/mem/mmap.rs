@@ -359,12 +359,16 @@ pub(crate) fn sys_madvise(args : SyscallArgs) -> UserRet {
             }
         }
         MADV_NORMAL | MADV_RANDOM | MADV_SEQUENTIAL | MADV_WILLNEED |
-        MADV_REMOVE | MADV_DONTFORK | MADV_DOFORK | MADV_MERGEABLE |
-        MADV_UNMERGEABLE | MADV_HUGEPAGE | MADV_NOHUGEPAGE | MADV_DONTDUMP | MADV_DODUMP |
-        MADV_WIPEONFORK | MADV_KEEPONFORK | MADV_COLD | MADV_PAGEOUT | MADV_POPULATE_READ |
-        MADV_POPULATE_WRITE | MADV_DONTNEED_LOCKED | MADV_COLLAPSE => {
+        MADV_DONTFORK | MADV_DOFORK | MADV_HUGEPAGE | MADV_NOHUGEPAGE | MADV_DONTDUMP |
+        MADV_DODUMP | MADV_COLD | MADV_PAGEOUT | MADV_POPULATE_READ | MADV_POPULATE_WRITE |
+        MADV_DONTNEED_LOCKED => {
             log::trace!("[syscall] madvise(nr=28) no-op advice={advice}");
             UserRet::from_success(0)
+        }
+        MADV_REMOVE | MADV_MERGEABLE | MADV_UNMERGEABLE | MADV_WIPEONFORK | MADV_KEEPONFORK |
+        MADV_COLLAPSE => {
+            log::trace!("[syscall] madvise(nr=28) unsupported advice={advice}");
+            UserRet::from_error(ErrNo::EINVAL)
         }
         _ => UserRet::from_error(ErrNo::EINVAL),
     }
