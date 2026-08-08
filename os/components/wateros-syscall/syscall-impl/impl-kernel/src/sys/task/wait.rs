@@ -367,6 +367,10 @@ fn wait_target_from_pid(pid : isize, caller_pgid : task::ProcessId) -> Result<Wa
         return Ok(WaitTarget::ProcessGroup(caller_pgid));
     }
     if pid < -1 {
+        let pgid_raw = (-(pid as i64)) as u64;
+        if pgid_raw > i32::MAX as u64 {
+            return Err(ErrNo::ESRCH);
+        }
         let pgid = task::ProcessId::from_raw((-pid) as usize);
         return Ok(WaitTarget::ProcessGroup(pgid));
     }

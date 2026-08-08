@@ -67,6 +67,8 @@
   `madvise02` 的未实现 advice 正确返回 `EINVAL`，失败数从 10 降到 5。
 - [`madvise VMA/映射范围检查`](./results/madvise-vma-range-check-20260808.md)：
   `madvise02` 的 `ENOMEM`/`EINVAL` 路径全部通过。
+- [`waitpid 无效进程组 ESRCH`](./results/waitpid-invalid-pgid-esrch-20260808.md)：
+  `waitpid04` 的 `INT_MIN` 进程组正确返回 `ESRCH`。
 
 - [`RISC-V sscratch 切换修复`](./results/riscv64-sscratch-switch-20260808.md)：
   协作式上下文切换进入内核/idle 任务时清理 `sscratch`，消除“内核任务被误判为用户态
