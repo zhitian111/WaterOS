@@ -199,6 +199,9 @@ pub(crate) fn sys_sched_setaffinity(args : SyscallArgs) -> UserRet {
         Some(mask) => mask,
         None => return UserRet::from_error(ErrNo::EINVAL),
     };
+    if mask.bits() == 0 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
     match task::set_affinity(task_id, mask) {
         Ok(()) => UserRet::from_success(0),
         Err(e) => UserRet::from_error(sched_err_to_errno(e)),

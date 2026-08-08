@@ -69,6 +69,8 @@
   `madvise02` 的 `ENOMEM`/`EINVAL` 路径全部通过。
 - [`waitpid 无效进程组 ESRCH`](./results/waitpid-invalid-pgid-esrch-20260808.md)：
   `waitpid04` 的 `INT_MIN` 进程组正确返回 `ESRCH`。
+- [`sched_setaffinity 空 mask`](./results/sched-setaffinity-empty-mask-20260808.md)：
+  `sched_setaffinity01` 的空 CPU mask 正确返回 `EINVAL`。
 
 - [`RISC-V sscratch 切换修复`](./results/riscv64-sscratch-switch-20260808.md)：
   协作式上下文切换进入内核/idle 任务时清理 `sscratch`，消除“内核任务被误判为用户态
