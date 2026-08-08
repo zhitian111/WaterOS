@@ -16,6 +16,13 @@ use crate::mm_util::{current_user_aspace_handle, mm_err_to_errno};
 
 pub(crate) const USER_PATH_MAX : usize = 4096;
 
+fn mm_user_copy_errno(e : mm::api::error::MmError) -> ErrNo {
+    match e {
+        mm::api::error::MmError::InvalidAddress => ErrNo::EFAULT,
+        other => mm_err_to_errno(other),
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct UserWriteProgress {
     pub copied : usize,
@@ -40,7 +47,7 @@ pub(crate) fn copy_from_user(buf : &mut [u8], ptr : usize) -> Result<usize, ErrN
     ops.copy_from_user(buf, VirtAddr(ptr))
        .map_err(|e| {
            trace_user_copy_failure("copy_from_user", ptr, buf.len(), e);
-           mm_err_to_errno(e)
+           mm_user_copy_errno(e)
        })
 }
 
@@ -60,7 +67,7 @@ pub(crate) fn copy_from_user_in_aspace(handle : usize,
     }
     ActiveUserMemoryOps::new(handle).copy_from_user(buf, VirtAddr(ptr))
                                     // 此函数允许在 scheduler 锁内调用；错误路径也不能查询当前 task。
-                                    .map_err(mm_err_to_errno)
+                                    .map_err(mm_user_copy_errno)
 }
 
 pub(crate) fn atomic_load_user_u32_in_aspace(handle : usize, ptr : usize) -> Result<u32, ErrNo> {
@@ -126,7 +133,7 @@ pub(crate) fn copy_to_user_progress(ptr : usize, buf : &[u8]) -> UserWriteProgre
     let error = progress.error
                         .map(|error| {
                             trace_user_copy_failure("copy_to_user", ptr, buf.len(), error);
-                            mm_err_to_errno(error)
+                            mm_user_copy_errno(error)
                         });
     UserWriteProgress { copied : progress.copied,
                         error }
@@ -174,7 +181,7 @@ pub(crate) fn copy_user_path_cstr(ptr : usize, max : usize) -> Result<String, Er
     while len < max {
         let mut byte = [0u8; 1];
         ops.copy_from_user(&mut byte, VirtAddr(ptr + len))
-           .map_err(mm_err_to_errno)?;
+           .map_err(mm_user_copy_errno)?;
         if byte[0] == 0 {
             break;
         }
@@ -222,7 +229,7 @@ pub(crate) fn copy_to_user_struct_in_aspace<T : Copy>(handle : usize,
                                    ptr,
                                    bytes.len(),
                                    e);
-           mm_err_to_errno(e)
+           mm_user_copy_errno(e)
        })
        .and_then(|n| {
            if n == bytes.len() {
