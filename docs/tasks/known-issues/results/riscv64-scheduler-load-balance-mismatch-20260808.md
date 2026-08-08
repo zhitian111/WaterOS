@@ -51,5 +51,4 @@ all commands finished
 
 ```text
 /tmp/final-rv-ra18.log
-/tmp/final-rv-ra19.log
 ```
