@@ -14,7 +14,6 @@ use utils::table_format::{Alignment, Cell, Column, FixedTable, Overflow};
 
 /// 每 tick 为 10ms；500ms 刷新一次既足够观察调度状态，也不会长期占用 UART。
 const REFRESH_INTERVAL_TICKS : u64 = 50;
-const MAX_CPUS : usize = base_config::task::MAX_CPUS;
 const CPU_COLUMNS : [Column; 7] =
     [Column::new(4, Alignment::Right).overflow(Overflow::Truncate(">")),
      Column::new(14, Alignment::Right).overflow(Overflow::Truncate(">")),
@@ -74,32 +73,21 @@ fn render_snapshot() -> String {
                             Cell::text("Timer")]);
         let _ = table.separator();
 
-        for raw in 0..MAX_CPUS {
-            let cpu_id = task::CpuId::from_raw(raw);
-            let snapshot = states.iter()
-                                 .find_map(|(id, state)| (*id == cpu_id).then_some(state));
-            match snapshot {
-                Some(state) => {
-                    let current = TaskIdText(&state.current_task_id);
-                    let queues = QueueCounts(state);
-                    let _ = table.row(&[Cell::display(&raw),
-                                        Cell::display(&current),
-                                        Cell::text(cpu_state_label(state)),
-                                        Cell::display(&queues),
-                                        Cell::text(if state.need_resched { "YES" } else { "-" }),
-                                        Cell::display(&state.context_switches),
-                                        Cell::display(&state.timer_ticks)]);
-                }
-                None => {
-                    let _ = table.row(&[Cell::display(&raw),
-                                        Cell::text("-"),
-                                        Cell::text("-"),
-                                        Cell::text("-"),
-                                        Cell::text("-"),
-                                        Cell::text("-"),
-                                        Cell::text("-")]);
-                }
-            }
+        // 只渲染 online 的核：MAX_CPUS 可能远大于实际启用的核数（如 SMP=8 时
+        // 32 个槽位里只有 0..8 online），把 offline 核全部列出只会刷屏。
+        for (cpu_id, state) in states.iter()
+                                     .filter(|(_, state)| state.online)
+        {
+            let raw = cpu_id.raw();
+            let current = TaskIdText(&state.current_task_id);
+            let queues = QueueCounts(state);
+            let _ = table.row(&[Cell::display(&raw),
+                                Cell::display(&current),
+                                Cell::text(cpu_state_label(state)),
+                                Cell::display(&queues),
+                                Cell::text(if state.need_resched { "YES" } else { "-" }),
+                                Cell::display(&state.context_switches),
+                                Cell::display(&state.timer_ticks)]);
         }
         let _ = table.finish();
     }

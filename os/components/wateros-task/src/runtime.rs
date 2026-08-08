@@ -39,7 +39,9 @@ pub extern "C" fn __wateros_task_runtime_enter_current_user_task() -> ! {
     assert!(restored,
             "user task entry requires a prepared trap frame in the current task");
     let kernel_stack_top =
-        scheduler::current_task_kernel_stack_top().expect("user task must have a kernel stack");
+        scheduler::current_task_snapshot()
+            .map(|snap| snap.kernel_stack_top)
+            .expect("user task must have a kernel stack");
     unsafe {
         __wateros_arch_restore_user_task((&trap_frame as *const TaskTrapFrame).cast::<u8>(),
                                          kernel_stack_top)
