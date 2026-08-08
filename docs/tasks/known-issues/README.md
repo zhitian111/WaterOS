@@ -37,6 +37,9 @@
 - [`RISC-V sscratch 切换修复`](./results/riscv64-sscratch-switch-20260808.md)：
   协作式上下文切换进入内核/idle 任务时清理 `sscratch`，消除“内核任务被误判为用户态
   trap”导致的 restore 失败。
+- [`RISC-V scheduler 负载均衡修复`](./results/riscv64-scheduler-load-balance-mismatch-20260808.md)：
+  禁用空闲偷取与亲和性放宽，恢复本地 runqueue 选择；完整 RISC-V Final BuildStorm
+  重新输出 `BUILDSTORM_COMPILE ok=true`。
 
 - [`K-25`](./results/k25-sched-getaffinity-cpusetsize-20260806.md)：
   `sched_getaffinity` 接受大 `cpusetsize`，guest `nproc` 从 1 恢复为 8。
