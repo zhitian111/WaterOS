@@ -138,13 +138,15 @@ pub(crate) fn sys_epoll_wait(args: SyscallArgs) -> UserRet {
 
 // 本方法代码由AI完成
 pub(crate) fn sys_epoll_pwait(args: SyscallArgs) -> UserRet {
-    let epfd = args.arg(0);
-    let events_ptr = args.arg(1);
-    let maxevents = args.arg(2);
-    let timeout_ms = args.arg(3) as isize;
-    // sigmask 暂未实现，委托 epoll_wait。
-    let _ = (args.arg(4), args.arg(5));
-    do_epoll_wait(epfd, events_ptr, maxevents, timeout_ms)
+    let sigmask = args.arg(4);
+    // sigmask 暂未用于改变信号掩码，但必须保持 Linux 的 EFAULT 行为。
+    if sigmask != 0 {
+        let mut probe = [0u8; 128];
+        if copy_from_user(&mut probe, sigmask).is_err() {
+            return UserRet::from_error(ErrNo::EFAULT);
+        }
+    }
+    sys_epoll_wait(args)
 }
 
 fn do_epoll_wait(

@@ -32,7 +32,11 @@
   bootstrap `/tmp` 也没有容量上限。大量临时文件会消耗 128 MiB 全局内核堆；
   这是 [`K-05D`](./05d-ramfs-physical-pages.md) 的资源正确性问题，不等待 K-04 性能排名。
 
-## 最近已验证闭环（2026-08-06）
+## 最近已验证闭环（2026-08-08）
+
+- [`generic ABI epoll_pwait 修复`](./results/generic-abi-epoll-pwait-20260808.md)：
+  RISC-V/LoongArch 的 `__NR_epoll_pwait` 修正为 22，`epoll_pwait04` 正确返回
+  `EFAULT`，`epoll_wait01/02` 同步通过。
 
 - [`RISC-V sscratch 切换修复`](./results/riscv64-sscratch-switch-20260808.md)：
   协作式上下文切换进入内核/idle 任务时清理 `sscratch`，消除“内核任务被误判为用户态

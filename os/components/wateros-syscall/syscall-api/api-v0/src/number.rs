@@ -212,8 +212,9 @@ pub const SHUTDOWN : usize = 210;
 pub const POLL : usize = 271;
 pub const EPOLL_CREATE1 : usize = 20;
 pub const EPOLL_CTL : usize = 21;
-pub const EPOLL_WAIT : usize = 22;
-pub const EPOLL_PWAIT : usize = 281;
+/// asm-generic 64 位无独立 `epoll_wait` nr；riscv64/loong64 用户态经 `epoll_pwait`(22) 实现。
+pub const EPOLL_WAIT : usize = usize::MAX;
+pub const EPOLL_PWAIT : usize = 22;
 
 // 别名/兼容 syscall – 已在别处实现，此处仅定义号段
 pub const FSTATAT : usize = 79;
