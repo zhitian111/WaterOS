@@ -381,6 +381,12 @@ impl LoongArch64AddressSpace {
             .0
     }
 
+    fn stack_overlap_end(&self, start : VirtAddr, end : VirtAddr) -> Option<VirtAddr> {
+        self.range_overlaps_stack(start, end)
+            .then(|| self.user_stack_top.ceil_page()
+                                        .start_addr())
+    }
+
     pub(crate) fn validate_user_mapping_range(&self,
                                               start : VirtAddr,
                                               end : VirtAddr)
@@ -398,6 +404,22 @@ impl LoongArch64AddressSpace {
         self.lazy_file_vmas
             .iter()
             .any(|vma| vma.overlaps(start, end))
+    }
+
+    fn lazy_vma_overlap_end(&self, start : VirtAddr, end : VirtAddr) -> Option<VirtAddr> {
+        let mut low = 0usize;
+        let mut high = self.lazy_file_vmas.len();
+        while low < high {
+            let mid = low + (high - low) / 2;
+            if self.lazy_file_vmas[mid].end.0 <= start.0 {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+        let vma = self.lazy_file_vmas.get(low)?;
+        vma.overlaps(start, end)
+            .then_some(vma.end)
     }
 
     #[allow(dead_code)]
@@ -456,6 +478,14 @@ impl LoongArch64AddressSpace {
         self.shared_anon_vmas
             .iter()
             .any(|vma| vma.overlaps(start, end))
+    }
+
+    fn shared_anon_vma_overlap_end(&self, start : VirtAddr, end : VirtAddr) -> Option<VirtAddr> {
+        self.shared_anon_vmas
+            .iter()
+            .filter(|vma| vma.overlaps(start, end))
+            .map(|vma| vma.end)
+            .max_by_key(|vma_end| vma_end.0)
     }
 
     pub(crate) fn shared_vma_contains(&self, page : VirtAddr) -> bool {
@@ -586,6 +616,9 @@ impl LoongArch64AddressSpace {
                                              .start_addr();
         let mut skipped = 0usize;
         loop {
+            if base.0 >= USER_VA_LIMIT {
+                return Err(MmError::InvalidAddress);
+            }
             if skipped > MAX_SEARCH_PAGES {
                 return Err(MmError::InvalidAddress);
             }
@@ -593,32 +626,52 @@ impl LoongArch64AddressSpace {
                                    .checked_add(n_pages.checked_mul(PAGE_SIZE)
                                                        .ok_or(MmError::InvalidAddress)?)
                                    .ok_or(MmError::InvalidAddress)?);
-            if end.0 <= USER_VA_LIMIT &&
-               !self.range_overlaps_stack(base, end) &&
-               !self.lazy_vma_overlaps(base, end) &&
-               !self.shared_anon_vma_overlaps(base, end)
+            if end.0 > USER_VA_LIMIT {
+                let jump = VirtAddr(USER_VA_LIMIT);
+                skipped = skipped.saturating_add((jump.0 - base.0).div_ceil(PAGE_SIZE));
+                base = jump.ceil_page()
+                           .start_addr();
+                continue;
+            }
+            if let Some(jump) = self.stack_overlap_end(base, end) {
+                let jump = VirtAddr(core::cmp::max(jump.0, base.0 + PAGE_SIZE));
+                skipped = skipped.saturating_add((jump.0 - base.0).div_ceil(PAGE_SIZE));
+                base = jump.ceil_page()
+                           .start_addr();
+                continue;
+            }
+            if let Some(jump) =
+                self.lazy_vma_overlap_end(base, end)
+                    .or_else(|| self.shared_anon_vma_overlap_end(base, end))
             {
-                let mut free = true;
-                for i in 0..n_pages {
-                    let va = VirtAddr(base.0
-                                          .checked_add(i.checked_mul(PAGE_SIZE)
-                                                        .ok_or(MmError::InvalidAddress)?)
-                                          .ok_or(MmError::InvalidAddress)?);
-                    if self.translate_addr(va)?
-                           .is_some()
-                    {
-                        free = false;
-                        break;
-                    }
-                }
-                if free {
-                    return Ok(base);
+                let jump = VirtAddr(core::cmp::max(jump.0, base.0 + PAGE_SIZE));
+                skipped = skipped.saturating_add((jump.0 - base.0).div_ceil(PAGE_SIZE));
+                base = jump.ceil_page()
+                           .start_addr();
+                continue;
+            }
+            let mut mapped_after = None;
+            for i in 0..n_pages {
+                let va = VirtAddr(base.0
+                                      .checked_add(i.checked_mul(PAGE_SIZE)
+                                                    .ok_or(MmError::InvalidAddress)?)
+                                      .ok_or(MmError::InvalidAddress)?);
+                if self.translate_addr(va)?.is_some() {
+                    mapped_after = Some(va);
+                    break;
                 }
             }
-            skipped += 1;
-            base = VirtAddr(base.0
-                                .checked_add(PAGE_SIZE)
-                                .ok_or(MmError::InvalidAddress)?);
+            let Some(mapped) = mapped_after else {
+                return Ok(base);
+            };
+            let jump = VirtAddr(core::cmp::min(mapped.0.saturating_add(PAGE_SIZE),
+                                               USER_VA_LIMIT));
+            skipped = skipped.saturating_add((jump.0 - base.0).div_ceil(PAGE_SIZE));
+            base = jump.ceil_page()
+                       .start_addr();
+            if base.0 >= USER_VA_LIMIT {
+                return Err(MmError::InvalidAddress);
+            }
         }
     }
 
