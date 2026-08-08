@@ -688,13 +688,16 @@ impl LoongArch64AddressSpace {
             return Err(MmError::InvalidAddress);
         }
         self.ensure_lazy_refill_paths(start, end)?;
+        let position = self.lazy_file_vmas
+                           .partition_point(|vma| vma.start.0 < start.0);
         self.lazy_file_vmas
-            .push(LazyFileVma { start,
-                                end,
-                                perm,
-                                file_offset,
-                                file_size,
-                                loader });
+            .insert(position,
+                    LazyFileVma { start,
+                                  end,
+                                  perm,
+                                  file_offset,
+                                  file_size,
+                                  loader });
         Ok(())
     }
 
