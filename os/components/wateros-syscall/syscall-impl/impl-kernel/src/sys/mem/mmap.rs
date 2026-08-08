@@ -98,6 +98,19 @@ pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
     let fd_arg = args.arg(4);
     let offset = args.arg(5);
 
+    const KNOWN_MMAP_FLAGS : u32 = 0x0000_0001 | 0x0000_0002 | 0x0000_0010 | 0x0000_0020 |
+                                   0x0000_0100 | 0x0000_0800 | 0x0000_1000 | 0x0000_2000 |
+                                   0x0000_4000 | 0x0000_8000 | 0x0001_0000 | 0x0002_0000 |
+                                   0x0004_0000 | 0x0008_0000 | 0x0010_0000;
+    if flags & !KNOWN_MMAP_FLAGS != 0 {
+        let shared_validate = flags & 0x3 == 0x3;
+        return UserRet::from_error(if shared_validate {
+            ErrNo::EOPNOTSUPP
+        } else {
+            ErrNo::EINVAL
+        });
+    }
+
     if len == 0 {
         return UserRet::from_error(ErrNo::EINVAL);
     }

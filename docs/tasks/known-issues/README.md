@@ -73,6 +73,8 @@
   `sched_setaffinity01` 的空 CPU mask 正确返回 `EINVAL`。
 - [`mmap O_WRONLY fd`](./results/mmap-wronly-fd-eacces-20260808.md)：
   `mmap06` 的 O_WRONLY fd 映射正确返回 `EACCES`。
+- [`MAP_SHARED_VALIDATE flag`](./results/mmap-shared-validate-flags-20260808.md)：
+  `mmap20` 的非法 `MAP_SHARED_VALIDATE` flag 正确返回 `EOPNOTSUPP`。
 
 - [`RISC-V sscratch 切换修复`](./results/riscv64-sscratch-switch-20260808.md)：
   协作式上下文切换进入内核/idle 任务时清理 `sscratch`，消除“内核任务被误判为用户态
