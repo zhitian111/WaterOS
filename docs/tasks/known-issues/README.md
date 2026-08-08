@@ -75,6 +75,8 @@
   `sched_setaffinity01` 的降权调用正确返回 `EPERM`，四项错误语义全部通过。
 - [`epoll_pwait2 syscall`](./results/epoll-pwait2-20260808.md)：
   `__NR_epoll_pwait2=441` 已实现，`epoll_pwait02..05` 的 pwait2 变体通过。
+- [`双架构完整 Final 复验`](./results/final-after-epoll-20260808.md)：
+  RISC-V `elapsed_s=1144.48`，LoongArch `elapsed_s=1083.76`。
 - [`mmap O_WRONLY fd`](./results/mmap-wronly-fd-eacces-20260808.md)：
   `mmap06` 的 O_WRONLY fd 映射正确返回 `EACCES`。
 - [`MAP_SHARED_VALIDATE flag`](./results/mmap-shared-validate-flags-20260808.md)：
