@@ -24,4 +24,5 @@ LTP 定向日志 `/tmp/schedaff-einval-fixed.log`：
 sched_setaffinity01: EFAULT / EINVAL / ESRCH 全部 TPASS
 ```
 
-剩余一项：`EPERM` 用例仍错误返回成功，需要继续检查 fork 后目标进程凭据查询。
+剩余 `EPERM` 用例已由
+[`sched_setaffinity EPERM 修复`](./sched-setaffinity-eperm-20260808.md) 闭环。

@@ -210,24 +210,12 @@ pub(crate) fn sys_sched_setaffinity(args : SyscallArgs) -> UserRet {
 
 fn can_change_affinity(target : task::TaskId) -> bool {
     let caller = cred::current_credentials();
-    if caller.effective_uid
-             .0 ==
-       0
-    {
+    if caller.effective_uid.0 == 0 {
         return true;
     }
     let target = cred::credentials_for(target);
-    caller.real_uid.0 == target.real_uid.0 ||
-    caller.real_uid.0 ==
-    target.effective_uid
-          .0 ||
-    caller.effective_uid
-          .0 ==
-    target.real_uid.0 ||
-    caller.effective_uid
-          .0 ==
-    target.effective_uid
-          .0
+    caller.effective_uid.0 == target.real_uid.0 ||
+    caller.effective_uid.0 == target.effective_uid.0
 }
 
 /// `sched_getaffinity(pid, cpusetsize, mask)`。

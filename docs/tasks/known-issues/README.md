@@ -71,6 +71,8 @@
   `waitpid04` 的 `INT_MIN` 进程组正确返回 `ESRCH`。
 - [`sched_setaffinity 空 mask`](./results/sched-setaffinity-empty-mask-20260808.md)：
   `sched_setaffinity01` 的空 CPU mask 正确返回 `EINVAL`。
+- [`sched_setaffinity EPERM`](./results/sched-setaffinity-eperm-20260808.md)：
+  `sched_setaffinity01` 的降权调用正确返回 `EPERM`，四项错误语义全部通过。
 - [`mmap O_WRONLY fd`](./results/mmap-wronly-fd-eacces-20260808.md)：
   `mmap06` 的 O_WRONLY fd 映射正确返回 `EACCES`。
 - [`MAP_SHARED_VALIDATE flag`](./results/mmap-shared-validate-flags-20260808.md)：
