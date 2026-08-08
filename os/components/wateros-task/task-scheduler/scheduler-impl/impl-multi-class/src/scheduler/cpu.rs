@@ -59,8 +59,8 @@ impl MultiClassScheduler {
     pub fn cpu_snapshot(&self, cpu_id : CpuId) -> Option<CpuSnapshot> {
         let cpu = self.cpu_states
                       .get(cpu_id.raw())?;
-        let current_is_idle = cpu.current_task_id == cpu.idle_task_id;
-        let current_address_space = cpu.current_task_id
+        let current_is_idle = cpu.current_task_id() == cpu.idle_task_id;
+        let current_address_space = cpu.current_task_id()
                                        .and_then(|id| {
                                            let raw = self.registry
                                                          .current_task_address_space_raw(id);
@@ -68,7 +68,7 @@ impl MultiClassScheduler {
                                        });
         Some(CpuSnapshot { cpu_id,
                            online : cpu.online(),
-                           current_task_id : cpu.current_task_id,
+                           current_task_id : cpu.current_task_id(),
                            idle_task_id : cpu.idle_task_id,
                            current_is_idle,
                            current_is_user : current_address_space.is_some(),
@@ -103,9 +103,12 @@ impl MultiClassScheduler {
     }
 
     pub fn total_idle_ticks(&self) -> u64 {
-        self.cpu_states.iter()
-                       .filter(|cpu| cpu.online())
-                       .fold(0u64, |total, cpu| total.saturating_add(cpu.idle_ticks))
+        self.cpu_states
+            .iter()
+            .filter(|cpu| cpu.online())
+            .fold(0u64, |total, cpu| {
+                total.saturating_add(cpu.idle_ticks)
+            })
     }
 
     pub fn running_cpu(&self, task_id : TaskId) -> Option<CpuId> {
@@ -152,7 +155,9 @@ impl MultiClassScheduler {
         if next != idle_id {
             return next;
         }
-        if self.steal_ready_task(cpu_id).is_some() {
+        if self.steal_ready_task(cpu_id)
+               .is_some()
+        {
             return self.cpu_states[cpu_id.raw()].pick_next_runnable();
         }
         idle_id
@@ -168,7 +173,10 @@ impl MultiClassScheduler {
         }
         let mut busiest = None;
         let mut busiest_load = 1usize;
-        for (index, cpu) in self.cpu_states.iter().enumerate() {
+        for (index, cpu) in self.cpu_states
+                                .iter()
+                                .enumerate()
+        {
             let other = CpuId::from_raw(index);
             if other == cpu_id || !cpu.online {
                 continue;
@@ -181,12 +189,12 @@ impl MultiClassScheduler {
         }
         let src = busiest?;
         // 从最忙核挑一个可迁移到本核的任务；affinity 由调用侧判定。
-        let task_id = self.cpu_states[src.raw()]
-                          .steal_candidate(|task_id| {
-                              self.registry.task_snapshot(task_id)
-                                           .affinity
-                                           .contains(cpu_id)
-                          })?;
+        let task_id = self.cpu_states[src.raw()].steal_candidate(|task_id| {
+                                                    self.registry
+                                                        .task_snapshot(task_id)
+                                                        .affinity
+                                                        .contains(cpu_id)
+                                                })?;
         self.enqueue_ready_on_cpu(task_id, cpu_id);
         Some(task_id)
     }

@@ -66,8 +66,9 @@ impl TaskTrapSnapshot {
 
 /// 对外暴露的稳定任务快照。
 ///
-/// 这里故意不暴露内核栈地址、bootstrap 协议细节和保存上下文布局，
-/// 让公共 API 更偏语义，而不是直接泄漏实现形状。
+/// 语义字段（id/state/policy/stats/affinity 等）之外，还携带调度器做“当前任务
+/// 粗粒度查询”所需的实现级字段：内核栈栈顶与地址空间 token。它们只在内核内部
+/// 传递，不面向用户态，用于让 `current_task_snapshot` 一次拿锁取全。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TaskSnapshot {
     /// 任务号。
@@ -102,6 +103,12 @@ pub struct TaskSnapshot {
     pub affinity : CpuMask,
     /// 用户地址空间指针（内核任务为 0）。
     pub user_aspace_ptr : usize,
+    /// 用户地址空间 token（satp）；0 = 内核地址空间。
+    pub user_address_space_token : usize,
+    /// trap 返回时应恢复的地址空间 token。
+    pub trap_return_address_space_token : usize,
+    /// 内核栈栈顶。
+    pub kernel_stack_top : usize,
     /// 任务上下文指针（用于 __switch）。
     pub task_cx : *const (),
 }
