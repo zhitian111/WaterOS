@@ -34,6 +34,10 @@
 
 ## 最近已验证闭环（2026-08-06）
 
+- [`RISC-V sscratch 切换修复`](./results/riscv64-sscratch-switch-20260808.md)：
+  协作式上下文切换进入内核/idle 任务时清理 `sscratch`，消除“内核任务被误判为用户态
+  trap”导致的 restore 失败。
+
 - [`K-25`](./results/k25-sched-getaffinity-cpusetsize-20260806.md)：
   `sched_getaffinity` 接受大 `cpusetsize`，guest `nproc` 从 1 恢复为 8。
 - [`K-26`](./results/k26-exit-group-exiting-trap-boundary-20260806.md)：
@@ -66,6 +70,13 @@
 - [`回归汇总`](./results/regression-known-issues-20260807.md)：
   已知问题回归：RV Final/Pre、read-family、iozone、并行探针通过；LA Final 仍受
   `cargo xtask` 偶发竞态影响，重跑已通过。
+
+## 2026-08-07 wait-hot 采样后新增任务
+
+- [`K-53..K-58`](./11-buildstorm-performance-analysis.md)：修复 `cargo xtask` 返回
+  竞态，并验证 `mprotect`、调度负载均衡、内存拷贝、VirtIO/block、TLSF 热点。
+  完整分析见
+  [`waithot-full-analysis-20260807.md`](../perf/waithot-full-analysis-20260807.md)。
 
 以上组合完整 Final 可跑通。当前最优 `elapsed_s=1281.26`；K-31 完整轮在宿主高负载
 下为 `1941.42`，K-32 低负载完整轮为 `1957.45`，K-33 为 `1873.87`，K-35 为
