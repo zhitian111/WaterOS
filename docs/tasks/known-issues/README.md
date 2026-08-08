@@ -83,6 +83,9 @@
   `__NR_getsid=156` 已实现，LTP `getsid01/02` 在 RV/LA 均通过。
 - [`sched_rr_get_interval syscall`](./results/sched-rr-get-interval-20260809.md)：
   `__NR_sched_rr_get_interval=127` 已实现，RR/FIFO/错误路径在 RV/LA 均通过。
+- [`rlimit 语义与 prlimit64`](./results/rlimit-semantics-20260809.md)：
+  非法 resource、`cur > max`、`NOFILE > NR_OPEN` 均按 Linux 返回，`prlimit64`
+  支持目标 pid。
 - [`sched_setparam Blocking/Sleeping 目标`](./results/sched-setparam-blocked-target-20260808.md)：
   `sched_setparam03` 不再对阻塞父进程错误返回 `ESRCH`，调度相关 LTP 全部通过。
 - [`mmap O_WRONLY fd`](./results/mmap-wronly-fd-eacces-20260808.md)：

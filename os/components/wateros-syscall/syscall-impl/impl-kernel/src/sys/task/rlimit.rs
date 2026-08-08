@@ -15,7 +15,11 @@ const RLIMIT_AS : usize = 9;
 const RLIMIT_DATA : usize = 2;
 const RLIMIT_MEMLOCK : usize = 8;
 const RLIMIT_NPROC : usize = 6;
+const RLIM_NLIMITS : usize = 16;
+const NR_OPEN : u64 = 1024 * 1024;
 const RLIM_INFINITY : u64 = !0u64;
+
+fn valid_resource(resource : usize) -> bool { resource < RLIM_NLIMITS }
 
 /// Linux `struct rlimit`（64-bit 下 rlim_t = u64）。
 #[repr(C)]
@@ -45,20 +49,33 @@ fn default_rlimit(resource : usize) -> UserRLimit {
     }
 }
 
-fn current_process_rlimit(resource : usize) -> UserRLimit {
+fn process_rlimit_for(pid : task::ProcessId, resource : usize) -> UserRLimit {
     let default = default_rlimit(resource);
-    let Some(pid) = task::current_process_task_snapshot().map(|snapshot| snapshot.pid) else {
-        return default;
-    };
     task::process_resource_limit(pid, resource).map(|limit| UserRLimit { cur : limit.cur,
                                                                          max : limit.max })
                                                .unwrap_or(default)
 }
 
-fn apply_process_rlimit(resource : usize, limit : UserRLimit) -> Result<(), ErrNo> {
+fn current_process_rlimit(resource : usize) -> UserRLimit {
     let Some(pid) = task::current_process_task_snapshot().map(|snapshot| snapshot.pid) else {
-        return Err(ErrNo::ESRCH);
+        return default_rlimit(resource);
     };
+    process_rlimit_for(pid, resource)
+}
+
+fn apply_process_rlimit_for(pid : task::ProcessId,
+                            resource : usize,
+                            limit : UserRLimit)
+                            -> Result<(), ErrNo> {
+    if !valid_resource(resource) {
+        return Err(ErrNo::EINVAL);
+    }
+    if limit.cur > limit.max {
+        return Err(ErrNo::EINVAL);
+    }
+    if resource == RLIMIT_NOFILE && limit.max > NR_OPEN {
+        return Err(ErrNo::EPERM);
+    }
     task::set_process_resource_limit(
         pid,
         resource,
@@ -73,10 +90,54 @@ fn apply_process_rlimit(resource : usize, limit : UserRLimit) -> Result<(), ErrN
     })
 }
 
+fn apply_process_rlimit(resource : usize, limit : UserRLimit) -> Result<(), ErrNo> {
+    let Some(pid) = task::current_process_task_snapshot().map(|snapshot| snapshot.pid) else {
+        return Err(ErrNo::ESRCH);
+    };
+    apply_process_rlimit_for(pid, resource, limit)
+}
+
+fn resolve_rlimit_pid(raw_pid : usize) -> Result<task::ProcessId, ErrNo> {
+    if raw_pid == 0 {
+        return task::current_process_task_snapshot()
+            .map(|snapshot| snapshot.pid)
+            .ok_or(ErrNo::ESRCH);
+    }
+    let pid = task::ProcessId::from_raw(raw_pid);
+    if task::process_snapshot(pid).is_none() {
+        return Err(ErrNo::ESRCH);
+    }
+    Ok(pid)
+}
+
+fn can_set_rlimit(pid : task::ProcessId) -> bool {
+    let Some(current) = task::current_process_task_snapshot() else {
+        return false;
+    };
+    if current.pid == pid {
+        return true;
+    }
+    let caller = cred::current_credentials();
+    if caller.effective_uid.0 == 0 {
+        return true;
+    }
+    let Some(leader) = task::leader_task_for_process(pid) else {
+        return false;
+    };
+    let target = cred::credentials_for(leader);
+    caller.real_uid.0 == target.real_uid.0 ||
+    caller.real_uid.0 == target.effective_uid.0 ||
+    caller.effective_uid.0 == target.real_uid.0 ||
+    caller.effective_uid.0 == target.effective_uid.0
+}
+
 /// `getrlimit(resource, rlim)` — 获取资源限制。
 pub(crate) fn sys_getrlimit(args : SyscallArgs) -> UserRet {
     let resource = args.arg(0);
     let rlim_ptr = args.arg(1);
+    if !valid_resource(resource) {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
     if rlim_ptr == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
     }
@@ -91,6 +152,9 @@ pub(crate) fn sys_getrlimit(args : SyscallArgs) -> UserRet {
 pub(crate) fn sys_setrlimit(args : SyscallArgs) -> UserRet {
     let resource = args.arg(0);
     let rlim_ptr = args.arg(1);
+    if !valid_resource(resource) {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
     if rlim_ptr == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
     }
@@ -121,28 +185,35 @@ pub(crate) fn current_umask() -> u32 {
                                          .unwrap_or(0o022)
 }
 
-/// `prlimit64(pid, resource, new_limit, old_limit)` — 查询/设置当前进程资源限制。
+/// `prlimit64(pid, resource, new_limit, old_limit)` — 查询/设置指定进程资源限制。
 pub(crate) fn sys_prlimit64(args : SyscallArgs) -> UserRet {
-    let pid = args.arg(0);
+    let raw_pid = args.arg(0);
     let resource = args.arg(1);
     let new_limit = args.arg(2);
     let old_limit = args.arg(3);
 
-    if pid != 0 {
-        return UserRet::from_error(ErrNo::ESRCH);
+    let pid = match resolve_rlimit_pid(raw_pid) {
+        Ok(pid) => pid,
+        Err(error) => return UserRet::from_error(error),
+    };
+    if !valid_resource(resource) {
+        return UserRet::from_error(ErrNo::EINVAL);
     }
     if old_limit != 0 {
-        let rlim = current_process_rlimit(resource);
+        let rlim = process_rlimit_for(pid, resource);
         if let Err(e) = copy_to_user_struct(old_limit, &rlim) {
             return UserRet::from_error(e);
         }
     }
     if new_limit != 0 {
+        if !can_set_rlimit(pid) {
+            return UserRet::from_error(ErrNo::EPERM);
+        }
         let rlim = match copy_from_user_struct::<UserRLimit>(new_limit) {
             Ok(rlim) => rlim,
             Err(e) => return UserRet::from_error(e),
         };
-        match apply_process_rlimit(resource, rlim) {
+        match apply_process_rlimit_for(pid, resource, rlim) {
             Ok(()) => {}
             Err(e) => return UserRet::from_error(e),
         }
