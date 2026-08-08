@@ -4,6 +4,7 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
+use alloc::collections::BTreeSet;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -121,6 +122,8 @@ pub struct PerTaskFdRegistry {
     fd_flags : BTreeMap<task::TaskId, Vec<u8>>,
     owners : BTreeMap<task::TaskId, task::TaskId>,
     ref_counts : BTreeMap<task::TaskId, usize>,
+    open_counts : BTreeMap<task::TaskId, usize>,
+    free_fds : BTreeMap<task::TaskId, BTreeSet<usize>>,
 }
 
 impl PerTaskFdRegistry {
@@ -128,11 +131,18 @@ impl PerTaskFdRegistry {
         Self { tables : BTreeMap::new(),
                fd_flags : BTreeMap::new(),
                owners : BTreeMap::new(),
-               ref_counts : BTreeMap::new() }
+               ref_counts : BTreeMap::new(),
+               open_counts : BTreeMap::new(),
+               free_fds : BTreeMap::new() }
     }
 
     // 本方法代码由AI完成
     fn ensure_task(&mut self, task_id : task::TaskId) {
+        if self.initialized_owner(task_id)
+               .is_some()
+        {
+            return;
+        }
         if !self.owners
                 .contains_key(&task_id)
         {
@@ -159,7 +169,27 @@ impl PerTaskFdRegistry {
             if flags.len() < VFS_FIRST_DYNAMIC_FD {
                 flags.resize(VFS_FIRST_DYNAMIC_FD, 0);
             }
+            self.open_counts
+                .insert(owner, VFS_FIRST_DYNAMIC_FD);
+            self.free_fds
+                .entry(owner)
+                .or_default()
+                .clear();
         }
+    }
+
+    /// 返回已绑定、fd 表已初始化且 refcount 已登记的 owner。
+    ///
+    /// 这是 syscall 热路径的常见状态；调用方拿到 `Some(owner)` 后可直接访问
+    /// `tables`，不再重复执行 BTreeMap entry/insert。
+    fn initialized_owner(&self, task_id : task::TaskId) -> Option<task::TaskId> {
+        let owner = self.owners
+                        .get(&task_id)
+                        .copied()?;
+        let table = self.tables
+                        .get(&owner)?;
+        (table.len() >= VFS_FIRST_DYNAMIC_FD && self.ref_counts.contains_key(&owner))
+            .then_some(owner)
     }
 
     // 本方法代码由AI完成
@@ -177,6 +207,96 @@ impl PerTaskFdRegistry {
         self.tables
             .get_mut(&owner)
             .expect("fd table owner")
+    }
+
+    fn resize_table_with_holes(&mut self, owner : task::TaskId, new_len : usize) {
+        let table = self.tables
+                        .get_mut(&owner)
+                        .expect("fd table owner");
+        let old_len = table.len();
+        if old_len < new_len {
+            table.resize_with(new_len, || None);
+            let free = self.free_fds
+                            .entry(owner)
+                            .or_default();
+            for fd in old_len..new_len {
+                free.insert(fd);
+            }
+        }
+    }
+
+    fn mark_fd_open(&mut self, owner : task::TaskId, fd : usize) {
+        let count = self.open_counts
+                        .entry(owner)
+                        .or_insert(0);
+        *count = count.saturating_add(1);
+        self.free_fds
+            .entry(owner)
+            .or_default()
+            .remove(&fd);
+    }
+
+    fn mark_fd_closed(&mut self, owner : task::TaskId, fd : usize) {
+        let count = self.open_counts
+                        .entry(owner)
+                        .or_insert(0);
+        *count = count.saturating_sub(1);
+        self.free_fds
+            .entry(owner)
+            .or_default()
+            .insert(fd);
+    }
+
+    fn alloc_slot_for_owner(&mut self,
+                            owner : task::TaskId,
+                            handle : SharedIoHandle)
+                            -> usize {
+        self.alloc_slot_for_owner_from(owner, 0, handle)
+    }
+
+    fn alloc_slot_for_owner_from(&mut self,
+                                 owner : task::TaskId,
+                                 minfd : usize,
+                                 handle : SharedIoHandle)
+                                 -> usize {
+        let candidate = {
+            let free = self.free_fds
+                            .entry(owner)
+                            .or_default();
+            free.range(minfd..)
+                .next()
+                .copied()
+        };
+        let fd = if let Some(fd) = candidate {
+            self.free_fds
+                .get_mut(&owner)
+                .expect("fd free set owner")
+                .remove(&fd);
+            let table = self.tables
+                            .get_mut(&owner)
+                            .expect("fd table owner");
+            table[fd] = Some(handle);
+            fd
+        } else {
+            let table = self.tables
+                            .get_mut(&owner)
+                            .expect("fd table owner");
+            let old_len = table.len();
+            if old_len < minfd {
+                table.resize_with(minfd, || None);
+                let free = self.free_fds
+                                .entry(owner)
+                                .or_default();
+                for fd in old_len..minfd {
+                    free.insert(fd);
+                }
+            }
+            let fd = table.len();
+            table.push(Some(handle));
+            fd
+        };
+        self.mark_fd_open(owner, fd);
+        fd
     }
 
     // 本方法代码由AI完成
@@ -226,6 +346,10 @@ impl PerTaskFdRegistry {
         }
         self.fd_flags
             .remove(&owner);
+        self.open_counts
+            .remove(&owner);
+        self.free_fds
+            .remove(&owner);
         handles
     }
 
@@ -250,6 +374,7 @@ impl PerTaskFdRegistry {
                 flags[fd] = 0;
             }
         }
+        self.mark_fd_closed(owner, fd);
         Ok(handle)
     }
 
@@ -293,6 +418,7 @@ impl PerTaskFdRegistry {
                     flags[fd] = 0;
                 }
             }
+            self.mark_fd_closed(owner, fd);
             handles.push((fd, handle));
         }
         Ok(handles)
@@ -372,13 +498,9 @@ impl PerTaskFdRegistry {
     // 本方法代码由AI完成
     fn open_fd_count_for_task(&self, task_id : task::TaskId) -> usize {
         let owner = self.effective_owner(task_id);
-        self.tables
+        self.open_counts
             .get(&owner)
-            .map(|table| {
-                table.iter()
-                     .filter(|slot| slot.is_some())
-                     .count()
-            })
+            .copied()
             .unwrap_or(0)
     }
 
@@ -387,13 +509,8 @@ impl PerTaskFdRegistry {
     /// `task_bindings` 包含共享同一张 fd 表的任务；`table_count` 是实际独立 fd 表数。
     /// 调用方必须已经持有注册表锁。
     pub fn debug_counts(&self) -> (usize, usize, usize) {
-        let open_fd_count = self.tables
+        let open_fd_count = self.open_counts
                                 .values()
-                                .map(|table| {
-                                    table.iter()
-                                         .filter(|slot| slot.is_some())
-                                         .count()
-                                })
                                 .sum();
         (self.owners.len(), self.tables.len(), open_fd_count)
     }
@@ -428,24 +545,7 @@ impl VfsFdSession for PerTaskFdRegistry {
     // 本方法代码由AI完成
     fn alloc_fd(&mut self, handle : Box<dyn VfsIoHandle>) -> VfsResult<usize> {
         let task_id = task::current_task_id().ok_or(VfsError::NoTask)?;
-        self.check_nofile_before_open(task_id)?;
-        let newfd = {
-            let table = self.table_mut(task_id);
-            if let Some(fd) = (0..table.len()).find(|&fd| table[fd].is_none()) {
-                table[fd] = Some(SharedIoHandle::new(handle));
-                fd
-            } else {
-                table.push(Some(SharedIoHandle::new(handle)));
-                table.len() - 1
-            }
-        };
-        let owner = self.effective_owner(task_id);
-        let len = self.tables
-                      .get(&owner)
-                      .map(Vec::len)
-                      .unwrap_or(0);
-        self.ensure_flags_len(task_id, len);
-        Ok(newfd)
+        self.alloc_fd_for_task(task_id, handle)
     }
 
     // 本方法代码由AI完成
@@ -480,17 +580,13 @@ impl PerTaskFdRegistry {
                              handle : Box<dyn VfsIoHandle>)
                              -> VfsResult<usize> {
         self.check_nofile_before_open(task_id)?;
-        let (newfd, len) = {
-            let table = self.table_mut(task_id);
-            if let Some(fd) = (0..table.len()).find(|&fd| table[fd].is_none()) {
-                table[fd] = Some(SharedIoHandle::new(handle));
-                (fd, table.len())
-            } else {
-                table.push(Some(SharedIoHandle::new(handle)));
-                let nf = table.len() - 1;
-                (nf, table.len())
-            }
-        };
+        self.ensure_task(task_id);
+        let owner = self.effective_owner(task_id);
+        let newfd = self.alloc_slot_for_owner(owner, SharedIoHandle::new(handle));
+        let len = self.tables
+                      .get(&owner)
+                      .map(Vec::len)
+                      .unwrap_or(0);
         self.ensure_flags_len(task_id, len);
         Ok(newfd)
     }
@@ -560,6 +656,13 @@ impl PerTaskFdRegistry {
                               task_id : task::TaskId,
                               fd : usize)
                               -> VfsResult<SharedIoHandle> {
+        if let Some(owner) = self.initialized_owner(task_id) {
+            return self.tables
+                       .get(&owner)
+                       .and_then(|table| table.get(fd))
+                       .and_then(|slot| slot.clone())
+                       .ok_or(VfsError::BadFd);
+        }
         self.ensure_task(task_id);
         let owner = self.effective_owner(task_id);
         self.tables
@@ -574,6 +677,14 @@ impl PerTaskFdRegistry {
                                      task_id : task::TaskId,
                                      fd : usize)
                                      -> VfsResult<SharedIoHandle> {
+        if let Some(owner) = self.initialized_owner(task_id) {
+            return self.tables
+                       .get(&owner)
+                       .and_then(|table| table.get(fd))
+                       .and_then(|slot| slot.as_ref())
+                       .ok_or(VfsError::BadFd)?
+                       .duplicate();
+        }
         self.ensure_task(task_id);
         let owner = self.effective_owner(task_id);
         self.tables
@@ -602,22 +713,8 @@ impl PerTaskFdRegistry {
         }
         self.check_nofile_before_open(task_id)?;
         self.ensure_task(task_id);
-        let newfd = {
-            let owner = self.effective_owner(task_id);
-            let table = self.tables
-                            .get_mut(&owner)
-                            .expect("fd table owner");
-            while table.len() < minfd {
-                table.push(None);
-            }
-            if let Some(fd) = (minfd..table.len()).find(|&fd| table[fd].is_none()) {
-                table[fd] = Some(dup_handle);
-                fd
-            } else {
-                table.push(Some(dup_handle));
-                table.len() - 1
-            }
-        };
+        let owner = self.effective_owner(task_id);
+        let newfd = self.alloc_slot_for_owner_from(owner, minfd, dup_handle);
         let owner = self.effective_owner(task_id);
         let len = self.tables
                       .get(&owner)
@@ -662,15 +759,11 @@ impl PerTaskFdRegistry {
         } else {
             None
         };
-        {
-            let table = self.tables
-                            .get_mut(&owner)
-                            .expect("fd table owner");
-            while table.len() <= newfd {
-                table.push(None);
-            }
-            table[newfd] = Some(dup_handle);
-        }
+        self.resize_table_with_holes(owner, newfd + 1);
+        self.tables
+            .get_mut(&owner)
+            .expect("fd table owner")[newfd] = Some(dup_handle);
+        self.mark_fd_open(owner, newfd);
         let len = self.tables
                       .get(&owner)
                       .map(Vec::len)
@@ -836,6 +929,23 @@ impl PerTaskFdRegistry {
             .insert(child, parent_table);
         self.fd_flags
             .insert(child, parent_flags);
+        let table = self.tables
+                         .get(&child)
+                         .expect("child fd table");
+        let open_count = table.iter()
+                              .filter(|slot| slot.is_some())
+                              .count();
+        self.open_counts
+            .insert(child, open_count);
+        let free = self.free_fds
+                        .entry(child)
+                        .or_default();
+        free.clear();
+        for (fd, slot) in table.iter().enumerate() {
+            if slot.is_none() {
+                free.insert(fd);
+            }
+        }
     }
 
     /// thread clone 时共享父任务 fd 表。
@@ -986,6 +1096,10 @@ impl PerTaskFdRegistry {
             self.tables
                 .remove(&task_id);
             self.fd_flags
+                .remove(&task_id);
+            self.open_counts
+                .remove(&task_id);
+            self.free_fds
                 .remove(&task_id);
         }
     }

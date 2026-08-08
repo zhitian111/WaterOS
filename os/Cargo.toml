@@ -47,11 +47,16 @@
     split-debuginfo = "off"
 
 [features]
-    default = [ "qemu-riscv64-opensbi", "heap-tlsf" ]
+    # Cargo builds that use the default feature set select the current
+    # RISC-V final candidate, TLSF, and no diagnostic hot-path features.
+    default = [ "qemu-riscv64-opensbi", "final_online", "heap-tlsf" ]
     # 比赛阶段决定根镜像中的用户态 bring-up 队列。
     pre = [  ]
     final_online = [  ]
     final_online_smp_test = [ "final_online" ]
+    # 开发/诊断启动行为由编译期选择，不再通过 QEMU bootargs 传入。
+    operator-shell = [  ]
+    operator-run = [  ]
     # syscall 长时间无进展时输出任务/futex 等待链；默认关闭。
     stall-debug = [ "dep:ipc", "ipc/futex" ]
     # 整个顶部 dashboard（CPU、内存、文件描述符与 syscall 摘要）；默认关闭。
@@ -98,6 +103,8 @@
     # LTP 并行跑测：busybox bringup 仅跑单个 ltp_testcode.sh
     bringup-ltp-glibc-only = [  ]
     bringup-ltp-musl-only = [  ]
+    # 低扰动 bring-up 计数器；默认关闭，性能测量时显式启用。
+    bringup-stats = [ "syscall/bringup-stats" ]
     # 热路径 syscall/trap 参数跟踪（默认关闭；见 trap_handler hot_syscall_trace!）
     qemu-riscv64-opensbi = [
         "dep:cred",

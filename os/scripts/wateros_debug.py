@@ -944,7 +944,7 @@ def tee_output(process: subprocess.Popen, destination: Path) -> None:
     assert process.stdout is not None
     with destination.open("wb") as stream:
         while True:
-            chunk = process.stdout.readline()
+            chunk = process.stdout.read1(4096)
             if not chunk:
                 break
             stream.write(chunk)
@@ -968,6 +968,15 @@ def build_debug_elf(
         "GDB_BUILD=1",
         f"GDB_FAULTS={1 if faults else 0}",
     ]
+    mode = os.environ.get("WATEROS_MODE", "auto")
+    if mode in {"auto", "shell", "run"}:
+        command.append(f"MODE={mode}")
+    script = os.environ.get("WATEROS_OPERATOR_SCRIPT", "").strip()
+    if script:
+        command.append(f"SCRIPT={script}")
+    shell = os.environ.get("WATEROS_OPERATOR_SHELL", "").strip()
+    if shell:
+        command.append(f"GUEST_SHELL={shell}")
     extra_features = os.environ.get("WOS_EXTRA_FEATURES", "").strip()
     if extra_features:
         command.append(f"EXTRA_FEATURES={extra_features}")
@@ -1013,6 +1022,134 @@ def serial_log_path(profile_name: str) -> Path:
     return directory / f"{profile_name}-{timestamp}.log"
 
 
+def write_exit_report(
+    arch: str,
+    elf: Path,
+    reason: str,
+    *,
+    serial_log: Path | None = None,
+    returncode: int | None = None,
+) -> Path:
+    """QEMU 已退出时生成的分析报告：完整 serial 日志 + ELF 静态分析。
+
+    此时 GDB stub 已不可达，因此不做运行时快照，而是对 ELF 做一次静态
+    分析（debug 信息、CFI、frame pointer 等），并把完整串口日志归档。
+    """
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    report = OS_ROOT / "debug-reports" / f"{timestamp}-{arch}-exit"
+    report.mkdir(parents=True, exist_ok=False)
+    if serial_log and serial_log.exists():
+        shutil.copyfile(serial_log, report / "serial.log")
+        lines = serial_log.read_text(errors="replace").splitlines()[-300:]
+        (report / "serial-tail.txt").write_text("\n".join(lines) + "\n")
+    else:
+        (report / "serial.log").write_text("")
+        (report / "serial-tail.txt").write_text("")
+
+    static: dict[str, Any] = {}
+    if not elf.is_file():
+        static["unavailable"] = "ELF file not found"
+    else:
+        try:
+            static["build_id"] = local_build_id(elf, arch)
+        except (DebugToolError, OSError, subprocess.CalledProcessError) as exc:
+            static["build_id"] = f"<unavailable: {exc}>"
+        try:
+            sections = subprocess.check_output(
+                ["readelf", "-S", str(elf)], text=True
+            )
+            static["has_debug_info"] = ".debug_info" in sections
+            static["has_frame_info"] = (
+                ".debug_frame" in sections or ".eh_frame" in sections
+            )
+            static["has_symbol_table"] = ".symtab" in sections
+            static["forced_frame_pointers"] = has_forced_frame_pointers(elf, arch)
+            static["missing_cfi"] = missing_cfi_symbols(elf, arch)
+        except (DebugToolError, OSError, subprocess.CalledProcessError) as exc:
+            static["analysis_error"] = str(exc)
+
+    metadata = {
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "arch": arch,
+        "reason": reason,
+        "elf": str(elf.resolve()),
+        "elf_sha256": sha256(elf) if elf.is_file() else None,
+        "git_commit": subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=OS_ROOT, text=True
+        ).strip(),
+        "git_dirty": bool(
+            subprocess.check_output(["git", "status", "--porcelain"], cwd=OS_ROOT)
+        ),
+        "returncode": returncode,
+        "static": static,
+    }
+    (report / "metadata.json").write_text(json.dumps(metadata, indent=2))
+    summary = [
+        f"WaterOS debug exit report: {reason}",
+        f"ELF: {elf}",
+        f"Build ID: {static.get('build_id')}",
+        f"DWARF .debug_info: {static.get('has_debug_info')}",
+        f"frame info: {static.get('has_frame_info')}",
+        f"symbol table: {static.get('has_symbol_table')}",
+        f"forced frame pointers: {static.get('forced_frame_pointers')}",
+    ]
+    missing_cfi = static.get("missing_cfi")
+    if missing_cfi:
+        summary.append(f"missing CFI: {', '.join(missing_cfi)}")
+    summary.append(
+        "Note: QEMU 已退出，无法连接 GDB stub，故未抓取运行时快照；"
+        "完整串口日志见 serial.log / serial-tail.txt。"
+    )
+    (report / "summary.txt").write_text("\n".join(summary) + "\n")
+    return report
+
+
+def collect_live_report(
+    arch: str,
+    elf: Path,
+    args: argparse.Namespace,
+    serial_log: Path,
+    process: subprocess.Popen | None,
+) -> Path | None:
+    """QEMU 仍在运行时抓取完整 GDB 分析报告；失败时降级为静态退出报告。"""
+    if process is not None and process.poll() is not None:
+        return write_exit_report(
+            arch,
+            elf,
+            "manual-interrupt",
+            serial_log=serial_log,
+            returncode=process.returncode,
+        )
+    try:
+        sample = collect_remote_sample(
+            arch,
+            elf,
+            args.host,
+            args.port,
+            args.timeout,
+            full_events=True,
+            leave_stopped=True,
+        )
+        return write_report(
+            arch,
+            elf,
+            sample,
+            "manual-interrupt",
+            args.host,
+            args.port,
+            serial_log=serial_log,
+            leave_stopped=True,
+        )
+    except (OSError, RemoteError, DebugToolError, subprocess.CalledProcessError) as exc:
+        print(
+            f"[wos-debug] live snapshot 失败，仅保存静态退出报告: {exc}",
+            file=sys.stderr,
+        )
+        return write_exit_report(
+            arch, elf, "manual-interrupt", serial_log=serial_log
+        )
+
+
 def command_run(args: argparse.Namespace) -> int:
     arch, profile, elf = build_debug_elf(
         args.profile, args.faults, args.build_timeout
@@ -1021,8 +1158,8 @@ def command_run(args: argparse.Namespace) -> int:
     environment = debug_environment(args, elf, start_paused=False)
     launch = build_qemu_launch(arch, profile, environment)
     serial_log = serial_log_path(args.profile)
-    stream = serial_log.open("wb")
     process: subprocess.Popen | None = None
+    output_thread: threading.Thread | None = None
     keep_running = False
     try:
         process = subprocess.Popen(
@@ -1030,7 +1167,7 @@ def command_run(args: argparse.Namespace) -> int:
             cwd=OS_ROOT,
             env=environment,
             stdin=subprocess.DEVNULL,
-            stdout=stream,
+            stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
@@ -1045,6 +1182,10 @@ def command_run(args: argparse.Namespace) -> int:
             start_paused=False,
         )
         print(f"[wos-debug] QEMU pid={process.pid} serial={serial_log}")
+        output_thread = threading.Thread(
+            target=tee_output, args=(process, serial_log), daemon=True
+        )
+        output_thread.start()
         result = watch(
             arch,
             elf,
@@ -1057,9 +1198,24 @@ def command_run(args: argparse.Namespace) -> int:
             process=process,
         )
         keep_running = result == 2 and process.poll() is None
+        if result != 2:
+            report = write_exit_report(
+                arch,
+                elf,
+                "guest-exit",
+                serial_log=serial_log,
+                returncode=result,
+            )
+            print(f"[wos-debug] exit report: {report}")
         return result
+    except KeyboardInterrupt:
+        report = collect_live_report(arch, elf, args, serial_log, process)
+        if report is not None:
+            print(f"[wos-debug] analysis report: {report}")
+        return 130
     finally:
-        stream.close()
+        if output_thread is not None:
+            output_thread.join(timeout=1)
         launch.cleanup()
         if process is not None:
             if not keep_running and process.poll() is None:

@@ -14,7 +14,9 @@ pub(crate) mod umount2;
 
 // ── 重新导出 ──────────────────────────────────────────────────
 pub(crate) use acct::sys_acct;
-pub(crate) use bringup_stats::{log_thread_bringup_stats_summary, record_user_page_fault_handled};
+pub(crate) use bringup_stats::{
+    log_thread_bringup_stats_summary, record_syscall, record_user_page_fault_handled,
+};
 pub(crate) use ioctl::sys_ioctl;
 pub(crate) use mount::sys_mount;
 #[cfg(target_arch = "riscv64")]

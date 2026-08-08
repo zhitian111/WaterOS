@@ -18,6 +18,7 @@
 | `user_bringup_common` | ELF 装载、spawn、wait/reap 串行执行 | QEMU board |
 | `user_bringup_basic` | `stage-basic`：直接跑 `/{glibc,musl}/basic/*` | QEMU board |
 | `user_bringup_busybox` | `stage-busybox`：busybox + testcode.sh 队列 | QEMU board |
+| `user_operator` | 按编译期 feature 选择自动队列 / 交互 shell / 指定脚本 | QEMU board |
 | `user_bringup_mm` | `stage-02-mm`：并行 spawn MM 测程 | QEMU board |
 | `user_bringup_posix_fs` | POSIX 目录/重命名烟囱 | QEMU board |
 | `user_bringup_root_layout` | `/bin` 链接、`/etc/passwd`、LTP 账户刷新 | QEMU board |
@@ -32,6 +33,7 @@
 | `qemu-loongarch64-virt` | LoongArch 三级页表、关 MMU 后再建页表、无 `self_tests::task` |
 | `vfs-bridge` | 启用 `wateros-vfs`；bring-up 路径检查、procfs、CWD |
 | `bringup-ltp-glibc-only` / `bringup-ltp-musl-only` | busybox 阶段仅跑单侧 LTP |
+| `operator-shell` / `operator-run` | 开发/诊断启动行为；shell 路径与脚本在构建期嵌入 |
 | `syscall-trace` | trap 热路径 `trace!`（与 `debug_assertions` 二选一开启） |
 | `pseudo-shell` | 依赖 `wateros-pseudo-shell`（需自行调用，非默认 bring-up） |
 | `impl-sv39` | 根 flag，联动子 crate 的 Sv39 相关 `cfg` |

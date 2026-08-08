@@ -28,6 +28,60 @@
   “没有 IPI 实现”是过期结论；双架构 8 核运行门禁仍未完整记录。
 - block cache 已在 RV/LA feature 中启用，容量为 1024 块；网络 RX/TX 已扩到 64 KiB
   且支持批量收包；ELF lazy map 和 TLSF 可选后端也已存在。这些任务从测量开始。
+- ramfs 已支持稀疏文件，但已写入数据页仍是 `BTreeMap<u64, Vec<u8>>`，
+  bootstrap `/tmp` 也没有容量上限。大量临时文件会消耗 128 MiB 全局内核堆；
+  这是 [`K-05D`](./05d-ramfs-physical-pages.md) 的资源正确性问题，不等待 K-04 性能排名。
+
+## 最近已验证闭环（2026-08-06）
+
+- [`RISC-V sscratch 切换修复`](./results/riscv64-sscratch-switch-20260808.md)：
+  协作式上下文切换进入内核/idle 任务时清理 `sscratch`，消除“内核任务被误判为用户态
+  trap”导致的 restore 失败。
+
+- [`K-25`](./results/k25-sched-getaffinity-cpusetsize-20260806.md)：
+  `sched_getaffinity` 接受大 `cpusetsize`，guest `nproc` 从 1 恢复为 8。
+- [`K-26`](./results/k26-exit-group-exiting-trap-boundary-20260806.md)：
+  trap 返回用户态前处理 `ProcessState::Exiting`，修复多线程 `exit_group`
+  后父进程 wait 永久等待，完整 Final 正常输出结果。
+- [`K-27`](./results/k27-rust-parallelism-evidence-20260806.md)：
+  Rust `available_parallelism()` 实测为 8，确认不是 Cargo job 数量被限制。
+- [`K-28`](./results/k28-fd-registry-free-list-20260806.md)：
+  fd registry 使用空闲集合与增量 open 计数，消除 O(N²) 路径。
+- [`K-29`](./results/k29-unix-sock-owner-range-20260806.md)：
+  AF_UNIX fork/exit 清理按 owner range 查询，不再扫描全局表。
+- [`K-30`](./results/k30-block-cache-set-associative-index-20260806.md)：
+  block cache 使用 8 路组相联 LBA 索引，完整 Final 记录 `1365.70s`。
+- [`K-31`](./results/k31-block-cache-hit-run-lru-20260806.md)：
+  block cache 连续命中区间批量拷贝并只刷新一次 LRU，完整 Final 可跑通。
+- [`K-32`](./results/k32-block-cache-miss-run-insert-20260807.md)：
+  block cache 连续 miss 区间直接插入，避免二次索引查找，完整 Final 可跑通。
+- [`K-33`](./results/k33-paged-handle-size-cache-20260807.md)：
+  PagedFileHandle 读路径不再逐次锁 ext4 metadata，完整 Final `1873.87s`。
+- [`K-35`](./results/k35-page-cache-key-reuse-20260807.md)：
+  页缓存 read/write 复用 FileCacheKey，降低 TLSF 分配热路径，完整 Final 通过。
+- [`K-36`](./results/k36-page-cache-close-no-purge-20260807.md)：
+  最后 close 不再立即 purge 页缓存，`purge_closed_file` 热点大幅下降。
+- [`K-37`](./results/k37-pcore-affinity-20260807.md)：
+  Final 运行默认绑定 P-core，完整 Final `elapsed_s=1348.86`。
+- [`K-38`](./results/k38-page-cache-capacity-32mib-20260807.md)：
+  页缓存扩容到 32MiB，完整 Final `elapsed_s=1282.12`。
+- [`K-50`](./results/k50-procfs-read-range-20260807.md)：
+  procfs 增加 range 读取，完整 Final `elapsed_s=1281.26`。
+- [`回归汇总`](./results/regression-known-issues-20260807.md)：
+  已知问题回归：RV Final/Pre、read-family、iozone、并行探针通过；LA Final 仍受
+  `cargo xtask` 偶发竞态影响，重跑已通过。
+
+## 2026-08-07 wait-hot 采样后新增任务
+
+- [`K-53..K-58`](./11-buildstorm-performance-analysis.md)：修复 `cargo xtask` 返回
+  竞态，并验证 `mprotect`、调度负载均衡、内存拷贝、VirtIO/block、TLSF 热点。
+  完整分析见
+  [`waithot-full-analysis-20260807.md`](../perf/waithot-full-analysis-20260807.md)。
+
+以上组合完整 Final 可跑通。当前最优 `elapsed_s=1281.26`；K-31 完整轮在宿主高负载
+下为 `1941.42`，K-32 低负载完整轮为 `1957.45`，K-33 为 `1873.87`，K-35 为
+`1896.21`，K-36 为 `1881.13`；P-core 亲和性下为 `1348.86`，仍未达到 700-800s
+目标。
 
 ## 必须同做与并行关系
 
@@ -60,7 +114,7 @@ K-01 内的 `fsync`、page-cache writeback、unlink/rename 失效和 another-ext
 | [ ] | [`K-02`](./02-smp-loongarch-validation.md) | 待复验 | RV/LA 8 核、IPI、LA-musl LTP |
 | [ ] | [`K-03`](./03-functional-zero-scores.md) | 待复验 | regex、Pagefaults、busybox 0 分项 |
 | [ ] | [`K-04`](./04-baseline-and-instrumentation.md) | 确认未完成 | Linux/WaterOS 三轮基线与 Top 3 |
-| [ ] | [`K-05`](./05-fs-vfs-performance.md) | 测量后候选 | dcache、页缓存 LRU、读写放大 |
+| [ ] | [`K-05`](./05-fs-vfs-performance.md) | 混合 | dcache、页缓存 LRU、读写放大、ramfs 物理页 |
 | [ ] | [`K-06`](./06-task-scheduler-futex.md) | 测量后候选 | ctx、队列、futex、退出生命周期 |
 | [ ] | [`K-07`](./07-mm-exec-fork-heap.md) | 测量后候选 | lazy ELF、fork/COW、回收、allocator |
 | [ ] | [`K-08`](./08-network-throughput.md) | 测量后候选 | poll、锁、收发批处理、缓冲 |
@@ -73,13 +127,14 @@ K-02、K-03、K-05、K-06、K-07 是共享契约和合并门禁，实际分派�
 |---|---|
 | K-02 | [`02A SMP/IPI`](./02a-smp-ipi-runtime.md)、[`02B LA-musl`](./02b-loongarch-musl-ltp.md) |
 | K-03 | [`03A regex`](./03a-regex-zero-score.md)、[`03B Pagefaults`](./03b-musl-rv-pagefault.md)、[`03C busybox`](./03c-busybox-kill-mv-rmdir.md) |
-| K-05 | [`05A inode/dcache`](./05a-inode-dentry-cache.md)、[`05B page LRU`](./05b-page-cache-lru.md)、[`05C I/O/prefetch`](./05c-io-merge-prefetch.md) |
+| K-05 | [`05A inode/dcache`](./05a-inode-dentry-cache.md)、[`05B page LRU`](./05b-page-cache-lru.md)、[`05C I/O/prefetch`](./05c-io-merge-prefetch.md)、[`05D ramfs 物理页`](./05d-ramfs-physical-pages.md) |
 | K-06 | [`06A scheduler`](./06a-scheduler-ctx.md)、[`06B futex`](./06b-futex-waitqueue.md)、[`06C reap`](./06c-process-reap-lifecycle.md) |
 | K-07 | [`07A lazy ELF`](./07a-elf-lazy-map.md)、[`07B fork/page table`](./07b-fork-pagetable-lifecycle.md)、[`07C heap`](./07c-kernel-heap-backend.md) |
 
 K-07B 依赖 K-06C 的 retired-process 接口，不能同时修改生命周期 API；K-05A 与 K-05B
 可并行，但必须先冻结 file identity/cache key。其余同一行 leaf 可使用独立 worktree
-并行，最终按父任务验收合并。
+并行，最终按父任务验收合并。K-05D 可立即启动，但页所有权契约需与 K-07
+协调，不允许让 FS 依赖某个架构的 MM 实现。
 
 ## 完整问题映射
 

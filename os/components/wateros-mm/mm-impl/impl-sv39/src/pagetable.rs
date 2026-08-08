@@ -648,13 +648,16 @@ impl Sv39AddressSpace {
         if self.lazy_vma_overlaps(start, end) {
             return Err(MmError::InvalidAddress);
         }
+        let position = self.lazy_file_vmas
+                           .partition_point(|vma| vma.start.0 < start.0);
         self.lazy_file_vmas
-            .push(LazyFileVma { start,
-                                end,
-                                perm,
-                                file_offset,
-                                file_size,
-                                loader });
+            .insert(position,
+                    LazyFileVma { start,
+                                  end,
+                                  perm,
+                                  file_offset,
+                                  file_size,
+                                  loader });
         Ok(())
     }
 
@@ -933,9 +936,7 @@ impl Sv39AddressSpace {
     {
         let page = fault_addr.floor_page()
                              .start_addr();
-        let Some(index) = self.lazy_file_vmas
-                              .iter()
-                              .position(|vma| vma.contains_page(page))
+        let Some(index) = self.lazy_file_vma_index(page)
         else {
             return Ok(false);
         };
@@ -976,6 +977,25 @@ impl Sv39AddressSpace {
         platform::arch::paging::flush_tlb_local(
             platform::arch::paging::TlbFlushRange::Page { addr : page.0 });
         Ok(true)
+    }
+
+    /// 在按 `start` 升序且互不重叠的 lazy VMA 集合中查找包含 `page` 的条目。
+    ///
+    /// 只保证 `start` 有序；先定位第一个 `end > page` 的 VMA，再验证包含关系。
+    fn lazy_file_vma_index(&self, page : VirtAddr) -> Option<usize> {
+        let mut low = 0usize;
+        let mut high = self.lazy_file_vmas.len();
+        while low < high {
+            let mid = low + (high - low) / 2;
+            if self.lazy_file_vmas[mid].end.0 <= page.0 {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+        let vma = self.lazy_file_vmas.get(low)?;
+        vma.contains_page(page)
+            .then_some(low)
     }
 
     // 本方法代码由AI完成

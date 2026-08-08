@@ -552,13 +552,10 @@ impl PagedFileHandle {
             return detached.data.len() as u64;
         }
         let key = detached.cache_key.clone();
-        let stable = detached.stable.clone();
         drop(detached);
-        let backing_size = stable.as_ref()
-                                 .and_then(|node| node.metadata().ok())
-                                 .map(|meta| meta.size)
-                                 .unwrap_or(self.on_disk_size);
-        global_cache(self.mount_gen).logical_size(key.as_str(), backing_size)
+        // 句柄打开/截断时已记录磁盘大小；页缓存自身的逻辑大小会在本内核
+        // 的写入和截断路径同步更新，因此读路径不必再逐次锁 ext4 metadata。
+        global_cache(self.mount_gen).logical_size(key.as_str(), self.on_disk_size)
     }
 
     fn active_path(&self) -> String { self.detached.lock().path.clone() }

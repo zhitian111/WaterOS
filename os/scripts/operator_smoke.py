@@ -86,15 +86,16 @@ def main() -> int:
     kernel = root / f"kernel-{stem}"
     build_target = f"kernel-{stem}"
     run_script = root / "scripts" / f"{args.arch}_{args.profile}_run.sh"
+    build_command = ["make", build_target, f"MODE={args.mode}"]
+    if args.mode == "run":
+        build_command.append(f"SCRIPT={args.script}")
     if not args.no_build:
-        subprocess.run(["make", build_target], cwd=root, check=True)
+        subprocess.run(build_command, cwd=root, check=True)
 
     master, slave = pty.openpty()
     env = os.environ.copy()
-    env.update(WOS_MODE=args.mode, WOS_LOG="warn", WOS_SMP=str(args.smp),
+    env.update(WOS_SMP=str(args.smp),
                WOS_QEMU_SNAPSHOT="1", WOS_KERNEL=str(kernel))
-    if args.script:
-        env["WOS_SCRIPT"] = args.script
     process = subprocess.Popen(["bash", str(run_script)], cwd=root, env=env,
                                stdin=slave, stdout=slave, stderr=slave,
                                start_new_session=True, close_fds=True)

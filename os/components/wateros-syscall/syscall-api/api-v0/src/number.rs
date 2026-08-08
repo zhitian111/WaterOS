@@ -100,6 +100,7 @@ pub const SCHED_GETAFFINITY : usize = 123;
 pub const SCHED_GET_PRIORITY_MAX : usize = 125;
 pub const SCHED_GET_PRIORITY_MIN : usize = 126;
 pub const YIELD : usize = 124;
+pub const GETCPU : usize = 168;
 pub const GET_TIME : usize = 169;
 pub const CLOCK_SETTIME : usize = 112;
 pub const CLOCK_GETTIME : usize = 113;

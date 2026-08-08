@@ -48,6 +48,17 @@ pub trait ProcFsView {
     fn metadata(&self, rel_path: &str) -> FsResult<FsMetadata>;
     /// 读取普通文件内容；目录路径返回 [`FsError::NotAFile`]。
     fn read(&self, rel_path: &str) -> FsResult<Vec<u8>>;
+    /// 读取普通文件指定区段；默认实现基于 [`Self::read`]，实现方可覆盖以避免整文件分配。
+    fn read_range(&self, rel_path: &str, offset: u64, buf: &mut [u8]) -> FsResult<usize> {
+        let data = self.read(rel_path)?;
+        let start = offset as usize;
+        if start >= data.len() {
+            return Ok(0);
+        }
+        let n = core::cmp::min(buf.len(), data.len() - start);
+        buf[..n].copy_from_slice(&data[start..start + n]);
+        Ok(n)
+    }
     /// 读取符号链接目标；非符号链接返回 [`FsError::NotAFile`]。
     fn read_symlink(&self, rel_path: &str) -> FsResult<Vec<u8>>;
     /// 列出目录项；非目录返回 [`FsError::NotAFile`]。

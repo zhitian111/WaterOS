@@ -9,8 +9,8 @@
 //!
 //! ## 与 trap / 访问位
 //!
-//! 映射时预先置 PTE **D** 位（脏位），避免依赖硬件写时置位触发页故障（早期
-//! bring-up 策略）。
+//! 可写映射预先置 PTE **D** 位（脏位），只读映射必须保持 D=0，确保用户 store
+//! 触发 Page Modified 异常并进入权限/COW 处理。
 
 extern crate alloc;
 
@@ -92,12 +92,11 @@ impl LoongArch64PteFlags {
         f
     }
 
-    /// 从 [`PagePerm`] 构造 PTE 标志：V=1, D=1 (pre-fault), MAT=CoherentCached,
-    /// PLV 由 `perm.user()` 决定。
+    /// 从 [`PagePerm`] 构造 PTE 标志：V=1, MAT=CoherentCached，PLV 由
+    /// `perm.user()` 决定。LoongArch 的写权限由硬件 D 位执行，W 位只供软件遍历。
     #[inline]
     fn from_perm(perm : PagePerm) -> Self {
         let mut f = Self::V; // always valid
-        f.0 |= Self::D.0; // pre-set dirty (eager bring-up)
         f.0 |= Self::P.0; // page is present
         f.0 |= Self::MAT_CACHED;
         if perm.user() {
@@ -105,7 +104,7 @@ impl LoongArch64PteFlags {
         }
         // else PLV stays 0 (kernel-only)
         if perm.writable() {
-            f.0 |= Self::W.0;
+            f.0 |= Self::W.0 | Self::D.0;
         }
         if !perm.readable() {
             f.0 |= Self::NR.0;

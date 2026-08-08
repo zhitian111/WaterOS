@@ -87,6 +87,9 @@ pub struct CPUState {
     pub current_ticks : u64,
     /// 当前任务自上次切入或同步以来实际运行的 tick 数，用于批量回写 TCB 统计。
     pub current_runtime_ticks : u64,
+    /// 被强制迁出本 CPU 的当前任务；在 `__switch` 保存完上下文前不能发布到其它核，
+    /// 由调度器在切走之后（`enqueue_deferred_task`）取出并重新激活。
+    pub deferred_ready_after_switch : Option<TaskId>,
 }
 impl CPUState {
     pub fn new(cpu_id : CpuId) -> Self {
@@ -108,7 +111,8 @@ impl CPUState {
                idle_queue : CfsQueue::new(),
                current_snapshot : None,
                current_ticks : 0,
-               current_runtime_ticks : 0 }
+               current_runtime_ticks : 0,
+               deferred_ready_after_switch : None }
     }
     pub fn init(&mut self, cpu_id : CpuId) {
         self.cpu_id = cpu_id;
@@ -134,6 +138,7 @@ impl CPUState {
         self.current_snapshot = None;
         self.current_ticks = 0;
         self.current_runtime_ticks = 0;
+        self.deferred_ready_after_switch = None;
     }
     /// OTHER 与 BATCH 共用的公平调度基线。
     pub fn min_vruntime(&self) -> VRunTime { self.min_vruntime }
@@ -607,6 +612,21 @@ impl CPUState {
         self.current_snapshot = Some(*snap);
         self.current_ticks = 0;
         self.current_runtime_ticks = 0;
+    }
+
+    /// 记录被强制迁出本 CPU 的当前任务；同一核同时只能有一个待迁任务。
+    pub fn set_deferred_ready(&mut self, task_id : TaskId) {
+        assert!(self.deferred_ready_after_switch
+                    .is_none(),
+                "CPU {} already has a deferred task migration",
+                self.cpu_id.raw());
+        self.deferred_ready_after_switch = Some(task_id);
+    }
+
+    /// 取走并清空本核待迁任务；仅在 `__switch` 保存完离开任务上下文后调用。
+    pub fn take_deferred_ready(&mut self) -> Option<TaskId> {
+        self.deferred_ready_after_switch
+            .take()
     }
 
     /// Policy 参数与本 CPU 调度队列的对应关系。

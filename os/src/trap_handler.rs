@@ -51,6 +51,15 @@ macro_rules! hot_syscall_trace {
     };
 }
 
+#[inline]
+fn exit_current_if_process_exiting() {
+    if let Some(process) = task::current_process_snapshot() {
+        if let task::ProcessState::Exiting(exit_code) = process.state {
+            task::exit_group_current(exit_code);
+        }
+    }
+}
+
 /// 监督态定时器中断后，用 **与 `kernel_main` 相同的 wall-clock 语义**
 /// 重新武装固件定时器。
 ///
@@ -97,10 +106,15 @@ fn log_unhandled_user_fault_probe(cx : &TrapContext, trap_cause : TrapCause, raw
 fn kill_current_user_task(context : &str, trap_cause : TrapCause, cx : &TrapContext) -> ! {
     if let Some(snapshot) = task::current_task_snapshot() {
         if snapshot.kind != task::TaskKind::User {
-            fatal_kernel_trap("attempted to terminate a non-user task",
-                              trap_cause,
-                              cx.raw_cause(),
-                              cx);
+            if !cx.returns_to_user() || task::current_process_task_snapshot().is_none() {
+                fatal_kernel_trap("attempted to terminate a non-user task",
+                                  trap_cause,
+                                  cx.raw_cause(),
+                                  cx);
+            }
+            warn!("[trap] user trap on mismatched task kind={:?} task_id={} state={:?} \
+                   returns_to_user=true; terminating current process",
+                  snapshot.kind, snapshot.id, snapshot.state);
         }
         warn!("[trap] killing user task ({}) cause={:?} pc={:#x} fault_addr={:#x} task_id={} \
                parent_id={:?} state={:?}",
@@ -157,6 +171,7 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
     let cx = unsafe { &mut *(authoritative as *mut TrapContext) };
 
     if cx.returns_to_user() {
+        exit_current_if_process_exiting();
         if platform::arch::trap::user_trap_requires_kernel_address_space() {
             let kernel_satp = mm::kernel_mm::kernel_satp();
             if paging::active_address_space_token() != kernel_satp {
@@ -195,9 +210,22 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                                regs[5],);
             if syscall_nr == RT_SIGRETURN {
                 if !syscall::restore_signal_frame(authoritative) {
-                    kill_current_user_task("invalid rt_sigreturn frame",
-                                           trap_cause,
-                                           cx);
+                    let has_user_context = task::current_task_snapshot().is_some_and(|task| {
+                                                                            task.kind ==
+                                                                            task::TaskKind::User
+                                                                        }) &&
+                                           task::current_process_task_snapshot().is_some();
+                    if has_user_context {
+                        kill_current_user_task("invalid rt_sigreturn frame",
+                                               trap_cause,
+                                               cx);
+                    }
+                    warn!("[trap] ignoring invalid rt_sigreturn on non-user context pc={:#x}",
+                          cx.user_pc());
+                    cx.add_user_pc(SYSCALL_INSN_BYTES);
+                    cx.set_syscall_ret(UserRet(syscall::ErrNo::EINVAL.user_ret()));
+                    finish_trap_return(frame, cx, raw_cause);
+                    return;
                 }
                 hot_syscall_trace!("[syscall] nr={} restored signal frame",
                                    syscall_nr);
@@ -340,8 +368,15 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             #[cfg(not(feature = "gdb-fault-injection"))]
             let suppress_scheduler = false;
             let tick = TIMER_TICK_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+            #[cfg(feature = "bringup-stats")]
+            if tick % 300 == 0 {
+                syscall::log_thread_bringup_stats_summary();
+            }
             if tick % 8 == 0 {
                 trace!("[trap] timer tick {}", tick);
+            }
+            if !cx.returns_to_user() {
+                exit_current_if_process_exiting();
             }
             syscall::timer_tick(cx.returns_to_user());
             if !suppress_scheduler {
@@ -376,6 +411,7 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
     }
 
     if cx.returns_to_user() {
+        exit_current_if_process_exiting();
         return_to_user_signal_delivery(authoritative, trap_cause, cx, restart);
         // `raw_cause` 来自 TrapContext.scause 快照，即 **本次** 进入内核的原因（如
         // ecall=0x8）， 不是硬件 CSR 的“下一异常预告”；`sret`
@@ -416,8 +452,21 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
     hot_syscall_trace!("[trap] restore_current_trap_frame restored={}",
                        restored);
     if cx.returns_to_user() && !restored {
+        // 诊断：打印当前任务与断点 PC，区分“current 缓存与硬件脱节（真双核/迁移
+        // 残留）”与“trap 处理中途切走了当前任务”。sepc 为内核地址且 current 为
+        // 内核任务 → 更可能是 sscratch 误分类；sepc 为用户地址且 current 非用户
+        // → 真脱节（current 缓存与硬件不一致）。
+        let current = task::current_task_snapshot();
         panic!("restore_current_trap_frame failed before sret to user (current task trap_frame \
-                missing?)");
+                missing? cpu={} current_id={:?} kind={:?} state={:?} sepc={:#x})",
+               platform::arch::cpu::current_cpu_id().raw(),
+               current.as_ref()
+                      .map(|s| s.id),
+               current.as_ref()
+                      .map(|s| s.kind),
+               current.as_ref()
+                      .map(|s| s.state),
+               cx.user_pc());
     }
 }
 
@@ -429,15 +478,26 @@ fn return_to_user_signal_delivery(frame : *mut u8,
                                   -> bool {
     let delivered = syscall::deliver_pending_signal(frame, restart);
     if delivered < 0 {
-        kill_current_user_task("signal frame setup failed",
-                               trap_cause,
-                               cx);
+        let has_user_context =
+            task::current_task_snapshot().is_some_and(|task| task.kind == task::TaskKind::User) &&
+            task::current_process_task_snapshot().is_some();
+        if has_user_context {
+            kill_current_user_task("signal frame setup failed",
+                                   trap_cause,
+                                   cx);
+        }
+        warn!("[trap] ignoring signal frame setup failure on non-user context pc={:#x}",
+              cx.user_pc());
+        return false;
     }
     delivered > 0
 }
 
 /// 信号/页错等提前返回路径：打 trace 后把 TCB trap 帧拷回内核栈供 `sret`。
 fn finish_trap_return(frame : *mut u8, cx : &TrapContext, raw_cause : usize) {
+    if cx.returns_to_user() {
+        exit_current_if_process_exiting();
+    }
     hot_syscall_trace!("[trap] sret to user pc={:#x} sp={:#x} return_satp={:#x} \
                         kernel_satp={:#x} frame_scause={:#x}",
                        cx.user_pc(),

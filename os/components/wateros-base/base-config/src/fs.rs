@@ -12,9 +12,9 @@ pub const FILE_PAGE_SIZE : usize = 4096;
 pub const BOOTSTRAP_TMPFS_LIMIT_BYTES : usize = 512 * 1024 * 1024;
 
 /// 全局页帧 LRU 槽位数（所有文件共享，非每文件容量）。
-/// 4096 * 4KiB = 16MiB，覆盖多数测试热集。内核堆共 128MiB，
+/// 8192 * 4KiB = 32MiB，覆盖多数测试热集。内核堆共 128MiB，
 /// 需为 ELF 加载、VFS 元数据、进程控制块等留出充足内存。
-pub const FILE_PAGE_CACHE_CAPACITY : usize = 4096;
+pub const FILE_PAGE_CACHE_CAPACITY : usize = 8192;
 
 /// Direct 模式下顺序读预取步长（页数）；`0` 表示关闭预取。
 /// 增大此值可减少读时的缺页中断次数，对顺序读性能有明显提升。
@@ -34,5 +34,5 @@ pub enum FileIoMode {
 pub const FILE_IO_MODE : FileIoMode = FileIoMode::Direct;
 
 /// `CachingBlockDevice` 可缓存的逻辑块数量；`0` 表示注册时不包装缓存。
-/// 1024 × 512B = 512KiB；QEMU 1G RAM / 内核堆 128MiB 下可承受单 virtio-blk 槽预分配。
-pub const BLOCK_CACHE_CAPACITY_BLOCKS : usize = 1024;
+/// 16384 × 512B = 8MiB；BuildStorm 反复访问镜像元数据时，512KiB 太容易被挤出。
+pub const BLOCK_CACHE_CAPACITY_BLOCKS : usize = 16384;

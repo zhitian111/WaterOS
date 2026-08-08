@@ -13,14 +13,12 @@ from qemu_run import QemuConfigError, build_qemu_launch
 
 
 class QemuRunTests(unittest.TestCase):
-    def test_riscv_run_mode_has_one_bootargs_source(self) -> None:
+    def test_riscv_launch_has_no_bootargs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             launch = build_qemu_launch(
                 "rv",
                 "pre",
                 {
-                    "WOS_MODE": "run",
-                    "WOS_SCRIPT": "/root/test.sh",
                     "WOS_SMP": "4",
                     "WOS_QEMU_SNAPSHOT": "1",
                     "WOS_QEMU_GDB": "1",
@@ -29,37 +27,34 @@ class QemuRunTests(unittest.TestCase):
                 },
                 root=Path(directory),
             )
-            self.assertIn("wos.mode=run wos.script=/root/test.sh", launch.argv)
+            self.assertNotIn("-append", launch.argv)
+            self.assertFalse(any("wos." in item for item in launch.argv))
             self.assertIn("-snapshot", launch.argv)
             self.assertIn("tcp:127.0.0.1:1235", launch.argv)
-            self.assertEqual(launch.temporary_files, [])
 
-    def test_loongarch_mailbox_matches_append(self) -> None:
+    def test_loongarch_launch_has_no_bootargs_or_mailbox(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             launch = build_qemu_launch(
                 "la",
                 "final",
                 {
-                    "WOS_MODE": "shell",
                     "WOS_SMP": "8",
                     "WOS_SDCARD": "/images/la-final.img",
                 },
                 root=Path(directory),
             )
-            append = launch.argv[launch.argv.index("-append") + 1]
-            mailbox = launch.temporary_files[0]
-            self.assertEqual(mailbox.read_bytes(), b"WOSCMD1" + append.encode() + b"\0")
-            launch.cleanup()
-            self.assertFalse(mailbox.exists())
+            self.assertNotIn("-append", launch.argv)
+            self.assertFalse(any("WOSCMD1" in item or item == "loader" for item in launch.argv))
+            self.assertFalse(any("wos." in item for item in launch.argv))
 
-    def test_script_requires_run_mode_and_absolute_path(self) -> None:
+    def test_invalid_smp_is_rejected(self) -> None:
         with self.assertRaises(QemuConfigError):
             build_qemu_launch(
-                "rv", "pre", {"WOS_MODE": "auto", "WOS_SCRIPT": "/root/x"}
+                "rv", "pre", {"WOS_SMP": "9", "WOS_SDCARD": "/images/root.img"}
             )
         with self.assertRaises(QemuConfigError):
             build_qemu_launch(
-                "rv", "pre", {"WOS_MODE": "run", "WOS_SCRIPT": "root/x"}
+                "rv", "pre", {"WOS_SMP": "0", "WOS_SDCARD": "/images/root.img"}
             )
 
     def test_empty_sdcard_is_rejected(self) -> None:

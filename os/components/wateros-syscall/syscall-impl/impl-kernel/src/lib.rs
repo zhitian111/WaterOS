@@ -22,6 +22,7 @@ mod vfs_util;
 /// trap / 异常返回路径上的 syscall 分发入口。
 #[inline]
 pub fn dispatch_syscall_from_trap(syscall_nr : usize, syscall_args : SyscallArgs) -> isize {
+    sys::record_syscall();
     syscall_nr_dispatch::dispatch_syscall_by_nr(syscall_nr, syscall_args)
 }
 
@@ -68,6 +69,9 @@ pub fn drop_reaped_task_runtime_resources(task_id : usize, aspace : usize) {
 /// 透明转发至 `sys::record_user_page_fault_handled`。
 #[inline]
 pub fn record_user_page_fault_handled() { sys::record_user_page_fault_handled(); }
+
+#[inline]
+pub fn record_syscall() { sys::record_syscall(); }
 
 /// 透明转发至 `sys::log_thread_bringup_stats_summary`。
 #[inline]

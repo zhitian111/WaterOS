@@ -6,7 +6,6 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
-use alloc::collections::BTreeMap;
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -31,6 +30,72 @@ impl Default for BlockCacheConfig {
     }
 }
 
+#[derive(Clone, Copy)]
+struct LbaIndexEntry {
+    lba : Lba,
+    idx : usize,
+}
+
+struct LbaIndex {
+    buckets : Vec<[Option<LbaIndexEntry>; LBA_INDEX_WAYS]>,
+}
+
+const LBA_INDEX_WAYS : usize = 8;
+
+impl LbaIndex {
+    fn new(capacity : usize) -> Self {
+        let bucket_count = capacity
+                               .div_ceil(LBA_INDEX_WAYS)
+                               .max(1);
+        Self { buckets : vec![[None; LBA_INDEX_WAYS]; bucket_count] }
+    }
+
+    fn bucket(&self, lba : Lba) -> usize {
+        (lba.0 as usize) % self.buckets.len()
+    }
+
+    fn get(&self, lba : Lba) -> Option<usize> {
+        let bucket = self.bucket(lba);
+        self.buckets[bucket]
+            .iter()
+            .find_map(|entry| {
+                entry.and_then(|entry| {
+                    (entry.lba == lba).then_some(entry.idx)
+                })
+            })
+    }
+
+    fn insert(&mut self, lba : Lba, idx : usize) -> Option<(Lba, usize)> {
+        let bucket = self.bucket(lba);
+        let entries = &mut self.buckets[bucket];
+        for entry in entries.iter_mut() {
+            if let Some(entry) = entry {
+                if entry.lba == lba {
+                    entry.idx = idx;
+                    return None;
+                }
+            } else {
+                *entry = Some(LbaIndexEntry { lba, idx });
+                return None;
+            }
+        }
+        let old = entries[0].take();
+        entries[0] = Some(LbaIndexEntry { lba, idx });
+        old.map(|entry| (entry.lba, entry.idx))
+    }
+
+    fn remove(&mut self, lba : Lba) -> Option<usize> {
+        let bucket = self.bucket(lba);
+        let entries = &mut self.buckets[bucket];
+        for entry in entries.iter_mut() {
+            if entry.is_some_and(|entry| entry.lba == lba) {
+                return entry.take().map(|entry| entry.idx);
+            }
+        }
+        None
+    }
+}
+
 struct Slot {
     lba: Option<Lba>,
     data: Vec<u8>,
@@ -43,7 +108,7 @@ pub struct CachingBlockDevice {
     inner: Box<dyn BlockDevice + Send>,
     block_size: usize,
     capacity: usize,
-    map: BTreeMap<Lba, usize>,
+    map: LbaIndex,
     slots: Vec<Slot>,
     /// 空闲槽下标（仅 `capacity > 0` 时使用）。
     free: Vec<usize>,
@@ -75,7 +140,7 @@ impl CachingBlockDevice {
             inner,
             block_size,
             capacity,
-            map: BTreeMap::new(),
+            map: LbaIndex::new(capacity),
             slots,
             free,
             lru_head: None,
@@ -148,12 +213,12 @@ impl CachingBlockDevice {
             log::warn!("[block-cache] evict_lru_slot: slot {idx} unoccupied");
             return Err(DriverError::IoError);
         };
-        self.map.remove(&lba);
+        self.map.remove(lba);
         Ok(idx)
     }
 
     fn reset_cache_invariant(&mut self) {
-        self.map.clear();
+        self.map = LbaIndex::new(self.capacity);
         self.lru_head = None;
         self.lru_tail = None;
         self.free.clear();
@@ -171,7 +236,7 @@ impl CachingBlockDevice {
             return;
         }
         debug_assert_eq!(block.len(), self.block_size);
-        if let Some(&idx) = self.map.get(&lba) {
+        if let Some(idx) = self.map.get(lba) {
             self.slots[idx].data.copy_from_slice(block);
             self.touch_lru(idx);
             return;
@@ -179,21 +244,36 @@ impl CachingBlockDevice {
         let idx = self.alloc_slot();
         self.slots[idx].lba = Some(lba);
         self.slots[idx].data.copy_from_slice(block);
-        self.map.insert(lba, idx);
+        if let Some((old_lba, old_idx)) = self.map.insert(lba, idx) {
+            if self.slots[old_idx].lba == Some(old_lba) {
+                self.detach_lru(old_idx);
+                self.slots[old_idx].lba = None;
+                self.free.push(old_idx);
+            }
+        }
         self.push_lru_back(idx);
     }
 
-    fn cache_copy_out(&mut self, lba: Lba, dst: &mut [u8]) -> bool {
+    /// 与 [`Self::cache_put`] 相同，但假定调用方已确认该 LBA 不在索引中。
+    /// 连续 miss 区间在扫描阶段已经逐个查过索引，可省去第二次查找。
+    fn cache_put_new(&mut self, lba: Lba, block: &[u8]) {
         if self.capacity == 0 {
-            return false;
+            return;
         }
-        let Some(&idx) = self.map.get(&lba) else {
-            return false;
-        };
-        dst.copy_from_slice(&self.slots[idx].data);
-        self.touch_lru(idx);
-        true
+        debug_assert_eq!(block.len(), self.block_size);
+        let idx = self.alloc_slot();
+        self.slots[idx].lba = Some(lba);
+        self.slots[idx].data.copy_from_slice(block);
+        if let Some((old_lba, old_idx)) = self.map.insert(lba, idx) {
+            if self.slots[old_idx].lba == Some(old_lba) {
+                self.detach_lru(old_idx);
+                self.slots[old_idx].lba = None;
+                self.free.push(old_idx);
+            }
+        }
+        self.push_lru_back(idx);
     }
+
 }
 
 impl BlockDevice for CachingBlockDevice {
@@ -218,16 +298,29 @@ impl BlockDevice for CachingBlockDevice {
         let base = start_block.0;
         let mut i = 0usize;
         while i < nblocks {
-            let lba = Lba(base + i as u64);
-            let row = &mut buf[i * bs..(i + 1) * bs];
-            if self.cache_copy_out(lba, row) {
-                i += 1;
+            let mut hit_end = i;
+            let mut last_hit_idx = None;
+            while hit_end < nblocks {
+                let lk = Lba(base + hit_end as u64);
+                let Some(idx) = self.map.get(lk) else {
+                    break;
+                };
+                buf[hit_end * bs..(hit_end + 1) * bs]
+                    .copy_from_slice(&self.slots[idx].data);
+                last_hit_idx = Some(idx);
+                hit_end += 1;
+            }
+            if hit_end > i {
+                if let Some(idx) = last_hit_idx {
+                    self.touch_lru(idx);
+                }
+                i = hit_end;
                 continue;
             }
             let mut j = i + 1;
             while j < nblocks {
                 let lbaj = Lba(base + j as u64);
-                if self.map.contains_key(&lbaj) {
+                if self.map.get(lbaj).is_some() {
                     break;
                 }
                 j += 1;
@@ -236,7 +329,7 @@ impl BlockDevice for CachingBlockDevice {
             self.inner.read_blocks(Lba(base + i as u64), &mut buf[i * bs..i * bs + run_bytes])?;
             for k in i..j {
                 let lk = Lba(base + k as u64);
-                self.cache_put(lk, &buf[k * bs..(k + 1) * bs]);
+                self.cache_put_new(lk, &buf[k * bs..(k + 1) * bs]);
             }
             i = j;
         }
@@ -347,6 +440,27 @@ mod tests {
     }
 
     #[test]
+    fn contiguous_hit_run_serves_all_from_cache() {
+        let reads = Arc::new(Mutex::new(0));
+        let writes = Arc::new(Mutex::new(0));
+        let inner = Box::new(CountingMem::new(4, reads.clone(), writes.clone()));
+        let mut cache = CachingBlockDevice::new(
+            inner,
+            BlockCacheConfig { capacity_blocks: 4 },
+        );
+        let bs = cache.block_size();
+        let mut first = vec![0u8; bs * 2];
+        cache.read_blocks(Lba(0), &mut first).unwrap();
+        assert_eq!(*reads.lock().unwrap(), 1);
+
+        let before = *reads.lock().unwrap();
+        let mut second = vec![0u8; bs * 2];
+        cache.read_blocks(Lba(0), &mut second).unwrap();
+        assert_eq!(second, first);
+        assert_eq!(*reads.lock().unwrap(), before);
+    }
+
+    #[test]
     fn hit_refreshes_lru_before_eviction() {
         let reads = Arc::new(Mutex::new(0));
         let writes = Arc::new(Mutex::new(0));
@@ -422,5 +536,16 @@ mod tests {
         cache.read_blocks(Lba(0), &mut r).unwrap();
         cache.read_blocks(Lba(0), &mut r).unwrap();
         assert_eq!(*reads.lock().unwrap(), 2);
+    }
+
+    #[test]
+    fn lba_index_set_associative_round_trip() {
+        let mut index = LbaIndex::new(8);
+        index.insert(Lba(7), 3);
+        assert_eq!(index.get(Lba(7)), Some(3));
+        index.insert(Lba(7), 5);
+        assert_eq!(index.get(Lba(7)), Some(5));
+        assert_eq!(index.remove(Lba(7)), Some(5));
+        assert_eq!(index.get(Lba(7)), None);
     }
 }

@@ -12,6 +12,7 @@
 
 [features]
     api-v0 = [ "dep:api-v0", "impl-kernel?/api-v0" ]
+    bringup-stats = [ "impl-kernel?/bringup-stats" ]
     default = [ "impl-kernel" ]
     impl-kernel = [ "api-v0", "dep:impl-kernel", "impl-kernel/impl-kernel" ]
 [profile.dev]

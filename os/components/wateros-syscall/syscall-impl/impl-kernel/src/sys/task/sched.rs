@@ -10,8 +10,7 @@ use api_v0::SyscallArgs;
 use api_v0::UserRet;
 use task::{CpuMask, SchedError, SchedPolicy};
 
-use crate::fallible_buf::{try_kbuf, SCHED_CPUSET_MAX};
-use crate::user_copy::{copy_from_user, copy_to_user};
+use crate::user_copy::{copy_from_user, copy_to_user, copy_to_user_struct};
 
 // 本结构代码由AI完成
 #[repr(C)]
@@ -60,6 +59,28 @@ fn read_user_sched_attr_size(attr_ptr : usize) -> Result<usize, ErrNo> {
     let mut raw_size = [0u8; size_of::<u32>()];
     copy_from_user(&mut raw_size, attr_ptr)?;
     Ok(u32::from_ne_bytes(raw_size) as usize)
+}
+
+/// `getcpu(cpu, node, tcache)`：返回执行当前 syscall 的逻辑 CPU 与 NUMA node。
+///
+/// QEMU 支持的平台目前都是单 NUMA node；Linux 已忽略第三个 cache 参数。
+pub(crate) fn sys_getcpu(args : SyscallArgs) -> UserRet {
+    let cpu_ptr = args.arg(0);
+    let node_ptr = args.arg(1);
+    let cpu = platform::arch::cpu::current_cpu_id().raw() as u32;
+    let node = 0u32;
+
+    if cpu_ptr != 0 {
+        if let Err(error) = copy_to_user_struct(cpu_ptr, &cpu) {
+            return UserRet::from_error(error);
+        }
+    }
+    if node_ptr != 0 {
+        if let Err(error) = copy_to_user_struct(node_ptr, &node) {
+            return UserRet::from_error(error);
+        }
+    }
+    UserRet::from_success(0)
 }
 
 
@@ -163,9 +184,6 @@ pub(crate) fn sys_sched_setaffinity(args : SyscallArgs) -> UserRet {
     if let Err(e) = task::validate_cpu_affinity_buf_len(cpusetsize) {
         return UserRet::from_error(sched_err_to_errno(e));
     }
-    if cpusetsize > SCHED_CPUSET_MAX {
-        return UserRet::from_error(ErrNo::EINVAL);
-    }
     let task_id = match task::resolve_sched_pid(pid) {
         Ok(id) => id,
         Err(e) => return UserRet::from_error(sched_err_to_errno(e)),
@@ -173,10 +191,7 @@ pub(crate) fn sys_sched_setaffinity(args : SyscallArgs) -> UserRet {
     if !can_change_affinity(task_id) {
         return UserRet::from_error(ErrNo::EPERM);
     }
-    let mut mask = match try_kbuf(cpusetsize, SCHED_CPUSET_MAX) {
-        Ok(buf) => buf,
-        Err(err) => return UserRet::from_error(err),
-    };
+    let mut mask = [0u8; 8];
     if let Err(e) = copy_from_user(&mut mask, mask_ptr) {
         return UserRet::from_error(e);
     }
@@ -224,9 +239,6 @@ pub(crate) fn sys_sched_getaffinity(args : SyscallArgs) -> UserRet {
     if let Err(e) = task::validate_cpu_affinity_buf_len(cpusetsize) {
         return UserRet::from_error(sched_err_to_errno(e));
     }
-    if cpusetsize > SCHED_CPUSET_MAX {
-        return UserRet::from_error(ErrNo::EINVAL);
-    }
     let task_id = match task::resolve_sched_pid(pid) {
         Ok(id) => id,
         Err(e) => return UserRet::from_error(sched_err_to_errno(e)),
@@ -234,10 +246,7 @@ pub(crate) fn sys_sched_getaffinity(args : SyscallArgs) -> UserRet {
     if task::get_scheduler_policy(task_id).is_err() {
         return UserRet::from_error(ErrNo::ESRCH);
     }
-    let mut buf = match try_kbuf(cpusetsize, SCHED_CPUSET_MAX) {
-        Ok(buf) => buf,
-        Err(err) => return UserRet::from_error(err),
-    };
+    let mut buf = [0u8; 8];
     let affinity = match task::get_affinity(task_id) {
         Ok(mask) => mask,
         Err(e) => return UserRet::from_error(sched_err_to_errno(e)),

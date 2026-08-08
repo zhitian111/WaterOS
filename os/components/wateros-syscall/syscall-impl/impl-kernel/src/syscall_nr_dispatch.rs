@@ -18,6 +18,7 @@ pub fn dispatch_syscall_by_nr(syscall_nr : usize, syscall_args : SyscallArgs) ->
         n if n == api_v0::SCHED_GETAFFINITY => sys::sys_sched_getaffinity(syscall_args).0,
         n if n == api_v0::SCHED_GET_PRIORITY_MAX => sys::sys_sched_get_priority_max(syscall_args).0,
         n if n == api_v0::SCHED_GET_PRIORITY_MIN => sys::sys_sched_get_priority_min(syscall_args).0,
+        n if n == api_v0::GETCPU => sys::sys_getcpu(syscall_args).0,
         n if n == api_v0::EXIT => sys::sys_exit(syscall_args.arg(0) as isize),
         n if n == api_v0::EXIT_GROUP => sys::sys_exit_group(syscall_args.arg(0) as isize),
         n if n == api_v0::READ => sys::sys_read(syscall_args).0,

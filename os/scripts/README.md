@@ -56,31 +56,20 @@ chmod +x ./scripts/*.sh
     `wait`、Ctrl-C、raw termios 和救援 shell；`--mode run --script /...` 验证
     脚本模式，`--vim` 另要求镜像包含 Vim 并验证其 raw mode 保存。
 
-### QEMU operator 参数
+### 启动行为由编译期 feature 控制
 
-`rv_pre_run.sh`、`rv_final_run.sh`、`la_pre_run.sh` 和 `la_final_run.sh`
-均把下列环境变量转换成内核 `-append` 启动参数：
-
-| 变量 | 用途 |
-| --- | --- |
-| `WOS_MODE=auto\|shell\|run` | 选择自动评测、交互 shell 或脚本 |
-| `WOS_SHELL=/path` | 指定 shell/BusyBox ELF |
-| `WOS_SCRIPT=/path` | `run` 模式脚本 |
-| `WOS_ON_EXIT=shutdown\|shell\|reboot` | 主程序退出策略 |
-| `WOS_TTY=interactive\|closed\|fixture` | 真实 UART、EOF 或自动密码输入 |
-| `WOS_LOG=error\|warn\|info\|debug\|trace` | 运行时日志级别 |
-| `WOS_SMP=1..8` | QEMU vCPU 数；LoongArch 同时据此限制 mailbox/AP 目标 |
-| `WOS_WRITE_DISK=1` | operator 模式显式写回基础镜像 |
-| `WOS_QEMU_SNAPSHOT=1` | 对任意模式强制 QEMU snapshot |
-| `WOS_SDCARD=/path/image.img` | QEMU 使用的根文件系统镜像；直接运行脚本时必须指定 |
+QEMU 启动命令不再携带 `-append` 或 `wos.*` bootargs。`make MODE=...` 只在构建期
+选择根 crate feature：`auto` 不加 operator feature，`shell` 启用
+`operator-shell`，`run` 启用 `operator-run`。shell 路径和 run 脚本分别通过
+`GUEST_SHELL`、`SCRIPT` 在编译时嵌入内核。
 
 推荐通过 `make run`、`make shell` 或 `make debug-server` 启动；Makefile 会按
 `ARCH/PROFILE` 从 `RV_PRE_IMAGE`、`RV_FINAL_IMAGE`、`LA_PRE_IMAGE`、
 `LA_FINAL_IMAGE` 中选择镜像。只有绕过 Make 直接执行上述兼容脚本时，才需要
 显式设置 `WOS_SDCARD`。
 
-operator 模式在没有 `WOS_WRITE_DISK=1` 时默认加 `-snapshot`。自动模式保持
-原有磁盘行为。完整的现场命令表与 TTY 排查见 `os/README.md`。
+磁盘策略只由 `WOS_QEMU_SNAPSHOT` / Makefile 的 `SNAPSHOT`、`WRITE_DISK`
+控制，与启动行为无关。完整的现场命令表见 `os/README.md`。
 
 ### Makefile 调试目标（在 `os/` 目录下）
 
@@ -100,6 +89,62 @@ operator 模式在没有 `WOS_WRITE_DISK=1` 时默认加 `-snapshot`。自动模
 `START_PAUSED=0`。活动会话保存在 `debug-reports/active/session.json`，
 所以 `make gdb/snapshot/watch` 不需要重复架构、ELF 和端口。旧 `*-gdb`
 目标仅作弃用兼容转发。
+
+#### 并行跑 QEMU（32 核可直接按核分片）
+
+所有 RISC-V / LoongArch 的 run 脚本都支持 `WOS_TASKSET_CPUS`，用逗号/横杠指定主机
+CPU 集合，例如：
+
+```bash
+WOS_TASKSET_CPUS=0-7 ./scripts/rv_final_run.sh
+```
+
+也可以用总控脚本同时启动多个测试（按主机核心自动分配）：
+
+```bash
+cd os
+WOS_CORES_PER_JOB=8 \
+WOS_MAX_PARALLEL_JOBS=4 \
+./scripts/run_qemu_parallel.sh \
+  "WOS_SMP=8 make rv_final_run" \
+  "WOS_SMP=8 make rv_final_run" \
+  "WOS_SMP=8 make rv_final_run" \
+  "WOS_SMP=8 make rv_final_run"
+```
+
+如果你机器是 32 核（`nproc`=32），上面会自动分配核区间 `0-7 / 8-15 / 16-23 / 24-31`，
+4 个实例可并行执行。也可在命令中省略 `WOS_SMP`，通过自动注入让其等于
+`WOS_CORES_PER_JOB`：
+
+```bash
+WOS_CORES_PER_JOB=4 WOS_AUTO_SMP=1 \
+./scripts/run_qemu_parallel.sh \
+  "make rv_final_run" \
+  "make rv_final_run" \
+  "make rv_final_run" \
+  "make rv_final_run"
+```
+
+在 32 核机器上，上面会使用 `0-7 / 8-15 / 16-23 / 24-31` 四组核。
+
+如果测试要写盘，使用 snapshot 时要给每实例分配不同的 `WOS_SNAPSHOT_ID`，
+避免 overlay 文件互相覆盖。
+
+并行运行同一镜像多个实例时，可通过总控脚本关闭 qemu 磁盘锁验证（仅推荐 qcow2 镜像）:
+
+```bash
+cd os
+WOS_CORES_PER_JOB=4 WOS_AUTO_SMP=1 WOS_AUTO_UNLOCK_DRIVE=1 \
+./scripts/run_qemu_parallel.sh \
+  "WOS_QEMU_SNAPSHOT=1 WOS_SDCARD=./sdcard-rv-pub.qcow2 make rv_pre_run" \
+  "WOS_QEMU_SNAPSHOT=1 WOS_SDCARD=./sdcard-rv-pub.qcow2 make rv_pre_run"
+```
+
+`WOS_AUTO_UNLOCK_DRIVE=1` 会为每个任务注入
+`WOS_QEMU_IMAGE_DRIVE_OPTIONS=locking=off`（会自动忽略非 qcow2 镜像）。若要避免读共享冲突请改用独立镜像文件。
+
+若你现在只有 raw 镜像，可先克隆为 qcow2 供并行测试：
+`qemu-img convert -f raw -O qcow2 sdcard-rv-pub.img sdcard-rv-pub.qcow2`
 
 GDB/LLDB 的完整操作流程见
 [`docs/debugging/GDB_STALL_DEBUG.md`](../../docs/debugging/GDB_STALL_DEBUG.md)。

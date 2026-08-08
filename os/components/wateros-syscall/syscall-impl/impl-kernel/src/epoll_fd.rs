@@ -284,19 +284,27 @@ pub(crate) struct EpollEvent {
 
 impl EpollEvent {
     /// Linux defines `epoll_event` as packed on all supported user ABIs.
+    #[cfg(any(target_arch = "riscv64", target_arch = "loongarch64"))]
+    pub(crate) const EVENT_DATA_OFFSET : usize = 8;
+    #[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
+    pub(crate) const EVENT_DATA_OFFSET : usize = 4;
+    /// 当前镜像的 64 位 glibc 把 `data` 对齐到 8 字节，事件结构为 16 字节。
+    #[cfg(any(target_arch = "riscv64", target_arch = "loongarch64"))]
+    pub(crate) const ABI_SIZE : usize = 16;
+    #[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
     pub(crate) const ABI_SIZE : usize = 12;
 
     pub(crate) fn from_abi_bytes(bytes : &[u8; Self::ABI_SIZE]) -> Self {
         Self { events : u32::from_ne_bytes(bytes[..4].try_into()
                                                     .expect("epoll events width")),
-               data : u64::from_ne_bytes(bytes[4..].try_into()
-                                                   .expect("epoll data width")) }
+               data : u64::from_ne_bytes(bytes[Self::EVENT_DATA_OFFSET..].try_into()
+                                                                         .expect("epoll data width")) }
     }
 
     pub(crate) fn to_abi_bytes(self) -> [u8; Self::ABI_SIZE] {
         let mut bytes = [0; Self::ABI_SIZE];
         bytes[..4].copy_from_slice(&self.events.to_ne_bytes());
-        bytes[4..].copy_from_slice(&self.data.to_ne_bytes());
+        bytes[Self::EVENT_DATA_OFFSET..].copy_from_slice(&self.data.to_ne_bytes());
         bytes
     }
 }
@@ -353,9 +361,9 @@ mod tests {
                                  data : 0x0123_4567_89ab_cdef };
         let bytes = event.to_abi_bytes();
 
-        assert_eq!(bytes.len(), 12);
+        assert_eq!(bytes.len(), EpollEvent::ABI_SIZE);
         assert_eq!(&bytes[..4], &event.events.to_ne_bytes());
-        assert_eq!(&bytes[4..], &event.data.to_ne_bytes());
+        assert_eq!(&bytes[EpollEvent::EVENT_DATA_OFFSET..], &event.data.to_ne_bytes());
 
         let decoded = EpollEvent::from_abi_bytes(&bytes);
         assert_eq!(decoded.events, event.events);

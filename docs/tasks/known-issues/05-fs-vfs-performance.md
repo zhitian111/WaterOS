@@ -70,8 +70,11 @@ fs.read(inode, offset as usize, buf)
 - [`K-05A：稳定 inode 与 dcache`](./05a-inode-dentry-cache.md)
 - [`K-05B：page-cache O(1) LRU`](./05b-page-cache-lru.md)
 - [`K-05C：I/O 合并与预取`](./05c-io-merge-prefetch.md)
+- [`K-05D：ramfs 物理页后端`](./05d-ramfs-physical-pages.md)
 
 K-05A 的 file identity/cache key 契约先提交；其后 K-05B 与 K-05C 可独立实现和测量。
+K-05D 是 `/tmp` 耗尽内核堆的正确性修复，不依赖 K-04 证明 FS 是性能 Top 3；
+它可与 A/B/C 并行，但不得同时修改未冻结的 MM 页所有权 API。
 
 ## 任务内容
 

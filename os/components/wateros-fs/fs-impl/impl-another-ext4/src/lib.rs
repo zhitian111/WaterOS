@@ -21,6 +21,7 @@ use api_v0::{
     FsAccessMode, FsCapability, FsDirEntry, FsError, FsImpl, FsKind, FsMetadata, FsNodeId,
     FsNodeType, FsResult, LocalFs, LocalRwFs, ReadOnlyFs, ReadWriteFs, SharedFs, SharedRwFs,
 };
+use core::sync::atomic::{AtomicBool, Ordering};
 use driver_block_api_v0::{Lba, SharedBlockDevice};
 use spin::Mutex;
 
@@ -54,6 +55,7 @@ fn map_type(file_type : FileType) -> FsNodeType {
 /// Adapts WaterOS's 512-byte-LBA block device to another_ext4's 4096-byte blocks.
 struct BlockAdapter {
     device : SharedBlockDevice,
+    io_error : Arc<AtomicBool>,
 }
 
 impl BlockDevice for BlockAdapter {
@@ -62,12 +64,17 @@ impl BlockDevice for BlockAdapter {
         let mut guard = self.device.lock();
         let block_size = guard.block_size() as u64;
         if block_size == 0 || BLOCK_SIZE as u64 % block_size != 0 {
-            panic!("another-ext4: unsupported device block size {block_size}");
+            self.io_error.store(true, Ordering::Release);
+            log::error!(
+                "[fs::another-ext4] unsupported device block size {block_size}, block={block_id}"
+            );
+            return Block::new(block_id, data);
         }
         guard.read_blocks(Lba(block_id * (BLOCK_SIZE as u64 / block_size)),
                           &mut data[..])
              .unwrap_or_else(|error| {
-                 panic!("another-ext4: failed to read block {block_id}: {error:?}")
+                 self.io_error.store(true, Ordering::Release);
+                 log::error!("[fs::another-ext4] failed to read block {block_id}: {error:?}");
              });
         Block::new(block_id, data)
     }
@@ -76,12 +83,17 @@ impl BlockDevice for BlockAdapter {
         let mut guard = self.device.lock();
         let block_size = guard.block_size();
         if block_size == 0 || BLOCK_SIZE % block_size != 0 {
-            panic!("another-ext4: unsupported device block size {block_size}");
+            self.io_error.store(true, Ordering::Release);
+            log::error!(
+                "[fs::another-ext4] unsupported device block size {block_size}, block={}", block.id
+            );
+            return;
         }
         let lba_count = BLOCK_SIZE / block_size;
         guard.write_blocks(Lba(block.id * lba_count as u64), &block.data[..])
              .unwrap_or_else(|error| {
-                 panic!("another-ext4: failed to write block {}: {error:?}", block.id)
+                 self.io_error.store(true, Ordering::Release);
+                 log::error!("[fs::another-ext4] failed to write block {}: {error:?}", block.id);
              });
     }
 }
@@ -151,6 +163,7 @@ fn parent_name(path : &str) -> FsResult<(&str, &str)> {
 
 pub struct AnotherExt4Fs {
     fs : Option<Ext4>,
+    io_error_state : Option<Arc<AtomicBool>>,
     lookup_cache : Mutex<BTreeMap<String, u32>>,
     open_nodes : BTreeMap<u32, usize>,
     orphan_nodes : BTreeMap<u32, String>,
@@ -160,19 +173,26 @@ pub struct AnotherExt4Fs {
 impl AnotherExt4Fs {
     const fn new() -> Self {
         Self { fs : None,
+               io_error_state : None,
                lookup_cache : Mutex::new(BTreeMap::new()),
                open_nodes : BTreeMap::new(),
                orphan_nodes : BTreeMap::new(),
                orphan_dir : None }
     }
     fn get(&self) -> FsResult<&Ext4> {
+        self.check_backend()?;
         self.fs
             .as_ref()
             .ok_or(FsError::NotMounted)
     }
 
     fn get_mut(&mut self) -> FsResult<&mut Ext4> {
+        self.check_backend()?;
         self.fs.as_mut().ok_or(FsError::NotMounted)
+    }
+
+    fn check_backend(&self) -> FsResult<()> {
+        check_backend_error(&self.io_error_state)
     }
 
     fn lookup(&self, path : &str) -> FsResult<u32> {
@@ -320,8 +340,13 @@ impl AnotherExt4Fs {
 
 impl ReadOnlyFs for AnotherExt4Fs {
     fn mount(&mut self, device : SharedBlockDevice) -> FsResult<()> {
-        let backend = Arc::new(BlockAdapter { device });
-        self.fs = Some(Ext4::load(backend).map_err(map_error)?);
+        let io_error_state = Arc::new(AtomicBool::new(false));
+        let backend = Arc::new(BlockAdapter { device, io_error : io_error_state.clone() });
+        let fs = Ext4::load(backend).map_err(map_error)?;
+        let state = Some(io_error_state);
+        check_backend_error(&state)?;
+        self.io_error_state = state;
+        self.fs = Some(fs);
         self.lookup_cache.lock().clear();
         self.open_nodes.clear();
         self.orphan_nodes.clear();
@@ -332,21 +357,25 @@ impl ReadOnlyFs for AnotherExt4Fs {
     fn is_mounted(&self) -> bool { self.fs.is_some() }
 
     fn exists(&self, path : &str) -> FsResult<bool> {
-        match self.lookup(path) {
+        let result = match self.lookup(path) {
             Ok(_) => Ok(true),
             Err(FsError::NotFound) => Ok(false),
             Err(error) => Err(error),
-        }
+        };
+        self.check_backend()?;
+        result
     }
 
     fn metadata(&self, path : &str) -> FsResult<FsMetadata> {
-        metadata(self.get()?, self.lookup(path)?)
+        let result = metadata(self.get()?, self.lookup(path)?);
+        self.check_backend()?;
+        result
     }
 
     fn read_range(&self, path : &str, offset : u64, buf : &mut [u8]) -> FsResult<usize> {
         let fs = self.get()?;
         let inode = self.lookup(path)?;
-        fs.read(inode, offset as usize, buf).map_err(|error| {
+        let result = fs.read(inode, offset as usize, buf).map_err(|error| {
             log::error!("[fs::another-ext4] read failed path={} inode={} offset={} len={} code={:?}",
                         path,
                         inode,
@@ -354,7 +383,9 @@ impl ReadOnlyFs for AnotherExt4Fs {
                         buf.len(),
                         error.code());
             map_error(error)
-        })
+        });
+        self.check_backend()?;
+        result
     }
 
     fn read(&self, path : &str) -> FsResult<Vec<u8>> {
@@ -389,6 +420,7 @@ impl ReadOnlyFs for AnotherExt4Fs {
             entries.push(FsDirEntry { name,
                                       node_type : map_type(child.ftype) });
         }
+        self.check_backend()?;
         Ok(entries)
     }
 
@@ -403,20 +435,31 @@ impl ReadOnlyFs for AnotherExt4Fs {
         let mut data = vec![0; attr.size as usize];
         let len = fs.readlink(inode, 0, &mut data)
                     .map_err(map_error)?;
+        self.check_backend()?;
         data.truncate(len);
         Ok(data)
     }
 }
 
+fn check_backend_error(io_error_state : &Option<Arc<AtomicBool>>) -> FsResult<()> {
+    if io_error_state.as_ref().is_some_and(|state| state.load(Ordering::Acquire)) {
+        return Err(FsError::Io);
+    }
+    Ok(())
+}
+
 impl ReadWriteFs for AnotherExt4Fs {
     fn mount_rw(&mut self, device : SharedBlockDevice) -> FsResult<()> {
         self.mount(device)?;
-        self.cleanup_stale_orphans()
+        let result = self.cleanup_stale_orphans();
+        self.check_backend()?;
+        result
     }
     fn is_mounted(&self) -> bool { self.fs.is_some() }
 
     fn sync(&mut self) -> FsResult<()> {
         self.get_mut()?.flush_all();
+        self.check_backend()?;
         Ok(())
     }
 
@@ -427,6 +470,7 @@ impl ReadWriteFs for AnotherExt4Fs {
         }
         let count = self.open_nodes.entry(inode).or_insert(0);
         *count = count.checked_add(1).ok_or(FsError::NoSpace)?;
+        self.check_backend()?;
         Ok(FsNodeId::new(inode as u64))
     }
 
@@ -444,6 +488,7 @@ impl ReadWriteFs for AnotherExt4Fs {
             let dir = self.orphan_dir.ok_or(FsError::Io)?;
             self.get_mut()?.unlink(dir, name.as_str()).map_err(map_error)?;
             self.get_mut()?.flush_all();
+            self.check_backend()?;
             self.orphan_nodes.remove(&inode);
         }
         self.open_nodes.remove(&inode);
@@ -451,7 +496,9 @@ impl ReadWriteFs for AnotherExt4Fs {
     }
 
     fn metadata_node(&self, node : FsNodeId) -> FsResult<FsMetadata> {
-        metadata(self.get()?, self.open_inode(node)?)
+        let result = metadata(self.get()?, self.open_inode(node)?);
+        self.check_backend()?;
+        result
     }
 
     fn read_range_node(&self,
@@ -459,7 +506,9 @@ impl ReadWriteFs for AnotherExt4Fs {
                        offset : u64,
                        buf : &mut [u8])
                        -> FsResult<usize> {
-        self.get()?.read(self.open_inode(node)?, offset as usize, buf).map_err(map_error)
+        let result = self.get()?.read(self.open_inode(node)?, offset as usize, buf).map_err(map_error);
+        self.check_backend()?;
+        result
     }
 
     fn write_range_node(&mut self,
@@ -468,7 +517,9 @@ impl ReadWriteFs for AnotherExt4Fs {
                         data : &[u8])
                         -> FsResult<usize> {
         let inode = self.open_inode(node)?;
-        write_with_ordered_size(self.get_mut()?, inode, offset, data)
+        let result = write_with_ordered_size(self.get_mut()?, inode, offset, data);
+        self.check_backend()?;
+        result
     }
 
     fn truncate_node(&mut self, node : FsNodeId, len : u64) -> FsResult<()> {
@@ -476,6 +527,7 @@ impl ReadWriteFs for AnotherExt4Fs {
         self.get_mut()?.setattr(inode, None, None, None, Some(len), None, None, None, None)
                        .map_err(map_error)?;
         self.get_mut()?.flush_all();
+        self.check_backend()?;
         Ok(())
     }
 
@@ -519,6 +571,7 @@ impl ReadWriteFs for AnotherExt4Fs {
           .map_err(map_error)?;
         write_with_ordered_size(fs, inode, 0, data)?;
         fs.flush_all();
+        self.check_backend()?;
         if created {
             self.cache_insert(path, inode);
         }
@@ -533,6 +586,7 @@ impl ReadWriteFs for AnotherExt4Fs {
         self.preserve_inode_if_open(inode)?;
         self.get_mut()?.generic_remove(EXT4_ROOT_INO, path).map_err(map_error)?;
         self.get_mut()?.flush_all();
+        self.check_backend()?;
         self.cache_remove_subtree(path);
         Ok(())
     }
@@ -545,6 +599,7 @@ impl ReadWriteFs for AnotherExt4Fs {
         }
         fs.generic_remove(EXT4_ROOT_INO, path).map_err(map_error)?;
         fs.flush_all();
+        self.check_backend()?;
         self.cache_remove_subtree(path);
         Ok(())
     }
@@ -552,7 +607,9 @@ impl ReadWriteFs for AnotherExt4Fs {
     fn write_range(&mut self, path : &str, offset : u64, data : &[u8]) -> FsResult<usize> {
         let fs = self.get_mut()?;
         let inode = lookup(fs, path)?;
-        write_with_ordered_size(fs, inode, offset, data)
+        let result = write_with_ordered_size(fs, inode, offset, data);
+        self.check_backend()?;
+        result
     }
 
     fn truncate(&mut self, path : &str, len : u64) -> FsResult<()> {
@@ -561,6 +618,7 @@ impl ReadWriteFs for AnotherExt4Fs {
         fs.setattr(inode, None, None, None, Some(len), None, None, None, None)
           .map_err(map_error)?;
         fs.flush_all();
+        self.check_backend()?;
         Ok(())
     }
 
@@ -578,6 +636,7 @@ impl ReadWriteFs for AnotherExt4Fs {
                              InodeMode::DIRECTORY | InodeMode::from_bits_retain(mode as u16))
                       .map_err(map_error)?;
         fs.flush_all();
+        self.check_backend()?;
         self.cache_insert(path, inode);
         Ok(())
     }
@@ -591,6 +650,7 @@ impl ReadWriteFs for AnotherExt4Fs {
         fs.setattr(inode, Some(mode), None, None, None, None, None, None, None)
           .map_err(map_error)?;
         fs.flush_all();
+        self.check_backend()?;
         Ok(())
     }
 
@@ -600,6 +660,7 @@ impl ReadWriteFs for AnotherExt4Fs {
         fs.setattr(inode, None, uid, gid, None, None, None, None, None)
           .map_err(map_error)?;
         fs.flush_all();
+        self.check_backend()?;
         Ok(())
     }
 
@@ -614,6 +675,7 @@ impl ReadWriteFs for AnotherExt4Fs {
         let inode = fs.generic_create(EXT4_ROOT_INO, path, inode_mode)
                       .map_err(map_error)?;
         fs.flush_all();
+        self.check_backend()?;
         self.cache_insert(path, inode);
         Ok(())
     }
@@ -622,6 +684,7 @@ impl ReadWriteFs for AnotherExt4Fs {
         let fs = self.get_mut()?;
         fs.generic_rename(EXT4_ROOT_INO, old_path, new_path).map_err(map_error)?;
         fs.flush_all();
+        self.check_backend()?;
         self.cache_rename_subtree(old_path, new_path);
         Ok(())
     }
@@ -648,6 +711,7 @@ impl ReadWriteFs for AnotherExt4Fs {
 
         fs.link(child, parent, name).map_err(map_error)?;
         fs.flush_all();
+        self.check_backend()?;
         self.cache_insert(new_path, child);
         Ok(())
     }
@@ -679,7 +743,17 @@ impl FsImpl for AnotherExt4Impl {
 
 #[cfg(test)]
 mod tests {
-    use super::{AnotherExt4Fs, FsError, FsNodeId, ReadWriteFs};
+    use super::{AnotherExt4Fs, AtomicBool, FsError, FsNodeId, Ordering, ReadWriteFs,
+                check_backend_error};
+    use alloc::sync::Arc;
+
+    #[test]
+    fn backend_error_latch_reports_io_after_failure() {
+        let state = Some(Arc::new(AtomicBool::new(false)));
+        assert_eq!(check_backend_error(&state), Ok(()));
+        state.as_ref().unwrap().store(true, Ordering::Release);
+        assert_eq!(check_backend_error(&state), Err(FsError::Io));
+    }
 
     #[test]
     fn lookup_cache_rename_moves_only_source_subtree() {

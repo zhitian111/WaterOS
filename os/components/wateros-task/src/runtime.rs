@@ -33,14 +33,14 @@ unsafe extern "C" {
 /// arch 恢复例程。
 #[unsafe(no_mangle)]
 pub extern "C" fn __wateros_task_runtime_enter_current_user_task() -> ! {
+    scheduler::enqueue_deferred_task();
     let mut trap_frame = TaskTrapFrame::default();
     let restored = scheduler::restore_current_trap_frame(&mut trap_frame);
     assert!(restored,
             "user task entry requires a prepared trap frame in the current task");
     let kernel_stack_top =
-        scheduler::current_task_snapshot()
-            .map(|snap| snap.kernel_stack_top)
-            .expect("user task must have a kernel stack");
+        scheduler::current_task_snapshot().map(|snap| snap.kernel_stack_top)
+                                          .expect("user task must have a kernel stack");
     unsafe {
         __wateros_arch_restore_user_task((&trap_frame as *const TaskTrapFrame).cast::<u8>(),
                                          kernel_stack_top)
@@ -48,6 +48,8 @@ pub extern "C" fn __wateros_task_runtime_enter_current_user_task() -> ! {
 }
 
 /// Idle任务入口：仅启用全局中断并循环等待中断。
+///
+/// 延迟迁移发布由共用入口 `__wateros_task_runtime_entry` 完成（idle 也经该入口进入）。
 #[unsafe(no_mangle)]
 pub extern "C" fn __wateros_idle_task_runtime_main(_arg : usize) -> ! {
     let _ = arch::interrupt::enable_global_interrupt();
@@ -56,9 +58,13 @@ pub extern "C" fn __wateros_idle_task_runtime_main(_arg : usize) -> ! {
     }
 }
 
-/// 普通内核任务入口
+/// 内核任务入口（idle 任务也经由此入口）：先发布被延迟的跨核迁移任务，再执行任务体。
+///
+/// 首次运行的 kernel/idle 任务经 `__switch` 直接进入此处（不会回到 `switch_and_unlock`），
+/// 所以必须在此完成 `enqueue_deferred_task()` 的延迟发布。
 #[unsafe(no_mangle)]
 pub extern "C" fn __wateros_task_runtime_entry(bootstrap_ptr : usize) -> ! {
+    scheduler::enqueue_deferred_task();
     let bootstrap = unsafe { &*(bootstrap_ptr as *const TaskBootstrap) };
     arch::interrupt::enable_global_interrupt().expect("enable global interrupt for task runtime");
     bootstrap.run()

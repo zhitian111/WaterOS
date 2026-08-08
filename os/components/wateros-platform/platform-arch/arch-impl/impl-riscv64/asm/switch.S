@@ -27,6 +27,9 @@ __switch:
         .set n, n + 1
     .endr
     ld sp, 8(a1)
+    # 用户态入口会在 `sret` 前重新设置 sscratch；切换到内核/idle 上下文时必须
+    # 保持 sscratch=0，否则下一次内核 trap 会被误判为来自用户态。
+    csrw sscratch, x0
     # 新栈属于另一个任务，旧调用者不能再由普通 CFA 表达；切换完成后的真实
     # 调用链从新上下文保存的 ra 继续。
     .cfi_undefined ra

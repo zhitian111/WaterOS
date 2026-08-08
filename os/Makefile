@@ -54,9 +54,9 @@ CONFIG_KEY := $(ARCH)-$(PROFILE)
 # QEMU 启动器只接收最终路径，不再根据 profile 猜测或静默回退。
 RV_PRE_IMAGE ?= ./sdcard-rv.img
 # 当前工作区 pre/final 共用该基础镜像；比赛镜像可在命令行单独覆盖。
-RV_FINAL_IMAGE ?= ./sdcard-rv.img
+RV_FINAL_IMAGE ?= ./sdcard-rv-pub.img
 LA_PRE_IMAGE ?= ./sdcard-la.img
-LA_FINAL_IMAGE ?= ./sdcard-la.img
+LA_FINAL_IMAGE ?= ./sdcard-la-pub.img
 IMAGE_rv_pre = $(RV_PRE_IMAGE)
 IMAGE_rv_final = $(RV_FINAL_IMAGE)
 IMAGE_la_pre = $(LA_PRE_IMAGE)
@@ -64,12 +64,10 @@ IMAGE_la_final = $(LA_FINAL_IMAGE)
 SELECTED_IMAGE = $(IMAGE_$(ARCH)_$(PROFILE))
 
 SMP ?= $(if $(WOS_SMP),$(WOS_SMP),8)
-MODE ?= $(if $(WOS_MODE),$(WOS_MODE),auto)
-SCRIPT ?= $(WOS_SCRIPT)
-GUEST_SHELL ?= $(WOS_SHELL)
-ON_EXIT ?= $(WOS_ON_EXIT)
-TTY ?= $(WOS_TTY)
-LOG ?= $(WOS_LOG)
+# MODE 只选择编译期 operator feature，不传给 QEMU。
+MODE ?= $(if $(WATEROS_MODE),$(WATEROS_MODE),auto)
+SCRIPT ?= $(WATEROS_OPERATOR_SCRIPT)
+GUEST_SHELL ?= $(WATEROS_OPERATOR_SHELL)
 WRITE_DISK ?= $(if $(WOS_WRITE_DISK),$(WOS_WRITE_DISK),0)
 SNAPSHOT ?= $(if $(WOS_QEMU_SNAPSHOT),$(WOS_QEMU_SNAPSHOT),$(if $(filter 1,$(WRITE_DISK)),0,1))
 # SDCARD 用于单次覆盖；WOS_SDCARD 保留为脚本兼容入口。
@@ -87,40 +85,43 @@ GDB_SUFFIX := $(if $(filter 1,$(GDB_BUILD)),-gdb,)
 GDB_FAULT_FEATURE := $(if $(filter 1,$(GDB_FAULTS)),$(COMMA)gdb-fault-injection,)
 GDB_FEATURE_SUFFIX := $(if $(filter 1,$(GDB_BUILD)),$(COMMA)gdb-debug$(GDB_FAULT_FEATURE),)
 EXTRA_FEATURE_SUFFIX := $(if $(strip $(EXTRA_FEATURES)),$(COMMA)$(EXTRA_FEATURES),)
+OPERATOR_FEATURE := $(if $(filter shell,$(MODE)),operator-shell,$(if $(filter run,$(MODE)),operator-run,))
+OPERATOR_FEATURE_SUFFIX := $(if $(strip $(OPERATOR_FEATURE)),$(COMMA)$(OPERATOR_FEATURE),)
 CARGO_PROFILE_ARG := $(if $(filter 1,$(GDB_BUILD)),--profile gdb,--release)
 GDB_FRAME_FLAGS := $(if $(filter 1,$(GDB_BUILD)),-C force-frame-pointers=yes,)
 GDB_BUILD_ID ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)-$(shell date +%s)
 HEAP_ALLOCATOR_FEATURE ?= heap-tlsf
+operator_env = WATEROS_OPERATOR_SHELL="$(GUEST_SHELL)" WATEROS_OPERATOR_SCRIPT="$(SCRIPT)"
 cargo_env = $(if $(filter 1,$(GDB_BUILD)),WATEROS_DEBUG_BUILD_ID="$(GDB_BUILD_ID)" WATEROS_DEBUG_FRAME_POINTERS=1 RUSTFLAGS="$(strip $(RUSTFLAGS) $(GDB_FRAME_FLAGS))",)
-cargo_build = $(cargo_env) cargo build
+cargo_build = $(operator_env) $(cargo_env) cargo build
 
 kernel_rv_flag := $(CARGO_PROFILE_ARG) --target riscv64gc-unknown-none-elf \
                   --no-default-features \
-                  --features qemu-riscv64-opensbi,pre,$(HEAP_ALLOCATOR_FEATURE)$(EXTRA_FEATURE_SUFFIX)$(GDB_FEATURE_SUFFIX)
+                  --features qemu-riscv64-opensbi,pre,$(HEAP_ALLOCATOR_FEATURE)$(EXTRA_FEATURE_SUFFIX)$(OPERATOR_FEATURE_SUFFIX)$(GDB_FEATURE_SUFFIX)
 kernel_rv_pre_flag := $(CARGO_PROFILE_ARG) --target riscv64gc-unknown-none-elf \
                       --no-default-features \
-                      --features qemu-riscv64-opensbi,pre,$(HEAP_ALLOCATOR_FEATURE)$(EXTRA_FEATURE_SUFFIX)$(GDB_FEATURE_SUFFIX)
+                      --features qemu-riscv64-opensbi,pre,$(HEAP_ALLOCATOR_FEATURE)$(EXTRA_FEATURE_SUFFIX)$(OPERATOR_FEATURE_SUFFIX)$(GDB_FEATURE_SUFFIX)
 kernel_rv_final_flag := $(CARGO_PROFILE_ARG) --target riscv64gc-unknown-none-elf \
                         --no-default-features \
-                        --features qemu-riscv64-opensbi,final_online,$(HEAP_ALLOCATOR_FEATURE)$(EXTRA_FEATURE_SUFFIX)$(GDB_FEATURE_SUFFIX)
+                        --features qemu-riscv64-opensbi,final_online,$(HEAP_ALLOCATOR_FEATURE)$(EXTRA_FEATURE_SUFFIX)$(OPERATOR_FEATURE_SUFFIX)$(GDB_FEATURE_SUFFIX)
 kernel_rv_final_log_flag := $(CARGO_PROFILE_ARG) --target riscv64gc-unknown-none-elf \
                             --no-default-features \
-                            --features qemu-riscv64-opensbi,final_online,stall-debug,$(HEAP_ALLOCATOR_FEATURE)$(EXTRA_FEATURE_SUFFIX)$(GDB_FEATURE_SUFFIX)
+                            --features qemu-riscv64-opensbi,final_online,stall-debug,$(HEAP_ALLOCATOR_FEATURE)$(EXTRA_FEATURE_SUFFIX)$(OPERATOR_FEATURE_SUFFIX)$(GDB_FEATURE_SUFFIX)
 kernel_rv_final_debug_flag := $(CARGO_PROFILE_ARG) --target riscv64gc-unknown-none-elf \
                               --no-default-features \
-                              --features qemu-riscv64-opensbi,final_online,dashboard-debug,$(HEAP_ALLOCATOR_FEATURE)$(EXTRA_FEATURE_SUFFIX)$(GDB_FEATURE_SUFFIX)
+                              --features qemu-riscv64-opensbi,final_online,dashboard-debug,$(HEAP_ALLOCATOR_FEATURE)$(EXTRA_FEATURE_SUFFIX)$(OPERATOR_FEATURE_SUFFIX)$(GDB_FEATURE_SUFFIX)
 
 kernel_rv_build_artifact_path := ./target/riscv64gc-unknown-none-elf/$(if $(filter 1,$(GDB_BUILD)),gdb,release)
 
 kernel_la_flag := $(CARGO_PROFILE_ARG) --target loongarch64-unknown-none \
                   --no-default-features \
-                  --features qemu-loongarch64-virt,pre,$(HEAP_ALLOCATOR_FEATURE)$(EXTRA_FEATURE_SUFFIX)$(GDB_FEATURE_SUFFIX)
+                  --features qemu-loongarch64-virt,pre,$(HEAP_ALLOCATOR_FEATURE)$(EXTRA_FEATURE_SUFFIX)$(OPERATOR_FEATURE_SUFFIX)$(GDB_FEATURE_SUFFIX)
 kernel_la_pre_flag := $(CARGO_PROFILE_ARG) --target loongarch64-unknown-none \
                       --no-default-features \
-                      --features qemu-loongarch64-virt,pre,$(HEAP_ALLOCATOR_FEATURE)$(EXTRA_FEATURE_SUFFIX)$(GDB_FEATURE_SUFFIX)
+                      --features qemu-loongarch64-virt,pre,$(HEAP_ALLOCATOR_FEATURE)$(EXTRA_FEATURE_SUFFIX)$(OPERATOR_FEATURE_SUFFIX)$(GDB_FEATURE_SUFFIX)
 kernel_la_final_flag := $(CARGO_PROFILE_ARG) --target loongarch64-unknown-none \
                         --no-default-features \
-                        --features qemu-loongarch64-virt,final_online,$(HEAP_ALLOCATOR_FEATURE)$(EXTRA_FEATURE_SUFFIX)$(GDB_FEATURE_SUFFIX)
+                        --features qemu-loongarch64-virt,final_online,$(HEAP_ALLOCATOR_FEATURE)$(EXTRA_FEATURE_SUFFIX)$(OPERATOR_FEATURE_SUFFIX)$(GDB_FEATURE_SUFFIX)
 
 kernel_la_build_artifact_path := ./target/loongarch64-unknown-none/$(if $(filter 1,$(GDB_BUILD)),gdb,release)
 GDB_PORT ?= $(PORT)
@@ -159,7 +160,7 @@ help:
 	@echo "  make run ARCH=rv PROFILE=final       执行内核 BRINGUP_COMMANDS"
 	@echo "  make shell ARCH=rv PROFILE=pre       进入交互 shell"
 	@echo "  make run EXTRA_FEATURES=display-demo 启动 VirtIO GPU 欢迎页"
-	@echo "  make run MODE=run SCRIPT=/root/x.sh  运行 guest 绝对路径脚本"
+	@echo "  make run MODE=run SCRIPT=/root/x.sh  构建 operator-run 内核并运行脚本"
 	@echo "  make debug ARCH=rv PROFILE=pre       自动启动并 watch"
 	@echo "  make debug-server ARCH=rv PROFILE=pre  手动挡：终端一启动 QEMU"
 	@echo "  make gdb                             手动挡：终端二连接"
@@ -167,7 +168,7 @@ help:
 	@echo "  make doctor                          检查 GDB/QEMU/符号工具"
 	@echo "  make show-config                     显示当前最终生效配置"
 	@echo ""
-	@echo "常用变量：SMP MODE SCRIPT GUEST_SHELL TTY LOG ON_EXIT SNAPSHOT WRITE_DISK SDCARD"
+	@echo "常用变量：SMP MODE SCRIPT GUEST_SHELL SNAPSHOT WRITE_DISK SDCARD"
 	@echo "图形变量：EXTRA_FEATURES=gui GRAPHICS=1 GRAPHICS_BACKEND=auto|gtk|sdl|cocoa|none"
 	@echo "镜像默认值：RV_PRE_IMAGE RV_FINAL_IMAGE LA_PRE_IMAGE LA_FINAL_IMAGE"
 	@echo "Make 不维护测试目录；auto 模式的测试由内核 bringup 选择。"
@@ -182,9 +183,7 @@ show-config:
 	@printf "  %-18s %s\n" "MODE" "$(MODE)"
 	@printf "  %-18s %s\n" "SCRIPT" "$(if $(strip $(SCRIPT)),$(SCRIPT),(空))"
 	@printf "  %-18s %s\n" "GUEST_SHELL" "$(if $(strip $(GUEST_SHELL)),$(GUEST_SHELL),(自动选择))"
-	@printf "  %-18s %s\n" "ON_EXIT" "$(if $(strip $(ON_EXIT)),$(ON_EXIT),(由内核按模式决定))"
-	@printf "  %-18s %s\n" "TTY" "$(if $(strip $(TTY)),$(TTY),(由内核按模式决定))"
-	@printf "  %-18s %s\n" "LOG" "$(if $(strip $(LOG)),$(LOG),(由内核按模式决定))"
+	@printf "  %-18s %s\n" "OPERATOR_FEATURE" "$(if $(strip $(OPERATOR_FEATURE)),$(OPERATOR_FEATURE),(自动评测队列))"
 	@printf "  %-18s %s\n" "SNAPSHOT" "$(SNAPSHOT)"
 	@printf "  %-18s %s\n" "WRITE_DISK" "$(WRITE_DISK)"
 	@printf "  %-18s %s\n" "PORT" "$(PORT)"
@@ -222,22 +221,20 @@ build: validate-config $(SELECTED_BUILD_TARGET)
 
 run: validate-config build
 	$(call INFO, "运行 ARCH=$(ARCH) PROFILE=$(PROFILE) MODE=$(MODE) SMP=$(SMP) snapshot=$(SNAPSHOT)")
-	@WOS_KERNEL="$(SELECTED_KERNEL)" WOS_SMP="$(SMP)" WOS_MODE="$(MODE)" \
-	 WOS_SCRIPT="$(SCRIPT)" WOS_SHELL="$(GUEST_SHELL)" WOS_ON_EXIT="$(ON_EXIT)" \
-	 WOS_TTY="$(TTY)" WOS_LOG="$(LOG)" WOS_QEMU_SNAPSHOT="$(SNAPSHOT)" \
+	@WOS_KERNEL="$(SELECTED_KERNEL)" WOS_SMP="$(SMP)" \
+	 WOS_QEMU_SNAPSHOT="$(SNAPSHOT)" \
 	 WOS_GRAPHICS="$(GRAPHICS)" WOS_QEMU_DISPLAY="$(GRAPHICS_BACKEND)" \
 	 WOS_WRITE_DISK="$(WRITE_DISK)" WOS_SDCARD="$(SDCARD)" \
 	 python3 ./scripts/qemu_run.py --arch "$(ARCH)" --profile "$(PROFILE)"
 
 shell:
 	@$(MAKE) --no-print-directory run ARCH="$(ARCH)" PROFILE="$(PROFILE)" SMP="$(SMP)" \
-		MODE=shell SCRIPT= TTY=interactive GUEST_SHELL="$(GUEST_SHELL)" \
-		LOG="$(LOG)" ON_EXIT="$(ON_EXIT)" SNAPSHOT="$(SNAPSHOT)" \
+		MODE=shell SCRIPT= GUEST_SHELL="$(GUEST_SHELL)" SNAPSHOT="$(SNAPSHOT)" \
 		WRITE_DISK="$(WRITE_DISK)" SDCARD="$(SDCARD)" EXTRA_FEATURES="$(EXTRA_FEATURES)"
 
 debug: validate-config
-	@WOS_MODE="$(MODE)" WOS_SCRIPT="$(SCRIPT)" WOS_SHELL="$(GUEST_SHELL)" \
-	 WOS_ON_EXIT="$(ON_EXIT)" WOS_TTY="$(TTY)" WOS_LOG="$(LOG)" WOS_SDCARD="$(SDCARD)" \
+	@WATEROS_MODE="$(MODE)" WATEROS_OPERATOR_SCRIPT="$(SCRIPT)" \
+	 WATEROS_OPERATOR_SHELL="$(GUEST_SHELL)" WOS_SDCARD="$(SDCARD)" \
 	 WOS_QEMU_SNAPSHOT="$(SNAPSHOT)" WOS_EXTRA_FEATURES="$(EXTRA_FEATURES)" \
 	 WOS_GRAPHICS="$(GRAPHICS)" WOS_QEMU_DISPLAY="$(GRAPHICS_BACKEND)" \
 	 python3 ./scripts/wateros_debug.py run "$(DEBUG_PROFILE)" --smp "$(SMP)" \
@@ -245,8 +242,8 @@ debug: validate-config
 		$(if $(filter 1,$(FAULTS)),--faults,)
 
 debug-server: validate-config
-	@WOS_MODE="$(MODE)" WOS_SCRIPT="$(SCRIPT)" WOS_SHELL="$(GUEST_SHELL)" \
-	 WOS_ON_EXIT="$(ON_EXIT)" WOS_TTY="$(TTY)" WOS_LOG="$(LOG)" WOS_SDCARD="$(SDCARD)" \
+	@WATEROS_MODE="$(MODE)" WATEROS_OPERATOR_SCRIPT="$(SCRIPT)" \
+	 WATEROS_OPERATOR_SHELL="$(GUEST_SHELL)" WOS_SDCARD="$(SDCARD)" \
 	 WOS_QEMU_SNAPSHOT="$(SNAPSHOT)" WOS_EXTRA_FEATURES="$(EXTRA_FEATURES)" \
 	 WOS_GRAPHICS="$(GRAPHICS)" WOS_QEMU_DISPLAY="$(GRAPHICS_BACKEND)" \
 	 python3 ./scripts/wateros_debug.py server "$(DEBUG_PROFILE)" --smp "$(SMP)" \
@@ -454,12 +451,12 @@ la_symbol_at: kernel-la
 
 rv_check:
 	$(call INFO, "开始对 riscv 平台进行 cargo check ...")
-	@$(cargo_env) cargo check $(SELECTED_RV_FLAG)
+	@$(operator_env) $(cargo_env) cargo check $(SELECTED_RV_FLAG)
 	$(call INFO, "对 riscv 平台的 cargo check 完成！")
 
 la_check:
 	$(call INFO, "开始对 loongarch64 平台进行 cargo check ...")
-	@$(cargo_env) cargo check $(SELECTED_LA_FLAG)
+	@$(operator_env) $(cargo_env) cargo check $(SELECTED_LA_FLAG)
 	$(call INFO, "对 loongarch64 平台的 cargo check 完成！")
 
 # rv_link_app_asm:

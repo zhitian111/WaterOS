@@ -417,15 +417,8 @@ impl FsBridge {
                              -> VfsResult<usize> {
         match resolve_route(path)? {
             FsRoute::PseudoProc { rel, .. } => {
-                let data = proc_view().read(rel.as_str())
-                                      .map_err(map_fs_err)?;
-                let start = offset as usize;
-                if start >= data.len() {
-                    return Ok(0);
-                }
-                let n = core::cmp::min(buf.len(), data.len() - start);
-                buf[..n].copy_from_slice(&data[start..start + n]);
-                Ok(n)
+                proc_view().read_range(rel.as_str(), offset, buf)
+                           .map_err(map_fs_err)
             }
             FsRoute::PseudoSecurity { .. } => Err(VfsError::NotFound),
             FsRoute::Root { abs, .. } => match root_rw()?.lock()

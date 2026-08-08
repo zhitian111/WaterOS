@@ -2,7 +2,7 @@
 """WaterOS QEMU 命令的唯一组装入口。
 
 Make、兼容 shell 脚本与 GDB 工具都复用本模块，避免架构、
-profile、bootargs 和磁盘策略在多份脚本中漂移。
+profile 和磁盘策略在多份脚本中漂移。
 """
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ import argparse
 import os
 import platform
 import subprocess
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
@@ -19,32 +18,23 @@ from typing import Mapping
 OS_ROOT = Path(__file__).resolve().parent.parent
 VALID_ARCHES = {"rv", "la"}
 VALID_PROFILES = {"pre", "final"}
-VALID_MODES = {"auto", "shell", "run"}
-VALID_TTYS = {"interactive", "closed", "fixture"}
-VALID_ON_EXIT = {"shutdown", "shell", "reboot"}
-VALID_LOGS = {"error", "warn", "info", "debug", "trace"}
 DISPLAY_BACKEND_PREFERENCES = {
     "Darwin": ["cocoa", "sdl", "gtk", "none"],
 }
 
 
 class QemuConfigError(ValueError):
-    """QEMU 或 WaterOS bootargs 配置无效。"""
+    """QEMU 配置无效。"""
 
 
 @dataclass
 class QemuLaunch:
-    """一次可启动的 QEMU 配置及其临时文件。"""
+    """一次可启动的 QEMU 配置。"""
 
     argv: list[str]
-    temporary_files: list[Path]
 
     def cleanup(self) -> None:
-        for path in self.temporary_files:
-            try:
-                path.unlink()
-            except FileNotFoundError:
-                pass
+        pass
 
 
 def _value(environment: Mapping[str, str], name: str, default: str = "") -> str:
@@ -103,52 +93,6 @@ def _choose_display_backend(arch: str, requested: str) -> str:
     return "none"
 
 
-def _bootargs(arch: str, environment: Mapping[str, str]) -> tuple[str, str]:
-    mode = _value(environment, "WOS_MODE", "auto")
-    if mode not in VALID_MODES:
-        raise QemuConfigError(f"WOS_MODE 必须是 auto/shell/run，当前为 {mode!r}")
-
-    script = _value(environment, "WOS_SCRIPT")
-    if mode == "run":
-        if not script:
-            raise QemuConfigError("WOS_MODE=run 时必须提供 WOS_SCRIPT")
-        if not script.startswith("/"):
-            raise QemuConfigError("WOS_SCRIPT 必须是 guest 内的绝对路径")
-    elif script:
-        raise QemuConfigError("WOS_SCRIPT 只能与 WOS_MODE=run 一起使用")
-
-    smp = _value(environment, "WOS_SMP", "8")
-    try:
-        smp_number = int(smp)
-    except ValueError as exc:
-        raise QemuConfigError(f"WOS_SMP 必须是 1..8，当前为 {smp!r}") from exc
-    if not 1 <= smp_number <= 8:
-        raise QemuConfigError(f"WOS_SMP 必须是 1..8，当前为 {smp!r}")
-
-    optional = {
-        "wos.shell": _value(environment, "WOS_SHELL"),
-        "wos.script": script,
-        "wos.on_exit": _value(environment, "WOS_ON_EXIT"),
-        "wos.tty": _value(environment, "WOS_TTY"),
-        "wos.log": _value(environment, "WOS_LOG"),
-    }
-    if optional["wos.on_exit"] and optional["wos.on_exit"] not in VALID_ON_EXIT:
-        raise QemuConfigError("WOS_ON_EXIT 必须是 shutdown/shell/reboot")
-    if optional["wos.tty"] and optional["wos.tty"] not in VALID_TTYS:
-        raise QemuConfigError("WOS_TTY 必须是 interactive/closed/fixture")
-    if optional["wos.log"] and optional["wos.log"] not in VALID_LOGS:
-        raise QemuConfigError("WOS_LOG 必须是 error/warn/info/debug/trace")
-
-    fields = [f"wos.mode={mode}"]
-    if arch == "la":
-        fields.append(f"wos.cpus={smp_number}")
-    for key, value in optional.items():
-        if value:
-            _validate_token(key, value)
-            fields.append(f"{key}={value}")
-    return " ".join(fields), str(smp_number)
-
-
 def build_qemu_launch(
     arch: str,
     profile: str,
@@ -164,8 +108,14 @@ def build_qemu_launch(
         raise QemuConfigError(f"PROFILE 必须是 pre/final，当前为 {profile!r}")
     env = os.environ if environment is None else environment
     root = root.resolve()
-    bootargs, smp = _bootargs(arch, env)
-    memory = "1G" if profile == "pre" else "8G"
+    smp = _value(env, "WOS_SMP", "8")
+    try:
+        smp_number = int(smp)
+    except ValueError as exc:
+        raise QemuConfigError(f"WOS_SMP 必须是 1..8，当前为 {smp!r}") from exc
+    if not 1 <= smp_number <= 8:
+        raise QemuConfigError(f"WOS_SMP 必须是 1..8，当前为 {smp!r}")
+    memory = _value(env, "WOS_QEMU_MEM") or ("1G" if profile == "pre" else "8G")
     kernel_value = _value(env, "WOS_KERNEL") or f"./kernel-{arch}-{profile}"
     kernel = Path(kernel_value)
     if not kernel.is_absolute():
@@ -192,10 +142,14 @@ def build_qemu_launch(
     )
 
     if arch == "rv":
+        drive_options = _value(env, "WOS_QEMU_IMAGE_DRIVE_OPTIONS")
+        drive_spec = f"file={sdcard},if=none,format=raw,id=x0"
+        if drive_options:
+            drive_spec += f",{drive_options}"
         argv = [
             "qemu-system-riscv64", "-machine", "virt", "-kernel", str(kernel),
             "-m", memory, *console_args, "-smp", smp, "-bios", "default",
-            "-drive", f"file={sdcard},if=none,format=raw,id=x0",
+            "-drive", drive_spec,
             "-device", "virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0",
             "-no-reboot", "-device", "virtio-net-device,netdev=net",
             "-netdev", "user,id=net", "-rtc", "base=utc",
@@ -222,23 +176,8 @@ def build_qemu_launch(
                 "-device", "virtio-tablet-pci",
             ])
 
-    argv.extend(["-append", bootargs])
-    temporary_files: list[Path] = []
-    if arch == "la":
-        # LoongArch direct ELF boot 会清空 argc/argv/envp，因此同时将
-        # bootargs 放入 platform::boot 约定的 early-RAM mailbox。
-        with tempfile.NamedTemporaryFile(
-            prefix="wateros-la-bootargs.", delete=False
-        ) as stream:
-            stream.write(b"WOSCMD1" + bootargs.encode("utf-8") + b"\0")
-            mailbox = Path(stream.name)
-        temporary_files.append(mailbox)
-        argv.extend(["-device", f"loader,file={mailbox},addr=0xa0000000,force-raw=on"])
-
     snapshot = _value(env, "WOS_QEMU_SNAPSHOT", "0") == "1"
-    write_disk = _value(env, "WOS_WRITE_DISK", "0") == "1"
-    mode = _value(env, "WOS_MODE", "auto")
-    if snapshot or (mode != "auto" and not write_disk):
+    if snapshot:
         argv.append("-snapshot")
 
     gdb_enabled = _value(env, "WOS_QEMU_GDB", "0") == "1"
@@ -254,7 +193,11 @@ def build_qemu_launch(
         argv.extend(["-gdb", f"tcp:127.0.0.1:{port_number}"])
     if gdb_wait:
         argv.append("-S")
-    return QemuLaunch(argv, temporary_files)
+    cpuset = _value(env, "WOS_TASKSET_CPUS")
+    if cpuset:
+        _validate_token("WOS_TASKSET_CPUS", cpuset)
+        argv = ["taskset", "-c", cpuset, *argv]
+    return QemuLaunch(argv)
 
 
 def main() -> int:

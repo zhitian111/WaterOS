@@ -23,6 +23,18 @@ pub(crate) struct InterruptSafeTlsfHeap {
     used_estimate : AtomicUsize,
 }
 
+fn dealloc_pointer_in_heap(ptr : *mut u8, layout : Layout) -> bool {
+    let heap_start = addr_of_mut!(HEAP_SPACE) as usize;
+    let heap_end = heap_start.checked_add(KERNEL_HEAP_SIZE)
+                             .unwrap_or(usize::MAX);
+    let ptr_value = ptr as usize;
+    ptr_value >= heap_start &&
+    ptr_value < heap_end &&
+    ptr_value.checked_add(layout.size())
+             .map(|end| end <= heap_end)
+             .unwrap_or(false)
+}
+
 impl InterruptSafeTlsfHeap {
     pub(crate) const fn new() -> Self {
         Self { inner: Mutex::new(KernelTlsf::new()),
@@ -96,6 +108,12 @@ unsafe impl GlobalAlloc for InterruptSafeTlsfHeap {
 
     unsafe fn dealloc(&self, ptr : *mut u8, layout : Layout) {
         if ptr.is_null() {
+            return;
+        }
+        if !dealloc_pointer_in_heap(ptr, layout) {
+            log::warn!("[heap] ignored invalid TLSF dealloc ptr={ptr:p} size={} align={}",
+                       layout.size(),
+                       layout.align());
             return;
         }
         with_allocator_interrupt_guard(|| unsafe {

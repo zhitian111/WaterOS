@@ -32,10 +32,19 @@ impl MultiClassScheduler {
                                cpu_id : CpuId) {
         self.sync_current_to_registry(cpu_id);
         match target {
-            // Yield/Tick 后优先留在本核；affinity 不允许时才回退到最小负载 CPU。
+            // Yield/Tick 后优先留在本核；affinity 不允许时延迟到 `__switch` 之后再迁移，
+            // 避免把“仍在运行”的当前任务发布到别核被空闲核偷取（双核同跑）。
             QueueTarget::Ready => {
-                self.activate_ready_task(current_task_id,
-                                         ReadyPlacement::Prefer(cpu_id));
+                let stay = self.registry
+                               .get_affinity(current_task_id)
+                               .expect("current task must exist in registry")
+                               .contains(cpu_id);
+                if stay {
+                    self.activate_ready_task(current_task_id,
+                                             ReadyPlacement::Prefer(cpu_id));
+                } else {
+                    self.cpu_states[cpu_id.raw()].set_deferred_ready(current_task_id);
+                }
             }
             QueueTarget::Blocked(reason) => {
                 self.registry
@@ -81,6 +90,14 @@ impl MultiClassScheduler {
                     .mark_exited(current_task_id, exit_code);
             }
         }
+    }
+    /// 源 CPU 已通过 `__switch` 保存完离开任务的上下文后，才把它发布到
+    /// affinity 允许的 runqueue（由 `switch_and_unlock` 与首次任务入口在切走后调用）。
+    pub(crate) fn enqueue_deferred_task(&mut self, cpu_id : CpuId) {
+        let Some(task_id) = self.cpu_states[cpu_id.raw()].take_deferred_ready() else {
+            return;
+        };
+        self.activate_ready_task(task_id, ReadyPlacement::LeastLoaded);
     }
     /// 激活非当前任务：选核、入 ready queue，并按统一 CPU 抢占规则请求调度。
     pub(crate) fn activate_ready_task(&mut self,
@@ -188,6 +205,21 @@ impl MultiClassScheduler {
                     .expect("queued task must exist")
                     .contains(cpu_id),
                 "ready task must target a CPU allowed by its affinity");
+        // 诊断断言：若任务仍被某个核当作 current（即它还在物理运行），绝不能发布到
+        // 别的核（空闲偷取会造成双核同跑/current-task 与硬件栈脱节）。延迟迁移的合法
+        // 情况是 running_cpu_id 尚未清除、但该核已 `__switch` 切走、不再是其 current。
+        if let Some(running_cpu) = self.registry
+                                       .running_cpu_id(task_id)
+        {
+            if self.cpu_states[running_cpu.raw()].current_task_id() == Some(task_id) {
+                assert_eq!(running_cpu,
+                           cpu_id,
+                           "[sched] publishing running task {} to CPU {} while it runs on CPU {}",
+                           task_id,
+                           cpu_id.raw(),
+                           running_cpu.raw());
+            }
+        }
         if let Some(old_cpu_id) = self.registry
                                       .ready_cpu_id(task_id)
         {

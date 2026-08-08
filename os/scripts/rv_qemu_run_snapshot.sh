@@ -2,8 +2,11 @@
 # RISC-V QEMU：qcow2 overlay 写盘，backing 默认 test_case 只读镜像，不改动 os/sdcard-rv.img。
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 os_file="${WOS_KERNEL:-./kernel-rv}"
 backing="${WOS_SDCARD_BACKING:-../test_case/sdcard-rv.img}"
+QEMU_MEM="${WOS_QEMU_MEM:-1G}"
 if [[ ! -f "$backing" ]]; then
     backing="./sdcard-rv.img"
 fi
@@ -17,9 +20,9 @@ rm -f "$overlay"
 qemu-img create -f qcow2 -b "$backing" -F raw "$overlay" >/dev/null
 echo "[rv_qemu_run_snapshot] kernel=$os_file backing=$backing overlay=$overlay id=$snapshot_id" >&2
 
-qemu-system-riscv64 -machine virt \
+"$SCRIPT_DIR/qemu_exec_with_taskset.sh" qemu-system-riscv64 -machine virt \
     -kernel "$os_file" \
-    -m 1G \
+    -m "${QEMU_MEM}" \
     -nographic \
     -smp 1 \
     -bios default \

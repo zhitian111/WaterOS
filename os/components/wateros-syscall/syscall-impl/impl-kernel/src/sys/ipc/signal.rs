@@ -1,7 +1,9 @@
 //! 进程/线程信号路由与 Linux 信号类 syscall 辅助逻辑。
 
+use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
+use spin::Mutex;
 
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
@@ -29,6 +31,30 @@ const MINSIGSTKSZ : usize = 2048;
 const MINSIGSTKSZ : usize = 4096;
 static LAST_ACCOUNTING_NS : [AtomicU64; wateros_base_config::task::MAX_CPUS] =
     [const { AtomicU64::new(0) }; wateros_base_config::task::MAX_CPUS];
+
+#[derive(Clone, Copy, Debug, Default)]
+struct PendingSignalSource {
+    pid : usize,
+    uid : u32,
+}
+
+/// 用户 `kill` / `tgkill` 投递时记录的 siginfo 来源；普通信号 pending 只保存位图，
+/// 这里补充 `sigwaitinfo` / `sigtimedwait` 需要的 `si_pid` / `si_uid`。
+static PENDING_SIGNAL_SOURCES : Mutex<BTreeMap<(usize, usize), PendingSignalSource>> =
+    Mutex::new(BTreeMap::new());
+
+fn record_pending_signal_source(process_pid : usize, signal : usize, source : PendingSignalSource) {
+    if signal != 0 {
+        PENDING_SIGNAL_SOURCES.lock()
+                              .insert((process_pid, signal), source);
+    }
+}
+
+fn take_pending_signal_source(process_pid : usize, signal : usize) -> PendingSignalSource {
+    PENDING_SIGNAL_SOURCES.lock()
+                          .remove(&(process_pid, signal))
+                          .unwrap_or_default()
+}
 
 #[cfg(target_arch = "riscv64")]
 const SIGNAL_TRAMPOLINE : usize = 0x0000_0000_7FFF_B000;
@@ -482,10 +508,11 @@ pub(crate) fn sys_rt_sigprocmask(args : SyscallArgs) -> UserRet {
     if sigset_size != RT_SIGSET_SIZE_64 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
-    let task_id = match ensure_current_signal_state() {
-        Ok(snapshot) => snapshot.task_id,
+    let snapshot = match ensure_current_signal_state() {
+        Ok(snapshot) => snapshot,
         Err(error) => return UserRet::from_error(error),
     };
+    let task_id = snapshot.task_id;
     let new_set = if set == 0 {
         None
     } else {
@@ -609,13 +636,18 @@ pub(crate) fn sys_rt_sigtimedwait(args : SyscallArgs) -> UserRet {
     if set == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
     }
+    if set % core::mem::align_of::<u64>() != 0 {
+        return UserRet::from_error(ErrNo::EFAULT);
+    }
     if sigset_size != RT_SIGSET_SIZE_64 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
-    let task_id = match ensure_current_signal_state() {
-        Ok(snapshot) => snapshot.task_id,
+    let signal_snapshot = match ensure_current_signal_state() {
+        Ok(snapshot) => snapshot,
         Err(error) => return UserRet::from_error(error),
     };
+    let task_id = signal_snapshot.task_id;
+    let process_pid = signal_snapshot.pid.raw();
     let wait_set = match copy_from_user_struct::<u64>(set) {
         Ok(bits) => SignalSet::from_bits(bits),
         Err(e) => return UserRet::from_error(e),
@@ -623,6 +655,9 @@ pub(crate) fn sys_rt_sigtimedwait(args : SyscallArgs) -> UserRet {
     let deadline = if timeout == 0 {
         None
     } else {
+        if timeout % core::mem::align_of::<UserTimespec>() != 0 {
+            return UserRet::from_error(ErrNo::EFAULT);
+        }
         let timeout = match copy_from_user_struct::<UserTimespec>(timeout) {
             Ok(timeout)
                 if timeout.sec >= 0 && timeout.nsec >= 0 && timeout.nsec < 1_000_000_000 =>
@@ -678,10 +713,14 @@ pub(crate) fn sys_rt_sigtimedwait(args : SyscallArgs) -> UserRet {
     };
     let _ = wait_queue.try_release_empty();
     if info != 0 {
+        let source = take_pending_signal_source(process_pid, sig);
+        let mut payload = [0u8; 116];
+        payload[4..8].copy_from_slice(&(source.pid as u32).to_ne_bytes());
+        payload[8..12].copy_from_slice(&source.uid.to_ne_bytes());
         let siginfo = UserSigInfo { signo : sig as i32,
                                     errno : 0,
                                     code : 0,
-                                    payload : [0; 116] };
+                                    payload };
         if let Err(e) = copy_to_user_struct(info, &siginfo) {
             return UserRet::from_error(e);
         }
@@ -754,6 +793,15 @@ pub(crate) fn sys_tkill(args : SyscallArgs) -> UserRet {
     if ensure_process_signal_state(snapshot.pid).is_err() {
         return UserRet::from_error(ErrNo::ESRCH);
     }
+    if let Some(caller) = task::current_process_snapshot() {
+        let uid = cred::current_credentials()
+                        .effective_uid
+                        .0;
+        record_pending_signal_source(snapshot.pid.raw(),
+                                     signal,
+                                     PendingSignalSource { pid : caller.pid.raw(),
+                                                           uid });
+    }
     match send_thread(task_id, signal) {
         Ok(()) => UserRet::from_success(0),
         Err(error) => UserRet::from_error(error),
@@ -786,6 +834,15 @@ pub(crate) fn sys_tgkill(args : SyscallArgs) -> UserRet {
     }
     if ensure_process_signal_state(snapshot.pid).is_err() {
         return UserRet::from_error(ErrNo::ESRCH);
+    }
+    if let Some(caller) = task::current_process_snapshot() {
+        let uid = cred::current_credentials()
+                        .effective_uid
+                        .0;
+        record_pending_signal_source(snapshot.pid.raw(),
+                                     signal,
+                                     PendingSignalSource { pid : caller.pid.raw(),
+                                                           uid });
     }
     match send_thread(task_id, signal) {
         Ok(()) => UserRet::from_success(0),
@@ -862,9 +919,23 @@ fn send_signal_to_process(process : ProcessId, sig : usize) -> Result<(), ErrNo>
     if task::leader_task_for_process(process).is_none() {
         return Err(ErrNo::ESRCH);
     }
+    if task::process_snapshot(process)
+        .is_some_and(|snapshot| matches!(snapshot.state, task::ProcessState::Exited(_)))
+    {
+        return Ok(());
+    }
     check_signal_permission(process, sig)?;
     if ensure_process_signal_state(process).is_err() {
         return Err(ErrNo::ESRCH);
+    }
+    if let Some(caller) = task::current_process_snapshot() {
+        let uid = cred::current_credentials()
+                        .effective_uid
+                        .0;
+        record_pending_signal_source(process.raw(),
+                                     sig,
+                                     PendingSignalSource { pid : caller.pid.raw(),
+                                                           uid });
     }
     let dispatch = ipc::signal::send_process(process.raw(), sig).map_err(|_| ErrNo::EINVAL)?;
     apply_signal_dispatch(dispatch, sig);
