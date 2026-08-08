@@ -42,6 +42,26 @@ pub(crate) fn sys_setsid() -> UserRet {
     }
 }
 
+pub(crate) fn sys_getsid(args : SyscallArgs) -> UserRet {
+    let pid_arg = args.arg(0) as i32;
+    if pid_arg < 0 {
+        return UserRet::from_error(ErrNo::ESRCH);
+    }
+    let current = match task::current_process_snapshot() {
+        Some(process) => process,
+        None => return UserRet::from_error(ErrNo::ESRCH),
+    };
+    let target_pid = if pid_arg == 0 {
+        current.pid
+    } else {
+        ProcessId::from_raw(pid_arg as usize)
+    };
+    match task::process_snapshot(target_pid) {
+        Some(process) => UserRet::from_success(process.sid.raw()),
+        None => UserRet::from_error(ErrNo::ESRCH),
+    }
+}
+
 /// 检查 `pgid` 是否是对应会话 `sid` 中的已有进程组。
 fn pgid_exists_in_session(pgid : ProcessId, sid : ProcessId) -> bool {
     task::all_process_pids().into_iter()

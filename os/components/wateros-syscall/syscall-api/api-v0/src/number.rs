@@ -150,6 +150,7 @@ pub const GETEUID : usize = 175;
 pub const GETGID : usize = 176;
 pub const GETEGID : usize = 177;
 pub const SETSID : usize = 157;
+pub const GETSID : usize = 156;
 pub const GETGROUPS : usize = 158;
 pub const SYSINFO : usize = 179;
 pub const SETGID : usize = 144;

@@ -103,6 +103,7 @@ pub fn dispatch_syscall_by_nr(syscall_nr : usize, syscall_args : SyscallArgs) ->
         n if n == api_v0::GETGID => sys::sys_getgid().0,
         n if n == api_v0::GETEGID => sys::sys_getegid().0,
         n if n == api_v0::SETSID => sys::sys_setsid().0,
+        n if n == api_v0::GETSID => sys::sys_getsid(syscall_args).0,
         n if n == api_v0::GETGROUPS => sys::sys_getgroups(syscall_args).0,
         n if n == api_v0::SYSINFO => sys::sys_sysinfo(syscall_args).0,
         n if n == api_v0::SETUID => sys::sys_setuid(syscall_args).0,

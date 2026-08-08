@@ -14,7 +14,8 @@ pub(crate) use clone::{sys_clone, sys_clone3};
 pub(crate) use execve::sys_execve;
 pub(crate) use priority::{sys_getpriority, sys_setpriority};
 pub(crate) use process::{
-    sys_getpgid, sys_getpid, sys_getppid, sys_gettid, sys_set_tid_address, sys_setpgid, sys_setsid,
+    sys_getpgid, sys_getpid, sys_getppid, sys_getsid, sys_gettid, sys_set_tid_address, sys_setpgid,
+    sys_setsid,
 };
 pub(crate) use rlimit::{current_umask, sys_getrlimit, sys_prlimit64, sys_setrlimit, sys_umask};
 pub(crate) use rseq::sys_rseq;
