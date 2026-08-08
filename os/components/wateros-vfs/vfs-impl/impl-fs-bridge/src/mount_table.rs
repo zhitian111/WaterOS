@@ -850,6 +850,13 @@ pub fn is_proc_mounted_at(mount_point : &str) -> bool {
       .any(|e| e.mount_point == mp.as_str() && matches!(e.fs, AuxMount::PseudoProc))
 }
 
+pub fn is_mount_point(mount_point : &str) -> bool {
+    let Ok(mp) = normalize_absolute_path(mount_point) else {
+        return false;
+    };
+    mount_namespace_snapshot().is_mount_point(mp.as_str())
+}
+
 // 本方法代码由AI完成
 fn fstype_for(entry : &MountEntry) -> &'static str { entry.fstype }
 

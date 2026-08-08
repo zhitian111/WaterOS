@@ -336,12 +336,19 @@ pub(crate) fn sys_unlinkat(args : SyscallArgs) -> UserRet {
         Err(e) => return UserRet::from_error(e),
     };
 
+    let remove_dir = flags & AT_REMOVEDIR != 0;
+    if remove_dir && (path == "." || path == "..") {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
     let resolved = match resolve_path_at(dirfd, path.as_str()) {
         Ok(p) => p,
         Err(e) => return UserRet::from_error(e),
     };
 
-    let remove_dir = flags & AT_REMOVEDIR != 0;
+    let resolved = match resolve_symlinks(resolved.as_str(), FinalSymlink::NoFollow) {
+        Ok(p) => p,
+        Err(e) => return UserRet::from_error(e),
+    };
     if flags & !AT_REMOVEDIR != 0 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
@@ -350,6 +357,9 @@ pub(crate) fn sys_unlinkat(args : SyscallArgs) -> UserRet {
     }
     if let Err(e) = check_unlink_permission(resolved.as_str()) {
         return UserRet::from_error(e);
+    }
+    if remove_dir && vfs::is_mount_point_absolute(resolved.as_str()) {
+        return UserRet::from_error(ErrNo::EBUSY);
     }
 
     match vfs::unlink_absolute(resolved.as_str(), remove_dir) {

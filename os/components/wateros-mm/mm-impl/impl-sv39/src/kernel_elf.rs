@@ -44,6 +44,7 @@ fn map_fs_to_root_vol(e : FsError) -> RootVolumeReadError {
         FsError::Corrupt => RootVolumeReadError::Corrupt,
         FsError::Io => RootVolumeReadError::Io,
         FsError::Exists => RootVolumeReadError::Unsupported,
+        FsError::NotEmpty => RootVolumeReadError::Unsupported,
     }
 }
 
@@ -55,6 +56,7 @@ fn map_vfs_to_root_vol(e : VfsError) -> RootVolumeReadError {
         VfsError::NotFound => RootVolumeReadError::NotFound,
         VfsError::NotAFile => RootVolumeReadError::NotAFile,
         VfsError::InvalidPath | VfsError::Exists => RootVolumeReadError::InvalidPath,
+        VfsError::NotEmpty => RootVolumeReadError::Unsupported,
         VfsError::NotUtf8 => RootVolumeReadError::NotUtf8,
         VfsError::NotDirectory |
         VfsError::TooManySymlinks |

@@ -19,6 +19,8 @@ pub enum VfsError {
     InvalidPath,
     /// 目标路径已存在。
     Exists,
+    /// 目录非空，无法删除。
+    NotEmpty,
     /// 按 UTF-8 解释文件内容失败。
     NotUtf8,
     /// 当前构建或后端不支持该操作。

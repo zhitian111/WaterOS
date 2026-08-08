@@ -139,6 +139,7 @@ fn map_ext4_rs(err : Ext4Error) -> FsError {
     match err.error() {
         Errno::ENOENT => FsError::NotFound,
         Errno::EEXIST => FsError::Exists,
+        Errno::ENOTEMPTY => FsError::NotEmpty,
         Errno::ENOTDIR | Errno::EISDIR => FsError::NotAFile,
         Errno::EINVAL | Errno::ENAMETOOLONG => FsError::InvalidPath,
         Errno::ENOSPC | Errno::EIO => FsError::Io,

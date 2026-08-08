@@ -769,7 +769,7 @@ impl ReadWriteFs for RamFs {
         if !node.children
                 .is_empty()
         {
-            return Err(FsError::Exists);
+            return Err(FsError::NotEmpty);
         }
         children.remove(name);
         Ok(())

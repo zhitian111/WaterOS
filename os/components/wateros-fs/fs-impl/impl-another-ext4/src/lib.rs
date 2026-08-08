@@ -34,6 +34,7 @@ fn map_error(error : Ext4Error) -> FsError {
     match error.code() {
         ErrCode::ENOENT => FsError::NotFound,
         ErrCode::EEXIST => FsError::Exists,
+        ErrCode::ENOTEMPTY => FsError::NotEmpty,
         ErrCode::ENOTDIR | ErrCode::EISDIR => FsError::NotAFile,
         ErrCode::EINVAL => FsError::InvalidPath,
         ErrCode::ENOSPC => FsError::NoSpace,

@@ -23,6 +23,8 @@ pub enum FsError {
     InvalidPath,
     /// 目标路径已存在（如 `mkdir` 时目录项冲突）。
     Exists,
+    /// 目录非空，无法删除。
+    NotEmpty,
     /// 内容非合法 UTF-8（如 `read_to_string`）。
     NotUtf8,
     /// 操作或组合不被当前实现支持。

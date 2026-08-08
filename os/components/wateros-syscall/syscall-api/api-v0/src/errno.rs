@@ -95,6 +95,8 @@ impl ErrNo {
     pub const ESPIPE: Self = Self(29);
     /// 只读文件系统。
     pub const EROFS: Self = Self(30);
+    /// 目录非空。
+    pub const ENOTEMPTY: Self = Self(39);
     /// 管道破裂。
     pub const EPIPE: Self = Self(32);
     /// 文件过大。

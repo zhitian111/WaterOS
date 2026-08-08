@@ -210,6 +210,12 @@ pub fn mount_tmpfs_at_with_limit(mount_point: &str, limit_bytes: Option<usize>) 
     impl_fs_bridge::mount_tmpfs_at_with_limit(mount_point, limit_bytes)
 }
 
+/// 判断绝对路径是否为当前挂载命名空间中的挂载点。
+#[cfg(feature = "bridge-fs-api")]
+pub fn is_mount_point_absolute(path: &str) -> bool {
+    impl_fs_bridge::is_mount_point(path)
+}
+
 /// 在首个任务继承的 bootstrap namespace 中挂载 tmpfs。
 #[cfg(feature = "bridge-fs-api")]
 pub fn mount_bootstrap_tmpfs_at(mount_point: &str) -> VfsResult<()> {

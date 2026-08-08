@@ -18,6 +18,7 @@ pub(crate) fn vfs_error_to_errno(err : VfsError) -> ErrNo {
         VfsError::NoSpace => ErrNo::ENOSPC,
         VfsError::NoMemory => ErrNo::ENOMEM,
         VfsError::Exists => ErrNo::EEXIST,
+        VfsError::NotEmpty => ErrNo::ENOTEMPTY,
         VfsError::ReadOnlyFs => ErrNo::EROFS,
         VfsError::NotFound => ErrNo::ENOENT,
         VfsError::NoDevice => ErrNo::ENXIO,

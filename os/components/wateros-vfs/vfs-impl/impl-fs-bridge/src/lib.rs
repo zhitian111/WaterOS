@@ -51,6 +51,7 @@ pub(crate) fn map_fs_err(e : FsError) -> VfsError {
         FsError::NotAFile => VfsError::NotAFile,
         FsError::InvalidPath => VfsError::InvalidPath,
         FsError::Exists => VfsError::Exists,
+        FsError::NotEmpty => VfsError::NotEmpty,
         FsError::NotUtf8 => VfsError::NotUtf8,
         FsError::Unsupported => VfsError::Unsupported,
         FsError::Driver => VfsError::Driver,
@@ -554,8 +555,8 @@ pub use mount_table::{
 };
 
 pub use mount_table::{
-    assert_path_writable, is_proc_mounted_at, list_proc_mount_lines, mount_aux_proc_at,
-    mount_bootstrap_proc_at,
+    assert_path_writable, is_mount_point, is_proc_mounted_at, list_proc_mount_lines,
+    mount_aux_proc_at, mount_bootstrap_proc_at,
 };
 
 /// 删除绝对路径（经挂载表路由）。

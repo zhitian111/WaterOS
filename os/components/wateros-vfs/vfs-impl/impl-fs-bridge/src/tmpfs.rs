@@ -284,7 +284,7 @@ impl TmpFs {
     fn insert_leaf(root: &mut TmpNode, parts: &[&str], node: TmpNode) -> FsResult<()> {
         let (children, name) = Self::parent_dir_mut(root, parts)?;
         if children.contains_key(name) {
-            return Err(FsError::Exists);
+            return Err(FsError::NotEmpty);
         }
         children.insert(String::from(name), node);
         Ok(())
