@@ -127,7 +127,20 @@ impl MultiClassScheduler {
 
     /// 判断某 CPU 是否负载偏高（高于系统平均负载 + 1 视为过载）。
     /// 用于唤醒亲和性放宽：last_cpu 过载时，把任务放到更空的核。
+    ///
+    /// 额外规则：只要有核空闲，任何非零负载的核都视为过载，
+    /// 避免出现"一个核忙、其他核空转"的积压。
     pub(super) fn cpu_is_overloaded(&self, cpu_id : CpuId) -> bool {
+        let load = self.cpu_states[cpu_id.raw()].load();
+        if load == 0 {
+            return false;
+        }
+        // 有核空闲 → 当前核过载，优先把任务放到空闲核
+        for cpu in &self.cpu_states {
+            if cpu.online && cpu.load() == 0 {
+                return true;
+            }
+        }
         let mut online = 0usize;
         let mut total = 0usize;
         for cpu in &self.cpu_states {
@@ -139,6 +152,6 @@ impl MultiClassScheduler {
         if online == 0 {
             return false;
         }
-        self.cpu_states[cpu_id.raw()].load() > total / online + 1
+        load > total / online + 1
     }
 }
