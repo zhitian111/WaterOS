@@ -554,6 +554,9 @@ fn scan_fd_sets_inner(nfds : usize,
             network_driven = true;
         }
         let revents = poll_revents_fd(fd, events);
+        if revents & POLLNVAL != 0 {
+            return Err(ErrNo::EBADF);
+        }
         if revents == 0 {
             continue;
         }
