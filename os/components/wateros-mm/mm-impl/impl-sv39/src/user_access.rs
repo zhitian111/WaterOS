@@ -225,8 +225,8 @@ fn copy_from_user_in_aspace(aspace : &mut Sv39AddressSpace,
                             -> MmResult<usize> {
     let mut done = 0usize;
     while done < kernel_buf.len() {
-        let pa = match aspace.translate_addr(user_addr)? {
-            Some(pa) => pa,
+        let (pa, perm) = match aspace.translate_addr_with_perm(user_addr)? {
+            Some(entry) => entry,
             None => {
                 let mut allocator = GlobalPhysFrameAllocator;
                 if MmapOps::handle_page_fault(aspace,
@@ -234,8 +234,8 @@ fn copy_from_user_in_aspace(aspace : &mut Sv39AddressSpace,
                                               user_addr,
                                               PageFaultAccess::Read)?
                 {
-                    match aspace.translate_addr(user_addr)? {
-                        Some(pa) => pa,
+                    match aspace.translate_addr_with_perm(user_addr)? {
+                        Some(entry) => entry,
                         None => return Err(MmError::AccessViolation),
                     }
                 } else {
@@ -243,8 +243,6 @@ fn copy_from_user_in_aspace(aspace : &mut Sv39AddressSpace,
                 }
             }
         };
-        let perm = aspace.leaf_page_perm(user_addr.floor_page())?
-                         .ok_or(MmError::AccessViolation)?;
         if !perm.user() || !perm.readable() {
             return Err(MmError::AccessViolation);
         }

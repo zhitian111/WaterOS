@@ -1189,6 +1189,27 @@ unsafe fn fork_table(parent_ppn : PhysPageNum,
     Ok(())
 }
 
+impl LoongArch64AddressSpace {
+    pub(crate) fn translate_addr_with_perm(&self,
+                                           va : VirtAddr)
+                                           -> MmResult<Option<(PhysAddr, PagePerm)>> {
+        let vpn = va.floor_page();
+        let off = va.page_offset();
+        let Some((pte, level)) = self.walk_find(vpn)? else {
+            return Ok(None);
+        };
+        if level != 0 ||
+           !pte.flags()
+               .is_leaf()
+        {
+            return Ok(None);
+        }
+        Ok(Some((PhysAddr(pte.ppn().0 * PAGE_SIZE + off),
+                 pte.flags()
+                    .to_page_perm())))
+    }
+}
+
 impl AddressSpaceOps for LoongArch64AddressSpace {
     /// 返回 WaterOS LA 地址空间 token：低 48 位为 PGDL，高位携带 10 位 ASID。
     fn satp_value(&self) -> usize { crate::asid::encode_token(self.root.0 * PAGE_SIZE, self.asid) }

@@ -1216,6 +1216,29 @@ unsafe fn fork_table(parent_ppn : PhysPageNum,
     Ok(())
 }
 
+impl Sv39AddressSpace {
+    pub(crate) fn translate_addr_with_perm(&self,
+                                           va : VirtAddr)
+                                           -> MmResult<Option<(PhysAddr, PagePerm)>> {
+        let vpn = va.floor_page();
+        let off = va.page_offset();
+        let Some((pte, level)) = self.walk_find(vpn)? else {
+            return Ok(None);
+        };
+        if !pte.flags()
+               .is_leaf_at_level(level)
+        {
+            return Ok(None);
+        }
+        if level != 0 {
+            return Err(MmError::Unsupported);
+        }
+        Ok(Some((PhysAddr(pte.ppn().0 * PAGE_SIZE + off),
+                 pte.flags()
+                    .to_page_perm())))
+    }
+}
+
 impl AddressSpaceOps for Sv39AddressSpace {
     fn satp_value(&self) -> usize { make_satp(self.root, self.asid as usize) }
 
