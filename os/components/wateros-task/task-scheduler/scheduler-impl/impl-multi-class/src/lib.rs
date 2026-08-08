@@ -89,7 +89,9 @@ fn with_scheduler<R>(f : impl FnOnce(&mut MultiClassScheduler) -> R) -> R {
         // `try_lock`，也确保普通 release 构建与诊断功能引入前语义一致。
         cell.exclusive_access()
     };
-    debug::lock_acquired(cpu_id.raw(), DebugLockKind::Scheduler, lock_address);
+    debug::lock_acquired(cpu_id.raw(),
+                         DebugLockKind::Scheduler,
+                         lock_address);
     let result = f(&mut scheduler);
     let current_task_id = scheduler.current_task_id(cpu_id)
                                    .unwrap_or(NO_CURRENT_TASK);
@@ -103,26 +105,31 @@ fn with_scheduler<R>(f : impl FnOnce(&mut MultiClassScheduler) -> R) -> R {
         None
     };
     drop(scheduler);
-    debug::lock_released(cpu_id.raw(), DebugLockKind::Scheduler, lock_address);
+    debug::lock_released(cpu_id.raw(),
+                         DebugLockKind::Scheduler,
+                         lock_address);
     if let Some((snapshot, task_snapshot)) = diagnostic_snapshot {
         debug::update_cpu_state(cpu_id.raw(), |state| {
-            state.flags = (if snapshot.online { debug::DebugCpuState::FLAG_ONLINE } else { 0 }) |
-                          (if snapshot.current_is_idle {
-                               debug::DebugCpuState::FLAG_IDLE
-                           } else {
-                               0
-                           }) |
-                          (if snapshot.current_is_user {
-                               debug::DebugCpuState::FLAG_USER
-                           } else {
-                               0
-                           }) |
-                          (if snapshot.need_resched {
-                               debug::DebugCpuState::FLAG_NEED_RESCHED
-                           } else {
-                               0
-                           });
-            state.current_task = snapshot.current_task_id.unwrap_or(NO_CURRENT_TASK) as u64;
+            state.flags = (if snapshot.online {
+                debug::DebugCpuState::FLAG_ONLINE
+            } else {
+                0
+            }) | (if snapshot.current_is_idle {
+                debug::DebugCpuState::FLAG_IDLE
+            } else {
+                0
+            }) | (if snapshot.current_is_user {
+                debug::DebugCpuState::FLAG_USER
+            } else {
+                0
+            }) | (if snapshot.need_resched {
+                debug::DebugCpuState::FLAG_NEED_RESCHED
+            } else {
+                0
+            });
+            state.current_task = snapshot.current_task_id
+                                         .unwrap_or(NO_CURRENT_TASK)
+                                 as u64;
             state.current_address_space = snapshot.current_address_space
                                                   .map(|handle| handle.raw() as u64)
                                                   .unwrap_or(0);
@@ -217,9 +224,7 @@ impl InterruptGuard {
                                                             scheduler guard");
         Self { state }
     }
-    fn release(self) {
-        drop(self);
-    }
+    fn release(self) { drop(self); }
 }
 impl Drop for InterruptGuard {
     fn drop(&mut self) {
@@ -244,29 +249,38 @@ fn switch_and_unlock(guard : InterruptGuard, switch_pair : SwitchPair) {
                         CURRENT_TASK_IDS[cpu_id.raw()].load(Ordering::Relaxed) as u64,
                         DebugEventKind::TaskSwitch,
                         0,
-                        [switch_pair.0 as usize as u64, switch_pair.1 as usize as u64, 0]);
+                        [switch_pair.0 as usize as u64,
+                         switch_pair.1 as usize as u64,
+                         0]);
     unsafe {
         __switch(switch_pair.0, switch_pair.1);
     }
-    complete_context_switch();
+    // 源核已保存离开任务的上下文；现在才发布被延迟迁移的任务。先取回待发送的
+    // IPI 目标，释放中断守卫后再发送（与其它路径“开中断后发 IPI”的约定一致）。
+    let targets = with_scheduler(|scheduler| {
+        scheduler.enqueue_deferred_task(cpu_id);
+        scheduler.take_pending_reschedule_cpus()
+    });
     guard.release();
+    dispatch_reschedules(targets, cpu_id);
 }
 
-/// 完成上一次物理上下文切换后延迟的跨核迁移发布。
+/// 发布被延迟的跨核迁移任务。
 ///
-/// 运行过的任务会从 `__switch` 返回到上面的路径；首次运行的任务由
-/// runtime 入口显式调用。
-pub fn complete_context_switch() {
+/// 仅应在源 CPU 已通过 `__switch` 保存完离开任务的上下文后调用；已运行过的
+/// 任务从 `switch_and_unlock` 返回时调用，首次运行的任务由 runtime 入口显式调用。
+pub fn enqueue_deferred_task() {
     let cpu_id = cpu::current_cpu_id();
     let targets = {
         let _guard = InterruptGuard::new();
         with_scheduler(|scheduler| {
-            scheduler.complete_context_switch(cpu_id);
+            scheduler.enqueue_deferred_task(cpu_id);
             scheduler.take_pending_reschedule_cpus()
         })
     };
     dispatch_reschedules(targets, cpu_id);
 }
+
 /// `__switch` 返回后重新关中断，再取等待结果（避免 wait 路径长期关中断）。
 fn finish_wait_after_switch(guard : InterruptGuard,
                             switch_pair : Option<SwitchPair>)
@@ -325,7 +339,11 @@ pub fn spawn_kernel_task(entry : KernelTaskEntry, arg : usize) -> TaskId {
         })
     };
     dispatch_reschedules(targets, cpu_id);
-    record_task_event(DebugEventKind::TaskEnqueue, task_id, [cpu_id.raw() as u64, 0, 0]);
+    record_task_event(DebugEventKind::TaskEnqueue,
+                      task_id,
+                      [cpu_id.raw() as u64,
+                       0,
+                       0]);
     task_id
 }
 
@@ -347,7 +365,11 @@ pub fn spawn_user_task_spec(spec : UserTask) -> TaskId {
         })
     };
     dispatch_reschedules(targets, cpu_id);
-    record_task_event(DebugEventKind::TaskEnqueue, task_id, [cpu_id.raw() as u64, 0, 0]);
+    record_task_event(DebugEventKind::TaskEnqueue,
+                      task_id,
+                      [cpu_id.raw() as u64,
+                       0,
+                       0]);
     task_id
 }
 
@@ -362,7 +384,11 @@ pub fn enqueue_ready_task(task_id : TaskId) {
         })
     };
     dispatch_reschedules(targets, cpu_id);
-    record_task_event(DebugEventKind::TaskEnqueue, task_id, [cpu_id.raw() as u64, 0, 0]);
+    record_task_event(DebugEventKind::TaskEnqueue,
+                      task_id,
+                      [cpu_id.raw() as u64,
+                       0,
+                       0]);
 }
 
 /// 从当前用户任务 fork 子任务（仅登记 TCB，不入就绪队列）。
@@ -556,7 +582,9 @@ pub fn block_current(reason : TaskWaitTarget) {
         (switch_pair, targets)
     });
     dispatch_reschedules(targets, cpu_id);
-    record_task_event(DebugEventKind::TaskBlock, blocked_task, [0, 0, 0]);
+    record_task_event(DebugEventKind::TaskBlock,
+                      blocked_task,
+                      [0, 0, 0]);
     if let Some(switch_pair) = switch_pair {
         switch_and_unlock(guard, switch_pair);
     }
@@ -578,7 +606,9 @@ pub fn sleep_current_for_ticks(ticks : TaskTick) -> TaskWaitResult {
         (switch_pair, targets)
     });
     dispatch_reschedules(targets, cpu_id);
-    record_task_event(DebugEventKind::TaskBlock, sleeping_task, [ticks, 0, 0]);
+    record_task_event(DebugEventKind::TaskBlock,
+                      sleeping_task,
+                      [ticks, 0, 0]);
     finish_wait_after_switch(guard, switch_pair)
 }
 
@@ -598,7 +628,11 @@ pub fn exit_current(exit_code : TaskExitCode) -> ! {
         (switch_pair, targets)
     });
     dispatch_reschedules(targets, cpu_id);
-    record_task_event(DebugEventKind::TaskExit, exited_task, [exit_code as u64, 0, 0]);
+    record_task_event(DebugEventKind::TaskExit,
+                      exited_task,
+                      [exit_code as u64,
+                       0,
+                       0]);
     match switch_pair {
         Some(switch_pair) => {
             switch_and_unlock(guard, switch_pair);
@@ -753,7 +787,9 @@ pub fn wake_task(task_id : TaskId) -> bool {
     };
     dispatch_reschedules(targets, cpu_id);
     if woken {
-        record_task_event(DebugEventKind::TaskWake, task_id, [0, 0, 0]);
+        record_task_event(DebugEventKind::TaskWake, task_id, [0,
+                                                              0,
+                                                              0]);
     }
     woken
 }
@@ -770,7 +806,9 @@ pub fn interrupt_task(task_id : TaskId) -> bool {
     };
     dispatch_reschedules(targets, cpu_id);
     if interrupted {
-        record_task_event(DebugEventKind::TaskWake, task_id, [1, 0, 0]);
+        record_task_event(DebugEventKind::TaskWake, task_id, [1,
+                                                              0,
+                                                              0]);
     }
     interrupted
 }
@@ -824,7 +862,9 @@ pub fn wake_one_in_wait_queue(wait_queue_id : WaitQueueId) -> Option<TaskId> {
     if let Some(task_id) = woken {
         record_task_event(DebugEventKind::TaskWake,
                           task_id,
-                          [wait_queue_id as u64, 0, 0]);
+                          [wait_queue_id as u64,
+                           0,
+                           0]);
     }
     woken
 }
@@ -844,7 +884,9 @@ pub fn wake_all_in_wait_queue(wait_queue_id : WaitQueueId) -> usize {
     if count != 0 {
         record_task_event(DebugEventKind::TaskWake,
                           NO_CURRENT_TASK,
-                          [wait_queue_id as u64, count as u64, 0]);
+                          [wait_queue_id as u64,
+                           count as u64,
+                           0]);
     }
     count
 }
@@ -1055,8 +1097,8 @@ pub fn request_task_reschedule(task_id : TaskId) {
     // 本地任务会在当前 trap 的统一返回路径处理状态变化，不在 syscall 中途
     // 自我切换。远端 CPU 需要区分普通抢占与“先处理目标任务状态再切换”。
     if !targets.is_empty() {
-        if let Err(error) =
-            platform::smp::send_ipi(targets, platform::smp::IpiKind::TaskNotify)
+        if let Err(error) = platform::smp::send_ipi(targets,
+                                                    platform::smp::IpiKind::TaskNotify)
         {
             log::warn!("[ipi] task notification failed: {:?}",
                        error);

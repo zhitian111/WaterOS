@@ -37,9 +37,6 @@ pub(super) struct MultiClassScheduler {
     pub timekeeper_cpu : Option<CpuId>,
     /// 入队时在 scheduler 锁内累计，锁外再实际发送定向 IPI。
     pub pending_reschedule_cpus : CpuMask,
-    /// 被强制迁出本 CPU 的当前任务。在 `__switch` 保存完上下文前，
-    /// 目标 CPU 不能在 runqueue 中看到它。
-    deferred_ready_after_switch : [Option<TaskId>; MAX_CPUS],
 }
 
 /// Ready 任务的放置偏好；最终目标仍须满足 online 与 affinity 约束。
@@ -64,8 +61,7 @@ impl MultiClassScheduler {
                cpu_states : cpu_states.into_boxed_slice(),
                next_placement_cpu : 0,
                timekeeper_cpu : None,
-               pending_reschedule_cpus : CpuMask::EMPTY,
-               deferred_ready_after_switch : [None; MAX_CPUS] }
+               pending_reschedule_cpus : CpuMask::EMPTY }
     }
 
     pub(super) fn init(&mut self, boot_cpu : CpuId) {
@@ -75,7 +71,6 @@ impl MultiClassScheduler {
         self.next_placement_cpu = 0;
         self.timekeeper_cpu = None;
         self.pending_reschedule_cpus = CpuMask::EMPTY;
-        self.deferred_ready_after_switch = [None; MAX_CPUS];
         // 为每个 CPU 创建 idle 任务
         for (cpu_id, cpu_state) in self.cpu_states
                                        .iter_mut()

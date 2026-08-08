@@ -195,6 +195,18 @@ impl MultiClassScheduler {
                                                         .affinity
                                                         .contains(cpu_id)
                                                 })?;
+        // 诊断断言：偷取的任务绝不能是任何 CPU 的 current（“就绪但仍在跑”=脏状态）。
+        let running_elsewhere = self.cpu_states
+                                    .iter()
+                                    .any(|cpu| cpu.current_task_id() == Some(task_id));
+        assert!(!running_elsewhere,
+                "[sched] stealing task {} that is current on another CPU (stale ready \
+                 publication; source CPU still running it)",
+                task_id);
+        log::debug!("[sched-steal] cpu={} stole task={} from cpu={}",
+                    cpu_id.raw(),
+                    task_id,
+                    src.raw());
         self.enqueue_ready_on_cpu(task_id, cpu_id);
         Some(task_id)
     }
