@@ -653,6 +653,7 @@ pub(crate) fn sys_pwrite64(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let ptr = args.arg(1);
     let len = args.arg(2);
+    const O_APPEND : u32 = 0o2000;
     if let Err(error) = validate_write_fd(fd) {
         return UserRet::from_error(error);
     }
@@ -676,8 +677,25 @@ pub(crate) fn sys_pwrite64(args : SyscallArgs) -> UserRet {
         Ok(n) if n == transfer_len => {}
         _ => return UserRet::from_error(ErrNo::EFAULT),
     }
+    let append = match vfs::fd::with_current_io(fd, |handle| {
+        Ok(handle.open_status_flags() & O_APPEND != 0)
+    }) {
+        Ok(value) => value,
+        Err(err) => return UserRet::from_error(vfs_io_at_error_to_errno(err)),
+    };
+    let write_offset = if append {
+        match vfs::fd::with_current_io(fd, |handle| {
+            handle.metadata()
+                  .map(|meta| meta.size)
+        }) {
+            Ok(size) => size,
+            Err(err) => return UserRet::from_error(vfs_io_at_error_to_errno(err)),
+        }
+    } else {
+        offset
+    };
     match vfs::fd::with_current_io(fd, |handle| {
-              handle.write_at(offset, &kbuf)
+              handle.write_at(write_offset, &kbuf)
           }) {
         Ok(n) => UserRet::from_success(n),
         Err(err) => UserRet::from_error(vfs_io_at_error_to_errno(err)),
