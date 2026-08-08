@@ -61,7 +61,9 @@ pub struct SharedIoHandle {
 
 impl SharedIoHandle {
     pub fn new(handle : Box<dyn VfsIoHandle>) -> Self {
-        let snapshot = handle.duplicate().ok().map(OpenFileDescription::new);
+        let snapshot = handle.duplicate()
+                             .ok()
+                             .map(OpenFileDescription::new);
         Self { inner : Arc::new(Mutex::new(OpenFileDescription::new(handle))),
                snapshot : Arc::new(Mutex::new(snapshot)) }
     }
@@ -77,14 +79,18 @@ impl SharedIoHandle {
     /// Capture a prepared read while holding the fd-slot lock only briefly.
     pub fn prepare_read(&self, max_len : usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
         let mut inner = self.inner.lock();
-        inner.handle.prepare_read(max_len)
+        inner.handle
+             .prepare_read(max_len)
     }
 
     /// Create an independent fd-slot handle. If the live handle is blocked in
     /// I/O, duplicate the snapshot captured immediately before that I/O.
     pub fn duplicate(&self) -> VfsResult<Self> {
-        let duplicate = if let Some(inner) = self.inner.try_lock() {
-            inner.handle.duplicate()?
+        let duplicate = if let Some(inner) = self.inner
+                                                 .try_lock()
+        {
+            inner.handle
+                 .duplicate()?
         } else {
             let snapshot = self.snapshot.lock();
             snapshot.as_ref()
@@ -106,7 +112,6 @@ impl SharedIoHandle {
             Ok(())
         }
     }
-
 }
 
 /// 全局 per-task fd 注册表。
@@ -459,7 +464,10 @@ impl PerTaskFdRegistry {
             .map(|table| {
                 table.iter()
                      .enumerate()
-                     .filter_map(|(fd, slot)| slot.as_ref().map(|_| fd))
+                     .filter_map(|(fd, slot)| {
+                         slot.as_ref()
+                             .map(|_| fd)
+                     })
                      .collect()
             })
             .unwrap_or_default()
@@ -848,6 +856,97 @@ impl PerTaskFdRegistry {
         *count = count.saturating_add(1);
     }
 
+    /// `close_range(CLOSE_RANGE_UNSHARE)`：若当前任务与他人共享 fd 表，则先复制出一份独立
+    /// fd 表（句柄按 fork 语义独立 duplication）；本任务本就持有唯一表时为空操作。
+    // 本方法代码由AI完成
+    pub fn unshare_fd_table(&mut self, task_id : task::TaskId) -> VfsResult<()> {
+        self.ensure_task(task_id);
+        let owner = self.effective_owner(task_id);
+        let count = self.ref_counts
+                        .get(&owner)
+                        .copied()
+                        .unwrap_or(1);
+        if count <= 1 {
+            return Ok(());
+        }
+
+        // 复制一份独立 fd 表（句柄独立 duplication，失败槽位按 fork 语义降级为关闭）。
+        let parent_table = self.tables
+                               .get(&owner)
+                               .cloned()
+                               .unwrap_or_default();
+        let parent_flags = self.fd_flags
+                               .get(&owner)
+                               .cloned()
+                               .unwrap_or_default();
+        let private_table = parent_table.into_iter()
+                                        .map(|slot| {
+                                            slot.and_then(|handle| {
+                                                    handle.duplicate()
+                                                          .ok()
+                                                })
+                                        })
+                                        .collect::<Vec<Option<SharedIoHandle>>>();
+
+        if task_id == owner {
+            // 当前任务即共享表 owner：把旧表迁移到某个兄弟共享者名下，
+            // 其余共享者继续指向旧表，本任务改用自己名下的私有表。
+            let sibling = self.owners
+                              .iter()
+                              .find(|(tid, o)| **o == owner && **tid != task_id)
+                              .map(|(tid, _)| *tid)
+                              .expect("shared fd table must have other sharers");
+            let old_table = self.tables
+                                .remove(&owner)
+                                .unwrap_or_default();
+            let old_flags = self.fd_flags
+                                .remove(&owner)
+                                .unwrap_or_default();
+            let mut migrated = 0usize;
+            for (tid, o) in self.owners
+                                .iter_mut()
+            {
+                if *o == owner && *tid != task_id {
+                    *o = sibling;
+                    migrated += 1;
+                }
+            }
+            self.ref_counts
+                .insert(sibling, migrated);
+            self.tables
+                .insert(sibling, old_table);
+            self.fd_flags
+                .insert(sibling, old_flags);
+        } else {
+            // 当前任务是共享者：脱离旧表，改用私有表。
+            self.owners
+                .remove(&task_id);
+            self.tables
+                .remove(&task_id);
+            self.fd_flags
+                .remove(&task_id);
+            if let Some(c) = self.ref_counts
+                                 .get_mut(&owner)
+            {
+                *c = c.saturating_sub(1);
+                if *c == 0 {
+                    self.ref_counts
+                        .remove(&owner);
+                }
+            }
+        }
+
+        self.owners
+            .insert(task_id, task_id);
+        self.ref_counts
+            .insert(task_id, 1);
+        self.tables
+            .insert(task_id, private_table);
+        self.fd_flags
+            .insert(task_id, parent_flags);
+        Ok(())
+    }
+
     /// `execve` 前关闭带 `FD_CLOEXEC` 的 fd。
     // 本方法代码由AI完成
     pub fn close_cloexec_fds_for_task(&mut self, task_id : task::TaskId) {
@@ -925,12 +1024,19 @@ fn default_serial_device() -> Option<SharedCharacterDevice> {
 /// 输入任务调用。
 pub fn poll_console_input_once() -> Option<TtyControlEvent> {
     let device = default_serial_device()?;
-    const POLLIN: i16 = 0x001;
-    if device.lock().poll_revents(POLLIN).ok()? & POLLIN == 0 {
+    const POLLIN : i16 = 0x001;
+    if device.lock()
+             .poll_revents(POLLIN)
+             .ok()? &
+       POLLIN ==
+       0
+    {
         return None;
     }
     let mut byte = [0u8; 1];
-    let read = device.lock().read(&mut byte).ok()?;
+    let read = device.lock()
+                     .read(&mut byte)
+                     .ok()?;
     if read == 0 {
         return None;
     }

@@ -132,9 +132,7 @@ pub fn with_current_io_detached<R>(fd : usize,
                                    f : impl FnOnce(&mut (dyn VfsIoHandle + '_)) -> VfsResult<R>)
                                    -> VfsResult<R> {
     let task_id = current_task_id()?;
-    let handle = with_fd_registry(|registry| {
-        registry.duplicate_handle_for_task(task_id, fd)
-    })?;
+    let handle = with_fd_registry(|registry| registry.duplicate_handle_for_task(task_id, fd))?;
     handle.with_io(f)
 }
 
@@ -312,17 +310,24 @@ pub fn copy_fd_table_from_parent(child_id : task::TaskId, parent_id : task::Task
         with_registry(|registry| registry.fd_table_copy_snapshot(parent_id));
     let parent_table = parent_snapshot.into_iter()
                                       .map(|slot| {
-                                          slot.and_then(|handle| handle.duplicate().ok())
+                                          slot.and_then(|handle| {
+                                                  handle.duplicate()
+                                                        .ok()
+                                              })
                                       })
                                       .collect();
-    with_registry(|registry| {
-        registry.install_fd_table_copy(child_id, parent_table, parent_flags)
-    });
+    with_registry(|registry| registry.install_fd_table_copy(child_id, parent_table, parent_flags));
 }
 
 /// thread clone 时共享父任务 fd 表。
 pub fn share_fd_table_from_parent(child_id : task::TaskId, parent_id : task::TaskId) {
     with_registry(|registry| registry.share_fd_table_from_parent(child_id, parent_id));
+}
+
+/// `close_range(CLOSE_RANGE_UNSHARE)`：若当前任务与他人共享 fd 表，则先复制出独立 fd 表。
+pub fn unshare_fd_table() -> VfsResult<()> {
+    let task_id = current_task_id()?;
+    with_fd_registry(|reg| reg.unshare_fd_table(task_id))
 }
 
 /// `execve` 前关闭带 `FD_CLOEXEC` 的 fd。
@@ -379,9 +384,10 @@ pub fn self_test() {
         let dup_handle = reg.duplicate_handle_for_task(a, fd)
                             .expect("dup source");
         let rejected_dup = reg.install_dup_fd_for_task(a,
-                                                        task::nofile_rlimit_for_task(a) as usize,
-                                                        dup_handle.clone());
-        assert_eq!(rejected_dup, Err(VfsError::TooManyOpenFiles));
+                                                       task::nofile_rlimit_for_task(a) as usize,
+                                                       dup_handle.clone());
+        assert_eq!(rejected_dup,
+                   Err(VfsError::TooManyOpenFiles));
         let dup_fd = reg.install_dup_fd_for_task(a, 0, dup_handle)
                         .expect("dup");
         assert_ne!(dup_fd, fd);
@@ -415,7 +421,10 @@ pub fn self_test() {
         let (parent_table, parent_flags) = reg.fd_table_copy_snapshot(a);
         let parent_table = parent_table.into_iter()
                                        .map(|slot| {
-                                           slot.and_then(|handle| handle.duplicate().ok())
+                                           slot.and_then(|handle| {
+                                                   handle.duplicate()
+                                                         .ok()
+                                               })
                                        })
                                        .collect();
         reg.install_fd_table_copy(b, parent_table, parent_flags);
