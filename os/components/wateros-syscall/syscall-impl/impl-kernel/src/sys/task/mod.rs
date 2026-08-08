@@ -26,7 +26,7 @@ pub(crate) use sched::{
 };
 pub(crate) use task::{
     exit_current_with_wait_code, exit_group_with_wait_code, sys_exit, sys_exit_group, sys_prctl,
-    sys_yield,
+    sys_yield, timer_slack_for_task,
 };
 pub(crate) use unshare::sys_unshare;
 pub(crate) use wait::{

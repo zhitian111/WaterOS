@@ -33,6 +33,9 @@ pub fn register_task_exe_lookup(_f : api_v0::TaskExeLookup) {}
 /// 占位：dummy 不消费 fd 枚举回调。
 pub fn register_task_fd_lookup(_f : api_v0::TaskFdLookup) {}
 
+/// 占位：dummy 不消费 timer slack 回调。
+pub fn register_task_timer_slack_lookup(_f : api_v0::TaskTimerSlackLookup) {}
+
 /// 占位：dummy 不消费挂载表回调。
 pub fn register_mount_list_lookup(_f : api_v0::MountListLookup) {}
 

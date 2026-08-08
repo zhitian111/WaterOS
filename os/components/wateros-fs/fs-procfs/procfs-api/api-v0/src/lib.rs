@@ -31,6 +31,9 @@ pub type TaskExeLookup = fn(TaskId) -> Option<String>;
 /// 按 task id 枚举当前打开的文件描述符。
 pub type TaskFdLookup = fn(TaskId) -> Vec<usize>;
 
+/// 按 task id 查询当前 timer slack，单位纳秒。
+pub type TaskTimerSlackLookup = fn(TaskId) -> u64;
+
 /// 枚举当前挂载表（供 `/proc/mounts`）。
 pub type MountListLookup = fn() -> Vec<ProcMountLine>;
 

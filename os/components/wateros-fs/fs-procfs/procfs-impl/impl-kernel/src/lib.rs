@@ -13,7 +13,8 @@ use alloc::{
 };
 use api_v0::{
     FsDirEntry, FsError, FsMetadata, FsNodeType, FsResult, IdleTimeLookup, MountListLookup, ProcFsView,
-    ProcMountLine, TaskArgvLookup, TaskExeLookup, TaskFdLookup, TaskId, UptimeLookup,
+    ProcMountLine, TaskArgvLookup, TaskExeLookup, TaskFdLookup, TaskId, TaskTimerSlackLookup,
+    UptimeLookup,
 };
 use fs_api_v0::{FsAccessMode, FsCapability, FsImpl, FsKind};
 use spin::Mutex;
@@ -24,6 +25,7 @@ static ARGV_LOOKUP : Mutex<Option<TaskArgvLookup>> = Mutex::new(None);
 // 本变量代码由AI完成
 static EXE_LOOKUP : Mutex<Option<TaskExeLookup>> = Mutex::new(None);
 static FD_LOOKUP : Mutex<Option<TaskFdLookup>> = Mutex::new(None);
+static TIMER_SLACK_LOOKUP : Mutex<Option<TaskTimerSlackLookup>> = Mutex::new(None);
 // 本变量代码由AI完成
 static MOUNT_LOOKUP : Mutex<Option<MountListLookup>> = Mutex::new(None);
 static UPTIME_LOOKUP : Mutex<Option<UptimeLookup>> = Mutex::new(None);
@@ -39,6 +41,10 @@ pub fn register_task_exe_lookup(f : TaskExeLookup) { *EXE_LOOKUP.lock() = Some(f
 
 /// 注册按 task id 枚举打开 fd 的回调。
 pub fn register_task_fd_lookup(f : TaskFdLookup) { *FD_LOOKUP.lock() = Some(f); }
+
+pub fn register_task_timer_slack_lookup(f : TaskTimerSlackLookup) {
+    *TIMER_SLACK_LOOKUP.lock() = Some(f);
+}
 
 /// 注册挂载表枚举回调（供 `/proc/mounts`）。
 // 本方法代码由AI完成
@@ -81,6 +87,12 @@ fn fds_for(leader : TaskId) -> Vec<usize> {
           .unwrap_or_default()
 }
 
+fn timer_slack_for(leader : TaskId) -> u64 {
+    let lookup = *TIMER_SLACK_LOOKUP.lock();
+    lookup.map(|f| f(leader))
+          .unwrap_or(0)
+}
+
 // 经静态回调枚举挂载行；未注册时返回空表。
 // 本方法代码由AI完成
 fn mount_lines() -> Vec<ProcMountLine> {
@@ -108,6 +120,7 @@ enum ProcNode {
     PidStat(ProcessId),
     PidStatus(ProcessId),
     PidComm(ProcessId),
+    PidTimerSlack(ProcessId),
     PidSmaps(ProcessId),
     PidMaps(ProcessId),
     PidCmdline(ProcessId),
@@ -139,6 +152,7 @@ fn proc_inode(node : ProcNode) -> u64 {
         ProcNode::PidStat(pid) => 0x1000_0001 | ((pid.raw() as u64) << 4),
         ProcNode::PidStatus(pid) => 0x1000_0002 | ((pid.raw() as u64) << 4),
         ProcNode::PidComm(pid) => 0x1000_0009 | ((pid.raw() as u64) << 4),
+        ProcNode::PidTimerSlack(pid) => 0x1000_000a | ((pid.raw() as u64) << 4),
         ProcNode::PidSmaps(pid) => 0x1000_0003 | ((pid.raw() as u64) << 4),
         ProcNode::PidMaps(pid) => 0x1000_0005 | ((pid.raw() as u64) << 4),
         ProcNode::PidCmdline(pid) => 0x1000_0004 | ((pid.raw() as u64) << 4),
@@ -239,6 +253,7 @@ fn parse_node(path : &str) -> Option<ProcNode> {
         [pid_name, "stat"] => Some(ProcNode::PidStat(parse_pid(pid_name)?)),
         [pid_name, "status"] => Some(ProcNode::PidStatus(parse_pid(pid_name)?)),
         [pid_name, "comm"] => Some(ProcNode::PidComm(parse_pid(pid_name)?)),
+        [pid_name, "timerslack_ns"] => Some(ProcNode::PidTimerSlack(parse_pid(pid_name)?)),
         [pid_name, "smaps"] => Some(ProcNode::PidSmaps(parse_pid(pid_name)?)),
         [pid_name, "maps"] => Some(ProcNode::PidMaps(parse_pid(pid_name)?)),
         [_pid_name, "mounts"] => Some(ProcNode::Mounts),
@@ -299,6 +314,15 @@ fn format_pid_comm(pid : ProcessId) -> FsResult<Vec<u8>> {
     }
     let mut out = comm_for(pid).into_bytes();
     out.push(b'\n');
+    Ok(out)
+}
+
+fn format_pid_timer_slack(pid : ProcessId) -> FsResult<Vec<u8>> {
+    if !process_visible(pid) {
+        return Err(FsError::NotFound);
+    }
+    let leader = task::leader_task_for_process(pid).ok_or(FsError::NotFound)?;
+    let out = format!("{}\n", timer_slack_for(leader)).into_bytes();
     Ok(out)
 }
 
@@ -566,6 +590,7 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidStat(pid) |
             ProcNode::PidStatus(pid) |
             ProcNode::PidComm(pid) |
+            ProcNode::PidTimerSlack(pid) |
             ProcNode::PidSmaps(pid) |
             ProcNode::PidMaps(pid) |
             ProcNode::PidCmdline(pid) |
@@ -618,6 +643,7 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidStat(pid) |
             ProcNode::PidStatus(pid) |
             ProcNode::PidComm(pid) |
+            ProcNode::PidTimerSlack(pid) |
             ProcNode::PidSmaps(pid) |
             ProcNode::PidMaps(pid) |
             ProcNode::PidCmdline(pid) |
@@ -677,6 +703,7 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidStat(pid) => format_stat(pid),
             ProcNode::PidStatus(pid) => format_status(pid),
             ProcNode::PidComm(pid) => format_pid_comm(pid),
+            ProcNode::PidTimerSlack(pid) => format_pid_timer_slack(pid),
             ProcNode::PidSmaps(pid) => format_smaps(pid),
             ProcNode::PidMaps(pid) => format_maps(pid),
             ProcNode::PidCmdline(pid) => format_cmdline(pid),
@@ -773,6 +800,10 @@ impl ProcFsView for KernelProcFs {
                                          FsNodeType::File },
                         FsDirEntry { name:
                                          String::from("comm"),
+                                     node_type:
+                                         FsNodeType::File },
+                        FsDirEntry { name:
+                                         String::from("timerslack_ns"),
                                      node_type:
                                          FsNodeType::File },
                         FsDirEntry { name:

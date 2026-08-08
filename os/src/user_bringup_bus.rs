@@ -35,6 +35,7 @@ pub fn run() {
             .saturating_mul(u128::from(base_config::task::SCHED_TIMER_PERIOD_MS))
             .saturating_mul(1_000_000)
     });
+    fs::procfs::active_impl::register_task_timer_slack_lookup(syscall::timer_slack_for_task);
     match vfs::mount_bootstrap_procfs_at("/proc") {
         Ok(()) => info!("[bringup][stage-00-bus] procfs mounted at /proc"),
         Err(vfs::api::VfsError::Exists) => info!("[bringup][stage-00-bus] procfs already at /proc"),

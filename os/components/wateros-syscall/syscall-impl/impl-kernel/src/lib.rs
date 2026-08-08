@@ -76,3 +76,8 @@ pub fn record_syscall() { sys::record_syscall(); }
 /// 透明转发至 `sys::log_thread_bringup_stats_summary`。
 #[inline]
 pub fn log_thread_bringup_stats_summary() { sys::log_thread_bringup_stats_summary(); }
+
+/// 查询指定 task 当前 timer slack，单位纳秒；供 procfs 暴露。
+pub fn timer_slack_for_task(task_id : usize) -> u64 {
+    sys::timer_slack_for_task(task_id)
+}

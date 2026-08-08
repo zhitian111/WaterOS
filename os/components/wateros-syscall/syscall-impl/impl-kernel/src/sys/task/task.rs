@@ -44,7 +44,7 @@ struct TimerSlack {
 
 static TIMER_SLACKS : Mutex<BTreeMap<usize, TimerSlack>> = Mutex::new(BTreeMap::new());
 
-fn timer_slack(task_id : usize) -> u64 {
+pub(crate) fn timer_slack_for_task(task_id : usize) -> u64 {
     TIMER_SLACKS.lock()
                 .entry(task_id)
                 .or_insert(TimerSlack { default_ns : DEFAULT_TIMER_SLACK_NS,
@@ -319,7 +319,7 @@ pub(crate) fn sys_prctl(args : SyscallArgs) -> UserRet {
             let Some(task_id) = task::current_task_id() else {
                 return UserRet::from_error(ErrNo::ESRCH);
             };
-            UserRet::from_success(timer_slack(task_id) as usize)
+            UserRet::from_success(timer_slack_for_task(task_id) as usize)
         }
         PR_GET_PDEATHSIG => {
             let addr_ptr = args.arg(1);
@@ -333,7 +333,6 @@ pub(crate) fn sys_prctl(args : SyscallArgs) -> UserRet {
             }
         }
         PR_SET_SECCOMP => UserRet::from_error(ErrNo::EINVAL),
-        PR_SET_NO_NEW_PRIVS => UserRet::from_success(0),
         PR_CAPBSET_READ => super::super::cred::cap::cap_bset_read(args.arg(1)),
         PR_CAPBSET_DROP => super::super::cred::cap::cap_bset_drop(args.arg(1)),
         _ => UserRet::from_error(ErrNo::EINVAL),
