@@ -1,4 +1,4 @@
-//! `epoll_create1` / `epoll_ctl` / `epoll_wait` / `epoll_pwait`。
+//! `epoll_create1` / `epoll_ctl` / `epoll_wait` / `epoll_pwait` / `epoll_pwait2`。
 
 //! 本模块代码由AI完成
 extern crate alloc;
@@ -14,7 +14,7 @@ use crate::epoll_fd::{
     EPOLLET, EPOLLONESHOT, EPOLLOUT, EPOLL_VALID_EVENTS,
 };
 use crate::poll_engine::{
-    poll_revents_fd, PollDeadline, POLLIN, POLLNVAL, POLLOUT, POLLPRI,
+    install_poll_sigmask, poll_revents_fd, PollDeadline, POLLIN, POLLNVAL, POLLOUT, POLLPRI,
 };
 use crate::user_copy::{copy_from_user, copy_to_user};
 use crate::vfs_util::vfs_error_to_errno;
@@ -137,27 +137,51 @@ pub(crate) fn sys_epoll_wait(args: SyscallArgs) -> UserRet {
     let events_ptr = args.arg(1);
     let maxevents = args.arg(2) as isize;
     let timeout_ms = args.arg(3) as isize;
-    do_epoll_wait(epfd, events_ptr, maxevents, timeout_ms)
+    let deadline = match PollDeadline::from_poll_millis(timeout_ms) {
+        Ok(deadline) => deadline,
+        Err(error) => return UserRet::from_error(error),
+    };
+    do_epoll_wait(epfd, events_ptr, maxevents, deadline)
 }
 
 // 本方法代码由AI完成
 pub(crate) fn sys_epoll_pwait(args: SyscallArgs) -> UserRet {
-    let sigmask = args.arg(4);
-    // sigmask 暂未用于改变信号掩码，但必须保持 Linux 的 EFAULT 行为。
-    if sigmask != 0 {
-        let mut probe = [0u8; 128];
-        if copy_from_user(&mut probe, sigmask).is_err() {
-            return UserRet::from_error(ErrNo::EFAULT);
-        }
+    let sigmask_guard = match install_poll_sigmask(args.arg(4), args.arg(5)) {
+        Ok(guard) => guard,
+        Err(error) => return UserRet::from_error(error),
+    };
+    let result = sys_epoll_wait(args);
+    if let Some(guard) = sigmask_guard {
+        guard.finish(result.0 == ErrNo::EINTR.user_ret());
     }
-    sys_epoll_wait(args)
+    result
+}
+
+// 本方法代码由AI完成
+pub(crate) fn sys_epoll_pwait2(args: SyscallArgs) -> UserRet {
+    let sigmask_guard = match install_poll_sigmask(args.arg(4), args.arg(5)) {
+        Ok(guard) => guard,
+        Err(error) => return UserRet::from_error(error),
+    };
+    let deadline = match PollDeadline::from_timespec_ptr(args.arg(3)) {
+        Ok(deadline) => deadline,
+        Err(error) => return UserRet::from_error(error),
+    };
+    let epfd = args.arg(0);
+    let events_ptr = args.arg(1);
+    let maxevents = args.arg(2) as isize;
+    let result = do_epoll_wait(epfd, events_ptr, maxevents, deadline);
+    if let Some(guard) = sigmask_guard {
+        guard.finish(result.0 == ErrNo::EINTR.user_ret());
+    }
+    result
 }
 
 fn do_epoll_wait(
     epfd: usize,
     events_ptr: usize,
     maxevents: isize,
-    timeout_ms: isize,
+    deadline: PollDeadline,
 ) -> UserRet {
     if maxevents <= 0 {
         return UserRet::from_error(ErrNo::EINVAL);
@@ -172,11 +196,6 @@ fn do_epoll_wait(
             return UserRet::from_error(ErrNo::EINVAL);
         }
         return UserRet::from_error(ErrNo::EBADF);
-    };
-
-    let deadline = match PollDeadline::from_poll_millis(timeout_ms) {
-        Ok(d) => d,
-        Err(e) => return UserRet::from_error(e),
     };
 
     loop {

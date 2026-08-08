@@ -180,6 +180,7 @@ pub fn dispatch_syscall_by_nr(syscall_nr : usize, syscall_args : SyscallArgs) ->
         n if n == api_v0::EPOLL_CTL => sys::sys_epoll_ctl(syscall_args).0,
         n if n == api_v0::EPOLL_WAIT => sys::sys_epoll_wait(syscall_args).0,
         n if n == api_v0::EPOLL_PWAIT => sys::sys_epoll_pwait(syscall_args).0,
+        n if n == api_v0::EPOLL_PWAIT2 => sys::sys_epoll_pwait2(syscall_args).0,
         n if n == api_v0::FSTATAT => sys::sys_fstatat(syscall_args).0,
         n if n == api_v0::STATX => sys::sys_statx(syscall_args).0,
         n if n == api_v0::SCHED_SETATTR => sys::sys_sched_setattr(syscall_args).0,

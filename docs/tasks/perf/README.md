@@ -73,6 +73,10 @@
 
 - [`page-cache 索引清理改用 BTree range`](./2026-08-08-page-cache-index-range.md)：
   消除页缓存 `purge/rename/truncate` 的全表键扫描。
+- [`page-cache 规范化 key A/B`](./2026-08-08-page-cache-key-canonical-ab.md)：
+  实验显示 `memcmp` 下降但总指令上升，已回退。
+- [`路径规范化快速路径 A/B`](./2026-08-08-path-normalize-fast-ab.md)：
+  快速路径未降低目标符号，总指令上升，已回退。
 
 ## 验证约定
 
