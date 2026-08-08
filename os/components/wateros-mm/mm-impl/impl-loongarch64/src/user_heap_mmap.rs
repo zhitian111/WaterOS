@@ -669,6 +669,60 @@ impl MmapOps for LoongArch64AddressSpace {
 }
 
 impl LoongArch64AddressSpace {
+    pub fn madvise_range_mapped(&self, addr : VirtAddr, len : usize) -> bool {
+        if len == 0 {
+            return true;
+        }
+        let Some(end) = addr.0.checked_add(len).map(VirtAddr) else {
+            return false;
+        };
+        let mut vpn = addr.floor_page();
+        let vpn_end = end.ceil_page();
+        while vpn.0 < vpn_end.0 {
+            let page = vpn.start_addr();
+            if self.translate_addr(page).ok().flatten().is_some() {
+                vpn = VirtPageNum(vpn.0 + 1);
+                continue;
+            }
+            let in_vma = self.lazy_file_vmas
+                             .iter()
+                             .any(|vma| vma.contains_page(page)) ||
+                         self.shared_anon_vmas
+                             .iter()
+                             .any(|vma| vma.contains_page(page)) ||
+                         self.shared_file_vmas
+                             .iter()
+                             .any(|vma| vma.start.0 <= page.0 && page.0 < vma.end.0);
+            let in_stack = self.user_stack_bottom.0 <= page.0 &&
+                           page.0 < self.user_stack_top.0;
+            let in_brk = self.user_brk_start.0 <= page.0 &&
+                         page.0 < self.user_brk_current_end.0;
+            if !in_vma && !in_stack && !in_brk {
+                return false;
+            }
+            vpn = VirtPageNum(vpn.0 + 1);
+        }
+        true
+    }
+
+    pub fn madvise_range_shared_or_file(&self, addr : VirtAddr, len : usize) -> bool {
+        if len == 0 {
+            return false;
+        }
+        let Some(end) = addr.0.checked_add(len).map(VirtAddr) else {
+            return true;
+        };
+        self.lazy_file_vmas
+            .iter()
+            .any(|vma| vma.overlaps(addr, end)) ||
+        self.shared_file_vmas
+            .iter()
+            .any(|vma| vma.overlaps(addr, end)) ||
+        self.shared_anon_vmas
+            .iter()
+            .any(|vma| vma.overlaps(addr, end))
+    }
+
     pub fn madvise_discard_mapped_pages<A : PhysicalFrameAllocator<FrameId = PhysPageNum>>(
         &mut self,
         allocator : &mut A,

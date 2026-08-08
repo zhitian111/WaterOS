@@ -353,6 +353,11 @@ pub(crate) fn sys_madvise(args : SyscallArgs) -> UserRet {
                 Ok(h) => h,
                 Err(e) => return UserRet::from_error(e),
             };
+            match mm::kernel_mm::madvise_range_shared_or_file(handle, addr, len) {
+                Ok(true) => return UserRet::from_error(ErrNo::EINVAL),
+                Ok(false) => {}
+                Err(e) => return UserRet::from_error(mm_err_to_errno(e)),
+            }
             match mm::kernel_mm::madvise_discard_pages(handle, addr, len) {
                 Ok(()) => UserRet::from_success(0),
                 Err(e) => UserRet::from_error(mm_err_to_errno(e)),
@@ -362,8 +367,18 @@ pub(crate) fn sys_madvise(args : SyscallArgs) -> UserRet {
         MADV_DONTFORK | MADV_DOFORK | MADV_HUGEPAGE | MADV_NOHUGEPAGE | MADV_DONTDUMP |
         MADV_DODUMP | MADV_COLD | MADV_PAGEOUT | MADV_POPULATE_READ | MADV_POPULATE_WRITE |
         MADV_DONTNEED_LOCKED => {
-            log::trace!("[syscall] madvise(nr=28) no-op advice={advice}");
-            UserRet::from_success(0)
+            let handle = match require_user_aspace("madvise") {
+                Ok(h) => h,
+                Err(e) => return UserRet::from_error(e),
+            };
+            match mm::kernel_mm::madvise_range_mapped(handle, addr, len) {
+                Ok(true) => {
+                    log::trace!("[syscall] madvise(nr=28) no-op advice={advice}");
+                    UserRet::from_success(0)
+                }
+                Ok(false) => UserRet::from_error(ErrNo::ENOMEM),
+                Err(e) => UserRet::from_error(mm_err_to_errno(e)),
+            }
         }
         MADV_REMOVE | MADV_MERGEABLE | MADV_UNMERGEABLE | MADV_WIPEONFORK | MADV_KEEPONFORK |
         MADV_COLLAPSE => {

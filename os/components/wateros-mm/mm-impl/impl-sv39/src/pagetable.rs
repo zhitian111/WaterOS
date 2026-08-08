@@ -263,11 +263,11 @@ impl LazyFileVma {
                                .duplicate_box()? })
     }
 
-    fn contains_page(&self, page : VirtAddr) -> bool {
+    pub(crate) fn contains_page(&self, page : VirtAddr) -> bool {
         page.0 >= self.start.0 && page.0 < self.end.0
     }
 
-    fn overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
+    pub(crate) fn overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
         start.0 < self.end.0 && end.0 > self.start.0
     }
 }
@@ -294,17 +294,17 @@ impl SharedFileVma {
                   loader : self.loader.duplicate_box()? })
     }
 
-    fn overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
+    pub(crate) fn overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
         start.0 < self.end.0 && end.0 > self.start.0
     }
 }
 
 impl SharedAnonVma {
-    fn contains_page(&self, page : VirtAddr) -> bool {
+    pub(crate) fn contains_page(&self, page : VirtAddr) -> bool {
         page.0 >= self.start.0 && page.0 < self.end.0
     }
 
-    fn overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
+    pub(crate) fn overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
         start.0 < self.end.0 && end.0 > self.start.0
     }
 }
