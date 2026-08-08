@@ -224,6 +224,7 @@ pub const FSTATAT : usize = 79;
 pub const STATX : usize = 291;
 pub const SCHED_SETATTR : usize = 274;
 pub const SCHED_GETATTR : usize = 275;
+pub const SCHED_RR_GET_INTERVAL : usize = 127;
 pub const FACESSAT2 : usize = 439;
 pub const ADJTIMEX : usize = 171;
 pub const CLOCK_ADJTIME : usize = 266;

@@ -9,8 +9,11 @@ use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
 use task::{CpuMask, SchedError, SchedPolicy};
+use wateros_base_config::task::{MAX_TICKS_PER_TASK, SCHED_TIMER_PERIOD_MS};
 
 use crate::user_copy::{copy_from_user, copy_to_user, copy_to_user_struct};
+
+const SCHED_RR_QUANTUM_MS : u64 = MAX_TICKS_PER_TASK * SCHED_TIMER_PERIOD_MS;
 
 // 本结构代码由AI完成
 #[repr(C)]
@@ -81,6 +84,36 @@ pub(crate) fn sys_getcpu(args : SyscallArgs) -> UserRet {
         }
     }
     UserRet::from_success(0)
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct UserTimespec {
+    sec : isize,
+    nsec : isize,
+}
+
+pub(crate) fn sys_sched_rr_get_interval(args : SyscallArgs) -> UserRet {
+    let pid = args.arg(0) as isize;
+    let interval_ptr = args.arg(1);
+    if interval_ptr == 0 {
+        return UserRet::from_error(ErrNo::EFAULT);
+    }
+    let task_id = match task::resolve_sched_pid(pid) {
+        Ok(task_id) => task_id,
+        Err(error) => return UserRet::from_error(sched_err_to_errno(error)),
+    };
+    let interval = match task::get_scheduler_policy(task_id) {
+        Ok(SchedPolicy::Rr) => UserTimespec { sec : (SCHED_RR_QUANTUM_MS / 1000) as isize,
+                                               nsec : ((SCHED_RR_QUANTUM_MS % 1000) *
+                                                       1_000_000) as isize },
+        Ok(_) => UserTimespec::default(),
+        Err(_) => return UserRet::from_error(ErrNo::ESRCH),
+    };
+    match copy_to_user_struct(interval_ptr, &interval) {
+        Ok(()) => UserRet::from_success(0),
+        Err(error) => UserRet::from_error(error),
+    }
 }
 
 

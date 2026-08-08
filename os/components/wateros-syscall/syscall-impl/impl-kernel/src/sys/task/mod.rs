@@ -22,7 +22,7 @@ pub(crate) use rseq::sys_rseq;
 pub(crate) use sched::{
     sys_getcpu, sys_sched_get_priority_max, sys_sched_get_priority_min, sys_sched_getaffinity,
     sys_sched_getattr, sys_sched_getparam, sys_sched_getscheduler, sys_sched_setaffinity,
-    sys_sched_setattr, sys_sched_setparam, sys_sched_setscheduler,
+    sys_sched_rr_get_interval, sys_sched_setattr, sys_sched_setparam, sys_sched_setscheduler,
 };
 pub(crate) use task::{
     exit_current_with_wait_code, exit_group_with_wait_code, sys_exit, sys_exit_group, sys_prctl,

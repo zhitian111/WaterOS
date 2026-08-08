@@ -186,6 +186,7 @@ pub fn dispatch_syscall_by_nr(syscall_nr : usize, syscall_args : SyscallArgs) ->
         n if n == api_v0::STATX => sys::sys_statx(syscall_args).0,
         n if n == api_v0::SCHED_SETATTR => sys::sys_sched_setattr(syscall_args).0,
         n if n == api_v0::SCHED_GETATTR => sys::sys_sched_getattr(syscall_args).0,
+        n if n == api_v0::SCHED_RR_GET_INTERVAL => sys::sys_sched_rr_get_interval(syscall_args).0,
         n if n == api_v0::FACESSAT2 => sys::sys_faccessat2(syscall_args).0,
         n if n == api_v0::ADJTIMEX => sys::sys_adjtimex(syscall_args).0,
         n if n == api_v0::CLOCK_ADJTIME => sys::sys_clock_adjtime(syscall_args).0,
