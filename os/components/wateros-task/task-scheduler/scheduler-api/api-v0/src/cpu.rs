@@ -3,45 +3,13 @@ use crate::fifo_queue::FifoQueue;
 use crate::rr_queue::RrQueue;
 use crate::{registry, TaskRegistry, WaitQueues};
 use arch::task::{ActiveArchTaskContext, ArchTaskContext};
-use config::task::{MAX_CPUS, MAX_TICKS_PER_TASK, NICE_0_WEIGHT, NICE_TO_WEIGHT};
-use core::sync::atomic::{AtomicUsize, Ordering};
-use log;
+use config::task::{MAX_TICKS_PER_TASK, NICE_0_WEIGHT, NICE_TO_WEIGHT};
 use task_api::{
     AddressSpaceHandle, CpuId, CpuMask, Nice, Priority, SchedError, SchedPolicy, TaskExitCode,
     TaskId, TaskSnapshot, TaskTick, TaskWaitTarget, VRunTime, NICE_MIN, PRIORITY_MIN,
 };
 // 用固定点表示每 tick 的 vruntime，避免高权重（负 nice）任务因整数除法得到 0。
 const VRUNTIME_SCALE : u64 = 1 << 20;
-
-// ── current-task 无锁镜像 ─────────────────────────────────────────
-// `current_snapshot` 是调度器锁内的语义缓存；以下两个原子是无锁读者（syscall 热路径
-// 的 `current_task_id()`/`current_task_user_aspace_ptr()`）使用的轻量镜像。二者由
-// `CPUState::set_current_task`/`set_current_aspace`（唯一的写路径，含跨核 policy 变更）
-// 在锁内 `Release`-store；查询方关中断 + `Acquire`-load，不抢全局锁。
-/// 本核当前任务 id；`usize::MAX` 表示尚无当前任务（引导期）。
-/// 初始值为非零（`usize::MAX`），BSS 段要求零初始化，必须放到 `.data` 段。
-#[unsafe(link_section = ".data.scheduler")]
-static CURRENT_TASK_IDS : [AtomicUsize; MAX_CPUS] =
-    [const { AtomicUsize::new(usize::MAX) }; MAX_CPUS];
-/// 本核当前任务用户地址空间指针；内核任务/无当前为 0。
-/// 放 `.data`（PROGBITS）：rust-lld 不把零初始化符号放进 `.bss.scheduler`，
-/// 落默认 `.bss` 末尾易被相邻越界写破坏。
-#[unsafe(link_section = ".data.scheduler")]
-static CURRENT_TASK_ASPACES : [AtomicUsize; MAX_CPUS] = [const { AtomicUsize::new(0) }; MAX_CPUS];
-
-/// 无锁读本核当前任务 id；引导期/尚无当前任务为 `None`。
-///
-/// 调用方必须已关闭本地中断：`set_current_task` 在 `__switch` 前（中断关闭）发布，
-/// 关中断读取才能避免读到“已发布 next、硬件仍在跑 old”的超前值。
-pub fn current_task_id_unlocked(cpu : CpuId) -> Option<TaskId> {
-    let id = CURRENT_TASK_IDS[cpu.index()].load(Ordering::Acquire);
-    (id != usize::MAX).then_some(id)
-}
-
-/// 无锁读本核当前任务用户地址空间指针（内核任务/无当前为 0）。调用方需已关中断。
-pub fn current_task_aspace_unlocked(cpu : CpuId) -> usize {
-    CURRENT_TASK_ASPACES[cpu.index()].load(Ordering::Acquire)
-}
 pub type SwitchPair =
     (*mut arch::task::ActiveArchTaskContext, *const arch::task::ActiveArchTaskContext);
 
@@ -328,7 +296,6 @@ impl CPUState {
         {
             snap.user_aspace_ptr = aspace;
         }
-        CURRENT_TASK_ASPACES[self.cpu_id.index()].store(aspace, Ordering::Release);
     }
     pub fn tick(&mut self) {
         self.timer_ticks = self.timer_ticks
@@ -645,32 +612,14 @@ impl CPUState {
         self.current_snapshot = Some(*snap);
         self.current_ticks = 0;
         self.current_runtime_ticks = 0;
-        Self::publish_current(self.cpu_id,
-                              snap.id,
-                              snap.user_aspace_ptr);
-    }
-
-    /// 发布无锁镜像：先 aspace 后 id。id 作为提交点（最后 `Release`），无锁读者
-    /// `Acquire` 读到新 id 时，aspace 与 `current_snapshot` 必已就绪。
-    fn publish_current(cpu : CpuId, task_id : TaskId, aspace : usize) {
-        CURRENT_TASK_ASPACES[cpu.index()].store(aspace, Ordering::Release);
-        CURRENT_TASK_IDS[cpu.index()].store(task_id, Ordering::Release);
     }
 
     /// 记录被强制迁出本 CPU 的当前任务；同一核同时只能有一个待迁任务。
-    /// 竞态防御：若已有待迁任务，warn 跳过（不 panic）——重复 defer 通常发生于
-    /// 罕见竞态窗口；丢一次迁移请求比崩内核安全，下次调度会重新决策。
     pub fn set_deferred_ready(&mut self, task_id : TaskId) {
-        if self.deferred_ready_after_switch
-               .is_some()
-        {
-            log::warn!("[defer] CPU {} already has deferred task {:?}; ignoring duplicate for \
-                        task {}",
-                       self.cpu_id.raw(),
-                       self.deferred_ready_after_switch,
-                       task_id);
-            return;
-        }
+        assert!(self.deferred_ready_after_switch
+                    .is_none(),
+                "CPU {} already has a deferred task migration",
+                self.cpu_id.raw());
         self.deferred_ready_after_switch = Some(task_id);
     }
 

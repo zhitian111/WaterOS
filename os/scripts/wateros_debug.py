@@ -8,7 +8,6 @@ import json
 import os
 import re
 import shutil
-import signal
 import socket
 import struct
 import subprocess
@@ -96,75 +95,6 @@ def process_alive(pid: int) -> bool:
     except PermissionError:
         return True
     return True
-
-
-def stale_debug_processes(host: str, port: int) -> list[tuple[int, str, str]]:
-    """返回可能占用 GDB 调试端口的遗留进程 `(pid, 类型, 命令行摘要)`。
-
-    只匹配本项目形态的进程：带 `-gdb` 且端口一致的 QEMU，以及加载了
-    `wateros.py` 扩展或执行 `target remote` 的 gdb-multiarch，避免误杀其它
-    用户的 QEMU/GDB。
-    """
-    matches: list[tuple[int, str, str]] = []
-    try:
-        entries = sorted(int(entry) for entry in os.listdir("/proc") if entry.isdigit())
-    except OSError:
-        return matches
-    for pid in entries:
-        if pid == os.getpid():
-            continue
-        try:
-            with open(f"/proc/{pid}/cmdline", "rb") as stream:
-                raw = stream.read()
-        except OSError:
-            continue
-        if not raw:
-            continue
-        argv0 = raw.split(b"\0", 1)[0].decode("ascii", "replace")
-        command = raw.replace(b"\0", b" ").decode("ascii", "replace")
-        lower = command.lower()
-        # 仅当 argv[0] 本身是目标二进制才匹配，避免命令行里恰好出现关键字
-        # （例如其它脚本的参数）导致误杀。
-        if argv0.endswith(("qemu-system-riscv64", "qemu-system-loongarch64")):
-            if "-gdb" in command and f":{port}" in command:
-                matches.append((pid, "qemu", command[:120]))
-        elif "gdb-multiarch" in argv0 and (
-            "wateros.py" in lower or "target remote" in lower
-        ):
-            matches.append((pid, "gdb", command[:120]))
-    return matches
-
-
-def cleanup_stale_debug_processes(host: str, port: int) -> int:
-    """SIGTERM（超时后 SIGKILL）掉遗留调试进程，返回清理数量。
-
-    可用环境变量 `WOS_SKIP_STALE_CLEANUP=1` 关闭。
-    """
-    if os.environ.get("WOS_SKIP_STALE_CLEANUP") == "1":
-        return 0
-    stale = stale_debug_processes(host, port)
-    if not stale:
-        return 0
-    for pid, kind, _summary in stale:
-        if not process_alive(pid):
-            continue
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except (ProcessLookupError, PermissionError):
-            continue
-        print(f"[wos-debug] terminating stale {kind} pid={pid}", flush=True)
-        deadline = time.monotonic() + 3.0
-        while time.monotonic() < deadline:
-            if not process_alive(pid):
-                break
-            time.sleep(0.05)
-        if process_alive(pid):
-            try:
-                os.kill(pid, signal.SIGKILL)
-                print(f"[wos-debug] SIGKILL stale {kind} pid={pid}", flush=True)
-            except (ProcessLookupError, PermissionError):
-                pass
-    return len(stale)
 
 
 def write_active_session(
@@ -1287,7 +1217,6 @@ def command_run(args: argparse.Namespace) -> int:
     arch, profile, elf = build_debug_elf(
         args.profile, args.faults, args.build_timeout
     )
-    cleanup_stale_debug_processes(args.host, args.port)
     ensure_port_available(args.host, args.port)
     environment = debug_environment(args, elf, start_paused=False)
     launch = build_qemu_launch(arch, profile, environment)
@@ -1363,7 +1292,6 @@ def command_server(args: argparse.Namespace) -> int:
     arch, profile, elf = build_debug_elf(
         args.profile, args.faults, args.build_timeout
     )
-    cleanup_stale_debug_processes(args.host, args.port)
     ensure_port_available(args.host, args.port)
     environment = debug_environment(args, elf, start_paused=args.start_paused)
     launch = build_qemu_launch(arch, profile, environment)

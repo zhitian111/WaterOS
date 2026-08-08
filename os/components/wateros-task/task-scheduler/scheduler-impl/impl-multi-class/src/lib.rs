@@ -11,7 +11,7 @@ use base::sync::MultiprocessorSafeCell;
 use config::task::MAX_CPUS;
 use core::mem::MaybeUninit;
 use core::panic::Location;
-use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use debug::{DebugEventKind, DebugLockKind};
 use task_api::{
     CpuId, ExitedTask, KernelTaskEntry, Priority, TaskExitCode, TaskId, TaskKind, TaskSnapshot,
@@ -38,10 +38,11 @@ static mut SCHEDULER : MaybeUninit<MultiprocessorSafeCell<MultiClassScheduler>> 
     MaybeUninit::uninit();
 #[unsafe(link_section = ".bss.scheduler")]
 static SCHEDULER_READY : AtomicBool = AtomicBool::new(false);
-/// 全局调度逻辑 tick 的无锁发布（timekeeper 推进时更新、全核无锁读）。
-/// 放 `.data`（PROGBITS）：rust-lld 不会把零初始化符号放进 `.bss.scheduler`，
-/// 落默认 `.bss` 末尾易被相邻越界写破坏（见 interrupt_guard 金丝雀讨论）。
-#[unsafe(link_section = ".data.scheduler")]
+// Scheduler-owned fields that must also be readable from scheduler condition
+// callbacks. Publishing them avoids recursively acquiring the global lock.
+const NO_CURRENT_TASK : usize = usize::MAX;
+static CURRENT_TASK_IDS : [AtomicUsize; MAX_CPUS] =
+    [const { AtomicUsize::new(NO_CURRENT_TASK) }; MAX_CPUS];
 static CURRENT_TICK : AtomicU64 = AtomicU64::new(0);
 // ── scheduler cell 访问 ────────────────────────────────────────────
 #[inline(never)]
@@ -66,16 +67,7 @@ fn publish_schedule_reason(cpu_id : CpuId, reason : u32) {
         state.last_schedule_reason = reason;
     });
 }
-/// 由 timekeeper 在推进全局 tick 后发布；全核 `current_tick()` 无锁读取。
-pub(crate) fn publish_current_tick(tick : TaskTick) { CURRENT_TICK.store(tick, Ordering::Release); }
 // 在单调度器 cell 上取得独占引用并执行闭包；调用方已通过 `InterruptGuard`
-// 关闭本核中断。
-//
-// 死锁边界：`f` 内不得调用任何会再次进入 `with_scheduler` 的公开查询
-// （`current_tick()`/`current_task_id()`/`current_task_snapshot()` 等）——这些
-// 查询现在是实时加锁读取 scheduler/cpu_states 缓存。尤其 scheduler 条件闭包
-// （`wait_current_while*`/`requeue_wait_queue_while`）在锁内执行，其内部只能查
-// 各自 IPC/VFS 锁保护的状态，不能查调度器 tick/current。
 #[inline(never)]
 fn with_scheduler<R>(f : impl FnOnce(&mut MultiClassScheduler) -> R) -> R {
     let cpu_id = cpu::current_cpu_id();
@@ -85,11 +77,9 @@ fn with_scheduler<R>(f : impl FnOnce(&mut MultiClassScheduler) -> R) -> R {
         if let Some(guard) = cell.try_lock() {
             guard
         } else {
-            // 等锁时尚未持有 scheduler 锁，但此时实时读 current/tick 会递归
-            // with_scheduler；诊断 tick/task 参数记 0，状态仍由 waiting_lock 承载。
             debug::lock_wait(cpu_id.raw(),
-                             0,
-                             0,
+                             CURRENT_TICK.load(Ordering::Relaxed),
+                             CURRENT_TASK_IDS[cpu_id.raw()].load(Ordering::Relaxed) as u64,
                              DebugLockKind::Scheduler,
                              lock_address);
             cell.exclusive_access()
@@ -103,9 +93,11 @@ fn with_scheduler<R>(f : impl FnOnce(&mut MultiClassScheduler) -> R) -> R {
                          DebugLockKind::Scheduler,
                          lock_address);
     let result = f(&mut scheduler);
-    // 不再发布 CURRENT_TASK_IDS/CURRENT_TICK：current 与 tick 的唯一来源是
-    // scheduler/cpu_states 实时缓存，查询方通过 with_scheduler 实时读取，
-    // 避免两套缓存不同步（trap 入口/返回 current 不一致的脱节根因）。
+    let current_task_id = scheduler.current_task_id(cpu_id)
+                                   .unwrap_or(NO_CURRENT_TASK);
+    CURRENT_TASK_IDS[cpu_id.raw()].store(current_task_id, Ordering::Release);
+    CURRENT_TICK.store(scheduler.current_tick(),
+                       Ordering::Release);
     let diagnostic_snapshot = if debug::ENABLED {
         scheduler.cpu_snapshot(cpu_id)
                  .map(|cpu| (cpu, scheduler.current_task_snapshot(cpu_id)))
@@ -136,7 +128,7 @@ fn with_scheduler<R>(f : impl FnOnce(&mut MultiClassScheduler) -> R) -> R {
                 0
             });
             state.current_task = snapshot.current_task_id
-                                         .unwrap_or(usize::MAX)
+                                         .unwrap_or(NO_CURRENT_TASK)
                                  as u64;
             state.current_address_space = snapshot.current_address_space
                                                   .map(|handle| handle.raw() as u64)
@@ -210,10 +202,8 @@ fn record_task_event(kind : DebugEventKind, task_id : TaskId, args : [u64; 3]) {
         return;
     }
     let cpu_id = cpu::current_cpu_id();
-    // 诊断 tick 实时读取（debug 模式、锁外调用）。
-    let tick = current_tick();
     debug::record_event(cpu_id.raw(),
-                        tick,
+                        CURRENT_TICK.load(Ordering::Relaxed),
                         task_id as u64,
                         kind,
                         0,
@@ -254,32 +244,25 @@ fn switch_and_unlock(guard : InterruptGuard, switch_pair : SwitchPair) {
     // 保持中断关闭直至寄存器/栈都切换完成。首次进入的任务运行时会自行开
     // 中断；已运行过的任务恢复到此函数时，再恢复它保存的原中断状态。
     let cpu_id = cpu::current_cpu_id();
-    if debug::ENABLED {
-        // __switch 前锁外；实时读 current/tick 仅在调试模式启用，避免热路径加锁。
-        let tick = current_tick();
-        let task = current_task_id().map_or(0, |id| id as u64);
-        debug::record_event(cpu_id.raw(),
-                            tick,
-                            task,
-                            DebugEventKind::TaskSwitch,
-                            0,
-                            [switch_pair.0 as usize as u64,
-                             switch_pair.1 as usize as u64,
-                             0]);
-    }
+    debug::record_event(cpu_id.raw(),
+                        CURRENT_TICK.load(Ordering::Relaxed),
+                        CURRENT_TASK_IDS[cpu_id.raw()].load(Ordering::Relaxed) as u64,
+                        DebugEventKind::TaskSwitch,
+                        0,
+                        [switch_pair.0 as usize as u64,
+                         switch_pair.1 as usize as u64,
+                         0]);
     unsafe {
         __switch(switch_pair.0, switch_pair.1);
     }
-    // 源核已保存离开任务的上下文；现在才发布被延迟迁移的任务。注意：`__switch`
-    // 之后本任务可能在**另一个核**上恢复（迁移），`cpu_id`（__switch 前捕获）已
-    // 失效，必须改用当前核做 defer 发布与 IPI 派发，否则会误操作旧核的槽位/目标。
-    let resume_cpu = cpu::current_cpu_id();
+    // 源核已保存离开任务的上下文；现在才发布被延迟迁移的任务。先取回待发送的
+    // IPI 目标，释放中断守卫后再发送（与其它路径“开中断后发 IPI”的约定一致）。
     let targets = with_scheduler(|scheduler| {
-        scheduler.enqueue_deferred_task(resume_cpu);
+        scheduler.enqueue_deferred_task(cpu_id);
         scheduler.take_pending_reschedule_cpus()
     });
     guard.release();
-    dispatch_reschedules(targets, resume_cpu);
+    dispatch_reschedules(targets, cpu_id);
 }
 
 /// 发布被延迟的跨核迁移任务。
@@ -588,22 +571,20 @@ pub fn block_current(reason : TaskWaitTarget) {
     let guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
     publish_schedule_reason(cpu_id, 5);
-    let (blocked_task, switch_pair, targets) = with_scheduler(|scheduler| {
-        let blocked_task = scheduler.current_task_id(cpu_id);
+    let blocked_task = CURRENT_TASK_IDS[cpu_id.raw()].load(Ordering::Acquire);
+    let (switch_pair, targets) = with_scheduler(|scheduler| {
         let switch_pair = scheduler.schedule(ScheduleReason::Block(reason), cpu_id);
         let mut targets = scheduler.take_pending_reschedule_cpus();
         if targets.contains(cpu_id) {
             targets.remove(cpu_id);
             assert!(scheduler.take_need_resched(cpu_id));
         }
-        (blocked_task, switch_pair, targets)
+        (switch_pair, targets)
     });
     dispatch_reschedules(targets, cpu_id);
-    if let Some(blocked_task) = blocked_task {
-        record_task_event(DebugEventKind::TaskBlock,
-                          blocked_task,
-                          [0, 0, 0]);
-    }
+    record_task_event(DebugEventKind::TaskBlock,
+                      blocked_task,
+                      [0, 0, 0]);
     if let Some(switch_pair) = switch_pair {
         switch_and_unlock(guard, switch_pair);
     }
@@ -614,22 +595,20 @@ pub fn sleep_current_for_ticks(ticks : TaskTick) -> TaskWaitResult {
     let guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
     publish_schedule_reason(cpu_id, 6);
-    let (sleeping_task, switch_pair, targets) = with_scheduler(|scheduler| {
-        let sleeping_task = scheduler.current_task_id(cpu_id);
+    let sleeping_task = CURRENT_TASK_IDS[cpu_id.raw()].load(Ordering::Acquire);
+    let (switch_pair, targets) = with_scheduler(|scheduler| {
         let switch_pair = scheduler.schedule(ScheduleReason::Sleep(ticks), cpu_id);
         let mut targets = scheduler.take_pending_reschedule_cpus();
         if targets.contains(cpu_id) {
             targets.remove(cpu_id);
             assert!(scheduler.take_need_resched(cpu_id));
         }
-        (sleeping_task, switch_pair, targets)
+        (switch_pair, targets)
     });
     dispatch_reschedules(targets, cpu_id);
-    if let Some(sleeping_task) = sleeping_task {
-        record_task_event(DebugEventKind::TaskBlock,
-                          sleeping_task,
-                          [ticks, 0, 0]);
-    }
+    record_task_event(DebugEventKind::TaskBlock,
+                      sleeping_task,
+                      [ticks, 0, 0]);
     finish_wait_after_switch(guard, switch_pair)
 }
 
@@ -638,24 +617,22 @@ pub fn exit_current(exit_code : TaskExitCode) -> ! {
     let guard = InterruptGuard::new();
     let cpu_id = cpu::current_cpu_id();
     publish_schedule_reason(cpu_id, 7);
-    let (exited_task, switch_pair, targets) = with_scheduler(|scheduler| {
-        let exited_task = scheduler.current_task_id(cpu_id);
+    let exited_task = CURRENT_TASK_IDS[cpu_id.raw()].load(Ordering::Acquire);
+    let (switch_pair, targets) = with_scheduler(|scheduler| {
         let switch_pair = scheduler.schedule(ScheduleReason::Exit(exit_code), cpu_id);
         let mut targets = scheduler.take_pending_reschedule_cpus();
         if targets.contains(cpu_id) {
             targets.remove(cpu_id);
             assert!(scheduler.take_need_resched(cpu_id));
         }
-        (exited_task, switch_pair, targets)
+        (switch_pair, targets)
     });
     dispatch_reschedules(targets, cpu_id);
-    if let Some(exited_task) = exited_task {
-        record_task_event(DebugEventKind::TaskExit,
-                          exited_task,
-                          [exit_code as u64,
-                           0,
-                           0]);
-    }
+    record_task_event(DebugEventKind::TaskExit,
+                      exited_task,
+                      [exit_code as u64,
+                       0,
+                       0]);
     match switch_pair {
         Some(switch_pair) => {
             switch_and_unlock(guard, switch_pair);
@@ -906,7 +883,7 @@ pub fn wake_all_in_wait_queue(wait_queue_id : WaitQueueId) -> usize {
     dispatch_reschedules(targets, cpu_id);
     if count != 0 {
         record_task_event(DebugEventKind::TaskWake,
-                          usize::MAX,
+                          NO_CURRENT_TASK,
                           [wait_queue_id as u64,
                            count as u64,
                            0]);
@@ -1009,9 +986,11 @@ pub fn kill_task(task_id : TaskId, exit_code : TaskExitCode) -> bool {
 
 /// 当前运行任务号；引导阶段尚未切换时为 `None`。
 pub fn current_task_id() -> Option<TaskId> {
-    // 关中断避免读到 __switch 前已发布、硬件尚未切换的超前值；无锁读本核镜像。
+    // Prevent a local context switch between selecting the per-CPU slot and
+    // reading the task id published by the scheduler.
     let _guard = InterruptGuard::new();
-    api_v0::current_task_id_unlocked(cpu::current_cpu_id())
+    let task_id = CURRENT_TASK_IDS[cpu::current_cpu_id().raw()].load(Ordering::Acquire);
+    (task_id != NO_CURRENT_TASK).then_some(task_id)
 }
 
 /// 当前运行任务的稳定快照（语义层，不含内核栈指针等实现细节）。
@@ -1038,36 +1017,8 @@ pub fn diagnostic_task_snapshots() -> Vec<TaskSnapshot> {
     with_scheduler(|scheduler| scheduler.diagnostic_task_snapshots())
 }
 
-/// 当前调度器逻辑 tick（timekeeper 发布的全局原子，无锁读）。
+/// 当前调度器逻辑 tick。
 pub fn current_tick() -> TaskTick { CURRENT_TICK.load(Ordering::Acquire) }
-
-/// 当前运行任务用户地址空间指针（内核任务为 0）；无锁读本核镜像。
-pub fn current_task_user_aspace_ptr() -> usize {
-    let _guard = InterruptGuard::new();
-    api_v0::current_task_aspace_unlocked(cpu::current_cpu_id())
-}
-
-/// 本核调度器切换次数（累加值，用于判断 trap 中途是否发生了调度）。
-pub fn cpu_context_switches() -> u64 {
-    let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.cpu_context_switches(cpu::current_cpu_id()))
-}
-/// 本核 deferred 待迁任务（若有）。
-pub fn cpu_deferred_ready() -> Option<TaskId> {
-    let _guard = InterruptGuard::new();
-    with_scheduler(|scheduler| scheduler.cpu_deferred_ready(cpu::current_cpu_id()))
-}
-/// 所有核当前任务 id 无锁镜像（`usize::MAX`=无当前）。
-pub fn current_task_mirror_ids() -> [usize; MAX_CPUS] {
-    let _guard = InterruptGuard::new();
-    let mut ids = [usize::MAX; MAX_CPUS];
-    for (i, slot) in ids.iter_mut()
-                        .enumerate()
-    {
-        *slot = api_v0::current_task_id_unlocked(CpuId::from_raw(i)).unwrap_or(usize::MAX);
-    }
-    ids
-}
 
 /// 判断指定任务是否仍有子任务。
 pub fn has_child(parent_id : TaskId) -> bool {

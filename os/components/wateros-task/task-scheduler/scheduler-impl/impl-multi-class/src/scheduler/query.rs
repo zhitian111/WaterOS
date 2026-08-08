@@ -47,10 +47,4 @@ impl MultiClassScheduler {
         self.wait_queues
             .current_tick()
     }
-    pub fn cpu_context_switches(&self, cpu_id : CpuId) -> u64 {
-        self.cpu_states[cpu_id.raw()].context_switches
-    }
-    pub fn cpu_deferred_ready(&self, cpu_id : CpuId) -> Option<TaskId> {
-        self.cpu_states[cpu_id.raw()].deferred_ready_after_switch
-    }
 }

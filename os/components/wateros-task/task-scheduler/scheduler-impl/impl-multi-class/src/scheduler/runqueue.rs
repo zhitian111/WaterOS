@@ -97,11 +97,6 @@ impl MultiClassScheduler {
         let Some(task_id) = self.cpu_states[cpu_id.raw()].take_deferred_ready() else {
             return;
         };
-        // 防御：清理可能残留的 running_cpu_id。deferred 任务已离开原核，
-        // 不应保留运行态归属；activate_ready_task → enqueue_ready_on_cpu
-        // 会校验 running_cpu_id 且假定已清除。
-        self.registry
-            .clear_running_cpu(task_id);
         self.activate_ready_task(task_id, ReadyPlacement::LeastLoaded);
     }
     /// 激活非当前任务：选核、入 ready queue，并按统一 CPU 抢占规则请求调度。

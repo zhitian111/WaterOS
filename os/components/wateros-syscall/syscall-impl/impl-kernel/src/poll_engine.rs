@@ -74,10 +74,11 @@ pub(crate) fn ns_duration_to_ticks(total_ns : u128) -> u64 {
 
 impl PollDeadline {
     fn now_ns() -> u128 {
-        // 绝不在锁内回退到 `task::current_tick()`：`PollDeadline::expired()` 会被
-        // scheduler 条件闭包（持全局锁）调用，实时读 current_tick 会重新取锁造成
-        // 同核重入死锁。时钟不可用属异常状态，返回 0 只会让超时判定退化，不致命。
-        wall_clock::monotonic_ns().unwrap_or(0)
+        wall_clock::monotonic_ns().unwrap_or_else(|_| {
+                                      (task::current_tick() as u128) *
+                                      (SCHED_TIMER_PERIOD_MS as u128) *
+                                      1_000_000
+                                  })
     }
 
     pub(crate) fn infinite() -> Self { Self { expire_ns : None } }
@@ -203,7 +204,8 @@ pub(crate) fn poll_socket_revents(fd : usize, events : i16) -> i16 {
                 // 每轮 poll/epoll 扫描都会先驱动网络栈，状态变化后再在下面报告。
             }
             SocketState::Connected => {
-                let peer_read_closed = !snapshot.may_recv;
+                let peer_read_closed =
+                    !snapshot.may_recv;
                 if events & POLLIN != 0 && (snapshot.can_recv || peer_read_closed) {
                     revents |= POLLIN;
                 }
@@ -215,9 +217,7 @@ pub(crate) fn poll_socket_revents(fd : usize, events : i16) -> i16 {
                 }
             }
             SocketState::Closed => {
-                if snapshot.connect_error
-                           .is_some()
-                {
+                if snapshot.connect_error.is_some() {
                     // connect 失败也属于一次“可写完成”；select 依赖 POLLOUT，
                     // poll/epoll 则通过 POLLERR 唤醒并继续读取 SO_ERROR。
                     if events & POLLOUT != 0 {
