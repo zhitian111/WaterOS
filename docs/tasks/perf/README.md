@@ -78,6 +78,11 @@
 - [`路径规范化快速路径 A/B`](./2026-08-08-path-normalize-fast-ab.md)：
   快速路径未降低目标符号，总指令上升，已回退。
 
+## 2026-08-09 新增记录
+
+- [`页缓存稳定 node key`](./2026-08-09-page-cache-stable-node-key.md)：
+  稳定文件改用数字 node id 比较，`memcmp` 下降约 76%，RV/LA 完整 Final 通过。
+
 ## 验证约定
 
 - 改代码后：`cd os && make rv_check && make la_check`（两架构均须通过）。

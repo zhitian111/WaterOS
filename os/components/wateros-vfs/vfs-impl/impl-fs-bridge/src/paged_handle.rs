@@ -24,7 +24,7 @@ use api_v0::{
     VfsOpenDescriptionState, VfsOpenFlags, VfsPreparedRead, VfsReadLease, VfsResult,
     VfsSeekWhence,
 };
-use impl_page_cache::{global_cache, PageCacheIo};
+use impl_page_cache::{global_cache, FileCacheKey, PageCacheIo};
 use spin::Mutex;
 use wateros_base_config::fs::{FileIoMode, FILE_IO_MODE};
 use fs::{FsError, FsNodeId, SharedRwFs};
@@ -116,6 +116,17 @@ struct DetachedState {
     data : Vec<u8>,
     stable : Option<Arc<StableNodeLease>>,
     cache_key : String,
+}
+
+fn file_key_for_state(mount_gen : u64, state : &DetachedState) -> FileCacheKey {
+    let path = Arc::from(state.cache_key.as_str());
+    match state.stable.as_ref() {
+        Some(node) => FileCacheKey::stable(mount_gen,
+                                           path,
+                                           node.identity.mount_id,
+                                           node.node.raw()),
+        None => FileCacheKey::path(mount_gen, path),
+    }
 }
 
 type DetachedKey = (u64, String);
@@ -390,8 +401,8 @@ impl Clone for PagedFileHandle {
 // 本方法代码由AI完成
     fn clone(&self) -> Self {
         if self.open_ref_held {
-            let key = self.cache_key();
-            global_cache(self.mount_gen).acquire_open_ref(key.as_str());
+            let key = self.cache_file_key();
+            global_cache(self.mount_gen).acquire_open_ref_key(&key);
         }
         Self { path : self.path.clone(),
                description : self.description.clone(),
@@ -437,9 +448,9 @@ impl PagedFileHandle {
         let cache = global_cache(mount_gen);
         let stable = open_stable_node(path.as_str())?;
         let detached = detached_state_for_open(mount_gen, path.as_str(), stable);
-        let (cache_key, stable) = {
+        let (stable, cache_file_key) = {
             let state = detached.lock();
-            (state.cache_key.clone(), state.stable.clone())
+            (state.stable.clone(), file_key_for_state(mount_gen, &state))
         };
 
         let mut on_disk_size = meta.size;
@@ -452,19 +463,19 @@ impl PagedFileHandle {
                 Some(node) => node.metadata()?,
                 None => bridge.metadata(path.as_str())?,
             };
-            cache.truncate(cache_key.as_str(), 0);
+            cache.truncate_key(&cache_file_key, 0);
             on_disk_size = 0;
         }
 
         let mut offset = 0u64;
         if flags.contains(VfsOpenFlags::APPEND) {
-            offset = cache.logical_size(cache_key.as_str(), on_disk_size);
+            offset = cache.logical_size_key(&cache_file_key, on_disk_size);
         }
 
         let mut meta = meta;
-        meta.size = cache.logical_size(cache_key.as_str(), on_disk_size);
+        meta.size = cache.logical_size_key(&cache_file_key, on_disk_size);
 
-        cache.acquire_open_ref(cache_key.as_str());
+        cache.acquire_open_ref_key(&cache_file_key);
 
 // 本变量代码由AI完成
         const O_WRONLY : u32 = 1;
@@ -499,8 +510,8 @@ impl PagedFileHandle {
 // 本方法代码由AI完成
     fn release_open_ref_if_held(&mut self) {
         if self.open_ref_held {
-            let key = self.cache_key();
-            global_cache(self.mount_gen).release_open_ref(key.as_str());
+            let key = self.cache_file_key();
+            global_cache(self.mount_gen).release_open_ref_key(&key);
             self.open_ref_held = false;
         }
     }
@@ -516,12 +527,12 @@ impl PagedFileHandle {
                         self.is_detached());
             return Ok(());
         }
-        let key = self.cache_key();
+        let key = self.cache_file_key();
         let mut io = self.page_io();
         let cache = global_cache(self.mount_gen);
-        match cache.flush(&mut io,
-                          key.as_str(),
-                          core::convert::identity)
+        match cache.flush_key(&mut io,
+                              &key,
+                              core::convert::identity)
         {
             Ok(()) => Ok(()),
             Err(VfsError::NotFound) if self.stable_node().is_none() => {
@@ -551,16 +562,18 @@ impl PagedFileHandle {
         if detached.detached {
             return detached.data.len() as u64;
         }
-        let key = detached.cache_key.clone();
         drop(detached);
         // 句柄打开/截断时已记录磁盘大小；页缓存自身的逻辑大小会在本内核
         // 的写入和截断路径同步更新，因此读路径不必再逐次锁 ext4 metadata。
-        global_cache(self.mount_gen).logical_size(key.as_str(), self.on_disk_size)
+        let key = file_key_for_state(self.mount_gen, &self.detached.lock());
+        global_cache(self.mount_gen).logical_size_key(&key, self.on_disk_size)
     }
 
     fn active_path(&self) -> String { self.detached.lock().path.clone() }
 
-    fn cache_key(&self) -> String { self.detached.lock().cache_key.clone() }
+    fn cache_file_key(&self) -> FileCacheKey {
+        file_key_for_state(self.mount_gen, &self.detached.lock())
+    }
 
     fn stable_node(&self) -> Option<Arc<StableNodeLease>> {
         self.detached.lock().stable.clone()
@@ -609,8 +622,8 @@ impl PagedFileHandle {
 impl VfsIoHandle for PagedFileHandle {
     fn prepare_read(&mut self, max_len : usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
         let reservation = ReservationGuard::begin(self.description.clone())?;
-        let key = self.cache_key();
-        global_cache(self.mount_gen).acquire_open_ref(key.as_str());
+        let key = self.cache_file_key();
+        global_cache(self.mount_gen).acquire_open_ref_key(&key);
         Ok(Box::new(PagedPreparedRead {
             reservation : Some(reservation),
             mount_gen : self.mount_gen,
@@ -645,13 +658,13 @@ impl VfsIoHandle for PagedFileHandle {
                     size);
         let mut io = self.page_io();
         let cache = global_cache(self.mount_gen);
-        let key = self.cache_key();
-        let n = cache.read(&mut io,
-                           key.as_str(),
-                           size,
-                           offset,
-                           buf,
-                           core::convert::identity)?;
+        let key = self.cache_file_key();
+        let n = cache.read_key(&mut io,
+                               &key,
+                               size,
+                               offset,
+                               buf,
+                               core::convert::identity)?;
         log::trace!("[paged_handle] read OK path={} offset={} n={}/{}",
                     self.active_path(),
                     offset,
@@ -684,13 +697,13 @@ impl VfsIoHandle for PagedFileHandle {
         let size = self.current_size();
         let mut io = self.page_io();
         let cache = global_cache(self.mount_gen);
-        let key = self.cache_key();
-        let n = match cache.write(&mut io,
-                                  key.as_str(),
-                                  size,
-                                  offset,
-                                  buf,
-                                  core::convert::identity)
+        let key = self.cache_file_key();
+        let n = match cache.write_key(&mut io,
+                                      &key,
+                                      size,
+                                      offset,
+                                      buf,
+                                      core::convert::identity)
         {
             Ok(n) => n,
             Err(VfsError::NotFound) if self.stable_node().is_none() => {
@@ -720,13 +733,13 @@ impl VfsIoHandle for PagedFileHandle {
         }
         let mut io = self.page_io();
         let cache = global_cache(self.mount_gen);
-        let key = self.cache_key();
-        let n = cache.read(&mut io,
-                           key.as_str(),
-                           size,
-                           offset,
-                           buf,
-                           core::convert::identity)?;
+        let key = self.cache_file_key();
+        let n = cache.read_key(&mut io,
+                               &key,
+                               size,
+                               offset,
+                               buf,
+                               core::convert::identity)?;
         Ok(n)
     }
 
@@ -744,13 +757,13 @@ impl VfsIoHandle for PagedFileHandle {
         let size = self.current_size();
         let mut io = self.page_io();
         let cache = global_cache(self.mount_gen);
-        let key = self.cache_key();
-        let n = match cache.write(&mut io,
-                                  key.as_str(),
-                                  size,
-                                  offset,
-                                  buf,
-                                  core::convert::identity)
+        let key = self.cache_file_key();
+        let n = match cache.write_key(&mut io,
+                                      &key,
+                                      size,
+                                      offset,
+                                      buf,
+                                      core::convert::identity)
         {
             Ok(n) => n,
             Err(VfsError::NotFound) if self.stable_node().is_none() => {
@@ -870,8 +883,8 @@ impl VfsIoHandle for PagedFileHandle {
         }
         let cache = global_cache(self.mount_gen);
         if !self.is_detached() {
-            let key = self.cache_key();
-            cache.truncate(key.as_str(), len);
+            let key = self.cache_file_key();
+            cache.truncate_key(&key, len);
         }
         self.on_disk_size = len;
         self.meta.size = len;
@@ -951,7 +964,7 @@ impl VfsPreparedRead for PagedPreparedRead {
             staged.copy_from_slice(&detached.data[start..start + len]);
             (staged, len)
         } else {
-            let key = detached.cache_key.clone();
+            let key = file_key_for_state(self.mount_gen, &detached);
             let stable = detached.stable.clone();
             drop(detached);
             let cache = global_cache(self.mount_gen);
@@ -959,7 +972,7 @@ impl VfsPreparedRead for PagedPreparedRead {
                                      .and_then(|node| node.metadata().ok())
                                      .map(|meta| meta.size)
                                      .unwrap_or(self.on_disk_size);
-            let size = cache.logical_size(key.as_str(), backing_size);
+            let size = cache.logical_size_key(&key, backing_size);
             let available = size.saturating_sub(offset);
             let len = usize::try_from(available.min(self.max_len as u64)).map_err(|_| VfsError::Io)?;
             let mut staged = try_zeroed(len)?;
@@ -967,12 +980,12 @@ impl VfsPreparedRead for PagedPreparedRead {
                 0
             } else {
                 let mut io = FsPageIo::new(self.mount_gen, stable);
-                cache.read(&mut io,
-                           key.as_str(),
-                           size,
-                           offset,
-                           staged.as_mut_slice(),
-                           core::convert::identity)?
+                cache.read_key(&mut io,
+                               &key,
+                               size,
+                               offset,
+                               staged.as_mut_slice(),
+                               core::convert::identity)?
             };
             (staged, n)
         };
@@ -985,8 +998,10 @@ impl VfsPreparedRead for PagedPreparedRead {
 impl Drop for PagedPreparedRead {
     fn drop(&mut self) {
         if self.open_ref_held {
-            let key = self.detached.lock().cache_key.clone();
-            global_cache(self.mount_gen).release_open_ref(key.as_str());
+            let state = self.detached.lock();
+            let key = file_key_for_state(self.mount_gen, &state);
+            drop(state);
+            global_cache(self.mount_gen).release_open_ref_key(&key);
             self.open_ref_held = false;
         }
     }

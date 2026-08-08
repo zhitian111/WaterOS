@@ -23,6 +23,7 @@ use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::cmp::min;
+use core::hash::{Hash, Hasher};
 use core::sync::atomic::{AtomicU64, Ordering};
 use spin::{Mutex, RwLock};
 use wateros_base_config::fs::{FILE_PAGE_CACHE_CAPACITY, FILE_PAGE_SIZE, FILE_READ_AHEAD_STRIDE};
@@ -43,12 +44,78 @@ pub trait PageCacheIo {
                    -> Result<usize, Self::Error>;
 }
 
-/// 页缓存键：根卷挂载代次 + 绝对路径。
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// 页缓存键：根卷挂载代次 + 绝对路径；可带稳定文件 node id 加速 BTree 比较。
+#[derive(Clone, Debug)]
 // 本结构代码由AI完成
 pub struct FileCacheKey {
     pub mount_gen : u64,
+    /// 稳定文件的 `(mount_id, node_id)`；`None` 表示没有稳定 node 的路径键。
+    pub stable : Option<(u64, u64)>,
     pub path : Arc<str>,
+}
+
+impl FileCacheKey {
+    pub fn path(mount_gen : u64, path : Arc<str>) -> Self {
+        Self { mount_gen,
+               stable : None,
+               path }
+    }
+
+    pub fn stable(mount_gen : u64, path : Arc<str>, mount_id : u64, node_id : u64) -> Self {
+        Self { mount_gen,
+               stable : Some((mount_id, node_id)),
+               path }
+    }
+}
+
+impl PartialEq for FileCacheKey {
+    fn eq(&self, other : &Self) -> bool {
+        if self.mount_gen != other.mount_gen {
+            return false;
+        }
+        match (self.stable, other.stable) {
+            (Some(left), Some(right)) => left == right,
+            (None, None) => self.path == other.path,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for FileCacheKey {}
+
+impl PartialOrd for FileCacheKey {
+    fn partial_cmp(&self, other : &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for FileCacheKey {
+    fn cmp(&self, other : &Self) -> core::cmp::Ordering {
+        self.mount_gen
+            .cmp(&other.mount_gen)
+            .then_with(|| match (self.stable, other.stable) {
+                (Some(left), Some(right)) => left.cmp(&right),
+                (None, None) => self.path.cmp(&other.path),
+                (None, Some(_)) => core::cmp::Ordering::Less,
+                (Some(_), None) => core::cmp::Ordering::Greater,
+            })
+    }
+}
+
+impl Hash for FileCacheKey {
+    fn hash<H : Hasher>(&self, state : &mut H) {
+        self.mount_gen.hash(state);
+        match self.stable {
+            Some(stable) => {
+                1u8.hash(state);
+                stable.hash(state);
+            }
+            None => {
+                0u8.hash(state);
+                self.path.hash(state);
+            }
+        }
+    }
 }
 
 // 本结构代码由AI完成
@@ -413,8 +480,7 @@ impl GlobalFilePageCache {
     }
 
     fn file_key_from_arc(&self, path : Arc<str>) -> FileCacheKey {
-        FileCacheKey { mount_gen : self.mount_gen(),
-                       path }
+        FileCacheKey::path(self.mount_gen(), path)
     }
 
 // 本方法代码由AI完成
@@ -444,40 +510,45 @@ impl GlobalFilePageCache {
     /// 普通文件句柄 `open`/`dup` 时登记；与 VFS `close` 配对。
 // 本方法代码由AI完成
     pub fn acquire_open_ref(&self, path : &str) {
-        let key = self.file_key(path);
+        self.acquire_open_ref_key(&self.file_key(path));
+    }
+
+    pub fn acquire_open_ref_key(&self, key : &FileCacheKey) {
         let mut refs = self.open_refs.lock();
-        *refs.entry(key).or_insert(0) += 1;
+        *refs.entry(key.clone()).or_insert(0) += 1;
     }
 
     /// 句柄 `close` 后递减；最后一个引用消失时丢弃该路径的页缓存元数据（页帧已在 close 时 flush）。
 // 本方法代码由AI完成
     pub fn release_open_ref(&self, path : &str) {
-        let key = self.file_key(path);
+        self.release_open_ref_key(&self.file_key(path));
+    }
+
+    pub fn release_open_ref_key(&self, key : &FileCacheKey) {
         let should_purge = {
             let mut refs = self.open_refs.lock();
-            let Some(count) = refs.get_mut(&key) else {
+            let Some(count) = refs.get_mut(key) else {
                 return;
             };
             *count = count.saturating_sub(1);
             if *count == 0 {
-                refs.remove(&key);
+                refs.remove(key);
                 true
             } else {
                 false
             }
         };
         if should_purge {
-            self.forget_closed_file(path);
+            self.forget_closed_file_key(key);
         }
     }
 
     /// 最后一个句柄关闭时只移除路径元数据，缓存页继续由 LRU 保留。
     /// unlink/rename 路径仍调用 [`Self::purge_closed_file`] 强制清页。
-    fn forget_closed_file(&self, path : &str) {
-        let key = self.file_key(path);
+    fn forget_closed_file_key(&self, key : &FileCacheKey) {
         self.files
             .lock()
-            .remove(&key);
+            .remove(key);
     }
 
 // 本方法代码由AI完成
@@ -876,11 +947,23 @@ impl GlobalFilePageCache {
                        -> Result<usize, E>
         where Io : PageCacheIo
     {
+        self.read_key(io, &self.file_key(path), file_size, offset, buf, map_err)
+    }
+
+    pub fn read_key<Io, E>(&self,
+                           io : &mut Io,
+                           key : &FileCacheKey,
+                           file_size : u64,
+                           offset : u64,
+                           buf : &mut [u8],
+                           map_err : fn(Io::Error) -> E)
+                           -> Result<usize, E>
+        where Io : PageCacheIo
+    {
         if buf.is_empty() || offset >= file_size {
             return Ok(0);
         }
-        let key = self.file_key(path);
-        let entry = self.get_file_entry_for_key(&key, file_size);
+        let entry = self.get_file_entry_for_key(key, file_size);
         let start_page = offset / FILE_PAGE_SIZE as u64;
         let sequential = entry.read()
                               .last_read_end_page
@@ -895,7 +978,7 @@ impl GlobalFilePageCache {
             let page_off = (pos % FILE_PAGE_SIZE as u64) as usize;
             let chunk = (FILE_PAGE_SIZE - page_off).min(max - done);
             loop {
-                self.install_page(io, &key, page_idx, file_size, map_err)?;
+                self.install_page(io, key, page_idx, file_size, map_err)?;
                 let cache = self.state.lock();
                 let Some(&idx) = cache.index
                                       .get(&(key.clone(), page_idx))
@@ -922,7 +1005,7 @@ impl GlobalFilePageCache {
                 if pi * FILE_PAGE_SIZE as u64 >= file_size {
                     break;
                 }
-                let _ = self.install_page(io, &key, pi, file_size, map_err);
+                let _ = self.install_page(io, key, pi, file_size, map_err);
             }
         }
         Ok(done)
@@ -940,12 +1023,24 @@ impl GlobalFilePageCache {
                         -> Result<usize, E>
         where Io : PageCacheIo
     {
+        self.write_key(io, &self.file_key(path), file_size, offset, buf, map_err)
+    }
+
+    pub fn write_key<Io, E>(&self,
+                            io : &mut Io,
+                            key : &FileCacheKey,
+                            file_size : u64,
+                            offset : u64,
+                            buf : &[u8],
+                            map_err : fn(Io::Error) -> E)
+                            -> Result<usize, E>
+        where Io : PageCacheIo
+    {
         if buf.is_empty() {
             return Ok(0);
         }
 
-        let key = self.file_key(path);
-        let entry = self.get_file_entry_for_key(&key, file_size);
+        let entry = self.get_file_entry_for_key(key, file_size);
         let mut pos = offset;
         let mut written = 0usize;
         while written < buf.len() {
@@ -959,10 +1054,10 @@ impl GlobalFilePageCache {
             };
             loop {
                 if page_start >= logical_size || (page_off == 0 && chunk == FILE_PAGE_SIZE) {
-                    self.install_zero_page(io, &key, page_idx, map_err)?;
+                    self.install_zero_page(io, key, page_idx, map_err)?;
                 } else {
                     self.install_page(io,
-                                      &key,
+                                      key,
                                       page_idx,
                                       logical_size,
                                       map_err)?;
@@ -997,7 +1092,11 @@ impl GlobalFilePageCache {
 
 // 本方法代码由AI完成
     pub fn logical_size(&self, path : &str, fallback : u64) -> u64 {
-        self.logical_size_for_key(&self.file_key(path), fallback)
+        self.logical_size_key(&self.file_key(path), fallback)
+    }
+
+    pub fn logical_size_key(&self, key : &FileCacheKey, fallback : u64) -> u64 {
+        self.logical_size_for_key(key, fallback)
     }
 
 // 本方法代码由AI完成
@@ -1029,14 +1128,23 @@ impl GlobalFilePageCache {
                         -> Result<(), E>
         where Io : PageCacheIo
     {
-        let key = self.file_key(path);
+        self.flush_key(io, &self.file_key(path), map_err)
+    }
+
+    pub fn flush_key<Io, E>(&self,
+                            io : &mut Io,
+                            key : &FileCacheKey,
+                            map_err : fn(Io::Error) -> E)
+                            -> Result<(), E>
+        where Io : PageCacheIo
+    {
         let entry = {
             let files = self.files.lock();
-            files.get(&key)
+            files.get(key)
                  .cloned()
         };
         let Some(entry) = entry else {
-            log::trace!("[page-cache-flush] path={} no-entry", path);
+            log::trace!("[page-cache-flush] key={:?} no-entry", key.path);
             return Ok(());
         };
         let (dirty, logical_size) = {
@@ -1055,7 +1163,7 @@ impl GlobalFilePageCache {
                                run.len() >= FLUSH_RUN_MAX_PAGES;
             if should_flush {
                 let flushed = self.flush_dirty_run(io,
-                                                   &key,
+                                                   key,
                                                    &run,
                                                    logical_size,
                                                    map_err)?;
@@ -1073,7 +1181,7 @@ impl GlobalFilePageCache {
         }
         if !run.is_empty() {
             let flushed = self.flush_dirty_run(io,
-                                               &key,
+                                               key,
                                                &run,
                                                logical_size,
                                                map_err)?;
@@ -1093,14 +1201,14 @@ impl GlobalFilePageCache {
     pub fn flush_all<Io, E>(&self, io : &mut Io, map_err : fn(Io::Error) -> E) -> Result<(), E>
         where Io : PageCacheIo
     {
-        let paths : Vec<Arc<str>> = {
+        let keys : Vec<FileCacheKey> = {
             let files = self.files.lock();
             files.keys()
-                 .map(|key| key.path.clone())
+                 .cloned()
                  .collect()
         };
-        for path in paths {
-            self.flush(io, path.as_ref(), map_err)?;
+        for key in keys {
+            self.flush_key(io, &key, map_err)?;
         }
         Ok(())
     }
@@ -1189,8 +1297,11 @@ impl GlobalFilePageCache {
     /// 更新逻辑长度，并丢弃 EOF 之后的缓存页。
 // 本方法代码由AI完成
     pub fn truncate(&self, path : &str, len : u64) {
-        let key = self.file_key(path);
-        let entry = self.get_file_entry(path, len);
+        self.truncate_key(&self.file_key(path), len);
+    }
+
+    pub fn truncate_key(&self, key : &FileCacheKey, len : u64) {
+        let entry = self.get_file_entry_for_key(key, len);
         {
             let mut guard = entry.write();
             guard.logical_size = len;
@@ -1238,7 +1349,7 @@ impl GlobalFilePageCache {
             if tail > 0 {
                 let page_idx = len / FILE_PAGE_SIZE as u64;
                 if let Some(&slot) = cache.index
-                                          .get(&(key, page_idx))
+                                          .get(&(key.clone(), page_idx))
                 {
                     cache.page_data_mut(slot)[tail..].fill(0);
                 }
@@ -1712,9 +1823,7 @@ mod tests {
         if let Some(pos) = state.free.iter().position(|free_idx| *free_idx == idx) {
             state.free.swap_remove(pos);
         }
-        let key = (FileCacheKey { mount_gen : 7,
-                                  path : Arc::from("/tmp/lru") },
-                   page_idx);
+        let key = (FileCacheKey::path(7, Arc::from("/tmp/lru")), page_idx);
         state.frames[idx].key = Some(key.clone());
         state.frames[idx].dirty = false;
         state.frames[idx].version = 0;
