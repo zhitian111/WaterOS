@@ -1,5 +1,5 @@
 use crate::alloc::string::ToString;
-use crate::sys::path_at::{resolve_path_at, resolve_symlinks};
+use crate::sys::path_at::{resolve_path_at, resolve_symlinks, AT_FDCWD};
 use crate::sys::stat_times::{self, StatTime};
 use crate::user_copy::{copy_from_user_struct, copy_user_path_cstr};
 use crate::vfs_util::vfs_error_to_errno;
@@ -304,6 +304,9 @@ pub(crate) fn sys_utimensat(args : SyscallArgs) -> UserRet {
     if atime.is_none() && mtime.is_none() {
         return UserRet::from_success(0);
     }
+    if let Err(error) = vfs::assert_path_writable(_path.as_str()) {
+        return UserRet::from_error(vfs_error_to_errno(error));
+    }
 
     // VFS metadata does not yet expose writable timestamps. Keep the values in
     // the existing inode-keyed syscall sidecar so stat/statx observe Linux
@@ -369,6 +372,9 @@ fn resolve_utimens_target(dirfd : isize,
                           final_symlink : FinalSymlink)
                           -> Result<(alloc::string::String, VfsMetadata), ErrNo> {
     if path_ptr == 0 {
+        if dirfd == AT_FDCWD {
+            return Err(ErrNo::EFAULT);
+        }
         if flags != 0 {
             return Err(ErrNo::EINVAL);
         }
