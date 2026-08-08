@@ -37,6 +37,9 @@
 - [`generic ABI epoll_pwait 修复`](./results/generic-abi-epoll-pwait-20260808.md)：
   RISC-V/LoongArch 的 `__NR_epoll_pwait` 修正为 22，`epoll_pwait04` 正确返回
   `EFAULT`，`epoll_wait01/02` 同步通过。
+- [`epoll ctl/wait 语义修复`](./results/epoll-semantics-ctl-wait-20260808.md)：
+  `epoll_ctl02/03`、`epoll_wait03`、`EPOLLRDHUP`、`EPOLLET` 与
+  `EPOLLONESHOT` 定向用例全部通过。
 
 - [`RISC-V sscratch 切换修复`](./results/riscv64-sscratch-switch-20260808.md)：
   协作式上下文切换进入内核/idle 任务时清理 `sscratch`，消除“内核任务被误判为用户态

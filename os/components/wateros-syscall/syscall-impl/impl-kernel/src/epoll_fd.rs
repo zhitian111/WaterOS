@@ -20,6 +20,8 @@ static NEXT_EPOLL_INODE : AtomicU64 = AtomicU64::new(1);
 pub(crate) struct EpollInterest {
     pub events : u32,
     pub data : u64,
+    pub edge_ready : bool,
+    pub oneshot_armed : bool,
 }
 
 /// epoll 实例状态。
@@ -318,6 +320,9 @@ pub(crate) fn epoll_to_poll_events(events : u32) -> i16 {
     if events & EPOLLOUT != 0 {
         poll |= crate::poll_engine::POLLOUT;
     }
+    if events & EPOLLRDHUP != 0 {
+        poll |= crate::poll_engine::POLLRDHUP;
+    }
     if events & EPOLLPRI != 0 {
         poll |= crate::poll_engine::POLLPRI;
     }
@@ -338,6 +343,9 @@ pub(crate) fn poll_to_epoll_events(revents : i16) -> u32 {
     }
     if revents & crate::poll_engine::POLLOUT != 0 {
         events |= EPOLLOUT;
+    }
+    if revents & crate::poll_engine::POLLRDHUP != 0 {
+        events |= EPOLLRDHUP;
     }
     if revents & crate::poll_engine::POLLPRI != 0 {
         events |= EPOLLPRI;

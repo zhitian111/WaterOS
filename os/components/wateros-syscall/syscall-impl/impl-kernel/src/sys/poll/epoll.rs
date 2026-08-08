@@ -11,7 +11,7 @@ use task::TaskTick;
 use crate::epoll_fd::{
     self, epoll_to_poll_events, poll_to_epoll_events, EpollEvent, EpollHandle, EpollInterest,
     EPOLL_CLOEXEC, EPOLL_CTL_ADD, EPOLL_CTL_DEL, EPOLL_CTL_MOD, EPOLLERR, EPOLLHUP,
-    EPOLL_VALID_EVENTS,
+    EPOLLET, EPOLLONESHOT, EPOLLOUT, EPOLL_VALID_EVENTS,
 };
 use crate::poll_engine::{
     poll_revents_fd, PollDeadline, POLLIN, POLLNVAL, POLLOUT, POLLPRI,
@@ -80,37 +80,41 @@ pub(crate) fn sys_epoll_ctl(args: SyscallArgs) -> UserRet {
                 Ok(event) => event,
                 Err(err) => return UserRet::from_error(err),
             };
-            if event.events == 0 || event.events & !EPOLL_VALID_EVENTS != 0 {
+            if event.events & !EPOLL_VALID_EVENTS != 0 {
                 return UserRet::from_error(ErrNo::EINVAL);
             }
             if !fd_is_pollable(target_fd) {
+                if vfs::fd::with_current_io(target_fd, |_| Ok(())).is_ok() {
+                    return UserRet::from_error(ErrNo::EPERM);
+                }
                 return UserRet::from_error(ErrNo::EBADF);
             }
+            let edge_ready = if event.events & EPOLLET != 0 {
+                current_out_events(target_fd, event.events)
+                    .map(|events| events != 0)
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+            let interest = EpollInterest {
+                events: event.events,
+                data: event.data,
+                edge_ready,
+                oneshot_armed: true,
+            };
             let mut guard = instance.lock();
             match op {
                 EPOLL_CTL_ADD => {
                     if guard.interests.contains_key(&target_fd) {
                         return UserRet::from_error(ErrNo::EEXIST);
                     }
-                    guard.interests.insert(
-                        target_fd,
-                        EpollInterest {
-                            events: event.events,
-                            data: event.data,
-                        },
-                    );
+                    guard.interests.insert(target_fd, interest);
                 }
                 EPOLL_CTL_MOD => {
                     if !guard.interests.contains_key(&target_fd) {
                         return UserRet::from_error(ErrNo::ENOENT);
                     }
-                    guard.interests.insert(
-                        target_fd,
-                        EpollInterest {
-                            events: event.events,
-                            data: event.data,
-                        },
-                    );
+                    guard.interests.insert(target_fd, interest);
                 }
                 _ => {}
             }
@@ -131,7 +135,7 @@ pub(crate) fn sys_epoll_ctl(args: SyscallArgs) -> UserRet {
 pub(crate) fn sys_epoll_wait(args: SyscallArgs) -> UserRet {
     let epfd = args.arg(0);
     let events_ptr = args.arg(1);
-    let maxevents = args.arg(2);
+    let maxevents = args.arg(2) as isize;
     let timeout_ms = args.arg(3) as isize;
     do_epoll_wait(epfd, events_ptr, maxevents, timeout_ms)
 }
@@ -152,12 +156,13 @@ pub(crate) fn sys_epoll_pwait(args: SyscallArgs) -> UserRet {
 fn do_epoll_wait(
     epfd: usize,
     events_ptr: usize,
-    maxevents: usize,
+    maxevents: isize,
     timeout_ms: isize,
 ) -> UserRet {
     if maxevents <= 0 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
+    let maxevents = maxevents as usize;
     if events_ptr == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
     }
@@ -223,13 +228,34 @@ fn read_epoll_event(ptr : usize) -> Result<EpollEvent, ErrNo> {
     Ok(EpollEvent::from_abi_bytes(&bytes))
 }
 
+fn current_out_events(fd : usize, events : u32) -> Option<u32> {
+    let poll_events = epoll_to_poll_events(events);
+    let revents = poll_revents_fd(fd, poll_events);
+    if revents & POLLNVAL != 0 {
+        return None;
+    }
+    let mut out_events = poll_to_epoll_events(revents);
+    out_events &= events | EPOLLERR | EPOLLHUP;
+    if events & EPOLLET != 0 && events & EPOLLOUT != 0 {
+        let pipe_len = vfs::fd::with_current_io(fd, |handle| Ok(handle.pipe_buffer_len()))
+            .ok()
+            .flatten();
+        if let Some(len) = pipe_len {
+            if len != 0 {
+                out_events &= !EPOLLOUT;
+            }
+        }
+    }
+    Some(out_events)
+}
+
 fn scan_epoll_ready(
     instance: &alloc::sync::Arc<spin::Mutex<epoll_fd::EpollInstance>>,
     events_ptr: usize,
     maxevents: usize,
 ) -> Result<usize, ErrNo> {
     crate::poll_engine::drive_network_stack();
-    let interests : alloc::vec::Vec<(usize, EpollInterest)> = {
+    let mut interests : alloc::vec::Vec<(usize, EpollInterest)> = {
         let guard = instance.lock();
         guard.interests
              .iter()
@@ -239,30 +265,59 @@ fn scan_epoll_ready(
     let mut ready = 0usize;
     let event_size = EpollEvent::ABI_SIZE;
 
-    for (fd, interest) in interests {
-        if ready >= maxevents {
-            break;
-        }
-        let poll_events = epoll_to_poll_events(interest.events);
-        let revents = poll_revents_fd(fd, poll_events);
-        if revents & POLLNVAL != 0 {
+    for (fd, mut interest) in interests.drain(..) {
+        let oneshot = interest.events & EPOLLONESHOT != 0;
+        let edge = interest.events & EPOLLET != 0;
+        if oneshot && !interest.oneshot_armed {
             continue;
         }
-        let mut out_events = poll_to_epoll_events(revents);
-        out_events &= interest.events | EPOLLERR | EPOLLHUP;
-        if out_events == 0 {
+        let Some(out_events) = current_out_events(fd, interest.events) else {
             continue;
-        }
-        let out = EpollEvent {
-            events: out_events,
-            data: interest.data,
         };
-        let ptr = events_ptr + ready * event_size;
-        let bytes = out.to_abi_bytes();
-        if copy_to_user(ptr, &bytes)? != bytes.len() {
-            return Err(ErrNo::EFAULT);
+
+        if edge {
+            if out_events != 0 {
+                if !interest.edge_ready {
+                    interest.edge_ready = true;
+                    if oneshot {
+                        interest.oneshot_armed = false;
+                    }
+                    if ready < maxevents {
+                        let out = EpollEvent {
+                            events: out_events,
+                            data: interest.data,
+                        };
+                        let ptr = events_ptr + ready * event_size;
+                        let bytes = out.to_abi_bytes();
+                        if copy_to_user(ptr, &bytes)? != bytes.len() {
+                            return Err(ErrNo::EFAULT);
+                        }
+                        ready += 1;
+                    }
+                }
+            } else {
+                interest.edge_ready = false;
+            }
+        } else if out_events != 0 {
+            if oneshot {
+                interest.oneshot_armed = false;
+            }
+            if ready < maxevents {
+                let out = EpollEvent {
+                    events: out_events,
+                    data: interest.data,
+                };
+                let ptr = events_ptr + ready * event_size;
+                let bytes = out.to_abi_bytes();
+                if copy_to_user(ptr, &bytes)? != bytes.len() {
+                    return Err(ErrNo::EFAULT);
+                }
+                ready += 1;
+            }
         }
-        ready += 1;
+        if let Some(slot) = instance.lock().interests.get_mut(&fd) {
+            *slot = interest;
+        }
     }
     Ok(ready)
 }

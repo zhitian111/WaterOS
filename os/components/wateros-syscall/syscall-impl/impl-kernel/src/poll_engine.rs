@@ -19,6 +19,7 @@ pub(crate) const POLLIN : i16 = 0x001;
 // 本变量代码由AI完成
 pub(crate) const POLLOUT : i16 = 0x004;
 pub(crate) const POLLPRI : i16 = 0x002;
+pub(crate) const POLLRDHUP : i16 = 0x2000;
 // 本变量代码由AI完成
 pub(crate) const POLLERR : i16 = 0x008;
 // 本变量代码由AI完成
@@ -206,6 +207,9 @@ pub(crate) fn poll_socket_revents(fd : usize, events : i16) -> i16 {
             SocketState::Connected => {
                 let peer_read_closed =
                     !snapshot.may_recv;
+                if events & POLLRDHUP != 0 && peer_read_closed {
+                    revents |= POLLRDHUP;
+                }
                 if events & POLLIN != 0 && (snapshot.can_recv || peer_read_closed) {
                     revents |= POLLIN;
                 }
@@ -217,6 +221,9 @@ pub(crate) fn poll_socket_revents(fd : usize, events : i16) -> i16 {
                 }
             }
             SocketState::Closed => {
+                if events & POLLRDHUP != 0 {
+                    revents |= POLLRDHUP;
+                }
                 if snapshot.connect_error.is_some() {
                     // connect 失败也属于一次“可写完成”；select 依赖 POLLOUT，
                     // poll/epoll 则通过 POLLERR 唤醒并继续读取 SO_ERROR。
