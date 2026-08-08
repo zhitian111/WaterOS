@@ -149,7 +149,9 @@ fn write_with_ordered_size(fs : &Ext4,
           .map_err(map_error)?;
         fs.flush_all();
     }
-    fs.write(inode, offset, data).map_err(map_error)
+    fs.write(inode, offset, data).map_err(map_error)?;
+    fs.flush_all();
+    Ok(data.len())
 }
 
 fn parent_name(path : &str) -> FsResult<(&str, &str)> {

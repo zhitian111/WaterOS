@@ -4,10 +4,10 @@ use crate::constants::*;
 use crate::prelude::*;
 use crate::Block;
 use crate::BlockDevice;
-use axsync::Mutex;
+use spin::Mutex;
 
 /// Write-back cache slot.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 struct CacheSlot {
     /// Valid flag.
     valid: bool,
@@ -22,7 +22,7 @@ struct CacheSlot {
 }
 
 /// Associative cache set.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct CacheSet {
     /// `CACHE_ASSOC`-way-associative slots.
     slots: [CacheSlot; CACHE_ASSOC],
@@ -32,11 +32,11 @@ struct CacheSet {
 
 impl CacheSet {
     /// Initialize the cache set. Initialize in heap to avoid stack overflow.
-    fn new() -> Box<Self> {
-        let mut set = Box::new(CacheSet {
-            slots: [CacheSlot::default(); CACHE_ASSOC],
+    fn new() -> Self {
+        let mut set = CacheSet {
+            slots: core::array::from_fn(|_| CacheSlot::default()),
             head: CACHE_ASSOC as u8 - 1,
-        });
+        };
         for i in 1..CACHE_ASSOC as u8 {
             set.link(i - 1, i);
         }
@@ -85,8 +85,7 @@ pub struct BlockCache {
 impl BlockCache {
     /// Create a new block cache on a block device.
     pub fn new(block_dev: Arc<dyn BlockDevice>) -> Self {
-        // Initialize in heap to avoid stack overflow
-        let cache = vec![*CacheSet::new(); CACHE_SIZE];
+        let cache: Vec<CacheSet> = (0..CACHE_SIZE).map(|_| CacheSet::new()).collect();
         Self {
             cache: Arc::new(Mutex::new(cache.try_into().unwrap())),
             block_dev,
@@ -165,7 +164,7 @@ impl BlockCache {
         for set in cache.iter_mut() {
             for slot in set.slots.iter_mut() {
                 if slot.valid && slot.dirty {
-                    info!("Flushing block {} to disk", slot.block.id);
+                    trace!("Flushing block {} to disk", slot.block.id);
                     self.block_dev.write_block(&slot.block);
                     slot.dirty = false;
                 }

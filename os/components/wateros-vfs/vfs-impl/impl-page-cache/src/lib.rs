@@ -54,7 +54,6 @@ pub struct FileCacheKey {
 // 本结构代码由AI完成
 struct PageFrame {
     key : Option<(FileCacheKey, u64)>,
-    data : Vec<u8>,
     dirty : bool,
     version : u64,
     lru_prev : Option<usize>,
@@ -71,6 +70,8 @@ enum LruClass {
 // 本结构代码由AI完成
 struct GlobalCacheState {
     capacity : usize,
+    /// 所有页帧 payload 共用连续池，避免每槽一次 4 KiB 堆分配放大 TLSF 锁竞争与碎片。
+    data : Vec<u8>,
     frames : Vec<PageFrame>,
     index : BTreeMap<(FileCacheKey, u64), usize>,
     clean_lru_head : Option<usize>,
@@ -88,11 +89,11 @@ impl GlobalCacheState {
     fn with_capacity(cap : usize) -> Self {
         let mut frames = Vec::new();
         let mut free = Vec::new();
+        let data = vec![0u8; cap.checked_mul(FILE_PAGE_SIZE).unwrap_or(usize::MAX)];
         if cap > 0 {
             frames.reserve_exact(cap);
             for _ in 0..cap {
                 frames.push(PageFrame { key : None,
-                                        data : vec![0u8; FILE_PAGE_SIZE],
                                         dirty : false,
                                         version : 0,
                                         lru_prev : None,
@@ -102,6 +103,7 @@ impl GlobalCacheState {
             free.extend((0..cap).rev());
         }
         Self { capacity : cap,
+               data,
                frames,
                index : BTreeMap::new(),
                clean_lru_head : None,
@@ -110,6 +112,18 @@ impl GlobalCacheState {
                dirty_lru_tail : None,
                free,
                next_version : 0 }
+    }
+
+    #[inline]
+    fn page_data(&self, idx : usize) -> &[u8] {
+        let start = idx * FILE_PAGE_SIZE;
+        &self.data[start..start + FILE_PAGE_SIZE]
+    }
+
+    #[inline]
+    fn page_data_mut(&mut self, idx : usize) -> &mut [u8] {
+        let start = idx * FILE_PAGE_SIZE;
+        &mut self.data[start..start + FILE_PAGE_SIZE]
     }
 
     fn lru_ends(&self, class : LruClass) -> (Option<usize>, Option<usize>) {
@@ -223,9 +237,7 @@ impl GlobalCacheState {
         self.remove_from_lru(idx);
         let dirty_data = if self.frames[idx].dirty {
             old.clone()
-               .map(|key| (key,
-                           self.frames[idx].data.clone(),
-                           self.frames[idx].version))
+               .map(|key| (key, self.page_data(idx).to_vec(), self.frames[idx].version))
         } else {
             None
         };
@@ -599,7 +611,7 @@ impl GlobalFilePageCache {
             }
 
             let len = FILE_PAGE_SIZE.min(usize::try_from(logical_size - off).unwrap_or(0));
-            batch_data.extend_from_slice(&cache.frames[slot].data[..len]);
+            batch_data.extend_from_slice(&cache.page_data(slot)[..len]);
             batch_last = Some(page_idx);
             flushed_pages.push((page_idx, expected_version));
         }
@@ -690,7 +702,7 @@ impl GlobalFilePageCache {
                 cache.frames[idx].key.clone().map(|(victim_key, victim_page)| {
                     (victim_key,
                      victim_page,
-                     cache.frames[idx].data.clone(),
+                     cache.page_data(idx).to_vec(),
                      cache.frames[idx].version)
                 })
             } else {
@@ -735,8 +747,8 @@ impl GlobalFilePageCache {
                 cache.touch_lru(existing);
                 return Ok(());
             }
-            cache.frames[idx].data
-                             .copy_from_slice(&page_buf);
+            cache.page_data_mut(idx)
+                 .copy_from_slice(&page_buf);
             cache.frames[idx].dirty = false;
             cache.frames[idx].version = 0;
             cache.frames[idx].key = Some((key.clone(), page_idx));
@@ -795,7 +807,7 @@ impl GlobalFilePageCache {
                 cache.frames[idx].key.clone().map(|(victim_key, victim_page)| {
                     (victim_key,
                      victim_page,
-                     cache.frames[idx].data.clone(),
+                     cache.page_data(idx).to_vec(),
                      cache.frames[idx].version)
                 })
             } else {
@@ -840,8 +852,8 @@ impl GlobalFilePageCache {
                 cache.touch_lru(existing);
                 return Ok(());
             }
-            cache.frames[idx].data
-                             .fill(0);
+            cache.page_data_mut(idx)
+                 .fill(0);
             cache.frames[idx].dirty = false;
             cache.frames[idx].version = 0;
             cache.frames[idx].key = Some((key.clone(), page_idx));
@@ -892,8 +904,8 @@ impl GlobalFilePageCache {
                     // install_page dropping the cache lock and this lookup.
                     continue;
                 };
-                buf[done..done + chunk].copy_from_slice(&cache.frames[idx].data
-                                                            [page_off..page_off + chunk]);
+                buf[done..done + chunk].copy_from_slice(&cache.page_data(idx)
+                                                             [page_off..page_off + chunk]);
                 break;
             }
             done += chunk;
@@ -964,9 +976,9 @@ impl GlobalFilePageCache {
                 else {
                     continue;
                 };
-                cache.frames[idx].data[page_off..page_off + chunk].copy_from_slice(&buf[written..
-                                                                                        written +
-                                                                                        chunk]);
+                cache.page_data_mut(idx)[page_off..page_off + chunk].copy_from_slice(
+                    &buf[written..written + chunk],
+                );
                 let version = cache.mark_dirty(idx);
                 cache.touch_lru(idx);
                 guard.dirty_pages
@@ -1226,7 +1238,7 @@ impl GlobalFilePageCache {
                 if let Some(&slot) = cache.index
                                           .get(&(key, page_idx))
                 {
-                    cache.frames[slot].data[tail..].fill(0);
+                    cache.page_data_mut(slot)[tail..].fill(0);
                 }
             }
         }
@@ -1312,7 +1324,7 @@ mod tests {
                     let idx = *state.index
                                     .get(&(key.clone(), 0))
                                     .unwrap();
-                    state.frames[idx].data.fill(0x22);
+                    state.page_data_mut(idx).fill(0x22);
                     state.mark_dirty(idx)
                 };
                 let entry = self.cache.files
@@ -1513,7 +1525,7 @@ mod tests {
             let state = cache.state.lock();
             let idx = *state.index.get(&(cache.file_key("/tmp/dirty"), 0)).unwrap();
             assert!(state.frames[idx].dirty);
-            assert_eq!(state.frames[idx].data, payload);
+            assert_eq!(state.page_data(idx), payload.as_slice());
             state.assert_lru_invariants();
         }
 

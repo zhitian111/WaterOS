@@ -6,7 +6,7 @@ name = "wateros-fs-impl-another-ext4"
 [dependencies]
     api-v0 = { path = "../../fs-api/api-v0/", package = "wateros-fs-api-v0", default-features = true }
     driver-block-api-v0 = { path = "../../../wateros-driver/driver-block/block-api/api-v0", package = "wateros-driver-block-api-v0", default-features = true }
-    another_ext4 = { path = "../../../../vendor/another_ext4" }
+    another_ext4 = { path = "../../../../vendor/another_ext4", features = ["block_cache"] }
     log = "0.4.29"
     spin = "0.10.0"
 

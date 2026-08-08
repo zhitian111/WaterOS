@@ -41,7 +41,7 @@ pub const SB_GOOD_INODE_SIZE: usize = 256;
 pub const SB_GOOD_DESC_SIZE: usize = 64;
 
 /// The size of the block cache (cache set number).
-pub const CACHE_SIZE: usize = 4;
+pub const CACHE_SIZE: usize = 64;
 
 /// Cache associativity.
 pub const CACHE_ASSOC: usize = 4;

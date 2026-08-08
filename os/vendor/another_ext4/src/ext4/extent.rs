@@ -193,10 +193,8 @@ impl Ext4 {
         }
 
         inode_ref.inode.extent_init();
-        for pblock in released.into_iter().chain(old_tree_blocks) {
-            self.write_block(&Block::new(pblock, Box::new([0; BLOCK_SIZE])));
-            self.dealloc_block(inode_ref, pblock)?;
-        }
+        released.extend(old_tree_blocks);
+        self.dealloc_blocks(inode_ref, &released)?;
         for extent in retained {
             let path = self.find_extent(inode_ref, extent.start_lblock());
             self.insert_extent(inode_ref, &path, &extent)?;
