@@ -126,6 +126,17 @@ pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
         if offset % PAGE_SIZE != 0 {
             return UserRet::from_error(ErrNo::EINVAL);
         }
+        const O_ACCMODE : u32 = 3;
+        const O_WRONLY : u32 = 1;
+        let accmode = match vfs::fd::with_current_io(fd as usize, |handle| {
+            Ok(handle.open_accmode())
+        }) {
+            Ok(mode) => mode,
+            Err(_) => return UserRet::from_error(ErrNo::EBADF),
+        };
+        if accmode & O_ACCMODE == O_WRONLY {
+            return UserRet::from_error(ErrNo::EACCES);
+        }
         let size = match file_size_for_mmap(fd as usize) {
             Ok(size) => size,
             Err(e) => return UserRet::from_error(e),
