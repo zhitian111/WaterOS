@@ -85,7 +85,7 @@ pub const EXIT_GROUP : usize = 94;
 pub const FORK : usize = 220; // 用户态 fork 常映射到 clone
 pub const CLONE3 : usize = 435;
 pub const WAITPID : usize = 260; // wait4
-pub const WAITID : usize = 247;
+pub const WAITID : usize = 95;
 pub const KILL : usize = 129;
 pub const EXEC : usize = 221; // execve
 pub const UNSHARE : usize = 272;
@@ -209,7 +209,8 @@ pub const SENDMMSG : usize = 269;
 pub const SETSOCKOPT : usize = 208;
 pub const GETSOCKOPT : usize = 209;
 pub const SHUTDOWN : usize = 210;
-pub const POLL : usize = 271;
+/// asm-generic 64 位无独立 `poll` nr；riscv64/loong64 用户态经 `ppoll`(73) 实现。
+pub const POLL : usize = usize::MAX;
 pub const EPOLL_CREATE1 : usize = 20;
 pub const EPOLL_CTL : usize = 21;
 /// asm-generic 64 位无独立 `epoll_wait` nr；riscv64/loong64 用户态经 `epoll_pwait`(22) 实现。

@@ -40,6 +40,9 @@
 - [`epoll ctl/wait 语义修复`](./results/epoll-semantics-ctl-wait-20260808.md)：
   `epoll_ctl02/03`、`epoll_wait03`、`EPOLLRDHUP`、`EPOLLET` 与
   `EPOLLONESHOT` 定向用例全部通过。
+- [`generic syscall 号与 siginfo_t 布局修复`](./results/generic-syscall-waitid-siginfo-20260808.md)：
+  `waitid` 修正为 95，`poll` 不再占用 271；RISC-V `siginfo_t` pad 补齐后
+  `waitid05/06` 通过。
 
 - [`RISC-V sscratch 切换修复`](./results/riscv64-sscratch-switch-20260808.md)：
   协作式上下文切换进入内核/idle 任务时清理 `sscratch`，消除“内核任务被误判为用户态

@@ -53,15 +53,19 @@ struct UserSigInfo {
     signo : i32,
     errno : i32,
     code : i32,
-    payload : [u8; 116],
+    pad : i32,
+    payload : [u8; 112],
 }
+
+const _ : () = assert!(core::mem::size_of::<UserSigInfo>() == 128);
 
 impl UserSigInfo {
     fn for_signal(sig : usize) -> Self {
         Self { signo : sig as i32,
                errno : 0,
                code : 0,
-               payload : [0; 116] }
+               pad : 0,
+               payload : [0; 112] }
     }
 }
 

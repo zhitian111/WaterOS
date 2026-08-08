@@ -1,4 +1,4 @@
-//! `poll(2)`（号 271）：委托共享 [`poll_engine`]。
+//! `poll(2)` 兼容入口：generic ABI 无独立 nr，用户态通常经 `ppoll`(73) 进入。
 
 //! 本模块代码由AI完成
 use api_v0::SyscallArgs;

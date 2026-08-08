@@ -67,7 +67,8 @@ struct UserSigInfo {
     signo : i32,
     errno : i32,
     code : i32,
-    payload : [u8; 116],
+    pad : i32,
+    payload : [u8; 112],
 }
 
 #[repr(C)]
@@ -398,7 +399,8 @@ pub(crate) fn deliver_pending_signal(frame : *mut u8,
         UserRtSignalFrame { info : UserSigInfo { signo : pending.signal as i32,
                                                  errno : 0,
                                                  code : 0,
-                                                 payload : [0; 116] },
+                                                 pad : 0,
+                                                 payload : [0; 112] },
                             ucontext:
                                 UserUContext { flags : 0,
                                                link : 0,
@@ -714,12 +716,13 @@ pub(crate) fn sys_rt_sigtimedwait(args : SyscallArgs) -> UserRet {
     let _ = wait_queue.try_release_empty();
     if info != 0 {
         let source = take_pending_signal_source(process_pid, sig);
-        let mut payload = [0u8; 116];
-        payload[4..8].copy_from_slice(&(source.pid as u32).to_ne_bytes());
-        payload[8..12].copy_from_slice(&source.uid.to_ne_bytes());
+        let mut payload = [0u8; 112];
+        payload[0..4].copy_from_slice(&(source.pid as u32).to_ne_bytes());
+        payload[4..8].copy_from_slice(&source.uid.to_ne_bytes());
         let siginfo = UserSigInfo { signo : sig as i32,
                                     errno : 0,
                                     code : 0,
+                                    pad : 0,
                                     payload };
         if let Err(e) = copy_to_user_struct(info, &siginfo) {
             return UserRet::from_error(e);
