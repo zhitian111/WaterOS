@@ -415,6 +415,38 @@ fn can_write_search_directory(meta : &VfsMetadata, cred : &ProcessCredentials) -
     mode & required == required
 }
 
+fn check_readlink_parent_search(path : &str, cred : &ProcessCredentials) -> Result<(), ErrNo> {
+    if cred.effective_uid.0 == 0 {
+        return Ok(());
+    }
+    let parts : alloc::vec::Vec<&str> = path
+        .trim_start_matches('/')
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect();
+    if parts.len() <= 1 {
+        return Ok(());
+    }
+    let mut current = alloc::string::String::from("/");
+    for part in &parts[..parts.len() - 1] {
+        if current != "/" {
+            current.push('/');
+        }
+        current.push_str(part);
+        match active_impl::backend().metadata(current.as_str()) {
+            Ok(meta) if meta.node_type == VfsNodeType::Directory => {
+                if meta.mode & 0o111 == 0 {
+                    return Err(ErrNo::EACCES);
+                }
+            }
+            Ok(_) => return Err(ErrNo::ENOTDIR),
+            Err(VfsError::NotFound) => return Err(ErrNo::ENOENT),
+            Err(e) => return Err(vfs_error_to_errno(e)),
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn sys_readlinkat(args : SyscallArgs) -> UserRet {
     let dirfd = args.arg(0) as isize;
     let path_ptr = args.arg(1);
@@ -434,6 +466,10 @@ pub(crate) fn sys_readlinkat(args : SyscallArgs) -> UserRet {
         Ok(path) => path,
         Err(e) => return UserRet::from_error(e),
     };
+    let cred = cred::current_credentials();
+    if let Err(e) = check_readlink_parent_search(resolved.as_str(), &cred) {
+        return UserRet::from_error(e);
+    }
     let target = match vfs::read_symlink_absolute(resolved.as_str()) {
         Ok(target) => target,
         Err(VfsError::NotAFile) => return UserRet::from_error(ErrNo::EINVAL),

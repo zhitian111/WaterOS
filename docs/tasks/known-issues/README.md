@@ -51,6 +51,8 @@
   `listen01` 对 UDP socket 正确返回 `EOPNOTSUPP`。
 - [`user-copy 无效地址 EFAULT`](./results/user-copy-invalid-address-efault-20260808.md)：
   坏指针路径不再误映射为 `EINVAL`，`statfs02/statfs02_64` 通过。
+- [`readlink 父目录搜索权限`](./results/readlink-parent-search-permission-20260808.md)：
+  `readlink03` 的 `EACCES` 路径正确返回，8 项全部通过。
 
 - [`RISC-V sscratch 切换修复`](./results/riscv64-sscratch-switch-20260808.md)：
   协作式上下文切换进入内核/idle 任务时清理 `sscratch`，消除“内核任务被误判为用户态
