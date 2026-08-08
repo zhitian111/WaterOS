@@ -262,6 +262,16 @@ impl TaskRegistry {
         }
     }
 
+    /// 防御式清理 `running_cpu_id`：deferred 任务在发布前不应残留运行态归属。
+    pub fn clear_running_cpu(&mut self, task_id : TaskId) {
+        if let Some(task) = self.tasks
+                                .get_mut(&task_id)
+                                .map(|b| b.as_mut())
+        {
+            task.clear_running_cpu();
+        }
+    }
+
     /// 将任务标为 Blocking 并记录原因。
     pub fn mark_blocking(&mut self, task_id : TaskId, reason : TaskWaitTarget) {
         if let Some(task) = self.tasks

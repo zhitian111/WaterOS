@@ -84,6 +84,11 @@ pub fn reap_exited_task(task_id : TaskId) -> Option<ExitedTask> {
 /// 返回当前正在运行任务的任务号。
 pub fn current_task_id() -> Option<TaskId> { scheduler::current_task_id() }
 
+/// 本核调度器切换次数（用于判断 trap 中途是否发生过调度）。
+pub fn context_switches() -> u64 { scheduler::cpu_context_switches() }
+/// 本核 deferred 待迁任务。
+pub fn deferred_ready() -> Option<TaskId> { scheduler::cpu_deferred_ready() }
+
 /// 返回当前正在运行任务的稳定快照。
 pub fn current_task_snapshot() -> Option<TaskSnapshot> { scheduler::current_task_snapshot() }
 
@@ -130,6 +135,4 @@ pub fn log_stall_diagnostics() {
 pub fn current_tick() -> TaskTick { scheduler::current_tick() }
 
 /// 当前运行任务的用户地址空间指针（内核任务为 0）；基于 `current_task_snapshot` 的单字段便捷封装。
-pub fn current_task_user_aspace_ptr() -> usize {
-    scheduler::current_task_snapshot().map_or(0, |snap| snap.user_aspace_ptr)
-}
+pub fn current_task_user_aspace_ptr() -> usize { scheduler::current_task_user_aspace_ptr() }

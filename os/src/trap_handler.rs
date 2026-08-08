@@ -170,6 +170,41 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
     };
     let cx = unsafe { &mut *(authoritative as *mut TrapContext) };
 
+    // 诊断：记录 trap 入口的调度上下文；返回路径 panic 时与返回时对比，判断：
+    //   - 入口 vs 返回 current 不同 → current 中途被切（脱节）
+    //   - 入口 vs 返回 context_switches 不同 → 中途发生过调度
+    //   - mirror_ids 展示全核 current 归属（可判断 entry_current 是否在别核）
+    let entry_current_id = task::current_task_id();
+    let entry_switches = task::context_switches();
+    let entry_tick = task::current_tick();
+    let entry_cpu_id = platform::arch::cpu::current_cpu_id().raw();
+
+    // tp 腐败主动防御：RISC-V 上 tp 必须在合法 CPU id 范围内，
+    // 若被 inline asm/编译器误改写，越界访问 cpu_states 会静默损坏数据。
+    if entry_cpu_id >= base_config::task::MAX_CPUS {
+        panic!("[trap] corrupted tp on trap entry: tp={} max_cpus={}",
+               entry_cpu_id,
+               base_config::task::MAX_CPUS);
+    }
+
+    // 诊断：用户态 trap 但本核没有用户 current（begin 返回 None → 回退到栈帧）。
+    // 说明 current-task 缓存与硬件脱节（某用户任务在调度器未跟踪的核上跑），
+    // 是磁盘/网络/堆等各类死锁的共同根类。仅在异常时打印，不影响正常路径。
+    if stack_cx.returns_to_user() && authoritative == frame {
+        let current_id = task::current_task_id();
+        let current = task::current_task_snapshot();
+        warn!("[trap-desync] cpu={} user trap pc={:#x} sp={:#x} but no user current: \
+               current_id={:?} kind={:?} state={:?}",
+              platform::arch::cpu::current_cpu_id().raw(),
+              stack_cx.user_pc(),
+              stack_cx.user_sp(),
+              current_id,
+              current.as_ref()
+                     .map(|s| s.kind),
+              current.as_ref()
+                     .map(|s| s.state));
+    }
+
     if cx.returns_to_user() {
         exit_current_if_process_exiting();
         if platform::arch::trap::user_trap_requires_kernel_address_space() {
@@ -381,6 +416,18 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             syscall::timer_tick(cx.returns_to_user());
             if !suppress_scheduler {
                 task::schedule_tick();
+                // 调度可能触发任务迁移到另一个核（switch_and_unlock 注释：
+                // "__switch 之后本任务可能在另一个核上恢复"）。
+                // 此时 tp/current 都会变，属于合法行为。
+                let post_tick_current = task::current_task_id();
+                if post_tick_current != entry_current_id {
+                    warn!("[trap] task switched during schedule_tick: entry_task={:?} \
+                           now_task={:?} entry_cpu={} now_cpu={}",
+                          entry_current_id,
+                          post_tick_current,
+                          entry_cpu_id,
+                          platform::arch::cpu::current_cpu_id().raw());
+                }
             }
         }
         _ => {
@@ -429,6 +476,14 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                       cx,
                       raw_cause);
 
+    // tp 变化检测：任务迁移（schedule_tick → __switch → 可能在另一个核上恢复）
+    // 会导致 tp 与 entry_cpu 不同，这是合法行为而非腐败。
+    let return_cpu_id = platform::arch::cpu::current_cpu_id().raw();
+    if return_cpu_id != entry_cpu_id {
+        warn!("[trap] task migrated during trap handling: entry_cpu={} return_cpu={}",
+              entry_cpu_id, return_cpu_id);
+    }
+
     // --- 返回路径（与 `trap.asm` 成对）：本函数返回后 **没有** 更多 Rust
     // 代码会执行；汇编从 `sp` 指向的 `TrapContext` 装载 CSR/通用寄存器并
     // `sret`。因此不会出现「已成功回到用户态」的 INFO 日志——除非
@@ -457,11 +512,36 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
         // 内核任务 → 更可能是 sscratch 误分类；sepc 为用户地址且 current 非用户
         // → 真脱节（current 缓存与硬件不一致）。
         let current = task::current_task_snapshot();
+        // 与入口对比：
+        //  entry/now current 不同 → current 中途被切（真脱节）；
+        //  entry/now switches 不同 → 中途发生过调度；
+        //  published_now vs current_id 同刻不一致 → 无锁镜像与快照脱节；
+        //  entry_running_cpu → entry 任务在 registry 里的运行归属；
+        //  deferred_ready → 本核是否有待迁任务未发布。
+        let published_now = task::current_task_id();
+        let now_switches = task::context_switches();
+        let now_tick = task::current_tick();
+        let entry_running_cpu = entry_current_id.and_then(|id| task::running_cpu(id));
+        let deferred_ready = task::deferred_ready();
+        let mirror_ids = task::current_task_mirror_ids();
         panic!("restore_current_trap_frame failed before sret to user (current task trap_frame \
-                missing? cpu={} current_id={:?} kind={:?} state={:?} sepc={:#x})",
+                missing? cpu={} entry_cpu={} entry_current={:?} current_id={:?} \
+                published_now={:?} entry_switches={} now_switches={} entry_tick={} now_tick={} \
+                entry_running_cpu={:?} deferred_ready={:?} mirrors={:?} kind={:?} state={:?} \
+                sepc={:#x})",
                platform::arch::cpu::current_cpu_id().raw(),
+               entry_cpu_id,
+               entry_current_id,
                current.as_ref()
                       .map(|s| s.id),
+               published_now,
+               entry_switches,
+               now_switches,
+               entry_tick,
+               now_tick,
+               entry_running_cpu,
+               deferred_ready,
+               &mirror_ids[..],
                current.as_ref()
                       .map(|s| s.kind),
                current.as_ref()

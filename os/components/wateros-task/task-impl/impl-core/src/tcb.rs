@@ -3,7 +3,6 @@
 //!
 //! 调度器只通过 `task_api` 抽象操作本模块类型。
 
-use syscall_api::UserRet;
 use alloc::boxed::Box;
 use api_v0::{
     AddressSpaceHandle, CpuId, CpuMask, ExitedTask, KernelStack, KernelTaskEntry, SchedPolicy,
@@ -13,6 +12,7 @@ use api_v0::{
 };
 use arch::task::{ActiveArchTaskContext as TaskContext, ArchTaskContext};
 use arch::trap::{ActiveTrapFrame as TaskTrapFrame, TrapFrameRead, TrapFrameWrite};
+use syscall_api::UserRet;
 
 unsafe extern "C" {
     fn __arch_task_entry();
@@ -564,6 +564,10 @@ impl TaskControlBlock {
                                   .saturating_add(1);
     }
 
+    /// 防御式清空 `running_cpu_id`（deferred 任务发布前调用，确保无残留归属）。
+    #[inline]
+    pub fn clear_running_cpu(&mut self) { self.running_cpu_id = None; }
+
     #[inline]
     pub fn mark_blocking(&mut self, reason : TaskWaitTarget) {
         self.state = TaskState::Blocking(reason);
@@ -592,9 +596,7 @@ impl TaskControlBlock {
     }
 
     #[inline]
-    pub fn tick(&mut self) {
-        self.add_ticks(1);
-    }
+    pub fn tick(&mut self) { self.add_ticks(1); }
 
     #[inline]
     pub fn add_ticks(&mut self, ticks : u64) {

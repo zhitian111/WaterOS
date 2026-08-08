@@ -103,6 +103,25 @@ impl MultiClassScheduler {
                        running_cpu.raw(),
                        cpu_id.raw());
         }
+        // 双核同跑防御：任务绝不能同时在另一个 CPU 上被标记为 current。
+        // 遍历全核检查，在某核 set_current_task 后、__switch 前被窃取会导致
+        // 同一任务的两个执行流存在（是所有竞态症状——restore desync、recursive
+        // heap、跳堆/空指针——的共同根源）。
+        let mut other_current = None;
+        for i in 0..self.cpu_states
+                        .len()
+        {
+            if i != cpu_id.raw() && self.cpu_states[i].current_task_id() == Some(snap.id) {
+                other_current = Some(i);
+                break;
+            }
+        }
+        if let Some(other) = other_current {
+            panic!("[sched] DUAL-RUN: task {} set_current on CPU {} but already current on CPU {}",
+                   snap.id,
+                   cpu_id.raw(),
+                   other);
+        }
         let cpu_state = &mut self.cpu_states[cpu_id.raw()];
         let previous_aspace = cpu_state.current_aspace();
         if previous_aspace != snap.user_aspace_ptr {
@@ -241,10 +260,12 @@ impl MultiClassScheduler {
 
     /// Tick 前置处理：推进时间、检查时间片与抢占条件。
     fn tick(&mut self, cpu_id : CpuId) -> Option<()> {
-        // 1. 推进全局 tick
+        // 1. 推进全局 tick，并发布无锁镜像供全核 `current_tick()` 读取。
         if self.is_timekeeper_cpu(cpu_id) {
             self.wait_queues
                 .tick();
+            crate::publish_current_tick(self.wait_queues
+                                            .current_tick());
         }
         // 2. 仅推进 CPU 本地缓存；任务统计会在离开 CPU 时统一回写 TCB。
         // 3. 推进当前任务的时间片/vruntime（由 CPUState::tick 按策略分发）
