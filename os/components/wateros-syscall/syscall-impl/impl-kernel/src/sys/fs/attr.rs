@@ -298,14 +298,14 @@ pub(crate) fn sys_utimensat(args : SyscallArgs) -> UserRet {
         Err(error) => return UserRet::from_error(error),
     };
 
+    if let Err(error) = vfs::assert_path_writable(_path.as_str()) {
+        return UserRet::from_error(vfs_error_to_errno(error));
+    }
     if let Err(error) = check_utimens_permission(&meta, times_are_now) {
         return UserRet::from_error(error);
     }
     if atime.is_none() && mtime.is_none() {
         return UserRet::from_success(0);
-    }
-    if let Err(error) = vfs::assert_path_writable(_path.as_str()) {
-        return UserRet::from_error(vfs_error_to_errno(error));
     }
 
     // VFS metadata does not yet expose writable timestamps. Keep the values in
