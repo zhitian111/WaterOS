@@ -49,15 +49,18 @@ BUILDSTORM_COMPILE mode=multi ok=true elapsed_s=1076.82 cores=8 arch=riscv64
 带本优化：
 
 ```text
-RISC-V:  elapsed_s=1070.61 cores=8 arch=riscv64
-LoongArch: elapsed_s=998.97 cores=8 arch=loongarch64
+RISC-V:  elapsed_s=1037.27 cores=8 arch=riscv64
+LoongArch: elapsed_s=1002.57 cores=8 arch=loongarch64
 ```
 
 日志：
 
 - `/tmp/final-after-merge-baseline-rv-20260809.log`
-- `/tmp/final-after-merge-pagecache-stable-20260809.log`
-- `/tmp/final-after-merge-pagecache-stable-la-20260809.log`
+- `/tmp/final-after-latest-scheduler-rv-20260809.log`
+- `/tmp/final-after-latest-scheduler-la-rerun-20260809.log`
+
+中间一次 LoongArch 完整轮出现过 `SIGSEGV`，随后原样重跑通过；已把该轮记入
+`/tmp/final-after-latest-scheduler-la-20260809.log`，不作为有效成绩。
 
 另跑 120s RISC-V pre smoke，日志
 `/tmp/pre-smoke-pagecache-stable-20260809.log`，无 panic。
