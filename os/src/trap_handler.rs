@@ -114,9 +114,7 @@ fn kill_current_user_task(context : &str, trap_cause : TrapCause, cx : &TrapCont
             }
             warn!("[trap] user trap on mismatched task kind={:?} task_id={} state={:?} \
                    returns_to_user=true; terminating current process",
-                  snapshot.kind,
-                  snapshot.id,
-                  snapshot.state);
+                  snapshot.kind, snapshot.id, snapshot.state);
         }
         warn!("[trap] killing user task ({}) cause={:?} pc={:#x} fault_addr={:#x} task_id={} \
                parent_id={:?} state={:?}",
@@ -212,11 +210,11 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                                regs[5],);
             if syscall_nr == RT_SIGRETURN {
                 if !syscall::restore_signal_frame(authoritative) {
-                    let has_user_context =
-                        task::current_task_snapshot()
-                            .is_some_and(|task| task.kind == task::TaskKind::User) &&
-                        task::current_process_task_snapshot()
-                            .is_some();
+                    let has_user_context = task::current_task_snapshot().is_some_and(|task| {
+                                                                            task.kind ==
+                                                                            task::TaskKind::User
+                                                                        }) &&
+                                           task::current_process_task_snapshot().is_some();
                     if has_user_context {
                         kill_current_user_task("invalid rt_sigreturn frame",
                                                trap_cause,
@@ -454,8 +452,21 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
     hot_syscall_trace!("[trap] restore_current_trap_frame restored={}",
                        restored);
     if cx.returns_to_user() && !restored {
+        // 诊断：打印当前任务与断点 PC，区分“current 缓存与硬件脱节（真双核/迁移
+        // 残留）”与“trap 处理中途切走了当前任务”。sepc 为内核地址且 current 为
+        // 内核任务 → 更可能是 sscratch 误分类；sepc 为用户地址且 current 非用户
+        // → 真脱节（current 缓存与硬件不一致）。
+        let current = task::current_task_snapshot();
         panic!("restore_current_trap_frame failed before sret to user (current task trap_frame \
-                missing?)");
+                missing? cpu={} current_id={:?} kind={:?} state={:?} sepc={:#x})",
+               platform::arch::cpu::current_cpu_id().raw(),
+               current.as_ref()
+                      .map(|s| s.id),
+               current.as_ref()
+                      .map(|s| s.kind),
+               current.as_ref()
+                      .map(|s| s.state),
+               cx.user_pc());
     }
 }
 
@@ -468,10 +479,8 @@ fn return_to_user_signal_delivery(frame : *mut u8,
     let delivered = syscall::deliver_pending_signal(frame, restart);
     if delivered < 0 {
         let has_user_context =
-            task::current_task_snapshot()
-                .is_some_and(|task| task.kind == task::TaskKind::User) &&
-            task::current_process_task_snapshot()
-                .is_some();
+            task::current_task_snapshot().is_some_and(|task| task.kind == task::TaskKind::User) &&
+            task::current_process_task_snapshot().is_some();
         if has_user_context {
             kill_current_user_task("signal frame setup failed",
                                    trap_cause,
