@@ -17,7 +17,7 @@ use api_v0::{
 };
 use fs_api_v0::{FsAccessMode, FsCapability, FsImpl, FsKind};
 use spin::Mutex;
-use task::{ProcessId, ProcessState, TaskState};
+use task::{ProcessId, ProcessState, TaskState, ThreadId};
 
 // 本变量代码由AI完成
 static ARGV_LOOKUP : Mutex<Option<TaskArgvLookup>> = Mutex::new(None);
@@ -64,6 +64,17 @@ fn exe_for(leader : TaskId) -> Option<String> {
     lookup.and_then(|f| f(leader))
 }
 
+fn thread_comm_str(task_id : TaskId) -> Option<String> {
+    let bytes = task::thread_comm(task_id)?;
+    let len = bytes.iter()
+                   .position(|&b| b == 0)
+                   .unwrap_or(bytes.len());
+    if len == 0 {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&bytes[..len]).into_owned())
+}
+
 fn fds_for(leader : TaskId) -> Vec<usize> {
     let lookup = *FD_LOOKUP.lock();
     lookup.map(|f| f(leader))
@@ -96,12 +107,16 @@ enum ProcNode {
     PidDir(ProcessId),
     PidStat(ProcessId),
     PidStatus(ProcessId),
+    PidComm(ProcessId),
     PidSmaps(ProcessId),
     PidMaps(ProcessId),
     PidCmdline(ProcessId),
     PidExe(ProcessId),
     PidFdDir(ProcessId),
     PidFd(ProcessId, usize),
+    PidTaskRoot(ProcessId),
+    PidTaskDir(ProcessId, TaskId),
+    PidTaskComm(ProcessId, TaskId),
 }
 
 // 为 proc 节点分配稳定 inode 号（pid 子树按 pid 编码）。
@@ -123,11 +138,19 @@ fn proc_inode(node : ProcNode) -> u64 {
         ProcNode::PidDir(pid) => 0x1000_0000 | ((pid.raw() as u64) << 4),
         ProcNode::PidStat(pid) => 0x1000_0001 | ((pid.raw() as u64) << 4),
         ProcNode::PidStatus(pid) => 0x1000_0002 | ((pid.raw() as u64) << 4),
+        ProcNode::PidComm(pid) => 0x1000_0009 | ((pid.raw() as u64) << 4),
         ProcNode::PidSmaps(pid) => 0x1000_0003 | ((pid.raw() as u64) << 4),
         ProcNode::PidMaps(pid) => 0x1000_0005 | ((pid.raw() as u64) << 4),
         ProcNode::PidCmdline(pid) => 0x1000_0004 | ((pid.raw() as u64) << 4),
         ProcNode::PidExe(pid) => 0x1000_0006 | ((pid.raw() as u64) << 4),
         ProcNode::PidFdDir(pid) => 0x1000_0007 | ((pid.raw() as u64) << 4),
+        ProcNode::PidTaskRoot(pid) => 0x1000_0008 | ((pid.raw() as u64) << 4),
+        ProcNode::PidTaskDir(pid, tid) => {
+            0x3000_0000_0000_0000 | ((pid.raw() as u64) << 32) | (tid as u64)
+        }
+        ProcNode::PidTaskComm(pid, tid) => {
+            0x3000_0000_0000_0000 | (1u64 << 60) | ((pid.raw() as u64) << 32) | (tid as u64)
+        }
         ProcNode::PidFd(pid, fd) => {
             0x2000_0000_0000_0000 | ((pid.raw() as u64) << 32) | fd as u64
         }
@@ -184,6 +207,12 @@ fn parse_pid(name : &str) -> Option<ProcessId> {
     }
 }
 
+fn parse_thread_task(pid : ProcessId, name : &str) -> Option<TaskId> {
+    let tid = name.parse::<usize>().ok()?;
+    let task_id = task::task_id_for_thread(ThreadId::from_raw(tid))?;
+    task::task_ids_for_process(pid)?.contains(&task_id).then_some(task_id)
+}
+
 // 将相对 `/proc` 的路径映射为内部节点；未知路径返回 None。
 // 本方法代码由AI完成
 fn parse_node(path : &str) -> Option<ProcNode> {
@@ -209,14 +238,24 @@ fn parse_node(path : &str) -> Option<ProcNode> {
         [pid_name] => Some(ProcNode::PidDir(parse_pid(pid_name)?)),
         [pid_name, "stat"] => Some(ProcNode::PidStat(parse_pid(pid_name)?)),
         [pid_name, "status"] => Some(ProcNode::PidStatus(parse_pid(pid_name)?)),
+        [pid_name, "comm"] => Some(ProcNode::PidComm(parse_pid(pid_name)?)),
         [pid_name, "smaps"] => Some(ProcNode::PidSmaps(parse_pid(pid_name)?)),
         [pid_name, "maps"] => Some(ProcNode::PidMaps(parse_pid(pid_name)?)),
         [_pid_name, "mounts"] => Some(ProcNode::Mounts),
         [pid_name, "cmdline"] => Some(ProcNode::PidCmdline(parse_pid(pid_name)?)),
         [pid_name, "exe"] => Some(ProcNode::PidExe(parse_pid(pid_name)?)),
         [pid_name, "fd"] => Some(ProcNode::PidFdDir(parse_pid(pid_name)?)),
+        [pid_name, "task"] => Some(ProcNode::PidTaskRoot(parse_pid(pid_name)?)),
         [pid_name, "fd", fd] => {
             Some(ProcNode::PidFd(parse_pid(pid_name)?, fd.parse().ok()?))
+        }
+        [pid_name, "task", tid_name] => {
+            let pid = parse_pid(pid_name)?;
+            Some(ProcNode::PidTaskDir(pid, parse_thread_task(pid, tid_name)?))
+        }
+        [pid_name, "task", tid_name, "comm"] => {
+            let pid = parse_pid(pid_name)?;
+            Some(ProcNode::PidTaskComm(pid, parse_thread_task(pid, tid_name)?))
         }
         _ => None,
     }
@@ -230,6 +269,9 @@ fn process_visible(pid : ProcessId) -> bool { task::process_snapshot(pid).is_som
 // 本方法代码由AI完成
 fn comm_for(pid : ProcessId) -> String {
     let leader = task::leader_task_for_process(pid).unwrap_or(0);
+    if let Some(comm) = thread_comm_str(leader) {
+        return comm;
+    }
     if let Some(argv) = argv_for(leader) {
         if let Some(arg0) = argv.first() {
             return basename(arg0);
@@ -239,6 +281,25 @@ fn comm_for(pid : ProcessId) -> String {
         return basename(exe.as_str());
     }
     String::from("process")
+}
+
+fn format_task_comm(pid : ProcessId, task_id : TaskId) -> FsResult<Vec<u8>> {
+    if !process_visible(pid) {
+        return Err(FsError::NotFound);
+    }
+    let comm = thread_comm_str(task_id).unwrap_or_else(|| comm_for(pid));
+    let mut out = comm.into_bytes();
+    out.push(b'\n');
+    Ok(out)
+}
+
+fn format_pid_comm(pid : ProcessId) -> FsResult<Vec<u8>> {
+    if !process_visible(pid) {
+        return Err(FsError::NotFound);
+    }
+    let mut out = comm_for(pid).into_bytes();
+    out.push(b'\n');
+    Ok(out)
 }
 
 // 本方法代码由AI完成
@@ -504,11 +565,14 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidDir(pid) |
             ProcNode::PidStat(pid) |
             ProcNode::PidStatus(pid) |
+            ProcNode::PidComm(pid) |
             ProcNode::PidSmaps(pid) |
             ProcNode::PidMaps(pid) |
             ProcNode::PidCmdline(pid) |
             ProcNode::PidExe(pid) |
-            ProcNode::PidFdDir(pid) => process_visible(pid),
+            ProcNode::PidFdDir(pid) |
+            ProcNode::PidTaskRoot(pid) => process_visible(pid),
+            ProcNode::PidTaskDir(pid, _) | ProcNode::PidTaskComm(pid, _) => process_visible(pid),
             ProcNode::PidFd(pid, fd) => {
                 task::leader_task_for_process(pid)
                     .map(|leader| fds_for(leader).contains(&fd))
@@ -525,7 +589,9 @@ impl ProcFsView for KernelProcFs {
             ProcNode::SysDir |
             ProcNode::SysKernelDir |
             ProcNode::PidDir(_) |
-            ProcNode::PidFdDir(_) => Ok(FsMetadata { node_type : FsNodeType::Directory,
+            ProcNode::PidFdDir(_) |
+            ProcNode::PidTaskRoot(_) |
+            ProcNode::PidTaskDir(_, _) => Ok(FsMetadata { node_type : FsNodeType::Directory,
                                                    size : 0,
                                                    mode : 0o555,
                                                    inode : proc_inode(node),
@@ -551,9 +617,11 @@ impl ProcFsView for KernelProcFs {
                                                           gid : 0 }),
             ProcNode::PidStat(pid) |
             ProcNode::PidStatus(pid) |
+            ProcNode::PidComm(pid) |
             ProcNode::PidSmaps(pid) |
             ProcNode::PidMaps(pid) |
-            ProcNode::PidCmdline(pid) => {
+            ProcNode::PidCmdline(pid) |
+            ProcNode::PidTaskComm(pid, _) => {
                 if !process_visible(pid) {
                     return Err(FsError::NotFound);
                 }
@@ -590,6 +658,8 @@ impl ProcFsView for KernelProcFs {
             ProcNode::SysKernelDir |
             ProcNode::PidDir(_) |
             ProcNode::PidFdDir(_) |
+            ProcNode::PidTaskRoot(_) |
+            ProcNode::PidTaskDir(_, _) |
             ProcNode::NetDir |
             ProcNode::PidExe(_) |
             ProcNode::PidFd(_, _) => {
@@ -606,9 +676,11 @@ impl ProcFsView for KernelProcFs {
             ProcNode::SysKernelTainted => Ok(b"0\n".to_vec()),
             ProcNode::PidStat(pid) => format_stat(pid),
             ProcNode::PidStatus(pid) => format_status(pid),
+            ProcNode::PidComm(pid) => format_pid_comm(pid),
             ProcNode::PidSmaps(pid) => format_smaps(pid),
             ProcNode::PidMaps(pid) => format_maps(pid),
             ProcNode::PidCmdline(pid) => format_cmdline(pid),
+            ProcNode::PidTaskComm(pid, task_id) => format_task_comm(pid, task_id),
         }
     }
 
@@ -700,6 +772,10 @@ impl ProcFsView for KernelProcFs {
                                      node_type:
                                          FsNodeType::File },
                         FsDirEntry { name:
+                                         String::from("comm"),
+                                     node_type:
+                                         FsNodeType::File },
+                        FsDirEntry { name:
                                          String::from("smaps"),
                                      node_type:
                                          FsNodeType::File },
@@ -722,6 +798,10 @@ impl ProcFsView for KernelProcFs {
                         FsDirEntry { name:
                                          String::from("fd"),
                                      node_type:
+                                         FsNodeType::Directory },
+                        FsDirEntry { name:
+                                         String::from("task"),
+                                     node_type:
                                          FsNodeType::Directory },])
             }
             ProcNode::PidFdDir(pid) => {
@@ -731,6 +811,29 @@ impl ProcFsView for KernelProcFs {
                     .map(|fd| FsDirEntry { name : fd.to_string(),
                                            node_type : FsNodeType::Symlink })
                     .collect())
+            }
+            ProcNode::PidTaskRoot(pid) => {
+                if !process_visible(pid) {
+                    return Err(FsError::NotFound);
+                }
+                Ok(task::task_ids_for_process(pid)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|task_id| {
+                        let tid = task::process_task_snapshot(task_id)
+                                      .map(|snap| snap.tid.raw())
+                                      .unwrap_or(task_id);
+                        FsDirEntry { name : tid.to_string(),
+                                     node_type : FsNodeType::Directory }
+                    })
+                    .collect())
+            }
+            ProcNode::PidTaskDir(pid, _) => {
+                if !process_visible(pid) {
+                    return Err(FsError::NotFound);
+                }
+                Ok(vec![FsDirEntry { name : String::from("comm"),
+                                     node_type : FsNodeType::File }])
             }
             _ => Err(FsError::NotAFile),
         }
