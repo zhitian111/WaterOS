@@ -57,6 +57,8 @@
   `utimes01` 的 `EFAULT` 与 `EROFS` 路径全部通过。
 - [`select/pselect 无效 fd EBADF`](./results/pselect-invalid-fd-ebadf-20260808.md)：
   `pselect02/02_64` 的已关闭 fd 正确返回 `EBADF`。
+- [`stat/statx 父目录搜索权限`](./results/stat-parent-search-permission-20260808.md)：
+  `stat03/03_64` 的 `EACCES` 路径正确返回。
 
 - [`RISC-V sscratch 切换修复`](./results/riscv64-sscratch-switch-20260808.md)：
   协作式上下文切换进入内核/idle 任务时清理 `sscratch`，消除“内核任务被误判为用户态
