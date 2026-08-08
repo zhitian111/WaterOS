@@ -18,7 +18,8 @@ impl MultiClassScheduler {
                 self.sync_current_to_registry(running_cpu);
             }
             TaskState::Ready => {}
-            TaskState::Blocking(_) | TaskState::Sleeping { .. } | TaskState::Exited(_) => {
+            TaskState::Blocking(_) | TaskState::Sleeping { .. } => {}
+            TaskState::Exited(_) => {
                 return Err(SchedError::NoSuchTask);
             }
         }
@@ -67,9 +68,8 @@ impl MultiClassScheduler {
                     false
                 }
             }
-            TaskState::Blocking(_) | TaskState::Sleeping { .. } | TaskState::Exited(_) => {
-                panic!("invalid state was rejected before TCB update")
-            }
+            TaskState::Blocking(_) | TaskState::Sleeping { .. } => false,
+            TaskState::Exited(_) => unreachable!("exited state rejected before TCB update"),
         };
         Ok(reschedule_local)
     }

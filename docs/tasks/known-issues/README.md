@@ -77,6 +77,8 @@
   `__NR_epoll_pwait2=441` 已实现，`epoll_pwait02..05` 的 pwait2 变体通过。
 - [`双架构完整 Final 复验`](./results/final-after-epoll-20260808.md)：
   RISC-V `elapsed_s=1144.48`，LoongArch `elapsed_s=1083.76`。
+- [`sched_setparam Blocking/Sleeping 目标`](./results/sched-setparam-blocked-target-20260808.md)：
+  `sched_setparam03` 不再对阻塞父进程错误返回 `ESRCH`，调度相关 LTP 全部通过。
 - [`mmap O_WRONLY fd`](./results/mmap-wronly-fd-eacces-20260808.md)：
   `mmap06` 的 O_WRONLY fd 映射正确返回 `EACCES`。
 - [`MAP_SHARED_VALIDATE flag`](./results/mmap-shared-validate-flags-20260808.md)：
