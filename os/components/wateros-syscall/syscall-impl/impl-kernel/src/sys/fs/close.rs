@@ -36,17 +36,17 @@ pub(crate) fn sys_close_range(args: SyscallArgs) -> UserRet {
     let last = args.arg(1);
     let flags = args.arg(2);
 
-    if first > last {
-        return UserRet::from_error(ErrNo::EINVAL);
-    }
     if flags & !(CLOSE_RANGE_UNSHARE | CLOSE_RANGE_CLOEXEC) != 0 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
+    // Linux 语义：先按需 unshare 出私有 fd 表，再执行区间关闭/CLOEXEC，
+    // 保证与共享 fd 表的兄弟线程互不影响。
     if flags & CLOSE_RANGE_UNSHARE != 0 {
-        log::warn!(
-            "[syscall] close_range(nr=436) CLOSE_RANGE_UNSHARE unsupported flags={:#x}",
-            flags,
-        );
+        if let Err(e) = vfs::fd::unshare_fd_table() {
+            return UserRet::from_error(vfs_error_to_errno(e));
+        }
+    }
+    if first > last {
         return UserRet::from_error(ErrNo::EINVAL);
     }
 

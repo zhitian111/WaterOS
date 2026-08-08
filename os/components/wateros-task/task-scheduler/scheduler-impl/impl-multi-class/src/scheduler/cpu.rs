@@ -59,8 +59,8 @@ impl MultiClassScheduler {
     pub fn cpu_snapshot(&self, cpu_id : CpuId) -> Option<CpuSnapshot> {
         let cpu = self.cpu_states
                       .get(cpu_id.raw())?;
-        let current_is_idle = cpu.current_task_id == cpu.idle_task_id;
-        let current_address_space = cpu.current_task_id
+        let current_is_idle = cpu.current_task_id() == cpu.idle_task_id;
+        let current_address_space = cpu.current_task_id()
                                        .and_then(|id| {
                                            let raw = self.registry
                                                          .current_task_address_space_raw(id);
@@ -68,7 +68,7 @@ impl MultiClassScheduler {
                                        });
         Some(CpuSnapshot { cpu_id,
                            online : cpu.online(),
-                           current_task_id : cpu.current_task_id,
+                           current_task_id : cpu.current_task_id(),
                            idle_task_id : cpu.idle_task_id,
                            current_is_idle,
                            current_is_user : current_address_space.is_some(),
@@ -103,9 +103,12 @@ impl MultiClassScheduler {
     }
 
     pub fn total_idle_ticks(&self) -> u64 {
-        self.cpu_states.iter()
-                       .filter(|cpu| cpu.online())
-                       .fold(0u64, |total, cpu| total.saturating_add(cpu.idle_ticks))
+        self.cpu_states
+            .iter()
+            .filter(|cpu| cpu.online())
+            .fold(0u64, |total, cpu| {
+                total.saturating_add(cpu.idle_ticks)
+            })
     }
 
     pub fn running_cpu(&self, task_id : TaskId) -> Option<CpuId> {

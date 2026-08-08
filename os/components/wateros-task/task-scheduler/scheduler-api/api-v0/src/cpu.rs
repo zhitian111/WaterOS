@@ -62,7 +62,6 @@ pub struct CPUState {
     /// `run_first_task` 前 CPU 仍在启动栈上；此时 current cache 预置为 idle，
     /// 但尚不能据此校验运行中的 `sp`。
     pub boot_context_active : bool,
-    pub current_task_id : Option<TaskId>,
     pub idle_task_id : Option<TaskId>,
     pub online : bool,
     /// 有新任务进入本 CPU 队列，需在安全点重新判断是否抢占。
@@ -80,26 +79,23 @@ pub struct CPUState {
     pub fifo_queue : FifoQueue,
     pub batch_queue : CfsQueue,
     pub idle_queue : CfsQueue,
-    //当前任务运行的tick数
+    /// 当前运行任务的完整快照缓存（id/policy/priority/nice/vruntime/affinity/
+    /// 上下文指针/地址空间一次到位），None 表示尚无当前任务。运行期会就地修改
+    /// 其 vruntime（每 tick 推进）、nice（set_nice）与 user_aspace（exec）。
+    pub current_snapshot : Option<TaskSnapshot>,
+    /// 当前任务在本 CPU 上连续运行的 tick 数（RR 时间片，不在快照里）。
     pub current_ticks : u64,
     /// 当前任务自上次切入或同步以来实际运行的 tick 数，用于批量回写 TCB 统计。
     pub current_runtime_ticks : u64,
-    pub current_policy : SchedPolicy,
-    pub current_priority : Priority,
-    pub current_vruntime : VRunTime,
-    pub current_nice : Nice,
-    pub current_affinity : CpuMask,
-    /// 缓存当前任务的上下文指针，避免每次调度都查 registry。
-    pub current_task_cx : *mut ActiveArchTaskContext,
-    /// 缓存当前任务的用户地址空间指针，用于快速判断是否需要切换页表。
-    pub current_aspace : usize,
+    /// 被强制迁出本 CPU 的当前任务；在 `__switch` 保存完上下文前不能发布到其它核，
+    /// 由调度器在切走之后（`enqueue_deferred_task`）取出并重新激活。
+    pub deferred_ready_after_switch : Option<TaskId>,
 }
 impl CPUState {
     pub fn new(cpu_id : CpuId) -> Self {
         Self { cpu_id,
                boot_task_cx : ActiveArchTaskContext::zero_init(),
                boot_context_active : true,
-               current_task_id : None,
                idle_task_id : None,
                online : false,
                need_resched : false,
@@ -113,21 +109,15 @@ impl CPUState {
                fifo_queue : FifoQueue::new(),
                batch_queue : CfsQueue::new(),
                idle_queue : CfsQueue::new(),
+               current_snapshot : None,
                current_ticks : 0,
                current_runtime_ticks : 0,
-               current_policy : SchedPolicy::Other,
-               current_priority : PRIORITY_MIN,
-               current_vruntime : 0,
-               current_nice : NICE_MIN,
-               current_affinity : CpuMask::EMPTY,
-               current_task_cx : core::ptr::null_mut(),
-               current_aspace : 0 }
+               deferred_ready_after_switch : None }
     }
     pub fn init(&mut self, cpu_id : CpuId) {
         self.cpu_id = cpu_id;
         self.boot_task_cx = ActiveArchTaskContext::zero_init();
         self.boot_context_active = true;
-        self.current_task_id = None;
         self.idle_task_id = None;
         self.online = false;
         self.need_resched = false;
@@ -145,15 +135,10 @@ impl CPUState {
             .init();
         self.idle_queue
             .init();
+        self.current_snapshot = None;
         self.current_ticks = 0;
         self.current_runtime_ticks = 0;
-        self.current_policy = SchedPolicy::Other;
-        self.current_priority = PRIORITY_MIN;
-        self.current_vruntime = 0;
-        self.current_nice = NICE_MIN;
-        self.current_affinity = CpuMask::EMPTY;
-        self.current_task_cx = core::ptr::null_mut();
-        self.current_aspace = 0;
+        self.deferred_ready_after_switch = None;
     }
     /// OTHER 与 BATCH 共用的公平调度基线。
     pub fn min_vruntime(&self) -> VRunTime { self.min_vruntime }
@@ -197,11 +182,11 @@ impl CPUState {
     fn update_min_vruntime(&mut self) {
         let mut candidate = self.min_ready_fair_vruntime();
         if !self.is_current_idle() &&
-           matches!(self.current_policy,
+           matches!(self.current_policy(),
                     SchedPolicy::Other | SchedPolicy::Batch)
         {
-            candidate = Some(candidate.map_or(self.current_vruntime, |ready| {
-                                          ready.min(self.current_vruntime)
+            candidate = Some(candidate.map_or(self.current_vruntime(), |ready| {
+                                          ready.min(self.current_vruntime())
                                       }));
         }
         if let Some(candidate) = candidate {
@@ -211,9 +196,9 @@ impl CPUState {
     }
     fn update_idle_min_vruntime(&mut self) {
         let mut candidate = self.min_idle_ready_vruntime();
-        if !self.is_current_idle() && matches!(self.current_policy, SchedPolicy::Idle) {
-            candidate = Some(candidate.map_or(self.current_vruntime, |ready| {
-                                          ready.min(self.current_vruntime)
+        if !self.is_current_idle() && matches!(self.current_policy(), SchedPolicy::Idle) {
+            candidate = Some(candidate.map_or(self.current_vruntime(), |ready| {
+                                          ready.min(self.current_vruntime())
                                       }));
         }
         if let Some(candidate) = candidate {
@@ -227,20 +212,91 @@ impl CPUState {
     /// whose vruntime is below the ready minimum can enqueue and immediately
     /// select itself forever.
     pub fn prepare_yield(&mut self) {
-        let ready_vruntime = match self.current_policy {
+        let ready_vruntime = match self.current_policy() {
             SchedPolicy::Other | SchedPolicy::Batch => self.min_ready_fair_vruntime(),
             SchedPolicy::Idle => self.min_idle_ready_vruntime(),
             SchedPolicy::Fifo | SchedPolicy::Rr => None,
         };
         if let Some(ready_vruntime) = ready_vruntime {
-            self.current_vruntime = self.current_vruntime
-                                        .max(ready_vruntime.saturating_add(1));
+            if let Some(snap) = self.current_snapshot
+                                    .as_mut()
+            {
+                snap.vruntime = snap.vruntime
+                                    .max(ready_vruntime.saturating_add(1));
+            }
         }
     }
     pub fn leave_boot_context(&mut self) { self.boot_context_active = false; }
     pub fn set_online(&mut self, online : bool) { self.online = online; }
     pub fn online(&self) -> bool { self.online }
     pub fn set_idle_task_id(&mut self, task_id : TaskId) { self.idle_task_id = Some(task_id); }
+
+    // ── 当前任务快照访问 ─────────────────────────────────────────
+    pub fn current_policy(&self) -> SchedPolicy {
+        self.current_snapshot
+            .as_ref()
+            .map(|snap| snap.policy)
+            .unwrap_or(SchedPolicy::Other)
+    }
+    pub fn current_priority(&self) -> Priority {
+        self.current_snapshot
+            .as_ref()
+            .map(|snap| snap.priority)
+            .unwrap_or(PRIORITY_MIN)
+    }
+    pub fn current_vruntime(&self) -> VRunTime {
+        self.current_snapshot
+            .as_ref()
+            .map(|snap| snap.vruntime)
+            .unwrap_or(0)
+    }
+    pub fn current_nice(&self) -> Nice {
+        self.current_snapshot
+            .as_ref()
+            .map(|snap| snap.nice)
+            .unwrap_or(NICE_MIN)
+    }
+    pub fn current_affinity(&self) -> CpuMask {
+        self.current_snapshot
+            .as_ref()
+            .map(|snap| snap.affinity)
+            .unwrap_or(CpuMask::EMPTY)
+    }
+    pub fn current_task_cx(&self) -> *mut ActiveArchTaskContext {
+        self.current_snapshot
+            .as_ref()
+            .map(|snap| snap.task_cx as *mut ActiveArchTaskContext)
+            .unwrap_or(core::ptr::null_mut())
+    }
+    pub fn current_aspace(&self) -> usize {
+        self.current_snapshot
+            .as_ref()
+            .map(|snap| snap.user_aspace_ptr)
+            .unwrap_or(0)
+    }
+    /// 就地推进当前任务缓存快照的 vruntime（fair 策略每 tick 调用）。
+    fn advance_current_vruntime(&mut self, delta : VRunTime) {
+        if let Some(snap) = self.current_snapshot
+                                .as_mut()
+        {
+            snap.vruntime = snap.vruntime
+                                .saturating_add(delta);
+        }
+    }
+    pub fn set_current_nice(&mut self, nice : Nice) {
+        if let Some(snap) = self.current_snapshot
+                                .as_mut()
+        {
+            snap.nice = nice;
+        }
+    }
+    pub fn set_current_aspace(&mut self, aspace : usize) {
+        if let Some(snap) = self.current_snapshot
+                                .as_mut()
+        {
+            snap.user_aspace_ptr = aspace;
+        }
+    }
     pub fn tick(&mut self) {
         self.timer_ticks = self.timer_ticks
                                .saturating_add(1);
@@ -250,39 +306,36 @@ impl CPUState {
         }
         self.current_runtime_ticks = self.current_runtime_ticks
                                          .saturating_add(1);
-        match self.current_policy {
+        match self.current_policy() {
             SchedPolicy::Other => {
                 // 物理 idle task 不属于 CFS；它运行时不能推进普通任务的
                 // vruntime 基线，否则新唤醒任务会被无端惩罚。
                 if !self.is_current_idle() {
-                    let weight = NICE_TO_WEIGHT[(self.current_nice + 20) as usize];
+                    let weight = NICE_TO_WEIGHT[(self.current_nice() + 20) as usize];
                     let delta = NICE_0_WEIGHT.saturating_mul(VRUNTIME_SCALE)
                                              .saturating_div(weight)
                                              .max(1);
-                    self.current_vruntime = self.current_vruntime
-                                                .saturating_add(delta);
+                    self.advance_current_vruntime(delta);
                     self.update_min_vruntime();
                 }
             }
             SchedPolicy::Batch => {
                 if !self.is_current_idle() {
-                    let weight = NICE_TO_WEIGHT[(self.current_nice + 20) as usize];
+                    let weight = NICE_TO_WEIGHT[(self.current_nice() + 20) as usize];
                     let delta = NICE_0_WEIGHT.saturating_mul(VRUNTIME_SCALE)
                                              .saturating_div(weight)
                                              .max(1);
-                    self.current_vruntime = self.current_vruntime
-                                                .saturating_add(delta);
+                    self.advance_current_vruntime(delta);
                     self.update_min_vruntime();
                 }
             }
             SchedPolicy::Idle => {
                 if !self.is_current_idle() {
-                    let weight = NICE_TO_WEIGHT[(self.current_nice + 20) as usize];
+                    let weight = NICE_TO_WEIGHT[(self.current_nice() + 20) as usize];
                     let delta = NICE_0_WEIGHT.saturating_mul(VRUNTIME_SCALE)
                                              .saturating_div(weight)
                                              .max(1);
-                    self.current_vruntime = self.current_vruntime
-                                                .saturating_add(delta);
+                    self.advance_current_vruntime(delta);
                     self.update_idle_min_vruntime();
                 }
             }
@@ -305,7 +358,7 @@ impl CPUState {
 
     /// 统一调度判断：给定触发来源时，当前任务是否应让出 CPU。
     pub fn cpu_should_reschedule(&self, cause : RescheduleCause) -> bool {
-        if !self.current_affinity
+        if !self.current_affinity()
                 .contains(self.cpu_id)
         {
             return true;
@@ -316,7 +369,7 @@ impl CPUState {
             // 弱唤醒策略只唤醒物理 idle CPU；繁忙 CPU 在下一 tick 再比较
             // 相应队列的 vruntime。
             RescheduleCause::Ready(SchedPolicy::Batch)
-                if !self.is_current_idle() && self.current_policy != SchedPolicy::Idle =>
+                if !self.is_current_idle() && self.current_policy() != SchedPolicy::Idle =>
             {
                 return false;
             }
@@ -327,7 +380,7 @@ impl CPUState {
         }
 
 
-        let is_idle = self.current_task_id == self.idle_task_id;
+        let is_idle = self.is_current_idle();
         if is_idle {
             if self.min_ready_fair_vruntime()
                    .is_some() ||
@@ -341,7 +394,7 @@ impl CPUState {
             return false;
         }
 
-        match self.current_policy {
+        match self.current_policy() {
             SchedPolicy::Other => {
                 if self.highest_priority()
                        .is_some()
@@ -349,13 +402,13 @@ impl CPUState {
                     return true;
                 }
                 self.min_ready_fair_vruntime()
-                    .is_some_and(|min| self.current_vruntime > min)
+                    .is_some_and(|min| self.current_vruntime() > min)
             }
             SchedPolicy::Batch => {
                 self.highest_priority()
                     .is_some() ||
                 self.min_ready_fair_vruntime()
-                    .is_some_and(|min| self.current_vruntime > min)
+                    .is_some_and(|min| self.current_vruntime() > min)
             }
             SchedPolicy::Idle => {
                 self.highest_priority()
@@ -367,11 +420,11 @@ impl CPUState {
                     .task_count() >
                 0 ||
                 self.min_idle_ready_vruntime()
-                    .is_some_and(|min| self.current_vruntime > min)
+                    .is_some_and(|min| self.current_vruntime() > min)
             }
             SchedPolicy::Fifo => {
                 if self.highest_priority()
-                       .is_some_and(|p| p > self.current_priority)
+                       .is_some_and(|p| p > self.current_priority())
                 {
                     return true;
                 }
@@ -382,7 +435,7 @@ impl CPUState {
                     return true;
                 }
                 if self.highest_priority()
-                       .is_some_and(|p| p > self.current_priority)
+                       .is_some_and(|p| p > self.current_priority())
                 {
                     return true;
                 }
@@ -449,24 +502,31 @@ impl CPUState {
                            -> Option<TaskId> {
         // FIFO/RR：从最高优先级往下找第一个非空队列。
         for priority in (1..=99).rev() {
-            if let Some(task_id) = self.fifo_queue.front_at_priority(priority) {
+            if let Some(task_id) = self.fifo_queue
+                                       .front_at_priority(priority)
+            {
                 return can_migrate(task_id).then(|| {
-                    self.fifo_queue
-                        .pick_at_priority(priority)
-                        .expect("peeked task must still be present")
-                });
+                                               self.fifo_queue
+                                                   .pick_at_priority(priority)
+                                                   .expect("peeked task must still be present")
+                                           });
             }
-            if let Some(task_id) = self.rr_queue.front_at_priority(priority) {
+            if let Some(task_id) = self.rr_queue
+                                       .front_at_priority(priority)
+            {
                 return can_migrate(task_id).then(|| {
-                    self.rr_queue
-                        .pick_at_priority(priority)
-                        .expect("peeked task must still be present")
-                });
+                                               self.rr_queue
+                                                   .pick_at_priority(priority)
+                                                   .expect("peeked task must still be present")
+                                           });
             }
         }
         // fair 队列（OTHER/BATCH/IDLE）中挑最小 vruntime 的任务。
         let mut best = None;
-        for queue in [&self.cfs_queue, &self.batch_queue, &self.idle_queue] {
+        for queue in [&self.cfs_queue,
+                      &self.batch_queue,
+                      &self.idle_queue]
+        {
             if let Some(candidate @ (_, vr)) = queue.front() {
                 if best.map_or(true, |(_, best_vr)| vr < best_vr) {
                     best = Some(candidate);
@@ -482,16 +542,24 @@ impl CPUState {
     }
 
     /// 当前任务是否为 idle 任务。
-    pub fn is_current_idle(&self) -> bool { self.current_task_id == self.idle_task_id }
+    pub fn is_current_idle(&self) -> bool { self.current_task_id() == self.idle_task_id }
 
-    pub fn current_task_id(&self) -> Option<TaskId> { self.current_task_id }
+    pub fn current_task_id(&self) -> Option<TaskId> {
+        self.current_snapshot
+            .as_ref()
+            .map(|snap| snap.id)
+    }
 
     pub fn set_current_task_id(&mut self, task_id : TaskId) {
-        self.current_task_id = Some(task_id);
+        if let Some(snap) = self.current_snapshot
+                                .as_mut()
+        {
+            snap.id = task_id;
+        }
     }
     /// 本 CPU 所有队列中的可运行任务总数。
     pub fn load(&self) -> usize {
-        let current = self.current_task_id != self.idle_task_id;
+        let current = !self.is_current_idle();
         self.rr_queue
             .task_count() +
         self.fifo_queue
@@ -535,22 +603,30 @@ impl CPUState {
         }
     }
 
-    /// 用快照更新所有 CPUState 缓存；aspace 切换由 scheduler 层处理。
+    /// 用快照更新当前任务缓存；aspace 切换由 scheduler 层处理。
     pub fn set_current_task(&mut self, snap : &TaskSnapshot) {
-        if self.current_task_id != Some(snap.id) {
+        if self.current_task_id() != Some(snap.id) {
             self.context_switches = self.context_switches
                                         .saturating_add(1);
         }
-        self.current_task_id = Some(snap.id);
-        self.current_policy = snap.policy;
-        self.current_priority = snap.priority;
-        self.current_vruntime = snap.vruntime;
-        self.current_nice = snap.nice;
+        self.current_snapshot = Some(*snap);
         self.current_ticks = 0;
         self.current_runtime_ticks = 0;
-        self.current_affinity = snap.affinity;
-        self.current_task_cx = snap.task_cx as *mut ActiveArchTaskContext;
-        self.current_aspace = snap.user_aspace_ptr;
+    }
+
+    /// 记录被强制迁出本 CPU 的当前任务；同一核同时只能有一个待迁任务。
+    pub fn set_deferred_ready(&mut self, task_id : TaskId) {
+        assert!(self.deferred_ready_after_switch
+                    .is_none(),
+                "CPU {} already has a deferred task migration",
+                self.cpu_id.raw());
+        self.deferred_ready_after_switch = Some(task_id);
+    }
+
+    /// 取走并清空本核待迁任务；仅在 `__switch` 保存完离开任务上下文后调用。
+    pub fn take_deferred_ready(&mut self) -> Option<TaskId> {
+        self.deferred_ready_after_switch
+            .take()
     }
 
     /// Policy 参数与本 CPU 调度队列的对应关系。
@@ -567,35 +643,6 @@ impl CPUState {
             policy if Self::is_cfs_policy(policy) && priority != 0 => Err(SchedError::InvalidArg),
             _ => Ok(()),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fair_yield_places_current_after_ready_peer() {
-        let mut cpu = CPUState::new(CpuId::from_raw(0));
-        cpu.current_policy = SchedPolicy::Other;
-        cpu.current_vruntime = 1;
-        cpu.cfs_queue.enqueue(2, 10);
-
-        cpu.prepare_yield();
-        cpu.cfs_queue.enqueue(1, cpu.current_vruntime);
-
-        assert_eq!(cpu.cfs_queue.pick(), Some((2, 10)));
-    }
-
-    #[test]
-    fn fair_yield_without_ready_peer_keeps_vruntime() {
-        let mut cpu = CPUState::new(CpuId::from_raw(0));
-        cpu.current_policy = SchedPolicy::Other;
-        cpu.current_vruntime = 7;
-
-        cpu.prepare_yield();
-
-        assert_eq!(cpu.current_vruntime, 7);
     }
 }
 pub struct CpuSnapshot {

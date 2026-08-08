@@ -46,7 +46,6 @@ pub use sched::{
 };
 pub use schedule::{
     block_current, current_task_id, current_task_snapshot,
-    current_task_trap_return_address_space_token, current_task_user_address_space_token,
     current_task_user_aspace_ptr, current_tick, interrupt_task, log_stall_diagnostics,
     reap_exited_task, schedule_reschedule, schedule_tick, sleep_for_ticks, task_snapshot, task_state,
     wait_for_task_exit, wait_for_task_exit_for_ticks, wait_on, wait_on_for_ticks, wait_on_while,
@@ -61,11 +60,11 @@ mod scheduler {
     pub use scheduler::*;
 }
 pub use api_v0::{
-    AddressSpaceHandle, AddressSpaceRef, CloneFlags, CpuId, KernelTaskEntry, ProcessError,
-    ProcessId, ProcessResult, ProcessSnapshot, ProcessState, ProcessTaskRole, ProcessTaskSnapshot,
-    ProcessTaskState, ResourceLimit, SchedError, SchedPolicy, TaskClearTid, TaskExitCode,
-    TaskSnapshot, TaskState, TaskTick, TaskWaitResult, TaskWaitTarget, ThreadId, UserImageInfo,
-    UserStack, UserTask, WaitQueueId,
+    AddressSpaceHandle, AddressSpaceRef, CloneFlags, CpuId, KernelTaskEntry,
+    ProcessError, ProcessId, ProcessResult, ProcessSnapshot, ProcessState, ProcessTaskRole,
+    ProcessTaskSnapshot, ProcessTaskState, ResourceLimit, SchedError, SchedPolicy, TaskClearTid,
+    TaskExitCode, TaskSnapshot, TaskState, TaskTick, TaskWaitResult, TaskWaitTarget, ThreadId,
+    UserImageInfo, UserStack, UserTask, WaitQueueId,
 };
 pub use api_v0::{ExitedTask, TaskId, TaskKind};
 pub use cpu::{

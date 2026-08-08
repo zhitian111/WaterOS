@@ -73,4 +73,91 @@ impl MultiClassScheduler {
         };
         Ok(reschedule_local)
     }
+
+    pub fn set_affinity(&mut self, task_id : TaskId, mask : CpuMask) -> Result<(), SchedError> {
+        if mask.bits() & !CpuMask::ALL.bits() != 0 {
+            return Err(SchedError::InvalidArg);
+        }
+        if mask.bits() &
+           self.online_cpu_mask()
+               .bits() ==
+           0
+        {
+            return Err(SchedError::InvalidArg);
+        }
+
+        let state = self.registry
+                        .state(task_id)
+                        .ok_or(SchedError::NoSuchTask)?;
+        if matches!(state, TaskState::Exited(_)) {
+            return Err(SchedError::NoSuchTask);
+        }
+        self.registry
+            .set_affinity(task_id, mask)?;
+
+        match state {
+            TaskState::Ready => {
+                // create_* 会先登记一个 Ready TCB、稍后才入 runqueue。此时
+                // `ready_cpu_id` 为 None；只保存 affinity，首次入队会按新 mask
+                // 选核，不能把它当作调度器不变量而 panic。
+                if let Some(ready_cpu) = self.registry
+                                             .ready_cpu_id(task_id)
+                {
+                    if !mask.contains(ready_cpu) {
+                        self.activate_ready_task(task_id, ReadyPlacement::LeastLoaded);
+                    }
+                }
+            }
+            TaskState::Running => {
+                let running_cpu = self.registry
+                                      .running_cpu_id(task_id)
+                                      .expect("running task must have a CPU owner");
+                if !mask.contains(running_cpu) {
+                    // 不从远端 CPU 修改运行现场。由目标 CPU 在收到 IPI 后进入
+                    // Reschedule 路径，把当前任务重新入队到允许的 CPU。
+                    self.request_reschedule(running_cpu, RescheduleCause::Forced);
+                }
+            }
+            TaskState::Blocking(_) | TaskState::Sleeping { .. } => {}
+            TaskState::Exited(_) => unreachable!(),
+        }
+        Ok(())
+    }
+    pub fn get_affinity(&self, task_id : TaskId) -> Result<CpuMask, SchedError> {
+        self.registry
+            .get_affinity(task_id)
+    }
+
+    /// 更新 TCB 中的 nice；运行中的任务还必须同步其所属 CPU 的热路径 cache。
+    pub fn set_nice(&mut self, task_id : TaskId, nice : i8) -> Result<(), SchedError> {
+        let state = self.registry
+                        .state(task_id)
+                        .ok_or(SchedError::NoSuchTask)?;
+        if matches!(state, TaskState::Exited(_)) {
+            return Err(SchedError::NoSuchTask);
+        }
+        if let Some(running_cpu) = self.registry
+                                       .running_cpu_id(task_id)
+        {
+            self.cpu_states[running_cpu.raw()].set_current_nice(nice);
+        }
+        self.registry
+            .set_nice(task_id, nice)
+    }
+
+    pub fn get_nice(&self, task_id : TaskId) -> Result<i8, SchedError> {
+        let snap = self.registry
+                       .task_snapshot(task_id);
+        Ok(snap.nice)
+    }
+    pub fn priority(&self, task_id : TaskId) -> Result<Priority, SchedError> {
+        let snap = self.registry
+                       .task_snapshot(task_id);
+        Ok(snap.priority)
+    }
+    pub fn policy(&self, task_id : TaskId) -> Result<SchedPolicy, SchedError> {
+        let snap = self.registry
+                       .task_snapshot(task_id);
+        Ok(snap.policy)
+    }
 }
