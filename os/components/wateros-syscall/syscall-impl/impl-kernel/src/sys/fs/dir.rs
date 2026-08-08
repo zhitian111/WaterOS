@@ -35,6 +35,10 @@ pub(crate) fn sys_mkdirat(args : SyscallArgs) -> UserRet {
         Ok(p) => p,
         Err(e) => return UserRet::from_error(e),
     };
+    let resolved = match resolve_symlinks(resolved.as_str(), FinalSymlink::NoFollow) {
+        Ok(p) => p,
+        Err(e) => return UserRet::from_error(e),
+    };
 
     let cred = cred::current_credentials();
     let parent_meta = match check_parent_create(resolved.as_str(), &cred) {
@@ -118,6 +122,10 @@ pub(crate) fn sys_mknodat(args : SyscallArgs) -> UserRet {
         Err(e) => return UserRet::from_error(e),
     };
     let resolved = match resolve_path_at(dirfd, path.as_str()) {
+        Ok(path) => path,
+        Err(e) => return UserRet::from_error(e),
+    };
+    let resolved = match resolve_symlinks(resolved.as_str(), FinalSymlink::NoFollow) {
         Ok(path) => path,
         Err(e) => return UserRet::from_error(e),
     };

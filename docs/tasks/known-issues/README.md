@@ -59,6 +59,8 @@
   `pselect02/02_64` 的已关闭 fd 正确返回 `EBADF`。
 - [`stat/statx 父目录搜索权限`](./results/stat-parent-search-permission-20260808.md)：
   `stat03/03_64` 的 `EACCES` 路径正确返回。
+- [`mkdirat/mknodat 符号链接循环`](./results/mkdirat-symlink-loop-20260808.md)：
+  `mkdirat02` 的 `ELOOP` 路径正确返回。
 
 - [`RISC-V sscratch 切换修复`](./results/riscv64-sscratch-switch-20260808.md)：
   协作式上下文切换进入内核/idle 任务时清理 `sscratch`，消除“内核任务被误判为用户态
