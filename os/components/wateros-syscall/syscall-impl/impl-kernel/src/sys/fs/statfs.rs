@@ -79,14 +79,14 @@ pub(crate) fn sys_statfs(args: SyscallArgs) -> UserRet {
         Ok(path) => path,
         Err(e) => return UserRet::from_error(e),
     };
-    let resolved = match resolve_symlinks(resolved.as_str(), FinalSymlink::Follow) {
-        Ok(path) => path,
-        Err(e) => return UserRet::from_error(e),
-    };
     let cred = cred::current_credentials();
     if let Err(e) = check_parent_search(resolved.as_str(), &cred) {
         return UserRet::from_error(e);
     }
+    let resolved = match resolve_symlinks(resolved.as_str(), FinalSymlink::Follow) {
+        Ok(path) => path,
+        Err(e) => return UserRet::from_error(e),
+    };
 
     match active_impl::backend().metadata(resolved.as_str()) {
         Ok(_) => {}
