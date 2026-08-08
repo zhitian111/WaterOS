@@ -98,7 +98,6 @@ impl LbaIndex {
 
 struct Slot {
     lba: Option<Lba>,
-    data: Vec<u8>,
     prev: Option<usize>,
     next: Option<usize>,
 }
@@ -108,6 +107,7 @@ pub struct CachingBlockDevice {
     inner: Box<dyn BlockDevice + Send>,
     block_size: usize,
     capacity: usize,
+    data: Vec<u8>,
     map: LbaIndex,
     slots: Vec<Slot>,
     /// 空闲槽下标（仅 `capacity > 0` 时使用）。
@@ -122,6 +122,7 @@ impl CachingBlockDevice {
     pub fn new(inner: Box<dyn BlockDevice + Send>, config: BlockCacheConfig) -> Self {
         let block_size = inner.block_size();
         let capacity = if block_size == 0 { 0 } else { config.capacity_blocks };
+        let data = vec![0u8; capacity.checked_mul(block_size).unwrap_or(usize::MAX)];
         let mut slots = Vec::new();
         let mut free = Vec::new();
         if capacity > 0 {
@@ -129,7 +130,6 @@ impl CachingBlockDevice {
             for _ in 0..capacity {
                 slots.push(Slot {
                     lba: None,
-                    data: vec![0u8; block_size],
                     prev: None,
                     next: None,
                 });
@@ -140,12 +140,25 @@ impl CachingBlockDevice {
             inner,
             block_size,
             capacity,
+            data,
             map: LbaIndex::new(capacity),
             slots,
             free,
             lru_head: None,
             lru_tail: None,
         }
+    }
+
+    #[inline]
+    fn slot_data(&self, idx: usize) -> &[u8] {
+        let start = idx * self.block_size;
+        &self.data[start..start + self.block_size]
+    }
+
+    #[inline]
+    fn slot_data_mut(&mut self, idx: usize) -> &mut [u8] {
+        let start = idx * self.block_size;
+        &mut self.data[start..start + self.block_size]
     }
 
     /// 将脏缓存写回底层（写穿下为 no-op）；保留接口供将来 write-back 或测试钩子使用。
@@ -237,13 +250,13 @@ impl CachingBlockDevice {
         }
         debug_assert_eq!(block.len(), self.block_size);
         if let Some(idx) = self.map.get(lba) {
-            self.slots[idx].data.copy_from_slice(block);
+            self.slot_data_mut(idx).copy_from_slice(block);
             self.touch_lru(idx);
             return;
         }
         let idx = self.alloc_slot();
         self.slots[idx].lba = Some(lba);
-        self.slots[idx].data.copy_from_slice(block);
+        self.slot_data_mut(idx).copy_from_slice(block);
         if let Some((old_lba, old_idx)) = self.map.insert(lba, idx) {
             if self.slots[old_idx].lba == Some(old_lba) {
                 self.detach_lru(old_idx);
@@ -263,7 +276,7 @@ impl CachingBlockDevice {
         debug_assert_eq!(block.len(), self.block_size);
         let idx = self.alloc_slot();
         self.slots[idx].lba = Some(lba);
-        self.slots[idx].data.copy_from_slice(block);
+        self.slot_data_mut(idx).copy_from_slice(block);
         if let Some((old_lba, old_idx)) = self.map.insert(lba, idx) {
             if self.slots[old_idx].lba == Some(old_lba) {
                 self.detach_lru(old_idx);
@@ -306,7 +319,7 @@ impl BlockDevice for CachingBlockDevice {
                     break;
                 };
                 buf[hit_end * bs..(hit_end + 1) * bs]
-                    .copy_from_slice(&self.slots[idx].data);
+                    .copy_from_slice(self.slot_data(idx));
                 last_hit_idx = Some(idx);
                 hit_end += 1;
             }
