@@ -44,6 +44,7 @@ pub(super) struct MultiClassScheduler {
 pub(super) enum ReadyPlacement {
     LeastLoaded,
     LastCpu,
+    Prefer(CpuId),
 }
 
 impl MultiClassScheduler {

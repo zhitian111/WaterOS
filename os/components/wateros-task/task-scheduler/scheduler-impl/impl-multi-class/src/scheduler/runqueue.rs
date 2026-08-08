@@ -40,7 +40,8 @@ impl MultiClassScheduler {
                                .expect("current task must exist in registry")
                                .contains(cpu_id);
                 if stay {
-                    self.activate_ready_task(current_task_id, ReadyPlacement::LastCpu);
+                    self.activate_ready_task(current_task_id,
+                                             ReadyPlacement::Prefer(cpu_id));
                 } else {
                     self.cpu_states[cpu_id.raw()].set_deferred_ready(current_task_id);
                 }
@@ -120,6 +121,7 @@ impl MultiClassScheduler {
             // 唤醒亲和性放宽：last_cpu 过载时，把任务放到更空的核。
             ReadyPlacement::LastCpu => snap.last_cpu_id
                                            .filter(|cpu_id| !self.cpu_is_overloaded(*cpu_id)),
+            ReadyPlacement::Prefer(cpu_id) => Some(cpu_id),
         };
         if let Some(cpu_id) = preferred.filter(|cpu_id| {
                                            cpu_id.fits_capacity(self.cpu_states
