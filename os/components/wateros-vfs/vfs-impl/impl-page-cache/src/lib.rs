@@ -1118,11 +1118,11 @@ impl GlobalFilePageCache {
             .remove(&key);
 
         let mut cache = self.state.lock();
-        let keys_to_remove : Vec<(FileCacheKey, u64)> = cache.index
-                                                             .keys()
-                                                             .filter(|(k, _)| *k == key)
-                                                             .cloned()
-                                                             .collect();
+        let keys_to_remove : Vec<(FileCacheKey, u64)> =
+            cache.index
+                 .range((key.clone(), 0)..=(key, u64::MAX))
+                 .map(|(k, _)| k.clone())
+                 .collect();
         for old in keys_to_remove {
             if let Some(slot) = cache.index
                                      .remove(&old)
@@ -1159,13 +1159,16 @@ impl GlobalFilePageCache {
         self.files.lock().remove(&new_key);
 
         let mut cache = self.state.lock();
-        let keys_to_remove : Vec<(FileCacheKey, u64)> = cache.index
-                                                             .keys()
-                                                             .filter(|(key, _)| {
-                                                                 *key == old_key || *key == new_key
-                                                             })
-                                                             .cloned()
-                                                             .collect();
+        let mut keys_to_remove : Vec<(FileCacheKey, u64)> =
+            cache.index
+                 .range((old_key.clone(), 0)..=(old_key, u64::MAX))
+                 .map(|(k, _)| k.clone())
+                 .collect();
+        keys_to_remove.extend(
+            cache.index
+                 .range((new_key.clone(), 0)..=(new_key, u64::MAX))
+                 .map(|(k, _)| k.clone()),
+        );
         for key in keys_to_remove {
             if let Some(slot) = cache.index.remove(&key) {
                 cache.frames[slot].key = None;
@@ -1215,9 +1218,8 @@ impl GlobalFilePageCache {
         };
         let keys_to_remove : Vec<(FileCacheKey, u64)> =
             cache.index
-                 .keys()
-                 .filter(|(k, page_idx)| *k == key && *page_idx >= first_past_eof)
-                 .cloned()
+                 .range((key.clone(), first_past_eof)..=(key.clone(), u64::MAX))
+                 .map(|(k, _)| k.clone())
                  .collect();
         for old in keys_to_remove {
             if let Some(slot) = cache.index

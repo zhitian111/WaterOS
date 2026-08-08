@@ -69,6 +69,11 @@
 - **LA-musl LTP 整套 0 分（G1）**：功能性，由用户自行修复；见 `docs/todo/perf-baseline-gap-report.md` §G1。
 - **全量性能分析只读**：见 `docs/todo/` 下各 `perf-*.md`，不单独建实施任务。
 
+## 2026-08-08 新增记录
+
+- [`page-cache 索引清理改用 BTree range`](./2026-08-08-page-cache-index-range.md)：
+  消除页缓存 `purge/rename/truncate` 的全表键扫描。
+
 ## 验证约定
 
 - 改代码后：`cd os && make rv_check && make la_check`（两架构均须通过）。
