@@ -1,6 +1,6 @@
 //! 绝对路径规范化：用于 VFS 入口在委托 FS 前统一路径形状（不访问块设备）。
 
-use alloc::{string::String, vec::Vec};
+use alloc::string::String;
 
 use crate::{VfsError, VfsResult};
 
@@ -27,27 +27,30 @@ pub fn normalize_absolute_path(path: &str) -> VfsResult<NormalizedPath> {
     if !path.starts_with('/') {
         return Err(VfsError::InvalidPath);
     }
-    let mut stack: Vec<&str> = Vec::new();
+    let mut out = String::with_capacity(path.len());
+    out.push('/');
     for part in path.split('/') {
         if part.is_empty() || part == "." {
             continue;
         }
         if part == ".." {
-            let _ = stack.pop();
+            if out.len() > 1 {
+                let prefix = &out[..out.len() - 1];
+                if let Some(pos) = prefix.rfind('/') {
+                    out.truncate(pos + 1);
+                } else {
+                    out.truncate(1);
+                }
+                if out.len() > 1 && out.ends_with('/') {
+                    out.pop();
+                }
+            }
             continue;
         }
-        stack.push(part);
-    }
-    let mut out = String::with_capacity(path.len());
-    out.push('/');
-    for (i, p) in stack.iter().enumerate() {
-        if i > 0 {
+        if out.len() > 1 && !out.ends_with('/') {
             out.push('/');
         }
-        out.push_str(p);
-    }
-    if out.len() > 1 && out.ends_with('/') {
-        out.pop();
+        out.push_str(part);
     }
     Ok(NormalizedPath { inner: out })
 }
@@ -58,4 +61,26 @@ pub fn validate_root_file_name(name: &str) -> VfsResult<()> {
         return Err(VfsError::InvalidPath);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_absolute_path;
+
+    #[test]
+    fn removes_dot_and_redundant_slashes() {
+        assert_eq!(normalize_absolute_path("//a//b/").unwrap().as_str(), "/a/b");
+    }
+
+    #[test]
+    fn resolves_parent_segments_without_escaping_root() {
+        assert_eq!(normalize_absolute_path("/a/./b/../c").unwrap().as_str(), "/a/c");
+        assert_eq!(normalize_absolute_path("/a/..").unwrap().as_str(), "/");
+        assert_eq!(normalize_absolute_path("/a/../../").unwrap().as_str(), "/");
+    }
+
+    #[test]
+    fn preserves_utf8_components() {
+        assert_eq!(normalize_absolute_path("/tmp/测试/ok").unwrap().as_str(), "/tmp/测试/ok");
+    }
 }
