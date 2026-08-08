@@ -16,10 +16,18 @@ const PR_SET_SECCOMP : usize = 22;
 const PR_SET_NAME : usize = 15;
 const PR_GET_NAME : usize = 16;
 const PR_SET_NO_NEW_PRIVS : usize = 38;
+const PR_GET_NO_NEW_PRIVS : usize = 39;
 const PR_CAPBSET_READ : usize = 23;
 const PR_CAPBSET_DROP : usize = 24;
+const PR_SET_TIMING : usize = 14;
+const PR_SET_SECUREBITS : usize = 28;
+const PR_SET_THP_DISABLE : usize = 41;
+const PR_GET_THP_DISABLE : usize = 42;
+const PR_CAP_AMBIENT : usize = 47;
+const PR_GET_SPECULATION_CTRL : usize = 52;
 const PR_GET_CHILD_SUBREAPER : usize = 36;
 const PR_SET_CHILD_SUBREAPER : usize = 37;
+const NSIG : i32 = 64;
 
 pub(crate) fn sys_yield() -> UserRet {
     task::yield_now();
@@ -169,8 +177,11 @@ pub(crate) fn sys_prctl(args : SyscallArgs) -> UserRet {
             }
         }
         PR_SET_DUMPABLE => {
-            let dumpable = args.arg(1) != 0;
-            if task::set_process_dumpable(current_pid, dumpable).is_ok() {
+            let dumpable = args.arg(1);
+            if dumpable > 1 {
+                return UserRet::from_error(ErrNo::EINVAL);
+            }
+            if task::set_process_dumpable(current_pid, dumpable != 0).is_ok() {
                 UserRet::from_success(0)
             } else {
                 UserRet::from_error(ErrNo::ESRCH)
@@ -208,13 +219,53 @@ pub(crate) fn sys_prctl(args : SyscallArgs) -> UserRet {
             None => UserRet::from_error(ErrNo::ESRCH),
         },
         PR_SET_PDEATHSIG => {
-            let sig = args.arg(1) as i32;
-            if task::set_process_parent_death_signal(current_pid, sig).is_ok() {
+            let raw_sig = args.arg(1) as i32;
+            if raw_sig < 0 || raw_sig > NSIG {
+                return UserRet::from_error(ErrNo::EINVAL);
+            }
+            if task::set_process_parent_death_signal(current_pid, raw_sig).is_ok() {
                 UserRet::from_success(0)
             } else {
                 UserRet::from_error(ErrNo::ESRCH)
             }
         }
+        PR_SET_TIMING => {
+            if args.arg(1) != 0 {
+                UserRet::from_error(ErrNo::EINVAL)
+            } else {
+                UserRet::from_success(0)
+            }
+        }
+        PR_SET_NO_NEW_PRIVS => {
+            if args.arg(1) == 1 && args.arg(2) == 0 {
+                UserRet::from_success(0)
+            } else {
+                UserRet::from_error(ErrNo::EINVAL)
+            }
+        }
+        PR_GET_NO_NEW_PRIVS => {
+            if args.arg(1) | args.arg(2) | args.arg(3) | args.arg(4) != 0 {
+                UserRet::from_error(ErrNo::EINVAL)
+            } else {
+                UserRet::from_success(0)
+            }
+        }
+        PR_SET_THP_DISABLE => {
+            if args.arg(2) | args.arg(3) | args.arg(4) != 0 {
+                UserRet::from_error(ErrNo::EINVAL)
+            } else {
+                UserRet::from_success(0)
+            }
+        }
+        PR_GET_THP_DISABLE => {
+            if args.arg(1) | args.arg(2) | args.arg(3) | args.arg(4) != 0 {
+                UserRet::from_error(ErrNo::EINVAL)
+            } else {
+                UserRet::from_success(0)
+            }
+        }
+        PR_CAP_AMBIENT | PR_GET_SPECULATION_CTRL => UserRet::from_error(ErrNo::EINVAL),
+        PR_SET_SECUREBITS => UserRet::from_error(ErrNo::EPERM),
         PR_GET_PDEATHSIG => {
             let addr_ptr = args.arg(1);
             if addr_ptr == 0 {
@@ -230,6 +281,6 @@ pub(crate) fn sys_prctl(args : SyscallArgs) -> UserRet {
         PR_SET_NO_NEW_PRIVS => UserRet::from_success(0),
         PR_CAPBSET_READ => super::super::cred::cap::cap_bset_read(args.arg(1)),
         PR_CAPBSET_DROP => super::super::cred::cap::cap_bset_drop(args.arg(1)),
-        _ => UserRet::from_error(ErrNo::ENOSYS),
+        _ => UserRet::from_error(ErrNo::EINVAL),
     }
 }

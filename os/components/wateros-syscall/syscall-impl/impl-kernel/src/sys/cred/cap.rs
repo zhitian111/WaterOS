@@ -80,7 +80,7 @@ pub(crate) fn cap_bset_drop(cap: usize) -> UserRet {
     if cap >= 64 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
-    UserRet::from_success(0)
+    UserRet::from_error(ErrNo::EPERM)
 }
 
 pub(crate) fn sys_capget(args: SyscallArgs) -> UserRet {

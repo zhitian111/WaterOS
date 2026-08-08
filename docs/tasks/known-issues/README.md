@@ -86,6 +86,8 @@
 - [`rlimit 语义与 prlimit64`](./results/rlimit-semantics-20260809.md)：
   非法 resource、`cur > max`、`NOFILE > NR_OPEN` 均按 Linux 返回，`prlimit64`
   支持目标 pid。
+- [`prctl 错误语义`](./results/prctl-pdeathsig-20260809.md)：
+  `prctl02` 的未实现 option 语义已补齐；PDEATHSIG 投递实验已回退待重做。
 - [`sched_setparam Blocking/Sleeping 目标`](./results/sched-setparam-blocked-target-20260808.md)：
   `sched_setparam03` 不再对阻塞父进程错误返回 `ESRCH`，调度相关 LTP 全部通过。
 - [`mmap O_WRONLY fd`](./results/mmap-wronly-fd-eacces-20260808.md)：
