@@ -125,6 +125,20 @@ codegraph explore "HeapBrk::brk handle_brk_page_fault user_brk_start user_brk_cu
 codegraph explore "protect_lazy_file_vmas lazy_vma_overlaps lazy_file_vma_index insert_lazy_file_vma mprotect sys_mprotect exact source and all callers; sorted invariant"
 ```
 
+### 验证结果
+
+- 双架构 Final check/build：通过。
+- RISC-V 完整 BuildStorm：`ok=true`，926.21 s；无 panic/SIGSEGV，完整结束。
+- 相对 MM-02B 的 989.57 s：减少 63.36 s（6.40%）；相对初始 1023.91 s 累计减少
+  97.70 s（9.54%）。当前为 Linux baseline 的 2.34 倍，距阶段门槛尚差 134.41 s。
+- 改后 300 s pc-hot 共采样 120,021,740,857 条指令；`mprotect` 已从第一名退出 Top 40，
+  证明全表 VMA 重建热点已消除。
+- 新热点依次包括 `memcpy`（25,424,005,910）、TLSF allocate/deallocate、
+  VirtIO `add_notify_wait_pop`（3,018,576,447）、`memset`、page-cache install/read、
+  `find_free_mmap_base_considering_vmas` 和 `remove_lazy_file_vmas`。
+- 完整日志：`/tmp/wateros-mm02c-after-rv.log`；采样：
+  `/tmp/wateros-mm02c-rv-pcs.txt`（本机临时文件，不提交）。
+
 ### 设计
 
 `lazy_file_vmas` 在注册时按 `start` 插入，且拒绝重叠；拆分、删除和 fork 都保持顺序。
@@ -152,3 +166,38 @@ codegraph explore "protect_lazy_file_vmas lazy_vma_overlaps lazy_file_vma_index 
   重建所有 VMA。其核心指令各执行约 1,418,596,177 次，是下一项 MM 优化候选。
 - 改后完整日志：`/tmp/wateros-mm02b-after-rv.log`；改后采样：
   `/tmp/wateros-mm02b-rv-pcs.txt`（本机临时文件，不提交）。
+
+## MM-02C：mprotect 仅更新相交 lazy VMA
+
+状态：进行中（2026-08-10）
+
+### 模块与热链
+
+```text
+sys_mprotect
+  -> MmapOps::mprotect
+     -> protect_lazy_file_vmas
+        -> lazy_file_vmas.drain(..)
+        -> 逐项 overlaps + 重建 Vec + duplicate_box
+```
+
+MM-02B 后的 pc-hot 显示，`protect_lazy_file_vmas` 全表循环的核心指令各执行约
+1,418,596,177 次，绝大多数集中在同一 vCPU。当前实现即使请求不涉及 lazy VMA，也会
+移动并重建整个向量；若 loader 复制中途失败，`drain(..)` 还会使原表部分丢失。
+
+### 设计
+
+1. 用 `partition_point(end <= start)` 和 `partition_point(start < end)` 得到相交的
+   `[first,last)`；无交集立即返回。
+2. 完整覆盖的 VMA 只原地更新 `perm`。
+3. 首、尾部分覆盖时，在修改原表前预先复制所需的左/右 loader；复制全部成功后再调整
+   原边界、批量更新权限，并最多各插入一个边界分片。
+4. 中间 VMA 不复制、不移动；错误路径保持原表不变。RISC-V 与 LoongArch 保持对称。
+5. 不引入红黑树、maple tree 或反向映射；这些 Linux 基础设施在当前实现中不存在，
+   有序小向量上的二分和局部更新更直接。
+
+恢复上下文命令：
+
+```bash
+codegraph explore "protect_lazy_file_vmas lazy_vma_overlaps lazy_file_vma_index insert_lazy_file_vma mprotect sys_mprotect exact source and all callers; sorted invariant"
+```

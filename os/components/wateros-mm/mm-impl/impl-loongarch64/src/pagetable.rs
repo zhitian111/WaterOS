@@ -778,42 +778,54 @@ impl LoongArch64AddressSpace {
                                          end : VirtAddr,
                                          perm : PagePerm)
                                          -> MmResult<()> {
-        let mut next = Vec::new();
-        for vma in self.lazy_file_vmas
-                       .drain(..)
-        {
-            if !vma.overlaps(start, end) {
-                next.push(vma);
-                continue;
-            }
-            if start.0 > vma.start.0 {
-                next.push(LazyFileVma { start : vma.start,
-                                        end : start,
-                                        perm : vma.perm,
-                                        file_offset : vma.file_offset,
-                                        file_size : vma.file_size,
-                                        loader : vma.loader
-                                                    .duplicate_box()? });
-            }
-            let mid_start = VirtAddr(core::cmp::max(start.0, vma.start.0));
-            let mid_end = VirtAddr(core::cmp::min(end.0, vma.end.0));
-            next.push(LazyFileVma { start : mid_start,
-                                    end : mid_end,
-                                    perm,
-                                    file_offset : vma.file_offset + (mid_start.0 - vma.start.0),
-                                    file_size : vma.file_size,
-                                    loader : vma.loader
-                                                .duplicate_box()? });
-            if end.0 < vma.end.0 {
-                next.push(LazyFileVma { start : end,
-                                        end : vma.end,
-                                        perm : vma.perm,
-                                        file_offset : vma.file_offset + (end.0 - vma.start.0),
-                                        file_size : vma.file_size,
-                                        loader : vma.loader });
-            }
+        if start.0 >= end.0 {
+            return Ok(());
         }
-        self.lazy_file_vmas = next;
+        let first = self.lazy_file_vmas
+                        .partition_point(|vma| vma.end.0 <= start.0);
+        let last = self.lazy_file_vmas
+                       .partition_point(|vma| vma.start.0 < end.0);
+        if first >= last {
+            return Ok(());
+        }
+
+        let first_vma = &self.lazy_file_vmas[first];
+        let split_left = (start.0 > first_vma.start.0).then(|| {
+            Ok::<_, MmError>(LazyFileVma { start : first_vma.start,
+                                           end : start,
+                                           perm : first_vma.perm,
+                                           file_offset : first_vma.file_offset,
+                                           file_size : first_vma.file_size,
+                                           loader : first_vma.loader.duplicate_box()? })
+        }).transpose()?;
+        let last_vma = &self.lazy_file_vmas[last - 1];
+        let split_right = (end.0 < last_vma.end.0).then(|| {
+            Ok::<_, MmError>(LazyFileVma { start : end,
+                                           end : last_vma.end,
+                                           perm : last_vma.perm,
+                                           file_offset : last_vma.file_offset +
+                                                         (end.0 - last_vma.start.0),
+                                           file_size : last_vma.file_size,
+                                           loader : last_vma.loader.duplicate_box()? })
+        }).transpose()?;
+
+        if split_left.is_some() {
+            let first_vma = &mut self.lazy_file_vmas[first];
+            first_vma.file_offset += start.0 - first_vma.start.0;
+            first_vma.start = start;
+        }
+        if split_right.is_some() {
+            self.lazy_file_vmas[last - 1].end = end;
+        }
+        for vma in &mut self.lazy_file_vmas[first..last] {
+            vma.perm = perm;
+        }
+        if let Some(right) = split_right {
+            self.lazy_file_vmas.insert(last, right);
+        }
+        if let Some(left) = split_left {
+            self.lazy_file_vmas.insert(first, left);
+        }
         Ok(())
     }
 
