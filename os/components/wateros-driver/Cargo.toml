@@ -12,6 +12,7 @@
         "./driver-character/character-impl/impl-dummy/",
         "./driver-character/character-impl/impl-null-stub/",
         "./driver-character/character-impl/impl-rtc-stub/",
+        "./driver-character/character-impl/impl-uart-16550/",
         "./driver-display/",
         "./driver-display/display-api/api-v0/",
         "./driver-display/display-impl/impl-virtio-mmio/",

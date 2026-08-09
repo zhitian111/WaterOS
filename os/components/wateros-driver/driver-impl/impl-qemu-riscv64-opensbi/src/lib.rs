@@ -33,13 +33,11 @@ use input::{
 };
 use character::{
     character_device_count, character_subsystem_claims_device, is_uart_compatible,
-    register_builtin_character_devices, register_character_device, CharacterDevice,
-    SerialPortCharacterDevice,
+    register_builtin_character_devices,
 };
 use fdt::Fdt;
 use fs::devfs::active_impl as devfs_impl;
 use spin::Mutex;
-use uart::QemuVirtUart16550;
 
 // DTB 物理基址；为 0 时 read_fdt 返回 NotFound（尚未 boot 或未调用 init_when_boot）。
 static DTB_BASE_ADDR: AtomicUsize = AtomicUsize::new(0);
@@ -427,15 +425,6 @@ fn probe_virtio_blk_and_collect_unsupported() -> Vec<String> {
     unsupported
 }
 
-fn register_uart_character_device(base: usize) -> usize {
-    let mut u = QemuVirtUart16550::new(base);
-    u.init_minimal();
-    let shared: character::SharedCharacterDevice = Arc::new(Mutex::new(
-        Box::new(SerialPortCharacterDevice::new(u)) as Box<dyn CharacterDevice>,
-    ));
-    register_character_device(shared)
-}
-
 /// 绑定 DTB 中的 UART 字符设备；若无匹配则回退到 QEMU virt 默认 UART0。
 fn probe_character_devices() {
     let uart_bases: Vec<usize> = {
@@ -461,7 +450,7 @@ fn probe_character_devices() {
     };
 
     for (idx, base) in uart_bases.iter().enumerate() {
-        let chr_idx = register_uart_character_device(*base);
+        let chr_idx = uart::register_uart_character_device(*base);
         log::info!(
             "[driver] registered character #{} (uart base={:#x}, dtb #{})",
             chr_idx,
@@ -471,11 +460,11 @@ fn probe_character_devices() {
     }
 
     if character_device_count() == 0 {
-        let idx = register_uart_character_device(QemuVirtUart16550::qemu_virt_default().base);
+        let idx = uart::register_uart_character_device(uart::QEMU_VIRT_UART0_BASE);
         log::info!(
             "[driver] registered character #{} (fallback virt uart0 base={:#x})",
             idx,
-            QemuVirtUart16550::qemu_virt_default().base
+            uart::QEMU_VIRT_UART0_BASE
         );
     }
 

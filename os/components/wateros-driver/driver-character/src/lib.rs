@@ -25,6 +25,9 @@ pub use impl_rtc_stub::{register_rtc_stub, RtcCharacterDevice, RtcTime};
 #[cfg(feature = "impl-null-stub")]
 pub use impl_null_stub::{register_null_stub, NullCharacterDevice};
 
+#[cfg(feature = "impl-uart-16550")]
+pub use impl_uart_16550::{register_uart_character_device, Ns16550Port, RegisterLayout};
+
 /// 字符子系统在 DTB 中声明可尝试绑定的设备。
 pub const CHARACTER_SUPPORTED_DEVICES: &[SupportedDeviceEntry] = &[
     SupportedDeviceEntry {

@@ -16,6 +16,7 @@
     character = { path = "../../driver-character", package = "wateros-driver-character", default-features = true, features = [
         "impl-null-stub",
         "impl-rtc-stub",
+        "impl-uart-16550",
     ] }
     network = { path = "../../driver-network", package = "wateros-driver-network", default-features = false, features = [
         "api-v0",

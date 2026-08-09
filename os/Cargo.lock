@@ -738,6 +738,7 @@ dependencies = [
  "wateros-driver-character-impl-dummy",
  "wateros-driver-character-impl-null-stub",
  "wateros-driver-character-impl-rtc-stub",
+ "wateros-driver-character-impl-uart-16550",
 ]
 
 [[package]]
@@ -770,6 +771,14 @@ version = "0.1.0"
 dependencies = [
  "spin",
  "wateros-driver-api-v0",
+ "wateros-driver-character-api-v0",
+]
+
+[[package]]
+name = "wateros-driver-character-impl-uart-16550"
+version = "0.1.0"
+dependencies = [
+ "spin",
  "wateros-driver-character-api-v0",
 ]
 
