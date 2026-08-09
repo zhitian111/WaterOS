@@ -68,5 +68,12 @@ RISC-V LTP：
   只对 pending 信号调用 `interrupt_task`，不再重复 `request_task_reschedule`。
 - RISC-V 静态回归连续 20 轮输出 `PDEATHSIG_OK`。
 
-完整 LoongArch Final 尚未重跑，需在下一轮完整验收中确认不再出现
-`SIGSEGV signal not delivered` 和 BuildStorm 尾部停滞。
+完整双架构 Final 已通过：
+
+```text
+RISC-V: BUILDSTORM_COMPILE mode=multi ok=true elapsed_s=1148.24
+LoongArch: BUILDSTORM_COMPILE mode=multi ok=true elapsed_s=1438.12
+```
+
+两端均无 panic、无 `SIGSEGV signal not delivered`，也没有再出现
+BuildStorm 尾部停滞。
