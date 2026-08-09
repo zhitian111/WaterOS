@@ -3,10 +3,11 @@
 //! Plans contain only validated scalar resources. They never construct a
 //! volatile backend or touch hardware.
 
-use api_v0::MmioRegion;
+use api_v0::{DriverError, MmioRegion};
 
-use crate::{irq_binding::{InterruptBinding, resolve},
-            irq_runtime::RuntimeLayout,
+use crate::{board_irq_owner::BoardIrqOwner,
+            irq_binding::{InterruptBinding, resolve},
+            irq_runtime::{ConfiguredRuntime, DormantRuntime, RuntimeError, RuntimeLayout},
             liointc::Route,
             mmc,
             topology::{BoardTopology, InterruptControllerDescription}};
@@ -50,6 +51,90 @@ pub enum OwnerPlanError {
     AmbiguousRoute,
     InvalidParent,
     DuplicateIrq,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApplyMode {
+    SafeDefault,
+    DiagnosticAckOnly,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ApplyReport {
+    pub configured : u8,
+    pub skipped_deferred : u8,
+    pub skipped_policy : u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApplyError {
+    MultipleAckOnly,
+    OwnerFactory(DriverError),
+    Configure(RuntimeError),
+}
+
+pub enum AppliedRuntime<I, R> {
+    Dormant(DormantRuntime<I, BoardIrqOwner<R>>),
+    Configured(ConfiguredRuntime<I, BoardIrqOwner<R>>),
+}
+
+pub struct ApplyFailure<I, R> {
+    pub error : ApplyError,
+    pub runtime : DormantRuntime<I, BoardIrqOwner<R>>,
+    pub owner : Option<BoardIrqOwner<R>>,
+    pub report : ApplyReport,
+}
+
+pub fn apply_owner_plan<I, R, F>(runtime : DormantRuntime<I, BoardIrqOwner<R>>,
+                                 plan : &BoardOwnerPlan,
+                                 mode : ApplyMode,
+                                 mut make_owner : F)
+                                 -> Result<(AppliedRuntime<I, R>, ApplyReport),
+                                           ApplyFailure<I, R>>
+where I : crate::liointc::RegisterIo,
+      R : mmc::RegisterIo,
+      F : FnMut(OwnerPlan) -> Result<BoardIrqOwner<R>, DriverError>
+{
+    let mut report = ApplyReport::default();
+    let mut selected = None;
+    for entry in plan.entries {
+        match entry.policy {
+            ActivationPolicy::Deferred => {
+                report.skipped_deferred = report.skipped_deferred.saturating_add(1);
+            }
+            ActivationPolicy::AckOnly if mode == ApplyMode::SafeDefault => {
+                report.skipped_policy = report.skipped_policy.saturating_add(1);
+            }
+            ActivationPolicy::AckOnly => {
+                if selected.replace(entry).is_some() {
+                    return Err(ApplyFailure { error : ApplyError::MultipleAckOnly,
+                                              runtime,
+                                              owner : None,
+                                              report });
+                }
+            }
+        }
+    }
+    let Some(entry) = selected else {
+        return Ok((AppliedRuntime::Dormant(runtime), report));
+    };
+    let owner = match make_owner(entry) {
+        Ok(owner) => owner,
+        Err(error) => return Err(ApplyFailure { error : ApplyError::OwnerFactory(error),
+                                                runtime,
+                                                owner : None,
+                                                report }),
+    };
+    match runtime.configure(entry.binding, entry.route, owner) {
+        Ok(configured) => {
+            report.configured = 1;
+            Ok((AppliedRuntime::Configured(configured), report))
+        }
+        Err(failure) => Err(ApplyFailure { error : ApplyError::Configure(failure.error),
+                                           runtime : failure.state,
+                                           owner : Some(failure.owner),
+                                           report }),
+    }
 }
 
 fn controller_for_bank<'a>(topology : &'a BoardTopology,
@@ -132,6 +217,27 @@ mod tests {
                           InterruptSpec, MmcDescription,
                           NamedResource, ResourceSpecifier, CardDetect};
     use super::*;
+    use crate::{board_irq_owner::{DeferredApbDmaOwner, MmcCommandOwner},
+                irq_runtime::BoardIrqRuntime,
+                liointc};
+    use dw_mmc::mmc::MmcError;
+
+    #[derive(Default)]
+    struct ModelLioIo;
+
+    impl liointc::RegisterIo for ModelLioIo {
+        fn read32(&self, _address : usize) -> u32 { 0 }
+        fn write32(&mut self, _address : usize, _value : u32) {}
+        fn write8(&mut self, _address : usize, _value : u8) {}
+    }
+
+    #[derive(Default)]
+    struct MockMmc;
+
+    impl mmc::RegisterIo for MockMmc {
+        fn read32(&mut self, _offset : usize) -> Result<u32, MmcError> { Ok(0) }
+        fn write32(&mut self, _offset : usize, _value : u32) -> Result<(), MmcError> { Ok(()) }
+    }
 
     fn resource() -> NamedResource {
         NamedResource { name : None,
@@ -205,5 +311,83 @@ mod tests {
         let mut board = topology();
         board.dma_controllers[0].interrupt = board.mmc_hosts[0].interrupt.clone();
         assert_eq!(compile(&board), Err(OwnerPlanError::DuplicateIrq));
+    }
+
+    fn dormant(board : &BoardTopology)
+                -> DormantRuntime<ModelLioIo, BoardIrqOwner<MockMmc>> {
+        let layout = RuntimeLayout::compile(board).unwrap();
+        let runtime : BoardIrqRuntime<ModelLioIo, BoardIrqOwner<MockMmc>> =
+            BoardIrqRuntime::assemble(layout, |_bank, _controller| Ok(ModelLioIo)).unwrap();
+        runtime.into_dormant()
+    }
+
+    fn owner(entry : OwnerPlan) -> BoardIrqOwner<MockMmc> {
+        match entry.kind {
+            OwnerKind::MmcCommand => BoardIrqOwner::MmcCommand(
+                MmcCommandOwner::new(entry.binding.global_irq(), MockMmc)),
+            OwnerKind::ApbDmaDeferred => BoardIrqOwner::ApbDmaDeferred(
+                DeferredApbDmaOwner::default()),
+        }
+    }
+
+    #[test]
+    fn safe_default_never_constructs_or_configures_an_owner() {
+        let board = topology();
+        let plan = compile(&board).unwrap();
+        let mut calls = 0;
+        let (applied, report) = apply_owner_plan(dormant(&board),
+                                                  &plan,
+                                                  ApplyMode::SafeDefault,
+                                                  |entry| {
+                                                      calls += 1;
+                                                      Ok(owner(entry))
+                                                  })
+            .unwrap_or_else(|_| panic!("safe apply failed"));
+        assert_eq!(calls, 0);
+        assert_eq!(report, ApplyReport { configured : 0,
+                                         skipped_deferred : 1,
+                                         skipped_policy : 1 });
+        assert!(matches!(applied, AppliedRuntime::Dormant(_)));
+    }
+
+    #[test]
+    fn diagnostic_apply_recovers_factory_and_configure_failures() {
+        let board = topology();
+        let plan = compile(&board).unwrap();
+        let factory_failure = apply_owner_plan(dormant(&board),
+                                               &plan,
+                                               ApplyMode::DiagnosticAckOnly,
+                                               |_entry| Err(DriverError::IoError))
+            .err()
+            .expect("factory failure unexpectedly succeeded");
+        assert_eq!(factory_failure.error, ApplyError::OwnerFactory(DriverError::IoError));
+        assert!(factory_failure.owner.is_none());
+
+        let mut invalid = plan;
+        let ack_index = invalid.entries.iter()
+                                       .position(|entry| entry.policy == ActivationPolicy::AckOnly)
+                                       .unwrap();
+        invalid.entries[ack_index].route.core_mask = 0;
+        let configure_failure = apply_owner_plan(factory_failure.runtime,
+                                                 &invalid,
+                                                 ApplyMode::DiagnosticAckOnly,
+                                                 |entry| Ok(owner(entry)))
+            .err()
+            .expect("invalid route configured");
+        assert_eq!(configure_failure.error,
+                   ApplyError::Configure(RuntimeError::Controller(DriverError::InvalidParam)));
+        let mut recovered_owner = configure_failure.owner;
+        let (applied, report) = apply_owner_plan(configure_failure.runtime,
+                                                  &plan,
+                                                  ApplyMode::DiagnosticAckOnly,
+                                                  |_entry| Ok(recovered_owner.take().unwrap()))
+            .unwrap_or_else(|_| panic!("recovered apply failed"));
+        assert_eq!(report, ApplyReport { configured : 1,
+                                         skipped_deferred : 1,
+                                         skipped_policy : 0 });
+        let AppliedRuntime::Configured(configured) = applied else {
+            panic!("diagnostic apply remained dormant")
+        };
+        assert_eq!(configured.configured_sources(), 1u64 << 31);
     }
 }

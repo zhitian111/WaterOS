@@ -26,10 +26,12 @@ pub mod topology;
 use api_v0::{DriverError, DriverResult};
 use spin::Mutex;
 use irq_runtime::{RuntimeLayout, RuntimeLayoutSlot};
+use irq_plan::BoardOwnerPlan;
 use topology::BoardTopology;
 
 static TOPOLOGY : Mutex<Option<BoardTopology>> = Mutex::new(None);
 static IRQ_LAYOUT : Mutex<RuntimeLayoutSlot> = Mutex::new(RuntimeLayoutSlot::new());
+static IRQ_OWNER_PLAN : Mutex<Option<BoardOwnerPlan>> = Mutex::new(None);
 
 pub use machine::machine;
 
@@ -39,6 +41,10 @@ pub fn init_after_boot() -> DriverResult<()> {
     let topology = topology::discover(&fdt)?;
     let irq_layout = RuntimeLayout::compile(&topology).map_err(|error| {
         log::error!("[driver-ls2k][irq] invalid runtime layout: {:?}", error);
+        DriverError::InvalidDtb
+    })?;
+    let owner_plan = irq_plan::compile(&topology).map_err(|error| {
+        log::error!("[driver-ls2k][irq] invalid owner plan: {:?}", error);
         DriverError::InvalidDtb
     })?;
     log::info!("[driver-ls2k] topology: uart={} liointc={} dma={} mmc={}",
@@ -67,10 +73,12 @@ pub fn init_after_boot() -> DriverResult<()> {
     }
     let mut stored_topology = TOPOLOGY.lock();
     let mut stored_layout = IRQ_LAYOUT.lock();
-    if stored_topology.is_some() || stored_layout.get().is_some() {
+    let mut stored_owner_plan = IRQ_OWNER_PLAN.lock();
+    if stored_topology.is_some() || stored_layout.get().is_some() || stored_owner_plan.is_some() {
         return Err(DriverError::InvalidParam);
     }
     stored_layout.publish(irq_layout).map_err(|_| DriverError::InvalidParam)?;
+    *stored_owner_plan = Some(owner_plan);
     *stored_topology = Some(topology);
     log::warn!("[driver-ls2k] resources discovered but hardware activation is \
                 UNVERIFIED_ON_HARDWARE");
@@ -88,6 +96,11 @@ pub fn with_topology<R>(f : impl FnOnce(Option<&BoardTopology>) -> R) -> R {
 pub fn with_irq_layout<R>(f : impl FnOnce(Option<&RuntimeLayout>) -> R) -> R {
     let layout = IRQ_LAYOUT.lock();
     f(layout.get())
+}
+
+pub fn with_irq_owner_plan<R>(f : impl FnOnce(Option<&BoardOwnerPlan>) -> R) -> R {
+    let plan = IRQ_OWNER_PLAN.lock();
+    f(plan.as_ref())
 }
 
 fn self_test() {

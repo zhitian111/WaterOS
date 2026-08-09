@@ -336,6 +336,8 @@ impl<I : RegisterIo, O> DormantRuntime<I, O> {
 }
 
 impl<I : RegisterIo, O> ConfiguredRuntime<I, O> {
+    pub const fn configured_sources(&self) -> u64 { self.configured_sources }
+
     pub fn configure(mut self,
                      binding : InterruptBinding,
                      route : Route,

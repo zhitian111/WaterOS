@@ -2354,3 +2354,49 @@ MMC policy 为 AckOnly，只允许使用 W1C adapter 做中断确认，不代表
 ### 提交
 
 - `[ref] compile 2K1000 IRQ owner plan`
+
+## 2026-08-10：批次 52——Safe owner-plan application modes
+
+### 任务与设计
+
+新增 `ApplyMode::{SafeDefault, DiagnosticAckOnly}`。SafeDefault 只返回 Dormant runtime，
+不调用 owner factory、不执行 configure，因此不会写 route/trigger/ENABLE_SET。DiagnosticAckOnly
+只选择唯一 AckOnly 项；Deferred APBDMA 始终跳过。
+
+应用返回 `AppliedRuntime::{Dormant, Configured}` 和固定计数报告。factory/configure 失败通过
+`ApplyFailure` 返还 Dormant runtime、可选 owner 与 partial report；修正问题后可使用相同资源重试。
+启动路径只编译并保存 owner plan，不调用应用函数。
+
+### 完成内容
+
+- [x] 新增 ApplyMode、ApplyReport、ApplyError、AppliedRuntime 和 ApplyFailure。
+- [x] SafeDefault 对 AckOnly 计 skipped-policy，对 Deferred 计 skipped-deferred，factory 零调用。
+- [x] DiagnosticAckOnly 最多选择一个 AckOnly；多个会在硬件动作前失败。
+- [x] owner factory error 返还原 Dormant runtime，owner=None。
+- [x] configure error 返还 Dormant runtime 与原 owner。
+- [x] 修复失败后可用同一 runtime/owner 重试并得到 Configured raw31。
+- [x] ConfiguredRuntime 暴露只读 configured source mask 供验证。
+- [x] `init_after_boot()` 编译并一次保存 owner plan；重复初始化检查同步覆盖 plan 容器。
+- [x] 默认启动没有 apply/volatile backend/controller 配置调用。
+
+### 验证证据
+
+- `cargo test`：67 项 host 单测全部通过（本批新增 2 项）。
+- SafeDefault 测试断言 factory calls=0，configured=0、deferred=1、policy=1，结果为 Dormant。
+- Diagnostic 测试依次制造 factory IoError、route core_mask=0 configure InvalidParam；两次均返还状态。
+- 第三次使用返还 owner 成功，report configured=1/deferred=1，configured mask=`1<<31`。
+- topology/畸形 DTS fixtures、LoongArch64 target check、`make kernel-la` 全部通过；仅有既有 warning。
+- `git diff --check` 通过；未创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：DiagnosticAckOnly 尚未用 volatile runtime 执行，所有寄存器行为仍未真机验证。
+- [ ] SafeDefault 之前若调用 assembler，assembler 自身会 mask-all；当前生产启动连 assembler 也不调用，完全零 MMIO。
+- [ ] 应用器当前支持唯一 AckOnly；多设备需扩展可迭代 Configured 状态和失败恢复列表。
+- [ ] owner plan/topology/layout 分别在 spin mutex 中，仅用于 boot/诊断，不得在 IRQ 热路径读取。
+- [ ] CPU parent activator 尚无 target backend，Configured 不能生产进入 Live。
+- [ ] 下一批应实现 LoongArch ECFG HWI enable/disable backend，先用纯 register model 测试只修改 HWI2/HWI3、保留 timer/IPI/其他位；volatile CSR 写保持 target-only 和未启用。
+
+### 提交
+
+- `[ref] apply 2K1000 IRQ plans safely`
