@@ -499,3 +499,48 @@ python3 scripts/remote_debug_qemu_smoke.py \
 ### 提交
 
 - `[feat] add VisionFive 2 external interrupt routing`
+
+## 2026-08-10：批次 11——PLIC 多 hart 初始化与 IRQ 注销生命周期
+
+### 任务与设计
+
+1. 审计 BSP/AP 启动顺序，确认 AP 上线早于全局 machine driver 发现，不能直接访问尚不存在的 PLIC topology。
+2. 在 machine driver 契约增加调用 CPU 的局部初始化，并用 driver-ready 屏障协调 AP。
+3. IRQ 注册改为 append-only 稳定 slot 和可失效 lease，支持同一 source 注销后重新注册但不复用旧 slot。
+4. 注销顺序定义为：设备驱动先 quiesce，PLIC 各 S context 屏蔽 source，lease 失效，等待 in-flight handler 排空。
+5. 用多 context 内存 MMIO、并发线程和 4-hart QEMU smoke 验证软件与启动路径。
+
+### 完成内容
+
+- [x] 新增 `MachineDriver::init_current_cpu(cpu_raw)` 默认契约，现有无 per-CPU 设备的 profile 保持兼容。
+- [x] RISC-V AP 在页表、timer/IPI 和 online 标记完成后等待 driver-ready；不会阻塞 BSP 的 online 等待。
+- [x] BSP 完成全局设备发现后初始化自己的 machine-local 状态，再 Release driver-ready；AP Acquire 后初始化各自 PLIC context。
+- [x] 每个已解析 S-mode context 独立清 threshold 并在当前 hart 打开 `sie.SEIE`。
+- [x] IRQ 注册返回 `IrqLease`，包含稳定 slot、source 和 presence；活动 source 不允许重复注册。
+- [x] 新增 `unregister_irq_handler`，重复注销幂等，旧 lease 永久失效，source 重注册获得更大的新 slot。
+- [x] handler 分发使用 in-flight 引用计数；注销会等待已复制 handler 返回，不在执行 handler 时持有注册表锁。
+- [x] PLIC source enable/disable 遍历原始 context 表，只操作已解析的 supervisor context，不误用交错的 M-mode context。
+- [x] QEMU remote-debug smoke 新增 `--smp 1..8` 参数，可重复验收多核启动而不写回根盘。
+
+### 验证证据
+
+- JH7110 profile host 单测 7 项通过，并以 4 个并发 test thread 运行。
+- 纯内存 PLIC 测试验证 context 1/3 的 threshold，以及 source 33 在两个 S context 的 enable/disable 位；M context 未被写入。
+- 生命周期测试验证注销幂等、slot 不复用、旧 lease 失效，以及并发注销确实等待正在执行的 handler 退出。
+- 合成 DTB fixture 继续通过 M/S context 交错、hart phandle 映射和 chosen UART 解析。
+- VisionFive 2 RISC-V64 完整交叉检查通过；公共 QEMU RISC-V `make check` 通过。
+- 4-hart QEMU runtime smoke 通过，远程 `status` 报告 `online_cpus=0xf`，并完成 ping/status/version/quit。
+- QEMU 复用 32 MiB 稀疏根盘并使用 snapshot，没有写回镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] JH7110 真机各 hart 的 OpenSBI HSM 可用性、PLIC context 可写性、SEIE 行为和中断亲和性仍待真机测试。
+- [ ] 注销调用者必须先屏蔽设备侧 IRQ、停止 DMA并完成 cache/order 同步；PLIC lease 无法替代设备 quiesce。
+- [ ] 禁止 handler 同步注销自身，否则会等待自己的 in-flight 引用；后续 threaded IRQ 可提供延迟注销路径。
+- [ ] 仍未支持共享 IRQ、IRQ affinity 配置、优先级策略和 storm 计数/自动隔离阈值。
+- [ ] QEMU 验证的是通用 SMP driver-ready 屏障，不是 JH7110 PLIC 硬件；后者只有 DTB和内存 MMIO 证据。
+- [ ] 下一批开始解析 VisionFive 2 MMC/SDIO DTB，优先评估可复用的 DesignWare MMC/SDHCI 实现及许可证。
+
+### 提交
+
+- `[feat] add per-hart PLIC and IRQ leases`

@@ -167,6 +167,8 @@ mod riscv64_opensbi {
     static BSP_HART : AtomicUsize = AtomicUsize::new(usize::MAX);
     /// BSP 完成初始化后置 true，AP 自旋等待此标志。
     static AP_BOOT_READY : AtomicBool = AtomicBool::new(false);
+    /// Global machine discovery completed; APs may now initialize per-hart devices.
+    static DRIVER_READY : AtomicBool = AtomicBool::new(false);
 
     unsafe extern "C" {
         fn __wateros_arch_boot();
@@ -232,6 +234,12 @@ mod riscv64_opensbi {
         platform::arch::interrupt::enable_soft_interrupt();
         platform::timer::set_timer_after_ms(100).expect("AP set initial timer");
         task::set_cpu_online(cpu_id);
+        while !DRIVER_READY.load(Ordering::Acquire) {
+            core::hint::spin_loop();
+        }
+        if let Err(error) = driver::machine().init_current_cpu(cpu_id.raw()) {
+            warn!("[smp] AP machine-local init skipped cpu={}: {:?}", cpu_id.raw(), error);
+        }
         platform::interrupt::enable_global_interrupt().expect("AP enable global interrupt");
         task::run_first_task()
     }
@@ -287,6 +295,10 @@ mod riscv64_opensbi {
         wait_for_secondary_online(requested_aps);
 
         bringup_driver_and_user();
+        if let Err(error) = driver::machine().init_current_cpu(cpu_id.raw()) {
+            warn!("[boot] BSP machine-local init skipped cpu={}: {:?}", cpu_id.raw(), error);
+        }
+        DRIVER_READY.store(true, Ordering::Release);
         #[cfg(feature = "stall-debug")]
         crate::stall_debug::start();
         #[cfg(feature = "dashboard-debug")]

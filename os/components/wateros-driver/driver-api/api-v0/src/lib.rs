@@ -120,6 +120,12 @@ pub trait MachineDriver {
     /// 内核完成必要子系统初始化后调用：枚举并注册设备。
     fn init_after_boot(&self) -> DriverResult<()>;
 
+    /// Initialize machine-local interrupt state for the calling CPU.
+    ///
+    /// Called after global device discovery and before global interrupts are
+    /// enabled on that CPU. Profiles without per-CPU hardware keep the default.
+    fn init_current_cpu(&self, _cpu_raw : usize) -> DriverResult<()> { Ok(()) }
+
     /// 平台可选能力（如实时钟）；不支持时默认返回 `Ok(None)`。
     fn realtime_ns(&self) -> DriverResult<Option<u64>> {
         Ok(None)

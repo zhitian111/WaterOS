@@ -24,6 +24,7 @@ def main() -> int:
     parser.add_argument("--kernel", type=Path, required=True)
     parser.add_argument("--sdcard", type=Path, required=True)
     parser.add_argument("--port", type=int, default=22323)
+    parser.add_argument("--smp", type=int, choices=range(1, 9), default=1)
     parser.add_argument("--timeout", type=float, default=30.0)
     args = parser.parse_args()
     if not args.kernel.is_file():
@@ -35,7 +36,7 @@ def main() -> int:
     environment.update({
         "WOS_KERNEL": str(args.kernel.resolve()),
         "WOS_SDCARD": str(args.sdcard.resolve()),
-        "WOS_SMP": "1",
+        "WOS_SMP": str(args.smp),
         "WOS_QEMU_SNAPSHOT": "1",
         "WOS_REMOTE_DEBUG_PORT": str(args.port),
     })
@@ -71,7 +72,7 @@ def main() -> int:
 
     for result in results:
         print(f"[{result.command}] {result.response.rstrip()}")
-    print(f"remote-debug QEMU smoke passed arch={args.arch} snapshot=1")
+    print(f"remote-debug QEMU smoke passed arch={args.arch} smp={args.smp} snapshot=1")
     return 0
 
 

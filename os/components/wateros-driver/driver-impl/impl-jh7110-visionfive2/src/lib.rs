@@ -27,14 +27,7 @@ impl MachineDriver for Machine {
             return Ok(());
         }
         let result = topology::discover(platform_dtb_pa()).and_then(|board| {
-                         let prepared_irq = irq::prepare_current_hart(&board)?;
                          topology::store(board.clone());
-                         #[cfg(target_arch = "riscv64")]
-                         if let Some((hart, context)) = prepared_irq {
-                             irq::enable_current_hart(hart, context);
-                         }
-                         #[cfg(not(target_arch = "riscv64"))]
-                         let _ = prepared_irq;
                          character::register_builtin_character_devices();
                          if let Some(console) = board.console_uart {
                              let index = uart::register(console);
@@ -66,6 +59,10 @@ impl MachineDriver for Machine {
 
     fn handle_external_interrupt(&self, cpu_raw : usize) -> DriverResult<bool> {
         irq::handle_external_interrupt(cpu_raw)
+    }
+
+    fn init_current_cpu(&self, cpu_raw : usize) -> DriverResult<()> {
+        irq::initialize_current_hart(cpu_raw)
     }
 
     fn test(&self) {
