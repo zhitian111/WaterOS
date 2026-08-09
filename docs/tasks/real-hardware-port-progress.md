@@ -3365,3 +3365,56 @@ Linux 主线 LS2K GPIO bank 使用 64-bit 寄存器，方向、输出、输入�
 ### 提交
 
 - `[feat] aggregate LS2K1000 MMC prerequisites`
+
+## 2026-08-10：批次 72——LS2K1000 MMC parent clock 一致性证据
+
+### 任务与设计
+
+1. 复核 Linux 主线 LS2K clock 与 MMC host 对 parent clock 的 ownership、rate 和 prescaler 处理。
+2. 判断是否存在可安全用于 MMC 的 DC PLL/GMAC/APB 写路径；证据不足时必须拒绝共享时钟 RMW。
+3. 建立两轮完整 snapshot 的只读一致性事务，保留 first/second read、mismatch 和 IO failure 的恢复证据。
+4. 让显式 `ls2k-mmc` 诊断使用一致性事务，拒绝输出混合世代频率。
+5. 收紧聚合 proof：clock hardware-ready 的 unsafe 边界至少要求 opaque consistent snapshot，而非任意单次 snapshot。
+
+Linux 主线 MMC host 对 parent clock 调用 `devm_clk_rate_exclusive_get()` 并读取当前 rate，实际调频只在
+MMC 控制器内部使用 8-bit prescaler；LS2K clock table 没有 MMC-private gate/rate control。DC PLL、
+GMAC divider 和 APB scale 是共享系统时钟链，因此本批不增加 provider 写接口，避免影响其他 APB 设备。
+
+### 完成内容
+
+- [x] 新增 opaque `ConsistentClockSnapshot`；只有连续两轮 DC PLL/GMAC/APB raw 与派生 rate 完全一致才能构造。
+- [x] 新增 `ConsistencyStage::{FirstRead,SecondRead,Mismatch}` 与 `ConsistencyRecovery`，错误保留已成功读取的 snapshot，不编造后续证据。
+- [x] recovery 提供显式只读 `revalidate()`；不会写时钟、自动重试控制操作或丢弃上一轮证据。
+- [x] 新增 topology-aware `snapshot_provider_consistent()`；unsupported provider 保证零 MMIO access。
+- [x] `ClockError` 增加稳定 `Inconsistent` 分类；remote formatter 输出 `clock=error:inconsistent`。
+- [x] `ls2k-mmc` 显式诊断从三次读取改为两轮共六次固定顺序读取，raw 发生变化时不报告 rate。
+- [x] `ClockReady::assume_verified()` 改为接受 opaque consistent snapshot；它仍为 unsafe，连续一致不等于物理稳定。
+- [x] clock 模块和参考文档明确禁止为 MMC 修改共享 DC PLL/GMAC/APB 链；未增加 volatile write backend。
+- [x] `ClockControlUnavailable`、其余六个 blocker 和 `proof=0` 保持不变，没有启动 MMC 数据通路。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 105 项全部通过；新增 4 项覆盖双轮固定读取顺序、一致 token、generation mismatch、first/second read failure、revalidate 与远程稳定错误码。
+- mismatch fixture 在第二轮改变 GMAC divider，诊断正确返回 `ClockError::Inconsistent`，并保留两代 raw evidence。
+- topology fixture/畸形 DTB 矩阵通过；dtc 仅输出刻意构造畸形输入的预期 warning。
+- remote client 与 QEMU launcher 的 13 项 Python host 测试通过。
+- `cargo check --no-default-features --features loongson2k1000la,final_online,heap-tlsf,remote-debug-monitor --target loongarch64-unknown-none` 通过。
+- `make kernel-la EXTRA_FEATURES=remote-debug-monitor` 与 `git diff --check` 通过；仅有仓库既有 warning。
+- 测试仅使用内存寄存器模型；没有访问物理 MMIO、写共享时钟或创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：连续两次相同 raw 只能排除采样间可见变化，不能证明没有瞬态 glitch、PLL 已 lock 或物理输出频率正确。
+- [ ] 三个寄存器的一轮 snapshot 本身仍非原子；两轮相同不能排除在两轮内部发生并恢复的变化。
+- [ ] volatile 64-bit 读取宽度、endian、device-memory ordering 与 100 MHz reference 仍需逐板验证。
+- [ ] WaterOS 不持有通用 clock framework ownership；禁止为 MMC 写共享 DC PLL/GMAC/APB 字段。
+- [ ] unsafe `ClockReady` 仍要求真机验证稳定性和目标 rate；consistent snapshot 只是最低软件证据，不会自动产生 ready token。
+- [ ] 下一批应审计并实现 MMC controller-private `PRE`/`CTL.ENCLK` transaction：验证 parent rate 可表示、prescaler 上取整/255 clamp、fresh read、write/readback、失败恢复及关钟边界；仍不执行命令或 DMA。
+
+### 参考与许可证
+
+- `docs/references/loongson2-clock-upstream.md`
+
+### 提交
+
+- `[feat] validate LS2K1000 MMC parent clock coherence`

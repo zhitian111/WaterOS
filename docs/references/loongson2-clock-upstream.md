@@ -22,9 +22,14 @@ Linux C 源文件。
 - DC PLL 位于 `0x20`：multiplier `[41:32]`、divisor `[31:26]`。
 - GMAC divider 位于 `0x28` 的 `[27:22]`，Linux 使用 one-based、allow-zero divider。
 - APB scale 位于 `0x50` 的 `[22:20]`，输出为 parent × (`field + 1`) / 8。
+- MMC host 获取并独占引用当前 parent rate，但不调用 `clk_set_rate()`；控制器内部 prescaler
+  使用 `DIV_ROUND_UP(parent, requested)` 并限制为 255，Linux 将 `f_min` 声明为
+  `DIV_ROUND_UP(parent, 256)`。
+- 因此 WaterOS 不应为 MMC 私自修改共享 DC PLL/GMAC/APB 链；当前安全推进方向是验证连续
+  snapshot 的一致性，并把控制器内部 prescaler 作为后续独立事务处理。
 
 ## 保留边界
 
 寄存器读取宽度、固件初值、PLL lock/stability、并发 clock framework owner 和实际输出频率均为
-`UNVERIFIED_ON_HARDWARE`。WaterOS 当前不写这些寄存器，也不因一次 snapshot 就解除 MMC
-activation blocker。
+`UNVERIFIED_ON_HARDWARE`。连续两次相同 snapshot 只能排除采样间可见变化，不能证明没有瞬态
+glitch。WaterOS 当前不写这些寄存器，也不因 snapshot 一致就解除 MMC activation blocker。

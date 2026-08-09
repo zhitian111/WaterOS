@@ -5,7 +5,7 @@
 //! normal diagnosis cannot form [`ControllerPrerequisiteProof`].
 
 use crate::{
-    clock::{ClockError, ClockSnapshot},
+    clock::{ClockError, ConsistentClockSnapshot},
     diagnostic_irq::DiagnosticIrqSnapshot,
     diagnostic_slot::DiagnosticSlotState,
     gpio::CardDetectSnapshot,
@@ -148,14 +148,14 @@ pub fn report(diagnosis : Diagnosis, irq : IrqObservation) -> PrerequisiteReport
 
 /// Hardware-verified clock-control evidence. No normal constructor exists.
 pub struct ClockReady {
-    _snapshot : ClockSnapshot,
+    _snapshot : ConsistentClockSnapshot,
 }
 
 impl ClockReady {
     /// # Safety
     /// Caller must verify clock programming, stability and target rate on the
     /// physical board, not merely obtain a read-only rate snapshot.
-    pub unsafe fn assume_verified(snapshot : ClockSnapshot) -> Self {
+    pub unsafe fn assume_verified(snapshot : ConsistentClockSnapshot) -> Self {
         Self { _snapshot : snapshot }
     }
 }
@@ -235,6 +235,23 @@ mod tests {
 
     struct Pins(u32);
 
+    struct Clocks;
+
+    impl crate::clock::RegisterIo for Clocks {
+        fn read32(&mut self, offset : usize) -> Result<u32, ClockError> {
+            assert_eq!(offset, 0x28);
+            Ok(2 << 22)
+        }
+
+        fn read64(&mut self, offset : usize) -> Result<u64, ClockError> {
+            match offset {
+                0x20 => Ok((10u64 << 32) | (2u64 << 26)),
+                0x50 => Ok(3 << 20),
+                _ => panic!("unexpected clock offset {offset:#x}"),
+            }
+        }
+    }
+
     impl RegisterIo for Pins {
         fn read32(&mut self, _offset : usize) -> Result<u32, PinctrlError> { Ok(self.0) }
     }
@@ -249,14 +266,14 @@ mod tests {
                           &mut Pins(raw)).unwrap()
     }
 
-    fn clock_snapshot() -> ClockSnapshot {
-        ClockSnapshot { dc_pll_raw : 1,
-                        gmac_div_raw : 1,
-                        apb_scale_raw : 1,
-                        reference_hz : 100_000_000,
-                        dc_pll_hz : 500_000_000,
-                        gmac_hz : 250_000_000,
-                        apb_hz : 125_000_000 }
+    fn clock_snapshot() -> crate::clock::ClockSnapshot {
+        crate::clock::ClockSnapshot { dc_pll_raw : (10u64 << 32) | (2u64 << 26),
+                                      gmac_div_raw : 2 << 22,
+                                      apb_scale_raw : 3 << 20,
+                                      reference_hz : 100_000_000,
+                                      dc_pll_hz : 500_000_000,
+                                      gmac_hz : 250_000_000,
+                                      apb_hz : 125_000_000 }
     }
 
     fn diagnosis() -> Diagnosis {
@@ -361,8 +378,9 @@ mod tests {
         let pins = PinctrlState::new(pin_snapshot(1 << 20)).classify()
                                                            .unwrap();
         let card = CardReady::from_diagnosis(diagnosis().card_detect).unwrap();
+        let consistent = crate::clock::snapshot_consistent(&mut Clocks, 100_000_000).unwrap();
         // SAFETY: these are pure host fixtures with no claim about real hardware.
-        let proof = assemble_proof(unsafe { ClockReady::assume_verified(clock_snapshot()) },
+        let proof = assemble_proof(unsafe { ClockReady::assume_verified(consistent) },
                                    unsafe { PowerReady::assume_verified() },
                                    pins,
                                    card,

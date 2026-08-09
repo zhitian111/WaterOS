@@ -82,6 +82,7 @@ fn clock_error_code(error : ClockError) -> &'static str {
         ClockError::ZeroPllMultiplier => "zero-pll-multiplier",
         ClockError::ZeroPllDivisor => "zero-pll-divisor",
         ClockError::RateOverflow => "rate-overflow",
+        ClockError::Inconsistent => "inconsistent",
         ClockError::UnsupportedProvider => "unsupported-provider",
     }
 }
@@ -214,8 +215,12 @@ pub fn diagnose<C : clock::RegisterIo, G : gpio::RegisterIo, P : pinctrl::Regist
     pinctrl_registers : &mut P)
     -> Result<Diagnosis, PlanError> {
     let plan = mmc::plan(description)?;
-    let clock = clock::snapshot_provider(description.clock_provider,
-                                         clock_registers);
+    let clock = clock::snapshot_provider_consistent(description.clock_provider,
+                                                    clock_registers).map(|value| value.snapshot())
+                                                                    .map_err(|recovery| {
+                                                                        recovery.error
+                                                                                .unwrap_or(ClockError::Inconsistent)
+                                                                    });
     let pinctrl = pinctrl::snapshot(description.pinctrl, pinctrl_registers);
     let card_detect = match &description.card_detect {
         CardDetect::NonRemovable => CardDetectDiagnosis::NonRemovable,
@@ -371,6 +376,8 @@ mod tests {
     struct ClockModel {
         reads : Vec<(usize, usize)>,
         fail : bool,
+        change_after_first : bool,
+        gmac_reads : usize,
     }
 
     impl clock::RegisterIo for ClockModel {
@@ -380,7 +387,12 @@ mod tests {
             if self.fail {
                 Err(ClockError::Io)
             } else {
-                Ok(2 << 22)
+                self.gmac_reads += 1;
+                Ok(if self.change_after_first && self.gmac_reads > 1 {
+                       3 << 22
+                   } else {
+                       2 << 22
+                   })
             }
         }
 
@@ -513,6 +525,9 @@ mod tests {
                        .can_activate());
         assert_eq!(clocks.reads, vec![(0x20, 8),
                                       (0x28, 4),
+                                      (0x50, 8),
+                                      (0x20, 8),
+                                      (0x28, 4),
                                       (0x50, 8)]);
         assert_eq!(gpios.reads, vec![0, 0x20]);
         assert_eq!(pins.reads, 1);
@@ -561,6 +576,24 @@ mod tests {
                     card=gpio-error:not-input \
                     gates=clock:error,vmmc:unverified-hardware,vqmmc:unverified-hardware,pinctrl:\
                     error,card:error,irq:missing proof=0 can_activate=0 blockers=7\r\n");
+    }
+
+    #[test]
+    fn rejects_mixed_generation_clock_diagnosis() {
+        let description = description(CardDetect::NonRemovable);
+        let mut clocks = ClockModel { change_after_first : true,
+                                      ..Default::default() };
+        let mut gpios = GpioModel::default();
+        let mut pins = PinctrlModel::default();
+        let result = diagnose(&description,
+                              &mut clocks,
+                              &mut gpios,
+                              &mut pins).unwrap();
+
+        assert_eq!(result.clock,
+                   Err(ClockError::Inconsistent));
+        assert!(format_diagnosis(result).contains("clock=error:inconsistent"));
+        assert_eq!(clocks.reads.len(), 6);
     }
 
     #[test]
