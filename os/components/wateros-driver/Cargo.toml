@@ -1,9 +1,9 @@
 [workspace]
-    exclude = [ "./driver-block/block-impl/impl-block-cache/" ]
     members = [
         "./driver-api/api-v0/",
         "./driver-block/",
         "./driver-block/block-api/api-v0/",
+        "./driver-block/block-impl/impl-block-cache/",
         "./driver-block/block-impl/impl-dummy/",
         "./driver-block/block-impl/impl-virtio-mmio/",
         "./driver-block/block-impl/impl-virtio-pci/",

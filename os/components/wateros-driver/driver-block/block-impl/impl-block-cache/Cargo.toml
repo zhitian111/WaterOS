@@ -12,6 +12,3 @@
 [features]
     api-v0 = [  ]
     default = [ "api-v0" ]
-
-[workspace]
-    members = [ "." ]
