@@ -747,3 +747,324 @@ python3 scripts/remote_debug_qemu_smoke.py \
 ### 提交
 
 - `[feat] discover VisionFive 2 MMC resources`
+
+## 2026-08-10：批次 17——2K1000LA UEFI 启动契约与 FDT 发现
+
+### 任务与设计
+
+1. 依据龙芯《CPU 统一系统架构规范（LA 架构嵌入式系列）》纠正入口参数语义，不沿用未经证实的 `argc/argv/envp` 假设。
+2. LoongArch 内核入口将三个原始固件参数显式传给 machine profile；QEMU profile 保持固定 DTB 地址语义。
+3. 2K1000LA 只接受 `a0 == 1` 的 UEFI-compatible 启动，并从 `a2` 指向的 EFI System Table Configuration Table 查找 `DEVICE_TREE_GUID`。
+4. 对 system-table 对齐、签名、configuration-table 空指针和条目数设置受检边界；失败返回现有 `0` DTB sentinel。
+5. 先建立可信 FDT 入口，再推进内存、LIOINTC、MMC/PCIe 等 DTB-first 驱动；不把 QEMU machine 常量复制到实板 profile。
+
+### 完成内容
+
+- [x] `_start.S` 和 `Loongson2K1000LABootArgs` 改为 UEFI flag、command-line PA、system-table PA 的官方语义。
+- [x] `wateros_kernel_main` 不再丢弃固件参数，machine-specific `device_tree_phys_addr(a0, a1, a2)` 在平台初始化前执行。
+- [x] 新增 64-bit EFI table header、system table、configuration table 和 GUID 的 `repr(C)` 布局。
+- [x] 使用官方 `DEVICE_TREE_GUID {b1b621d5-f19c-41a5-830b-d9152c69aae0}` 发现 FDT，允许其位于非首个 configuration-table entry。
+- [x] 拒绝非 UEFI-compatible 标志、空或非 64 KiB 对齐 system table、错误签名、超过 4096 项、非零条目数配空指针以及缺失/空 FDT entry。
+- [x] unsafe 边界集中在固件表读取函数，并记录 identity-mapped/readable firmware memory 的调用者责任。
+- [x] QEMU LoongArch profile 仅适配统一函数签名，仍返回其 machine 固定的 `0x0010_0000`，行为不变。
+
+### 验证证据
+
+- 2K1000LA platform host 单测 3 项通过，其中 EFI 查找覆盖非首位目标项、空目标地址和缺失目标项。
+- QEMU LoongArch platform crate `cargo check` 通过，只有既有 `asm_sub_register` warning。
+- `make kernel-la`（QEMU LoongArch final profile）整核构建通过，证明接口改动未破坏既有 LA profile。
+- `cargo build --release --target loongarch64-unknown-none --no-default-features --features loongson2k1000la,pre,heap-tlsf` 通过，证明 2K1000LA 独立 profile 可交叉编译和链接。
+- 全仓 `cargo fmt --all --check` 因仓库及 `vendor/` 既有格式差异失败；受影响 platform crate 已定向格式化，没有批量修改第三方代码。
+
+### 已知限制、未验证与后续测试
+
+- [ ] **EFI 表解析依据官方 ABI 和 UEFI 布局完成，但尚未用目标板固件提供的真实 System Table/FDT 上板验证。**
+- [ ] 当前失败仍沿用 `dtb_pa == 0` sentinel，早期控制台尚未输出细分发现错误；真机首启前应加入不依赖 DTB 的诊断码。
+- [ ] `a1` command line 仅保留未解析；当前启动流程没有消费内核命令行。
+- [ ] 代码假定固件表在早期 identity-map 下可读；切换页表前有效，后续若移动发现时点必须重新审计映射生命周期。
+- [ ] 当前 2K1000LA 内存仍使用保守 fallback，driver 仍为 dummy；下一批应使用已发现 FDT 解析官方 DTS 的多段内存，并建立实板专属 DTB 驱动 profile。
+- [ ] UART `0x1fe20000`、125 MHz、LIOINTC IRQ 0，MMC `0x1fe2c000`/IRQ 31 以及 PCIe ranges 虽有官方/上游 DTS 依据，均尚未在本批激活，全部保持 UNVERIFIED。
+
+### 参考依据
+
+- 龙芯《CPU 统一系统架构规范（LA 架构嵌入式系列）V1.0》：启动参数、UEFI Configuration Table/FDT GUID 与附录 2K1000LA DTS。
+- Linux/LoongArch `loongson-2k1000.dtsi`：UART、LIOINTC、MMC 和 PCIe 资源形态，仅作为后续驱动交叉依据。
+
+### 提交
+
+- `[fix] discover 2K1000LA FDT from UEFI tables`
+
+## 2026-08-10：批次 18——2K1000LA FDT 多段内存发现
+
+### 任务与设计
+
+1. 从批次 17 已发现的固件 FDT 读取 `memory` 节点，不再无条件假设 1 GiB RAM。
+2. 官方 2K1000LA DTS 有三个不连续 `reg` 区段；现有 `KernelMemoryLayout` 只能表达单段主 RAM，因此只选择包含内核链接地址 `0x90000000` 的区段。
+3. 对地址加法、空区间和页边界做受检处理，不允许通过饱和加法把畸形区段伪装成有效 RAM。
+4. 缺少 DTB、FDT 无效或没有包含内核的 memory extent 时，保留 `0x90000000..0xc0000000` 降级窗口。
+5. 使用真实 DTS cell 形态经 `dtc` 编译后做端到端 host 验证，并保留纯函数边界测试。
+
+### 完成内容
+
+- [x] 2K1000LA platform 引入既有 `fdt 0.1.5` 解析库，新增 `primary_ram_from_fdt()`。
+- [x] 扫描 `memory`/`memory@...` 节点的所有 `reg` entries，并由 FDT 父节点的 address/size cells 解析 64-bit 地址与长度。
+- [x] 区段起点向上、终点向下做 4 KiB 对齐；零长度、加法溢出和不包含内核链接地址的区段被忽略。
+- [x] 多个候选区段同时包含内核时选择容量较大者，结果仍交由公共 `KernelMemoryLayout::validate()` 校验。
+- [x] 官方三段布局中只选择 `0x90000000..0x270000000`，不会把两个低内存段或中间地址空洞交给 frame allocator。
+- [x] `physical_ram_end_exclusive()` 和 `kernel_memory_layout()` 统一消费同一个主 RAM 发现结果。
+- [x] 新增两个 DTS fixtures、host verifier 和临时 DTB 测试脚本，临时文件在退出时删除。
+
+### 验证证据
+
+- 2K1000LA platform host 单测由 3 项增至 6 项，全部通过。
+- 纯单测覆盖 fallback layout、跨页对齐、低内存排除、零长度、`usize` 地址溢出以及多候选择大。
+- `official-memory-layout.dts` 经 `dtc` 编译，端到端解析得到 `0x90000000..0x270000000`。
+- `no-kernel-memory.dts` 经相同路径解析为 `None`，证明低地址 extent 不会被误选。
+- `cargo build --release --target loongarch64-unknown-none --no-default-features --features loongson2k1000la,pre,heap-tlsf` 通过。
+- `git diff --check` 通过；测试只生成临时小型 DTB，没有创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] **FDT cell 解析和选择策略已验证，但真实板报告的实际容量、FDT 所在物理地址和固件保留区仍须上板核对。**
+- [ ] 公共内存 API 仍只支持一个连续 extent；官方两个低内存区段暂未使用，这是避免跨空洞分配的有意限制。
+- [ ] 尚未从 `/reserved-memory` 和 FDT memory reservation block 扣除保留页；在允许整个高内存 extent 进入 frame allocator 前必须解决 DTB/固件表生命周期和保留区问题。
+- [ ] 当前发现错误静默降级到 768 MiB fallback；早期诊断日志仍待加入。
+- [ ] MMIO 表仍是保守静态范围，没有根据 PCIe ranges 等 DTB 属性细化。
+- [ ] 下一批应建立 2K1000LA 专属 driver aggregate，先实现只读 DTB topology，解析 UART、LIOINTC 与 MMC 资源但暂不执行未经上板验证的寄存器写入。
+
+### 提交
+
+- `[feat] discover 2K1000LA RAM from FDT`
+
+## 2026-08-10：批次 19——2K1000LA 独立驱动拓扑
+
+### 任务与设计
+
+1. 为 2K1000LA 新建独立 machine driver crate，顶层 profile 不再选择 `driver/impl-dummy`。
+2. 只从 FDT 发现并验证 UART、LIOINTC 和 MMC 资源，本批不执行未经真机验证的寄存器写入。
+3. 中断描述保留 parent phandle 和最多 4 个原始 specifier cells，避免被公共单 IRQ 摘要模型截断。
+4. MMIO `reg` 必须完整编码、非空、非零长度且地址加法不溢出；设备专属资源数量严格校验。
+5. host parser 不依赖目标架构汇编；platform 依赖只在 `target_arch = "loongarch64"` 时启用。
+
+### 完成内容
+
+- [x] 新增 `wateros-driver-impl-loongson2k1000la` 并接入 driver workspace、aggregate feature 和根 `loongson2k1000la` feature。
+- [x] `MachineDriver::init_after_boot()` 读取 platform 保存的 FDT、构造 topology 快照并记录发现数量。
+- [x] 新增 `BoardTopology`、`UartDescription`、`InterruptControllerDescription`、`MmcDescription` 和 `InterruptSpec`。
+- [x] 精确匹配 `ns16550a`、`loongson,liointc-2.0`、`loongson,ls2k1000-mmc` compatible。
+- [x] UART 要求单个 MMIO、interrupt parent/specifier 和 `clock-frequency`，可选 `reg-shift`。
+- [x] LIOINTC 要求单个 MMIO、phandle 和 1..4 个 interrupt cells；MMC 支持一到两个 MMIO regions 并要求中断描述。
+- [x] `status = disabled/reserved/fail/failed` 节点在资源解引用前跳过；未知或非 NUL 终止 status 被拒绝。
+- [x] topology 保存进互斥快照供后续激活层读取，但明确输出 `UNVERIFIED_ON_HARDWARE`，没有注册虚假可用设备。
+- [x] host 构建时不链接 LoongArch platform，避免测试环境误汇编目标指令。
+
+### 验证证据
+
+- 有效 DTS fixture 经 `dtc` 编译后解析出 1 个 LIOINTC、1 个 UART 和 1 个 MMC。
+- 断言 LIOINTC `0x1fe01400`/2 cells、UART `0x1fe20000`/125 MHz/IRQ `<0 4>`、MMC `0x1fe2c000` + `0x1fe00438`/IRQ `<31 4>`。
+- fixture 中禁用 UART 带零长度 MMIO 且无中断，仍被先行忽略，最终 UART 数保持 1。
+- 缺少 UART `clock-frequency` 的独立 fixture 经相同解析路径返回错误。
+- 新 driver crate host test/doc-test 构建通过；fixture runner 两种模式均通过。
+- 2K1000LA release 交叉构建通过，构建日志确认编译并链接 `wateros-driver-impl-loongson2k1000la`。
+- `git diff --check` 通过；测试只生成两个临时小型 DTB。
+
+### 已知限制、未验证与后续测试
+
+- [ ] **所有资源数值来自规范/上游 DTS 与合成 fixture；真实固件 compatible 列表、phandle 和 interrupt cells 仍须用上板 DTB 对照。**
+- [ ] LIOINTC 仅描述未初始化，CPU HWI route、enable/mask、ack 与多核 affinity 全部 UNVERIFIED。
+- [ ] UART topology 尚未替换 early console 的固定基址，也没有注册运行期字符设备；UART IRQ 收发未激活。
+- [ ] MMC topology 尚未解析 clocks、resets、DMA、bus-width、card-detect 和供电资源，也未绑定块设备驱动。
+- [ ] parser 当前要求设备节点显式提供 `interrupt-parent`，尚未实现 Devicetree 规范的祖先继承规则。
+- [ ] 尚未发现 PCIe、GMAC、USB、SATA 和 GPIO；后续优先级为 LIOINTC 受检寄存器模型、MMC/clock 资源，再到 PCIe/USB。
+- [ ] 下一批应实现 LIOINTC 2.0 的纯寄存器模型与 MMIO backend 分离，先验证 route/mask/ack 算术，不在 machine init 自动 enable。
+
+### 提交
+
+- `[feat] add 2K1000LA driver topology`
+
+## 2026-08-10：批次 20——LIOINTC 2.0 受检寄存器模型
+
+### 任务与设计
+
+1. 依据 Linux 主线 irqchip 和 Devicetree binding 核对 32-source LIOINTC bank 的 route、enable、disable、polarity、edge 和 per-core ISR 布局。
+2. 将寄存器算法与访问方式分离为 `RegisterIo`，host model 记录全部读写，目标侧 volatile backend 保持未激活。
+3. route byte 使用低 4 位 core mask、高 4 位 parent HWI mask；每个 bank 只接受 IRQ 0..31。
+4. `ENABLE`/`DISABLE` 使用专用写寄存器，不对 set/clear 寄存器做 read-modify-write；trigger 的 POL/EDGE 按文档读改写。
+5. 修正批次 19 对 LIOINTC 2.0 单 MMIO 的错误假设，按 `reg-names = main,isr0,isr1...` 保存独立 ISR regions。
+
+### 完成内容
+
+- [x] 新增 `liointc` 模块、`LioIntc<I>`、`RegisterIo`、`Route` 和四种 `Trigger`。
+- [x] 实现单 IRQ enable、mask/ack、全禁用、route 配置、trigger 配置、per-core pending 和最低位 claim。
+- [x] `mask_ack` 明确区分：写 DISABLE 可清锁存 pulse，但 level source 仍必须由源设备清除。
+- [x] claim 取 per-core ISR 与 enable-status 的交集，不返回被 mask 的 pending source。
+- [x] 构造器限制最多 4 核 ISR，并检查 main/ISR 地址加法溢出；缺失 core 返回 `InvalidParam`。
+- [x] 新增 `VolatileMmio`，unsafe 只包围单次 volatile read/write；代码注释标为 `UNVERIFIED_ON_HARDWARE`，没有接入 machine init。
+- [x] topology 的 LIOINTC 描述改为 `main_mmio + core_isr[]`，严格校验连续命名 `isr0..isr3`。
+- [x] 未被其它节点引用的控制器允许没有 phandle；被设备引用的 interrupt parent 仍必须有有效 phandle。
+- [x] fixture 更新为两组官方形态控制器：main `0x1fe01400/1440`，ISR `0x1fe01040/48` 与 `0x1fe01140/48`。
+
+### 验证证据
+
+- LIOINTC host 单测 5 项全部通过。
+- route 测试验证 core mask `0b0101` + parent line 2 编码为 `0x45`，并拒绝空 core mask 与 parent line 4。
+- 寄存器 trace 验证 IRQ31 route 写 `base+31`，enable 写 `base+0x28`，mask/ack 与 disable-all 写 `base+0x2c`。
+- 四种 trigger 组合验证 EDGE/POLARITY 最终位图；pending 测试验证两个 core 的独立 ISR 和最低 enabled bit claim。
+- IRQ32 测试最初发现 `then_some` 参数提前求值导致移位 panic；改为范围检查后再移位，现断言错误路径无任何写入。
+- 更新后的双 LIOINTC DTS fixture 经 `dtc` 和同一 topology parser 验证通过；缺失 UART clock fixture继续被拒绝。
+- 2K1000LA release 交叉构建通过，`git diff --check` 通过。
+
+### 已知限制、未验证与后续测试
+
+- [ ] **volatile MMIO、真实 pending 变化、CPU HWI cascade 和 pulse clear 副作用均未上板验证；machine init 不会构造或启用控制器。**
+- [ ] route 模型支持 4 核，但 2K1000LA 实际双核映射和 boot CPU ID 必须从 CPU topology 取得，不能固定为 core0。
+- [ ] 尚未解析 `loongson,parent_int_map`、`interrupts` 和 `interrupt-names` 来自动生成每个 source 的 parent route。
+- [ ] claim 只返回 bank-local 0..31；第二 LIOINTC 到全局 IRQ 32..63 的 domain 映射尚未接入公共 interrupt API。
+- [ ] 没有通用 IRQ handler registry，UART/MMC 也尚未注册 handler，因此现在激活控制器仍没有安全 dispatch 终点。
+- [ ] LIOINTC 寄存器并发读改写需要 interrupt-safe lock；当前模型由调用者独占，接入多核前必须加入锁语义。
+- [ ] 下一批应扩展 topology 的 parent map/parent IRQ 名称解析，并实现两个 bank 的纯 domain 映射与 dispatch 表，不直接开启硬件。
+
+### 参考依据
+
+- Linux 主线 `drivers/irqchip/irq-loongson-liointc.c`（GPL-2.0）：寄存器偏移、route 编码、mask/ack 和 per-core ISR 行为，仅作为语义参考，没有复制实现代码。
+- Linux Devicetree binding `loongson,liointc.yaml`（GPL-2.0-only OR BSD-2-Clause）：LIOINTC 2.0 命名寄存器、2-cell interrupt 和 parent map 契约。
+- Linux `loongson-2k1000.dtsi`（GPL-2.0）：两组 LIOINTC 的 main/isr0/isr1 实际地址。
+
+### 提交
+
+- `[feat] model 2K1000LA LIOINTC registers`
+
+## 2026-08-10：批次 21——LIOINTC parent route 与双 bank IRQ domain
+
+### 任务与设计
+
+1. 解析 LIOINTC 自身连接 CPUINTC 的多项 `interrupts`、`interrupt-names` 和四项 `loongson,parent_int_map`。
+2. parent name 只接受 `int0..int3`，specifier 数量必须与名称一致，非零 source map 必须有对应 parent interrupt。
+3. 四个 source maps 必须互不重叠且合计覆盖完整 32-source bank，拒绝一个 source 同时路由到多个 parent line 的歧义。
+4. 建立固定两 bank、每 bank 32 项的全局 IRQ domain，映射公式为 `bank * 32 + local`。
+5. handler 表固定 64 项，dispatch 路径不分配内存、不持锁、不隐式执行硬件 ack。
+
+### 完成内容
+
+- [x] topology parser 将单中断解析推广为按 parent `#interrupt-cells` 切分的多 specifier parser。
+- [x] `InterruptControllerDescription` 新增四槽 `parent_interrupts` 和 `parent_source_maps`。
+- [x] 严格校验 parent name、重复名称、specifier/name 数量、map 长度、重叠 map、未连接 parent 和未覆盖 source。
+- [x] 官方形态 fixture 中 LIOINTC0 保存 CPU HWI2/`int0`/`0xffffffff`，LIOINTC1 保存 CPU HWI3/`int1`/`0xffffffff`。
+- [x] 新增 `GlobalIrq`、`LioIntcDomain`、`DomainError`、固定 handler table 和 `DispatchReport`。
+- [x] 实现注册、拒绝重复注册、注销、bank pending snapshot dispatch，以及 handled/unhandled 64-bit 位图报告。
+- [x] dispatch 按 local IRQ 从低到高调用 handler，不重读 pending，不修改 mask，也不声称完成 EOI。
+- [x] 新增 overlapping-parent-map fixture，source 0 同时出现在 int0/int1 时明确拒绝。
+
+### 验证证据
+
+- 2K1000LA driver host 单测由 5 项增至 9 项，全部通过。
+- domain 边界测试验证 bank0/local0 -> global0、bank1/local31 -> global63，并拒绝 bank2 和 local32。
+- dispatch 测试在 bank1 同时提交 local 0/7/31：已注册 0 和 31 被调用并形成 global bits 32/63，未注册 7 报告为 global bit39。
+- 注册测试覆盖 duplicate、unregister 和二次 unregister；无效 bank count 0/3 被拒绝。
+- 有效 DTS fixture 端到端断言两组 parent specifier 与 maps；缺 UART clock 和重叠 parent map 两个畸形 fixture 均被拒绝。
+- 2K1000LA release 交叉构建通过，`git diff --check` 通过；测试只生成三个临时小型 DTB。
+
+### 已知限制、未验证与后续测试
+
+- [ ] **domain 和 dispatch 仅为纯模型，尚未连接 LoongArch CPU HWI trap、真实 LIOINTC pending 或 mask/ack，全部待上板验证。**
+- [ ] 固定 64 IRQ 符合 2K1000LA 两 bank；不是面向所有 Loongson SoC 的通用 IRQ domain。
+- [ ] handler 目前是 `fn(GlobalIrq)`，不能携带设备实例上下文；UART/MMC 接入前需要确定静态实例或受控 context 方案。
+- [ ] register/unregister 要求外部独占且必须在开中断前完成；运行期动态注销需要 interrupt-safe synchronization 和 quiesce 协议。
+- [ ] source map 严格要求覆盖 32 bits，符合目标 DTS；若真实固件保留未连接 source，需基于导出 DTB 和 binding 重新评估而非静默放宽。
+- [ ] dispatch 遇到 unhandled source 只报告，不自动 mask；未来 trap glue 必须采用有界循环并处理持续电平，防止中断风暴。
+- [ ] 下一批应完善 MMC 的 clocks、DMA、bus-width、card-detect 与 non-removable topology，为复用已有 DesignWare/SD 协议层做准备。
+
+### 提交
+
+- `[feat] add 2K1000LA IRQ domain model`
+
+## 2026-08-10：批次 22——2K1000LA MMC clock/DMA/card-detect 拓扑
+
+### 任务与设计
+
+1. 依据上游 2K1000 DTS/参考板 DTS 补齐 MMC 的 APB clock、APB DMA、4-bit bus 和 GPIO card-detect 描述。
+2. phandle specifier 根据 provider 的 `#clock-cells`、`#dma-cells`、`#gpio-cells` 动态切分，不写死参数宽度。
+3. 命名资源要求 name 数量与 specifier 数量一致；目标 MMC 的 DMA 只接受单个 `rx-tx` channel。
+4. `cd-gpios`、`broken-cd`、`non-removable` 三种介质策略互斥；无属性时保存 native detect。
+5. supply 只保存并验证 provider phandle，本批不操作 regulator、clock、DMA 或 MMC 寄存器。
+
+### 完成内容
+
+- [x] 新增 `ResourceSpecifier { provider_phandle, args }` 和 `NamedResource`，单 provider 最多接受 8 个参数 cells。
+- [x] 通用 parser 逐项读取 phandle、查询 provider cell count，拒绝未知 provider、截断参数、非 cell 对齐和超宽 specifier。
+- [x] `MmcDescription` 新增 clocks、可选 DMA、bus width、card-detect、`vmmc-supply` 和 `vqmmc-supply`。
+- [x] MMC 要求恰好一个 clock；`clock-names` 可选，但存在时必须与 clock 数量一致。
+- [x] `dmas`/`dma-names` 必须同时出现或同时缺失；目标节点只接受一个名为 `rx-tx` 的 DMA specifier。
+- [x] `bus-width` 缺省为 1，只接受 1/4/8。
+- [x] GPIO card-detect 保存 provider 与 `<22, GPIO_ACTIVE_LOW>` 原始参数；支持 native、broken 和 non-removable 策略。
+- [x] boolean 属性必须是零长度 DTB property，拒绝带值的伪 boolean。
+- [x] supply property 必须是单 phandle 且 provider 存在。
+- [x] 有效 fixture 的 MMC MMIO 大小修正为上游 DTS 的 `0x68`，并增加真实 clock/DMA/GPIO provider 形态。
+
+### 验证证据
+
+- 既有 9 项 LIOINTC/domain host 单测全部通过。
+- 有效 fixture 经 `dtc` 后断言 clock args `[0]`、DMA 名称 `rx-tx`/args `[0]`、bus width 4、GPIO args `[22,1]` 及两个 supply phandle。
+- 动态 non-removable fixture 走同一 parser 并得到 `CardDetect::NonRemovable`。
+- 同时含 `cd-gpios` 与 `broken-cd` 的 fixture 被拒绝。
+- DMA provider 声明 `#dma-cells = 1` 而 consumer 缺少 argument 时，`dtc` 发出 warning，WaterOS parser继续明确返回错误。
+- 缺 UART clock 与重叠 LIOINTC parent map 的既有畸形 fixtures 继续被拒绝。
+- 2K1000LA release 交叉构建通过，`git diff --check` 通过；所有测试 DTB 均为临时小文件。
+
+### 已知限制、未验证与后续测试
+
+- [ ] **资源解析已验证，但 clock enable、APBDMA channel 0 语义、GPIO active-low 电平和卡槽电气行为全部待真机验证。**
+- [ ] 上游 `.dtsi` 默认禁用 MMC/APBDMA，参考板 `.dts` 才启用；实际固件 DTB 的 status 与 pinctrl 必须导出核对。
+- [ ] 尚未解析 pinctrl、reset、`max-frequency`、write-protect、SD voltage/capability 属性和 DMA coherency constraints。
+- [ ] `vmmc/vqmmc` 仅保存 phandle，没有 regulator framework，不能切换供电或信号电压。
+- [ ] DMA topology 不等于 DMA driver；在 cache maintenance、descriptor ownership 和中断完成路径验证前必须使用 polling/PIO bring-up。
+- [ ] 当前 Loongson 分支尚未拥有 VisionFive 分支中的 DesignWare MMC/SD 协议实现；复用前应抽到独立公共 crate，而不是跨平台复制代码。
+- [ ] 下一批应提取跨平台 DesignWare MMC polling/PIO transport 与 SD protocol crate，并让两个平台只提供寄存器资源和 board prerequisites。
+
+### 参考依据
+
+- Linux `loongson-2k1000.dtsi`：MMC `0x1fe2c000/0x68`、辅助区、APB clock、APBDMA1 channel 0 与 `rx-tx`。
+- Linux `loongson-2k1000-ref.dts`：MMC enable、4-bit bus、GPIO22 active-low card detect。
+
+### 提交
+
+- `[feat] discover 2K1000LA MMC resources`
+
+## 2026-08-10：批次 23——共享 DesignWare MMC/SD 核心抽取
+
+### 任务与设计
+
+1. 审计 VisionFive 2 已有 DesignWare MMC 与 SD 协议实现的平台耦合。
+2. 在 `wateros-driver/driver-block` 下建立独立、`no_std` 的共享核心 crate。
+3. 迁入寄存器轮询/PIO、识别时钟、SD 枚举、CSD 容量解析和只读块适配。
+4. 平台层继续负责 DTB 资源、外部时钟、复位、pinmux、供电和卡检测。
+5. 复用原有 mock 测试，并做 RISC-V 裸机目标编译检查。
+
+本批只建立两个平台可共同依赖的控制器/协议边界，不在缺少真机时启用设备注册。DMA、多块命令和写入路径继续排除在首轮核心之外。
+
+### 完成内容
+
+- [x] 新增 `wateros-driver-block-impl-dw-mmc` workspace crate。
+- [x] `RegisterIo` 隔离真实 MMIO 与 host mock 后端。
+- [x] 迁入版本化 FIFO、复位、时钟更新/分频、命令执行和单块 PIO 读取。
+- [x] 迁入 SD v1/v2 枚举、OCR 有界轮询、寻址选择和 CSD v1/v2 容量计算。
+- [x] 保留通用 `BlockDevice` 只读适配、整段越界预检和错误映射。
+- [x] 排除 JH7110 clock/reset/syscon 等板级资源结构，避免共享核心依赖具体 SoC。
+
+### 验证证据
+
+- `cargo test -p wateros-driver-block-impl-dw-mmc`：12 项 host 单测全部通过。
+- `cargo check -p wateros-driver-block-impl-dw-mmc --target riscv64gc-unknown-none-elf` 通过。
+- 覆盖复位/超时/CRC/硬件锁、旧/新 FIFO、识别时钟、SDHC/SDSC、CSD、地址溢出、跨盘尾读取和写入拒绝。
+
+### 已知限制、未验证与后续测试
+
+- [ ] 尚未回接 VisionFive 2 平台 crate；下一批应替换重复实现并做比较验证。
+- [ ] 2K1000LA 是否完全兼容该 DesignWare 寄存器布局仍需固件 DTB、手册和真机寄存器确认。
+- [ ] CIU/BIU 时钟、reset、pinmux、供电/电压、card-detect 与长响应顺序均为真机未验证。
+- [ ] 当前仅轮询、PIO、单块、只读；IRQ、DMA、多块、写入及 cache 一致性尚未实现。
+- [ ] host mock 与交叉编译不能替代插卡启动、已知 CSD 对照、盘尾读取和长时间 I/O 压测。
+
+### 提交
+
+- `[ref] extract shared DesignWare MMC core`
