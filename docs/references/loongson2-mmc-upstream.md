@@ -22,6 +22,13 @@ Confirmed facts used by the current WaterOS foundation:
 
 - Main registers occupy offsets `0x00..0x64`; DATA is `0x40`, IEN is `0x64`.
 - Command argument/control are `0x08/0x0c`; response words are `0x14..0x20`.
+- Controller-private clock registers are `CTL=0x00` and `PRE=0x04`;
+  `CTL.ENCLK=bit0`, `PRE.EN=bit31`, while the prescaler field is documented as
+  bits `[9:0]`. The current Linux path nevertheless clamps its computed
+  prescaler to 255, writes `PRE.EN | divider`, then updates only `CTL.ENCLK`.
+- Linux computes the divider with upward rounding. WaterOS mirrors that policy
+  but requires coherent parent evidence, fresh controller reads and readback;
+  its current conservative plan retains the upstream 255 clamp.
 - The second 2K1000 DT register region is an APB DMA configuration register.
 - 2K1000 uses external APB DMA (`rx-tx`); it is not a DesignWare MMC host.
 - The APBDMA order register is accessed as a non-atomic 64-bit little-endian
@@ -35,5 +42,5 @@ Confirmed facts used by the current WaterOS foundation:
   defines no status bit meanings and does not inspect that word in its ISR.
 
 Still requiring physical-board validation: MMIO accessibility/endian behavior,
-clock/reset/power ordering, response word ordering, interrupt delivery, DMA
-routing and cache coherency.
+`PRE`/`CTL.ENCLK` write and readback behavior, clock/reset/power ordering,
+response word ordering, interrupt delivery, DMA routing and cache coherency.

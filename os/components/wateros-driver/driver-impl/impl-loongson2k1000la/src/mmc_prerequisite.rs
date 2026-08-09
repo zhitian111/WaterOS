@@ -5,11 +5,11 @@
 //! normal diagnosis cannot form [`ControllerPrerequisiteProof`].
 
 use crate::{
-    clock::{ClockError, ConsistentClockSnapshot},
+    clock::ClockError,
     diagnostic_irq::DiagnosticIrqSnapshot,
     diagnostic_slot::DiagnosticSlotState,
     gpio::CardDetectSnapshot,
-    mmc::PrerequisiteStatus,
+    mmc::{ControllerClockReady, PrerequisiteStatus},
     mmc_diagnostic::{CardDetectDiagnosis, Diagnosis},
     pinctrl::{PinctrlError, PinctrlState, Ready},
 };
@@ -148,15 +148,15 @@ pub fn report(diagnosis : Diagnosis, irq : IrqObservation) -> PrerequisiteReport
 
 /// Hardware-verified clock-control evidence. No normal constructor exists.
 pub struct ClockReady {
-    _snapshot : ConsistentClockSnapshot,
+    _controller : ControllerClockReady,
 }
 
 impl ClockReady {
     /// # Safety
     /// Caller must verify clock programming, stability and target rate on the
     /// physical board, not merely obtain a read-only rate snapshot.
-    pub unsafe fn assume_verified(snapshot : ConsistentClockSnapshot) -> Self {
-        Self { _snapshot : snapshot }
+    pub unsafe fn assume_verified(controller : ControllerClockReady) -> Self {
+        Self { _controller : controller }
     }
 }
 
@@ -236,6 +236,25 @@ mod tests {
     struct Pins(u32);
 
     struct Clocks;
+
+    struct ControllerClockRegisters {
+        pre : u32,
+        control : u32,
+    }
+
+    impl crate::mmc::RegisterIo for ControllerClockRegisters {
+        fn read32(&mut self, offset : usize) -> Result<u32, dw_mmc::mmc::MmcError> {
+            match offset {
+                0x00 => Ok(self.control),
+                0x04 => Ok(self.pre),
+                _ => Err(dw_mmc::mmc::MmcError::RegisterOutOfRange),
+            }
+        }
+
+        fn write32(&mut self, _offset : usize, _value : u32) -> Result<(), dw_mmc::mmc::MmcError> {
+            panic!("read-only controller clock fixture must not write")
+        }
+    }
 
     impl crate::clock::RegisterIo for Clocks {
         fn read32(&mut self, offset : usize) -> Result<u32, ClockError> {
@@ -379,8 +398,15 @@ mod tests {
                                                            .unwrap();
         let card = CardReady::from_diagnosis(diagnosis().card_detect).unwrap();
         let consistent = crate::clock::snapshot_consistent(&mut Clocks, 100_000_000).unwrap();
+        let plan = crate::mmc::ControllerClockPlan::from_parent(consistent, 25_000_000).unwrap();
+        let controller = crate::mmc::observe_controller_clock(&mut ControllerClockRegisters {
+                                                                 pre : (1 << 31) |
+                                                                       u32::from(plan.divider()),
+                                                                 control : 1,
+                                                             },
+                                                             plan).unwrap();
         // SAFETY: these are pure host fixtures with no claim about real hardware.
-        let proof = assemble_proof(unsafe { ClockReady::assume_verified(consistent) },
+        let proof = assemble_proof(unsafe { ClockReady::assume_verified(controller) },
                                    unsafe { PowerReady::assume_verified() },
                                    pins,
                                    card,

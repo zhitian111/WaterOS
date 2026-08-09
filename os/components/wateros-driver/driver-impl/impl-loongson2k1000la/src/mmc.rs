@@ -4,10 +4,16 @@
 //! register layout. The second DT register is an APB-DMA routing register, not
 //! a FIFO window. WaterOS reuses [`dw_mmc::sd`] only as an SD protocol layer.
 
-use crate::{irq_domain::{AcknowledgedIrq, DeviceAckedIrq, GlobalIrq, IrqDisposition},
-            topology::{CardDetect, FixedSupplyControl, MmcClockProvider, MmcDescription,
-                       PinctrlProvider, SupplyDescription, SupplyProvider}};
+use crate::{
+    clock::ConsistentClockSnapshot,
+    irq_domain::{AcknowledgedIrq, DeviceAckedIrq, GlobalIrq, IrqDisposition},
+    topology::{
+        CardDetect, FixedSupplyControl, MmcClockProvider, MmcDescription, PinctrlProvider,
+        SupplyDescription, SupplyProvider,
+    },
+};
 use api_v0::MmioRegion;
+use core::sync::atomic::{AtomicBool, Ordering};
 use dw_mmc::mmc::MmcError;
 
 /// Minimum documented main-register window from the upstream 2K1000 DTS.
@@ -71,13 +77,19 @@ impl BringUpPlan {
 }
 
 pub fn plan(description : &MmcDescription) -> Result<BringUpPlan, PlanError> {
-    if description.controller_mmio.size < MIN_CONTROLLER_WINDOW {
+    if description.controller_mmio
+                  .size <
+       MIN_CONTROLLER_WINDOW
+    {
         return Err(PlanError::ControllerWindowTooSmall);
     }
     let auxiliary_mmio = description.auxiliary_mmio
                                     .filter(|region| region.size >= 4)
                                     .ok_or(PlanError::MissingAuxiliaryWindow)?;
-    if description.clocks.len() != 1 {
+    if description.clocks
+                  .len() !=
+       1
+    {
         return Err(PlanError::MissingClock);
     }
     let clock = match description.clock_provider {
@@ -86,19 +98,18 @@ pub fn plan(description : &MmcDescription) -> Result<BringUpPlan, PlanError> {
     };
     let supply = |description : Option<SupplyDescription>| match description {
         None => PrerequisiteStatus::ImplicitBoardSupply,
-        Some(SupplyDescription {
-            provider : SupplyProvider::Fixed { control : FixedSupplyControl::None, .. },
-            ..
-        }) => PrerequisiteStatus::ReadyByTopology,
-        Some(SupplyDescription {
-            provider : SupplyProvider::Fixed { control : FixedSupplyControl::Gpio, .. },
-            ..
-        }) => {
-            PrerequisiteStatus::RequiresDriver
-        }
-        Some(SupplyDescription { provider : SupplyProvider::Unsupported, .. }) => {
-            PrerequisiteStatus::UnsupportedProvider
-        }
+        Some(SupplyDescription { provider:
+                                     SupplyProvider::Fixed { control:
+                                                                 FixedSupplyControl::None,
+                                                             .. },
+                                 .. }) => PrerequisiteStatus::ReadyByTopology,
+        Some(SupplyDescription { provider:
+                                     SupplyProvider::Fixed { control:
+                                                                 FixedSupplyControl::Gpio,
+                                                             .. },
+                                 .. }) => PrerequisiteStatus::RequiresDriver,
+        Some(SupplyDescription { provider: SupplyProvider::Unsupported,
+                                 .. }) => PrerequisiteStatus::UnsupportedProvider,
     };
     let card_detect = match description.card_detect {
         CardDetect::NonRemovable => PrerequisiteStatus::ReadyByTopology,
@@ -112,34 +123,34 @@ pub fn plan(description : &MmcDescription) -> Result<BringUpPlan, PlanError> {
             PinctrlProvider::Unsupported => PrerequisiteStatus::UnsupportedProvider,
         },
     };
-    Ok(BringUpPlan {
-        controller_mmio : description.controller_mmio,
-        auxiliary_mmio,
-        bus_width : description.bus_width,
-        prerequisites : PrerequisitePlan { clock,
-                                           vmmc : supply(description.vmmc_supply),
-                                           vqmmc : supply(description.vqmmc_supply),
-                                           pinctrl,
-                                           card_detect },
-        blockers : [ActivationBlocker::DataPathUnavailable,
-                    ActivationBlocker::ExternalDmaExecutorUnavailable,
-                    ActivationBlocker::ClockControlUnavailable,
-                    ActivationBlocker::PowerSequencingUnavailable,
-                    ActivationBlocker::CardDetectUnavailable,
-                    ActivationBlocker::PinControlUnavailable,
-                    ActivationBlocker::InterruptPathUnverified],
-    })
+    Ok(BringUpPlan { controller_mmio : description.controller_mmio,
+                     auxiliary_mmio,
+                     bus_width : description.bus_width,
+                     prerequisites : PrerequisitePlan { clock,
+                                                        vmmc:
+                                                            supply(description.vmmc_supply),
+                                                        vqmmc:
+                                                            supply(description.vqmmc_supply),
+                                                        pinctrl,
+                                                        card_detect },
+                     blockers : [ActivationBlocker::DataPathUnavailable,
+                                 ActivationBlocker::ExternalDmaExecutorUnavailable,
+                                 ActivationBlocker::ClockControlUnavailable,
+                                 ActivationBlocker::PowerSequencingUnavailable,
+                                 ActivationBlocker::CardDetectUnavailable,
+                                 ActivationBlocker::PinControlUnavailable,
+                                 ActivationBlocker::InterruptPathUnverified] })
 }
 
 const REG_CTL : usize = 0x00;
 const REG_PRE : usize = 0x04;
 const REG_CARG : usize = 0x08;
-const REG_CCTL : usize = 0x0c;
+const REG_CCTL : usize = 0x0C;
 const REG_RSP0 : usize = 0x14;
 const REG_RSP1 : usize = 0x18;
-const REG_RSP2 : usize = 0x1c;
+const REG_RSP2 : usize = 0x1C;
 const REG_RSP3 : usize = 0x20;
-const REG_INT : usize = 0x3c;
+const REG_INT : usize = 0x3C;
 
 const CTL_ENABLE_CLOCK : u32 = 1 << 0;
 const PRE_ENABLE : u32 = 1 << 31;
@@ -150,7 +161,7 @@ const CCTL_LONG_RESPONSE : u32 = 1 << 10;
 const INT_COMMAND_SENT : u32 = 1 << 6;
 const INT_COMMAND_TIMEOUT : u32 = 1 << 7;
 const INT_RESPONSE_CRC : u32 = 1 << 8;
-const INT_CLEAR : u32 = 0x3ff;
+const INT_CLEAR : u32 = 0x3FF;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MmcIrqAckError {
@@ -192,14 +203,22 @@ impl VolatileRegisters {
         if region.base == 0 || region.base % 4 != 0 || region.size < MIN_CONTROLLER_WINDOW {
             return Err(MmcError::RegisterOutOfRange);
         }
-        Ok(Self { base : region.base as *mut u8, size : region.size })
+        Ok(Self { base : region.base as *mut u8,
+                  size : region.size })
     }
 
     fn register(&self, offset : usize) -> Result<*mut u32, MmcError> {
-        if offset % 4 != 0 || offset.checked_add(4).is_none_or(|end| end > self.size) {
+        if offset % 4 != 0 ||
+           offset.checked_add(4)
+                 .is_none_or(|end| end > self.size)
+        {
             return Err(MmcError::RegisterOutOfRange);
         }
-        Ok(unsafe { self.base.add(offset).cast::<u32>() })
+        Ok(unsafe {
+            self.base
+                .add(offset)
+                .cast::<u32>()
+        })
     }
 }
 
@@ -218,31 +237,33 @@ impl RegisterIo for VolatileRegisters {
 /// Clear a masked/acknowledged MMC interrupt and produce rearm evidence only
 /// when every observed pending bit has documented W1C behavior.
 pub fn acknowledge_interrupt<R : RegisterIo>(registers : &mut R,
-                                              expected : GlobalIrq,
-                                              acknowledged : AcknowledgedIrq)
-                                              -> Result<IrqDisposition,
-                                                        MmcIrqAckFailure> {
+                                             expected : GlobalIrq,
+                                             acknowledged : AcknowledgedIrq)
+                                             -> Result<IrqDisposition, MmcIrqAckFailure> {
     if acknowledged.irq() != expected {
         return Err(MmcIrqAckFailure { error : MmcIrqAckError::UnexpectedSource,
-                                     acknowledged });
+                                      acknowledged });
     }
     let status = match registers.read32(REG_INT) {
         Ok(status) => status,
-        Err(error) => return Err(MmcIrqAckFailure { error : MmcIrqAckError::Io(error),
-                                                   acknowledged }),
+        Err(error) => {
+            return Err(MmcIrqAckFailure { error : MmcIrqAckError::Io(error),
+                                          acknowledged })
+        }
     };
     let known = status & INT_CLEAR;
     if known == 0 {
         return Err(MmcIrqAckFailure { error : MmcIrqAckError::NoKnownPending,
-                                     acknowledged });
+                                      acknowledged });
     }
     if let Err(error) = registers.write32(REG_INT, known) {
-        return Err(MmcIrqAckFailure { error : MmcIrqAckError::Io(error), acknowledged });
+        return Err(MmcIrqAckFailure { error : MmcIrqAckError::Io(error),
+                                      acknowledged });
     }
     let unknown = status & !INT_CLEAR;
     if unknown != 0 {
         return Err(MmcIrqAckFailure { error : MmcIrqAckError::UnknownPending(unknown),
-                                     acknowledged });
+                                      acknowledged });
     }
     Ok(IrqDisposition::Rearm(DeviceAckedIrq::after_device_clear(expected)))
 }
@@ -259,24 +280,301 @@ pub fn clock_prescaler(input_hz : u32, target_hz : u32) -> Result<(u8, u32), Mmc
     if input_hz == 0 || target_hz == 0 {
         return Err(MmcError::InvalidParameter);
     }
-    let divider = input_hz.div_ceil(target_hz).clamp(1, 255);
+    let divider = input_hz.div_ceil(target_hz)
+                          .clamp(1, 255);
     Ok((divider as u8, input_hz / divider))
+}
+
+/// Opaque controller-private clock plan derived from coherent parent evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ControllerClockPlan {
+    parent_hz : u32,
+    requested_hz : u32,
+    divider : u8,
+    actual_hz : u32,
+}
+
+impl ControllerClockPlan {
+    pub fn from_parent(parent : ConsistentClockSnapshot,
+                       requested_hz : u32)
+                       -> Result<Self, MmcError> {
+        let parent_hz = u32::try_from(parent.snapshot()
+                                            .apb_hz).map_err(|_| MmcError::InvalidParameter)?;
+        let (divider, actual_hz) = clock_prescaler(parent_hz, requested_hz)?;
+        Ok(Self { parent_hz,
+                  requested_hz,
+                  divider,
+                  actual_hz })
+    }
+
+    pub const fn parent_hz(&self) -> u32 { self.parent_hz }
+    pub const fn requested_hz(&self) -> u32 { self.requested_hz }
+    pub const fn divider(&self) -> u8 { self.divider }
+    pub const fn actual_hz(&self) -> u32 { self.actual_hz }
+    const fn pre_value(&self) -> u32 { PRE_ENABLE | self.divider as u32 }
+}
+
+/// Readback-verified controller-private clock state.
+///
+/// Physical clock output remains `UNVERIFIED_ON_HARDWARE`; this token is not
+/// command, DMA or aggregate prerequisite authority.
+#[derive(Debug)]
+pub struct ControllerClockReady {
+    plan : ControllerClockPlan,
+}
+
+impl ControllerClockReady {
+    pub const fn plan(&self) -> ControllerClockPlan { self.plan }
+}
+
+/// Explicit acceptance of an unverified physical MMC clock write.
+pub struct ControllerClockAuthority {
+    _private : (),
+}
+
+impl ControllerClockAuthority {
+    /// # Safety
+    /// The caller must verify the target board, exclusive controller ownership,
+    /// parent-clock stability, register semantics and recovery procedure.
+    pub const unsafe fn assume_board_verified() -> Self { Self { _private : () } }
+}
+
+struct ClockTransactionGate {
+    busy : AtomicBool,
+}
+
+impl ClockTransactionGate {
+    const fn new() -> Self { Self { busy : AtomicBool::new(false) } }
+
+    fn try_enter(&self) -> Result<ClockTransactionGuard<'_>, ClockTransactionBusy> {
+        self.busy
+            .compare_exchange(false,
+                              true,
+                              Ordering::AcqRel,
+                              Ordering::Acquire)
+            .map(|_| ClockTransactionGuard { gate : self })
+            .map_err(|_| ClockTransactionBusy)
+    }
+}
+
+static CLOCK_TRANSACTION_GATE : ClockTransactionGate = ClockTransactionGate::new();
+
+pub fn try_begin_clock_transaction(
+    )
+    -> Result<ClockTransactionGuard<'static>, ClockTransactionBusy>
+{
+    CLOCK_TRANSACTION_GATE.try_enter()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClockTransactionBusy;
+
+pub struct ClockTransactionGuard<'a> {
+    gate : &'a ClockTransactionGate,
+}
+
+impl Drop for ClockTransactionGuard<'_> {
+    fn drop(&mut self) {
+        self.gate
+            .busy
+            .store(false, Ordering::Release);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ControllerClockStage {
+    ObservePre,
+    ObserveControl,
+    ObserveMismatch,
+    PreflightPre,
+    PreflightControl,
+    WritePre,
+    ReadbackPre,
+    ReadbackPreMismatch,
+    WriteControl,
+    ReadbackControl,
+    ReadbackControlMismatch,
+    RevalidatePre,
+    RevalidateControl,
+    RevalidateMismatch,
+}
+
+/// Verify an already-configured controller clock without writing registers.
+pub fn observe_controller_clock(registers : &mut impl RegisterIo,
+                                plan : ControllerClockPlan)
+                                -> Result<ControllerClockReady, ControllerClockRecovery> {
+    let pre = registers.read32(REG_PRE)
+                       .map_err(|error| {
+                           ControllerClockRecovery { stage : ControllerClockStage::ObservePre,
+                                                     plan,
+                                                     observed_pre : None,
+                                                     observed_control : None,
+                                                     error : Some(error) }
+                       })?;
+    let control = registers.read32(REG_CTL)
+                           .map_err(|error| {
+                               ControllerClockRecovery { stage:
+                                                             ControllerClockStage::ObserveControl,
+                                                         plan,
+                                                         observed_pre : Some(pre),
+                                                         observed_control : None,
+                                                         error : Some(error) }
+                           })?;
+    verify_controller_clock(plan, pre, control).map_err(|()| {
+                                                   ControllerClockRecovery {
+                                                      stage : ControllerClockStage::ObserveMismatch,
+                                                      plan,
+                                                      observed_pre : Some(pre),
+                                                      observed_control : Some(control),
+                                                      error : None,
+                                                  }
+                                               })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ControllerClockRecovery {
+    pub stage : ControllerClockStage,
+    pub plan : ControllerClockPlan,
+    pub observed_pre : Option<u32>,
+    pub observed_control : Option<u32>,
+    pub error : Option<MmcError>,
+}
+
+impl ControllerClockRecovery {
+    /// Re-read controller state after an uncertain transaction; never writes.
+    pub fn revalidate(&self,
+                      registers : &mut impl RegisterIo,
+                      _guard : &mut ClockTransactionGuard<'_>)
+                      -> Result<ControllerClockReady, Self> {
+        let pre = registers.read32(REG_PRE)
+                           .map_err(|error| Self { stage : ControllerClockStage::RevalidatePre,
+                                                   plan : self.plan,
+                                                   observed_pre : None,
+                                                   observed_control : None,
+                                                   error : Some(error) })?;
+        let control =
+            registers.read32(REG_CTL)
+                     .map_err(|error| Self { stage : ControllerClockStage::RevalidateControl,
+                                             plan : self.plan,
+                                             observed_pre : Some(pre),
+                                             observed_control : None,
+                                             error : Some(error) })?;
+        verify_controller_clock(self.plan, pre, control).map_err(|()| Self {
+                                                               stage : ControllerClockStage::RevalidateMismatch,
+                                                               plan : self.plan,
+                                                               observed_pre : Some(pre),
+                                                               observed_control : Some(control),
+                                                               error : None,
+                                                           })
+    }
+}
+
+fn verify_controller_clock(plan : ControllerClockPlan,
+                           pre : u32,
+                           control : u32)
+                           -> Result<ControllerClockReady, ()> {
+    if pre == plan.pre_value() && control & CTL_ENABLE_CLOCK != 0 {
+        Ok(ControllerClockReady { plan })
+    } else {
+        Err(())
+    }
+}
+
+/// Fresh-read, conditionally program and read back the MMC-private clock.
+pub fn apply_controller_clock(registers : &mut impl RegisterIo,
+                              plan : ControllerClockPlan,
+                              _authority : &ControllerClockAuthority,
+                              _guard : &mut ClockTransactionGuard<'_>)
+                              -> Result<ControllerClockReady, ControllerClockRecovery> {
+    let mut pre =
+        registers.read32(REG_PRE)
+                 .map_err(|error| ControllerClockRecovery { stage:
+                                                                ControllerClockStage::PreflightPre,
+                                                            plan,
+                                                            observed_pre : None,
+                                                            observed_control : None,
+                                                            error : Some(error) })?;
+    let mut control =
+        registers.read32(REG_CTL)
+                 .map_err(|error| {
+                     ControllerClockRecovery { stage : ControllerClockStage::PreflightControl,
+                                               plan,
+                                               observed_pre : Some(pre),
+                                               observed_control : None,
+                                               error : Some(error) }
+                 })?;
+    if verify_controller_clock(plan, pre, control).is_ok() {
+        return Ok(ControllerClockReady { plan });
+    }
+
+    if pre != plan.pre_value() {
+        registers.write32(REG_PRE, plan.pre_value())
+                 .map_err(|error| ControllerClockRecovery { stage:
+                                                                ControllerClockStage::WritePre,
+                                                            plan,
+                                                            observed_pre : None,
+                                                            observed_control : Some(control),
+                                                            error : Some(error) })?;
+        pre = registers.read32(REG_PRE)
+                       .map_err(|error| {
+                           ControllerClockRecovery { stage : ControllerClockStage::ReadbackPre,
+                                                     plan,
+                                                     observed_pre : None,
+                                                     observed_control : Some(control),
+                                                     error : Some(error) }
+                       })?;
+        if pre != plan.pre_value() {
+            return Err(ControllerClockRecovery { stage:
+                                                     ControllerClockStage::ReadbackPreMismatch,
+                                                 plan,
+                                                 observed_pre : Some(pre),
+                                                 observed_control : Some(control),
+                                                 error : None });
+        }
+    }
+
+    if control & CTL_ENABLE_CLOCK == 0 {
+        let desired = control | CTL_ENABLE_CLOCK;
+        registers.write32(REG_CTL, desired)
+                 .map_err(|error| ControllerClockRecovery { stage:
+                                                                ControllerClockStage::WriteControl,
+                                                            plan,
+                                                            observed_pre : Some(pre),
+                                                            observed_control : None,
+                                                            error : Some(error) })?;
+        control = registers.read32(REG_CTL)
+                           .map_err(|error| {
+                               ControllerClockRecovery { stage:
+                                                             ControllerClockStage::ReadbackControl,
+                                                         plan,
+                                                         observed_pre : Some(pre),
+                                                         observed_control : None,
+                                                         error : Some(error) }
+                           })?;
+        if control != desired {
+            return Err(ControllerClockRecovery { stage:
+                                                     ControllerClockStage::ReadbackControlMismatch,
+                                                 plan,
+                                                 observed_pre : Some(pre),
+                                                 observed_control : Some(control),
+                                                 error : None });
+        }
+    }
+
+    verify_controller_clock(plan, pre, control).map_err(|()| {
+                                                   ControllerClockRecovery { stage:
+                                                ControllerClockStage::ReadbackControlMismatch,
+                                            plan,
+                                            observed_pre : Some(pre),
+                                            observed_control : Some(control),
+                                            error : None }
+                                               })
 }
 
 impl<R : RegisterIo> Host<R> {
     pub fn new(registers : R, poll_limit : usize) -> Self {
-        Self { registers, poll_limit : poll_limit.max(1) }
-    }
-
-    pub fn configure_clock(&mut self,
-                           input_hz : u32,
-                           target_hz : u32)
-                           -> Result<u32, MmcError> {
-        let (divider, actual) = clock_prescaler(input_hz, target_hz)?;
-        self.registers.write32(REG_PRE, PRE_ENABLE | divider as u32)?;
-        let control = self.registers.read32(REG_CTL)?;
-        self.registers.write32(REG_CTL, control | CTL_ENABLE_CLOCK)?;
-        Ok(actual)
+        Self { registers,
+               poll_limit : poll_limit.max(1) }
     }
 
     /// Execute a non-data command by bounded polling.
@@ -292,14 +590,22 @@ impl<R : RegisterIo> Host<R> {
         if index > 63 || response_long && !response_expected {
             return Err(MmcError::InvalidParameter);
         }
-        self.registers.write32(REG_INT, INT_CLEAR)?;
-        self.registers.write32(REG_CARG, argument)?;
+        self.registers
+            .write32(REG_INT, INT_CLEAR)?;
+        self.registers
+            .write32(REG_CARG, argument)?;
         let mut control = index as u32 | CCTL_HOST | CCTL_START;
-        if response_expected { control |= CCTL_WAIT_RESPONSE; }
-        if response_long { control |= CCTL_LONG_RESPONSE; }
-        self.registers.write32(REG_CCTL, control)?;
+        if response_expected {
+            control |= CCTL_WAIT_RESPONSE;
+        }
+        if response_long {
+            control |= CCTL_LONG_RESPONSE;
+        }
+        self.registers
+            .write32(REG_CCTL, control)?;
         for _ in 0..self.poll_limit {
-            let interrupts = self.registers.read32(REG_INT)?;
+            let interrupts = self.registers
+                                 .read32(REG_INT)?;
             if interrupts & INT_COMMAND_TIMEOUT != 0 {
                 return Err(MmcError::ResponseTimeout);
             }
@@ -307,11 +613,16 @@ impl<R : RegisterIo> Host<R> {
                 return Err(MmcError::ResponseCrc);
             }
             if interrupts & INT_COMMAND_SENT != 0 {
-                self.registers.write32(REG_INT, interrupts & INT_CLEAR)?;
-                return Ok([self.registers.read32(REG_RSP0)?,
-                           self.registers.read32(REG_RSP1)?,
-                           self.registers.read32(REG_RSP2)?,
-                           self.registers.read32(REG_RSP3)?]);
+                self.registers
+                    .write32(REG_INT, interrupts & INT_CLEAR)?;
+                return Ok([self.registers
+                               .read32(REG_RSP0)?,
+                           self.registers
+                               .read32(REG_RSP1)?,
+                           self.registers
+                               .read32(REG_RSP2)?,
+                           self.registers
+                               .read32(REG_RSP3)?]);
             }
         }
         Err(MmcError::Timeout)
@@ -324,8 +635,11 @@ impl<R : RegisterIo> Host<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::topology::{CardDetect, FixedSupplyControl, InterruptSpec, MmcClockProvider,
-                          NamedResource, ResourceSpecifier, SupplyDescription, SupplyProvider};
+    use crate::clock;
+    use crate::topology::{
+        CardDetect, FixedSupplyControl, InterruptSpec, MmcClockProvider, NamedResource,
+        ResourceSpecifier, SupplyDescription, SupplyProvider,
+    };
     use alloc::vec;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -343,59 +657,84 @@ mod tests {
 
     impl RegisterIo for AckRegisters {
         fn read32(&mut self, offset : usize) -> Result<u32, MmcError> {
-            self.events.push(AckEvent::Read(offset));
-            if self.fail_read { Err(MmcError::RegisterOutOfRange) } else { Ok(self.status) }
+            self.events
+                .push(AckEvent::Read(offset));
+            if self.fail_read {
+                Err(MmcError::RegisterOutOfRange)
+            } else {
+                Ok(self.status)
+            }
         }
         fn write32(&mut self, offset : usize, value : u32) -> Result<(), MmcError> {
-            self.events.push(AckEvent::Write(offset, value));
-            if self.fail_write { Err(MmcError::RegisterOutOfRange) } else { Ok(()) }
+            self.events
+                .push(AckEvent::Write(offset, value));
+            if self.fail_write {
+                Err(MmcError::RegisterOutOfRange)
+            } else {
+                Ok(())
+            }
         }
     }
 
     fn ack_registers(status : u32) -> AckRegisters {
-        AckRegisters { status, fail_read : false, fail_write : false, events : alloc::vec::Vec::new() }
+        AckRegisters { status,
+                       fail_read : false,
+                       fail_write : false,
+                       events : alloc::vec::Vec::new() }
     }
 
-    fn acknowledged(irq : GlobalIrq) -> AcknowledgedIrq {
-        AcknowledgedIrq::after_mask_ack(irq)
-    }
+    fn acknowledged(irq : GlobalIrq) -> AcknowledgedIrq { AcknowledgedIrq::after_mask_ack(irq) }
 
     fn description() -> MmcDescription {
-        MmcDescription {
-            controller_mmio : MmioRegion { base : 0x1fe2_c000, size : 0x68 },
-            auxiliary_mmio : Some(MmioRegion { base : 0x1fe0_0438, size : 8 }),
-            interrupt : InterruptSpec { parent_phandle : 1,
-                                        cells : [31, 4, 0, 0],
-                                        cell_count : 2 },
-            clocks : vec![NamedResource {
+        MmcDescription { controller_mmio : MmioRegion { base : 0x1FE2_C000,
+                                                        size : 0x68 },
+                         auxiliary_mmio : Some(MmioRegion { base : 0x1FE0_0438,
+                                                            size : 8 }),
+                         interrupt : InterruptSpec { parent_phandle : 1,
+                                                     cells : [31, 4, 0, 0],
+                                                     cell_count : 2 },
+                         clocks : vec![NamedResource {
                 name : None,
                 specifier : ResourceSpecifier { provider_phandle : 2, args : vec![0] },
             }],
-            clock_provider : MmcClockProvider::Loongson2k {
-                mmio : MmioRegion { base : 0x1fe0_0480, size : 0x58 },
-                reference_hz : 100_000_000,
-            },
-            dma : None,
-            bus_width : 4,
-            pinctrl : None,
-            card_detect : CardDetect::NonRemovable,
-            vmmc_supply : None,
-            vqmmc_supply : None,
-        }
+                         clock_provider:
+                             MmcClockProvider::Loongson2k { mmio : MmioRegion { base:
+                                                                                    0x1FE0_0480,
+                                                                                size : 0x58 },
+                                                            reference_hz : 100_000_000 },
+                         dma : None,
+                         bus_width : 4,
+                         pinctrl : None,
+                         card_detect : CardDetect::NonRemovable,
+                         vmmc_supply : None,
+                         vqmmc_supply : None }
     }
 
     #[test]
     fn preserves_dma_routing_window_but_refuses_activation() {
         let plan = plan(&description()).unwrap();
-        assert_eq!(plan.controller_mmio.size, 0x68);
-        assert_eq!(plan.auxiliary_mmio.base, 0x1fe0_0438);
+        assert_eq!(plan.controller_mmio
+                       .size,
+                   0x68);
+        assert_eq!(plan.auxiliary_mmio
+                       .base,
+                   0x1FE0_0438);
         assert_eq!(plan.bus_width, 4);
         assert!(!plan.can_activate());
-        assert!(plan.blockers.contains(&ActivationBlocker::DataPathUnavailable));
-        assert_eq!(plan.prerequisites.clock, PrerequisiteStatus::RequiresDriver);
-        assert_eq!(plan.prerequisites.card_detect, PrerequisiteStatus::ReadyByTopology);
-        assert_eq!(plan.prerequisites.vmmc, PrerequisiteStatus::ImplicitBoardSupply);
-        assert_eq!(plan.prerequisites.pinctrl, PrerequisiteStatus::Missing);
+        assert!(plan.blockers
+                    .contains(&ActivationBlocker::DataPathUnavailable));
+        assert_eq!(plan.prerequisites
+                       .clock,
+                   PrerequisiteStatus::RequiresDriver);
+        assert_eq!(plan.prerequisites
+                       .card_detect,
+                   PrerequisiteStatus::ReadyByTopology);
+        assert_eq!(plan.prerequisites
+                       .vmmc,
+                   PrerequisiteStatus::ImplicitBoardSupply);
+        assert_eq!(plan.prerequisites
+                       .pinctrl,
+                   PrerequisiteStatus::Missing);
     }
 
     #[test]
@@ -407,40 +746,61 @@ mod tests {
                 mmio : MmioRegion { base : 0x1fe0_0420, size : 0x18 },
             },
         });
-        assert_eq!(plan(&value).unwrap().prerequisites.pinctrl,
+        assert_eq!(plan(&value).unwrap()
+                               .prerequisites
+                               .pinctrl,
                    PrerequisiteStatus::RequiresDriver);
-        value.pinctrl.as_mut().unwrap().provider = PinctrlProvider::Unsupported;
-        assert_eq!(plan(&value).unwrap().prerequisites.pinctrl,
+        value.pinctrl
+             .as_mut()
+             .unwrap()
+             .provider = PinctrlProvider::Unsupported;
+        assert_eq!(plan(&value).unwrap()
+                               .prerequisites
+                               .pinctrl,
                    PrerequisiteStatus::UnsupportedProvider);
     }
 
     #[test]
     fn classifies_power_readiness_without_assuming_fixed_regulators_are_enabled() {
         let mut value = description();
-        value.vmmc_supply = Some(SupplyDescription {
-            phandle : 3,
-            provider : SupplyProvider::Fixed {
-                control : FixedSupplyControl::None, always_on : false, boot_on : false,
-            },
-        });
-        value.vqmmc_supply = Some(SupplyDescription {
-            phandle : 4,
-            provider : SupplyProvider::Fixed {
-                control : FixedSupplyControl::None, always_on : true, boot_on : false,
-            },
-        });
+        value.vmmc_supply =
+            Some(SupplyDescription { phandle : 3,
+                                     provider : SupplyProvider::Fixed { control:
+                                                                            FixedSupplyControl::None,
+                                                                        always_on : false,
+                                                                        boot_on : false } });
+        value.vqmmc_supply =
+            Some(SupplyDescription { phandle : 4,
+                                     provider : SupplyProvider::Fixed { control:
+                                                                            FixedSupplyControl::None,
+                                                                        always_on : true,
+                                                                        boot_on : false } });
         let readiness = plan(&value).unwrap();
-        assert_eq!(readiness.prerequisites.vmmc, PrerequisiteStatus::ReadyByTopology);
-        assert_eq!(readiness.prerequisites.vqmmc, PrerequisiteStatus::ReadyByTopology);
+        assert_eq!(readiness.prerequisites
+                            .vmmc,
+                   PrerequisiteStatus::ReadyByTopology);
+        assert_eq!(readiness.prerequisites
+                            .vqmmc,
+                   PrerequisiteStatus::ReadyByTopology);
 
-        value.vmmc_supply.as_mut().unwrap().provider = SupplyProvider::Fixed {
-            control : FixedSupplyControl::Gpio, always_on : true, boot_on : true,
-        };
-        assert_eq!(plan(&value).unwrap().prerequisites.vmmc,
+        value.vmmc_supply
+             .as_mut()
+             .unwrap()
+             .provider = SupplyProvider::Fixed { control : FixedSupplyControl::Gpio,
+                                                 always_on : true,
+                                                 boot_on : true };
+        assert_eq!(plan(&value).unwrap()
+                               .prerequisites
+                               .vmmc,
                    PrerequisiteStatus::RequiresDriver);
 
-        value.vmmc_supply.as_mut().unwrap().provider = SupplyProvider::Unsupported;
-        assert_eq!(plan(&value).unwrap().prerequisites.vmmc,
+        value.vmmc_supply
+             .as_mut()
+             .unwrap()
+             .provider = SupplyProvider::Unsupported;
+        assert_eq!(plan(&value).unwrap()
+                               .prerequisites
+                               .vmmc,
                    PrerequisiteStatus::UnsupportedProvider);
     }
 
@@ -448,29 +808,64 @@ mod tests {
     fn rejects_resources_that_cannot_back_future_register_io() {
         let mut value = description();
         value.auxiliary_mmio = None;
-        assert_eq!(plan(&value), Err(PlanError::MissingAuxiliaryWindow));
+        assert_eq!(plan(&value),
+                   Err(PlanError::MissingAuxiliaryWindow));
 
         let mut value = description();
-        value.controller_mmio.size = 0x64;
-        assert_eq!(plan(&value), Err(PlanError::ControllerWindowTooSmall));
+        value.controller_mmio
+             .size = 0x64;
+        assert_eq!(plan(&value),
+                   Err(PlanError::ControllerWindowTooSmall));
 
         let mut value = description();
         value.clocks.clear();
-        assert_eq!(plan(&value), Err(PlanError::MissingClock));
+        assert_eq!(plan(&value),
+                   Err(PlanError::MissingClock));
     }
 
     struct MockRegisters {
         values : [u32; 26],
         interrupts : u32,
     }
+
+    struct ParentRegisters;
+
+    impl clock::RegisterIo for ParentRegisters {
+        fn read32(&mut self, offset : usize) -> Result<u32, clock::ClockError> {
+            assert_eq!(offset, 0x28);
+            Ok(2 << 22)
+        }
+
+        fn read64(&mut self, offset : usize) -> Result<u64, clock::ClockError> {
+            match offset {
+                0x20 => Ok((10u64 << 32) | (2u64 << 26)),
+                0x50 => Ok(3 << 20),
+                _ => panic!("unexpected clock offset {offset:#x}"),
+            }
+        }
+    }
+
+    fn controller_clock_plan(target_hz : u32) -> ControllerClockPlan {
+        let parent = clock::snapshot_consistent(&mut ParentRegisters, 100_000_000).unwrap();
+        ControllerClockPlan::from_parent(parent, target_hz).unwrap()
+    }
     impl RegisterIo for MockRegisters {
         fn read32(&mut self, offset : usize) -> Result<u32, MmcError> {
-            if offset == REG_INT { return Ok(self.interrupts); }
-            self.values.get(offset / 4).copied().ok_or(MmcError::RegisterOutOfRange)
+            if offset == REG_INT {
+                return Ok(self.interrupts);
+            }
+            self.values
+                .get(offset / 4)
+                .copied()
+                .ok_or(MmcError::RegisterOutOfRange)
         }
         fn write32(&mut self, offset : usize, value : u32) -> Result<(), MmcError> {
-            if offset == REG_INT { return Ok(()); }
-            *self.values.get_mut(offset / 4).ok_or(MmcError::RegisterOutOfRange)? = value;
+            if offset == REG_INT {
+                return Ok(());
+            }
+            *self.values
+                 .get_mut(offset / 4)
+                 .ok_or(MmcError::RegisterOutOfRange)? = value;
             Ok(())
         }
     }
@@ -480,27 +875,226 @@ mod tests {
         let mut registers = MockRegisters { values : [0; 26],
                                             interrupts : INT_COMMAND_SENT };
         registers.values[REG_RSP0 / 4] = 0x1234;
+        let plan = controller_clock_plan(400_000);
+        let authority = unsafe { ControllerClockAuthority::assume_board_verified() };
+        let mut guard = try_begin_clock_transaction().unwrap();
+        let ready = apply_controller_clock(&mut registers,
+                                           plan,
+                                           &authority,
+                                           &mut guard).unwrap();
+        assert_eq!(ready.plan()
+                        .actual_hz(),
+                   490_196);
+        drop(guard);
         let mut host = Host::new(registers, 2);
-        assert_eq!(host.configure_clock(125_000_000, 400_000), Ok(490_196));
-        assert_eq!(host.execute_command(8, 0x1aa, true, false),
+        assert_eq!(host.execute_command(8, 0x1AA, true, false),
                    Ok([0x1234, 0, 0, 0]));
         let registers = host.into_inner();
-        assert_eq!(registers.values[REG_PRE / 4], PRE_ENABLE | 255);
-        assert_eq!(registers.values[REG_CARG / 4], 0x1aa);
+        assert_eq!(registers.values[REG_PRE / 4],
+                   PRE_ENABLE | 255);
+        assert_eq!(registers.values[REG_CARG / 4], 0x1AA);
         assert_eq!(registers.values[REG_CCTL / 4],
                    8 | CCTL_HOST | CCTL_START | CCTL_WAIT_RESPONSE);
     }
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum ClockEvent {
+        Read(usize),
+        Write(usize, u32),
+    }
+
+    struct ClockRegisters {
+        pre : u32,
+        control : u32,
+        events : alloc::vec::Vec<ClockEvent>,
+        reads : usize,
+        writes : usize,
+        fail_read : Option<usize>,
+        fail_write : Option<usize>,
+        ignore_pre_write : bool,
+        ignore_control_write : bool,
+    }
+
+    impl RegisterIo for ClockRegisters {
+        fn read32(&mut self, offset : usize) -> Result<u32, MmcError> {
+            self.events
+                .push(ClockEvent::Read(offset));
+            self.reads += 1;
+            if self.fail_read == Some(self.reads) {
+                return Err(MmcError::RegisterOutOfRange);
+            }
+            match offset {
+                REG_PRE => Ok(self.pre),
+                REG_CTL => Ok(self.control),
+                _ => Err(MmcError::RegisterOutOfRange),
+            }
+        }
+
+        fn write32(&mut self, offset : usize, value : u32) -> Result<(), MmcError> {
+            self.events
+                .push(ClockEvent::Write(offset, value));
+            self.writes += 1;
+            if self.fail_write == Some(self.writes) {
+                return Err(MmcError::RegisterOutOfRange);
+            }
+            match offset {
+                REG_PRE => {
+                    if !self.ignore_pre_write {
+                        self.pre = value;
+                    }
+                }
+                REG_CTL => {
+                    if !self.ignore_control_write {
+                        self.control = value;
+                    }
+                }
+                _ => return Err(MmcError::RegisterOutOfRange),
+            }
+            Ok(())
+        }
+    }
+
+    fn clock_registers(pre : u32, control : u32) -> ClockRegisters {
+        ClockRegisters { pre,
+                         control,
+                         events : alloc::vec::Vec::new(),
+                         reads : 0,
+                         writes : 0,
+                         fail_read : None,
+                         fail_write : None,
+                         ignore_pre_write : false,
+                         ignore_control_write : false }
+    }
+
+    #[test]
+    fn controller_clock_transaction_is_minimal_and_serialized() {
+        let plan = controller_clock_plan(400_000);
+        assert_eq!(plan.parent_hz(), 125_000_000);
+        assert_eq!(plan.requested_hz(), 400_000);
+        assert_eq!(plan.divider(), 255);
+
+        let authority = unsafe { ControllerClockAuthority::assume_board_verified() };
+        let mut guard = try_begin_clock_transaction().unwrap();
+        assert!(matches!(try_begin_clock_transaction(),
+                         Err(ClockTransactionBusy)));
+        let mut registers = clock_registers(0x55AA, 1 << 9);
+        let ready = apply_controller_clock(&mut registers,
+                                           plan,
+                                           &authority,
+                                           &mut guard).unwrap();
+        assert_eq!(ready.plan(), plan);
+        assert_eq!(registers.pre, PRE_ENABLE | 255);
+        assert_eq!(registers.control,
+                   (1 << 9) | CTL_ENABLE_CLOCK);
+        assert_eq!(registers.events,
+                   [ClockEvent::Read(REG_PRE),
+                    ClockEvent::Read(REG_CTL),
+                    ClockEvent::Write(REG_PRE, PRE_ENABLE | 255),
+                    ClockEvent::Read(REG_PRE),
+                    ClockEvent::Write(REG_CTL, (1 << 9) | CTL_ENABLE_CLOCK),
+                    ClockEvent::Read(REG_CTL)]);
+        drop(guard);
+
+        let mut guard = try_begin_clock_transaction().unwrap();
+        registers.events
+                 .clear();
+        apply_controller_clock(&mut registers,
+                               plan,
+                               &authority,
+                               &mut guard).unwrap();
+        assert_eq!(registers.events,
+                   [ClockEvent::Read(REG_PRE),
+                    ClockEvent::Read(REG_CTL)]);
+    }
+
+    #[test]
+    fn controller_clock_failures_remain_revalidatable() {
+        let plan = controller_clock_plan(25_000_000);
+        let authority = unsafe { ControllerClockAuthority::assume_board_verified() };
+        let mut guard = try_begin_clock_transaction().unwrap();
+
+        for (read, stage) in [(1, ControllerClockStage::PreflightPre),
+                              (2, ControllerClockStage::PreflightControl),
+                              (3, ControllerClockStage::ReadbackPre),
+                              (4, ControllerClockStage::ReadbackControl)]
+        {
+            let mut registers = clock_registers(0, 0);
+            registers.fail_read = Some(read);
+            let recovery = apply_controller_clock(&mut registers,
+                                                  plan,
+                                                  &authority,
+                                                  &mut guard).unwrap_err();
+            assert_eq!(recovery.stage, stage);
+            assert_eq!(recovery.error,
+                       Some(MmcError::RegisterOutOfRange));
+        }
+
+        let mut failed_pre = clock_registers(0, 0);
+        failed_pre.fail_write = Some(1);
+        let recovery = apply_controller_clock(&mut failed_pre,
+                                              plan,
+                                              &authority,
+                                              &mut guard).unwrap_err();
+        assert_eq!(recovery.stage,
+                   ControllerClockStage::WritePre);
+        assert_eq!(recovery.observed_pre, None);
+
+        let mut mismatch = clock_registers(0, 0);
+        mismatch.ignore_pre_write = true;
+        let recovery = apply_controller_clock(&mut mismatch,
+                                              plan,
+                                              &authority,
+                                              &mut guard).unwrap_err();
+        assert_eq!(recovery.stage,
+                   ControllerClockStage::ReadbackPreMismatch);
+        assert_eq!(recovery.observed_pre, Some(0));
+
+        mismatch.pre = plan.pre_value();
+        mismatch.control = CTL_ENABLE_CLOCK;
+        assert_eq!(recovery.revalidate(&mut mismatch, &mut guard)
+                           .unwrap()
+                           .plan(),
+                   plan);
+
+        let mut failed_control = clock_registers(plan.pre_value(), 0x80);
+        failed_control.fail_write = Some(1);
+        let recovery = apply_controller_clock(&mut failed_control,
+                                              plan,
+                                              &authority,
+                                              &mut guard).unwrap_err();
+        assert_eq!(recovery.stage,
+                   ControllerClockStage::WriteControl);
+        assert_eq!(recovery.observed_pre,
+                   Some(plan.pre_value()));
+
+        let mut control_mismatch = clock_registers(plan.pre_value(), 0x80);
+        control_mismatch.ignore_control_write = true;
+        let recovery = apply_controller_clock(&mut control_mismatch,
+                                              plan,
+                                              &authority,
+                                              &mut guard).unwrap_err();
+        assert_eq!(recovery.stage,
+                   ControllerClockStage::ReadbackControlMismatch);
+        assert_eq!(recovery.observed_control, Some(0x80));
+    }
+
     #[test]
     fn bounds_polling_and_reports_command_errors() {
-        let mut host = Host::new(MockRegisters { values : [0; 26], interrupts : 0 }, 2);
-        assert_eq!(host.execute_command(0, 0, false, false), Err(MmcError::Timeout));
         let mut host = Host::new(MockRegisters { values : [0; 26],
-                                                interrupts : INT_COMMAND_TIMEOUT }, 2);
-        assert_eq!(host.execute_command(8, 0, true, false), Err(MmcError::ResponseTimeout));
+                                                 interrupts : 0 },
+                                 2);
+        assert_eq!(host.execute_command(0, 0, false, false),
+                   Err(MmcError::Timeout));
         let mut host = Host::new(MockRegisters { values : [0; 26],
-                                                interrupts : INT_RESPONSE_CRC }, 2);
-        assert_eq!(host.execute_command(8, 0, true, false), Err(MmcError::ResponseCrc));
+                                                 interrupts : INT_COMMAND_TIMEOUT },
+                                 2);
+        assert_eq!(host.execute_command(8, 0, true, false),
+                   Err(MmcError::ResponseTimeout));
+        let mut host = Host::new(MockRegisters { values : [0; 26],
+                                                 interrupts : INT_RESPONSE_CRC },
+                                 2);
+        assert_eq!(host.execute_command(8, 0, true, false),
+                   Err(MmcError::ResponseCrc));
     }
 
     #[test]
@@ -512,7 +1106,8 @@ mod tests {
                    IrqDisposition::Rearm(DeviceAckedIrq::after_device_clear(irq)));
         assert_eq!(registers.events,
                    [AckEvent::Read(REG_INT),
-                    AckEvent::Write(REG_INT, INT_COMMAND_SENT | INT_RESPONSE_CRC)]);
+                    AckEvent::Write(REG_INT,
+                                    INT_COMMAND_SENT | INT_RESPONSE_CRC)]);
     }
 
     #[test]
@@ -521,33 +1116,48 @@ mod tests {
         let other = GlobalIrq::from_bank_local(0, 30).unwrap();
         let mut registers = ack_registers(INT_COMMAND_SENT);
         let failure = acknowledge_interrupt(&mut registers, irq, acknowledged(other)).unwrap_err();
-        assert_eq!(failure.error, MmcIrqAckError::UnexpectedSource);
-        assert!(registers.events.is_empty());
-        assert_eq!(failure.acknowledged.irq(), other);
+        assert_eq!(failure.error,
+                   MmcIrqAckError::UnexpectedSource);
+        assert!(registers.events
+                         .is_empty());
+        assert_eq!(failure.acknowledged
+                          .irq(),
+                   other);
 
         let mut registers = ack_registers(0);
         let failure = acknowledge_interrupt(&mut registers, irq, acknowledged(irq)).unwrap_err();
-        assert_eq!(failure.error, MmcIrqAckError::NoKnownPending);
-        assert_eq!(registers.events, [AckEvent::Read(REG_INT)]);
+        assert_eq!(failure.error,
+                   MmcIrqAckError::NoKnownPending);
+        assert_eq!(registers.events,
+                   [AckEvent::Read(REG_INT)]);
 
         let mut registers = ack_registers(INT_COMMAND_SENT);
         registers.fail_read = true;
         let failure = acknowledge_interrupt(&mut registers, irq, acknowledged(irq)).unwrap_err();
-        assert_eq!(failure.error, MmcIrqAckError::Io(MmcError::RegisterOutOfRange));
-        assert_eq!(registers.events, [AckEvent::Read(REG_INT)]);
+        assert_eq!(failure.error,
+                   MmcIrqAckError::Io(MmcError::RegisterOutOfRange));
+        assert_eq!(registers.events,
+                   [AckEvent::Read(REG_INT)]);
 
         let unknown = 1 << 15;
         let mut registers = ack_registers(INT_COMMAND_SENT | unknown);
         let failure = acknowledge_interrupt(&mut registers, irq, acknowledged(irq)).unwrap_err();
-        assert_eq!(failure.error, MmcIrqAckError::UnknownPending(unknown));
+        assert_eq!(failure.error,
+                   MmcIrqAckError::UnknownPending(unknown));
         assert_eq!(registers.events,
-                   [AckEvent::Read(REG_INT), AckEvent::Write(REG_INT, INT_COMMAND_SENT)]);
-        assert_eq!(failure.acknowledged.irq(), irq);
+                   [AckEvent::Read(REG_INT),
+                    AckEvent::Write(REG_INT, INT_COMMAND_SENT)]);
+        assert_eq!(failure.acknowledged
+                          .irq(),
+                   irq);
 
         let mut registers = ack_registers(INT_COMMAND_TIMEOUT);
         registers.fail_write = true;
         let failure = acknowledge_interrupt(&mut registers, irq, acknowledged(irq)).unwrap_err();
-        assert_eq!(failure.error, MmcIrqAckError::Io(MmcError::RegisterOutOfRange));
-        assert_eq!(failure.acknowledged.irq(), irq);
+        assert_eq!(failure.error,
+                   MmcIrqAckError::Io(MmcError::RegisterOutOfRange));
+        assert_eq!(failure.acknowledged
+                          .irq(),
+                   irq);
     }
 }

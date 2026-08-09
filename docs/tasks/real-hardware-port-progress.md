@@ -3418,3 +3418,62 @@ GMAC divider 和 APB scale 是共享系统时钟链，因此本批不增加 prov
 ### 提交
 
 - `[feat] validate LS2K1000 MMC parent clock coherence`
+
+## 2026-08-10：批次 73——LS2K1000 MMC controller-private clock transaction
+
+### 任务与设计
+
+1. 审计 Linux 主线 MMC `PRE=0x04`、`CTL=0x00` 的 divider、enable 与写入顺序。
+2. 只控制 MMC controller-private prescaler/clock-enable，不修改共享 DC PLL/GMAC/APB parent。
+3. 要求上一批的 opaque coherent parent evidence 才能生成 prescaler plan。
+4. transaction 必须持有全局 guard 与 unsafe board authority，执行 fresh read、conditional write 和 readback。
+5. 任何部分写入、IO error 或 readback mismatch 均返回分阶段 recovery evidence；恢复只读重新验证。
+
+Linux 当前以 `DIV_ROUND_UP(parent, requested)` 计算 divider、clamp 到 255，写入
+`PRE.EN | divider`，再只更新 `CTL.ENCLK`。虽然寄存器定义的 divider field 为 `[9:0]`，WaterOS
+保守保持上游实际使用的 255 clamp，不推测 256..1023 在两块目标板上的行为。
+
+### 完成内容
+
+- [x] 新增 opaque `ControllerClockPlan`，只能由 `ConsistentClockSnapshot` 构造，并保存 parent、requested、divider 与 actual rate。
+- [x] parent rate 超出 `u32` 或 requested rate 为零时 fail-closed；prescaler 继续使用上取整与 255 clamp。
+- [x] 新增 `ControllerClockAuthority::assume_board_verified()`，显式承载板级 MMIO、ownership、parent stability 与恢复契约。
+- [x] 新增模块内唯一 `CLOCK_TRANSACTION_GATE`；并发调用返回 busy，guard drop 后重新开放。
+- [x] `apply_controller_clock()` fresh-read `PRE/CTL`；已满足时零写入，否则先写/读回 PRE，再对 CTL bit0 做保留无关位的 RMW/readback。
+- [x] PRE 按上游语义写完整 `PRE.EN | divider`；CTL 只置 `ENCLK`，保留 fresh-read 的其他位。
+- [x] 新增 `ControllerClockStage` 与 `ControllerClockRecovery`，覆盖 observe、preflight、两次 write/readback、mismatch 和 revalidate 阶段。
+- [x] write error 的对应寄存器观测标为 unknown，不把错误解释为“写入未发生”；revalidate 只读 PRE/CTL。
+- [x] 新增 `observe_controller_clock()`，允许对固件已配置状态做零写入 readback 验证。
+- [x] 删除原公开 `Host::configure_clock(input_hz, target_hz)` 旁路，调用者不能绕过 parent token、guard、authority 和 readback。
+- [x] `mmc_prerequisite::ClockReady` 改为必须接收 opaque `ControllerClockReady`；parent coherence 本身不再足以形成 clock proof。
+- [x] machine init、remote diagnosis 没有 authority/guard 调用点；七个 blocker、`proof=0` 和 `can_activate()==false` 保持不变。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 107 项全部通过；新增 2 个 transaction 测试聚合覆盖 255 clamp、完整写序、CTL 无关位保留、already-ready 零写和 gate 生命周期。
+- fault matrix 覆盖四个 read failure 点、PRE/CTL write failure、两处 readback mismatch 与恢复后只读 revalidate。
+- 既有 command mock 改为先取得 controller clock token，再执行非数据命令；证明删除旧旁路后组合路径仍可编译测试。
+- topology fixture/畸形 DTB 矩阵通过；dtc 仅输出刻意构造畸形输入的预期 warning。
+- remote client 与 QEMU launcher 的 13 项 Python host 测试通过。
+- `cargo check --no-default-features --features loongson2k1000la,final_online,heap-tlsf,remote-debug-monitor --target loongarch64-unknown-none` 通过。
+- `make kernel-la EXTRA_FEATURES=remote-debug-monitor` 与 `git diff --check` 通过；仅有仓库既有 warning。
+- 所有新增写测试使用内存 MMIO model；没有访问物理寄存器、启动命令/DMA 或创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：真实 `PRE`/`CTL.ENCLK` 写入、readback、ordering、endian 与输出频率尚未在两块板验证。
+- [ ] `ControllerClockReady` 只证明寄存器 readback，不证明时钟波形稳定、占空比正确或 SD 卡实际收到时钟。
+- [ ] 255 clamp 会使高 parent rate 下最低可达时钟高于请求值；调用者必须读取 `actual_hz`，真机初始化策略仍需确认卡片容忍度。
+- [ ] WaterOS-local gate 无法排除 boot firmware、另一核心或绕过 API 的代码并发修改控制器。
+- [ ] 当前没有推测 clock-disable/rollback 顺序；在上游和硬件证据不足时，失败只允许重新观测，不盲目清 ENCLK/PRE.EN。
+- [ ] `Host::execute_command()` 尚未在类型系统中强制消费 aggregate prerequisite proof；当前无生产调用点，但下一阶段必须封闭该旁路。
+- [ ] 下一批应把 `Host` 重构为 typestate session：只有完整 aggregate proof 才能进入 command-capable 状态，并先实现 reset/idle/interrupt-clear 的有界 preflight；data command 与 DMA 继续禁用。
+
+### 参考与许可证
+
+- `docs/references/loongson2-mmc-upstream.md`
+- `docs/references/loongson2-clock-upstream.md`
+
+### 提交
+
+- `[feat] add recoverable LS2K1000 MMC clock transaction`
