@@ -2172,3 +2172,48 @@ condition 导致立即重入。所有失败都返还原 `AcknowledgedIrq`，允�
 ### 提交
 
 - `[ref] add 2K1000 MMC IRQ ack adapter`
+
+## 2026-08-10：批次 48——Fixed-capacity IRQ owner slots
+
+### 任务与设计
+
+新增安全的 `IrqOwnerTable<O>`，为 64 个 `GlobalIrq` 提供固定槽位。板级代码可令 `O` 为
+包含 MMC/APBDMA 等实例的 enum，从而避免裸 `*mut ()` context。`begin(AcknowledgedIrq)` 把
+owner 从 Ready 移入线性 `ActiveOwner`，原槽变为 InHandler；只有 `finish(active)` 才能恢复。
+
+每次 register 使用全局单调 generation。active token 同时绑定 IRQ+generation，因此不能错误
+归还到另一张 owner table 的同 IRQ 槽。active 被 drop 时 owner 被丢弃且槽永久 busy，这是有意
+的 fail-closed 行为，防止同一设备状态被重复消费。
+
+### 完成内容
+
+- [x] 新增 Empty/Ready/InHandler 三态 fixed owner slot。
+- [x] register 拒绝重复或 handler 运行中的 slot，并返还未注册 owner。
+- [x] begin 只接受匹配 IRQ 的 acknowledged token；未注册/重入失败返还原 token。
+- [x] ActiveOwner 提供唯一 `&mut O`，不暴露复制或 clone。
+- [x] unregister 在 InHandler 状态被拒绝。
+- [x] finish 校验 IRQ 和全局唯一 generation，失败返还完整 active owner。
+- [x] token drop 保持槽 busy，后续 begin/unregister 均被拒绝。
+- [x] 本批保持既有 function-pointer domain 不变，下一批再进行集成迁移。
+
+### 验证证据
+
+- `cargo test`：61 项 host 单测全部通过（本批新增 3 项）。
+- 正常测试覆盖 register→begin→owner mutate→重入拒绝→finish→unregister，值从 10 变为 15。
+- drop 测试断言 active 丢失后 slot 永久 InHandler，不能二次 begin 或 unregister。
+- 跨表测试同时激活 A/B 同 IRQ，A token 交给 B 返回 InvalidCompletion，两表仍 busy；各自正确 finish 后 owner 值保持 1/2。
+- topology/畸形 DTS fixtures、LoongArch64 target check、`make kernel-la` 全部通过；仅有既有 warning。
+- `git diff --check` 通过；未创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] owner table 尚未替换 `LioIntcDomain` function-pointer handler；当前为可独立验证的基础层。
+- [ ] generation 为 u64，理论 wrap 未特殊处理；实际 boot/runtime 注册次数不可达该上限。
+- [ ] active drop 没有恢复 API，这是安全策略但要求生产 handler 严格避免 panic/提前遗失 token。
+- [ ] 中断并发还需由每 CPU interrupt masking 或外部同步保证对 table 的唯一 `&mut` 访问。
+- [ ] `UNVERIFIED_ON_HARDWARE`：真实多核同 source 到达与 LIOINTC mask 生效时序未验证。
+- [ ] 下一批应让 domain 保存 owner slot identity 而非 function pointer，并由 Live runtime 同时持 domain+owner table；dispatch 流程变为 mask/ack→owner begin→device adapter→owner finish→按 disposition rearm。
+
+### 提交
+
+- `[ref] add 2K1000 IRQ owner slots`
