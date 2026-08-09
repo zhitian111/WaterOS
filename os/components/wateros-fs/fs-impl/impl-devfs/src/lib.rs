@@ -3,12 +3,14 @@
 
 //! 用户态/测试向的简化 devfs 视图：枚举块设备为 Linux 风格 `/dev/vda*` 与兼容 `/dev/vblk{n}`。
 //!
-//! 与 `devfs-impl/impl-kernel` 的差异：无 DTB 占位、无动态 `register_block_device`；路径解析规则见 `parse_block_index`（模块内私有）。
+//! 与 `devfs-impl/impl-kernel` 的差异：无 DTB 占位和手工路径绑定；两者都会按驱动
+//! topology generation 自动同步注册与注销。
 extern crate alloc;
 
 use alloc::{format, string::String, vec::Vec};
+use core::sync::atomic::{AtomicU64, Ordering};
 use api_v0::{FsError, FsResult};
-use driver_block_api_v0::{block_device_at, block_device_count, block_device_role_at,
+use driver_block_api_v0::{block_device_at, block_devices_snapshot, device_topology_generation,
                           BlockDeviceRole, SharedBlockDevice};
 use spin::Mutex;
 
@@ -37,6 +39,13 @@ pub struct DevNode {
 // 与内核 devfs 不同：仅缓存枚举快照，无动态 register 表；单 Mutex 保护 bring-up 阶段并发。
 // 本变量代码由AI完成
 static DEV_NODES: Mutex<Vec<DevNode>> = Mutex::new(Vec::new());
+static DEVFS_GENERATION : AtomicU64 = AtomicU64::new(0);
+
+fn ensure_fresh() {
+    if DEVFS_GENERATION.load(Ordering::Acquire) != device_topology_generation() {
+        refresh();
+    }
+}
 
 // Linux 风格磁盘名：索引 0 → `/dev/vda`。
 // 本方法代码由AI完成
@@ -57,14 +66,14 @@ fn push_node(nodes: &mut Vec<DevNode>, path: String, index: usize) {
     });
 }
 
-/// 根据 `block_device_count()` 重建节点表并返回节点数量。
+/// 根据块设备注册表快照重建节点表并返回节点数量。
 // 本方法代码由AI完成
 pub fn refresh() -> usize {
-    let count = block_device_count();
-    let snapshot : Vec<_> = (0..count).filter_map(|index| {
-                                             block_device_role_at(index).map(|role| (index, role))
-                                         })
-                                         .collect();
+    let observed_generation = device_topology_generation();
+    let snapshot : Vec<_> = block_devices_snapshot()
+                               .into_iter()
+                               .map(|(index, _, role)| (index, role))
+                               .collect();
     let mut nodes = DEV_NODES.lock();
     nodes.clear();
     for (index, role) in &snapshot {
@@ -92,17 +101,20 @@ pub fn refresh() -> usize {
                   *index);
     }
     logging::trace!("[fs::devfs] refresh done, block_nodes={}", nodes.len());
+    DEVFS_GENERATION.store(observed_generation, Ordering::Release);
     nodes.len()
 }
 
 /// 返回当前缓存的节点列表副本。
 pub fn list_nodes() -> Vec<DevNode> {
+    ensure_fresh();
     DEV_NODES.lock().clone()
 }
 
 /// 将设备路径解析为索引并向驱动查询共享块设备句柄。
 // 本方法代码由AI完成
 pub fn lookup_block_device(path: &str) -> FsResult<SharedBlockDevice> {
+    ensure_fresh();
     let idx = DEV_NODES.lock()
                        .iter()
                        .find(|node| node.path == path)
@@ -114,9 +126,51 @@ pub fn lookup_block_device(path: &str) -> FsResult<SharedBlockDevice> {
 /// 优先返回第一个真实分区，无分区时回退到整盘。
 // 本方法代码由AI完成
 pub fn default_root_block_path() -> Option<String> {
+    ensure_fresh();
     let nodes = DEV_NODES.lock();
     nodes.iter()
          .find(|node| node.path == "/dev/vda1")
          .or_else(|| nodes.iter().find(|node| node.path == "/dev/vda"))
          .map(|node| node.path.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::{boxed::Box, sync::Arc};
+    use driver_block_api_v0::{BlockDevice, DriverError, DriverResult, Lba,
+                              register_block_device, unregister_block_device};
+
+    struct EmptyDisk;
+
+    impl BlockDevice for EmptyDisk {
+        fn total_blocks(&self) -> Option<u64> { Some(1) }
+
+        fn read_blocks(&mut self, start : Lba, buf : &mut [u8]) -> DriverResult<()> {
+            if start.0 != 0 || buf.len() != driver_block_api_v0::BLOCK_SIZE {
+                return Err(DriverError::InvalidParam);
+            }
+            buf.fill(0);
+            Ok(())
+        }
+
+        fn write_blocks(&mut self, _start : Lba, _buf : &[u8]) -> DriverResult<()> {
+            Err(DriverError::Unsupported)
+        }
+    }
+
+    #[test]
+    fn lookup_lazily_tracks_registration_and_removal() {
+        let device : SharedBlockDevice = Arc::new(Mutex::new(Box::new(EmptyDisk)));
+        let index = register_block_device(device);
+        let path = list_nodes()
+            .into_iter()
+            .find(|node| node.index == index && node.path.starts_with("/dev/vd"))
+            .map(|node| node.path)
+            .expect("new disk should appear without explicit refresh");
+        assert!(lookup_block_device(path.as_str()).is_ok());
+        assert!(unregister_block_device(index));
+        assert!(matches!(lookup_block_device(path.as_str()), Err(FsError::NotFound)));
+        assert!(!list_nodes().iter().any(|node| node.index == index));
+    }
 }

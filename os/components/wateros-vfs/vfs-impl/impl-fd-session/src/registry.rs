@@ -16,8 +16,7 @@ use api_v0::{
     VFS_STDERR_FD, VFS_STDIN_FD, VFS_STDOUT_FD,
 };
 use driver_character_api_v0::{
-    character_device_at, character_device_count, character_device_kind_at, CharacterDeviceKind,
-    SharedCharacterDevice,
+    character_devices_snapshot, CharacterDeviceKind, SharedCharacterDevice,
 };
 
 use crate::char_dev_handle::CharDevHandle;
@@ -1125,11 +1124,9 @@ fn default_stdout_handle() -> Box<dyn VfsIoHandle> {
 
 // 本方法代码由AI完成
 fn default_serial_device() -> Option<SharedCharacterDevice> {
-    (0..character_device_count()).find(|&idx| {
-                                     character_device_kind_at(idx) ==
-                                     Some(CharacterDeviceKind::Serial)
-                                 })
-                                 .and_then(character_device_at)
+    character_devices_snapshot()
+        .into_iter()
+        .find_map(|(_, device, kind)| (kind == CharacterDeviceKind::Serial).then_some(device))
 }
 
 /// 最多从物理控制台读取一个字节并送入共享 TTY。

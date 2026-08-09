@@ -7,6 +7,29 @@ extern crate alloc;
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicU64, Ordering};
+
+// Starts at one so a zero-initialized consumer cache is always stale.
+static DEVICE_TOPOLOGY_GENERATION : AtomicU64 = AtomicU64::new(1);
+
+/// Monotonic version of all driver registry membership.
+///
+/// Consumers use this as an invalidation hint and must still obtain a registry
+/// snapshot for the actual devices. Counter wrap is practically unreachable;
+/// equality remains the only supported comparison.
+pub fn device_topology_generation() -> u64 {
+    DEVICE_TOPOLOGY_GENERATION.load(Ordering::Acquire)
+}
+
+/// Notify registry consumers after a device becomes visible or invisible.
+///
+/// This is public because block/character/input/display API crates are separate
+/// packages. Hardware drivers should call their subsystem registration API,
+/// not this function directly.
+#[doc(hidden)]
+pub fn notify_device_topology_changed() -> u64 {
+    DEVICE_TOPOLOGY_GENERATION.fetch_add(1, Ordering::AcqRel).wrapping_add(1)
+}
 
 /// 由 MMIO 魔数与 VirtIO device id 等探测得到的设备大类，用于与子系统声明对齐。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -51,7 +51,7 @@ pub enum CharacterDeviceKind {
 /// 可在多任务间共享的字符设备句柄。
 pub type SharedCharacterDevice = Arc<Mutex<Box<dyn CharacterDevice>>>;
 
-static CHARACTER_DEVICES: Mutex<Vec<SharedCharacterDevice>> = Mutex::new(Vec::new());
+static CHARACTER_DEVICES: Mutex<Vec<Option<SharedCharacterDevice>>> = Mutex::new(Vec::new());
 
 /// Bytes reserved from a consuming character device but not yet committed.
 pub struct CharacterReadReservation {
@@ -317,23 +317,58 @@ pub fn test() {
 /// 将设备追加到全局表末尾，返回其索引（从 0 起）。
 pub fn register_character_device(device: SharedCharacterDevice) -> usize {
     let mut devices = CHARACTER_DEVICES.lock();
-    devices.push(device);
-    devices.len() - 1
+    let index = devices.len();
+    devices.push(Some(device));
+    drop(devices);
+    driver_api::notify_device_topology_changed();
+    index
 }
 
 /// 当前已注册字符设备数量。
 pub fn character_device_count() -> usize {
-    CHARACTER_DEVICES.lock().len()
+    CHARACTER_DEVICES.lock().iter().flatten().count()
 }
 
 /// 按下标取设备；越界返回 `None`。
 pub fn character_device_at(index: usize) -> Option<SharedCharacterDevice> {
-    CHARACTER_DEVICES.lock().get(index).cloned()
+    CHARACTER_DEVICES.lock().get(index).and_then(Option::as_ref).cloned()
 }
 
 /// 取首个字符设备。
 pub fn first_character_device() -> Option<SharedCharacterDevice> {
-    CHARACTER_DEVICES.lock().first().cloned()
+    CHARACTER_DEVICES.lock().iter().flatten().next().cloned()
+}
+
+/// Snapshot active character devices and their stable slot IDs.
+pub fn character_devices_snapshot() -> Vec<(usize, SharedCharacterDevice, CharacterDeviceKind)> {
+    let devices : Vec<_> = CHARACTER_DEVICES.lock()
+                                          .iter()
+                                          .enumerate()
+                                          .filter_map(|(index, device)| {
+                                              device.as_ref().map(|device| (index, device.clone()))
+                                          })
+                                          .collect();
+    devices.into_iter()
+           .map(|(index, device)| {
+               let kind = device.lock().device_kind();
+               (index, device, kind)
+           })
+           .collect()
+}
+
+/// Remove a character device from future enumeration and lookup.
+/// Existing shared handles remain valid until their owners release them.
+/// A hardware driver must disable interrupts/DMA before this registry update;
+/// that ordering still requires physical-board validation.
+pub fn unregister_character_device(index : usize) -> bool {
+    let mut devices = CHARACTER_DEVICES.lock();
+    let Some(slot) = devices.get_mut(index) else { return false };
+    if slot.take().is_none() {
+        return false;
+    }
+    drop(devices);
+    driver_api::notify_device_topology_changed();
+    true
 }
 
 /// 对指定下标设备加锁并执行 `f`。
@@ -349,4 +384,37 @@ where
 /// 查询指定下标设备的类别。
 pub fn character_device_kind_at(index: usize) -> Option<CharacterDeviceKind> {
     with_character_device(index, |dev| dev.device_kind())
+}
+
+#[cfg(test)]
+mod registry_tests {
+    use super::*;
+
+    struct NullDevice;
+
+    impl CharacterDevice for NullDevice {
+        fn read(&mut self, _buf : &mut [u8]) -> DriverResult<usize> { Ok(0) }
+        fn write(&mut self, buf : &[u8]) -> DriverResult<usize> { Ok(buf.len()) }
+        fn device_kind(&self) -> CharacterDeviceKind { CharacterDeviceKind::Null }
+    }
+
+    fn shared() -> SharedCharacterDevice {
+        Arc::new(Mutex::new(Box::new(NullDevice)))
+    }
+
+    #[test]
+    fn unregister_keeps_slot_stable_and_updates_snapshot() {
+        let before = driver_api::device_topology_generation();
+        let index = register_character_device(shared());
+        assert!(driver_api::device_topology_generation() > before);
+        assert!(character_devices_snapshot().iter().any(|(slot, _, kind)| {
+            *slot == index && *kind == CharacterDeviceKind::Null
+        }));
+        assert!(unregister_character_device(index));
+        assert!(character_device_at(index).is_none());
+        assert!(!unregister_character_device(index));
+        let next = register_character_device(shared());
+        assert!(next > index);
+        assert!(unregister_character_device(next));
+    }
 }

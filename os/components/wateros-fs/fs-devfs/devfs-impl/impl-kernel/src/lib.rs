@@ -8,11 +8,10 @@ extern crate alloc;
 
 use alloc::{format, string::String, string::ToString, vec::Vec};
 use api_v0::{DevFsManager, DevNode};
-use driver_block_api_v0::{block_device_at, block_device_count, block_device_role_at,
-                          BlockDeviceRole, SharedBlockDevice};
+use driver_block_api_v0::{block_devices_snapshot, device_topology_generation, BlockDeviceRole,
+                          SharedBlockDevice};
 use driver_character_api_v0::{
-    character_device_at, character_device_count, character_device_kind_at,
-    CharacterDeviceKind, SharedCharacterDevice,
+    character_devices_snapshot, CharacterDeviceKind, SharedCharacterDevice,
 };
 use fs_api_v0::{
     FsAccessMode, FsCapability, FsError, FsImpl, FsKind, FsResult, SharedFs,
@@ -30,6 +29,8 @@ struct DevFsImpl {
     character_bindings: Vec<(String, SharedCharacterDevice)>,
     // DTB 解析出的、尚无驱动实现的占位路径；在 refresh 末尾合并进 nodes。
     dt_unsupported_paths: Vec<String>,
+    // 驱动注册表快照对应的 topology generation；0 表示必须重建。
+    synced_generation: u64,
 }
 
 /// 零大小 [`DevFsManager`] 句柄；实际状态在静态 `DEVFS` 中。
@@ -42,7 +43,17 @@ static DEVFS: Mutex<DevFsImpl> = Mutex::new(DevFsImpl {
     block_bindings: Vec::new(),
     character_bindings: Vec::new(),
     dt_unsupported_paths: Vec::new(),
+    synced_generation: 0,
 });
+
+fn ensure_fresh() {
+    let generation = device_topology_generation();
+    if DEVFS.lock().synced_generation == generation {
+        return;
+    }
+    let mut manager = KernelDevFsManager;
+    manager.refresh();
+}
 
 // Linux 风格磁盘名：索引 0 → `/dev/vda`，超过 26 个盘符时截断到 `z`。
 // 本方法代码由AI完成
@@ -80,23 +91,9 @@ fn push_char_alias(inner: &mut DevFsImpl, path: String, dev: SharedCharacterDevi
 impl DevFsManager for KernelDevFsManager {
 // 本方法代码由AI完成
     fn refresh(&mut self) {
-        let block_snapshot: alloc::vec::Vec<_> = (0..block_device_count())
-            .filter_map(|idx| {
-                block_device_at(idx).zip(block_device_role_at(idx))
-                                    .map(|(dev, role)| (idx, dev, role))
-            })
-            .collect();
-        let char_snapshot: alloc::vec::Vec<_> = (0..character_device_count())
-            .filter_map(|idx| {
-                character_device_at(idx).map(|dev| {
-                    (
-                        idx,
-                        dev,
-                        character_device_kind_at(idx).unwrap_or(CharacterDeviceKind::Serial),
-                    )
-                })
-            })
-            .collect();
+        let observed_generation = device_topology_generation();
+        let block_snapshot = block_devices_snapshot();
+        let char_snapshot = character_devices_snapshot();
         let dt_paths = DEVFS.lock().dt_unsupported_paths.clone();
         let block_count = block_snapshot.len();
         let char_count = char_snapshot.len();
@@ -131,19 +128,25 @@ impl DevFsManager for KernelDevFsManager {
             push_block_alias(&mut inner, path, dev.clone());
         }
 
+        let mut has_console = false;
         for (idx, dev, kind) in char_snapshot {
-            push_char_alias(&mut inner, format!("/dev/ttyS{idx}"), dev.clone());
-            if idx == 0 {
-                push_char_alias(&mut inner, String::from("/dev/console"), dev.clone());
-                push_char_alias(&mut inner, String::from("/dev/tty"), dev.clone());
-            }
-            if kind == CharacterDeviceKind::Rtc {
-                push_char_alias(&mut inner, String::from("/dev/misc/rtc"), dev.clone());
-                push_char_alias(&mut inner, String::from("/dev/rtc0"), dev.clone());
-                push_char_alias(&mut inner, String::from("/dev/rtc"), dev.clone());
-            }
-            if kind == CharacterDeviceKind::Null {
-                push_char_alias(&mut inner, String::from("/dev/null"), dev.clone());
+            match kind {
+                CharacterDeviceKind::Serial => {
+                    push_char_alias(&mut inner, format!("/dev/ttyS{idx}"), dev.clone());
+                    if !has_console {
+                        push_char_alias(&mut inner, String::from("/dev/console"), dev.clone());
+                        push_char_alias(&mut inner, String::from("/dev/tty"), dev.clone());
+                        has_console = true;
+                    }
+                },
+                CharacterDeviceKind::Rtc => {
+                    push_char_alias(&mut inner, String::from("/dev/misc/rtc"), dev.clone());
+                    push_char_alias(&mut inner, String::from("/dev/rtc0"), dev.clone());
+                    push_char_alias(&mut inner, String::from("/dev/rtc"), dev.clone());
+                },
+                CharacterDeviceKind::Null => {
+                    push_char_alias(&mut inner, String::from("/dev/null"), dev.clone());
+                },
             }
         }
         for path in ["/dev/null", "/dev/zero", "/dev/urandom", "/dev/cpu_dma_latency"] {
@@ -161,6 +164,7 @@ impl DevFsManager for KernelDevFsManager {
                 node_type: api_v0::DevNodeType::Unsupported,
             });
         }
+        inner.synced_generation = observed_generation;
         logging::info!(
             "[fs::devfs] refresh done, total_nodes={}, block={}, character={}, unsupported={}",
             inner.nodes.len(),
@@ -172,11 +176,14 @@ impl DevFsManager for KernelDevFsManager {
 
 // 本方法代码由AI完成
     fn set_dt_unsupported_paths(&mut self, paths: Vec<String>) {
-        DEVFS.lock().dt_unsupported_paths = paths;
+        let mut inner = DEVFS.lock();
+        inner.dt_unsupported_paths = paths;
+        inner.synced_generation = 0;
     }
 
 // 本方法代码由AI完成
     fn list_nodes(&self) -> Vec<DevNode> {
+        ensure_fresh();
         DEVFS.lock().nodes.clone()
     }
 
@@ -205,6 +212,7 @@ impl DevFsManager for KernelDevFsManager {
 
 // 本方法代码由AI完成
     fn lookup_block_device(&self, path: &str) -> fs_api_v0::FsResult<SharedBlockDevice> {
+        ensure_fresh();
         DEVFS
             .lock()
             .block_bindings
@@ -239,6 +247,7 @@ impl DevFsManager for KernelDevFsManager {
 
 // 本方法代码由AI完成
     fn lookup_character_device(&self, path: &str) -> fs_api_v0::FsResult<SharedCharacterDevice> {
+        ensure_fresh();
         DEVFS
             .lock()
             .character_bindings
@@ -250,6 +259,7 @@ impl DevFsManager for KernelDevFsManager {
 
 // 本方法代码由AI完成
     fn default_root_block_path(&self) -> Option<String> {
+        ensure_fresh();
         let inner = DEVFS.lock();
         inner
             .nodes

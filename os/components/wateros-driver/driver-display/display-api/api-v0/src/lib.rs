@@ -48,7 +48,7 @@ pub struct FramebufferRegion {
 /// 可在多任务间共享的显示设备。锁同时保护驱动状态和可写 framebuffer。
 pub type SharedDisplayDevice = Arc<Mutex<Box<dyn DisplayDevice>>>;
 
-static DISPLAY_DEVICES : Mutex<Vec<SharedDisplayDevice>> = Mutex::new(Vec::new());
+static DISPLAY_DEVICES : Mutex<Vec<Option<SharedDisplayDevice>>> = Mutex::new(Vec::new());
 
 /// 显示设备契约。首版仅支持单个线性 framebuffer 与主动全屏刷新。
 pub trait DisplayDevice: Send {
@@ -69,26 +69,38 @@ pub trait DisplayDevice: Send {
 /// 注册一个显示设备并返回稳定索引。
 pub fn register_display_device(device : SharedDisplayDevice) -> usize {
     let mut devices = DISPLAY_DEVICES.lock();
-    devices.push(device);
-    devices.len() - 1
+    let index = devices.len();
+    devices.push(Some(device));
+    drop(devices);
+    driver_api::notify_device_topology_changed();
+    index
 }
 
 /// 返回已经注册的显示设备数量。
 pub fn display_device_count() -> usize {
-    DISPLAY_DEVICES.lock()
-                   .len()
+    DISPLAY_DEVICES.lock().iter().flatten().count()
 }
 
 /// 返回第一个显示设备；未发现 GPU 时为 `None`。
 pub fn first_display_device() -> Option<SharedDisplayDevice> {
-    DISPLAY_DEVICES.lock()
-                   .first()
-                   .cloned()
+    DISPLAY_DEVICES.lock().iter().flatten().next().cloned()
 }
 
 /// 按注册索引查询显示设备。
 pub fn display_device_at(index : usize) -> Option<SharedDisplayDevice> {
-    DISPLAY_DEVICES.lock()
-                   .get(index)
-                   .cloned()
+    DISPLAY_DEVICES.lock().get(index).and_then(Option::as_ref).cloned()
+}
+
+/// 注销显示设备；GUI 必须先停止呈现并释放 framebuffer 借用。
+///
+/// QEMU 可验证注册表状态，真实 GPU/显示控制器的 DMA quiesce 仍需上板测试。
+pub fn unregister_display_device(index : usize) -> bool {
+    let mut devices = DISPLAY_DEVICES.lock();
+    let Some(slot) = devices.get_mut(index) else { return false };
+    if slot.take().is_none() {
+        return false;
+    }
+    drop(devices);
+    driver_api::notify_device_topology_changed();
+    true
 }

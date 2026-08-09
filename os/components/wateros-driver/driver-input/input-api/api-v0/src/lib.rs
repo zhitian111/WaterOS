@@ -51,22 +51,52 @@ pub trait InputDevice: Send {
 
 pub type SharedInputDevice = Arc<Mutex<Box<dyn InputDevice>>>;
 
-static INPUT_DEVICES : Mutex<Vec<SharedInputDevice>> = Mutex::new(Vec::new());
+static INPUT_DEVICES : Mutex<Vec<Option<SharedInputDevice>>> = Mutex::new(Vec::new());
 
 /// 注册设备并返回稳定的全局索引。
 pub fn register_input_device(device : SharedInputDevice) -> usize {
     let mut devices = INPUT_DEVICES.lock();
-    devices.push(device);
-    devices.len() - 1
+    let index = devices.len();
+    devices.push(Some(device));
+    drop(devices);
+    driver_api::notify_device_topology_changed();
+    index
 }
 
 /// 已注册设备数量。
-pub fn input_device_count() -> usize { INPUT_DEVICES.lock().len() }
+pub fn input_device_count() -> usize { INPUT_DEVICES.lock().iter().flatten().count() }
 
 /// 按注册索引获取共享设备句柄。
 pub fn input_device_at(index : usize) -> Option<SharedInputDevice> {
-    INPUT_DEVICES.lock().get(index).cloned()
+    INPUT_DEVICES.lock().get(index).and_then(Option::as_ref).cloned()
 }
 
 /// 获取当前注册表快照；不长期持有注册表锁。
-pub fn input_devices() -> Vec<SharedInputDevice> { INPUT_DEVICES.lock().clone() }
+pub fn input_devices() -> Vec<SharedInputDevice> {
+    INPUT_DEVICES.lock().iter().flatten().cloned().collect()
+}
+
+/// 获取稳定 slot ID 与设备句柄快照，供需要处理注销的消费者使用。
+pub fn input_devices_snapshot() -> Vec<(usize, SharedInputDevice)> {
+    INPUT_DEVICES.lock()
+                 .iter()
+                 .enumerate()
+                 .filter_map(|(index, device)| {
+                     device.as_ref().map(|device| (index, device.clone()))
+                 })
+                 .collect()
+}
+
+/// 注销输入设备；已取得的共享句柄在引用释放前仍然有效。
+///
+/// 真机驱动必须先屏蔽中断并停止 DMA；本 API 只处理注册表可见性，该硬件顺序待上板验证。
+pub fn unregister_input_device(index : usize) -> bool {
+    let mut devices = INPUT_DEVICES.lock();
+    let Some(slot) = devices.get_mut(index) else { return false };
+    if slot.take().is_none() {
+        return false;
+    }
+    drop(devices);
+    driver_api::notify_device_topology_changed();
+    true
+}

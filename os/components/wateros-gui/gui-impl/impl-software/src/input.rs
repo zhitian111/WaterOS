@@ -26,6 +26,7 @@ const BTN_RIGHT : u16 = 0x111;
 const BTN_MIDDLE : u16 = 0x112;
 
 struct DeviceState {
+    registry_index : usize,
     device : SharedInputDevice,
     #[allow(dead_code)]
     kind : InputDeviceKind,
@@ -37,9 +38,10 @@ struct DeviceState {
 }
 
 impl DeviceState {
-    fn new(device : SharedInputDevice) -> Self {
+    fn new(registry_index : usize, device : SharedInputDevice) -> Self {
         let info = device.lock().info().clone();
-        Self { device,
+        Self { registry_index,
+               device,
                kind : info.kind,
                absolute_x : info.absolute_x,
                absolute_y : info.absolute_y,
@@ -154,10 +156,13 @@ impl InputBridge {
     pub fn device_count(&self) -> usize { self.devices.len() }
 
     fn discover_devices(&mut self) {
-        let count = input::input_device_count();
-        for index in self.devices.len()..count {
-            if let Some(device) = input::input_device_at(index) {
-                self.devices.push(DeviceState::new(device));
+        let snapshot = input::input_devices_snapshot();
+        self.devices.retain(|state| {
+            snapshot.iter().any(|(index, _)| *index == state.registry_index)
+        });
+        for (index, device) in snapshot {
+            if !self.devices.iter().any(|state| state.registry_index == index) {
+                self.devices.push(DeviceState::new(index, device));
             }
         }
     }
@@ -255,6 +260,19 @@ fn printable_character(code : u16, modifiers : KeyModifiers) -> Option<char> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{boxed::Box, string::String, sync::Arc};
+    use input::{InputDevice, InputDeviceInfo};
+    use spin::Mutex;
+
+    struct TestInput {
+        info : InputDeviceInfo,
+    }
+
+    impl InputDevice for TestInput {
+        fn info(&self) -> &InputDeviceInfo { &self.info }
+
+        fn pop_event(&mut self) -> input::DriverResult<Option<RawInputEvent>> { Ok(None) }
+    }
 
     #[test]
     fn absolute_coordinates_reach_both_edges() {
@@ -269,5 +287,22 @@ mod tests {
         assert_eq!(printable_character(30, KeyModifiers(KeyModifiers::SHIFT)), Some('A'));
         assert_eq!(printable_character(30, KeyModifiers(KeyModifiers::CAPS_LOCK)), Some('A'));
         assert_eq!(printable_character(2, KeyModifiers(KeyModifiers::SHIFT)), Some('!'));
+    }
+
+    #[test]
+    fn bridge_discovers_and_forgets_registry_slots() {
+        let device : SharedInputDevice = Arc::new(Mutex::new(Box::new(TestInput {
+            info : InputDeviceInfo { name : String::from("dynamic-test"),
+                                     kind : InputDeviceKind::Keyboard,
+                                     absolute_x : None,
+                                     absolute_y : None },
+        })));
+        let index = input::register_input_device(device);
+        let mut bridge = InputBridge::new();
+        bridge.poll(Size::new(80, 25), 1);
+        assert_eq!(bridge.device_count(), 1);
+        assert!(input::unregister_input_device(index));
+        bridge.poll(Size::new(80, 25), 1);
+        assert_eq!(bridge.device_count(), 0);
     }
 }

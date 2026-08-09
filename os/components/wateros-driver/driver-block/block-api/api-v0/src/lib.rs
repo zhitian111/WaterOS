@@ -11,7 +11,7 @@ use spin::Mutex;
 pub mod partition;
 pub use partition::{MbrPartition, PartitionBlockDevice, PartitionScanError, scan_mbr};
 
-pub use driver_api::{DriverError, DriverResult};
+pub use driver_api::{DriverError, DriverResult, device_topology_generation};
 
 /// 逻辑块字节长度；当前 WaterOS bring-up 固定为 512（与 virtio-blk 常见配置一致）。
 pub const BLOCK_SIZE: usize = 512;
@@ -45,7 +45,7 @@ struct RegisteredBlockDevice {
     role : BlockDeviceRole,
 }
 
-static BLOCK_DEVICES : Mutex<Vec<RegisteredBlockDevice>> = Mutex::new(Vec::new());
+static BLOCK_DEVICES : Mutex<Vec<Option<RegisteredBlockDevice>>> = Mutex::new(Vec::new());
 
 /// 块设备语义契约：按块读写为必须实现；按字节读提供默认实现（内部临时缓冲整段块）。
 pub trait BlockDevice: Send {
@@ -110,24 +110,36 @@ pub trait BlockDevice: Send {
 ///
 /// 若首扇区包含受支持的 MBR 主分区表，对应的有界分区设备会紧随整盘注册。
 pub fn register_block_device(device: SharedBlockDevice) -> usize {
-    let mut devices = BLOCK_DEVICES.lock();
-    let disk_number = devices.iter()
-                             .filter(|entry| matches!(entry.role, BlockDeviceRole::Disk { .. }))
-                             .count();
-    devices.push(RegisteredBlockDevice { device : device.clone(),
-                                         role : BlockDeviceRole::Disk { disk_number } });
-    let disk_index = devices.len() - 1;
-    drop(devices);
-
-    match scan_mbr(&device) {
-        Ok(partitions) => for partition in partitions {
+    let scan = scan_mbr(&device);
+    let mut children = Vec::new();
+    if let Ok(partitions) = &scan {
+        for partition in partitions {
             if let Ok(child) = PartitionBlockDevice::shared(device.clone(),
                                                             partition.start_lba,
                                                             partition.sectors)
             {
-                register_partition_device(disk_index, partition.number, child);
+                children.push((partition.number, child));
             }
-        },
+        }
+    }
+
+    let mut devices = BLOCK_DEVICES.lock();
+    let disk_number = first_available_disk_number(&devices);
+    let disk_index = devices.len();
+    devices.push(Some(RegisteredBlockDevice { device : device.clone(),
+                                              role : BlockDeviceRole::Disk { disk_number } }));
+    for (partition_number, child) in children {
+        devices.push(Some(RegisteredBlockDevice {
+            device : child,
+            role : BlockDeviceRole::Partition { parent_device_index : disk_index,
+                                                partition_number },
+        }));
+    }
+    drop(devices);
+    driver_api::notify_device_topology_changed();
+
+    match scan {
+        Ok(_) => {},
         // 没有 MBR 签名是合法的整盘文件系统布局，不需要告警。
         Err(PartitionScanError::InvalidSignature) => {},
         Err(error) => {
@@ -140,35 +152,71 @@ pub fn register_block_device(device: SharedBlockDevice) -> usize {
     disk_index
 }
 
-fn register_partition_device(parent_device_index : usize,
-                             partition_number : u8,
-                             device : SharedBlockDevice) -> usize {
-    let mut devices = BLOCK_DEVICES.lock();
-    devices.push(RegisteredBlockDevice { device,
-                                         role : BlockDeviceRole::Partition {
-                                             parent_device_index,
-                                             partition_number,
-                                         } });
-    devices.len() - 1
+fn first_available_disk_number(devices : &[Option<RegisteredBlockDevice>]) -> usize {
+    (0..).find(|candidate| {
+             !devices.iter().flatten().any(|entry| {
+                 matches!(entry.role,
+                          BlockDeviceRole::Disk { disk_number } if disk_number == *candidate)
+             })
+         })
+         .expect("finite registry always has a free disk number")
 }
 
 /// 当前已注册块设备数量，包括整盘与自动发现的分区设备。
 pub fn block_device_count() -> usize {
-    BLOCK_DEVICES.lock().len()
+    BLOCK_DEVICES.lock().iter().flatten().count()
 }
 
 /// 取表中第一个设备，常用于根文件系统绑定单盘场景。
 pub fn first_block_device() -> Option<SharedBlockDevice> {
-    BLOCK_DEVICES.lock().first().map(|entry| entry.device.clone())
+    BLOCK_DEVICES.lock().iter().flatten().next().map(|entry| entry.device.clone())
 }
 
 /// 按下标取设备；越界返回 `None`。
 pub fn block_device_at(index: usize) -> Option<SharedBlockDevice> {
-    BLOCK_DEVICES.lock().get(index).map(|entry| entry.device.clone())
+    BLOCK_DEVICES.lock().get(index).and_then(Option::as_ref).map(|entry| entry.device.clone())
 }
 
 pub fn block_device_role_at(index : usize) -> Option<BlockDeviceRole> {
-    BLOCK_DEVICES.lock().get(index).map(|entry| entry.role)
+    BLOCK_DEVICES.lock().get(index).and_then(Option::as_ref).map(|entry| entry.role)
+}
+
+/// Snapshot active devices without retaining the registry lock.
+pub fn block_devices_snapshot() -> Vec<(usize, SharedBlockDevice, BlockDeviceRole)> {
+    BLOCK_DEVICES.lock()
+                 .iter()
+                 .enumerate()
+                 .filter_map(|(index, entry)| {
+                     entry.as_ref().map(|entry| (index, entry.device.clone(), entry.role))
+                 })
+                 .collect()
+}
+
+/// Remove a registry slot. Removing a disk also removes all child partitions.
+///
+/// Existing [`SharedBlockDevice`] clones remain alive. A physical hot-unplug
+/// driver must quiesce DMA and make outstanding I/O fail before calling this;
+/// that hardware sequence is not testable without the target board.
+pub fn unregister_block_device(index : usize) -> bool {
+    let mut devices = BLOCK_DEVICES.lock();
+    let Some(role) = devices.get(index).and_then(Option::as_ref).map(|entry| entry.role) else {
+        return false;
+    };
+    devices[index] = None;
+    if matches!(role, BlockDeviceRole::Disk { .. }) {
+        for entry in devices.iter_mut() {
+            if entry.as_ref().is_some_and(|entry| {
+                matches!(entry.role,
+                         BlockDeviceRole::Partition { parent_device_index, .. }
+                         if parent_device_index == index)
+            }) {
+                *entry = None;
+            }
+        }
+    }
+    drop(devices);
+    driver_api::notify_device_topology_changed();
+    true
 }
 
 /// 自检：校验常量与样例设备的 [`read_prefix`] 行为。
@@ -218,5 +266,70 @@ impl BlockDevice for SampleBlockDevice {
 
     fn write_blocks(&mut self, _start_block: Lba, _buf: &[u8]) -> DriverResult<()> {
         Err(DriverError::Unsupported)
+    }
+}
+
+#[cfg(test)]
+mod registry_tests {
+    use super::*;
+
+    struct RegistryDisk {
+        bytes : Vec<u8>,
+    }
+
+    impl RegistryDisk {
+        fn shared_with_partition() -> SharedBlockDevice {
+            let mut bytes = vec![0u8; BLOCK_SIZE * 8];
+            bytes[510..512].copy_from_slice(&[0x55, 0xAA]);
+            bytes[446 + 4] = 0x83;
+            bytes[446 + 8..446 + 12].copy_from_slice(&1u32.to_le_bytes());
+            bytes[446 + 12..446 + 16].copy_from_slice(&2u32.to_le_bytes());
+            Arc::new(Mutex::new(Box::new(Self { bytes })))
+        }
+    }
+
+    impl BlockDevice for RegistryDisk {
+        fn total_blocks(&self) -> Option<u64> { Some((self.bytes.len() / BLOCK_SIZE) as u64) }
+
+        fn read_blocks(&mut self, start : Lba, buf : &mut [u8]) -> DriverResult<()> {
+            let start = usize::try_from(start.0)
+                              .map_err(|_| DriverError::InvalidParam)?
+                              .checked_mul(BLOCK_SIZE)
+                              .ok_or(DriverError::InvalidParam)?;
+            let source = self.bytes.get(start..start + buf.len())
+                                   .ok_or(DriverError::InvalidParam)?;
+            buf.copy_from_slice(source);
+            Ok(())
+        }
+
+        fn write_blocks(&mut self, _start : Lba, _buf : &[u8]) -> DriverResult<()> {
+            Err(DriverError::Unsupported)
+        }
+    }
+
+    #[test]
+    fn unregister_disk_removes_children_without_reusing_slots() {
+        let before_generation = device_topology_generation();
+        let disk_index = register_block_device(RegistryDisk::shared_with_partition());
+        let snapshot = block_devices_snapshot();
+        let partition_index = snapshot.iter()
+                                          .find_map(|(index, _, role)| {
+                                              matches!(role,
+                                                       BlockDeviceRole::Partition {
+                                                           parent_device_index,
+                                                           partition_number : 1,
+                                                       } if *parent_device_index == disk_index)
+                                                  .then_some(*index)
+                                          })
+                                          .expect("partition should be registered");
+        assert!(device_topology_generation() > before_generation);
+        assert!(unregister_block_device(disk_index));
+        assert!(block_device_at(disk_index).is_none());
+        assert!(block_device_at(partition_index).is_none());
+        assert!(!unregister_block_device(disk_index));
+
+        let next_index = register_block_device(RegistryDisk::shared_with_partition());
+        assert!(next_index > partition_index, "stable slots must not be reused");
+        assert!(unregister_block_device(next_index));
     }
 }

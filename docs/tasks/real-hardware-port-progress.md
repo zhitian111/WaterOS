@@ -262,3 +262,55 @@ nc 127.0.0.1 22323
 ### 提交
 
 - `[feat] add reproducible physical root image tooling`
+
+## 2026-08-10：批次 6——动态设备拓扑与 devfs 自动同步
+
+### 任务与设计
+
+1. 为块、字符、输入和显示注册表提供稳定 slot、快照与受控注销。
+2. 用全局单调 topology generation 通知上层设备成员变化。
+3. devfs 在列举、查找和选择根盘前按 generation 自动同步，不再依赖启动调用者手工刷新。
+4. 消费者不能再用 `0..active_count` 猜测 slot；改用带稳定 ID 的 snapshot。
+5. 注销整盘时同步移除所有分区节点，已有 `Arc` 句柄继续存活到持有者释放。
+
+slot 只追加、不移动、不复用，避免旧索引在设备移除后指向另一设备。`*_device_count()` 继续表示活动设备数，仅用于统计；带空洞的实际枚举必须使用 snapshot。generation 只是缓存失效提示，不替代设备事件队列。
+
+### 完成内容
+
+- [x] `driver-api` 新增全局 topology generation，使用 Acquire/Release 原子语义。
+- [x] block registry 改为稳定可空 slot，并新增带角色 snapshot 与注销 API。
+- [x] 整盘及其 MBR 分区在一次注册表事务中同时发布，generation 只递增一次。
+- [x] 注销整盘会清除所有引用该父 slot 的分区；重复注销返回 `false`。
+- [x] character/input/display registry 改为稳定可空 slot，新增 snapshot/注销入口。
+- [x] 字符 snapshot 在释放注册表锁后才锁具体设备读取 kind，避免锁嵌套。
+- [x] kernel devfs 与简化 devfs 都会在 generation 变化后自动重建缓存。
+- [x] devfs 不再把 RTC 和 null 错误暴露为 `ttyS*`；`/dev/console`、`/dev/tty` 绑定当前首个 Serial。
+- [x] GUI `InputBridge` 按稳定 ID 添加和删除输入设备状态。
+- [x] VFS 默认控制台改用字符设备 snapshot，不会因中间 slot 空洞漏掉后续串口。
+- [x] 注销 API 注释明确要求真机驱动先停止中断/DMA；该硬件顺序尚未验证。
+
+### 验证证据
+
+- block API host 单测 4 项通过，其中动态注册测试覆盖 generation、分区发现、父盘级联注销、重复注销和 slot 不复用。
+- character API host 单测通过，覆盖 kind snapshot、注销、重复注销和 slot 不复用。
+- 简化 devfs host 单测通过：无需显式 `refresh()`，注册后节点自动出现，注销后 lookup 与节点列表自动消失。
+- input、display 和 kernel devfs host `cargo check` 通过。
+- GUI host 单测 9 项通过；新增用例验证 `InputBridge` 无需重建即可发现注册设备，并在注销后丢弃对应跨事件状态。
+- fd-session 单 crate 无架构 feature 检查触发既有 `Arch*Impl` 未定义；RISC-V64 与 LoongArch64 顶层 profile 交叉检查均通过，证明其实际配置下 snapshot 改造可编译。
+- RISC-V release 内核构建通过。
+- 使用上一批 32 MiB 分区镜像做 QEMU snapshot 回归：`block=2`、`character=3`，devfs 节点由 21 个收敛为 19 个（删除 RTC/null 的伪 `ttyS*`），根卷仍从 `/dev/vda1` 读写挂载并正常退出。
+
+### 已知限制、未验证与后续测试
+
+- [ ] 注册表注销只改变新枚举可见性；已挂载根卷或已打开 fd 持有的共享句柄仍存活，尚无统一的 device-gone I/O 错误状态。
+- [ ] 未实现根卷卸载/阻止拔盘策略；物理根盘热拔属于高风险操作，驱动接入前不得宣称支持。
+- [ ] QEMU 本批没有执行 monitor `device_del`，因为当前 virtio 驱动没有中断/DMA quiesce 与 PCI/MMIO remove 回调；host 状态机测试不能替代该硬件流程。
+- [ ] 输入设备已能从 GUI 动态移除，但尚未暴露 Linux `/dev/input/eventN` 字符设备语义。
+- [ ] display 注销要求 GUI 先 shutdown；尚无自动通知正在呈现的 GUI runtime。
+- [ ] network registry 尚未迁移到同一套 topology/注销模型，网卡热插拔仍待后续批次。
+- [ ] slot 永不复用会随极端长期热插拔增长；当前嵌入式启动生命周期可接受，未来可引入带 generation 的复合 `DeviceId` 后安全复用。
+- [ ] VisionFive 2/2K1000LA 上屏蔽中断、停止 DMA、cache flush 和设备断电顺序均待真机验证。
+
+### 提交
+
+- `[feat] add dynamic device topology tracking`
