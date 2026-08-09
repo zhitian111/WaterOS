@@ -793,3 +793,45 @@ python3 scripts/remote_debug_qemu_smoke.py \
 ### 提交
 
 - `[fix] discover 2K1000LA FDT from UEFI tables`
+
+## 2026-08-10：批次 18——2K1000LA FDT 多段内存发现
+
+### 任务与设计
+
+1. 从批次 17 已发现的固件 FDT 读取 `memory` 节点，不再无条件假设 1 GiB RAM。
+2. 官方 2K1000LA DTS 有三个不连续 `reg` 区段；现有 `KernelMemoryLayout` 只能表达单段主 RAM，因此只选择包含内核链接地址 `0x90000000` 的区段。
+3. 对地址加法、空区间和页边界做受检处理，不允许通过饱和加法把畸形区段伪装成有效 RAM。
+4. 缺少 DTB、FDT 无效或没有包含内核的 memory extent 时，保留 `0x90000000..0xc0000000` 降级窗口。
+5. 使用真实 DTS cell 形态经 `dtc` 编译后做端到端 host 验证，并保留纯函数边界测试。
+
+### 完成内容
+
+- [x] 2K1000LA platform 引入既有 `fdt 0.1.5` 解析库，新增 `primary_ram_from_fdt()`。
+- [x] 扫描 `memory`/`memory@...` 节点的所有 `reg` entries，并由 FDT 父节点的 address/size cells 解析 64-bit 地址与长度。
+- [x] 区段起点向上、终点向下做 4 KiB 对齐；零长度、加法溢出和不包含内核链接地址的区段被忽略。
+- [x] 多个候选区段同时包含内核时选择容量较大者，结果仍交由公共 `KernelMemoryLayout::validate()` 校验。
+- [x] 官方三段布局中只选择 `0x90000000..0x270000000`，不会把两个低内存段或中间地址空洞交给 frame allocator。
+- [x] `physical_ram_end_exclusive()` 和 `kernel_memory_layout()` 统一消费同一个主 RAM 发现结果。
+- [x] 新增两个 DTS fixtures、host verifier 和临时 DTB 测试脚本，临时文件在退出时删除。
+
+### 验证证据
+
+- 2K1000LA platform host 单测由 3 项增至 6 项，全部通过。
+- 纯单测覆盖 fallback layout、跨页对齐、低内存排除、零长度、`usize` 地址溢出以及多候选择大。
+- `official-memory-layout.dts` 经 `dtc` 编译，端到端解析得到 `0x90000000..0x270000000`。
+- `no-kernel-memory.dts` 经相同路径解析为 `None`，证明低地址 extent 不会被误选。
+- `cargo build --release --target loongarch64-unknown-none --no-default-features --features loongson2k1000la,pre,heap-tlsf` 通过。
+- `git diff --check` 通过；测试只生成临时小型 DTB，没有创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] **FDT cell 解析和选择策略已验证，但真实板报告的实际容量、FDT 所在物理地址和固件保留区仍须上板核对。**
+- [ ] 公共内存 API 仍只支持一个连续 extent；官方两个低内存区段暂未使用，这是避免跨空洞分配的有意限制。
+- [ ] 尚未从 `/reserved-memory` 和 FDT memory reservation block 扣除保留页；在允许整个高内存 extent 进入 frame allocator 前必须解决 DTB/固件表生命周期和保留区问题。
+- [ ] 当前发现错误静默降级到 768 MiB fallback；早期诊断日志仍待加入。
+- [ ] MMIO 表仍是保守静态范围，没有根据 PCIe ranges 等 DTB 属性细化。
+- [ ] 下一批应建立 2K1000LA 专属 driver aggregate，先实现只读 DTB topology，解析 UART、LIOINTC 与 MMC 资源但暂不执行未经上板验证的寄存器写入。
+
+### 提交
+
+- `[feat] discover 2K1000LA RAM from FDT`

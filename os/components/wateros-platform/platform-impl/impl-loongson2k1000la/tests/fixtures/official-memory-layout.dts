@@ -1,0 +1,14 @@
+/dts-v1/;
+
+/ {
+    compatible = "loongson,ls2k";
+    #address-cells = <2>;
+    #size-cells = <2>;
+
+    memory@200000 {
+        device_type = "memory";
+        reg = <0x0 0x00200000 0x0 0x06e00000>,
+              <0x0 0x08000000 0x0 0x07000000>,
+              <0x0 0x90000000 0x1 0xe0000000>;
+    };
+};
