@@ -5,7 +5,7 @@
 //! the slot. Dropping it is intentionally fail-closed: the source remains busy
 //! and cannot be consumed again.
 
-use crate::irq_domain::{AcknowledgedIrq, GlobalIrq, MAX_GLOBAL_IRQS};
+use crate::irq_domain::{AcknowledgedIrq, GlobalIrq, IrqDisposition, MAX_GLOBAL_IRQS};
 use core::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_OWNER_GENERATION : AtomicU64 = AtomicU64::new(1);
@@ -35,12 +35,26 @@ pub struct ActiveOwner<O> {
     irq : GlobalIrq,
     owner : O,
     generation : u64,
+    acknowledged : Option<AcknowledgedIrq>,
+}
+
+pub trait IrqOwner {
+    fn handle(&mut self, acknowledged : AcknowledgedIrq) -> IrqDisposition;
 }
 
 impl<O> ActiveOwner<O> {
     pub const fn irq(&self) -> GlobalIrq { self.irq }
     pub fn owner(&self) -> &O { &self.owner }
     pub fn owner_mut(&mut self) -> &mut O { &mut self.owner }
+
+    pub fn handle(mut self) -> (Self, IrqDisposition)
+    where O : IrqOwner
+    {
+        let acknowledged = self.acknowledged.take()
+                                .expect("active IRQ evidence already consumed");
+        let disposition = self.owner.handle(acknowledged);
+        (self, disposition)
+    }
 }
 
 pub struct FinishFailure<O> {
@@ -85,6 +99,14 @@ impl<O> IrqOwnerTable<O> {
         }
     }
 
+    pub fn get(&self, irq : GlobalIrq) -> Result<&O, OwnerError> {
+        match &self.slots[irq.raw() as usize] {
+            OwnerSlot::Ready { owner, .. } => Ok(owner),
+            OwnerSlot::Empty => Err(OwnerError::NotRegistered),
+            OwnerSlot::InHandler { .. } => Err(OwnerError::InHandler),
+        }
+    }
+
     pub fn begin(&mut self, acknowledged : AcknowledgedIrq)
                  -> Result<ActiveOwner<O>, BeginFailure> {
         let irq = acknowledged.irq();
@@ -92,7 +114,10 @@ impl<O> IrqOwnerTable<O> {
         match core::mem::replace(slot, OwnerSlot::Empty) {
             OwnerSlot::Ready { owner, generation } => {
                 *slot = OwnerSlot::InHandler { generation };
-                Ok(ActiveOwner { irq, owner, generation })
+                Ok(ActiveOwner { irq,
+                                 owner,
+                                 generation,
+                                 acknowledged : Some(acknowledged) })
             }
             OwnerSlot::Empty => {
                 *slot = OwnerSlot::Empty;

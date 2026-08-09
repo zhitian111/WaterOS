@@ -2217,3 +2217,50 @@ owner 从 Ready 移入线性 `ActiveOwner`，原槽变为 InHandler；只有 `fi
 ### 提交
 
 - `[ref] add 2K1000 IRQ owner slots`
+
+## 2026-08-10：批次 49——Live runtime owner-table integration
+
+### 任务与设计
+
+将 `BoardIrqRuntime` 改为 `BoardIrqRuntime<I, O>` 并直接持有 `IrqOwnerTable<O>`。新增
+`IrqOwner::handle(&mut self, AcknowledgedIrq) -> IrqDisposition`；ActiveOwner 单次交付
+acknowledged token，handler 返回后先通过 IRQ+generation 校验把 owner 放回 Ready，随后才验证
+disposition 并可能 ENABLE_SET。
+
+configure API 现在接收设备 owner，而不是 function pointer。重复注册或 arm 失败通过
+`ConfigureFailure<State, Owner>` 同时返还 runtime 状态与 owner，不丢失设备实例。
+
+### 完成内容
+
+- [x] ActiveOwner 保存 `Option<AcknowledgedIrq>`，handle 消费且只能交付一次。
+- [x] 新增 `IrqOwner` trait，设备实例以安全 `&mut self` 处理 IRQ。
+- [x] runtime 内 function-pointer domain 被 owner table 替代；纯 domain 模块仅保留独立契约测试。
+- [x] Dormant/Configured/Live 全部泛型化为 `<I, O>`。
+- [x] configure 重复/失败返还原 owner；成功后 owner 固定绑定 GlobalIrq。
+- [x] service 顺序固定为 mask/ack→begin→handle→finish→disposition→optional rearm。
+- [x] 未注册 owner 计为 unhandled；busy/finish failure 产生 partial failure并保持 source masked。
+- [x] owner getter 只在 Ready 时返回引用，便于诊断持久设备状态。
+- [x] volatile assembler 泛型化，可为未来板级 owner enum 构造 runtime。
+
+### 验证证据
+
+- `cargo test`：61 项 host 单测全部通过；原 runtime 测试已全部迁移为 `TestOwner`。
+- duplicate configure 返回 `Owner(AlreadyRegistered)`，并断言返还 owner 未被修改。
+- 连续两次 matching Rearm service 均执行 CLEAR→SET，owner `handled` 从 0 累积到 2。
+- mismatch disposition 在 owner 已成功归还 Ready 后被拒绝，rearmed=0。
+- 多 parent 测试仍为 3 masked、2 handled、1 unhandled，证明迁移未改变 source 覆盖。
+- topology/畸形 DTS fixtures、LoongArch64 target check、`make kernel-la` 全部通过；仅有既有 warning。
+- `git diff --check` 通过；未创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：owner handler 执行期间多核中断屏蔽与同 source 并发到达尚未真机验证。
+- [ ] runtime 需要唯一 `&mut` 才能 service；全局发布容器必须避免 IRQ 上下文 spin-lock 死锁。
+- [ ] owner handler panic 会在 token 归还前终止内核；slot fail-closed 语义仅适用于可返回控制流。
+- [ ] production board owner enum 尚未定义；MMC adapter 仍没有持久 register backend 实例。
+- [ ] CPU parent activator 和 global Live runtime 尚未生产接入。
+- [ ] 下一批应定义 `BoardIrqOwner` enum，先加入 `MmcCommand` mock/target-deferred variant，把 MMC ack adapter 包装为 `IrqOwner`；APBDMA variant继续 KeepMasked。随后设计 IRQ-safe global runtime publication。
+
+### 提交
+
+- `[ref] bind 2K1000 IRQ runtime owners`

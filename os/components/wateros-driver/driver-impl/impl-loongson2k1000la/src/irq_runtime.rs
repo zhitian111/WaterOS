@@ -6,9 +6,9 @@
 
 use api_v0::DriverError;
 
-use crate::{irq_domain::{DomainError, GlobalIrq, IrqDisposition, IrqHandler, LioIntcDomain,
-                        MAX_BANKS},
+use crate::{irq_domain::{DomainError, GlobalIrq, IrqDisposition, MAX_BANKS},
             irq_binding::InterruptBinding,
+            irq_owner::{IrqOwner, IrqOwnerTable, OwnerError},
             liointc::{LioIntc, MAIN_REGISTER_BYTES, MAX_CORES, RegisterIo},
             topology::BoardTopology};
 use crate::liointc::Route;
@@ -110,6 +110,7 @@ pub enum RuntimeError {
     Domain(DomainError),
     NoConfiguredSources,
     DispositionMismatch,
+    Owner(OwnerError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -136,27 +137,33 @@ pub struct TransitionFailure<S> {
     pub state : S,
 }
 
-pub struct DormantRuntime<I> {
-    runtime : BoardIrqRuntime<I>,
+pub struct ConfigureFailure<S, O> {
+    pub error : RuntimeError,
+    pub state : S,
+    pub owner : O,
 }
 
-pub struct ConfiguredRuntime<I> {
-    runtime : BoardIrqRuntime<I>,
+pub struct DormantRuntime<I, O> {
+    runtime : BoardIrqRuntime<I, O>,
+}
+
+pub struct ConfiguredRuntime<I, O> {
+    runtime : BoardIrqRuntime<I, O>,
     configured_sources : u64,
 }
 
-pub struct LiveRuntime<I> {
-    runtime : BoardIrqRuntime<I>,
+pub struct LiveRuntime<I, O> {
+    runtime : BoardIrqRuntime<I, O>,
     configured_sources : u64,
 }
 
-pub struct BoardIrqRuntime<I> {
+pub struct BoardIrqRuntime<I, O> {
     controllers : [Option<LioIntc<I>>; MAX_BANKS],
     parent_banks : [Option<u8>; HWI_LINES],
-    domain : LioIntcDomain,
+    owners : IrqOwnerTable<O>,
 }
 
-impl<I : RegisterIo> BoardIrqRuntime<I> {
+impl<I : RegisterIo, O> BoardIrqRuntime<I, O> {
     pub fn assemble<F>(layout : RuntimeLayout, mut make_io : F) -> Result<Self, RuntimeError>
     where F : FnMut(usize, ControllerLayout) -> Result<I, DriverError>
     {
@@ -196,22 +203,29 @@ impl<I : RegisterIo> BoardIrqRuntime<I> {
         }
         Ok(Self { controllers,
                   parent_banks,
-                  domain : LioIntcDomain::new(MAX_BANKS).map_err(RuntimeError::Domain)? })
+                  owners : IrqOwnerTable::new() })
     }
 
-    pub fn register(&mut self, irq : GlobalIrq, handler : IrqHandler)
-                    -> Result<(), RuntimeError> {
-        self.domain.register(irq, handler).map_err(RuntimeError::Domain)
+    pub fn register(&mut self, irq : GlobalIrq, owner : O)
+                    -> Result<(), (RuntimeError, O)> {
+        self.owners.register(irq, owner)
+                   .map_err(|(error, owner)| (RuntimeError::Owner(error), owner))
     }
 
-    pub fn into_dormant(self) -> DormantRuntime<I> { DormantRuntime { runtime : self } }
+    pub fn owner(&self, irq : GlobalIrq) -> Result<&O, RuntimeError> {
+        self.owners.get(irq).map_err(RuntimeError::Owner)
+    }
+
+    pub fn into_dormant(self) -> DormantRuntime<I, O> { DormantRuntime { runtime : self } }
 
     pub fn into_controllers(self) -> [Option<LioIntc<I>>; MAX_BANKS] {
         self.controllers
     }
 
     fn service(&mut self, snapshot : usize, core : usize)
-                   -> Result<ServiceReport, ServiceFailure> {
+                   -> Result<ServiceReport, ServiceFailure>
+    where O : IrqOwner
+    {
         if snapshot == 0 || snapshot & !0xff != 0 {
             return Err(ServiceFailure { error : RuntimeError::InvalidSnapshot,
                                         report : ServiceReport::default() });
@@ -250,31 +264,39 @@ impl<I : RegisterIo> BoardIrqRuntime<I> {
                     ServiceFailure { error : RuntimeError::Controller(error), report }
                 })?;
                 report.masked_sources = report.masked_sources.saturating_add(1);
-                match self.domain.dispatch(acknowledged) {
-                    Ok(disposition) => {
-                        report.handled_sources = report.handled_sources.saturating_add(1);
-                        match disposition {
-                            IrqDisposition::KeepMasked => {}
-                            IrqDisposition::Rearm(evidence) => {
-                                let expected = GlobalIrq::from_bank_local(bank, local)
-                                    .map_err(|error| ServiceFailure {
-                                        error : RuntimeError::Domain(error), report
-                                    })?;
-                                if evidence.irq() != expected {
-                                    return Err(ServiceFailure {
-                                        error : RuntimeError::DispositionMismatch,
-                                        report,
-                                    });
-                                }
-                                controller.enable(local).map_err(|error| ServiceFailure {
-                                    error : RuntimeError::Controller(error), report
-                                })?;
-                                report.rearmed_sources = report.rearmed_sources.saturating_add(1);
-                            }
-                        }
+                let active = match self.owners.begin(acknowledged) {
+                    Ok(active) => active,
+                    Err(failure) if failure.error == OwnerError::NotRegistered => {
+                        report.unhandled_sources = report.unhandled_sources.saturating_add(1);
+                        continue;
                     }
-                    Err(_unhandled) => {
-                        report.unhandled_sources = report.unhandled_sources.saturating_add(1)
+                    Err(failure) => return Err(ServiceFailure {
+                        error : RuntimeError::Owner(failure.error), report
+                    }),
+                };
+                let (active, disposition) = active.handle();
+                if let Err(failure) = self.owners.finish(active) {
+                    return Err(ServiceFailure { error : RuntimeError::Owner(failure.error),
+                                                report });
+                }
+                report.handled_sources = report.handled_sources.saturating_add(1);
+                match disposition {
+                    IrqDisposition::KeepMasked => {}
+                    IrqDisposition::Rearm(evidence) => {
+                        let expected = GlobalIrq::from_bank_local(bank, local)
+                            .map_err(|error| ServiceFailure {
+                                error : RuntimeError::Domain(error), report
+                            })?;
+                        if evidence.irq() != expected {
+                            return Err(ServiceFailure {
+                                error : RuntimeError::DispositionMismatch,
+                                report,
+                            });
+                        }
+                        controller.enable(local).map_err(|error| ServiceFailure {
+                            error : RuntimeError::Controller(error), report
+                        })?;
+                        report.rearmed_sources = report.rearmed_sources.saturating_add(1);
                     }
                 }
             }
@@ -283,56 +305,60 @@ impl<I : RegisterIo> BoardIrqRuntime<I> {
     }
 }
 
-impl<I : RegisterIo> DormantRuntime<I> {
+impl<I : RegisterIo, O> DormantRuntime<I, O> {
     pub fn configure(mut self,
                      binding : InterruptBinding,
                      route : Route,
-                     handler : IrqHandler)
-                     -> Result<ConfiguredRuntime<I>, TransitionFailure<Self>> {
+                     owner : O)
+                     -> Result<ConfiguredRuntime<I, O>, ConfigureFailure<Self, O>> {
         let irq = binding.global_irq();
-        if let Err(error) = self.runtime.register(irq, handler) {
-            return Err(TransitionFailure { error, state : self });
+        if let Err((error, owner)) = self.runtime.register(irq, owner) {
+            return Err(ConfigureFailure { error, state : self, owner });
         }
         let controller = match self.runtime.controllers[irq.bank()].as_mut() {
             Some(controller) => controller,
             None => {
-                let _ = self.runtime.domain.unregister(irq);
-                return Err(TransitionFailure { error : RuntimeError::MissingController,
-                                               state : self });
+                let owner = self.runtime.owners.unregister(irq).expect("registered owner missing");
+                return Err(ConfigureFailure { error : RuntimeError::MissingController,
+                                              state : self,
+                                              owner });
             }
         };
         if let Err(failure) = binding.arm(controller, route) {
-            let _ = self.runtime.domain.unregister(irq);
-            return Err(TransitionFailure { error : RuntimeError::Controller(failure.error),
-                                           state : self });
+            let owner = self.runtime.owners.unregister(irq).expect("registered owner missing");
+            return Err(ConfigureFailure { error : RuntimeError::Controller(failure.error),
+                                          state : self,
+                                          owner });
         }
         Ok(ConfiguredRuntime { runtime : self.runtime,
                                configured_sources : 1u64 << irq.raw() })
     }
 }
 
-impl<I : RegisterIo> ConfiguredRuntime<I> {
+impl<I : RegisterIo, O> ConfiguredRuntime<I, O> {
     pub fn configure(mut self,
                      binding : InterruptBinding,
                      route : Route,
-                     handler : IrqHandler)
-                     -> Result<Self, TransitionFailure<Self>> {
+                     owner : O)
+                     -> Result<Self, ConfigureFailure<Self, O>> {
         let irq = binding.global_irq();
-        if let Err(error) = self.runtime.register(irq, handler) {
-            return Err(TransitionFailure { error, state : self });
+        if let Err((error, owner)) = self.runtime.register(irq, owner) {
+            return Err(ConfigureFailure { error, state : self, owner });
         }
         let controller = match self.runtime.controllers[irq.bank()].as_mut() {
             Some(controller) => controller,
             None => {
-                let _ = self.runtime.domain.unregister(irq);
-                return Err(TransitionFailure { error : RuntimeError::MissingController,
-                                               state : self });
+                let owner = self.runtime.owners.unregister(irq).expect("registered owner missing");
+                return Err(ConfigureFailure { error : RuntimeError::MissingController,
+                                              state : self,
+                                              owner });
             }
         };
         if let Err(failure) = binding.arm(controller, route) {
-            let _ = self.runtime.domain.unregister(irq);
-            return Err(TransitionFailure { error : RuntimeError::Controller(failure.error),
-                                           state : self });
+            let owner = self.runtime.owners.unregister(irq).expect("registered owner missing");
+            return Err(ConfigureFailure { error : RuntimeError::Controller(failure.error),
+                                          state : self,
+                                          owner });
         }
         self.configured_sources |= 1u64 << irq.raw();
         Ok(self)
@@ -340,7 +366,7 @@ impl<I : RegisterIo> ConfiguredRuntime<I> {
 
     pub fn activate<A : CpuParentActivator>(self,
                                             activator : &mut A)
-                                            -> Result<LiveRuntime<I>, TransitionFailure<Self>> {
+                                            -> Result<LiveRuntime<I, O>, TransitionFailure<Self>> {
         if self.configured_sources == 0 {
             return Err(TransitionFailure { error : RuntimeError::NoConfiguredSources,
                                            state : self });
@@ -366,9 +392,9 @@ impl<I : RegisterIo> ConfiguredRuntime<I> {
     }
 }
 
-impl<I : RegisterIo> LiveRuntime<I> {
+impl<I : RegisterIo, O : IrqOwner> LiveRuntime<I, O> {
     pub fn configured_sources(&self) -> u64 { self.configured_sources }
-    pub fn into_runtime(self) -> BoardIrqRuntime<I> { self.runtime }
+    pub fn into_runtime(self) -> BoardIrqRuntime<I, O> { self.runtime }
 
     /// Service one snapshot. Sources remain masked after dispatch until a
     /// future device-ack disposition contract permits explicit re-enable.
@@ -386,8 +412,8 @@ impl<I : RegisterIo> LiveRuntime<I> {
 /// ENABLE_CLEAR on both controllers. Register behavior is
 /// `UNVERIFIED_ON_HARDWARE` until tested on a 2K1000LA board.
 #[cfg(target_arch = "loongarch64")]
-pub unsafe fn assemble_volatile(layout : RuntimeLayout)
-                                -> Result<BoardIrqRuntime<crate::liointc::VolatileMmio>,
+pub unsafe fn assemble_volatile<O>(layout : RuntimeLayout)
+                                -> Result<BoardIrqRuntime<crate::liointc::VolatileMmio, O>,
                                           RuntimeError> {
     BoardIrqRuntime::assemble(layout, |_bank, _controller| Ok(crate::liointc::VolatileMmio))
 }
@@ -434,23 +460,45 @@ mod tests {
 
     static VISITED : AtomicU8 = AtomicU8::new(0);
 
-    fn record(acknowledged : crate::irq_domain::AcknowledgedIrq) -> IrqDisposition {
-        VISITED.fetch_or(1 << acknowledged.irq().local(), Ordering::Relaxed);
-        IrqDisposition::KeepMasked
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum OwnerMode {
+        KeepMasked,
+        Rearm,
+        MismatchedRearm,
     }
 
-    fn rearm(acknowledged : crate::irq_domain::AcknowledgedIrq) -> IrqDisposition {
-        IrqDisposition::Rearm(crate::irq_domain::DeviceAckedIrq::after_device_clear(
-            acknowledged.irq()))
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct TestOwner {
+        mode : OwnerMode,
+        handled : u8,
     }
 
-    fn mismatched_rearm(_acknowledged : crate::irq_domain::AcknowledgedIrq)
-                        -> IrqDisposition {
-        IrqDisposition::Rearm(crate::irq_domain::DeviceAckedIrq::after_device_clear(
-            GlobalIrq::from_bank_local(0, 1).unwrap()))
+    impl TestOwner {
+        const fn keep() -> Self { Self { mode : OwnerMode::KeepMasked, handled : 0 } }
+        const fn rearm() -> Self { Self { mode : OwnerMode::Rearm, handled : 0 } }
+        const fn mismatched() -> Self {
+            Self { mode : OwnerMode::MismatchedRearm, handled : 0 }
+        }
     }
 
-    fn runtime() -> BoardIrqRuntime<ModelIo> {
+    impl IrqOwner for TestOwner {
+        fn handle(&mut self,
+                  acknowledged : crate::irq_domain::AcknowledgedIrq)
+                  -> IrqDisposition {
+            self.handled += 1;
+            VISITED.fetch_or(1 << acknowledged.irq().local(), Ordering::Relaxed);
+            match self.mode {
+                OwnerMode::KeepMasked => IrqDisposition::KeepMasked,
+                OwnerMode::Rearm => IrqDisposition::Rearm(
+                    crate::irq_domain::DeviceAckedIrq::after_device_clear(acknowledged.irq())),
+                OwnerMode::MismatchedRearm => IrqDisposition::Rearm(
+                    crate::irq_domain::DeviceAckedIrq::after_device_clear(
+                        GlobalIrq::from_bank_local(0, 1).unwrap())),
+            }
+        }
+    }
+
+    fn runtime() -> BoardIrqRuntime<ModelIo, TestOwner> {
         let bank0 = LioIntc::new(ModelIo::default()
                                      .with(ISR0, 1 << 2)
                                      .with(BASE0 + ENABLE_STATUS, 1 << 2),
@@ -517,10 +565,11 @@ mod tests {
         let layout = RuntimeLayout::compile(&board(vec![description(0x1000, 2),
                                                          description(0x1040, 3)])).unwrap();
         let mut seen = Vec::new();
-        let runtime = BoardIrqRuntime::assemble(layout, |bank, controller| {
+        let runtime : BoardIrqRuntime<ModelIo, TestOwner> =
+            BoardIrqRuntime::assemble(layout, |bank, controller| {
             seen.push((bank, controller.main_base));
             Ok(ModelIo::default())
-        }).unwrap();
+            }).unwrap();
         assert_eq!(seen, [(0, 0x1000), (1, 0x1040)]);
         let mut controllers = runtime.into_controllers();
         assert_eq!(controllers[0].take().unwrap().into_inner().writes,
@@ -534,10 +583,11 @@ mod tests {
         let layout = RuntimeLayout::compile(&board(vec![description(0x1000, 2),
                                                          description(0x1040, 3)])).unwrap();
         let mut calls = 0;
-        let result = BoardIrqRuntime::assemble(layout, |bank, _controller| {
+        let result : Result<BoardIrqRuntime<ModelIo, TestOwner>, RuntimeError> =
+            BoardIrqRuntime::assemble(layout, |bank, _controller| {
             calls += 1;
             if bank == 1 { Err(DriverError::IoError) } else { Ok(ModelIo::default()) }
-        });
+            });
         assert!(matches!(result, Err(RuntimeError::Controller(DriverError::IoError))));
         assert_eq!(calls, 2);
     }
@@ -571,23 +621,25 @@ mod tests {
     fn typestate_retries_parent_activation_and_rejects_duplicate_source() {
         let topology = board(vec![description(0x1000, 2), description(0x1040, 3)]);
         let layout = RuntimeLayout::compile(&topology).unwrap();
-        let runtime = BoardIrqRuntime::assemble(layout,
-                                                |_bank, _controller| Ok(ModelIo::default()))
+        let runtime : BoardIrqRuntime<ModelIo, TestOwner> =
+            BoardIrqRuntime::assemble(layout,
+                                      |_bank, _controller| Ok(ModelIo::default()))
             .unwrap();
         let binding = device_binding(&topology, 0x1000, 6);
         let configured = runtime.into_dormant()
                                 .configure(binding,
                                            Route { core_mask : 1, parent_line : 0 },
-                                           record)
+                                           TestOwner::keep())
                                 .unwrap_or_else(|_| panic!("initial configure failed"));
         let duplicate = match configured.configure(binding,
                                                     Route { core_mask : 1, parent_line : 0 },
-                                                    record) {
+                                                    TestOwner::keep()) {
             Ok(_) => panic!("duplicate source configured"),
             Err(failure) => failure,
         };
         assert_eq!(duplicate.error,
-                   RuntimeError::Domain(DomainError::AlreadyRegistered));
+                   RuntimeError::Owner(OwnerError::AlreadyRegistered));
+        assert_eq!(duplicate.owner, TestOwner::keep());
         let mut activator = Activator { fail : true, calls : Vec::new() };
         let failed = match duplicate.state.activate(&mut activator) {
             Ok(_) => panic!("failed activator produced live runtime"),
@@ -608,8 +660,8 @@ mod tests {
     fn services_multiple_parent_lines_and_keeps_unhandled_masked() {
         VISITED.store(0, Ordering::Relaxed);
         let mut runtime = runtime();
-        runtime.register(GlobalIrq::from_bank_local(0, 2).unwrap(), record).unwrap();
-        runtime.register(GlobalIrq::from_bank_local(1, 7).unwrap(), record).unwrap();
+        runtime.register(GlobalIrq::from_bank_local(0, 2).unwrap(), TestOwner::keep()).unwrap();
+        runtime.register(GlobalIrq::from_bank_local(1, 7).unwrap(), TestOwner::keep()).unwrap();
         let report = runtime.service((1 << 2) | (1 << 3), 0).unwrap();
         assert_eq!(report, ServiceReport { parent_lines : 2,
                                            masked_sources : 3,
@@ -639,17 +691,26 @@ mod tests {
     #[test]
     fn rearm_requires_matching_device_ack_evidence() {
         let mut matching_runtime = runtime();
-        matching_runtime.register(GlobalIrq::from_bank_local(0, 2).unwrap(), rearm).unwrap();
+        matching_runtime.register(GlobalIrq::from_bank_local(0, 2).unwrap(),
+                                  TestOwner::rearm()).unwrap();
         let report = matching_runtime.service(1 << 2, 0).unwrap();
         assert_eq!(report.rearmed_sources, 1);
+        let report = matching_runtime.service(1 << 2, 0).unwrap();
+        assert_eq!(report.rearmed_sources, 1);
+        assert_eq!(matching_runtime.owner(GlobalIrq::from_bank_local(0, 2).unwrap())
+                                   .unwrap()
+                                   .handled,
+                   2);
         let mut controllers = matching_runtime.into_controllers();
         assert_eq!(controllers[0].take().unwrap().into_inner().writes,
                    [(BASE0 + ENABLE_CLEAR, 1 << 2),
+                    (BASE0 + 0x28, 1 << 2),
+                    (BASE0 + ENABLE_CLEAR, 1 << 2),
                     (BASE0 + 0x28, 1 << 2)]);
 
         let mut mismatched_runtime = runtime();
         mismatched_runtime.register(GlobalIrq::from_bank_local(0, 2).unwrap(),
-                                    mismatched_rearm).unwrap();
+                                    TestOwner::mismatched()).unwrap();
         let failure = mismatched_runtime.service(1 << 2, 0).unwrap_err();
         assert_eq!(failure.error, RuntimeError::DispositionMismatch);
         assert_eq!(failure.report.handled_sources, 1);
