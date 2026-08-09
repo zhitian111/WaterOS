@@ -48,7 +48,7 @@ pub struct MmcDescription {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MmcClockProvider {
     /// Topology evidence only. Register semantics are UNVERIFIED_ON_HARDWARE.
-    Loongson2k { mmio : MmioRegion },
+    Loongson2k { mmio : MmioRegion, reference_hz : u32 },
     Unsupported { phandle : u32 },
 }
 
@@ -388,11 +388,29 @@ fn mmc_clock_provider(fdt : &fdt::Fdt<'_>,
     if !has_compatible(provider, "loongson,ls2k-clk") {
         return Ok(MmcClockProvider::Unsupported { phandle });
     }
-    let regs = regions(provider)?;
-    if regs.len() != 1 || regs[0].base == 0 || regs[0].size < 4 {
+    if clock.specifier.args.as_slice() != [12] {
         return Err(DriverError::InvalidDtb);
     }
-    Ok(MmcClockProvider::Loongson2k { mmio : regs[0] })
+    let regs = regions(provider)?;
+    if regs.len() != 1 || regs[0].base == 0 || regs[0].size < 0x58 {
+        return Err(DriverError::InvalidDtb);
+    }
+    if string_list(provider, "clock-names")? != ["ref_100m"] {
+        return Err(DriverError::InvalidDtb);
+    }
+    let references = resource_specifiers(fdt, provider, "clocks", "#clock-cells")?;
+    if references.len() != 1 || !references[0].args.is_empty() {
+        return Err(DriverError::InvalidDtb);
+    }
+    let reference = fdt.find_phandle(references[0].provider_phandle)
+                       .ok_or(DriverError::InvalidDtb)?;
+    if !has_compatible(reference, "fixed-clock") {
+        return Err(DriverError::InvalidDtb);
+    }
+    let reference_hz = property_u32(reference, "clock-frequency")
+        .filter(|rate| *rate != 0)
+        .ok_or(DriverError::InvalidDtb)?;
+    Ok(MmcClockProvider::Loongson2k { mmio : regs[0], reference_hz })
 }
 
 fn boolean_property(node : fdt::node::FdtNode<'_, '_>, name : &str) -> DriverResult<bool> {

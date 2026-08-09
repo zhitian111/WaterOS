@@ -2896,3 +2896,64 @@ Live 输出单行固定字段：slot state、configured/parent masks、service c
 ### 提交
 
 - `[feat] model 2K1000 MMC prerequisites`
+
+## 2026-08-10：批次 63——LS2K1000 APB clock read-only snapshot model
+
+### 任务与设计
+
+1. 核对 Linux 主线 LS2K clock driver、DT binding、clock ID header 和 MMC binding。
+2. 只实现上游明确描述的 2K1000 MMC parent clock 链，不推测不存在的 MMC gate。
+3. 使用可 mock `RegisterIo` 固定读取 DC PLL、GMAC divider、APB scale，保存 raw evidence
+   并计算各级频率。
+4. target-only volatile backend 只读且不接入 machine init；snapshot 不解除 activation blocker。
+5. 修正 fixture 中无语义的 clock ID 0，并补齐 binding 要求的 100 MHz reference parent。
+
+上游证明 2K1000 MMC 消费 `LOONGSON2_APB_CLK = 12`。其父链为 100 MHz reference →
+DC PLL (`0x20`) → GMAC divider (`0x28`) → APB scale (`0x50`)。2K1000 clock table 没有
+MMC/eMMC 专用 gate；ID 31 的 eMMC clock 属于其他 Loongson-2 变体，不能套用于 2K1000。
+
+### 完成内容
+
+- [x] 新增 `clock` 模块及 read-only `ClockSnapshot`，同时返回三个 raw register 和四级 rate。
+- [x] DC PLL 按 multiplier `[41:32]`、divisor `[31:26]` 计算并拒绝零字段。
+- [x] GMAC divider 按 `[27:22]` 及 Linux one-based/allow-zero 语义计算。
+- [x] APB scale 按 `[22:20] + 1`、parent × scale / 8 计算。
+- [x] 固定读取顺序和宽度：`0x20/64`、`0x28/32`、`0x50/64`。
+- [x] `snapshot_provider()` 从 topology provider 获取 reference rate；unsupported provider 不读取。
+- [x] target-only `VolatileRegisters` 检查 base、8-byte alignment、0x58 window 和每次访问范围。
+- [x] topology 要求 MMC clock ID 12、单个 `ref_100m` parent、fixed-clock 和非零 frequency。
+- [x] fixture 新增 100 MHz fixed-clock，APBDMA/MMC consumer 改用 ID 12。
+- [x] 新增 `docs/references/loongson2-clock-upstream.md`，记录来源、SPDX 与实现边界。
+- [x] 没有 clock 写接口、enable/disable、PLL lock 轮询或 machine-init 自动 snapshot。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 79 项全部通过；4 项 clock 测试覆盖 rate chain、固定读取顺序、
+  allow-zero bypass、三处 IO failure、零 PLL 字段、topology reference 和 unsupported fail-closed。
+- topology fixture 端到端断言 clock ID 12、100 MHz reference 和 0x58 provider window。
+- fixture 新增错误 MMC clock ID 与缺 reference parent 两个拒绝场景；既有短 clock window、
+  截断 DMA、非法 regulator flag 等场景继续通过。
+- `cargo check --no-default-features --features loongson2k1000la,final_online,heap-tlsf
+  --target loongarch64-unknown-none` 通过，覆盖 volatile backend。
+- `make kernel-la`、`git diff --check` 通过；仅有仓库既有 warning。
+- 所有 DTB 仍在 `mktemp` 中生成并自动删除；没有创建镜像或执行硬件访问。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：64-bit volatile read、固件寄存器初值、PLL lock/stability、
+  parent ownership 与测得输出频率均未在 2K1000 板上确认。
+- [ ] snapshot 是瞬时三次读取，不保证跨寄存器原子一致；clock owner 并发改频时可能混合世代。
+- [ ] WaterOS 尚无通用 clock framework，本模块只服务 2K1000 诊断与后续 MMC bring-up。
+- [ ] 本批没有 clock enable 写，因为 2K1000 上游表没有 MMC 专用 gate，APB 是否由固件持续
+  开启必须通过真实 DT/固件和板上观测确认。
+- [ ] `ClockControlUnavailable` blocker 保持不变；snapshot 成功也不会自动激活 MMC。
+- [ ] 下一批应实现 LS2K GPIO card-detect 的只读模型：解析 provider MMIO 与 active-low flags，
+  用 mock 验证方向/输入采样和极性；volatile snapshot 不接入自动启动。
+
+### 参考与许可证
+
+- `docs/references/loongson2-clock-upstream.md`
+
+### 提交
+
+- `[feat] add LS2K1000 clock diagnostics`

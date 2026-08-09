@@ -357,6 +357,7 @@ mod tests {
             }],
             clock_provider : MmcClockProvider::Loongson2k {
                 mmio : MmioRegion { base : 0x1fe0_0480, size : 0x58 },
+                reference_hz : 100_000_000,
             },
             dma : None,
             bus_width : 4,

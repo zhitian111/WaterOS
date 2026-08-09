@@ -51,7 +51,7 @@ fn main() {
                 .expect("resolve APBDMA interrupt provider");
             assert_eq!(dma_irq.global_irq().bank(), 1);
             assert_eq!(dma_irq.global_irq().local(), 13);
-            assert_eq!(dma.clock.specifier.args, &[0]);
+            assert_eq!(dma.clock.specifier.args, &[12]);
             assert_eq!(dma.channel_cells, 1);
             let intc = &topology.interrupt_controllers[0];
             assert_eq!(intc.main_mmio.base, 0x1FE0_1400);
@@ -98,10 +98,11 @@ fn main() {
             assert_eq!(mmc.clocks.len(), 1);
             assert_eq!(mmc.clocks[0].specifier
                                     .args,
-                       &[0]);
+                       &[12]);
             assert_eq!(mmc.clock_provider,
                        MmcClockProvider::Loongson2k {
                            mmio : api_v0::MmioRegion { base : 0x1FE0_0480, size : 0x58 },
+                           reference_hz : 100_000_000,
                        });
             assert_eq!(mmc.dma
                           .as_ref()

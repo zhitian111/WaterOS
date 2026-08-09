@@ -26,7 +26,7 @@ sed 's/cd-gpios = <&gpio0 22 1>;/non-removable;/' \
     > "$tmp_dir/non-removable.dts"
 dtc -I dts -O dtb -o "$tmp_dir/non-removable.dtb" \
     "$tmp_dir/non-removable.dts"
-sed '/clocks = <&clk 0>;/ { x; /apbdma/ { x; d; }; x; }; /apbdma1:/ { h; }' \
+sed '/clocks = <&clk 12>;/ { x; /apbdma/ { x; d; }; x; }; /apbdma1:/ { h; }' \
     "$crate_dir/tests/fixtures/loongson2k1000la-topology.dts" \
     > "$tmp_dir/missing-dma-clock.dts"
 dtc -I dts -O dtb -o "$tmp_dir/missing-dma-clock.dtb" \
@@ -51,6 +51,16 @@ sed '/regulator-vmmc/a\        regulator-always-on = <1>;' \
     > "$tmp_dir/malformed-regulator-flag.dts"
 dtc -I dts -O dtb -o "$tmp_dir/malformed-regulator-flag.dtb" \
     "$tmp_dir/malformed-regulator-flag.dts"
+sed '/mmc@1fe2c000/,/vmmc-supply/ s/clocks = <&clk 12>/clocks = <\&clk 0>/' \
+    "$crate_dir/tests/fixtures/loongson2k1000la-topology.dts" \
+    > "$tmp_dir/wrong-mmc-clock-id.dts"
+dtc -I dts -O dtb -o "$tmp_dir/wrong-mmc-clock-id.dtb" \
+    "$tmp_dir/wrong-mmc-clock-id.dts"
+sed '/clock-controller@1fe00480/,/clock-names/ { /clocks = <&ref_100m>;/d; }' \
+    "$crate_dir/tests/fixtures/loongson2k1000la-topology.dts" \
+    > "$tmp_dir/missing-clock-reference.dts"
+dtc -I dts -O dtb -o "$tmp_dir/missing-clock-reference.dtb" \
+    "$tmp_dir/missing-clock-reference.dts"
 
 cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
     --example verify_topology -- valid "$tmp_dir/valid.dtb"
@@ -74,3 +84,7 @@ cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
     --example verify_topology -- invalid "$tmp_dir/short-clock-mmio.dtb"
 cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
     --example verify_topology -- invalid "$tmp_dir/malformed-regulator-flag.dtb"
+cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
+    --example verify_topology -- invalid "$tmp_dir/wrong-mmc-clock-id.dtb"
+cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
+    --example verify_topology -- invalid "$tmp_dir/missing-clock-reference.dtb"

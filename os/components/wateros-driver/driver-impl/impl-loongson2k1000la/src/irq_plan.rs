@@ -278,6 +278,7 @@ mod tests {
                 clocks : vec![resource()],
                 clock_provider : MmcClockProvider::Loongson2k {
                     mmio : MmioRegion { base : 0x5000, size : 0x58 },
+                    reference_hz : 100_000_000,
                 },
                 dma : None, bus_width : 4,
                 card_detect : CardDetect::NonRemovable,
