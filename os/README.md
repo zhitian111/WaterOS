@@ -134,6 +134,31 @@ make run ARCH=rv PROFILE=pre \
 虽然会挂图形设备，内核不会绑定；启用 `gui` 会默认令 `GRAPHICS=1`，仍可显式用
 `GRAPHICS=0` 覆盖。
 
+### 用户态 Nano-X
+
+Nano-X 与上面的内核桌面是两种互斥的 framebuffer 所有者。先在仓库根目录构建
+`nanox` 用户镜像，再用 `user-graphics` 暴露 Linux fbdev/evdev：
+
+```bash
+make -C user image ARCH=rv PROFILE=nanox
+
+cd os
+make shell ARCH=rv PROFILE=pre \
+  SDCARD=../user/build/images/wateros-rv-nanox.ext4 \
+  EXTRA_FEATURES=user-graphics
+```
+
+QEMU 会同时打开图形窗口与串口；在串口 shell 执行：
+
+```sh
+ls -l /dev/fb0 /dev/input/keyboard0 /dev/input/pointer0
+start-nanox
+```
+
+不要同时传 `EXTRA_FEATURES=gui,user-graphics`，编译器会明确拒绝两个绘制方竞争
+framebuffer。Nano-X 首期用户包只支持 RISC-V；LoongArch 已完成内核接口和编译检查。
+完整结构和排错见 [`Nano-X 支持文档`](../docs/kasss's_todo_list/nanox.md)。
+
 ## 5. 磁盘 snapshot
 
 统一入口默认 `SNAPSHOT=1`。QEMU 会把 guest 的磁盘写入保存在内存/
@@ -252,7 +277,7 @@ make gdb                      # 交互式调试
 | `LA_FINAL_IMAGE` | `./sdcard-la.img` | LoongArch final 默认镜像 |
 | `SDCARD` | 由上述四项选择 | 覆盖本次运行的镜像路径 |
 | `EXTRA_FEATURES` | 空 | 逗号分隔的额外根 crate feature |
-| `GRAPHICS` | `EXTRA_FEATURES` 含 `gui`/`display-demo` 时为 `1`，否则 `0` | 是否挂载 QEMU VirtIO GPU、键盘、平板并启用图形输出 |
+| `GRAPHICS` | `EXTRA_FEATURES` 含 `gui`/`display-demo`/`user-graphics` 时为 `1`，否则 `0` | 是否挂载 QEMU VirtIO GPU、键盘、平板并启用图形输出 |
 | `GRAPHICS_BACKEND` | `auto` | QEMU display backend，`auto` 会按宿主/QEMU 支持自动选择，也可显式指定 `gtk`、`sdl`、`cocoa` 或 `none` |
 
 镜像名称只在 Makefile 的四个 `*_IMAGE` 变量中定义，QEMU 启动脚本不会
@@ -278,3 +303,5 @@ make run ARCH=rv PROFILE=pre RV_PRE_IMAGE=/data/wateros-pre.img
 - 退出 QEMU：按 `Ctrl-A` 后按 `x`。Guest 内的 Ctrl-C 仍用于中断前台进程。
 - 图形窗口未出现：确认使用了 `EXTRA_FEATURES=gui`，并检查宿主是否安装了
   对应的 QEMU 显示后端；服务器环境可先用 `GRAPHICS_BACKEND=none` 验证驱动。
+- Nano-X 黑屏或无输入：确认使用 `PROFILE=nanox` 用户镜像和
+  `EXTRA_FEATURES=user-graphics`，检查三个设备节点后直接执行 `nano-X` 查看错误。

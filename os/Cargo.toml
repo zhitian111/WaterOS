@@ -65,6 +65,9 @@
     gui = [ "dep:gui", "driver/display", "driver/input" ]
     # 兼容原启动命令，现转发到完整 wateros-gui 组件。
     display-demo = [ "gui" ]
+    # 将 VirtIO framebuffer/input 以 Linux fbdev/evdev ABI 暴露给用户态。
+    # 本 feature 不启动内核 GUI，与 `gui`/`display-demo` 互斥。
+    user-graphics = [ "driver/display", "driver/input", "vfs/user-graphics" ]
     # 版本化内存诊断区和无锁事件环；普通构建中 debug 记录接口为空操作。
     gdb-debug = [ "debug/enabled", "stall-debug" ]
     # 只供 GDB 诊断集成测试使用；通过导出变量确定性注入 loop/ABBA/timer/stall。

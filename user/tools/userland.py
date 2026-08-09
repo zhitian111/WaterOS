@@ -456,7 +456,9 @@ def default_jobs() -> int:
 
 def add_build_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--arch", choices=("rv", "la"), required=True)
-    parser.add_argument("--profile", choices=("minimal", "operator"), required=True)
+    profiles = tuple(sorted(load_toml(CONFIG_ROOT / "profiles.toml")
+                            .get("profiles", {})))
+    parser.add_argument("--profile", choices=profiles, required=True)
     parser.add_argument("--jobs", type=int, default=default_jobs())
 
 

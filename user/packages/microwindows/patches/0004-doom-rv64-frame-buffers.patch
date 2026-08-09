@@ -1,0 +1,99 @@
+diff --git a/src/contrib/doom/i_video.c b/src/contrib/doom/i_video.c
+index ea341d1..48ef48e 100644
+--- a/src/contrib/doom/i_video.c
++++ b/src/contrib/doom/i_video.c
+@@ -43,6 +43,11 @@ boolean		grabMouse;
+ // According to Dave Taylor, it still is a bonehead thing to do ....
+ static int	multiply=1;
+ 
++/* Upstream allocates both converted frames with alloca() on every redraw.
++ * A 3x ARGB frame exhausts a normal RV64 userspace stack, so keep reusable
++ * heap buffers instead.  The scale is fixed before the first frame. */
++static unsigned char *scaled_output;
++static uint32_t *argb_output;
+ 
+ //
+ //  Translates the key 
+@@ -105,6 +109,10 @@ int
+ 
+ void I_ShutdownGraphics(void)
+ {
++  free(argb_output);
++  argb_output = NULL;
++  free(scaled_output);
++  scaled_output = NULL;
+   GrClose();
+ }
+ 
+@@ -233,7 +241,11 @@ void I_FinishUpdate (void)
+ 	// allocate temp buffer for scaling
+ 	int outpitch = SCREENWIDTH * multiply;
+ 	int outsize = SCREENHEIGHT * multiply * outpitch;
+-	unsigned char *output = alloca(outsize * sizeof(unsigned char *));
++	if (!scaled_output) {
++	    scaled_output = malloc(outsize);
++	    if (!scaled_output)
++		I_Error("Couldn't allocate scaled screen memory");
++	}
+ 
+     // scales the screen size before blitting it
+     if (multiply == 1)
+@@ -244,7 +256,7 @@ void I_FinishUpdate (void)
+ 	int y;
+ 
+ 	ilineptr = (unsigned char *) screens[0];
+-	olineptr = (unsigned char *) output;
++	olineptr = scaled_output;
+ 
+ 	y = SCREENHEIGHT;
+ 	while (y--)
+@@ -269,7 +281,7 @@ void I_FinishUpdate (void)
+ 
+ 	ilineptr = (unsigned int *) (screens[0]);
+ 	for (i=0 ; i<2 ; i++) {
+-	    olineptrs[i] = (unsigned int *)&((unsigned char *)output)[i*outpitch];
++	    olineptrs[i] = (unsigned int *)&scaled_output[i*outpitch];
+         }
+ 
+ 	y = SCREENHEIGHT;
+@@ -317,7 +329,7 @@ void I_FinishUpdate (void)
+ 	ilineptr = (unsigned int *) (screens[0]);
+ 	for (i=0 ; i<3 ; i++) {
+ 	    olineptrs[i] = 
+-		(unsigned int *)&((unsigned char *)output)[i*outpitch];
++		(unsigned int *)&scaled_output[i*outpitch];
+         }
+ 
+ 	y = SCREENHEIGHT;
+@@ -363,11 +375,16 @@ void I_FinishUpdate (void)
+ #if MWPIXEL_FORMAT == MWPF_TRUECOLORARGB
+ 	/* convert palette screen to 32-bit ARGB and display*/
+ 	int size = SCREENHEIGHT * multiply * SCREENWIDTH * multiply;
+-	uint32_t *argb, *argb_start;
+-	argb = argb_start = alloca(size * sizeof(uint32_t));
++	uint32_t *argb;
++	if (!argb_output) {
++	    argb_output = malloc(size * sizeof(*argb_output));
++	    if (!argb_output)
++		I_Error("Couldn't allocate ARGB screen memory");
++	}
++	argb = argb_output;
+ 
+ #define CONVPAL(c)  RGB2PIXEL8888(pal.palette[c].r, pal.palette[c].g, pal.palette[c].b)
+-	unsigned char *input = output;
++	unsigned char *input = scaled_output;
+ 	for (i=0; i<size; i++)
+ 	{
+ 		*argb++ = CONVPAL(*input);
+@@ -375,9 +390,9 @@ void I_FinishUpdate (void)
+ 		input++;
+ 	}
+ 	GrArea(win, gc, 0, 0, SCREENWIDTH*multiply, SCREENHEIGHT*multiply,
+-		argb_start, MWPF_TRUECOLORARGB);
++		argb_output, MWPF_TRUECOLORARGB);
+ #elif MWPIXEL_FORMAT == MWPF_PALETTE
+-    GrArea(win, gc, 0, 0, SCREENWIDTH*multiply, SCREENHEIGHT*multiply, output, MWPF_PALETTE);
++    GrArea(win, gc, 0, 0, SCREENWIDTH*multiply, SCREENHEIGHT*multiply, scaled_output, MWPF_PALETTE);
+ #else
+ #error MWPIXEL_FORMAT not supported.
+ #endif

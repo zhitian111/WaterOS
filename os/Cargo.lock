@@ -1802,6 +1802,8 @@ dependencies = [
  "wateros-base-config",
  "wateros-driver-api-v0",
  "wateros-driver-character-api-v0",
+ "wateros-driver-display-api-v0",
+ "wateros-driver-input-api-v0",
  "wateros-ipc",
  "wateros-platform-arch",
  "wateros-runtime-console",

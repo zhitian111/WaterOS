@@ -1,0 +1,13 @@
+diff --git a/src/demos/nanox/nxlaunch.c b/src/demos/nanox/nxlaunch.c
+index 8335f6f..5c9d725 100644
+--- a/src/demos/nanox/nxlaunch.c
++++ b/src/demos/nanox/nxlaunch.c
+@@ -68,7 +68,7 @@
+ #define WINDOW_BACKGROUND_IMAGE	"bin/nxlaunch.ppm"
+ #endif
+ 
+-#define CONFIG	"bin/nxlaunch.cnf"	/* config file */
++#define CONFIG	"/etc/wateros/nxlaunch.cnf"	/* WaterOS system config */
+ 
+ /* The default screen saver timeout */
+ #define SCREENSAVER_TIMEOUT	5

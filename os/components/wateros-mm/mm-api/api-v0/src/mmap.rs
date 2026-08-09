@@ -2,7 +2,7 @@
 
 extern crate alloc;
 
-use alloc::boxed::Box;
+use alloc::{boxed::Box, sync::Arc};
 
 use crate::addr::{PhysPageNum, VirtAddr};
 use crate::address_space::AddressSpaceOps;
@@ -18,6 +18,24 @@ pub enum MmapKind {
     Anonymous,
     /// 文件映射占位：供后续 VFS/文件后备填充。
     File { fd : usize, offset : usize },
+    /// 外部设备物理页映射；页的所有权不属于地址空间。
+    Device { offset : usize },
+}
+
+/// 设备映射生命周期令牌。
+///
+/// MM 层不依赖具体驱动；VMA 持有该对象即可防止底层 DMA
+/// 缓冲在用户映射存活期间被释放。
+pub trait DeviceMappingLease: Send + Sync {}
+
+impl<T : Send + Sync + ?Sized> DeviceMappingLease for T {}
+
+/// 一段物理连续、不由通用帧分配器回收的设备内存。
+#[derive(Clone)]
+pub struct DeviceMapping {
+    pub phys_start : PhysPageNum,
+    pub len : usize,
+    pub lease : Arc<dyn DeviceMappingLease>,
 }
 
 /// mmap 请求结构（从 syscall/ABI 层组装）。
@@ -87,6 +105,17 @@ pub trait MmapOps: AddressSpaceOps {
                          file_size : usize,
                          loader : Box<dyn DemandPageLoader>)
                          -> MmResult<VirtAddr>
+        where A : PhysicalFrameAllocator<FrameId = PhysPageNum>;
+
+    /// 将外部设备页 eager 映射到用户空间。
+    ///
+    /// 实现必须保留 `mapping.lease`，且解除映射时只删除 PTE，
+    /// 不得把 `phys_start` 对应物理页交给通用帧分配器。
+    fn mmap_device<A>(&mut self,
+                      allocator : &mut A,
+                      req : MmapRequest,
+                      mapping : DeviceMapping)
+                      -> MmResult<VirtAddr>
         where A : PhysicalFrameAllocator<FrameId = PhysPageNum>;
 
     /// 处理用户页故障。返回 `Ok(true)` 表示已装入/修复该页，可重试用户访问。

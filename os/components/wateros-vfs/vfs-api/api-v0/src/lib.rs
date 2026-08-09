@@ -28,8 +28,10 @@ pub use fd::{
     VfsFd, VfsFdSession, VFS_FIRST_DYNAMIC_FD, VFS_STDERR_FD, VFS_STDIN_FD, VFS_STDOUT_FD,
 };
 pub use handle::{
-    VfsCopyProgress, VfsFileHandle, VfsIoHandle, VfsOpenDescriptionState, VfsOpenFlags,
-    VfsOpenOps, VfsPreparedRead, VfsReadFinish, VfsReadLease, VfsReadReservation, VfsSeekWhence,
+    VfsCopyProgress, VfsDeviceMapping, VfsDeviceMappingLease, VfsFileHandle,
+    VfsFramebufferInfo, VfsInputDeviceInfo, VfsIoHandle, VfsOpenDescriptionState, VfsOpenFlags,
+    VfsOpenOps, VfsPreparedRead, VfsReadFinish, VfsReadLease, VfsReadReservation,
+    VfsSeekWhence, VfsSpecialDeviceInfo,
 };
 pub use kind::{VfsAccessMode, VfsCapability, VfsFsKind};
 pub use meta::{VfsDirEntry, VfsMetadata, VfsNodeType};

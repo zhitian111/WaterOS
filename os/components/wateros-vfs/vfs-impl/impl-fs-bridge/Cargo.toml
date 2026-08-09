@@ -26,4 +26,5 @@
         "dep:impl_fd_session",
         "dep:impl_page_cache",
     ]
+    user-graphics = [ "impl_fd_session/user-graphics" ]
     default = [ "api-v0", "bridge-fs-api" ]

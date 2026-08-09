@@ -6,6 +6,8 @@
 compile_error!("features `pre` and `final_online` are mutually exclusive");
 #[cfg(not(any(feature = "pre", feature = "final_online")))]
 compile_error!("select one competition stage feature: `pre` or `final_online`");
+#[cfg(all(feature = "user-graphics", feature = "gui"))]
+compile_error!("features `user-graphics` and `gui`/`display-demo` are mutually exclusive");
 
 extern crate alloc;
 
@@ -113,6 +115,14 @@ fn bringup_driver_and_user() {
     match driver::machine().init_after_boot() {
         Err(ref err) => warn!("driver init failed: {:?}", err),
         Ok(()) => {
+            #[cfg(feature = "user-graphics")]
+            {
+                let has_input = vfs::initialize_user_graphics_devices();
+                if has_input {
+                    task::spawn_kernel_task(vfs::user_graphics_input_worker, 0);
+                }
+                warn!("[user-graphics] fbdev/evdev ready input_worker={}", has_input);
+            }
             #[cfg(feature = "gui")]
             match (|| -> gui::GuiResult<()> {
                 gui::initialize()?;

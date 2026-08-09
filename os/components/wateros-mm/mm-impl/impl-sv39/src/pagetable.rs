@@ -14,12 +14,12 @@
 
 extern crate alloc;
 
-use alloc::{boxed::Box, vec::Vec};
+use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
 use api_v0::addr::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum, PAGE_SIZE};
 use api_v0::address_space::AddressSpaceOps;
 use api_v0::error::{MmError, MmResult};
-use api_v0::mmap::{DemandPageLoader, PageFaultAccess};
+use api_v0::mmap::{DemandPageLoader, DeviceMappingLease, PageFaultAccess};
 use api_v0::perm::PagePerm;
 
 use frame_alloctor::{frame_alloc_result, frame_dealloc_result, frame_inc_ref, frame_ref_count};
@@ -235,6 +235,8 @@ pub struct Sv39AddressSpace {
     pub(crate) lazy_file_vmas : Vec<LazyFileVma>,
     pub(crate) shared_anon_vmas : Vec<SharedAnonVma>,
     pub(crate) shared_file_vmas : Vec<SharedFileVma>,
+    /// 不属于通用帧分配器的外部设备映射。
+    pub(crate) device_vmas : Vec<DeviceVma>,
 }
 
 // The address space is accessed through MultiprocessorSafeCell.  The lock
@@ -286,6 +288,25 @@ pub(crate) struct SharedFileVma {
     pub loader : Box<dyn DemandPageLoader>,
 }
 
+#[derive(Clone)]
+pub(crate) struct DeviceVma {
+    pub start : VirtAddr,
+    pub end : VirtAddr,
+    pub phys_start : PhysPageNum,
+    pub perm : PagePerm,
+    pub lease : Arc<dyn DeviceMappingLease>,
+}
+
+impl DeviceVma {
+    pub(crate) fn contains_page(&self, page : VirtAddr) -> bool {
+        page.0 >= self.start.0 && page.0 < self.end.0
+    }
+
+    pub(crate) fn overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
+        start.0 < self.end.0 && end.0 > self.start.0
+    }
+}
+
 impl SharedFileVma {
     fn duplicate(&self) -> MmResult<Self> {
         Ok(Self { start : self.start,
@@ -332,7 +353,8 @@ impl Sv39AddressSpace {
                   user_stack_top : VirtAddr(0),
                   lazy_file_vmas : Vec::new(),
                   shared_anon_vmas : Vec::new(),
-                  shared_file_vmas : Vec::new() })
+                  shared_file_vmas : Vec::new(),
+                  device_vmas : Vec::new() })
     }
 
     /// 创建内核地址空间；ASID 0 不参与用户编号复用。
@@ -350,7 +372,8 @@ impl Sv39AddressSpace {
                   user_stack_top : VirtAddr(0),
                   lazy_file_vmas : Vec::new(),
                   shared_anon_vmas : Vec::new(),
-                  shared_file_vmas : Vec::new() })
+                  shared_file_vmas : Vec::new(),
+                  device_vmas : Vec::new() })
     }
 
     pub(crate) fn kernel_satp_value(&self) -> usize {
@@ -532,6 +555,107 @@ impl Sv39AddressSpace {
         self.shared_anon_vmas
             .iter()
             .any(|vma| vma.contains_page(page))
+    }
+
+    /// 页是否由其他地址空间或设备持有，解除 PTE 时不得回收物理页。
+    pub(crate) fn non_owned_vma_contains(&self, page : VirtAddr) -> bool {
+        self.shared_vma_contains(page) ||
+        self.device_vmas
+            .iter()
+            .any(|vma| vma.contains_page(page))
+    }
+
+    pub(crate) fn device_vma_overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
+        self.device_vmas.iter().any(|vma| vma.overlaps(start, end))
+    }
+
+    pub(crate) fn register_device_vma(&mut self, vma : DeviceVma) {
+        let position = self.device_vmas.partition_point(|entry| entry.start.0 < vma.start.0);
+        self.device_vmas.insert(position, vma);
+    }
+
+    pub(crate) fn remove_device_vmas(&mut self, start : VirtAddr, end : VirtAddr) {
+        let mut next = Vec::new();
+        for vma in self.device_vmas.drain(..) {
+            if !vma.overlaps(start, end) {
+                next.push(vma);
+                continue;
+            }
+            if start.0 > vma.start.0 {
+                next.push(DeviceVma { start : vma.start,
+                                      end : start,
+                                      phys_start : vma.phys_start,
+                                      perm : vma.perm,
+                                      lease : vma.lease.clone() });
+            }
+            if end.0 < vma.end.0 {
+                let skipped_pages = (end.0 - vma.start.0) / PAGE_SIZE;
+                next.push(DeviceVma { start : end,
+                                      end : vma.end,
+                                      phys_start : PhysPageNum(vma.phys_start.0 + skipped_pages),
+                                      perm : vma.perm,
+                                      lease : vma.lease });
+            }
+        }
+        self.device_vmas = next;
+    }
+
+    pub(crate) fn protect_device_vmas(&mut self,
+                                       start : VirtAddr,
+                                       end : VirtAddr,
+                                       perm : PagePerm) {
+        let mut next = Vec::new();
+        for vma in self.device_vmas.drain(..) {
+            if !vma.overlaps(start, end) {
+                next.push(vma);
+                continue;
+            }
+            if start.0 > vma.start.0 {
+                next.push(DeviceVma { start : vma.start,
+                                      end : start,
+                                      phys_start : vma.phys_start,
+                                      perm : vma.perm,
+                                      lease : vma.lease.clone() });
+            }
+            let mid_start = VirtAddr(core::cmp::max(start.0, vma.start.0));
+            let mid_end = VirtAddr(core::cmp::min(end.0, vma.end.0));
+            let mid_pages = (mid_start.0 - vma.start.0) / PAGE_SIZE;
+            next.push(DeviceVma { start : mid_start,
+                                  end : mid_end,
+                                  phys_start : PhysPageNum(vma.phys_start.0 + mid_pages),
+                                  perm,
+                                  lease : vma.lease.clone() });
+            if end.0 < vma.end.0 {
+                let skipped_pages = (end.0 - vma.start.0) / PAGE_SIZE;
+                next.push(DeviceVma { start : end,
+                                      end : vma.end,
+                                      phys_start : PhysPageNum(vma.phys_start.0 + skipped_pages),
+                                      perm : vma.perm,
+                                      lease : vma.lease });
+            }
+        }
+        self.device_vmas = next;
+    }
+
+    /// 解除 mmap 区间；共享页和设备页只断开 PTE，其他页正常回收。
+    pub(crate) fn unmap_mmap_range<A>(&mut self,
+                                      allocator : &mut A,
+                                      start : VirtAddr,
+                                      end : VirtAddr)
+                                      -> MmResult<()>
+        where A : api_v0::frame_allocator::PhysicalFrameAllocator<FrameId = PhysPageNum>
+    {
+        let mut vpn = start.floor_page();
+        let vpn_end = end.ceil_page();
+        while vpn.0 < vpn_end.0 {
+            if self.non_owned_vma_contains(vpn.start_addr()) {
+                let _ = self.unmap_page_to_ppn(vpn)?;
+            } else {
+                self.unmap_page_with_alloc(allocator, vpn)?;
+            }
+            vpn = VirtPageNum(vpn.0 + 1);
+        }
+        Ok(())
     }
 
     pub(crate) fn register_shared_anon_vma(&mut self, start : VirtAddr, end : VirtAddr) {
@@ -902,10 +1026,15 @@ impl Sv39AddressSpace {
                        child_root,
                        SV39_LEVELS - 1,
                        0,
-                       &self.shared_anon_vmas)
+                       &self.shared_anon_vmas,
+                       &self.device_vmas)
         } {
             unsafe {
-                destroy_table(child_root, SV39_LEVELS - 1, 0, &self.shared_anon_vmas);
+                destroy_table(child_root,
+                              SV39_LEVELS - 1,
+                              0,
+                              &self.shared_anon_vmas,
+                              &self.device_vmas);
             }
             crate::asid::release_user(child_asid);
             return Err(err);
@@ -925,7 +1054,8 @@ impl Sv39AddressSpace {
                               user_stack_top : self.user_stack_top,
                               lazy_file_vmas : child_lazy_file_vmas,
                               shared_anon_vmas : self.shared_anon_vmas.clone(),
-                              shared_file_vmas : child_shared_file_vmas })
+                              shared_file_vmas : child_shared_file_vmas,
+                              device_vmas : self.device_vmas.clone() })
     }
 
     /// 递归释放所有用户页帧及页表帧，不触碰内核恒等映射。
@@ -939,7 +1069,8 @@ impl Sv39AddressSpace {
             destroy_table(self.root,
                           SV39_LEVELS - 1,
                           0,
-                          &self.shared_anon_vmas);
+                          &self.shared_anon_vmas,
+                          &self.device_vmas);
         }
         self.root = PhysPageNum(0);
     }
@@ -957,6 +1088,7 @@ impl Sv39AddressSpace {
         drop(core::mem::take(&mut self.lazy_file_vmas));
         drop(core::mem::take(&mut self.shared_anon_vmas));
         drop(core::mem::take(&mut self.shared_file_vmas));
+        drop(core::mem::take(&mut self.device_vmas));
         core::mem::replace(&mut self.asid, crate::asid::KERNEL_ASID)
     }
 
@@ -1112,7 +1244,8 @@ impl Sv39AddressSpace {
 unsafe fn destroy_table(ppn : PhysPageNum,
                         level : usize,
                         vpn_prefix : usize,
-                        shared_anon_vmas : &[SharedAnonVma]) {
+                        shared_anon_vmas : &[SharedAnonVma],
+                        device_vmas : &[DeviceVma]) {
     let table = unsafe { table_mut(ppn) };
     for i in 0..SV39_ENTRIES {
         let pte = table[i];
@@ -1131,7 +1264,8 @@ unsafe fn destroy_table(ppn : PhysPageNum,
                 let is_shared_anon = shared_anon_vmas
                     .iter()
                     .any(|vma| vma.contains_page(page));
-                if !is_shared_anon {
+                let is_device = device_vmas.iter().any(|vma| vma.contains_page(page));
+                if !is_shared_anon && !is_device {
                     let _ = frame_dealloc_result(child_ppn);
                 }
             }
@@ -1140,7 +1274,11 @@ unsafe fn destroy_table(ppn : PhysPageNum,
             // 中间页表：递归销毁子树
             let child_prefix = vpn_prefix | (i << (level * VPN_INDEX_BITS));
             unsafe {
-                destroy_table(child_ppn, level - 1, child_prefix, shared_anon_vmas);
+                destroy_table(child_ppn,
+                              level - 1,
+                              child_prefix,
+                              shared_anon_vmas,
+                              device_vmas);
             }
         }
     }
@@ -1160,7 +1298,8 @@ unsafe fn fork_table(parent_ppn : PhysPageNum,
                      child_ppn : PhysPageNum,
                      level : usize,
                      vpn_prefix : usize,
-                     shared_anon_vmas : &[SharedAnonVma])
+                     shared_anon_vmas : &[SharedAnonVma],
+                     device_vmas : &[DeviceVma])
                      -> MmResult<()> {
     let parent_table = unsafe { table_mut(parent_ppn) };
     let child_table = unsafe { table_mut(child_ppn) };
@@ -1180,11 +1319,12 @@ unsafe fn fork_table(parent_ppn : PhysPageNum,
                 let is_shared_anon = shared_anon_vmas
                     .iter()
                     .any(|vma| vma.contains_page(page));
-                if !is_shared_anon {
+                let is_device = device_vmas.iter().any(|vma| vma.contains_page(page));
+                if !is_shared_anon && !is_device {
                     frame_inc_ref(ppn).map_err(MmError::from)?;
                 }
                 // 可写私有页：父子共享物理帧，父 PTE 清 W 并打 COW 标记
-                let child_flags = if is_shared_anon {
+                let child_flags = if is_shared_anon || is_device {
                     flags
                 } else if flags.writable() {
                     let cow_flags = flags.prepare_cow();
@@ -1203,10 +1343,21 @@ unsafe fn fork_table(parent_ppn : PhysPageNum,
             let child_prefix = vpn_prefix | (i << (level * VPN_INDEX_BITS));
             let child_sub = alloc_table_frame_zeroed()?;
             if let Err(err) =
-                unsafe { fork_table(ppn, child_sub, level - 1, child_prefix, shared_anon_vmas) }
+                unsafe {
+                    fork_table(ppn,
+                               child_sub,
+                               level - 1,
+                               child_prefix,
+                               shared_anon_vmas,
+                               device_vmas)
+                }
             {
                 unsafe {
-                    destroy_table(child_sub, level - 1, child_prefix, shared_anon_vmas);
+                    destroy_table(child_sub,
+                                  level - 1,
+                                  child_prefix,
+                                  shared_anon_vmas,
+                                  device_vmas);
                 }
                 return Err(err);
             }

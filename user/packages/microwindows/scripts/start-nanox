@@ -1,0 +1,41 @@
+#!/bin/sh
+# 从串口 shell 启动 Nano-X；无论正常退出还是失败都清理后台客户端和 socket。
+set -u
+
+for device in /dev/fb0 /dev/input/keyboard0 /dev/input/pointer0; do
+    if [ ! -e "$device" ]; then
+        echo "start-nanox: missing $device" >&2
+        exit 1
+    fi
+done
+
+socket=/tmp/.nano-X
+rm -f "$socket"
+nano-X &
+server_pid=$!
+clients=""
+
+cleanup() {
+    for pid in $clients; do kill "$pid" 2>/dev/null || true; done
+    kill "$server_pid" 2>/dev/null || true
+    wait "$server_pid" 2>/dev/null || true
+    rm -f "$socket"
+}
+trap cleanup EXIT INT TERM
+
+# BusyBox ash 支持小数 sleep；最多等待约 5 秒，避免 server 装载失败时永久挂起。
+i=0
+while [ ! -S "$socket" ] && kill -0 "$server_pid" 2>/dev/null; do
+    [ "$i" -ge 100 ] && break
+    i=$((i + 1))
+    sleep 0.05
+done
+if [ ! -S "$socket" ]; then
+    echo "start-nanox: nano-X did not create $socket" >&2
+    exit 1
+fi
+
+nxlaunch & clients="$clients $!"
+nxclock & clients="$clients $!"
+nxeyes & clients="$clients $!"
+wait "$server_pid"
