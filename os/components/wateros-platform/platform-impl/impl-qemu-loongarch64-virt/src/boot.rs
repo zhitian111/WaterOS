@@ -7,7 +7,9 @@ use api_v0::boot::PlatformBootArgs;
 pub const DEVICE_TREE_PHYS_ADDR : usize = 0x0010_0000;
 
 #[inline]
-pub const fn device_tree_phys_addr() -> usize { DEVICE_TREE_PHYS_ADDR }
+pub const fn device_tree_phys_addr(_arg0 : usize, _arg1 : usize, _arg2 : usize) -> usize {
+    DEVICE_TREE_PHYS_ADDR
+}
 
 #[derive(Debug, Clone, Copy)]
 /// LoongArch QEMU 入口透传的三项原始参数。

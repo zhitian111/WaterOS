@@ -1,4 +1,4 @@
-# 2K1000LA legacy LoongArch boot ABI: a0/a1/a2 are preserved as argc/argv/envp.
+# 2K1000LA unified ABI: a0/a1/a2 are the UEFI flag/cmdline/system-table values.
     .section .text.entry.platform
     .globl _start
     .align 2

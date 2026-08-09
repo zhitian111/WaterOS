@@ -380,7 +380,7 @@ mod loongarch64_platform {
     }
 
     #[unsafe(no_mangle)]
-    pub fn wateros_kernel_main(cpu_raw : usize, _argc : usize, _argv : usize, _envp : usize) -> ! {
+    pub fn wateros_kernel_main(cpu_raw : usize, arg0 : usize, arg1 : usize, arg2 : usize) -> ! {
         let cpu_id = task::CpuId::from_raw(cpu_raw);
         mask_boot_interrupts();
         if BSP_CLAIMED.swap(true, Ordering::AcqRel) {
@@ -394,7 +394,7 @@ mod loongarch64_platform {
         platform::arch::cpu::init_current_cpu(cpu_id).expect("BSP init current CPU");
         platform::arch::init();
         let _ = platform::smp::init_ipi();
-        let dtb_pa = platform::active_impl::boot::device_tree_phys_addr();
+        let dtb_pa = platform::active_impl::boot::device_tree_phys_addr(arg0, arg1, arg2);
         platform::init_when_boot(dtb_pa);
         let configured =
             platform::active_impl::smp::init_configured_cpu_mask(dtb_pa).expect("initialize \
