@@ -1555,3 +1555,62 @@ helper 以两个 32-bit MMIO 操作先低后高完成读写。启动序列先写
 ### 提交
 
 - `[feat] add 2K1000 APBDMA order MMIO`
+
+## 2026-08-10：批次 35——APBDMA partial-start recovery typestate
+
+### 任务与设计
+
+1. 审计 executor、typestate session、order-register backend 与 topology 的生产连接缺口。
+2. 区分“寄存器未被触碰”和“可能已有部分写入”的 MMIO 错误效果。
+3. 若 start 写可能已到达硬件，禁止返回可直接 cancel 的 prepared session。
+4. 用 recovery typestate 独占 executor 与 DMA mappings，强制 stop 成功后才能恢复 CPU ownership。
+5. 从 topology 已验证的 DMA controller 描述构造真实 volatile executor，不绕过资源校验。
+
+APBDMA start 位位于 order register 的低 32 位。low-then-high 写入若在 high-half 失败，
+低半部可能已带着 start 位到达设备，因此原有“返回 prepared token、允许 cancel”的行为会在
+硬件可能仍访问内存时恢复 CPU ownership。`OrderWriteFailure` 现在携带 `WriteEffect`：只有
+`Untouched` 才能安全返回 `PreparedSession`；`MayHaveWritten` 会把 executor 标记为占用并返回
+`RecoverySession`。recovery session 不提供 cancel 或 IRQ completion，只能反复尝试 stop；
+stop 成功后才转为 `QuiescedSession`，再执行 cache ownership 恢复。
+
+`OrderMmio32` 的错误契约明确为单次 32-bit 写失败时该写没有到达设备。因此 low-half 失败可
+报告 `Untouched`，high-half 失败必须报告 `MayHaveWritten`。其它 `OrderIo` 实现也必须显式
+报告写入效果，不能把未知硬件状态压缩成普通寄存器错误。
+
+### 完成内容
+
+- [x] 新增 `WriteEffect::{Untouched, MayHaveWritten}` 与带效果的 `OrderWriteFailure`。
+- [x] `LoHiOrderIo` 精确报告 low-half 失败未触碰、high-half 失败可能已部分写入。
+- [x] 新增 `StartSessionFailure::{Prepared, Recovery}`，调用方必须显式处理两类失败状态。
+- [x] 新增借用式 `RecoverySession`，同时独占 executor、descriptor mapping 和 payload mapping。
+- [x] 可能部分写入时 executor 保留 transfer plan，阻止第二个 transfer 启动。
+- [x] recovery stop 失败返回原 recovery session，可重试且不会提前释放 mappings。
+- [x] stop 成功才清除 executor 占用状态并产生 quiesced session。
+- [x] executor 的裸 start/complete/stop 收紧为 crate 内原语，对外保留 typestate 路径。
+- [x] 新增 target-only `PlatformExecutor` 和 `executor_from_controller` 生产组装入口。
+- [x] 组装入口复用 topology 校验后的 8-byte volatile MMIO backend，并明确要求外部保持 clock 与 IRQ 能力。
+
+### 验证证据
+
+- `cargo test -p wateros-driver-impl-loongson2k1000la`：33 项 host 单测全部通过（本批新增 3 项）。
+- 新测试覆盖未触碰失败可取消、partial-start 必须 stop、stop 首次失败后 recovery 重试成功。
+- fault mock 保存可能写入的寄存器值，并断言 clear、start、stop 的完整顺序。
+- mappings 在 recovery session 生命周期内保持 device-owned；只有 stop 和 finish 完成后恢复 CPU ownership。
+- `cargo check -p wateros-driver-impl-loongson2k1000la --target loongarch64-unknown-none` 通过，并实际编译生产组装入口。
+- 2K1000LA topology/畸形 DTS fixtures 全部通过；truncated DMA 的 dtc warning 为预期输入。
+- `make kernel-la` QEMU LoongArch64 release 回归构建通过；仅有仓库既有 warning。
+- `git diff --check` 通过；未创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：软件认为 stop 写成功尚不能证明 APBDMA 已停止总线访问；仍需确认 stop bit、自清除/完成状态和必要轮询。
+- [ ] 当前 `QuiescedSession` 信任 stop 写成功，尚未读取 order register 或 descriptor status 二次确认 idle。
+- [ ] `OrderMmio32` 的失败效果契约由 backend 实现保证；raw volatile backend 当前只有地址校验错误，不能捕获同步总线异常。
+- [ ] `executor_from_controller` 只组装 order MMIO；clock enable、DMA route、IRQ13 claim/ack、cache maintenance 仍是缺失的显式能力。
+- [ ] 生产 executor 尚未存入平台 driver state，也未接入 `init_after_boot`，避免在能力不完整时误触碰真机寄存器。
+- [ ] descriptor completion/error status、超时、短传输以及 MMC data command 仍未实现。
+- [ ] 下一批应实现带有有界轮询的 stop-confirmation backend，并让 quiesced 仅由确认 idle 的结果产生；若文档不足则继续保持保守的 `UNVERIFIED_ON_HARDWARE` 标记。
+
+### 提交
+
+- `[fix] recover partial 2K1000 APBDMA starts`

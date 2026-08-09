@@ -9,7 +9,9 @@
 
 use core::sync::atomic::{Ordering, fence};
 
-use crate::apbdma::{ExecutorError, OrderIo};
+#[cfg(target_arch = "loongarch64")]
+use crate::apbdma::Executor;
+use crate::apbdma::{ExecutorError, OrderIo, OrderWriteFailure, WriteEffect};
 #[cfg(target_arch = "loongarch64")]
 use crate::topology::DmaControllerDescription;
 
@@ -19,7 +21,8 @@ const HIGH_OFFSET : usize = 4;
 const ORDER_WINDOW_SIZE : usize = 8;
 
 /// One ordered 32-bit MMIO access. Implementations must not merge adjacent
-/// calls into a native 64-bit transaction.
+/// calls into a native 64-bit transaction. A failed `write32` must mean that
+/// this individual 32-bit write did not reach the device.
 pub trait OrderMmio32 {
     fn read32(&mut self, offset : usize) -> Result<u32, ExecutorError>;
     fn write32(&mut self, offset : usize, value : u32) -> Result<(), ExecutorError>;
@@ -44,13 +47,30 @@ impl<M : OrderMmio32> OrderIo for LoHiOrderIo<M> {
         Ok(low as u64 | (high as u64) << 32)
     }
 
-    fn write64(&mut self, value : u64) -> Result<(), ExecutorError> {
+    fn write64(&mut self, value : u64) -> Result<(), OrderWriteFailure> {
         fence(Ordering::SeqCst);
-        self.mmio.write32(LOW_OFFSET, value as u32)?;
-        self.mmio.write32(HIGH_OFFSET, (value >> 32) as u32)?;
+        self.mmio.write32(LOW_OFFSET, value as u32)
+                 .map_err(|error| OrderWriteFailure { error,
+                                                      effect : WriteEffect::Untouched })?;
+        self.mmio.write32(HIGH_OFFSET, (value >> 32) as u32)
+                 .map_err(|error| OrderWriteFailure { error,
+                                                      effect : WriteEffect::MayHaveWritten })?;
         fence(Ordering::SeqCst);
         Ok(())
     }
+}
+
+#[cfg(target_arch = "loongarch64")]
+pub type PlatformExecutor = Executor<LoHiOrderIo<VolatileOrderMmio32>>;
+
+/// Assemble an executor only from a topology-validated controller window.
+///
+/// The caller must additionally keep the controller clock enabled and arrange
+/// IRQ acknowledgement before using the returned executor.
+#[cfg(target_arch = "loongarch64")]
+pub unsafe fn executor_from_controller(controller : &DmaControllerDescription)
+                                       -> Result<PlatformExecutor, ExecutorError> {
+    Ok(Executor::new(unsafe { VolatileOrderMmio32::from_controller(controller)? }))
 }
 
 /// Raw volatile 32-bit access to a topology-validated APBDMA order window.
@@ -165,7 +185,9 @@ mod tests {
         let mut mmio = mock(0xaaaa_aaaa, 0xbbbb_bbbb);
         mmio.fail_high_write = true;
         let mut io = LoHiOrderIo::new(mmio);
-        assert_eq!(io.write64(0x0123_4567_89ab_cdef), Err(ExecutorError::Register));
+        assert_eq!(io.write64(0x0123_4567_89ab_cdef),
+                   Err(OrderWriteFailure { error : ExecutorError::Register,
+                                           effect : WriteEffect::MayHaveWritten }));
         let mmio = io.into_inner();
         assert_eq!(mmio.low, 0x89ab_cdef);
         assert_eq!(mmio.high, 0xbbbb_bbbb);

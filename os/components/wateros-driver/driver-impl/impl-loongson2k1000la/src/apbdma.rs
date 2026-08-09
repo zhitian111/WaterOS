@@ -202,15 +202,28 @@ pub enum ExecutorError {
     Register,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriteEffect {
+    Untouched,
+    MayHaveWritten,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OrderWriteFailure {
+    pub error : ExecutorError,
+    pub effect : WriteEffect,
+}
+
 #[derive(Debug)]
 pub struct StartFailure {
     pub error : ExecutorError,
     pub prepared : PreparedTransfer,
+    recovery_required : bool,
 }
 
 pub trait OrderIo {
     fn read64(&mut self) -> Result<u64, ExecutorError>;
-    fn write64(&mut self, value : u64) -> Result<(), ExecutorError>;
+    fn write64(&mut self, value : u64) -> Result<(), OrderWriteFailure>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -254,6 +267,33 @@ pub struct RunningSession<'a, 'e, R, D, P> {
     payload : &'a mut DmaMapping<P>,
 }
 
+/// A start-register write may have reached hardware. The mappings remain
+/// device-owned until an explicit stop confirms the channel is quiescent.
+#[must_use = "stop a DMA session whose start state is uncertain"]
+pub struct RecoverySession<'a, 'e, R, D, P> {
+    executor : &'e mut Executor<R>,
+    descriptor : &'a mut DmaMapping<D>,
+    payload : &'a mut DmaMapping<P>,
+}
+
+pub enum StartSessionFailure<'a, 'e, R, D, P> {
+    Prepared(SessionFailure<ExecutorError, PreparedSession<'a, D, P>>),
+    Recovery(SessionFailure<ExecutorError, RecoverySession<'a, 'e, R, D, P>>),
+}
+
+impl<R, D, P> core::fmt::Debug for StartSessionFailure<'_, '_, R, D, P> {
+    fn fmt(&self, formatter : &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let (state, error) = match self {
+            Self::Prepared(failure) => ("Prepared", &failure.error),
+            Self::Recovery(failure) => ("Recovery", &failure.error),
+        };
+        formatter.debug_struct("StartSessionFailure")
+                 .field("state", &state)
+                 .field("error", error)
+                 .finish()
+    }
+}
+
 /// Hardware is confirmed idle; CPU-side cache synchronization remains.
 #[must_use = "finish cache synchronization for a quiesced DMA session"]
 pub struct QuiescedSession<'a, D, P> {
@@ -273,17 +313,25 @@ impl<'a, D : DmaCoherency, P : DmaCoherency> PreparedSession<'a, D, P> {
     pub fn start<'e, R : OrderIo>(self,
                                   executor : &'e mut Executor<R>)
                                   -> Result<RunningSession<'a, 'e, R, D, P>,
-                                            SessionFailure<ExecutorError, Self>> {
+                                            StartSessionFailure<'a, 'e, R, D, P>> {
         match executor.start(self.prepared) {
             Ok(()) => Ok(RunningSession { executor,
                                          descriptor : self.descriptor,
                                          payload : self.payload }),
-            Err(failure) => Err(SessionFailure {
+            Err(failure) if failure.recovery_required => {
+                Err(StartSessionFailure::Recovery(SessionFailure {
+                    error : failure.error,
+                    session : RecoverySession { executor,
+                                                descriptor : self.descriptor,
+                                                payload : self.payload },
+                }))
+            },
+            Err(failure) => Err(StartSessionFailure::Prepared(SessionFailure {
                 error : failure.error,
                 session : PreparedSession { prepared : failure.prepared,
                                             descriptor : self.descriptor,
                                             payload : self.payload },
-            }),
+            })),
         }
     }
 }
@@ -300,6 +348,19 @@ impl<'a, 'e, R : OrderIo, D, P> RunningSession<'a, 'e, R, D, P> {
         }
     }
 
+    pub fn stop(self)
+                -> Result<QuiescedSession<'a, D, P>,
+                          SessionFailure<ExecutorError, Self>> {
+        match self.executor.stop() {
+            Ok(completion) => Ok(QuiescedSession { completion,
+                                                  descriptor : self.descriptor,
+                                                  payload : self.payload }),
+            Err(error) => Err(SessionFailure { error, session : self }),
+        }
+    }
+}
+
+impl<'a, 'e, R : OrderIo, D, P> RecoverySession<'a, 'e, R, D, P> {
     pub fn stop(self)
                 -> Result<QuiescedSession<'a, D, P>,
                           SessionFailure<ExecutorError, Self>> {
@@ -413,30 +474,45 @@ pub struct Executor<R> {
 impl<R : OrderIo> Executor<R> {
     pub fn new(registers : R) -> Self { Self { registers, running : None } }
 
-    pub fn start(&mut self, prepared : PreparedTransfer) -> Result<(), StartFailure> {
+    pub(crate) fn start(&mut self, prepared : PreparedTransfer) -> Result<(), StartFailure> {
         if self.running.is_some() {
-            return Err(StartFailure { error : ExecutorError::Busy, prepared });
+            return Err(StartFailure { error : ExecutorError::Busy,
+                                      prepared,
+                                      recovery_required : false });
         }
-        if let Err(error) = self.registers.write64(0) {
-            return Err(StartFailure { error, prepared });
+        if let Err(failure) = self.registers.write64(0) {
+            if failure.effect == WriteEffect::MayHaveWritten {
+                self.running = Some(prepared.0);
+            }
+            return Err(StartFailure { error : failure.error,
+                                      prepared,
+                                      recovery_required : failure.effect ==
+                                                          WriteEffect::MayHaveWritten });
         }
-        if let Err(error) = self.registers.write64(prepared.0.start_order) {
-            return Err(StartFailure { error, prepared });
+        if let Err(failure) = self.registers.write64(prepared.0.start_order) {
+            if failure.effect == WriteEffect::MayHaveWritten {
+                self.running = Some(prepared.0);
+            }
+            return Err(StartFailure { error : failure.error,
+                                      prepared,
+                                      recovery_required : failure.effect ==
+                                                          WriteEffect::MayHaveWritten });
         }
         self.running = Some(prepared.0);
         Ok(())
     }
 
     /// Called only after the APBDMA IRQ has been claimed and acknowledged.
-    pub fn complete_irq(&mut self) -> Result<Completion, ExecutorError> {
+    pub(crate) fn complete_irq(&mut self) -> Result<Completion, ExecutorError> {
         let plan = self.running.take().ok_or(ExecutorError::Idle)?;
         Ok(Completion { invalidate_buffer_after : plan.invalidate_buffer_after })
     }
 
-    pub fn stop(&mut self) -> Result<Completion, ExecutorError> {
+    pub(crate) fn stop(&mut self) -> Result<Completion, ExecutorError> {
         let plan = self.running.ok_or(ExecutorError::Idle)?;
         let current = self.registers.read64()?;
-        self.registers.write64((current & !ORDER_CONFIG_MASK) | ORDER_64_BIT | (1 << 4))?;
+        self.registers.write64((current & !ORDER_CONFIG_MASK) | ORDER_64_BIT | (1 << 4))
+                      .map_err(|failure| failure.error)?;
         self.running = None;
         Ok(Completion { invalidate_buffer_after : plan.invalidate_buffer_after })
     }
@@ -579,6 +655,14 @@ mod tests {
     }
 
     #[derive(Default)]
+    struct FaultOrderIo {
+        value : u64,
+        writes : Vec<u64>,
+        write_calls : usize,
+        failures : Vec<(usize, WriteEffect)>,
+    }
+
+    #[derive(Default)]
     struct MockCache {
         device_syncs : usize,
         cpu_syncs : usize,
@@ -619,9 +703,26 @@ mod tests {
     }
     impl OrderIo for MockOrderIo {
         fn read64(&mut self) -> Result<u64, ExecutorError> { Ok(self.value) }
-        fn write64(&mut self, value : u64) -> Result<(), ExecutorError> {
+        fn write64(&mut self, value : u64) -> Result<(), OrderWriteFailure> {
             self.value = value;
             self.writes.push(value);
+            Ok(())
+        }
+    }
+
+    impl OrderIo for FaultOrderIo {
+        fn read64(&mut self) -> Result<u64, ExecutorError> { Ok(self.value) }
+        fn write64(&mut self, value : u64) -> Result<(), OrderWriteFailure> {
+            self.write_calls += 1;
+            self.writes.push(value);
+            if let Some(position) = self.failures.iter()
+                                                 .position(|(call, _)| *call == self.write_calls)
+            {
+                let (_, effect) = self.failures.remove(position);
+                if effect == WriteEffect::MayHaveWritten { self.value = value; }
+                return Err(OrderWriteFailure { error : ExecutorError::Register, effect });
+            }
+            self.value = value;
             Ok(())
         }
     }
@@ -715,7 +816,8 @@ mod tests {
 
         let failure = match prepare_session(plan, &mut descriptor2, &mut payload2).unwrap()
                                                                                        .start(&mut executor) {
-            Err(failure) => failure,
+            Err(StartSessionFailure::Prepared(failure)) => failure,
+            Err(StartSessionFailure::Recovery(_)) => panic!("busy state requires recovery"),
             Ok(_) => panic!("busy executor accepted a second session"),
         };
         assert_eq!(failure.error, ExecutorError::Busy);
@@ -766,5 +868,87 @@ mod tests {
         assert!(payload.is_cpu_owned());
         assert_eq!(executor.into_inner().writes.last().copied(),
                    Some((plan.start_order & !ORDER_CONFIG_MASK) | ORDER_64_BIT | (1 << 4)));
+    }
+
+    #[test]
+    fn untouched_start_failure_returns_cancellable_prepared_session() {
+        let plan = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 4, 1,
+                                  Direction::MemoryToDevice).unwrap();
+        let (mut descriptor, mut payload) = mappings(plan);
+        let registers = FaultOrderIo { failures : vec![(1, WriteEffect::Untouched)],
+                                       ..FaultOrderIo::default() };
+        let mut executor = Executor::new(registers);
+        let failure = match prepare_session(plan, &mut descriptor, &mut payload).unwrap()
+                                                                                .start(&mut executor) {
+            Err(failure) => failure,
+            Ok(_) => panic!("fault injection unexpectedly started DMA"),
+        };
+        match failure {
+            StartSessionFailure::Prepared(failure) => failure.session.cancel().unwrap(),
+            StartSessionFailure::Recovery(_) => panic!("untouched write entered recovery"),
+        }
+        assert!(descriptor.is_cpu_owned());
+        assert!(payload.is_cpu_owned());
+        assert_eq!(executor.stop(), Err(ExecutorError::Idle));
+    }
+
+    #[test]
+    fn partial_start_write_requires_stop_before_cpu_reclaim() {
+        let plan = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 4, 1,
+                                  Direction::MemoryToDevice).unwrap();
+        let (mut descriptor, mut payload) = mappings(plan);
+        let registers = FaultOrderIo { failures : vec![(2, WriteEffect::MayHaveWritten)],
+                                       ..FaultOrderIo::default() };
+        let mut executor = Executor::new(registers);
+        let failure = match prepare_session(plan, &mut descriptor, &mut payload).unwrap()
+                                                                                .start(&mut executor) {
+            Err(failure) => failure,
+            Ok(_) => panic!("fault injection unexpectedly started DMA"),
+        };
+        let recovery = match failure {
+            StartSessionFailure::Recovery(failure) => failure.session,
+            StartSessionFailure::Prepared(_) => panic!("partial write remained cancellable"),
+        };
+        recovery.stop().unwrap()
+                .finish().unwrap();
+        assert!(descriptor.is_cpu_owned());
+        assert!(payload.is_cpu_owned());
+        let registers = executor.into_inner();
+        assert_eq!(registers.writes,
+                   vec![0,
+                        plan.start_order,
+                        (plan.start_order & !ORDER_CONFIG_MASK) | ORDER_64_BIT | (1 << 4)]);
+    }
+
+    #[test]
+    fn recovery_session_retries_failed_stop_without_releasing_mappings() {
+        let plan = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 4, 1,
+                                  Direction::MemoryToDevice).unwrap();
+        let (mut descriptor, mut payload) = mappings(plan);
+        let registers = FaultOrderIo {
+            failures : vec![(2, WriteEffect::MayHaveWritten),
+                            (3, WriteEffect::MayHaveWritten)],
+            ..FaultOrderIo::default()
+        };
+        let mut executor = Executor::new(registers);
+        let failure = match prepare_session(plan, &mut descriptor, &mut payload).unwrap()
+                                                                                .start(&mut executor) {
+            Err(failure) => failure,
+            Ok(_) => panic!("fault injection unexpectedly started DMA"),
+        };
+        let recovery = match failure {
+            StartSessionFailure::Recovery(failure) => failure.session,
+            StartSessionFailure::Prepared(_) => panic!("partial write remained cancellable"),
+        };
+        let failure = match recovery.stop() {
+            Err(failure) => failure,
+            Ok(_) => panic!("fault injection unexpectedly stopped DMA"),
+        };
+        assert_eq!(failure.error, ExecutorError::Register);
+        failure.session.stop().unwrap()
+               .finish().unwrap();
+        assert!(descriptor.is_cpu_owned());
+        assert!(payload.is_cpu_owned());
+        assert_eq!(executor.into_inner().write_calls, 4);
     }
 }
