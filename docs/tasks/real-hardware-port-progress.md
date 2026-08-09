@@ -3022,3 +3022,54 @@ Linux 主线 LS2K GPIO bank 使用 64-bit 寄存器，方向、输出、输入�
 ### 提交
 
 - `[feat] add LS2K1000 card-detect diagnostics`
+
+## 2026-08-10：批次 65——LS2K1000 MMC combined prerequisite diagnosis
+
+### 任务与设计
+
+1. 组合既有 clock 与 GPIO card-detect 只读 snapshot，不复制 provider 或寄存器模型。
+2. 诊断结果必须保留完整 `BringUpPlan`，snapshot 成功不能解除任何 activation blocker。
+3. clock 与 GPIO 使用两个独立、可注入 backend；错误作为证据保留，不互相短路。
+4. non-removable、broken、native 和 GPIO card-detect 返回不同语义，不猜测未观测状态。
+5. target-only 显式 volatile 入口只为支持的 provider 构造 MMIO backend，不接入 machine init。
+6. 静态 plan 无效时在任何寄存器读取前失败；unsupported provider 必须零读取 fail-closed。
+
+### 完成内容
+
+- [x] 新增 `mmc_diagnostic` 模块、`Diagnosis` 和 `CardDetectDiagnosis`。
+- [x] `Diagnosis` 同时保存 `BringUpPlan`、`Result<ClockSnapshot, ClockError>` 与 card-detect
+  证据，调用者能区分静态拓扑、瞬时观测和具体读取错误。
+- [x] GPIO snapshot 失败不掩盖 clock snapshot，clock 失败也不阻止安全的 GPIO 读取。
+- [x] non-removable 返回 topology evidence；broken 返回 firmware-maintained 标记；native
+  明确为 unavailable；三者均不读取 GPIO。
+- [x] `diagnose_volatile()` 先验证静态 plan，再按 topology 构造只读 clock/GPIO backend。
+- [x] target unsupported/unused backend 使用纯软件枚举哨兵，不构造占位物理地址。
+- [x] API 注释明确物理读取仍为 `UNVERIFIED_ON_HARDWARE`，machine init 没有调用诊断入口。
+- [x] topology 端到端示例使用 mock 寄存器，从 DT 描述计算 250 MHz APB clock、识别
+  active-low GPIO22 插卡，同时断言 `can_activate() == false`。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 88 项全部通过；新增 5 项组合测试覆盖成功证据、独立双错误、
+  三种 topology-only card mode、unsupported provider 零读取、invalid plan 零读取。
+- topology fixture 与全部畸形 DTB 场景通过；有效 fixture 额外执行组合诊断 mock。
+- `cargo check --no-default-features --features loongson2k1000la,final_online,heap-tlsf
+  --target loongarch64-unknown-none` 通过，覆盖 target-only backend。
+- `make kernel-la`、`git diff --check` 通过；仅有仓库既有 warning。
+- 测试没有创建镜像、访问物理 MMIO 或执行 clock/GPIO/MMC 写。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：组合入口未在 2K1000 板执行；clock raw/rate 与 GPIO raw/level
+  都只是 host mock 和上游文档所支持的预期。
+- [ ] 多个寄存器按顺序读取，不是跨 clock/GPIO 原子 snapshot；结果可能跨越硬件状态变化。
+- [ ] power rail 仍只有 topology ownership 分类，没有安全的只读 regulator 电平观测。
+- [ ] native card-detect 尚无经上游证明的只读寄存器模型；broken-cd 也不等于实际存在卡。
+- [ ] 显式 volatile 入口要求调用者保证设备映射与独占读取，目前没有公开远程命令触发它。
+- [ ] 六个 activation blocker 全部保留；本批不表示 MMC data path、DMA、power、IRQ 可用。
+- [ ] 下一批应将组合结果接入现有 remote debug monitor 的只读命令与稳定文本 formatter，
+  只允许显式触发，并对 unsupported profile、并发 reservation、错误输出做 host 测试。
+
+### 提交
+
+- `[feat] combine LS2K1000 MMC diagnostics`

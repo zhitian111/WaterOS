@@ -6,7 +6,40 @@ use wateros_driver_impl_loongson2k1000la::{irq_binding::resolve,
                                            irq_plan::{ActivationPolicy, OwnerKind,
                                                       compile as compile_owner_plan},
                                            mmc::{ActivationBlocker, PrerequisiteStatus, plan},
+                                           mmc_diagnostic::{CardDetectDiagnosis, diagnose},
                                            topology::{MmcClockProvider, SupplyProvider, discover}};
+
+struct ClockEvidence;
+
+impl wateros_driver_impl_loongson2k1000la::clock::RegisterIo for ClockEvidence {
+    fn read32(&mut self, offset : usize)
+              -> Result<u32, wateros_driver_impl_loongson2k1000la::clock::ClockError> {
+        assert_eq!(offset, 0x28);
+        Ok(2 << 22)
+    }
+
+    fn read64(&mut self, offset : usize)
+              -> Result<u64, wateros_driver_impl_loongson2k1000la::clock::ClockError> {
+        match offset {
+            0x20 => Ok((40u64 << 32) | (4u64 << 26)),
+            0x50 => Ok(3u64 << 20),
+            _ => panic!("unexpected clock offset {offset:#x}"),
+        }
+    }
+}
+
+struct GpioEvidence;
+
+impl wateros_driver_impl_loongson2k1000la::gpio::RegisterIo for GpioEvidence {
+    fn read64(&mut self, offset : usize)
+              -> Result<u64, wateros_driver_impl_loongson2k1000la::gpio::GpioError> {
+        match offset {
+            0 => Ok(1 << 22),
+            0x20 => Ok(0),
+            _ => panic!("unexpected GPIO offset {offset:#x}"),
+        }
+    }
+}
 
 fn main() {
     let mut args = env::args().skip(1);
@@ -147,6 +180,12 @@ fn main() {
             assert_eq!(plan.prerequisites.vmmc, PrerequisiteStatus::RequiresDriver);
             assert_eq!(plan.prerequisites.vqmmc, PrerequisiteStatus::RequiresDriver);
             assert_eq!(plan.prerequisites.card_detect, PrerequisiteStatus::RequiresDriver);
+            let diagnosis = diagnose(mmc, &mut ClockEvidence, &mut GpioEvidence)
+                .expect("combine read-only MMC evidence");
+            assert_eq!(diagnosis.clock.expect("clock snapshot").apb_hz, 250_000_000);
+            assert!(matches!(diagnosis.card_detect,
+                             CardDetectDiagnosis::Gpio(Ok(snapshot)) if snapshot.card_present));
+            assert!(!diagnosis.plan.can_activate());
         }
         "invalid" => assert!(discover(&fdt).is_err()),
         "non-removable" => {
