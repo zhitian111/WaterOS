@@ -174,7 +174,8 @@ pub unsafe fn diagnose_loongson2k1000_mmc()
             ) => Loongson2k1000MmcDiagnosticError::PinctrlBackend,
         }
     })?;
-    Ok(impl_loongson2k1000la::mmc_diagnostic::format_diagnosis(diagnosis))
+    let irq = impl_loongson2k1000la::diagnostic_irq::snapshot();
+    Ok(impl_loongson2k1000la::mmc_diagnostic::format_diagnosis_with_irq(diagnosis, irq))
 }
 
 /// 自检入口：依次调用 API 与各子系统测试钩子；QEMU 实现会跑探测路径，dummy

@@ -22,6 +22,7 @@ pub mod diagnostic_irq;
 pub mod liointc;
 pub mod mmc;
 pub mod mmc_diagnostic;
+pub mod mmc_prerequisite;
 pub mod pinctrl;
 pub mod apbdma;
 pub mod apbdma_mmio;

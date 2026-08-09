@@ -3320,3 +3320,48 @@ Linux 主线 LS2K GPIO bank 使用 64-bit 寄存器，方向、输出、输入�
 ### 提交
 
 - `[feat] add recoverable LS2K1000 pinctrl transaction`
+
+## 2026-08-10：批次 71——聚合 LS2K1000 MMC prerequisite proof
+
+### 任务与设计
+
+1. 审计 clock、vmmc/vqmmc、pinctrl、card-detect 与 IRQ 的现有证据，区分 topology、瞬时观测和真机验证。
+2. 建立六项独立 gate 的聚合报告；任何单项 snapshot 都不能被误当作 controller activation 权限。
+3. 用 opaque typestate token 表达经真机验证的 clock、power、pinctrl、card 与 IRQ 证据，只有全部存在才能组装 proof。
+4. remote `ls2k-mmc` 输出稳定 gate code 与 `proof=0/1`，同时保留既有 bring-up blocker。
+5. 不启动 MMC controller、DMA 或数据通路，也不增加新的硬件写调用点。
+
+### 完成内容
+
+- [x] 新增 `mmc_prerequisite` 模块和 `PrerequisiteReport`，分别报告六项 gate，只有全部为 `Satisfied` 才允许 `can_form_proof()`。
+- [x] clock rate snapshot 分类为 `ObservedOnly`；它不证明时钟可控、目标频率已稳定或物理输出正确。
+- [x] implicit/fixed supply topology 分类为 `UnverifiedOnHardware`；软件无需 enable 不等于真实 rail 电压及时序已验证。
+- [x] pinctrl 只有既有 opaque `PinctrlState<Ready>` 可分类为 satisfied；card-detect 只有 non-removable 或 GPIO input 报告 present 可满足本地 gate。
+- [x] diagnostic IRQ runtime 即使已配置 IRQ31 且软件状态干净，也只分类为 `ObservedOnly`，不冒充真实投递、设备 ack、mask/rearm 证明。
+- [x] 新增 `ClockReady`、`PowerReady`、`CardReady`、`IrqReady` 与 `ControllerPrerequisiteProof`；需要真机证据的 token 没有普通构造器。
+- [x] proof 只代表 controller 前置条件齐备，注释明确它仍不是 data-path token。
+- [x] remote facade 合并当前 IRQ software snapshot，稳定输出六项 gate 和 `proof`；当前正常诊断预期仍为 `proof=0`。
+- [x] 七个 MMC activation blocker 与 `can_activate()==false` 保持不变；machine init、remote monitor 均未获得 controller 写入口。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 101 项全部通过；新增 4 项覆盖健康观测仍不能形成 proof、各 gate fault matrix、IRQ observation 降级和完整 typed-token 组装。
+- formatter 精确字符串测试覆盖健康与多错误场景，确认稳定 gate code、`proof=0` 和既有 blocker 数量。
+- topology fixture/畸形 DTB 矩阵通过；dtc 输出仅为刻意构造畸形输入的预期 warning。
+- remote client 与 QEMU launcher 的 13 项 Python host 测试通过。
+- `cargo check --no-default-features --features loongson2k1000la,final_online,heap-tlsf,remote-debug-monitor --target loongarch64-unknown-none` 通过。
+- `make kernel-la EXTRA_FEATURES=remote-debug-monitor` 与 `git diff --check` 通过；仅有仓库既有 warning。
+- 所有新增测试均为 host fixture/software snapshot；没有访问物理 MMIO、执行硬件写或启动 MMC 数据通路。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：两块目标板的 MMC clock 稳定性、vmmc/vqmmc 电压与上电时序、真实 card-detect 电气状态均未验证。
+- [ ] live diagnostic IRQ 只能证明 WaterOS 软件 runtime 中配置了 IRQ31；尚未证明真实 MMC 中断投递、W1C ack、mask/rearm 和异常恢复。
+- [ ] unsafe `assume_verified` 构造器是显式审计边界，不是硬件身份认证；只能在逐板完成物理验证后调用。
+- [ ] pinctrl ready 仍是瞬时寄存器证据；shared mux 的并发修改、endian、bit 语义和引脚电气状态需真机复核。
+- [ ] `ControllerPrerequisiteProof` 没有生产调用点，也不解除七个 blocker；当前输出 `proof=0` 是预期安全状态。
+- [ ] 下一批优先审计并建立保守的 MMC clock-control transaction/typestate：先证明允许频率、fresh-read/RMW/readback 与恢复边界；真实写入口继续隔离并标记未在硬件验证。
+
+### 提交
+
+- `[feat] aggregate LS2K1000 MMC prerequisites`
