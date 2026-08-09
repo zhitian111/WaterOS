@@ -175,6 +175,64 @@ codegraph explore "RISC-V platform arch global_asm memcpy compiler_builtins copy
   复制次数或直接填充最终页，而非替换通用 memcpy。
 - 完整日志：`/tmp/wateros-copy01a-after-rv.log`（本机临时文件，不提交）。
 
+## COPY-01B：page-cache miss 直接填充最终槽位
+
+状态：完整测试无可证明收益并回退（2026-08-10）
+
+### 模块与调用链
+
+```text
+GlobalFilePageCache::read_key / VfsMmapPageLoader::load_page
+  -> GlobalFilePageCache::install_page
+     -> [u8; 4096] page_buf
+     -> PageCacheIo::read_range(page_buf)
+     -> cache.page_data_mut(slot).copy_from_slice(page_buf)
+```
+
+当前 cache payload 是构造后不再扩容的连续 `Vec<u8>`，但所有权元数据只有
+free/index/LRU 三态。若仅把槽从 LRU 摘下后锁外写入，`reset_to_gen` 或其他 miss 可能把它
+当作 free 重用，造成数据竞争。
+
+### 设计
+
+1. `PageFrame` 增加内部 `reserved` 状态。预留槽不在 index、LRU 或 free 中，只有发起
+   miss 的同步 I/O 路径能写其 payload。
+2. miss 优先从 free 或 clean LRU 预留槽；锁外将槽清零并把其稳定 4 KiB payload 直接传给
+   `PageCacheIo::read_range`，成功后在锁内一次发布 key/index/LRU。
+3. I/O 失败、同页并发 miss 的后到者均取消预留并归还 free；dirty victim 继续走现有
+   保存副本、锁外写回和 version 校验路径。
+4. `reset_to_gen` 在清空连续 payload 元数据前等待 reserved 槽归还；循环不持锁等待，保证
+   I/O 完成路径可以取得 state lock。
+5. 单元测试除数据和 LRU 不变量外，直接比较 `read_range` 收到的 buffer 地址与 reserved
+   cache payload 地址，证明不是仍经临时数组复制。
+
+恢复上下文命令：
+
+```bash
+codegraph explore "GlobalFilePageCache install_page PageFrame GlobalCacheState pop_free_or_lru_index reset_to_gen clear_in_place page_data_mut PageCacheIo tests exact source and invariants"
+```
+
+### 验收
+
+- page-cache 单元测试通过，覆盖直接地址、I/O 错误回滚和 LRU 不变量。
+- 双架构 Final check/build 通过。
+- RISC-V 16 GiB/8 vCPU、`-snapshot` 完整 BuildStorm 成功且明确优于 926.21 s。
+
+### 验证结果
+
+- page-cache 单元测试：15/15 通过。新增测试确认 `PageCacheIo::read_range` 的目标地址就是
+  reserved cache payload，并确认 I/O 失败归还槽位且 LRU 不变量成立。
+- 双架构 Final check/build：通过。
+- RISC-V 16 GiB/8 vCPU、`-snapshot` 完整 BuildStorm：`ok=true`，925.80 s；无
+  panic/SIGSEGV，完整结束。
+- 相对 926.21 s 对照仅减少 0.41 s（0.04%），完全处于运行噪声内。由于方案引入锁外
+  raw payload、reserved 状态和 reset 等待，风险与复杂度不能由收益证明；实现和测试全部
+  回退，仅保留分析记录。
+- 结论：page-cache miss 最终一次 4 KiB staging copy 不是当前阶段缺口的主要来源。
+  下一项应重新采样并优先评估更高频的 cache-hit → read lease → user-copy，或 mmap
+  fault 中 page-cache → 用户 frame 的全页复制。
+- 完整日志：`/tmp/wateros-copy01b-after-rv.log`（本机临时文件，不提交）。
+
 ## FILE-01A：普通 ext4 数据写不再隐式全盘 flush
 
 状态：完整测试无收益并回退（2026-08-10）
