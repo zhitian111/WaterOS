@@ -2642,3 +2642,53 @@ CPU parent HWI。parent disable 失败时 source 已保持 masked，runtime/pare
 ### 提交
 
 - `[ref] add retryable 2K1000 IRQ runtime drain`
+
+## 2026-08-10：批次 58——Bounded LIOINTC enable-status verification
+
+### 任务与设计
+
+所有关键 LIOINTC source enable/disable 写入后轮询 `ENABLE_STATUS`。单 source 操作只判断目标
+bit，允许其他 owner 的无关位保持；mask-all 必须确认整个 status 归零。轮询使用固定 64 次默认
+budget，无时钟依赖且不会无限阻塞。零 budget 为 InvalidParam，预算耗尽为 IoError。
+
+assembly mask-all、activation ENABLE_SET、activation rollback、service mask-ack、device-ack rearm
+和 drain/quiesce 均改用 verified 操作。任何 status 无法确认的路径不发布、不 rearm 或不销毁
+runtime，保持 fail closed。
+
+### 完成内容
+
+- [x] 新增 `enable_verified()` 与目标 bit 的 enabled=true 有界确认。
+- [x] 新增 `mask_ack_verified()` 与目标 bit 的 enabled=false 有界确认。
+- [x] 新增 `mask_ack_claim_verified()`，只有 mask 状态确认后才生成 AcknowledgedIrq evidence。
+- [x] 新增 `mask_all_verified()`，确认完整 ENABLE_STATUS 为零。
+- [x] BoardIrqRuntime assembly 在保存 controller 前确认 bank 已全部 mask。
+- [x] activation/source rollback/quiesce 使用 verified set/clear。
+- [x] IRQ service mask-ack 与 W1C 后 rearm 使用 verified 操作。
+- [x] runtime ModelIo 模拟 ENABLE_SET/CLEAR 对 ENABLE_STATUS 的硬件状态变化。
+- [x] 状态等待使用 `spin_loop()` hint，不引入睡眠、分配或 timer 依赖。
+
+### 验证证据
+
+- `cargo test`：74 项 host 单测全部通过（本批新增 1 项脚本化 status 测试）。
+- delayed model 让状态在两次 read 后生效；budget=3 的 enable 成功，并保持原有无关 bit7。
+- delayed mask 在预算内清除目标 bit3，无关 bit7 保持。
+- stuck model 对单 bit mask 与 mask-all 均在三次读取后返回 IoError。
+- mask-all budget=0 返回 InvalidParam；无无限轮询路径。
+- 既有 runtime 测试现通过真实 status 模型覆盖 assembly、activation、rollback、service、rearm、quiesce。
+- 2K1000 精确 feature LoongArch target check、`make kernel-la`、topology/畸形 DTS fixture、
+  `git diff --check` 通过；仅有既有 warning，未创建镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：ENABLE_STATUS 是否同步反映 SET/CLEAR、需要何种 barrier/延迟仍需真机确认。
+- [ ] 固定 64 次是操作次数上界而非时间上界；真机若需要更长 posted-write drain，应基于计时器校准。
+- [ ] volatile read/write 当前没有显式架构 I/O fence；需要核对 2K1000 uncached device mapping 与 LoongArch ordering。
+- [ ] mask-all 要求 status 全零，因此只适用于 runtime 独占 controller 的 assembly 阶段。
+- [ ] service 内最多轮询 64 次，虽有界但可能增加 IRQ latency；真机应记录最大/平均 polls。
+- [ ] 错误仍折叠为 DriverError::IoError，尚未暴露 observed status 和 polls-used 供远程诊断。
+- [ ] 下一批应增加 LIOINTC 操作诊断报告（期望值、最后 status、poll count）并在 runtime last-failure
+  快照中保存，便于无 JTAG 情况下通过串口/远程 monitor 定位寄存器时序问题。
+
+### 提交
+
+- `[ref] verify 2K1000 IRQ enable state`

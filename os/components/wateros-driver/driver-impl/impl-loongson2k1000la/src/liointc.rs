@@ -16,6 +16,8 @@ const ENABLE_CLEAR : usize = 0x2C;
 const POLARITY : usize = 0x30;
 const EDGE : usize = 0x34;
 
+pub const DEFAULT_STATUS_POLL_BUDGET : usize = 64;
+
 pub trait RegisterIo {
     fn read32(&self, address : usize) -> u32;
     fn write32(&mut self, address : usize, value : u32);
@@ -102,6 +104,23 @@ impl<I : RegisterIo> LioIntc<I> {
         Ok(())
     }
 
+    fn wait_enabled(&self, irq : u32, enabled : bool, poll_budget : usize)
+                    -> DriverResult<()> {
+        let mask = Self::irq_mask(irq)?;
+        if poll_budget == 0 { return Err(DriverError::InvalidParam); }
+        for _ in 0..poll_budget {
+            let observed = self.io.read32(self.main_base + ENABLE_STATUS) & mask != 0;
+            if observed == enabled { return Ok(()); }
+            core::hint::spin_loop();
+        }
+        Err(DriverError::IoError)
+    }
+
+    pub fn enable_verified(&mut self, irq : u32, poll_budget : usize) -> DriverResult<()> {
+        self.enable(irq)?;
+        self.wait_enabled(irq, true, poll_budget)
+    }
+
     /// Masks the source. This also clears a latched pulse; a level source must
     /// still be cleared at its originating device.
     pub fn mask_ack(&mut self, irq : u32) -> DriverResult<()> {
@@ -111,9 +130,24 @@ impl<I : RegisterIo> LioIntc<I> {
         Ok(())
     }
 
+    pub fn mask_ack_verified(&mut self, irq : u32, poll_budget : usize) -> DriverResult<()> {
+        self.mask_ack(irq)?;
+        self.wait_enabled(irq, false, poll_budget)
+    }
+
     /// Mask every local source with one ENABLE_CLEAR write.
     pub fn mask_all(&mut self) {
         self.io.write32(self.main_base + ENABLE_CLEAR, u32::MAX);
+    }
+
+    pub fn mask_all_verified(&mut self, poll_budget : usize) -> DriverResult<()> {
+        if poll_budget == 0 { return Err(DriverError::InvalidParam); }
+        self.mask_all();
+        for _ in 0..poll_budget {
+            if self.io.read32(self.main_base + ENABLE_STATUS) == 0 { return Ok(()); }
+            core::hint::spin_loop();
+        }
+        Err(DriverError::IoError)
     }
 
     /// Mask/ack one local source and return evidence tied to its global bank.
@@ -124,6 +158,18 @@ impl<I : RegisterIo> LioIntc<I> {
         let global = GlobalIrq::from_bank_local(bank, irq)
                                .map_err(|_| DriverError::InvalidParam)?;
         self.mask_ack(irq)?;
+        Ok(AcknowledgedIrq::after_mask_ack(global))
+    }
+
+    pub fn mask_ack_claim_verified(&mut self,
+                                   bank : usize,
+                                   irq : u32,
+                                   poll_budget : usize)
+                                   -> DriverResult<AcknowledgedIrq> {
+        if bank != self.bank { return Err(DriverError::InvalidParam); }
+        let global = GlobalIrq::from_bank_local(bank, irq)
+                               .map_err(|_| DriverError::InvalidParam)?;
+        self.mask_ack_verified(irq, poll_budget)?;
         Ok(AcknowledgedIrq::after_mask_ack(global))
     }
 
@@ -214,6 +260,7 @@ impl RegisterIo for VolatileMmio {
 #[cfg(test)]
 mod tests {
     use alloc::vec::Vec;
+    use core::cell::Cell;
 
     use super::*;
 
@@ -251,6 +298,39 @@ mod tests {
             self.writes8
                 .push((address, value));
         }
+    }
+
+    struct DelayedStatusIo {
+        base : usize,
+        visible : Cell<u32>,
+        desired : Cell<u32>,
+        reads_before_apply : Cell<usize>,
+        stuck : bool,
+    }
+
+    impl RegisterIo for DelayedStatusIo {
+        fn read32(&self, address : usize) -> u32 {
+            if address != self.base + ENABLE_STATUS { return 0; }
+            if !self.stuck {
+                let remaining = self.reads_before_apply.get();
+                if remaining == 0 {
+                    self.visible.set(self.desired.get());
+                } else {
+                    self.reads_before_apply.set(remaining - 1);
+                }
+            }
+            self.visible.get()
+        }
+
+        fn write32(&mut self, address : usize, value : u32) {
+            if address == self.base + ENABLE_SET {
+                self.desired.set(self.visible.get() | value);
+            } else if address == self.base + ENABLE_CLEAR {
+                self.desired.set(self.visible.get() & !value);
+            }
+        }
+
+        fn write8(&mut self, _address : usize, _value : u8) {}
     }
 
     const BASE : usize = 0x1000;
@@ -293,6 +373,32 @@ mod tests {
                                    1 << 31),
                                   (BASE + ENABLE_CLEAR,
                                    u32::MAX)]);
+    }
+
+    #[test]
+    fn verified_enable_and_mask_bound_delayed_status_polling() {
+        const BASE : usize = 0x3000;
+        let io = DelayedStatusIo { base : BASE,
+                                   visible : Cell::new(1 << 7),
+                                   desired : Cell::new(1 << 7),
+                                   reads_before_apply : Cell::new(2),
+                                   stuck : false };
+        let mut lio = LioIntc::new(io, 0, BASE, &[0x4000]).unwrap();
+        assert_eq!(lio.enable_verified(3, 3), Ok(()));
+        assert_eq!(lio.io.visible.get(), (1 << 7) | (1 << 3));
+        lio.io.reads_before_apply.set(1);
+        assert_eq!(lio.mask_ack_verified(3, 2), Ok(()));
+        assert_eq!(lio.io.visible.get(), 1 << 7);
+        assert_eq!(lio.mask_all_verified(0), Err(DriverError::InvalidParam));
+
+        let stuck = DelayedStatusIo { base : BASE,
+                                      visible : Cell::new(1 << 4),
+                                      desired : Cell::new(1 << 4),
+                                      reads_before_apply : Cell::new(0),
+                                      stuck : true };
+        let mut lio = LioIntc::new(stuck, 0, BASE, &[0x4000]).unwrap();
+        assert_eq!(lio.mask_ack_verified(4, 3), Err(DriverError::IoError));
+        assert_eq!(lio.mask_all_verified(3), Err(DriverError::IoError));
     }
 
     #[test]

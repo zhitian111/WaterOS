@@ -9,7 +9,8 @@ use api_v0::DriverError;
 use crate::{irq_domain::{DomainError, GlobalIrq, IrqDisposition, MAX_BANKS},
             irq_binding::InterruptBinding,
             irq_owner::{IrqOwner, IrqOwnerTable, OwnerError},
-            liointc::{LioIntc, MAIN_REGISTER_BYTES, MAX_CORES, RegisterIo},
+            liointc::{DEFAULT_STATUS_POLL_BUDGET, LioIntc, MAIN_REGISTER_BYTES, MAX_CORES,
+                      RegisterIo},
             topology::BoardTopology};
 use crate::liointc::Route;
 
@@ -213,7 +214,8 @@ impl<I : RegisterIo, O> BoardIrqRuntime<I, O> {
                                               controller_layout.main_base,
                                               &core_isr[..core_count])
                 .map_err(RuntimeError::Controller)?;
-            controller.mask_all();
+            controller.mask_all_verified(DEFAULT_STATUS_POLL_BUDGET)
+                      .map_err(RuntimeError::Controller)?;
             controllers[bank] = Some(controller);
         }
         Self::new(controllers, layout.parent_banks)
@@ -291,7 +293,9 @@ impl<I : RegisterIo, O> BoardIrqRuntime<I, O> {
             while pending != 0 {
                 let local = pending.trailing_zeros();
                 pending &= !(1 << local);
-                let acknowledged = controller.mask_ack_claim(bank, local).map_err(|error| {
+                let acknowledged = controller
+                    .mask_ack_claim_verified(bank, local, DEFAULT_STATUS_POLL_BUDGET)
+                    .map_err(|error| {
                     ServiceFailure { error : RuntimeError::Controller(error), report }
                 })?;
                 report.masked_sources = report.masked_sources.saturating_add(1);
@@ -324,7 +328,8 @@ impl<I : RegisterIo, O> BoardIrqRuntime<I, O> {
                                 report,
                             });
                         }
-                        controller.enable(local).map_err(|error| ServiceFailure {
+                        controller.enable_verified(local, DEFAULT_STATUS_POLL_BUDGET)
+                                  .map_err(|error| ServiceFailure {
                             error : RuntimeError::Controller(error), report
                         })?;
                         report.rearmed_sources = report.rearmed_sources.saturating_add(1);
@@ -424,9 +429,13 @@ impl<I : RegisterIo, O> ConfiguredRuntime<I, O> {
                                          .as_mut()
                                          .ok_or(RuntimeError::MissingController)?;
             if enabled {
-                controller.enable((raw % 32) as u32).map_err(RuntimeError::Controller)?;
+                controller.enable_verified((raw % 32) as u32,
+                                           DEFAULT_STATUS_POLL_BUDGET)
+                          .map_err(RuntimeError::Controller)?;
             } else {
-                controller.mask_ack((raw % 32) as u32).map_err(RuntimeError::Controller)?;
+                controller.mask_ack_verified((raw % 32) as u32,
+                                             DEFAULT_STATUS_POLL_BUDGET)
+                          .map_err(RuntimeError::Controller)?;
             }
         }
         Ok(())
@@ -553,7 +562,8 @@ impl<I : RegisterIo, O : IrqOwner> LiveRuntime<I, O> {
                                          .as_mut()
                                          .ok_or(QuiesceError::Source(
                                              RuntimeError::MissingController))?;
-            controller.mask_ack((raw % 32) as u32)
+            controller.mask_ack_verified((raw % 32) as u32,
+                                         DEFAULT_STATUS_POLL_BUDGET)
                       .map_err(|error| QuiesceError::Source(
                           RuntimeError::Controller(error)))?;
         }
@@ -595,6 +605,7 @@ mod tests {
     const ISR0 : usize = 0x2000;
     const ISR1 : usize = 0x2040;
     const ENABLE_STATUS : usize = 0x24;
+    const ENABLE_SET : usize = 0x28;
     const ENABLE_CLEAR : usize = 0x2c;
 
     #[derive(Default)]
@@ -617,6 +628,15 @@ mod tests {
         }
         fn write32(&mut self, address : usize, value : u32) {
             self.writes.push((address, value));
+            for base in [BASE0, BASE1] {
+                let status_address = base + ENABLE_STATUS;
+                let current = self.read32(status_address);
+                if address == base + ENABLE_SET {
+                    self.values.push((status_address, current | value));
+                } else if address == base + ENABLE_CLEAR {
+                    self.values.push((status_address, current & !value));
+                }
+            }
         }
         fn write8(&mut self, _address : usize, _value : u8) {}
     }
