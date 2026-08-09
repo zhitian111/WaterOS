@@ -7,8 +7,10 @@
 use api_v0::DriverError;
 
 use crate::{irq_domain::{DomainError, GlobalIrq, IrqHandler, LioIntcDomain, MAX_BANKS},
+            irq_binding::InterruptBinding,
             liointc::{LioIntc, MAIN_REGISTER_BYTES, MAX_CORES, RegisterIo},
             topology::BoardTopology};
+use crate::liointc::Route;
 
 const HWI_LINES : usize = 8;
 
@@ -105,6 +107,7 @@ pub enum RuntimeError {
     MissingController,
     Controller(DriverError),
     Domain(DomainError),
+    NoConfiguredSources,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -119,6 +122,29 @@ pub struct ServiceReport {
 pub struct ServiceFailure {
     pub error : RuntimeError,
     pub report : ServiceReport,
+}
+
+pub trait CpuParentActivator {
+    fn enable_parent_lines(&mut self, snapshot : u8) -> Result<(), DriverError>;
+}
+
+pub struct TransitionFailure<S> {
+    pub error : RuntimeError,
+    pub state : S,
+}
+
+pub struct DormantRuntime<I> {
+    runtime : BoardIrqRuntime<I>,
+}
+
+pub struct ConfiguredRuntime<I> {
+    runtime : BoardIrqRuntime<I>,
+    configured_sources : u64,
+}
+
+pub struct LiveRuntime<I> {
+    runtime : BoardIrqRuntime<I>,
+    configured_sources : u64,
 }
 
 pub struct BoardIrqRuntime<I> {
@@ -175,11 +201,13 @@ impl<I : RegisterIo> BoardIrqRuntime<I> {
         self.domain.register(irq, handler).map_err(RuntimeError::Domain)
     }
 
+    pub fn into_dormant(self) -> DormantRuntime<I> { DormantRuntime { runtime : self } }
+
     pub fn into_controllers(self) -> [Option<LioIntc<I>>; MAX_BANKS] {
         self.controllers
     }
 
-    pub fn service(&mut self, snapshot : usize, core : usize)
+    fn service(&mut self, snapshot : usize, core : usize)
                    -> Result<ServiceReport, ServiceFailure> {
         if snapshot == 0 || snapshot & !0xff != 0 {
             return Err(ServiceFailure { error : RuntimeError::InvalidSnapshot,
@@ -228,6 +256,101 @@ impl<I : RegisterIo> BoardIrqRuntime<I> {
             }
         }
         Ok(report)
+    }
+}
+
+impl<I : RegisterIo> DormantRuntime<I> {
+    pub fn configure(mut self,
+                     binding : InterruptBinding,
+                     route : Route,
+                     handler : IrqHandler)
+                     -> Result<ConfiguredRuntime<I>, TransitionFailure<Self>> {
+        let irq = binding.global_irq();
+        if let Err(error) = self.runtime.register(irq, handler) {
+            return Err(TransitionFailure { error, state : self });
+        }
+        let controller = match self.runtime.controllers[irq.bank()].as_mut() {
+            Some(controller) => controller,
+            None => {
+                let _ = self.runtime.domain.unregister(irq);
+                return Err(TransitionFailure { error : RuntimeError::MissingController,
+                                               state : self });
+            }
+        };
+        if let Err(failure) = binding.arm(controller, route) {
+            let _ = self.runtime.domain.unregister(irq);
+            return Err(TransitionFailure { error : RuntimeError::Controller(failure.error),
+                                           state : self });
+        }
+        Ok(ConfiguredRuntime { runtime : self.runtime,
+                               configured_sources : 1u64 << irq.raw() })
+    }
+}
+
+impl<I : RegisterIo> ConfiguredRuntime<I> {
+    pub fn configure(mut self,
+                     binding : InterruptBinding,
+                     route : Route,
+                     handler : IrqHandler)
+                     -> Result<Self, TransitionFailure<Self>> {
+        let irq = binding.global_irq();
+        if let Err(error) = self.runtime.register(irq, handler) {
+            return Err(TransitionFailure { error, state : self });
+        }
+        let controller = match self.runtime.controllers[irq.bank()].as_mut() {
+            Some(controller) => controller,
+            None => {
+                let _ = self.runtime.domain.unregister(irq);
+                return Err(TransitionFailure { error : RuntimeError::MissingController,
+                                               state : self });
+            }
+        };
+        if let Err(failure) = binding.arm(controller, route) {
+            let _ = self.runtime.domain.unregister(irq);
+            return Err(TransitionFailure { error : RuntimeError::Controller(failure.error),
+                                           state : self });
+        }
+        self.configured_sources |= 1u64 << irq.raw();
+        Ok(self)
+    }
+
+    pub fn activate<A : CpuParentActivator>(self,
+                                            activator : &mut A)
+                                            -> Result<LiveRuntime<I>, TransitionFailure<Self>> {
+        if self.configured_sources == 0 {
+            return Err(TransitionFailure { error : RuntimeError::NoConfiguredSources,
+                                           state : self });
+        }
+        let mut parents = 0u8;
+        for (line, bank) in self.runtime.parent_banks.iter().enumerate() {
+            if let Some(bank) = bank {
+                let bank_mask = if *bank == 0 { u32::MAX as u64 }
+                                else { (u32::MAX as u64) << 32 };
+                if self.configured_sources & bank_mask != 0 { parents |= 1 << line; }
+            }
+        }
+        if parents == 0 {
+            return Err(TransitionFailure { error : RuntimeError::UnmappedParent,
+                                           state : self });
+        }
+        if let Err(error) = activator.enable_parent_lines(parents) {
+            return Err(TransitionFailure { error : RuntimeError::Controller(error),
+                                           state : self });
+        }
+        Ok(LiveRuntime { runtime : self.runtime,
+                         configured_sources : self.configured_sources })
+    }
+}
+
+impl<I : RegisterIo> LiveRuntime<I> {
+    pub fn configured_sources(&self) -> u64 { self.configured_sources }
+    pub fn into_runtime(self) -> BoardIrqRuntime<I> { self.runtime }
+
+    /// Service one snapshot. Sources remain masked after dispatch until a
+    /// future device-ack disposition contract permits explicit re-enable.
+    pub fn service(&mut self, snapshot : usize, core : usize)
+                   -> Result<ServiceReport, ServiceFailure> {
+        self.runtime.service(snapshot, core)
     }
 }
 
@@ -381,6 +504,68 @@ mod tests {
         });
         assert!(matches!(result, Err(RuntimeError::Controller(DriverError::IoError))));
         assert_eq!(calls, 2);
+    }
+
+    struct Activator {
+        fail : bool,
+        calls : Vec<u8>,
+    }
+
+    impl CpuParentActivator for Activator {
+        fn enable_parent_lines(&mut self, snapshot : u8) -> Result<(), DriverError> {
+            self.calls.push(snapshot);
+            if self.fail {
+                self.fail = false;
+                Err(DriverError::IoError)
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    fn device_binding(topology : &BoardTopology, provider : u32, local : u32)
+                      -> InterruptBinding {
+        crate::irq_binding::resolve(topology,
+                                    &InterruptSpec { parent_phandle : provider,
+                                                     cells : [local, 4, 0, 0],
+                                                     cell_count : 2 }).unwrap()
+    }
+
+    #[test]
+    fn typestate_retries_parent_activation_and_rejects_duplicate_source() {
+        let topology = board(vec![description(0x1000, 2), description(0x1040, 3)]);
+        let layout = RuntimeLayout::compile(&topology).unwrap();
+        let runtime = BoardIrqRuntime::assemble(layout,
+                                                |_bank, _controller| Ok(ModelIo::default()))
+            .unwrap();
+        let binding = device_binding(&topology, 0x1000, 6);
+        let configured = runtime.into_dormant()
+                                .configure(binding,
+                                           Route { core_mask : 1, parent_line : 0 },
+                                           record)
+                                .unwrap_or_else(|_| panic!("initial configure failed"));
+        let duplicate = match configured.configure(binding,
+                                                    Route { core_mask : 1, parent_line : 0 },
+                                                    record) {
+            Ok(_) => panic!("duplicate source configured"),
+            Err(failure) => failure,
+        };
+        assert_eq!(duplicate.error,
+                   RuntimeError::Domain(DomainError::AlreadyRegistered));
+        let mut activator = Activator { fail : true, calls : Vec::new() };
+        let failed = match duplicate.state.activate(&mut activator) {
+            Ok(_) => panic!("failed activator produced live runtime"),
+            Err(failure) => failure,
+        };
+        assert_eq!(failed.error, RuntimeError::Controller(DriverError::IoError));
+        let live = failed.state.activate(&mut activator)
+                               .unwrap_or_else(|_| panic!("activation retry failed"));
+        assert_eq!(activator.calls, [1 << 2, 1 << 2]);
+        assert_eq!(live.configured_sources(), 1 << 6);
+        let mut controllers = live.into_runtime().into_controllers();
+        let bank0 = controllers[0].take().unwrap().into_inner();
+        assert_eq!(bank0.writes.first(), Some(&(0x1000 + ENABLE_CLEAR, u32::MAX)));
+        assert_eq!(bank0.writes.last(), Some(&(0x1000 + 0x28, 1 << 6)));
     }
 
     #[test]

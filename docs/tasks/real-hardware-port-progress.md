@@ -2041,3 +2041,48 @@ target-only volatile assembler 被标为 unsafe：调用者必须证明所有 ma
 ### 提交
 
 - `[ref] assemble masked 2K1000 IRQ runtime`
+
+## 2026-08-10：批次 45——IRQ runtime startup typestate
+
+### 任务与设计
+
+建立 `DormantRuntime → ConfiguredRuntime → LiveRuntime` 启动状态机。Dormant 来自已全 mask
+的 assembler；configure 必须完成唯一 handler 注册、route、trigger 与 local source enable，并
+把 source 记录到固定 64-bit ownership mask。activate 根据已配置 source 所在 bank 计算所需
+CPU parent HWI mask，只有显式 `CpuParentActivator` 成功后才产生 Live。
+
+当前 handler 只消费 acknowledged token，尚不能返回 device-acked/re-enable 证据。因此 Live
+采用安全的一次触发语义：service 会 mask/ack 并 dispatch，但不会自动 re-enable local source。
+
+### 完成内容
+
+- [x] 新增 Dormant、Configured、Live 三种不可互换的 runtime 类型。
+- [x] 底层 `BoardIrqRuntime::service` 改为私有，只有 Live 对外提供 service。
+- [x] Dormant configure 注册 handler 并执行 binding arm；失败注销 domain owner 并返还 Dormant。
+- [x] Configured 可追加 source；重复 `GlobalIrq` 返回 `AlreadyRegistered` 并返还原状态。
+- [x] configured source ownership 使用固定 u64，不分配内存。
+- [x] activator 只收到已配置 bank 对应的 HWI mask。
+- [x] activator 失败通过 `TransitionFailure<ConfiguredRuntime>` 返还完整状态，可安全重试。
+- [x] Live 明确保持中断处理后 source masked，不虚构 device ack。
+
+### 验证证据
+
+- `cargo test`：55 项 host 单测全部通过（本批新增 1 项）。
+- typestate 测试断言 mask-all 为第一条写，source ENABLE_SET 为配置阶段最后一条写。
+- 重复 source 返回 `Domain(AlreadyRegistered)`；状态随后仍可 activate。
+- activator 第一次 `IoError`、第二次成功，两次均收到仅 HWI2 的 `0x04` mask。
+- topology/畸形 DTS fixtures、LoongArch64 target check、`make kernel-la` 全部通过；仅有既有 warning。
+- `git diff --check` 通过；未创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：route/trigger/source enable 与 CPU parent enable 的真实写序尚未真机验证。
+- [ ] `CpuParentActivator` 目前只有 mock；尚无 ECFG target backend，因此生产无法进入 Live。
+- [ ] configured ownership 压缩为 bitmask；当前 source 首次 dispatch 后仍保留“已配置”诊断位，但硬件已 masked。
+- [ ] handler 不能返回 device ack disposition，故不能安全循环 re-enable。
+- [ ] volatile Live runtime 尚未发布，kernel external trap 仍未接入。
+- [ ] 下一批应实现 handler disposition typestate：handler 接收 acknowledged/masked state，只能返回 `KeepMasked` 或具备设备 clear 证据的 `Rearm`；runtime 根据返回值决定是否 ENABLE_SET，并测试 ack 失败保持 masked。
+
+### 提交
+
+- `[ref] stage 2K1000 IRQ runtime activation`
