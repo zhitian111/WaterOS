@@ -2592,3 +2592,53 @@ LIOINTC/ECFG owner 等 unsafe 前置条件。
 ### 提交
 
 - `[ref] add explicit 2K1000 IRQ diagnostic runtime`
+
+## 2026-08-10：批次 57——Retryable diagnostic IRQ drain
+
+### 任务与设计
+
+为诊断 runtime 增加 Live→Draining→Empty 状态迁移。slot 通过 CAS 独占 runtime；正在
+Servicing 时 drain 立即 Busy，不在中断相关路径自旋。drain 操作失败时 guard 将状态恢复
+Live 并保留原 runtime，允许对同一 MMIO/owner 状态重试。
+
+硬件 quiesce 顺序固定为逐项 mask configured LIOINTC source，然后 disable runtime 拥有的
+CPU parent HWI。parent disable 失败时 source 已保持 masked，runtime/parent mask 仍被保存；
+再次 drain 会幂等 mask source 并重试 parent disable。两步都成功后才 drop runtime 并回到 Empty。
+
+### 完成内容
+
+- [x] DiagnosticRuntimeSlot 新增 Draining 状态和泛型 `drain()`。
+- [x] Empty drain 返回 Empty；Reserved/Servicing/Draining 竞争返回 Busy。
+- [x] drain operation error 恢复 Live，不移动或销毁 value。
+- [x] 成功 drain 原地 drop value并恢复 Empty，允许下一次 reserve/activation。
+- [x] LiveRuntime 新增 `quiesce()`、QuiesceReport 和 Source/Parent 分层错误。
+- [x] quiesce 先 ENABLE_CLEAR 所有 configured source，再 disable owned parent lines。
+- [x] parent disable 失败保持 parent mask，成功后清零 LiveRuntime parent ownership。
+- [x] target diagnostic runtime 接入 LoongArch activator drain。
+- [x] 聚合 driver 暴露显式 unsafe `drain_loongson2k1000_irq_diagnostic()`。
+- [x] host activation/drain/service 全部 fail closed，不访问硬件。
+
+### 验证证据
+
+- `cargo test`：73 项 host 单测全部通过（本批新增 slot drain 与 runtime quiesce 各 1 项）。
+- slot 测试覆盖 operation failure恢复 Live、成功回到 Empty、重复 drain Empty、重新 reserve/publish。
+- service 闭包内发起 drain 返回 Busy，证明不会与正在执行的 IRQ handler 并发取得可变引用。
+- runtime mock 注入第一次 parent disable IoError；source 写序列断言为 ENABLE_SET、ENABLE_CLEAR、
+  retry ENABLE_CLEAR，第二次 parent disable 成功且 ownership 清零。
+- 2K1000 精确 feature LoongArch target check 与 `make kernel-la` 通过；仅有既有 warning。
+- topology/畸形 DTS fixture 和 `git diff --check` 通过；未执行真实 unsafe drain，未创建镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：LIOINTC mask 与 ECFG parent disable 的物理顺序/可见性未上板验证。
+- [ ] drain Busy 由调用方稍后重试；当前没有阻塞等待或超时协调器。
+- [ ] source mask backend 没有读回验证，volatile write 总是返回成功；真机应增加 ENABLE_STATUS readback。
+- [ ] parent disable 失败后 slot 恢复 Live，但 sources 已 masked；service 可进入但不会观察到这些 source。
+- [ ] 仅支持 boot CPU 0；跨 CPU drain 必须先实现 affinity/ownership 迁移。
+- [ ] runtime drop 不清除 device 侧已有 pending 状态；MMC W1C drain policy需根据真机状态寄存器补充。
+- [ ] 下一批应实现 LIOINTC ENABLE_STATUS 有界读回验证，用 model 覆盖延迟生效、timeout、错误 mask，
+  并让 activation/quiesce 对无法确认的 enable/disable fail closed。
+
+### 提交
+
+- `[ref] add retryable 2K1000 IRQ runtime drain`

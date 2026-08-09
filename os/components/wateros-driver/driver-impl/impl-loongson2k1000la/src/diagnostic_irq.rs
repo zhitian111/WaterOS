@@ -7,12 +7,15 @@ use api_v0::{DriverError, DriverResult};
 use crate::diagnostic_slot::SlotError;
 
 #[cfg(target_arch = "loongarch64")]
+use crate::diagnostic_slot::DrainError;
+
+#[cfg(target_arch = "loongarch64")]
 use crate::{
     board_irq_owner::{BoardIrqOwner, MmcCommandOwner},
     cpu_parent::LoongArchCpuParentActivator,
     diagnostic_slot::DiagnosticRuntimeSlot,
     irq_plan::{ApplyError, ApplyMode, AppliedRuntime, OwnerKind},
-    irq_runtime::{LiveRuntime, RuntimeError},
+    irq_runtime::{LiveRuntime, QuiesceError, RuntimeError},
     liointc::VolatileMmio,
     mmc::VolatileRegisters,
 };
@@ -33,6 +36,14 @@ pub enum DiagnosticIrqError {
         parent_rollback : Option<DriverError>,
         residual_parent_lines : u8,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiagnosticDrainError {
+    NotInitialized,
+    Slot(SlotError),
+    #[cfg(target_arch = "loongarch64")]
+    Quiesce(QuiesceError),
 }
 
 #[cfg(target_arch = "loongarch64")]
@@ -103,9 +114,32 @@ pub unsafe fn activate() -> Result<(), DiagnosticIrqError> {
     Ok(())
 }
 
+/// Quiesce and remove the published diagnostic runtime.
+///
+/// # Safety
+/// Must run on the same boot CPU that activated the runtime. Physical ECFG
+/// and LIOINTC shutdown remains `UNVERIFIED_ON_HARDWARE`.
+#[cfg(target_arch = "loongarch64")]
+pub unsafe fn drain() -> Result<(), DiagnosticDrainError> {
+    let mut activator = LoongArchCpuParentActivator;
+    RUNTIME
+        .drain(|runtime| runtime.quiesce(&mut activator).map(|_| ()))
+        .map_err(|error| match error {
+            DrainError::Slot(error) => DiagnosticDrainError::Slot(error),
+            DrainError::Operation(error) => DiagnosticDrainError::Quiesce(error),
+        })?;
+    log::warn!("[driver-ls2k][irq] diagnostic runtime drained");
+    Ok(())
+}
+
 #[cfg(not(target_arch = "loongarch64"))]
 pub unsafe fn activate() -> Result<(), DiagnosticIrqError> {
     Err(DiagnosticIrqError::NotInitialized)
+}
+
+#[cfg(not(target_arch = "loongarch64"))]
+pub unsafe fn drain() -> Result<(), DiagnosticDrainError> {
+    Err(DiagnosticDrainError::NotInitialized)
 }
 
 #[cfg(target_arch = "loongarch64")]
@@ -135,6 +169,8 @@ mod tests {
     fn host_cannot_activate_or_service_real_hardware_runtime() {
         // SAFETY: the host implementation performs no hardware access.
         assert_eq!(unsafe { activate() }, Err(DiagnosticIrqError::NotInitialized));
+        // SAFETY: the host implementation performs no hardware access.
+        assert_eq!(unsafe { drain() }, Err(DiagnosticDrainError::NotInitialized));
         assert_eq!(service(1 << 2, 0), Err(DriverError::Unsupported));
     }
 }

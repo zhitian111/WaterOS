@@ -108,6 +108,18 @@ pub unsafe fn activate_loongson2k1000_irq_diagnostic()
     unsafe { impl_loongson2k1000la::diagnostic_irq::activate() }
 }
 
+/// Quiesce and remove the explicitly activated 2K1000 IRQ diagnostic runtime.
+///
+/// # Safety
+/// Must execute on the same boot CPU under the exclusion contract used for
+/// activation.
+#[cfg(feature = "impl-loongson2k1000la")]
+pub unsafe fn drain_loongson2k1000_irq_diagnostic()
+    -> Result<(), impl_loongson2k1000la::diagnostic_irq::DiagnosticDrainError> {
+    // SAFETY: forwarded to the caller-visible contract above.
+    unsafe { impl_loongson2k1000la::diagnostic_irq::drain() }
+}
+
 /// 自检入口：依次调用 API 与各子系统测试钩子；QEMU 实现会跑探测路径，dummy
 /// 实现跳过硬件。
 pub fn test() {

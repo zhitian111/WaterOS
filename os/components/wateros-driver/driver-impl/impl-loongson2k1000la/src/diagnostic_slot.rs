@@ -11,6 +11,7 @@ const EMPTY : u8 = 0;
 const RESERVED : u8 = 1;
 const LIVE : u8 = 2;
 const SERVICING : u8 = 3;
+const DRAINING : u8 = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SlotError {
@@ -18,6 +19,12 @@ pub enum SlotError {
     AlreadyLive,
     Empty,
     Busy,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum DrainError<E> {
+    Slot(SlotError),
+    Operation(E),
 }
 
 pub struct DiagnosticRuntimeSlot<T> {
@@ -48,7 +55,7 @@ impl<T> DiagnosticRuntimeSlot<T> {
         match self.state.compare_exchange(LIVE, SERVICING, Ordering::AcqRel, Ordering::Acquire) {
             Ok(_) => {}
             Err(EMPTY) => return Err(SlotError::Empty),
-            Err(RESERVED) | Err(SERVICING) => return Err(SlotError::Busy),
+            Err(RESERVED) | Err(SERVICING) | Err(DRAINING) => return Err(SlotError::Busy),
             Err(_) => return Err(SlotError::Busy),
         }
         let guard = ServiceGuard { slot : self };
@@ -58,6 +65,30 @@ impl<T> DiagnosticRuntimeSlot<T> {
         let result = f(value);
         drop(guard);
         Ok(result)
+    }
+
+    /// Exclusively quiesce and remove the live value.
+    ///
+    /// A failed operation restores LIVE so the same value can be retried.
+    pub fn drain<E>(&self,
+                    f : impl FnOnce(&mut T) -> Result<(), E>)
+                    -> Result<(), DrainError<E>> {
+        match self.state.compare_exchange(LIVE, DRAINING, Ordering::AcqRel, Ordering::Acquire) {
+            Ok(_) => {}
+            Err(EMPTY) => return Err(DrainError::Slot(SlotError::Empty)),
+            Err(_) => return Err(DrainError::Slot(SlotError::Busy)),
+        }
+        let mut guard = DrainGuard { slot : self, restore_live : true };
+        // SAFETY: LIVE->DRAINING grants exclusive access to an initialized value.
+        let value = unsafe { (&mut *self.value.get()).assume_init_mut() };
+        if let Err(error) = f(value) {
+            return Err(DrainError::Operation(error));
+        }
+        // SAFETY: the operation succeeded while DRAINING remained exclusive.
+        unsafe { (&mut *self.value.get()).assume_init_drop(); }
+        guard.restore_live = false;
+        self.state.store(EMPTY, Ordering::Release);
+        Ok(())
     }
 }
 
@@ -97,6 +128,19 @@ struct ServiceGuard<'a, T> {
     slot : &'a DiagnosticRuntimeSlot<T>,
 }
 
+struct DrainGuard<'a, T> {
+    slot : &'a DiagnosticRuntimeSlot<T>,
+    restore_live : bool,
+}
+
+impl<T> Drop for DrainGuard<'_, T> {
+    fn drop(&mut self) {
+        if self.restore_live {
+            self.slot.state.store(LIVE, Ordering::Release);
+        }
+    }
+}
+
 impl<T> Drop for ServiceGuard<'_, T> {
     fn drop(&mut self) {
         self.slot.state.store(LIVE, Ordering::Release);
@@ -125,9 +169,31 @@ mod tests {
         slot.reserve().unwrap().commit(7u8);
         let result = slot.with_live_mut(|value| {
             assert_eq!(slot.with_live_mut(|_| ()), Err(SlotError::Busy));
+            assert_eq!(slot.drain(|_| Ok::<(), ()>(())),
+                       Err(DrainError::Slot(SlotError::Busy)));
             *value
         });
         assert_eq!(result, Ok(7));
         assert_eq!(slot.with_live_mut(|value| *value), Ok(7));
+    }
+
+    #[test]
+    fn drain_failure_restores_live_and_success_reopens_slot() {
+        let slot = DiagnosticRuntimeSlot::new();
+        slot.reserve().unwrap().commit(9u8);
+        let failed = slot.drain(|value| {
+            *value = 10;
+            Err::<(), _>("retry")
+        });
+        assert_eq!(failed, Err(DrainError::Operation("retry")));
+        assert_eq!(slot.with_live_mut(|value| *value), Ok(10));
+        assert_eq!(slot.drain(|value| {
+            assert_eq!(*value, 10);
+            Ok::<(), &str>(())
+        }), Ok(()));
+        assert_eq!(slot.drain(|_| Ok::<(), &str>(())),
+                   Err(DrainError::Slot(SlotError::Empty)));
+        slot.reserve().unwrap().commit(11u8);
+        assert_eq!(slot.with_live_mut(|value| *value), Ok(11));
     }
 }

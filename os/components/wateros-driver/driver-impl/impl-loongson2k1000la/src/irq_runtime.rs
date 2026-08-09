@@ -176,6 +176,18 @@ pub struct LiveRuntime<I, O> {
     parent_lines : u8,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QuiesceReport {
+    pub masked_sources : u64,
+    pub disabled_parent_lines : u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuiesceError {
+    Source(RuntimeError),
+    Parent(DriverError),
+}
+
 pub struct BoardIrqRuntime<I, O> {
     controllers : [Option<LioIntc<I>>; MAX_BANKS],
     parent_banks : [Option<u8>; HWI_LINES],
@@ -527,6 +539,32 @@ impl<I : RegisterIo, O : IrqOwner> LiveRuntime<I, O> {
                    -> Result<ServiceReport, ServiceFailure> {
         self.runtime.service(snapshot, core)
     }
+
+    /// Stop device delivery before disabling this runtime's CPU parent lines.
+    /// Failure leaves the runtime owned by the caller for a retry.
+    pub fn quiesce<A : CpuParentActivator>(&mut self,
+                                           activator : &mut A)
+                                           -> Result<QuiesceReport, QuiesceError> {
+        let mut remaining = self.configured_sources;
+        while remaining != 0 {
+            let raw = remaining.trailing_zeros() as usize;
+            remaining &= !(1u64 << raw);
+            let controller = self.runtime.controllers[raw / 32]
+                                         .as_mut()
+                                         .ok_or(QuiesceError::Source(
+                                             RuntimeError::MissingController))?;
+            controller.mask_ack((raw % 32) as u32)
+                      .map_err(|error| QuiesceError::Source(
+                          RuntimeError::Controller(error)))?;
+        }
+        let parents = self.parent_lines;
+        if parents != 0 {
+            activator.disable_parent_lines(parents).map_err(QuiesceError::Parent)?;
+            self.parent_lines = 0;
+        }
+        Ok(QuiesceReport { masked_sources : self.configured_sources,
+                           disabled_parent_lines : parents })
+    }
 }
 
 /// Assemble controllers backed by raw volatile physical MMIO.
@@ -844,6 +882,42 @@ mod tests {
                    [(BASE0 + 0x28, 1 << 6),
                     (BASE0 + ENABLE_CLEAR, 1 << 6),
                     (BASE0 + 0x28, 1 << 6)]);
+    }
+
+    #[test]
+    fn quiesce_masks_sources_before_parent_disable_and_retries_failure() {
+        let topology = board(vec![description(0x1000, 2), description(0x1040, 3)]);
+        let layout = RuntimeLayout::compile(&topology).unwrap();
+        let runtime : BoardIrqRuntime<ModelIo, TestOwner> =
+            BoardIrqRuntime::assemble(layout,
+                                      |_bank, _controller| Ok(ModelIo::default()))
+            .unwrap();
+        let configured = runtime.into_dormant()
+                                .configure(device_binding(&topology, 0x1000, 6),
+                                           Route { core_mask : 1, parent_line : 0 },
+                                           TestOwner::keep())
+                                .unwrap_or_else(|_| panic!("configure failed"));
+        let mut activator = Activator { fail_enable : false,
+                                        fail_disable : false,
+                                        enables : Vec::new(),
+                                        disables : Vec::new() };
+        let mut live = configured.activate(&mut activator)
+                                 .unwrap_or_else(|_| panic!("activate failed"));
+        activator.fail_disable = true;
+        assert_eq!(live.quiesce(&mut activator),
+                   Err(QuiesceError::Parent(DriverError::IoError)));
+        assert_eq!(live.parent_lines(), 1 << 2);
+        assert_eq!(live.quiesce(&mut activator),
+                   Ok(QuiesceReport { masked_sources : 1 << 6,
+                                      disabled_parent_lines : 1 << 2 }));
+        assert_eq!(live.parent_lines(), 0);
+        assert_eq!(activator.disables, [1 << 2, 1 << 2]);
+        let mut controllers = live.into_runtime().into_controllers();
+        let writes = controllers[0].take().unwrap().into_inner().writes;
+        assert_eq!(&writes[writes.len() - 3..],
+                   [(BASE0 + 0x28, 1 << 6),
+                    (BASE0 + ENABLE_CLEAR, 1 << 6),
+                    (BASE0 + ENABLE_CLEAR, 1 << 6)]);
     }
 
     #[test]
