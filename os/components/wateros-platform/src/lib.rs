@@ -75,6 +75,33 @@ pub fn physical_ram_end_exclusive() -> usize {
     }
 }
 
+/// Board-provided RAM and identity-mapped MMIO layout consumed by the active
+/// architecture MM implementation.
+pub mod memory {
+    pub use api_v0::memory::{KernelMemoryLayout, MemoryLayoutError, PhysicalRange};
+
+    pub fn kernel_layout() -> KernelMemoryLayout {
+        #[cfg(feature = "impl-qemu-riscv64-opensbi")]
+        {
+            return impl_qemu_riscv64_opensbi::memory::kernel_memory_layout();
+        }
+        #[cfg(all(not(feature = "impl-qemu-riscv64-opensbi"),
+                  feature = "impl-qemu-loongarch64-virt"))]
+        {
+            return impl_qemu_loongarch64_virt::memory::kernel_memory_layout();
+        }
+        #[cfg(not(any(feature = "impl-qemu-riscv64-opensbi",
+                      feature = "impl-qemu-loongarch64-virt")))]
+        {
+            const NO_MMIO : [PhysicalRange; 0] = [];
+            KernelMemoryLayout { ram : PhysicalRange::new(config::mm::QEMU_VIRT_PHYS_RAM_BASE,
+                                                           config::mm::QEMU_VIRT_PHYS_RAM_END),
+                                 mmio : &NO_MMIO,
+                                 probe_virtual_page : None }
+        }
+    }
+}
+
 /// 启动参数与引导上下文：具体类型由 feature 选中的 `platform-impl` 提供。
 #[cfg(feature = "api-v0")]
 pub mod boot;

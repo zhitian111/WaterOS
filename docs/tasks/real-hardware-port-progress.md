@@ -86,3 +86,43 @@ nc 127.0.0.1 22323
 ### 提交
 
 - `[feat] add opt-in TCP debug monitor`
+
+## 2026-08-10：批次 2——平台化内核内存布局
+
+### 任务与设计
+
+1. 定义与板卡无关的 RAM、MMIO 和页表探针布局契约。
+2. 让架构 MM 实现消费平台布局，清除 RISC-V/LoongArch64 MM 中的 QEMU 地址常量。
+3. 将现有 QEMU 地址收敛到各自 platform implementation，保持原有启动行为。
+4. 用 host 单测拒绝空、未对齐或重叠的布局。
+
+当前契约有意只描述一段主连续 RAM；这足以承载现有 QEMU 和两块目标板的早期启动，避免在尚未确认真机保留区和 DMA 约束时过早引入多内存域分配器。
+
+### 完成内容
+
+- [x] 新增 `PhysicalRange` 和 `KernelMemoryLayout` 平台 API。
+- [x] 布局验证覆盖页对齐、RAM/MMIO 重叠、MMIO 互相重叠和探针 VA 冲突。
+- [x] QEMU RISC-V 平台提供 DTB RAM 上界、virt MMIO、RTC 和 Sv39 探针 VA。
+- [x] QEMU LoongArch64 平台提供高段 RAM、低端 MMIO 和 PCI MMIO 窗口。
+- [x] Sv39 和 LoongArch64 内核页表初始化不再内嵌板卡地址。
+- [x] 保留 DTB 位于 RAM 时截断早期帧池的保护行为。
+
+### 验证证据
+
+- `cargo test --manifest-path os/components/wateros-platform/platform-api/api-v0/Cargo.toml`：3 项单测和 doc-test 通过。
+- RISC-V `cargo check --target riscv64gc-unknown-none-elf --no-default-features --features qemu-riscv64-opensbi,pre,heap-tlsf`：通过。
+- LoongArch64 `cargo check --target loongarch64-unknown-none --no-default-features --features qemu-loongarch64-virt,pre,heap-tlsf`：通过。
+- `make kernel-rv`：release 构建通过。
+- QEMU RISC-V 1 GiB/8 hart/snapshot 回归通过：所有 AP 进入 Rust，virtio-net/blk 发现正常，devfs 刷新、ext4 根挂载与内核自测正常。
+- QEMU 复用现有根盘并使用 snapshot，没有修改或新建镜像。
+
+### 未验证与后续测试
+
+- [ ] LoongArch64 QEMU 运行时回归未执行，当前有交叉编译证据。
+- [ ] VisionFive 2 和 2K1000LA 的精确 RAM/MMIO/保留区需在各自 profile 引入后依据厂商 DTB 和手册填充。
+- [ ] 多段 RAM、DMA 可达性和 cache 一致性策略待驱动 bring-up 阶段扩展。
+- [ ] 实机上的启动器保留区、DTB 位置和内核镜像边界必须再验证。
+
+### 提交
+
+- `[ref] make kernel memory layout platform-owned`

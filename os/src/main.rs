@@ -277,8 +277,7 @@ mod qemu_riscv64_opensbi {
         crate::dashboard::init();
         crate::trap_handler::init();
         // MM 初始化
-        let memory_end = platform::physical_ram_end_exclusive();
-        mm::kernel_mm::init(dtb_pa, memory_end);
+        mm::kernel_mm::init(dtb_pa, platform::memory::kernel_layout());
         AP_BOOT_READY.store(true, Ordering::Release);
 
         let requested_aps = start_secondary_harts(cpu_id, dtb_pa);
@@ -410,8 +409,7 @@ mod qemu_loongarch64_virt {
         crate::trap_handler::init();
         platform::arch::paging::init_paging_disable_mmu();
 
-        let memory_end = platform::physical_ram_end_exclusive();
-        mm::kernel_mm::init(dtb_pa, memory_end);
+        mm::kernel_mm::init(dtb_pa, platform::memory::kernel_layout());
 
         AP_BOOT_READY.store(true, Ordering::Release);
         let requested_aps = start_secondary_cpus(cpu_id);

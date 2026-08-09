@@ -1,4 +1,12 @@
-//! 平台物理内存布局：从引导 DTB 解析 RAM 上界（bring-up 期供 MM 初始化）。
+//! QEMU RISC-V physical RAM and identity-mapped MMIO layout.
+
+use api_v0::memory::{KernelMemoryLayout, PhysicalRange};
+
+const MMIO_RANGES : [PhysicalRange; 2] =
+    [PhysicalRange::new(config::mm::QEMU_VIRT_MMIO_PHYS_START,
+                        config::mm::QEMU_VIRT_MMIO_PHYS_END),
+     PhysicalRange::new(config::mm::QEMU_VIRT_RTC_PHYS_START,
+                        config::mm::QEMU_VIRT_RTC_PHYS_END)];
 
 /// 物理 RAM 上界（不包含）：优先解析平台 DTB `memory@*` 的 `reg`；失败时用
 /// `wateros-base-config` 回退值。
@@ -37,4 +45,13 @@ pub fn physical_ram_end_exclusive() -> usize {
     } else {
         FALLBACK
     }
+}
+
+pub fn kernel_memory_layout() -> KernelMemoryLayout {
+    KernelMemoryLayout { ram : PhysicalRange::new(config::mm::QEMU_VIRT_PHYS_RAM_BASE,
+                                                   physical_ram_end_exclusive()),
+                         mmio : &MMIO_RANGES,
+                         probe_virtual_page : Some(0x4000_0000) }
+        .validate()
+        .expect("QEMU RISC-V memory layout must be valid")
 }

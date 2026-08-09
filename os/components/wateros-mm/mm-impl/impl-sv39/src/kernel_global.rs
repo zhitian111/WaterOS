@@ -55,11 +55,11 @@ pub fn kernel_satp() -> usize { api_v0::kernel_satp::get() }
 
 /// QEMU virt RAM 恒等映射（S 态、无 `U`），保证 trap / 调度代码可执行。
 ///
-/// `ram_end_exclusive` 为物理 RAM 上界（不包含），应与 DTB `/memory` 或
-/// bring-up 约定一致。
-pub fn init(dtb_pa : usize, ram_end_exclusive : usize) {
-    assert!(ram_end_exclusive > 0x8000_0000,
-            "kernel_mm: ram_end_exclusive must be above RAM base");
+/// `layout` 由当前平台提供，包含物理 RAM、需要恒等映射的 MMIO，
+/// 以及页表切换探针使用的虚拟页。
+pub fn init(dtb_pa : usize, layout : platform::memory::KernelMemoryLayout) {
+    let layout = layout.validate().expect("kernel_mm: invalid platform memory layout");
+    let ram_end_exclusive = layout.ram.end;
     PHYS_RAM_END_EXCL.store(ram_end_exclusive, Ordering::Release);
 
     // 从 kernel_end → DTB → RAM 上界换算可用帧范围
@@ -68,8 +68,10 @@ pub fn init(dtb_pa : usize, ram_end_exclusive : usize) {
     unsafe {
         core::arch::asm!("la {}, kernel_end", out(reg) kernel_end_addr);
     }
+    assert!(layout.ram.contains(kernel_end_addr),
+            "kernel_mm: kernel_end must be inside platform RAM");
     let start_ppn = (kernel_end_addr + PAGE_SIZE - 1) / PAGE_SIZE;
-    let alloc_end = if dtb_pa >= 0x8000_0000 && dtb_pa < ram_end_exclusive {
+    let alloc_end = if layout.ram.contains(dtb_pa) {
         dtb_pa & !(PAGE_SIZE - 1)
     } else {
         ram_end_exclusive
@@ -101,31 +103,27 @@ pub fn init(dtb_pa : usize, ram_end_exclusive : usize) {
     };
 
     map_identity(&mut aspace,
-                 0x8000_0000,
-                 ram_end_exclusive,
+                 layout.ram.start,
+                 layout.ram.end,
                  PagePerm::R | PagePerm::W | PagePerm::X,
                  "RAM");
 
-    // 访问 virtio / UART 等 MMIO（如 0x1000_8000）必须映射；与 `-m` 无关。
-    map_identity(&mut aspace,
-                 wateros_base_config::mm::QEMU_VIRT_MMIO_PHYS_START,
-                 wateros_base_config::mm::QEMU_VIRT_MMIO_PHYS_END,
-                 PagePerm::R | PagePerm::W,
-                 "MMIO");
-
-    // Goldfish RTC 位于 0x0010_1000，不在 UART/VirtIO 的常规 MMIO 窗口内。
-    map_identity(&mut aspace,
-                 wateros_base_config::mm::QEMU_VIRT_RTC_PHYS_START,
-                 wateros_base_config::mm::QEMU_VIRT_RTC_PHYS_END,
-                 PagePerm::R | PagePerm::W,
-                 "RTC MMIO");
+    for range in layout.mmio.iter().copied() {
+        map_identity(&mut aspace,
+                     range.start,
+                     range.end,
+                     PagePerm::R | PagePerm::W,
+                     "MMIO");
+    }
 
     // 选一枚位于帧池内的物理页做 satp 切换后的翻译与内存一致性探针（与 RAM
     // 恒等区无重叠的任意 VA）。
     assert!(start_ppn + 16 < end_ppn,
             "kernel_mm: probe ppn out of range");
     let probe_ppn = PhysPageNum(start_ppn + 16);
-    let probe_va = VirtAddr(0x4000_0000usize + 0x2A0);
+    let probe_page = layout.probe_virtual_page
+                           .expect("kernel_mm: Sv39 requires a probe virtual page");
+    let probe_va = VirtAddr(probe_page + 0x2A0);
     let probe_vpn = probe_va.floor_page();
     aspace.map_page_to_ppn(probe_vpn,
                            probe_ppn,
@@ -135,11 +133,11 @@ pub fn init(dtb_pa : usize, ram_end_exclusive : usize) {
     let satp_target = aspace.kernel_satp_value();
     #[cfg(all(feature = "impl-riscv64", target_arch = "riscv64"))]
     platform::arch::trap::set_kernel_trap_satp(satp_target);
-    runtime::logging::trace!("[kernel-mm] identity map RAM [0x80000000,{:#x}) MMIO [{:#x},{:#x}) \
-                              satp target={:#x}",
+    runtime::logging::trace!("[kernel-mm] identity map RAM [{:#x},{:#x}) mmio_regions={} satp \
+                              target={:#x}",
+                             layout.ram.start,
                              ram_end_exclusive,
-                             wateros_base_config::mm::QEMU_VIRT_MMIO_PHYS_START,
-                             wateros_base_config::mm::QEMU_VIRT_MMIO_PHYS_END,
+                             layout.mmio.len(),
                              satp_target);
     platform::arch::paging::activate_address_space_token_and_flush(satp_target);
     assert_eq!(platform::arch::paging::active_address_space_token(),

@@ -1,4 +1,11 @@
-//! 平台物理内存布局：从引导 DTB 解析 RAM 上界（bring-up 期供 MM 初始化）。
+//! QEMU LoongArch64 physical RAM and identity-mapped MMIO layout.
+
+use api_v0::memory::{KernelMemoryLayout, PhysicalRange};
+
+const QEMU_RAM_BASE : usize = 0x9000_0000;
+const MMIO_RANGES : [PhysicalRange; 2] =
+    [PhysicalRange::new(0x1000_0000, 0x3000_0000),
+     PhysicalRange::new(0x4000_0000, 0x8000_0000)];
 
 /// 物理 RAM 上界（不包含）：QEMU LoongArch64 `virt -m 1G` 的可用 RAM
 /// 包含内核所在的 `0x8000_0000..0xb000_0000` 高段；内核从 `0x9000_0000`
@@ -34,4 +41,13 @@ pub fn physical_ram_end_exclusive() -> usize {
     }
     // 回退：DTB 不可用时匹配仓库 Makefile 的 QEMU `virt -m 1G`。
     0xb000_0000
+}
+
+pub fn kernel_memory_layout() -> KernelMemoryLayout {
+    KernelMemoryLayout { ram : PhysicalRange::new(QEMU_RAM_BASE,
+                                                   physical_ram_end_exclusive()),
+                         mmio : &MMIO_RANGES,
+                         probe_virtual_page : None }
+        .validate()
+        .expect("QEMU LoongArch64 memory layout must be valid")
 }

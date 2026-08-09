@@ -38,13 +38,6 @@ static KERNEL_ASPACE : BootOnceCell<KernelAddressSpaceCell> = BootOnceCell::new(
 /// 装载等路径读取。
 static PHYS_RAM_END_EXCL : AtomicUsize = AtomicUsize::new(0);
 
-/// QEMU virt LoongArch64 RAM 基址（与 link.ld 一致）。
-const LOONGARCH64_RAM_BASE : usize = 0x9000_0000;
-const LOONGARCH64_LOW_MMIO_START : usize = 0x1000_0000;
-const LOONGARCH64_LOW_MMIO_END : usize = 0x3000_0000;
-const LOONGARCH64_PCI_MMIO_START : usize = 0x4000_0000;
-const LOONGARCH64_PCI_MMIO_END : usize = 0x8000_0000;
-
 #[inline]
 pub(crate) fn phys_ram_end_exclusive() -> usize {
     let v = PHYS_RAM_END_EXCL.load(Ordering::Acquire);
@@ -73,11 +66,10 @@ pub fn kernel_satp() -> usize { api_v0::kernel_satp::get() }
 /// QEMU virt LoongArch64 RAM 恒等映射（S 态、无 `U`），保证 trap /
 /// 调度代码可执行。
 ///
-/// `ram_end_exclusive` 为物理 RAM 上界（不包含），应与 DTB `/memory` 或
-/// bring-up 约定一致。
-pub fn init(_dtb_pa : usize, ram_end_exclusive : usize) {
-    assert!(ram_end_exclusive > LOONGARCH64_RAM_BASE,
-            "kernel_mm: ram_end_exclusive must be above RAM base");
+/// `layout` 由当前平台提供，包含物理 RAM 和需要恒等映射的 MMIO。
+pub fn init(_dtb_pa : usize, layout : platform::memory::KernelMemoryLayout) {
+    let layout = layout.validate().expect("kernel_mm: invalid platform memory layout");
+    let ram_end_exclusive = layout.ram.end;
     PHYS_RAM_END_EXCL.store(ram_end_exclusive, Ordering::Release);
 
     // 初始化帧分配器
@@ -85,6 +77,8 @@ pub fn init(_dtb_pa : usize, ram_end_exclusive : usize) {
     unsafe {
         core::arch::asm!("la {}, kernel_end", out(reg) kernel_end_addr);
     }
+    assert!(layout.ram.contains(kernel_end_addr),
+            "kernel_mm: kernel_end must be inside platform RAM");
     let start_ppn = (kernel_end_addr + PAGE_SIZE - 1) / PAGE_SIZE;
     let end_ppn = ram_end_exclusive / PAGE_SIZE;
     let usable_end_ppn = end_ppn.min(0x1_0000_0000usize / PAGE_SIZE);
@@ -113,24 +107,18 @@ pub fn init(_dtb_pa : usize, ram_end_exclusive : usize) {
     };
 
     map_identity(&mut aspace,
-                 LOONGARCH64_RAM_BASE,
-                 ram_end_exclusive,
+                 layout.ram.start,
+                 layout.ram.end,
                  PagePerm::R | PagePerm::W | PagePerm::X,
                  "RAM");
 
-    // 访问 UART、PLIC/MSI、PCI ECAM 等低地址 MMIO 必须映射；与 `-m` 无关。
-    map_identity(&mut aspace,
-                 LOONGARCH64_LOW_MMIO_START,
-                 LOONGARCH64_LOW_MMIO_END,
-                 PagePerm::R | PagePerm::W,
-                 "low MMIO");
-
-    // VirtIO PCI transport 会在该窗口内分配 BAR，启用 PGDL 后也要恒等映射。
-    map_identity(&mut aspace,
-                 LOONGARCH64_PCI_MMIO_START,
-                 LOONGARCH64_PCI_MMIO_END,
-                 PagePerm::R | PagePerm::W,
-                 "PCI MMIO");
+    for range in layout.mmio.iter().copied() {
+        map_identity(&mut aspace,
+                     range.start,
+                     range.end,
+                     PagePerm::R | PagePerm::W,
+                     "MMIO");
+    }
 
     // 选一枚帧池内真实 RAM 帧，用已建立的 RAM 恒等映射做 PGDL 切换后的访存探针。
     // 避免额外低地址 VA 受 LoongArch64 PGDL/PGDH 选择规则影响。
@@ -138,12 +126,11 @@ pub fn init(_dtb_pa : usize, ram_end_exclusive : usize) {
     let probe_va = VirtAddr(probe_ppn.0 * PAGE_SIZE + 0x2A0);
 
     let pgdl_target = aspace.satp_value();
-    runtime::logging::trace!("[kernel-mm] identity map RAM [{:#x},{:#x}) MMIO [{:#x},{:#x}) pgdl \
+    runtime::logging::trace!("[kernel-mm] identity map RAM [{:#x},{:#x}) mmio_regions={} pgdl \
                               target={:#x}",
-                             LOONGARCH64_RAM_BASE,
+                             layout.ram.start,
                              ram_end_exclusive,
-                             LOONGARCH64_LOW_MMIO_START,
-                             LOONGARCH64_LOW_MMIO_END,
+                             layout.mmio.len(),
                              pgdl_target);
     platform::arch::paging::activate_address_space_token_and_flush(pgdl_target);
     platform::arch::paging::enable_paging();

@@ -10,6 +10,7 @@
 
 pub mod boot;
 pub mod console;
+pub mod memory;
 pub mod reset;
 /// CPU bring-up and online-state contract for SMP-capable platforms.
 pub mod smp;
