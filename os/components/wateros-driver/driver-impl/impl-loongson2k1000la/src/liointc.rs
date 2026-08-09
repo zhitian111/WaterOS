@@ -18,6 +18,28 @@ const EDGE : usize = 0x34;
 
 pub const DEFAULT_STATUS_POLL_BUDGET : usize = 64;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatusPollOperation {
+    Enable,
+    Mask,
+    MaskAll,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StatusPollReport {
+    pub operation : StatusPollOperation,
+    pub expected_mask : u32,
+    pub expected_value : u32,
+    pub observed_status : u32,
+    pub polls : usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StatusPollFailure {
+    pub error : DriverError,
+    pub report : StatusPollReport,
+}
+
 pub trait RegisterIo {
     fn read32(&self, address : usize) -> u32;
     fn write32(&mut self, address : usize, value : u32);
@@ -52,6 +74,8 @@ pub struct LioIntc<I> {
     bank : usize,
     main_base : usize,
     core_isr : [Option<usize>; MAX_CORES],
+    last_status_poll_report : Option<StatusPollReport>,
+    last_status_poll_failure : Option<StatusPollFailure>,
 }
 
 impl<I : RegisterIo> LioIntc<I> {
@@ -80,10 +104,18 @@ impl<I : RegisterIo> LioIntc<I> {
         Ok(Self { io,
                   bank,
                   main_base,
-                  core_isr : isr })
+                  core_isr : isr,
+                  last_status_poll_report : None,
+                  last_status_poll_failure : None })
     }
 
     pub const fn bank(&self) -> usize { self.bank }
+    pub const fn last_status_poll_failure(&self) -> Option<StatusPollFailure> {
+        self.last_status_poll_failure
+    }
+    pub const fn last_status_poll_report(&self) -> Option<StatusPollReport> {
+        self.last_status_poll_report
+    }
 
     fn irq_mask(irq : u32) -> DriverResult<u32> {
         if irq >= IRQ_COUNT {
@@ -104,19 +136,58 @@ impl<I : RegisterIo> LioIntc<I> {
         Ok(())
     }
 
-    fn wait_enabled(&self, irq : u32, enabled : bool, poll_budget : usize)
+    fn wait_enabled(&mut self, irq : u32, enabled : bool, poll_budget : usize)
                     -> DriverResult<()> {
         let mask = Self::irq_mask(irq)?;
-        if poll_budget == 0 { return Err(DriverError::InvalidParam); }
-        for _ in 0..poll_budget {
-            let observed = self.io.read32(self.main_base + ENABLE_STATUS) & mask != 0;
-            if observed == enabled { return Ok(()); }
+        let expected_value = if enabled { mask } else { 0 };
+        let operation = if enabled { StatusPollOperation::Enable }
+                        else { StatusPollOperation::Mask };
+        self.wait_status(operation, mask, expected_value, poll_budget)
+            .map(|_| ())
+            .map_err(|failure| failure.error)
+    }
+
+    fn wait_status(&mut self,
+                   operation : StatusPollOperation,
+                   expected_mask : u32,
+                   expected_value : u32,
+                   poll_budget : usize)
+                   -> Result<StatusPollReport, StatusPollFailure> {
+        let mut observed_status = self.io.read32(self.main_base + ENABLE_STATUS);
+        if poll_budget == 0 {
+            let failure = StatusPollFailure {
+                error : DriverError::InvalidParam,
+                report : StatusPollReport { operation, expected_mask, expected_value,
+                                            observed_status, polls : 0 },
+            };
+            self.last_status_poll_report = Some(failure.report);
+            self.last_status_poll_failure = Some(failure);
+            return Err(failure);
+        }
+        for polls in 1..=poll_budget {
+            if polls != 1 {
+                observed_status = self.io.read32(self.main_base + ENABLE_STATUS);
+            }
+            if observed_status & expected_mask == expected_value {
+                let report = StatusPollReport { operation, expected_mask, expected_value,
+                                                observed_status, polls };
+                self.last_status_poll_report = Some(report);
+                return Ok(report);
+            }
             core::hint::spin_loop();
         }
-        Err(DriverError::IoError)
+        let failure = StatusPollFailure {
+            error : DriverError::IoError,
+            report : StatusPollReport { operation, expected_mask, expected_value,
+                                        observed_status, polls : poll_budget },
+        };
+        self.last_status_poll_report = Some(failure.report);
+        self.last_status_poll_failure = Some(failure);
+        Err(failure)
     }
 
     pub fn enable_verified(&mut self, irq : u32, poll_budget : usize) -> DriverResult<()> {
+        if poll_budget == 0 { return self.wait_enabled(irq, true, 0); }
         self.enable(irq)?;
         self.wait_enabled(irq, true, poll_budget)
     }
@@ -131,6 +202,7 @@ impl<I : RegisterIo> LioIntc<I> {
     }
 
     pub fn mask_ack_verified(&mut self, irq : u32, poll_budget : usize) -> DriverResult<()> {
+        if poll_budget == 0 { return self.wait_enabled(irq, false, 0); }
         self.mask_ack(irq)?;
         self.wait_enabled(irq, false, poll_budget)
     }
@@ -141,13 +213,15 @@ impl<I : RegisterIo> LioIntc<I> {
     }
 
     pub fn mask_all_verified(&mut self, poll_budget : usize) -> DriverResult<()> {
-        if poll_budget == 0 { return Err(DriverError::InvalidParam); }
-        self.mask_all();
-        for _ in 0..poll_budget {
-            if self.io.read32(self.main_base + ENABLE_STATUS) == 0 { return Ok(()); }
-            core::hint::spin_loop();
+        if poll_budget == 0 {
+            return self.wait_status(StatusPollOperation::MaskAll, u32::MAX, 0, 0)
+                       .map(|_| ())
+                       .map_err(|failure| failure.error);
         }
-        Err(DriverError::IoError)
+        self.mask_all();
+        self.wait_status(StatusPollOperation::MaskAll, u32::MAX, 0, poll_budget)
+            .map(|_| ())
+            .map_err(|failure| failure.error)
     }
 
     /// Mask/ack one local source and return evidence tied to its global bank.
@@ -386,10 +460,26 @@ mod tests {
         let mut lio = LioIntc::new(io, 0, BASE, &[0x4000]).unwrap();
         assert_eq!(lio.enable_verified(3, 3), Ok(()));
         assert_eq!(lio.io.visible.get(), (1 << 7) | (1 << 3));
+        assert_eq!(lio.last_status_poll_report(), Some(StatusPollReport {
+            operation : StatusPollOperation::Enable,
+            expected_mask : 1 << 3,
+            expected_value : 1 << 3,
+            observed_status : (1 << 7) | (1 << 3),
+            polls : 3,
+        }));
         lio.io.reads_before_apply.set(1);
         assert_eq!(lio.mask_ack_verified(3, 2), Ok(()));
         assert_eq!(lio.io.visible.get(), 1 << 7);
+        assert_eq!(lio.last_status_poll_report().unwrap().polls, 2);
         assert_eq!(lio.mask_all_verified(0), Err(DriverError::InvalidParam));
+        assert_eq!(lio.last_status_poll_failure(), Some(StatusPollFailure {
+            error : DriverError::InvalidParam,
+            report : StatusPollReport { operation : StatusPollOperation::MaskAll,
+                                        expected_mask : u32::MAX,
+                                        expected_value : 0,
+                                        observed_status : 1 << 7,
+                                        polls : 0 },
+        }));
 
         let stuck = DelayedStatusIo { base : BASE,
                                       visible : Cell::new(1 << 4),
@@ -398,7 +488,23 @@ mod tests {
                                       stuck : true };
         let mut lio = LioIntc::new(stuck, 0, BASE, &[0x4000]).unwrap();
         assert_eq!(lio.mask_ack_verified(4, 3), Err(DriverError::IoError));
+        assert_eq!(lio.last_status_poll_failure(), Some(StatusPollFailure {
+            error : DriverError::IoError,
+            report : StatusPollReport { operation : StatusPollOperation::Mask,
+                                        expected_mask : 1 << 4,
+                                        expected_value : 0,
+                                        observed_status : 1 << 4,
+                                        polls : 3 },
+        }));
         assert_eq!(lio.mask_all_verified(3), Err(DriverError::IoError));
+        assert_eq!(lio.last_status_poll_failure(), Some(StatusPollFailure {
+            error : DriverError::IoError,
+            report : StatusPollReport { operation : StatusPollOperation::MaskAll,
+                                        expected_mask : u32::MAX,
+                                        expected_value : 0,
+                                        observed_status : 1 << 4,
+                                        polls : 3 },
+        }));
     }
 
     #[test]

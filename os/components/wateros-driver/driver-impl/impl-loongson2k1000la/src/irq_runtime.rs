@@ -10,7 +10,7 @@ use crate::{irq_domain::{DomainError, GlobalIrq, IrqDisposition, MAX_BANKS},
             irq_binding::InterruptBinding,
             irq_owner::{IrqOwner, IrqOwnerTable, OwnerError},
             liointc::{DEFAULT_STATUS_POLL_BUDGET, LioIntc, MAIN_REGISTER_BYTES, MAX_CORES,
-                      RegisterIo},
+                      RegisterIo, StatusPollFailure},
             topology::BoardTopology};
 use crate::liointc::Route;
 
@@ -196,6 +196,12 @@ pub struct BoardIrqRuntime<I, O> {
 }
 
 impl<I : RegisterIo, O> BoardIrqRuntime<I, O> {
+    fn status_poll_failures(&self) -> [Option<StatusPollFailure>; MAX_BANKS] {
+        core::array::from_fn(|bank| {
+            self.controllers[bank].as_ref().and_then(LioIntc::last_status_poll_failure)
+        })
+    }
+
     pub fn assemble<F>(layout : RuntimeLayout, mut make_io : F) -> Result<Self, RuntimeError>
     where F : FnMut(usize, ControllerLayout) -> Result<I, DriverError>
     {
@@ -373,6 +379,9 @@ impl<I : RegisterIo, O> DormantRuntime<I, O> {
 
 impl<I : RegisterIo, O> ConfiguredRuntime<I, O> {
     pub const fn configured_sources(&self) -> u64 { self.configured_sources }
+    pub fn status_poll_failures(&self) -> [Option<StatusPollFailure>; MAX_BANKS] {
+        self.runtime.status_poll_failures()
+    }
 
     pub fn configure(mut self,
                      binding : InterruptBinding,
@@ -540,6 +549,9 @@ impl<I : RegisterIo, O> ConfiguredRuntime<I, O> {
 impl<I : RegisterIo, O : IrqOwner> LiveRuntime<I, O> {
     pub fn configured_sources(&self) -> u64 { self.configured_sources }
     pub fn parent_lines(&self) -> u8 { self.parent_lines }
+    pub fn status_poll_failures(&self) -> [Option<StatusPollFailure>; MAX_BANKS] {
+        self.runtime.status_poll_failures()
+    }
     pub fn into_runtime(self) -> BoardIrqRuntime<I, O> { self.runtime }
 
     /// Service one snapshot. Sources remain masked after dispatch until a

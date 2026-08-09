@@ -101,11 +101,15 @@ pub unsafe fn activate() -> Result<(), DiagnosticIrqError> {
     let mut activator = LoongArchCpuParentActivator;
     let live = configured
         .activate_transactional(&mut activator, 0, |_| Ok(()))
-        .map_err(|failure| DiagnosticIrqError::Activate {
-            error : failure.error,
-            source_rollback : failure.source_rollback_error,
-            parent_rollback : failure.rollback_error,
-            residual_parent_lines : failure.residual_parent_lines,
+        .map_err(|failure| {
+            log::error!("[driver-ls2k][irq] activation status polls: {:?}",
+                        failure.state.status_poll_failures());
+            DiagnosticIrqError::Activate {
+                error : failure.error,
+                source_rollback : failure.source_rollback_error,
+                parent_rollback : failure.rollback_error,
+                residual_parent_lines : failure.residual_parent_lines,
+            }
         })?;
     reservation.commit(live);
     log::warn!(
@@ -123,7 +127,13 @@ pub unsafe fn activate() -> Result<(), DiagnosticIrqError> {
 pub unsafe fn drain() -> Result<(), DiagnosticDrainError> {
     let mut activator = LoongArchCpuParentActivator;
     RUNTIME
-        .drain(|runtime| runtime.quiesce(&mut activator).map(|_| ()))
+        .drain(|runtime| {
+            runtime.quiesce(&mut activator).map(|_| ()).map_err(|error| {
+                log::error!("[driver-ls2k][irq] drain status polls: {:?}",
+                            runtime.status_poll_failures());
+                error
+            })
+        })
         .map_err(|error| match error {
             DrainError::Slot(error) => DiagnosticDrainError::Slot(error),
             DrainError::Operation(error) => DiagnosticDrainError::Quiesce(error),
@@ -149,6 +159,10 @@ pub fn service(snapshot : usize, core : usize) -> DriverResult<()> {
         Ok(Ok(_report)) => Ok(()),
         Ok(Err(failure)) => {
             log::error!("[driver-ls2k][irq] service failure: {:?}", failure.error);
+            let _ = RUNTIME.with_live_mut(|runtime| {
+                log::error!("[driver-ls2k][irq] service status polls: {:?}",
+                            runtime.status_poll_failures());
+            });
             Err(DriverError::IoError)
         }
         Err(SlotError::Empty) => Err(DriverError::Unsupported),

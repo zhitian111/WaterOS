@@ -2692,3 +2692,52 @@ runtime，保持 fail closed。
 ### 提交
 
 - `[ref] verify 2K1000 IRQ enable state`
+
+## 2026-08-10：批次 59——Structured LIOINTC status-poll diagnostics
+
+### 任务与设计
+
+为 verified status polling 增加固定尺寸结构化证据。每次操作报告 operation、expected mask/value、
+最后完整 ENABLE_STATUS 和 polls-used；failure 额外保存 DriverError。controller 分别保留最近一次
+poll report 与最近一次 failure，后续成功不会擦除历史 failure。
+
+Configured/Live runtime 可汇总两个 bank 的 failure snapshot。显式诊断 activation、drain 和 service
+失败路径将 snapshot 写入日志，为无 JTAG 环境下的串口/远程排障提供可复制证据。
+
+### 完成内容
+
+- [x] 新增 `StatusPollOperation::{Enable, Mask, MaskAll}`。
+- [x] 新增 `StatusPollReport`：expected mask/value、observed full status、poll count。
+- [x] 新增 `StatusPollFailure`：DriverError 加完整 report。
+- [x] LioIntc 保存 last report 与 last failure；成功只更新 report，不清除历史 failure。
+- [x] zero-budget 在任何 SET/CLEAR 写之前失败，并记录 polls=0 与调用时 observed status。
+- [x] ConfiguredRuntime/LiveRuntime 暴露两个 controller 的固定数组 failure snapshot。
+- [x] diagnostic activation failure 打印返还 Configured state 的 status snapshots。
+- [x] diagnostic drain failure 在 runtime 仍受 slot 独占时打印 snapshots。
+- [x] diagnostic service failure 在状态恢复 Live 后读取并打印 snapshots。
+- [x] 无堆分配、无新增锁，所有报告均 Copy。
+
+### 验证证据
+
+- `cargo test`：74 项 host 单测全部通过。
+- delayed enable 精确报告 operation=Enable、mask/value=bit3、完整 status 含无关 bit7、polls=3。
+- delayed mask 报告 polls=2；stuck mask 报告 observed bit4、polls=3、IoError。
+- stuck mask-all 报告 expected mask=u32::MAX/value=0、observed bit4、polls=3。
+- zero-budget mask-all 在写前报告 observed bit7、polls=0、InvalidParam。
+- 2K1000 精确 feature LoongArch target check、`make kernel-la`、topology/畸形 DTS fixture 和
+  `git diff --check` 通过；仅有既有 warning，未创建镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：report 字段可用，但真实 observed/status timing 尚无上板样本。
+- [ ] failure 目前通过日志输出，尚无稳定的远程 monitor 命令或用户态查询 ABI。
+- [ ] service failure 后重新取得 slot 记录日志存在一个短竞争窗口；另一个 CPU 可能先进入 service。
+- [ ] 只保存每 bank 最近一次 failure，不保存历史环形缓冲；连续故障会覆盖较旧证据。
+- [ ] assembly mask-all 失败时 runtime 尚未形成，controller 内 snapshot 随错误路径丢失；应把 failure
+  直接附加到 RuntimeError 或 assembly error report。
+- [ ] 下一批应实现板级 `DiagnosticIrqSnapshot`：包含 slot state、configured sources、parent lines、
+  两 bank status failures 和 service counters，并通过无硬件访问的 aggregate 查询函数暴露。
+
+### 提交
+
+- `[ref] record 2K1000 IRQ status diagnostics`
