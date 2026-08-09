@@ -3532,3 +3532,61 @@ Linux 上游 power-up 路径写 `CTL.RESET`、等待 10 ms、写 `CTL.EXTCLK`，
 ### 提交
 
 - `[feat] gate LS2K1000 MMC commands by prerequisites`
+
+## 2026-08-10：批次 75——LS2K1000 MMC 非数据命令 ownership recovery
+
+### 任务与设计
+
+1. 审计 `execute_command()` 在参数错误、MMIO fault、命令超时、CRC 错误和响应读取失败后的 Host ownership。
+2. 消除 `&mut Host<CommandReady>` 在命令已下发后自动归还 ready 借用的旁路。
+3. 将结果区分为 pre-MMIO rejection、成功完成和必须隔离恢复三类。
+4. 仅在 CSTS/DSTS idle、没有未知中断位且已知 W1C 状态清理并 readback 为零时恢复 ready。
+5. 任何无法证明安全复用的状态均可降级为 `Uninitialized`，丢弃旧 proof 并要求完整 reset/clock/authorization 链。
+
+状态转移为 `Host<CommandReady> → CommandOutcome::{Completed,Rejected,RecoveryRequired}`。
+`Rejected` 只用于零 MMIO 的参数错误；从第一次 W1C write 开始，write 是否生效都可能未知，因此所有错误
+均转入 `CommandRecoveryRequired`。恢复对象同时保存不可变 origin fault 和当前 revalidation fault，避免二次
+失败覆盖最初诊断证据。
+
+### 完成内容
+
+- [x] `execute_command()` 改为消费 Host ownership，不再以可重复使用的 `&mut self` 执行命令。
+- [x] 新增 `CommandOutcome`；成功显式归还 response 与 `Host<CommandReady>`，无 MMIO 参数拒绝归还原 Host。
+- [x] 新增不可直接发命令的 `CommandRecoveryRequired` typestate 和 owned `CommandRecovery`。
+- [x] 命令路径对 clear INT、写 argument、写 CCTL、poll INT、timeout/CRC、ack completion 和四个 response read 分阶段记录错误。
+- [x] recovery 保存 `origin_stage/origin_error`，revalidate 失败时另行更新当前 `stage/error` 和观测值。
+- [x] `revalidate()` 读取 CSTS、DSTS、INT，拒绝 command/data busy 和未知位；已知位必须 W1C 后 readback 为零。
+- [x] recovery failure 保持 ownership，可再次 revalidate；`into_uninitialized()` 强制丢弃旧 prerequisite proof。
+- [x] 上游参考文档补充 INT bits 6/7/8 和 W1C 依据，并明确 owned recovery 是 WaterOS 额外安全策略。
+- [x] data command、DMA、machine init 与 remote monitor 激活入口均未开放；七个 blocker 和 `can_activate()==false` 保持不变。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 113 项全部通过；新增 3 项聚合测试覆盖 ownership 分类、恢复准入和 revalidation fault matrix。
+- 参数错误 fixture 验证零 MMIO；成功 fixture 验证 W1C 后显式归还 ready Host 和四字 response。
+- command fault matrix 覆盖 4 个 write failure 与 5 个 read failure，全部只返回 recovery ownership。
+- timeout/CRC 与 bounded poll 路径均进入隔离；idle + known W1C/readback 可恢复，busy/unknown status 不可恢复。
+- recovery fault matrix 覆盖 CSTS、DSTS、INT、W1C write 和 readback IO failure，并验证 origin fault 不被覆盖。
+- topology fixture/畸形 DTB 矩阵通过；dtc 仅输出刻意构造畸形输入的预期 warning。
+- remote client 与 QEMU launcher 的 13 项 Python host 测试通过。
+- `cargo check --no-default-features --features loongson2k1000la,final_online,heap-tlsf,remote-debug-monitor --target loongarch64-unknown-none` 通过。
+- `make kernel-la EXTRA_FEATURES=remote-debug-monitor` 与 `git diff --check` 通过；仅有仓库既有 warning。
+- 所有命令与恢复测试均使用内存 MMIO model；没有访问物理寄存器、真实卡片或 DMA。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：CSTS/DSTS 是否足以证明失败命令已完全 quiesce，以及 INT W1C 后立即 readback 为零的真实行为尚未逐板验证。
+- [ ] 命令完成与 timeout/CRC 的优先级、响应寄存器稳定窗口和长响应 word ordering 仍需逻辑分析仪/真机测试。
+- [ ] WaterOS recovery 目前使用一次 bounded snapshot，不证明采样后的固件、另一核心或异常硬件不会再次改变状态。
+- [ ] 恢复成功沿用原 aggregate proof；这只适用于未 reset、供电/卡检测/IRQ ownership 未变化的串行 session，生产调用者尚不存在。
+- [ ] `into_uninitialized()` 只改变软件 typestate，不自动写 RESET；调用者必须重新执行 preflight，不能把类型转换解释为硬件复位。
+- [ ] 当前仍只支持 polling 非数据命令；真实 IRQ-driven completion、data PIO 与 APBDMA binding 均未实现。
+- [ ] 下一批应建立非数据命令 descriptor/response contract：按 response type 决定是否读取寄存器，验证 short/long response word mapping，并把 unsupported data flags 在零 MMIO 前拒绝。
+
+### 参考与许可证
+
+- `docs/references/loongson2-mmc-upstream.md`
+
+### 提交
+
+- `[feat] isolate failed LS2K1000 MMC commands`

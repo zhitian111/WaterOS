@@ -37,6 +37,11 @@ Confirmed facts used by the current WaterOS foundation:
   active indicators. WaterOS performs a bounded post-reset idle check before
   allowing clock configuration; this additional fail-closed check is not a
   claim that Linux uses the same preflight policy.
+- Command completion, response timeout and response CRC status are `INT`
+  bits 6, 7 and 8. Linux acknowledges observed status through the same W1C
+  register. WaterOS additionally isolates ownership after every post-MMIO
+  failure and requires idle plus a verified known-status clear before reuse;
+  this recovery typestate is a WaterOS safety policy, not an upstream claim.
 - The second 2K1000 DT register region is an APB DMA configuration register.
 - 2K1000 uses external APB DMA (`rx-tx`); it is not a DesignWare MMC host.
 - The APBDMA order register is accessed as a non-atomic 64-bit little-endian
@@ -52,4 +57,5 @@ Confirmed facts used by the current WaterOS foundation:
 Still requiring physical-board validation: MMIO accessibility/endian behavior,
 `PRE`/`CTL.ENCLK` write and readback behavior, clock/reset/power ordering,
 10 ms reset timing sufficiency, CSTS/DSTS post-reset behavior, response word
-ordering, interrupt delivery, DMA routing and cache coherency.
+ordering, command-error W1C/readback recovery, interrupt delivery, DMA routing
+and cache coherency.
