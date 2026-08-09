@@ -92,7 +92,9 @@ const COMMAND_INTERRUPT : u32 = 1 << 1;
 const COMMAND_MEMORY_TO_DEVICE : u32 = 1 << 12;
 const ORDER_64_BIT : u64 = 1 << 0;
 const ORDER_START : u64 = 1 << 3;
+const ORDER_STOP : u64 = 1 << 4;
 const ORDER_CONFIG_MASK : u64 = 0x1f;
+const DEFAULT_STOP_POLL_LIMIT : usize = 1024;
 const DMA_ROUTE_MASK : u32 = 0b111 << 15;
 const DMA1_ROUTE : u32 = 1 << 15;
 
@@ -200,6 +202,9 @@ pub enum ExecutorError {
     Busy,
     Idle,
     Register,
+    InvalidPollLimit,
+    StopTimeout,
+    StopUnverified,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -224,6 +229,9 @@ pub struct StartFailure {
 pub trait OrderIo {
     fn read64(&mut self) -> Result<u64, ExecutorError>;
     fn write64(&mut self, value : u64) -> Result<(), OrderWriteFailure>;
+    /// Report whether hardware is proven to have stopped. Implementations must
+    /// return `StopUnverified` when the platform has no documented probe.
+    fn confirm_stopped(&mut self) -> Result<bool, ExecutorError>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -469,10 +477,21 @@ pub(crate) fn cancel_prepared<D : DmaCoherency, P : DmaCoherency>(
 pub struct Executor<R> {
     registers : R,
     running : Option<TransferPlan>,
+    stop_poll_limit : usize,
 }
 
 impl<R : OrderIo> Executor<R> {
-    pub fn new(registers : R) -> Self { Self { registers, running : None } }
+    pub fn new(registers : R) -> Self {
+        Self { registers,
+               running : None,
+               stop_poll_limit : DEFAULT_STOP_POLL_LIMIT }
+    }
+
+    pub fn with_stop_poll_limit(registers : R, stop_poll_limit : usize)
+                                -> Result<Self, ExecutorError> {
+        if stop_poll_limit == 0 { return Err(ExecutorError::InvalidPollLimit); }
+        Ok(Self { registers, running : None, stop_poll_limit })
+    }
 
     pub(crate) fn start(&mut self, prepared : PreparedTransfer) -> Result<(), StartFailure> {
         if self.running.is_some() {
@@ -511,10 +530,17 @@ impl<R : OrderIo> Executor<R> {
     pub(crate) fn stop(&mut self) -> Result<Completion, ExecutorError> {
         let plan = self.running.ok_or(ExecutorError::Idle)?;
         let current = self.registers.read64()?;
-        self.registers.write64((current & !ORDER_CONFIG_MASK) | ORDER_64_BIT | (1 << 4))
+        self.registers.write64((current & !ORDER_CONFIG_MASK) | ORDER_64_BIT | ORDER_STOP)
                       .map_err(|failure| failure.error)?;
-        self.running = None;
-        Ok(Completion { invalidate_buffer_after : plan.invalidate_buffer_after })
+        for _ in 0..self.stop_poll_limit {
+            if self.registers.confirm_stopped()? {
+                self.running = None;
+                return Ok(Completion {
+                    invalidate_buffer_after : plan.invalidate_buffer_after,
+                });
+            }
+        }
+        Err(ExecutorError::StopTimeout)
     }
 
     #[cfg(test)]
@@ -660,6 +686,8 @@ mod tests {
         writes : Vec<u64>,
         write_calls : usize,
         failures : Vec<(usize, WriteEffect)>,
+        confirmations : Vec<Result<bool, ExecutorError>>,
+        confirmation_calls : usize,
     }
 
     #[derive(Default)]
@@ -708,6 +736,7 @@ mod tests {
             self.writes.push(value);
             Ok(())
         }
+        fn confirm_stopped(&mut self) -> Result<bool, ExecutorError> { Ok(true) }
     }
 
     impl OrderIo for FaultOrderIo {
@@ -724,6 +753,10 @@ mod tests {
             }
             self.value = value;
             Ok(())
+        }
+        fn confirm_stopped(&mut self) -> Result<bool, ExecutorError> {
+            self.confirmation_calls += 1;
+            if self.confirmations.is_empty() { Ok(true) } else { self.confirmations.remove(0) }
         }
     }
 
@@ -950,5 +983,86 @@ mod tests {
         assert!(descriptor.is_cpu_owned());
         assert!(payload.is_cpu_owned());
         assert_eq!(executor.into_inner().write_calls, 4);
+    }
+
+    #[test]
+    fn stop_waits_for_bounded_delayed_confirmation() {
+        let plan = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 4, 1,
+                                  Direction::MemoryToDevice).unwrap();
+        let (mut descriptor, mut payload) = mappings(plan);
+        let registers = FaultOrderIo {
+            confirmations : vec![Ok(false), Ok(false), Ok(true)],
+            ..FaultOrderIo::default()
+        };
+        let mut executor = Executor::with_stop_poll_limit(registers, 3).unwrap();
+        prepare_session(plan, &mut descriptor, &mut payload).unwrap()
+                                                               .start(&mut executor).unwrap()
+                                                               .stop().unwrap()
+                                                               .finish().unwrap();
+        assert!(descriptor.is_cpu_owned());
+        assert!(payload.is_cpu_owned());
+        assert_eq!(executor.into_inner().confirmation_calls, 3);
+    }
+
+    #[test]
+    fn stop_timeout_keeps_session_recoverable_and_mappings_owned_by_device() {
+        let plan = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 4, 1,
+                                  Direction::MemoryToDevice).unwrap();
+        let (mut descriptor, mut payload) = mappings(plan);
+        let registers = FaultOrderIo {
+            confirmations : vec![Ok(false), Ok(false)],
+            ..FaultOrderIo::default()
+        };
+        let mut executor = Executor::with_stop_poll_limit(registers, 2).unwrap();
+        let running = prepare_session(plan, &mut descriptor, &mut payload).unwrap()
+                                                                          .start(&mut executor)
+                                                                          .unwrap();
+        let failure = match running.stop() {
+            Err(failure) => failure,
+            Ok(_) => panic!("unconfirmed stop produced a quiesced session"),
+        };
+        assert_eq!(failure.error, ExecutorError::StopTimeout);
+        failure.session.stop().unwrap()
+               .finish().unwrap();
+        assert!(descriptor.is_cpu_owned());
+        assert!(payload.is_cpu_owned());
+        let registers = executor.into_inner();
+        assert_eq!(registers.confirmation_calls, 3);
+        assert_eq!(registers.writes.len(), 4);
+    }
+
+    #[test]
+    fn stop_probe_error_keeps_recovery_session_for_retry() {
+        let plan = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 4, 1,
+                                  Direction::MemoryToDevice).unwrap();
+        let (mut descriptor, mut payload) = mappings(plan);
+        let registers = FaultOrderIo {
+            failures : vec![(2, WriteEffect::MayHaveWritten)],
+            confirmations : vec![Err(ExecutorError::Register), Ok(true)],
+            ..FaultOrderIo::default()
+        };
+        let mut executor = Executor::with_stop_poll_limit(registers, 2).unwrap();
+        let failure = match prepare_session(plan, &mut descriptor, &mut payload).unwrap()
+                                                                                .start(&mut executor) {
+            Err(StartSessionFailure::Recovery(failure)) => failure,
+            Err(StartSessionFailure::Prepared(_)) => panic!("partial write remained prepared"),
+            Ok(_) => panic!("fault injection unexpectedly started DMA"),
+        };
+        let failure = match failure.session.stop() {
+            Err(failure) => failure,
+            Ok(_) => panic!("failed confirmation produced a quiesced session"),
+        };
+        assert_eq!(failure.error, ExecutorError::Register);
+        failure.session.stop().unwrap()
+               .finish().unwrap();
+        assert!(descriptor.is_cpu_owned());
+        assert!(payload.is_cpu_owned());
+        assert_eq!(executor.into_inner().confirmation_calls, 2);
+    }
+
+    #[test]
+    fn executor_rejects_zero_stop_poll_budget() {
+        assert!(matches!(Executor::with_stop_poll_limit(MockOrderIo::default(), 0),
+                         Err(ExecutorError::InvalidPollLimit)));
     }
 }

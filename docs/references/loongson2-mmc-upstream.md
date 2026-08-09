@@ -28,6 +28,9 @@ Confirmed facts used by the current WaterOS foundation:
   value: Linux uses `lo_hi_readq`/`lo_hi_writeq`, which access the low 32-bit
   word before the high 32-bit word. Transfer start writes zero first, then the
   descriptor address combined with `64BIT_EN | START`.
+- Linux terminate, pause and final-IRQ paths encode `64BIT_EN | STOP` after
+  preserving the descriptor-address bits. They do not poll an order bit or
+  descriptor status to prove that hardware has become idle.
 
 Still requiring physical-board validation: MMIO accessibility/endian behavior,
 clock/reset/power ordering, response word ordering, interrupt delivery, DMA

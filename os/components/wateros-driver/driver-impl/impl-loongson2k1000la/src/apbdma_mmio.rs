@@ -26,6 +26,11 @@ const ORDER_WINDOW_SIZE : usize = 8;
 pub trait OrderMmio32 {
     fn read32(&mut self, offset : usize) -> Result<u32, ExecutorError>;
     fn write32(&mut self, offset : usize, value : u32) -> Result<(), ExecutorError>;
+    /// Platform-specific proof that the DMA engine no longer accesses memory.
+    /// The published Linux driver provides no such register-level probe.
+    fn confirm_stopped(&mut self) -> Result<bool, ExecutorError> {
+        Err(ExecutorError::StopUnverified)
+    }
 }
 
 /// Non-atomic low-word/high-word adapter used by the APBDMA executor.
@@ -57,6 +62,10 @@ impl<M : OrderMmio32> OrderIo for LoHiOrderIo<M> {
                                                       effect : WriteEffect::MayHaveWritten })?;
         fence(Ordering::SeqCst);
         Ok(())
+    }
+
+    fn confirm_stopped(&mut self) -> Result<bool, ExecutorError> {
+        self.mmio.confirm_stopped()
     }
 }
 
@@ -194,5 +203,11 @@ mod tests {
         assert_eq!(mmio.events,
                    [Event::Write(LOW_OFFSET, 0x89ab_cdef),
                     Event::Write(HIGH_OFFSET, 0x0123_4567)]);
+    }
+
+    #[test]
+    fn refuses_to_invent_stop_confirmation_without_platform_evidence() {
+        let mut io = LoHiOrderIo::new(mock(0, 0));
+        assert_eq!(io.confirm_stopped(), Err(ExecutorError::StopUnverified));
     }
 }

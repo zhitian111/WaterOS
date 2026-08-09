@@ -1614,3 +1614,61 @@ stop 成功后才转为 `QuiescedSession`，再执行 cache ownership 恢复。
 ### 提交
 
 - `[fix] recover partial 2K1000 APBDMA starts`
+
+## 2026-08-10：批次 36——APBDMA bounded stop confirmation
+
+### 任务与设计
+
+1. 核对上游 stop 编码以及是否存在可作为 idle 证据的 order/descriptor 位。
+2. 将 stop 写入与“硬件已静止”确认拆分，禁止写成功直接产生 quiesced 状态。
+3. 用显式有限预算轮询可注入 confirmation 探针，避免无限等待。
+4. 超时、探针错误或证据缺失时返回原 running/recovery session，继续隔离 DMA mappings。
+5. raw volatile backend 在没有板级证据时保守拒绝确认，不根据未知位伪造 idle。
+
+Linux 上游的 terminate、pause 和 final-IRQ 路径会保留 descriptor 地址位并写入
+`64BIT_EN | STOP`，但随后只更新软件状态；没有轮询 START/STOP、自清除位或 descriptor
+status 来证明控制器已经停止。因此本批没有把任何寄存器位硬编码为 idle 条件。
+
+`OrderIo::confirm_stopped()` 是显式证据边界。executor 写 STOP 后最多调用配置的 poll limit
+次；只有探针返回 `true` 才清除 active plan 并产生 `Completion`。预算耗尽返回
+`StopTimeout`，平台无可靠探针返回 `StopUnverified`，I/O 失败保留原错误。所有失败路径
+都不清除 executor 状态，typestate session 继续独占 mappings，可安全重试。
+
+### 完成内容
+
+- [x] 抽出 `ORDER_STOP`，新增默认 1024 次的有限 stop poll budget。
+- [x] 新增 `Executor::with_stop_poll_limit`，拒绝零预算。
+- [x] `ExecutorError` 新增 `InvalidPollLimit`、`StopTimeout` 和 `StopUnverified`。
+- [x] `OrderIo` 新增平台 stop-confirmation 契约。
+- [x] executor 在 STOP 写成功后有界轮询，确认成功前不清除 active transfer。
+- [x] running 与 partial-start recovery 共用相同确认路径；错误均返回原 session。
+- [x] `OrderMmio32` 提供保守默认 confirmation：无平台证据时返回 `StopUnverified`。
+- [x] `LoHiOrderIo` 转发 confirmation，不把 order register 读值解释成未经证明的 idle 位。
+- [x] 本地上游参考补充 Linux stop 路径没有硬件 idle 轮询的事实。
+
+### 验证证据
+
+- `cargo test -p wateros-driver-impl-loongson2k1000la`：38 项 host 单测全部通过（本批新增 5 项）。
+- 延迟确认测试在前两次 false、第三次 true 时才恢复 CPU ownership，并断言恰好轮询 3 次。
+- timeout 测试在 2 次预算耗尽后返回原 running session，重试确认后才 finish。
+- confirmation I/O 错误测试从 recovery session 返回原状态，第二次 stop 成功恢复。
+- 零 poll budget 被拒绝；默认 raw/MMIO mock 在无平台证据时返回 `StopUnverified`。
+- `cargo check -p wateros-driver-impl-loongson2k1000la --target loongarch64-unknown-none` 通过。
+- 2K1000LA topology/畸形 DTS fixtures 全部通过；truncated DMA 的 dtc warning 为预期输入。
+- `make kernel-la` QEMU LoongArch64 release 回归构建通过；仅有仓库既有 warning。
+- `git diff --check` 通过；未创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：目前没有已证明可用的 2K1000LA stop-confirmation 探针，因此 raw backend 会返回 `StopUnverified`，不会允许真实 mappings 被回收。
+- [ ] Linux 上游写 STOP 后不轮询不是硬件同步完成的证明；WaterOS 有意采用更保守的 ownership 边界。
+- [ ] 默认 1024 是调用次数预算，不是时间单位；未来探针需要结合平台 timer/relax 明确最大墙钟时间。
+- [ ] IRQ completion 路径仍信任“IRQ 已 claim/ack”的调用前提，尚未检查 descriptor status、错误或短传输。
+- [ ] descriptor status 的位定义及 cache visibility 尚无可靠本地资料，不能用于 stop confirmation。
+- [ ] clock、DMA route、IRQ13 和 cache maintenance 仍未接入生产 platform state。
+- [ ] 真机 bring-up 前必须根据芯片手册或板级实验实现 confirmation：例如 STOP 后可读状态、总线 idle 或平台 reset/clock gate 保证；完成前保持 `StopUnverified`。
+- [ ] 下一批可优先实现 APBDMA IRQ13 的 claim/ack 与 descriptor status 读取抽象；即便状态位语义未知，也可先完成可 mock 的内存可见性和错误分类边界。
+
+### 提交
+
+- `[fix] require 2K1000 APBDMA stop confirmation`
