@@ -2,9 +2,24 @@
 //!
 //! This module deliberately stops below card enumeration and clock/reset setup:
 //! those board-specific operations cannot be validated without hardware.
+use alloc::vec::Vec;
 use api_v0::MmioRegion;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResourceSpecifier {
+    pub provider : u32,
+    pub args : Vec<u32>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SysregField {
+    pub provider : u32,
+    pub offset : u32,
+    pub shift : u8,
+    pub mask : u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MmcHostDescription {
     pub mmio : MmioRegion,
     pub irq : u32,
@@ -12,6 +27,10 @@ pub struct MmcHostDescription {
     pub max_frequency_hz : Option<u32>,
     pub fifo_depth : Option<u32>,
     pub non_removable : bool,
+    pub biu_clock : ResourceSpecifier,
+    pub ciu_clock : ResourceSpecifier,
+    pub reset : ResourceSpecifier,
+    pub sysreg : Option<SysregField>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

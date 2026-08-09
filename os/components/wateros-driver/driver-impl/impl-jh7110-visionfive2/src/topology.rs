@@ -1,9 +1,9 @@
 use crate::{
-    mmc::MmcHostDescription,
+    mmc::{MmcHostDescription, ResourceSpecifier, SysregField},
     plic::{parse_contexts, PlicDescription},
     uart::{self, UartDescription},
 };
-use alloc::{format, vec::Vec};
+use alloc::{format, string::String, vec::Vec};
 use api_v0::{DriverError, DriverResult};
 use character::is_uart_compatible;
 use common::dtb;
@@ -46,6 +46,90 @@ fn bus_width(value : Option<u32>) -> DriverResult<u8> {
         width @ (1 | 4 | 8) => Ok(width as u8),
         _ => Err(DriverError::InvalidDtb),
     }
+}
+
+fn string_list(node : &fdt::node::FdtNode<'_, '_>, property : &str)
+    -> DriverResult<Vec<String>>
+{
+    let bytes = node.property(property).ok_or(DriverError::InvalidDtb)?.value;
+    if bytes.is_empty() || bytes.last() != Some(&0) {
+        return Err(DriverError::InvalidDtb);
+    }
+    bytes[..bytes.len() - 1]
+        .split(|byte| *byte == 0)
+        .map(|value| {
+            core::str::from_utf8(value)
+                .ok()
+                .filter(|value| !value.is_empty())
+                .map(String::from)
+                .ok_or(DriverError::InvalidDtb)
+        })
+        .collect()
+}
+
+fn phandle_specifiers(fdt : &fdt::Fdt<'_>,
+                      node : &fdt::node::FdtNode<'_, '_>,
+                      property : &str,
+                      provider_cells_property : &str)
+                      -> DriverResult<Vec<ResourceSpecifier>> {
+    let bytes = node.property(property).ok_or(DriverError::InvalidDtb)?.value;
+    if bytes.is_empty() || bytes.len() % 4 != 0 {
+        return Err(DriverError::InvalidDtb);
+    }
+    let mut offset = 0;
+    let mut result = Vec::new();
+    while offset < bytes.len() {
+        let provider = dtb::read_be_u32(bytes, offset).ok_or(DriverError::InvalidDtb)?;
+        offset += 4;
+        let provider_node = fdt.find_phandle(provider).ok_or(DriverError::InvalidDtb)?;
+        let cells = be32_property(&provider_node, provider_cells_property)
+            .filter(|cells| *cells <= 8)
+            .ok_or(DriverError::InvalidDtb)? as usize;
+        let args_bytes = cells.checked_mul(4).ok_or(DriverError::InvalidDtb)?;
+        let end = offset.checked_add(args_bytes)
+                        .filter(|end| *end <= bytes.len())
+                        .ok_or(DriverError::InvalidDtb)?;
+        let mut args = Vec::with_capacity(cells);
+        while offset < end {
+            args.push(dtb::read_be_u32(bytes, offset).ok_or(DriverError::InvalidDtb)?);
+            offset += 4;
+        }
+        result.push(ResourceSpecifier { provider, args });
+    }
+    Ok(result)
+}
+
+fn named_specifier(names : &[String],
+                   specifiers : &[ResourceSpecifier],
+                   wanted : &str)
+                   -> DriverResult<ResourceSpecifier> {
+    if names.len() != specifiers.len() ||
+       names.iter().filter(|name| name.as_str() == wanted).count() != 1
+    {
+        return Err(DriverError::InvalidDtb);
+    }
+    names.iter().position(|name| name == wanted)
+         .and_then(|index| specifiers.get(index))
+         .cloned()
+         .ok_or(DriverError::InvalidDtb)
+}
+
+fn sysreg_field(fdt : &fdt::Fdt<'_>, node : &fdt::node::FdtNode<'_, '_>)
+    -> DriverResult<Option<SysregField>>
+{
+    let Some(property) = node.property("starfive,sysreg") else { return Ok(None); };
+    if property.value.len() != 16 {
+        return Err(DriverError::InvalidDtb);
+    }
+    let provider = dtb::read_be_u32(property.value, 0).ok_or(DriverError::InvalidDtb)?;
+    fdt.find_phandle(provider).ok_or(DriverError::InvalidDtb)?;
+    let offset = dtb::read_be_u32(property.value, 4).ok_or(DriverError::InvalidDtb)?;
+    let shift = dtb::read_be_u32(property.value, 8).ok_or(DriverError::InvalidDtb)?;
+    let mask = dtb::read_be_u32(property.value, 12).ok_or(DriverError::InvalidDtb)?;
+    if offset % 4 != 0 || shift >= 32 || mask == 0 || mask & ((1u32 << shift) - 1) != 0 {
+        return Err(DriverError::InvalidDtb);
+    }
+    Ok(Some(SysregField { provider, offset, shift: shift as u8, mask }))
 }
 
 fn cpu_interrupt_controllers(fdt : &fdt::Fdt<'_>) -> Vec<(u32, usize)> {
@@ -107,6 +191,12 @@ pub fn discover(dtb_pa : usize) -> DriverResult<BoardTopology> {
                           .and_then(|property| dtb::read_be_u32(property.value, 0))
                           .ok_or(DriverError::InvalidDtb)?;
             let bus_width = bus_width(be32_property(&node, "bus-width"))?;
+            let clock_names = string_list(&node, "clock-names")?;
+            let clocks = phandle_specifiers(&fdt, &node, "clocks", "#clock-cells")?;
+            let resets = phandle_specifiers(&fdt, &node, "resets", "#reset-cells")?;
+            if resets.len() != 1 {
+                return Err(DriverError::InvalidDtb);
+            }
             result.mmc_hosts
                   .push(MmcHostDescription { mmio,
                                              irq,
@@ -115,7 +205,16 @@ pub fn discover(dtb_pa : usize) -> DriverResult<BoardTopology> {
                                                                               "max-frequency"),
                                              fifo_depth : be32_property(&node, "fifo-depth"),
                                              non_removable : node.property("non-removable")
-                                                                 .is_some() });
+                                                                 .is_some(),
+                                             biu_clock : named_specifier(&clock_names,
+                                                                           &clocks,
+                                                                           "biu")?,
+                                             ciu_clock : named_specifier(&clock_names,
+                                                                           &clocks,
+                                                                           "ciu")?,
+                                             reset : resets.into_iter().next()
+                                                           .ok_or(DriverError::InvalidDtb)?,
+                                             sysreg : sysreg_field(&fdt, &node)? });
         }
         if is_plic(&compatibles) {
             let mmio = dtb::first_mmio_region(node).ok_or(DriverError::InvalidDtb)?;

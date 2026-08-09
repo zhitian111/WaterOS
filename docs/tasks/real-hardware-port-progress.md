@@ -706,3 +706,44 @@ python3 scripts/remote_debug_qemu_smoke.py \
 ### 提交
 
 - `[feat] add DesignWare MMC identification clock setup`
+
+## 2026-08-10：批次 16——MMC clock/reset/syscon DTB 资源拓扑
+
+### 任务与设计
+
+1. 依据 JH7110 binding/DTS 解析 `clocks`、`clock-names`、`resets` 和 `starfive,sysreg`。
+2. phandle specifier 必须读取 provider 的 `#clock-cells`/`#reset-cells`，不得写死每项两个 cell。
+3. 对 MMC binding 要求唯一 `biu`、`ciu` 名称和单个 reset；资源只描述、不执行硬件副作用。
+4. sysreg 保存 provider、offset、shift、mask，并校验对齐、位宽和 mask/shift 一致性。
+5. 用有效、禁用和必须拒绝的畸形 DTB fixture 做端到端测试。
+
+### 完成内容
+
+- [x] 新增可变参数 `ResourceSpecifier { provider, args }`，支持 provider 声明 0..8 个参数 cell。
+- [x] specifier parser 逐项解析 phandle、查询 provider cell count，并拒绝未知 provider、截断参数和非 cell 对齐属性。
+- [x] string-list parser 要求 NUL 终止、合法 UTF-8、非空名称；命名资源要求名称数与 specifier 数一致且目标名唯一。
+- [x] `MmcHostDescription` 新增 BIU clock、CIU clock、reset 和可选 sysreg 位域。
+- [x] fixture 增加合成 syscrg/syscon provider；mmc0 解析 ID 91/92/reset 90 和 `<0x14,26,0x7c000000>`。
+- [x] mmc1 解析 ID 93/94/reset 95 和 `<0x9c,1,0x3e>`。
+- [x] `status = "disabled"` 且资源引用故意损坏的第三节点被忽略，不污染可用 topology。
+- [x] fixture runner 动态生成重复 clock-name、未知 provider、截断 specifier 和非法 sysreg mask 四类畸形 DTB，discover 必须返回 `InvalidDtb`。
+
+### 验证证据
+
+- JH7110 profile 19 项 host 单测继续通过。
+- 有效 DTS 经 `dtc` 编译后，example 端到端断言两路 host 的 provider phandle、clock/reset ID 和 sysreg 位域。
+- 畸形 DTS corpus 覆盖 `biu,biu`、不存在的 `0xffffffff` phandle、缺少 provider argument 和 shift 以下含位的 mask；同一 discover 路径全部明确拒绝，临时文件由 trap 清理。
+- 禁用节点没有 `interrupts`、clock provider 也无效，但解析仍成功且 host 数保持 2，证明 status 检查早于资源解引用。
+- VisionFive 2 RISC-V64 交叉检查与公共 RISC-V `make check` 作为提交前验收项。
+
+### 已知限制、未验证与后续测试
+
+- [ ] **资源引用解析已验证，但 syscrg/syscon provider 尚无 WaterOS 驱动，本批不会 enable clock、deassert reset 或写 sysreg。**
+- [ ] fixture 的 clock/reset ID 取自目标属性形态用于解析测试；实际 ID 数值和固件 DTB 版本仍须与真机导出的 DTB 对照。
+- [ ] `starfive,sysreg` 的 sample phase 位域只保存不解释；高速调谐仍为 UNVERIFIED。
+- [ ] 目前 generic specifier 上限为 8 args，足够目标 provider；未来遇到更宽 binding 时应显式提高并增加内存边界测试。
+- [ ] 下一批应实现独立 JH7110 syscrg 描述与受检 MMIO backend，先覆盖 clock/reset 寄存器算术，不在 machine init 自动激活。
+
+### 提交
+
+- `[feat] discover VisionFive 2 MMC resources`
