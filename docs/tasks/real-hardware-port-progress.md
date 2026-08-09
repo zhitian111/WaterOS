@@ -5,8 +5,8 @@
 ## 总体分支与验证策略
 
 - 公共工作分支：`feat/real-hardware-common`，承载远程调试、平台接口、磁盘/分区、动态设备与通用驱动。
-- VisionFive 2 分支：待公共启动和内存接口稳定后，从公共分支创建 `feat/visionfive2-port`。
-- 2K1000LA 分支：待公共启动和内存接口稳定后，从公共分支创建 `feat/loongson2k1000-port`。
+- VisionFive 2 分支：`feat/visionfive2-port`，独立工作树 `WaterOS_visionfive2_port`。
+- 2K1000LA 分支：`feat/loongson2k1000-port`，独立工作树 `WaterOS_loongson2k1000_port`。
 - 无真机阶段使用三层证据：host 单元测试、QEMU 集成测试、文档驱动的寄存器/DTB 测试。只有前两类通过的功能才标为已验证。
 - 必须真机确认的启动 ABI、时钟、中断路由、DMA/cache 和电气行为统一标为“待真机测试”。
 - 为节省空间，优先复用现有稀疏镜像并使用 QEMU `-snapshot`；新建测试镜像原则上控制在 64 MiB 以内。
@@ -418,3 +418,42 @@ python3 scripts/remote_debug_qemu_smoke.py \
 ### 提交
 
 - `[feat] harden remote debug network lifecycle`
+
+## 2026-08-10：批次 9——VisionFive 2 DTB 拓扑与 PLIC 基础
+
+### 任务与设计
+
+1. 从公共基线创建两个真机平台的独立分支和工作树，本批只修改 VisionFive 2。
+2. 用 CodeGraph 审计 machine driver、DTB、UART 与中断路径，确认 VisionFive 2 仍使用 dummy 且无 PLIC 实现。
+3. 新增 JH7110 machine profile，以 DTB `/chosen/stdout-path` 选择控制台，不重复写死设备枚举。
+4. 解析 PLIC MMIO、`riscv,ndev` 与 `interrupts-extended`，但在 S-mode context 未确认前不触碰寄存器。
+5. 用纯算术测试与现场编译的最小 DTS fixture 验证无板阶段可验证部分。
+
+### 完成内容
+
+- [x] 创建 `feat/visionfive2-port`、`feat/loongson2k1000-port` 及独立工作树。
+- [x] `visionfive2` 顶层 feature 从 dummy machine driver 切换到独立 JH7110 profile。
+- [x] 支持 `starfive,jh7110-uart` + `snps,dw-apb-uart` 的 32 位/4 字节步长 UART 描述和字符设备注册。
+- [x] 正确处理常见的 `stdout-path = "serial0:115200n8"` alias 与串口参数后缀。
+- [x] 发现 `riscv,plic0`/`sifive,plic-1.0.0` PLIC，保存 MMIO、源数量与上下文中断对。
+- [x] 实现标准 PLIC enable、claim/complete 偏移校验和显式 unsafe MMIO claim/complete 边界。
+- [x] 初始化日志明确输出 `activation deferred`，防止把 DTB 解析成功误报成真机 IRQ 可用。
+
+### 验证证据
+
+- JH7110 profile host 单测 3 项通过：上下文对解析、畸形长度拒绝、PLIC 偏移/源边界、UART layout 与 compatible。
+- `dtc` 将 `visionfive2-minimal.dts` 编译为临时 DTB，`inspect_dtb` 端到端解析 chosen UART、两组 PLIC context、136 个源及 MMIO 地址；临时文件自动删除。
+- `cargo check --no-default-features --features visionfive2,heap-tlsf,pre --target riscv64gc-unknown-none-elf` 通过。
+- 测试只产生可删除的编译缓存与临时 DTB，没有创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] JH7110 PLIC 的实际 S-mode context 索引、各设备 IRQ 路由、优先级和 claim/complete 行为待官方 DTB 对照及真机验证。
+- [ ] 当前 PLIC core 只提供安全构造/偏移计算和显式 unsafe claim/complete，尚未接入 RISC-V 外部 trap 分发，也未主动 enable source。
+- [ ] UART DTB 绑定和字符读写已编译并通过 fixture；实际 UART0 时钟、reset、pinmux、FIFO 和中断行为待真机。
+- [ ] 尚未从发行版/固件采集多版本 VisionFive 2 DTB 做兼容性 corpus；fixture 只覆盖目标属性形态。
+- [ ] 本批没有实现 MMC、DWMAC 或 USB；下一批优先完成 PLIC CPU context 映射与外部中断分发，再推进可中断驱动。
+
+### 提交
+
+- `[feat] add VisionFive 2 DTB machine profile`

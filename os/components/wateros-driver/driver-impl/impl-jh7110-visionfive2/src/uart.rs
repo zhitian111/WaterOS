@@ -1,0 +1,22 @@
+use api_v0::MmioRegion;
+use character::RegisterLayout;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UartDescription {
+    pub mmio : MmioRegion,
+    pub layout : RegisterLayout,
+}
+
+pub fn register(uart : UartDescription) -> usize {
+    character::register_uart_character_device(uart.mmio.base, uart.layout)
+}
+
+pub(crate) fn layout(reg_shift : Option<u32>,
+                     reg_io_width : Option<u32>)
+                     -> Option<RegisterLayout> {
+    match (reg_shift.unwrap_or(0), reg_io_width.unwrap_or(1)) {
+        (0, 1) => Some(RegisterLayout::Byte16550),
+        (2, 4) => Some(RegisterLayout::DwApb32),
+        _ => None,
+    }
+}

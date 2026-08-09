@@ -1,0 +1,36 @@
+/dts-v1/;
+
+/ {
+    #address-cells = <2>;
+    #size-cells = <2>;
+
+    aliases { serial0 = &uart0; };
+    chosen { stdout-path = "serial0:115200n8"; };
+
+    cpu_intc0: interrupt-controller-0 {
+        compatible = "riscv,cpu-intc";
+        interrupt-controller;
+        #interrupt-cells = <1>;
+        phandle = <1>;
+    };
+    cpu_intc1: interrupt-controller-1 {
+        compatible = "riscv,cpu-intc";
+        interrupt-controller;
+        #interrupt-cells = <1>;
+        phandle = <2>;
+    };
+    uart0: serial@10000000 {
+        compatible = "starfive,jh7110-uart", "snps,dw-apb-uart";
+        reg = <0 0x10000000 0 0x1000>;
+        reg-shift = <2>;
+        reg-io-width = <4>;
+    };
+    interrupt-controller@c000000 {
+        compatible = "starfive,jh7110-plic", "sifive,plic-1.0.0";
+        reg = <0 0x0c000000 0 0x04000000>;
+        interrupt-controller;
+        #interrupt-cells = <1>;
+        riscv,ndev = <136>;
+        interrupts-extended = <&cpu_intc0 9 &cpu_intc1 9>;
+    };
+};

@@ -35,6 +35,8 @@ pub mod network {
 pub use impl_qemu_loongarch64_virt::uart;
 #[cfg(feature = "impl-qemu-riscv64-virt")]
 pub use impl_qemu_riscv64_virt::uart;
+#[cfg(feature = "impl-jh7110-visionfive2")]
+pub use impl_jh7110_visionfive2::uart;
 
 use alloc::vec::Vec;
 use api_v0::{MachineDriver, SupportedDeviceEntry};
@@ -53,9 +55,14 @@ pub fn machine() -> &'static dyn MachineDriver {
     {
         impl_qemu_riscv64_virt::machine()
     }
+    #[cfg(feature = "impl-jh7110-visionfive2")]
+    {
+        impl_jh7110_visionfive2::machine()
+    }
     #[cfg(not(any(feature = "impl-dummy",
                   feature = "impl-qemu-loongarch64-virt",
-                  feature = "impl-qemu-riscv64-virt")))]
+                  feature = "impl-qemu-riscv64-virt",
+                  feature = "impl-jh7110-visionfive2")))]
     {
         core::unreachable!("no machine driver feature selected")
     }
