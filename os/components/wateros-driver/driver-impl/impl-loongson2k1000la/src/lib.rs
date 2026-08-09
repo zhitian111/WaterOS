@@ -24,6 +24,7 @@ pub mod mmc;
 pub mod apbdma;
 pub mod apbdma_mmio;
 pub mod dma_memory;
+pub mod gpio;
 mod machine;
 pub mod topology;
 

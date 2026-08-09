@@ -89,9 +89,24 @@ pub struct NamedResource {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CardDetect {
     Native,
-    Gpio(ResourceSpecifier),
+    Gpio(GpioLineDescription),
     Broken,
     NonRemovable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GpioProvider {
+    /// Register semantics are topology evidence and UNVERIFIED_ON_HARDWARE.
+    Loongson2k1000 { mmio : MmioRegion, ngpios : u8 },
+    Unsupported { phandle : u32 },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GpioLineDescription {
+    pub specifier : ResourceSpecifier,
+    pub provider : GpioProvider,
+    pub pin : u8,
+    pub active_low : bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -445,7 +460,32 @@ fn mmc_card_detect(fdt : &fdt::Fdt<'_>,
         if specifiers.len() != 1 {
             return Err(DriverError::InvalidDtb);
         }
-        Ok(CardDetect::Gpio(specifiers.remove(0)))
+        let specifier = specifiers.remove(0);
+        if specifier.args.len() != 2 || specifier.args[1] > 1 {
+            return Err(DriverError::InvalidDtb);
+        }
+        let provider_node = fdt.find_phandle(specifier.provider_phandle)
+                               .ok_or(DriverError::InvalidDtb)?;
+        let provider = if has_compatible(provider_node, "loongson,ls2k1000-gpio") &&
+                          has_compatible(provider_node, "loongson,ls2k-gpio")
+        {
+            let regs = regions(provider_node)?;
+            let ngpios = property_u32(provider_node, "ngpios")
+                .filter(|count| (1..=64).contains(count))
+                .ok_or(DriverError::InvalidDtb)?;
+            if regs.len() != 1 || regs[0].base == 0 || regs[0].base % 8 != 0 ||
+               regs[0].size < 0x28 || specifier.args[0] >= ngpios
+            {
+                return Err(DriverError::InvalidDtb);
+            }
+            GpioProvider::Loongson2k1000 { mmio : regs[0], ngpios : ngpios as u8 }
+        } else {
+            GpioProvider::Unsupported { phandle : specifier.provider_phandle }
+        };
+        Ok(CardDetect::Gpio(GpioLineDescription { pin : specifier.args[0] as u8,
+                                                  active_low : specifier.args[1] == 1,
+                                                  specifier,
+                                                  provider }))
     } else {
         Ok(CardDetect::Native)
     }

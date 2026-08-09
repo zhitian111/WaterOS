@@ -118,8 +118,16 @@ fn main() {
                        &[0]);
             assert_eq!(mmc.bus_width, 4);
             match &mmc.card_detect {
-                wateros_driver_impl_loongson2k1000la::topology::CardDetect::Gpio(specifier) => {
-                    assert_eq!(specifier.args, &[22, 1]);
+                wateros_driver_impl_loongson2k1000la::topology::CardDetect::Gpio(line) => {
+                    assert_eq!(line.specifier.args, &[22, 1]);
+                    assert_eq!(line.pin, 22);
+                    assert!(line.active_low);
+                    assert!(matches!(line.provider,
+                                     wateros_driver_impl_loongson2k1000la::topology::GpioProvider::Loongson2k1000 {
+                                         mmio : api_v0::MmioRegion { base : 0x1FE0_0500,
+                                                                     size : 0x38 },
+                                         ngpios : 64,
+                                     }));
                 }
                 other => panic!("unexpected card detect: {other:?}"),
             }

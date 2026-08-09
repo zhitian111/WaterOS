@@ -61,6 +61,21 @@ sed '/clock-controller@1fe00480/,/clock-names/ { /clocks = <&ref_100m>;/d; }' \
     > "$tmp_dir/missing-clock-reference.dts"
 dtc -I dts -O dtb -o "$tmp_dir/missing-clock-reference.dtb" \
     "$tmp_dir/missing-clock-reference.dts"
+sed 's/cd-gpios = <&gpio0 22 1>/cd-gpios = <\&gpio0 64 1>/' \
+    "$crate_dir/tests/fixtures/loongson2k1000la-topology.dts" \
+    > "$tmp_dir/gpio-pin-out-of-range.dts"
+dtc -I dts -O dtb -o "$tmp_dir/gpio-pin-out-of-range.dtb" \
+    "$tmp_dir/gpio-pin-out-of-range.dts"
+sed 's/cd-gpios = <&gpio0 22 1>/cd-gpios = <\&gpio0 22 2>/' \
+    "$crate_dir/tests/fixtures/loongson2k1000la-topology.dts" \
+    > "$tmp_dir/gpio-unsupported-flags.dts"
+dtc -I dts -O dtb -o "$tmp_dir/gpio-unsupported-flags.dtb" \
+    "$tmp_dir/gpio-unsupported-flags.dts"
+sed '/gpio@1fe00500/,/#gpio-cells/ s/0x0 0x38/0x0 0x20/' \
+    "$crate_dir/tests/fixtures/loongson2k1000la-topology.dts" \
+    > "$tmp_dir/short-gpio-mmio.dts"
+dtc -I dts -O dtb -o "$tmp_dir/short-gpio-mmio.dtb" \
+    "$tmp_dir/short-gpio-mmio.dts"
 
 cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
     --example verify_topology -- valid "$tmp_dir/valid.dtb"
@@ -88,3 +103,9 @@ cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
     --example verify_topology -- invalid "$tmp_dir/wrong-mmc-clock-id.dtb"
 cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
     --example verify_topology -- invalid "$tmp_dir/missing-clock-reference.dtb"
+cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
+    --example verify_topology -- invalid "$tmp_dir/gpio-pin-out-of-range.dtb"
+cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
+    --example verify_topology -- invalid "$tmp_dir/gpio-unsupported-flags.dtb"
+cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
+    --example verify_topology -- invalid "$tmp_dir/short-gpio-mmio.dtb"

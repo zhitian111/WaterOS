@@ -35,8 +35,9 @@
     };
 
     gpio0: gpio@1fe00500 {
-        compatible = "loongson,ls2k-gpio";
+        compatible = "loongson,ls2k1000-gpio", "loongson,ls2k-gpio";
         reg = <0x0 0x1fe00500 0x0 0x38>;
+        ngpios = <64>;
         gpio-controller;
         #gpio-cells = <2>;
     };

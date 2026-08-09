@@ -2957,3 +2957,68 @@ MMC/eMMC 专用 gate；ID 31 的 eMMC clock 属于其他 Loongson-2 变体，不
 ### 提交
 
 - `[feat] add LS2K1000 clock diagnostics`
+
+## 2026-08-10：批次 64——LS2K1000 GPIO card-detect read-only model
+
+### 任务与设计
+
+1. 核对 Linux 主线 LS2K GPIO driver、DT binding 和参考板 MMC `cd-gpios` 描述。
+2. 在 topology 中保存 GPIO provider MMIO、有效 GPIO 数、pin 与 active-low flag。
+3. 建立可 mock 的只读方向/输入 snapshot；GPIO 不是输入时 fail-closed，绝不改方向。
+4. 拒绝越界 pin、未知 flags、不足 MMIO window 和不合法 provider 描述。
+5. target-only volatile backend 不接入 machine init，不提供方向、输出或中断写接口。
+6. 本批只补齐 card-detect 的可诊断证据，不减少 MMC activation blocker。
+
+Linux 主线 LS2K GPIO bank 使用 64-bit 寄存器，方向、输出、输入、中断使能偏移分别为
+`0x00`、`0x10`、`0x20`、`0x30`，方向位为 1 表示 input。参考板 GPIO22 的
+`GPIO_ACTIVE_LOW` 被保留为 topology 数据，并在纯逻辑层转换为 card-present 状态。
+
+### 完成内容
+
+- [x] `CardDetect::Gpio` 改为带类型的 `GpioLineDescription`，保存原始 specifier、provider、
+  pin 与 polarity。
+- [x] 识别 `loongson,ls2k1000-gpio` + `loongson,ls2k-gpio` provider，要求单个非零、
+  8-byte 对齐且至少 `0x28` 的 MMIO window，以及 `ngpios` 在 1..=64。
+- [x] `cd-gpios` 要求恰好两个参数，flags 只接受 active-high 0 或 active-low 1，pin 必须
+  小于 provider 的 `ngpios`。
+- [x] 新增 `gpio` 模块与 `CardDetectSnapshot`，依次读取 direction `0x00` 和 input
+  `0x20`，同时保留 raw register、pin、polarity、level 和 card-present 证据。
+- [x] direction 位为 0 时返回 `NotInput`，且不读取 input；unsupported/out-of-range provider
+  在任何 MMIO 访问前失败。
+- [x] target-only `VolatileRegisters` 检查 base、alignment、window 和每次 64-bit 访问范围；
+  模块没有任何写方法。
+- [x] topology fixture 补充兼容串与 `ngpios = <64>`，验证器断言 GPIO22、active-low、
+  `0x1fe00500/0x38` 和 64-line provider。
+- [x] 新增 `docs/references/loongson2-gpio-upstream.md`，记录来源、SPDX 与实现边界。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 83 项全部通过；4 项 GPIO 测试覆盖 active-low/high、固定读取顺序、
+  非 input 提前失败、unsupported/越界零读取和两处 IO failure。
+- topology fixture 端到端通过；新增 pin 64 越界、flags 2、GPIO MMIO 仅 `0x20` 三个畸形
+  DTB，均被拒绝。截断 DMA fixture 仍仅产生预期的 dtc warning。
+- `cargo check --no-default-features --features loongson2k1000la,final_online,heap-tlsf
+  --target loongarch64-unknown-none` 通过，覆盖 volatile backend。
+- `make kernel-la`、`git diff --check` 通过；仅有仓库既有 warning。
+- fixture DTB 位于 `mktemp` 并自动删除；没有创建镜像、访问硬件或执行 GPIO 写。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：64-bit volatile read、GPIO22 mux、方向位语义、输入电平、
+  卡座极性和插拔稳定性尚未在 2K1000 板上确认。
+- [ ] snapshot 是两次非原子读取；方向或 pinmux 并发变化时可能混合状态，没有 debounce。
+- [ ] topology fixture 仅建模 card-detect 所需的只读资源，没有宣称完整验证 Linux binding
+  要求的 gpio-ranges、interrupt controller 或 pinctrl 配置。
+- [ ] unsupported provider 可被 topology 保留用于诊断，但 snapshot 必定在零 MMIO 访问前拒绝。
+- [ ] GPIO 处于 output 时不会尝试纠正；这是避免在未知板级连接上写寄存器的安全边界。
+- [ ] `CardDetectControlUnavailable` blocker 保持不变；成功 snapshot 也不会启动 MMC host。
+- [ ] 下一批应把 clock 与 GPIO snapshot 接入显式、只读的 MMC prerequisite diagnosis，使用
+  mock backend 验证组合状态；仍不接入自动 machine init，也不执行 power/clock/GPIO 写。
+
+### 参考与许可证
+
+- `docs/references/loongson2-gpio-upstream.md`
+
+### 提交
+
+- `[feat] add LS2K1000 card-detect diagnostics`
