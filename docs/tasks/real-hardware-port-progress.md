@@ -3129,3 +3129,49 @@ Linux 主线 LS2K GPIO bank 使用 64-bit 寄存器，方向、输出、输入�
 ### 提交
 
 - `[feat] expose LS2K1000 MMC diagnostics remotely`
+
+## 2026-08-10：批次 67——校正 LS2K1000 MMC supply readiness
+
+### 任务与设计
+
+1. 依据 Linux 主线 fixed-regulator binding/driver、MMC regulator core 与 2K1000 reference DTS，核对供电所有权语义。
+2. 将“未声明 supply”“显式无控制 fixed rail”“GPIO-controlled fixed rail”“unsupported provider”分开建模。
+3. `always-on`/`boot-on` 只作为策略证据保留，不用于猜测 GPIO-controlled rail 已真实开启。
+4. fixture 同时覆盖合成 fixed-regulator 与上游参考板省略 supply 的形态，并拒绝歧义控制属性。
+5. remote `ls2k-mmc` 稳定输出增加 `vmmc`/`vqmmc` 前置条件，但不解除任何 activation blocker。
+
+### 完成内容
+
+- [x] 新增 `FixedSupplyControl::{None,Gpio}`，把控制能力与 `always_on`/`boot_on` 策略正交表示。
+- [x] 未声明 optional supply 分类为 `ImplicitBoardSupply`，与 Linux MMC core 和主线 2K1000 reference DTS 一致。
+- [x] 显式无 GPIO 的 fixed regulator 分类为 topology-ready；GPIO-controlled rail 仍为 requires-driver。
+- [x] 同时声明 `gpio` 与 `gpios`、带值的 boolean policy 均 fail-closed 为 invalid DTB。
+- [x] 合成 fixture 补齐 regulator-name 与固定 3.3 V min/max；注释明确它不是上游 2K1000 板级事实。
+- [x] topology 脚本生成 upstream-shaped 无 supply 变体，断言两路均为 implicit board supply 且 host 仍不可激活。
+- [x] remote formatter 固定输出 `vmmc=... vqmmc=...`，状态码不依赖 Rust Debug 名称。
+- [x] 新增 `docs/references/linux-mmc-power-upstream.md`，记录一手来源与 WaterOS 实现边界。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 89 项全部通过；供电分类覆盖隐式板级、无控制 fixed、GPIO fixed 与 unsupported。
+- topology fixture/畸形 DTB 矩阵通过；新增 upstream-shaped 无 supply 与双 GPIO 属性场景。dtc 仅报告刻意构造输入的预期 warning。
+- `cargo check --no-default-features --features loongson2k1000la,final_online,heap-tlsf,remote-debug-monitor --target loongarch64-unknown-none` 通过。
+- `make kernel-la EXTRA_FEATURES=remote-debug-monitor`、`git diff --check` 通过；仅有仓库既有 warning。
+- 测试没有访问物理 MMIO、执行 regulator/GPIO/MMC 写或创建持久镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：implicit/no-control 只证明软件没有 enable 操作，不证明插槽实际有 3.3 V、rail 稳定或上电时序正确。
+- [ ] `PowerSequencingUnavailable` 与其余 MMC activation blocker 全部保留；本批没有启动 host 或数据通路。
+- [ ] GPIO-controlled fixed rail 没有安全的状态观测与写路径，即使 DTS 声明 always-on/boot-on 也保持 requires-driver。
+- [ ] 主线 2K1000 reference DTS 是参考板证据，不保证两块目标板的原理图完全相同；拿到板级 DTS/原理图后必须重新核对。
+- [ ] remote 状态是 topology ownership 证据，不是电压测量；真机验收仍需万用表/示波器或经验证的 PMIC/regulator 状态源。
+- [ ] 下一批应审计 MMC pinctrl/pinmux ownership 与主线 2K1000 reference DTS，建立只读/拓扑诊断；任何 pinmux 写继续推迟到板级连接可证明之后。
+
+### 参考与许可证
+
+- `docs/references/linux-mmc-power-upstream.md`
+
+### 提交
+
+- `[fix] correct LS2K1000 MMC supply readiness`

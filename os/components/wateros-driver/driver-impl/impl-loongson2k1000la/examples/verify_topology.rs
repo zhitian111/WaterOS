@@ -7,7 +7,8 @@ use wateros_driver_impl_loongson2k1000la::{irq_binding::resolve,
                                                       compile as compile_owner_plan},
                                            mmc::{ActivationBlocker, PrerequisiteStatus, plan},
                                            mmc_diagnostic::{CardDetectDiagnosis, diagnose},
-                                           topology::{MmcClockProvider, SupplyProvider, discover}};
+                                           topology::{FixedSupplyControl, MmcClockProvider,
+                                                      SupplyProvider, discover}};
 
 struct ClockEvidence;
 
@@ -169,16 +170,17 @@ fn main() {
             assert!(mmc.vqmmc_supply
                        .is_some());
             assert!(matches!(mmc.vmmc_supply.unwrap().provider,
-                             SupplyProvider::Fixed { always_on : false,
+                             SupplyProvider::Fixed { control : FixedSupplyControl::None,
+                                                     always_on : false,
                                                      boot_on : false,
-                                                     gpio_controlled : false }));
+                                                   }));
             let plan = plan(mmc).expect("build deferred MMC plan");
             assert!(!plan.can_activate());
             assert!(plan.blockers
                         .contains(&ActivationBlocker::DataPathUnavailable));
             assert_eq!(plan.prerequisites.clock, PrerequisiteStatus::RequiresDriver);
-            assert_eq!(plan.prerequisites.vmmc, PrerequisiteStatus::RequiresDriver);
-            assert_eq!(plan.prerequisites.vqmmc, PrerequisiteStatus::RequiresDriver);
+            assert_eq!(plan.prerequisites.vmmc, PrerequisiteStatus::ReadyByTopology);
+            assert_eq!(plan.prerequisites.vqmmc, PrerequisiteStatus::ReadyByTopology);
             assert_eq!(plan.prerequisites.card_detect, PrerequisiteStatus::RequiresDriver);
             let diagnosis = diagnose(mmc, &mut ClockEvidence, &mut GpioEvidence)
                 .expect("combine read-only MMC evidence");
@@ -192,6 +194,18 @@ fn main() {
             let topology = discover(&fdt).expect("discover non-removable MMC");
             assert!(matches!(topology.mmc_hosts[0].card_detect,
                              wateros_driver_impl_loongson2k1000la::topology::CardDetect::NonRemovable));
+        }
+        "implicit-supplies" => {
+            let topology = discover(&fdt).expect("discover upstream-shaped MMC supplies");
+            let mmc = &topology.mmc_hosts[0];
+            assert!(mmc.vmmc_supply.is_none());
+            assert!(mmc.vqmmc_supply.is_none());
+            let plan = plan(mmc).expect("plan MMC with board-wired supplies");
+            assert_eq!(plan.prerequisites.vmmc,
+                       PrerequisiteStatus::ImplicitBoardSupply);
+            assert_eq!(plan.prerequisites.vqmmc,
+                       PrerequisiteStatus::ImplicitBoardSupply);
+            assert!(!plan.can_activate());
         }
         _ => panic!("unknown mode: {mode}"),
     }

@@ -42,12 +42,22 @@
         #gpio-cells = <2>;
     };
 
+    /*
+     * Synthetic optional supplies for fixed-regulator parser coverage.
+     * Linux's upstream 2K1000 reference DTS omits both MMC supplies.
+     */
     vmmc: regulator-vmmc {
         compatible = "regulator-fixed";
+        regulator-name = "vmmc";
+        regulator-min-microvolt = <3300000>;
+        regulator-max-microvolt = <3300000>;
     };
 
     vqmmc: regulator-vqmmc {
         compatible = "regulator-fixed";
+        regulator-name = "vqmmc";
+        regulator-min-microvolt = <3300000>;
+        regulator-max-microvolt = <3300000>;
     };
 
     liointc0: interrupt-controller@1fe01400 {

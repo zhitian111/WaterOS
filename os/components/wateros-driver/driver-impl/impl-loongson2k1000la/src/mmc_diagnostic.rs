@@ -8,7 +8,7 @@
 use crate::{
     clock::{self, ClockError, ClockSnapshot},
     gpio::{self, CardDetectSnapshot, GpioError},
-    mmc::{self, BringUpPlan, PlanError},
+    mmc::{self, BringUpPlan, PlanError, PrerequisiteStatus},
     topology::{CardDetect, MmcDescription},
 };
 use alloc::{format, string::String};
@@ -92,6 +92,17 @@ fn gpio_error_code(error : GpioError) -> &'static str {
     }
 }
 
+fn prerequisite_code(status : PrerequisiteStatus) -> &'static str {
+    match status {
+        PrerequisiteStatus::ReadyByTopology => "topology-ready",
+        PrerequisiteStatus::ImplicitBoardSupply => "implicit-board-supply",
+        PrerequisiteStatus::FirmwareMaintained => "firmware-maintained",
+        PrerequisiteStatus::RequiresDriver => "requires-driver",
+        PrerequisiteStatus::Missing => "missing",
+        PrerequisiteStatus::UnsupportedProvider => "unsupported-provider",
+    }
+}
+
 /// Stable single-line representation used by the remote development monitor.
 pub fn format_diagnosis(diagnosis : Diagnosis) -> String {
     let clock = match diagnosis.clock {
@@ -127,8 +138,10 @@ pub fn format_diagnosis(diagnosis : Diagnosis) -> String {
                     gpio_error_code(error))
         }
     };
-    format!("ls2k-mmc {} {} can_activate={} blockers={}\r\n",
+    format!("ls2k-mmc {} vmmc={} vqmmc={} {} can_activate={} blockers={}\r\n",
             clock,
+            prerequisite_code(diagnosis.plan.prerequisites.vmmc),
+            prerequisite_code(diagnosis.plan.prerequisites.vqmmc),
             card,
             u8::from(diagnosis.plan
                               .can_activate()),
@@ -384,8 +397,9 @@ mod tests {
         assert_eq!(gpios.reads, vec![0, 0x20]);
         assert_eq!(format_diagnosis(result),
                    "ls2k-mmc clock=ok ref_hz=100000000 pll_raw=0x2810000000 gmac_raw=0x800000 \
-                    apb_raw=0x300000 apb_hz=250000000 card=gpio dir_raw=0x400000 input_raw=0x0 \
-                    pin=22 active_low=1 level_high=0 present=1 can_activate=0 blockers=6\r\n");
+                    apb_raw=0x300000 apb_hz=250000000 vmmc=implicit-board-supply \
+                    vqmmc=implicit-board-supply card=gpio dir_raw=0x400000 input_raw=0x0 pin=22 \
+                    active_low=1 level_high=0 present=1 can_activate=0 blockers=6\r\n");
     }
 
     #[test]
@@ -406,7 +420,8 @@ mod tests {
         assert!(!result.plan
                        .can_activate());
         assert_eq!(format_diagnosis(result),
-                   "ls2k-mmc clock=error:io card=gpio-error:not-input can_activate=0 \
+                   "ls2k-mmc clock=error:io vmmc=implicit-board-supply \
+                    vqmmc=implicit-board-supply card=gpio-error:not-input can_activate=0 \
                     blockers=6\r\n");
     }
 

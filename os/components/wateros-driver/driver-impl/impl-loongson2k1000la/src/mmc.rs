@@ -5,8 +5,8 @@
 //! a FIFO window. WaterOS reuses [`dw_mmc::sd`] only as an SD protocol layer.
 
 use crate::{irq_domain::{AcknowledgedIrq, DeviceAckedIrq, GlobalIrq, IrqDisposition},
-            topology::{CardDetect, MmcClockProvider, MmcDescription, SupplyDescription,
-                       SupplyProvider}};
+            topology::{CardDetect, FixedSupplyControl, MmcClockProvider, MmcDescription,
+                       SupplyDescription, SupplyProvider}};
 use api_v0::MmioRegion;
 use dw_mmc::mmc::MmcError;
 
@@ -33,6 +33,8 @@ pub enum ActivationBlocker {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrerequisiteStatus {
     ReadyByTopology,
+    /// Upstream MMC treats the absent optional supply as board-wired power.
+    ImplicitBoardSupply,
     FirmwareMaintained,
     RequiresDriver,
     Missing,
@@ -81,12 +83,15 @@ pub fn plan(description : &MmcDescription) -> Result<BringUpPlan, PlanError> {
         MmcClockProvider::Unsupported { .. } => PrerequisiteStatus::UnsupportedProvider,
     };
     let supply = |description : Option<SupplyDescription>| match description {
-        None => PrerequisiteStatus::Missing,
+        None => PrerequisiteStatus::ImplicitBoardSupply,
         Some(SupplyDescription {
-            provider : SupplyProvider::Fixed { always_on, boot_on, gpio_controlled : false },
+            provider : SupplyProvider::Fixed { control : FixedSupplyControl::None, .. },
             ..
-        }) if always_on || boot_on => PrerequisiteStatus::FirmwareMaintained,
-        Some(SupplyDescription { provider : SupplyProvider::Fixed { .. }, .. }) => {
+        }) => PrerequisiteStatus::ReadyByTopology,
+        Some(SupplyDescription {
+            provider : SupplyProvider::Fixed { control : FixedSupplyControl::Gpio, .. },
+            ..
+        }) => {
             PrerequisiteStatus::RequiresDriver
         }
         Some(SupplyDescription { provider : SupplyProvider::Unsupported, .. }) => {
@@ -308,8 +313,8 @@ impl<R : RegisterIo> Host<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::topology::{CardDetect, InterruptSpec, MmcClockProvider, NamedResource,
-                          ResourceSpecifier, SupplyDescription, SupplyProvider};
+    use crate::topology::{CardDetect, FixedSupplyControl, InterruptSpec, MmcClockProvider,
+                          NamedResource, ResourceSpecifier, SupplyDescription, SupplyProvider};
     use alloc::vec;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -377,7 +382,7 @@ mod tests {
         assert!(plan.blockers.contains(&ActivationBlocker::DataPathUnavailable));
         assert_eq!(plan.prerequisites.clock, PrerequisiteStatus::RequiresDriver);
         assert_eq!(plan.prerequisites.card_detect, PrerequisiteStatus::ReadyByTopology);
-        assert_eq!(plan.prerequisites.vmmc, PrerequisiteStatus::Missing);
+        assert_eq!(plan.prerequisites.vmmc, PrerequisiteStatus::ImplicitBoardSupply);
     }
 
     #[test]
@@ -386,18 +391,24 @@ mod tests {
         value.vmmc_supply = Some(SupplyDescription {
             phandle : 3,
             provider : SupplyProvider::Fixed {
-                always_on : false, boot_on : false, gpio_controlled : false,
+                control : FixedSupplyControl::None, always_on : false, boot_on : false,
             },
         });
         value.vqmmc_supply = Some(SupplyDescription {
             phandle : 4,
             provider : SupplyProvider::Fixed {
-                always_on : true, boot_on : false, gpio_controlled : false,
+                control : FixedSupplyControl::None, always_on : true, boot_on : false,
             },
         });
         let readiness = plan(&value).unwrap();
-        assert_eq!(readiness.prerequisites.vmmc, PrerequisiteStatus::RequiresDriver);
-        assert_eq!(readiness.prerequisites.vqmmc, PrerequisiteStatus::FirmwareMaintained);
+        assert_eq!(readiness.prerequisites.vmmc, PrerequisiteStatus::ReadyByTopology);
+        assert_eq!(readiness.prerequisites.vqmmc, PrerequisiteStatus::ReadyByTopology);
+
+        value.vmmc_supply.as_mut().unwrap().provider = SupplyProvider::Fixed {
+            control : FixedSupplyControl::Gpio, always_on : true, boot_on : true,
+        };
+        assert_eq!(plan(&value).unwrap().prerequisites.vmmc,
+                   PrerequisiteStatus::RequiresDriver);
 
         value.vmmc_supply.as_mut().unwrap().provider = SupplyProvider::Unsupported;
         assert_eq!(plan(&value).unwrap().prerequisites.vmmc,

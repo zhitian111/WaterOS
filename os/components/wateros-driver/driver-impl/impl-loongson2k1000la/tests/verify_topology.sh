@@ -51,6 +51,20 @@ sed '/regulator-vmmc/a\        regulator-always-on = <1>;' \
     > "$tmp_dir/malformed-regulator-flag.dts"
 dtc -I dts -O dtb -o "$tmp_dir/malformed-regulator-flag.dtb" \
     "$tmp_dir/malformed-regulator-flag.dts"
+sed -e '/    vmmc: regulator-vmmc {/,/    };/d' \
+    -e '/    vqmmc: regulator-vqmmc {/,/    };/d' \
+    -e '/vmmc-supply/d' -e '/vqmmc-supply/d' \
+    "$crate_dir/tests/fixtures/loongson2k1000la-topology.dts" \
+    > "$tmp_dir/implicit-board-supplies.dts"
+dtc -I dts -O dtb -o "$tmp_dir/implicit-board-supplies.dtb" \
+    "$tmp_dir/implicit-board-supplies.dts"
+sed '/vmmc: regulator-vmmc {/a\
+        gpio = <1>;\
+        gpios = <1>;' \
+    "$crate_dir/tests/fixtures/loongson2k1000la-topology.dts" \
+    > "$tmp_dir/ambiguous-regulator-gpio.dts"
+dtc -I dts -O dtb -o "$tmp_dir/ambiguous-regulator-gpio.dtb" \
+    "$tmp_dir/ambiguous-regulator-gpio.dts"
 sed '/mmc@1fe2c000/,/vmmc-supply/ s/clocks = <&clk 12>/clocks = <\&clk 0>/' \
     "$crate_dir/tests/fixtures/loongson2k1000la-topology.dts" \
     > "$tmp_dir/wrong-mmc-clock-id.dts"
@@ -99,6 +113,10 @@ cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
     --example verify_topology -- invalid "$tmp_dir/short-clock-mmio.dtb"
 cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
     --example verify_topology -- invalid "$tmp_dir/malformed-regulator-flag.dtb"
+cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
+    --example verify_topology -- implicit-supplies "$tmp_dir/implicit-board-supplies.dtb"
+cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
+    --example verify_topology -- invalid "$tmp_dir/ambiguous-regulator-gpio.dtb"
 cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
     --example verify_topology -- invalid "$tmp_dir/wrong-mmc-clock-id.dtb"
 cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \

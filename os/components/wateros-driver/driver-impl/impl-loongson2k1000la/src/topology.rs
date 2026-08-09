@@ -54,8 +54,20 @@ pub enum MmcClockProvider {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SupplyProvider {
-    Fixed { always_on : bool, boot_on : bool, gpio_controlled : bool },
+    Fixed {
+        control : FixedSupplyControl,
+        always_on : bool,
+        boot_on : bool,
+    },
     Unsupported,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FixedSupplyControl {
+    /// Linux's regulator-fixed driver exposes empty ops without an enable GPIO.
+    None,
+    /// Control exists, but WaterOS deliberately has no rail-write path yet.
+    Gpio,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -382,12 +394,18 @@ fn supply_description(fdt : &fdt::Fdt<'_>,
     let provider_node = fdt.find_phandle(phandle)
                            .ok_or(DriverError::InvalidDtb)?;
     let provider = if has_compatible(provider_node, "regulator-fixed") {
-        SupplyProvider::Fixed { always_on : boolean_property(provider_node,
-                                                             "regulator-always-on")?,
-                                boot_on : boolean_property(provider_node,
-                                                           "regulator-boot-on")?,
-                                gpio_controlled : provider_node.property("gpio").is_some() ||
-                                                  provider_node.property("gpios").is_some() }
+        let gpio = provider_node.property("gpio").is_some();
+        let gpios = provider_node.property("gpios").is_some();
+        if gpio && gpios {
+            return Err(DriverError::InvalidDtb);
+        }
+        SupplyProvider::Fixed {
+            control : if gpio || gpios { FixedSupplyControl::Gpio } else {
+                FixedSupplyControl::None
+            },
+            always_on : boolean_property(provider_node, "regulator-always-on")?,
+            boot_on : boolean_property(provider_node, "regulator-boot-on")?,
+        }
     } else {
         SupplyProvider::Unsupported
     };
