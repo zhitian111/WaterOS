@@ -77,6 +77,12 @@ impl RegisterIo for MmioRegisters {
 }
 
 const CTRL : usize = 0x000;
+const PWREN : usize = 0x004;
+const CLKDIV : usize = 0x008;
+const CLKSRC : usize = 0x00C;
+const CLKENA : usize = 0x010;
+const TMOUT : usize = 0x014;
+const CTYPE : usize = 0x018;
 const BLKSIZ : usize = 0x01C;
 const BYTCNT : usize = 0x020;
 const CMDARG : usize = 0x028;
@@ -87,11 +93,14 @@ const RESP2 : usize = 0x038;
 const RESP3 : usize = 0x03C;
 const RINTSTS : usize = 0x044;
 const STATUS : usize = 0x048;
+const FIFOTH : usize = 0x04C;
+const INTMASK : usize = 0x024;
 const VERID : usize = 0x06C;
 
 const CTRL_RESET_ALL : u32 = 0b111;
 const CMD_START : u32 = 1 << 31;
 const CMD_USE_HOLD : u32 = 1 << 29;
+const CMD_UPDATE_CLOCK : u32 = 1 << 21;
 const CMD_WAIT_PREVIOUS_DATA : u32 = 1 << 13;
 const CMD_SEND_INITIALIZATION : u32 = 1 << 15;
 const CMD_DATA_EXPECTED : u32 = 1 << 9;
@@ -117,6 +126,25 @@ pub struct DwMmc<R> {
     fifo_offset : usize,
     poll_limit : usize,
 }
+
+/// Calculate the 8-bit DesignWare divider and the resulting card clock.
+/// Divider zero bypasses division; non-zero values produce input/(2*div).
+pub fn clock_divider(input_hz : u32, target_hz : u32) -> Result<(u8, u32), MmcError> {
+    if input_hz == 0 || target_hz == 0 {
+        return Err(MmcError::InvalidParameter);
+    }
+    if target_hz >= input_hz {
+        return Ok((0, input_hz));
+    }
+    let denominator = 2u64 * target_hz as u64;
+    let divider = (input_hz as u64).div_ceil(denominator);
+    if divider == 0 || divider > u8::MAX as u64 {
+        return Err(MmcError::InvalidParameter);
+    }
+    let actual = input_hz / (2 * divider as u32);
+    Ok((divider as u8, actual))
+}
+
 impl<R : RegisterIo> DwMmc<R> {
     pub fn probe(mut registers : R, poll_limit : usize) -> Result<Self, MmcError> {
         let version = registers.read32(VERID)? & 0xFFFF;
@@ -139,6 +167,64 @@ impl<R : RegisterIo> DwMmc<R> {
             }
         }
         Err(MmcError::Timeout)
+    }
+
+    fn update_clock(&mut self) -> Result<(), MmcError> {
+        self.registers.write32(RINTSTS, INT_ALL)?;
+        self.registers.write32(CMD,
+                               CMD_START | CMD_USE_HOLD | CMD_WAIT_PREVIOUS_DATA |
+                               CMD_UPDATE_CLOCK)?;
+        for _ in 0..self.poll_limit {
+            let interrupts = self.registers.read32(RINTSTS)?;
+            Self::check_errors(interrupts)?;
+            if self.registers.read32(CMD)? & CMD_START == 0 {
+                if interrupts != 0 {
+                    self.registers.write32(RINTSTS, interrupts)?;
+                }
+                return Ok(());
+            }
+        }
+        Err(MmcError::Timeout)
+    }
+
+    /// Configure the controller-internal card clock without exceeding target.
+    pub fn configure_card_clock(&mut self,
+                                input_hz : u32,
+                                target_hz : u32)
+                                -> Result<u32, MmcError> {
+        let (divider, actual) = clock_divider(input_hz, target_hz)?;
+        self.registers.write32(CLKENA, 0)?;
+        self.update_clock()?;
+        self.registers.write32(CLKDIV, divider as u32)?;
+        self.registers.write32(CLKSRC, 0)?;
+        self.update_clock()?;
+        self.registers.write32(CLKENA, 1)?;
+        self.update_clock()?;
+        Ok(actual)
+    }
+
+    /// Conservative polling/PIO setup for SD identification mode.
+    /// The upstream JH7110 AHB/CIU clocks, reset and pinmux must already be
+    /// configured by a board layer; that prerequisite is UNVERIFIED.
+    pub fn initialize_polling(&mut self,
+                              input_hz : u32,
+                              target_hz : u32,
+                              fifo_depth : u32)
+                              -> Result<u32, MmcError> {
+        if !(2..=4096).contains(&fifo_depth) {
+            return Err(MmcError::InvalidParameter);
+        }
+        self.reset()?;
+        self.registers.write32(PWREN, 1)?;
+        self.registers.write32(TMOUT, u32::MAX)?;
+        self.registers.write32(CTYPE, 0)?;
+        self.registers.write32(INTMASK, 0)?;
+        self.registers.write32(RINTSTS, INT_ALL)?;
+        let receive_watermark = fifo_depth / 2 - 1;
+        let transmit_watermark = fifo_depth / 2;
+        self.registers.write32(FIFOTH,
+                               (receive_watermark << 16) | transmit_watermark)?;
+        self.configure_card_clock(input_hz, target_hz)
     }
 
     /// Execute a non-data command and return RESP0..RESP3.
@@ -285,6 +371,8 @@ mod tests {
         fifo : VecDeque<u32>,
         interrupts : u32,
         clear_reset : bool,
+        clear_command_start : bool,
+        clock_updates : usize,
     }
     impl MockRegisters {
         fn successful() -> Self {
@@ -296,7 +384,9 @@ mod tests {
             Self { values,
                    fifo,
                    interrupts : INT_COMMAND_DONE | INT_RX_READY | INT_DATA_OVER,
-                   clear_reset : true }
+                   clear_reset : true,
+                   clear_command_start : true,
+                   clock_updates : 0 }
         }
     }
     impl RegisterIo for MockRegisters {
@@ -324,8 +414,13 @@ mod tests {
             let slot = self.values
                            .get_mut(offset / 4)
                            .ok_or(MmcError::RegisterOutOfRange)?;
+            if offset == CMD && value & CMD_UPDATE_CLOCK != 0 {
+                self.clock_updates += 1;
+            }
             *slot = if offset == CTRL && self.clear_reset {
                 0
+            } else if offset == CMD && self.clear_command_start {
+                value & !CMD_START
             } else {
                 value
             };
@@ -367,6 +462,44 @@ mod tests {
         let response_flags = CMD_RESPONSE_EXPECTED | CMD_RESPONSE_LONG |
                              CMD_CHECK_RESPONSE_CRC;
         assert_eq!(command2 & response_flags, response_flags);
+    }
+
+    #[test]
+    fn configures_bounded_identification_clock_and_fifo() {
+        assert_eq!(clock_divider(50_000_000, 400_000), Ok((63, 396_825)));
+        assert_eq!(clock_divider(25_000_000, 50_000_000), Ok((0, 25_000_000)));
+        assert_eq!(clock_divider(1, 0), Err(MmcError::InvalidParameter));
+        assert_eq!(clock_divider(500_000_000, 1), Err(MmcError::InvalidParameter));
+
+        let mut host = DwMmc::probe(MockRegisters::successful(), 4).unwrap();
+        assert_eq!(host.initialize_polling(50_000_000, 400_000, 32), Ok(396_825));
+        let registers = host.into_inner();
+        assert_eq!(registers.clock_updates, 3);
+        assert_eq!(registers.values[CLKDIV / 4], 63);
+        assert_eq!(registers.values[CLKENA / 4], 1);
+        assert_eq!(registers.values[CTYPE / 4], 0);
+        assert_eq!(registers.values[INTMASK / 4], 0);
+        assert_eq!(registers.values[FIFOTH / 4], (15 << 16) | 16);
+    }
+
+    #[test]
+    fn clock_update_error_does_not_enable_clock() {
+        let mut mock = MockRegisters::successful();
+        mock.interrupts = INT_HARDWARE_LOCKED;
+        let mut host = DwMmc::probe(mock, 2).unwrap();
+        assert_eq!(host.configure_card_clock(50_000_000, 400_000),
+                   Err(MmcError::HardwareLocked));
+        let registers = host.into_inner();
+        assert_eq!(registers.clock_updates, 1);
+        assert_eq!(registers.values[CLKDIV / 4], 0);
+        assert_eq!(registers.values[CLKENA / 4], 0);
+
+        let mut mock = MockRegisters::successful();
+        mock.interrupts = 0;
+        mock.clear_command_start = false;
+        let mut host = DwMmc::probe(mock, 2).unwrap();
+        assert_eq!(host.configure_card_clock(50_000_000, 400_000), Err(MmcError::Timeout));
+        assert_eq!(host.into_inner().values[CLKENA / 4], 0);
     }
 
     #[test]

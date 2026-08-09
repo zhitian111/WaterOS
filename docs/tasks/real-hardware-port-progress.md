@@ -667,3 +667,42 @@ python3 scripts/remote_debug_qemu_smoke.py \
 ### 提交
 
 - `[feat] validate SD card capacity from CSD`
+
+## 2026-08-10：批次 15——DesignWare MMC identification 时钟
+
+### 任务与设计
+
+1. 实现 DesignWare 8-bit divider 的受检计算，向上取整以保证实际卡时钟不高于目标。
+2. 按控制器协议执行 disable/update、divider/update、enable/update 三阶段时钟切换。
+3. update-clock 使用 `CMD.START` 自清除而非普通 `CMD_DONE`，并设置独立有界轮询。
+4. 新增保守 polling/PIO 初始化：复位、供电、timeout、1-bit bus、IRQ mask 和 FIFO watermark。
+5. 保持 JH7110 上游 AHB/CIU clock、reset、syscon 和 pinmux 为板级前置条件。
+
+### 完成内容
+
+- [x] `clock_divider()` 支持 bypass 和 1..255 divider，拒绝零频率及无法达到的过低目标。
+- [x] 50 MHz 输入、400 kHz 目标得到 divider 63、实际 396825 Hz，不超过 identification 上限。
+- [x] `update_clock()` 清 pending status，发出 UPDATE_CLOCK command，并有界等待 START 清零。
+- [x] `configure_card_clock()` 只有前三阶段全部成功才返回实际频率；第一阶段失败时不会写 divider 或 enable。
+- [x] `initialize_polling()` 保持 DMA 和控制器 IRQ mask 关闭，设置 1-bit CTYPE、全 timeout 和按 FIFO depth 计算的 RX/TX watermark。
+- [x] 板级依赖在 API 文档中明确标为 UNVERIFIED，machine init 不调用该入口。
+
+### 验证证据
+
+- JH7110 profile host 单测增至 19 项。
+- 寄存器模型断言三次 update-clock、最终 divider 63、CLKENA 1、CTYPE 0、INTMASK 0，以及 32-word FIFO 的 RX/TX watermark 15/16。
+- divider 测试覆盖 bypass、400 kHz 向下逼近、零目标和超出 8-bit 能力的目标。
+- hardware-lock 注入在第一次 update 时返回专用错误，并断言 CLKDIV/CLKENA 均未推进。
+- START 永不自清除的模型在固定 poll limit 后超时，并保持卡时钟禁用。
+
+### 已知限制、未验证与后续测试
+
+- [ ] **控制器内部 divider 序列已用模型验证，但 JH7110 CIU 输入是否确为 50 MHz、update-clock 副作用仍须真机确认。**
+- [ ] `PWREN=1` 只是 DesignWare host 端位；VF2 SD slot regulator、GPIO card-detect 和电气供电仍未控制。
+- [ ] JH7110 clock/reset provider 与 syscon sample phase 尚未实现；调用 `initialize_polling()` 前置条件目前无法在 machine driver 中满足。
+- [ ] FIFO watermark 只服务 polling PIO；实际 RXDR 触发阈值和 FIFO depth 应用 HCON/DTB 与真机日志交叉确认。
+- [ ] 下一批应从 DTB 解析 clock/reset phandle specifier，先建立只描述、不写寄存器的资源拓扑与可测试解析器。
+
+### 提交
+
+- `[feat] add DesignWare MMC identification clock setup`
