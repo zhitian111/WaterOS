@@ -6,7 +6,8 @@
 
 use api_v0::DriverError;
 
-use crate::{irq_domain::{DomainError, GlobalIrq, IrqHandler, LioIntcDomain, MAX_BANKS},
+use crate::{irq_domain::{DomainError, GlobalIrq, IrqDisposition, IrqHandler, LioIntcDomain,
+                        MAX_BANKS},
             irq_binding::InterruptBinding,
             liointc::{LioIntc, MAIN_REGISTER_BYTES, MAX_CORES, RegisterIo},
             topology::BoardTopology};
@@ -108,6 +109,7 @@ pub enum RuntimeError {
     Controller(DriverError),
     Domain(DomainError),
     NoConfiguredSources,
+    DispositionMismatch,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -116,6 +118,7 @@ pub struct ServiceReport {
     pub masked_sources : u8,
     pub handled_sources : u8,
     pub unhandled_sources : u8,
+    pub rearmed_sources : u8,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -248,7 +251,28 @@ impl<I : RegisterIo> BoardIrqRuntime<I> {
                 })?;
                 report.masked_sources = report.masked_sources.saturating_add(1);
                 match self.domain.dispatch(acknowledged) {
-                    Ok(()) => report.handled_sources = report.handled_sources.saturating_add(1),
+                    Ok(disposition) => {
+                        report.handled_sources = report.handled_sources.saturating_add(1);
+                        match disposition {
+                            IrqDisposition::KeepMasked => {}
+                            IrqDisposition::Rearm(evidence) => {
+                                let expected = GlobalIrq::from_bank_local(bank, local)
+                                    .map_err(|error| ServiceFailure {
+                                        error : RuntimeError::Domain(error), report
+                                    })?;
+                                if evidence.irq() != expected {
+                                    return Err(ServiceFailure {
+                                        error : RuntimeError::DispositionMismatch,
+                                        report,
+                                    });
+                                }
+                                controller.enable(local).map_err(|error| ServiceFailure {
+                                    error : RuntimeError::Controller(error), report
+                                })?;
+                                report.rearmed_sources = report.rearmed_sources.saturating_add(1);
+                            }
+                        }
+                    }
                     Err(_unhandled) => {
                         report.unhandled_sources = report.unhandled_sources.saturating_add(1)
                     }
@@ -410,8 +434,20 @@ mod tests {
 
     static VISITED : AtomicU8 = AtomicU8::new(0);
 
-    fn record(acknowledged : crate::irq_domain::AcknowledgedIrq) {
+    fn record(acknowledged : crate::irq_domain::AcknowledgedIrq) -> IrqDisposition {
         VISITED.fetch_or(1 << acknowledged.irq().local(), Ordering::Relaxed);
+        IrqDisposition::KeepMasked
+    }
+
+    fn rearm(acknowledged : crate::irq_domain::AcknowledgedIrq) -> IrqDisposition {
+        IrqDisposition::Rearm(crate::irq_domain::DeviceAckedIrq::after_device_clear(
+            acknowledged.irq()))
+    }
+
+    fn mismatched_rearm(_acknowledged : crate::irq_domain::AcknowledgedIrq)
+                        -> IrqDisposition {
+        IrqDisposition::Rearm(crate::irq_domain::DeviceAckedIrq::after_device_clear(
+            GlobalIrq::from_bank_local(0, 1).unwrap()))
     }
 
     fn runtime() -> BoardIrqRuntime<ModelIo> {
@@ -578,7 +614,8 @@ mod tests {
         assert_eq!(report, ServiceReport { parent_lines : 2,
                                            masked_sources : 3,
                                            handled_sources : 2,
-                                           unhandled_sources : 1 });
+                                           unhandled_sources : 1,
+                                           rearmed_sources : 0 });
         assert_eq!(VISITED.load(Ordering::Relaxed), (1 << 2) | (1 << 7));
         let mut controllers = runtime.into_controllers();
         let bank0 = controllers[0].take().unwrap().into_inner();
@@ -597,5 +634,28 @@ mod tests {
         assert_eq!(failure.error, RuntimeError::UnmappedParent);
         assert_eq!(failure.report.masked_sources, 1);
         assert_eq!(failure.report.unhandled_sources, 1);
+    }
+
+    #[test]
+    fn rearm_requires_matching_device_ack_evidence() {
+        let mut matching_runtime = runtime();
+        matching_runtime.register(GlobalIrq::from_bank_local(0, 2).unwrap(), rearm).unwrap();
+        let report = matching_runtime.service(1 << 2, 0).unwrap();
+        assert_eq!(report.rearmed_sources, 1);
+        let mut controllers = matching_runtime.into_controllers();
+        assert_eq!(controllers[0].take().unwrap().into_inner().writes,
+                   [(BASE0 + ENABLE_CLEAR, 1 << 2),
+                    (BASE0 + 0x28, 1 << 2)]);
+
+        let mut mismatched_runtime = runtime();
+        mismatched_runtime.register(GlobalIrq::from_bank_local(0, 2).unwrap(),
+                                    mismatched_rearm).unwrap();
+        let failure = mismatched_runtime.service(1 << 2, 0).unwrap_err();
+        assert_eq!(failure.error, RuntimeError::DispositionMismatch);
+        assert_eq!(failure.report.handled_sources, 1);
+        assert_eq!(failure.report.rearmed_sources, 0);
+        let mut controllers = mismatched_runtime.into_controllers();
+        assert_eq!(controllers[0].take().unwrap().into_inner().writes,
+                   [(BASE0 + ENABLE_CLEAR, 1 << 2)]);
     }
 }

@@ -43,7 +43,27 @@ pub enum DomainError {
     NotRegistered,
 }
 
-pub type IrqHandler = fn(AcknowledgedIrq);
+/// Evidence that the device-level interrupt condition for one source was
+/// cleared after its LIOINTC line had been masked/acknowledged.
+#[derive(Debug, PartialEq, Eq)]
+pub struct DeviceAckedIrq {
+    irq : GlobalIrq,
+}
+
+impl DeviceAckedIrq {
+    pub const fn irq(&self) -> GlobalIrq { self.irq }
+
+    #[allow(dead_code)]
+    pub(crate) const fn after_device_clear(irq : GlobalIrq) -> Self { Self { irq } }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum IrqDisposition {
+    KeepMasked,
+    Rearm(DeviceAckedIrq),
+}
+
+pub type IrqHandler = fn(AcknowledgedIrq) -> IrqDisposition;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct UnhandledIrq {
@@ -89,7 +109,7 @@ impl LioIntcDomain {
     /// An unregistered source returns the linear evidence so the caller can
     /// keep the line masked and report or recover it deliberately.
     pub fn dispatch(&self, acknowledged : AcknowledgedIrq)
-                    -> Result<(), UnhandledIrq> {
+                    -> Result<IrqDisposition, UnhandledIrq> {
         let irq = acknowledged.irq();
         let index = match self.validate(irq) {
             Ok(index) => index,
@@ -97,8 +117,7 @@ impl LioIntcDomain {
         };
         match self.handlers[index] {
             Some(handler) => {
-                handler(acknowledged);
-                Ok(())
+                Ok(handler(acknowledged))
             }
             None => Err(UnhandledIrq { error : DomainError::NotRegistered,
                                       acknowledged }),
@@ -114,8 +133,9 @@ mod tests {
 
     static VISITED : AtomicU64 = AtomicU64::new(0);
 
-    fn record(acknowledged : AcknowledgedIrq) {
+    fn record(acknowledged : AcknowledgedIrq) -> IrqDisposition {
         VISITED.fetch_or(1u64 << acknowledged.irq().raw(), Ordering::Relaxed);
+        IrqDisposition::KeepMasked
     }
 
     #[test]
@@ -141,7 +161,7 @@ mod tests {
               .unwrap();
         let handled = AcknowledgedIrq::after_mask_ack(
             GlobalIrq::from_bank_local(1, 0).unwrap());
-        domain.dispatch(handled).unwrap();
+        assert_eq!(domain.dispatch(handled), Ok(IrqDisposition::KeepMasked));
         let missing_irq = GlobalIrq::from_bank_local(1, 7).unwrap();
         let failure = domain.dispatch(AcknowledgedIrq::after_mask_ack(missing_irq))
                             .unwrap_err();

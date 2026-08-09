@@ -2086,3 +2086,46 @@ CPU parent HWI mask，只有显式 `CpuParentActivator` 成功后才产生 Live�
 ### 提交
 
 - `[ref] stage 2K1000 IRQ runtime activation`
+
+## 2026-08-10：批次 46——Device-ack IRQ disposition
+
+### 任务与设计
+
+把 handler 契约升级为 `fn(AcknowledgedIrq) -> IrqDisposition`。handler 可以选择
+`KeepMasked`，或返回绑定具体 `GlobalIrq` 的 `DeviceAckedIrq` 证据请求 `Rearm`。证据字段私有，
+构造仅 crate 内可见，真实 handler 必须在设备侧 clear 成功后才构造。
+
+runtime 在 handler 返回后核对证据 source identity；只有完全匹配当前 bank/local source 才写
+ENABLE_SET。错 source、未注册或 KeepMasked 都不会重新开线。
+
+### 完成内容
+
+- [x] 新增 `DeviceAckedIrq` 与 `IrqDisposition::{KeepMasked, Rearm}`。
+- [x] `IrqHandler` 返回 disposition，domain 只负责所有权转交，不自行操作 controller。
+- [x] `ServiceReport` 新增 `rearmed_sources`。
+- [x] runtime 对 Rearm evidence 重新构造期望 GlobalIrq 并精确核对。
+- [x] 匹配证据后执行 ENABLE_SET；错 source 返回 `DispositionMismatch` 和 partial report。
+- [x] KeepMasked 与未注册 source 继续保持 masked。
+- [x] APBDMA 没有 device clear 证据，生产路径仍不能构造 Rearm。
+
+### 验证证据
+
+- `cargo test`：56 项 host 单测全部通过（本批新增 1 项）。
+- KeepMasked 既有测试断言无 ENABLE_SET，rearmed 计数为 0。
+- 匹配 evidence 测试断言写序严格为 ENABLE_CLEAR 后 ENABLE_SET，rearmed=1。
+- 错 source evidence 测试返回 `DispositionMismatch`，handled=1、rearmed=0，只有 ENABLE_CLEAR 写。
+- topology/畸形 DTS fixtures、LoongArch64 target check、`make kernel-la` 全部通过；仅有既有 warning。
+- `git diff --check` 通过；未创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：设备 clear 完成到 LIOINTC ENABLE_SET 的真实同步要求尚未真机验证。
+- [ ] 当前 `RegisterIo::write32` 不可失败，无法模拟或传播 ENABLE_SET 总线错误；volatile MMIO fault 会成为同步异常。
+- [ ] `after_device_clear` 暂时仅由 mock handler 使用；首个生产 handler 接入前保留 `dead_code` allowance。
+- [ ] 证据构造是 crate 内可信边界，不是硬件自动生成的证明；每个生产 handler 仍需独立审计 clear 写序。
+- [ ] APBDMA status/clear 位未知，因此必须继续 KeepMasked。
+- [ ] 下一批应优先为已知 W1C 语义的 MMC command interrupt 建立 concrete device-ack adapter，验证寄存器 read→W1C clear→Rearm；数据路径仍保持 deferred。
+
+### 提交
+
+- `[ref] gate 2K1000 IRQ rearm on device ack`
