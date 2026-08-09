@@ -215,3 +215,50 @@ nc 127.0.0.1 22323
 ### 提交
 
 - `[feat] add bounded MBR partition devices`
+
+## 2026-08-10：批次 5——小型物理根盘镜像工具
+
+### 任务与设计
+
+1. 用无特权宿主工具生成可供 QEMU 与真机共用的原始磁盘/SD 卡镜像。
+2. 用声明式 JSON 清单描述根卷目录、权限、内联文件和外部二进制来源。
+3. 固定 MBR、1 MiB 分区对齐、ext4 UUID/卷标/block size 与兼容 feature。
+4. 构建完成后先独立校验，再原子替换输出；失败不得破坏已有镜像。
+5. 用 QEMU snapshot 验证内核自动发现分区并从 `/dev/vda1` 读写挂载。
+
+默认镜像逻辑容量 32 MiB，采用稀疏文件；空骨架在本机只占约 104 KiB。默认清单只提供物理根卷骨架和 `/etc/wateros-release`，不把数 GiB 的比赛测试树隐式复制进去。架构相关 BusyBox、动态链接器和应用可通过单独清单的 `source` 项加入。
+
+### 完成内容
+
+- [x] 新增 `os/scripts/root_image/root_image.py`，构建过程不 mount、不使用 `sudo`。
+- [x] 新增默认 `rootfs-manifest.json`，预建 `/bin`、`/sbin`、`/etc`、`/proc`、`/dev`、`/tmp`、`/root`、`/usr` 和 `/var` 骨架。
+- [x] 固定 DOS/MBR disk id `0x574f5301`、2048 起始扇区、单个 `0x83` 分区。
+- [x] 固定 4 KiB ext4 block、UUID、卷标，关闭 journal 并保留 `64bit` descriptor feature。
+- [x] 输出使用同目录临时文件；MBR、ext4 和清单验证全部通过后才原子替换旧镜像。
+- [x] 独立 verifier 检查 MBR 签名、分区范围/重叠/类型/对齐、`e2fsck -fn`、ext4 feature、必需路径和声明文件逐字节内容。
+- [x] Makefile 新增 `physical-root-image` 与 `verify-physical-root-image`。
+- [x] 新增工具说明，记录宿主依赖、清单格式和真机风险。
+
+### 验证证据
+
+- Python 单测 4 项通过：正常 MBR、越界/重叠分区、清单路径逃逸和权限、失败的强制重建不破坏旧镜像。
+- `py_compile` 通过。
+- Makefile 实际构建和独立校验 32 MiB 镜像通过；布局为 start=2048、sectors=63488，实际分配约 104 KiB。
+- QEMU 对 ext4 feature 做了四组最小变量实验：默认空卷成功、默认预填充卷成功、仅关闭 journal 成功、关闭 `64bit` 稳定以 `InvalidPath` 失败。由此将 `64bit` 纳入 verifier 强制约束。
+- RISC-V release 内核构建通过。
+- 新镜像 QEMU snapshot 回归通过：virtio-blk 注册后 `block=2`，devfs 刷新成功，根卷从 `/dev/vda1` 读写挂载，QEMU 正常退出。
+- LoongArch64 release 内核构建及同镜像 QEMU snapshot 回归通过；启动进入只会在根卷挂载成功后发布的 BusyBox 队列并正常退出。当前 LoongArch early serial 的 ANSI 光标输出覆盖了前段日志，后续需改善日志捕获以保留逐行 `/dev/vda1` 证据。
+- snapshot 运行后再次执行独立 verifier 仍通过，基准镜像未被写回。
+
+### 已知限制、未验证与后续测试
+
+- [ ] 默认最小清单没有 BusyBox/动态链接器；自动比赛队列找不到 `/glibc/cagent_testcode.sh` 是预期行为，不代表用户环境已经完成。
+- [ ] 需要为 RISC-V64 与 LoongArch64 分别提供发布清单，并验证 ELF 架构、解释器和共享库闭包。
+- [ ] `another_ext4` 对非 `64bit` descriptor 小卷返回 `EINVAL` 的根因仍在 vendor 内部；当前通过明确镜像契约规避。
+- [ ] journal 为控制体积而关闭，当前不承诺写入时掉电恢复；生产策略需评估只读根、独立数据分区或完善 journal/write barrier。
+- [ ] e2fsprogs 跨版本不保证输出逐字节一致；正式发布若要求 bit-reproducible，需要固定构建容器和工具版本。
+- [ ] VisionFive 2 SD/eMMC 与 2K1000LA AHCI 上的容量、flush、cache coherency、DMA 和掉电行为均待真机测试。
+
+### 提交
+
+- `[feat] add reproducible physical root image tooling`

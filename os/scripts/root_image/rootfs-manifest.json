@@ -1,0 +1,21 @@
+{
+  "directories": [
+    {"path": "/bin", "mode": "0755"},
+    {"path": "/sbin", "mode": "0755"},
+    {"path": "/etc", "mode": "0755"},
+    {"path": "/proc", "mode": "0555"},
+    {"path": "/dev", "mode": "0755"},
+    {"path": "/tmp", "mode": "1777"},
+    {"path": "/root", "mode": "0700"},
+    {"path": "/usr/bin", "mode": "0755"},
+    {"path": "/usr/sbin", "mode": "0755"},
+    {"path": "/var", "mode": "0755"}
+  ],
+  "files": [
+    {
+      "path": "/etc/wateros-release",
+      "mode": "0644",
+      "content": "NAME=WaterOS\nIMAGE_LAYOUT=physical-root-v1\n"
+    }
+  ]
+}

@@ -20,6 +20,7 @@ BUILD_NUM = $(shell git rev-list --count HEAD 2>/dev/null || echo "0")
 .PHONY: kernel-la kernel-la-best kernel-la-pre kernel-la-final la_pre_run la_final_run la_final_run_log
 .PHONY: la_pre_run-gdb la_final_run-gdb la_final_run_log-gdb
 .PHONY: la_qemu_run la_qemu_run_snapshot
+.PHONY: physical-root-image verify-physical-root-image
 COLOR_ANSI_RED := \033[31m
 COLOR_ANSI_GREEN := \033[32m
 COLOR_ANSI_YELLOW := \033[33m
@@ -72,6 +73,8 @@ WRITE_DISK ?= $(if $(WOS_WRITE_DISK),$(WOS_WRITE_DISK),0)
 SNAPSHOT ?= $(if $(WOS_QEMU_SNAPSHOT),$(WOS_QEMU_SNAPSHOT),$(if $(filter 1,$(WRITE_DISK)),0,1))
 # SDCARD 用于单次覆盖；WOS_SDCARD 保留为脚本兼容入口。
 SDCARD ?= $(if $(strip $(WOS_SDCARD)),$(WOS_SDCARD),$(SELECTED_IMAGE))
+ROOT_IMAGE ?= ./wateros-root.img
+ROOT_IMAGE_TOOL := ./scripts/root_image/root_image.py
 PORT ?= 1234
 START_PAUSED ?= 1
 FAULTS ?= 0
@@ -166,6 +169,8 @@ help:
 	@echo "  make gdb                             手动挡：终端二连接"
 	@echo "  make snapshot / make watch           附加当前活动会话"
 	@echo "  make doctor                          检查 GDB/QEMU/符号工具"
+	@echo "  make physical-root-image             构建 32 MiB MBR+ext4 真机根盘"
+	@echo "  make verify-physical-root-image      只读检查真机根盘布局与内容"
 	@echo "  make show-config                     显示当前最终生效配置"
 	@echo ""
 	@echo "常用变量：SMP MODE SCRIPT GUEST_SHELL SNAPSHOT WRITE_DISK SDCARD"
@@ -470,6 +475,14 @@ la_check:
 
 check: validate-config $(SELECTED_CHECK_TARGET)
 	$(call INFO, "ARCH=$(ARCH) PROFILE=$(PROFILE) check 完成！")
+
+physical-root-image:
+	$(call INFO, "构建物理机/QEMU 共用根盘 $(ROOT_IMAGE)...")
+	@python3 $(ROOT_IMAGE_TOOL) build --force --output "$(ROOT_IMAGE)"
+
+verify-physical-root-image:
+	$(call INFO, "只读验证根盘 $(ROOT_IMAGE)...")
+	@python3 $(ROOT_IMAGE_TOOL) verify --image "$(ROOT_IMAGE)"
 
 rv_user_mode_program:
 	$(call INFO, "开始为 riscv 平台生成用户态测试用程序...")
