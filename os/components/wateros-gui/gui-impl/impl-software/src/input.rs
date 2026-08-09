@@ -8,7 +8,7 @@ use api_v0::{
     InputEvent, KeyCode, KeyEvent, KeyModifiers, Point, PointerButton, PointerEvent,
     PointerEventKind, Size,
 };
-use input::{AbsoluteAxis, InputDeviceKind, RawInputEvent, SharedInputDevice};
+use input::{AbsoluteAxis, InputDeviceKind, InputSubscription, RawInputEvent, SharedInputDevice};
 
 const EV_SYN : u16 = 0;
 const EV_KEY : u16 = 1;
@@ -27,7 +27,7 @@ const BTN_MIDDLE : u16 = 0x112;
 
 struct DeviceState {
     registry_index : usize,
-    device : SharedInputDevice,
+    subscription : InputSubscription,
     #[allow(dead_code)]
     kind : InputDeviceKind,
     absolute_x : Option<AbsoluteAxis>,
@@ -38,16 +38,17 @@ struct DeviceState {
 }
 
 impl DeviceState {
-    fn new(registry_index : usize, device : SharedInputDevice) -> Self {
+    fn new(registry_index : usize, device : SharedInputDevice) -> Option<Self> {
         let info = device.lock().info().clone();
-        Self { registry_index,
-               device,
+        let subscription = input::subscribe_input_device(registry_index).ok()?;
+        Some(Self { registry_index,
+               subscription,
                kind : info.kind,
                absolute_x : info.absolute_x,
                absolute_y : info.absolute_y,
                pointer : Point::new(0, 0),
                pointer_changed : false,
-               modifiers : KeyModifiers::default() }
+               modifiers : KeyModifiers::default() })
     }
 
     fn consume(&mut self, raw : RawInputEvent, size : Size, output : &mut Vec<InputEvent>) {
@@ -136,8 +137,7 @@ impl InputBridge {
         let mut remaining = budget;
         for state in &mut self.devices {
             while remaining > 0 {
-                // 设备锁仅覆盖一次非阻塞 pop，不跨事件路由或绘制。
-                let raw = state.device.lock().pop_event();
+                let raw = state.subscription.pop_event();
                 match raw {
                     Ok(Some(raw)) => {
                         state.consume(raw, size, &mut output);
@@ -162,7 +162,9 @@ impl InputBridge {
         });
         for (index, device) in snapshot {
             if !self.devices.iter().any(|state| state.registry_index == index) {
-                self.devices.push(DeviceState::new(index, device));
+                if let Some(state) = DeviceState::new(index, device) {
+                    self.devices.push(state);
+                }
             }
         }
     }

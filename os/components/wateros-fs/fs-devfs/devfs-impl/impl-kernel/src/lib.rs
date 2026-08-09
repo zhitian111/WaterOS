@@ -13,6 +13,7 @@ use driver_block_api_v0::{block_devices_snapshot, device_topology_generation, Bl
 use driver_character_api_v0::{
     character_devices_snapshot, CharacterDeviceKind, SharedCharacterDevice,
 };
+use driver_input_api_v0::{evdev_character_device, input_devices_snapshot};
 use fs_api_v0::{
     FsAccessMode, FsCapability, FsError, FsImpl, FsKind, FsResult, SharedFs,
 };
@@ -94,9 +95,11 @@ impl DevFsManager for KernelDevFsManager {
         let observed_generation = device_topology_generation();
         let block_snapshot = block_devices_snapshot();
         let char_snapshot = character_devices_snapshot();
+        let input_snapshot = input_devices_snapshot();
         let dt_paths = DEVFS.lock().dt_unsupported_paths.clone();
         let block_count = block_snapshot.len();
         let char_count = char_snapshot.len();
+        let input_count = input_snapshot.len();
 
         let mut inner = DEVFS.lock();
         inner.nodes.clear();
@@ -147,6 +150,14 @@ impl DevFsManager for KernelDevFsManager {
                 CharacterDeviceKind::Null => {
                     push_char_alias(&mut inner, String::from("/dev/null"), dev.clone());
                 },
+                CharacterDeviceKind::InputEvent { input_index } => {
+                    push_char_alias(&mut inner, format!("/dev/input/event{input_index}"), dev.clone());
+                },
+            }
+        }
+        for (input_index, _) in input_snapshot {
+            if let Ok(device) = evdev_character_device(input_index) {
+                push_char_alias(&mut inner, format!("/dev/input/event{input_index}"), device);
             }
         }
         for path in ["/dev/null", "/dev/zero", "/dev/urandom", "/dev/cpu_dma_latency"] {
@@ -166,10 +177,11 @@ impl DevFsManager for KernelDevFsManager {
         }
         inner.synced_generation = observed_generation;
         logging::info!(
-            "[fs::devfs] refresh done, total_nodes={}, block={}, character={}, unsupported={}",
+            "[fs::devfs] refresh done, total_nodes={}, block={}, character={}, input={}, unsupported={}",
             inner.nodes.len(),
             block_count,
             char_count,
+            input_count,
             inner.dt_unsupported_paths.len()
         );
     }
@@ -272,6 +284,36 @@ impl DevFsManager for KernelDevFsManager {
                 })
             })
             .map(|n| n.path.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::{boxed::Box, string::String, sync::Arc};
+    use driver_input_api_v0::{register_input_device, unregister_input_device, InputDevice,
+                              InputDeviceInfo, InputDeviceKind, RawInputEvent};
+    struct EmptyInput(InputDeviceInfo);
+    impl InputDevice for EmptyInput {
+        fn info(&self) -> &InputDeviceInfo { &self.0 }
+        fn pop_event(&mut self) -> driver_input_api_v0::DriverResult<Option<RawInputEvent>> {
+            Ok(None)
+        }
+    }
+    #[test]
+    fn input_slot_has_stable_event_node_until_unregister() {
+        let input = Arc::new(Mutex::new(Box::new(EmptyInput(InputDeviceInfo {
+            name : String::from("devfs-test-input"), kind : InputDeviceKind::Keyboard,
+            absolute_x : None, absolute_y : None,
+        })) as Box<dyn InputDevice>));
+        let index = register_input_device(input);
+        let manager = KernelDevFsManager;
+        let path = format!("/dev/input/event{index}");
+        assert!(manager.list_nodes().iter().any(|node| node.path == path));
+        assert!(manager.lookup_character_device(&path).is_ok());
+        assert!(unregister_input_device(index));
+        assert!(!manager.list_nodes().iter().any(|node| node.path == path));
+        assert!(manager.lookup_character_device(&path).is_err());
     }
 }
 

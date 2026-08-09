@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 driver-api = { path = "../../../driver-api/api-v0", package = "wateros-driver-api-v0" }
+character-api = { path = "../../../driver-character/character-api/api-v0", package = "wateros-driver-character-api-v0" }
 spin = "0.10.0"
 
 [features]

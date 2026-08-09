@@ -314,3 +314,49 @@ slot 只追加、不移动、不复用，避免旧索引在设备移除后指向
 ### 提交
 
 - `[feat] add dynamic device topology tracking`
+
+## 2026-08-10：批次 7——evdev 输入字符设备与多消费者扇出
+
+### 任务与设计
+
+1. 将输入设备按稳定 slot 暴露为 `/dev/input/eventN`。
+2. 采用 RISC-V64/LoongArch64 共用的 Linux 64 位 `input_event` 小端布局（24 字节）。
+3. 在原始硬件队列与消费者之间增加有界扇出，避免 GUI 与用户态读取互相抢事件。
+4. 支持 VFS 的 `prepare_read/finish_read` 事务，用户复制失败时恢复尚未提交的完整事件。
+5. 用内存状态机、devfs、两架构构建和带 VirtIO 键鼠的 QEMU 分层验证。
+
+每个订阅者有独立的 256 事件队列；队列满时丢弃该订阅者最旧事件并累计 dropped 计数，不拖慢其他消费者。当前记录的 `timeval` 两字段明确置零，待平台单调时钟接口稳定后接入。
+
+### 完成内容
+
+- [x] 输入注册表增加独立订阅 API，硬件事件一次取出后复制给所有活动订阅者。
+- [x] GUI `InputBridge` 改用订阅，不再直接消费硬件队列。
+- [x] 新增只读 evdev 字符适配器，输出 `sec:i64/usec:i64/type:u16/code:u16/value:i32` 小端记录。
+- [x] 小于一个完整记录的 read 返回参数错误；无事件保持非阻塞语义；write 不支持。
+- [x] evdev 支持字符设备读预留、提交和完整事件后缀回滚；部分暴露的记录按已消费处理，避免重复事件。
+- [x] devfs 按输入稳定 slot 自动生成 `/dev/input/eventN`，注销后 generation 刷新会移除节点。
+- [x] 打开的旧句柄在设备注销后停止取得事件，不会重新绑定到其他 slot。
+
+### 验证证据
+
+- input API host 单测 2 项通过：双订阅者收到完全相同事件；24 字节布局、零时间戳及事务后缀回滚正确。
+- kernel devfs host 单测通过：event 节点和字符绑定随注册出现、随注销消失。
+- GUI host 单测 9 项通过，包括设备动态发现/移除和原有键盘、指针解释测试。
+- 仓库规定的 RISC-V `make check` 通过；RISC-V GUI release 内核实际构建通过。
+- LoongArch64 `make kernel-la` 通过。
+- RISC-V QEMU 以 VirtIO GPU、keyboard、tablet 启动：成功注册 Keyboard #0 与 Pointer #1；devfs 报告 `input=2`、`total_nodes=18`，对应 `/dev/input/event0` 与 `event1`；GUI 初始化、`/dev/vda1` 根卷挂载及 VFS 自测继续通过。
+- QEMU 使用上一批 32 MiB 稀疏根盘的 snapshot 模式，未写回基准镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `input_event` 时间戳当前为零；需接入平台单调时钟，并验证 Linux 用户程序对时钟域的预期。
+- [ ] 当前 QEMU 图形运行关闭 monitor，已验证键盘/平板枚举与节点生成，但未自动注入按键/坐标后从用户态读取字节；host 扇出与编码测试不能替代这一端到端测试。
+- [ ] 尚未实现 evdev `EVIOCG*` ioctl、设备能力 bitmap、grab、FF/LED；当前只保证基础 read/poll 事件流。
+- [ ] 慢消费者溢出只提供内核 dropped 计数，尚无用户态查询 ABI；需要决定是否通过 ioctl 或 `SYN_DROPPED` 报告。
+- [ ] 注销后的旧 fd 当前得到通用驱动参数错误，尚未统一映射为 Linux `ENODEV`。
+- [ ] GUI 和用户态订阅都采用轮询泵送；中断唤醒/等待队列接入后才能给阻塞 read/poll 提供低延迟、低空转语义。
+- [ ] VisionFive 2 与 2K1000LA 的物理 USB HID/input 驱动、IRQ/DMA/cache 一致性及热拔顺序仍待真机验证。
+
+### 提交
+
+- `[feat] expose fanout input event devices`

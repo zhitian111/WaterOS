@@ -896,6 +896,7 @@ version = "0.1.0"
 dependencies = [
  "spin",
  "wateros-driver-api-v0",
+ "wateros-driver-character-api-v0",
 ]
 
 [[package]]
@@ -1037,6 +1038,7 @@ dependencies = [
  "spin",
  "wateros-driver-block-api-v0",
  "wateros-driver-character-api-v0",
+ "wateros-driver-input-api-v0",
  "wateros-fs-api-v0",
  "wateros-fs-devfs-api-v0",
  "wateros-runtime-logging",

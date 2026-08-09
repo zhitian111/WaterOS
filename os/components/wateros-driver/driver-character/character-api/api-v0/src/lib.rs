@@ -46,6 +46,7 @@ pub enum CharacterDeviceKind {
     Serial,
     Rtc,
     Null,
+    InputEvent { input_index: usize },
 }
 
 /// 可在多任务间共享的字符设备句柄。
