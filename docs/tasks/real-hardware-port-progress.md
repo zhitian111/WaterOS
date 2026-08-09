@@ -3224,3 +3224,50 @@ Linux 主线 LS2K GPIO bank 使用 64-bit 寄存器，方向、输出、输入�
 ### 提交
 
 - `[feat] add LS2K1000 MMC pinctrl diagnostics`
+
+## 2026-08-10：批次 69——LS2K1000 MMC pinctrl activation typestate
+
+### 任务与设计
+
+1. 在只读 pinmux snapshot 之上建立 `Observed -> Ready/NeedsTransition` 类型状态。
+2. 只有同时观测到 SDIO bit20=1、PWM2/GPIO22 bit14=0 才能产生 opaque `Ready` token。
+3. 不满足时生成最小纯软件 transition plan，描述 set/clear mask 与期望 raw，但不提供硬件写入口。
+4. 防止外部伪造 snapshot；IO、missing、unsupported provider 均不能产生 token。
+5. remote 输出增加稳定 `ready=0/1` 证据，所有 activation blocker 保持不变。
+
+### 完成内容
+
+- [x] 新增 `PinctrlState<S>`、`Observed`、`Ready` 与 `NeedsTransition` typestate。
+- [x] `PinctrlSnapshot` 字段改为私有，只能通过经过 provider 检查的 snapshot 路径产生；对外提供只读 accessor。
+- [x] `classify()` 直接依据 raw bit 分类，不信任重复布尔字段；只有完整满足状态返回 `PinctrlState<Ready>`。
+- [x] `NeedsTransition::transition_plan()` 生成 `set_mask`、`clear_mask`、`original_raw`、`desired_raw`，不执行 MMIO。
+- [x] transition plan 只允许置 bit20、清 bit14，保留全部无关位。
+- [x] `ls2k-mmc` 的 `pinmux=ok` 段新增 `ready=`，错误输出仍保留既有稳定错误码。
+- [x] API 注释明确 ready token 是瞬时证据，不授予写权限，也不解除 `PinControlUnavailable`。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 94 项全部通过；新增 2 项覆盖 opaque ready token、两类不满足状态和无关位保持。
+- transition fixture 验证 raw 同时缺失 SDIO/错误选择 PWM2 时，计划精确置 bit20、清 bit14，其他 bit xor 为 0。
+- topology fixture/畸形 DTB 矩阵通过；有效 mock 的 remote formatter 精确输出 `ready=1`。
+- remote client 与 QEMU launcher 的 13 项 Python host 测试通过。
+- `cargo check --no-default-features --features loongson2k1000la,final_online,heap-tlsf,remote-debug-monitor --target loongarch64-unknown-none` 通过。
+- `make kernel-la EXTRA_FEATURES=remote-debug-monitor` 与 `git diff --check` 通过；仅有仓库既有 warning。
+- 测试未访问物理 MMIO、未执行 pinmux 写、未创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：ready token 只证明一次 volatile read 的解释，真实 endian、bit 语义和引脚电气状态仍未验证。
+- [ ] token 不提供时间稳定性；firmware、其他 core 或驱动可能在 snapshot 后修改同一 shared mux register。
+- [ ] `TransitionPlan` 只是上游派生的数学计划，尚未连接 write/readback、锁或 rollback，因此不能用于真机激活。
+- [ ] 七个 MMC blocker 全部保留，`can_activate()` 仍恒为 false。
+- [ ] 两块目标板仍需各自 DTS/原理图确认 SDIO 和 GPIO22 不与其他外设冲突。
+- [ ] 下一批应实现显式、默认关闭的 pinctrl transaction abstraction：锁内 read/conditional-RMW/readback，失败时保留可恢复状态；volatile 写后端继续与自动 machine init 隔离。
+
+### 参考与许可证
+
+- `docs/references/linux-ls2k-pinctrl-upstream.md`
+
+### 提交
+
+- `[feat] gate LS2K1000 pinctrl readiness`

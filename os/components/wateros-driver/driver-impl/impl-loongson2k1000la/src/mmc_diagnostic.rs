@@ -149,10 +149,13 @@ pub fn format_diagnosis(diagnosis : Diagnosis) -> String {
         }
     };
     let pinmux = match diagnosis.pinctrl {
-        Ok(snapshot) => format!("pinmux=ok raw={:#x} sdio={} card_gpio={}",
-                               snapshot.mux_raw,
-                               u8::from(snapshot.sdio_selected),
-                               u8::from(snapshot.card_detect_gpio_selected)),
+        Ok(snapshot) => format!("pinmux=ok raw={:#x} sdio={} card_gpio={} ready={}",
+                               snapshot.mux_raw(),
+                               u8::from(snapshot.sdio_selected()),
+                               u8::from(snapshot.card_detect_gpio_selected()),
+                               u8::from(pinctrl::PinctrlState::<pinctrl::Observed>::new(snapshot)
+                                            .classify()
+                                            .is_ok())),
         Err(error) => format!("pinmux=error:{}", pinctrl_error_code(error)),
     };
     format!("ls2k-mmc {} vmmc={} vqmmc={} pinctrl={} {} {} can_activate={} blockers={}\r\n",
@@ -474,7 +477,7 @@ mod tests {
                    "ls2k-mmc clock=ok ref_hz=100000000 pll_raw=0x2810000000 gmac_raw=0x800000 \
                     apb_raw=0x300000 apb_hz=250000000 vmmc=implicit-board-supply \
                     vqmmc=implicit-board-supply pinctrl=requires-driver pinmux=ok raw=0x100000 \
-                    sdio=1 card_gpio=1 card=gpio dir_raw=0x400000 input_raw=0x0 pin=22 \
+                    sdio=1 card_gpio=1 ready=1 card=gpio dir_raw=0x400000 input_raw=0x0 pin=22 \
                     active_low=1 level_high=0 present=1 can_activate=0 blockers=7\r\n");
     }
 

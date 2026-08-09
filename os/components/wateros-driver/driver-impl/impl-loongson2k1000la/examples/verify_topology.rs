@@ -207,7 +207,7 @@ fn main() {
                              CardDetectDiagnosis::Gpio(Ok(snapshot)) if snapshot.card_present));
             assert!(diagnosis.pinctrl
                              .expect("pinctrl snapshot")
-                             .sdio_selected);
+                             .sdio_selected());
             assert!(!diagnosis.plan.can_activate());
         }
         "invalid" => assert!(discover(&fdt).is_err()),
