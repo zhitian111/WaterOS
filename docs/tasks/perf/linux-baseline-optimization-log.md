@@ -139,6 +139,65 @@ codegraph explore "protect_lazy_file_vmas lazy_vma_overlaps lazy_file_vma_index 
 - 完整日志：`/tmp/wateros-mm02c-after-rv.log`；采样：
   `/tmp/wateros-mm02c-rv-pcs.txt`（本机临时文件，不提交）。
 
+## MM-03：mmap first-fit 逐页页表查询（暂缓）
+
+状态：审计后暂缓（2026-08-10）
+
+- pc-hot 的 387,012,821 条指令主要落在
+  `find_free_mmap_base_considering_vmas` 对候选区间逐页 `translate_addr` 的循环。
+- 该项只占同窗口总指令约 0.32%，完全消除的收益上限也很小。
+- lazy file/shared anonymous VMA 已可按区间跳跃，但 private anonymous 映射没有完整 VMA
+  记录；直接跳过页表检查会让后续非 fixed mmap 与既有 PTE 重叠。
+- 结论：在补齐所有匿名映射区间语义前不做投机 fast path，优先更高占比热点。
+
+## COPY-02：页缓存到 mmap 用户帧零拷贝（中期候选）
+
+状态：完成归因，等待基础设施（2026-08-10）
+
+- 300 s 采样中 `memcpy` 为 25,424,005,910 条指令（约 21.18%）。
+- 文件页 miss 当前执行“块设备/FS → 4 KiB 栈缓冲 → page-cache frame”；文件 mmap fault
+  再执行“page-cache frame → 新用户 frame”。
+- 消除后一份复制需要页缓存帧可被用户 PTE 直接引用，并补齐 pin/refcount、只读共享、
+  MAP_PRIVATE 写时复制、驱逐等待和地址空间销毁协议。当前 page cache 使用固定连续 `Vec<u8>`
+  槽，不具备可独立映射帧的所有权模型。
+- 结论：这是达到 Linux 最终目标的重要方向，但不以绕过缓存或裸借用指针的局部补丁实现。
+
+## ALLOC-01A：削减 TLSF 同步元数据原子操作
+
+状态：完整测试超时并回退（2026-08-10）
+
+### 热点与模块
+
+- 模块：`wateros-runtime/runtime-heap-allocator`。
+- TLSF allocate/deallocate 及 GlobalAlloc 包装在 300 s 采样中合计约 90 亿条指令。
+- 每次操作除全局 TLSF mutex 外，还对相邻的 per-CPU 递归深度槽执行 AMO，并用 CAS
+  循环更新 `used_estimate`，造成不必要的原子 RMW 和潜在 cache-line 伪共享。
+
+### 设计
+
+1. 将每 CPU 深度槽按 64 字节对齐；中断关闭后槽由当前 CPU 独占，用 Relaxed load/store
+   保留递归检测，替代 fetch_add/fetch_sub。
+2. `used_estimate` 所有写路径统一置于 TLSF mutex 内，用 load + 饱和计算 + store 替代
+   `fetch_update` CAS；无锁诊断读仍使用 AtomicUsize。
+3. 保持 TLSF 算法、布局、全局互斥、OOM 统计和非法指针策略不变。
+
+恢复上下文命令：
+
+```bash
+codegraph explore "wateros_runtime_heap_allocator InterruptSafeTlsfHeap GlobalAlloc alloc dealloc realloc with_allocator_interrupt_guard HeapMemStats TLSF initialization features small allocation cache slab all callers and exact source"
+```
+
+### 验证与结论
+
+- 双架构 Final check/build：通过。
+- RISC-V 完整 BuildStorm：1800 s 超时，未到达 `BUILDSTORM_COMPILE`；无 panic，但末段
+  编译进度长时间停滞。对照版本为 926.21 s，属于确定性严重退化。
+- 主要设计错误是把 dealloc 的用量估算更新从 TLSF 锁外移入全局锁，扩大所有 CPU 共享的
+  allocator 临界区；减少 AMO 并不等于减少并发成本。
+- 代码改动全部回退，不提交。后续 allocator 优化必须先具备分配尺寸/竞争计数，并优先
+  设计真正缩短或绕过全局锁的 per-CPU cache，而不是调整锁内原子形式。
+- 超时日志：`/tmp/wateros-alloc01a-after-rv.log`（本机临时文件，不提交）。
+
 ### 设计
 
 `lazy_file_vmas` 在注册时按 `start` 插入，且拒绝重叠；拆分、删除和 fork 都保持顺序。
