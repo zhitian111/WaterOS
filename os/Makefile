@@ -10,14 +10,14 @@ BUILD_NUM = $(shell git rev-list --count HEAD 2>/dev/null || echo "0")
 .PHONY: snapshot watch gdb doctor validate-config all all_start_info kernel configure fmt
 .PHONY: apply_features apply_features_la flush_img export rv_user_mode_bin
 .PHONY: rv_check rv_elf_info rv_obj_dump rv_pc_watch rv_symbol_at
-.PHONY: kernel-rv kernel-rv-pre kernel-rv-final kernel-rv-final-log
+.PHONY: kernel-rv kernel-rv-best kernel-rv-pre kernel-rv-final kernel-rv-final-log
 .PHONY: kernel-rv-final-debug kernel-rv-strip-image
 .PHONY: rv_pre_run rv_final_run rv_final_run_log rv_final_debug_run
 .PHONY: rv_pre_run-gdb rv_final_run-gdb rv_final_run_log-gdb rv_final_debug_run-gdb
 .PHONY: rv_qemu_run rv_qemu_run_snapshot
 .PHONY: rv_qemu_run_with_log
 .PHONY: la_check la_elf_info la_symbol_at la_pc_watch la_gdb_snapshot
-.PHONY: kernel-la kernel-la-pre kernel-la-final la_pre_run la_final_run la_final_run_log
+.PHONY: kernel-la kernel-la-best kernel-la-pre kernel-la-final la_pre_run la_final_run la_final_run_log
 .PHONY: la_pre_run-gdb la_final_run-gdb la_final_run_log-gdb
 .PHONY: la_qemu_run la_qemu_run_snapshot
 COLOR_ANSI_RED := \033[31m
@@ -290,16 +290,20 @@ $(kernel_rv_build_artifact_path)/wateros: $(kernel_rv_dependencies) kernel
 	@$(cargo_build) $(kernel_rv_flag)
 	$(call INFO,"构建成功！");
 
-kernel-rv: kernel-rv-pre
-	@cp ./kernel-rv-pre ./kernel-rv
+kernel-rv: kernel-rv-best
+
+kernel-rv-best: kernel-rv-final
+	@cp ./kernel-rv-final ./kernel-rv
 
 $(kernel_la_build_artifact_path)/wateros: $(common_dependencies) kernel
 	$(call INFO, "开始构建 loongarch64 内核...")
 	@$(cargo_build) $(kernel_la_flag)
 	$(call INFO,"构建成功！");
 
-kernel-la: kernel-la-pre
-	@cp ./kernel-la-pre ./kernel-la
+kernel-la: kernel-la-best
+
+kernel-la-best: kernel-la-final
+	@cp ./kernel-la-final ./kernel-la
 
 kernel-rv-strip-image: $(kernel_rv_build_artifact_path)/wateros
 	$(call INFO,"清除文件元数据...");
@@ -492,7 +496,7 @@ clean:
 
 all_start_info:
 	$(call INFO, "开始构建完整项目...")
-all: all_start_info kernel-rv kernel-la
+all: all_start_info kernel-rv-best kernel-la-best
 
 fmt:
 	$(call INFO, "开始格式化项目文件...")
