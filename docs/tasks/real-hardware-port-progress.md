@@ -16,9 +16,9 @@
 - [ ] 平台化 RAM/MMIO/链接地址、启动参数和逻辑 CPU 映射。
 - [x] 新增 VisionFive 2 与 2K1000LA 编译型 platform profile（driver profile 待后续批次）。
 - [ ] 实现并验证 PLIC、ICU、外部中断分发和 SMP 映射。
-- [ ] 构建持久根文件系统和小型分区磁盘/SD 卡镜像生成器。
-- [ ] 块设备增加分区扫描与分区子设备，不再默认整盘即文件系统。
-- [ ] 改进 devfs 的设备增删、稳定命名和热插拔刷新。
+- [x] 构建持久根文件系统和小型分区磁盘/SD 卡镜像生成器。
+- [x] 块设备增加分区扫描与分区子设备，不再默认整盘即文件系统。
+- [x] 改进 devfs 的设备增删、稳定命名和热插拔刷新。
 - [ ] 依次推进 MMC/AHCI、DWMAC/PHY、USB/HID、显示与触摸。
 - [ ] 调研可复用的上游驱动；引入时记录来源、版本、修改和许可证。
 - [ ] 在 PTY、用户态 socket 和登录基础具备后，将开发监视器升级或替换为用户态远程登录服务。
@@ -360,3 +360,61 @@ slot 只追加、不移动、不复用，避免旧索引在设备移除后指向
 ### 提交
 
 - `[feat] expose fanout input event devices`
+
+## 2026-08-10：批次 8——网络设备租约与自动远程调试验收
+
+### 任务与设计
+
+1. 审计首批 TCP monitor 是否具备完整可脚本化协议，而不重复实现 SSH。
+2. 将 network registry 迁移到与其它设备一致的稳定 slot、snapshot、generation 和注销模型。
+3. 协议栈持有可失效 lease；网卡注销后不得继续通过旧 `Arc` 访问硬件。
+4. 提供不依赖 `nc`、第三方包和用户根盘内容的远程 monitor 客户端。
+5. 自动启动 QEMU、等待 guest readiness、执行命令并清理进程，覆盖两种 ISA。
+
+网卡 slot 只追加且不复用。注册项包含独立 `AtomicBool present`；注销以 Release 标记 lease 失效，RX、TX token 消费和能力查询均以 Acquire 检查。真机驱动仍必须先屏蔽 IRQ、停止 DMA 并完成 cache 同步，再调用 registry 注销；lease 解决的是上层旧引用，不替代硬件 quiesce。
+
+### 完成内容
+
+- [x] network registry 改为可空稳定 slot，活动计数不再等同于 `Vec::len()`。
+- [x] 新增 `network_devices_snapshot()`、按 slot/首设备 lease 获取和 `unregister_network_device()`。
+- [x] 网络注册/注销纳入全局 topology generation。
+- [x] `NetworkDeviceLease` 在注销时原子失效，已安装 smoltcp adapter 随即停止物理 RX/TX，loopback 路径仍可工作。
+- [x] smoltcp 初始化改为只接受受 registry 管理的 lease，不再把裸设备 `Arc` 当作永久在线。
+- [x] 新增 `remote_debug_client.py`，校验 banner、prompt、响应上限及 `ping/status/version/quit` 结果。
+- [x] 客户端 readiness 同时要求 TCP 建连和有效 WaterOS banner；QEMU hostfwd 早于 guest listener 接受连接时会安全重连。
+- [x] 新增 `remote_debug_qemu_smoke.py`，强制 snapshot，失败时输出临时串口尾部，并确保 QEMU terminate/kill 清理。
+
+### 验证证据
+
+- network API host 单测通过：generation 递增、lease 失效、重复注销、活动 snapshot 和 slot 不复用。
+- Python 单测共 13 项通过：完整 monitor 会话、错误 banner、多行命令拒绝、hostfwd 提前接受连接后的 readiness 重连，以及 RV/LA launcher 参数。
+- 两个 Python 工具均通过 `py_compile`。
+- RISC-V `make check` 通过，证明实际 smoltcp/virtio feature 组合可编译。
+- LoongArch64 启用 `remote-debug-monitor,operator-shell` 的 release 内核构建通过。
+- 自动 RISC-V QEMU smoke 通过：banner、`pong`、tick/CPU/heap status、版本和 `bye` 全部校验成功。
+- 自动 LoongArch64 QEMU smoke 通过同一组协议断言，补齐批次 1 留下的 LA runtime 连接缺口。
+- 两次 QEMU 都复用批次 5 的 32 MiB 稀疏分区根盘并强制 snapshot，没有写回或新建大镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] monitor 仍是无认证、无加密的内核诊断接口，不是 SSH/登录 shell；生产构建继续默认关闭。
+- [ ] 用户态认证登录仍依赖 PTY、stdio 转接、用户 socket 包装和可部署 BusyBox/dropbear 等根盘内容。
+- [ ] 当前协议栈只在初始化时选择第一块网卡；注销后阻止旧设备 I/O，但不会自动迁移现有 socket 到新网卡。
+- [ ] QEMU 未执行 `device_del`：VirtIO 驱动还没有 IRQ/DMA quiesce/remove 回调，直接热删会违反注销 API 的前置条件。
+- [ ] TX token 已在消费时再次检查 lease；设备驱动自身的并发 send/receive 与 quiesce 屏障仍必须由具体驱动保证。
+- [ ] VisionFive 2 DWMAC/PHY 和 2K1000LA GMAC/PCIe 网卡驱动尚未接入，真机远程调试仍不可用。
+- [ ] 真机需验证链路状态、PHY reset/时钟、DMA cache 一致性、中断亲和性及断链恢复。
+
+### 使用方法
+
+```bash
+cd os
+make kernel-rv EXTRA_FEATURES=remote-debug-monitor,operator-shell
+python3 scripts/remote_debug_qemu_smoke.py \
+  --arch rv --profile final --kernel ./kernel-rv \
+  --sdcard /path/to/wateros-root.img --port 22323
+```
+
+### 提交
+
+- `[feat] harden remote debug network lifecycle`

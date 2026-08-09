@@ -5,7 +5,7 @@ use smoltcp::time::Instant;
 use smoltcp::wire::{EthernetAddress, HardwareAddress, IpCidr, Ipv4Address};
 
 use crate::adapter::SmoltcpAdapter;
-use driver_network::first_network_device;
+use driver_network::first_network_device_lease;
 
 use super::global::install_stack;
 use super::state::NetworkStack;
@@ -19,8 +19,8 @@ pub fn init(network_config : NetworkConfig) -> Result<(), NetworkError> {
     let ip = network_config.address;
     let gateway = network_config.gateway;
     let prefix_len = network_config.prefix_len;
-    let mut adapter = match first_network_device() {
-        Some(device) => SmoltcpAdapter::new(device),
+    let mut adapter = match first_network_device_lease() {
+        Some(lease) => SmoltcpAdapter::from_lease(lease),
         None => {
             log::warn!("[network-stack] no network device registered; using loopback-only mode");
             SmoltcpAdapter::loopback_only()

@@ -5,7 +5,7 @@
 use alloc::collections::VecDeque;
 use alloc::vec;
 use alloc::vec::Vec;
-use driver_network::{SharedNetworkDevice, DEFAULT_MTU};
+use driver_network::{NetworkDeviceLease, SharedNetworkDevice, DEFAULT_MTU};
 use smoltcp::phy::{self, Device, DeviceCapabilities, Medium};
 use smoltcp::time::Instant;
 
@@ -27,6 +27,8 @@ const ETHERTYPE_ARP : u16 = 0x0806;
 /// 若在此用 `[u8; 64KiB]` 栈数组会在 `network::stack::init` 栈溢出并踩坏相邻 BSS。
 pub struct SmoltcpAdapter {
     inner : Option<SharedNetworkDevice>,
+    /// 注册表管理的 adapter 用此租约阻止注销后的硬件 I/O。
+    lease : Option<NetworkDeviceLease>,
     // 适配层的接收工作缓冲区。
     rx_buf : Vec<u8>,
     // 适配层的发送工作缓冲区。
@@ -44,19 +46,23 @@ pub struct SmoltcpRxToken<'a>(&'a [u8]);
 pub struct SmoltcpTxToken<'a> {
     buf : &'a mut [u8],
     dev : Option<&'a SharedNetworkDevice>,
+    lease : Option<&'a NetworkDeviceLease>,
     local_ipv4 : [u8; 4],
     loopback_queue : &'a mut VecDeque<Vec<u8>>,
 }
 
 impl SmoltcpAdapter {
-    /// 用已注册的共享网络设备构造适配器。
-    pub fn new(inner : SharedNetworkDevice) -> Self { Self::with_inner(Some(inner)) }
+    /// 用可失效注册表租约构造适配器；生产协议栈应使用此入口。
+    pub fn from_lease(lease : NetworkDeviceLease) -> Self {
+        Self::with_inner(Some(lease.device()), Some(lease))
+    }
 
     /// 构造只支持本机回环的适配器；用于无真实网卡时的 127.0.0.1。
-    pub fn loopback_only() -> Self { Self::with_inner(None) }
+    pub fn loopback_only() -> Self { Self::with_inner(None, None) }
 
-    fn with_inner(inner : Option<SharedNetworkDevice>) -> Self {
+    fn with_inner(inner : Option<SharedNetworkDevice>, lease : Option<NetworkDeviceLease>) -> Self {
         Self { inner,
+               lease,
                rx_buf : vec![0u8; RX_BUF],
                tx_buf : vec![0u8; TX_BUF],
                rx_len : 0,
@@ -65,13 +71,20 @@ impl SmoltcpAdapter {
                rx_staging : VecDeque::new() }
     }
 
+    fn physical_device(&self) -> Option<&SharedNetworkDevice> {
+        if self.lease.as_ref().is_some_and(|lease| !lease.is_present()) {
+            None
+        } else {
+            self.inner.as_ref()
+        }
+    }
+
     /// 设置本机 IPv4 地址，用于识别应回灌给协议栈的本地帧。
     pub fn set_local_ipv4(&mut self, ip : [u8; 4]) { self.local_ipv4 = ip; }
 
     /// 获取 MAC 地址（用于构建 smoltcp 接口配置）。
     pub fn mac_address(&self) -> [u8; 6] {
-        self.inner
-            .as_ref()
+        self.physical_device()
             .map(|dev| {
                 dev.lock()
                    .mac_address()
@@ -101,7 +114,9 @@ impl SmoltcpAdapter {
             return;
         }
 
-        let Some(dev_handle) = self.inner.as_ref() else {
+        // Clone the Arc so the registry-presence check does not keep an immutable
+        // borrow of the whole adapter while RX buffers are mutated below.
+        let Some(dev_handle) = self.physical_device().cloned() else {
             return;
         };
 
@@ -138,6 +153,7 @@ impl Device for SmoltcpAdapter {
                         .pop_front()?;
 
         let Self { inner,
+                   lease,
                    rx_buf,
                    tx_buf,
                    rx_len,
@@ -152,18 +168,21 @@ impl Device for SmoltcpAdapter {
         Some((SmoltcpRxToken(&rx_buf[..*rx_len]),
               SmoltcpTxToken { buf : tx_buf.as_mut_slice(),
                                dev : inner.as_ref(),
+                               lease : lease.as_ref(),
                                local_ipv4 : *local_ipv4,
                                loopback_queue }))
     }
 
     fn transmit(&mut self, _timestamp : Instant) -> Option<Self::TxToken<'_>> {
         let Self { inner,
+                   lease,
                    tx_buf,
                    local_ipv4,
                    loopback_queue,
                    .. } = self;
         Some(SmoltcpTxToken { buf : tx_buf.as_mut_slice(),
                               dev : inner.as_ref(),
+                              lease : lease.as_ref(),
                               local_ipv4 : *local_ipv4,
                               loopback_queue })
     }
@@ -171,8 +190,7 @@ impl Device for SmoltcpAdapter {
     fn capabilities(&self) -> DeviceCapabilities {
         let mut caps = DeviceCapabilities::default();
         caps.medium = Medium::Ethernet;
-        let ip_mtu = self.inner
-                         .as_ref()
+        let ip_mtu = self.physical_device()
                          .map(|dev| dev.lock().mtu())
                          .unwrap_or(DEFAULT_MTU);
         // NetworkDevice::mtu() 使用通常的 IP MTU 语义；smoltcp 在 Ethernet
@@ -203,6 +221,9 @@ impl phy::TxToken for SmoltcpTxToken<'_> {
             return result;
         }
 
+        if self.lease.is_some_and(|lease| !lease.is_present()) {
+            return result;
+        }
         if let Some(dev) = self.dev {
             if let Err(e) = dev.lock()
                                .send(frame)
