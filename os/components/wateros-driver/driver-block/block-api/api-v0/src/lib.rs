@@ -8,6 +8,9 @@ extern crate alloc;
 use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
 use spin::Mutex;
 
+pub mod partition;
+pub use partition::{MbrPartition, PartitionBlockDevice, PartitionScanError, scan_mbr};
+
 pub use driver_api::{DriverError, DriverResult};
 
 /// 逻辑块字节长度；当前 WaterOS bring-up 固定为 512（与 virtio-blk 常见配置一致）。
@@ -31,7 +34,18 @@ impl From<u64> for Lba {
 pub type SharedBlockDevice = Arc<Mutex<Box<dyn BlockDevice>>>;
 
 // 注册顺序稳定：`register_block_device` 返回的下标即在此 `Vec` 中的位置。
-static BLOCK_DEVICES: Mutex<Vec<SharedBlockDevice>> = Mutex::new(Vec::new());
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlockDeviceRole {
+    Disk { disk_number : usize },
+    Partition { parent_device_index : usize, partition_number : u8 },
+}
+
+struct RegisteredBlockDevice {
+    device : SharedBlockDevice,
+    role : BlockDeviceRole,
+}
+
+static BLOCK_DEVICES : Mutex<Vec<RegisteredBlockDevice>> = Mutex::new(Vec::new());
 
 /// 块设备语义契约：按块读写为必须实现；按字节读提供默认实现（内部临时缓冲整段块）。
 pub trait BlockDevice: Send {
@@ -92,26 +106,69 @@ pub trait BlockDevice: Send {
     }
 }
 
-/// 将设备追加到全局表末尾，返回其索引（从 0 起）。
+/// 将整盘追加到全局表末尾，返回整盘索引（从 0 起）。
+///
+/// 若首扇区包含受支持的 MBR 主分区表，对应的有界分区设备会紧随整盘注册。
 pub fn register_block_device(device: SharedBlockDevice) -> usize {
     let mut devices = BLOCK_DEVICES.lock();
-    devices.push(device);
+    let disk_number = devices.iter()
+                             .filter(|entry| matches!(entry.role, BlockDeviceRole::Disk { .. }))
+                             .count();
+    devices.push(RegisteredBlockDevice { device : device.clone(),
+                                         role : BlockDeviceRole::Disk { disk_number } });
+    let disk_index = devices.len() - 1;
+    drop(devices);
+
+    match scan_mbr(&device) {
+        Ok(partitions) => for partition in partitions {
+            if let Ok(child) = PartitionBlockDevice::shared(device.clone(),
+                                                            partition.start_lba,
+                                                            partition.sectors)
+            {
+                register_partition_device(disk_index, partition.number, child);
+            }
+        },
+        // 没有 MBR 签名是合法的整盘文件系统布局，不需要告警。
+        Err(PartitionScanError::InvalidSignature) => {},
+        Err(error) => {
+            #[cfg(feature = "logging")]
+            logging::warn!("[driver-block-api] disk #{disk_number} partition scan skipped: {error:?}");
+            #[cfg(not(feature = "logging"))]
+            let _ = error;
+        },
+    }
+    disk_index
+}
+
+fn register_partition_device(parent_device_index : usize,
+                             partition_number : u8,
+                             device : SharedBlockDevice) -> usize {
+    let mut devices = BLOCK_DEVICES.lock();
+    devices.push(RegisteredBlockDevice { device,
+                                         role : BlockDeviceRole::Partition {
+                                             parent_device_index,
+                                             partition_number,
+                                         } });
     devices.len() - 1
 }
 
-/// 当前已注册块设备数量。
+/// 当前已注册块设备数量，包括整盘与自动发现的分区设备。
 pub fn block_device_count() -> usize {
     BLOCK_DEVICES.lock().len()
 }
 
 /// 取表中第一个设备，常用于根文件系统绑定单盘场景。
 pub fn first_block_device() -> Option<SharedBlockDevice> {
-    BLOCK_DEVICES.lock().first().cloned()
+    BLOCK_DEVICES.lock().first().map(|entry| entry.device.clone())
 }
 
 /// 按下标取设备；越界返回 `None`。
 pub fn block_device_at(index: usize) -> Option<SharedBlockDevice> {
-    BLOCK_DEVICES.lock().get(index).cloned()
+    BLOCK_DEVICES.lock().get(index).map(|entry| entry.device.clone())
+}
+
+pub fn block_device_role_at(index : usize) -> Option<BlockDeviceRole> {
+    BLOCK_DEVICES.lock().get(index).map(|entry| entry.role)
 }
 
 /// 自检：校验常量与样例设备的 [`read_prefix`] 行为。

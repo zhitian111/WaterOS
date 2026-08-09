@@ -8,7 +8,8 @@ extern crate alloc;
 
 use alloc::{format, string::String, vec::Vec};
 use api_v0::{FsError, FsResult};
-use driver_block_api_v0::{block_device_at, block_device_count, SharedBlockDevice};
+use driver_block_api_v0::{block_device_at, block_device_count, block_device_role_at,
+                          BlockDeviceRole, SharedBlockDevice};
 use spin::Mutex;
 
 /// 简化 devfs 中的节点类型（仅块与占位未使用）。
@@ -60,16 +61,35 @@ fn push_node(nodes: &mut Vec<DevNode>, path: String, index: usize) {
 // 本方法代码由AI完成
 pub fn refresh() -> usize {
     let count = block_device_count();
+    let snapshot : Vec<_> = (0..count).filter_map(|index| {
+                                             block_device_role_at(index).map(|role| (index, role))
+                                         })
+                                         .collect();
     let mut nodes = DEV_NODES.lock();
     nodes.clear();
-    for idx in 0..count {
-        let vd = linux_vd_disk_path(idx);
-        push_node(&mut nodes, format!("/dev/vblk{}", idx), idx);
-        push_node(&mut nodes, vd.clone(), idx);
-        if idx == 0 {
-            push_node(&mut nodes, format!("{vd}1"), idx);
-            push_node(&mut nodes, format!("{vd}2"), idx);
+    for (index, role) in &snapshot {
+        if let BlockDeviceRole::Disk { disk_number } = role {
+            push_node(&mut nodes, format!("/dev/vblk{}", disk_number), *index);
+            push_node(&mut nodes, linux_vd_disk_path(*disk_number), *index);
         }
+    }
+    for (index, role) in &snapshot {
+        let BlockDeviceRole::Partition { parent_device_index, partition_number } = role else {
+            continue;
+        };
+        let Some(disk_number) = snapshot.iter().find_map(|(candidate, role)| {
+            if candidate == parent_device_index {
+                if let BlockDeviceRole::Disk { disk_number } = role {
+                    return Some(*disk_number);
+                }
+            }
+            None
+        }) else {
+            continue;
+        };
+        push_node(&mut nodes,
+                  format!("{}{}", linux_vd_disk_path(disk_number), partition_number),
+                  *index);
     }
     logging::trace!("[fs::devfs] refresh done, block_nodes={}", nodes.len());
     nodes.len()
@@ -83,38 +103,20 @@ pub fn list_nodes() -> Vec<DevNode> {
 /// 将设备路径解析为索引并向驱动查询共享块设备句柄。
 // 本方法代码由AI完成
 pub fn lookup_block_device(path: &str) -> FsResult<SharedBlockDevice> {
-    let idx = parse_block_index(path).ok_or(FsError::NotFound)?;
+    let idx = DEV_NODES.lock()
+                       .iter()
+                       .find(|node| node.path == path)
+                       .map(|node| node.index)
+                       .ok_or(FsError::NotFound)?;
     block_device_at(idx).ok_or(FsError::NotFound)
 }
 
-/// 存在至少一块设备时返回 `/dev/vda`，否则 `None`。
+/// 优先返回第一个真实分区，无分区时回退到整盘。
 // 本方法代码由AI完成
 pub fn default_root_block_path() -> Option<String> {
-    if block_device_count() == 0 {
-        None
-    } else {
-        Some(linux_vd_disk_path(0))
-    }
-}
-
-// 路径格式与 impl-kernel 命名保持一致，便于测试共享镜像。
-// 本方法代码由AI完成
-fn parse_block_index(path: &str) -> Option<usize> {
-    if let Some(suffix) = path.strip_prefix("/dev/vblk") {
-        return suffix.parse::<usize>().ok();
-    }
-    if let Some(rest) = path.strip_prefix("/dev/vd") {
-        let mut chars = rest.chars();
-        let disk_letter = chars.next()?;
-        if !disk_letter.is_ascii_lowercase() {
-            return None;
-        }
-        let disk_idx = (disk_letter as u8 - b'a') as usize;
-        let part: String = chars.collect();
-        if part.is_empty() || part.chars().all(|c| c.is_ascii_digit()) {
-            return Some(disk_idx);
-        }
-        return None;
-    }
-    None
+    let nodes = DEV_NODES.lock();
+    nodes.iter()
+         .find(|node| node.path == "/dev/vda1")
+         .or_else(|| nodes.iter().find(|node| node.path == "/dev/vda"))
+         .map(|node| node.path.clone())
 }

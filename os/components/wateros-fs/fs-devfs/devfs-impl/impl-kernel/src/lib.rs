@@ -8,7 +8,8 @@ extern crate alloc;
 
 use alloc::{format, string::String, string::ToString, vec::Vec};
 use api_v0::{DevFsManager, DevNode};
-use driver_block_api_v0::{block_device_at, block_device_count, SharedBlockDevice};
+use driver_block_api_v0::{block_device_at, block_device_count, block_device_role_at,
+                          BlockDeviceRole, SharedBlockDevice};
 use driver_character_api_v0::{
     character_device_at, character_device_count, character_device_kind_at,
     CharacterDeviceKind, SharedCharacterDevice,
@@ -80,7 +81,10 @@ impl DevFsManager for KernelDevFsManager {
 // 本方法代码由AI完成
     fn refresh(&mut self) {
         let block_snapshot: alloc::vec::Vec<_> = (0..block_device_count())
-            .filter_map(|idx| block_device_at(idx).map(|dev| (idx, dev)))
+            .filter_map(|idx| {
+                block_device_at(idx).zip(block_device_role_at(idx))
+                                    .map(|(dev, role)| (idx, dev, role))
+            })
             .collect();
         let char_snapshot: alloc::vec::Vec<_> = (0..character_device_count())
             .filter_map(|idx| {
@@ -102,14 +106,29 @@ impl DevFsManager for KernelDevFsManager {
         inner.block_bindings.clear();
         inner.character_bindings.clear();
 
-        for (idx, dev) in block_snapshot {
-            let vd = linux_vd_disk_path(idx);
-            push_block_alias(&mut inner, format!("/dev/vblk{}", idx), dev.clone());
-            push_block_alias(&mut inner, vd.clone(), dev.clone());
-            if idx == 0 {
-                push_block_alias(&mut inner, alloc::format!("{vd}1"), dev.clone());
-                push_block_alias(&mut inner, alloc::format!("{vd}2"), dev.clone());
+        for (_, dev, role) in &block_snapshot {
+            if let BlockDeviceRole::Disk { disk_number } = role {
+                let vd = linux_vd_disk_path(*disk_number);
+                push_block_alias(&mut inner, format!("/dev/vblk{}", disk_number), dev.clone());
+                push_block_alias(&mut inner, vd, dev.clone());
             }
+        }
+        for (_, dev, role) in &block_snapshot {
+            let BlockDeviceRole::Partition { parent_device_index, partition_number } = role else {
+                continue;
+            };
+            let Some(disk_number) = block_snapshot.iter().find_map(|(index, _, role)| {
+                if index == parent_device_index {
+                    if let BlockDeviceRole::Disk { disk_number } = role {
+                        return Some(*disk_number);
+                    }
+                }
+                None
+            }) else {
+                continue;
+            };
+            let path = alloc::format!("{}{}", linux_vd_disk_path(disk_number), partition_number);
+            push_block_alias(&mut inner, path, dev.clone());
         }
 
         for (idx, dev, kind) in char_snapshot {
@@ -235,7 +254,8 @@ impl DevFsManager for KernelDevFsManager {
         inner
             .nodes
             .iter()
-            .find(|n| n.path == "/dev/vda")
+            .find(|n| n.path == "/dev/vda1")
+            .or_else(|| inner.nodes.iter().find(|n| n.path == "/dev/vda"))
             .or_else(|| {
                 inner.nodes.iter().find(|n| {
                     matches!(n.node_type, api_v0::DevNodeType::Block)
@@ -281,7 +301,7 @@ pub fn lookup_character_device(path: &str) -> fs_api_v0::FsResult<SharedCharacte
     m.lookup_character_device(path)
 }
 
-/// 默认根块设备路径：优先 `/dev/vda`，否则取首个块节点。
+/// 默认根块设备路径：优先真实 `/dev/vda1`，其次整盘 `/dev/vda`。
 // 本方法代码由AI完成
 pub fn default_root_block_path() -> Option<String> {
     let m = KernelDevFsManager;

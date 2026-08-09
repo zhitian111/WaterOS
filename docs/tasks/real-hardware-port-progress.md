@@ -173,3 +173,45 @@ nc 127.0.0.1 22323
 ### 提交
 
 - `[feat] add real-hardware platform profiles`
+
+## 2026-08-10：批次 4——有边界的 MBR 分区块设备
+
+### 任务与设计
+
+1. 在公共块设备层读取 MBR，而不是让 ext4 或 devfs 猜测分区偏移。
+2. 将每个主分区包装成独立块设备，所有读写先做分区内边界检查，再平移到父设备 LBA。
+3. 为注册项记录“整盘/分区”角色；devfs 只为真实发现的分区创建 `/dev/vdXn`。
+4. 保留整盘文件系统兼容路径：没有 MBR 签名时只创建 `/dev/vdX`，根挂载自动回退整盘。
+
+本批次只接受传统 MBR 的四个主分区。GPT protective MBR 和扩展/逻辑分区会被明确识别并拒绝，避免尚未实现的格式被错误暴露为普通分区。
+
+### 完成内容
+
+- [x] 新增 MBR 签名、主分区项、磁盘范围和分区重叠校验。
+- [x] 新增 `PartitionBlockDevice`，读写均校验长度、溢出和分区末端。
+- [x] 整盘注册时自动发现并登记有效主分区。
+- [x] 注册表增加整盘/分区角色及父设备、分区号元数据。
+- [x] 两套 devfs 实现删除伪造的 `vda1`/`vda2`，按元数据生成节点。
+- [x] 默认根设备优先真实 `/dev/vda1`，不存在时回退 `/dev/vda`。
+- [x] GPT、扩展分区和损坏表会记录跳过原因；无 MBR 签名的整盘布局不告警。
+
+### 验证证据
+
+- block API host 单测 3 项通过，覆盖两个主分区、LBA 写平移、越界读、坏签名、超磁盘范围、GPT、扩展分区和分区重叠。
+- 两套 devfs crate 的 host `cargo check` 通过。
+- 现有 QEMU RISC-V 与 LoongArch64 profile 交叉检查通过。
+- `make kernel-rv` release 构建通过。
+- 使用临时 32 MiB 稀疏 MBR 镜像验证 QEMU RISC-V：只含一个从 LBA 2048 开始的 Linux 分区，分区内 4 KiB block ext4 成功通过 `/dev/vda1` 读写挂载；镜像已清理。
+- 使用已有无分区 ext4 镜像和 QEMU snapshot 回归：块设备数为 1，根文件系统成功从 `/dev/vda` 读写挂载，QEMU 正常退出且原镜像未修改。
+
+### 未验证与后续测试
+
+- [ ] GPT 只检测 protective MBR，尚未解析 GPT header、entry array 和 CRC。
+- [ ] MBR 扩展/逻辑分区尚不支持。
+- [ ] 当前注册表只支持启动期追加，不处理设备热移除及其子分区失效。
+- [ ] 真实 SD/eMMC/AHCI 驱动尚未接入，因此分区扫描尚未在目标板存储控制器上运行。
+- [ ] 真机仍需验证设备容量、扇区大小、缓存一致性、写屏障和掉电恢复行为。
+
+### 提交
+
+- `[feat] add bounded MBR partition devices`
