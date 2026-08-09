@@ -5,6 +5,7 @@
 //! architecture-specific cache operations before using a plan on hardware.
 use crate::topology::DmaControllerDescription;
 use crate::dma_memory::DmaAllocationError;
+use crate::irq_domain::{AcknowledgedIrq, GlobalIrq};
 #[cfg(target_arch = "loongarch64")]
 use crate::dma_memory::OwnedDmaBuffer;
 use alloc::vec::Vec;
@@ -158,7 +159,7 @@ impl<D : DmaCoherency, P : DmaCoherency> OwnedTransferResources<D, P> {
             core::mem::size_of::<HardwareDescriptor>(),
             32,
             device_address_bits,
-            DmaDirection::ToDevice,
+            DmaDirection::Bidirectional,
             descriptor_coherency)?;
         let payload = OwnedDmaBuffer::allocate_zeroed(byte_length,
                                                       4,
@@ -205,6 +206,7 @@ pub enum ExecutorError {
     InvalidPollLimit,
     StopTimeout,
     StopUnverified,
+    UnexpectedIrq,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -239,6 +241,57 @@ pub struct Completion {
     invalidate_buffer_after : bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DescriptorCompletion {
+    Complete,
+    HardwareError(u32),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DescriptorStatusError {
+    Cache(DriverError),
+    Read,
+    StatusUnverified,
+    Unknown(u32),
+}
+
+pub trait DescriptorStatusReader {
+    fn read_status(&mut self, descriptor : api_v0::dma::DmaRegion)
+                   -> Result<u32, DescriptorStatusError>;
+}
+
+pub trait DescriptorStatusDecoder {
+    fn decode(&self, status : u32) -> Result<DescriptorCompletion, DescriptorStatusError>;
+}
+
+pub struct UnverifiedStatusDecoder;
+
+impl DescriptorStatusDecoder for UnverifiedStatusDecoder {
+    fn decode(&self, _status : u32) -> Result<DescriptorCompletion, DescriptorStatusError> {
+        Err(DescriptorStatusError::StatusUnverified)
+    }
+}
+
+/// Volatile descriptor status access after descriptor cache ownership has
+/// already returned to the CPU.
+#[cfg(target_arch = "loongarch64")]
+pub struct VolatileDescriptorStatusReader;
+
+#[cfg(target_arch = "loongarch64")]
+impl DescriptorStatusReader for VolatileDescriptorStatusReader {
+    fn read_status(&mut self, descriptor : api_v0::dma::DmaRegion)
+                   -> Result<u32, DescriptorStatusError> {
+        let offset = core::mem::offset_of!(HardwareDescriptor, status);
+        if descriptor.length() < offset + core::mem::size_of::<u32>() {
+            return Err(DescriptorStatusError::Read);
+        }
+        let address = descriptor.virtual_address()
+                                .checked_add(offset)
+                                .ok_or(DescriptorStatusError::Read)?;
+        Ok(unsafe { core::ptr::read_volatile(address as *const u32) })
+    }
+}
+
 impl Completion {
     pub const fn requires_buffer_invalidate(self) -> bool { self.invalidate_buffer_after }
 }
@@ -271,6 +324,15 @@ pub struct PreparedSession<'a, D, P> {
 #[must_use = "complete the IRQ or stop a running DMA session"]
 pub struct RunningSession<'a, 'e, R, D, P> {
     executor : &'e mut Executor<R>,
+    descriptor : &'a mut DmaMapping<D>,
+    payload : &'a mut DmaMapping<P>,
+}
+
+/// The expected APBDMA IRQ was masked/acknowledged and hardware is no longer
+/// treated as running. Descriptor visibility/status inspection remains.
+#[must_use = "inspect descriptor status or explicitly reclaim an IRQ completion"]
+pub struct IrqCompletionSession<'a, D, P> {
+    completion : Completion,
     descriptor : &'a mut DmaMapping<D>,
     payload : &'a mut DmaMapping<P>,
 }
@@ -345,13 +407,13 @@ impl<'a, D : DmaCoherency, P : DmaCoherency> PreparedSession<'a, D, P> {
 }
 
 impl<'a, 'e, R : OrderIo, D, P> RunningSession<'a, 'e, R, D, P> {
-    pub fn complete_irq(self)
-                        -> Result<QuiescedSession<'a, D, P>,
+    pub fn complete_irq(self, acknowledged : AcknowledgedIrq)
+                        -> Result<IrqCompletionSession<'a, D, P>,
                                   SessionFailure<ExecutorError, Self>> {
-        match self.executor.complete_irq() {
-            Ok(completion) => Ok(QuiescedSession { completion,
-                                                  descriptor : self.descriptor,
-                                                  payload : self.payload }),
+        match self.executor.complete_irq(acknowledged) {
+            Ok(completion) => Ok(IrqCompletionSession { completion,
+                                                       descriptor : self.descriptor,
+                                                       payload : self.payload }),
             Err(error) => Err(SessionFailure { error, session : self }),
         }
     }
@@ -365,6 +427,52 @@ impl<'a, 'e, R : OrderIo, D, P> RunningSession<'a, 'e, R, D, P> {
                                                   payload : self.payload }),
             Err(error) => Err(SessionFailure { error, session : self }),
         }
+    }
+}
+
+impl<'a, D : DmaCoherency, P> IrqCompletionSession<'a, D, P> {
+    pub fn inspect_status<R : DescriptorStatusReader, C : DescriptorStatusDecoder>(
+        self,
+        reader : &mut R,
+        decoder : &C)
+        -> Result<(DescriptorCompletion, QuiescedSession<'a, D, P>),
+                  SessionFailure<DescriptorStatusError, Self>> {
+        let descriptor = if self.descriptor.is_cpu_owned() {
+            self.descriptor.cpu_region()
+        } else {
+            self.descriptor.complete_from_device()
+        };
+        let descriptor = match descriptor {
+            Ok(descriptor) => descriptor,
+            Err(error) => {
+                return Err(SessionFailure { error : DescriptorStatusError::Cache(error),
+                                            session : self });
+            },
+        };
+        let status = match reader.read_status(descriptor) {
+            Ok(status) => status,
+            Err(error) => return Err(SessionFailure { error, session : self }),
+        };
+        let result = match decoder.decode(status) {
+            Ok(result) => result,
+            Err(error) => return Err(SessionFailure { error, session : self }),
+        };
+        Ok((result,
+            QuiescedSession { completion : self.completion,
+                              descriptor : self.descriptor,
+                              payload : self.payload }))
+    }
+
+    /// Reclaim resources after an expected, acknowledged IRQ without claiming
+    /// that the undocumented descriptor status represents success.
+    ///
+    /// # Safety
+    /// The caller must have platform evidence that this IRQ means the DMA
+    /// engine has stopped accessing both mappings.
+    pub unsafe fn reclaim_unverified(self) -> QuiescedSession<'a, D, P> {
+        QuiescedSession { completion : self.completion,
+                          descriptor : self.descriptor,
+                          payload : self.payload }
     }
 }
 
@@ -406,7 +514,7 @@ pub(crate) fn prepare_transfer<D : DmaCoherency, P : DmaCoherency>(
     -> DriverResult<PreparedTransfer> {
     let descriptor_region = descriptor.cpu_region()?;
     let payload_region = payload.cpu_region()?;
-    if descriptor.direction() != DmaDirection::ToDevice ||
+    if descriptor.direction() != DmaDirection::Bidirectional ||
        descriptor_region.physical_address() != plan.descriptor_physical_address ||
        descriptor_region.length() < core::mem::size_of::<HardwareDescriptor>() ||
        payload.direction() != dma_direction(plan.direction) ||
@@ -478,19 +586,23 @@ pub struct Executor<R> {
     registers : R,
     running : Option<TransferPlan>,
     stop_poll_limit : usize,
+    expected_irq : GlobalIrq,
 }
 
 impl<R : OrderIo> Executor<R> {
-    pub fn new(registers : R) -> Self {
+    pub fn new(registers : R, expected_irq : GlobalIrq) -> Self {
         Self { registers,
                running : None,
-               stop_poll_limit : DEFAULT_STOP_POLL_LIMIT }
+               stop_poll_limit : DEFAULT_STOP_POLL_LIMIT,
+               expected_irq }
     }
 
-    pub fn with_stop_poll_limit(registers : R, stop_poll_limit : usize)
+    pub fn with_stop_poll_limit(registers : R,
+                                expected_irq : GlobalIrq,
+                                stop_poll_limit : usize)
                                 -> Result<Self, ExecutorError> {
         if stop_poll_limit == 0 { return Err(ExecutorError::InvalidPollLimit); }
-        Ok(Self { registers, running : None, stop_poll_limit })
+        Ok(Self { registers, running : None, stop_poll_limit, expected_irq })
     }
 
     pub(crate) fn start(&mut self, prepared : PreparedTransfer) -> Result<(), StartFailure> {
@@ -522,7 +634,11 @@ impl<R : OrderIo> Executor<R> {
     }
 
     /// Called only after the APBDMA IRQ has been claimed and acknowledged.
-    pub(crate) fn complete_irq(&mut self) -> Result<Completion, ExecutorError> {
+    pub(crate) fn complete_irq(&mut self, acknowledged : AcknowledgedIrq)
+                               -> Result<Completion, ExecutorError> {
+        if acknowledged.irq() != self.expected_irq {
+            return Err(ExecutorError::UnexpectedIrq);
+        }
         let plan = self.running.take().ok_or(ExecutorError::Idle)?;
         Ok(Completion { invalidate_buffer_after : plan.invalidate_buffer_after })
     }
@@ -602,6 +718,11 @@ mod tests {
     use super::*;
     use alloc::vec;
     use api_v0::dma::{DmaRegion, DmaCoherency};
+
+    fn dma_irq() -> GlobalIrq { GlobalIrq::from_bank_local(1, 13).unwrap() }
+    fn acknowledged_dma_irq() -> AcknowledgedIrq {
+        AcknowledgedIrq::after_mask_ack(dma_irq())
+    }
 
     #[test]
     fn builds_64_bit_read_descriptor_and_start_order() {
@@ -691,6 +812,36 @@ mod tests {
     }
 
     #[derive(Default)]
+    struct MockStatusReader {
+        status : u32,
+        calls : usize,
+        fail : bool,
+    }
+
+    impl DescriptorStatusReader for MockStatusReader {
+        fn read_status(&mut self, _descriptor : DmaRegion)
+                       -> Result<u32, DescriptorStatusError> {
+            self.calls += 1;
+            if self.fail { Err(DescriptorStatusError::Read) } else { Ok(self.status) }
+        }
+    }
+
+    struct FixtureStatusDecoder;
+
+    impl DescriptorStatusDecoder for FixtureStatusDecoder {
+        fn decode(&self, status : u32)
+                  -> Result<DescriptorCompletion, DescriptorStatusError> {
+            match status {
+                0x100 => Ok(DescriptorCompletion::Complete),
+                value if value & 0x8000_0000 != 0 => {
+                    Ok(DescriptorCompletion::HardwareError(value))
+                },
+                value => Err(DescriptorStatusError::Unknown(value)),
+            }
+        }
+    }
+
+    #[derive(Default)]
     struct MockCache {
         device_syncs : usize,
         cpu_syncs : usize,
@@ -726,7 +877,7 @@ mod tests {
                                      plan.byte_length,
                                      32,
                                      64).unwrap();
-        (DmaMapping::new(descriptor, DmaDirection::ToDevice, MockCache::default()),
+        (DmaMapping::new(descriptor, DmaDirection::Bidirectional, MockCache::default()),
          DmaMapping::new(payload, dma_direction(plan.direction), MockCache::default()))
     }
     impl OrderIo for MockOrderIo {
@@ -766,14 +917,14 @@ mod tests {
                                   Direction::DeviceToMemory).unwrap();
         let (mut descriptor, mut payload) = mappings(plan);
         let prepared = prepare_transfer(plan, &mut descriptor, &mut payload).unwrap();
-        let mut executor = Executor::new(MockOrderIo::default());
+        let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
         assert!(executor.start(prepared).is_ok());
-        let completion = executor.complete_irq().unwrap();
+        let completion = executor.complete_irq(acknowledged_dma_irq()).unwrap();
         assert!(completion.requires_buffer_invalidate());
         finish_transfer(completion, &mut descriptor, &mut payload).unwrap();
         assert!(descriptor.cpu_region().is_ok());
         assert!(payload.cpu_region().is_ok());
-        assert_eq!(executor.complete_irq(), Err(ExecutorError::Idle));
+        assert_eq!(executor.complete_irq(acknowledged_dma_irq()), Err(ExecutorError::Idle));
         let io = executor.into_inner();
         assert_eq!(io.writes, vec![0, plan.start_order]);
     }
@@ -783,7 +934,7 @@ mod tests {
         let plan = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 4, 1,
                                   Direction::MemoryToDevice).unwrap();
         let (mut descriptor, mut payload) = mappings(plan);
-        let mut executor = Executor::new(MockOrderIo::default());
+        let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
         assert!(executor.start(prepare_transfer(plan, &mut descriptor, &mut payload).unwrap())
                         .is_ok());
         let (mut descriptor2, mut payload2) = mappings(plan);
@@ -826,13 +977,14 @@ mod tests {
         let plan = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 512, 16,
                                   Direction::DeviceToMemory).unwrap();
         let (mut descriptor, mut payload) = mappings(plan);
-        let mut executor = Executor::new(MockOrderIo::default());
+        let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
 
         let running = prepare_session(plan, &mut descriptor, &mut payload).unwrap()
                                                                           .start(&mut executor)
                                                                           .unwrap();
-        running.complete_irq().unwrap()
-               .finish().unwrap();
+        let completion = running.complete_irq(acknowledged_dma_irq()).unwrap();
+        // SAFETY: the mock IRQ deterministically marks this transfer stopped.
+        unsafe { completion.reclaim_unverified() }.finish().unwrap();
         assert!(descriptor.is_cpu_owned());
         assert!(payload.is_cpu_owned());
     }
@@ -843,7 +995,7 @@ mod tests {
                                   Direction::DeviceToMemory).unwrap();
         let (mut descriptor, mut payload) = mappings(plan);
         let (mut descriptor2, mut payload2) = mappings(plan);
-        let mut executor = Executor::new(MockOrderIo::default());
+        let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
         let prepared = prepare_transfer(plan, &mut descriptor, &mut payload).unwrap();
         executor.start(prepared).unwrap();
 
@@ -870,16 +1022,18 @@ mod tests {
         let payload_region = DmaRegion::new(0x8000, 0x3000, 512, 32, 64).unwrap();
         let mut descriptor = DmaMapping::new(
             descriptor_region,
-            DmaDirection::ToDevice,
+            DmaDirection::Bidirectional,
             MockCache { fail_cpu_syncs : 1, ..MockCache::default() });
         let mut payload = DmaMapping::new(payload_region,
                                           DmaDirection::FromDevice,
                                           MockCache::default());
-        let mut executor = Executor::new(MockOrderIo::default());
-        let quiesced = prepare_session(plan, &mut descriptor, &mut payload).unwrap()
-                                                                           .start(&mut executor)
-                                                                           .unwrap()
-                                                                           .complete_irq().unwrap();
+        let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
+        let completion = prepare_session(plan, &mut descriptor, &mut payload).unwrap()
+                                                                            .start(&mut executor)
+                                                                            .unwrap()
+                                                                            .complete_irq(acknowledged_dma_irq()).unwrap();
+        // SAFETY: the mock IRQ deterministically marks this transfer stopped.
+        let quiesced = unsafe { completion.reclaim_unverified() };
         let failure = quiesced.finish().unwrap_err();
         assert_eq!(failure.error, DriverError::IoError);
         failure.session.finish().unwrap();
@@ -892,7 +1046,7 @@ mod tests {
         let plan = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 4, 1,
                                   Direction::MemoryToDevice).unwrap();
         let (mut descriptor, mut payload) = mappings(plan);
-        let mut executor = Executor::new(MockOrderIo::default());
+        let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
         prepare_session(plan, &mut descriptor, &mut payload).unwrap()
                                                                .start(&mut executor).unwrap()
                                                                .stop().unwrap()
@@ -910,7 +1064,7 @@ mod tests {
         let (mut descriptor, mut payload) = mappings(plan);
         let registers = FaultOrderIo { failures : vec![(1, WriteEffect::Untouched)],
                                        ..FaultOrderIo::default() };
-        let mut executor = Executor::new(registers);
+        let mut executor = Executor::new(registers, dma_irq());
         let failure = match prepare_session(plan, &mut descriptor, &mut payload).unwrap()
                                                                                 .start(&mut executor) {
             Err(failure) => failure,
@@ -932,7 +1086,7 @@ mod tests {
         let (mut descriptor, mut payload) = mappings(plan);
         let registers = FaultOrderIo { failures : vec![(2, WriteEffect::MayHaveWritten)],
                                        ..FaultOrderIo::default() };
-        let mut executor = Executor::new(registers);
+        let mut executor = Executor::new(registers, dma_irq());
         let failure = match prepare_session(plan, &mut descriptor, &mut payload).unwrap()
                                                                                 .start(&mut executor) {
             Err(failure) => failure,
@@ -963,7 +1117,7 @@ mod tests {
                             (3, WriteEffect::MayHaveWritten)],
             ..FaultOrderIo::default()
         };
-        let mut executor = Executor::new(registers);
+        let mut executor = Executor::new(registers, dma_irq());
         let failure = match prepare_session(plan, &mut descriptor, &mut payload).unwrap()
                                                                                 .start(&mut executor) {
             Err(failure) => failure,
@@ -994,7 +1148,7 @@ mod tests {
             confirmations : vec![Ok(false), Ok(false), Ok(true)],
             ..FaultOrderIo::default()
         };
-        let mut executor = Executor::with_stop_poll_limit(registers, 3).unwrap();
+        let mut executor = Executor::with_stop_poll_limit(registers, dma_irq(), 3).unwrap();
         prepare_session(plan, &mut descriptor, &mut payload).unwrap()
                                                                .start(&mut executor).unwrap()
                                                                .stop().unwrap()
@@ -1013,7 +1167,7 @@ mod tests {
             confirmations : vec![Ok(false), Ok(false)],
             ..FaultOrderIo::default()
         };
-        let mut executor = Executor::with_stop_poll_limit(registers, 2).unwrap();
+        let mut executor = Executor::with_stop_poll_limit(registers, dma_irq(), 2).unwrap();
         let running = prepare_session(plan, &mut descriptor, &mut payload).unwrap()
                                                                           .start(&mut executor)
                                                                           .unwrap();
@@ -1041,7 +1195,7 @@ mod tests {
             confirmations : vec![Err(ExecutorError::Register), Ok(true)],
             ..FaultOrderIo::default()
         };
-        let mut executor = Executor::with_stop_poll_limit(registers, 2).unwrap();
+        let mut executor = Executor::with_stop_poll_limit(registers, dma_irq(), 2).unwrap();
         let failure = match prepare_session(plan, &mut descriptor, &mut payload).unwrap()
                                                                                 .start(&mut executor) {
             Err(StartSessionFailure::Recovery(failure)) => failure,
@@ -1062,7 +1216,94 @@ mod tests {
 
     #[test]
     fn executor_rejects_zero_stop_poll_budget() {
-        assert!(matches!(Executor::with_stop_poll_limit(MockOrderIo::default(), 0),
+        assert!(matches!(Executor::with_stop_poll_limit(MockOrderIo::default(), dma_irq(), 0),
                          Err(ExecutorError::InvalidPollLimit)));
+    }
+
+    #[test]
+    fn irq_completion_rejects_wrong_acknowledged_source_without_losing_session() {
+        let plan = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 4, 1,
+                                  Direction::MemoryToDevice).unwrap();
+        let (mut descriptor, mut payload) = mappings(plan);
+        let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
+        let running = prepare_session(plan, &mut descriptor, &mut payload).unwrap()
+                                                                          .start(&mut executor)
+                                                                          .unwrap();
+        let wrong = AcknowledgedIrq::after_mask_ack(
+            GlobalIrq::from_bank_local(0, 13).unwrap());
+        let failure = match running.complete_irq(wrong) {
+            Err(failure) => failure,
+            Ok(_) => panic!("wrong IRQ completed APBDMA"),
+        };
+        assert_eq!(failure.error, ExecutorError::UnexpectedIrq);
+        let completion = failure.session.complete_irq(acknowledged_dma_irq()).unwrap();
+        // SAFETY: the mock IRQ deterministically marks this transfer stopped.
+        unsafe { completion.reclaim_unverified() }.finish().unwrap();
+        assert!(descriptor.is_cpu_owned());
+        assert!(payload.is_cpu_owned());
+    }
+
+    #[test]
+    fn irq_status_is_read_only_after_descriptor_cpu_sync() {
+        let plan = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 4, 1,
+                                  Direction::MemoryToDevice).unwrap();
+        let descriptor_region = DmaRegion::new(0x4000, 0x2000, 64, 32, 64).unwrap();
+        let payload_region = DmaRegion::new(0x8000, 0x3000, 4, 32, 64).unwrap();
+        let mut descriptor = DmaMapping::new(
+            descriptor_region,
+            DmaDirection::Bidirectional,
+            MockCache { fail_cpu_syncs : 1, ..MockCache::default() });
+        let mut payload = DmaMapping::new(payload_region,
+                                          DmaDirection::ToDevice,
+                                          MockCache::default());
+        let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
+        let completion = prepare_session(plan, &mut descriptor, &mut payload).unwrap()
+                                                                             .start(&mut executor)
+                                                                             .unwrap()
+                                                                             .complete_irq(acknowledged_dma_irq())
+                                                                             .unwrap();
+        let mut reader = MockStatusReader { status : 0x100, ..MockStatusReader::default() };
+        let failure = match completion.inspect_status(&mut reader, &FixtureStatusDecoder) {
+            Err(failure) => failure,
+            Ok(_) => panic!("status read bypassed failed cache sync"),
+        };
+        assert_eq!(failure.error, DescriptorStatusError::Cache(DriverError::IoError));
+        assert_eq!(reader.calls, 0);
+        let (outcome, quiesced) = failure.session
+                                           .inspect_status(&mut reader,
+                                                           &FixtureStatusDecoder).unwrap();
+        assert_eq!(outcome, DescriptorCompletion::Complete);
+        assert_eq!(reader.calls, 1);
+        quiesced.finish().unwrap();
+        assert!(descriptor.is_cpu_owned());
+        assert!(payload.is_cpu_owned());
+    }
+
+    #[test]
+    fn descriptor_decoder_classifies_fixture_error_and_unknown_status() {
+        assert_eq!(FixtureStatusDecoder.decode(0x8000_0042),
+                   Ok(DescriptorCompletion::HardwareError(0x8000_0042)));
+        assert_eq!(FixtureStatusDecoder.decode(0x42),
+                   Err(DescriptorStatusError::Unknown(0x42)));
+
+        let plan = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 4, 1,
+                                  Direction::MemoryToDevice).unwrap();
+        let (mut descriptor, mut payload) = mappings(plan);
+        let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
+        let completion = prepare_session(plan, &mut descriptor, &mut payload).unwrap()
+                                                                             .start(&mut executor)
+                                                                             .unwrap()
+                                                                             .complete_irq(acknowledged_dma_irq())
+                                                                             .unwrap();
+        let mut reader = MockStatusReader { status : 0x42, ..MockStatusReader::default() };
+        let failure = match completion.inspect_status(&mut reader, &UnverifiedStatusDecoder) {
+            Err(failure) => failure,
+            Ok(_) => panic!("unverified decoder claimed completion"),
+        };
+        assert_eq!(failure.error, DescriptorStatusError::StatusUnverified);
+        // SAFETY: the mock IRQ deterministically marks this transfer stopped.
+        unsafe { failure.session.reclaim_unverified() }.finish().unwrap();
+        assert!(descriptor.is_cpu_owned());
+        assert!(payload.is_cpu_owned());
     }
 }

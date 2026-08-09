@@ -23,6 +23,18 @@ impl GlobalIrq {
     pub const fn local(self) -> u32 { self.0 as u32 % IRQS_PER_BANK }
 }
 
+/// Evidence that a LIOINTC source was masked/acknowledged before dispatch.
+#[derive(Debug, PartialEq, Eq)]
+pub struct AcknowledgedIrq {
+    irq : GlobalIrq,
+}
+
+impl AcknowledgedIrq {
+    pub const fn irq(&self) -> GlobalIrq { self.irq }
+
+    pub(crate) const fn after_mask_ack(irq : GlobalIrq) -> Self { Self { irq } }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DomainError {
     InvalidBankCount,

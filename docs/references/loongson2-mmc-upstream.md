@@ -31,6 +31,8 @@ Confirmed facts used by the current WaterOS foundation:
 - Linux terminate, pause and final-IRQ paths encode `64BIT_EN | STOP` after
   preserving the descriptor-address bits. They do not poll an order bit or
   descriptor status to prove that hardware has become idle.
+- The hardware descriptor contains a `stats` word, but the referenced driver
+  defines no status bit meanings and does not inspect that word in its ISR.
 
 Still requiring physical-board validation: MMIO accessibility/endian behavior,
 clock/reset/power ordering, response word ordering, interrupt delivery, DMA

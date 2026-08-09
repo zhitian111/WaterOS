@@ -1672,3 +1672,70 @@ status 来证明控制器已经停止。因此本批没有把任何寄存器位�
 ### 提交
 
 - `[fix] require 2K1000 APBDMA stop confirmation`
+
+## 2026-08-10：批次 37——APBDMA IRQ and descriptor-status evidence
+
+### 任务与设计
+
+1. 审计 LIOINTC claim/ack、APBDMA IRQ completion 与 DMA mapping ownership 顺序。
+2. 将 IRQ source 与 executor 显式绑定，错 IRQ 不得完成 active transfer。
+3. 在 descriptor status 读取前恢复 descriptor 的 CPU cache visibility。
+4. 把 IRQ 到达、descriptor 状态分类和资源回收拆成独立 typestate 阶段。
+5. 状态位没有可靠定义时返回 `StatusUnverified`，不把任意数值解释成成功。
+
+`LioIntc::mask_ack_claim()` 在写 ENABLE_CLEAR 后产生线性的 `AcknowledgedIrq`，token 绑定
+global bank/local source，且不实现 `Copy`。每个 executor 保存预期 IRQ；只有 token 与绑定
+完全相同才会结束 running 状态并产生 `IrqCompletionSession`。错 IRQ 返回原 running session，
+不会丢失 stop/retry 能力。
+
+IRQ completion 不再直接等于传输成功。`IrqCompletionSession::inspect_status()` 先对 descriptor
+mapping 执行 device-to-CPU sync，再把获得 CPU ownership 的 region 交给 status reader；decoder
+随后分类 `Complete`、`HardwareError` 或错误。descriptor 同时包含 CPU 写入命令和设备回写
+status，因此本批把其 DMA direction 从错误的 `ToDevice` 修正为 `Bidirectional`。
+
+Linux 上游声明了 descriptor `stats` word，但没有定义位语义，ISR 也不检查它。因此
+`UnverifiedStatusDecoder` 一律返回 `StatusUnverified`。无状态证明的 cleanup 入口被标为
+`unsafe reclaim_unverified`，调用方必须另有平台证据证明该 IRQ 已停止 DMA 总线访问。
+
+### 完成内容
+
+- [x] 新增非 `Copy` 的 `AcknowledgedIrq`，只能由 crate 内 LIOINTC mask/ack 路径构造。
+- [x] 新增 `LioIntc::mask_ack_claim(bank, local)`，无效 bank/local 不执行 MMIO 写。
+- [x] executor 构造必须绑定 `GlobalIrq`；生产 factory 同样要求显式 IRQ binding。
+- [x] APBDMA completion 拒绝不匹配 source，并返回原 running session。
+- [x] 新增 `IrqCompletionSession`，分离 IRQ 静止事件和 descriptor 状态验证。
+- [x] 新增 `DescriptorStatusReader`、`DescriptorStatusDecoder` 及 completion/error 分类。
+- [x] target-only volatile reader 按 `offset_of!(HardwareDescriptor, status)` 读取 status word。
+- [x] status reader 仅在 descriptor CPU sync 成功后调用；sync/read/decode 失败返回原 session。
+- [x] 新增保守 `UnverifiedStatusDecoder`，未知平台不宣称成功。
+- [x] `reclaim_unverified` 收紧为 unsafe，要求调用方承担硬件停止证明。
+- [x] descriptor mapping 全路径改为 `Bidirectional`，覆盖命令发布和 status 回写。
+- [x] 本地上游参考补充 stats 未定义/未由 ISR 检查的事实。
+
+### 验证证据
+
+- `cargo test -p wateros-driver-impl-loongson2k1000la`：42 项 host 单测全部通过（本批新增 4 项）。
+- LIOINTC 测试断言 bank1/local13 token 与 ENABLE_CLEAR 写序，无效 bank 不写寄存器。
+- 错 IRQ 测试断言 `UnexpectedIrq` 并保留 running session，随后正确 IRQ 可继续完成。
+- cache fault 测试在 descriptor 首次 CPU sync 失败时断言 status reader 零调用；重试同步后才读取一次。
+- fixture decoder 独立覆盖 Complete、HardwareError 和 Unknown；生产默认 decoder 覆盖 `StatusUnverified`。
+- 测试中的 unsafe cleanup 均附带 mock IRQ 保证的 SAFETY 注释。
+- `cargo check -p wateros-driver-impl-loongson2k1000la --target loongarch64-unknown-none` 通过，并编译 volatile status reader 与生产 executor factory。
+- 2K1000LA topology/畸形 DTS fixtures 全部通过；truncated DMA 的 dtc warning 为预期输入。
+- `make kernel-la` QEMU LoongArch64 release 回归构建通过；仅有仓库既有 warning。
+- `git diff --check` 通过；未创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：APBDMA IRQ 是否只在总线访问完全结束后触发尚未验证；安全代码不能使用 unverified cleanup。
+- [ ] `mask_ack_claim` 只证明 LIOINTC source 被 mask/清 latch；level-triggered APBDMA condition 仍需设备侧 ack/clear 语义。
+- [ ] descriptor status 位无公开可靠定义，生产 decoder 当前故意不可用；fixture 位值仅用于测试状态机，不代表硬件。
+- [ ] volatile status 读取依赖真实 coherency backend 正确处理 `Bidirectional` descriptor cache line。
+- [ ] APBDMA IRQ13 尚未注册到运行时 trap glue，executor 也未存入全局 platform driver state。
+- [ ] IRQ token 与 topology interrupt spec 到 global bank 的映射仍由未来组装层显式提供，不能仅凭 phandle 猜测 bank。
+- [ ] payload completion、MMC data command、硬件错误传播和 timeout/cancel 仍未连成真实 block I/O。
+- [ ] 下一批应实现 topology/LIOINTC bank binding 的可验证解析与 IRQ lifecycle（route、trigger、enable、mask、设备 ack、re-enable）模型，再考虑接入 runtime trap glue。
+
+### 提交
+
+- `[ref] verify 2K1000 APBDMA IRQ completion`

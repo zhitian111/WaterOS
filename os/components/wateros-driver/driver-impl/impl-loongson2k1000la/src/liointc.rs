@@ -4,6 +4,7 @@
 //! 2K documentation. The volatile backend is `UNVERIFIED_ON_HARDWARE`.
 
 use api_v0::{DriverError, DriverResult};
+use crate::irq_domain::{AcknowledgedIrq, GlobalIrq};
 
 pub const IRQ_COUNT : u32 = 32;
 pub const MAX_CORES : usize = 4;
@@ -102,6 +103,16 @@ impl<I : RegisterIo> LioIntc<I> {
             .write32(self.main_base + ENABLE_CLEAR,
                      Self::irq_mask(irq)?);
         Ok(())
+    }
+
+    /// Mask/ack one local source and return evidence tied to its global bank.
+    /// A level-triggered device must still clear its own interrupt condition.
+    pub fn mask_ack_claim(&mut self, bank : usize, irq : u32)
+                          -> DriverResult<AcknowledgedIrq> {
+        let global = GlobalIrq::from_bank_local(bank, irq)
+                               .map_err(|_| DriverError::InvalidParam)?;
+        self.mask_ack(irq)?;
+        Ok(AcknowledgedIrq::after_mask_ack(global))
     }
 
     pub fn configure_route(&mut self, irq : u32, route : Route) -> DriverResult<()> {
@@ -266,6 +277,20 @@ mod tests {
                                    1 << 31),
                                   (BASE + ENABLE_CLEAR,
                                    u32::MAX)]);
+    }
+
+    #[test]
+    fn mask_ack_claim_binds_evidence_to_global_irq() {
+        let mut valid_controller = controller();
+        let acknowledged = valid_controller.mask_ack_claim(1, 13).unwrap();
+        assert_eq!(acknowledged.irq(), GlobalIrq::from_bank_local(1, 13).unwrap());
+        assert_eq!(valid_controller.into_inner().writes32,
+                   &[(BASE + ENABLE_CLEAR, 1 << 13)]);
+
+        let mut invalid_controller = controller();
+        assert_eq!(invalid_controller.mask_ack_claim(2, 13),
+                   Err(DriverError::InvalidParam));
+        assert!(invalid_controller.into_inner().writes32.is_empty());
     }
 
     #[test]
