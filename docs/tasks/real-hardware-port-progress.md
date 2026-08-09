@@ -1029,3 +1029,42 @@ python3 scripts/remote_debug_qemu_smoke.py \
 ### 提交
 
 - `[feat] discover 2K1000LA MMC resources`
+
+## 2026-08-10：批次 23——共享 DesignWare MMC/SD 核心抽取
+
+### 任务与设计
+
+1. 审计 VisionFive 2 已有 DesignWare MMC 与 SD 协议实现的平台耦合。
+2. 在 `wateros-driver/driver-block` 下建立独立、`no_std` 的共享核心 crate。
+3. 迁入寄存器轮询/PIO、识别时钟、SD 枚举、CSD 容量解析和只读块适配。
+4. 平台层继续负责 DTB 资源、外部时钟、复位、pinmux、供电和卡检测。
+5. 复用原有 mock 测试，并做 RISC-V 裸机目标编译检查。
+
+本批只建立两个平台可共同依赖的控制器/协议边界，不在缺少真机时启用设备注册。DMA、多块命令和写入路径继续排除在首轮核心之外。
+
+### 完成内容
+
+- [x] 新增 `wateros-driver-block-impl-dw-mmc` workspace crate。
+- [x] `RegisterIo` 隔离真实 MMIO 与 host mock 后端。
+- [x] 迁入版本化 FIFO、复位、时钟更新/分频、命令执行和单块 PIO 读取。
+- [x] 迁入 SD v1/v2 枚举、OCR 有界轮询、寻址选择和 CSD v1/v2 容量计算。
+- [x] 保留通用 `BlockDevice` 只读适配、整段越界预检和错误映射。
+- [x] 排除 JH7110 clock/reset/syscon 等板级资源结构，避免共享核心依赖具体 SoC。
+
+### 验证证据
+
+- `cargo test -p wateros-driver-block-impl-dw-mmc`：12 项 host 单测全部通过。
+- `cargo check -p wateros-driver-block-impl-dw-mmc --target riscv64gc-unknown-none-elf` 通过。
+- 覆盖复位/超时/CRC/硬件锁、旧/新 FIFO、识别时钟、SDHC/SDSC、CSD、地址溢出、跨盘尾读取和写入拒绝。
+
+### 已知限制、未验证与后续测试
+
+- [ ] 尚未回接 VisionFive 2 平台 crate；下一批应替换重复实现并做比较验证。
+- [ ] 2K1000LA 是否完全兼容该 DesignWare 寄存器布局仍需固件 DTB、手册和真机寄存器确认。
+- [ ] CIU/BIU 时钟、reset、pinmux、供电/电压、card-detect 与长响应顺序均为真机未验证。
+- [ ] 当前仅轮询、PIO、单块、只读；IRQ、DMA、多块、写入及 cache 一致性尚未实现。
+- [ ] host mock 与交叉编译不能替代插卡启动、已知 CSD 对照、盘尾读取和长时间 I/O 压测。
+
+### 提交
+
+- `[ref] extract shared DesignWare MMC core`
