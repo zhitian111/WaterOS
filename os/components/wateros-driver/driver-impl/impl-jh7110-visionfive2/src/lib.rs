@@ -4,6 +4,7 @@ extern crate alloc;
 
 pub mod irq;
 pub mod mmc;
+pub mod sd;
 pub mod plic;
 pub mod topology;
 pub mod uart;

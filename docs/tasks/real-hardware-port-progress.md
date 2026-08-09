@@ -584,3 +584,46 @@ python3 scripts/remote_debug_qemu_smoke.py \
 ### 提交
 
 - `[feat] add VisionFive 2 MMC PIO foundation`
+
+## 2026-08-10：批次 13——SD 初始化协议与只读块设备适配
+
+### 任务与设计
+
+1. 审计 block API、设备注册与分区扫描契约，保持现有 512-byte LBA 接口不变。
+2. 将 SD native-mode 协议与 DesignWare MMIO 分层，以可注入 transport 驱动同一初始化状态机。
+3. 实现 CMD0、CMD8、CMD55/ACMD41、CMD2、CMD3、CMD7 和 SDSC 的 CMD16 流程。
+4. 根据 CMD8 与 OCR CCS 区分 SDSC 字节寻址和 SDHC/SDXC 块寻址，所有轮询与算术必须有界。
+5. 提供只读 block adapter；在板级供电/时钟未验证前不自动注册设备。
+
+### 完成内容
+
+- [x] 新增 `SdTransport`、响应类型和脚本化 transport，可在无 MMIO 环境验证完整命令序列。
+- [x] CMD0 自动设置 DesignWare `SEND_INITIALIZATION`，非数据命令支持短响应、无 CRC OCR 响应和 136-bit 长响应。
+- [x] CMD8 正确回显 `0x1aa` 时请求 HCS；CMD8 response timeout 作为旧版卡兼容路径，其它错误不被吞掉。
+- [x] ACMD41 每次轮询前重新发送 CMD55，验证 APP_CMD、power-up、目标电压范围和 CCS，尝试次数由调用方限制。
+- [x] 获取并校验非零 RCA、选择卡；SDSC 设置 512-byte block length，SDHC/SDXC 保持块寻址。
+- [x] `SdCard<T>` 实现现有 `BlockDevice`：连续读拆为单块 CMD17，拒绝非整块缓冲、寻址溢出和全部写请求。
+- [x] DesignWare host 直接实现 `SdTransport`，协议测试通过后可复用到真实 MMIO 后端，不是 mock-only API。
+- [x] 来源审计补充 SD Association 官方简化规范；仅实现协议事实，没有复制规范文字或第三方驱动代码。
+
+### 验证证据
+
+- JH7110 profile host 单测增至 15 项；新增测试覆盖 DesignWare CMD0 初始化位、长响应 flags 和四类 SD 场景。
+- 脚本化 SDHC 卡严格断言命令、参数和 response kind，并读取连续两个非零模式块，确认使用 LBA 7/8。
+- 脚本化 SDSC 卡以 CMD8 timeout 进入旧卡路径，断言 LBA 3 转换为 byte address 1536，并拒绝 32-bit 地址溢出。
+- 异常测试覆盖 ACMD41 有界超时、错误 CMD8 回显、非整块缓冲、SDHC 地址溢出和写入拒绝。
+- DTB fixture、VisionFive 2 RISC-V64 交叉检查与公共 RISC-V `make check` 作为提交前验收项。
+
+### 已知限制、未验证与后续测试
+
+- [ ] **状态机和 DesignWare 编码已测试，但真实 SD 卡初始化仍为 UNVERIFIED；尚无物理 VF2 证明 400 kHz 时钟或线路工作。**
+- [ ] 尚未解析 CMD9/CSD，`total_blocks` 保持 `None`；注册为整盘前必须补容量解析和越界测试。
+- [ ] 尚未读取 SCR、切换 4-bit bus、查询写保护或处理 card-detect；首轮真机仍应使用 1-bit 低速只读模式。
+- [ ] 当前不自动调用 `register_block_device`，因此不会被根文件系统或 MBR 扫描误选为可用磁盘。
+- [ ] DesignWare clock divider/update-clock 命令、JH7110 reset/syscon/pinmux/regulator 尚未实现，协议层调用前置条件尚不成立。
+- [ ] eMMC 使用不同于 SD 的 CMD1 初始化流程，本批只覆盖 mmc1 可移除 SD，不得用于 mmc0 eMMC。
+- [ ] 后续先实现并纯函数测试 CSD v1/v2 容量解析，再建立显式、失败可回滚的只读注册入口。
+
+### 提交
+
+- `[feat] add SD card initialization state machine`

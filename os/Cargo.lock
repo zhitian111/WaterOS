@@ -851,6 +851,7 @@ dependencies = [
  "log",
  "spin",
  "wateros-driver-api-v0",
+ "wateros-driver-block-api-v0",
  "wateros-driver-character",
  "wateros-driver-impl-common",
  "wateros-platform",

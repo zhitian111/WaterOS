@@ -82,6 +82,9 @@ const BYTCNT : usize = 0x020;
 const CMDARG : usize = 0x028;
 const CMD : usize = 0x02C;
 const RESP0 : usize = 0x030;
+const RESP1 : usize = 0x034;
+const RESP2 : usize = 0x038;
+const RESP3 : usize = 0x03C;
 const RINTSTS : usize = 0x044;
 const STATUS : usize = 0x048;
 const VERID : usize = 0x06C;
@@ -90,9 +93,11 @@ const CTRL_RESET_ALL : u32 = 0b111;
 const CMD_START : u32 = 1 << 31;
 const CMD_USE_HOLD : u32 = 1 << 29;
 const CMD_WAIT_PREVIOUS_DATA : u32 = 1 << 13;
+const CMD_SEND_INITIALIZATION : u32 = 1 << 15;
 const CMD_DATA_EXPECTED : u32 = 1 << 9;
 const CMD_CHECK_RESPONSE_CRC : u32 = 1 << 8;
 const CMD_RESPONSE_EXPECTED : u32 = 1 << 6;
+const CMD_RESPONSE_LONG : u32 = 1 << 7;
 const INT_END_BIT : u32 = 1 << 15;
 const INT_START_BIT : u32 = 1 << 13;
 const INT_HARDWARE_LOCKED : u32 = 1 << 12;
@@ -131,6 +136,46 @@ impl<R : RegisterIo> DwMmc<R> {
                0
             {
                 return Ok(());
+            }
+        }
+        Err(MmcError::Timeout)
+    }
+
+    /// Execute a non-data command and return RESP0..RESP3.
+    ///
+    /// The caller selects response CRC behavior because OCR responses do not
+    /// carry a valid CRC. CMD0 automatically requests the required 80 initial
+    /// card clocks from the DesignWare controller. Board clock rate and power
+    /// sequencing remain the caller's responsibility and are UNVERIFIED.
+    pub fn execute_command(&mut self,
+                           index : u8,
+                           argument : u32,
+                           response_expected : bool,
+                           response_long : bool,
+                           response_crc : bool)
+                           -> Result<[u32; 4], MmcError> {
+        if index > 63 || response_long && !response_expected {
+            return Err(MmcError::InvalidParameter);
+        }
+        self.registers.write32(RINTSTS, INT_ALL)?;
+        self.registers.write32(CMDARG, argument)?;
+        let mut command = CMD_START | CMD_USE_HOLD | CMD_WAIT_PREVIOUS_DATA | index as u32;
+        if index == 0 { command |= CMD_SEND_INITIALIZATION; }
+        if response_expected { command |= CMD_RESPONSE_EXPECTED; }
+        if response_long { command |= CMD_RESPONSE_LONG; }
+        if response_crc { command |= CMD_CHECK_RESPONSE_CRC; }
+        self.registers.write32(CMD, command)?;
+        for _ in 0..self.poll_limit {
+            let interrupts = self.registers.read32(RINTSTS)?;
+            Self::check_errors(interrupts)?;
+            if interrupts != 0 {
+                self.registers.write32(RINTSTS, interrupts)?;
+            }
+            if interrupts & INT_COMMAND_DONE != 0 {
+                return Ok([self.registers.read32(RESP0)?,
+                           self.registers.read32(RESP1)?,
+                           self.registers.read32(RESP2)?,
+                           self.registers.read32(RESP3)?]);
             }
         }
         Err(MmcError::Timeout)
@@ -305,6 +350,23 @@ mod tests {
         assert_eq!(registers.values[BYTCNT / 4], 512);
         assert_eq!(registers.values[CMDARG / 4], 7);
         assert_eq!(registers.values[CMD / 4] & 0x3F, 17);
+    }
+
+    #[test]
+    fn executes_initialization_and_long_response_commands() {
+        let mut mock = MockRegisters::successful();
+        mock.values[RESP1 / 4] = 2;
+        mock.values[RESP2 / 4] = 3;
+        mock.values[RESP3 / 4] = 4;
+        let mut host = DwMmc::probe(mock, 2).unwrap();
+        assert_eq!(host.execute_command(0, 0, false, false, false), Ok([0x1234, 2, 3, 4]));
+        let command0 = host.registers.values[CMD / 4];
+        assert_ne!(command0 & CMD_SEND_INITIALIZATION, 0);
+        assert_eq!(host.execute_command(2, 0, true, true, true), Ok([0x1234, 2, 3, 4]));
+        let command2 = host.into_inner().values[CMD / 4];
+        let response_flags = CMD_RESPONSE_EXPECTED | CMD_RESPONSE_LONG |
+                             CMD_CHECK_RESPONSE_CRC;
+        assert_eq!(command2 & response_flags, response_flags);
     }
 
     #[test]

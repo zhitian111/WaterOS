@@ -10,6 +10,7 @@ Audit date: 2026-08-10
 | Linux `jh7110.dtsi`, `jh7110-common.dtsi`, `jh7110-starfive-visionfive-2.dtsi` | GPL-2.0 OR MIT | host addresses, IRQ 74/75, bus widths, 100 MHz maximum, eMMC/SD board roles |
 | Linux `dw_mmc.h` and `dw_mmc.c` | GPL-2.0-or-later | public DesignWare register offsets and bit definitions used as hardware-interface facts |
 | Linux `dw_mmc-starfive.c` | GPL-2.0-only | JH7110 has a StarFive-specific sample phase and DDR clock behavior |
+| SD Association Physical Layer Simplified Specification | SDA simplified-specification terms | SD native-mode initialization sequence, response formats, OCR readiness and CCS addressing semantics |
 
 Primary locations:
 
@@ -19,6 +20,7 @@ Primary locations:
 - <https://github.com/torvalds/linux/blob/master/arch/riscv/boot/dts/starfive/jh7110-starfive-visionfive-2.dtsi>
 - <https://github.com/torvalds/linux/blob/master/drivers/mmc/host/dw_mmc-starfive.c>
 - <https://github.com/torvalds/linux/blob/master/drivers/mmc/host/dw_mmc.h>
+- <https://www.sdcard.org/downloads/pls/>
 
 ## Reuse decision
 
@@ -33,3 +35,8 @@ The current code is therefore only a controller primitive plus DTB discovery. It
 must not be represented as a functioning SD/eMMC driver until card enumeration,
 clock/reset/pinmux, voltage switching, tuning and cache/DMA behavior are completed
 and exercised on physical hardware.
+
+The SD Association document was used as a protocol specification, not as source
+code: no prose, diagrams or tables were reproduced. The implementation expresses
+only command numbers, response bits and state transitions required for interoperable
+hardware operation.
