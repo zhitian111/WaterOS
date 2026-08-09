@@ -2,8 +2,9 @@
 #![no_std]
 extern crate alloc;
 
-pub mod plic;
 pub mod irq;
+pub mod mmc;
+pub mod plic;
 pub mod topology;
 pub mod uart;
 
@@ -48,6 +49,15 @@ impl MachineDriver for Machine {
                                         plic.mmio.size,
                                         plic.sources,
                                         plic.contexts.len());
+                         }
+                         for host in &board.mmc_hosts {
+                             log::info!("[driver][visionfive2] MMC host discovered base={:#x} \
+                                         irq={} width={} max_hz={:?}; clock/reset/card bring-up \
+                                         status=UNVERIFIED",
+                                        host.mmio.base,
+                                        host.irq,
+                                        host.bus_width,
+                                        host.max_frequency_hz);
                          }
                          Ok(())
                      });

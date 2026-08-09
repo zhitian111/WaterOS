@@ -1,0 +1,335 @@
+//! Minimal DesignWare MSHC primitives used by the JH7110 MMC hosts.
+//!
+//! This module deliberately stops below card enumeration and clock/reset setup:
+//! those board-specific operations cannot be validated without hardware.
+use api_v0::MmioRegion;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MmcHostDescription {
+    pub mmio : MmioRegion,
+    pub irq : u32,
+    pub bus_width : u8,
+    pub max_frequency_hz : Option<u32>,
+    pub fifo_depth : Option<u32>,
+    pub non_removable : bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MmcError {
+    InvalidParameter,
+    RegisterOutOfRange,
+    Timeout,
+    ResponseTimeout,
+    Response,
+    ResponseCrc,
+    DataTimeout,
+    DataCrc,
+    Fifo,
+    HardwareLocked,
+}
+
+pub trait RegisterIo {
+    fn read32(&mut self, offset : usize) -> Result<u32, MmcError>;
+    fn write32(&mut self, offset : usize, value : u32) -> Result<(), MmcError>;
+}
+
+pub struct MmioRegisters {
+    base : usize,
+    size : usize,
+}
+impl MmioRegisters {
+    /// # Safety
+    /// The caller must ensure that the region is mapped device memory and is
+    /// exclusively controlled through this instance while it is alive.
+    pub unsafe fn new(region : MmioRegion) -> Self {
+        Self { base : region.base,
+               size : region.size }
+    }
+}
+impl RegisterIo for MmioRegisters {
+    fn read32(&mut self, offset : usize) -> Result<u32, MmcError> {
+        if offset.checked_add(4)
+                 .is_none_or(|end| end > self.size) ||
+           offset % 4 != 0
+        {
+            return Err(MmcError::RegisterOutOfRange);
+        }
+        // SAFETY: guaranteed by `new`; the bounds and alignment are checked above.
+        let address = self.base
+                          .checked_add(offset)
+                          .ok_or(MmcError::RegisterOutOfRange)?;
+        Ok(unsafe { core::ptr::read_volatile(address as *const u32) })
+    }
+    fn write32(&mut self, offset : usize, value : u32) -> Result<(), MmcError> {
+        if offset.checked_add(4)
+                 .is_none_or(|end| end > self.size) ||
+           offset % 4 != 0
+        {
+            return Err(MmcError::RegisterOutOfRange);
+        }
+        // SAFETY: guaranteed by `new`; the bounds and alignment are checked above.
+        let address = self.base
+                          .checked_add(offset)
+                          .ok_or(MmcError::RegisterOutOfRange)?;
+        unsafe { core::ptr::write_volatile(address as *mut u32, value) };
+        Ok(())
+    }
+}
+
+const CTRL : usize = 0x000;
+const BLKSIZ : usize = 0x01C;
+const BYTCNT : usize = 0x020;
+const CMDARG : usize = 0x028;
+const CMD : usize = 0x02C;
+const RESP0 : usize = 0x030;
+const RINTSTS : usize = 0x044;
+const STATUS : usize = 0x048;
+const VERID : usize = 0x06C;
+
+const CTRL_RESET_ALL : u32 = 0b111;
+const CMD_START : u32 = 1 << 31;
+const CMD_USE_HOLD : u32 = 1 << 29;
+const CMD_WAIT_PREVIOUS_DATA : u32 = 1 << 13;
+const CMD_DATA_EXPECTED : u32 = 1 << 9;
+const CMD_CHECK_RESPONSE_CRC : u32 = 1 << 8;
+const CMD_RESPONSE_EXPECTED : u32 = 1 << 6;
+const INT_END_BIT : u32 = 1 << 15;
+const INT_START_BIT : u32 = 1 << 13;
+const INT_HARDWARE_LOCKED : u32 = 1 << 12;
+const INT_FIFO_RUN : u32 = 1 << 11;
+const INT_DATA_TIMEOUT : u32 = 1 << 9;
+const INT_RESPONSE_TIMEOUT : u32 = 1 << 8;
+const INT_DATA_CRC : u32 = 1 << 7;
+const INT_RESPONSE_CRC : u32 = 1 << 6;
+const INT_RX_READY : u32 = 1 << 5;
+const INT_DATA_OVER : u32 = 1 << 3;
+const INT_COMMAND_DONE : u32 = 1 << 2;
+const INT_RESPONSE_ERROR : u32 = 1 << 1;
+const INT_ALL : u32 = 0x1FFFF;
+
+pub struct DwMmc<R> {
+    registers : R,
+    fifo_offset : usize,
+    poll_limit : usize,
+}
+impl<R : RegisterIo> DwMmc<R> {
+    pub fn probe(mut registers : R, poll_limit : usize) -> Result<Self, MmcError> {
+        let version = registers.read32(VERID)? & 0xFFFF;
+        let fifo_offset = if version >= 0x240A { 0x200 } else { 0x100 };
+        Ok(Self { registers,
+                  fifo_offset,
+                  poll_limit : poll_limit.max(1) })
+    }
+
+    pub fn reset(&mut self) -> Result<(), MmcError> {
+        self.registers
+            .write32(CTRL, CTRL_RESET_ALL)?;
+        for _ in 0..self.poll_limit {
+            if self.registers
+                   .read32(CTRL)? &
+               CTRL_RESET_ALL ==
+               0
+            {
+                return Ok(());
+            }
+        }
+        Err(MmcError::Timeout)
+    }
+
+    /// Issues CMD17 and transfers exactly one 512-byte block through the FIFO.
+    /// Clocking, card selection, addressing mode and voltage setup are the
+    /// caller's responsibility.
+    pub fn read_single_block(&mut self,
+                             argument : u32,
+                             output : &mut [u8])
+                             -> Result<u32, MmcError> {
+        if output.len() != 512 {
+            return Err(MmcError::InvalidParameter);
+        }
+        self.registers
+            .write32(RINTSTS, INT_ALL)?;
+        self.registers
+            .write32(BLKSIZ, 512)?;
+        self.registers
+            .write32(BYTCNT, 512)?;
+        self.registers
+            .write32(CMDARG, argument)?;
+        self.registers
+            .write32(CMD,
+                     CMD_START |
+                     CMD_USE_HOLD |
+                     CMD_WAIT_PREVIOUS_DATA |
+                     CMD_DATA_EXPECTED |
+                     CMD_CHECK_RESPONSE_CRC |
+                     CMD_RESPONSE_EXPECTED |
+                     17)?;
+
+        let mut bytes = 0;
+        let mut command_done = false;
+        let mut data_over = false;
+        for _ in 0..self.poll_limit {
+            let interrupts = self.registers
+                                 .read32(RINTSTS)?;
+            Self::check_errors(interrupts)?;
+            command_done |= interrupts & INT_COMMAND_DONE != 0;
+            data_over |= interrupts & INT_DATA_OVER != 0;
+
+            let fifo_words = ((self.registers
+                                   .read32(STATUS)? >>
+                               17) &
+                              0x1FFF) as usize;
+            if fifo_words > 0 || interrupts & INT_RX_READY != 0 {
+                for _ in 0..fifo_words.min((output.len() - bytes) / 4) {
+                    let word = self.registers
+                                   .read32(self.fifo_offset)?;
+                    output[bytes..bytes + 4].copy_from_slice(&word.to_le_bytes());
+                    bytes += 4;
+                }
+            }
+            if interrupts != 0 {
+                self.registers
+                    .write32(RINTSTS, interrupts)?;
+            }
+            if command_done && data_over && bytes == output.len() {
+                return self.registers
+                           .read32(RESP0);
+            }
+            if bytes == output.len() && fifo_words > 0 {
+                return Err(MmcError::Fifo);
+            }
+        }
+        Err(MmcError::Timeout)
+    }
+
+    fn check_errors(interrupts : u32) -> Result<(), MmcError> {
+        if interrupts & INT_RESPONSE_TIMEOUT != 0 {
+            return Err(MmcError::ResponseTimeout);
+        }
+        if interrupts & INT_RESPONSE_CRC != 0 {
+            return Err(MmcError::ResponseCrc);
+        }
+        if interrupts & INT_RESPONSE_ERROR != 0 {
+            return Err(MmcError::Response);
+        }
+        if interrupts & INT_DATA_TIMEOUT != 0 {
+            return Err(MmcError::DataTimeout);
+        }
+        if interrupts & INT_DATA_CRC != 0 {
+            return Err(MmcError::DataCrc);
+        }
+        if interrupts & (INT_END_BIT | INT_START_BIT | INT_FIFO_RUN) != 0 {
+            return Err(MmcError::Fifo);
+        }
+        if interrupts & INT_HARDWARE_LOCKED != 0 {
+            return Err(MmcError::HardwareLocked);
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn into_inner(self) -> R { self.registers }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::{collections::VecDeque, vec, vec::Vec};
+
+    struct MockRegisters {
+        values : Vec<u32>,
+        fifo : VecDeque<u32>,
+        interrupts : u32,
+        clear_reset : bool,
+    }
+    impl MockRegisters {
+        fn successful() -> Self {
+            let fifo = (0..128).map(|word| 0xA500_0000 | word)
+                               .collect();
+            let mut values = vec![0; 0x204 / 4];
+            values[VERID / 4] = 0x240A;
+            values[RESP0 / 4] = 0x1234;
+            Self { values,
+                   fifo,
+                   interrupts : INT_COMMAND_DONE | INT_RX_READY | INT_DATA_OVER,
+                   clear_reset : true }
+        }
+    }
+    impl RegisterIo for MockRegisters {
+        fn read32(&mut self, offset : usize) -> Result<u32, MmcError> {
+            if offset == RINTSTS {
+                return Ok(self.interrupts);
+            }
+            if offset == STATUS {
+                return Ok((self.fifo.len() as u32) << 17);
+            }
+            if offset == 0x200 {
+                return self.fifo
+                           .pop_front()
+                           .ok_or(MmcError::Fifo);
+            }
+            self.values
+                .get(offset / 4)
+                .copied()
+                .ok_or(MmcError::RegisterOutOfRange)
+        }
+        fn write32(&mut self, offset : usize, value : u32) -> Result<(), MmcError> {
+            if offset == RINTSTS {
+                return Ok(());
+            }
+            let slot = self.values
+                           .get_mut(offset / 4)
+                           .ok_or(MmcError::RegisterOutOfRange)?;
+            *slot = if offset == CTRL && self.clear_reset {
+                0
+            } else {
+                value
+            };
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn reset_and_read_one_block_through_versioned_fifo() {
+        let mut host = DwMmc::probe(MockRegisters::successful(), 4).unwrap();
+        host.reset()
+            .unwrap();
+        let mut block = [0; 512];
+        assert_eq!(host.read_single_block(7, &mut block),
+                   Ok(0x1234));
+        assert_eq!(&block[..4],
+                   &0xA500_0000u32.to_le_bytes());
+        assert_eq!(&block[508..],
+                   &(0xA500_007Fu32).to_le_bytes());
+        let registers = host.into_inner();
+        assert_eq!(registers.values[BLKSIZ / 4], 512);
+        assert_eq!(registers.values[BYTCNT / 4], 512);
+        assert_eq!(registers.values[CMDARG / 4], 7);
+        assert_eq!(registers.values[CMD / 4] & 0x3F, 17);
+    }
+
+    #[test]
+    fn reports_crc_and_bounded_timeout() {
+        let mut crc = MockRegisters::successful();
+        crc.interrupts = INT_DATA_CRC;
+        let mut host = DwMmc::probe(crc, 2).unwrap();
+        assert_eq!(host.read_single_block(0, &mut [0; 512]),
+                   Err(MmcError::DataCrc));
+
+        let mut timeout = MockRegisters::successful();
+        timeout.interrupts = 0;
+        timeout.fifo.clear();
+        let mut host = DwMmc::probe(timeout, 2).unwrap();
+        assert_eq!(host.read_single_block(0, &mut [0; 512]),
+                   Err(MmcError::Timeout));
+    }
+
+    #[test]
+    fn rejects_wrong_block_size_and_detects_old_fifo_layout() {
+        let mut mock = MockRegisters::successful();
+        mock.values[VERID / 4] = 0x2390;
+        let mut host = DwMmc::probe(mock, 1).unwrap();
+        assert_eq!(host.fifo_offset, 0x100);
+        assert_eq!(host.read_single_block(0, &mut [0; 4]),
+                   Err(MmcError::InvalidParameter));
+    }
+}

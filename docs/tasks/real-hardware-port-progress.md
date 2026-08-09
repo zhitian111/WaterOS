@@ -544,3 +544,43 @@ python3 scripts/remote_debug_qemu_smoke.py \
 ### 提交
 
 - `[feat] add per-hart PLIC and IRQ leases`
+
+## 2026-08-10：批次 12——VisionFive 2 MMC 拓扑与 PIO 控制器核心
+
+### 任务与设计
+
+1. 以 Linux 主线 DT binding 和 JH7110/VisionFive 2 DTS 为权威来源，确认两路 MMC 的地址、IRQ、总线宽度和板级角色。
+2. 审计 DesignWare MMC 与 StarFive 扩展实现的许可证，只复用硬件接口事实，不复制或翻译 GPL 驱动代码。
+3. 将 MMC host 加入 DTB 拓扑；禁用节点不得注册，非法总线宽度必须拒绝。
+4. 实现可注入寄存器后端、版本化 FIFO 地址、控制器复位和有界 CMD17 PIO 单块读取核心。
+5. 用合成寄存器和现场编译 DTB 验证无板可验证部分，明确隔离时钟、复位、调谐和卡枚举等真机工作。
+
+### 完成内容
+
+- [x] 解析 `starfive,jh7110-mmc` 节点的 MMIO、IRQ、`bus-width`、`max-frequency`、`fifo-depth` 与 `non-removable`。
+- [x] DTB fixture 描述 mmc0/eMMC（`0x16010000`、IRQ 74、8-bit）和 mmc1/SD（`0x16020000`、IRQ 75、4-bit）。
+- [x] 新增有边界检查的 volatile MMIO 后端和可替换 `RegisterIo`，测试不访问宿主机物理地址。
+- [x] 根据控制器版本选择旧版 `0x100` 或 2.40a 及以后 `0x200` FIFO 窗口。
+- [x] 实现有界软复位、CMD17 编码、响应/数据 CRC 与超时分类、FIFO 计数驱动的 512-byte PIO 读取。
+- [x] machine driver 只报告 host 拓扑，并明确打印 `clock/reset/card bring-up status=UNVERIFIED`，尚不注册块设备。
+- [x] 新增独立来源与许可证审计，记录 GPL-only StarFive 扩展只用于识别待办边界。
+
+### 验证证据
+
+- JH7110 profile host 单测 10 项通过，其中 3 项直接覆盖 MMC：成功块读取、复位、版本化 FIFO、错误块长、CRC 错误和有界超时。
+- 合成 FIFO 使用 128 个不同的 32-bit word，断言首尾字节、CMD17 编号、参数及块长度，避免只验证全零缓冲区。
+- DTS fixture 经 `dtc` 现场编译并端到端解析两路 host；断言地址、IRQ、总线宽度和 eMMC `non-removable`。
+- VisionFive 2 RISC-V64 交叉检查与公共 RISC-V `make check` 作为本批提交前验收项。
+
+### 已知限制、未验证与后续测试
+
+- [ ] **没有真机，因此 SD/eMMC 可读写状态仍为 UNVERIFIED；宿主机 mock 只能证明软件状态机和边界。**
+- [ ] 尚未实现 JH7110 clock/reset/syscon/pinmux、电源 regulator、card-detect、卡初始化和容量识别，当前不会向 block registry 暴露设备。
+- [ ] 尚未实现 CMD0/CMD8/ACMD41/CMD2/CMD3/CMD7、SDHC 块寻址、写入、多块传输和停止命令。
+- [ ] StarFive sample-phase tuning、DDR 50/52 MHz 时钟倍频、1.8V 切换及 HS200 只能结合硬件和示波/日志验证。
+- [ ] 当前只提供 polling PIO 核心；DMA、cache coherency、IRQ 模式和注销 quiesce 必须在后续独立批次实现。
+- [ ] 真机首测应从 mmc1 可移除 SD 的低速 1-bit/400 kHz 初始化开始，保持 eMMC 根盘只读，确认容量与随机块校验后再允许写入。
+
+### 提交
+
+- `[feat] add VisionFive 2 MMC PIO foundation`

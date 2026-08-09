@@ -244,7 +244,9 @@ mod tests {
         let _guard = TEST_LOCK.lock().unwrap();
         let mut words = alloc::vec![0u32; 0x20_4000 / 4];
         let description = mock_plic(&mut words);
-        topology::store(BoardTopology { console_uart : None, plic : Some(description) });
+        topology::store(BoardTopology { console_uart : None,
+                                        plic : Some(description),
+                                        ..BoardTopology::default() });
         let first = register_irq_handler(17, record).unwrap();
         words[0x20_1004 / 4] = 17;
         assert_eq!(handle_external_interrupt(0), Ok(true));
@@ -261,7 +263,8 @@ mod tests {
         let _guard = TEST_LOCK.lock().unwrap();
         let mut words = alloc::vec![0u32; 0x20_4000 / 4];
         topology::store(BoardTopology { console_uart : None,
-                                        plic : Some(mock_plic(&mut words)) });
+                                        plic : Some(mock_plic(&mut words)),
+                                        ..BoardTopology::default() });
         BLOCKING_STARTED.store(false, Ordering::Release);
         BLOCKING_RELEASE.store(false, Ordering::Release);
         let lease = register_irq_handler(23, blocking_record).unwrap();

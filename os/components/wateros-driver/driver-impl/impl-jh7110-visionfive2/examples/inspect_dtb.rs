@@ -22,5 +22,19 @@ fn main() {
     assert_eq!(plic.contexts[3].hart_id, Some(1));
     assert_eq!(plic.context_for_hart(0), Some(1));
     assert_eq!(plic.context_for_hart(1), Some(3));
+    assert_eq!(topology.mmc_hosts
+                       .len(),
+               2);
+    assert_eq!(topology.mmc_hosts[0].mmio
+                                    .base,
+               0x1601_0000);
+    assert_eq!(topology.mmc_hosts[0].irq, 74);
+    assert_eq!(topology.mmc_hosts[0].bus_width, 8);
+    assert!(topology.mmc_hosts[0].non_removable);
+    assert_eq!(topology.mmc_hosts[1].mmio
+                                    .base,
+               0x1602_0000);
+    assert_eq!(topology.mmc_hosts[1].irq, 75);
+    assert_eq!(topology.mmc_hosts[1].bus_width, 4);
     println!("fixture topology: {topology:?}");
 }

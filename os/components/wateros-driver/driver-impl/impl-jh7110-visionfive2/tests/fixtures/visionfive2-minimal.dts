@@ -39,7 +39,7 @@
         reg-shift = <2>;
         reg-io-width = <4>;
     };
-    interrupt-controller@c000000 {
+    plic: interrupt-controller@c000000 {
         compatible = "starfive,jh7110-plic", "sifive,plic-1.0.0";
         reg = <0 0x0c000000 0 0x04000000>;
         interrupt-controller;
@@ -47,5 +47,24 @@
         riscv,ndev = <136>;
         interrupts-extended = <&cpu_intc0 11 &cpu_intc0 9
                                &cpu_intc1 11 &cpu_intc1 9>;
+    };
+    mmc@16010000 {
+        compatible = "starfive,jh7110-mmc";
+        reg = <0 0x16010000 0 0x10000>;
+        interrupts = <74>;
+        interrupt-parent = <&plic>;
+        bus-width = <8>;
+        max-frequency = <100000000>;
+        fifo-depth = <32>;
+        non-removable;
+    };
+    mmc@16020000 {
+        compatible = "starfive,jh7110-mmc";
+        reg = <0 0x16020000 0 0x10000>;
+        interrupts = <75>;
+        interrupt-parent = <&plic>;
+        bus-width = <4>;
+        max-frequency = <100000000>;
+        fifo-depth = <32>;
     };
 };
