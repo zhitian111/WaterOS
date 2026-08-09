@@ -244,6 +244,65 @@ codegraph explore "wateros_vfs_api_v0::path::normalize_absolute_path NormalizedP
   堆叠字符串微优化，应转向 copy_from_user、页表和高层路径重复解析。
 - 完整日志：`/tmp/wateros-path01a-after-rv.log`（本机临时文件，不提交）。
 
+## COPY-02A：per-CPU 发布当前用户地址空间指针
+
+状态：完整测试超时并回退（2026-08-10）
+
+### 证据与调用链
+
+当前 pc-hot 中，`Sv39UserMemoryOps::copy_from_user` 聚合 792,143,258 条指令；同时
+`process_task_snapshot`、`task_snapshot`、`current_task_snapshot` 等完整快照路径合计超过
+十亿条指令。用户复制获取地址空间的公共链路为：
+
+```text
+copy_from_user / copy_to_user
+  -> current_user_aspace_handle
+     -> task::current_task_user_aspace_ptr
+        -> scheduler::current_task_snapshot
+           -> 全局 scheduler lock
+           -> registry.task_snapshot + 完整 TaskSnapshot
+           -> live tick / vruntime 补算
+        -> 只读取 user_aspace_ptr 一个字段
+```
+
+scheduler 已用 per-CPU `CURRENT_TASK_IDS` 原子槽避免当前 task-id 查询递归获取全局锁；当前
+地址空间也由 `CPUState` 在 switch/exec 时同步维护，具备相同的发布条件。
+
+### 设计
+
+1. 在 scheduler impl 增加 per-CPU `CURRENT_ASPACE_PTRS`，与 `CURRENT_TASK_IDS` 在
+   `with_scheduler` 的统一尾部从 `CPUState::current_aspace()` 发布。
+2. 新增 impl 内部 `current_task_user_aspace_ptr()`：关闭本地中断后选择当前 CPU 槽，使用
+   Acquire load；0 继续表示 idle/kernel/no user aspace。
+3. task 聚合层现有同名接口改为直接调用，不扩大 `task-api/api-v0` 稳定接口。
+4. 不改变地址空间 enter/leave 通知、SATP 切换、任务迁移或调度策略；该缓存仅是当前
+   scheduler 状态的只读镜像，沿用 `CURRENT_TASK_IDS` 的一致性模型。
+
+恢复上下文命令：
+
+```bash
+codegraph explore "current_task_user_aspace_ptr current_user_aspace_handle CURRENT_TASK_IDS with_scheduler CPUState::current_aspace set_current_task execve_current all context-switch publish paths"
+```
+
+### 验收
+
+- task/scheduler 现有测试与双架构 Final check/build 通过。
+- Final feature tree 不启用 user-copy diagnostics。
+- RISC-V 16 GiB/8 vCPU、`-snapshot` 完整 BuildStorm 明确优于 900.64 s，否则回退。
+
+### 验证结果与结论
+
+- 双架构 Final check/build：通过；普通 Final feature tree 不含 `user-copy-diagnostics`。
+- RISC-V 完整 BuildStorm 在 1800 s 上限超时，未到达 `BUILDSTORM_COMPILE`；未发现
+  panic、SIGSEGV 或明确 EFAULT。
+- 改动全部回退。`CURRENT_TASK_IDS` 的统一尾部发布适合 scheduler 条件查询，但地址空间
+  指针参与 exec/switch 后的首个用户访问；上下文切换可能不在新任务栈上返回到统一尾部，
+  因而不能假设二者具有完全相同的发布时序。
+- 后续若重做，必须在 `set_current_task`、exec 更新和进入 idle 的精确状态变更点发布，并
+  增加“切换后首个 syscall 返回正确 aspace”的双架构运行测试；在这些基础设施完成前，
+  保留完整快照查询的正确性路径。
+- 超时日志：`/tmp/wateros-copy02a-after-rv.log`（本机临时文件，不提交）。
+
 ## COPY-01A：RISC-V 对齐 memcpy 64 字节展开
 
 状态：完整测试显著退化并回退（2026-08-10）
