@@ -188,6 +188,62 @@ codegraph explore "another_ext4 BlockCache::read_block CacheSlot Block data clon
   inode/extent 解析和内存管理，而非单一块复制。
 - 完整日志：`/tmp/wateros-fs02b-after-rv.log`（本机临时文件，不提交）。
 
+## PATH-01A：已规范化绝对路径快速复制
+
+状态：已完成（2026-08-10）
+
+### 证据与调用链
+
+FS-02B 后用当前 Final ELF 重跑 300 s pc-hot：`normalize_absolute_path` 聚合
+683,545,098 条指令，函数内 `memcpy` callsite 执行 8,994,172 次。调用链覆盖 openat、
+metadata、mount route 和 symlink resolve：
+
+```text
+copy_user_path_cstr / cwd + relative path
+  -> resolve_path_at / VFS entry
+     -> normalize_absolute_path
+        -> split('/')
+        -> 逐分量判断 empty / . / ..
+        -> 逐段 push 到新 String
+```
+
+BuildStorm 的编译器路径绝大多数已经是标准绝对路径，但每次仍执行完整分量状态机。
+
+### 设计
+
+1. 增加无分配的单次 byte scan；确认路径以 `/` 开头、非根路径不以 `/` 结尾，且没有
+   空、`.` 或 `..` 分量。
+2. 命中时直接 `String::from(path)` 构造 `NormalizedPath`；不逐段 push，也不改变 UTF-8
+   字节。
+3. 未命中继续走原实现，保持根以上 `..` 折叠、重复斜杠、尾斜杠及错误语义。
+4. 不引入 Linux dentry/namei cache：当前缺少 dentry 生命周期、rename invalidation 和
+   mount namespace generation；本项只优化纯函数。
+
+恢复上下文命令：
+
+```bash
+codegraph explore "wateros_vfs_api_v0::path::normalize_absolute_path NormalizedPath all callers resolve_path_at mount route symlink exact source and pathname invariants"
+```
+
+### 验收
+
+- 单元测试覆盖根、标准路径、重复斜杠、`.`、`..`、尾斜杠与 UTF-8。
+- 双架构 Final check/build 通过。
+- RISC-V 16 GiB/8 vCPU、`-snapshot` 完整 BuildStorm 明确优于 908.02 s，否则回退。
+
+### 验证结果
+
+- wateros-vfs-api-v0 单元测试：5/5 通过；覆盖根、标准路径、重复斜杠、`.`、`..`、
+  尾斜杠和 UTF-8。
+- 双架构 Final check/build：通过。
+- RISC-V 16 GiB/8 vCPU、`-snapshot` 完整 BuildStorm：`ok=true`，900.64 s；无
+  panic/SIGSEGV，完整结束。
+- 相对 908.02 s 对照减少 7.38 s（0.81%）；相对 Linux 395.90 s 为 2.28 倍，距离
+  2 倍阶段门槛 791.80 s 尚差 108.84 s。
+- 结论：标准绝对路径占比足以抵消一次预扫描成本，保留快路径；收益有限，后续不继续
+  堆叠字符串微优化，应转向 copy_from_user、页表和高层路径重复解析。
+- 完整日志：`/tmp/wateros-path01a-after-rv.log`（本机临时文件，不提交）。
+
 ## COPY-01A：RISC-V 对齐 memcpy 64 字节展开
 
 状态：完整测试显著退化并回退（2026-08-10）

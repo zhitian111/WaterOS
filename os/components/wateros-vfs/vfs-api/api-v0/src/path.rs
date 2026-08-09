@@ -27,6 +27,11 @@ pub fn normalize_absolute_path(path: &str) -> VfsResult<NormalizedPath> {
     if !path.starts_with('/') {
         return Err(VfsError::InvalidPath);
     }
+    if is_normalized_absolute_path(path.as_bytes()) {
+        return Ok(NormalizedPath {
+            inner: String::from(path),
+        });
+    }
     let mut out = String::with_capacity(path.len());
     out.push('/');
     for part in path.split('/') {
@@ -53,6 +58,33 @@ pub fn normalize_absolute_path(path: &str) -> VfsResult<NormalizedPath> {
         out.push_str(part);
     }
     Ok(NormalizedPath { inner: out })
+}
+
+/// Check the normalized-path invariant without allocating or decoding UTF-8 again.
+fn is_normalized_absolute_path(path: &[u8]) -> bool {
+    if path == b"/" {
+        return true;
+    }
+    if path.len() < 2 || path[0] != b'/' || path[path.len() - 1] == b'/' {
+        return false;
+    }
+
+    let mut component_start = 1;
+    let mut index = 1;
+    while index <= path.len() {
+        if index == path.len() || path[index] == b'/' {
+            let len = index - component_start;
+            if len == 0 ||
+               (len == 1 && path[component_start] == b'.') ||
+               (len == 2 && path[component_start] == b'.' && path[component_start + 1] == b'.')
+            {
+                return false;
+            }
+            component_start = index + 1;
+        }
+        index += 1;
+    }
+    true
 }
 
 /// 根目录下文件名不得包含 `/` 或为空。
@@ -82,5 +114,12 @@ mod tests {
     #[test]
     fn preserves_utf8_components() {
         assert_eq!(normalize_absolute_path("/tmp/测试/ok").unwrap().as_str(), "/tmp/测试/ok");
+    }
+
+    #[test]
+    fn preserves_already_normalized_paths() {
+        assert_eq!(normalize_absolute_path("/").unwrap().as_str(), "/");
+        assert_eq!(normalize_absolute_path("/usr/src/main.rs").unwrap().as_str(),
+                   "/usr/src/main.rs");
     }
 }
