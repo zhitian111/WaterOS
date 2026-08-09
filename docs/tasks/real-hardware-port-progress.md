@@ -627,3 +627,43 @@ python3 scripts/remote_debug_qemu_smoke.py \
 ### 提交
 
 - `[feat] add SD card initialization state machine`
+
+## 2026-08-10：批次 14——SD CSD 容量与整盘边界
+
+### 任务与设计
+
+1. 统一协议层的 136-bit 响应为 MSW-first 128-bit payload，在 DesignWare transport 边界转换 RESP0..3。
+2. 在获得 RCA 后、选卡前发送 CMD9，解析 CSD v1/v2 容量。
+3. 用 checked arithmetic 计算 512-byte 总块数，拒绝保留 CSD structure、非法 block length 和溢出。
+4. 在发出任何 CMD17 前验证整个连续请求没有越过盘尾，避免部分读取。
+5. 提供显式共享块设备句柄构造，但保持 registry 插入由后续真机激活流程控制。
+
+### 完成内容
+
+- [x] `CommandResponse::Long` 明确定义为 MSW-first；DesignWare 的 RESP3..RESP0 在 transport 边界规范化。
+- [x] SD 初始化新增 CMD9，参数使用 RCA，CSD 必须解析成功后才返回 `SdCard`。
+- [x] CSD v2 以 22-bit `C_SIZE` 计算 `(C_SIZE + 1) * 1024` 个逻辑块，覆盖最大 2 TiB/2^32 blocks。
+- [x] CSD v1 组合 `READ_BL_LEN`、`C_SIZE`、`C_SIZE_MULT` 并换算 512-byte blocks，只接受规范允许的 9..11 block-length exponent。
+- [x] `SdCardInfo.total_blocks` 从 `None` 改为可信 `Some`，公共 `BlockDevice::total_blocks()` 可供 MBR 分区边界校验使用。
+- [x] 多块读取先验证 `[start, end)` 完整范围；跨盘尾请求在 transport I/O 前失败。
+- [x] 新增 `into_shared()` 显式构造公共块设备句柄，不自动注册、不触发 MBR 扫描。
+
+### 验证证据
+
+- JH7110 profile host 单测增至 17 项。
+- 合成 CSD v2 最大字段解析为 `2^32` blocks；合成 CSD v1 解析为 32768 blocks。
+- 保留 CSD structure 和非法 256-byte read block length 均被拒绝。
+- 两块请求从 LBA 1023 跨越 1024-block 盘尾时返回 `InvalidParam`，并断言 transport 没有收到任何读命令。
+- 既有 SDHC/SDSC 严格命令脚本加入 CMD9/RCA 参数断言，连续读和地址换算测试继续通过。
+
+### 已知限制、未验证与后续测试
+
+- [ ] **DesignWare RESP3..RESP0 到 CSD MSW/LSW 的转换依据控制器接口定义和上游行为，仍须用真机已知卡的原始 CSD/容量交叉确认。**
+- [ ] CSD 可证明容量算法，不证明卡实际返回稳定响应；真实 CMD9 CRC、timeout 和线路行为仍为 UNVERIFIED。
+- [ ] 尚未解析 erase geometry、write-protect、transfer speed 等 CSD 字段；当前只读路径不依赖这些字段。
+- [ ] 尚未自动注册设备；必须先完成 JH7110 时钟、reset、syscon、pinmux 和低速初始化前置条件。
+- [ ] 首次显式注册前应至少重复读取 MBR/LBA0 和随机末尾块，并与离线镜像哈希对照，失败时不得进入 registry。
+
+### 提交
+
+- `[feat] validate SD card capacity from CSD`
