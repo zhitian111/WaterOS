@@ -87,7 +87,8 @@
   非法 resource、`cur > max`、`NOFILE > NR_OPEN` 均按 Linux 返回，`prlimit64`
   支持目标 pid。
 - [`prctl 错误语义`](./results/prctl-pdeathsig-20260809.md)：
-  `prctl02` 的未实现 option 语义已补齐；PDEATHSIG 投递实验已回退待重做。
+  `prctl02` 的未实现 option 语义已补齐；首次回归定位到 `dc2a7d76`，并已用
+  “托孤前通知 + 跳过 Exiting 子进程”的保守版本重新实现，RV 定向压力通过。
 - [`PR_SET/GET_TIMERSLACK`](./results/prctl-timerslack-20260809.md)：
   per-task timer slack 与 fork/clone 继承已实现，`prctl09` 定时采样通过。
 - [`prctl03 child subreaper`](./results/prctl03-subreaper-20260809.md)：

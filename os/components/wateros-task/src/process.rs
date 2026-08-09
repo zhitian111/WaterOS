@@ -137,6 +137,11 @@ pub fn leader_task_for_process(pid : ProcessId) -> Option<TaskId> {
     active_impl::leader_task_for_process(pid)
 }
 
+/// 返回指定进程的全部直接子进程 pid。
+pub fn collect_child_pids(pid : ProcessId) -> Vec<ProcessId> {
+    active_impl::collect_child_pids(pid)
+}
+
 /// 查找当前进程下一个已退出子进程。
 pub fn find_exited_child_process(parent_pid : ProcessId) -> Option<ProcessSnapshot> {
     active_impl::find_exited_child_process(parent_pid)

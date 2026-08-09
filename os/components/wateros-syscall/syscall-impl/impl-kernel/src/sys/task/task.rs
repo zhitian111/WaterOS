@@ -92,6 +92,9 @@ pub(crate) fn exit_current_with_wait_code(exit_code : isize) -> isize {
         super::wait::drop_task_runtime_resources(task_id);
     }
     let completed_process = task::record_current_task_exit(exit_code);
+    if let Some(pid) = completed_process {
+        crate::sys::ipc::signal::notify_parent_death_signals(pid);
+    }
     if let (Some(task_id), Some(process_task)) = (task::current_task_id(), process_task) {
         crate::sys::ipc::signal::on_thread_exit(task_id,
                                                 process_task.pid.raw(),
@@ -119,6 +122,7 @@ pub(crate) fn exit_group_with_wait_code(exit_code : isize) -> isize {
     if let Some(task_id) = task::current_task_id() {
         super::wait::wake_clear_child_tid_for_task(task_id);
         if let Some(snapshot) = task::current_process_task_snapshot() {
+            crate::sys::ipc::signal::notify_parent_death_signals(snapshot.pid);
             super::wait::reap_exited_member_threads_runtime_resources(snapshot.pid);
             super::super::acct::record_current_process_exit(exit_code);
             process_task = Some(snapshot);

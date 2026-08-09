@@ -123,6 +123,11 @@ pub fn leader_task_for_process(pid : ProcessId) -> Option<TaskId> {
     with_process_registry(|registry| registry.leader_task_for_process(pid))
 }
 
+/// 返回指定进程的全部直接子进程 pid。
+pub fn collect_child_pids(pid : ProcessId) -> Vec<ProcessId> {
+    with_process_registry(|registry| registry.collect_child_pids(pid))
+}
+
 /// 列出进程内全部 task id。
 pub fn task_ids_for_process(pid : ProcessId) -> Option<Vec<TaskId>> {
     with_process_registry(|registry| registry.task_ids_for_process(pid))

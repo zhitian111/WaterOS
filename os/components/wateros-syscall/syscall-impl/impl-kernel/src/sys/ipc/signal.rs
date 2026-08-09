@@ -990,6 +990,52 @@ pub(crate) fn send_kernel_signal_to_process_group(pgid : ProcessId,
     delivered
 }
 
+/// 父进程退出时向直接子进程投递 `PR_SET_PDEATHSIG` 设置的信号。
+///
+/// 该路径由内核自动触发，不检查调用者权限；只投递给仍存活的子进程，避免向
+/// 已 `Exiting/Exited` 的进程重复中断。
+fn send_kernel_signal_to_process(process : ProcessId, sig : usize) -> Result<(), ErrNo> {
+    if sig == 0 || sig > _NSIG as usize {
+        return Err(ErrNo::EINVAL);
+    }
+    if task::leader_task_for_process(process).is_none() {
+        return Err(ErrNo::ESRCH);
+    }
+    if task::process_snapshot(process)
+        .is_none_or(|snapshot| {
+            matches!(snapshot.state,
+                     task::ProcessState::Exited(_) | task::ProcessState::Exiting(_))
+        })
+    {
+        return Ok(());
+    }
+    if ensure_process_signal_state(process).is_err() {
+        return Ok(());
+    }
+    let dispatch = ipc::signal::send_process(process.raw(), sig).map_err(|_| ErrNo::EINVAL)?;
+    apply_signal_dispatch(dispatch, sig);
+    if dispatch.delivery == SignalDelivery::Pending {
+        if let Some(task_ids) = task::task_ids_for_process(process) {
+            for member in task_ids {
+                if ipc::signal::has_deliverable(member).unwrap_or(false) {
+                    let _ = task::interrupt_task(member);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn notify_parent_death_signals(parent_pid : ProcessId) {
+    for child in task::collect_child_pids(parent_pid) {
+        if let Some(sig) = task::process_parent_death_signal(child) {
+            if sig > 0 {
+                let _ = send_kernel_signal_to_process(child, sig as usize);
+            }
+        }
+    }
+}
+
 /// `kill(pid, sig)` — riscv64 系统调用号 129。
 pub(crate) fn sys_kill(args : SyscallArgs) -> UserRet {
     let pid = args.arg(0) as isize;
