@@ -464,6 +464,41 @@ codegraph explore "copy_user_path_cstr ActiveUserMemoryOps::copy_from_user user_
 - smoke 日志：`/tmp/wateros-copy03a-smoke-rv.log`；超时日志：
   `/tmp/wateros-copy03a-after-rv.log`（本机临时文件，不提交）。
 
+## COPY-03B：用户路径使用 64-byte 页内窗口
+
+状态：完整测试退化并回退（2026-08-10）
+
+### 设计
+
+1. 每轮复制 `min(64, page_room, max-len)`，随后在该窗口扫描 NUL。
+2. 典型短路径只需一次 aspace cell 获取和页表 walk；跨页路径仍严格在新页重新验证。
+3. 相对 COPY-03A，最坏无用读取从接近 4095 bytes 限制为 63 bytes；相对原实现，64
+   字节路径的页表 walk 从 64 次降为 1 次。
+4. 保持地址溢出、UTF-8、ENAMETOOLONG、空字符串和 NUL 后未映射页语义。
+
+恢复上下文命令：
+
+```bash
+codegraph explore "copy_user_path_cstr ActiveUserMemoryOps::copy_from_user fixed window page boundary NUL semantics exact source"
+```
+
+### 验收
+
+- 双架构 Final check/build 与 180 s snapshot smoke 通过。
+- 完整 RISC-V BuildStorm 明确优于 900.64 s，否则恢复逐字节实现。
+
+### 验证结果与结论
+
+- 双架构 Final check/build：通过；180 s snapshot smoke 通过 toolchain/minibuild 并进入
+  正式编译，无 EFAULT/panic。
+- 完整 RISC-V BuildStorm：`ok=true`，925.56 s；无 panic/SIGSEGV，完整结束。
+- 相对 900.64 s 对照增加 24.92 s（2.77%），明确退化；逐字节实现已恢复。
+- 结论：限制过读后仍退化，说明批量 memcpy 后再扫描 NUL 的双遍访存和新增分支成本
+  超过页表 walk 减少的收益。pc-hot 指令占比不能直接换算 TCG 墙钟；停止 C 字符串批量
+  复制方向，后续应减少调用链上的复制次数而不是扩大每次复制。
+- smoke 日志：`/tmp/wateros-copy03b-smoke-rv.log`；完整日志：
+  `/tmp/wateros-copy03b-after-rv.log`（本机临时文件，不提交）。
+
 ## COPY-01A：RISC-V 对齐 memcpy 64 字节展开
 
 状态：完整测试显著退化并回退（2026-08-10）
