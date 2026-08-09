@@ -1288,3 +1288,54 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 ### 提交
 
 - `[feat] add physical DMA ownership contract`
+
+## 2026-08-10：批次 31——物理连续 DMA 帧所有权
+
+### 任务与设计
+
+1. 为公共物理帧分配 API 增加连续、按页对齐的区间契约。
+2. 保持单页分配和引用计数语义，连续区间分配/释放必须原子失败。
+3. 用不可复制的 RAII 对象封装连续物理 RAM，分别暴露物理地址和恒等映射借用。
+4. 增加无架构 host 测试缝，默认内核构建仍保留中断屏蔽与 CPU-aware locking。
+5. 运行 host 单测及 RISC-V64、LoongArch64 双架构构建。
+
+`FrameSpan` 只描述分配器返回的起始 PPN 和页数；`OwnedPhysFrameSpan` 才持有回收责任。
+对齐单位为页且必须为 2 的幂。释放前先检查区间内每页均已分配且引用计数恰为 1，任何
+一页不满足时整段保持不变。驱动必须从 `physical_address()` 取得设备地址，不能把恒等
+映射 slice 的虚拟指针当作通用 VA→PA 转换。
+
+### 完成内容
+
+- [x] `PhysicalFrameAllocator` 新增带默认 `Unsupported` 的连续分配/释放方法，不破坏其它实现。
+- [x] `FrameSpan` 保存起始 frame id 与 frame count，不对外开放字段修改。
+- [x] stack allocator 支持非零 2 次幂页对齐，优先从未使用连续高段分配，再扫描回收区间。
+- [x] 对齐产生的空洞页进入既有回收栈，不会丢失可用帧。
+- [x] 分配成功后一次性标记区间内所有页为 allocated/refcount=1；失败不修改状态。
+- [x] 连续释放拒绝越界、零长度、重复释放以及含共享引用的区间，检查完成后才统一回收。
+- [x] 新增全局 `frame_alloc_contiguous` / `frame_dealloc_contiguous` 入口。
+- [x] `OwnedPhysFrameSpan::alloc_zeroed` 封装清零、物理地址、长度、字节借用和 Drop 整段回收。
+- [x] stack crate 增加默认开启的 `kernel-arch` 特性；仅显式关闭时使用 host 测试路径，生产默认行为不变。
+
+### 验证证据
+
+- `cargo test -p wateros-mm-frame-alloctor-impl-stack --no-default-features --features api-v0`：3 项通过。
+- host 测试覆盖对齐空洞保留、释放后复用、重复释放、共享引用拒绝、非法参数、OOM 和失败不变性。
+- `make check`：RISC-V64 release cargo check 通过。
+- `make kernel-rv`：RISC-V64 release kernel 构建通过。
+- `make kernel-la`：LoongArch64 release kernel 构建通过。
+- 本批 Rust 文件已按仓库 `.rustfmt.toml` 单独格式化；`git diff --check` 通过。
+- 全仓 `cargo fmt --all -- --check` 仍会报告 vendor 与其它既有文件的大量格式差异，本批未改动这些文件。
+
+### 已知限制、未验证与后续测试
+
+- [ ] 尚无真机，未验证两块板上的物理 RAM 恒等映射范围、cache coherency、DMA address width 和设备实际读写。
+- [ ] `OwnedPhysFrameSpan` 只提供连续 RAM 所有权与明确 PA；尚未直接生成 driver API 的 `DmaRegion`/`DmaMapping`。
+- [ ] 当前连续分配为线性扫描，适合 bring-up 和小规模 descriptor/buffer；长期需要更高效的 buddy/extent allocator。
+- [ ] 对齐只支持页粒度，不能表达小于 4 KiB 的 descriptor 对齐或大于页且非 2 次幂的设备约束。
+- [ ] 连续分配尚未接入 2K1000 APBDMA descriptor/buffer executor，也未迁移现有 VirtIO HAL。
+- [ ] 清零和字节借用依赖可分配 RAM 恒等映射；未来若改为高半内核或 IOMMU，需由平台提供显式映射。
+- [ ] 后续应增加从 owned span 到 `DmaMapping` 的受控适配，并实现/验证 LoongArch64 cache maintenance backend。
+
+### 提交
+
+- `[feat] allocate owned contiguous physical frames`
