@@ -142,6 +142,7 @@ pub struct ParentActivationReport {
 
 pub struct ActivationFailure<S> {
     pub error : RuntimeError,
+    pub source_rollback_error : Option<RuntimeError>,
     pub rollback_error : Option<DriverError>,
     /// Parent inputs that this transaction enabled but could not roll back.
     pub residual_parent_lines : u8,
@@ -342,7 +343,7 @@ impl<I : RegisterIo, O> DormantRuntime<I, O> {
                                               owner });
             }
         };
-        if let Err(failure) = binding.arm(controller, route) {
+        if let Err(failure) = binding.configure_masked(controller, route) {
             let owner = self.runtime.owners.unregister(irq).expect("registered owner missing");
             return Err(ConfigureFailure { error : RuntimeError::Controller(failure.error),
                                           state : self,
@@ -374,7 +375,7 @@ impl<I : RegisterIo, O> ConfiguredRuntime<I, O> {
                                               owner });
             }
         };
-        if let Err(failure) = binding.arm(controller, route) {
+        if let Err(failure) = binding.configure_masked(controller, route) {
             let owner = self.runtime.owners.unregister(irq).expect("registered owner missing");
             return Err(ConfigureFailure { error : RuntimeError::Controller(failure.error),
                                           state : self,
@@ -402,6 +403,23 @@ impl<I : RegisterIo, O> ConfiguredRuntime<I, O> {
         Ok(parents)
     }
 
+    fn set_configured_sources(&mut self, enabled : bool) -> Result<(), RuntimeError> {
+        let mut remaining = self.configured_sources;
+        while remaining != 0 {
+            let raw = remaining.trailing_zeros() as usize;
+            remaining &= !(1u64 << raw);
+            let controller = self.runtime.controllers[raw / 32]
+                                         .as_mut()
+                                         .ok_or(RuntimeError::MissingController)?;
+            if enabled {
+                controller.enable((raw % 32) as u32).map_err(RuntimeError::Controller)?;
+            } else {
+                controller.mask_ack((raw % 32) as u32).map_err(RuntimeError::Controller)?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn activate<A : CpuParentActivator>(self,
                                             activator : &mut A)
                                             -> Result<LiveRuntime<I, O>, TransitionFailure<Self>> {
@@ -415,7 +433,7 @@ impl<I : RegisterIo, O> ConfiguredRuntime<I, O> {
     ///
     /// `already_enabled` must be the caller's current-CPU ownership snapshot,
     /// not a raw ECFG value.  Real CSR behavior is `UNVERIFIED_ON_HARDWARE`.
-    pub fn activate_transactional<A, F>(self,
+    pub fn activate_transactional<A, F>(mut self,
                                         activator : &mut A,
                                         already_enabled : u8,
                                         mut commit : F)
@@ -427,6 +445,7 @@ impl<I : RegisterIo, O> ConfiguredRuntime<I, O> {
             Ok(parents) => parents,
             Err(error) => return Err(ActivationFailure {
                 error,
+                source_rollback_error : None,
                 rollback_error : None,
                 residual_parent_lines : 0,
                 report : ParentActivationReport { requested : 0,
@@ -444,6 +463,7 @@ impl<I : RegisterIo, O> ConfiguredRuntime<I, O> {
             if let Err(error) = activator.enable_parent_lines(report.newly_enabled) {
                 return Err(ActivationFailure {
                     error : RuntimeError::Controller(error),
+                    source_rollback_error : None,
                     rollback_error : None,
                     residual_parent_lines : 0,
                     report,
@@ -451,7 +471,27 @@ impl<I : RegisterIo, O> ConfiguredRuntime<I, O> {
                 });
             }
         }
+        if let Err(error) = self.set_configured_sources(true) {
+            let rollback_error = if report.newly_enabled == 0 {
+                None
+            } else {
+                activator.disable_parent_lines(report.newly_enabled).err()
+            };
+            return Err(ActivationFailure {
+                error,
+                source_rollback_error : self.set_configured_sources(false).err(),
+                rollback_error,
+                residual_parent_lines : if rollback_error.is_some() {
+                    report.newly_enabled
+                } else {
+                    0
+                },
+                report,
+                state : self,
+            });
+        }
         if let Err(error) = commit(report) {
+            let source_rollback_error = self.set_configured_sources(false).err();
             let rollback_error = if report.newly_enabled == 0 {
                 None
             } else {
@@ -459,6 +499,7 @@ impl<I : RegisterIo, O> ConfiguredRuntime<I, O> {
             };
             return Err(ActivationFailure {
                 error : RuntimeError::Controller(error),
+                source_rollback_error,
                 rollback_error,
                 residual_parent_lines : if rollback_error.is_some() {
                     report.newly_enabled
@@ -797,6 +838,12 @@ mod tests {
         assert_eq!(live.parent_lines(), 1 << 2);
         assert_eq!(activator.enables, [1 << 2]);
         assert_eq!(activator.disables, [1 << 2]);
+        let mut controllers = live.into_runtime().into_controllers();
+        let writes = controllers[0].take().unwrap().into_inner().writes;
+        assert_eq!(&writes[writes.len() - 3..],
+                   [(BASE0 + 0x28, 1 << 6),
+                    (BASE0 + ENABLE_CLEAR, 1 << 6),
+                    (BASE0 + 0x28, 1 << 6)]);
     }
 
     #[test]

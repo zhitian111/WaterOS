@@ -2492,3 +2492,53 @@ parent mask。调用方可以把 residual 合并进下一次 `already_enabled` �
 ### 提交
 
 - `[ref] make 2K1000 IRQ activation rollback-safe`
+
+## 2026-08-10：批次 55——Masked staging and single-publication runtime slot
+
+### 任务与设计
+
+审查诊断入口时发现原 configure 会立即写 ENABLE_SET；如果后续 CPU parent activation/publish
+失败，丢弃 Configured typestate 会遗留已开启 device source。因此先将配置和交付严格分阶段：
+configure 只写 route/trigger 且保持 source masked；activate 先启用 CPU parent，再启用 configured
+source；commit 失败按 source-mask → 新增 parent-disable 的顺序回滚。
+
+新增 lock-free `DiagnosticRuntimeSlot`。诊断流程必须在任何硬件写前 reserve；reservation drop
+自动恢复 Empty，commit 在持有 reservation 时为不可失败写入。IRQ service 使用原子
+Live→Servicing 独占访问，避免持有初始化 spin mutex，重入/并发 service fail closed。
+
+### 完成内容
+
+- [x] `InterruptBinding::configure_masked()` 只配置 route/trigger，不执行 ENABLE_SET。
+- [x] 既有 `arm()` 复用 masked configuration 后显式 enable，生命周期 API 行为保持兼容。
+- [x] Dormant/Configured runtime 配置 owner 时保持所有 device source masked。
+- [x] activation 在 parent enable 成功后才逐项 ENABLE_SET。
+- [x] commit failure 先逐项 ENABLE_CLEAR，再回滚本事务新增 CPU HWI。
+- [x] `ActivationFailure` 分开报告 source rollback 与 parent rollback error。
+- [x] 新增 Empty/Reserved/Live/Servicing 原子 slot 状态机。
+- [x] reservation 未 commit 时 Drop 可重试；commit 后拒绝二次发布。
+- [x] service 重入返回 Busy，不等待自旋锁、不暴露半初始化值。
+- [x] production init 尚未创建/调用 slot，默认硬件行为不变。
+
+### 验证证据
+
+- `cargo test`：70 项 host 单测全部通过（本批新增 2 项 slot 测试）。
+- rollback 顺序模型断言 LIOINTC 写序列为 ENABLE_SET → ENABLE_CLEAR → retry ENABLE_SET。
+- parent mock 断言 commit 失败时只撤销事务新增 HWI2，已有 HWI3 不受影响。
+- slot 测试覆盖 reservation 冲突、drop 后重试、单次 commit、Live mutation 和 service 重入 Busy。
+- 2K1000 精确 feature LoongArch target check、`make kernel-la`、topology/畸形 DTS fixture 通过；
+  仅有既有 warning。
+- `git diff --check` 通过；未创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：masked route/trigger 配置、parent-first/source-last 顺序仍需示波或日志上板确认。
+- [ ] slot 是基础容器，target-only volatile LiveRuntime 尚未声明为全局实例。
+- [ ] Servicing 防止同一 slot 并发，但当前未实现 SMP interrupt affinity，预期诊断阶段只路由 boot CPU。
+- [ ] commit 后 runtime 不支持卸载；CPU offline/shutdown 需新增 drain/quiesce 状态。
+- [ ] source enable 的底层 volatile backend 当前不会报告总线异常；错误模型主要覆盖契约/未来可失败 backend。
+- [ ] 下一批可安全实现显式 target-only diagnostic bring-up：先 reserve slot，再 assemble masked runtime、
+  应用 AckOnly owner、事务 activate，最后 infallible commit；Machine handler 只服务 Live slot。
+
+### 提交
+
+- `[ref] stage 2K1000 IRQ runtime before publication`

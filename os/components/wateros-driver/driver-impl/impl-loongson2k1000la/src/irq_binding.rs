@@ -38,10 +38,11 @@ impl InterruptBinding {
     pub const fn global_irq(self) -> GlobalIrq { self.global_irq }
     pub const fn trigger(self) -> Trigger { self.trigger }
 
-    pub fn arm<I : RegisterIo>(self,
-                               controller : &mut LioIntc<I>,
-                               route : Route)
-                               -> Result<ArmedInterrupt, LifecycleFailure<Self>> {
+    /// Program route and trigger while leaving the source masked.
+    pub fn configure_masked<I : RegisterIo>(self,
+                                            controller : &mut LioIntc<I>,
+                                            route : Route)
+                                            -> Result<(), LifecycleFailure<Self>> {
         if controller.bank() != self.global_irq.bank() || route.encode().is_err() {
             return Err(LifecycleFailure { error : DriverError::InvalidParam, state : self });
         }
@@ -51,6 +52,14 @@ impl InterruptBinding {
         if let Err(error) = controller.set_trigger(self.global_irq.local(), self.trigger) {
             return Err(LifecycleFailure { error, state : self });
         }
+        Ok(())
+    }
+
+    pub fn arm<I : RegisterIo>(self,
+                               controller : &mut LioIntc<I>,
+                               route : Route)
+                               -> Result<ArmedInterrupt, LifecycleFailure<Self>> {
+        self.configure_masked(controller, route)?;
         if let Err(error) = controller.enable(self.global_irq.local()) {
             return Err(LifecycleFailure { error, state : self });
         }
