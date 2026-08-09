@@ -93,6 +93,9 @@
 - [`prctl03 child subreaper`](./results/prctl03-subreaper-20260809.md)：
   SET/GET opcode、GET 写回和孤儿托孤语义已修复；静态回归通过，完整 LTP
   暂留排除名单。
+- [`K-05D ramfs 物理页复验`](./results/k05d-ramfs-physical-pages-20260809.md)：
+  `/tmp` payload 使用 `OwnedPhysPage`，128 MiB 实写对应帧占用、删除可回收，
+  600 MiB 写入稳定返回 `ENOSPC`。
 - [`sched_setparam Blocking/Sleeping 目标`](./results/sched-setparam-blocked-target-20260808.md)：
   `sched_setparam03` 不再对阻塞父进程错误返回 `ESRCH`，调度相关 LTP 全部通过。
 - [`mmap O_WRONLY fd`](./results/mmap-wronly-fd-eacces-20260808.md)：
