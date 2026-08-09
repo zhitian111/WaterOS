@@ -11,7 +11,7 @@
 //! - VirtIO PCI BAR 不是 VirtIO-MMIO 寄存器文件，必须使用 `PciTransport` 解析
 //!   vendor capabilities。
 
-use api_v0::DriverResult;
+use api_v0::{DriverError, DriverResult};
 use block::{VirtioPciBarAllocator, VirtioPciBlkDevice, VirtioPciProbeInfo};
 use network::{VirtioNetPciBarAllocator, VirtioNetPciProbeInfo, VirtioPciNetDevice};
 #[cfg(feature = "display")]
@@ -28,6 +28,78 @@ const PCI_GPU_MMIO_BASE: u64 = 0x6000_0000;
 #[cfg(feature = "input")]
 const PCI_INPUT_MMIO_BASE: u64 = 0x7000_0000;
 const PCI_MMIO_END: u64 = 0x8000_0000;
+
+const LS7A_TOY_READ0_OFFSET: usize = 0x2c;
+const LS7A_TOY_READ1_OFFSET: usize = 0x30;
+const LS7A_RTC_CTRL_OFFSET: usize = 0x40;
+const LS7A_RTC_REQUIRED_SIZE: usize = LS7A_RTC_CTRL_OFFSET + core::mem::size_of::<u32>();
+const LS7A_RTC_CTRL_TOY_ENABLE: u32 = 1 << 11;
+const LS7A_RTC_CTRL_ENABLE_OUTPUT: u32 = 1 << 8;
+
+fn mmio_read32(base: usize, byte_offset: usize) -> u32 {
+    let ptr = base.wrapping_add(byte_offset) as *const u32;
+    unsafe { core::ptr::read_volatile(ptr) }
+}
+
+fn mmio_write32(base: usize, byte_offset: usize, value: u32) {
+    let ptr = base.wrapping_add(byte_offset) as *mut u32;
+    unsafe { core::ptr::write_volatile(ptr, value) }
+}
+
+/// 从 LS7A TOY 寄存器读取 QEMU 提供的 UTC，并转换为 Unix 纳秒时间戳。
+///
+/// 裸内核启动没有固件替我们打开日历计数器，因此读取前需要保留控制寄存器的其他位，
+/// 再启用 TOY 与输出总开关。年份在跨年瞬间可能变化，前后两次年份一致时才采用本次结果。
+pub fn ls7a_rtc_realtime_ns() -> DriverResult<u64> {
+    let fdt = common::dtb::read_fdt(platform::dtb_pa())?;
+    let rtc = fdt
+        .all_nodes()
+        .find(|node| {
+            common::dtb::compatible_list(node)
+                .iter()
+                .any(|compatible| compatible == "loongson,ls7a-rtc")
+        })
+        .and_then(common::dtb::first_mmio_region)
+        .filter(|region| region.size >= LS7A_RTC_REQUIRED_SIZE)
+        .ok_or(DriverError::NotFound)?;
+
+    let control = mmio_read32(rtc.base, LS7A_RTC_CTRL_OFFSET);
+    let enabled_control = control | LS7A_RTC_CTRL_TOY_ENABLE | LS7A_RTC_CTRL_ENABLE_OUTPUT;
+    if enabled_control != control {
+        mmio_write32(rtc.base, LS7A_RTC_CTRL_OFFSET, enabled_control);
+    }
+
+    for _ in 0..3 {
+        let year_before = mmio_read32(rtc.base, LS7A_TOY_READ1_OFFSET);
+        let calendar = mmio_read32(rtc.base, LS7A_TOY_READ0_OFFSET);
+        let year_after = mmio_read32(rtc.base, LS7A_TOY_READ1_OFFSET);
+        if year_before != year_after {
+            continue;
+        }
+
+        let fields = platform::wall_clock::RtcTimeFields {
+            tm_sec: ((calendar >> 4) & 0x3f) as i32,
+            tm_min: ((calendar >> 10) & 0x3f) as i32,
+            tm_hour: ((calendar >> 16) & 0x1f) as i32,
+            tm_mday: ((calendar >> 21) & 0x1f) as i32,
+            tm_mon: (((calendar >> 26) & 0x3f) as i32) - 1,
+            tm_year: year_before as i32,
+            ..Default::default()
+        };
+        if fields.tm_sec > 59
+            || fields.tm_min > 59
+            || fields.tm_hour > 23
+            || fields.tm_mday > 31
+        {
+            return Err(DriverError::IoError);
+        }
+        let ns = platform::wall_clock::rtc_time_to_ns(&fields)
+            .map_err(|_| DriverError::IoError)?;
+        return u64::try_from(ns).map_err(|_| DriverError::IoError);
+    }
+
+    Err(DriverError::IoError)
+}
 
 /// 从 DTB 中解析 `pci@*` 节点的 `reg` 段，优先寻找 QEMU LoongArch 的配置窗口；
 /// 失败则回退到硬编码默认值。
