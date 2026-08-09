@@ -1,6 +1,6 @@
 //! QEMU `virt` 机器、RISC-V64、OpenSBI 环境下的机器驱动。
 //!
-//! 职责划分：`boot` 保存引导 DTB 指针；`enumerate` 扫描 DTB 设备表；`register`
+//! 职责划分：`enumerate` 扫描 DTB 设备表；`register`
 //! 实例化并注册各子系统设备；`devfs` 同步设备视图；`test` 提供只读自检；
 //! `machine` 以 [`MachineDriver`] 契约对外暴露本 profile；`uart` 负责平台侧
 //! UART 接线。
@@ -8,7 +8,6 @@
 #![no_std]
 extern crate alloc;
 
-pub mod boot;
 pub mod devfs;
 pub mod enumerate;
 pub mod machine;

@@ -40,7 +40,7 @@ pub(crate) fn sys_dev_path_for_dtb_node(node_name: &str) -> String {
 
 /// 遍历 DTB 全部节点，重建全局设备信息表（先清空）；返回表中条目数。
 pub fn scan_device_info() -> DriverResult<usize> {
-    let fdt = dtb::read_fdt()?;
+    let fdt = dtb::read_fdt(platform::dtb_pa())?;
     let mut devices = DEVICE_INFOS.lock();
     devices.clear();
 

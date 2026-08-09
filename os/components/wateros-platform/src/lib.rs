@@ -40,6 +40,23 @@ pub fn init_when_boot(dtb_pa: usize) {
     }
 }
 
+/// 平台持有的 DTB 物理指针（未保存时为 0）。
+pub fn dtb_pa() -> usize {
+    #[cfg(feature = "impl-qemu-riscv64-opensbi")]
+    {
+        impl_qemu_riscv64_opensbi::dtb::dtb_pa()
+    }
+    #[cfg(feature = "impl-qemu-loongarch64-virt")]
+    {
+        impl_qemu_loongarch64_virt::dtb::dtb_pa()
+    }
+    #[cfg(not(any(feature = "impl-qemu-riscv64-opensbi",
+                  feature = "impl-qemu-loongarch64-virt")))]
+    {
+        0
+    }
+}
+
 /// 物理 RAM 上界（不包含），用于恒等映射与帧分配器；QEMU 实现从平台持有的
 /// DTB 解析，其它配置返回回退常量。
 pub fn physical_ram_end_exclusive() -> usize {

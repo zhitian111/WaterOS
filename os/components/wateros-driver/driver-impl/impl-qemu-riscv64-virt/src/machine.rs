@@ -2,7 +2,7 @@
 
 use api_v0::{DriverResult, MachineDriver};
 
-use crate::{boot, enumerate, init_after_boot, test};
+use crate::{enumerate, init_after_boot, test};
 
 /// 当前 QEMU RISC-V profile 的机器驱动单例。
 pub struct Machine;
@@ -15,10 +15,6 @@ pub fn machine() -> &'static dyn MachineDriver {
 }
 
 impl MachineDriver for Machine {
-    fn init_when_boot(&self, dtb_pa: usize) {
-        boot::init_when_boot(dtb_pa)
-    }
-
     fn init_after_boot(&self) -> DriverResult<()> {
         init_after_boot()
     }

@@ -72,12 +72,6 @@ pub fn supported_device_entries() -> Vec<&'static SupportedDeviceEntry> {
                               .collect()
 }
 
-/// 引导早期调用：保存 DTB 物理地址等平台状态；具体解析在 [`init_after_boot`]
-/// 或各实现内完成。
-pub fn init_when_boot(dtb_pa : usize) {
-    machine().init_when_boot(dtb_pa);
-}
-
 /// 内核完成必要子系统初始化后调用：扫描/注册设备等；失败时记录日志，
 /// 不向上返回错误（当前契约）。
 pub fn init_after_boot() {

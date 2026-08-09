@@ -1,13 +1,12 @@
 //! QEMU LoongArch64 `virt` 平台驱动：PCIe ECAM 枚举、virtio 注册与 devfs 同步。
 //!
-//! 职责划分：`boot` 保存引导 DTB 并初始化早期 UART；`enumerate` 做 PCIe ECAM
+//! 职责划分：`enumerate` 做 PCIe ECAM
 //! 扫描；`register` 实例化并注册各子系统设备；`devfs` 同步设备视图；`test`
 //! 提供只读自检；`machine` 以 [`MachineDriver`] 契约对外暴露本 profile。
 
 #![no_std]
 extern crate alloc;
 
-mod boot;
 mod devfs;
 mod enumerate;
 mod machine;
@@ -49,6 +48,7 @@ pub fn init_after_boot() -> DriverResult<()> {
 }
 
 fn init_after_boot_inner() -> DriverResult<()> {
+    uart::init_default_virt_uart();
     for e in block::supported_devices() {
         log::info!(
             "[driver-la] supported-device catalog: subsystem={} name={} compatible={}",
@@ -119,7 +119,6 @@ fn init_after_boot_inner() -> DriverResult<()> {
     }
 
     devfs::sync();
-    uart::init_default_virt_uart();
     log::info!("[driver-la] QEMU LoongArch64 UART16550 ready (serial I/O)");
 
     Ok(())

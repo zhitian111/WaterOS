@@ -1,6 +1,6 @@
 //! 引导期从 DTB 探测 CPU timebase 频率并注入 [`platform::time::set_frequency_hz`]。
 //!
-//! 须在 `driver::init_when_boot` 之后、首次 [`platform::timer`] 使用前调用；
+//! 须在 `platform::init_when_boot` 之后、首次 [`platform::timer`] 使用前调用；
 //! DTB 指针与 driver 层 `read_fdt` 使用相同契约（常驻物理内存、合法 FDT 头）。
 
 use fdt::Fdt;

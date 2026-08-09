@@ -16,8 +16,6 @@ pub fn machine() -> &'static dyn MachineDriver {
 }
 
 impl MachineDriver for Machine {
-    fn init_when_boot(&self, _dtb_pa: usize) {}
-
     fn init_after_boot(&self) -> DriverResult<()> {
         Ok(())
     }

@@ -261,7 +261,6 @@ mod qemu_riscv64_opensbi {
         }
         // BSP 初始化：驱动 → 日志 → timebase → 堆 → arch → 任务 → trap
         platform::init_when_boot(dtb_pa);
-        driver::init_when_boot(dtb_pa);
         runtime::console::show_logo();
         klog::init();
         runtime::logging::init();
@@ -391,7 +390,6 @@ mod qemu_loongarch64_virt {
         let _ = platform::smp::init_ipi();
         let dtb_pa = platform::active_impl::boot::device_tree_phys_addr();
         platform::init_when_boot(dtb_pa);
-        driver::init_when_boot(dtb_pa);
         let configured =
             platform::active_impl::smp::init_configured_cpu_mask(dtb_pa).expect("initialize \
                                                                                  LoongArch CPU \

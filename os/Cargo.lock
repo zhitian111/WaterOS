@@ -858,6 +858,7 @@ dependencies = [
  "wateros-driver-input",
  "wateros-driver-network",
  "wateros-fs",
+ "wateros-platform",
 ]
 
 [[package]]

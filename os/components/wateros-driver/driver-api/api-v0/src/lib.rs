@@ -94,9 +94,6 @@ pub type DriverResult<T> = core::result::Result<T, DriverError>;
 /// 每个 `driver-impl` profile（QEMU RV/LA、dummy）实现本 trait，并通过
 /// `machine()` 提供单例；上层只依赖该契约，不再直接引用具体 impl crate。
 pub trait MachineDriver {
-    /// 引导早期调用：保存 DTB 等平台状态；实现可忽略参数。
-    fn init_when_boot(&self, dtb_pa: usize);
-
     /// 内核完成必要子系统初始化后调用：枚举并注册设备。
     fn init_after_boot(&self) -> DriverResult<()>;
 

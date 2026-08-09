@@ -32,6 +32,7 @@
     ] }
     fs = { path = "../../../wateros-fs", package = "wateros-fs", default-features = true }
     wateros-base-config = { path = "../../../wateros-base/base-config", package = "wateros-base-config" }
+    platform = { path = "../../../wateros-platform", package = "wateros-platform", default-features = false, features = [ "impl-qemu-loongarch64-virt" ] }
 
 [features]
     api-v0 = [  ]

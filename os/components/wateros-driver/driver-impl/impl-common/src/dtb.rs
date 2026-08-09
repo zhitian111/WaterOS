@@ -1,34 +1,20 @@
 //! DTB 访问与节点解析原语。
 //!
-//! 存储引导期传入的 DTB 物理指针，并提供只读解析助手；设备探测与注册等
-//! transport 相关逻辑不在此处。
+//! DTB 物理指针由 platform 唯一持有（见 `wateros-platform::init_when_boot`），
+//! 本模块只提供按指针解析的只读助手；设备探测与注册等 transport 相关逻辑不在
+//! 此处。
 
 use alloc::{string::String, vec::Vec};
-use core::sync::atomic::{AtomicUsize, Ordering};
 
 use api_v0::{DriverError, DriverResult, IrqLine, MmioRegion};
 use fdt::Fdt;
 
-/// DTB 物理基址；为 0 时 [`read_fdt`] 返回 [`DriverError::NotFound`]。
-static DTB_BASE_ADDR: AtomicUsize = AtomicUsize::new(0);
-
-/// 保存引导期传入的 DTB 物理基址。
-pub fn store(dtb_pa: usize) {
-    DTB_BASE_ADDR.store(dtb_pa, Ordering::Release);
-}
-
-/// 当前保存的 DTB 物理基址（未保存时为 0）。
-pub fn dtb_pa() -> usize {
-    DTB_BASE_ADDR.load(Ordering::Acquire)
-}
-
 // `unsafe`：`dtb_pa` 指向的 DTB 在内核存活期内常驻且布局合法；返回的 `Fdt` 仅用于只读扫描。
-pub fn read_fdt() -> DriverResult<Fdt<'static>> {
-    let dtb = DTB_BASE_ADDR.load(Ordering::Acquire);
-    if dtb == 0 {
+pub fn read_fdt(dtb_pa: usize) -> DriverResult<Fdt<'static>> {
+    if dtb_pa == 0 {
         return Err(DriverError::NotFound);
     }
-    let fdt = unsafe { Fdt::from_ptr(dtb as *const u8) }.map_err(|_| DriverError::InvalidDtb)?;
+    let fdt = unsafe { Fdt::from_ptr(dtb_pa as *const u8) }.map_err(|_| DriverError::InvalidDtb)?;
     Ok(fdt)
 }
 
