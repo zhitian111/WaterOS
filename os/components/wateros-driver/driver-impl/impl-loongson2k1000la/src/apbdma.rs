@@ -188,20 +188,8 @@ impl<D : DmaCoherency, P : DmaCoherency> OwnedTransferResources<D, P> {
         self.payload.cpu_bytes_mut()
     }
 
-    pub fn prepare(&mut self) -> DriverResult<PreparedTransfer> {
-        prepare_transfer(self.plan,
-                         self.descriptor.mapping_mut(),
-                         self.payload.mapping_mut())
-    }
-
-    pub fn cancel(&mut self, prepared : PreparedTransfer) -> DriverResult<()> {
-        cancel_prepared(prepared,
-                        self.descriptor.mapping_mut(),
-                        self.payload.mapping_mut())
-    }
-
-    pub fn finish(&mut self, completion : Completion) -> DriverResult<()> {
-        finish_transfer(completion,
+    pub fn prepare_session(&mut self) -> DriverResult<PreparedSession<'_, D, P>> {
+        prepare_session(self.plan,
                         self.descriptor.mapping_mut(),
                         self.payload.mapping_mut())
     }
@@ -234,6 +222,105 @@ impl Completion {
     pub const fn requires_buffer_invalidate(self) -> bool { self.invalidate_buffer_after }
 }
 
+/// A failed state transition that returns the original session for retry or
+/// explicit cancellation.
+pub struct SessionFailure<E, S> {
+    pub error : E,
+    pub session : S,
+}
+
+impl<E : core::fmt::Debug, S> core::fmt::Debug for SessionFailure<E, S> {
+    fn fmt(&self, formatter : &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.debug_struct("SessionFailure")
+                 .field("error", &self.error)
+                 .finish_non_exhaustive()
+    }
+}
+
+/// Both mappings have been synchronized for the device but hardware has not
+/// started. The mutable borrows keep the backing resources alive.
+#[must_use = "cancel or start a prepared DMA session"]
+pub struct PreparedSession<'a, D, P> {
+    prepared : PreparedTransfer,
+    descriptor : &'a mut DmaMapping<D>,
+    payload : &'a mut DmaMapping<P>,
+}
+
+/// Hardware is running and exclusively borrows both mappings and the executor.
+#[must_use = "complete the IRQ or stop a running DMA session"]
+pub struct RunningSession<'a, 'e, R, D, P> {
+    executor : &'e mut Executor<R>,
+    descriptor : &'a mut DmaMapping<D>,
+    payload : &'a mut DmaMapping<P>,
+}
+
+/// Hardware is confirmed idle; CPU-side cache synchronization remains.
+#[must_use = "finish cache synchronization for a quiesced DMA session"]
+pub struct QuiescedSession<'a, D, P> {
+    completion : Completion,
+    descriptor : &'a mut DmaMapping<D>,
+    payload : &'a mut DmaMapping<P>,
+}
+
+impl<'a, D : DmaCoherency, P : DmaCoherency> PreparedSession<'a, D, P> {
+    pub fn cancel(self) -> Result<(), SessionFailure<DriverError, Self>> {
+        match cancel_prepared(&self.prepared, self.descriptor, self.payload) {
+            Ok(()) => Ok(()),
+            Err(error) => Err(SessionFailure { error, session : self }),
+        }
+    }
+
+    pub fn start<'e, R : OrderIo>(self,
+                                  executor : &'e mut Executor<R>)
+                                  -> Result<RunningSession<'a, 'e, R, D, P>,
+                                            SessionFailure<ExecutorError, Self>> {
+        match executor.start(self.prepared) {
+            Ok(()) => Ok(RunningSession { executor,
+                                         descriptor : self.descriptor,
+                                         payload : self.payload }),
+            Err(failure) => Err(SessionFailure {
+                error : failure.error,
+                session : PreparedSession { prepared : failure.prepared,
+                                            descriptor : self.descriptor,
+                                            payload : self.payload },
+            }),
+        }
+    }
+}
+
+impl<'a, 'e, R : OrderIo, D, P> RunningSession<'a, 'e, R, D, P> {
+    pub fn complete_irq(self)
+                        -> Result<QuiescedSession<'a, D, P>,
+                                  SessionFailure<ExecutorError, Self>> {
+        match self.executor.complete_irq() {
+            Ok(completion) => Ok(QuiescedSession { completion,
+                                                  descriptor : self.descriptor,
+                                                  payload : self.payload }),
+            Err(error) => Err(SessionFailure { error, session : self }),
+        }
+    }
+
+    pub fn stop(self)
+                -> Result<QuiescedSession<'a, D, P>,
+                          SessionFailure<ExecutorError, Self>> {
+        match self.executor.stop() {
+            Ok(completion) => Ok(QuiescedSession { completion,
+                                                  descriptor : self.descriptor,
+                                                  payload : self.payload }),
+            Err(error) => Err(SessionFailure { error, session : self }),
+        }
+    }
+}
+
+impl<'a, D : DmaCoherency, P : DmaCoherency> QuiescedSession<'a, D, P> {
+    pub fn finish(self) -> Result<(), SessionFailure<DriverError, Self>> {
+        match finish_transfer(self.completion, self.descriptor, self.payload) {
+            Ok(()) => Ok(()),
+            Err(error) => Err(SessionFailure { error, session : self }),
+        }
+    }
+}
+
 fn dma_direction(direction : Direction) -> DmaDirection {
     match direction {
         Direction::DeviceToMemory => DmaDirection::FromDevice,
@@ -243,7 +330,7 @@ fn dma_direction(direction : Direction) -> DmaDirection {
 
 /// Validate actual mappings against the plan and transfer both to the device.
 /// Safe code cannot construct [`PreparedTransfer`] by assertion alone.
-pub fn prepare_transfer<D : DmaCoherency, P : DmaCoherency>(
+pub(crate) fn prepare_transfer<D : DmaCoherency, P : DmaCoherency>(
     plan : TransferPlan,
     descriptor : &mut DmaMapping<D>,
     payload : &mut DmaMapping<P>)
@@ -267,25 +354,52 @@ pub fn prepare_transfer<D : DmaCoherency, P : DmaCoherency>(
     Ok(PreparedTransfer(plan))
 }
 
-pub fn finish_transfer<D : DmaCoherency, P : DmaCoherency>(
+pub fn prepare_session<'a, D : DmaCoherency, P : DmaCoherency>(
+    plan : TransferPlan,
+    descriptor : &'a mut DmaMapping<D>,
+    payload : &'a mut DmaMapping<P>)
+    -> DriverResult<PreparedSession<'a, D, P>> {
+    let prepared = prepare_transfer(plan, descriptor, payload)?;
+    Ok(PreparedSession { prepared, descriptor, payload })
+}
+
+pub(crate) fn finish_transfer<D : DmaCoherency, P : DmaCoherency>(
     _completion : Completion,
     descriptor : &mut DmaMapping<D>,
     payload : &mut DmaMapping<P>)
     -> DriverResult<()> {
-    let payload_result = payload.complete_from_device();
-    let descriptor_result = descriptor.complete_from_device();
+    let payload_result = if payload.is_cpu_owned() {
+        Ok(())
+    } else {
+        payload.complete_from_device().map(|_| ())
+    };
+    let descriptor_result = if descriptor.is_cpu_owned() {
+        Ok(())
+    } else {
+        descriptor.complete_from_device().map(|_| ())
+    };
+    if payload.is_cpu_owned() && descriptor.is_cpu_owned() { return Ok(()); }
     payload_result?;
     descriptor_result?;
     Ok(())
 }
 
-pub fn cancel_prepared<D : DmaCoherency, P : DmaCoherency>(
-    _prepared : PreparedTransfer,
+pub(crate) fn cancel_prepared<D : DmaCoherency, P : DmaCoherency>(
+    _prepared : &PreparedTransfer,
     descriptor : &mut DmaMapping<D>,
     payload : &mut DmaMapping<P>)
     -> DriverResult<()> {
-    let payload_result = payload.reclaim_after_stop();
-    let descriptor_result = descriptor.reclaim_after_stop();
+    let payload_result = if payload.is_cpu_owned() {
+        Ok(())
+    } else {
+        payload.reclaim_after_stop().map(|_| ())
+    };
+    let descriptor_result = if descriptor.is_cpu_owned() {
+        Ok(())
+    } else {
+        descriptor.reclaim_after_stop().map(|_| ())
+    };
+    if payload.is_cpu_owned() && descriptor.is_cpu_owned() { return Ok(()); }
     payload_result?;
     descriptor_result?;
     Ok(())
@@ -465,7 +579,12 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct MockCache { device_syncs : usize, cpu_syncs : usize, fail_device : bool }
+    struct MockCache {
+        device_syncs : usize,
+        cpu_syncs : usize,
+        fail_device : bool,
+        fail_cpu_syncs : usize,
+    }
     impl DmaCoherency for MockCache {
         fn sync_for_device(&mut self, _region : DmaRegion, _direction : DmaDirection)
                            -> DriverResult<()> {
@@ -475,6 +594,10 @@ mod tests {
         }
         fn sync_for_cpu(&mut self, _region : DmaRegion, _direction : DmaDirection)
                         -> DriverResult<()> {
+            if self.fail_cpu_syncs > 0 {
+                self.fail_cpu_syncs -= 1;
+                return Err(DriverError::IoError);
+            }
             self.cpu_syncs += 1;
             Ok(())
         }
@@ -535,7 +658,7 @@ mod tests {
                                                       &mut payload2).unwrap())
                               .unwrap_err();
         assert_eq!(failure.error, ExecutorError::Busy);
-        cancel_prepared(failure.prepared, &mut descriptor2, &mut payload2).unwrap();
+        cancel_prepared(&failure.prepared, &mut descriptor2, &mut payload2).unwrap();
         let completion = executor.stop().unwrap();
         finish_transfer(completion, &mut descriptor, &mut payload).unwrap();
         assert_eq!(executor.into_inner().writes.last().copied(),
@@ -562,5 +685,86 @@ mod tests {
                          Err(DriverError::IoError)));
         assert!(descriptor.cpu_region().is_ok());
         assert!(payload.cpu_region().is_ok());
+    }
+
+    #[test]
+    fn typestate_session_covers_irq_completion() {
+        let plan = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 512, 16,
+                                  Direction::DeviceToMemory).unwrap();
+        let (mut descriptor, mut payload) = mappings(plan);
+        let mut executor = Executor::new(MockOrderIo::default());
+
+        let running = prepare_session(plan, &mut descriptor, &mut payload).unwrap()
+                                                                          .start(&mut executor)
+                                                                          .unwrap();
+        running.complete_irq().unwrap()
+               .finish().unwrap();
+        assert!(descriptor.is_cpu_owned());
+        assert!(payload.is_cpu_owned());
+    }
+
+    #[test]
+    fn prepared_session_is_returned_when_low_level_executor_is_busy() {
+        let plan = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 512, 16,
+                                  Direction::DeviceToMemory).unwrap();
+        let (mut descriptor, mut payload) = mappings(plan);
+        let (mut descriptor2, mut payload2) = mappings(plan);
+        let mut executor = Executor::new(MockOrderIo::default());
+        let prepared = prepare_transfer(plan, &mut descriptor, &mut payload).unwrap();
+        executor.start(prepared).unwrap();
+
+        let failure = match prepare_session(plan, &mut descriptor2, &mut payload2).unwrap()
+                                                                                       .start(&mut executor) {
+            Err(failure) => failure,
+            Ok(_) => panic!("busy executor accepted a second session"),
+        };
+        assert_eq!(failure.error, ExecutorError::Busy);
+        failure.session.cancel().unwrap();
+        finish_transfer(executor.stop().unwrap(), &mut descriptor, &mut payload).unwrap();
+        assert!(descriptor.is_cpu_owned());
+        assert!(payload.is_cpu_owned());
+        assert!(descriptor2.is_cpu_owned());
+        assert!(payload2.is_cpu_owned());
+    }
+
+    #[test]
+    fn quiesced_session_retries_only_mapping_still_owned_by_device() {
+        let plan = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 512, 16,
+                                  Direction::DeviceToMemory).unwrap();
+        let descriptor_region = DmaRegion::new(0x4000, 0x2000, 64, 32, 64).unwrap();
+        let payload_region = DmaRegion::new(0x8000, 0x3000, 512, 32, 64).unwrap();
+        let mut descriptor = DmaMapping::new(
+            descriptor_region,
+            DmaDirection::ToDevice,
+            MockCache { fail_cpu_syncs : 1, ..MockCache::default() });
+        let mut payload = DmaMapping::new(payload_region,
+                                          DmaDirection::FromDevice,
+                                          MockCache::default());
+        let mut executor = Executor::new(MockOrderIo::default());
+        let quiesced = prepare_session(plan, &mut descriptor, &mut payload).unwrap()
+                                                                           .start(&mut executor)
+                                                                           .unwrap()
+                                                                           .complete_irq().unwrap();
+        let failure = quiesced.finish().unwrap_err();
+        assert_eq!(failure.error, DriverError::IoError);
+        failure.session.finish().unwrap();
+        assert!(descriptor.is_cpu_owned());
+        assert!(payload.is_cpu_owned());
+    }
+
+    #[test]
+    fn typestate_stop_quiesces_before_restoring_cpu_ownership() {
+        let plan = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 4, 1,
+                                  Direction::MemoryToDevice).unwrap();
+        let (mut descriptor, mut payload) = mappings(plan);
+        let mut executor = Executor::new(MockOrderIo::default());
+        prepare_session(plan, &mut descriptor, &mut payload).unwrap()
+                                                               .start(&mut executor).unwrap()
+                                                               .stop().unwrap()
+                                                               .finish().unwrap();
+        assert!(descriptor.is_cpu_owned());
+        assert!(payload.is_cpu_owned());
+        assert_eq!(executor.into_inner().writes.last().copied(),
+                   Some((plan.start_order & !ORDER_CONFIG_MASK) | ORDER_64_BIT | (1 << 4)));
     }
 }

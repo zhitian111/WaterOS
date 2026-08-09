@@ -1443,3 +1443,60 @@ PA 构建 APBDMA plan，并将 48-byte hardware descriptor 写入 owned descript
 ### 提交
 
 - `[feat] own 2K1000 APBDMA transfer memory`
+
+## 2026-08-10：批次 33——APBDMA typestate transfer lifecycle
+
+### 任务与设计
+
+1. 收紧裸 `PreparedTransfer` 与 owned allocation 生命周期可能分离的接口。
+2. 用借用式 typestate 表达 prepared、running、quiesced 三个硬件阶段。
+3. running 阶段同时独占借用 executor、descriptor mapping 和 payload mapping。
+4. 所有失败状态返回原 session，支持显式取消、stop 或同步重试。
+5. 让双 mapping 的 CPU-side sync 在部分成功后保持幂等可恢复。
+
+`PreparedSession` 在两个 mapping 完成 device sync 后持有其可变借用；`start()` 消费它并
+产生同时借用 `Executor` 的 `RunningSession`。IRQ completion 或确认 stop 只能产生
+`QuiescedSession`，此时硬件已不再运行，但 CPU cache ownership 仍可能尚未完全恢复。
+`finish()` 只有在两个 mapping 都归 CPU 后才释放借用。各 session 带 `must_use`，错误
+转换通过 `SessionFailure<E, S>` 返回原状态，避免错误路径丢失恢复能力。
+
+底层 token/executor 方法保留为 crate 内原语和 mock 测试工具；owned resources 对外只提供
+`prepare_session()`，不再返回与 allocation 无生命周期关系的裸 token。
+
+### 完成内容
+
+- [x] 新增 `PreparedSession`、`RunningSession` 和 `QuiescedSession` 三阶段类型。
+- [x] prepared session 的两个 mapping 借用阻止 CPU buffer 访问和 allocation 回收。
+- [x] running session 进一步独占 executor，正常安全代码无法并发 start/stop 同一 executor。
+- [x] IRQ 与 stop 分别把 running 转换为 quiesced，不能直接跳到 CPU ownership。
+- [x] prepared cancel、start busy、running completion/stop 和 quiesced finish 失败均返回原 session。
+- [x] `OwnedTransferResources` 删除裸 prepare/cancel/finish 组合，改为单一 `prepare_session()` 入口。
+- [x] `prepare_transfer`、`finish_transfer`、`cancel_prepared` 收紧为 crate 内底层原语。
+- [x] finish/cancel 对已归 CPU 的 mapping 幂等，只重试仍归 device 的 mapping。
+- [x] 若第一次 payload sync 成功、descriptor sync 失败，第二次 finish 可继续 descriptor 而不重复 payload sync。
+- [x] session 类型标记 `must_use`；错误调试输出只显示错误，不要求 mapping/backend 实现 `Debug`。
+
+### 验证证据
+
+- `wateros-driver-api-v0`：3 项 host 单测全部通过。
+- 2K1000LA driver：27 项 host 单测全部通过（本批新增 4 项）。
+- typestate host 测试覆盖 IRQ completion、stop、底层 executor busy 时 prepared session 返还和取消。
+- 部分同步测试注入 descriptor 首次 CPU sync 失败，验证 payload 已归 CPU、重试仅恢复 descriptor，最终两者均归 CPU。
+- Rust 借用关系在编译期确保 live `RunningSession` 持有 executor 与两个 mappings；测试代码无法同时取得第二个可变借用。
+- `cargo check -p wateros-driver-impl-loongson2k1000la --target loongarch64-unknown-none` 通过。
+- 2K1000LA DTS topology/畸形 fixture 全部通过；truncated DMA 的 dtc warning 为预期输入。
+- `make kernel-la` QEMU LoongArch64 release 回归构建通过；仅有仓库既有 warning。
+- `git diff --check` 通过；未创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：typestate 证明软件生命周期，不证明 APBDMA stop/IRQ 已真正停止总线访问。
+- [ ] Rust 允许显式 `mem::forget`；若调用方故意遗忘 session，owned buffer 的 device-owned Drop 保留策略仍是最终防 UAF 兜底。
+- [ ] 尚无生产 cache maintenance、memory barrier、volatile order-register backend 或 IRQ13 acknowledgement。
+- [ ] completion 尚未读取/验证 descriptor status，无法区分成功、总线错误和短传输。
+- [ ] executor 仍只支持一个 descriptor，不支持 scatter-gather、超时状态机或异步 waitqueue。
+- [ ] 下一批可实现 APBDMA order-register 的 volatile lo/hi 访问模型及 host mock write-tearing/stop 测试，但真机访问顺序仍需标注待验证。
+
+### 提交
+
+- `[ref] bind 2K1000 DMA resources to executor state`
