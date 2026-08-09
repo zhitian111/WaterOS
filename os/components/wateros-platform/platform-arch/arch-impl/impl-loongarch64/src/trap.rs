@@ -226,6 +226,11 @@ impl TrapFrameRead for TrapContext {
 
     fn trap_cause(&self) -> TrapCause { decode_loongarch64_trap_cause(self.estat) }
 
+    fn external_interrupt_snapshot(&self) -> Option<usize> {
+        let pending = (self.estat & HARDWARE_INTERRUPT_PENDING) >> 2;
+        (pending != 0).then_some(pending)
+    }
+
     fn fault_addr(&self) -> usize { self.badv }
 
     fn user_pc(&self) -> usize { self.era }

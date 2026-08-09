@@ -89,6 +89,14 @@ pub trait TrapFrameRead {
     /// 将 [`raw_cause`](Self::raw_cause) 解码为跨架构语义 [`TrapCause`]。
     fn trap_cause(&self) -> TrapCause;
 
+    /// Architecture-defined external-interrupt pending snapshot captured in
+    /// this trap frame. `None` means that this architecture/profile does not
+    /// expose a board-routable snapshot through the common contract.
+    #[inline]
+    fn external_interrupt_snapshot(&self) -> Option<usize> {
+        None
+    }
+
     /// 故障地址（页故障等；无则实现可返回 0）。
     fn fault_addr(&self) -> usize;
     /// 用户态程序计数器。

@@ -1871,3 +1871,41 @@ LoongArch64 ESTAT.IS 的 HWI0–HWI7 位于 bits 2–9；IPI 和 timer 继续保
 ### 提交
 
 - `[fix] decode LoongArch hardware interrupts`
+
+## 2026-08-10：批次 41——External IRQ snapshot contract
+
+### 任务与设计
+
+建立 trap-entry snapshot 到 machine driver 的跨层契约，但在 2K1000LA runtime controller
+尚未持久化前不接 kernel dispatch。snapshot 必须来自已保存 trap frame，避免 handler 二次读取
+ESTAT 引入竞态；其他架构通过默认 `None` 保持行为不变。machine service 默认返回
+`Unsupported`，实现方只有在 acknowledge 或 mask 每个消费 source 后才能返回成功。
+
+### 完成内容
+
+- [x] `TrapFrameRead` 新增默认 `external_interrupt_snapshot() -> Option<usize>`。
+- [x] LoongArch64 从已保存 ESTAT 提取 HWI0–HWI7 八位 pending snapshot，零 pending 返回 `None`。
+- [x] `MachineDriver` 新增默认 fail-closed `handle_external_interrupt(snapshot)`。
+- [x] driver 聚合层导出 machine service 路由函数。
+- [x] 2K1000LA service 验证 snapshot 范围；runtime 未建立前明确返回 `Unsupported`。
+- [x] 未把 kernel external trap 接到失败 service，避免未清 pending 导致中断风暴。
+
+### 验证证据
+
+- `cargo test`（2K1000LA driver crate）：48 项 host 单测全部通过（本批新增 1 项）。
+- 测试验证 zero/out-of-range snapshot 为 `InvalidParam`，合法 HWI snapshot 在未初始化时为 `Unsupported`。
+- topology/畸形 DTS fixtures 全部通过；truncated DMA dtc warning 为预期输入。
+- `cargo check --target loongarch64-unknown-none` 与 `make kernel-la` 通过；仅有既有 warning。
+- `git diff --check` 通过；未创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：trap frame 保存的 ESTAT HWI snapshot 与真实 parent-line 到达时序尚未验证。
+- [ ] 2K1000LA machine service 当前故意不可用，kernel 也尚未调用它。
+- [ ] topology 与 LIOINTC controller 尚未组成静态 runtime state；init 后发现结果当前会被丢弃。
+- [ ] snapshot 只表示 CPU HWI parent line，仍必须读取对应 LIOINTC per-core ISR 才能得到 local source。
+- [ ] 下一批应实现一次初始化、不可重复替换的 board IRQ runtime，持有 topology-derived bank descriptors、domain 和 controller MMIO；先用 mock backend 测试 snapshot 多 bit、claim、未注册 mask 保留，再接 kernel trap。
+
+### 提交
+
+- `[ref] add external IRQ snapshot contract`

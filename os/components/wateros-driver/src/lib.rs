@@ -86,6 +86,13 @@ pub fn init_after_boot() {
     }
 }
 
+/// Route one immutable trap-entry external-interrupt snapshot to the selected
+/// machine driver. The kernel must not call this until board IRQ runtime state
+/// has been initialized successfully.
+pub fn handle_external_interrupt(snapshot : usize) -> api_v0::DriverResult<()> {
+    machine().handle_external_interrupt(snapshot)
+}
+
 /// 自检入口：依次调用 API 与各子系统测试钩子；QEMU 实现会跑探测路径，dummy
 /// 实现跳过硬件。
 pub fn test() {

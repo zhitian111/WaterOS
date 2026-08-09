@@ -127,6 +127,12 @@ pub trait MachineDriver {
         Ok(None)
     }
 
+    /// Service an architecture-captured external-interrupt snapshot.
+    /// Implementations must acknowledge or mask every source they consume.
+    fn handle_external_interrupt(&self, _snapshot : usize) -> DriverResult<()> {
+        Err(DriverError::Unsupported)
+    }
+
     /// 驱动自检。
     fn test(&self);
 }
