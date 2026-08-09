@@ -12,9 +12,7 @@ use crate::sys::time::timer::{
     account_child_cpu, child_cpu_from_exited, ticks_to_timeval, write_child_rusage,
     write_zero_rusage, ChildCpuTicks,
 };
-use crate::user_copy::{
-    copy_from_user_struct, copy_to_user_struct, copy_to_user_struct_in_aspace,
-};
+use crate::user_copy::{copy_from_user_struct, copy_to_user_struct, copy_to_user_struct_in_aspace};
 
 /// 等待目标类型：任意子进程、指定进程组、或特定进程。
 #[derive(Clone, Copy)]
@@ -117,10 +115,11 @@ pub(crate) fn wake_clear_child_tid_for_task(task_id : task::TaskId) -> usize {
 /// 信号终止进程的 wait(2) 编码：负值表示被信号杀死，低 7 位为信号号，bit7 为 core dump。
 pub(crate) fn signal_terminate_exit_code(signal : usize, task_id : usize) -> isize {
     let mut status = (signal & 0x7F) as isize;
-    let core_allowed = task::process_task_snapshot(task_id)
-        .and_then(|snapshot| task::process_resource_limit(snapshot.pid, RLIMIT_CORE))
-        .map(|limit| limit.cur > 0)
-        .unwrap_or(false);
+    let core_allowed = task::process_task_snapshot(task_id).and_then(|snapshot| {
+                           task::process_resource_limit(snapshot.pid, RLIMIT_CORE)
+                       })
+                       .map(|limit| limit.cur > 0)
+                       .unwrap_or(false);
     if core_allowed && signal_dumps_core(signal) {
         status |= 0x80;
     }
@@ -129,7 +128,8 @@ pub(crate) fn signal_terminate_exit_code(signal : usize, task_id : usize) -> isi
 
 fn signal_dumps_core(signal : usize) -> bool {
     // Linux 只对这些默认终止信号设置 WCOREDUMP。SIGIOT 与 SIGABRT 同号。
-    matches!(signal, 3 | 4 | 5 | 6 | 7 | 8 | 11 | 24 | 25 | 31)
+    matches!(signal,
+             3 | 4 | 5 | 6 | 7 | 8 | 11 | 24 | 25 | 31)
 }
 
 fn write_exit_code(exit_code_ptr : usize, exit_code : isize) -> Result<(), ErrNo> {
@@ -162,6 +162,7 @@ pub(crate) fn drop_task_runtime_resources(task_id : task::TaskId) {
 }
 
 pub(crate) fn drop_task_runtime_resources_with_aspace(task_id : task::TaskId, aspace : usize) {
+    super::task::drop_timer_slack(task_id);
     ipc::futex::cancel_task_wait(task_id);
     super::super::shm::drop_task_attachments(task_id, aspace);
     vfs::cwd::drop_task_cwd(task_id);
@@ -709,10 +710,12 @@ mod tests {
     #[test]
     fn core_dump_signal_list_matches_linux() {
         for signal in [3, 4, 5, 6, 7, 8, 11, 24, 25, 31] {
-            assert!(signal_dumps_core(signal), "signal {signal} should dump core");
+            assert!(signal_dumps_core(signal),
+                    "signal {signal} should dump core");
         }
         for signal in [1, 2, 9, 10, 12, 13, 14, 15, 16, 26, 27, 29, 30] {
-            assert!(!signal_dumps_core(signal), "signal {signal} should not dump core");
+            assert!(!signal_dumps_core(signal),
+                    "signal {signal} should not dump core");
         }
     }
 }

@@ -58,9 +58,14 @@ pub(crate) fn copy_timer_slack(parent : usize, child : usize) {
                            .or_insert(TimerSlack { default_ns : DEFAULT_TIMER_SLACK_NS,
                                                    current_ns : DEFAULT_TIMER_SLACK_NS })
                            .current_ns;
-    slacks.insert(child,
-                  TimerSlack { default_ns : current_ns,
-                               current_ns });
+    slacks.insert(child, TimerSlack { default_ns:
+                                          current_ns,
+                                      current_ns });
+}
+
+pub(crate) fn drop_timer_slack(task_id : usize) {
+    TIMER_SLACKS.lock()
+                .remove(&task_id);
 }
 
 pub(crate) fn sys_yield() -> UserRet {
@@ -69,9 +74,7 @@ pub(crate) fn sys_yield() -> UserRet {
 }
 
 #[inline]
-fn normalize_user_exit_code(exit_code : isize) -> isize {
-    (exit_code as usize & 0xFF) as isize
-}
+fn normalize_user_exit_code(exit_code : isize) -> isize { (exit_code as usize & 0xFF) as isize }
 
 pub(crate) fn sys_exit(exit_code : isize) -> isize {
     let exit_code = normalize_user_exit_code(exit_code);
@@ -83,21 +86,24 @@ pub(crate) fn exit_current_with_wait_code(exit_code : isize) -> isize {
     let mut process_was_exiting = false;
     if let Some(task_id) = task::current_task_id() {
         if let Some(snapshot) = task::process_task_snapshot(task_id) {
-            process_was_exiting = task::process_snapshot(snapshot.pid)
-                .is_some_and(|process| matches!(process.state, task::ProcessState::Exiting(_)));
+            process_was_exiting = task::process_snapshot(snapshot.pid).is_some_and(|process| {
+                                      matches!(process.state,
+                                               task::ProcessState::Exiting(_))
+                                  });
             process_task = Some(snapshot);
         }
         super::wait::wake_clear_child_tid_for_task(task_id);
         crate::sys::ipc::robust::robust_exit_cleanup(task_id);
         super::wait::drop_task_runtime_resources(task_id);
     }
-    let completed_process = task::record_current_task_exit(exit_code);
-    if let Some(pid) = completed_process {
-        crate::sys::ipc::signal::notify_parent_death_signals(pid);
-    }
+    let exit_outcome = task::record_current_task_exit(exit_code);
+    crate::sys::ipc::signal::deliver_parent_death_notifications(
+        exit_outcome.parent_death_notifications.iter().copied());
+    let completed_process = exit_outcome.completed_process;
     if let (Some(task_id), Some(process_task)) = (task::current_task_id(), process_task) {
         crate::sys::ipc::signal::on_thread_exit(task_id,
-                                                process_task.pid.raw(),
+                                                process_task.pid
+                                                            .raw(),
                                                 completed_process.is_some());
     }
     if let Some(pid) = completed_process {
@@ -122,13 +128,13 @@ pub(crate) fn exit_group_with_wait_code(exit_code : isize) -> isize {
     if let Some(task_id) = task::current_task_id() {
         super::wait::wake_clear_child_tid_for_task(task_id);
         if let Some(snapshot) = task::current_process_task_snapshot() {
-            crate::sys::ipc::signal::notify_parent_death_signals(snapshot.pid);
             super::wait::reap_exited_member_threads_runtime_resources(snapshot.pid);
             super::super::acct::record_current_process_exit(exit_code);
             process_task = Some(snapshot);
             // Publish Exiting before any remote reschedule. Otherwise a sibling
             // can consume the IPI, still observe Running, and continue forever.
-            task::begin_current_process_exit(exit_code);
+            let notifications = task::begin_current_process_exit(exit_code);
+            crate::sys::ipc::signal::deliver_parent_death_notifications(notifications);
             if let Some(task_ids) = task::task_ids_for_process(snapshot.pid) {
                 let user_aspace = task::current_task_user_aspace_ptr();
                 for sibling in task_ids {
@@ -137,7 +143,10 @@ pub(crate) fn exit_group_with_wait_code(exit_code : isize) -> isize {
                         // futex 等运行时资源。kill_task 成功表示它已经不再执行；
                         // 失败的远端线程会在下一次返回用户态时观察到进程 Exited，
                         // 再通过自己的 sys_exit 路径完成清理。
-                        if task::kill_task(sibling, exit_code) {
+                        let killed = task::kill_task_with_notifications(sibling, exit_code);
+                        crate::sys::ipc::signal::deliver_parent_death_notifications(
+                            killed.parent_death_notifications);
+                        if killed.killed {
                             super::wait::wake_clear_child_tid_for_task(sibling);
                             crate::sys::ipc::robust::robust_exit_cleanup(sibling);
                             super::super::shm::drop_task_attachments(sibling, user_aspace);
@@ -152,10 +161,14 @@ pub(crate) fn exit_group_with_wait_code(exit_code : isize) -> isize {
         crate::sys::ipc::robust::robust_exit_cleanup(task_id);
         super::wait::drop_task_runtime_resources(task_id);
     }
-    let completed_process = task::record_current_task_exit(exit_code);
+    let exit_outcome = task::record_current_task_exit(exit_code);
+    crate::sys::ipc::signal::deliver_parent_death_notifications(
+        exit_outcome.parent_death_notifications.iter().copied());
+    let completed_process = exit_outcome.completed_process;
     if let (Some(task_id), Some(process_task)) = (task::current_task_id(), process_task) {
         crate::sys::ipc::signal::on_thread_exit(task_id,
-                                                process_task.pid.raw(),
+                                                process_task.pid
+                                                            .raw(),
                                                 completed_process.is_some());
     }
     if let Some(pid) = completed_process {

@@ -17,8 +17,7 @@ use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use api_v0::{
-    ProcessId, ProcessResult, ProcessSnapshot, ProcessTaskSnapshot, TaskClearTid, TaskId,
-    ThreadId,
+    ProcessId, ProcessResult, ProcessSnapshot, ProcessTaskSnapshot, TaskClearTid, TaskId, ThreadId,
 };
 use arch::interrupt::ArchInterruptState;
 use base::sync::MultiprocessorSafeCell;
@@ -27,7 +26,7 @@ mod process;
 mod tcb;
 
 pub use api_v0::TaskBootstrap;
-pub use process::{ProcessControlBlock, ProcessRegistry};
+pub use process::{ParentDeathNotification, ProcessControlBlock, ProcessRegistry};
 pub use tcb::TaskControlBlock;
 
 static mut PROCESS_REGISTRY : MaybeUninit<MultiprocessorSafeCell<ProcessRegistry>> =
@@ -95,10 +94,14 @@ pub fn with_process_registry<R>(f : impl FnOnce(&mut ProcessRegistry) -> R) -> R
     } else {
         cell.exclusive_access()
     };
-    debug::lock_acquired(cpu, debug::DebugLockKind::ProcessRegistry, object);
+    debug::lock_acquired(cpu,
+                         debug::DebugLockKind::ProcessRegistry,
+                         object);
     let result = f(&mut registry);
     drop(registry);
-    debug::lock_released(cpu, debug::DebugLockKind::ProcessRegistry, object);
+    debug::lock_released(cpu,
+                         debug::DebugLockKind::ProcessRegistry,
+                         object);
     result
 }
 
@@ -113,8 +116,7 @@ pub fn process_task_snapshot(task_id : TaskId) -> Option<ProcessTaskSnapshot> {
 }
 
 /// 按调度实体查询进程及其父进程标识，避免为标识类 syscall 构造完整快照。
-pub fn process_identity_for_task(task_id : TaskId)
-                                 -> Option<(ProcessId, Option<ProcessId>)> {
+pub fn process_identity_for_task(task_id : TaskId) -> Option<(ProcessId, Option<ProcessId>)> {
     with_process_registry(|registry| registry.process_identity_for_task(task_id))
 }
 

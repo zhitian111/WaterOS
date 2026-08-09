@@ -213,12 +213,14 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
     let is_vfork = clone_flags.bits() & CLONE_VFORK != 0;
     let parent_aspace = task::current_task_user_aspace_ptr();
     let (new_aspace_ptr, new_satp) = if is_vfork {
-        let Some(address_space) = task::current_process_snapshot()
-                                             .and_then(|process| process.address_space)
+        let Some(address_space) =
+            task::current_process_snapshot().and_then(|process| process.address_space)
         else {
             return UserRet::from_error(ErrNo::ENOMEM);
         };
-        (address_space.user_aspace_ptr(), address_space.token().raw())
+        (address_space.user_aspace_ptr(),
+         address_space.token()
+                      .raw())
     } else {
         match mm::kernel_mm::fork_user_aspace(parent_aspace) {
             Ok(pair) => pair,
@@ -268,6 +270,7 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
        copy_to_user_struct(parent_tid, &child_tid_value).is_err()
     {
         let _ = task::abort_fork_child(child_id);
+        super::task::drop_timer_slack(child_id);
         return UserRet::from_error(ErrNo::EFAULT);
     }
     if clone_flags.contains(task::CloneFlags::CLONE_CHILD_SETTID) &&
@@ -277,6 +280,7 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
                                      &child_tid_value).is_err()
     {
         let _ = task::abort_fork_child(child_id);
+        super::task::drop_timer_slack(child_id);
         return UserRet::from_error(ErrNo::EFAULT);
     }
     if clone_flags.contains(task::CloneFlags::CLONE_CHILD_CLEARTID) {
@@ -389,6 +393,7 @@ fn do_clone_thread(clone_flags : task::CloneFlags,
     super::task::copy_timer_slack(parent_id, child_id);
     if crate::sys::ipc::signal::on_clone_thread(parent_id, child_id, child_tid_raw).is_err() {
         task::abort_clone_thread(child_id);
+        super::task::drop_timer_slack(child_id);
         crate::sys::ipc::signal::abort_clone_thread_signal(child_id);
         return UserRet::from_error(ErrNo::EAGAIN);
     }
@@ -399,6 +404,7 @@ fn do_clone_thread(clone_flags : task::CloneFlags,
        copy_to_user_struct(parent_tid, &child_tid_value).is_err()
     {
         task::abort_clone_thread(child_id);
+        super::task::drop_timer_slack(child_id);
         crate::sys::ipc::signal::abort_clone_thread_signal(child_id);
         return UserRet::from_error(ErrNo::EFAULT);
     }
@@ -407,6 +413,7 @@ fn do_clone_thread(clone_flags : task::CloneFlags,
        copy_to_user_struct(child_tid, &child_tid_value).is_err()
     {
         task::abort_clone_thread(child_id);
+        super::task::drop_timer_slack(child_id);
         crate::sys::ipc::signal::abort_clone_thread_signal(child_id);
         return UserRet::from_error(ErrNo::EFAULT);
     }

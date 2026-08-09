@@ -48,14 +48,14 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
     let argv_refs : Vec<&str> = argv.iter()
                                     .map(String::as_str)
                                     .collect();
-    let loaded_program =
-        match mm::kernel_mm::load_program_from_path(abs_path.as_str(), &argv_refs) {
-            Ok(program) => program,
-            Err(err) => {
-                let errno = load_program_to_errno(err);
-                return Err(errno);
-            }
-        };
+    let loaded_program = match mm::kernel_mm::load_program_from_path(abs_path.as_str(), &argv_refs)
+    {
+        Ok(program) => program,
+        Err(err) => {
+            let errno = load_program_to_errno(err);
+            return Err(errno);
+        }
+    };
     let new_elf = loaded_program.elf;
     let final_argv = loaded_program.argv;
     let executable_path = loaded_program.executable_path;
@@ -85,13 +85,16 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
     // Allocate signal state before entering sibling teardown; this is the last
     // preparation step that can fail independently of the thread group.
     crate::sys::ipc::robust::robust_exit_cleanup_siblings_for_exec();
-    let killed_threads = match task::terminate_other_threads_for_exec() {
-        Ok(threads) => threads,
+    let terminated = match task::terminate_other_threads_for_exec() {
+        Ok(terminated) => terminated,
         Err(_) => {
             mm::kernel_mm::drop_user_aspace(new_elf.user_aspace_ptr);
             return Err(ErrNo::EINVAL);
         }
     };
+    crate::sys::ipc::signal::deliver_parent_death_notifications(
+        terminated.parent_death_notifications.iter().copied());
+    let killed_threads = terminated.exited_tasks;
 
     let (argc, argv_ptr, envp_ptr) = initial_entry_args(new_sp, final_argv_refs.len());
 
@@ -131,6 +134,13 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
     let _ = vfs::cwd::set_task_argv(current_tid,
                                     final_argv.iter()
                                               .map(String::as_str));
+    let mut comm = [0u8; 16];
+    let basename = executable_path.rsplit('/')
+                                  .find(|part| !part.is_empty())
+                                  .unwrap_or("");
+    let len = core::cmp::min(15, basename.len());
+    comm[..len].copy_from_slice(&basename.as_bytes()[..len]);
+    let _ = task::set_thread_comm(current_tid, comm);
 
     let image_info = task::UserImageInfo::new(new_elf.image_base, new_elf.image_size);
     let stack_info = task::UserStack::from_range(new_elf.stack_bottom, new_elf.stack_top);
@@ -160,8 +170,9 @@ fn initial_entry_args(sp : usize, argc : usize) -> (usize, usize, usize) {
 fn prepare_stack_to_errno(e : PrepareUserStackError) -> ErrNo {
     match e {
         PrepareUserStackError::StackOverflow => ErrNo::E2BIG,
-        PrepareUserStackError::AccessViolation |
-        PrepareUserStackError::NoUserAspace => ErrNo::EFAULT,
+        PrepareUserStackError::AccessViolation | PrepareUserStackError::NoUserAspace => {
+            ErrNo::EFAULT
+        }
     }
 }
 
@@ -238,12 +249,12 @@ fn read_string_array(array_ptr : usize, budget : &mut usize) -> Result<Vec<Strin
             return Err(ErrNo::E2BIG);
         }
         let value = copy_user_path_cstr(ptr, max_len).map_err(|error| {
-                                                        if error == ErrNo::ENAMETOOLONG {
-                                                            ErrNo::E2BIG
-                                                        } else {
-                                                            error
-                                                        }
-                                                    })?;
+                                                         if error == ErrNo::ENAMETOOLONG {
+                                                             ErrNo::E2BIG
+                                                         } else {
+                                                             error
+                                                         }
+                                                     })?;
         *budget = budget.checked_sub(value.len() + 1)
                         .ok_or(ErrNo::E2BIG)?;
         result.push(value);

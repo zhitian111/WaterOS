@@ -24,6 +24,26 @@ struct ProcessTask {
     comm : [u8; 16],
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ParentDeathSource {
+    Task(TaskId),
+    Process(ProcessId),
+}
+
+/// A parent-death signal captured while the process registry lock is held.
+/// Signal delivery must happen after releasing that lock.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParentDeathNotification {
+    pub pid : ProcessId,
+    pub signal : i32,
+}
+
+#[derive(Debug, Default)]
+pub struct TaskExitResult {
+    pub process_completed : bool,
+    pub parent_death_notifications : Vec<ParentDeathNotification>,
+}
+
 impl ProcessTask {
     fn snapshot(&self,
                 task_id : TaskId,
@@ -75,6 +95,9 @@ pub struct ProcessControlBlock {
     umask : u32,
     /// 父进程死亡时发送给本进程的信号（`prctl PR_SET_PDEATHSIG`）；0 表示未设置。
     parent_death_signal : i32,
+    /// Linux ties PDEATHSIG to the creating thread.  Once orphaned, the
+    /// adopting subreaper/init process becomes the next death source.
+    parent_death_source : Option<ParentDeathSource>,
 }
 
 /// A process removed from the registry whose owned resources can be dropped
@@ -85,13 +108,16 @@ pub(crate) struct RetiredProcess {
 
 impl RetiredProcess {
     pub(crate) fn cleanup(self) -> (ProcessSnapshot, Vec<TaskId>) {
-        let snapshot = self.process.snapshot();
+        let snapshot = self.process
+                           .snapshot();
         let task_ids = self.process
                            .tasks
                            .keys()
                            .copied()
                            .collect();
-        if let Some(aspace) = self.process.address_space {
+        if let Some(aspace) = self.process
+                                  .address_space
+        {
             let ptr = aspace.user_aspace_ptr();
             if ptr != 0 {
                 mm_api::user_aspace_lifecycle::drop_user_aspace_on_task_exit(ptr);
@@ -202,7 +228,7 @@ impl ProcessRegistry {
                           .remove(&pid)?;
         if process.child_subreaper {
             self.subreaper_count = self.subreaper_count
-                                      .saturating_sub(1);
+                                       .saturating_sub(1);
         }
         for (&task_id, task) in &process.tasks {
             assert_eq!(self.pid_for_task
@@ -261,6 +287,8 @@ impl ProcessRegistry {
                                             exec_in_progress : false,
                                             state : ProcessState::Running,
                                             parent_death_signal : 0,
+                                            parent_death_source:
+                                                parent_pid.map(ParentDeathSource::Process),
                                             sid : initial_sid,
                                             dumpable : true,
                                             child_subreaper : false,
@@ -279,6 +307,7 @@ impl ProcessRegistry {
     // 根据父进程pid创建子进程，返回子进程pid
     pub fn create_process_like_fork(&mut self,
                                     parent_pid : ProcessId,
+                                    parent_task_id : TaskId,
                                     child_task_id : TaskId,
                                     address_space : Option<AddressSpaceRef>)
                                     -> ProcessResult<ProcessId> {
@@ -291,6 +320,10 @@ impl ProcessRegistry {
         let parent_sid = parent.sid;
         let parent_dumpable = parent.dumpable;
         let parent_umask = parent.umask;
+        let parent_comm = parent.tasks
+                                .get(&parent_task_id)
+                                .ok_or(ProcessError::TaskNotFound)?
+                                .comm;
         let child_pid = self.create_process_for_task(child_task_id,
                                                      Some(parent_pid),
                                                      address_space)?;
@@ -300,6 +333,12 @@ impl ProcessRegistry {
             process.sid = parent_sid;
             process.dumpable = parent_dumpable;
             process.umask = parent_umask;
+            process.parent_death_source = Some(ParentDeathSource::Task(parent_task_id));
+            if let Some(task) = process.tasks
+                                       .get_mut(&child_task_id)
+            {
+                task.comm = parent_comm;
+            }
         }
         Ok(child_pid)
     }
@@ -416,6 +455,7 @@ impl ProcessRegistry {
 
     pub fn add_task_to_process(&mut self,
                                pid : ProcessId,
+                               parent_task_id : TaskId,
                                task_id : TaskId,
                                clone_flags : CloneFlags,
                                tls : usize,
@@ -432,6 +472,10 @@ impl ProcessRegistry {
         if process.exec_in_progress {
             return Err(ProcessError::InvalidArgument);
         }
+        let parent_comm = process.tasks
+                                 .get(&parent_task_id)
+                                 .ok_or(ProcessError::TaskNotFound)?
+                                 .comm;
         process.tasks
                .insert(task_id, ProcessTask { tid,
                                               state:
@@ -444,8 +488,8 @@ impl ProcessRegistry {
                                                       0
                                                   },
                                               clear_child_tid,
-                                              comm : [0u8;
-                                                      16] });
+                                              comm:
+                                                  parent_comm });
         assert_eq!(self.pid_for_task
                        .insert(task_id, pid),
                    None);
@@ -466,17 +510,21 @@ impl ProcessRegistry {
             return Err(ProcessError::InvalidArgument);
         }
         process.exec_in_progress = true;
-        Ok(process.tasks.keys().copied().collect())
+        Ok(process.tasks
+                  .keys()
+                  .copied()
+                  .collect())
     }
 
     pub fn mark_task_exited(&mut self,
                             task_id : TaskId,
                             exit_code : TaskExitCode)
-                            -> ProcessResult<bool> {
+                            -> ProcessResult<TaskExitResult> {
         let pid = self.pid_for_task
                       .get(&task_id)
                       .copied()
                       .ok_or(ProcessError::TaskNotFound)?;
+        let notifications = self.take_parent_death_notifications(ParentDeathSource::Task(task_id));
         let process = self.processes
                           .get_mut(&pid)
                           .ok_or(ProcessError::ProcessNotFound)?;
@@ -496,16 +544,48 @@ impl ProcessRegistry {
         {
             process.state = ProcessState::Exited(exit_code);
         }
-        Ok(!process_was_exited && matches!(process.state, ProcessState::Exited(_)))
+        let process_completed =
+            !process_was_exited && matches!(process.state, ProcessState::Exited(_));
+        if process_completed {
+            let mut process_notifications =
+                self.take_parent_death_notifications(ParentDeathSource::Process(pid));
+            let mut notifications = notifications;
+            notifications.append(&mut process_notifications);
+            self.reparent_orphans(pid);
+            return Ok(TaskExitResult { process_completed,
+                                       parent_death_notifications : notifications });
+        }
+        Ok(TaskExitResult { process_completed,
+                            parent_death_notifications : notifications })
     }
 
     pub fn mark_process_exited(&mut self,
                                pid : ProcessId,
                                exit_code : TaskExitCode)
-                               -> ProcessResult<()> {
+                               -> ProcessResult<Vec<ParentDeathNotification>> {
         // 父进程死亡（exit_group）时立即将子进程托孤给最近的 subreaper，
         // 没有则托孤给 init，匹配 Linux 的 getppid() 语义。
         // 必须在借用 self.process_mut(pid) 之前完成托孤。
+        let sources = {
+            let process = self.processes
+                              .get(&pid)
+                              .ok_or(ProcessError::ProcessNotFound)?;
+            if matches!(process.state,
+                        ProcessState::Exiting(_) | ProcessState::Exited(_))
+            {
+                return Ok(Vec::new());
+            }
+            process.tasks
+                   .keys()
+                   .copied()
+                   .map(ParentDeathSource::Task)
+                   .collect::<Vec<_>>()
+        };
+        let mut notifications = Vec::new();
+        for source in sources {
+            notifications.append(&mut self.take_parent_death_notifications(source));
+        }
+        notifications.append(&mut self.take_parent_death_notifications(ParentDeathSource::Process(pid)));
         self.reparent_orphans(pid);
         let process = self.process_mut(pid)
                           .ok_or(ProcessError::ProcessNotFound)?;
@@ -520,7 +600,7 @@ impl ProcessRegistry {
         {
             process.state = ProcessState::Exited(exit_code);
         }
-        Ok(())
+        Ok(notifications)
     }
 
     pub fn task_ids_for_process(&self, pid : ProcessId) -> Option<Vec<TaskId>> {
@@ -941,10 +1021,10 @@ impl ProcessRegistry {
         if was_enabled != enabled {
             if enabled {
                 self.subreaper_count = self.subreaper_count
-                                          .saturating_add(1);
+                                           .saturating_add(1);
             } else {
                 self.subreaper_count = self.subreaper_count
-                                          .saturating_sub(1);
+                                           .saturating_sub(1);
             }
         }
         let process = self.process_mut(pid)
@@ -960,6 +1040,25 @@ impl ProcessRegistry {
             .filter(|process| process.parent_pid == Some(parent_pid))
             .map(|process| process.pid)
             .collect()
+    }
+
+    fn take_parent_death_notifications(&mut self,
+                                       source : ParentDeathSource)
+                                       -> Vec<ParentDeathNotification> {
+        let mut notifications = Vec::new();
+        for process in self.processes
+                           .values_mut()
+        {
+            if process.parent_death_source == Some(source) {
+                process.parent_death_source = None;
+                if process.parent_death_signal > 0 {
+                    notifications.push(ParentDeathNotification { pid : process.pid,
+                                                                 signal:
+                                                                     process.parent_death_signal });
+                }
+            }
+        }
+        notifications
     }
 
     /// 将指定进程的所有子进程托孤给最近的活 subreaper 祖先；没有则给 init。
@@ -980,6 +1079,7 @@ impl ProcessRegistry {
             for child_pid in &children {
                 if let Some(process) = self.process_mut(*child_pid) {
                     process.parent_pid = Some(init_pid);
+                    process.parent_death_source = Some(ParentDeathSource::Process(init_pid));
                 }
             }
             return;
@@ -991,12 +1091,14 @@ impl ProcessRegistry {
             let Some(pid) = ancestor else {
                 break None;
             };
-            let Some(process) = self.processes.get(&pid) else {
+            let Some(process) = self.processes
+                                    .get(&pid)
+            else {
                 break None;
             };
-            if process.child_subreaper
-                && !matches!(process.state,
-                             ProcessState::Exiting(_) | ProcessState::Exited(_))
+            if process.child_subreaper &&
+               !matches!(process.state,
+                         ProcessState::Exiting(_) | ProcessState::Exited(_))
             {
                 break Some(pid);
             }
@@ -1006,6 +1108,7 @@ impl ProcessRegistry {
         for child_pid in &children {
             if let Some(process) = self.process_mut(*child_pid) {
                 process.parent_pid = Some(target_pid);
+                process.parent_death_source = Some(ParentDeathSource::Process(target_pid));
             }
         }
     }
@@ -1064,11 +1167,13 @@ mod tests {
         registry.set_parent_death_signal(parent_pid, 9)
                 .expect("set parent death signal");
 
-        let child_pid = registry.create_process_like_fork(parent_pid, 11, None)
+        let child_pid = registry.create_process_like_fork(parent_pid, 10, 11, None)
                                 .expect("fork child process");
 
-        assert_eq!(registry.get_parent_death_signal(parent_pid), Some(9));
-        assert_eq!(registry.get_parent_death_signal(child_pid), Some(0));
+        assert_eq!(registry.get_parent_death_signal(parent_pid),
+                   Some(9));
+        assert_eq!(registry.get_parent_death_signal(child_pid),
+                   Some(0));
     }
 
     #[test]
@@ -1079,11 +1184,13 @@ mod tests {
         registry.set_process_child_subreaper(parent_pid, true)
                 .expect("set child subreaper");
 
-        let child_pid = registry.create_process_like_fork(parent_pid, 11, None)
+        let child_pid = registry.create_process_like_fork(parent_pid, 10, 11, None)
                                 .expect("fork child process");
 
-        assert_eq!(registry.process_child_subreaper(parent_pid), Some(true));
-        assert_eq!(registry.process_child_subreaper(child_pid), Some(false));
+        assert_eq!(registry.process_child_subreaper(parent_pid),
+                   Some(true));
+        assert_eq!(registry.process_child_subreaper(child_pid),
+                   Some(false));
     }
 
     #[test]
@@ -1102,12 +1209,16 @@ mod tests {
 
         registry.mark_process_exited(parent, 0)
                 .expect("parent exits");
-        assert_eq!(registry.process_snapshot(orphan).unwrap().parent_pid,
+        assert_eq!(registry.process_snapshot(orphan)
+                           .unwrap()
+                           .parent_pid,
                    Some(subreaper));
 
         registry.mark_process_exited(subreaper, 0)
                 .expect("subreaper exits");
-        assert_eq!(registry.process_snapshot(orphan).unwrap().parent_pid,
+        assert_eq!(registry.process_snapshot(orphan)
+                           .unwrap()
+                           .parent_pid,
                    Some(init_pid));
     }
 
@@ -1116,12 +1227,13 @@ mod tests {
         let mut registry = ProcessRegistry::new();
         let parent_pid = registry.create_process_for_task(10, None, None)
                                  .expect("create parent process");
-        let child_pid = registry.create_process_like_fork(parent_pid, 11, None)
+        let child_pid = registry.create_process_like_fork(parent_pid, 10, 11, None)
                                 .expect("fork child process");
 
         assert_eq!(registry.process_identity_for_task(11),
                    Some((child_pid, Some(parent_pid))));
-        assert_eq!(registry.process_identity_for_task(99), None);
+        assert_eq!(registry.process_identity_for_task(99),
+                   None);
     }
 
     #[test]
@@ -1150,27 +1262,44 @@ mod tests {
         let mut registry = ProcessRegistry::new();
         let pid = registry.create_process_for_task(10, None, None)
                           .expect("create process");
-        registry.add_task_to_process(pid, 11, CloneFlags::CLONE_THREAD, 0, None)
+        registry.add_task_to_process(pid,
+                                     10,
+                                     11,
+                                     CloneFlags::CLONE_THREAD,
+                                     0,
+                                     None)
                 .expect("add member thread");
 
         registry.mark_process_exited(pid, 9)
                 .expect("start process exit");
-        assert_eq!(registry.process_snapshot(pid).unwrap().state,
+        assert_eq!(registry.process_snapshot(pid)
+                           .unwrap()
+                           .state,
                    ProcessState::Exiting(9));
-        assert!(registry.detach_exited_process(pid).is_none());
+        assert!(registry.detach_exited_process(pid)
+                        .is_none());
 
         assert!(!registry.mark_task_exited(10, 9)
-                         .expect("exit leader"));
-        assert_eq!(registry.process_snapshot(pid).unwrap().state,
+                         .expect("exit leader")
+                         .process_completed);
+        assert_eq!(registry.process_snapshot(pid)
+                           .unwrap()
+                           .state,
                    ProcessState::Exiting(9));
-        assert!(registry.detach_exited_process(pid).is_none());
+        assert!(registry.detach_exited_process(pid)
+                        .is_none());
 
         assert!(registry.mark_task_exited(11, 9)
-                        .expect("exit final member"));
-        assert_eq!(registry.process_snapshot(pid).unwrap().state,
+                        .expect("exit final member")
+                        .process_completed);
+        assert_eq!(registry.process_snapshot(pid)
+                           .unwrap()
+                           .state,
                    ProcessState::Exited(9));
-        assert!(registry.detach_exited_process(pid).is_some());
-        assert!(registry.detach_exited_process(pid).is_none());
+        assert!(registry.detach_exited_process(pid)
+                        .is_some());
+        assert!(registry.detach_exited_process(pid)
+                        .is_none());
     }
 
     #[test]
@@ -1178,18 +1307,126 @@ mod tests {
         let mut registry = ProcessRegistry::new();
         let pid = registry.create_process_for_task(10, None, None)
                           .expect("create process");
-        registry.add_task_to_process(pid, 11, CloneFlags::CLONE_THREAD, 0, None)
+        registry.add_task_to_process(pid,
+                                     10,
+                                     11,
+                                     CloneFlags::CLONE_THREAD,
+                                     0,
+                                     None)
                 .expect("add existing member");
 
         assert_eq!(registry.begin_process_exec(pid, 10)
                            .expect("begin exec"),
                    alloc::vec![10, 11]);
-        assert!(registry.add_task_to_process(pid, 12, CloneFlags::CLONE_THREAD, 0, None)
+        assert!(registry.add_task_to_process(pid,
+                                             10,
+                                             12,
+                                             CloneFlags::CLONE_THREAD,
+                                             0,
+                                             None)
                         .is_err());
 
         registry.retain_only_task_in_process(pid, 10)
                 .expect("finish exec");
-        registry.add_task_to_process(pid, 13, CloneFlags::CLONE_THREAD, 0, None)
+        registry.add_task_to_process(pid,
+                                     10,
+                                     13,
+                                     CloneFlags::CLONE_THREAD,
+                                     0,
+                                     None)
                 .expect("clone after exec");
+    }
+
+    #[test]
+    fn parent_death_signal_tracks_creating_thread_once() {
+        let mut registry = ProcessRegistry::new();
+        let parent = registry.create_process_for_task(10, None, None)
+                             .unwrap();
+        registry.add_task_to_process(parent,
+                                     10,
+                                     11,
+                                     CloneFlags::CLONE_THREAD,
+                                     0,
+                                     None)
+                .unwrap();
+        let child = registry.create_process_like_fork(parent, 11, 12, None)
+                            .unwrap();
+        registry.set_parent_death_signal(child, 9)
+                .unwrap();
+
+        let first = registry.mark_task_exited(10, 0)
+                            .unwrap();
+        assert!(first.parent_death_notifications
+                     .is_empty());
+        let second = registry.mark_task_exited(11, 0)
+                             .unwrap();
+        assert_eq!(second.parent_death_notifications,
+                   alloc::vec![super::ParentDeathNotification { pid : child,
+                                                                signal : 9 }]);
+        assert!(registry.mark_task_exited(11, 0)
+                        .unwrap()
+                        .parent_death_notifications
+                        .is_empty());
+    }
+
+    #[test]
+    fn exit_group_notifies_once_then_subreaper_death_notifies_again() {
+        let mut registry = ProcessRegistry::new();
+        let init = registry.create_process_for_task(1, None, None).unwrap();
+        let subreaper = registry.create_process_for_task(10, Some(init), None).unwrap();
+        registry.set_process_child_subreaper(subreaper, true).unwrap();
+        let parent = registry.create_process_for_task(20, Some(subreaper), None).unwrap();
+        registry.add_task_to_process(parent, 20, 21, CloneFlags::CLONE_THREAD, 0, None).unwrap();
+        let child = registry.create_process_like_fork(parent, 21, 30, None).unwrap();
+        registry.set_parent_death_signal(child, 12).unwrap();
+
+        let notifications = registry.mark_process_exited(parent, 0).unwrap();
+        assert_eq!(notifications,
+                   alloc::vec![super::ParentDeathNotification { pid : child, signal : 12 }]);
+        assert!(registry.mark_process_exited(parent, 0).unwrap().is_empty());
+        assert_eq!(registry.process_snapshot(child).unwrap().parent_pid, Some(subreaper));
+
+        let notifications = registry.mark_process_exited(subreaper, 0).unwrap();
+        assert_eq!(notifications,
+                   alloc::vec![super::ParentDeathNotification { pid : child, signal : 12 }]);
+        assert_eq!(registry.process_snapshot(child).unwrap().parent_pid, Some(init));
+    }
+
+    #[test]
+    fn ordinary_last_thread_exit_reparents_children() {
+        let mut registry = ProcessRegistry::new();
+        let init = registry.create_process_for_task(1, None, None).unwrap();
+        let parent = registry.create_process_for_task(10, Some(init), None).unwrap();
+        let child = registry.create_process_like_fork(parent, 10, 11, None).unwrap();
+
+        let result = registry.mark_task_exited(10, 0).unwrap();
+        assert!(result.process_completed);
+        assert_eq!(registry.process_snapshot(child).unwrap().parent_pid, Some(init));
+    }
+
+    #[test]
+    fn fork_and_clone_inherit_calling_thread_comm() {
+        let mut registry = ProcessRegistry::new();
+        let parent = registry.create_process_for_task(10, None, None)
+                             .unwrap();
+        let mut comm = [0; 16];
+        comm[..6].copy_from_slice(b"worker");
+        registry.set_thread_comm(10, comm)
+                .unwrap();
+        let child = registry.create_process_like_fork(parent, 10, 11, None)
+                            .unwrap();
+        registry.add_task_to_process(parent,
+                                     10,
+                                     12,
+                                     CloneFlags::CLONE_THREAD,
+                                     0,
+                                     None)
+                .unwrap();
+        assert_eq!(registry.get_thread_comm(11), Some(comm));
+        assert_eq!(registry.get_thread_comm(12), Some(comm));
+        assert_eq!(registry.process_snapshot(child)
+                           .unwrap()
+                           .leader_task_id,
+                   11);
     }
 }

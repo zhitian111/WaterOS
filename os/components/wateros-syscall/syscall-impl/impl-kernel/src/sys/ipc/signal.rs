@@ -318,17 +318,15 @@ pub(crate) fn deliver_pending_signal(frame : *mut u8,
             task::ProcessState::Stopped { .. } => {
                 if task::current_task_id().is_some_and(ipc::signal::take_sigkill) {
                     let task_id = task::current_task_id().ok_or(ErrNo::ESRCH)?;
-                    let exit_code = crate::sys::task::wait::signal_terminate_exit_code(
-                        ipc::signal::SIGKILL,
-                        task_id,
-                    );
+                    let exit_code =
+                        crate::sys::task::wait::signal_terminate_exit_code(ipc::signal::SIGKILL,
+                                                                           task_id);
                     crate::sys::task::exit_group_with_wait_code(exit_code);
                     unreachable!("exit_group_with_wait_code must not return");
                 }
                 task::block_current(task::TaskWaitTarget::Manual);
             }
-            task::ProcessState::Exiting(exit_code) |
-            task::ProcessState::Exited(exit_code) => {
+            task::ProcessState::Exiting(exit_code) | task::ProcessState::Exited(exit_code) => {
                 crate::sys::task::exit_current_with_wait_code(exit_code);
                 unreachable!("exit_current_with_wait_code must not return");
             }
@@ -649,7 +647,8 @@ pub(crate) fn sys_rt_sigtimedwait(args : SyscallArgs) -> UserRet {
         Err(error) => return UserRet::from_error(error),
     };
     let task_id = signal_snapshot.task_id;
-    let process_pid = signal_snapshot.pid.raw();
+    let process_pid = signal_snapshot.pid
+                                     .raw();
     let wait_set = match copy_from_user_struct::<u64>(set) {
         Ok(bits) => SignalSet::from_bits(bits),
         Err(e) => return UserRet::from_error(e),
@@ -718,7 +717,8 @@ pub(crate) fn sys_rt_sigtimedwait(args : SyscallArgs) -> UserRet {
         let source = take_pending_signal_source(process_pid, sig);
         let mut payload = [0u8; 112];
         payload[0..4].copy_from_slice(&(source.pid as u32).to_ne_bytes());
-        payload[4..8].copy_from_slice(&source.uid.to_ne_bytes());
+        payload[4..8].copy_from_slice(&source.uid
+                                             .to_ne_bytes());
         let siginfo = UserSigInfo { signo : sig as i32,
                                     errno : 0,
                                     code : 0,
@@ -797,9 +797,8 @@ pub(crate) fn sys_tkill(args : SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::ESRCH);
     }
     if let Some(caller) = task::current_process_snapshot() {
-        let uid = cred::current_credentials()
-                        .effective_uid
-                        .0;
+        let uid = cred::current_credentials().effective_uid
+                                             .0;
         record_pending_signal_source(snapshot.pid.raw(),
                                      signal,
                                      PendingSignalSource { pid : caller.pid.raw(),
@@ -839,9 +838,8 @@ pub(crate) fn sys_tgkill(args : SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::ESRCH);
     }
     if let Some(caller) = task::current_process_snapshot() {
-        let uid = cred::current_credentials()
-                        .effective_uid
-                        .0;
+        let uid = cred::current_credentials().effective_uid
+                                             .0;
         record_pending_signal_source(snapshot.pid.raw(),
                                      signal,
                                      PendingSignalSource { pid : caller.pid.raw(),
@@ -922,8 +920,10 @@ fn send_signal_to_process(process : ProcessId, sig : usize) -> Result<(), ErrNo>
     if task::leader_task_for_process(process).is_none() {
         return Err(ErrNo::ESRCH);
     }
-    if task::process_snapshot(process)
-        .is_some_and(|snapshot| matches!(snapshot.state, task::ProcessState::Exited(_)))
+    if task::process_snapshot(process).is_some_and(|snapshot| {
+                                          matches!(snapshot.state,
+                                                   task::ProcessState::Exited(_))
+                                      })
     {
         return Ok(());
     }
@@ -932,9 +932,8 @@ fn send_signal_to_process(process : ProcessId, sig : usize) -> Result<(), ErrNo>
         return Err(ErrNo::ESRCH);
     }
     if let Some(caller) = task::current_process_snapshot() {
-        let uid = cred::current_credentials()
-                        .effective_uid
-                        .0;
+        let uid = cred::current_credentials().effective_uid
+                                             .0;
         record_pending_signal_source(process.raw(),
                                      sig,
                                      PendingSignalSource { pid : caller.pid.raw(),
@@ -960,9 +959,7 @@ fn send_signal_to_process(process : ProcessId, sig : usize) -> Result<(), ErrNo>
 /// This is a kernel-originated path: unlike `kill(2)` it deliberately bypasses
 /// caller credential checks, while reusing the normal pending-signal,
 /// stop/continue and scheduler wakeup machinery.
-pub(crate) fn send_kernel_signal_to_process_group(pgid : ProcessId,
-                                                   sig : usize)
-                                                   -> usize {
+pub(crate) fn send_kernel_signal_to_process_group(pgid : ProcessId, sig : usize) -> usize {
     if sig == 0 || sig > NSIG {
         return 0;
     }
@@ -1001,11 +998,11 @@ fn send_kernel_signal_to_process(process : ProcessId, sig : usize) -> Result<(),
     if task::leader_task_for_process(process).is_none() {
         return Err(ErrNo::ESRCH);
     }
-    if task::process_snapshot(process)
-        .is_none_or(|snapshot| {
-            matches!(snapshot.state,
-                     task::ProcessState::Exited(_) | task::ProcessState::Exiting(_))
-        })
+    if task::process_snapshot(process).is_none_or(|snapshot| {
+                                          matches!(snapshot.state,
+                                                   task::ProcessState::Exited(_) |
+                                                   task::ProcessState::Exiting(_))
+                                      })
     {
         return Ok(());
     }
@@ -1026,12 +1023,12 @@ fn send_kernel_signal_to_process(process : ProcessId, sig : usize) -> Result<(),
     Ok(())
 }
 
-pub(crate) fn notify_parent_death_signals(parent_pid : ProcessId) {
-    for child in task::collect_child_pids(parent_pid) {
-        if let Some(sig) = task::process_parent_death_signal(child) {
-            if sig > 0 {
-                let _ = send_kernel_signal_to_process(child, sig as usize);
-            }
+pub(crate) fn deliver_parent_death_notifications(notifications : impl IntoIterator<Item = task::ParentDeathNotification>)
+{
+    for notification in notifications {
+        if notification.signal > 0 {
+            let _ = send_kernel_signal_to_process(notification.pid,
+                                                  notification.signal as usize);
         }
     }
 }
