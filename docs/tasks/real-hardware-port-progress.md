@@ -2741,3 +2741,53 @@ Configured/Live runtime 可汇总两个 bank 的 failure snapshot。显式诊断
 ### 提交
 
 - `[ref] record 2K1000 IRQ status diagnostics`
+
+## 2026-08-10：批次 60——Read-only diagnostic IRQ snapshots
+
+### 任务与设计
+
+新增固定尺寸、无硬件访问的板级诊断快照。slot 暴露 Empty/Reserved/Live/Servicing/Draining
+Acquire snapshot；只有 CAS 取得 Live runtime 独占访问时才复制 runtime 数据。若与 service/drain
+竞争，不等待、不重试，返回当时 slot state 和 runtime=None。
+
+LiveRuntime 使用饱和计数累计 service calls/successes/failures 以及 parent/masked/handled/
+unhandled/rearmed 数量。成功和失败的 partial ServiceReport 都进入累计统计。runtime snapshot 同时
+包含 configured source mask、parent HWI mask 和两个 bank 最近 status-poll failure。
+
+### 完成内容
+
+- [x] 新增公开 `DiagnosticSlotState` 五态枚举和原子 `state()`。
+- [x] slot 测试直接观察 reserve、service、drain 期间的 Reserved/Servicing/Draining。
+- [x] 新增固定尺寸 `ServiceCounters`，全部使用 saturating add。
+- [x] LiveRuntime service 成功/失败均更新 calls 与对应 report 累计值。
+- [x] 新增 `RuntimeDiagnosticSnapshot`，汇总 ownership、service counters 和 status failures。
+- [x] 新增板级 `DiagnosticIrqSnapshot { slot_state, runtime }`。
+- [x] target snapshot 只复制内存，不读取 LIOINTC/MMC/ECFG。
+- [x] host snapshot 确定性返回 Empty/None。
+- [x] 聚合 driver 暴露 `loongson2k1000_irq_diagnostic_snapshot()`。
+- [x] SafeDefault、activation 和 drain 行为均未改变。
+
+### 验证证据
+
+- `cargo test`：74 项 host 单测全部通过。
+- slot 测试断言 Empty→Reserved→Live、service 内 Servicing、drain 内 Draining、失败恢复 Live、
+  成功恢复 Empty。
+- LiveRuntime 测试断言初始 counters 全零；InvalidSnapshot service 后 calls=1/failures=1，
+  success 与 report 累计保持零。
+- host 板级 snapshot 精确等于 Empty/runtime=None，且 activation/drain/service 仍 fail closed。
+- 2K1000 精确 feature LoongArch target check、`make kernel-la`、topology/畸形 DTS fixture、
+  `git diff --check` 通过；仅有既有 warning，未创建镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：snapshot 本身无硬件访问，但其中真实计数/status 仍需上板产生。
+- [ ] 查询与 service/drain 竞争时 runtime=None；调用方需依据 state 稍后重试。
+- [ ] 统计只有累计值，没有时间戳、CPU id、最近 snapshot 或最近 RuntimeError。
+- [ ] counters 位于 runtime 内，成功 drain 后随 runtime 销毁；没有跨 activation epoch 累计。
+- [ ] aggregate 查询仅在 2K1000 feature 下编译，尚未接入 remote-debug monitor 文本命令。
+- [ ] 下一批应将 snapshot 接入已有 development-only remote-debug monitor，增加只读 `ls2k-irq`
+  命令；非 2K1000 profile 返回 unsupported，命令不得触发 activation/drain 或硬件读取。
+
+### 提交
+
+- `[ref] expose 2K1000 IRQ diagnostic snapshots`

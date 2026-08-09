@@ -120,6 +120,13 @@ pub unsafe fn drain_loongson2k1000_irq_diagnostic()
     unsafe { impl_loongson2k1000la::diagnostic_irq::drain() }
 }
 
+/// Snapshot the 2K1000 diagnostic IRQ runtime without hardware access.
+#[cfg(feature = "impl-loongson2k1000la")]
+pub fn loongson2k1000_irq_diagnostic_snapshot()
+    -> impl_loongson2k1000la::diagnostic_irq::DiagnosticIrqSnapshot {
+    impl_loongson2k1000la::diagnostic_irq::snapshot()
+}
+
 /// 自检入口：依次调用 API 与各子系统测试钩子；QEMU 实现会跑探测路径，dummy
 /// 实现跳过硬件。
 pub fn test() {

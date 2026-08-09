@@ -14,6 +14,15 @@ const SERVICING : u8 = 3;
 const DRAINING : u8 = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiagnosticSlotState {
+    Empty,
+    Reserved,
+    Live,
+    Servicing,
+    Draining,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SlotError {
     Reserved,
     AlreadyLive,
@@ -39,6 +48,17 @@ impl<T> DiagnosticRuntimeSlot<T> {
     pub const fn new() -> Self {
         Self { state : AtomicU8::new(EMPTY),
                value : UnsafeCell::new(MaybeUninit::uninit()) }
+    }
+
+    pub fn state(&self) -> DiagnosticSlotState {
+        match self.state.load(Ordering::Acquire) {
+            EMPTY => DiagnosticSlotState::Empty,
+            RESERVED => DiagnosticSlotState::Reserved,
+            LIVE => DiagnosticSlotState::Live,
+            SERVICING => DiagnosticSlotState::Servicing,
+            DRAINING => DiagnosticSlotState::Draining,
+            _ => DiagnosticSlotState::Draining,
+        }
     }
 
     pub fn reserve(&self) -> Result<RuntimeReservation<'_, T>, SlotError> {
@@ -154,11 +174,14 @@ mod tests {
     #[test]
     fn reservation_drop_reopens_slot_and_commit_is_single_publication() {
         let slot = DiagnosticRuntimeSlot::new();
+        assert_eq!(slot.state(), DiagnosticSlotState::Empty);
         assert_eq!(slot.with_live_mut(|_: &mut u32| ()), Err(SlotError::Empty));
         let reservation = slot.reserve().unwrap();
+        assert_eq!(slot.state(), DiagnosticSlotState::Reserved);
         assert_eq!(slot.reserve().err(), Some(SlotError::Reserved));
         drop(reservation);
         slot.reserve().unwrap().commit(41u32);
+        assert_eq!(slot.state(), DiagnosticSlotState::Live);
         assert_eq!(slot.reserve().err(), Some(SlotError::AlreadyLive));
         assert_eq!(slot.with_live_mut(|value| { *value += 1; *value }), Ok(42));
     }
@@ -168,6 +191,7 @@ mod tests {
         let slot = DiagnosticRuntimeSlot::new();
         slot.reserve().unwrap().commit(7u8);
         let result = slot.with_live_mut(|value| {
+            assert_eq!(slot.state(), DiagnosticSlotState::Servicing);
             assert_eq!(slot.with_live_mut(|_| ()), Err(SlotError::Busy));
             assert_eq!(slot.drain(|_| Ok::<(), ()>(())),
                        Err(DrainError::Slot(SlotError::Busy)));
@@ -182,15 +206,18 @@ mod tests {
         let slot = DiagnosticRuntimeSlot::new();
         slot.reserve().unwrap().commit(9u8);
         let failed = slot.drain(|value| {
+            assert_eq!(slot.state(), DiagnosticSlotState::Draining);
             *value = 10;
             Err::<(), _>("retry")
         });
         assert_eq!(failed, Err(DrainError::Operation("retry")));
+        assert_eq!(slot.state(), DiagnosticSlotState::Live);
         assert_eq!(slot.with_live_mut(|value| *value), Ok(10));
         assert_eq!(slot.drain(|value| {
             assert_eq!(*value, 10);
             Ok::<(), &str>(())
         }), Ok(()));
+        assert_eq!(slot.state(), DiagnosticSlotState::Empty);
         assert_eq!(slot.drain(|_| Ok::<(), &str>(())),
                    Err(DrainError::Slot(SlotError::Empty)));
         slot.reserve().unwrap().commit(11u8);

@@ -4,7 +4,8 @@
 
 use api_v0::{DriverError, DriverResult};
 
-use crate::diagnostic_slot::SlotError;
+use crate::{diagnostic_slot::{DiagnosticSlotState, SlotError},
+            irq_runtime::RuntimeDiagnosticSnapshot};
 
 #[cfg(target_arch = "loongarch64")]
 use crate::diagnostic_slot::DrainError;
@@ -44,6 +45,12 @@ pub enum DiagnosticDrainError {
     Slot(SlotError),
     #[cfg(target_arch = "loongarch64")]
     Quiesce(QuiesceError),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DiagnosticIrqSnapshot {
+    pub slot_state : DiagnosticSlotState,
+    pub runtime : Option<RuntimeDiagnosticSnapshot>,
 }
 
 #[cfg(target_arch = "loongarch64")]
@@ -170,9 +177,27 @@ pub fn service(snapshot : usize, core : usize) -> DriverResult<()> {
     }
 }
 
+/// Copy diagnostic state without reading or writing hardware registers.
+#[cfg(target_arch = "loongarch64")]
+pub fn snapshot() -> DiagnosticIrqSnapshot {
+    if RUNTIME.state() != DiagnosticSlotState::Live {
+        return DiagnosticIrqSnapshot { slot_state : RUNTIME.state(), runtime : None };
+    }
+    match RUNTIME.with_live_mut(|runtime| runtime.diagnostic_snapshot()) {
+        Ok(runtime) => DiagnosticIrqSnapshot { slot_state : DiagnosticSlotState::Live,
+                                               runtime : Some(runtime) },
+        Err(_) => DiagnosticIrqSnapshot { slot_state : RUNTIME.state(), runtime : None },
+    }
+}
+
 #[cfg(not(target_arch = "loongarch64"))]
 pub fn service(_snapshot : usize, _core : usize) -> DriverResult<()> {
     Err(DriverError::Unsupported)
+}
+
+#[cfg(not(target_arch = "loongarch64"))]
+pub fn snapshot() -> DiagnosticIrqSnapshot {
+    DiagnosticIrqSnapshot { slot_state : DiagnosticSlotState::Empty, runtime : None }
 }
 
 #[cfg(test)]
@@ -186,5 +211,9 @@ mod tests {
         // SAFETY: the host implementation performs no hardware access.
         assert_eq!(unsafe { drain() }, Err(DiagnosticDrainError::NotInitialized));
         assert_eq!(service(1 << 2, 0), Err(DriverError::Unsupported));
+        assert_eq!(snapshot(), DiagnosticIrqSnapshot {
+            slot_state : DiagnosticSlotState::Empty,
+            runtime : None,
+        });
     }
 }

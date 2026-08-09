@@ -175,6 +175,37 @@ pub struct LiveRuntime<I, O> {
     runtime : BoardIrqRuntime<I, O>,
     configured_sources : u64,
     parent_lines : u8,
+    service_counters : ServiceCounters,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ServiceCounters {
+    pub calls : u64,
+    pub successes : u64,
+    pub failures : u64,
+    pub parent_lines : u64,
+    pub masked_sources : u64,
+    pub handled_sources : u64,
+    pub unhandled_sources : u64,
+    pub rearmed_sources : u64,
+}
+
+impl ServiceCounters {
+    fn add_report(&mut self, report : ServiceReport) {
+        self.parent_lines = self.parent_lines.saturating_add(report.parent_lines as u64);
+        self.masked_sources = self.masked_sources.saturating_add(report.masked_sources as u64);
+        self.handled_sources = self.handled_sources.saturating_add(report.handled_sources as u64);
+        self.unhandled_sources = self.unhandled_sources.saturating_add(report.unhandled_sources as u64);
+        self.rearmed_sources = self.rearmed_sources.saturating_add(report.rearmed_sources as u64);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeDiagnosticSnapshot {
+    pub configured_sources : u64,
+    pub parent_lines : u8,
+    pub service : ServiceCounters,
+    pub status_poll_failures : [Option<StatusPollFailure>; MAX_BANKS],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -542,7 +573,8 @@ impl<I : RegisterIo, O> ConfiguredRuntime<I, O> {
         }
         Ok(LiveRuntime { runtime : self.runtime,
                          configured_sources : self.configured_sources,
-                         parent_lines : requested })
+                         parent_lines : requested,
+                         service_counters : ServiceCounters::default() })
     }
 }
 
@@ -552,13 +584,35 @@ impl<I : RegisterIo, O : IrqOwner> LiveRuntime<I, O> {
     pub fn status_poll_failures(&self) -> [Option<StatusPollFailure>; MAX_BANKS] {
         self.runtime.status_poll_failures()
     }
+    pub fn diagnostic_snapshot(&self) -> RuntimeDiagnosticSnapshot {
+        RuntimeDiagnosticSnapshot {
+            configured_sources : self.configured_sources,
+            parent_lines : self.parent_lines,
+            service : self.service_counters,
+            status_poll_failures : self.status_poll_failures(),
+        }
+    }
     pub fn into_runtime(self) -> BoardIrqRuntime<I, O> { self.runtime }
 
     /// Service one snapshot. Sources remain masked after dispatch until a
     /// future device-ack disposition contract permits explicit re-enable.
     pub fn service(&mut self, snapshot : usize, core : usize)
                    -> Result<ServiceReport, ServiceFailure> {
-        self.runtime.service(snapshot, core)
+        self.service_counters.calls = self.service_counters.calls.saturating_add(1);
+        match self.runtime.service(snapshot, core) {
+            Ok(report) => {
+                self.service_counters.successes =
+                    self.service_counters.successes.saturating_add(1);
+                self.service_counters.add_report(report);
+                Ok(report)
+            }
+            Err(failure) => {
+                self.service_counters.failures =
+                    self.service_counters.failures.saturating_add(1);
+                self.service_counters.add_report(failure.report);
+                Err(failure)
+            }
+        }
     }
 
     /// Stop device delivery before disabling this runtime's CPU parent lines.
@@ -856,12 +910,17 @@ mod tests {
             Err(failure) => failure,
         };
         assert_eq!(failed.error, RuntimeError::Controller(DriverError::IoError));
-        let live = failed.state.activate(&mut activator)
-                               .unwrap_or_else(|_| panic!("activation retry failed"));
+        let mut live = failed.state.activate(&mut activator)
+                                   .unwrap_or_else(|_| panic!("activation retry failed"));
         assert_eq!(activator.enables, [1 << 2, 1 << 2]);
         assert!(activator.disables.is_empty());
         assert_eq!(live.configured_sources(), 1 << 6);
         assert_eq!(live.parent_lines(), 1 << 2);
+        assert_eq!(live.diagnostic_snapshot().service, ServiceCounters::default());
+        assert_eq!(live.service(0, 0).unwrap_err().error, RuntimeError::InvalidSnapshot);
+        assert_eq!(live.diagnostic_snapshot().service,
+                   ServiceCounters { calls : 1, failures : 1,
+                                     ..ServiceCounters::default() });
         let mut controllers = live.into_runtime().into_controllers();
         let bank0 = controllers[0].take().unwrap().into_inner();
         assert_eq!(bank0.writes.first(), Some(&(0x1000 + ENABLE_CLEAR, u32::MAX)));
