@@ -2542,3 +2542,53 @@ Live→Servicing 独占访问，避免持有初始化 spin mutex，重入/并发
 ### 提交
 
 - `[ref] stage 2K1000 IRQ runtime before publication`
+
+## 2026-08-10：批次 56——Explicit volatile IRQ diagnostic runtime
+
+### 任务与设计
+
+新增仅 LoongArch target 存在的全局诊断 LiveRuntime slot。显式 unsafe activation 严格执行：
+reserve slot → 复制已发布 layout/owner plan → assemble volatile LIOINTC 并 mask-all →
+只构造 MMC AckOnly owner → masked configure → transaction activate → infallible slot commit。
+
+入口不属于 `init_after_boot()`；安全默认启动仍只保存 topology/layout/plan。聚合 driver 暴露
+`activate_loongson2k1000_irq_diagnostic()`，调用者必须显式承担 MMIO 独占、boot CPU 0、无其他
+LIOINTC/ECFG owner 等 unsafe 前置条件。
+
+### 完成内容
+
+- [x] 新增 target-only `DiagnosticRuntimeSlot<TargetRuntime>` 全局实例。
+- [x] 在任何 MMIO/CSR 写之前 reserve，重复/并发 activation 立即失败。
+- [x] volatile assembly 先对两个 LIOINTC bank 执行 mask-all。
+- [x] owner factory 仅接受 MmcCommand，APBDMA Deferred 不会被构造或激活。
+- [x] MMC volatile register ownership进入 LiveRuntime，并添加受 slot 串行化约束的 Send 证明。
+- [x] activation failure 保留 source rollback、parent rollback 和 residual HWI 到错误模型。
+- [x] 完整 LiveRuntime 才能 commit；Machine external handler 只服务 slot 中 Live 状态。
+- [x] Empty slot 返回 Unsupported；Reserved/Servicing 等竞争状态 fail closed 为 IoError。
+- [x] 聚合 driver 提供显式 unsafe 入口，默认 init 路径没有调用。
+- [x] host 实现不访问硬件，activation 返回 NotInitialized、service 返回 Unsupported。
+
+### 验证证据
+
+- `cargo test`：71 项 host 单测全部通过（本批新增 1 项 host fail-closed 测试）。
+- 既有 70 项模型测试覆盖 assembly mask-all、AckOnly plan、masked configure、parent/source rollback、
+  single-publication 和 service reentrancy；target glue 本身由 LoongArch 精确 feature 编译验证。
+- `cargo check --no-default-features --features loongson2k1000la,heap-tlsf,final_online
+  --target loongarch64-unknown-none` 通过，包含全局 volatile runtime 的完整类型检查。
+- `make kernel-la`、topology/畸形 DTS fixture、`git diff --check` 通过；仅有既有 warning。
+- 未调用 unsafe activation，未进行任何真实 MMIO/CSR 写，未创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：完整 activation 和 interrupt delivery 从未执行；当前只有编译与 model 证据。
+- [ ] 诊断入口没有绑定到默认 boot、远程 monitor 或 shell 命令，避免误触；需要板上专用 harness 显式调用。
+- [ ] 当前固定 boot CPU/core 0，未支持 SMP affinity、per-CPU ECFG ownership 或 CPU offline。
+- [ ] service error 目前折叠为 IoError 并记录日志；后续诊断接口可暴露结构化计数/last failure。
+- [ ] Live runtime 只支持一次发布，没有 shutdown/drain/unpublish；重启前无法动态卸载。
+- [ ] MMC owner 仅确认 command W1C interrupt，不代表 clock/power/data/card path 可用。
+- [ ] 下一批应增加 Live runtime 诊断状态快照与安全 drain 状态机：先 mask device sources、等待
+  Servicing 退出、再关闭 transaction-owned parent HWI；用 mock 覆盖 Busy、重复 drain 和失败重试。
+
+### 提交
+
+- `[ref] add explicit 2K1000 IRQ diagnostic runtime`

@@ -15,10 +15,9 @@ impl MachineDriver for Machine {
         if snapshot == 0 || snapshot & !0xff != 0 {
             return Err(api_v0::DriverError::InvalidParam);
         }
-        // UNVERIFIED_ON_HARDWARE: persistent topology/LIOINTC ownership is not
-        // assembled yet. Refuse service rather than returning with a live,
-        // unmasked level interrupt and causing an implicit re-enable.
-        Err(api_v0::DriverError::Unsupported)
+        // The diagnostic slot is empty during safe-default boot. Only an
+        // explicitly activated, fully published runtime can service a trap.
+        crate::diagnostic_irq::service(snapshot, 0)
     }
 
     fn test(&self) { crate::self_test(); }

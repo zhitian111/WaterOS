@@ -116,6 +116,11 @@ pub struct VolatileRegisters {
     size : usize,
 }
 
+// The diagnostic runtime owns this MMIO window exclusively and the runtime
+// slot serializes mutable access. Moving that ownership does not duplicate it.
+#[cfg(target_arch = "loongarch64")]
+unsafe impl Send for VolatileRegisters {}
+
 #[cfg(target_arch = "loongarch64")]
 impl VolatileRegisters {
     /// # Safety

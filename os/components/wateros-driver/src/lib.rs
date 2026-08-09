@@ -93,6 +93,21 @@ pub fn handle_external_interrupt(snapshot : usize) -> api_v0::DriverResult<()> {
     machine().handle_external_interrupt(snapshot)
 }
 
+/// Explicitly enable the 2K1000 real-hardware IRQ diagnostic runtime.
+///
+/// This is intentionally separate from [`init_after_boot`]. Safe-default boot
+/// never calls it.
+///
+/// # Safety
+/// The caller must satisfy the board MMIO ownership, boot-CPU and interrupt
+/// exclusion contract documented by the implementation.
+#[cfg(feature = "impl-loongson2k1000la")]
+pub unsafe fn activate_loongson2k1000_irq_diagnostic()
+    -> Result<(), impl_loongson2k1000la::diagnostic_irq::DiagnosticIrqError> {
+    // SAFETY: forwarded to the caller-visible contract above.
+    unsafe { impl_loongson2k1000la::diagnostic_irq::activate() }
+}
+
 /// 自检入口：依次调用 API 与各子系统测试钩子；QEMU 实现会跑探测路径，dummy
 /// 实现跳过硬件。
 pub fn test() {
