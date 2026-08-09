@@ -1,0 +1,10 @@
+[package]
+name = "microwindows"
+version = "0.93-wateros-21086753-doom1"
+source = "vendor/microwindows"
+architectures = ["rv"]
+dependencies = ["base-layout", "busybox", "operator-tools"]
+build = "build.py"
+install_prefix = "/usr"
+allow_overwrite = []
+inputs = ["vendor/MICROWINDOWS_SOURCE.md"]

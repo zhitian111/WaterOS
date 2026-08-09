@@ -2,13 +2,51 @@
 
 extern crate alloc;
 
-use alloc::boxed::Box;
+use alloc::{boxed::Box, string::String, sync::Arc};
 use core::any::Any;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use spin::Mutex;
 
 use crate::error::{VfsError, VfsResult};
 use crate::meta::VfsMetadata;
+
+/// framebuffer 的 VFS 中立视图，避免 syscall 层依赖具体 VirtIO 驱动。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VfsFramebufferInfo {
+    pub width : u32,
+    pub height : u32,
+    pub stride : usize,
+    pub byte_len : usize,
+    pub phys_base : usize,
+    pub mapped_len : usize,
+}
+
+/// evdev 节点的稳定能力摘要。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VfsInputDeviceInfo {
+    pub name : String,
+    pub keyboard : bool,
+    pub pointer : bool,
+    pub absolute_x : Option<(i32, i32)>,
+    pub absolute_y : Option<(i32, i32)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VfsSpecialDeviceInfo {
+    Framebuffer(VfsFramebufferInfo),
+    InputEvent(VfsInputDeviceInfo),
+}
+
+/// VFS 层的设备内存生命周期令牌。
+pub trait VfsDeviceMappingLease: Send + Sync {}
+impl<T : Send + Sync + ?Sized> VfsDeviceMappingLease for T {}
+
+#[derive(Clone)]
+pub struct VfsDeviceMapping {
+    pub phys_start : usize,
+    pub len : usize,
+    pub lease : Arc<dyn VfsDeviceMappingLease>,
+}
 
 /// One Linux open-file-description's shared seek position and status flags.
 ///
@@ -342,6 +380,15 @@ pub trait VfsIoHandle: Send + VfsHandleAny {
     fn ioctl(&mut self, _request: usize, _arg: usize) -> VfsResult<isize> {
         Err(VfsError::Unsupported)
     }
+
+    /// 查询 framebuffer/evdev 等需由 syscall 层翻译 Linux ABI 的设备。
+    fn special_device_info(&self) -> Option<VfsSpecialDeviceInfo> { None }
+
+    /// 查询可 mmap 的设备物理内存。
+    fn device_mapping(&self) -> VfsResult<VfsDeviceMapping> { Err(VfsError::Unsupported) }
+
+    /// 将 framebuffer 变更提交给宿主显示设备。
+    fn flush_device(&mut self) -> VfsResult<()> { Err(VfsError::Unsupported) }
 
     /// 是否为软件 RTC 字符设备（syscall 层对 rtc fd 分发专用 ioctl）。
     fn is_rtc_device(&self) -> bool {

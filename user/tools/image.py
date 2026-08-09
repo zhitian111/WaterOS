@@ -150,7 +150,9 @@ def _fixed_uuid(arch: str, profile: str) -> str:
 
 
 def _label(arch: str, profile: str) -> str:
-    abbreviated = "min" if profile == "minimal" else "operator"
+    abbreviated = {"minimal": "min", "operator": "operator", "nanox": "nanox"}.get(
+        profile, profile
+    )
     return f"wos-{arch}-{abbreviated}"[:16]
 
 

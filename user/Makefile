@@ -25,6 +25,7 @@ help:
 	@echo "  make doctor ARCH=rv"
 	@echo "  make build  ARCH=rv PROFILE=minimal"
 	@echo "  make image  ARCH=rv PROFILE=minimal IMAGE_SIZE_MB=256"
+	@echo "  make image  ARCH=rv PROFILE=nanox    # Nano-X graphical rootfs"
 	@echo "  make overlay ARCH=rv PROFILE=operator BASE_IMAGE=../os/sdcard-rv.img"
 	@echo "  make inspect ARCH=rv PROFILE=minimal"
 	@echo "  make test"

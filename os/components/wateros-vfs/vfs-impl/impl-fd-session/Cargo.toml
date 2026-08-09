@@ -10,6 +10,8 @@
     console = { path = "../../../wateros-runtime/runtime-console/", package = "wateros-runtime-console", default-features = false }
     driver-api = { path = "../../../wateros-driver/driver-api/api-v0/", package = "wateros-driver-api-v0", default-features = true }
     driver-character-api-v0 = { path = "../../../wateros-driver/driver-character/character-api/api-v0", package = "wateros-driver-character-api-v0", default-features = true }
+    driver-display-api-v0 = { path = "../../../wateros-driver/driver-display/display-api/api-v0", package = "wateros-driver-display-api-v0", default-features = true, optional = true }
+    driver-input-api-v0 = { path = "../../../wateros-driver/driver-input/input-api/api-v0", package = "wateros-driver-input-api-v0", default-features = true, optional = true }
     ipc = { path = "../../../wateros-ipc/", package = "wateros-ipc", default-features = false }
     arch = { path = "../../../wateros-platform/platform-arch/", package = "wateros-platform-arch", default-features = false, features = [
         "api-v0",
@@ -29,6 +31,10 @@
         "api-v0",
         "ipc/pipe",
         "waitqueue/impl-task",
+    ]
+    user-graphics = [
+        "dep:driver-display-api-v0",
+        "dep:driver-input-api-v0",
     ]
 
 [profile.dev]

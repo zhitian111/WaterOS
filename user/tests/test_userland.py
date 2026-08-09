@@ -41,6 +41,24 @@ class ConfigurationTests(unittest.TestCase):
                          ["base-layout", "busybox", "operator-tools"])
         self.assertIn("/var/lib/wateros", profile.overlay_replace_prefixes)
 
+    def test_nanox_profile_is_riscv_only_and_dependency_ordered(self) -> None:
+        profile = userland.load_profile("nanox")
+        packages = userland.resolve_packages(profile, "rv")
+        self.assertEqual([package.name for package in packages],
+                         ["base-layout", "busybox", "operator-tools", "microwindows"])
+        with self.assertRaisesRegex(userland.UserlandError, "does not support la"):
+            userland.resolve_packages(profile, "la")
+
+    def test_nanox_doom_payload_and_launcher_are_present(self) -> None:
+        wad = (userland.USER_ROOT / "vendor/microwindows/src/contrib/doom/"
+               "doom1.wad")
+        self.assertTrue(wad.is_file())
+        self.assertIn(wad.read_bytes()[:4], (b"IWAD", b"PWAD"))
+        launcher = (userland.PACKAGE_ROOT / "microwindows/scripts/"
+                    "start-doom")
+        self.assertTrue(launcher.is_file())
+        self.assertIn("DOOMWADDIR", launcher.read_text(encoding="utf-8"))
+
     def test_dependency_cycle_is_rejected(self) -> None:
         def package(name: str) -> userland.Package:
             dependency = "right" if name == "left" else "left"

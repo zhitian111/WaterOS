@@ -1,0 +1,373 @@
+diff --git a/src/drivers/Objects.rules b/src/drivers/Objects.rules
+index 37199c5..fbfce8a 100644
+--- a/src/drivers/Objects.rules
++++ b/src/drivers/Objects.rules
+@@ -201,6 +201,10 @@ ifeq ($(MOUSE), FBEMOUSE)
+ MW_CORE_OBJS += $(MW_DIR_OBJ)/drivers/mou_fbe.o
+ endif
+ 
++ifeq ($(MOUSE), WATEROS_EVDEV)
++MW_CORE_OBJS += $(MW_DIR_OBJ)/drivers/mou_wateros_evdev.o
++endif
++
+ #
+ # Keyboard driver set by KEYBOARD=
+ #
+@@ -222,6 +226,10 @@ ifeq ($(KEYBOARD), FBEKBD)
+ MW_CORE_OBJS +=	$(MW_DIR_OBJ)/drivers/kbd_fbe.o
+ endif
+ 
++ifeq ($(KEYBOARD), WATEROS_EVDEV)
++MW_CORE_OBJS += $(MW_DIR_OBJ)/drivers/kbd_wateros_evdev.o
++endif
++
+ #
+ # Other
+ #
+diff --git a/src/drivers/kbd_wateros_evdev.c b/src/drivers/kbd_wateros_evdev.c
+new file mode 100644
+index 0000000..72de9c1
+--- /dev/null
++++ b/src/drivers/kbd_wateros_evdev.c
+@@ -0,0 +1,150 @@
++/* WaterOS Linux-compatible evdev keyboard backend for Nano-X. */
++#include <errno.h>
++#include <fcntl.h>
++#include <linux/input.h>
++#include <unistd.h>
++#include "device.h"
++
++#define WATEROS_KEYBOARD "/dev/input/keyboard0"
++
++static int keyboard_fd = -1;
++static MWKEYMOD modifiers;
++static int caps_lock;
++
++static MWKEY special_key(unsigned code)
++{
++    switch (code) {
++    case KEY_BACKSPACE: return MWKEY_BACKSPACE;
++    case KEY_TAB: return MWKEY_TAB;
++    case KEY_ENTER: return MWKEY_ENTER;
++    case KEY_ESC: return MWKEY_ESCAPE;
++    case KEY_DELETE: return MWKEY_DELETE;
++    case KEY_HOME: return MWKEY_HOME;
++    case KEY_END: return MWKEY_END;
++    case KEY_INSERT: return MWKEY_INSERT;
++    case KEY_PAGEUP: return MWKEY_PAGEUP;
++    case KEY_PAGEDOWN: return MWKEY_PAGEDOWN;
++    case KEY_LEFT: return MWKEY_LEFT;
++    case KEY_RIGHT: return MWKEY_RIGHT;
++    case KEY_UP: return MWKEY_UP;
++    case KEY_DOWN: return MWKEY_DOWN;
++    case KEY_F1: return MWKEY_F1;
++    case KEY_F2: return MWKEY_F2;
++    case KEY_F3: return MWKEY_F3;
++    case KEY_F4: return MWKEY_F4;
++    case KEY_F5: return MWKEY_F5;
++    case KEY_F6: return MWKEY_F6;
++    case KEY_F7: return MWKEY_F7;
++    case KEY_F8: return MWKEY_F8;
++    case KEY_F9: return MWKEY_F9;
++    case KEY_F10: return MWKEY_F10;
++    case KEY_F11: return MWKEY_F11;
++    case KEY_F12: return MWKEY_F12;
++    case KEY_LEFTSHIFT: return MWKEY_LSHIFT;
++    case KEY_RIGHTSHIFT: return MWKEY_RSHIFT;
++    case KEY_LEFTCTRL: return MWKEY_LCTRL;
++    case KEY_RIGHTCTRL: return MWKEY_RCTRL;
++    case KEY_LEFTALT: return MWKEY_LALT;
++    case KEY_RIGHTALT: return MWKEY_RALT;
++    case KEY_LEFTMETA: return MWKEY_LMETA;
++    case KEY_RIGHTMETA: return MWKEY_RMETA;
++    case KEY_CAPSLOCK: return MWKEY_CAPSLOCK;
++    default: return MWKEY_UNKNOWN;
++    }
++}
++
++static MWKEY printable_key(unsigned code)
++{
++    static const char normal[] = {
++        [KEY_1] = '1', [KEY_2] = '2', [KEY_3] = '3', [KEY_4] = '4',
++        [KEY_5] = '5', [KEY_6] = '6', [KEY_7] = '7', [KEY_8] = '8',
++        [KEY_9] = '9', [KEY_0] = '0', [KEY_MINUS] = '-', [KEY_EQUAL] = '=',
++        [KEY_LEFTBRACE] = '[', [KEY_RIGHTBRACE] = ']', [KEY_BACKSLASH] = '\\',
++        [KEY_SEMICOLON] = ';', [KEY_APOSTROPHE] = '\'', [KEY_GRAVE] = '`',
++        [KEY_COMMA] = ',', [KEY_DOT] = '.', [KEY_SLASH] = '/', [KEY_SPACE] = ' '
++    };
++    static const char shifted[] = {
++        [KEY_1] = '!', [KEY_2] = '@', [KEY_3] = '#', [KEY_4] = '$',
++        [KEY_5] = '%', [KEY_6] = '^', [KEY_7] = '&', [KEY_8] = '*',
++        [KEY_9] = '(', [KEY_0] = ')', [KEY_MINUS] = '_', [KEY_EQUAL] = '+',
++        [KEY_LEFTBRACE] = '{', [KEY_RIGHTBRACE] = '}', [KEY_BACKSLASH] = '|',
++        [KEY_SEMICOLON] = ':', [KEY_APOSTROPHE] = '"', [KEY_GRAVE] = '~',
++        [KEY_COMMA] = '<', [KEY_DOT] = '>', [KEY_SLASH] = '?', [KEY_SPACE] = ' '
++    };
++    int shift = (modifiers & MWKMOD_SHIFT) != 0;
++    if (code >= KEY_A && code <= KEY_Z) {
++        int upper = shift ^ caps_lock;
++        return (MWKEY)((upper ? 'A' : 'a') + (code - KEY_A));
++    }
++    if (code < sizeof(normal) && normal[code])
++        return (MWKEY)(shift ? shifted[code] : normal[code]);
++    return special_key(code);
++}
++
++static void update_modifier(unsigned code, int down)
++{
++    MWKEYMOD mask = 0;
++    switch (code) {
++    case KEY_LEFTSHIFT: mask = MWKMOD_LSHIFT; break;
++    case KEY_RIGHTSHIFT: mask = MWKMOD_RSHIFT; break;
++    case KEY_LEFTCTRL: mask = MWKMOD_LCTRL; break;
++    case KEY_RIGHTCTRL: mask = MWKMOD_RCTRL; break;
++    case KEY_LEFTALT: mask = MWKMOD_LALT; break;
++    case KEY_RIGHTALT: mask = MWKMOD_RALT; break;
++    case KEY_LEFTMETA: mask = MWKMOD_LMETA; break;
++    case KEY_RIGHTMETA: mask = MWKMOD_RMETA; break;
++    default: break;
++    }
++    if (mask) {
++        if (down) modifiers |= mask;
++        else modifiers &= ~mask;
++    }
++    if (code == KEY_CAPSLOCK && down) {
++        caps_lock = !caps_lock;
++        if (caps_lock) modifiers |= MWKMOD_CAPS;
++        else modifiers &= ~MWKMOD_CAPS;
++    }
++}
++
++static int KBD_Open(KBDDEVICE *pkd)
++{
++    (void)pkd;
++    keyboard_fd = open(WATEROS_KEYBOARD, O_RDONLY | O_NONBLOCK);
++    modifiers = 0;
++    caps_lock = 0;
++    return keyboard_fd < 0 ? DRIVER_FAIL : DRIVER_OKFILEDESC(keyboard_fd);
++}
++
++static void KBD_Close(void)
++{
++    if (keyboard_fd >= 0) close(keyboard_fd);
++    keyboard_fd = -1;
++}
++
++static void KBD_GetModifierInfo(MWKEYMOD *available, MWKEYMOD *current)
++{
++    if (available)
++        *available = MWKMOD_SHIFT | MWKMOD_CTRL | MWKMOD_ALT | MWKMOD_META | MWKMOD_CAPS;
++    if (current) *current = modifiers;
++}
++
++static int KBD_Read(MWKEY *key, MWKEYMOD *mods, MWSCANCODE *scancode)
++{
++    struct input_event event;
++    for (;;) {
++        ssize_t count = read(keyboard_fd, &event, sizeof(event));
++        if (count < 0 && (errno == EAGAIN || errno == EINTR)) return KBD_NODATA;
++        if (count != sizeof(event)) return count < 0 ? KBD_FAIL : KBD_NODATA;
++        if (event.type != EV_KEY) continue;
++        update_modifier(event.code, event.value != 0);
++        *key = printable_key(event.code);
++        *mods = modifiers;
++        *scancode = (MWSCANCODE)event.code;
++        if (*key == MWKEY_UNKNOWN) continue;
++        return event.value == 0 ? KBD_KEYRELEASE : KBD_KEYPRESS;
++    }
++}
++
++KBDDEVICE kbddev = {
++    KBD_Open, KBD_Close, KBD_GetModifierInfo, KBD_Read, NULL
++};
+diff --git a/src/drivers/mou_wateros_evdev.c b/src/drivers/mou_wateros_evdev.c
+new file mode 100644
+index 0000000..41f8192
+--- /dev/null
++++ b/src/drivers/mou_wateros_evdev.c
+@@ -0,0 +1,95 @@
++/* WaterOS Linux-compatible absolute evdev pointer backend for Nano-X. */
++#include <errno.h>
++#include <fcntl.h>
++#include <linux/input.h>
++#include <sys/ioctl.h>
++#include <unistd.h>
++#include "device.h"
++
++#define WATEROS_POINTER "/dev/input/pointer0"
++
++static int pointer_fd = -1;
++static int raw_x, raw_y, buttons;
++static struct input_absinfo abs_x, abs_y;
++extern SCREENDEVICE scrdev;
++
++static int scale_axis(int value, const struct input_absinfo *axis, int size)
++{
++    long range = (long)axis->maximum - axis->minimum;
++    if (range <= 0 || size <= 1) return 0;
++    if (value < axis->minimum) value = axis->minimum;
++    if (value > axis->maximum) value = axis->maximum;
++    return (int)(((long)(value - axis->minimum) * (size - 1)) / range);
++}
++
++static int MOU_Open(MOUSEDEVICE *pmd)
++{
++    (void)pmd;
++    pointer_fd = open(WATEROS_POINTER, O_RDONLY | O_NONBLOCK);
++    if (pointer_fd < 0) return DRIVER_FAIL;
++    if (ioctl(pointer_fd, EVIOCGABS(ABS_X), &abs_x) < 0 ||
++        ioctl(pointer_fd, EVIOCGABS(ABS_Y), &abs_y) < 0) {
++        close(pointer_fd);
++        pointer_fd = -1;
++        return DRIVER_FAIL;
++    }
++    raw_x = abs_x.value;
++    raw_y = abs_y.value;
++    buttons = 0;
++    return DRIVER_OKFILEDESC(pointer_fd);
++}
++
++static void MOU_Close(void)
++{
++    if (pointer_fd >= 0) close(pointer_fd);
++    pointer_fd = -1;
++}
++
++static int MOU_GetButtonInfo(void)
++{
++    return MWBUTTON_L | MWBUTTON_M | MWBUTTON_R;
++}
++
++static void MOU_GetDefaultAccel(int *scale, int *threshold)
++{
++    *scale = 1;
++    *threshold = 0;
++}
++
++static int MOU_Read(MWCOORD *x, MWCOORD *y, MWCOORD *z, int *button_state)
++{
++    struct input_event event;
++    int changed = 0;
++    for (;;) {
++        ssize_t count = read(pointer_fd, &event, sizeof(event));
++        if (count < 0 && (errno == EAGAIN || errno == EINTR)) return MOUSE_NODATA;
++        if (count != sizeof(event)) return count < 0 ? MOUSE_FAIL : MOUSE_NODATA;
++        if (event.type == EV_ABS) {
++            if (event.code == ABS_X) { raw_x = event.value; changed = 1; }
++            else if (event.code == ABS_Y) { raw_y = event.value; changed = 1; }
++        } else if (event.type == EV_KEY) {
++            int mask = 0;
++            if (event.code == BTN_LEFT) mask = MWBUTTON_L;
++            else if (event.code == BTN_MIDDLE) mask = MWBUTTON_M;
++            else if (event.code == BTN_RIGHT) mask = MWBUTTON_R;
++            if (mask) {
++                if (event.value) buttons |= mask;
++                else buttons &= ~mask;
++                changed = 1;
++            }
++        } else if (event.type == EV_SYN && event.code == SYN_DROPPED) {
++            changed = 0;
++        } else if (event.type == EV_SYN && event.code == SYN_REPORT && changed) {
++            *x = scale_axis(raw_x, &abs_x, scrdev.xres);
++            *y = scale_axis(raw_y, &abs_y, scrdev.yres);
++            *z = 0;
++            *button_state = buttons;
++            return MOUSE_ABSPOS;
++        }
++    }
++}
++
++MOUSEDEVICE mousedev = {
++    MOU_Open, MOU_Close, MOU_GetButtonInfo, MOU_GetDefaultAccel,
++    MOU_Read, NULL, MOUSE_NORMAL
++};
+diff --git a/src/drivers/scr_fb.c b/src/drivers/scr_fb.c
+index fa9f435..517cbd1 100644
+--- a/src/drivers/scr_fb.c
++++ b/src/drivers/scr_fb.c
+@@ -36,6 +36,10 @@ static void fb_setpalette(PSD psd,int first, int count, MWPALENTRY *palette);
+ static PSD open_linuxfb(PSD psd);
+ static void	set_directcolor_palette(PSD psd);
+ 
++#if WATEROS_NANOX
++static void fb_update(PSD psd, MWCOORD x, MWCOORD y, MWCOORD width, MWCOORD height);
++static int fb_preselect(PSD psd);
++#endif
+ /* static variables*/
+ static int fb = -1;				/* framebuffer file handle*/
+ #if LINUX
+@@ -62,8 +66,13 @@ SCREENDEVICE	scrdev = {
+ 	gen_mapmemgc,
+ 	gen_freememgc,
+ 	gen_setportrait,
++#if WATEROS_NANOX
++	fb_update,
++	fb_preselect
++#else
+ 	NULL,				/* Update*/
+ 	NULL				/* PreSelect*/
++#endif
+ };
+ 
+ /* open framebuffer driver*/
+@@ -258,5 +267,8 @@ open_linuxfb(PSD psd)
+ 		goto fail;
+ 	}
+ 
++#if WATEROS_NANOX
++	psd->flags |= PSF_DELAYUPDATE;
++#endif
+ 	/* save original palette*/
+ 	ioctl_getpalette(0, 16, saved_red, saved_green, saved_blue);
+@@ -271,6 +283,29 @@ fail:
+ 	return NULL;
+ }
+ 
++#if WATEROS_NANOX
++static int fb_dirty;
++
++static void
++fb_update(PSD psd, MWCOORD x, MWCOORD y, MWCOORD width, MWCOORD height)
++{
++	(void)psd; (void)x; (void)y; (void)width; (void)height;
++	fb_dirty = 1;
++}
++
++static int
++fb_preselect(PSD psd)
++{
++	(void)psd;
++	if (fb_dirty) {
++		fb_dirty = 0;
++		if (ioctl(fb, FBIOPAN_DISPLAY, &fb_var) < 0)
++			EPRINTF("WaterOS framebuffer flush failed: %m\n");
++	}
++	return 0;
++}
++#endif
++
+ /* close framebuffer*/
+ static void
+ fb_close(PSD psd)
+diff --git a/src/demos/nanox/Makefile b/src/demos/nanox/Makefile
+index 4a6582f..4560660 100644
+--- a/src/demos/nanox/Makefile
++++ b/src/demos/nanox/Makefile
+@@ -139,6 +139,18 @@ TARGETS += $(MW_DIR_BIN)/demo-agg
+ endif # COSMO
+ 
++# WaterOS intentionally ships a small, dependency-free demonstration set.
++# In particular nxterm is excluded because the first release has no PTY.
++ifeq ($(WATEROS_NANOX), Y)
++TARGETS := \
++	$(MW_DIR_BIN)/nxlaunch \
++	$(MW_DIR_BIN)/nxclock \
++	$(MW_DIR_BIN)/nxeyes \
++	$(MW_DIR_BIN)/nxcalc \
++	$(MW_DIR_BIN)/nxedit \
++	$(MW_DIR_BIN)/nxev
++endif
++
+ else # ECOS
+ TARGETS += $(MW_DIR_BIN)/nxmine.o $(MW_DIR_BIN)/nxtetris.o $(MW_DIR_BIN)/nxworld.o
+ endif

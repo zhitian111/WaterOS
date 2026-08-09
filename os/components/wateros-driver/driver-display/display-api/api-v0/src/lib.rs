@@ -32,6 +32,13 @@ pub struct FramebufferInfo {
     pub format : PixelFormat,
     /// 可写缓冲区总字节数。
     pub byte_len : usize,
+    /// DMA framebuffer 的起始物理地址。
+    ///
+    /// 只有设备 mmap 层可将它映射到用户地址空间；普通绘制代码
+    /// 应继续使用 [`DisplayDevice::framebuffer`]。
+    pub phys_base : usize,
+    /// DMA 分配的页对齐长度，可能大于 [`Self::byte_len`]。
+    pub mapped_len : usize,
     /// 内核恒等映射下的帧缓冲虚拟地址，仅供诊断显示。
     pub base : usize,
 }

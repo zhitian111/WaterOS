@@ -1,0 +1,9 @@
+# WaterOS Nano-X 启动器菜单。图标使用 `-`，避免依赖额外图片解码库。
+$window_background_colour BLUE
+
+Clock - /usr/bin/nxclock
+Eyes - /usr/bin/nxeyes
+Calculator - /usr/bin/nxcalc
+Editor - /usr/bin/nxedit
+Events - /usr/bin/nxev
+Doom - /usr/bin/start-doom

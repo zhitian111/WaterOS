@@ -392,6 +392,13 @@ impl FsBridge {
             }
             _ => {}
         }
+        if let Some(opened) = impl_fd_session::open_special_device(
+            abs.as_str(),
+            open_accmode(flags),
+            flags.contains(VfsOpenFlags::NONBLOCK),
+        ) {
+            return opened;
+        }
         if let Ok(dev) = fs::devfs::active_impl::lookup_character_device(abs.as_str()) {
             return Ok(Box::new(impl_fd_session::CharDevHandle::from_devfs_path(dev,
                                                                                abs.as_str(),

@@ -23,6 +23,37 @@ make  image ARCH=rv PROFILE=minimal
 make  image ARCH=la PROFILE=operator
 ```
 
+### Nano-X 图形镜像
+
+Nano-X profile 首期支持 RISC-V，包含静态 `nano-X`、内置 `nanowm` 和演示程序：
+
+```bash
+make image ARCH=rv PROFILE=nanox
+
+cd ../os
+make shell ARCH=rv PROFILE=pre \
+  SDCARD=../user/build/images/wateros-rv-nanox.ext4 \
+  EXTRA_FEATURES=user-graphics
+```
+
+进入串口 shell 后执行 `start-nanox`。图形窗口和串口 shell 是两个独立界面；
+`start-nanox` 会检查 `/dev/fb0`、keyboard/pointer evdev 节点，并管理 server、客户端和
+`/tmp/.nano-X` 的生命周期。详细实现与排查见
+[`docs/kasss's_todo_list/nanox.md`](../docs/kasss's_todo_list/nanox.md)。
+
+`nanox` 镜像同时包含静态 Nano-X Doom 和仓库中的 `doom1.wad`。启动桌面后可在
+`nxlaunch` 中点击 `Doom`，也可从串口执行：
+
+```sh
+start-nanox >/tmp/nanox.log 2>&1 &
+start-doom
+```
+
+程序安装在 `/usr/bin/doom`，WAD 安装在
+`/usr/share/games/doom/doom1.wad`。`start-doom` 默认使用三倍窗口缩放并直接进入
+E1M1；可用 `start-doom -2` 改为两倍缩放，或用
+`start-doom -3 -warp 1 2` 选择其他地图。
+
 `setup` 把工具链安装在 `user/build/toolchains/rv/`，后续命令会自动发现，不需要
 配置 `RV_CROSS_COMPILE`。它是显式的联网安装步骤，不会执行 `sudo`；`build/image`
 本身仍然完全离线。已经下载官方归档时可以避免再次联网：
@@ -87,6 +118,7 @@ LA_CROSS_COMPILE=/opt/toolchains/la/bin/loongarch64-linux-musl- \
 | ------------ | --------------------------- | ------------------------------------- |
 | `minimal`  | `base-layout`、`busybox`  | 最小静态 shell/rootfs               |
 | `operator` | minimal +`operator-tools` | 增加`wos-help`、`wos-info` 现场脚本 |
+| `nanox` | operator +`microwindows` | RISC-V Nano-X server、窗口管理器和演示程序 |
 
 `base-layout` 提供标准目录、账号、网络基础配置、`/etc/profile` 和预留的
 `/etc/init.d/rcS`。当前内核 operator supervisor 直接装载 `/bin/sh`，不会把
@@ -120,7 +152,7 @@ packages/<name>/
 5. 合并 profile staging，同一路径冲突默认报错；
 6. 写入 `/var/lib/wateros/packages.json` 和宿主侧文件清单。
 
-新增 Vim、Lua 或未来 Nano-X 时，只需新增 package 并把名称加入 profile，无需修改
+新增 Vim、Lua 或其他用户项目时，只需新增 package 并把名称加入 profile，无需修改
 EXT4 生成器。package 构建不得修改 `vendor/` 源码，也不得从网络下载依赖。
 
 ## EXT4 镜像
