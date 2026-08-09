@@ -90,7 +90,7 @@ fn main() {
             let plan = plan(mmc).expect("build deferred MMC plan");
             assert!(!plan.can_activate());
             assert!(plan.blockers
-                        .contains(&ActivationBlocker::SplitRegisterLayoutUnverified));
+                        .contains(&ActivationBlocker::DataPathUnavailable));
         }
         "invalid" => assert!(discover(&fdt).is_err()),
         "non-removable" => {

@@ -1110,3 +1110,47 @@ python3 scripts/remote_debug_qemu_smoke.py \
 ### 提交
 
 - `[feat] plan deferred 2K1000LA MMC bring-up`
+
+## 2026-08-10：批次 26——2K1000LA 专属 MMC 命令核心
+
+### 任务与设计
+
+1. 检索 Linux 主线驱动与 DT binding，查明控制器和第二 MMIO 区域语义。
+2. 纠正“可能是 split-window DesignWare”假设，明确只复用共享 SD 协议层。
+3. 实现 Loongson 专属、可 mock 的时钟分频和非数据命令轮询核心。
+4. 数据路径、外部 DMA、IRQ、供电与 card-detect 不完整时继续禁止设备激活。
+5. 记录上游来源、许可证和真机验证边界。
+
+上游 `loongson2-mmc` 证明主窗口包含独立的 CTL/PRE/CARG/CCTL/RSP/INT/DATA 寄存器，第二窗口只是 APB DMA routing config。2K1000 使用外部 APB DMA，并非 DesignWare MMC host。
+
+### 完成内容
+
+- [x] deferred plan blocker 改为数据路径、外部 DMA、clock control、供电、card-detect 和 IRQ 六项真实缺口。
+- [x] 新增 Loongson `RegisterIo` 与 `Host<R>`，不依赖 DesignWare 寄存器类型。
+- [x] 实现输入/目标时钟校验、向上取整且上限 255 的 prescaler 编码和 clock enable RMW。
+- [x] 实现 CMD index/argument、短/长响应标志、W1C interrupt、命令完成/timeout/CRC 的有界轮询。
+- [x] 响应读取覆盖 RSP0..RSP3；物理 word ordering 在注释中保持 `UNVERIFIED_ON_HARDWARE`。
+- [x] 新增上游参考与 GPL-2.0-only 许可证说明；没有将 Linux C 源码 vendoring 进仓库。
+
+### 验证证据
+
+- 2K1000LA driver host 单测由 11 项增至 13 项并全部通过。
+- 新测试检查 125 MHz 到 400 kHz 的饱和 prescaler、clock enable 保留位、CMD8 编码、响应读取、轮询超时、命令超时和 CRC 错误。
+- 既有 deferred plan 与 LIOINTC/IRQ domain 测试继续通过。
+- 参考资料确认主寄存器最大 offset `0x64` 与 DT 主窗口 `0x68` 一致，第二窗口描述为 APB DMA config。
+
+### 已知限制、未验证与后续测试
+
+- [ ] 当前仅非数据命令基础，不实现 `SdTransport`，因此不会误注册不可读写的卡。
+- [ ] Linux 上游 2K1000 数据路径使用外部 DMA；WaterOS 尚无 APBDMA driver、descriptor、IRQ completion 或 cache maintenance。
+- [ ] clock provider enable/rate、controller reset、vmmc/vqmmc、GPIO22 card detect 与 pinctrl 仍未实现。
+- [ ] INT W1C、RSP0..3 顺序和 255 prescaler 的实际低速输出必须用逻辑分析或已知卡在真机对照。
+- [ ] 后续应先实现 APBDMA channel 0 的可 mock descriptor/routing 层，再把 host 接成共享 `SdTransport`。
+
+### 参考与许可证
+
+- `docs/references/loongson2-mmc-upstream.md`
+
+### 提交
+
+- `[feat] add 2K1000LA MMC command core`
