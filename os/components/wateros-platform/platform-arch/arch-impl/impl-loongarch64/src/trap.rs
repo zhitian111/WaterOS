@@ -57,6 +57,8 @@ const LOONGARCH_USER_PLV : usize = 0x3;
 const TIMER_INTERRUPT_PENDING : usize = 1 << 11;
 /// `ESTAT.IS.IPI`：核间中断挂起位。
 const IPI_INTERRUPT_PENDING : usize = 1 << 12;
+/// `ESTAT.IS.HWI0..HWI7`：平台中断控制器送入 CPUINTC 的八条硬件中断线。
+const HARDWARE_INTERRUPT_PENDING : usize = 0xff << 2;
 /// 单次定时器中断后重新武装的切片长度（StableCounter
 /// 刻度）；与调度策略相关，非用户 ABI。
 const TIMER_SLICE_TICKS : u64 = 10_000_000;
@@ -127,11 +129,8 @@ unsafe fn restore_fp_state(regs : &[u64; 32], fcsr : u32) {
 
 #[inline]
 fn decode_loongarch64_trap_cause(estat : usize) -> TrapCause {
-    if (estat & IPI_INTERRUPT_PENDING) != 0 {
-        return TrapCause::Interrupt(Interrupt::SupervisiorSoft);
-    }
-    if (estat & TIMER_INTERRUPT_PENDING) != 0 {
-        return TrapCause::Interrupt(Interrupt::SupervisiorTimer);
+    if let Some(interrupt) = decode_loongarch64_interrupt(estat) {
+        return TrapCause::Interrupt(interrupt);
     }
 
     let ecode = (estat >> 16) & 0x3F;
@@ -147,6 +146,28 @@ fn decode_loongarch64_trap_cause(estat : usize) -> TrapCause {
         other => TrapCause::Exception(Exception::Unsupported(other)),
     }
 }
+
+const fn decode_loongarch64_interrupt(estat : usize) -> Option<Interrupt> {
+    if (estat & IPI_INTERRUPT_PENDING) != 0 {
+        return Some(Interrupt::SupervisiorSoft);
+    }
+    if (estat & TIMER_INTERRUPT_PENDING) != 0 {
+        return Some(Interrupt::SupervisiorTimer);
+    }
+    if (estat & HARDWARE_INTERRUPT_PENDING) != 0 {
+        return Some(Interrupt::SupervisiorExternel);
+    }
+    None
+}
+
+// Compile-time checks run for every LoongArch64 build without requiring a
+// physical CPU or executing target test binaries.
+const _ : () = assert!(matches!(decode_loongarch64_interrupt(1 << 2),
+                               Some(Interrupt::SupervisiorExternel)));
+const _ : () = assert!(matches!(decode_loongarch64_interrupt(1 << 9),
+                               Some(Interrupt::SupervisiorExternel)));
+const _ : () = assert!(matches!(decode_loongarch64_interrupt((1 << 12) | (1 << 2)),
+                               Some(Interrupt::SupervisiorSoft)));
 
 
 unsafe extern "C" {

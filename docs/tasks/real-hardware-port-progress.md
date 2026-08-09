@@ -1826,3 +1826,48 @@ LIOINTC mask/ack 证据。本批先收紧 crate 内边界：handler 必须消费
 ### 提交
 
 - `[ref] require acknowledged IRQ dispatch`
+
+## 2026-08-10：批次 40——LoongArch64 HWI decode and LIOINTC parent binding
+
+### 任务与设计
+
+1. 审计 LoongArch64 ESTAT/ECFG、WaterOS `TrapCause` 与 2K1000LA LIOINTC parent IRQ。
+2. 修复 HWI0–HWI7 未被架构 trap decoder 识别的问题。
+3. 将 CPU hardware line 与 topology LIOINTC bank 做稳定、可拒绝歧义的绑定。
+4. 用编译期断言、host 单测和真实 DTS fixture 覆盖无物理机验证。
+
+LoongArch64 ESTAT.IS 的 HWI0–HWI7 位于 bits 2–9；IPI 和 timer 继续保持现有优先级，
+随后才把任一 HWI pending 解码为跨架构 `SupervisiorExternel`。平台 parent-line resolver
+只接受 HWI 0..7，必须在 topology 中精确匹配一个 controller，并继续按 main-MMIO 升序
+计算 bank，避免 discovery 顺序影响。
+
+### 完成内容
+
+- [x] LoongArch64 trap decoder 新增 HWI0–HWI7 mask，外部硬件中断不再误落为 `Unsupported(0)`。
+- [x] decoder 拆出 const 纯函数，并编译期验证 HWI0/HWI7 边界及 IPI-over-HWI 优先级。
+- [x] 新增 `irq_entry::resolve_parent_line()` 与 `ParentLineBinding`。
+- [x] resolver 拒绝非法 HWI、缺失 controller、重复匹配、重复 MMIO 和过多 bank。
+- [x] host 单测验证 controller vector 乱序时 HWI3 仍稳定解析为 bank1。
+- [x] 真实 topology fixture 验证 HWI2→bank0、HWI3→bank1。
+
+### 验证证据
+
+- `cargo test`（2K1000LA driver crate）：47 项 host 单测全部通过（本批新增 2 项）。
+- LoongArch64 decoder 的 HWI bit 边界与优先级由 target 构建必经的 const assertions 验证。
+- topology/畸形 DTS fixtures 全部通过；truncated DMA 的 dtc warning 为预期输入。
+- `cargo check --target loongarch64-unknown-none` 通过。
+- `make kernel-la` QEMU LoongArch64 release 回归构建通过；仅有仓库既有 warning。
+- `git diff --check` 通过；未创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：真实 2K1000LA ESTAT HWI pending、ECFG enable 和 parent-line 电气路由尚未验证。
+- [ ] `SupervisiorExternel` 目前只表达“至少一个 HWI pending”，不携带具体 HWI index；kernel handler 仍需读取可验证 snapshot。
+- [ ] kernel trap 尚未调用 board IRQ service；当前修改只保证不会把 external IRQ 当成同步异常。
+- [ ] 多个 HWI 同时 pending 时需要 snapshot/优先级 adapter，不能仅由语义枚举推断来源。
+- [ ] LIOINTC volatile claim、mask/ack 和 device clear/re-enable 仍保持真机未验证。
+- [ ] 下一批应在 arch API 增加可读取的 LoongArch interrupt-pending snapshot 契约，并由 2K1000LA machine driver 提供 board IRQ service；QEMU profile 必须保持无行为变化。
+
+### 提交
+
+- `[fix] decode LoongArch hardware interrupts`

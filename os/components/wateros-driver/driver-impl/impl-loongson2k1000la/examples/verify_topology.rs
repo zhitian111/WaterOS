@@ -1,6 +1,7 @@
 use std::{env, fs};
 
 use wateros_driver_impl_loongson2k1000la::{irq_binding::resolve,
+                                           irq_entry::resolve_parent_line,
                                            mmc::{ActivationBlocker, plan},
                                            topology::discover};
 
@@ -55,6 +56,8 @@ fn main() {
                                                  .expect("int1")
                                                  .cells[0],
                        3);
+            assert_eq!(resolve_parent_line(&topology, 2).expect("resolve HWI2").bank, 0);
+            assert_eq!(resolve_parent_line(&topology, 3).expect("resolve HWI3").bank, 1);
             let uart = &topology.uarts[0];
             assert_eq!(uart.mmio.base, 0x1FE2_0000);
             assert_eq!(uart.clock_hz, 125_000_000);
