@@ -42,6 +42,13 @@ Confirmed facts used by the current WaterOS foundation:
   register. WaterOS additionally isolates ownership after every post-MMIO
   failure and requires idle plus a verified known-status clear before reuse;
   this recovery typestate is a WaterOS safety policy, not an upstream claim.
+- Linux maps `MMC_RSP_PRESENT` to `CCTL.WAIT_RSP` and `MMC_RSP_136` to
+  `CCTL.LONG_RSP`. Its threaded completion path reads RSP0 through RSP3 in
+  increasing offset order for every command, then clears CARG and CCTL.
+  WaterOS uses the same long-response register order and cleanup order, but
+  minimizes reads to zero/one/four words for none/short/long descriptors.
+  That smaller access policy and its physical response mapping require board
+  validation.
 - The second 2K1000 DT register region is an APB DMA configuration register.
 - 2K1000 uses external APB DMA (`rx-tx`); it is not a DesignWare MMC host.
 - The APBDMA order register is accessed as a non-atomic 64-bit little-endian
@@ -58,4 +65,5 @@ Still requiring physical-board validation: MMIO accessibility/endian behavior,
 `PRE`/`CTL.ENCLK` write and readback behavior, clock/reset/power ordering,
 10 ms reset timing sufficiency, CSTS/DSTS post-reset behavior, response word
 ordering, command-error W1C/readback recovery, interrupt delivery, DMA routing
-and cache coherency.
+and cache coherency. Also validate that no-response/short-response commands
+permit minimized RSP reads and that CARG/CCTL cleanup readback is reliable.

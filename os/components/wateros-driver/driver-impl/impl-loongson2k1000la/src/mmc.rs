@@ -885,37 +885,88 @@ impl<R> Host<R, ClockConfigured> {
     fn authorize_host_fixture(self) -> Host<R, CommandReady> { self.change_state() }
 }
 
+/// Response width promised by a non-data MMC command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResponseType {
+    None,
+    Short,
+    Long,
+}
+
+/// Transfer intent used to reject the unimplemented data path before MMIO.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandTransfer {
+    None,
+    /// Reserved for a future PIO/APBDMA contract; currently rejected.
+    Data,
+}
+
+/// Failure to construct a command that the current Host can execute.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandDescriptorError {
+    InvalidIndex,
+    DataUnsupported,
+}
+
+/// A prevalidated command contract. Invalid and data-bearing commands cannot
+/// reach the Host MMIO method.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CommandDescriptor {
+    index : u8,
+    argument : u32,
+    response : ResponseType,
+}
+
+impl CommandDescriptor {
+    /// Validate the command index and reject all data-bearing requests.
+    pub fn new(index : u8,
+               argument : u32,
+               response : ResponseType,
+               transfer : CommandTransfer)
+               -> Result<Self, CommandDescriptorError> {
+        if index > 63 {
+            return Err(CommandDescriptorError::InvalidIndex);
+        }
+        if transfer != CommandTransfer::None {
+            return Err(CommandDescriptorError::DataUnsupported);
+        }
+        Ok(Self { index,
+                  argument,
+                  response })
+    }
+}
+
+/// Response words read according to the validated descriptor contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandResponse {
+    None,
+    Short(u32),
+    /// RSP0 through RSP3 in register-offset order. Physical protocol word
+    /// mapping remains UNVERIFIED_ON_HARDWARE.
+    Long([u32; 4]),
+}
+
 impl<R : RegisterIo> Host<R, CommandReady> {
     /// Execute a non-data command by bounded polling.
     ///
     /// Register definitions and W1C interrupt behavior follow the upstream
     /// Linux driver. Physical response ordering remains UNVERIFIED_ON_HARDWARE.
-    pub fn execute_command(mut self,
-                           index : u8,
-                           argument : u32,
-                           response_expected : bool,
-                           response_long : bool)
-                           -> CommandOutcome<R> {
-        if index > 63 || response_long && !response_expected {
-            return CommandOutcome::Rejected { host : self,
-                                              error : MmcError::InvalidParameter };
-        }
+    pub fn execute_command(mut self, command : CommandDescriptor) -> CommandOutcome<R> {
         if let Err(error) = self.registers
                                 .write32(REG_INT, INT_CLEAR)
         {
             return self.command_failure(CommandStage::ClearInterrupts, error);
         }
         if let Err(error) = self.registers
-                                .write32(REG_CARG, argument)
+                                .write32(REG_CARG, command.argument)
         {
             return self.command_failure(CommandStage::WriteArgument, error);
         }
-        let mut control = index as u32 | CCTL_HOST | CCTL_START;
-        if response_expected {
-            control |= CCTL_WAIT_RESPONSE;
-        }
-        if response_long {
-            control |= CCTL_LONG_RESPONSE;
+        let mut control = command.index as u32 | CCTL_HOST | CCTL_START;
+        match command.response {
+            ResponseType::None => {}
+            ResponseType::Short => control |= CCTL_WAIT_RESPONSE,
+            ResponseType::Long => control |= CCTL_WAIT_RESPONSE | CCTL_LONG_RESPONSE,
         }
         if let Err(error) = self.registers
                                 .write32(REG_CCTL, control)
@@ -942,18 +993,44 @@ impl<R : RegisterIo> Host<R, CommandReady> {
                 {
                     return self.command_failure(CommandStage::AcknowledgeCompletion, error);
                 }
-                let mut response = [0; 4];
-                for (word, offset) in response.iter_mut()
-                                              .zip([REG_RSP0, REG_RSP1, REG_RSP2, REG_RSP3])
-                {
-                    *word = match self.registers
-                                      .read32(offset)
+                let response = match command.response {
+                    ResponseType::None => CommandResponse::None,
+                    ResponseType::Short => match self.registers
+                                                       .read32(REG_RSP0)
                     {
-                        Ok(value) => value,
+                        Ok(value) => CommandResponse::Short(value),
                         Err(error) => {
-                            return self.command_failure(CommandStage::ReadResponse, error)
+                            return self.command_failure(CommandStage::ReadResponse0, error)
                         }
-                    };
+                    },
+                    ResponseType::Long => {
+                        let mut response = [0; 4];
+                        for (word, (offset, stage)) in
+                            response.iter_mut()
+                                    .zip([(REG_RSP0, CommandStage::ReadResponse0),
+                                          (REG_RSP1, CommandStage::ReadResponse1),
+                                          (REG_RSP2, CommandStage::ReadResponse2),
+                                          (REG_RSP3, CommandStage::ReadResponse3)])
+                        {
+                            *word = match self.registers
+                                              .read32(offset)
+                            {
+                                Ok(value) => value,
+                                Err(error) => return self.command_failure(stage, error),
+                            };
+                        }
+                        CommandResponse::Long(response)
+                    }
+                };
+                if let Err(error) = self.registers
+                                        .write32(REG_CARG, 0)
+                {
+                    return self.command_failure(CommandStage::CleanupArgument, error);
+                }
+                if let Err(error) = self.registers
+                                        .write32(REG_CCTL, 0)
+                {
+                    return self.command_failure(CommandStage::CleanupControl, error);
                 }
                 return CommandOutcome::Completed { host : self,
                                                    response };
@@ -970,6 +1047,8 @@ impl<R : RegisterIo> Host<R, CommandReady> {
                                                            observed_command_status : None,
                                                            observed_data_status : None,
                                                            observed_interrupts : None,
+                                                           observed_argument : None,
+                                                           observed_control : None,
                                                            host : self.change_state() })
     }
 }
@@ -977,12 +1056,7 @@ impl<R : RegisterIo> Host<R, CommandReady> {
 pub enum CommandOutcome<R> {
     Completed {
         host : Host<R, CommandReady>,
-        response : [u32; 4],
-    },
-    /// Invalid parameters are rejected before the first MMIO access.
-    Rejected {
-        host : Host<R, CommandReady>,
-        error : MmcError,
+        response : CommandResponse,
     },
     RecoveryRequired(CommandRecovery<R>),
 }
@@ -997,7 +1071,12 @@ pub enum CommandStage {
     ResponseCrc,
     PollTimeout,
     AcknowledgeCompletion,
-    ReadResponse,
+    ReadResponse0,
+    ReadResponse1,
+    ReadResponse2,
+    ReadResponse3,
+    CleanupArgument,
+    CleanupControl,
     RevalidateCommandStatus,
     RevalidateDataStatus,
     RevalidateInterrupts,
@@ -1006,6 +1085,12 @@ pub enum CommandStage {
     RevalidateClearInterrupts,
     RevalidateInterruptReadback,
     RevalidateInterruptStillPending,
+    RevalidateCleanupArgument,
+    RevalidateCleanupControl,
+    RevalidateArgumentReadback,
+    RevalidateArgumentMismatch,
+    RevalidateControlReadback,
+    RevalidateControlMismatch,
 }
 
 pub struct CommandRecovery<R> {
@@ -1018,6 +1103,8 @@ pub struct CommandRecovery<R> {
     pub observed_command_status : Option<u32>,
     pub observed_data_status : Option<u32>,
     pub observed_interrupts : Option<u32>,
+    pub observed_argument : Option<u32>,
+    pub observed_control : Option<u32>,
     host : Host<R, CommandRecoveryRequired>,
 }
 
@@ -1034,6 +1121,10 @@ impl<R> core::fmt::Debug for CommandRecovery<R> {
                         &self.observed_data_status)
                  .field("observed_interrupts",
                         &self.observed_interrupts)
+                 .field("observed_argument",
+                        &self.observed_argument)
+                 .field("observed_control",
+                        &self.observed_control)
                  .finish_non_exhaustive()
     }
 }
@@ -1090,6 +1181,38 @@ impl<R : RegisterIo> CommandRecovery<R> {
                 return Err(self.at(CommandStage::RevalidateInterruptStillPending,
                                    MmcError::Timeout));
             }
+        }
+        if let Err(error) = self.host.registers
+                                     .write32(REG_CARG, 0)
+        {
+            return Err(self.at(CommandStage::RevalidateCleanupArgument, error));
+        }
+        if let Err(error) = self.host.registers
+                                     .write32(REG_CCTL, 0)
+        {
+            return Err(self.at(CommandStage::RevalidateCleanupControl, error));
+        }
+        let argument = match self.host.registers
+                                 .read32(REG_CARG)
+        {
+            Ok(value) => value,
+            Err(error) => return Err(self.at(CommandStage::RevalidateArgumentReadback, error)),
+        };
+        self.observed_argument = Some(argument);
+        if argument != 0 {
+            return Err(self.at(CommandStage::RevalidateArgumentMismatch,
+                               MmcError::InvalidParameter));
+        }
+        let control = match self.host.registers
+                                .read32(REG_CCTL)
+        {
+            Ok(value) => value,
+            Err(error) => return Err(self.at(CommandStage::RevalidateControlReadback, error)),
+        };
+        self.observed_control = Some(control);
+        if control != 0 {
+            return Err(self.at(CommandStage::RevalidateControlMismatch,
+                               MmcError::InvalidParameter));
         }
         Ok(self.host.change_state())
     }
@@ -1309,8 +1432,12 @@ mod tests {
         data_status : u32,
         reads : usize,
         writes : usize,
+        response_reads : alloc::vec::Vec<usize>,
+        started_control : Option<u32>,
         fail_read : Option<usize>,
         fail_write : Option<usize>,
+        ignore_argument_zero : bool,
+        ignore_control_zero : bool,
     }
 
     impl RegisterIo for CommandRegisters {
@@ -1318,6 +1445,10 @@ mod tests {
             self.reads += 1;
             if self.fail_read == Some(self.reads) {
                 return Err(MmcError::RegisterOutOfRange);
+            }
+            if matches!(offset, REG_RSP0 | REG_RSP1 | REG_RSP2 | REG_RSP3) {
+                self.response_reads
+                    .push(offset);
             }
             match offset {
                 REG_INT => Ok(self.interrupts),
@@ -1338,10 +1469,19 @@ mod tests {
             match offset {
                 REG_INT => self.interrupts &= !value,
                 REG_CCTL => {
+                    if value == 0 && self.ignore_control_zero {
+                        return Ok(());
+                    }
                     self.values[REG_CCTL / 4] = value;
-                    self.interrupts = self.next_interrupts;
+                    if value & CCTL_START != 0 {
+                        self.started_control = Some(value);
+                        self.interrupts = self.next_interrupts;
+                    }
                 }
                 _ => {
+                    if offset == REG_CARG && value == 0 && self.ignore_argument_zero {
+                        return Ok(());
+                    }
                     *self.values
                          .get_mut(offset / 4)
                          .ok_or(MmcError::RegisterOutOfRange)? = value;
@@ -1359,14 +1499,25 @@ mod tests {
                            data_status : 0,
                            reads : 0,
                            writes : 0,
+                           response_reads : alloc::vec::Vec::new(),
+                           started_control : None,
                            fail_read : None,
-                           fail_write : None }
+                           fail_write : None,
+                           ignore_argument_zero : false,
+                           ignore_control_zero : false }
     }
 
     fn command_fixture(registers : CommandRegisters) -> Host<CommandRegisters, CommandReady> {
         Host { registers,
                poll_limit : 2,
                _state : PhantomData }
+    }
+
+    fn descriptor(index : u8,
+                  argument : u32,
+                  response : ResponseType)
+                  -> CommandDescriptor {
+        CommandDescriptor::new(index, argument, response, CommandTransfer::None).unwrap()
     }
 
     fn failed_revalidation(
@@ -1647,18 +1798,19 @@ mod tests {
         let mut registers = MockRegisters { values : [0; 26],
                                             interrupts : INT_COMMAND_SENT };
         registers.values[REG_RSP0 / 4] = 0x1234;
-        let outcome = command_host(registers).execute_command(8, 0x1AA, true, false);
+        let outcome = command_host(registers).execute_command(descriptor(8,
+                                                                         0x1AA,
+                                                                         ResponseType::Short));
         let (host, response) = match outcome {
             CommandOutcome::Completed { host, response } => (host, response),
             _ => panic!("command did not complete"),
         };
-        assert_eq!(response, [0x1234, 0, 0, 0]);
+        assert_eq!(response, CommandResponse::Short(0x1234));
         let registers = host.into_inner();
         assert_eq!(registers.values[REG_PRE / 4],
                    PRE_ENABLE | 255);
-        assert_eq!(registers.values[REG_CARG / 4], 0x1AA);
-        assert_eq!(registers.values[REG_CCTL / 4],
-                   8 | CCTL_HOST | CCTL_START | CCTL_WAIT_RESPONSE);
+        assert_eq!(registers.values[REG_CARG / 4], 0);
+        assert_eq!(registers.values[REG_CCTL / 4], 0);
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1845,10 +1997,9 @@ mod tests {
     #[test]
     fn bounds_polling_and_reports_command_errors() {
         let outcome = command_host(MockRegisters { values : [0; 26],
-                                                   interrupts : 0 }).execute_command(0,
-                                                                                    0,
-                                                                                    false,
-                                                                                    false);
+                                                   interrupts : 0 }).execute_command(descriptor(0,
+                                                                                                0,
+                                                                                                ResponseType::None));
         match outcome {
             CommandOutcome::RecoveryRequired(recovery) => {
                 assert_eq!(recovery.stage, CommandStage::PollTimeout);
@@ -1858,10 +2009,9 @@ mod tests {
         }
         let outcome = command_host(MockRegisters { values : [0; 26],
                                                    interrupts:
-                                                       INT_COMMAND_TIMEOUT }).execute_command(8,
-                                                                                              0,
-                                                                                              true,
-                                                                                              false);
+                                                       INT_COMMAND_TIMEOUT }).execute_command(descriptor(8,
+                                                                                                         0,
+                                                                                                         ResponseType::Short));
         match outcome {
             CommandOutcome::RecoveryRequired(recovery) => {
                 assert_eq!(recovery.stage,
@@ -1873,10 +2023,9 @@ mod tests {
         }
         let outcome = command_host(MockRegisters { values : [0; 26],
                                                    interrupts:
-                                                       INT_RESPONSE_CRC }).execute_command(8,
-                                                                                           0,
-                                                                                           true,
-                                                                                           false);
+                                                       INT_RESPONSE_CRC }).execute_command(descriptor(8,
+                                                                                                      0,
+                                                                                                      ResponseType::Short));
         match outcome {
             CommandOutcome::RecoveryRequired(recovery) => {
                 assert_eq!(recovery.stage, CommandStage::ResponseCrc);
@@ -1887,29 +2036,36 @@ mod tests {
     }
 
     #[test]
-    fn command_ownership_distinguishes_rejection_success_and_io_faults() {
-        let outcome = command_fixture(command_registers(0)).execute_command(64,
-                                                                           0,
-                                                                           false,
-                                                                           false);
-        let host = match outcome {
-            CommandOutcome::Rejected { host, error } => {
-                assert_eq!(error, MmcError::InvalidParameter);
-                host
-            }
-            _ => panic!("invalid command touched the recovery path"),
-        };
-        assert_eq!(host.into_inner().writes, 0);
+    fn command_descriptor_rejects_unsupported_intent_before_host_mmio() {
+        assert_eq!(CommandDescriptor::new(64,
+                                          0,
+                                          ResponseType::None,
+                                          CommandTransfer::None),
+                   Err(CommandDescriptorError::InvalidIndex));
+        assert_eq!(CommandDescriptor::new(8,
+                                          0,
+                                          ResponseType::Short,
+                                          CommandTransfer::Data),
+                   Err(CommandDescriptorError::DataUnsupported));
 
         let mut registers = command_registers(INT_COMMAND_SENT);
         registers.values[REG_RSP0 / 4] = 1;
         registers.values[REG_RSP1 / 4] = 2;
         registers.values[REG_RSP2 / 4] = 3;
         registers.values[REG_RSP3 / 4] = 4;
-        match command_fixture(registers).execute_command(8, 0, true, true) {
+        match command_fixture(registers).execute_command(descriptor(2, 0, ResponseType::Long)) {
             CommandOutcome::Completed { host, response } => {
-                assert_eq!(response, [1, 2, 3, 4]);
-                assert_eq!(host.into_inner().interrupts, 0);
+                assert_eq!(response,
+                           CommandResponse::Long([1, 2, 3, 4]));
+                let registers = host.into_inner();
+                assert_eq!(registers.interrupts, 0);
+                assert_eq!(registers.response_reads,
+                           [REG_RSP0, REG_RSP1, REG_RSP2, REG_RSP3]);
+                assert_eq!(registers.started_control,
+                           Some(2 | CCTL_HOST | CCTL_START | CCTL_WAIT_RESPONSE |
+                                CCTL_LONG_RESPONSE));
+                assert_eq!(registers.values[REG_CARG / 4], 0);
+                assert_eq!(registers.values[REG_CCTL / 4], 0);
             }
             _ => panic!("valid command did not return ready ownership"),
         }
@@ -1917,11 +2073,15 @@ mod tests {
         for (failed_write, stage) in [(1, CommandStage::ClearInterrupts),
                                       (2, CommandStage::WriteArgument),
                                       (3, CommandStage::StartCommand),
-                                      (4, CommandStage::AcknowledgeCompletion)]
+                                      (4, CommandStage::AcknowledgeCompletion),
+                                      (5, CommandStage::CleanupArgument),
+                                      (6, CommandStage::CleanupControl)]
         {
             let mut registers = command_registers(INT_COMMAND_SENT);
             registers.fail_write = Some(failed_write);
-            match command_fixture(registers).execute_command(8, 0, true, false) {
+            match command_fixture(registers).execute_command(descriptor(8,
+                                                                         0,
+                                                                         ResponseType::Short)) {
                 CommandOutcome::RecoveryRequired(recovery) => {
                     assert_eq!(recovery.stage, stage);
                     assert_eq!(recovery.error,
@@ -1932,14 +2092,16 @@ mod tests {
         }
 
         for (failed_read, stage) in [(1, CommandStage::PollInterrupts),
-                                     (2, CommandStage::ReadResponse),
-                                     (3, CommandStage::ReadResponse),
-                                     (4, CommandStage::ReadResponse),
-                                     (5, CommandStage::ReadResponse)]
+                                     (2, CommandStage::ReadResponse0),
+                                     (3, CommandStage::ReadResponse1),
+                                     (4, CommandStage::ReadResponse2),
+                                     (5, CommandStage::ReadResponse3)]
         {
             let mut registers = command_registers(INT_COMMAND_SENT);
             registers.fail_read = Some(failed_read);
-            match command_fixture(registers).execute_command(8, 0, true, false) {
+            match command_fixture(registers).execute_command(descriptor(2,
+                                                                         0,
+                                                                         ResponseType::Long)) {
                 CommandOutcome::RecoveryRequired(recovery) => {
                     assert_eq!(recovery.stage, stage);
                     assert_eq!(recovery.error,
@@ -1951,12 +2113,46 @@ mod tests {
     }
 
     #[test]
+    fn command_response_contract_minimizes_register_reads() {
+        let outcome = command_fixture(command_registers(INT_COMMAND_SENT)).execute_command(
+            descriptor(0, 0, ResponseType::None));
+        match outcome {
+            CommandOutcome::Completed { host, response } => {
+                assert_eq!(response, CommandResponse::None);
+                let registers = host.into_inner();
+                assert!(registers.response_reads.is_empty());
+                assert_eq!(registers.started_control,
+                           Some(CCTL_HOST | CCTL_START));
+                assert_eq!(registers.values[REG_CCTL / 4], 0);
+            }
+            _ => panic!("no-response command did not complete"),
+        }
+
+        let mut registers = command_registers(INT_COMMAND_SENT);
+        registers.values[REG_RSP0 / 4] = 0xCAFE;
+        let outcome = command_fixture(registers).execute_command(descriptor(8,
+                                                                            0,
+                                                                            ResponseType::Short));
+        match outcome {
+            CommandOutcome::Completed { host, response } => {
+                assert_eq!(response,
+                           CommandResponse::Short(0xCAFE));
+                let registers = host.into_inner();
+                assert_eq!(registers.response_reads, [REG_RSP0]);
+                assert_eq!(registers.started_control,
+                           Some(8 | CCTL_HOST | CCTL_START | CCTL_WAIT_RESPONSE));
+                assert_eq!(registers.values[REG_CCTL / 4], 0);
+            }
+            _ => panic!("short-response command did not complete"),
+        }
+    }
+
+    #[test]
     fn command_recovery_requires_idle_and_verified_interrupt_clear() {
         let recovery =
-            match command_fixture(command_registers(INT_COMMAND_TIMEOUT)).execute_command(8,
-                                                                                           0,
-                                                                                           true,
-                                                                                           false) {
+            match command_fixture(command_registers(INT_COMMAND_TIMEOUT)).execute_command(descriptor(8,
+                                                                                                      0,
+                                                                                                      ResponseType::Short)) {
                 CommandOutcome::RecoveryRequired(recovery) => recovery,
                 _ => panic!("timeout did not require recovery"),
             };
@@ -1967,7 +2163,9 @@ mod tests {
         let mut busy = command_registers(0);
         busy.command_status = CSTS_ON;
         busy.data_status = DSTS_ACTIVE;
-        let recovery = match command_fixture(busy).execute_command(0, 0, false, false) {
+        let recovery = match command_fixture(busy).execute_command(descriptor(0,
+                                                                               0,
+                                                                               ResponseType::None)) {
             CommandOutcome::RecoveryRequired(recovery) => recovery,
             _ => panic!("poll timeout did not require recovery"),
         };
@@ -1984,10 +2182,9 @@ mod tests {
 
         let unknown = 1 << 12;
         let recovery =
-            match command_fixture(command_registers(unknown)).execute_command(0,
-                                                                               0,
-                                                                               false,
-                                                                               false) {
+            match command_fixture(command_registers(unknown)).execute_command(descriptor(0,
+                                                                                          0,
+                                                                                          ResponseType::None)) {
                 CommandOutcome::RecoveryRequired(recovery) => recovery,
                 _ => panic!("unknown status did not reach recovery"),
             };
@@ -2002,12 +2199,16 @@ mod tests {
         for (failed_read, stage) in [(2, CommandStage::RevalidateCommandStatus),
                                      (3, CommandStage::RevalidateDataStatus),
                                      (4, CommandStage::RevalidateInterrupts),
-                                     (5, CommandStage::RevalidateInterruptReadback)]
+                                     (5, CommandStage::RevalidateInterruptReadback),
+                                     (6, CommandStage::RevalidateArgumentReadback),
+                                     (7, CommandStage::RevalidateControlReadback)]
         {
             let mut registers = command_registers(INT_COMMAND_TIMEOUT);
             registers.fail_read = Some(failed_read);
             let recovery =
-                match command_fixture(registers).execute_command(8, 0, true, false) {
+                match command_fixture(registers).execute_command(descriptor(8,
+                                                                             0,
+                                                                             ResponseType::Short)) {
                     CommandOutcome::RecoveryRequired(recovery) => recovery,
                     _ => panic!("timeout did not require recovery"),
                 };
@@ -2021,18 +2222,45 @@ mod tests {
                        MmcError::RegisterOutOfRange);
         }
 
-        let mut registers = command_registers(INT_COMMAND_TIMEOUT);
-        registers.fail_write = Some(4);
-        let recovery =
-            match command_fixture(registers).execute_command(8, 0, true, false) {
-                CommandOutcome::RecoveryRequired(recovery) => recovery,
-                _ => panic!("timeout did not require recovery"),
-            };
-        let recovery = failed_revalidation(recovery.revalidate());
-        assert_eq!(recovery.stage,
-                   CommandStage::RevalidateClearInterrupts);
-        assert_eq!(recovery.error,
-                   MmcError::RegisterOutOfRange);
+        for (failed_write, stage) in [(4, CommandStage::RevalidateClearInterrupts),
+                                      (5, CommandStage::RevalidateCleanupArgument),
+                                      (6, CommandStage::RevalidateCleanupControl)]
+        {
+            let mut registers = command_registers(INT_COMMAND_TIMEOUT);
+            registers.fail_write = Some(failed_write);
+            let recovery =
+                match command_fixture(registers).execute_command(descriptor(8,
+                                                                             0,
+                                                                             ResponseType::Short)) {
+                    CommandOutcome::RecoveryRequired(recovery) => recovery,
+                    _ => panic!("timeout did not require recovery"),
+                };
+            let recovery = failed_revalidation(recovery.revalidate());
+            assert_eq!(recovery.stage, stage);
+            assert_eq!(recovery.error,
+                       MmcError::RegisterOutOfRange);
+        }
+
+        for (argument, control, stage) in [(true,
+                                            false,
+                                            CommandStage::RevalidateArgumentMismatch),
+                                           (false,
+                                            true,
+                                            CommandStage::RevalidateControlMismatch)]
+        {
+            let mut registers = command_registers(INT_COMMAND_TIMEOUT);
+            registers.ignore_argument_zero = argument;
+            registers.ignore_control_zero = control;
+            let recovery =
+                match command_fixture(registers).execute_command(descriptor(8,
+                                                                             0x55,
+                                                                             ResponseType::Short)) {
+                    CommandOutcome::RecoveryRequired(recovery) => recovery,
+                    _ => panic!("timeout did not require recovery"),
+                };
+            let recovery = failed_revalidation(recovery.revalidate());
+            assert_eq!(recovery.stage, stage);
+        }
     }
 
     #[test]

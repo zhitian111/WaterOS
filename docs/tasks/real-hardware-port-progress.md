@@ -3590,3 +3590,63 @@ Linux 上游 power-up 路径写 `CTL.RESET`、等待 10 ms、写 `CTL.EXTCLK`，
 ### 提交
 
 - `[feat] isolate failed LS2K1000 MMC commands`
+
+## 2026-08-10：批次 76——LS2K1000 MMC command descriptor 与 response contract
+
+### 任务与设计
+
+1. 审计 Linux 主线 command flags、CCTL encoding、response register order 和完成后的 controller cleanup。
+2. 用预验证 descriptor 取代 index/argument/response bool 散参数，避免非法组合进入 Host MMIO。
+3. 将无响应、短响应和 136-bit 长响应建模为不同 contract，只读取 contract 要求的寄存器。
+4. 在成功归还 ready ownership 前执行上游同序的 CARG/CCTL cleanup；失败继续进入 owned recovery。
+5. recovery 也必须完成 cleanup 和 readback，不能只凭 idle/INT clear 复用旧命令状态。
+
+Linux 将 `MMC_RSP_PRESENT` 映射到 `CCTL.WAIT_RSP`、`MMC_RSP_136` 映射到
+`CCTL.LONG_RSP`。其 threaded completion 为统一收尾读取 RSP0..RSP3，然后依次清零 CARG/CCTL。
+WaterOS 保留 CCTL encoding、长响应 offset order 和 cleanup order，但按 descriptor 将响应读取缩减为
+0/1/4 次；这是额外的最小 MMIO 策略，不声明已经获得真机行为证明。
+
+### 完成内容
+
+- [x] 新增 `CommandDescriptor`、`ResponseType::{None,Short,Long}` 和 `CommandTransfer`。
+- [x] descriptor 构造器拒绝 index > 63 和所有 `CommandTransfer::Data`，因此非法/data request 无法调用 Host MMIO 方法。
+- [x] 删除执行期 bool 组合和 `CommandOutcome::Rejected`；非法意图在 Host ownership 之外提前失败。
+- [x] 新增 typed `CommandResponse::{None,Short,Long}`，不再用 `[u32;4]` 隐含所有响应类型。
+- [x] CCTL 对 None 不置 response 位、Short 只置 WAIT_RSP、Long 置 WAIT_RSP|LONG_RSP。
+- [x] 成功路径分别读取 0、RSP0、RSP0..RSP3；长响应按递增寄存器 offset 返回。
+- [x] 四个 response read 使用独立 `CommandStage::ReadResponse0..3`，保留精确 fault evidence。
+- [x] 响应处理后按上游顺序写 CARG=0、CCTL=0；任一写失败均隔离 ownership。
+- [x] recovery 在 idle/INT clear 后也写零 CARG/CCTL，并逐个 readback；IO fault 或 mismatch 继续隔离。
+- [x] recovery 新增 argument/control 观测值和 cleanup/readback/mismatch 阶段，不会错误返回 ready。
+- [x] 数据寄存器、PIO、DMA、machine init 与 remote monitor 激活入口保持关闭；既有 blocker 不变。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 114 项全部通过；新增 response-contract 测试并扩展 command/recovery fault matrices。
+- descriptor fixture 覆盖 index 越界与 data intent，证明没有可传入 Host 的非法 descriptor。
+- None/Short/Long fixtures 验证 CCTL 精确位、响应读取次数 0/1/4、长响应 RSP0→RSP3 顺序和 typed payload。
+- 成功 fixture 验证 CARG/CCTL 最终均为零；command write fault matrix 从 4 个扩展到 6 个阶段，包含两个 cleanup write。
+- long-response read fault matrix 分别注入 RSP0/1/2/3 failure，返回对应 stage 且不归还 ready Host。
+- recovery fault matrix 覆盖 CSTS/DSTS/INT、INT readback、CARG/CCTL write/readback，以及两个 cleanup mismatch。
+- topology fixture/畸形 DTB 矩阵通过；dtc 仅输出刻意构造畸形输入的预期 warning。
+- remote client 与 QEMU launcher 的 13 项 Python host 测试通过。
+- LoongArch64 target check 与 `make kernel-la EXTRA_FEATURES=remote-debug-monitor` 通过；仅有仓库既有 warning。
+- `git diff --check` 通过；全部 MMIO 测试使用内存模型，没有物理寄存器、卡片或 DMA 访问。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：None/Short 省略未声明 RSP register reads 是否适用于两块目标板，尚未实测。
+- [ ] 长响应 `[RSP0,RSP1,RSP2,RSP3]` 只表示寄存器 offset order；协议位序、CRC strip 和 endian mapping 仍需真机对照 CID/CSD。
+- [ ] CARG/CCTL 写零及立即 readback 的硬件可靠性、posted-write ordering 和失败恢复仍需逐板验证。
+- [ ] Linux 无条件读四个 response words；WaterOS 最小读取是有意差异，若真机发现 latch/read side effect 必须回退并记录证据。
+- [ ] 当前 `CommandTransfer::Data` 只作为 fail-closed marker；没有数据 descriptor、PIO 或 APBDMA binding。
+- [ ] `ResponseType` 尚未表达 CRC expected、busy response 和 opcode-specific quirk；不能直接视为完整 MMC core flags adapter。
+- [ ] 下一批应增加 response policy：区分 short/short+CRC/short+busy/long+CRC，审计 CCTL.CHECK 与 BUSYEND 语义；证据不足的 flag 必须显式拒绝而非猜测。
+
+### 参考与许可证
+
+- `docs/references/loongson2-mmc-upstream.md`
+
+### 提交
+
+- `[feat] define LS2K1000 MMC command responses`
