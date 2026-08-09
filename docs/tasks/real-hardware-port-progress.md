@@ -1997,3 +1997,47 @@ IRQ layout 和诊断 topology 在 `init_after_boot()` 中先局部构造并验�
 ### 提交
 
 - `[ref] compile 2K1000 IRQ runtime layout`
+
+## 2026-08-10：批次 44——IRQ runtime assembler and initial masking
+
+### 任务与设计
+
+从已验证 `RuntimeLayout` 组装两个 bank identity 固定的 `LioIntc<I>`。assembler 按 bank0、
+bank1 调用 I/O factory，构造每个 controller 后立即执行单次 `ENABLE_CLEAR = 0xffffffff`；
+只有两者全部成功后才创建 domain 并返回 `BoardIrqRuntime`。任何 factory/controller 失败都不
+产出半初始化 runtime。
+
+target-only volatile assembler 被标为 unsafe：调用者必须证明所有 main/core ISR 物理地址已
+映射且由该 driver 独占，因为函数会立即写两个 controller。本批没有从启动路径调用它。
+
+### 完成内容
+
+- [x] `LioIntc::mask_all()` 用一次 ENABLE_CLEAR 写屏蔽 32 个 local source。
+- [x] 新增 `BoardIrqRuntime::assemble(layout, make_io)` 泛型 assembler。
+- [x] core ISR 定长地址按 layout 原样传递，controller bank identity 由数组位置确定。
+- [x] 每个 controller 在 runtime 可见前全部 source masked。
+- [x] 第二 bank factory 失败时返回错误，不创建 domain/runtime。
+- [x] 新增 target-only `unsafe assemble_volatile()` 与完整 Safety/真机未验证说明。
+- [x] 源码搜索确认 volatile assembler 当前没有生产调用者。
+
+### 验证证据
+
+- `cargo test`：54 项 host 单测全部通过（本批新增 2 项）。
+- assembler 测试断言 factory 顺序为 `(bank0,0x1000)`、`(bank1,0x1040)`。
+- 成功 runtime 拆解后，每个 mock controller 恰有一条 `base+0x2c = 0xffffffff` 写。
+- 第二 bank 返回 `IoError` 时 assembler 返回对应 error，调用计数为 2 且无 runtime。
+- topology/畸形 DTS fixtures、LoongArch64 target check、`make kernel-la` 全部通过；仅有既有 warning。
+- `git diff --check` 通过；未创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：ENABLE_CLEAR 全掩码写及 physical MMIO 可访问性尚未在 2K1000LA 验证。
+- [ ] assembler 失败前已对较早 bank 执行 mask-all；这是安全且不可回滚的硬件副作用，不是事务。
+- [ ] volatile runtime 尚未全局发布，kernel external trap 仍未调用 machine service。
+- [ ] source 注册、route/trigger/enable 必须在开放 CPU HWI 前完成；当前没有启动状态机保证该顺序。
+- [ ] device-side ack/re-enable 与 APBDMA session owner 尚未接入。
+- [ ] 下一批应实现 `Dormant → Configured → Live` 启动 typestate：Dormant 持有全 masked runtime；Configured 至少注册/arm 已证明 source；只有 Live 才可被 trap handler 访问。无已证明 device ack 的 APBDMA source 继续不得进入 Live。
+
+### 提交
+
+- `[ref] assemble masked 2K1000 IRQ runtime`

@@ -128,6 +128,30 @@ pub struct BoardIrqRuntime<I> {
 }
 
 impl<I : RegisterIo> BoardIrqRuntime<I> {
+    pub fn assemble<F>(layout : RuntimeLayout, mut make_io : F) -> Result<Self, RuntimeError>
+    where F : FnMut(usize, ControllerLayout) -> Result<I, DriverError>
+    {
+        let mut controllers : [Option<LioIntc<I>>; MAX_BANKS] = [None, None];
+        for bank in 0..MAX_BANKS {
+            let controller_layout = layout.controllers[bank];
+            let mut core_isr = [0; MAX_CORES];
+            let mut core_count = 0;
+            for address in controller_layout.core_isr.iter().flatten() {
+                core_isr[core_count] = *address;
+                core_count += 1;
+            }
+            let io = make_io(bank, controller_layout).map_err(RuntimeError::Controller)?;
+            let mut controller = LioIntc::new(io,
+                                              bank,
+                                              controller_layout.main_base,
+                                              &core_isr[..core_count])
+                .map_err(RuntimeError::Controller)?;
+            controller.mask_all();
+            controllers[bank] = Some(controller);
+        }
+        Self::new(controllers, layout.parent_banks)
+    }
+
     pub fn new(controllers : [Option<LioIntc<I>>; MAX_BANKS],
                parent_banks : [Option<u8>; HWI_LINES])
                -> Result<Self, RuntimeError> {
@@ -205,6 +229,20 @@ impl<I : RegisterIo> BoardIrqRuntime<I> {
         }
         Ok(report)
     }
+}
+
+/// Assemble controllers backed by raw volatile physical MMIO.
+///
+/// # Safety
+/// Every main/core ISR address in `layout` must be mapped, accessible and
+/// exclusively owned by this driver. Construction immediately writes
+/// ENABLE_CLEAR on both controllers. Register behavior is
+/// `UNVERIFIED_ON_HARDWARE` until tested on a 2K1000LA board.
+#[cfg(target_arch = "loongarch64")]
+pub unsafe fn assemble_volatile(layout : RuntimeLayout)
+                                -> Result<BoardIrqRuntime<crate::liointc::VolatileMmio>,
+                                          RuntimeError> {
+    BoardIrqRuntime::assemble(layout, |_bank, _controller| Ok(crate::liointc::VolatileMmio))
 }
 
 #[cfg(test)]
@@ -313,6 +351,36 @@ mod tests {
         let replacement = RuntimeLayout { parent_banks : [None; HWI_LINES], ..layout };
         assert_eq!(slot.publish(replacement), Err(LayoutError::AlreadyPublished));
         assert_eq!(slot.get(), Some(&layout));
+    }
+
+    #[test]
+    fn assembler_passes_stable_banks_and_masks_every_source() {
+        let layout = RuntimeLayout::compile(&board(vec![description(0x1000, 2),
+                                                         description(0x1040, 3)])).unwrap();
+        let mut seen = Vec::new();
+        let runtime = BoardIrqRuntime::assemble(layout, |bank, controller| {
+            seen.push((bank, controller.main_base));
+            Ok(ModelIo::default())
+        }).unwrap();
+        assert_eq!(seen, [(0, 0x1000), (1, 0x1040)]);
+        let mut controllers = runtime.into_controllers();
+        assert_eq!(controllers[0].take().unwrap().into_inner().writes,
+                   [(0x1000 + ENABLE_CLEAR, u32::MAX)]);
+        assert_eq!(controllers[1].take().unwrap().into_inner().writes,
+                   [(0x1040 + ENABLE_CLEAR, u32::MAX)]);
+    }
+
+    #[test]
+    fn assembler_returns_no_runtime_after_second_bank_factory_failure() {
+        let layout = RuntimeLayout::compile(&board(vec![description(0x1000, 2),
+                                                         description(0x1040, 3)])).unwrap();
+        let mut calls = 0;
+        let result = BoardIrqRuntime::assemble(layout, |bank, _controller| {
+            calls += 1;
+            if bank == 1 { Err(DriverError::IoError) } else { Ok(ModelIo::default()) }
+        });
+        assert!(matches!(result, Err(RuntimeError::Controller(DriverError::IoError))));
+        assert_eq!(calls, 2);
     }
 
     #[test]

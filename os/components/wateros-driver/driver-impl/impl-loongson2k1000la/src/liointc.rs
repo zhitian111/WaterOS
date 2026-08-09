@@ -111,6 +111,11 @@ impl<I : RegisterIo> LioIntc<I> {
         Ok(())
     }
 
+    /// Mask every local source with one ENABLE_CLEAR write.
+    pub fn mask_all(&mut self) {
+        self.io.write32(self.main_base + ENABLE_CLEAR, u32::MAX);
+    }
+
     /// Mask/ack one local source and return evidence tied to its global bank.
     /// A level-triggered device must still clear its own interrupt condition.
     pub fn mask_ack_claim(&mut self, bank : usize, irq : u32)
