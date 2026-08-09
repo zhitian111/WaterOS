@@ -125,6 +125,63 @@ codegraph explore "HeapBrk::brk handle_brk_page_fault user_brk_start user_brk_cu
 codegraph explore "protect_lazy_file_vmas lazy_vma_overlaps lazy_file_vma_index insert_lazy_file_vma mprotect sys_mprotect exact source and all callers; sorted invariant"
 ```
 
+## FILE-01A：普通 ext4 数据写不再隐式全盘 flush
+
+状态：完整测试无收益并回退（2026-08-10）
+
+### 模块与热链
+
+```text
+PagedFileHandle::write / close writeback
+  -> GlobalFilePageCache::flush_key（最多合并 64 个连续脏页）
+     -> FsPageIo::write_range
+        -> AnotherExt4Fs::write_range_node
+           -> write_with_ordered_size
+              -> Ext4::setattr + flush_all（扩展写）
+              -> Ext4::write + flush_all（所有写）
+                 -> BlockAdapter -> CachingBlockDevice -> VirtIOBlk
+                    -> add_notify_wait_pop（busy-poll）
+```
+
+MM-02C 后 300 s pc-hot 中，VirtIO `add_notify_wait_pop` 约 30.18 亿条指令。当前没有块设备
+IRQ 注册、请求等待队列和可跨锁存活的 DMA buffer；直接把 busy-poll 改成 task sleep 会让
+任务持有 `SharedBlockDevice` 的 spin mutex 睡眠，使中断完成路径无法安全接管设备。
+
+### 设计
+
+1. 普通 buffered data write 中，文件扩展仍先更新内存中的 `i_size`，随后写数据，但不在
+   每次 `setattr` 或 `write` 后调用 `flush_all`。
+2. 保留 `ReadWriteFs::sync` / `fsync` 的显式 `flush_all`，并保留 unlink/rename/orphan 等
+   元数据操作现有同步策略。本轮不扩大崩溃一致性承诺：与 Linux 一样，未调用 fsync 的
+   普通 write/close 不保证掉电后持久化。
+3. `write_regular_file` 移除 helper 之外重复的 flush；其数据仍可由后续显式 sync 持久化。
+4. 不在本轮实现 VirtIO 中断异步。后续 BIO 任务需先引入请求所有权、稳定 DMA buffer、
+   释放设备锁后等待、IRQ ack/complete、取消与 teardown 协议。
+
+恢复上下文命令：
+
+```bash
+codegraph explore "AnotherExt4Fs write_with_ordered_size write_range_node write_range write_regular_file sync; PagedFileHandle writeback_dirty sync_dirty; GlobalFilePageCache flush_key; BlockAdapter CachingBlockDevice VirtIOBlk add_notify_wait_pop exact source and call paths"
+```
+
+### 验收
+
+- 双架构 Final check/build 通过。
+- RISC-V 16G/8 vCPU、`-snapshot` 完整 BuildStorm 成功，无 panic/SIGSEGV。
+- 相对 926.21 s 对照有可重复收益；若语义回归或性能退化则回退。
+
+### 验证结果
+
+- 双架构 Final check/build：通过。
+- RISC-V 16 GiB/8 vCPU、`-snapshot` 完整 BuildStorm：`ok=true`，937.39 s；无
+  panic/SIGSEGV，完整结束。
+- 相对 926.21 s 对照增加 11.18 s（1.21%），既无收益也未达到 Linux 2 倍的
+  791.80 s 阶段门槛；代码改动全部回退，仅保留分析记录。
+- 结论：普通数据写中的强制 flush 并非当前 BuildStorm 的主要瓶颈，不能仅凭 VirtIO
+  busy-poll 的 30.18 亿指令归因于该写路径。下一次块层实验应先按请求类型、读写方向、
+  LBA 连续性和请求尺寸计数，再决定 read-ahead、跨调用合并或异步完成。
+- 完整日志：`/tmp/wateros-file01a-after-rv.log`（本机临时文件，不提交）。
+
 ### 验证结果
 
 - 双架构 Final check/build：通过。
