@@ -1245,3 +1245,46 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 ### 提交
 
 - `[feat] add 2K1000 APBDMA lifecycle model`
+
+## 2026-08-10：批次 29——公共 DMA ownership/cache contract
+
+### 任务与设计
+
+1. 审计公共 frame allocator、地址转换、VirtIO HAL 与两架构 cache 能力。
+2. 在稳定 driver API 中定义不假设恒等映射的 DMA region。
+3. 用 ownership 状态机强制 CPU→device→CPU 同步顺序。
+4. 平台通过 trait 实现 cache maintenance 和 memory ordering，不允许公共层提供空操作。
+5. 用 host mock 和双架构裸机目标编译验证契约。
+
+现有 frame allocator只提供物理页，尚无通用连续 DMA 分配与 cache API；多个 VirtIO HAL 的 `share/unshare` 依赖恒等映射并且同步为空，不能外推到物理板。本批只建立平台必须满足的 contract，不伪造硬件实现。
+
+### 完成内容
+
+- [x] `wateros-driver-api-v0` 新增公共 `dma` 模块。
+- [x] `DmaRegion` 分别保存 virtual/physical address、长度和 alignment。
+- [x] 构造时拒绝零地址/长度、非 2 次幂对齐、两侧地址未对齐、地址溢出和超过设备 address width。
+- [x] 定义 `ToDevice`、`FromDevice`、`Bidirectional` 三种方向。
+- [x] `DmaCoherency` 要求平台分别实现 `sync_for_device` 与 `sync_for_cpu`。
+- [x] `DmaMapping` 初始归 CPU；同步成功后才转移给 device，完成或确认 stop 后才归还 CPU。
+- [x] device ownership 期间 `cpu_region()`、重复 prepare 和提前拆分 mapping 均被拒绝。
+- [x] 同步失败不会错误转移 ownership。
+
+### 验证证据
+
+- driver API 3 项 host 单测全部通过。
+- 测试覆盖不同 VA/PA、64-bit PA、32-bit device address 越界、alignment、完整同步事件序列和失败回滚。
+- `cargo check -p wateros-driver-api-v0 --target riscv64gc-unknown-none-elf` 通过。
+- `cargo check -p wateros-driver-api-v0 --target loongarch64-unknown-none` 通过。
+- `git diff --check` 通过；本批没有创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] contract 不分配内存，也不做 VA→PA；需要建立可证明物理连续、可回收的 DMA allocator。
+- [ ] RISC-V/LoongArch64 均未提供真实 `DmaCoherency` backend；cache line 大小、指令可用性与 firmware coherency 必须按平台确认。
+- [ ] 现有 VirtIO HAL 尚未迁移到公共 contract，其空 `share/unshare` 行为仍只适用于当前 QEMU coherent/identity 环境。
+- [ ] ownership 是单 mapping 状态机，尚未定义 scatter-gather、子区间同步、并发引用或 IOMMU mapping。
+- [ ] 下一批应先为 LoongArch64 建立保守的 DMA allocation/translation 边界，再让 2K1000 APBDMA executor 消费 `DmaMapping`。
+
+### 提交
+
+- `[feat] add physical DMA ownership contract`
