@@ -303,6 +303,63 @@ codegraph explore "current_task_user_aspace_ptr current_user_aspace_handle CURRE
   保留完整快照查询的正确性路径。
 - 超时日志：`/tmp/wateros-copy02a-after-rv.log`（本机临时文件，不提交）。
 
+## FS-03A：挂载时缓存 ext4 不可变几何参数
+
+状态：完整测试退化并回退（2026-08-10）
+
+### 证据与调用链
+
+当前 profile 中 `inode_disk_pos` 聚合 167,173,736 条指令，`read_inode` 为 77,870,676
+条。一次 inode 读取包含两次 superblock cache access：
+
+```text
+read_inode
+  -> inode_disk_pos
+     -> read_super_block                  # 第一次
+     -> read_block_group
+        -> block_group_disk_pos
+           -> read_super_block            # 第二次
+```
+
+每次 `read_super_block` 都进入 another_ext4 全局 block-cache mutex、执行 set/LRU 查找并从
+block 0 解析 1024-byte `SuperBlock`。其中 inode/block-group 定位只需要四个挂载期间不变
+的几何字段。
+
+### 设计
+
+1. `Ext4::load` 校验 superblock 后保存 `inodes_per_group`、`inode_size`、`desc_size` 和
+   `first_data_block` 到只读 `Ext4Geometry`。
+2. `inode_disk_pos` 与 `block_group_disk_pos` 直接读取几何字段，消除每次 inode 定位的
+   两次 block-cache access 和 superblock 反序列化。
+3. free block/inode counters、checksum、UUID 等状态继续经 `read_super_block`/
+   `write_super_block`，不缓存可变数据，不改变 allocation 与 write-back 语义。
+4. 不引入 Linux inode/dentry cache；当前缺少 rename/unlink invalidation 和 inode
+   reclaim 基础设施，本项仅缓存 ext4 格式定义为静态的布局参数。
+
+恢复上下文命令：
+
+```bash
+codegraph explore "another_ext4 Ext4::load read_inode inode_disk_pos read_block_group block_group_disk_pos read_super_block write_super_block all callers and geometry mutation semantics"
+```
+
+### 验收
+
+- another_ext4 测试通过，反汇编确认 `inode_disk_pos` 不再调用 `read_super_block`。
+- 双架构 Final check/build 通过。
+- RISC-V 16 GiB/8 vCPU、`-snapshot` 完整 BuildStorm 明确优于 900.64 s，否则回退。
+
+### 验证结果与结论
+
+- another_ext4 单元测试：2/2 通过；双架构 Final check/build 通过。
+- RISC-V 反汇编确认改动版 `inode_disk_pos` 不再调用 `read_super_block/read_block`。
+- RISC-V 16 GiB/8 vCPU、`-snapshot` 完整 BuildStorm：`ok=true`，917.11 s；无
+  panic/SIGSEGV，完整结束。
+- 相对 900.64 s 对照增加 16.47 s（1.83%），属于明确退化；代码全部回退。
+- 结论：FS-02B 后 superblock cache hit 已是共享数据，显式访问的墙钟代价低于函数指令
+  计数所暗示；新增 `Ext4` 字段及不同代码布局反而恶化 TCG 执行。后续不继续缓存零散
+  ext4 几何字段，除非先用调用级计时证明锁等待占比。
+- 完整日志：`/tmp/wateros-fs03a-after-rv.log`（本机临时文件，不提交）。
+
 ## COPY-01A：RISC-V 对齐 memcpy 64 字节展开
 
 状态：完整测试显著退化并回退（2026-08-10）
