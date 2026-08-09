@@ -5,6 +5,8 @@
 #![no_std]
 extern crate alloc;
 
+pub mod dma;
+
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};

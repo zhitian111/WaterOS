@@ -1068,3 +1068,223 @@ python3 scripts/remote_debug_qemu_smoke.py \
 ### 提交
 
 - `[ref] extract shared DesignWare MMC core`
+
+## 2026-08-10：批次 25——2K1000LA 共享 SD 核心与延迟激活计划
+
+### 任务与设计
+
+1. 将共享 DesignWare MMC/SD crate 合入 2K1000LA 分支。
+2. 核对 Loongson MMC DTB 窗口是否能直接满足共享寄存器后端。
+3. 建立只验证资源、不触碰硬件的 deferred bring-up plan。
+4. 将寄存器布局、clock、FIFO、供电和 card-detect 缺口编码为显式 blocker。
+5. 用合成资源、真实 DTS fixture、共享测试和 LoongArch64 交叉编译验证。
+
+审计发现主窗口仅 `0x68`，另有独立 auxiliary window；共享 `MmioRegisters` 则按控制器版本在偏移 `0x100/0x200` 访问 FIFO。因此当前只能确认共享 SD 协议可复用，不能确认 DesignWare 主机寄存器布局可直接复用。
+
+### 完成内容
+
+- [x] 2K1000LA 分支合入并依赖 `wateros-driver-block-impl-dw-mmc`。
+- [x] 新增 `mmc::BringUpPlan`，保存 controller/auxiliary 两段 MMIO 与 bus width。
+- [x] 主窗口小于 `0x68`、缺 auxiliary window 或缺 clock 时在任何 MMIO 操作前拒绝。
+- [x] 显式列出 split layout、输入时钟、clock control、FIFO depth、供电和 card-detect 六类 blocker。
+- [x] `can_activate()` 固定返回 false，代码注释禁止在布局确认前构造真实 `DwMmc`。
+- [x] 启动路径只生成并打印 deferred plan，不读取或写入 MMC 寄存器。
+- [x] 真实 DTS fixture 断言 plan 保持禁用且含 split-layout blocker。
+
+### 验证证据
+
+- 共享 MMC/SD 核心 12 项 host 单测全部通过。
+- 2K1000LA driver 11 项 host 单测全部通过，其中 2 项覆盖 deferred plan 的保留/拒绝行为。
+- `tests/verify_topology.sh` 全部通过：真实形态 fixture、non-removable 与 4 个畸形 DTB 场景继续验证。
+- `cargo check -p wateros-driver-impl-loongson2k1000la --target loongarch64-unknown-none` 通过。
+- 所有 DTB 都在 `mktemp` 小目录生成并由 trap 清理，没有创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] **共享 SD 状态机可复用不等于共享 DesignWare 寄存器后端可用；当前激活被代码强制禁止。**
+- [ ] auxiliary `0x1fe00438` 的 FIFO/控制语义和主窗口寄存器布局需查厂商手册并用真机安全读取确认。
+- [ ] APB clock 实际频率、enable/reset 顺序、FIFO depth、GPIO22 电平、regulator 与 pinmux 均未知。
+- [ ] 尚未实现 2K1000LA split-window `RegisterIo`；确认映射后应先用 mock 后端覆盖 offset routing，再进行只读 PIO bring-up。
+- [ ] DMA channel 0、IRQ 完成、cache 一致性、写入和多块传输继续禁用。
+
+### 提交
+
+- `[feat] plan deferred 2K1000LA MMC bring-up`
+
+## 2026-08-10：批次 26——2K1000LA 专属 MMC 命令核心
+
+### 任务与设计
+
+1. 检索 Linux 主线驱动与 DT binding，查明控制器和第二 MMIO 区域语义。
+2. 纠正“可能是 split-window DesignWare”假设，明确只复用共享 SD 协议层。
+3. 实现 Loongson 专属、可 mock 的时钟分频和非数据命令轮询核心。
+4. 数据路径、外部 DMA、IRQ、供电与 card-detect 不完整时继续禁止设备激活。
+5. 记录上游来源、许可证和真机验证边界。
+
+上游 `loongson2-mmc` 证明主窗口包含独立的 CTL/PRE/CARG/CCTL/RSP/INT/DATA 寄存器，第二窗口只是 APB DMA routing config。2K1000 使用外部 APB DMA，并非 DesignWare MMC host。
+
+### 完成内容
+
+- [x] deferred plan blocker 改为数据路径、外部 DMA、clock control、供电、card-detect 和 IRQ 六项真实缺口。
+- [x] 新增 Loongson `RegisterIo` 与 `Host<R>`，不依赖 DesignWare 寄存器类型。
+- [x] 实现输入/目标时钟校验、向上取整且上限 255 的 prescaler 编码和 clock enable RMW。
+- [x] 实现 CMD index/argument、短/长响应标志、W1C interrupt、命令完成/timeout/CRC 的有界轮询。
+- [x] 响应读取覆盖 RSP0..RSP3；物理 word ordering 在注释中保持 `UNVERIFIED_ON_HARDWARE`。
+- [x] 新增上游参考与 GPL-2.0-only 许可证说明；没有将 Linux C 源码 vendoring 进仓库。
+
+### 验证证据
+
+- 2K1000LA driver host 单测由 11 项增至 13 项并全部通过。
+- 新测试检查 125 MHz 到 400 kHz 的饱和 prescaler、clock enable 保留位、CMD8 编码、响应读取、轮询超时、命令超时和 CRC 错误。
+- 既有 deferred plan 与 LIOINTC/IRQ domain 测试继续通过。
+- 参考资料确认主寄存器最大 offset `0x64` 与 DT 主窗口 `0x68` 一致，第二窗口描述为 APB DMA config。
+
+### 已知限制、未验证与后续测试
+
+- [ ] 当前仅非数据命令基础，不实现 `SdTransport`，因此不会误注册不可读写的卡。
+- [ ] Linux 上游 2K1000 数据路径使用外部 DMA；WaterOS 尚无 APBDMA driver、descriptor、IRQ completion 或 cache maintenance。
+- [ ] clock provider enable/rate、controller reset、vmmc/vqmmc、GPIO22 card detect 与 pinctrl 仍未实现。
+- [ ] INT W1C、RSP0..3 顺序和 255 prescaler 的实际低速输出必须用逻辑分析或已知卡在真机对照。
+- [ ] 后续应先实现 APBDMA channel 0 的可 mock descriptor/routing 层，再把 host 接成共享 `SdTransport`。
+
+### 参考与许可证
+
+- `docs/references/loongson2-mmc-upstream.md`
+
+### 提交
+
+- `[feat] add 2K1000LA MMC command core`
+
+## 2026-08-10：批次 27——2K1000 APBDMA descriptor 计划
+
+### 任务与设计
+
+1. 审计 WaterOS 的 DMA、物理地址和 cache maintenance 抽象。
+2. 对照 Linux `loongson2-apb-dma` 确认 descriptor 与启动寄存器编码。
+3. 建立不分配内存、不做地址转换、不访问 MMIO 的纯数据 transfer plan。
+4. 显式携带 descriptor clean 和 read buffer invalidate 要求。
+5. 用 host 单测覆盖地址、方向、分段、路由和拒绝路径。
+
+仓库没有可供真实 SoC DMA 共用的框架；VirtIO HAL 依赖恒等映射且 cache hooks 为空，不能作为 2K1000 APBDMA 的可用性证据。本批因此只实现可审核的 descriptor 编码，未来 executor 必须提供 DMA-capable 物理内存和架构 cache 操作。
+
+### 完成内容
+
+- [x] 新增 `apbdma` 模块以及 48 字节 `#[repr(C)] HardwareDescriptor`。
+- [x] 支持 64 位内存/descriptor 地址、32 位 APB 外设地址和读写方向命令位。
+- [x] 按 word 数、burst words 计算 `length_words` 与 `step_times`。
+- [x] descriptor 地址要求低 5 位为零，避免与 order register 控制位冲突。
+- [x] 生成 `64BIT_EN | START` order 值，并保留 descriptor 物理地址高位。
+- [x] `route_sdio_to_dma1()` 只更新 routing bits 17:15，不破坏同一 syscon 的其他位。
+- [x] transfer plan 明确要求启动前 clean descriptor；device-to-memory 完成后 invalidate buffer。
+- [x] MMC blocker 细化为 `ExternalDmaExecutorUnavailable`，仍禁止激活。
+
+### 验证证据
+
+- 2K1000LA driver host 单测由 13 项增至 16 项并全部通过。
+- 512 字节 read fixture 验证 64 位地址拆分、16-word segment、8 steps、DATA `0x1fe2c040` 和 start order。
+- write fixture 验证 direction bit、无需 read invalidate，以及 DMA1 route 的 read-modify-write 结果。
+- 拒绝零长度、非 4 字节长度、descriptor 非 32 字节对齐、零 burst 和超过 32 位的 APB 地址。
+- `HardwareDescriptor` host 断言大小为 48 字节。
+
+### 已知限制、未验证与后续测试
+
+- [ ] transfer plan 不是 DMA executor；尚无 descriptor/buffer 分配、VA→PA、cache clean/invalidate 或内存屏障实现。
+- [ ] 尚未解析并驱动 APBDMA controller 自身的 MMIO、clock 和 IRQ topology。
+- [ ] descriptor 字段字节序、order register 64 位访问顺序、routing syscon 和 IRQ completion 均待真机验证。
+- [ ] 单 descriptor 计划尚未实现 scatter-gather 链、取消、超时回收和并发 channel ownership。
+- [ ] 在 cache hooks 可用并经真机确认前，不得把 executor 接入 `SdTransport`。
+
+### 参考与许可证
+
+- `docs/references/loongson2-mmc-upstream.md` 已补充 GPL-2.0-or-later APBDMA 来源。
+
+### 提交
+
+- `[feat] model 2K1000 APBDMA descriptors`
+
+## 2026-08-10：批次 28——APBDMA topology、lease 与 executor 状态机
+
+### 任务与设计
+
+1. 解析 2K1000 APBDMA controller 的 MMIO、IRQ、clock、phandle 和 channel cells。
+2. 用 provider/channel lease 防止同一 DMA channel 被重复占用。
+3. executor 只接受完成 cache 同步后的不可直接构造 token。
+4. mock order register 覆盖 start、busy、IRQ completion 和 stop。
+5. DTS fixture 增加缺 clock 与短 MMIO 窗口拒绝测试。
+
+topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 provider channel 0 的独占；executor 管理单个正在运行的 descriptor。真实 cache/地址转换尚未实现，因此 `PreparedTransfer::after_cache_sync` 是带安全契约的入口，正常安全代码不能绕过准备门槛。
+
+### 完成内容
+
+- [x] `BoardTopology` 新增 `dma_controllers` 与 `DmaControllerDescription`。
+- [x] APBDMA 要求单个 8-byte MMIO、单个 clock、合法 IRQ、phandle 和 `#dma-cells = 1`。
+- [x] 上游形态 fixture 补齐 APBDMA1 `0x1fe00c10/8`、LIOINTC1 IRQ13 和 APB clock。
+- [x] `ChannelLeases` 按 provider phandle 管理 channel 0，拒绝未知 provider、非零 channel 和重复 claim。
+- [x] `PreparedTransfer` 只能通过带 descriptor/buffer cache 同步前置条件的 `unsafe` 构造函数创建。
+- [x] `Executor` 启动时先写 0 再写 start order，拒绝并发 start；IRQ completion 返回是否需要 invalidate read buffer。
+- [x] stop 保留 descriptor address、清除控制低位并编码 64-bit + STOP。
+- [x] 启动日志报告 DMA controller 数量，但仍不实例化真实 executor。
+
+### 验证证据
+
+- 2K1000LA driver host 单测由 16 项增至 19 项，全部通过。
+- lease 测试覆盖 claim/busy/release/reclaim、错误 provider 和错误 channel。
+- mock executor 测试覆盖 start write 序列、重复启动、完成后二次完成拒绝和 stop 编码。
+- DTS fixture 脚本通过既有场景，并新增缺 APBDMA clock、4-byte MMIO 两个拒绝场景。
+- 有效 fixture 断言 APBDMA MMIO、IRQ `<13,4>`、clock arg `[0]` 和 channel cell count。
+
+### 已知限制、未验证与后续测试
+
+- [ ] executor 仍只有 mock `OrderIo`，没有真实 volatile 64-bit lo/hi MMIO 后端。
+- [ ] `unsafe` cache-sync token 是防误用契约，不是 cache maintenance 实现；LoongArch64 cache API 仍缺失。
+- [ ] 尚未把 APBDMA IRQ13 接入 LIOINTC domain，也未校验 descriptor status/硬件错误位。
+- [ ] lease 当前是平台内存对象，尚未接入全局动态设备 topology 或移除/quiesce 流程。
+- [ ] APBDMA controller clock enable、descriptor 内存分配/物理地址、memory barrier 和真机 stop 行为待验证。
+- [ ] MMC 仍不实现 `SdTransport`，不会注册块设备。
+
+### 提交
+
+- `[feat] add 2K1000 APBDMA lifecycle model`
+
+## 2026-08-10：批次 29——公共 DMA ownership/cache contract
+
+### 任务与设计
+
+1. 审计公共 frame allocator、地址转换、VirtIO HAL 与两架构 cache 能力。
+2. 在稳定 driver API 中定义不假设恒等映射的 DMA region。
+3. 用 ownership 状态机强制 CPU→device→CPU 同步顺序。
+4. 平台通过 trait 实现 cache maintenance 和 memory ordering，不允许公共层提供空操作。
+5. 用 host mock 和双架构裸机目标编译验证契约。
+
+现有 frame allocator只提供物理页，尚无通用连续 DMA 分配与 cache API；多个 VirtIO HAL 的 `share/unshare` 依赖恒等映射并且同步为空，不能外推到物理板。本批只建立平台必须满足的 contract，不伪造硬件实现。
+
+### 完成内容
+
+- [x] `wateros-driver-api-v0` 新增公共 `dma` 模块。
+- [x] `DmaRegion` 分别保存 virtual/physical address、长度和 alignment。
+- [x] 构造时拒绝零地址/长度、非 2 次幂对齐、两侧地址未对齐、地址溢出和超过设备 address width。
+- [x] 定义 `ToDevice`、`FromDevice`、`Bidirectional` 三种方向。
+- [x] `DmaCoherency` 要求平台分别实现 `sync_for_device` 与 `sync_for_cpu`。
+- [x] `DmaMapping` 初始归 CPU；同步成功后才转移给 device，完成或确认 stop 后才归还 CPU。
+- [x] device ownership 期间 `cpu_region()`、重复 prepare 和提前拆分 mapping 均被拒绝。
+- [x] 同步失败不会错误转移 ownership。
+
+### 验证证据
+
+- driver API 3 项 host 单测全部通过。
+- 测试覆盖不同 VA/PA、64-bit PA、32-bit device address 越界、alignment、完整同步事件序列和失败回滚。
+- `cargo check -p wateros-driver-api-v0 --target riscv64gc-unknown-none-elf` 通过。
+- `cargo check -p wateros-driver-api-v0 --target loongarch64-unknown-none` 通过。
+- `git diff --check` 通过；本批没有创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] contract 不分配内存，也不做 VA→PA；需要建立可证明物理连续、可回收的 DMA allocator。
+- [ ] RISC-V/LoongArch64 均未提供真实 `DmaCoherency` backend；cache line 大小、指令可用性与 firmware coherency 必须按平台确认。
+- [ ] 现有 VirtIO HAL 尚未迁移到公共 contract，其空 `share/unshare` 行为仍只适用于当前 QEMU coherent/identity 环境。
+- [ ] ownership 是单 mapping 状态机，尚未定义 scatter-gather、子区间同步、并发引用或 IOMMU mapping。
+- [ ] 下一批应先为 LoongArch64 建立保守的 DMA allocation/translation 边界，再让 2K1000 APBDMA executor 消费 `DmaMapping`。
+
+### 提交
+
+- `[feat] add physical DMA ownership contract`
