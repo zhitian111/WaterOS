@@ -283,7 +283,6 @@ impl ProcessRegistry {
         let parent_pgid = parent.pgid;
         let parent_sid = parent.sid;
         let parent_dumpable = parent.dumpable;
-        let parent_subreaper = parent.child_subreaper;
         let parent_umask = parent.umask;
         let child_pid = self.create_process_for_task(child_task_id,
                                                      Some(parent_pid),
@@ -293,7 +292,6 @@ impl ProcessRegistry {
             process.pgid = parent_pgid;
             process.sid = parent_sid;
             process.dumpable = parent_dumpable;
-            process.child_subreaper = parent_subreaper;
             process.umask = parent_umask;
         }
         Ok(child_pid)
@@ -498,8 +496,8 @@ impl ProcessRegistry {
                                pid : ProcessId,
                                exit_code : TaskExitCode)
                                -> ProcessResult<()> {
-        // 父进程死亡（exit_group）时立即将子进程托孤给 init，
-        // 匹配 Linux 语义：子进程 getppid() 应返回 1（init）。
+        // 父进程死亡（exit_group）时立即将子进程托孤给最近的 subreaper，
+        // 没有则托孤给 init，匹配 Linux 的 getppid() 语义。
         // 必须在借用 self.process_mut(pid) 之前完成托孤。
         self.reparent_orphans(pid);
         let process = self.process_mut(pid)
@@ -944,7 +942,7 @@ impl ProcessRegistry {
             .collect()
     }
 
-    /// 将指定进程的所有子进程托孤给 init（PID 1）。
+    /// 将指定进程的所有子进程托孤给最近的活 subreaper 祖先；没有则给 init。
     ///
     /// 父进程退出时调用，确保子进程的 `parent_pid` 始终指向有效进程，
     /// 避免子进程 exit 后成为无人回收的僵尸。
@@ -957,10 +955,28 @@ impl ProcessRegistry {
         if children.is_empty() {
             return;
         }
-        let init_pid = ProcessId::from_raw(INIT_PID);
+        let mut ancestor = self.processes
+                               .get(&parent_pid)
+                               .and_then(|process| process.parent_pid);
+        let subreaper = loop {
+            let Some(pid) = ancestor else {
+                break None;
+            };
+            let Some(process) = self.processes.get(&pid) else {
+                break None;
+            };
+            if process.child_subreaper
+                && !matches!(process.state,
+                             ProcessState::Exiting(_) | ProcessState::Exited(_))
+            {
+                break Some(pid);
+            }
+            ancestor = process.parent_pid;
+        };
+        let target_pid = subreaper.unwrap_or_else(|| ProcessId::from_raw(INIT_PID));
         for child_pid in &children {
             if let Some(process) = self.process_mut(*child_pid) {
-                process.parent_pid = Some(init_pid);
+                process.parent_pid = Some(target_pid);
             }
         }
     }
@@ -1024,6 +1040,46 @@ mod tests {
 
         assert_eq!(registry.get_parent_death_signal(parent_pid), Some(9));
         assert_eq!(registry.get_parent_death_signal(child_pid), Some(0));
+    }
+
+    #[test]
+    fn fork_clears_child_subreaper() {
+        let mut registry = ProcessRegistry::new();
+        let parent_pid = registry.create_process_for_task(10, None, None)
+                                 .expect("create parent process");
+        registry.set_process_child_subreaper(parent_pid, true)
+                .expect("set child subreaper");
+
+        let child_pid = registry.create_process_like_fork(parent_pid, 11, None)
+                                .expect("fork child process");
+
+        assert_eq!(registry.process_child_subreaper(parent_pid), Some(true));
+        assert_eq!(registry.process_child_subreaper(child_pid), Some(false));
+    }
+
+    #[test]
+    fn reparents_to_nearest_living_subreaper() {
+        let mut registry = ProcessRegistry::new();
+        let init_pid = registry.create_process_for_task(1, None, None)
+                               .expect("create init process");
+        let subreaper = registry.create_process_for_task(10, Some(init_pid), None)
+                                .expect("create subreaper process");
+        registry.set_process_child_subreaper(subreaper, true)
+                .expect("set child subreaper");
+        let parent = registry.create_process_for_task(20, Some(subreaper), None)
+                             .expect("create parent process");
+        let orphan = registry.create_process_for_task(30, Some(parent), None)
+                             .expect("create orphan process");
+
+        registry.mark_process_exited(parent, 0)
+                .expect("parent exits");
+        assert_eq!(registry.process_snapshot(orphan).unwrap().parent_pid,
+                   Some(subreaper));
+
+        registry.mark_process_exited(subreaper, 0)
+                .expect("subreaper exits");
+        assert_eq!(registry.process_snapshot(orphan).unwrap().parent_pid,
+                   Some(init_pid));
     }
 
     #[test]

@@ -90,6 +90,9 @@
   `prctl02` 的未实现 option 语义已补齐；PDEATHSIG 投递实验已回退待重做。
 - [`PR_SET/GET_TIMERSLACK`](./results/prctl-timerslack-20260809.md)：
   per-task timer slack 与 fork/clone 继承已实现，`prctl09` 定时采样通过。
+- [`prctl03 child subreaper`](./results/prctl03-subreaper-20260809.md)：
+  SET/GET opcode、GET 写回和孤儿托孤语义已修复；静态回归通过，完整 LTP
+  暂留排除名单。
 - [`sched_setparam Blocking/Sleeping 目标`](./results/sched-setparam-blocked-target-20260808.md)：
   `sched_setparam03` 不再对阻塞父进程错误返回 `ESRCH`，调度相关 LTP 全部通过。
 - [`mmap O_WRONLY fd`](./results/mmap-wronly-fd-eacces-20260808.md)：

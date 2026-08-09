@@ -30,8 +30,8 @@ const PR_SET_THP_DISABLE : usize = 41;
 const PR_GET_THP_DISABLE : usize = 42;
 const PR_CAP_AMBIENT : usize = 47;
 const PR_GET_SPECULATION_CTRL : usize = 52;
-const PR_GET_CHILD_SUBREAPER : usize = 36;
-const PR_SET_CHILD_SUBREAPER : usize = 37;
+const PR_SET_CHILD_SUBREAPER : usize = 36;
+const PR_GET_CHILD_SUBREAPER : usize = 37;
 const NSIG : i32 = 64;
 
 const DEFAULT_TIMER_SLACK_NS : u64 = 50_000;
@@ -247,11 +247,19 @@ pub(crate) fn sys_prctl(args : SyscallArgs) -> UserRet {
                 UserRet::from_error(ErrNo::ESRCH)
             }
         }
-        PR_GET_CHILD_SUBREAPER => match task::process_child_subreaper(current_pid) {
-            Some(true) => UserRet::from_success(1),
-            Some(false) => UserRet::from_success(0),
-            None => UserRet::from_error(ErrNo::ESRCH),
-        },
+        PR_GET_CHILD_SUBREAPER => {
+            let addr_ptr = args.arg(1);
+            if addr_ptr == 0 {
+                return UserRet::from_error(ErrNo::EFAULT);
+            }
+            let Some(enabled) = task::process_child_subreaper(current_pid) else {
+                return UserRet::from_error(ErrNo::ESRCH);
+            };
+            match copy_to_user_struct(addr_ptr, &(enabled as i32)) {
+                Ok(()) => UserRet::from_success(0),
+                Err(e) => UserRet::from_error(e),
+            }
+        }
         PR_SET_PDEATHSIG => {
             let raw_sig = args.arg(1) as i32;
             if raw_sig < 0 || raw_sig > NSIG {
