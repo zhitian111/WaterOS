@@ -1,0 +1,6 @@
+/build/
+*.ext4
+*.sha256
+*.manifest.json
+__pycache__/
+

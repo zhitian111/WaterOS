@@ -24,7 +24,7 @@
 
 - `os/components/**`
 - `os/src/`
-- `user/src/`，若任务需要用户态验证视角
+- `user/packages/`、`user/tools/`，若任务需要用户空间构建与镜像视角
 - 旧版 `docs/*.md`，若需要迁移既有文档内容
 
 ## 输出目录

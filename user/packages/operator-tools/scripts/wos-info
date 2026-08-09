@@ -1,0 +1,10 @@
+#!/bin/sh
+echo "WaterOS operator information"
+echo "kernel: $(uname -a 2>/dev/null || echo unavailable)"
+echo "uptime: $(uptime 2>/dev/null || echo unavailable)"
+echo "cwd: $(pwd)"
+echo "mounts:"
+cat /proc/mounts 2>/dev/null || echo "  /proc/mounts unavailable"
+echo "memory:"
+free 2>/dev/null || cat /proc/meminfo 2>/dev/null || echo "  unavailable"
+

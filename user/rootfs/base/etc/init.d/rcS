@@ -1,0 +1,8 @@
+#!/bin/sh
+# WaterOS currently launches the operator shell directly.  This file is kept
+# as the future userspace-init entry and must remain safe when invoked manually.
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin:/opt/wateros/bin
+[ -d /run ] || mkdir -p /run
+[ -d /var/log ] || mkdir -p /var/log
+exit 0
+

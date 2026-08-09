@@ -79,6 +79,20 @@ make shell ARCH=rv PROFILE=final GUEST_SHELL=/glibc/busybox
 更完整的 TTY、Ctrl-C、raw mode、救援 shell 和排查说明见
 [`wateros-tty/README.md`](./components/wateros-tty/README.md)。
 
+也可以使用仓库自带的静态 BusyBox rootfs，而不是比赛镜像：
+
+```bash
+cd ..
+make -C user image ARCH=rv PROFILE=minimal
+cd os
+make shell ARCH=rv PROFILE=pre \
+  SDCARD=../user/build/images/wateros-rv-minimal.ext4
+```
+
+这套镜像由 [`user/`](../user/README.md) 独立构建，不参与内核 `make all`。
+`minimal` 和 `operator` 都能提供 `/bin/sh`；后者额外包含 `wos-help`、`wos-info`。
+自有镜像不含 `/glibc`、`/musl` 比赛测例，只用于 shell 和自有用户程序。
+
 ## 3. 运行镜像内指定脚本
 
 `MODE=run` 保留为通用 operator 能力，它不是 Make 测试目录。它会构建
