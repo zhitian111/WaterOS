@@ -233,6 +233,69 @@ codegraph explore "GlobalFilePageCache install_page PageFrame GlobalCacheState p
   fault 中 page-cache → 用户 frame 的全页复制。
 - 完整日志：`/tmp/wateros-copy01b-after-rv.log`（本机临时文件，不提交）。
 
+## FS-02A：ext4 目录查找原地比较名称
+
+状态：完整测试退化并回退（2026-08-10）
+
+### 证据与调用链
+
+使用当前有效 Final ELF 重跑 300 s pc-hot，并将所有直达 `memcpy` 的 callsite PC 与采样表
+关联。最高的两个调用点均位于 `another_ext4::Ext4::dir_find_entry`，各执行 9,514,168 次：
+
+```text
+lookup / open / metadata
+  -> Ext4::dir_find_entry
+     -> DirBlock::get
+        -> Block::read_offset_as::<DirEntry>
+           -> DirEntry::from_bytes
+              -> 清零 255-byte name
+              -> memcpy 当前 name 到 DirEntry
+        -> 将 256-byte DirEntry 再复制到扫描局部变量
+        -> compare_name
+```
+
+普通文件 staged read 没有进入最高频 memcpy callsite，故暂停需要 cache pin/refcount 的
+COPY-01C。其他高频调用点包括 `normalize_absolute_path` 8,994,189 次、另一个 ext4 块复制
+6,804,463 次和 `copy_from_user` 4,947,611 次。
+
+### 设计
+
+1. `DirBlock::get` 直接从 4 KiB block payload 解码 8-byte ext4 dirent header。
+2. 先校验 `rec_len >= 8`、记录不越过 block、`name_len <= rec_len - 8`；无效记录返回
+   `None`，同时避免原实现可能在 `rec_len == 0` 时死循环。
+3. inode 非零且长度相等时，直接把 block 内 name slice 与目标 `str::as_bytes()` 比较；
+   仅返回 32-bit inode，不构造 `DirEntry` 或 `[u8; 255]`。
+4. `list/insert/remove` 保留拥有型 `DirEntry` 路径，避免扩大补丁；双架构均使用同一
+   little-endian ext4 解析。
+
+恢复上下文命令：
+
+```bash
+codegraph explore "another_ext4 Ext4::dir_find_entry DirBlock::get DirEntry::from_bytes compare_name Block::read_offset_as all callers and exact source"
+```
+
+### 验收
+
+- another_ext4 单元测试覆盖命中、未命中、unused 和损坏 rec_len/name_len。
+- 双架构 Final check/build 通过。
+- RISC-V 16 GiB/8 vCPU、`-snapshot` 完整 BuildStorm 明确优于 926.21 s。
+- 改后 pc-hot 中原 0x802fffa6/0x802fffb6 两个 memcpy callsite 消失。
+
+### 验证结果
+
+- another_ext4 单元测试：3/3 通过；新增用例覆盖命中、unused、未命中和损坏记录。
+- 双架构 Final check/build：通过。
+- 构建后反汇编确认 `dir_find_entry` 的两个 `memcpy` 和 255-byte `memset` 消失，仅保留
+  长度匹配候选的 `memcmp`。
+- RISC-V 16 GiB/8 vCPU、`-snapshot` 完整 BuildStorm：`ok=true`，941.62 s；无
+  panic/SIGSEGV，完整结束。
+- 相对 926.21 s 对照增加 15.41 s（1.66%），属于明确退化；vendor 实现和新增测试全部
+  回退，仅保留分析记录。
+- 结论：逐字段边界检查、little-endian 解码及 slice 逻辑在 QEMU TCG 上比原固定布局
+  反序列化更贵。高频 memcpy callsite 数量也不能单独代表墙钟占比；后续选点必须结合
+  函数内部总指令或 syscall 时间，而不是只看调用次数。
+- 完整日志：`/tmp/wateros-fs02a-after-rv.log`（本机临时文件，不提交）。
+
 ## FILE-01A：普通 ext4 数据写不再隐式全盘 flush
 
 状态：完整测试无收益并回退（2026-08-10）
