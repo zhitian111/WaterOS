@@ -8,6 +8,7 @@
 #![no_std]
 extern crate alloc;
 
+pub mod irq_domain;
 pub mod liointc;
 mod machine;
 pub mod topology;

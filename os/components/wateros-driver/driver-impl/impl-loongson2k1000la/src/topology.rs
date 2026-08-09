@@ -26,6 +26,8 @@ pub struct InterruptControllerDescription {
     pub main_mmio : MmioRegion,
     pub core_isr : Vec<MmioRegion>,
     pub interrupt_cells : u8,
+    pub parent_interrupts : [Option<InterruptSpec>; 4],
+    pub parent_source_maps : [u32; 4],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,7 +135,7 @@ fn phandle(node : fdt::node::FdtNode<'_, '_>) -> Option<u32> {
     property_u32(node, "phandle").or_else(|| property_u32(node, "linux,phandle"))
 }
 
-fn interrupt(node : fdt::node::FdtNode<'_, '_>) -> DriverResult<InterruptSpec> {
+fn interrupt_specs(node : fdt::node::FdtNode<'_, '_>) -> DriverResult<Vec<InterruptSpec>> {
     let parent = node.interrupt_parent()
                      .ok_or(DriverError::InvalidDtb)?;
     let parent_phandle = phandle(parent).ok_or(DriverError::InvalidDtb)?;
@@ -145,18 +147,79 @@ fn interrupt(node : fdt::node::FdtNode<'_, '_>) -> DriverResult<InterruptSpec> {
     let raw = node.property("interrupts")
                   .ok_or(DriverError::InvalidDtb)?
                   .value;
-    if raw.len() != cell_count * 4 {
+    let stride = cell_count * 4;
+    if raw.is_empty() || raw.len() % stride != 0 {
         return Err(DriverError::InvalidDtb);
     }
-    let mut cells = [0; MAX_INTERRUPT_CELLS];
-    for (index, cell) in cells[..cell_count].iter_mut()
-                                            .enumerate()
-    {
-        *cell = read_be_u32(raw, index * 4).ok_or(DriverError::InvalidDtb)?;
+    let mut specs = Vec::new();
+    for encoded in raw.chunks_exact(stride) {
+        let mut cells = [0; MAX_INTERRUPT_CELLS];
+        for (index, cell) in cells[..cell_count].iter_mut()
+                                                .enumerate()
+        {
+            *cell = read_be_u32(encoded, index * 4).ok_or(DriverError::InvalidDtb)?;
+        }
+        specs.push(InterruptSpec { parent_phandle,
+                                   cells,
+                                   cell_count : cell_count as u8 });
     }
-    Ok(InterruptSpec { parent_phandle,
-                       cells,
-                       cell_count : cell_count as u8 })
+    Ok(specs)
+}
+
+fn interrupt(node : fdt::node::FdtNode<'_, '_>) -> DriverResult<InterruptSpec> {
+    let mut specs = interrupt_specs(node)?;
+    if specs.len() != 1 {
+        return Err(DriverError::InvalidDtb);
+    }
+    Ok(specs.remove(0))
+}
+
+fn parse_parent_routes(node : fdt::node::FdtNode<'_, '_>)
+                       -> DriverResult<([Option<InterruptSpec>; 4], [u32; 4])> {
+    let names = string_list(node, "interrupt-names")?;
+    let specs = interrupt_specs(node)?;
+    if names.is_empty() || names.len() != specs.len() || names.len() > 4 {
+        return Err(DriverError::InvalidDtb);
+    }
+    let mut parents : [Option<InterruptSpec>; 4] = core::array::from_fn(|_| None);
+    for (name, spec) in names.iter()
+                             .zip(specs)
+    {
+        let line = match *name {
+            "int0" => 0,
+            "int1" => 1,
+            "int2" => 2,
+            "int3" => 3,
+            _ => return Err(DriverError::InvalidDtb),
+        };
+        if parents[line].replace(spec)
+                        .is_some()
+        {
+            return Err(DriverError::InvalidDtb);
+        }
+    }
+
+    let raw = node.property("loongson,parent_int_map")
+                  .ok_or(DriverError::InvalidDtb)?
+                  .value;
+    if raw.len() != 16 {
+        return Err(DriverError::InvalidDtb);
+    }
+    let mut maps = [0; 4];
+    let mut covered = 0u32;
+    for (line, map) in maps.iter_mut()
+                           .enumerate()
+    {
+        *map = read_be_u32(raw, line * 4).ok_or(DriverError::InvalidDtb)?;
+        if covered & *map != 0 || (*map != 0 && parents[line].is_none()) {
+            return Err(DriverError::InvalidDtb);
+        }
+        covered |= *map;
+    }
+    if covered != u32::MAX {
+        return Err(DriverError::InvalidDtb);
+    }
+    Ok((parents, maps))
 }
 
 pub fn discover(fdt : &fdt::Fdt<'_>) -> DriverResult<BoardTopology> {
@@ -197,12 +260,15 @@ pub fn discover(fdt : &fdt::Fdt<'_>) -> DriverResult<BoardTopology> {
             if interrupt_cells == 0 || interrupt_cells > MAX_INTERRUPT_CELLS {
                 return Err(DriverError::InvalidDtb);
             }
+            let (parent_interrupts, parent_source_maps) = parse_parent_routes(node)?;
             topology.interrupt_controllers
                     .push(InterruptControllerDescription { phandle : phandle(node),
                                                            main_mmio : regs[0],
                                                            core_isr : Vec::from(&regs[1..]),
                                                            interrupt_cells : interrupt_cells
-                                                                             as u8 });
+                                                                             as u8,
+                                                           parent_interrupts,
+                                                           parent_source_maps });
         } else if has_compatible(node, "ns16550a") {
             let regs = regions(node)?;
             if regs.len() != 1 {

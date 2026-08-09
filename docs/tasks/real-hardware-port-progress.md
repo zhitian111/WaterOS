@@ -933,3 +933,47 @@ python3 scripts/remote_debug_qemu_smoke.py \
 ### 提交
 
 - `[feat] model 2K1000LA LIOINTC registers`
+
+## 2026-08-10：批次 21——LIOINTC parent route 与双 bank IRQ domain
+
+### 任务与设计
+
+1. 解析 LIOINTC 自身连接 CPUINTC 的多项 `interrupts`、`interrupt-names` 和四项 `loongson,parent_int_map`。
+2. parent name 只接受 `int0..int3`，specifier 数量必须与名称一致，非零 source map 必须有对应 parent interrupt。
+3. 四个 source maps 必须互不重叠且合计覆盖完整 32-source bank，拒绝一个 source 同时路由到多个 parent line 的歧义。
+4. 建立固定两 bank、每 bank 32 项的全局 IRQ domain，映射公式为 `bank * 32 + local`。
+5. handler 表固定 64 项，dispatch 路径不分配内存、不持锁、不隐式执行硬件 ack。
+
+### 完成内容
+
+- [x] topology parser 将单中断解析推广为按 parent `#interrupt-cells` 切分的多 specifier parser。
+- [x] `InterruptControllerDescription` 新增四槽 `parent_interrupts` 和 `parent_source_maps`。
+- [x] 严格校验 parent name、重复名称、specifier/name 数量、map 长度、重叠 map、未连接 parent 和未覆盖 source。
+- [x] 官方形态 fixture 中 LIOINTC0 保存 CPU HWI2/`int0`/`0xffffffff`，LIOINTC1 保存 CPU HWI3/`int1`/`0xffffffff`。
+- [x] 新增 `GlobalIrq`、`LioIntcDomain`、`DomainError`、固定 handler table 和 `DispatchReport`。
+- [x] 实现注册、拒绝重复注册、注销、bank pending snapshot dispatch，以及 handled/unhandled 64-bit 位图报告。
+- [x] dispatch 按 local IRQ 从低到高调用 handler，不重读 pending，不修改 mask，也不声称完成 EOI。
+- [x] 新增 overlapping-parent-map fixture，source 0 同时出现在 int0/int1 时明确拒绝。
+
+### 验证证据
+
+- 2K1000LA driver host 单测由 5 项增至 9 项，全部通过。
+- domain 边界测试验证 bank0/local0 -> global0、bank1/local31 -> global63，并拒绝 bank2 和 local32。
+- dispatch 测试在 bank1 同时提交 local 0/7/31：已注册 0 和 31 被调用并形成 global bits 32/63，未注册 7 报告为 global bit39。
+- 注册测试覆盖 duplicate、unregister 和二次 unregister；无效 bank count 0/3 被拒绝。
+- 有效 DTS fixture 端到端断言两组 parent specifier 与 maps；缺 UART clock 和重叠 parent map 两个畸形 fixture 均被拒绝。
+- 2K1000LA release 交叉构建通过，`git diff --check` 通过；测试只生成三个临时小型 DTB。
+
+### 已知限制、未验证与后续测试
+
+- [ ] **domain 和 dispatch 仅为纯模型，尚未连接 LoongArch CPU HWI trap、真实 LIOINTC pending 或 mask/ack，全部待上板验证。**
+- [ ] 固定 64 IRQ 符合 2K1000LA 两 bank；不是面向所有 Loongson SoC 的通用 IRQ domain。
+- [ ] handler 目前是 `fn(GlobalIrq)`，不能携带设备实例上下文；UART/MMC 接入前需要确定静态实例或受控 context 方案。
+- [ ] register/unregister 要求外部独占且必须在开中断前完成；运行期动态注销需要 interrupt-safe synchronization 和 quiesce 协议。
+- [ ] source map 严格要求覆盖 32 bits，符合目标 DTS；若真实固件保留未连接 source，需基于导出 DTB 和 binding 重新评估而非静默放宽。
+- [ ] dispatch 遇到 unhandled source 只报告，不自动 mask；未来 trap glue 必须采用有界循环并处理持续电平，防止中断风暴。
+- [ ] 下一批应完善 MMC 的 clocks、DMA、bus-width、card-detect 与 non-removable topology，为复用已有 DesignWare/SD 协议层做准备。
+
+### 提交
+
+- `[feat] add 2K1000LA IRQ domain model`

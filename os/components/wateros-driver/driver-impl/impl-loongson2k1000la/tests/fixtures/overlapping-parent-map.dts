@@ -1,0 +1,24 @@
+/dts-v1/;
+
+/ {
+    #address-cells = <2>;
+    #size-cells = <2>;
+
+    cpu_intc: interrupt-controller {
+        interrupt-controller;
+        #interrupt-cells = <1>;
+    };
+
+    interrupt-controller@1fe01400 {
+        compatible = "loongson,liointc-2.0";
+        reg = <0x0 0x1fe01400 0x0 0x40>,
+              <0x0 0x1fe01040 0x0 0x8>;
+        reg-names = "main", "isr0";
+        interrupt-controller;
+        #interrupt-cells = <2>;
+        interrupt-parent = <&cpu_intc>;
+        interrupts = <2>, <3>;
+        interrupt-names = "int0", "int1";
+        loongson,parent_int_map = <0xffffffff>, <0x1>, <0x0>, <0x0>;
+    };
+};

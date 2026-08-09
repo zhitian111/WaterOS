@@ -5,6 +5,12 @@
     #address-cells = <2>;
     #size-cells = <2>;
 
+    cpu_intc: interrupt-controller {
+        compatible = "loongson,cpu-interrupt-controller";
+        interrupt-controller;
+        #interrupt-cells = <1>;
+    };
+
     liointc0: interrupt-controller@1fe01400 {
         compatible = "loongson,liointc-2.0";
         reg = <0x0 0x1fe01400 0x0 0x40>,
@@ -12,6 +18,10 @@
         reg-names = "main", "isr0";
         interrupt-controller;
         #interrupt-cells = <2>;
+        interrupt-parent = <&cpu_intc>;
+        interrupts = <2>;
+        interrupt-names = "int0";
+        loongson,parent_int_map = <0xffffffff>, <0x0>, <0x0>, <0x0>;
     };
 
     serial@1fe20000 {
