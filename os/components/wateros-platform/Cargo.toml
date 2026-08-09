@@ -7,6 +7,9 @@
         "./platform-arch/arch-impl/impl-loongarch64/",
         "./platform-arch/arch-impl/impl-riscv64/",
         "./platform-impl/impl-dummy/",
+        "./platform-impl/impl-jh7110-visionfive2/",
+        "./platform-impl/impl-loongson2k1000la/",
+        "./platform-impl/impl-opensbi-common/",
         "./platform-impl/impl-qemu-loongarch64-virt/",
         "./platform-impl/impl-qemu-riscv64-opensbi/",
     ]
@@ -18,6 +21,8 @@
 [dependencies]
     api-v0 = { path = "./platform-api/api-v0/", package = "wateros-platform-api-v0", default-features = false }
     impl-dummy = { path = "./platform-impl/impl-dummy/", package = "wateros-platform-impl-dummy", default-features = false, optional = true }
+    impl-jh7110-visionfive2 = { path = "./platform-impl/impl-jh7110-visionfive2/", package = "wateros-platform-impl-jh7110-visionfive2", default-features = false, optional = true }
+    impl-loongson2k1000la = { path = "./platform-impl/impl-loongson2k1000la/", package = "wateros-platform-impl-loongson2k1000la", default-features = false, optional = true }
     impl-qemu-loongarch64-virt = { path = "./platform-impl/impl-qemu-loongarch64-virt/", package = "wateros-platform-impl-qemu-loongarch64-virt", default-features = true, optional = true }
     impl-qemu-riscv64-opensbi = { path = "./platform-impl/impl-qemu-riscv64-opensbi/", package = "wateros-platform-impl-qemu-riscv64-opensbi", default-features = false, optional = true }
     arch = { path = "./platform-arch/", package = "wateros-platform-arch", default-features = false }
@@ -30,11 +35,23 @@ debug = { path = "../wateros-debug/", package = "wateros-debug", default-feature
     api-v0 = [
         "arch/api-v0",
         "impl-dummy?/api-v0",
+        "impl-jh7110-visionfive2?/api-v0",
+        "impl-loongson2k1000la?/api-v0",
         "impl-qemu-loongarch64-virt?/api-v0",
         "impl-qemu-riscv64-opensbi?/api-v0",
     ]
     default = [ "api-v0" ]
     impl-dummy = [ "dep:impl-dummy" ]
+    impl-jh7110-visionfive2 = [
+        "api-v0",
+        "arch/impl-riscv64",
+        "dep:impl-jh7110-visionfive2",
+    ]
+    impl-loongson2k1000la = [
+        "api-v0",
+        "arch/impl-loongarch64",
+        "dep:impl-loongson2k1000la",
+    ]
     impl-qemu-loongarch64-virt = [
         "api-v0",
         "arch/impl-loongarch64",

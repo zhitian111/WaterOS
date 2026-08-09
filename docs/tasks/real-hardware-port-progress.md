@@ -14,7 +14,7 @@
 ## 总体待办
 
 - [ ] 平台化 RAM/MMIO/链接地址、启动参数和逻辑 CPU 映射。
-- [ ] 新增 VisionFive 2 与 2K1000LA 编译型 platform/driver profile。
+- [x] 新增 VisionFive 2 与 2K1000LA 编译型 platform profile（driver profile 待后续批次）。
 - [ ] 实现并验证 PLIC、ICU、外部中断分发和 SMP 映射。
 - [ ] 构建持久根文件系统和小型分区磁盘/SD 卡镜像生成器。
 - [ ] 块设备增加分区扫描与分区子设备，不再默认整盘即文件系统。
@@ -126,3 +126,50 @@ nc 127.0.0.1 22323
 ### 提交
 
 - `[ref] make kernel memory layout platform-owned`
+
+## 2026-08-10：批次 3——目标板编译型平台骨架
+
+### 任务与设计
+
+1. 建立 VisionFive 2 与 2K1000LA 独立 platform crate，不将真机 profile 别名到 QEMU 实现。
+2. 抽取与板卡无关的 OpenSBI timer/reset/HSM/IPI/remote-fence 运输层。
+3. 接入顶层 feature、架构启动路径、入口汇编和链接脚本。
+4. 无真机证据的 2K1000LA SMP/reset 不写猜测性寄存器操作，显式降级为单核/`Unsupported`。
+
+### 完成内容
+
+- [x] 新增 `wateros-platform-impl-opensbi-common`，不包含 UART、内存或链接地址等板卡假设。
+- [x] 新增 `wateros-platform-impl-jh7110-visionfive2`。
+- [x] VF2 链接入口为 `0x4020_0000`，RAM 从 `0x4000_0000` 开始并可从 DTB 取上界。
+- [x] VF2 early console 使用 DW APB UART0 `0x1000_0000`、`reg-shift=2`、32 位 MMIO 和 LSR `+0x14`。
+- [x] VF2 时钟回退为 OpenSBI 报告的 4 MHz，仍允许 DTB 覆盖。
+- [x] 新增 `wateros-platform-impl-loongson2k1000la`。
+- [x] 2K1000LA 链接入口为 `0x9000_0000`，early console 使用 BSP `serial0` 的 `0x1fe2_0000` ns16550a。
+- [x] 2K1000LA 暂用 1 GiB 板型的保守高段 RAM 窗口，启动参数解析完成前不声称适配其它容量。
+- [x] 顶层新增 `visionfive2` 和 `loongson2k1000la` profile，当前驱动层显式使用 dummy machine。
+- [x] 通用内核启动模块按 ISA/firmware 分组，不再以 QEMU 名称作为模块语义。
+
+### 验证证据
+
+- VF2 platform host 单测：1 项 RAM/MMIO/探针布局测试通过。
+- 2K1000LA platform host 单测：1 项保守内存布局测试通过。
+- `visionfive2,pre,heap-tlsf` RISC-V cross check 通过。
+- `loongson2k1000la,pre,heap-tlsf` LoongArch64 cross check 通过。
+- 两个新 profile 的 release 内核都完成链接。
+- `llvm-readelf` 确认 VF2 ELF 为 RISC-V/entry `0x40200000`，2K1000LA ELF 为 LoongArch/entry `0x90000000`。
+- `cargo tree` 确认新 profile 不依赖任何 QEMU platform implementation。
+- 现有 QEMU RISC-V 和 QEMU LoongArch64 profile 交叉检查回归通过。
+
+### 未验证与后续测试
+
+- [ ] VF2 `0x4020_0000` 需与实际 U-Boot `kernel_addr_r` 核对；DW APB UART 32 位访问需真机串口验证。
+- [ ] VF2 MMIO 暂为早期宽窗口，待 PLIC/clock/reset/driver 引入时按 DTB 缩窄。
+- [ ] 2K1000LA 需解析 a0/a1/a2 启动参数及内存表，取代固定 RAM 上界。
+- [ ] 2K1000LA StableCounter 的 100 MHz 回退仅用于编译 bring-up，需经 CPUCFG/固件或真机测量确认。
+- [ ] 2K1000LA 当前只启动 BSP；mailbox/IPI、ICU、双核启动和远端 TLB flush 全部待实现。
+- [ ] 2K1000LA reset/shutdown 当前返回 `Unsupported`，待核对 PM/reset-controller 序列。
+- [ ] 两个新 profile 当前都使用 dummy machine driver，只能证明内核可编译/可链接，不能证明外设可用。
+
+### 提交
+
+- `[feat] add real-hardware platform profiles`

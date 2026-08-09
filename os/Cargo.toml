@@ -82,6 +82,20 @@
     heap-stress = [ "runtime/heap-stress" ]
     heap-tlsf = [ "runtime/heap-tlsf" ]
     impl-sv39 = [ "mm/impl-sv39" ]
+    visionfive2 = [
+        "dep:cred", "dep:driver", "dep:fdt", "dep:fs", "dep:ipc", "dep:network",
+        "driver/impl-block-cache", "driver/impl-dummy", "ipc/all", "vfs-bridge",
+        "impl-sv39", "mm/vfs-root-read", "platform/impl-jh7110-visionfive2",
+        "runtime/impl-info", "dep:klog", "klog/default", "runtime/impl-error",
+        "runtime/impl-platform-console", "syscall/impl-kernel",
+    ]
+    loongson2k1000la = [
+        "dep:cred", "dep:driver", "dep:fdt", "dep:fs", "dep:ipc", "dep:network",
+        "driver/impl-block-cache", "driver/impl-dummy", "ipc/all",
+        "mm/impl-loongarch64", "mm/vfs-root-read", "platform/impl-loongson2k1000la",
+        "runtime/impl-info", "dep:klog", "klog/default", "runtime/impl-error",
+        "runtime/impl-platform-console", "syscall/impl-kernel", "vfs-bridge",
+    ]
     qemu-loongarch64-virt = [
         "dep:cred",
         "dep:driver",

@@ -17,6 +17,16 @@ fn main() {
     println!("cargo::rustc-link-arg=-T./components/wateros-platform/platform-impl/\
               impl-qemu-riscv64-opensbi/src/linker/link.ld");
 
+    #[cfg(feature = "visionfive2")]
+    println!("cargo::rerun-if-changed=./components/wateros-platform/platform-impl/\
+              impl-jh7110-visionfive2/src/linker/link.ld");
+    #[cfg(feature = "visionfive2")]
+    println!("cargo::rerun-if-changed=./components/wateros-platform/platform-impl/\
+              impl-jh7110-visionfive2/src/asm/_start.S");
+    #[cfg(feature = "visionfive2")]
+    println!("cargo::rustc-link-arg=-T./components/wateros-platform/platform-impl/\
+              impl-jh7110-visionfive2/src/linker/link.ld");
+
     #[cfg(feature = "qemu-loongarch64-virt")]
     println!("cargo::rerun-if-changed=./components/wateros-platform/platform-impl/\
               impl-qemu-loongarch64-virt/src/linker/link.ld");
@@ -26,4 +36,14 @@ fn main() {
     #[cfg(feature = "qemu-loongarch64-virt")]
     println!("cargo::rustc-link-arg=-T./components/wateros-platform/platform-impl/\
               impl-qemu-loongarch64-virt/src/linker/link.ld");
+
+    #[cfg(feature = "loongson2k1000la")]
+    println!("cargo::rerun-if-changed=./components/wateros-platform/platform-impl/\
+              impl-loongson2k1000la/src/linker/link.ld");
+    #[cfg(feature = "loongson2k1000la")]
+    println!("cargo::rerun-if-changed=./components/wateros-platform/platform-impl/\
+              impl-loongson2k1000la/src/asm/_start.S");
+    #[cfg(feature = "loongson2k1000la")]
+    println!("cargo::rustc-link-arg=-T./components/wateros-platform/platform-impl/\
+              impl-loongson2k1000la/src/linker/link.ld");
 }

@@ -1473,6 +1473,8 @@ dependencies = [
  "wateros-platform-api-v0",
  "wateros-platform-arch",
  "wateros-platform-impl-dummy",
+ "wateros-platform-impl-jh7110-visionfive2",
+ "wateros-platform-impl-loongson2k1000la",
  "wateros-platform-impl-qemu-loongarch64-virt",
  "wateros-platform-impl-qemu-riscv64-opensbi",
 ]
@@ -1537,6 +1539,33 @@ name = "wateros-platform-impl-dummy"
 version = "0.1.0"
 dependencies = [
  "wateros-base",
+ "wateros-platform-api-v0",
+]
+
+[[package]]
+name = "wateros-platform-impl-jh7110-visionfive2"
+version = "0.1.0"
+dependencies = [
+ "fdt",
+ "wateros-platform-api-v0",
+ "wateros-platform-impl-opensbi-common",
+]
+
+[[package]]
+name = "wateros-platform-impl-loongson2k1000la"
+version = "0.1.0"
+dependencies = [
+ "wateros-base",
+ "wateros-platform-api-v0",
+]
+
+[[package]]
+name = "wateros-platform-impl-opensbi-common"
+version = "0.1.0"
+dependencies = [
+ "sbi-rt",
+ "wateros-base",
+ "wateros-base-config",
  "wateros-platform-api-v0",
 ]
 

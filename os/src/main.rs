@@ -13,7 +13,10 @@ use klog as _;
 #[cfg(feature = "gui")]
 use runtime::logging::info;
 use runtime::logging::warn;
-#[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
+#[cfg(any(feature = "qemu-riscv64-opensbi",
+          feature = "qemu-loongarch64-virt",
+          feature = "visionfive2",
+          feature = "loongson2k1000la"))]
 use syscall as _;
 
 mod boot_timebase;
@@ -155,8 +158,8 @@ fn bringup_driver_and_user() {
     }
 }
 
-#[cfg(feature = "qemu-riscv64-opensbi")]
-mod qemu_riscv64_opensbi {
+#[cfg(any(feature = "qemu-riscv64-opensbi", feature = "visionfive2"))]
+mod riscv64_opensbi {
     use crate::bringup_driver_and_user;
     use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use runtime::logging::*;
@@ -186,7 +189,7 @@ mod qemu_riscv64_opensbi {
                     info!("[smp] hart_start accepted cpu={} status={:?}",
                           raw, status);
                 }
-                // A smaller QEMU `-smp` simply has no hart at this index.
+                // Firmware may expose fewer harts than the compile-time capacity.
                 Err(platform::smp::PlatformSmpError::InvalidCpu) => break,
                 Err(error) => panic!("[smp] cannot start cpu={}: {:?}; use an OpenSBI firmware \
                                       with HSM",
@@ -296,8 +299,8 @@ mod qemu_riscv64_opensbi {
     }
 }
 
-#[cfg(feature = "qemu-loongarch64-virt")]
-mod qemu_loongarch64_virt {
+#[cfg(any(feature = "qemu-loongarch64-virt", feature = "loongson2k1000la"))]
+mod loongarch64_platform {
     use crate::bringup_driver_and_user;
     use core::sync::atomic::{AtomicBool, Ordering};
     use runtime::logging::*;
@@ -310,8 +313,8 @@ mod qemu_loongarch64_virt {
     }
 
     fn start_secondary_cpus(boot_cpu : task::CpuId) -> base::cpu::CpuMask {
-        // QEMU 的 AP 固件不会为 mailbox 入口准备 a0；必须从平台 `_start`
-        // 进入，由它读取 CSR.CPUNUM，再跳转到通用 arch boot 入口。
+        // AP firmware does not prepare the normal kernel argument registers for
+        // a mailbox entry; enter through platform `_start` so it reads CPUNUM.
         let entry = _start as *const () as usize;
         let configured = platform::smp::configured_cpu_mask();
         let mut requested = base::cpu::CpuMask::EMPTY;
