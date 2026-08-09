@@ -862,3 +862,49 @@ MM-02B 后的 pc-hot 显示，`protect_lazy_file_vmas` 全表循环的核心指�
 ```bash
 codegraph explore "protect_lazy_file_vmas lazy_vma_overlaps lazy_file_vma_index insert_lazy_file_vma mprotect sys_mprotect exact source and all callers; sorted invariant"
 ```
+
+## CACHE-03A：稳定文件页缓存使用轻量索引键
+
+状态：完整测试无稳定收益并回退（2026-08-10）
+
+### 模块与热链
+
+```text
+GlobalFilePageCache::{read_key,write_key,install_page,flush_key}
+  -> GlobalCacheState.index: BTreeMap<(FileCacheKey, page_idx), slot>
+     -> FileCacheKey::clone
+        -> Arc<str> 原子引用计数
+     -> FileCacheKey::cmp
+```
+
+pc-hot 中 `FileCacheKey::cmp` 约 4.58 亿条指令。ext4 文件已有稳定的
+`(mount_id,node_id)` 身份，但当前每次 BTree 查询仍构造完整键并克隆路径 `Arc<str>`；单页
+读写和安装会重复查询多次，路径本身在稳定键比较中并未使用。
+
+### 设计与保留门槛
+
+1. 为 `index` 引入只含 `mount_gen + identity + page_idx` 的内部键；稳定文件 identity 只保存
+   两个整数，path-only 文件继续保存 `Arc<str>`，保持原有冲突与排序语义。
+2. `PageFrame` 继续保存完整 `FileCacheKey`，因此 I/O、脏页回写、rename、truncate 和错误路径
+   仍能取得原路径；不改变公开 API、页替换或一致性协议。
+3. 添加稳定键忽略路径、路径键保持区分以及索引/LRU 不变量测试。
+4. 双架构 Final check/build 后运行 RISC-V 16 GiB/8 vCPU、`-snapshot` 的完整 BuildStorm。
+   以 900.64 s 为当前保留基线；无稳定改善或出现回归即回退代码，仅保留实验记录。
+
+恢复上下文命令：
+
+```bash
+codegraph explore "FileCacheKey FileCacheIndexKey GlobalCacheState.index read_key write_key install_page install_zero_page flush_key purge_closed_file finish_rename truncate_key PageFrame exact source and all callers"
+```
+
+### 验证结果与结论
+
+- 页缓存定向测试：14 项全部通过，包含新增的稳定键/路径键身份测试。
+- `make check ARCH={rv,la} PROFILE=final` 与双架构 Final build：全部通过。
+- RISC-V 完整 BuildStorm（16 GiB、8 vCPU、`-snapshot`）：
+  `BUILDSTORM_COMPILE mode=multi ok=true elapsed_s=903.72`，测试完整结束，无 panic/SIGSEGV。
+- 相对 900.64 s 有效基线慢 3.08 s（+0.34%），没有达到预设的稳定改善保留门槛；代码
+  已全部回退，仅保留本记录。测试日志：`/tmp/wateros-cache03a-after-rv.log`（本机临时文件）。
+- 结论：稳定键查询中的路径 Arc 引用计数不是当前可独立兑现的主要瓶颈；4.58 亿条
+  `FileCacheKey::cmp` 指令主要成本更可能来自 BTree 查找本身。后续若继续优化页缓存索引，
+  应测量命中率和树深，并评估固定容量哈希/分片索引，而不是只缩减键的拥有字段。
