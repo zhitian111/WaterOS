@@ -1954,3 +1954,46 @@ service 对每个 bank 只读取一次 pending snapshot。未注册 source 的�
 ### 提交
 
 - `[ref] add 2K1000 IRQ runtime core`
+
+## 2026-08-10：批次 43——Topology-compiled IRQ runtime layout
+
+### 任务与设计
+
+把动态、可分配的 `BoardTopology` 编译为不借用 DTB 的定长 `RuntimeLayout`。layout 固定保存
+两个按 main-MMIO 排序的 controller、每个 controller 最多四个 per-core ISR 地址，以及八条
+HWI→bank 映射。编译必须全部成功后才发布；发布槽只能写一次，后续初始化不得覆盖旧状态。
+
+IRQ layout 和诊断 topology 在 `init_after_boot()` 中先局部构造并验证，再同时写入各自容器。
+本批仍不在中断热路径获取这些锁，也不创建 volatile MMIO controller。
+
+### 完成内容
+
+- [x] 新增 `ControllerLayout`、`RuntimeLayout`、`LayoutError` 和 `RuntimeLayoutSlot`。
+- [x] 严格要求两个 LIOINTC，按 main-MMIO 地址而非 discovery 顺序确定 bank。
+- [x] 验证 main MMIO 非零/对齐/尺寸、core ISR 数量/对齐/尺寸。
+- [x] 验证每个 controller 至少有一个 CPU parent line，cell 必须是 HWI0–HWI7。
+- [x] 拒绝重复 main MMIO、重复 parent line、缺失 controller 与非法资源。
+- [x] 一次发布槽拒绝 replacement，并保持原 layout 不变。
+- [x] `init_after_boot()` 编译并发布 layout；重复初始化返回 `InvalidParam`，不再覆盖 topology。
+- [x] fixture verifier 直接检查编译后的 bank bases 与 HWI2/HWI3 映射。
+
+### 验证证据
+
+- `cargo test`：52 项 host 单测全部通过（本批新增 2 项）。
+- 乱序 controller 测试生成完全相同的 layout；单 controller 和重复 parent line 均被拒绝。
+- replacement publish 返回 `AlreadyPublished`，`get()` 仍返回第一次发布值。
+- topology/畸形 DTS fixtures、LoongArch64 target check、`make kernel-la` 全部通过；仅有既有 warning。
+- `git diff --check` 通过；未创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：layout 中物理地址尚未用于 volatile MMIO，真实映射可访问性未知。
+- [ ] topology/layout 容器仍为 spin mutex；只允许初始化/诊断使用，IRQ 热路径不得持锁。
+- [ ] 当前发布不是跨两个 mutex 的通用并发事务；boot 初始化按单线程前提调用。
+- [ ] runtime layout 已定长，但 `BoardIrqRuntime<VolatileMmio>` 尚未一次构造和发布。
+- [ ] 所有设备 source 尚未注册，且 device ack/re-enable 仍未实现。
+- [ ] 下一批应实现 target-only unsafe runtime assembler：从 layout 创建 bank-identity 正确的 `LioIntc<VolatileMmio>`，在发布前保持所有 source disabled；用 mock assembler 验证失败不发布、地址逐项传递，再决定全局 runtime 容器。
+
+### 提交
+
+- `[ref] compile 2K1000 IRQ runtime layout`

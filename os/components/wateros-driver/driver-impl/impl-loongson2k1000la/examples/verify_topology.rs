@@ -2,6 +2,7 @@ use std::{env, fs};
 
 use wateros_driver_impl_loongson2k1000la::{irq_binding::resolve,
                                            irq_entry::resolve_parent_line,
+                                           irq_runtime::RuntimeLayout,
                                            mmc::{ActivationBlocker, plan},
                                            topology::discover};
 
@@ -15,6 +16,12 @@ fn main() {
     match mode.as_str() {
         "valid" => {
             let topology = discover(&fdt).expect("discover valid topology");
+            let runtime_layout = RuntimeLayout::compile(&topology)
+                .expect("compile fixed IRQ runtime layout");
+            assert_eq!(runtime_layout.controllers[0].main_base, 0x1FE0_1400);
+            assert_eq!(runtime_layout.controllers[1].main_base, 0x1FE0_1440);
+            assert_eq!(runtime_layout.parent_banks[2], Some(0));
+            assert_eq!(runtime_layout.parent_banks[3], Some(1));
             assert_eq!(topology.interrupt_controllers
                                .len(),
                        2);

@@ -22,9 +22,11 @@ pub mod topology;
 
 use api_v0::{DriverError, DriverResult};
 use spin::Mutex;
+use irq_runtime::{RuntimeLayout, RuntimeLayoutSlot};
 use topology::BoardTopology;
 
 static TOPOLOGY : Mutex<Option<BoardTopology>> = Mutex::new(None);
+static IRQ_LAYOUT : Mutex<RuntimeLayoutSlot> = Mutex::new(RuntimeLayoutSlot::new());
 
 pub use machine::machine;
 
@@ -32,6 +34,10 @@ pub use machine::machine;
 pub fn init_after_boot() -> DriverResult<()> {
     let fdt = common::dtb::read_fdt(platform::dtb_pa())?;
     let topology = topology::discover(&fdt)?;
+    let irq_layout = RuntimeLayout::compile(&topology).map_err(|error| {
+        log::error!("[driver-ls2k][irq] invalid runtime layout: {:?}", error);
+        DriverError::InvalidDtb
+    })?;
     log::info!("[driver-ls2k] topology: uart={} liointc={} dma={} mmc={}",
                topology.uarts.len(),
                topology.interrupt_controllers
@@ -56,7 +62,13 @@ pub fn init_after_boot() -> DriverResult<()> {
                    plan.bus_width,
                    plan.blockers);
     }
-    *TOPOLOGY.lock() = Some(topology);
+    let mut stored_topology = TOPOLOGY.lock();
+    let mut stored_layout = IRQ_LAYOUT.lock();
+    if stored_topology.is_some() || stored_layout.get().is_some() {
+        return Err(DriverError::InvalidParam);
+    }
+    stored_layout.publish(irq_layout).map_err(|_| DriverError::InvalidParam)?;
+    *stored_topology = Some(topology);
     log::warn!("[driver-ls2k] resources discovered but hardware activation is \
                 UNVERIFIED_ON_HARDWARE");
     Ok(())
@@ -68,6 +80,11 @@ pub fn init_after_boot() -> DriverResult<()> { Err(DriverError::Unsupported) }
 pub fn with_topology<R>(f : impl FnOnce(Option<&BoardTopology>) -> R) -> R {
     let topology = TOPOLOGY.lock();
     f(topology.as_ref())
+}
+
+pub fn with_irq_layout<R>(f : impl FnOnce(Option<&RuntimeLayout>) -> R) -> R {
+    let layout = IRQ_LAYOUT.lock();
+    f(layout.get())
 }
 
 fn self_test() {

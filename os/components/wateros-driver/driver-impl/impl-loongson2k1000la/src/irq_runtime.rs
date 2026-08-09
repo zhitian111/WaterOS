@@ -7,9 +7,95 @@
 use api_v0::DriverError;
 
 use crate::{irq_domain::{DomainError, GlobalIrq, IrqHandler, LioIntcDomain, MAX_BANKS},
-            liointc::{LioIntc, RegisterIo}};
+            liointc::{LioIntc, MAIN_REGISTER_BYTES, MAX_CORES, RegisterIo},
+            topology::BoardTopology};
 
 const HWI_LINES : usize = 8;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayoutError {
+    WrongControllerCount,
+    InvalidMainMmio,
+    InvalidCoreIsr,
+    MissingParentLine,
+    InvalidParentLine,
+    DuplicateParentLine,
+    DuplicateMmio,
+    AlreadyPublished,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ControllerLayout {
+    pub main_base : usize,
+    pub core_isr : [Option<usize>; MAX_CORES],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeLayout {
+    pub controllers : [ControllerLayout; MAX_BANKS],
+    pub parent_banks : [Option<u8>; HWI_LINES],
+}
+
+impl RuntimeLayout {
+    pub fn compile(topology : &BoardTopology) -> Result<Self, LayoutError> {
+        let descriptions = &topology.interrupt_controllers;
+        if descriptions.len() != MAX_BANKS { return Err(LayoutError::WrongControllerCount); }
+        if descriptions[0].main_mmio.base == descriptions[1].main_mmio.base {
+            return Err(LayoutError::DuplicateMmio);
+        }
+        let mut controllers = [ControllerLayout { main_base : 0,
+                                                  core_isr : [None; MAX_CORES] }; MAX_BANKS];
+        let mut parent_banks = [None; HWI_LINES];
+        for description in descriptions {
+            let main = description.main_mmio;
+            if main.base == 0 || main.base % 4 != 0 || main.size < MAIN_REGISTER_BYTES {
+                return Err(LayoutError::InvalidMainMmio);
+            }
+            if description.core_isr.is_empty() || description.core_isr.len() > MAX_CORES {
+                return Err(LayoutError::InvalidCoreIsr);
+            }
+            let bank = descriptions.iter()
+                                   .filter(|candidate| candidate.main_mmio.base < main.base)
+                                   .count();
+            let mut core_isr = [None; MAX_CORES];
+            for (slot, region) in core_isr.iter_mut().zip(&description.core_isr) {
+                if region.base == 0 || region.base % 4 != 0 || region.size < 4 {
+                    return Err(LayoutError::InvalidCoreIsr);
+                }
+                *slot = Some(region.base);
+            }
+            controllers[bank] = ControllerLayout { main_base : main.base, core_isr };
+            let mut has_parent = false;
+            for parent in description.parent_interrupts.iter().flatten() {
+                if parent.cell_count != 1 || parent.cells[0] >= HWI_LINES as u32 {
+                    return Err(LayoutError::InvalidParentLine);
+                }
+                let line = parent.cells[0] as usize;
+                if parent_banks[line].replace(bank as u8).is_some() {
+                    return Err(LayoutError::DuplicateParentLine);
+                }
+                has_parent = true;
+            }
+            if !has_parent { return Err(LayoutError::MissingParentLine); }
+        }
+        Ok(Self { controllers, parent_banks })
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct RuntimeLayoutSlot {
+    layout : Option<RuntimeLayout>,
+}
+
+impl RuntimeLayoutSlot {
+    pub const fn new() -> Self { Self { layout : None } }
+    pub const fn get(&self) -> Option<&RuntimeLayout> { self.layout.as_ref() }
+    pub fn publish(&mut self, layout : RuntimeLayout) -> Result<(), LayoutError> {
+        if self.layout.is_some() { return Err(LayoutError::AlreadyPublished); }
+        self.layout = Some(layout);
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeError {
@@ -123,10 +209,12 @@ impl<I : RegisterIo> BoardIrqRuntime<I> {
 
 #[cfg(test)]
 mod tests {
-    use alloc::vec::Vec;
+    use alloc::{vec, vec::Vec};
     use core::sync::atomic::{AtomicU8, Ordering};
+    use api_v0::MmioRegion;
 
     use super::*;
+    use crate::topology::{InterruptControllerDescription, InterruptSpec};
 
     const BASE0 : usize = 0x1000;
     const BASE1 : usize = 0x1040;
@@ -176,6 +264,55 @@ mod tests {
                                  1, BASE1, &[ISR1]).unwrap();
         BoardIrqRuntime::new([Some(bank0), Some(bank1)],
                              [None, None, Some(0), Some(1), None, None, None, None]).unwrap()
+    }
+
+    fn description(base : usize, line : u32) -> InterruptControllerDescription {
+        let mut parents = core::array::from_fn(|_| None);
+        parents[0] = Some(InterruptSpec { parent_phandle : 99,
+                                          cells : [line, 0, 0, 0],
+                                          cell_count : 1 });
+        InterruptControllerDescription {
+            phandle : Some(base as u32),
+            main_mmio : MmioRegion { base, size : 0x40 },
+            core_isr : vec![MmioRegion { base : base - 0x400, size : 8 }],
+            interrupt_cells : 2,
+            parent_interrupts : parents,
+            parent_source_maps : [u32::MAX, 0, 0, 0],
+        }
+    }
+
+    fn board(descriptions : Vec<InterruptControllerDescription>) -> BoardTopology {
+        BoardTopology { uarts : vec![], interrupt_controllers : descriptions,
+                        mmc_hosts : vec![], dma_controllers : vec![] }
+    }
+
+    #[test]
+    fn layout_compilation_is_stable_and_strict() {
+        let low = description(0x1fe0_1400, 2);
+        let high = description(0x1fe0_1440, 3);
+        let ordered = RuntimeLayout::compile(&board(vec![low.clone(), high.clone()])).unwrap();
+        let reversed = RuntimeLayout::compile(&board(vec![high, low])).unwrap();
+        assert_eq!(ordered, reversed);
+        assert_eq!(ordered.controllers[0].main_base, 0x1fe0_1400);
+        assert_eq!(ordered.controllers[1].main_base, 0x1fe0_1440);
+        assert_eq!(ordered.parent_banks[2], Some(0));
+        assert_eq!(ordered.parent_banks[3], Some(1));
+        assert_eq!(RuntimeLayout::compile(&board(vec![description(0x1000, 2)])),
+                   Err(LayoutError::WrongControllerCount));
+        assert_eq!(RuntimeLayout::compile(&board(vec![description(0x1000, 2),
+                                                       description(0x1040, 2)])),
+                   Err(LayoutError::DuplicateParentLine));
+    }
+
+    #[test]
+    fn layout_slot_publishes_once_without_overwrite() {
+        let layout = RuntimeLayout::compile(&board(vec![description(0x1000, 2),
+                                                         description(0x1040, 3)])).unwrap();
+        let mut slot = RuntimeLayoutSlot::new();
+        assert_eq!(slot.publish(layout), Ok(()));
+        let replacement = RuntimeLayout { parent_banks : [None; HWI_LINES], ..layout };
+        assert_eq!(slot.publish(replacement), Err(LayoutError::AlreadyPublished));
+        assert_eq!(slot.get(), Some(&layout));
     }
 
     #[test]
