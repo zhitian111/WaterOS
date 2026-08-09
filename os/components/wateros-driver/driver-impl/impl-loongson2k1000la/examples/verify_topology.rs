@@ -14,13 +14,16 @@ fn main() {
             let topology = discover(&fdt).expect("discover valid topology");
             assert_eq!(topology.interrupt_controllers
                                .len(),
-                       1);
+                       2);
             assert_eq!(topology.uarts.len(), 1);
             assert_eq!(topology.mmc_hosts
                                .len(),
                        1);
             let intc = &topology.interrupt_controllers[0];
-            assert_eq!(intc.mmio.base, 0x1FE0_1400);
+            assert_eq!(intc.main_mmio.base, 0x1FE0_1400);
+            assert_eq!(intc.core_isr.len(), 2);
+            assert_eq!(intc.core_isr[0].base, 0x1FE0_1040);
+            assert_eq!(intc.core_isr[1].base, 0x1FE0_1140);
             assert_eq!(intc.interrupt_cells, 2);
             let uart = &topology.uarts[0];
             assert_eq!(uart.mmio.base, 0x1FE2_0000);
@@ -28,7 +31,8 @@ fn main() {
             assert_eq!(&uart.interrupt.cells[..2], &[0, 4]);
             assert_eq!(uart.interrupt
                            .parent_phandle,
-                       intc.phandle);
+                       intc.phandle
+                           .expect("referenced LIOINTC phandle"));
             let mmc = &topology.mmc_hosts[0];
             assert_eq!(mmc.controller_mmio
                           .base,

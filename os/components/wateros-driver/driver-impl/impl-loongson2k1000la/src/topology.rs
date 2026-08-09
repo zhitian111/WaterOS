@@ -22,8 +22,9 @@ pub struct UartDescription {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InterruptControllerDescription {
-    pub phandle : u32,
-    pub mmio : MmioRegion,
+    pub phandle : Option<u32>,
+    pub main_mmio : MmioRegion,
+    pub core_isr : Vec<MmioRegion>,
     pub interrupt_cells : u8,
 }
 
@@ -56,6 +57,25 @@ fn has_compatible(node : fdt::node::FdtNode<'_, '_>, expected : &str) -> bool {
                     .any(|item| item == expected.as_bytes())
         })
         .unwrap_or(false)
+}
+
+fn string_list<'b, 'a : 'b>(node : fdt::node::FdtNode<'b, 'a>,
+                            name : &str)
+                            -> DriverResult<Vec<&'a str>> {
+    let raw = node.property(name)
+                  .ok_or(DriverError::InvalidDtb)?
+                  .value;
+    if raw.is_empty() || !raw.ends_with(&[0]) {
+        return Err(DriverError::InvalidDtb);
+    }
+    raw[..raw.len() - 1].split(|byte| *byte == 0)
+                        .map(|item| {
+                            if item.is_empty() {
+                                return Err(DriverError::InvalidDtb);
+                            }
+                            core::str::from_utf8(item).map_err(|_| DriverError::InvalidDtb)
+                        })
+                        .collect()
 }
 
 fn enabled(node : fdt::node::FdtNode<'_, '_>) -> DriverResult<bool> {
@@ -149,19 +169,40 @@ pub fn discover(fdt : &fdt::Fdt<'_>) -> DriverResult<BoardTopology> {
         }
         if has_compatible(node, "loongson,liointc-2.0") {
             let regs = regions(node)?;
-            if regs.len() != 1 {
+            let names = string_list(node, "reg-names")?;
+            if !(2..=5).contains(&regs.len()) ||
+               names.len() != regs.len() ||
+               names.first()
+                    .copied() !=
+               Some("main")
+            {
                 return Err(DriverError::InvalidDtb);
+            }
+            for (core, name) in names[1..].iter()
+                                          .enumerate()
+            {
+                let expected = match core {
+                    0 => "isr0",
+                    1 => "isr1",
+                    2 => "isr2",
+                    3 => "isr3",
+                    _ => return Err(DriverError::InvalidDtb),
+                };
+                if *name != expected {
+                    return Err(DriverError::InvalidDtb);
+                }
             }
             let interrupt_cells = node.interrupt_cells()
                                       .ok_or(DriverError::InvalidDtb)?;
             if interrupt_cells == 0 || interrupt_cells > MAX_INTERRUPT_CELLS {
                 return Err(DriverError::InvalidDtb);
             }
-            topology.interrupt_controllers.push(InterruptControllerDescription {
-                phandle : phandle(node).ok_or(DriverError::InvalidDtb)?,
-                mmio : regs[0],
-                interrupt_cells : interrupt_cells as u8,
-            });
+            topology.interrupt_controllers
+                    .push(InterruptControllerDescription { phandle : phandle(node),
+                                                           main_mmio : regs[0],
+                                                           core_isr : Vec::from(&regs[1..]),
+                                                           interrupt_cells : interrupt_cells
+                                                                             as u8 });
         } else if has_compatible(node, "ns16550a") {
             let regs = regions(node)?;
             if regs.len() != 1 {

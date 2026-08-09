@@ -881,3 +881,55 @@ python3 scripts/remote_debug_qemu_smoke.py \
 ### 提交
 
 - `[feat] add 2K1000LA driver topology`
+
+## 2026-08-10：批次 20——LIOINTC 2.0 受检寄存器模型
+
+### 任务与设计
+
+1. 依据 Linux 主线 irqchip 和 Devicetree binding 核对 32-source LIOINTC bank 的 route、enable、disable、polarity、edge 和 per-core ISR 布局。
+2. 将寄存器算法与访问方式分离为 `RegisterIo`，host model 记录全部读写，目标侧 volatile backend 保持未激活。
+3. route byte 使用低 4 位 core mask、高 4 位 parent HWI mask；每个 bank 只接受 IRQ 0..31。
+4. `ENABLE`/`DISABLE` 使用专用写寄存器，不对 set/clear 寄存器做 read-modify-write；trigger 的 POL/EDGE 按文档读改写。
+5. 修正批次 19 对 LIOINTC 2.0 单 MMIO 的错误假设，按 `reg-names = main,isr0,isr1...` 保存独立 ISR regions。
+
+### 完成内容
+
+- [x] 新增 `liointc` 模块、`LioIntc<I>`、`RegisterIo`、`Route` 和四种 `Trigger`。
+- [x] 实现单 IRQ enable、mask/ack、全禁用、route 配置、trigger 配置、per-core pending 和最低位 claim。
+- [x] `mask_ack` 明确区分：写 DISABLE 可清锁存 pulse，但 level source 仍必须由源设备清除。
+- [x] claim 取 per-core ISR 与 enable-status 的交集，不返回被 mask 的 pending source。
+- [x] 构造器限制最多 4 核 ISR，并检查 main/ISR 地址加法溢出；缺失 core 返回 `InvalidParam`。
+- [x] 新增 `VolatileMmio`，unsafe 只包围单次 volatile read/write；代码注释标为 `UNVERIFIED_ON_HARDWARE`，没有接入 machine init。
+- [x] topology 的 LIOINTC 描述改为 `main_mmio + core_isr[]`，严格校验连续命名 `isr0..isr3`。
+- [x] 未被其它节点引用的控制器允许没有 phandle；被设备引用的 interrupt parent 仍必须有有效 phandle。
+- [x] fixture 更新为两组官方形态控制器：main `0x1fe01400/1440`，ISR `0x1fe01040/48` 与 `0x1fe01140/48`。
+
+### 验证证据
+
+- LIOINTC host 单测 5 项全部通过。
+- route 测试验证 core mask `0b0101` + parent line 2 编码为 `0x45`，并拒绝空 core mask 与 parent line 4。
+- 寄存器 trace 验证 IRQ31 route 写 `base+31`，enable 写 `base+0x28`，mask/ack 与 disable-all 写 `base+0x2c`。
+- 四种 trigger 组合验证 EDGE/POLARITY 最终位图；pending 测试验证两个 core 的独立 ISR 和最低 enabled bit claim。
+- IRQ32 测试最初发现 `then_some` 参数提前求值导致移位 panic；改为范围检查后再移位，现断言错误路径无任何写入。
+- 更新后的双 LIOINTC DTS fixture 经 `dtc` 和同一 topology parser 验证通过；缺失 UART clock fixture继续被拒绝。
+- 2K1000LA release 交叉构建通过，`git diff --check` 通过。
+
+### 已知限制、未验证与后续测试
+
+- [ ] **volatile MMIO、真实 pending 变化、CPU HWI cascade 和 pulse clear 副作用均未上板验证；machine init 不会构造或启用控制器。**
+- [ ] route 模型支持 4 核，但 2K1000LA 实际双核映射和 boot CPU ID 必须从 CPU topology 取得，不能固定为 core0。
+- [ ] 尚未解析 `loongson,parent_int_map`、`interrupts` 和 `interrupt-names` 来自动生成每个 source 的 parent route。
+- [ ] claim 只返回 bank-local 0..31；第二 LIOINTC 到全局 IRQ 32..63 的 domain 映射尚未接入公共 interrupt API。
+- [ ] 没有通用 IRQ handler registry，UART/MMC 也尚未注册 handler，因此现在激活控制器仍没有安全 dispatch 终点。
+- [ ] LIOINTC 寄存器并发读改写需要 interrupt-safe lock；当前模型由调用者独占，接入多核前必须加入锁语义。
+- [ ] 下一批应扩展 topology 的 parent map/parent IRQ 名称解析，并实现两个 bank 的纯 domain 映射与 dispatch 表，不直接开启硬件。
+
+### 参考依据
+
+- Linux 主线 `drivers/irqchip/irq-loongson-liointc.c`（GPL-2.0）：寄存器偏移、route 编码、mask/ack 和 per-core ISR 行为，仅作为语义参考，没有复制实现代码。
+- Linux Devicetree binding `loongson,liointc.yaml`（GPL-2.0-only OR BSD-2-Clause）：LIOINTC 2.0 命名寄存器、2-cell interrupt 和 parent map 契约。
+- Linux `loongson-2k1000.dtsi`（GPL-2.0）：两组 LIOINTC 的 main/isr0/isr1 实际地址。
+
+### 提交
+
+- `[feat] model 2K1000LA LIOINTC registers`

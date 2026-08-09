@@ -7,7 +7,9 @@
 
     liointc0: interrupt-controller@1fe01400 {
         compatible = "loongson,liointc-2.0";
-        reg = <0x0 0x1fe01400 0x0 0x40>;
+        reg = <0x0 0x1fe01400 0x0 0x40>,
+              <0x0 0x1fe01040 0x0 0x8>;
+        reg-names = "main", "isr0";
         interrupt-controller;
         #interrupt-cells = <2>;
     };
