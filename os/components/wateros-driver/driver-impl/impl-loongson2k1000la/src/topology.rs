@@ -37,11 +37,32 @@ pub struct MmcDescription {
     pub auxiliary_mmio : Option<MmioRegion>,
     pub interrupt : InterruptSpec,
     pub clocks : Vec<NamedResource>,
+    pub clock_provider : MmcClockProvider,
     pub dma : Option<NamedResource>,
     pub bus_width : u8,
     pub card_detect : CardDetect,
-    pub vmmc_supply : Option<u32>,
-    pub vqmmc_supply : Option<u32>,
+    pub vmmc_supply : Option<SupplyDescription>,
+    pub vqmmc_supply : Option<SupplyDescription>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MmcClockProvider {
+    /// Topology evidence only. Register semantics are UNVERIFIED_ON_HARDWARE.
+    Loongson2k { mmio : MmioRegion },
+    Unsupported { phandle : u32 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SupplyProvider {
+    Fixed { always_on : bool, boot_on : bool, gpio_controlled : bool },
+    Unsupported,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SupplyDescription {
+    /// Provider identity does not prove the rail's live electrical state.
+    pub phandle : u32,
+    pub provider : SupplyProvider,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -330,10 +351,10 @@ fn named_resources(fdt : &fdt::Fdt<'_>,
                  .collect())
 }
 
-fn supply_phandle(fdt : &fdt::Fdt<'_>,
-                  node : fdt::node::FdtNode<'_, '_>,
-                  property : &str)
-                  -> DriverResult<Option<u32>> {
+fn supply_description(fdt : &fdt::Fdt<'_>,
+                      node : fdt::node::FdtNode<'_, '_>,
+                      property : &str)
+                      -> DriverResult<Option<SupplyDescription>> {
     let Some(raw) = node.property(property)
                         .map(|property| property.value)
     else {
@@ -343,9 +364,35 @@ fn supply_phandle(fdt : &fdt::Fdt<'_>,
         return Err(DriverError::InvalidDtb);
     }
     let phandle = read_be_u32(raw, 0).ok_or(DriverError::InvalidDtb)?;
-    fdt.find_phandle(phandle)
-       .ok_or(DriverError::InvalidDtb)?;
-    Ok(Some(phandle))
+    let provider_node = fdt.find_phandle(phandle)
+                           .ok_or(DriverError::InvalidDtb)?;
+    let provider = if has_compatible(provider_node, "regulator-fixed") {
+        SupplyProvider::Fixed { always_on : boolean_property(provider_node,
+                                                             "regulator-always-on")?,
+                                boot_on : boolean_property(provider_node,
+                                                           "regulator-boot-on")?,
+                                gpio_controlled : provider_node.property("gpio").is_some() ||
+                                                  provider_node.property("gpios").is_some() }
+    } else {
+        SupplyProvider::Unsupported
+    };
+    Ok(Some(SupplyDescription { phandle, provider }))
+}
+
+fn mmc_clock_provider(fdt : &fdt::Fdt<'_>,
+                      clock : &NamedResource)
+                      -> DriverResult<MmcClockProvider> {
+    let phandle = clock.specifier.provider_phandle;
+    let provider = fdt.find_phandle(phandle)
+                      .ok_or(DriverError::InvalidDtb)?;
+    if !has_compatible(provider, "loongson,ls2k-clk") {
+        return Ok(MmcClockProvider::Unsupported { phandle });
+    }
+    let regs = regions(provider)?;
+    if regs.len() != 1 || regs[0].base == 0 || regs[0].size < 4 {
+        return Err(DriverError::InvalidDtb);
+    }
+    Ok(MmcClockProvider::Loongson2k { mmio : regs[0] })
 }
 
 fn boolean_property(node : fdt::node::FdtNode<'_, '_>, name : &str) -> DriverResult<bool> {
@@ -482,6 +529,7 @@ pub fn discover(fdt : &fdt::Fdt<'_>) -> DriverResult<BoardTopology> {
             if clocks.len() != 1 {
                 return Err(DriverError::InvalidDtb);
             }
+            let clock_provider = mmc_clock_provider(fdt, &clocks[0])?;
             let dma = match (node.property("dmas"), node.property("dma-names")) {
                 (None, None) => None,
                 (Some(_), Some(_)) => {
@@ -511,15 +559,16 @@ pub fn discover(fdt : &fdt::Fdt<'_>) -> DriverResult<BoardTopology> {
                                            auxiliary_mmio : regs.get(1).copied(),
                                            interrupt : interrupt(node)?,
                                            clocks,
+                                           clock_provider,
                                            dma,
                                            bus_width : bus_width as u8,
                                            card_detect : mmc_card_detect(fdt, node)?,
-                                           vmmc_supply : supply_phandle(fdt,
-                                                                        node,
-                                                                        "vmmc-supply")?,
-                                           vqmmc_supply : supply_phandle(fdt,
-                                                                         node,
-                                                                         "vqmmc-supply")? });
+                                           vmmc_supply : supply_description(fdt,
+                                                                            node,
+                                                                            "vmmc-supply")?,
+                                           vqmmc_supply : supply_description(fdt,
+                                                                             node,
+                                                                             "vqmmc-supply")? });
         }
     }
     if topology.uarts

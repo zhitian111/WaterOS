@@ -5,7 +5,8 @@
 //! a FIFO window. WaterOS reuses [`dw_mmc::sd`] only as an SD protocol layer.
 
 use crate::{irq_domain::{AcknowledgedIrq, DeviceAckedIrq, GlobalIrq, IrqDisposition},
-            topology::MmcDescription};
+            topology::{CardDetect, MmcClockProvider, MmcDescription, SupplyDescription,
+                       SupplyProvider}};
 use api_v0::MmioRegion;
 use dw_mmc::mmc::MmcError;
 
@@ -29,6 +30,24 @@ pub enum ActivationBlocker {
     InterruptPathUnverified,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrerequisiteStatus {
+    ReadyByTopology,
+    FirmwareMaintained,
+    RequiresDriver,
+    Missing,
+    UnsupportedProvider,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PrerequisitePlan {
+    /// These values classify DT ownership; they are not hardware observations.
+    pub clock : PrerequisiteStatus,
+    pub vmmc : PrerequisiteStatus,
+    pub vqmmc : PrerequisiteStatus,
+    pub card_detect : PrerequisiteStatus,
+}
+
 /// Validated resource snapshot for future conservative PIO activation.
 ///
 /// This is deliberately not convertible to `DwMmc`: the controller is a
@@ -39,6 +58,7 @@ pub struct BringUpPlan {
     pub controller_mmio : MmioRegion,
     pub auxiliary_mmio : MmioRegion,
     pub bus_width : u8,
+    pub prerequisites : PrerequisitePlan,
     pub blockers : [ActivationBlocker; 6],
 }
 
@@ -56,10 +76,36 @@ pub fn plan(description : &MmcDescription) -> Result<BringUpPlan, PlanError> {
     if description.clocks.len() != 1 {
         return Err(PlanError::MissingClock);
     }
+    let clock = match description.clock_provider {
+        MmcClockProvider::Loongson2k { .. } => PrerequisiteStatus::RequiresDriver,
+        MmcClockProvider::Unsupported { .. } => PrerequisiteStatus::UnsupportedProvider,
+    };
+    let supply = |description : Option<SupplyDescription>| match description {
+        None => PrerequisiteStatus::Missing,
+        Some(SupplyDescription {
+            provider : SupplyProvider::Fixed { always_on, boot_on, gpio_controlled : false },
+            ..
+        }) if always_on || boot_on => PrerequisiteStatus::FirmwareMaintained,
+        Some(SupplyDescription { provider : SupplyProvider::Fixed { .. }, .. }) => {
+            PrerequisiteStatus::RequiresDriver
+        }
+        Some(SupplyDescription { provider : SupplyProvider::Unsupported, .. }) => {
+            PrerequisiteStatus::UnsupportedProvider
+        }
+    };
+    let card_detect = match description.card_detect {
+        CardDetect::NonRemovable => PrerequisiteStatus::ReadyByTopology,
+        CardDetect::Gpio(_) | CardDetect::Native => PrerequisiteStatus::RequiresDriver,
+        CardDetect::Broken => PrerequisiteStatus::FirmwareMaintained,
+    };
     Ok(BringUpPlan {
         controller_mmio : description.controller_mmio,
         auxiliary_mmio,
         bus_width : description.bus_width,
+        prerequisites : PrerequisitePlan { clock,
+                                           vmmc : supply(description.vmmc_supply),
+                                           vqmmc : supply(description.vqmmc_supply),
+                                           card_detect },
         blockers : [ActivationBlocker::DataPathUnavailable,
                     ActivationBlocker::ExternalDmaExecutorUnavailable,
                     ActivationBlocker::ClockControlUnavailable,
@@ -262,7 +308,8 @@ impl<R : RegisterIo> Host<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::topology::{CardDetect, InterruptSpec, NamedResource, ResourceSpecifier};
+    use crate::topology::{CardDetect, InterruptSpec, MmcClockProvider, NamedResource,
+                          ResourceSpecifier, SupplyDescription, SupplyProvider};
     use alloc::vec;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -308,6 +355,9 @@ mod tests {
                 name : None,
                 specifier : ResourceSpecifier { provider_phandle : 2, args : vec![0] },
             }],
+            clock_provider : MmcClockProvider::Loongson2k {
+                mmio : MmioRegion { base : 0x1fe0_0480, size : 0x58 },
+            },
             dma : None,
             bus_width : 4,
             card_detect : CardDetect::NonRemovable,
@@ -324,6 +374,33 @@ mod tests {
         assert_eq!(plan.bus_width, 4);
         assert!(!plan.can_activate());
         assert!(plan.blockers.contains(&ActivationBlocker::DataPathUnavailable));
+        assert_eq!(plan.prerequisites.clock, PrerequisiteStatus::RequiresDriver);
+        assert_eq!(plan.prerequisites.card_detect, PrerequisiteStatus::ReadyByTopology);
+        assert_eq!(plan.prerequisites.vmmc, PrerequisiteStatus::Missing);
+    }
+
+    #[test]
+    fn classifies_power_readiness_without_assuming_fixed_regulators_are_enabled() {
+        let mut value = description();
+        value.vmmc_supply = Some(SupplyDescription {
+            phandle : 3,
+            provider : SupplyProvider::Fixed {
+                always_on : false, boot_on : false, gpio_controlled : false,
+            },
+        });
+        value.vqmmc_supply = Some(SupplyDescription {
+            phandle : 4,
+            provider : SupplyProvider::Fixed {
+                always_on : true, boot_on : false, gpio_controlled : false,
+            },
+        });
+        let readiness = plan(&value).unwrap();
+        assert_eq!(readiness.prerequisites.vmmc, PrerequisiteStatus::RequiresDriver);
+        assert_eq!(readiness.prerequisites.vqmmc, PrerequisiteStatus::FirmwareMaintained);
+
+        value.vmmc_supply.as_mut().unwrap().provider = SupplyProvider::Unsupported;
+        assert_eq!(plan(&value).unwrap().prerequisites.vmmc,
+                   PrerequisiteStatus::UnsupportedProvider);
     }
 
     #[test]

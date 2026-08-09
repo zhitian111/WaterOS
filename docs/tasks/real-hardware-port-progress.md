@@ -2841,3 +2841,58 @@ Live 输出单行固定字段：slot state、configured/parent masks、service c
 ### 提交
 
 - `[feat] expose 2K1000 IRQ status remotely`
+
+## 2026-08-10：批次 62——2K1000 MMC prerequisite/provider readiness model
+
+### 任务与设计
+
+1. 从 DTB 中识别 MMC clock 与 supply provider，而不执行 provider 操作。
+2. 将“资源已描述”和“硬件已就绪”分开，输出 clock、vmmc、vqmmc、card-detect 四项状态。
+3. 只有 DT 明确声明无 GPIO 的 fixed regulator 为 `regulator-always-on` 或
+   `regulator-boot-on` 时，才分类为 firmware-maintained；其他情况保持 requires-driver。
+4. LS2K clock 只保存 topology 验证后的 MMIO 窗口；不读取/写入寄存器。
+5. 数据、DMA、clock control、power、card-detect、IRQ 六个 activation blocker 保持不变，
+   `can_activate()` 继续固定返回 false。
+
+### 完成内容
+
+- [x] `MmcDescription` 保存 `MmcClockProvider` 和带类型的两个 supply provider。
+- [x] LS2K clock provider 验证单个非零、至少 4-byte 的 MMIO region。
+- [x] fixed-regulator 保存 always-on、boot-on、GPIO-controlled 三项 DT 属性。
+- [x] 非支持的 clock/regulator provider 被保守分类为 `UnsupportedProvider`，不猜测能力。
+- [x] 新增 `PrerequisitePlan`，覆盖 ReadyByTopology、FirmwareMaintained、RequiresDriver、
+  Missing、UnsupportedProvider 五种状态。
+- [x] non-removable card 仅由拓扑即可判定；GPIO/native card detect 仍要求驱动；broken-cd
+  作为固件/板级维持策略记录。
+- [x] machine discovery 日志打印 prerequisite plan 与既有 blockers。
+- [x] 源码注释明确 provider 分类不是硬件状态观测，LS2K clock 语义仍为
+  `UNVERIFIED_ON_HARDWARE`。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 75 项全部通过；新增测试验证 fixed regulator 不会因 compatible
+  存在就被误判为已上电，并覆盖 always-on 与 unsupported provider。
+- topology fixture 端到端断言 LS2K clock MMIO、fixed-regulator flags，以及当前参考板四项
+  prerequisite 均为 requires-driver。
+- fixture 新增过短 clock MMIO 和带值的 regulator boolean 两个畸形 DTB，均被拒绝。
+- `cargo check --no-default-features --features loongson2k1000la,final_online,heap-tlsf
+  --target loongarch64-unknown-none` 通过。
+- `make kernel-la` 通过；仅有仓库既有 warning。
+- `git diff --check` 通过；fixture 临时 DTB 位于 `mktemp` 并自动删除，未创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：`0x1fe00480/0x58` clock provider 的寄存器位域、门控位、
+  输入频率和固件初始状态尚未验证。
+- [ ] `FirmwareMaintained` 仅表示 DT 合同，不等于本次启动已测得 rail 为高电平。
+- [ ] 当前参考 fixture 的两个 fixed regulator 没有 always-on/boot-on，因此仍为
+  requires-driver；这符合 fail-closed 策略。
+- [ ] GPIO22 provider 类型和 MMIO 尚未进入 card-detect readiness；本批没有读取 GPIO。
+- [ ] 未解析 pinctrl、write-protect、voltage ranges 或 clock rate parent tree。
+- [ ] 未减少任何 activation blocker；没有执行 MMC command、DMA、IRQ activation 或硬件写。
+- [ ] 下一批应建立 LS2K clock 的纯寄存器模型与只读 snapshot：先根据可引用文档确认位域，
+  用 mock 覆盖 offset/掩码/频率计算；target volatile backend 不接入 machine init。
+
+### 提交
+
+- `[feat] model 2K1000 MMC prerequisites`

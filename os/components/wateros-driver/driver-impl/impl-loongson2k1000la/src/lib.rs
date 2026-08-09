@@ -65,13 +65,14 @@ pub fn init_after_boot() -> DriverResult<()> {
                                       DriverError::InvalidDtb
                                   })?;
         log::warn!("[driver-ls2k][mmc] deferred controller={:#x}/{:#x} \
-                    auxiliary={:#x}/{:#x} bus_width={} blockers={:?}; \
+                    auxiliary={:#x}/{:#x} bus_width={} prerequisites={:?} blockers={:?}; \
                     hardware activation=UNVERIFIED_ON_HARDWARE",
                    plan.controller_mmio.base,
                    plan.controller_mmio.size,
                    plan.auxiliary_mmio.base,
                    plan.auxiliary_mmio.size,
                    plan.bus_width,
+                   plan.prerequisites,
                    plan.blockers);
     }
     let mut stored_topology = TOPOLOGY.lock();

@@ -219,7 +219,8 @@ mod tests {
     use super::*;
     use crate::{board_irq_owner::{DeferredApbDmaOwner, MmcCommandOwner},
                 irq_runtime::BoardIrqRuntime,
-                liointc};
+                liointc,
+                topology::MmcClockProvider};
     use dw_mmc::mmc::MmcError;
 
     #[derive(Default)]
@@ -274,7 +275,11 @@ mod tests {
                 auxiliary_mmio : Some(MmioRegion { base : 0x3000, size : 8 }),
                 interrupt : InterruptSpec { parent_phandle : 10,
                                             cells : [31, 4, 0, 0], cell_count : 2 },
-                clocks : vec![resource()], dma : None, bus_width : 4,
+                clocks : vec![resource()],
+                clock_provider : MmcClockProvider::Loongson2k {
+                    mmio : MmioRegion { base : 0x5000, size : 0x58 },
+                },
+                dma : None, bus_width : 4,
                 card_detect : CardDetect::NonRemovable,
                 vmmc_supply : None, vqmmc_supply : None,
             }],

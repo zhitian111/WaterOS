@@ -41,6 +41,16 @@ sed '/dma-controller@1fe00c10/,/#dma-cells/ s/0x1fe00c10/0x1fe00c12/' \
     > "$tmp_dir/unaligned-dma-mmio.dts"
 dtc -I dts -O dtb -o "$tmp_dir/unaligned-dma-mmio.dtb" \
     "$tmp_dir/unaligned-dma-mmio.dts"
+sed '/clock-controller@1fe00480/,/#clock-cells/ s/0x0 0x58/0x0 0x2/' \
+    "$crate_dir/tests/fixtures/loongson2k1000la-topology.dts" \
+    > "$tmp_dir/short-clock-mmio.dts"
+dtc -I dts -O dtb -o "$tmp_dir/short-clock-mmio.dtb" \
+    "$tmp_dir/short-clock-mmio.dts"
+sed '/regulator-vmmc/a\        regulator-always-on = <1>;' \
+    "$crate_dir/tests/fixtures/loongson2k1000la-topology.dts" \
+    > "$tmp_dir/malformed-regulator-flag.dts"
+dtc -I dts -O dtb -o "$tmp_dir/malformed-regulator-flag.dtb" \
+    "$tmp_dir/malformed-regulator-flag.dts"
 
 cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
     --example verify_topology -- valid "$tmp_dir/valid.dtb"
@@ -60,3 +70,7 @@ cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
     --example verify_topology -- invalid "$tmp_dir/short-dma-mmio.dtb"
 cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
     --example verify_topology -- invalid "$tmp_dir/unaligned-dma-mmio.dtb"
+cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
+    --example verify_topology -- invalid "$tmp_dir/short-clock-mmio.dtb"
+cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
+    --example verify_topology -- invalid "$tmp_dir/malformed-regulator-flag.dtb"

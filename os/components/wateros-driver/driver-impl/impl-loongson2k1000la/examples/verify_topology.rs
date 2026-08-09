@@ -5,8 +5,8 @@ use wateros_driver_impl_loongson2k1000la::{irq_binding::resolve,
                                            irq_runtime::RuntimeLayout,
                                            irq_plan::{ActivationPolicy, OwnerKind,
                                                       compile as compile_owner_plan},
-                                           mmc::{ActivationBlocker, plan},
-                                           topology::discover};
+                                           mmc::{ActivationBlocker, PrerequisiteStatus, plan},
+                                           topology::{MmcClockProvider, SupplyProvider, discover}};
 
 fn main() {
     let mut args = env::args().skip(1);
@@ -99,6 +99,10 @@ fn main() {
             assert_eq!(mmc.clocks[0].specifier
                                     .args,
                        &[0]);
+            assert_eq!(mmc.clock_provider,
+                       MmcClockProvider::Loongson2k {
+                           mmio : api_v0::MmioRegion { base : 0x1FE0_0480, size : 0x58 },
+                       });
             assert_eq!(mmc.dma
                           .as_ref()
                           .expect("MMC DMA")
@@ -122,10 +126,18 @@ fn main() {
                        .is_some());
             assert!(mmc.vqmmc_supply
                        .is_some());
+            assert!(matches!(mmc.vmmc_supply.unwrap().provider,
+                             SupplyProvider::Fixed { always_on : false,
+                                                     boot_on : false,
+                                                     gpio_controlled : false }));
             let plan = plan(mmc).expect("build deferred MMC plan");
             assert!(!plan.can_activate());
             assert!(plan.blockers
                         .contains(&ActivationBlocker::DataPathUnavailable));
+            assert_eq!(plan.prerequisites.clock, PrerequisiteStatus::RequiresDriver);
+            assert_eq!(plan.prerequisites.vmmc, PrerequisiteStatus::RequiresDriver);
+            assert_eq!(plan.prerequisites.vqmmc, PrerequisiteStatus::RequiresDriver);
+            assert_eq!(plan.prerequisites.card_detect, PrerequisiteStatus::RequiresDriver);
         }
         "invalid" => assert!(discover(&fdt).is_err()),
         "non-removable" => {
