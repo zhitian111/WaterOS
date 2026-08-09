@@ -2791,3 +2791,53 @@ unhandled/rearmed 数量。成功和失败的 partial ServiceReport 都进入累
 ### 提交
 
 - `[ref] expose 2K1000 IRQ diagnostic snapshots`
+
+## 2026-08-10：批次 61——Read-only `ls2k-irq` remote monitor command
+
+### 任务与设计
+
+在既有 development-only、无认证 TCP monitor 中新增只读 `ls2k-irq`。命令解析在所有 profile
+一致；2K1000 feature 下只调用内存 snapshot API，其他 profile 返回明确 unsupported。没有新增
+activation/drain 或任何 MMIO/CSR 路径。
+
+Live 输出单行固定字段：slot state、configured/parent masks、service counters、bank0/bank1 failure。
+每个 failure 编码 operation、expected mask/value、observed full status、poll count；无 failure 为 none。
+非 Live/竞争状态输出 state 与 runtime=unavailable，调用端可稍后重试。
+
+### 完成内容
+
+- [x] Command enum/parser 增加 `ls2k-irq`。
+- [x] help 文本列出新命令。
+- [x] 2K1000 formatter 使用 `loongson2k1000_irq_diagnostic_snapshot()`，无硬件访问。
+- [x] Empty/Reserved/Servicing/Draining 等无 runtime 快照状态有稳定响应。
+- [x] Live response 输出 ownership、9 项 service 统计和两个 bank failure。
+- [x] 非 2K1000 profile 返回 `ERR unsupported`，不引用板级类型。
+- [x] 命令响应始终不关闭 session。
+- [x] 未增加远程 activation/drain 写命令，安全边界保持只读。
+- [x] parser/response 增加 cfg-aware 单元测试。
+
+### 验证证据
+
+- QEMU LoongArch + `remote-debug-monitor` 精确 feature target check 通过，验证 unsupported 分支。
+- 2K1000 + `remote-debug-monitor` 精确 feature target check 通过，验证完整 snapshot formatter。
+- 2K1000 驱动 74 项 host 单测继续通过。
+- remote_debug 单元测试源码覆盖 whitespace parser、`ls2k-irq` 解析、response 不关闭，以及 profile
+  对应的 state/unsupported 前缀；内核 no_std target 仅完成编译，未在物理 NIC 上执行。
+- `make kernel-la EXTRA_FEATURES=remote-debug-monitor`、topology/畸形 DTS fixture、
+  `git diff --check` 通过；仅有既有 warning。
+- 未启动 TCP listener、未创建镜像、未执行任何诊断硬件写。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：2K1000 尚无可用 NIC 驱动，monitor 无法在板上建立 TCP 连接。
+- [ ] monitor 无认证/加密，只能用于隔离开发网络，不能作为生产 sshd 替代。
+- [ ] QEMU LoongArch 本批只编译 remote feature；既有端到端 transport 证据来自 RISC-V QEMU。
+- [ ] Live 单行可能较长，当前 send_all 支持分段发送，但客户端脚本需按 CRLF 读取完整行。
+- [ ] snapshot 竞争时只返回 unavailable，不自动重试。
+- [ ] 未提供 JSON/稳定 ABI；字段名面向人工与简单脚本诊断。
+- [ ] 下一批应转向 2K1000 MMC 的最小非数据 bring-up 前置：只读/规划 clock、power、card-detect
+  provider，不启动 host；优先补齐 topology provider ownership 和可测试的 blocker 消解状态机。
+
+### 提交
+
+- `[feat] expose 2K1000 IRQ status remotely`

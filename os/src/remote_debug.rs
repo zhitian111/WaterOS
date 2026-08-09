@@ -29,6 +29,7 @@ enum Command {
     Ping,
     Status,
     Version,
+    Ls2kIrq,
     Quit,
     Empty,
     Unknown,
@@ -44,6 +45,7 @@ fn parse_command(line : &[u8]) -> Command {
         "ping" => Command::Ping,
         "status" => Command::Status,
         "version" => Command::Version,
+        "ls2k-irq" => Command::Ls2kIrq,
         "quit" | "exit" => Command::Quit,
         _ => Command::Unknown,
     }
@@ -64,9 +66,9 @@ fn send_all(socket : &SocketRef, mut data : &[u8]) -> Result<(), SocketSendError
 
 fn command_response(command : Command) -> (alloc::string::String, bool) {
     match command {
-        Command::Help => {
-            (alloc::string::String::from("commands: help, ping, status, version, quit\r\n"), false)
-        }
+        Command::Help => (alloc::string::String::from("commands: help, ping, status, version, \
+                                                       ls2k-irq, quit\r\n"),
+                          false),
         Command::Ping => (alloc::string::String::from("pong\r\n"), false),
         Command::Status => {
             let heap = runtime::heap_allocator::heap_mem_stats();
@@ -82,12 +84,63 @@ fn command_response(command : Command) -> (alloc::string::String, bool) {
         Command::Version => (format!("WaterOS {}\r\n",
                                      env!("CARGO_PKG_VERSION")),
                              false),
+        Command::Ls2kIrq => (ls2k_irq_response(), false),
         Command::Quit => (alloc::string::String::from("bye\r\n"), true),
         Command::Empty => (alloc::string::String::new(), false),
         Command::Unknown => {
             (alloc::string::String::from("unknown command; type 'help'\r\n"), false)
         }
     }
+}
+
+#[cfg(feature = "loongson2k1000la")]
+fn ls2k_irq_response() -> alloc::string::String {
+    let snapshot = driver::loongson2k1000_irq_diagnostic_snapshot();
+    let Some(runtime) = snapshot.runtime else {
+        return format!("ls2k-irq state={:?} runtime=unavailable\r\n",
+                       snapshot.slot_state);
+    };
+    let failure = |bank : usize| match runtime.status_poll_failures[bank] {
+        None => alloc::string::String::from("none"),
+        Some(failure) => format!("{:?},{:#x},{:#x},{:#x},{}",
+                                 failure.report
+                                        .operation,
+                                 failure.report
+                                        .expected_mask,
+                                 failure.report
+                                        .expected_value,
+                                 failure.report
+                                        .observed_status,
+                                 failure.report.polls),
+    };
+    format!("ls2k-irq state={:?} configured={:#x} parents={:#x} calls={} ok={} fail={} \
+             parent_events={} masked={} handled={} unhandled={} rearmed={} bank0={} bank1={}\r\n",
+            snapshot.slot_state,
+            runtime.configured_sources,
+            runtime.parent_lines,
+            runtime.service
+                   .calls,
+            runtime.service
+                   .successes,
+            runtime.service
+                   .failures,
+            runtime.service
+                   .parent_lines,
+            runtime.service
+                   .masked_sources,
+            runtime.service
+                   .handled_sources,
+            runtime.service
+                   .unhandled_sources,
+            runtime.service
+                   .rearmed_sources,
+            failure(0),
+            failure(1))
+}
+
+#[cfg(not(feature = "loongson2k1000la"))]
+fn ls2k_irq_response() -> alloc::string::String {
+    alloc::string::String::from("ERR unsupported: ls2k-irq requires loongson2k1000la\r\n")
 }
 
 fn serve_client(socket : &SocketRef) {
@@ -196,6 +249,8 @@ mod tests {
                    Command::Help);
         assert_eq!(parse_command(b"?"), Command::Help);
         assert_eq!(parse_command(b"exit"), Command::Quit);
+        assert_eq!(parse_command(b"ls2k-irq"),
+                   Command::Ls2kIrq);
         assert_eq!(parse_command(b"\t"), Command::Empty);
     }
 
@@ -204,5 +259,16 @@ mod tests {
         assert_eq!(parse_command(b"reboot"),
                    Command::Unknown);
         assert_eq!(parse_command(&[0xFF]), Command::Unknown);
+    }
+
+    #[test]
+    fn ls2k_irq_command_is_read_only_and_profile_gated() {
+        let (response, close) = super::command_response(Command::Ls2kIrq);
+        assert!(!close);
+        #[cfg(feature = "loongson2k1000la")]
+        assert!(response.starts_with("ls2k-irq state="));
+        #[cfg(not(feature = "loongson2k1000la"))]
+        assert_eq!(response,
+                   "ERR unsupported: ls2k-irq requires loongson2k1000la\r\n");
     }
 }
