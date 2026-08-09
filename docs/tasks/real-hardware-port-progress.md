@@ -1795,3 +1795,34 @@ DeviceAckedInterrupt -> ArmedInterrupt`。claim 产生独立 `AcknowledgedIrq` �
 ### 提交
 
 - `[ref] bind 2K1000 LIOINTC IRQ lifecycle`
+
+## 2026-08-10：批次 39——IRQ dispatch ownership boundary
+
+### 任务与设计
+
+审计发现组合层 trap 当前只处理 LoongArch64 software/timer interrupt；2K1000LA 外部中断
+cause/CSR 路径尚未接入。原 `dispatch_bank(pending)` 仅凭 snapshot 调用 `fn(GlobalIrq)`，会绕过
+LIOINTC mask/ack 证据。本批先收紧 crate 内边界：handler 必须消费非 `Copy` 的
+`AcknowledgedIrq`；未注册或 inactive-bank 时原 token 必须返还，保持 source masked 供上层诊断。
+
+### 完成内容与验证
+
+- [x] `IrqHandler` 改为 `fn(AcknowledgedIrq)`，删除裸 pending snapshot 分发入口。
+- [x] 新增 `UnhandledIrq`，同时返回错误与未消费的线性 token。
+- [x] 注册仍以 `GlobalIrq` 为唯一键并拒绝重复 owner。
+- [x] 单测覆盖已注册消费、未注册返还 token、inactive bank 返还 token。
+- `cargo test`：45 项 host 单测全部通过。
+- topology/畸形 DTS fixtures、LoongArch64 target check、`make kernel-la` 全部通过；仅有既有 warning。
+- `git diff --check` 通过。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：LoongArch64 外部中断 cause、ESTAT/ECFG 位与 LIOINTC parent line 尚未用真机确认。
+- [ ] kernel trap 尚无 external IRQ 分支；在可靠 CSR/手册证据前不猜测编号或清 pending 顺序。
+- [ ] function-pointer handler 只建立 token ownership 边界，APBDMA session 的并发容器仍待设计。
+- [ ] device-side clear 未知，因此 APBDMA handler 仍不得自动 re-enable。
+- [ ] 下一批应从本地 LoongArch64 arch 实现和可核验资料建立 external IRQ cause 抽象及纯 mock trap adapter，再决定 target glue。
+
+### 提交
+
+- `[ref] require acknowledged IRQ dispatch`

@@ -43,13 +43,12 @@ pub enum DomainError {
     NotRegistered,
 }
 
-pub type IrqHandler = fn(GlobalIrq);
+pub type IrqHandler = fn(AcknowledgedIrq);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct DispatchReport {
-    pub handled : u64,
-    pub unhandled : u64,
-    pub invoked : u8,
+#[derive(Debug, PartialEq, Eq)]
+pub struct UnhandledIrq {
+    pub error : DomainError,
+    pub acknowledged : AcknowledgedIrq,
 }
 
 pub struct LioIntcDomain {
@@ -86,33 +85,24 @@ impl LioIntcDomain {
                             .ok_or(DomainError::NotRegistered)
     }
 
-    /// Dispatches every bit present in one bank snapshot, from low to high.
-    ///
-    /// This function neither re-reads pending state nor acknowledges hardware.
-    /// The future trap glue must mask/ack in a documented order around it.
-    pub fn dispatch_bank(&self,
-                         bank : usize,
-                         mut pending : u32)
-                         -> Result<DispatchReport, DomainError> {
-        if bank >= self.bank_count as usize {
-            return Err(DomainError::OutOfRange);
-        }
-        let mut report = DispatchReport::default();
-        while pending != 0 {
-            let local = pending.trailing_zeros();
-            pending &= !(1 << local);
-            let irq = GlobalIrq::from_bank_local(bank, local)?;
-            let bit = 1u64 << irq.raw();
-            match self.handlers[irq.raw() as usize] {
-                Some(handler) => {
-                    handler(irq);
-                    report.handled |= bit;
-                    report.invoked += 1;
-                }
-                None => report.unhandled |= bit,
+    /// Dispatch one source only after its controller has masked/acknowledged it.
+    /// An unregistered source returns the linear evidence so the caller can
+    /// keep the line masked and report or recover it deliberately.
+    pub fn dispatch(&self, acknowledged : AcknowledgedIrq)
+                    -> Result<(), UnhandledIrq> {
+        let irq = acknowledged.irq();
+        let index = match self.validate(irq) {
+            Ok(index) => index,
+            Err(error) => return Err(UnhandledIrq { error, acknowledged }),
+        };
+        match self.handlers[index] {
+            Some(handler) => {
+                handler(acknowledged);
+                Ok(())
             }
+            None => Err(UnhandledIrq { error : DomainError::NotRegistered,
+                                      acknowledged }),
         }
-        Ok(report)
     }
 }
 
@@ -124,7 +114,9 @@ mod tests {
 
     static VISITED : AtomicU64 = AtomicU64::new(0);
 
-    fn record(irq : GlobalIrq) { VISITED.fetch_or(1u64 << irq.raw(), Ordering::Relaxed); }
+    fn record(acknowledged : AcknowledgedIrq) {
+        VISITED.fetch_or(1u64 << acknowledged.irq().raw(), Ordering::Relaxed);
+    }
 
     #[test]
     fn maps_bank_local_boundaries() {
@@ -141,23 +133,21 @@ mod tests {
     }
 
     #[test]
-    fn dispatches_registered_and_reports_unhandled_sources() {
+    fn dispatches_only_mask_ack_evidence_and_returns_unhandled_token() {
         VISITED.store(0, Ordering::Relaxed);
         let mut domain = LioIntcDomain::new(2).unwrap();
         domain.register(GlobalIrq::from_bank_local(1, 0).unwrap(),
                         record)
               .unwrap();
-        domain.register(GlobalIrq::from_bank_local(1, 31).unwrap(),
-                        record)
-              .unwrap();
-        let report = domain.dispatch_bank(1, (1 << 0) | (1 << 7) | (1 << 31))
-                           .unwrap();
-        assert_eq!(report.invoked, 2);
-        assert_eq!(report.handled,
-                   (1u64 << 32) | (1u64 << 63));
-        assert_eq!(report.unhandled, 1u64 << 39);
-        assert_eq!(VISITED.load(Ordering::Relaxed),
-                   report.handled);
+        let handled = AcknowledgedIrq::after_mask_ack(
+            GlobalIrq::from_bank_local(1, 0).unwrap());
+        domain.dispatch(handled).unwrap();
+        let missing_irq = GlobalIrq::from_bank_local(1, 7).unwrap();
+        let failure = domain.dispatch(AcknowledgedIrq::after_mask_ack(missing_irq))
+                            .unwrap_err();
+        assert_eq!(failure.error, DomainError::NotRegistered);
+        assert_eq!(failure.acknowledged.irq(), missing_irq);
+        assert_eq!(VISITED.load(Ordering::Relaxed), 1u64 << 32);
     }
 
     #[test]
@@ -181,7 +171,10 @@ mod tests {
         assert!(matches!(LioIntcDomain::new(3),
                          Err(DomainError::InvalidBankCount)));
         let domain = LioIntcDomain::new(1).unwrap();
-        assert_eq!(domain.dispatch_bank(1, 1),
-                   Err(DomainError::OutOfRange));
+        let irq = GlobalIrq::from_bank_local(1, 0).unwrap();
+        let failure = domain.dispatch(AcknowledgedIrq::after_mask_ack(irq))
+                            .unwrap_err();
+        assert_eq!(failure.error, DomainError::OutOfRange);
+        assert_eq!(failure.acknowledged.irq(), irq);
     }
 }
