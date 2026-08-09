@@ -653,7 +653,7 @@ dependencies = [
  "wateros-driver-display",
  "wateros-driver-impl-dummy",
  "wateros-driver-impl-qemu-loongarch64-virt",
- "wateros-driver-impl-qemu-riscv64-opensbi",
+ "wateros-driver-impl-qemu-riscv64-virt",
  "wateros-driver-input",
  "wateros-driver-network",
 ]
@@ -861,7 +861,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "wateros-driver-impl-qemu-riscv64-opensbi"
+name = "wateros-driver-impl-qemu-riscv64-virt"
 version = "0.1.0"
 dependencies = [
  "log",

@@ -1,5 +1,5 @@
 [package]
-    name = "wateros-driver-impl-qemu-riscv64-opensbi"
+    name = "wateros-driver-impl-qemu-riscv64-virt"
     version = "0.1.0"
     edition = "2024"
 

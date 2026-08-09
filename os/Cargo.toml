@@ -114,7 +114,7 @@
         "dep:ipc",
         "dep:network",
         "driver/impl-block-cache",
-        "driver/impl-qemu-riscv64-opensbi",
+        "driver/impl-qemu-riscv64-virt",
         "ipc/all",
         "vfs-bridge",
         # 根 crate 的 `impl-sv39`：其它 crate（如 `task`）里 `#[cfg(feature = "impl-sv39")]` 依赖此 flag。

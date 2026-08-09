@@ -33,8 +33,8 @@ pub mod network {
 // 行为契约统一由 [`MachineDriver`] 表达，经 [`machine`] 选择当前 profile。
 #[cfg(feature = "impl-qemu-loongarch64-virt")]
 pub use impl_qemu_loongarch64_virt::uart;
-#[cfg(feature = "impl-qemu-riscv64-opensbi")]
-pub use impl_qemu_riscv64_opensbi::uart;
+#[cfg(feature = "impl-qemu-riscv64-virt")]
+pub use impl_qemu_riscv64_virt::uart;
 
 use alloc::vec::Vec;
 use api_v0::{MachineDriver, SupportedDeviceEntry};
@@ -49,13 +49,13 @@ pub fn machine() -> &'static dyn MachineDriver {
     {
         impl_qemu_loongarch64_virt::machine()
     }
-    #[cfg(feature = "impl-qemu-riscv64-opensbi")]
+    #[cfg(feature = "impl-qemu-riscv64-virt")]
     {
-        impl_qemu_riscv64_opensbi::machine()
+        impl_qemu_riscv64_virt::machine()
     }
     #[cfg(not(any(feature = "impl-dummy",
                   feature = "impl-qemu-loongarch64-virt",
-                  feature = "impl-qemu-riscv64-opensbi")))]
+                  feature = "impl-qemu-riscv64-virt")))]
     {
         core::unreachable!("no machine driver feature selected")
     }
