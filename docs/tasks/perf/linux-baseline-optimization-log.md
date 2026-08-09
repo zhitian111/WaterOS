@@ -125,6 +125,56 @@ codegraph explore "HeapBrk::brk handle_brk_page_fault user_brk_start user_brk_cu
 codegraph explore "protect_lazy_file_vmas lazy_vma_overlaps lazy_file_vma_index insert_lazy_file_vma mprotect sys_mprotect exact source and all callers; sorted invariant"
 ```
 
+## COPY-01A：RISC-V 对齐 memcpy 64 字节展开
+
+状态：完整测试显著退化并回退（2026-08-10）
+
+### 模块与热点
+
+- 模块：`wateros-platform/platform-arch/impl-riscv64`，内核 C ABI `memcpy`。
+- MM-02C 后 300 s pc-hot 中，`compiler_builtins::mem::memcpy` 合计约 254.24 亿条指令。
+- 其中对齐 8 字节循环的 `ld/sd/add/add/branch` 五条指令各执行 4,642,413,418 次，合计
+  约 232.12 亿条；非对齐字拼接循环的核心指令各仅约 816 万次。
+- `memcpy` 入口约 6,138 万次，对齐循环约 46.42 亿轮，平均每次调用约 75 个双字，即
+  约 600 字节。当前实现每 8 字节一次分支，循环控制成本过高。
+
+### 设计
+
+1. RISC-V 提供强 C ABI `memcpy`：保存原始 `dst` 作为返回值。
+2. 小块、无法把 src/dst 同时对齐的复制使用字节循环；共同 8 字节对齐后，每轮展开
+   8 组 `ld/sd`，复制 64 字节，再处理 8 字节与字节尾部。
+3. 不执行未对齐 `ld/sd`，不依赖 QEMU 的未对齐访问模拟；不修改 `memmove`，调用方仍须
+   遵守 `memcpy` 源目标不重叠契约。
+4. LoongArch 暂时保持 compiler-builtins 实现；其完整构建用于防止共享接口回归。
+5. 构建后用 `llvm-nm` 与 `llvm-objdump` 确认内核实际导出并调用新实现；若未替换成功，
+   不进入完整性能测试。
+
+恢复上下文命令：
+
+```bash
+codegraph explore "RISC-V platform arch global_asm memcpy compiler_builtins copy_from_slice GlobalFilePageCache install_page read_key user_copy exact source and callers"
+```
+
+### 验收
+
+- 双架构 Final check/build 通过。
+- RISC-V 16 GiB/8 vCPU、`-snapshot` 完整 BuildStorm 成功，无 panic/SIGSEGV。
+- 相对 926.21 s 对照有明确收益；改后 pc-hot 中 memcpy 循环控制指令显著减少。
+
+### 验证结果
+
+- 新实现成功替换 compiler-builtins：`llvm-nm` 显示唯一强符号 `memcpy T 8033cfa4`，
+  `llvm-objdump` 显示内核调用点均跳转至该实现。
+- 双架构 Final check/build：通过。
+- RISC-V 16 GiB/8 vCPU、`-snapshot` 完整 BuildStorm：`ok=true`，1131.62 s；无
+  panic/SIGSEGV，完整结束。
+- 相对 926.21 s 对照增加 205.41 s（22.18%），属于确定性严重退化；汇编实现及接入
+  全部回退，仅保留分析记录。
+- 结论：pc-hot 指令数不能直接代表 QEMU TCG 的墙钟成本。64 字节展开减少 guest 分支，
+  但更长基本块和更多活跃临时寄存器在当前 QEMU 上代价更高。后续 COPY 优化应消除跨层
+  复制次数或直接填充最终页，而非替换通用 memcpy。
+- 完整日志：`/tmp/wateros-copy01a-after-rv.log`（本机临时文件，不提交）。
+
 ## FILE-01A：普通 ext4 数据写不再隐式全盘 flush
 
 状态：完整测试无收益并回退（2026-08-10）
