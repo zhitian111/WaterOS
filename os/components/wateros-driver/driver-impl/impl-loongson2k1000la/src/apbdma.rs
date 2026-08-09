@@ -5,6 +5,8 @@
 //! architecture-specific cache operations before using a plan on hardware.
 use crate::topology::DmaControllerDescription;
 use alloc::vec::Vec;
+use api_v0::{DriverError, DriverResult,
+             dma::{DmaCoherency, DmaDirection, DmaMapping}};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
@@ -96,27 +98,29 @@ pub struct TransferPlan {
     pub descriptor : HardwareDescriptor,
     pub descriptor_physical_address : u64,
     pub start_order : u64,
+    pub memory_physical_address : u64,
+    pub byte_length : usize,
+    pub direction : Direction,
     /// The buffer must be invalidated after a device-to-memory transfer.
     pub invalidate_buffer_after : bool,
     /// Descriptor contents must be visible before the order register is written.
     pub clean_descriptor_before : bool,
 }
 
+#[derive(Debug)]
 pub struct PreparedTransfer(TransferPlan);
-
-impl PreparedTransfer {
-    /// # Safety
-    /// The caller must have written `plan.descriptor` to the physical address,
-    /// cleaned the descriptor cache lines, and for memory-to-device transfers
-    /// cleaned the buffer cache lines before constructing this token.
-    pub unsafe fn after_cache_sync(plan : TransferPlan) -> Self { Self(plan) }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutorError {
     Busy,
     Idle,
     Register,
+}
+
+#[derive(Debug)]
+pub struct StartFailure {
+    pub error : ExecutorError,
+    pub prepared : PreparedTransfer,
 }
 
 pub trait OrderIo {
@@ -126,7 +130,68 @@ pub trait OrderIo {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Completion {
-    pub invalidate_buffer_after : bool,
+    invalidate_buffer_after : bool,
+}
+
+impl Completion {
+    pub const fn requires_buffer_invalidate(self) -> bool { self.invalidate_buffer_after }
+}
+
+fn dma_direction(direction : Direction) -> DmaDirection {
+    match direction {
+        Direction::DeviceToMemory => DmaDirection::FromDevice,
+        Direction::MemoryToDevice => DmaDirection::ToDevice,
+    }
+}
+
+/// Validate actual mappings against the plan and transfer both to the device.
+/// Safe code cannot construct [`PreparedTransfer`] by assertion alone.
+pub fn prepare_transfer<D : DmaCoherency, P : DmaCoherency>(
+    plan : TransferPlan,
+    descriptor : &mut DmaMapping<D>,
+    payload : &mut DmaMapping<P>)
+    -> DriverResult<PreparedTransfer> {
+    let descriptor_region = descriptor.cpu_region()?;
+    let payload_region = payload.cpu_region()?;
+    if descriptor.direction() != DmaDirection::ToDevice ||
+       descriptor_region.physical_address() != plan.descriptor_physical_address ||
+       descriptor_region.length() < core::mem::size_of::<HardwareDescriptor>() ||
+       payload.direction() != dma_direction(plan.direction) ||
+       payload_region.physical_address() != plan.memory_physical_address ||
+       payload_region.length() != plan.byte_length
+    {
+        return Err(DriverError::InvalidParam);
+    }
+    descriptor.prepare_for_device()?;
+    if let Err(error) = payload.prepare_for_device() {
+        descriptor.reclaim_after_stop().map_err(|_| DriverError::IoError)?;
+        return Err(error);
+    }
+    Ok(PreparedTransfer(plan))
+}
+
+pub fn finish_transfer<D : DmaCoherency, P : DmaCoherency>(
+    _completion : Completion,
+    descriptor : &mut DmaMapping<D>,
+    payload : &mut DmaMapping<P>)
+    -> DriverResult<()> {
+    let payload_result = payload.complete_from_device();
+    let descriptor_result = descriptor.complete_from_device();
+    payload_result?;
+    descriptor_result?;
+    Ok(())
+}
+
+pub fn cancel_prepared<D : DmaCoherency, P : DmaCoherency>(
+    _prepared : PreparedTransfer,
+    descriptor : &mut DmaMapping<D>,
+    payload : &mut DmaMapping<P>)
+    -> DriverResult<()> {
+    let payload_result = payload.reclaim_after_stop();
+    let descriptor_result = descriptor.reclaim_after_stop();
+    payload_result?;
+    descriptor_result?;
+    Ok(())
 }
 
 pub struct Executor<R> {
@@ -137,10 +202,16 @@ pub struct Executor<R> {
 impl<R : OrderIo> Executor<R> {
     pub fn new(registers : R) -> Self { Self { registers, running : None } }
 
-    pub fn start(&mut self, prepared : PreparedTransfer) -> Result<(), ExecutorError> {
-        if self.running.is_some() { return Err(ExecutorError::Busy); }
-        self.registers.write64(0)?;
-        self.registers.write64(prepared.0.start_order)?;
+    pub fn start(&mut self, prepared : PreparedTransfer) -> Result<(), StartFailure> {
+        if self.running.is_some() {
+            return Err(StartFailure { error : ExecutorError::Busy, prepared });
+        }
+        if let Err(error) = self.registers.write64(0) {
+            return Err(StartFailure { error, prepared });
+        }
+        if let Err(error) = self.registers.write64(prepared.0.start_order) {
+            return Err(StartFailure { error, prepared });
+        }
         self.running = Some(prepared.0);
         Ok(())
     }
@@ -151,12 +222,12 @@ impl<R : OrderIo> Executor<R> {
         Ok(Completion { invalidate_buffer_after : plan.invalidate_buffer_after })
     }
 
-    pub fn stop(&mut self) -> Result<(), ExecutorError> {
-        if self.running.is_none() { return Err(ExecutorError::Idle); }
+    pub fn stop(&mut self) -> Result<Completion, ExecutorError> {
+        let plan = self.running.ok_or(ExecutorError::Idle)?;
         let current = self.registers.read64()?;
         self.registers.write64((current & !ORDER_CONFIG_MASK) | ORDER_64_BIT | (1 << 4))?;
         self.running = None;
-        Ok(())
+        Ok(Completion { invalidate_buffer_after : plan.invalidate_buffer_after })
     }
 
     #[cfg(test)]
@@ -205,6 +276,9 @@ pub fn build_transfer(descriptor_physical_address : u64,
         descriptor_physical_address,
         start_order : (descriptor_physical_address & !ORDER_CONFIG_MASK) |
                       ORDER_64_BIT | ORDER_START,
+        memory_physical_address,
+        byte_length,
+        direction,
         invalidate_buffer_after : direction == Direction::DeviceToMemory,
         clean_descriptor_before : true,
     })
@@ -214,6 +288,7 @@ pub fn build_transfer(descriptor_physical_address : u64,
 mod tests {
     use super::*;
     use alloc::vec;
+    use api_v0::dma::{DmaRegion, DmaCoherency};
 
     #[test]
     fn builds_64_bit_read_descriptor_and_start_order() {
@@ -291,6 +366,37 @@ mod tests {
         value : u64,
         writes : Vec<u64>,
     }
+
+    #[derive(Default)]
+    struct MockCache { device_syncs : usize, cpu_syncs : usize, fail_device : bool }
+    impl DmaCoherency for MockCache {
+        fn sync_for_device(&mut self, _region : DmaRegion, _direction : DmaDirection)
+                           -> DriverResult<()> {
+            if self.fail_device { return Err(DriverError::IoError); }
+            self.device_syncs += 1;
+            Ok(())
+        }
+        fn sync_for_cpu(&mut self, _region : DmaRegion, _direction : DmaDirection)
+                        -> DriverResult<()> {
+            self.cpu_syncs += 1;
+            Ok(())
+        }
+    }
+
+    fn mappings(plan : TransferPlan) -> (DmaMapping<MockCache>, DmaMapping<MockCache>) {
+        let descriptor = DmaRegion::new(0x4000,
+                                        plan.descriptor_physical_address,
+                                        64,
+                                        32,
+                                        64).unwrap();
+        let payload = DmaRegion::new(0x8000,
+                                     plan.memory_physical_address,
+                                     plan.byte_length,
+                                     32,
+                                     64).unwrap();
+        (DmaMapping::new(descriptor, DmaDirection::ToDevice, MockCache::default()),
+         DmaMapping::new(payload, dma_direction(plan.direction), MockCache::default()))
+    }
     impl OrderIo for MockOrderIo {
         fn read64(&mut self) -> Result<u64, ExecutorError> { Ok(self.value) }
         fn write64(&mut self, value : u64) -> Result<(), ExecutorError> {
@@ -304,12 +410,15 @@ mod tests {
     fn executor_requires_prepared_token_and_tracks_completion() {
         let plan = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 512, 16,
                                   Direction::DeviceToMemory).unwrap();
-        // SAFETY: mock memory is coherent and the test does not start hardware.
-        let prepared = unsafe { PreparedTransfer::after_cache_sync(plan) };
+        let (mut descriptor, mut payload) = mappings(plan);
+        let prepared = prepare_transfer(plan, &mut descriptor, &mut payload).unwrap();
         let mut executor = Executor::new(MockOrderIo::default());
-        executor.start(prepared).unwrap();
-        assert_eq!(executor.complete_irq(),
-                   Ok(Completion { invalidate_buffer_after : true }));
+        assert!(executor.start(prepared).is_ok());
+        let completion = executor.complete_irq().unwrap();
+        assert!(completion.requires_buffer_invalidate());
+        finish_transfer(completion, &mut descriptor, &mut payload).unwrap();
+        assert!(descriptor.cpu_region().is_ok());
+        assert!(payload.cpu_region().is_ok());
         assert_eq!(executor.complete_irq(), Err(ExecutorError::Idle));
         let io = executor.into_inner();
         assert_eq!(io.writes, vec![0, plan.start_order]);
@@ -319,13 +428,42 @@ mod tests {
     fn executor_rejects_overlap_and_encodes_stop() {
         let plan = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 4, 1,
                                   Direction::MemoryToDevice).unwrap();
+        let (mut descriptor, mut payload) = mappings(plan);
         let mut executor = Executor::new(MockOrderIo::default());
-        // SAFETY: mock memory is coherent and the test does not start hardware.
-        executor.start(unsafe { PreparedTransfer::after_cache_sync(plan) }).unwrap();
-        assert_eq!(executor.start(unsafe { PreparedTransfer::after_cache_sync(plan) }),
-                   Err(ExecutorError::Busy));
-        executor.stop().unwrap();
+        assert!(executor.start(prepare_transfer(plan, &mut descriptor, &mut payload).unwrap())
+                        .is_ok());
+        let (mut descriptor2, mut payload2) = mappings(plan);
+        let failure = executor.start(prepare_transfer(plan,
+                                                      &mut descriptor2,
+                                                      &mut payload2).unwrap())
+                              .unwrap_err();
+        assert_eq!(failure.error, ExecutorError::Busy);
+        cancel_prepared(failure.prepared, &mut descriptor2, &mut payload2).unwrap();
+        let completion = executor.stop().unwrap();
+        finish_transfer(completion, &mut descriptor, &mut payload).unwrap();
         assert_eq!(executor.into_inner().writes.last().copied(),
                    Some((plan.start_order & !ORDER_CONFIG_MASK) | ORDER_64_BIT | (1 << 4)));
+    }
+
+    #[test]
+    fn mapping_mismatch_and_payload_sync_failure_are_recoverable() {
+        let plan = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 512, 16,
+                                  Direction::DeviceToMemory).unwrap();
+        let (mut descriptor, mut payload) = mappings(plan);
+        let wrong = DmaRegion::new(0xa000, 0x4000, 512, 32, 64).unwrap();
+        let mut wrong_payload = DmaMapping::new(wrong, DmaDirection::FromDevice,
+                                               MockCache::default());
+        assert!(matches!(prepare_transfer(plan, &mut descriptor, &mut wrong_payload),
+                         Err(DriverError::InvalidParam)));
+        assert!(descriptor.cpu_region().is_ok());
+
+        let payload_region = payload.cpu_region().unwrap();
+        payload = DmaMapping::new(payload_region,
+                                  DmaDirection::FromDevice,
+                                  MockCache { fail_device : true, ..MockCache::default() });
+        assert!(matches!(prepare_transfer(plan, &mut descriptor, &mut payload),
+                         Err(DriverError::IoError)));
+        assert!(descriptor.cpu_region().is_ok());
+        assert!(payload.cpu_region().is_ok());
     }
 }

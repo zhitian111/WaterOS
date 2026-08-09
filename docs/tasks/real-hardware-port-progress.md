@@ -1288,3 +1288,47 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 ### 提交
 
 - `[feat] add physical DMA ownership contract`
+
+## 2026-08-10：批次 30——APBDMA 接入公共 DMA ownership
+
+### 任务与设计
+
+1. 将公共 `DmaRegion`/`DmaMapping` contract 合入 2K1000LA 分支。
+2. 让 APBDMA plan 与真实 descriptor/payload mapping 做地址、长度和方向一致性校验。
+3. 只有两个 mapping 都完成 device-side sync 后才生成 `PreparedTransfer`。
+4. busy/MMIO 启动失败返回 token，支持安全取消和 ownership 回滚。
+5. IRQ completion 或确认 stop 后同步并归还 CPU ownership。
+
+descriptor 与 payload 分别拥有 mapping；plan 只是期望值，不能替代实际物理内存元数据。completion 和 prepared token 的构造均保持私有，普通安全代码无法跳过 cache contract 或伪造 DMA 已完成。
+
+### 完成内容
+
+- [x] 合入公共物理 DMA ownership contract。
+- [x] `TransferPlan` 增加原始 payload PA、byte length 和 direction。
+- [x] `prepare_transfer()` 校验 descriptor PA/最小 48-byte、payload PA/精确长度以及两个 mapping 的方向。
+- [x] descriptor 固定为 `ToDevice`；payload 根据 DMA 方向要求 `FromDevice` 或 `ToDevice`。
+- [x] descriptor sync 成功而 payload sync 失败时，descriptor 自动恢复 CPU ownership。
+- [x] 移除公开 unsafe `PreparedTransfer` 构造器，prepared token 只能由校验/同步流程产生。
+- [x] `StartFailure` 在 busy 或 order-register 写失败时归还 prepared token。
+- [x] `cancel_prepared()` 恢复尚未启动的两个 mapping；`finish_transfer()` 消费 IRQ/stop completion 后归还 ownership。
+- [x] completion 字段私有，只能由运行中的 executor 产生。
+
+### 验证证据
+
+- 公共 DMA API 3 项 host 单测全部通过。
+- 2K1000LA driver 20 项 host 单测全部通过。
+- 新测试覆盖 plan/mapping PA 不一致、payload sync 失败回滚、device ownership 期间 CPU 访问拒绝、busy token 归还、IRQ 完成和 stop 后恢复。
+- DTS fixture 全部通过，包括 APBDMA 资源畸形场景。
+- `cargo check -p wateros-driver-impl-loongson2k1000la --target loongarch64-unknown-none` 通过。
+
+### 已知限制、未验证与后续测试
+
+- [ ] mock coherency 只证明调用顺序；尚无 LoongArch64 cache clean/invalidate 与 barrier 实现。
+- [ ] mapping 元数据由测试构造；尚无真实连续 DMA allocator 和 VA→PA provider。
+- [ ] executor 仍未接入 volatile order-register backend、APBDMA IRQ13 或 descriptor status。
+- [ ] 启动第二次 64-bit order write 失败时硬件是否可能部分观察，未来真实 backend 必须在回滚前执行 stop/quiesce。
+- [ ] MMC 仍未实现数据 command 与共享 `SdTransport`，不会注册块设备。
+
+### 提交
+
+- `[ref] enforce DMA ownership in 2K1000 APBDMA`

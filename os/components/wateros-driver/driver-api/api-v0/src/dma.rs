@@ -86,6 +86,8 @@ impl<C : DmaCoherency> DmaMapping<C> {
         (self.owner == Owner::Cpu).then_some(self.region).ok_or(DriverError::InvalidParam)
     }
 
+    pub const fn direction(&self) -> DmaDirection { self.direction }
+
     pub fn prepare_for_device(&mut self) -> DriverResult<DmaRegion> {
         if self.owner != Owner::Cpu { return Err(DriverError::InvalidParam); }
         self.coherency.sync_for_device(self.region, self.direction)?;
