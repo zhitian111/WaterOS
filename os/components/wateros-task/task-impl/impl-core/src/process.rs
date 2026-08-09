@@ -128,6 +128,7 @@ pub struct ProcessRegistry {
     task_for_thread : BTreeMap<ThreadId, TaskId>,
     next_pid : usize,
     next_tid : usize,
+    subreaper_count : usize,
 }
 
 impl ProcessRegistry {
@@ -136,7 +137,8 @@ impl ProcessRegistry {
                pid_for_task : BTreeMap::new(),
                task_for_thread : BTreeMap::new(),
                next_pid : 1,
-               next_tid : 1 }
+               next_tid : 1,
+               subreaper_count : 0 }
     }
 
     pub fn clear(&mut self) {
@@ -148,6 +150,7 @@ impl ProcessRegistry {
             .clear();
         self.next_pid = 1;
         self.next_tid = 1;
+        self.subreaper_count = 0;
     }
 
     fn alloc_pid(&mut self) -> ProcessId {
@@ -197,6 +200,10 @@ impl ProcessRegistry {
     fn remove_process(&mut self, pid : ProcessId) -> Option<ProcessControlBlock> {
         let process = self.processes
                           .remove(&pid)?;
+        if process.child_subreaper {
+            self.subreaper_count = self.subreaper_count
+                                      .saturating_sub(1);
+        }
         for (&task_id, task) in &process.tasks {
             assert_eq!(self.pid_for_task
                            .remove(&task_id),
@@ -927,6 +934,19 @@ impl ProcessRegistry {
                                        pid : ProcessId,
                                        enabled : bool)
                                        -> ProcessResult<()> {
+        let was_enabled = self.processes
+                              .get(&pid)
+                              .map(|process| process.child_subreaper)
+                              .unwrap_or(false);
+        if was_enabled != enabled {
+            if enabled {
+                self.subreaper_count = self.subreaper_count
+                                          .saturating_add(1);
+            } else {
+                self.subreaper_count = self.subreaper_count
+                                          .saturating_sub(1);
+            }
+        }
         let process = self.process_mut(pid)
                           .ok_or(ProcessError::ProcessNotFound)?;
         process.child_subreaper = enabled;
@@ -953,6 +973,15 @@ impl ProcessRegistry {
         }
         let children = self.collect_child_pids(parent_pid);
         if children.is_empty() {
+            return;
+        }
+        if self.subreaper_count == 0 {
+            let init_pid = ProcessId::from_raw(INIT_PID);
+            for child_pid in &children {
+                if let Some(process) = self.process_mut(*child_pid) {
+                    process.parent_pid = Some(init_pid);
+                }
+            }
             return;
         }
         let mut ancestor = self.processes

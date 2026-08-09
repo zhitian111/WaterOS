@@ -81,6 +81,9 @@ impl RrQueue {
     }
     pub fn task_count(&self) -> usize { self.task_count }
     pub fn highest_priority(&self) -> Option<Priority> {
+        if self.task_count == 0 {
+            return None;
+        }
         for (i, q) in self.queues
                           .iter()
                           .enumerate()
