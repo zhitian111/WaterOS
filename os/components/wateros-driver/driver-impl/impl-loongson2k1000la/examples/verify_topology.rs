@@ -3,6 +3,8 @@ use std::{env, fs};
 use wateros_driver_impl_loongson2k1000la::{irq_binding::resolve,
                                            irq_entry::resolve_parent_line,
                                            irq_runtime::RuntimeLayout,
+                                           irq_plan::{ActivationPolicy, OwnerKind,
+                                                      compile as compile_owner_plan},
                                            mmc::{ActivationBlocker, plan},
                                            topology::discover};
 
@@ -22,6 +24,17 @@ fn main() {
             assert_eq!(runtime_layout.controllers[1].main_base, 0x1FE0_1440);
             assert_eq!(runtime_layout.parent_banks[2], Some(0));
             assert_eq!(runtime_layout.parent_banks[3], Some(1));
+            let owner_plan = compile_owner_plan(&topology).expect("compile IRQ owner plan");
+            assert_eq!(owner_plan.entries[0].kind, OwnerKind::MmcCommand);
+            assert_eq!(owner_plan.entries[0].binding.global_irq().raw(), 31);
+            assert_eq!(owner_plan.entries[0].hardware_line, 2);
+            assert_eq!(owner_plan.entries[0].route.parent_line, 0);
+            assert_eq!(owner_plan.entries[0].policy, ActivationPolicy::AckOnly);
+            assert_eq!(owner_plan.entries[1].kind, OwnerKind::ApbDmaDeferred);
+            assert_eq!(owner_plan.entries[1].binding.global_irq().raw(), 45);
+            assert_eq!(owner_plan.entries[1].hardware_line, 3);
+            assert_eq!(owner_plan.entries[1].route.parent_line, 1);
+            assert_eq!(owner_plan.entries[1].policy, ActivationPolicy::Deferred);
             assert_eq!(topology.interrupt_controllers
                                .len(),
                        2);

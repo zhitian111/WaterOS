@@ -2308,3 +2308,49 @@ controller window；每次访问验证 offset 对齐/范围。当前无生产调
 ### 提交
 
 - `[ref] add 2K1000 board IRQ owners`
+
+## 2026-08-10：批次 51——Topology-compiled IRQ owner plan
+
+### 任务与设计
+
+新增纯逻辑 `irq_plan::compile()`，从动态 topology 生成固定两项 `BoardOwnerPlan`。每项保存
+owner kind、稳定 InterruptBinding、Route、CPU HWI、device MMIO 和 activation policy。
+route 不硬编码：根据该 LIOINTC `parent_source_maps` 中唯一覆盖 local source bit 的 slot 推导，
+再由对应 parent interrupt spec 得到 HWI。
+
+MMC policy 为 AckOnly，只允许使用 W1C adapter 做中断确认，不代表 host 可激活；APBDMA policy
+为 Deferred。两项按 GlobalIrq raw 排序，避免 topology 节点顺序影响启动计划。
+
+### 完成内容
+
+- [x] 新增 `OwnerKind`、`ActivationPolicy`、`OwnerPlan`、`BoardOwnerPlan` 和错误模型。
+- [x] 严格要求唯一 MMC 与唯一 APBDMA 描述。
+- [x] 复用 RuntimeLayout 与 InterruptBinding 的全部 topology 验证。
+- [x] MMC 资源先通过 deferred bring-up plan 验证。
+- [x] route 由 source map 唯一覆盖关系推导，拒绝 missing/ambiguous route。
+- [x] parent spec 必须是单 cell HWI0–HWI7。
+- [x] 拒绝 MMC/APBDMA 解析为同一 GlobalIrq。
+- [x] 输出按 global IRQ 排序并携带 boot-core `core_mask=1`。
+- [x] fixture verifier 直接断言真实 MMC/DMA owner plan。
+
+### 验证证据
+
+- `cargo test`：65 项 host 单测全部通过（本批新增 2 项）。
+- 乱序 controller topology 仍生成 MMC raw31/int0/HWI2/AckOnly 与 DMA raw45/int1/HWI3/Deferred。
+- 缺失 MMC 返回 MissingOrDuplicateMmc；重复 GlobalIrq 返回 DuplicateIrq。
+- 真实 DTS fixture 验证相同 kind、raw IRQ、route slot、HWI 与 policy。
+- topology/畸形 DTS fixtures、LoongArch64 target check、`make kernel-la` 全部通过；仅有既有 warning。
+- `git diff --check` 通过；未创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：parent source map 到真实 CPU HWI 的路由仍需真机确认。
+- [ ] core_mask 固定 boot core；SMP affinity、迁移和 per-core ISR 尚未设计。
+- [ ] plan 要求恰好一个 MMC/APBDMA，未来多 controller board 需要扩展固定容量与选择策略。
+- [ ] AckOnly 不表示 MMC clock/power/data path 可用，生产启动必须继续尊重 blockers。
+- [ ] plan 尚未实例化 BoardIrqOwner 或 ConfiguredRuntime。
+- [ ] 下一批应实现 mock-first `apply_owner_plan`：按 plan 顺序构造 owner、调用 Dormant.configure；Deferred 项必须保持 local source disabled，AckOnly 项也只在显式 diagnostic mode 下允许配置，默认启动不触碰硬件。
+
+### 提交
+
+- `[ref] compile 2K1000 IRQ owner plan`

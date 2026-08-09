@@ -14,6 +14,7 @@ pub mod irq_entry;
 pub mod irq_runtime;
 pub mod irq_owner;
 pub mod board_irq_owner;
+pub mod irq_plan;
 pub mod liointc;
 pub mod mmc;
 pub mod apbdma;
