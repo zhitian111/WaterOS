@@ -78,25 +78,6 @@ pub fn init_when_boot(dtb_pa : usize) {
     machine().init_when_boot(dtb_pa);
 }
 
-/// 物理 RAM 上界（不包含），用于恒等映射与帧分配器；QEMU 实现从 DTB
-/// 解析，其它配置返回回退常量。
-#[inline]
-pub fn physical_ram_end_exclusive() -> usize {
-    #[cfg(feature = "impl-qemu-riscv64-opensbi")]
-    {
-        impl_qemu_riscv64_opensbi::physical_ram_end_exclusive()
-    }
-    #[cfg(feature = "impl-qemu-loongarch64-virt")]
-    {
-        impl_qemu_loongarch64_virt::physical_ram_end_exclusive()
-    }
-    #[cfg(not(any(feature = "impl-qemu-riscv64-opensbi",
-                  feature = "impl-qemu-loongarch64-virt")))]
-    {
-        wateros_base_config::mm::QEMU_VIRT_PHYS_RAM_END
-    }
-}
-
 /// 内核完成必要子系统初始化后调用：扫描/注册设备等；失败时记录日志，
 /// 不向上返回错误（当前契约）。
 pub fn init_after_boot() {

@@ -27,6 +27,24 @@ pub use impl_qemu_loongarch64_virt as active_impl;
 #[cfg(feature = "impl-qemu-riscv64-opensbi")]
 pub use impl_qemu_riscv64_opensbi as active_impl;
 
+/// 物理 RAM 上界（不包含），用于恒等映射与帧分配器；QEMU 实现从 DTB
+/// 解析，其它配置返回回退常量。
+pub fn physical_ram_end_exclusive(dtb_pa: usize) -> usize {
+    #[cfg(feature = "impl-qemu-riscv64-opensbi")]
+    {
+        impl_qemu_riscv64_opensbi::memory::physical_ram_end_exclusive(dtb_pa)
+    }
+    #[cfg(feature = "impl-qemu-loongarch64-virt")]
+    {
+        impl_qemu_loongarch64_virt::memory::physical_ram_end_exclusive(dtb_pa)
+    }
+    #[cfg(not(any(feature = "impl-qemu-riscv64-opensbi",
+                  feature = "impl-qemu-loongarch64-virt")))]
+    {
+        config::mm::QEMU_VIRT_PHYS_RAM_END
+    }
+}
+
 /// 启动参数与引导上下文：具体类型由 feature 选中的 `platform-impl` 提供。
 #[cfg(feature = "api-v0")]
 pub mod boot;

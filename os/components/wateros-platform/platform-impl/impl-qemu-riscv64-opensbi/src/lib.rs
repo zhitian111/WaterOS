@@ -18,6 +18,8 @@ global_asm!(include_str!("asm/_start.S"));
 /// OpenSBI boot arguments and their typed view.
 pub mod boot;
 pub mod console;
+/// QEMU RISC-V 平台物理内存布局解析。
+pub mod memory;
 /// OpenSBI system reset 后端。
 pub mod reset;
 /// SBI HSM based secondary-hart control for QEMU RISC-V.

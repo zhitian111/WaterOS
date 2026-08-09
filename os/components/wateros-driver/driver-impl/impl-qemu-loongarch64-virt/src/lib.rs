@@ -75,56 +75,6 @@ impl MachineDriver for Machine {
     }
 }
 
-/// 物理 RAM 上界（不包含）：QEMU LoongArch64 `virt -m 1G` 的可用 RAM
-/// 包含内核所在的 `0x8000_0000..0xb000_0000` 高段；内核从
-/// `0x9000_0000` 启动，因此 frame allocator 的高段 fallback 必须停在
-/// `0xb000_0000`，不能把中间 MMIO/空洞当作 RAM。
-pub fn physical_ram_end_exclusive() -> usize {
-    let _fallback = wateros_base_config::mm::QEMU_VIRT_PHYS_RAM_END;
-    let dtb = DTB_BASE_ADDR.load(Ordering::Acquire);
-    if dtb != 0 {
-        if let Ok(fdt) = read_fdt() {
-            let mut best_end = 0usize;
-            for node in fdt.all_nodes() {
-                if !node
-                    .name
-                    .starts_with("memory")
-                {
-                    continue;
-                }
-                let Some(mut regions) = node.reg() else {
-                    continue;
-                };
-                while let Some(region) = regions.next() {
-                    let base = region.starting_address as usize;
-                    let Some(size) = region.size else {
-                        continue;
-                    };
-                    let end = base.saturating_add(size);
-                    if end > base && base >= 0x8000_0000 && end > best_end {
-                        best_end = end;
-                    }
-                }
-            }
-            if best_end > 0x8000_0000 {
-                return best_end;
-            }
-        }
-    }
-    // 回退：DTB 不可用时匹配仓库 Makefile 的 QEMU `virt -m 1G`。
-    0xb000_0000
-}
-
-fn read_fdt() -> DriverResult<fdt::Fdt<'static>> {
-    let dtb = DTB_BASE_ADDR.load(Ordering::Acquire);
-    if dtb == 0 {
-        return Err(DriverError::NotFound);
-    }
-    let fdt =
-        unsafe { fdt::Fdt::from_ptr(dtb as *const u8) }.map_err(|_| DriverError::InvalidDtb)?;
-    Ok(fdt)
-}
-
 /// 扫描 PCIe ECAM 总线寻找 virtio-blk 设备并注册。
 pub fn init_after_boot() -> DriverResult<()> {
     if INIT_AFTER_BOOT_DONE.swap(true, Ordering::AcqRel) {

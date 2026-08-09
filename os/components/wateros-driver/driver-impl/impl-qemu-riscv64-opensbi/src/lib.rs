@@ -86,40 +86,6 @@ impl MachineDriver for Machine {
     }
 }
 
-/// 物理 RAM 上界（不包含）：优先解析 DTB `memory@*` 的 `reg`；失败时用 `wateros-base-config` 回退值。
-pub fn physical_ram_end_exclusive() -> usize {
-    use wateros_base_config::mm::QEMU_VIRT_PHYS_RAM_END as FALLBACK;
-    let Ok(fdt) = read_fdt() else {
-        return FALLBACK;
-    };
-    let mut best_end = 0usize;
-    for node in fdt.all_nodes() {
-        // 与 Linux/QEMU virt 常见命名一致；非规范强制，属当前 bring-up 假设。
-        if !node.name.starts_with("memory") {
-            continue;
-        }
-        let Some(mut regions) = node.reg() else {
-            continue;
-        };
-        while let Some(region) = regions.next() {
-            let base = region.starting_address as usize;
-            let Some(size) = region.size else {
-                continue;
-            };
-            let end = base.saturating_add(size);
-            // 忽略低于 DRAM 典型起点的区域，避免误选保留映射。
-            if end > base && base >= 0x8000_0000 && end > best_end {
-                best_end = end;
-            }
-        }
-    }
-    if best_end > 0x8000_0000 {
-        best_end
-    } else {
-        FALLBACK
-    }
-}
-
 // `unsafe`：`dtb_pa` 指向的 DTB 在内核存活期内常驻且布局合法；返回的 `Fdt` 仅在本 crate 扫描路径中使用。
 fn read_fdt() -> DriverResult<Fdt<'static>> {
     let dtb = DTB_BASE_ADDR.load(Ordering::Acquire);

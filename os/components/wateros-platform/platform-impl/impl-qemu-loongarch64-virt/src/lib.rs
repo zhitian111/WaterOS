@@ -12,6 +12,8 @@ global_asm!(include_str!("asm/_start.S"));
 
 pub mod boot;
 pub mod console;
+/// QEMU LoongArch64 平台物理内存布局解析。
+pub mod memory;
 pub mod reset;
 pub mod smp;
 pub mod time;
