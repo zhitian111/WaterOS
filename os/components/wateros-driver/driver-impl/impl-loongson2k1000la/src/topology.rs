@@ -1,9 +1,10 @@
-use alloc::vec::Vec;
+use alloc::{string::String, vec::Vec};
 
 use api_v0::{DriverError, DriverResult, MmioRegion};
 use common::dtb::read_be_u32;
 
 const MAX_INTERRUPT_CELLS : usize = 4;
+const MAX_RESOURCE_CELLS : usize = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InterruptSpec {
@@ -35,6 +36,32 @@ pub struct MmcDescription {
     pub controller_mmio : MmioRegion,
     pub auxiliary_mmio : Option<MmioRegion>,
     pub interrupt : InterruptSpec,
+    pub clocks : Vec<NamedResource>,
+    pub dma : Option<NamedResource>,
+    pub bus_width : u8,
+    pub card_detect : CardDetect,
+    pub vmmc_supply : Option<u32>,
+    pub vqmmc_supply : Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResourceSpecifier {
+    pub provider_phandle : u32,
+    pub args : Vec<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NamedResource {
+    pub name : Option<String>,
+    pub specifier : ResourceSpecifier,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CardDetect {
+    Native,
+    Gpio(ResourceSpecifier),
+    Broken,
+    NonRemovable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -222,6 +249,133 @@ fn parse_parent_routes(node : fdt::node::FdtNode<'_, '_>)
     Ok((parents, maps))
 }
 
+fn resource_specifiers(fdt : &fdt::Fdt<'_>,
+                       node : fdt::node::FdtNode<'_, '_>,
+                       property : &str,
+                       provider_cells : &str)
+                       -> DriverResult<Vec<ResourceSpecifier>> {
+    let raw = node.property(property)
+                  .ok_or(DriverError::InvalidDtb)?
+                  .value;
+    if raw.is_empty() || raw.len() % 4 != 0 {
+        return Err(DriverError::InvalidDtb);
+    }
+    let mut offset = 0usize;
+    let mut result = Vec::new();
+    while offset < raw.len() {
+        let provider_phandle = read_be_u32(raw, offset).ok_or(DriverError::InvalidDtb)?;
+        offset += 4;
+        let provider = fdt.find_phandle(provider_phandle)
+                          .ok_or(DriverError::InvalidDtb)?;
+        let cell_count =
+            property_u32(provider, provider_cells).ok_or(DriverError::InvalidDtb)? as usize;
+        if cell_count > MAX_RESOURCE_CELLS {
+            return Err(DriverError::InvalidDtb);
+        }
+        let byte_count = cell_count.checked_mul(4)
+                                   .ok_or(DriverError::InvalidDtb)?;
+        if offset.checked_add(byte_count)
+                 .filter(|end| *end <= raw.len())
+                 .is_none()
+        {
+            return Err(DriverError::InvalidDtb);
+        }
+        let mut args = Vec::with_capacity(cell_count);
+        for _ in 0..cell_count {
+            args.push(read_be_u32(raw, offset).ok_or(DriverError::InvalidDtb)?);
+            offset += 4;
+        }
+        result.push(ResourceSpecifier { provider_phandle,
+                                        args });
+    }
+    Ok(result)
+}
+
+fn named_resources(fdt : &fdt::Fdt<'_>,
+                   node : fdt::node::FdtNode<'_, '_>,
+                   property : &str,
+                   names_property : &str,
+                   provider_cells : &str,
+                   names_required : bool)
+                   -> DriverResult<Vec<NamedResource>> {
+    let specifiers = resource_specifiers(fdt, node, property, provider_cells)?;
+    let names = match node.property(names_property) {
+        Some(_) => Some(string_list(node, names_property)?),
+        None if names_required => return Err(DriverError::InvalidDtb),
+        None => None,
+    };
+    if names.as_ref()
+            .is_some_and(|names| names.len() != specifiers.len())
+    {
+        return Err(DriverError::InvalidDtb);
+    }
+    Ok(specifiers.into_iter()
+                 .enumerate()
+                 .map(|(index, specifier)| NamedResource { name : names.as_ref()
+                                                                       .map(|names| {
+                                                                           String::from(names
+                                                                                            [index])
+                                                                       }),
+                                                           specifier })
+                 .collect())
+}
+
+fn supply_phandle(fdt : &fdt::Fdt<'_>,
+                  node : fdt::node::FdtNode<'_, '_>,
+                  property : &str)
+                  -> DriverResult<Option<u32>> {
+    let Some(raw) = node.property(property)
+                        .map(|property| property.value)
+    else {
+        return Ok(None);
+    };
+    if raw.len() != 4 {
+        return Err(DriverError::InvalidDtb);
+    }
+    let phandle = read_be_u32(raw, 0).ok_or(DriverError::InvalidDtb)?;
+    fdt.find_phandle(phandle)
+       .ok_or(DriverError::InvalidDtb)?;
+    Ok(Some(phandle))
+}
+
+fn boolean_property(node : fdt::node::FdtNode<'_, '_>, name : &str) -> DriverResult<bool> {
+    match node.property(name) {
+        Some(property)
+            if property.value
+                       .is_empty() =>
+        {
+            Ok(true)
+        }
+        Some(_) => Err(DriverError::InvalidDtb),
+        None => Ok(false),
+    }
+}
+
+fn mmc_card_detect(fdt : &fdt::Fdt<'_>,
+                   node : fdt::node::FdtNode<'_, '_>)
+                   -> DriverResult<CardDetect> {
+    let non_removable = boolean_property(node, "non-removable")?;
+    let broken = boolean_property(node, "broken-cd")?;
+    let gpio = node.property("cd-gpios")
+                   .is_some();
+    if non_removable as u8 + broken as u8 + gpio as u8 > 1 {
+        return Err(DriverError::InvalidDtb);
+    }
+    if non_removable {
+        Ok(CardDetect::NonRemovable)
+    } else if broken {
+        Ok(CardDetect::Broken)
+    } else if gpio {
+        let mut specifiers = resource_specifiers(fdt, node, "cd-gpios", "#gpio-cells")?;
+        if specifiers.len() != 1 {
+            return Err(DriverError::InvalidDtb);
+        }
+        Ok(CardDetect::Gpio(specifiers.remove(0)))
+    } else {
+        Ok(CardDetect::Native)
+    }
+}
+
 pub fn discover(fdt : &fdt::Fdt<'_>) -> DriverResult<BoardTopology> {
     let mut topology = BoardTopology { uarts : Vec::new(),
                                        interrupt_controllers : Vec::new(),
@@ -286,10 +440,53 @@ pub fn discover(fdt : &fdt::Fdt<'_>) -> DriverResult<BoardTopology> {
             if !(1..=2).contains(&regs.len()) {
                 return Err(DriverError::InvalidDtb);
             }
+            let clocks = named_resources(fdt,
+                                         node,
+                                         "clocks",
+                                         "clock-names",
+                                         "#clock-cells",
+                                         false)?;
+            if clocks.len() != 1 {
+                return Err(DriverError::InvalidDtb);
+            }
+            let dma = match (node.property("dmas"), node.property("dma-names")) {
+                (None, None) => None,
+                (Some(_), Some(_)) => {
+                    let mut resources = named_resources(fdt,
+                                                        node,
+                                                        "dmas",
+                                                        "dma-names",
+                                                        "#dma-cells",
+                                                        true)?;
+                    if resources.len() != 1 ||
+                       resources[0].name
+                                   .as_deref() !=
+                       Some("rx-tx")
+                    {
+                        return Err(DriverError::InvalidDtb);
+                    }
+                    Some(resources.remove(0))
+                }
+                _ => return Err(DriverError::InvalidDtb),
+            };
+            let bus_width = property_u32(node, "bus-width").unwrap_or(1);
+            if !matches!(bus_width, 1 | 4 | 8) {
+                return Err(DriverError::InvalidDtb);
+            }
             topology.mmc_hosts
                     .push(MmcDescription { controller_mmio : regs[0],
                                            auxiliary_mmio : regs.get(1).copied(),
-                                           interrupt : interrupt(node)? });
+                                           interrupt : interrupt(node)?,
+                                           clocks,
+                                           dma,
+                                           bus_width : bus_width as u8,
+                                           card_detect : mmc_card_detect(fdt, node)?,
+                                           vmmc_supply : supply_phandle(fdt,
+                                                                        node,
+                                                                        "vmmc-supply")?,
+                                           vqmmc_supply : supply_phandle(fdt,
+                                                                         node,
+                                                                         "vqmmc-supply")? });
         }
     }
     if topology.uarts

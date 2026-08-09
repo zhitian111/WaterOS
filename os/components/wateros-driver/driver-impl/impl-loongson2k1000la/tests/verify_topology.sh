@@ -11,6 +11,21 @@ dtc -I dts -O dtb -o "$tmp_dir/invalid.dtb" \
     "$crate_dir/tests/fixtures/missing-uart-clock.dts"
 dtc -I dts -O dtb -o "$tmp_dir/overlap.dtb" \
     "$crate_dir/tests/fixtures/overlapping-parent-map.dts"
+sed '/cd-gpios/a\        broken-cd;' \
+    "$crate_dir/tests/fixtures/loongson2k1000la-topology.dts" \
+    > "$tmp_dir/card-detect-conflict.dts"
+dtc -I dts -O dtb -o "$tmp_dir/card-detect-conflict.dtb" \
+    "$tmp_dir/card-detect-conflict.dts"
+sed 's/dmas = <&apbdma1 0>/dmas = <\&apbdma1>/' \
+    "$crate_dir/tests/fixtures/loongson2k1000la-topology.dts" \
+    > "$tmp_dir/truncated-dma.dts"
+dtc -I dts -O dtb -o "$tmp_dir/truncated-dma.dtb" \
+    "$tmp_dir/truncated-dma.dts"
+sed 's/cd-gpios = <&gpio0 22 1>;/non-removable;/' \
+    "$crate_dir/tests/fixtures/loongson2k1000la-topology.dts" \
+    > "$tmp_dir/non-removable.dts"
+dtc -I dts -O dtb -o "$tmp_dir/non-removable.dtb" \
+    "$tmp_dir/non-removable.dts"
 
 cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
     --example verify_topology -- valid "$tmp_dir/valid.dtb"
@@ -18,3 +33,9 @@ cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
     --example verify_topology -- invalid "$tmp_dir/invalid.dtb"
 cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
     --example verify_topology -- invalid "$tmp_dir/overlap.dtb"
+cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
+    --example verify_topology -- invalid "$tmp_dir/card-detect-conflict.dtb"
+cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
+    --example verify_topology -- invalid "$tmp_dir/truncated-dma.dtb"
+cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
+    --example verify_topology -- non-removable "$tmp_dir/non-removable.dtb"

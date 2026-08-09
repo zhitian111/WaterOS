@@ -977,3 +977,55 @@ python3 scripts/remote_debug_qemu_smoke.py \
 ### 提交
 
 - `[feat] add 2K1000LA IRQ domain model`
+
+## 2026-08-10：批次 22——2K1000LA MMC clock/DMA/card-detect 拓扑
+
+### 任务与设计
+
+1. 依据上游 2K1000 DTS/参考板 DTS 补齐 MMC 的 APB clock、APB DMA、4-bit bus 和 GPIO card-detect 描述。
+2. phandle specifier 根据 provider 的 `#clock-cells`、`#dma-cells`、`#gpio-cells` 动态切分，不写死参数宽度。
+3. 命名资源要求 name 数量与 specifier 数量一致；目标 MMC 的 DMA 只接受单个 `rx-tx` channel。
+4. `cd-gpios`、`broken-cd`、`non-removable` 三种介质策略互斥；无属性时保存 native detect。
+5. supply 只保存并验证 provider phandle，本批不操作 regulator、clock、DMA 或 MMC 寄存器。
+
+### 完成内容
+
+- [x] 新增 `ResourceSpecifier { provider_phandle, args }` 和 `NamedResource`，单 provider 最多接受 8 个参数 cells。
+- [x] 通用 parser 逐项读取 phandle、查询 provider cell count，拒绝未知 provider、截断参数、非 cell 对齐和超宽 specifier。
+- [x] `MmcDescription` 新增 clocks、可选 DMA、bus width、card-detect、`vmmc-supply` 和 `vqmmc-supply`。
+- [x] MMC 要求恰好一个 clock；`clock-names` 可选，但存在时必须与 clock 数量一致。
+- [x] `dmas`/`dma-names` 必须同时出现或同时缺失；目标节点只接受一个名为 `rx-tx` 的 DMA specifier。
+- [x] `bus-width` 缺省为 1，只接受 1/4/8。
+- [x] GPIO card-detect 保存 provider 与 `<22, GPIO_ACTIVE_LOW>` 原始参数；支持 native、broken 和 non-removable 策略。
+- [x] boolean 属性必须是零长度 DTB property，拒绝带值的伪 boolean。
+- [x] supply property 必须是单 phandle 且 provider 存在。
+- [x] 有效 fixture 的 MMC MMIO 大小修正为上游 DTS 的 `0x68`，并增加真实 clock/DMA/GPIO provider 形态。
+
+### 验证证据
+
+- 既有 9 项 LIOINTC/domain host 单测全部通过。
+- 有效 fixture 经 `dtc` 后断言 clock args `[0]`、DMA 名称 `rx-tx`/args `[0]`、bus width 4、GPIO args `[22,1]` 及两个 supply phandle。
+- 动态 non-removable fixture 走同一 parser 并得到 `CardDetect::NonRemovable`。
+- 同时含 `cd-gpios` 与 `broken-cd` 的 fixture 被拒绝。
+- DMA provider 声明 `#dma-cells = 1` 而 consumer 缺少 argument 时，`dtc` 发出 warning，WaterOS parser继续明确返回错误。
+- 缺 UART clock 与重叠 LIOINTC parent map 的既有畸形 fixtures 继续被拒绝。
+- 2K1000LA release 交叉构建通过，`git diff --check` 通过；所有测试 DTB 均为临时小文件。
+
+### 已知限制、未验证与后续测试
+
+- [ ] **资源解析已验证，但 clock enable、APBDMA channel 0 语义、GPIO active-low 电平和卡槽电气行为全部待真机验证。**
+- [ ] 上游 `.dtsi` 默认禁用 MMC/APBDMA，参考板 `.dts` 才启用；实际固件 DTB 的 status 与 pinctrl 必须导出核对。
+- [ ] 尚未解析 pinctrl、reset、`max-frequency`、write-protect、SD voltage/capability 属性和 DMA coherency constraints。
+- [ ] `vmmc/vqmmc` 仅保存 phandle，没有 regulator framework，不能切换供电或信号电压。
+- [ ] DMA topology 不等于 DMA driver；在 cache maintenance、descriptor ownership 和中断完成路径验证前必须使用 polling/PIO bring-up。
+- [ ] 当前 Loongson 分支尚未拥有 VisionFive 分支中的 DesignWare MMC/SD 协议实现；复用前应抽到独立公共 crate，而不是跨平台复制代码。
+- [ ] 下一批应提取跨平台 DesignWare MMC polling/PIO transport 与 SD protocol crate，并让两个平台只提供寄存器资源和 board prerequisites。
+
+### 参考依据
+
+- Linux `loongson-2k1000.dtsi`：MMC `0x1fe2c000/0x68`、辅助区、APB clock、APBDMA1 channel 0 与 `rx-tx`。
+- Linux `loongson-2k1000-ref.dts`：MMC enable、4-bit bus、GPIO22 active-low card detect。
+
+### 提交
+
+- `[feat] discover 2K1000LA MMC resources`

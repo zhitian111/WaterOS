@@ -59,8 +59,40 @@ fn main() {
                           .base,
                        0x1FE0_0438);
             assert_eq!(&mmc.interrupt.cells[..2], &[31, 4]);
+            assert_eq!(mmc.clocks.len(), 1);
+            assert_eq!(mmc.clocks[0].specifier
+                                    .args,
+                       &[0]);
+            assert_eq!(mmc.dma
+                          .as_ref()
+                          .expect("MMC DMA")
+                          .name
+                          .as_deref(),
+                       Some("rx-tx"));
+            assert_eq!(mmc.dma
+                          .as_ref()
+                          .expect("MMC DMA")
+                          .specifier
+                          .args,
+                       &[0]);
+            assert_eq!(mmc.bus_width, 4);
+            match &mmc.card_detect {
+                wateros_driver_impl_loongson2k1000la::topology::CardDetect::Gpio(specifier) => {
+                    assert_eq!(specifier.args, &[22, 1]);
+                }
+                other => panic!("unexpected card detect: {other:?}"),
+            }
+            assert!(mmc.vmmc_supply
+                       .is_some());
+            assert!(mmc.vqmmc_supply
+                       .is_some());
         }
         "invalid" => assert!(discover(&fdt).is_err()),
+        "non-removable" => {
+            let topology = discover(&fdt).expect("discover non-removable MMC");
+            assert!(matches!(topology.mmc_hosts[0].card_detect,
+                             wateros_driver_impl_loongson2k1000la::topology::CardDetect::NonRemovable));
+        }
         _ => panic!("unknown mode: {mode}"),
     }
 }
