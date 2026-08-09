@@ -1,6 +1,7 @@
 use std::{env, fs};
 
-use wateros_driver_impl_loongson2k1000la::topology::discover;
+use wateros_driver_impl_loongson2k1000la::{mmc::{ActivationBlocker, plan},
+                                           topology::discover};
 
 fn main() {
     let mut args = env::args().skip(1);
@@ -86,6 +87,10 @@ fn main() {
                        .is_some());
             assert!(mmc.vqmmc_supply
                        .is_some());
+            let plan = plan(mmc).expect("build deferred MMC plan");
+            assert!(!plan.can_activate());
+            assert!(plan.blockers
+                        .contains(&ActivationBlocker::SplitRegisterLayoutUnverified));
         }
         "invalid" => assert!(discover(&fdt).is_err()),
         "non-removable" => {

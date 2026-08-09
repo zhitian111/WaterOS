@@ -10,6 +10,7 @@ extern crate alloc;
 
 pub mod irq_domain;
 pub mod liointc;
+pub mod mmc;
 mod machine;
 pub mod topology;
 
@@ -31,6 +32,22 @@ pub fn init_after_boot() -> DriverResult<()> {
                        .len(),
                topology.mmc_hosts
                        .len());
+    for host in &topology.mmc_hosts {
+        let plan = mmc::plan(host).map_err(|error| {
+                                      log::error!("[driver-ls2k][mmc] invalid deferred plan: {:?}",
+                                                  error);
+                                      DriverError::InvalidDtb
+                                  })?;
+        log::warn!("[driver-ls2k][mmc] deferred controller={:#x}/{:#x} \
+                    auxiliary={:#x}/{:#x} bus_width={} blockers={:?}; \
+                    hardware activation=UNVERIFIED_ON_HARDWARE",
+                   plan.controller_mmio.base,
+                   plan.controller_mmio.size,
+                   plan.auxiliary_mmio.base,
+                   plan.auxiliary_mmio.size,
+                   plan.bus_width,
+                   plan.blockers);
+    }
     *TOPOLOGY.lock() = Some(topology);
     log::warn!("[driver-ls2k] resources discovered but hardware activation is \
                 UNVERIFIED_ON_HARDWARE");

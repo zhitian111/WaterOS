@@ -1068,3 +1068,45 @@ python3 scripts/remote_debug_qemu_smoke.py \
 ### 提交
 
 - `[ref] extract shared DesignWare MMC core`
+
+## 2026-08-10：批次 25——2K1000LA 共享 SD 核心与延迟激活计划
+
+### 任务与设计
+
+1. 将共享 DesignWare MMC/SD crate 合入 2K1000LA 分支。
+2. 核对 Loongson MMC DTB 窗口是否能直接满足共享寄存器后端。
+3. 建立只验证资源、不触碰硬件的 deferred bring-up plan。
+4. 将寄存器布局、clock、FIFO、供电和 card-detect 缺口编码为显式 blocker。
+5. 用合成资源、真实 DTS fixture、共享测试和 LoongArch64 交叉编译验证。
+
+审计发现主窗口仅 `0x68`，另有独立 auxiliary window；共享 `MmioRegisters` 则按控制器版本在偏移 `0x100/0x200` 访问 FIFO。因此当前只能确认共享 SD 协议可复用，不能确认 DesignWare 主机寄存器布局可直接复用。
+
+### 完成内容
+
+- [x] 2K1000LA 分支合入并依赖 `wateros-driver-block-impl-dw-mmc`。
+- [x] 新增 `mmc::BringUpPlan`，保存 controller/auxiliary 两段 MMIO 与 bus width。
+- [x] 主窗口小于 `0x68`、缺 auxiliary window 或缺 clock 时在任何 MMIO 操作前拒绝。
+- [x] 显式列出 split layout、输入时钟、clock control、FIFO depth、供电和 card-detect 六类 blocker。
+- [x] `can_activate()` 固定返回 false，代码注释禁止在布局确认前构造真实 `DwMmc`。
+- [x] 启动路径只生成并打印 deferred plan，不读取或写入 MMC 寄存器。
+- [x] 真实 DTS fixture 断言 plan 保持禁用且含 split-layout blocker。
+
+### 验证证据
+
+- 共享 MMC/SD 核心 12 项 host 单测全部通过。
+- 2K1000LA driver 11 项 host 单测全部通过，其中 2 项覆盖 deferred plan 的保留/拒绝行为。
+- `tests/verify_topology.sh` 全部通过：真实形态 fixture、non-removable 与 4 个畸形 DTB 场景继续验证。
+- `cargo check -p wateros-driver-impl-loongson2k1000la --target loongarch64-unknown-none` 通过。
+- 所有 DTB 都在 `mktemp` 小目录生成并由 trap 清理，没有创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] **共享 SD 状态机可复用不等于共享 DesignWare 寄存器后端可用；当前激活被代码强制禁止。**
+- [ ] auxiliary `0x1fe00438` 的 FIFO/控制语义和主窗口寄存器布局需查厂商手册并用真机安全读取确认。
+- [ ] APB clock 实际频率、enable/reset 顺序、FIFO depth、GPIO22 电平、regulator 与 pinmux 均未知。
+- [ ] 尚未实现 2K1000LA split-window `RegisterIo`；确认映射后应先用 mock 后端覆盖 offset routing，再进行只读 PIO bring-up。
+- [ ] DMA channel 0、IRQ 完成、cache 一致性、写入和多块传输继续禁用。
+
+### 提交
+
+- `[feat] plan deferred 2K1000LA MMC bring-up`
