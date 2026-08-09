@@ -360,6 +360,53 @@ codegraph explore "another_ext4 Ext4::load read_inode inode_disk_pos read_block_
   ext4 几何字段，除非先用调用级计时证明锁等待占比。
 - 完整日志：`/tmp/wateros-fs03a-after-rv.log`（本机临时文件，不提交）。
 
+## COPY-02B：仅在调度状态变更点发布当前地址空间
+
+状态：完整测试退化并回退（2026-08-10）
+
+### COPY-02A 失败修正
+
+CodeGraph 确认所有实际任务切换均通过 `MultiClassScheduler::set_current_task`，它在
+`__switch` 前更新 `CPUState.current_aspace`；idle 任务也走同一入口。exec 则在
+`execve_current` 内单独更新当前 CPU 的 aspace。COPY-02A 把原子发布放在通用
+`with_scheduler` 尾部，导致每一次 scheduler 查询/操作都执行 Release store，热点快照
+查询本身因此持续写共享 cache line，可能造成严重伪共享，而非必要的状态同步。
+
+### 设计
+
+1. 保留 per-CPU `CURRENT_ASPACE_PTRS`，但只由 `set_current_task` 和 exec 的实际 aspace
+   变更点调用发布函数；不在通用 `with_scheduler` 尾部写入。
+2. 发布发生在 `__switch` 前，首次任务、普通切换、block/exit 后选择 idle 均覆盖；exec
+   在替换 `CPUState` 后立即发布。
+3. 查询关闭本地中断后 Acquire load CPU-local 槽，不再构造 `TaskSnapshot`。
+4. 不改变 SATP、enter/leave 通知、迁移和调度策略。若短启动或完整测试异常立即回退。
+
+恢复上下文命令：
+
+```bash
+codegraph explore "MultiClassScheduler::set_current_task execve_current CPUState::set_current_task current_aspace switch_and_unlock __switch all callers and ordering"
+```
+
+### 验收
+
+- 短快照启动能够进入并持续执行 BuildStorm，无 EFAULT/panic。
+- 双架构 Final check/build 通过。
+- 完整 RISC-V BuildStorm 明确优于 900.64 s，否则回退。
+
+### 验证结果与结论
+
+- 180 s RISC-V `-snapshot` smoke：通过 toolchain/minibuild 并进入正式 BuildStorm 编译，
+  无 EFAULT/panic。
+- 双架构 Final check/build：通过。
+- RISC-V 16 GiB/8 vCPU、`-snapshot` 完整 BuildStorm：`ok=true`，908.65 s；无
+  panic/SIGSEGV，完整结束。
+- 相对 900.64 s 对照增加 8.01 s（0.89%）；代码全部回退。
+- 结论：仅在真实状态变更点发布修复了 COPY-02A 的超时，但 per-CPU Release/Acquire、
+  单独查询函数和中断守卫的净成本仍未转化为墙钟收益。连续两种 aspace 镜像方案均失败，
+  后续停止该方向，优先优化用户复制内部页表遍历或减少上层复制次数。
+- smoke 日志：`/tmp/wateros-copy02b-smoke-rv.log`；完整日志：
+  `/tmp/wateros-copy02b-after-rv.log`（本机临时文件，不提交）。
+
 ## COPY-01A：RISC-V 对齐 memcpy 64 字节展开
 
 状态：完整测试显著退化并回退（2026-08-10）
