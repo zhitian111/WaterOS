@@ -4,6 +4,9 @@
 //! or MMIO. A future executor must supply DMA-capable physical memory and the
 //! architecture-specific cache operations before using a plan on hardware.
 use crate::topology::DmaControllerDescription;
+use crate::dma_memory::DmaAllocationError;
+#[cfg(target_arch = "loongarch64")]
+use crate::dma_memory::OwnedDmaBuffer;
 use alloc::vec::Vec;
 use api_v0::{DriverError, DriverResult,
              dma::{DmaCoherency, DmaDirection, DmaMapping}};
@@ -109,6 +112,100 @@ pub struct TransferPlan {
 
 #[derive(Debug)]
 pub struct PreparedTransfer(TransferPlan);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceError {
+    Allocation(DmaAllocationError),
+    InvalidPlan(PlanError),
+    Driver(DriverError),
+}
+
+impl From<DmaAllocationError> for ResourceError {
+    fn from(error : DmaAllocationError) -> Self { Self::Allocation(error) }
+}
+
+impl From<PlanError> for ResourceError {
+    fn from(error : PlanError) -> Self { Self::InvalidPlan(error) }
+}
+
+impl From<DriverError> for ResourceError {
+    fn from(error : DriverError) -> Self { Self::Driver(error) }
+}
+
+/// Descriptor and payload allocations whose lifetime covers one APBDMA transfer.
+#[cfg(target_arch = "loongarch64")]
+pub struct OwnedTransferResources<D, P> {
+    plan : TransferPlan,
+    descriptor : OwnedDmaBuffer<D>,
+    payload : OwnedDmaBuffer<P>,
+}
+
+#[cfg(target_arch = "loongarch64")]
+impl<D : DmaCoherency, P : DmaCoherency> OwnedTransferResources<D, P> {
+    /// Allocate real contiguous RAM and encode its physical addresses into the
+    /// descriptor. Supplying a production coherency backend remains mandatory.
+    pub fn allocate(apb_address : u64,
+                    byte_length : usize,
+                    burst_words : u32,
+                    direction : Direction,
+                    device_address_bits : u8,
+                    descriptor_coherency : D,
+                    payload_coherency : P)
+                    -> Result<Self, ResourceError> {
+        let mut descriptor = OwnedDmaBuffer::allocate_zeroed(
+            core::mem::size_of::<HardwareDescriptor>(),
+            32,
+            device_address_bits,
+            DmaDirection::ToDevice,
+            descriptor_coherency)?;
+        let payload = OwnedDmaBuffer::allocate_zeroed(byte_length,
+                                                      4,
+                                                      device_address_bits,
+                                                      dma_direction(direction),
+                                                      payload_coherency)?;
+        let descriptor_region = descriptor.region()?;
+        let payload_region = payload.region()?;
+        let plan = build_transfer(descriptor_region.physical_address(),
+                                  payload_region.physical_address(),
+                                  apb_address,
+                                  byte_length,
+                                  burst_words,
+                                  direction)?;
+        let descriptor_bytes = unsafe {
+            core::slice::from_raw_parts(
+                (&plan.descriptor as *const HardwareDescriptor).cast::<u8>(),
+                core::mem::size_of::<HardwareDescriptor>())
+        };
+        descriptor.cpu_bytes_mut()?.copy_from_slice(descriptor_bytes);
+        Ok(Self { plan, descriptor, payload })
+    }
+
+    pub const fn plan(&self) -> TransferPlan { self.plan }
+
+    pub fn payload_bytes(&self) -> DriverResult<&[u8]> { self.payload.cpu_bytes() }
+
+    pub fn payload_bytes_mut(&mut self) -> DriverResult<&mut [u8]> {
+        self.payload.cpu_bytes_mut()
+    }
+
+    pub fn prepare(&mut self) -> DriverResult<PreparedTransfer> {
+        prepare_transfer(self.plan,
+                         self.descriptor.mapping_mut(),
+                         self.payload.mapping_mut())
+    }
+
+    pub fn cancel(&mut self, prepared : PreparedTransfer) -> DriverResult<()> {
+        cancel_prepared(prepared,
+                        self.descriptor.mapping_mut(),
+                        self.payload.mapping_mut())
+    }
+
+    pub fn finish(&mut self, completion : Completion) -> DriverResult<()> {
+        finish_transfer(completion,
+                        self.descriptor.mapping_mut(),
+                        self.payload.mapping_mut())
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutorError {

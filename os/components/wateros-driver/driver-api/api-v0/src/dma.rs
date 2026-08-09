@@ -77,6 +77,12 @@ pub struct DmaMapping<C> {
     coherency : C,
 }
 
+impl<C> DmaMapping<C> {
+    /// Whether CPU ownership has been restored and the backing allocation may
+    /// be safely accessed or released.
+    pub const fn is_cpu_owned(&self) -> bool { matches!(self.owner, Owner::Cpu) }
+}
+
 impl<C : DmaCoherency> DmaMapping<C> {
     pub fn new(region : DmaRegion, direction : DmaDirection, coherency : C) -> Self {
         Self { region, direction, owner : Owner::Cpu, coherency }
@@ -155,9 +161,11 @@ mod tests {
                                           MockCoherency::default());
         assert_eq!(mapping.complete_from_device(), Err(DriverError::InvalidParam));
         assert_eq!(mapping.prepare_for_device(), Ok(region));
+        assert!(!mapping.is_cpu_owned());
         assert_eq!(mapping.cpu_region(), Err(DriverError::InvalidParam));
         assert_eq!(mapping.prepare_for_device(), Err(DriverError::InvalidParam));
         assert_eq!(mapping.complete_from_device(), Ok(region));
+        assert!(mapping.is_cpu_owned());
         let (_, backend) = mapping.into_parts().unwrap();
         assert_eq!(backend.events,
                    [Event::Device(DmaDirection::FromDevice),

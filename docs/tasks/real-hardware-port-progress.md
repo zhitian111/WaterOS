@@ -1383,3 +1383,63 @@ descriptor 与 payload 分别拥有 mapping；plan 只是期望值，不能替�
 ### 提交
 
 - `[feat] allocate owned contiguous physical frames`
+
+## 2026-08-10：批次 32——2K1000LA owned APBDMA resources
+
+### 任务与设计
+
+1. 将公共连续物理帧提交同步到 Loongson 2K1000LA 平台分支。
+2. 用 owned allocation 替代 APBDMA 调用方手工拼装的 VA/PA mapping 元数据。
+3. descriptor 与 payload 分别持有连续 RAM、精确 DMA region 和 coherency ownership。
+4. descriptor 必须写入其真实 DMA allocation，再经过 sync 后才能产生 prepared token。
+5. device ownership 下禁止 CPU 字节借用；错误析构不得回收仍可能被硬件访问的物理页。
+
+`OwnedDmaBuffer<C>` 同时持有 `OwnedPhysFrameSpan` 和 `DmaMapping<C>`。当前 2K1000LA
+内核采用 RAM 恒等映射，因此 region 的 VA/PA 数值相同，但构造仍分别填写两个字段，且
+必须通过设备地址宽度检查。`OwnedTransferResources<D, P>` 自动从实际 descriptor/payload
+PA 构建 APBDMA plan，并将 48-byte hardware descriptor 写入 owned descriptor 区域。
+真实 cache backend 仍由调用方注入，本批不提供未经验证的空实现。
+
+若资源在 device ownership 下被错误析构，安全兜底会记录错误并保留物理区间，而不是
+把可能仍在 DMA 的页交回分配器。正常 IRQ completion 或确认 stop 后恢复 CPU ownership，
+仍会按 RAII 正常回收。这一泄漏仅保护错误路径，后续应以 typestate running-transfer API
+从类型层禁止该误用。
+
+### 完成内容
+
+- [x] Loongson 分支合入批次 31 的连续帧 API、stack 实现和 `OwnedPhysFrameSpan`。
+- [x] 新增 `dma_memory` 模块和 target-specific frame allocator 依赖，host 测试不拉入 ISA backend。
+- [x] `allocation_layout` 将任意正字节长度向上取整为物理页数，并保留大于页的 2 次幂对齐。
+- [x] `OwnedDmaBuffer::allocate_zeroed` 创建真实连续 allocation、精确 byte-prefix region 和 mapping。
+- [x] CPU byte slice 访问先验证 mapping 归 CPU，device ownership 时返回错误。
+- [x] 公共 `DmaMapping::is_cpu_owned` 提供只读释放安全判断，并补充 ownership 转换断言。
+- [x] device-owned buffer 的 Drop 不回收物理页，避免 DMA use-after-free，并记录 `UNVERIFIED_ON_HARDWARE` 错误。
+- [x] `OwnedTransferResources::allocate` 自动分配 descriptor/payload、编码真实 PA 并写入 descriptor。
+- [x] resources 封装 prepare/cancel/finish，复用既有 cache sync、失败回滚和 IRQ/stop ownership 流程。
+- [x] descriptor 使用 32-byte 对齐/`ToDevice`；payload 使用 4-byte 对齐及与传输方向匹配的 mapping。
+
+### 验证证据
+
+- `wateros-driver-api-v0`：3 项 host 单测全部通过。
+- 2K1000LA driver：23 项 host 单测全部通过（本批新增 3 项）。
+- 新测试覆盖页数向上取整、大于页的对齐、零长度、非 2 次幂、算术溢出和 32-bit DMA 地址越界。
+- 既有 mock 测试继续覆盖 descriptor/payload ownership 顺序、sync 失败回滚、IRQ completion 和 stop。
+- `cargo check -p wateros-driver-impl-loongson2k1000la --target loongarch64-unknown-none` 通过，实际编译 owned 生产路径。
+- `tests/verify_topology.sh` 全部通过；truncated DMA fixture 的 dtc warning 属于预期畸形输入。
+- `make kernel-la` QEMU LoongArch64 release 回归构建通过；仅有仓库既有 warning。
+- `git diff --check` 通过；未创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：尚未验证 2K1000LA 可分配 RAM 的完整恒等映射、cache line 大小和 DMA snoop 行为。
+- [ ] 尚无生产 `DmaCoherency` backend，因此真实 APBDMA 路径仍不能构造可安全使用的 resources。
+- [ ] owned resources 尚未接入 volatile order-register backend、IRQ13 dispatch、descriptor status/error 检查或 MMC data command。
+- [ ] device-owned Drop 的保留策略避免 use-after-free，但会永久泄漏该区间；应以持有 executor/resource 的 typestate running token 替代。
+- [ ] descriptor 的 native-endian 内存布局、48-byte 大小和 APBDMA 实际 fetch 行为仍需真机核对。
+- [ ] APBDMA 的实际 DMA address width 尚未从 DTB/平台 capability 推导，当前由未来调用方显式传入。
+- [ ] payload 只支持单个物理连续区间，尚无 scatter-gather、bounce buffer 或 IOMMU mapping。
+- [ ] 下一批优先实现不会伪造 cache coherency 的 LoongArch cache/barrier capability 探测，或先完成 typestate executor ownership。
+
+### 提交
+
+- `[feat] own 2K1000 APBDMA transfer memory`

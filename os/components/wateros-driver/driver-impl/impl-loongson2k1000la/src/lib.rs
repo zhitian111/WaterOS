@@ -12,6 +12,7 @@ pub mod irq_domain;
 pub mod liointc;
 pub mod mmc;
 pub mod apbdma;
+pub mod dma_memory;
 mod machine;
 pub mod topology;
 
