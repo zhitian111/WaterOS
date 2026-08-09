@@ -10,6 +10,30 @@ use crate::time::ArchTimeResult;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ArchInterruptState(pub usize);
 
+/// CPU-local external interrupt input lines.
+///
+/// Each bit identifies one architecture-defined parent input.  LoongArch maps
+/// bits 0..=7 to HWI0..=7; architectures without independently controllable
+/// parent inputs return `Unsupported`.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ArchExternalInterruptLines(pub u8);
+
+/// CPU-local external interrupt parent-line control.
+pub trait ArchExternalInterruptControl {
+    /// Enable the selected external parent inputs without changing other
+    /// interrupt-enable state.
+    fn enable_external_interrupt_lines(
+        lines: ArchExternalInterruptLines,
+    ) -> ArchTimeResult<()>;
+
+    /// Disable the selected external parent inputs without changing other
+    /// interrupt-enable state.
+    fn disable_external_interrupt_lines(
+        lines: ArchExternalInterruptLines,
+    ) -> ArchTimeResult<()>;
+}
+
 /// 架构层时钟中断开关原语：
 /// - 只负责中断位的开/关
 /// - 不负责编程下一次 timer deadline（该职责在 firmware/platform 层）

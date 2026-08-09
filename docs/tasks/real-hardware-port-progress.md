@@ -2400,3 +2400,49 @@ MMC policy 为 AckOnly，只允许使用 W1C adapter 做中断确认，不代表
 ### 提交
 
 - `[ref] apply 2K1000 IRQ plans safely`
+
+## 2026-08-10：批次 53——LoongArch CPU HWI parent-line control
+
+### 任务与设计
+
+在 arch-api 新增 CPU-local external interrupt line 契约。LoongArch 将抽象 bit0–bit7
+映射为 ECFG.LIE 的 HWI0–HWI7（bit2–bit9）；RISC-V 明确返回 Unsupported。CSR read-modify-write
+复用一个纯 `update_external_interrupt_lines()` 模型，使 timer bit11、IPI bit12、VS 等其余字段
+的保持性可以在无板环境静态验证。
+
+2K1000 驱动新增惰性的 `LoongArchCpuParentActivator`，只在调用 trait 时访问当前 CPU ECFG；
+生产 `init_after_boot()` 不构造、不调用该适配器，SafeDefault 行为保持零 CSR/零 MMIO 写。
+
+### 完成内容
+
+- [x] 新增 `ArchExternalInterruptLines` 与 `ArchExternalInterruptControl` 公共契约。
+- [x] platform-arch aggregate 暴露 enable/disable external line 调用。
+- [x] LoongArch 实现 HWI0–HWI7 到 ECFG bit2–bit9 的 enable/disable。
+- [x] 纯寄存器模型覆盖 HWI0/HWI7 边界，并断言 timer、IPI、VS/其他位保持不变。
+- [x] RISC-V 实现显式返回 Unsupported，不伪造按线控制能力。
+- [x] 新增 2K1000 `CpuParentActivator` target backend；host fallback 返回 Unsupported。
+- [x] 适配器与 CSR 写均标记 `UNVERIFIED_ON_HARDWARE`，未接入生产初始化。
+
+### 验证证据
+
+- 2K1000 驱动 `cargo test`：67 项 host 单测全部通过。
+- arch-api host test/doc-test 通过；LoongArch 纯模型同时由编译期断言校验。
+- `make kernel-la` 通过；仅有仓库既有 warning。
+- 2K1000 精确 feature check：`cargo check --no-default-features --features
+  loongson2k1000la,heap-tlsf,final_online --target loongarch64-unknown-none` 通过。
+- 直接使用默认 feature 做 LoongArch check 会把 `sbi-rt` 带入并报 RISC-V 寄存器错误；这是配置选择问题，
+  改为上述 2K1000 精确 feature 后通过。
+- topology/畸形 DTS fixtures 与 `git diff --check` 通过；未创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：ECFG.LIE bit2–bit9 映射和 CSR read-modify-write 尚未在 2K1000 实测。
+- [ ] 当前适配器只启用当前 CPU 的 HWI，SMP per-core 初始化与 affinity 尚未实现。
+- [ ] `CpuParentActivator` 只提供 enable；Live 回滚或 shutdown 所需 disable 流程尚未接入 runtime typestate。
+- [ ] production init 仍不 assemble/apply/activate runtime，因此不会意外打开父中断线。
+- [ ] 下一批应增加可回滚的 parent activation transaction：启用失败或后续发布失败时关闭本次新增 HWI，
+  并用 mock 验证原先已启用的 HWI 不被误关；仍只供显式诊断入口使用。
+
+### 提交
+
+- `[ref] add LoongArch external IRQ line control`

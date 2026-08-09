@@ -137,7 +137,7 @@ pub mod ipi {
 /// 或 SBI `set_timer` 的编程。
 #[cfg(feature = "api-v0")]
 pub mod interrupt {
-    pub use api_v0::interrupt::ArchTimerInterruptControl;
+    pub use api_v0::interrupt::{ArchExternalInterruptControl, ArchTimerInterruptControl};
     pub use api_v0::time::ArchTimeResult;
 
     #[cfg(feature = "impl-loongarch64")]
@@ -145,7 +145,18 @@ pub mod interrupt {
     #[cfg(feature = "impl-riscv64")]
     pub use impl_riscv64::interrupt::Riscv64ArchInterrupt as ArchInterruptImpl;
 
-    pub use api_v0::interrupt::ArchInterruptState;
+    pub use api_v0::interrupt::{ArchExternalInterruptLines, ArchInterruptState};
+
+    #[inline]
+    pub fn enable_external_interrupt_lines(lines : ArchExternalInterruptLines) -> ArchTimeResult<()> {
+        ArchInterruptImpl::enable_external_interrupt_lines(lines)
+    }
+
+    #[inline]
+    pub fn disable_external_interrupt_lines(lines : ArchExternalInterruptLines)
+        -> ArchTimeResult<()> {
+        ArchInterruptImpl::disable_external_interrupt_lines(lines)
+    }
 
     #[inline]
     pub fn enable_timer_interrupt() -> ArchTimeResult<()> {

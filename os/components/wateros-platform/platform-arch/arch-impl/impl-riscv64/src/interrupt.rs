@@ -2,8 +2,11 @@
 //!
 //! 与 **平台 deadline timer**（`mtime` / `set_timer`）解耦；后者在 `platform-impl` 组合。
 
-use api_v0::interrupt::{ArchInterruptState, ArchTimerInterruptControl};
-use api_v0::time::ArchTimeResult;
+use api_v0::interrupt::{
+    ArchExternalInterruptControl, ArchExternalInterruptLines, ArchInterruptState,
+    ArchTimerInterruptControl,
+};
+use api_v0::time::{ArchTimeError, ArchTimeResult};
 use core::arch::asm;
 use riscv::register::{sie, sstatus};
 
@@ -12,6 +15,16 @@ use riscv::register::{sie, sstatus};
 /// PLATFORM_BOUNDARY: 所有方法只修改本 hart 的 CSR；timer deadline 由 platform
 /// profile 编程，IPI 的 reason 与调度动作不属于本实现。
 pub struct Riscv64ArchInterrupt;
+
+impl ArchExternalInterruptControl for Riscv64ArchInterrupt {
+    fn enable_external_interrupt_lines(_lines: ArchExternalInterruptLines) -> ArchTimeResult<()> {
+        Err(ArchTimeError::Unsupported)
+    }
+
+    fn disable_external_interrupt_lines(_lines: ArchExternalInterruptLines) -> ArchTimeResult<()> {
+        Err(ArchTimeError::Unsupported)
+    }
+}
 
 impl ArchTimerInterruptControl for Riscv64ArchInterrupt {
     #[inline]

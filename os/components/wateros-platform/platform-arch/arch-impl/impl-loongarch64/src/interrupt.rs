@@ -1,7 +1,10 @@
 //! LoongArch64 **中断开关**：`CRMD.IE` 为全局中断，`ECFG` 中定时器使能位与手册一致；
 //! **不**编程 StableCounter deadline（见 `platform::timer`）。
 
-use api_v0::interrupt::{ArchInterruptState, ArchTimerInterruptControl};
+use api_v0::interrupt::{
+    ArchExternalInterruptControl, ArchExternalInterruptLines, ArchInterruptState,
+    ArchTimerInterruptControl,
+};
 use api_v0::time::ArchTimeResult;
 use core::arch::asm;
 
@@ -15,6 +18,8 @@ const CRMD_IE: usize = 1 << 2;
 const ECFG_TIMER_INTERRUPT_ENABLE: usize = 1 << 11;
 /// `ECFG.IS.IPI`：LoongArch IPI 中断使能位。
 const ECFG_IPI_INTERRUPT_ENABLE: usize = 1 << 12;
+/// `ECFG.LIE[9:2]`: HWI0..HWI7 local enable bits.
+const ECFG_HWI_SHIFT: usize = 2;
 /// LoongArch IOCSR IPI pending/clear 寄存器。
 const IOCSR_IPI_STATUS: usize = 0x1000;
 const IOCSR_IPI_CLEAR: usize = 0x100C;
@@ -24,6 +29,20 @@ const IOCSR_IPI_CLEAR: usize = 0x100C;
 /// PLATFORM_BOUNDARY: 这些操作只影响当前 CPU 的 CRMD/ECFG/IOCSR 状态；IPI transport
 /// 的目标选择和 mailbox 参数仍由 QEMU platform profile 维护。
 pub struct LoongArch64ArchInterrupt;
+
+/// Apply a HWI line update to a saved ECFG value.
+///
+/// This pure model is kept separate from the CSR write so preservation of the
+/// timer, IPI and exception-vector fields can be checked without hardware.
+pub const fn update_external_interrupt_lines(
+    ecfg: usize,
+    enable: ArchExternalInterruptLines,
+    disable: ArchExternalInterruptLines,
+) -> usize {
+    let enable_mask = (enable.0 as usize) << ECFG_HWI_SHIFT;
+    let disable_mask = (disable.0 as usize) << ECFG_HWI_SHIFT;
+    (ecfg | enable_mask) & !disable_mask
+}
 
 #[inline]
 fn read_csr<const CSR: usize>() -> usize {
@@ -108,6 +127,48 @@ impl ArchTimerInterruptControl for LoongArch64ArchInterrupt {
         }
     }
 }
+
+impl ArchExternalInterruptControl for LoongArch64ArchInterrupt {
+    #[inline]
+    fn enable_external_interrupt_lines(lines: ArchExternalInterruptLines) -> ArchTimeResult<()> {
+        // UNVERIFIED_ON_HARDWARE: CSR mapping follows the LoongArch ECFG.LIE
+        // definition; actual 2K1000 interrupt delivery still requires a board.
+        let current = read_csr::<CSR_ECFG>();
+        write_csr::<CSR_ECFG>(update_external_interrupt_lines(
+            current,
+            lines,
+            ArchExternalInterruptLines(0),
+        ));
+        Ok(())
+    }
+
+    #[inline]
+    fn disable_external_interrupt_lines(lines: ArchExternalInterruptLines) -> ArchTimeResult<()> {
+        let current = read_csr::<CSR_ECFG>();
+        write_csr::<CSR_ECFG>(update_external_interrupt_lines(
+            current,
+            ArchExternalInterruptLines(0),
+            lines,
+        ));
+        Ok(())
+    }
+}
+
+const _: () = {
+    let preserved = ECFG_TIMER_INTERRUPT_ENABLE | ECFG_IPI_INTERRUPT_ENABLE | (5 << 16);
+    let enabled = update_external_interrupt_lines(
+        preserved,
+        ArchExternalInterruptLines(0b1000_0001),
+        ArchExternalInterruptLines(0),
+    );
+    assert!(enabled == preserved | (1 << 2) | (1 << 9));
+    let disabled = update_external_interrupt_lines(
+        enabled,
+        ArchExternalInterruptLines(0),
+        ArchExternalInterruptLines(0b0000_0001),
+    );
+    assert!(disabled == preserved | (1 << 9));
+};
 
 /// 清除当前 CPU 的 LoongArch IOCSR IPI pending 位。
 ///
