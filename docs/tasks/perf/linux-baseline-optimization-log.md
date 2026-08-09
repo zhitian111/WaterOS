@@ -407,6 +407,63 @@ codegraph explore "MultiClassScheduler::set_current_task execve_current CPUState
 - smoke 日志：`/tmp/wateros-copy02b-smoke-rv.log`；完整日志：
   `/tmp/wateros-copy02b-after-rv.log`（本机临时文件，不提交）。
 
+## COPY-03A：用户路径按页批量复制并扫描 NUL
+
+状态：完整测试超时并停止（2026-08-10）
+
+### 证据与调用链
+
+`copy_user_path_cstr` 被 38 个 syscall 路径调用。它只捕获一次 aspace handle，但当前按
+单字节循环调用用户复制：
+
+```text
+copy_user_path_cstr
+  -> for each byte
+     -> ActiveUserMemoryOps::copy_from_user([u8; 1])
+        -> with_user_aspace_mut
+        -> translate_addr_with_perm（三级页表 walk）
+        -> permission check
+        -> memcpy 1 byte
+```
+
+当前 pc-hot 中 `copy_user_path_cstr` 聚合约 88,973,767 条指令；普通构建路径通常几十到
+数百字节且落在同一用户页，页表遍历次数可降低一个数量级。
+
+### 设计
+
+1. 每轮计算当前用户地址到页末的长度，批量复制 `min(page_room, max-len)` 字节到已分配
+   的目标 `Vec`。
+2. 只在已验证的单个用户页内预取，然后在复制结果中搜索 NUL；命中立即 truncate。
+3. 不跨页预取，保证 NUL 位于页尾前时不会因后一页未映射而错误返回 EFAULT；每个新页
+   仍执行 fault、U/R 权限检查。
+4. 用 `checked_add` 处理地址溢出；保留 `ENAMETOOLONG`、UTF-8 和空字符串语义。
+5. 不缓存 VA→PA 翻译，不需要页表失效或 aspace 生命周期基础设施。
+
+恢复上下文命令：
+
+```bash
+codegraph explore "copy_user_path_cstr ActiveUserMemoryOps::copy_from_user user_copy copy_from_user_in_aspace translate_addr_with_perm all callers exact source and C string fault semantics"
+```
+
+### 验收
+
+- 单元/内核用户复制测试覆盖同页、跨页、NUL 后未映射页、无 NUL 和地址溢出。
+- 双架构 Final check/build 通过。
+- 完整 RISC-V BuildStorm 明确优于 900.64 s，否则回退。
+
+### 验证结果与结论
+
+- 双架构 Final check/build：通过；180 s snapshot smoke 通过 toolchain/minibuild 并进入
+  正式编译，无 EFAULT/panic。
+- 完整 RISC-V BuildStorm 在 1800 s 上限超时，未到达 `BUILDSTORM_COMPILE`，无
+  panic/SIGSEGV。
+- 根因：普通路径通常仅几十字节，但按页方案会从起始地址复制最多近 4 KiB，再扫描
+  NUL；减少页表 walk 的收益远小于过量 memcpy/memchr，导致灾难性退化。
+- 页级批量方案停止，不提交。下一实验限制为 64-byte 且不跨页的小窗口，使短路径只
+  产生有限过读，同时仍把页表 walk 从逐字节降到每 64 bytes 一次。
+- smoke 日志：`/tmp/wateros-copy03a-smoke-rv.log`；超时日志：
+  `/tmp/wateros-copy03a-after-rv.log`（本机临时文件，不提交）。
+
 ## COPY-01A：RISC-V 对齐 memcpy 64 字节展开
 
 状态：完整测试显著退化并回退（2026-08-10）
