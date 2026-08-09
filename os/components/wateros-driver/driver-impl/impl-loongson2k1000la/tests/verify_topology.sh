@@ -26,6 +26,16 @@ sed 's/cd-gpios = <&gpio0 22 1>;/non-removable;/' \
     > "$tmp_dir/non-removable.dts"
 dtc -I dts -O dtb -o "$tmp_dir/non-removable.dtb" \
     "$tmp_dir/non-removable.dts"
+sed '/clocks = <&clk 0>;/ { x; /apbdma/ { x; d; }; x; }; /apbdma1:/ { h; }' \
+    "$crate_dir/tests/fixtures/loongson2k1000la-topology.dts" \
+    > "$tmp_dir/missing-dma-clock.dts"
+dtc -I dts -O dtb -o "$tmp_dir/missing-dma-clock.dtb" \
+    "$tmp_dir/missing-dma-clock.dts"
+sed '/dma-controller@1fe00c10/,/#dma-cells/ s/0x0 0x8/0x0 0x4/' \
+    "$crate_dir/tests/fixtures/loongson2k1000la-topology.dts" \
+    > "$tmp_dir/short-dma-mmio.dts"
+dtc -I dts -O dtb -o "$tmp_dir/short-dma-mmio.dtb" \
+    "$tmp_dir/short-dma-mmio.dts"
 
 cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
     --example verify_topology -- valid "$tmp_dir/valid.dtb"
@@ -39,3 +49,7 @@ cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
     --example verify_topology -- invalid "$tmp_dir/truncated-dma.dtb"
 cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
     --example verify_topology -- non-removable "$tmp_dir/non-removable.dtb"
+cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
+    --example verify_topology -- invalid "$tmp_dir/missing-dma-clock.dtb"
+cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
+    --example verify_topology -- invalid "$tmp_dir/short-dma-mmio.dtb"

@@ -27,9 +27,11 @@ pub use machine::machine;
 pub fn init_after_boot() -> DriverResult<()> {
     let fdt = common::dtb::read_fdt(platform::dtb_pa())?;
     let topology = topology::discover(&fdt)?;
-    log::info!("[driver-ls2k] topology: uart={} liointc={} mmc={}",
+    log::info!("[driver-ls2k] topology: uart={} liointc={} dma={} mmc={}",
                topology.uarts.len(),
                topology.interrupt_controllers
+                       .len(),
+               topology.dma_controllers
                        .len(),
                topology.mmc_hosts
                        .len());

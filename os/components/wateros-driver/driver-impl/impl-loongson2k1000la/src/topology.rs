@@ -45,6 +45,15 @@ pub struct MmcDescription {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DmaControllerDescription {
+    pub phandle : u32,
+    pub mmio : MmioRegion,
+    pub interrupt : InterruptSpec,
+    pub clock : NamedResource,
+    pub channel_cells : u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResourceSpecifier {
     pub provider_phandle : u32,
     pub args : Vec<u32>,
@@ -69,6 +78,7 @@ pub struct BoardTopology {
     pub uarts : Vec<UartDescription>,
     pub interrupt_controllers : Vec<InterruptControllerDescription>,
     pub mmc_hosts : Vec<MmcDescription>,
+    pub dma_controllers : Vec<DmaControllerDescription>,
 }
 
 fn property_u32(node : fdt::node::FdtNode<'_, '_>, name : &str) -> Option<u32> {
@@ -379,7 +389,8 @@ fn mmc_card_detect(fdt : &fdt::Fdt<'_>,
 pub fn discover(fdt : &fdt::Fdt<'_>) -> DriverResult<BoardTopology> {
     let mut topology = BoardTopology { uarts : Vec::new(),
                                        interrupt_controllers : Vec::new(),
-                                       mmc_hosts : Vec::new() };
+                                       mmc_hosts : Vec::new(),
+                                       dma_controllers : Vec::new() };
     for node in fdt.all_nodes() {
         if !enabled(node)? {
             continue;
@@ -423,6 +434,28 @@ pub fn discover(fdt : &fdt::Fdt<'_>) -> DriverResult<BoardTopology> {
                                                                              as u8,
                                                            parent_interrupts,
                                                            parent_source_maps });
+        } else if has_compatible(node, "loongson,ls2k1000-apbdma") {
+            let regs = regions(node)?;
+            if regs.len() != 1 || regs[0].size != 8 {
+                return Err(DriverError::InvalidDtb);
+            }
+            let clocks = named_resources(fdt,
+                                         node,
+                                         "clocks",
+                                         "clock-names",
+                                         "#clock-cells",
+                                         false)?;
+            if clocks.len() != 1 || property_u32(node, "#dma-cells") != Some(1) {
+                return Err(DriverError::InvalidDtb);
+            }
+            topology.dma_controllers
+                    .push(DmaControllerDescription {
+                        phandle : phandle(node).ok_or(DriverError::InvalidDtb)?,
+                        mmio : regs[0],
+                        interrupt : interrupt(node)?,
+                        clock : clocks.into_iter().next().ok_or(DriverError::InvalidDtb)?,
+                        channel_cells : 1,
+                    });
         } else if has_compatible(node, "ns16550a") {
             let regs = regions(node)?;
             if regs.len() != 1 {
@@ -492,6 +525,8 @@ pub fn discover(fdt : &fdt::Fdt<'_>) -> DriverResult<BoardTopology> {
     if topology.uarts
                .is_empty() ||
        topology.interrupt_controllers
+               .is_empty() ||
+       topology.dma_controllers
                .is_empty() ||
        topology.mmc_hosts
                .is_empty()

@@ -20,6 +20,9 @@
     apbdma1: dma-controller@1fe00c10 {
         compatible = "loongson,ls2k1000-apbdma";
         reg = <0x0 0x1fe00c10 0x0 0x8>;
+        interrupt-parent = <&liointc1>;
+        interrupts = <13 4>;
+        clocks = <&clk 0>;
         #dma-cells = <1>;
     };
 

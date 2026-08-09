@@ -20,6 +20,13 @@ fn main() {
             assert_eq!(topology.mmc_hosts
                                .len(),
                        1);
+            assert_eq!(topology.dma_controllers.len(), 1);
+            let dma = &topology.dma_controllers[0];
+            assert_eq!(dma.mmio.base, 0x1FE0_0C10);
+            assert_eq!(dma.mmio.size, 8);
+            assert_eq!(&dma.interrupt.cells[..2], &[13, 4]);
+            assert_eq!(dma.clock.specifier.args, &[0]);
+            assert_eq!(dma.channel_cells, 1);
             let intc = &topology.interrupt_controllers[0];
             assert_eq!(intc.main_mmio.base, 0x1FE0_1400);
             assert_eq!(intc.core_isr.len(), 2);

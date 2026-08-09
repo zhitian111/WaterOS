@@ -1201,3 +1201,47 @@ python3 scripts/remote_debug_qemu_smoke.py \
 ### 提交
 
 - `[feat] model 2K1000 APBDMA descriptors`
+
+## 2026-08-10：批次 28——APBDMA topology、lease 与 executor 状态机
+
+### 任务与设计
+
+1. 解析 2K1000 APBDMA controller 的 MMIO、IRQ、clock、phandle 和 channel cells。
+2. 用 provider/channel lease 防止同一 DMA channel 被重复占用。
+3. executor 只接受完成 cache 同步后的不可直接构造 token。
+4. mock order register 覆盖 start、busy、IRQ completion 和 stop。
+5. DTS fixture 增加缺 clock 与短 MMIO 窗口拒绝测试。
+
+topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 provider channel 0 的独占；executor 管理单个正在运行的 descriptor。真实 cache/地址转换尚未实现，因此 `PreparedTransfer::after_cache_sync` 是带安全契约的入口，正常安全代码不能绕过准备门槛。
+
+### 完成内容
+
+- [x] `BoardTopology` 新增 `dma_controllers` 与 `DmaControllerDescription`。
+- [x] APBDMA 要求单个 8-byte MMIO、单个 clock、合法 IRQ、phandle 和 `#dma-cells = 1`。
+- [x] 上游形态 fixture 补齐 APBDMA1 `0x1fe00c10/8`、LIOINTC1 IRQ13 和 APB clock。
+- [x] `ChannelLeases` 按 provider phandle 管理 channel 0，拒绝未知 provider、非零 channel 和重复 claim。
+- [x] `PreparedTransfer` 只能通过带 descriptor/buffer cache 同步前置条件的 `unsafe` 构造函数创建。
+- [x] `Executor` 启动时先写 0 再写 start order，拒绝并发 start；IRQ completion 返回是否需要 invalidate read buffer。
+- [x] stop 保留 descriptor address、清除控制低位并编码 64-bit + STOP。
+- [x] 启动日志报告 DMA controller 数量，但仍不实例化真实 executor。
+
+### 验证证据
+
+- 2K1000LA driver host 单测由 16 项增至 19 项，全部通过。
+- lease 测试覆盖 claim/busy/release/reclaim、错误 provider 和错误 channel。
+- mock executor 测试覆盖 start write 序列、重复启动、完成后二次完成拒绝和 stop 编码。
+- DTS fixture 脚本通过既有场景，并新增缺 APBDMA clock、4-byte MMIO 两个拒绝场景。
+- 有效 fixture 断言 APBDMA MMIO、IRQ `<13,4>`、clock arg `[0]` 和 channel cell count。
+
+### 已知限制、未验证与后续测试
+
+- [ ] executor 仍只有 mock `OrderIo`，没有真实 volatile 64-bit lo/hi MMIO 后端。
+- [ ] `unsafe` cache-sync token 是防误用契约，不是 cache maintenance 实现；LoongArch64 cache API 仍缺失。
+- [ ] 尚未把 APBDMA IRQ13 接入 LIOINTC domain，也未校验 descriptor status/硬件错误位。
+- [ ] lease 当前是平台内存对象，尚未接入全局动态设备 topology 或移除/quiesce 流程。
+- [ ] APBDMA controller clock enable、descriptor 内存分配/物理地址、memory barrier 和真机 stop 行为待验证。
+- [ ] MMC 仍不实现 `SdTransport`，不会注册块设备。
+
+### 提交
+
+- `[feat] add 2K1000 APBDMA lifecycle model`
