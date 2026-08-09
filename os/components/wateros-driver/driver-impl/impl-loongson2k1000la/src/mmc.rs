@@ -4,7 +4,8 @@
 //! register layout. The second DT register is an APB-DMA routing register, not
 //! a FIFO window. WaterOS reuses [`dw_mmc::sd`] only as an SD protocol layer.
 
-use crate::topology::MmcDescription;
+use crate::{irq_domain::{AcknowledgedIrq, DeviceAckedIrq, GlobalIrq, IrqDisposition},
+            topology::MmcDescription};
 use api_v0::MmioRegion;
 use dw_mmc::mmc::MmcError;
 
@@ -89,9 +90,55 @@ const INT_COMMAND_TIMEOUT : u32 = 1 << 7;
 const INT_RESPONSE_CRC : u32 = 1 << 8;
 const INT_CLEAR : u32 = 0x3ff;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MmcIrqAckError {
+    UnexpectedSource,
+    NoKnownPending,
+    UnknownPending(u32),
+    Io(MmcError),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct MmcIrqAckFailure {
+    pub error : MmcIrqAckError,
+    pub acknowledged : AcknowledgedIrq,
+}
+
 pub trait RegisterIo {
     fn read32(&mut self, offset : usize) -> Result<u32, MmcError>;
     fn write32(&mut self, offset : usize, value : u32) -> Result<(), MmcError>;
+}
+
+/// Clear a masked/acknowledged MMC interrupt and produce rearm evidence only
+/// when every observed pending bit has documented W1C behavior.
+pub fn acknowledge_interrupt<R : RegisterIo>(registers : &mut R,
+                                              expected : GlobalIrq,
+                                              acknowledged : AcknowledgedIrq)
+                                              -> Result<IrqDisposition,
+                                                        MmcIrqAckFailure> {
+    if acknowledged.irq() != expected {
+        return Err(MmcIrqAckFailure { error : MmcIrqAckError::UnexpectedSource,
+                                     acknowledged });
+    }
+    let status = match registers.read32(REG_INT) {
+        Ok(status) => status,
+        Err(error) => return Err(MmcIrqAckFailure { error : MmcIrqAckError::Io(error),
+                                                   acknowledged }),
+    };
+    let known = status & INT_CLEAR;
+    if known == 0 {
+        return Err(MmcIrqAckFailure { error : MmcIrqAckError::NoKnownPending,
+                                     acknowledged });
+    }
+    if let Err(error) = registers.write32(REG_INT, known) {
+        return Err(MmcIrqAckFailure { error : MmcIrqAckError::Io(error), acknowledged });
+    }
+    let unknown = status & !INT_CLEAR;
+    if unknown != 0 {
+        return Err(MmcIrqAckFailure { error : MmcIrqAckError::UnknownPending(unknown),
+                                     acknowledged });
+    }
+    Ok(IrqDisposition::Rearm(DeviceAckedIrq::after_device_clear(expected)))
 }
 
 pub struct Host<R> {
@@ -173,6 +220,38 @@ mod tests {
     use super::*;
     use crate::topology::{CardDetect, InterruptSpec, NamedResource, ResourceSpecifier};
     use alloc::vec;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum AckEvent {
+        Read(usize),
+        Write(usize, u32),
+    }
+
+    struct AckRegisters {
+        status : u32,
+        fail_read : bool,
+        fail_write : bool,
+        events : alloc::vec::Vec<AckEvent>,
+    }
+
+    impl RegisterIo for AckRegisters {
+        fn read32(&mut self, offset : usize) -> Result<u32, MmcError> {
+            self.events.push(AckEvent::Read(offset));
+            if self.fail_read { Err(MmcError::RegisterOutOfRange) } else { Ok(self.status) }
+        }
+        fn write32(&mut self, offset : usize, value : u32) -> Result<(), MmcError> {
+            self.events.push(AckEvent::Write(offset, value));
+            if self.fail_write { Err(MmcError::RegisterOutOfRange) } else { Ok(()) }
+        }
+    }
+
+    fn ack_registers(status : u32) -> AckRegisters {
+        AckRegisters { status, fail_read : false, fail_write : false, events : alloc::vec::Vec::new() }
+    }
+
+    fn acknowledged(irq : GlobalIrq) -> AcknowledgedIrq {
+        AcknowledgedIrq::after_mask_ack(irq)
+    }
 
     fn description() -> MmcDescription {
         MmcDescription {
@@ -260,5 +339,53 @@ mod tests {
         let mut host = Host::new(MockRegisters { values : [0; 26],
                                                 interrupts : INT_RESPONSE_CRC }, 2);
         assert_eq!(host.execute_command(8, 0, true, false), Err(MmcError::ResponseCrc));
+    }
+
+    #[test]
+    fn mmc_irq_ack_reads_then_clears_known_w1c_bits_before_rearm() {
+        let irq = GlobalIrq::from_bank_local(0, 31).unwrap();
+        let mut registers = ack_registers(INT_COMMAND_SENT | INT_RESPONSE_CRC);
+        let disposition = acknowledge_interrupt(&mut registers, irq, acknowledged(irq)).unwrap();
+        assert_eq!(disposition,
+                   IrqDisposition::Rearm(DeviceAckedIrq::after_device_clear(irq)));
+        assert_eq!(registers.events,
+                   [AckEvent::Read(REG_INT),
+                    AckEvent::Write(REG_INT, INT_COMMAND_SENT | INT_RESPONSE_CRC)]);
+    }
+
+    #[test]
+    fn mmc_irq_ack_keeps_unknown_or_failed_sources_masked_and_recoverable() {
+        let irq = GlobalIrq::from_bank_local(0, 31).unwrap();
+        let other = GlobalIrq::from_bank_local(0, 30).unwrap();
+        let mut registers = ack_registers(INT_COMMAND_SENT);
+        let failure = acknowledge_interrupt(&mut registers, irq, acknowledged(other)).unwrap_err();
+        assert_eq!(failure.error, MmcIrqAckError::UnexpectedSource);
+        assert!(registers.events.is_empty());
+        assert_eq!(failure.acknowledged.irq(), other);
+
+        let mut registers = ack_registers(0);
+        let failure = acknowledge_interrupt(&mut registers, irq, acknowledged(irq)).unwrap_err();
+        assert_eq!(failure.error, MmcIrqAckError::NoKnownPending);
+        assert_eq!(registers.events, [AckEvent::Read(REG_INT)]);
+
+        let mut registers = ack_registers(INT_COMMAND_SENT);
+        registers.fail_read = true;
+        let failure = acknowledge_interrupt(&mut registers, irq, acknowledged(irq)).unwrap_err();
+        assert_eq!(failure.error, MmcIrqAckError::Io(MmcError::RegisterOutOfRange));
+        assert_eq!(registers.events, [AckEvent::Read(REG_INT)]);
+
+        let unknown = 1 << 15;
+        let mut registers = ack_registers(INT_COMMAND_SENT | unknown);
+        let failure = acknowledge_interrupt(&mut registers, irq, acknowledged(irq)).unwrap_err();
+        assert_eq!(failure.error, MmcIrqAckError::UnknownPending(unknown));
+        assert_eq!(registers.events,
+                   [AckEvent::Read(REG_INT), AckEvent::Write(REG_INT, INT_COMMAND_SENT)]);
+        assert_eq!(failure.acknowledged.irq(), irq);
+
+        let mut registers = ack_registers(INT_COMMAND_TIMEOUT);
+        registers.fail_write = true;
+        let failure = acknowledge_interrupt(&mut registers, irq, acknowledged(irq)).unwrap_err();
+        assert_eq!(failure.error, MmcIrqAckError::Io(MmcError::RegisterOutOfRange));
+        assert_eq!(failure.acknowledged.irq(), irq);
     }
 }

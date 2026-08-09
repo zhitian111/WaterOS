@@ -2129,3 +2129,46 @@ ENABLE_SET。错 source、未注册或 KeepMasked 都不会重新开线。
 ### 提交
 
 - `[ref] gate 2K1000 IRQ rearm on device ack`
+
+## 2026-08-10：批次 47——MMC W1C IRQ acknowledgement adapter
+
+### 任务与设计
+
+为已有明确 W1C 语义的 MMC `REG_INT=0x3c` 建立 source-bound ack adapter。已知 W1C
+范围为低 10 位 `0x3ff`。adapter 先核对 acknowledged source，再读取状态；只有至少一个已知
+pending 位、没有未知 pending 位、且 W1C 写成功时才生成 `Rearm(DeviceAckedIrq)`。
+
+混合状态会清除已知 W1C 位，但返回 `UnknownPending` 并保持 LIOINTC masked，避免未知 level
+condition 导致立即重入。所有失败都返还原 `AcknowledgedIrq`，允许诊断或重试。
+
+### 完成内容
+
+- [x] 新增 `MmcIrqAckError`、`MmcIrqAckFailure` 和 `acknowledge_interrupt()`。
+- [x] source mismatch 在任何 register I/O 前失败并返还原 token。
+- [x] zero/unknown-only 状态不执行 W1C 写，不产生 rearm evidence。
+- [x] known-only 状态严格执行 REG_INT read→known W1C write→Rearm。
+- [x] known+unknown 状态只清 known mask，返回 UnknownPending，保持 controller source masked。
+- [x] read/write I/O 错误均返还 acknowledged token。
+- [x] production MMC activation/IRQ handler 仍 deferred；本批只提供可组合 adapter。
+
+### 验证证据
+
+- `cargo test`：58 项 host 单测全部通过（本批新增 2 项）。
+- 成功测试断言事件序列为 `Read(0x3c)`、`Write(0x3c, command_sent|response_crc)`，并核对 evidence IRQ。
+- mismatch 测试断言零 I/O；zero 和 read-failure 测试断言只有一次 read。
+- mixed 测试断言只写 known command-sent 位并返回未知 bit15；write failure 返回原 token。
+- topology/畸形 DTS fixtures、LoongArch64 target check、`make kernel-la` 全部通过；仅有既有 warning。
+- `git diff --check` 通过；未创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：MMC REG_INT 的 W1C 行为和 level deassert 时序尚未在 2K1000LA 验证。
+- [ ] adapter 依赖上游已知 `0x3ff` W1C mask，但低 10 位各自完整语义仍未全部建模。
+- [ ] W1C write 成功由 RegisterIo 返回值代表；没有 read-back 验证，W1C 寄存器也不保证适合 read-back。
+- [ ] 没有生产 MMC owner/global handler，因此 adapter 尚未注册到 Live runtime。
+- [ ] MMC clock、power、card-detect、DMA data path 未就绪，不能仅因 IRQ adapter 完成而激活 host。
+- [ ] 下一批应把可恢复 ack failure 映射到统一 handler disposition adapter，避免 function-pointer handler 无法携带设备实例；设计固定 slot owner 或静态 context table，并测试并发/重入拒绝。
+
+### 提交
+
+- `[ref] add 2K1000 MMC IRQ ack adapter`
