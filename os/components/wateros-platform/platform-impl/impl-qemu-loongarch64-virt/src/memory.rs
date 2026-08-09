@@ -4,7 +4,8 @@
 /// 包含内核所在的 `0x8000_0000..0xb000_0000` 高段；内核从 `0x9000_0000`
 /// 启动，因此 frame allocator 的高段 fallback 必须停在 `0xb000_0000`，
 /// 不能把中间 MMIO/空洞当作 RAM。
-pub fn physical_ram_end_exclusive(dtb_pa: usize) -> usize {
+pub fn physical_ram_end_exclusive() -> usize {
+    let dtb_pa = crate::dtb::dtb_pa();
     if dtb_pa != 0 {
         if let Ok(fdt) = unsafe { fdt::Fdt::from_ptr(dtb_pa as *const u8) } {
             let mut best_end = 0usize;

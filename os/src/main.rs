@@ -260,6 +260,7 @@ mod qemu_riscv64_opensbi {
             wait_ap_boot_ready(cpu_id);
         }
         // BSP 初始化：驱动 → 日志 → timebase → 堆 → arch → 任务 → trap
+        platform::init_when_boot(dtb_pa);
         driver::init_when_boot(dtb_pa);
         runtime::console::show_logo();
         klog::init();
@@ -273,7 +274,7 @@ mod qemu_riscv64_opensbi {
         crate::dashboard::init();
         crate::trap_handler::init();
         // MM 初始化
-        let memory_end = platform::physical_ram_end_exclusive(dtb_pa);
+        let memory_end = platform::physical_ram_end_exclusive();
         mm::kernel_mm::init(dtb_pa, memory_end);
         AP_BOOT_READY.store(true, Ordering::Release);
 
@@ -389,6 +390,7 @@ mod qemu_loongarch64_virt {
         platform::arch::init();
         let _ = platform::smp::init_ipi();
         let dtb_pa = platform::active_impl::boot::device_tree_phys_addr();
+        platform::init_when_boot(dtb_pa);
         driver::init_when_boot(dtb_pa);
         let configured =
             platform::active_impl::smp::init_configured_cpu_mask(dtb_pa).expect("initialize \
@@ -406,7 +408,7 @@ mod qemu_loongarch64_virt {
         crate::trap_handler::init();
         platform::arch::paging::init_paging_disable_mmu();
 
-        let memory_end = platform::physical_ram_end_exclusive(dtb_pa);
+        let memory_end = platform::physical_ram_end_exclusive();
         mm::kernel_mm::init(dtb_pa, memory_end);
 
         AP_BOOT_READY.store(true, Ordering::Release);

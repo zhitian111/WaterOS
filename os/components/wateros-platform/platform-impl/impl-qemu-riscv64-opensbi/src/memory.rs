@@ -1,9 +1,10 @@
 //! 平台物理内存布局：从引导 DTB 解析 RAM 上界（bring-up 期供 MM 初始化）。
 
-/// 物理 RAM 上界（不包含）：优先解析 DTB `memory@*` 的 `reg`；失败时用
+/// 物理 RAM 上界（不包含）：优先解析平台 DTB `memory@*` 的 `reg`；失败时用
 /// `wateros-base-config` 回退值。
-pub fn physical_ram_end_exclusive(dtb_pa: usize) -> usize {
+pub fn physical_ram_end_exclusive() -> usize {
     use config::mm::QEMU_VIRT_PHYS_RAM_END as FALLBACK;
+    let dtb_pa = crate::dtb::dtb_pa();
     if dtb_pa == 0 {
         return FALLBACK;
     }
