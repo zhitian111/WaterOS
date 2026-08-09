@@ -30,5 +30,7 @@
 
 - topology 只接受参考板已证明的两个映射，缺少任一映射或额外未知映射均 fail-closed。
 - bring-up plan 将受支持 state 标为 `RequiresDriver`，并保留独立 `PinControlUnavailable` blocker。
-- 只读 snapshot 一次读取首个 mux 寄存器；它能报告瞬时选择状态，但不会解除 blocker，也不会执行修复写入。
+- 只读 snapshot 一次读取首个 mux 寄存器；它能报告瞬时选择状态，但不会解除 blocker。
+- 写事务被隔离在显式 API：必须具备 unsafe 板级 authority 与全局 transaction guard，执行 fresh read、conditional RMW 和 readback；machine init 与 remote diagnosis 都不调用它。
+- 写失败不能证明寄存器未改变，API 必须返回 recovery evidence 并要求重新读取验证。
 - 真实 MMIO endian、pin ownership、firmware 并发修改和 bit 语义均为 `UNVERIFIED_ON_HARDWARE`。

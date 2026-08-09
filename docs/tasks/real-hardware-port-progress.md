@@ -3271,3 +3271,52 @@ Linux 主线 LS2K GPIO bank 使用 64-bit 寄存器，方向、输出、输入�
 ### 提交
 
 - `[feat] gate LS2K1000 pinctrl readiness`
+
+## 2026-08-10：批次 70——显式 LS2K1000 pinctrl transaction 与恢复契约
+
+### 任务与设计
+
+1. 为 `NeedsTransition` 增加显式 fresh-read、conditional RMW、readback transaction。
+2. 写路径必须同时持有唯一全局 transaction guard 与 unsafe board authority；普通诊断不可达。
+3. preflight 使用最新 raw 重新计算 mask，避免陈旧 snapshot 覆盖期间变化的无关位。
+4. write failure 一律视为效果未知；preflight/readback IO 与 mismatch 返回分阶段 recovery evidence。
+5. recovery 只允许显式只读 revalidate，不猜测写是否生效，也不自动重试写入。
+
+### 完成内容
+
+- [x] 新增 `WriteRegisterIo`，与既有只读 `RegisterIo` 分离；remote diagnosis 继续只持有只读 backend。
+- [x] 新增 `TransitionAuthority::assume_board_verified()`；只有 unsafe 调用者确认原理图/DTS、寄存器语义、独占权与恢复流程后才能构造。
+- [x] 新增模块内唯一 `TRANSACTION_GATE` 与 `try_begin_transition()`；外部不能构造其他 gate/guard 绕过本地串行化。
+- [x] `apply_transition()` 在 guard 内 fresh read；若已 ready 零写入，否则按 fresh raw 生成最小 desired value、写入并 readback。
+- [x] 新增 `TransitionStage` 与 `TransitionRecovery`，覆盖 preflight read、write、readback、mismatch、revalidate read/mismatch。
+- [x] write error 的 `observed_raw=None`，明确不能把失败解释为未写；成功必须由 readback 重新产生 opaque ready token。
+- [x] `TransitionRecovery::revalidate()` 只读一次并重新分类；不会隐式再次写入。
+- [x] 新增独立 `VolatileWriteRegisters`，target-only 且标为 `UNVERIFIED_ON_HARDWARE`；machine init、remote monitor 和 facade 均无调用点。
+- [x] 上游参考文档补充 transaction 隔离、authority、guard 和 uncertain-write 边界。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 97 项全部通过；新增 3 项 transaction 测试覆盖 gate busy/drop、already-ready 零写、fresh RMW、write failure、preflight/readback IO、readback mismatch 与 revalidate。
+- fresh raw 含无关 bit3/bit27 的 fixture 只改变 bit20/bit14；写值与 readback 顺序逐项断言。
+- topology fixture/畸形 DTB 矩阵通过，证明新增写 abstraction 未改变只读 discovery/diagnosis 行为。
+- `cargo check --no-default-features --features loongson2k1000la,final_online,heap-tlsf,remote-debug-monitor --target loongarch64-unknown-none` 通过，覆盖隔离的 volatile write backend 编译。
+- `make kernel-la EXTRA_FEATURES=remote-debug-monitor` 与 `git diff --check` 通过；仅有仓库既有 warning。
+- 所有 transaction 测试均为内存 mock；没有访问物理 MMIO、没有真实 pinmux 写、没有创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：volatile write、readback ordering、device-memory 属性、endian 与 bit20/bit14 语义尚未在 2K1000 板验证。
+- [ ] 全局 gate 只排除 WaterOS 内这一 API 的并发事务，无法阻止 boot firmware、管理核心或未遵守 API 的代码修改 shared mux register。
+- [ ] authority 是显式 unsafe 契约，不是运行时硬件身份认证；两块目标板必须分别核对 DTS/原理图后才能创建。
+- [ ] mismatch 不尝试 rollback，因为恢复原 raw 可能覆盖并发修改；当前策略是保留证据并要求重新观测。
+- [ ] transaction 成功只产生 pinctrl ready token，七个 MMC blocker 与 `can_activate()==false` 保持不变。
+- [ ] machine init 与远程 monitor 没有写入口；本批不代表 pinctrl 已在物理机激活。
+- [ ] 下一批应将 pinctrl ready token 纳入一个聚合的 MMC prerequisite proof，要求 clock/power/card-detect/IRQ 各自 token 全部存在后才能进入 controller activation typestate；仍不启动 data path。
+
+### 参考与许可证
+
+- `docs/references/linux-ls2k-pinctrl-upstream.md`
+
+### 提交
+
+- `[feat] add recoverable LS2K1000 pinctrl transaction`
