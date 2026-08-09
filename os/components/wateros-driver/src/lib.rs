@@ -29,7 +29,7 @@ pub mod network {
     pub use ::network::*;
 }
 
-// 三选一：QEMU/OpenSBI RISC-V, QEMU/LoongArch64 virt, 或 dummy 占位；
+// 四选一：QEMU/OpenSBI RISC-V, QEMU/LoongArch64 virt, 2K1000LA 或 dummy 占位；
 // 行为契约统一由 [`MachineDriver`] 表达，经 [`machine`] 选择当前 profile。
 #[cfg(feature = "impl-qemu-loongarch64-virt")]
 pub use impl_qemu_loongarch64_virt::uart;
@@ -39,7 +39,7 @@ pub use impl_qemu_riscv64_virt::uart;
 use alloc::vec::Vec;
 use api_v0::{MachineDriver, SupportedDeviceEntry};
 
-/// 当前 feature 选中的机器驱动契约实现（QEMU RV/LA 或 dummy）。
+/// 当前 feature 选中的机器驱动契约实现。
 pub fn machine() -> &'static dyn MachineDriver {
     #[cfg(feature = "impl-dummy")]
     {
@@ -49,11 +49,16 @@ pub fn machine() -> &'static dyn MachineDriver {
     {
         impl_qemu_loongarch64_virt::machine()
     }
+    #[cfg(feature = "impl-loongson2k1000la")]
+    {
+        impl_loongson2k1000la::machine()
+    }
     #[cfg(feature = "impl-qemu-riscv64-virt")]
     {
         impl_qemu_riscv64_virt::machine()
     }
     #[cfg(not(any(feature = "impl-dummy",
+                  feature = "impl-loongson2k1000la",
                   feature = "impl-qemu-loongarch64-virt",
                   feature = "impl-qemu-riscv64-virt")))]
     {

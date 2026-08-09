@@ -835,3 +835,49 @@ python3 scripts/remote_debug_qemu_smoke.py \
 ### 提交
 
 - `[feat] discover 2K1000LA RAM from FDT`
+
+## 2026-08-10：批次 19——2K1000LA 独立驱动拓扑
+
+### 任务与设计
+
+1. 为 2K1000LA 新建独立 machine driver crate，顶层 profile 不再选择 `driver/impl-dummy`。
+2. 只从 FDT 发现并验证 UART、LIOINTC 和 MMC 资源，本批不执行未经真机验证的寄存器写入。
+3. 中断描述保留 parent phandle 和最多 4 个原始 specifier cells，避免被公共单 IRQ 摘要模型截断。
+4. MMIO `reg` 必须完整编码、非空、非零长度且地址加法不溢出；设备专属资源数量严格校验。
+5. host parser 不依赖目标架构汇编；platform 依赖只在 `target_arch = "loongarch64"` 时启用。
+
+### 完成内容
+
+- [x] 新增 `wateros-driver-impl-loongson2k1000la` 并接入 driver workspace、aggregate feature 和根 `loongson2k1000la` feature。
+- [x] `MachineDriver::init_after_boot()` 读取 platform 保存的 FDT、构造 topology 快照并记录发现数量。
+- [x] 新增 `BoardTopology`、`UartDescription`、`InterruptControllerDescription`、`MmcDescription` 和 `InterruptSpec`。
+- [x] 精确匹配 `ns16550a`、`loongson,liointc-2.0`、`loongson,ls2k1000-mmc` compatible。
+- [x] UART 要求单个 MMIO、interrupt parent/specifier 和 `clock-frequency`，可选 `reg-shift`。
+- [x] LIOINTC 要求单个 MMIO、phandle 和 1..4 个 interrupt cells；MMC 支持一到两个 MMIO regions 并要求中断描述。
+- [x] `status = disabled/reserved/fail/failed` 节点在资源解引用前跳过；未知或非 NUL 终止 status 被拒绝。
+- [x] topology 保存进互斥快照供后续激活层读取，但明确输出 `UNVERIFIED_ON_HARDWARE`，没有注册虚假可用设备。
+- [x] host 构建时不链接 LoongArch platform，避免测试环境误汇编目标指令。
+
+### 验证证据
+
+- 有效 DTS fixture 经 `dtc` 编译后解析出 1 个 LIOINTC、1 个 UART 和 1 个 MMC。
+- 断言 LIOINTC `0x1fe01400`/2 cells、UART `0x1fe20000`/125 MHz/IRQ `<0 4>`、MMC `0x1fe2c000` + `0x1fe00438`/IRQ `<31 4>`。
+- fixture 中禁用 UART 带零长度 MMIO 且无中断，仍被先行忽略，最终 UART 数保持 1。
+- 缺少 UART `clock-frequency` 的独立 fixture 经相同解析路径返回错误。
+- 新 driver crate host test/doc-test 构建通过；fixture runner 两种模式均通过。
+- 2K1000LA release 交叉构建通过，构建日志确认编译并链接 `wateros-driver-impl-loongson2k1000la`。
+- `git diff --check` 通过；测试只生成两个临时小型 DTB。
+
+### 已知限制、未验证与后续测试
+
+- [ ] **所有资源数值来自规范/上游 DTS 与合成 fixture；真实固件 compatible 列表、phandle 和 interrupt cells 仍须用上板 DTB 对照。**
+- [ ] LIOINTC 仅描述未初始化，CPU HWI route、enable/mask、ack 与多核 affinity 全部 UNVERIFIED。
+- [ ] UART topology 尚未替换 early console 的固定基址，也没有注册运行期字符设备；UART IRQ 收发未激活。
+- [ ] MMC topology 尚未解析 clocks、resets、DMA、bus-width、card-detect 和供电资源，也未绑定块设备驱动。
+- [ ] parser 当前要求设备节点显式提供 `interrupt-parent`，尚未实现 Devicetree 规范的祖先继承规则。
+- [ ] 尚未发现 PCIe、GMAC、USB、SATA 和 GPIO；后续优先级为 LIOINTC 受检寄存器模型、MMC/clock 资源，再到 PCIe/USB。
+- [ ] 下一批应实现 LIOINTC 2.0 的纯寄存器模型与 MMIO backend 分离，先验证 route/mask/ack 算术，不在 machine init 自动 enable。
+
+### 提交
+
+- `[feat] add 2K1000LA driver topology`

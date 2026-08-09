@@ -23,6 +23,7 @@
         "./driver-input/input-impl/impl-virtio-pci/",
         "./driver-impl/impl-dummy/",
         "./driver-impl/impl-common/",
+        "./driver-impl/impl-loongson2k1000la/",
         "./driver-impl/impl-qemu-loongarch64-virt/",
         "./driver-impl/impl-qemu-riscv64-virt/",
         "./driver-network/",
@@ -41,6 +42,7 @@
     impl-dummy = { path = "./driver-impl/impl-dummy/", package = "wateros-driver-impl-dummy", default-features = true }
     impl-qemu-riscv64-virt = { path = "./driver-impl/impl-qemu-riscv64-virt/", package = "wateros-driver-impl-qemu-riscv64-virt", default-features = true, optional = true }
     impl-qemu-loongarch64-virt = { path = "./driver-impl/impl-qemu-loongarch64-virt/", package = "wateros-driver-impl-qemu-loongarch64-virt", default-features = true, optional = true }
+    impl-loongson2k1000la = { path = "./driver-impl/impl-loongson2k1000la/", package = "wateros-driver-impl-loongson2k1000la", default-features = true, optional = true }
     block = { path = "./driver-block/", package = "wateros-driver-block", default-features = true }
     character = { path = "./driver-character/", package = "wateros-driver-character", default-features = true, features = [
         "impl-null-stub",
@@ -59,6 +61,7 @@
         "display/api-v0",
         "input/api-v0",
         "impl-dummy/api-v0",
+        "impl-loongson2k1000la?/api-v0",
         "impl-qemu-loongarch64-virt?/api-v0",
         "impl-qemu-riscv64-virt?/api-v0",
         "network/api-v0",
@@ -78,6 +81,7 @@
         "impl-qemu-riscv64-virt?/block-cache",
     ]
     impl-dummy = [  ]
+    impl-loongson2k1000la = [ "dep:impl-loongson2k1000la" ]
     impl-qemu-loongarch64-virt = [
         "dep:impl-qemu-loongarch64-virt",
         "block/impl-virtio-pci",

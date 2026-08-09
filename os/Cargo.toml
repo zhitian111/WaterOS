@@ -91,7 +91,7 @@
     ]
     loongson2k1000la = [
         "dep:cred", "dep:driver", "dep:fdt", "dep:fs", "dep:ipc", "dep:network",
-        "driver/impl-block-cache", "driver/impl-dummy", "ipc/all",
+        "driver/impl-block-cache", "driver/impl-loongson2k1000la", "ipc/all",
         "mm/impl-loongarch64", "mm/vfs-root-read", "platform/impl-loongson2k1000la",
         "runtime/impl-info", "dep:klog", "klog/default", "runtime/impl-error",
         "runtime/impl-platform-console", "syscall/impl-kernel", "vfs-bridge",
