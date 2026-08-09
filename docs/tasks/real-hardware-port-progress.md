@@ -1909,3 +1909,48 @@ ESTAT 引入竞态；其他架构通过默认 `None` 保持行为不变。machin
 ### 提交
 
 - `[ref] add external IRQ snapshot contract`
+
+## 2026-08-10：批次 42——Allocation-free board IRQ runtime core
+
+### 任务与设计
+
+实现固定容量、无热路径分配的 `BoardIrqRuntime<I>`，把 HWI snapshot 展开为 parent line，
+映射到稳定 bank，读取该 core 的 enabled-pending snapshot，并对每个 local source 严格执行
+mask/ack 后再 dispatch。两个 controller 槽、八条 HWI 映射和 64 项 domain 均固定容量；handler
+注册要求初始化期独占 `&mut self`。
+
+service 对每个 bank 只读取一次 pending snapshot。未注册 source 的线性 token 不交给 handler，
+但 source 已被 ENABLE_CLEAR mask，报告为 unhandled。后续 parent line 失败时返回累计 report，
+不回滚已经发生的硬件写，也不伪装成原子事务。
+
+### 完成内容
+
+- [x] `LioIntc` 新增 `pending_enabled(core)`，统一 pending 与 enable snapshot 读取。
+- [x] 新增泛型 `BoardIrqRuntime<I>`、`RuntimeError`、`ServiceReport` 和 `ServiceFailure`。
+- [x] runtime 构造验证 controller 槽位与 bank identity、parent map 引用完整性。
+- [x] registration 继续复用唯一 `GlobalIrq` domain，拒绝重复 owner。
+- [x] snapshot service 支持多 parent line、多 local source 和同 bank 去重。
+- [x] 每个 local source 先 `mask_ack_claim`，然后才把非 `Copy` token 交给 handler。
+- [x] 未注册 source 保持 masked，并计入诊断报告。
+- [x] 后续 source 失败返回 partial report，准确反映不可回滚副作用。
+
+### 验证证据
+
+- `cargo test`：50 项 host 单测全部通过（本批新增 2 项）。
+- 多 parent 测试同时服务 HWI2/HWI3，断言 3 次 ENABLE_CLEAR、2 handled、1 unhandled。
+- partial-failure 测试先 mask/ack HWI2 local source，再遇到未映射 HWI4，报告保留此前计数。
+- topology/畸形 DTS fixtures、LoongArch64 target check、`make kernel-la` 全部通过；仅有既有 warning。
+- `git diff --check` 通过；未创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：runtime 目前仅使用 mock `RegisterIo`，未发布 volatile controller 全局实例。
+- [ ] service 未持有设备侧 ack/re-enable 状态；已处理 source 默认继续 masked，这是有意的安全策略。
+- [ ] handler 为 function pointer；APBDMA session 的可变 owner 容器尚未接入。
+- [ ] 全局 `TOPOLOGY` 仍可被重复覆盖，且不应在 IRQ 上下文持锁。
+- [ ] HWI parent map 尚未从 topology 一次性编译成 runtime layout。
+- [ ] 下一批应实现 topology→定长 `RuntimeLayout` 编译与一次发布容器，验证重复 init、缺失 bank、重复 parent line；volatile MMIO 发布仍需明确 unsafe 映射前提。
+
+### 提交
+
+- `[ref] add 2K1000 IRQ runtime core`

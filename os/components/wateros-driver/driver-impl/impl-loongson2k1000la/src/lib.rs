@@ -11,6 +11,7 @@ extern crate alloc;
 pub mod irq_domain;
 pub mod irq_binding;
 pub mod irq_entry;
+pub mod irq_runtime;
 pub mod liointc;
 pub mod mmc;
 pub mod apbdma;

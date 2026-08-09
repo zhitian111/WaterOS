@@ -174,10 +174,14 @@ impl<I : RegisterIo> LioIntc<I> {
     }
 
     pub fn claim_first(&self, core : usize) -> DriverResult<Option<u32>> {
-        let pending = self.pending(core)? &
-                      self.io
-                          .read32(self.main_base + ENABLE_STATUS);
+        let pending = self.pending_enabled(core)?;
         Ok((pending != 0).then(|| pending.trailing_zeros()))
+    }
+
+    pub fn pending_enabled(&self, core : usize) -> DriverResult<u32> {
+        Ok(self.pending(core)? &
+           self.io
+               .read32(self.main_base + ENABLE_STATUS))
     }
 
     pub fn into_inner(self) -> I { self.io }
