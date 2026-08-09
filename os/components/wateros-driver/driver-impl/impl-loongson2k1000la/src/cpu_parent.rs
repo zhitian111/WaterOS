@@ -20,11 +20,25 @@ impl CpuParentActivator for LoongArchCpuParentActivator {
         )
         .map_err(|_| DriverError::IoError)
     }
+
+    fn disable_parent_lines(&mut self, snapshot: u8) -> DriverResult<()> {
+        // UNVERIFIED_ON_HARDWARE: rollback is limited to transaction-owned
+        // HWI bits, but still requires physical-board delivery testing.
+        platform::arch::interrupt::disable_external_interrupt_lines(
+            platform::arch::interrupt::ArchExternalInterruptLines(snapshot),
+        )
+        .map_err(|_| DriverError::IoError)
+    }
 }
 
 #[cfg(not(target_arch = "loongarch64"))]
 impl CpuParentActivator for LoongArchCpuParentActivator {
     fn enable_parent_lines(&mut self, _snapshot: u8) -> DriverResult<()> {
+        Err(DriverError::Unsupported)
+    }
+
+
+    fn disable_parent_lines(&mut self, _snapshot: u8) -> DriverResult<()> {
         Err(DriverError::Unsupported)
     }
 }

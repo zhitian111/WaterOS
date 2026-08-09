@@ -130,6 +130,23 @@ pub struct ServiceFailure {
 
 pub trait CpuParentActivator {
     fn enable_parent_lines(&mut self, snapshot : u8) -> Result<(), DriverError>;
+    fn disable_parent_lines(&mut self, snapshot : u8) -> Result<(), DriverError>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParentActivationReport {
+    pub requested : u8,
+    pub already_enabled : u8,
+    pub newly_enabled : u8,
+}
+
+pub struct ActivationFailure<S> {
+    pub error : RuntimeError,
+    pub rollback_error : Option<DriverError>,
+    /// Parent inputs that this transaction enabled but could not roll back.
+    pub residual_parent_lines : u8,
+    pub report : ParentActivationReport,
+    pub state : S,
 }
 
 pub struct TransitionFailure<S> {
@@ -155,6 +172,7 @@ pub struct ConfiguredRuntime<I, O> {
 pub struct LiveRuntime<I, O> {
     runtime : BoardIrqRuntime<I, O>,
     configured_sources : u64,
+    parent_lines : u8,
 }
 
 pub struct BoardIrqRuntime<I, O> {
@@ -366,12 +384,9 @@ impl<I : RegisterIo, O> ConfiguredRuntime<I, O> {
         Ok(self)
     }
 
-    pub fn activate<A : CpuParentActivator>(self,
-                                            activator : &mut A)
-                                            -> Result<LiveRuntime<I, O>, TransitionFailure<Self>> {
+    fn required_parent_lines(&self) -> Result<u8, RuntimeError> {
         if self.configured_sources == 0 {
-            return Err(TransitionFailure { error : RuntimeError::NoConfiguredSources,
-                                           state : self });
+            return Err(RuntimeError::NoConfiguredSources);
         }
         let mut parents = 0u8;
         for (line, bank) in self.runtime.parent_banks.iter().enumerate() {
@@ -382,20 +397,87 @@ impl<I : RegisterIo, O> ConfiguredRuntime<I, O> {
             }
         }
         if parents == 0 {
-            return Err(TransitionFailure { error : RuntimeError::UnmappedParent,
-                                           state : self });
+            return Err(RuntimeError::UnmappedParent);
         }
-        if let Err(error) = activator.enable_parent_lines(parents) {
-            return Err(TransitionFailure { error : RuntimeError::Controller(error),
-                                           state : self });
+        Ok(parents)
+    }
+
+    pub fn activate<A : CpuParentActivator>(self,
+                                            activator : &mut A)
+                                            -> Result<LiveRuntime<I, O>, TransitionFailure<Self>> {
+        self.activate_transactional(activator, 0, |_| Ok(()))
+            .map_err(|failure| TransitionFailure { error : failure.error,
+                                                   state : failure.state })
+    }
+
+    /// Enable the parent inputs owned by this runtime and run a final commit
+    /// step.  A failed commit disables only inputs newly enabled here.
+    ///
+    /// `already_enabled` must be the caller's current-CPU ownership snapshot,
+    /// not a raw ECFG value.  Real CSR behavior is `UNVERIFIED_ON_HARDWARE`.
+    pub fn activate_transactional<A, F>(self,
+                                        activator : &mut A,
+                                        already_enabled : u8,
+                                        mut commit : F)
+                                        -> Result<LiveRuntime<I, O>, ActivationFailure<Self>>
+    where A : CpuParentActivator,
+          F : FnMut(ParentActivationReport) -> Result<(), DriverError>
+    {
+        let requested = match self.required_parent_lines() {
+            Ok(parents) => parents,
+            Err(error) => return Err(ActivationFailure {
+                error,
+                rollback_error : None,
+                residual_parent_lines : 0,
+                report : ParentActivationReport { requested : 0,
+                                                  already_enabled,
+                                                  newly_enabled : 0 },
+                state : self,
+            }),
+        };
+        let report = ParentActivationReport {
+            requested,
+            already_enabled,
+            newly_enabled : requested & !already_enabled,
+        };
+        if report.newly_enabled != 0 {
+            if let Err(error) = activator.enable_parent_lines(report.newly_enabled) {
+                return Err(ActivationFailure {
+                    error : RuntimeError::Controller(error),
+                    rollback_error : None,
+                    residual_parent_lines : 0,
+                    report,
+                    state : self,
+                });
+            }
+        }
+        if let Err(error) = commit(report) {
+            let rollback_error = if report.newly_enabled == 0 {
+                None
+            } else {
+                activator.disable_parent_lines(report.newly_enabled).err()
+            };
+            return Err(ActivationFailure {
+                error : RuntimeError::Controller(error),
+                rollback_error,
+                residual_parent_lines : if rollback_error.is_some() {
+                    report.newly_enabled
+                } else {
+                    0
+                },
+                report,
+                state : self,
+            });
         }
         Ok(LiveRuntime { runtime : self.runtime,
-                         configured_sources : self.configured_sources })
+                         configured_sources : self.configured_sources,
+                         parent_lines : requested })
     }
 }
 
 impl<I : RegisterIo, O : IrqOwner> LiveRuntime<I, O> {
     pub fn configured_sources(&self) -> u64 { self.configured_sources }
+    pub fn parent_lines(&self) -> u8 { self.parent_lines }
     pub fn into_runtime(self) -> BoardIrqRuntime<I, O> { self.runtime }
 
     /// Service one snapshot. Sources remain masked after dispatch until a
@@ -595,15 +677,27 @@ mod tests {
     }
 
     struct Activator {
-        fail : bool,
-        calls : Vec<u8>,
+        fail_enable : bool,
+        fail_disable : bool,
+        enables : Vec<u8>,
+        disables : Vec<u8>,
     }
 
     impl CpuParentActivator for Activator {
         fn enable_parent_lines(&mut self, snapshot : u8) -> Result<(), DriverError> {
-            self.calls.push(snapshot);
-            if self.fail {
-                self.fail = false;
+            self.enables.push(snapshot);
+            if self.fail_enable {
+                self.fail_enable = false;
+                Err(DriverError::IoError)
+            } else {
+                Ok(())
+            }
+        }
+
+        fn disable_parent_lines(&mut self, snapshot : u8) -> Result<(), DriverError> {
+            self.disables.push(snapshot);
+            if self.fail_disable {
+                self.fail_disable = false;
                 Err(DriverError::IoError)
             } else {
                 Ok(())
@@ -642,7 +736,10 @@ mod tests {
         assert_eq!(duplicate.error,
                    RuntimeError::Owner(OwnerError::AlreadyRegistered));
         assert_eq!(duplicate.owner, TestOwner::keep());
-        let mut activator = Activator { fail : true, calls : Vec::new() };
+        let mut activator = Activator { fail_enable : true,
+                                        fail_disable : false,
+                                        enables : Vec::new(),
+                                        disables : Vec::new() };
         let failed = match duplicate.state.activate(&mut activator) {
             Ok(_) => panic!("failed activator produced live runtime"),
             Err(failure) => failure,
@@ -650,12 +747,56 @@ mod tests {
         assert_eq!(failed.error, RuntimeError::Controller(DriverError::IoError));
         let live = failed.state.activate(&mut activator)
                                .unwrap_or_else(|_| panic!("activation retry failed"));
-        assert_eq!(activator.calls, [1 << 2, 1 << 2]);
+        assert_eq!(activator.enables, [1 << 2, 1 << 2]);
+        assert!(activator.disables.is_empty());
         assert_eq!(live.configured_sources(), 1 << 6);
+        assert_eq!(live.parent_lines(), 1 << 2);
         let mut controllers = live.into_runtime().into_controllers();
         let bank0 = controllers[0].take().unwrap().into_inner();
         assert_eq!(bank0.writes.first(), Some(&(0x1000 + ENABLE_CLEAR, u32::MAX)));
         assert_eq!(bank0.writes.last(), Some(&(0x1000 + 0x28, 1 << 6)));
+    }
+
+    #[test]
+    fn activation_rolls_back_only_new_parent_lines_and_reports_residue() {
+        let topology = board(vec![description(0x1000, 2), description(0x1040, 3)]);
+        let layout = RuntimeLayout::compile(&topology).unwrap();
+        let runtime : BoardIrqRuntime<ModelIo, TestOwner> =
+            BoardIrqRuntime::assemble(layout,
+                                      |_bank, _controller| Ok(ModelIo::default()))
+            .unwrap();
+        let configured = runtime.into_dormant()
+                                .configure(device_binding(&topology, 0x1000, 6),
+                                           Route { core_mask : 1, parent_line : 0 },
+                                           TestOwner::keep())
+                                .unwrap_or_else(|_| panic!("configure failed"));
+        let mut activator = Activator { fail_enable : false,
+                                        fail_disable : true,
+                                        enables : Vec::new(),
+                                        disables : Vec::new() };
+        let failure = match configured.activate_transactional(&mut activator,
+                                                               1 << 3,
+                                                               |_| Err(DriverError::InvalidParam)) {
+            Ok(_) => panic!("failed commit produced live runtime"),
+            Err(failure) => failure,
+        };
+        assert_eq!(failure.error, RuntimeError::Controller(DriverError::InvalidParam));
+        assert_eq!(failure.rollback_error, Some(DriverError::IoError));
+        assert_eq!(failure.residual_parent_lines, 1 << 2);
+        assert_eq!(failure.report, ParentActivationReport { requested : 1 << 2,
+                                                            already_enabled : 1 << 3,
+                                                            newly_enabled : 1 << 2 });
+        assert_eq!(activator.enables, [1 << 2]);
+        assert_eq!(activator.disables, [1 << 2]);
+
+        let live = failure.state
+                          .activate_transactional(&mut activator,
+                                                  (1 << 2) | (1 << 3),
+                                                  |_| Ok(()))
+                          .unwrap_or_else(|_| panic!("retry failed"));
+        assert_eq!(live.parent_lines(), 1 << 2);
+        assert_eq!(activator.enables, [1 << 2]);
+        assert_eq!(activator.disables, [1 << 2]);
     }
 
     #[test]

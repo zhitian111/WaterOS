@@ -2446,3 +2446,49 @@ MMC policy 为 AckOnly，只允许使用 W1C adapter 做中断确认，不代表
 ### 提交
 
 - `[ref] add LoongArch external IRQ line control`
+
+## 2026-08-10：批次 54——Rollback-safe CPU parent activation
+
+### 任务与设计
+
+将 CPU parent activation 改为显式增量事务。调用方提供当前 CPU 已拥有的 HWI snapshot，
+runtime 根据 configured source 推导 requested parents，并只对 `requested & !already_enabled`
+执行 enable。enable 后的 commit hook 用于未来诊断 runtime 发布；若 commit 失败，只 disable
+本事务新增位，不影响其他消费者已有 HWI。
+
+失败对象返还完整 Configured typestate、激活报告、可选 rollback error 和无法撤销的 residual
+parent mask。调用方可以把 residual 合并进下一次 `already_enabled` 后重试，避免重复 enable。
+
+### 完成内容
+
+- [x] `CpuParentActivator` 增加对称的 `disable_parent_lines()` 契约。
+- [x] 新增 `ParentActivationReport`，记录 requested/already-enabled/newly-enabled。
+- [x] 新增 `ActivationFailure`，返还 state、原错误、rollback error 和 residual mask。
+- [x] ConfiguredRuntime 增加 `activate_transactional()`；旧 `activate()` 保持兼容并使用零已有位、无失败 commit。
+- [x] LiveRuntime 保存并暴露其 parent-line mask。
+- [x] LoongArch target adapter 使用上一批 arch API 关闭事务拥有的 ECFG HWI 位。
+- [x] host fallback 的 enable/disable 均明确返回 Unsupported。
+- [x] production 初始化未调用 assemble/apply/activate，安全默认行为不变。
+
+### 验证证据
+
+- `cargo test`：68 项 host 单测全部通过（本批新增 1 项）。
+- mock 验证已有 HWI3 时，本事务只 enable/disable HWI2，未把 HWI3 交给 rollback。
+- mock 注入 commit InvalidParam 与 rollback IoError，失败结果保留原错误、rollback error 和 residual HWI2。
+- 使用返还的 Configured state 重试，并把 residual 合并进 already-enabled；未重复执行 enable/disable，成功进入 Live。
+- 2K1000 精确 feature LoongArch target check 通过；`make kernel-la` 通过，仅有既有 warning。
+- topology/畸形 DTS fixture 与 `git diff --check` 通过；未创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：真实 ECFG enable/rollback 以及 LIOINTC 到 CPU HWI delivery 未实测。
+- [ ] already-enabled 由未来的单 CPU 诊断状态所有者维护；当前不读取 raw ECFG 来猜测软件 ownership。
+- [ ] runtime 尚无全局 Live slot，commit hook 目前只在 mock 中模拟 publication failure。
+- [ ] rollback 失败后的 residual 必须由调用方保留；掉电/重启前不能假定该 HWI 已关闭。
+- [ ] SMP 每核 parent ownership、CPU offline 和 affinity 迁移尚未实现。
+- [ ] 下一批应实现一次发布的 diagnostic runtime slot：SafeDefault 不执行；显式 diagnostic 请求才
+  assemble volatile controller、应用 AckOnly plan、事务激活并原子发布，任何阶段失败均保留可诊断状态。
+
+### 提交
+
+- `[ref] make 2K1000 IRQ activation rollback-safe`
