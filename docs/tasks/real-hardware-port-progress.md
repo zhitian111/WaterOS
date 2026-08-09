@@ -1500,3 +1500,58 @@ PA 构建 APBDMA plan，并将 48-byte hardware descriptor 写入 owned descript
 ### 提交
 
 - `[ref] bind 2K1000 DMA resources to executor state`
+
+## 2026-08-10：批次 34——APBDMA order-register MMIO backend
+
+### 任务与设计
+
+1. 核对 2K1000 APBDMA order window 的寄存器宽度与 Linux 上游访问顺序。
+2. 将 8-byte order register 建模为 low-then-high 的非原子 64-bit MMIO，而不是假定存在原生 64-bit 总线访问。
+3. 在寄存器访问边界加入保守的 compiler/CPU 顺序约束，并保持可注入的 host mock。
+4. 由已验证的 DMA topology 构造真实 volatile backend，拒绝零地址、错位和错误窗口大小。
+5. 对半写失败保留可观察状态，明确交由上层 stop/quiesce 恢复，而不伪装成原子事务。
+
+Linux `loongson2-apb-dma.c` 使用 `lo_hi_readq`/`lo_hi_writeq` 访问 order register；对应
+helper 以两个 32-bit MMIO 操作先低后高完成读写。启动序列先写零，再写 descriptor 地址与
+64-bit enable/start 位。本实现只依据这些行为事实建立独立抽象，没有复制上游实现代码；
+参考文件同时记录了 APBDMA 驱动 GPL-2.0-or-later 与 helper GPL-2.0 的许可证边界。
+
+`LoHiOrderIo<M>` 把任意 32-bit MMIO backend 适配为现有 executor 的 `OrderIo`。目标平台上的
+`VolatileOrderMmio32` 仅接受 topology 已确认的 8-byte、4-byte 对齐、非零 order window，
+并只执行 low/high 两次 volatile u32 访问。访问前后使用 `SeqCst` fence 作为当前保守边界；
+它不替代未来需在真机确认的 LoongArch device-memory 属性和平台 I/O barrier。
+
+### 完成内容
+
+- [x] 新增 `apbdma_mmio` 模块及可测试的 `OrderMmio32` 接口。
+- [x] `LoHiOrderIo` 以 little-endian 低 32 位、高 32 位顺序重组和拆分 64-bit order value。
+- [x] read/write 两侧加入 `SeqCst` fence，避免普通内存与寄存器序列被软件重排。
+- [x] LoongArch target 新增 raw volatile u32 backend；host 构建不暴露或编译裸 MMIO 构造。
+- [x] backend 构造复用 `DmaControllerDescription`，严格检查 8-byte window、非零基址和 4-byte 对齐。
+- [x] topology 验证同步拒绝错位 APBDMA order window，并新增 DTS fixture。
+- [x] mock 测试断言读写均为 low-then-high，且不会退化为假定原子性的 native u64 访问。
+- [x] mock 注入 high-half write 失败，验证错误向上传递且已发生的 low-half 写入保持可观察。
+- [x] 本地上游参考补充 order register 访问顺序、启动序列与许可证信息。
+
+### 验证证据
+
+- `cargo test -p wateros-driver-impl-loongson2k1000la`：30 项 host 单测全部通过（本批新增 3 项）。
+- 新测试覆盖 low/high read 重组、low/high write 顺序和 high-half 失败后的部分写状态。
+- `cargo check -p wateros-driver-impl-loongson2k1000la --target loongarch64-unknown-none` 通过，并实际编译 raw volatile backend。
+- `tests/verify_topology.sh` 全部通过，新增错位 DMA MMIO fixture 被正确拒绝；truncated fixture 的 dtc warning 为预期畸形输入。
+- `make kernel-la` QEMU LoongArch64 release 回归构建通过；仅有仓库既有 warning。
+- `git diff --check` 通过；未创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：尚未确认 order window 在内核地址空间可直接恒等访问、实际 endian/device-memory 属性及总线行为。
+- [ ] `SeqCst` fence 是否足以形成 2K1000LA 所需 I/O ordering 尚未真机验证；未来可能需要架构专用 barrier。
+- [ ] low-half 成功而 high-half 失败不是可回滚事务；当前 executor 会返还 prepared session，但真实恢复路径必须先写 stop 并确认 quiesce 后才能回收资源。
+- [ ] 尚未验证写零、descriptor/start 写入以及 stop 序列在硬件上的 tearing、完成时机与错误状态。
+- [ ] volatile backend 尚未接入 `init_after_boot` 或生产 executor 构造；仍缺真实 clock enable、IRQ13 dispatch/ack 和 cache maintenance backend。
+- [ ] 尚未读取 descriptor completion/error status，也未连接 MMC data command，不能宣称真实传输可用。
+- [ ] 下一批应先实现可审计的 executor/platform 组装入口和失败后的强制 stop 状态机，同时继续把 cache/IRQ 能力保留为显式依赖。
+
+### 提交
+
+- `[feat] add 2K1000 APBDMA order MMIO`

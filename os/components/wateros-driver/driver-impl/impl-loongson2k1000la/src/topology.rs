@@ -436,7 +436,7 @@ pub fn discover(fdt : &fdt::Fdt<'_>) -> DriverResult<BoardTopology> {
                                                            parent_source_maps });
         } else if has_compatible(node, "loongson,ls2k1000-apbdma") {
             let regs = regions(node)?;
-            if regs.len() != 1 || regs[0].size != 8 {
+            if regs.len() != 1 || regs[0].size != 8 || regs[0].base == 0 || regs[0].base % 4 != 0 {
                 return Err(DriverError::InvalidDtb);
             }
             let clocks = named_resources(fdt,

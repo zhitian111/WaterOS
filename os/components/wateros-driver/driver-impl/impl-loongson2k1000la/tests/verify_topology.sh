@@ -36,6 +36,11 @@ sed '/dma-controller@1fe00c10/,/#dma-cells/ s/0x0 0x8/0x0 0x4/' \
     > "$tmp_dir/short-dma-mmio.dts"
 dtc -I dts -O dtb -o "$tmp_dir/short-dma-mmio.dtb" \
     "$tmp_dir/short-dma-mmio.dts"
+sed '/dma-controller@1fe00c10/,/#dma-cells/ s/0x1fe00c10/0x1fe00c12/' \
+    "$crate_dir/tests/fixtures/loongson2k1000la-topology.dts" \
+    > "$tmp_dir/unaligned-dma-mmio.dts"
+dtc -I dts -O dtb -o "$tmp_dir/unaligned-dma-mmio.dtb" \
+    "$tmp_dir/unaligned-dma-mmio.dts"
 
 cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
     --example verify_topology -- valid "$tmp_dir/valid.dtb"
@@ -53,3 +58,5 @@ cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
     --example verify_topology -- invalid "$tmp_dir/missing-dma-clock.dtb"
 cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
     --example verify_topology -- invalid "$tmp_dir/short-dma-mmio.dtb"
+cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
+    --example verify_topology -- invalid "$tmp_dir/unaligned-dma-mmio.dtb"

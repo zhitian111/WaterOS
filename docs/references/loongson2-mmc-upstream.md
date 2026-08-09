@@ -24,6 +24,10 @@ Confirmed facts used by the current WaterOS foundation:
 - Command argument/control are `0x08/0x0c`; response words are `0x14..0x20`.
 - The second 2K1000 DT register region is an APB DMA configuration register.
 - 2K1000 uses external APB DMA (`rx-tx`); it is not a DesignWare MMC host.
+- The APBDMA order register is accessed as a non-atomic 64-bit little-endian
+  value: Linux uses `lo_hi_readq`/`lo_hi_writeq`, which access the low 32-bit
+  word before the high 32-bit word. Transfer start writes zero first, then the
+  descriptor address combined with `64BIT_EN | START`.
 
 Still requiring physical-board validation: MMIO accessibility/endian behavior,
 clock/reset/power ordering, response word ordering, interrupt delivery, DMA
