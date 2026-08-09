@@ -1,0 +1,5 @@
+NAME=WaterOS
+ID=wateros
+VERSION=1
+PRETTY_NAME="WaterOS userland"
+

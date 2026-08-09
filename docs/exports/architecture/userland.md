@@ -1,128 +1,71 @@
 # userland — 架构
 
-事实来源：`user/` 目录树、`user/Cargo.toml`、`user/Makefile`、内核 `os/src/main.rs` bring-up 路径。
+事实来源：`user/configs/`、`user/packages/`、`user/tools/` 与 `user/README.md`。
 
-## 在系统中的位置
+## 定位
 
-用户态代码以 **Git 子模块** `user/`（远程 `wateros_user_mode_program`）维护，与内核仓库解耦构建；产物通过 ext4 磁盘镜像或 ELF 路径由内核加载器装入用户地址空间。
-
-```mermaid
-flowchart TD
-    subgraph host [宿主机构建]
-        makefile[user/Makefile]
-        cargo[cargo riscv64gc-unknown-none-elf]
-        objcopy[objcopy bin/elf]
-        img[rv_disk.img ext4]
-        makefile --> cargo --> objcopy --> img
-    end
-
-    subgraph userCrate [wateros_user_lib]
-        start[_start .text.entry]
-        share[share: console heap syscall config]
-        riscv[riscv: ecall lang_items linker.ld]
-        bins[src/bin/*.rs main]
-        start --> share
-        share --> riscv
-        bins --> start
-    end
-
-    subgraph kernel [WaterOS 内核]
-        loader[MM from_elf / 根卷路径]
-        trap[trap + wateros-syscall]
-        vfs[vfs fd 0/1]
-        loader --> trap
-        trap --> vfs
-    end
-
-    img --> loader
-    cargo --> userCrate
-    userCrate --> loader
-```
-
-## 目录与职责
+`user/` 是 WaterOS 仓库内的普通目录，不再是 Rust 用户程序 Git 子模块。它是一个
+离线、可组合的用户空间构建系统，负责双架构静态 BusyBox、profile staging、独立
+EXT4 rootfs 和外部 EXT4 镜像副本叠加。内核仍通过现有 ELF loader、VFS 和 syscall
+实现运行这些标准 Linux ABI 用户程序。
 
 ```mermaid
 flowchart LR
-    lib[src/lib.rs 门面与 wait 策略]
-    shareMod[share/ 可移植层]
-    riscvMod[riscv/ 架构后端]
-    binDir[src/bin/ 独立 ELF]
-    ld[linker_script/linker.ld]
-    build[build.rs]
-
-    lib --> shareMod
-    shareMod --> riscvMod
-    binDir --> lib
-    riscvMod --> ld
-    build --> ld
+    Config[architectures.toml / profiles.toml] --> Orchestrator[userland.py]
+    Package[packages/*] --> Orchestrator
+    Vendor[vendor/busybox] --> Work[build/work 副本]
+    Orchestrator --> Work
+    Work --> Dest[package DESTDIR]
+    Dest --> Stage[profile staging]
+    Stage --> Image[独立 EXT4]
+    Stage --> Overlay[外部镜像副本]
+    Image --> Kernel[WaterOS VFS + ELF loader]
+    Overlay --> Kernel
 ```
+
+## 目录职责
 
 | 路径 | 职责 |
-|------|------|
-| `src/lib.rs` | `_start`、弱 `main`、对外 `write`/`fork`/… 门面；`wait` 轮询策略 |
-| `src/share/` | 控制台、堆配置、syscall 薄封装（意图上与架构解耦） |
-| `src/riscv/` | BSS 清零、`ecall`、panic、`linker.ld` |
-| `src/bin/` | 各烟测与 shell；仅提供 `main` |
-| `script/` | Makefile 生成、ext4 镜像、统计脚本 |
-| `build.rs` | 链接脚本变更重编译 |
+| --- | --- |
+| `configs/architectures.toml` | 工具链前缀、目标三元组、ABI flags、ELF machine |
+| `configs/profiles.toml` | package 集合、合并覆盖和 overlay 替换范围 |
+| `rootfs/base/` | 架构无关账号、网络、shell 环境与 rcS |
+| `packages/*/package.toml` | package 元数据、依赖、架构和输入 |
+| `packages/*/build.py` | 将一个 package 安装到隔离 DESTDIR |
+| `vendor/` | 固定版本、带许可证的上游源码 |
+| `tools/userland.py` | doctor、依赖排序、缓存、构建和 staging 合并 |
+| `tools/image.py` | EXT4 创建、校验、inspect 和安全叠加 |
+| `build/` | work、缓存、staging、manifest 和镜像；不提交 |
 
-## 启动与链接布局
+## 构建数据流
 
-1. 内核将 ELF 映射到用户地址空间（装载地址假设与 `linker.ld` `USER_ENTRY_ADDRESS` 及加载器一致）。
-2. CPU 从 `_start`（`.text.entry`）开始执行。
-3. `clear_bss` → `init_heap` → 用户 `main` → `exit` syscall。
+1. 读取架构与 profile TOML，解析 package 依赖并拓扑排序。
+2. 将 vendor 源码复制到 `build/work`；只在副本上应用有序 patch。
+3. package 构建入口收到 JSON context，安装到独立 DESTDIR。
+4. 以“同一路径单一 owner”为默认规则合并 staging；未授权冲突立即失败。
+5. 写入工具链/package/cache 元数据和逐路径 manifest。
+6. `mke2fs -d` 创建无分区表 EXT4，或由 `debugfs` 写入基础镜像副本。
 
-`linker.ld` 段顺序：`.text.entry` → trampoline 占位 → `.text.*` → `.rodata` → `.data` → `.bss`（含 `bss_start`/`bss_end`）。
+缓存键覆盖架构、源码、package/config/patch、额外输入和工具链版本，不能跨 ABI
+误复用。构建过程不联网、不修改 vendor，也不要求 root/loop mount。
 
-## Syscall 路径
+## 与内核的边界
 
-```mermaid
-sequenceDiagram
-    participant App as bin main 或 lib API
-    participant Share as share::syscall
-    participant RV as riscv::syscall
-    participant Kern as 内核 trap
+- `os/Makefile` 只接收 `SDCARD=<path>`，不构建用户软件。
+- 根目录 `make all` 不依赖 `user/build`，比赛外部镜像流程保持不变。
+- operator supervisor 直接尝试 `/bin/sh`；首版不运行传统 PID 1。
+- `/dev`、`/proc`、`/tmp` 在镜像中只是挂载点，由内核运行时提供。
+- minimal/operator 不带比赛 `/glibc`、`/musl`；需要测例时使用 overlay 副本。
 
-    App->>Share: write / fork / ...
-    Share->>RV: sys_write / ...
-    RV->>Kern: ecall a7=nr a0-a2=args
-    Kern-->>RV: a0=ret
-    RV-->>App: isize
-```
+## 安全与可复现边界
 
-- 编号常量定义在 `riscv/syscall.rs`，与 `wateros-abi` `LinuxGeneric64` 调试子集对齐。
-- 控制台 I/O 经 fd 0/1 进入内核 VFS/字符设备栈（具体驱动由内核 feature 决定）。
-
-## 构建流水线
-
-| 阶段 | 输出 |
-|------|------|
-| `script/gen_bin_makefile.sh` | `src/bin/Makefile.generated`（每个 `[[bin]]` 的 objcopy 规则） |
-| `cargo build --target riscv64gc-unknown-none-elf --release` | `libwateros_user_lib.rlib` + 各 bin ELF |
-| `objcopy -O binary` | `bin/riscv/*.bin` |
-| `objcopy -O elf64-littleriscv` | `elf/riscv/*.elf` |
-| `script/rv_gen_ext4_disk_img.sh` | `rv_disk.img`（供 QEMU/内核根卷） |
-
-## 与内核组件对应
-
-| 用户态 | 内核 |
-|--------|------|
-| `ecall` + 号表 | `wateros-platform` trap → `wateros-syscall` |
-| 号表常量 | `wateros-abi` `impl-linux-generic64` |
-| `read`/`write` fd 0/1 | `wateros-vfs` fd-session + 控制台 |
-| `fork`/`exec`/`waitpid` | `wateros-task` + `wateros-mm` ELF 加载 |
-| `brk` | `wateros-mm` 用户堆/ program break |
-| `get_time` | `wateros-platform` 计时 / tick |
-
-## 当前限制（架构层）
-
-- **单架构**：仅 RISC-V 64；LoongArch 用户态未分叉。
-- **共享地址空间 fork**：与内核 task 文档一致，fork 后页表共享为临时方案。
-- **无动态链接**：静态链接 `wateros_user_lib` + `buddy_system_allocator`。
-- **子模块检出**：父仓库 `user/` 为空时需初始化子模块，否则无源码可构建。
+- overlay 从不原地修改输入镜像，并在完成前后检查基础镜像摘要。
+- `/glibc`、`/musl` 永不允许写入；其他路径受 allowlist 和 profile 替换权限约束。
+- 独立镜像使用固定 UUID、label、时间基准和保守 EXT4 feature。
+- 完成后执行 `e2fsck -fn`，并生成内容清单及 SHA-256。
 
 ## 修订
 
 | 日期 | 说明 |
-|------|------|
-| 2026-06-29 | 初版架构导出 |
+| --- | --- |
+| 2026-08-09 | 将旧 Rust 子模块文档替换为双架构 BusyBox/package/EXT4 架构 |

@@ -1,0 +1,10 @@
+[package]
+name = "base-layout"
+version = "1"
+source = ""
+architectures = ["rv", "la"]
+dependencies = []
+build = "build.py"
+install_prefix = "/"
+allow_overwrite = []
+inputs = ["rootfs/base"]

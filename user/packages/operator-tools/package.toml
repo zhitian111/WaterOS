@@ -1,0 +1,10 @@
+[package]
+name = "operator-tools"
+version = "1"
+source = ""
+architectures = ["rv", "la"]
+dependencies = ["base-layout", "busybox"]
+build = "build.py"
+install_prefix = "/opt/wateros"
+allow_overwrite = []
+inputs = []

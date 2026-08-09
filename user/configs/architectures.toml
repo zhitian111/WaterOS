@@ -1,0 +1,16 @@
+[architectures.rv]
+triple = "riscv64-linux-musl"
+cross_compile = "riscv64-buildroot-linux-musl-"
+cross_env = "RV_CROSS_COMPILE"
+kernel_arch = "riscv"
+cflags = ["-march=rv64gc", "-mabi=lp64d"]
+elf_machine = "RISC-V"
+
+[architectures.la]
+triple = "loongarch64-linux-musl"
+cross_compile = "loongarch64-linux-musl-"
+cross_env = "LA_CROSS_COMPILE"
+kernel_arch = "loongarch"
+cflags = ["-mabi=lp64d"]
+elf_machine = "LoongArch"
+
