@@ -3073,3 +3073,59 @@ Linux 主线 LS2K GPIO bank 使用 64-bit 寄存器，方向、输出、输入�
 ### 提交
 
 - `[feat] combine LS2K1000 MMC diagnostics`
+
+## 2026-08-10：批次 66——Remote `ls2k-mmc` read-only diagnosis command
+
+### 任务与设计
+
+1. 在 development-only TCP monitor 增加严格无参数的 `ls2k-mmc` 命令。
+2. 2K1000 profile 只在收到命令时执行 clock/GPIO 组合 snapshot；其他 profile 零 MMIO 访问。
+3. 使用非阻塞 one-shot gate 排除并发物理读取，busy 立即失败而不是等待或重入。
+4. 从 topology 锁内只复制唯一 MMC 描述；MMIO 读取、格式化和网络发送均在锁外完成。
+5. 成功与部分失败使用固定单行字段顺序和稳定错误码，同时保留 `can_activate=0` 与 blocker 数。
+6. 不增加认证、写命令、自动 snapshot 或 MMC activation；真机行为继续标记未验证。
+
+### 完成内容
+
+- [x] monitor parser/help/dispatch 增加 `ls2k-mmc`，命令响应不会关闭会话。
+- [x] 新增 `DiagnosticGate`，基于 atomic compare-exchange；guard drop 总能重新开放 gate。
+- [x] `diagnose_mmc_once()` 在 gate 内复制 topology 描述后释放锁，再调用显式 volatile diagnosis。
+- [x] topology 未初始化、host 数不是 1、busy、invalid plan、clock/GPIO backend 构造失败均映射为
+  稳定 facade 错误。
+- [x] formatter 输出 clock raw/reference/APB rate、GPIO raw/pin/polarity/level/present、
+  `can_activate` 和 blocker 数；clock/GPIO 部分错误独立保留。
+- [x] overall 错误使用 `busy`、`topology-unavailable`、`invalid-host-count`、`invalid-plan`、
+  `clock-backend`、`gpio-backend`，不暴露 Rust `Debug` 名称。
+- [x] QEMU/非 2K1000 profile 固定返回
+  `ERR unsupported: ls2k-mmc requires loongson2k1000la`，不会链接物理诊断入口。
+- [x] remote debug Python smoke client 现在发送并校验 `ls2k-mmc`，接受成功、诊断错误、
+  target unavailable 和 profile unsupported 四类前缀。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 89 项全部通过；gate 测试覆盖重入 busy 与 drop 后恢复，既有组合测试
+  新增成功/双错误响应的逐字节稳定格式断言。
+- remote client 与 QEMU launcher 的 13 项 Python host 测试通过，socketpair 会话包含
+  `ls2k-mmc` unsupported 响应及后续 `quit`。
+- 2K1000 + `remote-debug-monitor` 精确 LoongArch target check 通过，覆盖真实 MMIO 命令分支。
+- QEMU LoongArch + `remote-debug-monitor` 精确 target check 通过，覆盖 unsupported 分支。
+- `make kernel-la EXTRA_FEATURES=remote-debug-monitor` 通过；仅有仓库既有 warning。
+- LoongArch QEMU TCP smoke 端到端通过：使用 1 MiB 临时稀疏 raw 盘和 snapshot 模式，实际收到
+  `ping`、`status`、`version`、`ls2k-mmc` unsupported、`quit`；临时盘退出时截断为 0 字节。
+- 顶层 host `cargo test` 仍受默认 RISC-V SBI inline-asm/未选择 platform-arch 实现限制；本批把
+  formatter 放在可独立 host 测试的 2K1000 crate，并用 target check + QEMU smoke 覆盖顶层协议。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：真实 2K1000 尚无 NIC 驱动，未通过 TCP 执行物理 clock/GPIO 读取。
+- [ ] monitor 无认证和加密，只允许在隔离开发网络使用；`remote-debug-monitor` 继续默认关闭。
+- [ ] one-shot gate 只排除同一诊断入口；调用者仍须保证其他固件/驱动不会并发改 clock/GPIO。
+- [ ] snapshot 跨多个非原子寄存器读取，输出不是一致性事务，也没有 GPIO debounce。
+- [ ] 成功输出可能超过输入 `MAX_LINE_LEN`；`send_all` 支持分段发送，Python 客户端按 prompt 聚合。
+- [ ] remote 命令只报告证据；六个 MMC activation blocker 保持不变，没有执行任何硬件写。
+- [ ] 下一批应重新核对 Linux fixed-regulator 无 GPIO 时的 ownership/enable 语义，建立只读 power
+  prerequisite 证据或修正当前保守分类；任何 rail 控制写仍需推迟到可证明板级连接之后。
+
+### 提交
+
+- `[feat] expose LS2K1000 MMC diagnostics remotely`

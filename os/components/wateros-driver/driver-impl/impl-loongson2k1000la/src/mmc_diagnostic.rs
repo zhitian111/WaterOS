@@ -11,6 +11,48 @@ use crate::{
     mmc::{self, BringUpPlan, PlanError},
     topology::{CardDetect, MmcDescription},
 };
+use alloc::{format, string::String};
+use core::sync::atomic::{AtomicBool, Ordering};
+
+/// Non-blocking exclusion for explicit physical diagnostic reads.
+pub struct DiagnosticGate {
+    busy : AtomicBool,
+}
+
+impl DiagnosticGate {
+    pub const fn new() -> Self { Self { busy : AtomicBool::new(false) } }
+
+    pub fn try_enter(&self) -> Result<DiagnosticGuard<'_>, GateError> {
+        self.busy
+            .compare_exchange(false,
+                              true,
+                              Ordering::AcqRel,
+                              Ordering::Acquire)
+            .map(|_| DiagnosticGuard { gate : self })
+            .map_err(|_| GateError::Busy)
+    }
+}
+
+impl Default for DiagnosticGate {
+    fn default() -> Self { Self::new() }
+}
+
+pub struct DiagnosticGuard<'a> {
+    gate : &'a DiagnosticGate,
+}
+
+impl Drop for DiagnosticGuard<'_> {
+    fn drop(&mut self) {
+        self.gate
+            .busy
+            .store(false, Ordering::Release);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GateError {
+    Busy,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CardDetectDiagnosis {
@@ -28,6 +70,71 @@ pub struct Diagnosis {
     pub plan : BringUpPlan,
     pub clock : Result<ClockSnapshot, ClockError>,
     pub card_detect : CardDetectDiagnosis,
+}
+
+fn clock_error_code(error : ClockError) -> &'static str {
+    match error {
+        ClockError::Io => "io",
+        ClockError::ZeroReference => "zero-reference",
+        ClockError::ZeroPllMultiplier => "zero-pll-multiplier",
+        ClockError::ZeroPllDivisor => "zero-pll-divisor",
+        ClockError::RateOverflow => "rate-overflow",
+        ClockError::UnsupportedProvider => "unsupported-provider",
+    }
+}
+
+fn gpio_error_code(error : GpioError) -> &'static str {
+    match error {
+        GpioError::Io => "io",
+        GpioError::UnsupportedProvider => "unsupported-provider",
+        GpioError::PinOutOfRange => "pin-out-of-range",
+        GpioError::NotInput => "not-input",
+    }
+}
+
+/// Stable single-line representation used by the remote development monitor.
+pub fn format_diagnosis(diagnosis : Diagnosis) -> String {
+    let clock = match diagnosis.clock {
+        Ok(snapshot) => {
+            format!("clock=ok ref_hz={} pll_raw={:#x} gmac_raw={:#x} apb_raw={:#x} apb_hz={}",
+                    snapshot.reference_hz,
+                    snapshot.dc_pll_raw,
+                    snapshot.gmac_div_raw,
+                    snapshot.apb_scale_raw,
+                    snapshot.apb_hz)
+        }
+        Err(error) => format!("clock=error:{}",
+                              clock_error_code(error)),
+    };
+    let card = match diagnosis.card_detect {
+        CardDetectDiagnosis::NonRemovable => String::from("card=non-removable"),
+        CardDetectDiagnosis::FirmwareMaintainedBroken => {
+            String::from("card=firmware-maintained-broken")
+        }
+        CardDetectDiagnosis::NativeUnavailable => String::from("card=native-unavailable"),
+        CardDetectDiagnosis::Gpio(Ok(snapshot)) => {
+            format!("card=gpio dir_raw={:#x} input_raw={:#x} pin={} active_low={} level_high={} \
+                     present={}",
+                    snapshot.direction_raw,
+                    snapshot.input_raw,
+                    snapshot.pin,
+                    u8::from(snapshot.active_low),
+                    u8::from(snapshot.level_high),
+                    u8::from(snapshot.card_present))
+        }
+        CardDetectDiagnosis::Gpio(Err(error)) => {
+            format!("card=gpio-error:{}",
+                    gpio_error_code(error))
+        }
+    };
+    format!("ls2k-mmc {} {} can_activate={} blockers={}\r\n",
+            clock,
+            card,
+            u8::from(diagnosis.plan
+                              .can_activate()),
+            diagnosis.plan
+                     .blockers
+                     .len())
 }
 
 /// Collect clock and card-detect evidence without changing hardware state.
@@ -151,6 +258,17 @@ mod tests {
     use alloc::{vec, vec::Vec};
     use api_v0::MmioRegion;
 
+    #[test]
+    fn diagnostic_gate_rejects_reentry_and_reopens_on_drop() {
+        let gate = DiagnosticGate::new();
+        let guard = gate.try_enter()
+                        .unwrap();
+        assert!(matches!(gate.try_enter(), Err(GateError::Busy)));
+        drop(guard);
+        assert!(gate.try_enter()
+                    .is_ok());
+    }
+
     #[derive(Default)]
     struct ClockModel {
         reads : Vec<(usize, usize)>,
@@ -264,6 +382,10 @@ mod tests {
                                       (0x28, 4),
                                       (0x50, 8)]);
         assert_eq!(gpios.reads, vec![0, 0x20]);
+        assert_eq!(format_diagnosis(result),
+                   "ls2k-mmc clock=ok ref_hz=100000000 pll_raw=0x2810000000 gmac_raw=0x800000 \
+                    apb_raw=0x300000 apb_hz=250000000 card=gpio dir_raw=0x400000 input_raw=0x0 \
+                    pin=22 active_low=1 level_high=0 present=1 can_activate=0 blockers=6\r\n");
     }
 
     #[test]
@@ -283,6 +405,9 @@ mod tests {
                    6);
         assert!(!result.plan
                        .can_activate());
+        assert_eq!(format_diagnosis(result),
+                   "ls2k-mmc clock=error:io card=gpio-error:not-input can_activate=0 \
+                    blockers=6\r\n");
     }
 
     #[test]

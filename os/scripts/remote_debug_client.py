@@ -96,7 +96,12 @@ def connect_with_retry(host: str, port: int, timeout: float) -> MonitorClient:
 
 def run_smoke(client: MonitorClient) -> list[CommandResult]:
     client.receive_banner()
-    results = [client.command("ping"), client.command("status"), client.command("version")]
+    results = [
+        client.command("ping"),
+        client.command("status"),
+        client.command("version"),
+        client.command("ls2k-mmc"),
+    ]
     if results[0].response != "pong\r\n":
         raise MonitorProtocolError(f"ping failed: {results[0].response!r}")
     required_status = ("tick=", "online_cpus=", "heap_used=", "heap_free=", "heap_capacity=")
@@ -104,6 +109,14 @@ def run_smoke(client: MonitorClient) -> list[CommandResult]:
         raise MonitorProtocolError(f"incomplete status: {results[1].response!r}")
     if not results[2].response.startswith("WaterOS "):
         raise MonitorProtocolError(f"version failed: {results[2].response!r}")
+    mmc_prefixes = (
+        "ls2k-mmc ",
+        "ERR ls2k-mmc ",
+        "ERR unavailable: ls2k-mmc ",
+        "ERR unsupported: ls2k-mmc ",
+    )
+    if not results[3].response.startswith(mmc_prefixes):
+        raise MonitorProtocolError(f"invalid ls2k-mmc response: {results[3].response!r}")
     results.append(client.quit())
     return results
 

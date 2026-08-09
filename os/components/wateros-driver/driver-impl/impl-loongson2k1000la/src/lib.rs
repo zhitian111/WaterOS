@@ -38,6 +38,18 @@ use topology::BoardTopology;
 static TOPOLOGY : Mutex<Option<BoardTopology>> = Mutex::new(None);
 static IRQ_LAYOUT : Mutex<RuntimeLayoutSlot> = Mutex::new(RuntimeLayoutSlot::new());
 static IRQ_OWNER_PLAN : Mutex<Option<BoardOwnerPlan>> = Mutex::new(None);
+#[cfg(target_arch = "loongarch64")]
+static MMC_DIAGNOSTIC_GATE : mmc_diagnostic::DiagnosticGate =
+    mmc_diagnostic::DiagnosticGate::new();
+
+#[cfg(target_arch = "loongarch64")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MmcDiagnosticError {
+    Busy,
+    TopologyUnavailable,
+    HostCount,
+    Diagnosis(mmc_diagnostic::VolatileDiagnosisError),
+}
 
 pub use machine::machine;
 
@@ -98,6 +110,29 @@ pub fn init_after_boot() -> DriverResult<()> { Err(DriverError::Unsupported) }
 pub fn with_topology<R>(f : impl FnOnce(Option<&BoardTopology>) -> R) -> R {
     let topology = TOPOLOGY.lock();
     f(topology.as_ref())
+}
+
+/// Perform one explicitly requested read-only MMC prerequisite diagnosis.
+///
+/// # Safety
+/// The topology MMIO windows must be mapped device memory and no other owner
+/// may mutate the clock/GPIO registers concurrently. Physical behavior is
+/// `UNVERIFIED_ON_HARDWARE`; this function never activates the MMC host.
+#[cfg(target_arch = "loongarch64")]
+pub unsafe fn diagnose_mmc_once()
+    -> Result<mmc_diagnostic::Diagnosis, MmcDiagnosticError> {
+    let _guard = MMC_DIAGNOSTIC_GATE.try_enter().map_err(|_| MmcDiagnosticError::Busy)?;
+    let description = with_topology(|topology| {
+        let topology = topology.ok_or(MmcDiagnosticError::TopologyUnavailable)?;
+        if topology.mmc_hosts.len() != 1 {
+            return Err(MmcDiagnosticError::HostCount);
+        }
+        Ok(topology.mmc_hosts[0].clone())
+    })?;
+    // SAFETY: forwarded to this function's caller; the gate excludes another
+    // diagnosis and the topology lock has already been released.
+    unsafe { mmc_diagnostic::diagnose_volatile(&description) }
+        .map_err(MmcDiagnosticError::Diagnosis)
 }
 
 pub fn with_irq_layout<R>(f : impl FnOnce(Option<&RuntimeLayout>) -> R) -> R {

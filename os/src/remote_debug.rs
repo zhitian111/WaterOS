@@ -30,6 +30,7 @@ enum Command {
     Status,
     Version,
     Ls2kIrq,
+    Ls2kMmc,
     Quit,
     Empty,
     Unknown,
@@ -46,6 +47,7 @@ fn parse_command(line : &[u8]) -> Command {
         "status" => Command::Status,
         "version" => Command::Version,
         "ls2k-irq" => Command::Ls2kIrq,
+        "ls2k-mmc" => Command::Ls2kMmc,
         "quit" | "exit" => Command::Quit,
         _ => Command::Unknown,
     }
@@ -67,7 +69,7 @@ fn send_all(socket : &SocketRef, mut data : &[u8]) -> Result<(), SocketSendError
 fn command_response(command : Command) -> (alloc::string::String, bool) {
     match command {
         Command::Help => (alloc::string::String::from("commands: help, ping, status, version, \
-                                                       ls2k-irq, quit\r\n"),
+                                                       ls2k-irq, ls2k-mmc, quit\r\n"),
                           false),
         Command::Ping => (alloc::string::String::from("pong\r\n"), false),
         Command::Status => {
@@ -85,6 +87,7 @@ fn command_response(command : Command) -> (alloc::string::String, bool) {
                                      env!("CARGO_PKG_VERSION")),
                              false),
         Command::Ls2kIrq => (ls2k_irq_response(), false),
+        Command::Ls2kMmc => (ls2k_mmc_response(), false),
         Command::Quit => (alloc::string::String::from("bye\r\n"), true),
         Command::Empty => (alloc::string::String::new(), false),
         Command::Unknown => {
@@ -136,6 +139,37 @@ fn ls2k_irq_response() -> alloc::string::String {
                    .rearmed_sources,
             failure(0),
             failure(1))
+}
+
+#[cfg(all(feature = "loongson2k1000la", target_arch = "loongarch64"))]
+fn ls2k_mmc_response() -> alloc::string::String {
+    let error_code = |error| match error {
+        driver::Loongson2k1000MmcDiagnosticError::Busy => "busy",
+        driver::Loongson2k1000MmcDiagnosticError::TopologyUnavailable => {
+            "topology-unavailable"
+        }
+        driver::Loongson2k1000MmcDiagnosticError::HostCount => "invalid-host-count",
+        driver::Loongson2k1000MmcDiagnosticError::InvalidPlan => "invalid-plan",
+        driver::Loongson2k1000MmcDiagnosticError::ClockBackend => "clock-backend",
+        driver::Loongson2k1000MmcDiagnosticError::GpioBackend => "gpio-backend",
+    };
+    // SAFETY: the 2K1000 platform initialized the topology mapping; the driver
+    // one-shot gate excludes concurrent monitor reads. Hardware semantics are
+    // still UNVERIFIED_ON_HARDWARE.
+    match unsafe { driver::diagnose_loongson2k1000_mmc() } {
+        Ok(response) => response,
+        Err(error) => format!("ERR ls2k-mmc {}\r\n", error_code(error)),
+    }
+}
+
+#[cfg(all(feature = "loongson2k1000la", not(target_arch = "loongarch64")))]
+fn ls2k_mmc_response() -> alloc::string::String {
+    alloc::string::String::from("ERR unavailable: ls2k-mmc requires loongarch64 target\r\n")
+}
+
+#[cfg(not(feature = "loongson2k1000la"))]
+fn ls2k_mmc_response() -> alloc::string::String {
+    alloc::string::String::from("ERR unsupported: ls2k-mmc requires loongson2k1000la\r\n")
 }
 
 #[cfg(not(feature = "loongson2k1000la"))]
@@ -251,6 +285,7 @@ mod tests {
         assert_eq!(parse_command(b"exit"), Command::Quit);
         assert_eq!(parse_command(b"ls2k-irq"),
                    Command::Ls2kIrq);
+        assert_eq!(parse_command(b" ls2k-mmc "), Command::Ls2kMmc);
         assert_eq!(parse_command(b"\t"), Command::Empty);
     }
 
@@ -270,5 +305,19 @@ mod tests {
         #[cfg(not(feature = "loongson2k1000la"))]
         assert_eq!(response,
                    "ERR unsupported: ls2k-irq requires loongson2k1000la\r\n");
+    }
+
+    #[test]
+    fn ls2k_mmc_command_is_profile_gated_and_never_closes_session() {
+        let (response, close) = super::command_response(Command::Ls2kMmc);
+        assert!(!close);
+        #[cfg(not(feature = "loongson2k1000la"))]
+        assert_eq!(response,
+                   "ERR unsupported: ls2k-mmc requires loongson2k1000la\r\n");
+        #[cfg(all(feature = "loongson2k1000la", not(target_arch = "loongarch64")))]
+        assert_eq!(response,
+                   "ERR unavailable: ls2k-mmc requires loongarch64 target\r\n");
+        #[cfg(all(feature = "loongson2k1000la", target_arch = "loongarch64"))]
+        assert!(response.starts_with("ls2k-mmc ") || response.starts_with("ERR ls2k-mmc "));
     }
 }

@@ -127,6 +127,52 @@ pub fn loongson2k1000_irq_diagnostic_snapshot()
     impl_loongson2k1000la::diagnostic_irq::snapshot()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Loongson2k1000MmcDiagnosticError {
+    Busy,
+    TopologyUnavailable,
+    HostCount,
+    InvalidPlan,
+    ClockBackend,
+    GpioBackend,
+}
+
+/// Explicitly collect and format read-only 2K1000 MMC prerequisite evidence.
+///
+/// # Safety
+/// The caller must satisfy the implementation's MMIO mapping and exclusion
+/// contract. This does not activate the MMC host or write device registers.
+#[cfg(all(feature = "impl-loongson2k1000la", target_arch = "loongarch64"))]
+pub unsafe fn diagnose_loongson2k1000_mmc()
+    -> Result<alloc::string::String, Loongson2k1000MmcDiagnosticError> {
+    use impl_loongson2k1000la::mmc_diagnostic::VolatileDiagnosisError;
+
+    // SAFETY: forwarded to the caller-visible contract above.
+    let diagnosis = unsafe { impl_loongson2k1000la::diagnose_mmc_once() }.map_err(|error| {
+        match error {
+            impl_loongson2k1000la::MmcDiagnosticError::Busy => {
+                Loongson2k1000MmcDiagnosticError::Busy
+            }
+            impl_loongson2k1000la::MmcDiagnosticError::TopologyUnavailable => {
+                Loongson2k1000MmcDiagnosticError::TopologyUnavailable
+            }
+            impl_loongson2k1000la::MmcDiagnosticError::HostCount => {
+                Loongson2k1000MmcDiagnosticError::HostCount
+            }
+            impl_loongson2k1000la::MmcDiagnosticError::Diagnosis(
+                VolatileDiagnosisError::Plan(_),
+            ) => Loongson2k1000MmcDiagnosticError::InvalidPlan,
+            impl_loongson2k1000la::MmcDiagnosticError::Diagnosis(
+                VolatileDiagnosisError::ClockBackend(_),
+            ) => Loongson2k1000MmcDiagnosticError::ClockBackend,
+            impl_loongson2k1000la::MmcDiagnosticError::Diagnosis(
+                VolatileDiagnosisError::GpioBackend(_),
+            ) => Loongson2k1000MmcDiagnosticError::GpioBackend,
+        }
+    })?;
+    Ok(impl_loongson2k1000la::mmc_diagnostic::format_diagnosis(diagnosis))
+}
+
 /// 自检入口：依次调用 API 与各子系统测试钩子；QEMU 实现会跑探测路径，dummy
 /// 实现跳过硬件。
 pub fn test() {
