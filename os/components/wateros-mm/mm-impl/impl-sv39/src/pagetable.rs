@@ -443,9 +443,17 @@ impl Sv39AddressSpace {
     }
 
     pub(crate) fn lazy_vma_overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
+        if start.0 >= end.0 {
+            return false;
+        }
+        // `lazy_file_vmas` is sorted and non-overlapping, so every VMA before
+        // this partition ends to the left of the query.  Only the first
+        // remaining VMA can decide whether an overlap exists.
+        let index = self.lazy_file_vmas
+                        .partition_point(|vma| vma.end.0 <= start.0);
         self.lazy_file_vmas
-            .iter()
-            .any(|vma| vma.overlaps(start, end))
+            .get(index)
+            .is_some_and(|vma| vma.start.0 < end.0)
     }
 
     fn lazy_vma_overlap_end(&self, start : VirtAddr, end : VirtAddr) -> Option<VirtAddr> {

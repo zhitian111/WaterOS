@@ -64,3 +64,91 @@ codegraph explore "with_user_aspace_mut_and_flush HeapBrk::brk MmapOps::munmap M
   累积无可测价值的复杂度，代码改动全部回退，不进入性能提交。
 - 原始日志：`/tmp/wateros-mm02a-before-rv.log`、
   `/tmp/wateros-mm02a-after-rv.log`（本机临时文件，不提交）。
+
+## MM-01A：评估并实现按需 brk（候选）
+
+状态：采样后终止（2026-08-10）
+
+### 目标调用链
+
+```text
+sys_brk
+  -> HeapBrk::brk
+     -> map_zeroed_page_with_alloc (增长区间逐页分配、清零、建 PTE)
+
+user page fault
+  -> MmapOps::handle_page_fault
+     -> handle_brk_page_fault
+        -> map_zeroed_page_with_alloc (现有按需零页路径)
+```
+
+恢复上下文命令：
+
+```bash
+codegraph explore "HeapBrk::brk handle_brk_page_fault user_brk_start user_brk_current_end user_brk_max initialization fork clone exec destroy and all brk tests; show call paths and exact relevant source"
+```
+
+### 候选设计与决策门槛
+
+1. 候选方案参考 Linux 匿名堆：增长只校验范围并推进 `current_end`，首次读写由现有
+   `handle_brk_page_fault` 分配清零页；收缩继续只回收已驻留页。
+2. fork 已复制 `user_brk_{start,current_end,max}`，未驻留页无需额外复制；exec 创建新地址
+   空间，不引入额外生命周期状态。
+3. 当前 `api-v0::HeapBrk` 文档明确要求增长时立即分配映射。实施 lazy 方案需要同步放宽
+   稳定契约，属于 API 语义变化，不能仅凭“已有 fault handler”直接修改。
+4. 先用 pc-hot 的 `fast=1` 对完整测试前 300 s 采样。只有 brk 零页、帧分配或相关页表
+   路径构成显著热点时才实施；否则终止该候选并转向采样排名更高的内存路径。
+
+### 采样结论
+
+- 300 s、8 vCPU、`fast=1` 共采样 225,996,010,249 条指令。
+- brk 零页和帧分配路径未进入 Top 80；直接改 lazy brk 缺乏收益证据，且需要改变
+  `api-v0` 的 eager 映射契约，因此不实施。
+- `Sv39AddressSpace::mprotect` 被归并为第一热点。原始 PC `0x8026f8a0` 等确认落在
+  `lazy_vma_overlaps` 的线性 VMA 扫描循环；仅该循环的五条核心指令各执行
+  3,596,178,512 次，合计约占总采样指令的 7.96%。
+- 原始采样：`/tmp/wateros-current-rv-pcs.txt`；Top 80：
+  `/tmp/wateros-current-rv-pchot-top80.txt`（本机临时文件，不提交）。
+
+## MM-02B：lazy VMA 重叠查询改为二分定位
+
+状态：已完成（2026-08-10）
+
+### 具体模块与调用链
+
+- 模块：`wateros-mm-impl-sv39`、`wateros-mm-impl-loongarch64` 的 `pagetable.rs`。
+- 热链：`sys_mprotect -> MmapOps::mprotect -> lazy_vma_overlaps -> Vec::iter().any()`。
+- 同一查询还被 lazy mmap 注册、brk 冲突检查、brk fault 和 mremap 使用。
+- CodeGraph 恢复命令：
+
+```bash
+codegraph explore "protect_lazy_file_vmas lazy_vma_overlaps lazy_file_vma_index insert_lazy_file_vma mprotect sys_mprotect exact source and all callers; sorted invariant"
+```
+
+### 设计
+
+`lazy_file_vmas` 在注册时按 `start` 插入，且拒绝重叠；拆分、删除和 fork 都保持顺序。
+因此可先用 `partition_point(vma.end <= query.start)` 跳过所有位于查询左侧的 VMA，再只
+检查第一个候选的 `start < query.end`。复杂度由 O(VMA 数) 降为 O(log VMA 数)，不改变
+映射、权限、loader 生命周期或错误语义。双架构采用同一实现。
+
+### 验收
+
+- 双架构 Final check/build 通过。
+- RISC-V 完整 Final BuildStorm 成功，且相对 1023.91 s 基线获得超出噪声的改善。
+- 改后复跑同窗口 pc-hot，确认 `0x8026f8a0` 线性循环热点消失；若完整测试退化则回退。
+
+### 验证结果
+
+- `make check ARCH=rv PROFILE=final`：通过。
+- `make check ARCH=la PROFILE=final`：通过。
+- 双架构 Final build：通过。
+- RISC-V 完整 BuildStorm：`ok=true`，989.57 s；无 panic/SIGSEGV，完整结束。
+- 相对改前 1023.91 s：减少 34.34 s（3.35%）。相对 Linux 395.90 s 为 2.50 倍；
+  距离 2 倍阶段门槛 791.80 s 尚差 197.77 s。
+- 改后相同 300 s pc-hot 中，旧 `lazy_vma_overlaps` 线性扫描 PC 热环已消失；
+  `mprotect` 聚合计数从 108,131,577,716 降至 86,669,001,515（-19.85%）。
+- 新的主要内核热环位于 `protect_lazy_file_vmas`：每次 mprotect 仍 `drain(..)` 全量扫描并
+  重建所有 VMA。其核心指令各执行约 1,418,596,177 次，是下一项 MM 优化候选。
+- 改后完整日志：`/tmp/wateros-mm02b-after-rv.log`；改后采样：
+  `/tmp/wateros-mm02b-rv-pcs.txt`（本机临时文件，不提交）。
