@@ -21,7 +21,7 @@ pub enum PlanError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActivationBlocker {
     DataPathUnavailable,
-    ExternalDmaUnavailable,
+    ExternalDmaExecutorUnavailable,
     ClockControlUnavailable,
     PowerSequencingUnavailable,
     CardDetectUnavailable,
@@ -60,7 +60,7 @@ pub fn plan(description : &MmcDescription) -> Result<BringUpPlan, PlanError> {
         auxiliary_mmio,
         bus_width : description.bus_width,
         blockers : [ActivationBlocker::DataPathUnavailable,
-                    ActivationBlocker::ExternalDmaUnavailable,
+                    ActivationBlocker::ExternalDmaExecutorUnavailable,
                     ActivationBlocker::ClockControlUnavailable,
                     ActivationBlocker::PowerSequencingUnavailable,
                     ActivationBlocker::CardDetectUnavailable,

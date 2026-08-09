@@ -1154,3 +1154,50 @@ python3 scripts/remote_debug_qemu_smoke.py \
 ### 提交
 
 - `[feat] add 2K1000LA MMC command core`
+
+## 2026-08-10：批次 27——2K1000 APBDMA descriptor 计划
+
+### 任务与设计
+
+1. 审计 WaterOS 的 DMA、物理地址和 cache maintenance 抽象。
+2. 对照 Linux `loongson2-apb-dma` 确认 descriptor 与启动寄存器编码。
+3. 建立不分配内存、不做地址转换、不访问 MMIO 的纯数据 transfer plan。
+4. 显式携带 descriptor clean 和 read buffer invalidate 要求。
+5. 用 host 单测覆盖地址、方向、分段、路由和拒绝路径。
+
+仓库没有可供真实 SoC DMA 共用的框架；VirtIO HAL 依赖恒等映射且 cache hooks 为空，不能作为 2K1000 APBDMA 的可用性证据。本批因此只实现可审核的 descriptor 编码，未来 executor 必须提供 DMA-capable 物理内存和架构 cache 操作。
+
+### 完成内容
+
+- [x] 新增 `apbdma` 模块以及 48 字节 `#[repr(C)] HardwareDescriptor`。
+- [x] 支持 64 位内存/descriptor 地址、32 位 APB 外设地址和读写方向命令位。
+- [x] 按 word 数、burst words 计算 `length_words` 与 `step_times`。
+- [x] descriptor 地址要求低 5 位为零，避免与 order register 控制位冲突。
+- [x] 生成 `64BIT_EN | START` order 值，并保留 descriptor 物理地址高位。
+- [x] `route_sdio_to_dma1()` 只更新 routing bits 17:15，不破坏同一 syscon 的其他位。
+- [x] transfer plan 明确要求启动前 clean descriptor；device-to-memory 完成后 invalidate buffer。
+- [x] MMC blocker 细化为 `ExternalDmaExecutorUnavailable`，仍禁止激活。
+
+### 验证证据
+
+- 2K1000LA driver host 单测由 13 项增至 16 项并全部通过。
+- 512 字节 read fixture 验证 64 位地址拆分、16-word segment、8 steps、DATA `0x1fe2c040` 和 start order。
+- write fixture 验证 direction bit、无需 read invalidate，以及 DMA1 route 的 read-modify-write 结果。
+- 拒绝零长度、非 4 字节长度、descriptor 非 32 字节对齐、零 burst 和超过 32 位的 APB 地址。
+- `HardwareDescriptor` host 断言大小为 48 字节。
+
+### 已知限制、未验证与后续测试
+
+- [ ] transfer plan 不是 DMA executor；尚无 descriptor/buffer 分配、VA→PA、cache clean/invalidate 或内存屏障实现。
+- [ ] 尚未解析并驱动 APBDMA controller 自身的 MMIO、clock 和 IRQ topology。
+- [ ] descriptor 字段字节序、order register 64 位访问顺序、routing syscon 和 IRQ completion 均待真机验证。
+- [ ] 单 descriptor 计划尚未实现 scatter-gather 链、取消、超时回收和并发 channel ownership。
+- [ ] 在 cache hooks 可用并经真机确认前，不得把 executor 接入 `SdTransport`。
+
+### 参考与许可证
+
+- `docs/references/loongson2-mmc-upstream.md` 已补充 GPL-2.0-or-later APBDMA 来源。
+
+### 提交
+
+- `[feat] model 2K1000 APBDMA descriptors`

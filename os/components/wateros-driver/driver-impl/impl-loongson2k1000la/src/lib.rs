@@ -11,6 +11,7 @@ extern crate alloc;
 pub mod irq_domain;
 pub mod liointc;
 pub mod mmc;
+pub mod apbdma;
 mod machine;
 pub mod topology;
 

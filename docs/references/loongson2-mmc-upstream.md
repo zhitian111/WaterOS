@@ -8,11 +8,15 @@ implemented with the following upstream Linux sources as behavioral references:
 - Linux DT binding change containing `loongson,ls2k1000-mmc` and the two register
   region descriptions:
   <https://android.googlesource.com/kernel/common/+/854ff7923753009189a9e1f80d23ae9d407c2fb2%5E1..854ff7923753009189a9e1f80d23ae9d407c2fb2/>
+- Linux `drivers/dma/loongson2-apb-dma.c`:
+  <https://codebrowser.dev/linux/linux/drivers/dma/loongson2-apb-dma.c.html>
 
 The referenced Linux driver is `SPDX-License-Identifier: GPL-2.0-only` and
 copyright 2018–2025 Loongson Technology Corporation Limited. No Linux source
 file is vendored into WaterOS. Any future direct code import must retain its
 SPDX identifier and copyright notice and undergo project-level license review.
+The APBDMA reference is `GPL-2.0-or-later`, copyright 2017–2023 Loongson
+Corporation; it is likewise referenced but not vendored.
 
 Confirmed facts used by the current WaterOS foundation:
 
