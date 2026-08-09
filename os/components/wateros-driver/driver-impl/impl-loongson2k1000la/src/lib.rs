@@ -13,6 +13,7 @@ pub mod irq_binding;
 pub mod irq_entry;
 pub mod irq_runtime;
 pub mod irq_owner;
+pub mod board_irq_owner;
 pub mod liointc;
 pub mod mmc;
 pub mod apbdma;

@@ -2264,3 +2264,47 @@ configure API 现在接收设备 owner，而不是 function pointer。重复注�
 ### 提交
 
 - `[ref] bind 2K1000 IRQ runtime owners`
+
+## 2026-08-10：批次 50——Concrete board IRQ owners
+
+### 任务与设计
+
+定义 `BoardIrqOwner<R>`，包含持久 `MmcCommandOwner<R>` 与保守
+`DeferredApbDmaOwner`。MMC owner 保存 expected IRQ、register backend、handled 计数和最近
+结构化错误；通过已有 W1C adapter 处理，成功才 Rearm，失败记录原因并 KeepMasked。
+APBDMA 在 clear/status 语义未知时只记录次数/source，始终 KeepMasked。
+
+同时新增 target-only `mmc::VolatileRegisters`。unsafe 构造验证非零、4-byte 对齐和最小
+controller window；每次访问验证 offset 对齐/范围。当前无生产调用者，不会触碰硬件。
+
+### 完成内容
+
+- [x] 新增 `MmcCommandOwner<R>`，持久保存寄存器实例和 IRQ 诊断状态。
+- [x] MMC owner 实现 `IrqOwner`，ack 成功清除 last_error，失败 KeepMasked 并保存错误。
+- [x] 新增 `DeferredApbDmaOwner`，记录 handled/last_irq，固定 KeepMasked。
+- [x] 新增泛型 `BoardIrqOwner<R>` enum 并统一分发两个 variant。
+- [x] 新增 LoongArch64-only volatile MMC backend 与 unsafe 映射契约。
+- [x] volatile register 地址按 checked offset 验证，不允许未对齐或越界访问。
+- [x] 源码搜索确认 volatile backend 当前没有生产构造调用。
+
+### 验证证据
+
+- `cargo test`：63 项 host 单测全部通过（本批新增 2 项）。
+- MMC owner 经 table begin→handle→finish 后仍持有同一 backend，handled=1、last_error=None，W1C 写正确。
+- MMC zero-status owner 记录 `NoKnownPending` 并 KeepMasked。
+- APBDMA deferred owner 处理 IRQ bank1/local13 后 handled=1、last_irq 匹配、disposition=KeepMasked。
+- topology/畸形 DTS fixtures、LoongArch64 target check、`make kernel-la` 全部通过；仅有既有 warning。
+- `git diff --check` 通过；未创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：volatile MMC 读写、W1C clear 和 IRQ deassert 尚未真机验证。
+- [ ] volatile backend 的 MMIO fault 无 Result 通道，会成为架构同步异常。
+- [ ] BoardIrqOwner 尚未由 topology 自动构造并注册到 runtime。
+- [ ] MMC owner 只处理 command interrupt ack；clock/power/data path 未完成，不能启动 host。
+- [ ] APBDMA owner 有意不 Rearm，直到 device clear/status 证据可用。
+- [ ] 下一批应实现纯逻辑 `OwnerPlan`：从 topology 解析 MMC/APBDMA binding、owner variant、route/core/HWI；验证重复 source、缺失设备和 blocker，并让 fixture 检查 plan，仍不创建 volatile backend。
+
+### 提交
+
+- `[ref] add 2K1000 board IRQ owners`

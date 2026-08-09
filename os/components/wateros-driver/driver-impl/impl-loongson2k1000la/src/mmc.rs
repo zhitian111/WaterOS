@@ -109,6 +109,45 @@ pub trait RegisterIo {
     fn write32(&mut self, offset : usize, value : u32) -> Result<(), MmcError>;
 }
 
+/// Raw volatile access to the topology-validated MMC controller window.
+#[cfg(target_arch = "loongarch64")]
+pub struct VolatileRegisters {
+    base : *mut u8,
+    size : usize,
+}
+
+#[cfg(target_arch = "loongarch64")]
+impl VolatileRegisters {
+    /// # Safety
+    /// `region` must be mapped device memory and exclusively owned for the
+    /// lifetime of this backend. Physical behavior is UNVERIFIED_ON_HARDWARE.
+    pub unsafe fn from_region(region : MmioRegion) -> Result<Self, MmcError> {
+        if region.base == 0 || region.base % 4 != 0 || region.size < MIN_CONTROLLER_WINDOW {
+            return Err(MmcError::RegisterOutOfRange);
+        }
+        Ok(Self { base : region.base as *mut u8, size : region.size })
+    }
+
+    fn register(&self, offset : usize) -> Result<*mut u32, MmcError> {
+        if offset % 4 != 0 || offset.checked_add(4).is_none_or(|end| end > self.size) {
+            return Err(MmcError::RegisterOutOfRange);
+        }
+        Ok(unsafe { self.base.add(offset).cast::<u32>() })
+    }
+}
+
+#[cfg(target_arch = "loongarch64")]
+impl RegisterIo for VolatileRegisters {
+    fn read32(&mut self, offset : usize) -> Result<u32, MmcError> {
+        Ok(unsafe { core::ptr::read_volatile(self.register(offset)?) })
+    }
+
+    fn write32(&mut self, offset : usize, value : u32) -> Result<(), MmcError> {
+        unsafe { core::ptr::write_volatile(self.register(offset)?, value) };
+        Ok(())
+    }
+}
+
 /// Clear a masked/acknowledged MMC interrupt and produce rearm evidence only
 /// when every observed pending bit has documented W1C behavior.
 pub fn acknowledge_interrupt<R : RegisterIo>(registers : &mut R,
