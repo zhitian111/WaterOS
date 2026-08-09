@@ -146,13 +146,27 @@ def build_qemu_launch(
         drive_spec = f"file={sdcard},if=none,format=raw,id=x0"
         if drive_options:
             drive_spec += f",{drive_options}"
+        netdev = "user,id=net"
+        remote_debug_port = _value(env, "WOS_REMOTE_DEBUG_PORT")
+        if remote_debug_port:
+            try:
+                remote_debug_port_number = int(remote_debug_port)
+            except ValueError as exc:
+                raise QemuConfigError(
+                    f"WOS_REMOTE_DEBUG_PORT 无效: {remote_debug_port!r}"
+                ) from exc
+            if not 1 <= remote_debug_port_number <= 65535:
+                raise QemuConfigError(
+                    f"WOS_REMOTE_DEBUG_PORT 必须是 1..65535: {remote_debug_port_number}"
+                )
+            netdev += f",hostfwd=tcp:127.0.0.1:{remote_debug_port_number}-:2323"
         argv = [
             "qemu-system-riscv64", "-machine", "virt", "-kernel", str(kernel),
             "-m", memory, *console_args, "-smp", smp, "-bios", "default",
             "-drive", drive_spec,
             "-device", "virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0",
             "-no-reboot", "-device", "virtio-net-device,netdev=net",
-            "-netdev", "user,id=net", "-rtc", "base=utc",
+            "-netdev", netdev, "-rtc", "base=utc",
         ]
         if graphics:
             argv.extend([
@@ -161,12 +175,26 @@ def build_qemu_launch(
                 "-device", "virtio-tablet-device",
             ])
     else:
+        netdev = "user,id=net0"
+        remote_debug_port = _value(env, "WOS_REMOTE_DEBUG_PORT")
+        if remote_debug_port:
+            try:
+                remote_debug_port_number = int(remote_debug_port)
+            except ValueError as exc:
+                raise QemuConfigError(
+                    f"WOS_REMOTE_DEBUG_PORT 无效: {remote_debug_port!r}"
+                ) from exc
+            if not 1 <= remote_debug_port_number <= 65535:
+                raise QemuConfigError(
+                    f"WOS_REMOTE_DEBUG_PORT 必须是 1..65535: {remote_debug_port_number}"
+                )
+            netdev += f",hostfwd=tcp:127.0.0.1:{remote_debug_port_number}-:2323"
         argv = [
             "qemu-system-loongarch64", "-kernel", str(kernel), "-m", memory,
             *console_args, "-smp", smp,
             "-drive", f"file={sdcard},if=none,format=raw,id=x0",
             "-device", "virtio-blk-pci,drive=x0", "-no-reboot",
-            "-device", "virtio-net-pci,netdev=net0", "-netdev", "user,id=net0",
+            "-device", "virtio-net-pci,netdev=net0", "-netdev", netdev,
             "-rtc", "base=utc",
         ]
         if graphics:

@@ -149,6 +149,37 @@ class QemuRunTests(unittest.TestCase):
             self.assertIn("-nographic", launch.argv)
             self.assertNotIn("virtio-gpu-device", launch.argv)
 
+    def test_remote_debug_forward_is_loopback_only(self) -> None:
+        for arch in ("rv", "la"):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                launch = build_qemu_launch(
+                    arch,
+                    "pre",
+                    {
+                        "WOS_SDCARD": "/images/root.img",
+                        "WOS_REMOTE_DEBUG_PORT": "22323",
+                    },
+                    root=Path(directory),
+                )
+                self.assertTrue(
+                    any(
+                        "hostfwd=tcp:127.0.0.1:22323-:2323" in item
+                        for item in launch.argv
+                    )
+                )
+
+    def test_invalid_remote_debug_port_is_rejected(self) -> None:
+        for value in ("0", "65536", "not-a-port"):
+            with self.subTest(value=value), self.assertRaises(QemuConfigError):
+                build_qemu_launch(
+                    "rv",
+                    "pre",
+                    {
+                        "WOS_SDCARD": "/images/root.img",
+                        "WOS_REMOTE_DEBUG_PORT": value,
+                    },
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

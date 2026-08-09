@@ -57,6 +57,9 @@
     # 开发/诊断启动行为由编译期选择，不再通过 QEMU bootargs 传入。
     operator-run = [  ]
     operator-shell = [  ]
+    # Development-only unauthenticated TCP monitor. It is deliberately opt-in
+    # and must not be enabled in production images.
+    remote-debug-monitor = [  ]
     # syscall 长时间无进展时输出任务/futex 等待链；默认关闭。
     stall-debug = [
         "dep:ipc",

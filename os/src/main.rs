@@ -21,6 +21,8 @@ mod boot_timebase;
 mod dashboard;
 #[cfg(feature = "gdb-fault-injection")]
 mod debug_fault;
+#[cfg(feature = "remote-debug-monitor")]
+mod remote_debug;
 #[cfg(feature = "stall-debug")]
 mod stall_debug;
 mod trap_handler;
@@ -142,6 +144,8 @@ fn bringup_driver_and_user() {
             {
                 Ok(()) => {
                     task::spawn_kernel_task(network_poller_task, 0);
+                    #[cfg(feature = "remote-debug-monitor")]
+                    remote_debug::start();
                 }
                 Err(e) => warn!("network stack init skipped: {}", e),
             }
