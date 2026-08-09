@@ -49,6 +49,13 @@ Confirmed facts used by the current WaterOS foundation:
   minimizes reads to zero/one/four words for none/short/long descriptors.
   That smaller access policy and its physical response mapping require board
   validation.
+- Linux MMC core separately defines response CRC, card-busy and opcode-check
+  flags. The Loongson2 driver does not consume those flags: `CCTL.CHECK`,
+  `INT.RESPCRC` and `INT.BUSYEND` are defined, but CHECK is not programmed and
+  BUSYEND/RESPCRC do not drive its command completion state machine. WaterOS
+  therefore rejects requested CRC/busy policies before MMIO instead of
+  inferring behavior from register names. A spontaneously observed RESPCRC is
+  still treated as a fail-closed anomaly.
 - The second 2K1000 DT register region is an APB DMA configuration register.
 - 2K1000 uses external APB DMA (`rx-tx`); it is not a DesignWare MMC host.
 - The APBDMA order register is accessed as a non-atomic 64-bit little-endian
@@ -67,3 +74,5 @@ Still requiring physical-board validation: MMIO accessibility/endian behavior,
 ordering, command-error W1C/readback recovery, interrupt delivery, DMA routing
 and cache coherency. Also validate that no-response/short-response commands
 permit minimized RSP reads and that CARG/CCTL cleanup readback is reliable.
+CRC checking, opcode checking and R1b busy completion require separate board
+evidence before their descriptor policies can be enabled.

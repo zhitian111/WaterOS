@@ -3650,3 +3650,60 @@ WaterOS 保留 CCTL encoding、长响应 offset order 和 cleanup order，但按
 ### 提交
 
 - `[feat] define LS2K1000 MMC command responses`
+
+## 2026-08-10：批次 77——LS2K1000 MMC response validation policy
+
+### 任务与设计
+
+1. 审计 Linux MMC core 的 PRESENT/136/CRC/BUSY/OPCODE flags 与 Loongson2 driver 的实际消费范围。
+2. 确认 `CCTL.CHECK`、`INT.RESPCRC`、`INT.BUSYEND` 是否存在可复用的上游完成语义。
+3. 将 response width 与 protocol validation 分开建模，不能实现的 policy 在 descriptor 构造期拒绝。
+4. 明确 polling 错误优先级，禁止 BUSYEND 单独冒充普通命令完成。
+5. 保持第 75/76 批 owned recovery、最小 response reads 和 CARG/CCTL cleanup 不变量。
+
+Linux MMC core 明确定义 CRC、card-busy 和 opcode-check flags，但 Loongson2 driver 只消费 PRESENT 与
+136-bit。主线虽定义 `CCTL.CHECK`、`INT.RESPCRC`、`INT.BUSYEND`，却不设置 CHECK，也不以
+RESPCRC/BUSYEND 驱动命令完成。因此本批不根据寄存器位名推测实现：只开放 `Unchecked`，CRC/busy
+policy 必须等待额外上游或逐板证据。
+
+### 完成内容
+
+- [x] 新增 `ResponseValidation::{Unchecked,Crc,CrcAndBusy}`，response width 与 validation policy 正交表达。
+- [x] `CommandDescriptor::new()` 增加 validation 参数；所有非 `Unchecked` policy 返回 `ResponsePolicyUnsupported`。
+- [x] CRC/busy rejection 发生在 Host ownership/MMIO 之前，不能绕过到 CCTL programming。
+- [x] CCTL encoding 仍只设置 WAIT_RSP/LONG_RSP；不会设置证据不足的 bit13 CHECK。
+- [x] INT poll 顺序固定为 command timeout、observed RESPCRC anomaly、command sent；错误不会被同时出现的成功位覆盖。
+- [x] BUSYEND bit9 单独出现时不形成普通命令完成，最终进入 bounded poll recovery。
+- [x] 自发观测到 RESPCRC 仍 fail-closed 为 `CommandStage::ResponseCrc`，但不宣称实现了 requested CRC checking。
+- [x] None/Short/Long response payload、cleanup、revalidate 和 typed Host ownership 均保持不变。
+- [x] data command、R1/R1b/R2 protocol adapter、IRQ-driven completion 与生产激活入口继续关闭。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 115 项全部通过；新增 1 项聚合覆盖 interrupt priority 和 BUSYEND fail-closed。
+- descriptor matrix 覆盖 Short/Long × Crc/CrcAndBusy，全部在构造期返回稳定错误。
+- long-response CCTL fixture 显式验证 bit13 CHECK 为零。
+- `CTIMEOUT|RESPCRC|CSENT` 返回 CommandTimeout；`RESPCRC|CSENT` 返回 ResponseCrc；BUSYEND-only 返回 PollTimeout。
+- 既有 114 项继续覆盖 response 0/1/4 reads、cleanup、command/recovery fault matrices 和完整 prerequisite chain。
+- topology fixture/畸形 DTB 矩阵通过；dtc 仅输出刻意构造畸形输入的预期 warning。
+- remote client 与 QEMU launcher 的 13 项 Python host 测试通过。
+- LoongArch64 target check 与 `make kernel-la EXTRA_FEATURES=remote-debug-monitor` 通过；仅有仓库既有 warning。
+- `git diff --check` 通过；测试全部使用内存寄存器模型，没有访问物理控制器。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：CCTL.CHECK 的真实作用、启用条件以及与 INT.RESPCRC 的关系未知。
+- [ ] INT.RESPCRC 在 CHECK 未设置时是否可能置位、是否 W1C、与 CSENT 同时出现时的硬件优先级均未逐板验证。
+- [ ] R1b 的 BUSYEND 时序、是否还需观察 DSTS.BUSYFIN、以及 completion/ack 顺序没有可靠证据。
+- [ ] opcode echo checking 未建模；主线 Loongson2 driver 同样未显式消费 MMC_RSP_OPCODE。
+- [ ] 当前仅能承载低层 unchecked diagnostics，不能声称支持要求 CRC 的标准 R1/R2/R5/R6/R7 初始化流程。
+- [ ] 两块板拿到后应先用 CMD0/无响应和只读 diagnostic command 验证基本路径，再受控实验 CHECK/RESPCRC/BUSYEND，禁止直接解除 policy gate。
+- [ ] 下一批应建立板级 command validation probe 规格和 software evidence recorder：定义每种 policy 需要采集的 CCTL/INT/CSTS/DSTS trace，使未来上板结果能生成受审计 token，而不是直接调用 unsafe bypass。
+
+### 参考与许可证
+
+- `docs/references/loongson2-mmc-upstream.md`
+
+### 提交
+
+- `[feat] reject unverified LS2K1000 MMC response policies`

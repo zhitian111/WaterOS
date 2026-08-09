@@ -893,6 +893,15 @@ pub enum ResponseType {
     Long,
 }
 
+/// Protocol-level checks requested by the command. Only `Unchecked` is
+/// currently supported because upstream does not establish CHECK/BUSYEND.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResponseValidation {
+    Unchecked,
+    Crc,
+    CrcAndBusy,
+}
+
 /// Transfer intent used to reject the unimplemented data path before MMIO.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandTransfer {
@@ -906,6 +915,7 @@ pub enum CommandTransfer {
 pub enum CommandDescriptorError {
     InvalidIndex,
     DataUnsupported,
+    ResponsePolicyUnsupported,
 }
 
 /// A prevalidated command contract. Invalid and data-bearing commands cannot
@@ -918,10 +928,12 @@ pub struct CommandDescriptor {
 }
 
 impl CommandDescriptor {
-    /// Validate the command index and reject all data-bearing requests.
+    /// Validate the command index and reject all data-bearing or unsupported
+    /// response-policy requests before the Host can perform MMIO.
     pub fn new(index : u8,
                argument : u32,
                response : ResponseType,
+               validation : ResponseValidation,
                transfer : CommandTransfer)
                -> Result<Self, CommandDescriptorError> {
         if index > 63 {
@@ -929,6 +941,9 @@ impl CommandDescriptor {
         }
         if transfer != CommandTransfer::None {
             return Err(CommandDescriptorError::DataUnsupported);
+        }
+        if validation != ResponseValidation::Unchecked {
+            return Err(CommandDescriptorError::ResponsePolicyUnsupported);
         }
         Ok(Self { index,
                   argument,
@@ -966,7 +981,9 @@ impl<R : RegisterIo> Host<R, CommandReady> {
         match command.response {
             ResponseType::None => {}
             ResponseType::Short => control |= CCTL_WAIT_RESPONSE,
-            ResponseType::Long => control |= CCTL_WAIT_RESPONSE | CCTL_LONG_RESPONSE,
+            ResponseType::Long => {
+                control |= CCTL_WAIT_RESPONSE | CCTL_LONG_RESPONSE
+            }
         }
         if let Err(error) = self.registers
                                 .write32(REG_CCTL, control)
@@ -995,14 +1012,16 @@ impl<R : RegisterIo> Host<R, CommandReady> {
                 }
                 let response = match command.response {
                     ResponseType::None => CommandResponse::None,
-                    ResponseType::Short => match self.registers
-                                                       .read32(REG_RSP0)
-                    {
-                        Ok(value) => CommandResponse::Short(value),
-                        Err(error) => {
-                            return self.command_failure(CommandStage::ReadResponse0, error)
+                    ResponseType::Short => {
+                        match self.registers
+                                  .read32(REG_RSP0)
+                        {
+                            Ok(value) => CommandResponse::Short(value),
+                            Err(error) => {
+                                return self.command_failure(CommandStage::ReadResponse0, error)
+                            }
                         }
-                    },
+                    }
                     ResponseType::Long => {
                         let mut response = [0; 4];
                         for (word, (offset, stage)) in
@@ -1517,7 +1536,11 @@ mod tests {
                   argument : u32,
                   response : ResponseType)
                   -> CommandDescriptor {
-        CommandDescriptor::new(index, argument, response, CommandTransfer::None).unwrap()
+        CommandDescriptor::new(index,
+                               argument,
+                               response,
+                               ResponseValidation::Unchecked,
+                               CommandTransfer::None).unwrap()
     }
 
     fn failed_revalidation(
@@ -2040,13 +2063,27 @@ mod tests {
         assert_eq!(CommandDescriptor::new(64,
                                           0,
                                           ResponseType::None,
+                                          ResponseValidation::Unchecked,
                                           CommandTransfer::None),
                    Err(CommandDescriptorError::InvalidIndex));
         assert_eq!(CommandDescriptor::new(8,
                                           0,
                                           ResponseType::Short,
+                                          ResponseValidation::Unchecked,
                                           CommandTransfer::Data),
                    Err(CommandDescriptorError::DataUnsupported));
+        for response in [ResponseType::Short, ResponseType::Long] {
+            for validation in [ResponseValidation::Crc,
+                               ResponseValidation::CrcAndBusy]
+            {
+                assert_eq!(CommandDescriptor::new(8,
+                                                  0,
+                                                  response,
+                                                  validation,
+                                                  CommandTransfer::None),
+                           Err(CommandDescriptorError::ResponsePolicyUnsupported));
+            }
+        }
 
         let mut registers = command_registers(INT_COMMAND_SENT);
         registers.values[REG_RSP0 / 4] = 1;
@@ -2064,6 +2101,8 @@ mod tests {
                 assert_eq!(registers.started_control,
                            Some(2 | CCTL_HOST | CCTL_START | CCTL_WAIT_RESPONSE |
                                 CCTL_LONG_RESPONSE));
+                assert_eq!(registers.started_control.unwrap() & (1 << 13),
+                           0);
                 assert_eq!(registers.values[REG_CARG / 4], 0);
                 assert_eq!(registers.values[REG_CCTL / 4], 0);
             }
@@ -2144,6 +2183,40 @@ mod tests {
                 assert_eq!(registers.values[REG_CCTL / 4], 0);
             }
             _ => panic!("short-response command did not complete"),
+        }
+    }
+
+    #[test]
+    fn command_error_bits_precede_completion_and_busyend_is_not_completion() {
+        let outcome = command_fixture(command_registers(INT_COMMAND_TIMEOUT |
+                                                         INT_RESPONSE_CRC |
+                                                         INT_COMMAND_SENT)).execute_command(
+            descriptor(8, 0, ResponseType::Short));
+        match outcome {
+            CommandOutcome::RecoveryRequired(recovery) => {
+                assert_eq!(recovery.stage,
+                           CommandStage::CommandTimeout);
+            }
+            _ => panic!("timeout did not take priority over completion"),
+        }
+
+        let outcome = command_fixture(command_registers(INT_RESPONSE_CRC |
+                                                         INT_COMMAND_SENT)).execute_command(
+            descriptor(8, 0, ResponseType::Short));
+        match outcome {
+            CommandOutcome::RecoveryRequired(recovery) => {
+                assert_eq!(recovery.stage, CommandStage::ResponseCrc);
+            }
+            _ => panic!("CRC status did not take priority over completion"),
+        }
+
+        let outcome = command_fixture(command_registers(1 << 9)).execute_command(
+            descriptor(8, 0, ResponseType::Short));
+        match outcome {
+            CommandOutcome::RecoveryRequired(recovery) => {
+                assert_eq!(recovery.stage, CommandStage::PollTimeout);
+            }
+            _ => panic!("BUSYEND alone was incorrectly accepted as command completion"),
         }
     }
 
