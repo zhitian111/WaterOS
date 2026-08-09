@@ -28,8 +28,8 @@
         "cred-session",
         "dep:ipc",
         "dep:mm",
-        "dep:vfs",
         "dep:tty",
+        "dep:vfs",
         "ipc/futex",
         "ipc/pipe",
         "ipc/shm",
@@ -45,9 +45,8 @@
         "platform/api-v0",
         "socket-net",
     ]
-    socket-net = [
-        "dep:network",
-    ]
+    socket-net = [ "dep:network" ]
+    user-copy-diagnostics = [  ]
 
 [profile.dev]
     panic = "abort"

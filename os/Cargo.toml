@@ -41,26 +41,31 @@
 # 保持 release 优化以复现时序问题，同时保留 GDB 所需的完整 DWARF。
 # frame pointer 由 Makefile 仅对 GDB 构建追加，避免改变普通 release。
 [profile.gdb]
-    inherits = "release"
     debug = 2
-    strip = "none"
+    inherits = "release"
     split-debuginfo = "off"
+    strip = "none"
 
 [features]
     # Cargo builds that use the default feature set select the current
     # RISC-V final candidate, TLSF, and no diagnostic hot-path features.
-    default = [ "qemu-riscv64-opensbi", "final_online", "heap-tlsf" ]
+    default = [ "final_online", "heap-tlsf", "qemu-riscv64-opensbi" ]
     # 比赛阶段决定根镜像中的用户态 bring-up 队列。
-    pre = [  ]
     final_online = [  ]
     final_online_smp_test = [ "final_online" ]
+    pre = [  ]
     # 开发/诊断启动行为由编译期选择，不再通过 QEMU bootargs 传入。
-    operator-shell = [  ]
     operator-run = [  ]
+    operator-shell = [  ]
     # syscall 长时间无进展时输出任务/futex 等待链；默认关闭。
-    stall-debug = [ "dep:ipc", "ipc/futex" ]
+    stall-debug = [
+        "dep:ipc",
+        "ipc/futex",
+        "runtime/tlsf-diagnostics",
+        "syscall/user-copy-diagnostics",
+    ]
     # 整个顶部 dashboard（CPU、内存、文件描述符与 syscall 摘要）；默认关闭。
-    dashboard-debug = [ "stall-debug", "dep:vfs" ]
+    dashboard-debug = [ "dep:vfs", "stall-debug" ]
     # 完整内核 GUI；默认比赛构建不探测显示或启动刷新任务。
     gui = [ "dep:gui", "driver/display", "driver/input" ]
     # 兼容原启动命令，现转发到完整 wateros-gui 组件。
@@ -124,9 +129,9 @@
         # "runtime/impl-trace",
         "runtime/impl-info",
         # "runtime/impl-warn",
-        "runtime/impl-error",
         "dep:klog",
         "klog/default",
+        "runtime/impl-error",
         "runtime/impl-platform-console",
         "syscall/impl-kernel",
         #"dashboard-debug",

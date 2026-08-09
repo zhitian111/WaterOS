@@ -41,5 +41,6 @@
     ]
     impl-trace = [ "logging/impl-trace" ]
     impl-warn = [ "logging/impl-warn" ]
+    tlsf-diagnostics = [ "heap-allocator/tlsf-diagnostics" ]
     # QEMU virt UART0 MMIO + SerialPort，供伪 shell（依赖 wateros-driver）。
     serial-uart-virt = [ "dep:runtime-serial" ]

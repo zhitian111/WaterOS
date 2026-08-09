@@ -7,6 +7,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use api_v0::ErrNo;
+#[cfg(feature = "user-copy-diagnostics")]
 use log::{trace, warn};
 use mm::api::addr::VirtAddr;
 use mm::api::user_access::{FutexMappingIdentity, UserMemoryOps};
@@ -122,12 +123,17 @@ pub(crate) fn copy_to_user_progress(ptr : usize, buf : &[u8]) -> UserWriteProgre
         return UserWriteProgress { copied : 0,
                                    error : Some(ErrNo::EFAULT) };
     };
-    let task_snap = task::current_task_snapshot();
-    let task_satp = task_snap.map_or(0, |snap| snap.user_address_space_token);
-    let trap_satp = task_snap.map_or(0, |snap| snap.trap_return_address_space_token);
-    if handle != 0 && task_satp != 0 && trap_satp != 0 && task_satp != trap_satp {
-        warn!("[user-copy] satp mismatch task={:#x} trap={:#x} handle={:#x} va={:#x}",
-              task_satp, trap_satp, handle, ptr);
+    #[cfg(feature = "user-copy-diagnostics")]
+    {
+        let task_snap = task::current_task_snapshot();
+        let task_satp = task_snap.map_or(0, |snap| snap.user_address_space_token);
+        let trap_satp = task_snap.map_or(0, |snap| {
+                                     snap.trap_return_address_space_token
+                                 });
+        if handle != 0 && task_satp != 0 && trap_satp != 0 && task_satp != trap_satp {
+            warn!("[user-copy] satp mismatch task={:#x} trap={:#x} handle={:#x} va={:#x}",
+                  task_satp, trap_satp, handle, ptr);
+        }
     }
     let ops = ActiveUserMemoryOps::new(handle);
     let progress = ops.copy_to_user_progress(VirtAddr(ptr), buf);
@@ -140,12 +146,14 @@ pub(crate) fn copy_to_user_progress(ptr : usize, buf : &[u8]) -> UserWriteProgre
                         error }
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(feature = "user-copy-diagnostics", target_arch = "riscv64"))]
 fn trace_user_copy_failure(op : &str, va : usize, len : usize, err : mm::api::error::MmError) {
     let handle = current_user_aspace_handle().unwrap_or(0);
     let task_snap = task::current_task_snapshot();
     let task_satp = task_snap.map_or(0, |snap| snap.user_address_space_token);
-    let trap_satp = task_snap.map_or(0, |snap| snap.trap_return_address_space_token);
+    let trap_satp = task_snap.map_or(0, |snap| {
+                                 snap.trap_return_address_space_token
+                             });
     #[cfg(debug_assertions)]
     let probe = mm::user_access::debug_probe_user_virt(handle, VirtAddr(va));
     #[cfg(not(debug_assertions))]
@@ -154,18 +162,25 @@ fn trace_user_copy_failure(op : &str, va : usize, len : usize, err : mm::api::er
             task_satp={task_satp:#x} trap_satp={trap_satp:#x} probe={probe:?}");
 }
 
-#[cfg(target_arch = "loongarch64")]
+#[cfg(all(feature = "user-copy-diagnostics", target_arch = "loongarch64"))]
 fn trace_user_copy_failure(op : &str, va : usize, len : usize, err : mm::api::error::MmError) {
     let handle = current_user_aspace_handle().unwrap_or(0);
     let task_snap = task::current_task_snapshot();
     let task_satp = task_snap.map_or(0, |snap| snap.user_address_space_token);
-    let trap_satp = task_snap.map_or(0, |snap| snap.trap_return_address_space_token);
+    let trap_satp = task_snap.map_or(0, |snap| {
+                                 snap.trap_return_address_space_token
+                             });
     trace!("[user-copy] {op} fail va={va:#x} len={len} err={err:?} handle={handle:#x} \
             task_satp={task_satp:#x} trap_satp={trap_satp:#x}");
     let _ = (handle, task_satp, trap_satp);
 }
 
-#[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
+#[cfg(not(feature = "user-copy-diagnostics"))]
+#[inline(always)]
+fn trace_user_copy_failure(_op : &str, _va : usize, _len : usize, _err : mm::api::error::MmError) {}
+
+#[cfg(all(feature = "user-copy-diagnostics",
+          not(any(target_arch = "riscv64", target_arch = "loongarch64"))))]
 fn trace_user_copy_failure(_op : &str, _va : usize, _len : usize, _err : mm::api::error::MmError) {}
 
 /// 读取以 NUL 结尾的用户路径（上限 `max` 字节，含终止符空间）。
