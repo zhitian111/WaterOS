@@ -1,6 +1,7 @@
 use std::{env, fs};
 
-use wateros_driver_impl_loongson2k1000la::{mmc::{ActivationBlocker, plan},
+use wateros_driver_impl_loongson2k1000la::{irq_binding::resolve,
+                                           mmc::{ActivationBlocker, plan},
                                            topology::discover};
 
 fn main() {
@@ -25,6 +26,10 @@ fn main() {
             assert_eq!(dma.mmio.base, 0x1FE0_0C10);
             assert_eq!(dma.mmio.size, 8);
             assert_eq!(&dma.interrupt.cells[..2], &[13, 4]);
+            let dma_irq = resolve(&topology, &dma.interrupt)
+                .expect("resolve APBDMA interrupt provider");
+            assert_eq!(dma_irq.global_irq().bank(), 1);
+            assert_eq!(dma_irq.global_irq().local(), 13);
             assert_eq!(dma.clock.specifier.args, &[0]);
             assert_eq!(dma.channel_cells, 1);
             let intc = &topology.interrupt_controllers[0];

@@ -1739,3 +1739,59 @@ Linux 上游声明了 descriptor `stats` word，但没有定义位语义，ISR �
 ### 提交
 
 - `[ref] verify 2K1000 APBDMA IRQ completion`
+
+## 2026-08-10：批次 38——LIOINTC topology binding and IRQ lifecycle
+
+### 任务与设计
+
+1. 审计 DTS 中 LIOINTC phandle、bank、`#interrupt-cells` 与 APBDMA IRQ13 的关系。
+2. 建立不依赖 DT 节点遍历顺序的 global IRQ 解析规则。
+3. 串联 route、trigger、enable、mask/ack、设备侧 clear 与 re-enable 生命周期。
+4. 用线性 typestate 阻止未完成设备 ack 时重新开中断线。
+5. 将 topology binding 接入 APBDMA 生产 executor factory 与真实 DTS fixture。
+
+global bank 按 LIOINTC main MMIO 基址升序分配，而不是按 discovery vector 顺序：
+`0x1fe01400` 为 bank0，`0x1fe01440` 为 bank1。resolver 必须精确匹配 interrupt-parent
+phandle，拒绝缺失/重复 phandle、重复 MMIO、非 2-cell spec、非法 trigger 和超出 bank 上限；
+因此 fixture 中 APBDMA `<13 4>` 稳定解析为 bank1/local13/level-high。
+
+生命周期为 `InterruptBinding -> ArmedInterrupt -> MaskedInterrupt ->
+DeviceAckedInterrupt -> ArmedInterrupt`。claim 产生独立 `AcknowledgedIrq` 证据并消耗 armed
+状态；设备 clear 失败会返回原 masked 状态以便重试。只有 `DeviceIrqAck::clear_interrupt()`
+成功后才可 rearm，避免 level IRQ 在设备条件未清除时立即重入。
+
+### 完成内容
+
+- [x] 新增 `irq_binding` 模块与稳定 topology resolver。
+- [x] resolver 用 provider phandle 确认归属，用 main-MMIO 排序计算 bank，不受节点顺序影响。
+- [x] 支持 edge-rising、edge-falling、level-high、level-low 四种 DT trigger 编码。
+- [x] `LioIntc` 实例显式绑定 bank，跨 bank 的 mask/ack 与 lifecycle 操作会被拒绝。
+- [x] 新增可恢复的 `LifecycleFailure<S>`，任何失败都返还原 typestate。
+- [x] 新增显式 `DeviceIrqAck` 契约；未成功 clear 不能获得 re-enable 能力。
+- [x] APBDMA target factory 改为接收已解析的 `InterruptBinding`，并复核 provider/local IRQ。
+- [x] topology fixture 验证 APBDMA 解析结果固定为 bank1/local13。
+- [x] 单测覆盖 controller discovery 顺序交换、歧义/非法 spec、设备 ack 失败重试和 re-enable 写序。
+
+### 验证证据
+
+- `cargo test`（2K1000LA driver crate）：45 项 host 单测全部通过（本批新增 3 项）。
+- 顺序稳定性测试用相同 phandle/MMIO 但相反 controller vector 顺序，均解析为 bank1/local13。
+- 生命周期测试断言首次 device clear 失败后没有 ENABLE_SET 写；重试成功后仅 rearm 一次。
+- `tests/verify_topology.sh` 全部通过；truncated DMA 的 dtc warning 为预期畸形输入。
+- `cargo check --target loongarch64-unknown-none` 通过，并编译 binding 驱动的生产 factory。
+- `make kernel-la` QEMU LoongArch64 release 回归构建通过；仅有仓库既有 warning。
+- `git diff --check` 通过；未创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：LIOINTC route/trigger/enable 寄存器与 mask/ack 写序尚未在 2K1000LA 真机验证。
+- [ ] `UNVERIFIED_ON_HARDWARE`：APBDMA 的设备侧 IRQ clear 寄存器/语义仍未知；本批只定义了必须实现的契约。
+- [ ] bank 规则目前依据已审计的两个 2K1000LA LIOINTC main-MMIO 窗口；真机 DTB 必须继续通过 fixture 等价检查。
+- [ ] typestate 防止安全 Rust 重复 claim/re-enable，但 runtime trap glue 尚未持有和调度这些状态。
+- [ ] `AcknowledgedIrq` 证明 LIOINTC latch 已 mask/ack，不证明 APBDMA 已停止访问 DMA memory。
+- [ ] 生产 executor 尚未接入平台全局 driver state；clock、DMA route 与 IRQ handler 注册仍待完成。
+- [ ] 下一批应设计 runtime IRQ registration/dispatch glue，使 APBDMA binding、LIOINTC controller 与 executor session 在并发边界上有唯一所有者；在设备 clear 语义获得证据前继续保持硬件路径禁用。
+
+### 提交
+
+- `[ref] bind 2K1000 LIOINTC IRQ lifecycle`

@@ -13,7 +13,7 @@ use core::sync::atomic::{Ordering, fence};
 use crate::apbdma::Executor;
 use crate::apbdma::{ExecutorError, OrderIo, OrderWriteFailure, WriteEffect};
 #[cfg(target_arch = "loongarch64")]
-use crate::irq_domain::GlobalIrq;
+use crate::irq_binding::InterruptBinding;
 #[cfg(target_arch = "loongarch64")]
 use crate::topology::DmaControllerDescription;
 
@@ -80,9 +80,15 @@ pub type PlatformExecutor = Executor<LoHiOrderIo<VolatileOrderMmio32>>;
 /// IRQ acknowledgement before using the returned executor.
 #[cfg(target_arch = "loongarch64")]
 pub unsafe fn executor_from_controller(controller : &DmaControllerDescription,
-                                       expected_irq : GlobalIrq)
+                                       binding : InterruptBinding)
                                        -> Result<PlatformExecutor, ExecutorError> {
-    Ok(Executor::new(unsafe { VolatileOrderMmio32::from_controller(controller)? }, expected_irq))
+    if binding.provider_phandle() != controller.interrupt.parent_phandle ||
+       binding.global_irq().local() != controller.interrupt.cells[0]
+    {
+        return Err(ExecutorError::UnexpectedIrq);
+    }
+    Ok(Executor::new(unsafe { VolatileOrderMmio32::from_controller(controller)? },
+                     binding.global_irq()))
 }
 
 /// Raw volatile 32-bit access to a topology-validated APBDMA order window.

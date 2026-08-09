@@ -47,13 +47,16 @@ impl Route {
 
 pub struct LioIntc<I> {
     io : I,
+    bank : usize,
     main_base : usize,
     core_isr : [Option<usize>; MAX_CORES],
 }
 
 impl<I : RegisterIo> LioIntc<I> {
-    pub fn new(io : I, main_base : usize, core_isr : &[usize]) -> DriverResult<Self> {
-        if main_base.checked_add(MAIN_REGISTER_BYTES)
+    pub fn new(io : I, bank : usize, main_base : usize, core_isr : &[usize])
+               -> DriverResult<Self> {
+        if bank >= crate::irq_domain::MAX_BANKS ||
+           main_base.checked_add(MAIN_REGISTER_BYTES)
                     .is_none() ||
            core_isr.is_empty() ||
            core_isr.len() > MAX_CORES
@@ -73,9 +76,12 @@ impl<I : RegisterIo> LioIntc<I> {
             *slot = Some(address);
         }
         Ok(Self { io,
+                  bank,
                   main_base,
                   core_isr : isr })
     }
+
+    pub const fn bank(&self) -> usize { self.bank }
 
     fn irq_mask(irq : u32) -> DriverResult<u32> {
         if irq >= IRQ_COUNT {
@@ -109,6 +115,7 @@ impl<I : RegisterIo> LioIntc<I> {
     /// A level-triggered device must still clear its own interrupt condition.
     pub fn mask_ack_claim(&mut self, bank : usize, irq : u32)
                           -> DriverResult<AcknowledgedIrq> {
+        if bank != self.bank { return Err(DriverError::InvalidParam); }
         let global = GlobalIrq::from_bank_local(bank, irq)
                                .map_err(|_| DriverError::InvalidParam)?;
         self.mask_ack(irq)?;
@@ -242,7 +249,7 @@ mod tests {
     const ISR1 : usize = 0x3000;
 
     fn controller() -> LioIntc<ModelIo> {
-        LioIntc::new(ModelIo::default(), BASE, &[ISR0, ISR1]).unwrap()
+        LioIntc::new(ModelIo::default(), 0, BASE, &[ISR0, ISR1]).unwrap()
     }
 
     #[test]
@@ -281,7 +288,8 @@ mod tests {
 
     #[test]
     fn mask_ack_claim_binds_evidence_to_global_irq() {
-        let mut valid_controller = controller();
+        let mut valid_controller = LioIntc::new(ModelIo::default(), 1, BASE, &[ISR0, ISR1])
+                                                .unwrap();
         let acknowledged = valid_controller.mask_ack_claim(1, 13).unwrap();
         assert_eq!(acknowledged.irq(), GlobalIrq::from_bank_local(1, 13).unwrap());
         assert_eq!(valid_controller.into_inner().writes32,
@@ -318,7 +326,7 @@ mod tests {
         io.set(ISR1, 1 << 12);
         io.set(BASE + ENABLE_STATUS,
                (1 << 7) | (1 << 12));
-        let controller = LioIntc::new(io, BASE, &[ISR0, ISR1]).unwrap();
+        let controller = LioIntc::new(io, 0, BASE, &[ISR0, ISR1]).unwrap();
         assert_eq!(controller.claim_first(0), Ok(Some(7)));
         assert_eq!(controller.claim_first(1), Ok(Some(12)));
         assert_eq!(controller.claim_first(2),
