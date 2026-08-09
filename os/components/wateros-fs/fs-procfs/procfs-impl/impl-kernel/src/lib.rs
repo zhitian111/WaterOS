@@ -112,6 +112,9 @@ enum ProcNode {
     Mounts,
     NetDir,
     ProcNetTcp,
+    ProcNetTcp6,
+    ProcNetUdp,
+    ProcNetUdp6,
     SysDir,
     SysKernelDir,
     SysKernelPidMax,
@@ -144,6 +147,9 @@ fn proc_inode(node : ProcNode) -> u64 {
         ProcNode::Mounts => 3,
         ProcNode::NetDir => 11,
         ProcNode::ProcNetTcp => 12,
+        ProcNode::ProcNetTcp6 => 13,
+        ProcNode::ProcNetUdp => 14,
+        ProcNode::ProcNetUdp6 => 15,
         ProcNode::SysDir => 9,
         ProcNode::SysKernelDir => 10,
         ProcNode::SysKernelPidMax => 4,
@@ -245,6 +251,9 @@ fn parse_node(path : &str) -> Option<ProcNode> {
         ["mounts"] => Some(ProcNode::Mounts),
         ["net"] => Some(ProcNode::NetDir),
         ["net", "tcp"] => Some(ProcNode::ProcNetTcp),
+        ["net", "tcp6"] => Some(ProcNode::ProcNetTcp6),
+        ["net", "udp"] => Some(ProcNode::ProcNetUdp),
+        ["net", "udp6"] => Some(ProcNode::ProcNetUdp6),
         ["sys"] => Some(ProcNode::SysDir),
         ["sys", "kernel"] => Some(ProcNode::SysKernelDir),
         ["sys", "kernel", "pid_max"] => Some(ProcNode::SysKernelPidMax),
@@ -561,6 +570,10 @@ fn format_mounts() -> Vec<u8> {
     out
 }
 
+// 当前 procfs 不枚举网络栈中的 socket；提供合法空表供 netstat 读取。
+const PROC_NET_TABLE : &[u8] =
+    b"  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
+
 /// 内核 procfs 只读视图（零大小；无实例状态）。
 // 本结构代码由AI完成
 pub struct KernelProcFs;
@@ -584,7 +597,10 @@ impl ProcFsView for KernelProcFs {
             ProcNode::NetDir |
             ProcNode::SysDir |
             ProcNode::SysKernelDir => true,
-            ProcNode::ProcNetTcp => true,
+            ProcNode::ProcNetTcp |
+            ProcNode::ProcNetTcp6 |
+            ProcNode::ProcNetUdp |
+            ProcNode::ProcNetUdp6 => true,
             ProcNode::SysKernelPidMax | ProcNode::SysKernelTainted => true,
             ProcNode::PidDir(pid) |
             ProcNode::PidStat(pid) |
@@ -611,6 +627,7 @@ impl ProcFsView for KernelProcFs {
         let node = parse_node(rel_path).ok_or(FsError::NotFound)?;
         match node {
             ProcNode::Root |
+            ProcNode::NetDir |
             ProcNode::SysDir |
             ProcNode::SysKernelDir |
             ProcNode::PidDir(_) |
@@ -628,8 +645,10 @@ impl ProcFsView for KernelProcFs {
             ProcNode::Uptime |
             ProcNode::Cgroups |
             ProcNode::Mounts |
-            ProcNode::NetDir |
             ProcNode::ProcNetTcp |
+            ProcNode::ProcNetTcp6 |
+            ProcNode::ProcNetUdp |
+            ProcNode::ProcNetUdp6 |
             ProcNode::SysKernelPidMax |
             ProcNode::SysKernelTainted => Ok(FsMetadata { node_type : FsNodeType::File,
                                                           size : self.read(rel_path)?
@@ -691,8 +710,10 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidFd(_, _) => {
                 Err(FsError::NotAFile)
             }
-            ProcNode::ProcNetTcp => Ok(b"sl local_address rem_address st tx_queue rx_queue tr tm->when retrnsmt\n\
- 0: 00000000:0000 00000000:0000 0A 00000000:00000000 00:00000000 0\n".to_vec()),
+            ProcNode::ProcNetTcp |
+            ProcNode::ProcNetTcp6 |
+            ProcNode::ProcNetUdp |
+            ProcNode::ProcNetUdp6 => Ok(PROC_NET_TABLE.to_vec()),
             ProcNode::Meminfo => Ok(format_meminfo()),
             ProcNode::Cpuinfo => Ok(format_cpuinfo()),
             ProcNode::Uptime => Ok(format_uptime()),
@@ -714,10 +735,10 @@ impl ProcFsView for KernelProcFs {
     fn read_range(&self, rel_path : &str, offset : u64, buf : &mut [u8]) -> FsResult<usize> {
         let node = parse_node(rel_path).ok_or(FsError::NotFound)?;
         let static_data : &[u8] = match node {
-            ProcNode::ProcNetTcp => {
-                b"sl local_address rem_address st tx_queue rx_queue tr tm->when retrnsmt\n\
- 0: 00000000:0000 00000000:0000 0A 00000000:00000000 00:00000000 0\n"
-            }
+            ProcNode::ProcNetTcp |
+            ProcNode::ProcNetTcp6 |
+            ProcNode::ProcNetUdp |
+            ProcNode::ProcNetUdp6 => PROC_NET_TABLE,
             ProcNode::SysKernelPidMax => b"32768\n",
             ProcNode::SysKernelTainted => b"0\n",
             _ => return ProcFsView::read_range(self, rel_path, offset, buf),
@@ -784,8 +805,16 @@ impl ProcFsView for KernelProcFs {
                         FsDirEntry { name : String::from("tainted"),
                                      node_type : FsNodeType::File }])
             }
-            ProcNode::NetDir => Ok(vec![FsDirEntry { name : String::from("tcp"),
-                                                   node_type : FsNodeType::File }]),
+            ProcNode::NetDir => Ok(vec![
+                FsDirEntry { name : String::from("tcp"),
+                             node_type : FsNodeType::File },
+                FsDirEntry { name : String::from("tcp6"),
+                             node_type : FsNodeType::File },
+                FsDirEntry { name : String::from("udp"),
+                             node_type : FsNodeType::File },
+                FsDirEntry { name : String::from("udp6"),
+                             node_type : FsNodeType::File },
+            ]),
             ProcNode::PidDir(pid) => {
                 if !process_visible(pid) {
                     return Err(FsError::NotFound);
