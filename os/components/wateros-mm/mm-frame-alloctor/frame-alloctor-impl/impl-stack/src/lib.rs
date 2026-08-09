@@ -10,41 +10,50 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use api_v0::{FrameAllocError, FrameAllocResult, FrameMemStats, PhysicalFrameAllocator};
-use mm_api::addr::{PhysPageNum, PAGE_SIZE};
-use wateros_base::sync::MultiprocessorSafeCell;
+use api_v0::{FrameAllocError, FrameAllocResult, FrameMemStats, FrameSpan, PhysicalFrameAllocator};
+#[cfg(feature = "kernel-arch")]
 use arch::interrupt::{
     disable_global_interrupt, read_global_interrupt_state, restore_global_interrupt_state,
     ArchInterruptState,
 };
+use mm_api::addr::{PhysPageNum, PAGE_SIZE};
+use wateros_base::sync::MultiprocessorSafeCell;
 
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 struct FrameAllocatorInterruptGuard {
+    #[cfg(feature = "kernel-arch")]
     state : ArchInterruptState,
 }
 
 impl FrameAllocatorInterruptGuard {
     fn new() -> Self {
-        let state = read_global_interrupt_state()
-            .expect("read global interrupt state for frame allocator guard");
+        #[cfg(feature = "kernel-arch")]
+        let state = read_global_interrupt_state().expect("read global interrupt state for frame \
+                                                          allocator guard");
+        #[cfg(feature = "kernel-arch")]
         disable_global_interrupt().expect("disable global interrupt for frame allocator guard");
-        Self { state }
+        Self { #[cfg(feature = "kernel-arch")]
+               state }
     }
 }
 
 impl Drop for FrameAllocatorInterruptGuard {
     fn drop(&mut self) {
-        restore_global_interrupt_state(self.state)
-            .expect("restore global interrupt state for frame allocator guard");
+        #[cfg(feature = "kernel-arch")]
+        restore_global_interrupt_state(self.state).expect("restore global interrupt state for \
+                                                           frame allocator guard");
     }
 }
 
 fn with_frame_allocator<R>(f : impl FnOnce(&mut StackFrameAllocator) -> R) -> R {
     let _irq = FrameAllocatorInterruptGuard::new();
     let cell = get_frame_allocator_cell();
+    #[cfg(feature = "kernel-arch")]
     let cpu = arch::cpu::current_cpu_id().raw();
+    #[cfg(not(feature = "kernel-arch"))]
+    let cpu = 0;
     let object = cell as *const _ as usize;
     let mut allocator = if debug::ENABLED {
         if let Some(guard) = cell.try_lock() {
@@ -60,10 +69,14 @@ fn with_frame_allocator<R>(f : impl FnOnce(&mut StackFrameAllocator) -> R) -> R 
     } else {
         cell.exclusive_access()
     };
-    debug::lock_acquired(cpu, debug::DebugLockKind::FrameAllocator, object);
+    debug::lock_acquired(cpu,
+                         debug::DebugLockKind::FrameAllocator,
+                         object);
     let result = f(&mut allocator);
     drop(allocator);
-    debug::lock_released(cpu, debug::DebugLockKind::FrameAllocator, object);
+    debug::lock_released(cpu,
+                         debug::DebugLockKind::FrameAllocator,
+                         object);
     result
 }
 
@@ -109,11 +122,15 @@ impl StackFrameAllocator {
         self.allocated
             .clear();
         self.allocated
-            .resize(end_ppn.0.saturating_sub(start_ppn.0), false);
+            .resize(end_ppn.0
+                           .saturating_sub(start_ppn.0),
+                    false);
         self.ref_counts
             .clear();
         self.ref_counts
-            .resize(end_ppn.0.saturating_sub(start_ppn.0), 0);
+            .resize(end_ppn.0
+                           .saturating_sub(start_ppn.0),
+                    0);
     }
 
     #[inline]
@@ -127,14 +144,16 @@ impl StackFrameAllocator {
 
     /// 只读内存池统计：总帧 = 区间大小；空闲 = 回收栈 + 未分配连续段。
     pub fn mem_stats(&self) -> FrameMemStats {
-        let total_frames = self.end_ppn.saturating_sub(self.start_ppn);
-        let novel_free = self.next_novel.saturating_sub(self.start_ppn);
-        let free_frames = self.recycled.len().saturating_add(novel_free);
-        FrameMemStats {
-            total_frames,
-            free_frames: free_frames.min(total_frames),
-            page_bytes: PAGE_SIZE,
-        }
+        let total_frames = self.end_ppn
+                               .saturating_sub(self.start_ppn);
+        let novel_free = self.next_novel
+                             .saturating_sub(self.start_ppn);
+        let free_frames = self.recycled
+                              .len()
+                              .saturating_add(novel_free);
+        FrameMemStats { total_frames,
+                        free_frames : free_frames.min(total_frames),
+                        page_bytes : PAGE_SIZE }
     }
 }
 
@@ -200,6 +219,85 @@ impl PhysicalFrameAllocator for StackFrameAllocator {
         self.allocated[idx] = false;
         self.recycled
             .push(frame);
+        Ok(())
+    }
+
+    fn alloc_contiguous(&mut self,
+                        frame_count : usize,
+                        alignment_frames : usize)
+                        -> FrameAllocResult<FrameSpan<Self::FrameId>> {
+        if frame_count == 0 || alignment_frames == 0 || !alignment_frames.is_power_of_two() {
+            return Err(FrameAllocError::InvalidFrame);
+        }
+
+        if let Some(max_start) = self.next_novel
+                                     .checked_sub(frame_count)
+        {
+            let start = max_start & !(alignment_frames - 1);
+            if start >= self.start_ppn {
+                let old_next = self.next_novel;
+                let end = start.checked_add(frame_count)
+                               .ok_or(FrameAllocError::InvalidFrame)?;
+                for ppn in end..old_next {
+                    self.recycled
+                        .push(PhysPageNum(ppn));
+                }
+                self.next_novel = start;
+                for ppn in start..end {
+                    let index = ppn - self.start_ppn;
+                    self.allocated[index] = true;
+                    self.ref_counts[index] = 1;
+                }
+                return Ok(FrameSpan::new(PhysPageNum(start), frame_count));
+            }
+        }
+
+        let last_start = self.end_ppn
+                             .checked_sub(frame_count)
+                             .ok_or(FrameAllocError::OutOfMemory)?;
+        for start in self.next_novel..=last_start {
+            if start % alignment_frames != 0 {
+                continue;
+            }
+            let end = start + frame_count;
+            if (start..end).all(|ppn| {
+                               let index = ppn - self.start_ppn;
+                               !self.allocated[index] && self.ref_counts[index] == 0
+                           })
+            {
+                self.recycled
+                    .retain(|frame| frame.0 < start || frame.0 >= end);
+                for ppn in start..end {
+                    let index = ppn - self.start_ppn;
+                    self.allocated[index] = true;
+                    self.ref_counts[index] = 1;
+                }
+                return Ok(FrameSpan::new(PhysPageNum(start), frame_count));
+            }
+        }
+        Err(FrameAllocError::OutOfMemory)
+    }
+
+    fn dealloc_contiguous(&mut self, span : FrameSpan<Self::FrameId>) -> FrameAllocResult<()> {
+        let start = span.start().0;
+        let end = start.checked_add(span.frame_count())
+                       .ok_or(FrameAllocError::InvalidFrame)?;
+        if span.frame_count() == 0 || start < self.start_ppn || end > self.end_ppn {
+            return Err(FrameAllocError::InvalidFrame);
+        }
+        for ppn in start..end {
+            let index = ppn - self.start_ppn;
+            if !self.allocated[index] || self.ref_counts[index] != 1 {
+                return Err(FrameAllocError::InvalidFrame);
+            }
+        }
+        for ppn in start..end {
+            let index = ppn - self.start_ppn;
+            self.allocated[index] = false;
+            self.ref_counts[index] = 0;
+            self.recycled
+                .push(PhysPageNum(ppn));
+        }
         Ok(())
     }
 }
@@ -269,7 +367,10 @@ pub fn frame_allocator_cell() -> &'static MultiprocessorSafeCell<StackFrameAlloc
 
 /// 分配一个物理帧（返回帧标识）。
 pub fn frame_alloc() -> Option<PhysPageNum> {
-    with_frame_allocator(|allocator| allocator.alloc_frame().ok())
+    with_frame_allocator(|allocator| {
+        allocator.alloc_frame()
+                 .ok()
+    })
 }
 
 /// 回收一个物理帧。
@@ -297,13 +398,83 @@ pub fn frame_ref_count(frame : PhysPageNum) -> FrameAllocResult<usize> {
     with_frame_allocator(|allocator| allocator.ref_count(frame))
 }
 
+pub fn frame_alloc_contiguous(frame_count : usize,
+                              alignment_frames : usize)
+                              -> FrameAllocResult<FrameSpan<PhysPageNum>> {
+    with_frame_allocator(|allocator| allocator.alloc_contiguous(frame_count, alignment_frames))
+}
+
+pub fn frame_dealloc_contiguous(span : FrameSpan<PhysPageNum>) -> FrameAllocResult<()> {
+    with_frame_allocator(|allocator| allocator.dealloc_contiguous(span))
+}
+
+#[cfg(test)]
+mod contiguous_tests {
+    use super::*;
+
+    fn allocator() -> StackFrameAllocator {
+        let mut allocator = StackFrameAllocator::new();
+        allocator.init(PhysPageNum(3), PhysPageNum(35));
+        allocator
+    }
+
+    #[test]
+    fn allocates_aligned_span_atomically_and_preserves_gap_frames() {
+        let mut allocator = allocator();
+        let span = allocator.alloc_contiguous(4, 8)
+                            .unwrap();
+        assert_eq!(span, FrameSpan::new(PhysPageNum(24), 4));
+        assert_eq!(allocator.mem_stats()
+                            .free_frames,
+                   28);
+        assert_eq!(allocator.alloc_frame(),
+                   Ok(PhysPageNum(34)));
+        assert_eq!(allocator.alloc_frame(),
+                   Ok(PhysPageNum(33)));
+    }
+
+    #[test]
+    fn reuses_released_contiguous_run_and_rejects_partial_or_shared_release() {
+        let mut allocator = StackFrameAllocator::new();
+        allocator.init(PhysPageNum(27), PhysPageNum(35));
+        let span = allocator.alloc_contiguous(4, 4)
+                            .unwrap();
+        allocator.dealloc_contiguous(span)
+                 .unwrap();
+        assert_eq!(allocator.dealloc_contiguous(span),
+                   Err(FrameAllocError::InvalidFrame));
+        let reused = allocator.alloc_contiguous(4, 4)
+                              .unwrap();
+        assert_eq!(reused, span);
+        allocator.inc_ref(PhysPageNum(reused.start().0 + 1))
+                 .unwrap();
+        assert_eq!(allocator.dealloc_contiguous(reused),
+                   Err(FrameAllocError::InvalidFrame));
+        assert_eq!(allocator.ref_count(reused.start()),
+                   Ok(1));
+        assert_eq!(allocator.ref_count(PhysPageNum(reused.start().0 + 1)),
+                   Ok(2));
+    }
+
+    #[test]
+    fn invalid_or_impossible_request_does_not_mutate_allocator() {
+        let mut allocator = allocator();
+        let before = allocator.mem_stats();
+        assert_eq!(allocator.alloc_contiguous(0, 1),
+                   Err(FrameAllocError::InvalidFrame));
+        assert_eq!(allocator.alloc_contiguous(2, 3),
+                   Err(FrameAllocError::InvalidFrame));
+        assert_eq!(allocator.alloc_contiguous(64, 1),
+                   Err(FrameAllocError::OutOfMemory));
+        assert_eq!(allocator.mem_stats(), before);
+    }
+}
+
 /// 全局帧池只读统计；未初始化时返回零值。
 pub fn frame_mem_stats() -> FrameMemStats {
     if !FRAME_ALLOCATOR_READY.load(Ordering::Acquire) {
-        return FrameMemStats {
-            page_bytes: PAGE_SIZE,
-            ..FrameMemStats::default()
-        };
+        return FrameMemStats { page_bytes : PAGE_SIZE,
+                               ..FrameMemStats::default() };
     }
     with_frame_allocator(|allocator| allocator.mem_stats())
 }

@@ -4,7 +4,7 @@
 
 pub use api_v0::*;
 
-use mm_api::addr::{PhysPageNum, PAGE_SIZE};
+use mm_api::addr::{PhysAddr, PhysPageNum, PAGE_SIZE};
 
 /// 独占拥有一页、可由内核通过 RAM 恒等映射访问的物理帧。
 ///
@@ -22,7 +22,9 @@ impl OwnedPhysPage {
         {
             let frame = frame_alloc_result()?;
             unsafe {
-                core::ptr::write_bytes((frame.0 * PAGE_SIZE) as *mut u8, 0, PAGE_SIZE);
+                core::ptr::write_bytes((frame.0 * PAGE_SIZE) as *mut u8,
+                                       0,
+                                       PAGE_SIZE);
             }
             Ok(Self { frame })
         }
@@ -37,13 +39,19 @@ impl OwnedPhysPage {
     /// 借用整页只读字节。
     #[inline]
     pub fn as_bytes(&self) -> &[u8] {
-        unsafe { core::slice::from_raw_parts((self.frame.0 * PAGE_SIZE) as *const u8, PAGE_SIZE) }
+        unsafe {
+            core::slice::from_raw_parts((self.frame.0 * PAGE_SIZE) as *const u8,
+                                        PAGE_SIZE)
+        }
     }
 
     /// 独占借用整页可写字节。
     #[inline]
     pub fn as_bytes_mut(&mut self) -> &mut [u8] {
-        unsafe { core::slice::from_raw_parts_mut((self.frame.0 * PAGE_SIZE) as *mut u8, PAGE_SIZE) }
+        unsafe {
+            core::slice::from_raw_parts_mut((self.frame.0 * PAGE_SIZE) as *mut u8,
+                                            PAGE_SIZE)
+        }
     }
 }
 
@@ -53,6 +61,97 @@ impl Drop for OwnedPhysPage {
         if let Err(error) = frame_dealloc_result(self.frame) {
             log::error!("[frame-allocator] owned page drop failed ppn={:#x}: {:?}",
                         self.frame.0,
+                        error);
+        }
+    }
+}
+
+/// 独占拥有一段物理连续、按页对齐的 RAM。
+///
+/// 与 [`OwnedPhysPage`] 相同，字节借用依赖当前内核对可分配 RAM 的恒等映射；供设备
+/// 使用的地址必须取自 [`Self::physical_address`]，不能从 slice 指针反推 DMA 地址。
+/// 该对象不可复制，析构时原子归还整个连续区间。
+pub struct OwnedPhysFrameSpan {
+    span : FrameSpan<PhysPageNum>,
+}
+
+impl OwnedPhysFrameSpan {
+    /// 分配并清零 `frame_count` 页；`alignment_frames` 必须为非零 2 的幂。
+    pub fn alloc_zeroed(frame_count : usize, alignment_frames : usize) -> FrameAllocResult<Self> {
+        #[cfg(feature = "impl-stack")]
+        {
+            let byte_len = frame_count.checked_mul(PAGE_SIZE)
+                                      .ok_or(FrameAllocError::InvalidFrame)?;
+            let span = frame_alloc_contiguous(frame_count, alignment_frames)?;
+            unsafe {
+                core::ptr::write_bytes(span.start()
+                                           .start_addr()
+                                           .0 as *mut u8,
+                                       0,
+                                       byte_len);
+            }
+            Ok(Self { span })
+        }
+        #[cfg(not(feature = "impl-stack"))]
+        {
+            let _ = (frame_count, alignment_frames);
+            Err(FrameAllocError::Unsupported)
+        }
+    }
+
+    /// 设备可见的连续物理首地址。
+    #[inline]
+    pub const fn physical_address(&self) -> PhysAddr {
+        self.span
+            .start()
+            .start_addr()
+    }
+
+    /// 连续区间的字节长度。
+    #[inline]
+    pub const fn byte_len(&self) -> usize {
+        self.span
+            .frame_count() *
+        PAGE_SIZE
+    }
+
+    /// 连续区间的页数。
+    #[inline]
+    pub const fn frame_count(&self) -> usize {
+        self.span
+            .frame_count()
+    }
+
+    /// 借用连续区间的只读恒等映射。
+    #[inline]
+    pub fn as_bytes(&self) -> &[u8] {
+        unsafe {
+            core::slice::from_raw_parts(self.physical_address()
+                                            .0 as *const u8,
+                                        self.byte_len())
+        }
+    }
+
+    /// 独占借用连续区间的可写恒等映射。
+    #[inline]
+    pub fn as_bytes_mut(&mut self) -> &mut [u8] {
+        unsafe {
+            core::slice::from_raw_parts_mut(self.physical_address()
+                                                .0
+                                            as *mut u8,
+                                            self.byte_len())
+        }
+    }
+}
+
+impl Drop for OwnedPhysFrameSpan {
+    fn drop(&mut self) {
+        #[cfg(feature = "impl-stack")]
+        if let Err(error) = frame_dealloc_contiguous(self.span) {
+            log::error!("[frame-allocator] owned span drop failed ppn={:#x} frames={}: {:?}",
+                        self.span.start().0,
+                        self.span
+                            .frame_count(),
                         error);
         }
     }
@@ -74,8 +173,7 @@ pub use impl_dummy::*;
 
 /// 按当前 feature 运行帧分配器自测：`PhysPageNum` 为半开区间 `[start, end)`，
 /// 与 `init_frame_allocator` 约定一致；dummy 实现仅打日志。
-pub fn test_with_range(start_ppn : mm_api::addr::PhysPageNum,
-                       end_ppn : mm_api::addr::PhysPageNum) {
+pub fn test_with_range(start_ppn : mm_api::addr::PhysPageNum, end_ppn : mm_api::addr::PhysPageNum) {
     log::trace!("[frame-alloctor] test begin");
     #[cfg(feature = "impl-stack")]
     impl_stack::test_with_range(start_ppn, end_ppn);
