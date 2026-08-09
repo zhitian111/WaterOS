@@ -101,7 +101,7 @@ impl Ext4 {
                     let iblock = (size as usize / BLOCK_SIZE) as LBlockId;
                     if let Ok(pblock) = self.extent_query(&inode, iblock) {
                         let mut block = self.read_block(pblock);
-                        block.data[tail..].fill(0);
+                        block.data_mut()[tail..].fill(0);
                         self.write_block(&block);
                     }
                 }

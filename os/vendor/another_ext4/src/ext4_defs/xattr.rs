@@ -316,18 +316,18 @@ impl XattrBlock {
         // Move the entries from `ins_entry_pos` to `p_entry`
         // Copy `[ins_entry_pos, p_entry)` to `[ins_entry_pos+ins_entry_size, p_entry+ins_entry_size)`
         self.0
-            .data
+            .data_mut()
             .copy_within(ins_entry_pos..p_entry, ins_entry_pos + ins_entry_size);
         // Set `[ins_entry_pos..ins_entry_pos+entry_req_size)` to 0
-        self.0.data[ins_entry_pos..ins_entry_pos + ins_entry_size].fill(0);
+        self.0.data_mut()[ins_entry_pos..ins_entry_pos + ins_entry_size].fill(0);
 
         // Move the corresponding values
         // Copy `[p_value, ins_value_pos)` to `[p_value-ins_value_size, ins_value_pos-ins_value_size)`
         self.0
-            .data
+            .data_mut()
             .copy_within(p_value..ins_value_pos, p_value - ins_value_size);
         // Set `[ins_value_pos-ins_value_size, ins_value_pos)` to 0
-        self.0.data[ins_value_pos - ins_value_size..ins_value_pos].fill(0);
+        self.0.data_mut()[ins_value_pos - ins_value_size..ins_value_pos].fill(0);
 
         // Update the value offset of the moved entries
         let mut p_entry2 = ins_entry_pos + ins_entry_size;
@@ -389,18 +389,18 @@ impl XattrBlock {
         // Move the following entries
         // Copy `[rem_entry_pos + rem_entry_size, p_entry)` to `[rem_entry_pos, p_entry - rem_entry_size)`
         self.0
-            .data
+            .data_mut()
             .copy_within(rem_entry_pos + rem_entry_size..p_entry, rem_entry_pos);
         // Set `[p_entry - rem_entry_size, p_entry)` to 0
-        self.0.data[p_entry - rem_entry_size..p_entry].fill(0);
+        self.0.data_mut()[p_entry - rem_entry_size..p_entry].fill(0);
 
         // Move the corresponding values
         // Copy `[p_value, rem_value_pos)` to `[p_value + rem_value_size, rem_value_pos + rem_value_size)`
         self.0
-            .data
+            .data_mut()
             .copy_within(p_value..rem_value_pos, p_value + rem_value_size);
         // Set `[p_value, p_value + rem_value_size)` to 0
-        self.0.data[p_value..p_value + rem_value_size].fill(0);
+        self.0.data_mut()[p_value..p_value + rem_value_size].fill(0);
 
         // Update the value offset of the moved entries
         let mut p_entry2 = rem_entry_pos;

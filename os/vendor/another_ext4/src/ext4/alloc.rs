@@ -195,7 +195,7 @@ impl Ext4 {
             let bitmap_block_id = bg.desc.block_bitmap_block();
             let mut bitmap_block = self.read_block(bitmap_block_id);
             let block_count = sb.block_count_in_group(bgid) as usize;
-            let mut bitmap = Bitmap::new(&mut *bitmap_block.data, 8 * BLOCK_SIZE);
+            let mut bitmap = Bitmap::new(bitmap_block.data_mut(), 8 * BLOCK_SIZE);
             self.initialize_block_bitmap_if_needed(&sb, &mut bg, &mut bitmap)?;
             let local = match bitmap.find_and_set_first_clear_bit(0, block_count) {
                 Some(local) => local as u64,
@@ -253,7 +253,7 @@ impl Ext4 {
             let mut bg = self.read_block_group(bgid);
             let bitmap_block_id = bg.desc.block_bitmap_block();
             let mut bitmap_block = self.read_block(bitmap_block_id);
-            let mut bitmap = Bitmap::new(&mut *bitmap_block.data, 8 * BLOCK_SIZE);
+            let mut bitmap = Bitmap::new(bitmap_block.data_mut(), 8 * BLOCK_SIZE);
 
             for &local in &locals {
                 if bitmap.is_bit_clear(local) {
@@ -295,10 +295,10 @@ impl Ext4 {
             let inode_count = sb.inode_count_in_group(bgid) as usize;
             self.initialize_inode_bitmap_if_needed(
                 &mut bg,
-                &mut *bitmap_block.data,
+                bitmap_block.data_mut(),
                 inode_count,
             )?;
-            let mut bitmap = Bitmap::new(&mut *bitmap_block.data, inode_count);
+            let mut bitmap = Bitmap::new(bitmap_block.data_mut(), inode_count);
 
             // Find a free inode
             let idx_in_bg =
@@ -354,7 +354,7 @@ impl Ext4 {
         let bitmap_block_id = bg.desc.inode_bitmap_block();
         let mut bitmap_block = self.read_block(bitmap_block_id);
         let inode_count = sb.inode_count_in_group(bgid) as usize;
-        let mut bitmap = Bitmap::new(&mut *bitmap_block.data, inode_count);
+        let mut bitmap = Bitmap::new(bitmap_block.data_mut(), inode_count);
 
         // Free the inode
         if bitmap.is_bit_clear(idx_in_bg as usize) {

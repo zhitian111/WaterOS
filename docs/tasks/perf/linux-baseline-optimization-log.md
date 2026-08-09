@@ -125,6 +125,69 @@ codegraph explore "HeapBrk::brk handle_brk_page_fault user_brk_start user_brk_cu
 codegraph explore "protect_lazy_file_vmas lazy_vma_overlaps lazy_file_vma_index insert_lazy_file_vma mprotect sys_mprotect exact source and all callers; sorted invariant"
 ```
 
+## FS-02B：ext4 内层块缓存命中使用写时复制
+
+状态：已完成（2026-08-10）
+
+### 证据与调用链
+
+当前 Final 的 300 s pc-hot 中，`another_ext4::BlockCache::read_block` 内 4 KiB
+`Block::clone` 的直达 `memcpy` callsite 执行 6,804,463 次。当前命中路径为：
+
+```text
+VFS lookup/read/metadata
+  -> Ext4::read_block
+     -> another_ext4::BlockCache::read_block
+        -> 命中持有 Box<[u8; 4096]> 的 CacheSlot
+        -> Block::clone
+           -> TLSF 分配 4096 bytes
+           -> memcpy 4096 bytes
+```
+
+WaterOS 外层 `CachingBlockDevice` 缓存 512-byte LBA；another_ext4 内层缓存 4 KiB ext4
+块并承担 dirty/write-back 语义。直接禁用内层缓存会增加锁和适配层调用，且改变写回行为，
+不作为首选。
+
+### 设计与备选
+
+1. 首选：`Block` 数据改为引用计数所有权；cache hit 的 clone 仅增加引用计数。所有修改
+   入口通过 `Arc::make_mut` 写时复制，读路径保持共享，写回和 LRU 锁边界不变。
+2. 保留 `BlockDevice` 和 `Ext4::read_block -> Block` 接口，避免把 cache guard 生命周期
+   传播到目录、extent、inode 和 xattr 全链路。
+3. 若引用计数成本抵消收益，备选是增加 `read_block_into` 并让调用方复用缓冲，只消除
+   TLSF 分配但仍保留 4 KiB copy；需要逐个改造消费者。
+4. 更激进的借用式 cache guard 可完全去掉 copy，但会让解析期间长期持有全局 cache 锁，
+   并要求 pin/eviction/write exclusion 语义；当前缺少这些基础设施，暂不采用。
+
+恢复上下文命令：
+
+```bash
+codegraph explore "another_ext4 BlockCache::read_block CacheSlot Block data clone Arc make_mut Ext4::read_block all read and mutation callers; BlockAdapter and outer CachingBlockDevice"
+```
+
+### 验收
+
+- another_ext4 单元测试覆盖 cache hit 共享、修改时分离、dirty flush 内容正确。
+- 双架构 Final check/build 通过。
+- RISC-V 16 GiB/8 vCPU、`-snapshot` 完整 BuildStorm 明确优于 926.21 s。
+- 改后反汇编或 pc-hot 确认原 4 KiB clone 的分配和 memcpy callsite 消失。
+
+### 验证结果
+
+- another_ext4 单元测试：2/2 通过；cache 测试确认两次读取只访问后端一次、命中共享数据、
+  修改时分离，且 flush 写出修改后的内容。
+- 双架构 Final check/build：通过。
+- RISC-V Final 反汇编中，`BlockCache::read_block` 已不再调用 `memcpy` 或为 clone 申请
+  4096 bytes。
+- RISC-V 16 GiB/8 vCPU、`-snapshot` 完整 BuildStorm：`ok=true`，908.02 s；无
+  panic/SIGSEGV，完整结束。
+- 相对 926.21 s 对照减少 18.19 s（1.96%）；相对 Linux 395.90 s 为 2.29 倍，距离
+  2 倍阶段门槛 791.80 s 尚差 116.22 s。
+- 结论：消除 cache-hit 的 4 KiB TLSF 分配和复制有可复现价值，保留该实现。收益没有
+  callsite 次数暗示得大，说明 BuildStorm 的主要剩余差距仍分布在路径处理、用户复制、
+  inode/extent 解析和内存管理，而非单一块复制。
+- 完整日志：`/tmp/wateros-fs02b-after-rv.log`（本机临时文件，不提交）。
+
 ## COPY-01A：RISC-V 对齐 memcpy 64 字节展开
 
 状态：完整测试显著退化并回退（2026-08-10）

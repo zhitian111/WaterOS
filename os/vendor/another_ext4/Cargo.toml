@@ -12,5 +12,5 @@ spin = { version = "0.10", default-features = false }
 [features]
 # Keep the upstream conditional code explicit even though the cache is disabled
 # until WaterOS supplies a compatible cache implementation.
-block_cache = []
+block_cache = ["spin/mutex", "spin/spin_mutex"]
 fuser_root_inode = []

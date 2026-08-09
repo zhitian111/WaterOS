@@ -152,7 +152,7 @@ impl DirEntryTail {
 
     pub fn set_checksum(&mut self, uuid: &[u8], ino: InodeId, ino_gen: u32, block: &Block) {
         let tail_offset = BLOCK_SIZE - size_of::<DirEntryTail>();
-        let mut data = block.data.clone();
+        let mut data = block.data.as_ref().clone();
         data[tail_offset + 8..tail_offset + 12].fill(0);
         let mut csum = crc32(CRC32_INIT, uuid);
         csum = crc32(csum, &ino.to_le_bytes());
@@ -181,7 +181,7 @@ impl DirBlock {
     /// Initialize a directory block, create an unused entry
     /// and the dir entry tail.
     pub fn init(&mut self) {
-        self.0.data.fill(0);
+        self.0.data_mut().fill(0);
         let tail_offset = BLOCK_SIZE - size_of::<DirEntryTail>();
         let entry = DirEntry::new(0, tail_offset as u16, "", FileType::Unknown);
         self.0.write_offset_as(0, &entry);

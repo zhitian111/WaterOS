@@ -172,3 +172,52 @@ impl BlockCache {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    struct MemoryDevice {
+        reads: AtomicUsize,
+        writes: Mutex<Vec<Block>>,
+    }
+
+    impl BlockDevice for MemoryDevice {
+        fn read_block(&self, block_id: PBlockId) -> Block {
+            self.reads.fetch_add(1, Ordering::Relaxed);
+            let mut data = Box::new([0; BLOCK_SIZE]);
+            data[0] = block_id as u8;
+            Block::new(block_id, data)
+        }
+
+        fn write_block(&self, block: &Block) {
+            self.writes.lock().push(block.clone());
+        }
+    }
+
+    #[test]
+    fn cache_hit_shares_data_and_write_uses_copy_on_write() {
+        let device = Arc::new(MemoryDevice {
+            reads: AtomicUsize::new(0),
+            writes: Mutex::new(Vec::new()),
+        });
+        let cache = BlockCache::new(device.clone());
+
+        let cached = cache.read_block(7);
+        let mut writable = cache.read_block(7);
+        assert_eq!(device.reads.load(Ordering::Relaxed), 1);
+        assert!(Arc::ptr_eq(&cached.data, &writable.data));
+
+        writable.write_offset(0, &[99]);
+        assert_eq!(cached.data()[0], 7);
+        assert_eq!(writable.data()[0], 99);
+        assert!(!Arc::ptr_eq(&cached.data, &writable.data));
+
+        cache.write_block(&writable);
+        cache.flush(7);
+        let writes = device.writes.lock();
+        assert_eq!(writes.len(), 1);
+        assert_eq!(writes[0].data()[0], 99);
+    }
+}
