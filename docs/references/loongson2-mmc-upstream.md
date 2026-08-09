@@ -29,6 +29,14 @@ Confirmed facts used by the current WaterOS foundation:
 - Linux computes the divider with upward rounding. WaterOS mirrors that policy
   but requires coherent parent evidence, fresh controller reads and readback;
   its current conservative plan retains the upstream 255 clamp.
+- Linux power-up writes `CTL.RESET`, waits 10 ms, writes `CTL.EXTCLK`, clears
+  interrupt bits `[9:0]` through `INT`, then writes the same `[9:0]` mask to
+  `IEN`. It does not document RESET as self-clearing, so WaterOS does not poll
+  or depend on self-clear behavior.
+- `CSTS.ON=bit8` and `DSTS.RXON/TXON=bits0/1` are the documented command/data
+  active indicators. WaterOS performs a bounded post-reset idle check before
+  allowing clock configuration; this additional fail-closed check is not a
+  claim that Linux uses the same preflight policy.
 - The second 2K1000 DT register region is an APB DMA configuration register.
 - 2K1000 uses external APB DMA (`rx-tx`); it is not a DesignWare MMC host.
 - The APBDMA order register is accessed as a non-atomic 64-bit little-endian
@@ -43,4 +51,5 @@ Confirmed facts used by the current WaterOS foundation:
 
 Still requiring physical-board validation: MMIO accessibility/endian behavior,
 `PRE`/`CTL.ENCLK` write and readback behavior, clock/reset/power ordering,
-response word ordering, interrupt delivery, DMA routing and cache coherency.
+10 ms reset timing sufficiency, CSTS/DSTS post-reset behavior, response word
+ordering, interrupt delivery, DMA routing and cache coherency.

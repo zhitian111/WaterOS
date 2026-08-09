@@ -7,12 +7,14 @@
 use crate::{
     clock::ConsistentClockSnapshot,
     irq_domain::{AcknowledgedIrq, DeviceAckedIrq, GlobalIrq, IrqDisposition},
+    mmc_prerequisite::ControllerPrerequisiteProof,
     topology::{
         CardDetect, FixedSupplyControl, MmcClockProvider, MmcDescription, PinctrlProvider,
         SupplyDescription, SupplyProvider,
     },
 };
 use api_v0::MmioRegion;
+use core::marker::PhantomData;
 use core::sync::atomic::{AtomicBool, Ordering};
 use dw_mmc::mmc::MmcError;
 
@@ -146,13 +148,18 @@ const REG_CTL : usize = 0x00;
 const REG_PRE : usize = 0x04;
 const REG_CARG : usize = 0x08;
 const REG_CCTL : usize = 0x0C;
+const REG_CSTS : usize = 0x10;
 const REG_RSP0 : usize = 0x14;
 const REG_RSP1 : usize = 0x18;
 const REG_RSP2 : usize = 0x1C;
 const REG_RSP3 : usize = 0x20;
 const REG_INT : usize = 0x3C;
+const REG_DSTS : usize = 0x34;
+const REG_IEN : usize = 0x64;
 
 const CTL_ENABLE_CLOCK : u32 = 1 << 0;
+const CTL_EXTERNAL_CLOCK : u32 = 1 << 1;
+const CTL_RESET : u32 = 1 << 8;
 const PRE_ENABLE : u32 = 1 << 31;
 const CCTL_HOST : u32 = 1 << 6;
 const CCTL_START : u32 = 1 << 8;
@@ -162,6 +169,8 @@ const INT_COMMAND_SENT : u32 = 1 << 6;
 const INT_COMMAND_TIMEOUT : u32 = 1 << 7;
 const INT_RESPONSE_CRC : u32 = 1 << 8;
 const INT_CLEAR : u32 = 0x3FF;
+const CSTS_ON : u32 = 1 << 8;
+const DSTS_ACTIVE : u32 = (1 << 0) | (1 << 1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MmcIrqAckError {
@@ -268,9 +277,259 @@ pub fn acknowledge_interrupt<R : RegisterIo>(registers : &mut R,
     Ok(IrqDisposition::Rearm(DeviceAckedIrq::after_device_clear(expected)))
 }
 
-pub struct Host<R> {
+pub struct Uninitialized;
+pub struct Preflighted;
+pub struct ClockConfigured;
+pub struct CommandReady;
+
+pub struct Host<R, S = Uninitialized> {
     registers : R,
     poll_limit : usize,
+    _state : PhantomData<S>,
+}
+
+impl<R, S> Host<R, S> {
+    fn change_state<T>(self) -> Host<R, T> {
+        Host { registers : self.registers,
+               poll_limit : self.poll_limit,
+               _state : PhantomData }
+    }
+
+    #[cfg(test)]
+    fn into_inner(self) -> R { self.registers }
+}
+
+pub trait ResetDelay {
+    /// Wait at least the requested duration before returning.
+    fn delay_milliseconds(&mut self, milliseconds : u32);
+}
+
+/// Explicit acceptance of the upstream-derived reset sequence on a board.
+pub struct HostPreflightAuthority {
+    _private : (),
+}
+
+impl HostPreflightAuthority {
+    /// # Safety
+    /// The caller must verify exclusive controller ownership, reset semantics,
+    /// delay availability, W1C interrupt behavior and the recovery procedure.
+    pub const unsafe fn assume_board_verified() -> Self { Self { _private : () } }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostPreflightStage {
+    WriteReset,
+    WriteExternalClock,
+    ReadbackControl,
+    ControlMismatch,
+    ClearInterrupts,
+    EnableInterrupts,
+    ReadbackInterruptEnable,
+    InterruptEnableMismatch,
+    ReadCommandStatus,
+    ReadDataStatus,
+    IdleTimeout,
+}
+
+pub struct HostPreflightFailure<R> {
+    pub stage : HostPreflightStage,
+    pub error : Option<MmcError>,
+    pub observed_control : Option<u32>,
+    pub observed_interrupt_enable : Option<u32>,
+    pub observed_command_status : Option<u32>,
+    pub observed_data_status : Option<u32>,
+    host : Host<R, Uninitialized>,
+}
+
+impl<R> core::fmt::Debug for HostPreflightFailure<R> {
+    fn fmt(&self, formatter : &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.debug_struct("HostPreflightFailure")
+                 .field("stage", &self.stage)
+                 .field("error", &self.error)
+                 .field("observed_control",
+                        &self.observed_control)
+                 .field("observed_interrupt_enable",
+                        &self.observed_interrupt_enable)
+                 .field("observed_command_status",
+                        &self.observed_command_status)
+                 .field("observed_data_status",
+                        &self.observed_data_status)
+                 .finish_non_exhaustive()
+    }
+}
+
+impl<R : RegisterIo> HostPreflightFailure<R> {
+    /// Retry the entire reset sequence. A failed write has unknown effect, so
+    /// retry starts from RESET rather than continuing at the failed stage.
+    pub fn retry(self,
+                 delay : &mut impl ResetDelay,
+                 authority : &HostPreflightAuthority)
+                 -> Result<Host<R, Preflighted>, Self> {
+        self.host
+            .preflight(delay, authority)
+    }
+
+    pub fn into_host(self) -> Host<R, Uninitialized> { self.host }
+}
+
+impl<R : RegisterIo> Host<R, Uninitialized> {
+    pub fn new(registers : R, poll_limit : usize) -> Self {
+        Self { registers,
+               poll_limit : poll_limit.max(1),
+               _state : PhantomData }
+    }
+
+    /// Apply the upstream power-up reset sequence and prove command/data idle.
+    ///
+    /// Physical behavior remains `UNVERIFIED_ON_HARDWARE`. The 10 ms delay is
+    /// upstream-derived; no reset self-clear behavior is assumed.
+    pub fn preflight(mut self,
+                     delay : &mut impl ResetDelay,
+                     _authority : &HostPreflightAuthority)
+                     -> Result<Host<R, Preflighted>, HostPreflightFailure<R>> {
+        if let Err(error) = self.registers
+                                .write32(REG_CTL, CTL_RESET)
+        {
+            return Err(self.failure(HostPreflightStage::WriteReset,
+                                    Some(error),
+                                    None,
+                                    None,
+                                    None,
+                                    None));
+        }
+        delay.delay_milliseconds(10);
+        if let Err(error) = self.registers
+                                .write32(REG_CTL, CTL_EXTERNAL_CLOCK)
+        {
+            return Err(self.failure(HostPreflightStage::WriteExternalClock,
+                                    Some(error),
+                                    None,
+                                    None,
+                                    None,
+                                    None));
+        }
+        let control = match self.registers
+                                .read32(REG_CTL)
+        {
+            Ok(value) => value,
+            Err(error) => {
+                return Err(self.failure(HostPreflightStage::ReadbackControl,
+                                        Some(error),
+                                        None,
+                                        None,
+                                        None,
+                                        None))
+            }
+        };
+        if control != CTL_EXTERNAL_CLOCK {
+            return Err(self.failure(HostPreflightStage::ControlMismatch,
+                                    None,
+                                    Some(control),
+                                    None,
+                                    None,
+                                    None));
+        }
+        if let Err(error) = self.registers
+                                .write32(REG_INT, INT_CLEAR)
+        {
+            return Err(self.failure(HostPreflightStage::ClearInterrupts,
+                                    Some(error),
+                                    Some(control),
+                                    None,
+                                    None,
+                                    None));
+        }
+        if let Err(error) = self.registers
+                                .write32(REG_IEN, INT_CLEAR)
+        {
+            return Err(self.failure(HostPreflightStage::EnableInterrupts,
+                                    Some(error),
+                                    Some(control),
+                                    None,
+                                    None,
+                                    None));
+        }
+        let interrupt_enable = match self.registers
+                                         .read32(REG_IEN)
+        {
+            Ok(value) => value,
+            Err(error) => {
+                return Err(self.failure(HostPreflightStage::ReadbackInterruptEnable,
+                                        Some(error),
+                                        Some(control),
+                                        None,
+                                        None,
+                                        None))
+            }
+        };
+        if interrupt_enable != INT_CLEAR {
+            return Err(self.failure(HostPreflightStage::InterruptEnableMismatch,
+                                    None,
+                                    Some(control),
+                                    Some(interrupt_enable),
+                                    None,
+                                    None));
+        }
+
+        let mut command_status = None;
+        let mut data_status = None;
+        for _ in 0..self.poll_limit {
+            let command = match self.registers
+                                    .read32(REG_CSTS)
+            {
+                Ok(value) => value,
+                Err(error) => {
+                    return Err(self.failure(HostPreflightStage::ReadCommandStatus,
+                                            Some(error),
+                                            Some(control),
+                                            Some(interrupt_enable),
+                                            None,
+                                            data_status))
+                }
+            };
+            command_status = Some(command);
+            let data = match self.registers
+                                 .read32(REG_DSTS)
+            {
+                Ok(value) => value,
+                Err(error) => {
+                    return Err(self.failure(HostPreflightStage::ReadDataStatus,
+                                            Some(error),
+                                            Some(control),
+                                            Some(interrupt_enable),
+                                            command_status,
+                                            None))
+                }
+            };
+            data_status = Some(data);
+            if command & CSTS_ON == 0 && data & DSTS_ACTIVE == 0 {
+                return Ok(self.change_state());
+            }
+        }
+        Err(self.failure(HostPreflightStage::IdleTimeout,
+                         None,
+                         Some(control),
+                         Some(interrupt_enable),
+                         command_status,
+                         data_status))
+    }
+
+    fn failure(self,
+               stage : HostPreflightStage,
+               error : Option<MmcError>,
+               observed_control : Option<u32>,
+               observed_interrupt_enable : Option<u32>,
+               observed_command_status : Option<u32>,
+               observed_data_status : Option<u32>)
+               -> HostPreflightFailure<R> {
+        HostPreflightFailure { stage,
+                               error,
+                               observed_control,
+                               observed_interrupt_enable,
+                               observed_command_status,
+                               observed_data_status,
+                               host : self }
+    }
 }
 
 /// Match the upstream driver's integer prescaler policy: round upward and clamp
@@ -571,12 +830,61 @@ pub fn apply_controller_clock(registers : &mut impl RegisterIo,
                                                })
 }
 
-impl<R : RegisterIo> Host<R> {
-    pub fn new(registers : R, poll_limit : usize) -> Self {
-        Self { registers,
-               poll_limit : poll_limit.max(1) }
+pub struct HostClockFailure<R> {
+    pub recovery : ControllerClockRecovery,
+    host : Host<R, Preflighted>,
+}
+
+impl<R> core::fmt::Debug for HostClockFailure<R> {
+    fn fmt(&self, formatter : &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.debug_struct("HostClockFailure")
+                 .field("recovery", &self.recovery)
+                 .finish_non_exhaustive()
+    }
+}
+
+impl<R : RegisterIo> HostClockFailure<R> {
+    pub fn retry(self,
+                 authority : &ControllerClockAuthority,
+                 guard : &mut ClockTransactionGuard<'_>)
+                 -> Result<(Host<R, ClockConfigured>, ControllerClockReady), Self> {
+        self.host
+            .configure_controller_clock(self.recovery.plan, authority, guard)
     }
 
+    pub fn into_host(self) -> Host<R, Preflighted> { self.host }
+}
+
+impl<R : RegisterIo> Host<R, Preflighted> {
+    pub fn configure_controller_clock(
+        mut self,
+        plan : ControllerClockPlan,
+        authority : &ControllerClockAuthority,
+        guard : &mut ClockTransactionGuard<'_>)
+        -> Result<(Host<R, ClockConfigured>, ControllerClockReady), HostClockFailure<R>> {
+        match apply_controller_clock(&mut self.registers,
+                                     plan,
+                                     authority,
+                                     guard)
+        {
+            Ok(ready) => Ok((self.change_state(), ready)),
+            Err(recovery) => Err(HostClockFailure { recovery,
+                                                    host : self }),
+        }
+    }
+}
+
+impl<R> Host<R, ClockConfigured> {
+    /// Consume the complete, post-reset prerequisite proof exactly once.
+    pub fn authorize(self, _proof : ControllerPrerequisiteProof) -> Host<R, CommandReady> {
+        self.change_state()
+    }
+
+    #[cfg(test)]
+    fn authorize_host_fixture(self) -> Host<R, CommandReady> { self.change_state() }
+}
+
+impl<R : RegisterIo> Host<R, CommandReady> {
     /// Execute a non-data command by bounded polling.
     ///
     /// Register definitions and W1C interrupt behavior follow the upstream
@@ -627,9 +935,6 @@ impl<R : RegisterIo> Host<R> {
         }
         Err(MmcError::Timeout)
     }
-
-    #[cfg(test)]
-    fn into_inner(self) -> R { self.registers }
 }
 
 #[cfg(test)]
@@ -849,6 +1154,228 @@ mod tests {
         let parent = clock::snapshot_consistent(&mut ParentRegisters, 100_000_000).unwrap();
         ControllerClockPlan::from_parent(parent, target_hz).unwrap()
     }
+
+    fn clock_guard() -> ClockTransactionGuard<'static> {
+        loop {
+            match try_begin_clock_transaction() {
+                Ok(guard) => return guard,
+                Err(ClockTransactionBusy) => core::hint::spin_loop(),
+            }
+        }
+    }
+
+    #[derive(Default)]
+    struct Delay {
+        calls : alloc::vec::Vec<u32>,
+    }
+
+    impl ResetDelay for Delay {
+        fn delay_milliseconds(&mut self, milliseconds : u32) {
+            self.calls
+                .push(milliseconds);
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum PreflightEvent {
+        Read(usize),
+        Write(usize, u32),
+    }
+
+    struct PreflightRegisters {
+        control : u32,
+        interrupt_enable : u32,
+        command_status : u32,
+        data_status : u32,
+        events : alloc::vec::Vec<PreflightEvent>,
+        reads : usize,
+        writes : usize,
+        fail_read : Option<usize>,
+        fail_write : Option<usize>,
+        ignore_control_write : bool,
+        ignore_interrupt_enable_write : bool,
+    }
+
+    impl RegisterIo for PreflightRegisters {
+        fn read32(&mut self, offset : usize) -> Result<u32, MmcError> {
+            self.events
+                .push(PreflightEvent::Read(offset));
+            self.reads += 1;
+            if self.fail_read == Some(self.reads) {
+                return Err(MmcError::RegisterOutOfRange);
+            }
+            match offset {
+                REG_CTL => Ok(self.control),
+                REG_IEN => Ok(self.interrupt_enable),
+                REG_CSTS => Ok(self.command_status),
+                REG_DSTS => Ok(self.data_status),
+                _ => Err(MmcError::RegisterOutOfRange),
+            }
+        }
+
+        fn write32(&mut self, offset : usize, value : u32) -> Result<(), MmcError> {
+            self.events
+                .push(PreflightEvent::Write(offset, value));
+            self.writes += 1;
+            if self.fail_write == Some(self.writes) {
+                return Err(MmcError::RegisterOutOfRange);
+            }
+            match offset {
+                REG_CTL => {
+                    if !self.ignore_control_write {
+                        self.control = value;
+                    }
+                }
+                REG_IEN => {
+                    if !self.ignore_interrupt_enable_write {
+                        self.interrupt_enable = value;
+                    }
+                }
+                REG_INT => {}
+                _ => return Err(MmcError::RegisterOutOfRange),
+            }
+            Ok(())
+        }
+    }
+
+    fn preflight_registers() -> PreflightRegisters {
+        PreflightRegisters { control : 0,
+                             interrupt_enable : 0,
+                             command_status : 0,
+                             data_status : 0,
+                             events : alloc::vec::Vec::new(),
+                             reads : 0,
+                             writes : 0,
+                             fail_read : None,
+                             fail_write : None,
+                             ignore_control_write : false,
+                             ignore_interrupt_enable_write : false }
+    }
+
+    fn command_host(registers : MockRegisters) -> Host<MockRegisters, CommandReady> {
+        let mut delay = Delay::default();
+        let preflight_authority = unsafe { HostPreflightAuthority::assume_board_verified() };
+        let host = Host::new(registers, 2).preflight(&mut delay, &preflight_authority)
+                                          .unwrap();
+        assert_eq!(delay.calls, [10]);
+        let clock_authority = unsafe { ControllerClockAuthority::assume_board_verified() };
+        let mut guard = clock_guard();
+        let (host, _clock) = host.configure_controller_clock(controller_clock_plan(400_000),
+                                                             &clock_authority,
+                                                             &mut guard)
+                                 .unwrap();
+        drop(guard);
+        host.authorize_host_fixture()
+    }
+
+    #[test]
+    fn host_preflight_follows_reset_delay_and_idle_sequence() {
+        let mut delay = Delay::default();
+        let authority = unsafe { HostPreflightAuthority::assume_board_verified() };
+        let host = Host::new(preflight_registers(), 2).preflight(&mut delay, &authority)
+                                                      .unwrap();
+        assert_eq!(delay.calls, [10]);
+        let registers = host.into_inner();
+        assert_eq!(registers.events,
+                   [PreflightEvent::Write(REG_CTL, CTL_RESET),
+                    PreflightEvent::Write(REG_CTL, CTL_EXTERNAL_CLOCK),
+                    PreflightEvent::Read(REG_CTL),
+                    PreflightEvent::Write(REG_INT, INT_CLEAR),
+                    PreflightEvent::Write(REG_IEN, INT_CLEAR),
+                    PreflightEvent::Read(REG_IEN),
+                    PreflightEvent::Read(REG_CSTS),
+                    PreflightEvent::Read(REG_DSTS)]);
+    }
+
+    #[test]
+    fn host_preflight_failures_preserve_session_and_retry_from_reset() {
+        let authority = unsafe { HostPreflightAuthority::assume_board_verified() };
+
+        for (write, stage) in [(1, HostPreflightStage::WriteReset),
+                               (2, HostPreflightStage::WriteExternalClock),
+                               (3, HostPreflightStage::ClearInterrupts),
+                               (4, HostPreflightStage::EnableInterrupts)]
+        {
+            let mut registers = preflight_registers();
+            registers.fail_write = Some(write);
+            let mut delay = Delay::default();
+            let failure = match Host::new(registers, 2).preflight(&mut delay, &authority) {
+                Ok(_) => panic!("write failure unexpectedly preflighted"),
+                Err(failure) => failure,
+            };
+            assert_eq!(failure.stage, stage);
+            assert_eq!(failure.error,
+                       Some(MmcError::RegisterOutOfRange));
+        }
+
+        for (read, stage) in [(1, HostPreflightStage::ReadbackControl),
+                              (2, HostPreflightStage::ReadbackInterruptEnable),
+                              (3, HostPreflightStage::ReadCommandStatus),
+                              (4, HostPreflightStage::ReadDataStatus)]
+        {
+            let mut registers = preflight_registers();
+            registers.fail_read = Some(read);
+            let mut delay = Delay::default();
+            let failure = match Host::new(registers, 2).preflight(&mut delay, &authority) {
+                Ok(_) => panic!("read failure unexpectedly preflighted"),
+                Err(failure) => failure,
+            };
+            assert_eq!(failure.stage, stage);
+            assert_eq!(failure.error,
+                       Some(MmcError::RegisterOutOfRange));
+        }
+
+        let mut registers = preflight_registers();
+        registers.fail_write = Some(1);
+        let mut delay = Delay::default();
+        let failure = match Host::new(registers, 2).preflight(&mut delay, &authority) {
+            Ok(_) => panic!("reset failure unexpectedly preflighted"),
+            Err(failure) => failure,
+        };
+        assert!(failure.retry(&mut delay, &authority)
+                       .is_ok());
+        assert_eq!(delay.calls, [10]);
+    }
+
+    #[test]
+    fn host_preflight_rejects_readback_mismatch_and_bounded_busy_state() {
+        let authority = unsafe { HostPreflightAuthority::assume_board_verified() };
+
+        let mut control = preflight_registers();
+        control.ignore_control_write = true;
+        let failure = match Host::new(control, 2).preflight(&mut Delay::default(), &authority) {
+            Ok(_) => panic!("control mismatch unexpectedly preflighted"),
+            Err(failure) => failure,
+        };
+        assert_eq!(failure.stage,
+                   HostPreflightStage::ControlMismatch);
+        assert_eq!(failure.observed_control, Some(0));
+
+        let mut interrupt_enable = preflight_registers();
+        interrupt_enable.ignore_interrupt_enable_write = true;
+        let failure =
+            match Host::new(interrupt_enable, 2).preflight(&mut Delay::default(), &authority) {
+                Ok(_) => panic!("interrupt-enable mismatch unexpectedly preflighted"),
+                Err(failure) => failure,
+            };
+        assert_eq!(failure.stage,
+                   HostPreflightStage::InterruptEnableMismatch);
+
+        let mut busy = preflight_registers();
+        busy.command_status = CSTS_ON;
+        busy.data_status = DSTS_ACTIVE;
+        let failure = match Host::new(busy, 2).preflight(&mut Delay::default(), &authority) {
+            Ok(_) => panic!("busy controller unexpectedly preflighted"),
+            Err(failure) => failure,
+        };
+        assert_eq!(failure.stage,
+                   HostPreflightStage::IdleTimeout);
+        assert_eq!(failure.observed_command_status,
+                   Some(CSTS_ON));
+        assert_eq!(failure.observed_data_status,
+                   Some(DSTS_ACTIVE));
+    }
+
     impl RegisterIo for MockRegisters {
         fn read32(&mut self, offset : usize) -> Result<u32, MmcError> {
             if offset == REG_INT {
@@ -875,18 +1402,7 @@ mod tests {
         let mut registers = MockRegisters { values : [0; 26],
                                             interrupts : INT_COMMAND_SENT };
         registers.values[REG_RSP0 / 4] = 0x1234;
-        let plan = controller_clock_plan(400_000);
-        let authority = unsafe { ControllerClockAuthority::assume_board_verified() };
-        let mut guard = try_begin_clock_transaction().unwrap();
-        let ready = apply_controller_clock(&mut registers,
-                                           plan,
-                                           &authority,
-                                           &mut guard).unwrap();
-        assert_eq!(ready.plan()
-                        .actual_hz(),
-                   490_196);
-        drop(guard);
-        let mut host = Host::new(registers, 2);
+        let mut host = command_host(registers);
         assert_eq!(host.execute_command(8, 0x1AA, true, false),
                    Ok([0x1234, 0, 0, 0]));
         let registers = host.into_inner();
@@ -974,7 +1490,7 @@ mod tests {
         assert_eq!(plan.divider(), 255);
 
         let authority = unsafe { ControllerClockAuthority::assume_board_verified() };
-        let mut guard = try_begin_clock_transaction().unwrap();
+        let mut guard = clock_guard();
         assert!(matches!(try_begin_clock_transaction(),
                          Err(ClockTransactionBusy)));
         let mut registers = clock_registers(0x55AA, 1 << 9);
@@ -995,7 +1511,7 @@ mod tests {
                     ClockEvent::Read(REG_CTL)]);
         drop(guard);
 
-        let mut guard = try_begin_clock_transaction().unwrap();
+        let mut guard = clock_guard();
         registers.events
                  .clear();
         apply_controller_clock(&mut registers,
@@ -1011,7 +1527,7 @@ mod tests {
     fn controller_clock_failures_remain_revalidatable() {
         let plan = controller_clock_plan(25_000_000);
         let authority = unsafe { ControllerClockAuthority::assume_board_verified() };
-        let mut guard = try_begin_clock_transaction().unwrap();
+        let mut guard = clock_guard();
 
         for (read, stage) in [(1, ControllerClockStage::PreflightPre),
                               (2, ControllerClockStage::PreflightControl),
@@ -1080,19 +1596,16 @@ mod tests {
 
     #[test]
     fn bounds_polling_and_reports_command_errors() {
-        let mut host = Host::new(MockRegisters { values : [0; 26],
-                                                 interrupts : 0 },
-                                 2);
+        let mut host = command_host(MockRegisters { values : [0; 26],
+                                                    interrupts : 0 });
         assert_eq!(host.execute_command(0, 0, false, false),
                    Err(MmcError::Timeout));
-        let mut host = Host::new(MockRegisters { values : [0; 26],
-                                                 interrupts : INT_COMMAND_TIMEOUT },
-                                 2);
+        let mut host = command_host(MockRegisters { values : [0; 26],
+                                                    interrupts : INT_COMMAND_TIMEOUT });
         assert_eq!(host.execute_command(8, 0, true, false),
                    Err(MmcError::ResponseTimeout));
-        let mut host = Host::new(MockRegisters { values : [0; 26],
-                                                 interrupts : INT_RESPONSE_CRC },
-                                 2);
+        let mut host = command_host(MockRegisters { values : [0; 26],
+                                                    interrupts : INT_RESPONSE_CRC });
         assert_eq!(host.execute_command(8, 0, true, false),
                    Err(MmcError::ResponseCrc));
     }

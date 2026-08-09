@@ -3477,3 +3477,58 @@ Linux 当前以 `DIV_ROUND_UP(parent, requested)` 计算 divider、clamp 到 255
 ### 提交
 
 - `[feat] add recoverable LS2K1000 MMC clock transaction`
+
+## 2026-08-10：批次 74——LS2K1000 MMC Host typestate 与 reset preflight
+
+### 任务与设计
+
+1. 审计 Linux 主线在首条命令前的 reset、延时、外部时钟选择与中断清理顺序。
+2. 将 Host 建模为 `Uninitialized → Preflighted → ClockConfigured → CommandReady`，封闭未初始化状态直接发命令的旁路。
+3. 处理 reset 会覆盖 `CTL.ENCLK` 的顺序约束：先 reset preflight，再配置 controller-private clock，最后消费完整 prerequisite proof。
+4. reset 后采用有界 idle 检查；任何 IO、readback 或 timeout 错误都归还可重试的 session，不进入数据命令或 DMA。
+5. 保持生产初始化入口关闭，直到两块目标板完成电源、时钟、卡检测和 IRQ 的物理验证。
+
+Linux 上游 power-up 路径写 `CTL.RESET`、等待 10 ms、写 `CTL.EXTCLK`，随后向 `INT` 和 `IEN`
+写低 10 位。上游没有把 RESET 当作可轮询的 self-clear 位，因此 WaterOS 不推测该语义；额外读取
+`CSTS.ON` 与 `DSTS.RXON/TXON` 做有界 idle 检查，属于 fail-closed 软件策略。
+
+### 完成内容
+
+- [x] 新增 `Uninitialized`、`Preflighted`、`ClockConfigured`、`CommandReady` 四个 Host typestate；只有 `Uninitialized` 暴露普通构造器。
+- [x] 新增带安全契约的 `HostPreflightAuthority` 和可注入 `ResetDelay`，明确 10 ms 延时、MMIO ownership 与板级验证责任。
+- [x] preflight 严格执行 reset、10 ms delay、EXTCLK、CTL readback、INT clear、IEN enable/readback 与 bounded idle poll。
+- [x] 不轮询未经文档证明会 self-clear 的 RESET；CTL/IEN 不匹配与 CSTS/DSTS 超时均 fail-closed。
+- [x] `HostPreflightFailure` 保存失败阶段、观测值和 `Host<Uninitialized>`；`retry()` 从完整 reset 序列重新开始。
+- [x] controller clock transaction 只能从 `Preflighted` 进入；失败通过 `HostClockFailure` 归还 host 与既有 clock recovery evidence。
+- [x] `Host<ClockConfigured>::authorize()` 必须消费完整 `ControllerPrerequisiteProof`，才能产生 `CommandReady`。
+- [x] `execute_command()` 只存在于 `Host<CommandReady>`；测试旁路使用 `#[cfg(test)]` fixture，不进入生产构建。
+- [x] 仍未提供 data command、DMA、machine init 或 remote monitor 的激活入口；七个 blocker、`can_activate()==false` 与 `proof=0` 保持不变。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 110 项全部通过；新增 3 项覆盖完整 preflight 顺序、所有 IO/readback fault 与 bounded busy timeout。
+- fault matrix 覆盖四处 write failure、四处 read failure、CTL/IEN mismatch，并验证 owned-session retry 必须重新写 RESET。
+- aggregate prerequisite 测试走完整生产类型链：reset preflight、controller clock transaction、typed proof 组装和 proof consumption。
+- topology fixture/畸形 DTB 矩阵通过；dtc 仅输出刻意构造畸形输入的预期 warning。
+- remote client 与 QEMU launcher 的 13 项 Python host 测试通过。
+- `cargo check --no-default-features --features loongson2k1000la,final_online,heap-tlsf,remote-debug-monitor --target loongarch64-unknown-none` 通过。
+- `make kernel-la EXTRA_FEATURES=remote-debug-monitor` 与 `git diff --check` 通过；仅有仓库既有 warning。
+- 所有写操作测试均使用内存寄存器模型；没有访问物理 MMIO、发真实命令、启动 DMA 或创建磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：真实 RESET 行为、10 ms 时序、CTL.EXTCLK readback、INT/IEN 语义以及 reset 后 CSTS/DSTS 状态均未在两块板验证。
+- [ ] 生产平台 timer 尚未接入 `ResetDelay`；当前仅由 host fixture 验证调用顺序和延时参数。
+- [ ] 完整 proof 没有生产构造路径：电源、卡检测和 IRQ token 仍要求逐板物理证据，因此 production Host 没有 command caller。
+- [ ] `CommandReady` 当前只允许非数据命令；响应寄存器顺序、命令完成 IRQ 和错误恢复仍需真机验证。
+- [ ] 证据不足时不推测 reset/clock shutdown 或 rollback 顺序；失败只归还 session 和观测证据。
+- [ ] 下一批应把单条非数据命令建模为可恢复的 in-flight session：timeout/error 后不能静默回到 ready，必须重新观测或 reset preflight 后才能继续。
+
+### 参考与许可证
+
+- `docs/references/loongson2-mmc-upstream.md`
+- `docs/references/loongson2-clock-upstream.md`
+
+### 提交
+
+- `[feat] gate LS2K1000 MMC commands by prerequisites`

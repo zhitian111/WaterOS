@@ -238,21 +238,30 @@ mod tests {
     struct Clocks;
 
     struct ControllerClockRegisters {
-        pre : u32,
-        control : u32,
+        values : [u32; 26],
     }
 
     impl crate::mmc::RegisterIo for ControllerClockRegisters {
         fn read32(&mut self, offset : usize) -> Result<u32, dw_mmc::mmc::MmcError> {
-            match offset {
-                0x00 => Ok(self.control),
-                0x04 => Ok(self.pre),
-                _ => Err(dw_mmc::mmc::MmcError::RegisterOutOfRange),
-            }
+            self.values
+                .get(offset / 4)
+                .copied()
+                .ok_or(dw_mmc::mmc::MmcError::RegisterOutOfRange)
         }
 
-        fn write32(&mut self, _offset : usize, _value : u32) -> Result<(), dw_mmc::mmc::MmcError> {
-            panic!("read-only controller clock fixture must not write")
+        fn write32(&mut self, offset : usize, value : u32) -> Result<(), dw_mmc::mmc::MmcError> {
+            *self.values
+                 .get_mut(offset / 4)
+                 .ok_or(dw_mmc::mmc::MmcError::RegisterOutOfRange)? = value;
+            Ok(())
+        }
+    }
+
+    struct Delay;
+
+    impl crate::mmc::ResetDelay for Delay {
+        fn delay_milliseconds(&mut self, milliseconds : u32) {
+            assert_eq!(milliseconds, 10);
         }
     }
 
@@ -399,18 +408,29 @@ mod tests {
         let card = CardReady::from_diagnosis(diagnosis().card_detect).unwrap();
         let consistent = crate::clock::snapshot_consistent(&mut Clocks, 100_000_000).unwrap();
         let plan = crate::mmc::ControllerClockPlan::from_parent(consistent, 25_000_000).unwrap();
-        let controller = crate::mmc::observe_controller_clock(&mut ControllerClockRegisters {
-                                                                 pre : (1 << 31) |
-                                                                       u32::from(plan.divider()),
-                                                                 control : 1,
-                                                             },
-                                                             plan).unwrap();
+        let preflight_authority =
+            unsafe { crate::mmc::HostPreflightAuthority::assume_board_verified() };
+        let host = crate::mmc::Host::new(ControllerClockRegisters { values : [0; 26] },
+                                         2).preflight(&mut Delay, &preflight_authority)
+                                           .unwrap();
+        let clock_authority =
+            unsafe { crate::mmc::ControllerClockAuthority::assume_board_verified() };
+        let mut guard = loop {
+            match crate::mmc::try_begin_clock_transaction() {
+                Ok(guard) => break guard,
+                Err(crate::mmc::ClockTransactionBusy) => core::hint::spin_loop(),
+            }
+        };
+        let (host, controller) =
+            host.configure_controller_clock(plan, &clock_authority, &mut guard)
+                .unwrap();
+        drop(guard);
         // SAFETY: these are pure host fixtures with no claim about real hardware.
         let proof = assemble_proof(unsafe { ClockReady::assume_verified(controller) },
                                    unsafe { PowerReady::assume_verified() },
                                    pins,
                                    card,
                                    unsafe { IrqReady::assume_verified() });
-        let _ = proof;
+        let _authorized = host.authorize(proof);
     }
 }
