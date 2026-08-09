@@ -50,6 +50,22 @@ qemu-system-loongarch64 -kernel ./kernel-la-final -m 8G -nographic -smp 8 \
     -device virtio-net-pci,netdev=net0 -netdev user,id=net0 -rtc base=utc
 ```
 
+## wait-hot：每核 idle/WFI 时间
+
+`wait-hot-rv.sh` / `wait-hot-la.sh` 是独立的 QEMU 插件入口，不改内核。它统计每个
+vCPU 进入/离开 WFI 的墙钟时间，并把 idle 时间归到 WFI PC。可和 pc-hot 同时挂载：
+
+```bash
+./scripts/pc-hot/wait-hot-rv.sh build
+./scripts/pc-hot/wait-hot-rv.sh run /tmp/wait.txt -- \
+    timeout 3600 qemu-system-riscv64 ... \
+    -plugin file=./scripts/pc-hot/build/rv/pc-hot-rv.so,out=/tmp/pcs.txt \
+    -plugin file=./scripts/pc-hot/build/rv/wait-hot-rv.so,out=/tmp/wait.txt
+```
+
+输出中的 `wfi_pc` 可用 `addr2line` 归到内核符号。当前 BuildStorm 中所有核的 WFI PC
+均归到 `__wateros_idle_task_runtime_main`。
+
 想要“时间”严格正比于指令数，qemu 命令加 `-icount shift=0,sleep=off`（每条指令推进 2^0=1ns 虚拟时间；`sleep=off` 防止 QEMU 按墙钟放慢模拟），analyze 加 `-t 0` 做换算。
 
 ## 两种计数模式与性能开销
