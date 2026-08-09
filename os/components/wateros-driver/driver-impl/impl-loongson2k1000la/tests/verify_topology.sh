@@ -65,6 +65,26 @@ sed '/vmmc: regulator-vmmc {/a\
     > "$tmp_dir/ambiguous-regulator-gpio.dts"
 dtc -I dts -O dtb -o "$tmp_dir/ambiguous-regulator-gpio.dtb" \
     "$tmp_dir/ambiguous-regulator-gpio.dts"
+sed -e '/pinctrl-0/d' -e '/pinctrl-names/d' \
+    "$crate_dir/tests/fixtures/loongson2k1000la-topology.dts" \
+    > "$tmp_dir/missing-pinctrl.dts"
+dtc -I dts -O dtb -o "$tmp_dir/missing-pinctrl.dtb" \
+    "$tmp_dir/missing-pinctrl.dts"
+sed '/pinctrl@1fe00420/,/sdio-pins/ s/loongson,ls2k-pinctrl/vendor,unknown-pinctrl/' \
+    "$crate_dir/tests/fixtures/loongson2k1000la-topology.dts" \
+    > "$tmp_dir/unsupported-pinctrl.dts"
+dtc -I dts -O dtb -o "$tmp_dir/unsupported-pinctrl.dtb" \
+    "$tmp_dir/unsupported-pinctrl.dts"
+sed '/sdio-det-pinmux/,/};/ s/function = "gpio"/function = "pwm2"/' \
+    "$crate_dir/tests/fixtures/loongson2k1000la-topology.dts" \
+    > "$tmp_dir/wrong-card-detect-pinmux.dts"
+dtc -I dts -O dtb -o "$tmp_dir/wrong-card-detect-pinmux.dtb" \
+    "$tmp_dir/wrong-card-detect-pinmux.dts"
+sed '/pinctrl@1fe00420/,/sdio-pins/ s/0x0 0x18/0x0 0x4/' \
+    "$crate_dir/tests/fixtures/loongson2k1000la-topology.dts" \
+    > "$tmp_dir/short-pinctrl-mmio.dts"
+dtc -I dts -O dtb -o "$tmp_dir/short-pinctrl-mmio.dtb" \
+    "$tmp_dir/short-pinctrl-mmio.dts"
 sed '/mmc@1fe2c000/,/vmmc-supply/ s/clocks = <&clk 12>/clocks = <\&clk 0>/' \
     "$crate_dir/tests/fixtures/loongson2k1000la-topology.dts" \
     > "$tmp_dir/wrong-mmc-clock-id.dts"
@@ -117,6 +137,14 @@ cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
     --example verify_topology -- implicit-supplies "$tmp_dir/implicit-board-supplies.dtb"
 cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
     --example verify_topology -- invalid "$tmp_dir/ambiguous-regulator-gpio.dtb"
+cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
+    --example verify_topology -- missing-pinctrl "$tmp_dir/missing-pinctrl.dtb"
+cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
+    --example verify_topology -- unsupported-pinctrl "$tmp_dir/unsupported-pinctrl.dtb"
+cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
+    --example verify_topology -- invalid "$tmp_dir/wrong-card-detect-pinmux.dtb"
+cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
+    --example verify_topology -- invalid "$tmp_dir/short-pinctrl-mmio.dtb"
 cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \
     --example verify_topology -- invalid "$tmp_dir/wrong-mmc-clock-id.dtb"
 cargo run --quiet --manifest-path "$crate_dir/Cargo.toml" \

@@ -6,7 +6,7 @@
 
 use crate::{irq_domain::{AcknowledgedIrq, DeviceAckedIrq, GlobalIrq, IrqDisposition},
             topology::{CardDetect, FixedSupplyControl, MmcClockProvider, MmcDescription,
-                       SupplyDescription, SupplyProvider}};
+                       PinctrlProvider, SupplyDescription, SupplyProvider}};
 use api_v0::MmioRegion;
 use dw_mmc::mmc::MmcError;
 
@@ -27,6 +27,7 @@ pub enum ActivationBlocker {
     ClockControlUnavailable,
     PowerSequencingUnavailable,
     CardDetectUnavailable,
+    PinControlUnavailable,
     InterruptPathUnverified,
 }
 
@@ -47,6 +48,7 @@ pub struct PrerequisitePlan {
     pub clock : PrerequisiteStatus,
     pub vmmc : PrerequisiteStatus,
     pub vqmmc : PrerequisiteStatus,
+    pub pinctrl : PrerequisiteStatus,
     pub card_detect : PrerequisiteStatus,
 }
 
@@ -61,7 +63,7 @@ pub struct BringUpPlan {
     pub auxiliary_mmio : MmioRegion,
     pub bus_width : u8,
     pub prerequisites : PrerequisitePlan,
-    pub blockers : [ActivationBlocker; 6],
+    pub blockers : [ActivationBlocker; 7],
 }
 
 impl BringUpPlan {
@@ -103,6 +105,13 @@ pub fn plan(description : &MmcDescription) -> Result<BringUpPlan, PlanError> {
         CardDetect::Gpio(_) | CardDetect::Native => PrerequisiteStatus::RequiresDriver,
         CardDetect::Broken => PrerequisiteStatus::FirmwareMaintained,
     };
+    let pinctrl = match description.pinctrl {
+        None => PrerequisiteStatus::Missing,
+        Some(state) => match state.provider {
+            PinctrlProvider::Loongson2k { .. } => PrerequisiteStatus::RequiresDriver,
+            PinctrlProvider::Unsupported => PrerequisiteStatus::UnsupportedProvider,
+        },
+    };
     Ok(BringUpPlan {
         controller_mmio : description.controller_mmio,
         auxiliary_mmio,
@@ -110,12 +119,14 @@ pub fn plan(description : &MmcDescription) -> Result<BringUpPlan, PlanError> {
         prerequisites : PrerequisitePlan { clock,
                                            vmmc : supply(description.vmmc_supply),
                                            vqmmc : supply(description.vqmmc_supply),
+                                           pinctrl,
                                            card_detect },
         blockers : [ActivationBlocker::DataPathUnavailable,
                     ActivationBlocker::ExternalDmaExecutorUnavailable,
                     ActivationBlocker::ClockControlUnavailable,
                     ActivationBlocker::PowerSequencingUnavailable,
                     ActivationBlocker::CardDetectUnavailable,
+                    ActivationBlocker::PinControlUnavailable,
                     ActivationBlocker::InterruptPathUnverified],
     })
 }
@@ -366,6 +377,7 @@ mod tests {
             },
             dma : None,
             bus_width : 4,
+            pinctrl : None,
             card_detect : CardDetect::NonRemovable,
             vmmc_supply : None,
             vqmmc_supply : None,
@@ -383,6 +395,23 @@ mod tests {
         assert_eq!(plan.prerequisites.clock, PrerequisiteStatus::RequiresDriver);
         assert_eq!(plan.prerequisites.card_detect, PrerequisiteStatus::ReadyByTopology);
         assert_eq!(plan.prerequisites.vmmc, PrerequisiteStatus::ImplicitBoardSupply);
+        assert_eq!(plan.prerequisites.pinctrl, PrerequisiteStatus::Missing);
+    }
+
+    #[test]
+    fn classifies_pinctrl_without_assuming_firmware_selected_the_state() {
+        let mut value = description();
+        value.pinctrl = Some(crate::topology::MmcPinctrlDescription {
+            state_phandle : 5,
+            provider : PinctrlProvider::Loongson2k {
+                mmio : MmioRegion { base : 0x1fe0_0420, size : 0x18 },
+            },
+        });
+        assert_eq!(plan(&value).unwrap().prerequisites.pinctrl,
+                   PrerequisiteStatus::RequiresDriver);
+        value.pinctrl.as_mut().unwrap().provider = PinctrlProvider::Unsupported;
+        assert_eq!(plan(&value).unwrap().prerequisites.pinctrl,
+                   PrerequisiteStatus::UnsupportedProvider);
     }
 
     #[test]

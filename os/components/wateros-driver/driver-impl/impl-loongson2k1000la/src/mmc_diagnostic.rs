@@ -9,6 +9,7 @@ use crate::{
     clock::{self, ClockError, ClockSnapshot},
     gpio::{self, CardDetectSnapshot, GpioError},
     mmc::{self, BringUpPlan, PlanError, PrerequisiteStatus},
+    pinctrl::{self, PinctrlError, PinctrlSnapshot},
     topology::{CardDetect, MmcDescription},
 };
 use alloc::{format, string::String};
@@ -69,6 +70,7 @@ pub enum CardDetectDiagnosis {
 pub struct Diagnosis {
     pub plan : BringUpPlan,
     pub clock : Result<ClockSnapshot, ClockError>,
+    pub pinctrl : Result<PinctrlSnapshot, PinctrlError>,
     pub card_detect : CardDetectDiagnosis,
 }
 
@@ -100,6 +102,14 @@ fn prerequisite_code(status : PrerequisiteStatus) -> &'static str {
         PrerequisiteStatus::RequiresDriver => "requires-driver",
         PrerequisiteStatus::Missing => "missing",
         PrerequisiteStatus::UnsupportedProvider => "unsupported-provider",
+    }
+}
+
+fn pinctrl_error_code(error : PinctrlError) -> &'static str {
+    match error {
+        PinctrlError::Io => "io",
+        PinctrlError::Missing => "missing",
+        PinctrlError::UnsupportedProvider => "unsupported-provider",
     }
 }
 
@@ -138,10 +148,19 @@ pub fn format_diagnosis(diagnosis : Diagnosis) -> String {
                     gpio_error_code(error))
         }
     };
-    format!("ls2k-mmc {} vmmc={} vqmmc={} {} can_activate={} blockers={}\r\n",
+    let pinmux = match diagnosis.pinctrl {
+        Ok(snapshot) => format!("pinmux=ok raw={:#x} sdio={} card_gpio={}",
+                               snapshot.mux_raw,
+                               u8::from(snapshot.sdio_selected),
+                               u8::from(snapshot.card_detect_gpio_selected)),
+        Err(error) => format!("pinmux=error:{}", pinctrl_error_code(error)),
+    };
+    format!("ls2k-mmc {} vmmc={} vqmmc={} pinctrl={} {} {} can_activate={} blockers={}\r\n",
             clock,
             prerequisite_code(diagnosis.plan.prerequisites.vmmc),
             prerequisite_code(diagnosis.plan.prerequisites.vqmmc),
+            prerequisite_code(diagnosis.plan.prerequisites.pinctrl),
+            pinmux,
             card,
             u8::from(diagnosis.plan
                               .can_activate()),
@@ -155,13 +174,16 @@ pub fn format_diagnosis(diagnosis : Diagnosis) -> String {
 /// Clock and GPIO backends are independent so host tests can prove access
 /// order and short-circuit behavior. Errors are retained in the diagnosis;
 /// only an invalid static bring-up plan prevents a result.
-pub fn diagnose<C : clock::RegisterIo, G : gpio::RegisterIo>(description : &MmcDescription,
-                                                             clock_registers : &mut C,
-                                                             gpio_registers : &mut G)
-                                                             -> Result<Diagnosis, PlanError> {
+pub fn diagnose<C : clock::RegisterIo, G : gpio::RegisterIo, P : pinctrl::RegisterIo>(
+    description : &MmcDescription,
+    clock_registers : &mut C,
+    gpio_registers : &mut G,
+    pinctrl_registers : &mut P,
+) -> Result<Diagnosis, PlanError> {
     let plan = mmc::plan(description)?;
     let clock = clock::snapshot_provider(description.clock_provider,
                                          clock_registers);
+    let pinctrl = pinctrl::snapshot(description.pinctrl, pinctrl_registers);
     let card_detect = match &description.card_detect {
         CardDetect::NonRemovable => CardDetectDiagnosis::NonRemovable,
         CardDetect::Broken => CardDetectDiagnosis::FirmwareMaintainedBroken,
@@ -172,6 +194,7 @@ pub fn diagnose<C : clock::RegisterIo, G : gpio::RegisterIo>(description : &MmcD
     };
     Ok(Diagnosis { plan,
                    clock,
+                   pinctrl,
                    card_detect })
 }
 
@@ -181,6 +204,7 @@ pub enum VolatileDiagnosisError {
     Plan(PlanError),
     ClockBackend(ClockError),
     GpioBackend(GpioError),
+    PinctrlBackend(PinctrlError),
 }
 
 #[cfg(target_arch = "loongarch64")]
@@ -222,6 +246,22 @@ impl gpio::RegisterIo for TargetGpioRegisters {
     }
 }
 
+#[cfg(target_arch = "loongarch64")]
+enum TargetPinctrlRegisters {
+    Volatile(pinctrl::VolatileRegisters),
+    Unused,
+}
+
+#[cfg(target_arch = "loongarch64")]
+impl pinctrl::RegisterIo for TargetPinctrlRegisters {
+    fn read32(&mut self, offset : usize) -> Result<u32, PinctrlError> {
+        match self {
+            Self::Volatile(registers) => registers.read32(offset),
+            Self::Unused => Err(PinctrlError::UnsupportedProvider),
+        }
+    }
+}
+
 /// Explicit physical-MMIO diagnostic entry point; never called by machine init.
 ///
 /// # Safety
@@ -230,7 +270,7 @@ impl gpio::RegisterIo for TargetGpioRegisters {
 #[cfg(target_arch = "loongarch64")]
 pub unsafe fn diagnose_volatile(description : &MmcDescription)
                                 -> Result<Diagnosis, VolatileDiagnosisError> {
-    use crate::topology::{GpioProvider, MmcClockProvider};
+    use crate::topology::{GpioProvider, MmcClockProvider, PinctrlProvider};
 
     mmc::plan(description).map_err(VolatileDiagnosisError::Plan)?;
     let mut clock_registers = match description.clock_provider {
@@ -255,10 +295,20 @@ pub unsafe fn diagnose_volatile(description : &MmcDescription)
         },
         _ => TargetGpioRegisters::Unused,
     };
+    let mut pinctrl_registers = match description.pinctrl.map(|state| state.provider) {
+        Some(PinctrlProvider::Loongson2k { mmio }) => {
+            // SAFETY: delegated to this function's caller.
+            let registers = unsafe { pinctrl::VolatileRegisters::new(mmio.base, mmio.size) }
+                .map_err(VolatileDiagnosisError::PinctrlBackend)?;
+            TargetPinctrlRegisters::Volatile(registers)
+        }
+        None | Some(PinctrlProvider::Unsupported) => TargetPinctrlRegisters::Unused,
+    };
 
     diagnose(description,
              &mut clock_registers,
-             &mut gpio_registers).map_err(VolatileDiagnosisError::Plan)
+             &mut gpio_registers,
+             &mut pinctrl_registers).map_err(VolatileDiagnosisError::Plan)
 }
 
 #[cfg(test)]
@@ -266,7 +316,7 @@ mod tests {
     use super::*;
     use crate::topology::{
         GpioLineDescription, GpioProvider, InterruptSpec, MmcClockProvider, NamedResource,
-        ResourceSpecifier, SupplyDescription,
+        MmcPinctrlDescription, PinctrlProvider, ResourceSpecifier, SupplyDescription,
     };
     use alloc::{vec, vec::Vec};
     use api_v0::MmioRegion;
@@ -331,6 +381,25 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct PinctrlModel {
+        raw : u32,
+        reads : usize,
+        fail : bool,
+    }
+
+    impl pinctrl::RegisterIo for PinctrlModel {
+        fn read32(&mut self, offset : usize) -> Result<u32, PinctrlError> {
+            assert_eq!(offset, 0);
+            self.reads += 1;
+            if self.fail { Err(PinctrlError::Io) } else { Ok(self.raw) }
+        }
+    }
+
+    fn pinctrl_state(provider : PinctrlProvider) -> MmcPinctrlDescription {
+        MmcPinctrlDescription { state_phandle : 4, provider }
+    }
+
     fn description(card_detect : CardDetect) -> MmcDescription {
         MmcDescription { controller_mmio : MmioRegion { base : 0x1FE0_C000,
                                                         size : 0x68 },
@@ -351,6 +420,7 @@ mod tests {
                                                             reference_hz : 100_000_000 },
                          dma : None,
                          bus_width : 4,
+                         pinctrl : None,
                          card_detect,
                          vmmc_supply : None::<SupplyDescription>,
                          vqmmc_supply : None::<SupplyDescription> }
@@ -371,12 +441,16 @@ mod tests {
 
     #[test]
     fn combines_clock_and_active_low_card_evidence_without_unblocking_plan() {
-        let description = description(CardDetect::Gpio(gpio_line()));
+        let mut description = description(CardDetect::Gpio(gpio_line()));
+        description.pinctrl = Some(pinctrl_state(PinctrlProvider::Loongson2k {
+            mmio : MmioRegion { base : 0x1FE0_0420, size : 0x18 },
+        }));
         let mut clocks = ClockModel::default();
         let mut gpios = GpioModel { direction : 1 << 22,
                                     input : 0,
                                     ..Default::default() };
-        let result = diagnose(&description, &mut clocks, &mut gpios).unwrap();
+        let mut pins = PinctrlModel { raw : 1 << 20, ..Default::default() };
+        let result = diagnose(&description, &mut clocks, &mut gpios, &mut pins).unwrap();
 
         assert_eq!(result.clock
                          .unwrap()
@@ -395,34 +469,41 @@ mod tests {
                                       (0x28, 4),
                                       (0x50, 8)]);
         assert_eq!(gpios.reads, vec![0, 0x20]);
+        assert_eq!(pins.reads, 1);
         assert_eq!(format_diagnosis(result),
                    "ls2k-mmc clock=ok ref_hz=100000000 pll_raw=0x2810000000 gmac_raw=0x800000 \
                     apb_raw=0x300000 apb_hz=250000000 vmmc=implicit-board-supply \
-                    vqmmc=implicit-board-supply card=gpio dir_raw=0x400000 input_raw=0x0 pin=22 \
-                    active_low=1 level_high=0 present=1 can_activate=0 blockers=6\r\n");
+                    vqmmc=implicit-board-supply pinctrl=requires-driver pinmux=ok raw=0x100000 \
+                    sdio=1 card_gpio=1 card=gpio dir_raw=0x400000 input_raw=0x0 pin=22 \
+                    active_low=1 level_high=0 present=1 can_activate=0 blockers=7\r\n");
     }
 
     #[test]
     fn retains_independent_read_failures_and_all_blockers() {
-        let description = description(CardDetect::Gpio(gpio_line()));
+        let mut description = description(CardDetect::Gpio(gpio_line()));
+        description.pinctrl = Some(pinctrl_state(PinctrlProvider::Loongson2k {
+            mmio : MmioRegion { base : 0x1FE0_0420, size : 0x18 },
+        }));
         let mut clocks = ClockModel { fail : true,
                                       ..Default::default() };
         let mut gpios = GpioModel::default();
-        let result = diagnose(&description, &mut clocks, &mut gpios).unwrap();
+        let mut pins = PinctrlModel { fail : true, ..Default::default() };
+        let result = diagnose(&description, &mut clocks, &mut gpios, &mut pins).unwrap();
 
         assert_eq!(result.clock, Err(ClockError::Io));
+        assert_eq!(result.pinctrl, Err(PinctrlError::Io));
         assert_eq!(result.card_detect,
                    CardDetectDiagnosis::Gpio(Err(GpioError::NotInput)));
         assert_eq!(result.plan
                          .blockers
                          .len(),
-                   6);
+                   7);
         assert!(!result.plan
                        .can_activate());
         assert_eq!(format_diagnosis(result),
                    "ls2k-mmc clock=error:io vmmc=implicit-board-supply \
-                    vqmmc=implicit-board-supply card=gpio-error:not-input can_activate=0 \
-                    blockers=6\r\n");
+                    vqmmc=implicit-board-supply pinctrl=requires-driver pinmux=error:io \
+                    card=gpio-error:not-input can_activate=0 blockers=7\r\n");
     }
 
     #[test]
@@ -434,9 +515,11 @@ mod tests {
         {
             let mut clocks = ClockModel::default();
             let mut gpios = GpioModel::default();
+            let mut pins = PinctrlModel::default();
             let result = diagnose(&description(card_detect),
                                   &mut clocks,
-                                  &mut gpios).unwrap();
+                                  &mut gpios,
+                                  &mut pins).unwrap();
             assert_eq!(result.card_detect, expected);
             assert!(gpios.reads
                          .is_empty());
@@ -450,12 +533,17 @@ mod tests {
             ..gpio_line()
         }));
         description.clock_provider = MmcClockProvider::Unsupported { phandle : 2 };
+        description.pinctrl = Some(pinctrl_state(PinctrlProvider::Unsupported));
         let mut clocks = ClockModel::default();
         let mut gpios = GpioModel::default();
-        let result = diagnose(&description, &mut clocks, &mut gpios).unwrap();
+        let mut pins = PinctrlModel::default();
+        let result = diagnose(&description, &mut clocks, &mut gpios, &mut pins).unwrap();
 
         assert_eq!(result.clock,
                    Err(ClockError::UnsupportedProvider));
+        assert_eq!(result.pinctrl,
+                   Err(PinctrlError::UnsupportedProvider));
+        assert_eq!(pins.reads, 0);
         assert_eq!(result.card_detect,
                    CardDetectDiagnosis::Gpio(Err(GpioError::UnsupportedProvider)));
         assert!(clocks.reads
@@ -473,11 +561,13 @@ mod tests {
                    .size = 4;
         let mut clocks = ClockModel::default();
         let mut gpios = GpioModel::default();
-        assert_eq!(diagnose(&description, &mut clocks, &mut gpios),
+        let mut pins = PinctrlModel::default();
+        assert_eq!(diagnose(&description, &mut clocks, &mut gpios, &mut pins),
                    Err(PlanError::ControllerWindowTooSmall));
         assert!(clocks.reads
                       .is_empty());
         assert!(gpios.reads
                      .is_empty());
+        assert_eq!(pins.reads, 0);
     }
 }

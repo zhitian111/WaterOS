@@ -152,6 +152,7 @@ fn ls2k_mmc_response() -> alloc::string::String {
         driver::Loongson2k1000MmcDiagnosticError::InvalidPlan => "invalid-plan",
         driver::Loongson2k1000MmcDiagnosticError::ClockBackend => "clock-backend",
         driver::Loongson2k1000MmcDiagnosticError::GpioBackend => "gpio-backend",
+        driver::Loongson2k1000MmcDiagnosticError::PinctrlBackend => "pinctrl-backend",
     };
     // SAFETY: the 2K1000 platform initialized the topology mapping; the driver
     // one-shot gate excludes concurrent monitor reads. Hardware semantics are

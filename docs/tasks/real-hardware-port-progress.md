@@ -3175,3 +3175,52 @@ Linux 主线 LS2K GPIO bank 使用 64-bit 寄存器，方向、输出、输入�
 ### 提交
 
 - `[fix] correct LS2K1000 MMC supply readiness`
+
+## 2026-08-10：批次 68——LS2K1000 MMC pinctrl topology 与只读诊断
+
+### 任务与设计
+
+1. 依据 Linux 主线 2K1000 reference DTS、pinctrl binding/driver 与 device core 核对 MMC pinmux 所有权。
+2. 解析唯一 `default` state，严格验证 `sdio -> sdio` 与 card-detect 所需 `pwm2 -> gpio` 两个映射。
+3. 将 pinctrl 作为独立 prerequisite；缺失、受支持 provider、未知 provider 必须有不同状态。
+4. 增加只读单寄存器 snapshot，报告 SDIO 与 GPIO22 mux 瞬时状态，但不自动修复或解除 blocker。
+5. 扩充 remote 稳定输出、畸形 DTB、host mock、LoongArch target 与整核构建验证。
+
+### 完成内容
+
+- [x] `MmcDescription` 新增 `MmcPinctrlDescription`，保存 state phandle 与 provider/MMIO 证据。
+- [x] topology 仅接受 `pinctrl-names = "default"`、单个 `pinctrl-0` 和主线已证明的两个映射；引用不存在、重复/额外映射、禁用 provider、短 MMIO 均 fail-closed。
+- [x] `PrerequisitePlan` 新增 `pinctrl`；无 state 为 missing，Loongson provider 为 requires-driver，未知 provider 为 unsupported-provider。
+- [x] `BringUpPlan` 新增第七个 `PinControlUnavailable` blocker；`can_activate()` 继续恒为 false。
+- [x] 新增 `pinctrl` 模块，以单次只读 32-bit access 解码首个 mux 寄存器 bit20(SDIO) 与 bit14(PWM2/GPIO22)。
+- [x] missing/unsupported provider 保证零读取；volatile backend 仅在显式 `ls2k-mmc` 诊断中构造，machine init 不读取或写入 pinctrl。
+- [x] remote formatter 新增 topology `pinctrl=...` 与瞬时 `pinmux=ok/error` 字段；backend 构造错误有稳定 `pinctrl-backend` 错误码。
+- [x] fixture 对齐主线 reference state；新增缺失 state、未知 provider、错误 card-detect function 和短 pinctrl MMIO 变体。
+- [x] 新增 `docs/references/linux-ls2k-pinctrl-upstream.md`，记录一手来源、SPDX 与实现边界。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 92 项全部通过；新增 3 项覆盖 prerequisite 分类、三组 bit 状态、IO error 与 missing/unsupported 零读取。
+- topology fixture/畸形 DTB 矩阵通过；有效 fixture 的组合诊断 mock 读出 raw `0x100000`，确认 SDIO=1、card GPIO=1。
+- remote client 与 QEMU launcher 的 13 项 Python host 测试通过。
+- `cargo check --no-default-features --features loongson2k1000la,final_online,heap-tlsf,remote-debug-monitor --target loongarch64-unknown-none` 通过。
+- `make kernel-la EXTRA_FEATURES=remote-debug-monitor` 与 `git diff --check` 通过；仅有仓库既有 warning。
+- 测试没有访问物理 MMIO、执行 pinmux/MMC 写或创建持久磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：`0x1fe00420` 的 endian、bit20/bit14 语义及映射可访问性尚未在 2K1000 板实测。
+- [ ] snapshot 是一次瞬时读取，不能证明 boot firmware/其他核心随后不改 mux，也不能证明引脚电气状态正确。
+- [ ] snapshot 即使报告 SDIO=1、card_gpio=1，也不会解除 `PinControlUnavailable` 或其他六个 blocker。
+- [ ] 本批没有实现 Linux 驱动的 locked read-modify-write；在拿到目标板 DTS/原理图并验证寄存器前禁止自动修复。
+- [ ] 两块目标板可能与主线 reference board 的 GPIO22/card-detect 连接不同，必须以各自板级 DTS/原理图复核。
+- [ ] remote monitor 仍依赖尚未完成的 2K1000 NIC；真机前只能验证 formatter、facade 和 target 链接路径。
+- [ ] 下一批应审计并实现保守的 pinctrl activation typestate：先 snapshot、只允许已满足状态通过；实际 RMW 写路径需独立 feature/policy gate，并继续默认关闭。
+
+### 参考与许可证
+
+- `docs/references/linux-ls2k-pinctrl-upstream.md`
+
+### 提交
+
+- `[feat] add LS2K1000 MMC pinctrl diagnostics`

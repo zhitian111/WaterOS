@@ -40,9 +40,24 @@ pub struct MmcDescription {
     pub clock_provider : MmcClockProvider,
     pub dma : Option<NamedResource>,
     pub bus_width : u8,
+    pub pinctrl : Option<MmcPinctrlDescription>,
     pub card_detect : CardDetect,
     pub vmmc_supply : Option<SupplyDescription>,
     pub vqmmc_supply : Option<SupplyDescription>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MmcPinctrlDescription {
+    pub state_phandle : u32,
+    pub provider : PinctrlProvider,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PinctrlProvider {
+    /// The state matches upstream `sdio -> sdio` and `pwm2 -> gpio`.
+    /// Register writes remain UNVERIFIED_ON_HARDWARE and are not implemented.
+    Loongson2k { mmio : MmioRegion },
+    Unsupported,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -412,6 +427,66 @@ fn supply_description(fdt : &fdt::Fdt<'_>,
     Ok(Some(SupplyDescription { phandle, provider }))
 }
 
+fn mmc_pinctrl(fdt : &fdt::Fdt<'_>,
+               node : fdt::node::FdtNode<'_, '_>)
+               -> DriverResult<Option<MmcPinctrlDescription>> {
+    let (Some(names), Some(states)) = (node.property("pinctrl-names"),
+                                       node.property("pinctrl-0"))
+    else {
+        if node.property("pinctrl-names").is_some() || node.property("pinctrl-0").is_some() {
+            return Err(DriverError::InvalidDtb);
+        }
+        return Ok(None);
+    };
+    if names.value != b"default\0" || states.value.len() != 4 {
+        return Err(DriverError::InvalidDtb);
+    }
+    let state_phandle = read_be_u32(states.value, 0).ok_or(DriverError::InvalidDtb)?;
+    let state = fdt.find_phandle(state_phandle)
+                   .ok_or(DriverError::InvalidDtb)?;
+    let mut provider = None;
+    for candidate in fdt.all_nodes() {
+        if has_compatible(candidate, "loongson,ls2k-pinctrl") &&
+           candidate.children()
+                    .any(|child| phandle(child) == Some(state_phandle))
+        {
+            if provider.is_some() || !enabled(candidate)? {
+                return Err(DriverError::InvalidDtb);
+            }
+            provider = Some(candidate);
+        }
+    }
+    let Some(provider) = provider else {
+        return Ok(Some(MmcPinctrlDescription { state_phandle,
+                                               provider : PinctrlProvider::Unsupported }));
+    };
+    let regs = regions(provider)?;
+    if regs.len() != 1 || regs[0].base == 0 || regs[0].base % 4 != 0 || regs[0].size < 0x18 {
+        return Err(DriverError::InvalidDtb);
+    }
+    let mut sdio = false;
+    let mut card_detect_gpio = false;
+    for mapping in state.children() {
+        let groups = string_list(mapping, "groups")?;
+        let functions = string_list(mapping, "function")?;
+        let pair = (groups.as_slice(), functions.as_slice());
+        if pair == (["sdio"].as_slice(), ["sdio"].as_slice()) && !sdio {
+            sdio = true;
+        } else if pair == (["pwm2"].as_slice(), ["gpio"].as_slice()) && !card_detect_gpio {
+            card_detect_gpio = true;
+        } else {
+            return Err(DriverError::InvalidDtb);
+        }
+    }
+    if !sdio || !card_detect_gpio {
+        return Err(DriverError::InvalidDtb);
+    }
+    Ok(Some(MmcPinctrlDescription {
+        state_phandle,
+        provider : PinctrlProvider::Loongson2k { mmio : regs[0] },
+    }))
+}
+
 fn mmc_clock_provider(fdt : &fdt::Fdt<'_>,
                       clock : &NamedResource)
                       -> DriverResult<MmcClockProvider> {
@@ -638,6 +713,7 @@ pub fn discover(fdt : &fdt::Fdt<'_>) -> DriverResult<BoardTopology> {
                                            clock_provider,
                                            dma,
                                            bus_width : bus_width as u8,
+                                           pinctrl : mmc_pinctrl(fdt, node)?,
                                            card_detect : mmc_card_detect(fdt, node)?,
                                            vmmc_supply : supply_description(fdt,
                                                                             node,

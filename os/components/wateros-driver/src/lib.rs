@@ -135,6 +135,7 @@ pub enum Loongson2k1000MmcDiagnosticError {
     InvalidPlan,
     ClockBackend,
     GpioBackend,
+    PinctrlBackend,
 }
 
 /// Explicitly collect and format read-only 2K1000 MMC prerequisite evidence.
@@ -168,6 +169,9 @@ pub unsafe fn diagnose_loongson2k1000_mmc()
             impl_loongson2k1000la::MmcDiagnosticError::Diagnosis(
                 VolatileDiagnosisError::GpioBackend(_),
             ) => Loongson2k1000MmcDiagnosticError::GpioBackend,
+            impl_loongson2k1000la::MmcDiagnosticError::Diagnosis(
+                VolatileDiagnosisError::PinctrlBackend(_),
+            ) => Loongson2k1000MmcDiagnosticError::PinctrlBackend,
         }
     })?;
     Ok(impl_loongson2k1000la::mmc_diagnostic::format_diagnosis(diagnosis))

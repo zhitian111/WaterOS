@@ -280,7 +280,7 @@ mod tests {
                     mmio : MmioRegion { base : 0x5000, size : 0x58 },
                     reference_hz : 100_000_000,
                 },
-                dma : None, bus_width : 4,
+                dma : None, bus_width : 4, pinctrl : None,
                 card_detect : CardDetect::NonRemovable,
                 vmmc_supply : None, vqmmc_supply : None,
             }],

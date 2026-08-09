@@ -8,7 +8,7 @@ use wateros_driver_impl_loongson2k1000la::{irq_binding::resolve,
                                            mmc::{ActivationBlocker, PrerequisiteStatus, plan},
                                            mmc_diagnostic::{CardDetectDiagnosis, diagnose},
                                            topology::{FixedSupplyControl, MmcClockProvider,
-                                                      SupplyProvider, discover}};
+                                                      PinctrlProvider, SupplyProvider, discover}};
 
 struct ClockEvidence;
 
@@ -39,6 +39,16 @@ impl wateros_driver_impl_loongson2k1000la::gpio::RegisterIo for GpioEvidence {
             0x20 => Ok(0),
             _ => panic!("unexpected GPIO offset {offset:#x}"),
         }
+    }
+}
+
+struct PinctrlEvidence;
+
+impl wateros_driver_impl_loongson2k1000la::pinctrl::RegisterIo for PinctrlEvidence {
+    fn read32(&mut self, offset : usize)
+              -> Result<u32, wateros_driver_impl_loongson2k1000la::pinctrl::PinctrlError> {
+        assert_eq!(offset, 0);
+        Ok(1 << 20)
     }
 }
 
@@ -151,6 +161,10 @@ fn main() {
                           .args,
                        &[0]);
             assert_eq!(mmc.bus_width, 4);
+            assert!(matches!(mmc.pinctrl.expect("MMC default pinctrl").provider,
+                             PinctrlProvider::Loongson2k {
+                                 mmio : api_v0::MmioRegion { base : 0x1FE0_0420, size : 0x18 },
+                             }));
             match &mmc.card_detect {
                 wateros_driver_impl_loongson2k1000la::topology::CardDetect::Gpio(line) => {
                     assert_eq!(line.specifier.args, &[22, 1]);
@@ -181,12 +195,19 @@ fn main() {
             assert_eq!(plan.prerequisites.clock, PrerequisiteStatus::RequiresDriver);
             assert_eq!(plan.prerequisites.vmmc, PrerequisiteStatus::ReadyByTopology);
             assert_eq!(plan.prerequisites.vqmmc, PrerequisiteStatus::ReadyByTopology);
+            assert_eq!(plan.prerequisites.pinctrl, PrerequisiteStatus::RequiresDriver);
             assert_eq!(plan.prerequisites.card_detect, PrerequisiteStatus::RequiresDriver);
-            let diagnosis = diagnose(mmc, &mut ClockEvidence, &mut GpioEvidence)
+            let diagnosis = diagnose(mmc,
+                                     &mut ClockEvidence,
+                                     &mut GpioEvidence,
+                                     &mut PinctrlEvidence)
                 .expect("combine read-only MMC evidence");
             assert_eq!(diagnosis.clock.expect("clock snapshot").apb_hz, 250_000_000);
             assert!(matches!(diagnosis.card_detect,
                              CardDetectDiagnosis::Gpio(Ok(snapshot)) if snapshot.card_present));
+            assert!(diagnosis.pinctrl
+                             .expect("pinctrl snapshot")
+                             .sdio_selected);
             assert!(!diagnosis.plan.can_activate());
         }
         "invalid" => assert!(discover(&fdt).is_err()),
@@ -205,6 +226,19 @@ fn main() {
                        PrerequisiteStatus::ImplicitBoardSupply);
             assert_eq!(plan.prerequisites.vqmmc,
                        PrerequisiteStatus::ImplicitBoardSupply);
+            assert!(!plan.can_activate());
+        }
+        "missing-pinctrl" => {
+            let topology = discover(&fdt).expect("discover MMC without pinctrl state");
+            let plan = plan(&topology.mmc_hosts[0]).expect("plan MMC without pinctrl state");
+            assert_eq!(plan.prerequisites.pinctrl, PrerequisiteStatus::Missing);
+            assert!(!plan.can_activate());
+        }
+        "unsupported-pinctrl" => {
+            let topology = discover(&fdt).expect("discover unsupported pinctrl provider");
+            let plan = plan(&topology.mmc_hosts[0]).expect("plan unsupported pinctrl provider");
+            assert_eq!(plan.prerequisites.pinctrl,
+                       PrerequisiteStatus::UnsupportedProvider);
             assert!(!plan.can_activate());
         }
         _ => panic!("unknown mode: {mode}"),
